@@ -1,0 +1,286 @@
+{
+  "mode": "dry-run",
+  "repo_root": "D:\\Git\\chill-vibe",
+  "output_dir": ".codex-artifacts\\check-all",
+  "package_manager": "pnpm",
+  "notes": [],
+  "plan": [
+    {
+      "phase": "quality",
+      "script_name": "legal:check",
+      "command": [
+        "pnpm",
+        "run",
+        "legal:check"
+      ],
+      "source": "package.json",
+      "reason": "script name or body matches static analysis or type checking"
+    },
+    {
+      "phase": "quality",
+      "script_name": "check",
+      "command": [
+        "pnpm",
+        "run",
+        "check"
+      ],
+      "source": "package.json",
+      "reason": "script name or body matches static analysis or type checking"
+    },
+    {
+      "phase": "quality",
+      "script_name": "lint",
+      "command": [
+        "pnpm",
+        "run",
+        "lint"
+      ],
+      "source": "package.json",
+      "reason": "script name or body matches static analysis or type checking"
+    },
+    {
+      "phase": "unit",
+      "script_name": "test",
+      "command": [
+        "pnpm",
+        "run",
+        "test"
+      ],
+      "source": "package.json",
+      "reason": "script name or body matches automated test execution"
+    },
+    {
+      "phase": "unit",
+      "script_name": "test:theme",
+      "command": [
+        "pnpm",
+        "run",
+        "test:theme"
+      ],
+      "source": "package.json",
+      "reason": "script name or body matches automated test execution"
+    },
+    {
+      "phase": "unit",
+      "script_name": "test:theme:headed",
+      "command": [
+        "pnpm",
+        "run",
+        "test:theme:headed"
+      ],
+      "source": "package.json",
+      "reason": "script name or body matches automated test execution"
+    },
+    {
+      "phase": "unit",
+      "script_name": "test:perf",
+      "command": [
+        "pnpm",
+        "run",
+        "test:perf"
+      ],
+      "source": "package.json",
+      "reason": "script name or body matches automated test execution"
+    },
+    {
+      "phase": "unit",
+      "script_name": "test:perf:headed",
+      "command": [
+        "pnpm",
+        "run",
+        "test:perf:headed"
+      ],
+      "source": "package.json",
+      "reason": "script name or body matches automated test execution"
+    },
+    {
+      "phase": "unit",
+      "script_name": "test:quality",
+      "command": [
+        "pnpm",
+        "run",
+        "test:quality"
+      ],
+      "source": "package.json",
+      "reason": "script name or body matches automated test execution"
+    },
+    {
+      "phase": "unit",
+      "script_name": "test:risk",
+      "command": [
+        "pnpm",
+        "run",
+        "test:risk"
+      ],
+      "source": "package.json",
+      "reason": "script name or body matches automated test execution"
+    },
+    {
+      "phase": "build",
+      "script_name": "build",
+      "command": [
+        "pnpm",
+        "run",
+        "build"
+      ],
+      "source": "package.json",
+      "reason": "script name matches a production build step"
+    },
+    {
+      "phase": "build",
+      "script_name": "build:client",
+      "command": [
+        "pnpm",
+        "run",
+        "build:client"
+      ],
+      "source": "package.json",
+      "reason": "script name matches a production build step"
+    },
+    {
+      "phase": "browser",
+      "script_name": "test:playwright",
+      "command": [
+        "pnpm",
+        "run",
+        "test:playwright"
+      ],
+      "source": "package.json",
+      "reason": "script name references browser end-to-end tooling"
+    },
+    {
+      "phase": "browser",
+      "script_name": "test:playwright:headed",
+      "command": [
+        "pnpm",
+        "run",
+        "test:playwright:headed"
+      ],
+      "source": "package.json",
+      "reason": "script name references browser end-to-end tooling"
+    },
+    {
+      "phase": "browser",
+      "script_name": "test:playwright:full",
+      "command": [
+        "pnpm",
+        "run",
+        "test:playwright:full"
+      ],
+      "source": "package.json",
+      "reason": "script name references browser end-to-end tooling"
+    },
+    {
+      "phase": "desktop",
+      "script_name": "electron:compile",
+      "command": [
+        "pnpm",
+        "run",
+        "electron:compile"
+      ],
+      "source": "package.json",
+      "reason": "script body references Electron or desktop smoke testing"
+    },
+    {
+      "phase": "desktop",
+      "script_name": "electron:dev",
+      "command": [
+        "pnpm",
+        "run",
+        "electron:dev"
+      ],
+      "source": "package.json",
+      "reason": "script body references Electron or desktop smoke testing"
+    },
+    {
+      "phase": "desktop",
+      "script_name": "electron:build",
+      "command": [
+        "pnpm",
+        "run",
+        "electron:build"
+      ],
+      "source": "package.json",
+      "reason": "script body references Electron or desktop smoke testing"
+    },
+    {
+      "phase": "desktop",
+      "script_name": "electron:build:zip",
+      "command": [
+        "pnpm",
+        "run",
+        "electron:build:zip"
+      ],
+      "source": "package.json",
+      "reason": "script body references Electron or desktop smoke testing"
+    },
+    {
+      "phase": "desktop",
+      "script_name": "electron:build:installer",
+      "command": [
+        "pnpm",
+        "run",
+        "electron:build:installer"
+      ],
+      "source": "package.json",
+      "reason": "script body references Electron or desktop smoke testing"
+    },
+    {
+      "phase": "desktop",
+      "script_name": "electron:build:portable",
+      "command": [
+        "pnpm",
+        "run",
+        "electron:build:portable"
+      ],
+      "source": "package.json",
+      "reason": "script body references Electron or desktop smoke testing"
+    },
+    {
+      "phase": "desktop",
+      "script_name": "test:perf:electron",
+      "command": [
+        "pnpm",
+        "run",
+        "test:perf:electron"
+      ],
+      "source": "package.json",
+      "reason": "script name references Electron or desktop smoke testing"
+    },
+    {
+      "phase": "desktop",
+      "script_name": "test:electron",
+      "command": [
+        "pnpm",
+        "run",
+        "test:electron"
+      ],
+      "source": "package.json",
+      "reason": "script name references Electron or desktop smoke testing"
+    },
+    {
+      "phase": "full",
+      "script_name": "test:full",
+      "command": [
+        "pnpm",
+        "run",
+        "test:full"
+      ],
+      "source": "package.json",
+      "reason": "script name is commonly used as an umbrella verification command"
+    },
+    {
+      "phase": "full",
+      "script_name": "verify",
+      "command": [
+        "pnpm",
+        "run",
+        "verify"
+      ],
+      "source": "package.json",
+      "reason": "script name is commonly used as an umbrella verification command"
+    }
+  ],
+  "results": [],
+  "artifacts": []
+}

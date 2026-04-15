@@ -1,0 +1,14 @@
+﻿{
+  "extends": "./tsconfig.test.json",
+  "compilerOptions": {
+    "noEmit": false,
+    "outDir": ".tmp-test-build-cjs",
+    "module": "CommonJS",
+    "moduleResolution": "node",
+    "verbatimModuleSyntax": false,
+    "allowImportingTsExtensions": true,
+    "rewriteRelativeImportExtensions": true,
+    "erasableSyntaxOnly": false
+  },
+  "include": ["tests/dream-card-utils.test.ts", "shared/**/*.ts", "src/**/*.ts", "src/**/*.tsx"]
+}

@@ -1,0 +1,99 @@
+import assert from 'node:assert/strict'
+import test from 'node:test'
+
+import { createDesktopBackend } from '../electron/backend.ts'
+
+test('desktop backend delays manager construction until the matching feature is used', async () => {
+  let chatManagerFactoryCalls = 0
+  let setupManagerFactoryCalls = 0
+  let musicManagerFactoryCalls = 0
+  let setupDisposed = 0
+  let musicDisposed = 0
+
+  const backend = createDesktopBackend({
+    createChatManager: () => {
+      chatManagerFactoryCalls += 1
+      return {
+        closeAll() {},
+        createStream() {
+          throw new Error('not used in this test')
+        },
+        stop() {
+          return false
+        },
+        subscribe() {
+          return null
+        },
+      }
+    },
+    createSetupManager: () => {
+      setupManagerFactoryCalls += 1
+      return {
+        getStatus() {
+          return { state: 'idle', logs: [] }
+        },
+        start() {
+          return { state: 'running', logs: [] }
+        },
+        dispose() {
+          setupDisposed += 1
+        },
+      }
+    },
+    createMusicManager: () => {
+      musicManagerFactoryCalls += 1
+      return {
+        getLoginStatus() {
+          return { authenticated: false, userId: 0, nickname: '', avatarUrl: '' }
+        },
+        async createQrLogin() {
+          throw new Error('not used in this test')
+        },
+        async checkQrLogin() {
+          throw new Error('not used in this test')
+        },
+        async logout() {
+          musicDisposed += 1
+        },
+        async fetchPlaylists() {
+          throw new Error('not used in this test')
+        },
+        async fetchPlaylistTracks() {
+          throw new Error('not used in this test')
+        },
+        async getSongUrl() {
+          throw new Error('not used in this test')
+        },
+        async recordPlay() {
+          throw new Error('not used in this test')
+        },
+        async getExplorePlaylists() {
+          throw new Error('not used in this test')
+        },
+      }
+    },
+  })
+
+  assert.equal(chatManagerFactoryCalls, 0)
+  assert.equal(setupManagerFactoryCalls, 0)
+  assert.equal(musicManagerFactoryCalls, 0)
+
+  assert.deepEqual(backend.fetchSetupStatus(), { state: 'idle', logs: [] })
+  assert.equal(setupManagerFactoryCalls, 1)
+  assert.equal(chatManagerFactoryCalls, 0)
+  assert.equal(musicManagerFactoryCalls, 0)
+
+  assert.deepEqual(backend.fetchMusicLoginStatus(), {
+    authenticated: false,
+    userId: 0,
+    nickname: '',
+    avatarUrl: '',
+  })
+  assert.equal(musicManagerFactoryCalls, 1)
+  assert.equal(chatManagerFactoryCalls, 0)
+
+  await backend.dispose()
+  assert.equal(setupDisposed, 1)
+  assert.equal(musicDisposed, 0)
+  assert.equal(chatManagerFactoryCalls, 0)
+})

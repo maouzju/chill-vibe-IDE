@@ -1,0 +1,151 @@
+{
+  "name": "chill-vibe-ide",
+  "description": "Lightweight local AI IDE for running multiple Codex and Claude workspaces side-by-side.",
+  "license": "MIT",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "dist/electron/main.mjs",
+  "engines": {
+    "node": ">=20"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/maouzju/chill-vibe-IDE.git"
+  },
+  "homepage": "https://github.com/maouzju/chill-vibe-IDE#readme",
+  "bugs": {
+    "url": "https://github.com/maouzju/chill-vibe-IDE/issues"
+  },
+  "author": "Chill Vibe contributors",
+  "keywords": [
+    "ai",
+    "ide",
+    "codex",
+    "claude",
+    "electron",
+    "react"
+  ],
+  "scripts": {
+    "dev": "pnpm electron:dev",
+    "dev:client": "node scripts/run-vite.mjs",
+    "dev:restart": "powershell -ExecutionPolicy Bypass -File scripts/restart-runtime.ps1",
+    "electron:compile": "node scripts/build-electron.mjs",
+    "electron:dev": "node scripts/start-electron-dev.mjs",
+    "electron:build": "node scripts/build-timestamped-release.mjs --target zip",
+    "electron:build:zip": "node scripts/build-timestamped-release.mjs --target zip",
+    "electron:build:installer": "node scripts/build-timestamped-release.mjs --target nsis",
+    "electron:build:portable": "node scripts/build-timestamped-release.mjs --target portable",
+    "build": "pnpm build:client && pnpm electron:compile",
+    "build:client": "node scripts/run-vite.mjs build",
+    "legal:generate": "node scripts/generate-third-party-licenses.mjs",
+    "legal:check": "node scripts/generate-third-party-licenses.mjs --check",
+    "check": "tsc -p tsconfig.app.json --noEmit && tsc -p tsconfig.server.json --noEmit && tsc -p tsconfig.node.json --noEmit && tsc -p tsconfig.test.json --noEmit",
+    "lint": "eslint .",
+    "start": "node scripts/start-electron-prod.mjs",
+    "test": "node --import tsx --test tests/index.test.ts",
+    "test:theme": "powershell -ExecutionPolicy Bypass -File scripts/run-playwright-specs.ps1 -Suite theme",
+    "test:theme:headed": "powershell -ExecutionPolicy Bypass -File scripts/run-playwright-specs.ps1 -Suite theme -Mode headed",
+    "test:playwright": "powershell -ExecutionPolicy Bypass -File scripts/run-playwright-specs.ps1",
+    "test:playwright:headed": "powershell -ExecutionPolicy Bypass -File scripts/run-playwright-specs.ps1 -Mode headed",
+    "test:playwright:full": "powershell -ExecutionPolicy Bypass -File scripts/run-playwright-specs.ps1 -Suite full",
+    "test:perf": "powershell -ExecutionPolicy Bypass -File scripts/run-performance-smoke.ps1",
+    "test:perf:headed": "powershell -ExecutionPolicy Bypass -File scripts/run-performance-smoke.ps1 -Mode headed",
+    "test:perf:electron": "powershell -ExecutionPolicy Bypass -File scripts/run-electron-runtime-tests.ps1 -Tests tests/electron-git-tool-runtime.test.ts,tests/electron-git-stage-performance.test.ts",
+    "test:electron": "powershell -ExecutionPolicy Bypass -File scripts/run-electron-runtime-tests.ps1",
+    "test:quality": "pnpm lint && pnpm check",
+    "test:risk": "pnpm test:quality && pnpm test && pnpm test:playwright && pnpm test:electron",
+    "test:full": "pnpm legal:check && pnpm test:quality && pnpm test && pnpm test:playwright:full && pnpm test:electron && pnpm build",
+    "test:watch": "node --import tsx --test --watch tests/index.test.ts",
+    "verify": "pnpm test:full"
+  },
+  "dependencies": {
+    "@primer/primitives": "^11.6.0",
+    "@primer/react": "^38.18.0",
+    "@types/react-is": "^19.2.0",
+    "NeteaseCloudMusicApi": "4.30.0",
+    "electron-log": "^5.4.3",
+    "express": "^5.1.0",
+    "monaco-editor": "^0.55.1",
+    "react": "^19.2.4",
+    "react-dom": "^19.2.4",
+    "react-is": "^19.2.4",
+    "react-markdown": "^10.1.0",
+    "remark-gfm": "^4.0.1",
+    "styled-components": "^6.3.12",
+    "zod": "^4.1.12"
+  },
+  "devDependencies": {
+    "@babel/core": "^7.29.0",
+    "@eslint/js": "^9.39.4",
+    "@playwright/test": "^1.59.1",
+    "@rolldown/plugin-babel": "^0.2.2",
+    "@types/express": "^5.0.5",
+    "@types/node": "^24.12.0",
+    "@types/react": "^19.2.14",
+    "@types/react-dom": "^19.2.3",
+    "@vitejs/plugin-react": "^6.0.1",
+    "babel-plugin-react-compiler": "^1.0.0",
+    "concurrently": "^9.2.1",
+    "electron": "^36.0.0",
+    "electron-builder": "^26.0.12",
+    "eslint": "^9.39.4",
+    "eslint-plugin-react-hooks": "^7.0.1",
+    "eslint-plugin-react-refresh": "^0.5.2",
+    "globals": "^17.4.0",
+    "tsup": "^8.5.0",
+    "tsx": "^4.20.6",
+    "typescript": "~5.9.3",
+    "typescript-eslint": "^8.57.0",
+    "vite": "^8.0.1",
+    "wait-on": "^8.0.3"
+  },
+  "build": {
+    "appId": "com.chill-vibe.ide",
+    "productName": "Chill Vibe",
+    "npmRebuild": false,
+    "files": [
+      "dist/client/**/*",
+      "dist/electron/**/*",
+      "dist/server/**/*",
+      "dist/shared/**/*",
+      "build/icon.png"
+    ],
+    "extraResources": [
+      {
+        "from": "LICENSE",
+        "to": "legal/LICENSE.txt"
+      },
+      {
+        "from": "PRIVACY.md",
+        "to": "legal/PRIVACY.md"
+      },
+      {
+        "from": "SECURITY.md",
+        "to": "legal/SECURITY.md"
+      },
+      {
+        "from": "THIRD_PARTY.md",
+        "to": "legal/THIRD_PARTY.md"
+      },
+      {
+        "from": "THIRD_PARTY_LICENSES.md",
+        "to": "legal/THIRD_PARTY_LICENSES.md"
+      },
+      {
+        "from": "scripts/setup-ai-cli.ps1",
+        "to": "scripts/setup-ai-cli.ps1"
+      }
+    ],
+    "directories": {
+      "output": "dist/release"
+    },
+    "win": {
+      "target": "nsis",
+      "icon": "build/icon.png"
+    },
+    "mac": {
+      "target": "dmg"
+    }
+  }
+}

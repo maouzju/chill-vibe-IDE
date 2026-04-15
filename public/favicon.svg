@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img">
+  <defs>
+    <linearGradient id="sky" x1="0.5" y1="0" x2="0.5" y2="1">
+      <stop offset="0%" stop-color="#0a1628"/>
+      <stop offset="100%" stop-color="#162544"/>
+    </linearGradient>
+    <mask id="crescent">
+      <rect width="64" height="64" fill="white"/>
+      <circle cx="37.5" cy="26.3" r="13.8" fill="black"/>
+    </mask>
+  </defs>
+  <rect width="64" height="64" rx="14" fill="url(#sky)"/>
+  <circle cx="32" cy="32" r="16.3" fill="#e8dcc8" mask="url(#crescent)"/>
+</svg>

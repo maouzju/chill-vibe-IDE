@@ -266,6 +266,7 @@ const captureProviderEvents = async (request: ChatRequest) =>
     Array<
       | { kind: 'delta'; content: string }
       | { kind: 'assistant_message'; itemId: string; content: string }
+      | { kind: 'activity'; activity: StreamActivity }
       | { kind: 'done' }
       | { kind: 'error'; message: string }
     >
@@ -273,6 +274,7 @@ const captureProviderEvents = async (request: ChatRequest) =>
     const events: Array<
       | { kind: 'delta'; content: string }
       | { kind: 'assistant_message'; itemId: string; content: string }
+      | { kind: 'activity'; activity: StreamActivity }
       | { kind: 'done' }
       | { kind: 'error'; message: string }
     > = []
@@ -290,7 +292,9 @@ const captureProviderEvents = async (request: ChatRequest) =>
           content: message.content,
         })
       },
-      onActivity: () => undefined,
+      onActivity: (activity) => {
+        events.push({ kind: 'activity', activity })
+      },
       onDone: () => {
         events.push({ kind: 'done' })
         resolve(events)
@@ -528,6 +532,33 @@ const buildFakeCodexDeltaWhitespaceChunksScript = () =>
     "    reply({ method: 'item/agentMessage/delta', params: { itemId: 'assistant-item-1', delta: '\\n\\n' } })",
     "    reply({ method: 'item/agentMessage/delta', params: { itemId: 'assistant-item-1', delta: 'Second paragraph' } })",
     "    reply({ method: 'item/completed', params: { item: { id: 'assistant-item-1', type: 'agentMessage', text: 'First paragraph\\n\\nSecond paragraph' } } })",
+    "    reply({ method: 'turn/completed', params: {} })",
+    '  }',
+    '})',
+  ].join('\n')
+
+const buildFakeCodexCommentaryDeltaScript = () =>
+  [
+    "const readline = require('node:readline')",
+    "const reply = (message) => process.stdout.write(`${JSON.stringify(message)}\\n`)",
+    "const rl = readline.createInterface({ input: process.stdin, crlfDelay: Infinity })",
+    "rl.on('line', (line) => {",
+    '  if (!line.trim()) {',
+    '    return',
+    '  }',
+    '  const request = JSON.parse(line)',
+    "  if (request.method === 'initialize' && request.id) {",
+    '    reply({ id: request.id, result: {} })',
+    '    return',
+    '  }',
+    "  if (request.method === 'thread/start' && request.id) {",
+    "    reply({ id: request.id, result: { thread: { id: 'thread-1', status: { type: 'active' } } } })",
+    '    return',
+    '  }',
+    "  if (request.method === 'turn/start' && request.id) {",
+    '    reply({ id: request.id, result: {} })',
+    `    reply({ method: 'item/agentMessage/delta', params: { itemId: 'assistant-item-1', delta: ${JSON.stringify('{"commentary":[{"text":"先确认 JSON 结构，再精确读取锻炉和候选效果。"}]}')} } })`,
+    `    reply({ method: 'item/completed', params: { item: { id: 'assistant-item-1', type: 'agentMessage', text: ${JSON.stringify('{"commentary":[{"text":"先确认 JSON 结构，再精确读取锻炉和候选效果。"}]}')} } } })`,
     "    reply({ method: 'turn/completed', params: {} })",
     '  }',
     '})',
@@ -920,6 +951,34 @@ test('codex app-server preserves newline-only delta chunks during streaming', as
   ])
 })
 
+test('codex app-server suppresses raw commentary JSON deltas and emits reasoning activity instead', async () => {
+  const events = await withFakeProviderCommand(
+    'codex',
+    buildFakeCodexCommentaryDeltaScript(),
+    async (workspacePath) =>
+      captureProviderEvents(
+        createRequest({
+          provider: 'codex',
+          language: 'zh-CN',
+          workspacePath,
+        }),
+      ),
+  )
+
+  assert.deepEqual(events, [
+    {
+      kind: 'activity',
+      activity: {
+        itemId: 'assistant-item-1',
+        kind: 'reasoning',
+        status: 'completed',
+        text: '先确认 JSON 结构，再精确读取锻炉和候选效果。',
+      },
+    },
+    { kind: 'done' },
+  ])
+})
+
 test('codex app-server stays compatible when an older CLI rejects the --listen flag', async () => {
   const capturePath = path.join(
     os.tmpdir(),
@@ -974,7 +1033,6 @@ test('codex app-server collapses duplicate compaction notifications into one act
     {
       kind: 'activity',
       activity: {
-        type: 'activity',
         itemId: 'compact-item-1',
         kind: 'compaction',
         status: 'completed',

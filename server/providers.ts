@@ -36,7 +36,10 @@ import { resolveImageAttachmentPath } from './attachments.js'
 import { createClaudeStructuredOutputParser } from './claude-structured-output.js'
 import { createCodexCompactionActivityDeduper } from './codex-compaction-dedupe.js'
 import { resolveClaudeRuntimeEnvironment } from './claude-runtime-environment.js'
-import { parseCodexResponseEvent } from './codex-structured-output.js'
+import {
+  looksLikeCodexStructuredAgentMessage,
+  parseCodexResponseEvent,
+} from './codex-structured-output.js'
 import { classifyProviderStreamErrorRecovery } from './provider-stream-recovery.js'
 import { readStringPreserveWhitespace } from './provider-stream-text.js'
 import { resolveProviderCommandLaunch } from './provider-command-launch.js'
@@ -938,6 +941,7 @@ const launchCodexAppServerRun = async (
   const nextRequestId = createCodexJsonRpcIdFactory()
   const manualCompactRequest = isManualCodexCompactRequest(request)
   const compactionActivityDeduper = createCodexCompactionActivityDeduper()
+  const bufferedStructuredAgentMessageDeltas = new Map<string, string>()
   const pendingRequests = new Map<
     string,
     {
@@ -1024,6 +1028,8 @@ const launchCodexAppServerRun = async (
 
   const handleCodexEvent = (event: unknown) => {
     for (const parsed of parseCodexResponseEvent(event)) {
+      bufferedStructuredAgentMessageDeltas.delete(parsed.itemId)
+
       if (parsed.type === 'assistant_message') {
         compactionActivityDeduper.reset()
         sink.onAssistantMessage({
@@ -1033,15 +1039,18 @@ const launchCodexAppServerRun = async (
         continue
       }
 
-      if (parsed.kind === 'compaction') {
-        if (compactionActivityDeduper.shouldEmit(event, parsed)) {
+      const activity = { ...parsed }
+      delete (activity as { type?: 'activity' }).type
+
+      if (activity.kind === 'compaction') {
+        if (compactionActivityDeduper.shouldEmit(event, activity)) {
           sink.onActivity({
-            ...parsed,
-            trigger: manualCompactRequest ? 'manual' : 'auto',
+            ...activity,
+            trigger: manualCompactRequest ? 'manual' : activity.trigger,
           })
         }
 
-        if (manualCompactRequest && parsed.status === 'completed') {
+        if (manualCompactRequest && activity.status === 'completed') {
           finishWithDone()
         }
 
@@ -1049,7 +1058,7 @@ const launchCodexAppServerRun = async (
       }
 
       compactionActivityDeduper.reset()
-      sink.onActivity(parsed)
+      sink.onActivity(activity)
     }
   }
 
@@ -1120,8 +1129,18 @@ const launchCodexAppServerRun = async (
       if (method === 'item/agentMessage/delta') {
         compactionActivityDeduper.reset()
         const delta = readStringPreserveWhitespace(params, 'delta')
+        const itemId = readString(params, 'itemId') ?? readString(params, 'item_id')
 
         if (delta) {
+          if (itemId) {
+            const bufferedDelta = bufferedStructuredAgentMessageDeltas.get(itemId)
+
+            if (bufferedDelta !== undefined || looksLikeCodexStructuredAgentMessage(delta)) {
+              bufferedStructuredAgentMessageDeltas.set(itemId, `${bufferedDelta ?? ''}${delta}`)
+              return
+            }
+          }
+
           sink.onDelta(delta)
         }
 

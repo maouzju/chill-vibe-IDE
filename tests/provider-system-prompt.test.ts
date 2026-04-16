@@ -343,6 +343,27 @@ const captureProviderActivities = async (request: ChatRequest) =>
     }).catch(reject)
   })
 
+const captureProviderRecoveryFailure = async (request: ChatRequest) =>
+  new Promise<{
+    kind: 'error'
+    message: string
+    recovery: { recoverable?: boolean; recoveryMode?: 'reattach-stream' | 'resume-session' }
+  }>((resolve, reject) => {
+    void launchProviderRun(request, {
+      onSession: () => undefined,
+      onDelta: () => undefined,
+      onLog: () => undefined,
+      onAssistantMessage: () => undefined,
+      onActivity: () => undefined,
+      onDone: () => reject(new Error('Expected provider run to fail.')),
+      onError: (message, _hint, recovery) => resolve({ kind: 'error', message, recovery: recovery ?? {} }),
+    }).then((child) => {
+      if (!child) {
+        reject(new Error('Expected fake provider command to launch.'))
+      }
+    }).catch(reject)
+  })
+
 const captureProviderLogs = async (request: ChatRequest) =>
   new Promise<
     Array<
@@ -622,6 +643,40 @@ const buildFakeClaudeLegacyEffortScript = (capturePath: string) =>
     "reply({ type: 'result', is_error: false, result: 'ok' })",
   ].join('\n')
 
+const buildFakeCodexRecoverableDisconnectScript = () =>
+  [
+    "const readline = require('node:readline')",
+    "const reply = (message) => process.stdout.write(`${JSON.stringify(message)}\\n`)",
+    "const rl = readline.createInterface({ input: process.stdin, crlfDelay: Infinity })",
+    "rl.on('line', (line) => {",
+    '  if (!line.trim()) {',
+    '    return',
+    '  }',
+    '  const request = JSON.parse(line)',
+    "  if (request.method === 'initialize' && request.id) {",
+    '    reply({ id: request.id, result: {} })',
+    '    return',
+    '  }',
+    "  if (request.method === 'thread/start' && request.id) {",
+    "    reply({ id: request.id, result: { thread: { id: 'thread-recoverable', status: { type: 'active' } } } })",
+    '    return',
+    '  }',
+    "  if (request.method === 'turn/start' && request.id) {",
+    '    reply({ id: request.id, result: { turn: { id: "turn-1", status: "inProgress", items: [], error: null } } })',
+    "    reply({ method: 'item/agentMessage/delta', params: { itemId: 'assistant-item-1', delta: 'Reconnecting 1/5' } })",
+    '    process.exit(0)',
+    '  }',
+    '})',
+  ].join('\n')
+
+const buildFakeClaudeRecoverableDisconnectScript = () =>
+  [
+    "const reply = (message) => process.stdout.write(`${JSON.stringify(message)}\\n`)",
+    "reply({ type: 'system', subtype: 'init', session_id: 'claude-session-recoverable' })",
+    "reply({ type: 'assistant', message: { content: [{ type: 'text', text: 'Reconnecting 1/5' }] } })",
+    'process.exit(0)',
+  ].join('\n')
+
 test('codex zero-exit without turn.completed is treated as a failed run', async () => {
   const outcome = await withFakeProviderCommand(
     'codex',
@@ -652,6 +707,30 @@ test('codex zero-exit without turn.completed is treated as a failed run', async 
   })
 })
 
+test('codex zero-exit after emitting a live session is still marked recoverable', async () => {
+  const outcome = await withFakeProviderCommand(
+    'codex',
+    buildFakeCodexRecoverableDisconnectScript(),
+    async (workspacePath) =>
+      captureProviderRecoveryFailure(
+        createRequest({
+          provider: 'codex',
+          language: 'en',
+          workspacePath,
+        }),
+      ),
+  )
+
+  assert.deepEqual(outcome, {
+    kind: 'error',
+    message: 'Codex ended without emitting a terminal completion event.',
+    recovery: {
+      recoverable: true,
+      recoveryMode: 'resume-session',
+    },
+  })
+})
+
 test('claude zero-exit without result is treated as a failed run', async () => {
   const outcome = await withFakeProviderCommand(
     'claude',
@@ -675,6 +754,31 @@ test('claude zero-exit without result is treated as a failed run', async () => {
   assert.deepEqual(outcome, {
     kind: 'error',
     message: 'Claude ended without emitting a terminal completion event.',
+  })
+})
+
+test('claude zero-exit after emitting a live session is still marked recoverable', async () => {
+  const outcome = await withFakeProviderCommand(
+    'claude',
+    buildFakeClaudeRecoverableDisconnectScript(),
+    async (workspacePath) =>
+      captureProviderRecoveryFailure(
+        createRequest({
+          provider: 'claude',
+          model: 'claude-sonnet-4-6',
+          language: 'en',
+          workspacePath,
+        }),
+      ),
+  )
+
+  assert.deepEqual(outcome, {
+    kind: 'error',
+    message: 'Claude ended without emitting a terminal completion event.',
+    recovery: {
+      recoverable: true,
+      recoveryMode: 'resume-session',
+    },
   })
 })
 

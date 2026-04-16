@@ -427,6 +427,23 @@ const formatProviderUnexpectedCompletion = (language: AppLanguage, provider: Pro
     : `${label} 鍦ㄦ病鏈夊彂鍑虹粓姝㈠畬鎴愪簨浠剁殑鎯呭喌涓嬪氨缁撴潫浜嗐€?`
 }
 
+const classifyLiveProviderStreamRecovery = (
+  request: Pick<ChatRequest, 'sessionId'>,
+  message: string,
+  hint?: StreamErrorHint,
+  emittedSessionId?: string | null,
+) =>
+  classifyProviderStreamErrorRecovery(
+    {
+      sessionId:
+        typeof emittedSessionId === 'string' && emittedSessionId.trim().length > 0
+          ? emittedSessionId
+          : request.sessionId,
+    },
+    message,
+    hint,
+  )
+
 const resolveAttachmentPaths = async (attachments: ImageAttachment[]) =>
   Promise.all(attachments.map((attachment) => resolveImageAttachmentPath(attachment.id)))
 
@@ -931,7 +948,7 @@ const launchCodexAppServerRun = async (
   >()
   let finished = false
   let stderr = ''
-  let emittedSessionId: string | null = null
+  let emittedSessionId: string | null = request.sessionId?.trim() || null
 
   const rejectPendingRequests = (message: string) => {
     for (const { reject } of pendingRequests.values()) {
@@ -958,7 +975,7 @@ const launchCodexAppServerRun = async (
 
     finished = true
     rejectPendingRequests(message)
-    sink.onError(message, hint, classifyProviderStreamErrorRecovery(request, message, hint))
+    sink.onError(message, hint, classifyLiveProviderStreamRecovery(request, message, hint, emittedSessionId))
     child.kill()
   }
 
@@ -1155,14 +1172,14 @@ const launchCodexAppServerRun = async (
       const diagnostics = summarizeDiagnostics(stderr)
       const message = diagnostics || formatProviderUnexpectedCompletion(language, 'codex')
       const hint = classifyLaunchErrorHint(`${message}\n${stderr}`)
-      sink.onError(message, hint, classifyProviderStreamErrorRecovery(request, message, hint))
+      sink.onError(message, hint, classifyLiveProviderStreamRecovery(request, message, hint, emittedSessionId))
       return
     }
 
     const diagnostics = summarizeDiagnostics(stderr)
     const message = diagnostics || formatProviderExit(language, 'codex', code)
     const hint = classifyLaunchErrorHint(`${message}\n${stderr}`)
-    sink.onError(message, hint, classifyProviderStreamErrorRecovery(request, message, hint))
+    sink.onError(message, hint, classifyLiveProviderStreamRecovery(request, message, hint, emittedSessionId))
   })
 
   child.on('error', (error) => {
@@ -1175,7 +1192,7 @@ const launchCodexAppServerRun = async (
     stderrLines.close()
     rejectPendingRequests(error.message)
     const hint = classifyLaunchErrorHint(error.message)
-    sink.onError(error.message, hint, classifyProviderStreamErrorRecovery(request, error.message, hint))
+    sink.onError(error.message, hint, classifyLiveProviderStreamRecovery(request, error.message, hint, emittedSessionId))
   })
 
   void (async () => {
@@ -1304,6 +1321,7 @@ export const launchProviderRun = async (request: ChatRequest, sink: StreamSink) 
     let sawClaudeDelta = false
     let sawClaudeStreamOutput = false
     let stderr = ''
+    let emittedSessionId: string | null = request.sessionId?.trim() || null
 
     const stdoutLines = readLines(child.stdout, (line) => {
       if (!line.trim()) {
@@ -1321,6 +1339,7 @@ export const launchProviderRun = async (request: ChatRequest, sink: StreamSink) 
         }
 
         if (event.type === 'system' && event.subtype === 'init' && typeof event.session_id === 'string') {
+          emittedSessionId = event.session_id
           sink.onSession(event.session_id)
           return
         }
@@ -1422,7 +1441,7 @@ export const launchProviderRun = async (request: ChatRequest, sink: StreamSink) 
       finished = true
       managedChild.setActiveChild(null)
       const hint = classifyLaunchErrorHint(detail)
-      sink.onError(message, hint, classifyProviderStreamErrorRecovery(request, message, hint))
+      sink.onError(message, hint, classifyLiveProviderStreamRecovery(request, message, hint, emittedSessionId))
     })
 
     child.on('error', (error) => {
@@ -1436,7 +1455,7 @@ export const launchProviderRun = async (request: ChatRequest, sink: StreamSink) 
       stdoutLines.close()
       stderrLines.close()
       const hint = classifyLaunchErrorHint(error.message)
-      sink.onError(error.message, hint, classifyProviderStreamErrorRecovery(request, error.message, hint))
+      sink.onError(error.message, hint, classifyLiveProviderStreamRecovery(request, error.message, hint, emittedSessionId))
     })
 
     return true

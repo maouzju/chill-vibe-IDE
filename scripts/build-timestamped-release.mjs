@@ -2,7 +2,11 @@ import { spawnSync } from 'node:child_process'
 import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { packageManualWindowsZip } from './manual-win-zip-packager.mjs'
+import {
+  packageManualWindowsZip,
+  WINDOWS_ZIP_ROOT_FOLDER_NAME,
+  writeZipFromDirectory,
+} from './manual-win-zip-packager.mjs'
 
 const scriptDir = path.dirname(fileURLToPath(import.meta.url))
 const projectRoot = path.resolve(scriptDir, '..')
@@ -154,8 +158,10 @@ function main() {
   const outputDirName = `release-${options.timestamp}${suffixPart}`
   const outputDirRelative = path.posix.join('dist', outputDirName)
   const outputDirAbsolute = path.join(projectRoot, 'dist', outputDirName)
-  const exePath = path.join(outputDirAbsolute, 'win-unpacked', 'Chill Vibe.exe')
   const rootPackageJson = JSON.parse(fs.readFileSync(path.join(projectRoot, 'package.json'), 'utf8'))
+  const winUnpackedDir = path.join(outputDirAbsolute, 'win-unpacked')
+  const exePath = path.join(winUnpackedDir, 'Chill Vibe.exe')
+  const zipPath = path.join(outputDirAbsolute, `Chill Vibe-${rootPackageJson.version}-win.zip`)
 
   const nodeCommand = process.execPath
   const legalCommand = [nodeCommand, ['scripts/generate-third-party-licenses.mjs']]
@@ -210,7 +216,6 @@ function main() {
       const manualResult = packageManualWindowsZip({
         projectRoot,
         outputDirAbsolute,
-        outputDirName,
         version: rootPackageJson.version,
       })
 
@@ -218,6 +223,16 @@ function main() {
       console.log(`[packaging] manual unpacked dir: ${manualResult.winUnpackedDir}`)
       break
     }
+  }
+
+  if (options.target === 'zip' && !options.dryRun) {
+    if (!fs.existsSync(winUnpackedDir)) {
+      throw new Error(`Expected unpacked app directory at ${winUnpackedDir}`)
+    }
+
+    writeZipFromDirectory(winUnpackedDir, zipPath, WINDOWS_ZIP_ROOT_FOLDER_NAME)
+    console.log(`[packaging] zip artifact: ${zipPath}`)
+    console.log(`[packaging] zip root folder: ${WINDOWS_ZIP_ROOT_FOLDER_NAME}`)
   }
 
   const targetLabel =

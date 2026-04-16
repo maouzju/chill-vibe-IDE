@@ -621,7 +621,17 @@ type StructuredDiffPreviewLine = {
   content: string
 }
 
-const diffMetadataPrefixes = ['diff --git ', 'index ', '--- ', '+++ ']
+const diffMetadataPrefixes = [
+  'diff --git ',
+  'index ',
+  'new file mode ',
+  'deleted file mode ',
+  'similarity index ',
+  'rename from ',
+  'rename to ',
+  '--- ',
+  '+++ ',
+]
 
 const buildStructuredDiffPreviewLines = (patch: string): StructuredDiffPreviewLine[] => {
   const rows: StructuredDiffPreviewLine[] = []
@@ -669,6 +679,11 @@ const stripDiffMetadata = (patch: string) =>
       (line) =>
         !line.startsWith('diff --git ') &&
         !line.startsWith('index ') &&
+        !line.startsWith('new file mode ') &&
+        !line.startsWith('deleted file mode ') &&
+        !line.startsWith('similarity index ') &&
+        !line.startsWith('rename from ') &&
+        !line.startsWith('rename to ') &&
         !line.startsWith('--- ') &&
         !line.startsWith('+++ ') &&
         !line.startsWith('@@'),
@@ -778,9 +793,30 @@ export const StructuredEditsCard = ({
           const summaryContent = (
             <>
               <div className="structured-edits-copy">
-                <div className="structured-edits-paths" title={file.path}>
-                  {directory ? <span className="structured-edits-path-directory">{directory}</span> : null}
-                  <code className="structured-edits-path structured-edits-path-name">{fileName}</code>
+                <div className="structured-edits-title-row">
+                  <div className="structured-edits-title">
+                    <code
+                      className="structured-edits-path structured-edits-path-name"
+                      title={fileName}
+                    >
+                      {fileName}
+                    </code>
+                    {directory ? (
+                      <span className="structured-edits-paths" title={directory}>
+                        <span className="structured-edits-path-directory">{directory}</span>
+                      </span>
+                    ) : null}
+                  </div>
+                  {(file.addedLines > 0 || file.removedLines > 0) ? (
+                    <div className="structured-edits-stats">
+                      {file.addedLines > 0 ? (
+                        <span className="structured-diff-stat is-added">{`+${file.addedLines}`}</span>
+                      ) : null}
+                      {file.removedLines > 0 ? (
+                        <span className="structured-diff-stat is-removed">{`-${file.removedLines}`}</span>
+                      ) : null}
+                    </div>
+                  ) : null}
                 </div>
                 <div className="structured-edits-meta-row">
                   <span className={`structured-edits-kind is-${file.kind}`}>
@@ -793,10 +829,6 @@ export const StructuredEditsCard = ({
                     </span>
                   ) : null}
                 </div>
-              </div>
-              <div className="structured-edits-stats">
-                <span className="structured-diff-stat is-added">{`+${file.addedLines}`}</span>
-                <span className="structured-diff-stat is-removed">{`-${file.removedLines}`}</span>
               </div>
             </>
           )

@@ -2866,6 +2866,60 @@ test('message bubbles hide redundant role labels in both themes', async ({ page 
   await expect.poll(async () => await readComputedValue(assistantTimestamp, 'display')).toBe('none')
 })
 
+test('system stop messages stay on one line in both themes', async ({ page }) => {
+  const state = createMockState()
+  const now = new Date().toISOString()
+
+  state.columns[0].cards[0].messages = [
+    {
+      id: 'message-system-stop-1',
+      role: 'system',
+      content: '这次运行已停止。',
+      createdAt: now,
+      meta: {
+        kind: 'run-stopped',
+      },
+    },
+  ]
+
+  await mockAppApis(page, { state })
+  await page.goto(appUrl)
+
+  const systemMessage = page.locator('[data-renderable-id="message-system-stop-1"] .message-system').first()
+  const systemParagraph = systemMessage.locator('.message-content p').first()
+  const settingsTab = page.locator('#app-tab-settings')
+  const ambienceTab = page.locator('#app-tab-ambience')
+  const lightThemeButton = page.locator('#app-panel-settings .theme-toggle').first().locator('.theme-chip').first()
+
+  const expectSingleLineStopMessage = async (theme: 'dark' | 'light') => {
+    await expect(systemMessage).toBeVisible()
+    await expect(systemParagraph).toContainText('这次运行已停止。')
+    await expect.poll(async () => {
+      const metrics = await systemParagraph.evaluate((node) => {
+        const style = window.getComputedStyle(node)
+        const lineHeight = Number.parseFloat(style.lineHeight)
+        const height = node.getBoundingClientRect().height
+        return { height, lineHeight }
+      })
+
+      return metrics.height / metrics.lineHeight
+    }).toBeLessThan(1.3)
+    await expect(systemMessage).toHaveScreenshot(`message-system-stop-single-line-${theme}.png`, {
+      animations: 'disabled',
+      caret: 'hide',
+    })
+  }
+
+  await expectSingleLineStopMessage('dark')
+
+  await settingsTab.click()
+  await lightThemeButton.click()
+  await expect(page.locator('html')).toHaveAttribute('data-theme', 'light')
+  await ambienceTab.click()
+
+  await expectSingleLineStopMessage('light')
+})
+
 test('user fork actions stay light and icon-only in both themes', async ({ page }) => {
   const state = createMockState()
   const now = new Date().toISOString()

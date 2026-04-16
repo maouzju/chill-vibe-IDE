@@ -1,5 +1,6 @@
 import { createDefaultState, createMessage, getOrderedColumnCards } from '../shared/default-state'
 import type {
+  AppLanguage,
   AppState,
   BoardColumn,
   ChatMessage,
@@ -7,6 +8,7 @@ import type {
   StreamActivity,
   StreamAssistantMessage,
 } from '../shared/schema'
+import { getLocaleText } from '../shared/i18n'
 import type { ChatStreamSource } from './api'
 
 export type LoadStatus = 'loading' | 'ready' | 'error'
@@ -27,6 +29,8 @@ export type ProfileDraft = {
   baseUrl: string
   apiKey: string
 }
+
+export type StoppedRunReason = 'manual' | 'user-interrupt'
 
 export const emptyProfileDraft = (): ProfileDraft => ({
   name: '',
@@ -187,6 +191,19 @@ export const createLogMessages = (provider: Provider, message: string) => {
     }),
   ]
 }
+
+export const createStoppedRunMessage = (
+  language: AppLanguage,
+  reason: StoppedRunReason = 'manual',
+): ChatMessage =>
+  createMessage(
+    'system',
+    reason === 'user-interrupt' ? getLocaleText(language).userInterrupted : getLocaleText(language).runStopped,
+    {
+      kind: 'run-stopped',
+      stopReason: reason,
+    },
+  )
 
 export const createStructuredMessageId = (provider: Provider, streamId: string, itemId: string) =>
   `${provider}:${streamId}:item:${itemId}`

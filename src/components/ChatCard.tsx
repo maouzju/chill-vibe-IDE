@@ -63,6 +63,7 @@ import {
   getScrollTopToRevealChildWithTopClearance,
   getProgrammaticBottomScrollTarget,
   programmaticScrollInterruptTolerancePx,
+  shouldAutoRevealCompactedHistoryImmediately,
   type ProgrammaticScrollIntent,
 } from './chat-scroll'
 import { syncComposerTextareaHeight } from './chat-composer-textarea'
@@ -144,22 +145,22 @@ const getCompactionBannerCopy = (
           : isAutoCompact
             ? 'hidden after automatic context compaction. You are viewing the compacted segment now.'
             : 'hidden after /compact to keep the active chat lighter.'
-      } Scroll up to load more history.`,
+      } Use the button below to show earlier history.`,
       action: 'Show all earlier messages',
     }
   }
 
   if (isAutoCompact) {
     return {
-      message: `已在自动上下文压缩后折叠更早的 ${hiddenMessageCount} 条消息。你当前看到的是压缩后的片段，继续上滑会自动加载更早历史。`,
+      message: `已在自动上下文压缩后折叠更早的 ${hiddenMessageCount} 条消息。你当前看到的是压缩后的片段，如需查看更早历史，请点击下方按钮。`,
       action: '显示全部更早消息',
     }
   }
 
   return {
     message: isPerformanceWindow
-      ? `已临时折叠更早的 ${hiddenMessageCount} 条消息，减少超长会话的渲染负担。继续上滑会自动加载更早历史。`
-      : `已在 /compact 后折叠更早的 ${hiddenMessageCount} 条消息，减少当前聊天卡片的渲染负担。继续上滑会自动加载更早历史。`,
+      ? `已临时折叠更早的 ${hiddenMessageCount} 条消息，减少超长会话的渲染负担。如需查看更早历史，请点击下方按钮。`
+      : `已在 /compact 后折叠更早的 ${hiddenMessageCount} 条消息，减少当前聊天卡片的渲染负担。如需查看更早历史，请点击下方按钮。`,
     action: '显示全部更早消息',
   }
 }
@@ -526,7 +527,9 @@ const ChatTranscript = memo(
         isActive &&
         compactionBannerCopy &&
         messageList &&
-        getCompactedHistoryAutoRevealMode(messageList, compactHistoryAutoRevealTopThresholdPx) !== 'none'
+        shouldAutoRevealCompactedHistoryImmediately(
+          getCompactedHistoryAutoRevealMode(messageList, compactHistoryAutoRevealTopThresholdPx),
+        )
       ) {
         onRevealMoreCompactedHistory()
       }
@@ -551,14 +554,16 @@ const ChatTranscript = memo(
       }
 
       if (
-        getCompactedHistoryAutoRevealMode(
-          {
-            scrollTop: messageList.scrollTop,
-            scrollHeight: messageList.scrollHeight,
-            clientHeight: messageList.clientHeight,
-          },
-          compactHistoryAutoRevealTopThresholdPx,
-        ) === 'unscrollable'
+        shouldAutoRevealCompactedHistoryImmediately(
+          getCompactedHistoryAutoRevealMode(
+            {
+              scrollTop: messageList.scrollTop,
+              scrollHeight: messageList.scrollHeight,
+              clientHeight: messageList.clientHeight,
+            },
+            compactHistoryAutoRevealTopThresholdPx,
+          ),
+        )
       ) {
         onRevealMoreCompactedHistory()
       }

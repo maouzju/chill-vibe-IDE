@@ -9,6 +9,10 @@ import { _electron as electron, type Locator } from '@playwright/test'
 
 import { createDefaultState, createPane } from '../shared/default-state.ts'
 import { GIT_TOOL_MODEL } from '../shared/models.ts'
+import {
+  ensureElectronRuntimeBuild,
+  getElectronTestRendererUrl,
+} from './ensure-electron-runtime-build.ts'
 
 const tempRoots: string[] = []
 
@@ -200,7 +204,7 @@ const createElectronRuntimeEnv = (dataDir: string, repoPath: string) => {
   const env = Object.fromEntries(
     Object.entries({
       ...process.env,
-      VITE_DEV_SERVER_URL: 'http://localhost:5173',
+      VITE_DEV_SERVER_URL: getElectronTestRendererUrl(),
       CHILL_VIBE_DISABLE_SINGLE_INSTANCE_LOCK: '1',
       CHILL_VIBE_ALLOW_SHARED_DATA_DIR: '1',
       CHILL_VIBE_DATA_DIR: dataDir,
@@ -221,6 +225,8 @@ const filterIgnorableConsoleMessages = (messages: string[]) =>
   )
 
 test('Electron runtime honors explicit data dir overrides for a persisted Git tool card', async () => {
+  await ensureElectronRuntimeBuild()
+
   const repoPath = await createTempRepo()
   const dataDir = await createTempStateDir(repoPath)
 
@@ -259,6 +265,8 @@ test('Electron runtime honors explicit data dir overrides for a persisted Git to
 })
 
 test('Electron runtime opens the Git analysis panel without React render-phase warnings', async () => {
+  await ensureElectronRuntimeBuild()
+
   const repoPath = await createTempRepo()
   const dataDir = await createTempStateDir(repoPath)
 
@@ -297,6 +305,8 @@ test('Electron runtime opens the Git analysis panel without React render-phase w
 })
 
 test('Electron runtime keeps heavy pane tab switches responsive without renderer errors', async () => {
+  await ensureElectronRuntimeBuild()
+
   const repoPath = await createTempRepo()
   const dataDir = await createHeavyPaneStateDir(repoPath)
 

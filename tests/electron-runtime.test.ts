@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { spawn } from 'node:child_process'
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { mkdtemp, readFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import test from 'node:test'
@@ -11,6 +11,11 @@ import {
   resolveDesktopWorkingDirectory,
 } from '../electron/runtime-environment.ts'
 import { getRendererLoadTarget } from '../electron/runtime-target.ts'
+import {
+  powerShellCommand,
+  prependPathEntry,
+  writeArgCaptureShim,
+} from './test-shell-helpers.ts'
 
 test('production Electron loads the bundled renderer from disk', () => {
   const target = getRendererLoadTarget({
@@ -353,17 +358,12 @@ test('repo ships a local full-regression skill for future risky changes', async 
 test('playwright runner script accepts a single spec path', async () => {
   const tempDir = await mkdtemp(path.join(tmpdir(), 'chill-vibe-playwright-script-'))
   const stubLogPath = path.join(tempDir, 'pnpm-args.txt')
-  const stubPnpmPath = path.join(tempDir, 'pnpm.cmd')
-
-  await writeFile(
-    stubPnpmPath,
-    ['@echo off', 'setlocal', 'echo %*>"%STUB_LOG%"', 'exit /b 0', ''].join('\r\n'),
-  )
+  await writeArgCaptureShim({ dir: tempDir, name: 'pnpm', logEnvVar: 'STUB_LOG' })
 
   try {
     await new Promise<void>((resolve, reject) => {
       const child = spawn(
-        'powershell',
+        powerShellCommand,
         [
           '-ExecutionPolicy',
           'Bypass',
@@ -375,7 +375,7 @@ test('playwright runner script accepts a single spec path', async () => {
           cwd: process.cwd(),
           env: {
             ...process.env,
-            PATH: `${tempDir};${process.env.PATH ?? ''}`,
+            PATH: prependPathEntry(tempDir, process.env.PATH ?? ''),
             STUB_LOG: stubLogPath,
           },
           stdio: ['ignore', 'pipe', 'pipe'],
@@ -410,17 +410,12 @@ test('playwright runner script accepts a single spec path', async () => {
 test('playwright runner script expands named suites through the repo harness', async () => {
   const tempDir = await mkdtemp(path.join(tmpdir(), 'chill-vibe-playwright-suite-script-'))
   const stubLogPath = path.join(tempDir, 'pnpm-suite-args.txt')
-  const stubPnpmPath = path.join(tempDir, 'pnpm.cmd')
-
-  await writeFile(
-    stubPnpmPath,
-    ['@echo off', 'setlocal', 'echo %*>"%STUB_LOG%"', 'exit /b 0', ''].join('\r\n'),
-  )
+  await writeArgCaptureShim({ dir: tempDir, name: 'pnpm', logEnvVar: 'STUB_LOG' })
 
   try {
     await new Promise<void>((resolve, reject) => {
       const child = spawn(
-        'powershell',
+        powerShellCommand,
         [
           '-ExecutionPolicy',
           'Bypass',
@@ -433,7 +428,7 @@ test('playwright runner script expands named suites through the repo harness', a
           cwd: process.cwd(),
           env: {
             ...process.env,
-            PATH: `${tempDir};${process.env.PATH ?? ''}`,
+            PATH: prependPathEntry(tempDir, process.env.PATH ?? ''),
             STUB_LOG: stubLogPath,
           },
           stdio: ['ignore', 'pipe', 'pipe'],
@@ -468,17 +463,12 @@ test('playwright runner script expands named suites through the repo harness', a
 test('playwright runner script forwards headed mode to Playwright', async () => {
   const tempDir = await mkdtemp(path.join(tmpdir(), 'chill-vibe-playwright-headed-script-'))
   const stubLogPath = path.join(tempDir, 'pnpm-headed-args.txt')
-  const stubPnpmPath = path.join(tempDir, 'pnpm.cmd')
-
-  await writeFile(
-    stubPnpmPath,
-    ['@echo off', 'setlocal', 'echo %*>"%STUB_LOG%"', 'exit /b 0', ''].join('\r\n'),
-  )
+  await writeArgCaptureShim({ dir: tempDir, name: 'pnpm', logEnvVar: 'STUB_LOG' })
 
   try {
     await new Promise<void>((resolve, reject) => {
       const child = spawn(
-        'powershell',
+        powerShellCommand,
         [
           '-ExecutionPolicy',
           'Bypass',
@@ -493,7 +483,7 @@ test('playwright runner script forwards headed mode to Playwright', async () => 
           cwd: process.cwd(),
           env: {
             ...process.env,
-            PATH: `${tempDir};${process.env.PATH ?? ''}`,
+            PATH: prependPathEntry(tempDir, process.env.PATH ?? ''),
             STUB_LOG: stubLogPath,
           },
           stdio: ['ignore', 'pipe', 'pipe'],
@@ -529,22 +519,13 @@ test('performance smoke runner uses headless node checks and the add-card freeze
   const tempDir = await mkdtemp(path.join(tmpdir(), 'chill-vibe-performance-smoke-script-'))
   const nodeLogPath = path.join(tempDir, 'node-args.txt')
   const pnpmLogPath = path.join(tempDir, 'pnpm-args.txt')
-  const stubNodePath = path.join(tempDir, 'node.cmd')
-  const stubPnpmPath = path.join(tempDir, 'pnpm.cmd')
-
-  await writeFile(
-    stubNodePath,
-    ['@echo off', 'setlocal', 'echo %*>"%NODE_LOG%"', 'exit /b 0', ''].join('\r\n'),
-  )
-  await writeFile(
-    stubPnpmPath,
-    ['@echo off', 'setlocal', 'echo %*>"%PNPM_LOG%"', 'exit /b 0', ''].join('\r\n'),
-  )
+  await writeArgCaptureShim({ dir: tempDir, name: 'node', logEnvVar: 'NODE_LOG' })
+  await writeArgCaptureShim({ dir: tempDir, name: 'pnpm', logEnvVar: 'PNPM_LOG' })
 
   try {
     await new Promise<void>((resolve, reject) => {
       const child = spawn(
-        'powershell',
+        powerShellCommand,
         [
           '-ExecutionPolicy',
           'Bypass',
@@ -555,7 +536,7 @@ test('performance smoke runner uses headless node checks and the add-card freeze
           cwd: process.cwd(),
           env: {
             ...process.env,
-            PATH: `${tempDir};${process.env.PATH ?? ''}`,
+            PATH: prependPathEntry(tempDir, process.env.PATH ?? ''),
             NODE_LOG: nodeLogPath,
             PNPM_LOG: pnpmLogPath,
           },

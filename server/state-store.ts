@@ -89,6 +89,15 @@ const isUntouchedEmptyChatCard = (card: Pick<ChatCard, 'status' | 'messages' | '
   !card.sessionId &&
   !card.streamId
 
+const getStartupPreferredModel = (settings: AppState['settings'], provider: ChatCard['provider']) => {
+  const rememberedModel =
+    settings.lastModel?.provider === provider
+      ? normalizeStoredModel(provider, settings.lastModel.model)
+      : ''
+
+  return rememberedModel || getConfiguredModel(settings, provider)
+}
+
 const shouldInvalidatePersistedChatSession = (
   status: ChatCard['status'],
   messages: ChatCard['messages'],
@@ -939,6 +948,7 @@ const sanitizeStateResult = (raw: unknown): SanitizedStateResult => {
           const shouldInvalidateSession = shouldInvalidatePersistedChatSession(status, messages)
           const normalizedModel = normalizeStoredModel(card.provider, card.model)
           const configuredModel = getConfiguredModel(safeSettings, card.provider)
+          const startupPreferredModel = getStartupPreferredModel(safeSettings, card.provider)
           const isLegacyPmCard = normalizedModel === PM_TOOL_MODEL
           const cardWithoutLegacyDream = {
             ...(card as ChatCard & { dream?: unknown }),
@@ -947,16 +957,18 @@ const sanitizeStateResult = (raw: unknown): SanitizedStateResult => {
           const migratedModel =
             isLegacyPmCard
               ? configuredModel
-              : normalizedModel === getDefaultModel(card.provider) &&
-                  configuredModel !== normalizedModel &&
-                  isUntouchedEmptyChatCard({
+              : isUntouchedEmptyChatCard({
                     status,
                     messages,
                     draft: card.draft,
                     sessionId: card.sessionId,
                     streamId: hasRecoverableStream ? card.streamId : undefined,
-                  })
-                ? configuredModel
+                  }) &&
+                  startupPreferredModel !== normalizedModel &&
+                  (normalizedModel === getDefaultModel(card.provider) ||
+                    normalizedModel === configuredModel) &&
+                  !card.title.trim()
+                ? startupPreferredModel
                 : normalizedModel
 
           cardEntries.push([
@@ -991,10 +1003,12 @@ const sanitizeStateResult = (raw: unknown): SanitizedStateResult => {
           model: (() => {
             const normalizedColumnModel = normalizeStoredModel(column.provider, column.model)
             const configuredColumnModel = getConfiguredModel(safeSettings, column.provider)
+            const startupPreferredColumnModel = getStartupPreferredModel(safeSettings, column.provider)
 
-            return normalizedColumnModel === getDefaultModel(column.provider) &&
-              configuredColumnModel !== normalizedColumnModel
-              ? configuredColumnModel
+            return (normalizedColumnModel === getDefaultModel(column.provider) ||
+              normalizedColumnModel === configuredColumnModel) &&
+              startupPreferredColumnModel !== normalizedColumnModel
+              ? startupPreferredColumnModel
               : normalizedColumnModel
           })(),
           width: normalizeColumnWidth(column.width),

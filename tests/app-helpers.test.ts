@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 
 import {
+  createStoppedRunMessage,
   createStructuredActivityMessage,
   finalizeStructuredActivityMessage,
   finalizeStreamedAssistantMessage,
@@ -23,6 +24,18 @@ test('getColumnById resolves a board column by its id', () => {
 
   assert.equal(getColumnById(columns, 'column-2')?.id, 'column-2')
   assert.equal(getColumnById(columns, 'missing'), undefined)
+})
+
+test('createStoppedRunMessage uses the user-interrupted copy for follow-up interrupts', () => {
+  const interrupted = createStoppedRunMessage('zh-CN', 'user-interrupt')
+  const stopped = createStoppedRunMessage('zh-CN')
+
+  assert.equal(interrupted.role, 'system')
+  assert.equal(interrupted.content, '用户打断')
+  assert.equal(interrupted.meta?.kind, 'run-stopped')
+  assert.equal(interrupted.meta?.stopReason, 'user-interrupt')
+  assert.equal(stopped.content, '这次运行已停止。')
+  assert.equal(stopped.meta?.stopReason, 'manual')
 })
 
 test('ask-user activities reuse a stable message id within the same stream', () => {

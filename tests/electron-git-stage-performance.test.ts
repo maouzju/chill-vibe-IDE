@@ -9,6 +9,10 @@ import { _electron as electron, type Page } from '@playwright/test'
 
 import { createDefaultState, createPane } from '../shared/default-state.ts'
 import { GIT_TOOL_MODEL } from '../shared/models.ts'
+import {
+  ensureElectronRuntimeBuild,
+  getElectronTestRendererUrl,
+} from './ensure-electron-runtime-build.ts'
 
 const tempRoots: string[] = []
 
@@ -126,13 +130,15 @@ after(async () => {
 })
 
 test('Electron ancient Git checkbox toggles stay responsive while preserving the selected diff', async () => {
+  await ensureElectronRuntimeBuild()
+
   const repoPath = await createLargeChangedRepo()
   const dataDir = await createTempStateDir(repoPath)
 
   const env = Object.fromEntries(
     Object.entries({
       ...process.env,
-      VITE_DEV_SERVER_URL: 'http://localhost:5173',
+      VITE_DEV_SERVER_URL: getElectronTestRendererUrl(),
       CHILL_VIBE_DISABLE_SINGLE_INSTANCE_LOCK: '1',
       CHILL_VIBE_ALLOW_SHARED_DATA_DIR: '1',
       CHILL_VIBE_DATA_DIR: dataDir,

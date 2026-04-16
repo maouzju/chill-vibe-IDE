@@ -199,7 +199,7 @@ test('adding a tab with many existing chats stays responsive without maximum-dep
   await page.getByRole('button', { name: 'Chat 1', exact: true }).waitFor()
   pageErrors.length = 0
 
-  await page.locator('.pane-add-tab').click({ timeout: 5000 })
+  await page.locator('.pane-add-tab').click()
 
   await expect(page.locator('.pane-tab.is-active')).toContainText('New chat', { timeout: 10000 })
   await expect(page.locator('.pane-tab-panel.is-active .textarea')).toBeVisible({ timeout: 10000 })

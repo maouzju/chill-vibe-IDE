@@ -14,6 +14,7 @@ import {
   launchProviderRun,
   normalizeProviderExitCode,
 } from '../server/providers.ts'
+import { prependPathEntry, writeNodeEntrypointShim } from './test-shell-helpers.ts'
 
 const createRequest = (overrides: Partial<ChatRequest> = {}): ChatRequest => ({
   provider: overrides.provider ?? 'codex',
@@ -189,7 +190,6 @@ const withFakeProviderCommand = async <T>(
   const binDir = path.join(tempRoot, 'bin')
   const dataDir = path.join(tempRoot, 'data')
   const workspacePath = path.join(tempRoot, 'workspace')
-  const commandPath = path.join(binDir, `${provider}.cmd`)
   const entrypointPath = path.join(binDir, `${provider}-cli.js`)
   const originalPath = process.env.PATH
   const originalDataDir = process.env.CHILL_VIBE_DATA_DIR
@@ -199,30 +199,13 @@ const withFakeProviderCommand = async <T>(
   await mkdir(workspacePath, { recursive: true })
   await writeTestState(dataDir, workspacePath)
   await writeFile(entrypointPath, scriptSource, 'utf8')
-  await writeFile(
-    commandPath,
-    [
-      '@ECHO off',
-      'GOTO start',
-      ':find_dp0',
-      'SET dp0=%~dp0',
-      'EXIT /b',
-      ':start',
-      'SETLOCAL',
-      'CALL :find_dp0',
-      'IF EXIST "%dp0%\\node.exe" (',
-      '  SET "_prog=%dp0%\\node.exe"',
-      ') ELSE (',
-      '  SET "_prog=node"',
-      '  SET PATHEXT=%PATHEXT:;.JS;=%',
-      ')',
-      `endLocal & goto #_undefined_# 2>NUL || title %COMSPEC% & "%_prog%"  "%dp0%\\${path.basename(entrypointPath)}" %*`,
-      '',
-    ].join('\r\n'),
-    'utf8',
-  )
+  await writeNodeEntrypointShim({
+    dir: binDir,
+    name: provider,
+    entrypointPath,
+  })
 
-  process.env.PATH = `${binDir}${path.delimiter}${originalPath ?? ''}`
+  process.env.PATH = prependPathEntry(binDir, originalPath ?? '')
   process.env.CHILL_VIBE_DATA_DIR = dataDir
 
   try {

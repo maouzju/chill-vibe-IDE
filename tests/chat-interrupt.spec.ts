@@ -443,6 +443,15 @@ test('sending during a running card stops the active stream and immediately star
   await expect
     .poll(() => mock.readState().columns[0]?.cards['card-1']?.messages.map((message) => message.role))
     .toEqual(['assistant', 'system', 'user'])
+  await expect
+    .poll(() => mock.readState().columns[0]?.cards['card-1']?.messages[1]?.meta?.kind)
+    .toBe('run-stopped')
+  await expect
+    .poll(() => mock.readState().columns[0]?.cards['card-1']?.messages[1]?.meta?.stopReason)
+    .toBe('user-interrupt')
+  await expect
+    .poll(() => mock.readState().columns[0]?.cards['card-1']?.messages[1]?.content)
+    .toBe('User interrupted')
   await expect.poll(() => mock.readState().columns[0]?.cards['card-1']?.status).toBe('streaming')
   await expect.poll(() => mock.readState().columns[0]?.cards['card-1']?.streamId).toBe('stream-2')
 })

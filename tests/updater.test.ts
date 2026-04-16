@@ -135,8 +135,26 @@ describe('parseReleaseResponse', () => {
     const result = parseReleaseResponse(release, '0.1.0', 'linux')
 
     assert.equal(result.hasUpdate, true)
-    assert.ok(result.error?.includes('No release asset found'))
+    assert.equal(result.error, 'No downloadable Linux asset found in the latest release.')
     assert.equal(result.assetUrl, undefined)
+  })
+
+  test('reports missing release assets before blaming the platform', () => {
+    const release = makeRelease('v0.2.0')
+    const result = parseReleaseResponse(release, '0.1.0', 'win32')
+
+    assert.equal(result.hasUpdate, true)
+    assert.equal(result.assetUrl, undefined)
+    assert.equal(result.error, 'Latest release does not have any downloadable assets yet.')
+  })
+
+  test('uses a friendly platform label when a platform-specific asset is missing', () => {
+    const release = makeRelease('v0.2.0', ['Chill-Vibe-0.2.0.dmg'])
+    const result = parseReleaseResponse(release, '0.1.0', 'win32')
+
+    assert.equal(result.hasUpdate, true)
+    assert.equal(result.assetUrl, undefined)
+    assert.equal(result.error, 'No downloadable Windows asset found in the latest release.')
   })
 
   test('includes htmlUrl for release page navigation', () => {

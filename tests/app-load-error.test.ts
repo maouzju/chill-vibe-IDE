@@ -1,4 +1,6 @@
 import assert from 'node:assert/strict'
+import { readFile } from 'node:fs/promises'
+import path from 'node:path'
 import test from 'node:test'
 
 import { resolveAppLoadError } from '../src/app-load-error.ts'
@@ -17,4 +19,18 @@ test('generic load errors no longer tell users to start a browser dev server', (
   assert.match(result.title, /workspace service|desktop client/i)
   assert.match(result.description, /desktop app|desktop client/i)
   assert.doesNotMatch(result.description, /dev server/i)
+})
+
+test('startup recovery renders as a standalone recovery shell instead of mounting the full blurred board', async () => {
+  const source = await readFile(path.join(process.cwd(), 'src', 'App.tsx'), 'utf8')
+  const startupRecoveryStart = source.indexOf('if (startupRecovery) {')
+  const settingsGroupStart = source.indexOf('const settingsGroupNodes:')
+  const startupRecoveryBlock =
+    startupRecoveryStart >= 0 && settingsGroupStart > startupRecoveryStart
+      ? source.slice(startupRecoveryStart, settingsGroupStart)
+      : ''
+
+  assert.match(startupRecoveryBlock, /if \(startupRecovery\)/)
+  assert.match(startupRecoveryBlock, /className="loading-shell"/)
+  assert.doesNotMatch(startupRecoveryBlock, /structured-preview-layer/)
 })

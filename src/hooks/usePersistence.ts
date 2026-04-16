@@ -92,11 +92,13 @@ export function usePersistence(
     document.addEventListener('visibilitychange', handleVisibilityChange)
     window.addEventListener('pagehide', handlePageHide)
     window.addEventListener('beforeunload', handlePageHide)
+    window.addEventListener('chill-vibe:flush-state-before-quit', handlePageHide)
 
     return () => {
       document.removeEventListener('visibilitychange', handleVisibilityChange)
       window.removeEventListener('pagehide', handlePageHide)
       window.removeEventListener('beforeunload', handlePageHide)
+      window.removeEventListener('chill-vibe:flush-state-before-quit', handlePageHide)
     }
   }, [flushPendingState, loadStatus])
 

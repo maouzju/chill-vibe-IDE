@@ -856,6 +856,25 @@ describe('state-store persistence', () => {
     assert.equal(loaded.columns[0].title, 'Workspace-9', 'last queued state should be persisted')
   })
 
+  it('waitForPendingStateWrites drains queued saves before quit-sensitive flows continue', async () => {
+    const { queueSaveState, waitForPendingStateWrites, loadState } = await import('../server/state-store.ts')
+    const state = createDefaultState('')
+    state.columns[0].title = 'Queued before update quit'
+
+    void queueSaveState(state)
+    await waitForPendingStateWrites()
+
+    const loaded = await loadState()
+    assert.equal(
+      loaded.columns[0].title,
+      'Queued before update quit',
+      'quit-sensitive flows should be able to wait for the queued state write to reach disk',
+    )
+
+    const files = await readdir(tmpDir)
+    assert.equal(files.filter((fileName) => fileName.endsWith('.wal')).length, 0)
+  })
+
   it('concurrent queueSaveState calls do not corrupt the file', async () => {
     const { queueSaveState, loadState } = await import('../server/state-store.ts')
 

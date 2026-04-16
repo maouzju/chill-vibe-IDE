@@ -79,6 +79,7 @@ Applies to: `AGENTS.md`, `CLAUDE.md`, `docs/`, ESLint config, CI scripts, `packa
 ## Packaging Defaults
 
 - For routine Windows handoff builds, default to a zipped app payload instead of a single-file `portable` executable.
+- Windows zip handoff artifacts should extract into a single top-level `Chill Vibe IDE` folder instead of spilling loose binaries into the unzip target.
 - Only build `portable` or `nsis` artifacts when the user explicitly asks for them.
 - If a collaborator has made it clear they expect a ready-to-run Windows handoff, do not stop at handing over a `.zip` path; also provide a no-manual-unzip path by extracting to `dist/release/win-unpacked` or by producing the installer they asked for, and state the exact executable or installer path.
 - Prefer the repo scripts (`pnpm electron:build`, `pnpm electron:build:zip`, `pnpm electron:build:installer`, `pnpm electron:build:portable`) over ad-hoc `electron-builder` commands so the packaging mode stays consistent.

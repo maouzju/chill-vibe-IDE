@@ -3681,7 +3681,7 @@ function App() {
           <div className="update-banner is-downloading" role="status">
             <span>
               {updateResult?.latestVersion
-                ? `${text.updateAvailable(updateResult!.latestVersion!)} 鈥?${text.updateDownloading(downloadProgress)}`
+                ? `${text.updateAvailable(updateResult!.latestVersion!)} — ${text.updateDownloading(downloadProgress)}`
                 : text.updateDownloading(downloadProgress)}
             </span>
             <div className="update-progress-bar">

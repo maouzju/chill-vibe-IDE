@@ -4,6 +4,7 @@ import path from 'node:path'
 import zlib from 'node:zlib'
 
 const require = createRequire(import.meta.url)
+export const WINDOWS_ZIP_ROOT_FOLDER_NAME = 'Chill Vibe IDE'
 
 const crcTable = new Uint32Array(256)
 
@@ -230,8 +231,15 @@ function stageElectronShell(winUnpackedDir) {
   }
 }
 
-function writeZipFromDirectory(sourceDir, zipPath, rootEntryName = path.basename(sourceDir)) {
-  const sourceParentDir = path.dirname(sourceDir)
+export function resolveZipEntryName(
+  sourceDir,
+  filePath,
+  rootEntryName = path.basename(sourceDir),
+) {
+  return `${rootEntryName}/${path.relative(sourceDir, filePath).split(path.sep).join('/')}`
+}
+
+export function writeZipFromDirectory(sourceDir, zipPath, rootEntryName = path.basename(sourceDir)) {
   const files = walkFiles(sourceDir)
   const zipFd = fs.openSync(zipPath, 'w')
   const centralDirectoryEntries = []
@@ -239,14 +247,7 @@ function writeZipFromDirectory(sourceDir, zipPath, rootEntryName = path.basename
 
   try {
     for (const filePath of files) {
-      const relativePath = path
-        .relative(sourceParentDir, filePath)
-        .split(path.sep)
-        .join('/')
-      const entryName = relativePath.startsWith(`${rootEntryName}/`)
-        ? relativePath
-        : `${rootEntryName}/${path.relative(sourceDir, filePath).split(path.sep).join('/')}`
-
+      const entryName = resolveZipEntryName(sourceDir, filePath, rootEntryName)
       const fileBuffer = fs.readFileSync(filePath)
       const compressedBuffer =
         fileBuffer.length > 0 ? zlib.deflateRawSync(fileBuffer, { level: 9 }) : Buffer.alloc(0)
@@ -333,7 +334,6 @@ function writeZipFromDirectory(sourceDir, zipPath, rootEntryName = path.basename
 export function packageManualWindowsZip({
   projectRoot,
   outputDirAbsolute,
-  outputDirName,
   version,
 }) {
   const rootPackageJson = readJson(path.join(projectRoot, 'package.json'))
@@ -346,7 +346,7 @@ export function packageManualWindowsZip({
   stageElectronShell(winUnpackedDir)
   stageAppPayload(projectRoot, appDir, rootPackageJson)
   stageLegalFiles(projectRoot, winUnpackedDir)
-  writeZipFromDirectory(winUnpackedDir, zipPath, outputDirName)
+  writeZipFromDirectory(winUnpackedDir, zipPath, WINDOWS_ZIP_ROOT_FOLDER_NAME)
 
   return {
     zipPath,

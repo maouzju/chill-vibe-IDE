@@ -48,7 +48,11 @@ import { getReasoningLabel, normalizeReasoningEffort } from '../shared/reasoning
 import { getInterruptedSessionResumeRequest } from '../shared/interrupted-session-recovery'
 import { formatLocalSlashHelp, parseSlashCommandInput } from '../shared/slash-commands'
 import { defaultSystemPrompt } from '../shared/system-prompt'
-import { resolveStreamRecoveryMode } from './stream-recovery'
+import {
+  resolveStreamRecoveryMode,
+  shouldResetStreamRecoveryAttemptsForActivity,
+  shouldResetStreamRecoveryAttemptsForText,
+} from './stream-recovery'
 import type {
   AppState,
   AutoUrgeProfile,
@@ -1731,7 +1735,9 @@ function App() {
 
       const source = openChatStream(card.streamId, {
         onSession: ({ sessionId }) => {
-          streamRetryCountRef.current.delete(card.id)
+          if (shouldResetStreamRecoveryAttemptsForActivity('session')) {
+            streamRetryCountRef.current.delete(card.id)
+          }
           persistImmediately(
             applyAction({
               type: 'updateCard',
@@ -1750,7 +1756,9 @@ function App() {
             source,
           )
 
-          streamRetryCountRef.current.delete(card.id)
+          if (shouldResetStreamRecoveryAttemptsForText(content)) {
+            streamRetryCountRef.current.delete(card.id)
+          }
           enqueueAssistantDelta(columnId, card.id, messageId, content)
         },
         onLog: ({ message }) => {
@@ -1759,7 +1767,9 @@ function App() {
             return
           }
 
-          streamRetryCountRef.current.delete(card.id)
+          if (shouldResetStreamRecoveryAttemptsForActivity('log')) {
+            streamRetryCountRef.current.delete(card.id)
+          }
           applyAction({
             type: 'appendMessages',
             columnId,
@@ -1768,7 +1778,12 @@ function App() {
           })
         },
         onAssistantMessage: (payload) => {
-          streamRetryCountRef.current.delete(card.id)
+          if (
+            shouldResetStreamRecoveryAttemptsForActivity('assistant_message') &&
+            shouldResetStreamRecoveryAttemptsForText(payload.content)
+          ) {
+            streamRetryCountRef.current.delete(card.id)
+          }
           const active = activeStreamsRef.current.get(card.id)
           const buffered = deltaBufferRef.current.get(card.id)
           if (buffered && buffered.messageId === active?.assistantMessageId) {
@@ -1814,7 +1829,9 @@ function App() {
           })
         },
         onActivity: (payload) => {
-          streamRetryCountRef.current.delete(card.id)
+          if (shouldResetStreamRecoveryAttemptsForActivity('activity')) {
+            streamRetryCountRef.current.delete(card.id)
+          }
 
           // Clear the current assistant message so that any subsequent onDelta
           // (the agent's final answer after tool calls) creates a new message
@@ -3659,6 +3676,100 @@ function App() {
             </AppButton>
           </div>
         </div>
+      </div>,
+    )
+  }
+
+  if (startupRecovery) {
+    return renderWithPrimer(
+      <div className="loading-shell">
+        <section
+          className="structured-preview-dialog state-recovery-dialog"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="state-recovery-title"
+        >
+          <div className="structured-preview-card state-recovery-card">
+            <div className="structured-preview-header">
+              <div className="structured-preview-copy">
+                <div className="eyebrow">{startupRecoveryCopy.eyebrow}</div>
+                <h3 id="state-recovery-title">{startupRecoveryCopy.title}</h3>
+                <p className="settings-note">{startupRecoveryCopy.description}</p>
+              </div>
+            </div>
+
+            <div className="structured-preview-body state-recovery-body">
+              <div className="state-recovery-section">
+                <div className="settings-section-title">{startupRecoveryCopy.issuesTitle}</div>
+                <div className="state-recovery-issue-list">
+                  {startupRecovery.issues.map((issue) => (
+                    <div key={`${issue.kind}-${issue.fileName}`} className="state-recovery-issue">
+                      <strong>{getStateRecoveryIssueLabel(appState.settings.language, issue)}</strong>
+                      <div className="state-recovery-issue-meta">
+                        <span>{issue.fileName}</span>
+                        {issue.updatedAt ? (
+                          <span>
+                            {startupRecoveryCopy.updatedAt}:{' '}
+                            {formatLocalizedDateTime(appState.settings.language, issue.updatedAt)}
+                          </span>
+                        ) : null}
+                      </div>
+                      {issue.details.trim() ? <p>{issue.details}</p> : null}
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              <div className="state-recovery-section">
+                <div className="settings-section-title">{startupRecoveryCopy.optionsTitle}</div>
+                <div className="state-recovery-option-list">
+                  {startupRecovery.options.map((option) => (
+                    <button
+                      key={option.id}
+                      type="button"
+                      className={`state-recovery-option${
+                        option.recommended ? ' is-recommended' : ''
+                      }${option.id === startupRecovery.currentOptionId ? ' is-current' : ''}`}
+                      disabled={stateRecoveryPending}
+                      onClick={() => void handleResolveStartupRecovery(option.id)}
+                    >
+                      <div className="state-recovery-option-head">
+                        <strong>{getStateRecoveryOptionLabel(appState.settings.language, option)}</strong>
+                        {option.recommended ? (
+                          <span className="state-recovery-chip">{startupRecoveryCopy.recommended}</span>
+                        ) : null}
+                        {option.id === startupRecovery.currentOptionId ? (
+                          <span className="state-recovery-chip is-muted">{startupRecoveryCopy.current}</span>
+                        ) : null}
+                      </div>
+                      <div className="state-recovery-option-meta">
+                        <span>{option.fileName}</span>
+                        {option.updatedAt ? (
+                          <span>
+                            {startupRecoveryCopy.updatedAt}:{' '}
+                            {formatLocalizedDateTime(appState.settings.language, option.updatedAt)}
+                          </span>
+                        ) : null}
+                      </div>
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {stateRecoveryError ? (
+                <div className="panel-alert" role="alert">
+                  {stateRecoveryError}
+                </div>
+              ) : null}
+
+              {stateRecoveryPending ? (
+                <div className="state-recovery-pending" role="status">
+                  {startupRecoveryCopy.restoring}
+                </div>
+              ) : null}
+            </div>
+          </div>
+        </section>
       </div>,
     )
   }
@@ -5668,99 +5779,6 @@ function App() {
                     {recentCrashActionPending ? recentCrashCopy.pending : recentCrashCopy.dismiss}
                   </AppButton>
                 </div>
-              </div>
-            </div>
-          </section>
-        </div>
-      ) : null}
-
-      {startupRecovery ? (
-        <div className="structured-preview-layer">
-          <div className="structured-preview-backdrop" />
-          <section
-            className="structured-preview-dialog state-recovery-dialog"
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="state-recovery-title"
-          >
-            <div className="structured-preview-card state-recovery-card">
-              <div className="structured-preview-header">
-                <div className="structured-preview-copy">
-                  <div className="eyebrow">{startupRecoveryCopy.eyebrow}</div>
-                  <h3 id="state-recovery-title">{startupRecoveryCopy.title}</h3>
-                  <p className="settings-note">{startupRecoveryCopy.description}</p>
-                </div>
-              </div>
-
-              <div className="structured-preview-body state-recovery-body">
-                <div className="state-recovery-section">
-                  <div className="settings-section-title">{startupRecoveryCopy.issuesTitle}</div>
-                  <div className="state-recovery-issue-list">
-                    {startupRecovery.issues.map((issue) => (
-                      <div key={`${issue.kind}-${issue.fileName}`} className="state-recovery-issue">
-                        <strong>{getStateRecoveryIssueLabel(appState.settings.language, issue)}</strong>
-                        <div className="state-recovery-issue-meta">
-                          <span>{issue.fileName}</span>
-                          {issue.updatedAt ? (
-                            <span>
-                              {startupRecoveryCopy.updatedAt}:{' '}
-                              {formatLocalizedDateTime(appState.settings.language, issue.updatedAt)}
-                            </span>
-                          ) : null}
-                        </div>
-                        {issue.details.trim() ? <p>{issue.details}</p> : null}
-                      </div>
-                    ))}
-                  </div>
-                </div>
-
-                <div className="state-recovery-section">
-                  <div className="settings-section-title">{startupRecoveryCopy.optionsTitle}</div>
-                  <div className="state-recovery-option-list">
-                    {startupRecovery.options.map((option) => (
-                      <button
-                        key={option.id}
-                        type="button"
-                        className={`state-recovery-option${
-                          option.recommended ? ' is-recommended' : ''
-                        }${option.id === startupRecovery.currentOptionId ? ' is-current' : ''}`}
-                        disabled={stateRecoveryPending}
-                        onClick={() => void handleResolveStartupRecovery(option.id)}
-                      >
-                        <div className="state-recovery-option-head">
-                          <strong>{getStateRecoveryOptionLabel(appState.settings.language, option)}</strong>
-                          {option.recommended ? (
-                            <span className="state-recovery-chip">{startupRecoveryCopy.recommended}</span>
-                          ) : null}
-                          {option.id === startupRecovery.currentOptionId ? (
-                            <span className="state-recovery-chip is-muted">{startupRecoveryCopy.current}</span>
-                          ) : null}
-                        </div>
-                        <div className="state-recovery-option-meta">
-                          <span>{option.fileName}</span>
-                          {option.updatedAt ? (
-                            <span>
-                              {startupRecoveryCopy.updatedAt}:{' '}
-                              {formatLocalizedDateTime(appState.settings.language, option.updatedAt)}
-                            </span>
-                          ) : null}
-                        </div>
-                      </button>
-                    ))}
-                  </div>
-                </div>
-
-                {stateRecoveryError ? (
-                  <div className="panel-alert" role="alert">
-                    {stateRecoveryError}
-                  </div>
-                ) : null}
-
-                {stateRecoveryPending ? (
-                  <div className="state-recovery-pending" role="status">
-                    {startupRecoveryCopy.restoring}
-                  </div>
-                ) : null}
               </div>
             </div>
           </section>

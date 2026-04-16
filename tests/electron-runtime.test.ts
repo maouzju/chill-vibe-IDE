@@ -214,6 +214,10 @@ test('Electron build emits an ESM main bundle and a CJS preload bundle', async (
   assert.match(buildElectronScriptBody, /compilePreload\(\)/)
   assert.match(buildElectronScriptBody, /ModuleKind\.CommonJS/)
   assert.match(buildElectronScriptBody, /await finalizeElectronMain\(\)/)
+  assert.equal(
+    buildElectronScriptBody.includes("!/^tsconfig(?:\\..+)?\\.json$/i.test(entry.name)"),
+    true,
+  )
   assert.match(electronPackageWriterBody, /type:\s*'module'/)
   assert.match(electronPackageWriterBody, /main\.js/)
   assert.match(electronPackageWriterBody, /main\.mjs/)
@@ -232,6 +236,35 @@ test('package start script clears ELECTRON_RUN_AS_NODE before launching Electron
   assert.equal(packageJson.scripts?.start, 'node scripts/start-electron-prod.mjs')
   assert.match(startScriptBody, /delete sharedEnv\.ELECTRON_RUN_AS_NODE/)
   assert.match(startScriptBody, /spawn\(electronBinary, \['\.'\]/)
+})
+
+test('Electron quit flow flushes renderer persistence and waits for queued state writes before exit', async () => {
+  const projectRoot = process.cwd()
+  const [mainBody, preloadBody, persistenceBody] = await Promise.all([
+    readFile(path.join(projectRoot, 'electron', 'main.ts'), 'utf8'),
+    readFile(path.join(projectRoot, 'electron', 'preload.ts'), 'utf8'),
+    readFile(path.join(projectRoot, 'src', 'hooks', 'usePersistence.ts'), 'utf8'),
+  ])
+
+  assert.match(mainBody, /webContents\.send\('app:flush-state-before-quit'\)/)
+  assert.match(mainBody, /await desktopBackend\.flushStateWrites\(\)/)
+  assert.match(preloadBody, /ipcRenderer\.on\('app:flush-state-before-quit'/)
+  assert.match(preloadBody, /window\.dispatchEvent\(new Event\('chill-vibe:flush-state-before-quit'\)\)/)
+  assert.match(persistenceBody, /window\.addEventListener\('chill-vibe:flush-state-before-quit', handlePageHide\)/)
+})
+
+test('development Electron retries renderer bootstrap when the dev shell loads with an empty root', async () => {
+  const projectRoot = process.cwd()
+  const [mainBody, rendererEntryBody] = await Promise.all([
+    readFile(path.join(projectRoot, 'electron', 'main.ts'), 'utf8'),
+    readFile(path.join(projectRoot, 'src', 'main.tsx'), 'utf8'),
+  ])
+
+  assert.match(mainBody, /Dev bootstrap import failed/)
+  assert.match(mainBody, /cv-dev-boot=/)
+  assert.match(mainBody, /root\.childElementCount > 0/)
+  assert.match(rendererEntryBody, /__CHILL_VIBE_ROOT__/)
+  assert.match(rendererEntryBody, /bootstrapWindow\.__CHILL_VIBE_ROOT__ = appRoot/)
 })
 
 test('README verification docs match the packaged regression scripts in both languages', async () => {

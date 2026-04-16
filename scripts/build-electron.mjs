@@ -72,7 +72,7 @@ async function copyRuntimeAssetsInto(rootDir, currentDir, targetRoot) {
       extension === '.mjs' ||
       extension === '.cjs' ||
       extension === '.node' ||
-      (extension === '.json' && !/^tsconfig(?:\\..+)?\\.json$/i.test(entry.name))
+      (extension === '.json' && !/^tsconfig(?:\..+)?\.json$/i.test(entry.name))
 
     if (!shouldCopy) {
       continue

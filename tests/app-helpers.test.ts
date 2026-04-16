@@ -3,6 +3,7 @@ import test from 'node:test'
 
 import {
   createStructuredActivityMessage,
+  finalizeStructuredActivityMessage,
   finalizeStreamedAssistantMessage,
   getAgentDoneSoundUrl,
   getColumnById,
@@ -139,4 +140,52 @@ test('finalizeStreamedAssistantMessage replaces the live streamed bubble in plac
   assert.equal(nextMessages[0]?.content, 'First paragraph\n\nSecond paragraph')
   assert.equal(nextMessages[0]?.meta?.provider, 'codex')
   assert.equal(nextMessages[0]?.meta?.itemId, 'assistant-item-1')
+})
+
+test('finalizeStructuredActivityMessage replaces a live ask-user XML bubble with the structured card', () => {
+  const existingMessages = [
+    {
+      id: 'assistant-live-1',
+      role: 'assistant' as const,
+      content:
+        '<ask-user-question>{"header":"Confirmation","question":"Which path should I use?","multiSelect":false,"options":[{"label":"Delete normally","description":"Delete only the current skill."},{"label":"Check impact first","description":"Inspect remotes and refs before deciding."}]}</ask-user-question>',
+      createdAt: '2026-04-16T00:00:00.000Z',
+      meta: {
+        provider: 'codex' as const,
+      },
+    },
+  ]
+
+  const nextMessages = finalizeStructuredActivityMessage(
+    existingMessages,
+    'assistant-live-1',
+    'codex',
+    'stream-1',
+    {
+      itemId: 'agent_message_1',
+      kind: 'ask-user',
+      status: 'completed',
+      header: 'Confirmation',
+      question: 'Which path should I use?',
+      multiSelect: false,
+      options: [
+        {
+          label: 'Delete normally',
+          description: 'Delete only the current skill.',
+        },
+        {
+          label: 'Check impact first',
+          description: 'Inspect remotes and refs before deciding.',
+        },
+      ],
+    },
+  )
+
+  assert.equal(nextMessages.length, 1)
+  assert.equal(nextMessages[0]?.id, 'codex:stream-1:item:ask-user:question')
+  assert.equal(nextMessages[0]?.content, '')
+  assert.equal(nextMessages[0]?.createdAt, '2026-04-16T00:00:00.000Z')
+  assert.equal(nextMessages[0]?.meta?.kind, 'ask-user')
+  assert.equal(nextMessages[0]?.meta?.itemId, 'agent_message_1')
+  assert.match(nextMessages[0]?.meta?.structuredData ?? '', /Which path should I use\?/)
 })

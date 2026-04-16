@@ -227,6 +227,28 @@ test('parses synthetic ask-user blocks from Codex assistant messages', () => {
   )
 })
 
+test('parses Codex commentary JSON assistant messages into reasoning activities', () => {
+  assert.deepEqual(
+    parseCodexResponseEvent({
+      type: 'item.completed',
+      item: {
+        id: 'item_6b',
+        type: 'agent_message',
+        text: '{"commentary":[{"text":"先确认 JSON 结构，再精确读取锻炉和候选效果。"}]}',
+      },
+    }),
+    [
+      {
+        type: 'activity',
+        itemId: 'item_6b',
+        kind: 'reasoning',
+        status: 'completed',
+        text: '先确认 JSON 结构，再精确读取锻炉和候选效果。',
+      },
+    ],
+  )
+})
+
 test('parses Codex native compaction notifications from app-server events', () => {
   assert.deepEqual(
     parseCodexResponseEvent({

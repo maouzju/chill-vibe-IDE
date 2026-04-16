@@ -1,5 +1,10 @@
 import path from 'node:path'
 
+const windowsAbsolutePathPattern = /^[A-Za-z]:[\\/]/
+
+const normalizePortableAbsolutePath = (value: string) =>
+  windowsAbsolutePathPattern.test(value) ? path.win32.normalize(value) : path.resolve(value)
+
 export function resolveDesktopRuntimeKind({ isDev }: { isDev: boolean }) {
   return isDev ? 'dev' : 'release'
 }
@@ -20,7 +25,7 @@ export function resolveDesktopDataDir({
   const normalizedConfiguredDataDir = configuredDataDir?.trim()
 
   if (allowConfiguredOverride && normalizedConfiguredDataDir) {
-    return path.resolve(normalizedConfiguredDataDir)
+    return normalizePortableAbsolutePath(normalizedConfiguredDataDir)
   }
 
   return isDev

@@ -12,7 +12,16 @@ const splitPathEntries = (value: string | undefined) =>
     .map((entry) => entry.trim().replace(/^"(.*)"$/, '$1'))
     .filter(Boolean)
 
-const toWindowsPath = (value: string) => path.win32.normalize(value)
+const windowsAbsolutePathPattern = /^[A-Za-z]:[\\/]/
+const uncPathPattern = /^\\\\/
+
+const isWindowsLikePath = (value: string) =>
+  windowsAbsolutePathPattern.test(value) || uncPathPattern.test(value)
+
+const getPathModuleForEntry = (value: string) =>
+  isWindowsLikePath(value) ? path.win32 : path.posix
+
+const normalizeCandidatePath = (value: string) => getPathModuleForEntry(value).normalize(value)
 
 const collectPortableGitDriveLetters = (entries: string[]) => {
   const letters = new Set<string>(['C'])
@@ -29,19 +38,20 @@ const collectPortableGitDriveLetters = (entries: string[]) => {
 
 const buildPathDerivedCandidates = (entries: string[]) =>
   entries.flatMap((entry) => {
-    const normalized = toWindowsPath(entry)
-    const basename = path.win32.basename(normalized).toLowerCase()
+    const pathModule = getPathModuleForEntry(entry)
+    const normalized = pathModule.normalize(entry)
+    const basename = pathModule.basename(normalized).toLowerCase()
 
     if (basename === 'bash.exe') {
       return [normalized]
     }
 
     if (basename === 'bin') {
-      return [path.win32.join(normalized, 'bash.exe')]
+      return [pathModule.join(normalized, 'bash.exe')]
     }
 
     if (basename === 'cmd') {
-      return [path.win32.join(normalized, '..', 'bin', 'bash.exe')]
+      return [pathModule.join(normalized, '..', 'bin', 'bash.exe')]
     }
 
     return []
@@ -67,7 +77,7 @@ const dedupeWindowsPaths = (paths: string[]) => {
   const seen = new Set<string>()
 
   return paths.filter((candidate) => {
-    const key = candidate.toLowerCase()
+    const key = normalizeCandidatePath(candidate).toLowerCase()
     if (seen.has(key)) {
       return false
     }
@@ -81,7 +91,7 @@ const resolveExistingPath = async (candidates: string[]) => {
   for (const candidate of dedupeWindowsPaths(candidates)) {
     try {
       await access(candidate)
-      return candidate
+      return normalizeCandidatePath(candidate)
     } catch {
       // Try the next candidate.
     }

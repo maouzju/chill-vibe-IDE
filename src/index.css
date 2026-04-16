@@ -3678,6 +3678,10 @@ body.is-card-dragging .lane-drop-zone-top {
 .message-assistant .message-role { color: var(--ink-3); }
 .message-assistant time           { color: var(--ink-4); }
 .message-system .message-topline { display: none; }
+.message-is-run-stopped .message-content,
+.message-is-run-stopped .message-content > p {
+  white-space: nowrap;
+}
 
 .message-entry {
   display: flex;

@@ -106,6 +106,7 @@ type LocaleText = {
   logWithProvider: (provider: string) => string
   unexpectedError: string
   runStopped: string
+  userInterrupted: string
   localCliUnavailable: string
   statusProvider: string
   statusModel: string
@@ -334,6 +335,7 @@ const localeTextByLanguage: Record<AppLanguage, LocaleText> = {
     logWithProvider: (provider) => `日志 · ${provider}`,
     unexpectedError: '发生了未知错误。',
     runStopped: '这次运行已停止。',
+    userInterrupted: '用户打断',
     localCliUnavailable: '本地 CLI 不可用。',
     statusProvider: '提供方',
     statusModel: '卡片类型',
@@ -577,6 +579,7 @@ const localeTextByLanguage: Record<AppLanguage, LocaleText> = {
     logWithProvider: (provider) => `Log · ${provider}`,
     unexpectedError: 'An unexpected error occurred.',
     runStopped: 'This run was stopped.',
+    userInterrupted: 'User interrupted',
     localCliUnavailable: 'The local CLI is not available.',
     statusProvider: 'Provider',
     statusModel: 'Card Type',

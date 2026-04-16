@@ -90,6 +90,10 @@ export const getCompactedHistoryAutoRevealMode = (
   return metrics.scrollTop <= thresholdPx ? 'near-top' : 'none'
 }
 
+export const shouldAutoRevealCompactedHistoryImmediately = (
+  mode: CompactedHistoryAutoRevealMode,
+) => mode !== 'none'
+
 export const getScrollTopToRevealChild = (
   { scrollTop, clientHeight }: ScrollViewportMetrics,
   { offsetTop, offsetHeight }: ScrollChildMetrics,

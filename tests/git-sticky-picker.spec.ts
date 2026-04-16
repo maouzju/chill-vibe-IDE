@@ -159,12 +159,14 @@ const installMockApis = async (
 }
 
 for (const theme of ['dark', 'light'] as const) {
-  test(`tool cards no longer render redundant model pickers in ${theme} theme`, async ({ page }) => {
-    for (const [model, title, selector] of [
-      [GIT_TOOL_MODEL, 'Git', '.git-tool-card'],
-      [STICKYNOTE_TOOL_MODEL, 'Sticky Note', '.sticky-note-card'],
-      [FILETREE_TOOL_MODEL, 'Files', '.file-tree-card'],
-    ] as const) {
+  for (const [model, title, selector] of [
+    [GIT_TOOL_MODEL, 'Git', '.git-tool-card'],
+    [STICKYNOTE_TOOL_MODEL, 'Sticky Note', '.sticky-note-card'],
+    [FILETREE_TOOL_MODEL, 'Files', '.file-tree-card'],
+  ] as const) {
+    test(`tool cards no longer render redundant model pickers for ${title} in ${theme} theme`, async ({
+      page,
+    }) => {
       await installMockApis(page, theme, model, title)
       await page.goto('http://localhost:5173')
 
@@ -176,6 +178,6 @@ for (const theme of ['dark', 'light'] as const) {
       await expect(toolSurface).toBeVisible()
       await expect(headerSelect).toHaveCount(0)
       await expect(modelSelects).toHaveCount(0)
-    }
-  })
+    })
+  }
 }

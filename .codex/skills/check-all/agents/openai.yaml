@@ -1,0 +1,4 @@
+interface:
+  display_name: "Check All"
+  short_description: "Full checks, screenshots, UI review, and delegated fixes."
+  default_prompt: "Use $check-all to run the repo's full check workflow, capture screenshot evidence, analyze bugs, review UI quality, and delegate bounded fixes."

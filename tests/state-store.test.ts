@@ -225,6 +225,43 @@ describe('state-store persistence', () => {
     assert.equal(loadedReviewColumn.cards[pinnedCardId]?.model, 'claude-opus-4-6')
   })
 
+  it('loadState prefers lastModel over provider defaults for untouched starter chats on startup', async () => {
+    const stateFile = path.join(tmpDir, 'state.json')
+    const state = createDefaultState('D:/remembered-last-model')
+    state.settings.requestModels.claude = 'claude-opus-4-6'
+    state.settings.lastModel = { provider: 'claude', model: 'claude-sonnet-4-6' }
+
+    const reviewColumn = state.columns[1]
+    const reviewPane = getFirstPane(reviewColumn.layout)
+    const untouchedCardId = reviewPane.tabs[1]!
+    const pinnedCardId = reviewPane.tabs[0]!
+
+    reviewColumn.cards[pinnedCardId]!.title = 'Keep using Opus here'
+    reviewColumn.cards[pinnedCardId]!.messages = [
+      {
+        id: 'msg-keep-opus',
+        role: 'assistant',
+        content: 'This thread should keep its existing model.',
+        createdAt: new Date().toISOString(),
+      },
+    ]
+    reviewColumn.cards[pinnedCardId]!.model = 'claude-opus-4-6'
+    reviewColumn.cards[untouchedCardId]!.title = ''
+    reviewColumn.cards[untouchedCardId]!.messages = []
+    reviewColumn.cards[untouchedCardId]!.model = 'claude-opus-4-6'
+    reviewColumn.model = 'claude-opus-4-6'
+
+    await writeFile(stateFile, JSON.stringify(state, null, 2), 'utf8')
+
+    const { loadState } = await import('../server/state-store.ts')
+    const loaded = await loadState()
+    const loadedReviewColumn = loaded.columns[1]
+
+    assert.equal(loadedReviewColumn.model, 'claude-sonnet-4-6')
+    assert.equal(loadedReviewColumn.cards[untouchedCardId]?.model, 'claude-sonnet-4-6')
+    assert.equal(loadedReviewColumn.cards[pinnedCardId]?.model, 'claude-opus-4-6')
+  })
+
   it('loadState drops persisted session ids for idle chats with historical image attachments', async () => {
     const stateFile = path.join(tmpDir, 'state.json')
     const state = createDefaultState('D:/image-session-replay')

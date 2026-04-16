@@ -11,6 +11,7 @@ import {
   getScrollTopToRevealChild,
   getScrollTopToRevealChildWithTopClearance,
   getProgrammaticBottomScrollTarget,
+  shouldAutoRevealCompactedHistoryImmediately,
 } from '../src/components/chat-scroll.ts'
 
 describe('chat scroll helpers', () => {
@@ -214,6 +215,17 @@ describe('chat scroll helpers', () => {
     })
 
     assert.equal(mode, 'unscrollable')
+  })
+
+  it('auto-reveals compacted history immediately when the list is already near the top', () => {
+    const mode = getCompactedHistoryAutoRevealMode({
+      scrollTop: 40,
+      scrollHeight: 1280,
+      clientHeight: 640,
+    })
+
+    assert.equal(mode, 'near-top')
+    assert.equal(shouldAutoRevealCompactedHistoryImmediately(mode), true)
   })
 
   it('prefers the previous user prompt anchor when the latest reply is still close to the bottom', () => {

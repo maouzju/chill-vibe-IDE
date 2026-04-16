@@ -117,6 +117,8 @@ import {
   type OnboardingStage,
   type ProfileDraft,
   type SaveStatus,
+  type StoppedRunReason,
+  createStoppedRunMessage,
   createLogMessages,
   createStructuredActivityMessage,
   emptyProfileDraft,
@@ -526,6 +528,7 @@ function App() {
     new Map<string, Array<{ prompt: string; attachments: ImageAttachment[] }>>(),
   )
   const queueFollowUpDuringStreamRef = useRef(new Map<string, boolean>())
+  const stoppedRunReasonRef = useRef(new Map<string, StoppedRunReason>())
   const appStateRef = useRef(appState)
   const activePaneTargetRef = useRef<PaneTarget | null>(null)
   const streamRetryCountRef = useRef(new Map<string, number>())
@@ -1360,7 +1363,7 @@ function App() {
   }, [applyAction])
 
   const requestStopForCard = useCallback(
-    async (cardId: string) => {
+    async (cardId: string, reason: StoppedRunReason = 'manual') => {
       const active = activeStreamsRef.current.get(cardId)
       const owner = appStateRef.current.columns.find((column) => Boolean(column.cards[cardId]))
       const liveCard = owner?.cards[cardId]
@@ -1371,9 +1374,11 @@ function App() {
       }
 
       try {
+        stoppedRunReasonRef.current.set(streamId, reason)
         await stopChat(streamId)
         return true
       } catch (error) {
+        stoppedRunReasonRef.current.delete(streamId)
         active?.source.close()
         activeStreamsRef.current.delete(cardId)
         streamRetryCountRef.current.delete(cardId)
@@ -1937,6 +1942,12 @@ function App() {
           activeStreamsRef.current.delete(card.id)
           streamRetryCountRef.current.delete(card.id)
           queueFollowUpDuringStreamRef.current.delete(card.id)
+          const stoppedRunReason = card.streamId
+            ? (stoppedRunReasonRef.current.get(card.streamId) ?? 'manual')
+            : 'manual'
+          if (card.streamId) {
+            stoppedRunReasonRef.current.delete(card.streamId)
+          }
 
           if (!stopped && appStateRef.current.settings.agentDoneSoundEnabled) {
             const audio = new Audio(getAgentDoneSoundUrl())
@@ -1989,9 +2000,7 @@ function App() {
               type: 'appendMessages',
               columnId,
               cardId: card.id,
-              messages: [
-                createMessage('system', getLocaleText(appStateRef.current.settings.language).runStopped),
-              ],
+              messages: [createStoppedRunMessage(appStateRef.current.settings.language, stoppedRunReason)],
             })
           }
 
@@ -2024,6 +2033,9 @@ function App() {
         onError: ({ message, recoverable, recoveryMode, hint }) => {
           source.close()
           activeStreamsRef.current.delete(card.id)
+          if (card.streamId) {
+            stoppedRunReasonRef.current.delete(card.streamId)
+          }
 
           if (recoverable) {
             const retryCount = streamRetryCountRef.current.get(card.id) ?? 0
@@ -2150,6 +2162,7 @@ function App() {
     activeStreamsRef.current.clear()
     queuedSendRequestsRef.current.clear()
     queueFollowUpDuringStreamRef.current.clear()
+    stoppedRunReasonRef.current.clear()
     streamRetryCountRef.current.clear()
   }, [])
 
@@ -2565,7 +2578,7 @@ function App() {
         isCompactBoundaryMessage(latestUserMessage, card.provider)
       enqueueQueuedSend(cardId, { prompt, attachments })
       if (!shouldQueueUntilDone) {
-        await requestStopForCard(cardId)
+        await requestStopForCard(cardId, 'user-interrupt')
       }
       return
     }
@@ -3079,7 +3092,7 @@ function App() {
   }
 
   const stopCard = async (cardId: string) => {
-    await requestStopForCard(cardId)
+    await requestStopForCard(cardId, 'manual')
   }
 
   const handleReset = async () => {

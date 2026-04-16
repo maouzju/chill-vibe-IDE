@@ -5,6 +5,7 @@ import zlib from 'node:zlib'
 
 const require = createRequire(import.meta.url)
 export const WINDOWS_ZIP_ROOT_FOLDER_NAME = 'Chill Vibe IDE'
+const windowsAbsolutePathPattern = /^[A-Za-z]:[\\/]/
 
 const crcTable = new Uint32Array(256)
 
@@ -236,7 +237,12 @@ export function resolveZipEntryName(
   filePath,
   rootEntryName = path.basename(sourceDir),
 ) {
-  return `${rootEntryName}/${path.relative(sourceDir, filePath).split(path.sep).join('/')}`
+  const relativePath =
+    windowsAbsolutePathPattern.test(sourceDir) || windowsAbsolutePathPattern.test(filePath)
+      ? path.win32.relative(sourceDir, filePath)
+      : path.relative(sourceDir, filePath)
+
+  return `${rootEntryName}/${relativePath.split(/[\\/]/).join('/')}`
 }
 
 export function writeZipFromDirectory(sourceDir, zipPath, rootEntryName = path.basename(sourceDir)) {

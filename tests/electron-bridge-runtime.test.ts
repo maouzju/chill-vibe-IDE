@@ -2,12 +2,18 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 
 import { _electron as electron } from '@playwright/test'
+import {
+  ensureElectronRuntimeBuild,
+  getElectronTestRendererUrl,
+} from './ensure-electron-runtime-build.ts'
 
 test('Electron runtime injects the desktop bridge into the renderer window', async () => {
+  await ensureElectronRuntimeBuild()
+
   const env = Object.fromEntries(
     Object.entries({
       ...process.env,
-      VITE_DEV_SERVER_URL: 'http://localhost:5173',
+      VITE_DEV_SERVER_URL: getElectronTestRendererUrl(),
       CHILL_VIBE_DISABLE_SINGLE_INSTANCE_LOCK: '1',
     }).filter((entry): entry is [string, string] => typeof entry[1] === 'string'),
   )

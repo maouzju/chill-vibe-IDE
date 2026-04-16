@@ -1,0 +1,3 @@
+display_name: Chill Vibe Regression
+short_description: Run the repo's required risk and full regression workflow for Electron-first changes.
+default_prompt: Run the Chill Vibe full regression workflow from the repo root, including quiet pnpm test:risk passes after risky changes, pnpm test:full before handoff, and pnpm dev:restart before finishing on Electron work.

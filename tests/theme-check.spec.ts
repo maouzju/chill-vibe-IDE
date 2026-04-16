@@ -1164,6 +1164,57 @@ const createEditedFilesStructuredState = (): AppState => {
   return state
 }
 
+const createOverflowEditedFilesStructuredState = (): AppState => {
+  const state = createMockState()
+  state.settings.language = 'zh-CN'
+  state.columns[0]!.width = 420
+  state.columns[0]!.cards[0]!.messages = [
+    {
+      id: 'edits-overflow-1',
+      role: 'assistant',
+      content: '',
+      createdAt: '2026-04-05T12:06:30.000Z',
+      meta: {
+        provider: 'codex',
+        kind: 'edits',
+        structuredData: JSON.stringify({
+          itemId: 'workspace_edits_overflow',
+          status: 'completed',
+          files: [
+            {
+              path: 'D:\\Git\\baztato\\client\\Assets\\Scripts\\Game\\Backpack\\System\\BazEffects\\EconomyShop\\BazEffectGuaranteedPatchedItemOnShopRefreshPerRound.cs.meta',
+              kind: 'added',
+              addedLines: 11,
+              removedLines: 0,
+              patch: [
+                'diff --git a/Assets/Scripts/Game/Backpack/System/BazEffects/EconomyShop/BazEffectGuaranteedPatchedItemOnShopRefreshPerRound.cs.meta b/Assets/Scripts/Game/Backpack/System/BazEffects/EconomyShop/BazEffectGuaranteedPatchedItemOnShopRefreshPerRound.cs.meta',
+                'new file mode 100644',
+                'index 0000000..abc1234',
+                '--- /dev/null',
+                '+++ b/Assets/Scripts/Game/Backpack/System/BazEffects/EconomyShop/BazEffectGuaranteedPatchedItemOnShopRefreshPerRound.cs.meta',
+                '@@ -0,0 +1,11 @@',
+                '+fileFormatVersion: 2',
+                '+guid: 701e2295416e4ba7bc943e7bf9fbfec3',
+                '+MonoImporter:',
+                '+  externalObjects: {}',
+                '+  serializedVersion: 2',
+                '+  defaultReferences: []',
+                '+  executionOrder: 0',
+                '+  icon: {fileID: 0}',
+                '+  userData: ',
+                '+  assetBundleName: ',
+                '+  assetBundleVariant: ',
+              ].join('\n'),
+            },
+          ],
+        }),
+      },
+    },
+  ]
+
+  return state
+}
+
 const createOverflowStructuredState = (): AppState => {
   const state = createMockState()
   state.settings.language = 'en'
@@ -4264,6 +4315,44 @@ test('structured edited-file blocks stay legible across themes', async ({ page }
   expect(maxChannel(lightDiffBackground)).toBeGreaterThan(180)
 
   await expect(editsCard).toHaveScreenshot('structured-edits-card-light.png', {
+    animations: 'disabled',
+    caret: 'hide',
+  })
+})
+
+test('structured edited-file overflow actions stay quiet across themes', async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 900 })
+  await mockAppApis(page, { state: createOverflowEditedFilesStructuredState() })
+  await page.goto(appUrl)
+  await page.locator('.structured-edits-card').first().waitFor()
+
+  const editsCard = page.locator('.structured-edits-card').first()
+  const preview = editsCard.locator('.structured-preview-text').first()
+  const viewDetailsButton = editsCard.locator('.structured-preview-footer .structured-preview-trigger')
+  const settingsTab = page.locator('#app-tab-settings')
+  const ambienceTab = page.locator('#app-tab-ambience')
+  const lightThemeButton = page.locator('#app-panel-settings .theme-toggle').first().locator('.theme-chip').first()
+
+  await expect(editsCard).toContainText('已编辑文件')
+  await expect(editsCard).toContainText('BazEffectGuaranteedPatchedItemOnShopRefreshPerRound.cs.meta')
+  await expect(editsCard).toContainText('新增')
+  await expect(editsCard).toContainText('+11')
+  await expect(preview).not.toContainText('new file mode')
+  await expect(viewDetailsButton).toBeVisible()
+  await expect(viewDetailsButton).toHaveText('查看全部')
+
+  await expect(editsCard).toHaveScreenshot('structured-edits-card-overflow-dark.png', {
+    animations: 'disabled',
+    caret: 'hide',
+  })
+
+  await settingsTab.click()
+  await lightThemeButton.click()
+  await expect(page.locator('html')).toHaveAttribute('data-theme', 'light')
+  await ambienceTab.click()
+
+  await expect(viewDetailsButton).toBeVisible()
+  await expect(editsCard).toHaveScreenshot('structured-edits-card-overflow-light.png', {
     animations: 'disabled',
     caret: 'hide',
   })

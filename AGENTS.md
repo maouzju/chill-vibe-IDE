@@ -80,11 +80,13 @@ Applies to: `AGENTS.md`, `CLAUDE.md`, `docs/`, ESLint config, CI scripts, `packa
 
 - For routine Windows handoff builds, default to a zipped app payload instead of a single-file `portable` executable.
 - Windows zip handoff artifacts should extract into a single top-level `Chill Vibe IDE` folder instead of spilling loose binaries into the unzip target.
+- Every published version release must include a matching Windows `.zip` asset on the cloud/GitHub release; a versioned release is not complete until that zip is uploaded and visible on the release page.
 - Only build `portable` or `nsis` artifacts when the user explicitly asks for them.
 - If a collaborator has made it clear they expect a ready-to-run Windows handoff, do not stop at handing over a `.zip` path; also provide a no-manual-unzip path by extracting to `dist/release/win-unpacked` or by producing the installer they asked for, and state the exact executable or installer path.
 - Prefer the repo scripts (`pnpm electron:build`, `pnpm electron:build:zip`, `pnpm electron:build:installer`, `pnpm electron:build:portable`) over ad-hoc `electron-builder` commands so the packaging mode stays consistent.
 - For manual Windows handoff packaging, prefer a fresh timestamped output root such as `dist/release-YYYYMMDD-HHmmss` so side-by-side zip extraction and reruns do not collide with an older `win-unpacked`.
 - Keep a simple runnable `.bat` entry under `dist\` for the timestamped packaging flow when a collaborator asks for a double-clickable handoff build command.
+- When publishing or refreshing a GitHub release, verify the release asset list after upload and include the final zip asset name plus direct download path in the handoff instead of assuming the CLI upload completed just because the command exited.
 
 ## Theme Safety
 
@@ -276,6 +278,8 @@ A living list of traps that have wasted time before. **When you hit a new pitfal
 | 81 | The first-open onboarding Playwright flow can stay stuck on “Not started yet” if the mock only flips setup completion from a later `/api/setup/status` poll after `/api/setup/run` | For onboarding wizard coverage that is really about the happy-path guide flow, mock `/api/setup/run` to return success directly instead of depending on asynchronous status polling semantics. |
 | 82 | Codex synthetic `<ask-user-question>` replies can stream raw XML into the live assistant bubble before the final structured `ask-user` activity arrives | If the activity is only appended, the transcript shows both the XML blob and a second ask-user card; replace the in-flight assistant bubble when promoting that activity. |
 | 83 | `pnpm legal:check` can disagree between Windows dev and Ubuntu CI because `pnpm licenses list --json` includes platform-specific optional binary packages | Generate and verify the legal inventory with `--no-optional`, or the checked-in `THIRD_PARTY_LICENSES.md` will churn by OS and fail CI even when dependencies did not really change. |
+| 84 | Large GitHub release zip uploads can take long enough that a foreground `gh release upload` looks hung even though the transfer is still the critical path | Start the upload in the background or with generous timeout, then poll the release asset list instead of blocking the whole session and assuming a slow upload means failure. |
+| 85 | Replacing a release asset in place with `gh release upload --clobber` can leave the release temporarily assetless if the old file is removed before the new large upload is confirmed | For slow or flaky large-file uploads, prefer uploading under a unique temporary asset name first, verify it appears on the release, then clean up or rename instead of deleting the only downloadable zip up front. |
 
 ### Self-maintenance rule
 

@@ -302,3 +302,60 @@ export const createStructuredActivityMessage = (
     structuredData: JSON.stringify(payload),
   },
 })
+
+export const finalizeStructuredActivityMessage = (
+  messages: ChatMessage[],
+  streamingMessageId: string | undefined,
+  provider: Provider,
+  streamId: string,
+  payload: StreamActivity,
+): ChatMessage[] => {
+  const nextMessage = createStructuredActivityMessage(provider, streamId, payload)
+  const streamingIndex =
+    streamingMessageId
+      ? messages.findIndex((message) => message.id === streamingMessageId)
+      : -1
+  const existingStructuredIndex = messages.findIndex((message) => message.id === nextMessage.id)
+  const createdAt =
+    messages[existingStructuredIndex]?.createdAt ??
+    (streamingIndex >= 0 ? messages[streamingIndex]?.createdAt : undefined) ??
+    nextMessage.createdAt
+
+  const nextMessages =
+    streamingIndex >= 0 && messages[streamingIndex]?.id !== nextMessage.id
+      ? messages.filter((message) => message.id !== streamingMessageId)
+      : [...messages]
+
+  const nextIndex = nextMessages.findIndex((message) => message.id === nextMessage.id)
+
+  if (nextIndex < 0) {
+    return [
+      ...nextMessages,
+      {
+        ...nextMessage,
+        createdAt,
+      },
+    ]
+  }
+
+  const existing = nextMessages[nextIndex]!
+
+  if (
+    existing.content === nextMessage.content &&
+    existing.meta?.provider === nextMessage.meta?.provider &&
+    existing.meta?.itemId === nextMessage.meta?.itemId &&
+    existing.meta?.kind === nextMessage.meta?.kind &&
+    existing.meta?.structuredData === nextMessage.meta?.structuredData
+  ) {
+    return nextMessages
+  }
+
+  return [
+    ...nextMessages.slice(0, nextIndex),
+    {
+      ...nextMessage,
+      createdAt,
+    },
+    ...nextMessages.slice(nextIndex + 1),
+  ]
+}

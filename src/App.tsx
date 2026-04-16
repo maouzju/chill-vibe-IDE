@@ -117,6 +117,7 @@ import {
   createStructuredActivityMessage,
   emptyProfileDraft,
   errorMessage,
+  finalizeStructuredActivityMessage,
   finalizeStreamedAssistantMessage,
   getAgentDoneSoundUrl,
   getColumnById,
@@ -1819,6 +1820,7 @@ function App() {
           // (the agent's final answer after tool calls) creates a new message
           // instead of appending to the one that sits *before* the tool calls.
           const active = activeStreamsRef.current.get(card.id)
+          const streamingMessageId = active?.assistantMessageId
           if (active) {
             activeStreamsRef.current.set(card.id, {
               ...active,
@@ -1864,33 +1866,54 @@ function App() {
             return
           }
 
+          if (payload.kind === 'ask-user') {
+            const liveCard = getColumn(columnId)?.cards[card.id]
+
+            applyAction({
+              type: 'updateCard',
+              columnId,
+              cardId: card.id,
+              patch: {
+                messages: finalizeStructuredActivityMessage(
+                  liveCard?.messages ?? [],
+                  streamingMessageId,
+                  card.provider,
+                  card.streamId!,
+                  payload,
+                ),
+              },
+            })
+
+            // When ExitPlanMode provides a plan file, open it as a TextEditor card
+            if (payload.planFile) {
+              const col = getColumnById(appStateRef.current.columns, columnId)
+              const sourcePane = col ? findPaneForTab(col.layout, card.id) : null
+              const targetPane =
+                col && sourcePane
+                  ? findNearestLargerPane(col.layout, sourcePane.id) ?? sourcePane
+                  : null
+              if (targetPane) {
+                rememberPaneTarget(columnId, targetPane.id)
+                applyAction({
+                  type: 'addTab',
+                  columnId,
+                  paneId: targetPane.id,
+                  model: TEXTEDITOR_TOOL_MODEL,
+                  stickyNote: payload.planFile,
+                  title: 'Plan',
+                })
+              }
+            }
+
+            return
+          }
+
           applyAction({
             type: 'upsertMessages',
             columnId,
             cardId: card.id,
             messages: [createStructuredActivityMessage(card.provider, card.streamId!, payload)],
           })
-
-          // When ExitPlanMode provides a plan file, open it as a TextEditor card
-          if (payload.kind === 'ask-user' && payload.planFile) {
-            const col = getColumnById(appStateRef.current.columns, columnId)
-            const sourcePane = col ? findPaneForTab(col.layout, card.id) : null
-            const targetPane =
-              col && sourcePane
-                ? findNearestLargerPane(col.layout, sourcePane.id) ?? sourcePane
-                : null
-            if (targetPane) {
-              rememberPaneTarget(columnId, targetPane.id)
-              applyAction({
-                type: 'addTab',
-                columnId,
-                paneId: targetPane.id,
-                model: TEXTEDITOR_TOOL_MODEL,
-                stickyNote: payload.planFile,
-                title: 'Plan',
-              })
-            }
-          }
         },
         onDone: ({ stopped }) => {
           source.close()

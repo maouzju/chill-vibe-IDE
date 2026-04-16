@@ -1069,16 +1069,16 @@ describe('ideReducer pane layout', () => {
     assert.equal(pane.activeTabId, 'card-2')
   })
 });
-describe('addColumn respects provider-local model memory', () => {
-  it('does not switch providers just because global lastModel uses another provider', () => {
+describe('addColumn follows last-used provider/model when available', () => {
+  it('uses the last-used provider and model even when the last column uses another provider', () => {
     const baseState = createState()
     const state: AppState = {
       ...baseState,
-      columns: [baseState.columns[0]!],
+      columns: [baseState.columns[1]!],
       settings: {
         ...createDefaultSettings(),
         requestModels: { codex: DEFAULT_CODEX_MODEL, claude: 'claude-opus-4-6' },
-        lastModel: { provider: 'claude', model: 'claude-sonnet-4-6' },
+        lastModel: { provider: 'codex', model: DEFAULT_CODEX_MODEL },
       },
     }
 

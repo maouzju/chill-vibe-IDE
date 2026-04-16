@@ -1175,9 +1175,10 @@ export const ideReducer = (state: AppState, action: IdeAction): AppState => {
       return action.state
     case 'addColumn': {
       const lastColumn = state.columns.at(-1)
-      const provider = lastColumn?.provider ?? defaultProviderByIndex(state.columns.length)
+      const remembered = state.settings.lastModel
+      const provider =
+        remembered?.provider ?? lastColumn?.provider ?? defaultProviderByIndex(state.columns.length)
       const language = state.settings.language
-      const remembered = state.settings.lastModel?.provider === provider ? state.settings.lastModel : undefined
       const model = remembered?.model || getConfiguredModel(state.settings, provider)
       const nextColumn =
         action.column ??

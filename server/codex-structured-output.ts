@@ -19,6 +19,8 @@ const readRecord = (record: Record<string, unknown>, key: string) =>
 
 const codexAskUserTagPattern = /^<ask-user-question>\s*([\s\S]+?)\s*<\/ask-user-question>$/
 
+const codexStructuredAgentMessagePrefixPattern = /^(?:<ask-user-question>|{)/
+
 const readNullableExitCode = (record: Record<string, unknown>) => {
   if (record.exit_code === null || record.exitCode === null) {
     return null
@@ -204,6 +206,99 @@ const parseCodexAskUserActivity = (
   }
 }
 
+const readCodexCommentaryEntryText = (entry: unknown) => {
+  if (typeof entry === 'string') {
+    return entry.trim()
+  }
+
+  if (!isRecord(entry)) {
+    return null
+  }
+
+  return readString(entry, 'text')?.trim() ?? readString(entry, 'content')?.trim() ?? null
+}
+
+const parseCodexCommentaryActivity = (
+  itemId: string,
+  content: string,
+): Extract<StreamActivity, { kind: 'reasoning' }> | null => {
+  const trimmed = content.trim()
+
+  if (!trimmed.startsWith('{') || !trimmed.endsWith('}')) {
+    return null
+  }
+
+  try {
+    const parsed = JSON.parse(trimmed) as unknown
+
+    if (!isRecord(parsed)) {
+      return null
+    }
+
+    const commentary = Array.isArray(parsed.commentary) ? parsed.commentary : null
+    if (!commentary || commentary.length === 0) {
+      return null
+    }
+
+    const text = commentary
+      .map((entry) => readCodexCommentaryEntryText(entry))
+      .filter((entry): entry is string => Boolean(entry))
+      .join('\n\n')
+      .trim()
+
+    if (!text) {
+      return null
+    }
+
+    return {
+      itemId,
+      kind: 'reasoning',
+      status: 'completed',
+      text,
+    }
+  } catch {
+    return null
+  }
+}
+
+export const looksLikeCodexStructuredAgentMessage = (content: string) =>
+  codexStructuredAgentMessagePrefixPattern.test(content.trimStart())
+
+export const parseCodexAgentMessageContent = (
+  itemId: string,
+  content: string,
+): CodexStructuredStreamEvent[] => {
+  const askUserActivity = parseCodexAskUserActivity(itemId, content)
+
+  if (askUserActivity) {
+    return [
+      {
+        type: 'activity',
+        ...askUserActivity,
+      },
+    ]
+  }
+
+  const commentaryActivity = parseCodexCommentaryActivity(itemId, content)
+
+  if (commentaryActivity) {
+    return [
+      {
+        type: 'activity',
+        ...commentaryActivity,
+      },
+    ]
+  }
+
+  return [
+    {
+      type: 'assistant_message',
+      itemId,
+      content,
+    },
+  ]
+}
+
 const getCodexEventType = (event: Record<string, unknown>) => {
   const type = readString(event, 'type')
   if (type) {
@@ -386,24 +481,7 @@ export const parseCodexResponseEvent = (event: unknown): CodexStructuredStreamEv
       return []
     }
 
-    const askUserActivity = parseCodexAskUserActivity(itemId, content)
-
-    if (askUserActivity) {
-      return [
-        {
-          type: 'activity',
-          ...askUserActivity,
-        },
-      ]
-    }
-
-    return [
-      {
-        type: 'assistant_message',
-        itemId,
-        content,
-      },
-    ]
+    return parseCodexAgentMessageContent(itemId, content)
   }
 
   return []

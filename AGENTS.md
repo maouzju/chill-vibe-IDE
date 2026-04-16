@@ -281,6 +281,7 @@ A living list of traps that have wasted time before. **When you hit a new pitfal
 | 84 | Large GitHub release zip uploads can take long enough that a foreground `gh release upload` looks hung even though the transfer is still the critical path | Start the upload in the background or with generous timeout, then poll the release asset list instead of blocking the whole session and assuming a slow upload means failure. |
 | 85 | Replacing a release asset in place with `gh release upload --clobber` can leave the release temporarily assetless if the old file is removed before the new large upload is confirmed | For slow or flaky large-file uploads, prefer uploading under a unique temporary asset name first, verify it appears on the release, then clean up or rename instead of deleting the only downloadable zip up front. |
 | 86 | In GitHub CLI, `gh release upload <file>#<text>` treats the `#<text>` suffix as the asset label, not as a renamed asset filename | If you need a different release asset filename, rename/copy the local file first or patch the uploaded asset name through the API instead of assuming the `#` suffix changes the download filename. |
+| 87 | Codex app-server `item/agentMessage/delta` chunks can carry structured payloads like commentary JSON instead of user-visible prose | Forwarding those deltas straight to the renderer leaks raw JSON into chat, so buffer suspected structured deltas and let the completed item decide whether they should become reasoning / ask-user blocks. |
 
 ### Self-maintenance rule
 

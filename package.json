@@ -2,7 +2,7 @@
   "name": "chill-vibe-ide",
   "description": "Lightweight local AI IDE for running multiple Codex and Claude workspaces side-by-side.",
   "license": "MIT",
-  "version": "0.11.0",
+  "version": "0.12.0",
   "private": true,
   "type": "module",
   "main": "dist/electron/main.mjs",

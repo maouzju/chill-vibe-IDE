@@ -1484,6 +1484,15 @@ export const resolveStateRecoveryOption = async (optionId: string): Promise<AppS
 // ── Queue with async mutex ───────────────────────────────────────────────────
 
 let pendingState: { state: AppState; dataDir: string } | null = null
+let latestQueuedStateWrite: Promise<void> = Promise.resolve()
+
+const drainPendingStateWrites = () => withWriteLock(async () => {
+  while (pendingState) {
+    const toWrite = pendingState
+    pendingState = null
+    await saveStateToDataDir(toWrite.state, toWrite.dataDir)
+  }
+})
 
 export const queueSaveState = (state: AppState) => {
   const dataDir = getAppDataDir()
@@ -1492,13 +1501,27 @@ export const queueSaveState = (state: AppState) => {
     dataDir,
   }
 
-  return withWriteLock(async () => {
-    while (pendingState) {
-      const toWrite = pendingState
-      pendingState = null
-      await saveStateToDataDir(toWrite.state, toWrite.dataDir)
+  const queuedWrite = drainPendingStateWrites()
+
+  latestQueuedStateWrite = queuedWrite.catch(() => undefined)
+  return queuedWrite
+}
+
+export const waitForPendingStateWrites = async () => {
+  while (pendingState) {
+    const queuedWrite = drainPendingStateWrites()
+    latestQueuedStateWrite = queuedWrite.catch(() => undefined)
+    await queuedWrite
+  }
+
+  while (true) {
+    const activeWrite = latestQueuedStateWrite
+    await activeWrite
+
+    if (activeWrite === latestQueuedStateWrite && !pendingState) {
+      return
     }
-  })
+  }
 }
 
 export const resetState = async () => {

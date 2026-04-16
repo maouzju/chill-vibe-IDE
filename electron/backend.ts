@@ -41,6 +41,7 @@ import {
   resetState,
   resolveStateRecoveryOption as resolveStateRecoverySelection,
   saveState,
+  waitForPendingStateWrites,
 } from '../server/state-store.ts'
 import { MusicManager } from '../server/music/music-manager.ts'
 import {
@@ -158,6 +159,9 @@ export const createDesktopBackend = (deps: DesktopBackendDependencies = {}) => {
     },
     queueStateSave(state: AppState) {
       void queueSaveState(appStateSchema.parse(state))
+    },
+    async flushStateWrites() {
+      await waitForPendingStateWrites()
     },
     async resetState() {
       return resetState()

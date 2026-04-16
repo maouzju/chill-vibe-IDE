@@ -15,6 +15,10 @@ ipcRenderer.on('chat:stream-event', (_event, payload) => {
   )
 })
 
+ipcRenderer.on('app:flush-state-before-quit', () => {
+  window.dispatchEvent(new Event('chill-vibe:flush-state-before-quit'))
+})
+
 contextBridge.exposeInMainWorld('electronAPI', {
   minimizeWindow: () => ipcRenderer.invoke('window:minimize'),
   toggleMaximizeWindow: () => ipcRenderer.invoke('window:toggle-maximize') as Promise<boolean>,

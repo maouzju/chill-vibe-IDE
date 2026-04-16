@@ -73,6 +73,30 @@ export function resolveDownloadedAssetStrategy(
   return 'shell-open'
 }
 
+const getPlatformDisplayName = (platform: string) => {
+  if (platform === 'win32') {
+    return 'Windows'
+  }
+
+  if (platform === 'darwin') {
+    return 'macOS'
+  }
+
+  if (platform === 'linux') {
+    return 'Linux'
+  }
+
+  return platform
+}
+
+const buildMissingAssetError = (assets: GitHubAsset[], platform: string) => {
+  if (assets.length === 0) {
+    return 'Latest release does not have any downloadable assets yet.'
+  }
+
+  return `No downloadable ${getPlatformDisplayName(platform)} asset found in the latest release.`
+}
+
 const findAssetByExtension = (assets: GitHubAsset[], extensions: string[]) => {
   const normalizedExtensions = extensions.map((value) => value.toLowerCase())
 
@@ -121,7 +145,7 @@ export function parseReleaseResponse(
       latestVersion,
       htmlUrl: release.html_url,
       releaseNotes: release.body,
-      error: `No release asset found for platform: ${platform}`,
+      error: buildMissingAssetError(release.assets, platform),
     }
   }
 

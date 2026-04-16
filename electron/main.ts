@@ -36,6 +36,8 @@ const clientDistDir = path.resolve(moduleDir, '../client')
 app.disableHardwareAcceleration()
 const devClientUrl = process.env.VITE_DEV_SERVER_URL ?? 'http://localhost:5173'
 const quitFlushDelayMs = 750
+const quitFlushTimeoutMs = 5000
+const devRendererBootstrapDelayMs = 750
 const bypassSingleInstanceLock = process.env.CHILL_VIBE_DISABLE_SINGLE_INSTANCE_LOCK === '1'
 const desktopWorkingDirectory = resolveDesktopWorkingDirectory({ isDev, moduleDir })
 const desktopRuntimeProfilePaths = resolveDesktopRuntimeProfilePaths({ isDev, projectRoot })
@@ -86,7 +88,39 @@ function configureDesktopEnvironment() {
 
 function loadWindowUrl(win: BrowserWindow, url: string, attempts = 0) {
   void win.loadURL(url)
-    .then(() => {
+    .then(async () => {
+      if (isDev) {
+        try {
+          const didBootstrap = await win.webContents.executeJavaScript(
+            `
+              new Promise((resolve) => {
+                window.setTimeout(async () => {
+                  try {
+                    const root = document.getElementById('root')
+                    if (!root || root.childElementCount > 0) {
+                      resolve(false)
+                      return
+                    }
+
+                    await import(${JSON.stringify(`/src/main.tsx?cv-dev-boot=${Date.now()}`)})
+                    resolve(true)
+                  } catch (error) {
+                    console.error('[chill-vibe] Dev bootstrap import failed.', error)
+                    resolve(false)
+                  }
+                }, ${devRendererBootstrapDelayMs})
+              })
+            `,
+          )
+
+          if (didBootstrap) {
+            log.warn('[main] Re-ran dev renderer bootstrap after detecting an empty root shell.')
+          }
+        } catch (error) {
+          log.warn('[main] Failed to verify dev renderer bootstrap state.', error)
+        }
+      }
+
       presentWindow(win)
     })
     .catch((err: unknown) => {
@@ -105,8 +139,33 @@ function scheduleQuitAfterFlush() {
   quitAfterFlushPending = true
   quitTimer = setTimeout(() => {
     quitTimer = null
+    log.warn('[main] Pending state flush timed out; continuing quit.', {
+      windowCount: BrowserWindow.getAllWindows().length,
+    })
     app.quit()
-  }, quitFlushDelayMs)
+  }, quitFlushTimeoutMs)
+
+  void (async () => {
+    try {
+      for (const win of BrowserWindow.getAllWindows()) {
+        if (!win.isDestroyed()) {
+          win.webContents.send('app:flush-state-before-quit')
+        }
+      }
+
+      await new Promise((resolve) => setTimeout(resolve, quitFlushDelayMs))
+      await desktopBackend.flushStateWrites()
+    } catch (error) {
+      log.warn('[main] Failed to flush pending state before quit.', error)
+    } finally {
+      if (quitTimer) {
+        clearTimeout(quitTimer)
+        quitTimer = null
+      }
+    }
+
+    app.quit()
+  })()
 }
 
 function getRelaunchArgs(extraArgs: string[] = []) {

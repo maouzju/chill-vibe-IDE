@@ -16,6 +16,7 @@ import {
 } from '@primer/react'
 
 import {
+  createId,
   createAutoUrgeProfile,
   createDefaultState,
   createMessage,
@@ -2032,7 +2033,7 @@ function App() {
           persistImmediately(applyActions(actions))
           dispatchNextQueuedSend(columnId, card.id)
         },
-        onError: ({ message, recoverable, recoveryMode, hint }) => {
+        onError: ({ message, recoverable, recoveryMode, transientOnly, hint }) => {
           source.close()
           activeStreamsRef.current.delete(card.id)
           if (card.streamId) {
@@ -2043,7 +2044,10 @@ function App() {
             const retryCount = streamRetryCountRef.current.get(card.id) ?? 0
 
             if (retryCount < 6) {
-              streamRetryCountRef.current.set(card.id, retryCount + 1)
+              const shouldCountAgainstBudget = transientOnly !== true
+              if (shouldCountAgainstBudget) {
+                streamRetryCountRef.current.set(card.id, retryCount + 1)
+              }
 
               window.setTimeout(() => {
                 const liveCard = getColumn(columnId)?.cards[card.id]
@@ -2063,7 +2067,7 @@ function App() {
 
                   attachStreamToCard(columnId, liveCard)
                 }
-              }, Math.min(1500, 250 * (retryCount + 1)))
+              }, Math.min(1500, 250 * (shouldCountAgainstBudget ? retryCount + 1 : 1)))
 
               return
             }
@@ -2694,6 +2698,8 @@ function App() {
         planMode: card.planMode ?? false,
         language,
         systemPrompt: appStateRef.current.settings.systemPrompt,
+        crossProviderSkillReuseEnabled:
+          appStateRef.current.settings.crossProviderSkillReuseEnabled,
         streamId,
         sessionId: card.sessionId,
         prompt: requestPrompt,
@@ -2834,6 +2840,8 @@ function App() {
         planMode: card.planMode ?? false,
         language: appStateRef.current.settings.language,
         systemPrompt: appStateRef.current.settings.systemPrompt,
+        crossProviderSkillReuseEnabled:
+          appStateRef.current.settings.crossProviderSkillReuseEnabled,
         streamId,
         sessionId: resumeRequest.sessionId,
         prompt: resumeRequest.prompt,
@@ -2952,6 +2960,8 @@ function App() {
         planMode: card.planMode ?? false,
         language: appStateRef.current.settings.language,
         systemPrompt: appStateRef.current.settings.systemPrompt,
+        crossProviderSkillReuseEnabled:
+          appStateRef.current.settings.crossProviderSkillReuseEnabled,
         streamId,
         sessionId: card.sessionId,
         prompt: '',
@@ -3096,6 +3106,67 @@ function App() {
   const stopCard = async (cardId: string) => {
     await requestStopForCard(cardId, 'manual')
   }
+
+  const launchSpecAgent = useCallback(
+    async (
+      columnId: string,
+      paneId: string,
+      sourceCardId: string,
+      payload: {
+        title: string
+        prompt: string
+        requirementsPath: string
+        designPath: string
+        tasksPath: string
+      },
+    ) => {
+      const column = getColumn(columnId)
+      const sourceCard = column?.cards[sourceCardId]
+
+      if (!column || !sourceCard) {
+        return
+      }
+
+      const chatCardId = createId()
+      const nextState = applyAction({
+        type: 'addTab',
+        columnId,
+        paneId,
+        cardId: chatCardId,
+        title: payload.title,
+        provider: column.provider,
+        model: column.model,
+      })
+      persistImmediately(nextState)
+
+      applyAction({
+        type: 'setActiveTab',
+        columnId,
+        paneId,
+        tabId: chatCardId,
+      })
+      rememberPaneTarget(columnId, paneId)
+
+      const adjacentPane = findAdjacentPane(column.layout, paneId)
+      const targetPaneId = adjacentPane ? adjacentPane.id : paneId
+      const filesToOpen = [payload.requirementsPath, payload.designPath, payload.tasksPath]
+
+      for (const relativePath of filesToOpen) {
+        const fileName = relativePath.split('/').pop() ?? relativePath
+        applyAction({
+          type: 'addTab',
+          columnId,
+          paneId: targetPaneId,
+          title: fileName,
+          model: TEXTEDITOR_TOOL_MODEL,
+          stickyNote: relativePath,
+        })
+      }
+
+      await sendMessageRef.current?.(columnId, chatCardId, payload.prompt, [])
+    },
+    [applyAction, getColumn, persistImmediately, rememberPaneTarget],
+  )
 
   const handleReset = async () => {
     await Promise.all([...activeStreamsRef.current.keys()].map((cardId) => closeStream(cardId, true)))
@@ -4071,6 +4142,23 @@ function App() {
         </label>
 
         <p className="settings-note">{text.systemPromptNote}</p>
+
+        <label className="settings-toggle" htmlFor="cross-provider-skill-reuse-toggle">
+          <span>{text.crossProviderSkillReuseLabel}</span>
+          <input
+            id="cross-provider-skill-reuse-toggle"
+            type="checkbox"
+            checked={appState.settings.crossProviderSkillReuseEnabled}
+            onChange={(event) =>
+              applyAction({
+                type: 'updateSettings',
+                patch: { crossProviderSkillReuseEnabled: event.target.checked },
+              })
+            }
+          />
+        </label>
+
+        <p className="settings-note">{text.crossProviderSkillReuseNote}</p>
 
         <div className="settings-actions">
           <AppButton
@@ -5232,6 +5320,23 @@ function App() {
 
                 <p className="settings-note">{text.systemPromptNote}</p>
 
+                <label className="settings-toggle" htmlFor="cross-provider-skill-reuse-toggle">
+                  <span>{text.crossProviderSkillReuseLabel}</span>
+                  <input
+                    id="cross-provider-skill-reuse-toggle"
+                    type="checkbox"
+                    checked={appState.settings.crossProviderSkillReuseEnabled}
+                    onChange={(event) =>
+                      applyAction({
+                        type: 'updateSettings',
+                        patch: { crossProviderSkillReuseEnabled: event.target.checked },
+                      })
+                    }
+                  />
+                </label>
+
+                <p className="settings-note">{text.crossProviderSkillReuseNote}</p>
+
                 <div className="settings-actions">
                   <AppButton
                     type="button"
@@ -5556,6 +5661,7 @@ function App() {
             providers={providerByName}
             language={appState.settings.language}
             systemPrompt={appState.settings.systemPrompt}
+            crossProviderSkillReuseEnabled={appState.settings.crossProviderSkillReuseEnabled}
             musicAlbumCoverEnabled={appState.settings.musicAlbumCoverEnabled}
             weatherCity={appState.settings.weatherCity}
             gitAgentModel={appState.settings.gitAgentModel}
@@ -5711,6 +5817,9 @@ function App() {
                 stickyNote: relativePath,
               })
             }}
+            onLaunchSpec={(paneId, cardId, payload) =>
+              launchSpecAgent(column.id, paneId, cardId, payload)
+            }
             recentWorkspaces={appState.settings.recentWorkspaces}
             onRecordRecentWorkspace={(path) => applyAction({ type: 'recordRecentWorkspace', path })}
             onRemoveRecentWorkspaces={(paths) => applyAction({ type: 'removeRecentWorkspaces', paths })}

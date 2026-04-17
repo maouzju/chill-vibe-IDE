@@ -16,11 +16,17 @@ import { ideReducer } from '../src/state.ts'
 
 const timestamp = '2026-04-04T12:00:00.000Z'
 
-const msg = (id: string, role: ChatMessage['role'], content: string): ChatMessage => ({
+const msg = (
+  id: string,
+  role: ChatMessage['role'],
+  content: string,
+  meta?: ChatMessage['meta'],
+): ChatMessage => ({
   id,
   role,
   content,
   createdAt: timestamp,
+  ...(meta ? { meta } : {}),
 })
 
 const createCard = (overrides: Partial<ChatCard> = {}): ChatCard => ({
@@ -40,6 +46,7 @@ const createCard = (overrides: Partial<ChatCard> = {}): ChatCard => ({
   collapsed: overrides.collapsed ?? false,
   unread: overrides.unread ?? false,
   draft: overrides.draft ?? '',
+  draftAttachments: overrides.draftAttachments ?? [],
   stickyNote: overrides.stickyNote ?? '',
   brainstorm: overrides.brainstorm ?? createDefaultBrainstormState(),
   messages: overrides.messages ?? [],
@@ -78,7 +85,16 @@ describe('forkConversation', () => {
   const messages: ChatMessage[] = [
     msg('m1', 'user', 'Hello'),
     msg('m2', 'assistant', 'Hi there'),
-    msg('m3', 'user', 'How are you?'),
+    msg(
+      'm3',
+      'user',
+      'How are you?',
+      {
+        imageAttachments: JSON.stringify([
+          { id: 'att-1', fileName: 'cat.png', mimeType: 'image/png', sizeBytes: 1234 },
+        ]),
+      },
+    ),
     msg('m4', 'assistant', 'I am fine'),
   ]
 
@@ -90,7 +106,7 @@ describe('forkConversation', () => {
   })
   const state = buildState([column])
 
-  it('forks from middle message — new card has messages up to fork point', () => {
+  it('forks from a user message — new card keeps messages BEFORE the fork point and puts that prompt into draft', () => {
     const next = ideReducer(state, {
       type: 'forkConversation',
       columnId: 'col-1',
@@ -104,13 +120,19 @@ describe('forkConversation', () => {
 
     const forkedCardId = cardIds.find((id) => id !== 'card-1')!
     const forkedCard = nextColumn.cards[forkedCardId]!
-    assert.equal(forkedCard.messages.length, 3)
+    // messages stop BEFORE the forked user message
+    assert.equal(forkedCard.messages.length, 2)
     assert.equal(forkedCard.messages[0]!.id, 'm1')
     assert.equal(forkedCard.messages[1]!.id, 'm2')
-    assert.equal(forkedCard.messages[2]!.id, 'm3')
+    // prompt text lands in draft
+    assert.equal(forkedCard.draft, 'How are you?')
+    // image attachments land in draftAttachments
+    assert.deepEqual(forkedCard.draftAttachments, [
+      { id: 'att-1', fileName: 'cat.png', mimeType: 'image/png', sizeBytes: 1234 },
+    ])
   })
 
-  it('assistant selections fall back to the preceding user prompt', () => {
+  it('forking on an assistant message falls back to the preceding user prompt', () => {
     const next = ideReducer(state, {
       type: 'forkConversation',
       columnId: 'col-1',
@@ -121,8 +143,25 @@ describe('forkConversation', () => {
     const nextColumn = next.columns.find((c) => c.id === 'col-1')!
     const forkedCardId = Object.keys(nextColumn.cards).find((id) => id !== 'card-1')!
     const forkedCard = nextColumn.cards[forkedCardId]!
-    assert.equal(forkedCard.messages.length, 3)
-    assert.equal(forkedCard.messages[2]!.id, 'm3')
+    // falls back to m3 as the user prompt; messages stop before m3
+    assert.equal(forkedCard.messages.length, 2)
+    assert.equal(forkedCard.draft, 'How are you?')
+  })
+
+  it('forking on the very first user message leaves messages empty', () => {
+    const next = ideReducer(state, {
+      type: 'forkConversation',
+      columnId: 'col-1',
+      cardId: 'card-1',
+      messageId: 'm1',
+    })
+
+    const nextColumn = next.columns.find((c) => c.id === 'col-1')!
+    const forkedCardId = Object.keys(nextColumn.cards).find((id) => id !== 'card-1')!
+    const forkedCard = nextColumn.cards[forkedCardId]!
+    assert.equal(forkedCard.messages.length, 0)
+    assert.equal(forkedCard.draft, 'Hello')
+    assert.deepEqual(forkedCard.draftAttachments, [])
   })
 
   it('original card is unchanged after fork', () => {
@@ -130,7 +169,7 @@ describe('forkConversation', () => {
       type: 'forkConversation',
       columnId: 'col-1',
       cardId: 'card-1',
-      messageId: 'm2',
+      messageId: 'm3',
     })
 
     const originalCard = next.columns.find((c) => c.id === 'col-1')!.cards['card-1']!
@@ -143,7 +182,7 @@ describe('forkConversation', () => {
       type: 'forkConversation',
       columnId: 'col-1',
       cardId: 'card-1',
-      messageId: 'm2',
+      messageId: 'm3',
     })
 
     const nextColumn = next.columns.find((c) => c.id === 'col-1')!
@@ -157,7 +196,7 @@ describe('forkConversation', () => {
       type: 'forkConversation',
       columnId: 'col-1',
       cardId: 'card-1',
-      messageId: 'm2',
+      messageId: 'm3',
     })
 
     const nextColumn = next.columns.find((c) => c.id === 'col-1')!
@@ -198,26 +237,12 @@ describe('forkConversation', () => {
     assert.equal(next, state)
   })
 
-  it('fork from the last assistant message stops at the previous user prompt', () => {
-    const next = ideReducer(state, {
-      type: 'forkConversation',
-      columnId: 'col-1',
-      cardId: 'card-1',
-      messageId: 'm4',
-    })
-
-    const nextColumn = next.columns.find((c) => c.id === 'col-1')!
-    const forkedCardId = Object.keys(nextColumn.cards).find((id) => id !== 'card-1')!
-    const forkedCard = nextColumn.cards[forkedCardId]!
-    assert.equal(forkedCard.messages.length, 3)
-  })
-
   it('fork title includes fork suffix', () => {
     const next = ideReducer(state, {
       type: 'forkConversation',
       columnId: 'col-1',
       cardId: 'card-1',
-      messageId: 'm2',
+      messageId: 'm3',
     })
 
     const nextColumn = next.columns.find((c) => c.id === 'col-1')!

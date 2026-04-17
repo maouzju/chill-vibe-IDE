@@ -10,6 +10,7 @@ import type {
 import { createPortal } from 'react-dom'
 
 import {
+  getImageAttachmentUrl,
   providerSupportsImageAttachments,
 } from '../../shared/chat-attachments'
 import {
@@ -21,6 +22,7 @@ import {
   FILETREE_TOOL_MODEL,
   GIT_TOOL_MODEL,
   MUSIC_TOOL_MODEL,
+  SPEC_TOOL_MODEL,
   STICKYNOTE_TOOL_MODEL,
   TEXTEDITOR_TOOL_MODEL,
   WEATHER_TOOL_MODEL,
@@ -79,6 +81,7 @@ import { StickyNoteCard } from './StickyNoteCard'
 import { FileTreeCard } from './FileTreeCard'
 import { TextEditorCard } from './TextEditorCard'
 import { BrainstormCard } from './BrainstormCard'
+import { SpecToolCard } from './SpecToolCard'
 import { resolveBrainstormRequestTarget } from './brainstorm-card-utils'
 import { MessageBubble, StreamingIndicator } from './MessageBubble'
 import {
@@ -102,6 +105,7 @@ import {
   StickyNoteIcon,
   StopIcon,
 } from './Icons'
+import { getSpecToolText } from './tool-card-text'
 
 let lastFocusedCardId: string | null = null
 const supportedImageMimeTypes = new Set(['image/png', 'image/jpeg', 'image/webp', 'image/gif'])
@@ -114,11 +118,19 @@ const emptyCompactMessageWindow: CompactMessageWindow = {
 }
 const compactHistoryRevealBatchSize = 32
 
-type PendingAttachment = {
-  id: string
-  file: File
-  previewUrl: string
-}
+type PendingAttachment =
+  | {
+      kind: 'local'
+      id: string
+      file: File
+      previewUrl: string
+    }
+  | {
+      kind: 'uploaded'
+      id: string
+      attachment: ImageAttachment
+      previewUrl: string
+    }
 
 type EmptyStateToolEntry = {
   model: string
@@ -172,6 +184,7 @@ type ChatCardProps = {
   workspacePath: string
   language: AppLanguage
   systemPrompt: string
+  crossProviderSkillReuseEnabled: boolean
   musicAlbumCoverEnabled: boolean
   weatherCity: string
   gitAgentModel: string
@@ -202,12 +215,20 @@ type ChatCardProps = {
         | 'brainstorm'
         | 'autoUrgeActive'
         | 'autoUrgeProfileId'
+        | 'draftAttachments'
       >
     >,
   ) => void
   onChangeTitle: (title: string) => void
   onForkConversation?: (messageId: string) => void
   onOpenFile?: (relativePath: string) => void
+  onLaunchSpec?: (payload: {
+    title: string
+    prompt: string
+    requirementsPath: string
+    designPath: string
+    tasksPath: string
+  }) => Promise<void>
   isRestored: boolean
   onRestoredAnimationEnd: () => void
   chromeMode?: 'card' | 'pane'
@@ -261,6 +282,9 @@ const getModelOptionIcon = (option: ModelOption): ReactNode => {
   if (option.model === TEXTEDITOR_TOOL_MODEL) {
     return <FileTextIcon className="model-option-icon" aria-hidden="true" />
   }
+  if (option.model === SPEC_TOOL_MODEL) {
+    return <FileTextIcon className="model-option-icon" aria-hidden="true" />
+  }
   if (option.provider === 'claude') {
     return <ClaudeIcon className="model-option-icon" aria-hidden="true" />
   }
@@ -269,6 +293,7 @@ const getModelOptionIcon = (option: ModelOption): ReactNode => {
 
 const hiddenModelPickerToolModels = new Set([
   GIT_TOOL_MODEL,
+  SPEC_TOOL_MODEL,
   STICKYNOTE_TOOL_MODEL,
   FILETREE_TOOL_MODEL,
   MUSIC_TOOL_MODEL,
@@ -287,6 +312,7 @@ const hiddenBrainstormRequestModels = new Set([
 ])
 const getEmptyStateToolEntry = (
   model: string,
+  language: AppLanguage,
   text: ReturnType<typeof getLocaleText>,
 ): EmptyStateToolEntry | null => {
   if (model === GIT_TOOL_MODEL) {
@@ -313,6 +339,19 @@ const getEmptyStateToolEntry = (
       title: text.emptyStateFilesTitle,
       description: text.emptyStateFilesDescription,
       icon: <FolderIcon aria-hidden="true" />,
+    }
+  }
+
+  if (model === SPEC_TOOL_MODEL) {
+    const specText = getSpecToolText(language)
+    return {
+      model,
+      title: 'SPEC',
+      description:
+        specText.emptyTitle === 'New SPEC'
+          ? 'Write requirements, design, and tasks before handing implementation to the agent.'
+          : '先写需求、设计和任务，再把实现交给 Agent。',
+      icon: <FileTextIcon aria-hidden="true" />,
     }
   }
 
@@ -371,6 +410,10 @@ const readFileAsDataUrl = (file: File) =>
   })
 
 const uploadPendingImage = async (attachment: PendingAttachment): Promise<ImageAttachment> => {
+  if (attachment.kind === 'uploaded') {
+    return attachment.attachment
+  }
+
   const dataUrl = await readFileAsDataUrl(attachment.file)
   const base64Index = dataUrl.indexOf(',')
 
@@ -385,8 +428,16 @@ const uploadPendingImage = async (attachment: PendingAttachment): Promise<ImageA
   })
 }
 
+const hydrateDraftAttachments = (attachments: ImageAttachment[]): PendingAttachment[] =>
+  attachments.map((attachment) => ({
+    kind: 'uploaded',
+    id: attachment.id,
+    attachment,
+    previewUrl: getImageAttachmentUrl(attachment.id),
+  }))
+
 const cardHeaderControlSelector =
-  'button, select, input, textarea, a, [role="button"], [role="link"], [contenteditable="true"], [data-card-header-control="true"]'
+  'button, label, select, input, textarea, a, [role="button"], [role="link"], [contenteditable="true"], [data-card-header-control="true"]'
 
 const isCardHeaderControlTarget = (target: EventTarget | null) =>
   target instanceof Element && target.closest(cardHeaderControlSelector) !== null
@@ -397,6 +448,7 @@ const areChatCardPropsEqual = (previous: ChatCardProps, next: ChatCardProps) =>
   previous.workspacePath === next.workspacePath &&
   previous.language === next.language &&
   previous.systemPrompt === next.systemPrompt &&
+  previous.crossProviderSkillReuseEnabled === next.crossProviderSkillReuseEnabled &&
   previous.musicAlbumCoverEnabled === next.musicAlbumCoverEnabled &&
   previous.weatherCity === next.weatherCity &&
   previous.gitAgentModel === next.gitAgentModel &&
@@ -860,6 +912,7 @@ const ChatCardView = ({
   workspacePath,
   language,
   systemPrompt,
+  crossProviderSkillReuseEnabled,
   musicAlbumCoverEnabled,
   weatherCity,
   gitAgentModel,
@@ -885,6 +938,7 @@ const ChatCardView = ({
   onChangeTitle,
   onForkConversation,
   onOpenFile,
+  onLaunchSpec,
   isRestored,
   onRestoredAnimationEnd,
   chromeMode = 'card',
@@ -907,7 +961,9 @@ const ChatCardView = ({
   const [slashCommandsStatus, setSlashCommandsStatus] = useState<'idle' | 'loading' | 'ready' | 'error'>('idle')
   const [selectedSlashIndex, setSelectedSlashIndex] = useState(0)
   const [slashMenuDismissed, setSlashMenuDismissed] = useState(false)
-  const [pendingAttachments, setPendingAttachments] = useState<PendingAttachment[]>([])
+  const [pendingAttachments, setPendingAttachments] = useState<PendingAttachment[]>(() =>
+    hydrateDraftAttachments(card.draftAttachments ?? []),
+  )
   const [composerError, setComposerError] = useState<string | null>(null)
   const [askUserAnswers, setAskUserAnswers] = useState<Record<string, string>>({})
   const [modelMenuOpen, setModelMenuOpen] = useState(false)
@@ -988,6 +1044,7 @@ const ChatCardView = ({
   const isFileTreeCard = card.model === FILETREE_TOOL_MODEL
   const isBrainstormCard = card.model === BRAINSTORM_TOOL_MODEL
   const isTextEditorCard = card.model === TEXTEDITOR_TOOL_MODEL
+  const isSpecToolCard = card.model === SPEC_TOOL_MODEL
   const isTopbarToolCard = isMusicToolCard || isWhiteNoiseCard || isWeatherCard
   const isToolCard =
     isGitToolCard ||
@@ -997,7 +1054,8 @@ const ChatCardView = ({
     isStickyNoteCard ||
     isFileTreeCard ||
     isBrainstormCard ||
-    isTextEditorCard
+    isTextEditorCard ||
+    isSpecToolCard
   const usesPaneChrome = chromeMode === 'pane'
   const suspendPaneRuntimeEffects = usesPaneChrome && !isActive
   const deferInactivePaneChatBody = suspendPaneRuntimeEffects && !isToolCard
@@ -1041,6 +1099,8 @@ const ChatCardView = ({
       ? text.stickyNoteTitle
       : isBrainstormCard
         ? text.brainstormTitle
+        : isSpecToolCard
+          ? 'SPEC'
         : text.newChat)
 
   // Draft persistence is decoupled from the live textarea. Fast typing updates
@@ -1203,6 +1263,19 @@ const ChatCardView = ({
     syncDraftFromCard(card.draft ?? '')
   }, [card.draft, card.id, syncDraftFromCard])
 
+  const hydratedAttachmentsCardIdRef = useRef(card.id)
+  useEffect(() => {
+    if (hydratedAttachmentsCardIdRef.current === card.id) return
+    // Card switched (e.g. fork created a new tab) — pull the persisted draft attachments in.
+    for (const existing of pendingAttachmentsRef.current) {
+      if (existing.kind === 'local') {
+        URL.revokeObjectURL(existing.previewUrl)
+      }
+    }
+    setPendingAttachments(hydrateDraftAttachments(card.draftAttachments ?? []))
+    hydratedAttachmentsCardIdRef.current = card.id
+  }, [card.id, card.draftAttachments])
+
   useEffect(() => {
     scheduleComposerResize()
 
@@ -1296,7 +1369,9 @@ const ChatCardView = ({
   useEffect(
     () => () => {
       for (const attachment of pendingAttachmentsRef.current) {
-        URL.revokeObjectURL(attachment.previewUrl)
+        if (attachment.kind === 'local') {
+          URL.revokeObjectURL(attachment.previewUrl)
+        }
       }
     },
     [],
@@ -1829,6 +1904,7 @@ const ChatCardView = ({
       provider: card.provider,
       workspacePath,
       language,
+      crossProviderSkillReuseEnabled,
     })
       .then((commands) => {
         if (cancelled) {
@@ -1850,7 +1926,16 @@ const ChatCardView = ({
     return () => {
       cancelled = true
     }
-  }, [card.provider, hasWorkspacePath, isToolCard, language, localSlashCommands, slashCommandsEnabled, workspacePath])
+  }, [
+    card.provider,
+    crossProviderSkillReuseEnabled,
+    hasWorkspacePath,
+    isToolCard,
+    language,
+    localSlashCommands,
+    slashCommandsEnabled,
+    workspacePath,
+  ])
 
   const slashCommands = hasWorkspacePath && slashCommandsEnabled ? remoteSlashCommands : localSlashCommands
   const effectiveSlashCommandsStatus =
@@ -1987,7 +2072,8 @@ const ChatCardView = ({
     setComposerError(null)
     setPendingAttachments((current) => [
       ...current,
-      ...imageFiles.map((file) => ({
+      ...imageFiles.map<PendingAttachment>((file) => ({
+        kind: 'local',
         id: crypto.randomUUID(),
         file,
         previewUrl: URL.createObjectURL(file),
@@ -2011,7 +2097,9 @@ const ChatCardView = ({
     await onSend(prompt, attachments)
 
     for (const attachment of pendingAttachments) {
-      URL.revokeObjectURL(attachment.previewUrl)
+      if (attachment.kind === 'local') {
+        URL.revokeObjectURL(attachment.previewUrl)
+      }
     }
 
     draftValueRef.current = ''
@@ -2024,6 +2112,9 @@ const ChatCardView = ({
     setComposerError(null)
     discardPendingDraftSync()
     onDraftChange('')
+    if ((card.draftAttachments ?? []).length > 0) {
+      onPatchCard({ draftAttachments: [] })
+    }
   }
 
   const applySlashCommand = (command: SlashCommand) => {
@@ -2168,9 +2259,9 @@ const ChatCardView = ({
       deferInactivePaneChatBody
         ? []
         : availableQuickToolModels
-          .map((model) => getEmptyStateToolEntry(model, text))
+          .map((model) => getEmptyStateToolEntry(model, language, text))
           .filter((entry): entry is EmptyStateToolEntry => entry !== null),
-    [availableQuickToolModels, deferInactivePaneChatBody, text],
+    [availableQuickToolModels, deferInactivePaneChatBody, language, text],
   )
   const showsQuickToolGrid =
     !deferInactivePaneChatBody &&
@@ -2670,6 +2761,7 @@ const ChatCardView = ({
             language={language}
             gitAgentModel={gitAgentModel}
             systemPrompt={systemPrompt}
+            crossProviderSkillReuseEnabled={crossProviderSkillReuseEnabled}
             isActive={!suspendPaneRuntimeEffects}
             requestedHeight={card.size ?? 440}
             onAgentPanelToggle={setGitAgentPanelOpen}
@@ -2706,6 +2798,17 @@ const ChatCardView = ({
         </div>
       )}
 
+      {isSpecToolCard && !isCollapsed && (
+        <SpecToolCard
+          title={card.title}
+          workspacePath={workspacePath}
+          language={language}
+          onChangeTitle={onChangeTitle}
+          onOpenFile={handleOpenWorkspaceFile}
+          onLaunchSpec={onLaunchSpec}
+        />
+      )}
+
       {isFileTreeCard && !isCollapsed && (
         <FileTreeCard
           cardId={card.id}
@@ -2720,6 +2823,7 @@ const ChatCardView = ({
           card={card}
           language={language}
           systemPrompt={systemPrompt}
+          crossProviderSkillReuseEnabled={crossProviderSkillReuseEnabled}
           providerReady={providerReady}
           workspacePath={workspacePath}
           requestModel={brainstormRequestModel}

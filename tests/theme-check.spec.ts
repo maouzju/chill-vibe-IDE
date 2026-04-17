@@ -2236,6 +2236,7 @@ test('language setting updates the interface copy in both themes', async ({ page
   await expect(page.locator('html')).toHaveAttribute('lang', 'en')
   await expect(page.getByRole('tab', { name: 'Settings' })).toHaveAttribute('aria-selected', 'true')
   await expect(page.getByRole('heading', { name: 'Interface and request settings' })).toBeVisible()
+  await expect(settingsPanel).toContainText('Reuse Codex / Claude skills')
   await page
     .locator('#app-panel-settings .theme-chip')
     .first()
@@ -2251,7 +2252,57 @@ test('language setting updates the interface copy in both themes', async ({ page
   await expect(settingsPanel).toContainText('\u754C\u9762\u548C\u8BF7\u6C42\u8BBE\u7F6E')
   await expect(settingsPanel).toContainText('\u6D45\u8272')
   await expect(settingsPanel).toContainText('\u6DF1\u8272')
+  await expect(settingsPanel).toContainText('Codex / Claude Skill 互相复用')
 })
+
+for (const scenario of [
+  {
+    language: 'zh-CN' as const,
+    theme: 'dark' as const,
+    label: 'Codex / Claude Skill 互相复用',
+    note: '斜杠菜单和实际 AI 运行都可以复用当前工作区里的 .codex/skills 和 .claude/skills',
+    snapshot: 'interface-request-settings-group-dark.png',
+  },
+  {
+    language: 'en' as const,
+    theme: 'light' as const,
+    label: 'Reuse Codex / Claude skills',
+    note: 'slash menus and provider runs can reuse local .codex/skills and .claude/skills',
+    snapshot: 'interface-request-settings-group-light.png',
+  },
+]) {
+  test(`interface settings expose cross-provider skill reuse in ${scenario.theme} theme`, async ({
+    page,
+  }) => {
+    const state = createMockState()
+    state.settings.language = scenario.language
+    state.settings.theme = scenario.theme
+
+    await mockAppApis(page, { state })
+    await page.goto(appUrl)
+    await page.locator('.card-shell').first().waitFor()
+
+    const settingsTab = page.getByRole('tab', { name: /设置|Settings/ })
+    const settingsPanel = page.locator('#app-panel-settings')
+    const crossProviderSkillToggle = settingsPanel.locator('#cross-provider-skill-reuse-toggle:visible').first()
+    const interfaceSettingsGroup = settingsPanel
+      .locator('.settings-group:visible')
+      .filter({ hasText: scenario.label })
+      .first()
+
+    await settingsTab.click()
+    await expect(settingsPanel).toBeVisible()
+    await expect(page.locator('html')).toHaveAttribute('lang', scenario.language)
+    await expect(page.locator('html')).toHaveAttribute('data-theme', scenario.theme)
+    await expect(crossProviderSkillToggle).toBeChecked()
+    await expect(interfaceSettingsGroup).toContainText(scenario.label)
+    await expect(interfaceSettingsGroup).toContainText(scenario.note)
+    await expect(interfaceSettingsGroup).toHaveScreenshot(scenario.snapshot, {
+      animations: 'disabled',
+      caret: 'hide',
+    })
+  })
+}
 
 test('card type settings group keeps tool toggles readable in both themes', async ({ page }) => {
   await mockAppApis(page)
@@ -3367,6 +3418,84 @@ test('sticky user prompts clamp long prompt previews in both themes', async ({ p
   await ambienceTab.click()
 
   await expectClampedStickyPrompt('light')
+})
+
+test('sticky user prompts keep mixed CJK/Latin long text within the message list bounds', async ({ page }) => {
+  const state = createMockState()
+  const now = Date.UTC(2026, 3, 17, 10, 0, 0)
+
+  state.settings.language = 'en'
+  state.columns[0].cards[0].messages = [
+    {
+      id: 'message-assistant-mixed-context',
+      role: 'assistant',
+      content: 'Earlier reply so the mixed prompt can scroll into sticky mode.',
+      createdAt: new Date(now - 2_000).toISOString(),
+    },
+    {
+      id: 'message-user-mixed-overflow',
+      role: 'user',
+      content:
+        '复用对方的skill省的要复制一遍这个复用功能做成设置项里的开关默认开启add就会把这些转义字符当字面路径传进去git当然找不到文件',
+      createdAt: new Date(now - 1_000).toISOString(),
+    },
+    {
+      id: 'message-assistant-mixed-reply',
+      role: 'assistant',
+      content: Array.from(
+        { length: 14 },
+        (_, index) => `Reply block ${index + 1}: ${'detail '.repeat(48)}`,
+      ).join('\n\n'),
+      createdAt: new Date(now).toISOString(),
+    },
+  ]
+
+  await mockAppApis(page, { state })
+  await page.setViewportSize({ width: 520, height: 720 })
+  await page.goto(appUrl)
+
+  const messageList = page.locator('.message-list').first()
+  const reply = page.locator('[data-renderable-id="message-assistant-mixed-reply"]').first()
+  const stickyShell = page.locator('.message-sticky-shell').first()
+  const stickyBubble = stickyShell.locator('.message-user').first()
+
+  await reply.evaluate((node) => {
+    const container = node.closest('.message-list') as HTMLElement | null
+    if (!container) {
+      return
+    }
+    const targetTop =
+      node.getBoundingClientRect().top - container.getBoundingClientRect().top + container.scrollTop
+    container.scrollTop = Math.max(targetTop + 180, 0)
+  })
+
+  await expect(stickyShell).toBeVisible()
+  await expect(stickyShell).toContainText('复用对方的skill')
+
+  const readContentBox = async (locator: Locator) =>
+    locator.evaluate((node) => {
+      const rect = node.getBoundingClientRect()
+      const style = window.getComputedStyle(node)
+      return {
+        left: rect.left + parseFloat(style.paddingLeft || '0'),
+        right: rect.right - parseFloat(style.paddingRight || '0'),
+      }
+    })
+
+  await expect.poll(async () => {
+    const cardShell = stickyBubble.locator('xpath=ancestor::*[contains(concat(" ",normalize-space(@class)," "), " card-shell ")][1]')
+    const [cardBox, bubbleRect, listBox] = await Promise.all([
+      readContentBox(cardShell),
+      readRect(stickyBubble),
+      readContentBox(messageList),
+    ])
+    return {
+      overflowsCardRight: bubbleRect.right > cardBox.right + 0.5,
+      overflowsCardLeft: bubbleRect.left < cardBox.left - 0.5,
+      overflowsListRight: bubbleRect.right > listBox.right + 0.5,
+      overflowsListLeft: bubbleRect.left < listBox.left - 0.5,
+    }
+  }).toEqual({ overflowsCardRight: false, overflowsCardLeft: false, overflowsListRight: false, overflowsListLeft: false })
 })
 
 test('sticky prompt waits until the latest image prompt has fully cleared the top edge in both themes', async ({ page }) => {
@@ -6857,13 +6986,14 @@ for (const theme of ['dark', 'light'] as const) {
     const toolButtons = paneView.locator('.chat-empty-tool-button')
 
     await expect(page.locator('.app-topbar-tool-button')).toHaveCount(0)
-    await expect(toolButtons).toHaveCount(6)
+    await expect(toolButtons).toHaveCount(7)
     await expect(toolButtons.nth(0)).toContainText(/Git/)
     await expect(toolButtons.nth(1)).toContainText(/Files/)
     await expect(toolButtons.nth(2)).toContainText(/Sticky Note/)
-    await expect(toolButtons.nth(3)).toContainText(/Weather/)
-    await expect(toolButtons.nth(4)).toContainText(/Music/)
-    await expect(toolButtons.nth(5)).toContainText(/White Noise/)
+    await expect(toolButtons.nth(3)).toContainText(/SPEC/)
+    await expect(toolButtons.nth(4)).toContainText(/Weather/)
+    await expect(toolButtons.nth(5)).toContainText(/Music/)
+    await expect(toolButtons.nth(6)).toContainText(/White Noise/)
     await expect(paneView).toHaveScreenshot(`empty-chat-tool-entries-${theme}.png`, {
       animations: 'disabled',
       caret: 'hide',
@@ -6885,9 +7015,10 @@ for (const theme of ['dark', 'light'] as const) {
       '查看仓库状态，分析改动并继续同步。',
       '打开文件树，快速浏览和跳转工作区内容。',
       '开一张便签，随手记下想法和待办。',
+      '先写需求、设计和任务，再把实现交给 Agent。',
     ]
 
-    await expect(toolButtons).toHaveCount(3)
+    await expect(toolButtons).toHaveCount(4)
 
     for (const [index, expectedDescription] of expectedDescriptions.entries()) {
       const button = toolButtons.nth(index)
@@ -6918,9 +7049,9 @@ for (const theme of ['dark', 'light'] as const) {
     const toolButtons = paneView.locator('.chat-empty-tool-button')
     const descriptions = paneView.locator('.chat-empty-tool-description')
 
-    await expect(toolButtons).toHaveCount(3)
+    await expect(toolButtons).toHaveCount(4)
 
-    for (const index of [0, 1, 2]) {
+    for (const index of [0, 1, 2, 3]) {
       const button = toolButtons.nth(index)
       const description = descriptions.nth(index)
 
@@ -6946,10 +7077,11 @@ for (const theme of ['dark', 'light'] as const) {
     const paneView = page.locator('.pane-view').first()
     const toolButtons = paneView.locator('.chat-empty-tool-button')
 
-    await expect(toolButtons).toHaveCount(3)
+    await expect(toolButtons).toHaveCount(4)
     await expect(toolButtons.nth(0)).toContainText(/Git/)
     await expect(toolButtons.nth(1)).toContainText(/Files/)
     await expect(toolButtons.nth(2)).toContainText(/Sticky Note/)
+    await expect(toolButtons.nth(3)).toContainText(/SPEC/)
     await expect(toolButtons.filter({ hasText: /Weather/ })).toHaveCount(0)
     await expect(toolButtons.filter({ hasText: /Music/ })).toHaveCount(0)
     await expect(toolButtons.filter({ hasText: /White Noise/ })).toHaveCount(0)

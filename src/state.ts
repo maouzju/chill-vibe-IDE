@@ -29,6 +29,7 @@ import {
   GIT_TOOL_MODEL,
   MUSIC_TOOL_MODEL,
   normalizeStoredModel,
+  SPEC_TOOL_MODEL,
   STICKYNOTE_TOOL_MODEL,
   TEXTEDITOR_TOOL_MODEL,
   WEATHER_TOOL_MODEL,
@@ -57,6 +58,7 @@ const toolCardModels = new Set([
   FILETREE_TOOL_MODEL,
   GIT_TOOL_MODEL,
   MUSIC_TOOL_MODEL,
+  SPEC_TOOL_MODEL,
   STICKYNOTE_TOOL_MODEL,
   TEXTEDITOR_TOOL_MODEL,
   WEATHER_TOOL_MODEL,
@@ -104,6 +106,7 @@ export type IdeAction =
           | 'experimentalWeatherEnabled'
           | 'agentDoneSoundEnabled'
           | 'agentDoneSoundVolume'
+          | 'crossProviderSkillReuseEnabled'
           | 'autoUrgeEnabled'
           | 'autoUrgeProfiles'
           | 'autoUrgeActiveProfileId'
@@ -237,6 +240,7 @@ export type IdeAction =
           | 'stickyNote'
           | 'messages'
           | 'brainstorm'
+          | 'draftAttachments'
         >
       >
     }
@@ -986,6 +990,11 @@ const selectCardModel = (
       sessionId: restoredSessionId,
       providerSessions: savedSessions,
     }
+  } else if (modelChanged) {
+    sessionPatch = {
+      sessionId: undefined,
+      providerSessions: {},
+    }
   }
 
   const updatedState = updateColumn(nextState, columnId, (currentColumn) => {
@@ -1035,6 +1044,7 @@ const buildRestoredCard = (state: AppState, entry: SessionHistoryEntry): ChatCar
   collapsed: false,
   unread: false,
   draft: '',
+  draftAttachments: [],
   stickyNote: '',
   brainstorm: createDefaultBrainstormState(),
   pm: createDefaultPmState(),
@@ -1929,6 +1939,7 @@ export const ideReducer = (state: AppState, action: IdeAction): AppState => {
         collapsed: false,
         unread: false,
         draft: '',
+        draftAttachments: [],
         stickyNote: '',
         brainstorm: createDefaultBrainstormState(),
         pm: createDefaultPmState(),
@@ -1964,7 +1975,11 @@ export const ideReducer = (state: AppState, action: IdeAction): AppState => {
               .find(({ message }) => message.role === 'user')?.index ?? -1
       if (messageIndex < 0) return state
 
-      const forkedMessages = sourceCard.messages.slice(0, messageIndex + 1)
+      const forkPointMessage = sourceCard.messages[messageIndex]!
+      // Messages BEFORE the fork point — the selected user prompt is restored into the composer instead.
+      const forkedMessages = sourceCard.messages.slice(0, messageIndex)
+      const forkedDraft = forkPointMessage.content
+      const forkedDraftAttachments = getChatMessageAttachments(forkPointMessage)
       const language = state.settings.language
 
       const forkedCard: ChatCard = {
@@ -1983,7 +1998,8 @@ export const ideReducer = (state: AppState, action: IdeAction): AppState => {
         autoUrgeProfileId: sourceCard.autoUrgeProfileId,
         collapsed: false,
         unread: false,
-        draft: '',
+        draft: forkedDraft,
+        draftAttachments: forkedDraftAttachments,
         stickyNote: '',
         brainstorm: createDefaultBrainstormState(),
         pm: sourceCard.pm ? { ...sourceCard.pm } : createDefaultPmState(),

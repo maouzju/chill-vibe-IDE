@@ -13,6 +13,7 @@ type WorkspaceColumnMemoProps = {
   providers: Record<string, ProviderStatus>
   language: AppLanguage
   systemPrompt: string
+  crossProviderSkillReuseEnabled: boolean
   musicAlbumCoverEnabled: boolean
   weatherCity: string
   gitAgentModel: string
@@ -32,6 +33,7 @@ type PaneViewMemoProps = {
   providers: Record<string, ProviderStatus>
   language: AppLanguage
   systemPrompt: string
+  crossProviderSkillReuseEnabled: boolean
   musicAlbumCoverEnabled: boolean
   weatherCity: string
   gitAgentModel: string
@@ -91,6 +93,7 @@ export const areWorkspaceColumnPropsEqual = (
   previous.providers === next.providers &&
   previous.language === next.language &&
   previous.systemPrompt === next.systemPrompt &&
+  previous.crossProviderSkillReuseEnabled === next.crossProviderSkillReuseEnabled &&
   previous.musicAlbumCoverEnabled === next.musicAlbumCoverEnabled &&
   previous.weatherCity === next.weatherCity &&
   previous.gitAgentModel === next.gitAgentModel &&
@@ -128,6 +131,7 @@ export const arePaneViewPropsEqual = (previous: PaneViewMemoProps, next: PaneVie
   previous.providers === next.providers &&
   previous.language === next.language &&
   previous.systemPrompt === next.systemPrompt &&
+  previous.crossProviderSkillReuseEnabled === next.crossProviderSkillReuseEnabled &&
   previous.musicAlbumCoverEnabled === next.musicAlbumCoverEnabled &&
   previous.weatherCity === next.weatherCity &&
   previous.gitAgentModel === next.gitAgentModel &&

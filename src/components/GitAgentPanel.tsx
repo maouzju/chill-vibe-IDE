@@ -40,6 +40,7 @@ type GitAgentPanelProps = {
   language: AppLanguage
   gitAgentModel: string
   systemPrompt: string
+  crossProviderSkillReuseEnabled: boolean
   onClose: () => void
   onStatusChange: (status: GitStatus) => void
   onAnalysisPendingChange?: (pending: boolean) => void
@@ -51,6 +52,7 @@ export const GitAgentPanel = ({
   language,
   gitAgentModel,
   systemPrompt,
+  crossProviderSkillReuseEnabled,
   onClose,
   onStatusChange,
   onAnalysisPendingChange,
@@ -80,6 +82,7 @@ export const GitAgentPanel = ({
         workspacePath,
         language,
         systemPrompt,
+        crossProviderSkillReuseEnabled,
         prompt,
         model,
         reasoningEffort,
@@ -205,7 +208,15 @@ export const GitAgentPanel = ({
         ),
       })
     }
-  }, [gitAgentModel, gitStatus, language, systemPrompt, text.commitError, workspacePath])
+  }, [
+    crossProviderSkillReuseEnabled,
+    gitAgentModel,
+    gitStatus,
+    language,
+    systemPrompt,
+    text.commitError,
+    workspacePath,
+  ])
 
   useEffect(() => {
     void startAnalysis()

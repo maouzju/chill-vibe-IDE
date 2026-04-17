@@ -43,6 +43,11 @@ import {
 import { classifyProviderStreamErrorRecovery } from './provider-stream-recovery.js'
 import { readStringPreserveWhitespace } from './provider-stream-text.js'
 import { resolveProviderCommandLaunch } from './provider-command-launch.js'
+import {
+  buildCrossProviderSkillInstructions,
+  discoverProviderSkills,
+  getReusableSkillProviders,
+} from './provider-skills.js'
 import { loadState } from './state-store.js'
 import { resilientProxyPool } from './resilient-proxy.js'
 
@@ -56,7 +61,7 @@ type StreamSink = {
   onError: (
     message: string,
     hint?: StreamErrorHint,
-    recovery?: Pick<StreamErrorEvent, 'recoverable' | 'recoveryMode'>,
+    recovery?: Pick<StreamErrorEvent, 'recoverable' | 'recoveryMode' | 'transientOnly'>,
   ) => void
 }
 
@@ -343,6 +348,16 @@ const isCodexAppServerEffortUnsupported = (message: string) => {
   )
 }
 
+const isCodexStaleResumedSession = (message: string) => {
+  const normalized = message.toLowerCase()
+  return (
+    normalized.includes('failed to load rollout') ||
+    normalized.includes('no rollout found for thread id') ||
+    normalized.includes('empty session file') ||
+    (normalized.includes('rollout') && normalized.includes('session file'))
+  )
+}
+
 const formatClaudeEffortCompatibilityNotice = (language: AppLanguage) =>
   language === 'en'
     ? 'Detected an older local Claude CLI that does not support --effort. Chill Vibe retried automatically without that flag. Please upgrade Claude CLI with: npm update -g @anthropic-ai/claude-code'
@@ -357,6 +372,11 @@ const formatCodexEffortCompatibilityNotice = (language: AppLanguage) =>
   language === 'en'
     ? 'Detected an older local Codex CLI that does not support app-server reasoning effort. Chill Vibe retried automatically without that field for this run.'
     : '检测到本地 Codex CLI 版本较旧，不支持 app-server 的 reasoning effort 字段。Chill Vibe 已自动改为不传该字段后重试本次请求。'
+
+const formatCodexStaleSessionRecoveryNotice = (language: AppLanguage) =>
+  language === 'en'
+    ? 'The resumed Codex session could not be loaded from its rollout file. Chill Vibe started a new session automatically so your latest prompt and attachments are not lost.'
+    : '恢复的 Codex 会话文件无法加载，Chill Vibe 已自动开启一个新会话，保留你本次发送的内容和附件。'
 
 const createManagedChildHandle = () => {
   let activeChild: ChildProcess | null = null
@@ -444,6 +464,10 @@ const formatProviderUnexpectedCompletion = (language: AppLanguage, provider: Pro
     ? `${label} ended without emitting a terminal completion event.`
     : `${label} 鍦ㄦ病鏈夊彂鍑虹粓姝㈠畬鎴愪簨浠剁殑鎯呭喌涓嬪氨缁撴潫浜嗐€?`
 }
+
+const transientRecoveryPlaceholderPattern = /^reconnecting(?:\s*(?:\.{3}|…))?(?:\s+\d+\s*\/\s*\d+)?$/i
+
+const isTransientRecoveryPlaceholder = (content: string) => transientRecoveryPlaceholderPattern.test(content.trim())
 
 const classifyLiveProviderStreamRecovery = (
   request: Pick<ChatRequest, 'sessionId'>,
@@ -740,21 +764,26 @@ export const getProviderSlashCommands = async ({
   provider,
   workspacePath,
   language = defaultAppLanguage,
+  crossProviderSkillReuseEnabled = true,
 }: SlashCommandRequest): Promise<SlashCommand[]> => {
   const normalizedLanguage = normalizeLanguage(language)
   const local = buildLocalSlashCommands(normalizedLanguage)
+  const skills = await discoverProviderSkills(
+    workspacePath,
+    getReusableSkillProviders(provider, crossProviderSkillReuseEnabled),
+  )
 
   if (provider === 'codex') {
     const native = buildNativeSlashCommands('codex', ['compact'], normalizedLanguage)
-    return dedupeSlashCommands([...local, ...native])
+    return dedupeSlashCommands([...local, ...native, ...skills])
   }
 
   if (provider === 'claude') {
     const native = await discoverClaudeSlashCommands(workspacePath, normalizedLanguage)
-    return dedupeSlashCommands([...local, ...native])
+    return dedupeSlashCommands([...local, ...native, ...skills])
   }
 
-  return local
+  return dedupeSlashCommands([...local, ...skills])
 }
 
 export const validateWorkspacePath = async (
@@ -957,6 +986,10 @@ const launchCodexAppServerRun = async (
   const manualCompactRequest = isManualCodexCompactRequest(request)
   const compactionActivityDeduper = createCodexCompactionActivityDeduper()
   const bufferedStructuredAgentMessageDeltas = new Map<string, string>()
+  const emittedAssistantContent = {
+    durable: false,
+    transientOnly: false,
+  }
   const pendingRequests = new Map<
     string,
     {
@@ -968,6 +1001,7 @@ const launchCodexAppServerRun = async (
   let finished = false
   let stderr = ''
   let emittedSessionId: string | null = request.sessionId?.trim() || null
+  let currentRequest = request
 
   const rejectPendingRequests = (message: string) => {
     for (const { reject } of pendingRequests.values()) {
@@ -1024,7 +1058,7 @@ const launchCodexAppServerRun = async (
 
   const startTurnWithCompatibilityFallback = async (threadId: string) => {
     try {
-      await sendRequest('turn/start', buildCodexTurnStartParams(request, threadId, attachmentPaths))
+      await sendRequest('turn/start', buildCodexTurnStartParams(currentRequest, threadId, attachmentPaths))
       return
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
@@ -1036,8 +1070,31 @@ const launchCodexAppServerRun = async (
       sink.onLog(formatCodexEffortCompatibilityNotice(language))
       await sendRequest(
         'turn/start',
-        buildCodexTurnStartParams(request, threadId, attachmentPaths, { includeEffort: false }),
+        buildCodexTurnStartParams(currentRequest, threadId, attachmentPaths, { includeEffort: false }),
       )
+    }
+  }
+
+  const startThread = async () => {
+    if (!currentRequest.sessionId) {
+      return await sendRequest('thread/start', buildCodexThreadStartParams(currentRequest, currentRequest.workspacePath))
+    }
+
+    try {
+      return await sendRequest(
+        'thread/resume',
+        buildCodexThreadResumeParams(currentRequest, currentRequest.workspacePath, currentRequest.sessionId),
+      )
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      if (!isCodexStaleResumedSession(message)) {
+        throw error
+      }
+
+      sink.onLog(formatCodexStaleSessionRecoveryNotice(language))
+      currentRequest = { ...currentRequest, sessionId: undefined }
+      emittedSessionId = null
+      return await sendRequest('thread/start', buildCodexThreadStartParams(currentRequest, currentRequest.workspacePath))
     }
   }
 
@@ -1147,6 +1204,13 @@ const launchCodexAppServerRun = async (
         const itemId = readString(params, 'itemId') ?? readString(params, 'item_id')
 
         if (delta) {
+          if (isTransientRecoveryPlaceholder(delta)) {
+            emittedAssistantContent.transientOnly = !emittedAssistantContent.durable
+          } else {
+            emittedAssistantContent.durable = true
+            emittedAssistantContent.transientOnly = false
+          }
+
           if (itemId) {
             const bufferedDelta = bufferedStructuredAgentMessageDeltas.get(itemId)
 
@@ -1206,7 +1270,10 @@ const launchCodexAppServerRun = async (
       const diagnostics = summarizeDiagnostics(stderr)
       const message = diagnostics || formatProviderUnexpectedCompletion(language, 'codex')
       const hint = classifyLaunchErrorHint(`${message}\n${stderr}`)
-      sink.onError(message, hint, classifyLiveProviderStreamRecovery(request, message, hint, emittedSessionId))
+      sink.onError(message, hint, {
+        ...classifyLiveProviderStreamRecovery(request, message, hint, emittedSessionId),
+        transientOnly: emittedAssistantContent.transientOnly && !emittedAssistantContent.durable,
+      })
       return
     }
 
@@ -1241,12 +1308,7 @@ const launchCodexAppServerRun = async (
       })
       await sendNotification('initialized')
 
-      const threadResponse = request.sessionId
-        ? await sendRequest(
-            'thread/resume',
-            buildCodexThreadResumeParams(request, request.workspacePath, request.sessionId),
-          )
-        : await sendRequest('thread/start', buildCodexThreadStartParams(request, request.workspacePath))
+      const threadResponse = await startThread()
 
       const threadRecord = isRecord(threadResponse) ? readRecord(threadResponse, 'thread') : null
       const threadId = (threadRecord ? readString(threadRecord, 'id') : undefined) ?? request.sessionId
@@ -1271,13 +1333,13 @@ const launchCodexAppServerRun = async (
       if (
         request.prompt.trim().length > 0 ||
         attachmentPaths.length > 0 ||
-        (request.sessionId && threadStatusType !== 'active')
+        (currentRequest.sessionId && threadStatusType !== 'active')
       ) {
         await startTurnWithCompatibilityFallback(threadId)
         return
       }
 
-      if (request.sessionId) {
+      if (currentRequest.sessionId) {
         return
       }
 
@@ -1293,26 +1355,51 @@ const launchCodexAppServerRun = async (
 
 export const launchProviderRun = async (request: ChatRequest, sink: StreamSink) => {
   const language = normalizeLanguage(request.language)
+  let currentRequest = request
 
-  if (request.attachments.length > 0 && !providerSupportsImageAttachments(request.provider)) {
-    sink.onError(formatImageAttachmentsUnsupported(language, request.provider))
+  try {
+    const crossProviderSkillInstructions = await buildCrossProviderSkillInstructions(request)
+
+    if (crossProviderSkillInstructions) {
+      currentRequest = {
+        ...currentRequest,
+        systemPrompt: [currentRequest.systemPrompt, crossProviderSkillInstructions]
+          .filter((part) => part.trim().length > 0)
+          .join('\n\n'),
+      }
+    }
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    sink.onLog(
+      language === 'en'
+        ? `Unable to load cross-provider skills; continuing without them. ${message}`
+        : `无法加载跨 Provider skills，已继续本次运行但不注入它们。${message}`,
+    )
+    currentRequest = request
+  }
+
+  if (
+    currentRequest.attachments.length > 0 &&
+    !providerSupportsImageAttachments(currentRequest.provider)
+  ) {
+    sink.onError(formatImageAttachmentsUnsupported(language, currentRequest.provider))
     return null
   }
 
   let attachmentPaths: string[] = []
 
-  if (request.attachments.length > 0) {
+  if (currentRequest.attachments.length > 0) {
     try {
-      attachmentPaths = await resolveAttachmentPaths(request.attachments)
+      attachmentPaths = await resolveAttachmentPaths(currentRequest.attachments)
     } catch (error) {
       sink.onError(error instanceof Error ? error.message : 'Unable to read the pasted image.')
       return null
     }
   }
-  const runtime = await resolveProviderRuntime(request.provider)
+  const runtime = await resolveProviderRuntime(currentRequest.provider)
 
-  if (request.provider === 'codex') {
-    return launchCodexAppServerRun(request, sink, language, runtime, attachmentPaths)
+  if (currentRequest.provider === 'codex') {
+    return launchCodexAppServerRun(currentRequest, sink, language, runtime, attachmentPaths)
   }
 
   const parseClaudeStructuredOutput = createClaudeStructuredOutputParser(language)
@@ -1320,7 +1407,6 @@ export const launchProviderRun = async (request: ChatRequest, sink: StreamSink) 
   let finished = false
   let fallbackAttempted = false
   let staleSessionFallbackAttempted = false
-  let currentRequest: ChatRequest = request
 
   const startClaudeAttempt = async (includeEffort: boolean) => {
     const args = [
@@ -1329,9 +1415,9 @@ export const launchProviderRun = async (request: ChatRequest, sink: StreamSink) 
     ]
 
     const child = await spawnProvider(
-      request.provider,
+      currentRequest.provider,
       args,
-      request.workspacePath,
+      currentRequest.workspacePath,
       sink,
       language,
       runtime.env,
@@ -1346,10 +1432,10 @@ export const launchProviderRun = async (request: ChatRequest, sink: StreamSink) 
     managedChild.setActiveChild(child)
 
     if (!child.stdout || !child.stderr) {
-      const message = formatProviderUnexpectedCompletion(language, request.provider)
+      const message = formatProviderUnexpectedCompletion(language, currentRequest.provider)
       finished = true
       managedChild.setActiveChild(null)
-      sink.onError(message, undefined, classifyProviderStreamErrorRecovery(request, message))
+      sink.onError(message, undefined, classifyProviderStreamErrorRecovery(currentRequest, message))
       child.kill()
       return false
     }
@@ -1357,7 +1443,7 @@ export const launchProviderRun = async (request: ChatRequest, sink: StreamSink) 
     let sawClaudeDelta = false
     let sawClaudeStreamOutput = false
     let stderr = ''
-    let emittedSessionId: string | null = request.sessionId?.trim() || null
+    let emittedSessionId: string | null = currentRequest.sessionId?.trim() || null
 
     const stdoutLines = readLines(child.stdout, (line) => {
       if (!line.trim()) {
@@ -1458,8 +1544,8 @@ export const launchProviderRun = async (request: ChatRequest, sink: StreamSink) 
       const diagnostics = summarizeDiagnostics(stderr)
       const message =
         code === 0
-          ? diagnostics || formatProviderUnexpectedCompletion(language, request.provider)
-          : diagnostics || formatProviderExit(language, request.provider, code)
+          ? diagnostics || formatProviderUnexpectedCompletion(language, currentRequest.provider)
+          : diagnostics || formatProviderExit(language, currentRequest.provider, code)
       const detail = `${message}\n${stderr}`
 
       if (
@@ -1494,7 +1580,7 @@ export const launchProviderRun = async (request: ChatRequest, sink: StreamSink) 
       finished = true
       managedChild.setActiveChild(null)
       const hint = classifyLaunchErrorHint(detail)
-      sink.onError(message, hint, classifyLiveProviderStreamRecovery(request, message, hint, emittedSessionId))
+      sink.onError(message, hint, classifyLiveProviderStreamRecovery(currentRequest, message, hint, emittedSessionId))
     })
 
     child.on('error', (error) => {
@@ -1508,7 +1594,7 @@ export const launchProviderRun = async (request: ChatRequest, sink: StreamSink) 
       stdoutLines.close()
       stderrLines.close()
       const hint = classifyLaunchErrorHint(error.message)
-      sink.onError(error.message, hint, classifyLiveProviderStreamRecovery(request, error.message, hint, emittedSessionId))
+      sink.onError(error.message, hint, classifyLiveProviderStreamRecovery(currentRequest, error.message, hint, emittedSessionId))
     })
 
     return true

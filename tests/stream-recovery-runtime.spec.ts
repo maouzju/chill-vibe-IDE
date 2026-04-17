@@ -19,6 +19,15 @@ const emitDesktopStreamEvent = async (page: Page, streamId: string, eventName: s
   )
 }
 
+const hasDesktopStreamSubscription = async (page: Page, streamId: string) =>
+  page.evaluate((targetStreamId) => {
+    const bridge = window as typeof window & {
+      __hasMockDesktopStreamSubscription: (streamId: string) => boolean
+    }
+
+    return bridge.__hasMockDesktopStreamSubscription(targetStreamId)
+  }, streamId)
+
 const installMockDesktopBridge = async (page: Page) => {
   await page.addInitScript(() => {
     const subscriptionsByStream = new Map<string, Set<string>>()
@@ -44,6 +53,15 @@ const installMockDesktopBridge = async (page: Page) => {
             }),
           )
         }
+      },
+    })
+
+    Object.defineProperty(window, '__hasMockDesktopStreamSubscription', {
+      configurable: true,
+      writable: true,
+      value: (streamId: string) => {
+        const subscriptions = subscriptionsByStream.get(streamId)
+        return Boolean(subscriptions && subscriptions.size > 0)
       },
     })
 
@@ -274,6 +292,7 @@ test('recoverable streaming errors resume the session instead of stopping immedi
   await page.goto('http://localhost:5173')
 
   await expect(page.locator('.pane-tab-panel.is-active .composer textarea').first()).toBeVisible()
+  await expect.poll(() => hasDesktopStreamSubscription(page, 'stream-1')).toBe(true)
 
   await emitDesktopStreamEvent(page, 'stream-1', 'error', {
     message: 'Codex ended without emitting a terminal completion event.',
@@ -295,6 +314,36 @@ test('recoverable streaming errors resume the session instead of stopping immedi
   await expect.poll(() => mock.readState().columns[0]?.cards['card-1']?.streamId).toBe('stream-2')
 
   await emitDesktopStreamEvent(page, 'stream-2', 'done', {})
+
+  await expect.poll(() => mock.readState().columns[0]?.cards['card-1']?.status).toBe('idle')
+})
+
+test('transient-only reconnect errors do not exhaust the recovery budget', async ({ page }) => {
+  const mock = await installMockDesktopBridge(page)
+  await page.goto('http://localhost:5173')
+
+  await expect(page.locator('.pane-tab-panel.is-active .composer textarea').first()).toBeVisible()
+
+  for (let attempt = 1; attempt <= 8; attempt += 1) {
+    const streamId = `stream-${attempt}`
+    await expect.poll(() => hasDesktopStreamSubscription(page, streamId)).toBe(true)
+    await emitDesktopStreamEvent(page, streamId, 'error', {
+      message: 'Codex ended without emitting a terminal completion event.',
+      recoverable: true,
+      recoveryMode: 'resume-session',
+      transientOnly: true,
+    })
+
+    await expect
+      .poll(() => mock.readRequests().length)
+      .toBe(attempt)
+    await expect
+      .poll(() => mock.readState().columns[0]?.cards['card-1']?.streamId)
+      .toBe(`stream-${attempt + 1}`)
+    await expect.poll(() => mock.readState().columns[0]?.cards['card-1']?.status).toBe('streaming')
+  }
+
+  await emitDesktopStreamEvent(page, 'stream-9', 'done', {})
 
   await expect.poll(() => mock.readState().columns[0]?.cards['card-1']?.status).toBe('idle')
 })

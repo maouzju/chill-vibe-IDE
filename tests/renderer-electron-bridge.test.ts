@@ -18,6 +18,7 @@ import {
   openChatStream,
   queueStateSave,
   renameWorkspaceEntry,
+  ensureSpecDocuments,
   toggleMaximizeWindow,
 } from '../src/api.ts'
 
@@ -30,11 +31,17 @@ type ElectronBridgeWindow = Window & typeof globalThis & {
     isWindowMaximized?: () => Promise<boolean>
     onWindowMaximizedChanged?: (listener: (maximized: boolean) => void) => () => void
     fetchState?: () => Promise<ReturnType<typeof createDefaultState>>
-    fetchSlashCommands?: (request: { provider: 'codex' | 'claude'; workspacePath: string; language: 'en' | 'zh-CN' }) => Promise<Array<{ name: string; description?: string; source?: 'app' | 'native' }>>
+    fetchSlashCommands?: (request: {
+      provider: 'codex' | 'claude'
+      workspacePath: string
+      language: 'en' | 'zh-CN'
+      crossProviderSkillReuseEnabled: boolean
+    }) => Promise<Array<{ name: string; description?: string; source?: 'app' | 'native' | 'skill' }>>
     queueStateSave?: (state: ReturnType<typeof createDefaultState>) => void
     getAttachmentUrl?: (attachmentId: string) => string
     createFile?: (request: { workspacePath: string; parentRelativePath: string; name: string }) => Promise<void>
     createDirectory?: (request: { workspacePath: string; parentRelativePath: string; name: string }) => Promise<void>
+    ensureSpecDocuments?: (request: { workspacePath: string; title: string; language: 'en' | 'zh-CN' }) => Promise<unknown>
     renameEntry?: (request: { workspacePath: string; relativePath: string; nextName: string }) => Promise<void>
     moveEntry?: (request: { workspacePath: string; relativePath: string; destinationParentRelativePath: string }) => Promise<void>
     deleteEntry?: (request: { workspacePath: string; relativePath: string }) => Promise<void>
@@ -201,16 +208,54 @@ test('fetchSlashCommands caches per language so translated menus refresh immedia
     provider: 'claude',
     workspacePath: 'D:/workspace/slash-cache-en',
     language: 'en',
+    crossProviderSkillReuseEnabled: true,
   })
   const chinese = await fetchSlashCommands({
     provider: 'claude',
     workspacePath: 'D:/workspace/slash-cache-en',
     language: 'zh-CN',
+    crossProviderSkillReuseEnabled: true,
   })
 
   assert.deepEqual(requests, ['en', 'zh-CN'])
   assert.equal(english[0]?.description, 'Help')
   assert.equal(chinese[0]?.description, '帮助')
+})
+
+test('fetchSlashCommands caches separately when cross-provider skill reuse changes', async () => {
+  const requests: boolean[] = []
+
+  setWindow({
+    electronAPI: {
+      fetchSlashCommands: async (request) => {
+        requests.push(request.crossProviderSkillReuseEnabled)
+        return [
+          {
+            name: request.crossProviderSkillReuseEnabled ? 'agent-reach' : 'check-all',
+            description: 'Skill',
+            source: 'skill',
+          },
+        ]
+      },
+    },
+  } as ElectronBridgeWindow)
+
+  const enabled = await fetchSlashCommands({
+    provider: 'claude',
+    workspacePath: 'D:/workspace/slash-cache-setting',
+    language: 'en',
+    crossProviderSkillReuseEnabled: true,
+  })
+  const disabled = await fetchSlashCommands({
+    provider: 'claude',
+    workspacePath: 'D:/workspace/slash-cache-setting',
+    language: 'en',
+    crossProviderSkillReuseEnabled: false,
+  })
+
+  assert.deepEqual(requests, [true, false])
+  assert.equal(enabled[0]?.name, 'agent-reach')
+  assert.equal(disabled[0]?.name, 'check-all')
 })
 
 test('openChatStream requires the Electron bridge and does not fall back to EventSource', () => {
@@ -396,6 +441,45 @@ test('moveWorkspaceEntry uses the Electron bridge when available', async () => {
     workspacePath: 'D:/workspace',
     relativePath: 'src/new-file.ts',
     destinationParentRelativePath: 'docs',
+  })
+  assert.equal(fetchCalls, 0)
+})
+
+test('ensureSpecDocuments uses the Electron bridge when available', async () => {
+  let fetchCalls = 0
+  let receivedRequest:
+    | { workspacePath: string; title: string; language: 'en' | 'zh-CN' }
+    | null = null
+
+  globalThis.fetch = (async () => {
+    fetchCalls += 1
+    throw new Error('fetch should not be used in Electron mode')
+  }) as typeof fetch
+
+  setWindow({
+    electronAPI: {
+      ensureSpecDocuments: async (request) => {
+        receivedRequest = request
+        return {
+          title: request.title,
+          slug: 'oauth-login-flow',
+          folderRelativePath: 'docs/specs/oauth-login-flow',
+          requirementsPath: 'docs/specs/oauth-login-flow/requirements.md',
+          designPath: 'docs/specs/oauth-login-flow/design.md',
+          tasksPath: 'docs/specs/oauth-login-flow/tasks.md',
+          created: [],
+          existing: [],
+        }
+      },
+    },
+  } as ElectronBridgeWindow)
+
+  await ensureSpecDocuments('D:/workspace', 'OAuth Login Flow', 'en')
+
+  assert.deepEqual(receivedRequest, {
+    workspacePath: 'D:/workspace',
+    title: 'OAuth Login Flow',
+    language: 'en',
   })
   assert.equal(fetchCalls, 0)
 })

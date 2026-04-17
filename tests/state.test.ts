@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
 
+import { attachImagesToMessageMeta } from '../shared/chat-attachments.ts'
 import { createDefaultSettings } from '../shared/default-state.ts'
 import { getDuplicateColumnTitle } from '../shared/i18n.ts'
 import { BRAINSTORM_TOOL_MODEL, DEFAULT_CODEX_MODEL, WEATHER_TOOL_MODEL } from '../shared/models.ts'
@@ -628,6 +629,169 @@ describe('ideReducer pane layout', () => {
 
     assert.equal(newCard?.provider, 'codex')
     assert.equal(newCard?.model, DEFAULT_CODEX_MODEL)
+  })
+
+  it('drops stale provider sessions when switching an image-bearing chat to another provider', () => {
+    const state = createState()
+    state.columns[0]!.cards['card-1'] = createCard({
+      id: 'card-1',
+      title: 'Image review',
+      provider: 'codex',
+      model: DEFAULT_CODEX_MODEL,
+      sessionId: 'codex-session-active',
+      providerSessions: {
+        claude: 'claude-session-stale',
+      },
+      status: 'idle',
+      streamId: undefined,
+      messages: [
+        {
+          id: 'msg-user-image',
+          role: 'user',
+          content: 'Please compare this screenshot before we switch providers.',
+          createdAt: timestamp,
+          meta: attachImagesToMessageMeta([
+            {
+              id: 'image-1',
+              fileName: 'board.png',
+              mimeType: 'image/png',
+              sizeBytes: 2048,
+            },
+          ]),
+        },
+      ],
+    })
+
+    const next = ideReducer(state, {
+      type: 'selectCardModel',
+      columnId: 'column-1',
+      cardId: 'card-1',
+      provider: 'claude',
+      model: 'claude-sonnet-4-6',
+    })
+
+    const updated = next.columns[0]!.cards['card-1']
+    assert.equal(updated?.provider, 'claude')
+    assert.equal(updated?.model, 'claude-sonnet-4-6')
+    assert.equal(
+      updated?.sessionId,
+      undefined,
+      'switching providers with historical images must force a fresh seeded session',
+    )
+    assert.deepEqual(
+      updated?.providerSessions,
+      {},
+      'stale provider-specific sessions must not survive after an image-bearing provider switch',
+    )
+  })
+
+  it('drops the active session when switching models inside an image-bearing chat', () => {
+    const state = createState()
+    state.columns[1]!.cards['card-3'] = createCard({
+      id: 'card-3',
+      title: 'Claude image review',
+      provider: 'claude',
+      model: 'claude-opus-4-7',
+      sessionId: 'claude-session-active',
+      providerSessions: {
+        codex: 'codex-session-stale',
+      },
+      status: 'idle',
+      streamId: undefined,
+      messages: [
+        {
+          id: 'msg-user-image',
+          role: 'user',
+          content: 'Inspect this screenshot and keep it available after the model switch.',
+          createdAt: timestamp,
+          meta: attachImagesToMessageMeta([
+            {
+              id: 'image-2',
+              fileName: 'screenshot.png',
+              mimeType: 'image/png',
+              sizeBytes: 4096,
+            },
+          ]),
+        },
+      ],
+    })
+
+    const next = ideReducer(state, {
+      type: 'selectCardModel',
+      columnId: 'column-2',
+      cardId: 'card-3',
+      provider: 'claude',
+      model: 'claude-sonnet-4-6',
+    })
+
+    const updated = next.columns[1]!.cards['card-3']
+    assert.equal(updated?.provider, 'claude')
+    assert.equal(updated?.model, 'claude-sonnet-4-6')
+    assert.equal(
+      updated?.sessionId,
+      undefined,
+      'switching models with historical images must replay the transcript into a fresh session',
+    )
+    assert.deepEqual(
+      updated?.providerSessions,
+      {},
+      'saved sessions from other providers also become stale once the image-bearing history changes model',
+    )
+  })
+
+  it('keeps the session when an image-bearing chat switches from an explicit model to the same configured default', () => {
+    const state = createState()
+    state.settings.requestModels.claude = 'claude-sonnet-4-6'
+    state.columns[1]!.cards['card-3'] = createCard({
+      id: 'card-3',
+      title: 'Pinned sonnet chat',
+      provider: 'claude',
+      model: 'claude-sonnet-4-6',
+      sessionId: 'claude-session-active',
+      providerSessions: {
+        codex: 'codex-session-stale',
+      },
+      status: 'idle',
+      streamId: undefined,
+      messages: [
+        {
+          id: 'msg-user-image',
+          role: 'user',
+          content: 'Keep this screenshot context while unpinning back to the default model.',
+          createdAt: timestamp,
+          meta: attachImagesToMessageMeta([
+            {
+              id: 'image-3',
+              fileName: 'default-model.png',
+              mimeType: 'image/png',
+              sizeBytes: 1024,
+            },
+          ]),
+        },
+      ],
+    })
+
+    const next = ideReducer(state, {
+      type: 'selectCardModel',
+      columnId: 'column-2',
+      cardId: 'card-3',
+      provider: 'claude',
+      model: '',
+    })
+
+    const updated = next.columns[1]!.cards['card-3']
+    assert.equal(updated?.provider, 'claude')
+    assert.equal(updated?.model, '')
+    assert.equal(
+      updated?.sessionId,
+      'claude-session-active',
+      'switching to the same effective configured default should not force a fresh session',
+    )
+    assert.deepEqual(
+      updated?.providerSessions,
+      { codex: 'codex-session-stale' },
+      'equivalent model selections should preserve saved provider sessions',
+    )
   })
 
   it('adds a preconfigured tool tab with the requested title and model', () => {

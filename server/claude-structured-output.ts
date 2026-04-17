@@ -342,6 +342,77 @@ const buildClaudeEditedFiles = (
   return file ? [file] : []
 }
 
+const claudeAskUserTagPattern = /<ask-user-question>\s*([\s\S]+?)\s*<\/ask-user-question>/g
+
+export const stripClaudeAskUserXmlBlocks = (text: string) =>
+  text.replace(claudeAskUserTagPattern, '')
+
+const parseClaudeAskUserXmlBlock = (
+  messageId: string | undefined,
+  text: string | undefined,
+): Extract<StreamActivity, { kind: 'ask-user' }> | null => {
+  if (!messageId || !text) {
+    return null
+  }
+
+  const match = text.match(/<ask-user-question>\s*([\s\S]+?)\s*<\/ask-user-question>/)
+
+  if (!match) {
+    return null
+  }
+
+  try {
+    const parsed = JSON.parse(match[1]!) as unknown
+
+    if (!isRecord(parsed) || !Array.isArray(parsed.options)) {
+      return null
+    }
+
+    const question = readString(parsed, 'question')?.trim()
+
+    if (!question) {
+      return null
+    }
+
+    const options = parsed.options
+      .map((entry) => {
+        if (!isRecord(entry)) {
+          return null
+        }
+        const label = readString(entry, 'label')?.trim()
+        if (!label) {
+          return null
+        }
+        return {
+          label,
+          description: readString(entry, 'description')?.trim() ?? '',
+        }
+      })
+      .filter(
+        (
+          entry,
+        ): entry is Extract<StreamActivity, { kind: 'ask-user' }>['options'][number] =>
+          entry !== null,
+      )
+
+    if (options.length === 0) {
+      return null
+    }
+
+    return {
+      itemId: messageId,
+      kind: 'ask-user',
+      status: 'completed',
+      header: readString(parsed, 'header')?.trim() ?? '',
+      question,
+      multiSelect: parsed.multiSelect === true,
+      options,
+    }
+  } catch {
+    return null
+  }
+}
+
 export const createClaudeStructuredOutputParser = (language: AppLanguage) => {
   let lastCommand: { itemId: string; command: string } | null = null
   let lastWrittenFile: string | null = null
@@ -355,8 +426,17 @@ export const createClaudeStructuredOutputParser = (language: AppLanguage) => {
       const message = isRecord(event.message) ? event.message : null
       const content = Array.isArray(message?.content) ? message.content : []
       const activities: ClaudeStructuredStreamEvent = []
+      const messageId = readString(message ?? {}, 'id')
 
       for (const item of content) {
+        if (isRecord(item) && item.type === 'text') {
+          const askUser = parseClaudeAskUserXmlBlock(messageId, readString(item, 'text'))
+          if (askUser) {
+            activities.push({ type: 'activity', ...askUser })
+          }
+          continue
+        }
+
         if (!isRecord(item) || item.type !== 'tool_use') {
           continue
         }
@@ -440,23 +520,29 @@ export const createClaudeStructuredOutputParser = (language: AppLanguage) => {
 
           if (firstQuestion) {
             const options = Array.isArray(firstQuestion.options) ? firstQuestion.options : []
-            activities.push({
-              type: 'activity',
-              itemId,
-              kind: 'ask-user',
-              status: 'completed',
-              question: typeof firstQuestion.question === 'string' ? firstQuestion.question : '',
-              header: typeof firstQuestion.header === 'string' ? firstQuestion.header : '',
-              multiSelect: firstQuestion.multiSelect === true,
-              options: options
-                .filter(isRecord)
-                .map((opt) => ({
-                  label: typeof opt.label === 'string' ? opt.label : '',
-                  description: typeof opt.description === 'string' ? opt.description : '',
-                }))
-                .filter((opt) => opt.label),
-            })
-            continue
+            const question =
+              typeof firstQuestion.question === 'string' ? firstQuestion.question.trim() : ''
+            const normalizedOptions = options
+              .filter(isRecord)
+              .map((opt) => ({
+                label: typeof opt.label === 'string' ? opt.label.trim() : '',
+                description: typeof opt.description === 'string' ? opt.description : '',
+              }))
+              .filter((opt) => opt.label)
+
+            if (question && normalizedOptions.length > 0) {
+              activities.push({
+                type: 'activity',
+                itemId,
+                kind: 'ask-user',
+                status: 'completed',
+                question,
+                header: typeof firstQuestion.header === 'string' ? firstQuestion.header : '',
+                multiSelect: firstQuestion.multiSelect === true,
+                options: normalizedOptions,
+              })
+              continue
+            }
           }
         }
 

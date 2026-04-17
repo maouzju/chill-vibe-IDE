@@ -44,8 +44,11 @@ Push-Location $repoRoot
 $startedDevServer = $false
 $devServerProcess = $null
 $pnpm = $null
+$previousHeadlessRuntimeTests = $env:CHILL_VIBE_HEADLESS_RUNTIME_TESTS
 
 try {
+  $env:CHILL_VIBE_HEADLESS_RUNTIME_TESTS = '1'
+
   $pnpm = Get-Command pnpm.cmd -ErrorAction SilentlyContinue
   if (-not $pnpm) {
     $pnpm = Get-Command pnpm -ErrorAction Stop
@@ -91,6 +94,12 @@ try {
     exit $LASTEXITCODE
   }
 } finally {
+  if ($null -eq $previousHeadlessRuntimeTests) {
+    Remove-Item Env:CHILL_VIBE_HEADLESS_RUNTIME_TESTS -ErrorAction SilentlyContinue
+  } else {
+    $env:CHILL_VIBE_HEADLESS_RUNTIME_TESTS = $previousHeadlessRuntimeTests
+  }
+
   if ($startedDevServer -and $null -ne $devServerProcess) {
     Stop-Process -Id $devServerProcess.Id -Force -ErrorAction SilentlyContinue
   }

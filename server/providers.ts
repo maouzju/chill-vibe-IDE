@@ -33,7 +33,7 @@ import type {
   StreamErrorHint,
 } from '../shared/schema.js'
 import { resolveImageAttachmentPath } from './attachments.js'
-import { createClaudeStructuredOutputParser } from './claude-structured-output.js'
+import { createClaudeStructuredOutputParser, stripClaudeAskUserXmlBlocks } from './claude-structured-output.js'
 import { createCodexCompactionActivityDeduper } from './codex-compaction-dedupe.js'
 import { resolveClaudeRuntimeEnvironment } from './claude-runtime-environment.js'
 import {
@@ -108,6 +108,11 @@ const getCodexAskUserQuestionInstruction = (language: AppLanguage) =>
   normalizeLanguage(language) === 'en'
     ? 'In this Chill Vibe Codex exec environment, the native request_user_input tool is unavailable. When you must ask the user to choose before you can continue safely, do not call request_user_input and do not ask a plain-text multiple-choice question. Instead, reply with only one XML block in this exact shape and no extra text: <ask-user-question>{"header":"Short title","question":"One concise question","multiSelect":false,"options":[{"label":"Option A","description":"Short tradeoff"},{"label":"Option B","description":"Short tradeoff"}]}</ask-user-question>. Use 2-3 options, keep labels short, omit any Other option, and wait for the next user reply after emitting the block.'
     : '在这个 Chill Vibe 的 Codex exec 运行环境里，原生 request_user_input 工具不可用。当你必须在继续之前让用户做选择时，不要调用 request_user_input，也不要用普通文本写多选题。而是只输出一个完整的 XML 块，并且不要加任何其他文本：<ask-user-question>{"header":"简短标题","question":"一句简洁问题","multiSelect":false,"options":[{"label":"选项 A","description":"简短权衡"},{"label":"选项 B","description":"简短权衡"}]}</ask-user-question>。选项保持 2-3 个，label 要简短，不要自己加 Other，并在输出这个块后等待用户下一条回复。'
+
+const getClaudeAskUserQuestionInstruction = (language: AppLanguage) =>
+  normalizeLanguage(language) === 'en'
+    ? 'In this Chill Vibe Claude runtime, the native AskUserQuestion tool cannot surface an interactive prompt to the user — calling it makes the CLI auto-return a placeholder "Answer questions?" result, which the user sees as a cancellation. Do not call AskUserQuestion. When you must ask the user to choose before you can continue safely, reply with only one XML block in this exact shape and no extra text: <ask-user-question>{"header":"Short title","question":"One concise question","multiSelect":false,"options":[{"label":"Option A","description":"Short tradeoff"},{"label":"Option B","description":"Short tradeoff"}]}</ask-user-question>. Use 2-3 options, keep labels short, omit any Other option, and wait for the next user reply after emitting the block.'
+    : '在这个 Chill Vibe 的 Claude 运行环境里，原生 AskUserQuestion 工具无法向用户弹出可交互面板 —— 一旦调用，CLI 会自动返回占位结果 "Answer questions?"，用户那边看到的就是"已取消"。不要调用 AskUserQuestion。当你必须在继续之前让用户做选择时，只输出一个完整的 XML 块，并且不要加任何其他文本：<ask-user-question>{"header":"简短标题","question":"一句简洁问题","multiSelect":false,"options":[{"label":"选项 A","description":"简短权衡"},{"label":"选项 B","description":"简短权衡"}]}</ask-user-question>。选项保持 2-3 个，label 要简短，不要自己加 Other，并在输出这个块后等待用户下一条回复。'
 
 const maybeResolveProxyBaseUrl = async (provider: Provider, baseUrl: string, enabled: boolean) => {
   if (!enabled) {
@@ -319,6 +324,11 @@ const isClaudeEffortUnsupported = (message: string) => {
   )
 }
 
+const isClaudeStaleResumedSession = (message: string) => {
+  const normalized = message.toLowerCase()
+  return normalized.includes('no deferred tool marker found in the resumed session')
+}
+
 const isCodexAppServerEffortUnsupported = (message: string) => {
   const normalized = message.toLowerCase()
   return (
@@ -337,6 +347,11 @@ const formatClaudeEffortCompatibilityNotice = (language: AppLanguage) =>
   language === 'en'
     ? 'Detected an older local Claude CLI that does not support --effort. Chill Vibe retried automatically without that flag. Please upgrade Claude CLI with: npm update -g @anthropic-ai/claude-code'
     : '检测到本地 Claude CLI 版本较旧，不支持 --effort。Chill Vibe 已自动改为不传该参数后重试。建议执行：npm update -g @anthropic-ai/claude-code'
+
+const formatClaudeStaleSessionRecoveryNotice = (language: AppLanguage) =>
+  language === 'en'
+    ? 'The resumed Claude session is stale (no deferred tool marker). Chill Vibe started a new session automatically so your prompt and attachments are not lost.'
+    : '检测到 Claude 会话已失效（无法恢复），Chill Vibe 已自动开启一个新会话，并保留了你这次发送的内容和图片。'
 
 const formatCodexEffortCompatibilityNotice = (language: AppLanguage) =>
   language === 'en'
@@ -1304,11 +1319,13 @@ export const launchProviderRun = async (request: ChatRequest, sink: StreamSink) 
   const managedChild = createManagedChildHandle()
   let finished = false
   let fallbackAttempted = false
+  let staleSessionFallbackAttempted = false
+  let currentRequest: ChatRequest = request
 
   const startClaudeAttempt = async (includeEffort: boolean) => {
     const args = [
       ...runtime.args,
-      ...buildClaudeArgs(request, attachmentPaths, { includeEffort }),
+      ...buildClaudeArgs(currentRequest, attachmentPaths, { includeEffort }),
     ]
 
     const child = await spawnProvider(
@@ -1354,7 +1371,9 @@ export const launchProviderRun = async (request: ChatRequest, sink: StreamSink) 
         const claudeStructuredEvents = parseClaudeStructuredOutput(event)
 
         for (const parsed of claudeStructuredEvents) {
-          sink.onActivity(parsed)
+          const activity = { ...parsed }
+          delete (activity as { type?: 'activity' }).type
+          sink.onActivity(activity)
         }
 
         if (event.type === 'system' && event.subtype === 'init' && typeof event.session_id === 'string') {
@@ -1390,10 +1409,10 @@ export const launchProviderRun = async (request: ChatRequest, sink: StreamSink) 
           if (Array.isArray(event.message?.content)) {
             const textContent = event.message.content
               .filter((item: { type?: string; text?: string }) => item.type === 'text')
-              .map((item: { text?: string }) => item.text ?? '')
+              .map((item: { text?: string }) => stripClaudeAskUserXmlBlocks(item.text ?? ''))
               .join('')
 
-            if (textContent) {
+            if (textContent.trim()) {
               sink.onDelta(textContent)
             }
           }
@@ -1454,6 +1473,21 @@ export const launchProviderRun = async (request: ChatRequest, sink: StreamSink) 
         managedChild.setActiveChild(null)
         sink.onLog(formatClaudeEffortCompatibilityNotice(language))
         void startClaudeAttempt(false)
+        return
+      }
+
+      if (
+        !staleSessionFallbackAttempted &&
+        code !== 0 &&
+        !sawClaudeStreamOutput &&
+        currentRequest.sessionId?.trim() &&
+        isClaudeStaleResumedSession(detail)
+      ) {
+        staleSessionFallbackAttempted = true
+        managedChild.setActiveChild(null)
+        sink.onLog(formatClaudeStaleSessionRecoveryNotice(language))
+        currentRequest = { ...currentRequest, sessionId: undefined }
+        void startClaudeAttempt(includeEffort)
         return
       }
 
@@ -1572,9 +1606,21 @@ export const buildClaudeArgs = (
 ) => {
   const args = ['-p', '--verbose', '--output-format', 'stream-json', '--include-partial-messages']
   const reasoningEffort = normalizeReasoningEffort('claude', request.reasoningEffort)
-  const systemPrompt = buildProviderSystemPrompt(request.language, request.systemPrompt)
+  const permissionMode = request.planMode ? 'plan' : 'bypassPermissions'
+  const systemPrompt = [
+    buildProviderSystemPrompt(request.language, request.systemPrompt),
+    getClaudeAskUserQuestionInstruction(request.language),
+  ].join(' ')
 
-  args.push('--permission-mode', request.planMode ? 'plan' : 'bypassPermissions')
+  args.push('--permission-mode', permissionMode)
+  args.push(
+    '--settings',
+    JSON.stringify({
+      permissions: {
+        defaultMode: permissionMode,
+      },
+    }),
+  )
 
   if (request.sessionId) {
     args.unshift(request.sessionId)

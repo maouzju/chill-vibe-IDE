@@ -7,6 +7,7 @@ import {
   createPane,
   createSplit,
   defaultProviderByIndex,
+  getEffectiveCardModel,
   getConfiguredModel,
   getFirstPane,
   getPreferredReasoningEffort,
@@ -20,6 +21,7 @@ import {
   touchState,
 } from '../shared/default-state'
 import { createDefaultBrainstormState } from '../shared/brainstorm'
+import { getChatMessageAttachments } from '../shared/chat-attachments'
 import { getDuplicateColumnTitle, getForkConversationTitle, getWorkspaceTitle } from '../shared/i18n'
 import {
   BRAINSTORM_TOOL_MODEL,
@@ -60,6 +62,9 @@ const toolCardModels = new Set([
   WEATHER_TOOL_MODEL,
   WHITENOISE_TOOL_MODEL,
 ])
+
+const cardHasHistoricalImageAttachments = (card: Pick<ChatCard, 'messages'>) =>
+  card.messages.some((message) => getChatMessageAttachments(message).length > 0)
 
 const isUntouchedEmptyChatCard = (card: ChatCard) =>
   card.status === 'idle' &&
@@ -958,9 +963,19 @@ const selectCardModel = (
     nextState = mergeSettings(nextState, { lastModel: { provider, model: normalizedModel } })
   }
   const providerChanged = card.provider !== provider
+  const previousEffectiveModel = getEffectiveCardModel(nextState.settings, card.provider, card.model)
+  const nextEffectiveModel = getEffectiveCardModel(nextState.settings, provider, normalizedModel)
+  const modelChanged = providerChanged || previousEffectiveModel !== nextEffectiveModel
+  const shouldInvalidateSessionsForImageReplay =
+    modelChanged && cardHasHistoricalImageAttachments(card)
 
   let sessionPatch: Pick<Partial<ChatCard>, 'sessionId' | 'providerSessions'> = {}
-  if (providerChanged) {
+  if (shouldInvalidateSessionsForImageReplay) {
+    sessionPatch = {
+      sessionId: undefined,
+      providerSessions: {},
+    }
+  } else if (providerChanged) {
     const savedSessions = { ...card.providerSessions }
     if (card.sessionId) {
       savedSessions[card.provider] = card.sessionId

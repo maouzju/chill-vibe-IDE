@@ -2,11 +2,12 @@ import { spawn } from 'node:child_process'
 import fs from 'fs'
 import { writeFile } from 'node:fs/promises'
 import path from 'path'
-import { app, net, shell } from 'electron'
+import { app, BrowserWindow, net, shell } from 'electron'
 
 import {
   GITHUB_API_URL,
   CHECK_TIMEOUT_MS,
+  buildWindowsZipReplaceScript,
   parseReleaseResponse,
   resolveDownloadedAssetStrategy,
   type UpdateCheckResult,
@@ -21,92 +22,10 @@ export {
   parseReleaseResponse,
   classifyDownloadedAsset,
   resolveDownloadedAssetStrategy,
+  buildWindowsZipReplaceScript,
 } from './updater-core.js'
 
-const escapePowerShellString = (value: string) => value.replace(/'/g, "''")
-
-const createWindowsZipReplaceScript = ({
-  processId,
-  assetPath,
-  targetDir,
-  executablePath,
-  stagingDir,
-}: {
-  processId: number
-  assetPath: string
-  targetDir: string
-  executablePath: string
-  stagingDir: string
-}) => {
-  const pidLiteral = `${processId}`
-  const assetLiteral = escapePowerShellString(assetPath)
-  const targetLiteral = escapePowerShellString(targetDir)
-  const executableLiteral = escapePowerShellString(executablePath)
-  const stagingLiteral = escapePowerShellString(stagingDir)
-
-  return `
-$ErrorActionPreference = 'Stop'
-
-$pidToWait = ${pidLiteral}
-$assetPath = '${assetLiteral}'
-$targetDir = '${targetLiteral}'
-$executablePath = '${executableLiteral}'
-$stagingDir = '${stagingLiteral}'
-
-function Wait-ForProcessExit {
-  param([int]$ProcessId)
-
-  while (Get-Process -Id $ProcessId -ErrorAction SilentlyContinue) {
-    Start-Sleep -Milliseconds 500
-  }
-}
-
-function Find-AppRoot {
-  param(
-    [string]$Root,
-    [string]$ExeName
-  )
-
-  $match = Get-ChildItem -LiteralPath $Root -Recurse -File -Filter $ExeName |
-    Where-Object { Test-Path -LiteralPath (Join-Path $_.DirectoryName 'resources') } |
-    Select-Object -First 1
-
-  if ($match) {
-    return $match.DirectoryName
-  }
-
-  $fallback = Get-ChildItem -LiteralPath $Root -Recurse -File -Filter $ExeName | Select-Object -First 1
-  if ($fallback) {
-    return $fallback.DirectoryName
-  }
-
-  return $null
-}
-
-Wait-ForProcessExit -ProcessId $pidToWait
-
-if (Test-Path -LiteralPath $stagingDir) {
-  Remove-Item -LiteralPath $stagingDir -Recurse -Force
-}
-
-New-Item -ItemType Directory -Path $stagingDir -Force | Out-Null
-Expand-Archive -LiteralPath $assetPath -DestinationPath $stagingDir -Force
-
-$sourceRoot = Find-AppRoot -Root $stagingDir -ExeName ([System.IO.Path]::GetFileName($executablePath))
-if (-not $sourceRoot) {
-  throw "Unable to find the extracted app root in $stagingDir."
-}
-
-New-Item -ItemType Directory -Path $targetDir -Force | Out-Null
-Get-ChildItem -LiteralPath $targetDir -Force | Remove-Item -Recurse -Force
-Get-ChildItem -LiteralPath $sourceRoot -Force | ForEach-Object {
-  Copy-Item -LiteralPath $_.FullName -Destination $targetDir -Recurse -Force
-}
-
-Start-Sleep -Milliseconds 250
-Start-Process -FilePath $executablePath -WorkingDirectory $targetDir | Out-Null
-`
-}
+const UPDATE_WAIT_TIMEOUT_SECONDS = 30
 
 const launchWindowsZipUpdateJob = async (assetPath: string) => {
   if (!app.isPackaged) {
@@ -118,26 +37,36 @@ const launchWindowsZipUpdateJob = async (assetPath: string) => {
   const jobRoot = path.join(app.getPath('temp'), `chill-vibe-update-${Date.now()}`)
   const stagingDir = path.join(jobRoot, 'extract')
   const scriptPath = path.join(jobRoot, 'apply-update.ps1')
+  const logPath = path.join(jobRoot, 'apply-update.log')
+  const spawnStdoutPath = path.join(jobRoot, 'powershell-stdout.log')
+  const spawnStderrPath = path.join(jobRoot, 'powershell-stderr.log')
 
   await fs.promises.mkdir(jobRoot, { recursive: true })
   await writeFile(
     scriptPath,
-    createWindowsZipReplaceScript({
+    buildWindowsZipReplaceScript({
       processId: process.pid,
       assetPath,
       targetDir,
       executablePath,
       stagingDir,
+      logPath,
+      waitTimeoutSeconds: UPDATE_WAIT_TIMEOUT_SECONDS,
     }),
     'utf8',
   )
+
+  // Redirect stdio to files instead of ignoring, so PowerShell spawn errors
+  // are diagnosable after the parent process exits.
+  const stdoutFd = fs.openSync(spawnStdoutPath, 'a')
+  const stderrFd = fs.openSync(spawnStderrPath, 'a')
 
   const child = spawn(
     'powershell',
     ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', scriptPath],
     {
       detached: true,
-      stdio: 'ignore',
+      stdio: ['ignore', stdoutFd, stderrFd],
       windowsHide: true,
     },
   )
@@ -225,15 +154,46 @@ export async function downloadUpdate(
   return destPath
 }
 
+// Force-shutdown helper that bypasses the `before-quit` preventDefault guard in
+// main.ts — that guard is necessary for normal quit (state flush), but during an
+// update the PowerShell job is actively polling our PID and must see us exit.
+// We briefly notify the renderer to flush state, then call `app.exit(0)`
+// (which does NOT fire `before-quit`/`will-quit`) as a hard fallback.
+const FORCE_EXIT_DELAY_MS = 1500
+
+const forceExitForUpdate = () => {
+  // Best-effort: let renderers flush before we hard-exit. We intentionally do
+  // not await an ACK — the PowerShell job is waiting on our PID and we cannot
+  // risk blocking on a renderer that never replies.
+  try {
+    for (const win of BrowserWindow.getAllWindows()) {
+      if (!win.isDestroyed()) {
+        win.webContents.send('app:flush-state-before-quit')
+      }
+    }
+  } catch {
+    // swallow — we are shutting down anyway
+  }
+
+  setTimeout(() => {
+    try {
+      app.exit(0)
+    } catch {
+      // If exit somehow throws, fall back to process.exit so the PID releases.
+      process.exit(0)
+    }
+  }, FORCE_EXIT_DELAY_MS)
+}
+
 export async function installUpdate(assetPath: string): Promise<void> {
   const strategy = resolveDownloadedAssetStrategy(process.platform, assetPath)
 
   if (strategy === 'replace-app-folder') {
     await launchWindowsZipUpdateJob(assetPath)
-    setTimeout(() => app.quit(), 1000)
+    forceExitForUpdate()
     return
   }
 
   await openDownloadedAsset(assetPath)
-  setTimeout(() => app.quit(), 1000)
+  forceExitForUpdate()
 }

@@ -64,6 +64,7 @@ import {
   getProgrammaticBottomScrollTarget,
   programmaticScrollInterruptTolerancePx,
   shouldAutoRevealCompactedHistoryImmediately,
+  shouldPinToBottomAfterContentGrowth,
   type ProgrammaticScrollIntent,
 } from './chat-scroll'
 import { syncComposerTextareaHeight } from './chat-composer-textarea'
@@ -1745,6 +1746,69 @@ const ChatCardView = ({
     programmaticScrollGuardRef.current = false
     programmaticScrollIntentRef.current = null
   }, [])
+
+  // Re-pin to the bottom when async content growth (late image/code-highlight/
+  // mermaid layout, visibility-change flushes) expands the list after the
+  // React-driven auto-scroll loop has already exited. Without this observer
+  // the user returns to a tab that is "almost but not quite" at the bottom
+  // and has to nudge it by hand.
+  const scrollMessageListToBottomRef = useRef(scrollMessageListToBottom)
+  useEffect(() => {
+    scrollMessageListToBottomRef.current = scrollMessageListToBottom
+  }, [scrollMessageListToBottom])
+
+  useEffect(() => {
+    if (suspendPaneRuntimeEffects) {
+      return
+    }
+
+    const node = messageListRef.current
+    if (!node || typeof ResizeObserver === 'undefined') {
+      return
+    }
+
+    let previousScrollHeight = node.scrollHeight
+    let previousBottomScrollTop = getProgrammaticBottomScrollTarget({
+      scrollHeight: node.scrollHeight,
+      clientHeight: node.clientHeight,
+    })
+
+    const observer = new ResizeObserver(() => {
+      const el = messageListRef.current
+      if (!el) {
+        return
+      }
+
+      if (el.scrollHeight === previousScrollHeight) {
+        return
+      }
+
+      const metrics = {
+        scrollTop: el.scrollTop,
+        scrollHeight: el.scrollHeight,
+        clientHeight: el.clientHeight,
+      }
+
+      if (
+        shouldPinToBottomAfterContentGrowth({
+          previousBottomScrollTop,
+          currentMetrics: metrics,
+          wasPinned: shouldAutoScrollRef.current,
+        })
+      ) {
+        scrollMessageListToBottomRef.current('instant')
+      }
+
+      previousScrollHeight = el.scrollHeight
+      previousBottomScrollTop = getProgrammaticBottomScrollTarget(metrics)
+    })
+
+    observer.observe(node)
+
+    return () => {
+      observer.disconnect()
+    }
+  }, [card.id, suspendPaneRuntimeEffects])
 
   useEffect(() => {
     if (isToolCard || !hasWorkspacePath || !slashCommandsEnabled) {

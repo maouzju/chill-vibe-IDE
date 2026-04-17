@@ -548,9 +548,9 @@ test('renders a VS Code-like structured todo card', () => {
   assert.match(markup, /Render the VS Code-like task list/)
   assert.match(markup, /Rendering the VS Code-like task list/)
   assert.match(markup, /Verify both themes/)
-  assert.match(markup, /In progress/)
-  assert.match(markup, /Pending/)
-  assert.match(markup, /Completed/)
+  assert.match(markup, /structured-todo-item is-in_progress/)
+  assert.match(markup, /structured-todo-item is-pending/)
+  assert.match(markup, /structured-todo-item is-completed/)
   assert.match(markup, /High priority/)
 })
 

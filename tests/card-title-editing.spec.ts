@@ -365,7 +365,7 @@ for (const theme of ['dark', 'light'] as const) {
     await expect(composerModelSelect).toBeVisible()
     await expect(headerModelSelect).toHaveCount(0)
     await expect(page.locator('.app-topbar-tool-button')).toHaveCount(0)
-    await expect(emptyToolButtons).toHaveCount(6)
+    await expect(emptyToolButtons).toHaveCount(7)
 
     const [rowBox, selectBox, textareaBox] = await Promise.all([
       composerRow.boundingBox(),
@@ -386,6 +386,7 @@ for (const theme of ['dark', 'light'] as const) {
     await expect(dropdown).not.toContainText('Git')
     await expect(dropdown).not.toContainText('Files')
     await expect(dropdown).not.toContainText('Sticky Note')
+    await expect(dropdown).not.toContainText('SPEC')
     await expect(dropdown).not.toContainText('PM')
     await expect(dropdown).not.toContainText('Weather')
     await expect(dropdown).not.toContainText('Music')
@@ -404,7 +405,7 @@ for (const theme of ['dark', 'light'] as const) {
     await page.goto('http://localhost:5173')
 
     const toolButtons = page.locator('.pane-view').first().locator('.chat-empty-tool-button')
-    await expect(toolButtons).toHaveCount(6)
+    await expect(toolButtons).toHaveCount(7)
 
     const [firstBox, secondBox] = await Promise.all([
       toolButtons.nth(0).boundingBox(),

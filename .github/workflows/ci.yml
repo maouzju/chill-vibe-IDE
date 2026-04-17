@@ -21,7 +21,7 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm legal:check
       - run: pnpm test:quality
-      - run: pnpm test
+      - run: xvfb-run -a pnpm test
 
   ui-regression:
     needs: quality

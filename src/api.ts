@@ -29,6 +29,7 @@ import {
   fileRenameRequestSchema,
   fileSearchRequestSchema,
   fileSearchResponseSchema,
+  specEnsureRequestSchema,
   imageAttachmentSchema,
   onboardingStatusSchema,
   providerStatusSchema,
@@ -79,6 +80,7 @@ import {
   type StateRecoverySelection,
   type StreamEventMap,
 } from '../shared/schema'
+import type { EnsureSpecDocumentsResult } from '../shared/spec-first'
 
 type StreamHandlers = {
   onSession?: (payload: StreamEventMap['session']) => void
@@ -87,7 +89,7 @@ type StreamHandlers = {
   onAssistantMessage?: (payload: StreamEventMap['assistant_message']) => void
   onActivity?: (payload: StreamEventMap['activity']) => void
   onDone?: (payload: StreamEventMap['done']) => void
-  onError?: (payload: StreamEventMap['error'] & { recoverable?: boolean }) => void
+  onError?: (payload: StreamEventMap['error'] & { recoverable?: boolean; transientOnly?: boolean }) => void
 }
 
 export type ChatStreamSource = {
@@ -339,7 +341,7 @@ const slashCommandCache = new Map<string, Promise<SlashCommand[]>>()
 
 export const fetchSlashCommands = async (request: SlashCommandRequest): Promise<SlashCommand[]> => {
   const parsed = slashCommandRequestSchema.parse(request)
-  const cacheKey = `${parsed.provider}:${parsed.workspacePath}:${parsed.language}`
+  const cacheKey = `${parsed.provider}:${parsed.workspacePath}:${parsed.language}:${parsed.crossProviderSkillReuseEnabled}`
   const cached = slashCommandCache.get(cacheKey)
 
   if (cached) {
@@ -806,6 +808,38 @@ export const saveFileContent = async (workspacePath: string, relativePath: strin
 }
 
 // ── App Update ───────────────────────────────────────────────────────────────
+
+export const ensureSpecDocuments = async (
+  workspacePath: string,
+  title: string,
+  language: 'en' | 'zh-CN',
+): Promise<EnsureSpecDocumentsResult> => {
+  const request = specEnsureRequestSchema.parse({
+    workspacePath,
+    title,
+    language,
+  })
+  const desktop = getDesktopApi()
+
+  if (desktop?.ensureSpecDocuments) {
+    return desktop.ensureSpecDocuments(request) as Promise<EnsureSpecDocumentsResult>
+  }
+
+  const response = await fetch('/api/specs/ensure', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(request),
+  })
+
+  if (!response.ok) {
+    const payload = await response.json().catch(() => null)
+    throw new Error(
+      payload && typeof payload.message === 'string' ? payload.message : 'Failed to create SPEC docs',
+    )
+  }
+
+  return response.json() as Promise<EnsureSpecDocumentsResult>
+}
 
 export type UpdateCheckResult = {
   hasUpdate: boolean

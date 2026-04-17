@@ -202,3 +202,42 @@ test('finalizeStructuredActivityMessage replaces a live ask-user XML bubble with
   assert.equal(nextMessages[0]?.meta?.itemId, 'agent_message_1')
   assert.match(nextMessages[0]?.meta?.structuredData ?? '', /Which path should I use\?/)
 })
+
+test('finalizeStructuredActivityMessage keeps a live assistant text bubble when an ask-user activity arrives alongside it', () => {
+  const existingMessages = [
+    {
+      id: 'assistant-live-2',
+      role: 'assistant' as const,
+      content: '好的，我先帮你确认一下方向。',
+      createdAt: '2026-04-16T00:00:00.000Z',
+      meta: {
+        provider: 'claude' as const,
+      },
+    },
+  ]
+
+  const nextMessages = finalizeStructuredActivityMessage(
+    existingMessages,
+    'assistant-live-2',
+    'claude',
+    'stream-2',
+    {
+      itemId: 'tooluse_ask_1',
+      kind: 'ask-user',
+      status: 'completed',
+      header: 'Confirmation',
+      question: 'Which path should I use?',
+      multiSelect: false,
+      options: [
+        { label: 'Option A', description: 'Keep current approach.' },
+        { label: 'Option B', description: 'Try a new approach.' },
+      ],
+    },
+  )
+
+  assert.equal(nextMessages.length, 2)
+  assert.equal(nextMessages[0]?.id, 'assistant-live-2')
+  assert.equal(nextMessages[0]?.content, '好的，我先帮你确认一下方向。')
+  assert.equal(nextMessages[1]?.id, 'claude:stream-2:item:ask-user:question')
+  assert.equal(nextMessages[1]?.meta?.kind, 'ask-user')
+})

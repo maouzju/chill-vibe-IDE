@@ -8,6 +8,7 @@ import {
   FILETREE_TOOL_MODEL,
   GIT_TOOL_MODEL,
   MUSIC_TOOL_MODEL,
+  SPEC_TOOL_MODEL,
   STICKYNOTE_TOOL_MODEL,
   TEXTEDITOR_TOOL_MODEL,
   WEATHER_TOOL_MODEL,
@@ -46,6 +47,7 @@ describe('model helpers', () => {
         FILETREE_TOOL_MODEL,
         BRAINSTORM_TOOL_MODEL,
         TEXTEDITOR_TOOL_MODEL,
+        SPEC_TOOL_MODEL,
         '',
         DEFAULT_CODEX_MODEL,
       ],
@@ -66,6 +68,8 @@ describe('model helpers', () => {
     assert.equal(resolveSlashModel('codex', 'dream'), null)
     assert.equal(resolveSlashModel('codex', 'reflection'), null)
     assert.equal(resolveSlashModel('codex', 'editor'), TEXTEDITOR_TOOL_MODEL)
+    assert.equal(resolveSlashModel('codex', 'spec'), SPEC_TOOL_MODEL)
+    assert.equal(resolveSlashModel('codex', 'spec-first'), SPEC_TOOL_MODEL)
     assert.equal(resolveSlashModel('codex', 'whitenoise'), WHITENOISE_TOOL_MODEL)
     assert.equal(resolveSlashModel('codex', 'ambient'), WHITENOISE_TOOL_MODEL)
     assert.equal(resolveSlashModel('claude', 'claude'), '')

@@ -27,6 +27,7 @@ type GitSyncPanelProps = {
   language: AppLanguage
   gitAgentModel: string
   systemPrompt: string
+  crossProviderSkillReuseEnabled: boolean
   onClose: () => void
   onStatusChange: (status: GitStatus) => void
 }
@@ -37,6 +38,7 @@ export const GitSyncPanel = ({
   language,
   gitAgentModel,
   systemPrompt,
+  crossProviderSkillReuseEnabled,
   onClose,
   onStatusChange,
 }: GitSyncPanelProps) => {
@@ -61,6 +63,7 @@ export const GitSyncPanel = ({
         workspacePath,
         language,
         systemPrompt,
+        crossProviderSkillReuseEnabled,
         prompt,
         model: agentParts[0] || '',
         reasoningEffort: agentParts[1] || getDefaultReasoningEffort('codex'),
@@ -98,7 +101,14 @@ export const GitSyncPanel = ({
         })
       }).catch(reject)
     })
-  }, [gitAgentModel, language, systemPrompt, text.syncError, workspacePath])
+  }, [
+    crossProviderSkillReuseEnabled,
+    gitAgentModel,
+    language,
+    systemPrompt,
+    text.syncError,
+    workspacePath,
+  ])
 
   const runSync = useCallback(async () => {
     setStep({ kind: 'pull' })

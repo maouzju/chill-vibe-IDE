@@ -20,13 +20,15 @@ export type ChatActivityKind = z.infer<typeof chatActivityKindSchema>
 export const chatCommandActivityStatusSchema = z.enum(['in_progress', 'completed', 'declined'])
 export type ChatCommandActivityStatus = z.infer<typeof chatCommandActivityStatusSchema>
 
-export const slashCommandSourceSchema = z.enum(['app', 'native'])
+export const slashCommandSourceSchema = z.enum(['app', 'native', 'skill'])
 export type SlashCommandSource = z.infer<typeof slashCommandSourceSchema>
 
 export const slashCommandSchema = z.object({
   name: z.string().min(1),
   description: z.string().optional(),
   source: slashCommandSourceSchema.default('native'),
+  skillProvider: providerSchema.optional(),
+  skillPath: z.string().optional(),
 })
 export type SlashCommand = z.infer<typeof slashCommandSchema>
 
@@ -121,6 +123,7 @@ export const chatCardSchema = z.object({
   collapsed: z.boolean().default(false),
   unread: z.boolean().default(false),
   draft: z.string().default(''),
+  draftAttachments: z.array(imageAttachmentSchema).default([]),
   stickyNote: z.string().default(''),
   brainstorm: brainstormStateSchema.default({
     prompt: '',
@@ -372,6 +375,7 @@ export const appSettingsSchema = z.object({
   experimentalWeatherEnabled: z.boolean().default(false),
   agentDoneSoundEnabled: z.boolean().default(false),
   agentDoneSoundVolume: z.number().min(0).max(1).default(0.7),
+  crossProviderSkillReuseEnabled: z.boolean().default(true),
   autoUrgeEnabled: z.boolean().default(false),
   autoUrgeProfiles: z.array(autoUrgeProfileSchema).default([
     {
@@ -438,6 +442,7 @@ export const appStateSchema = z.object({
     experimentalWeatherEnabled: false,
     agentDoneSoundEnabled: false,
     agentDoneSoundVolume: 0.7,
+    crossProviderSkillReuseEnabled: true,
     autoUrgeEnabled: false,
     autoUrgeProfiles: [
       {
@@ -634,6 +639,7 @@ export const chatRequestSchema = z.object({
   sessionId: z.string().optional(),
   language: appLanguageSchema.default('zh-CN'),
   systemPrompt: z.string().default(defaultSystemPrompt),
+  crossProviderSkillReuseEnabled: z.boolean().default(true),
   prompt: z.string().default(''),
   attachments: z.array(imageAttachmentSchema).default([]),
   sandboxMode: codexSandboxModeSchema.optional(),
@@ -702,6 +708,7 @@ export const slashCommandRequestSchema = z.object({
   provider: providerSchema,
   workspacePath: z.string().min(1),
   language: appLanguageSchema.default('zh-CN'),
+  crossProviderSkillReuseEnabled: z.boolean().default(true),
 })
 export type SlashCommandRequest = z.infer<typeof slashCommandRequestSchema>
 
@@ -969,6 +976,7 @@ export type StreamErrorEvent = {
   hint?: StreamErrorHint
   recoverable?: boolean
   recoveryMode?: StreamErrorRecoveryMode
+  transientOnly?: boolean
 }
 
 export type StreamEventMap = {
@@ -1064,3 +1072,10 @@ export const fileWriteRequestSchema = z.object({
   content: z.string(),
 })
 export type FileWriteRequest = z.infer<typeof fileWriteRequestSchema>
+
+export const specEnsureRequestSchema = z.object({
+  workspacePath: z.string().min(1),
+  title: z.string().default(''),
+  language: appLanguageSchema.default('zh-CN'),
+})
+export type SpecEnsureRequest = z.infer<typeof specEnsureRequestSchema>

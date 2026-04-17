@@ -63,6 +63,8 @@ type LocaleText = {
   gitAgentModelNote: string
   systemPromptLabel: string
   systemPromptNote: string
+  crossProviderSkillReuseLabel: string
+  crossProviderSkillReuseNote: string
   restoreDefaultSystemPrompt: string
   applyToExistingChats: string
   resetInterfaceDefaults: string
@@ -97,6 +99,7 @@ type LocaleText = {
   resizeCardTitle: string
   appBadge: string
   nativeBadge: string
+  skillBadge: string
   codexDefaultModelLabel: string
   claudeDefaultModelLabel: string
   you: string
@@ -288,6 +291,9 @@ const localeTextByLanguage: Record<AppLanguage, LocaleText> = {
     gitAgentModelNote: 'Git 分析使用的模型，格式：模型名称 推理强度（如 gpt-5.4 xhigh）。',
     systemPromptLabel: '系统提示词',
     systemPromptNote: '每次 AI 运行前都会附加这条系统提示词。恢复默认可回到内置提示词。',
+    crossProviderSkillReuseLabel: 'Codex / Claude Skill 互相复用',
+    crossProviderSkillReuseNote:
+      '启用后，斜杠菜单和实际 AI 运行都可以复用当前工作区里的 .codex/skills 和 .claude/skills，不用复制两份。',
     restoreDefaultSystemPrompt: '恢复内置提示词',
     applyToExistingChats: '应用到现有会话',
     resetInterfaceDefaults: '重置界面默认值',
@@ -326,6 +332,7 @@ const localeTextByLanguage: Record<AppLanguage, LocaleText> = {
     resizeCardTitle: '拖动调整卡片高度',
     appBadge: '应用',
     nativeBadge: '原生',
+    skillBadge: 'Skill',
     codexDefaultModelLabel: 'Codex',
     claudeDefaultModelLabel: 'Claude',
     you: '你',
@@ -530,6 +537,9 @@ const localeTextByLanguage: Record<AppLanguage, LocaleText> = {
     systemPromptLabel: 'System prompt',
     systemPromptNote:
       'This prompt is appended before each AI run. Restore default to go back to the built-in prompt.',
+    crossProviderSkillReuseLabel: 'Reuse Codex / Claude skills',
+    crossProviderSkillReuseNote:
+      'When enabled, slash menus and provider runs can reuse local .codex/skills and .claude/skills without copying them twice.',
     restoreDefaultSystemPrompt: 'Restore built-in prompt',
     applyToExistingChats: 'Apply to existing chats',
     resetInterfaceDefaults: 'Reset interface defaults',
@@ -570,6 +580,7 @@ const localeTextByLanguage: Record<AppLanguage, LocaleText> = {
     resizeCardTitle: 'Drag to resize card height',
     appBadge: 'App',
     nativeBadge: 'Native',
+    skillBadge: 'Skill',
     codexDefaultModelLabel: 'Codex default',
     claudeDefaultModelLabel: 'Claude CLI default',
     you: 'You',
@@ -1043,6 +1054,10 @@ export const getSlashCommandSourceLabel = (
   source: SlashCommandSource,
 ) => {
   const text = getLocaleText(language)
+  if (source === 'skill') {
+    return text.skillBadge
+  }
+
   return source === 'native' ? text.nativeBadge : text.appBadge
 }
 

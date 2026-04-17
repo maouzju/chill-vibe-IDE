@@ -39,6 +39,10 @@ test-results
 !.codex/skills/
 !.codex/skills/chill-vibe-full-regression/
 !.codex/skills/chill-vibe-full-regression/SKILL.md
+!.codex/skills/release-pipeline/
+!.codex/skills/release-pipeline/SKILL.md
+!.codex/skills/release-pipeline/agents/
+!.codex/skills/release-pipeline/agents/openai.yaml
 .claude/settings.json
 .claude/skills/
 .claude/scheduled_tasks.lock

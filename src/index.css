@@ -3717,6 +3717,23 @@ body.is-card-dragging .lane-drop-zone-top {
   align-items: center;
 }
 
+.message-entry-system > .message-entry-shell {
+  width: 100%;
+  align-items: center;
+}
+
+.message-is-run-stopped {
+  width: fit-content;
+  margin-inline: auto;
+}
+
+.message-is-run-stopped .message-content {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+}
+
 .message-sticky-overlay {
   position: absolute;
   top: 0;
@@ -3725,6 +3742,7 @@ body.is-card-dragging .lane-drop-zone-top {
   z-index: 3;
   display: flex;
   justify-content: flex-end;
+  container-type: inline-size;
   pointer-events: none;
 }
 
@@ -3734,10 +3752,14 @@ body.is-card-dragging .lane-drop-zone-top {
   pointer-events: auto;
   cursor: pointer;
   outline: none;
+  min-inline-size: 0;
+  max-inline-size: 100%;
 }
 
 .message-sticky-jump-target > [aria-hidden='true'] {
   pointer-events: none;
+  min-inline-size: 0;
+  max-inline-size: 100%;
 }
 
 .message-sticky-jump-target:focus-visible .message-user.is-sticky-anchor {
@@ -3777,6 +3799,13 @@ body.is-card-dragging .lane-drop-zone-top {
 .message-user.is-sticky-anchor {
   position: relative;
   z-index: 1;
+  /* Sticky previews sit inside an auto-sized overlay target, so percentages can
+     resolve against a shrink-to-fit box and force short CJK prompts into
+     awkward vertical wraps. Container units keep the preview width tied to the
+     full overlay lane instead. */
+  width: fit-content;
+  min-inline-size: 0;
+  max-inline-size: min(88cqw, 100%);
   max-block-size: min(11rem, 38vh);
   overflow: hidden;
   box-shadow:
@@ -4758,6 +4787,43 @@ body.is-card-dragging .lane-drop-zone-top {
   box-shadow: 0 0 0 2px var(--accent-line), var(--shadow-xs);
 }
 
+.structured-preview-close {
+  flex-shrink: 0;
+  align-self: flex-start;
+  display: inline-grid;
+  place-items: center;
+  width: 2rem;
+  min-width: 2rem;
+  height: 2rem;
+  padding: 0;
+  border-radius: 0.8rem;
+  border-color: color-mix(in srgb, var(--line-strong) 76%, transparent);
+  background: color-mix(in srgb, var(--menu-bg) 78%, transparent);
+  color: var(--ink-3);
+  box-shadow: none;
+  backdrop-filter: blur(18px);
+  -webkit-backdrop-filter: blur(18px);
+}
+
+.structured-preview-close svg {
+  width: 0.9rem;
+  height: 0.9rem;
+  stroke-width: 2.15;
+}
+
+.structured-preview-close:hover:enabled {
+  transform: none;
+  border-color: var(--accent-line-strong);
+  background: color-mix(in srgb, var(--panel-strong) 80%, transparent);
+  color: var(--ink-1);
+  box-shadow: var(--shadow-xs);
+}
+
+.structured-preview-close:active:enabled {
+  transform: none;
+  box-shadow: none;
+}
+
 .structured-preview-layer {
   position: fixed;
   inset: 0;
@@ -5687,7 +5753,8 @@ body.is-card-dragging .lane-drop-zone-top {
   }
 
   .structured-preview-close {
-    width: 100%;
+    width: 2rem;
+    align-self: flex-end;
     justify-content: center;
   }
 }
@@ -10650,6 +10717,139 @@ body,
   line-height: 1.6;
   padding: 4px 6px;
   overflow-y: auto;
+}
+
+/* -- SPEC Tool Card ----------------------------------------*/
+
+.spec-tool-card {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  padding: 10px;
+}
+
+.spec-tool-shell {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  flex-direction: column;
+  gap: 12px;
+  padding: 12px;
+  border: 1px solid var(--panel-border);
+  border-radius: 14px;
+  background: var(--panel-2);
+}
+
+.spec-tool-header {
+  display: flex;
+  gap: 10px;
+  align-items: end;
+  flex-wrap: wrap;
+}
+
+.spec-tool-field {
+  display: flex;
+  min-width: min(24rem, 100%);
+  flex: 1;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.spec-tool-label {
+  color: var(--ink-2);
+  font-size: 0.76rem;
+  font-weight: 600;
+}
+
+.spec-tool-input {
+  width: 100%;
+  min-height: 2.4rem;
+  border: 1px solid var(--input-border);
+  border-radius: 10px;
+  background: var(--input-bg);
+  color: var(--text);
+  padding: 0.65rem 0.8rem;
+  font: inherit;
+}
+
+.spec-tool-input:focus {
+  outline: none;
+  border-color: var(--focus-ring);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--focus-ring) 22%, transparent);
+}
+
+.spec-tool-primary {
+  align-self: stretch;
+}
+
+.spec-tool-summary {
+  display: grid;
+  gap: 6px;
+  color: var(--text);
+}
+
+.spec-tool-summary p {
+  margin: 0;
+}
+
+.spec-tool-launch-hint {
+  color: var(--ink-2);
+  font-size: 0.82rem;
+}
+
+.spec-tool-doc-grid {
+  display: grid;
+  gap: 10px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.spec-tool-doc-card {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 12px;
+  border: 1px solid var(--panel-border);
+  border-radius: 12px;
+  background: var(--panel);
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.spec-tool-doc-card:hover {
+  border-color: var(--focus-ring);
+  background: var(--panel-strong);
+}
+
+.spec-tool-doc-label {
+  font-weight: 600;
+}
+
+.spec-tool-doc-path {
+  width: 100%;
+  color: var(--ink-2);
+  font-size: 0.75rem;
+  line-height: 1.45;
+  word-break: break-word;
+}
+
+.spec-tool-doc-action {
+  color: var(--accent-11, var(--fgColor-accent, #4f8cff));
+  font-size: 0.8rem;
+  font-weight: 600;
+}
+
+.spec-tool-actions {
+  display: flex;
+  justify-content: flex-start;
+}
+
+@media (max-width: 900px) {
+  .spec-tool-doc-grid {
+    grid-template-columns: 1fr;
+  }
 }
 
 /* -- Brainstorm Card ----------------------------------------*/

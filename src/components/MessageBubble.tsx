@@ -25,7 +25,7 @@ import {
   renderMarkdown,
   summarizeReasoningPreview,
 } from './chat-card-rendering'
-import { GitBranchIcon } from './Icons'
+import { CloseIcon, GitBranchIcon } from './Icons'
 import {
   AskUserQuestionCard,
   ChangesSummaryCard,
@@ -102,7 +102,7 @@ const MessageAttachmentPreviewDialog = ({
               onClick={onClose}
               aria-label={labels.closeDetails}
             >
-              ×
+              <CloseIcon />
             </button>
           </div>
 

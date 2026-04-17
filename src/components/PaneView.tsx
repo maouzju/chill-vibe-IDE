@@ -6,6 +6,7 @@ import {
   FILETREE_TOOL_MODEL,
   GIT_TOOL_MODEL,
   MUSIC_TOOL_MODEL,
+  SPEC_TOOL_MODEL,
   STICKYNOTE_TOOL_MODEL,
   TEXTEDITOR_TOOL_MODEL,
   WEATHER_TOOL_MODEL,
@@ -50,6 +51,7 @@ type PaneViewProps = {
   providers: Record<string, ProviderStatus>
   language: AppLanguage
   systemPrompt: string
+  crossProviderSkillReuseEnabled: boolean
   musicAlbumCoverEnabled: boolean
   weatherCity: string
   gitAgentModel: string
@@ -116,6 +118,17 @@ type PaneViewProps = {
   onStopMessage: (cardId: string) => Promise<void>
   onForkConversation?: (cardId: string, messageId: string) => void
   onOpenFile?: (paneId: string, relativePath: string) => void
+  onLaunchSpec?: (
+    paneId: string,
+    cardId: string,
+    payload: {
+      title: string
+      prompt: string
+      requirementsPath: string
+      designPath: string
+      tasksPath: string
+    },
+  ) => Promise<void>
 }
 
 const getHorizontalPlacement = (event: DragEvent<HTMLElement>): DropPlacement => {
@@ -247,6 +260,7 @@ const cardUsesComposer = (card: ChatCardState) =>
     BRAINSTORM_TOOL_MODEL,
     GIT_TOOL_MODEL,
     MUSIC_TOOL_MODEL,
+    SPEC_TOOL_MODEL,
     STICKYNOTE_TOOL_MODEL,
     TEXTEDITOR_TOOL_MODEL,
     WEATHER_TOOL_MODEL,
@@ -259,6 +273,7 @@ const PaneViewView = ({
   providers,
   language,
   systemPrompt,
+  crossProviderSkillReuseEnabled,
   musicAlbumCoverEnabled,
   weatherCity,
   gitAgentModel,
@@ -293,6 +308,7 @@ const PaneViewView = ({
   onStopMessage,
   onForkConversation,
   onOpenFile,
+  onLaunchSpec,
 }: PaneViewProps) => {
   const text = getLocaleText(language)
   const tabStripRef = useRef<HTMLDivElement | null>(null)
@@ -885,6 +901,7 @@ const PaneViewView = ({
                   workspacePath={column.workspacePath}
                   language={language}
                   systemPrompt={systemPrompt}
+                  crossProviderSkillReuseEnabled={crossProviderSkillReuseEnabled}
                   musicAlbumCoverEnabled={musicAlbumCoverEnabled}
                   weatherCity={weatherCity}
                   gitAgentModel={gitAgentModel}
@@ -916,6 +933,11 @@ const PaneViewView = ({
                   onToggleCollapsed={() => onToggleCardCollapsed(card.id)}
                   onMarkRead={() => onMarkCardRead(card.id)}
                   onOpenFile={(relativePath) => onOpenFile?.(pane.id, relativePath)}
+                  onLaunchSpec={
+                    onLaunchSpec
+                      ? (payload) => onLaunchSpec(pane.id, card.id, payload)
+                      : undefined
+                  }
                   isRestored={flashCardIds.has(card.id)}
                   onRestoredAnimationEnd={() => onRestoredAnimationEnd(card.id)}
                   chromeMode="pane"

@@ -333,15 +333,25 @@ export const finalizeStructuredActivityMessage = (
       ? messages.findIndex((message) => message.id === streamingMessageId)
       : -1
   const existingStructuredIndex = messages.findIndex((message) => message.id === nextMessage.id)
+  const streamingContent =
+    streamingIndex >= 0 ? messages[streamingIndex]?.content ?? '' : ''
+  // Only drop the live streaming bubble when it is a synthetic <ask-user-question>
+  // XML blob that the structured card is replacing. Real assistant prose (e.g. Claude
+  // native AskUserQuestion tool flows) must survive so the user does not lose context.
+  const streamingIsAskUserXmlBlob =
+    payload.kind === 'ask-user' && /<ask-user-question>/i.test(streamingContent)
+  const shouldReplaceStreaming =
+    streamingIndex >= 0 &&
+    messages[streamingIndex]?.id !== nextMessage.id &&
+    (payload.kind !== 'ask-user' || streamingIsAskUserXmlBlob)
   const createdAt =
     messages[existingStructuredIndex]?.createdAt ??
-    (streamingIndex >= 0 ? messages[streamingIndex]?.createdAt : undefined) ??
+    (shouldReplaceStreaming ? messages[streamingIndex]?.createdAt : undefined) ??
     nextMessage.createdAt
 
-  const nextMessages =
-    streamingIndex >= 0 && messages[streamingIndex]?.id !== nextMessage.id
-      ? messages.filter((message) => message.id !== streamingMessageId)
-      : [...messages]
+  const nextMessages = shouldReplaceStreaming
+    ? messages.filter((message) => message.id !== streamingMessageId)
+    : [...messages]
 
   const nextIndex = nextMessages.findIndex((message) => message.id === nextMessage.id)
 

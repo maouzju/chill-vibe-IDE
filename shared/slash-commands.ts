@@ -123,6 +123,10 @@ export const getSlashCommandDescription = (
     return getLocalSlashCommands(normalizedLanguage).find((command) => command.name === name)?.description ?? `/${name}`
   }
 
+  if (source === 'skill') {
+    return `Skill /${name}`
+  }
+
   if (provider === 'claude') {
     return (
       CLAUDE_NATIVE_SLASH_COMMAND_DESCRIPTIONS[normalizedLanguage][name] ??

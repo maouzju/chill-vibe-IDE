@@ -72,6 +72,7 @@ type WorkspaceColumnProps = {
   providers: Record<string, ProviderStatus>
   language: AppLanguage
   systemPrompt: string
+  crossProviderSkillReuseEnabled: boolean
   musicAlbumCoverEnabled: boolean
   weatherCity: string
   gitAgentModel: string
@@ -143,6 +144,17 @@ type WorkspaceColumnProps = {
   onStopMessage: (cardId: string) => Promise<void>
   onForkConversation?: (cardId: string, messageId: string) => void
   onOpenFile?: (paneId: string, relativePath: string) => void
+  onLaunchSpec?: (
+    paneId: string,
+    cardId: string,
+    payload: {
+      title: string
+      prompt: string
+      requirementsPath: string
+      designPath: string
+      tasksPath: string
+    },
+  ) => Promise<void>
   recentWorkspaces: RecentWorkspace[]
   onRecordRecentWorkspace: (path: string) => void
   onRemoveRecentWorkspaces: (paths: string[]) => void
@@ -161,6 +173,7 @@ const WorkspaceColumnView = ({
   providers,
   language,
   systemPrompt,
+  crossProviderSkillReuseEnabled,
   musicAlbumCoverEnabled,
   weatherCity,
   gitAgentModel,
@@ -198,6 +211,7 @@ const WorkspaceColumnView = ({
   onStopMessage,
   onForkConversation,
   onOpenFile,
+  onLaunchSpec,
   recentWorkspaces,
   onRecordRecentWorkspace,
   onRemoveRecentWorkspaces,
@@ -829,6 +843,7 @@ const WorkspaceColumnView = ({
           providers={providers}
           language={language}
           systemPrompt={systemPrompt}
+          crossProviderSkillReuseEnabled={crossProviderSkillReuseEnabled}
           musicAlbumCoverEnabled={musicAlbumCoverEnabled}
           weatherCity={weatherCity}
           gitAgentModel={gitAgentModel}
@@ -867,10 +882,11 @@ const WorkspaceColumnView = ({
           onPatchCard={onPatchCard}
           onChangeCardTitle={onChangeCardTitle}
           onSendMessage={onSendMessage}
-          onStopMessage={onStopMessage}
-          onForkConversation={onForkConversation}
-          onOpenFile={onOpenFile}
-        />
+        onStopMessage={onStopMessage}
+        onForkConversation={onForkConversation}
+        onOpenFile={onOpenFile}
+        onLaunchSpec={onLaunchSpec}
+      />
       </div>
 
       <div

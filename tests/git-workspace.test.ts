@@ -353,4 +353,34 @@ describe('git workspace helpers', () => {
     assert.equal(restaged.summary.staged, 1)
     assert.equal(restaged.summary.unstaged, 0)
   })
+
+  it('stages and commits files whose names contain non-ASCII (Chinese) characters', async () => {
+    const repoPath = await createTempRepo()
+    const chineseName = '大学笔记.md'
+    await writeFile(path.join(repoPath, chineseName), '中文内容\n')
+
+    const initial = await inspectGitWorkspace(repoPath)
+    const change = initial.changes.find((entry) => entry.path === chineseName)
+    assert.ok(change, `expected a change entry for ${chineseName}, got ${JSON.stringify(initial.changes)}`)
+
+    const staged = await setGitWorkspaceStage({
+      workspacePath: repoPath,
+      paths: [chineseName],
+      staged: true,
+    })
+    const stagedChange = staged.changes.find((entry) => entry.path === chineseName)
+    assert.equal(stagedChange?.staged, true)
+
+    const commitResult = await commitGitWorkspace({
+      workspacePath: repoPath,
+      paths: [chineseName],
+      summary: '新增中文文件',
+      description: '',
+    })
+    assert.equal(commitResult.commit.summary, '新增中文文件')
+
+    const afterCommit = await inspectGitWorkspace(repoPath)
+    assert.equal(afterCommit.clean, true)
+    assert.equal(afterCommit.changes.length, 0)
+  })
 })

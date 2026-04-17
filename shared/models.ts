@@ -1,7 +1,7 @@
 import type { Provider } from './schema.js'
 
 export const DEFAULT_CODEX_MODEL = 'gpt-5.4'
-export const DEFAULT_CLAUDE_MODEL = 'claude-opus-4-6'
+export const DEFAULT_CLAUDE_MODEL = 'claude-opus-4-7'
 export const DEFAULT_GIT_AGENT_MODEL = `${DEFAULT_CODEX_MODEL} xhigh`
 export const GIT_TOOL_MODEL = '__git_tool__'
 export const MUSIC_TOOL_MODEL = '__music_tool__'
@@ -92,10 +92,10 @@ export const MODEL_OPTIONS: ModelOption[] = [
     aliases: ['gpt-5.4', '5.4', 'gpt54'],
   },
   {
-    label: 'Opus 4.6',
+    label: 'Opus 4.7',
     provider: 'claude',
     model: DEFAULT_CLAUDE_MODEL,
-    aliases: ['opus', 'opus-4.6', 'claude-opus-4-6'],
+    aliases: ['opus', 'opus-4.7', 'claude-opus-4-7'],
   },
   {
     label: 'Sonnet 4.6',

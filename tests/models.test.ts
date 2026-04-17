@@ -26,7 +26,7 @@ describe('model helpers', () => {
     assert.equal(normalizeStoredModel('codex', '__dream_tool__'), DEFAULT_CODEX_MODEL)
     assert.equal(normalizeStoredModel('claude', ''), '')
     assert.equal(normalizeModel('claude', ''), DEFAULT_CLAUDE_MODEL)
-    assert.equal(normalizeModel('claude', ' claude-opus-4-6 '), 'claude-opus-4-6')
+    assert.equal(normalizeModel('claude', ' claude-opus-4-7 '), 'claude-opus-4-7')
   })
 
   it('lists Git tool first among codex model options', () => {
@@ -69,7 +69,7 @@ describe('model helpers', () => {
     assert.equal(resolveSlashModel('codex', 'whitenoise'), WHITENOISE_TOOL_MODEL)
     assert.equal(resolveSlashModel('codex', 'ambient'), WHITENOISE_TOOL_MODEL)
     assert.equal(resolveSlashModel('claude', 'claude'), '')
-    assert.equal(resolveSlashModel('claude', 'opus'), 'claude-opus-4-6')
+    assert.equal(resolveSlashModel('claude', 'opus'), 'claude-opus-4-7')
     assert.equal(resolveSlashModel('claude', 'unknown-model'), null)
   })
 })

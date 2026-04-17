@@ -33,7 +33,7 @@ const createState = (theme: ThemeName, cardOverrides: Record<string, unknown> = 
       resilientProxyEnabled: true,
       requestModels: {
         codex: 'gpt-5.4',
-        claude: 'claude-opus-4-6',
+        claude: 'claude-opus-4-7',
       },
       modelReasoningEfforts: {
         codex: {},
@@ -149,7 +149,7 @@ for (const theme of ['dark', 'light'] as const) {
 
     await page.waitForTimeout(550)
 
-    await selectModel(page, modelSelect, 'Opus 4.6')
+    await selectModel(page, modelSelect, 'Opus 4.7')
     await settingsTrigger.click()
     await expect(reasoningSelect).toHaveValue('max')
 
@@ -162,13 +162,13 @@ for (const theme of ['dark', 'light'] as const) {
     await settingsTrigger.click()
     await expect(reasoningSelect).toHaveValue('high')
 
-    await selectModel(page, modelSelect, 'Opus 4.6')
+    await selectModel(page, modelSelect, 'Opus 4.7')
     await settingsTrigger.click()
     await expect(reasoningSelect).toHaveValue('low')
 
     await page.reload()
 
-    await expect(modelSelect).toHaveText('Opus 4.6')
+    await expect(modelSelect).toHaveText('Opus 4.7')
     await settingsTrigger.click()
     await expect(reasoningSelect).toHaveValue('low')
 

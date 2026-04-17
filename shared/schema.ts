@@ -5,7 +5,7 @@ import {
   MAX_BRAINSTORM_ANSWER_COUNT,
   MIN_BRAINSTORM_ANSWER_COUNT,
 } from './brainstorm.js'
-import { DEFAULT_CODEX_MODEL, DEFAULT_GIT_AGENT_MODEL } from './models.js'
+import { DEFAULT_CLAUDE_MODEL, DEFAULT_CODEX_MODEL, DEFAULT_GIT_AGENT_MODEL } from './models.js'
 import { defaultSystemPrompt } from './system-prompt.js'
 
 export const providerSchema = z.enum(['codex', 'claude'])
@@ -204,8 +204,8 @@ export const boardColumnSchema = z.object({
 export type BoardColumn = z.infer<typeof boardColumnSchema>
 
 export const requestModelSettingsSchema = z.object({
-  codex: z.string().default('gpt-5.4'),
-  claude: z.string().default('claude-opus-4-6'),
+  codex: z.string().default(DEFAULT_CODEX_MODEL),
+  claude: z.string().default(DEFAULT_CLAUDE_MODEL),
 })
 export type RequestModelSettings = z.infer<typeof requestModelSettingsSchema>
 
@@ -387,8 +387,8 @@ export const appSettingsSchema = z.object({
   weatherCity: z.string().default(''),
   systemPrompt: z.string().default(defaultSystemPrompt),
   requestModels: requestModelSettingsSchema.default({
-    codex: 'gpt-5.4',
-    claude: 'claude-opus-4-6',
+    codex: DEFAULT_CODEX_MODEL,
+    claude: DEFAULT_CLAUDE_MODEL,
   }),
   modelReasoningEfforts: modelReasoningEffortsSchema.default({
     codex: {},
@@ -453,8 +453,8 @@ export const appStateSchema = z.object({
     weatherCity: '',
     systemPrompt: defaultSystemPrompt,
     requestModels: {
-      codex: 'gpt-5.4',
-      claude: 'claude-opus-4-6',
+      codex: DEFAULT_CODEX_MODEL,
+      claude: DEFAULT_CLAUDE_MODEL,
     },
     modelReasoningEfforts: {
       codex: {},

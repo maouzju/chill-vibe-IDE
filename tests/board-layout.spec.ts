@@ -4,7 +4,7 @@ import { createPlaywrightState } from './playwright-state.ts'
 
 const createBoardColumnFixture = (index: number, width?: number) => {
   const provider = index % 2 === 0 ? ('codex' as const) : ('claude' as const)
-  const model = provider === 'codex' ? 'gpt-5.4' : 'claude-opus-4-6'
+  const model = provider === 'codex' ? 'gpt-5.4' : 'claude-opus-4-7'
 
   return {
     id: `col-${index + 1}`,
@@ -48,7 +48,7 @@ const mockAppApis = async (
       resilientProxyEnabled: true,
       requestModels: {
         codex: 'gpt-5.4',
-        claude: 'claude-opus-4-6',
+        claude: 'claude-opus-4-7',
       },
       modelReasoningEfforts: {
         codex: {},

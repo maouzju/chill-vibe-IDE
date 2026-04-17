@@ -132,14 +132,14 @@ const createState = (): AppState => ({
       title: 'Workspace 2',
       provider: 'claude',
       workspacePath: 'D:/repo/two',
-      model: 'claude-opus-4-6',
+      model: 'claude-opus-4-7',
       layout: createPane('pane-2', ['card-3'], 'card-3'),
       cards: {
         'card-3': createCard({
           id: 'card-3',
           title: 'Claude Chat',
           provider: 'claude',
-          model: 'claude-opus-4-6',
+          model: 'claude-opus-4-7',
           messages: [],
         }),
       },
@@ -481,8 +481,8 @@ describe('ideReducer pane layout', () => {
       },
       layout: createPane('pane-2', ['card-3'], 'card-3'),
     }
-    state.settings.requestModels.claude = 'claude-opus-4-6'
-    state.settings.lastModel = { provider: 'claude', model: 'claude-opus-4-6' }
+    state.settings.requestModels.claude = 'claude-opus-4-7'
+    state.settings.lastModel = { provider: 'claude', model: 'claude-opus-4-7' }
 
     const next = ideReducer(state, {
       type: 'addTab',
@@ -503,7 +503,7 @@ describe('ideReducer pane layout', () => {
     state.columns[1] = {
       ...state.columns[1]!,
       provider: 'claude',
-      model: 'claude-opus-4-6',
+      model: 'claude-opus-4-7',
       cards: {
         'card-3': createCard({
           id: 'card-3',
@@ -574,20 +574,20 @@ describe('ideReducer pane layout', () => {
 
   it('updates untouched empty chats that still point at the previous provider default', () => {
     const state = createState()
-    state.settings.requestModels.claude = 'claude-opus-4-6'
+    state.settings.requestModels.claude = 'claude-opus-4-7'
     const claudeColumn = state.columns[1]!
     claudeColumn.cards['card-4'] = createCard({
       id: 'card-4',
       title: '',
       provider: 'claude',
-      model: 'claude-opus-4-6',
+      model: 'claude-opus-4-7',
       messages: [],
     })
     claudeColumn.cards['card-5'] = createCard({
       id: 'card-5',
       title: 'Pinned Opus Chat',
       provider: 'claude',
-      model: 'claude-opus-4-6',
+      model: 'claude-opus-4-7',
     })
     claudeColumn.layout = createPane('pane-2', ['card-3', 'card-4', 'card-5'], 'card-3')
 
@@ -602,7 +602,7 @@ describe('ideReducer pane layout', () => {
     assert.equal(next.settings.requestModels.claude, 'claude-sonnet-4-6')
     assert.equal(next.columns[1]?.cards['card-3']?.model, 'claude-sonnet-4-6')
     assert.equal(next.columns[1]?.cards['card-4']?.model, 'claude-sonnet-4-6')
-    assert.equal(next.columns[1]?.cards['card-5']?.model, 'claude-opus-4-6')
+    assert.equal(next.columns[1]?.cards['card-5']?.model, 'claude-opus-4-7')
   })
 
   it('does not replace future chat defaults when switching the current card to a tool model', () => {
@@ -1077,7 +1077,7 @@ describe('addColumn follows last-used provider/model when available', () => {
       columns: [baseState.columns[1]!],
       settings: {
         ...createDefaultSettings(),
-        requestModels: { codex: DEFAULT_CODEX_MODEL, claude: 'claude-opus-4-6' },
+        requestModels: { codex: DEFAULT_CODEX_MODEL, claude: 'claude-opus-4-7' },
         lastModel: { provider: 'codex', model: DEFAULT_CODEX_MODEL },
       },
     }
@@ -1109,7 +1109,7 @@ describe('addColumn follows last-used provider/model when available', () => {
       columns: [baseState.columns[1]!],
       settings: {
         ...createDefaultSettings(),
-        requestModels: { codex: DEFAULT_CODEX_MODEL, claude: 'claude-opus-4-6' },
+        requestModels: { codex: DEFAULT_CODEX_MODEL, claude: 'claude-opus-4-7' },
         lastModel: { provider: 'claude', model: 'claude-sonnet-4-6' },
       },
     }

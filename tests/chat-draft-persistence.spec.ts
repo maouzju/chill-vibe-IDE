@@ -21,7 +21,7 @@ const installMockApis = async (page: Page, initialState?: ReturnType<typeof crea
       resilientProxyEnabled: true,
       requestModels: {
         codex: 'gpt-5.4',
-        claude: 'claude-opus-4-6',
+        claude: 'claude-opus-4-7',
       },
       modelReasoningEfforts: {
         codex: {},
@@ -235,7 +235,7 @@ test('same-pane tab switches keep the latest draft when inactive chat bodies unl
       resilientProxyEnabled: true,
       requestModels: {
         codex: 'gpt-5.4',
-        claude: 'claude-opus-4-6',
+        claude: 'claude-opus-4-7',
       },
       modelReasoningEfforts: {
         codex: {},

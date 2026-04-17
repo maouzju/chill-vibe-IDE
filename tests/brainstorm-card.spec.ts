@@ -18,7 +18,7 @@ const createState = () =>
       brainstormCardEnabled: true,
       requestModels: {
         codex: 'gpt-5.4',
-        claude: 'claude-opus-4-6',
+        claude: 'claude-opus-4-7',
       },
       modelReasoningEfforts: {
         codex: {},
@@ -240,7 +240,7 @@ test('brainstorm card lets users choose the request model per card', async ({ pa
 
   await expect(modelSelect).toBeVisible()
   await modelSelect.click()
-  await page.getByRole('option', { name: 'Opus 4.6' }).click()
+  await page.getByRole('option', { name: 'Opus 4.7' }).click()
 
   await page.locator('.brainstorm-textarea').fill('Pitch three directions for a calmer empty state.')
   await page.locator('.brainstorm-count-input').fill('1')
@@ -249,7 +249,7 @@ test('brainstorm card lets users choose the request model per card', async ({ pa
   await expect.poll(() => readBrainstormRequests(page)).toEqual([
     {
       provider: 'claude',
-      model: 'claude-opus-4-6',
+      model: 'claude-opus-4-7',
       prompt: 'Pitch three directions for a calmer empty state.',
     },
   ])

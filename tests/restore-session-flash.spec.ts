@@ -134,7 +134,7 @@ const mockAppApis = async (
       resilientProxyEnabled: true,
       requestModels: {
         codex: 'gpt-5.4',
-        claude: 'claude-opus-4-6',
+        claude: 'claude-opus-4-7',
       },
       modelReasoningEfforts: { codex: {}, claude: {} },
       providerProfiles: {
@@ -206,7 +206,7 @@ const mockBackgroundTabApis = async (page: Page) => {
       resilientProxyEnabled: true,
       requestModels: {
         codex: 'gpt-5.4',
-        claude: 'claude-opus-4-6',
+        claude: 'claude-opus-4-7',
       },
       modelReasoningEfforts: { codex: {}, claude: {} },
       providerProfiles: {
@@ -279,7 +279,7 @@ const mockHistorySearchApis = async (page: Page) => {
       resilientProxyEnabled: true,
       requestModels: {
         codex: 'gpt-5.4',
-        claude: 'claude-opus-4-6',
+        claude: 'claude-opus-4-7',
       },
       modelReasoningEfforts: { codex: {}, claude: {} },
       providerProfiles: {
@@ -343,7 +343,7 @@ const mockHistorySearchApis = async (page: Page) => {
         title: 'Planning sync',
         sessionId: 'planning-sync',
         provider: 'claude' as const,
-        model: 'claude-opus-4-6',
+        model: 'claude-opus-4-7',
         workspacePath: 'd:\\Git\\docs-site',
         messages: [
           {

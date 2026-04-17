@@ -34,6 +34,8 @@ import {
 import { attachImagesToMessageMeta } from '../shared/chat-attachments'
 import { formatLocalizedDateTime, getLocaleText, getProviderLabel } from '../shared/i18n'
 import {
+  DEFAULT_CLAUDE_MODEL,
+  DEFAULT_CODEX_MODEL,
   FILETREE_TOOL_MODEL,
   TEXTEDITOR_TOOL_MODEL,
   getModelOptions,
@@ -4005,7 +4007,7 @@ function App() {
                 patch: { codex: event.target.value },
               })
             }
-            placeholder="gpt-5.4"
+            placeholder={DEFAULT_CODEX_MODEL}
           />
         </label>
 
@@ -4024,7 +4026,7 @@ function App() {
                 patch: { claude: event.target.value },
               })
             }
-            placeholder="claude-opus-4-6"
+            placeholder={DEFAULT_CLAUDE_MODEL}
           />
         </label>
 
@@ -5165,7 +5167,7 @@ function App() {
                         patch: { codex: event.target.value },
                       })
                     }
-                    placeholder="gpt-5.4"
+                    placeholder={DEFAULT_CODEX_MODEL}
                   />
                 </label>
 
@@ -5184,7 +5186,7 @@ function App() {
                         patch: { claude: event.target.value },
                       })
                     }
-                    placeholder="claude-opus-4-6"
+                    placeholder={DEFAULT_CLAUDE_MODEL}
                   />
                 </label>
 

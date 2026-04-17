@@ -67,7 +67,7 @@ describe('internal resilient proxy', () => {
       response.statusCode = 200
       response.setHeader('Content-Type', 'text/event-stream')
       response.write('event: message_start\n')
-      response.write('data: {"type":"message_start","message":{"id":"msg-1","model":"claude-opus-4-6"}}\n\n')
+      response.write('data: {"type":"message_start","message":{"id":"msg-1","model":"claude-opus-4-7"}}\n\n')
       response.write('event: content_block_start\n')
       response.write('data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}\n\n')
 
@@ -106,7 +106,7 @@ describe('internal resilient proxy', () => {
           'x-api-key': 'sk-test',
         },
         body: JSON.stringify({
-          model: 'claude-opus-4-6',
+          model: 'claude-opus-4-7',
           stream: true,
           messages: [
             {
@@ -151,7 +151,7 @@ describe('internal resilient proxy', () => {
       response.statusCode = 200
       response.setHeader('Content-Type', 'text/event-stream')
       response.write('event: message_start\n')
-      response.write('data: {"type":"message_start","message":{"id":"msg-terminal","model":"claude-opus-4-6"}}\n\n')
+      response.write('data: {"type":"message_start","message":{"id":"msg-terminal","model":"claude-opus-4-7"}}\n\n')
       response.write('event: content_block_start\n')
       response.write('data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}\n\n')
       response.write('event: content_block_delta\n')
@@ -182,7 +182,7 @@ describe('internal resilient proxy', () => {
           'x-api-key': 'sk-test',
         },
         body: JSON.stringify({
-          model: 'claude-opus-4-6',
+          model: 'claude-opus-4-7',
           stream: true,
           messages: [
             {

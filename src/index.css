@@ -2717,11 +2717,16 @@ body.is-card-dragging .lane-drop-zone-top {
 
 .message-user {
   align-self: flex-end;
-  min-inline-size: min(5.5em, 100%);
   background: rgba(255, 255, 255, 0.96);
   border: 1px solid rgba(80, 90, 82, 0.1);
   border-bottom-right-radius: 5px;
   box-shadow: none;
+}
+
+.message.message-user {
+  width: max-content;
+  max-width: 88%;
+  min-inline-size: 0;
 }
 
 .message-assistant {
@@ -3693,6 +3698,10 @@ body.is-card-dragging .lane-drop-zone-top {
   display: flex;
   min-width: 0;
   flex-direction: column;
+}
+
+.message-entry-user > .message-entry-shell {
+  width: 100%;
 }
 
 .message-entry-user {

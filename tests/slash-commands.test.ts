@@ -25,7 +25,7 @@ describe('slash command helpers', () => {
 
   it('extracts completion queries and recognizes local commands', () => {
     assert.equal(getSlashCompletionQuery('  /Sta'), 'sta')
-    assert.equal(getSlashCompletionQuery('/model opus 4.6'), null)
+    assert.equal(getSlashCompletionQuery('/model opus 4.7'), null)
     assert.equal(isLocalSlashCommandInput('/help'), true)
     assert.equal(isLocalSlashCommandInput('/plan'), false)
   })

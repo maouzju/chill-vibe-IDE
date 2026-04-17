@@ -115,7 +115,7 @@ test('resume args omit an empty prompt when continuing a codex session', () => {
   assert.ok(!args.includes(''))
 })
 
-test('resume args omit an empty prompt when continuing a claude session', () => {
+test('resume args include a fallback prompt when continuing a claude session with no new input', () => {
   const args = buildClaudeArgs(
     createRequest({
       provider: 'claude',
@@ -131,6 +131,19 @@ test('resume args omit an empty prompt when continuing a claude session', () => 
   assert.equal(args[0], '-r')
   assert.equal(args[1], 'resume-session-1')
   assert.ok(!args.includes(''))
+  // The Claude CLI treats the trailing positional argument as the user prompt.
+  // When resuming a session with no new input we must still pass a non-empty
+  // fallback prompt so the CLI has something to continue with — otherwise it
+  // errors out with "No deferred tool marker found in the resumed session."
+  const systemPromptIndex = args.indexOf('--append-system-prompt')
+  assert.notEqual(systemPromptIndex, -1)
+  const trailing = args.slice(systemPromptIndex + 2)
+  assert.equal(
+    trailing.length,
+    1,
+    `expected exactly one positional prompt after the system prompt flag, got ${JSON.stringify(trailing)}`,
+  )
+  assert.ok(trailing[0].trim().length > 0, 'fallback prompt must be non-empty')
 })
 
 test('claude image attachment prompts follow the documented image-path format', () => {

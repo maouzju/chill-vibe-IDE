@@ -16,7 +16,7 @@ const installMockApis = async (page: Page, theme: ThemeName) => {
       lineHeightScale: 1,
       requestModels: {
         codex: 'gpt-5.4',
-        claude: 'claude-opus-4-6',
+        claude: 'claude-opus-4-7',
       },
     },
     updatedAt: new Date().toISOString(),

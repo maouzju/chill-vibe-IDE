@@ -1544,7 +1544,14 @@ const getClaudePrompt = (request: ChatRequest, attachmentPaths: string[]) => {
   const prompt = request.prompt.trim()
 
   if (attachmentPaths.length === 0) {
-    return prompt
+    if (prompt) {
+      return prompt
+    }
+    // When resuming a session with no new input, Claude's CLI errors out with
+    // "No deferred tool marker found in the resumed session" unless we give it
+    // something to continue with. Emit a neutral fallback so auto-resume feels
+    // seamless instead of surfacing that error to the user.
+    return request.sessionId ? 'Please continue.' : ''
   }
 
   const imagePrefix =
@@ -1584,7 +1591,7 @@ export const buildClaudeArgs = (
   args.push('--append-system-prompt', systemPrompt)
 
   const prompt = getClaudePrompt(request, attachmentPaths)
-  if (!request.sessionId || prompt.trim().length > 0 || attachmentPaths.length > 0) {
+  if (prompt.length > 0) {
     args.push(prompt)
   }
   return args

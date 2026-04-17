@@ -221,7 +221,7 @@ const createMockState = (): AppState => ({
       resilientProxyEnabled: true,
       requestModels: {
         codex: 'gpt-5.4',
-        claude: 'claude-opus-4-6',
+        claude: 'claude-opus-4-7',
       },
       modelReasoningEfforts: {
         codex: {},
@@ -303,14 +303,14 @@ const createColumnHeaderDropState = (): AppState => {
       title: 'Target Workspace',
       provider: 'claude',
       workspacePath: 'd:\\Git\\target-workspace',
-      model: 'claude-opus-4-6',
+      model: 'claude-opus-4-7',
       cards: [
         {
           ...state.columns[0]!.cards[0]!,
           id: 'card-2',
           title: 'Target Chat',
           provider: 'claude',
-          model: 'claude-opus-4-6',
+          model: 'claude-opus-4-7',
         },
       ],
     },
@@ -652,14 +652,14 @@ const createCrossWorkspaceWeatherDragState = (): AppState => {
       title: 'Target Workspace',
       provider: 'claude',
       workspacePath: 'd:\\Git\\target-workspace',
-      model: 'claude-opus-4-6',
+      model: 'claude-opus-4-7',
       cards: [
         {
           ...state.columns[0]!.cards[0]!,
           id: 'target-chat',
           title: 'Target Chat',
           provider: 'claude',
-          model: 'claude-opus-4-6',
+          model: 'claude-opus-4-7',
           reasoningEffort: 'medium',
           messages: [],
         },
@@ -974,11 +974,11 @@ const createStreamingStructuredCommandGroupState = (): AppState => {
 const createClaudeStructuredChatState = (): AppState => {
   const state = createMockState()
   state.columns[0]!.provider = 'claude'
-  state.columns[0]!.model = 'claude-opus-4-6'
+  state.columns[0]!.model = 'claude-opus-4-7'
   state.columns[0]!.cards[0] = {
     ...state.columns[0]!.cards[0]!,
     provider: 'claude',
-    model: 'claude-opus-4-6',
+    model: 'claude-opus-4-7',
     messages: [
       {
         id: 'tool-1',
@@ -1049,11 +1049,11 @@ const createStructuredTodoState = (): AppState => {
   const state = createMockState()
   state.settings.language = 'en'
   state.columns[0]!.provider = 'claude'
-  state.columns[0]!.model = 'claude-opus-4-6'
+  state.columns[0]!.model = 'claude-opus-4-7'
   state.columns[0]!.cards[0] = {
     ...state.columns[0]!.cards[0]!,
     provider: 'claude',
-    model: 'claude-opus-4-6',
+    model: 'claude-opus-4-7',
     status: 'streaming',
     messages: [
       {
@@ -1302,7 +1302,7 @@ const createOverflowStructuredState = (): AppState => {
     title: 'Review Workspace',
     provider: 'claude',
     workspacePath: 'd:\\Git\\review-workspace',
-    model: 'claude-opus-4-6',
+    model: 'claude-opus-4-7',
     width: 420,
     cards: [
       {
@@ -1311,7 +1311,7 @@ const createOverflowStructuredState = (): AppState => {
         status: 'idle',
         size: 540,
         provider: 'claude',
-        model: 'claude-opus-4-6',
+        model: 'claude-opus-4-7',
         reasoningEffort: 'medium',
         draft: '',
         messages: [],
@@ -2918,6 +2918,39 @@ test('system stop messages stay on one line in both themes', async ({ page }) =>
   await ambienceTab.click()
 
   await expectSingleLineStopMessage('light')
+})
+
+test('short user messages stay on one line without forced wrapping', async ({ page }) => {
+  const state = createMockState()
+  const now = new Date().toISOString()
+
+  state.columns[0].cards[0].messages = [
+    {
+      id: 'message-user-short-1',
+      role: 'user',
+      content: '你是什么模型',
+      createdAt: now,
+    },
+  ]
+
+  await mockAppApis(page, { state })
+  await page.goto(appUrl)
+
+  const userBubble = page.locator('[data-renderable-id="message-user-short-1"] .message-user').first()
+  const userParagraph = userBubble.locator('.message-content p').first()
+
+  await expect(userBubble).toBeVisible()
+  await expect(userParagraph).toContainText('你是什么模型')
+  await expect.poll(async () => {
+    const metrics = await userParagraph.evaluate((node) => {
+      const style = window.getComputedStyle(node)
+      const lineHeight = Number.parseFloat(style.lineHeight)
+      const height = node.getBoundingClientRect().height
+      return { height, lineHeight }
+    })
+
+    return metrics.height / metrics.lineHeight
+  }).toBeLessThan(1.3)
 })
 
 test('user fork actions stay light and icon-only in both themes', async ({ page }) => {
@@ -5458,7 +5491,7 @@ for (const theme of ['dark', 'light'] as const) {
       id: 'chat-below-card',
       title: 'Below chat',
       provider: 'claude',
-      model: 'claude-opus-4-6',
+      model: 'claude-opus-4-7',
       reasoningEffort: 'medium',
       size: 300,
       draft: 'Keep the lower pane mounted while the Git card overflows.',
@@ -5848,7 +5881,7 @@ for (const theme of ['dark', 'light'] as const) {
       id: 'chat-card',
       title: 'Below chat',
       provider: 'claude' as const,
-      model: 'claude-opus-4-6',
+      model: 'claude-opus-4-7',
       reasoningEffort: 'medium',
       size: 280,
     }
@@ -6034,7 +6067,7 @@ test('git tool card keeps long zh-CN metadata rows fully visible instead of clip
       id: 'card-2',
       title: '问题3',
       provider: 'claude',
-      model: 'claude-opus-4-6',
+      model: 'claude-opus-4-7',
       reasoningEffort: 'medium',
       size: 340,
     },

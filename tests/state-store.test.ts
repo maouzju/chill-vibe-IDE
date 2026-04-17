@@ -222,13 +222,13 @@ describe('state-store persistence', () => {
 
     assert.equal(loadedReviewColumn.model, 'claude-sonnet-4-6')
     assert.equal(loadedReviewColumn.cards[untouchedCardId]?.model, 'claude-sonnet-4-6')
-    assert.equal(loadedReviewColumn.cards[pinnedCardId]?.model, 'claude-opus-4-6')
+    assert.equal(loadedReviewColumn.cards[pinnedCardId]?.model, 'claude-opus-4-7')
   })
 
   it('loadState prefers lastModel over provider defaults for untouched starter chats on startup', async () => {
     const stateFile = path.join(tmpDir, 'state.json')
     const state = createDefaultState('D:/remembered-last-model')
-    state.settings.requestModels.claude = 'claude-opus-4-6'
+    state.settings.requestModels.claude = 'claude-opus-4-7'
     state.settings.lastModel = { provider: 'claude', model: 'claude-sonnet-4-6' }
 
     const reviewColumn = state.columns[1]
@@ -245,11 +245,11 @@ describe('state-store persistence', () => {
         createdAt: new Date().toISOString(),
       },
     ]
-    reviewColumn.cards[pinnedCardId]!.model = 'claude-opus-4-6'
+    reviewColumn.cards[pinnedCardId]!.model = 'claude-opus-4-7'
     reviewColumn.cards[untouchedCardId]!.title = ''
     reviewColumn.cards[untouchedCardId]!.messages = []
-    reviewColumn.cards[untouchedCardId]!.model = 'claude-opus-4-6'
-    reviewColumn.model = 'claude-opus-4-6'
+    reviewColumn.cards[untouchedCardId]!.model = 'claude-opus-4-7'
+    reviewColumn.model = 'claude-opus-4-7'
 
     await writeFile(stateFile, JSON.stringify(state, null, 2), 'utf8')
 
@@ -259,7 +259,7 @@ describe('state-store persistence', () => {
 
     assert.equal(loadedReviewColumn.model, 'claude-sonnet-4-6')
     assert.equal(loadedReviewColumn.cards[untouchedCardId]?.model, 'claude-sonnet-4-6')
-    assert.equal(loadedReviewColumn.cards[pinnedCardId]?.model, 'claude-opus-4-6')
+    assert.equal(loadedReviewColumn.cards[pinnedCardId]?.model, 'claude-opus-4-7')
   })
 
   it('loadState drops persisted session ids for idle chats with historical image attachments', async () => {

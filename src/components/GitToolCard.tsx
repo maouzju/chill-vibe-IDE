@@ -484,7 +484,18 @@ export const GitToolCard = ({
       {/* ── Change summary (top) ─────────────────────────────────────────── */}
       {gitStatus.clean ? (
         <div className="git-dashboard-empty">
-          <span style={{ fontSize: '0.85em', opacity: 0.7 }}>{text.cleanTitle}</span>
+          <div className="git-dashboard-empty-row">
+            <span style={{ fontSize: '0.85em', opacity: 0.7 }}>{text.cleanTitle}</span>
+            <HoverTooltip content={text.openFullGitTooltip}>
+              <button
+                type="button"
+                className="git-tool-button"
+                onClick={() => setFullDialogMode('full')}
+              >
+                {text.openFullGit}
+              </button>
+            </HoverTooltip>
+          </div>
         </div>
       ) : (
         <div className="git-dashboard-compact-content">

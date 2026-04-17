@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import { describe, test } from 'node:test'
 
 import {
+  buildWindowsZipReplaceScript,
   classifyDownloadedAsset,
   isNewerVersion,
   parseVersionTag,
@@ -188,5 +189,69 @@ describe('update asset install strategy', () => {
       resolveDownloadedAssetStrategy('darwin', '/tmp/Chill-Vibe-0.2.0.dmg'),
       'shell-open',
     )
+  })
+})
+
+describe('buildWindowsZipReplaceScript', () => {
+  const baseParams = {
+    processId: 12345,
+    assetPath: 'C:\\Temp\\Chill.Vibe-0.14.0-win.zip',
+    targetDir: 'D:\\下载\\Chill.Vibe',
+    executablePath: 'D:\\下载\\Chill.Vibe\\Chill Vibe.exe',
+    stagingDir: 'C:\\Temp\\chill-vibe-update-1\\extract',
+    logPath: 'C:\\Temp\\chill-vibe-update-1\\apply-update.log',
+    waitTimeoutSeconds: 30,
+  }
+
+  test('waits for the parent PID but bounded by a timeout', () => {
+    const script = buildWindowsZipReplaceScript(baseParams)
+    assert.match(script, /\$pidToWait = 12345/)
+    assert.match(script, /\$waitTimeoutSeconds = 30/)
+    // Must stop waiting after the timeout elapses (force-kill the parent so we can proceed)
+    assert.match(script, /Stop-Process[^\n]*-Force/)
+  })
+
+  test('force-kills the parent if it lingers past the timeout', () => {
+    const script = buildWindowsZipReplaceScript(baseParams)
+    // The wait loop must exit when elapsed crosses the timeout (guard against infinite wait)
+    assert.match(script, /\$elapsed[^\n]*-ge[^\n]*\$TimeoutSeconds/)
+  })
+
+  test('measures the wait timeout in real time instead of half-second loop counts', () => {
+    const script = buildWindowsZipReplaceScript(baseParams)
+    assert.match(script, /Start-Sleep -Milliseconds 500/)
+    assert.match(script, /\$elapsedMilliseconds[^\n]*\+= 500/)
+    assert.match(script, /\$elapsedMilliseconds[^\n]*-ge[^\n]*\(\$TimeoutSeconds \* 1000\)/)
+  })
+
+  test('writes a log file for every major phase', () => {
+    const script = buildWindowsZipReplaceScript(baseParams)
+    assert.match(script, /\$logPath = 'C:\\Temp\\chill-vibe-update-1\\apply-update\.log'/)
+    // Each phase should append to the log (Out-File -Append or Add-Content)
+    assert.match(script, /(Out-File|Add-Content)[^\n]*\$logPath/)
+    // Must log the expand, copy, and launch phases so we can diagnose silent failures
+    assert.match(script, /expand/i)
+    assert.match(script, /copy/i)
+    assert.match(script, /launch/i)
+  })
+
+  test('wraps the body in try/catch so failures are logged instead of swallowed', () => {
+    const script = buildWindowsZipReplaceScript(baseParams)
+    assert.match(script, /\btry\s*\{/)
+    assert.match(script, /\bcatch\s*\{/)
+  })
+
+  test('escapes single quotes inside paths to avoid PowerShell injection', () => {
+    const script = buildWindowsZipReplaceScript({
+      ...baseParams,
+      targetDir: "D:\\My'Dir\\Chill",
+    })
+    // PowerShell single-quote escape: ' -> ''
+    assert.match(script, /D:\\My''Dir\\Chill/)
+  })
+
+  test('uses UTF-8 output encoding so Chinese paths survive the shell roundtrip', () => {
+    const script = buildWindowsZipReplaceScript(baseParams)
+    assert.match(script, /UTF8Encoding/)
   })
 })

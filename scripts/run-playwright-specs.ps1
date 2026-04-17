@@ -14,6 +14,10 @@ $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 Push-Location $repoRoot
 
 try {
+  if ($Mode -ne 'headless') {
+    Write-Warning "Headed mode has been retired for repo validation; running headless instead."
+  }
+
   [string[]]$requestedSpecs = @()
   $suiteSpecs = @{
     smoke = @(
@@ -61,10 +65,6 @@ try {
   }
 
   $playwrightArgs = @('exec', 'playwright', 'test') + $targets
-
-  if ($Mode -eq 'headed') {
-    $playwrightArgs += '--headed'
-  }
 
   & pnpm @playwrightArgs
 

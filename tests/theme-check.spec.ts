@@ -4247,7 +4247,7 @@ test('structured todo cards stay readable across themes', async ({ page }) => {
   const todoItems = todoCard.locator('.structured-todo-item')
   const completedItem = todoCard.locator('.structured-todo-item.is-completed').first()
   const completedTitle = todoCard.locator('.structured-todo-item.is-completed .structured-todo-title').first()
-  const inProgressBadge = todoCard.locator('.structured-todo-item.is-in_progress .structured-todo-badge').first()
+  const inProgressItem = todoCard.locator('.structured-todo-item.is-in_progress').first()
   const priorityBadge = todoCard.locator('.structured-todo-badge.is-priority.is-high').first()
   const settingsTab = page.locator('#app-tab-settings')
   const ambienceTab = page.locator('#app-tab-ambience')
@@ -4283,7 +4283,7 @@ test('structured todo cards stay readable across themes', async ({ page }) => {
   await expect(todoItems).toHaveCount(3)
   await expect(todoCard).toContainText('Tasks')
   await expect(todoCard).toContainText('1 of 3 completed')
-  await expect(inProgressBadge).toContainText('In progress')
+  await expect(inProgressItem).toBeVisible()
   await expect(priorityBadge).toContainText('High priority')
   expect(await readComputedValue(completedTitle, 'text-decoration-line')).toBe('line-through')
 

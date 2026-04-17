@@ -12,6 +12,7 @@ import {
   getScrollTopToRevealChildWithTopClearance,
   getProgrammaticBottomScrollTarget,
   shouldAutoRevealCompactedHistoryImmediately,
+  shouldPinToBottomAfterContentGrowth,
 } from '../src/components/chat-scroll.ts'
 
 describe('chat scroll helpers', () => {
@@ -270,6 +271,73 @@ describe('chat scroll helpers', () => {
         scrollTop: 794,
         bottomSpacerPx: 527,
       },
+    )
+  })
+
+  it('re-pins to the new bottom when async content growth happens while the user was pinned and idle', () => {
+    // Scenario: stream finished, scrollTop was at the previous bottom (580).
+    // Afterwards an async block (image / code highlight / mermaid) expands the
+    // list from scrollHeight=1000 to 1100. scrollTop stays at 580 because the
+    // browser did not move it, but the real bottom is now 680. Since the user
+    // did not scroll, auto-scroll must still want to follow.
+    assert.equal(
+      shouldPinToBottomAfterContentGrowth({
+        previousBottomScrollTop: 580,
+        currentMetrics: {
+          scrollTop: 580,
+          scrollHeight: 1100,
+          clientHeight: 420,
+        },
+        wasPinned: true,
+      }),
+      true,
+    )
+  })
+
+  it('does not re-pin after content growth if the user had already scrolled up before the growth', () => {
+    assert.equal(
+      shouldPinToBottomAfterContentGrowth({
+        previousBottomScrollTop: 580,
+        currentMetrics: {
+          scrollTop: 200,
+          scrollHeight: 1100,
+          clientHeight: 420,
+        },
+        wasPinned: false,
+      }),
+      false,
+    )
+  })
+
+  it('does not re-pin when there was no actual content growth', () => {
+    assert.equal(
+      shouldPinToBottomAfterContentGrowth({
+        previousBottomScrollTop: 580,
+        currentMetrics: {
+          scrollTop: 580,
+          scrollHeight: 1000,
+          clientHeight: 420,
+        },
+        wasPinned: true,
+      }),
+      false,
+    )
+  })
+
+  it('tolerates sub-pixel drift between previousBottomScrollTop and the old bottom position', () => {
+    // The user was effectively pinned (within 1px of the bottom) when growth
+    // started; we should still follow the new bottom.
+    assert.equal(
+      shouldPinToBottomAfterContentGrowth({
+        previousBottomScrollTop: 579.4,
+        currentMetrics: {
+          scrollTop: 579.4,
+          scrollHeight: 1100,
+          clientHeight: 420,
+        },
+        wasPinned: true,
+      }),
+      true,
     )
   })
 })

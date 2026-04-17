@@ -157,18 +157,12 @@ test('package scripts expose risk and full regression entrypoints', async () => 
     packageJson.scripts?.['test:theme'],
     'powershell -ExecutionPolicy Bypass -File scripts/run-playwright-specs.ps1 -Suite theme',
   )
-  assert.equal(
-    packageJson.scripts?.['test:theme:headed'],
-    'powershell -ExecutionPolicy Bypass -File scripts/run-playwright-specs.ps1 -Suite theme -Mode headed',
-  )
+  assert.equal('test:theme:headed' in (packageJson.scripts ?? {}), false)
   assert.equal(
     packageJson.scripts?.['test:playwright'],
     'powershell -ExecutionPolicy Bypass -File scripts/run-playwright-specs.ps1',
   )
-  assert.equal(
-    packageJson.scripts?.['test:playwright:headed'],
-    'powershell -ExecutionPolicy Bypass -File scripts/run-playwright-specs.ps1 -Mode headed',
-  )
+  assert.equal('test:playwright:headed' in (packageJson.scripts ?? {}), false)
   assert.equal(
     packageJson.scripts?.['test:playwright:full'],
     'powershell -ExecutionPolicy Bypass -File scripts/run-playwright-specs.ps1 -Suite full',
@@ -177,10 +171,7 @@ test('package scripts expose risk and full regression entrypoints', async () => 
     packageJson.scripts?.['test:perf'],
     'powershell -ExecutionPolicy Bypass -File scripts/run-performance-smoke.ps1',
   )
-  assert.equal(
-    packageJson.scripts?.['test:perf:headed'],
-    'powershell -ExecutionPolicy Bypass -File scripts/run-performance-smoke.ps1 -Mode headed',
-  )
+  assert.equal('test:perf:headed' in (packageJson.scripts ?? {}), false)
   assert.equal(
     packageJson.scripts?.['test:perf:electron'],
     'powershell -ExecutionPolicy Bypass -File scripts/run-electron-runtime-tests.ps1 -Tests tests/electron-git-tool-runtime.test.ts,tests/electron-git-stage-performance.test.ts',
@@ -258,6 +249,18 @@ test('Electron quit flow flushes renderer persistence and waits for queued state
   assert.match(persistenceBody, /window\.addEventListener\('chill-vibe:flush-state-before-quit', handlePageHide\)/)
 })
 
+test('Electron runtime validation keeps desktop windows hidden by default', async () => {
+  const projectRoot = process.cwd()
+  const [mainBody, runnerBody] = await Promise.all([
+    readFile(path.join(projectRoot, 'electron', 'main.ts'), 'utf8'),
+    readFile(path.join(projectRoot, 'scripts', 'run-electron-runtime-tests.ps1'), 'utf8'),
+  ])
+
+  assert.match(runnerBody, /\$env:CHILL_VIBE_HEADLESS_RUNTIME_TESTS\s*=\s*'1'/)
+  assert.match(mainBody, /CHILL_VIBE_HEADLESS_RUNTIME_TESTS\s*===\s*'1'/)
+  assert.match(mainBody, /presentWindow\(win\)/)
+})
+
 test('development Electron retries renderer bootstrap when the dev shell loads with an empty root', async () => {
   const projectRoot = process.cwd()
   const [mainBody, rendererEntryBody] = await Promise.all([
@@ -282,23 +285,21 @@ test('README verification docs match the packaged regression scripts in both lan
   }
 
   assert.equal(packageJson.scripts?.['test:playwright'], 'powershell -ExecutionPolicy Bypass -File scripts/run-playwright-specs.ps1')
-  assert.equal(packageJson.scripts?.['test:playwright:headed'], 'powershell -ExecutionPolicy Bypass -File scripts/run-playwright-specs.ps1 -Mode headed')
   assert.equal(packageJson.scripts?.['test:playwright:full'], 'powershell -ExecutionPolicy Bypass -File scripts/run-playwright-specs.ps1 -Suite full')
-  assert.equal(packageJson.scripts?.['test:theme:headed'], 'powershell -ExecutionPolicy Bypass -File scripts/run-playwright-specs.ps1 -Suite theme -Mode headed')
+  assert.equal('test:playwright:headed' in (packageJson.scripts ?? {}), false)
+  assert.equal('test:theme:headed' in (packageJson.scripts ?? {}), false)
   assert.equal(packageJson.scripts?.['test:perf'], 'powershell -ExecutionPolicy Bypass -File scripts/run-performance-smoke.ps1')
-  assert.equal(packageJson.scripts?.['test:perf:headed'], 'powershell -ExecutionPolicy Bypass -File scripts/run-performance-smoke.ps1 -Mode headed')
+  assert.equal('test:perf:headed' in (packageJson.scripts ?? {}), false)
   assert.equal(packageJson.scripts?.['test:perf:electron'], 'powershell -ExecutionPolicy Bypass -File scripts/run-electron-runtime-tests.ps1 -Tests tests/electron-git-tool-runtime.test.ts,tests/electron-git-stage-performance.test.ts')
   assert.equal(packageJson.scripts?.['test:risk'], 'pnpm test:quality && pnpm test && pnpm test:playwright && pnpm test:electron')
   assert.equal(packageJson.scripts?.['test:full'], 'pnpm legal:check && pnpm test:quality && pnpm test && pnpm test:playwright:full && pnpm test:electron && pnpm build')
 
-  assert.match(readmeBody, /- `pnpm test:playwright` runs the default Playwright smoke suite for day-to-day regressions in headless mode\./)
-  assert.match(readmeBody, /- `pnpm test:playwright:headed` runs the same Playwright smoke suite with a visible browser for local debugging\./)
-  assert.match(readmeBody, /- `pnpm test:playwright:full` runs the full Playwright browser-flow regression suite\./)
+  assert.match(readmeBody, /- `pnpm test:playwright` runs the default Playwright smoke suite in headless mode\./)
+  assert.match(readmeBody, /- `pnpm test:playwright:full` runs the full Playwright browser-flow regression suite in headless mode\./)
   assert.match(readmeBody, /- `pnpm test:theme` runs the Playwright theme and board-layout regression checks through the repo harness in headless mode\./)
-  assert.match(readmeBody, /- `pnpm test:theme:headed` runs the same theme checks with a visible browser when you need to inspect UI behavior live\./)
-  assert.match(readmeBody, /- `pnpm test:perf` runs the headless browser-performance smoke slice: long-chat compaction logic, layout memoization safeguards, and the add-card freeze regression\./)
-  assert.match(readmeBody, /- `pnpm test:perf:headed` runs that same browser-performance smoke slice with a visible browser\./)
-  assert.match(readmeBody, /- `pnpm test:perf:electron` runs the real-window Electron responsiveness smoke for desktop-only performance issues\./)
+  assert.match(readmeBody, /- `pnpm test:perf` runs the browser-performance smoke slice in headless mode: long-chat compaction logic, layout memoization safeguards, and the add-card freeze regression\./)
+  assert.match(readmeBody, /- `pnpm test:perf:electron` runs the hidden-window Electron responsiveness smoke for desktop-only performance issues\./)
+  assert.match(readmeBody, /- `pnpm test:electron` runs the hidden-window Electron runtime suite\./)
   assert.match(readmeBody, /- `pnpm test:risk` runs lint, type checks, Node tests, the Playwright smoke suite, and Electron runtime checks\./)
   assert.match(readmeBody, /- `pnpm test:full` runs the legal inventory check, lint, type checks, Node tests, the full Playwright suite, Electron runtime checks, and the production build\./)
 
@@ -460,7 +461,7 @@ test('playwright runner script expands named suites through the repo harness', a
   }
 })
 
-test('playwright runner script forwards headed mode to Playwright', async () => {
+test('playwright runner stays headless even when legacy headed mode is requested', async () => {
   const tempDir = await mkdtemp(path.join(tmpdir(), 'chill-vibe-playwright-headed-script-'))
   const stubLogPath = path.join(tempDir, 'pnpm-headed-args.txt')
   await writeArgCaptureShim({ dir: tempDir, name: 'pnpm', logEnvVar: 'STUB_LOG' })
@@ -509,7 +510,8 @@ test('playwright runner script forwards headed mode to Playwright', async () => 
     })
 
     const capturedArgs = await readFile(stubLogPath, 'utf8')
-    assert.match(capturedArgs, /exec playwright test tests\/add-card-freeze\.spec\.ts --headed/i)
+    assert.match(capturedArgs, /exec playwright test tests\/add-card-freeze\.spec\.ts/i)
+    assert.doesNotMatch(capturedArgs, /--headed/i)
   } finally {
     await rm(tempDir, { recursive: true, force: true })
   }

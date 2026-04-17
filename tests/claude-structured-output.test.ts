@@ -382,3 +382,88 @@ test('ExitPlanMode attaches planFile from the most recent Write activity', () =>
     ],
   )
 })
+
+test('parses <ask-user-question> XML block emitted in Claude assistant text into ask-user activity', () => {
+  const parseClaudeStreamEvent = createClaudeStructuredOutputParser('zh-CN')
+
+  const payload = {
+    header: '布局选择',
+    question: '工作区干净时如何展示古法 Git 按钮?',
+    multiSelect: false,
+    options: [
+      { label: '单独按钮', description: '只显示古法 Git 按钮' },
+      { label: '完整操作栏', description: '其余按钮 disabled' },
+    ],
+  }
+
+  assert.deepEqual(
+    parseClaudeStreamEvent({
+      type: 'assistant',
+      message: {
+        id: 'msg_ask_user_xml',
+        content: [
+          {
+            type: 'text',
+            text: `<ask-user-question>${JSON.stringify(payload)}</ask-user-question>`,
+          },
+        ],
+      },
+    }),
+    [
+      {
+        type: 'activity',
+        itemId: 'msg_ask_user_xml',
+        kind: 'ask-user',
+        status: 'completed',
+        header: '布局选择',
+        question: '工作区干净时如何展示古法 Git 按钮?',
+        multiSelect: false,
+        options: [
+          { label: '单独按钮', description: '只显示古法 Git 按钮' },
+          { label: '完整操作栏', description: '其余按钮 disabled' },
+        ],
+      },
+    ],
+  )
+})
+
+test('invalid Claude AskUserQuestion tool payload falls back to a normal tool activity instead of a blank ask-user card', () => {
+  const parseClaudeStreamEvent = createClaudeStructuredOutputParser('en')
+
+  assert.deepEqual(
+    parseClaudeStreamEvent({
+      type: 'assistant',
+      message: {
+        id: 'msg_invalid_ask_user_tool',
+        content: [
+          {
+            type: 'tool_use',
+            id: 'toolu_invalid_ask_user',
+            name: 'AskUserQuestion',
+            input: {
+              questions: [
+                {
+                  header: 'Confirmation',
+                  question: '',
+                  multiSelect: false,
+                  options: [],
+                },
+              ],
+            },
+          },
+        ],
+      },
+    }),
+    [
+      {
+        type: 'activity',
+        itemId: 'toolu_invalid_ask_user',
+        kind: 'tool',
+        status: 'completed',
+        toolName: 'AskUserQuestion',
+        summary: 'Use tool: AskUserQuestion',
+        toolInput: undefined,
+      },
+    ],
+  )
+})

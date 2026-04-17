@@ -132,6 +132,8 @@ Applies to: `AGENTS.md`, `CLAUDE.md`, `docs/`, ESLint config, CI scripts, `packa
 - For a broad regression sweep, release verification, or any task where the user explicitly wants comprehensive validation, invoke the repo-local `chill-vibe-full-regression` skill and follow its workflow.
 - Do not treat `pnpm test:risk` or `pnpm test:full` as unconditional handoff gates for every risky change; start with the narrowest proving test unless the user asks for a wider sweep.
 - Use the repo Playwright scripts instead of bare `playwright test`; `pnpm test:playwright` is the default smoke sweep, `pnpm test:playwright:full` is the exhaustive suite, and `pnpm test:theme` covers theme snapshots through the same harness.
+- Repo-local browser verification is headless-only by default and by policy; do not add headed validation scripts back into the standard release/test workflow.
+- Repo-local Electron validation is hidden-window by default; do not rely on visible desktop windows as a standard release gate.
 - When a narrow failing test is enough to iterate locally, run it first and expand coverage only as far as the task and user request justify.
 - For Git-related changes, include the real card switch flow: switch a normal card to the `Git` model and verify the Git tool UI after the switch, not only a pre-seeded Git card state.
 
@@ -141,14 +143,11 @@ Applies to: `AGENTS.md`, `CLAUDE.md`, `docs/`, ESLint config, CI scripts, `packa
 |---------|-------------|
 | `pnpm test` | Unit tests (Node `--test` via tsx) |
 | `pnpm test:theme` | Headless Playwright visual regression (theme-check + board-layout) via the repo harness |
-| `pnpm test:theme:headed` | The same theme regression checks with a visible browser for local debugging |
 | `pnpm test:playwright` | Default Playwright smoke suite via the repo harness in headless mode |
-| `pnpm test:playwright:headed` | The same Playwright smoke suite with a visible browser for local debugging |
 | `pnpm test:playwright:full` | Full Playwright suite via PowerShell harness |
 | `pnpm test:perf` | Headless browser performance smoke: compaction + memoization + add-card freeze regression |
-| `pnpm test:perf:headed` | The same browser performance smoke with a visible browser |
-| `pnpm test:perf:electron` | Real-window Electron responsiveness smoke for desktop-only performance issues |
-| `pnpm test:electron` | Electron runtime tests |
+| `pnpm test:perf:electron` | Hidden-window Electron responsiveness smoke for desktop-only performance issues |
+| `pnpm test:electron` | Hidden-window Electron runtime tests |
 | `pnpm test:quality` | ESLint + TypeScript type-check |
 | `pnpm test:risk` | quality → unit → Playwright smoke → electron |
 | `pnpm test:full` | quality → unit → full Playwright → electron → production build |

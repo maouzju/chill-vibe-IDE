@@ -47,6 +47,7 @@ const shouldClearUserDataOnLaunch = process.argv.includes(clearUserDataArg)
 const allowSharedDataDirOverride =
   process.env.CHILL_VIBE_ALLOW_SHARED_DATA_DIR === '1' ||
   process.argv.includes('--allow-shared-data-dir')
+const shouldKeepValidationWindowHidden = process.env.CHILL_VIBE_HEADLESS_RUNTIME_TESTS === '1'
 
 const audioProtocolScheme = 'chill-vibe-audio'
 
@@ -121,7 +122,9 @@ function loadWindowUrl(win: BrowserWindow, url: string, attempts = 0) {
         }
       }
 
-      presentWindow(win)
+      if (!shouldKeepValidationWindowHidden) {
+        presentWindow(win)
+      }
     })
     .catch((err: unknown) => {
       log.warn('[main] Failed to load window URL, attempt', attempts, err)
@@ -596,7 +599,9 @@ function createWindow() {
   win.on('enter-full-screen', () => broadcastWindowState(win))
   win.on('leave-full-screen', () => broadcastWindowState(win))
   win.once('ready-to-show', () => {
-    presentWindow(win)
+    if (!shouldKeepValidationWindowHidden) {
+      presentWindow(win)
+    }
   })
   attachWindowDiagnostics(win)
 
@@ -616,7 +621,9 @@ function createWindow() {
   }
 
   void win.loadFile(target.value).then(() => {
-    presentWindow(win)
+    if (!shouldKeepValidationWindowHidden) {
+      presentWindow(win)
+    }
   })
 }
 

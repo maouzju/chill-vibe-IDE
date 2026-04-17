@@ -76,7 +76,28 @@ test('claude runs include the final resolution marker instruction', () => {
   const promptIndex = args.indexOf('--append-system-prompt')
 
   assert.notEqual(promptIndex, -1)
-  assert.equal(args[promptIndex + 1], 'Always leave a clear final status line.')
+  const promptValue = args[promptIndex + 1] ?? ''
+  assert.match(promptValue, /Always leave a clear final status line\./)
+  assert.match(promptValue, /ask-user-question/)
+  assert.match(promptValue, /AskUserQuestion/)
+})
+
+test('claude runs pin the permission default mode so spawned subagents inherit it', () => {
+  const args = buildClaudeArgs(
+    createRequest({
+      provider: 'claude',
+      model: 'claude-sonnet-4-6',
+      language: 'en',
+    }),
+    [],
+  )
+  const settingsIndex = args.indexOf('--settings')
+
+  assert.notEqual(settingsIndex, -1)
+  const settingsArg = args[settingsIndex + 1] ?? ''
+  const parsedSettings = JSON.parse(settingsArg) as { permissions?: { defaultMode?: string } }
+
+  assert.equal(parsedSettings.permissions?.defaultMode, 'bypassPermissions')
 })
 
 test('chat requests allow resuming a saved session without a new prompt', () => {
@@ -670,6 +691,40 @@ const buildFakeClaudeLegacyEffortScript = (capturePath: string) =>
     "reply({ type: 'result', is_error: false, result: 'ok' })",
   ].join('\n')
 
+const buildFakeClaudeStaleSessionScript = (capturePath: string) =>
+  [
+    "const fs = require('node:fs')",
+    `const capturePath = ${JSON.stringify(capturePath)}`,
+    "const argv = process.argv.slice(2)",
+    "fs.appendFileSync(capturePath, `${JSON.stringify(argv)}\\n`, 'utf8')",
+    "const reply = (message) => process.stdout.write(`${JSON.stringify(message)}\\n`)",
+    "if (argv.includes('-r')) {",
+    "  process.stderr.write('Error: No deferred tool marker found in the resumed session. Either the session was not deferred, the marker is stale (tool already ran), or it exceeds the tail-scan window. Provide a prompt to continue the conversation.\\n')",
+    '  process.exit(1)',
+    '}',
+    "reply({ type: 'system', subtype: 'init', session_id: 'claude-session-recovered' })",
+    "reply({ type: 'assistant', message: { content: [{ type: 'text', text: 'Recovered reply' }] } })",
+    "reply({ type: 'result', is_error: false, result: 'ok' })",
+  ].join('\n')
+
+const buildFakeClaudeAskUserXmlScript = () =>
+  [
+    "const reply = (message) => process.stdout.write(`${JSON.stringify(message)}\\n`)",
+    "reply({",
+    "  type: 'assistant',",
+    "  message: {",
+    "    id: 'msg_ask_user_xml',",
+    "    content: [",
+    "      {",
+    "        type: 'text',",
+    "        text: '<ask-user-question>{\"header\":\"Confirmation\",\"question\":\"Which path should I use?\",\"multiSelect\":false,\"options\":[{\"label\":\"Delete normally\",\"description\":\"Delete only the current skill.\"},{\"label\":\"Check impact first\",\"description\":\"Inspect remotes and refs before deciding.\"}]}</ask-user-question>'",
+    '      },',
+    '    ],',
+    '  },',
+    '})',
+    "reply({ type: 'result', is_error: false, result: 'ok' })",
+  ].join('\n')
+
 const buildFakeCodexRecoverableDisconnectScript = () =>
   [
     "const readline = require('node:readline')",
@@ -850,6 +905,93 @@ test('claude automatically retries without --effort for older CLIs and logs the 
   } finally {
     await rm(capturePath, { force: true }).catch(() => {})
   }
+})
+
+test('claude automatically retries without -r when the resumed session is stale and logs the recovery hint', async () => {
+  const capturePath = path.join(
+    os.tmpdir(),
+    `chill-vibe-claude-stale-session-${Date.now()}-${Math.random().toString(36).slice(2)}.jsonl`,
+  )
+
+  try {
+    const events = await withFakeProviderCommand(
+      'claude',
+      buildFakeClaudeStaleSessionScript(capturePath),
+      async (workspacePath) =>
+        captureProviderLogs(
+          createRequest({
+            provider: 'claude',
+            model: 'claude-sonnet-4-6',
+            language: 'en',
+            workspacePath,
+            sessionId: 'stale-session-id',
+            prompt: 'Analyze this image.',
+          }),
+        ),
+    )
+
+    const doneIndex = events.findIndex((event) => event.kind === 'done')
+    assert.notEqual(doneIndex, -1, `expected a terminal done event, got ${JSON.stringify(events)}`)
+    assert.ok(
+      events.some(
+        (event) => event.kind === 'log' && /stale|resumed session|new session/i.test(event.message),
+      ),
+      `expected a stale-session recovery log, got ${JSON.stringify(events)}`,
+    )
+
+    const launches = (await readFile(capturePath, 'utf8'))
+      .trim()
+      .split(/\r?\n/)
+      .map((line) => JSON.parse(line) as string[])
+
+    assert.equal(launches.length, 2, `expected two CLI launches (initial + retry), got ${launches.length}`)
+    assert.ok(launches[0].includes('-r'), 'initial launch should resume the session')
+    assert.ok(launches[0].includes('stale-session-id'), 'initial launch should carry the stale id')
+    assert.ok(!launches[1].includes('-r'), 'retry launch must drop -r to fork a fresh session')
+    assert.ok(!launches[1].includes('stale-session-id'), 'retry launch must not reuse the stale id')
+    // prompt and attachment intent must survive into the retry
+    assert.ok(
+      launches[1].some((arg) => typeof arg === 'string' && arg.includes('Analyze this image.')),
+      `retry launch must preserve the original prompt, got ${JSON.stringify(launches[1])}`,
+    )
+  } finally {
+    await rm(capturePath, { force: true }).catch(() => {})
+  }
+})
+
+test('claude ask-user XML emits the interactive activity without leaking the raw XML as a delta', async () => {
+  const events = await withFakeProviderCommand(
+    'claude',
+    buildFakeClaudeAskUserXmlScript(),
+    async (workspacePath) =>
+      captureProviderEvents(
+        createRequest({
+          provider: 'claude',
+          model: 'claude-sonnet-4-6',
+          language: 'en',
+          workspacePath,
+        }),
+      ),
+  )
+
+  assert.deepEqual(events, [
+    {
+      kind: 'activity',
+      activity: {
+        itemId: 'msg_ask_user_xml',
+        kind: 'ask-user',
+        status: 'completed',
+        header: 'Confirmation',
+        question: 'Which path should I use?',
+        multiSelect: false,
+        options: [
+          { label: 'Delete normally', description: 'Delete only the current skill.' },
+          { label: 'Check impact first', description: 'Inspect remotes and refs before deciding.' },
+        ],
+      },
+    },
+    { kind: 'done' },
+  ])
 })
 
 test('codex app-server retries turn/start without effort when an older CLI rejects that field', async () => {

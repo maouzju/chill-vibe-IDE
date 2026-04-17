@@ -167,12 +167,9 @@ pnpm check
 pnpm test
 pnpm test:quality
 pnpm test:playwright
-pnpm test:playwright:headed
 pnpm test:playwright:full
 pnpm test:theme
-pnpm test:theme:headed
 pnpm test:perf
-pnpm test:perf:headed
 pnpm test:perf:electron
 pnpm test:electron
 pnpm test:risk
@@ -185,14 +182,12 @@ pnpm verify
 - `pnpm legal:check` verifies that the generated third-party dependency inventory is current.
 - `pnpm test:quality` runs ESLint and TypeScript checks.
 - `pnpm test` runs the automated unit test suite.
-- `pnpm test:playwright` runs the default Playwright smoke suite for day-to-day regressions in headless mode.
-- `pnpm test:playwright:headed` runs the same Playwright smoke suite with a visible browser for local debugging.
-- `pnpm test:playwright:full` runs the full Playwright browser-flow regression suite.
+- `pnpm test:playwright` runs the default Playwright smoke suite in headless mode.
+- `pnpm test:playwright:full` runs the full Playwright browser-flow regression suite in headless mode.
 - `pnpm test:theme` runs the Playwright theme and board-layout regression checks through the repo harness in headless mode.
-- `pnpm test:theme:headed` runs the same theme checks with a visible browser when you need to inspect UI behavior live.
-- `pnpm test:perf` runs the headless browser-performance smoke slice: long-chat compaction logic, layout memoization safeguards, and the add-card freeze regression.
-- `pnpm test:perf:headed` runs that same browser-performance smoke slice with a visible browser.
-- `pnpm test:perf:electron` runs the real-window Electron responsiveness smoke for desktop-only performance issues.
+- `pnpm test:perf` runs the browser-performance smoke slice in headless mode: long-chat compaction logic, layout memoization safeguards, and the add-card freeze regression.
+- `pnpm test:perf:electron` runs the hidden-window Electron responsiveness smoke for desktop-only performance issues.
+- `pnpm test:electron` runs the hidden-window Electron runtime suite.
 - `pnpm test:risk` runs lint, type checks, Node tests, the Playwright smoke suite, and Electron runtime checks.
 - `pnpm test:full` runs the legal inventory check, lint, type checks, Node tests, the full Playwright suite, Electron runtime checks, and the production build.
 - `pnpm verify` runs `pnpm test:full`, including the legal inventory check.

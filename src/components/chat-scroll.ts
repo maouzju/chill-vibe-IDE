@@ -183,6 +183,36 @@ export const getAutoScrollStateAfterUserScroll = (
   }
 }
 
+// Async content growth (images/code highlight/mermaid finishing layout after
+// the stream closed, or tab visibility changes flushing deferred work) can push
+// the real bottom below the pinned scrollTop. The scroll handler will not fire
+// because scrollTop itself did not change, so the useLayoutEffect dependency
+// graph never sees the delta. This predicate decides whether the auto-scroll
+// loop should re-pin to the new bottom based only on the measurable invariants:
+// the list really grew, and the user was at the bottom before the growth.
+export const shouldPinToBottomAfterContentGrowth = ({
+  previousBottomScrollTop,
+  currentMetrics,
+  wasPinned,
+  tolerancePx = programmaticScrollInterruptTolerancePx,
+}: {
+  previousBottomScrollTop: number
+  currentMetrics: MessageListMetrics
+  wasPinned: boolean
+  tolerancePx?: number
+}) => {
+  if (!wasPinned) {
+    return false
+  }
+
+  const currentBottomScrollTop = getProgrammaticBottomScrollTarget(currentMetrics)
+  if (currentBottomScrollTop <= previousBottomScrollTop + tolerancePx) {
+    return false
+  }
+
+  return Math.abs(currentMetrics.scrollTop - previousBottomScrollTop) <= tolerancePx
+}
+
 export const getAutoScrollStateAfterCardUpdate = ({
   previousCardId,
   currentCardId,

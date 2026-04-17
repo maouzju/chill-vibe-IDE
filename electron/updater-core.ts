@@ -73,6 +73,130 @@ export function resolveDownloadedAssetStrategy(
   return 'shell-open'
 }
 
+export type WindowsZipReplaceScriptParams = {
+  processId: number
+  assetPath: string
+  targetDir: string
+  executablePath: string
+  stagingDir: string
+  logPath: string
+  waitTimeoutSeconds: number
+}
+
+const escapePowerShellSingleQuoted = (value: string) => value.replace(/'/g, "''")
+
+export function buildWindowsZipReplaceScript(params: WindowsZipReplaceScriptParams): string {
+  const pidLiteral = `${params.processId}`
+  const waitTimeoutLiteral = `${params.waitTimeoutSeconds}`
+  const assetLiteral = escapePowerShellSingleQuoted(params.assetPath)
+  const targetLiteral = escapePowerShellSingleQuoted(params.targetDir)
+  const executableLiteral = escapePowerShellSingleQuoted(params.executablePath)
+  const stagingLiteral = escapePowerShellSingleQuoted(params.stagingDir)
+  const logLiteral = escapePowerShellSingleQuoted(params.logPath)
+
+  return `
+$ErrorActionPreference = 'Stop'
+$OutputEncoding = [System.Text.UTF8Encoding]::new()
+[Console]::OutputEncoding = [System.Text.UTF8Encoding]::new()
+
+$pidToWait = ${pidLiteral}
+$waitTimeoutSeconds = ${waitTimeoutLiteral}
+$assetPath = '${assetLiteral}'
+$targetDir = '${targetLiteral}'
+$executablePath = '${executableLiteral}'
+$stagingDir = '${stagingLiteral}'
+$logPath = '${logLiteral}'
+
+function Write-Log {
+  param([string]$Message)
+  $stamp = Get-Date -Format 'yyyy-MM-dd HH:mm:ss.fff'
+  "[$stamp] $Message" | Out-File -FilePath $logPath -Append -Encoding utf8
+}
+
+function Wait-ForProcessExit {
+  param([int]$ProcessId, [int]$TimeoutSeconds)
+
+  $elapsedMilliseconds = 0
+  while (Get-Process -Id $ProcessId -ErrorAction SilentlyContinue) {
+    if ($elapsedMilliseconds -ge ($TimeoutSeconds * 1000)) {
+      Write-Log "Parent PID $ProcessId did not exit within $TimeoutSeconds seconds; force-killing."
+      try {
+        Stop-Process -Id $ProcessId -Force -ErrorAction Stop
+      } catch {
+        Write-Log "Stop-Process failed: $($_.Exception.Message)"
+      }
+      Start-Sleep -Milliseconds 500
+      break
+    }
+    Start-Sleep -Milliseconds 500
+    $elapsedMilliseconds += 500
+  }
+}
+
+function Find-AppRoot {
+  param(
+    [string]$Root,
+    [string]$ExeName
+  )
+
+  $match = Get-ChildItem -LiteralPath $Root -Recurse -File -Filter $ExeName |
+    Where-Object { Test-Path -LiteralPath (Join-Path $_.DirectoryName 'resources') } |
+    Select-Object -First 1
+
+  if ($match) {
+    return $match.DirectoryName
+  }
+
+  $fallback = Get-ChildItem -LiteralPath $Root -Recurse -File -Filter $ExeName | Select-Object -First 1
+  if ($fallback) {
+    return $fallback.DirectoryName
+  }
+
+  return $null
+}
+
+try {
+  Write-Log "Update job started. pid=$pidToWait target=$targetDir asset=$assetPath"
+
+  Wait-ForProcessExit -ProcessId $pidToWait -TimeoutSeconds $waitTimeoutSeconds
+  Write-Log 'Parent process exited (or was force-killed); proceeding.'
+
+  if (Test-Path -LiteralPath $stagingDir) {
+    Remove-Item -LiteralPath $stagingDir -Recurse -Force
+  }
+
+  New-Item -ItemType Directory -Path $stagingDir -Force | Out-Null
+  Write-Log "Begin expand archive -> $stagingDir"
+  Expand-Archive -LiteralPath $assetPath -DestinationPath $stagingDir -Force
+  Write-Log 'Expand archive finished.'
+
+  $sourceRoot = Find-AppRoot -Root $stagingDir -ExeName ([System.IO.Path]::GetFileName($executablePath))
+  if (-not $sourceRoot) {
+    throw "Unable to find the extracted app root in $stagingDir."
+  }
+  Write-Log "Resolved source root: $sourceRoot"
+
+  New-Item -ItemType Directory -Path $targetDir -Force | Out-Null
+  Write-Log "Begin copy: clearing $targetDir"
+  Get-ChildItem -LiteralPath $targetDir -Force | Remove-Item -Recurse -Force
+  Write-Log 'Target directory cleared. Copying new files...'
+  Get-ChildItem -LiteralPath $sourceRoot -Force | ForEach-Object {
+    Copy-Item -LiteralPath $_.FullName -Destination $targetDir -Recurse -Force
+  }
+  Write-Log 'Copy finished.'
+
+  Start-Sleep -Milliseconds 250
+  Write-Log "Launch new app: $executablePath"
+  Start-Process -FilePath $executablePath -WorkingDirectory $targetDir | Out-Null
+  Write-Log 'Launch issued. Update job done.'
+} catch {
+  Write-Log "Update job failed: $($_.Exception.Message)"
+  Write-Log $_.ScriptStackTrace
+  throw
+}
+`
+}
+
 const getPlatformDisplayName = (platform: string) => {
   if (platform === 'win32') {
     return 'Windows'

@@ -2525,6 +2525,7 @@ body.is-card-dragging .lane-drop-zone-top {
     var(--message-list-pad-left);
   overflow-y: auto;
   overscroll-behavior-y: contain;   /* keep card-boundary wheel gestures from chaining into the app shell */
+  scrollbar-gutter: stable both-edges;   /* reserve symmetric gutter so system messages stay centered regardless of scrollbar presence */
   scrollbar-width: thin;
   scrollbar-color: rgba(60, 72, 62, 0.18) transparent;
   background: transparent;
@@ -5207,60 +5208,54 @@ body.is-card-dragging .lane-drop-zone-top {
 
 .structured-todo-list {
   display: grid;
-  gap: 0.38rem;
+  gap: 0.12rem;
 }
 
 .structured-todo-item {
   position: relative;
   display: grid;
   gap: 0.32rem;
-  padding: 0.5rem 0.58rem;
-  border: 1px solid color-mix(in srgb, var(--line) 84%, transparent);
-  border-radius: 12px;
-  background: color-mix(in srgb, var(--structured-group-bg) 84%, transparent);
+  padding: 0.36rem 0.5rem 0.36rem 0.62rem;
+  border: 0;
+  border-left: 2px solid color-mix(in srgb, var(--line) 70%, transparent);
+  border-radius: 0;
+  background: transparent;
   min-width: 0;
   overflow: hidden;
   isolation: isolate;
   transition:
     border-color 0.14s var(--ease),
-    background 0.14s var(--ease),
-    transform 0.14s var(--ease);
+    background 0.14s var(--ease);
 }
 
 .structured-todo-item::after {
   content: '';
   position: absolute;
-  inset: -1px;
-  border-radius: inherit;
+  inset: 0;
   pointer-events: none;
   opacity: 0;
   background: linear-gradient(
     118deg,
     transparent 0%,
     color-mix(in srgb, var(--structured-diff-added-bg) 24%, transparent) 22%,
-    color-mix(in srgb, var(--structured-diff-added-bg) 82%, var(--accent-soft)) 50%,
+    color-mix(in srgb, var(--structured-diff-added-bg) 60%, var(--accent-soft)) 50%,
     color-mix(in srgb, var(--structured-diff-added-bg) 28%, transparent) 78%,
     transparent 100%
   );
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--structured-diff-added-ink) 26%, transparent);
 }
 
 .structured-todo-item:hover {
-  transform: translateY(-1px);
+  background: color-mix(in srgb, var(--structured-group-bg) 40%, transparent);
 }
 
 .structured-todo-item.is-in_progress {
-  border-color: color-mix(in srgb, var(--accent-line) 70%, transparent);
-  background: linear-gradient(
-    180deg,
-    color-mix(in srgb, var(--accent-soft) 76%, var(--structured-group-bg)) 0%,
-    color-mix(in srgb, var(--structured-group-bg) 88%, transparent) 100%
-  );
+  border-left-color: color-mix(in srgb, var(--accent-line) 88%, transparent);
+  background: transparent;
 }
 
 .structured-todo-item.is-completed {
-  border-color: color-mix(in srgb, var(--structured-diff-added-ink) 16%, var(--line));
-  background: color-mix(in srgb, var(--structured-diff-added-bg) 58%, transparent);
+  border-left-color: color-mix(in srgb, var(--structured-diff-added-ink) 60%, transparent);
+  background: transparent;
 }
 
 .structured-todo-item.is-newly-completed {
@@ -8519,6 +8514,13 @@ body,
   flex: 1;
   justify-content: flex-start;
   min-height: 0;
+}
+
+.git-dashboard-empty-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
 }
 
 .git-dashboard-compact-content {

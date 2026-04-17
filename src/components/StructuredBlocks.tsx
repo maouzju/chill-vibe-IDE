@@ -904,20 +904,6 @@ export const StructuredToolGroupCard = memo(
 )
 StructuredToolGroupCard.displayName = 'StructuredToolGroupCard'
 
-const getTodoStatusLabel = (
-  labels: ReturnType<typeof getStructuredLabels>,
-  status: StructuredTodoMessage['items'][number]['status'],
-) => {
-  switch (status) {
-    case 'completed':
-      return labels.taskCompleted
-    case 'in_progress':
-      return labels.taskInProgress
-    default:
-      return labels.taskPending
-  }
-}
-
 const getTodoPriorityLabel = (
   labels: ReturnType<typeof getStructuredLabels>,
   priority: StructuredTodoMessage['items'][number]['priority'],
@@ -1019,7 +1005,6 @@ export const StructuredTodoCard = ({
       ) : (
         <div className="structured-todo-list">
           {data.items.map((item) => {
-            const statusLabel = getTodoStatusLabel(labels, item.status)
             const priorityLabel = getTodoPriorityLabel(labels, item.priority)
             const detail =
               item.status === 'in_progress' && item.activeForm && item.activeForm !== item.content
@@ -1040,7 +1025,6 @@ export const StructuredTodoCard = ({
                   <div className="structured-todo-copy">
                     <div className="structured-todo-title-row">
                       <span className="structured-todo-title">{item.content}</span>
-                      <span className={`structured-todo-badge is-${item.status}`}>{statusLabel}</span>
                       {priorityLabel ? (
                         <span className={`structured-todo-badge is-priority is-${item.priority}`}>
                           {priorityLabel}

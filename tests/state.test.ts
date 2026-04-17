@@ -4,7 +4,7 @@ import { describe, it } from 'node:test'
 import { attachImagesToMessageMeta } from '../shared/chat-attachments.ts'
 import { createDefaultSettings } from '../shared/default-state.ts'
 import { getDuplicateColumnTitle } from '../shared/i18n.ts'
-import { BRAINSTORM_TOOL_MODEL, DEFAULT_CODEX_MODEL, WEATHER_TOOL_MODEL } from '../shared/models.ts'
+import { BRAINSTORM_TOOL_MODEL, DEFAULT_CODEX_MODEL, SPEC_TOOL_MODEL, WEATHER_TOOL_MODEL } from '../shared/models.ts'
 import { defaultAutoUrgeProfileId } from '../shared/schema.ts'
 import type {
   AppState,
@@ -43,6 +43,7 @@ const createCard = (overrides: Partial<ChatCard> = {}): ChatCard => ({
   unread: overrides.unread ?? false,
   draft: overrides.draft ?? '',
   stickyNote: overrides.stickyNote ?? '',
+  draftAttachments: overrides.draftAttachments ?? [],
   brainstorm: overrides.brainstorm ?? {
     prompt: '',
     provider: 'codex',
@@ -739,6 +740,52 @@ describe('ideReducer pane layout', () => {
     )
   })
 
+  it('drops the active session when switching models inside a text-only chat', () => {
+    const state = createState()
+    state.columns[1]!.cards['card-3'] = createCard({
+      id: 'card-3',
+      title: 'Claude architecture review',
+      provider: 'claude',
+      model: 'claude-opus-4-7',
+      sessionId: 'claude-session-active',
+      providerSessions: {
+        codex: 'codex-session-stale',
+      },
+      status: 'idle',
+      streamId: undefined,
+      messages: [
+        {
+          id: 'msg-user-text',
+          role: 'user',
+          content: 'Keep reviewing this reducer, but switch me to Sonnet first.',
+          createdAt: timestamp,
+        },
+      ],
+    })
+
+    const next = ideReducer(state, {
+      type: 'selectCardModel',
+      columnId: 'column-2',
+      cardId: 'card-3',
+      provider: 'claude',
+      model: 'claude-sonnet-4-6',
+    })
+
+    const updated = next.columns[1]!.cards['card-3']
+    assert.equal(updated?.provider, 'claude')
+    assert.equal(updated?.model, 'claude-sonnet-4-6')
+    assert.equal(
+      updated?.sessionId,
+      undefined,
+      'switching text chats to another model must not keep resuming the old-model session',
+    )
+    assert.deepEqual(
+      updated?.providerSessions,
+      {},
+      'saved sessions from other providers also become stale once the active chat switches model',
+    )
+  })
+
   it('keeps the session when an image-bearing chat switches from an explicit model to the same configured default', () => {
     const state = createState()
     state.settings.requestModels.claude = 'claude-sonnet-4-6'
@@ -809,6 +856,24 @@ describe('ideReducer pane layout', () => {
     assert.ok(toolCard)
     assert.equal(toolCard?.title, 'Weather')
     assert.equal(toolCard?.model, WEATHER_TOOL_MODEL)
+    assert.equal(toolCard?.provider, 'codex')
+  })
+
+  it('adds a SPEC tool tab with the requested title and codex provider', () => {
+    const next = ideReducer(createState(), {
+      type: 'addTab',
+      columnId: 'column-1',
+      paneId: 'pane-1',
+      title: 'SPEC',
+      model: SPEC_TOOL_MODEL,
+    })
+
+    const pane = next.columns[0].layout as PaneNode
+    const toolCard = next.columns[0].cards[pane.activeTabId]
+
+    assert.ok(toolCard)
+    assert.equal(toolCard?.title, 'SPEC')
+    assert.equal(toolCard?.model, SPEC_TOOL_MODEL)
     assert.equal(toolCard?.provider, 'codex')
   })
 

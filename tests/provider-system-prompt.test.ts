@@ -27,6 +27,7 @@ const createRequest = (overrides: Partial<ChatRequest> = {}): ChatRequest => ({
   sessionId: overrides.sessionId,
   language: overrides.language ?? 'zh-CN',
   systemPrompt: overrides.systemPrompt ?? defaultSystemPrompt,
+  crossProviderSkillReuseEnabled: overrides.crossProviderSkillReuseEnabled ?? true,
   prompt: overrides.prompt ?? '修复这个问题',
   attachments: overrides.attachments ?? [],
   sandboxMode: overrides.sandboxMode,
@@ -98,6 +99,114 @@ test('claude runs pin the permission default mode so spawned subagents inherit i
   const parsedSettings = JSON.parse(settingsArg) as { permissions?: { defaultMode?: string } }
 
   assert.equal(parsedSettings.permissions?.defaultMode, 'bypassPermissions')
+})
+
+test('codex app-server injects opposite-provider workspace skills when cross-provider reuse is enabled', async () => {
+  const capturePath = path.join(
+    os.tmpdir(),
+    `chill-vibe-codex-cross-skill-${Date.now()}-${Math.random().toString(36).slice(2)}.jsonl`,
+  )
+
+  try {
+    const outcome = await withFakeProviderCommand(
+      'codex',
+      buildFakeCodexAppServerScript(capturePath),
+      async (workspacePath) => {
+        const skillDir = path.join(workspacePath, '.claude', 'skills', 'agent-reach')
+        await mkdir(skillDir, { recursive: true })
+        await writeFile(
+          path.join(skillDir, 'SKILL.md'),
+          [
+            '---',
+            'name: agent-reach',
+            'description: Search the web and supported platforms',
+            '---',
+            '',
+            '# Agent Reach',
+          ].join('\n'),
+          'utf8',
+        )
+
+        return captureProviderOutcome(
+          createRequest({
+            provider: 'codex',
+            language: 'en',
+            workspacePath,
+            crossProviderSkillReuseEnabled: true,
+          }),
+        )
+      },
+    )
+
+    assert.deepEqual(outcome, { kind: 'done' })
+
+    const requests = (await readFile(capturePath, 'utf8'))
+      .trim()
+      .split(/\r?\n/)
+      .map((line) => JSON.parse(line) as { method?: string; params?: Record<string, unknown> })
+    const threadStart = requests.find((request) => request.method === 'thread/start')
+    const baseInstructions = String(threadStart?.params?.baseInstructions ?? '')
+
+    assert.match(baseInstructions, /Cross-provider skill reuse is enabled\./)
+    assert.match(baseInstructions, /agent-reach \(claude\)/)
+    assert.match(baseInstructions, /Search the web and supported platforms/)
+    assert.match(baseInstructions, /SKILL\.md/)
+  } finally {
+    await rm(capturePath, { force: true }).catch(() => {})
+  }
+})
+
+test('codex app-server skips opposite-provider skill injection when cross-provider reuse is disabled', async () => {
+  const capturePath = path.join(
+    os.tmpdir(),
+    `chill-vibe-codex-cross-skill-off-${Date.now()}-${Math.random().toString(36).slice(2)}.jsonl`,
+  )
+
+  try {
+    const outcome = await withFakeProviderCommand(
+      'codex',
+      buildFakeCodexAppServerScript(capturePath),
+      async (workspacePath) => {
+        const skillDir = path.join(workspacePath, '.claude', 'skills', 'agent-reach')
+        await mkdir(skillDir, { recursive: true })
+        await writeFile(
+          path.join(skillDir, 'SKILL.md'),
+          [
+            '---',
+            'name: agent-reach',
+            'description: Search the web and supported platforms',
+            '---',
+            '',
+            '# Agent Reach',
+          ].join('\n'),
+          'utf8',
+        )
+
+        return captureProviderOutcome(
+          createRequest({
+            provider: 'codex',
+            language: 'en',
+            workspacePath,
+            crossProviderSkillReuseEnabled: false,
+          }),
+        )
+      },
+    )
+
+    assert.deepEqual(outcome, { kind: 'done' })
+
+    const requests = (await readFile(capturePath, 'utf8'))
+      .trim()
+      .split(/\r?\n/)
+      .map((line) => JSON.parse(line) as { method?: string; params?: Record<string, unknown> })
+    const threadStart = requests.find((request) => request.method === 'thread/start')
+    const baseInstructions = String(threadStart?.params?.baseInstructions ?? '')
+
+    assert.doesNotMatch(baseInstructions, /Cross-provider skill reuse is enabled\./)
+    assert.doesNotMatch(baseInstructions, /agent-reach \(claude\)/)
+  } finally {
+    await rm(capturePath, { force: true }).catch(() => {})
+  }
 })
 
 test('chat requests allow resuming a saved session without a new prompt', () => {
@@ -368,7 +477,7 @@ const captureProviderRecoveryFailure = async (request: ChatRequest) =>
   new Promise<{
     kind: 'error'
     message: string
-    recovery: { recoverable?: boolean; recoveryMode?: 'reattach-stream' | 'resume-session' }
+    recovery: { recoverable?: boolean; recoveryMode?: 'reattach-stream' | 'resume-session'; transientOnly?: boolean }
   }>((resolve, reject) => {
     void launchProviderRun(request, {
       onSession: () => undefined,
@@ -489,6 +598,72 @@ const buildFakeCodexIdleResumeScript = (capturePath: string) =>
     '  }',
     "  if (request.method === 'thread/resume' && request.id) {",
     "    reply({ id: request.id, result: { thread: { id: request.params.threadId, status: { type: 'idle' } } } })",
+    '    return',
+    '  }',
+    "  if (request.method === 'turn/start' && request.id) {",
+    '    reply({ id: request.id, result: { turn: { id: "turn-1", status: "inProgress", items: [], error: null } } })',
+    "    reply({ method: 'turn/completed', params: {} })",
+    '  }',
+    '})',
+  ].join('\n')
+
+const buildFakeCodexEmptyRolloutResumeScript = (capturePath: string) =>
+  [
+    "const fs = require('node:fs')",
+    "const readline = require('node:readline')",
+    `const capturePath = ${JSON.stringify(capturePath)}`,
+    'const appendMessage = (message) => fs.appendFileSync(capturePath, `${JSON.stringify(message)}\\n`, "utf8")',
+    "const reply = (message) => process.stdout.write(`${JSON.stringify(message)}\\n`)",
+    "const rl = readline.createInterface({ input: process.stdin, crlfDelay: Infinity })",
+    "rl.on('line', (line) => {",
+    '  if (!line.trim()) {',
+    '    return',
+    '  }',
+    '  const request = JSON.parse(line)',
+    '  appendMessage(request)',
+    "  if (request.method === 'initialize' && request.id) {",
+    '    reply({ id: request.id, result: {} })',
+    '    return',
+    '  }',
+    "  if (request.method === 'thread/resume' && request.id) {",
+    "    reply({ id: request.id, error: { message: 'failed to load rollout C:\\\\Users\\\\tester\\\\.codex\\\\sessions\\\\2026\\\\04\\\\17\\\\rollout-stale.jsonl: empty session file' } })",
+    '    return',
+    '  }',
+    "  if (request.method === 'thread/start' && request.id) {",
+    "    reply({ id: request.id, result: { thread: { id: 'thread-fresh', status: { type: 'active' } } } })",
+    '    return',
+    '  }',
+    "  if (request.method === 'turn/start' && request.id) {",
+    '    reply({ id: request.id, result: { turn: { id: "turn-1", status: "inProgress", items: [], error: null } } })',
+    "    reply({ method: 'turn/completed', params: {} })",
+    '  }',
+    '})',
+  ].join('\n')
+
+const buildFakeCodexNoRolloutFoundResumeScript = (capturePath: string) =>
+  [
+    "const fs = require('node:fs')",
+    "const readline = require('node:readline')",
+    `const capturePath = ${JSON.stringify(capturePath)}`,
+    'const appendMessage = (message) => fs.appendFileSync(capturePath, `${JSON.stringify(message)}\\n`, "utf8")',
+    "const reply = (message) => process.stdout.write(`${JSON.stringify(message)}\\n`)",
+    "const rl = readline.createInterface({ input: process.stdin, crlfDelay: Infinity })",
+    "rl.on('line', (line) => {",
+    '  if (!line.trim()) {',
+    '    return',
+    '  }',
+    '  const request = JSON.parse(line)',
+    '  appendMessage(request)',
+    "  if (request.method === 'initialize' && request.id) {",
+    '    reply({ id: request.id, result: {} })',
+    '    return',
+    '  }',
+    "  if (request.method === 'thread/resume' && request.id) {",
+    "    reply({ id: request.id, error: { message: 'no rollout found for thread id 082eba38-c11f-4a90-b577-54bc312faac3' } })",
+    '    return',
+    '  }',
+    "  if (request.method === 'thread/start' && request.id) {",
+    "    reply({ id: request.id, result: { thread: { id: 'thread-fresh', status: { type: 'active' } } } })",
     '    return',
     '  }',
     "  if (request.method === 'turn/start' && request.id) {",
@@ -751,6 +926,37 @@ const buildFakeCodexRecoverableDisconnectScript = () =>
     '})',
   ].join('\n')
 
+const buildFakeCodexRecoverableReconnectLoopScript = (capturePath: string) =>
+  [
+    "const fs = require('node:fs')",
+    "const readline = require('node:readline')",
+    `const capturePath = ${JSON.stringify(capturePath)}`,
+    'const appendMessage = (message) => fs.appendFileSync(capturePath, `${JSON.stringify(message)}\\n`, "utf8")',
+    "const reply = (message) => process.stdout.write(`${JSON.stringify(message)}\\n`)",
+    "const rl = readline.createInterface({ input: process.stdin, crlfDelay: Infinity })",
+    "rl.on('line', (line) => {",
+    '  if (!line.trim()) {',
+    '    return',
+    '  }',
+    '  const request = JSON.parse(line)',
+    '  appendMessage(request)',
+    "  if (request.method === 'initialize' && request.id) {",
+    '    reply({ id: request.id, result: {} })',
+    '    return',
+    '  }',
+    "  if (request.method === 'thread/start' && request.id) {",
+    "    reply({ id: request.id, result: { thread: { id: 'thread-loop', status: { type: 'active' } } } })",
+    '    return',
+    '  }',
+    "  if (request.method === 'turn/start' && request.id) {",
+    '    reply({ id: request.id, result: { turn: { id: "turn-1", status: "inProgress", items: [], error: null } } })',
+    "    reply({ method: 'item/agentMessage/delta', params: { itemId: 'assistant-item-1', delta: 'Reconnecting... 1/5' } })",
+    "    reply({ method: 'item/agentMessage/delta', params: { itemId: 'assistant-item-1', delta: 'Reconnecting... 2/5' } })",
+    '    process.exit(0)',
+    '  }',
+    '})',
+  ].join('\n')
+
 const buildFakeClaudeRecoverableDisconnectScript = () =>
   [
     "const reply = (message) => process.stdout.write(`${JSON.stringify(message)}\\n`)",
@@ -809,8 +1015,51 @@ test('codex zero-exit after emitting a live session is still marked recoverable'
     recovery: {
       recoverable: true,
       recoveryMode: 'resume-session',
+      transientOnly: true,
     },
   })
+})
+
+test('codex app-server reconnect-only zero-exit stays recoverable after CLI retries are exhausted', async () => {
+  const capturePath = path.join(
+    os.tmpdir(),
+    `chill-vibe-codex-reconnect-loop-${Date.now()}-${Math.random().toString(36).slice(2)}.jsonl`,
+  )
+
+  try {
+    const events = await withFakeProviderCommand(
+      'codex',
+      buildFakeCodexRecoverableReconnectLoopScript(capturePath),
+      async (workspacePath) =>
+        captureProviderRecoveryFailure(
+          createRequest({
+            provider: 'codex',
+            language: 'en',
+            workspacePath,
+          }),
+        ),
+    )
+
+    assert.deepEqual(events, {
+      kind: 'error',
+      message: 'Codex ended without emitting a terminal completion event.',
+      recovery: {
+        recoverable: true,
+        recoveryMode: 'resume-session',
+        transientOnly: true,
+      },
+    })
+
+    const requests = (await readFile(capturePath, 'utf8'))
+      .trim()
+      .split(/\r?\n/)
+      .map((line) => JSON.parse(line) as { method?: string; params?: Record<string, unknown> })
+      .filter((request) => request.method === 'turn/start')
+
+    assert.equal(requests.length, 1)
+  } finally {
+    await rm(capturePath, { force: true }).catch(() => {})
+  }
 })
 
 test('claude zero-exit without result is treated as a failed run', async () => {
@@ -1374,6 +1623,94 @@ test('codex app-server continues an idle resumed thread by starting a blank turn
         text_elements: [],
       },
     ])
+  } finally {
+    await rm(capturePath, { force: true }).catch(() => {})
+  }
+})
+
+test('codex app-server retries with a fresh thread when the resumed rollout file is empty', async () => {
+  const capturePath = path.join(
+    os.tmpdir(),
+    `chill-vibe-codex-app-server-resume-empty-rollout-${Date.now()}-${Math.random().toString(36).slice(2)}.jsonl`,
+  )
+
+  try {
+    const events = await withFakeProviderCommand(
+      'codex',
+      buildFakeCodexEmptyRolloutResumeScript(capturePath),
+      async (workspacePath) =>
+        captureProviderLogs(
+          createRequest({
+            provider: 'codex',
+            language: 'en',
+            workspacePath,
+            sessionId: 'stale-rollout-session',
+            prompt: 'Retry with this updated instruction.',
+          }),
+        ),
+    )
+
+    assert.deepEqual(events, [
+      {
+        kind: 'log',
+        message:
+          'The resumed Codex session could not be loaded from its rollout file. Chill Vibe started a new session automatically so your latest prompt and attachments are not lost.',
+      },
+      { kind: 'done' },
+    ])
+
+    const requests = (await readFile(capturePath, 'utf8'))
+      .trim()
+      .split(/\r?\n/)
+      .map((line) => JSON.parse(line) as { method?: string; params?: Record<string, unknown> })
+
+    assert.equal(requests.filter((request) => request.method === 'thread/resume').length, 1)
+    assert.equal(requests.filter((request) => request.method === 'thread/start').length, 1)
+    assert.equal(requests.filter((request) => request.method === 'turn/start').length, 1)
+  } finally {
+    await rm(capturePath, { force: true }).catch(() => {})
+  }
+})
+
+test('codex app-server retries with a fresh thread when no rollout is found for the session', async () => {
+  const capturePath = path.join(
+    os.tmpdir(),
+    `chill-vibe-codex-app-server-resume-missing-rollout-${Date.now()}-${Math.random().toString(36).slice(2)}.jsonl`,
+  )
+
+  try {
+    const events = await withFakeProviderCommand(
+      'codex',
+      buildFakeCodexNoRolloutFoundResumeScript(capturePath),
+      async (workspacePath) =>
+        captureProviderLogs(
+          createRequest({
+            provider: 'codex',
+            language: 'en',
+            workspacePath,
+            sessionId: '082eba38-c11f-4a90-b577-54bc312faac3',
+            prompt: 'Retry with this updated instruction.',
+          }),
+        ),
+    )
+
+    assert.deepEqual(events, [
+      {
+        kind: 'log',
+        message:
+          'The resumed Codex session could not be loaded from its rollout file. Chill Vibe started a new session automatically so your latest prompt and attachments are not lost.',
+      },
+      { kind: 'done' },
+    ])
+
+    const requests = (await readFile(capturePath, 'utf8'))
+      .trim()
+      .split(/\r?\n/)
+      .map((line) => JSON.parse(line) as { method?: string; params?: Record<string, unknown> })
+
+    assert.equal(requests.filter((request) => request.method === 'thread/resume').length, 1)
+    assert.equal(requests.filter((request) => request.method === 'thread/start').length, 1)
+    assert.equal(requests.filter((request) => request.method === 'turn/start').length, 1)
   } finally {
     await rm(capturePath, { force: true }).catch(() => {})
   }

@@ -35,6 +35,7 @@ import {
   GIT_TOOL_MODEL,
   MUSIC_TOOL_MODEL,
   STICKYNOTE_TOOL_MODEL,
+  SPEC_TOOL_MODEL,
   WEATHER_TOOL_MODEL,
   WHITENOISE_TOOL_MODEL,
   getDefaultModel,
@@ -305,6 +306,7 @@ export const createDefaultSettings = (language: AppLanguage = defaultAppLanguage
   experimentalWeatherEnabled: false,
   agentDoneSoundEnabled: false,
   agentDoneSoundVolume: 0.7,
+  crossProviderSkillReuseEnabled: true,
   autoUrgeEnabled: false,
   autoUrgeProfiles: [
     createAutoUrgeProfile(language, {}, { index: 0, fallbackId: defaultAutoUrgeProfileId }),
@@ -409,6 +411,10 @@ export const normalizeAppSettings = (settings?: Partial<AppSettings> | null): Ap
         ? settings.agentDoneSoundEnabled
         : defaults.agentDoneSoundEnabled,
     agentDoneSoundVolume: clampScale(settings?.agentDoneSoundVolume, 0, 1, defaults.agentDoneSoundVolume),
+    crossProviderSkillReuseEnabled:
+      typeof settings?.crossProviderSkillReuseEnabled === 'boolean'
+        ? settings.crossProviderSkillReuseEnabled
+        : defaults.crossProviderSkillReuseEnabled,
     autoUrgeEnabled:
       typeof settings?.autoUrgeEnabled === 'boolean'
         ? settings.autoUrgeEnabled
@@ -461,6 +467,7 @@ const quickToolModelsInOrder = [
   GIT_TOOL_MODEL,
   FILETREE_TOOL_MODEL,
   STICKYNOTE_TOOL_MODEL,
+  SPEC_TOOL_MODEL,
   WEATHER_TOOL_MODEL,
   MUSIC_TOOL_MODEL,
   WHITENOISE_TOOL_MODEL,
@@ -793,6 +800,7 @@ export const createCard = (
     collapsed: false,
     unread: false,
     draft: '',
+    draftAttachments: [],
     stickyNote: '',
     brainstorm: createDefaultBrainstormState(),
     pm: createDefaultPmState(),

@@ -45,7 +45,9 @@ import type {
   SlashCommandRequest,
   StateRecoverySelection,
   StreamEventMap,
+  SpecEnsureRequest,
 } from '../shared/schema'
+import type { EnsureSpecDocumentsResult } from '../shared/spec-first'
 
 type DesktopStreamEventDetail = {
   subscriptionId: string
@@ -97,6 +99,7 @@ declare global {
       subscribeChatStream?: (streamId: string, subscriptionId: string) => Promise<void>
       unsubscribeChatStream?: (subscriptionId: string) => Promise<void>
       getAttachmentUrl?: (attachmentId: string) => string
+      ensureSpecDocuments?: (request: SpecEnsureRequest) => Promise<EnsureSpecDocumentsResult>
 
       // Music
       fetchMusicLoginStatus?: () => Promise<unknown>

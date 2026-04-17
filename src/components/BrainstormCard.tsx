@@ -19,6 +19,7 @@ type BrainstormCardProps = {
   card: ChatCardModel
   language: AppLanguage
   systemPrompt: string
+  crossProviderSkillReuseEnabled: boolean
   providerReady: boolean
   workspacePath: string
   requestModel: string
@@ -62,6 +63,7 @@ export function BrainstormCard({
   card,
   language,
   systemPrompt,
+  crossProviderSkillReuseEnabled,
   providerReady,
   workspacePath,
   requestModel,
@@ -233,6 +235,7 @@ export function BrainstormCard({
         planMode: false,
         language,
         systemPrompt,
+        crossProviderSkillReuseEnabled,
         streamId: answer.streamId,
         prompt,
         attachments: [],
@@ -264,7 +267,15 @@ export function BrainstormCard({
         })),
       )
     }
-  }, [attachAnswerStream, language, requestModel, systemPrompt, updateBrainstorm, workspacePath])
+  }, [
+    attachAnswerStream,
+    crossProviderSkillReuseEnabled,
+    language,
+    requestModel,
+    systemPrompt,
+    updateBrainstorm,
+    workspacePath,
+  ])
 
   const persistDraftNow = useCallback((value: string) => {
     if (draftTimerRef.current !== null) {

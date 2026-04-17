@@ -1,0 +1,4 @@
+interface:
+  display_name: "Release Pipeline"
+  short_description: "Audit, verify, version, and publish releases."
+  default_prompt: "Use $release-pipeline to audit the current repo diff for leaks, run release verification, bump the version, and publish a GitHub release with the verified zip asset."

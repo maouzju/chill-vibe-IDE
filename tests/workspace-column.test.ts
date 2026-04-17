@@ -121,6 +121,7 @@ describe('WorkspaceColumn streaming column actions', () => {
           collapsed: false,
           unread: false,
           draft: '',
+          draftAttachments: [],
           stickyNote: '',
           brainstorm: createDefaultBrainstormState(),
           providerSessions: {},

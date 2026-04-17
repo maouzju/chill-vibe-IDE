@@ -94,7 +94,10 @@ const runGit = async (
   },
 ): Promise<GitRunResult> =>
   await new Promise((resolve, reject) => {
-    const child = spawn('git', args, {
+    // `-c core.quotepath=false` keeps non-ASCII paths (e.g. Chinese file names)
+    // as raw UTF-8 in porcelain/diff output instead of being backslash-escaped,
+    // so paths we read from `git status` round-trip cleanly back into `git add`.
+    const child = spawn('git', ['-c', 'core.quotepath=false', ...args], {
       cwd: workspacePath,
       stdio: ['ignore', 'pipe', 'pipe'],
       windowsHide: true,

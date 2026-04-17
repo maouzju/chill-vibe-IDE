@@ -27,6 +27,7 @@ const createCard = (): ChatCardModel => ({
   collapsed: false,
   unread: false,
   draft: '',
+  draftAttachments: [],
   stickyNote: '',
   brainstorm: createDefaultBrainstormState(),
   providerSessions: {},
@@ -107,6 +108,7 @@ const createClaudeToolCard = (): ChatCardModel => ({
   collapsed: false,
   unread: false,
   draft: '',
+  draftAttachments: [],
   stickyNote: '',
   brainstorm: createDefaultBrainstormState(),
   providerSessions: {},
@@ -150,6 +152,7 @@ const createEditedFilesCard = (): ChatCardModel => ({
   collapsed: false,
   unread: false,
   draft: '',
+  draftAttachments: [],
   stickyNote: '',
   brainstorm: createDefaultBrainstormState(),
   providerSessions: {},
@@ -195,6 +198,7 @@ const createChangesSummaryCard = (): ChatCardModel => ({
   collapsed: false,
   unread: false,
   draft: '',
+  draftAttachments: [],
   stickyNote: '',
   brainstorm: createDefaultBrainstormState(),
   providerSessions: {},
@@ -234,6 +238,7 @@ const createTodoCard = (): ChatCardModel => ({
   collapsed: false,
   unread: false,
   draft: '',
+  draftAttachments: [],
   stickyNote: '',
   brainstorm: createDefaultBrainstormState(),
   providerSessions: {},
@@ -291,6 +296,7 @@ const renderCard = (
       workspacePath="d:\\Git\\chill-vibe"
       language="en"
       systemPrompt={defaultSystemPrompt}
+      crossProviderSkillReuseEnabled={true}
       musicAlbumCoverEnabled={false}
       weatherCity=""
       gitAgentModel="gpt-5.4 low"

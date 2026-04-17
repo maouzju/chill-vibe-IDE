@@ -15,9 +15,15 @@ import type {
 import { cleanCommandDisplay, buildToolGroupSummary, getStructuredLabels, summarizeCommandDisplay } from './chat-card-rendering'
 import { resolveWorkspaceRelativeFilePath } from './structured-file-paths'
 import {
+  clearAskUserDraft,
+  getAskUserDraft,
+  setAskUserDraft,
+} from './ask-user-draft-cache'
+import {
   getNewlyCompletedStructuredTodoItemIds,
   structuredTodoCompletionFlashDurationMs,
 } from './structured-todo-flash'
+import { CloseIcon } from './Icons'
 
 const StructuredDialog = ({
   language,
@@ -64,7 +70,7 @@ const StructuredDialog = ({
               onClick={onClose}
               aria-label={labels.closeDetails}
             >
-              ×
+              <CloseIcon />
             </button>
           </div>
 
@@ -1057,9 +1063,26 @@ export const AskUserQuestionCard = ({
 }) => {
   const isAnswered = answeredOption !== null
   const OTHER_LABEL = 'Other'
-  const [selected, setSelected] = useState<string | null>(answeredOption)
-  const [otherText, setOtherText] = useState('')
+  const cachedDraft = isAnswered ? null : getAskUserDraft(data.itemId)
+  const [selected, setSelectedState] = useState<string | null>(
+    answeredOption ?? cachedDraft?.selected ?? null,
+  )
+  const [otherText, setOtherTextState] = useState(cachedDraft?.otherText ?? '')
   const otherInputRef = useRef<HTMLInputElement>(null)
+
+  const setSelected = (value: string | null) => {
+    setSelectedState(value)
+    if (!isAnswered) {
+      setAskUserDraft(data.itemId, { selected: value, otherText })
+    }
+  }
+
+  const setOtherText = (value: string) => {
+    setOtherTextState(value)
+    if (!isAnswered) {
+      setAskUserDraft(data.itemId, { selected, otherText: value })
+    }
+  }
 
   const labels = language === 'en'
     ? { submit: 'Submit answers', escHint: 'Esc to cancel', other: 'Other' }
@@ -1072,6 +1095,7 @@ export const AskUserQuestionCard = ({
     } else {
       onSelectOption(selected)
     }
+    clearAskUserDraft(data.itemId)
   }
 
   useEffect(() => {

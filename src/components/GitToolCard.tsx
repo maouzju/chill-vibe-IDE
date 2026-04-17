@@ -36,6 +36,7 @@ type GitToolCardProps = {
   language: AppLanguage
   gitAgentModel: string
   systemPrompt: string
+  crossProviderSkillReuseEnabled: boolean
   isActive?: boolean
   requestedHeight: number
   onCompactHeightChange?: (height: number) => void
@@ -105,6 +106,7 @@ export const GitToolCard = ({
   language,
   gitAgentModel,
   systemPrompt,
+  crossProviderSkillReuseEnabled,
   isActive = true,
   requestedHeight,
   onCompactHeightChange,
@@ -593,6 +595,7 @@ export const GitToolCard = ({
             language={language}
             gitAgentModel={gitAgentModel}
             systemPrompt={systemPrompt}
+            crossProviderSkillReuseEnabled={crossProviderSkillReuseEnabled}
             onAnalysisPendingChange={setAgentAnalysisPending}
             onClose={handleCloseAgentPanel}
             onStatusChange={handleStatusChange}
@@ -662,6 +665,7 @@ export const GitToolCard = ({
             language={language}
             gitAgentModel={gitAgentModel}
             systemPrompt={systemPrompt}
+            crossProviderSkillReuseEnabled={crossProviderSkillReuseEnabled}
             onClose={() => setSyncPanelOpen(false)}
             onStatusChange={handleStatusChange}
           />

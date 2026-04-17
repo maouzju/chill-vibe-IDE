@@ -26,6 +26,7 @@ import {
   FILETREE_TOOL_MODEL,
   GIT_TOOL_MODEL,
   MUSIC_TOOL_MODEL,
+  SPEC_TOOL_MODEL,
   STICKYNOTE_TOOL_MODEL,
   WEATHER_TOOL_MODEL,
   WHITENOISE_TOOL_MODEL,
@@ -70,6 +71,7 @@ describe('default-state helpers', () => {
       experimentalWeatherEnabled: false,
       agentDoneSoundEnabled: false,
       agentDoneSoundVolume: 0.7,
+      crossProviderSkillReuseEnabled: true,
       autoUrgeEnabled: false,
       autoUrgeMessage: '你必须百分百验证通过你要解决的问题，才能结束回答，如果确定解决了，回复YES，否则不准停下来',
       autoUrgeSuccessKeyword: 'YES',
@@ -148,6 +150,12 @@ describe('default-state helpers', () => {
     assert.equal(normalizeAppSettings({ gitAgentModel: '' }).gitAgentModel, 'gpt-5.4 xhigh')
   })
 
+  it('enables cross-provider skill reuse by default and preserves explicit opt-out', () => {
+    assert.equal(createDefaultSettings().crossProviderSkillReuseEnabled, true)
+    assert.equal(normalizeAppSettings({}).crossProviderSkillReuseEnabled, true)
+    assert.equal(normalizeAppSettings({ crossProviderSkillReuseEnabled: false }).crossProviderSkillReuseEnabled, false)
+  })
+
   it('normalizes the system prompt with the built-in default fallback', () => {
     assert.equal(createDefaultSettings().systemPrompt, defaultSystemPrompt)
     assert.equal(normalizeAppSettings({}).systemPrompt, defaultSystemPrompt)
@@ -165,6 +173,7 @@ describe('default-state helpers', () => {
       GIT_TOOL_MODEL,
       FILETREE_TOOL_MODEL,
       STICKYNOTE_TOOL_MODEL,
+      SPEC_TOOL_MODEL,
     ])
     assert.deepEqual(
       getAvailableQuickToolModels(
@@ -178,6 +187,7 @@ describe('default-state helpers', () => {
       [
         FILETREE_TOOL_MODEL,
         STICKYNOTE_TOOL_MODEL,
+        SPEC_TOOL_MODEL,
         WEATHER_TOOL_MODEL,
         MUSIC_TOOL_MODEL,
       ],
@@ -209,6 +219,7 @@ describe('default-state helpers', () => {
       GIT_TOOL_MODEL,
       FILETREE_TOOL_MODEL,
       STICKYNOTE_TOOL_MODEL,
+      SPEC_TOOL_MODEL,
     ])
   })
 

@@ -37,6 +37,7 @@ const createColumn = (): BoardColumn => {
         collapsed: false,
         unread: false,
         draft: '',
+        draftAttachments: [],
         stickyNote: '',
         brainstorm: {
           prompt: '',
@@ -64,6 +65,7 @@ const createColumn = (): BoardColumn => {
         collapsed: false,
         unread: false,
         draft: '',
+        draftAttachments: [],
         stickyNote: '',
         brainstorm: {
           prompt: '',
@@ -90,6 +92,7 @@ const renderLayout = () => {
       providers={{} as Record<string, ProviderStatus>}
       language="en"
       systemPrompt={defaultSystemPrompt}
+      crossProviderSkillReuseEnabled={true}
       musicAlbumCoverEnabled={false}
       weatherCity=""
       gitAgentModel="gpt-5.4 low"

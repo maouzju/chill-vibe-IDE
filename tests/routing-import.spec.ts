@@ -42,7 +42,7 @@ const createState = () => ({
     resilientProxyEnabled: true,
     requestModels: {
       codex: 'gpt-5.4',
-      claude: 'claude-opus-4-6',
+      claude: 'claude-opus-4-7',
     },
     modelReasoningEfforts: {
       codex: {},

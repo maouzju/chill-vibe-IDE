@@ -17,7 +17,7 @@ const mockAppApis = async (page: Page) => {
       resilientProxyEnabled: true,
       requestModels: {
         codex: 'gpt-5.4',
-        claude: 'claude-opus-4-6',
+        claude: 'claude-opus-4-7',
       },
       modelReasoningEfforts: {
         codex: {},
@@ -61,7 +61,7 @@ const mockAppApis = async (page: Page) => {
         title: 'Target',
         provider: 'claude' as const,
         workspacePath: 'd:\\Git\\chill-vibe',
-        model: 'claude-opus-4-6',
+        model: 'claude-opus-4-7',
         cards: [
           {
             id: 'card-target',
@@ -69,7 +69,7 @@ const mockAppApis = async (page: Page) => {
             status: 'idle' as const,
             size: 560,
             provider: 'claude' as const,
-            model: 'claude-opus-4-6',
+            model: 'claude-opus-4-7',
             reasoningEffort: 'medium',
             draft: '',
             messages: [],
@@ -192,7 +192,7 @@ test('dragging a tab onto the lower half of another pane in the same column keep
       resilientProxyEnabled: true,
       requestModels: {
         codex: 'gpt-5.4',
-        claude: 'claude-opus-4-6',
+        claude: 'claude-opus-4-7',
       },
       modelReasoningEfforts: {
         codex: {},

@@ -7069,14 +7069,13 @@ for (const theme of ['dark', 'light'] as const) {
     const toolButtons = paneView.locator('.chat-empty-tool-button')
 
     await expect(page.locator('.app-topbar-tool-button')).toHaveCount(0)
-    await expect(toolButtons).toHaveCount(7)
+    await expect(toolButtons).toHaveCount(6)
     await expect(toolButtons.nth(0)).toContainText(/Git/)
     await expect(toolButtons.nth(1)).toContainText(/Files/)
     await expect(toolButtons.nth(2)).toContainText(/Sticky Note/)
-    await expect(toolButtons.nth(3)).toContainText(/SPEC/)
-    await expect(toolButtons.nth(4)).toContainText(/Weather/)
-    await expect(toolButtons.nth(5)).toContainText(/Music/)
-    await expect(toolButtons.nth(6)).toContainText(/White Noise/)
+    await expect(toolButtons.nth(3)).toContainText(/Weather/)
+    await expect(toolButtons.nth(4)).toContainText(/Music/)
+    await expect(toolButtons.nth(5)).toContainText(/White Noise/)
     await expect(paneView).toHaveScreenshot(`empty-chat-tool-entries-${theme}.png`, {
       animations: 'disabled',
       caret: 'hide',
@@ -7098,10 +7097,9 @@ for (const theme of ['dark', 'light'] as const) {
       '查看仓库状态，分析改动并继续同步。',
       '打开文件树，快速浏览和跳转工作区内容。',
       '开一张便签，随手记下想法和待办。',
-      '先写需求、设计和任务，再把实现交给 Agent。',
     ]
 
-    await expect(toolButtons).toHaveCount(4)
+    await expect(toolButtons).toHaveCount(3)
 
     for (const [index, expectedDescription] of expectedDescriptions.entries()) {
       const button = toolButtons.nth(index)
@@ -7132,9 +7130,9 @@ for (const theme of ['dark', 'light'] as const) {
     const toolButtons = paneView.locator('.chat-empty-tool-button')
     const descriptions = paneView.locator('.chat-empty-tool-description')
 
-    await expect(toolButtons).toHaveCount(4)
+    await expect(toolButtons).toHaveCount(3)
 
-    for (const index of [0, 1, 2, 3]) {
+    for (const index of [0, 1, 2]) {
       const button = toolButtons.nth(index)
       const description = descriptions.nth(index)
 
@@ -7160,11 +7158,10 @@ for (const theme of ['dark', 'light'] as const) {
     const paneView = page.locator('.pane-view').first()
     const toolButtons = paneView.locator('.chat-empty-tool-button')
 
-    await expect(toolButtons).toHaveCount(4)
+    await expect(toolButtons).toHaveCount(3)
     await expect(toolButtons.nth(0)).toContainText(/Git/)
     await expect(toolButtons.nth(1)).toContainText(/Files/)
     await expect(toolButtons.nth(2)).toContainText(/Sticky Note/)
-    await expect(toolButtons.nth(3)).toContainText(/SPEC/)
     await expect(toolButtons.filter({ hasText: /Weather/ })).toHaveCount(0)
     await expect(toolButtons.filter({ hasText: /Music/ })).toHaveCount(0)
     await expect(toolButtons.filter({ hasText: /White Noise/ })).toHaveCount(0)

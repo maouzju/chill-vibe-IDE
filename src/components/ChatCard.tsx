@@ -22,7 +22,6 @@ import {
   FILETREE_TOOL_MODEL,
   GIT_TOOL_MODEL,
   MUSIC_TOOL_MODEL,
-  SPEC_TOOL_MODEL,
   STICKYNOTE_TOOL_MODEL,
   TEXTEDITOR_TOOL_MODEL,
   WEATHER_TOOL_MODEL,
@@ -81,7 +80,6 @@ import { StickyNoteCard } from './StickyNoteCard'
 import { FileTreeCard } from './FileTreeCard'
 import { TextEditorCard } from './TextEditorCard'
 import { BrainstormCard } from './BrainstormCard'
-import { SpecToolCard } from './SpecToolCard'
 import { resolveBrainstormRequestTarget } from './brainstorm-card-utils'
 import { MessageBubble, StreamingIndicator } from './MessageBubble'
 import {
@@ -105,7 +103,6 @@ import {
   StickyNoteIcon,
   StopIcon,
 } from './Icons'
-import { getSpecToolText } from './tool-card-text'
 
 let lastFocusedCardId: string | null = null
 const supportedImageMimeTypes = new Set(['image/png', 'image/jpeg', 'image/webp', 'image/gif'])
@@ -222,13 +219,6 @@ type ChatCardProps = {
   onChangeTitle: (title: string) => void
   onForkConversation?: (messageId: string) => void
   onOpenFile?: (relativePath: string) => void
-  onLaunchSpec?: (payload: {
-    title: string
-    prompt: string
-    requirementsPath: string
-    designPath: string
-    tasksPath: string
-  }) => Promise<void>
   isRestored: boolean
   onRestoredAnimationEnd: () => void
   chromeMode?: 'card' | 'pane'
@@ -282,9 +272,6 @@ const getModelOptionIcon = (option: ModelOption): ReactNode => {
   if (option.model === TEXTEDITOR_TOOL_MODEL) {
     return <FileTextIcon className="model-option-icon" aria-hidden="true" />
   }
-  if (option.model === SPEC_TOOL_MODEL) {
-    return <FileTextIcon className="model-option-icon" aria-hidden="true" />
-  }
   if (option.provider === 'claude') {
     return <ClaudeIcon className="model-option-icon" aria-hidden="true" />
   }
@@ -293,7 +280,6 @@ const getModelOptionIcon = (option: ModelOption): ReactNode => {
 
 const hiddenModelPickerToolModels = new Set([
   GIT_TOOL_MODEL,
-  SPEC_TOOL_MODEL,
   STICKYNOTE_TOOL_MODEL,
   FILETREE_TOOL_MODEL,
   MUSIC_TOOL_MODEL,
@@ -312,7 +298,6 @@ const hiddenBrainstormRequestModels = new Set([
 ])
 const getEmptyStateToolEntry = (
   model: string,
-  language: AppLanguage,
   text: ReturnType<typeof getLocaleText>,
 ): EmptyStateToolEntry | null => {
   if (model === GIT_TOOL_MODEL) {
@@ -342,18 +327,6 @@ const getEmptyStateToolEntry = (
     }
   }
 
-  if (model === SPEC_TOOL_MODEL) {
-    const specText = getSpecToolText(language)
-    return {
-      model,
-      title: 'SPEC',
-      description:
-        specText.emptyTitle === 'New SPEC'
-          ? 'Write requirements, design, and tasks before handing implementation to the agent.'
-          : '先写需求、设计和任务，再把实现交给 Agent。',
-      icon: <FileTextIcon aria-hidden="true" />,
-    }
-  }
 
   if (model === BRAINSTORM_TOOL_MODEL) {
     return {
@@ -938,7 +911,6 @@ const ChatCardView = ({
   onChangeTitle,
   onForkConversation,
   onOpenFile,
-  onLaunchSpec,
   isRestored,
   onRestoredAnimationEnd,
   chromeMode = 'card',
@@ -1044,7 +1016,6 @@ const ChatCardView = ({
   const isFileTreeCard = card.model === FILETREE_TOOL_MODEL
   const isBrainstormCard = card.model === BRAINSTORM_TOOL_MODEL
   const isTextEditorCard = card.model === TEXTEDITOR_TOOL_MODEL
-  const isSpecToolCard = card.model === SPEC_TOOL_MODEL
   const isTopbarToolCard = isMusicToolCard || isWhiteNoiseCard || isWeatherCard
   const isToolCard =
     isGitToolCard ||
@@ -1054,8 +1025,7 @@ const ChatCardView = ({
     isStickyNoteCard ||
     isFileTreeCard ||
     isBrainstormCard ||
-    isTextEditorCard ||
-    isSpecToolCard
+    isTextEditorCard
   const usesPaneChrome = chromeMode === 'pane'
   const suspendPaneRuntimeEffects = usesPaneChrome && !isActive
   const deferInactivePaneChatBody = suspendPaneRuntimeEffects && !isToolCard
@@ -1105,8 +1075,6 @@ const ChatCardView = ({
       ? text.stickyNoteTitle
       : isBrainstormCard
         ? text.brainstormTitle
-        : isSpecToolCard
-          ? 'SPEC'
         : text.newChat)
 
   // Draft persistence is decoupled from the live textarea. Fast typing updates
@@ -2304,9 +2272,9 @@ const ChatCardView = ({
       deferInactivePaneChatBody
         ? []
         : availableQuickToolModels
-          .map((model) => getEmptyStateToolEntry(model, language, text))
+          .map((model) => getEmptyStateToolEntry(model, text))
           .filter((entry): entry is EmptyStateToolEntry => entry !== null),
-    [availableQuickToolModels, deferInactivePaneChatBody, language, text],
+    [availableQuickToolModels, deferInactivePaneChatBody, text],
   )
   const showsQuickToolGrid =
     !deferInactivePaneChatBody &&
@@ -2847,16 +2815,6 @@ const ChatCardView = ({
         </div>
       )}
 
-      {isSpecToolCard && !isCollapsed && (
-        <SpecToolCard
-          title={card.title}
-          workspacePath={workspacePath}
-          language={language}
-          onChangeTitle={onChangeTitle}
-          onOpenFile={handleOpenWorkspaceFile}
-          onLaunchSpec={onLaunchSpec}
-        />
-      )}
 
       {isFileTreeCard && !isCollapsed && (
         <FileTreeCard

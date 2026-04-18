@@ -144,17 +144,6 @@ type WorkspaceColumnProps = {
   onStopMessage: (cardId: string) => Promise<void>
   onForkConversation?: (cardId: string, messageId: string) => void
   onOpenFile?: (paneId: string, relativePath: string) => void
-  onLaunchSpec?: (
-    paneId: string,
-    cardId: string,
-    payload: {
-      title: string
-      prompt: string
-      requirementsPath: string
-      designPath: string
-      tasksPath: string
-    },
-  ) => Promise<void>
   recentWorkspaces: RecentWorkspace[]
   onRecordRecentWorkspace: (path: string) => void
   onRemoveRecentWorkspaces: (paths: string[]) => void
@@ -211,7 +200,6 @@ const WorkspaceColumnView = ({
   onStopMessage,
   onForkConversation,
   onOpenFile,
-  onLaunchSpec,
   recentWorkspaces,
   onRecordRecentWorkspace,
   onRemoveRecentWorkspaces,
@@ -885,7 +873,6 @@ const WorkspaceColumnView = ({
         onStopMessage={onStopMessage}
         onForkConversation={onForkConversation}
         onOpenFile={onOpenFile}
-        onLaunchSpec={onLaunchSpec}
       />
       </div>
 

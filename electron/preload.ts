@@ -132,8 +132,6 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.invoke('desktop:read-file', request),
   writeFile: (request: unknown) =>
     ipcRenderer.invoke('desktop:write-file', request),
-  ensureSpecDocuments: (request: unknown) =>
-    ipcRenderer.invoke('desktop:ensure-spec-documents', request),
 
   // ── Proxy Stats ───────────────────────────────────────────────────────────
   fetchProxyStats: (since?: number) =>

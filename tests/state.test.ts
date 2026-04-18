@@ -4,7 +4,7 @@ import { describe, it } from 'node:test'
 import { attachImagesToMessageMeta } from '../shared/chat-attachments.ts'
 import { createDefaultSettings } from '../shared/default-state.ts'
 import { getDuplicateColumnTitle } from '../shared/i18n.ts'
-import { BRAINSTORM_TOOL_MODEL, DEFAULT_CODEX_MODEL, SPEC_TOOL_MODEL, WEATHER_TOOL_MODEL } from '../shared/models.ts'
+import { BRAINSTORM_TOOL_MODEL, DEFAULT_CODEX_MODEL, WEATHER_TOOL_MODEL } from '../shared/models.ts'
 import { defaultAutoUrgeProfileId } from '../shared/schema.ts'
 import type {
   AppState,
@@ -859,23 +859,6 @@ describe('ideReducer pane layout', () => {
     assert.equal(toolCard?.provider, 'codex')
   })
 
-  it('adds a SPEC tool tab with the requested title and codex provider', () => {
-    const next = ideReducer(createState(), {
-      type: 'addTab',
-      columnId: 'column-1',
-      paneId: 'pane-1',
-      title: 'SPEC',
-      model: SPEC_TOOL_MODEL,
-    })
-
-    const pane = next.columns[0].layout as PaneNode
-    const toolCard = next.columns[0].cards[pane.activeTabId]
-
-    assert.ok(toolCard)
-    assert.equal(toolCard?.title, 'SPEC')
-    assert.equal(toolCard?.model, SPEC_TOOL_MODEL)
-    assert.equal(toolCard?.provider, 'codex')
-  })
 
   it('adds a brainstorm tool tab with default target count and empty failure history', () => {
     const next = ideReducer(createState(), {

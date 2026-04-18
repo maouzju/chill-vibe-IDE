@@ -18,7 +18,6 @@ import {
   openChatStream,
   queueStateSave,
   renameWorkspaceEntry,
-  ensureSpecDocuments,
   toggleMaximizeWindow,
 } from '../src/api.ts'
 
@@ -41,7 +40,6 @@ type ElectronBridgeWindow = Window & typeof globalThis & {
     getAttachmentUrl?: (attachmentId: string) => string
     createFile?: (request: { workspacePath: string; parentRelativePath: string; name: string }) => Promise<void>
     createDirectory?: (request: { workspacePath: string; parentRelativePath: string; name: string }) => Promise<void>
-    ensureSpecDocuments?: (request: { workspacePath: string; title: string; language: 'en' | 'zh-CN' }) => Promise<unknown>
     renameEntry?: (request: { workspacePath: string; relativePath: string; nextName: string }) => Promise<void>
     moveEntry?: (request: { workspacePath: string; relativePath: string; destinationParentRelativePath: string }) => Promise<void>
     deleteEntry?: (request: { workspacePath: string; relativePath: string }) => Promise<void>
@@ -445,44 +443,6 @@ test('moveWorkspaceEntry uses the Electron bridge when available', async () => {
   assert.equal(fetchCalls, 0)
 })
 
-test('ensureSpecDocuments uses the Electron bridge when available', async () => {
-  let fetchCalls = 0
-  let receivedRequest:
-    | { workspacePath: string; title: string; language: 'en' | 'zh-CN' }
-    | null = null
-
-  globalThis.fetch = (async () => {
-    fetchCalls += 1
-    throw new Error('fetch should not be used in Electron mode')
-  }) as typeof fetch
-
-  setWindow({
-    electronAPI: {
-      ensureSpecDocuments: async (request) => {
-        receivedRequest = request
-        return {
-          title: request.title,
-          slug: 'oauth-login-flow',
-          folderRelativePath: 'docs/specs/oauth-login-flow',
-          requirementsPath: 'docs/specs/oauth-login-flow/requirements.md',
-          designPath: 'docs/specs/oauth-login-flow/design.md',
-          tasksPath: 'docs/specs/oauth-login-flow/tasks.md',
-          created: [],
-          existing: [],
-        }
-      },
-    },
-  } as ElectronBridgeWindow)
-
-  await ensureSpecDocuments('D:/workspace', 'OAuth Login Flow', 'en')
-
-  assert.deepEqual(receivedRequest, {
-    workspacePath: 'D:/workspace',
-    title: 'OAuth Login Flow',
-    language: 'en',
-  })
-  assert.equal(fetchCalls, 0)
-})
 
 test('attachment URLs switch to the Electron protocol when available', () => {
   setWindow({

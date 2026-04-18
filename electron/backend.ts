@@ -12,7 +12,6 @@ import {
   searchWorkspaceFiles,
   writeWorkspaceFile,
 } from '../server/file-system.ts'
-import { ensureSpecDocuments as ensureSpecDocumentsOnDisk } from '../server/spec-first.ts'
 import { listExternalSessions, loadExternalSession } from '../server/external-history.ts'
 import {
   commitAllGitWorkspace,
@@ -79,7 +78,6 @@ import {
   fileRenameRequestSchema,
   fileSearchRequestSchema,
   fileWriteRequestSchema,
-  specEnsureRequestSchema,
   type AppState,
   type AttachmentUploadRequest,
   type CcSwitchImportRequest,
@@ -342,9 +340,6 @@ export const createDesktopBackend = (deps: DesktopBackendDependencies = {}) => {
     },
     async writeFile(request: unknown) {
       await writeWorkspaceFile(fileWriteRequestSchema.parse(request))
-    },
-    async ensureSpecDocuments(request: unknown) {
-      return ensureSpecDocumentsOnDisk(specEnsureRequestSchema.parse(request))
     },
 
     // ── Proxy Stats ────────────────────────────────────────────────────────

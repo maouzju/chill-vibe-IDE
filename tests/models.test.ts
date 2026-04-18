@@ -8,7 +8,6 @@ import {
   FILETREE_TOOL_MODEL,
   GIT_TOOL_MODEL,
   MUSIC_TOOL_MODEL,
-  SPEC_TOOL_MODEL,
   STICKYNOTE_TOOL_MODEL,
   TEXTEDITOR_TOOL_MODEL,
   WEATHER_TOOL_MODEL,
@@ -25,6 +24,7 @@ describe('model helpers', () => {
     assert.equal(normalizeModel('codex', ''), DEFAULT_CODEX_MODEL)
     assert.equal(normalizeModel('codex', 'gpt-4.5'), DEFAULT_CODEX_MODEL)
     assert.equal(normalizeStoredModel('codex', '__dream_tool__'), DEFAULT_CODEX_MODEL)
+    assert.equal(normalizeStoredModel('codex', '__spec_tool__'), DEFAULT_CODEX_MODEL)
     assert.equal(normalizeStoredModel('claude', ''), '')
     assert.equal(normalizeModel('claude', ''), DEFAULT_CLAUDE_MODEL)
     assert.equal(normalizeModel('claude', ' claude-opus-4-7 '), 'claude-opus-4-7')
@@ -47,7 +47,6 @@ describe('model helpers', () => {
         FILETREE_TOOL_MODEL,
         BRAINSTORM_TOOL_MODEL,
         TEXTEDITOR_TOOL_MODEL,
-        SPEC_TOOL_MODEL,
         '',
         DEFAULT_CODEX_MODEL,
       ],
@@ -68,8 +67,8 @@ describe('model helpers', () => {
     assert.equal(resolveSlashModel('codex', 'dream'), null)
     assert.equal(resolveSlashModel('codex', 'reflection'), null)
     assert.equal(resolveSlashModel('codex', 'editor'), TEXTEDITOR_TOOL_MODEL)
-    assert.equal(resolveSlashModel('codex', 'spec'), SPEC_TOOL_MODEL)
-    assert.equal(resolveSlashModel('codex', 'spec-first'), SPEC_TOOL_MODEL)
+    assert.equal(resolveSlashModel('codex', 'spec'), null)
+    assert.equal(resolveSlashModel('codex', 'spec-first'), null)
     assert.equal(resolveSlashModel('codex', 'whitenoise'), WHITENOISE_TOOL_MODEL)
     assert.equal(resolveSlashModel('codex', 'ambient'), WHITENOISE_TOOL_MODEL)
     assert.equal(resolveSlashModel('claude', 'claude'), '')

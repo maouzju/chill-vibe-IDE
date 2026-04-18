@@ -490,9 +490,6 @@ function registerDesktopHandlers() {
   ipcMain.handle('desktop:write-file', (_event, request) =>
     desktopBackend.writeFile(request),
   )
-  ipcMain.handle('desktop:ensure-spec-documents', (_event, request) =>
-    desktopBackend.ensureSpecDocuments(request),
-  )
   ipcMain.handle(
     'desktop:open-message-local-link',
     async (_event, request: { href: string; workspacePath?: string }) => {

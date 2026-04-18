@@ -50,6 +50,7 @@ import {
 } from './provider-skills.js'
 import { loadState } from './state-store.js'
 import { resilientProxyPool } from './resilient-proxy.js'
+import { createArchiveRecallRuntimeOverrides, getCodexArchiveRecallInstruction } from './archive-recall.js'
 
 type StreamSink = {
   onSession: (sessionId: string) => void
@@ -956,6 +957,7 @@ const launchCodexAppServerRun = async (
   language: AppLanguage,
   runtime: ProviderRuntime,
   attachmentPaths: string[],
+  archiveRecallCleanup?: (() => Promise<void>) | null,
 ) => {
   if (isManualCodexCompactRequest(request) && !request.sessionId) {
     sink.onError(formatCodexCompactRequiresSession(language))
@@ -980,6 +982,20 @@ const launchCodexAppServerRun = async (
     sink.onError(formatCodexAppServerMissingStdio(language))
     child.kill()
     return null
+  }
+
+  let archiveRecallCleanedUp = false
+  const cleanupArchiveRecall = async () => {
+    if (archiveRecallCleanedUp || !archiveRecallCleanup) {
+      return
+    }
+
+    archiveRecallCleanedUp = true
+    try {
+      await archiveRecallCleanup()
+    } catch {
+      // Ignore archive recall cleanup errors so the provider run can settle normally.
+    }
   }
 
   const nextRequestId = createCodexJsonRpcIdFactory()
@@ -1017,6 +1033,7 @@ const launchCodexAppServerRun = async (
 
     finished = true
     rejectPendingRequests('Codex run completed.')
+    void cleanupArchiveRecall()
     sink.onDone()
     child.kill()
   }
@@ -1028,6 +1045,7 @@ const launchCodexAppServerRun = async (
 
     finished = true
     rejectPendingRequests(message)
+    void cleanupArchiveRecall()
     sink.onError(message, hint, classifyLiveProviderStreamRecovery(request, message, hint, emittedSessionId))
     child.kill()
   }
@@ -1258,6 +1276,7 @@ const launchCodexAppServerRun = async (
   child.on('close', (code) => {
     stdoutLines.close()
     stderrLines.close()
+    void cleanupArchiveRecall()
 
     if (finished) {
       return
@@ -1288,6 +1307,7 @@ const launchCodexAppServerRun = async (
       return
     }
 
+    void cleanupArchiveRecall()
     finished = true
     stdoutLines.close()
     stderrLines.close()
@@ -1399,7 +1419,38 @@ export const launchProviderRun = async (request: ChatRequest, sink: StreamSink) 
   const runtime = await resolveProviderRuntime(currentRequest.provider)
 
   if (currentRequest.provider === 'codex') {
-    return launchCodexAppServerRun(currentRequest, sink, language, runtime, attachmentPaths)
+    let archiveRecallRuntime: Awaited<ReturnType<typeof createArchiveRecallRuntimeOverrides>> | null = null
+
+    try {
+      archiveRecallRuntime = await createArchiveRecallRuntimeOverrides(currentRequest)
+    } catch (error) {
+      console.warn(`[archive-recall] Unable to prepare archive recall runtime: ${error instanceof Error ? error.message : String(error)}`)
+      archiveRecallRuntime = null
+    }
+
+    const codexRuntime = archiveRecallRuntime
+      ? {
+          ...runtime,
+          args: [...runtime.args, ...archiveRecallRuntime.runtimeArgs],
+        }
+      : runtime
+    const codexRequest = archiveRecallRuntime
+      ? {
+          ...currentRequest,
+          systemPrompt: [currentRequest.systemPrompt, getCodexArchiveRecallInstruction(language)]
+            .filter((part) => part.trim().length > 0)
+            .join('\n\n'),
+        }
+      : currentRequest
+
+    return launchCodexAppServerRun(
+      codexRequest,
+      sink,
+      language,
+      codexRuntime,
+      attachmentPaths,
+      archiveRecallRuntime?.cleanup,
+    )
   }
 
   const parseClaudeStructuredOutput = createClaudeStructuredOutputParser(language)

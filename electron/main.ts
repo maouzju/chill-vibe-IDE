@@ -588,6 +588,7 @@ function createWindow() {
     ...(titleBarStyle ? { titleBarStyle } : {}),
     webPreferences: {
       preload: path.join(moduleDir, 'preload.cjs'),
+      backgroundThrottling: !shouldKeepValidationWindowHidden,
       contextIsolation: true,
       nodeIntegration: false,
     },

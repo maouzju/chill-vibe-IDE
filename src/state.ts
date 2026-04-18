@@ -464,43 +464,6 @@ const collectPaneBounds = (
   })
 }
 
-const getPaneAxisSpan = (
-  layout: LayoutNode,
-  paneId: string,
-  direction: SplitNode['direction'],
-) => {
-  const bounds = collectPaneBounds(layout).find(({ pane }) => pane.id === paneId)
-  if (!bounds) {
-    return null
-  }
-
-  return direction === 'horizontal' ? bounds.width : bounds.height
-}
-
-const getInheritedSplitRatios = (
-  sourceLayout: LayoutNode,
-  sourcePaneId: string,
-  targetLayout: LayoutNode,
-  targetPaneId: string,
-  direction: SplitNode['direction'],
-  placement: Placement | undefined,
-) => {
-  const sourceSpan = getPaneAxisSpan(sourceLayout, sourcePaneId, direction)
-  const targetSpan = getPaneAxisSpan(targetLayout, targetPaneId, direction)
-
-  if (sourceSpan === null || targetSpan === null || sourceSpan <= 0 || targetSpan <= 0) {
-    return [0.5, 0.5]
-  }
-
-  const safeTargetSpan = Math.max(targetSpan, Number.EPSILON * 2)
-  const newPaneSpan = Math.min(Math.max(sourceSpan, Number.EPSILON), safeTargetSpan - Number.EPSILON)
-  const currentPaneSpan = Math.max(safeTargetSpan - newPaneSpan, Number.EPSILON)
-
-  return placement === 'before'
-    ? normalizeSplitRatios([newPaneSpan, currentPaneSpan], 2)
-    : normalizeSplitRatios([currentPaneSpan, newPaneSpan], 2)
-}
-
 const getPaneGapDistance = (source: PaneBounds, target: PaneBounds) => {
   const horizontalGap = Math.max(
     0,
@@ -1521,14 +1484,6 @@ export const ideReducer = (state: AppState, action: IdeAction): AppState => {
           }
         }
 
-        const inheritedRatios = getInheritedSplitRatios(
-          column.layout,
-          action.sourcePaneId,
-          layout,
-          action.targetPaneId,
-          action.direction,
-          action.placement,
-        )
         const currentTargetPane = createPane(
           updatedTargetPane.tabs,
           updatedTargetPane.activeTabId,
@@ -1541,7 +1496,7 @@ export const ideReducer = (state: AppState, action: IdeAction): AppState => {
         const replacement = createSplit(
           action.direction,
           children,
-          inheritedRatios,
+          [0.5, 0.5],
           action.splitId ?? createId(),
         )
 

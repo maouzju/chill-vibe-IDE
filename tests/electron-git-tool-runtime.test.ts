@@ -13,6 +13,7 @@ import {
   ensureElectronRuntimeBuild,
   getElectronTestRendererUrl,
 } from './ensure-electron-runtime-build.ts'
+import { createHeadlessElectronRuntimeEnv } from './electron-test-env.ts'
 
 const tempRoots: string[] = []
 
@@ -201,20 +202,13 @@ after(async () => {
 })
 
 const createElectronRuntimeEnv = (dataDir: string, repoPath: string) => {
-  const env = Object.fromEntries(
-    Object.entries({
-      ...process.env,
-      VITE_DEV_SERVER_URL: getElectronTestRendererUrl(),
-      CHILL_VIBE_DISABLE_SINGLE_INSTANCE_LOCK: '1',
-      CHILL_VIBE_ALLOW_SHARED_DATA_DIR: '1',
-      CHILL_VIBE_DATA_DIR: dataDir,
-      CHILL_VIBE_DEFAULT_WORKSPACE: repoPath,
-    }).filter((entry): entry is [string, string] => typeof entry[1] === 'string'),
-  )
-
-  delete env.ELECTRON_RUN_AS_NODE
-
-  return env
+  return createHeadlessElectronRuntimeEnv({
+    VITE_DEV_SERVER_URL: getElectronTestRendererUrl(),
+    CHILL_VIBE_DISABLE_SINGLE_INSTANCE_LOCK: '1',
+    CHILL_VIBE_ALLOW_SHARED_DATA_DIR: '1',
+    CHILL_VIBE_DATA_DIR: dataDir,
+    CHILL_VIBE_DEFAULT_WORKSPACE: repoPath,
+  })
 }
 
 const filterIgnorableConsoleMessages = (messages: string[]) =>

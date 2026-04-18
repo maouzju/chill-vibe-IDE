@@ -13,6 +13,7 @@ import {
   ensureElectronRuntimeBuild,
   getElectronTestRendererUrl,
 } from './ensure-electron-runtime-build.ts'
+import { createHeadlessElectronRuntimeEnv } from './electron-test-env.ts'
 
 const tempRoots: string[] = []
 
@@ -135,18 +136,14 @@ test('Electron ancient Git checkbox toggles stay responsive while preserving the
   const repoPath = await createLargeChangedRepo()
   const dataDir = await createTempStateDir(repoPath)
 
-  const env = Object.fromEntries(
-    Object.entries({
-      ...process.env,
-      VITE_DEV_SERVER_URL: getElectronTestRendererUrl(),
-      CHILL_VIBE_DISABLE_SINGLE_INSTANCE_LOCK: '1',
-      CHILL_VIBE_ALLOW_SHARED_DATA_DIR: '1',
-      CHILL_VIBE_DATA_DIR: dataDir,
-      CHILL_VIBE_DEFAULT_WORKSPACE: repoPath,
-    }).filter((entry): entry is [string, string] => typeof entry[1] === 'string'),
-  )
-
-  delete env.ELECTRON_RUN_AS_NODE
+  const env = createHeadlessElectronRuntimeEnv({
+    VITE_DEV_SERVER_URL: getElectronTestRendererUrl(),
+    CHILL_VIBE_DISABLE_SINGLE_INSTANCE_LOCK: '1',
+    CHILL_VIBE_ALLOW_SHARED_DATA_DIR: '1',
+    CHILL_VIBE_DATA_DIR: dataDir,
+    CHILL_VIBE_DEFAULT_WORKSPACE: repoPath,
+  })
+  const maxToggleDurationMs = env.CHILL_VIBE_HEADLESS_RUNTIME_TESTS === '1' ? 2500 : 1000
 
   const app = await electron.launch({
     args: ['.'],
@@ -237,8 +234,8 @@ test('Electron ancient Git checkbox toggles stay responsive while preserving the
 
     assert.equal(toggleDurations.length, 3)
     assert.ok(
-      toggleDurations.every((duration) => duration < 1000),
-      `expected every checkbox toggle to finish within 1000ms, got ${toggleDurations.join(', ')}ms`,
+      toggleDurations.every((duration) => duration < maxToggleDurationMs),
+      `expected every checkbox toggle to finish within ${maxToggleDurationMs}ms, got ${toggleDurations.join(', ')}ms`,
     )
   } finally {
     await app.close()

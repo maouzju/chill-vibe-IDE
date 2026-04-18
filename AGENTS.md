@@ -63,6 +63,15 @@ Applies to: `AGENTS.md`, `CLAUDE.md`, `docs/`, ESLint config, CI scripts, `packa
 ### Shared rule across all tiers
 - Do not finish with an unverified code change. Every tier has its own verification step — follow it.
 
+## SPEC-first Workflow
+
+- For net-new features, multi-step behavior changes, cross-cutting product work, or any task where the user explicitly asks for a spec / requirements / design / plan, start with a SPEC under `docs/specs/<slug>/`.
+- The minimum SPEC set is `requirements.md`, `design.md`, and `tasks.md`. Treat those documents as the source of truth for the implementation.
+- Do not edit production code in `src/`, `server/`, `shared/`, or `electron/` until `requirements.md` and `design.md` are coherent and `tasks.md` contains a clear first implementation slice.
+- If requirements or design are ambiguous, stop and ask the user to review or clarify the SPEC before coding.
+- Small, well-scoped bug fixes, refactors with no intended behavior change, and docs-only/config-only edits may skip SPEC-first, but the handoff should say why skipping it was reasonable.
+- When the workspace surface exposes the SPEC tool, prefer that entry point over ad-hoc markdown files so the repo uses one consistent `docs/specs/` workflow.
+
 ## Agent Posture
 
 - The agent should act as an optimizer for the team's workflow, not wait for the user to repeatedly point out the same friction.
@@ -291,6 +300,10 @@ A living list of traps that have wasted time before. **When you hit a new pitfal
 | 93 | `pnpm test -- --test-name-pattern ...` still boots the repo-wide `tests/index.test.ts`, so narrow Node test runs can crash on unrelated React/CSS imports before your targeted reducer test executes | For focused logic debugging in this repo, run `node --import tsx --test <file>.ts` on the exact test file instead of relying on the package script’s name-pattern filter. |
 
 | 94 | Ubuntu GitHub Actions runners can fail `pnpm test` in the CI `quality` job with `Missing X server or $DISPLAY` because the Node test suite launches hidden Electron runtime tests through Playwright | Wrap the Ubuntu `pnpm test` step with `xvfb-run -a` (or provide an equivalent virtual display), or the release commit looks red in CI even when the app itself is fine. |
+| 95 | Windows PowerShell 5.1 can parse a BOM-less UTF-8 `.ps1` update script with mojibake paths like `D:\涓嬭浇\...`, even when the script body itself sets `UTF8Encoding` after launch | When an updater or helper script may include Chinese/non-ASCII paths, write the `.ps1` file with a UTF-8 BOM or the update can close the app, fail silently, and relaunch nothing. |
+
+| 96 | The repo can ship a SPEC-first tool flow in app code while `AGENTS.md` still lacks any SPEC-first entry rule | Agents that start from a normal chat or an external task runner may skip `docs/specs/` entirely unless the workspace contract also documents when SPEC-first is mandatory. |
+| 97 | A Playwright run that starts the repo Vite web server on `127.0.0.1:5173` can leave that process behind after the suite exits, so the next Playwright launch fails immediately with “port already used” | Before a second Playwright run in the same session, verify who owns `5173` and stop the leftover repo-local `vite.js --host 127.0.0.1 --strictPort` process instead of assuming the prior run cleaned it up. |
 
 ### Self-maintenance rule
 

@@ -148,6 +148,7 @@ import { collectChangesSummaryFilesForStream } from './components/chat-card-pars
 import { getAutoReadCardIdsForVisiblePanes, shouldMarkCardUnreadOnStreamDone } from './components/pane-read-state'
 import { clearFileTreeCacheForCard } from './components/tool-card-state'
 import { buildSeededChatPrompt, collectSeededChatAttachments, hasSeededChatTranscript } from './chat-request-seeding'
+import { buildArchiveRecallSnapshot } from './archive-recall'
 import { getOnboardingText, getPanelText, getResilientProxyText, getTopTabText } from './app-panel-text'
 import { AppButton } from './components/AppButton'
 import {
@@ -2593,6 +2594,14 @@ function App() {
       card.messages.length === 0 && !card.title
         ? titleFromPrompt(prompt)
         : card.title
+    const archiveRecall =
+      card.provider === 'codex'
+        ? buildArchiveRecallSnapshot({
+            messages: card.messages,
+            provider: card.provider,
+            status: card.status,
+          })
+        : undefined
     const isManualCodexCompactRequest =
       card.provider === 'codex' &&
       attachments.length === 0 &&
@@ -2704,6 +2713,7 @@ function App() {
         sessionId: card.sessionId,
         prompt: requestPrompt,
         attachments: requestAttachments,
+        archiveRecall,
       })
 
       if (response.streamId !== streamId) {
@@ -2815,6 +2825,14 @@ function App() {
       return
     }
 
+    const archiveRecall =
+      card.provider === 'codex'
+        ? buildArchiveRecallSnapshot({
+            messages: card.messages,
+            provider: card.provider,
+            status: card.status,
+          })
+        : undefined
     const streamId = crypto.randomUUID()
     persistImmediately(
       applyAction({
@@ -2846,6 +2864,7 @@ function App() {
         sessionId: resumeRequest.sessionId,
         prompt: resumeRequest.prompt,
         attachments: resumeRequest.attachments,
+        archiveRecall,
       })
 
       if (response.streamId !== streamId) {
@@ -2935,6 +2954,14 @@ function App() {
       return false
     }
 
+    const archiveRecall =
+      card.provider === 'codex'
+        ? buildArchiveRecallSnapshot({
+            messages: card.messages,
+            provider: card.provider,
+            status: card.status,
+          })
+        : undefined
     const streamId = crypto.randomUUID()
     persistImmediately(
       applyAction({
@@ -2966,6 +2993,7 @@ function App() {
         sessionId: card.sessionId,
         prompt: '',
         attachments: [],
+        archiveRecall,
       })
 
       if (response.streamId !== streamId) {

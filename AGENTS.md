@@ -307,6 +307,10 @@ A living list of traps that have wasted time before. **When you hit a new pitfal
 | 96 | If "read docs first / maintain docs" lives only in product ideas instead of `AGENTS.md`, external agents can skip it completely | Put the docs-first rule in the repo contract itself, or each new task risks repeating the same workflow mistake. |
 | 97 | A Playwright run that starts the repo Vite web server on `127.0.0.1:5173` can leave that process behind after the suite exits, so the next Playwright launch fails immediately with “port already used” | Before a second Playwright run in the same session, verify who owns `5173` and stop the leftover repo-local `vite.js --host 127.0.0.1 --strictPort` process instead of assuming the prior run cleaned it up. |
 
+| 98 | Waiting only for the packaged Electron main PID is not enough during a Windows in-place update because renderer/GPU/utility child processes from the same `Chill Vibe.exe` path can keep `app.asar` and the executable locked after the main process exits | The zip updater must wait for or kill every matching app process under the installed executable path before clearing the app folder, or auto-update can silently die at the copy step even when the script itself launches correctly. |
+
+| 99 | Claude CLI bypass mode acceptance is controlled by the top-level `skipDangerousModePermissionPrompt`, while file access outside the workspace still needs `permissions.additionalDirectories` / `--add-dir` | Setting only `permissions.defaultMode: "bypassPermissions"` can still leave the outer IDE stuck on Claude's own warning or `~/.claude` access prompt, so the launcher must seed both knobs together. |
+
 ### Self-maintenance rule
 
 - When you encounter a new non-obvious failure mode — a test that fails for environmental reasons, a build step with hidden prerequisites, a runtime behavior that contradicts the docs — append a row to this table before you finish the task.

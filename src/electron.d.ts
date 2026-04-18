@@ -1,4 +1,5 @@
 import type {
+  AppSettings,
   AppState,
   AppStateLoadResponse,
   AttachmentUploadRequest,
@@ -69,6 +70,7 @@ declare global {
       fetchState?: () => Promise<AppStateLoadResponse | AppState>
       loadSessionHistoryEntry?: (request: InternalSessionHistoryLoadRequest) => Promise<InternalSessionHistoryLoadResponse>
       saveState?: (state: AppState) => Promise<AppState>
+      syncRuntimeSettings?: (settings: AppSettings) => Promise<void>
       queueStateSave?: (state: AppState) => void
       resetState?: () => Promise<AppState>
       resolveStateRecoveryOption?: (request: StateRecoverySelection) => Promise<AppStateLoadResponse>

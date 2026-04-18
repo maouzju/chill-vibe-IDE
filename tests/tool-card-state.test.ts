@@ -6,6 +6,7 @@ import {
   clearFileTreeCacheForCard,
   getCachedFileTreeNodes,
   getFileTreeCacheKey,
+  resolveTextEditorExternalRefresh,
   shouldFlushTextEditorSave,
 } from '../src/components/tool-card-state.ts'
 
@@ -32,4 +33,28 @@ test('clearing a file tree card removes cached trees for every workspace copy of
 test('text editor only flushes when content changed since the last save', () => {
   assert.equal(shouldFlushTextEditorSave('saved text', 'saved text'), false)
   assert.equal(shouldFlushTextEditorSave('saved text', 'edited text'), true)
+})
+
+test('text editor refreshes clean cards when the file changes on disk', () => {
+  assert.deepEqual(
+    resolveTextEditorExternalRefresh('saved text', 'saved text', 'disk text'),
+    {
+      content: 'disk text',
+      savedContent: 'disk text',
+    },
+  )
+})
+
+test('text editor keeps local unsaved edits when the file changes on disk', () => {
+  assert.equal(
+    resolveTextEditorExternalRefresh('saved text', 'edited text', 'disk text'),
+    null,
+  )
+})
+
+test('text editor skips refresh work when disk content already matches the card', () => {
+  assert.equal(
+    resolveTextEditorExternalRefresh('saved text', 'saved text', 'saved text'),
+    null,
+  )
 })

@@ -94,6 +94,7 @@ import {
   resetState,
   runEnvironmentSetup,
   stopChat,
+  syncRuntimeSettings,
   toggleMaximizeWindow,
   type ProxyStatsCounts,
   type ProxyStatsSummary,
@@ -165,10 +166,14 @@ import {
   EyeOffIcon,
 } from './components/Icons'
 import { WorkspaceColumn } from './components/WorkspaceColumn'
-import { getPersistenceVersion, shouldPersistActionImmediately } from './hooks/persistence-queue'
+import {
+  getPersistenceVersion,
+  shouldPersistActionImmediately,
+  shouldSyncRuntimeSettings,
+} from './hooks/persistence-queue'
 import { usePersistence } from './hooks/usePersistence'
 import { updateLatestKnownAppState } from './renderer-crash-state'
-import { findAdjacentPane, findNearestLargerPane, findPaneForTab, findPaneInLayout, ideReducer, type IdeAction } from './state'
+import { findPaneForTab, findPaneInLayout, ideReducer, type IdeAction } from './state'
 
 const overflowScrollablePattern = /(auto|scroll|overlay)/
 const emptyProxyStatsCounts: ProxyStatsCounts = {
@@ -783,6 +788,7 @@ function App() {
   ) => {
     appStateRef.current = state
     updateLatestKnownAppState(state)
+    void syncRuntimeSettings(state.settings).catch(() => undefined)
     const snapshot = getPersistenceVersion(state)
     lastSavedSnapshot.current = snapshot
     lastQueuedSnapshot.current = snapshot
@@ -825,6 +831,9 @@ function App() {
 
     const nextState = actions.reduce(ideReducer, appStateRef.current)
     appStateRef.current = nextState
+    if (actions.some((action) => shouldSyncRuntimeSettings(action))) {
+      void syncRuntimeSettings(nextState.settings).catch(() => undefined)
+    }
 
     for (const action of actions) {
       dispatch(action)
@@ -1517,6 +1526,21 @@ function App() {
       : undefined
   }, [getColumn])
 
+  const openTextEditorTab = useCallback(
+    (columnId: string, paneId: string, relativePath: string, title: string) => {
+      rememberPaneTarget(columnId, paneId)
+      applyAction({
+        type: 'addTab',
+        columnId,
+        paneId,
+        title,
+        model: TEXTEDITOR_TOOL_MODEL,
+        stickyNote: relativePath,
+      })
+    },
+    [applyAction, rememberPaneTarget],
+  )
+
   const changeCardModelSelection = useCallback(
     (columnId: string, cardId: string, provider: Provider, model: string) => {
       const card = getColumnCard(columnId, cardId)
@@ -1913,20 +1937,8 @@ function App() {
             if (payload.planFile) {
               const col = getColumnById(appStateRef.current.columns, columnId)
               const sourcePane = col ? findPaneForTab(col.layout, card.id) : null
-              const targetPane =
-                col && sourcePane
-                  ? findNearestLargerPane(col.layout, sourcePane.id) ?? sourcePane
-                  : null
-              if (targetPane) {
-                rememberPaneTarget(columnId, targetPane.id)
-                applyAction({
-                  type: 'addTab',
-                  columnId,
-                  paneId: targetPane.id,
-                  model: TEXTEDITOR_TOOL_MODEL,
-                  stickyNote: payload.planFile,
-                  title: 'Plan',
-                })
+              if (sourcePane) {
+                openTextEditorTab(columnId, sourcePane.id, payload.planFile, 'Plan')
               }
             }
 
@@ -2155,9 +2167,9 @@ function App() {
       enqueueAssistantDelta,
       ensureAssistantMessage,
       getColumn,
+      openTextEditorTab,
       openRemediationPanel,
       persistImmediately,
-      rememberPaneTarget,
     ],
   )
 
@@ -5773,16 +5785,7 @@ function App() {
             }
             onOpenFile={(paneId, relativePath) => {
               const fileName = relativePath.split('/').pop() ?? relativePath
-              const adjacentPane = findAdjacentPane(column.layout, paneId)
-              const targetPaneId = adjacentPane ? adjacentPane.id : paneId
-              applyAction({
-                type: 'addTab',
-                columnId: column.id,
-                paneId: targetPaneId,
-                title: fileName,
-                model: TEXTEDITOR_TOOL_MODEL,
-                stickyNote: relativePath,
-              })
+              openTextEditorTab(column.id, paneId, relativePath, fileName)
             }}
             recentWorkspaces={appState.settings.recentWorkspaces}
             onRecordRecentWorkspace={(path) => applyAction({ type: 'recordRecentWorkspace', path })}

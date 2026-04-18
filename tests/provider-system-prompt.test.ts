@@ -30,6 +30,7 @@ const createRequest = (overrides: Partial<ChatRequest> = {}): ChatRequest => ({
   crossProviderSkillReuseEnabled: overrides.crossProviderSkillReuseEnabled ?? true,
   prompt: overrides.prompt ?? '修复这个问题',
   attachments: overrides.attachments ?? [],
+  archiveRecall: overrides.archiveRecall,
   sandboxMode: overrides.sandboxMode,
 })
 
@@ -204,6 +205,78 @@ test('codex app-server skips opposite-provider skill injection when cross-provid
 
     assert.doesNotMatch(baseInstructions, /Cross-provider skill reuse is enabled\./)
     assert.doesNotMatch(baseInstructions, /agent-reach \(claude\)/)
+  } finally {
+    await rm(capturePath, { force: true }).catch(() => {})
+  }
+})
+
+test('codex app-server injects archive recall MCP config and instruction for compacted history', async () => {
+  const capturePath = path.join(
+    os.tmpdir(),
+    `chill-vibe-codex-archive-recall-${Date.now()}-${Math.random().toString(36).slice(2)}.jsonl`,
+  )
+
+  try {
+    const outcome = await withFakeProviderCommand(
+      'codex',
+      buildFakeCodexArchiveRecallScript(capturePath),
+      async (workspacePath) =>
+        captureProviderOutcome(
+          createRequest({
+            provider: 'codex',
+            language: 'en',
+            workspacePath,
+            archiveRecall: {
+              hiddenReason: 'compact',
+              hiddenMessageCount: 1,
+              messages: [
+                {
+                  id: 'hidden-user',
+                  role: 'user',
+                  content: 'Earlier screenshot is attached here.',
+                  createdAt: '2026-04-18T01:09:00.000Z',
+                  meta: {},
+                },
+              ],
+            },
+          }),
+        ),
+    )
+
+    assert.deepEqual(outcome, { kind: 'done' })
+
+    const events = (await readFile(capturePath, 'utf8'))
+      .trim()
+      .split(/\r?\n/)
+      .map((line) => JSON.parse(line) as { kind?: string; argv?: string[]; method?: string; params?: Record<string, unknown> })
+    const startup = events.find((event) => event.kind === 'startup')
+    const argv = startup?.argv ?? []
+    const joinedArgs = argv.join(' ')
+
+    assert.match(joinedArgs, /mcp_servers\.chill_vibe_archive\.command=/)
+    assert.match(joinedArgs, /archive-recall-mcp\.js/)
+    assert.match(joinedArgs, /CHILL_VIBE_ARCHIVE_RECALL_FILE=/)
+
+    const snapshotArg = argv.find((arg) =>
+      arg.startsWith('mcp_servers.chill_vibe_archive.env.CHILL_VIBE_ARCHIVE_RECALL_FILE='),
+    )
+    assert.ok(snapshotArg)
+
+    const snapshotPath = snapshotArg
+      ?.slice('mcp_servers.chill_vibe_archive.env.CHILL_VIBE_ARCHIVE_RECALL_FILE='.length)
+      .replace(/^"/, '')
+      .replace(/"$/, '')
+      .replace(/\\\\/g, '\\')
+      .replace(/\\"/g, '"')
+    assert.ok(snapshotPath)
+
+    const threadStart = events.find((event) => event.method === 'thread/start')
+    const baseInstructions = String(threadStart?.params?.baseInstructions ?? '')
+    assert.match(baseInstructions, /search_compacted_history/)
+    assert.match(baseInstructions, /Do not say an older attachment is unavailable/)
+
+    const snapshotStillExists = await readFile(snapshotPath!, 'utf8').then(() => true).catch(() => false)
+    assert.equal(snapshotStillExists, false)
   } finally {
     await rm(capturePath, { force: true }).catch(() => {})
   }
@@ -569,6 +642,36 @@ const buildFakeCodexAppServerScript = (capturePath: string) =>
     '      return',
     '    }',
     "    reply({ id: request.id, result: { thread: { id: request.params.threadId, status: { type: 'active' } } } })",
+    '    return',
+    '  }',
+    "  if (request.method === 'turn/start' && request.id) {",
+    '    reply({ id: request.id, result: {} })',
+    "    reply({ method: 'turn/completed', params: {} })",
+    '  }',
+    '})',
+  ].join('\n')
+
+const buildFakeCodexArchiveRecallScript = (capturePath: string) =>
+  [
+    "const fs = require('node:fs')",
+    "const readline = require('node:readline')",
+    `const capturePath = ${JSON.stringify(capturePath)}`,
+    'const appendMessage = (message) => fs.appendFileSync(capturePath, `${JSON.stringify(message)}\\n`, "utf8")',
+    "const reply = (message) => process.stdout.write(`${JSON.stringify(message)}\\n`)",
+    "appendMessage({ kind: 'startup', argv: process.argv.slice(2) })",
+    "const rl = readline.createInterface({ input: process.stdin, crlfDelay: Infinity })",
+    "rl.on('line', (line) => {",
+    '  if (!line.trim()) {',
+    '    return',
+    '  }',
+    '  const request = JSON.parse(line)',
+    '  appendMessage(request)',
+    "  if (request.method === 'initialize' && request.id) {",
+    '    reply({ id: request.id, result: {} })',
+    '    return',
+    '  }',
+    "  if (request.method === 'thread/start' && request.id) {",
+    "    reply({ id: request.id, result: { thread: { id: 'thread-1', status: { type: 'active' } } } })",
     '    return',
     '  }',
     "  if (request.method === 'turn/start' && request.id) {",

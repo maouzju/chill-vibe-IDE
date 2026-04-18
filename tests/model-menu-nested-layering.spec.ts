@@ -6,6 +6,9 @@ import { installMockElectronBridge } from './electron-bridge.ts'
 import { createPlaywrightState } from './playwright-state.ts'
 
 type ThemeName = 'dark' | 'light'
+const appUrl = 'http://localhost:5173'
+
+test.setTimeout(60000)
 
 const createNestedSplitState = (theme: ThemeName) => createPlaywrightState({
   version: 1 as const,
@@ -98,6 +101,78 @@ const createNestedSplitState = (theme: ThemeName) => createPlaywrightState({
   ],
 })
 
+const createConstrainedBottomPaneState = (theme: ThemeName) => createPlaywrightState({
+  version: 1 as const,
+  settings: {
+    language: 'en',
+    theme,
+    fontScale: 1,
+    lineHeightScale: 1,
+    resilientProxyEnabled: true,
+    requestModels: {
+      codex: 'gpt-5.4',
+      claude: 'claude-opus-4-7',
+    },
+    modelReasoningEfforts: {
+      codex: {},
+      claude: {},
+    },
+    providerProfiles: {
+      codex: {
+        activeProfileId: '',
+        profiles: [],
+      },
+      claude: {
+        activeProfileId: '',
+        profiles: [],
+      },
+    },
+  },
+  updatedAt: new Date().toISOString(),
+  columns: [
+    {
+      id: 'col-constrained',
+      title: 'Constrained Menu Test',
+      provider: 'codex' as const,
+      workspacePath: 'd:\\Git\\chill-vibe',
+      model: 'gpt-5.4',
+      cards: [
+        {
+          id: 'card-top',
+          title: 'Reference Pane',
+          status: 'idle' as const,
+          size: 560,
+          provider: 'codex' as const,
+          model: 'gpt-5.4',
+          reasoningEffort: 'medium',
+          draft: 'Keep the lower pane short so the model menu must stay inside it.',
+          messages: [],
+        },
+        {
+          id: 'card-bottom',
+          title: 'Picker Owner',
+          status: 'idle' as const,
+          size: 560,
+          provider: 'codex' as const,
+          model: 'gpt-5.4',
+          reasoningEffort: 'medium',
+          draft: '',
+          messages: [],
+        },
+      ],
+      layout: createSplit(
+        'vertical',
+        [
+          createPane(['card-top'], 'card-top', 'pane-top'),
+          createPane(['card-bottom'], 'card-bottom', 'pane-bottom'),
+        ],
+        [0.72, 0.28],
+        'split-root',
+      ),
+    },
+  ],
+})
+
 const installMockApis = async (page: Page, initialState: AppState) => {
   await installMockElectronBridge(page)
 
@@ -149,14 +224,15 @@ const installMockApis = async (page: Page, initialState: AppState) => {
 }
 
 for (const theme of ['dark', 'light'] as const) {
-  test(`nested split model menu stays above upper sibling panes in ${theme} theme`, async ({ page }) => {
+  test(`nested split model menu stays inside its own pane in ${theme} theme`, async ({ page }) => {
     await installMockApis(page, createNestedSplitState(theme))
     await page.setViewportSize({ width: 1280, height: 820 })
-    await page.goto('http://localhost:5173')
+    await page.goto(appUrl, { waitUntil: 'domcontentloaded' })
 
     const paneViews = page.locator('.pane-view')
     const topPane = paneViews.nth(1)
     const bottomPane = paneViews.nth(2)
+    const bottomPaneContent = bottomPane.locator('.pane-content')
     const modelSelect = bottomPane.locator('.composer-input-row .model-select').first()
     const modelMenu = page.locator('.model-dropdown-menu').first()
 
@@ -175,12 +251,13 @@ for (const theme of ['dark', 'light'] as const) {
 
     expect(menuUsesBodyLayer).toBeTruthy()
 
-    const [menuBox, topPaneBox] = await Promise.all([
+    const [menuBox, topPaneBox, bottomPaneContentBox] = await Promise.all([
       modelMenu.boundingBox(),
       topPane.boundingBox(),
+      bottomPaneContent.boundingBox(),
     ])
 
-    if (!menuBox || !topPaneBox) {
+    if (!menuBox || !topPaneBox || !bottomPaneContentBox) {
       throw new Error('Expected nested pane geometry to be measurable')
     }
 
@@ -188,22 +265,57 @@ for (const theme of ['dark', 'light'] as const) {
     const overlapBottom = Math.min(menuBox.y + menuBox.height, topPaneBox.y + topPaneBox.height)
     const overlapHeight = overlapBottom - overlapTop
 
-    expect(overlapHeight).toBeGreaterThan(48)
+    expect(overlapHeight).toBeLessThanOrEqual(1)
+    expect(menuBox.x).toBeGreaterThanOrEqual(bottomPaneContentBox.x - 1)
+    expect(menuBox.y).toBeGreaterThanOrEqual(bottomPaneContentBox.y - 1)
+    expect(menuBox.x + menuBox.width).toBeLessThanOrEqual(bottomPaneContentBox.x + bottomPaneContentBox.width + 1)
+    expect(menuBox.y + menuBox.height).toBeLessThanOrEqual(bottomPaneContentBox.y + bottomPaneContentBox.height + 1)
+  })
 
-    const hit = await page.evaluate(({ x, y }) => {
-      const target = document.elementFromPoint(x, y)
-      return {
-        className: target instanceof HTMLElement ? target.className : '',
-        insideMenu: Boolean(target instanceof Element && target.closest('.model-dropdown-menu')),
-      }
-    }, {
-      x: menuBox.x + menuBox.width / 2,
-      y: overlapTop + overlapHeight / 2,
+  test(`model menu stays inside a short pane in ${theme} theme`, async ({ page }) => {
+    await installMockApis(page, createConstrainedBottomPaneState(theme))
+    await page.setViewportSize({ width: 430, height: 760 })
+    await page.goto(appUrl, { waitUntil: 'domcontentloaded' })
+
+    const paneViews = page.locator('.pane-view')
+    const bottomPane = paneViews.nth(1)
+    const bottomPaneContent = bottomPane.locator('.pane-content')
+    const modelSelect = bottomPane.locator('.composer-input-row .model-select').first()
+    const modelMenu = page.locator('.model-dropdown-menu').first()
+
+    await expect(paneViews).toHaveCount(2)
+    await expect(bottomPane).toBeVisible()
+    await expect(modelSelect).toBeVisible()
+
+    await modelSelect.click()
+    await expect(modelMenu).toBeVisible()
+
+    const [menuBox, paneContentBox] = await Promise.all([
+      modelMenu.boundingBox(),
+      bottomPaneContent.boundingBox(),
+    ])
+
+    if (!menuBox || !paneContentBox) {
+      throw new Error('Expected the constrained pane geometry to be measurable')
+    }
+
+    expect(menuBox.x).toBeGreaterThanOrEqual(paneContentBox.x - 1)
+    expect(menuBox.y).toBeGreaterThanOrEqual(paneContentBox.y - 1)
+    expect(menuBox.x + menuBox.width).toBeLessThanOrEqual(paneContentBox.x + paneContentBox.width + 1)
+    expect(menuBox.y + menuBox.height).toBeLessThanOrEqual(paneContentBox.y + paneContentBox.height + 1)
+
+    const menuMetrics = await modelMenu.evaluate((node) => ({
+      scrollHeight: node.scrollHeight,
+      clientHeight: node.clientHeight,
+      overflowY: getComputedStyle(node).overflowY,
+    }))
+
+    expect(menuMetrics.overflowY).toBe('auto')
+    expect(menuMetrics.scrollHeight).toBeGreaterThan(menuMetrics.clientHeight + 1)
+
+    await expect(bottomPane).toHaveScreenshot(`model-menu-short-pane-${theme}.png`, {
+      animations: 'disabled',
+      caret: 'hide',
     })
-
-    expect(
-      hit.insideMenu,
-      `Expected the lower pane menu to stay on top of the upper pane, got ${hit.className}`,
-    ).toBeTruthy()
   })
 }

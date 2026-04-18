@@ -1,5 +1,7 @@
 import type { PointerEvent } from 'react'
 
+import { getResizedSplitRatios } from './split-resize-utils'
+
 type SplitResizeHandleProps = {
   direction: 'horizontal' | 'vertical'
   splitId: string
@@ -7,8 +9,6 @@ type SplitResizeHandleProps = {
   ratios: number[]
   onResize: (splitId: string, ratios: number[]) => void
 }
-
-const minPanePixels = 120
 
 export const SplitResizeHandle = ({
   direction,
@@ -45,13 +45,10 @@ export const SplitResizeHandle = ({
     const handleMove = (moveEvent: globalThis.PointerEvent) => {
       const currentPosition = direction === 'horizontal' ? moveEvent.clientX : moveEvent.clientY
       const deltaRatio = (currentPosition - startPosition) / totalSize
-      const minRatio = minPanePixels / totalSize
-      const nextBefore = Math.min(Math.max(startBefore + deltaRatio, minRatio), combined - minRatio)
-      const nextAfter = combined - nextBefore
-      const nextRatios = [...startRatios]
-      nextRatios[index] = nextBefore
-      nextRatios[index + 1] = nextAfter
-      onResize(splitId, nextRatios)
+      const nextRatios = getResizedSplitRatios(startRatios, index, deltaRatio, totalSize)
+      if (nextRatios) {
+        onResize(splitId, nextRatios)
+      }
     }
 
     const handleStop = () => {

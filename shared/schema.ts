@@ -274,6 +274,16 @@ export const internalSessionHistoryLoadResponseSchema = z.object({
 })
 export type InternalSessionHistoryLoadResponse = z.infer<typeof internalSessionHistoryLoadResponseSchema>
 
+export const archiveRecallHiddenReasonSchema = z.enum(['compact'])
+export type ArchiveRecallHiddenReason = z.infer<typeof archiveRecallHiddenReasonSchema>
+
+export const archiveRecallSnapshotSchema = z.object({
+  hiddenReason: archiveRecallHiddenReasonSchema,
+  hiddenMessageCount: z.number().int().nonnegative(),
+  messages: z.array(chatMessageSchema).default([]),
+})
+export type ArchiveRecallSnapshot = z.infer<typeof archiveRecallSnapshotSchema>
+
 // ── External history import ──────────────────────────────────────────────────
 
 export const externalSessionSummarySchema = z.object({
@@ -642,6 +652,7 @@ export const chatRequestSchema = z.object({
   crossProviderSkillReuseEnabled: z.boolean().default(true),
   prompt: z.string().default(''),
   attachments: z.array(imageAttachmentSchema).default([]),
+  archiveRecall: archiveRecallSnapshotSchema.optional(),
   sandboxMode: codexSandboxModeSchema.optional(),
 }).refine((value) => {
   const hasPrompt = value.prompt.trim().length > 0

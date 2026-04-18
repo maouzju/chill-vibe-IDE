@@ -6,19 +6,15 @@ import {
   ensureElectronRuntimeBuild,
   getElectronTestRendererUrl,
 } from './ensure-electron-runtime-build.ts'
+import { createHeadlessElectronRuntimeEnv } from './electron-test-env.ts'
 
 test('Electron runtime injects the desktop bridge into the renderer window', async () => {
   await ensureElectronRuntimeBuild()
 
-  const env = Object.fromEntries(
-    Object.entries({
-      ...process.env,
+  const env = createHeadlessElectronRuntimeEnv({
       VITE_DEV_SERVER_URL: getElectronTestRendererUrl(),
       CHILL_VIBE_DISABLE_SINGLE_INSTANCE_LOCK: '1',
-    }).filter((entry): entry is [string, string] => typeof entry[1] === 'string'),
-  )
-
-  delete env.ELECTRON_RUN_AS_NODE
+    })
 
   const app = await electron.launch({
     args: ['.'],

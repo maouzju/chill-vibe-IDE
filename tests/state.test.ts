@@ -1015,6 +1015,7 @@ describe('ideReducer pane layout', () => {
     const root = next.columns[0].layout as SplitNode
     assert.equal(root.type, 'split')
     assert.equal(root.direction, 'vertical')
+    assert.deepEqual(root.ratios, [0.5, 0.5])
 
     const topPane = root.children[0] as PaneNode
     const bottomPane = root.children[1] as PaneNode
@@ -1024,7 +1025,7 @@ describe('ideReducer pane layout', () => {
     assert.ok(next.columns[0].cards['card-1'], 'moved tab should stay in the same-column card map')
   })
 
-  it('keeps the moved pane height weight when dragging it into a vertical split elsewhere', () => {
+  it('rebalances to an even split when a pane is turned into a vertical split elsewhere', () => {
     const state = createState()
     state.columns[0] = createColumn({
       id: 'column-1',
@@ -1060,7 +1061,114 @@ describe('ideReducer pane layout', () => {
     const root = next.columns[0].layout as SplitNode
     assert.equal(root.type, 'split')
     assert.equal(root.direction, 'vertical')
-    assert.deepEqual(root.ratios, [0.75, 0.25])
+    assert.deepEqual(root.ratios, [0.5, 0.5])
+  })
+
+  it('splits the tiny target pane evenly instead of inheriting the dragged pane height', () => {
+    const state = createState()
+    state.columns[0] = createColumn({
+      id: 'column-1',
+      provider: 'codex',
+      workspacePath: 'D:/repo/one',
+      model: DEFAULT_CODEX_MODEL,
+      layout: createSplit(
+        'split-root',
+        'horizontal',
+        [
+          createPane('pane-left', ['card-1'], 'card-1'),
+          createSplit(
+            'split-right',
+            'vertical',
+            [
+              createPane('pane-right-top', ['card-2'], 'card-2'),
+              createPane('pane-right-bottom', ['card-3'], 'card-3'),
+            ],
+            [0.1, 0.9],
+          ),
+        ],
+        [0.5, 0.5],
+      ),
+      cards: {
+        'card-1': createCard({ id: 'card-1', provider: 'codex', model: DEFAULT_CODEX_MODEL, messages: [] }),
+        'card-2': createCard({ id: 'card-2', title: 'Chat 2', provider: 'codex', model: DEFAULT_CODEX_MODEL, messages: [] }),
+        'card-3': createCard({ id: 'card-3', title: 'Chat 3', provider: 'codex', model: DEFAULT_CODEX_MODEL, messages: [] }),
+      },
+    })
+
+    const next = ideReducer(state, {
+      type: 'splitMoveTab',
+      columnId: 'column-1',
+      sourcePaneId: 'pane-left',
+      targetPaneId: 'pane-right-top',
+      tabId: 'card-1',
+      direction: 'vertical',
+      placement: 'after',
+      newPaneId: 'pane-moved',
+    })
+
+    const root = next.columns[0].layout as SplitNode
+    assert.equal(root.type, 'split')
+    assert.equal(root.id, 'split-right')
+    assert.equal(root.direction, 'vertical')
+
+    const upperBranch = root.children[0] as SplitNode
+    assert.equal(upperBranch.type, 'split')
+    assert.equal(upperBranch.direction, 'vertical')
+    assert.deepEqual(upperBranch.ratios, [0.5, 0.5])
+  })
+
+  it('splits the tiny target pane evenly instead of inheriting the dragged pane width', () => {
+    const state = createState()
+    state.columns[0] = createColumn({
+      id: 'column-1',
+      provider: 'codex',
+      workspacePath: 'D:/repo/one',
+      model: DEFAULT_CODEX_MODEL,
+      layout: createSplit(
+        'split-root',
+        'vertical',
+        [
+          createPane('pane-top', ['card-1'], 'card-1'),
+          createSplit(
+            'split-bottom',
+            'horizontal',
+            [
+              createPane('pane-bottom-left', ['card-2'], 'card-2'),
+              createPane('pane-bottom-right', ['card-3'], 'card-3'),
+            ],
+            [0.1, 0.9],
+          ),
+        ],
+        [0.5, 0.5],
+      ),
+      cards: {
+        'card-1': createCard({ id: 'card-1', provider: 'codex', model: DEFAULT_CODEX_MODEL, messages: [] }),
+        'card-2': createCard({ id: 'card-2', title: 'Chat 2', provider: 'codex', model: DEFAULT_CODEX_MODEL, messages: [] }),
+        'card-3': createCard({ id: 'card-3', title: 'Chat 3', provider: 'codex', model: DEFAULT_CODEX_MODEL, messages: [] }),
+      },
+    })
+
+    const next = ideReducer(state, {
+      type: 'splitMoveTab',
+      columnId: 'column-1',
+      sourcePaneId: 'pane-top',
+      targetPaneId: 'pane-bottom-left',
+      tabId: 'card-1',
+      direction: 'horizontal',
+      placement: 'after',
+      newPaneId: 'pane-moved',
+    })
+
+    const root = next.columns[0].layout as SplitNode
+    assert.equal(root.type, 'split')
+    assert.equal(root.id, 'split-bottom')
+    assert.equal(root.direction, 'horizontal')
+    assert.deepEqual(root.ratios, [0.1, 0.9])
+
+    const leftBranch = root.children[0] as SplitNode
+    assert.equal(leftBranch.type, 'split')
+    assert.equal(leftBranch.direction, 'horizontal')
+    assert.deepEqual(leftBranch.ratios, [0.5, 0.5])
   })
 
   it('reorders tabs within a pane without touching the card map', () => {

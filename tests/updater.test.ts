@@ -1,9 +1,14 @@
 import assert from 'node:assert/strict'
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import os from 'node:os'
+import path from 'node:path'
+import { spawnSync } from 'node:child_process'
 import { describe, test } from 'node:test'
 
 import {
   buildWindowsZipReplaceScript,
   classifyDownloadedAsset,
+  encodePowerShellScriptUtf8Bom,
   isNewerVersion,
   parseVersionTag,
   selectPlatformAsset,
@@ -253,5 +258,38 @@ describe('buildWindowsZipReplaceScript', () => {
   test('uses UTF-8 output encoding so Chinese paths survive the shell roundtrip', () => {
     const script = buildWindowsZipReplaceScript(baseParams)
     assert.match(script, /UTF8Encoding/)
+  })
+})
+
+describe('encodePowerShellScriptUtf8Bom', () => {
+  test('writes a BOM so Windows PowerShell preserves Chinese paths inside the script file', async (t) => {
+    if (process.platform !== 'win32') {
+      t.skip('Windows PowerShell script encoding only matters on win32.')
+      return
+    }
+
+    const tempDir = await mkdtemp(path.join(os.tmpdir(), 'chill-vibe-updater-'))
+    const outputPath = path.join(tempDir, 'captured.txt')
+    const scriptPath = path.join(tempDir, 'apply-update.ps1')
+    const script = [
+      `$value = 'D:\\下载\\Chill Vibe IDE'`,
+      `Set-Content -LiteralPath '${outputPath.replace(/\\/g, '\\\\')}' -Value $value -Encoding utf8`,
+    ].join('\r\n')
+
+    await writeFile(scriptPath, encodePowerShellScriptUtf8Bom(script))
+
+    try {
+      const result = spawnSync(
+        'powershell',
+        ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', scriptPath],
+        { encoding: 'utf8' },
+      )
+
+      assert.equal(result.status, 0, result.stderr || result.stdout)
+      const captured = (await readFile(outputPath, 'utf8')).replace(/^\uFEFF/, '')
+      assert.equal(captured, 'D:\\下载\\Chill Vibe IDE\r\n')
+    } finally {
+      await rm(tempDir, { recursive: true, force: true })
+    }
   })
 })

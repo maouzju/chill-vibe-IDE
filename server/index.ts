@@ -22,7 +22,6 @@ import {
   fileReadRequestSchema,
   fileRenameRequestSchema,
   fileSearchRequestSchema,
-  specEnsureRequestSchema,
   fileWriteRequestSchema,
   slashCommandRequestSchema,
   workspaceValidationRequestSchema,
@@ -42,7 +41,6 @@ import {
   searchWorkspaceFiles,
   writeWorkspaceFile,
 } from './file-system.js'
-import { ensureSpecDocuments } from './spec-first.js'
 import { ChatManager } from './chat-manager.js'
 import {
   commitGitWorkspace,
@@ -422,23 +420,6 @@ app.post('/api/files/write', async (request, response) => {
   }
 })
 
-app.post('/api/specs/ensure', async (request, response) => {
-  const parsed = specEnsureRequestSchema.safeParse(request.body)
-
-  if (!parsed.success) {
-    response.status(400).json({ message: 'Invalid SPEC scaffold request.' })
-    return
-  }
-
-  try {
-    const result = await ensureSpecDocuments(parsed.data)
-    response.json(result)
-  } catch (error) {
-    response.status(400).json({
-      message: error instanceof Error ? error.message : 'Unable to create SPEC docs.',
-    })
-  }
-})
 
 app.post('/api/attachments', async (request, response) => {
   const parsed = attachmentUploadRequestSchema.safeParse(request.body)

@@ -16,7 +16,6 @@ import {
 } from '@primer/react'
 
 import {
-  createId,
   createAutoUrgeProfile,
   createDefaultState,
   createMessage,
@@ -3135,66 +3134,6 @@ function App() {
     await requestStopForCard(cardId, 'manual')
   }
 
-  const launchSpecAgent = useCallback(
-    async (
-      columnId: string,
-      paneId: string,
-      sourceCardId: string,
-      payload: {
-        title: string
-        prompt: string
-        requirementsPath: string
-        designPath: string
-        tasksPath: string
-      },
-    ) => {
-      const column = getColumn(columnId)
-      const sourceCard = column?.cards[sourceCardId]
-
-      if (!column || !sourceCard) {
-        return
-      }
-
-      const chatCardId = createId()
-      const nextState = applyAction({
-        type: 'addTab',
-        columnId,
-        paneId,
-        cardId: chatCardId,
-        title: payload.title,
-        provider: column.provider,
-        model: column.model,
-      })
-      persistImmediately(nextState)
-
-      applyAction({
-        type: 'setActiveTab',
-        columnId,
-        paneId,
-        tabId: chatCardId,
-      })
-      rememberPaneTarget(columnId, paneId)
-
-      const adjacentPane = findAdjacentPane(column.layout, paneId)
-      const targetPaneId = adjacentPane ? adjacentPane.id : paneId
-      const filesToOpen = [payload.requirementsPath, payload.designPath, payload.tasksPath]
-
-      for (const relativePath of filesToOpen) {
-        const fileName = relativePath.split('/').pop() ?? relativePath
-        applyAction({
-          type: 'addTab',
-          columnId,
-          paneId: targetPaneId,
-          title: fileName,
-          model: TEXTEDITOR_TOOL_MODEL,
-          stickyNote: relativePath,
-        })
-      }
-
-      await sendMessageRef.current?.(columnId, chatCardId, payload.prompt, [])
-    },
-    [applyAction, getColumn, persistImmediately, rememberPaneTarget],
-  )
 
   const handleReset = async () => {
     await Promise.all([...activeStreamsRef.current.keys()].map((cardId) => closeStream(cardId, true)))
@@ -5845,9 +5784,6 @@ function App() {
                 stickyNote: relativePath,
               })
             }}
-            onLaunchSpec={(paneId, cardId, payload) =>
-              launchSpecAgent(column.id, paneId, cardId, payload)
-            }
             recentWorkspaces={appState.settings.recentWorkspaces}
             onRecordRecentWorkspace={(path) => applyAction({ type: 'recordRecentWorkspace', path })}
             onRemoveRecentWorkspaces={(paths) => applyAction({ type: 'removeRecentWorkspaces', paths })}

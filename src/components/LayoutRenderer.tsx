@@ -84,17 +84,6 @@ type LayoutRendererProps = {
   onStopMessage: (cardId: string) => Promise<void>
   onForkConversation?: (cardId: string, messageId: string) => void
   onOpenFile?: (paneId: string, relativePath: string) => void
-  onLaunchSpec?: (
-    paneId: string,
-    cardId: string,
-    payload: {
-      title: string
-      prompt: string
-      requirementsPath: string
-      designPath: string
-      tasksPath: string
-    },
-  ) => Promise<void>
 }
 
 export const LayoutRenderer = ({

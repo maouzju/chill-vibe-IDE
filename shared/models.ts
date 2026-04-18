@@ -11,7 +11,6 @@ export const STICKYNOTE_TOOL_MODEL = '__stickynote_tool__'
 export const FILETREE_TOOL_MODEL = '__filetree_tool__'
 export const BRAINSTORM_TOOL_MODEL = '__brainstorm_tool__'
 export const TEXTEDITOR_TOOL_MODEL = '__texteditor_tool__'
-export const SPEC_TOOL_MODEL = '__spec_tool__'
 // Legacy-only token kept so persisted PM cards can be demoted safely during load.
 export const PM_TOOL_MODEL = '__pm_tool__'
 
@@ -73,12 +72,6 @@ export const MODEL_OPTIONS: ModelOption[] = [
     aliases: ['editor', 'text-editor', 'texteditor', 'edit'],
   },
   {
-    label: 'SPEC',
-    provider: 'codex',
-    model: SPEC_TOOL_MODEL,
-    aliases: ['spec', 'spec-first', 'specs', 'requirements', 'design-doc'],
-  },
-  {
     label: 'Codex',
     provider: 'codex',
     model: '',
@@ -118,7 +111,7 @@ export const MODEL_OPTIONS: ModelOption[] = [
   },
 ]
 
-const legacyCodexModels = new Set(['gpt-4.5', '__dream_tool__'])
+const legacyCodexModels = new Set(['gpt-4.5', '__dream_tool__', '__spec_tool__'])
 
 const canonicalizeModelAlias = (value: string) => value.trim().toLowerCase().replace(/\s+/g, '-')
 

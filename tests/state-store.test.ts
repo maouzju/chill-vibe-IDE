@@ -191,6 +191,31 @@ describe('state-store persistence', () => {
     assert.equal((restoredCard as { dream?: unknown } | undefined)?.dream, undefined)
   })
 
+  it('loadState demotes persisted SPEC cards into normal Codex chats', async () => {
+    const stateFile = path.join(tmpDir, 'state.json')
+    const state = createDefaultState('D:/legacy-spec')
+    const firstColumn = state.columns[0]
+    const firstPane = getFirstPane(firstColumn.layout)
+    const specCardId = firstPane.tabs[0]!
+    const persistedState = structuredClone(state) as Record<string, unknown>
+    const persistedColumns = persistedState.columns as Array<Record<string, unknown>>
+    const persistedCards = persistedColumns[0]?.cards as Record<string, Record<string, unknown>>
+    const persistedSpecCard = persistedCards[specCardId]
+
+    assert.ok(persistedSpecCard, 'expected the starter card to exist before injecting legacy SPEC data')
+
+    persistedSpecCard.title = 'SPEC'
+    persistedSpecCard.model = '__spec_tool__'
+
+    await writeFile(stateFile, JSON.stringify(persistedState, null, 2), 'utf8')
+
+    const { loadState } = await import('../server/state-store.ts')
+    const loaded = await loadState()
+    const restoredCard = loaded.columns[0]?.cards[specCardId]
+
+    assert.equal(restoredCard?.model, DEFAULT_CODEX_MODEL)
+  })
+
   it('loadState migrates untouched empty chats to the configured provider model', async () => {
     const stateFile = path.join(tmpDir, 'state.json')
     const state = createDefaultState('D:/remembered-model')

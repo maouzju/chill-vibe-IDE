@@ -2,7 +2,6 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 
 import { createDesktopBackend } from '../electron/backend.ts'
-import { buildSpecFileSet } from '../shared/spec-first.ts'
 
 test('desktop backend delays manager construction until the matching feature is used', async () => {
   let chatManagerFactoryCalls = 0
@@ -97,38 +96,4 @@ test('desktop backend delays manager construction until the matching feature is 
   assert.equal(setupDisposed, 1)
   assert.equal(musicDisposed, 0)
   assert.equal(chatManagerFactoryCalls, 0)
-})
-
-test('desktop backend creates SPEC starter docs without constructing unrelated managers', async () => {
-  let chatManagerFactoryCalls = 0
-  let setupManagerFactoryCalls = 0
-  let musicManagerFactoryCalls = 0
-
-  const backend = createDesktopBackend({
-    createChatManager: () => {
-      chatManagerFactoryCalls += 1
-      throw new Error('chat manager should not be constructed')
-    },
-    createSetupManager: () => {
-      setupManagerFactoryCalls += 1
-      throw new Error('setup manager should not be constructed')
-    },
-    createMusicManager: () => {
-      musicManagerFactoryCalls += 1
-      throw new Error('music manager should not be constructed')
-    },
-  })
-
-  const result = await backend.ensureSpecDocuments({
-    workspacePath: process.cwd(),
-    title: 'OAuth Login Flow',
-    language: 'en',
-  })
-
-  const expected = buildSpecFileSet('OAuth Login Flow')
-  assert.equal(result.slug, expected.slug)
-  assert.equal(result.requirementsPath, expected.requirementsPath)
-  assert.equal(chatManagerFactoryCalls, 0)
-  assert.equal(setupManagerFactoryCalls, 0)
-  assert.equal(musicManagerFactoryCalls, 0)
 })

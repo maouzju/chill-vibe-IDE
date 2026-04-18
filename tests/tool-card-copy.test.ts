@@ -5,13 +5,13 @@ import { getFileTreeCardText, getTextEditorCardText } from '../src/components/to
 
 test('tool card zh-CN labels stay readable', () => {
   const fileTreeText = getFileTreeCardText('zh-CN')
-  assert.equal(fileTreeText.loading, '加载文件中...')
-  assert.equal(fileTreeText.searchPlaceholder, '搜索文件')
-  assert.equal(fileTreeText.searching, '搜索文件中...')
-  assert.equal(fileTreeText.emptySearch, '没有找到匹配的文件。')
+  assert.equal(fileTreeText.loading, '\u52a0\u8f7d\u6587\u4ef6\u4e2d...')
+  assert.equal(fileTreeText.searchPlaceholder, '\u641c\u7d22\u6587\u4ef6')
+  assert.equal(fileTreeText.searching, '\u641c\u7d22\u6587\u4ef6\u4e2d...')
+  assert.equal(fileTreeText.emptySearch, '\u6ca1\u6709\u627e\u5230\u5339\u914d\u7684\u6587\u4ef6\u3002')
 
   const editorText = getTextEditorCardText('zh-CN')
-  assert.equal(editorText.loading, '加载中...')
-  assert.equal(editorText.saving, '保存中...')
-  assert.equal(editorText.unsaved, '未保存')
+  assert.equal(editorText.loading, '\u52a0\u8f7d\u4e2d...')
+  assert.equal(editorText.saving, '\u4fdd\u5b58\u4e2d...')
+  assert.equal(editorText.unsaved, '\u672a\u4fdd\u5b58')
 })

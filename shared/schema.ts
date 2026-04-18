@@ -1083,10 +1083,3 @@ export const fileWriteRequestSchema = z.object({
   content: z.string(),
 })
 export type FileWriteRequest = z.infer<typeof fileWriteRequestSchema>
-
-export const specEnsureRequestSchema = z.object({
-  workspacePath: z.string().min(1),
-  title: z.string().default(''),
-  language: appLanguageSchema.default('zh-CN'),
-})
-export type SpecEnsureRequest = z.infer<typeof specEnsureRequestSchema>

@@ -338,6 +338,9 @@ function registerDesktopHandlers() {
   ipcMain.on('desktop:queue-state-save', (_event, state) => {
     desktopBackend.queueStateSave(state)
   })
+  ipcMain.handle('desktop:sync-runtime-settings', (_event, settings) =>
+    desktopBackend.syncRuntimeSettings(settings),
+  )
   ipcMain.handle('desktop:reset-state', () => desktopBackend.resetState())
   ipcMain.handle('desktop:resolve-state-recovery-option', (_event, request) =>
     desktopBackend.resolveStateRecoveryOption(request),

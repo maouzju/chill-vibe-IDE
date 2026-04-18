@@ -2,6 +2,7 @@ import type { ChildProcess } from 'node:child_process'
 import { spawn } from 'node:child_process'
 import { EventEmitter } from 'node:events'
 import { stat } from 'node:fs/promises'
+import os from 'node:os'
 import { basename, delimiter, dirname, resolve as resolvePath } from 'node:path'
 import readline from 'node:readline'
 import type { Readable } from 'node:stream'
@@ -22,6 +23,7 @@ import { normalizeReasoningEffort } from '../shared/reasoning.js'
 import { providerSupportsImageAttachments } from '../shared/chat-attachments.js'
 import type {
   AppLanguage,
+  AppSettings,
   ChatRequest,
   ImageAttachment,
   Provider,
@@ -69,6 +71,12 @@ type StreamSink = {
 export type ProviderRuntime = {
   args: string[]
   env: NodeJS.ProcessEnv
+}
+
+let providerRuntimeSettingsOverride: AppSettings | null = null
+
+export const setProviderRuntimeSettingsOverride = (settings: AppSettings | null) => {
+  providerRuntimeSettingsOverride = settings
 }
 
 const providerCommandPreferences: Record<Provider, string[]> =
@@ -173,15 +181,15 @@ export const resolveProviderRuntime = async (provider: Provider): Promise<Provid
     provider === 'claude' ? await resolveClaudeRuntimeEnvironment({ env: process.env }) : process.env
 
   try {
-    const state = await loadState()
-    if (!state.settings.cliRoutingEnabled) {
+    const settings = providerRuntimeSettingsOverride ?? (await loadState()).settings
+    if (!settings.cliRoutingEnabled) {
       return {
         args: [],
         env: baseEnv,
       }
     }
 
-    const activeProfile = getActiveProviderProfile(state.settings, provider)
+    const activeProfile = getActiveProviderProfile(settings, provider)
     const apiKey = activeProfile?.apiKey.trim()
 
     if (!apiKey) {
@@ -195,7 +203,7 @@ export const resolveProviderRuntime = async (provider: Provider): Promise<Provid
     const runtimeBaseUrl = await maybeResolveProxyBaseUrl(
       provider,
       baseUrl,
-      Boolean(state.settings.resilientProxyEnabled),
+      Boolean(settings.resilientProxyEnabled),
     )
 
     if (provider === 'claude') {
@@ -1734,27 +1742,83 @@ const getClaudePrompt = (request: ChatRequest, attachmentPaths: string[]) => {
     : `${imagePrefix}\n${imageRefs}`
 }
 
+const resolveConfiguredPath = (value: string | undefined) => {
+  const normalized = value?.trim()
+  return normalized ? resolvePath(normalized) : null
+}
+
+const dedupeResolvedPaths = (paths: string[]) => {
+  const seen = new Set<string>()
+
+  return paths.filter((candidate) => {
+    const key = process.platform === 'win32' ? candidate.toLowerCase() : candidate
+    if (seen.has(key)) {
+      return false
+    }
+
+    seen.add(key)
+    return true
+  })
+}
+
+const resolveClaudeAdditionalDirectories = (options?: {
+  env?: NodeJS.ProcessEnv
+  homeDir?: string | null
+}) => {
+  if (typeof options?.homeDir === 'string' && options.homeDir.trim().length > 0) {
+    return [resolvePath(options.homeDir, '.claude')]
+  }
+
+  const env = options?.env ?? process.env
+  const homeCandidates = [
+    resolveConfiguredPath(env.HOME),
+    resolveConfiguredPath(env.USERPROFILE),
+    resolveConfiguredPath(
+      env.HOMEDRIVE && env.HOMEPATH ? `${env.HOMEDRIVE}${env.HOMEPATH}` : undefined,
+    ),
+    resolveConfiguredPath(os.homedir()),
+  ].filter((candidate): candidate is string => Boolean(candidate))
+
+  return dedupeResolvedPaths(homeCandidates.map((homeDir) => resolvePath(homeDir, '.claude')))
+}
+
 export const buildClaudeArgs = (
   request: ChatRequest,
   attachmentPaths: string[] = [],
   options?: {
     includeEffort?: boolean
+    env?: NodeJS.ProcessEnv
+    homeDir?: string | null
   },
 ) => {
   const args = ['-p', '--verbose', '--output-format', 'stream-json', '--include-partial-messages']
   const reasoningEffort = normalizeReasoningEffort('claude', request.reasoningEffort)
   const permissionMode = request.planMode ? 'plan' : 'bypassPermissions'
+  const additionalDirectories = resolveClaudeAdditionalDirectories(options)
   const systemPrompt = [
     buildProviderSystemPrompt(request.language, request.systemPrompt),
     getClaudeAskUserQuestionInstruction(request.language),
   ].join(' ')
 
   args.push('--permission-mode', permissionMode)
+  if (additionalDirectories.length > 0) {
+    args.push('--add-dir', ...additionalDirectories)
+  }
   args.push(
     '--settings',
     JSON.stringify({
+      ...(permissionMode === 'bypassPermissions'
+        ? {
+            skipDangerousModePermissionPrompt: true,
+          }
+        : {}),
       permissions: {
         defaultMode: permissionMode,
+        ...(additionalDirectories.length > 0
+          ? {
+              additionalDirectories,
+            }
+          : {}),
       },
     }),
   )

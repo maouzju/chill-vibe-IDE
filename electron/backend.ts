@@ -28,6 +28,7 @@ import { inspectOnboardingStatus } from '../server/onboarding-status.ts'
 import {
   getProviderSlashCommands,
   getProviderStatuses,
+  setProviderRuntimeSettingsOverride,
   validateWorkspacePath,
 } from '../server/providers.ts'
 import { resilientProxyPool } from '../server/resilient-proxy.ts'
@@ -53,6 +54,7 @@ import {
 import { fetchWeather, searchCities } from '../server/weather/weather-service.ts'
 import { generateScene } from '../server/whitenoise/whitenoise-generator.ts'
 import {
+  appSettingsSchema,
   attachmentUploadRequestSchema,
   appStateSchema,
   rendererCrashCaptureRequestSchema,
@@ -159,6 +161,9 @@ export const createDesktopBackend = (deps: DesktopBackendDependencies = {}) => {
     },
     queueStateSave(state: AppState) {
       void queueSaveState(appStateSchema.parse(state))
+    },
+    syncRuntimeSettings(settings: AppState['settings']) {
+      setProviderRuntimeSettingsOverride(appSettingsSchema.parse(settings))
     },
     async flushStateWrites() {
       await waitForPendingStateWrites()

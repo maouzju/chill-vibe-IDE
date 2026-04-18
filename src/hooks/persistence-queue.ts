@@ -25,6 +25,18 @@ export const shouldPersistActionImmediately = (
   state: Pick<AppState, 'columns'>,
 ) => actionType === 'selectCardModel' && shouldPauseQueuedStateSave(state)
 
+const runtimeSyncSettingsKeys = ['cliRoutingEnabled', 'resilientProxyEnabled', 'providerProfiles'] as const
+
+export const shouldSyncRuntimeSettings = (action: IdeAction) => {
+  if (action.type === 'updateSettings') {
+    return runtimeSyncSettingsKeys.some((key) => key in action.patch)
+  }
+
+  return action.type === 'upsertProviderProfile' ||
+    action.type === 'removeProviderProfile' ||
+    action.type === 'setActiveProviderProfile'
+}
+
 export const createQueuedStateSaveScheduler = ({
   delayMs,
   queueStateSave,

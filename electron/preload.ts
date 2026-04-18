@@ -47,6 +47,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   loadSessionHistoryEntry: (request: unknown) =>
     ipcRenderer.invoke('desktop:load-session-history-entry', request),
   saveState: (state: unknown) => ipcRenderer.invoke('desktop:save-state', state),
+  syncRuntimeSettings: (settings: unknown) =>
+    ipcRenderer.invoke('desktop:sync-runtime-settings', settings),
   queueStateSave: (state: unknown) => {
     ipcRenderer.send('desktop:queue-state-save', state)
   },

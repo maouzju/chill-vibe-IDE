@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 
 import { fetchFileContent, saveFileContent } from '../api'
-import type { AppLanguage } from '../../shared/schema'
-import { shouldFlushTextEditorSave } from './tool-card-state'
+import type { AppLanguage, FileReadResponse } from '../../shared/schema'
+import { resolveTextEditorExternalRefresh, shouldFlushTextEditorSave } from './tool-card-state'
 import { getTextEditorCardText } from './tool-card-text'
 import { resolveTextEditorMonacoTheme } from './text-editor-monaco-config'
 
@@ -20,6 +20,7 @@ type TextEditorMonacoModule = typeof import('./text-editor-monaco')
 type MonacoEditorInstance = import('monaco-editor').editor.IStandaloneCodeEditor
 type MonacoTextModel = import('monaco-editor').editor.ITextModel
 type UiTheme = 'light' | 'dark'
+const TEXT_EDITOR_REFRESH_INTERVAL_MS = 2_000
 
 const getCurrentUiTheme = (): UiTheme => {
   if (typeof document === 'undefined') {
@@ -46,6 +47,7 @@ const TextEditorCardInner = ({ workspacePath, filePath, language }: TextEditorCa
   const mountedRef = useRef(true)
   const contentRef = useRef('')
   const savedContentRef = useRef('')
+  const suppressEditorChangeRef = useRef(false)
 
   useEffect(() => {
     mountedRef.current = true
@@ -74,19 +76,47 @@ const TextEditorCardInner = ({ workspacePath, filePath, language }: TextEditorCa
     }
   }, [])
 
+  const applyResolvedRefresh = useCallback((nextContent: string) => {
+    contentRef.current = nextContent
+    savedContentRef.current = nextContent
+
+    const model = modelRef.current
+    if (model && model.getValue() !== nextContent) {
+      suppressEditorChangeRef.current = true
+      model.setValue(nextContent)
+    }
+
+    if (mountedRef.current) {
+      setContent(nextContent)
+      setSavedContent(nextContent)
+    }
+  }, [])
+
+  const syncFileSnapshot = useCallback((result: FileReadResponse) => {
+    const refresh = resolveTextEditorExternalRefresh(
+      savedContentRef.current,
+      contentRef.current,
+      result.content,
+    )
+
+    if (refresh) {
+      applyResolvedRefresh(refresh.content)
+    }
+
+    if (mountedRef.current) {
+      setFileLanguage(result.language)
+      setError(null)
+      setLoading(false)
+    }
+  }, [applyResolvedRefresh])
+
   useEffect(() => {
     let cancelled = false
 
     fetchFileContent(workspacePath, filePath)
       .then((result) => {
         if (!cancelled && mountedRef.current) {
-          contentRef.current = result.content
-          savedContentRef.current = result.content
-          setContent(result.content)
-          setSavedContent(result.content)
-          setFileLanguage(result.language)
-          setError(null)
-          setLoading(false)
+          syncFileSnapshot(result)
         }
       })
       .catch((err) => {
@@ -99,7 +129,16 @@ const TextEditorCardInner = ({ workspacePath, filePath, language }: TextEditorCa
     return () => {
       cancelled = true
     }
-  }, [filePath, workspacePath])
+  }, [filePath, syncFileSnapshot, workspacePath])
+
+  const refreshFileFromDisk = useCallback(async () => {
+    const result = await fetchFileContent(workspacePath, filePath)
+    if (!mountedRef.current) {
+      return
+    }
+
+    syncFileSnapshot(result)
+  }, [filePath, syncFileSnapshot, workspacePath])
 
   const save = useCallback(async (textContent: string, options?: PersistOptions) => {
     const indicateSaving = options?.indicateSaving ?? true
@@ -151,8 +190,54 @@ const TextEditorCardInner = ({ workspacePath, filePath, language }: TextEditorCa
   const handleEditorContentChange = useCallback((value: string) => {
     contentRef.current = value
     setContent(value)
+
+    if (suppressEditorChangeRef.current) {
+      suppressEditorChangeRef.current = false
+      return
+    }
+
+    if (!shouldFlushTextEditorSave(savedContentRef.current, value)) {
+      if (saveTimerRef.current) {
+        clearTimeout(saveTimerRef.current)
+        saveTimerRef.current = null
+      }
+      return
+    }
+
     scheduleSave(value)
   }, [scheduleSave])
+
+  useEffect(() => {
+    if (loading || error || typeof window === 'undefined' || typeof document === 'undefined') {
+      return
+    }
+
+    const refreshIfVisible = () => {
+      if (document.hidden) {
+        return
+      }
+
+      void refreshFileFromDisk().catch(() => {
+        // Ignore background refresh failures and keep the current editor state.
+      })
+    }
+
+    const handleVisibilityChange = () => {
+      if (!document.hidden) {
+        refreshIfVisible()
+      }
+    }
+
+    const interval = window.setInterval(refreshIfVisible, TEXT_EDITOR_REFRESH_INTERVAL_MS)
+    window.addEventListener('focus', refreshIfVisible)
+    document.addEventListener('visibilitychange', handleVisibilityChange)
+
+    return () => {
+      window.clearInterval(interval)
+      window.removeEventListener('focus', refreshIfVisible)
+      document.removeEventListener('visibilitychange', handleVisibilityChange)
+    }
+  }, [error, loading, refreshFileFromDisk])
 
   useEffect(() => {
     if (loading || error || !editorContainerRef.current) {

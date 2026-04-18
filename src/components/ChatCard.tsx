@@ -1063,7 +1063,13 @@ const ChatCardView = ({
   const [musicTitleOverride, setMusicTitleOverride] = useState<string | null>(null)
   const [gitAgentPanelOpen, setGitAgentPanelOpen] = useState(false)
   const [gitInfo, setGitInfo] = useState<GitInfoSummary | null>(null)
-  const [modelMenuStyle, setModelMenuStyle] = useState<{ top: number; left: number; minWidth: number } | null>(null)
+  const [modelMenuStyle, setModelMenuStyle] = useState<{
+    top: number
+    left: number
+    minWidth: number
+    maxWidth: number
+    maxHeight: number
+  } | null>(null)
   const [settingsMenuStyle, setSettingsMenuStyle] = useState<{ top: number; left: number; maxWidth: number } | null>(null)
   const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(() => new Set())
   const [revealedCompactedHistoryCount, setRevealedCompactedHistoryCount] = useState(0)
@@ -1382,10 +1388,12 @@ const ChatCardView = ({
     const handleClickOutside = (event: Event) => {
       const target = event.target as Node
       if (modelMenuRef.current?.contains(target) || modelDropdownRef.current?.contains(target)) return
+      setModelMenuStyle(null)
       setModelMenuOpen(false)
     }
     const handleEscape = (event: Event) => {
       if ((event as globalThis.KeyboardEvent).key === 'Escape') {
+        setModelMenuStyle(null)
         setModelMenuOpen(false)
       }
     }
@@ -1407,25 +1415,60 @@ const ChatCardView = ({
 
     const anchorRect = anchor.getBoundingClientRect()
     const dropdownRect = dropdown.getBoundingClientRect()
+    const containerRect =
+      anchor.closest('.pane-content')?.getBoundingClientRect() ??
+      anchor.closest('.card-shell')?.getBoundingClientRect()
+    const edgeInset = 8
     const gap = anchor.classList.contains('is-composer-anchor') ? 6 : 4
-    const rawTop = anchor.classList.contains('is-composer-anchor')
-      ? anchorRect.top - gap - dropdownRect.height
+    const preferAbove = anchor.classList.contains('is-composer-anchor')
+    const minLeft = Math.max(edgeInset, containerRect?.left ?? edgeInset)
+    const maxRight = Math.min(
+      window.innerWidth - edgeInset,
+      containerRect?.right ?? window.innerWidth - edgeInset,
+    )
+    const maxWidth = Math.max(anchorRect.width, maxRight - minLeft)
+    const nextWidth = Math.min(dropdownRect.width, maxWidth)
+    const nextLeft = Math.min(
+      Math.max(anchorRect.left, minLeft),
+      Math.max(minLeft, maxRight - nextWidth),
+    )
+    const minTop = Math.max(edgeInset, containerRect?.top ?? edgeInset)
+    const maxBottom = Math.min(
+      window.innerHeight - edgeInset,
+      containerRect?.bottom ?? window.innerHeight - edgeInset,
+    )
+    const availableAbove = Math.max(0, anchorRect.top - gap - minTop)
+    const availableBelow = Math.max(0, maxBottom - (anchorRect.bottom + gap))
+    const fitsAbove = dropdownRect.height <= availableAbove
+    const fitsBelow = dropdownRect.height <= availableBelow
+    const placeAbove =
+      preferAbove
+        ? fitsAbove || (!fitsBelow && availableAbove >= availableBelow)
+        : fitsBelow ? false : fitsAbove ? true : availableAbove > availableBelow
+    const maxHeight = Math.max(0, placeAbove ? availableAbove : availableBelow)
+    const nextHeight = Math.min(dropdownRect.height, maxHeight)
+    const rawTop = placeAbove
+      ? anchorRect.top - gap - nextHeight
       : anchorRect.bottom + gap
-    const maxLeft = Math.max(8, window.innerWidth - dropdownRect.width - 8)
-    const maxTop = Math.max(8, window.innerHeight - dropdownRect.height - 8)
-    const nextLeft = Math.min(Math.max(anchorRect.left, 8), maxLeft)
-    const nextTop = Math.min(Math.max(rawTop, 8), maxTop)
+    const nextTop = Math.min(
+      Math.max(rawTop, minTop),
+      Math.max(minTop, maxBottom - nextHeight),
+    )
     const nextStyle = {
       top: nextTop,
       left: nextLeft,
       minWidth: anchorRect.width,
+      maxWidth,
+      maxHeight,
     }
 
     setModelMenuStyle((current) =>
       current &&
       Math.abs(current.top - nextStyle.top) < 0.5 &&
       Math.abs(current.left - nextStyle.left) < 0.5 &&
-      Math.abs(current.minWidth - nextStyle.minWidth) < 0.5
+      Math.abs(current.minWidth - nextStyle.minWidth) < 0.5 &&
+      Math.abs(current.maxWidth - nextStyle.maxWidth) < 0.5 &&
+      Math.abs(current.maxHeight - nextStyle.maxHeight) < 0.5
         ? current
         : nextStyle,
     )
@@ -2189,6 +2232,8 @@ const ChatCardView = ({
     selectOptions.find((option) => `${option.provider}:${option.model}` === selectValue) ?? selectOptions[0]
   const reasoningValue = normalizeReasoningEffort(effectiveProvider, card.reasoningEffort)
   const menuMinWidth = modelMenuStyle?.minWidth ?? 0
+  const menuMaxWidth = modelMenuStyle?.maxWidth ?? 0
+  const menuMaxHeight = modelMenuStyle?.maxHeight ?? 0
   const reasoningOptions = useMemo(
     () => getReasoningOptions(effectiveProvider, language),
     [effectiveProvider, language],
@@ -2585,6 +2630,7 @@ const ChatCardView = ({
         disabled={card.status === 'streaming'}
         onClick={(event) => {
           event.stopPropagation()
+          setModelMenuStyle(null)
           setModelMenuOpen((prev) => !prev)
         }}
       >
@@ -2609,12 +2655,14 @@ const ChatCardView = ({
               role="listbox"
               style={
                 modelMenuStyle
-                  ? {
-                      position: 'fixed',
-                      top: `${modelMenuStyle.top}px`,
-                      left: `${modelMenuStyle.left}px`,
-                      minWidth: `${menuMinWidth}px`,
-                    }
+                    ? {
+                        position: 'fixed',
+                        top: `${modelMenuStyle.top}px`,
+                        left: `${modelMenuStyle.left}px`,
+                        minWidth: `${menuMinWidth}px`,
+                        maxWidth: `${menuMaxWidth}px`,
+                        maxHeight: `${menuMaxHeight}px`,
+                      }
                   : {
                       position: 'fixed',
                       top: '0px',
@@ -2651,6 +2699,7 @@ const ChatCardView = ({
                       } else {
                         onChangeModel(option.provider, option.model)
                       }
+                      setModelMenuStyle(null)
                       setModelMenuOpen(false)
                     }}
                   >
@@ -3085,19 +3134,27 @@ const ChatCardView = ({
                         ref={index === activeSlashIndex ? activeSlashItemRef : undefined}
                         type="button"
                         className={`slash-command-item${index === activeSlashIndex ? ' is-selected' : ''}`}
+                        title={command.description ?? `/${command.name}`}
                         onMouseDown={(event) => {
                           event.preventDefault()
                           applySlashCommand(command)
                         }}
                       >
-                        <span className="slash-command-name">/{command.name}</span>
-                        <span className="slash-command-meta">
-                          <span className={`slash-command-badge is-${command.source}`}>
-                            {getSlashCommandSourceLabel(language, command.source)}
+                        <span className="slash-command-header">
+                          <span className="slash-command-name">/{command.name}</span>
+                          <span className="slash-command-badges">
+                            <span className={`slash-command-badge is-${command.source}`}>
+                              {getSlashCommandSourceLabel(language, command.source)}
+                            </span>
+                            {command.source === 'skill' && command.skillProvider ? (
+                              <span className={`slash-command-badge is-provider-${command.skillProvider}`}>
+                                {command.skillProvider === 'codex' ? 'Codex' : 'Claude'}
+                              </span>
+                            ) : null}
                           </span>
-                          <span className="slash-command-description">
-                            {command.description ?? `/${command.name}`}
-                          </span>
+                        </span>
+                        <span className="slash-command-description">
+                          {command.description ?? `/${command.name}`}
                         </span>
                       </button>
                     ))

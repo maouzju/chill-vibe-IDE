@@ -8,6 +8,7 @@ import {
   GITHUB_API_URL,
   CHECK_TIMEOUT_MS,
   buildWindowsZipReplaceScript,
+  encodePowerShellScriptUtf8Bom,
   parseReleaseResponse,
   resolveDownloadedAssetStrategy,
   type UpdateCheckResult,
@@ -23,6 +24,7 @@ export {
   classifyDownloadedAsset,
   resolveDownloadedAssetStrategy,
   buildWindowsZipReplaceScript,
+  encodePowerShellScriptUtf8Bom,
 } from './updater-core.js'
 
 const UPDATE_WAIT_TIMEOUT_SECONDS = 30
@@ -44,16 +46,17 @@ const launchWindowsZipUpdateJob = async (assetPath: string) => {
   await fs.promises.mkdir(jobRoot, { recursive: true })
   await writeFile(
     scriptPath,
-    buildWindowsZipReplaceScript({
-      processId: process.pid,
-      assetPath,
-      targetDir,
-      executablePath,
-      stagingDir,
-      logPath,
-      waitTimeoutSeconds: UPDATE_WAIT_TIMEOUT_SECONDS,
-    }),
-    'utf8',
+    encodePowerShellScriptUtf8Bom(
+      buildWindowsZipReplaceScript({
+        processId: process.pid,
+        assetPath,
+        targetDir,
+        executablePath,
+        stagingDir,
+        logPath,
+        waitTimeoutSeconds: UPDATE_WAIT_TIMEOUT_SECONDS,
+      }),
+    ),
   )
 
   // Redirect stdio to files instead of ignoring, so PowerShell spawn errors

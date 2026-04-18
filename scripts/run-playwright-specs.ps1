@@ -12,11 +12,14 @@ $ErrorActionPreference = 'Stop'
 $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 
 Push-Location $repoRoot
+$previousPwDebug = $env:PWDEBUG
 
 try {
   if ($Mode -ne 'headless') {
     Write-Warning "Headed mode has been retired for repo validation; running headless instead."
   }
+
+  Remove-Item Env:PWDEBUG -ErrorAction SilentlyContinue
 
   [string[]]$requestedSpecs = @()
   $suiteSpecs = @{
@@ -64,7 +67,7 @@ try {
     throw 'No Playwright spec files were found under tests/.'
   }
 
-  $playwrightArgs = @('exec', 'playwright', 'test') + $targets
+  $playwrightArgs = @('exec', 'playwright', 'test', '--config', 'playwright.config.ts') + $targets
 
   & pnpm @playwrightArgs
 
@@ -72,5 +75,11 @@ try {
     exit $LASTEXITCODE
   }
 } finally {
+  if ($null -eq $previousPwDebug) {
+    Remove-Item Env:PWDEBUG -ErrorAction SilentlyContinue
+  } else {
+    $env:PWDEBUG = $previousPwDebug
+  }
+
   Pop-Location
 }

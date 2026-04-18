@@ -251,14 +251,35 @@ test('Electron quit flow flushes renderer persistence and waits for queued state
 
 test('Electron runtime validation keeps desktop windows hidden by default', async () => {
   const projectRoot = process.cwd()
-  const [mainBody, runnerBody] = await Promise.all([
+  const [mainBody, runnerBody, helperBody] = await Promise.all([
     readFile(path.join(projectRoot, 'electron', 'main.ts'), 'utf8'),
     readFile(path.join(projectRoot, 'scripts', 'run-electron-runtime-tests.ps1'), 'utf8'),
+    readFile(path.join(projectRoot, 'tests', 'electron-test-env.ts'), 'utf8'),
   ])
 
   assert.match(runnerBody, /\$env:CHILL_VIBE_HEADLESS_RUNTIME_TESTS\s*=\s*'1'/)
+  assert.match(runnerBody, /Remove-Item Env:PWDEBUG -ErrorAction SilentlyContinue/)
   assert.match(mainBody, /CHILL_VIBE_HEADLESS_RUNTIME_TESTS\s*===\s*'1'/)
   assert.match(mainBody, /presentWindow\(win\)/)
+  assert.match(mainBody, /backgroundThrottling:\s*!shouldKeepValidationWindowHidden/)
+  assert.match(helperBody, /CHILL_VIBE_HEADLESS_RUNTIME_TESTS:\s*'1'/)
+})
+
+test('Playwright browser validation is forced into headless mode by config and repo harness', async () => {
+  const projectRoot = process.cwd()
+  const [configBody, runnerBody] = await Promise.all([
+    readFile(path.join(projectRoot, 'playwright.config.ts'), 'utf8'),
+    readFile(path.join(projectRoot, 'scripts', 'run-playwright-specs.ps1'), 'utf8'),
+  ])
+
+  assert.match(configBody, /testDir:\s*['"]\.\/tests['"]/)
+  assert.match(configBody, /testMatch:\s*['"]\*\*\/\*\.spec\.ts['"]/)
+  assert.match(configBody, /headless:\s*true/)
+  assert.match(configBody, /webServer:\s*{/)
+  assert.match(configBody, /command:\s*['"]node scripts\/run-vite\.mjs --host 127\.0\.0\.1 --strictPort['"]/)
+  assert.match(configBody, /reuseExistingServer:\s*false/)
+  assert.match(runnerBody, /Remove-Item Env:PWDEBUG -ErrorAction SilentlyContinue/)
+  assert.match(runnerBody, /\('exec', 'playwright', 'test', '--config', 'playwright\.config\.ts'\)/)
 })
 
 test('development Electron retries renderer bootstrap when the dev shell loads with an empty root', async () => {
@@ -402,7 +423,7 @@ test('playwright runner script accepts a single spec path', async () => {
     })
 
     const capturedArgs = await readFile(stubLogPath, 'utf8')
-    assert.match(capturedArgs, /exec playwright test tests\/git-tool-switch\.spec\.ts/i)
+    assert.match(capturedArgs, /exec playwright test --config playwright\.config\.ts tests\/git-tool-switch\.spec\.ts/i)
   } finally {
     await rm(tempDir, { recursive: true, force: true })
   }
@@ -455,7 +476,7 @@ test('playwright runner script expands named suites through the repo harness', a
     })
 
     const capturedArgs = await readFile(stubLogPath, 'utf8')
-    assert.match(capturedArgs, /exec playwright test tests\/theme-check\.spec\.ts tests\/board-layout\.spec\.ts/i)
+    assert.match(capturedArgs, /exec playwright test --config playwright\.config\.ts tests\/theme-check\.spec\.ts tests\/board-layout\.spec\.ts/i)
   } finally {
     await rm(tempDir, { recursive: true, force: true })
   }
@@ -510,7 +531,7 @@ test('playwright runner stays headless even when legacy headed mode is requested
     })
 
     const capturedArgs = await readFile(stubLogPath, 'utf8')
-    assert.match(capturedArgs, /exec playwright test tests\/add-card-freeze\.spec\.ts/i)
+    assert.match(capturedArgs, /exec playwright test --config playwright\.config\.ts tests\/add-card-freeze\.spec\.ts/i)
     assert.doesNotMatch(capturedArgs, /--headed/i)
   } finally {
     await rm(tempDir, { recursive: true, force: true })
@@ -573,7 +594,7 @@ test('performance smoke runner uses headless node checks and the add-card freeze
       capturedNodeArgs,
       /--import tsx --test tests\/chat-card-compaction\.test\.ts tests\/layout-memoization\.test\.ts/i,
     )
-    assert.match(capturedPnpmArgs, /exec playwright test tests\/add-card-freeze\.spec\.ts/i)
+    assert.match(capturedPnpmArgs, /exec playwright test --config playwright\.config\.ts tests\/add-card-freeze\.spec\.ts/i)
     assert.doesNotMatch(capturedPnpmArgs, /--headed/i)
   } finally {
     await rm(tempDir, { recursive: true, force: true })

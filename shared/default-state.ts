@@ -69,6 +69,8 @@ export const createId = (): string => crypto.randomUUID()
 const normalizePositiveRatio = (value: unknown) =>
   typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : 0
 
+const roundSplitRatio = (value: number) => Math.round(value * 1_000_000_000_000) / 1_000_000_000_000
+
 export const normalizeSplitRatios = (ratios: number[] | undefined, childCount: number) => {
   if (childCount <= 0) {
     return []
@@ -84,7 +86,23 @@ export const normalizeSplitRatios = (ratios: number[] | undefined, childCount: n
     return Array.from({ length: childCount }, () => 1 / childCount)
   }
 
-  return nextRatios.map((ratio) => ratio / total)
+  const normalized = nextRatios.map((ratio) => roundSplitRatio(ratio / total))
+  const correctionIndex = normalized.findLastIndex((ratio) => ratio > 0)
+
+  if (correctionIndex < 0) {
+    return normalized
+  }
+
+  const correction =
+    roundSplitRatio(1 - normalized.reduce((sum, ratio) => sum + ratio, 0))
+
+  if (correction === 0) {
+    return normalized
+  }
+
+  const nextNormalized = [...normalized]
+  nextNormalized[correctionIndex] = roundSplitRatio((nextNormalized[correctionIndex] ?? 0) + correction)
+  return nextNormalized
 }
 
 const roundScale = (value: number) => Math.round(value * 100) / 100

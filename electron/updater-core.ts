@@ -84,6 +84,11 @@ export type WindowsZipReplaceScriptParams = {
 }
 
 const escapePowerShellSingleQuoted = (value: string) => value.replace(/'/g, "''")
+const utf8Bom = Buffer.from([0xef, 0xbb, 0xbf])
+
+export function encodePowerShellScriptUtf8Bom(script: string): Buffer {
+  return Buffer.concat([utf8Bom, Buffer.from(script, 'utf8')])
+}
 
 export function buildWindowsZipReplaceScript(params: WindowsZipReplaceScriptParams): string {
   const pidLiteral = `${params.processId}`

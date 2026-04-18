@@ -14,7 +14,7 @@ import {
   STICKYNOTE_TOOL_MODEL,
   WEATHER_TOOL_MODEL,
 } from '../shared/models.ts'
-import type { AppState, SetupStatus } from '../shared/schema.ts'
+import type { AppState, SetupStatus, SlashCommand } from '../shared/schema.ts'
 import { installMockElectronBridge } from './electron-bridge.ts'
 import { createPlaywrightState } from './playwright-state.ts'
 
@@ -334,6 +334,45 @@ const createWeatherMenuState = (theme: 'dark' | 'light'): AppState => {
 
   return state
 }
+
+const createSlashMenuState = (theme: 'dark' | 'light'): AppState => {
+  const state = createMockState()
+  state.settings.theme = theme
+  state.columns[0]!.width = 380
+  state.columns[0]!.title = 'Skill Menu'
+  state.columns[0]!.cards[0] = {
+    ...state.columns[0]!.cards[0]!,
+    title: 'Slash Menu',
+    provider: 'codex',
+    model: 'gpt-5.4',
+    reasoningEffort: 'medium',
+    draft: '',
+    messages: [],
+  }
+
+  return state
+}
+
+const createSkillHeavySlashCommands = (): SlashCommand[] => [
+  {
+    name: 'compact',
+    source: 'native',
+    description: '压缩当前会话上下文',
+  },
+  {
+    name: 'check-all',
+    source: 'skill',
+    skillProvider: 'codex',
+    description:
+      "Run Chill Vibe's exhaustive repo-local verification flow, collect screenshot and log evidence, analyze failing tests and UI regressions, and delegate bounded fixes.",
+  },
+  {
+    name: 'agent-reach',
+    source: 'skill',
+    skillProvider: 'claude',
+    description: 'Search the web and supported platforms without leaving the current workspace flow.',
+  },
+]
 
 const configureColumnCardsAndLayout = (
   state: AppState,
@@ -1350,6 +1389,7 @@ const mockAppApis = async (
   options?: {
     state?: AppState
     setupStatus?: SetupStatus
+    slashCommands?: SlashCommand[]
   },
 ) => {
   await installMockElectronBridge(page)
@@ -1359,6 +1399,7 @@ const mockAppApis = async (
     state: 'idle',
     logs: [],
   }
+  const slashCommands = options?.slashCommands ?? []
 
   await page.route('**/api/state', async (route) => {
     const request = route.request()
@@ -1393,6 +1434,10 @@ const mockAppApis = async (
 
   await page.route('**/api/setup/status', async (route) => {
     await route.fulfill({ json: setupStatus })
+  })
+
+  await page.route('**/api/slash-commands', async (route) => {
+    await route.fulfill({ json: slashCommands })
   })
 }
 
@@ -1540,10 +1585,24 @@ const mountThemeFixtures = async (page: Page) => {
       <input class="control control-title" id="fixture-control-title" value="Theme-safe title" />
       <div class="slash-command-menu" id="fixture-slash-menu">
         <button type="button" class="slash-command-item is-selected" id="fixture-slash-item">
-          <span class="slash-command-name">/status</span>
-          <span class="slash-command-meta">
-            <span class="slash-command-badge is-native">Native</span>
-            <span class="slash-command-description">Show workspace status</span>
+          <span class="slash-command-header">
+            <span class="slash-command-name">/status</span>
+            <span class="slash-command-badges">
+              <span class="slash-command-badge is-native">Native</span>
+            </span>
+          </span>
+          <span class="slash-command-description">Show workspace status</span>
+        </button>
+        <button type="button" class="slash-command-item" id="fixture-slash-skill-item">
+          <span class="slash-command-header">
+            <span class="slash-command-name">/check-all</span>
+            <span class="slash-command-badges">
+              <span class="slash-command-badge is-skill">Skill</span>
+              <span class="slash-command-badge is-provider-codex">Codex</span>
+            </span>
+          </span>
+          <span class="slash-command-description">
+            Run Chill Vibe&apos;s exhaustive repo-local verification flow without exploding the menu layout.
           </span>
         </button>
       </div>
@@ -2103,6 +2162,30 @@ test('theme toggle applies dark and light surfaces consistently', async ({ page 
 
   await page.waitForTimeout(200)
 })
+
+for (const theme of ['dark', 'light'] as const) {
+  test(`slash command menu keeps skill rows tidy in ${theme} theme`, async ({ page }) => {
+    await page.setViewportSize({ width: 1280, height: 820 })
+
+    await mockAppApis(page, {
+      state: createSlashMenuState(theme),
+      slashCommands: createSkillHeavySlashCommands(),
+    })
+    await page.goto(appUrl)
+
+    const textarea = page.locator('.pane-tab-panel.is-active .composer textarea').first()
+    await expect(textarea).toBeVisible()
+    await textarea.fill('/')
+
+    const slashMenu = page.locator('.slash-command-menu').first()
+    await expect(slashMenu).toBeVisible()
+    await expect.poll(async () => slashMenu.locator('.slash-command-item').count()).toBe(3)
+    await expect(slashMenu).toHaveScreenshot(`slash-command-skill-list-${theme}.png`, {
+      animations: 'disabled',
+      caret: 'hide',
+    })
+  })
+}
 
 test('add workspace button keeps its icon aligned with the chrome tone in both themes', async ({ page }) => {
   await mockAppApis(page)

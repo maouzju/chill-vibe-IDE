@@ -45,9 +45,11 @@ $startedDevServer = $false
 $devServerProcess = $null
 $pnpm = $null
 $previousHeadlessRuntimeTests = $env:CHILL_VIBE_HEADLESS_RUNTIME_TESTS
+$previousPwDebug = $env:PWDEBUG
 
 try {
   $env:CHILL_VIBE_HEADLESS_RUNTIME_TESTS = '1'
+  Remove-Item Env:PWDEBUG -ErrorAction SilentlyContinue
 
   $pnpm = Get-Command pnpm.cmd -ErrorAction SilentlyContinue
   if (-not $pnpm) {
@@ -98,6 +100,12 @@ try {
     Remove-Item Env:CHILL_VIBE_HEADLESS_RUNTIME_TESTS -ErrorAction SilentlyContinue
   } else {
     $env:CHILL_VIBE_HEADLESS_RUNTIME_TESTS = $previousHeadlessRuntimeTests
+  }
+
+  if ($null -eq $previousPwDebug) {
+    Remove-Item Env:PWDEBUG -ErrorAction SilentlyContinue
+  } else {
+    $env:PWDEBUG = $previousPwDebug
   }
 
   if ($startedDevServer -and $null -ne $devServerProcess) {

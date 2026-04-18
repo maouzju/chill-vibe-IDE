@@ -3080,9 +3080,14 @@ body.is-card-dragging .lane-drop-zone-top {
 .slash-command-menu {
   position: absolute;
   bottom: 0;
-  width: 15rem;
+  width: clamp(18rem, 32vw, 28rem);
+  max-width: min(28rem, calc(100vw - 1rem));
   max-height: min(24rem, 60vh);
   overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+  padding: 0.25rem;
+  box-sizing: border-box;
   border: 1px solid var(--line-strong);
   border-radius: 12px;
   background: var(--menu-bg);
@@ -3101,14 +3106,17 @@ body.is-card-dragging .lane-drop-zone-top {
 .slash-command-item {
   width: 100%;
   display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 0.75rem;
-  padding: 0.5rem 0.65rem;
+  flex-direction: column;
+  align-items: stretch;
+  justify-content: flex-start;
+  gap: 0.4rem;
+  padding: 0.65rem 0.75rem;
   border: 0;
   border-bottom: 1px solid var(--menu-line);
+  border-radius: 10px;
   background: transparent;
   text-align: left;
+  cursor: pointer;
   transition: background 120ms var(--ease);
 }
 
@@ -3121,7 +3129,18 @@ body.is-card-dragging .lane-drop-zone-top {
   background: var(--menu-hover-bg);
 }
 
+.slash-command-header {
+  min-width: 0;
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
 .slash-command-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
   font-family: 'IBM Plex Mono', 'Cascadia Mono', Consolas, monospace;
   font-size: 0.78rem;
   font-weight: 700;
@@ -3129,20 +3148,26 @@ body.is-card-dragging .lane-drop-zone-top {
   white-space: nowrap;
 }
 
-.slash-command-meta {
-  min-width: 0;
+.slash-command-badges {
   display: flex;
   align-items: center;
   justify-content: flex-end;
-  gap: 0.45rem;
-  flex: 1;
+  gap: 0.35rem;
+  flex-wrap: wrap;
+  flex-shrink: 0;
 }
 
 .slash-command-description {
   color: var(--ink-2);
   font-size: 0.76rem;
-  line-height: 1.35;
+  line-height: 1.45;
   min-width: 0;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  text-wrap: pretty;
 }
 
 .slash-command-badge {
@@ -3165,6 +3190,21 @@ body.is-card-dragging .lane-drop-zone-top {
 .slash-command-badge.is-native {
   background: var(--accent-soft);
   color: var(--accent-2);
+}
+
+.slash-command-badge.is-skill {
+  background: color-mix(in srgb, var(--accent-soft) 92%, var(--panel));
+  color: color-mix(in srgb, var(--accent) 86%, var(--ink-1));
+}
+
+.slash-command-badge.is-provider-codex {
+  background: color-mix(in srgb, var(--accent-soft) 58%, var(--panel-strong));
+  color: color-mix(in srgb, var(--accent) 92%, var(--ink-1));
+}
+
+.slash-command-badge.is-provider-claude {
+  background: color-mix(in srgb, var(--warn-soft) 72%, var(--panel-strong));
+  color: color-mix(in srgb, var(--warn) 92%, var(--ink-1));
 }
 
 .slash-command-empty {
@@ -6169,6 +6209,9 @@ body.is-card-dragging .lane-drop-zone-top {
   z-index: 120;
   min-width: 100%;
   width: max-content;
+  max-width: min(14rem, calc(100vw - 1rem));
+  max-height: calc(100vh - 1rem);
+  box-sizing: border-box;
   border: 1px solid var(--line-strong);
   border-radius: var(--r-xs);
   background: rgba(255, 255, 255, 0.98);
@@ -6177,6 +6220,8 @@ body.is-card-dragging .lane-drop-zone-top {
   display: flex;
   flex-direction: column;
   gap: 0.05rem;
+  overflow-y: auto;
+  overscroll-behavior: contain;
 }
 
 .model-select-shell.is-composer-anchor .model-dropdown-menu {
@@ -6191,6 +6236,7 @@ body.is-card-dragging .lane-drop-zone-top {
   align-items: center;
   gap: 0.35rem;
   width: 100%;
+  min-width: 0;
   border: none;
   border-radius: calc(var(--r-xs) - 2px);
   background: transparent;
@@ -6204,6 +6250,12 @@ body.is-card-dragging .lane-drop-zone-top {
   text-align: left;
   line-height: 1;
   transition: background-color 80ms var(--ease);
+}
+
+.model-dropdown-option span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .model-dropdown-option:hover {

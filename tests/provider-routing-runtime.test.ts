@@ -71,6 +71,49 @@ describe('provider runtime routing', () => {
       restoreEnvVar('OPENAI_BASE_URL', originalOpenAiBaseUrl)
     }
   })
+
+  it('prefers staged runtime settings over stale persisted routing settings before the next save flushes', async () => {
+    const { saveState } = await import('../server/state-store.ts')
+    const { resolveProviderRuntime, setProviderRuntimeSettingsOverride } = await import('../server/providers.ts')
+    const persistedState = createDefaultState('')
+    const stagedState = createDefaultState('')
+    const originalOpenAiApiKey = process.env.OPENAI_API_KEY
+    const originalOpenAiBaseUrl = process.env.OPENAI_BASE_URL
+
+    delete process.env.OPENAI_API_KEY
+    delete process.env.OPENAI_BASE_URL
+
+    persistedState.settings.cliRoutingEnabled = false
+    await saveState(persistedState)
+
+    stagedState.settings.cliRoutingEnabled = true
+    stagedState.settings.resilientProxyEnabled = false
+    stagedState.settings.providerProfiles.codex = {
+      activeProfileId: 'codex-profile-1',
+      profiles: [
+        {
+          id: 'codex-profile-1',
+          name: 'Codex Proxy',
+          apiKey: 'sk-codex',
+          baseUrl: 'https://codex.example/v1',
+        },
+      ],
+    }
+
+    setProviderRuntimeSettingsOverride(stagedState.settings)
+
+    try {
+      const runtime = await resolveProviderRuntime('codex')
+
+      assert.equal(runtime.env.OPENAI_API_KEY, 'sk-codex')
+      assert.equal(runtime.env.OPENAI_BASE_URL, 'https://codex.example/v1')
+      assert.notDeepEqual(runtime.args, [])
+    } finally {
+      setProviderRuntimeSettingsOverride(null)
+      restoreEnvVar('OPENAI_API_KEY', originalOpenAiApiKey)
+      restoreEnvVar('OPENAI_BASE_URL', originalOpenAiBaseUrl)
+    }
+  })
 })
 
 describe('cc-switch provider profile import merge', () => {

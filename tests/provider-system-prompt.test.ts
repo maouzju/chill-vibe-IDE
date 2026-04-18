@@ -97,9 +97,56 @@ test('claude runs pin the permission default mode so spawned subagents inherit i
 
   assert.notEqual(settingsIndex, -1)
   const settingsArg = args[settingsIndex + 1] ?? ''
-  const parsedSettings = JSON.parse(settingsArg) as { permissions?: { defaultMode?: string } }
+  const parsedSettings = JSON.parse(settingsArg) as {
+    skipDangerousModePermissionPrompt?: boolean
+    permissions?: { defaultMode?: string }
+  }
 
   assert.equal(parsedSettings.permissions?.defaultMode, 'bypassPermissions')
+  assert.equal(parsedSettings.skipDangerousModePermissionPrompt, true)
+})
+
+test('claude runs pre-authorize the resolved global .claude directory for tool access', async () => {
+  const tempRoot = path.join(
+    os.tmpdir(),
+    `chill-vibe-claude-permissions-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+  )
+  const homeDir = path.join(tempRoot, 'home')
+  const claudeDir = path.join(homeDir, '.claude')
+
+  await mkdir(claudeDir, { recursive: true })
+
+  try {
+    const args = buildClaudeArgs(
+      createRequest({
+        provider: 'claude',
+        model: 'claude-sonnet-4-6',
+        language: 'en',
+      }),
+      [],
+      {
+        env: {
+          HOME: homeDir,
+        },
+        homeDir,
+      },
+    )
+    const addDirIndex = args.indexOf('--add-dir')
+    const settingsIndex = args.indexOf('--settings')
+
+    assert.notEqual(addDirIndex, -1)
+    assert.equal(args[addDirIndex + 1], claudeDir)
+    assert.notEqual(settingsIndex, -1)
+
+    const settingsArg = args[settingsIndex + 1] ?? ''
+    const parsedSettings = JSON.parse(settingsArg) as {
+      permissions?: { additionalDirectories?: string[] }
+    }
+
+    assert.deepEqual(parsedSettings.permissions?.additionalDirectories, [claudeDir])
+  } finally {
+    await rm(tempRoot, { recursive: true, force: true }).catch(() => {})
+  }
 })
 
 test('codex app-server injects opposite-provider workspace skills when cross-provider reuse is enabled', async () => {

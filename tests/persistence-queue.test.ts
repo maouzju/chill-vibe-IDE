@@ -6,6 +6,7 @@ import {
   createQueuedStateSaveScheduler,
   getPersistenceVersion,
   shouldPersistActionImmediately,
+  shouldSyncRuntimeSettings,
   shouldPauseQueuedStateSave,
 } from '../src/hooks/persistence-queue.ts'
 
@@ -64,6 +65,52 @@ describe('persistence queue', () => {
     const state = createDefaultState('')
 
     assert.equal(shouldPersistActionImmediately('selectCardModel', state), false)
+  })
+
+  it('flags runtime-routing changes for immediate backend sync', () => {
+    const state = createDefaultState('')
+
+    assert.equal(shouldSyncRuntimeSettings({ type: 'updateSettings', patch: { cliRoutingEnabled: false } }), true)
+    assert.equal(shouldSyncRuntimeSettings({ type: 'updateSettings', patch: { resilientProxyEnabled: false } }), true)
+    assert.equal(
+      shouldSyncRuntimeSettings({
+        type: 'updateSettings',
+        patch: {
+          providerProfiles: state.settings.providerProfiles,
+        },
+      }),
+      true,
+    )
+    assert.equal(
+      shouldSyncRuntimeSettings({
+        type: 'upsertProviderProfile',
+        provider: 'codex',
+        profile: {
+          id: 'codex-profile-1',
+          name: 'Codex Proxy',
+          apiKey: 'sk-codex',
+          baseUrl: 'https://codex.example/v1',
+        },
+      }),
+      true,
+    )
+    assert.equal(
+      shouldSyncRuntimeSettings({
+        type: 'setActiveProviderProfile',
+        provider: 'codex',
+        profileId: 'codex-profile-1',
+      }),
+      true,
+    )
+    assert.equal(
+      shouldSyncRuntimeSettings({
+        type: 'removeProviderProfile',
+        provider: 'codex',
+        profileId: 'codex-profile-1',
+      }),
+      true,
+    )
+    assert.equal(shouldSyncRuntimeSettings({ type: 'updateSettings', patch: { theme: 'dark' } }), false)
   })
 
   it('batches rapid schedules and flushes only the newest state', () => {

@@ -1,4 +1,5 @@
 import {
+  appSettingsSchema,
   attachmentUploadRequestSchema,
   appStateLoadResponseSchema,
   appStateSchema,
@@ -39,6 +40,7 @@ import {
   setupStatusSchema,
   stateRecoverySelectionSchema,
   type AppStateLoadResponse,
+  type AppSettings,
   type AppState,
   type AttachmentUploadRequest,
   type CcSwitchImportRequest,
@@ -149,6 +151,12 @@ export const saveState = async (state: AppState): Promise<AppState> => {
   const desktopSaveState = requireDesktopAction(getDesktopApi()?.saveState)
 
   return readDesktop(() => desktopSaveState(state), appStateSchema)
+}
+
+export const syncRuntimeSettings = async (settings: AppSettings): Promise<void> => {
+  const parsed = appSettingsSchema.parse(settings)
+  const fn = requireDesktopAction(getDesktopApi()?.syncRuntimeSettings)
+  return fn(parsed) as Promise<void>
 }
 
 export const queueStateSave = (state: AppState) => {

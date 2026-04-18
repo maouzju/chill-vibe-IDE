@@ -27,3 +27,22 @@ export const clearFileTreeCacheForCard = (cardId: string) => {
 
 export const shouldFlushTextEditorSave = (savedContent: string, content: string) =>
   savedContent !== content
+
+export const resolveTextEditorExternalRefresh = (
+  savedContent: string,
+  content: string,
+  diskContent: string,
+) => {
+  if (shouldFlushTextEditorSave(savedContent, content)) {
+    return null
+  }
+
+  if (diskContent === savedContent && diskContent === content) {
+    return null
+  }
+
+  return {
+    content: diskContent,
+    savedContent: diskContent,
+  }
+}

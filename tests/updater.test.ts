@@ -216,6 +216,20 @@ describe('buildWindowsZipReplaceScript', () => {
     assert.match(script, /Stop-Process[^\n]*-Force/)
   })
 
+  test('tracks lingering app processes by executable path instead of only the main pid', () => {
+    const script = buildWindowsZipReplaceScript(baseParams)
+    assert.match(script, /Get-CimInstance\s+Win32_Process/)
+    assert.match(script, /\$proc\.ExecutablePath/)
+    assert.match(script, /-ExecutablePath \$executablePath/)
+  })
+
+  test('force-kills remaining app child processes from the same install path after timeout', () => {
+    const script = buildWindowsZipReplaceScript(baseParams)
+    assert.match(script, /App processes still running after/)
+    assert.match(script, /\$matchingProcessIds/)
+    assert.match(script, /foreach \(\$remainingId in \$matchingProcessIds\)/)
+  })
+
   test('force-kills the parent if it lingers past the timeout', () => {
     const script = buildWindowsZipReplaceScript(baseParams)
     // The wait loop must exit when elapsed crosses the timeout (guard against infinite wait)

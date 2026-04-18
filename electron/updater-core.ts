@@ -118,21 +118,58 @@ function Write-Log {
   "[$stamp] $Message" | Out-File -FilePath $logPath -Append -Encoding utf8
 }
 
+function Get-MatchingAppProcessIds {
+  param([int]$ProcessId, [string]$ExecutablePath)
+
+  $normalizedExecutablePath = [System.IO.Path]::GetFullPath($ExecutablePath)
+  $processIds = New-Object 'System.Collections.Generic.HashSet[int]'
+
+  if (Get-Process -Id $ProcessId -ErrorAction SilentlyContinue) {
+    [void]$processIds.Add($ProcessId)
+  }
+
+  foreach ($proc in @(Get-CimInstance Win32_Process -ErrorAction SilentlyContinue)) {
+    if (-not $proc.ExecutablePath) {
+      continue
+    }
+
+    try {
+      $candidatePath = [System.IO.Path]::GetFullPath($proc.ExecutablePath)
+    } catch {
+      continue
+    }
+
+    if ([System.StringComparer]::OrdinalIgnoreCase.Equals($candidatePath, $normalizedExecutablePath)) {
+      [void]$processIds.Add([int]$proc.ProcessId)
+    }
+  }
+
+  return @($processIds)
+}
+
 function Wait-ForProcessExit {
-  param([int]$ProcessId, [int]$TimeoutSeconds)
+  param([int]$ProcessId, [string]$ExecutablePath, [int]$TimeoutSeconds)
 
   $elapsedMilliseconds = 0
-  while (Get-Process -Id $ProcessId -ErrorAction SilentlyContinue) {
+  while ($true) {
+    $matchingProcessIds = @(Get-MatchingAppProcessIds -ProcessId $ProcessId -ExecutablePath $ExecutablePath)
+    if ($matchingProcessIds.Count -eq 0) {
+      break
+    }
+
     if ($elapsedMilliseconds -ge ($TimeoutSeconds * 1000)) {
-      Write-Log "Parent PID $ProcessId did not exit within $TimeoutSeconds seconds; force-killing."
-      try {
-        Stop-Process -Id $ProcessId -Force -ErrorAction Stop
-      } catch {
-        Write-Log "Stop-Process failed: $($_.Exception.Message)"
+      Write-Log "App processes still running after $TimeoutSeconds seconds: $($matchingProcessIds -join ', '). Force-killing."
+      foreach ($remainingId in $matchingProcessIds) {
+        try {
+          Stop-Process -Id $remainingId -Force -ErrorAction Stop
+        } catch {
+          Write-Log "Stop-Process $remainingId failed: $($_.Exception.Message)"
+        }
       }
       Start-Sleep -Milliseconds 500
       break
     }
+
     Start-Sleep -Milliseconds 500
     $elapsedMilliseconds += 500
   }
@@ -163,8 +200,8 @@ function Find-AppRoot {
 try {
   Write-Log "Update job started. pid=$pidToWait target=$targetDir asset=$assetPath"
 
-  Wait-ForProcessExit -ProcessId $pidToWait -TimeoutSeconds $waitTimeoutSeconds
-  Write-Log 'Parent process exited (or was force-killed); proceeding.'
+  Wait-ForProcessExit -ProcessId $pidToWait -ExecutablePath $executablePath -TimeoutSeconds $waitTimeoutSeconds
+  Write-Log 'App processes exited (or were force-killed); proceeding.'
 
   if (Test-Path -LiteralPath $stagingDir) {
     Remove-Item -LiteralPath $stagingDir -Recurse -Force

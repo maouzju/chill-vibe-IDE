@@ -1922,7 +1922,7 @@ test('theme toggle applies dark and light surfaces consistently', async ({ page 
     page.locator('#language-select'),
     'background-color',
   )
-  await expect(page.locator('.settings-field-icon')).toHaveCount(4)
+  await expect(page.locator('.settings-field-icon')).toHaveCount(5)
   const darkSettingsModelIconColor = await readComputedRgb(page.locator('.settings-field-icon').first(), 'color')
   expect(darkActiveThemeChipBackgroundImage).toBe('none')
   expect(darkProxyEnabledBackgroundImage).toBe('none')
@@ -2343,14 +2343,14 @@ for (const scenario of [
     language: 'zh-CN' as const,
     theme: 'dark' as const,
     label: 'Codex / Claude Skill 互相复用',
-    note: '斜杠菜单和实际 AI 运行都可以复用当前工作区里的 .codex/skills 和 .claude/skills',
+    note: '斜杠菜单和实际 AI 运行都可以复用当前工作区或用户目录里的 .codex/skills 和 .claude/skills',
     snapshot: 'interface-request-settings-group-dark.png',
   },
   {
     language: 'en' as const,
     theme: 'light' as const,
     label: 'Reuse Codex / Claude skills',
-    note: 'slash menus and provider runs can reuse local .codex/skills and .claude/skills',
+    note: 'slash menus and provider runs can reuse .codex/skills and .claude/skills from the current workspace or user home',
     snapshot: 'interface-request-settings-group-light.png',
   },
 ]) {
@@ -2384,6 +2384,55 @@ for (const scenario of [
       animations: 'disabled',
       caret: 'hide',
     })
+  })
+}
+
+for (const theme of ['dark', 'light'] as const) {
+  test(`model prompt rules editor stays legible in ${theme} theme`, async ({ page }) => {
+    const state = createMockState()
+    state.settings.language = theme === 'dark' ? 'zh-CN' : 'en'
+    state.settings.theme = theme
+    state.settings.modelPromptRules = [
+      {
+        id: 'rule-claude',
+        modelMatch: 'claude',
+        prompt: 'Use concise review bullets for this model.',
+      },
+    ]
+
+    await page.setViewportSize({ width: 1280, height: 960 })
+    await mockAppApis(page, { state })
+    await page.goto(appUrl)
+    await page.locator('.card-shell').first().waitFor()
+
+    const settingsPanel = page.locator('#app-panel-settings')
+    const modelSettingsGroup = settingsPanel
+      .locator('.settings-group:visible')
+      .filter({ hasText: /基于模型的提示词|Model prompt rules/ })
+      .first()
+
+    await page.locator('#app-tab-settings').click()
+    await expect(settingsPanel).toBeVisible()
+    await expect(page.locator('html')).toHaveAttribute('data-theme', theme)
+    await expect(modelSettingsGroup).toContainText(/已配置 1 条规则|1 rule configured/)
+    await expect(modelSettingsGroup.locator('.model-prompt-rules-summary')).toHaveScreenshot(
+      `model-prompt-rules-summary-${theme}.png`,
+      {
+        animations: 'disabled',
+        caret: 'hide',
+      },
+    )
+
+    await modelSettingsGroup.getByRole('button', { name: /编辑规则|Edit rules/ }).click()
+    const dialog = page.getByRole('dialog', { name: /基于模型的提示词|Model prompt rules/ })
+    await expect(dialog).toBeVisible()
+    await expect(dialog.locator('.model-prompt-rules-card')).toHaveScreenshot(
+      `model-prompt-rules-dialog-${theme}.png`,
+      {
+        animations: 'disabled',
+        caret: 'hide',
+      },
+    )
   })
 }
 
@@ -7095,8 +7144,8 @@ for (const theme of ['dark', 'light'] as const) {
     const descriptions = paneView.locator('.chat-empty-tool-description')
     const expectedDescriptions = [
       '查看仓库状态，分析改动并继续同步。',
-      '打开文件树，快速浏览和跳转工作区内容。',
-      '开一张便签，随手记下想法和待办。',
+      '快速浏览和跳转工作区内容。',
+      '随手记下想法和待办。',
     ]
 
     await expect(toolButtons).toHaveCount(3)

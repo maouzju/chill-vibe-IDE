@@ -212,6 +212,13 @@ export const requestModelSettingsSchema = z.object({
 })
 export type RequestModelSettings = z.infer<typeof requestModelSettingsSchema>
 
+export const modelPromptRuleSchema = z.object({
+  id: z.string().min(1),
+  modelMatch: z.string().min(1),
+  prompt: z.string().min(1),
+})
+export type ModelPromptRule = z.infer<typeof modelPromptRuleSchema>
+
 export const modelReasoningEffortsSchema = z.object({
   codex: z.record(z.string(), z.string()).default({}),
   claude: z.record(z.string(), z.string()).default({}),
@@ -400,6 +407,7 @@ export const appSettingsSchema = z.object({
   autoUrgeSuccessKeyword: z.string().default(defaultAutoUrgeSuccessKeyword),
   weatherCity: z.string().default(''),
   systemPrompt: z.string().default(defaultSystemPrompt),
+  modelPromptRules: z.array(modelPromptRuleSchema).default([]),
   requestModels: requestModelSettingsSchema.default({
     codex: DEFAULT_CODEX_MODEL,
     claude: DEFAULT_CLAUDE_MODEL,
@@ -467,6 +475,7 @@ export const appStateSchema = z.object({
     autoUrgeSuccessKeyword: defaultAutoUrgeSuccessKeyword,
     weatherCity: '',
     systemPrompt: defaultSystemPrompt,
+    modelPromptRules: [],
     requestModels: {
       codex: DEFAULT_CODEX_MODEL,
       claude: DEFAULT_CLAUDE_MODEL,
@@ -649,6 +658,7 @@ export const chatRequestSchema = z.object({
   sessionId: z.string().optional(),
   language: appLanguageSchema.default('zh-CN'),
   systemPrompt: z.string().default(defaultSystemPrompt),
+  modelPromptRules: z.array(modelPromptRuleSchema).default([]),
   crossProviderSkillReuseEnabled: z.boolean().default(true),
   prompt: z.string().default(''),
   attachments: z.array(imageAttachmentSchema).default([]),

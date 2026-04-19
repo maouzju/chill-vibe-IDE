@@ -20,6 +20,7 @@ import type {
   BoardColumn,
   ExternalSessionSummary,
   ImageAttachment,
+  ModelPromptRule,
   Provider,
   ProviderStatus,
   RecentWorkspace,
@@ -72,6 +73,7 @@ type WorkspaceColumnProps = {
   providers: Record<string, ProviderStatus>
   language: AppLanguage
   systemPrompt: string
+  modelPromptRules?: ModelPromptRule[]
   crossProviderSkillReuseEnabled: boolean
   musicAlbumCoverEnabled: boolean
   weatherCity: string
@@ -162,6 +164,7 @@ const WorkspaceColumnView = ({
   providers,
   language,
   systemPrompt,
+  modelPromptRules = [],
   crossProviderSkillReuseEnabled,
   musicAlbumCoverEnabled,
   weatherCity,
@@ -831,6 +834,7 @@ const WorkspaceColumnView = ({
           providers={providers}
           language={language}
           systemPrompt={systemPrompt}
+          modelPromptRules={modelPromptRules}
           crossProviderSkillReuseEnabled={crossProviderSkillReuseEnabled}
           musicAlbumCoverEnabled={musicAlbumCoverEnabled}
           weatherCity={weatherCity}

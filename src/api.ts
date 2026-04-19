@@ -344,10 +344,12 @@ export const fetchCommitDiff = async (
 }
 
 const slashCommandCache = new Map<string, Promise<SlashCommand[]>>()
+const slashCommandCacheTtlMs = 5_000
 
 export const fetchSlashCommands = async (request: SlashCommandRequest): Promise<SlashCommand[]> => {
   const parsed = slashCommandRequestSchema.parse(request)
-  const cacheKey = `${parsed.provider}:${parsed.workspacePath}:${parsed.language}:${parsed.crossProviderSkillReuseEnabled}`
+  const cacheBucket = Math.floor(Date.now() / slashCommandCacheTtlMs)
+  const cacheKey = `${parsed.provider}:${parsed.workspacePath}:${parsed.language}:${parsed.crossProviderSkillReuseEnabled}:${cacheBucket}`
   const cached = slashCommandCache.get(cacheKey)
 
   if (cached) {
@@ -366,6 +368,11 @@ export const fetchSlashCommands = async (request: SlashCommandRequest): Promise<
     throw error
   })
 
+  for (const key of slashCommandCache.keys()) {
+    if (key !== cacheKey) {
+      slashCommandCache.delete(key)
+    }
+  }
   slashCommandCache.set(cacheKey, promise)
   return promise
 }

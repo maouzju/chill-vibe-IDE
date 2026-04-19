@@ -42,7 +42,11 @@ import {
   normalizeStoredModel,
 } from './models.js'
 import { getDefaultReasoningEffort, normalizeReasoningEffort } from './reasoning.js'
-import { defaultSystemPrompt, normalizeSystemPrompt } from './system-prompt.js'
+import {
+  defaultSystemPrompt,
+  normalizeModelPromptRules,
+  normalizeSystemPrompt,
+} from './system-prompt.js'
 
 const now = () => new Date().toISOString()
 
@@ -333,6 +337,7 @@ export const createDefaultSettings = (language: AppLanguage = defaultAppLanguage
   autoUrgeSuccessKeyword: defaultAutoUrgeSuccessKeyword,
   weatherCity: '',
   systemPrompt: defaultSystemPrompt,
+  modelPromptRules: [],
   gitAgentModel: DEFAULT_GIT_AGENT_MODEL,
   requestModels: {
     codex: DEFAULT_CODEX_MODEL,
@@ -442,6 +447,7 @@ export const normalizeAppSettings = (settings?: Partial<AppSettings> | null): Ap
     autoUrgeSuccessKeyword: autoUrgeSettings.autoUrgeSuccessKeyword,
     weatherCity: normalizeText(settings?.weatherCity) || defaults.weatherCity,
     systemPrompt: normalizeSystemPrompt(settings?.systemPrompt),
+    modelPromptRules: normalizeModelPromptRules(settings?.modelPromptRules),
     gitAgentModel: normalizeText(settings?.gitAgentModel) || defaults.gitAgentModel,
     lastModel: settings?.lastModel ?? undefined,
     requestModels: {

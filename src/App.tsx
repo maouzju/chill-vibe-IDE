@@ -49,7 +49,11 @@ import {
 import { getReasoningLabel, normalizeReasoningEffort } from '../shared/reasoning'
 import { getInterruptedSessionResumeRequest } from '../shared/interrupted-session-recovery'
 import { formatLocalSlashHelp, parseSlashCommandInput } from '../shared/slash-commands'
-import { defaultSystemPrompt } from '../shared/system-prompt'
+import {
+  buildSystemPromptForModel,
+  defaultSystemPrompt,
+  type ModelPromptRule,
+} from '../shared/system-prompt'
 import {
   resolveStreamRecoveryMode,
   shouldResetStreamRecoveryAttemptsForActivity,
@@ -252,6 +256,21 @@ const getCompactionStatusMessage = (
     : '\u5df2\u5b8c\u6210 Codex \u4f1a\u8bdd\u4e0a\u4e0b\u6587\u538b\u7f29\u3002'
 }
 
+const getModelPromptRulesSummary = (
+  rules: ModelPromptRule[],
+  language: AppState['settings']['language'],
+) => {
+  if (rules.length === 0) {
+    return language === 'zh-CN' ? '还没有规则' : 'No rules yet'
+  }
+
+  if (language === 'zh-CN') {
+    return `已配置 ${rules.length} 条规则`
+  }
+
+  return `${rules.length} rule${rules.length === 1 ? '' : 's'} configured`
+}
+
 const createCompactionStatusMessage = ({
   provider,
   streamId,
@@ -437,6 +456,8 @@ function App() {
   const [routingSubTab, setRoutingSubTab] = useState<'providers' | 'proxy'>('providers')
   const [visibleApiKeys, setVisibleApiKeys] = useState<Set<string>>(() => new Set())
   const [settingsNotice, setSettingsNotice] = useState<string | null>(null)
+  const [modelPromptRulesDialogOpen, setModelPromptRulesDialogOpen] = useState(false)
+  const [modelPromptRulesDraft, setModelPromptRulesDraft] = useState<ModelPromptRule[]>([])
   const [setupStatus, setSetupStatus] = useState<SetupStatus | null>(null)
   const [setupStatusPending, setSetupStatusPending] = useState(false)
   const [routingImportPending, setRoutingImportPending] = useState(false)
@@ -463,6 +484,10 @@ function App() {
     ? '\u5728\u8fd9\u91cc\u4fdd\u5b58\u591a\u4e2a\u547d\u540d\u7684\u97ad\u7b56\u7c7b\u578b\uff1b\u5f00\u542f\u540e\u53ea\u4f1a\u8ba9\u6bcf\u4e2a\u4f1a\u8bdd\u53ef\u4ee5\u624b\u52a8\u542f\u7528\uff0c\u5177\u4f53\u4f7f\u7528\u54ea\u79cd\u7c7b\u578b\u5728\u4f1a\u8bdd\u5185\u5355\u72ec\u9009\u3002'
     : 'Save multiple named urge types here. Enabling the feature only makes it available per chat, and each chat still chooses its own type manually.'
   const resilientProxyText = useMemo(() => getResilientProxyText(panelText), [panelText])
+  const modelPromptRulesSummary = useMemo(
+    () => getModelPromptRulesSummary(appState.settings.modelPromptRules ?? [], appState.settings.language),
+    [appState.settings.language, appState.settings.modelPromptRules],
+  )
   const [proxyStats, setProxyStats] = useState<ProxyStatsSummary | null>(null)
   const [proxyStatsRange, setProxyStatsRange] = useState<'all' | 'session' | '1h' | '24h'>('all')
   const [windowMaximized, setWindowMaximized] = useState(false)
@@ -1540,6 +1565,170 @@ function App() {
     },
     [applyAction, rememberPaneTarget],
   )
+
+  const openModelPromptRulesDialog = useCallback(() => {
+    setModelPromptRulesDraft(
+      (appStateRef.current.settings.modelPromptRules ?? []).map((rule) => ({ ...rule })),
+    )
+    setModelPromptRulesDialogOpen(true)
+  }, [])
+
+  const closeModelPromptRulesDialog = useCallback(() => {
+    setModelPromptRulesDialogOpen(false)
+    setModelPromptRulesDraft([])
+  }, [])
+
+  const saveModelPromptRulesDialog = useCallback(() => {
+    applyAction({
+      type: 'updateSettings',
+      patch: {
+        modelPromptRules: modelPromptRulesDraft,
+      },
+    })
+    closeModelPromptRulesDialog()
+  }, [applyAction, closeModelPromptRulesDialog, modelPromptRulesDraft])
+
+  const renderModelPromptRulesDialog = () => {
+    if (!modelPromptRulesDialogOpen) {
+      return null
+    }
+
+    const dialogTitle = appState.settings.language === 'zh-CN' ? '基于模型的提示词' : 'Model prompt rules'
+    const dialogDescription = appState.settings.language === 'zh-CN'
+      ? '按模型关键字匹配，例如 claude 会命中 claude-sonnet-4-6。多条命中时会按顺序依次追加。'
+      : 'Match by model keyword substring. For example, claude matches claude-sonnet-4-6. When multiple rules match, prompts are appended in order.'
+    const keywordLabel = appState.settings.language === 'zh-CN' ? '模型关键字' : 'Model keyword'
+    const keywordPlaceholder = appState.settings.language === 'zh-CN'
+      ? '例如：claude / sonnet / gpt-5.4'
+      : 'For example: claude / sonnet / gpt-5.4'
+    const promptLabel = appState.settings.language === 'zh-CN' ? '追加提示词' : 'Prompt to append'
+    const promptPlaceholder = appState.settings.language === 'zh-CN'
+      ? '命中这个模型时追加的系统提示词'
+      : 'System prompt text to append when this rule matches'
+    const addLabel = appState.settings.language === 'zh-CN' ? '新增规则' : 'Add rule'
+    const saveLabel = appState.settings.language === 'zh-CN' ? '保存规则' : 'Save rules'
+    const cancelLabel = appState.settings.language === 'zh-CN' ? '取消' : 'Cancel'
+    const deleteLabel = appState.settings.language === 'zh-CN' ? '删除' : 'Delete'
+
+    return (
+      <div className="structured-preview-layer">
+        <div className="structured-preview-backdrop" onClick={closeModelPromptRulesDialog} />
+        <section
+          className="structured-preview-dialog model-prompt-rules-dialog"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="model-prompt-rules-dialog-title"
+        >
+          <div className="structured-preview-card model-prompt-rules-card">
+            <div className="structured-preview-header">
+              <div className="structured-preview-copy">
+                <h3 id="model-prompt-rules-dialog-title">{dialogTitle}</h3>
+                <p className="settings-note">{dialogDescription}</p>
+              </div>
+
+              <button
+                type="button"
+                className="btn btn-ghost structured-preview-close"
+                onClick={closeModelPromptRulesDialog}
+                aria-label={cancelLabel}
+              >
+                <CloseIcon />
+              </button>
+            </div>
+
+            <div className="structured-preview-body">
+              <div className="model-prompt-rules-list">
+                {modelPromptRulesDraft.map((rule, index) => (
+                  <div key={rule.id} className="model-prompt-rule-card">
+                    <label className="settings-field">
+                      <span className="settings-field-label">
+                        <span className="settings-field-label-text">{keywordLabel}</span>
+                      </span>
+                      <input
+                        className="control settings-input"
+                        value={rule.modelMatch}
+                        placeholder={keywordPlaceholder}
+                        onChange={(event) =>
+                          setModelPromptRulesDraft((current) =>
+                            current.map((entry, entryIndex) =>
+                              entryIndex === index
+                                ? { ...entry, modelMatch: event.target.value }
+                                : entry,
+                            ),
+                          )
+                        }
+                      />
+                    </label>
+
+                    <label className="settings-field">
+                      <span className="settings-field-label">
+                        <span className="settings-field-label-text">{promptLabel}</span>
+                      </span>
+                      <textarea
+                        className="control settings-input settings-textarea"
+                        rows={4}
+                        value={rule.prompt}
+                        placeholder={promptPlaceholder}
+                        onChange={(event) =>
+                          setModelPromptRulesDraft((current) =>
+                            current.map((entry, entryIndex) =>
+                              entryIndex === index
+                                ? { ...entry, prompt: event.target.value }
+                                : entry,
+                            ),
+                          )
+                        }
+                      />
+                    </label>
+
+                    <div className="settings-actions model-prompt-rule-actions">
+                      <AppButton
+                        type="button"
+                        onClick={() =>
+                          setModelPromptRulesDraft((current) =>
+                            current.filter((entry) => entry.id !== rule.id),
+                          )
+                        }
+                      >
+                        {deleteLabel}
+                      </AppButton>
+                    </div>
+                  </div>
+                ))}
+              </div>
+
+              <div className="settings-actions">
+                <AppButton
+                  type="button"
+                  onClick={() =>
+                    setModelPromptRulesDraft((current) => [
+                      ...current,
+                      {
+                        id: crypto.randomUUID(),
+                        modelMatch: '',
+                        prompt: '',
+                      },
+                    ])
+                  }
+                >
+                  {addLabel}
+                </AppButton>
+              </div>
+
+              <div className="settings-actions model-prompt-rules-dialog-actions">
+                <AppButton type="button" onClick={closeModelPromptRulesDialog}>
+                  {cancelLabel}
+                </AppButton>
+                <AppButton tone="primary" type="button" onClick={saveModelPromptRulesDialog}>
+                  {saveLabel}
+                </AppButton>
+              </div>
+            </div>
+          </div>
+        </section>
+      </div>
+    )
+  }
 
   const changeCardModelSelection = useCallback(
     (columnId: string, cardId: string, provider: Provider, model: string) => {
@@ -2709,6 +2898,11 @@ function App() {
     )
 
     try {
+      const composedSystemPrompt = buildSystemPromptForModel(
+        appStateRef.current.settings.systemPrompt,
+        resolvedModel,
+        appStateRef.current.settings.modelPromptRules,
+      )
       const response = await requestChat({
         provider: card.provider,
         workspacePath: column.workspacePath,
@@ -2717,7 +2911,8 @@ function App() {
         thinkingEnabled: card.thinkingEnabled !== false,
         planMode: card.planMode ?? false,
         language,
-        systemPrompt: appStateRef.current.settings.systemPrompt,
+        systemPrompt: composedSystemPrompt,
+        modelPromptRules: appStateRef.current.settings.modelPromptRules,
         crossProviderSkillReuseEnabled:
           appStateRef.current.settings.crossProviderSkillReuseEnabled,
         streamId,
@@ -2860,6 +3055,11 @@ function App() {
     )
 
     try {
+      const composedSystemPrompt = buildSystemPromptForModel(
+        appStateRef.current.settings.systemPrompt,
+        resolvedModel,
+        appStateRef.current.settings.modelPromptRules,
+      )
       const response = await requestChat({
         provider: card.provider,
         workspacePath: column.workspacePath,
@@ -2868,7 +3068,8 @@ function App() {
         thinkingEnabled: card.thinkingEnabled !== false,
         planMode: card.planMode ?? false,
         language: appStateRef.current.settings.language,
-        systemPrompt: appStateRef.current.settings.systemPrompt,
+        systemPrompt: composedSystemPrompt,
+        modelPromptRules: appStateRef.current.settings.modelPromptRules,
         crossProviderSkillReuseEnabled:
           appStateRef.current.settings.crossProviderSkillReuseEnabled,
         streamId,
@@ -2989,6 +3190,11 @@ function App() {
     )
 
     try {
+      const composedSystemPrompt = buildSystemPromptForModel(
+        appStateRef.current.settings.systemPrompt,
+        resolvedModel,
+        appStateRef.current.settings.modelPromptRules,
+      )
       const response = await requestChat({
         provider: card.provider,
         workspacePath: column.workspacePath,
@@ -2997,7 +3203,8 @@ function App() {
         thinkingEnabled: card.thinkingEnabled !== false,
         planMode: card.planMode ?? false,
         language: appStateRef.current.settings.language,
-        systemPrompt: appStateRef.current.settings.systemPrompt,
+        systemPrompt: composedSystemPrompt,
+        modelPromptRules: appStateRef.current.settings.modelPromptRules,
         crossProviderSkillReuseEnabled:
           appStateRef.current.settings.crossProviderSkillReuseEnabled,
         streamId,
@@ -4121,6 +4328,29 @@ function App() {
         </label>
 
         <p className="settings-note">{text.systemPromptNote}</p>
+
+        <div className="settings-field model-prompt-rules-summary-row">
+          <span className="settings-field-label">
+            <ModelIcon className="settings-field-icon" aria-hidden="true" />
+            <span className="settings-field-label-text">
+              {appState.settings.language === 'zh-CN' ? '基于模型的提示词' : 'Model prompt rules'}
+            </span>
+          </span>
+          <div className="model-prompt-rules-summary">
+            <strong>{modelPromptRulesSummary}</strong>
+            <span className="settings-note">
+              {appState.settings.language === 'zh-CN'
+                ? '按模型关键字做包含匹配。命中后，会把规则提示词追加到系统提示词后面。'
+                : 'Rules match by model keyword substring. Matching prompts are appended after the base system prompt.'}
+            </span>
+          </div>
+        </div>
+
+        <div className="settings-actions">
+          <AppButton type="button" onClick={openModelPromptRulesDialog}>
+            {appState.settings.language === 'zh-CN' ? '编辑规则' : 'Edit rules'}
+          </AppButton>
+        </div>
 
         <label className="settings-toggle" htmlFor="cross-provider-skill-reuse-toggle">
           <span>{text.crossProviderSkillReuseLabel}</span>
@@ -5640,6 +5870,7 @@ function App() {
             providers={providerByName}
             language={appState.settings.language}
             systemPrompt={appState.settings.systemPrompt}
+            modelPromptRules={appState.settings.modelPromptRules}
             crossProviderSkillReuseEnabled={appState.settings.crossProviderSkillReuseEnabled}
             musicAlbumCoverEnabled={appState.settings.musicAlbumCoverEnabled}
             weatherCity={appState.settings.weatherCity}
@@ -6117,6 +6348,8 @@ function App() {
           </section>
         </div>
       ) : null}
+
+      {renderModelPromptRulesDialog()}
     </div>,
   )
 }

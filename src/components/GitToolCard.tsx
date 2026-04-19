@@ -8,7 +8,7 @@ import {
   setGitStage,
 } from '../api'
 import { defaultGitToolCardSize, minGitToolCardSize } from '../../shared/default-state'
-import type { AppLanguage, GitChange, GitStatus } from '../../shared/schema'
+import type { AppLanguage, GitChange, GitStatus, ModelPromptRule } from '../../shared/schema'
 import { getGitLocaleText } from '../../shared/i18n'
 import { errorMessage, computeTotalStats, getRepositoryName } from './git-utils'
 import { GitFullDialog, type GitFullDialogMode } from './GitFullDialog'
@@ -36,6 +36,7 @@ type GitToolCardProps = {
   language: AppLanguage
   gitAgentModel: string
   systemPrompt: string
+  modelPromptRules?: ModelPromptRule[]
   crossProviderSkillReuseEnabled: boolean
   isActive?: boolean
   requestedHeight: number
@@ -106,6 +107,7 @@ export const GitToolCard = ({
   language,
   gitAgentModel,
   systemPrompt,
+  modelPromptRules = [],
   crossProviderSkillReuseEnabled,
   isActive = true,
   requestedHeight,
@@ -595,6 +597,7 @@ export const GitToolCard = ({
             language={language}
             gitAgentModel={gitAgentModel}
             systemPrompt={systemPrompt}
+            modelPromptRules={modelPromptRules}
             crossProviderSkillReuseEnabled={crossProviderSkillReuseEnabled}
             onAnalysisPendingChange={setAgentAnalysisPending}
             onClose={handleCloseAgentPanel}
@@ -665,6 +668,7 @@ export const GitToolCard = ({
             language={language}
             gitAgentModel={gitAgentModel}
             systemPrompt={systemPrompt}
+            modelPromptRules={modelPromptRules}
             crossProviderSkillReuseEnabled={crossProviderSkillReuseEnabled}
             onClose={() => setSyncPanelOpen(false)}
             onStatusChange={handleStatusChange}

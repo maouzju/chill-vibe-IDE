@@ -2,6 +2,7 @@ import type {
   AppLanguage,
   AutoUrgeProfile,
   BoardColumn,
+  ModelPromptRule,
   PaneNode,
   ProviderStatus,
   RecentWorkspace,
@@ -13,6 +14,7 @@ type WorkspaceColumnMemoProps = {
   providers: Record<string, ProviderStatus>
   language: AppLanguage
   systemPrompt: string
+  modelPromptRules?: ModelPromptRule[]
   crossProviderSkillReuseEnabled: boolean
   musicAlbumCoverEnabled: boolean
   weatherCity: string
@@ -33,6 +35,7 @@ type PaneViewMemoProps = {
   providers: Record<string, ProviderStatus>
   language: AppLanguage
   systemPrompt: string
+  modelPromptRules?: ModelPromptRule[]
   crossProviderSkillReuseEnabled: boolean
   musicAlbumCoverEnabled: boolean
   weatherCity: string
@@ -93,6 +96,7 @@ export const areWorkspaceColumnPropsEqual = (
   previous.providers === next.providers &&
   previous.language === next.language &&
   previous.systemPrompt === next.systemPrompt &&
+  previous.modelPromptRules === next.modelPromptRules &&
   previous.crossProviderSkillReuseEnabled === next.crossProviderSkillReuseEnabled &&
   previous.musicAlbumCoverEnabled === next.musicAlbumCoverEnabled &&
   previous.weatherCity === next.weatherCity &&
@@ -131,6 +135,7 @@ export const arePaneViewPropsEqual = (previous: PaneViewMemoProps, next: PaneVie
   previous.providers === next.providers &&
   previous.language === next.language &&
   previous.systemPrompt === next.systemPrompt &&
+  previous.modelPromptRules === next.modelPromptRules &&
   previous.crossProviderSkillReuseEnabled === next.crossProviderSkillReuseEnabled &&
   previous.musicAlbumCoverEnabled === next.musicAlbumCoverEnabled &&
   previous.weatherCity === next.weatherCity &&

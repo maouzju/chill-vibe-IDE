@@ -44,6 +44,13 @@ export type StructuredAskUserOption = {
   description: string
 }
 
+export type StructuredAskUserQuestionItem = {
+  question: string
+  header: string
+  multiSelect: boolean
+  options: StructuredAskUserOption[]
+}
+
 export type StructuredAskUserMessage = {
   itemId: string
   status: 'completed'
@@ -51,6 +58,7 @@ export type StructuredAskUserMessage = {
   header: string
   multiSelect: boolean
   options: StructuredAskUserOption[]
+  questions: StructuredAskUserQuestionItem[]
 }
 
 export type StructuredToolGroupItem =
@@ -392,36 +400,85 @@ export const parseStructuredAskUserMessage = (message: ChatMessage): StructuredA
   }
 
   const itemId = readStructuredString(payload, 'itemId')
-  const question = readStructuredString(payload, 'question')
-  const rawOptions = payload.options
 
-  if (!itemId || !question || !Array.isArray(rawOptions)) {
+  if (!itemId) {
     return null
   }
 
-  const options: StructuredAskUserOption[] = rawOptions
-    .map((entry) => {
-      if (typeof entry !== 'object' || entry === null) {
-        return null
-      }
-      const record = entry as Record<string, unknown>
-      const label = readStructuredString(record, 'label')
-      const description = readStructuredString(record, 'description') ?? ''
-      return label ? { label, description } : null
-    })
-    .filter((opt): opt is StructuredAskUserOption => opt !== null)
+  const parseOptions = (raw: unknown): StructuredAskUserOption[] => {
+    if (!Array.isArray(raw)) {
+      return []
+    }
+    return raw
+      .map((entry) => {
+        if (typeof entry !== 'object' || entry === null) {
+          return null
+        }
+        const record = entry as Record<string, unknown>
+        const label = readStructuredString(record, 'label')
+        const description = readStructuredString(record, 'description') ?? ''
+        return label ? { label, description } : null
+      })
+      .filter((opt): opt is StructuredAskUserOption => opt !== null)
+  }
 
-  if (options.length === 0) {
+  const parseQuestionItem = (raw: unknown): StructuredAskUserQuestionItem | null => {
+    if (typeof raw !== 'object' || raw === null) {
+      return null
+    }
+    const record = raw as Record<string, unknown>
+    const q = readStructuredString(record, 'question')
+    const opts = parseOptions(record.options)
+    if (!q || opts.length === 0) {
+      return null
+    }
+    return {
+      question: q,
+      header: readStructuredString(record, 'header') ?? '',
+      multiSelect: record.multiSelect === true,
+      options: opts,
+    }
+  }
+
+  const rawQuestions = Array.isArray(payload.questions) ? payload.questions : null
+  const parsedQuestions = rawQuestions
+    ? rawQuestions
+        .map(parseQuestionItem)
+        .filter((q): q is StructuredAskUserQuestionItem => q !== null)
+    : []
+
+  // Legacy shape: single question at the top level.
+  const topQuestion = readStructuredString(payload, 'question')
+  const topOptions = parseOptions(payload.options)
+
+  const questions: StructuredAskUserQuestionItem[] =
+    parsedQuestions.length > 0
+      ? parsedQuestions
+      : topQuestion && topOptions.length > 0
+        ? [
+            {
+              question: topQuestion,
+              header: readStructuredString(payload, 'header') ?? '',
+              multiSelect: payload.multiSelect === true,
+              options: topOptions,
+            },
+          ]
+        : []
+
+  if (questions.length === 0) {
     return null
   }
+
+  const first = questions[0]!
 
   return {
     itemId,
     status: 'completed',
-    question,
-    header: readStructuredString(payload, 'header') ?? '',
-    multiSelect: payload.multiSelect === true,
-    options,
+    question: first.question,
+    header: first.header,
+    multiSelect: first.multiSelect,
+    options: first.options,
+    questions,
   }
 }
 
@@ -523,6 +580,60 @@ const isEmptySkippableMessage = (message: ChatMessage) => {
   return false
 }
 
+const mergeAdjacentAskUserMessages = (
+  messages: ChatMessage[],
+  startIndex: number,
+): { merged: ChatMessage; nextIndex: number } | null => {
+  const first = messages[startIndex]
+  if (!first || first.meta?.kind !== 'ask-user') return null
+
+  const firstParsed = parseStructuredAskUserMessage(first)
+  if (!firstParsed) return null
+
+  let lookahead = startIndex + 1
+  const tail: ChatMessage[] = []
+
+  while (lookahead < messages.length) {
+    const next = messages[lookahead]!
+    if (next.meta?.kind !== 'ask-user') break
+    if (next.role !== first.role) break
+    if (!parseStructuredAskUserMessage(next)) break
+    tail.push(next)
+    lookahead += 1
+  }
+
+  if (tail.length === 0) {
+    return { merged: first, nextIndex: startIndex + 1 }
+  }
+
+  const mergedQuestions = [...firstParsed.questions]
+  for (const msg of tail) {
+    const parsed = parseStructuredAskUserMessage(msg)
+    if (parsed) mergedQuestions.push(...parsed.questions)
+  }
+
+  const anchorPayload = {
+    itemId: firstParsed.itemId,
+    kind: 'ask-user' as const,
+    status: 'completed' as const,
+    question: mergedQuestions[0]!.question,
+    header: mergedQuestions[0]!.header,
+    multiSelect: mergedQuestions[0]!.multiSelect,
+    options: mergedQuestions[0]!.options,
+    questions: mergedQuestions,
+  }
+
+  const mergedMessage: ChatMessage = {
+    ...first,
+    meta: {
+      ...first.meta!,
+      structuredData: JSON.stringify(anchorPayload),
+    },
+  }
+
+  return { merged: mergedMessage, nextIndex: lookahead }
+}
+
 export const buildRenderableMessages = (messages: ChatMessage[]): RenderableMessage[] => {
   const items: RenderableMessage[] = []
   let index = 0
@@ -542,6 +653,15 @@ export const buildRenderableMessages = (messages: ChatMessage[]): RenderableMess
         })
         index += 1
         continue
+      }
+
+      if (currentMessage.meta?.kind === 'ask-user') {
+        const mergeResult = mergeAdjacentAskUserMessages(messages, index)
+        if (mergeResult) {
+          items.push({ type: 'message', message: mergeResult.merged })
+          index = mergeResult.nextIndex
+          continue
+        }
       }
 
       if (!isEmptySkippableMessage(currentMessage)) {

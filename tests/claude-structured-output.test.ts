@@ -427,6 +427,70 @@ test('parses <ask-user-question> XML block emitted in Claude assistant text into
   )
 })
 
+test('AskUserQuestion tool with multiple questions keeps all of them on the activity', () => {
+  const parseClaudeStreamEvent = createClaudeStructuredOutputParser('en')
+
+  const activities = parseClaudeStreamEvent({
+    type: 'assistant',
+    message: {
+      id: 'msg_multi',
+      content: [
+        {
+          type: 'tool_use',
+          id: 'toolu_multi_ask',
+          name: 'AskUserQuestion',
+          input: {
+            questions: [
+              {
+                header: 'Layout',
+                question: 'Which layout?',
+                multiSelect: false,
+                options: [
+                  { label: 'Compact', description: 'Dense' },
+                  { label: 'Spacious', description: 'Airy' },
+                ],
+              },
+              {
+                header: 'Theme',
+                question: 'Which theme?',
+                multiSelect: false,
+                options: [
+                  { label: 'Dark', description: '' },
+                  { label: 'Light', description: '' },
+                ],
+              },
+              {
+                header: 'Font',
+                question: 'Which font?',
+                multiSelect: true,
+                options: [
+                  { label: 'Sans', description: '' },
+                  { label: 'Mono', description: '' },
+                ],
+              },
+            ],
+          },
+        },
+      ],
+    },
+  })
+
+  assert.equal(activities.length, 1)
+  const activity = activities[0] as Extract<typeof activities[number], { kind: 'ask-user' }>
+  assert.equal(activity.kind, 'ask-user')
+  assert.equal(activity.itemId, 'toolu_multi_ask')
+  assert.ok(Array.isArray(activity.questions), 'expected questions array to be kept')
+  assert.equal(activity.questions?.length, 3)
+  assert.equal(activity.questions?.[0]?.question, 'Which layout?')
+  assert.equal(activity.questions?.[1]?.question, 'Which theme?')
+  assert.equal(activity.questions?.[2]?.question, 'Which font?')
+  assert.equal(activity.questions?.[2]?.multiSelect, true)
+  assert.equal(activity.questions?.[1]?.options[0]?.label, 'Dark')
+  // Top-level fields should mirror the first question for backward compatibility.
+  assert.equal(activity.question, 'Which layout?')
+  assert.equal(activity.header, 'Layout')
+})
+
 test('invalid Claude AskUserQuestion tool payload falls back to a normal tool activity instead of a blank ask-user card', () => {
   const parseClaudeStreamEvent = createClaudeStructuredOutputParser('en')
 

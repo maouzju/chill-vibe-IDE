@@ -83,6 +83,7 @@ import { TextEditorCard } from './TextEditorCard'
 import { BrainstormCard } from './BrainstormCard'
 import { resolveBrainstormRequestTarget } from './brainstorm-card-utils'
 import { formatAskUserFollowUpPrompt } from './ask-user-follow-up'
+import type { CardRecoveryStatus } from '../stream-recovery-feedback'
 import { MessageBubble, StreamingIndicator } from './MessageBubble'
 import {
   StructuredToolGroupCard,
@@ -227,6 +228,7 @@ type ChatCardProps = {
   chromeMode?: 'card' | 'pane'
   isActive?: boolean
   composerFocusRequest?: number
+  recoveryStatus?: CardRecoveryStatus
 }
 
 const getSelectValue = (provider: Provider, model: string) =>
@@ -444,6 +446,7 @@ type ChatTranscriptProps = {
   language: AppLanguage
   workspacePath: string
   cardStatus: ChatCardModel['status']
+  recoveryStatus?: CardRecoveryStatus
   messages: ChatCardModel['messages']
   messageListRef: RefObject<HTMLDivElement | null>
   renderableMessages: RenderableMessage[]
@@ -471,6 +474,7 @@ const ChatTranscript = memo(
     language,
     workspacePath,
     cardStatus,
+    recoveryStatus,
     messages,
     messageListRef,
     renderableMessages,
@@ -873,8 +877,12 @@ const ChatTranscript = memo(
           </div>
         </div>
 
-        {cardStatus === 'streaming' ? (
-          <StreamingIndicator messages={messages} language={language} />
+        {cardStatus === 'streaming' || recoveryStatus?.kind === 'failed' ? (
+          <StreamingIndicator
+            messages={messages}
+            language={language}
+            recoveryStatus={recoveryStatus}
+          />
         ) : null}
       </>
     )
@@ -920,6 +928,7 @@ const ChatCardView = ({
   chromeMode = 'card',
   isActive = true,
   composerFocusRequest = 0,
+  recoveryStatus,
 }: ChatCardProps) => {
   const text = useMemo(() => getLocaleText(language), [language])/*
   const thinkingDepthLabel = language === 'en' ? 'Thinking depth' : '思考深度'
@@ -2916,6 +2925,7 @@ const ChatCardView = ({
                 language={language}
                 workspacePath={workspacePath}
                 cardStatus={card.status}
+                recoveryStatus={recoveryStatus}
                 messages={card.messages}
                 messageListRef={messageListRef}
                 renderableMessages={renderableMessages}

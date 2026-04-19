@@ -967,6 +967,14 @@ export const askUserOptionSchema = z.object({
 })
 export type AskUserOption = z.infer<typeof askUserOptionSchema>
 
+export const askUserQuestionItemSchema = z.object({
+  question: z.string().min(1),
+  header: z.string().default(''),
+  multiSelect: z.boolean().default(false),
+  options: z.array(askUserOptionSchema).default([]),
+})
+export type AskUserQuestionItem = z.infer<typeof askUserQuestionItemSchema>
+
 export const streamAskUserActivitySchema = z.object({
   itemId: z.string().min(1),
   kind: z.literal('ask-user'),
@@ -975,6 +983,7 @@ export const streamAskUserActivitySchema = z.object({
   header: z.string().default(''),
   multiSelect: z.boolean().default(false),
   options: z.array(askUserOptionSchema).default([]),
+  questions: z.array(askUserQuestionItemSchema).optional(),
   planFile: z.string().optional(),
 })
 export type StreamAskUserActivity = z.infer<typeof streamAskUserActivitySchema>

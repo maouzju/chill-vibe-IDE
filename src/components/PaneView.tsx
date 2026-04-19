@@ -23,6 +23,7 @@ import type {
   ProviderStatus,
 } from '../../shared/schema'
 import { clearDragPayload, readDragPayload, writeDragPayload } from '../dnd'
+import type { CardRecoveryStatus } from '../stream-recovery-feedback'
 import { arePaneViewPropsEqual } from './layout-memoization'
 import { getAutoReadCardId } from './pane-read-state'
 import { syncMessageListElementToBottom } from './pane-scroll'
@@ -119,6 +120,7 @@ type PaneViewProps = {
   onStopMessage: (cardId: string) => Promise<void>
   onForkConversation?: (cardId: string, messageId: string) => void
   onOpenFile?: (paneId: string, relativePath: string) => void
+  cardRecoveryStatuses?: ReadonlyMap<string, CardRecoveryStatus>
 }
 
 const getHorizontalPlacement = (event: DragEvent<HTMLElement>): DropPlacement => {
@@ -298,6 +300,7 @@ const PaneViewView = ({
   onStopMessage,
   onForkConversation,
   onOpenFile,
+  cardRecoveryStatuses,
 }: PaneViewProps) => {
   const text = getLocaleText(language)
   const tabStripRef = useRef<HTMLDivElement | null>(null)
@@ -928,6 +931,7 @@ const PaneViewView = ({
                   chromeMode="pane"
                   isActive
                   composerFocusRequest={composerFocusRequest}
+                  recoveryStatus={cardRecoveryStatuses?.get(card.id)}
                 />
               ) : null}
             </div>

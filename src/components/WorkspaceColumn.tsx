@@ -29,6 +29,7 @@ import type {
 import { listExternalHistory, loadExternalSession } from '../api'
 import { resizeColumnGroups } from '../column-resize'
 import { clearDragPayload, readDragPayload, type Placement, writeDragPayload } from '../dnd'
+import type { CardRecoveryStatus } from '../stream-recovery-feedback'
 import { areWorkspaceColumnPropsEqual } from './layout-memoization'
 import { filterExternalSessionHistory, filterSessionHistoryEntries, hasSessionHistorySearch } from './workspace-column-history'
 import { CloseIcon, FolderIcon, HistoryIcon, IconButton } from './Icons'
@@ -152,6 +153,7 @@ type WorkspaceColumnProps = {
   sessionHistory: SessionHistoryEntry[]
   onRestoreSession: (entryId: string) => void
   onImportExternalSession: (entry: SessionHistoryEntry) => void
+  cardRecoveryStatuses?: ReadonlyMap<string, CardRecoveryStatus>
 }
 
 const getHorizontalPlacement = (event: DragEvent<HTMLElement>) => {
@@ -209,6 +211,7 @@ const WorkspaceColumnView = ({
   sessionHistory,
   onRestoreSession,
   onImportExternalSession,
+  cardRecoveryStatuses,
 }: WorkspaceColumnProps) => {
   const text = getLocaleText(language)
   const [editingPath, setEditingPath] = useState(() => !column.workspacePath.trim())
@@ -877,6 +880,7 @@ const WorkspaceColumnView = ({
         onStopMessage={onStopMessage}
         onForkConversation={onForkConversation}
         onOpenFile={onOpenFile}
+        cardRecoveryStatuses={cardRecoveryStatuses}
       />
       </div>
 

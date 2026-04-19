@@ -1063,44 +1063,87 @@ export const AskUserQuestionCard = ({
 }) => {
   const isAnswered = answeredOption !== null
   const OTHER_LABEL = 'Other'
+  const totalQuestions = data.questions.length
+  const isMulti = totalQuestions > 1
+
   const cachedDraft = isAnswered ? null : getAskUserDraft(data.itemId)
-  const [selected, setSelectedState] = useState<string | null>(
-    answeredOption ?? cachedDraft?.selected ?? null,
-  )
-  const [otherText, setOtherTextState] = useState(cachedDraft?.otherText ?? '')
+  // selections[i] holds the chosen label (or Other) for question i; null = unanswered.
+  const [selections, setSelections] = useState<(string | null)[]>(() => {
+    if (isAnswered && !isMulti) {
+      return [answeredOption]
+    }
+    const base = new Array(totalQuestions).fill(null) as (string | null)[]
+    if (cachedDraft?.selected != null) {
+      base[0] = cachedDraft.selected
+    }
+    return base
+  })
+  const [otherTexts, setOtherTexts] = useState<string[]>(() => {
+    const base = new Array(totalQuestions).fill('') as string[]
+    if (cachedDraft?.otherText) {
+      base[0] = cachedDraft.otherText
+    }
+    return base
+  })
+  const [currentIndex, setCurrentIndex] = useState(0)
   const [lastSubmittedItemId, setLastSubmittedItemId] = useState<string | null>(null)
   const otherInputRef = useRef<HTMLInputElement>(null)
   const submitStartedRef = useRef<string | null>(null)
-  const isSubmitting = answeredOption === null && lastSubmittedItemId === data.itemId
+  const isSubmitting = !isAnswered && lastSubmittedItemId === data.itemId
+
+  const current = data.questions[currentIndex] ?? data.questions[0]!
+  const selected = selections[currentIndex] ?? null
+  const otherText = otherTexts[currentIndex] ?? ''
 
   const setSelected = (value: string | null) => {
-    setSelectedState(value)
-    if (!isAnswered) {
+    setSelections((prev) => {
+      const next = prev.slice()
+      next[currentIndex] = value
+      return next
+    })
+    if (!isAnswered && !isMulti) {
       setAskUserDraft(data.itemId, { selected: value, otherText })
     }
   }
 
   const setOtherText = (value: string) => {
-    setOtherTextState(value)
-    if (!isAnswered) {
+    setOtherTexts((prev) => {
+      const next = prev.slice()
+      next[currentIndex] = value
+      return next
+    })
+    if (!isAnswered && !isMulti) {
       setAskUserDraft(data.itemId, { selected, otherText: value })
     }
   }
 
   const labels = language === 'en'
-    ? { submit: 'Submit answers', escHint: 'Esc to cancel', other: 'Other' }
-    : { submit: '提交回答', escHint: 'Esc 取消', other: '其他' }
+    ? { submit: 'Submit answers', escHint: 'Esc to cancel', other: 'Other', prev: 'Previous', next: 'Next' }
+    : { submit: '提交回答', escHint: 'Esc 取消', other: '其他', prev: '上一题', next: '下一题' }
+
+  const allAnswered = selections.every((sel) => sel !== null)
+
+  const resolveAnswerLabel = (idx: number): string => {
+    const sel = selections[idx]
+    if (sel === null) return ''
+    if (sel === OTHER_LABEL) return (otherTexts[idx] ?? '').trim() || OTHER_LABEL
+    return sel
+  }
 
   const handleSubmit = () => {
-    if (!selected || isAnswered || submitStartedRef.current === data.itemId) return
+    if (isAnswered || submitStartedRef.current === data.itemId) return
+    if (!allAnswered) return
 
     submitStartedRef.current = data.itemId
     setLastSubmittedItemId(data.itemId)
 
-    if (selected === OTHER_LABEL) {
-      onSelectOption(otherText.trim() || OTHER_LABEL)
+    if (isMulti) {
+      const combined = data.questions
+        .map((q, idx) => `[${idx + 1}] ${q.question} → ${resolveAnswerLabel(idx)}`)
+        .join('\n')
+      onSelectOption(combined)
     } else {
-      onSelectOption(selected)
+      onSelectOption(resolveAnswerLabel(0))
     }
     clearAskUserDraft(data.itemId)
   }
@@ -1114,9 +1157,15 @@ export const AskUserQuestionCard = ({
   useEffect(() => {
     if (!isAnswered) {
       const handler = (e: KeyboardEvent) => {
-        if (e.key === 'Enter' && selected) {
+        if (e.key === 'Enter' && allAnswered) {
           e.preventDefault()
           handleSubmit()
+        } else if (isMulti && e.key === 'ArrowLeft' && currentIndex > 0) {
+          e.preventDefault()
+          setCurrentIndex(currentIndex - 1)
+        } else if (isMulti && e.key === 'ArrowRight' && currentIndex < totalQuestions - 1) {
+          e.preventDefault()
+          setCurrentIndex(currentIndex + 1)
         }
       }
       window.addEventListener('keydown', handler)
@@ -1124,18 +1173,55 @@ export const AskUserQuestionCard = ({
     }
   })
 
+  const goPrev = () => {
+    if (currentIndex > 0) setCurrentIndex(currentIndex - 1)
+  }
+  const goNext = () => {
+    if (currentIndex < totalQuestions - 1) setCurrentIndex(currentIndex + 1)
+  }
+
+  const answeredForRadio = isAnswered && !isMulti ? answeredOption : selected
+
   return (
     <section className={`ask-user-card${isAnswered ? ' is-answered' : ''}`}>
       <div className="ask-user-title-bar">
-        <span className="ask-user-title">{data.header || labels.other}</span>
+        <span className="ask-user-title">{current.header || labels.other}</span>
+        {isMulti ? (
+          <span className="ask-user-pager">
+            <button
+              type="button"
+              className="ask-user-nav-btn"
+              disabled={currentIndex === 0}
+              onClick={goPrev}
+              aria-label={labels.prev}
+              title={labels.prev}
+            >
+              ‹
+            </button>
+            <span className="ask-user-counter">
+              {currentIndex + 1} / {totalQuestions}
+              {selections[currentIndex] !== null ? ' ✓' : ''}
+            </span>
+            <button
+              type="button"
+              className="ask-user-nav-btn"
+              disabled={currentIndex === totalQuestions - 1}
+              onClick={goNext}
+              aria-label={labels.next}
+              title={labels.next}
+            >
+              ›
+            </button>
+          </span>
+        ) : null}
       </div>
 
-      <div className="ask-user-question">{data.question}</div>
+      <div className="ask-user-question">{current.question}</div>
 
       <div className="ask-user-options">
-        {data.options.map((option) => {
-          const isChecked = isAnswered ? answeredOption === option.label : selected === option.label
-          const isDimmed = isAnswered && answeredOption !== option.label
+        {current.options.map((option) => {
+          const isChecked = answeredForRadio === option.label
+          const isDimmed = isAnswered && !isMulti && answeredOption !== option.label
           return (
             <label
               key={option.label}
@@ -1150,7 +1236,7 @@ export const AskUserQuestionCard = ({
               </span>
               <input
                 type="radio"
-                name={`ask-user-${data.itemId}`}
+                name={`ask-user-${data.itemId}-${currentIndex}`}
                 className="ask-user-radio-input"
                 checked={isChecked}
                 disabled={isAnswered || isSubmitting}
@@ -1162,7 +1248,7 @@ export const AskUserQuestionCard = ({
 
         {/* Other option */}
         <label
-          className={`ask-user-option${selected === OTHER_LABEL ? ' is-selected' : ''}${isAnswered && answeredOption !== OTHER_LABEL ? ' is-dimmed' : ''}`}
+          className={`ask-user-option${selected === OTHER_LABEL ? ' is-selected' : ''}${isAnswered && !isMulti && answeredOption !== OTHER_LABEL ? ' is-dimmed' : ''}`}
         >
           <span className={`ask-user-radio${selected === OTHER_LABEL ? ' is-checked' : ''}`} />
           <span className="ask-user-option-body">
@@ -1170,7 +1256,7 @@ export const AskUserQuestionCard = ({
           </span>
           <input
             type="radio"
-            name={`ask-user-${data.itemId}`}
+            name={`ask-user-${data.itemId}-${currentIndex}`}
             className="ask-user-radio-input"
             checked={selected === OTHER_LABEL}
             disabled={isAnswered || isSubmitting}
@@ -1199,7 +1285,7 @@ export const AskUserQuestionCard = ({
           <button
             type="button"
             className="ask-user-submit"
-            disabled={!selected || isSubmitting}
+            disabled={!allAnswered || isSubmitting}
             onClick={handleSubmit}
           >
             {labels.submit}

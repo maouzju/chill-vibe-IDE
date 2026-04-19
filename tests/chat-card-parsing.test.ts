@@ -9,6 +9,7 @@ import {
   getStickyRenderableUserMessageId,
   getLastRenderableUserMessageId,
   getTopVisibleRenderableEntryId,
+  parseStructuredAskUserMessage,
   parseStructuredTodoMessage,
 } from '../src/components/chat-card-parsing.ts'
 
@@ -369,4 +370,65 @@ test('parseStructuredTodoMessage reads structured todo list messages', () => {
       },
     ],
   })
+})
+
+const makeAskUserMessage = (
+  id: string,
+  question: string,
+  header: string,
+  optionLabels: string[],
+): ChatMessage =>
+  makeMessage({
+    id,
+    role: 'assistant',
+    content: '',
+    meta: {
+      provider: 'claude',
+      kind: 'ask-user',
+      itemId: id,
+      structuredData: JSON.stringify({
+        itemId: id,
+        kind: 'ask-user',
+        status: 'completed',
+        question,
+        header,
+        multiSelect: false,
+        options: optionLabels.map((label) => ({ label, description: '' })),
+      }),
+    },
+  })
+
+test('buildRenderableMessages merges consecutive ask-user messages into a single renderable with questions[]', () => {
+  const messages = [
+    makeAskUserMessage('ask-1', 'Q1?', 'H1', ['A', 'B']),
+    makeAskUserMessage('ask-2', 'Q2?', 'H2', ['C', 'D']),
+    makeAskUserMessage('ask-3', 'Q3?', 'H3', ['E', 'F']),
+  ]
+
+  const result = buildRenderableMessages(messages)
+
+  assert.equal(result.length, 1, 'three consecutive ask-user should merge to one renderable')
+  assert.equal(result[0]!.type, 'message')
+  if (result[0]!.type !== 'message') return
+
+  const merged = parseStructuredAskUserMessage(result[0]!.message)
+  assert.ok(merged, 'merged message must still parse as ask-user')
+  assert.equal(merged!.itemId, 'ask-1', 'anchor itemId should be the first message id')
+  assert.equal(merged!.questions.length, 3, 'all three questions should be preserved')
+  assert.equal(merged!.questions[0]!.question, 'Q1?')
+  assert.equal(merged!.questions[1]!.question, 'Q2?')
+  assert.equal(merged!.questions[2]!.question, 'Q3?')
+  assert.equal(merged!.questions[1]!.header, 'H2')
+})
+
+test('buildRenderableMessages does not merge ask-user across non-ask-user boundary', () => {
+  const messages = [
+    makeAskUserMessage('ask-1', 'Q1?', 'H1', ['A', 'B']),
+    makeMessage({ id: 'user-reply', role: 'user', content: 'A' }),
+    makeAskUserMessage('ask-2', 'Q2?', 'H2', ['C', 'D']),
+  ]
+
+  const result = buildRenderableMessages(messages)
+
+  assert.equal(result.length, 3, 'user message in between must break the merge group')
 })

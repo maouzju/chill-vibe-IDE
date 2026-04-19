@@ -180,16 +180,13 @@ const classifyLaunchErrorHint = (message: string): StreamErrorHint | undefined =
   return undefined
 }
 
-const shouldUseLocalProviderProfiles = (settings: AppSettings) =>
-  settings.cliRoutingEnabled || settings.resilientProxyEnabled
-
 export const resolveProviderRuntime = async (provider: Provider): Promise<ProviderRuntime> => {
   const baseEnv =
     provider === 'claude' ? await resolveClaudeRuntimeEnvironment({ env: process.env }) : process.env
 
   try {
     const settings = providerRuntimeSettingsOverride ?? (await loadState()).settings
-    if (!shouldUseLocalProviderProfiles(settings)) {
+    if (!settings.cliRoutingEnabled) {
       return {
         args: [],
         env: baseEnv,

@@ -17,6 +17,7 @@ import type { AppLanguage, FileEntry, FileSearchEntry } from '../../shared/schem
 import { resolveFileTreeMoveDestination } from './file-tree-dnd'
 import {
   applyRefreshedFileTreeDirectories,
+  attachFileTreeAutoRefreshTriggers,
   collectExpandedFileTreeDirectoryPaths,
 } from './file-tree-refresh'
 import {
@@ -629,6 +630,28 @@ const FileTreeCardInner = ({ cardId, workspacePath, language, onOpenFile }: File
       window.removeEventListener(fileTreeMutationEventName, handleMutation as EventListener)
     }
   }, [clearSearchCache, refreshSearch, refreshVisibleTree, searchQuery, workspacePath])
+
+  useEffect(() => {
+    if (typeof window === 'undefined' || typeof document === 'undefined') {
+      return
+    }
+
+    const triggerRefresh = () => {
+      clearSearchCache()
+
+      if (normalizeSearchQuery(searchQuery).length > 0) {
+        refreshSearch()
+      }
+
+      void refreshVisibleTree().catch(() => undefined)
+    }
+
+    return attachFileTreeAutoRefreshTriggers({
+      win: window,
+      doc: document,
+      onRefresh: triggerRefresh,
+    })
+  }, [clearSearchCache, refreshSearch, refreshVisibleTree, searchQuery])
 
   const hasSearchQuery = normalizeSearchQuery(searchQuery).length > 0
 

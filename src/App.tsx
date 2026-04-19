@@ -59,6 +59,13 @@ import {
   shouldResetStreamRecoveryAttemptsForActivity,
   shouldResetStreamRecoveryAttemptsForText,
 } from './stream-recovery'
+import {
+  computeRecoveryStatusAfterFinalFailure,
+  computeRecoveryStatusAfterRetryScheduled,
+  computeRecoveryStatusAfterSuccess,
+  shouldClearRecoveryStatusOnStreamIdle,
+  type CardRecoveryStatus,
+} from './stream-recovery-feedback'
 import type {
   AppState,
   AutoUrgeProfile,
@@ -565,6 +572,85 @@ function App() {
   const appStateRef = useRef(appState)
   const activePaneTargetRef = useRef<PaneTarget | null>(null)
   const streamRetryCountRef = useRef(new Map<string, number>())
+  const [cardRecoveryStatuses, setCardRecoveryStatuses] = useState<
+    ReadonlyMap<string, CardRecoveryStatus>
+  >(() => new Map())
+  const recoveryResumedTimersRef = useRef(new Map<string, ReturnType<typeof setTimeout>>())
+  const updateRecoveryStatus = useCallback(
+    (
+      cardId: string,
+      updater: (previous: CardRecoveryStatus | undefined) => CardRecoveryStatus | undefined,
+    ) => {
+      setCardRecoveryStatuses((current) => {
+        const previous = current.get(cardId)
+        const next = updater(previous)
+        if (previous === next) return current
+        const copy = new Map(current)
+        if (next === undefined) copy.delete(cardId)
+        else copy.set(cardId, next)
+        return copy
+      })
+    },
+    [],
+  )
+  const clearRecoveryResumedTimer = useCallback((cardId: string) => {
+    const timer = recoveryResumedTimersRef.current.get(cardId)
+    if (timer !== undefined) {
+      clearTimeout(timer)
+      recoveryResumedTimersRef.current.delete(cardId)
+    }
+  }, [])
+  const markRecoveryReconnecting = useCallback(
+    (cardId: string, retryCount: number) => {
+      clearRecoveryResumedTimer(cardId)
+      updateRecoveryStatus(cardId, () =>
+        computeRecoveryStatusAfterRetryScheduled(retryCount, 6),
+      )
+    },
+    [clearRecoveryResumedTimer, updateRecoveryStatus],
+  )
+  const markRecoveryResumedIfActive = useCallback(
+    (cardId: string) => {
+      updateRecoveryStatus(cardId, (previous) => {
+        const next = computeRecoveryStatusAfterSuccess(previous)
+        if (next?.kind === 'resumed' && previous?.kind === 'reconnecting') {
+          clearRecoveryResumedTimer(cardId)
+          const timer = setTimeout(() => {
+            recoveryResumedTimersRef.current.delete(cardId)
+            updateRecoveryStatus(cardId, (inner) =>
+              inner?.kind === 'resumed' ? undefined : inner,
+            )
+          }, 2000)
+          recoveryResumedTimersRef.current.set(cardId, timer)
+        }
+        return next
+      })
+    },
+    [clearRecoveryResumedTimer, updateRecoveryStatus],
+  )
+  const markRecoveryFailed = useCallback(
+    (cardId: string) => {
+      clearRecoveryResumedTimer(cardId)
+      updateRecoveryStatus(cardId, () => computeRecoveryStatusAfterFinalFailure())
+    },
+    [clearRecoveryResumedTimer, updateRecoveryStatus],
+  )
+  const clearRecoveryStatusIfAllowed = useCallback(
+    (cardId: string) => {
+      updateRecoveryStatus(cardId, (previous) =>
+        shouldClearRecoveryStatusOnStreamIdle(previous) ? undefined : previous,
+      )
+      clearRecoveryResumedTimer(cardId)
+    },
+    [clearRecoveryResumedTimer, updateRecoveryStatus],
+  )
+  const forceResetRecoveryStatus = useCallback(
+    (cardId: string) => {
+      clearRecoveryResumedTimer(cardId)
+      updateRecoveryStatus(cardId, () => undefined)
+    },
+    [clearRecoveryResumedTimer, updateRecoveryStatus],
+  )
   const sendMessageRef = useRef<(
     (columnId: string, cardId: string, prompt: string, attachments: ImageAttachment[]) => Promise<void>
   ) | null>(null)
@@ -1958,6 +2044,7 @@ function App() {
         onSession: ({ sessionId }) => {
           if (shouldResetStreamRecoveryAttemptsForActivity('session')) {
             streamRetryCountRef.current.delete(card.id)
+            markRecoveryResumedIfActive(card.id)
           }
           persistImmediately(
             applyAction({
@@ -1979,6 +2066,7 @@ function App() {
 
           if (shouldResetStreamRecoveryAttemptsForText(content)) {
             streamRetryCountRef.current.delete(card.id)
+            markRecoveryResumedIfActive(card.id)
           }
           enqueueAssistantDelta(columnId, card.id, messageId, content)
         },
@@ -1990,6 +2078,7 @@ function App() {
 
           if (shouldResetStreamRecoveryAttemptsForActivity('log')) {
             streamRetryCountRef.current.delete(card.id)
+            markRecoveryResumedIfActive(card.id)
           }
           applyAction({
             type: 'appendMessages',
@@ -2004,6 +2093,7 @@ function App() {
             shouldResetStreamRecoveryAttemptsForText(payload.content)
           ) {
             streamRetryCountRef.current.delete(card.id)
+            markRecoveryResumedIfActive(card.id)
           }
           const active = activeStreamsRef.current.get(card.id)
           const buffered = deltaBufferRef.current.get(card.id)
@@ -2052,6 +2142,7 @@ function App() {
         onActivity: (payload) => {
           if (shouldResetStreamRecoveryAttemptsForActivity('activity')) {
             streamRetryCountRef.current.delete(card.id)
+            markRecoveryResumedIfActive(card.id)
           }
 
           // Clear the current assistant message so that any subsequent onDelta
@@ -2146,6 +2237,9 @@ function App() {
           activeStreamsRef.current.delete(card.id)
           streamRetryCountRef.current.delete(card.id)
           queueFollowUpDuringStreamRef.current.delete(card.id)
+          // Normal completion clears reconnecting/resumed but preserves failed
+          // (failed should only clear when a brand-new stream starts on this card).
+          clearRecoveryStatusIfAllowed(card.id)
           const stoppedRunReason = card.streamId
             ? (stoppedRunReasonRef.current.get(card.streamId) ?? 'manual')
             : 'manual'
@@ -2249,6 +2343,12 @@ function App() {
               if (shouldCountAgainstBudget) {
                 streamRetryCountRef.current.set(card.id, retryCount + 1)
               }
+              // Show the reconnecting banner. The helper adds 1 internally so the
+              // visible label becomes "n/6" where n is the attempt about to run.
+              // Transient placeholder-only errors don't move the budget, so the
+              // label stays on whatever attempt the previous non-transient failure
+              // put us on.
+              markRecoveryReconnecting(card.id, retryCount)
 
               window.setTimeout(() => {
                 const liveCard = getColumn(columnId)?.cards[card.id]
@@ -2280,6 +2380,7 @@ function App() {
           // Stream expired or server restarted — gracefully return to idle
           // so the user can continue chatting with their existing messages.
           if (message === 'Stream not found.') {
+            forceResetRecoveryStatus(card.id)
             const liveCard = getColumn(columnId)?.cards[card.id]
             const pendingCompactBoundary = liveCard
               ? getPendingCompactBoundaryMessage(liveCard.messages)
@@ -2310,6 +2411,9 @@ function App() {
           if (hint === 'switch-config' || hint === 'env-setup') {
             openRemediationPanel(card.provider, hint)
           }
+          // Final, unrecoverable failure (or recoverable retries exhausted) —
+          // show the failed recovery banner so the user isn't left wondering.
+          markRecoveryFailed(card.id)
           const liveCard = getColumn(columnId)?.cards[card.id]
           const pendingCompactBoundary = liveCard
             ? getPendingCompactBoundaryMessage(liveCard.messages)
@@ -2352,10 +2456,15 @@ function App() {
     [
       applyAction,
       applyActions,
+      clearRecoveryStatusIfAllowed,
       dispatchNextQueuedSend,
       enqueueAssistantDelta,
       ensureAssistantMessage,
+      forceResetRecoveryStatus,
       getColumn,
+      markRecoveryFailed,
+      markRecoveryReconnecting,
+      markRecoveryResumedIfActive,
       openTextEditorTab,
       openRemediationPanel,
       persistImmediately,
@@ -2777,6 +2886,10 @@ function App() {
       return
     }
 
+    // A brand-new send clears any previous recovery banner (including failed),
+    // otherwise stale "Reconnect failed" can linger on the card after the user
+    // retries manually.
+    forceResetRecoveryStatus(cardId)
 
     if (card.status === 'streaming') {
       const latestUserMessage = [...card.messages].reverse().find((message) => message.role === 'user')
@@ -6022,6 +6135,7 @@ function App() {
             onRecordRecentWorkspace={(path) => applyAction({ type: 'recordRecentWorkspace', path })}
             onRemoveRecentWorkspaces={(paths) => applyAction({ type: 'removeRecentWorkspaces', paths })}
             sessionHistory={sessionHistory}
+            cardRecoveryStatuses={cardRecoveryStatuses}
             onRestoreSession={(entryId) => handleRestoreSession(column.id, entryId)}
             onImportExternalSession={(entry) =>
               applyAction({

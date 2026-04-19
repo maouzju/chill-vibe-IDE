@@ -73,10 +73,9 @@ describe('provider runtime routing', () => {
     }
   })
 
-  it('still injects provider profile settings when resilient proxy is enabled even if CLI routing is disabled', async () => {
+  it('does not inject provider profile settings when only resilient proxy is enabled (CLI routing controls injection)', async () => {
     const { saveState } = await import('../server/state-store.ts')
     const { resolveProviderRuntime } = await import('../server/providers.ts')
-    const { resilientProxyPool } = await import('../server/resilient-proxy.ts')
     const state = createDefaultState('')
     const originalOpenAiApiKey = process.env.OPENAI_API_KEY
     const originalOpenAiBaseUrl = process.env.OPENAI_BASE_URL
@@ -103,12 +102,10 @@ describe('provider runtime routing', () => {
     try {
       const runtime = await resolveProviderRuntime('codex')
 
-      assert.equal(runtime.env.OPENAI_API_KEY, 'sk-codex')
-      assert.match(runtime.env.OPENAI_BASE_URL ?? '', /^http:\/\/127\.0\.0\.1:\d+(\/v1)?$/)
-      assert.notEqual(runtime.env.OPENAI_BASE_URL, 'https://codex.example/v1')
-      assert.notDeepEqual(runtime.args, [])
+      assert.deepEqual(runtime.args, [])
+      assert.equal(runtime.env.OPENAI_API_KEY, undefined)
+      assert.equal(runtime.env.OPENAI_BASE_URL, undefined)
     } finally {
-      await resilientProxyPool.dispose()
       restoreEnvVar('OPENAI_API_KEY', originalOpenAiApiKey)
       restoreEnvVar('OPENAI_BASE_URL', originalOpenAiBaseUrl)
     }

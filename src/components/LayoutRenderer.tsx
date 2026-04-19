@@ -8,6 +8,7 @@ import type {
   ProviderStatus,
 } from '../../shared/schema'
 import type { AppLanguage } from '../../shared/schema'
+import type { CardRecoveryStatus } from '../stream-recovery-feedback'
 import { PaneView } from './PaneView'
 import { SplitResizeHandle } from './SplitResizeHandle'
 
@@ -86,6 +87,7 @@ type LayoutRendererProps = {
   onStopMessage: (cardId: string) => Promise<void>
   onForkConversation?: (cardId: string, messageId: string) => void
   onOpenFile?: (paneId: string, relativePath: string) => void
+  cardRecoveryStatuses?: ReadonlyMap<string, CardRecoveryStatus>
 }
 
 export const LayoutRenderer = ({

@@ -2842,6 +2842,22 @@ body.is-card-dragging .lane-drop-zone-top {
 .streaming-dots span:nth-child(2) { animation-delay: 0.16s; }
 .streaming-dots span:nth-child(3) { animation-delay: 0.32s; }
 
+.streaming-indicator.streaming-recovery.is-reconnecting .streaming-label {
+  color: var(--ink-2);
+  font-style: italic;
+}
+.streaming-indicator.streaming-recovery.is-resumed .streaming-label {
+  color: var(--accent);
+}
+.streaming-indicator.streaming-recovery.is-failed .streaming-label {
+  color: var(--danger);
+}
+.streaming-indicator.streaming-recovery.is-failed .streaming-dots span {
+  background: var(--danger);
+  animation: none;
+  opacity: 0.6;
+}
+
 @keyframes bounce-dot {
   0%, 80%, 100% { transform: translateY(0); opacity: 0.4; }
   40%           { transform: translateY(-4px); opacity: 1; }
@@ -6481,6 +6497,7 @@ body.is-card-dragging .lane-drop-zone-top {
 .ask-user-title-bar {
   display: flex;
   align-items: center;
+  justify-content: space-between;
   gap: 0.4rem;
   padding: 0.4rem 0.6rem;
   border-bottom: 2px solid var(--accent);
@@ -6490,6 +6507,43 @@ body.is-card-dragging .lane-drop-zone-top {
   font-size: 0.72rem;
   font-weight: 700;
   color: var(--ink-1);
+}
+
+.ask-user-pager {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+}
+
+.ask-user-nav-btn {
+  appearance: none;
+  border: 1px solid var(--line);
+  background: transparent;
+  color: var(--ink-1);
+  width: 1.25rem;
+  height: 1.25rem;
+  line-height: 1;
+  font-size: 0.9rem;
+  border-radius: 3px;
+  cursor: pointer;
+  padding: 0;
+}
+
+.ask-user-nav-btn:hover:not(:disabled) {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.ask-user-nav-btn:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+.ask-user-counter {
+  font-size: 0.66rem;
+  color: var(--ink-2);
+  min-width: 2.5rem;
+  text-align: center;
 }
 
 .ask-user-question {

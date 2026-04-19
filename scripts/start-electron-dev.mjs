@@ -122,7 +122,7 @@ async function ensureDevServices() {
 function killStaleDevInstances() {
   if (process.platform !== 'win32') {
     try {
-      const out = execSync(`pgrep -af "${devMarkerArg}"`, { encoding: 'utf8', timeout: 3000 })
+      const out = execSync(`pgrep -af -- "${devMarkerArg}"`, { encoding: 'utf8', timeout: 3000 })
 
       for (const line of out.trim().split('\n')) {
         const pid = parseInt(line, 10)

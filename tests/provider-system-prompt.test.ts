@@ -27,6 +27,7 @@ const createRequest = (overrides: Partial<ChatRequest> = {}): ChatRequest => ({
   sessionId: overrides.sessionId,
   language: overrides.language ?? 'zh-CN',
   systemPrompt: overrides.systemPrompt ?? defaultSystemPrompt,
+  modelPromptRules: overrides.modelPromptRules ?? [],
   crossProviderSkillReuseEnabled: overrides.crossProviderSkillReuseEnabled ?? true,
   prompt: overrides.prompt ?? '修复这个问题',
   attachments: overrides.attachments ?? [],
@@ -82,6 +83,67 @@ test('claude runs include the final resolution marker instruction', () => {
   assert.match(promptValue, /Always leave a clear final status line\./)
   assert.match(promptValue, /ask-user-question/)
   assert.match(promptValue, /AskUserQuestion/)
+})
+
+test('codex args append matching model prompt rules before provider execution', () => {
+  const args = buildCodexArgs(
+    createRequest({
+      provider: 'codex',
+      model: 'gpt-5.4',
+      language: 'en',
+      systemPrompt: 'Base system prompt.',
+      modelPromptRules: [
+        {
+          id: 'rule-gpt',
+          modelMatch: 'gpt',
+          prompt: 'Use GPT-specific guidance.',
+        },
+        {
+          id: 'rule-claude',
+          modelMatch: 'claude',
+          prompt: 'Should not reach Codex.',
+        },
+      ],
+    }),
+    [],
+  )
+  const instructionsArg = args.find((arg) => arg.startsWith('instructions='))
+
+  assert.ok(instructionsArg)
+  assert.match(instructionsArg, /Base system prompt\./)
+  assert.match(instructionsArg, /Use GPT-specific guidance\./)
+  assert.doesNotMatch(instructionsArg, /Should not reach Codex\./)
+})
+
+test('claude args append matching model prompt rules before provider execution', () => {
+  const args = buildClaudeArgs(
+    createRequest({
+      provider: 'claude',
+      model: 'claude-sonnet-4-6',
+      language: 'en',
+      systemPrompt: 'Base system prompt.',
+      modelPromptRules: [
+        {
+          id: 'rule-claude',
+          modelMatch: 'claude',
+          prompt: 'Use Claude-specific guidance.',
+        },
+        {
+          id: 'rule-gpt',
+          modelMatch: 'gpt',
+          prompt: 'Should not reach Claude.',
+        },
+      ],
+    }),
+    [],
+  )
+  const promptIndex = args.indexOf('--append-system-prompt')
+
+  assert.notEqual(promptIndex, -1)
+  const promptValue = args[promptIndex + 1] ?? ''
+  assert.match(promptValue, /Base system prompt\./)
+  assert.match(promptValue, /Use Claude-specific guidance\./)
+  assert.doesNotMatch(promptValue, /Should not reach Claude\./)
 })
 
 test('claude runs pin the permission default mode so spawned subagents inherit it', () => {
@@ -252,6 +314,141 @@ test('codex app-server skips opposite-provider skill injection when cross-provid
 
     assert.doesNotMatch(baseInstructions, /Cross-provider skill reuse is enabled\./)
     assert.doesNotMatch(baseInstructions, /agent-reach \(claude\)/)
+  } finally {
+    await rm(capturePath, { force: true }).catch(() => {})
+  }
+})
+
+
+test('codex skill slash prompts expand to an explicit SKILL.md instruction before launch', async () => {
+  const capturePath = path.join(
+    os.tmpdir(),
+    `chill-vibe-codex-skill-slash-${Date.now()}-${Math.random().toString(36).slice(2)}.jsonl`,
+  )
+
+  try {
+    let skillPath = ''
+
+    const outcome = await withFakeProviderCommand(
+      'codex',
+      buildFakeCodexAppServerScript(capturePath),
+      async (workspacePath) => {
+        const skillDir = path.join(workspacePath, '.claude', 'skills', 'agent-reach')
+        await mkdir(skillDir, { recursive: true })
+        skillPath = path.join(skillDir, 'SKILL.md')
+        await writeFile(
+          skillPath,
+          [
+            '---',
+            'name: agent-reach',
+            'description: Search the web and supported platforms',
+            '---',
+            '',
+            '# Agent Reach',
+          ].join('\n'),
+          'utf8',
+        )
+
+        return captureProviderOutcome(
+          createRequest({
+            provider: 'codex',
+            language: 'en',
+            workspacePath,
+            prompt: '/agent-reach Find the latest project docs.',
+          }),
+        )
+      },
+    )
+
+    assert.deepEqual(outcome, { kind: 'done' })
+
+    const requests = (await readFile(capturePath, 'utf8'))
+      .trim()
+      .split(/\r?\n/)
+      .map((line) => JSON.parse(line) as { method?: string; params?: Record<string, unknown> })
+    const turnStart = requests.find((request) => request.method === 'turn/start')
+    const input = Array.isArray(turnStart?.params?.input) ? turnStart.params?.input : []
+    const promptText =
+      input.length > 0 && typeof input[0] === 'object' && input[0] !== null && 'text' in input[0]
+        ? String((input[0] as { text?: unknown }).text ?? '')
+        : ''
+
+    assert.match(promptText, /Use \$agent-reach at /)
+    assert.ok(promptText.includes(skillPath), `expected prompt to include ${skillPath}, got ${promptText}`)
+    assert.match(promptText, /Search the web and supported platforms/)
+    assert.match(promptText, /Find the latest project docs\./)
+    assert.doesNotMatch(promptText, /^\/agent-reach\b/)
+  } finally {
+    await rm(capturePath, { force: true }).catch(() => {})
+  }
+})
+
+test('claude skill slash prompts expand to an explicit SKILL.md instruction before launch', async () => {
+  const capturePath = path.join(
+    os.tmpdir(),
+    `chill-vibe-claude-skill-slash-${Date.now()}-${Math.random().toString(36).slice(2)}.jsonl`,
+  )
+
+  try {
+    let skillPath = ''
+
+    const outcome = await withFakeProviderCommand(
+      'claude',
+      buildFakeClaudeCapturePromptScript(capturePath),
+      async (workspacePath) => {
+        const skillDir = path.join(workspacePath, '.codex', 'skills', 'check-all')
+        await mkdir(skillDir, { recursive: true })
+        skillPath = path.join(skillDir, 'SKILL.md')
+        await writeFile(
+          skillPath,
+          [
+            '---',
+            'name: check-all',
+            'description: Run the broad validation workflow',
+            '---',
+            '',
+            '# Check All',
+          ].join('\n'),
+          'utf8',
+        )
+
+        return captureProviderOutcome(
+          createRequest({
+            provider: 'claude',
+            model: 'claude-sonnet-4-6',
+            language: 'en',
+            workspacePath,
+            prompt: '/check-all Validate the release candidate.',
+          }),
+        )
+      },
+    )
+
+    assert.deepEqual(outcome, { kind: 'done' })
+
+    const launches = (await readFile(capturePath, 'utf8'))
+      .trim()
+      .split(/\r?\n/)
+      .map((line) => JSON.parse(line) as string[])
+
+    assert.equal(launches.length, 1)
+    const argv = launches[0] ?? []
+    const systemPromptIndex = argv.indexOf('--append-system-prompt')
+    assert.notEqual(systemPromptIndex, -1)
+
+    const trailing = argv.slice(systemPromptIndex + 2)
+    assert.equal(
+      trailing.length,
+      1,
+      `expected exactly one positional prompt after the system prompt flag, got ${JSON.stringify(trailing)}`,
+    )
+
+    const promptArg = trailing[0] ?? ''
+    assert.match(promptArg, /Use \$check-all at /)
+    assert.ok(promptArg.includes(skillPath), `expected prompt to include ${skillPath}, got ${promptArg}`)
+    assert.match(promptArg, /Run the broad validation workflow/)
+    assert.match(promptArg, /Validate the release candidate\./)
+    assert.doesNotMatch(promptArg, /^\/check-all\b/)
   } finally {
     await rm(capturePath, { force: true }).catch(() => {})
   }
@@ -1029,6 +1226,19 @@ const buildFakeClaudeStaleSessionScript = (capturePath: string) =>
     '}',
     "reply({ type: 'system', subtype: 'init', session_id: 'claude-session-recovered' })",
     "reply({ type: 'assistant', message: { content: [{ type: 'text', text: 'Recovered reply' }] } })",
+    "reply({ type: 'result', is_error: false, result: 'ok' })",
+  ].join('\n')
+
+
+const buildFakeClaudeCapturePromptScript = (capturePath: string) =>
+  [
+    "const fs = require('node:fs')",
+    `const capturePath = ${JSON.stringify(capturePath)}`,
+    "const argv = process.argv.slice(2)",
+    "fs.appendFileSync(capturePath, `${JSON.stringify(argv)}\\n`, 'utf8')",
+    "const reply = (message) => process.stdout.write(`${JSON.stringify(message)}\\n`)",
+    "reply({ type: 'system', subtype: 'init', session_id: 'claude-session-capture' })",
+    "reply({ type: 'assistant', message: { content: [{ type: 'text', text: 'Captured prompt' }] } })",
     "reply({ type: 'result', is_error: false, result: 'ok' })",
   ].join('\n')
 

@@ -256,6 +256,61 @@ test('fetchSlashCommands caches separately when cross-provider skill reuse chang
   assert.equal(disabled[0]?.name, 'check-all')
 })
 
+test('fetchSlashCommands refreshes shortly so newly-created skills can appear without restarting', async () => {
+  const originalDateNow = Date.now
+  let now = 1_000
+  const requests: number[] = []
+
+  Date.now = () => now
+
+  setWindow({
+    electronAPI: {
+      fetchSlashCommands: async () => {
+        const callNumber = requests.length + 1
+        requests.push(callNumber)
+        return [
+          {
+            name: callNumber === 1 ? 'before-skill' : 'after-skill',
+            description: 'Skill',
+            source: 'skill',
+          },
+        ]
+      },
+    },
+  } as unknown as ElectronBridgeWindow)
+
+  try {
+    const first = await fetchSlashCommands({
+      provider: 'codex',
+      workspacePath: 'D:/workspace/slash-cache-ttl',
+      language: 'en',
+      crossProviderSkillReuseEnabled: true,
+    })
+    const cached = await fetchSlashCommands({
+      provider: 'codex',
+      workspacePath: 'D:/workspace/slash-cache-ttl',
+      language: 'en',
+      crossProviderSkillReuseEnabled: true,
+    })
+
+    now += 5_001
+
+    const refreshed = await fetchSlashCommands({
+      provider: 'codex',
+      workspacePath: 'D:/workspace/slash-cache-ttl',
+      language: 'en',
+      crossProviderSkillReuseEnabled: true,
+    })
+
+    assert.deepEqual(requests, [1, 2])
+    assert.equal(first[0]?.name, 'before-skill')
+    assert.equal(cached[0]?.name, 'before-skill')
+    assert.equal(refreshed[0]?.name, 'after-skill')
+  } finally {
+    Date.now = originalDateNow
+  }
+})
+
 test('openChatStream requires the Electron bridge and does not fall back to EventSource', () => {
   let eventSourceCalls = 0
 

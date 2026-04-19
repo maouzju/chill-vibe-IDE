@@ -293,7 +293,7 @@ const localeTextByLanguage: Record<AppLanguage, LocaleText> = {
     systemPromptNote: '每次 AI 运行前都会附加这条系统提示词。恢复默认可回到内置提示词。',
     crossProviderSkillReuseLabel: 'Codex / Claude Skill 互相复用',
     crossProviderSkillReuseNote:
-      '启用后，斜杠菜单和实际 AI 运行都可以复用当前工作区里的 .codex/skills 和 .claude/skills，不用复制两份。',
+      '启用后，斜杠菜单和实际 AI 运行都可以复用当前工作区或用户目录里的 .codex/skills 和 .claude/skills，不用复制两份。',
     restoreDefaultSystemPrompt: '恢复内置提示词',
     applyToExistingChats: '应用到现有会话',
     resetInterfaceDefaults: '重置界面默认值',
@@ -445,11 +445,11 @@ const localeTextByLanguage: Record<AppLanguage, LocaleText> = {
     emptyStateToolsLabel: '快捷功能卡',
     emptyStateGitDescription: '查看仓库状态，分析改动并继续同步。',
     emptyStateFilesTitle: '文件',
-    emptyStateFilesDescription: '打开文件树，快速浏览和跳转工作区内容。',
-    emptyStateStickyDescription: '开一张便签，随手记下想法和待办。',
+    emptyStateFilesDescription: '快速浏览和跳转工作区内容。',
+    emptyStateStickyDescription: '随手记下想法和待办。',
     emptyStateBrainstormDescription: '让多个 agent 并行给出不同脑暴方向，删掉弱答案后会自动补位。',
-    emptyStateWeatherDescription: '打开天气氛围卡，让当前环境更有感觉。',
-    emptyStateMusicDescription: '打开网易云音乐，在工作时挂一条背景声轨。',
+    emptyStateWeatherDescription: '让当前环境更有感觉。',
+    emptyStateMusicDescription: '在工作时挂一条背景声轨。',
     emptyStateWhiteNoiseDescription: '生成一组专注白噪音，铺一层工作氛围。',
 
     settingsGroupUpdate: '应用更新',
@@ -539,7 +539,7 @@ const localeTextByLanguage: Record<AppLanguage, LocaleText> = {
       'This prompt is appended before each AI run. Restore default to go back to the built-in prompt.',
     crossProviderSkillReuseLabel: 'Reuse Codex / Claude skills',
     crossProviderSkillReuseNote:
-      'When enabled, slash menus and provider runs can reuse local .codex/skills and .claude/skills without copying them twice.',
+      'When enabled, slash menus and provider runs can reuse .codex/skills and .claude/skills from the current workspace or user home without copying them twice.',
     restoreDefaultSystemPrompt: 'Restore built-in prompt',
     applyToExistingChats: 'Apply to existing chats',
     resetInterfaceDefaults: 'Reset interface defaults',

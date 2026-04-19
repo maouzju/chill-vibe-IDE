@@ -9,9 +9,10 @@ import {
   requestChat,
   stopChat,
 } from '../api'
-import type { AppLanguage, GitStatus } from '../../shared/schema'
+import type { AppLanguage, GitStatus, ModelPromptRule } from '../../shared/schema'
 import { getGitLocaleText } from '../../shared/i18n'
 import { getDefaultReasoningEffort } from '../../shared/reasoning'
+import { buildSystemPromptForModel } from '../../shared/system-prompt'
 import { errorMessage } from './git-utils'
 
 type SyncStep =
@@ -27,6 +28,7 @@ type GitSyncPanelProps = {
   language: AppLanguage
   gitAgentModel: string
   systemPrompt: string
+  modelPromptRules?: ModelPromptRule[]
   crossProviderSkillReuseEnabled: boolean
   onClose: () => void
   onStatusChange: (status: GitStatus) => void
@@ -38,6 +40,7 @@ export const GitSyncPanel = ({
   language,
   gitAgentModel,
   systemPrompt,
+  modelPromptRules = [],
   crossProviderSkillReuseEnabled,
   onClose,
   onStatusChange,
@@ -58,14 +61,17 @@ export const GitSyncPanel = ({
         : `The Git repository has merge conflicts after pulling. Please automatically resolve the conflicts in these files, keep the meaningful changes from both sides, run git add to stage the resolved files, and if Git is still mid-merge, complete the merge commit so the repository is ready to push:\nConflict files: ${conflictFiles}`
 
       const agentParts = gitAgentModel.trim().split(/\s+/)
+      const model = agentParts[0] || ''
+      const composedSystemPrompt = buildSystemPromptForModel(systemPrompt, model, modelPromptRules)
       void requestChat({
         provider: 'codex',
         workspacePath,
         language,
-        systemPrompt,
+        systemPrompt: composedSystemPrompt,
+        modelPromptRules,
         crossProviderSkillReuseEnabled,
         prompt,
-        model: agentParts[0] || '',
+        model,
         reasoningEffort: agentParts[1] || getDefaultReasoningEffort('codex'),
         thinkingEnabled: true,
         planMode: false,
@@ -105,6 +111,7 @@ export const GitSyncPanel = ({
     crossProviderSkillReuseEnabled,
     gitAgentModel,
     language,
+    modelPromptRules,
     systemPrompt,
     text.syncError,
     workspacePath,

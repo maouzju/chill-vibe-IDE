@@ -41,6 +41,7 @@ import type {
   AutoUrgeProfile,
   ChatCard as ChatCardModel,
   ImageAttachment,
+  ModelPromptRule,
   Provider,
   SlashCommand,
 } from '../../shared/schema'
@@ -81,6 +82,7 @@ import { FileTreeCard } from './FileTreeCard'
 import { TextEditorCard } from './TextEditorCard'
 import { BrainstormCard } from './BrainstormCard'
 import { resolveBrainstormRequestTarget } from './brainstorm-card-utils'
+import { formatAskUserFollowUpPrompt } from './ask-user-follow-up'
 import { MessageBubble, StreamingIndicator } from './MessageBubble'
 import {
   StructuredToolGroupCard,
@@ -181,6 +183,7 @@ type ChatCardProps = {
   workspacePath: string
   language: AppLanguage
   systemPrompt: string
+  modelPromptRules?: ModelPromptRule[]
   crossProviderSkillReuseEnabled: boolean
   musicAlbumCoverEnabled: boolean
   weatherCity: string
@@ -885,6 +888,7 @@ const ChatCardView = ({
   workspacePath,
   language,
   systemPrompt,
+  modelPromptRules = [],
   crossProviderSkillReuseEnabled,
   musicAlbumCoverEnabled,
   weatherCity,
@@ -1959,6 +1963,52 @@ const ChatCardView = ({
       setSlashMenuDismissed(false)
     })
   }, [slashQuery])
+
+  useEffect(() => {
+    if (isToolCard || !hasWorkspacePath || !slashCommandsEnabled || slashQuery === null) {
+      return
+    }
+
+    let cancelled = false
+
+    void fetchSlashCommands({
+      provider: card.provider,
+      workspacePath,
+      language,
+      crossProviderSkillReuseEnabled,
+    })
+      .then((commands) => {
+        if (cancelled) {
+          return
+        }
+
+        setRemoteSlashCommands(commands.length > 0 ? commands : localSlashCommands)
+        setSlashCommandsStatus('ready')
+      })
+      .catch(() => {
+        if (cancelled) {
+          return
+        }
+
+        setRemoteSlashCommands(localSlashCommands)
+        setSlashCommandsStatus('error')
+      })
+
+    return () => {
+      cancelled = true
+    }
+  }, [
+    card.provider,
+    crossProviderSkillReuseEnabled,
+    hasWorkspacePath,
+    isToolCard,
+    language,
+    localSlashCommands,
+    slashCommandsEnabled,
+    slashQuery,
+    workspacePath,
+  ])
+
   const filteredSlashCommands = useMemo(() => {
     if (slashQuery === null) {
       return []
@@ -2344,10 +2394,9 @@ const ChatCardView = ({
   const handleSelectAskUserOption = useCallback(
     (itemId: string, label: string) => {
       setAskUserAnswers((prev) => (prev[itemId] === label ? prev : { ...prev, [itemId]: label }))
-      scrollMessageListToBottom('instant')
-      void onSend(label, [])
+      void onSend(formatAskUserFollowUpPrompt(label, language), [])
     },
-    [onSend, scrollMessageListToBottom],
+    [language, onSend],
   )
 
   // Layer 1: auto-collapse tool-groups once the assistant has clearly moved on
@@ -2494,7 +2543,7 @@ const ChatCardView = ({
     })
   }, [autoUrgeActive, card.status, card.id])
 
-  const hasFloatingUi = modelMenuOpen || slashMenuOpen || gitAgentPanelOpen
+  const hasFloatingUi = slashMenuOpen || gitAgentPanelOpen
   const slashMenuSideRef = useRef<'left' | 'right'>('right')
   const slashMenuRef = (el: HTMLDivElement | null) => {
     slashMenuElRef.current = el
@@ -2778,6 +2827,7 @@ const ChatCardView = ({
             language={language}
             gitAgentModel={gitAgentModel}
             systemPrompt={systemPrompt}
+            modelPromptRules={modelPromptRules}
             crossProviderSkillReuseEnabled={crossProviderSkillReuseEnabled}
             isActive={!suspendPaneRuntimeEffects}
             requestedHeight={card.size ?? 440}
@@ -2830,6 +2880,7 @@ const ChatCardView = ({
           card={card}
           language={language}
           systemPrompt={systemPrompt}
+          modelPromptRules={modelPromptRules}
           crossProviderSkillReuseEnabled={crossProviderSkillReuseEnabled}
           providerReady={providerReady}
           workspacePath={workspacePath}
@@ -2840,7 +2891,7 @@ const ChatCardView = ({
         />
       )}
 
-      {isTextEditorCard && !isCollapsed && card.stickyNote && (
+      {isTextEditorCard && !isCollapsed && (
         <TextEditorCard
           workspacePath={workspacePath}
           filePath={card.stickyNote}

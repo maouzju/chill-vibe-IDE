@@ -1068,7 +1068,10 @@ export const AskUserQuestionCard = ({
     answeredOption ?? cachedDraft?.selected ?? null,
   )
   const [otherText, setOtherTextState] = useState(cachedDraft?.otherText ?? '')
+  const [lastSubmittedItemId, setLastSubmittedItemId] = useState<string | null>(null)
   const otherInputRef = useRef<HTMLInputElement>(null)
+  const submitStartedRef = useRef<string | null>(null)
+  const isSubmitting = answeredOption === null && lastSubmittedItemId === data.itemId
 
   const setSelected = (value: string | null) => {
     setSelectedState(value)
@@ -1089,7 +1092,11 @@ export const AskUserQuestionCard = ({
     : { submit: '提交回答', escHint: 'Esc 取消', other: '其他' }
 
   const handleSubmit = () => {
-    if (!selected || isAnswered) return
+    if (!selected || isAnswered || submitStartedRef.current === data.itemId) return
+
+    submitStartedRef.current = data.itemId
+    setLastSubmittedItemId(data.itemId)
+
     if (selected === OTHER_LABEL) {
       onSelectOption(otherText.trim() || OTHER_LABEL)
     } else {
@@ -1097,6 +1104,12 @@ export const AskUserQuestionCard = ({
     }
     clearAskUserDraft(data.itemId)
   }
+
+  useEffect(() => {
+    if (answeredOption !== null) {
+      submitStartedRef.current = null
+    }
+  }, [data.itemId, answeredOption, isAnswered])
 
   useEffect(() => {
     if (!isAnswered) {
@@ -1140,7 +1153,7 @@ export const AskUserQuestionCard = ({
                 name={`ask-user-${data.itemId}`}
                 className="ask-user-radio-input"
                 checked={isChecked}
-                disabled={isAnswered}
+                disabled={isAnswered || isSubmitting}
                 onChange={() => setSelected(option.label)}
               />
             </label>
@@ -1160,7 +1173,7 @@ export const AskUserQuestionCard = ({
             name={`ask-user-${data.itemId}`}
             className="ask-user-radio-input"
             checked={selected === OTHER_LABEL}
-            disabled={isAnswered}
+            disabled={isAnswered || isSubmitting}
             onChange={() => {
               setSelected(OTHER_LABEL)
               requestAnimationFrame(() => otherInputRef.current?.focus())
@@ -1174,6 +1187,7 @@ export const AskUserQuestionCard = ({
             type="text"
             className="ask-user-other-input"
             value={otherText}
+            disabled={isSubmitting}
             onChange={(e) => setOtherText(e.target.value)}
             placeholder="..."
           />
@@ -1185,7 +1199,7 @@ export const AskUserQuestionCard = ({
           <button
             type="button"
             className="ask-user-submit"
-            disabled={!selected}
+            disabled={!selected || isSubmitting}
             onClick={handleSubmit}
           >
             {labels.submit}

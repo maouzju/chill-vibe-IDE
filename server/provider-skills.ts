@@ -1,7 +1,9 @@
 import { access, readdir, readFile, stat } from 'node:fs/promises'
+import os from 'node:os'
 import path from 'node:path'
 
 import type { ChatRequest, Provider, SlashCommand } from '../shared/schema.js'
+import { parseSlashCommandInput } from '../shared/slash-commands.js'
 
 export type DiscoveredProviderSkill = SlashCommand & {
   source: 'skill'
@@ -22,6 +24,11 @@ const providerSkillDirectoryNames: Record<Provider, string> = {
   claude: '.claude',
 }
 
+const providerConfigHomeEnvNames: Record<Provider, string[]> = {
+  codex: ['CODEX_HOME'],
+  claude: ['CLAUDE_HOME', 'CLAUDE_CONFIG_DIR'],
+}
+
 const oppositeProvider = (provider: Provider): Provider =>
   provider === 'codex' ? 'claude' : 'codex'
 
@@ -35,6 +42,42 @@ const normalizeWorkspacePath = (workspacePath: string) => workspacePath.trim()
 
 const getWorkspaceSkillRoot = (workspacePath: string, provider: Provider) =>
   path.join(normalizeWorkspacePath(workspacePath), providerSkillDirectoryNames[provider], 'skills')
+
+const getHomePathCandidates = (env: NodeJS.ProcessEnv = process.env, homeDir = os.homedir()) => [
+  homeDir,
+  env.HOME,
+  env.USERPROFILE,
+]
+
+const getProviderSkillRoots = (
+  workspacePath: string,
+  provider: Provider,
+  env: NodeJS.ProcessEnv = process.env,
+) => {
+  const providerDirectoryName = providerSkillDirectoryNames[provider]
+  const roots = [getWorkspaceSkillRoot(workspacePath, provider)]
+
+  for (const homePath of getHomePathCandidates(env)) {
+    if (homePath?.trim()) {
+      roots.push(path.join(homePath, providerDirectoryName, 'skills'))
+    }
+  }
+
+  for (const envName of providerConfigHomeEnvNames[provider]) {
+    const configHome = env[envName]?.trim()
+    if (!configHome) {
+      continue
+    }
+
+    roots.push(path.join(configHome, 'skills'))
+
+    if (path.basename(configHome).toLowerCase() === 'skills') {
+      roots.push(configHome)
+    }
+  }
+
+  return roots
+}
 
 const pathExists = async (filePath: string) => {
   try {
@@ -236,7 +279,7 @@ const discoverProviderSkillsForProvider = async (
   workspacePath: string,
   provider: Provider,
 ): Promise<DiscoveredProviderSkill[]> => {
-  const roots = await getUniqueExistingRoots([getWorkspaceSkillRoot(workspacePath, provider)])
+  const roots = await getUniqueExistingRoots(getProviderSkillRoots(workspacePath, provider))
   const skillCandidates: Array<{ skillPath: string; fallbackName: string }> = []
 
   for (const root of roots) {
@@ -291,6 +334,66 @@ export const discoverProviderSkills = async (
   }
 
   return result
+}
+
+export const resolvePromptSkill = async (
+  request: Pick<ChatRequest, 'provider' | 'workspacePath' | 'prompt'> & {
+    crossProviderSkillReuseEnabled?: boolean
+  },
+): Promise<DiscoveredProviderSkill | null> => {
+  const parsed = parseSlashCommandInput(request.prompt)
+  if (!parsed?.name) {
+    return null
+  }
+
+  const skills = await discoverProviderSkills(
+    request.workspacePath,
+    getReusableSkillProviders(request.provider, request.crossProviderSkillReuseEnabled),
+  )
+
+  return skills.find((skill) => skill.name === parsed.name) ?? null
+}
+
+export const buildSkillSlashPrompt = (
+  request: Pick<ChatRequest, 'provider' | 'prompt' | 'language'>,
+  skill: DiscoveredProviderSkill,
+) => {
+  const parsed = parseSlashCommandInput(request.prompt)
+  if (!parsed || parsed.name !== skill.name) {
+    return request.prompt
+  }
+
+  const description = skill.description ? `\nDescription: ${skill.description}` : ''
+  const userPrompt = parsed.args.trim()
+  const instruction =
+    request.language === 'en'
+      ? [
+          `Use $${skill.name} at ${skill.skillPath} while handling this request.`,
+          `Read that SKILL.md first and follow its workflow. Reusing the skill does not switch provider CLIs; this run stays on ${request.provider}.`,
+          `Skill source: ${skill.skillProvider}.${description}`,
+        ].join('\n')
+      : [
+          `使用 $${skill.name}（路径：${skill.skillPath}）来处理这次请求。`,
+          `请先读取这个 SKILL.md，并按照其中的工作流执行。复用 skill 不代表切换 CLI；本次运行仍使用当前 Provider。`,
+          `Skill 来源：${skill.skillProvider}。${description}`,
+        ].join('\n')
+
+  if (!userPrompt) {
+    return instruction
+  }
+
+  return request.language === 'en'
+    ? `${instruction}\n\nUser request:\n${userPrompt}`
+    : `${instruction}\n\n用户请求：\n${userPrompt}`
+}
+
+export const expandSkillSlashPrompt = async (
+  request: Pick<ChatRequest, 'provider' | 'workspacePath' | 'language' | 'prompt'> & {
+    crossProviderSkillReuseEnabled?: boolean
+  },
+) => {
+  const skill = await resolvePromptSkill(request)
+  return skill ? buildSkillSlashPrompt(request, skill) : request.prompt
 }
 
 export const buildCrossProviderSkillInstructions = async (

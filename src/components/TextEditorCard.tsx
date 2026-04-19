@@ -5,6 +5,7 @@ import type { AppLanguage, FileReadResponse } from '../../shared/schema'
 import { resolveTextEditorExternalRefresh, shouldFlushTextEditorSave } from './tool-card-state'
 import { getTextEditorCardText } from './tool-card-text'
 import { resolveTextEditorMonacoTheme } from './text-editor-monaco-config'
+import { FileTextIcon } from './Icons'
 
 type TextEditorCardProps = {
   workspacePath: string
@@ -32,6 +33,7 @@ const getCurrentUiTheme = (): UiTheme => {
 
 const TextEditorCardInner = ({ workspacePath, filePath, language }: TextEditorCardProps) => {
   const text = getTextEditorCardText(language)
+  const normalizedFilePath = filePath.trim()
   const [content, setContent] = useState('')
   const [savedContent, setSavedContent] = useState('')
   const [loading, setLoading] = useState(true)
@@ -111,9 +113,19 @@ const TextEditorCardInner = ({ workspacePath, filePath, language }: TextEditorCa
   }, [applyResolvedRefresh])
 
   useEffect(() => {
+    if (!normalizedFilePath) {
+      setLoading(false)
+      setError(null)
+      setContent('')
+      setSavedContent('')
+      contentRef.current = ''
+      savedContentRef.current = ''
+      return
+    }
+
     let cancelled = false
 
-    fetchFileContent(workspacePath, filePath)
+    fetchFileContent(workspacePath, normalizedFilePath)
       .then((result) => {
         if (!cancelled && mountedRef.current) {
           syncFileSnapshot(result)
@@ -129,16 +141,20 @@ const TextEditorCardInner = ({ workspacePath, filePath, language }: TextEditorCa
     return () => {
       cancelled = true
     }
-  }, [filePath, syncFileSnapshot, workspacePath])
+  }, [normalizedFilePath, syncFileSnapshot, workspacePath])
 
   const refreshFileFromDisk = useCallback(async () => {
-    const result = await fetchFileContent(workspacePath, filePath)
+    if (!normalizedFilePath) {
+      return
+    }
+
+    const result = await fetchFileContent(workspacePath, normalizedFilePath)
     if (!mountedRef.current) {
       return
     }
 
     syncFileSnapshot(result)
-  }, [filePath, syncFileSnapshot, workspacePath])
+  }, [normalizedFilePath, syncFileSnapshot, workspacePath])
 
   const save = useCallback(async (textContent: string, options?: PersistOptions) => {
     const indicateSaving = options?.indicateSaving ?? true
@@ -148,7 +164,11 @@ const TextEditorCardInner = ({ workspacePath, filePath, language }: TextEditorCa
     }
 
     try {
-      await saveFileContent(workspacePath, filePath, textContent)
+      if (!normalizedFilePath) {
+        return
+      }
+
+      await saveFileContent(workspacePath, normalizedFilePath, textContent)
       savedContentRef.current = textContent
 
       if (mountedRef.current) {
@@ -161,7 +181,7 @@ const TextEditorCardInner = ({ workspacePath, filePath, language }: TextEditorCa
         setSaving(false)
       }
     }
-  }, [filePath, workspacePath])
+  }, [normalizedFilePath, workspacePath])
 
   const flushPendingSave = useCallback((options?: PersistOptions) => {
     if (saveTimerRef.current) {
@@ -240,7 +260,7 @@ const TextEditorCardInner = ({ workspacePath, filePath, language }: TextEditorCa
   }, [error, loading, refreshFileFromDisk])
 
   useEffect(() => {
-    if (loading || error || !editorContainerRef.current) {
+    if (!normalizedFilePath || loading || error || !editorContainerRef.current) {
       return
     }
 
@@ -258,7 +278,7 @@ const TextEditorCardInner = ({ workspacePath, filePath, language }: TextEditorCa
         module.ensureTextEditorMonacoEnvironment()
         module.monaco.editor.setTheme(resolveTextEditorMonacoTheme(getCurrentUiTheme()))
 
-        const model = await module.createTextEditorModel(contentRef.current, filePath, fileLanguage)
+        const model = await module.createTextEditorModel(contentRef.current, normalizedFilePath, fileLanguage)
         if (cancelled || !mountedRef.current || !editorContainerRef.current) {
           model.dispose()
           return
@@ -311,7 +331,7 @@ const TextEditorCardInner = ({ workspacePath, filePath, language }: TextEditorCa
       modelRef.current?.dispose()
       modelRef.current = null
     }
-  }, [error, fileLanguage, filePath, flushPendingSave, handleEditorContentChange, loading])
+  }, [error, fileLanguage, flushPendingSave, handleEditorContentChange, loading, normalizedFilePath])
 
   useEffect(() => {
     const monacoModule = monacoModuleRef.current
@@ -334,6 +354,18 @@ const TextEditorCardInner = ({ workspacePath, filePath, language }: TextEditorCa
   }, [save])
 
   const isDirty = content !== savedContent
+
+  if (!normalizedFilePath) {
+    return (
+      <div className="text-editor-card">
+        <div className="text-editor-empty">
+          <FileTextIcon className="text-editor-empty-icon" />
+          <div className="text-editor-empty-title">{text.emptyTitle}</div>
+          <div className="text-editor-empty-description">{text.emptyDescription}</div>
+        </div>
+      </div>
+    )
+  }
 
   if (loading) {
     return (
@@ -374,7 +406,7 @@ const TextEditorCardInner = ({ workspacePath, filePath, language }: TextEditorCa
 export function TextEditorCard({ workspacePath, filePath, language }: TextEditorCardProps) {
   return (
     <TextEditorCardInner
-      key={`${workspacePath}\0${filePath}`}
+      key={`${workspacePath}\0${filePath.trim()}`}
       workspacePath={workspacePath}
       filePath={filePath}
       language={language}

@@ -224,6 +224,35 @@ const installMockApis = async (page: Page, initialState: AppState) => {
 }
 
 for (const theme of ['dark', 'light'] as const) {
+  test(`portaled model menu keeps pane clipping intact in ${theme} theme`, async ({ page }) => {
+    await installMockApis(page, createNestedSplitState(theme))
+    await page.setViewportSize({ width: 1280, height: 820 })
+    await page.goto(appUrl, { waitUntil: 'domcontentloaded' })
+
+    const paneViews = page.locator('.pane-view')
+    const bottomPane = paneViews.nth(2)
+    const bottomCard = bottomPane.locator('.card-shell').first()
+    const modelSelect = bottomPane.locator('.composer-input-row .model-select').first()
+    const modelMenu = page.locator('.model-dropdown-menu').first()
+
+    await expect(paneViews).toHaveCount(3)
+    await expect(bottomPane).toBeVisible()
+    await expect(bottomCard).toBeVisible()
+    await expect(modelSelect).toBeVisible()
+
+    await modelSelect.click()
+    await expect(modelMenu).toBeVisible()
+    await expect(bottomCard).not.toHaveClass(/has-floating-ui/)
+    await expect
+      .poll(async () =>
+        bottomPane.evaluate((node) => ({
+          overflowX: getComputedStyle(node).overflowX,
+          overflowY: getComputedStyle(node).overflowY,
+        })),
+      )
+      .toEqual({ overflowX: 'hidden', overflowY: 'hidden' })
+  })
+
   test(`nested split model menu stays inside its own pane in ${theme} theme`, async ({ page }) => {
     await installMockApis(page, createNestedSplitState(theme))
     await page.setViewportSize({ width: 1280, height: 820 })

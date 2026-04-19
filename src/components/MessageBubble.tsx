@@ -11,6 +11,7 @@ import {
   getMessageLabel,
 } from '../../shared/i18n'
 import type { AppLanguage, ChatMessage, ImageAttachment } from '../../shared/schema'
+import type { CardRecoveryStatus } from '../stream-recovery-feedback'
 import {
   parseStructuredAskUserMessage,
   parseStructuredCommandMessage,
@@ -169,10 +170,34 @@ const MessageAttachments = ({
   )
 }
 
-export const StreamingIndicator = ({ messages, language }: { messages: ChatMessage[]; language: AppLanguage }) => {
-  const label = getStreamingLabel(messages, language)
+export const StreamingIndicator = ({
+  messages,
+  language,
+  recoveryStatus,
+}: {
+  messages: ChatMessage[]
+  language: AppLanguage
+  recoveryStatus?: CardRecoveryStatus
+}) => {
+  const locale = getLocaleText(language)
+  const defaultLabel = getStreamingLabel(messages, language)
+  let label = defaultLabel
+  let recoveryClass: string | null = null
+  if (recoveryStatus?.kind === 'reconnecting') {
+    label = locale.streamRecoveryReconnecting(recoveryStatus.attempt, recoveryStatus.max)
+    recoveryClass = 'is-reconnecting'
+  } else if (recoveryStatus?.kind === 'resumed') {
+    label = locale.streamRecoveryResumed
+    recoveryClass = 'is-resumed'
+  } else if (recoveryStatus?.kind === 'failed') {
+    label = locale.streamRecoveryFailed
+    recoveryClass = 'is-failed'
+  }
+  const className = recoveryClass
+    ? `streaming-indicator streaming-recovery ${recoveryClass}`
+    : 'streaming-indicator'
   return (
-    <div className="streaming-indicator">
+    <div className={className} role="status" aria-live="polite">
       <span className="streaming-dots" aria-hidden="true">
         <span />
         <span />

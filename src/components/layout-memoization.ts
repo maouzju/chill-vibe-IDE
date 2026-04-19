@@ -8,6 +8,7 @@ import type {
   RecentWorkspace,
   SessionHistoryEntry,
 } from '../../shared/schema'
+import type { CardRecoveryStatus } from '../stream-recovery-feedback'
 
 type WorkspaceColumnMemoProps = {
   column: BoardColumn
@@ -27,6 +28,7 @@ type WorkspaceColumnMemoProps = {
   autoUrgeSuccessKeyword: string
   recentWorkspaces: RecentWorkspace[]
   sessionHistory: SessionHistoryEntry[]
+  cardRecoveryStatuses?: ReadonlyMap<string, CardRecoveryStatus>
 }
 
 type PaneViewMemoProps = {
@@ -47,6 +49,7 @@ type PaneViewMemoProps = {
   autoUrgeMessage: string
   autoUrgeSuccessKeyword: string
   flashCardIds: Set<string>
+  cardRecoveryStatuses?: ReadonlyMap<string, CardRecoveryStatus>
 }
 
 const haveSameSessionHistoryEntries = (
@@ -108,6 +111,7 @@ export const areWorkspaceColumnPropsEqual = (
   previous.autoUrgeMessage === next.autoUrgeMessage &&
   previous.autoUrgeSuccessKeyword === next.autoUrgeSuccessKeyword &&
   previous.recentWorkspaces === next.recentWorkspaces &&
+  previous.cardRecoveryStatuses === next.cardRecoveryStatuses &&
   haveSameSessionHistoryEntries(previous.sessionHistory, next.sessionHistory)
 
 const haveSamePaneCardRefs = (previous: PaneViewMemoProps, next: PaneViewMemoProps) => {
@@ -121,6 +125,13 @@ const haveSamePaneCardRefs = (previous: PaneViewMemoProps, next: PaneViewMemoPro
     }
 
     if (previous.flashCardIds.has(tabId) !== next.flashCardIds.has(tabId)) {
+      return false
+    }
+
+    if (
+      (previous.cardRecoveryStatuses?.get(tabId) ?? undefined) !==
+      (next.cardRecoveryStatuses?.get(tabId) ?? undefined)
+    ) {
       return false
     }
   }

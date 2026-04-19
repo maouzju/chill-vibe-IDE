@@ -208,20 +208,23 @@ const formatStructuredSections = (message: ChatMessage) => {
   const askUser = parseStructuredAskUserMessage(message)
   if (askUser) {
     const sections: string[] = []
-    pushLabeledValue(sections, 'Ask user', askUser.question)
-    if (askUser.header.trim()) {
-      pushLabeledValue(sections, 'Header', askUser.header)
-    }
-    pushLabeledValue(sections, 'Multi-select', askUser.multiSelect ? 'true' : 'false')
-    pushLabeledList(
-      sections,
-      'Options',
-      askUser.options.map((option) =>
-        option.description.trim()
-          ? `${option.label} - ${option.description}`
-          : option.label,
-      ),
-    )
+    askUser.questions.forEach((q, idx) => {
+      const label = askUser.questions.length > 1 ? `Ask user [${idx + 1}/${askUser.questions.length}]` : 'Ask user'
+      pushLabeledValue(sections, label, q.question)
+      if (q.header.trim()) {
+        pushLabeledValue(sections, 'Header', q.header)
+      }
+      pushLabeledValue(sections, 'Multi-select', q.multiSelect ? 'true' : 'false')
+      pushLabeledList(
+        sections,
+        'Options',
+        q.options.map((option) =>
+          option.description.trim()
+            ? `${option.label} - ${option.description}`
+            : option.label,
+        ),
+      )
+    })
     return sections
   }
 

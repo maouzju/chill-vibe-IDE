@@ -66,6 +66,47 @@ const updateTree = <T extends RefreshableFileTreeNode>(
     return node
   })
 
+type AutoRefreshListener = () => void
+
+type AutoRefreshWindowLike = {
+  addEventListener: (name: string, listener: AutoRefreshListener) => void
+  removeEventListener: (name: string, listener: AutoRefreshListener) => void
+}
+
+type AutoRefreshDocumentLike = AutoRefreshWindowLike & {
+  visibilityState: 'visible' | 'hidden' | string
+}
+
+export type AttachFileTreeAutoRefreshOptions = {
+  win: AutoRefreshWindowLike
+  doc: AutoRefreshDocumentLike
+  onRefresh: () => void
+}
+
+export const attachFileTreeAutoRefreshTriggers = ({
+  win,
+  doc,
+  onRefresh,
+}: AttachFileTreeAutoRefreshOptions) => {
+  const handleFocus: AutoRefreshListener = () => {
+    onRefresh()
+  }
+
+  const handleVisibilityChange: AutoRefreshListener = () => {
+    if (doc.visibilityState === 'visible') {
+      onRefresh()
+    }
+  }
+
+  win.addEventListener('focus', handleFocus)
+  doc.addEventListener('visibilitychange', handleVisibilityChange)
+
+  return () => {
+    win.removeEventListener('focus', handleFocus)
+    doc.removeEventListener('visibilitychange', handleVisibilityChange)
+  }
+}
+
 export const applyRefreshedFileTreeDirectories = <T extends RefreshableFileTreeNode>(
   currentNodes: T[],
   refreshedByPath: ReadonlyMap<string, T[]>,

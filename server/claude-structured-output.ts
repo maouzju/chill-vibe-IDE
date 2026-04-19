@@ -515,34 +515,54 @@ export const createClaudeStructuredOutputParser = (language: AppLanguage) => {
         }
 
         if (toolName === 'AskUserQuestion') {
-          const questions = Array.isArray(input.questions) ? input.questions : []
-          const firstQuestion = questions.length > 0 && isRecord(questions[0]) ? questions[0] : null
-
-          if (firstQuestion) {
-            const options = Array.isArray(firstQuestion.options) ? firstQuestion.options : []
-            const question =
-              typeof firstQuestion.question === 'string' ? firstQuestion.question.trim() : ''
-            const normalizedOptions = options
-              .filter(isRecord)
-              .map((opt) => ({
-                label: typeof opt.label === 'string' ? opt.label.trim() : '',
-                description: typeof opt.description === 'string' ? opt.description : '',
-              }))
-              .filter((opt) => opt.label)
-
-            if (question && normalizedOptions.length > 0) {
-              activities.push({
-                type: 'activity',
-                itemId,
-                kind: 'ask-user',
-                status: 'completed',
+          const rawQuestions = Array.isArray(input.questions) ? input.questions : []
+          const normalizedQuestions = rawQuestions
+            .filter(isRecord)
+            .map((raw) => {
+              const question = typeof raw.question === 'string' ? raw.question.trim() : ''
+              const options = Array.isArray(raw.options) ? raw.options : []
+              const normalizedOptions = options
+                .filter(isRecord)
+                .map((opt) => ({
+                  label: typeof opt.label === 'string' ? opt.label.trim() : '',
+                  description: typeof opt.description === 'string' ? opt.description : '',
+                }))
+                .filter((opt) => opt.label)
+              if (!question || normalizedOptions.length === 0) {
+                return null
+              }
+              return {
                 question,
-                header: typeof firstQuestion.header === 'string' ? firstQuestion.header : '',
-                multiSelect: firstQuestion.multiSelect === true,
+                header: typeof raw.header === 'string' ? raw.header : '',
+                multiSelect: raw.multiSelect === true,
                 options: normalizedOptions,
-              })
-              continue
-            }
+              }
+            })
+            .filter(
+              (
+                entry,
+              ): entry is {
+                question: string
+                header: string
+                multiSelect: boolean
+                options: { label: string; description: string }[]
+              } => entry !== null,
+            )
+
+          if (normalizedQuestions.length > 0) {
+            const first = normalizedQuestions[0]!
+            activities.push({
+              type: 'activity',
+              itemId,
+              kind: 'ask-user',
+              status: 'completed',
+              question: first.question,
+              header: first.header,
+              multiSelect: first.multiSelect,
+              options: first.options,
+              ...(normalizedQuestions.length > 1 ? { questions: normalizedQuestions } : {}),
+            })
+            continue
           }
         }
 

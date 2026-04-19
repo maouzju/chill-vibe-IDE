@@ -33,7 +33,7 @@ describe('provider runtime routing', () => {
     await rm(tmpDir, { recursive: true, force: true }).catch(() => {})
   })
 
-  it('does not inject provider profile settings when CLI routing is disabled', async () => {
+  it('does not inject provider profile settings when both CLI routing and resilient proxy are disabled', async () => {
     const { saveState } = await import('../server/state-store.ts')
     const { resolveProviderRuntime } = await import('../server/providers.ts')
     const state = createDefaultState('')
@@ -44,6 +44,7 @@ describe('provider runtime routing', () => {
     delete process.env.OPENAI_BASE_URL
 
     state.settings.cliRoutingEnabled = false
+    state.settings.resilientProxyEnabled = false
     state.settings.providerProfiles.codex = {
       activeProfileId: 'codex-profile-1',
       profiles: [
@@ -67,6 +68,47 @@ describe('provider runtime routing', () => {
       assert.notEqual(runtime.env.OPENAI_API_KEY, 'sk-codex')
       assert.notEqual(runtime.env.OPENAI_BASE_URL, 'https://codex.example/v1')
     } finally {
+      restoreEnvVar('OPENAI_API_KEY', originalOpenAiApiKey)
+      restoreEnvVar('OPENAI_BASE_URL', originalOpenAiBaseUrl)
+    }
+  })
+
+  it('still injects provider profile settings when resilient proxy is enabled even if CLI routing is disabled', async () => {
+    const { saveState } = await import('../server/state-store.ts')
+    const { resolveProviderRuntime } = await import('../server/providers.ts')
+    const { resilientProxyPool } = await import('../server/resilient-proxy.ts')
+    const state = createDefaultState('')
+    const originalOpenAiApiKey = process.env.OPENAI_API_KEY
+    const originalOpenAiBaseUrl = process.env.OPENAI_BASE_URL
+
+    delete process.env.OPENAI_API_KEY
+    delete process.env.OPENAI_BASE_URL
+
+    state.settings.cliRoutingEnabled = false
+    state.settings.resilientProxyEnabled = true
+    state.settings.providerProfiles.codex = {
+      activeProfileId: 'codex-profile-1',
+      profiles: [
+        {
+          id: 'codex-profile-1',
+          name: 'Codex Proxy',
+          apiKey: 'sk-codex',
+          baseUrl: 'https://codex.example/v1',
+        },
+      ],
+    }
+
+    await saveState(state)
+
+    try {
+      const runtime = await resolveProviderRuntime('codex')
+
+      assert.equal(runtime.env.OPENAI_API_KEY, 'sk-codex')
+      assert.match(runtime.env.OPENAI_BASE_URL ?? '', /^http:\/\/127\.0\.0\.1:\d+(\/v1)?$/)
+      assert.notEqual(runtime.env.OPENAI_BASE_URL, 'https://codex.example/v1')
+      assert.notDeepEqual(runtime.args, [])
+    } finally {
+      await resilientProxyPool.dispose()
       restoreEnvVar('OPENAI_API_KEY', originalOpenAiApiKey)
       restoreEnvVar('OPENAI_BASE_URL', originalOpenAiBaseUrl)
     }

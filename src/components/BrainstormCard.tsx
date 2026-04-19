@@ -6,7 +6,9 @@ import type {
   BrainstormAnswer,
   BrainstormState,
   ChatCard as ChatCardModel,
+  ModelPromptRule,
 } from '../../shared/schema'
+import { buildSystemPromptForModel } from '../../shared/system-prompt'
 import { flashWindowOnce, openChatStream, requestChat, stopChat, type ChatStreamSource } from '../api'
 import {
   getBrainstormCardStatus,
@@ -19,6 +21,7 @@ type BrainstormCardProps = {
   card: ChatCardModel
   language: AppLanguage
   systemPrompt: string
+  modelPromptRules?: ModelPromptRule[]
   crossProviderSkillReuseEnabled: boolean
   providerReady: boolean
   workspacePath: string
@@ -63,6 +66,7 @@ export function BrainstormCard({
   card,
   language,
   systemPrompt,
+  modelPromptRules = [],
   crossProviderSkillReuseEnabled,
   providerReady,
   workspacePath,
@@ -225,6 +229,7 @@ export function BrainstormCard({
     const prompt = brainstorm.prompt.trim()
 
     try {
+      const composedSystemPrompt = buildSystemPromptForModel(systemPrompt, model, modelPromptRules)
       const response = await requestChat({
         provider,
         workspacePath,
@@ -234,7 +239,8 @@ export function BrainstormCard({
         thinkingEnabled: latestCardRef.current.thinkingEnabled !== false,
         planMode: false,
         language,
-        systemPrompt,
+        systemPrompt: composedSystemPrompt,
+        modelPromptRules,
         crossProviderSkillReuseEnabled,
         streamId: answer.streamId,
         prompt,
@@ -271,6 +277,7 @@ export function BrainstormCard({
     attachAnswerStream,
     crossProviderSkillReuseEnabled,
     language,
+    modelPromptRules,
     requestModel,
     systemPrompt,
     updateBrainstorm,

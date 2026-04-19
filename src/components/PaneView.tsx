@@ -17,6 +17,7 @@ import type {
   BoardColumn,
   ChatCard as ChatCardState,
   ImageAttachment,
+  ModelPromptRule,
   PaneNode,
   Provider,
   ProviderStatus,
@@ -50,6 +51,7 @@ type PaneViewProps = {
   providers: Record<string, ProviderStatus>
   language: AppLanguage
   systemPrompt: string
+  modelPromptRules?: ModelPromptRule[]
   crossProviderSkillReuseEnabled: boolean
   musicAlbumCoverEnabled: boolean
   weatherCity: string
@@ -260,6 +262,7 @@ const PaneViewView = ({
   providers,
   language,
   systemPrompt,
+  modelPromptRules = [],
   crossProviderSkillReuseEnabled,
   musicAlbumCoverEnabled,
   weatherCity,
@@ -887,6 +890,7 @@ const PaneViewView = ({
                   workspacePath={column.workspacePath}
                   language={language}
                   systemPrompt={systemPrompt}
+                  modelPromptRules={modelPromptRules}
                   crossProviderSkillReuseEnabled={crossProviderSkillReuseEnabled}
                   musicAlbumCoverEnabled={musicAlbumCoverEnabled}
                   weatherCity={weatherCity}

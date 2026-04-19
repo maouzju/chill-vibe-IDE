@@ -1,7 +1,64 @@
 export const defaultSystemPrompt =
-  '\u5982\u679c\u7528\u6237\u5bfb\u6c42\u95ee\u9898\u7684\u89e3\u51b3\u800c\u4e0d\u662f\u7eaf\u804a\u5929\u6216\u8005\u53d1\u6563\uff0c\u5728\u6700\u7ec8\u7b54\u590d\u7684\u6700\u540e\uff0c\u5fc5\u987b\u7528\u4e00\u53e5\u7b80\u77ed\u7684\u8bdd\u660e\u786e\u8bf4\u660e\u7ed3\u679c\uff1a\u5982\u679c\u95ee\u9898\u5df2\u89e3\u51b3\uff0c\u53ea\u5199\u201c\u5df2\u89e3\u51b3\u201d\uff1b\u5982\u679c\u95ee\u9898\u5c1a\u672a\u89e3\u51b3\uff0c\u53ea\u5199\u201c\u5c1a\u672a\u89e3\u51b3\uff1a\u201d\u5e76\u9644\u4e0a\u660e\u786e\u3001\u5408\u7406\u7684\u539f\u56e0'
+  '如果用户寻求问题的解决而不是纯聊天或者发散，在最终答复的最后，必须用一句简短的话明确说明结果：如果问题已解决，只写“已解决”；如果问题尚未解决，只写“尚未解决：”并附上明确、合理的原因'
+
+export type ModelPromptRule = {
+  id: string
+  modelMatch: string
+  prompt: string
+}
 
 export const normalizeSystemPrompt = (value?: string | null) => {
   const trimmed = value?.trim() ?? ''
   return trimmed.length > 0 ? trimmed : defaultSystemPrompt
+}
+
+export const normalizeModelPromptRules = (
+  rules?: Array<Partial<ModelPromptRule> | null | undefined> | null,
+): ModelPromptRule[] =>
+  Array.isArray(rules)
+    ? rules.flatMap((rule, index) => {
+        const modelMatch = rule?.modelMatch?.trim() ?? ''
+        const prompt = rule?.prompt?.trim() ?? ''
+
+        if (!modelMatch || !prompt) {
+          return []
+        }
+
+        return [{
+          id: rule?.id?.trim() || `model-prompt-rule-${index + 1}`,
+          modelMatch,
+          prompt,
+        }]
+      })
+    : []
+
+export const getMatchingModelPromptRules = (
+  model: string | null | undefined,
+  rules?: Array<Partial<ModelPromptRule> | null | undefined> | null,
+) => {
+  const normalizedModel = model?.trim().toLowerCase() ?? ''
+
+  if (!normalizedModel) {
+    return [] as ModelPromptRule[]
+  }
+
+  return normalizeModelPromptRules(rules).filter((rule) =>
+    normalizedModel.includes(rule.modelMatch.toLowerCase()),
+  )
+}
+
+export const buildSystemPromptForModel = (
+  basePrompt: string | null | undefined,
+  model: string | null | undefined,
+  rules?: Array<Partial<ModelPromptRule> | null | undefined> | null,
+) => {
+  const normalizedBasePrompt = normalizeSystemPrompt(basePrompt)
+  const promptParts = [
+    normalizedBasePrompt,
+    ...getMatchingModelPromptRules(model, rules)
+      .filter((rule) => !normalizedBasePrompt.includes(rule.prompt))
+      .map((rule) => rule.prompt),
+  ].filter((value) => value.trim().length > 0)
+
+  return promptParts.join('\n\n')
 }

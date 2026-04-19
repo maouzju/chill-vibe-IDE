@@ -112,6 +112,7 @@ export type IdeAction =
           | 'autoUrgeSuccessKeyword'
           | 'weatherCity'
           | 'systemPrompt'
+          | 'modelPromptRules'
           | 'gitAgentModel'
           | 'providerProfiles'
         >
@@ -825,6 +826,7 @@ const mergeSettings = (state: AppState, patch: Partial<AppSettings>) => ({
     ...state.settings,
     ...patch,
     requestModels: patch.requestModels ?? state.settings.requestModels,
+    modelPromptRules: patch.modelPromptRules ?? state.settings.modelPromptRules,
     modelReasoningEfforts: patch.modelReasoningEfforts ?? state.settings.modelReasoningEfforts,
     providerProfiles: patch.providerProfiles ?? state.settings.providerProfiles,
   }),

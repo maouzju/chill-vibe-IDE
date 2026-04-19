@@ -92,6 +92,7 @@ const renderLayout = () => {
       providers={{} as Record<string, ProviderStatus>}
       language="en"
       systemPrompt={defaultSystemPrompt}
+      modelPromptRules={[]}
       crossProviderSkillReuseEnabled={true}
       musicAlbumCoverEnabled={false}
       weatherCity=""

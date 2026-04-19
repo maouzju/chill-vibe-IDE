@@ -76,6 +76,7 @@ describe('default-state helpers', () => {
       autoUrgeSuccessKeyword: 'YES',
       weatherCity: '',
       systemPrompt: defaultSystemPrompt,
+      modelPromptRules: [],
       gitAgentModel: 'gpt-5.4 xhigh',
       lastModel: undefined,
       requestModels: {
@@ -162,6 +163,34 @@ describe('default-state helpers', () => {
     assert.equal(
       normalizeAppSettings({ systemPrompt: '  Always verify before claiming success.  ' }).systemPrompt,
       'Always verify before claiming success.',
+    )
+  })
+
+  it('keeps model prompt rules empty by default and trims valid saved rules', () => {
+    assert.deepEqual(createDefaultSettings().modelPromptRules, [])
+    assert.deepEqual(normalizeAppSettings({}).modelPromptRules, [])
+    assert.deepEqual(
+      normalizeAppSettings({
+        modelPromptRules: [
+          {
+            id: 'rule-claude',
+            modelMatch: '  claude  ',
+            prompt: '  Use concise review bullets.  ',
+          },
+          {
+            id: 'rule-empty',
+            modelMatch: '   ',
+            prompt: 'Should be ignored.',
+          },
+        ],
+      }).modelPromptRules,
+      [
+        {
+          id: 'rule-claude',
+          modelMatch: 'claude',
+          prompt: 'Use concise review bullets.',
+        },
+      ],
     )
   })
 

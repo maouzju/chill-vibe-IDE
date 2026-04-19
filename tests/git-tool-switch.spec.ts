@@ -1041,4 +1041,21 @@ for (const theme of ['dark', 'light'] as const) {
     await expect(page.getByRole('button', { name: 'Analyze changes' })).toBeVisible()
     await expect(page.getByRole('button', { name: 'Full Git' })).toBeVisible()
   })
+
+  test(`switching a card to Editor without a file keeps a visible empty state in ${theme} theme`, async ({ page }) => {
+    await installMockApis(page, theme)
+
+    await page.goto('http://localhost:5173')
+
+    const modelSelect = page.locator('.model-select').first()
+
+    await modelSelect.waitFor()
+    await selectModel(page, modelSelect, 'Editor')
+
+    await expect(page.locator('.text-editor-card')).toBeVisible()
+    await expect(page.locator('.text-editor-empty')).toBeVisible()
+    await expect(page.locator('.text-editor-empty-title')).toBeVisible()
+    await expect(page.locator('.text-editor-empty-description')).toBeVisible()
+    await expect(page.locator('.composer textarea')).toHaveCount(0)
+  })
 }

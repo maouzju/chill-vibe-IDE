@@ -9,9 +9,10 @@ import {
   stopChat,
   type ChatStreamSource,
 } from '../api'
-import type { AppLanguage, GitStatus } from '../../shared/schema'
+import type { AppLanguage, GitStatus, ModelPromptRule } from '../../shared/schema'
 import { getGitLocaleText } from '../../shared/i18n'
 import { getDefaultReasoningEffort } from '../../shared/reasoning'
+import { buildSystemPromptForModel } from '../../shared/system-prompt'
 import {
   getGitAgentAnalysisTimeouts,
   refreshGitAgentAnalysisTimeout,
@@ -40,6 +41,7 @@ type GitAgentPanelProps = {
   language: AppLanguage
   gitAgentModel: string
   systemPrompt: string
+  modelPromptRules?: ModelPromptRule[]
   crossProviderSkillReuseEnabled: boolean
   onClose: () => void
   onStatusChange: (status: GitStatus) => void
@@ -52,6 +54,7 @@ export const GitAgentPanel = ({
   language,
   gitAgentModel,
   systemPrompt,
+  modelPromptRules = [],
   crossProviderSkillReuseEnabled,
   onClose,
   onStatusChange,
@@ -77,11 +80,13 @@ export const GitAgentPanel = ({
       const parts = gitAgentModel.trim().split(/\s+/)
       const model = parts[0] || ''
       const reasoningEffort = parts[1] || getDefaultReasoningEffort('codex')
+      const composedSystemPrompt = buildSystemPromptForModel(systemPrompt, model, modelPromptRules)
       const result = await requestChat({
         provider: 'codex',
         workspacePath,
         language,
-        systemPrompt,
+        systemPrompt: composedSystemPrompt,
+        modelPromptRules,
         crossProviderSkillReuseEnabled,
         prompt,
         model,
@@ -213,6 +218,7 @@ export const GitAgentPanel = ({
     gitAgentModel,
     gitStatus,
     language,
+    modelPromptRules,
     systemPrompt,
     text.commitError,
     workspacePath,

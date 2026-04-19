@@ -13,7 +13,7 @@ import {
   normalizeLanguage,
 } from '../shared/i18n.js'
 import { getActiveProviderProfile } from '../shared/default-state.js'
-import { normalizeSystemPrompt } from '../shared/system-prompt.js'
+import { buildSystemPromptForModel, normalizeSystemPrompt } from '../shared/system-prompt.js'
 import {
   getSlashCommandDescription,
   getLocalSlashCommands,
@@ -48,6 +48,7 @@ import { resolveProviderCommandLaunch } from './provider-command-launch.js'
 import {
   buildCrossProviderSkillInstructions,
   discoverProviderSkills,
+  expandSkillSlashPrompt,
   getReusableSkillProviders,
 } from './provider-skills.js'
 import { loadState } from './state-store.js'
@@ -118,6 +119,9 @@ export const buildProviderSystemPrompt = (
   return instructions.join(' ')
 }
 
+const getRequestBaseSystemPrompt = (request: ChatRequest) =>
+  buildSystemPromptForModel(request.systemPrompt, request.model, request.modelPromptRules)
+
 const getCodexAskUserQuestionInstruction = (language: AppLanguage) =>
   normalizeLanguage(language) === 'en'
     ? 'In this Chill Vibe Codex exec environment, the native request_user_input tool is unavailable. When you must ask the user to choose before you can continue safely, do not call request_user_input and do not ask a plain-text multiple-choice question. Instead, reply with only one XML block in this exact shape and no extra text: <ask-user-question>{"header":"Short title","question":"One concise question","multiSelect":false,"options":[{"label":"Option A","description":"Short tradeoff"},{"label":"Option B","description":"Short tradeoff"}]}</ask-user-question>. Use 2-3 options, keep labels short, omit any Other option, and wait for the next user reply after emitting the block.'
@@ -176,13 +180,16 @@ const classifyLaunchErrorHint = (message: string): StreamErrorHint | undefined =
   return undefined
 }
 
+const shouldUseLocalProviderProfiles = (settings: AppSettings) =>
+  settings.cliRoutingEnabled || settings.resilientProxyEnabled
+
 export const resolveProviderRuntime = async (provider: Provider): Promise<ProviderRuntime> => {
   const baseEnv =
     provider === 'claude' ? await resolveClaudeRuntimeEnvironment({ env: process.env }) : process.env
 
   try {
     const settings = providerRuntimeSettingsOverride ?? (await loadState()).settings
-    if (!settings.cliRoutingEnabled) {
+    if (!shouldUseLocalProviderProfiles(settings)) {
       return {
         args: [],
         env: baseEnv,
@@ -1386,7 +1393,15 @@ export const launchProviderRun = async (request: ChatRequest, sink: StreamSink) 
   let currentRequest = request
 
   try {
+    const expandedPrompt = await expandSkillSlashPrompt(request)
     const crossProviderSkillInstructions = await buildCrossProviderSkillInstructions(request)
+
+    if (expandedPrompt !== currentRequest.prompt) {
+      currentRequest = {
+        ...currentRequest,
+        prompt: expandedPrompt,
+      }
+    }
 
     if (crossProviderSkillInstructions) {
       currentRequest = {
@@ -1691,7 +1706,7 @@ export const buildCodexArgs = (request: ChatRequest, attachmentPaths: string[]) 
     : ['exec', '--json', '--skip-git-repo-check']
   const reasoningEffort = normalizeReasoningEffort('codex', request.reasoningEffort)
   const systemPrompt = [
-    buildProviderSystemPrompt(request.language, request.systemPrompt),
+    buildProviderSystemPrompt(request.language, getRequestBaseSystemPrompt(request)),
     getCodexAskUserQuestionInstruction(request.language),
   ].join(' ')
 
@@ -1796,7 +1811,7 @@ export const buildClaudeArgs = (
   const permissionMode = request.planMode ? 'plan' : 'bypassPermissions'
   const additionalDirectories = resolveClaudeAdditionalDirectories(options)
   const systemPrompt = [
-    buildProviderSystemPrompt(request.language, request.systemPrompt),
+    buildProviderSystemPrompt(request.language, getRequestBaseSystemPrompt(request)),
     getClaudeAskUserQuestionInstruction(request.language),
   ].join(' ')
 

@@ -1571,6 +1571,64 @@ body.is-card-dragging .lane-drop-zone-top {
   margin-top: 0.9rem;
 }
 
+.model-prompt-rules-summary-row {
+  margin-top: 0.7rem;
+}
+
+.model-prompt-rules-summary {
+  display: grid;
+  gap: 0.2rem;
+  min-width: 0;
+  padding: 0.55rem 0.65rem;
+  border: 1px solid var(--line);
+  border-radius: 0.8rem;
+  background: var(--panel-soft);
+}
+
+.model-prompt-rules-summary strong {
+  color: var(--ink-1);
+  font-size: 0.82rem;
+}
+
+.model-prompt-rules-summary .settings-note {
+  margin: 0;
+}
+
+.model-prompt-rules-dialog {
+  width: min(48rem, calc(100vw - 2rem));
+}
+
+.model-prompt-rules-card {
+  max-height: calc(100vh - 2rem);
+}
+
+.model-prompt-rules-list {
+  display: grid;
+  gap: 0.72rem;
+}
+
+.model-prompt-rule-card {
+  display: grid;
+  gap: 0.65rem;
+  padding: 0.72rem;
+  border: 1px solid var(--line);
+  border-radius: 0.9rem;
+  background: var(--panel-soft);
+}
+
+.model-prompt-rule-card .settings-field {
+  margin: 0;
+}
+
+.model-prompt-rule-card .settings-textarea {
+  min-height: 5.2rem;
+}
+
+.model-prompt-rule-actions,
+.model-prompt-rules-dialog-actions {
+  justify-content: flex-end;
+}
+
 .panel-alert {
   margin-top: 0.95rem;
   padding: 0.8rem 0.9rem;
@@ -2405,6 +2463,12 @@ body.is-card-dragging .lane-drop-zone-top {
   mask-repeat: no-repeat;
   -webkit-mask-size: 100% 100%;
   mask-size: 100% 100%;
+}
+
+.card-title-row .card-actions:has(.model-select.is-open) {
+  -webkit-mask-image: none;
+  mask-image: none;
+  overflow: visible;
 }
 
 .card-shell.has-floating-ui .card-title-row .card-actions {
@@ -11888,6 +11952,37 @@ body.is-pane-resizing .split-resize-handle::before {
   padding: 1rem;
   color: var(--ink-2);
   text-align: center;
+}
+
+.text-editor-empty {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.45rem;
+  padding: 1.25rem;
+  text-align: center;
+  color: var(--ink-2);
+}
+
+.text-editor-empty-icon {
+  width: 1.3rem;
+  height: 1.3rem;
+  opacity: 0.72;
+}
+
+.text-editor-empty-title {
+  font-size: 0.92rem;
+  font-weight: 600;
+  color: var(--ink-1);
+}
+
+.text-editor-empty-description {
+  max-width: 28rem;
+  font-size: 0.82rem;
+  line-height: 1.45;
 }
 
 .text-editor-error {

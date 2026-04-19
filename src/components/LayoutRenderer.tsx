@@ -3,6 +3,7 @@ import type {
   BoardColumn,
   ImageAttachment,
   LayoutNode,
+  ModelPromptRule,
   Provider,
   ProviderStatus,
 } from '../../shared/schema'
@@ -16,6 +17,7 @@ type LayoutRendererProps = {
   providers: Record<string, ProviderStatus>
   language: AppLanguage
   systemPrompt: string
+  modelPromptRules?: ModelPromptRule[]
   crossProviderSkillReuseEnabled: boolean
   musicAlbumCoverEnabled: boolean
   weatherCity: string

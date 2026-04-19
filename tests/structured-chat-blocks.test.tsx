@@ -296,6 +296,7 @@ const renderCard = (
       workspacePath="d:\\Git\\chill-vibe"
       language="en"
       systemPrompt={defaultSystemPrompt}
+      modelPromptRules={[]}
       crossProviderSkillReuseEnabled={true}
       musicAlbumCoverEnabled={false}
       weatherCity=""

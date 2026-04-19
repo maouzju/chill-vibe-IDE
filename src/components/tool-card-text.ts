@@ -13,4 +13,9 @@ export const getTextEditorCardText = (language: AppLanguage) => ({
   loading: language === 'en' ? 'Loading...' : '\u52a0\u8f7d\u4e2d...',
   saving: language === 'en' ? 'Saving...' : '\u4fdd\u5b58\u4e2d...',
   unsaved: language === 'en' ? 'Unsaved' : '\u672a\u4fdd\u5b58',
+  emptyTitle: language === 'en' ? 'Open a file to start editing.' : '\u5148\u6253\u5f00\u4e00\u4e2a\u6587\u4ef6\u518d\u5f00\u59cb\u7f16\u8f91\u3002',
+  emptyDescription:
+    language === 'en'
+      ? 'Use Files or a generated plan result to open one here.'
+      : '\u53ef\u4ee5\u4ece\u300c\u6587\u4ef6\u300d\u5361\u6216\u8ba1\u5212\u7ed3\u679c\u91cc\u6253\u5f00\u3002',
 })

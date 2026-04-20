@@ -1,5 +1,6 @@
 import type { AppState } from '../shared/schema'
 import { captureRendererCrash } from './api'
+import { getResolvedAppTheme } from './theme'
 
 type RendererCrashCaptureSource = 'window-error' | 'unhandled-rejection' | 'react-boundary'
 
@@ -13,7 +14,7 @@ export const updateLatestKnownAppState = (state: AppState) => {
 
 export const getLatestKnownAppPresentation = () => ({
   language: latestKnownState?.settings.language ?? 'zh-CN',
-  theme: latestKnownState?.settings.theme ?? 'dark',
+  theme: getResolvedAppTheme(latestKnownState?.settings.theme ?? 'dark'),
 })
 
 const buildCrashSignature = (source: RendererCrashCaptureSource, message: string, stack: string) =>

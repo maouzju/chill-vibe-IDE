@@ -4,12 +4,13 @@ import './crash-logger-renderer'
 import './index.css'
 import App from './App.tsx'
 import { AppFatalBoundary } from './components/AppFatalBoundary'
+import { getResolvedAppTheme } from './theme'
 
 type MainBootstrapWindow = Window & {
   __CHILL_VIBE_ROOT__?: ReturnType<typeof createRoot>
 }
 
-document.documentElement.dataset.theme = 'dark'
+document.documentElement.dataset.theme = getResolvedAppTheme('system')
 
 const rootElement = document.getElementById('root')
 

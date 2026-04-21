@@ -32,7 +32,7 @@ export const slashCommandSchema = z.object({
 })
 export type SlashCommand = z.infer<typeof slashCommandSchema>
 
-export const themeSchema = z.enum(['light', 'dark'])
+export const themeSchema = z.enum(['light', 'dark', 'system'])
 export type AppTheme = z.infer<typeof themeSchema>
 
 export const appLanguageSchema = z.enum(['zh-CN', 'en'])

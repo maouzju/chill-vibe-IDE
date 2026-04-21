@@ -1,4 +1,3 @@
-import { spawn } from 'node:child_process'
 import fs from 'fs'
 import { writeFile } from 'node:fs/promises'
 import path from 'path'
@@ -14,6 +13,7 @@ import {
   type UpdateCheckResult,
   type GitHubRelease,
 } from './updater-core.js'
+import { launchDetachedPowerShellScriptFile } from './updater-launch.js'
 
 export type { UpdateCheckResult } from './updater-core.js'
 export {
@@ -44,6 +44,7 @@ const launchWindowsZipUpdateJob = async (assetPath: string) => {
   const spawnStderrPath = path.join(jobRoot, 'powershell-stderr.log')
 
   await fs.promises.mkdir(jobRoot, { recursive: true })
+  await writeFile(logPath, '')
   await writeFile(
     scriptPath,
     encodePowerShellScriptUtf8Bom(
@@ -64,17 +65,20 @@ const launchWindowsZipUpdateJob = async (assetPath: string) => {
   const stdoutFd = fs.openSync(spawnStdoutPath, 'a')
   const stderrFd = fs.openSync(spawnStderrPath, 'a')
 
-  const child = spawn(
-    'powershell',
-    ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', scriptPath],
-    {
-      detached: true,
-      stdio: ['ignore', stdoutFd, stderrFd],
-      windowsHide: true,
-    },
-  )
-
-  child.unref()
+  try {
+    await launchDetachedPowerShellScriptFile({
+      scriptPath,
+      stdoutFd,
+      stderrFd,
+    })
+  } catch (error) {
+    const message = error instanceof Error ? `${error.name}: ${error.message}` : String(error)
+    fs.appendFileSync(spawnStderrPath, `[launcher] Failed to spawn update PowerShell job: ${message}\n`)
+    throw error
+  } finally {
+    fs.closeSync(stdoutFd)
+    fs.closeSync(stderrFd)
+  }
 }
 
 const openDownloadedAsset = async (assetPath: string) => {

@@ -38,8 +38,31 @@ type AutoUrgeToggleResult = {
   shouldSendImmediately: boolean
 }
 
-const findLastAssistantMessage = (messages: ChatMessage[]) =>
-  [...messages].reverse().find((entry) => entry.role === 'assistant')
+const findLastUserMessageIndex = (messages: ChatMessage[]) => {
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    if (messages[index]?.role === 'user') {
+      return index
+    }
+  }
+
+  return -1
+}
+
+const latestAssistantTurnContainsSuccessKeyword = (
+  messages: ChatMessage[],
+  successKeyword: string,
+) => {
+  const latestUserMessageIndex = findLastUserMessageIndex(messages)
+
+  return messages
+    .slice(latestUserMessageIndex + 1)
+    .some(
+      (entry) =>
+        entry.role === 'assistant' &&
+        typeof entry.content === 'string' &&
+        entry.content.includes(successKeyword),
+    )
+}
 
 export const getNextAutoUrgeToggleState = ({
   featureEnabled,
@@ -80,11 +103,9 @@ export const evaluateAutoUrge = (
   }
 
   const trimmedSuccessKeyword = state.successKeyword.trim()
-  const lastAssistantMessage = findLastAssistantMessage(state.messages)
   const successFound =
     trimmedSuccessKeyword.length > 0 &&
-    typeof lastAssistantMessage?.content === 'string' &&
-    lastAssistantMessage.content.includes(trimmedSuccessKeyword)
+    latestAssistantTurnContainsSuccessKeyword(state.messages, trimmedSuccessKeyword)
 
   if (successFound) {
     return { kind: 'disable' }

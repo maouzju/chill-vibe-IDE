@@ -8,7 +8,10 @@ import { maxUiScale, minUiScale } from '../shared/default-state.js'
 import { getAppDataDir } from '../server/app-paths.js'
 import { initCrashLogger, log } from './crash-logger.js'
 import { createDesktopBackend } from './backend.js'
-import { resolveMessageLocalLinkTarget } from './message-local-link.js'
+import {
+  resolveMessageLocalLinkTarget,
+  revealMessageLocalLinkTarget,
+} from './message-local-link.js'
 import {
   resolveDesktopDataDir,
   resolveDesktopRuntimeProfilePaths,
@@ -502,23 +505,10 @@ function registerDesktopHandlers() {
         throw new Error('Only local file links can be opened in Explorer.')
       }
 
-      const targetStats = await stat(targetPath).catch(() => null)
-
-      if (!targetStats) {
-        throw new Error(`Path not found: ${targetPath}`)
-      }
-
-      if (targetStats.isDirectory()) {
-        const openError = await shell.openPath(targetPath)
-
-        if (openError) {
-          throw new Error(openError)
-        }
-
-        return
-      }
-
-      shell.showItemInFolder(targetPath)
+      await revealMessageLocalLinkTarget(targetPath, {
+        shellAdapter: shell,
+        statPath: stat,
+      })
     },
   )
   ipcMain.handle('desktop:open-external-link', async (_event, href: string) => {

@@ -525,6 +525,48 @@ test('renders structured edited-file diff blocks', () => {
   assert.match(markup, /export const newLine = true/)
 })
 
+test('renders streaming ask-user cards inside the normal chat shell', () => {
+  const card = createCard()
+  card.messages = [
+    {
+      id: 'user-ask-user',
+      role: 'user',
+      content: 'Please choose the next path.',
+      createdAt: '2026-04-20T08:00:00.000Z',
+    },
+    {
+      id: 'ask-user-1',
+      role: 'assistant',
+      content: '',
+      createdAt: '2026-04-20T08:00:01.000Z',
+      meta: {
+        kind: 'ask-user',
+        provider: 'codex',
+        itemId: 'ask-user-1',
+        structuredData: JSON.stringify({
+          itemId: 'ask-user-1',
+          kind: 'ask-user',
+          status: 'completed',
+          header: 'Need direction',
+          question: 'Which approach should I take?',
+          multiSelect: false,
+          options: [
+            { label: 'Fast path', description: 'Keep the current shape.' },
+            { label: 'Safer refactor', description: 'Clean up first.' },
+          ],
+        }),
+      },
+    },
+  ]
+
+  const markup = renderCard(card)
+
+  assert.match(markup, /class="card-shell[^"]*is-streaming/)
+  assert.match(markup, /class="ask-user-card/)
+  assert.match(markup, /Need direction/)
+  assert.match(markup, /Which approach should I take\?/)
+})
+
 test('renders open-file buttons for structured edited files when file opening is available', () => {
   const markup = renderCard(createEditedFilesCard(), {
     onOpenFile: () => undefined,

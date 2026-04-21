@@ -4,12 +4,18 @@ import test from 'node:test'
 import type { ChatMessage } from '../shared/schema.ts'
 import { evaluateAutoUrge, getNextAutoUrgeToggleState } from '../src/components/chat-auto-urge.ts'
 
-const createAssistantMessage = (content: string): ChatMessage => ({
-  id: `msg-${content.length}`,
-  role: 'assistant',
+let messageSequence = 0
+
+const createChatMessage = (role: ChatMessage['role'], content: string): ChatMessage => ({
+  id: `msg-${++messageSequence}`,
+  role,
   content,
   createdAt: '2026-04-12T00:00:00.000Z',
 })
+
+const createAssistantMessage = (content: string): ChatMessage => createChatMessage('assistant', content)
+
+const createUserMessage = (content: string): ChatMessage => createChatMessage('user', content)
 
 test('manual activation sends the selected urge immediately when the chat is idle', () => {
   const result = evaluateAutoUrge(
@@ -85,6 +91,58 @@ test('stream completion still sends the urge when verification is not finished',
       message: 'Keep verifying until the fix is proven.',
       successKeyword: 'YES',
       messages: [createAssistantMessage('I only have a guess so far.')],
+    },
+  )
+
+  assert.deepEqual(result, {
+    kind: 'send',
+    message: 'Keep verifying until the fix is proven.',
+  })
+})
+
+test('stream completion disables auto urge when the latest assistant turn contains the success keyword before a trailing assistant summary card', () => {
+  const result = evaluateAutoUrge(
+    {
+      type: 'stream-finished',
+      previousStatus: 'streaming',
+      status: 'idle',
+    },
+    {
+      active: true,
+      enabled: true,
+      message: 'Keep verifying until the fix is proven.',
+      successKeyword: 'YES',
+      messages: [
+        createUserMessage('Please keep checking until you are sure.'),
+        createAssistantMessage('The fix is verified. YES'),
+        createAssistantMessage(''),
+      ],
+    },
+  )
+
+  assert.deepEqual(result, {
+    kind: 'disable',
+  })
+})
+
+test('stream completion does not reuse a success keyword from an older assistant turn', () => {
+  const result = evaluateAutoUrge(
+    {
+      type: 'stream-finished',
+      previousStatus: 'streaming',
+      status: 'idle',
+    },
+    {
+      active: true,
+      enabled: true,
+      message: 'Keep verifying until the fix is proven.',
+      successKeyword: 'YES',
+      messages: [
+        createUserMessage('Fix the first problem.'),
+        createAssistantMessage('That one is verified. YES'),
+        createUserMessage('Now fix the second problem.'),
+        createAssistantMessage('I still need more evidence for this one.'),
+      ],
     },
   )
 

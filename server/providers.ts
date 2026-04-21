@@ -787,7 +787,7 @@ export const getProviderSlashCommands = async ({
   )
 
   if (provider === 'codex') {
-    const native = buildNativeSlashCommands('codex', ['compact'], normalizedLanguage)
+    const native = buildNativeSlashCommands('codex', ['compact', 'init', 'plan'], normalizedLanguage)
     return dedupeSlashCommands([...local, ...native, ...skills])
   }
 
@@ -843,6 +843,76 @@ const isManualCodexCompactRequest = (request: ChatRequest) => {
 
   const parsed = parseSlashCommandInput(request.prompt)
   return Boolean(parsed && parsed.name === 'compact' && parsed.args.length === 0)
+}
+
+const buildCodexInitSlashPrompt = (language: AppLanguage, args: string) => {
+  const userPrompt = args.trim()
+  const instruction =
+    language === 'en'
+      ? [
+          'Refresh the project instructions for this workspace.',
+          'Inspect the existing AGENTS.md, README, and the most relevant docs before you change anything.',
+          'If the repo-specific guidance is missing or stale, draft or update the project instructions with concise, durable collaborator guidance grounded in the files you inspected.',
+          'Call out any uncertainty or missing repo context before inventing project rules.',
+        ].join('\n')
+      : [
+          '请为当前工作区刷新项目说明。',
+          '在修改任何内容前，先检查现有的 AGENTS.md、README 和最相关的 docs。',
+          '如果仓库级协作说明缺失或已过时，请基于你实际检查到的文件，起草或更新简洁、长期有效的项目说明。',
+          '如果仓库上下文不足或存在不确定点，先明确指出，不要凭空编造项目规则。',
+        ].join('\n')
+
+  if (!userPrompt) {
+    return instruction
+  }
+
+  return language === 'en'
+    ? `${instruction}\n\nUser request:\n${userPrompt}`
+    : `${instruction}\n\n用户请求：\n${userPrompt}`
+}
+
+const buildCodexPlanSlashPrompt = (language: AppLanguage, args: string) => {
+  const userPrompt = args.trim()
+  const instruction =
+    language === 'en'
+      ? [
+          'Produce a concrete implementation plan for this request before making code changes.',
+          'Inspect the relevant files first, then summarize the requirements, constraints, and the smallest safe sequence of steps.',
+          'Do not make code changes yet unless the user explicitly asks you to skip planning and implement immediately.',
+        ].join('\n')
+      : [
+          '先为这次请求产出一份具体的实现计划，再进入代码修改。',
+          '先检查相关文件，再总结需求、约束，以及最小且安全的执行步骤。',
+          '在用户没有明确要求跳过规划直接实现之前，不要先改代码。',
+        ].join('\n')
+
+  if (!userPrompt) {
+    return instruction
+  }
+
+  return language === 'en'
+    ? `${instruction}\n\nUser request:\n${userPrompt}`
+    : `${instruction}\n\n用户请求：\n${userPrompt}`
+}
+
+export const expandCodexNativeSlashPrompt = (request: ChatRequest) => {
+  if (request.provider !== 'codex') {
+    return request.prompt
+  }
+
+  const parsed = parseSlashCommandInput(request.prompt)
+  if (!parsed) {
+    return request.prompt
+  }
+
+  switch (parsed.name) {
+    case 'init':
+      return buildCodexInitSlashPrompt(request.language, parsed.args)
+    case 'plan':
+      return buildCodexPlanSlashPrompt(request.language, parsed.args)
+    default:
+      return request.prompt
+  }
 }
 
 const buildCodexAppServerBaseInstructions = (request: ChatRequest) =>
@@ -1390,7 +1460,10 @@ export const launchProviderRun = async (request: ChatRequest, sink: StreamSink) 
   let currentRequest = request
 
   try {
-    const expandedPrompt = await expandSkillSlashPrompt(request)
+    const expandedPrompt = await expandSkillSlashPrompt({
+      ...request,
+      prompt: expandCodexNativeSlashPrompt(request),
+    })
     const crossProviderSkillInstructions = await buildCrossProviderSkillInstructions(request)
 
     if (expandedPrompt !== currentRequest.prompt) {

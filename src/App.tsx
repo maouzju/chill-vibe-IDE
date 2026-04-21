@@ -123,6 +123,7 @@ import {
 } from './api'
 import { resolveAppLoadError } from './app-load-error'
 import { startInitialAppLoad } from './app-initial-load'
+import { getResolvedAppTheme, subscribeToSystemThemeChange } from './theme'
 import { WeatherAmbientOverlay } from './components/WeatherAmbientOverlay'
 import {
   type ActiveStream,
@@ -463,6 +464,7 @@ function App() {
   const [routingSubTab, setRoutingSubTab] = useState<'providers' | 'proxy'>('providers')
   const [visibleApiKeys, setVisibleApiKeys] = useState<Set<string>>(() => new Set())
   const [settingsNotice, setSettingsNotice] = useState<string | null>(null)
+  const [resolvedTheme, setResolvedTheme] = useState(() => getResolvedAppTheme('dark'))
   const [modelPromptRulesDialogOpen, setModelPromptRulesDialogOpen] = useState(false)
   const [modelPromptRulesDraft, setModelPromptRulesDraft] = useState<ModelPromptRule[]>([])
   const [setupStatus, setSetupStatus] = useState<SetupStatus | null>(null)
@@ -2547,12 +2549,24 @@ function App() {
   }, [hydrate])
 
   useEffect(() => {
+    setResolvedTheme(getResolvedAppTheme(appState.settings.theme))
+
+    if (appState.settings.theme !== 'system') {
+      return
+    }
+
+    return subscribeToSystemThemeChange(() => {
+      setResolvedTheme(getResolvedAppTheme('system'))
+    })
+  }, [appState.settings.theme])
+
+  useEffect(() => {
     const root = document.documentElement
     root.lang = appState.settings.language
-    root.dataset.theme = appState.settings.theme
+    root.dataset.theme = resolvedTheme
     root.style.setProperty('--ui-font-scale', appState.settings.fontScale.toFixed(2))
     root.style.setProperty('--ui-line-height-scale', appState.settings.lineHeightScale.toFixed(2))
-  }, [appState.settings.fontScale, appState.settings.language, appState.settings.lineHeightScale, appState.settings.theme])
+  }, [appState.settings.fontScale, appState.settings.language, appState.settings.lineHeightScale, resolvedTheme])
 
   useEffect(() => {
     const root = document.documentElement
@@ -3950,10 +3964,33 @@ function App() {
   }
 
   const renderWithPrimer = (content: ReactNode) => (
-    <ThemeProvider colorMode={appState.settings.theme}>
+    <ThemeProvider colorMode={resolvedTheme}>
       <BaseStyles>{content}</BaseStyles>
     </ThemeProvider>
   )
+
+  const renderThemeToggle = () => {
+    const themeOptions: Array<{ value: AppState['settings']['theme']; label: string }> = [
+      { value: 'light', label: text.light },
+      { value: 'dark', label: text.dark },
+      { value: 'system', label: text.systemTheme },
+    ]
+
+    return (
+      <div className="theme-toggle">
+        {themeOptions.map((option) => (
+          <button
+            key={option.value}
+            type="button"
+            className={`theme-chip${appState.settings.theme === option.value ? ' is-active' : ''}`}
+            onClick={() => applyAction({ type: 'updateSettings', patch: { theme: option.value } })}
+          >
+            {option.label}
+          </button>
+        ))}
+      </div>
+    )
+  }
 
   const startupRecoveryCopy =
     appState.settings.language === 'zh-CN'
@@ -4250,22 +4287,7 @@ function App() {
 
       <div className="settings-section">
         <div className="settings-section-title">{text.theme}</div>
-        <div className="theme-toggle">
-          <button
-            type="button"
-            className={`theme-chip${appState.settings.theme === 'light' ? ' is-active' : ''}`}
-            onClick={() => applyAction({ type: 'updateSettings', patch: { theme: 'light' } })}
-          >
-            {text.light}
-          </button>
-          <button
-            type="button"
-            className={`theme-chip${appState.settings.theme === 'dark' ? ' is-active' : ''}`}
-            onClick={() => applyAction({ type: 'updateSettings', patch: { theme: 'dark' } })}
-          >
-            {text.dark}
-          </button>
-        </div>
+        {renderThemeToggle()}
       </div>
 
       <div className="settings-section">
@@ -5449,22 +5471,7 @@ function App() {
 
               <div className="settings-section">
                 <div className="settings-section-title">{text.theme}</div>
-                <div className="theme-toggle">
-                  <button
-                    type="button"
-                    className={`theme-chip${appState.settings.theme === 'light' ? ' is-active' : ''}`}
-                    onClick={() => applyAction({ type: 'updateSettings', patch: { theme: 'light' } })}
-                  >
-                    {text.light}
-                  </button>
-                  <button
-                    type="button"
-                    className={`theme-chip${appState.settings.theme === 'dark' ? ' is-active' : ''}`}
-                    onClick={() => applyAction({ type: 'updateSettings', patch: { theme: 'dark' } })}
-                  >
-                    {text.dark}
-                  </button>
-                </div>
+                {renderThemeToggle()}
               </div>
 
               <div className="settings-section">
@@ -6469,7 +6476,3 @@ function App() {
 }
 
 export default App
-
-
-
-

@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { EventEmitter } from 'node:events'
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
@@ -15,6 +16,10 @@ import {
   parseReleaseResponse,
   resolveDownloadedAssetStrategy,
 } from '../electron/updater-core.ts'
+import {
+  launchDetachedPowerShellScriptFile,
+  resolveWindowsPowerShellPath,
+} from '../electron/updater-launch.ts'
 
 describe('parseVersionTag', () => {
   test('strips v prefix', () => {
@@ -305,5 +310,111 @@ describe('encodePowerShellScriptUtf8Bom', () => {
     } finally {
       await rm(tempDir, { recursive: true, force: true })
     }
+  })
+})
+
+describe('resolveWindowsPowerShellPath', () => {
+  test('prefers the absolute SystemRoot PowerShell path when it exists', () => {
+    const resolved = resolveWindowsPowerShellPath(
+      {
+        PATH: '',
+        SystemRoot: 'C:\\Windows',
+      },
+      (candidatePath) =>
+        candidatePath === 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe',
+    )
+
+    assert.equal(resolved, 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe')
+  })
+
+  test('falls back to bare powershell.exe when the standard path is unavailable', () => {
+    const resolved = resolveWindowsPowerShellPath(
+      {
+        PATH: '',
+        SystemRoot: 'C:\\MissingWindows',
+      },
+      () => false,
+    )
+
+    assert.equal(resolved, 'powershell.exe')
+  })
+})
+
+describe('launchDetachedPowerShellScriptFile', () => {
+  class FakeChildProcess extends EventEmitter {
+    unrefCalls = 0
+
+    unref() {
+      this.unrefCalls += 1
+    }
+  }
+
+  test('launches the detached updater job from an absolute PowerShell path and waits for spawn', async () => {
+    const child = new FakeChildProcess()
+    let capturedCommand = ''
+    let capturedArgs: string[] = []
+    let capturedOptions:
+      | {
+          detached: boolean
+          stdio: ['ignore', number, number]
+          windowsHide: boolean
+        }
+      | undefined
+
+    await launchDetachedPowerShellScriptFile({
+      scriptPath: 'C:\\Temp\\apply-update.ps1',
+      stdoutFd: 11,
+      stderrFd: 12,
+      env: {
+        PATH: '',
+        SystemRoot: 'C:\\Windows',
+      },
+      fileExists: () => true,
+      spawnProcess: (command, args, options) => {
+        capturedCommand = command
+        capturedArgs = args
+        capturedOptions = options
+        setImmediate(() => child.emit('spawn'))
+        return child
+      },
+    })
+
+    assert.equal(capturedCommand, 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe')
+    assert.deepEqual(capturedArgs, [
+      '-NoProfile',
+      '-ExecutionPolicy',
+      'Bypass',
+      '-File',
+      'C:\\Temp\\apply-update.ps1',
+    ])
+    assert.deepEqual(capturedOptions, {
+      detached: true,
+      stdio: ['ignore', 11, 12],
+      windowsHide: true,
+    })
+    assert.equal(child.unrefCalls, 1)
+  })
+
+  test('rejects before quit if spawning the PowerShell job fails', async () => {
+    const child = new FakeChildProcess()
+
+    await assert.rejects(
+      launchDetachedPowerShellScriptFile({
+        scriptPath: 'C:\\Temp\\apply-update.ps1',
+        stdoutFd: 11,
+        stderrFd: 12,
+        env: {
+          PATH: '',
+        },
+        fileExists: () => false,
+        spawnProcess: () => {
+          setImmediate(() => child.emit('error', new Error('spawn ENOENT')))
+          return child
+        },
+      }),
+      /spawn ENOENT/,
+    )
+
+    assert.equal(child.unrefCalls, 0)
   })
 })

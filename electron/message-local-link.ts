@@ -1,5 +1,7 @@
 import path from 'node:path'
 import { fileURLToPath, URL } from 'node:url'
+import type { shell } from 'electron'
+import { stat } from 'node:fs/promises'
 
 const explicitSchemePattern = /^[a-z][a-z\d+.-]*:/i
 const windowsDrivePathPattern = /^[a-z]:[\\/]/i
@@ -79,4 +81,47 @@ export const resolveMessageLocalLinkTarget = (
 
   const basePath = workspacePath?.trim() ? workspacePath : process.cwd()
   return resolvePortablePath(basePath, trimmedHref)
+}
+
+type RevealMessageLocalLinkShellAdapter = Pick<typeof shell, 'openPath' | 'showItemInFolder'>
+type RevealMessageLocalLinkStats = Pick<Awaited<ReturnType<typeof stat>>, 'isDirectory'>
+type RevealMessageLocalLinkStatPath = (
+  targetPath: string,
+) => Promise<RevealMessageLocalLinkStats>
+
+type RevealMessageLocalLinkTargetOptions = {
+  platform?: NodeJS.Platform
+  shellAdapter: RevealMessageLocalLinkShellAdapter
+  statPath?: RevealMessageLocalLinkStatPath
+}
+
+export const revealMessageLocalLinkTarget = async (
+  targetPath: string,
+  options: RevealMessageLocalLinkTargetOptions,
+) => {
+  const statPath = options.statPath ?? stat
+  const targetStats = await statPath(targetPath).catch(() => null)
+
+  if (!targetStats) {
+    throw new Error(`Path not found: ${targetPath}`)
+  }
+
+  const platform = options.platform ?? process.platform
+
+  if (platform === 'win32') {
+    options.shellAdapter.showItemInFolder(targetPath)
+    return
+  }
+
+  if (targetStats.isDirectory()) {
+    const openError = await options.shellAdapter.openPath(targetPath)
+
+    if (openError) {
+      throw new Error(openError)
+    }
+
+    return
+  }
+
+  options.shellAdapter.showItemInFolder(targetPath)
 }

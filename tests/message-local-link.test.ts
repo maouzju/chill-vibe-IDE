@@ -9,7 +9,10 @@ import {
   handleMessageLinkClick,
   isLocalMessageLinkHref,
 } from '../src/components/chat-card-rendering.tsx'
-import { resolveMessageLocalLinkTarget } from '../electron/message-local-link.ts'
+import {
+  resolveMessageLocalLinkTarget,
+  revealMessageLocalLinkTarget,
+} from '../electron/message-local-link.ts'
 
 type ElectronBridgeWindow = Window & typeof globalThis & {
   electronAPI?: {
@@ -86,6 +89,30 @@ test('resolves slash-prefixed Windows file links and ignores line fragments', ()
     resolveMessageLocalLinkTarget('/D:/Git/chill-vibe/AGENTS.md#L74', 'D:/Git/chill-vibe'),
     path.resolve('D:/Git/chill-vibe/AGENTS.md'),
   )
+})
+
+test('reveals local directories through the system file manager on Windows', async () => {
+  const revealedPaths: string[] = []
+  const openedPaths: string[] = []
+
+  await revealMessageLocalLinkTarget('D:/Git/chill-vibe/wiki', {
+    platform: 'win32',
+    shellAdapter: {
+      showItemInFolder: (targetPath) => {
+        revealedPaths.push(targetPath)
+      },
+      openPath: async (targetPath) => {
+        openedPaths.push(targetPath)
+        return ''
+      },
+    },
+    statPath: async () => ({
+      isDirectory: () => true,
+    }),
+  })
+
+  assert.deepEqual(revealedPaths, ['D:/Git/chill-vibe/wiki'])
+  assert.deepEqual(openedPaths, [])
 })
 
 test('routes local message link clicks through the Electron bridge', async () => {

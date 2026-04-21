@@ -347,6 +347,48 @@ const claudeAskUserTagPattern = /<ask-user-question>\s*([\s\S]+?)\s*<\/ask-user-
 export const stripClaudeAskUserXmlBlocks = (text: string) =>
   text.replace(claudeAskUserTagPattern, '')
 
+// Claude occasionally emits the ask-user JSON with cosmetic deviations from
+// strict JSON: smart/curly quotes around keys and string values, trailing
+// commas before a closing bracket or brace, or markdown-style fencing. These
+// are trivially normalisable before JSON.parse so the ask-user card still
+// renders instead of leaking raw XML to the user.
+const normaliseAskUserJsonText = (raw: string): string => {
+  let text = raw.trim()
+
+  // Strip a leading/trailing markdown code fence if present, e.g. ```json ... ```
+  if (text.startsWith('```')) {
+    text = text.replace(/^```[a-zA-Z0-9]*\s*\n?/, '')
+    text = text.replace(/\s*```\s*$/, '')
+    text = text.trim()
+  }
+
+  // Replace curly double and single quotes with ASCII quotes. JSON only
+  // tolerates ASCII double quotes; smart quotes come from copy/paste or from
+  // models that pretty-print their output.
+  text = text
+    .replace(/[\u201c\u201d\u201e\u201f\u2033\u2036]/g, '"')
+    .replace(/[\u2018\u2019\u201a\u201b\u2032\u2035]/g, "'")
+
+  // Drop trailing commas inside arrays and objects: ",]" / ",}" (with optional
+  // whitespace/newlines between the comma and the closer).
+  text = text.replace(/,(\s*[\]}])/g, '$1')
+
+  return text
+}
+
+const parseClaudeAskUserJson = (raw: string): unknown => {
+  try {
+    return JSON.parse(raw)
+  } catch {
+    // fall through to the normalised attempt
+  }
+  try {
+    return JSON.parse(normaliseAskUserJsonText(raw))
+  } catch {
+    return null
+  }
+}
+
 const parseClaudeAskUserXmlBlock = (
   messageId: string | undefined,
   text: string | undefined,
@@ -362,7 +404,11 @@ const parseClaudeAskUserXmlBlock = (
   }
 
   try {
-    const parsed = JSON.parse(match[1]!) as unknown
+    const parsed = parseClaudeAskUserJson(match[1]!) as unknown
+
+    if (parsed === null) {
+      return null
+    }
 
     if (!isRecord(parsed) || !Array.isArray(parsed.options)) {
       return null

@@ -51,6 +51,7 @@ type LocaleText = {
   theme: string
   light: string
   dark: string
+  systemTheme: string
   uiScale: string
   fontScale: string
   lineHeight: string
@@ -282,6 +283,7 @@ const localeTextByLanguage: Record<AppLanguage, LocaleText> = {
     theme: '主题',
     light: '浅色',
     dark: '深色',
+    systemTheme: '系统',
     uiScale: '界面缩放',
     fontScale: '字体缩放',
     lineHeight: '行高',
@@ -529,6 +531,7 @@ const localeTextByLanguage: Record<AppLanguage, LocaleText> = {
     theme: 'Theme',
     light: 'Light',
     dark: 'Dark',
+    systemTheme: 'System',
     uiScale: 'UI scale',
     fontScale: 'Font scale',
     lineHeight: 'Line height',
@@ -1089,4 +1092,3 @@ export const getMessageLabel = (language: AppLanguage, message: ChatMessage) => 
 
   return text.system
 }
-

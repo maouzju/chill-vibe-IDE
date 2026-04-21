@@ -74,6 +74,9 @@ test('codex slash commands include current-provider and cross-provider skills wh
       crossProviderSkillReuseEnabled: true,
     })
 
+    assert.equal(commands.some((command) => command.name === 'init' && command.source === 'native'), true)
+    assert.equal(commands.some((command) => command.name === 'plan' && command.source === 'native'), true)
+
     const checkAll = commands.find((command) => command.name === 'check-all')
     const agentReach = commands.find((command) => command.name === 'agent-reach')
 

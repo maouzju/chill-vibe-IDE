@@ -32,6 +32,7 @@ import {
 } from '../shared/models.ts'
 import type { PaneNode } from '../shared/schema.ts'
 import { defaultSystemPrompt } from '../shared/system-prompt.ts'
+import { resolveAppTheme } from '../shared/theme.ts'
 
 describe('default-state helpers', () => {
   it('normalizes settings into safe persisted values', () => {
@@ -142,6 +143,13 @@ describe('default-state helpers', () => {
     const next = normalizeAppSettings({ uiScale: 1.2 } as never) as { uiScale?: number }
 
     assert.equal(next.uiScale, 1.2)
+  })
+
+  it('preserves the system theme preference and resolves it against the OS theme', () => {
+    assert.equal(normalizeAppSettings({ theme: 'system' }).theme, 'system')
+    assert.equal(resolveAppTheme('system', true), 'dark')
+    assert.equal(resolveAppTheme('system', false), 'light')
+    assert.equal(resolveAppTheme('light', true), 'light')
   })
 
   it('normalizes gitAgentModel with default fallback', () => {

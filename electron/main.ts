@@ -36,6 +36,10 @@ const isDev = !app.isPackaged
 const projectRoot = path.resolve(moduleDir, '../..')
 const clientDistDir = path.resolve(moduleDir, '../client')
 
+if (process.platform === 'linux') {
+  app.commandLine.appendSwitch('gtk-version', '3')
+}
+
 app.disableHardwareAcceleration()
 const devClientUrl = process.env.VITE_DEV_SERVER_URL ?? 'http://localhost:5173'
 const quitFlushDelayMs = 750

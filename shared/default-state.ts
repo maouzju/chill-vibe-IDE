@@ -355,7 +355,10 @@ export const normalizeAppSettings = (settings?: Partial<AppSettings> | null): Ap
 
   return {
     language,
-    theme: settings?.theme === 'light' ? 'light' : 'dark',
+    theme:
+      settings?.theme === 'light' || settings?.theme === 'system'
+        ? settings.theme
+        : 'dark',
     activeTopTab: normalizeTopTab(settings?.activeTopTab),
     uiScale: clampScale(settings?.uiScale, minUiScale, maxUiScale, defaults.uiScale),
     fontScale: clampScale(settings?.fontScale, minFontScale, maxFontScale, defaults.fontScale),

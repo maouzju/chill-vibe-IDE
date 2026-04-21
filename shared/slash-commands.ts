@@ -37,9 +37,13 @@ const CLAUDE_NATIVE_SLASH_COMMAND_DESCRIPTIONS: Record<AppLanguage, Record<strin
 const CODEX_NATIVE_SLASH_COMMAND_DESCRIPTIONS: Record<AppLanguage, Record<string, string>> = {
   'zh-CN': {
     compact: '压缩当前会话上下文',
+    init: '初始化或刷新项目说明',
+    plan: '查看或管理当前计划',
   },
   en: {
     compact: 'compact the current session context',
+    init: 'bootstrap or refresh project instructions',
+    plan: 'inspect or manage the current plan',
   },
 }
 

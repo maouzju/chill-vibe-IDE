@@ -18,6 +18,9 @@ const readMessageListMetrics = async (page: Page) =>
     distanceToBottom: Math.max(node.scrollHeight - node.clientHeight - node.scrollTop, 0),
   }))
 
+const readAskUserCardHeight = async (page: Page) =>
+  page.locator('.ask-user-card').evaluate((node) => node.getBoundingClientRect().height)
+
 const scrollMessageListToBottom = async (page: Page) => {
   await getActiveMessageList(page).evaluate((node) => {
     node.scrollTop = node.scrollHeight
@@ -315,6 +318,30 @@ for (const theme of ['dark', 'light'] as const) {
     await expect
       .poll(async () => (await readMessageListMetrics(page)).distanceToBottom)
       .toBeLessThanOrEqual(1)
+  })
+
+  test(`answering ask-user keeps the card height stable in ${theme} theme`, async ({
+    page,
+  }) => {
+    const mockApis = await installMockStreamingApis(page, theme)
+
+    await page.goto(appUrl)
+    await expect(page.locator('.ask-user-card')).toBeVisible()
+
+    const before = await readAskUserCardHeight(page)
+
+    await page.locator('.ask-user-option').filter({ hasText: 'Fast path' }).click()
+    await page.keyboard.press('Enter')
+
+    await expect
+      .poll(() => mockApis.readChatRequests())
+      .toEqual([
+        expect.stringContaining('Latest user message:\nFast path'),
+      ])
+    await expect(page.locator('.ask-user-card.is-answered')).toBeVisible()
+
+    const after = await readAskUserCardHeight(page)
+    expect(Math.abs(after - before)).toBeLessThanOrEqual(4)
   })
 }
 

@@ -1118,8 +1118,24 @@ export const AskUserQuestionCard = ({
   }
 
   const labels = language === 'en'
-    ? { submit: 'Submit answers', escHint: 'Esc to cancel', other: 'Other', prev: 'Previous', next: 'Next' }
-    : { submit: '提交回答', escHint: 'Esc 取消', other: '其他', prev: '上一题', next: '下一题' }
+    ? {
+        submit: 'Submit answers',
+        submitted: 'Submitted',
+        escHint: 'Esc to cancel',
+        lockedHint: 'Selection locked',
+        other: 'Other',
+        prev: 'Previous',
+        next: 'Next',
+      }
+    : {
+        submit: '提交回答',
+        submitted: '已提交',
+        escHint: 'Esc 取消',
+        lockedHint: '选择已锁定',
+        other: '其他',
+        prev: '上一题',
+        next: '下一题',
+      }
 
   const allAnswered = selections.every((sel) => sel !== null)
 
@@ -1280,19 +1296,19 @@ export const AskUserQuestionCard = ({
         ) : null}
       </div>
 
-      {!isAnswered ? (
-        <div className="ask-user-footer">
-          <button
-            type="button"
-            className="ask-user-submit"
-            disabled={!allAnswered || isSubmitting}
-            onClick={handleSubmit}
-          >
-            {labels.submit}
-          </button>
-          <span className="ask-user-esc-hint">{labels.escHint}</span>
-        </div>
-      ) : null}
+      <div className={`ask-user-footer${isAnswered ? ' is-answered' : ''}`}>
+        <button
+          type="button"
+          className="ask-user-submit"
+          disabled={isAnswered || !allAnswered || isSubmitting}
+          onClick={handleSubmit}
+        >
+          {isAnswered ? labels.submitted : labels.submit}
+        </button>
+        <span className="ask-user-esc-hint">
+          {isAnswered ? labels.lockedHint : labels.escHint}
+        </span>
+      </div>
     </section>
   )
 }

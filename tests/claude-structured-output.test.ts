@@ -531,3 +531,59 @@ test('invalid Claude AskUserQuestion tool payload falls back to a normal tool ac
     ],
   )
 })
+
+test('parses <ask-user-question> XML whose JSON uses smart quotes and trailing commas', () => {
+  const parseClaudeStreamEvent = createClaudeStructuredOutputParser('zh-CN')
+
+  // Real-world payload as emitted by Claude in the wild: curly quotes around
+  // keys/values and a trailing comma after the last option. Plain JSON.parse
+  // would throw on this, so the parser must tolerate both forms.
+  const rawXml =
+    '<ask-user-question>{\u201cheader\u201d:\u201c\u88ab\u52a8\u5b9e\u73b0\u65b9\u5f0f\u201d,\u201cquestion\u201d:\u201c\u6539\u5199\u8868\u8fbe?\u201d,\u201cmultiSelect\u201d:false,\u201coptions\u201d:[{\u201clabel\u201d:\u201c\u65b0\u589e passive.kind=rewrite\u201d,\u201cdescription\u201d:\u201c\u76f4\u63a5\u6539\u5199\u3002\u201d},{\u201clabel\u201d:\u201c\u52a0 aura \u65b0\u89e6\u53d1\u201d,\u201cdescription\u201d:\u201c\u4fdd\u7559\u73b0\u7ed3\u6784\u3002\u201d},]}</ask-user-question>'
+
+  const activities = parseClaudeStreamEvent({
+    type: 'assistant',
+    message: {
+      id: 'msg_smart_quotes',
+      content: [{ type: 'text', text: rawXml }],
+    },
+  })
+
+  assert.equal(activities.length, 1, 'expected a single ask-user activity')
+  const activity = activities[0] as Extract<typeof activities[number], { kind: 'ask-user' }>
+  assert.equal(activity.kind, 'ask-user')
+  assert.equal(activity.itemId, 'msg_smart_quotes')
+  assert.equal(activity.header, '\u88ab\u52a8\u5b9e\u73b0\u65b9\u5f0f')
+  assert.equal(activity.question, '\u6539\u5199\u8868\u8fbe?')
+  assert.equal(activity.multiSelect, false)
+  assert.equal(activity.options.length, 2)
+  assert.equal(activity.options[0]?.label, '\u65b0\u589e passive.kind=rewrite')
+  assert.equal(activity.options[1]?.label, '\u52a0 aura \u65b0\u89e6\u53d1')
+})
+
+test('parses <ask-user-question> XML wrapped in a fenced code block', () => {
+  const parseClaudeStreamEvent = createClaudeStructuredOutputParser('zh-CN')
+
+  // Claude sometimes wraps its XML in a markdown code fence. The parser should
+  // still recognise the ask-user block inside.
+  const payload = {
+    header: 'Layout',
+    question: 'Which layout?',
+    multiSelect: false,
+    options: [{ label: 'Compact', description: '' }],
+  }
+  const text = '```xml\n<ask-user-question>' + JSON.stringify(payload) + '</ask-user-question>\n```'
+
+  const activities = parseClaudeStreamEvent({
+    type: 'assistant',
+    message: {
+      id: 'msg_fenced',
+      content: [{ type: 'text', text }],
+    },
+  })
+
+  assert.equal(activities.length, 1)
+  const activity = activities[0] as Extract<typeof activities[number], { kind: 'ask-user' }>
+  assert.equal(activity.question, 'Which layout?')
+  assert.equal(activity.options[0]?.label, 'Compact')
+})

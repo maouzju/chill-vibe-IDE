@@ -311,6 +311,9 @@ A living list of traps that have wasted time before. **When you hit a new pitfal
 
 | 99 | Claude CLI bypass mode acceptance is controlled by the top-level `skipDangerousModePermissionPrompt`, while file access outside the workspace still needs `permissions.additionalDirectories` / `--add-dir` | Setting only `permissions.defaultMode: "bypassPermissions"` can still leave the outer IDE stuck on Claude's own warning or `~/.claude` access prompt, so the launcher must seed both knobs together. |
 
+| 100 | Windows packaged auto-update can still close the app and do nothing if the updater spawns bare `powershell` via `PATH` and never waits for the child process `spawn` event | Launch the update script via the absolute `SystemRoot\\System32\\WindowsPowerShell\\v1.0\\powershell.exe` path when available, and treat spawn errors as install failures before quitting so the app stays open instead of silently exiting. |
+| 101 | Ask-user 选项卡在提交答案后如果直接移除底部 footer，会让整张卡片高度瞬间缩短并造成“底部上移”的错觉 | 这类交互卡片的 answered 态要保留稳定的底部占位，只把控件切成已提交/锁定状态，避免消息区和 composer 跟着跳动。 |
+
 ### Self-maintenance rule
 
 - When you encounter a new non-obvious failure mode — a test that fails for environmental reasons, a build step with hidden prerequisites, a runtime behavior that contradicts the docs — append a row to this table before you finish the task.

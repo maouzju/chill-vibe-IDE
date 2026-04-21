@@ -2275,6 +2275,17 @@ body.is-card-dragging .lane-drop-zone-top {
   min-height: 0;
 }
 
+.card-shell.is-streaming,
+.card-shell:has(.ask-user-card),
+.card-shell:has(.message-sticky-overlay) {
+  /* Chromium/Electron can occasionally fail to repaint highly dynamic chat
+     surfaces until a pane/tab switch forces a fresh paint. Ask-user cards and
+     sticky transcript overlays are especially susceptible while a card is
+     streaming, so keep layout/style containment but drop paint containment for
+     those live interactive states. */
+  contain: layout style;
+}
+
 .card-shell.has-floating-ui {
   z-index: 4;
   overflow: visible;
@@ -6645,6 +6656,10 @@ body.is-card-dragging .lane-drop-zone-top {
   flex-direction: column;
   gap: 0.25rem;
   padding: 0.4rem 0.6rem 0.5rem;
+}
+
+.ask-user-footer.is-answered {
+  opacity: 0.85;
 }
 
 .ask-user-submit {

@@ -1,7 +1,10 @@
 import assert from 'node:assert/strict'
 import { readFile } from 'node:fs/promises'
+import fs from 'node:fs'
+import os from 'node:os'
 import path from 'node:path'
 import test from 'node:test'
+import crypto from 'node:crypto'
 import { inflateSync } from 'node:zlib'
 
 import { getWindowIconPathForPlatform } from '../electron/window-options.ts'
@@ -141,6 +144,36 @@ const readPixelAt = (image: PngImage, x: number, y: number) => {
   }
 }
 
+const hashFile = (filePath: string) =>
+  crypto.createHash('sha256').update(fs.readFileSync(filePath)).digest('hex')
+
+type IconSummary = {
+  count: number
+  sizes: string[]
+}
+
+type WindowsExeIconModule = {
+  readIconFileSummary(iconFilePath?: string): Promise<{ iconFilePath: string } & IconSummary>
+  readWindowsExecutableIconSummary(executablePath: string): Promise<{
+    executablePath: string
+    groups: Array<IconSummary & { id: string | number; lang: string | number }>
+  }>
+  patchWindowsExecutableIcon(options: {
+    executablePath: string
+    iconFilePath?: string
+    defaultGroupId?: number
+    defaultLang?: number
+  }): Promise<unknown>
+}
+
+const loadWindowsExeIconModule = (() => {
+  const runtimeImport = new Function('specifier', 'return import(specifier)') as (
+    specifier: string,
+  ) => Promise<WindowsExeIconModule>
+
+  return () => runtimeImport('../scripts/windows-exe-icon.mjs')
+})()
+
 test('Electron icon asset keeps transparent corners', async () => {
   const image = await decodePng(path.join(process.cwd(), 'build', 'icon.png'))
 
@@ -186,4 +219,39 @@ test('development icon moon is red while the packaged icon stays the original ne
   assert.equal(devMoonPixel.red > devMoonPixel.blue + 60, true)
   assert.equal(Math.abs(packagedMoonPixel.red - packagedMoonPixel.green) < 20, true)
   assert.equal(Math.abs(packagedMoonPixel.green - packagedMoonPixel.blue) < 40, true)
+})
+
+test('packaging patch rewrites a copied electron executable to the packaged app icon set', {
+  skip: process.platform !== 'win32',
+}, async () => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'chill-vibe-exe-icon-'))
+  const sourceExePath = path.join(process.cwd(), 'node_modules', 'electron', 'dist', 'electron.exe')
+  const tempExePath = path.join(tempDir, 'Chill Vibe.exe')
+  const iconFilePath = path.join(process.cwd(), 'build', 'icon.ico')
+
+  fs.copyFileSync(sourceExePath, tempExePath)
+
+  try {
+    const {
+      patchWindowsExecutableIcon,
+      readIconFileSummary,
+      readWindowsExecutableIconSummary,
+    } = await loadWindowsExeIconModule()
+    const expectedIcon = await readIconFileSummary(iconFilePath)
+    const beforeHash = hashFile(tempExePath)
+
+    await patchWindowsExecutableIcon({
+      executablePath: tempExePath,
+      iconFilePath,
+    })
+
+    const after = await readWindowsExecutableIconSummary(tempExePath)
+    const afterHash = hashFile(tempExePath)
+
+    assert.deepEqual(after.groups[0]?.sizes, expectedIcon.sizes)
+    assert.equal(after.groups[0]?.count, expectedIcon.count)
+    assert.notEqual(afterHash, beforeHash)
+  } finally {
+    fs.rmSync(tempDir, { recursive: true, force: true })
+  }
 })

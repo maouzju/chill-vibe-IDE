@@ -7,6 +7,7 @@ import {
   WINDOWS_ZIP_ROOT_FOLDER_NAME,
   writeZipFromDirectory,
 } from './manual-win-zip-packager.mjs'
+import { patchWindowsExecutableIcon } from './windows-exe-icon.mjs'
 
 const scriptDir = path.dirname(fileURLToPath(import.meta.url))
 const projectRoot = path.resolve(scriptDir, '..')
@@ -144,7 +145,7 @@ function runCommand(command, args = [], { dryRun = false } = {}) {
   }
 }
 
-function main() {
+async function main() {
   const options = parseArgs(process.argv.slice(2))
 
   if (options.help) {
@@ -213,7 +214,7 @@ function main() {
         `[packaging] warning: electron-builder failed for zip packaging, falling back to manual zip assembly`,
       )
 
-      const manualResult = packageManualWindowsZip({
+      const manualResult = await packageManualWindowsZip({
         projectRoot,
         outputDirAbsolute,
         version: rootPackageJson.version,
@@ -223,6 +224,11 @@ function main() {
       console.log(`[packaging] manual unpacked dir: ${manualResult.winUnpackedDir}`)
       break
     }
+  }
+
+  if (!options.dryRun && fs.existsSync(exePath)) {
+    await patchWindowsExecutableIcon({ executablePath: exePath })
+    console.log(`[packaging] patched Windows app icon: ${exePath}`)
   }
 
   if (options.target === 'zip' && !options.dryRun) {
@@ -246,7 +252,7 @@ function main() {
 }
 
 try {
-  main()
+  await main()
 } catch (error) {
   console.error(`[packaging] ${error instanceof Error ? error.message : String(error)}`)
   process.exitCode = 1

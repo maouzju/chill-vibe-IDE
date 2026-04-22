@@ -2,7 +2,7 @@
   "name": "chill-vibe-ide",
   "description": "Lightweight local AI IDE for running multiple Codex and Claude workspaces side-by-side.",
   "license": "MIT",
-  "version": "0.14.8",
+  "version": "0.14.9",
   "private": true,
   "type": "module",
   "main": "dist/electron/main.mjs",
@@ -100,6 +100,7 @@
   "build": {
     "appId": "com.chill-vibe.ide",
     "productName": "Chill Vibe",
+    "afterPack": "scripts/electron-builder-after-pack.cjs",
     "npmRebuild": false,
     "files": [
       "dist/client/**/*",
@@ -139,7 +140,7 @@
     },
     "win": {
       "target": "nsis",
-      "icon": "build/icon.png"
+      "icon": "build/icon.ico"
     },
     "mac": {
       "target": "dmg"

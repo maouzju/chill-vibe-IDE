@@ -3,6 +3,8 @@ import fs from 'node:fs'
 import path from 'node:path'
 import zlib from 'node:zlib'
 
+import { patchWindowsExecutableIcon } from './windows-exe-icon.mjs'
+
 const require = createRequire(import.meta.url)
 export const WINDOWS_ZIP_ROOT_FOLDER_NAME = 'Chill Vibe IDE'
 const windowsAbsolutePathPattern = /^[A-Za-z]:[\\/]/
@@ -213,7 +215,7 @@ function stageAppPayload(projectRoot, appDir, rootPackageJson) {
   stageRuntimeNodeModules(projectRoot, appDir, rootPackageJson)
 }
 
-function stageElectronShell(winUnpackedDir) {
+async function stageElectronShell(winUnpackedDir) {
   const electronBinaryPath = require('electron')
   const electronDistDir = path.dirname(electronBinaryPath)
 
@@ -225,6 +227,7 @@ function stageElectronShell(winUnpackedDir) {
     fs.rmSync(chillVibeExePath, { force: true })
   }
   fs.renameSync(electronExePath, chillVibeExePath)
+  await patchWindowsExecutableIcon({ executablePath: chillVibeExePath })
 
   const licensePath = path.join(winUnpackedDir, 'LICENSE')
   if (fs.existsSync(licensePath)) {
@@ -337,7 +340,7 @@ export function writeZipFromDirectory(sourceDir, zipPath, rootEntryName = path.b
   }
 }
 
-export function packageManualWindowsZip({
+export async function packageManualWindowsZip({
   projectRoot,
   outputDirAbsolute,
   version,
@@ -349,7 +352,7 @@ export function packageManualWindowsZip({
   const zipPath = path.join(outputDirAbsolute, zipFileName)
 
   ensureCleanDirectory(outputDirAbsolute)
-  stageElectronShell(winUnpackedDir)
+  await stageElectronShell(winUnpackedDir)
   stageAppPayload(projectRoot, appDir, rootPackageJson)
   stageLegalFiles(projectRoot, winUnpackedDir)
   writeZipFromDirectory(winUnpackedDir, zipPath, WINDOWS_ZIP_ROOT_FOLDER_NAME)

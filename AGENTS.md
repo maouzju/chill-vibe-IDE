@@ -63,6 +63,17 @@ Applies to: `AGENTS.md`, `CLAUDE.md`, `docs/`, ESLint config, CI scripts, `packa
 ### Shared rule across all tiers
 - Do not finish with an unverified code change. Every tier has its own verification step — follow it.
 
+## Docs-first Operating Contract
+
+This section governs agents working on **this Chill Vibe IDE repository**. It is not a product feature and must not be implemented by injecting extra prompts into Chill Vibe-launched Codex/Claude runtime sessions unless the user explicitly asks for that.
+
+- Start every non-trivial repo task from the docs, not from source code. Read `AGENTS.md` first, then the most relevant file under `docs/` or `docs/specs/` before editing production code.
+- For net-new features, multi-step behavior changes, cross-cutting product work, or any request that asks for a spec / requirements / design / plan, create or update `docs/specs/<slug>/requirements.md`, `design.md`, and `tasks.md` before touching `src/`, `server/`, `shared/`, or `electron/`.
+- For behavior, workflow, UX, packaging, persistence, provider-routing, or test-process changes, update the matching docs in the same task. Code and docs should land together.
+- Small scoped bug fixes, pure refactors, and docs/config/tooling-only edits may skip a new SPEC, but the handoff must say why skipping SPEC was reasonable and which existing docs/rules were checked.
+- If an agent realizes it started from code without the required docs pass, it must stop, read the relevant docs, and correct the process before continuing.
+- Do not treat app runtime prompt changes as a substitute for this repository-level agent contract. The source of truth for agent behavior while developing Chill Vibe is this `AGENTS.md` plus the relevant docs/specs.
+
 ## SPEC-first Workflow
 
 - For net-new features, multi-step behavior changes, cross-cutting product work, or any task where the user explicitly asks for a spec / requirements / design / plan, start with a SPEC under `docs/specs/<slug>/`.
@@ -304,7 +315,7 @@ A living list of traps that have wasted time before. **When you hit a new pitfal
 | 94 | Ubuntu GitHub Actions runners can fail `pnpm test` in the CI `quality` job with `Missing X server or $DISPLAY` because the Node test suite launches hidden Electron runtime tests through Playwright | Wrap the Ubuntu `pnpm test` step with `xvfb-run -a` (or provide an equivalent virtual display), or the release commit looks red in CI even when the app itself is fine. |
 | 95 | Windows PowerShell 5.1 can parse a BOM-less UTF-8 `.ps1` update script with mojibake paths like `D:\涓嬭浇\...`, even when the script body itself sets `UTF8Encoding` after launch | When an updater or helper script may include Chinese/non-ASCII paths, write the `.ps1` file with a UTF-8 BOM or the update can close the app, fail silently, and relaunch nothing. |
 
-| 96 | If "read docs first / maintain docs" lives only in product ideas instead of `AGENTS.md`, external agents can skip it completely | Put the docs-first rule in the repo contract itself, or each new task risks repeating the same workflow mistake. |
+| 96 | If "read docs first / maintain docs" is only implied by product ideas or runtime prompts, repo agents can still skip it while modifying Chill Vibe itself | Put the docs-first rule in the repo contract itself (`AGENTS.md`) and require agents to read/update relevant docs before production code, or each new task risks repeating the same workflow mistake. |
 | 97 | A Playwright run that starts the repo Vite web server on `127.0.0.1:5173` can leave that process behind after the suite exits, so the next Playwright launch fails immediately with “port already used” | Before a second Playwright run in the same session, verify who owns `5173` and stop the leftover repo-local `vite.js --host 127.0.0.1 --strictPort` process instead of assuming the prior run cleaned it up. |
 
 | 98 | Waiting only for the packaged Electron main PID is not enough during a Windows in-place update because renderer/GPU/utility child processes from the same `Chill Vibe.exe` path can keep `app.asar` and the executable locked after the main process exits | The zip updater must wait for or kill every matching app process under the installed executable path before clearing the app folder, or auto-update can silently die at the copy step even when the script itself launches correctly. |
@@ -313,6 +324,11 @@ A living list of traps that have wasted time before. **When you hit a new pitfal
 
 | 100 | Windows packaged auto-update can still close the app and do nothing if the updater spawns bare `powershell` via `PATH` and never waits for the child process `spawn` event | Launch the update script via the absolute `SystemRoot\\System32\\WindowsPowerShell\\v1.0\\powershell.exe` path when available, and treat spawn errors as install failures before quitting so the app stays open instead of silently exiting. |
 | 101 | Ask-user 选项卡在提交答案后如果直接移除底部 footer，会让整张卡片高度瞬间缩短并造成“底部上移”的错觉 | 这类交互卡片的 answered 态要保留稳定的底部占位，只把控件切成已提交/锁定状态，避免消息区和 composer 跟着跳动。 |
+| 102 | `spawn('powershell.exe', args, { detached: true, stdio: 'ignore', windowsHide: true })` 能成功 fire `'spawn'` 事件，但 PowerShell 会立刻以 exit code 0 退出且从不执行脚本——apply-update.log 保持 0 字节，更新彻底失效 | 走 `cmd.exe /c start "" /B <powershell> <args>` 包一层来真正分离进程，或者 auto-update 会表现为"点了安装窗口关了但啥都没发生"；直接 spawn powershell 再加 detached 是不可靠的。 |
+| 103 | Ask-user 不能只靠“卡里有 ask-user 消息”来判断是否等待用户回答，也不能忘记实时 activity 到达时打等待标记 | 实时 ask-user activity 必须立刻把当前 stream 标成等待回答；恢复态只应把“最新用户消息之后的 ask-user”视为待回答，否则会出现点击答案自中断，或旧 ask-user 禁掉正常打断。 |
+
+| 104 | Local provider `resume-session` recovery must continue the existing proxy-stats run instead of starting a fresh one | Restarting stats on auto-resume double-counts `request` and loses the earlier disconnect marker, so settings can still show zero recoveries/failures even though the chat visibly reconnected or failed. |
+| 105 | A provider session can become a dead archive that only resumes into transient `Reconnecting... n/5` placeholder output forever | After a few placeholder-only `resume-session` attempts, clear the stale session id and replay the visible transcript into a fresh provider session instead of reusing the dead session. |
 
 ### Self-maintenance rule
 

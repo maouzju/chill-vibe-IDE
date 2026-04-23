@@ -27,6 +27,7 @@ import {
 import { inspectOnboardingStatus } from '../server/onboarding-status.ts'
 import {
   getProviderSlashCommands,
+  recordProviderProxyStatsEvent,
   getProviderStatuses,
   setProviderRuntimeSettingsOverride,
   validateWorkspacePath,
@@ -353,6 +354,9 @@ export const createDesktopBackend = (deps: DesktopBackendDependencies = {}) => {
     },
     resetProxyStats() {
       resilientProxyPool.resetStats()
+    },
+    recordProxyStatsEvent(request: unknown) {
+      recordProviderProxyStatsEvent(request)
     },
 
     // ── Weather ─────────────────────────────────────────────────────────────

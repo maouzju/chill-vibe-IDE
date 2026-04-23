@@ -538,6 +538,9 @@ function registerDesktopHandlers() {
   ipcMain.handle('desktop:reset-proxy-stats', () =>
     desktopBackend.resetProxyStats(),
   )
+  ipcMain.handle('desktop:record-proxy-stats-event', (_event, request: unknown) =>
+    desktopBackend.recordProxyStatsEvent(request),
+  )
 
   // ── Weather ──────────────────────────────────────────────────────────────
   ipcMain.handle('desktop:fetch-weather', (_event, city?: string) =>

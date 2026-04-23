@@ -52,6 +52,7 @@ import {
   getReusableSkillProviders,
 } from './provider-skills.js'
 import { loadState } from './state-store.js'
+import { proxyStats, type ProxyStatsEvent } from './proxy-stats-store.js'
 import { resilientProxyPool } from './resilient-proxy.js'
 import { createArchiveRecallRuntimeOverrides, getCodexArchiveRecallInstruction } from './archive-recall.js'
 
@@ -78,6 +79,63 @@ let providerRuntimeSettingsOverride: AppSettings | null = null
 
 export const setProviderRuntimeSettingsOverride = (settings: AppSettings | null) => {
   providerRuntimeSettingsOverride = settings
+}
+
+type ProviderProxyStatsRecordRequest = {
+  provider: Provider
+  event: ProxyStatsEvent
+  endpoint: string
+  attempt?: number
+  errorType?: string
+}
+
+const providerProxyStatsEventValues: ProxyStatsEvent[] = [
+  'request',
+  'disconnect',
+  'recovery_success',
+  'recovery_fail',
+]
+
+const parseProviderProxyStatsRecordRequest = (value: unknown): ProviderProxyStatsRecordRequest => {
+  if (!value || typeof value !== 'object') {
+    throw new Error('Invalid proxy stats event.')
+  }
+
+  const record = value as Record<string, unknown>
+  const provider = record.provider
+  const event = record.event
+  const endpoint = typeof record.endpoint === 'string' ? record.endpoint.trim() : ''
+  const attempt = record.attempt
+  const errorType = record.errorType
+
+  if ((provider !== 'codex' && provider !== 'claude') || typeof event !== 'string' || !providerProxyStatsEventValues.includes(event as ProxyStatsEvent) || endpoint.length === 0) {
+    throw new Error('Invalid proxy stats event.')
+  }
+
+  if (attempt !== undefined && (typeof attempt !== 'number' || !Number.isFinite(attempt))) {
+    throw new Error('Invalid proxy stats event.')
+  }
+
+  if (errorType !== undefined && typeof errorType !== 'string') {
+    throw new Error('Invalid proxy stats event.')
+  }
+
+  return {
+    provider,
+    event: event as ProxyStatsEvent,
+    endpoint,
+    attempt,
+    errorType,
+  }
+}
+
+export const recordProviderProxyStatsEvent = (request: unknown) => {
+  const parsed = parseProviderProxyStatsRecordRequest(request)
+
+  proxyStats.record(parsed.provider, parsed.event, parsed.endpoint, {
+    attempt: parsed.attempt,
+    errorType: parsed.errorType,
+  })
 }
 
 const providerCommandPreferences: Record<Provider, string[]> =

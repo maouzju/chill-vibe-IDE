@@ -356,15 +356,13 @@ describe('launchDetachedPowerShellScriptFile', () => {
     let capturedOptions:
       | {
           detached: boolean
-          stdio: ['ignore', number, number]
+          stdio: 'ignore'
           windowsHide: boolean
         }
       | undefined
 
     await launchDetachedPowerShellScriptFile({
       scriptPath: 'C:\\Temp\\apply-update.ps1',
-      stdoutFd: 11,
-      stderrFd: 12,
       env: {
         PATH: '',
         SystemRoot: 'C:\\Windows',
@@ -379,17 +377,27 @@ describe('launchDetachedPowerShellScriptFile', () => {
       },
     })
 
-    assert.equal(capturedCommand, 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe')
+    // Must wrap PowerShell under cmd.exe /c start /B because Node's spawn
+    // with { detached:true, windowsHide:true } against powershell.exe directly
+    // causes PS to exit 0 immediately without running the script on Windows.
+    assert.equal(capturedCommand, 'cmd.exe')
     assert.deepEqual(capturedArgs, [
+      '/c',
+      'start',
+      '""',
+      '/B',
+      'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe',
       '-NoProfile',
       '-ExecutionPolicy',
       'Bypass',
       '-File',
       'C:\\Temp\\apply-update.ps1',
     ])
+    // stdio must be 'ignore' — inheriting fds caused fd lifecycle bugs and
+    // doesn't help once we detach through cmd.exe anyway.
     assert.deepEqual(capturedOptions, {
       detached: true,
-      stdio: ['ignore', 11, 12],
+      stdio: 'ignore',
       windowsHide: true,
     })
     assert.equal(child.unrefCalls, 1)
@@ -401,8 +409,6 @@ describe('launchDetachedPowerShellScriptFile', () => {
     await assert.rejects(
       launchDetachedPowerShellScriptFile({
         scriptPath: 'C:\\Temp\\apply-update.ps1',
-        stdoutFd: 11,
-        stderrFd: 12,
         env: {
           PATH: '',
         },

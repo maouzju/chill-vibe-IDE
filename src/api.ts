@@ -556,6 +556,16 @@ export type ProxyStatsSummary = {
   }>
 }
 
+export type ProxyStatsEvent = 'request' | 'disconnect' | 'recovery_success' | 'recovery_fail'
+
+export type ProxyStatsRecordRequest = {
+  provider: 'codex' | 'claude'
+  event: ProxyStatsEvent
+  endpoint: string
+  attempt?: number
+  errorType?: string
+}
+
 export const fetchProxyStats = async (since?: number): Promise<ProxyStatsSummary> => {
   const fn = requireDesktopAction(getDesktopApi()?.fetchProxyStats)
   return fn(since) as Promise<ProxyStatsSummary>
@@ -564,6 +574,11 @@ export const fetchProxyStats = async (since?: number): Promise<ProxyStatsSummary
 export const resetProxyStats = async (): Promise<void> => {
   const fn = requireDesktopAction(getDesktopApi()?.resetProxyStats)
   return fn() as Promise<void>
+}
+
+export const recordProxyStatsEvent = async (request: ProxyStatsRecordRequest): Promise<void> => {
+  const fn = requireDesktopAction(getDesktopApi()?.recordProxyStatsEvent)
+  return fn(request) as Promise<void>
 }
 
 // ── Weather ───────────────────────────────────────────────────────────────────

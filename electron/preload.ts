@@ -139,6 +139,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   fetchProxyStats: (since?: number) =>
     ipcRenderer.invoke('desktop:fetch-proxy-stats', since),
   resetProxyStats: () => ipcRenderer.invoke('desktop:reset-proxy-stats'),
+  recordProxyStatsEvent: (request: unknown) =>
+    ipcRenderer.invoke('desktop:record-proxy-stats-event', request),
 
   // ── Weather ──────────────────────────────────────────────────────────────
   fetchWeather: (city?: string) =>

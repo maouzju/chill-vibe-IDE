@@ -56,9 +56,17 @@ import {
 } from '../shared/system-prompt'
 import {
   resolveStreamRecoveryMode,
+  shouldKeepRecoveringTransientResumeWithFreshSession,
   shouldResetStreamRecoveryAttemptsForActivity,
   shouldResetStreamRecoveryAttemptsForText,
 } from './stream-recovery'
+import {
+  beginLocalRecoveryStatsRun,
+  continueLocalRecoveryStatsRun,
+  noteLocalRecoveryDisconnect,
+  settleLocalRecoveryStatsRun,
+  type LocalRecoveryStatsState,
+} from './stream-recovery-stats'
 import {
   computeRecoveryStatusAfterFinalFailure,
   computeRecoveryStatusAfterRetryScheduled,
@@ -93,6 +101,7 @@ import {
   fetchOnboardingStatus,
   fetchProviders,
   fetchProxyStats,
+  recordProxyStatsEvent,
   fetchSetupStatus,
   loadSessionHistoryEntry,
   fetchState,
@@ -195,6 +204,7 @@ const emptyProxyStatsCounts: ProxyStatsCounts = {
   recoveryFailures: 0,
 }
 const emptySessionHistory: SessionHistoryEntry[] = []
+const maxTransientResumeLoopAttempts = 3
 
 const normalizeWorkspaceHistoryKey = (workspacePath: string) => workspacePath.trim().toLowerCase()
 const findSessionRestoreColumnId = (state: AppState, entry: Pick<SessionHistoryEntry, 'workspacePath'>) =>
@@ -444,6 +454,9 @@ type QueuedSendRequest = {
   attachments: ImageAttachment[]
 }
 
+const hasPendingAskUserMessage = (messages: ChatMessage[]) =>
+  messages.findLastIndex((message) => message.meta?.kind === 'ask-user') >
+  messages.findLastIndex((message) => message.role === 'user')
 
 function App() {
   const [appState, dispatch] = useReducer(ideReducer, createDefaultState(''))
@@ -574,6 +587,8 @@ function App() {
   const appStateRef = useRef(appState)
   const activePaneTargetRef = useRef<PaneTarget | null>(null)
   const streamRetryCountRef = useRef(new Map<string, number>())
+  const transientResumeLoopCountRef = useRef(new Map<string, number>())
+  const localRecoveryStatsRef = useRef(new Map<string, LocalRecoveryStatsState>())
   const [cardRecoveryStatuses, setCardRecoveryStatuses] = useState<
     ReadonlyMap<string, CardRecoveryStatus>
   >(() => new Map())
@@ -656,7 +671,13 @@ function App() {
   const sendMessageRef = useRef<(
     (columnId: string, cardId: string, prompt: string, attachments: ImageAttachment[]) => Promise<void>
   ) | null>(null)
-  const recoverLiveStreamRef = useRef<((columnId: string, cardId: string) => Promise<boolean>) | null>(null)
+  const recoverLiveStreamRef = useRef<(
+    (
+      columnId: string,
+      cardId: string,
+      options?: { clearSessionId?: boolean },
+    ) => Promise<boolean>
+  ) | null>(null)
   const routingImportInputRef = useRef<HTMLInputElement | null>(null)
   const onboardingAutoSetupStartedRef = useRef(false)
   const hydrateRequestIdRef = useRef(0)
@@ -1480,7 +1501,20 @@ function App() {
     active.source.close()
     activeStreamsRef.current.delete(cardId)
     streamRetryCountRef.current.delete(cardId)
+    transientResumeLoopCountRef.current.delete(cardId)
     queueFollowUpDuringStreamRef.current.delete(cardId)
+    const settledRecoveryStats = settleLocalRecoveryStatsRun(
+      localRecoveryStatsRef.current.get(cardId),
+      'abandoned',
+    )
+    localRecoveryStatsRef.current.delete(cardId)
+    for (const event of settledRecoveryStats.events) {
+      void recordProxyStatsEvent({
+        provider: active.provider,
+        event,
+        endpoint: '/cli/local-stream',
+      }).catch(() => undefined)
+    }
 
     if (stopRemote) {
       await stopChat(active.streamId).catch(() => undefined)
@@ -1507,6 +1541,7 @@ function App() {
         active?.source.close()
         activeStreamsRef.current.delete(cardId)
         streamRetryCountRef.current.delete(cardId)
+        transientResumeLoopCountRef.current.delete(cardId)
         queueFollowUpDuringStreamRef.current.delete(cardId)
 
         if (!owner) {
@@ -1959,6 +1994,7 @@ function App() {
       activeStreamsRef.current.set(cardId, {
         cardId,
         streamId,
+        provider,
         source,
         assistantMessageId: active?.assistantMessageId ?? assistantMessage.id,
       })
@@ -2046,6 +2082,7 @@ function App() {
         onSession: ({ sessionId }) => {
           if (shouldResetStreamRecoveryAttemptsForActivity('session')) {
             streamRetryCountRef.current.delete(card.id)
+            transientResumeLoopCountRef.current.delete(card.id)
             markRecoveryResumedIfActive(card.id)
           }
           persistImmediately(
@@ -2068,6 +2105,7 @@ function App() {
 
           if (shouldResetStreamRecoveryAttemptsForText(content)) {
             streamRetryCountRef.current.delete(card.id)
+            transientResumeLoopCountRef.current.delete(card.id)
             markRecoveryResumedIfActive(card.id)
           }
           enqueueAssistantDelta(columnId, card.id, messageId, content)
@@ -2080,6 +2118,7 @@ function App() {
 
           if (shouldResetStreamRecoveryAttemptsForActivity('log')) {
             streamRetryCountRef.current.delete(card.id)
+            transientResumeLoopCountRef.current.delete(card.id)
             markRecoveryResumedIfActive(card.id)
           }
           applyAction({
@@ -2095,6 +2134,7 @@ function App() {
             shouldResetStreamRecoveryAttemptsForText(payload.content)
           ) {
             streamRetryCountRef.current.delete(card.id)
+            transientResumeLoopCountRef.current.delete(card.id)
             markRecoveryResumedIfActive(card.id)
           }
           const active = activeStreamsRef.current.get(card.id)
@@ -2144,6 +2184,7 @@ function App() {
         onActivity: (payload) => {
           if (shouldResetStreamRecoveryAttemptsForActivity('activity')) {
             streamRetryCountRef.current.delete(card.id)
+            transientResumeLoopCountRef.current.delete(card.id)
             markRecoveryResumedIfActive(card.id)
           }
 
@@ -2199,6 +2240,7 @@ function App() {
 
           if (payload.kind === 'ask-user') {
             const liveCard = getColumn(columnId)?.cards[card.id]
+            queueFollowUpDuringStreamRef.current.set(card.id, true)
 
             applyAction({
               type: 'updateCard',
@@ -2238,7 +2280,20 @@ function App() {
           source.close()
           activeStreamsRef.current.delete(card.id)
           streamRetryCountRef.current.delete(card.id)
+          transientResumeLoopCountRef.current.delete(card.id)
           queueFollowUpDuringStreamRef.current.delete(card.id)
+          const settledLocalRecoveryStats = settleLocalRecoveryStatsRun(
+            localRecoveryStatsRef.current.get(card.id),
+            stopped ? 'abandoned' : 'success',
+          )
+          localRecoveryStatsRef.current.delete(card.id)
+          for (const event of settledLocalRecoveryStats.events) {
+            void recordProxyStatsEvent({
+              provider: card.provider,
+              event,
+              endpoint: '/cli/local-stream',
+            }).catch(() => undefined)
+          }
           // Normal completion clears reconnecting/resumed but preserves failed
           // (failed should only clear when a brand-new stream starts on this card).
           clearRecoveryStatusIfAllowed(card.id)
@@ -2338,10 +2393,32 @@ function App() {
           }
 
           if (recoverable) {
+            const disconnectedLocalRecoveryStats = noteLocalRecoveryDisconnect(
+              localRecoveryStatsRef.current.get(card.id),
+            )
+            localRecoveryStatsRef.current.set(card.id, disconnectedLocalRecoveryStats.state)
+            for (const event of disconnectedLocalRecoveryStats.events) {
+              void recordProxyStatsEvent({
+                provider: card.provider,
+                event,
+                endpoint: '/cli/local-stream',
+                attempt: streamRetryCountRef.current.get(card.id) ?? 0,
+                errorType: 'local-provider-recoverable',
+              }).catch(() => undefined)
+            }
             const retryCount = streamRetryCountRef.current.get(card.id) ?? 0
 
             if (retryCount < 6) {
               const shouldCountAgainstBudget = transientOnly !== true
+              const transientResumeAttempt =
+                recoveryMode === 'resume-session' && transientOnly === true
+                  ? (transientResumeLoopCountRef.current.get(card.id) ?? 0) + 1
+                  : 0
+              if (transientResumeAttempt > 0) {
+                transientResumeLoopCountRef.current.set(card.id, transientResumeAttempt)
+              } else {
+                transientResumeLoopCountRef.current.delete(card.id)
+              }
               if (shouldCountAgainstBudget) {
                 streamRetryCountRef.current.set(card.id, retryCount + 1)
               }
@@ -2355,12 +2432,45 @@ function App() {
               window.setTimeout(() => {
                 const liveCard = getColumn(columnId)?.cards[card.id]
                 if (liveCard && liveCard.streamId === card.streamId) {
+                  const hasLiveSessionId =
+                    typeof liveCard.sessionId === 'string' &&
+                    liveCard.sessionId.trim().length > 0
+                  if (
+                    shouldKeepRecoveringTransientResumeWithFreshSession({
+                      recoverable,
+                      recoveryMode,
+                      transientOnly,
+                      hasSessionId: hasLiveSessionId,
+                      transientResumeAttempt,
+                      maxTransientResumeAttempts: maxTransientResumeLoopAttempts,
+                    })
+                  ) {
+                    transientResumeLoopCountRef.current.delete(card.id)
+                    if (hasLiveSessionId) {
+                      persistImmediately(
+                        applyAction({
+                          type: 'updateCard',
+                          columnId,
+                          cardId: card.id,
+                          patch: {
+                            sessionId: undefined,
+                            providerSessions: {},
+                          },
+                        }),
+                      )
+                    }
+                    void recoverLiveStreamRef.current?.(columnId, card.id, {
+                      clearSessionId: true,
+                    })
+                    return
+                  }
+
                   const nextRecoveryMode = resolveStreamRecoveryMode(
                     {
                       recoverable,
                       recoveryMode,
                     },
-                    typeof liveCard.sessionId === 'string' && liveCard.sessionId.trim().length > 0,
+                    hasLiveSessionId,
                   )
 
                   if (nextRecoveryMode === 'resume-session') {
@@ -2377,7 +2487,21 @@ function App() {
           }
 
           streamRetryCountRef.current.delete(card.id)
+          transientResumeLoopCountRef.current.delete(card.id)
           queueFollowUpDuringStreamRef.current.delete(card.id)
+          const settledLocalRecoveryStats = settleLocalRecoveryStatsRun(
+            localRecoveryStatsRef.current.get(card.id),
+            'failure',
+          )
+          localRecoveryStatsRef.current.delete(card.id)
+          for (const event of settledLocalRecoveryStats.events) {
+            void recordProxyStatsEvent({
+              provider: card.provider,
+              event,
+              endpoint: '/cli/local-stream',
+              errorType: 'local-provider-final',
+            }).catch(() => undefined)
+          }
 
           // Stream expired or server restarted — gracefully return to idle
           // so the user can continue chatting with their existing messages.
@@ -2452,6 +2576,7 @@ function App() {
       activeStreamsRef.current.set(card.id, {
         cardId: card.id,
         streamId: card.streamId,
+        provider: card.provider,
         source,
       })
     },
@@ -2482,6 +2607,8 @@ function App() {
     queueFollowUpDuringStreamRef.current.clear()
     stoppedRunReasonRef.current.clear()
     streamRetryCountRef.current.clear()
+    transientResumeLoopCountRef.current.clear()
+    localRecoveryStatsRef.current.clear()
   }, [])
 
   const attachStreamsForState = useCallback((state: AppState) => {
@@ -2538,6 +2665,7 @@ function App() {
     void hydrate()
     const activeStreams = activeStreamsRef.current
     const retryCounts = streamRetryCountRef.current
+    const transientResumeLoopCounts = transientResumeLoopCountRef.current
 
     return () => {
       activeStreams.forEach((stream) => {
@@ -2545,6 +2673,7 @@ function App() {
       })
       activeStreams.clear()
       retryCounts.clear()
+      transientResumeLoopCounts.clear()
     }
   }, [hydrate])
 
@@ -2909,6 +3038,7 @@ function App() {
       const latestUserMessage = [...card.messages].reverse().find((message) => message.role === 'user')
       const shouldQueueUntilDone =
         queueFollowUpDuringStreamRef.current.get(cardId) === true ||
+        hasPendingAskUserMessage(card.messages) ||
         isCompactBoundaryMessage(latestUserMessage, card.provider)
       enqueueQueuedSend(cardId, { prompt, attachments })
       if (!shouldQueueUntilDone) {
@@ -3000,6 +3130,15 @@ function App() {
     }
 
     const streamId = crypto.randomUUID()
+    const startedLocalRecoveryStats = beginLocalRecoveryStatsRun()
+    localRecoveryStatsRef.current.set(cardId, startedLocalRecoveryStats.state)
+    for (const event of startedLocalRecoveryStats.events) {
+      void recordProxyStatsEvent({
+        provider: card.provider,
+        event,
+        endpoint: '/cli/local-stream',
+      }).catch(() => undefined)
+    }
     queueFollowUpDuringStreamRef.current.set(cardId, isCompactBoundaryMessage(userMessage, card.provider))
     persistImmediately(
       applyActions([
@@ -3167,6 +3306,21 @@ function App() {
           })
         : undefined
     const streamId = crypto.randomUUID()
+    const continuedLocalRecoveryStats = continueLocalRecoveryStatsRun(
+      localRecoveryStatsRef.current.get(cardId),
+    )
+    if (continuedLocalRecoveryStats.state) {
+      localRecoveryStatsRef.current.set(cardId, continuedLocalRecoveryStats.state)
+    } else {
+      localRecoveryStatsRef.current.delete(cardId)
+    }
+    for (const event of continuedLocalRecoveryStats.events) {
+      void recordProxyStatsEvent({
+        provider: card.provider,
+        event,
+        endpoint: '/cli/local-stream',
+      }).catch(() => undefined)
+    }
     persistImmediately(
       applyAction({
         type: 'updateCard',
@@ -3225,6 +3379,19 @@ function App() {
 
       attachStream(columnId, liveCard)
     } catch (error) {
+      const settledLocalRecoveryStats = settleLocalRecoveryStatsRun(
+        localRecoveryStatsRef.current.get(cardId),
+        'failure',
+      )
+      localRecoveryStatsRef.current.delete(cardId)
+      for (const event of settledLocalRecoveryStats.events) {
+        void recordProxyStatsEvent({
+          provider: card.provider,
+          event,
+          endpoint: '/cli/local-stream',
+          errorType: 'local-provider-start-failed',
+        }).catch(() => undefined)
+      }
       persistImmediately(
         applyActions([
           {
@@ -3253,11 +3420,20 @@ function App() {
     text.unexpectedError,
   ])
 
-  const recoverLiveStream = useCallback(async (columnId: string, cardId: string) => {
+  const recoverLiveStream = useCallback(async (
+    columnId: string,
+    cardId: string,
+    options?: { clearSessionId?: boolean },
+  ) => {
     const column = getColumn(columnId)
     const card = column?.cards[cardId]
 
-    if (!column || !card || !column.workspacePath.trim() || !card.sessionId) {
+    if (!column || !card || !column.workspacePath.trim()) {
+      return false
+    }
+
+    const shouldClearSessionId = options?.clearSessionId === true
+    if (!shouldClearSessionId && !card.sessionId) {
       return false
     }
 
@@ -3293,6 +3469,25 @@ function App() {
       return false
     }
 
+    const language = appStateRef.current.settings.language
+    const freshSessionRecoveryPrompt = shouldClearSessionId
+      ? buildSeededChatPrompt({
+          language,
+          prompt: language === 'en' ? 'Please continue.' : '????',
+          attachments: [],
+          messages: card.messages,
+          provider: card.provider,
+          status: card.status,
+        })
+      : ''
+    const freshSessionRecoveryAttachments = shouldClearSessionId
+      ? collectSeededChatAttachments({
+          messages: card.messages,
+          attachments: [],
+          provider: card.provider,
+          status: card.status,
+        })
+      : []
     const archiveRecall =
       card.provider === 'codex'
         ? buildArchiveRecallSnapshot({
@@ -3302,6 +3497,15 @@ function App() {
           })
         : undefined
     const streamId = crypto.randomUUID()
+    const startedLocalRecoveryStats = beginLocalRecoveryStatsRun()
+    localRecoveryStatsRef.current.set(cardId, startedLocalRecoveryStats.state)
+    for (const event of startedLocalRecoveryStats.events) {
+      void recordProxyStatsEvent({
+        provider: card.provider,
+        event,
+        endpoint: '/cli/local-stream',
+      }).catch(() => undefined)
+    }
     persistImmediately(
       applyAction({
         type: 'updateCard',
@@ -3312,6 +3516,12 @@ function App() {
           reasoningEffort: resolvedReasoningEffort,
           status: 'streaming',
           streamId,
+          ...(shouldClearSessionId
+            ? {
+                sessionId: undefined,
+                providerSessions: {},
+              }
+            : {}),
         },
       }),
     )
@@ -3329,15 +3539,15 @@ function App() {
         reasoningEffort: resolvedReasoningEffort,
         thinkingEnabled: card.thinkingEnabled !== false,
         planMode: card.planMode ?? false,
-        language: appStateRef.current.settings.language,
+        language,
         systemPrompt: composedSystemPrompt,
         modelPromptRules: appStateRef.current.settings.modelPromptRules,
         crossProviderSkillReuseEnabled:
           appStateRef.current.settings.crossProviderSkillReuseEnabled,
         streamId,
-        sessionId: card.sessionId,
-        prompt: '',
-        attachments: [],
+        sessionId: shouldClearSessionId ? undefined : card.sessionId,
+        prompt: shouldClearSessionId ? freshSessionRecoveryPrompt : '',
+        attachments: shouldClearSessionId ? freshSessionRecoveryAttachments : [],
         archiveRecall,
       })
 
@@ -3361,6 +3571,19 @@ function App() {
       attachStream(columnId, liveCard)
       return true
     } catch (error) {
+      const settledLocalRecoveryStats = settleLocalRecoveryStatsRun(
+        localRecoveryStatsRef.current.get(cardId),
+        'failure',
+      )
+      localRecoveryStatsRef.current.delete(cardId)
+      for (const event of settledLocalRecoveryStats.events) {
+        void recordProxyStatsEvent({
+          provider: card.provider,
+          event,
+          endpoint: '/cli/local-stream',
+          errorType: 'local-provider-start-failed',
+        }).catch(() => undefined)
+      }
       persistImmediately(
         applyActions([
           {

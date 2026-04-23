@@ -17,6 +17,7 @@ export type SaveStatus = 'idle' | 'saving' | 'saved' | 'error'
 export type ActiveStream = {
   cardId: string
   streamId: string
+  provider: Provider
   source: ChatStreamSource
   assistantMessageId?: string
 }

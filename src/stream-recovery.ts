@@ -30,3 +30,54 @@ export const shouldResetStreamRecoveryAttemptsForText = (content: string) => {
 export const shouldResetStreamRecoveryAttemptsForActivity = (
   source: 'session' | 'log' | 'activity' | 'assistant_message',
 ) => source === 'activity' || source === 'assistant_message'
+
+export const shouldFallbackToFreshSessionAfterTransientResumeLoop = ({
+  recoverable,
+  recoveryMode,
+  transientOnly,
+  hasSessionId,
+  transientResumeAttempt,
+  maxTransientResumeAttempts,
+}: {
+  recoverable?: boolean
+  recoveryMode?: StreamErrorRecoveryMode
+  transientOnly?: boolean
+  hasSessionId: boolean
+  transientResumeAttempt: number
+  maxTransientResumeAttempts: number
+}) =>
+  recoverable === true &&
+  recoveryMode === 'resume-session' &&
+  transientOnly === true &&
+  hasSessionId &&
+  transientResumeAttempt >= maxTransientResumeAttempts
+
+export const shouldKeepRecoveringTransientResumeWithFreshSession = ({
+  recoverable,
+  recoveryMode,
+  transientOnly,
+  hasSessionId,
+  transientResumeAttempt,
+  maxTransientResumeAttempts,
+}: {
+  recoverable?: boolean
+  recoveryMode?: StreamErrorRecoveryMode
+  transientOnly?: boolean
+  hasSessionId: boolean
+  transientResumeAttempt: number
+  maxTransientResumeAttempts: number
+}) =>
+  recoverable === true &&
+  recoveryMode === 'resume-session' &&
+  transientOnly === true &&
+  (
+    !hasSessionId ||
+    shouldFallbackToFreshSessionAfterTransientResumeLoop({
+      recoverable,
+      recoveryMode,
+      transientOnly,
+      hasSessionId,
+      transientResumeAttempt,
+      maxTransientResumeAttempts,
+    })
+  )

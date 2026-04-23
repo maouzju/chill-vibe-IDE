@@ -16,6 +16,7 @@ import {
   parseStructuredToolMessage,
   readStructuredData,
 } from './components/chat-card-parsing'
+import { shouldResetStreamRecoveryAttemptsForText } from './stream-recovery'
 
 const MAX_SEEDED_PROMPT_CHARS = 6_000
 const MAX_REPLAY_ENTRY_CHARS = 1_100
@@ -303,7 +304,7 @@ const formatReplayMessage = (language: AppLanguage, message: ChatMessage) => {
   sections.push(...formatStructuredSections(message))
 
   const content = message.content.trim()
-  if (content) {
+  if (content && shouldResetStreamRecoveryAttemptsForText(content)) {
     sections.push(sections.length === 0 ? content : `Content:\n${indentBlock(content)}`)
   }
 

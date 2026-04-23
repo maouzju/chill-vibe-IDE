@@ -18,12 +18,13 @@ When a chat card's stream enters recovery, the user sees a short status line **i
 1. **Reconnecting state** — When `onError` receives a recoverable error and a retry is scheduled, the card's streaming indicator must show `正在重连… n/6` (or English equivalent) with the current retry attempt count.
 2. **Resumed state** — When real assistant output resumes (i.e. the next `onData` event passes `shouldResetStreamRecoveryAttemptsForText` / `shouldResetStreamRecoveryAttemptsForActivity`), the status line briefly shows `已恢复` (~2s) then disappears so the normal streaming indicator resumes.
 3. **Failed state** — When retry budget is exhausted (`retryCount >= 6`) or an unrecoverable final error arrives, the status line shows `重连失败` and stays until the card leaves streaming status. The existing error-message append in the transcript is still written.
-4. **No extra persistence** — Recovery state is per-session in-memory only. It resets on app restart.
-5. **No toast, no global alert** — Per user decision, feedback lives inside the assistant bubble area only.
+4. **Dead resumed-session escape hatch** — If the same provider session repeatedly resumes into placeholder-only `Reconnecting... n/5` output, Chill Vibe must stop reusing that provider `sessionId`, start a fresh provider session, and replay the visible transcript so the user is not trapped in a dead archive.
+5. **No extra persistence** — Recovery state is per-session in-memory only. It resets on app restart.
+6. **No toast, no global alert** — Per user decision, feedback lives inside the assistant bubble area only.
 
 ## Non-goals
 
-- Recovery retry logic itself (already exists in `resilient-proxy.ts` and `App.tsx:onError`).
+- General recovery retry transport logic (already exists in `resilient-proxy.ts` and `App.tsx:onError`), except for the dead resumed-session escape hatch above.
 - `InterruptedSessionEntry` restore menu (already exists on startup).
 - Global notification / toast infrastructure.
 

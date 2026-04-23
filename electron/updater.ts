@@ -40,8 +40,7 @@ const launchWindowsZipUpdateJob = async (assetPath: string) => {
   const stagingDir = path.join(jobRoot, 'extract')
   const scriptPath = path.join(jobRoot, 'apply-update.ps1')
   const logPath = path.join(jobRoot, 'apply-update.log')
-  const spawnStdoutPath = path.join(jobRoot, 'powershell-stdout.log')
-  const spawnStderrPath = path.join(jobRoot, 'powershell-stderr.log')
+  const spawnErrorPath = path.join(jobRoot, 'launcher-error.log')
 
   await fs.promises.mkdir(jobRoot, { recursive: true })
   await writeFile(logPath, '')
@@ -60,24 +59,15 @@ const launchWindowsZipUpdateJob = async (assetPath: string) => {
     ),
   )
 
-  // Redirect stdio to files instead of ignoring, so PowerShell spawn errors
-  // are diagnosable after the parent process exits.
-  const stdoutFd = fs.openSync(spawnStdoutPath, 'a')
-  const stderrFd = fs.openSync(spawnStderrPath, 'a')
-
+  // stdio is 'ignore' inside the launcher — we rely on the PowerShell script's
+  // own Write-Log calls into apply-update.log for diagnostics. Any failure to
+  // even spawn PS is surfaced as an exception we log to launcher-error.log.
   try {
-    await launchDetachedPowerShellScriptFile({
-      scriptPath,
-      stdoutFd,
-      stderrFd,
-    })
+    await launchDetachedPowerShellScriptFile({ scriptPath })
   } catch (error) {
     const message = error instanceof Error ? `${error.name}: ${error.message}` : String(error)
-    fs.appendFileSync(spawnStderrPath, `[launcher] Failed to spawn update PowerShell job: ${message}\n`)
+    fs.appendFileSync(spawnErrorPath, `[launcher] Failed to spawn update PowerShell job: ${message}\n`)
     throw error
-  } finally {
-    fs.closeSync(stdoutFd)
-    fs.closeSync(stderrFd)
   }
 }
 

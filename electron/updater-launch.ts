@@ -4,7 +4,7 @@ import path from 'node:path'
 
 type SpawnOptions = {
   detached: boolean
-  stdio: ['ignore', number, number]
+  stdio: 'ignore'
   windowsHide: boolean
 }
 
@@ -45,27 +45,43 @@ export function resolveWindowsPowerShellPath(
 
 export async function launchDetachedPowerShellScriptFile({
   scriptPath,
-  stdoutFd,
-  stderrFd,
   env = process.env,
   fileExists = existsSync,
   spawnProcess = spawn,
 }: {
   scriptPath: string
-  stdoutFd: number
-  stderrFd: number
   env?: NodeJS.ProcessEnv
   fileExists?: (path: string) => boolean
   spawnProcess?: PowerShellSpawnProcess
 }) {
-  const command = resolveWindowsPowerShellPath(env, fileExists)
-  const args = ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', scriptPath]
+  // Why cmd.exe wrapping:
+  // Node's `spawn('powershell.exe', args, { detached: true, stdio: 'ignore',
+  // windowsHide: true })` causes PowerShell to exit 0 immediately without
+  // executing the script on Windows — likely because CREATE_NO_WINDOW +
+  // DETACHED_PROCESS leaves PS without a console it can attach to. Wrapping
+  // through `cmd.exe /c start "" /B` gives PS a proper detached environment
+  // without a visible window and lets it actually run the script to completion
+  // even after the parent Electron process exits.
+  const psPath = resolveWindowsPowerShellPath(env, fileExists)
+  const command = 'cmd.exe'
+  const args = [
+    '/c',
+    'start',
+    '""',
+    '/B',
+    psPath,
+    '-NoProfile',
+    '-ExecutionPolicy',
+    'Bypass',
+    '-File',
+    scriptPath,
+  ]
 
   await new Promise<void>((resolve, reject) => {
     let settled = false
     const child = spawnProcess(command, args, {
       detached: true,
-      stdio: ['ignore', stdoutFd, stderrFd],
+      stdio: 'ignore',
       windowsHide: true,
     })
 

@@ -11,6 +11,7 @@ type MockCardState = {
     role: 'assistant' | 'user' | 'system'
     content: string
     createdAt: string
+    meta?: Record<string, string>
   }>
 }
 
@@ -33,6 +34,32 @@ const emitStreamEvent = async (page: Page, streamId: string, eventName: string, 
     },
   )
 }
+
+const askUserActivity = {
+  itemId: 'ask-user-item-1',
+  kind: 'ask-user',
+  status: 'completed',
+  header: 'Need a choice',
+  question: 'Which path should I take?',
+  multiSelect: false,
+  options: [
+    { label: 'Fast', description: 'Ship the smallest safe fix' },
+    { label: 'Deep', description: 'Investigate the whole area first' },
+  ],
+} as const
+
+const createAskUserMessage = (createdAt: string) => ({
+  id: 'codex:stream-1:item:ask-user:question',
+  role: 'assistant' as const,
+  content: '',
+  createdAt,
+  meta: {
+    provider: 'codex',
+    kind: 'ask-user',
+    itemId: askUserActivity.itemId,
+    structuredData: JSON.stringify(askUserActivity),
+  },
+})
 
 const installMockApis = async (
   page: Page,
@@ -496,4 +523,112 @@ test('sending during /compact still waits for the compaction stream to finish', 
   }).toBe(true)
   await expect.poll(() => mock.readState().columns[0]?.cards['card-1']?.status).toBe('streaming')
   await expect.poll(() => mock.readState().columns[0]?.cards['card-1']?.streamId).toBe('stream-3')
+})
+
+test('answering a live ask-user activity waits for the active stream instead of interrupting it', async ({ page }) => {
+  const mock = await installMockApis(page, { autoEmitDoneOnStop: true })
+  await page.goto('http://localhost:5173')
+
+  await expect(getActiveComposerTextarea(page)).toBeVisible()
+
+  await emitStreamEvent(page, 'stream-1', 'activity', askUserActivity)
+
+  await expect(page.locator('.ask-user-card')).toBeVisible()
+  await page.locator('.ask-user-option').filter({ hasText: 'Fast' }).click()
+  await page.locator('.ask-user-submit').click()
+
+  await expect.poll(() => mock.readRequests()).toEqual([])
+  await expect
+    .poll(() => mock.readState().columns[0]?.cards['card-1']?.messages.map((message) => message.role))
+    .toEqual(['assistant'])
+  await expect.poll(() => mock.readState().columns[0]?.cards['card-1']?.status).toBe('streaming')
+  await expect.poll(() => mock.readState().columns[0]?.cards['card-1']?.streamId).toBe('stream-1')
+
+  await emitStreamEvent(page, 'stream-1', 'done', {})
+
+  await expect
+    .poll(() => mock.readRequests())
+    .toEqual(['message:Fast'])
+  await expect
+    .poll(() => mock.readState().columns[0]?.cards['card-1']?.messages.map((message) => message.role))
+    .toEqual(['assistant', 'assistant', 'user'])
+  await expect.poll(() => mock.readState().columns[0]?.cards['card-1']?.streamId).toBe('stream-2')
+})
+
+test('answering a restored ask-user card waits for the recovered stream instead of interrupting it', async ({ page }) => {
+  const now = new Date().toISOString()
+  const mock = await installMockApis(page, {
+    initialCard: {
+      status: 'streaming',
+      streamId: 'stream-1',
+      sessionId: 'session-1',
+      messages: [createAskUserMessage(now)],
+    },
+    autoEmitDoneOnStop: true,
+  })
+  await page.goto('http://localhost:5173')
+
+  await expect(getActiveComposerTextarea(page)).toBeVisible()
+  await expect(page.locator('.ask-user-card')).toBeVisible()
+
+  await page.locator('.ask-user-option').filter({ hasText: 'Fast' }).click()
+  await page.locator('.ask-user-submit').click()
+
+  await expect.poll(() => mock.readRequests()).toEqual([])
+  await expect
+    .poll(() => mock.readState().columns[0]?.cards['card-1']?.messages.map((message) => message.role))
+    .toEqual(['assistant'])
+  await expect.poll(() => mock.readState().columns[0]?.cards['card-1']?.status).toBe('streaming')
+  await expect.poll(() => mock.readState().columns[0]?.cards['card-1']?.streamId).toBe('stream-1')
+
+  await emitStreamEvent(page, 'stream-1', 'done', {})
+
+  await expect
+    .poll(() => mock.readRequests())
+    .toEqual(['message:Fast'])
+  await expect
+    .poll(() => mock.readState().columns[0]?.cards['card-1']?.messages.map((message) => message.role))
+    .toEqual(['assistant', 'user'])
+  await expect.poll(() => mock.readState().columns[0]?.cards['card-1']?.streamId).toBe('stream-2')
+})
+
+test('old answered ask-user cards do not disable ordinary user interrupts', async ({ page }) => {
+  const now = new Date().toISOString()
+  const mock = await installMockApis(page, {
+    initialCard: {
+      status: 'streaming',
+      streamId: 'stream-1',
+      sessionId: 'session-1',
+      messages: [
+        createAskUserMessage(now),
+        {
+          id: 'user-answer-1',
+          role: 'user',
+          content: 'Fast',
+          createdAt: now,
+        },
+        {
+          id: 'assistant-2',
+          role: 'assistant',
+          content: 'Working after your answer',
+          createdAt: now,
+        },
+      ],
+    },
+    autoEmitDoneOnStop: true,
+  })
+  await page.goto('http://localhost:5173')
+
+  const textarea = getActiveComposerTextarea(page)
+  const sendButton = page.getByRole('button', { name: 'Send message' })
+
+  await expect(textarea).toBeVisible()
+  await textarea.fill('Interrupt the new work')
+  await sendButton.click()
+
+  await expect.poll(() => mock.readRequests()).toEqual([
+    'stop:stream-1',
+    'message:Interrupt the new work',
+  ])
+  await expect.poll(() => mock.readState().columns[0]?.cards['card-1']?.streamId).toBe('stream-2')
 })

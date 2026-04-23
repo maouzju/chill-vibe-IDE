@@ -3,6 +3,8 @@ import test from 'node:test'
 
 import {
   resolveStreamRecoveryMode,
+  shouldFallbackToFreshSessionAfterTransientResumeLoop,
+  shouldKeepRecoveringTransientResumeWithFreshSession,
   shouldResetStreamRecoveryAttemptsForActivity,
   shouldResetStreamRecoveryAttemptsForText,
 } from '../src/stream-recovery.ts'
@@ -60,4 +62,134 @@ test('only meaningful activity resets the recovery retry budget', () => {
   assert.equal(shouldResetStreamRecoveryAttemptsForActivity('log'), false)
   assert.equal(shouldResetStreamRecoveryAttemptsForActivity('activity'), true)
   assert.equal(shouldResetStreamRecoveryAttemptsForActivity('assistant_message'), true)
+})
+
+test('repeated transient resume loops fall back to a fresh session escape hatch', () => {
+  assert.equal(
+    shouldFallbackToFreshSessionAfterTransientResumeLoop({
+      recoverable: true,
+      recoveryMode: 'resume-session',
+      transientOnly: true,
+      hasSessionId: true,
+      transientResumeAttempt: 2,
+      maxTransientResumeAttempts: 3,
+    }),
+    false,
+  )
+
+  assert.equal(
+    shouldFallbackToFreshSessionAfterTransientResumeLoop({
+      recoverable: true,
+      recoveryMode: 'resume-session',
+      transientOnly: true,
+      hasSessionId: true,
+      transientResumeAttempt: 3,
+      maxTransientResumeAttempts: 3,
+    }),
+    true,
+  )
+})
+
+test('fresh-session fallback only applies to recoverable placeholder-only session resumes', () => {
+  const base = {
+    recoverable: true,
+    recoveryMode: 'resume-session' as const,
+    transientOnly: true,
+    hasSessionId: true,
+    transientResumeAttempt: 4,
+    maxTransientResumeAttempts: 3,
+  }
+
+  assert.equal(
+    shouldFallbackToFreshSessionAfterTransientResumeLoop({
+      ...base,
+      recoverable: false,
+    }),
+    false,
+  )
+  assert.equal(
+    shouldFallbackToFreshSessionAfterTransientResumeLoop({
+      ...base,
+      recoveryMode: 'reattach-stream',
+    }),
+    false,
+  )
+  assert.equal(
+    shouldFallbackToFreshSessionAfterTransientResumeLoop({
+      ...base,
+      transientOnly: false,
+    }),
+    false,
+  )
+  assert.equal(
+    shouldFallbackToFreshSessionAfterTransientResumeLoop({
+      ...base,
+      hasSessionId: false,
+    }),
+    false,
+  )
+})
+
+test('transient-only resume recovery keeps using fresh-session recovery after the session id is gone', () => {
+  assert.equal(
+    shouldKeepRecoveringTransientResumeWithFreshSession({
+      recoverable: true,
+      recoveryMode: 'resume-session',
+      transientOnly: true,
+      hasSessionId: false,
+      transientResumeAttempt: 1,
+      maxTransientResumeAttempts: 3,
+    }),
+    true,
+  )
+
+  assert.equal(
+    shouldKeepRecoveringTransientResumeWithFreshSession({
+      recoverable: true,
+      recoveryMode: 'resume-session',
+      transientOnly: true,
+      hasSessionId: true,
+      transientResumeAttempt: 3,
+      maxTransientResumeAttempts: 3,
+    }),
+    true,
+  )
+})
+
+test('fresh-session transient recovery does not apply to non-transient or non-resume failures', () => {
+  assert.equal(
+    shouldKeepRecoveringTransientResumeWithFreshSession({
+      recoverable: true,
+      recoveryMode: 'reattach-stream',
+      transientOnly: true,
+      hasSessionId: false,
+      transientResumeAttempt: 5,
+      maxTransientResumeAttempts: 3,
+    }),
+    false,
+  )
+
+  assert.equal(
+    shouldKeepRecoveringTransientResumeWithFreshSession({
+      recoverable: true,
+      recoveryMode: 'resume-session',
+      transientOnly: false,
+      hasSessionId: false,
+      transientResumeAttempt: 5,
+      maxTransientResumeAttempts: 3,
+    }),
+    false,
+  )
+
+  assert.equal(
+    shouldKeepRecoveringTransientResumeWithFreshSession({
+      recoverable: false,
+      recoveryMode: 'resume-session',
+      transientOnly: true,
+      hasSessionId: false,
+      transientResumeAttempt: 5,
+      maxTransientResumeAttempts: 3,
+    }),
+    false,
+  )
 })

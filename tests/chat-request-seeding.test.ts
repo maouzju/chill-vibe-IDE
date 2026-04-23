@@ -326,6 +326,24 @@ describe('chat request seeding', () => {
     assert.match(prompt, /Visible follow-up after compact\./i)
   })
 
+  it('skips transient reconnect placeholders when replaying a fresh-session prompt', () => {
+    const prompt = buildSeededChatPrompt({
+      language: 'en',
+      provider: 'codex',
+      status: 'streaming',
+      prompt: 'Please continue.',
+      attachments: [],
+      messages: [
+        createMessage('user-1', 'user', 'Finish the repair.'),
+        createMessage('assistant-1', 'assistant', 'Reconnecting... 1/5'),
+        createMessage('assistant-2', 'assistant', 'Reconnecting 2/5'),
+      ],
+    })
+
+    assert.match(prompt, /Finish the repair\./i)
+    assert.doesNotMatch(prompt, /Reconnecting/i)
+  })
+
   it('keeps long-chat history available for seeded requests when UI hides older messages for performance', () => {
     const prompt = buildSeededChatPrompt({
       language: 'en',

@@ -45,6 +45,7 @@ export const shouldClearRecoveryStatusOnStreamIdle = (
    - In `onError` final-failure branch: `computeRecoveryStatusAfterFinalFailure`.
    - In `onData` / the text/activity reset branch (wherever `shouldResetStreamRecoveryAttempts*` returns `true`): call `computeRecoveryStatusAfterSuccess` + schedule a 2s clear.
    - When a card transitions to `idle` after `streaming`: clear unless `failed` (use `shouldClearRecoveryStatusOnStreamIdle`).
+   - Track consecutive `resume-session` retries whose provider output was only transient reconnect placeholder text. After a small threshold, clear the card's stale `sessionId`, start a fresh provider session, and seed the request with the visible transcript via `buildSeededChatPrompt`; filter placeholder reconnect messages out of that seeded transcript.
 
 2. **Prop drilling**:
    - `App.tsx` → `ChatCard` (new optional prop `recoveryStatus?: CardRecoveryStatus`).
@@ -68,6 +69,8 @@ Unit test `src/stream-recovery-feedback.ts`:
 - `resumed` only emits when previous was `reconnecting` (no false positives on fresh streams).
 - `failed` overrides `reconnecting`.
 - `shouldClearRecoveryStatusOnStreamIdle` preserves `failed` but clears others.
+- `shouldFallbackToFreshSessionAfterTransientResumeLoop` only triggers for recoverable `resume-session` placeholder-only loops at the configured threshold.
+- `buildSeededChatPrompt` skips placeholder reconnect messages when replaying a fresh-session recovery prompt.
 
 Register the new file in `tests/index.test.ts`.
 

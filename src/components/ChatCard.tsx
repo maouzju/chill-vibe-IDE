@@ -1978,34 +1978,7 @@ const ChatCardView = ({
       return
     }
 
-    let cancelled = false
-
-    void fetchSlashCommands({
-      provider: card.provider,
-      workspacePath,
-      language,
-      crossProviderSkillReuseEnabled,
-    })
-      .then((commands) => {
-        if (cancelled) {
-          return
-        }
-
-        setRemoteSlashCommands(commands.length > 0 ? commands : localSlashCommands)
-        setSlashCommandsStatus('ready')
-      })
-      .catch(() => {
-        if (cancelled) {
-          return
-        }
-
-        setRemoteSlashCommands(localSlashCommands)
-        setSlashCommandsStatus('error')
-      })
-
-    return () => {
-      cancelled = true
-    }
+    return undefined
   }, [
     card.provider,
     crossProviderSkillReuseEnabled,

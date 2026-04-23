@@ -114,6 +114,13 @@ declare global {
       // Proxy Stats
       fetchProxyStats?: (since?: number) => Promise<unknown>
       resetProxyStats?: () => Promise<void>
+      recordProxyStatsEvent?: (request: {
+        provider: 'codex' | 'claude'
+        event: 'request' | 'disconnect' | 'recovery_success' | 'recovery_fail'
+        endpoint: string
+        attempt?: number
+        errorType?: string
+      }) => Promise<void>
 
       // White Noise
       fetchWhiteNoiseScenes?: () => Promise<unknown>

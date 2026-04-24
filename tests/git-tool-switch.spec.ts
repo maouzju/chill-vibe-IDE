@@ -208,7 +208,7 @@ const installMockApis = async (page: Page, theme: ThemeName, language: AppLangua
       lineHeightScale: 1,
       resilientProxyEnabled: true,
       requestModels: {
-        codex: 'gpt-5.4',
+        codex: 'gpt-5.5',
         claude: 'claude-opus-4-7',
       },
       modelReasoningEfforts: {
@@ -233,7 +233,7 @@ const installMockApis = async (page: Page, theme: ThemeName, language: AppLangua
         title: 'Git Flow Test',
         provider: 'codex' as const,
         workspacePath: 'd:\\Git\\chill-vibe',
-        model: 'gpt-5.4',
+        model: 'gpt-5.5',
         cards: [
           {
             id: 'card-1',
@@ -241,7 +241,7 @@ const installMockApis = async (page: Page, theme: ThemeName, language: AppLangua
             status: 'idle' as const,
             size: 560,
             provider: 'codex' as const,
-            model: 'gpt-5.4',
+            model: 'gpt-5.5',
             reasoningEffort: 'medium',
             draft: '',
             messages: [],
@@ -831,7 +831,7 @@ test('inactive pane-mounted Git tabs defer status fetch until activated', async 
       lineHeightScale: 1,
       resilientProxyEnabled: true,
       requestModels: {
-        codex: 'gpt-5.4',
+        codex: 'gpt-5.5',
         claude: 'claude-opus-4-7',
       },
       modelReasoningEfforts: {
@@ -856,7 +856,7 @@ test('inactive pane-mounted Git tabs defer status fetch until activated', async 
         title: 'Git Pane Test',
         provider: 'codex' as const,
         workspacePath: 'd:\\Git\\chill-vibe',
-        model: 'gpt-5.4',
+        model: 'gpt-5.5',
         cards: [
           {
             id: 'card-1',

@@ -77,7 +77,7 @@ describe('model prompt rules', () => {
 
   it('falls back to the built-in prompt when the base prompt is empty and no rules match', () => {
     assert.equal(
-      buildSystemPromptForModel('', 'gpt-5.4', [
+      buildSystemPromptForModel('', 'gpt-5.5', [
         {
           id: 'rule-claude',
           modelMatch: 'claude',

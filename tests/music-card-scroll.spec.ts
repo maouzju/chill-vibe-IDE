@@ -37,7 +37,7 @@ const createState = (theme: ThemeName) => createPlaywrightState({
     experimentalWhiteNoiseEnabled: false,
     experimentalWeatherEnabled: false,
     requestModels: {
-      codex: 'gpt-5.4',
+      codex: 'gpt-5.5',
       claude: 'claude-opus-4-7',
     },
     modelReasoningEfforts: {
@@ -54,7 +54,7 @@ const createState = (theme: ThemeName) => createPlaywrightState({
         profiles: [],
       },
     },
-    gitAgentModel: 'gpt-5.4 low',
+    gitAgentModel: 'gpt-5.5 low',
     recentWorkspaces: [],
   },
   updatedAt: '2026-04-07T00:00:00.000Z',
@@ -64,7 +64,7 @@ const createState = (theme: ThemeName) => createPlaywrightState({
       title: 'Music Workspace',
       provider: 'codex' as const,
       workspacePath: 'd:\\Git\\chill-vibe',
-      model: 'gpt-5.4',
+      model: 'gpt-5.5',
       cards: [
         {
           id: 'card-1',

@@ -11787,19 +11787,26 @@ body.is-pane-resizing .split-resize-handle::before {
   border-top: 1px solid var(--drop-target-border);
 }
 
-.pane-content > .card-shell:not(.is-error),
-.pane-content > .pane-tab-panel > .card-shell:not(.is-error) {
+.pane-content > .card-shell,
+.pane-content > .pane-tab-panel > .card-shell {
   height: 100%;
   flex: 1 1 auto;
+  min-width: 0;
   min-height: 0;
+}
+
+.pane-content > .card-shell:not(.is-error),
+.pane-content > .pane-tab-panel > .card-shell:not(.is-error),
+.pane-content > .card-shell.is-pane-embedded.is-error,
+.pane-content > .pane-tab-panel > .card-shell.is-pane-embedded.is-error {
   border: none;
   border-radius: 0;
   background: transparent;
   box-shadow: none;
 }
 
-.pane-content > .card-shell:not(.is-error)::after,
-.pane-content > .pane-tab-panel > .card-shell:not(.is-error)::after {
+.pane-content > .card-shell::after,
+.pane-content > .pane-tab-panel > .card-shell::after {
   border-radius: 0;
 }
 

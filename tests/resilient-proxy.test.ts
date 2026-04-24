@@ -274,7 +274,7 @@ describe('internal resilient proxy', () => {
         response.setHeader('Content-Type', 'text/event-stream')
         response.write('event: response.created\n')
         response.write(
-          'data: {"type":"response.created","response":{"id":"resp-1","model":"gpt-5.4","status":"in_progress"}}\n\n',
+          'data: {"type":"response.created","response":{"id":"resp-1","model":"gpt-5.5","status":"in_progress"}}\n\n',
         )
         response.write('event: response.output_item.added\n')
         response.write(
@@ -296,7 +296,7 @@ describe('internal resilient proxy', () => {
           JSON.stringify({
             id: 'resp-1',
             object: 'response',
-            model: 'gpt-5.4',
+            model: 'gpt-5.5',
             status: 'completed',
             output: [
               {
@@ -342,7 +342,7 @@ describe('internal resilient proxy', () => {
           Authorization: 'Bearer sk-test',
         },
         body: JSON.stringify({
-          model: 'gpt-5.4',
+          model: 'gpt-5.5',
           stream: true,
           input: 'Say hello',
         }),

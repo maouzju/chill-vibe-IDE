@@ -19,8 +19,8 @@ const createWorkspaceColumnComparatorProps = () => {
     crossProviderSkillReuseEnabled: true,
     musicAlbumCoverEnabled: true,
     weatherCity: '',
-    gitAgentModel: 'gpt-5.4',
-    brainstormRequestModel: 'gpt-5.4',
+    gitAgentModel: 'gpt-5.5',
+    brainstormRequestModel: 'gpt-5.5',
     availableQuickToolModels: [],
     autoUrgeEnabled: false,
     autoUrgeProfiles: [],
@@ -62,8 +62,8 @@ const createWorkspaceColumnComparatorProps = () => {
 }
 
 const createPaneComparatorProps = () => {
-  const leftCard = createCard('Left Chat', 420, 'codex', 'gpt-5.4', 'medium', 'en')
-  const rightCard = createCard('Right Chat', 420, 'codex', 'gpt-5.4', 'medium', 'en')
+  const leftCard = createCard('Left Chat', 420, 'codex', 'gpt-5.5', 'medium', 'en')
+  const rightCard = createCard('Right Chat', 420, 'codex', 'gpt-5.5', 'medium', 'en')
   const leftPane = createPane([leftCard.id], leftCard.id, 'pane-left')
   const rightPane = createPane([rightCard.id], rightCard.id, 'pane-right')
   const column = createColumn(
@@ -71,7 +71,7 @@ const createPaneComparatorProps = () => {
       title: 'Memo Test',
       provider: 'codex',
       workspacePath: 'd:\\Git\\chill-vibe',
-      model: 'gpt-5.4',
+      model: 'gpt-5.5',
       cards: {
         [leftCard.id]: leftCard,
         [rightCard.id]: rightCard,
@@ -93,8 +93,8 @@ const createPaneComparatorProps = () => {
     crossProviderSkillReuseEnabled: true,
     musicAlbumCoverEnabled: true,
     weatherCity: '',
-    gitAgentModel: 'gpt-5.4',
-    brainstormRequestModel: 'gpt-5.4',
+    gitAgentModel: 'gpt-5.5',
+    brainstormRequestModel: 'gpt-5.5',
     availableQuickToolModels: [],
     autoUrgeEnabled: false,
     autoUrgeProfiles: [],
@@ -158,7 +158,7 @@ test('workspace column memoization ignores session history identity churn when e
     title: 'Archived Chat',
     sessionId: 'session-1',
     provider: 'codex' as const,
-    model: 'gpt-5.4',
+    model: 'gpt-5.5',
     workspacePath: 'd:\\Git\\chill-vibe',
     archivedAt: '2026-04-11T00:00:00.000Z',
     messages: [],

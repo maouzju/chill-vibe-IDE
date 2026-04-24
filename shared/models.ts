@@ -1,6 +1,6 @@
 import type { Provider } from './schema.js'
 
-export const DEFAULT_CODEX_MODEL = 'gpt-5.4'
+export const DEFAULT_CODEX_MODEL = 'gpt-5.5'
 export const DEFAULT_CLAUDE_MODEL = 'claude-opus-4-7'
 export const DEFAULT_GIT_AGENT_MODEL = `${DEFAULT_CODEX_MODEL} xhigh`
 export const GIT_TOOL_MODEL = '__git_tool__'
@@ -86,10 +86,10 @@ export const MODEL_OPTIONS: ModelOption[] = [
     usesConfiguredDefault: true,
   },
   {
-    label: 'GPT-5.4',
+    label: 'GPT-5.5',
     provider: 'codex',
     model: DEFAULT_CODEX_MODEL,
-    aliases: ['gpt-5.4', '5.4', 'gpt54'],
+    aliases: ['gpt-5.5', '5.5', 'gpt55'],
   },
   {
     label: 'Opus 4.7',
@@ -111,7 +111,7 @@ export const MODEL_OPTIONS: ModelOption[] = [
   },
 ]
 
-const legacyCodexModels = new Set(['gpt-4.5', '__dream_tool__', '__spec_tool__'])
+const legacyCodexModels = new Set(['gpt-5.4', 'gpt-4.5', '__dream_tool__', '__spec_tool__'])
 
 const canonicalizeModelAlias = (value: string) => value.trim().toLowerCase().replace(/\s+/g, '-')
 

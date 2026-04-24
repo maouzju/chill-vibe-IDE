@@ -19,7 +19,7 @@ const createColumn = (): BoardColumn => {
     title: 'Workspace 1',
     provider: 'codex',
     workspacePath: 'd:\\Git\\chill-vibe',
-    model: 'gpt-5.4',
+    model: 'gpt-5.5',
     layout: createSplit('horizontal', [leftPane, rightPane], [0.5, 0.5], 'split-1'),
     cards: {
       'card-1': {
@@ -28,7 +28,7 @@ const createColumn = (): BoardColumn => {
         status: 'idle',
         size: 560,
         provider: 'codex',
-        model: 'gpt-5.4',
+        model: 'gpt-5.5',
         reasoningEffort: 'medium',
         thinkingEnabled: true,
         planMode: false,
@@ -42,7 +42,7 @@ const createColumn = (): BoardColumn => {
         brainstorm: {
           prompt: '',
           provider: 'codex',
-          model: 'gpt-5.4',
+          model: 'gpt-5.5',
           answerCount: 6,
           answers: [],
           failedAnswers: [],
@@ -56,7 +56,7 @@ const createColumn = (): BoardColumn => {
         status: 'idle',
         size: 560,
         provider: 'codex',
-        model: 'gpt-5.4',
+        model: 'gpt-5.5',
         reasoningEffort: 'medium',
         thinkingEnabled: true,
         planMode: false,
@@ -70,7 +70,7 @@ const createColumn = (): BoardColumn => {
         brainstorm: {
           prompt: '',
           provider: 'codex',
-          model: 'gpt-5.4',
+          model: 'gpt-5.5',
           answerCount: 6,
           answers: [],
           failedAnswers: [],
@@ -96,8 +96,8 @@ const renderLayout = () => {
       crossProviderSkillReuseEnabled={true}
       musicAlbumCoverEnabled={false}
       weatherCity=""
-      gitAgentModel="gpt-5.4 low"
-      brainstormRequestModel="gpt-5.4"
+      gitAgentModel="gpt-5.5 low"
+      brainstormRequestModel="gpt-5.5"
       availableQuickToolModels={[]}
       autoUrgeEnabled={false}
       autoUrgeMessage=""

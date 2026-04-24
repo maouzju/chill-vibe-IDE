@@ -1052,11 +1052,13 @@ export const StructuredTodoCard = ({
 
 export const AskUserQuestionCard = ({
   data,
+  answerKey,
   answeredOption,
   onSelectOption,
   language,
 }: {
   data: StructuredAskUserMessage
+  answerKey: string
   answeredOption: string | null
   onSelectOption: (label: string) => void
   language: AppLanguage
@@ -1066,7 +1068,7 @@ export const AskUserQuestionCard = ({
   const totalQuestions = data.questions.length
   const isMulti = totalQuestions > 1
 
-  const cachedDraft = isAnswered ? null : getAskUserDraft(data.itemId)
+  const cachedDraft = isAnswered ? null : getAskUserDraft(answerKey)
   // selections[i] holds the chosen label (or Other) for question i; null = unanswered.
   const [selections, setSelections] = useState<(string | null)[]>(() => {
     if (isAnswered && !isMulti) {
@@ -1102,7 +1104,7 @@ export const AskUserQuestionCard = ({
       return next
     })
     if (!isAnswered && !isMulti) {
-      setAskUserDraft(data.itemId, { selected: value, otherText })
+      setAskUserDraft(answerKey, { selected: value, otherText })
     }
   }
 
@@ -1113,7 +1115,7 @@ export const AskUserQuestionCard = ({
       return next
     })
     if (!isAnswered && !isMulti) {
-      setAskUserDraft(data.itemId, { selected, otherText: value })
+      setAskUserDraft(answerKey, { selected, otherText: value })
     }
   }
 
@@ -1161,14 +1163,14 @@ export const AskUserQuestionCard = ({
     } else {
       onSelectOption(resolveAnswerLabel(0))
     }
-    clearAskUserDraft(data.itemId)
+    clearAskUserDraft(answerKey)
   }
 
   useEffect(() => {
     if (answeredOption !== null) {
       submitStartedRef.current = null
     }
-  }, [data.itemId, answeredOption, isAnswered])
+  }, [answerKey, answeredOption, isAnswered])
 
   useEffect(() => {
     if (!isAnswered) {

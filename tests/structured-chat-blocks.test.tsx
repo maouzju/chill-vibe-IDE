@@ -18,7 +18,7 @@ const createCard = (): ChatCardModel => ({
   status: 'streaming',
   size: 560,
   provider: 'codex',
-  model: 'gpt-5.4',
+  model: 'gpt-5.5',
   reasoningEffort: 'medium',
   thinkingEnabled: true,
   planMode: false,
@@ -143,7 +143,7 @@ const createEditedFilesCard = (): ChatCardModel => ({
   status: 'idle',
   size: 560,
   provider: 'codex',
-  model: 'gpt-5.4',
+  model: 'gpt-5.5',
   reasoningEffort: 'medium',
   thinkingEnabled: true,
   planMode: false,
@@ -189,7 +189,7 @@ const createChangesSummaryCard = (): ChatCardModel => ({
   status: 'idle',
   size: 560,
   provider: 'codex',
-  model: 'gpt-5.4',
+  model: 'gpt-5.5',
   reasoningEffort: 'medium',
   thinkingEnabled: true,
   planMode: false,
@@ -300,8 +300,8 @@ const renderCard = (
       crossProviderSkillReuseEnabled={true}
       musicAlbumCoverEnabled={false}
       weatherCity=""
-      gitAgentModel="gpt-5.4 low"
-      brainstormRequestModel="gpt-5.4"
+      gitAgentModel="gpt-5.5 low"
+      brainstormRequestModel="gpt-5.5"
       availableQuickToolModels={[]}
       autoUrgeEnabled={false}
       autoUrgeMessage=""

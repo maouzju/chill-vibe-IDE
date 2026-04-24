@@ -22,7 +22,7 @@ const createState = () => createPlaywrightState({
       title: 'Slash Test',
       provider: 'codex' as const,
       workspacePath: 'd:\\Git\\chill-vibe',
-      model: 'gpt-5.4',
+      model: 'gpt-5.5',
       cards: [
         {
           id: 'card-1',
@@ -30,7 +30,7 @@ const createState = () => createPlaywrightState({
           status: 'idle' as const,
           size: 560,
           provider: 'codex' as const,
-          model: 'gpt-5.4',
+          model: 'gpt-5.5',
           reasoningEffort: 'medium',
           draft: '',
           messages: [],
@@ -146,7 +146,7 @@ test('slash command menu reopens when user continues typing after dismiss', asyn
   await page.locator('.card-shell').first().click({ position: { x: 10, y: 10 } })
   await expect(slashMenu).not.toBeVisible()
 
-  // Focus back and type more â€” menu should reopen
+  // Focus back and type more â€?menu should reopen
   await textarea.click()
   await page.keyboard.type('h')
   await expect(slashMenu).toBeVisible()

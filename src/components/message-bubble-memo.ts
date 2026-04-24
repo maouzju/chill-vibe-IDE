@@ -5,7 +5,7 @@ export type MessageBubbleProps = {
   message: ChatMessage
   workspacePath: string
   answeredOption: string | null
-  onSelectAskUserOption: (itemId: string, label: string) => void
+  onSelectAskUserOption: (answerKey: string, label: string) => void
   onOpenFile?: (relativePath: string) => void
   isStickyToTop?: boolean
   onForkFromHere?: () => void

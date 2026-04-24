@@ -19,9 +19,9 @@ describe('brainstorm card utils', () => {
     assert.deepEqual(
       resolveBrainstormRequestTarget({
         provider: 'codex',
-        model: 'gpt-5.4',
+        model: 'gpt-5.5',
       }),
-      { provider: 'codex', model: 'gpt-5.4' },
+      { provider: 'codex', model: 'gpt-5.5' },
     )
 
     assert.deepEqual(
@@ -49,7 +49,7 @@ describe('brainstorm card utils', () => {
       getBrainstormCardStatus({
         prompt: 'topic',
         provider: 'codex',
-        model: 'gpt-5.4',
+        model: 'gpt-5.5',
         answerCount: 2,
         failedAnswers: [],
         answers: [
@@ -64,7 +64,7 @@ describe('brainstorm card utils', () => {
       getBrainstormCardStatus({
         prompt: 'topic',
         provider: 'codex',
-        model: 'gpt-5.4',
+        model: 'gpt-5.5',
         answerCount: 2,
         failedAnswers: [],
         answers: [

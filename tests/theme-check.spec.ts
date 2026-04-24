@@ -220,7 +220,7 @@ const createMockState = (): AppState => ({
       lineHeightScale: 1,
       resilientProxyEnabled: true,
       requestModels: {
-        codex: 'gpt-5.4',
+        codex: 'gpt-5.5',
         claude: 'claude-opus-4-7',
       },
       modelReasoningEfforts: {
@@ -259,7 +259,7 @@ const createMockState = (): AppState => ({
         title: 'Development Channel',
         provider: 'codex' as const,
         workspacePath: 'd:\\Git\\chill-vibe',
-        model: 'gpt-5.4',
+        model: 'gpt-5.5',
         cards: [
           {
             id: 'card-1',
@@ -267,7 +267,7 @@ const createMockState = (): AppState => ({
             status: 'idle' as const,
             size: 560,
             provider: 'codex' as const,
-            model: 'gpt-5.4',
+            model: 'gpt-5.5',
             reasoningEffort: 'medium',
             draft: '',
             messages: [],
@@ -287,14 +287,14 @@ const createColumnHeaderDropState = (): AppState => {
       title: 'Source Workspace',
       provider: 'codex',
       workspacePath: 'd:\\Git\\source-workspace',
-      model: 'gpt-5.4',
+      model: 'gpt-5.5',
       cards: [
         {
           ...state.columns[0]!.cards[0]!,
           id: 'card-1',
           title: 'Source Chat',
           provider: 'codex',
-          model: 'gpt-5.4',
+          model: 'gpt-5.5',
         },
       ],
     },
@@ -344,7 +344,7 @@ const createSlashMenuState = (theme: 'dark' | 'light'): AppState => {
     ...state.columns[0]!.cards[0]!,
     title: 'Slash Menu',
     provider: 'codex',
-    model: 'gpt-5.4',
+    model: 'gpt-5.5',
     reasoningEffort: 'medium',
     draft: '',
     messages: [],
@@ -556,7 +556,7 @@ const createBrainstormToolState = (theme: 'dark' | 'light'): AppState => {
           brainstorm: {
             prompt: 'How can we make onboarding feel more playful for new users?',
             provider: 'codex',
-            model: 'gpt-5.4',
+            model: 'gpt-5.5',
             answerCount: 6,
             failedAnswers: [],
             answers: [
@@ -644,7 +644,7 @@ const createMusicSplitDropState = (theme: 'dark' | 'light'): AppState => {
     ...state.columns[1]!,
     title: 'Music Workspace',
     provider: 'codex',
-    model: 'gpt-5.4',
+    model: 'gpt-5.5',
     cards: [
       {
         ...state.columns[1]!.cards[0]!,
@@ -673,7 +673,7 @@ const createCrossWorkspaceWeatherDragState = (): AppState => {
       title: 'Weather Workspace',
       provider: 'codex',
       workspacePath: 'd:\\Git\\weather-workspace',
-      model: 'gpt-5.4',
+      model: 'gpt-5.5',
       cards: [
         {
           ...state.columns[0]!.cards[0]!,
@@ -5084,7 +5084,7 @@ for (const theme of ['dark', 'light'] as const) {
 
     await expect(tabBar).toContainText('新会话')
     await expect(contentHeader).toHaveCount(0)
-    await expect(composerModelSelect).toContainText(/GPT-5\.4/i)
+    await expect(composerModelSelect).toContainText(/GPT-5\.5/i)
     await expect(duplicatedTitle).toHaveCount(0)
     await expect(paneView).toHaveScreenshot(`pane-single-tab-chrome-${theme}.png`, {
       animations: 'disabled',

@@ -330,6 +330,9 @@ A living list of traps that have wasted time before. **When you hit a new pitfal
 | 104 | Local provider `resume-session` recovery must continue the existing proxy-stats run instead of starting a fresh one | Restarting stats on auto-resume double-counts `request` and loses the earlier disconnect marker, so settings can still show zero recoveries/failures even though the chat visibly reconnected or failed. |
 | 105 | A provider session can become a dead archive that only resumes into transient `Reconnecting... n/5` placeholder output forever | After a few placeholder-only `resume-session` attempts, clear the stale session id and replay the visible transcript into a fresh provider session instead of reusing the dead session. |
 
+
+| 106 | Codex app-server can emit only transient `Reconnecting... n/5` placeholders and then exit nonzero | The exit text alone is not one of the generic recoverable phrases, so preserve the observed placeholder-only state and still mark it `resume-session` + `transientOnly` instead of surfacing a hard disconnect. |
+
 ### Self-maintenance rule
 
 - When you encounter a new non-obvious failure mode — a test that fails for environmental reasons, a build step with hidden prerequisites, a runtime behavior that contradicts the docs — append a row to this table before you finish the task.

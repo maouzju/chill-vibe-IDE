@@ -64,7 +64,7 @@ const mockAppApis = async (
       lineHeightScale: 1,
       resilientProxyEnabled: true,
       requestModels: {
-        codex: 'gpt-5.4',
+        codex: 'gpt-5.5',
         claude: 'claude-opus-4-7',
       },
       modelReasoningEfforts: {
@@ -103,14 +103,14 @@ const mockAppApis = async (
         title: 'Dev',
         provider: 'codex' as const,
         workspacePath,
-        model: 'gpt-5.4',
+        model: 'gpt-5.5',
         cards: cards.map((card) => ({
           id: card.id,
           title: card.title,
           status: 'idle' as const,
           size: 440,
           provider: 'codex' as const,
-          model: 'gpt-5.4',
+          model: 'gpt-5.5',
           reasoningEffort: 'medium',
           draft: '',
           messages: card.messages ?? [],

@@ -86,6 +86,19 @@ Reuse the verification posture from `../chill-vibe-full-regression/SKILL.md`, bu
   - GitHub release URL
   - final downloadable asset URL
 
+## Release Pitfalls / Fast Recovery
+
+- Release-specific slowdown traps belong here, not only in `AGENTS.md`. If a release run hits a repeatable release-only failure, update this skill before handoff. If the release commit/tag is already pushed, make the skill update as a separate follow-up commit so the shipped tag stays immutable.
+- `gh release create` can time out after partially creating a draft or empty release. After any timeout, do not rerun blindly:
+  - stop orphaned `gh.exe` create/upload processes first, then inspect `gh release view v<tag> --json apiUrl,uploadUrl,url,assets,isDraft,isPrerelease,tagName,publishedAt`;
+  - if the release exists but has no asset, keep it and upload the asset explicitly;
+  - if it is an accidental draft with an `untagged-*` URL, verify whether it still exists through the API/list view before deleting or recreating.
+- For large Windows zip assets, prefer a two-step publish: create the release notes/tag release first, then upload the zip, then verify `assets[].name`, `assets[].size`, `assets[].state`, and the direct download URL. This makes partial failures easier to recover than a single `gh release create ... <zip>` call.
+- If `gh release upload` hangs on the large zip while a tiny probe asset uploads successfully, prefer the repo's existing `release-zip.yml` workflow_dispatch for the tag so GitHub builds/uploads/verifies the canonical asset server-side. Use a manual `curl.exe --http1.1` upload against the release `uploadUrl` only as a fallback; put the token only in a temporary curl config, never echo it to logs, and delete probe assets immediately after the check.
+- When generating temporary curl config lines in PowerShell, wrap concatenated strings in parentheses inside arrays, e.g. `('output = "' + $path + '"')`; otherwise PowerShell can split the config value across multiple lines and curl fails before uploading.
+- Do not keep retrying the full regression wrapper when it is blocked by known fixed-port `5173` ownership or a flaky Playwright check. Capture the exact wrapper failure, confirm the port owner is repo-local before stopping it, and rerun the failing spec or strongest targeted gate in isolation.
+- Clean up release scratch files before final handoff (`.tmp-release-notes-*`, `.tmp-gh-upload-*`, `.tmp-curl-*`) unless they are intentionally needed for audit evidence.
+
 ## Suggested Prompt Shapes
 
 - `Use $release-pipeline to audit this checkout, bump the version, and publish a GitHub release if it is safe.`

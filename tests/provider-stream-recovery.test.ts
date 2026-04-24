@@ -18,6 +18,22 @@ test('provider unexpected completion with an existing session becomes resumable'
   )
 })
 
+
+test('provider zero status exit after a live session is resumable', () => {
+  assert.deepEqual(
+    classifyProviderStreamErrorRecovery(
+      {
+        sessionId: 'session-1',
+      },
+      'Codex exited with status code: 0',
+    ),
+    {
+      recoverable: true,
+      recoveryMode: 'resume-session',
+    },
+  )
+})
+
 test('setup and routing errors stay non-recoverable even with a session', () => {
   assert.deepEqual(
     classifyProviderStreamErrorRecovery(

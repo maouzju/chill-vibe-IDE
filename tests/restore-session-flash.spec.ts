@@ -1,4 +1,4 @@
-import { expect, test, type Page } from '@playwright/test'
+﻿import { expect, test, type Page } from '@playwright/test'
 import { installMockElectronBridge } from './electron-bridge.ts'
 import { createPlaywrightState } from './playwright-state.ts'
 
@@ -133,7 +133,7 @@ const mockAppApis = async (
       lineHeightScale: 1,
       resilientProxyEnabled: true,
       requestModels: {
-        codex: 'gpt-5.4',
+        codex: 'gpt-5.5',
         claude: 'claude-opus-4-7',
       },
       modelReasoningEfforts: { codex: {}, claude: {} },
@@ -159,7 +159,7 @@ const mockAppApis = async (
         title: 'Workspace 1',
         provider: 'codex' as const,
         workspacePath: 'd:\\Git\\chill-vibe',
-        model: 'gpt-5.4',
+        model: 'gpt-5.5',
         cards: [
           {
             id: 'card-1',
@@ -167,7 +167,7 @@ const mockAppApis = async (
             status: 'idle' as const,
             size: 440,
             provider: 'codex' as const,
-            model: 'gpt-5.4',
+            model: 'gpt-5.5',
             reasoningEffort: 'medium',
             draft: '',
             messages: [],
@@ -181,7 +181,7 @@ const mockAppApis = async (
         title: 'Old Session',
         sessionId: 'old-session-1',
         provider: 'codex' as const,
-        model: 'gpt-5.4',
+        model: 'gpt-5.5',
         workspacePath: 'd:\\Git\\chill-vibe',
         messages: restoredMessages,
         archivedAt: now,
@@ -205,7 +205,7 @@ const mockBackgroundTabApis = async (page: Page) => {
       lineHeightScale: 1,
       resilientProxyEnabled: true,
       requestModels: {
-        codex: 'gpt-5.4',
+        codex: 'gpt-5.5',
         claude: 'claude-opus-4-7',
       },
       modelReasoningEfforts: { codex: {}, claude: {} },
@@ -231,7 +231,7 @@ const mockBackgroundTabApis = async (page: Page) => {
         title: 'Workspace 1',
         provider: 'codex' as const,
         workspacePath: 'd:\\Git\\chill-vibe',
-        model: 'gpt-5.4',
+        model: 'gpt-5.5',
         cards: [
           {
             id: 'card-1',
@@ -239,7 +239,7 @@ const mockBackgroundTabApis = async (page: Page) => {
             status: 'idle' as const,
             size: 440,
             provider: 'codex' as const,
-            model: 'gpt-5.4',
+            model: 'gpt-5.5',
             reasoningEffort: 'medium',
             draft: '',
             messages: [],
@@ -250,7 +250,7 @@ const mockBackgroundTabApis = async (page: Page) => {
             status: 'idle' as const,
             size: 440,
             provider: 'codex' as const,
-            model: 'gpt-5.4',
+            model: 'gpt-5.5',
             reasoningEffort: 'medium',
             draft: '',
             messages: Array.from({ length: 28 }, (_, index) =>
@@ -278,7 +278,7 @@ const mockHistorySearchApis = async (page: Page) => {
       lineHeightScale: 1,
       resilientProxyEnabled: true,
       requestModels: {
-        codex: 'gpt-5.4',
+        codex: 'gpt-5.5',
         claude: 'claude-opus-4-7',
       },
       modelReasoningEfforts: { codex: {}, claude: {} },
@@ -304,7 +304,7 @@ const mockHistorySearchApis = async (page: Page) => {
         title: 'Workspace 1',
         provider: 'codex' as const,
         workspacePath: 'd:\\Git\\chill-vibe',
-        model: 'gpt-5.4',
+        model: 'gpt-5.5',
         cards: [
           {
             id: 'card-1',
@@ -312,7 +312,7 @@ const mockHistorySearchApis = async (page: Page) => {
             status: 'idle' as const,
             size: 440,
             provider: 'codex' as const,
-            model: 'gpt-5.4',
+            model: 'gpt-5.5',
             reasoningEffort: 'medium',
             draft: '',
             messages: [],
@@ -326,7 +326,7 @@ const mockHistorySearchApis = async (page: Page) => {
         title: 'Release checklist',
         sessionId: 'release-checklist',
         provider: 'codex' as const,
-        model: 'gpt-5.4',
+        model: 'gpt-5.5',
         workspacePath: 'd:\\Git\\chill-vibe',
         messages: [
           {
@@ -366,7 +366,7 @@ const mockHistorySearchApis = async (page: Page) => {
             id: 'external-search-1',
             title: 'Imported release prep',
             provider: 'codex',
-            model: 'gpt-5.4',
+            model: 'gpt-5.5',
             workspacePath: 'd:\\Git\\chill-vibe',
             messageCount: 12,
             startedAt: '2026-04-08T03:00:00.000Z',

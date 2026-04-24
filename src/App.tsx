@@ -583,6 +583,10 @@ function App() {
     new Map<string, Array<{ prompt: string; attachments: ImageAttachment[] }>>(),
   )
   const queueFollowUpDuringStreamRef = useRef(new Map<string, boolean>())
+  const pendingAskUserDuringStreamRef = useRef(new Map<string, boolean>())
+  const stopCompletionFallbackTimersRef = useRef(
+    new Map<string, number>(),
+  )
   const stoppedRunReasonRef = useRef(new Map<string, StoppedRunReason>())
   const appStateRef = useRef(appState)
   const activePaneTargetRef = useRef<PaneTarget | null>(null)
@@ -1481,6 +1485,7 @@ function App() {
     const active = activeStreamsRef.current.get(cardId)
     if (!active) {
       queueFollowUpDuringStreamRef.current.delete(cardId)
+      pendingAskUserDuringStreamRef.current.delete(cardId)
       return
     }
 
@@ -1500,9 +1505,15 @@ function App() {
 
     active.source.close()
     activeStreamsRef.current.delete(cardId)
+    const fallbackTimer = stopCompletionFallbackTimersRef.current.get(cardId)
+    if (fallbackTimer !== undefined) {
+      window.clearTimeout(fallbackTimer)
+      stopCompletionFallbackTimersRef.current.delete(cardId)
+    }
     streamRetryCountRef.current.delete(cardId)
     transientResumeLoopCountRef.current.delete(cardId)
     queueFollowUpDuringStreamRef.current.delete(cardId)
+    pendingAskUserDuringStreamRef.current.delete(cardId)
     const settledRecoveryStats = settleLocalRecoveryStatsRun(
       localRecoveryStatsRef.current.get(cardId),
       'abandoned',
@@ -1540,9 +1551,15 @@ function App() {
         stoppedRunReasonRef.current.delete(streamId)
         active?.source.close()
         activeStreamsRef.current.delete(cardId)
+        const fallbackTimer = stopCompletionFallbackTimersRef.current.get(cardId)
+        if (fallbackTimer !== undefined) {
+          window.clearTimeout(fallbackTimer)
+          stopCompletionFallbackTimersRef.current.delete(cardId)
+        }
         streamRetryCountRef.current.delete(cardId)
         transientResumeLoopCountRef.current.delete(cardId)
         queueFollowUpDuringStreamRef.current.delete(cardId)
+        pendingAskUserDuringStreamRef.current.delete(cardId)
 
         if (!owner) {
           return false
@@ -1599,6 +1616,32 @@ function App() {
       void sendMessageRef.current?.(columnId, cardId, nextRequest.prompt, nextRequest.attachments)
     })
   }, [])
+
+  const finalizeStoppedAskUserWithoutServerAck = useCallback(async (
+    columnId: string,
+    cardId: string,
+  ) => {
+    await closeStream(cardId, false)
+
+    const liveCard = appStateRef.current.columns.find((column) => column.id === columnId)?.cards[cardId]
+    if (!liveCard) {
+      return
+    }
+
+    const nextState = applyAction({
+      type: 'updateCard',
+      columnId,
+      cardId,
+      patch: { status: 'idle', streamId: undefined },
+    })
+    persistImmediately(nextState)
+    dispatchNextQueuedSend(columnId, cardId)
+  }, [
+    applyAction,
+    closeStream,
+    dispatchNextQueuedSend,
+    persistImmediately,
+  ])
 
   const providerByName = useMemo(
     () => Object.fromEntries(providers.map((provider) => [provider.provider, provider])),
@@ -1722,8 +1765,8 @@ function App() {
       : 'Match by model keyword substring. For example, claude matches claude-sonnet-4-6. When multiple rules match, prompts are appended in order.'
     const keywordLabel = appState.settings.language === 'zh-CN' ? '模型关键字' : 'Model keyword'
     const keywordPlaceholder = appState.settings.language === 'zh-CN'
-      ? '例如：claude / sonnet / gpt-5.4'
-      : 'For example: claude / sonnet / gpt-5.4'
+      ? '例如：claude / sonnet / gpt-5.5'
+      : 'For example: claude / sonnet / gpt-5.5'
     const promptLabel = appState.settings.language === 'zh-CN' ? '追加提示词' : 'Prompt to append'
     const promptPlaceholder = appState.settings.language === 'zh-CN'
       ? '命中这个模型时追加的系统提示词'
@@ -2240,7 +2283,7 @@ function App() {
 
           if (payload.kind === 'ask-user') {
             const liveCard = getColumn(columnId)?.cards[card.id]
-            queueFollowUpDuringStreamRef.current.set(card.id, true)
+            pendingAskUserDuringStreamRef.current.set(card.id, true)
 
             applyAction({
               type: 'updateCard',
@@ -2279,9 +2322,15 @@ function App() {
         onDone: ({ stopped }) => {
           source.close()
           activeStreamsRef.current.delete(card.id)
+          const fallbackTimer = stopCompletionFallbackTimersRef.current.get(card.id)
+          if (fallbackTimer !== undefined) {
+            window.clearTimeout(fallbackTimer)
+            stopCompletionFallbackTimersRef.current.delete(card.id)
+          }
           streamRetryCountRef.current.delete(card.id)
           transientResumeLoopCountRef.current.delete(card.id)
           queueFollowUpDuringStreamRef.current.delete(card.id)
+          pendingAskUserDuringStreamRef.current.delete(card.id)
           const settledLocalRecoveryStats = settleLocalRecoveryStatsRun(
             localRecoveryStatsRef.current.get(card.id),
             stopped ? 'abandoned' : 'success',
@@ -2350,7 +2399,7 @@ function App() {
             })
           }
 
-          if (stopped) {
+          if (stopped && stoppedRunReason !== 'ask-user-answer') {
             actions.push({
               type: 'appendMessages',
               columnId,
@@ -2388,6 +2437,11 @@ function App() {
         onError: ({ message, recoverable, recoveryMode, transientOnly, hint }) => {
           source.close()
           activeStreamsRef.current.delete(card.id)
+          const fallbackTimer = stopCompletionFallbackTimersRef.current.get(card.id)
+          if (fallbackTimer !== undefined) {
+            window.clearTimeout(fallbackTimer)
+            stopCompletionFallbackTimersRef.current.delete(card.id)
+          }
           if (card.streamId) {
             stoppedRunReasonRef.current.delete(card.streamId)
           }
@@ -2489,6 +2543,7 @@ function App() {
           streamRetryCountRef.current.delete(card.id)
           transientResumeLoopCountRef.current.delete(card.id)
           queueFollowUpDuringStreamRef.current.delete(card.id)
+          pendingAskUserDuringStreamRef.current.delete(card.id)
           const settledLocalRecoveryStats = settleLocalRecoveryStatsRun(
             localRecoveryStatsRef.current.get(card.id),
             'failure',
@@ -2605,6 +2660,9 @@ function App() {
     activeStreamsRef.current.clear()
     queuedSendRequestsRef.current.clear()
     queueFollowUpDuringStreamRef.current.clear()
+    pendingAskUserDuringStreamRef.current.clear()
+    stopCompletionFallbackTimersRef.current.forEach((timer) => window.clearTimeout(timer))
+    stopCompletionFallbackTimersRef.current.clear()
     stoppedRunReasonRef.current.clear()
     streamRetryCountRef.current.clear()
     transientResumeLoopCountRef.current.clear()
@@ -3036,17 +3094,43 @@ function App() {
 
     if (card.status === 'streaming') {
       const latestUserMessage = [...card.messages].reverse().find((message) => message.role === 'user')
+      const shouldAnswerAskUser =
+        pendingAskUserDuringStreamRef.current.get(cardId) === true ||
+        hasPendingAskUserMessage(card.messages)
       const shouldQueueUntilDone =
-        queueFollowUpDuringStreamRef.current.get(cardId) === true ||
-        hasPendingAskUserMessage(card.messages) ||
+        shouldAnswerAskUser ||
         isCompactBoundaryMessage(latestUserMessage, card.provider)
-      enqueueQueuedSend(cardId, { prompt, attachments })
-      if (!shouldQueueUntilDone) {
+      if (shouldAnswerAskUser) {
+        enqueueQueuedSend(cardId, { prompt, attachments })
+        queueMicrotask(() => {
+          void requestStopForCard(cardId, 'ask-user-answer')
+        })
+        if (!stopCompletionFallbackTimersRef.current.has(cardId)) {
+          const timer = window.setTimeout(() => {
+            stopCompletionFallbackTimersRef.current.delete(cardId)
+            const liveCard = getColumn(columnId)?.cards[cardId]
+            if (!liveCard || liveCard.status !== 'streaming') {
+              return
+            }
+            if (pendingAskUserDuringStreamRef.current.get(cardId) === true) {
+              void finalizeStoppedAskUserWithoutServerAck(columnId, cardId)
+              return
+            }
+          }, 250)
+          stopCompletionFallbackTimersRef.current.set(cardId, timer)
+        }
+        return
+      }
+      if (shouldQueueUntilDone) {
+        enqueueQueuedSend(cardId, { prompt, attachments })
+      } else {
+        enqueueQueuedSend(cardId, { prompt, attachments })
         await requestStopForCard(cardId, 'user-interrupt')
       }
       return
     }
 
+    pendingAskUserDuringStreamRef.current.delete(cardId)
     const nextTitle =
       card.messages.length === 0 && !card.title
         ? titleFromPrompt(prompt)
@@ -3208,6 +3292,7 @@ function App() {
       attachStream(columnId, liveCard)
     } catch (error) {
       queueFollowUpDuringStreamRef.current.delete(cardId)
+      pendingAskUserDuringStreamRef.current.delete(cardId)
       const actions: IdeAction[] = [
         {
           type: 'appendMessages',
@@ -3708,6 +3793,9 @@ function App() {
     await Promise.all([...activeStreamsRef.current.keys()].map((cardId) => closeStream(cardId, true)))
     queuedSendRequestsRef.current.clear()
     queueFollowUpDuringStreamRef.current.clear()
+    pendingAskUserDuringStreamRef.current.clear()
+    stopCompletionFallbackTimersRef.current.forEach((timer) => window.clearTimeout(timer))
+    stopCompletionFallbackTimersRef.current.clear()
 
     try {
       const state = await resetState()
@@ -4660,7 +4748,7 @@ function App() {
                 patch: { gitAgentModel: event.target.value },
               })
             }
-            placeholder="gpt-5.4 xhigh"
+            placeholder="gpt-5.5 xhigh"
           />
         </label>
 
@@ -5845,7 +5933,7 @@ function App() {
                         patch: { gitAgentModel: event.target.value },
                       })
                     }
-                    placeholder="gpt-5.4 xhigh"
+                    placeholder="gpt-5.5 xhigh"
                   />
                 </label>
 

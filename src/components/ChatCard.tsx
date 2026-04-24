@@ -462,7 +462,7 @@ type ChatTranscriptProps = {
   onRevealMoreCompactedHistory: () => void
   onActivateQuickTool: (entry: EmptyStateToolEntry) => void
   onToggleToolGroup: (key: string) => void
-  onSelectAskUserOption: (itemId: string, label: string) => void
+  onSelectAskUserOption: (answerKey: string, label: string) => void
   onJumpToStickyMessageSource: (targetScrollTop: number) => void
   onOpenFile?: (relativePath: string) => void
   onForkConversation?: (messageId: string) => void
@@ -781,7 +781,7 @@ const ChatTranscript = memo(
                     language={language}
                     message={stickyMessage}
                     workspacePath={workspacePath}
-                    answeredOption={askUserAnswers[stickyMessage.meta?.itemId ?? ''] ?? null}
+                    answeredOption={askUserAnswers[stickyMessage.id] ?? null}
                     onSelectAskUserOption={onSelectAskUserOption}
                     isStickyToTop
                   />
@@ -856,7 +856,7 @@ const ChatTranscript = memo(
                   language={language}
                   message={entry.message}
                   workspacePath={workspacePath}
-                  answeredOption={askUserAnswers[entry.message.meta?.itemId ?? ''] ?? null}
+                  answeredOption={askUserAnswers[entry.message.id] ?? null}
                   onSelectAskUserOption={onSelectAskUserOption}
                   onOpenFile={onOpenFile}
                   onForkFromHere={
@@ -2374,8 +2374,8 @@ const ChatCardView = ({
   )
 
   const handleSelectAskUserOption = useCallback(
-    (itemId: string, label: string) => {
-      setAskUserAnswers((prev) => (prev[itemId] === label ? prev : { ...prev, [itemId]: label }))
+    (answerKey: string, label: string) => {
+      setAskUserAnswers((prev) => (prev[answerKey] === label ? prev : { ...prev, [answerKey]: label }))
       void onSend(formatAskUserFollowUpPrompt(label, language), [])
     },
     [language, onSend],

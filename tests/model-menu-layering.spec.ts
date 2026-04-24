@@ -17,7 +17,7 @@ const createState = (theme: ThemeName) => createPlaywrightState({
     experimentalWeatherEnabled: true,
     weatherCity: 'Shanghai',
     requestModels: {
-      codex: 'gpt-5.4',
+      codex: 'gpt-5.5',
       claude: 'claude-opus-4-7',
     },
     modelReasoningEfforts: {
@@ -42,7 +42,7 @@ const createState = (theme: ThemeName) => createPlaywrightState({
       title: 'Layering Test',
       provider: 'codex' as const,
       workspacePath: 'd:\\Git\\chill-vibe',
-      model: 'gpt-5.4',
+      model: 'gpt-5.5',
       cards: [
         {
           id: 'card-1',

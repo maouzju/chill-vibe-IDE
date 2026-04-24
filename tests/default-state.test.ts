@@ -78,7 +78,7 @@ describe('default-state helpers', () => {
       weatherCity: '',
       systemPrompt: defaultSystemPrompt,
       modelPromptRules: [],
-      gitAgentModel: 'gpt-5.4 xhigh',
+      gitAgentModel: 'gpt-5.5 xhigh',
       lastModel: undefined,
       requestModels: {
         codex: DEFAULT_CODEX_MODEL,
@@ -100,6 +100,23 @@ describe('default-state helpers', () => {
       },
       recentWorkspaces: [],
     })
+  })
+
+  it('migrates the previous Codex default to the current Codex default', () => {
+    const migrated = normalizeAppSettings({
+      requestModels: {
+        codex: 'gpt-5.4',
+        claude: DEFAULT_CLAUDE_MODEL,
+      },
+      gitAgentModel: 'gpt-5.4 high',
+      lastModel: { provider: 'codex', model: 'gpt-5.4' },
+    })
+
+    assert.equal(migrated.gitAgentModel, `${DEFAULT_CODEX_MODEL} high`)
+    assert.equal(migrated.requestModels.codex, DEFAULT_CODEX_MODEL)
+    assert.deepEqual(migrated.lastModel, { provider: 'codex', model: DEFAULT_CODEX_MODEL })
+    assert.equal(createCard('Chat', 440, 'codex', 'gpt-5.4').model, DEFAULT_CODEX_MODEL)
+    assert.equal(createColumn({ provider: 'codex', model: 'gpt-5.4' }).model, DEFAULT_CODEX_MODEL)
   })
 
   it('uses the configured provider defaults and preserves explicit default selections on cards', () => {
@@ -153,9 +170,9 @@ describe('default-state helpers', () => {
   })
 
   it('normalizes gitAgentModel with default fallback', () => {
-    assert.equal(normalizeAppSettings({}).gitAgentModel, 'gpt-5.4 xhigh')
+    assert.equal(normalizeAppSettings({}).gitAgentModel, 'gpt-5.5 xhigh')
     assert.equal(normalizeAppSettings({ gitAgentModel: '  o3-pro high  ' }).gitAgentModel, 'o3-pro high')
-    assert.equal(normalizeAppSettings({ gitAgentModel: '' }).gitAgentModel, 'gpt-5.4 xhigh')
+    assert.equal(normalizeAppSettings({ gitAgentModel: '' }).gitAgentModel, 'gpt-5.5 xhigh')
   })
 
   it('enables cross-provider skill reuse by default and preserves explicit opt-out', () => {

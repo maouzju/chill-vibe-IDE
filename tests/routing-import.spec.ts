@@ -41,7 +41,7 @@ const createState = () => ({
     lineHeightScale: 1,
     resilientProxyEnabled: true,
     requestModels: {
-      codex: 'gpt-5.4',
+      codex: 'gpt-5.5',
       claude: 'claude-opus-4-7',
     },
     modelReasoningEfforts: {

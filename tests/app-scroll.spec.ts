@@ -36,7 +36,7 @@ const createState = (theme: ThemeName): AppState => createPlaywrightState({
     lineHeightScale: 1,
     resilientProxyEnabled: true,
     requestModels: {
-      codex: 'gpt-5.4',
+      codex: 'gpt-5.5',
       claude: 'claude-opus-4-7',
     },
     modelReasoningEfforts: {
@@ -75,7 +75,7 @@ const createState = (theme: ThemeName): AppState => createPlaywrightState({
       title: 'Workspace 1',
       provider: 'codex',
       workspacePath: 'd:\\Git\\chill-vibe',
-      model: 'gpt-5.4',
+      model: 'gpt-5.5',
       cards: [
         {
           id: 'card-1',
@@ -83,7 +83,7 @@ const createState = (theme: ThemeName): AppState => createPlaywrightState({
           status: 'idle',
           size: 560,
           provider: 'codex',
-          model: 'gpt-5.4',
+          model: 'gpt-5.5',
           reasoningEffort: 'medium',
           draft: '',
           messages: Array.from({ length: 28 }, (_, index) => createHistoryMessage(index)),

@@ -15,7 +15,7 @@ const createCardState = (overrides: Record<string, unknown> = {}) => ({
   status: 'idle' as const,
   size: 560,
   provider: 'codex' as const,
-  model: 'gpt-5.4',
+  model: 'gpt-5.5',
   reasoningEffort: 'medium',
   draft: '',
   messages: [],
@@ -32,7 +32,7 @@ const createState = (theme: ThemeName, cardOverrides: Record<string, unknown> = 
       lineHeightScale: 1,
       resilientProxyEnabled: true,
       requestModels: {
-        codex: 'gpt-5.4',
+        codex: 'gpt-5.5',
         claude: 'claude-opus-4-7',
       },
       modelReasoningEfforts: {
@@ -57,7 +57,7 @@ const createState = (theme: ThemeName, cardOverrides: Record<string, unknown> = 
         title: 'Preference Test',
         provider: 'codex' as const,
         workspacePath: 'd:\\Git\\chill-vibe',
-        model: 'gpt-5.4',
+        model: 'gpt-5.5',
         cards: [createCardState(cardOverrides)],
       },
     ],
@@ -158,7 +158,7 @@ for (const theme of ['dark', 'light'] as const) {
 
     await page.waitForTimeout(550)
 
-    await selectModel(page, modelSelect, 'GPT-5.4')
+    await selectModel(page, modelSelect, 'gpt-5.5')
     await settingsTrigger.click()
     await expect(reasoningSelect).toHaveValue('high')
 
@@ -172,7 +172,7 @@ for (const theme of ['dark', 'light'] as const) {
     await settingsTrigger.click()
     await expect(reasoningSelect).toHaveValue('low')
 
-    await selectModel(page, modelSelect, 'GPT-5.4')
+    await selectModel(page, modelSelect, 'gpt-5.5')
     await settingsTrigger.click()
     await expect(reasoningSelect).toHaveValue('high')
   })

@@ -14,10 +14,10 @@ describe('reasoning helpers', () => {
     assert.equal(createCard(undefined, undefined, 'claude').reasoningEffort, 'max')
   })
 
-  it('lists provider-specific reasoning options including auto', () => {
+  it('lists provider-specific reasoning options and omits unsupported Codex auto', () => {
     assert.deepEqual(
       getReasoningOptions('codex').map((option) => option.value),
-      ['auto', 'low', 'medium', 'high', 'xhigh'],
+      ['low', 'medium', 'high', 'xhigh'],
     )
     assert.deepEqual(
       getReasoningOptions('claude').map((option) => option.value),
@@ -32,8 +32,8 @@ describe('reasoning helpers', () => {
     assert.equal(normalizeReasoningEffort('claude', 'unknown'), 'max')
   })
 
-  it('accepts auto as a valid reasoning effort for both providers', () => {
-    assert.equal(normalizeReasoningEffort('codex', 'auto'), 'auto')
+  it('normalizes unsupported Codex auto to the default while keeping Claude auto', () => {
+    assert.equal(normalizeReasoningEffort('codex', 'auto'), 'xhigh')
     assert.equal(normalizeReasoningEffort('claude', 'auto'), 'auto')
   })
 
@@ -57,10 +57,10 @@ describe('reasoning helpers', () => {
     )
   })
 
-  it('includes localized label for auto option', () => {
+  it('includes localized label for supported auto option only', () => {
     const codexZh = getReasoningOptions('codex', 'zh-CN')
     const claudeEn = getReasoningOptions('claude', 'en')
-    assert.equal(codexZh.find((o) => o.value === 'auto')?.label, '自动')
+    assert.equal(codexZh.find((o) => o.value === 'auto'), undefined)
     assert.equal(claudeEn.find((o) => o.value === 'auto')?.label, 'Auto')
   })
 })

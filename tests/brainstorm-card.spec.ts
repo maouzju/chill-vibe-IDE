@@ -17,7 +17,7 @@ const createState = () =>
       resilientProxyEnabled: true,
       brainstormCardEnabled: true,
       requestModels: {
-        codex: 'gpt-5.4',
+        codex: 'gpt-5.5',
         claude: 'claude-opus-4-7',
       },
       modelReasoningEfforts: {
@@ -42,7 +42,7 @@ const createState = () =>
         title: 'Brainstorm Workspace',
         provider: 'codex' as const,
         workspacePath: 'd:\\Git\\chill-vibe',
-        model: 'gpt-5.4',
+        model: 'gpt-5.5',
         cards: [
           {
             id: 'card-1',
@@ -56,7 +56,7 @@ const createState = () =>
             brainstorm: {
               prompt: '',
               provider: 'codex' as const,
-              model: 'gpt-5.4',
+              model: 'gpt-5.5',
               answerCount: 6,
               failedAnswers: [],
               answers: [],
@@ -205,9 +205,9 @@ test('brainstorm card forwards the raw topic, fills answers in parallel, and ref
 
   await expect.poll(() => readBrainstormRequests(page).then((requests) => requests.length)).toBe(3)
   await expect.poll(() => readBrainstormRequests(page)).toEqual([
-    { provider: 'codex', model: 'gpt-5.4', prompt: topic },
-    { provider: 'codex', model: 'gpt-5.4', prompt: topic },
-    { provider: 'codex', model: 'gpt-5.4', prompt: topic },
+    { provider: 'codex', model: 'gpt-5.5', prompt: topic },
+    { provider: 'codex', model: 'gpt-5.5', prompt: topic },
+    { provider: 'codex', model: 'gpt-5.5', prompt: topic },
   ])
   await expect(page.locator('.brainstorm-answer-card')).toHaveCount(3)
   await expect(page.locator('.brainstorm-answer-card').nth(0)).toContainText('Confetti checkpoints')
@@ -221,7 +221,7 @@ test('brainstorm card forwards the raw topic, fills answers in parallel, and ref
   const requestsAfterDelete = await readBrainstormRequests(page)
   expect(requestsAfterDelete.at(-1)).toEqual({
     provider: 'codex',
-    model: 'gpt-5.4',
+    model: 'gpt-5.5',
     prompt: topic,
   })
   expect(normalizeMultiline(deletedAnswer)).not.toHaveLength(0)

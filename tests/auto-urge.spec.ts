@@ -53,7 +53,7 @@ const installMockApis = async (
       lineHeightScale: 1,
       resilientProxyEnabled: true,
       requestModels: {
-        codex: 'gpt-5.4',
+        codex: 'gpt-5.5',
         claude: 'claude-opus-4-7',
       },
       modelReasoningEfforts: {
@@ -90,7 +90,7 @@ const installMockApis = async (
         title: 'Auto Urge',
         provider: 'codex' as const,
         workspacePath: 'd:\\Git\\chill-vibe',
-        model: 'gpt-5.4',
+        model: 'gpt-5.5',
         cards: [
           {
             id: 'card-1',
@@ -98,7 +98,7 @@ const installMockApis = async (
             status: 'idle' as const,
             size: 560,
             provider: 'codex' as const,
-            model: 'gpt-5.4',
+            model: 'gpt-5.5',
             reasoningEffort: 'medium',
             draft: '',
             messages: options?.cardMessages ?? [],

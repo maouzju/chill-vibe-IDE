@@ -1,4 +1,4 @@
-﻿import assert from 'node:assert/strict'
+import assert from 'node:assert/strict'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
@@ -88,7 +88,7 @@ describe('archive recall runtime overrides', () => {
     const request: ChatRequest = {
       provider: 'codex',
       workspacePath: 'D:\\Git\\chill-vibe',
-      model: 'gpt-5.4',
+      model: 'gpt-5.5',
       reasoningEffort: 'max',
       thinkingEnabled: true,
       planMode: false,
@@ -130,7 +130,7 @@ describe('archive recall runtime overrides', () => {
     const request: ChatRequest = {
       provider: 'codex',
       workspacePath: 'D:\\Git\\chill-vibe',
-      model: 'gpt-5.4',
+      model: 'gpt-5.5',
       reasoningEffort: 'max',
       thinkingEnabled: true,
       planMode: false,

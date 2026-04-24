@@ -392,7 +392,7 @@ describe('state-store persistence', () => {
     const firstPane = getFirstPane(firstColumn.layout)
     const originalChatId = firstPane.tabs[0]!
     const pmCard = createCard('PM', 560, 'codex', PM_TOOL_MODEL, undefined, 'en')
-    const taskCard = createCard('Task', 560, 'codex', 'gpt-5.4', undefined, 'en')
+    const taskCard = createCard('Task', 560, 'codex', 'gpt-5.5', undefined, 'en')
 
     pmCard.id = 'pm-card'
     pmCard.pmTaskCardId = 'task-card'
@@ -420,7 +420,7 @@ describe('state-store persistence', () => {
     const loadedTaskCard = loadedFirstColumn.cards['task-card']
 
     assert.ok(loadedPmCard, 'expected the persisted PM card to stay visible as a normal chat')
-    assert.equal(loadedPmCard?.model, 'gpt-5.4')
+    assert.equal(loadedPmCard?.model, DEFAULT_CODEX_MODEL)
     assert.equal(loadedPmCard?.pmTaskCardId, '')
     assert.equal(loadedTaskCard?.pmOwnerCardId, '')
   })
@@ -499,7 +499,7 @@ describe('state-store persistence', () => {
         title: 'Archived release debug session',
         sessionId: 'session-command',
         provider: 'codex',
-        model: 'gpt-5.4',
+        model: 'gpt-5.5',
         workspacePath: 'D:/release-white-screen',
         archivedAt: new Date('2026-04-11T05:10:00.000Z').toISOString(),
         messages: [
@@ -601,7 +601,7 @@ describe('state-store persistence', () => {
         title: 'Archived release debug session',
         sessionId: 'session-command',
         provider: 'codex',
-        model: 'gpt-5.4',
+        model: 'gpt-5.5',
         workspacePath: 'D:/release-white-screen',
         archivedAt: new Date('2026-04-11T06:00:00.000Z').toISOString(),
         messages: Array.from({ length: 18 }, (_, index) =>
@@ -832,7 +832,7 @@ describe('state-store persistence', () => {
         title: 'Recovered archived session',
         sessionId: 'wal-history-session',
         provider: 'codex',
-        model: 'gpt-5.4',
+        model: 'gpt-5.5',
         workspacePath: 'D:/wal-history',
         archivedAt: new Date('2026-04-12T01:00:00.000Z').toISOString(),
         messages: [
@@ -1126,7 +1126,7 @@ describe('state-store persistence', () => {
         title: 'Archived release investigation',
         sessionId: 'history-trim-session-1',
         provider: 'codex',
-        model: 'gpt-5.4',
+        model: 'gpt-5.5',
         workspacePath: 'D:/history-renderer-trim',
         messageCount: 12,
         messages: Array.from({ length: 12 }, (_, index) => ({
@@ -1187,7 +1187,7 @@ describe('state-store persistence', () => {
         title: 'Archived merge target',
         sessionId: 'history-merge-session-1',
         provider: 'codex',
-        model: 'gpt-5.4',
+        model: 'gpt-5.5',
         workspacePath: 'D:/history-save-merge',
         messageCount: 10,
         messages: Array.from({ length: 10 }, (_, index) => ({

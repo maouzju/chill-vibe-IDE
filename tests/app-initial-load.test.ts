@@ -32,9 +32,9 @@ const createState = (): AppState => ({
     autoUrgeMessage: '你必须百分百验证通过你要解决的问题，才能结束回答，如果确定解决了，回复YES，否则不准停下来',
     autoUrgeSuccessKeyword: 'YES',
     weatherCity: '',
-    gitAgentModel: 'gpt-5.4 low',
+    gitAgentModel: 'gpt-5.5 low',
     requestModels: {
-      codex: 'gpt-5.4',
+      codex: 'gpt-5.5',
       claude: 'claude-opus-4-7',
     },
     modelReasoningEfforts: {

@@ -119,6 +119,22 @@ const clampScale = (value: unknown, min: number, max: number, fallback: number) 
 }
 
 const normalizeText = (value: unknown) => (typeof value === 'string' ? value.trim() : '')
+const normalizeGitAgentModel = (value: unknown, fallback: string) => {
+  const trimmed = normalizeText(value)
+
+  if (!trimmed) {
+    return fallback
+  }
+
+  const [rawModel = '', ...rest] = trimmed.split(/\s+/)
+  const normalizedModel = normalizeStoredModel('codex', rawModel)
+
+  if (!normalizedModel || normalizedModel === rawModel) {
+    return trimmed
+  }
+
+  return [normalizedModel, ...rest].join(' ')
+}
 export const createDefaultPmState = () => ({
   provider: 'codex' as const,
   model: DEFAULT_CODEX_MODEL,
@@ -451,8 +467,13 @@ export const normalizeAppSettings = (settings?: Partial<AppSettings> | null): Ap
     weatherCity: normalizeText(settings?.weatherCity) || defaults.weatherCity,
     systemPrompt: normalizeSystemPrompt(settings?.systemPrompt),
     modelPromptRules: normalizeModelPromptRules(settings?.modelPromptRules),
-    gitAgentModel: normalizeText(settings?.gitAgentModel) || defaults.gitAgentModel,
-    lastModel: settings?.lastModel ?? undefined,
+    gitAgentModel: normalizeGitAgentModel(settings?.gitAgentModel, defaults.gitAgentModel),
+    lastModel: settings?.lastModel
+      ? {
+          provider: settings.lastModel.provider,
+          model: normalizeModel(settings.lastModel.provider, settings.lastModel.model),
+        }
+      : undefined,
     requestModels: {
       codex: normalizeModel('codex', settings?.requestModels?.codex ?? defaults.requestModels.codex),
       claude: normalizeModel('claude', settings?.requestModels?.claude ?? defaults.requestModels.claude),

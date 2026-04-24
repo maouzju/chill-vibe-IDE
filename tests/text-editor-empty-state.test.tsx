@@ -45,8 +45,8 @@ test('text editor cards without a file show a usable empty state instead of a bl
       crossProviderSkillReuseEnabled={true}
       musicAlbumCoverEnabled={false}
       weatherCity=""
-      gitAgentModel="gpt-5.4 low"
-      brainstormRequestModel="gpt-5.4"
+      gitAgentModel="gpt-5.5 low"
+      brainstormRequestModel="gpt-5.5"
       availableQuickToolModels={[]}
       autoUrgeEnabled={false}
       autoUrgeMessage=""

@@ -17,7 +17,7 @@ const createBrainstormToolState = (theme: 'dark' | 'light') =>
       resilientProxyEnabled: true,
       brainstormCardEnabled: true,
       requestModels: {
-        codex: 'gpt-5.4',
+        codex: 'gpt-5.5',
         claude: 'claude-opus-4-7',
       },
       modelReasoningEfforts: {
@@ -42,7 +42,7 @@ const createBrainstormToolState = (theme: 'dark' | 'light') =>
         title: 'Brainstorm Workspace',
         provider: 'codex' as const,
         workspacePath: 'd:\\Git\\chill-vibe',
-        model: 'gpt-5.4',
+        model: 'gpt-5.5',
         cards: [
           {
             id: 'brainstorm-card',
@@ -56,7 +56,7 @@ const createBrainstormToolState = (theme: 'dark' | 'light') =>
             brainstorm: {
               prompt: 'How can we make onboarding feel more playful for new users?',
               provider: 'codex' as const,
-              model: 'gpt-5.4',
+              model: 'gpt-5.5',
               answerCount: 6,
               failedAnswers: [],
               answers: [

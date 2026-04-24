@@ -293,7 +293,7 @@ const localeTextByLanguage: Record<AppLanguage, LocaleText> = {
     defaultRequestModels: '默认请求模型',
     defaultRequestModelsNote: '新会话会默认使用这些模型，你也可以同步到现有会话。',
     gitAgentModel: 'Git 卡片 AI 模型',
-    gitAgentModelNote: 'Git 分析使用的模型，格式：模型名称 推理强度（如 gpt-5.4 xhigh）。',
+    gitAgentModelNote: 'Git 分析使用的模型，格式：模型名称 推理强度（如 gpt-5.5 xhigh）。',
     systemPromptLabel: '系统提示词',
     systemPromptNote: '每次 AI 运行前都会附加这条系统提示词。恢复默认可回到内置提示词。',
     crossProviderSkillReuseLabel: 'Codex / Claude Skill 互相复用',
@@ -542,7 +542,7 @@ const localeTextByLanguage: Record<AppLanguage, LocaleText> = {
     defaultRequestModelsNote:
       'New chats will use these models by default, and you can sync them into existing chats.',
     gitAgentModel: 'Git card AI model',
-    gitAgentModelNote: 'Model used for Git analysis. Format: model-name reasoning-effort (e.g. gpt-5.4 xhigh).',
+    gitAgentModelNote: 'Model used for Git analysis. Format: model-name reasoning-effort (e.g. gpt-5.5 xhigh).',
     systemPromptLabel: 'System prompt',
     systemPromptNote:
       'This prompt is appended before each AI run. Restore default to go back to the built-in prompt.',

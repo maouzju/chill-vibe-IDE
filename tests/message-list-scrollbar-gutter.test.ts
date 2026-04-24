@@ -20,4 +20,16 @@ describe('message-list scrollbar gutter', () => {
       '.message-list must declare `scrollbar-gutter: stable both-edges` to keep the visible content box centered',
     )
   })
+
+  it('keeps embedded pane error cards width-constrained so reconnect failures do not create right-side blanks', () => {
+    const css = readFileSync(cssPath, 'utf8')
+    const paneCardRule = css.match(/\.pane-content > \.card-shell,\s*\.pane-content > \.pane-tab-panel > \.card-shell\s*\{[^}]*\}/)
+    assert.ok(paneCardRule, 'expected pane embedded card sizing rule')
+    assert.match(paneCardRule[0], /min-width:\s*0/, 'embedded cards must be allowed to shrink inside the pane')
+
+    const paneErrorRule = css.match(/\.pane-content > \.card-shell:not\(\.is-error\),[\s\S]*?\.pane-content > \.pane-tab-panel > \.card-shell\.is-pane-embedded\.is-error\s*\{[^}]*\}/)
+    assert.ok(paneErrorRule, 'expected pane embedded error cards to share the same transparent pane surface rule')
+    assert.match(paneErrorRule[0], /border:\s*none/, 'embedded error cards should not keep standalone-card borders')
+    assert.match(paneErrorRule[0], /background:\s*transparent/, 'embedded error cards should not repaint a narrower standalone background')
+  })
 })

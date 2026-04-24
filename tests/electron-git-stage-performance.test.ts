@@ -100,7 +100,7 @@ const createTempStateDir = async (workspacePath: string) => {
       title: 'Git Stage Perf',
       provider: 'codex',
       workspacePath,
-      model: 'gpt-5.4',
+      model: 'gpt-5.5',
       width: 520,
       layout: createPane(['card-git-stage-perf'], 'card-git-stage-perf', 'pane-git-stage-perf'),
       cards: {

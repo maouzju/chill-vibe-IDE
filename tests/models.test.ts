@@ -59,7 +59,7 @@ describe('model helpers', () => {
 
   it('resolves slash-command aliases to canonical model names', () => {
     assert.equal(resolveSlashModel('codex', 'gpt'), '')
-    assert.equal(resolveSlashModel('codex', '5.4'), DEFAULT_CODEX_MODEL)
+    assert.equal(resolveSlashModel('codex', '5.5'), DEFAULT_CODEX_MODEL)
     assert.equal(resolveSlashModel('codex', 'git'), GIT_TOOL_MODEL)
     assert.equal(resolveSlashModel('codex', 'files'), FILETREE_TOOL_MODEL)
     assert.equal(resolveSlashModel('codex', 'brainstorm'), BRAINSTORM_TOOL_MODEL)

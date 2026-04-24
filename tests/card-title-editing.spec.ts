@@ -11,7 +11,7 @@ const createCardState = (id: string, title: string) => ({
   status: 'idle' as const,
   size: 560,
   provider: 'codex' as const,
-  model: 'gpt-5.4',
+  model: 'gpt-5.5',
   reasoningEffort: 'medium',
   draft: '',
   messages: [],
@@ -27,7 +27,7 @@ const createState = (theme: ThemeName) =>
       lineHeightScale: 1,
       resilientProxyEnabled: true,
       requestModels: {
-        codex: 'gpt-5.4',
+        codex: 'gpt-5.5',
         claude: 'claude-opus-4-7',
       },
       modelReasoningEfforts: {
@@ -52,7 +52,7 @@ const createState = (theme: ThemeName) =>
         title: 'Header Hit Targets',
         provider: 'codex' as const,
         workspacePath: 'd:\\Git\\chill-vibe',
-        model: 'gpt-5.4',
+        model: 'gpt-5.5',
         cards: [
           createCardState('card-1', 'Feature Chat'),
           createCardState('card-2', 'Review'),
@@ -71,7 +71,7 @@ const createOverflowingTabState = (theme: ThemeName) =>
       lineHeightScale: 1,
       resilientProxyEnabled: true,
       requestModels: {
-        codex: 'gpt-5.4',
+        codex: 'gpt-5.5',
         claude: 'claude-opus-4-7',
       },
       modelReasoningEfforts: {
@@ -96,7 +96,7 @@ const createOverflowingTabState = (theme: ThemeName) =>
         title: 'Overflow Tabs',
         provider: 'codex' as const,
         workspacePath: 'd:\\Git\\chill-vibe',
-        model: 'gpt-5.4',
+        model: 'gpt-5.5',
         width: 260,
         cards: [
           createCardState('card-1', 'Feature Chat'),

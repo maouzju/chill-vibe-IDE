@@ -16,7 +16,7 @@ const mockAppApis = async (page: Page) => {
       lineHeightScale: 1,
       resilientProxyEnabled: true,
       requestModels: {
-        codex: 'gpt-5.4',
+        codex: 'gpt-5.5',
         claude: 'claude-opus-4-7',
       },
       modelReasoningEfforts: {
@@ -41,7 +41,7 @@ const mockAppApis = async (page: Page) => {
         title: 'Source',
         provider: 'codex' as const,
         workspacePath: 'd:\\Git\\chill-vibe',
-        model: 'gpt-5.4',
+        model: 'gpt-5.5',
         cards: [
           {
             id: 'card-source',
@@ -49,7 +49,7 @@ const mockAppApis = async (page: Page) => {
             status: 'idle' as const,
             size: 560,
             provider: 'codex' as const,
-            model: 'gpt-5.4',
+            model: 'gpt-5.5',
             reasoningEffort: 'medium',
             draft: '',
             messages: [],
@@ -191,7 +191,7 @@ test('dragging a tab onto the lower half of another pane in the same column keep
       lineHeightScale: 1,
       resilientProxyEnabled: true,
       requestModels: {
-        codex: 'gpt-5.4',
+        codex: 'gpt-5.5',
         claude: 'claude-opus-4-7',
       },
       modelReasoningEfforts: {
@@ -216,7 +216,7 @@ test('dragging a tab onto the lower half of another pane in the same column keep
         title: 'Board',
         provider: 'codex' as const,
         workspacePath: 'd:\\Git\\chill-vibe',
-        model: 'gpt-5.4',
+        model: 'gpt-5.5',
         layout: createSplit(
           'horizontal',
           [
@@ -233,7 +233,7 @@ test('dragging a tab onto the lower half of another pane in the same column keep
             status: 'idle' as const,
             size: 560,
             provider: 'codex' as const,
-            model: 'gpt-5.4',
+            model: 'gpt-5.5',
             reasoningEffort: 'medium',
             draft: '',
             messages: [],
@@ -244,7 +244,7 @@ test('dragging a tab onto the lower half of another pane in the same column keep
             status: 'idle' as const,
             size: 560,
             provider: 'codex' as const,
-            model: 'gpt-5.4',
+            model: 'gpt-5.5',
             reasoningEffort: 'medium',
             draft: '',
             messages: [],

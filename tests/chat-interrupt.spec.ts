@@ -339,7 +339,7 @@ const installMockApis = async (
       lineHeightScale: 1,
       resilientProxyEnabled: true,
       requestModels: {
-        codex: 'gpt-5.4',
+        codex: 'gpt-5.5',
         claude: 'claude-opus-4-7',
       },
       modelReasoningEfforts: {
@@ -364,7 +364,7 @@ const installMockApis = async (
         title: 'Interrupt Test',
         provider: 'codex' as const,
         workspacePath: 'd:\\Git\\chill-vibe',
-        model: 'gpt-5.4',
+        model: 'gpt-5.5',
         cards: [
           {
             id: 'card-1',
@@ -372,7 +372,7 @@ const installMockApis = async (
             status: initialCard.status,
             size: 560,
             provider: 'codex' as const,
-            model: 'gpt-5.4',
+            model: 'gpt-5.5',
             reasoningEffort: 'medium',
             draft: '',
             streamId: initialCard.streamId,
@@ -525,7 +525,7 @@ test('sending during /compact still waits for the compaction stream to finish', 
   await expect.poll(() => mock.readState().columns[0]?.cards['card-1']?.streamId).toBe('stream-3')
 })
 
-test('answering a live ask-user activity waits for the active stream instead of interrupting it', async ({ page }) => {
+test('answering a live ask-user activity stops the waiting stream and immediately sends the answer', async ({ page }) => {
   const mock = await installMockApis(page, { autoEmitDoneOnStop: true })
   await page.goto('http://localhost:5173')
 
@@ -537,25 +537,17 @@ test('answering a live ask-user activity waits for the active stream instead of 
   await page.locator('.ask-user-option').filter({ hasText: 'Fast' }).click()
   await page.locator('.ask-user-submit').click()
 
-  await expect.poll(() => mock.readRequests()).toEqual([])
-  await expect
-    .poll(() => mock.readState().columns[0]?.cards['card-1']?.messages.map((message) => message.role))
-    .toEqual(['assistant'])
-  await expect.poll(() => mock.readState().columns[0]?.cards['card-1']?.status).toBe('streaming')
-  await expect.poll(() => mock.readState().columns[0]?.cards['card-1']?.streamId).toBe('stream-1')
-
-  await emitStreamEvent(page, 'stream-1', 'done', {})
-
-  await expect
-    .poll(() => mock.readRequests())
-    .toEqual(['message:Fast'])
+  await expect.poll(() => mock.readRequests()).toEqual([
+    'stop:stream-1',
+    'message:Fast',
+  ])
   await expect
     .poll(() => mock.readState().columns[0]?.cards['card-1']?.messages.map((message) => message.role))
     .toEqual(['assistant', 'assistant', 'user'])
   await expect.poll(() => mock.readState().columns[0]?.cards['card-1']?.streamId).toBe('stream-2')
 })
 
-test('answering a restored ask-user card waits for the recovered stream instead of interrupting it', async ({ page }) => {
+test('answering a restored ask-user card stops the recovered stream and immediately sends the answer', async ({ page }) => {
   const now = new Date().toISOString()
   const mock = await installMockApis(page, {
     initialCard: {
@@ -574,21 +566,30 @@ test('answering a restored ask-user card waits for the recovered stream instead 
   await page.locator('.ask-user-option').filter({ hasText: 'Fast' }).click()
   await page.locator('.ask-user-submit').click()
 
-  await expect.poll(() => mock.readRequests()).toEqual([])
-  await expect
-    .poll(() => mock.readState().columns[0]?.cards['card-1']?.messages.map((message) => message.role))
-    .toEqual(['assistant'])
-  await expect.poll(() => mock.readState().columns[0]?.cards['card-1']?.status).toBe('streaming')
-  await expect.poll(() => mock.readState().columns[0]?.cards['card-1']?.streamId).toBe('stream-1')
-
-  await emitStreamEvent(page, 'stream-1', 'done', {})
-
-  await expect
-    .poll(() => mock.readRequests())
-    .toEqual(['message:Fast'])
+  await expect.poll(() => mock.readRequests()).toEqual([
+    'stop:stream-1',
+    'message:Fast',
+  ])
   await expect
     .poll(() => mock.readState().columns[0]?.cards['card-1']?.messages.map((message) => message.role))
     .toEqual(['assistant', 'user'])
+  await expect.poll(() => mock.readState().columns[0]?.cards['card-1']?.streamId).toBe('stream-2')
+})
+
+test('answering a live ask-user activity still sends if stop does not emit done', async ({ page }) => {
+  const mock = await installMockApis(page, { autoEmitDoneOnStop: false })
+  await page.goto('http://localhost:5173')
+
+  await expect(getActiveComposerTextarea(page)).toBeVisible()
+  await emitStreamEvent(page, 'stream-1', 'activity', askUserActivity)
+
+  await expect(page.locator('.ask-user-card')).toBeVisible()
+  await page.locator('.ask-user-option').filter({ hasText: 'Fast' }).click()
+  await page.locator('.ask-user-submit').click()
+
+  await expect.poll(() => mock.readRequests()[0]).toBe('stop:stream-1')
+  await expect.poll(() => mock.readRequests().filter((entry) => entry === 'stop:stream-1').length).toBe(1)
+  await expect.poll(() => mock.readRequests()).toContain('message:Fast')
   await expect.poll(() => mock.readState().columns[0]?.cards['card-1']?.streamId).toBe('stream-2')
 })
 
@@ -631,4 +632,81 @@ test('old answered ask-user cards do not disable ordinary user interrupts', asyn
     'message:Interrupt the new work',
   ])
   await expect.poll(() => mock.readState().columns[0]?.cards['card-1']?.streamId).toBe('stream-2')
+})
+
+test('reused ask-user itemId does not inherit an earlier answered state', async ({ page }) => {
+  const now = new Date().toISOString()
+  const mock = await installMockApis(page, {
+    initialCard: {
+      status: 'idle',
+      sessionId: 'session-1',
+      messages: [createAskUserMessage(now)],
+    },
+    autoEmitDoneOnStop: true,
+  })
+  await page.goto('http://localhost:5173')
+
+  const firstCard = page.locator('.ask-user-card').first()
+  await expect(firstCard).toBeVisible()
+
+  await firstCard.locator('.ask-user-option').filter({ hasText: 'Fast' }).click()
+  await firstCard.locator('.ask-user-submit').click()
+
+  await expect.poll(() => mock.readRequests()).toEqual(['message:Fast'])
+  await expect.poll(() => mock.readState().columns[0]?.cards['card-1']?.streamId).toBe('stream-2')
+
+  await emitStreamEvent(page, 'stream-2', 'activity', askUserActivity)
+
+  const latestCard = page.locator('.ask-user-card').last()
+  await expect(latestCard).toBeVisible()
+  await expect(latestCard).not.toHaveClass(/is-answered/)
+  await expect(latestCard.locator('.ask-user-option.is-selected')).toHaveCount(0)
+  await expect(latestCard.locator('.ask-user-submit')).toBeDisabled()
+  await expect.poll(() => mock.readRequests()).toEqual(['message:Fast'])
+
+  await latestCard.locator('.ask-user-option').filter({ hasText: 'Deep' }).click()
+  await expect(latestCard.locator('.ask-user-submit')).toBeEnabled()
+  await latestCard.locator('.ask-user-submit').click()
+
+  await expect.poll(() => mock.readRequests()).toEqual([
+    'message:Fast',
+    'stop:stream-2',
+    'message:Deep',
+  ])
+})
+
+test('reused ask-user itemId does not inherit an unsubmitted draft selection', async ({ page }) => {
+  const now = new Date().toISOString()
+  const mock = await installMockApis(page, {
+    initialCard: {
+      status: 'idle',
+      sessionId: 'session-1',
+      messages: [createAskUserMessage(now)],
+    },
+    autoEmitDoneOnStop: true,
+  })
+  await page.goto('http://localhost:5173')
+
+  const firstCard = page.locator('.ask-user-card').first()
+  const textarea = getActiveComposerTextarea(page)
+  const sendButton = page.getByRole('button', { name: 'Send message' })
+
+  await expect(firstCard).toBeVisible()
+  await firstCard.locator('.ask-user-option').filter({ hasText: 'Fast' }).click()
+  await expect(firstCard.locator('.ask-user-submit')).toBeEnabled()
+
+  await textarea.fill('Start a new run')
+  await sendButton.click()
+
+  await expect.poll(() => mock.readRequests()).toEqual(['message:Start a new run'])
+  await expect.poll(() => mock.readState().columns[0]?.cards['card-1']?.streamId).toBe('stream-2')
+
+  await emitStreamEvent(page, 'stream-2', 'activity', askUserActivity)
+
+  const latestCard = page.locator('.ask-user-card').last()
+  await expect(latestCard).toBeVisible()
+  await expect(latestCard).not.toHaveClass(/is-answered/)
+  await expect(latestCard.locator('.ask-user-option.is-selected')).toHaveCount(0)
+  await expect(latestCard.locator('.ask-user-submit')).toBeDisabled()
+  await expect.poll(() => mock.readRequests()).toEqual(['message:Start a new run'])
 })

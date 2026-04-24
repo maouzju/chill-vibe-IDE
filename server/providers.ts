@@ -545,17 +545,45 @@ const classifyLiveProviderStreamRecovery = (
   message: string,
   hint?: StreamErrorHint,
   emittedSessionId?: string | null,
-) =>
-  classifyProviderStreamErrorRecovery(
+  options?: { transientOnly?: boolean },
+): Pick<StreamErrorEvent, 'recoverable' | 'recoveryMode' | 'transientOnly'> => {
+  const sessionId =
+    typeof emittedSessionId === 'string' && emittedSessionId.trim().length > 0
+      ? emittedSessionId
+      : request.sessionId
+  const baseRecovery = classifyProviderStreamErrorRecovery(
     {
-      sessionId:
-        typeof emittedSessionId === 'string' && emittedSessionId.trim().length > 0
-          ? emittedSessionId
-          : request.sessionId,
+      sessionId,
     },
     message,
     hint,
   )
+
+  if (!options?.transientOnly) {
+    return baseRecovery
+  }
+
+  if (baseRecovery.recoverable) {
+    return {
+      ...baseRecovery,
+      transientOnly: true,
+    }
+  }
+
+  if (
+    sessionId?.trim() &&
+    hint !== 'switch-config' &&
+    hint !== 'env-setup'
+  ) {
+    return {
+      recoverable: true,
+      recoveryMode: 'resume-session',
+      transientOnly: true,
+    }
+  }
+
+  return baseRecovery
+}
 
 const resolveAttachmentPaths = async (attachments: ImageAttachment[]) =>
   Promise.all(attachments.map((attachment) => resolveImageAttachmentPath(attachment.id)))
@@ -1429,17 +1457,26 @@ const launchCodexAppServerRun = async (
       const diagnostics = summarizeDiagnostics(stderr)
       const message = diagnostics || formatProviderUnexpectedCompletion(language, 'codex')
       const hint = classifyLaunchErrorHint(`${message}\n${stderr}`)
-      sink.onError(message, hint, {
-        ...classifyLiveProviderStreamRecovery(request, message, hint, emittedSessionId),
-        transientOnly: emittedAssistantContent.transientOnly && !emittedAssistantContent.durable,
-      })
+      sink.onError(
+        message,
+        hint,
+        classifyLiveProviderStreamRecovery(request, message, hint, emittedSessionId, {
+          transientOnly: emittedAssistantContent.transientOnly && !emittedAssistantContent.durable,
+        }),
+      )
       return
     }
 
     const diagnostics = summarizeDiagnostics(stderr)
     const message = diagnostics || formatProviderExit(language, 'codex', code)
     const hint = classifyLaunchErrorHint(`${message}\n${stderr}`)
-    sink.onError(message, hint, classifyLiveProviderStreamRecovery(request, message, hint, emittedSessionId))
+    sink.onError(
+      message,
+      hint,
+      classifyLiveProviderStreamRecovery(request, message, hint, emittedSessionId, {
+        transientOnly: emittedAssistantContent.transientOnly && !emittedAssistantContent.durable,
+      }),
+    )
   })
 
   child.on('error', (error) => {

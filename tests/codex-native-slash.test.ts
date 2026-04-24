@@ -8,7 +8,7 @@ import { expandCodexNativeSlashPrompt } from '../server/providers.ts'
 const createRequest = (prompt: string): ChatRequest => ({
   provider: 'codex',
   workspacePath: 'D:/Git/chill-vibe',
-  model: 'gpt-5.4',
+  model: 'gpt-5.5',
   reasoningEffort: 'medium',
   thinkingEnabled: true,
   planMode: false,

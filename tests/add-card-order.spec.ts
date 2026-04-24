@@ -18,7 +18,7 @@ const createSinglePaneState = () => {
       lineHeightScale: 1,
       resilientProxyEnabled: true,
       requestModels: {
-        codex: 'gpt-5.4',
+        codex: 'gpt-5.5',
         claude: 'claude-opus-4-7',
       },
       modelReasoningEfforts: {
@@ -43,7 +43,7 @@ const createSinglePaneState = () => {
         title: 'Dev',
         provider: 'codex' as const,
         workspacePath: 'd:\\Git\\chill-vibe',
-        model: 'gpt-5.4',
+        model: 'gpt-5.5',
         cards: [
           {
             id: 'card-1',
@@ -51,7 +51,7 @@ const createSinglePaneState = () => {
             status: 'idle' as const,
             size: 440,
             provider: 'codex' as const,
-            model: 'gpt-5.4',
+            model: 'gpt-5.5',
             reasoningEffort: 'medium',
             draft: '',
             messages: [],
@@ -74,7 +74,7 @@ const createSplitPaneState = () => {
       lineHeightScale: 1,
       resilientProxyEnabled: true,
       requestModels: {
-        codex: 'gpt-5.4',
+        codex: 'gpt-5.5',
         claude: 'claude-opus-4-7',
       },
       modelReasoningEfforts: {
@@ -99,7 +99,7 @@ const createSplitPaneState = () => {
         title: 'Dev',
         provider: 'codex' as const,
         workspacePath: 'd:\\Git\\chill-vibe',
-        model: 'gpt-5.4',
+        model: 'gpt-5.5',
         cards: [
           {
             id: 'card-1',
@@ -107,7 +107,7 @@ const createSplitPaneState = () => {
             status: 'idle' as const,
             size: 440,
             provider: 'codex' as const,
-            model: 'gpt-5.4',
+            model: 'gpt-5.5',
             reasoningEffort: 'medium',
             draft: '',
             messages: [],
@@ -118,7 +118,7 @@ const createSplitPaneState = () => {
             status: 'idle' as const,
             size: 440,
             provider: 'codex' as const,
-            model: 'gpt-5.4',
+            model: 'gpt-5.5',
             reasoningEffort: 'medium',
             draft: '',
             messages: [],

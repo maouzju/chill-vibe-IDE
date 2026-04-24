@@ -1,4 +1,4 @@
-import { expect, test, type Page } from '@playwright/test'
+﻿import { expect, test, type Page } from '@playwright/test'
 import { installMockElectronBridge } from './electron-bridge.ts'
 import { createPlaywrightState } from './playwright-state.ts'
 
@@ -15,7 +15,7 @@ const installMockApis = async (page: Page, theme: ThemeName) => {
       fontScale: 1,
       lineHeightScale: 1,
       requestModels: {
-        codex: 'gpt-5.4',
+        codex: 'gpt-5.5',
         claude: 'claude-opus-4-7',
       },
     },
@@ -26,7 +26,7 @@ const installMockApis = async (page: Page, theme: ThemeName) => {
         title: 'Input Test',
         provider: 'codex',
         workspacePath: 'd:\\Git\\chill-vibe',
-        model: 'gpt-5.4',
+        model: 'gpt-5.5',
         cards: [
           {
             id: 'card-1',
@@ -34,7 +34,7 @@ const installMockApis = async (page: Page, theme: ThemeName) => {
             status: 'idle',
             size: 560,
             provider: 'codex',
-            model: 'gpt-5.4',
+            model: 'gpt-5.5',
             reasoningEffort: 'medium',
             messages: [],
           },

@@ -16,7 +16,7 @@ const createToolCardState = (theme: ThemeName, model: string, title: string) =>
       lineHeightScale: 1,
       resilientProxyEnabled: true,
       requestModels: {
-        codex: 'gpt-5.4',
+        codex: 'gpt-5.5',
         claude: 'claude-opus-4-7',
       },
       modelReasoningEfforts: {
@@ -41,7 +41,7 @@ const createToolCardState = (theme: ThemeName, model: string, title: string) =>
         title: 'Tool Workspace',
         provider: 'codex' as const,
         workspacePath: 'd:\\Git\\chill-vibe',
-        model: 'gpt-5.4',
+        model: 'gpt-5.5',
         cards: [
           {
             id: 'card-tool',

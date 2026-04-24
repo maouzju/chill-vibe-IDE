@@ -7,6 +7,8 @@ const recoverableErrorPatterns = [
   'unexpected completion',
 ] as const
 
+const zeroExitPattern = /\b(?:codex|claude) exited with status code:\s*0\b/i
+
 export const classifyProviderStreamErrorRecovery = (
   request: Pick<ChatRequest, 'sessionId'>,
   message: string,
@@ -25,7 +27,10 @@ export const classifyProviderStreamErrorRecovery = (
     return {}
   }
 
-  if (recoverableErrorPatterns.some((pattern) => normalizedMessage.includes(pattern))) {
+  if (
+    recoverableErrorPatterns.some((pattern) => normalizedMessage.includes(pattern)) ||
+    zeroExitPattern.test(normalizedMessage)
+  ) {
     return {
       recoverable: true,
       recoveryMode: 'resume-session',

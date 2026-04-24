@@ -30,7 +30,7 @@ const createChatCard = (
   status: options.status ?? 'idle',
   size: 560,
   provider: 'codex' as const,
-  model: 'gpt-5.4',
+  model: 'gpt-5.5',
   reasoningEffort: 'medium',
   draft: '',
   streamId: options.streamId,
@@ -62,7 +62,7 @@ const createState = (): AppState => {
       lineHeightScale: 1,
       resilientProxyEnabled: true,
       requestModels: {
-        codex: 'gpt-5.4',
+        codex: 'gpt-5.5',
         claude: 'claude-opus-4-7',
       },
       modelReasoningEfforts: {
@@ -87,7 +87,7 @@ const createState = (): AppState => {
         title: 'Crash Repro',
         provider: 'codex' as const,
         workspacePath: 'd:\\Git\\chill-vibe',
-        model: 'gpt-5.4',
+        model: 'gpt-5.5',
         cards,
         layout: createPane(cards.map((card) => card.id), 'card-1', 'pane-1'),
       },

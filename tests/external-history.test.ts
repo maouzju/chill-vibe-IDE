@@ -40,7 +40,7 @@ const writeCodexFixture = ({
   sessionId,
   workspacePath,
   title,
-  model = 'gpt-5.4',
+  model = 'gpt-5.5',
   startedAt = ts1,
   updatedAt = ts2,
   archived = false,

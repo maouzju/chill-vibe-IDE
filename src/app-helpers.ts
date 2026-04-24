@@ -31,7 +31,7 @@ export type ProfileDraft = {
   apiKey: string
 }
 
-export type StoppedRunReason = 'manual' | 'user-interrupt'
+export type StoppedRunReason = 'manual' | 'user-interrupt' | 'ask-user-answer'
 
 export const emptyProfileDraft = (): ProfileDraft => ({
   name: '',

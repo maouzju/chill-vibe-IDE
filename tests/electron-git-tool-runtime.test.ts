@@ -1,4 +1,4 @@
-import assert from 'node:assert/strict'
+﻿import assert from 'node:assert/strict'
 import { spawn } from 'node:child_process'
 import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -88,7 +88,7 @@ const createTempStateDir = async (workspacePath: string) => {
       title: 'Git Smoke',
       provider: 'codex',
       workspacePath,
-      model: 'gpt-5.4',
+      model: 'gpt-5.5',
       width: 460,
       layout: createPane(['card-1'], 'card-1', 'pane-git'),
       cards: {
@@ -184,7 +184,7 @@ const createHeavyPaneStateDir = async (workspacePath: string) => {
       title: 'Heavy Pane',
       provider: 'codex',
       workspacePath,
-      model: 'gpt-5.4',
+      model: 'gpt-5.5',
       layout: createPane(cards.map((card) => card.id), 'card-heavy-1', 'pane-heavy'),
       cards: Object.fromEntries(cards.map((card) => [card.id, card])),
     },

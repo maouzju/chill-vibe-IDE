@@ -1,4 +1,4 @@
-import assert from 'node:assert/strict'
+﻿import assert from 'node:assert/strict'
 import { mkdir, readFile, rm, writeFile } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
@@ -19,7 +19,7 @@ import { prependPathEntry, writeNodeEntrypointShim } from './test-shell-helpers.
 const createRequest = (overrides: Partial<ChatRequest> = {}): ChatRequest => ({
   provider: overrides.provider ?? 'codex',
   workspacePath: overrides.workspacePath ?? 'D:/Git/chill-vibe',
-  model: overrides.model ?? 'gpt-5.4',
+  model: overrides.model ?? 'gpt-5.5',
   reasoningEffort: overrides.reasoningEffort ?? 'medium',
   thinkingEnabled: overrides.thinkingEnabled ?? true,
   planMode: overrides.planMode ?? false,
@@ -89,7 +89,7 @@ test('codex args append matching model prompt rules before provider execution', 
   const args = buildCodexArgs(
     createRequest({
       provider: 'codex',
-      model: 'gpt-5.4',
+      model: 'gpt-5.5',
       language: 'en',
       systemPrompt: 'Base system prompt.',
       modelPromptRules: [

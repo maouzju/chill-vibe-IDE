@@ -1,6 +1,8 @@
 import type { AppLanguage, Provider } from './schema.js'
 
-export type ReasoningEffort = 'auto' | 'low' | 'medium' | 'high' | 'max' | 'xhigh'
+type CodexReasoningEffort = 'low' | 'medium' | 'high' | 'xhigh'
+type ClaudeReasoningEffort = 'auto' | 'low' | 'medium' | 'high' | 'max'
+export type ReasoningEffort = CodexReasoningEffort | ClaudeReasoningEffort
 
 export type ReasoningOption = {
   value: ReasoningEffort
@@ -26,9 +28,8 @@ const reasoningOptionLabels: Record<AppLanguage, Record<ReasoningEffort, string>
   },
 }
 
-const reasoningOptionsByProvider: Record<Provider, readonly Omit<ReasoningOption, 'label'>[]> = {
+const reasoningOptionsByProvider = {
   codex: [
-    { value: 'auto' },
     { value: 'low' },
     { value: 'medium' },
     { value: 'high' },
@@ -41,7 +42,7 @@ const reasoningOptionsByProvider: Record<Provider, readonly Omit<ReasoningOption
     { value: 'high' },
     { value: 'max' },
   ],
-}
+} satisfies Record<Provider, readonly Omit<ReasoningOption, 'label'>[]>
 
 const reasoningAliasesByProvider: Record<Provider, Partial<Record<string, ReasoningEffort>>> = {
   codex: {

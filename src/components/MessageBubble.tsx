@@ -221,7 +221,7 @@ const MessageContent = ({
   message: ChatMessage
   workspacePath: string
   answeredOption: string | null
-  onSelectAskUserOption: (itemId: string, label: string) => void
+  onSelectAskUserOption: (answerKey: string, label: string) => void
   onOpenFile?: (relativePath: string) => void
   isStickyPreview?: boolean
 }) => {
@@ -251,8 +251,9 @@ const MessageContent = ({
       <div className="message-content">
         <AskUserQuestionCard
           data={askUser}
+          answerKey={message.id}
           answeredOption={answeredOption}
-          onSelectOption={(label) => onSelectAskUserOption(askUser.itemId, label)}
+          onSelectOption={(label) => onSelectAskUserOption(message.id, label)}
           language={language}
         />
       </div>

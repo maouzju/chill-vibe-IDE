@@ -19,7 +19,7 @@ const createNestedSplitState = (theme: ThemeName) => createPlaywrightState({
     lineHeightScale: 1,
     resilientProxyEnabled: true,
     requestModels: {
-      codex: 'gpt-5.4',
+      codex: 'gpt-5.5',
       claude: 'claude-opus-4-7',
     },
     modelReasoningEfforts: {
@@ -44,7 +44,7 @@ const createNestedSplitState = (theme: ThemeName) => createPlaywrightState({
       title: 'Nested Layering Test',
       provider: 'codex' as const,
       workspacePath: 'd:\\Git\\chill-vibe',
-      model: 'gpt-5.4',
+      model: 'gpt-5.5',
       cards: [
         {
           id: 'card-left',
@@ -52,7 +52,7 @@ const createNestedSplitState = (theme: ThemeName) => createPlaywrightState({
           status: 'idle' as const,
           size: 560,
           provider: 'codex' as const,
-          model: 'gpt-5.4',
+          model: 'gpt-5.5',
           reasoningEffort: 'medium',
           draft: 'Keep this pane mounted beside the nested split.',
           messages: [],
@@ -63,7 +63,7 @@ const createNestedSplitState = (theme: ThemeName) => createPlaywrightState({
           status: 'idle' as const,
           size: 560,
           provider: 'codex' as const,
-          model: 'gpt-5.4',
+          model: 'gpt-5.5',
           reasoningEffort: 'medium',
           draft: 'The lower pane menu should layer above this surface.',
           messages: [],
@@ -74,7 +74,7 @@ const createNestedSplitState = (theme: ThemeName) => createPlaywrightState({
           status: 'idle' as const,
           size: 560,
           provider: 'codex' as const,
-          model: 'gpt-5.4',
+          model: 'gpt-5.5',
           reasoningEffort: 'medium',
           draft: 'Open the card type menu from the lower-right pane.',
           messages: [],
@@ -110,7 +110,7 @@ const createConstrainedBottomPaneState = (theme: ThemeName) => createPlaywrightS
     lineHeightScale: 1,
     resilientProxyEnabled: true,
     requestModels: {
-      codex: 'gpt-5.4',
+      codex: 'gpt-5.5',
       claude: 'claude-opus-4-7',
     },
     modelReasoningEfforts: {
@@ -135,7 +135,7 @@ const createConstrainedBottomPaneState = (theme: ThemeName) => createPlaywrightS
       title: 'Constrained Menu Test',
       provider: 'codex' as const,
       workspacePath: 'd:\\Git\\chill-vibe',
-      model: 'gpt-5.4',
+      model: 'gpt-5.5',
       cards: [
         {
           id: 'card-top',
@@ -143,7 +143,7 @@ const createConstrainedBottomPaneState = (theme: ThemeName) => createPlaywrightS
           status: 'idle' as const,
           size: 560,
           provider: 'codex' as const,
-          model: 'gpt-5.4',
+          model: 'gpt-5.5',
           reasoningEffort: 'medium',
           draft: 'Keep the lower pane short so the model menu must stay inside it.',
           messages: [],
@@ -154,7 +154,7 @@ const createConstrainedBottomPaneState = (theme: ThemeName) => createPlaywrightS
           status: 'idle' as const,
           size: 560,
           provider: 'codex' as const,
-          model: 'gpt-5.4',
+          model: 'gpt-5.5',
           reasoningEffort: 'medium',
           draft: '',
           messages: [],

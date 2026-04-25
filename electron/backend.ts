@@ -164,7 +164,13 @@ export const createDesktopBackend = (deps: DesktopBackendDependencies = {}) => {
       void queueSaveState(appStateSchema.parse(state))
     },
     syncRuntimeSettings(settings: AppState['settings']) {
-      setProviderRuntimeSettingsOverride(appSettingsSchema.parse(settings))
+      const parsed = appSettingsSchema.parse(settings)
+      setProviderRuntimeSettingsOverride(parsed)
+      void resilientProxyPool.configure({
+        firstByteTimeoutMs: parsed.resilientProxyFirstByteTimeoutSec * 1000,
+        stallTimeoutMs: parsed.resilientProxyStallTimeoutSec * 1000,
+        maxRecoveryRetries: parsed.resilientProxyMaxRetries,
+      })
     },
     async flushStateWrites() {
       await waitForPendingStateWrites()

@@ -1,4 +1,4 @@
-﻿import { expect, test, type Locator, type Page } from '@playwright/test'
+import { expect, test, type Locator, type Page } from '@playwright/test'
 
 import { attachImagesToMessageMeta } from '../shared/chat-attachments.ts'
 import {
@@ -5653,6 +5653,80 @@ for (const theme of ['dark', 'light'] as const) {
     expect(fileListRect.bottom).toBeLessThanOrEqual(cardRect.bottom + 2)
 
     await expect(gitCardShell).toHaveScreenshot(`git-tool-card-compact-default-${theme}.png`, {
+      animations: 'disabled',
+      caret: 'hide',
+    })
+  })
+}
+
+for (const theme of ['dark', 'light'] as const) {
+  test(`git tool non-repo onboarding empty state is calm and themed in ${theme} theme`, async ({ page }) => {
+    await page.setViewportSize({ width: 1280, height: 960 })
+
+    const state = createMockState()
+    state.settings.language = 'zh-CN'
+    state.settings.theme = theme
+    state.columns[0]!.width = 520
+    state.columns[0]!.workspacePath = 'C:\\workspace\\brand-new-app'
+    state.columns[0]!.cards[0] = {
+      ...state.columns[0]!.cards[0]!,
+      title: 'Git setup',
+      provider: 'codex',
+      model: GIT_TOOL_MODEL,
+      reasoningEffort: 'medium',
+      size: 360,
+    }
+
+    await mockAppApis(page, { state })
+    await page.route('**/api/git/status?workspacePath=*', async (route) => {
+      await route.fulfill({
+        json: {
+          workspacePath: 'C:\\workspace\\brand-new-app',
+          isRepository: false,
+          repoRoot: '',
+          branch: '',
+          upstream: undefined,
+          ahead: 0,
+          behind: 0,
+          hasConflicts: false,
+          clean: true,
+          summary: {
+            staged: 0,
+            unstaged: 0,
+            untracked: 0,
+            conflicted: 0,
+          },
+          changes: [],
+          lastCommit: null,
+          description: '',
+          note: 'This workspace is not a Git repository yet.',
+        },
+      })
+    })
+
+    await page.goto(appUrl)
+
+    const gitCardShell = page.locator('.card-shell').first()
+    const onboarding = page.locator('.git-onboarding-empty').first()
+    const pathRow = onboarding.locator('.git-onboarding-path')
+    const actions = onboarding.locator('.git-onboarding-actions')
+
+    await expect(onboarding).toBeVisible()
+    await expect(onboarding).toContainText('\u8fd8\u6ca1\u5f00\u59cb\u7248\u672c\u7ba1\u7406')
+    await expect(onboarding).toContainText('\u8bf7\u5728\u8fd9\u91cc\u8fd0\u884c git init')
+    await expect(onboarding).toContainText('\u521d\u59cb\u5316 .git')
+    await expect(page.getByRole('button', { name: '\u521b\u5efa Git \u4ed3\u5e93' })).toBeVisible()
+
+    const [cardRect, pathRect, actionsRect] = await Promise.all([
+      readRect(onboarding),
+      readRect(pathRow),
+      readRect(actions),
+    ])
+
+    expect(pathRect.right).toBeLessThanOrEqual(cardRect.right + 1)
+    expect(actionsRect.bottom).toBeLessThanOrEqual(cardRect.bottom + 1)
+
+    await expect(gitCardShell).toHaveScreenshot(`git-tool-not-repo-onboarding-${theme}.png`, {
       animations: 'disabled',
       caret: 'hide',
     })

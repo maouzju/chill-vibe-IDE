@@ -48,6 +48,19 @@ const askUserActivity = {
   ],
 } as const
 
+const followUpAskUserActivity = {
+  itemId: 'ask-user-item-2',
+  kind: 'ask-user',
+  status: 'completed',
+  header: 'Need another choice',
+  question: 'How should I handle the popup question tool?',
+  multiSelect: false,
+  options: [
+    { label: 'Continue', description: 'Keep testing the current flow' },
+    { label: 'Stop', description: 'End the popup feature test' },
+  ],
+} as const
+
 const createAskUserMessage = (createdAt: string) => ({
   id: 'codex:stream-1:item:ask-user:question',
   role: 'assistant' as const,
@@ -709,4 +722,72 @@ test('reused ask-user itemId does not inherit an unsubmitted draft selection', a
   await expect(latestCard.locator('.ask-user-option.is-selected')).toHaveCount(0)
   await expect(latestCard.locator('.ask-user-submit')).toBeDisabled()
   await expect.poll(() => mock.readRequests()).toEqual(['message:Start a new run'])
+})
+
+test('updating an existing ask-user card to a later question resets stale local selection state', async ({ page }) => {
+  const mock = await installMockApis(page, { autoEmitDoneOnStop: true })
+  await page.goto('http://localhost:5173')
+
+  await expect(getActiveComposerTextarea(page)).toBeVisible()
+  await emitStreamEvent(page, 'stream-1', 'activity', askUserActivity)
+
+  const card = page.locator('.ask-user-card').last()
+  await expect(card).toBeVisible()
+  await expect(card.locator('.ask-user-question')).toHaveText('Which path should I take?')
+  await card.locator('.ask-user-option').filter({ hasText: 'Fast' }).click()
+  await expect(card.locator('.ask-user-option.is-selected')).toContainText('Fast')
+  await expect(card.locator('.ask-user-submit')).toBeEnabled()
+
+  await emitStreamEvent(page, 'stream-1', 'activity', followUpAskUserActivity)
+
+  const updatedCard = page.locator('.ask-user-card').last()
+  await expect(updatedCard).toBeVisible()
+  await expect(updatedCard.locator('.ask-user-question')).toHaveText('How should I handle the popup question tool?')
+  await expect(updatedCard).not.toHaveClass(/is-answered/)
+  await expect(updatedCard.locator('.ask-user-option.is-selected')).toHaveCount(0)
+  await expect(updatedCard.locator('.ask-user-submit')).toBeDisabled()
+  await expect.poll(() => mock.readRequests()).toEqual([])
+})
+
+test('merged consecutive ask-user questions require answering the later question before submit', async ({ page }) => {
+  const now = new Date().toISOString()
+  const mock = await installMockApis(page, {
+    initialCard: {
+      status: 'idle',
+      sessionId: 'session-1',
+      messages: [
+        createAskUserMessage(now),
+        {
+          id: 'codex:stream-1:item:ask-user:question-2',
+          role: 'assistant',
+          content: '',
+          createdAt: now,
+          meta: {
+            provider: 'codex',
+            kind: 'ask-user',
+            itemId: followUpAskUserActivity.itemId,
+            structuredData: JSON.stringify(followUpAskUserActivity),
+          },
+        },
+      ],
+    },
+    autoEmitDoneOnStop: true,
+  })
+  await page.goto('http://localhost:5173')
+
+  const card = page.locator('.ask-user-card').last()
+  await expect(card).toBeVisible()
+  await expect(card.locator('.ask-user-counter')).toContainText('1 / 2')
+  await card.locator('.ask-user-option').filter({ hasText: 'Fast' }).click()
+  await expect(card.locator('.ask-user-submit')).toBeDisabled()
+
+  await card.getByRole('button', { name: 'Next' }).click()
+  await expect(card.locator('.ask-user-counter')).toContainText('2 / 2')
+  await expect(card.locator('.ask-user-question')).toHaveText('How should I handle the popup question tool?')
+  await expect(card.locator('.ask-user-option.is-selected')).toHaveCount(0)
+  await expect(card.locator('.ask-user-submit')).toBeDisabled()
+  await expect.poll(() => mock.readRequests()).toEqual([])
+
+  await card.locator('.ask-user-option').filter({ hasText: 'Continue' }).click()
+  await expect(card.locator('.ask-user-submit')).toBeEnabled()
 })

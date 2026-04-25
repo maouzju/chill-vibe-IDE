@@ -25,7 +25,14 @@ export const shouldPersistActionImmediately = (
   state: Pick<AppState, 'columns'>,
 ) => actionType === 'selectCardModel' && shouldPauseQueuedStateSave(state)
 
-const runtimeSyncSettingsKeys = ['cliRoutingEnabled', 'resilientProxyEnabled', 'providerProfiles'] as const
+const runtimeSyncSettingsKeys = [
+  'cliRoutingEnabled',
+  'resilientProxyEnabled',
+  'resilientProxyStallTimeoutSec',
+  'resilientProxyFirstByteTimeoutSec',
+  'resilientProxyMaxRetries',
+  'providerProfiles',
+] as const
 
 export const shouldSyncRuntimeSettings = (action: IdeAction) => {
   if (action.type === 'updateSettings') {

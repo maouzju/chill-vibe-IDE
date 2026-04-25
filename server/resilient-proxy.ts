@@ -31,6 +31,12 @@ type StartResilientProxyServerOptions = {
   logger?: Logger
 }
 
+export type ResilientProxyRuntimeConfig = {
+  firstByteTimeoutMs?: number
+  stallTimeoutMs?: number
+  maxRecoveryRetries?: number
+}
+
 export type RunningResilientProxyServer = {
   provider: Provider
   origin: string
@@ -678,7 +684,10 @@ class ResilientProxyServer {
     this.stallTimeoutMs = options.stallTimeoutMs ?? defaultStallTimeoutMs
     this.responsesTailFetchTimeoutMs =
       options.responsesTailFetchTimeoutMs ?? defaultResponsesTailFetchTimeoutMs
-    this.maxRecoveryRetries = options.maxRecoveryRetries ?? defaultMaxRecoveryRetries
+    this.maxRecoveryRetries =
+      options.maxRecoveryRetries === -1
+        ? Number.POSITIVE_INFINITY
+        : (options.maxRecoveryRetries ?? defaultMaxRecoveryRetries)
     this.maxRequestBodyBytes = options.maxRequestBodyBytes ?? defaultMaxRequestBodyBytes
     this.safeResumeBodyBytes = options.safeResumeBodyBytes ?? defaultSafeResumeBodyBytes
     this.logger = options.logger ?? console
@@ -1648,13 +1657,16 @@ class ResilientProxyPool {
 
   private readonly servers = new Map<string, Promise<RunningResilientProxyServer> | RunningResilientProxyServer>()
 
+  private runtimeConfig: ResilientProxyRuntimeConfig = {}
+
   constructor(logger: Logger = console) {
     this.logger = logger
   }
 
-  async resolveBaseUrl(provider: Provider, upstreamBaseUrl: string) {
+  async resolveBaseUrl(provider: Provider, upstreamBaseUrl: string, config?: ResilientProxyRuntimeConfig) {
     const normalizedUpstream = normalizeBaseUrl(upstreamBaseUrl)
-    const key = `${provider}:${normalizedUpstream}`
+    const effectiveConfig = config ?? this.runtimeConfig
+    const key = `${provider}:${normalizedUpstream}:${effectiveConfig.firstByteTimeoutMs ?? 'default'}:${effectiveConfig.stallTimeoutMs ?? 'default'}:${effectiveConfig.maxRecoveryRetries ?? 'default'}`
     const existing = this.servers.get(key)
 
     if (existing) {
@@ -1665,6 +1677,7 @@ class ResilientProxyPool {
     const pending = startResilientProxyServer({
       provider,
       upstreamBaseUrl: normalizedUpstream,
+      ...effectiveConfig,
       logger: this.logger,
     }).catch((error) => {
       this.servers.delete(key)
@@ -1675,6 +1688,25 @@ class ResilientProxyPool {
     const running = await pending
     this.servers.set(key, running)
     return running.clientBaseUrl
+  }
+
+
+  async configure(config: ResilientProxyRuntimeConfig) {
+    const nextConfig = {
+      firstByteTimeoutMs: config.firstByteTimeoutMs,
+      stallTimeoutMs: config.stallTimeoutMs,
+      maxRecoveryRetries: config.maxRecoveryRetries,
+    }
+    if (
+      this.runtimeConfig.firstByteTimeoutMs === nextConfig.firstByteTimeoutMs &&
+      this.runtimeConfig.stallTimeoutMs === nextConfig.stallTimeoutMs &&
+      this.runtimeConfig.maxRecoveryRetries === nextConfig.maxRecoveryRetries
+    ) {
+      return
+    }
+
+    this.runtimeConfig = nextConfig
+    await this.dispose()
   }
 
   async dispose() {

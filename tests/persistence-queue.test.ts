@@ -72,6 +72,9 @@ describe('persistence queue', () => {
 
     assert.equal(shouldSyncRuntimeSettings({ type: 'updateSettings', patch: { cliRoutingEnabled: false } }), true)
     assert.equal(shouldSyncRuntimeSettings({ type: 'updateSettings', patch: { resilientProxyEnabled: false } }), true)
+    assert.equal(shouldSyncRuntimeSettings({ type: 'updateSettings', patch: { resilientProxyStallTimeoutSec: 120 } }), true)
+    assert.equal(shouldSyncRuntimeSettings({ type: 'updateSettings', patch: { resilientProxyFirstByteTimeoutSec: 180 } }), true)
+    assert.equal(shouldSyncRuntimeSettings({ type: 'updateSettings', patch: { resilientProxyMaxRetries: -1 } }), true)
     assert.equal(
       shouldSyncRuntimeSettings({
         type: 'updateSettings',

@@ -53,6 +53,7 @@ import {
 } from './provider-skills.js'
 import { loadState } from './state-store.js'
 import { proxyStats, type ProxyStatsEvent } from './proxy-stats-store.js'
+import type { ResilientProxyRuntimeConfig } from './resilient-proxy.js'
 import { resilientProxyPool } from './resilient-proxy.js'
 import { createArchiveRecallRuntimeOverrides, getCodexArchiveRecallInstruction } from './archive-recall.js'
 
@@ -190,13 +191,18 @@ const getClaudeAskUserQuestionInstruction = (language: AppLanguage) =>
     ? 'In this Chill Vibe Claude runtime, both the native AskUserQuestion tool and the following XML block render as an interactive card for the user. Prefer the XML block form because it streams reliably and does not depend on tool availability. When you must ask the user to choose before you can continue safely, reply with only one XML block in this exact shape and no extra text: <ask-user-question>{"header":"Short title","question":"One concise question","multiSelect":false,"options":[{"label":"Option A","description":"Short tradeoff"},{"label":"Option B","description":"Short tradeoff"}]}</ask-user-question>. Use 2-3 options, keep labels short, omit any Other option, and wait for the next user reply after emitting the block.'
     : '在这个 Chill Vibe 的 Claude 运行环境里，原生 AskUserQuestion 工具和下面这个 XML 块都会被渲染成可交互卡片。优先使用 XML 块形式，因为它流式更稳、且不依赖工具可用性。当你必须在继续之前让用户做选择时，只输出一个完整的 XML 块，并且不要加任何其他文本：<ask-user-question>{"header":"简短标题","question":"一句简洁问题","multiSelect":false,"options":[{"label":"选项 A","description":"简短权衡"},{"label":"选项 B","description":"简短权衡"}]}</ask-user-question>。选项保持 2-3 个，label 要简短，不要自己加 Other，并在输出这个块后等待用户下一条回复。'
 
-const maybeResolveProxyBaseUrl = async (provider: Provider, baseUrl: string, enabled: boolean) => {
+const maybeResolveProxyBaseUrl = async (
+  provider: Provider,
+  baseUrl: string,
+  enabled: boolean,
+  config?: ResilientProxyRuntimeConfig,
+) => {
   if (!enabled) {
     return baseUrl
   }
 
   try {
-    return await resilientProxyPool.resolveBaseUrl(provider, baseUrl)
+    return await resilientProxyPool.resolveBaseUrl(provider, baseUrl, config)
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
     console.warn(`[resilient-proxy] Falling back to direct ${provider} upstream: ${message}`)
@@ -266,6 +272,11 @@ export const resolveProviderRuntime = async (provider: Provider): Promise<Provid
       provider,
       baseUrl,
       Boolean(settings.resilientProxyEnabled),
+      {
+        firstByteTimeoutMs: settings.resilientProxyFirstByteTimeoutSec * 1000,
+        stallTimeoutMs: settings.resilientProxyStallTimeoutSec * 1000,
+        maxRecoveryRetries: settings.resilientProxyMaxRetries,
+      },
     )
 
     if (provider === 'claude') {
@@ -539,6 +550,35 @@ const formatProviderUnexpectedCompletion = (language: AppLanguage, provider: Pro
 const transientRecoveryPlaceholderPattern = /^reconnecting(?:\s*(?:\.{3}|…))?(?:\s+\d+\s*\/\s*\d+)?$/i
 
 const isTransientRecoveryPlaceholder = (content: string) => transientRecoveryPlaceholderPattern.test(content.trim())
+
+const transientRecoveryPlaceholderPrefixPattern =
+  /^reconnecting(?:\s*(?:\.{0,3}|\u2026))?(?:\s*\d*\s*(?:\/\s*\d*)?)?$/i
+
+const isTransientRecoveryPlaceholderPrefix = (content: string) => {
+  const normalized = content.trim()
+  if (!normalized) {
+    return false
+  }
+
+  const lower = normalized.toLowerCase()
+  return (
+    'reconnecting'.startsWith(lower) ||
+    lower.startsWith('reconnecting') ||
+    transientRecoveryPlaceholderPrefixPattern.test(normalized)
+  )
+}
+
+const shouldStartTransientPlaceholderStallTimer = (content: string) =>
+  content.trim().length >= 'reconnecting'.length && isTransientRecoveryPlaceholderPrefix(content)
+
+const getTransientPlaceholderStallTimeoutMs = () => {
+  const parsed = Number.parseInt(process.env.CHILL_VIBE_TRANSIENT_PLACEHOLDER_TIMEOUT_MS ?? '', 10)
+  if (Number.isFinite(parsed) && parsed >= 50) {
+    return parsed
+  }
+
+  return 3000
+}
 
 const classifyLiveProviderStreamRecovery = (
   request: Pick<ChatRequest, 'sessionId'>,
@@ -1170,10 +1210,13 @@ const launchCodexAppServerRun = async (
   const manualCompactRequest = isManualCodexCompactRequest(request)
   const compactionActivityDeduper = createCodexCompactionActivityDeduper()
   const bufferedStructuredAgentMessageDeltas = new Map<string, string>()
+  const transientPlaceholderCandidateContentByItemId = new Map<string, string>()
   const emittedAssistantContent = {
     durable: false,
     transientOnly: false,
   }
+  const transientOnlyCompletionMessage =
+    'Codex produced only transient reconnect placeholders before completion.'
   const pendingRequests = new Map<
     string,
     {
@@ -1186,6 +1229,72 @@ const launchCodexAppServerRun = async (
   let stderr = ''
   let emittedSessionId: string | null = request.sessionId?.trim() || null
   let currentRequest = request
+  let transientPlaceholderStallTimer: ReturnType<typeof setTimeout> | undefined
+
+  const clearTransientPlaceholderStallTimer = () => {
+    if (transientPlaceholderStallTimer) {
+      clearTimeout(transientPlaceholderStallTimer)
+      transientPlaceholderStallTimer = undefined
+    }
+  }
+
+  const markDurableProviderProgress = () => {
+    emittedAssistantContent.durable = true
+    emittedAssistantContent.transientOnly = false
+    transientPlaceholderCandidateContentByItemId.clear()
+    clearTransientPlaceholderStallTimer()
+  }
+
+  const hasOnlyTransientAssistantContent = () =>
+    !emittedAssistantContent.durable &&
+    (emittedAssistantContent.transientOnly || transientPlaceholderCandidateContentByItemId.size > 0)
+
+  const recordAssistantContentProgress = (content: string, itemId?: string) => {
+    if (!content.trim()) {
+      return
+    }
+
+    if (isTransientRecoveryPlaceholder(content)) {
+      emittedAssistantContent.transientOnly = !emittedAssistantContent.durable
+      if (itemId) {
+        transientPlaceholderCandidateContentByItemId.set(itemId, content)
+      }
+      scheduleTransientPlaceholderStallTimer()
+      return
+    }
+
+    if (isTransientRecoveryPlaceholderPrefix(content)) {
+      emittedAssistantContent.transientOnly = !emittedAssistantContent.durable
+      if (itemId) {
+        transientPlaceholderCandidateContentByItemId.set(itemId, content)
+      }
+      if (shouldStartTransientPlaceholderStallTimer(content)) {
+        scheduleTransientPlaceholderStallTimer()
+      }
+      return
+    }
+
+    if (itemId) {
+      transientPlaceholderCandidateContentByItemId.delete(itemId)
+    }
+    markDurableProviderProgress()
+  }
+
+  const scheduleTransientPlaceholderStallTimer = () => {
+    if (emittedAssistantContent.durable || finished) {
+      return
+    }
+
+    clearTransientPlaceholderStallTimer()
+    transientPlaceholderStallTimer = setTimeout(() => {
+      transientPlaceholderStallTimer = undefined
+      if (finished || emittedAssistantContent.durable) {
+        return
+      }
+
+      finishWithError('Codex stalled after producing only transient reconnect placeholders.')
+    }, getTransientPlaceholderStallTimeoutMs())
+  }
 
   const rejectPendingRequests = (message: string) => {
     for (const { reject } of pendingRequests.values()) {
@@ -1199,6 +1308,12 @@ const launchCodexAppServerRun = async (
       return
     }
 
+    if (hasOnlyTransientAssistantContent()) {
+      finishWithError(transientOnlyCompletionMessage)
+      return
+    }
+
+    clearTransientPlaceholderStallTimer()
     finished = true
     rejectPendingRequests('Codex run completed.')
     void cleanupArchiveRecall()
@@ -1211,10 +1326,17 @@ const launchCodexAppServerRun = async (
       return
     }
 
+    clearTransientPlaceholderStallTimer()
     finished = true
     rejectPendingRequests(message)
     void cleanupArchiveRecall()
-    sink.onError(message, hint, classifyLiveProviderStreamRecovery(request, message, hint, emittedSessionId))
+    sink.onError(
+      message,
+      hint,
+      classifyLiveProviderStreamRecovery(request, message, hint, emittedSessionId, {
+        transientOnly: hasOnlyTransientAssistantContent(),
+      }),
+    )
     child.kill()
   }
 
@@ -1287,9 +1409,11 @@ const launchCodexAppServerRun = async (
   const handleCodexEvent = (event: unknown) => {
     for (const parsed of parseCodexResponseEvent(event)) {
       bufferedStructuredAgentMessageDeltas.delete(parsed.itemId)
+      transientPlaceholderCandidateContentByItemId.delete(parsed.itemId)
 
       if (parsed.type === 'assistant_message') {
         compactionActivityDeduper.reset()
+        recordAssistantContentProgress(parsed.content, parsed.itemId)
         sink.onAssistantMessage({
           itemId: parsed.itemId,
           content: parsed.content,
@@ -1302,6 +1426,7 @@ const launchCodexAppServerRun = async (
 
       if (activity.kind === 'compaction') {
         if (compactionActivityDeduper.shouldEmit(event, activity)) {
+          markDurableProviderProgress()
           sink.onActivity({
             ...activity,
             trigger: manualCompactRequest ? 'manual' : activity.trigger,
@@ -1316,6 +1441,7 @@ const launchCodexAppServerRun = async (
       }
 
       compactionActivityDeduper.reset()
+      markDurableProviderProgress()
       sink.onActivity(activity)
     }
   }
@@ -1390,12 +1516,13 @@ const launchCodexAppServerRun = async (
         const itemId = readString(params, 'itemId') ?? readString(params, 'item_id')
 
         if (delta) {
-          if (isTransientRecoveryPlaceholder(delta)) {
-            emittedAssistantContent.transientOnly = !emittedAssistantContent.durable
-          } else {
-            emittedAssistantContent.durable = true
-            emittedAssistantContent.transientOnly = false
-          }
+          const pendingTransientCandidate = itemId
+            ? transientPlaceholderCandidateContentByItemId.get(itemId)
+            : undefined
+          const contentForProgress = pendingTransientCandidate
+            ? `${pendingTransientCandidate}${delta}`
+            : delta
+          recordAssistantContentProgress(contentForProgress, itemId)
 
           if (itemId) {
             const bufferedDelta = bufferedStructuredAgentMessageDeltas.get(itemId)
@@ -1450,6 +1577,7 @@ const launchCodexAppServerRun = async (
       return
     }
 
+    clearTransientPlaceholderStallTimer()
     finished = true
     rejectPendingRequests(code === 0 ? 'Codex app-server closed before completion.' : formatProviderExit(language, 'codex', code))
 
@@ -1461,7 +1589,7 @@ const launchCodexAppServerRun = async (
         message,
         hint,
         classifyLiveProviderStreamRecovery(request, message, hint, emittedSessionId, {
-          transientOnly: emittedAssistantContent.transientOnly && !emittedAssistantContent.durable,
+          transientOnly: hasOnlyTransientAssistantContent(),
         }),
       )
       return
@@ -1474,7 +1602,7 @@ const launchCodexAppServerRun = async (
       message,
       hint,
       classifyLiveProviderStreamRecovery(request, message, hint, emittedSessionId, {
-        transientOnly: emittedAssistantContent.transientOnly && !emittedAssistantContent.durable,
+        transientOnly: hasOnlyTransientAssistantContent(),
       }),
     )
   })
@@ -1490,7 +1618,13 @@ const launchCodexAppServerRun = async (
     stderrLines.close()
     rejectPendingRequests(error.message)
     const hint = classifyLaunchErrorHint(error.message)
-    sink.onError(error.message, hint, classifyLiveProviderStreamRecovery(request, error.message, hint, emittedSessionId))
+    sink.onError(
+      error.message,
+      hint,
+      classifyLiveProviderStreamRecovery(request, error.message, hint, emittedSessionId, {
+        transientOnly: hasOnlyTransientAssistantContent(),
+      }),
+    )
   })
 
   void (async () => {

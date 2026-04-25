@@ -187,6 +187,10 @@ test('non-repo Git cards offer a create-repository action and recover into repo 
   await selectModel(page, modelSelect, 'Git')
 
   const createButton = page.getByRole('button', { name: 'Create Git Repository' })
+  await expect(page.locator('.git-onboarding-empty')).toBeVisible()
+  await expect(page.locator('.git-onboarding-empty')).toContainText('Version control is not started')
+  await expect(page.locator('.git-onboarding-hint')).toHaveCount(3)
+  await expect(page.getByRole('button', { name: 'Refresh' })).toBeVisible()
   await expect(createButton).toBeVisible()
   await createButton.click()
 

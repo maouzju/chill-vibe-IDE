@@ -333,6 +333,10 @@ A living list of traps that have wasted time before. **When you hit a new pitfal
 
 | 106 | Codex app-server can emit only transient `Reconnecting... n/5` placeholders and then exit nonzero | The exit text alone is not one of the generic recoverable phrases, so preserve the observed placeholder-only state and still mark it `resume-session` + `transientOnly` instead of surfacing a hard disconnect. |
 
+| 107 | Editing UTF-8 source files with Windows PowerShell `Get-Content` / `Set-Content` can silently mojibake Chinese strings and add a BOM | Use .NET `File.ReadAllText(..., UTF8)` plus `UTF8Encoding(false)` or a patch tool that preserves encoding, then review the diff before running lint. |
+
+| 108 | Codex app-server reconnect placeholders can arrive split across multiple `item/agentMessage/delta` chunks | Track transient placeholder prefixes per item id before deciding the stream produced real assistant output; otherwise partial chunks like `Reconnect` / `ing` falsely mark the run durable and let a placeholder-only turn finish as `done`. |
+
 ### Self-maintenance rule
 
 - When you encounter a new non-obvious failure mode — a test that fails for environmental reasons, a build step with hidden prerequisites, a runtime behavior that contradicts the docs — append a row to this table before you finish the task.

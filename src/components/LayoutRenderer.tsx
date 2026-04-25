@@ -85,6 +85,7 @@ type LayoutRendererProps = {
   onChangeCardTitle: (cardId: string, title: string) => void
   onSendMessage: (cardId: string, prompt: string, attachments: ImageAttachment[]) => Promise<void>
   onStopMessage: (cardId: string) => Promise<void>
+  onManualRecoverStream?: (cardId: string) => Promise<unknown>
   onForkConversation?: (cardId: string, messageId: string) => void
   onOpenFile?: (paneId: string, relativePath: string) => void
   cardRecoveryStatuses?: ReadonlyMap<string, CardRecoveryStatus>

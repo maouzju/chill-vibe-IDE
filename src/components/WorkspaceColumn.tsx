@@ -145,6 +145,7 @@ type WorkspaceColumnProps = {
   onActivatePane: (paneId: string) => void
   onSendMessage: (cardId: string, prompt: string, attachments: ImageAttachment[]) => Promise<void>
   onStopMessage: (cardId: string) => Promise<void>
+  onManualRecoverStream?: (cardId: string) => Promise<unknown>
   onForkConversation?: (cardId: string, messageId: string) => void
   onOpenFile?: (paneId: string, relativePath: string) => void
   recentWorkspaces: RecentWorkspace[]
@@ -203,6 +204,7 @@ const WorkspaceColumnView = ({
   onActivatePane,
   onSendMessage,
   onStopMessage,
+  onManualRecoverStream,
   onForkConversation,
   onOpenFile,
   recentWorkspaces,
@@ -877,8 +879,9 @@ const WorkspaceColumnView = ({
           onPatchCard={onPatchCard}
           onChangeCardTitle={onChangeCardTitle}
           onSendMessage={onSendMessage}
-        onStopMessage={onStopMessage}
-        onForkConversation={onForkConversation}
+          onStopMessage={onStopMessage}
+          onManualRecoverStream={onManualRecoverStream}
+          onForkConversation={onForkConversation}
         onOpenFile={onOpenFile}
         cardRecoveryStatuses={cardRecoveryStatuses}
       />

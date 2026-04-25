@@ -344,6 +344,36 @@ describe('chat request seeding', () => {
     assert.doesNotMatch(prompt, /Reconnecting/i)
   })
 
+  it('keeps post-compact history available for seeded requests when the UI adds a performance window', () => {
+    const prompt = buildSeededChatPrompt({
+      language: 'en',
+      provider: 'claude',
+      status: 'idle',
+      prompt: 'Continue from the visible branch.',
+      attachments: [],
+      messages: [
+        createMessage('old-user', 'user', 'Older context that should stay hidden after compact.'),
+        createMessage('old-assistant', 'assistant', 'Older answer that should stay hidden after compact.'),
+        createMessage('compact-1', 'user', '/compact'),
+        ...Array.from({ length: 260 }, (_, index) =>
+          createMessage(
+            `follow-up-${index + 1}`,
+            index % 2 === 0 ? 'user' : 'assistant',
+            index === 0
+              ? 'First post-compact detail must stay available for seeded requests.'
+              : index === 259
+                ? 'Latest post-compact detail stays available too.'
+                : '',
+          ),
+        ),
+      ],
+    })
+
+    assert.doesNotMatch(prompt, /Older context that should stay hidden after compact\./i)
+    assert.match(prompt, /First post-compact detail must stay available for seeded requests\./i)
+    assert.match(prompt, /Latest post-compact detail stays available too\./i)
+  })
+
   it('keeps long-chat history available for seeded requests when UI hides older messages for performance', () => {
     const prompt = buildSeededChatPrompt({
       language: 'en',

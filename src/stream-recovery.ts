@@ -1,6 +1,6 @@
 import type { StreamErrorEvent, StreamErrorRecoveryMode } from '../shared/schema.js'
 
-const transientRecoveryPlaceholderPattern = /^reconnecting(?:\s*(?:\.{3}|…))?(?:\s+\d+\s*\/\s*\d+)?$/i
+const transientRecoveryPlaceholderPattern = /^reconnecting(?:\s*(?:\.{3}|\u2026))?(?:\s+\d+\s*\/\s*\d+)?$/i
 
 export const resolveStreamRecoveryMode = (
   error: Pick<StreamErrorEvent, 'recoverable' | 'recoveryMode'>,
@@ -15,6 +15,26 @@ export const resolveStreamRecoveryMode = (
   }
 
   return 'reattach-stream'
+}
+
+
+const defaultRecoverableStreamRetryLimit = 6
+
+export const getRecoverableStreamRetryLimit = (configuredMaxRetries?: number) => {
+  if (configuredMaxRetries === -1) {
+    return Number.POSITIVE_INFINITY
+  }
+
+  if (
+    typeof configuredMaxRetries === 'number' &&
+    Number.isInteger(configuredMaxRetries) &&
+    configuredMaxRetries >= 0 &&
+    configuredMaxRetries <= 50
+  ) {
+    return configuredMaxRetries
+  }
+
+  return defaultRecoverableStreamRetryLimit
 }
 
 export const shouldResetStreamRecoveryAttemptsForText = (content: string) => {

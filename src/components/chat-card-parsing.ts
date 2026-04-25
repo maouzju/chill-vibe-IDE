@@ -78,6 +78,11 @@ export type RenderableMessage =
     }
   | StructuredToolGroup
 
+export const getAskUserAnswerKey = (message: ChatMessage) =>
+  message.meta?.kind === 'ask-user'
+    ? `${message.id}:${message.meta.structuredData ?? message.meta.itemId ?? ''}`
+    : message.id
+
 const structuredDataCache = new WeakMap<ChatMessage, Record<string, unknown> | null>()
 
 export const readStructuredData = (message: ChatMessage) => {

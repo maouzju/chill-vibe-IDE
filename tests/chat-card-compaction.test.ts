@@ -226,6 +226,158 @@ describe('chat card compaction window', () => {
     })
   })
 
+  it('keeps an explicit compact boundary when only the pre-compact history is content-heavy', () => {
+    const messages = [
+      ...Array.from({ length: 60 }, (_, index) =>
+        makeMessage(
+          `old-${index + 1}`,
+          index % 2 === 0 ? 'user' : 'assistant',
+          `older heavy context ${index + 1} ${'x'.repeat(2_200)}`,
+        ),
+      ),
+      makeMessage('compact-1', 'user', '/compact'),
+      makeMessage('summary-1', 'assistant', 'Compacted summary.'),
+      makeMessage('follow-up-1', 'user', 'Small follow-up after compact.'),
+    ]
+
+    assert.deepEqual(getWindow(messages, 'claude'), {
+      hiddenMessageCount: 60,
+      compactMessageId: 'compact-1',
+      hiddenReason: 'compact',
+      compactTrigger: 'manual',
+      visibleMessages: messages.slice(60),
+    })
+  })
+
+  it('continues auto-folding when the post-compact segment grows long again', () => {
+    const messages = [
+      makeMessage('m1', 'user', 'first question'),
+      makeMessage('m2', 'assistant', 'first answer'),
+      makeMessage('m3', 'user', '/compact'),
+      ...Array.from({ length: 260 }, (_, index) =>
+        makeMessage(
+          `follow-up-${index + 1}`,
+          index % 2 === 0 ? 'user' : 'assistant',
+          `follow-up message ${index + 1}`,
+        ),
+      ),
+    ]
+
+    const compactWindow = getWindow(messages, 'claude')
+
+    assert.equal(compactWindow.hiddenReason, 'performance')
+    assert.equal(compactWindow.compactTrigger, null)
+    assert.ok(compactWindow.hiddenMessageCount > 2)
+    assert.deepEqual(compactWindow.visibleMessages, messages.slice(compactWindow.hiddenMessageCount))
+  })
+
+  it('keeps compact-window semantics when performance windowing is disabled', () => {
+    const messages = [
+      makeMessage('m1', 'user', 'first question'),
+      makeMessage('m2', 'assistant', 'first answer'),
+      makeMessage('m3', 'user', '/compact'),
+      ...Array.from({ length: 260 }, (_, index) =>
+        makeMessage(
+          `follow-up-${index + 1}`,
+          index % 2 === 0 ? 'user' : 'assistant',
+          `follow-up message ${index + 1}`,
+        ),
+      ),
+    ]
+
+    assert.deepEqual(
+      getCompactMessageWindow(messages, 'claude', 'idle', {
+        allowPerformanceWindowing: false,
+      }),
+      {
+        hiddenMessageCount: 2,
+        compactMessageId: 'm3',
+        hiddenReason: 'compact',
+        compactTrigger: 'manual',
+        visibleMessages: messages.slice(2),
+      },
+    )
+  })
+
+  it('fully reveals a performance window stacked on top of a compact boundary', () => {
+    const messages = [
+      makeMessage('m1', 'user', 'first question'),
+      makeMessage('m2', 'assistant', 'first answer'),
+      makeMessage('m3', 'user', '/compact'),
+      ...Array.from({ length: 260 }, (_, index) =>
+        makeMessage(
+          `follow-up-${index + 1}`,
+          index % 2 === 0 ? 'user' : 'assistant',
+          `follow-up message ${index + 1}`,
+        ),
+      ),
+    ]
+
+    const compactWindow = getCompactMessageWindow(messages, 'claude', 'idle', {
+      revealedHiddenMessageCount: Number.POSITIVE_INFINITY,
+    })
+
+    assert.equal(compactWindow.hiddenMessageCount, 0)
+    assert.equal(compactWindow.hiddenReason, 'performance')
+    assert.deepEqual(compactWindow.visibleMessages, messages)
+  })
+
+  it('auto-folds content-heavy chats before the message-count threshold', () => {
+    const messages = Array.from({ length: 80 }, (_, index) =>
+      makeMessage(
+        `m${index + 1}`,
+        index % 2 === 0 ? 'user' : 'assistant',
+        `message ${index + 1} ${'x'.repeat(2_000)}`,
+      ),
+    )
+
+    const compactWindow = getWindow(messages, 'codex')
+
+    assert.equal(compactWindow.hiddenReason, 'performance')
+    assert.ok(compactWindow.hiddenMessageCount > 0)
+    assert.ok(compactWindow.hiddenMessageCount < messages.length)
+    assert.deepEqual(compactWindow.visibleMessages, messages.slice(compactWindow.hiddenMessageCount))
+  })
+
+  it('auto-folds metadata-heavy structured chats before the message-count threshold', () => {
+    const messages = Array.from({ length: 40 }, (_, index) =>
+      makeMessage(`m${index + 1}`, 'assistant', '', {
+        kind: 'command',
+        structuredData: JSON.stringify({
+          itemId: `cmd-${index + 1}`,
+          status: 'completed',
+          output: 'x'.repeat(4_000),
+        }),
+      }),
+    )
+
+    const compactWindow = getWindow(messages, 'codex')
+
+    assert.equal(compactWindow.hiddenReason, 'performance')
+    assert.ok(compactWindow.hiddenMessageCount > 0)
+    assert.ok(compactWindow.hiddenMessageCount < messages.length)
+    assert.deepEqual(compactWindow.visibleMessages, messages.slice(compactWindow.hiddenMessageCount))
+  })
+
+  it('can disable performance-only windowing for request seeding and archive derivation', () => {
+    const messages = Array.from({ length: 260 }, (_, index) =>
+      makeMessage(`m${index + 1}`, index % 2 === 0 ? 'user' : 'assistant', `message ${index + 1}`),
+    )
+
+    assert.deepEqual(
+      getCompactMessageWindow(messages, 'codex', 'idle', {
+        allowPerformanceWindowing: false,
+      }),
+      {
+        hiddenMessageCount: 0,
+        compactMessageId: null,
+        hiddenReason: null,
+        compactTrigger: null,
+        visibleMessages: messages,
+      },
+    )
+  })
+
   it('reveals only part of a performance window until the user asks for more history', () => {
     const messages = Array.from({ length: 260 }, (_, index) =>
       makeMessage(`m${index + 1}`, index % 2 === 0 ? 'user' : 'assistant', `message ${index + 1}`),

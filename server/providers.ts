@@ -63,7 +63,13 @@ type StreamSink = {
   onLog: (message: string) => void
   onAssistantMessage: (message: { itemId: string; content: string }) => void
   onActivity: (activity: StreamActivity) => void
-  onStats?: (event: { event: ProxyStatsEvent; endpoint: string; attempt?: number; errorType?: string }) => void
+  onStats?: (event: {
+    event: ProxyStatsEvent
+    endpoint: string
+    attempt?: number
+    errorType?: string
+    alreadyRecorded?: boolean
+  }) => void
   onDone: () => void
   onError: (
     message: string,
@@ -554,6 +560,8 @@ const isTransientRecoveryPlaceholder = (content: string) => transientRecoveryPla
 
 const transientRecoveryPlaceholderPrefixPattern =
   /^reconnecting(?:\s*(?:\.{0,3}|\u2026))?(?:\s*\d*\s*(?:\/\s*\d*)?)?$/i
+const transientRecoveryPlaceholderSequencePattern =
+  /^(?:reconnecting(?:\s*(?:\.{3}|\u2026))?(?:\s+\d+\s*\/\s*\d+)?\s*)+$/i
 
 const isTransientRecoveryPlaceholderPrefix = (content: string) => {
   const normalized = content.trim()
@@ -564,13 +572,16 @@ const isTransientRecoveryPlaceholderPrefix = (content: string) => {
   const lower = normalized.toLowerCase()
   return (
     'reconnecting'.startsWith(lower) ||
-    lower.startsWith('reconnecting') ||
-    transientRecoveryPlaceholderPrefixPattern.test(normalized)
+    transientRecoveryPlaceholderPrefixPattern.test(normalized) ||
+    transientRecoveryPlaceholderSequencePattern.test(normalized)
   )
 }
 
-const shouldStartTransientPlaceholderStallTimer = (content: string) =>
-  content.trim().length >= 'reconnecting'.length && isTransientRecoveryPlaceholderPrefix(content)
+const shouldStartTransientPlaceholderStallTimer = (content: string) => {
+  const normalized = content.trim().toLowerCase()
+
+  return normalized.length >= 'reconnecting'.length && normalized.startsWith('reconnecting')
+}
 
 const getTransientPlaceholderStallTimeoutMs = () => {
   const parsed = Number.parseInt(process.env.CHILL_VIBE_TRANSIENT_PLACEHOLDER_TIMEOUT_MS ?? '', 10)
@@ -586,7 +597,7 @@ const classifyLiveProviderStreamRecovery = (
   message: string,
   hint?: StreamErrorHint,
   emittedSessionId?: string | null,
-  options?: { transientOnly?: boolean },
+  options?: { transientOnly?: boolean; interruptedByTransientPlaceholder?: boolean },
 ): Pick<StreamErrorEvent, 'recoverable' | 'recoveryMode' | 'transientOnly'> => {
   const sessionId =
     typeof emittedSessionId === 'string' && emittedSessionId.trim().length > 0
@@ -600,26 +611,33 @@ const classifyLiveProviderStreamRecovery = (
     hint,
   )
 
-  if (!options?.transientOnly) {
+  if (options?.transientOnly) {
+    if (baseRecovery.recoverable) {
+      return {
+        ...baseRecovery,
+        transientOnly: true,
+      }
+    }
+
+    if (
+      sessionId?.trim() &&
+      hint !== 'switch-config' &&
+      hint !== 'env-setup'
+    ) {
+      return {
+        recoverable: true,
+        recoveryMode: 'resume-session',
+        transientOnly: true,
+      }
+    }
+
     return baseRecovery
   }
 
-  if (baseRecovery.recoverable) {
-    return {
-      ...baseRecovery,
-      transientOnly: true,
-    }
-  }
-
-  if (
-    sessionId?.trim() &&
-    hint !== 'switch-config' &&
-    hint !== 'env-setup'
-  ) {
+  if (options?.interruptedByTransientPlaceholder && sessionId?.trim() && baseRecovery.recoverable !== true) {
     return {
       recoverable: true,
       recoveryMode: 'resume-session',
-      transientOnly: true,
     }
   }
 
@@ -1214,6 +1232,7 @@ const launchCodexAppServerRun = async (
   const transientPlaceholderCandidateContentByItemId = new Map<string, string>()
   const emittedAssistantContent = {
     durable: false,
+    interruptedByTransientPlaceholder: false,
     transientOnly: false,
   }
   const transientOnlyCompletionMessage =
@@ -1241,16 +1260,21 @@ const launchCodexAppServerRun = async (
   }
 
   const reportTransientPlaceholderDisconnectStats = () => {
-    if (transientPlaceholderDisconnectStatsReported || emittedAssistantContent.durable) {
+    if (transientPlaceholderDisconnectStatsReported) {
       return
     }
 
     transientPlaceholderDisconnectStatsReported = true
-    sink.onStats?.({
-      event: 'disconnect',
+    const event = {
+      event: 'disconnect' as const,
       endpoint: '/cli/local-stream',
       errorType: 'native-reconnect-placeholder',
+      alreadyRecorded: true,
+    }
+    proxyStats.record(request.provider, event.event, event.endpoint, {
+      errorType: event.errorType,
     })
+    sink.onStats?.(event)
   }
 
   const markDurableAssistantContentProgress = () => {
@@ -1276,6 +1300,7 @@ const launchCodexAppServerRun = async (
     }
 
     if (isTransientRecoveryPlaceholder(content)) {
+      emittedAssistantContent.interruptedByTransientPlaceholder = true
       emittedAssistantContent.transientOnly = !emittedAssistantContent.durable
       if (itemId) {
         transientPlaceholderCandidateContentByItemId.set(itemId, content)
@@ -1286,6 +1311,7 @@ const launchCodexAppServerRun = async (
     }
 
     if (isTransientRecoveryPlaceholderPrefix(content)) {
+      emittedAssistantContent.interruptedByTransientPlaceholder = true
       emittedAssistantContent.transientOnly = !emittedAssistantContent.durable
       if (itemId) {
         transientPlaceholderCandidateContentByItemId.set(itemId, content)
@@ -1304,18 +1330,24 @@ const launchCodexAppServerRun = async (
   }
 
   const scheduleTransientPlaceholderStallTimer = () => {
-    if (emittedAssistantContent.durable || finished) {
+    if (finished) {
       return
     }
 
     clearTransientPlaceholderStallTimer()
     transientPlaceholderStallTimer = setTimeout(() => {
       transientPlaceholderStallTimer = undefined
-      if (finished || emittedAssistantContent.durable) {
+      if (finished) {
         return
       }
 
-      finishWithError('Codex stalled after producing only transient reconnect placeholders.')
+      const stalledAfterDurableContentMessage =
+        'Codex stalled after native reconnect placeholders interrupted the stream.'
+      finishWithError(
+        emittedAssistantContent.durable
+          ? stalledAfterDurableContentMessage
+          : 'Codex stalled after producing only transient reconnect placeholders.',
+      )
     }, getTransientPlaceholderStallTimeoutMs())
   }
 
@@ -1358,6 +1390,7 @@ const launchCodexAppServerRun = async (
       hint,
       classifyLiveProviderStreamRecovery(request, message, hint, emittedSessionId, {
         transientOnly: hasTransientPlaceholderWithoutDurableAssistantContent(),
+        interruptedByTransientPlaceholder: emittedAssistantContent.interruptedByTransientPlaceholder,
       }),
     )
     child.kill()
@@ -1436,7 +1469,11 @@ const launchCodexAppServerRun = async (
 
       if (parsed.type === 'assistant_message') {
         compactionActivityDeduper.reset()
+        const shouldSuppressTransientPlaceholder = isTransientRecoveryPlaceholderPrefix(parsed.content)
         recordAssistantContentProgress(parsed.content, parsed.itemId)
+        if (shouldSuppressTransientPlaceholder) {
+          continue
+        }
         sink.onAssistantMessage({
           itemId: parsed.itemId,
           content: parsed.content,
@@ -1622,6 +1659,7 @@ const launchCodexAppServerRun = async (
         hint,
         classifyLiveProviderStreamRecovery(request, message, hint, emittedSessionId, {
           transientOnly: hasTransientPlaceholderWithoutDurableAssistantContent(),
+          interruptedByTransientPlaceholder: emittedAssistantContent.interruptedByTransientPlaceholder,
         }),
       )
       return
@@ -1635,6 +1673,7 @@ const launchCodexAppServerRun = async (
       hint,
       classifyLiveProviderStreamRecovery(request, message, hint, emittedSessionId, {
         transientOnly: hasTransientPlaceholderWithoutDurableAssistantContent(),
+        interruptedByTransientPlaceholder: emittedAssistantContent.interruptedByTransientPlaceholder,
       }),
     )
   })
@@ -1655,6 +1694,7 @@ const launchCodexAppServerRun = async (
       hint,
       classifyLiveProviderStreamRecovery(request, error.message, hint, emittedSessionId, {
         transientOnly: hasTransientPlaceholderWithoutDurableAssistantContent(),
+        interruptedByTransientPlaceholder: emittedAssistantContent.interruptedByTransientPlaceholder,
       }),
     )
   })

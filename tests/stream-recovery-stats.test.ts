@@ -3,6 +3,7 @@ import { describe, it } from 'node:test'
 
 import {
   beginLocalRecoveryStatsRun,
+  beginOrContinueLocalRecoveryStatsRun,
   continueLocalRecoveryStatsRun,
   noteLocalRecoveryDisconnect,
   settleLocalRecoveryStatsRun,
@@ -57,6 +58,16 @@ describe('stream-recovery-stats', () => {
 
     assert.deepEqual(settled.events, [])
     assert.equal(settled.state, undefined)
+  })
+
+
+  it('auto recovery retries keep the existing stats run instead of recording another request', () => {
+    const started = beginLocalRecoveryStatsRun()
+    const disconnected = noteLocalRecoveryDisconnect(started.state)
+    const continued = beginOrContinueLocalRecoveryStatsRun(disconnected.state)
+
+    assert.deepEqual(continued.events, [])
+    assert.deepEqual(continued.state, { hadRecoverableDisconnect: true })
   })
 
   it('resume-session retries keep the existing run instead of recording a second request', () => {

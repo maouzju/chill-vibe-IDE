@@ -21,12 +21,13 @@ const compactBoundaryMetaKey = 'compactBoundary'
 const compactTriggerMetaKey = 'compactTrigger'
 const compactHiddenMetaKey = 'compactHidden'
 const compactPendingMetaKey = 'compactPending'
-const performanceWindowThreshold = 220
-const performanceVisibleMessageCount = 140
-const contentPerformanceWindowThresholdChars = 120_000
-const contentPerformanceVisibleChars = 80_000
-const structuredPerformanceWindowThreshold = 72
-const structuredPerformanceVisibleMessageCount = 56
+const performanceWindowThreshold = 1200
+const performanceVisibleMessageCount = 360
+const contentPerformanceWindowThresholdChars = 2_000_000
+const contentPerformanceVisibleChars = 900_000
+const contentPerformanceMinimumMessageCount = 160
+const structuredPerformanceWindowThreshold = 420
+const structuredPerformanceVisibleMessageCount = 180
 const structuredPerformanceScanCount = 96
 const structuredPerformanceActivationCount = 36
 
@@ -210,7 +211,40 @@ const getMessageRenderWeight = (message: ChatMessage) => {
   return weight
 }
 
+const getLatestContextUserIndex = (messages: ChatMessage[]) => {
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const message = messages[index]
+    if (
+      message?.role === 'user' &&
+      !hasExplicitCompactBoundary(message) &&
+      !isCompactCommandMessage(message)
+    ) {
+      return index
+    }
+  }
+
+  return -1
+}
+
+const preserveLatestUserTurn = (messages: ChatMessage[], hiddenMessageCount: number) => {
+  if (hiddenMessageCount <= 0) {
+    return hiddenMessageCount
+  }
+
+  const latestUserIndex = getLatestContextUserIndex(messages)
+
+  if (latestUserIndex >= 0 && hiddenMessageCount > latestUserIndex) {
+    return latestUserIndex
+  }
+
+  return hiddenMessageCount
+}
+
 const getContentHiddenMessageCount = (messages: ChatMessage[]) => {
+  if (messages.length < contentPerformanceMinimumMessageCount) {
+    return 0
+  }
+
   const totalWeight = messages.reduce((total, message) => total + getMessageRenderWeight(message), 0)
 
   if (totalWeight < contentPerformanceWindowThresholdChars) {
@@ -241,7 +275,7 @@ const getPerformanceHiddenMessageCount = (messages: ChatMessage[]) => {
     messages.length >= threshold ? Math.max(messages.length - visibleCount, 0) : 0
   const contentHiddenMessageCount = getContentHiddenMessageCount(messages)
 
-  return Math.max(countHiddenMessageCount, contentHiddenMessageCount)
+  return preserveLatestUserTurn(messages, Math.max(countHiddenMessageCount, contentHiddenMessageCount))
 }
 
 export const shouldAutoCompactCodexConversation = ({

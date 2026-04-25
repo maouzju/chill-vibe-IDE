@@ -1004,6 +1004,7 @@ export type StreamStatsEvent = {
   endpoint: string
   attempt?: number
   errorType?: string
+  alreadyRecorded?: boolean
 }
 
 export type StreamErrorRecoveryMode = 'reattach-stream' | 'resume-session'

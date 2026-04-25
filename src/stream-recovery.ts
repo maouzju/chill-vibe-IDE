@@ -1,6 +1,8 @@
 import type { StreamErrorEvent, StreamErrorRecoveryMode } from '../shared/schema.js'
 
 const transientRecoveryPlaceholderPattern = /^reconnecting(?:\s*(?:\.{3}|\u2026))?(?:\s+\d+\s*\/\s*\d+)?$/i
+const transientRecoveryPlaceholderSequencePattern =
+  /^(?:reconnecting(?:\s*(?:\.{3}|\u2026))?(?:\s+\d+\s*\/\s*\d+)?\s*)+$/i
 
 export const resolveStreamRecoveryMode = (
   error: Pick<StreamErrorEvent, 'recoverable' | 'recoveryMode'>,
@@ -44,7 +46,10 @@ export const shouldResetStreamRecoveryAttemptsForText = (content: string) => {
     return false
   }
 
-  return !transientRecoveryPlaceholderPattern.test(normalized)
+  return !(
+    transientRecoveryPlaceholderPattern.test(normalized) ||
+    transientRecoveryPlaceholderSequencePattern.test(normalized)
+  )
 }
 
 export const shouldResetStreamRecoveryAttemptsForActivity = (

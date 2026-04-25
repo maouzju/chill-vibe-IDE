@@ -1091,7 +1091,7 @@ export const AskUserQuestionCard = ({
   const [lastSubmittedItemId, setLastSubmittedItemId] = useState<string | null>(null)
   const otherInputRef = useRef<HTMLInputElement>(null)
   const submitStartedRef = useRef<string | null>(null)
-  const isSubmitting = !isAnswered && lastSubmittedItemId === data.itemId
+  const isSubmitting = !isAnswered && lastSubmittedItemId === answerKey
 
   const current = data.questions[currentIndex] ?? data.questions[0]!
   const selected = selections[currentIndex] ?? null
@@ -1139,7 +1139,7 @@ export const AskUserQuestionCard = ({
         next: '下一题',
       }
 
-  const allAnswered = selections.every((sel) => sel !== null)
+  const allAnswered = data.questions.every((_, idx) => selections[idx] !== null)
 
   const resolveAnswerLabel = (idx: number): string => {
     const sel = selections[idx]
@@ -1149,11 +1149,11 @@ export const AskUserQuestionCard = ({
   }
 
   const handleSubmit = () => {
-    if (isAnswered || submitStartedRef.current === data.itemId) return
+    if (isAnswered || submitStartedRef.current === answerKey) return
     if (!allAnswered) return
 
-    submitStartedRef.current = data.itemId
-    setLastSubmittedItemId(data.itemId)
+    submitStartedRef.current = answerKey
+    setLastSubmittedItemId(answerKey)
 
     if (isMulti) {
       const combined = data.questions
@@ -1254,7 +1254,7 @@ export const AskUserQuestionCard = ({
               </span>
               <input
                 type="radio"
-                name={`ask-user-${data.itemId}-${currentIndex}`}
+                name={`ask-user-${answerKey}-${currentIndex}`}
                 className="ask-user-radio-input"
                 checked={isChecked}
                 disabled={isAnswered || isSubmitting}
@@ -1274,7 +1274,7 @@ export const AskUserQuestionCard = ({
           </span>
           <input
             type="radio"
-            name={`ask-user-${data.itemId}-${currentIndex}`}
+            name={`ask-user-${answerKey}-${currentIndex}`}
             className="ask-user-radio-input"
             checked={selected === OTHER_LABEL}
             disabled={isAnswered || isSubmitting}

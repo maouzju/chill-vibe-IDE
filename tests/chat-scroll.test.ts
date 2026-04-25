@@ -6,6 +6,7 @@ import {
   didUserInterruptProgrammaticScroll,
   getAutoScrollStateAfterCardUpdate,
   getAutoScrollStateAfterUserScroll,
+  getAutoScrollStateDuringProgrammaticScroll,
   getCompactedHistoryAutoRevealMode,
   getRestoredMessageListScrollPlan,
   getScrollTopToRevealChild,
@@ -113,6 +114,40 @@ describe('chat scroll helpers', () => {
       ),
       true,
     )
+  })
+
+  it('keeps auto-scroll armed while a programmatic scroll toward the streaming bottom is still in flight', () => {
+    const next = getAutoScrollStateDuringProgrammaticScroll(
+      {
+        startScrollTop: 340,
+        targetScrollTop: 660,
+      },
+      480,
+      true,
+    )
+
+    assert.deepEqual(next, {
+      interrupted: false,
+      shouldAutoScroll: true,
+      lastScrollTop: 480,
+    })
+  })
+
+  it('turns off auto-scroll when the user scrolls opposite to the guarded programmatic bottom scroll', () => {
+    const next = getAutoScrollStateDuringProgrammaticScroll(
+      {
+        startScrollTop: 340,
+        targetScrollTop: 660,
+      },
+      300,
+      true,
+    )
+
+    assert.deepEqual(next, {
+      interrupted: true,
+      shouldAutoScroll: false,
+      lastScrollTop: 300,
+    })
   })
 
   it('keeps the current scroll position when the child is already visible inside the menu viewport', () => {

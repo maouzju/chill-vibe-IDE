@@ -104,6 +104,81 @@ const hasResponsesCompletedEvent = (payload: string) => {
 }
 
 describe('internal resilient proxy', () => {
+
+  it('honors unlimited recovery retries for long-running streams', async () => {
+    let requestCount = 0
+
+    const upstream = http.createServer(async (request, response) => {
+      if (request.method !== 'POST' || request.url !== '/v1/messages') {
+        response.statusCode = 404
+        response.end('not found')
+        return
+      }
+
+      requestCount += 1
+      await readJsonBody(request)
+
+      response.statusCode = 200
+      response.setHeader('Content-Type', 'text/event-stream')
+      response.write('event: message_start\n')
+      response.write('data: {"type":"message_start","message":{"id":"msg-1","model":"claude-opus-4-7"}}\n\n')
+
+      if (requestCount < 4) {
+        response.write('event: content_block_delta\n')
+        response.write(`data: {"type":"content_block_delta","delta":{"type":"text_delta","text":"part-${requestCount} "}}\n\n`)
+        response.end()
+        return
+      }
+
+      response.write('event: content_block_delta\n')
+      response.write('data: {"type":"content_block_delta","delta":{"type":"text_delta","text":"done"}}\n\n')
+      response.write('event: message_delta\n')
+      response.write('data: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null},"usage":{"output_tokens":1}}\n\n')
+      response.end()
+    })
+
+    upstream.listen(0, '127.0.0.1')
+    await once(upstream, 'listening')
+    const address = upstream.address()
+    if (!address || typeof address === 'string') {
+      throw new Error('Failed to bind upstream test server.')
+    }
+
+    const proxy = await startResilientProxyServer({
+      provider: 'claude',
+      upstreamBaseUrl: `http://127.0.0.1:${address.port}`,
+      maxRecoveryRetries: -1,
+    })
+
+    try {
+      const response = await fetch(`${proxy.clientBaseUrl}/v1/messages`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-api-key': 'sk-test',
+        },
+        body: JSON.stringify({
+          model: 'claude-opus-4-7',
+          stream: true,
+          messages: [
+            {
+              role: 'user',
+              content: 'Keep going until done',
+            },
+          ],
+        }),
+      })
+
+      assert.equal(response.status, 200)
+      assert.equal(parseSseDeltaText(await response.text()), 'part-1 part-2 part-3 done')
+      assert.equal(requestCount, 4)
+    } finally {
+      await proxy.stop()
+      upstream.close()
+      await once(upstream, 'close').catch(() => undefined)
+    }
+  })
+
   it('retries interrupted Claude message streams without duplicating delivered text', async () => {
     const requests: Record<string, unknown>[] = []
     let requestCount = 0

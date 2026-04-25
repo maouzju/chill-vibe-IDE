@@ -118,6 +118,7 @@ type PaneViewProps = {
   onChangeCardTitle: (cardId: string, title: string) => void
   onSendMessage: (cardId: string, prompt: string, attachments: ImageAttachment[]) => Promise<void>
   onStopMessage: (cardId: string) => Promise<void>
+  onManualRecoverStream?: (cardId: string) => Promise<unknown>
   onForkConversation?: (cardId: string, messageId: string) => void
   onOpenFile?: (paneId: string, relativePath: string) => void
   cardRecoveryStatuses?: ReadonlyMap<string, CardRecoveryStatus>
@@ -298,6 +299,7 @@ const PaneViewView = ({
   onChangeCardTitle,
   onSendMessage,
   onStopMessage,
+  onManualRecoverStream,
   onForkConversation,
   onOpenFile,
   cardRecoveryStatuses,
@@ -908,6 +910,11 @@ const PaneViewView = ({
                   onRemove={() => onCloseTab(pane.id, card.id)}
                   onSend={(prompt, attachments) => onSendMessage(card.id, prompt, attachments)}
                   onStop={() => onStopMessage(card.id)}
+                  onManualRecoverStream={
+                    onManualRecoverStream
+                      ? () => onManualRecoverStream(card.id)
+                      : undefined
+                  }
                   onForkConversation={
                     onForkConversation
                       ? (messageId) => onForkConversation(card.id, messageId)

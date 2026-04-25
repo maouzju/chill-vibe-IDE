@@ -1,4 +1,4 @@
-﻿import assert from 'node:assert/strict'
+import assert from 'node:assert/strict'
 import { mkdir, readFile, rm, writeFile } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
@@ -13,6 +13,7 @@ import {
   buildProviderSystemPrompt,
   launchProviderRun,
   normalizeProviderExitCode,
+  setProviderRuntimeSettingsOverride,
 } from '../server/providers.ts'
 import { prependPathEntry, writeNodeEntrypointShim } from './test-shell-helpers.ts'
 
@@ -653,6 +654,7 @@ const withFakeProviderCommand = async <T>(
   const entrypointPath = path.join(binDir, `${provider}-cli.js`)
   const originalPath = process.env.PATH
   const originalDataDir = process.env.CHILL_VIBE_DATA_DIR
+  const originalPlaceholderTimeout = process.env.CHILL_VIBE_TRANSIENT_PLACEHOLDER_TIMEOUT_MS
 
   await mkdir(binDir, { recursive: true })
   await mkdir(dataDir, { recursive: true })
@@ -682,6 +684,14 @@ const withFakeProviderCommand = async <T>(
     } else {
       delete process.env.CHILL_VIBE_DATA_DIR
     }
+
+    if (typeof originalPlaceholderTimeout === 'string') {
+      process.env.CHILL_VIBE_TRANSIENT_PLACEHOLDER_TIMEOUT_MS = originalPlaceholderTimeout
+    } else {
+      delete process.env.CHILL_VIBE_TRANSIENT_PLACEHOLDER_TIMEOUT_MS
+    }
+
+    setProviderRuntimeSettingsOverride(null)
 
     await rm(tempRoot, { recursive: true, force: true }).catch(() => {})
   }
@@ -1286,11 +1296,12 @@ const buildFakeCodexRecoverableDisconnectScript = () =>
     '})',
   ].join('\n')
 
-const buildFakeCodexRecoverableReconnectLoopScript = (capturePath: string) =>
+const buildFakeCodexRecoverableReconnectLoopScript = (capturePath: string, exitCode = 0) =>
   [
     "const fs = require('node:fs')",
     "const readline = require('node:readline')",
     `const capturePath = ${JSON.stringify(capturePath)}`,
+    `const exitCode = ${JSON.stringify(exitCode)}`,
     'const appendMessage = (message) => fs.appendFileSync(capturePath, `${JSON.stringify(message)}\\n`, "utf8")',
     "const reply = (message) => process.stdout.write(`${JSON.stringify(message)}\\n`)",
     "const rl = readline.createInterface({ input: process.stdin, crlfDelay: Infinity })",
@@ -1312,7 +1323,92 @@ const buildFakeCodexRecoverableReconnectLoopScript = (capturePath: string) =>
     '    reply({ id: request.id, result: { turn: { id: "turn-1", status: "inProgress", items: [], error: null } } })',
     "    reply({ method: 'item/agentMessage/delta', params: { itemId: 'assistant-item-1', delta: 'Reconnecting... 1/5' } })",
     "    reply({ method: 'item/agentMessage/delta', params: { itemId: 'assistant-item-1', delta: 'Reconnecting... 2/5' } })",
-    '    process.exit(0)',
+    '    process.exit(exitCode)',
+    '  }',
+    '})',
+  ].join('\n')
+
+
+const buildFakeCodexReconnectPlaceholderCompletedScript = () =>
+  [
+    "const readline = require('node:readline')",
+    "const reply = (message) => process.stdout.write(`${JSON.stringify(message)}\\n`)",
+    "const rl = readline.createInterface({ input: process.stdin, crlfDelay: Infinity })",
+    "rl.on('line', (line) => {",
+    '  if (!line.trim()) {',
+    '    return',
+    '  }',
+    '  const request = JSON.parse(line)',
+    "  if (request.method === 'initialize' && request.id) {",
+    '    reply({ id: request.id, result: {} })',
+    '    return',
+    '  }',
+    "  if (request.method === 'thread/start' && request.id) {",
+    "    reply({ id: request.id, result: { thread: { id: 'thread-placeholder-done', status: { type: 'active' } } } })",
+    '    return',
+    '  }',
+    "  if (request.method === 'turn/start' && request.id) {",
+    '    reply({ id: request.id, result: { turn: { id: "turn-1", status: "inProgress", items: [], error: null } } })',
+    "    reply({ method: 'item/agentMessage/delta', params: { itemId: 'assistant-item-1', delta: 'Reconnecting... 1/5' } })",
+    "    reply({ method: 'turn/completed', params: { turn: { id: 'turn-1', status: 'completed' } } })",
+    '    return',
+    '  }',
+    '})',
+  ].join('\n')
+
+
+
+const buildFakeCodexChunkedReconnectPlaceholderCompletedScript = () =>
+  [
+    "const readline = require('node:readline')",
+    "const reply = (message) => process.stdout.write(`${JSON.stringify(message)}\\n`)",
+    "const rl = readline.createInterface({ input: process.stdin, crlfDelay: Infinity })",
+    "rl.on('line', (line) => {",
+    '  if (!line.trim()) {',
+    '    return',
+    '  }',
+    '  const request = JSON.parse(line)',
+    "  if (request.method === 'initialize' && request.id) {",
+    '    reply({ id: request.id, result: {} })',
+    '    return',
+    '  }',
+    "  if (request.method === 'thread/start' && request.id) {",
+    "    reply({ id: request.id, result: { thread: { id: 'thread-placeholder-chunked-done', status: { type: 'active' } } } })",
+    '    return',
+    '  }',
+    "  if (request.method === 'turn/start' && request.id) {",
+    '    reply({ id: request.id, result: { turn: { id: "turn-1", status: "inProgress", items: [], error: null } } })',
+    "    for (const delta of ['Reconnect', 'ing', '... ', '1', '/', '5']) {",
+    "      reply({ method: 'item/agentMessage/delta', params: { itemId: 'assistant-item-1', delta } })",
+    '    }',
+    "    reply({ method: 'turn/completed', params: { turn: { id: 'turn-1', status: 'completed' } } })",
+    '    return',
+    '  }',
+    '})',
+  ].join('\n')
+
+const buildFakeCodexReconnectPlaceholderStallScript = () =>
+  [
+    "const readline = require('node:readline')",
+    "const reply = (message) => process.stdout.write(`${JSON.stringify(message)}\\n`)",
+    "const rl = readline.createInterface({ input: process.stdin, crlfDelay: Infinity })",
+    "rl.on('line', (line) => {",
+    '  if (!line.trim()) {',
+    '    return',
+    '  }',
+    '  const request = JSON.parse(line)',
+    "  if (request.method === 'initialize' && request.id) {",
+    '    reply({ id: request.id, result: {} })',
+    '    return',
+    '  }',
+    "  if (request.method === 'thread/start' && request.id) {",
+    "    reply({ id: request.id, result: { thread: { id: 'thread-placeholder-stall', status: { type: 'active' } } } })",
+    '    return',
+    '  }',
+    "  if (request.method === 'turn/start' && request.id) {",
+    '    reply({ id: request.id, result: { turn: { id: "turn-1", status: "inProgress", items: [], error: null } } })',
+    "    reply({ method: 'item/agentMessage/delta', params: { itemId: 'assistant-item-1', delta: 'Reconnecting... 1/5' } })",
+    '    return',
     '  }',
     '})',
   ].join('\n')
@@ -1324,6 +1420,86 @@ const buildFakeClaudeRecoverableDisconnectScript = () =>
     "reply({ type: 'assistant', message: { content: [{ type: 'text', text: 'Reconnecting 1/5' }] } })",
     'process.exit(0)',
   ].join('\n')
+
+
+test('codex app-server placeholder-only turn completion is recoverable instead of done', async () => {
+  const outcome = await withFakeProviderCommand(
+    'codex',
+    buildFakeCodexReconnectPlaceholderCompletedScript(),
+    async (workspacePath) =>
+      captureProviderRecoveryFailure(
+        createRequest({
+          provider: 'codex',
+          language: 'en',
+          workspacePath,
+        }),
+      ),
+  )
+
+  assert.deepEqual(outcome, {
+    kind: 'error',
+    message: 'Codex produced only transient reconnect placeholders before completion.',
+    recovery: {
+      recoverable: true,
+      recoveryMode: 'resume-session',
+      transientOnly: true,
+    },
+  })
+})
+
+
+
+test('codex app-server chunked placeholder-only turn completion is recoverable instead of done', async () => {
+  const outcome = await withFakeProviderCommand(
+    'codex',
+    buildFakeCodexChunkedReconnectPlaceholderCompletedScript(),
+    async (workspacePath) =>
+      captureProviderRecoveryFailure(
+        createRequest({
+          provider: 'codex',
+          language: 'en',
+          workspacePath,
+        }),
+      ),
+  )
+
+  assert.deepEqual(outcome, {
+    kind: 'error',
+    message: 'Codex produced only transient reconnect placeholders before completion.',
+    recovery: {
+      recoverable: true,
+      recoveryMode: 'resume-session',
+      transientOnly: true,
+    },
+  })
+})
+
+test('codex app-server placeholder-only stalls are failed fast as recoverable transient resumes', async () => {
+  process.env.CHILL_VIBE_TRANSIENT_PLACEHOLDER_TIMEOUT_MS = '60'
+
+  const outcome = await withFakeProviderCommand(
+    'codex',
+    buildFakeCodexReconnectPlaceholderStallScript(),
+    async (workspacePath) =>
+      captureProviderRecoveryFailure(
+        createRequest({
+          provider: 'codex',
+          language: 'en',
+          workspacePath,
+        }),
+      ),
+  )
+
+  assert.deepEqual(outcome, {
+    kind: 'error',
+    message: 'Codex stalled after producing only transient reconnect placeholders.',
+    recovery: {
+      recoverable: true,
+      recoveryMode: 'resume-session',
+      transientOnly: true,
+    },
+  })
+})
 
 test('codex zero-exit without turn.completed is treated as a failed run', async () => {
   const outcome = await withFakeProviderCommand(
@@ -1417,6 +1593,41 @@ test('codex app-server reconnect-only zero-exit stays recoverable after CLI retr
       .filter((request) => request.method === 'turn/start')
 
     assert.equal(requests.length, 1)
+  } finally {
+    await rm(capturePath, { force: true }).catch(() => {})
+  }
+})
+
+
+test('codex app-server reconnect-only nonzero exit is recoverable and transient-only', async () => {
+  const capturePath = path.join(
+    os.tmpdir(),
+    `chill-vibe-codex-reconnect-nonzero-${Date.now()}-${Math.random().toString(36).slice(2)}.jsonl`,
+  )
+
+  try {
+    const events = await withFakeProviderCommand(
+      'codex',
+      buildFakeCodexRecoverableReconnectLoopScript(capturePath, 1),
+      async (workspacePath) =>
+        captureProviderRecoveryFailure(
+          createRequest({
+            provider: 'codex',
+            language: 'en',
+            workspacePath,
+          }),
+        ),
+    )
+
+    assert.deepEqual(events, {
+      kind: 'error',
+      message: 'Codex exited with status code: 1',
+      recovery: {
+        recoverable: true,
+        recoveryMode: 'resume-session',
+        transientOnly: true,
+      },
+    })
   } finally {
     await rm(capturePath, { force: true }).catch(() => {})
   }

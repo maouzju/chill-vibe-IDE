@@ -15,6 +15,7 @@ import { GitFullDialog, type GitFullDialogMode } from './GitFullDialog'
 import { GitAgentPanel } from './GitAgentPanel'
 import { GitSyncPanel } from './GitSyncPanel'
 import { HoverTooltip } from './HoverTooltip'
+import { GitBranchIcon } from './Icons'
 import { getGitChangesSinceLastSnapshot, rememberGitChangeSnapshot } from './git-change-tracker'
 
 type NoticeTone = 'info' | 'success' | 'error'
@@ -47,6 +48,7 @@ type GitToolCardProps = {
 
 const legacyGitToolCompactHeight = 190
 const gitCompactBottomPadding = 12
+const serverNotRepositoryNote = 'This workspace is not a Git repository yet.'
 const compactableGitCardHeights = new Set([
   minGitToolCardSize,
   defaultGitToolCardSize,
@@ -203,9 +205,13 @@ export const GitToolCard = ({
 
     const cardRect = card.getBoundingClientRect()
     const compactContentRect = compactContent.getBoundingClientRect()
+    const contentHeight = Math.max(
+      compactContent.scrollHeight,
+      Math.ceil(compactContentRect.bottom - cardRect.top),
+    )
     const compactHeight = Math.max(
       minGitToolCardSize,
-      Math.ceil(compactContentRect.bottom - cardRect.top + gitCompactBottomPadding),
+      Math.ceil(contentHeight + gitCompactBottomPadding),
     )
 
     if (requestedHeight - compactHeight < 24) {
@@ -223,6 +229,19 @@ export const GitToolCard = ({
   const creatingRepoButtonLabel = language === 'zh-CN' ? '正在创建 Git 仓库...' : 'Creating Git repository...'
   const createRepoSuccessMessage = language === 'zh-CN' ? '已创建 Git 仓库。' : 'Created a new Git repository.'
   const createRepoErrorMessage = language === 'zh-CN' ? '无法创建 Git 仓库。' : 'Unable to create the Git repository.'
+  const notRepoKicker = language === 'zh-CN' ? '还没开始版本管理' : 'Version control is not started'
+  const notRepoPathLabel = language === 'zh-CN' ? '工作区' : 'Workspace'
+  const notRepoHintLabel = language === 'zh-CN' ? '创建后会开启这些 Git 功能' : 'Git features enabled after setup'
+  const notRepoHints = language === 'zh-CN'
+    ? ['初始化 .git', '查看改动', 'AI 分析提交']
+    : ['Initialize .git', 'Review changes', 'AI commit help']
+  const normalizeNotRepoMessage = (message?: string) => {
+    if (!message || message === serverNotRepositoryNote) {
+      return text.notRepoCopy
+    }
+
+    return message
+  }
   const analyzeButtonLabel = agentAnalysisPending
     ? text.analyzing.replace(/[\s.。…]+$/u, '')
     : text.analyzeChanges
@@ -410,18 +429,48 @@ export const GitToolCard = ({
     setAgentPanelOpenState(false)
   }, [setAgentPanelOpenState])
 
-  const renderNotRepositoryState = (message: string) => (
-    <div ref={cardRef} className="git-tool-card git-tool-empty-state">
-      <strong>{text.notRepoTitle}</strong>
-      <p>{message}</p>
-      <button
-        type="button"
-        className="git-tool-button is-primary"
-        onClick={() => void handleCreateRepository()}
-        disabled={createRepoPending}
-      >
-        {createRepoPending ? creatingRepoButtonLabel : createRepoButtonLabel}
-      </button>
+  const renderNotRepositoryState = (message?: string) => (
+    <div ref={cardRef} className="git-tool-card git-tool-empty-state git-onboarding-empty">
+      <div className="git-onboarding-header">
+        <div className="git-onboarding-orb" aria-hidden="true">
+          <GitBranchIcon />
+        </div>
+        <div className="git-onboarding-copy">
+          <span className="git-onboarding-kicker">{notRepoKicker}</span>
+          <strong className="git-onboarding-title">{text.notRepoTitle}</strong>
+          <p>{normalizeNotRepoMessage(message)}</p>
+        </div>
+      </div>
+
+      <div className="git-onboarding-path" title={workspacePath}>
+        <span>{notRepoPathLabel}</span>
+        <code>{workspacePath}</code>
+      </div>
+
+      <div className="git-onboarding-hints" aria-label={notRepoHintLabel}>
+        {notRepoHints.map((hint) => (
+          <span key={hint} className="git-onboarding-hint">{hint}</span>
+        ))}
+      </div>
+
+      <div className="git-onboarding-actions">
+        <button
+          type="button"
+          className="git-tool-button is-primary"
+          onClick={() => void handleCreateRepository()}
+          disabled={createRepoPending}
+        >
+          {createRepoPending ? creatingRepoButtonLabel : createRepoButtonLabel}
+        </button>
+        <button
+          type="button"
+          className="git-tool-button is-subtle"
+          onClick={() => void refreshStatus()}
+          disabled={createRepoPending}
+        >
+          {text.refresh}
+        </button>
+      </div>
     </div>
   )
 
@@ -457,7 +506,7 @@ export const GitToolCard = ({
   }
 
   if (!gitStatus.isRepository) {
-    return renderNotRepositoryState(notice?.message ?? gitStatus.note ?? text.notRepoCopy)
+    return renderNotRepositoryState(notice?.message ?? gitStatus.note)
   }
 
   return (

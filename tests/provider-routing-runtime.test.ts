@@ -153,6 +153,61 @@ describe('provider runtime routing', () => {
       restoreEnvVar('OPENAI_BASE_URL', originalOpenAiBaseUrl)
     }
   })
+
+  it('passes resilient proxy timeout and retry settings into the runtime proxy', async () => {
+    const { saveState } = await import('../server/state-store.ts')
+    const { resolveProviderRuntime, setProviderRuntimeSettingsOverride } = await import('../server/providers.ts')
+    const { resilientProxyPool } = await import('../server/resilient-proxy.ts')
+    const state = createDefaultState('')
+    const originalResolveBaseUrl = resilientProxyPool.resolveBaseUrl.bind(resilientProxyPool)
+    const captured: Array<{ provider: string; baseUrl: string; config: unknown }> = []
+
+    state.settings.cliRoutingEnabled = true
+    state.settings.resilientProxyEnabled = true
+    state.settings.resilientProxyStallTimeoutSec = 123
+    state.settings.resilientProxyFirstByteTimeoutSec = 234
+    state.settings.resilientProxyMaxRetries = -1
+    state.settings.providerProfiles.codex = {
+      activeProfileId: 'codex-profile-1',
+      profiles: [
+        {
+          id: 'codex-profile-1',
+          name: 'Codex Proxy',
+          apiKey: 'sk-codex',
+          baseUrl: 'https://codex.example/v1',
+        },
+      ],
+    }
+
+    await saveState(state)
+    setProviderRuntimeSettingsOverride(state.settings)
+
+    resilientProxyPool.resolveBaseUrl = (async (provider, baseUrl, config) => {
+      captured.push({ provider, baseUrl, config })
+      return 'http://127.0.0.1:43210/v1'
+    }) as typeof resilientProxyPool.resolveBaseUrl
+
+    try {
+      const runtime = await resolveProviderRuntime('codex')
+
+      assert.equal(runtime.env.OPENAI_BASE_URL, 'http://127.0.0.1:43210/v1')
+      assert.deepEqual(captured, [
+        {
+          provider: 'codex',
+          baseUrl: 'https://codex.example/v1',
+          config: {
+            firstByteTimeoutMs: 234_000,
+            stallTimeoutMs: 123_000,
+            maxRecoveryRetries: -1,
+          },
+        },
+      ])
+    } finally {
+      resilientProxyPool.resolveBaseUrl = originalResolveBaseUrl
+      setProviderRuntimeSettingsOverride(null)
+    }
+  })
+
 })
 
 describe('cc-switch provider profile import merge', () => {

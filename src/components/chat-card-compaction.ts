@@ -23,6 +23,8 @@ const compactHiddenMetaKey = 'compactHidden'
 const compactPendingMetaKey = 'compactPending'
 const performanceWindowThreshold = 220
 const performanceVisibleMessageCount = 140
+const contentPerformanceWindowThresholdChars = 120_000
+const contentPerformanceVisibleChars = 80_000
 const structuredPerformanceWindowThreshold = 72
 const structuredPerformanceVisibleMessageCount = 56
 const structuredPerformanceScanCount = 96
@@ -196,14 +198,50 @@ const findLatestCompactBoundary = (
   return null
 }
 
-const getPerformanceHiddenMessageCount = (messages: ChatMessage[]) => {
-  const { threshold, visibleCount } = getPerformanceWindowConfig(messages)
+const getMessageRenderWeight = (message: ChatMessage) => {
+  let weight = message.content.length
 
-  if (messages.length < threshold) {
+  if (message.meta) {
+    for (const [key, value] of Object.entries(message.meta)) {
+      weight += key.length + value.length
+    }
+  }
+
+  return weight
+}
+
+const getContentHiddenMessageCount = (messages: ChatMessage[]) => {
+  const totalWeight = messages.reduce((total, message) => total + getMessageRenderWeight(message), 0)
+
+  if (totalWeight < contentPerformanceWindowThresholdChars) {
     return 0
   }
 
-  return Math.max(messages.length - visibleCount, 0)
+  let visibleWeight = 0
+  let firstVisibleIndex = messages.length
+
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const messageWeight = getMessageRenderWeight(messages[index]!)
+    const nextVisibleWeight = visibleWeight + messageWeight
+
+    if (firstVisibleIndex < messages.length && nextVisibleWeight > contentPerformanceVisibleChars) {
+      break
+    }
+
+    visibleWeight = nextVisibleWeight
+    firstVisibleIndex = index
+  }
+
+  return Math.max(firstVisibleIndex, 0)
+}
+
+const getPerformanceHiddenMessageCount = (messages: ChatMessage[]) => {
+  const { threshold, visibleCount } = getPerformanceWindowConfig(messages)
+  const countHiddenMessageCount =
+    messages.length >= threshold ? Math.max(messages.length - visibleCount, 0) : 0
+  const contentHiddenMessageCount = getContentHiddenMessageCount(messages)
+
+  return Math.max(countHiddenMessageCount, contentHiddenMessageCount)
 }
 
 export const shouldAutoCompactCodexConversation = ({
@@ -274,6 +312,20 @@ export const getCompactMessageWindow = (
       }
     }
 
+    return buildCompactMessageWindow({
+      messages,
+      hiddenMessageCount: performanceHiddenMessageCount,
+      hiddenReason: 'performance',
+      compactTrigger: null,
+      revealedHiddenMessageCount,
+    })
+  }
+
+  const performanceHiddenMessageCount = allowPerformanceWindowing
+    ? compactBoundary + getPerformanceHiddenMessageCount(messages.slice(compactBoundary))
+    : 0
+
+  if (performanceHiddenMessageCount > compactBoundary) {
     return buildCompactMessageWindow({
       messages,
       hiddenMessageCount: performanceHiddenMessageCount,

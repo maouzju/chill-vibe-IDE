@@ -13,6 +13,7 @@ import {
 import type { AppLanguage, ChatMessage, ImageAttachment } from '../../shared/schema'
 import type { CardRecoveryStatus } from '../stream-recovery-feedback'
 import {
+  getAskUserAnswerKey,
   parseStructuredAskUserMessage,
   parseStructuredCommandMessage,
   parseStructuredEditsMessage,
@@ -174,10 +175,12 @@ export const StreamingIndicator = ({
   messages,
   language,
   recoveryStatus,
+  onManualRecoverStream,
 }: {
   messages: ChatMessage[]
   language: AppLanguage
   recoveryStatus?: CardRecoveryStatus
+  onManualRecoverStream?: () => void
 }) => {
   const locale = getLocaleText(language)
   const defaultLabel = getStreamingLabel(messages, language)
@@ -204,6 +207,15 @@ export const StreamingIndicator = ({
         <span />
       </span>
       <span className="streaming-label">{label}</span>
+      {onManualRecoverStream ? (
+        <button
+          type="button"
+          className="streaming-manual-recover-button"
+          onClick={onManualRecoverStream}
+        >
+          {locale.streamRecoveryManualResume}
+        </button>
+      ) : null}
     </div>
   )
 }
@@ -247,13 +259,15 @@ const MessageContent = ({
 
   const askUser = parseStructuredAskUserMessage(message)
   if (askUser) {
+    const answerKey = getAskUserAnswerKey(message)
     return (
       <div className="message-content">
         <AskUserQuestionCard
+          key={answerKey}
           data={askUser}
-          answerKey={message.id}
+          answerKey={answerKey}
           answeredOption={answeredOption}
-          onSelectOption={(label) => onSelectAskUserOption(message.id, label)}
+          onSelectOption={(label) => onSelectAskUserOption(answerKey, label)}
           language={language}
         />
       </div>

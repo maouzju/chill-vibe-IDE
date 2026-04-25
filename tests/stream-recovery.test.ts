@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 
 import {
+  getRecoverableStreamRetryLimit,
   resolveStreamRecoveryMode,
   shouldFallbackToFreshSessionAfterTransientResumeLoop,
   shouldKeepRecoveringTransientResumeWithFreshSession,
@@ -192,4 +193,12 @@ test('fresh-session transient recovery does not apply to non-transient or non-re
     }),
     false,
   )
+})
+
+test('recoverable stream retry limit accepts unlimited and clamps invalid configured values', () => {
+  assert.equal(getRecoverableStreamRetryLimit(6), 6)
+  assert.equal(getRecoverableStreamRetryLimit(-1), Number.POSITIVE_INFINITY)
+  assert.equal(getRecoverableStreamRetryLimit(0), 0)
+  assert.equal(getRecoverableStreamRetryLimit(51), 6)
+  assert.equal(getRecoverableStreamRetryLimit(undefined), 6)
 })

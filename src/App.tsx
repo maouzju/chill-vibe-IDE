@@ -55,6 +55,7 @@ import {
   type ModelPromptRule,
 } from '../shared/system-prompt'
 import {
+  getRecoverableStreamRetryLimit,
   resolveStreamRecoveryMode,
   shouldKeepRecoveringTransientResumeWithFreshSession,
   shouldResetStreamRecoveryAttemptsForActivity,
@@ -194,6 +195,7 @@ import {
 } from './hooks/persistence-queue'
 import { usePersistence } from './hooks/usePersistence'
 import { updateLatestKnownAppState } from './renderer-crash-state'
+import { resolveSessionHistoryEntryForRestore } from './session-history-restore'
 import { findPaneForTab, findPaneInLayout, ideReducer, type IdeAction } from './state'
 
 const overflowScrollablePattern = /(auto|scroll|overlay)/
@@ -204,7 +206,8 @@ const emptyProxyStatsCounts: ProxyStatsCounts = {
   recoveryFailures: 0,
 }
 const emptySessionHistory: SessionHistoryEntry[] = []
-const maxTransientResumeLoopAttempts = 3
+const maxTransientResumeLoopAttempts = 2
+const defaultRecoverableStreamRetryLimit = 6
 
 const normalizeWorkspaceHistoryKey = (workspacePath: string) => workspacePath.trim().toLowerCase()
 const findSessionRestoreColumnId = (state: AppState, entry: Pick<SessionHistoryEntry, 'workspacePath'>) =>
@@ -622,10 +625,10 @@ function App() {
     }
   }, [])
   const markRecoveryReconnecting = useCallback(
-    (cardId: string, retryCount: number) => {
+    (cardId: string, retryCount: number, maxAttempts = defaultRecoverableStreamRetryLimit) => {
       clearRecoveryResumedTimer(cardId)
       updateRecoveryStatus(cardId, () =>
-        computeRecoveryStatusAfterRetryScheduled(retryCount, 6),
+        computeRecoveryStatusAfterRetryScheduled(retryCount, maxAttempts),
       )
     },
     [clearRecoveryResumedTimer, updateRecoveryStatus],
@@ -2461,8 +2464,11 @@ function App() {
               }).catch(() => undefined)
             }
             const retryCount = streamRetryCountRef.current.get(card.id) ?? 0
+            const maxRecoverableRetries = getRecoverableStreamRetryLimit(
+              appStateRef.current.settings.resilientProxyMaxRetries,
+            )
 
-            if (retryCount < 6) {
+            if (retryCount < maxRecoverableRetries) {
               const shouldCountAgainstBudget = transientOnly !== true
               const transientResumeAttempt =
                 recoveryMode === 'resume-session' && transientOnly === true
@@ -2477,11 +2483,11 @@ function App() {
                 streamRetryCountRef.current.set(card.id, retryCount + 1)
               }
               // Show the reconnecting banner. The helper adds 1 internally so the
-              // visible label becomes "n/6" where n is the attempt about to run.
-              // Transient placeholder-only errors don't move the budget, so the
+              // visible label becomes "n/max" where n is the attempt about to run.
+              // Transient placeholder-only errors do not move the budget, so the
               // label stays on whatever attempt the previous non-transient failure
               // put us on.
-              markRecoveryReconnecting(card.id, retryCount)
+              markRecoveryReconnecting(card.id, retryCount, maxRecoverableRetries)
 
               window.setTimeout(() => {
                 const liveCard = getColumn(columnId)?.cards[card.id]
@@ -3558,7 +3564,7 @@ function App() {
     const freshSessionRecoveryPrompt = shouldClearSessionId
       ? buildSeededChatPrompt({
           language,
-          prompt: language === 'en' ? 'Please continue.' : '????',
+          prompt: language === 'en' ? 'Please continue.' : '\u8bf7\u7ee7\u7eed\u3002',
           attachments: [],
           messages: card.messages,
           provider: card.provider,
@@ -3698,6 +3704,69 @@ function App() {
     text.unexpectedError,
   ])
   recoverLiveStreamRef.current = recoverLiveStream
+
+  const manuallyRecoverStream = useCallback(
+    async (columnId: string, cardId: string) => {
+      const liveCard = getColumn(columnId)?.cards[cardId]
+      if (!liveCard) {
+        return false
+      }
+
+      if (liveCard.streamId) {
+        activeStreamsRef.current.get(cardId)?.source.close()
+        activeStreamsRef.current.delete(cardId)
+        const fallbackTimer = stopCompletionFallbackTimersRef.current.get(cardId)
+        if (fallbackTimer !== undefined) {
+          window.clearTimeout(fallbackTimer)
+          stopCompletionFallbackTimersRef.current.delete(cardId)
+        }
+        stoppedRunReasonRef.current.set(liveCard.streamId, 'manual')
+        await stopChat(liveCard.streamId).catch(() => undefined)
+        stoppedRunReasonRef.current.delete(liveCard.streamId)
+      }
+
+      const settledLocalRecoveryStats = settleLocalRecoveryStatsRun(
+        localRecoveryStatsRef.current.get(cardId),
+        'abandoned',
+      )
+      localRecoveryStatsRef.current.delete(cardId)
+      for (const event of settledLocalRecoveryStats.events) {
+        void recordProxyStatsEvent({
+          provider: liveCard.provider,
+          event,
+          endpoint: '/cli/local-stream',
+        }).catch(() => undefined)
+      }
+
+      streamRetryCountRef.current.delete(cardId)
+      transientResumeLoopCountRef.current.delete(cardId)
+      queueFollowUpDuringStreamRef.current.delete(cardId)
+      pendingAskUserDuringStreamRef.current.delete(cardId)
+      forceResetRecoveryStatus(cardId)
+
+      const currentCard = getColumn(columnId)?.cards[cardId]
+      if (!currentCard) {
+        return false
+      }
+
+      persistImmediately(
+        applyAction({
+          type: 'updateCard',
+          columnId,
+          cardId,
+          patch: {
+            sessionId: undefined,
+            providerSessions: {},
+            streamId: undefined,
+          },
+        }),
+      )
+
+      return recoverLiveStreamRef.current?.(columnId, cardId, { clearSessionId: true }) ?? false
+    },
+    [applyAction, forceResetRecoveryStatus, getColumn, persistImmediately],
+  )
+
 
   const closeTab = async (columnId: string, paneId: string, cardId: string) => {
     clearQueuedSends(cardId)
@@ -3919,13 +3988,17 @@ function App() {
     void (async () => {
       try {
         const paneId = resolveColumnPaneTarget(columnId)
-        const response = await loadSessionHistoryEntry({ entryId })
+        const entry = await resolveSessionHistoryEntryForRestore({
+          entryId,
+          state: appStateRef.current,
+          loadEntry: loadSessionHistoryEntry,
+        })
         const nextState = applyActions([
           {
             type: 'importExternalSession',
             columnId,
             paneId,
-            entry: response.entry,
+            entry,
           },
           {
             type: 'removeSessionHistory',
@@ -6442,6 +6515,7 @@ function App() {
               sendMessage(column.id, cardId, prompt, attachments)
             }
             onStopMessage={(cardId) => stopCard(cardId)}
+            onManualRecoverStream={(cardId) => manuallyRecoverStream(column.id, cardId)}
             onForkConversation={(cardId, messageId) =>
               dispatch({ type: 'forkConversation', columnId: column.id, cardId, messageId })
             }

@@ -47,6 +47,7 @@ import type {
 } from '../../shared/schema'
 import {
   buildRenderableMessages,
+  getAskUserAnswerKey,
   getRestoredStickyUserAnchor,
   getTopVisibleRenderableEntryId,
   getStickyRenderableUserMessageId,
@@ -60,6 +61,7 @@ import {
   getCompactedHistoryAutoRevealMode,
   getDistanceToBottom,
   getAutoScrollStateAfterUserScroll,
+  getAutoScrollStateDuringProgrammaticScroll,
   getRestoredMessageListScrollPlan,
   getScrollTopToRevealChild,
   getScrollTopToRevealChildWithTopClearance,
@@ -83,7 +85,10 @@ import { TextEditorCard } from './TextEditorCard'
 import { BrainstormCard } from './BrainstormCard'
 import { resolveBrainstormRequestTarget } from './brainstorm-card-utils'
 import { formatAskUserFollowUpPrompt } from './ask-user-follow-up'
-import type { CardRecoveryStatus } from '../stream-recovery-feedback'
+import {
+  shouldShowManualStreamRecoveryControl,
+  type CardRecoveryStatus,
+} from '../stream-recovery-feedback'
 import { MessageBubble, StreamingIndicator } from './MessageBubble'
 import {
   StructuredToolGroupCard,
@@ -100,6 +105,7 @@ import {
   IconButton,
   MusicIcon,
   NeteaseCloudMusicIcon,
+  RefreshIcon,
   SendIcon,
   SlidersIcon,
   SparklesIcon,
@@ -165,19 +171,19 @@ const getCompactionBannerCopy = (
 
   if (isAutoCompact) {
     return {
-      message: `已在自动上下文压缩后折叠更早的 ${hiddenMessageCount} 条消息。你当前看到的是压缩后的片段，如需查看更早历史，请点击下方按钮。`,
-      action: '显示全部更早消息',
+      message: `\u5df2\u5728\u81ea\u52a8\u4e0a\u4e0b\u6587\u538b\u7f29\u540e\u6298\u53e0\u66f4\u65e9\u7684 ${hiddenMessageCount} \u6761\u6d88\u606f\u3002\u4f60\u5f53\u524d\u770b\u5230\u7684\u662f\u538b\u7f29\u540e\u7684\u7247\u6bb5\uff0c\u5982\u9700\u67e5\u770b\u66f4\u65e9\u5386\u53f2\uff0c\u8bf7\u70b9\u51fb\u4e0b\u65b9\u6309\u94ae\u3002`,
+      action: '\u663e\u793a\u5168\u90e8\u66f4\u65e9\u6d88\u606f',
     }
   }
 
   return {
     message: isPerformanceWindow
-      ? `已临时折叠更早的 ${hiddenMessageCount} 条消息，减少超长会话的渲染负担。如需查看更早历史，请点击下方按钮。`
-      : `已在 /compact 后折叠更早的 ${hiddenMessageCount} 条消息，减少当前聊天卡片的渲染负担。如需查看更早历史，请点击下方按钮。`,
-    action: '显示全部更早消息',
+      ? `\u5df2\u4e34\u65f6\u6298\u53e0\u66f4\u65e9\u7684 ${hiddenMessageCount} \u6761\u6d88\u606f\uff0c\u51cf\u5c11\u8d85\u957f\u4f1a\u8bdd\u7684\u6e32\u67d3\u8d1f\u62c5\u3002\u5982\u9700\u67e5\u770b\u66f4\u65e9\u5386\u53f2\uff0c\u8bf7\u70b9\u51fb\u4e0b\u65b9\u6309\u94ae\u3002`
+      : `\u5df2\u5728 /compact \u540e\u6298\u53e0\u66f4\u65e9\u7684 ${hiddenMessageCount} \u6761\u6d88\u606f\uff0c\u51cf\u5c11\u5f53\u524d\u804a\u5929\u5361\u7247\u7684\u6e32\u67d3\u8d1f\u62c5\u3002\u5982\u9700\u67e5\u770b\u66f4\u65e9\u5386\u53f2\uff0c\u8bf7\u70b9\u51fb\u4e0b\u65b9\u6309\u94ae\u3002`,
+    action: '\u663e\u793a\u5168\u90e8\u66f4\u65e9\u6d88\u606f',
   }
-}
 
+}
 type ChatCardProps = {
   card: ChatCardModel
   providerReady: boolean
@@ -199,6 +205,7 @@ type ChatCardProps = {
   onRemove: () => void
   onSend: (prompt: string, attachments: ImageAttachment[]) => Promise<void>
   onStop: () => Promise<void>
+  onManualRecoverStream?: () => void
   onDraftChange: (draft: string) => void
   onChangeModel: (provider: Provider, model: string) => void
   onChangeReasoningEffort: (reasoningEffort: string) => void
@@ -439,7 +446,9 @@ const areChatCardPropsEqual = (previous: ChatCardProps, next: ChatCardProps) =>
   previous.isRestored === next.isRestored &&
   previous.chromeMode === next.chromeMode &&
   previous.isActive === next.isActive &&
-  previous.composerFocusRequest === next.composerFocusRequest
+  previous.composerFocusRequest === next.composerFocusRequest &&
+  previous.recoveryStatus === next.recoveryStatus &&
+  previous.onManualRecoverStream === next.onManualRecoverStream
 
 type ChatTranscriptProps = {
   isActive: boolean
@@ -447,6 +456,7 @@ type ChatTranscriptProps = {
   workspacePath: string
   cardStatus: ChatCardModel['status']
   recoveryStatus?: CardRecoveryStatus
+  onManualRecoverStream?: () => void
   messages: ChatCardModel['messages']
   messageListRef: RefObject<HTMLDivElement | null>
   renderableMessages: RenderableMessage[]
@@ -475,6 +485,7 @@ const ChatTranscript = memo(
     workspacePath,
     cardStatus,
     recoveryStatus,
+    onManualRecoverStream,
     messages,
     messageListRef,
     renderableMessages,
@@ -721,7 +732,7 @@ const ChatTranscript = memo(
     }, [renderableMessages, stickyMessageId])
 
     const stickyJumpLabel =
-      language === 'en' ? 'Jump to the original prompt position' : '跳到原消息位置'
+      language === 'en' ? 'Jump to the original prompt position' : '\u8df3\u5230\u539f\u6d88\u606f\u4f4d\u7f6e'
 
     const handleJumpToStickyMessage = useCallback(() => {
       if (!stickyMessageId) {
@@ -781,7 +792,7 @@ const ChatTranscript = memo(
                     language={language}
                     message={stickyMessage}
                     workspacePath={workspacePath}
-                    answeredOption={askUserAnswers[stickyMessage.id] ?? null}
+                    answeredOption={askUserAnswers[getAskUserAnswerKey(stickyMessage)] ?? null}
                     onSelectAskUserOption={onSelectAskUserOption}
                     isStickyToTop
                   />
@@ -856,7 +867,7 @@ const ChatTranscript = memo(
                   language={language}
                   message={entry.message}
                   workspacePath={workspacePath}
-                  answeredOption={askUserAnswers[entry.message.id] ?? null}
+                  answeredOption={askUserAnswers[getAskUserAnswerKey(entry.message)] ?? null}
                   onSelectAskUserOption={onSelectAskUserOption}
                   onOpenFile={onOpenFile}
                   onForkFromHere={
@@ -882,6 +893,7 @@ const ChatTranscript = memo(
             messages={messages}
             language={language}
             recoveryStatus={recoveryStatus}
+            onManualRecoverStream={onManualRecoverStream}
           />
         ) : null}
       </>
@@ -923,6 +935,7 @@ const ChatCardView = ({
   onChangeTitle,
   onForkConversation,
   onOpenFile,
+  onManualRecoverStream,
   isRestored,
   onRestoredAnimationEnd,
   chromeMode = 'card',
@@ -931,7 +944,7 @@ const ChatCardView = ({
   recoveryStatus,
 }: ChatCardProps) => {
   const text = useMemo(() => getLocaleText(language), [language])/*
-  const thinkingDepthLabel = language === 'en' ? 'Thinking depth' : '思考深度'
+  const thinkingDepthLabel = language === 'en' ? 'Thinking depth' : '鎬濊€冩繁搴?
 */
   const thinkingDepthLabel = language === 'en' ? 'Thinking depth' : '\u601d\u8003\u6df1\u5ea6'
   const localSlashCommands = useMemo(() => getLocalSlashCommands(language), [language])
@@ -1253,7 +1266,7 @@ const ChatCardView = ({
   const hydratedAttachmentsCardIdRef = useRef(card.id)
   useEffect(() => {
     if (hydratedAttachmentsCardIdRef.current === card.id) return
-    // Card switched (e.g. fork created a new tab) — pull the persisted draft attachments in.
+    // Card switched (e.g. fork created a new tab) 鈥?pull the persisted draft attachments in.
     for (const existing of pendingAttachmentsRef.current) {
       if (existing.kind === 'local') {
         URL.revokeObjectURL(existing.previewUrl)
@@ -1561,12 +1574,16 @@ const ChatCardView = ({
     }
 
     if (programmaticScrollGuardRef.current) {
-      const intent = programmaticScrollIntentRef.current
-      if (
-        intent &&
-        Math.abs(node.scrollTop - intent.targetScrollTop) > programmaticScrollInterruptTolerancePx
-      ) {
-        shouldAutoScrollRef.current = false
+      const next = getAutoScrollStateDuringProgrammaticScroll(
+        programmaticScrollIntentRef.current,
+        node.scrollTop,
+        shouldAutoScrollRef.current,
+      )
+
+      shouldAutoScrollRef.current = next.shouldAutoScroll
+      lastScrollTopRef.current = next.lastScrollTop
+
+      if (next.interrupted) {
         programmaticScrollGuardRef.current = false
         programmaticScrollIntentRef.current = null
         if (programmaticScrollGuardFrameRef.current !== null) {
@@ -1574,7 +1591,7 @@ const ChatCardView = ({
           programmaticScrollGuardFrameRef.current = null
         }
       }
-      lastScrollTopRef.current = node.scrollTop
+
       return
     }
 
@@ -2251,6 +2268,17 @@ const ChatCardView = ({
     () => (deferInactivePaneChatBody ? [] : buildRenderableMessages(compactMessageWindow.visibleMessages)),
     [compactMessageWindow.visibleMessages, deferInactivePaneChatBody],
   )
+  const latestAssistantContent = useMemo(
+    () => [...card.messages].reverse().find((message) => message.role === 'assistant')?.content ?? '',
+    [card.messages],
+  )
+  const showManualStreamRecovery =
+    typeof onManualRecoverStream === 'function' &&
+    shouldShowManualStreamRecoveryControl({
+      cardStatus: card.status,
+      recoveryStatus,
+      latestAssistantContent,
+    })
   const compactBoundaryRef = useRef<string | null>(compactMessageWindow.compactMessageId)
   useEffect(() => {
     if (deferInactivePaneChatBody) {
@@ -2495,7 +2523,7 @@ const ChatCardView = ({
     }
   }, [slashMenuOpen])
 
-  // Auto-Urge: when card transitions from streaming → idle, check if the last
+  // Auto-Urge: when card transitions from streaming 鈫?idle, check if the last
   // assistant message contains the success keyword. If not, auto-send the urge message.
   useEffect(() => {
     const previousStatus = prevCardStatusRef.current
@@ -2899,6 +2927,7 @@ const ChatCardView = ({
                 workspacePath={workspacePath}
                 cardStatus={card.status}
                 recoveryStatus={recoveryStatus}
+                onManualRecoverStream={showManualStreamRecovery ? onManualRecoverStream : undefined}
                 messages={card.messages}
                 messageListRef={messageListRef}
                 renderableMessages={renderableMessages}
@@ -3092,6 +3121,15 @@ const ChatCardView = ({
                         document.body,
                       )
                     : null}
+                  {showManualStreamRecovery ? (
+                    <IconButton
+                      label={text.streamRecoveryManualResume}
+                      className="manual-stream-recovery-composer-button"
+                      onClick={onManualRecoverStream}
+                    >
+                      <RefreshIcon />
+                    </IconButton>
+                  ) : null}
                   {card.status === 'streaming' ? (
                     <IconButton label={text.stopRun} onClick={onStop}>
                       <StopIcon />

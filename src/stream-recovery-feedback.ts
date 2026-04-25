@@ -1,12 +1,16 @@
 export type CardRecoveryStatus =
-  | { kind: 'reconnecting'; attempt: number; max: number }
+  | { kind: 'reconnecting'; attempt: number; max: number | 'unlimited' }
   | { kind: 'resumed' }
   | { kind: 'failed' }
 
 export const computeRecoveryStatusAfterRetryScheduled = (
   currentAttempt: number,
   max: number,
-): CardRecoveryStatus => ({ kind: 'reconnecting', attempt: currentAttempt + 1, max })
+): CardRecoveryStatus => ({
+  kind: 'reconnecting',
+  attempt: currentAttempt + 1,
+  max: Number.isFinite(max) ? max : 'unlimited',
+})
 
 export const computeRecoveryStatusAfterSuccess = (
   previous: CardRecoveryStatus | undefined,
@@ -25,3 +29,32 @@ export const computeRecoveryStatusAfterFinalFailure = (): CardRecoveryStatus => 
 export const shouldClearRecoveryStatusOnStreamIdle = (
   previous: CardRecoveryStatus | undefined,
 ): boolean => previous?.kind !== 'failed'
+
+
+const transientRecoveryPlaceholderPattern = /^reconnecting(?:\s*(?:\.{3}|\u2026))?(?:\s+\d+\s*\/\s*\d+)?$/i
+
+const isTransientRecoveryPlaceholder = (content: string) =>
+  transientRecoveryPlaceholderPattern.test(content.trim())
+
+export const shouldShowManualStreamRecoveryControl = ({
+  cardStatus,
+  recoveryStatus,
+  latestAssistantContent,
+}: {
+  cardStatus: 'idle' | 'streaming' | 'error'
+  recoveryStatus?: CardRecoveryStatus
+  latestAssistantContent?: string
+}) => {
+  if (recoveryStatus?.kind === 'failed') {
+    return true
+  }
+
+  if (cardStatus !== 'streaming') {
+    return false
+  }
+
+  return (
+    recoveryStatus?.kind === 'reconnecting' ||
+    (latestAssistantContent ? isTransientRecoveryPlaceholder(latestAssistantContent) : false)
+  )
+}

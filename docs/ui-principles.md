@@ -10,6 +10,7 @@ It exists to reduce subjective back-and-forth. If a UI change violates these rul
 - Content first: chats and workspace context carry the visual weight, not the chrome around them.
 - Subtractive by default: if a line, pill, border, glow, or shadow does not help orientation or action, remove it.
 - Stable across themes: light and dark may differ in color, but not in hierarchy or spacing logic.
+- Empty setup states should feel like a small guided next step: one clear primary action, quiet context, and no generic error-card chrome.
 
 ## Hard Rules
 

@@ -21,6 +21,8 @@ When a chat card's stream enters recovery, the user sees a short status line **i
 4. **Dead resumed-session escape hatch** — If the same provider session repeatedly resumes into placeholder-only `Reconnecting... n/5` output, Chill Vibe must stop reusing that provider `sessionId`, start a fresh provider session, and replay the visible transcript so the user is not trapped in a dead archive.
 5. **No extra persistence** — Recovery state is per-session in-memory only. It resets on app restart.
 6. **No toast, no global alert** — Per user decision, feedback lives inside the assistant bubble area only.
+7. **User retry budget honored** - The in-app chat recovery loop must use the same `resilientProxyMaxRetries` setting shown in Settings -> Routing -> Auto-retry. `-1` means unlimited recoverable retries instead of silently falling back to the hard-coded default.
+8. **Runtime proxy settings are live** - Changes to stall timeout, first-byte timeout, and max retries must be synced to the Electron backend/proxy runtime immediately; otherwise long chats keep using stale retry behavior until a restart.
 
 ## Non-goals
 

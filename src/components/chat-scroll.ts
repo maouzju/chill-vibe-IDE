@@ -153,6 +153,23 @@ export const didUserInterruptProgrammaticScroll = (
   return false
 }
 
+export const getAutoScrollStateDuringProgrammaticScroll = (
+  intent: ProgrammaticScrollIntent | null,
+  currentScrollTop: number,
+  previousShouldAutoScroll: boolean,
+  tolerancePx = programmaticScrollInterruptTolerancePx,
+) => {
+  const interrupted = intent
+    ? didUserInterruptProgrammaticScroll(intent, currentScrollTop, tolerancePx)
+    : false
+
+  return {
+    interrupted,
+    shouldAutoScroll: interrupted ? false : previousShouldAutoScroll,
+    lastScrollTop: currentScrollTop,
+  }
+}
+
 export const getAutoScrollStateAfterUserScroll = (
   previousScrollTop: number,
   metrics: MessageListMetrics,

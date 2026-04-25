@@ -62,7 +62,7 @@ import {
   shouldResetStreamRecoveryAttemptsForText,
 } from './stream-recovery'
 import {
-  beginLocalRecoveryStatsRun,
+  beginOrContinueLocalRecoveryStatsRun,
   continueLocalRecoveryStatsRun,
   noteLocalRecoveryDisconnect,
   settleLocalRecoveryStatsRun,
@@ -2322,6 +2322,24 @@ function App() {
             messages: [createStructuredActivityMessage(card.provider, card.streamId!, payload)],
           })
         },
+        onStats: (payload) => {
+          const disconnectedLocalRecoveryStats = payload.event === 'disconnect'
+            ? noteLocalRecoveryDisconnect(localRecoveryStatsRef.current.get(card.id))
+            : {
+                state: localRecoveryStatsRef.current.get(card.id) ?? { hadRecoverableDisconnect: false },
+                events: [payload.event],
+              }
+          localRecoveryStatsRef.current.set(card.id, disconnectedLocalRecoveryStats.state)
+          for (const event of disconnectedLocalRecoveryStats.events) {
+            void recordProxyStatsEvent({
+              provider: card.provider,
+              event,
+              endpoint: payload.endpoint,
+              attempt: payload.attempt,
+              errorType: payload.errorType,
+            }).catch(() => undefined)
+          }
+        },
         onDone: ({ stopped }) => {
           source.close()
           activeStreamsRef.current.delete(card.id)
@@ -3220,7 +3238,9 @@ function App() {
     }
 
     const streamId = crypto.randomUUID()
-    const startedLocalRecoveryStats = beginLocalRecoveryStatsRun()
+    const startedLocalRecoveryStats = beginOrContinueLocalRecoveryStatsRun(
+      localRecoveryStatsRef.current.get(cardId),
+    )
     localRecoveryStatsRef.current.set(cardId, startedLocalRecoveryStats.state)
     for (const event of startedLocalRecoveryStats.events) {
       void recordProxyStatsEvent({
@@ -3588,7 +3608,9 @@ function App() {
           })
         : undefined
     const streamId = crypto.randomUUID()
-    const startedLocalRecoveryStats = beginLocalRecoveryStatsRun()
+    const startedLocalRecoveryStats = beginOrContinueLocalRecoveryStatsRun(
+      localRecoveryStatsRef.current.get(cardId),
+    )
     localRecoveryStatsRef.current.set(cardId, startedLocalRecoveryStats.state)
     for (const event of startedLocalRecoveryStats.events) {
       void recordProxyStatsEvent({

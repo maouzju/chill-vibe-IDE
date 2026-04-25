@@ -63,6 +63,7 @@ type StreamSink = {
   onLog: (message: string) => void
   onAssistantMessage: (message: { itemId: string; content: string }) => void
   onActivity: (activity: StreamActivity) => void
+  onStats?: (event: { event: ProxyStatsEvent; endpoint: string; attempt?: number; errorType?: string }) => void
   onDone: () => void
   onError: (
     message: string,
@@ -1230,6 +1231,7 @@ const launchCodexAppServerRun = async (
   let emittedSessionId: string | null = request.sessionId?.trim() || null
   let currentRequest = request
   let transientPlaceholderStallTimer: ReturnType<typeof setTimeout> | undefined
+  let transientPlaceholderDisconnectStatsReported = false
 
   const clearTransientPlaceholderStallTimer = () => {
     if (transientPlaceholderStallTimer) {
@@ -1238,14 +1240,33 @@ const launchCodexAppServerRun = async (
     }
   }
 
-  const markDurableProviderProgress = () => {
+  const reportTransientPlaceholderDisconnectStats = () => {
+    if (transientPlaceholderDisconnectStatsReported || emittedAssistantContent.durable) {
+      return
+    }
+
+    transientPlaceholderDisconnectStatsReported = true
+    sink.onStats?.({
+      event: 'disconnect',
+      endpoint: '/cli/local-stream',
+      errorType: 'native-reconnect-placeholder',
+    })
+  }
+
+  const markDurableAssistantContentProgress = () => {
     emittedAssistantContent.durable = true
     emittedAssistantContent.transientOnly = false
     transientPlaceholderCandidateContentByItemId.clear()
     clearTransientPlaceholderStallTimer()
   }
 
-  const hasOnlyTransientAssistantContent = () =>
+  const markDurableProviderProgress = () => {
+    emittedAssistantContent.transientOnly = false
+    transientPlaceholderCandidateContentByItemId.clear()
+    clearTransientPlaceholderStallTimer()
+  }
+
+  const hasTransientPlaceholderWithoutDurableAssistantContent = () =>
     !emittedAssistantContent.durable &&
     (emittedAssistantContent.transientOnly || transientPlaceholderCandidateContentByItemId.size > 0)
 
@@ -1259,6 +1280,7 @@ const launchCodexAppServerRun = async (
       if (itemId) {
         transientPlaceholderCandidateContentByItemId.set(itemId, content)
       }
+      reportTransientPlaceholderDisconnectStats()
       scheduleTransientPlaceholderStallTimer()
       return
     }
@@ -1269,6 +1291,7 @@ const launchCodexAppServerRun = async (
         transientPlaceholderCandidateContentByItemId.set(itemId, content)
       }
       if (shouldStartTransientPlaceholderStallTimer(content)) {
+        reportTransientPlaceholderDisconnectStats()
         scheduleTransientPlaceholderStallTimer()
       }
       return
@@ -1277,7 +1300,7 @@ const launchCodexAppServerRun = async (
     if (itemId) {
       transientPlaceholderCandidateContentByItemId.delete(itemId)
     }
-    markDurableProviderProgress()
+    markDurableAssistantContentProgress()
   }
 
   const scheduleTransientPlaceholderStallTimer = () => {
@@ -1308,7 +1331,7 @@ const launchCodexAppServerRun = async (
       return
     }
 
-    if (hasOnlyTransientAssistantContent()) {
+    if (hasTransientPlaceholderWithoutDurableAssistantContent()) {
       finishWithError(transientOnlyCompletionMessage)
       return
     }
@@ -1334,7 +1357,7 @@ const launchCodexAppServerRun = async (
       message,
       hint,
       classifyLiveProviderStreamRecovery(request, message, hint, emittedSessionId, {
-        transientOnly: hasOnlyTransientAssistantContent(),
+        transientOnly: hasTransientPlaceholderWithoutDurableAssistantContent(),
       }),
     )
     child.kill()
@@ -1522,18 +1545,27 @@ const launchCodexAppServerRun = async (
           const contentForProgress = pendingTransientCandidate
             ? `${pendingTransientCandidate}${delta}`
             : delta
+          const shouldSuppressTransientPlaceholder = Boolean(
+            itemId && isTransientRecoveryPlaceholderPrefix(contentForProgress),
+          )
           recordAssistantContentProgress(contentForProgress, itemId)
+
+          if (shouldSuppressTransientPlaceholder) {
+            return
+          }
+
+          const deltaForSink = pendingTransientCandidate ? contentForProgress : delta
 
           if (itemId) {
             const bufferedDelta = bufferedStructuredAgentMessageDeltas.get(itemId)
 
-            if (bufferedDelta !== undefined || looksLikeCodexStructuredAgentMessage(delta)) {
-              bufferedStructuredAgentMessageDeltas.set(itemId, `${bufferedDelta ?? ''}${delta}`)
+            if (bufferedDelta !== undefined || looksLikeCodexStructuredAgentMessage(deltaForSink)) {
+              bufferedStructuredAgentMessageDeltas.set(itemId, `${bufferedDelta ?? ''}${deltaForSink}`)
               return
             }
           }
 
-          sink.onDelta(delta)
+          sink.onDelta(deltaForSink)
         }
 
         return
@@ -1589,7 +1621,7 @@ const launchCodexAppServerRun = async (
         message,
         hint,
         classifyLiveProviderStreamRecovery(request, message, hint, emittedSessionId, {
-          transientOnly: hasOnlyTransientAssistantContent(),
+          transientOnly: hasTransientPlaceholderWithoutDurableAssistantContent(),
         }),
       )
       return
@@ -1602,7 +1634,7 @@ const launchCodexAppServerRun = async (
       message,
       hint,
       classifyLiveProviderStreamRecovery(request, message, hint, emittedSessionId, {
-        transientOnly: hasOnlyTransientAssistantContent(),
+        transientOnly: hasTransientPlaceholderWithoutDurableAssistantContent(),
       }),
     )
   })
@@ -1622,7 +1654,7 @@ const launchCodexAppServerRun = async (
       error.message,
       hint,
       classifyLiveProviderStreamRecovery(request, error.message, hint, emittedSessionId, {
-        transientOnly: hasOnlyTransientAssistantContent(),
+        transientOnly: hasTransientPlaceholderWithoutDurableAssistantContent(),
       }),
     )
   })

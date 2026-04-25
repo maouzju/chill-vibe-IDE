@@ -61,7 +61,12 @@ export const shouldClearRecoveryStatusOnStreamIdle = (
    - Accept optional `recoveryStatus?: CardRecoveryStatus`.
    - If present, render a `<span className="streaming-recovery">` line below the dots with the localized label, replacing the default label while in `reconnecting`/`failed`. For `resumed` show the localized `已恢复` briefly.
 
-4. **i18n**: add three keys in `shared/i18n.ts`:
+4. **Local recovery stats bridge**:
+   - Provider runs may emit an in-band `stats` stream event for local-only recovery signals that happen before the terminal `error` event. The first native reconnect placeholder maps to one `disconnect` stat with `errorType: 'native-reconnect-placeholder'`.
+   - `App.tsx` forwards those stats through the existing `recordProxyStatsEvent()` IPC path and dedupes disconnects through `noteLocalRecoveryDisconnect()` so later recoverable `onError` handling does not double-count.
+   - Auto recovery retries call `beginOrContinueLocalRecoveryStatsRun()` instead of always starting a new run, so request counts describe user-visible chat requests rather than every internal retry.
+
+5. **i18n**: add three keys in `shared/i18n.ts`:
    - `streamRecoveryReconnecting(attempt, max)` → `正在重连… ${n}/${max}` / `Reconnecting… ${n}/${max}`
    - `streamRecoveryResumed` → `已恢复` / `Resumed`
    - `streamRecoveryFailed` → `重连失败` / `Reconnect failed`

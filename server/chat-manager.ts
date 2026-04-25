@@ -177,6 +177,7 @@ export class ChatManager {
         }
         this.emit(stream, 'activity', activity)
       },
+      onStats: (event) => this.emit(stream, 'stats', event),
       onDone: () => {
         if (!stream.stopRequested) {
           void this.finalizeWithWorkspaceEdits(stream, request, workspaceSnapshot, touchedPaths, 'done', {})

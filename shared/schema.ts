@@ -999,6 +999,13 @@ export const streamActivitySchema = z.union([
 ])
 export type StreamActivity = z.infer<typeof streamActivitySchema>
 
+export type StreamStatsEvent = {
+  event: 'request' | 'disconnect' | 'recovery_success' | 'recovery_fail'
+  endpoint: string
+  attempt?: number
+  errorType?: string
+}
+
 export type StreamErrorRecoveryMode = 'reattach-stream' | 'resume-session'
 
 export type StreamErrorEvent = {
@@ -1015,6 +1022,7 @@ export type StreamEventMap = {
   log: { message: string }
   assistant_message: StreamAssistantMessage
   activity: StreamActivity
+  stats: StreamStatsEvent
   done: { stopped?: boolean }
   error: StreamErrorEvent
 }

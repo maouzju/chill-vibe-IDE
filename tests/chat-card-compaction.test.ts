@@ -179,47 +179,47 @@ describe('chat card compaction window', () => {
     )
   })
 
-  it('temporarily hides older messages in very long chats even without an explicit compact boundary', () => {
-    const messages = Array.from({ length: 260 }, (_, index) =>
+  it('temporarily hides older messages only when chats hit the emergency fallback size', () => {
+    const messages = Array.from({ length: 1200 }, (_, index) =>
       makeMessage(`m${index + 1}`, index % 2 === 0 ? 'user' : 'assistant', `message ${index + 1}`),
     )
 
     assert.deepEqual(getWindow(messages, 'codex'), {
-      hiddenMessageCount: 120,
-      compactMessageId: 'm121',
+      hiddenMessageCount: 840,
+      compactMessageId: 'm841',
       hiddenReason: 'performance',
       compactTrigger: null,
-      visibleMessages: messages.slice(120),
+      visibleMessages: messages.slice(840),
     })
   })
 
-  it('starts performance windowing earlier for command-heavy chats', () => {
-    const messages = Array.from({ length: 100 }, (_, index) =>
+  it('uses a lower but still emergency-sized fallback for command-heavy chats', () => {
+    const messages = Array.from({ length: 420 }, (_, index) =>
       makeMessage(
         `m${index + 1}`,
         'assistant',
         '',
-        index < 60 ? { kind: 'command', structuredData: '{"itemId":"cmd","status":"completed"}' } : undefined,
+        { kind: 'command', structuredData: '{"itemId":"cmd","status":"completed"}' },
       ),
     )
 
     assert.deepEqual(getWindow(messages, 'codex'), {
-      hiddenMessageCount: 44,
-      compactMessageId: 'm45',
+      hiddenMessageCount: 240,
+      compactMessageId: 'm241',
       hiddenReason: 'performance',
       compactTrigger: null,
-      visibleMessages: messages.slice(44),
+      visibleMessages: messages.slice(240),
     })
   })
 
   it('restores the full transcript when a performance-windowed long chat is fully revealed', () => {
-    const messages = Array.from({ length: 260 }, (_, index) =>
+    const messages = Array.from({ length: 1200 }, (_, index) =>
       makeMessage(`m${index + 1}`, index % 2 === 0 ? 'user' : 'assistant', `message ${index + 1}`),
     )
 
     assert.deepEqual(getWindow(messages, 'codex', 'idle', Number.POSITIVE_INFINITY), {
       hiddenMessageCount: 0,
-      compactMessageId: 'm121',
+      compactMessageId: 'm841',
       hiddenReason: 'performance',
       compactTrigger: null,
       visibleMessages: messages,
@@ -249,12 +249,12 @@ describe('chat card compaction window', () => {
     })
   })
 
-  it('continues auto-folding when the post-compact segment grows long again', () => {
+  it('continues auto-folding only when the post-compact segment hits the emergency fallback size', () => {
     const messages = [
       makeMessage('m1', 'user', 'first question'),
       makeMessage('m2', 'assistant', 'first answer'),
       makeMessage('m3', 'user', '/compact'),
-      ...Array.from({ length: 260 }, (_, index) =>
+      ...Array.from({ length: 1200 }, (_, index) =>
         makeMessage(
           `follow-up-${index + 1}`,
           index % 2 === 0 ? 'user' : 'assistant',
@@ -304,7 +304,7 @@ describe('chat card compaction window', () => {
       makeMessage('m1', 'user', 'first question'),
       makeMessage('m2', 'assistant', 'first answer'),
       makeMessage('m3', 'user', '/compact'),
-      ...Array.from({ length: 260 }, (_, index) =>
+      ...Array.from({ length: 1200 }, (_, index) =>
         makeMessage(
           `follow-up-${index + 1}`,
           index % 2 === 0 ? 'user' : 'assistant',
@@ -322,12 +322,106 @@ describe('chat card compaction window', () => {
     assert.deepEqual(compactWindow.visibleMessages, messages)
   })
 
-  it('auto-folds content-heavy chats before the message-count threshold', () => {
+  it('keeps short chats visible even when a single command payload is content-heavy', () => {
+    const messages = [
+      makeMessage('m1', 'user', 'Can you inspect this quickly?'),
+      makeMessage('m2', 'assistant', 'I will check the repo.'),
+      makeMessage('m3', 'assistant', '', {
+        kind: 'command',
+        structuredData: JSON.stringify({
+          itemId: 'cmd-heavy',
+          status: 'completed',
+          output: 'x'.repeat(160_000),
+        }),
+      }),
+      makeMessage('m4', 'user', 'Please keep the earlier context visible.'),
+      makeMessage('m5', 'assistant', 'Continuing from the visible context.'),
+      makeMessage('m6', 'assistant', 'Done.'),
+    ]
+
+    assert.deepEqual(getWindow(messages, 'codex'), {
+      hiddenMessageCount: 0,
+      compactMessageId: null,
+      hiddenReason: null,
+      compactTrigger: null,
+      visibleMessages: messages,
+    })
+  })
+
+  it('keeps a moderately heavy latest turn visible instead of treating it as an emergency', () => {
+    const messages = [
+      ...Array.from({ length: 38 }, (_, index) =>
+        makeMessage(`old-${index + 1}`, index % 2 === 0 ? 'user' : 'assistant', `older context ${index + 1}`),
+      ),
+      makeMessage('latest-user', 'user', 'This is the question the command output is answering.'),
+      makeMessage('latest-command', 'assistant', '', {
+        kind: 'command',
+        structuredData: JSON.stringify({
+          itemId: 'cmd-tail-heavy',
+          status: 'completed',
+          output: 'x'.repeat(160_000),
+        }),
+      }),
+    ]
+
+    assert.deepEqual(getWindow(messages, 'codex'), {
+      hiddenMessageCount: 0,
+      compactMessageId: null,
+      hiddenReason: null,
+      compactTrigger: null,
+      visibleMessages: messages,
+    })
+  })
+
+  it('keeps the latest user turn visible when emergency content windowing triggers', () => {
+    const messages = [
+      ...Array.from({ length: 170 }, (_, index) =>
+        makeMessage(`old-${index + 1}`, index % 2 === 0 ? 'user' : 'assistant', `older context ${index + 1}`),
+      ),
+      makeMessage('latest-user', 'user', 'This is the question the huge command output is answering.'),
+      makeMessage('latest-command', 'assistant', '', {
+        kind: 'command',
+        structuredData: JSON.stringify({
+          itemId: 'cmd-emergency-tail',
+          status: 'completed',
+          output: 'x'.repeat(2_200_000),
+        }),
+      }),
+    ]
+
+    assert.deepEqual(getWindow(messages, 'codex'), {
+      hiddenMessageCount: 170,
+      compactMessageId: 'latest-user',
+      hiddenReason: 'performance',
+      compactTrigger: null,
+      visibleMessages: messages.slice(170),
+    })
+  })
+
+  it('does not auto-fold merely content-heavy chats before emergency size', () => {
     const messages = Array.from({ length: 80 }, (_, index) =>
       makeMessage(
         `m${index + 1}`,
         index % 2 === 0 ? 'user' : 'assistant',
         `message ${index + 1} ${'x'.repeat(2_000)}`,
+      ),
+    )
+
+    assert.deepEqual(getWindow(messages, 'codex'), {
+      hiddenMessageCount: 0,
+      compactMessageId: null,
+      hiddenReason: null,
+      compactTrigger: null,
+      visibleMessages: messages,
+    })
+  })
+
+  it('auto-folds content-heavy chats only at emergency payload size', () => {
+    const messages = Array.from({ length: 180 }, (_, index) =>
+      makeMessage(
+        `m${index + 1}`,
+        index % 2 === 0 ? 'user' : 'assistant',
+        `message ${index + 1} ${'x'.repeat(12_000)}`,
       ),
     )
 
@@ -339,7 +433,7 @@ describe('chat card compaction window', () => {
     assert.deepEqual(compactWindow.visibleMessages, messages.slice(compactWindow.hiddenMessageCount))
   })
 
-  it('auto-folds metadata-heavy structured chats before the message-count threshold', () => {
+  it('does not auto-fold moderately metadata-heavy structured chats', () => {
     const messages = Array.from({ length: 40 }, (_, index) =>
       makeMessage(`m${index + 1}`, 'assistant', '', {
         kind: 'command',
@@ -347,6 +441,27 @@ describe('chat card compaction window', () => {
           itemId: `cmd-${index + 1}`,
           status: 'completed',
           output: 'x'.repeat(4_000),
+        }),
+      }),
+    )
+
+    assert.deepEqual(getWindow(messages, 'codex'), {
+      hiddenMessageCount: 0,
+      compactMessageId: null,
+      hiddenReason: null,
+      compactTrigger: null,
+      visibleMessages: messages,
+    })
+  })
+
+  it('auto-folds metadata-heavy structured chats only at emergency payload size', () => {
+    const messages = Array.from({ length: 180 }, (_, index) =>
+      makeMessage(`m${index + 1}`, 'assistant', '', {
+        kind: 'command',
+        structuredData: JSON.stringify({
+          itemId: `cmd-${index + 1}`,
+          status: 'completed',
+          output: 'x'.repeat(12_000),
         }),
       }),
     )
@@ -360,7 +475,7 @@ describe('chat card compaction window', () => {
   })
 
   it('can disable performance-only windowing for request seeding and archive derivation', () => {
-    const messages = Array.from({ length: 260 }, (_, index) =>
+    const messages = Array.from({ length: 1200 }, (_, index) =>
       makeMessage(`m${index + 1}`, index % 2 === 0 ? 'user' : 'assistant', `message ${index + 1}`),
     )
 
@@ -379,7 +494,7 @@ describe('chat card compaction window', () => {
   })
 
   it('reveals only part of a performance window until the user asks for more history', () => {
-    const messages = Array.from({ length: 260 }, (_, index) =>
+    const messages = Array.from({ length: 1200 }, (_, index) =>
       makeMessage(`m${index + 1}`, index % 2 === 0 ? 'user' : 'assistant', `message ${index + 1}`),
     )
 
@@ -388,11 +503,11 @@ describe('chat card compaction window', () => {
         revealedHiddenMessageCount: 32,
       }),
       {
-        hiddenMessageCount: 88,
-        compactMessageId: 'm121',
+        hiddenMessageCount: 808,
+        compactMessageId: 'm841',
         hiddenReason: 'performance',
         compactTrigger: null,
-        visibleMessages: messages.slice(88),
+        visibleMessages: messages.slice(808),
       },
     )
   })

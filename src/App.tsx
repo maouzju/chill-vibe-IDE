@@ -2323,13 +2323,17 @@ function App() {
           })
         },
         onStats: (payload) => {
+          const previousLocalRecoveryStats = localRecoveryStatsRef.current.get(card.id)
           const disconnectedLocalRecoveryStats = payload.event === 'disconnect'
-            ? noteLocalRecoveryDisconnect(localRecoveryStatsRef.current.get(card.id))
+            ? noteLocalRecoveryDisconnect(previousLocalRecoveryStats)
             : {
-                state: localRecoveryStatsRef.current.get(card.id) ?? { hadRecoverableDisconnect: false },
+                state: previousLocalRecoveryStats ?? { hadRecoverableDisconnect: false },
                 events: [payload.event],
               }
           localRecoveryStatsRef.current.set(card.id, disconnectedLocalRecoveryStats.state)
+          if (payload.alreadyRecorded) {
+            return
+          }
           for (const event of disconnectedLocalRecoveryStats.events) {
             void recordProxyStatsEvent({
               provider: card.provider,

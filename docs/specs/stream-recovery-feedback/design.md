@@ -63,8 +63,13 @@ export const shouldClearRecoveryStatusOnStreamIdle = (
 
 4. **Local recovery stats bridge**:
    - Provider runs may emit an in-band `stats` stream event for local-only recovery signals that happen before the terminal `error` event. The first native reconnect placeholder maps to one `disconnect` stat with `errorType: 'native-reconnect-placeholder'`.
-   - `App.tsx` forwards those stats through the existing `recordProxyStatsEvent()` IPC path and dedupes disconnects through `noteLocalRecoveryDisconnect()` so later recoverable `onError` handling does not double-count.
+   - Codex app-server records native reconnect placeholder disconnects into the backend proxy-stats store immediately and marks the emitted stream stats payload as `alreadyRecorded`; `App.tsx` still updates its in-memory local recovery state but skips a second `recordProxyStatsEvent()` write for that payload.
+   - Later recoverable `onError` handling still runs through `noteLocalRecoveryDisconnect()` so local recovery state is consistent and duplicate disconnect stats are not emitted.
    - Auto recovery retries call `beginOrContinueLocalRecoveryStatsRun()` instead of always starting a new run, so request counts describe user-visible chat requests rather than every internal retry.
+
+5. **Native reconnect placeholder suppression**:
+   - `item/agentMessage/delta` chunks and `item/completed` assistant messages that are only Codex native `Reconnecting... n/5` placeholders are treated as recovery control signals.
+   - These placeholders update recovery/stats state, but they are not forwarded as visible `delta` or `assistant_message` events and are not replayed into fresh-session seeded prompts.
 
 5. **i18n**: add three keys in `shared/i18n.ts`:
    - `streamRecoveryReconnecting(attempt, max)` → `正在重连… ${n}/${max}` / `Reconnecting… ${n}/${max}`

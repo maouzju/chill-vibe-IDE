@@ -24,6 +24,7 @@ When a chat card's stream enters recovery, the user sees a short status line **i
 7. **User retry budget honored** - The in-app chat recovery loop must use the same `resilientProxyMaxRetries` setting shown in Settings -> Routing -> Auto-retry. `-1` means unlimited recoverable retries instead of silently falling back to the hard-coded default.
 8. **Runtime proxy settings are live** - Changes to stall timeout, first-byte timeout, and max retries must be synced to the Electron backend/proxy runtime immediately; otherwise long chats keep using stale retry behavior until a restart.
 9. **Stats reflect local reconnects** - When Codex emits native `Reconnecting... n/5` placeholders before a recoverable local-stream retry, Settings -> Routing -> Auto-retry stats must count a disconnect immediately, and automated recovery attempts must not inflate the request count.
+10. **Native placeholders stay out of chat text** - Codex native `Reconnecting... n/5` placeholder deltas or completed assistant-message items are control signals only; they must not be persisted or rendered as normal assistant content.
 
 ## Non-goals
 

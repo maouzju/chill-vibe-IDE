@@ -51,6 +51,7 @@ test('non-recoverable errors do not trigger stream recovery', () => {
 test('transport reconnect placeholders do not reset the recovery retry budget', () => {
   assert.equal(shouldResetStreamRecoveryAttemptsForText('Reconnecting... 1/5'), false)
   assert.equal(shouldResetStreamRecoveryAttemptsForText('Reconnecting 1/5'), false)
+  assert.equal(shouldResetStreamRecoveryAttemptsForText('Reconnecting... 1/5Reconnecting... 2/5'), false)
 })
 
 test('real assistant output still resets the recovery retry budget', () => {

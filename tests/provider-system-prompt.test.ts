@@ -800,6 +800,110 @@ const captureProviderActivities = async (request: ChatRequest) =>
     }).catch(reject)
   })
 
+
+const captureProviderStatsWithin = async (request: ChatRequest, timeoutMs = 500) =>
+  new Promise<
+    | { kind: 'stats'; event: string; endpoint?: string; errorType?: string }
+    | { kind: 'timeout' }
+  >((resolve, reject) => {
+    let settled = false
+    let child: Awaited<ReturnType<typeof launchProviderRun>> | null = null
+    const timer = setTimeout(() => {
+      if (settled) return
+      settled = true
+      child?.kill()
+      resolve({ kind: 'timeout' })
+    }, timeoutMs)
+
+    void launchProviderRun(request, {
+      onSession: () => undefined,
+      onDelta: () => undefined,
+      onLog: () => undefined,
+      onAssistantMessage: () => undefined,
+      onActivity: () => undefined,
+      onStats: (payload: { event: string; endpoint?: string; errorType?: string }) => {
+        if (settled) return
+        settled = true
+        clearTimeout(timer)
+        child?.kill()
+        resolve({ kind: 'stats', ...payload })
+      },
+      onDone: () => {
+        if (settled) return
+        settled = true
+        clearTimeout(timer)
+        reject(new Error('Expected provider run to emit a stats event.'))
+      },
+      onError: (message) => {
+        if (settled) return
+        settled = true
+        clearTimeout(timer)
+        reject(new Error(`Expected stats before provider error: ${message}`))
+      },
+    } as Parameters<typeof launchProviderRun>[1] & {
+      onStats: (payload: { event: string; endpoint?: string; errorType?: string }) => void
+    }).then((launchedChild) => {
+      child = launchedChild
+      if (!launchedChild && !settled) {
+        settled = true
+        clearTimeout(timer)
+        reject(new Error('Expected fake provider command to launch.'))
+      }
+    }).catch((error) => {
+      if (settled) return
+      settled = true
+      clearTimeout(timer)
+      reject(error)
+    })
+  })
+
+const captureProviderRecoveryFailureWithin = async (request: ChatRequest, timeoutMs = 500) =>
+  new Promise<
+    | { kind: 'error'; message: string; recovery: { recoverable?: boolean; recoveryMode?: 'reattach-stream' | 'resume-session'; transientOnly?: boolean } }
+    | { kind: 'timeout' }
+  >((resolve, reject) => {
+    let settled = false
+    let child: Awaited<ReturnType<typeof launchProviderRun>> | null = null
+    const timer = setTimeout(() => {
+      if (settled) return
+      settled = true
+      child?.kill()
+      resolve({ kind: 'timeout' })
+    }, timeoutMs)
+
+    void launchProviderRun(request, {
+      onSession: () => undefined,
+      onDelta: () => undefined,
+      onLog: () => undefined,
+      onAssistantMessage: () => undefined,
+      onActivity: () => undefined,
+      onDone: () => {
+        if (settled) return
+        settled = true
+        clearTimeout(timer)
+        reject(new Error('Expected provider run to fail.'))
+      },
+      onError: (message, _hint, recovery) => {
+        if (settled) return
+        settled = true
+        clearTimeout(timer)
+        resolve({ kind: 'error', message, recovery: recovery ?? {} })
+      },
+    }).then((launchedChild) => {
+      child = launchedChild
+      if (!launchedChild && !settled) {
+        settled = true
+        clearTimeout(timer)
+        reject(new Error('Expected fake provider command to launch.'))
+      }
+    }).catch((error) => {
+      if (settled) return
+      settled = true
+      clearTimeout(timer)
+      reject(error)
+    })
+  })
+
 const captureProviderRecoveryFailure = async (request: ChatRequest) =>
   new Promise<{
     kind: 'error'
@@ -1413,6 +1517,34 @@ const buildFakeCodexReconnectPlaceholderStallScript = () =>
     '})',
   ].join('\n')
 
+const buildFakeCodexCommandThenReconnectPlaceholderScript = () =>
+  [
+    "const readline = require('node:readline')",
+    "const reply = (message) => process.stdout.write(`${JSON.stringify(message)}\\n`)",
+    "const rl = readline.createInterface({ input: process.stdin, crlfDelay: Infinity })",
+    "rl.on('line', (line) => {",
+    '  if (!line.trim()) {',
+    '    return',
+    '  }',
+    '  const request = JSON.parse(line)',
+    "  if (request.method === 'initialize' && request.id) {",
+    '    reply({ id: request.id, result: {} })',
+    '    return',
+    '  }',
+    "  if (request.method === 'thread/start' && request.id) {",
+    "    reply({ id: request.id, result: { thread: { id: 'thread-command-reconnect', status: { type: 'active' } } } })",
+    '    return',
+    '  }',
+    "  if (request.method === 'turn/start' && request.id) {",
+    "    reply({ id: request.id, result: { turn: { id: 'turn-1', status: 'inProgress', items: [], error: null } } })",
+    "    reply({ method: 'item/started', params: { item: { id: 'cmd-1', type: 'command_execution', status: 'in_progress', command: 'pnpm test' } } })",
+    "    reply({ method: 'item/agentMessage/delta', params: { itemId: 'assistant-item-1', delta: 'Reconnecting... 1/5' } })",
+    '    setInterval(() => {}, 1000)',
+    '    return',
+    '  }',
+    '})',
+  ].join('\n')
+
 const buildFakeClaudeRecoverableDisconnectScript = () =>
   [
     "const reply = (message) => process.stdout.write(`${JSON.stringify(message)}\\n`)",
@@ -1499,6 +1631,78 @@ test('codex app-server placeholder-only stalls are failed fast as recoverable tr
       transientOnly: true,
     },
   })
+})
+
+
+test('codex app-server emits a local disconnect stats event when native reconnect placeholders appear', async () => {
+  const originalPlaceholderTimeout = process.env.CHILL_VIBE_TRANSIENT_PLACEHOLDER_TIMEOUT_MS
+  process.env.CHILL_VIBE_TRANSIENT_PLACEHOLDER_TIMEOUT_MS = '1000'
+
+  try {
+    const outcome = await withFakeProviderCommand(
+      'codex',
+      buildFakeCodexCommandThenReconnectPlaceholderScript(),
+      async (workspacePath) =>
+        captureProviderStatsWithin(
+          createRequest({
+            provider: 'codex',
+            language: 'en',
+            workspacePath,
+          }),
+          500,
+        ),
+    )
+
+    assert.deepEqual(outcome, {
+      kind: 'stats',
+      event: 'disconnect',
+      endpoint: '/cli/local-stream',
+      errorType: 'native-reconnect-placeholder',
+    })
+  } finally {
+    if (typeof originalPlaceholderTimeout === 'string') {
+      process.env.CHILL_VIBE_TRANSIENT_PLACEHOLDER_TIMEOUT_MS = originalPlaceholderTimeout
+    } else {
+      delete process.env.CHILL_VIBE_TRANSIENT_PLACEHOLDER_TIMEOUT_MS
+    }
+  }
+})
+
+test('codex app-server treats native reconnect placeholders as recoverable even after command activity', async () => {
+  const originalPlaceholderTimeout = process.env.CHILL_VIBE_TRANSIENT_PLACEHOLDER_TIMEOUT_MS
+  process.env.CHILL_VIBE_TRANSIENT_PLACEHOLDER_TIMEOUT_MS = '60'
+
+  try {
+    const outcome = await withFakeProviderCommand(
+      'codex',
+      buildFakeCodexCommandThenReconnectPlaceholderScript(),
+      async (workspacePath) =>
+        captureProviderRecoveryFailureWithin(
+          createRequest({
+            provider: 'codex',
+            language: 'en',
+            workspacePath,
+          }),
+          1000,
+        ),
+    )
+
+    assert.deepEqual(outcome, {
+      kind: 'error',
+      message: 'Codex stalled after producing only transient reconnect placeholders.',
+      recovery: {
+        recoverable: true,
+        recoveryMode: 'resume-session',
+        transientOnly: true,
+      },
+    })
+  } finally {
+    if (typeof originalPlaceholderTimeout === 'string') {
+      process.env.CHILL_VIBE_TRANSIENT_PLACEHOLDER_TIMEOUT_MS = originalPlaceholderTimeout
+    } else {
+      delete process.env.CHILL_VIBE_TRANSIENT_PLACEHOLDER_TIMEOUT_MS
+    }
+  }
 })
 
 test('codex zero-exit without turn.completed is treated as a failed run', async () => {

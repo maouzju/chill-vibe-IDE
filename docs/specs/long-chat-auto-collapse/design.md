@@ -9,11 +9,14 @@ The app already has two related mechanisms:
 1. `/compact` boundaries hide older transcript messages behind a banner.
 2. Performance windowing can temporarily hide older messages without changing provider state.
 
-This feature formalizes the second mechanism as the long-chat auto-collapse behavior:
+This feature formalizes the second mechanism as an emergency renderer fallback, not routine conversation cleanup:
 
-- plain conversations start windowing after 220 messages and keep the latest 140 rendered;
-- structured/tool-heavy conversations start windowing after 72 messages and keep the latest 56 rendered;
+- plain conversations start windowing after 1200 messages and keep the latest 360 rendered;
+- structured/tool-heavy conversations start windowing after 420 messages and keep the latest 180 rendered;
+- content-weight windowing only triggers after both a large transcript length and a multi-megabyte render payload, so moderately heavy command output remains visible;
 - the banner copy explains that older messages are temporarily hidden for responsiveness;
+- content-weight windowing has a minimum transcript length so one large command output in a short conversation does not hide the whole setup;
+- performance window boundaries are clamped back to the latest ordinary user turn so the current question stays visible with its assistant/tool output;
 - reveal actions reuse the existing compacted-history reveal path.
 
 ## Why UI-only windowing

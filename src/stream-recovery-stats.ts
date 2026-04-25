@@ -12,6 +12,16 @@ export const beginLocalRecoveryStatsRun = (): {
   events: ['request'],
 })
 
+
+
+export const beginOrContinueLocalRecoveryStatsRun = (
+  state: LocalRecoveryStatsState | undefined,
+): {
+  state: LocalRecoveryStatsState
+  events: LocalRecoveryStatsEvent[]
+} => (state ? { state, events: [] } : beginLocalRecoveryStatsRun())
+
+
 export const noteLocalRecoveryDisconnect = (
   state: LocalRecoveryStatsState | undefined,
 ): {

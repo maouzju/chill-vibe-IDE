@@ -88,6 +88,7 @@ type StreamHandlers = {
   onLog?: (payload: StreamEventMap['log']) => void
   onAssistantMessage?: (payload: StreamEventMap['assistant_message']) => void
   onActivity?: (payload: StreamEventMap['activity']) => void
+  onStats?: (payload: StreamEventMap['stats']) => void
   onDone?: (payload: StreamEventMap['done']) => void
   onError?: (payload: StreamEventMap['error'] & { recoverable?: boolean; transientOnly?: boolean }) => void
 }
@@ -917,6 +918,11 @@ export const openChatStream = (streamId: string, handlers: StreamHandlers): Chat
 
     if (event.detail.event === 'activity') {
       handlers.onActivity?.(data as StreamEventMap['activity'])
+      return
+    }
+
+    if (event.detail.event === 'stats') {
+      handlers.onStats?.(data as StreamEventMap['stats'])
       return
     }
 

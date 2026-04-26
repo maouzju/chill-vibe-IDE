@@ -11,6 +11,7 @@ import {
   buildClaudeArgs,
   buildCodexArgs,
   buildProviderSystemPrompt,
+  isCodexNativeReconnectPlaceholderForTesting,
   launchProviderRun,
   normalizeProviderExitCode,
   setProviderRuntimeSettingsOverride,
@@ -1633,6 +1634,30 @@ const buildFakeCodexStderrOnlyReconnectPlaceholderScript = () =>
     '})',
   ].join('\n')
 
+const buildFakeCodexJsonRpcReconnectPlaceholderErrorScript = () =>
+  [
+    "const readline = require('node:readline')",
+    "const reply = (message) => process.stdout.write(`${JSON.stringify(message)}\\n`)",
+    "const rl = readline.createInterface({ input: process.stdin, crlfDelay: Infinity })",
+    "rl.on('line', (line) => {",
+    '  if (!line.trim()) {',
+    '    return',
+    '  }',
+    '  const request = JSON.parse(line)',
+    "  if (request.method === 'initialize' && request.id) {",
+    '    reply({ id: request.id, result: {} })',
+    '    return',
+    '  }',
+    "  if (request.method === 'thread/start' && request.id) {",
+    "    reply({ id: request.id, result: { thread: { id: 'thread-jsonrpc-placeholder', status: { type: 'active' } } } })",
+    '    return',
+    '  }',
+    "  if (request.method === 'turn/start' && request.id) {",
+    "    reply({ id: request.id, error: { code: -32000, message: 'Reconnecting... 1/5' } })",
+    '  }',
+    '})',
+  ].join('\n')
+
 const buildFakeClaudeRecoverableDisconnectScript = () =>
   [
     "const reply = (message) => process.stdout.write(`${JSON.stringify(message)}\\n`)",
@@ -1889,6 +1914,93 @@ test('codex app-server suppresses native reconnect placeholders from visible del
 
   assert.equal(events.some((event) => event.kind === 'delta' && /Reconnecting/i.test(event.content)), false)
   assert.equal(events.some((event) => event.kind === 'assistant_message' && /Reconnecting/i.test(event.content)), false)
+})
+
+test('codex native reconnect detector covers the exact screenshot placeholder', () => {
+  assert.equal(isCodexNativeReconnectPlaceholderForTesting('Reconnecting... 1/5'), true)
+  assert.equal(isCodexNativeReconnectPlaceholderForTesting('Reconnecting\u2026 1/5'), true)
+  assert.equal(isCodexNativeReconnectPlaceholderForTesting('Reconnecting 1/5'), true)
+  assert.equal(isCodexNativeReconnectPlaceholderForTesting('Reconnecting because the network is down'), false)
+})
+
+test('codex app-server does not surface JSON-RPC reconnect placeholder errors as final errors', async () => {
+  const outcome = await withFakeProviderCommand(
+    'codex',
+    buildFakeCodexJsonRpcReconnectPlaceholderErrorScript(),
+    async (workspacePath) =>
+      captureProviderRecoveryFailure(
+        createRequest({
+          provider: 'codex',
+          language: 'en',
+          workspacePath,
+        }),
+      ),
+  )
+
+  assert.deepEqual(outcome, {
+    kind: 'error',
+    message: 'Codex produced only transient reconnect placeholders before completion.',
+    recovery: {
+      recoverable: true,
+      recoveryMode: 'resume-session',
+      transientOnly: true,
+    },
+  })
+})
+
+test('codex app-server suppresses JSON-RPC reconnect placeholder errors from all visible events', async () => {
+  const events = await withFakeProviderCommand(
+    'codex',
+    buildFakeCodexJsonRpcReconnectPlaceholderErrorScript(),
+    async (workspacePath) =>
+      captureProviderEvents(
+        createRequest({
+          provider: 'codex',
+          language: 'en',
+          workspacePath,
+        }),
+      ),
+  )
+
+  assert.equal(events.some((event) => event.kind === 'delta' && /Reconnecting/i.test(event.content)), false)
+  assert.equal(events.some((event) => event.kind === 'assistant_message' && /Reconnecting/i.test(event.content)), false)
+  const finalError = events.find((event) => event.kind === 'error')
+  assert.ok(finalError)
+  assert.doesNotMatch(finalError.message, /Reconnecting/i)
+})
+
+test('codex app-server records JSON-RPC reconnect placeholder errors as disconnect stats', async () => {
+  const outcome = await withFakeProviderCommand(
+    'codex',
+    buildFakeCodexJsonRpcReconnectPlaceholderErrorScript(),
+    async (workspacePath) => {
+      const { proxyStats } = await import('../server/proxy-stats-store.ts')
+      proxyStats.reset()
+
+      const statsEvent = await captureProviderStatsWithin(
+        createRequest({
+          provider: 'codex',
+          language: 'en',
+          workspacePath,
+        }),
+      )
+
+      return {
+        statsEvent,
+        stats: proxyStats.getStats(),
+      }
+    },
+  )
+
+  assert.deepEqual(outcome.statsEvent, {
+    kind: 'stats',
+    event: 'disconnect',
+    endpoint: '/cli/local-stream',
+    errorType: 'native-reconnect-placeholder',
+    alreadyRecorded: true,
+  })
+  assert.equal(outcome.stats.history.disconnects, 1)
+  assert.equal(outcome.stats.currentSession.disconnects, 1)
 })
 
 test('codex app-server records stderr-only native reconnect placeholders as disconnect stats', async () => {

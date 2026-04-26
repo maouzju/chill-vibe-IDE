@@ -554,14 +554,23 @@ const formatProviderUnexpectedCompletion = (language: AppLanguage, provider: Pro
     : `${label} 鍦ㄦ病鏈夊彂鍑虹粓姝㈠畬鎴愪簨浠剁殑鎯呭喌涓嬪氨缁撴潫浜嗐€?`
 }
 
-const transientRecoveryPlaceholderPattern = /^reconnecting(?:\s*(?:\.{3}|…))?(?:\s+\d+\s*\/\s*\d+)?$/i
+const reconnectingPlaceholderProgressPattern = String.raw`(?:\s+\d+\s*\/\s*\d+)?`
+const reconnectingPlaceholderSuffixPattern = String.raw`(?:\s*(?:\.{1,3}|\u2026))?${reconnectingPlaceholderProgressPattern}`
+const transientRecoveryPlaceholderPattern = new RegExp(
+  String.raw`^reconnecting${reconnectingPlaceholderSuffixPattern}$`,
+  'i',
+)
 
 const isTransientRecoveryPlaceholder = (content: string) => transientRecoveryPlaceholderPattern.test(content.trim())
 
-const transientRecoveryPlaceholderPrefixPattern =
-  /^reconnecting(?:\s*(?:\.{0,3}|\u2026))?(?:\s*\d*\s*(?:\/\s*\d*)?)?$/i
-const transientRecoveryPlaceholderSequencePattern =
-  /^(?:reconnecting(?:\s*(?:\.{3}|\u2026))?(?:\s+\d+\s*\/\s*\d+)?\s*)+$/i
+const transientRecoveryPlaceholderPrefixPattern = new RegExp(
+  String.raw`^reconnecting(?:\s*(?:\.{0,3}|\u2026))?(?:\s*\d*\s*(?:\/\s*\d*)?)?$`,
+  'i',
+)
+const transientRecoveryPlaceholderSequencePattern = new RegExp(
+  String.raw`^(?:reconnecting${reconnectingPlaceholderSuffixPattern}\s*)+$`,
+  'i',
+)
 
 const ansiEscape = String.fromCharCode(27)
 const ansiControlSequencePattern = new RegExp(`${ansiEscape}\\[[0-?]*[ -/]*[@-~]`, 'g')
@@ -592,6 +601,9 @@ const hasTransientRecoveryPlaceholderDiagnostics = (content: string) =>
     transientRecoveryPlaceholderPattern.test(line) ||
     transientRecoveryPlaceholderSequencePattern.test(line),
   )
+
+export const isCodexNativeReconnectPlaceholderForTesting = (content: string) =>
+  isTransientRecoveryPlaceholder(content) || hasOnlyTransientRecoveryPlaceholderDiagnostics(content)
 
 const isTransientRecoveryPlaceholderPrefix = (content: string) => {
   const normalized = content.trim()
@@ -1307,6 +1319,21 @@ const launchCodexAppServerRun = async (
     sink.onStats?.(event)
   }
 
+  const recordTransientPlaceholderControlSignal = (
+    content?: string,
+    options: { itemId?: string; startStallTimer?: boolean } = {},
+  ) => {
+    emittedAssistantContent.interruptedByTransientPlaceholder = true
+    emittedAssistantContent.transientOnly = !emittedAssistantContent.durable
+    if (options.itemId && content) {
+      transientPlaceholderCandidateContentByItemId.set(options.itemId, content)
+    }
+    reportTransientPlaceholderDisconnectStats()
+    if (options.startStallTimer) {
+      scheduleTransientPlaceholderStallTimer()
+    }
+  }
+
   const markDurableAssistantContentProgress = () => {
     emittedAssistantContent.durable = true
     emittedAssistantContent.transientOnly = false
@@ -1330,26 +1357,18 @@ const launchCodexAppServerRun = async (
     }
 
     if (isTransientRecoveryPlaceholder(content)) {
-      emittedAssistantContent.interruptedByTransientPlaceholder = true
-      emittedAssistantContent.transientOnly = !emittedAssistantContent.durable
-      if (itemId) {
-        transientPlaceholderCandidateContentByItemId.set(itemId, content)
-      }
-      reportTransientPlaceholderDisconnectStats()
-      scheduleTransientPlaceholderStallTimer()
+      recordTransientPlaceholderControlSignal(content, {
+        itemId,
+        startStallTimer: true,
+      })
       return
     }
 
     if (isTransientRecoveryPlaceholderPrefix(content)) {
-      emittedAssistantContent.interruptedByTransientPlaceholder = true
-      emittedAssistantContent.transientOnly = !emittedAssistantContent.durable
-      if (itemId) {
-        transientPlaceholderCandidateContentByItemId.set(itemId, content)
-      }
-      if (shouldStartTransientPlaceholderStallTimer(content)) {
-        reportTransientPlaceholderDisconnectStats()
-        scheduleTransientPlaceholderStallTimer()
-      }
+      recordTransientPlaceholderControlSignal(content, {
+        itemId,
+        startStallTimer: shouldStartTransientPlaceholderStallTimer(content),
+      })
       return
     }
 
@@ -1411,14 +1430,22 @@ const launchCodexAppServerRun = async (
       return
     }
 
+    let visibleMessage = message
+    if (hasOnlyTransientRecoveryPlaceholderDiagnostics(message)) {
+      recordTransientPlaceholderControlSignal(message)
+      visibleMessage = emittedAssistantContent.durable
+        ? 'Codex stalled after native reconnect placeholders interrupted the stream.'
+        : transientOnlyCompletionMessage
+    }
+
     clearTransientPlaceholderStallTimer()
     finished = true
-    rejectPendingRequests(message)
+    rejectPendingRequests(visibleMessage)
     void cleanupArchiveRecall()
     sink.onError(
-      message,
+      visibleMessage,
       hint,
-      classifyLiveProviderStreamRecovery(request, message, hint, emittedSessionId, {
+      classifyLiveProviderStreamRecovery(request, visibleMessage, hint, emittedSessionId, {
         transientOnly: hasTransientPlaceholderWithoutDurableAssistantContent(),
         interruptedByTransientPlaceholder: emittedAssistantContent.interruptedByTransientPlaceholder,
       }),
@@ -1665,10 +1692,7 @@ const launchCodexAppServerRun = async (
     }
 
     if (hasTransientRecoveryPlaceholderDiagnostics(line)) {
-      emittedAssistantContent.interruptedByTransientPlaceholder = true
-      emittedAssistantContent.transientOnly = !emittedAssistantContent.durable
-      reportTransientPlaceholderDisconnectStats()
-      scheduleTransientPlaceholderStallTimer()
+      recordTransientPlaceholderControlSignal(line, { startStallTimer: true })
     }
 
     stderr += `${line}\n`

@@ -1607,6 +1607,32 @@ const buildFakeCodexAssistantThenReconnectPlaceholderScript = () =>
     '})',
   ].join('\n')
 
+const buildFakeCodexStderrOnlyReconnectPlaceholderScript = () =>
+  [
+    "const readline = require('node:readline')",
+    "const reply = (message) => process.stdout.write(`${JSON.stringify(message)}\\n`)",
+    "const rl = readline.createInterface({ input: process.stdin, crlfDelay: Infinity })",
+    "rl.on('line', (line) => {",
+    '  if (!line.trim()) {',
+    '    return',
+    '  }',
+    '  const request = JSON.parse(line)',
+    "  if (request.method === 'initialize' && request.id) {",
+    '    reply({ id: request.id, result: {} })',
+    '    return',
+    '  }',
+    "  if (request.method === 'thread/start' && request.id) {",
+    "    reply({ id: request.id, result: { thread: { id: 'thread-stderr-placeholder', status: { type: 'active' } } } })",
+    '    return',
+    '  }',
+    "  if (request.method === 'turn/start' && request.id) {",
+    "    reply({ id: request.id, result: { turn: { id: 'turn-1', status: 'inProgress', items: [], error: null } } })",
+    "    process.stderr.write('Reconnecting... 1/5\\n')",
+    '    process.exit(0)',
+    '  }',
+    '})',
+  ].join('\n')
+
 const buildFakeClaudeRecoverableDisconnectScript = () =>
   [
     "const reply = (message) => process.stdout.write(`${JSON.stringify(message)}\\n`)",
@@ -1825,6 +1851,28 @@ test('codex app-server suppresses native reconnect placeholder assistant message
   })
 })
 
+test('codex app-server does not surface stderr-only native reconnect placeholders as final errors', async () => {
+  const outcome = await withFakeProviderCommand(
+    'codex',
+    buildFakeCodexStderrOnlyReconnectPlaceholderScript(),
+    async (workspacePath) =>
+      captureProviderRecoveryFailureWithin(
+        createRequest({
+          provider: 'codex',
+          language: 'en',
+          workspacePath,
+        }),
+        1000,
+      ),
+  )
+
+  assert.notEqual(outcome.kind, 'timeout')
+  if (outcome.kind === 'error') {
+    assert.doesNotMatch(outcome.message, /Reconnecting/i)
+    assert.equal(outcome.recovery.recoverable, true)
+  }
+})
+
 test('codex app-server suppresses native reconnect placeholders from visible deltas', async () => {
   const events = await withFakeProviderCommand(
     'codex',
@@ -1841,6 +1889,52 @@ test('codex app-server suppresses native reconnect placeholders from visible del
 
   assert.equal(events.some((event) => event.kind === 'delta' && /Reconnecting/i.test(event.content)), false)
   assert.equal(events.some((event) => event.kind === 'assistant_message' && /Reconnecting/i.test(event.content)), false)
+})
+
+test('codex app-server records stderr-only native reconnect placeholders as disconnect stats', async () => {
+  const originalPlaceholderTimeout = process.env.CHILL_VIBE_TRANSIENT_PLACEHOLDER_TIMEOUT_MS
+  process.env.CHILL_VIBE_TRANSIENT_PLACEHOLDER_TIMEOUT_MS = '1000'
+
+  try {
+    const outcome = await withFakeProviderCommand(
+      'codex',
+      buildFakeCodexStderrOnlyReconnectPlaceholderScript(),
+      async (workspacePath) => {
+        const { proxyStats } = await import('../server/proxy-stats-store.ts')
+        proxyStats.reset()
+
+        const statsEvent = await captureProviderStatsWithin(
+          createRequest({
+            provider: 'codex',
+            language: 'en',
+            workspacePath,
+          }),
+          500,
+        )
+
+        return {
+          statsEvent,
+          stats: proxyStats.getStats(),
+        }
+      },
+    )
+
+    assert.deepEqual(outcome.statsEvent, {
+      kind: 'stats',
+      event: 'disconnect',
+      endpoint: '/cli/local-stream',
+      errorType: 'native-reconnect-placeholder',
+      alreadyRecorded: true,
+    })
+    assert.equal(outcome.stats.history.disconnects, 1)
+    assert.equal(outcome.stats.currentSession.disconnects, 1)
+  } finally {
+    if (typeof originalPlaceholderTimeout === 'string') {
+      process.env.CHILL_VIBE_TRANSIENT_PLACEHOLDER_TIMEOUT_MS = originalPlaceholderTimeout
+    } else {
+      delete process.env.CHILL_VIBE_TRANSIENT_PLACEHOLDER_TIMEOUT_MS
+    }
+  }
 })
 
 test('codex app-server records native reconnect stats in the backend store immediately', async () => {

@@ -563,6 +563,36 @@ const transientRecoveryPlaceholderPrefixPattern =
 const transientRecoveryPlaceholderSequencePattern =
   /^(?:reconnecting(?:\s*(?:\.{3}|\u2026))?(?:\s+\d+\s*\/\s*\d+)?\s*)+$/i
 
+const ansiEscape = String.fromCharCode(27)
+const ansiControlSequencePattern = new RegExp(`${ansiEscape}\\[[0-?]*[ -/]*[@-~]`, 'g')
+
+const stripAnsiControlSequences = (content: string) =>
+  content.replace(ansiControlSequencePattern, '')
+
+const normalizeTransientRecoveryPlaceholderText = (content: string) =>
+  stripAnsiControlSequences(content).replace(/\r/g, '\n')
+
+const getTransientRecoveryPlaceholderDiagnostics = (content: string) =>
+  normalizeTransientRecoveryPlaceholderText(content)
+    .split(/\n+/)
+    .map((line) => line.trim())
+    .filter(Boolean)
+
+const hasOnlyTransientRecoveryPlaceholderDiagnostics = (content: string) => {
+  const diagnostics = getTransientRecoveryPlaceholderDiagnostics(content)
+
+  return diagnostics.length > 0 && diagnostics.every((line) =>
+    transientRecoveryPlaceholderPattern.test(line) ||
+    transientRecoveryPlaceholderSequencePattern.test(line),
+  )
+}
+
+const hasTransientRecoveryPlaceholderDiagnostics = (content: string) =>
+  getTransientRecoveryPlaceholderDiagnostics(content).some((line) =>
+    transientRecoveryPlaceholderPattern.test(line) ||
+    transientRecoveryPlaceholderSequencePattern.test(line),
+  )
+
 const isTransientRecoveryPlaceholderPrefix = (content: string) => {
   const normalized = content.trim()
   if (!normalized) {
@@ -1634,6 +1664,13 @@ const launchCodexAppServerRun = async (
       return
     }
 
+    if (hasTransientRecoveryPlaceholderDiagnostics(line)) {
+      emittedAssistantContent.interruptedByTransientPlaceholder = true
+      emittedAssistantContent.transientOnly = !emittedAssistantContent.durable
+      reportTransientPlaceholderDisconnectStats()
+      scheduleTransientPlaceholderStallTimer()
+    }
+
     stderr += `${line}\n`
   })
 
@@ -1652,7 +1689,9 @@ const launchCodexAppServerRun = async (
 
     if (code === 0) {
       const diagnostics = summarizeDiagnostics(stderr)
-      const message = diagnostics || formatProviderUnexpectedCompletion(language, 'codex')
+      const message = hasOnlyTransientRecoveryPlaceholderDiagnostics(diagnostics || stderr)
+        ? transientOnlyCompletionMessage
+        : diagnostics || formatProviderUnexpectedCompletion(language, 'codex')
       const hint = classifyLaunchErrorHint(`${message}\n${stderr}`)
       sink.onError(
         message,
@@ -1666,7 +1705,9 @@ const launchCodexAppServerRun = async (
     }
 
     const diagnostics = summarizeDiagnostics(stderr)
-    const message = diagnostics || formatProviderExit(language, 'codex', code)
+    const message = hasOnlyTransientRecoveryPlaceholderDiagnostics(diagnostics || stderr)
+      ? transientOnlyCompletionMessage
+      : diagnostics || formatProviderExit(language, 'codex', code)
     const hint = classifyLaunchErrorHint(`${message}\n${stderr}`)
     sink.onError(
       message,

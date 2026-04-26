@@ -31,9 +31,15 @@
     - Card transitions from `streaming` → non-streaming: clear via `shouldClearRecoveryStatusOnStreamIdle`.
 11. Pass `recoveryStatus={recoveryStatuses.get(card.id)}` to each `ChatCardView`.
 
-## Slice 5 — verification
+## Slice 5 - Codex stderr placeholder handling
 
-12. Run `pnpm test` and confirm green.
-13. Run `pnpm test:quality` (narrow scope).
-14. Restart the active runtime (Electron via `pnpm dev:restart`).
-15. Update handoff notes.
+12. Treat stderr-only Codex native `Reconnecting... n/5` diagnostics as recovery control signals.
+13. Keep those diagnostics out of final user-visible error text and record one local reconnect disconnect stat.
+14. Add focused provider tests for stderr-only placeholder suppression and stats.
+
+## Slice 6 - verification
+
+15. Run `pnpm test` and confirm green.
+16. Run `pnpm test:quality` (narrow scope).
+17. Restart the active runtime (Electron via `pnpm dev:restart`).
+18. Update handoff notes.

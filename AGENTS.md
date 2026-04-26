@@ -337,6 +337,8 @@ A living list of traps that have wasted time before. **When you hit a new pitfal
 
 | 108 | Codex app-server reconnect placeholders can arrive split across multiple `item/agentMessage/delta` chunks | Track transient placeholder prefixes per item id before deciding the stream produced real assistant output; otherwise partial chunks like `Reconnect` / `ing` falsely mark the run durable and let a placeholder-only turn finish as `done`. |
 
+| 109 | Codex native reconnect placeholders can arrive on stderr instead of JSON-RPC delta/item events | If only stdout is filtered, `Reconnecting... 1/5` can leak into final system error bubbles and skip disconnect stats; detect placeholder-only diagnostics from stderr too and record them through the same local stream stats path. |
+
 ### Self-maintenance rule
 
 - When you encounter a new non-obvious failure mode — a test that fails for environmental reasons, a build step with hidden prerequisites, a runtime behavior that contradicts the docs — append a row to this table before you finish the task.

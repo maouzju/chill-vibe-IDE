@@ -62,13 +62,13 @@ export const shouldClearRecoveryStatusOnStreamIdle = (
    - If present, render a `<span className="streaming-recovery">` line below the dots with the localized label, replacing the default label while in `reconnecting`/`failed`. For `resumed` show the localized `已恢复` briefly.
 
 4. **Local recovery stats bridge**:
-   - Provider runs may emit an in-band `stats` stream event for local-only recovery signals that happen before the terminal `error` event. The first native reconnect placeholder maps to one `disconnect` stat with `errorType: 'native-reconnect-placeholder'`, including when the placeholder is seen only in Codex stderr diagnostics.
+   - Provider runs may emit an in-band `stats` stream event for local-only recovery signals that happen before the terminal `error` event. The first native reconnect placeholder maps to one `disconnect` stat with `errorType: 'native-reconnect-placeholder'`, including when the placeholder is seen only in a Codex JSON-RPC error response or stderr diagnostics.
    - Codex app-server records native reconnect placeholder disconnects into the backend proxy-stats store immediately and marks the emitted stream stats payload as `alreadyRecorded`; `App.tsx` still updates its in-memory local recovery state but skips a second `recordProxyStatsEvent()` write for that payload.
    - Later recoverable `onError` handling still runs through `noteLocalRecoveryDisconnect()` so local recovery state is consistent and duplicate disconnect stats are not emitted.
    - Auto recovery retries call `beginOrContinueLocalRecoveryStatsRun()` instead of always starting a new run, so request counts describe user-visible chat requests rather than every internal retry.
 
 5. **Native reconnect placeholder suppression**:
-   - `item/agentMessage/delta` chunks, `item/completed` assistant messages, and stderr diagnostic lines that are only Codex native `Reconnecting... n/5` placeholders are treated as recovery control signals.
+   - `item/agentMessage/delta` chunks, `item/completed` assistant messages, JSON-RPC error responses, and stderr diagnostic lines that are only Codex native `Reconnecting... n/5` placeholders are treated as recovery control signals.
    - These placeholders update recovery/stats state, but they are not forwarded as visible `delta`, `assistant_message`, or final error text and are not replayed into fresh-session seeded prompts.
 
 5. **i18n**: add three keys in `shared/i18n.ts`:
@@ -87,7 +87,7 @@ Unit test `src/stream-recovery-feedback.ts`:
 - `shouldClearRecoveryStatusOnStreamIdle` preserves `failed` but clears others.
 - `shouldFallbackToFreshSessionAfterTransientResumeLoop` only triggers for recoverable `resume-session` placeholder-only loops at the configured threshold.
 - `buildSeededChatPrompt` skips placeholder reconnect messages when replaying a fresh-session recovery prompt.
-- Codex app-server stderr-only placeholder diagnostics produce recoverable failure text, stay out of user-visible errors, and record one disconnect stat.
+- Codex app-server JSON-RPC-error-only and stderr-only placeholder diagnostics produce recoverable failure text, stay out of user-visible errors, and record one disconnect stat.
 
 Register the new file in `tests/index.test.ts`.
 

@@ -31,11 +31,11 @@
     - Card transitions from `streaming` → non-streaming: clear via `shouldClearRecoveryStatusOnStreamIdle`.
 11. Pass `recoveryStatus={recoveryStatuses.get(card.id)}` to each `ChatCardView`.
 
-## Slice 5 - Codex stderr placeholder handling
+## Slice 5 - Codex native placeholder handling
 
-12. Treat stderr-only Codex native `Reconnecting... n/5` diagnostics as recovery control signals.
+12. Treat stderr-only and JSON-RPC-error-only Codex native `Reconnecting... n/5` diagnostics as recovery control signals.
 13. Keep those diagnostics out of final user-visible error text and record one local reconnect disconnect stat.
-14. Add focused provider tests for stderr-only placeholder suppression and stats.
+14. Add focused provider tests for stderr-only and JSON-RPC-error-only placeholder suppression and stats.
 
 ## Slice 6 - verification
 

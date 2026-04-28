@@ -38,10 +38,13 @@ import {
 } from '../shared/schema.js'
 import { getAppDataDir, getDefaultWorkspacePath } from './app-paths.js'
 
+type SessionHistoryCacheMode = 'full' | 'preview'
+
 type StateCacheEntry = {
   dataDir: string
   state: AppState
   diskStamp: string | null
+  sessionHistoryMode: SessionHistoryCacheMode
 }
 
 type SanitizedStateResult = {
@@ -54,6 +57,8 @@ const retainedStateSnapshotCount = 8
 const maxSnapshotRecoveryOptions = 3
 const stateSnapshotPrefix = 'state.snapshot-'
 const stateSnapshotSuffix = '.json'
+const sessionHistoryDirName = 'session-history'
+const sessionHistoryFileSuffix = '.json'
 const legacyRecentCrashRecoveryFileName = 'state.crash-recovery.json'
 const rendererSessionHistoryPreviewMessageLimit = 8
 const maxPersistedCardMessages = 500
@@ -73,11 +78,19 @@ const getRecentCrashRecoveryFileName = () => {
 const getCachedStateEntry = (dataDir = getAppDataDir()) =>
   cachedStateEntry?.dataDir === dataDir ? cachedStateEntry : null
 
+const getSessionHistoryCacheMode = (state: AppState): SessionHistoryCacheMode =>
+  state.sessionHistory.some(
+    (entry) => entry.messagesPreview || getSessionHistoryMessageCount(entry) > entry.messages.length,
+  )
+    ? 'preview'
+    : 'full'
+
 const setCachedState = (state: AppState, dataDir = getAppDataDir(), diskStamp: string | null = null) => {
   cachedStateEntry = {
     dataDir,
     state,
     diskStamp,
+    sessionHistoryMode: getSessionHistoryCacheMode(state),
   }
   return state
 }
@@ -132,12 +145,103 @@ const createRendererSessionHistoryMessages = (
 }
 
 const renderSessionHistoryForRenderer = (entries: SessionHistoryEntry[]): SessionHistoryEntry[] =>
-  entries.map((entry) => ({
-    ...entry,
-    messageCount: getSessionHistoryMessageCount(entry),
-    messagesPreview: true,
-    messages: createRendererSessionHistoryMessages(entry.messages),
-  }))
+  entries.map((entry) => {
+    const messageCount = getSessionHistoryMessageCount(entry)
+    const hasCompleteMessages = !entry.messagesPreview && entry.messages.length >= messageCount
+
+    return {
+      ...entry,
+      messageCount,
+      messagesPreview: true,
+      messages: hasCompleteMessages
+        ? createRendererSessionHistoryMessages(entry.messages)
+        : entry.messages.map(toRendererSessionHistoryMessage),
+    }
+  })
+
+const isFullSessionHistoryEntry = (entry: SessionHistoryEntry) =>
+  !entry.messagesPreview &&
+  entry.messages.length > 0 &&
+  getSessionHistoryMessageCount(entry) <= entry.messages.length
+
+const writeSessionHistorySidecars = async (entries: SessionHistoryEntry[], dataDir = getAppDataDir()) => {
+  if (entries.length === 0) {
+    return
+  }
+
+  const sidecarDir = getSessionHistoryDirPath(dataDir)
+  await mkdir(sidecarDir, { recursive: true })
+
+  await Promise.all(
+    entries.filter(isFullSessionHistoryEntry).map(async (entry) => {
+      await writeFile(
+        getSessionHistoryEntryFilePath(entry.id, dataDir),
+        `${JSON.stringify(entry, null, 2)}\n`,
+        'utf8',
+      )
+    }),
+  )
+}
+
+const readSessionHistorySidecarEntry = async (
+  entryId: string,
+  dataDir = getAppDataDir(),
+): Promise<SessionHistoryEntry | null> => {
+  try {
+    const content = await readFile(getSessionHistoryEntryFilePath(entryId, dataDir), 'utf8')
+    return internalSessionHistoryLoadResponseSchema.parse({ entry: JSON.parse(content) }).entry
+  } catch {
+    return null
+  }
+}
+
+const loadSessionHistorySidecars = async (dataDir = getAppDataDir()) => {
+  try {
+    const sidecarDir = getSessionHistoryDirPath(dataDir)
+    const files = await readdir(sidecarDir)
+    const entries = await Promise.all(
+      files
+        .filter((fileName) => fileName.endsWith(sessionHistoryFileSuffix))
+        .map(async (fileName) => {
+          try {
+            const content = await readFile(path.join(sidecarDir, fileName), 'utf8')
+            return internalSessionHistoryLoadResponseSchema.parse({ entry: JSON.parse(content) }).entry
+          } catch {
+            return null
+          }
+        }),
+    )
+
+    return normalizeSessionHistory(entries.filter((entry): entry is SessionHistoryEntry => Boolean(entry)))
+  } catch {
+    return []
+  }
+}
+
+const hydratePreviewSessionHistory = async (
+  entries: SessionHistoryEntry[],
+  dataDir = getAppDataDir(),
+) => {
+  if (entries.length === 0 || entries.every(isFullSessionHistoryEntry)) {
+    return entries
+  }
+
+  const sidecarEntries = await loadSessionHistorySidecars(dataDir)
+  if (sidecarEntries.length === 0) {
+    return entries
+  }
+
+  const sidecarEntriesById = new Map(sidecarEntries.map((entry) => [entry.id, entry] as const))
+
+  return entries.map((entry) => {
+    const messageCount = getSessionHistoryMessageCount(entry)
+    const sidecarEntry = sidecarEntriesById.get(entry.id)
+
+    return sidecarEntry && getSessionHistoryMessageCount(sidecarEntry) >= messageCount
+      ? sidecarEntry
+      : entry
+  })
+}
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -152,6 +256,16 @@ const renderSessionHistoryForRenderer = (entries: SessionHistoryEntry[]): Sessio
 const trimStreamingMessages = (messages: ChatCard['messages']) => messages
 
 const getStateFilePathForDir = (dataDir: string) => path.join(dataDir, 'state.json')
+const getSessionHistoryDirPath = (dataDir = getAppDataDir()) => path.join(dataDir, sessionHistoryDirName)
+
+const encodeSessionHistoryFileName = (entryId: string) =>
+  `${Buffer.from(entryId, 'utf8')
+    .toString('base64url')
+    .replace(/[^A-Za-z0-9_-]/g, '_')}${sessionHistoryFileSuffix}`
+
+const getSessionHistoryEntryFilePath = (entryId: string, dataDir = getAppDataDir()) =>
+  path.join(getSessionHistoryDirPath(dataDir), encodeSessionHistoryFileName(entryId))
+
 const getStateDiskStamp = async (dataDir = getAppDataDir()) => {
   const stateInfo = await stat(getStateFilePathForDir(dataDir)).catch(() => null)
   const walInfo = await stat(getWalFilePath(dataDir)).catch(() => null)
@@ -1129,7 +1243,10 @@ export const loadState = async () => {
     }
 
     const currentDiskStamp = await getStateDiskStamp(dataDir)
-    if (currentDiskStamp === cachedStateEntry.diskStamp) {
+    if (
+      currentDiskStamp === cachedStateEntry.diskStamp &&
+      cachedStateEntry.sessionHistoryMode === 'full'
+    ) {
       return cachedStateEntry.state
     }
   }
@@ -1163,7 +1280,14 @@ export const loadState = async () => {
         return saveStateToDataDir(sanitized.state, dataDir)
       }
 
-      return setCachedState(sanitized.state, dataDir, await getStateDiskStamp(dataDir))
+      return setCachedState(
+        {
+          ...sanitized.state,
+          sessionHistory: await hydratePreviewSessionHistory(sanitized.state.sessionHistory, dataDir),
+        },
+        dataDir,
+        await getStateDiskStamp(dataDir),
+      )
     }
 
     // Schema changed or file has unexpected shape — backup before fallback
@@ -1180,7 +1304,14 @@ export const loadState = async () => {
           return saveStateToDataDir(retrySanitized.state, dataDir)
         }
 
-        return setCachedState(retrySanitized.state, dataDir, await getStateDiskStamp(dataDir))
+        return setCachedState(
+          {
+            ...retrySanitized.state,
+            sessionHistory: await hydratePreviewSessionHistory(retrySanitized.state.sessionHistory, dataDir),
+          },
+          dataDir,
+          await getStateDiskStamp(dataDir),
+        )
       }
     }
 
@@ -1293,20 +1424,30 @@ const loadPersistedSessionHistory = async (dataDir = getAppDataDir()) => {
     (
       cachedStateEntry?.diskStamp === null ||
       cachedStateEntry?.diskStamp === await getStateDiskStamp(dataDir)
-    ) &&
-    cachedSessionHistory.every(
-      (entry) =>
-        !entry.messagesPreview &&
-        getSessionHistoryMessageCount(entry) <= entry.messages.length,
     )
   ) {
-    return cachedSessionHistory
+    if (
+      cachedStateEntry?.sessionHistoryMode === 'full' &&
+      cachedSessionHistory.every(isFullSessionHistoryEntry)
+    ) {
+      return cachedSessionHistory
+    }
+
+    const sidecarSessionHistory = await loadSessionHistorySidecars(dataDir)
+    if (sidecarSessionHistory.length > 0) {
+      return sidecarSessionHistory
+    }
   }
 
   try {
     const walRecovered = await recoverFromWal(dataDir)
     if (walRecovered) {
       return walRecovered.sessionHistory
+    }
+
+    const sidecarSessionHistory = await loadSessionHistorySidecars(dataDir)
+    if (sidecarSessionHistory.length > 0) {
+      return sidecarSessionHistory
     }
 
     const file = await readFile(getStateFilePathForDir(dataDir), 'utf8')
@@ -1321,14 +1462,17 @@ const loadPersistedSessionHistory = async (dataDir = getAppDataDir()) => {
 }
 
 const mergePersistedSessionHistory = async (state: AppState, dataDir: string): Promise<AppState> => {
-  const needsMerge = state.sessionHistory.some(
-    (entry) => entry.messagesPreview || getSessionHistoryMessageCount(entry) > entry.messages.length,
-  )
-  if (!needsMerge) {
+  if (state.sessionHistory.length === 0) {
     return state
   }
 
   const persistedSessionHistory = await loadPersistedSessionHistory(dataDir)
+  if (
+    persistedSessionHistory.length === 0 &&
+    state.sessionHistory.every(isFullSessionHistoryEntry)
+  ) {
+    return state
+  }
   const persistedEntriesById = new Map(
     persistedSessionHistory.map((entry) => [entry.id, entry] as const),
   )
@@ -1372,14 +1516,19 @@ const saveStateToDataDir = async (state: AppState, dataDir: string) => {
   await mkdir(dataDir, { recursive: true })
   const sanitizedState = sanitizeStateResult(state).state
   const safeState = await mergePersistedSessionHistory(sanitizedState, dataDir)
-  const content = `${JSON.stringify(safeState, null, 2)}\n`
+  await writeSessionHistorySidecars(safeState.sessionHistory, dataDir)
+  const lightweightState: AppState = {
+    ...safeState,
+    sessionHistory: renderSessionHistoryForRenderer(safeState.sessionHistory),
+  }
+  const content = `${JSON.stringify(lightweightState, null, 2)}\n`
 
   // Safety: if the new state has no real content but the existing file does,
   // backup and skip the write to avoid silent data loss.
   const hasRealContent =
     safeState.columns.some((col) =>
       Object.values(col.cards).some((card) => card.messages.length > 0),
-    ) || safeState.sessionHistory.some((entry) => entry.messages.length > 0)
+    ) || safeState.sessionHistory.some((entry) => getSessionHistoryMessageCount(entry) > 0)
   if (!hasRealContent) {
     try {
       const existing = await readFile(getStateFilePathForDir(dataDir), 'utf8')
@@ -1395,7 +1544,7 @@ const saveStateToDataDir = async (state: AppState, dataDir: string) => {
 
   await atomicWriteFile(getStateFilePathForDir(dataDir), content, dataDir)
   await writeStateSnapshot(content, dataDir)
-  return setCachedState(safeState, dataDir, await getStateDiskStamp(dataDir))
+  return setCachedState(lightweightState, dataDir, await getStateDiskStamp(dataDir))
 }
 
 export const saveState = async (state: AppState) => saveStateToDataDir(state, getAppDataDir())
@@ -1459,8 +1608,9 @@ export const loadStateForRenderer = async (): Promise<AppStateLoadResponse> => {
 }
 
 export const loadSessionHistoryEntry = async (request: { entryId: string }) => {
-  const sessionHistory = await loadPersistedSessionHistory(getAppDataDir())
-  const entry = sessionHistory.find((item) => item.id === request.entryId)
+  const dataDir = getAppDataDir()
+  const sidecarEntry = await readSessionHistorySidecarEntry(request.entryId, dataDir)
+  const entry = sidecarEntry ?? (await loadPersistedSessionHistory(dataDir)).find((item) => item.id === request.entryId)
 
   if (!entry) {
     throw new Error(`Session history entry not found: ${request.entryId}`)

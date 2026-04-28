@@ -97,3 +97,26 @@ test('desktop backend delays manager construction until the matching feature is 
   assert.equal(musicDisposed, 0)
   assert.equal(chatManagerFactoryCalls, 0)
 })
+
+
+test('desktop backend treats stopping an already-settled stream as idempotent', async () => {
+  const stoppedStreamIds: string[] = []
+  const backend = createDesktopBackend({
+    createChatManager: () => ({
+      closeAll() {},
+      createStream() {
+        throw new Error('not used in this test')
+      },
+      stop(streamId: string) {
+        stoppedStreamIds.push(streamId)
+        return false
+      },
+      subscribe() {
+        return null
+      },
+    }),
+  })
+
+  await assert.doesNotReject(() => backend.stopChat('stale-stream'))
+  assert.deepEqual(stoppedStreamIds, ['stale-stream'])
+})

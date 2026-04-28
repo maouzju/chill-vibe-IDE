@@ -985,6 +985,29 @@ function App() {
 
   const applyAction = useCallback((action: IdeAction) => applyActions([action]), [applyActions])
 
+  const flushBufferedAssistantDeltaForCard = useCallback(
+    (cardId: string) => {
+      const bufferEntry = deltaBufferRef.current.get(cardId)
+      if (!bufferEntry) {
+        return appStateRef.current
+      }
+
+      deltaBufferRef.current.delete(cardId)
+      if (bufferEntry.buffer.length === 0) {
+        return appStateRef.current
+      }
+
+      return applyAction({
+        type: 'appendAssistantDelta',
+        columnId: bufferEntry.columnId,
+        cardId: bufferEntry.cardId,
+        messageId: bufferEntry.messageId,
+        delta: bufferEntry.buffer,
+      })
+    },
+    [applyAction],
+  )
+
   const updateAutoUrgeProfiles = useCallback(
     (
       autoUrgeProfiles: AutoUrgeProfile[],
@@ -1493,18 +1516,9 @@ function App() {
     }
 
     // Flush any buffered streaming deltas for this card before tearing down
-    const bufferEntry = deltaBufferRef.current.get(cardId)
-    if (bufferEntry && bufferEntry.buffer.length > 0) {
-      const flushAction: IdeAction = {
-        type: 'appendAssistantDelta',
-        columnId: bufferEntry.columnId,
-        cardId: bufferEntry.cardId,
-        messageId: bufferEntry.messageId,
-        delta: bufferEntry.buffer,
-      }
-      deltaBufferRef.current.delete(cardId)
-      applyAction(flushAction)
-    }
+    // the stream. Otherwise a follow-up stream can overwrite the per-card
+    // buffer before the next animation-frame flush and make visible text vanish.
+    flushBufferedAssistantDeltaForCard(cardId)
 
     active.source.close()
     activeStreamsRef.current.delete(cardId)
@@ -1533,7 +1547,7 @@ function App() {
     if (stopRemote) {
       await stopChat(active.streamId).catch(() => undefined)
     }
-  }, [applyAction])
+  }, [flushBufferedAssistantDeltaForCard])
 
   const requestStopForCard = useCallback(
     async (cardId: string, reason: StoppedRunReason = 'manual') => {
@@ -1552,6 +1566,7 @@ function App() {
         return true
       } catch (error) {
         stoppedRunReasonRef.current.delete(streamId)
+        flushBufferedAssistantDeltaForCard(cardId)
         active?.source.close()
         activeStreamsRef.current.delete(cardId)
         const fallbackTimer = stopCompletionFallbackTimersRef.current.get(cardId)
@@ -1587,7 +1602,7 @@ function App() {
         return false
       }
     },
-    [applyActions, persistImmediately, text.unexpectedError],
+    [applyActions, flushBufferedAssistantDeltaForCard, persistImmediately, text.unexpectedError],
   )
 
   const enqueueQueuedSend = useCallback((cardId: string, request: QueuedSendRequest) => {
@@ -2120,6 +2135,7 @@ function App() {
       }
 
       if (existing) {
+        flushBufferedAssistantDeltaForCard(card.id)
         existing.source.close()
         activeStreamsRef.current.delete(card.id)
       }
@@ -2345,6 +2361,7 @@ function App() {
           }
         },
         onDone: ({ stopped }) => {
+          flushBufferedAssistantDeltaForCard(card.id)
           source.close()
           activeStreamsRef.current.delete(card.id)
           const fallbackTimer = stopCompletionFallbackTimersRef.current.get(card.id)
@@ -2402,14 +2419,27 @@ function App() {
           const pendingCompactBoundary = liveCard
             ? getPendingCompactBoundaryMessage(liveCard.messages)
             : null
-          const actions: IdeAction[] = [
-            {
+          const actions: IdeAction[] = []
+
+          if (stopped) {
+            actions.push({
+              type: 'finishStoppedStream',
+              columnId,
+              cardId: card.id,
+              unread,
+              stoppedMessage:
+                stoppedRunReason !== 'ask-user-answer'
+                  ? createStoppedRunMessage(appStateRef.current.settings.language, stoppedRunReason)
+                  : undefined,
+            })
+          } else {
+            actions.push({
               type: 'updateCard',
               columnId,
               cardId: card.id,
               patch: { status: 'idle', streamId: undefined, unread },
-            },
-          ]
+            })
+          }
 
           if (pendingCompactBoundary) {
             actions.unshift({
@@ -2421,15 +2451,6 @@ function App() {
                   ? clearPendingCompactBoundaryMessage(pendingCompactBoundary)
                   : finalizePendingCompactBoundaryMessage(pendingCompactBoundary),
               ],
-            })
-          }
-
-          if (stopped && stoppedRunReason !== 'ask-user-answer') {
-            actions.push({
-              type: 'appendMessages',
-              columnId,
-              cardId: card.id,
-              messages: [createStoppedRunMessage(appStateRef.current.settings.language, stoppedRunReason)],
             })
           }
 
@@ -2460,6 +2481,7 @@ function App() {
           dispatchNextQueuedSend(columnId, card.id)
         },
         onError: ({ message, recoverable, recoveryMode, transientOnly, hint }) => {
+          flushBufferedAssistantDeltaForCard(card.id)
           source.close()
           activeStreamsRef.current.delete(card.id)
           const fallbackTimer = stopCompletionFallbackTimersRef.current.get(card.id)
@@ -2671,6 +2693,7 @@ function App() {
       enqueueAssistantDelta,
       ensureAssistantMessage,
       forceResetRecoveryStatus,
+      flushBufferedAssistantDeltaForCard,
       getColumn,
       markRecoveryFailed,
       markRecoveryReconnecting,

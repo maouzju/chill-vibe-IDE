@@ -250,6 +250,13 @@ export type IdeAction =
       messageId: string
       delta: string
     }
+  | {
+      type: 'finishStoppedStream'
+      columnId: string
+      cardId: string
+      stoppedMessage?: ChatMessage
+      unread?: boolean
+    }
   | { type: 'recordRecentWorkspace'; path: string }
   | { type: 'removeRecentWorkspaces'; paths: string[] }
   | { type: 'restoreSession'; columnId: string; entryId: string; paneId?: string }
@@ -1796,6 +1803,18 @@ export const ideReducer = (state: AppState, action: IdeAction): AppState => {
             ),
           }
         }),
+      )
+    case 'finishStoppedStream':
+      return touchState(
+        updateCard(state, action.columnId, action.cardId, (card) => ({
+          ...card,
+          status: 'idle',
+          streamId: undefined,
+          unread: action.unread ?? card.unread,
+          messages: action.stoppedMessage
+            ? [...card.messages, action.stoppedMessage]
+            : card.messages,
+        })),
       )
     case 'recordRecentWorkspace': {
       const path = action.path.trim()

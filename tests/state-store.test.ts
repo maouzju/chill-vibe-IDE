@@ -530,10 +530,16 @@ describe('state-store persistence', () => {
     const originalContent = JSON.stringify(state, null, 2)
     await writeFile(stateFile, originalContent, 'utf8')
 
-    const { loadState } = await import('../server/state-store.ts')
+    const { loadState, loadSessionHistoryEntry } = await import('../server/state-store.ts')
     const loaded = await loadState()
-    const structuredData = loaded.sessionHistory[0]?.messages[0]?.meta?.structuredData
-    assert.ok(structuredData, 'expected structured command metadata to survive session history load')
+    assert.equal(
+      loaded.sessionHistory[0]?.messages[0]?.meta,
+      undefined,
+      'main state should keep only lightweight archived-session previews',
+    )
+    const restored = await loadSessionHistoryEntry({ entryId: 'history-command' })
+    const structuredData = restored.entry.messages[0]?.meta?.structuredData
+    assert.ok(structuredData, 'expected structured command metadata to survive on-demand session history load')
 
     const payload = JSON.parse(structuredData) as {
       command: string
@@ -559,7 +565,7 @@ describe('state-store persistence', () => {
 
   it('saveState re-compacts legacy 32KB command output chunks to the current release-safe budget', async () => {
     const stateFile = path.join(tmpDir, 'state.json')
-    const { saveState, loadState } = await import('../server/state-store.ts')
+    const { saveState, loadState, loadSessionHistoryEntry } = await import('../server/state-store.ts')
     const state = createDefaultState('D:/release-white-screen')
     const firstCard = getFirstCard(state)
     assert.ok(firstCard, 'expected a default card to exist in the first column')
@@ -632,7 +638,8 @@ describe('state-store persistence', () => {
     assert.ok(loadedFirstCard, 'expected the saved card to load back')
 
     const liveOutput = JSON.parse(loadedFirstCard.messages[0]?.meta?.structuredData ?? '{}').output as string
-    const historyOutput = JSON.parse(loaded.sessionHistory[0]?.messages[0]?.meta?.structuredData ?? '{}').output as string
+    const restoredHistory = await loadSessionHistoryEntry({ entryId: 'history-command' })
+    const historyOutput = JSON.parse(restoredHistory.entry.messages[0]?.meta?.structuredData ?? '{}').output as string
 
     for (const output of [liveOutput, historyOutput]) {
       assert.match(output, /Output truncated in saved state/i)
@@ -1177,6 +1184,73 @@ describe('state-store persistence', () => {
     assert.match(restored.entry.messages[11]?.meta?.structuredData ?? '', /"command":"pnpm test"/)
   })
 
+  it('saveState writes archived session bodies to sidecar files and keeps state.json lightweight', async () => {
+    const { saveState, loadStateForRenderer, loadSessionHistoryEntry } = await import('../server/state-store.ts')
+    const state = createDefaultState('D:/history-sidecar')
+    const largeStructuredOutput = 'x'.repeat(100_000)
+
+    state.sessionHistory = [
+      {
+        id: 'history-sidecar-1',
+        title: 'Archived sidecar target',
+        sessionId: 'history-sidecar-session-1',
+        provider: 'codex',
+        model: 'gpt-5.5',
+        workspacePath: 'D:/history-sidecar',
+        messageCount: 30,
+        messages: Array.from({ length: 30 }, (_, index) => ({
+          id: `history-sidecar-message-${index + 1}`,
+          role: index % 2 === 0 ? ('user' as const) : ('assistant' as const),
+          content: `Archived sidecar message ${index + 1}`,
+          createdAt: new Date(Date.UTC(2026, 3, 12, 8, 0, index)).toISOString(),
+          meta: index === 29
+            ? {
+                provider: 'codex',
+                kind: 'command',
+                structuredData: JSON.stringify({
+                  itemId: 'history-sidecar-command',
+                  status: 'completed',
+                  command: 'node big-output.js',
+                  output: largeStructuredOutput,
+                  exitCode: 0,
+                }),
+              }
+            : undefined,
+        })),
+        archivedAt: new Date('2026-04-12T08:20:00.000Z').toISOString(),
+      },
+    ]
+
+    await saveState(state)
+
+    const stateContent = await readFile(path.join(tmpDir, 'state.json'), 'utf8')
+    assert.equal(
+      stateContent.includes(largeStructuredOutput),
+      false,
+      'main state.json should not keep full archived message bodies or large structured output',
+    )
+
+    const sidecarDir = path.join(tmpDir, 'session-history')
+    const sidecarFiles = await readdir(sidecarDir)
+    assert.equal(sidecarFiles.length, 1, 'expected one archived session sidecar file')
+
+    const sidecarContent = await readFile(path.join(sidecarDir, sidecarFiles[0]!), 'utf8')
+    assert.ok(
+      sidecarContent.includes('Archived sidecar message 30'),
+      'sidecar should keep the full archived transcript',
+    )
+
+    const rendererLoaded = await loadStateForRenderer()
+    assert.equal(rendererLoaded.state.sessionHistory[0]?.messageCount, 30)
+    assert.ok(
+      (rendererLoaded.state.sessionHistory[0]?.messages.length ?? 30) < 30,
+      'renderer state should receive only the lightweight archived-session preview',
+    )
+
+    const restored = await loadSessionHistoryEntry({ entryId: 'history-sidecar-1' })
+    assert.equal(restored.entry.messages.length, 30)
+    assert.equal(restored.entry.messages[29]?.content, 'Archived sidecar message 30')
+  })
   it('saveState preserves full archived session transcripts when the renderer only sends lightweight history previews', async () => {
     const { saveState, loadState } = await import('../server/state-store.ts')
     const state = createDefaultState('D:/history-save-merge')

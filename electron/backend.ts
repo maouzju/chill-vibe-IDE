@@ -249,9 +249,12 @@ export const createDesktopBackend = (deps: DesktopBackendDependencies = {}) => {
       return storeImageAttachment(attachmentUploadRequestSchema.parse(request))
     },
     async stopChat(streamId: string) {
-      if (!getChatManager().stop(streamId)) {
-        throw new Error('Unable to stop the current run.')
-      }
+      // Stop is intentionally idempotent from the renderer's point of view.
+      // A stream can finish naturally between the user's click and the IPC call,
+      // or a restored card can keep a stale stream id. In both cases the UI is
+      // trying to leave the running state, so surfacing a hard IPC error only
+      // pollutes the transcript without making the provider any more stopped.
+      getChatManager().stop(streamId)
     },
     subscribeChatStream(streamId: string, listener: StreamListener) {
       return getChatManager().subscribe(streamId, listener)

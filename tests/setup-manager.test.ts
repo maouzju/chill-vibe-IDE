@@ -3,7 +3,7 @@ import path from 'node:path'
 import test from 'node:test'
 import { pathToFileURL } from 'node:url'
 
-import { resolveSetupScriptPath } from '../server/setup-manager.ts'
+import { buildSetupScriptArguments, resolveSetupScriptPath } from '../server/setup-manager.ts'
 
 test('setup manager resolves the repo script from the module location instead of the current workspace cwd', () => {
   const projectRoot = path.join('D:', 'Git', 'chill-vibe')
@@ -35,4 +35,31 @@ test('setup manager resolves the bundled setup script from Electron resources in
   })
 
   assert.equal(resolved, expectedScriptPath)
+})
+
+test('setup manager defaults CLI updates to the latest version', () => {
+  assert.deepEqual(buildSetupScriptArguments('D:/repo/scripts/setup-ai-cli.ps1', {
+    mode: 'update-cli',
+    cli: 'all',
+    version: '',
+  }), [
+    '-ExecutionPolicy',
+    'Bypass',
+    '-File',
+    'D:/repo/scripts/setup-ai-cli.ps1',
+    '-Mode',
+    'update-cli',
+    '-Cli',
+    'all',
+    '-Version',
+    'latest',
+  ])
+})
+
+test('setup manager passes a requested CLI version through to the setup script', () => {
+  assert.deepEqual(buildSetupScriptArguments('D:/repo/scripts/setup-ai-cli.ps1', {
+    mode: 'update-cli',
+    cli: 'codex',
+    version: '0.23.4',
+  }).slice(-6), ['-Mode', 'update-cli', '-Cli', 'codex', '-Version', '0.23.4'])
 })

@@ -71,6 +71,7 @@ import {
   gitPullRequestSchema,
   gitPushRequestSchema,
   gitStageRequestSchema,
+  setupRunRequestSchema,
   stateRecoverySelectionSchema,
   slashCommandRequestSchema,
   fileCreateRequestSchema,
@@ -196,8 +197,8 @@ export const createDesktopBackend = (deps: DesktopBackendDependencies = {}) => {
     fetchSetupStatus() {
       return getSetupManager().getStatus()
     },
-    runEnvironmentSetup() {
-      return getSetupManager().start()
+    runEnvironmentSetup(request?: unknown) {
+      return getSetupManager().start(setupRunRequestSchema.parse(request ?? {}))
     },
     async fetchOnboardingStatus() {
       return inspectOnboardingStatus()

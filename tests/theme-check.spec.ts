@@ -2542,6 +2542,7 @@ test('environment setup group highlights only missing tools in both themes', asy
   await expect(environmentSettingsGroup).toContainText(/Git/)
   await expect(environmentSettingsGroup).toContainText(/Codex CLI/)
   await expect(environmentSettingsGroup.getByRole('button', { name: /Install missing tools|\u4e00\u952e\u5b89\u88c5\u7f3a\u5931\u73af\u5883/ })).toBeVisible()
+  await expect(environmentSettingsGroup.getByRole('button', { name: /Update CLI|\u66f4\u65b0 CLI/ })).toBeVisible()
   await expect(environmentSettingsGroup).toHaveScreenshot('environment-settings-group-dark.png', {
     animations: 'disabled',
   })

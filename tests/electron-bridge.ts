@@ -81,9 +81,11 @@ export const installMockElectronBridge = async (page: Page) => {
           body: JSON.stringify(request),
         }),
       fetchSetupStatus: async () => jsonRequest('/api/setup/status'),
-      runEnvironmentSetup: async () =>
+      runEnvironmentSetup: async (request) =>
         jsonRequest('/api/setup/run', {
           method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(request ?? {}),
         }),
       fetchOnboardingStatus: async () => jsonRequest('/api/onboarding/status'),
       fetchGitStatus: async (workspacePath) =>

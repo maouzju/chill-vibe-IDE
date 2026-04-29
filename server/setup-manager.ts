@@ -4,7 +4,7 @@ import path from 'node:path'
 import readline from 'node:readline'
 import { fileURLToPath, URL } from 'node:url'
 
-import type { SetupLog, SetupStatus } from '../shared/schema.js'
+import type { SetupLog, SetupRunRequest, SetupStatus } from '../shared/schema.js'
 
 const maxLogs = 400
 const setupScriptRelativePath = path.join('scripts', 'setup-ai-cli.ps1')
@@ -75,6 +75,36 @@ export const resolveSetupScriptPath = ({
   return candidates.find((candidate) => exists(candidate))
 }
 
+const normalizeSetupRunRequest = (request: SetupRunRequest = {
+  mode: 'install-missing',
+  cli: 'all',
+  version: 'latest',
+}): SetupRunRequest => ({
+  mode: request.mode,
+  cli: request.cli,
+  version: request.version.trim() || 'latest',
+})
+
+export const buildSetupScriptArguments = (
+  scriptPath: string,
+  request?: SetupRunRequest,
+) => {
+  const normalized = normalizeSetupRunRequest(request)
+
+  return [
+    '-ExecutionPolicy',
+    'Bypass',
+    '-File',
+    scriptPath,
+    '-Mode',
+    normalized.mode,
+    '-Cli',
+    normalized.cli,
+    '-Version',
+    normalized.version,
+  ]
+}
+
 export class SetupManager {
   private child: ChildProcess | null = null
 
@@ -90,7 +120,7 @@ export class SetupManager {
     }
   }
 
-  start(): SetupStatus {
+  start(request?: SetupRunRequest): SetupStatus {
     if (this.status.state === 'running') {
       return this.getStatus()
     }
@@ -124,7 +154,7 @@ export class SetupManager {
 
     const child = spawn(
       'powershell.exe',
-      ['-ExecutionPolicy', 'Bypass', '-File', scriptPath],
+      buildSetupScriptArguments(scriptPath, request),
       {
         cwd: path.dirname(scriptPath),
         windowsHide: true,

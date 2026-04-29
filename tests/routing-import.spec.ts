@@ -311,7 +311,7 @@ test('shows localized routing copy when the app language is zh-CN', async ({ pag
   await expect(routingPanel).toContainText(/\u542f\u7528|\u0043\u004c\u0049 \u8def\u7531/)
 })
 
-test('hides the setup panel in settings when the environment is already ready', async ({ page }) => {
+test('hides the missing install action but keeps CLI updates available when the environment is ready', async ({ page }) => {
   await mockBaseApis(page)
 
   let onboardingStatusRequests = 0
@@ -329,6 +329,7 @@ test('hides the setup panel in settings when the environment is already ready', 
   await expect.poll(() => onboardingStatusRequests).toBeGreaterThan(0)
   await expect(page.locator('.setup-missing-list')).toHaveCount(0)
   await expect(page.locator('#app-panel-settings').getByRole('button', { name: installMissingToolsPattern })).toHaveCount(0)
+  await expect(page.locator('#app-panel-settings').getByRole('button', { name: /更新 CLI|Update CLI/ })).toBeVisible()
 })
 
 test('waits for onboarding detection before showing the setup panel', async ({ page }) => {
@@ -383,6 +384,55 @@ test('lists only missing tools in the setup panel and keeps a single install but
   await expect(missingList).not.toContainText('Node.js')
   await expect(missingList).not.toContainText('Claude CLI')
   await expect(settingsPanel.getByRole('button', { name: installMissingToolsPattern })).toHaveCount(1)
+})
+
+test('CLI update form defaults to latest and can target a specific CLI version', async ({ page }) => {
+  await mockBaseApis(page)
+
+  let setupRequest: unknown = null
+
+  await page.route('**/api/onboarding/status', async (route) => {
+    await route.fulfill({
+      json: createOnboardingStatus(),
+    })
+  })
+
+  await page.route('**/api/setup/run', async (route) => {
+    setupRequest = JSON.parse(route.request().postData() || '{}')
+    await route.fulfill({
+      status: 202,
+      json: {
+        state: 'success',
+        logs: [],
+      },
+    })
+  })
+
+  await page.goto('http://localhost:5173')
+  await page.getByRole('tab', { name: settingsTabPattern }).click()
+
+  const settingsPanel = page.locator('#app-panel-settings')
+  await settingsPanel.locator('#cli-update-target').selectOption('codex')
+  await settingsPanel.locator('#cli-update-version').fill('0.23.4')
+  await settingsPanel.getByRole('button', { name: /更新 CLI|Update CLI/ }).click()
+
+  await expect.poll(() => setupRequest).toEqual({
+    mode: 'update-cli',
+    cli: 'codex',
+    version: '0.23.4',
+  })
+
+  setupRequest = null
+  await settingsPanel.locator('#cli-update-target').selectOption('all')
+  await settingsPanel.locator('#cli-update-version').fill('')
+  await expect(settingsPanel.getByRole('button', { name: /更新 CLI|Update CLI/ })).toBeEnabled()
+  await settingsPanel.getByRole('button', { name: /更新 CLI|Update CLI/ }).click()
+
+  await expect.poll(() => setupRequest).toEqual({
+    mode: 'update-cli',
+    cli: 'all',
+    version: 'latest',
+  })
 })
 
 test('imports cc-switch profiles and shows a summary notice', async ({ page }) => {

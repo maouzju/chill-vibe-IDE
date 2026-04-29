@@ -63,7 +63,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   importCcSwitchRouting: (request: unknown) =>
     ipcRenderer.invoke('desktop:import-cc-switch-routing', request),
   fetchSetupStatus: () => ipcRenderer.invoke('desktop:fetch-setup-status'),
-  runEnvironmentSetup: () => ipcRenderer.invoke('desktop:run-environment-setup'),
+  runEnvironmentSetup: (request: unknown) =>
+    ipcRenderer.invoke('desktop:run-environment-setup', request),
   fetchOnboardingStatus: () => ipcRenderer.invoke('desktop:fetch-onboarding-status'),
   fetchGitStatus: (workspacePath: string) => ipcRenderer.invoke('desktop:fetch-git-status', workspacePath),
   setGitStage: (request: unknown) => ipcRenderer.invoke('desktop:set-git-stage', request),

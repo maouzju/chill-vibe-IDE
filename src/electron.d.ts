@@ -41,6 +41,7 @@ import type {
   ProviderStatus,
   RecentCrashRecovery,
   RendererCrashCaptureRequest,
+  SetupRunRequestInput,
   SetupStatus,
   SlashCommand,
   SlashCommandRequest,
@@ -79,7 +80,7 @@ declare global {
       fetchProviders?: () => Promise<ProviderStatus[]>
       importCcSwitchRouting?: (request: CcSwitchImportRequest) => Promise<CcSwitchImportResponse>
       fetchSetupStatus?: () => Promise<SetupStatus>
-      runEnvironmentSetup?: () => Promise<SetupStatus>
+      runEnvironmentSetup?: (request?: SetupRunRequestInput) => Promise<SetupStatus>
       fetchOnboardingStatus?: () => Promise<OnboardingStatus>
       fetchGitStatus?: (workspacePath: string) => Promise<GitStatus>
       setGitStage?: (request: GitStageRequest) => Promise<GitStatus>

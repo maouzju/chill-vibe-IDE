@@ -37,6 +37,7 @@ import {
   rendererCrashCaptureRequestSchema,
   slashCommandRequestSchema,
   slashCommandSchema,
+  setupRunRequestSchema,
   setupStatusSchema,
   stateRecoverySelectionSchema,
   type AppStateLoadResponse,
@@ -75,6 +76,7 @@ import {
   type ProviderStatus,
   type RecentCrashRecovery,
   type RendererCrashCaptureRequest,
+  type SetupRunRequestInput,
   type SetupStatus,
   type SlashCommand,
   type SlashCommandRequest,
@@ -270,8 +272,12 @@ export const loadExternalSession = async (
 export const fetchSetupStatus = async (): Promise<SetupStatus> =>
   readDesktop(requireDesktopAction(getDesktopApi()?.fetchSetupStatus), setupStatusSchema)
 
-export const runEnvironmentSetup = async (): Promise<SetupStatus> =>
-  readDesktop(requireDesktopAction(getDesktopApi()?.runEnvironmentSetup), setupStatusSchema)
+export const runEnvironmentSetup = async (request: SetupRunRequestInput = {}): Promise<SetupStatus> => {
+  const parsed = setupRunRequestSchema.parse(request)
+  const desktopSetup = requireDesktopAction(getDesktopApi()?.runEnvironmentSetup)
+
+  return readDesktop(() => desktopSetup(parsed), setupStatusSchema)
+}
 
 export const fetchOnboardingStatus = async (): Promise<OnboardingStatus> =>
   readDesktop(requireDesktopAction(getDesktopApi()?.fetchOnboardingStatus), onboardingStatusSchema)

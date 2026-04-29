@@ -363,7 +363,9 @@ function registerDesktopHandlers() {
     desktopBackend.importCcSwitchRouting(request),
   )
   ipcMain.handle('desktop:fetch-setup-status', () => desktopBackend.fetchSetupStatus())
-  ipcMain.handle('desktop:run-environment-setup', () => desktopBackend.runEnvironmentSetup())
+  ipcMain.handle('desktop:run-environment-setup', (_event, request: unknown) =>
+    desktopBackend.runEnvironmentSetup(request),
+  )
   ipcMain.handle('desktop:fetch-onboarding-status', () => desktopBackend.fetchOnboardingStatus())
   ipcMain.handle('desktop:fetch-git-status', (_event, workspacePath) =>
     desktopBackend.fetchGitStatus(workspacePath),

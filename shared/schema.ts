@@ -622,6 +622,14 @@ export const setupStatusSchema = z.object({
 })
 export type SetupStatus = z.infer<typeof setupStatusSchema>
 
+export const setupRunRequestSchema = z.object({
+  mode: z.enum(['install-missing', 'update-cli']).default('install-missing'),
+  cli: z.enum(['all', 'claude', 'codex']).default('all'),
+  version: z.string().default('latest'),
+})
+export type SetupRunRequestInput = z.input<typeof setupRunRequestSchema>
+export type SetupRunRequest = z.infer<typeof setupRunRequestSchema>
+
 export const environmentCheckIdSchema = z.enum(['git', 'node', 'claude', 'codex'])
 export type EnvironmentCheckId = z.infer<typeof environmentCheckIdSchema>
 

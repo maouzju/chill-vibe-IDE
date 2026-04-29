@@ -1,3 +1,13 @@
+param(
+    [ValidateSet('install-missing', 'update-cli')]
+    [string]$Mode = 'install-missing',
+
+    [ValidateSet('all', 'claude', 'codex')]
+    [string]$Cli = 'all',
+
+    [string]$Version = 'latest'
+)
+
 $ErrorActionPreference = 'Stop'
 [Console]::OutputEncoding = [System.Text.UTF8Encoding]::UTF8
 
@@ -102,12 +112,14 @@ function Install-NpmGlobal {
     param(
         [string]$PackageName,
         [string]$CommandName,
-        [string]$DisplayName
+        [string]$DisplayName,
+        [string]$PackageVersion = 'latest',
+        [switch]$Force
     )
 
     Refresh-Path
     $existing = Get-CommandSafe $CommandName
-    if ($existing) {
+    if ($existing -and -not $Force) {
         Write-Step "$DisplayName already available: $(Get-CommandVersion -CommandName $CommandName)"
         return
     }
@@ -116,8 +128,11 @@ function Install-NpmGlobal {
         throw "npm is not available. Install Node.js first."
     }
 
-    Write-Step "Installing $DisplayName with npm..."
-    & npm install -g $PackageName 2>&1 | ForEach-Object {
+    $normalizedVersion = if ([string]::IsNullOrWhiteSpace($PackageVersion)) { 'latest' } else { $PackageVersion.Trim() }
+    $packageSpec = "${PackageName}@${normalizedVersion}"
+    $actionLabel = if ($Force) { 'Updating' } else { 'Installing' }
+    Write-Step "$actionLabel $DisplayName with npm ($normalizedVersion)..."
+    & npm install -g $packageSpec 2>&1 | ForEach-Object {
         $line = $_.ToString().Trim()
         if ($line) {
             Write-Step "  $line"
@@ -130,6 +145,36 @@ function Install-NpmGlobal {
     }
 
     Write-Step "$DisplayName installed: $(Get-CommandVersion -CommandName $CommandName)"
+}
+
+function Update-SelectedCli {
+    param(
+        [string]$SelectedCli,
+        [string]$TargetVersion
+    )
+
+    Refresh-Path
+    if (-not (Get-CommandSafe 'npm')) {
+        throw 'npm is not available. Install Node.js first.'
+    }
+
+    $normalizedVersion = if ([string]::IsNullOrWhiteSpace($TargetVersion)) { 'latest' } else { $TargetVersion.Trim() }
+    Write-Step "Starting CLI update: target=$SelectedCli, version=$normalizedVersion."
+
+    if ($SelectedCli -eq 'all' -or $SelectedCli -eq 'claude') {
+        Install-NpmGlobal -PackageName '@anthropic-ai/claude-code' -CommandName 'claude' -DisplayName 'Claude CLI' -PackageVersion $normalizedVersion -Force
+    }
+
+    if ($SelectedCli -eq 'all' -or $SelectedCli -eq 'codex') {
+        Install-NpmGlobal -PackageName '@openai/codex' -CommandName 'codex' -DisplayName 'Codex CLI' -PackageVersion $normalizedVersion -Force
+    }
+
+    Write-Step 'CLI update completed successfully.'
+}
+
+if ($Mode -eq 'update-cli') {
+    Update-SelectedCli -SelectedCli $Cli -TargetVersion $Version
+    return
 }
 
 Write-Step 'Starting one-click setup for Git, Node.js, Claude CLI, and Codex CLI.'

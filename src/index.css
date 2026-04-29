@@ -1835,6 +1835,29 @@ body.is-card-dragging .lane-drop-zone-top {
   border-color: color-mix(in srgb, #e37c68 38%, var(--line));
 }
 
+.cli-update-shell {
+  margin-top: 1rem;
+  padding-top: 0.85rem;
+  border-top: 1px solid var(--line);
+}
+
+.cli-update-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 0.85fr) minmax(0, 1.15fr);
+  gap: 0.75rem;
+  margin-top: 0.75rem;
+}
+
+.cli-update-actions {
+  margin-top: 0.75rem;
+}
+
+@media (max-width: 720px) {
+  .cli-update-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
 /* ── Update banner ───────────────────────────────────────────────────── */
 
 .update-banner {

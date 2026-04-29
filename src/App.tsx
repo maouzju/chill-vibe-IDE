@@ -485,6 +485,8 @@ function App() {
   const [modelPromptRulesDraft, setModelPromptRulesDraft] = useState<ModelPromptRule[]>([])
   const [setupStatus, setSetupStatus] = useState<SetupStatus | null>(null)
   const [setupStatusPending, setSetupStatusPending] = useState(false)
+  const [cliUpdateTarget, setCliUpdateTarget] = useState<'all' | 'claude' | 'codex'>('all')
+  const [cliUpdateVersion, setCliUpdateVersion] = useState('')
   const [routingImportPending, setRoutingImportPending] = useState(false)
   const [onboardingCandidate, setOnboardingCandidate] = useState(false)
   const [onboardingInitialized, setOnboardingInitialized] = useState(false)
@@ -4172,6 +4174,30 @@ function App() {
     }
   }, [syncProviderStatuses, text.unexpectedError])
 
+  const handleUpdateCli = useCallback(async () => {
+    setSettingsNotice(null)
+    setSetupStatusPending(true)
+
+    try {
+      setSetupStatus(
+        await runEnvironmentSetup({
+          mode: 'update-cli',
+          cli: cliUpdateTarget,
+          version: cliUpdateVersion.trim() || 'latest',
+        }),
+      )
+    } catch (error) {
+      setSetupStatus({
+        state: 'error',
+        message: errorMessage(error, text.unexpectedError),
+        logs: [],
+      })
+    } finally {
+      setSetupStatusPending(false)
+      void syncProviderStatuses()
+    }
+  }, [cliUpdateTarget, cliUpdateVersion, syncProviderStatuses, text.unexpectedError])
+
   const setGuideLanguage = useCallback(
     (language: AppState['settings']['language']) => {
       setOnboardingLanguage(language)
@@ -4217,11 +4243,11 @@ function App() {
           ? panelText.setupError
           : setupStatus?.state === 'unsupported'
             ? panelText.setupUnsupported
-            : onboardingStatus?.environment.checks.some((check) => !check.available)
-              ? panelText.setupDetectedMissing
-              : setupStatus
-                ? panelText.setupIdle
-                : panelText.setupLoading
+            : onboardingStatusPending || !onboardingStatus
+              ? panelText.setupLoading
+              : onboardingStatus.environment.checks.some((check) => !check.available)
+                ? panelText.setupDetectedMissing
+                : panelText.setupIdle
   const setupLogs = setupStatus?.logs ?? []
   const hasRunSetup = (setupStatus?.state ?? 'idle') !== 'idle'
   const hasSetupLogs = setupLogs.length > 0
@@ -4236,7 +4262,7 @@ function App() {
   )
   const onboardingEnvironmentReady = Boolean(onboardingStatus?.environment.ready) || setupStatus?.state === 'success'
   const showSettingsSetupPanel =
-    Boolean(onboardingStatus) && !onboardingStatusPending && !onboardingEnvironmentReady && hasMissingEnvironmentChecks
+    Boolean(onboardingStatus) && !onboardingStatusPending
   const setupStatusMessage =
     setupStatus?.message ??
     (setupStatusPending
@@ -5183,14 +5209,16 @@ function App() {
           </div>
 
           <div className="settings-actions">
-            <AppButton
-              tone="primary"
-              type="button"
-              disabled={setupStatusPending || setupStatus?.state === 'running'}
-              onClick={() => void handleRunSetup()}
-            >
-              {hasRunSetup ? panelText.rerunSetup : panelText.installMissingTools}
-            </AppButton>
+            {hasMissingEnvironmentChecks ? (
+              <AppButton
+                tone="primary"
+                type="button"
+                disabled={setupStatusPending || setupStatus?.state === 'running'}
+                onClick={() => void handleRunSetup()}
+              >
+                {hasRunSetup ? panelText.rerunSetup : panelText.installMissingTools}
+              </AppButton>
+            ) : null}
             <AppButton
               type="button"
               disabled={setupStatusPending}
@@ -5201,6 +5229,49 @@ function App() {
             >
               {panelText.refreshSetup}
             </AppButton>
+          </div>
+
+          <div className="cli-update-shell">
+            <div className="settings-section-title">{panelText.cliUpdateTitle}</div>
+            <p className="settings-note">{panelText.cliUpdateDescription}</p>
+            <div className="cli-update-grid">
+              <label className="settings-field" htmlFor="cli-update-target">
+                <span>{panelText.cliUpdateTarget}</span>
+                <select
+                  id="cli-update-target"
+                  className="control settings-input"
+                  value={cliUpdateTarget}
+                  onChange={(event) =>
+                    setCliUpdateTarget(event.target.value as 'all' | 'claude' | 'codex')
+                  }
+                >
+                  <option value="all">{panelText.cliUpdateTargetAll}</option>
+                  <option value="claude">Claude</option>
+                  <option value="codex">Codex</option>
+                </select>
+              </label>
+
+              <label className="settings-field" htmlFor="cli-update-version">
+                <span>{panelText.cliUpdateVersion}</span>
+                <input
+                  id="cli-update-version"
+                  className="control settings-input"
+                  value={cliUpdateVersion}
+                  placeholder={panelText.cliUpdateVersionPlaceholder}
+                  onChange={(event) => setCliUpdateVersion(event.target.value)}
+                />
+              </label>
+            </div>
+            <p className="settings-note">{panelText.cliUpdateVersionNote}</p>
+            <div className="settings-actions cli-update-actions">
+              <AppButton
+                type="button"
+                disabled={setupStatusPending || setupStatus?.state === 'running'}
+                onClick={() => void handleUpdateCli()}
+              >
+                {panelText.cliUpdateButton}
+              </AppButton>
+            </div>
           </div>
 
           {hasSetupLogs ? (
@@ -6345,14 +6416,16 @@ function App() {
                   </div>
 
                   <div className="settings-actions">
-                    <AppButton
-                      tone="primary"
-                      type="button"
-                      disabled={setupStatusPending || setupStatus?.state === 'running'}
-                      onClick={() => void handleRunSetup()}
-                    >
-                      {hasRunSetup ? panelText.rerunSetup : panelText.installMissingTools}
-                    </AppButton>
+                    {hasMissingEnvironmentChecks ? (
+                      <AppButton
+                        tone="primary"
+                        type="button"
+                        disabled={setupStatusPending || setupStatus?.state === 'running'}
+                        onClick={() => void handleRunSetup()}
+                      >
+                        {hasRunSetup ? panelText.rerunSetup : panelText.installMissingTools}
+                      </AppButton>
+                    ) : null}
                     <AppButton
                       type="button"
                       disabled={setupStatusPending}
@@ -6363,6 +6436,49 @@ function App() {
                     >
                       {panelText.refreshSetup}
                     </AppButton>
+                  </div>
+
+                  <div className="cli-update-shell">
+                    <div className="settings-section-title">{panelText.cliUpdateTitle}</div>
+                    <p className="settings-note">{panelText.cliUpdateDescription}</p>
+                    <div className="cli-update-grid">
+                      <label className="settings-field" htmlFor="cli-update-target">
+                        <span>{panelText.cliUpdateTarget}</span>
+                        <select
+                          id="cli-update-target"
+                          className="control settings-input"
+                          value={cliUpdateTarget}
+                          onChange={(event) =>
+                            setCliUpdateTarget(event.target.value as 'all' | 'claude' | 'codex')
+                          }
+                        >
+                          <option value="all">{panelText.cliUpdateTargetAll}</option>
+                          <option value="claude">Claude</option>
+                          <option value="codex">Codex</option>
+                        </select>
+                      </label>
+
+                      <label className="settings-field" htmlFor="cli-update-version">
+                        <span>{panelText.cliUpdateVersion}</span>
+                        <input
+                          id="cli-update-version"
+                          className="control settings-input"
+                          value={cliUpdateVersion}
+                          placeholder={panelText.cliUpdateVersionPlaceholder}
+                          onChange={(event) => setCliUpdateVersion(event.target.value)}
+                        />
+                      </label>
+                    </div>
+                    <p className="settings-note">{panelText.cliUpdateVersionNote}</p>
+                    <div className="settings-actions cli-update-actions">
+                      <AppButton
+                        type="button"
+                        disabled={setupStatusPending || setupStatus?.state === 'running'}
+                        onClick={() => void handleUpdateCli()}
+                      >
+                        {panelText.cliUpdateButton}
+                      </AppButton>
+                    </div>
                   </div>
 
                   {hasSetupLogs ? (

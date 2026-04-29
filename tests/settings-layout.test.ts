@@ -26,7 +26,7 @@ describe('settings layout', () => {
       { id: 'models', height: 220 },
       { id: 'utility', height: 280 },
       { id: 'experimental', height: 240 },
-      { id: 'environment', height: 300 },
+      { id: 'environment', height: 380 },
       { id: 'data', height: 140 },
     ]
 

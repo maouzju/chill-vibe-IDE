@@ -44,6 +44,15 @@ export const getPanelText = (language: AppState['settings']['language']) =>
         setupMissingListTitle: 'Missing tools',
         setupMissingListDescription: 'Only the items below still need installation.',
         installMissingTools: 'Install missing tools',
+        cliUpdateTitle: 'Update CLI version',
+        cliUpdateDescription:
+          'Update Claude CLI, Codex CLI, or both. Leave the version blank to install the latest release.',
+        cliUpdateTarget: 'CLI',
+        cliUpdateTargetAll: 'Claude + Codex',
+        cliUpdateVersion: 'Version',
+        cliUpdateVersionPlaceholder: 'latest',
+        cliUpdateVersionNote: 'Supports npm versions or dist-tags, such as latest, 1.2.3, or beta.',
+        cliUpdateButton: 'Update CLI',
         resilientProxyTitle: 'Auto-retry proxy',
         resilientProxyDescription:
           'Automatically retry interrupted AI streams. Only affects runs from this app.',
@@ -140,6 +149,15 @@ export const getPanelText = (language: AppState['settings']['language']) =>
         setupMissingListTitle: '缺失项',
         setupMissingListDescription: '仅下列项目仍需要安装。',
         installMissingTools: '一键安装缺失环境',
+        cliUpdateTitle: '更新 CLI 版本',
+        cliUpdateDescription:
+          '更新 Claude CLI、Codex CLI，或同时更新两者。版本留空时默认安装最新版。',
+        cliUpdateTarget: 'CLI',
+        cliUpdateTargetAll: 'Claude + Codex',
+        cliUpdateVersion: '版本',
+        cliUpdateVersionPlaceholder: 'latest',
+        cliUpdateVersionNote: '支持 npm 版本号或标签，例如 latest、1.2.3、beta。',
+        cliUpdateButton: '更新 CLI',
         resilientProxyTitle: '断线续传',
         resilientProxyDescription:
           '流式响应中断时自动重试，从断点处继续。仅影响本应用发起的请求。',

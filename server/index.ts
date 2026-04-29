@@ -23,6 +23,7 @@ import {
   fileRenameRequestSchema,
   fileSearchRequestSchema,
   fileWriteRequestSchema,
+  setupRunRequestSchema,
   slashCommandRequestSchema,
   workspaceValidationRequestSchema,
 } from '../shared/schema.js'
@@ -148,8 +149,15 @@ app.get('/api/onboarding/status', async (_request, response) => {
   response.json(await inspectOnboardingStatus())
 })
 
-app.post('/api/setup/run', (_request, response) => {
-  response.status(202).json(setupManager.start())
+app.post('/api/setup/run', (request, response) => {
+  const parsed = setupRunRequestSchema.safeParse(request.body ?? {})
+
+  if (!parsed.success) {
+    response.status(400).json({ message: 'Invalid setup request.' })
+    return
+  }
+
+  response.status(202).json(setupManager.start(parsed.data))
 })
 
 app.post('/api/slash-commands', async (request, response) => {

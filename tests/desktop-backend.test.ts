@@ -9,6 +9,7 @@ test('desktop backend delays manager construction until the matching feature is 
   let musicManagerFactoryCalls = 0
   let setupDisposed = 0
   let musicDisposed = 0
+  const setupRequests: unknown[] = []
 
   const backend = createDesktopBackend({
     createChatManager: () => {
@@ -32,7 +33,8 @@ test('desktop backend delays manager construction until the matching feature is 
         getStatus() {
           return { state: 'idle', logs: [] }
         },
-        start() {
+        start(request?: unknown) {
+          setupRequests.push(request)
           return { state: 'running', logs: [] }
         },
         dispose() {
@@ -82,6 +84,12 @@ test('desktop backend delays manager construction until the matching feature is 
   assert.equal(setupManagerFactoryCalls, 1)
   assert.equal(chatManagerFactoryCalls, 0)
   assert.equal(musicManagerFactoryCalls, 0)
+
+  assert.deepEqual(backend.runEnvironmentSetup({ mode: 'update-cli', cli: 'codex', version: '0.23.4' }), {
+    state: 'running',
+    logs: [],
+  })
+  assert.deepEqual(setupRequests, [{ mode: 'update-cli', cli: 'codex', version: '0.23.4' }])
 
   assert.deepEqual(backend.fetchMusicLoginStatus(), {
     authenticated: false,

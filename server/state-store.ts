@@ -4,19 +4,37 @@ import path from 'node:path'
 import { getChatMessageAttachments } from '../shared/chat-attachments.js'
 import {
   archiveOpenChatsForCrashRecovery,
+  createCard,
   createPane,
   createDefaultState,
   getConfiguredModel,
+  getCardDefaultSize,
+  getCardMinimumSize,
   getOrderedColumnCards,
   getPreferredReasoningEffort,
   normalizeLayoutNode,
   normalizeAppSettings,
+  normalizeCardSize,
   normalizeColumnWidth,
   normalizeSessionHistory,
+  maxRecentWorkspaces,
 } from '../shared/default-state.js'
+import { normalizeBrainstormAnswerCount } from '../shared/brainstorm.js'
 import { getWorkspaceTitle } from '../shared/i18n.js'
 import { isInterruptedSessionRecoverable } from '../shared/interrupted-session-recovery.js'
-import { BRAINSTORM_TOOL_MODEL, getDefaultModel, normalizeStoredModel, PM_TOOL_MODEL } from '../shared/models.js'
+import {
+  BRAINSTORM_TOOL_MODEL,
+  FILETREE_TOOL_MODEL,
+  GIT_TOOL_MODEL,
+  MUSIC_TOOL_MODEL,
+  STICKYNOTE_TOOL_MODEL,
+  TEXTEDITOR_TOOL_MODEL,
+  WEATHER_TOOL_MODEL,
+  WHITENOISE_TOOL_MODEL,
+  getDefaultModel,
+  normalizeStoredModel,
+  PM_TOOL_MODEL,
+} from '../shared/models.js'
 import { normalizeReasoningEffort } from '../shared/reasoning.js'
 import {
   appStateSchema,
@@ -28,7 +46,10 @@ import {
   type BoardColumn,
   type ChatCard,
   type DesktopRuntimeKind,
+  type ImageAttachment,
   type InterruptedSessionRecovery,
+  type LayoutNode,
+  type Provider,
   type RecentCrashRecovery,
   type RendererCrashCaptureRequest,
   type SessionHistoryEntry,
@@ -189,7 +210,9 @@ const readSessionHistorySidecarEntry = async (
 ): Promise<SessionHistoryEntry | null> => {
   try {
     const content = await readFile(getSessionHistoryEntryFilePath(entryId, dataDir), 'utf8')
-    return internalSessionHistoryLoadResponseSchema.parse({ entry: JSON.parse(content) }).entry
+    return internalSessionHistoryLoadResponseSchema.parse({
+      entry: normalizePersistedSessionHistoryEntry(JSON.parse(content) as SessionHistoryEntry),
+    }).entry
   } catch {
     return null
   }
@@ -205,7 +228,9 @@ const loadSessionHistorySidecars = async (dataDir = getAppDataDir()) => {
         .map(async (fileName) => {
           try {
             const content = await readFile(path.join(sidecarDir, fileName), 'utf8')
-            return internalSessionHistoryLoadResponseSchema.parse({ entry: JSON.parse(content) }).entry
+            return internalSessionHistoryLoadResponseSchema.parse({
+              entry: normalizePersistedSessionHistoryEntry(JSON.parse(content) as SessionHistoryEntry),
+            }).entry
           } catch {
             return null
           }
@@ -278,6 +303,380 @@ const getStateDiskStamp = async (dataDir = getAppDataDir()) => {
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value)
 
+const isProvider = (value: unknown): value is Provider =>
+  value === 'codex' || value === 'claude'
+
+const persistedToolCardModels = new Set([
+  FILETREE_TOOL_MODEL,
+  GIT_TOOL_MODEL,
+  MUSIC_TOOL_MODEL,
+  STICKYNOTE_TOOL_MODEL,
+  TEXTEDITOR_TOOL_MODEL,
+  WEATHER_TOOL_MODEL,
+  WHITENOISE_TOOL_MODEL,
+])
+
+const fallbackTimestamp = '1970-01-01T00:00:00.000Z'
+const fallbackMessageCreatedAt = '1970-01-01T00:00:00.000Z'
+
+const normalizePersistedTimestamp = (value: unknown, fallback = fallbackTimestamp) => {
+  if (typeof value !== 'string' || !value.trim()) {
+    return fallback
+  }
+
+  const parsed = Date.parse(value)
+  return Number.isFinite(parsed) ? new Date(parsed).toISOString() : fallback
+}
+
+const normalizePersistedMessageTimestamp = (value: unknown) =>
+  normalizePersistedTimestamp(value, fallbackMessageCreatedAt)
+
+const normalizeOptionalString = (value: unknown) =>
+  typeof value === 'string' ? value : undefined
+
+const normalizeStringRecord = (value: unknown): Record<string, string> =>
+  isRecord(value)
+    ? Object.fromEntries(
+        Object.entries(value).filter((entry): entry is [string, string] => typeof entry[1] === 'string'),
+      )
+    : {}
+
+const normalizePositiveInteger = (value: unknown, fallback: number) =>
+  typeof value === 'number' && Number.isInteger(value) && value >= 0 ? value : fallback
+
+const normalizePersistedRecentWorkspaces = (value: unknown): AppState['settings']['recentWorkspaces'] => {
+  if (!Array.isArray(value)) {
+    return []
+  }
+
+  const seen = new Set<string>()
+  return value
+    .flatMap((item) => {
+      if (!isRecord(item) || typeof item.path !== 'string' || !item.path.trim()) {
+        return []
+      }
+
+      const key = item.path.toLowerCase()
+      if (seen.has(key)) {
+        return []
+      }
+      seen.add(key)
+
+      return [{
+        path: item.path,
+        openedAt: normalizePersistedTimestamp(item.openedAt),
+      }]
+    })
+    .sort((a, b) => (b.openedAt > a.openedAt ? 1 : b.openedAt < a.openedAt ? -1 : 0))
+    .slice(0, maxRecentWorkspaces)
+}
+
+const normalizePersistedImageAttachments = (value: unknown): ImageAttachment[] => {
+  if (!Array.isArray(value)) {
+    return []
+  }
+
+  return value.flatMap((attachment) => {
+    if (!isRecord(attachment)) {
+      return []
+    }
+
+    if (
+      typeof attachment.id !== 'string' ||
+      !attachment.id.trim() ||
+      typeof attachment.fileName !== 'string' ||
+      !attachment.fileName.trim() ||
+      (
+        attachment.mimeType !== 'image/png' &&
+        attachment.mimeType !== 'image/jpeg' &&
+        attachment.mimeType !== 'image/webp' &&
+        attachment.mimeType !== 'image/gif'
+      ) ||
+      typeof attachment.sizeBytes !== 'number' ||
+      !Number.isInteger(attachment.sizeBytes) ||
+      attachment.sizeBytes <= 0
+    ) {
+      return []
+    }
+
+    return [{
+      id: attachment.id,
+      fileName: attachment.fileName,
+      mimeType: attachment.mimeType,
+      sizeBytes: attachment.sizeBytes,
+    }]
+  })
+}
+
+const normalizePersistedMessage = (
+  message: unknown,
+  index: number,
+): ChatCard['messages'][number] => {
+  const record = isRecord(message) ? message : {}
+  const id = typeof record.id === 'string' && record.id.trim()
+    ? record.id
+    : `recovered-message-${index + 1}`
+  const role =
+    record.role === 'user' || record.role === 'assistant' || record.role === 'system'
+      ? record.role
+      : 'assistant'
+  const content = typeof record.content === 'string' ? record.content : ''
+  const createdAt = normalizePersistedMessageTimestamp(record.createdAt)
+  const meta = normalizeStringRecord(record.meta)
+
+  const normalized = {
+    id,
+    role,
+    content,
+    createdAt,
+    meta: Object.keys(meta).length > 0 ? meta : undefined,
+  }
+
+  return normalized as ChatCard['messages'][number]
+}
+
+const normalizePersistedMessages = (messages: unknown): ChatCard['messages'] =>
+  Array.isArray(messages) ? messages.map(normalizePersistedMessage) : []
+
+const normalizePersistedBrainstorm = (
+  value: unknown,
+  fallback: ChatCard['brainstorm'],
+): ChatCard['brainstorm'] => {
+  const record = isRecord(value) ? value : {}
+  const answers = Array.isArray(record.answers)
+    ? record.answers.flatMap((answer, index) => {
+        if (!isRecord(answer)) {
+          return []
+        }
+
+        const id = typeof answer.id === 'string' && answer.id.trim()
+          ? answer.id
+          : `recovered-answer-${index + 1}`
+        const status: ChatCard['brainstorm']['answers'][number]['status'] =
+          answer.status === 'streaming' || answer.status === 'done' || answer.status === 'error'
+            ? answer.status
+            : 'error'
+        const streamId = typeof answer.streamId === 'string' && answer.streamId.trim()
+          ? answer.streamId
+          : undefined
+
+        return [{
+          id,
+          content: typeof answer.content === 'string' ? answer.content : '',
+          status,
+          streamId,
+          error: typeof answer.error === 'string' ? answer.error : '',
+        }]
+      })
+    : []
+
+  return {
+    prompt: typeof record.prompt === 'string' ? record.prompt : fallback.prompt,
+    provider: isProvider(record.provider) ? record.provider : fallback.provider,
+    model: typeof record.model === 'string' ? record.model : fallback.model,
+    answerCount: normalizeBrainstormAnswerCount(record.answerCount, fallback.answerCount),
+    answers,
+    failedAnswers: Array.isArray(record.failedAnswers)
+      ? record.failedAnswers.filter((item): item is string => typeof item === 'string')
+      : [],
+  }
+}
+
+const normalizePersistedPm = (value: unknown, fallback: ChatCard['pm']): ChatCard['pm'] => {
+  if (!isRecord(value) && !fallback) {
+    return undefined
+  }
+
+  const record = isRecord(value) ? value : {}
+  const provider = isProvider(record.provider) ? record.provider : (fallback?.provider ?? 'codex')
+
+  return {
+    provider,
+    model: typeof record.model === 'string' && record.model.trim()
+      ? normalizeStoredModel(provider, record.model)
+      : (fallback?.model ?? getDefaultModel(provider)),
+  }
+}
+
+const normalizePersistedCard = (
+  card: unknown,
+  options: {
+    cardId: string
+    columnProvider: Provider
+    columnModel: string
+    settings: AppState['settings']
+    language: AppState['settings']['language']
+  },
+): ChatCard | null => {
+  if (!isRecord(card)) {
+    return null
+  }
+
+  const candidateProvider = isProvider(card.provider) ? card.provider : options.columnProvider
+  const rawModel = typeof card.model === 'string' ? card.model : options.columnModel
+  const isToolCard = persistedToolCardModels.has(rawModel)
+  const provider = isToolCard ? options.columnProvider : candidateProvider
+  const normalizedModel = normalizeStoredModel(provider, rawModel)
+  const fallback = createCard(
+    undefined,
+    typeof card.size === 'number' && Number.isFinite(card.size) && card.size > 0 ? card.size : undefined,
+    provider,
+    normalizedModel || getConfiguredModel(options.settings, provider),
+    typeof card.reasoningEffort === 'string' ? card.reasoningEffort : undefined,
+    options.language,
+  )
+  const id = typeof card.id === 'string' && card.id.trim() ? card.id : options.cardId
+  const rawStatus = card.status
+  const hasRecoverableStream = rawStatus === 'streaming' && typeof card.streamId === 'string' && card.streamId.trim()
+  const status: ChatCard['status'] =
+    rawStatus === 'streaming'
+      ? (hasRecoverableStream ? 'streaming' : 'idle')
+      : rawStatus === 'error'
+        ? 'error'
+        : 'idle'
+  const rawMessages = normalizePersistedMessages(
+    hasRecoverableStream ? trimStreamingMessages(card.messages as ChatCard['messages']) : card.messages,
+  )
+  const shouldInvalidateSession = shouldInvalidatePersistedChatSession(status, rawMessages)
+  const providerSessions = shouldInvalidateSession ? {} : normalizeStringRecord(card.providerSessions)
+  const sessionId = shouldInvalidateSession ? undefined : normalizeOptionalString(card.sessionId)
+  const streamId = hasRecoverableStream ? normalizeOptionalString(card.streamId) : undefined
+
+  return {
+    ...fallback,
+    id,
+    title: typeof card.title === 'string' ? card.title : fallback.title,
+    sessionId,
+    providerSessions,
+    streamId,
+    status,
+    size: normalizeCardSize(
+      typeof card.size === 'number' ? card.size : fallback.size,
+      getCardMinimumSize(normalizedModel),
+      getCardDefaultSize(normalizedModel),
+    ),
+    provider,
+    model: normalizedModel,
+    reasoningEffort: normalizeReasoningEffort(provider, typeof card.reasoningEffort === 'string' ? card.reasoningEffort : undefined),
+    thinkingEnabled: typeof card.thinkingEnabled === 'boolean' ? card.thinkingEnabled : fallback.thinkingEnabled,
+    planMode: typeof card.planMode === 'boolean' ? card.planMode : fallback.planMode,
+    autoUrgeActive: typeof card.autoUrgeActive === 'boolean' ? card.autoUrgeActive : fallback.autoUrgeActive,
+    autoUrgeProfileId: typeof card.autoUrgeProfileId === 'string' ? card.autoUrgeProfileId : fallback.autoUrgeProfileId,
+    collapsed: typeof card.collapsed === 'boolean' ? card.collapsed : fallback.collapsed,
+    unread: typeof card.unread === 'boolean' ? card.unread : fallback.unread,
+    draft: typeof card.draft === 'string' ? card.draft : fallback.draft,
+    draftAttachments: normalizePersistedImageAttachments(card.draftAttachments),
+    stickyNote: typeof card.stickyNote === 'string' ? card.stickyNote : fallback.stickyNote,
+    brainstorm: normalizePersistedBrainstorm(card.brainstorm, fallback.brainstorm),
+    pm: normalizePersistedPm(card.pm, fallback.pm),
+    pmTaskCardId: '',
+    pmOwnerCardId: '',
+    messages: rawMessages,
+    messageCount: normalizePositiveInteger(card.messageCount, rawMessages.length),
+  }
+}
+
+const normalizePersistedLayoutNode = (layout: unknown): LayoutNode | undefined => {
+  if (!isRecord(layout)) {
+    return undefined
+  }
+
+  const id = typeof layout.id === 'string' && layout.id.trim() ? layout.id : 'recovered-layout'
+  if (layout.type === 'pane') {
+    return {
+      type: 'pane',
+      id,
+      tabs: Array.isArray(layout.tabs) ? layout.tabs.filter((item): item is string => typeof item === 'string' && Boolean(item)) : [],
+      activeTabId: typeof layout.activeTabId === 'string' ? layout.activeTabId : '',
+      tabHistory: Array.isArray(layout.tabHistory)
+        ? layout.tabHistory.filter((item): item is string => typeof item === 'string' && Boolean(item))
+        : [],
+    }
+  }
+
+  if (layout.type === 'split') {
+    const children = Array.isArray(layout.children)
+      ? layout.children.flatMap((child) => {
+          const normalized = normalizePersistedLayoutNode(child)
+          return normalized ? [normalized] : []
+        })
+      : []
+
+    if (children.length < 2) {
+      return children[0]
+    }
+
+    return {
+      type: 'split',
+      id,
+      direction: layout.direction === 'vertical' ? 'vertical' : 'horizontal',
+      children,
+      ratios: Array.isArray(layout.ratios)
+        ? layout.ratios.filter((ratio): ratio is number => typeof ratio === 'number' && Number.isFinite(ratio) && ratio > 0)
+        : [],
+    }
+  }
+
+  return undefined
+}
+
+const normalizePersistedSessionHistoryEntry = (
+  entry: unknown,
+  index = 0,
+): SessionHistoryEntry | null => {
+  if (!isRecord(entry)) {
+    return null
+  }
+
+  const messages = normalizePersistedMessages(entry.messages)
+  const id = typeof entry.id === 'string' && entry.id.trim()
+    ? entry.id
+    : `recovered-history-${index + 1}`
+  const workspacePath = typeof entry.workspacePath === 'string' && entry.workspacePath.trim()
+    ? entry.workspacePath
+    : getDefaultWorkspacePath() || 'Recovered workspace'
+  const provider = isProvider(entry.provider) ? entry.provider : 'codex'
+  const messageCount = Math.max(normalizePositiveInteger(entry.messageCount, messages.length), messages.length)
+
+  return {
+    id,
+    title: typeof entry.title === 'string' && entry.title.trim() ? entry.title : 'Recovered history',
+    sessionId: normalizeOptionalString(entry.sessionId),
+    provider,
+    model: typeof entry.model === 'string' ? normalizeStoredModel(provider, entry.model) : getDefaultModel(provider),
+    workspacePath,
+    messages,
+    messageCount,
+    messagesPreview: typeof entry.messagesPreview === 'boolean' ? entry.messagesPreview : undefined,
+    archivedAt: normalizePersistedTimestamp(entry.archivedAt),
+  }
+}
+
+const normalizePersistedSessionHistory = (items: unknown): SessionHistoryEntry[] =>
+  Array.isArray(items)
+    ? normalizeSessionHistory(
+        items.flatMap((entry, index) => {
+          const normalized = normalizePersistedSessionHistoryEntry(entry, index)
+          return normalized ? [normalized] : []
+        }),
+      )
+    : []
+
+const normalizePersistedStartupSettings = (settings: unknown): AppState['settings'] => {
+  const normalized = normalizeAppSettings(
+    isRecord(settings)
+      ? (settings as Parameters<typeof normalizeAppSettings>[0])
+      : undefined,
+  )
+
+  return {
+    ...normalized,
+    recentWorkspaces: isRecord(settings)
+      ? normalizePersistedRecentWorkspaces(settings.recentWorkspaces)
+      : [],
+  }
+}
+
 const resetLegacyBoardState = (raw: unknown): AppState | null => {
   if (!isRecord(raw) || !Array.isArray(raw.columns)) {
     return null
@@ -295,11 +694,7 @@ const resetLegacyBoardState = (raw: unknown): AppState | null => {
     return null
   }
 
-  const safeSettings = normalizeAppSettings(
-    isRecord(raw.settings)
-      ? (raw.settings as Parameters<typeof normalizeAppSettings>[0])
-      : undefined,
-  )
+  const safeSettings = normalizePersistedStartupSettings(raw.settings)
   const defaultState = createDefaultState(getDefaultWorkspacePath(), safeSettings.language)
 
   return {
@@ -1013,6 +1408,67 @@ const isPlausibleRawState = (raw: unknown): raw is AppState =>
   'settings' in raw &&
   typeof (raw as Record<string, unknown>).settings === 'object'
 
+const normalizePersistedColumn = (
+  column: unknown,
+  columnIndex: number,
+  options: {
+    settings: AppState['settings']
+    language: AppState['settings']['language']
+    fallbackColumn: BoardColumn
+  },
+): BoardColumn | null => {
+  if (!isRecord(column)) {
+    return null
+  }
+
+  const provider = isProvider(column.provider)
+    ? column.provider
+    : isProvider(options.fallbackColumn.provider)
+      ? options.fallbackColumn.provider
+      : 'codex'
+  const configuredModel = getConfiguredModel(options.settings, provider)
+  const rawColumnModel = typeof column.model === 'string' ? column.model : configuredModel
+  const normalizedColumnModel = normalizeStoredModel(provider, rawColumnModel) || configuredModel
+  const rawCards = isRecord(column.cards) ? column.cards : {}
+  const cards = Object.fromEntries(
+    Object.entries(rawCards).flatMap(([cardId, card]) => {
+      const normalizedCard = normalizePersistedCard(card, {
+        cardId,
+        columnProvider: provider,
+        columnModel: normalizedColumnModel,
+        settings: options.settings,
+        language: options.language,
+      })
+
+      if (!normalizedCard) {
+        return []
+      }
+
+      return [[normalizedCard.id, normalizedCard] satisfies [string, ChatCard]]
+    }),
+  )
+  const normalizedLayoutInput = normalizePersistedLayoutNode(column.layout)
+  const layout = normalizeLayoutNode(normalizedLayoutInput, cards)
+
+  return {
+    id: typeof column.id === 'string' && column.id.trim()
+      ? column.id
+      : options.fallbackColumn.id,
+    title: typeof column.title === 'string' && column.title.trim()
+      ? column.title
+      : getWorkspaceTitle(options.language, columnIndex + 1),
+    provider,
+    workspacePath: typeof column.workspacePath === 'string' ? column.workspacePath : options.fallbackColumn.workspacePath,
+    model: normalizedColumnModel,
+    width: normalizeColumnWidth(column.width as number | undefined),
+    layout:
+      layout.type === 'pane' && layout.tabs.length === 0 && Object.keys(cards).length > 0
+        ? createPane(Object.keys(cards))
+        : layout,
+    cards,
+  }
+}
+
 const sanitizeStateResult = (raw: unknown): SanitizedStateResult => {
   const defaultState = createDefaultState(getDefaultWorkspacePath())
 
@@ -1028,14 +1484,24 @@ const sanitizeStateResult = (raw: unknown): SanitizedStateResult => {
   // this app, so a structural plausibility check is sufficient.
   const data = raw as AppState
 
-  const safeSettings = normalizeAppSettings(data.settings)
-  const safeColumns = data.columns.length > 0 ? data.columns : defaultState.columns
-  const safeSessionHistory = normalizeSessionHistory(data.sessionHistory ?? [])
+  const safeSettings = normalizePersistedStartupSettings(data.settings)
+  const safeColumns = (data.columns.length > 0 ? data.columns : defaultState.columns)
+    .flatMap((column: unknown, columnIndex: number) => {
+      const normalizedColumn = normalizePersistedColumn(column, columnIndex, {
+        settings: safeSettings,
+        language: safeSettings.language,
+        fallbackColumn: defaultState.columns[columnIndex] ?? defaultState.columns[0]!,
+      })
+
+      return normalizedColumn ? [normalizedColumn] : []
+    })
+  const safeSessionHistory = normalizePersistedSessionHistory(data.sessionHistory ?? [])
   const language = safeSettings.language
   let didCompactStructuredData = false
 
   const state: AppState = {
     ...data,
+    version: 1,
     settings: safeSettings,
     updatedAt: new Date().toISOString(),
     columns: safeColumns.map((column: BoardColumn, columnIndex: number) => ({
@@ -1050,7 +1516,9 @@ const sanitizeStateResult = (raw: unknown): SanitizedStateResult => {
           const hasRecoverableStream = card.status === 'streaming' && Boolean(card.streamId)
           const status: ChatCard['status'] =
             card.status === 'streaming' ? (hasRecoverableStream ? 'streaming' : 'idle') : card.status
-          const rawMessages = hasRecoverableStream ? trimStreamingMessages(card.messages) : card.messages
+          const rawMessages = normalizePersistedMessages(
+            hasRecoverableStream ? trimStreamingMessages(card.messages) : card.messages,
+          )
           const compactedMessages = compactPersistedMessages(rawMessages)
           if (compactedMessages.didCompact) {
             didCompactStructuredData = true
@@ -1135,7 +1603,7 @@ const sanitizeStateResult = (raw: unknown): SanitizedStateResult => {
       })(),
     })),
     sessionHistory: safeSessionHistory.map((entry) => {
-      const compactedMessages = compactPersistedMessages(entry.messages)
+      const compactedMessages = compactPersistedMessages(normalizePersistedMessages(entry.messages))
       if (compactedMessages.didCompact) {
         didCompactStructuredData = true
       }
@@ -1143,14 +1611,11 @@ const sanitizeStateResult = (raw: unknown): SanitizedStateResult => {
       const trimmedMessages = compactedMessages.messages.length > maxPersistedCardMessages
         ? compactedMessages.messages.slice(-maxPersistedCardMessages)
         : compactedMessages.messages
-      const needsTrim = trimmedMessages !== compactedMessages.messages
 
-      return compactedMessages.didCompact || needsTrim
-        ? {
-            ...entry,
-            messages: trimmedMessages,
-          }
-        : entry
+      return {
+        ...entry,
+        messages: trimmedMessages,
+      }
     }),
   }
 
@@ -1368,7 +1833,7 @@ const loadRendererStartupState = async (dataDir = getAppDataDir()): Promise<AppS
 
     if (Array.isArray(raw.sessionHistory)) {
       raw.sessionHistory = renderSessionHistoryForRenderer(
-        normalizeSessionHistory(raw.sessionHistory as SessionHistoryEntry[]),
+        normalizePersistedSessionHistory(raw.sessionHistory),
       )
     }
 
@@ -1453,9 +1918,7 @@ const loadPersistedSessionHistory = async (dataDir = getAppDataDir()) => {
     const file = await readFile(getStateFilePathForDir(dataDir), 'utf8')
     const raw = JSON.parse(file) as Record<string, unknown>
 
-    return Array.isArray(raw.sessionHistory)
-      ? normalizeSessionHistory(raw.sessionHistory as SessionHistoryEntry[])
-      : []
+    return normalizePersistedSessionHistory(raw.sessionHistory)
   } catch {
     return []
   }

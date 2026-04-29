@@ -7,6 +7,7 @@ import os from 'node:os'
 import { attachImagesToMessageMeta } from '../shared/chat-attachments.ts'
 import { createCard, createDefaultState, createPane, getFirstPane } from '../shared/default-state.ts'
 import { BRAINSTORM_TOOL_MODEL, DEFAULT_CODEX_MODEL, PM_TOOL_MODEL } from '../shared/models.ts'
+import { appStateLoadResponseSchema } from '../shared/schema.ts'
 
 // We test the module-level functions by setting the env var before importing.
 // Each test gets a fresh temp directory.
@@ -762,6 +763,209 @@ describe('state-store persistence', () => {
     assert.ok(!files.includes('state.wal'), 'a valid WAL should be promoted and cleared before renderer startup returns')
     const persisted = await readFile(path.join(tmpDir, 'state.json'), 'utf8')
     assert.match(persisted, /Recovered from WAL/)
+  })
+
+  it('loadStateForRenderer upgrades legacy messages without createdAt so desktop startup still hydrates', async () => {
+    const { loadStateForRenderer } = await import('../server/state-store.ts')
+    const state = createDefaultState('D:/legacy-message-state')
+    const firstCard = getFirstCard(state)
+    assert.ok(firstCard, 'expected a default card to exist in the first column')
+
+    firstCard.messages = [
+      {
+        id: 'legacy-active-message',
+        role: 'assistant',
+        content: 'Old active card message without a timestamp',
+      } as typeof firstCard.messages[number],
+    ]
+    state.sessionHistory = [
+      {
+        id: 'legacy-history-entry',
+        title: 'Legacy history',
+        sessionId: 'legacy-session',
+        provider: 'codex',
+        model: 'gpt-5.5',
+        workspacePath: 'D:/legacy-message-state',
+        messageCount: 1,
+        messages: [
+          {
+            id: 'legacy-history-message',
+            role: 'user',
+            content: 'Old archived message without a timestamp',
+          } as typeof firstCard.messages[number],
+        ],
+        archivedAt: new Date('2026-04-12T08:20:00.000Z').toISOString(),
+      },
+    ]
+
+    await writeFile(path.join(tmpDir, 'state.json'), `${JSON.stringify(state, null, 2)}\n`, 'utf8')
+
+    const loaded = await loadStateForRenderer()
+
+    assert.doesNotThrow(() => appStateLoadResponseSchema.parse(loaded))
+    assert.match(getFirstCard(loaded.state)?.messages[0]?.createdAt ?? '', /^\d{4}-\d{2}-\d{2}T/)
+    assert.match(loaded.state.sessionHistory[0]?.messages[0]?.createdAt ?? '', /^\d{4}-\d{2}-\d{2}T/)
+  })
+
+  it('loadSessionHistoryEntry upgrades legacy sidecar messages without createdAt before bridge validation', async () => {
+    const { loadSessionHistoryEntry } = await import('../server/state-store.ts')
+    const sidecarDir = path.join(tmpDir, 'session-history')
+    await mkdir(sidecarDir, { recursive: true })
+    await writeFile(
+      path.join(sidecarDir, `${Buffer.from('legacy-sidecar-entry', 'utf8').toString('base64url')}.json`),
+      `${JSON.stringify({
+        id: 'legacy-sidecar-entry',
+        title: 'Legacy sidecar',
+        sessionId: 'legacy-sidecar-session',
+        provider: 'codex',
+        model: 'gpt-5.5',
+        workspacePath: 'D:/legacy-sidecar-state',
+        messageCount: 1,
+        messages: [
+          {
+            id: 'legacy-sidecar-message',
+            role: 'assistant',
+            content: 'Old sidecar message without a timestamp',
+          },
+        ],
+        archivedAt: new Date('2026-04-13T09:20:00.000Z').toISOString(),
+      }, null, 2)}\n`,
+      'utf8',
+    )
+
+    const loaded = await loadSessionHistoryEntry({ entryId: 'legacy-sidecar-entry' })
+
+    assert.match(loaded.entry.messages[0]?.createdAt ?? '', /^\d{4}-\d{2}-\d{2}T/)
+  })
+
+  it('loadStateForRenderer repairs dirty legacy startup fields before desktop bridge validation', async () => {
+    const { loadStateForRenderer } = await import('../server/state-store.ts')
+    const state = createDefaultState('D:/dirty-startup-state')
+    const firstColumn = state.columns[0]
+    const firstCard = getFirstCard(state)
+    assert.ok(firstColumn, 'expected a default column to exist')
+    assert.ok(firstCard, 'expected a default card to exist in the first column')
+
+    const rawState = structuredClone(state) as Record<string, unknown>
+    rawState.version = 0
+    rawState.updatedAt = 'not-a-date'
+    rawState.settings = {
+      ...(rawState.settings as Record<string, unknown>),
+      recentWorkspaces: [
+        { path: 'D:/dirty-startup-state', openedAt: 'not-a-date' },
+        { path: '', openedAt: 'also-not-a-date' },
+      ],
+    }
+
+    const rawColumns = rawState.columns as Array<Record<string, unknown>>
+    const rawColumn = rawColumns[0]!
+    rawColumn.title = ''
+    rawColumn.provider = 'mystery-provider'
+    rawColumn.model = 123
+    rawColumn.width = 'wide'
+    rawColumn.layout = {
+      type: 'split',
+      id: 'dirty-split',
+      direction: 'diagonal',
+      children: [
+        {
+          type: 'pane',
+          id: 'dirty-pane',
+          tabs: [firstCard.id, 'missing-card', ''],
+          activeTabId: 'missing-card',
+          tabHistory: [firstCard.id, 'missing-card'],
+        },
+        {
+          type: 'pane',
+          id: 'empty-pane',
+          tabs: ['missing-card'],
+          activeTabId: 'missing-card',
+        },
+      ],
+      ratios: ['bad', 0],
+    }
+
+    const rawCards = rawColumn.cards as Record<string, Record<string, unknown>>
+    const rawCard = rawCards[firstCard.id]!
+    delete rawCard.status
+    delete rawCard.title
+    rawCard.size = -10
+    rawCard.provider = 'mystery-provider'
+    rawCard.model = 123
+    rawCard.reasoningEffort = 123
+    rawCard.thinkingEnabled = 'yes'
+    rawCard.planMode = 'no'
+    rawCard.autoUrgeActive = 'yes'
+    rawCard.autoUrgeProfileId = 42
+    rawCard.collapsed = 'no'
+    rawCard.unread = 'yes'
+    rawCard.draft = 99
+    rawCard.draftAttachments = [
+      { id: '', fileName: 'bad.bmp', mimeType: 'image/bmp', sizeBytes: -1 },
+      { id: 'valid-attachment', fileName: 'ok.png', mimeType: 'image/png', sizeBytes: 12 },
+    ]
+    rawCard.stickyNote = 12
+    rawCard.brainstorm = {
+      prompt: 123,
+      provider: 'mystery-provider',
+      model: 42,
+      answerCount: 99,
+      answers: [
+        { id: '', content: 7, status: 'bad-status', streamId: '', error: 5 },
+      ],
+      failedAnswers: [1, 'recoverable-failure'],
+    }
+    rawCard.pm = { provider: 'mystery-provider', model: 7 }
+    rawCard.providerSessions = ['bad-session-map']
+    rawCard.messages = [
+      {
+        id: '',
+        role: 'bad-role',
+        content: 'keep active message',
+        createdAt: 'not-a-date',
+        meta: {
+          kind: 'command',
+          structuredData: JSON.stringify({ kind: 'command', output: 'kept output' }),
+          badValue: 123,
+        },
+      },
+    ]
+
+    rawState.sessionHistory = [
+      {
+        id: '',
+        title: '',
+        provider: 'mystery-provider',
+        model: 123,
+        workspacePath: '',
+        messages: [
+          {
+            id: 'dirty-history-message',
+            role: 'user',
+            content: 'keep archived message',
+            createdAt: 'not-a-date',
+          },
+        ],
+        messageCount: -1,
+        messagesPreview: 'yes',
+        archivedAt: 'not-a-date',
+      },
+    ]
+
+    await writeFile(path.join(tmpDir, 'state.json'), `${JSON.stringify(rawState, null, 2)}\n`, 'utf8')
+
+    const loaded = await loadStateForRenderer()
+
+    assert.doesNotThrow(() => appStateLoadResponseSchema.parse(loaded))
+    const loadedCard = getFirstCard(loaded.state)
+    assert.equal(loaded.state.version, 1)
+    assert.equal(loaded.state.settings.recentWorkspaces[0]?.path, 'D:/dirty-startup-state')
+    assert.match(loaded.state.settings.recentWorkspaces[0]?.openedAt ?? '', /^\d{4}-\d{2}-\d{2}T/)
+    assert.equal(loadedCard?.messages[0]?.content, 'keep active message')
+    assert.match(loadedCard?.messages[0]?.createdAt ?? '', /^\d{4}-\d{2}-\d{2}T/)
+    assert.deepEqual(loadedCard?.draftAttachments.map((attachment) => attachment.id), ['valid-attachment'])
+    assert.equal(loaded.state.sessionHistory[0]?.messages[0]?.content, 'keep archived message')
+    assert.match(loaded.state.sessionHistory[0]?.archivedAt ?? '', /^\d{4}-\d{2}-\d{2}T/)
   })
 
   it('loadStateForRenderer avoids main-process response revalidation', async () => {

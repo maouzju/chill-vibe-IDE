@@ -339,6 +339,8 @@ A living list of traps that have wasted time before. **When you hit a new pitfal
 
 | 109 | Codex native reconnect placeholders can arrive on stderr or JSON-RPC error responses instead of normal delta/item events | If only delta/item stdout is filtered, `Reconnecting... 1/5` can leak into final system error bubbles and skip disconnect stats; detect placeholder-only diagnostics from stderr and JSON-RPC errors too, then record them through the same local stream stats path. |
 
+| 110 | Old packaged installs can carry chat messages without `createdAt`, and the Electron bridge then rejects startup state with the generic “无法连接本地工作区服务” shell | Normalize persisted live-card and archived-session messages before renderer startup validation; otherwise the desktop backend is alive but hydration fails like a service outage. |
+
 ### Self-maintenance rule
 
 - When you encounter a new non-obvious failure mode — a test that fails for environmental reasons, a build step with hidden prerequisites, a runtime behavior that contradicts the docs — append a row to this table before you finish the task.

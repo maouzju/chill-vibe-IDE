@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState, type CSSProperties } from 'react'
 
 import { getLocaleText } from '../../shared/i18n'
 import type { AppLanguage } from '../../shared/schema'
@@ -18,12 +18,14 @@ const REFRESH_INTERVAL_MS = 30 * 60 * 1000
 const TIME_PHASE_INTERVAL_MS = 2 * 60 * 1000
 
 // Deterministic pseudo-random durations (avoids Math.random in render)
-const RAIN_DURATIONS = [0.52, 0.68, 0.55, 0.71, 0.60, 0.65, 0.73, 0.50, 0.62, 0.58, 0.69, 0.54, 0.67, 0.56, 0.72, 0.63, 0.57, 0.66, 0.59, 0.70]
-const RAIN_HEIGHTS = [14, 18, 12, 20, 15, 17, 13, 19, 16, 14, 18, 11, 20, 15, 17, 13, 19, 16, 12, 18]
-const RAIN_WIDTHS = [1, 1.5, 1, 2, 1, 1.5, 1, 2, 1.5, 1, 1.5, 1, 2, 1, 1.5, 1, 2, 1, 1, 1.5]
-const SNOW_DURATIONS = [2.8, 3.4, 3.1, 2.6, 3.8, 2.9, 3.5, 3.0, 2.7, 3.3, 3.6, 2.5, 3.2, 3.7, 2.85]
-const SNOW_SIZES = [3, 5, 4, 6, 3, 5, 4, 7, 3, 5, 6, 4, 3, 5, 4]
-const SNOW_SWAY = [40, -30, 50, -20, 35, -45, 25, -35, 40, -25, 30, -40, 45, -30, 35]
+const RAIN_DURATIONS = [0.58, 0.72, 0.64, 0.76, 0.61, 0.69, 0.78, 0.56, 0.66, 0.62, 0.74, 0.60]
+const RAIN_HEIGHTS = [13, 17, 12, 18, 14, 16, 13, 17, 15, 13, 18, 12]
+const RAIN_WIDTHS = [1, 1.5, 1, 1.5, 1, 1.5, 1, 1.5, 1, 1, 1.5, 1]
+const SNOW_DURATIONS = [3.0, 3.6, 3.2, 2.8, 3.9, 3.1, 3.7, 3.3, 2.9, 3.5]
+const SNOW_SIZES = [3, 5, 4, 6, 3, 5, 4, 6, 3, 5]
+const SNOW_SWAY = [28, -24, 34, -18, 26, -32, 20, -26, 30, -20]
+
+type WeatherStyle = CSSProperties & Record<`--${string}`, string | number>
 
 // ── Internal visual elements ────────────────────────────────────────────────
 
@@ -41,49 +43,53 @@ function MoonCrescent() {
   return <div className="weather-moon" />
 }
 
-function CloudSvgFilter() {
-  return (
-    <svg width="0" height="0" style={{ position: 'absolute' }}>
-      <defs>
-        <filter id="cloud-filter-back">
-          <feTurbulence type="fractalNoise" baseFrequency="0.015" numOctaves="4" seed="1" />
-          <feDisplacementMap in="SourceGraphic" scale="40" />
-        </filter>
-        <filter id="cloud-filter-mid">
-          <feTurbulence type="fractalNoise" baseFrequency="0.018" numOctaves="3" seed="5" />
-          <feDisplacementMap in="SourceGraphic" scale="30" />
-        </filter>
-        <filter id="cloud-filter-front">
-          <feTurbulence type="fractalNoise" baseFrequency="0.02" numOctaves="3" seed="9" />
-          <feDisplacementMap in="SourceGraphic" scale="22" />
-        </filter>
-      </defs>
-    </svg>
-  )
-}
-
 const CLOUD_PRESETS = [
-  { filter: 'url(#cloud-filter-back)', top: '8%', left: '-10%', w: 160, h: 70, opacity: 0.35, delay: 0, speed: 28 },
-  { filter: 'url(#cloud-filter-mid)', top: '22%', left: '15%', w: 130, h: 60, opacity: 0.5, delay: 4, speed: 22 },
-  { filter: 'url(#cloud-filter-front)', top: '40%', left: '5%', w: 150, h: 65, opacity: 0.65, delay: 2, speed: 18 },
+  { className: 'weather-cloud weather-cloud--back', top: '8%', left: '-10%', w: 160, h: 70, opacity: 0.35, delay: 0, speed: 28 },
+  { className: 'weather-cloud weather-cloud--mid', top: '22%', left: '15%', w: 130, h: 60, opacity: 0.5, delay: 4, speed: 22 },
+  { className: 'weather-cloud weather-cloud--front', top: '40%', left: '5%', w: 150, h: 65, opacity: 0.65, delay: 2, speed: 18 },
 ]
+
+const RAIN_STREAKS = RAIN_DURATIONS.map((duration, i) => ({
+  key: `rain-${i}`,
+  style: {
+    left: `${6 + i * 7.6}%`,
+    width: `${RAIN_WIDTHS[i]}px`,
+    height: `${RAIN_HEIGHTS[i]}px`,
+    animationDelay: `${(i * 0.09) % 0.7}s`,
+    animationDuration: `${duration}s`,
+  } satisfies CSSProperties,
+}))
+
+const SNOW_DOTS = SNOW_DURATIONS.map((duration, i) => {
+  const size = SNOW_SIZES[i]
+  return {
+    key: `snow-${i}`,
+    style: {
+      left: `${7 + i * 9}%`,
+      width: `${size}px`,
+      height: `${size}px`,
+      opacity: 0.4 + (size / 7) * 0.5,
+      animationDelay: `${i * 0.45}s`,
+      animationDuration: `${duration}s`,
+      '--sway': `${SNOW_SWAY[i]}px`,
+    } satisfies WeatherStyle,
+  }
+})
 
 function CloudLayers({ count }: { count: number }) {
   const layers = CLOUD_PRESETS.slice(0, count)
   return (
     <>
-      <CloudSvgFilter />
       {layers.map((c, i) => (
         <div
           key={i}
-          className="weather-cloud"
+          className={c.className}
           style={{
             width: `${c.w}px`,
             height: `${c.h}px`,
             top: c.top,
             left: c.left,
             opacity: c.opacity,
-            filter: c.filter,
             animationDelay: `${c.delay}s`,
             animationDuration: `${c.speed}s`,
           }}
@@ -96,17 +102,11 @@ function CloudLayers({ count }: { count: number }) {
 function RainStreaks() {
   return (
     <>
-      {Array.from({ length: 20 }, (_, i) => (
+      {RAIN_STREAKS.map(({ key, style }) => (
         <div
-          key={i}
+          key={key}
           className="weather-rain-streak"
-          style={{
-            left: `${5 + i * 4.5}%`,
-            width: `${RAIN_WIDTHS[i]}px`,
-            height: `${RAIN_HEIGHTS[i]}px`,
-            animationDelay: `${(i * 0.07) % 0.6}s`,
-            animationDuration: `${RAIN_DURATIONS[i]}s`,
-          }}
+          style={style}
         />
       ))}
     </>
@@ -116,19 +116,11 @@ function RainStreaks() {
 function SnowDots() {
   return (
     <>
-      {Array.from({ length: 15 }, (_, i) => (
+      {SNOW_DOTS.map(({ key, style }) => (
         <div
-          key={i}
+          key={key}
           className="weather-snow-dot"
-          style={{
-            left: `${5 + i * 6}%`,
-            width: `${SNOW_SIZES[i]}px`,
-            height: `${SNOW_SIZES[i]}px`,
-            opacity: 0.4 + (SNOW_SIZES[i] / 7) * 0.5,
-            animationDelay: `${i * 0.4}s`,
-            animationDuration: `${SNOW_DURATIONS[i]}s`,
-            '--sway': `${SNOW_SWAY[i]}px`,
-          } as React.CSSProperties}
+          style={style}
         />
       ))}
     </>

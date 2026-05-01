@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 
 import type { WeatherData } from '../api'
 
@@ -104,21 +104,41 @@ function useWeatherEvent() {
 
 function useCardRect(active: boolean) {
   const [rect, setRect] = useState<DOMRect | null>(null)
+  const rectSignatureRef = useRef('')
 
   useEffect(() => {
     if (!active) return
+    let frame = 0
+
     const track = () => {
       const el = document.querySelector('[data-weather-card]')
-      setRect(el?.getBoundingClientRect() ?? null)
+      const nextRect = el?.getBoundingClientRect() ?? null
+      const nextSignature = nextRect
+        ? `${Math.round(nextRect.left)},${Math.round(nextRect.top)},${Math.round(nextRect.width)},${Math.round(nextRect.height)}`
+        : 'none'
+
+      if (rectSignatureRef.current !== nextSignature) {
+        rectSignatureRef.current = nextSignature
+        setRect(nextRect)
+      }
     }
-    track()
-    const handle = setInterval(track, 1000)
-    window.addEventListener('resize', track)
-    window.addEventListener('scroll', track, true)
+    const scheduleTrack = () => {
+      if (frame !== 0) return
+      frame = window.requestAnimationFrame(() => {
+        frame = 0
+        track()
+      })
+    }
+
+    scheduleTrack()
+    window.addEventListener('resize', scheduleTrack)
+    window.addEventListener('scroll', scheduleTrack, true)
     return () => {
-      clearInterval(handle)
-      window.removeEventListener('resize', track)
-      window.removeEventListener('scroll', track, true)
+      if (frame !== 0) {
+        window.cancelAnimationFrame(frame)
+      }
+      window.removeEventListener('resize', scheduleTrack)
+      window.removeEventListener('scroll', scheduleTrack, true)
     }
   }, [active])
 

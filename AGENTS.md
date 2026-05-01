@@ -341,6 +341,8 @@ A living list of traps that have wasted time before. **When you hit a new pitfal
 
 | 110 | Old packaged installs can carry chat messages without `createdAt`, and the Electron bridge then rejects startup state with the generic “无法连接本地工作区服务” shell | Normalize persisted live-card and archived-session messages before renderer startup validation; otherwise the desktop backend is alive but hydration fails like a service outage. |
 
+| 111 | Browser layout can clamp a chat `.message-list` `scrollTop` to 0 while the tab/window is hidden or temporarily zero-height | Do not treat that synthetic reset as user scroll-up, or every agent pane can look like it jumped to the top when the user returns. |
+
 ### Self-maintenance rule
 
 - When you encounter a new non-obvious failure mode — a test that fails for environmental reasons, a build step with hidden prerequisites, a runtime behavior that contradicts the docs — append a row to this table before you finish the task.

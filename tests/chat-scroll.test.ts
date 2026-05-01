@@ -5,6 +5,7 @@ import {
   autoScrollBottomThresholdPx,
   didUserInterruptProgrammaticScroll,
   getAutoScrollStateAfterCardUpdate,
+  getAutoScrollStateAfterObservedScroll,
   getAutoScrollStateAfterUserScroll,
   getAutoScrollStateDuringProgrammaticScroll,
   getCompactedHistoryAutoRevealMode,
@@ -12,6 +13,7 @@ import {
   getScrollTopToRevealChild,
   getScrollTopToRevealChildWithTopClearance,
   getProgrammaticBottomScrollTarget,
+  shouldIgnoreHiddenLayoutScrollReset,
   shouldAutoRevealCompactedHistoryImmediately,
   shouldPinToBottomAfterContentGrowth,
 } from '../src/components/chat-scroll.ts'
@@ -373,6 +375,68 @@ describe('chat scroll helpers', () => {
         wasPinned: true,
       }),
       true,
+    )
+  })
+
+  it('identifies browser scrollTop resets caused by hidden zero-height layout instead of user scrolling', () => {
+    assert.equal(
+      shouldIgnoreHiddenLayoutScrollReset({
+        previousScrollTop: 620,
+        previousMetrics: {
+          scrollHeight: 1180,
+          clientHeight: 560,
+        },
+        currentMetrics: {
+          scrollTop: 0,
+          scrollHeight: 0,
+          clientHeight: 0,
+        },
+        isVisible: false,
+      }),
+      true,
+    )
+  })
+
+  it('does not ignore a real visible scroll back to the top', () => {
+    assert.equal(
+      shouldIgnoreHiddenLayoutScrollReset({
+        previousScrollTop: 620,
+        previousMetrics: {
+          scrollHeight: 1180,
+          clientHeight: 560,
+        },
+        currentMetrics: {
+          scrollTop: 0,
+          scrollHeight: 1180,
+          clientHeight: 560,
+        },
+        isVisible: true,
+      }),
+      false,
+    )
+  })
+
+  it('preserves auto-scroll when a hidden layout clamp reports scrollTop zero', () => {
+    assert.deepEqual(
+      getAutoScrollStateAfterObservedScroll({
+        previousScrollTop: 620,
+        currentMetrics: {
+          scrollTop: 0,
+          scrollHeight: 0,
+          clientHeight: 0,
+        },
+        previousMetrics: {
+          scrollHeight: 1180,
+          clientHeight: 560,
+        },
+        previousShouldAutoScroll: true,
+        isVisible: false,
+      }),
+      {
+        lastScrollTop: 620,
+        shouldAutoScroll: true,
+        ignored: true,
+      },
     )
   })
 })

@@ -10677,6 +10677,16 @@ body,
   z-index: 0;
   pointer-events: none;
   overflow: hidden;
+  opacity: 0.5;
+  transform: translate3d(0, -20px, 0);
+  animation: weather-rain-fall 0.8s linear infinite;
+  will-change: transform;
+}
+
+.weather-ambient-rain::before {
+  content: '';
+  position: absolute;
+  inset: -20px 0 0;
   background:
     repeating-linear-gradient(
       transparent,
@@ -10684,13 +10694,11 @@ body,
       rgba(140, 170, 220, 0.04) 4px,
       rgba(140, 170, 220, 0.04) 5px
     );
-  animation: weather-rain-fall 0.8s linear infinite;
-  opacity: 0.5;
 }
 
 @keyframes weather-rain-fall {
-  from { background-position-y: 0; }
-  to   { background-position-y: 20px; }
+  from { transform: translate3d(0, -20px, 0); }
+  to   { transform: translate3d(0, 0, 0); }
 }
 
 /* ── Weather Card ───────────────────────────────────────────────────────────── */
@@ -10879,7 +10887,7 @@ body,
   50%      { opacity: 1; }
 }
 
-/* Clouds – organic shapes via SVG feTurbulence displacement */
+/* Clouds: layered CSS shapes only, avoiding expensive SVG filters */
 .weather-cloud {
   position: absolute;
   border-radius: 50%;
@@ -10889,6 +10897,41 @@ body,
     0 4px 20px rgba(160, 170, 190, 0.2);
   animation: weather-cloud-drift 20s ease-in-out infinite alternate;
   will-change: transform;
+}
+
+.weather-cloud::before,
+.weather-cloud::after {
+  content: '';
+  position: absolute;
+  border-radius: 999px;
+  background: inherit;
+  box-shadow: inherit;
+}
+
+.weather-cloud::before {
+  width: 64%;
+  height: 82%;
+  left: 11%;
+  top: -27%;
+}
+
+.weather-cloud::after {
+  width: 58%;
+  height: 72%;
+  right: 8%;
+  top: -16%;
+}
+
+.weather-cloud--back {
+  transform: scale(1.04);
+}
+
+.weather-cloud--mid {
+  transform: scale(0.96);
+}
+
+.weather-cloud--front {
+  transform: scale(1.02);
 }
 
 :root[data-theme='dark'] .weather-cloud {
@@ -10912,6 +10955,7 @@ body,
   background: linear-gradient(to bottom, transparent, rgba(140, 180, 240, 0.5) 30%, rgba(160, 200, 255, 0.7));
   transform: rotate(4deg);
   animation: weather-streak-fall 0.6s linear infinite;
+  will-change: transform, opacity;
 }
 
 .weather-rain-streak::after {
@@ -10947,23 +10991,16 @@ body,
   border-radius: 50%;
   background: radial-gradient(circle at 35% 35%, rgba(255, 255, 255, 0.95), rgba(220, 230, 250, 0.6));
   box-shadow: 0 0 4px rgba(220, 230, 250, 0.3);
-  animation:
-    weather-snow-fall 3s ease-in-out infinite,
-    weather-snow-sway 3s ease-in-out infinite;
+  animation: weather-snow-fall 3s ease-in-out infinite;
+  will-change: transform, opacity;
 }
 
 @keyframes weather-snow-fall {
-  0%   { transform: translateY(-10px); opacity: 0; }
+  0%   { transform: translate3d(0, -10px, 0); opacity: 0; }
   15%  { opacity: 1; }
+  50%  { transform: translate3d(var(--sway, 30px), 88px, 0); }
   85%  { opacity: 0.8; }
-  100% { transform: translateY(180px); opacity: 0; }
-}
-
-@keyframes weather-snow-sway {
-  0%, 100% { margin-left: 0; }
-  25%      { margin-left: calc(var(--sway, 30px) * 0.5); }
-  50%      { margin-left: var(--sway, 30px); }
-  75%      { margin-left: calc(var(--sway, 30px) * 0.3); }
+  100% { transform: translate3d(calc(var(--sway, 30px) * 0.35), 180px, 0); opacity: 0; }
 }
 
 /* Fog – multi-layer drifting mist */

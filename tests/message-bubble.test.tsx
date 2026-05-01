@@ -91,6 +91,62 @@ test('MessageBubble hides fork actions on structured assistant messages', () => 
   assert.doesNotMatch(markup, /message-fork-btn/)
 })
 
+test('MessageBubble renders safe raw HTML color tables as visible swatches', () => {
+  const markup = renderToStaticMarkup(
+    <MessageBubble
+      language="zh-CN"
+      message={{
+        id: 'assistant-color-table-1',
+        role: 'assistant',
+        content: [
+          '下面是角色提炼出的颜色色卡：',
+          '',
+          '<table>',
+          '<tr><td style="background:#9B4A87;width:80px;height:32px;"> </td><td><b>#9B4A87</b></td><td>葡萄紫</td></tr>',
+          '<tr><td style="background:#7FA64E;width:80px;height:32px;"> </td><td><b>#7FA64E</b></td><td>草木绿</td></tr>',
+          '</table>',
+        ].join('\n'),
+        createdAt: '2026-04-11T10:08:00.000Z',
+      }}
+      workspacePath="D:\\Git\\chill-vibe"
+      answeredOption={null}
+      onSelectAskUserOption={() => undefined}
+    />,
+  )
+
+  assert.match(markup, /<table>/)
+  assert.match(markup, /style="background-color:#9B4A87;width:80px;height:32px"/)
+  assert.match(markup, /<strong>#9B4A87<\/strong>/)
+  assert.match(markup, /葡萄紫/)
+  assert.doesNotMatch(markup, /&lt;table&gt;/)
+})
+
+test('MessageBubble sanitizes unsupported raw HTML inside parsed tables', () => {
+  const markup = renderToStaticMarkup(
+    <MessageBubble
+      language="en"
+      message={{
+        id: 'assistant-safe-table-1',
+        role: 'assistant',
+        content: [
+          '<table>',
+          '<tr><td style="background:url(javascript:alert(1));width:80px" onclick="alert(1)"><script>alert(1)</script><img src=x onerror=alert(1)>Safe</td></tr>',
+          '</table>',
+        ].join('\n'),
+        createdAt: '2026-04-11T10:09:00.000Z',
+      }}
+      workspacePath="D:\\Git\\chill-vibe"
+      answeredOption={null}
+      onSelectAskUserOption={() => undefined}
+    />,
+  )
+
+  assert.match(markup, /<table>/)
+  assert.match(markup, />Safe</)
+  assert.match(markup, /style="width:80px"/)
+  assert.doesNotMatch(markup, /script|onclick|onerror|javascript|<img/i)
+})
+
 test('MessageBubble memo comparator ignores callback churn for unchanged message payloads', () => {
   const sharedMessage = {
     id: 'user-memo-1',

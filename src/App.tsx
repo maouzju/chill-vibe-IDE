@@ -689,6 +689,7 @@ function App() {
   ) | null>(null)
   const routingImportInputRef = useRef<HTMLInputElement | null>(null)
   const onboardingAutoSetupStartedRef = useRef(false)
+  const setupRunStatusRef = useRef<SetupStatus | null>(null)
   const hydrateRequestIdRef = useRef(0)
   // Streaming delta buffer: coalesces per-token SSE deltas into a single
   // dispatch per animation frame to avoid re-rendering on every character.
@@ -2982,6 +2983,10 @@ function App() {
     }
   }, [loadOnboarding, setupStatus?.state, syncProviderStatuses])
 
+  useEffect(() => {
+    setupRunStatusRef.current = setupStatus
+  }, [setupStatus])
+
   const handleLocalSlashCommand = useCallback(
     async (columnId: string, card: ChatCard, prompt: string) => {
       const column = getColumn(columnId)
@@ -4161,18 +4166,25 @@ function App() {
     setSetupStatusPending(true)
 
     try {
-      setSetupStatus(await runEnvironmentSetup())
+      const nextStatus = await runEnvironmentSetup()
+      setupRunStatusRef.current = nextStatus
+      setSetupStatus(nextStatus)
     } catch (error) {
-      setSetupStatus({
+      const nextStatus = {
         state: 'error',
         message: errorMessage(error, text.unexpectedError),
         logs: [],
-      })
+      } satisfies SetupStatus
+      setupRunStatusRef.current = nextStatus
+      setSetupStatus(nextStatus)
     } finally {
       setSetupStatusPending(false)
+      if (setupRunStatusRef.current?.state === 'success') {
+        void loadOnboarding().catch(() => undefined)
+      }
       void syncProviderStatuses()
     }
-  }, [syncProviderStatuses, text.unexpectedError])
+  }, [loadOnboarding, syncProviderStatuses, text.unexpectedError])
 
   const handleUpdateCli = useCallback(async () => {
     setSettingsNotice(null)

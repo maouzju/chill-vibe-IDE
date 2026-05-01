@@ -1,3 +1,4 @@
+import type { ComponentProps, CSSProperties, ReactNode } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 
@@ -42,6 +43,362 @@ type LinkClickEvent = {
   preventDefault: () => void
 }
 
+type SafeInlineNode =
+  | string
+  | {
+      kind: 'strong' | 'em' | 'code'
+      children: SafeInlineNode[]
+    }
+  | {
+      kind: 'br'
+    }
+
+type SafeHtmlTableCell = {
+  kind: 'td' | 'th'
+  style?: CSSProperties
+  children: SafeInlineNode[]
+}
+
+type SafeHtmlTable = SafeHtmlTableCell[][]
+
+type MarkdownRenderChunk =
+  | {
+      kind: 'markdown'
+      content: string
+    }
+  | {
+      kind: 'table'
+      table: SafeHtmlTable
+    }
+
+const HTML_ENTITY_MAP: Record<string, string> = {
+  amp: '&',
+  apos: "'",
+  gt: '>',
+  lt: '<',
+  nbsp: '\u00A0',
+  quot: '"',
+}
+
+const MAX_SAFE_HTML_TABLE_ROWS = 80
+const MAX_SAFE_HTML_TABLE_CELLS = 12
+
+const decodeHtmlEntities = (value: string) =>
+  value.replace(/&(#x[\da-f]+|#\d+|[a-z][\da-z]+);/gi, (entity, body: string) => {
+    const normalizedBody = body.toLowerCase()
+
+    if (normalizedBody.startsWith('#x')) {
+      const codePoint = Number.parseInt(normalizedBody.slice(2), 16)
+      return Number.isFinite(codePoint) ? String.fromCodePoint(codePoint) : entity
+    }
+
+    if (normalizedBody.startsWith('#')) {
+      const codePoint = Number.parseInt(normalizedBody.slice(1), 10)
+      return Number.isFinite(codePoint) ? String.fromCodePoint(codePoint) : entity
+    }
+
+    return HTML_ENTITY_MAP[normalizedBody] ?? entity
+  })
+
+const extractHtmlAttribute = (attributes: string, name: string) => {
+  const escapedName = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  const pattern = `(?:^|\\s)${escapedName}\\s*=\\s*(?:"([^"]*)"|'([^']*)'|([^\\s"'<>` + '`' + '=]+))'
+  const match = attributes.match(new RegExp(pattern, 'i'))
+
+  return match ? decodeHtmlEntities(match[1] ?? match[2] ?? match[3] ?? '') : null
+}
+
+const readSafeCssColor = (rawValue: string | null) => {
+  const value = rawValue?.trim() ?? ''
+
+  if (/^#[\da-f]{3,4}$/i.test(value) || /^#[\da-f]{6}(?:[\da-f]{2})?$/i.test(value)) {
+    return value
+  }
+
+  const rgbMatch = value.match(/^rgba?\(([^)]+)\)$/i)
+  if (rgbMatch) {
+    const parts = rgbMatch[1]?.split(',').map((part) => part.trim()) ?? []
+    const expectedLength = value.toLowerCase().startsWith('rgba') ? 4 : 3
+    const rgbParts = parts.slice(0, 3).map((part) => Number.parseInt(part, 10))
+    const alphaPart = parts[3]
+
+    if (
+      parts.length === expectedLength &&
+      rgbParts.every((part) => Number.isInteger(part) && part >= 0 && part <= 255) &&
+      (alphaPart === undefined || /^(?:0(?:\.\d+)?|1(?:\.0+)?)$/.test(alphaPart))
+    ) {
+      return value
+    }
+  }
+
+  return null
+}
+
+const readSafeCssLength = (rawValue: string | null) => {
+  const value = rawValue?.trim() ?? ''
+
+  if (
+    /^(?:0|[1-9]\d{0,3})(?:\.\d{1,2})?px$/i.test(value) ||
+    /^(?:0|[1-9]\d{0,2})(?:\.\d{1,2})?(?:rem|em)$/i.test(value) ||
+    /^(?:100|[1-9]?\d)(?:\.\d{1,2})?%$/.test(value)
+  ) {
+    return value
+  }
+
+  if (/^(?:0|[1-9]\d{0,3})$/.test(value)) {
+    return `${value}px`
+  }
+
+  return null
+}
+
+const parseSafeTableCellStyle = (attributes: string): CSSProperties | undefined => {
+  const styleAttribute = extractHtmlAttribute(attributes, 'style')
+  const nextStyle: CSSProperties = {}
+
+  if (styleAttribute) {
+    for (const declaration of styleAttribute.split(';')) {
+      const separatorIndex = declaration.indexOf(':')
+      if (separatorIndex < 0) {
+        continue
+      }
+
+      const property = declaration.slice(0, separatorIndex).trim().toLowerCase()
+      const value = declaration.slice(separatorIndex + 1).trim()
+
+      if (property === 'background' || property === 'background-color') {
+        const color = readSafeCssColor(value)
+        if (color) {
+          nextStyle.backgroundColor = color
+        }
+      } else if (property === 'color') {
+        const color = readSafeCssColor(value)
+        if (color) {
+          nextStyle.color = color
+        }
+      } else if (property === 'width') {
+        const width = readSafeCssLength(value)
+        if (width) {
+          nextStyle.width = width
+        }
+      } else if (property === 'height') {
+        const height = readSafeCssLength(value)
+        if (height) {
+          nextStyle.height = height
+        }
+      }
+    }
+  }
+
+  const backgroundAttribute = readSafeCssColor(extractHtmlAttribute(attributes, 'bgcolor'))
+  const widthAttribute = readSafeCssLength(extractHtmlAttribute(attributes, 'width'))
+  const heightAttribute = readSafeCssLength(extractHtmlAttribute(attributes, 'height'))
+
+  if (backgroundAttribute) {
+    nextStyle.backgroundColor = nextStyle.backgroundColor ?? backgroundAttribute
+  }
+
+  if (widthAttribute) {
+    nextStyle.width = nextStyle.width ?? widthAttribute
+  }
+
+  if (heightAttribute) {
+    nextStyle.height = nextStyle.height ?? heightAttribute
+  }
+
+  return Object.keys(nextStyle).length > 0 ? nextStyle : undefined
+}
+
+const pushSafeInlineText = (target: SafeInlineNode[], text: string) => {
+  if (!text) {
+    return
+  }
+
+  target.push(decodeHtmlEntities(text))
+}
+
+const parseSafeInlineHtml = (html: string): SafeInlineNode[] => {
+  const cleanedHtml = html
+    .replace(/<script\b[\s\S]*?<\/script>/gi, '')
+    .replace(/<style\b[\s\S]*?<\/style>/gi, '')
+  const root: SafeInlineNode[] = []
+  const stack: Array<{ kind: 'root' | 'strong' | 'em' | 'code'; children: SafeInlineNode[] }> = [
+    { kind: 'root', children: root },
+  ]
+  const tagPattern = /<\/?(?:b|strong|i|em|code|br)\b[^>]*>|<[^>]+>/gi
+  let cursor = 0
+  let match: RegExpExecArray | null
+
+  while ((match = tagPattern.exec(cleanedHtml)) !== null) {
+    pushSafeInlineText(stack.at(-1)!.children, cleanedHtml.slice(cursor, match.index))
+
+    const tag = match[0]
+    const tagName = tag.match(/^<\/?\s*([a-z][\da-z-]*)/i)?.[1]?.toLowerCase()
+    const isClosingTag = /^<\//.test(tag)
+    const isAllowedTag = tagName && ['b', 'strong', 'i', 'em', 'code', 'br'].includes(tagName)
+
+    if (isAllowedTag && tagName === 'br' && !isClosingTag) {
+      stack.at(-1)!.children.push({ kind: 'br' })
+    } else if (isAllowedTag && !isClosingTag) {
+      const kind = tagName === 'b' || tagName === 'strong'
+        ? 'strong'
+        : tagName === 'i' || tagName === 'em'
+          ? 'em'
+          : 'code'
+      const node: Extract<SafeInlineNode, { children: SafeInlineNode[] }> = { kind, children: [] }
+      stack.at(-1)!.children.push(node)
+      stack.push(node)
+    } else if (isAllowedTag && isClosingTag) {
+      const kind = tagName === 'b' || tagName === 'strong'
+        ? 'strong'
+        : tagName === 'i' || tagName === 'em'
+          ? 'em'
+          : tagName === 'code'
+            ? 'code'
+            : null
+      const matchingIndex = kind
+        ? stack.findLastIndex((entry) => entry.kind === kind)
+        : -1
+
+      if (matchingIndex > 0) {
+        stack.length = matchingIndex
+      }
+    }
+
+    cursor = tagPattern.lastIndex
+  }
+
+  pushSafeInlineText(stack.at(-1)!.children, cleanedHtml.slice(cursor))
+
+  return root
+}
+
+const parseSafeHtmlTable = (html: string): SafeHtmlTable | null => {
+  if (!/^<table\b/i.test(html.trim())) {
+    return null
+  }
+
+  const rows: SafeHtmlTable = []
+  const rowPattern = /<tr\b[^>]*>([\s\S]*?)<\/tr>/gi
+  let rowMatch: RegExpExecArray | null
+
+  while ((rowMatch = rowPattern.exec(html)) !== null && rows.length < MAX_SAFE_HTML_TABLE_ROWS) {
+    const rowHtml = rowMatch[1] ?? ''
+    const cells: SafeHtmlTableCell[] = []
+    const cellPattern = /<(td|th)\b([^>]*)>([\s\S]*?)<\/\1>/gi
+    let cellMatch: RegExpExecArray | null
+
+    while ((cellMatch = cellPattern.exec(rowHtml)) !== null && cells.length < MAX_SAFE_HTML_TABLE_CELLS) {
+      const kind = cellMatch[1]?.toLowerCase() === 'th' ? 'th' : 'td'
+      const attributes = cellMatch[2] ?? ''
+      const children = parseSafeInlineHtml(cellMatch[3] ?? '')
+
+      cells.push({
+        kind,
+        style: parseSafeTableCellStyle(attributes),
+        children: children.length > 0 ? children : ['\u00A0'],
+      })
+    }
+
+    if (cells.length > 0) {
+      rows.push(cells)
+    }
+  }
+
+  return rows.length > 0 ? rows : null
+}
+
+const isInsideMarkdownCodeFence = (content: string, index: number) => {
+  const fencePattern = /^```/gm
+  let insideFence = false
+  let match: RegExpExecArray | null
+
+  while ((match = fencePattern.exec(content)) !== null) {
+    if (match.index >= index) {
+      break
+    }
+
+    insideFence = !insideFence
+  }
+
+  return insideFence
+}
+
+const splitMarkdownAndSafeHtmlTables = (content: string): MarkdownRenderChunk[] => {
+  const chunks: MarkdownRenderChunk[] = []
+  const tablePattern = /<table\b[\s\S]*?<\/table>/gi
+  let cursor = 0
+  let match: RegExpExecArray | null
+
+  while ((match = tablePattern.exec(content)) !== null) {
+    const tableHtml = match[0] ?? ''
+    const table = !isInsideMarkdownCodeFence(content, match.index)
+      ? parseSafeHtmlTable(tableHtml)
+      : null
+
+    if (!table) {
+      continue
+    }
+
+    if (match.index > cursor) {
+      chunks.push({ kind: 'markdown', content: content.slice(cursor, match.index) })
+    }
+
+    chunks.push({ kind: 'table', table })
+    cursor = tablePattern.lastIndex
+  }
+
+  if (cursor < content.length) {
+    chunks.push({ kind: 'markdown', content: content.slice(cursor) })
+  }
+
+  return chunks.length > 0 ? chunks : [{ kind: 'markdown', content }]
+}
+
+const renderSafeInlineNodes = (nodes: SafeInlineNode[], keyPrefix: string): ReactNode[] =>
+  nodes.map((node, index) => {
+    const key = `${keyPrefix}-${index}`
+
+    if (typeof node === 'string') {
+      return node
+    }
+
+    if (node.kind === 'br') {
+      return <br key={key} />
+    }
+
+    if (node.kind === 'strong') {
+      return <strong key={key}>{renderSafeInlineNodes(node.children, key)}</strong>
+    }
+
+    if (node.kind === 'em') {
+      return <em key={key}>{renderSafeInlineNodes(node.children, key)}</em>
+    }
+
+    return <code key={key}>{renderSafeInlineNodes(node.children, key)}</code>
+  })
+
+const renderSafeHtmlTable = (table: SafeHtmlTable, keyPrefix: string) => (
+  <table key={keyPrefix}>
+    <tbody>
+      {table.map((row, rowIndex) => (
+        <tr key={`${keyPrefix}-row-${rowIndex}`}>
+          {row.map((cell, cellIndex) => {
+            const key = `${keyPrefix}-cell-${rowIndex}-${cellIndex}`
+            const children = renderSafeInlineNodes(cell.children, key)
+
+            return cell.kind === 'th' ? (
+              <th key={key} style={cell.style}>{children}</th>
+            ) : (
+              <td key={key} style={cell.style}>{children}</td>
+            )
+          })}
+        </tr>
+      ))}
+    </tbody>
+  </table>
+)
+
 export const handleMessageLinkClick = async (
   event: LinkClickEvent,
   href: string | undefined,
@@ -73,7 +430,7 @@ export const handleMessageLinkClick = async (
 }
 
 const createMarkdownComponents = (workspacePath?: string) => ({
-  a: ({ href, ...props }: React.ComponentProps<'a'>) => {
+  a: ({ href, ...props }: ComponentProps<'a'>) => {
     const isLocalLink = isLocalMessageLinkHref(href)
 
     return (
@@ -102,14 +459,37 @@ const getMarkdownComponents = (workspacePath?: string) => {
   return components
 }
 
-export const renderMarkdown = (content: string, workspacePath?: string) => (
+const renderPlainMarkdown = (content: string, workspacePath: string | undefined, key?: string) => (
   <ReactMarkdown
+    key={key}
     remarkPlugins={REMARK_PLUGINS}
     components={getMarkdownComponents(workspacePath)}
   >
     {content}
   </ReactMarkdown>
 )
+
+export const renderMarkdown = (content: string, workspacePath?: string) => {
+  const chunks = splitMarkdownAndSafeHtmlTables(content)
+
+  if (chunks.length === 1 && chunks[0]?.kind === 'markdown') {
+    return renderPlainMarkdown(chunks[0].content, workspacePath)
+  }
+
+  return (
+    <>
+      {chunks.map((chunk, index) => {
+        const key = `markdown-chunk-${index}`
+
+        if (chunk.kind === 'markdown') {
+          return chunk.content ? renderPlainMarkdown(chunk.content, workspacePath, key) : null
+        }
+
+        return renderSafeHtmlTable(chunk.table, key)
+      })}
+    </>
+  )
+}
 
 const collapsePreviewWhitespace = (text: string) =>
   text

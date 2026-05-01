@@ -230,6 +230,94 @@ export const shouldPinToBottomAfterContentGrowth = ({
   return Math.abs(currentMetrics.scrollTop - previousBottomScrollTop) <= tolerancePx
 }
 
+export const didHiddenLayoutClampScrollToTop = ({
+  previousScrollTop,
+  currentScrollTop,
+  previousClientHeight,
+  currentClientHeight,
+  previousScrollHeight,
+  currentScrollHeight,
+  tolerancePx = programmaticScrollInterruptTolerancePx,
+}: {
+  previousScrollTop: number
+  currentScrollTop: number
+  previousClientHeight: number
+  currentClientHeight: number
+  previousScrollHeight: number
+  currentScrollHeight: number
+  tolerancePx?: number
+}) =>
+  previousScrollTop > tolerancePx &&
+  currentScrollTop <= tolerancePx &&
+  previousClientHeight > tolerancePx &&
+  currentClientHeight <= tolerancePx &&
+  previousScrollHeight > previousClientHeight + tolerancePx &&
+  currentScrollHeight <= currentClientHeight + tolerancePx
+
+export const shouldIgnoreHiddenLayoutScrollReset = ({
+  previousScrollTop,
+  currentMetrics,
+  previousMetrics,
+  isVisible,
+  tolerancePx = programmaticScrollInterruptTolerancePx,
+}: {
+  previousScrollTop: number
+  currentMetrics: MessageListMetrics
+  previousMetrics?: Pick<MessageListMetrics, 'scrollHeight' | 'clientHeight'> | null
+  isVisible: boolean
+  tolerancePx?: number
+}) =>
+  !isVisible &&
+  previousScrollTop > tolerancePx &&
+  currentMetrics.scrollTop <= tolerancePx &&
+  (!previousMetrics ||
+    didHiddenLayoutClampScrollToTop({
+      previousScrollTop,
+      currentScrollTop: currentMetrics.scrollTop,
+      previousClientHeight: previousMetrics.clientHeight,
+      currentClientHeight: currentMetrics.clientHeight,
+      previousScrollHeight: previousMetrics.scrollHeight,
+      currentScrollHeight: currentMetrics.scrollHeight,
+      tolerancePx,
+    }) ||
+    currentMetrics.clientHeight > tolerancePx)
+
+export const getAutoScrollStateAfterObservedScroll = ({
+  previousScrollTop,
+  currentMetrics,
+  previousMetrics,
+  previousShouldAutoScroll,
+  isVisible,
+  thresholdPx = autoScrollBottomThresholdPx,
+}: {
+  previousScrollTop: number
+  currentMetrics: MessageListMetrics
+  previousMetrics?: Pick<MessageListMetrics, 'scrollHeight' | 'clientHeight'> | null
+  previousShouldAutoScroll: boolean
+  isVisible: boolean
+  thresholdPx?: number
+}) => {
+  if (
+    shouldIgnoreHiddenLayoutScrollReset({
+      previousScrollTop,
+      currentMetrics,
+      previousMetrics,
+      isVisible,
+    })
+  ) {
+    return {
+      shouldAutoScroll: previousShouldAutoScroll,
+      lastScrollTop: previousScrollTop,
+      ignored: true,
+    }
+  }
+
+  return {
+    ...getAutoScrollStateAfterUserScroll(previousScrollTop, currentMetrics, thresholdPx),
+    ignored: false,
+  }
+}
+
 export const getAutoScrollStateAfterCardUpdate = ({
   previousCardId,
   currentCardId,

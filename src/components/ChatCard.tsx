@@ -57,10 +57,10 @@ import {
 import { getCompactMessageWindow, type CompactMessageWindow } from './chat-card-compaction'
 import {
   getAutoScrollStateAfterCardUpdate,
+  getAutoScrollStateAfterObservedScroll,
   compactHistoryAutoRevealTopThresholdPx,
   getCompactedHistoryAutoRevealMode,
   getDistanceToBottom,
-  getAutoScrollStateAfterUserScroll,
   getAutoScrollStateDuringProgrammaticScroll,
   getRestoredMessageListScrollPlan,
   getScrollTopToRevealChild,
@@ -948,6 +948,7 @@ const ChatCardView = ({
 */
   const thinkingDepthLabel = language === 'en' ? 'Thinking depth' : '\u601d\u8003\u6df1\u5ea6'
   const localSlashCommands = useMemo(() => getLocalSlashCommands(language), [language])
+  const localSlashCommandsRef = useRef(localSlashCommands)
   const draftValueRef = useRef(card.draft ?? '')
   const draftHasTextRef = useRef(draftValueRef.current.trim().length > 0)
   const slashDraftRef = useRef(
@@ -1011,6 +1012,10 @@ const ChatCardView = ({
   const programmaticScrollGuardRef = useRef(false)
   const programmaticScrollGuardFrameRef = useRef<number | null>(null)
   const programmaticScrollIntentRef = useRef<ProgrammaticScrollIntent | null>(null)
+  const lastMessageListMetricsRef = useRef<{
+    scrollHeight: number
+    clientHeight: number
+  } | null>(null)
   const restoredScrollBootstrapCardIdRef = useRef<string | null>(null)
   const restoredAnchorLockedCardIdRef = useRef<string | null>(null)
   const pendingRestoredAnchorScrollTopRef = useRef<number | null>(null)
@@ -1078,6 +1083,11 @@ const ChatCardView = ({
     openFileHandlerRef.current?.(relativePath)
   }, [])
   const openFileCallback = onOpenFile ? handleOpenWorkspaceFile : undefined
+
+  useEffect(() => {
+    localSlashCommandsRef.current = localSlashCommands
+  }, [localSlashCommands])
+
   const showsCardTitle =
     !usesPaneChrome &&
     !isGitToolCard &&
@@ -1582,6 +1592,10 @@ const ChatCardView = ({
 
       shouldAutoScrollRef.current = next.shouldAutoScroll
       lastScrollTopRef.current = next.lastScrollTop
+      lastMessageListMetricsRef.current = {
+        scrollHeight: node.scrollHeight,
+        clientHeight: node.clientHeight,
+      }
 
       if (next.interrupted) {
         programmaticScrollGuardRef.current = false
@@ -1595,11 +1609,25 @@ const ChatCardView = ({
       return
     }
 
-    const next = getAutoScrollStateAfterUserScroll(lastScrollTopRef.current, {
+    const currentMetrics = {
       scrollTop: node.scrollTop,
       scrollHeight: node.scrollHeight,
       clientHeight: node.clientHeight,
+    }
+    const next = getAutoScrollStateAfterObservedScroll({
+      previousScrollTop: lastScrollTopRef.current,
+      currentMetrics,
+      previousMetrics: lastMessageListMetricsRef.current,
+      previousShouldAutoScroll: shouldAutoScrollRef.current,
+      isVisible:
+        (typeof document === 'undefined' || document.visibilityState === 'visible') &&
+        node.isConnected &&
+        node.getClientRects().length > 0 &&
+        node.clientHeight > programmaticScrollInterruptTolerancePx,
     })
+    if (next.ignored) {
+      return
+    }
     restoredAnchorLockedCardIdRef.current = null
     pendingRestoredAnchorScrollTopRef.current = null
     if (restoredScrollSpacerPx > 0) {
@@ -1607,6 +1635,10 @@ const ChatCardView = ({
     }
     lastScrollTopRef.current = next.lastScrollTop
     shouldAutoScrollRef.current = next.shouldAutoScroll
+    lastMessageListMetricsRef.current = {
+      scrollHeight: node.scrollHeight,
+      clientHeight: node.clientHeight,
+    }
   }, [restoredScrollSpacerPx, suspendPaneRuntimeEffects])
 
   const scrollMessageListTo = useCallback((targetScrollTop: number, behavior: ScrollBehavior = 'instant') => {
@@ -1636,6 +1668,10 @@ const ChatCardView = ({
     })
 
     lastScrollTopRef.current = nextScrollTop
+    lastMessageListMetricsRef.current = {
+      scrollHeight: el.scrollHeight,
+      clientHeight: el.clientHeight,
+    }
     el.scrollTo({
       top: nextScrollTop,
       behavior,
@@ -1822,6 +1858,32 @@ const ChatCardView = ({
     }
 
     const el = messageListRef.current
+    const currentMetrics = el
+      ? {
+          scrollTop: el.scrollTop,
+          scrollHeight: el.scrollHeight,
+          clientHeight: el.clientHeight,
+        }
+      : null
+    const ignoredHiddenScrollReset =
+      el &&
+      currentMetrics &&
+      getAutoScrollStateAfterObservedScroll({
+        previousScrollTop: lastScrollTopRef.current,
+        currentMetrics,
+        previousMetrics: lastMessageListMetricsRef.current,
+        previousShouldAutoScroll: shouldAutoScrollRef.current,
+        isVisible:
+          (typeof document === 'undefined' || document.visibilityState === 'visible') &&
+          el.isConnected &&
+          el.getClientRects().length > 0 &&
+          el.clientHeight > programmaticScrollInterruptTolerancePx,
+      }).ignored
+
+    if (ignoredHiddenScrollReset) {
+      return
+    }
+
     const isCurrentlyPinnedToBottom =
       el &&
       getDistanceToBottom({
@@ -1835,6 +1897,10 @@ const ChatCardView = ({
     if (externalScrollOverride) {
       shouldAutoScrollRef.current = false
       lastScrollTopRef.current = el.scrollTop
+      lastMessageListMetricsRef.current = {
+        scrollHeight: el.scrollHeight,
+        clientHeight: el.clientHeight,
+      }
       return
     }
 
@@ -1883,6 +1949,11 @@ const ChatCardView = ({
       return
     }
 
+    lastMessageListMetricsRef.current = {
+      scrollHeight: node.scrollHeight,
+      clientHeight: node.clientHeight,
+    }
+
     let previousScrollHeight = node.scrollHeight
     let previousBottomScrollTop = getProgrammaticBottomScrollTarget({
       scrollHeight: node.scrollHeight,
@@ -1897,6 +1968,10 @@ const ChatCardView = ({
 
       if (el.scrollHeight === previousScrollHeight) {
         return
+      }
+      lastMessageListMetricsRef.current = {
+        scrollHeight: el.scrollHeight,
+        clientHeight: el.clientHeight,
       }
 
       const metrics = {
@@ -1952,7 +2027,7 @@ const ChatCardView = ({
           return
         }
 
-        setRemoteSlashCommands(commands.length > 0 ? commands : localSlashCommands)
+        setRemoteSlashCommands(commands.length > 0 ? commands : localSlashCommandsRef.current)
         setSlashCommandsStatus('ready')
       })
       .catch(() => {
@@ -1960,7 +2035,7 @@ const ChatCardView = ({
           return
         }
 
-        setRemoteSlashCommands(localSlashCommands)
+        setRemoteSlashCommands(localSlashCommandsRef.current)
         setSlashCommandsStatus('error')
       })
 
@@ -1973,7 +2048,6 @@ const ChatCardView = ({
     hasWorkspacePath,
     isToolCard,
     language,
-    localSlashCommands,
     slashCommandsEnabled,
     workspacePath,
   ])
@@ -2002,7 +2076,6 @@ const ChatCardView = ({
     hasWorkspacePath,
     isToolCard,
     language,
-    localSlashCommands,
     slashCommandsEnabled,
     slashQuery,
     workspacePath,
@@ -2046,7 +2119,7 @@ const ChatCardView = ({
   const sendDisabled =
     (!draftHasText && !hasPendingAttachments) ||
     (hasPendingAttachments && !providerCanSendImages) ||
-    (!localSlashDraft && (!workspacePath.trim() || !providerReady))
+    (!localSlashDraft && !workspacePath.trim())
 
   const removePendingAttachment = (attachmentId: string) => {
     setPendingAttachments((current) => {

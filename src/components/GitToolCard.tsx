@@ -17,6 +17,10 @@ import { GitSyncPanel } from './GitSyncPanel'
 import { HoverTooltip } from './HoverTooltip'
 import { GitBranchIcon } from './Icons'
 import { getGitChangesSinceLastSnapshot, rememberGitChangeSnapshot } from './git-change-tracker'
+import {
+  getGitDashboardFileListWindow,
+  getGitDashboardVisibleChanges,
+} from './git-dashboard-windowing'
 
 type NoticeTone = 'info' | 'success' | 'error'
 
@@ -129,7 +133,9 @@ export const GitToolCard = ({
   const [commitingBlocked, setCommitingBlocked] = useState(false)
   const [commitNewPending, setCommitNewPending] = useState(false)
   const [createRepoPending, setCreateRepoPending] = useState(false)
+  const [fileListMetrics, setFileListMetrics] = useState({ scrollTop: 0, clientHeight: 0 })
   const cardRef = useRef<HTMLDivElement>(null)
+  const fileListRef = useRef<HTMLDivElement>(null)
   const gitStatusRef = useRef<GitStatus | null>(null)
   const refreshingRef = useRef(false)
   const autoCompactedRef = useRef(false)
@@ -254,8 +260,44 @@ export const GitToolCard = ({
     lastRefreshRef.current = now
     void refreshStatus()
   }, [isBusy, refreshStatus])
+  const syncFileListMetrics = useCallback(() => {
+    const node = fileListRef.current
+    if (!node) {
+      return
+    }
+
+    setFileListMetrics((current) => {
+      const next = {
+        scrollTop: node.scrollTop,
+        clientHeight: node.clientHeight,
+      }
+
+      return current.scrollTop === next.scrollTop && current.clientHeight === next.clientHeight
+        ? current
+        : next
+    })
+  }, [])
   const repositoryName = getRepositoryName(gitStatus?.repoRoot ?? workspacePath)
   const totalStats = useMemo(() => computeTotalStats(gitStatus?.changes ?? []), [gitStatus?.changes])
+  const fileListWindow = useMemo(
+    () =>
+      gitStatus && !gitStatus.clean
+        ? getGitDashboardFileListWindow({
+            changeCount: gitStatus.changes.length,
+            viewportHeight: fileListMetrics.clientHeight,
+            scrollTop: fileListMetrics.scrollTop,
+          })
+        : null,
+    [fileListMetrics.clientHeight, fileListMetrics.scrollTop, gitStatus],
+  )
+  const isFileListVirtualized = fileListWindow?.isVirtualized ?? false
+  const visibleGitChanges = useMemo(() => {
+    if (!gitStatus || gitStatus.clean) {
+      return []
+    }
+
+    return getGitDashboardVisibleChanges(gitStatus.changes, fileListWindow)
+  }, [fileListWindow, gitStatus])
 
   const prevGitInfoRef = useRef<GitInfoSummary | null>(null)
 
@@ -287,6 +329,36 @@ export const GitToolCard = ({
       }
     }
   }, [gitStatus, isActive, onGitInfoChange, repositoryName])
+
+  useLayoutEffect(() => {
+    if (!gitStatus || gitStatus.clean || !isFileListVirtualized) {
+      return
+    }
+
+    syncFileListMetrics()
+  }, [gitStatus, isFileListVirtualized, syncFileListMetrics])
+
+  useEffect(() => {
+    if (!gitStatus || gitStatus.clean || !isFileListVirtualized) {
+      return
+    }
+
+    if (typeof ResizeObserver === 'undefined') {
+      return
+    }
+
+    const observer = new ResizeObserver(() => {
+      syncFileListMetrics()
+    })
+    const node = fileListRef.current
+    if (node) {
+      observer.observe(node)
+    }
+
+    return () => {
+      observer.disconnect()
+    }
+  }, [gitStatus, isFileListVirtualized, syncFileListMetrics])
 
   const handleStatusChange = useCallback((nextStatus: GitStatus) => {
     startTransition(() => {
@@ -629,10 +701,45 @@ export const GitToolCard = ({
             </div>
           </div>
 
-          <div className="git-dashboard-file-list">
-            {gitStatus.changes.map((c) => (
-              <span key={c.path} className="git-dashboard-file-item" title={c.path}>{c.path}</span>
-            ))}
+          <div
+            ref={fileListRef}
+            className="git-dashboard-file-list"
+            data-virtualized={isFileListVirtualized ? 'true' : 'false'}
+            onScroll={isFileListVirtualized ? syncFileListMetrics : undefined}
+          >
+            {isFileListVirtualized ? (
+              <>
+                {fileListWindow.topSpacerHeight > 0 ? (
+                  <div
+                    aria-hidden="true"
+                    style={{
+                      flex: '0 0 auto',
+                      height: `${fileListWindow.topSpacerHeight}px`,
+                    }}
+                  />
+                ) : null}
+                {visibleGitChanges.map((change) => (
+                  <span key={change.path} className="git-dashboard-file-item" title={change.path}>
+                    {change.path}
+                  </span>
+                ))}
+                {fileListWindow.bottomSpacerHeight > 0 ? (
+                  <div
+                    aria-hidden="true"
+                    style={{
+                      flex: '0 0 auto',
+                      height: `${fileListWindow.bottomSpacerHeight}px`,
+                    }}
+                  />
+                ) : null}
+              </>
+            ) : (
+              gitStatus.changes.map((change) => (
+                <span key={change.path} className="git-dashboard-file-item" title={change.path}>
+                  {change.path}
+                </span>
+              ))
+            )}
           </div>
         </div>
       )}

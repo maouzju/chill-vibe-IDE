@@ -155,11 +155,15 @@ test('Electron ancient Git checkbox toggles stay responsive while preserving the
     const page = await app.firstWindow()
 
     await waitForGitToolCard(page)
-    await page.waitForFunction(
-      () => document.querySelectorAll('.git-dashboard-file-item').length >= 100,
-      undefined,
-      { timeout: 60000 },
-    )
+    await page.waitForFunction(() => {
+      const fileList = document.querySelector('.git-dashboard-file-list')
+      if (!fileList || fileList.getAttribute('data-virtualized') !== 'true') {
+        return false
+      }
+
+      const visibleCount = fileList.querySelectorAll('.git-dashboard-file-item').length
+      return visibleCount > 0 && visibleCount < 100
+    }, undefined, { timeout: 60000 })
 
     await page.getByRole('button', { name: 'Full Git' }).click()
 

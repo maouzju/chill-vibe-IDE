@@ -211,6 +211,16 @@ describe('WorkspaceColumn session history access', () => {
     assert.match(markup, /workspace-path-input/)
     assert.match(markup, />Session history</)
   })
+
+  it('marks the session history button as a non-drag target so clicks are not eaten by the draggable header', () => {
+    setWindow(undefined)
+
+    const markup = createMarkup(createColumn())
+    const columnHeaderMarkup = markup.match(/<div class="column-actions"[\s\S]*?<\/div>\s*<\/div>/)?.[0] ?? ''
+
+    assert.match(columnHeaderMarkup, /aria-label="Session history"/)
+    assert.match(columnHeaderMarkup, /draggable="false"/)
+  })
 })
 
 describe('WorkspaceColumn session history search', () => {

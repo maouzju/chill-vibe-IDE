@@ -290,7 +290,8 @@ export const GitToolCard = ({
         : null,
     [fileListMetrics.clientHeight, fileListMetrics.scrollTop, gitStatus],
   )
-  const isFileListVirtualized = fileListWindow?.isVirtualized ?? false
+  const virtualizedFileListWindow = fileListWindow?.isVirtualized ? fileListWindow : null
+  const isFileListVirtualized = virtualizedFileListWindow !== null
   const visibleGitChanges = useMemo(() => {
     if (!gitStatus || gitStatus.clean) {
       return []
@@ -707,14 +708,14 @@ export const GitToolCard = ({
             data-virtualized={isFileListVirtualized ? 'true' : 'false'}
             onScroll={isFileListVirtualized ? syncFileListMetrics : undefined}
           >
-            {isFileListVirtualized ? (
+            {virtualizedFileListWindow ? (
               <>
-                {fileListWindow.topSpacerHeight > 0 ? (
+                {virtualizedFileListWindow.topSpacerHeight > 0 ? (
                   <div
                     aria-hidden="true"
                     style={{
                       flex: '0 0 auto',
-                      height: `${fileListWindow.topSpacerHeight}px`,
+                      height: `${virtualizedFileListWindow.topSpacerHeight}px`,
                     }}
                   />
                 ) : null}
@@ -723,12 +724,12 @@ export const GitToolCard = ({
                     {change.path}
                   </span>
                 ))}
-                {fileListWindow.bottomSpacerHeight > 0 ? (
+                {virtualizedFileListWindow.bottomSpacerHeight > 0 ? (
                   <div
                     aria-hidden="true"
                     style={{
                       flex: '0 0 auto',
-                      height: `${fileListWindow.bottomSpacerHeight}px`,
+                      height: `${virtualizedFileListWindow.bottomSpacerHeight}px`,
                     }}
                   />
                 ) : null}

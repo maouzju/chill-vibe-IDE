@@ -4043,7 +4043,8 @@ function App() {
   const handleRestoreSession = useCallback((columnId: string, entryId: string) => {
     void (async () => {
       try {
-        const paneId = resolveColumnPaneTarget(columnId)
+        const column = getColumn(columnId)
+        const paneId = resolveColumnPaneTarget(columnId) ?? (column ? getFirstPane(column.layout).id : undefined)
         const entry = await resolveSessionHistoryEntryForRestore({
           entryId,
           state: appStateRef.current,
@@ -4068,7 +4069,7 @@ function App() {
         console.error('[history] Failed to restore archived session.', error)
       }
     })()
-  }, [applyActions, persistImmediately, resolveColumnPaneTarget])
+  }, [applyActions, getColumn, persistImmediately, resolveColumnPaneTarget])
 
   const handleDismissInterruptedSessions = useCallback(() => {
     if (!interruptedSessionRecovery) {

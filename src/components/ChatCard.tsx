@@ -86,6 +86,13 @@ import { BrainstormCard } from './BrainstormCard'
 import { resolveBrainstormRequestTarget } from './brainstorm-card-utils'
 import { formatAskUserFollowUpPrompt } from './ask-user-follow-up'
 import {
+  areSlashCommandListsEqual,
+  getSlashCommandsLoadKey,
+  resolveSlashCommandsLoadKeyAfterCancel,
+  resolveRemoteSlashCommands,
+  shouldStartSlashCommandsLoad,
+} from './chat-card-slash-commands'
+import {
   shouldShowManualStreamRecoveryControl,
   type CardRecoveryStatus,
 } from '../stream-recovery-feedback'
@@ -958,6 +965,8 @@ const ChatCardView = ({
   const [slashDraft, setSlashDraft] = useState(() => slashDraftRef.current)
   const [remoteSlashCommands, setRemoteSlashCommands] = useState<SlashCommand[]>(localSlashCommands)
   const [slashCommandsStatus, setSlashCommandsStatus] = useState<'idle' | 'loading' | 'ready' | 'error'>('idle')
+  const slashCommandsStatusRef = useRef(slashCommandsStatus)
+  const slashCommandsLoadKeyRef = useRef<string | null>(null)
   const [selectedSlashIndex, setSelectedSlashIndex] = useState(0)
   const [slashMenuDismissed, setSlashMenuDismissed] = useState(false)
   const [pendingAttachments, setPendingAttachments] = useState<PendingAttachment[]>(() =>
@@ -1087,6 +1096,10 @@ const ChatCardView = ({
   useEffect(() => {
     localSlashCommandsRef.current = localSlashCommands
   }, [localSlashCommands])
+
+  useEffect(() => {
+    slashCommandsStatusRef.current = slashCommandsStatus
+  }, [slashCommandsStatus])
 
   const showsCardTitle =
     !usesPaneChrome &&
@@ -2003,44 +2016,63 @@ const ChatCardView = ({
 
   useEffect(() => {
     if (isToolCard || !hasWorkspacePath || !slashCommandsEnabled) {
+      slashCommandsLoadKeyRef.current = null
       return
     }
 
+    const request = {
+      provider: card.provider,
+      workspacePath: workspacePath.trim(),
+      language,
+      crossProviderSkillReuseEnabled,
+    }
+    const loadKey = getSlashCommandsLoadKey(request)
+    if (!shouldStartSlashCommandsLoad(slashCommandsLoadKeyRef.current, loadKey)) {
+      return
+    }
+
+    slashCommandsLoadKeyRef.current = loadKey
     let cancelled = false
     // This flag mirrors the async fetch lifecycle for slash command discovery.
     queueMicrotask(() => {
-      if (!cancelled) {
+      if (!cancelled && slashCommandsStatusRef.current !== 'loading') {
         startTransition(() => {
           setSlashCommandsStatus('loading')
         })
       }
     })
 
-    void fetchSlashCommands({
-      provider: card.provider,
-      workspacePath,
-      language,
-      crossProviderSkillReuseEnabled,
-    })
+    void fetchSlashCommands(request)
       .then((commands) => {
-        if (cancelled) {
+        if (cancelled || slashCommandsLoadKeyRef.current !== loadKey) {
           return
         }
 
-        setRemoteSlashCommands(commands.length > 0 ? commands : localSlashCommandsRef.current)
-        setSlashCommandsStatus('ready')
+        setRemoteSlashCommands((current) => {
+          const nextCommands = resolveRemoteSlashCommands(commands, localSlashCommandsRef.current)
+          return areSlashCommandListsEqual(current, nextCommands) ? current : nextCommands
+        })
+        setSlashCommandsStatus((current) => current === 'ready' ? current : 'ready')
       })
       .catch(() => {
-        if (cancelled) {
+        if (cancelled || slashCommandsLoadKeyRef.current !== loadKey) {
           return
         }
 
-        setRemoteSlashCommands(localSlashCommandsRef.current)
-        setSlashCommandsStatus('error')
+        setRemoteSlashCommands((current) =>
+          areSlashCommandListsEqual(current, localSlashCommandsRef.current)
+            ? current
+            : localSlashCommandsRef.current,
+        )
+        setSlashCommandsStatus((current) => current === 'error' ? current : 'error')
       })
 
     return () => {
       cancelled = true
+      slashCommandsLoadKeyRef.current = resolveSlashCommandsLoadKeyAfterCancel(
+        slashCommandsLoadKeyRef.current,
+        loadKey,
+      )
     }
   }, [
     card.provider,

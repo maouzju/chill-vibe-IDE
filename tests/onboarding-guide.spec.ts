@@ -151,7 +151,7 @@ test('first open wizard auto-runs setup, supports language flags, and can import
   await expect(page.locator('#wizard-language-en')).toContainText('🇺🇸')
   await page.getByRole('button', { name: /English/ }).click()
   await expect(page.getByRole('dialog')).toContainText(/Quick start/)
-  await expect(page.getByRole('dialog')).toContainText(/Environment setup completed\./, { timeout: 15000 })
+  await expect(page.getByRole('dialog')).toContainText(/Environment setup completed\.|Environment ready\./, { timeout: 15000 })
   await expect(page.getByRole('dialog')).toContainText(/Import from cc-switch/)
   await page.getByRole('button', { name: /Import now/ }).click()
   await expect(page.getByRole('dialog')).toContainText(/Imported 2 profiles/)

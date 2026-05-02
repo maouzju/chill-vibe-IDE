@@ -616,7 +616,10 @@ const WorkspaceColumnView = ({
               <IconButton
                 label={text.sessionHistory}
                 className="column-secondary-action"
-                onClick={() => {
+                draggable={false}
+                onMouseDown={(event) => event.stopPropagation()}
+                onClick={(event) => {
+                  event.stopPropagation()
                   setEditingPath(false)
                   setRecentMenuView(false)
                   setHistoryMenuOpen((current) => {

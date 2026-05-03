@@ -1,4 +1,4 @@
-import { memo, useEffect, useEffectEvent, useId, useLayoutEffect, useRef, useState } from 'react'
+import { memo, useCallback, useEffect, useId, useLayoutEffect, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 
@@ -108,7 +108,7 @@ export const StructuredPreviewBlock = ({
   const [isOverflowing, setIsOverflowing] = useState(false)
   const [isDialogOpen, setIsDialogOpen] = useState(false)
 
-  const measureOverflow = useEffectEvent(() => {
+  const measureOverflow = useCallback(() => {
     const node = previewRef.current
 
     if (!node) {
@@ -117,7 +117,7 @@ export const StructuredPreviewBlock = ({
 
     const nextOverflowing = node.scrollHeight > node.clientHeight + 1 || node.scrollWidth > node.clientWidth + 1
     setIsOverflowing((current) => (current === nextOverflowing ? current : nextOverflowing))
-  })
+  }, [])
 
   useLayoutEffect(() => {
     const node = previewRef.current
@@ -126,7 +126,10 @@ export const StructuredPreviewBlock = ({
       return
     }
 
-    measureOverflow()
+    let frame: number | null = window.requestAnimationFrame(() => {
+      frame = null
+      measureOverflow()
+    })
 
     let resizeObserver: ResizeObserver | null = null
 
@@ -140,10 +143,13 @@ export const StructuredPreviewBlock = ({
     window.addEventListener('resize', measureOverflow)
 
     return () => {
+      if (frame !== null) {
+        window.cancelAnimationFrame(frame)
+      }
       resizeObserver?.disconnect()
       window.removeEventListener('resize', measureOverflow)
     }
-  }, [previewText])
+  }, [measureOverflow, previewText])
 
   useEffect(() => {
     if (!isDialogOpen) {

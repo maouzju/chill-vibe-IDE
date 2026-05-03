@@ -2,7 +2,7 @@ import { app, BrowserWindow, dialog, ipcMain, net, protocol, shell } from 'elect
 import { rm, stat } from 'node:fs/promises'
 import path from 'path'
 import { fileURLToPath, pathToFileURL } from 'url'
-import type { IpcMainInvokeEvent, WebContents } from 'electron'
+import type { IpcMainInvokeEvent } from 'electron'
 
 import { maxUiScale, minUiScale } from '../shared/default-state.js'
 import { getAppDataDir } from '../server/app-paths.js'
@@ -199,9 +199,9 @@ async function clearUserDataOnLaunchIfNeeded() {
   await rm(dataDir, { recursive: true, force: true })
 }
 
-function cleanupSubscriptionsForContents(webContents: WebContents) {
+function cleanupSubscriptionsForContentsId(webContentsId: number) {
   for (const [subscriptionId, entry] of streamSubscriptions.entries()) {
-    if (entry.webContentsId !== webContents.id) {
+    if (entry.webContentsId !== webContentsId) {
       continue
     }
 
@@ -608,8 +608,9 @@ function createWindow() {
   })
   attachWindowDiagnostics(win)
 
+  const webContentsId = win.webContents.id
   win.webContents.on('destroyed', () => {
-    cleanupSubscriptionsForContents(win.webContents)
+    cleanupSubscriptionsForContentsId(webContentsId)
   })
 
   const target = getRendererLoadTarget({

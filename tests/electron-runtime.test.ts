@@ -249,6 +249,17 @@ test('Electron quit flow flushes renderer persistence and waits for queued state
   assert.match(persistenceBody, /window\.addEventListener\('chill-vibe:flush-state-before-quit', handlePageHide\)/)
 })
 
+test('Electron stream cleanup does not touch destroyed WebContents objects during shutdown', async () => {
+  const mainBody = await readFile(path.join(process.cwd(), 'electron', 'main.ts'), 'utf8')
+
+  assert.match(mainBody, /function cleanupSubscriptionsForContentsId\(webContentsId: number\)/)
+  assert.match(
+    mainBody,
+    /const webContentsId = win\.webContents\.id\s+win\.webContents\.on\('destroyed', \(\) => {\s+cleanupSubscriptionsForContentsId\(webContentsId\)/s,
+  )
+  assert.doesNotMatch(mainBody, /cleanupSubscriptionsForContents\(win\.webContents\)/)
+})
+
 test('Electron runtime validation keeps desktop windows hidden by default', async () => {
   const projectRoot = process.cwd()
   const [mainBody, runnerBody, helperBody] = await Promise.all([

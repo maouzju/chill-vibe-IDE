@@ -56,6 +56,24 @@ export function usePersistence(
     [persistState, setSaveStatus],
   )
 
+  const persistQueued = useCallback(
+    (nextState: AppState) => {
+      if (loadStatus !== 'ready') {
+        return
+      }
+
+      const version = getPersistenceVersion(nextState)
+      lastQueuedSnapshot.current = version
+      lastQueuedState.current = nextState
+      setSaveStatus('saving')
+      queuedSaveSchedulerRef.current?.schedule(nextState, {
+        delayMs: getQueuedStateSaveDelayMs(nextState),
+        resetTimer: shouldResetQueuedStateSaveTimer(nextState),
+      })
+    },
+    [loadStatus, setSaveStatus],
+  )
+
   const flushPendingState = useCallback(() => {
     if (loadStatus !== 'ready') {
       return
@@ -140,6 +158,7 @@ export function usePersistence(
 
   return {
     persistImmediately,
+    persistQueued,
     flushPendingState,
     lastSavedSnapshot,
     lastQueuedSnapshot,

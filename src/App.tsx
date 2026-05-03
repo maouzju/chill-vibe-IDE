@@ -193,6 +193,7 @@ import {
   streamDeltaFlushIntervalMs,
   shouldPersistActionImmediately,
   shouldSyncRuntimeSettings,
+  shouldUseQueuedPersistenceForAction,
 } from './hooks/persistence-queue'
 import { usePersistence } from './hooks/usePersistence'
 import { updateLatestKnownAppState } from './renderer-crash-state'
@@ -921,6 +922,7 @@ function App() {
 
   const {
     persistImmediately,
+    persistQueued,
     lastSavedSnapshot,
     lastQueuedSnapshot,
     lastSavedState,
@@ -996,6 +998,30 @@ function App() {
   }, [])
 
   const applyAction = useCallback((action: IdeAction) => applyActions([action]), [applyActions])
+
+  const persistAfterAction = useCallback(
+    (actionType: IdeAction['type'], nextState: AppState) => {
+      if (shouldUseQueuedPersistenceForAction(actionType)) {
+        persistQueued(nextState)
+        return
+      }
+
+      persistImmediately(nextState)
+    },
+    [persistImmediately, persistQueued],
+  )
+
+  const persistAfterActions = useCallback(
+    (actions: IdeAction[], nextState: AppState) => {
+      if (actions.length > 0 && actions.every((action) => shouldUseQueuedPersistenceForAction(action.type))) {
+        persistQueued(nextState)
+        return
+      }
+
+      persistImmediately(nextState)
+    },
+    [persistImmediately, persistQueued],
+  )
 
   const flushBufferedAssistantDeltaForCard = useCallback(
     (cardId: string) => {
@@ -1374,7 +1400,7 @@ function App() {
         apiKey,
       }
 
-      applyActions([
+      const actions: IdeAction[] = [
         {
           type: 'upsertProviderProfile',
           provider,
@@ -1385,7 +1411,8 @@ function App() {
           provider,
           profileId: profile.id,
         },
-      ])
+      ]
+      persistAfterActions(actions, applyActions(actions))
 
       setSwitchNotice(null)
       setProfileDrafts((current) => ({
@@ -1393,7 +1420,7 @@ function App() {
         [provider]: emptyProfileDraft(),
       }))
     },
-    [applyActions, profileDrafts],
+    [applyActions, persistAfterActions, profileDrafts],
   )
 
   const updateProviderProfile = useCallback(
@@ -1595,26 +1622,25 @@ function App() {
           return false
         }
 
-        persistImmediately(
-          applyActions([
-            {
-              type: 'appendMessages',
-              columnId: owner.id,
-              cardId,
-              messages: [createMessage('system', errorMessage(error, text.unexpectedError))],
-            },
-            {
-              type: 'updateCard',
-              columnId: owner.id,
-              cardId,
-              patch: { status: 'error', streamId: undefined },
-            },
-          ]),
-        )
+        const actions: IdeAction[] = [
+          {
+            type: 'appendMessages',
+            columnId: owner.id,
+            cardId,
+            messages: [createMessage('system', errorMessage(error, text.unexpectedError))],
+          },
+          {
+            type: 'updateCard',
+            columnId: owner.id,
+            cardId,
+            patch: { status: 'error', streamId: undefined },
+          },
+        ]
+        persistAfterActions(actions, applyActions(actions))
         return false
       }
     },
-    [applyActions, flushBufferedAssistantDeltaForCard, persistImmediately, text.unexpectedError],
+    [applyActions, flushBufferedAssistantDeltaForCard, persistAfterActions, text.unexpectedError],
   )
 
   const enqueueQueuedSend = useCallback((cardId: string, request: QueuedSendRequest) => {
@@ -1658,19 +1684,20 @@ function App() {
       return
     }
 
-    const nextState = applyAction({
+    const action: IdeAction = {
       type: 'updateCard',
       columnId,
       cardId,
       patch: { status: 'idle', streamId: undefined },
-    })
-    persistImmediately(nextState)
+    }
+    const nextState = applyAction(action)
+    persistAfterAction(action.type, nextState)
     dispatchNextQueuedSend(columnId, cardId)
   }, [
     applyAction,
     closeStream,
     dispatchNextQueuedSend,
-    persistImmediately,
+    persistAfterAction,
   ])
 
   const providerByName = useMemo(
@@ -1944,10 +1971,10 @@ function App() {
       const nextState = applyAction(action)
 
       if (shouldPersistActionImmediately(action.type, nextState)) {
-        persistImmediately(nextState)
+        persistAfterAction(action.type, nextState)
       }
     },
-    [applyAction, getColumnCard, persistImmediately],
+    [applyAction, getColumnCard, persistAfterAction],
   )
 
   const changeCardReasoningEffort = useCallback(
@@ -1960,7 +1987,7 @@ function App() {
 
       const normalizedReasoningEffort = normalizeReasoningEffort(card.provider, reasoningEffort)
 
-      applyActions([
+      const actions: IdeAction[] = [
         {
           type: 'updateCard',
           columnId,
@@ -1975,9 +2002,10 @@ function App() {
           model: card.model,
           reasoningEffort: normalizedReasoningEffort,
         },
-      ])
+      ]
+      persistAfterActions(actions, applyActions(actions))
     },
-    [applyActions, getColumnCard],
+    [applyActions, getColumnCard, persistAfterActions],
   )
 
   const toggleCardPlanMode = useCallback(
@@ -1988,14 +2016,15 @@ function App() {
         return
       }
 
-      applyAction({
+      const action: IdeAction = {
         type: 'updateCard',
         columnId,
         cardId,
         patch: { planMode: !card.planMode },
-      })
+      }
+      persistAfterAction(action.type, applyAction(action))
     },
-    [applyAction, getColumnCard],
+    [applyAction, getColumnCard, persistAfterAction],
   )
 
   const toggleCardThinking = useCallback(
@@ -2006,14 +2035,15 @@ function App() {
         return
       }
 
-      applyAction({
+      const action: IdeAction = {
         type: 'updateCard',
         columnId,
         cardId,
         patch: { thinkingEnabled: card.thinkingEnabled === false ? true : false },
-      })
+      }
+      persistAfterAction(action.type, applyAction(action))
     },
-    [applyAction, getColumnCard],
+    [applyAction, getColumnCard, persistAfterAction],
   )
 
   const toggleCardCollapsed = useCallback(
@@ -2024,14 +2054,15 @@ function App() {
         return
       }
 
-      applyAction({
+      const action: IdeAction = {
         type: 'updateCard',
         columnId,
         cardId,
         patch: { collapsed: !card.collapsed },
-      })
+      }
+      persistAfterAction(action.type, applyAction(action))
     },
-    [applyAction, getColumnCard],
+    [applyAction, getColumnCard, persistAfterAction],
   )
 
   const appendCardLogs = useCallback(
@@ -2042,15 +2073,16 @@ function App() {
       }
 
       startTransition(() => {
-        dispatch({
+        const action: IdeAction = {
           type: 'appendMessages',
           columnId,
           cardId,
           messages,
-        })
+        }
+        persistAfterAction(action.type, applyAction(action))
       })
     },
-    [],
+    [applyAction, persistAfterAction],
   )
 
   const ensureAssistantMessage = useCallback(
@@ -2076,16 +2108,17 @@ function App() {
         return active.assistantMessageId
       }
 
-      applyAction({
+      const action: IdeAction = {
         type: 'appendMessages',
         columnId,
         cardId,
         messages: [assistantMessage],
-      })
+      }
+      persistAfterAction(action.type, applyAction(action))
 
       return assistantMessage.id
     },
-    [applyAction],
+    [applyAction, persistAfterAction],
   )
 
   const flushDeltaBuffer = useCallback(() => {
@@ -2113,9 +2146,9 @@ function App() {
     }
 
     startTransition(() => {
-      applyActions(actions)
+      persistAfterActions(actions, applyActions(actions))
     })
-  }, [applyActions])
+  }, [applyActions, persistAfterActions])
 
   const enqueueAssistantDelta = useCallback(
     (columnId: string, cardId: string, messageId: string, delta: string) => {
@@ -2159,12 +2192,13 @@ function App() {
             transientResumeLoopCountRef.current.delete(card.id)
             markRecoveryResumedIfActive(card.id)
           }
-          applyAction({
+          const action: IdeAction = {
             type: 'updateCard',
             columnId,
             cardId: card.id,
             patch: { sessionId },
-          })
+          }
+          persistAfterAction(action.type, applyAction(action))
         },
         onDelta: ({ content }) => {
           const messageId = ensureAssistantMessage(
@@ -2193,12 +2227,13 @@ function App() {
             transientResumeLoopCountRef.current.delete(card.id)
             markRecoveryResumedIfActive(card.id)
           }
-          applyAction({
+          const action: IdeAction = {
             type: 'appendMessages',
             columnId,
             cardId: card.id,
             messages,
-          })
+          }
+          persistAfterAction(action.type, applyAction(action))
         },
         onAssistantMessage: (payload) => {
           if (
@@ -2227,18 +2262,19 @@ function App() {
             : null
 
           if (nextMessages) {
-            applyAction({
+            const action: IdeAction = {
               type: 'updateCard',
               columnId,
               cardId: card.id,
               patch: {
                 messages: nextMessages,
               },
-            })
+            }
+            persistAfterAction(action.type, applyAction(action))
             return
           }
 
-          applyAction({
+          const action: IdeAction = {
             type: 'updateCard',
             columnId,
             cardId: card.id,
@@ -2251,7 +2287,8 @@ function App() {
                 payload,
               ),
             },
-          })
+          }
+          persistAfterAction(action.type, applyAction(action))
         },
         onActivity: (payload) => {
           if (shouldResetStreamRecoveryAttemptsForActivity('activity')) {
@@ -2292,7 +2329,7 @@ function App() {
                     createdAt: new Date().toISOString(),
                   })
 
-            applyAction({
+            const action: IdeAction = {
               type: 'upsertMessages',
               columnId,
               cardId: card.id,
@@ -2306,7 +2343,8 @@ function App() {
                   trigger: payload.trigger,
                 }),
               ],
-            })
+            }
+            persistAfterAction(action.type, applyAction(action))
             return
           }
 
@@ -2314,7 +2352,7 @@ function App() {
             const liveCard = getColumn(columnId)?.cards[card.id]
             pendingAskUserDuringStreamRef.current.set(card.id, true)
 
-            applyAction({
+            const action: IdeAction = {
               type: 'updateCard',
               columnId,
               cardId: card.id,
@@ -2327,7 +2365,8 @@ function App() {
                   payload,
                 ),
               },
-            })
+            }
+            persistAfterAction(action.type, applyAction(action))
 
             // When ExitPlanMode provides a plan file, open it as a TextEditor card
             if (payload.planFile) {
@@ -2341,12 +2380,13 @@ function App() {
             return
           }
 
-          applyAction({
+          const action: IdeAction = {
             type: 'upsertMessages',
             columnId,
             cardId: card.id,
             messages: [createStructuredActivityMessage(card.provider, card.streamId!, payload)],
-          })
+          }
+          persistAfterAction(action.type, applyAction(action))
         },
         onStats: (payload) => {
           const previousLocalRecoveryStats = localRecoveryStatsRef.current.get(card.id)
@@ -2487,7 +2527,7 @@ function App() {
             }
           }
 
-          applyActions(actions)
+          persistAfterActions(actions, applyActions(actions))
           dispatchNextQueuedSend(columnId, card.id)
         },
         onError: ({ message, recoverable, recoveryMode, transientOnly, hint }) => {
@@ -2561,7 +2601,7 @@ function App() {
                   ) {
                     transientResumeLoopCountRef.current.delete(card.id)
                     if (hasLiveSessionId) {
-                      applyAction({
+                      const action: IdeAction = {
                         type: 'updateCard',
                         columnId,
                         cardId: card.id,
@@ -2569,7 +2609,8 @@ function App() {
                           sessionId: undefined,
                           providerSessions: {},
                         },
-                      })
+                      }
+                      persistAfterAction(action.type, applyAction(action))
                     }
                     void recoverLiveStreamRef.current?.(columnId, card.id, {
                       clearSessionId: true,
@@ -2642,7 +2683,7 @@ function App() {
               })
             }
 
-            applyActions(actions)
+            persistAfterActions(actions, applyActions(actions))
             dispatchNextQueuedSend(columnId, card.id)
             return
           }
@@ -2681,7 +2722,7 @@ function App() {
             })
           }
 
-          applyActions(actions)
+          persistAfterActions(actions, applyActions(actions))
           dispatchNextQueuedSend(columnId, card.id)
         },
       })
@@ -2708,6 +2749,8 @@ function App() {
       markRecoveryResumedIfActive,
       openTextEditorTab,
       openRemediationPanel,
+      persistAfterAction,
+      persistAfterActions,
     ],
   )
 
@@ -2876,9 +2919,9 @@ function App() {
     }
 
     if (actions.length > 0) {
-      applyActions(actions)
+      persistAfterActions(actions, applyActions(actions))
     }
-  }, [activeTab, appState.columns, applyActions])
+  }, [activeTab, appState.columns, applyActions, persistAfterActions])
 
   useEffect(() => {
     if (!onboardingCandidate || onboardingInitialized || loadStatus !== 'ready') {
@@ -3096,43 +3139,41 @@ function App() {
           const nextModelLabel =
             availableModelOptions.find((option) => option.model === nextModel)?.label ?? nextModel
 
-          persistImmediately(
-            applyActions([
-              {
-                type: 'selectCardModel',
-                columnId,
-                cardId: card.id,
-                provider: card.provider,
-                model: nextModel,
-              },
-              {
-                type: 'appendMessages',
-                columnId,
-                cardId: card.id,
-                messages: createLogMessages(card.provider, languageText.switchedModel(nextModelLabel)),
-              },
-            ]),
-          )
+          const actions: IdeAction[] = [
+            {
+              type: 'selectCardModel',
+              columnId,
+              cardId: card.id,
+              provider: card.provider,
+              model: nextModel,
+            },
+            {
+              type: 'appendMessages',
+              columnId,
+              cardId: card.id,
+              messages: createLogMessages(card.provider, languageText.switchedModel(nextModelLabel)),
+            },
+          ]
+          persistAfterActions(actions, applyActions(actions))
           return true
         }
         case 'clear':
         case 'new': {
           await closeStream(card.id, true)
           clearQueuedSends(card.id)
-          persistImmediately(
-            applyAction({
-              type: 'resetCardConversation',
-              columnId,
-              cardId: card.id,
-            }),
-          )
+          const action: IdeAction = {
+            type: 'resetCardConversation',
+            columnId,
+            cardId: card.id,
+          }
+          persistAfterAction(action.type, applyAction(action))
           return true
         }
         default:
           return false
       }
     },
-    [appendCardLogs, applyAction, applyActions, clearQueuedSends, closeStream, getColumn, persistImmediately, providerByName],
+    [appendCardLogs, applyAction, applyActions, clearQueuedSends, closeStream, getColumn, persistAfterAction, persistAfterActions, providerByName],
   )
 
   const sendMessage = async (
@@ -3251,28 +3292,27 @@ function App() {
       : attachments
 
     if (!providerStatus?.available) {
-      persistImmediately(
-        applyActions([
-          {
-            type: 'appendMessages',
-            columnId,
-            cardId,
-            messages: [baseUserMessage, createMessage('system', text.localCliUnavailable)],
+      const actions: IdeAction[] = [
+        {
+          type: 'appendMessages',
+          columnId,
+          cardId,
+          messages: [baseUserMessage, createMessage('system', text.localCliUnavailable)],
+        },
+        {
+          type: 'updateCard',
+          columnId,
+          cardId,
+          patch: {
+            model: resolvedModel,
+            reasoningEffort: resolvedReasoningEffort,
+            status: 'error',
+            streamId: undefined,
+            title: nextTitle,
           },
-          {
-            type: 'updateCard',
-            columnId,
-            cardId,
-            patch: {
-              model: resolvedModel,
-              reasoningEffort: resolvedReasoningEffort,
-              status: 'error',
-              streamId: undefined,
-              title: nextTitle,
-            },
-          },
-        ]),
-      )
+        },
+      ]
+      persistAfterActions(actions, applyActions(actions))
       return
     }
 
@@ -3299,28 +3339,27 @@ function App() {
       }).catch(() => undefined)
     }
     queueFollowUpDuringStreamRef.current.set(cardId, isCompactBoundaryMessage(userMessage, card.provider))
-    persistImmediately(
-      applyActions([
-        {
-          type: 'appendMessages',
-          columnId,
-          cardId,
-          messages: requestMessages,
+    const startActions: IdeAction[] = [
+      {
+        type: 'appendMessages',
+        columnId,
+        cardId,
+        messages: requestMessages,
+      },
+      {
+        type: 'updateCard',
+        columnId,
+        cardId,
+        patch: {
+          model: resolvedModel,
+          reasoningEffort: resolvedReasoningEffort,
+          status: 'streaming',
+          streamId,
+          title: nextTitle,
         },
-        {
-          type: 'updateCard',
-          columnId,
-          cardId,
-          patch: {
-            model: resolvedModel,
-            reasoningEffort: resolvedReasoningEffort,
-            status: 'streaming',
-            streamId,
-            title: nextTitle,
-          },
-        },
-      ]),
-    )
+      },
+    ]
+    persistAfterActions(startActions, applyActions(startActions))
 
     try {
       const composedSystemPrompt = buildSystemPromptForModel(
@@ -3348,14 +3387,13 @@ function App() {
       })
 
       if (response.streamId !== streamId) {
-        persistImmediately(
-          applyAction({
-            type: 'updateCard',
-            columnId,
-            cardId,
-            patch: { streamId: response.streamId },
-          }),
-        )
+        const action: IdeAction = {
+          type: 'updateCard',
+          columnId,
+          cardId,
+          patch: { streamId: response.streamId },
+        }
+        persistAfterAction(action.type, applyAction(action))
       }
 
       const liveCard = getColumn(columnId)?.cards[cardId]
@@ -3392,7 +3430,7 @@ function App() {
         })
       }
 
-      persistImmediately(applyActions(actions))
+      persistAfterActions(actions, applyActions(actions))
     }
   }
   sendMessageRef.current = sendMessage
@@ -3414,14 +3452,13 @@ function App() {
     })
 
     if (!column.workspacePath.trim() || !resumeRequest) {
-      persistImmediately(
-        applyAction({
-          type: 'updateCard',
-          columnId,
-          cardId,
-          patch: { status: 'idle', streamId: undefined },
-        }),
-      )
+      const action: IdeAction = {
+        type: 'updateCard',
+        columnId,
+        cardId,
+        patch: { status: 'idle', streamId: undefined },
+      }
+      persistAfterAction(action.type, applyAction(action))
       return
     }
 
@@ -3433,27 +3470,26 @@ function App() {
     const resolvedReasoningEffort = normalizeReasoningEffort(card.provider, card.reasoningEffort)
 
     if (!providerStatus?.available) {
-      persistImmediately(
-        applyActions([
-          {
-            type: 'appendMessages',
-            columnId,
-            cardId,
-            messages: [createMessage('system', text.localCliUnavailable)],
+      const actions: IdeAction[] = [
+        {
+          type: 'appendMessages',
+          columnId,
+          cardId,
+          messages: [createMessage('system', text.localCliUnavailable)],
+        },
+        {
+          type: 'updateCard',
+          columnId,
+          cardId,
+          patch: {
+            model: resolvedModel,
+            reasoningEffort: resolvedReasoningEffort,
+            status: 'error',
+            streamId: undefined,
           },
-          {
-            type: 'updateCard',
-            columnId,
-            cardId,
-            patch: {
-              model: resolvedModel,
-              reasoningEffort: resolvedReasoningEffort,
-              status: 'error',
-              streamId: undefined,
-            },
-          },
-        ]),
-      )
+        },
+      ]
+      persistAfterActions(actions, applyActions(actions))
       return
     }
 
@@ -3481,7 +3517,7 @@ function App() {
         endpoint: '/cli/local-stream',
       }).catch(() => undefined)
     }
-    applyAction({
+    const startAction: IdeAction = {
       type: 'updateCard',
       columnId,
       cardId,
@@ -3491,7 +3527,8 @@ function App() {
         status: 'streaming',
         streamId,
       },
-    })
+    }
+    persistAfterAction(startAction.type, applyAction(startAction))
 
     try {
       const composedSystemPrompt = buildSystemPromptForModel(
@@ -3519,12 +3556,13 @@ function App() {
       })
 
       if (response.streamId !== streamId) {
-        applyAction({
+        const action: IdeAction = {
           type: 'updateCard',
           columnId,
           cardId,
           patch: { streamId: response.streamId },
-        })
+        }
+        persistAfterAction(action.type, applyAction(action))
       }
 
       const liveCard = getColumn(columnId)?.cards[cardId]
@@ -3548,29 +3586,29 @@ function App() {
           errorType: 'local-provider-start-failed',
         }).catch(() => undefined)
       }
-      persistImmediately(
-        applyActions([
-          {
-            type: 'appendMessages',
-            columnId,
-            cardId,
-            messages: [createMessage('system', errorMessage(error, text.unexpectedError))],
-          },
-          {
-            type: 'updateCard',
-            columnId,
-            cardId,
-            patch: { status: 'error', streamId: undefined },
-          },
-        ]),
-      )
+      const actions: IdeAction[] = [
+        {
+          type: 'appendMessages',
+          columnId,
+          cardId,
+          messages: [createMessage('system', errorMessage(error, text.unexpectedError))],
+        },
+        {
+          type: 'updateCard',
+          columnId,
+          cardId,
+          patch: { status: 'error', streamId: undefined },
+        },
+      ]
+      persistAfterActions(actions, applyActions(actions))
     }
   }, [
     applyAction,
     applyActions,
     attachStream,
     getColumn,
-    persistImmediately,
+    persistAfterAction,
+    persistAfterActions,
     providerByName,
     text.localCliUnavailable,
     text.unexpectedError,
@@ -3601,27 +3639,26 @@ function App() {
     const resolvedReasoningEffort = normalizeReasoningEffort(card.provider, card.reasoningEffort)
 
     if (!providerStatus?.available) {
-      persistImmediately(
-        applyActions([
-          {
-            type: 'appendMessages',
-            columnId,
-            cardId,
-            messages: [createMessage('system', text.localCliUnavailable)],
+      const actions: IdeAction[] = [
+        {
+          type: 'appendMessages',
+          columnId,
+          cardId,
+          messages: [createMessage('system', text.localCliUnavailable)],
+        },
+        {
+          type: 'updateCard',
+          columnId,
+          cardId,
+          patch: {
+            model: resolvedModel,
+            reasoningEffort: resolvedReasoningEffort,
+            status: 'error',
+            streamId: undefined,
           },
-          {
-            type: 'updateCard',
-            columnId,
-            cardId,
-            patch: {
-              model: resolvedModel,
-              reasoningEffort: resolvedReasoningEffort,
-              status: 'error',
-              streamId: undefined,
-            },
-          },
-        ]),
-      )
+        },
+      ]
+      persistAfterActions(actions, applyActions(actions))
       return false
     }
 
@@ -3664,7 +3701,7 @@ function App() {
         endpoint: '/cli/local-stream',
       }).catch(() => undefined)
     }
-    applyAction({
+    const startAction: IdeAction = {
       type: 'updateCard',
       columnId,
       cardId,
@@ -3680,7 +3717,8 @@ function App() {
             }
           : {}),
       },
-    })
+    }
+    persistAfterAction(startAction.type, applyAction(startAction))
 
     try {
       const composedSystemPrompt = buildSystemPromptForModel(
@@ -3708,12 +3746,13 @@ function App() {
       })
 
       if (response.streamId !== streamId) {
-        applyAction({
+        const action: IdeAction = {
           type: 'updateCard',
           columnId,
           cardId,
           patch: { streamId: response.streamId },
-        })
+        }
+        persistAfterAction(action.type, applyAction(action))
       }
 
       const liveCard = getColumn(columnId)?.cards[cardId]
@@ -3738,22 +3777,21 @@ function App() {
           errorType: 'local-provider-start-failed',
         }).catch(() => undefined)
       }
-      persistImmediately(
-        applyActions([
-          {
-            type: 'appendMessages',
-            columnId,
-            cardId,
-            messages: [createMessage('system', errorMessage(error, text.unexpectedError))],
-          },
-          {
-            type: 'updateCard',
-            columnId,
-            cardId,
-            patch: { status: 'error', streamId: undefined },
-          },
-        ]),
-      )
+      const actions: IdeAction[] = [
+        {
+          type: 'appendMessages',
+          columnId,
+          cardId,
+          messages: [createMessage('system', errorMessage(error, text.unexpectedError))],
+        },
+        {
+          type: 'updateCard',
+          columnId,
+          cardId,
+          patch: { status: 'error', streamId: undefined },
+        },
+      ]
+      persistAfterActions(actions, applyActions(actions))
       return false
     }
   }, [
@@ -3761,7 +3799,8 @@ function App() {
     applyActions,
     attachStream,
     getColumn,
-    persistImmediately,
+    persistAfterAction,
+    persistAfterActions,
     providerByName,
     text.localCliUnavailable,
     text.unexpectedError,
@@ -3812,22 +3851,21 @@ function App() {
         return false
       }
 
-      persistImmediately(
-        applyAction({
-          type: 'updateCard',
-          columnId,
-          cardId,
-          patch: {
-            sessionId: undefined,
-            providerSessions: {},
-            streamId: undefined,
-          },
-        }),
-      )
+      const action: IdeAction = {
+        type: 'updateCard',
+        columnId,
+        cardId,
+        patch: {
+          sessionId: undefined,
+          providerSessions: {},
+          streamId: undefined,
+        },
+      }
+      persistAfterAction(action.type, applyAction(action))
 
       return recoverLiveStreamRef.current?.(columnId, cardId, { clearSessionId: true }) ?? false
     },
-    [applyAction, forceResetRecoveryStatus, getColumn, persistImmediately],
+    [applyAction, forceResetRecoveryStatus, getColumn, persistAfterAction],
   )
 
 
@@ -4087,15 +4125,14 @@ function App() {
     setInterruptedSessionActionError(null)
 
     try {
-      const nextState = applyActions(
-        interruptedSessionRecovery.entries.map((entry) => ({
-          type: 'updateCard' as const,
-          columnId: entry.columnId,
-          cardId: entry.cardId,
-          patch: { status: 'idle' as const, streamId: undefined },
-        })),
-      )
-      persistImmediately(nextState)
+      const actions: IdeAction[] = interruptedSessionRecovery.entries.map((entry) => ({
+        type: 'updateCard',
+        columnId: entry.columnId,
+        cardId: entry.cardId,
+        patch: { status: 'idle' as const, streamId: undefined },
+      }))
+      const nextState = applyActions(actions)
+      persistAfterActions(actions, nextState)
       updateLatestKnownAppState(nextState)
       setInterruptedSessionRecovery(null)
     } catch (error) {
@@ -4114,7 +4151,7 @@ function App() {
     appState.settings.language,
     applyActions,
     interruptedSessionRecovery,
-    persistImmediately,
+    persistAfterActions,
   ])
 
   const handleResumeInterruptedSessions = useCallback(async () => {
@@ -4128,15 +4165,14 @@ function App() {
     try {
       const unrecoverableEntries = interruptedSessionRecovery.entries.filter((entry) => !entry.recoverable)
       if (unrecoverableEntries.length > 0) {
-        const nextState = applyActions(
-          unrecoverableEntries.map((entry) => ({
-            type: 'updateCard' as const,
-            columnId: entry.columnId,
-            cardId: entry.cardId,
-            patch: { status: 'idle' as const, streamId: undefined },
-          })),
-        )
-        persistImmediately(nextState)
+        const actions: IdeAction[] = unrecoverableEntries.map((entry) => ({
+          type: 'updateCard',
+          columnId: entry.columnId,
+          cardId: entry.cardId,
+          patch: { status: 'idle' as const, streamId: undefined },
+        }))
+        const nextState = applyActions(actions)
+        persistAfterActions(actions, nextState)
         updateLatestKnownAppState(nextState)
       }
 
@@ -4167,7 +4203,7 @@ function App() {
     appState.settings.language,
     applyActions,
     interruptedSessionRecovery,
-    persistImmediately,
+    persistAfterActions,
     resumeInterruptedSession,
   ])
 
@@ -6584,7 +6620,15 @@ function App() {
             onToggleCardThinking={(cardId) => toggleCardThinking(column.id, cardId)}
             onToggleCardCollapsed={(cardId) => toggleCardCollapsed(column.id, cardId)}
             onMarkCardRead={(cardId) =>
-              applyAction({ type: 'updateCard', columnId: column.id, cardId, patch: { unread: false } })
+              (() => {
+                const action: IdeAction = {
+                  type: 'updateCard',
+                  columnId: column.id,
+                  cardId,
+                  patch: { unread: false },
+                }
+                persistAfterAction(action.type, applyAction(action))
+              })()
             }
             onChangeCardDraft={(cardId, draft) => {
               const currentDraft = column.cards[cardId]?.draft ?? ''
@@ -6594,20 +6638,44 @@ function App() {
 
               const nextState = applyAction({ type: 'setCardDraft', columnId: column.id, cardId, draft })
 
-              // Keep send/clear flows durable immediately, but let active typing
-              // reuse the queued persistence path to avoid synchronous full-state saves.
+              // Empty drafts are less urgent than send/clear flows; queue them so
+              // repeated composer edits cannot force synchronous full-state saves.
               if (draft.length === 0) {
-                persistImmediately(nextState)
+                persistQueued(nextState)
               }
             }}
             onChangeCardStickyNote={(cardId, content) =>
-              applyAction({ type: 'updateCard', columnId: column.id, cardId, patch: { stickyNote: content } })
+              (() => {
+                const action: IdeAction = {
+                  type: 'updateCard',
+                  columnId: column.id,
+                  cardId,
+                  patch: { stickyNote: content },
+                }
+                persistAfterAction(action.type, applyAction(action))
+              })()
             }
             onPatchCard={(cardId, patch) =>
-              applyAction({ type: 'updateCard', columnId: column.id, cardId, patch })
+              (() => {
+                const action: IdeAction = {
+                  type: 'updateCard',
+                  columnId: column.id,
+                  cardId,
+                  patch,
+                }
+                persistAfterAction(action.type, applyAction(action))
+              })()
             }
             onChangeCardTitle={(cardId, title) =>
-              applyAction({ type: 'updateCard', columnId: column.id, cardId, patch: { title } })
+              (() => {
+                const action: IdeAction = {
+                  type: 'updateCard',
+                  columnId: column.id,
+                  cardId,
+                  patch: { title },
+                }
+                persistAfterAction(action.type, applyAction(action))
+              })()
             }
             onReorderColumn={(sourceColumnId, targetColumnId, placement) =>
               applyAction({

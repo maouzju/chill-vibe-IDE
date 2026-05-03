@@ -1,4 +1,4 @@
-import { memo, startTransition, useCallback, useDeferredValue, useEffect, useEffectEvent, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { memo, startTransition, useCallback, useDeferredValue, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import type {
   ClipboardEvent,
   CompositionEvent,
@@ -1239,7 +1239,13 @@ const ChatCardView = ({
     },
     [scheduleComposerResize, syncDraftDerivedState],
   )
-  const patchCard = useEffectEvent(
+  const onPatchCardRef = useRef(onPatchCard)
+  const onSendRef = useRef(onSend)
+  useEffect(() => {
+    onPatchCardRef.current = onPatchCard
+    onSendRef.current = onSend
+  }, [onPatchCard, onSend])
+  const patchCard = useCallback(
     (
       patch: Partial<
         Pick<
@@ -1248,13 +1254,14 @@ const ChatCardView = ({
         >
       >,
     ) => {
-      onPatchCard(patch)
+      onPatchCardRef.current(patch)
     },
+    [],
   )
-  const sendAutoUrge = useEffectEvent((message: string) => {
-    void onSend(message, [])
-  })
-  const runAutoUrge = useEffectEvent(
+  const sendAutoUrge = useCallback((message: string) => {
+    void onSendRef.current(message, [])
+  }, [])
+  const runAutoUrge = useCallback(
     (
       trigger:
         | {
@@ -1279,6 +1286,7 @@ const ChatCardView = ({
         sendAutoUrge(result.message)
       }
     },
+    [patchCard, sendAutoUrge],
   )
 
   useEffect(() => {
@@ -1355,7 +1363,7 @@ const ChatCardView = ({
       setSelectedAutoUrgeProfileId(activeAutoUrgeProfile.id)
     })
     patchCard({ autoUrgeProfileId: activeAutoUrgeProfile.id })
-  }, [activeAutoUrgeProfile, autoUrgeEnabled, selectedAutoUrgeProfileId])
+  }, [activeAutoUrgeProfile, autoUrgeEnabled, patchCard, selectedAutoUrgeProfileId])
 
   useEffect(() => {
     autoUrgeStateRef.current = {
@@ -1422,7 +1430,7 @@ const ChatCardView = ({
     }
   }, [modelMenuOpen])
 
-  const updateModelMenuPosition = useEffectEvent(() => {
+  const updateModelMenuPosition = useCallback(() => {
     const anchor = modelMenuRef.current
     const dropdown = modelDropdownRef.current
 
@@ -1489,7 +1497,7 @@ const ChatCardView = ({
         ? current
         : nextStyle,
     )
-  })
+  }, [])
 
   useLayoutEffect(() => {
     if (!modelMenuOpen) return
@@ -1506,7 +1514,7 @@ const ChatCardView = ({
       window.removeEventListener('resize', handleLayout)
       window.removeEventListener('scroll', handleLayout, true)
     }
-  }, [modelMenuOpen])
+  }, [modelMenuOpen, updateModelMenuPosition])
 
   useEffect(() => {
     if (!settingsMenuOpen) return
@@ -1530,7 +1538,7 @@ const ChatCardView = ({
     }
   }, [settingsMenuOpen])
 
-  const updateSettingsMenuPosition = useEffectEvent(() => {
+  const updateSettingsMenuPosition = useCallback(() => {
     const anchor = settingsMenuRef.current
     const dropdown = settingsDropdownRef.current
 
@@ -1567,7 +1575,7 @@ const ChatCardView = ({
         ? current
         : nextStyle,
     )
-  })
+  }, [])
 
   useLayoutEffect(() => {
     if (!settingsMenuOpen) return
@@ -1584,7 +1592,7 @@ const ChatCardView = ({
       window.removeEventListener('resize', handleLayout)
       window.removeEventListener('scroll', handleLayout, true)
     }
-  }, [autoUrgeEnabled, card.provider, language, settingsMenuOpen])
+  }, [autoUrgeEnabled, card.provider, language, settingsMenuOpen, updateSettingsMenuPosition])
 
   const syncAutoScrollPreference = useCallback(() => {
     if (suspendPaneRuntimeEffects) {
@@ -1761,9 +1769,10 @@ const ChatCardView = ({
     scrollMessageListTo(targetScrollTop, 'smooth')
   }, [restoredScrollSpacerPx, scrollMessageListTo])
 
-  const bootstrapRestoredMessageListScroll = useEffectEvent(() => {
+  const renderableMessagesRef = useRef<RenderableMessage[]>([])
+  const bootstrapRestoredMessageListScroll = useCallback(() => {
     const messageList = messageListRef.current
-    const restoredAnchor = getRestoredStickyUserAnchor(renderableMessages)
+    const restoredAnchor = getRestoredStickyUserAnchor(renderableMessagesRef.current)
 
     if (
       card.status !== 'streaming' &&
@@ -1813,7 +1822,13 @@ const ChatCardView = ({
     }
     shouldAutoScrollRef.current = true
     keepMessageListPinnedToBottom('instant', 0)
-  })
+  }, [
+    card.id,
+    card.status,
+    keepMessageListPinnedToBottom,
+    restoredScrollSpacerPx,
+    scrollMessageListTo,
+  ])
 
   useLayoutEffect(() => {
     if (suspendPaneRuntimeEffects) {
@@ -1826,7 +1841,7 @@ const ChatCardView = ({
 
     restoredScrollBootstrapCardIdRef.current = card.id
     bootstrapRestoredMessageListScroll()
-  }, [card.id, isRestored, suspendPaneRuntimeEffects])
+  }, [bootstrapRestoredMessageListScroll, card.id, isRestored, suspendPaneRuntimeEffects])
 
   useLayoutEffect(() => {
     if (suspendPaneRuntimeEffects) {
@@ -2165,7 +2180,7 @@ const ChatCardView = ({
     })
   }
 
-  const handleMessageListCopy = useEffectEvent(async (event: globalThis.ClipboardEvent) => {
+  const handleMessageListCopy = useCallback(async (event: globalThis.ClipboardEvent) => {
     const selection = window.getSelection()
     if (!selection || selection.isCollapsed) return
 
@@ -2209,7 +2224,7 @@ const ChatCardView = ({
     } catch {
       await navigator.clipboard.writeText(plainText)
     }
-  })
+  }, [])
 
   useEffect(() => {
     const el = messageListRef.current
@@ -2221,7 +2236,7 @@ const ChatCardView = ({
 
     el.addEventListener('copy', listener)
     return () => el.removeEventListener('copy', listener)
-  }, [])
+  }, [handleMessageListCopy])
 
   const handlePaste = (event: ClipboardEvent<HTMLTextAreaElement>) => {
     const imageFiles = Array.from(event.clipboardData.items)
@@ -2373,6 +2388,9 @@ const ChatCardView = ({
     () => (deferInactivePaneChatBody ? [] : buildRenderableMessages(compactMessageWindow.visibleMessages)),
     [compactMessageWindow.visibleMessages, deferInactivePaneChatBody],
   )
+  useEffect(() => {
+    renderableMessagesRef.current = renderableMessages
+  }, [renderableMessages])
   const latestAssistantContent = useMemo(
     () => [...card.messages].reverse().find((message) => message.role === 'assistant')?.content ?? '',
     [card.messages],
@@ -2644,7 +2662,7 @@ const ChatCardView = ({
       })
     }, 800)
     return () => window.clearTimeout(timer)
-  }, [card.status, card.id])
+  }, [card.status, card.id, runAutoUrge])
 
   useEffect(() => {
     if (!pendingImmediateAutoUrgeRef.current || card.status !== 'idle') {
@@ -2656,7 +2674,7 @@ const ChatCardView = ({
       type: 'manual-activation',
       status: card.status,
     })
-  }, [autoUrgeActive, card.status, card.id])
+  }, [autoUrgeActive, card.status, card.id, runAutoUrge])
 
   const hasFloatingUi = slashMenuOpen || gitAgentPanelOpen
   const slashMenuSideRef = useRef<'left' | 'right'>('right')

@@ -342,6 +342,9 @@ A living list of traps that have wasted time before. **When you hit a new pitfal
 | 110 | Old packaged installs can carry chat messages without `createdAt`, and the Electron bridge then rejects startup state with the generic “无法连接本地工作区服务” shell | Normalize persisted live-card and archived-session messages before renderer startup validation; otherwise the desktop backend is alive but hydration fails like a service outage. |
 
 | 111 | Browser layout can clamp a chat `.message-list` `scrollTop` to 0 while the tab/window is hidden or temporarily zero-height | Do not treat that synthetic reset as user scroll-up, or every agent pane can look like it jumped to the top when the user returns. |
+| 112 | Electron `WebContents` can still throw `Object has been destroyed` from a `webContents.on('destroyed')` listener even if the handler only uses a captured id | Clean renderer stream subscriptions from the owning `BrowserWindow` `close`/`closed` events instead of registering cleanup on the destroyed WebContents itself. |
+| 113 | Pausing all state saves while any card is streaming leaves old `streaming` cards and stale `streamId`s on disk after a packaged crash | Keep queued persistence active during streaming and compact live stream backlogs, otherwise restart can rehydrate already-finished cards as live streams and spawn multiple provider runs again. |
+| 114 | Routine renderer preview saves that hydrate every `session-history` sidecar can push packaged Electron main memory into multi-GB territory | Keep ordinary saves preview-only and preserve full archived transcripts by leaving existing sidecars untouched until a single history entry is restored. |
 
 ### Self-maintenance rule
 

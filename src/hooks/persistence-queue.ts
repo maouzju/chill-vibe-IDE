@@ -15,10 +15,10 @@ export const getPersistenceVersion = (state: Pick<AppState, 'updatedAt'>) =>
     ? state.updatedAt
     : ''
 
-export const shouldPauseQueuedStateSave = (state: Pick<AppState, 'columns'>) =>
-  state.columns.some((column) =>
-    Object.values(column.cards).some((card) => card.status === 'streaming'),
-  )
+export const shouldPauseQueuedStateSave = (state: Pick<AppState, 'columns'>) => {
+  void state
+  return false
+}
 
 export const shouldPersistActionImmediately = (
   actionType: IdeAction['type'],

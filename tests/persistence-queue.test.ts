@@ -18,7 +18,7 @@ describe('persistence queue', () => {
     assert.equal(getPersistenceVersion(state), '2026-04-07T10:00:00.000Z')
   })
 
-  it('pauses queued saves while any card is streaming', () => {
+  it('keeps queued saves active while cards are streaming so completed messages survive a crash', () => {
     const state = createDefaultState('')
     const activeCardId = state.columns[0]?.layout.type === 'pane'
       ? state.columns[0].layout.activeTabId
@@ -33,7 +33,7 @@ describe('persistence queue', () => {
       status: 'streaming',
     }
 
-    assert.equal(shouldPauseQueuedStateSave(state), true)
+    assert.equal(shouldPauseQueuedStateSave(state), false)
   })
 
   it('keeps queued saves enabled when no card is streaming', () => {
@@ -42,7 +42,7 @@ describe('persistence queue', () => {
     assert.equal(shouldPauseQueuedStateSave(state), false)
   })
 
-  it('forces immediate persistence for model picks when another card is still streaming', () => {
+  it('keeps model picks on the queued path even when another card is still streaming', () => {
     const state = createDefaultState('')
     const activeCardId = state.columns[0]?.layout.type === 'pane'
       ? state.columns[0].layout.activeTabId
@@ -57,7 +57,7 @@ describe('persistence queue', () => {
       status: 'streaming',
     }
 
-    assert.equal(shouldPersistActionImmediately('selectCardModel', state), true)
+    assert.equal(shouldPersistActionImmediately('selectCardModel', state), false)
     assert.equal(shouldPersistActionImmediately('updateRequestModels', state), false)
   })
 

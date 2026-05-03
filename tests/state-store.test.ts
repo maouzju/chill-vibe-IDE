@@ -1010,9 +1010,10 @@ describe('state-store persistence', () => {
       false,
       'saving a renderer preview should not route through loadState() because the first post-startup tab switch would hydrate full archived history and can OOM the packaged main process',
     )
-    assert.ok(
+    assert.equal(
       mergePersistedSessionHistoryBlock.includes('await loadPersistedSessionHistory(dataDir)'),
-      'renderer preview saves should recover archived transcripts through the lightweight session-history loader instead',
+      false,
+      'renderer preview saves should keep existing archived transcripts in sidecars instead of hydrating every sidecar during routine saves',
     )
   })
 
@@ -1455,6 +1456,111 @@ describe('state-store persistence', () => {
     assert.equal(restored.entry.messages.length, 30)
     assert.equal(restored.entry.messages[29]?.content, 'Archived sidecar message 30')
   })
+  it('saveState does not hydrate or rewrite unchanged archived sidecars for lightweight preview saves', async () => {
+    const { saveState, loadState } = await import('../server/state-store.ts')
+    const { stat } = await import('node:fs/promises')
+    const state = createDefaultState('D:/history-preview-save')
+
+    state.sessionHistory = [
+      {
+        id: 'history-preview-unchanged-1',
+        title: 'Archived unchanged sidecar',
+        sessionId: 'history-preview-session-1',
+        provider: 'codex',
+        model: 'gpt-5.5',
+        workspacePath: 'D:/history-preview-save',
+        messageCount: 12,
+        messages: Array.from({ length: 12 }, (_, index) => ({
+          id: `history-preview-message-${index + 1}`,
+          role: index % 2 === 0 ? ('user' as const) : ('assistant' as const),
+          content: `Archived preview save message ${index + 1}`,
+          createdAt: new Date(Date.UTC(2026, 3, 12, 9, 0, index)).toISOString(),
+        })),
+        archivedAt: new Date('2026-04-12T09:20:00.000Z').toISOString(),
+      },
+    ]
+
+    await saveState(state)
+
+    const sidecarDir = path.join(tmpDir, 'session-history')
+    const [sidecarFile] = await readdir(sidecarDir)
+    assert.ok(sidecarFile, 'expected an archived session sidecar file')
+    const sidecarPath = path.join(sidecarDir, sidecarFile)
+    const before = await stat(sidecarPath)
+
+    await new Promise((resolve) => setTimeout(resolve, 50))
+
+    const rendererPreview = structuredClone(state)
+    rendererPreview.columns[0]!.title = 'Updated after unchanged preview save'
+    rendererPreview.sessionHistory = [
+      {
+        ...rendererPreview.sessionHistory[0]!,
+        messageCount: 12,
+        messagesPreview: true,
+        messages: rendererPreview.sessionHistory[0]!.messages.slice(0, 2),
+      },
+    ]
+
+    await saveState(rendererPreview)
+
+    const after = await stat(sidecarPath)
+    assert.equal(
+      after.mtimeMs,
+      before.mtimeMs,
+      'routine renderer preview saves should not rewrite unchanged full session-history sidecars',
+    )
+
+    const loaded = await loadState()
+    assert.equal(loaded.columns[0]?.title, 'Updated after unchanged preview save')
+    assert.equal(loaded.sessionHistory[0]?.messages.length, 12)
+    assert.equal(loaded.sessionHistory[0]?.messages[11]?.content, 'Archived preview save message 12')
+  })
+
+  it('loadState keeps renderer-updated history metadata while hydrating preview messages from sidecar', async () => {
+    const { saveState, loadState } = await import('../server/state-store.ts')
+    const state = createDefaultState('D:/history-preview-metadata')
+
+    state.sessionHistory = [
+      {
+        id: 'history-preview-metadata-1',
+        title: 'Original archived title',
+        sessionId: 'history-preview-metadata-session-1',
+        provider: 'codex',
+        model: 'gpt-5.5',
+        workspacePath: 'D:/history-preview-metadata',
+        messageCount: 12,
+        messages: Array.from({ length: 12 }, (_, index) => ({
+          id: `history-preview-metadata-message-${index + 1}`,
+          role: index % 2 === 0 ? ('user' as const) : ('assistant' as const),
+          content: `Archived preview metadata message ${index + 1}`,
+          createdAt: new Date(Date.UTC(2026, 3, 12, 10, 0, index)).toISOString(),
+        })),
+        archivedAt: new Date('2026-04-12T10:20:00.000Z').toISOString(),
+      },
+    ]
+
+    await saveState(state)
+
+    const rendererPreview = structuredClone(state)
+    rendererPreview.sessionHistory = [
+      {
+        ...rendererPreview.sessionHistory[0]!,
+        title: 'Renderer renamed archived title',
+        messageCount: 12,
+        messagesPreview: true,
+        messages: rendererPreview.sessionHistory[0]!.messages.slice(0, 2),
+      },
+    ]
+
+    await saveState(rendererPreview)
+
+    const loaded = await loadState()
+    assert.equal(loaded.sessionHistory[0]?.title, 'Renderer renamed archived title')
+    assert.equal(loaded.sessionHistory[0]?.messagesPreview, undefined)
+    assert.equal(loaded.sessionHistory[0]?.messages.length, 12)
+    assert.equal(loaded.sessionHistory[0]?.messages[11]?.content, 'Archived preview metadata message 12')
+  })
+
   it('saveState preserves full archived session transcripts when the renderer only sends lightweight history previews', async () => {
     const { saveState, loadState } = await import('../server/state-store.ts')
     const state = createDefaultState('D:/history-save-merge')

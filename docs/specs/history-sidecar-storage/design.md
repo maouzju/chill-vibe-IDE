@@ -13,6 +13,8 @@
 4. Write complete incoming archived entries to `session-history/` files.
 5. Write `state.json` with `renderSessionHistoryForRenderer(...)` output only.
 6. Cache the lightweight state so ordinary settings/provider reads do not hydrate archived transcripts.
+7. When several chats are streaming or live transcripts are already large, batch renderer saves into a wider window and compact oversized `structuredData` before crossing the Electron IPC bridge.
+8. If queued saves keep replacing each other or individual writes become slow, open the state-save circuit breaker: delay the next write, keep only the newest pending state, and throttle routine snapshots while the circuit is open.
 
 ## Load flow
 
@@ -28,4 +30,5 @@
 ## Risk controls
 
 - Add focused state-store tests for sidecar writes, lightweight `state.json`, and per-entry restore.
+- Add focused renderer queue tests for multi-session save backoff, compact queued IPC payloads, and circuit-breaker snapshot throttling.
 - Do not change UI styling; no visual snapshot update needed.

@@ -199,6 +199,8 @@ A living list of traps that have wasted time before. **When you hit a new pitfal
 | # | Pitfall | Why it bites |
 |---|---------|-------------|
 | 1 | Running bare `playwright test` instead of the repo Playwright scripts | The bare command discovers Node `--test` entrypoints and tries to run them as Playwright specs, causing false failures. Always use `pnpm test:playwright`, `pnpm test:playwright:full`, or `pnpm test:theme`. |
+| 1A | React effects that queue an unconditional state setter can loop under StrictMode and surface only as minified React error #185 in packaged builds | Guard the setter with an idempotent updater or skip the update when the state is already correct, especially for composer/slash-menu effects that run across many mounted chat cards. |
+| 1B | Huge live `message.meta.structuredData` can still cross the Electron IPC bridge on every queued preview save even if the server later compacts it | Compact queued renderer snapshots before `desktop:queue-state-save`; otherwise multi-session streaming can spend memory cloning giant command metadata before the server-side sanitizer ever runs. |
 | 2 | Port `5173` ≠ standalone web app | In this repo `5173` is the Vite dev server for the Electron renderer. Do not treat it as proof of a running web product. |
 | 3 | Adding a test file without importing it in [`tests/index.test.ts`](./tests/index.test.ts) | Node's `--test` runner only sees files imported from the entrypoint. A new `.test.ts` file that is not registered there will silently never run. |
 | 4 | Hard-coding colors instead of using theme tokens | Looks fine in one theme, broken in the other. Always use CSS custom properties from [`src/index.css`](./src/index.css). |

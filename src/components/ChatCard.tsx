@@ -88,6 +88,7 @@ import { formatAskUserFollowUpPrompt } from './ask-user-follow-up'
 import {
   areSlashCommandListsEqual,
   getSlashCommandsLoadKey,
+  resolveSlashMenuDismissedAfterQueryChange,
   resolveSlashCommandsLoadKeyAfterCancel,
   resolveRemoteSlashCommands,
   shouldStartSlashCommandsLoad,
@@ -2106,9 +2107,7 @@ const ChatCardView = ({
   const deferredSlashDraft = useDeferredValue(slashDraft)
   const slashQuery = useMemo(() => getSlashCompletionQuery(deferredSlashDraft), [deferredSlashDraft])
   useEffect(() => {
-    queueMicrotask(() => {
-      setSlashMenuDismissed(false)
-    })
+    setSlashMenuDismissed(resolveSlashMenuDismissedAfterQueryChange)
   }, [slashQuery])
 
   useEffect(() => {

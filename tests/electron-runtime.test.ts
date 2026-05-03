@@ -253,6 +253,7 @@ test('Electron stream cleanup runs before WebContents destruction during window 
   const mainBody = await readFile(path.join(process.cwd(), 'electron', 'main.ts'), 'utf8')
 
   assert.match(mainBody, /const sendChatStreamEventSafely = \(/)
+  assert.match(mainBody, /sender\.isDestroyed\(\) \|\| sender\.isCrashed\(\)/)
   assert.match(mainBody, /try\s*{\s*sender\.send\('chat:stream-event'/)
   assert.match(mainBody, /function cleanupSubscriptionsForContentsId\(webContentsId: number\)/)
   assert.match(
@@ -260,6 +261,8 @@ test('Electron stream cleanup runs before WebContents destruction during window 
     /const webContentsId = win\.webContents\.id\s+let didCleanupSubscriptionsForWindow = false\s+const cleanupSubscriptionsForWindow = \(\) => {[\s\S]+cleanupSubscriptionsForContentsId\(webContentsId\)[\s\S]+win\.on\('close', cleanupSubscriptionsForWindow\)/,
   )
   assert.match(mainBody, /win\.on\('closed', cleanupSubscriptionsForWindow\)/)
+  assert.match(mainBody, /win\.webContents\.once\('destroyed', cleanupSubscriptionsForWindow\)/)
+  assert.match(mainBody, /win\.webContents\.once\('render-process-gone', cleanupSubscriptionsForWindow\)/)
   assert.doesNotMatch(mainBody, /webContents\.on\('destroyed'/)
   assert.doesNotMatch(mainBody, /cleanupSubscriptionsForContents\(win\.webContents\)/)
 })

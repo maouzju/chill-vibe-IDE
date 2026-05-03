@@ -345,6 +345,7 @@ A living list of traps that have wasted time before. **When you hit a new pitfal
 | 112 | Electron `WebContents` can still throw `Object has been destroyed` from a `webContents.on('destroyed')` listener even if the handler only uses a captured id | Clean renderer stream subscriptions from the owning `BrowserWindow` `close`/`closed` events instead of registering cleanup on the destroyed WebContents itself. |
 | 113 | Pausing all state saves while any card is streaming leaves old `streaming` cards and stale `streamId`s on disk after a packaged crash | Keep queued persistence active during streaming and compact live stream backlogs, otherwise restart can rehydrate already-finished cards as live streams and spawn multiple provider runs again. |
 | 114 | Routine renderer preview saves that hydrate every `session-history` sidecar can push packaged Electron main memory into multi-GB territory | Keep ordinary saves preview-only and preserve full archived transcripts by leaving existing sidecars untouched until a single history entry is restored. |
+| 115 | Letting many restored chat streams update React and persist state at per-token cadence can make packaged Electron look like it exits unexpectedly under multi-session resume | Batch renderer deltas, throttle queued saves while any stream is active, and start interrupted-session resumes in small waves instead of unleashing every recovered provider run at once. |
 
 ### Self-maintenance rule
 

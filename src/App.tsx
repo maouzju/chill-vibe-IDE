@@ -190,6 +190,7 @@ import {
 import { WorkspaceColumn } from './components/WorkspaceColumn'
 import {
   getPersistenceVersion,
+  streamDeltaFlushIntervalMs,
   shouldPersistActionImmediately,
   shouldSyncRuntimeSettings,
 } from './hooks/persistence-queue'
@@ -208,6 +209,8 @@ const emptyProxyStatsCounts: ProxyStatsCounts = {
 const emptySessionHistory: SessionHistoryEntry[] = []
 const maxTransientResumeLoopAttempts = 2
 const defaultRecoverableStreamRetryLimit = 6
+const maxConcurrentInterruptedSessionResumes = 2
+const interruptedSessionResumeBatchDelayMs = 350
 
 const normalizeWorkspaceHistoryKey = (workspacePath: string) => workspacePath.trim().toLowerCase()
 const findSessionRestoreColumnId = (state: AppState, entry: Pick<SessionHistoryEntry, 'workspacePath'>) =>
@@ -243,6 +246,11 @@ const getStateRecoveryOptionLabel = (
       return option.fileName
   }
 }
+
+const delayInterruptedSessionResumeBatch = () =>
+  new Promise<void>((resolve) => {
+    window.setTimeout(resolve, interruptedSessionResumeBatchDelayMs)
+  })
 
 const getStateRecoveryIssueLabel = (
   language: AppState['settings']['language'],
@@ -692,7 +700,8 @@ function App() {
   const setupRunStatusRef = useRef<SetupStatus | null>(null)
   const hydrateRequestIdRef = useRef(0)
   // Streaming delta buffer: coalesces per-token SSE deltas into a single
-  // dispatch per animation frame to avoid re-rendering on every character.
+  // dispatch window to avoid re-rendering on every character when several
+  // sessions stream at once.
   const deltaBufferRef = useRef(
     new Map<string, { columnId: string; cardId: string; messageId: string; buffer: string }>(),
   )
@@ -2120,7 +2129,7 @@ function App() {
       }
 
       if (deltaFlushHandleRef.current === null) {
-        deltaFlushHandleRef.current = window.requestAnimationFrame(flushDeltaBuffer)
+        deltaFlushHandleRef.current = window.setTimeout(flushDeltaBuffer, streamDeltaFlushIntervalMs)
       }
     },
     [flushDeltaBuffer],
@@ -2150,14 +2159,12 @@ function App() {
             transientResumeLoopCountRef.current.delete(card.id)
             markRecoveryResumedIfActive(card.id)
           }
-          persistImmediately(
-            applyAction({
-              type: 'updateCard',
-              columnId,
-              cardId: card.id,
-              patch: { sessionId },
-            }),
-          )
+          applyAction({
+            type: 'updateCard',
+            columnId,
+            cardId: card.id,
+            patch: { sessionId },
+          })
         },
         onDelta: ({ content }) => {
           const messageId = ensureAssistantMessage(
@@ -2480,7 +2487,7 @@ function App() {
             }
           }
 
-          persistImmediately(applyActions(actions))
+          applyActions(actions)
           dispatchNextQueuedSend(columnId, card.id)
         },
         onError: ({ message, recoverable, recoveryMode, transientOnly, hint }) => {
@@ -2554,17 +2561,15 @@ function App() {
                   ) {
                     transientResumeLoopCountRef.current.delete(card.id)
                     if (hasLiveSessionId) {
-                      persistImmediately(
-                        applyAction({
-                          type: 'updateCard',
-                          columnId,
-                          cardId: card.id,
-                          patch: {
-                            sessionId: undefined,
-                            providerSessions: {},
-                          },
-                        }),
-                      )
+                      applyAction({
+                        type: 'updateCard',
+                        columnId,
+                        cardId: card.id,
+                        patch: {
+                          sessionId: undefined,
+                          providerSessions: {},
+                        },
+                      })
                     }
                     void recoverLiveStreamRef.current?.(columnId, card.id, {
                       clearSessionId: true,
@@ -2637,7 +2642,7 @@ function App() {
               })
             }
 
-            persistImmediately(applyActions(actions))
+            applyActions(actions)
             dispatchNextQueuedSend(columnId, card.id)
             return
           }
@@ -2676,7 +2681,7 @@ function App() {
             })
           }
 
-          persistImmediately(applyActions(actions))
+          applyActions(actions)
           dispatchNextQueuedSend(columnId, card.id)
         },
       })
@@ -2703,7 +2708,6 @@ function App() {
       markRecoveryResumedIfActive,
       openTextEditorTab,
       openRemediationPanel,
-      persistImmediately,
     ],
   )
 
@@ -2717,6 +2721,11 @@ function App() {
     pendingAskUserDuringStreamRef.current.clear()
     stopCompletionFallbackTimersRef.current.forEach((timer) => window.clearTimeout(timer))
     stopCompletionFallbackTimersRef.current.clear()
+    if (deltaFlushHandleRef.current !== null) {
+      window.clearTimeout(deltaFlushHandleRef.current)
+      deltaFlushHandleRef.current = null
+    }
+    deltaBufferRef.current.clear()
     stoppedRunReasonRef.current.clear()
     streamRetryCountRef.current.clear()
     transientResumeLoopCountRef.current.clear()
@@ -2778,12 +2787,18 @@ function App() {
     const activeStreams = activeStreamsRef.current
     const retryCounts = streamRetryCountRef.current
     const transientResumeLoopCounts = transientResumeLoopCountRef.current
+    const deltaBuffer = deltaBufferRef.current
 
     return () => {
       activeStreams.forEach((stream) => {
         stream.source.close()
       })
       activeStreams.clear()
+      if (deltaFlushHandleRef.current !== null) {
+        window.clearTimeout(deltaFlushHandleRef.current)
+        deltaFlushHandleRef.current = null
+      }
+      deltaBuffer.clear()
       retryCounts.clear()
       transientResumeLoopCounts.clear()
     }
@@ -3466,19 +3481,17 @@ function App() {
         endpoint: '/cli/local-stream',
       }).catch(() => undefined)
     }
-    persistImmediately(
-      applyAction({
-        type: 'updateCard',
-        columnId,
-        cardId,
-        patch: {
-          model: resolvedModel,
-          reasoningEffort: resolvedReasoningEffort,
-          status: 'streaming',
-          streamId,
-        },
-      }),
-    )
+    applyAction({
+      type: 'updateCard',
+      columnId,
+      cardId,
+      patch: {
+        model: resolvedModel,
+        reasoningEffort: resolvedReasoningEffort,
+        status: 'streaming',
+        streamId,
+      },
+    })
 
     try {
       const composedSystemPrompt = buildSystemPromptForModel(
@@ -3506,14 +3519,12 @@ function App() {
       })
 
       if (response.streamId !== streamId) {
-        persistImmediately(
-          applyAction({
-            type: 'updateCard',
-            columnId,
-            cardId,
-            patch: { streamId: response.streamId },
-          }),
-        )
+        applyAction({
+          type: 'updateCard',
+          columnId,
+          cardId,
+          patch: { streamId: response.streamId },
+        })
       }
 
       const liveCard = getColumn(columnId)?.cards[cardId]
@@ -3653,25 +3664,23 @@ function App() {
         endpoint: '/cli/local-stream',
       }).catch(() => undefined)
     }
-    persistImmediately(
-      applyAction({
-        type: 'updateCard',
-        columnId,
-        cardId,
-        patch: {
-          model: resolvedModel,
-          reasoningEffort: resolvedReasoningEffort,
-          status: 'streaming',
-          streamId,
-          ...(shouldClearSessionId
-            ? {
-                sessionId: undefined,
-                providerSessions: {},
-              }
-            : {}),
-        },
-      }),
-    )
+    applyAction({
+      type: 'updateCard',
+      columnId,
+      cardId,
+      patch: {
+        model: resolvedModel,
+        reasoningEffort: resolvedReasoningEffort,
+        status: 'streaming',
+        streamId,
+        ...(shouldClearSessionId
+          ? {
+              sessionId: undefined,
+              providerSessions: {},
+            }
+          : {}),
+      },
+    })
 
     try {
       const composedSystemPrompt = buildSystemPromptForModel(
@@ -3699,14 +3708,12 @@ function App() {
       })
 
       if (response.streamId !== streamId) {
-        persistImmediately(
-          applyAction({
-            type: 'updateCard',
-            columnId,
-            cardId,
-            patch: { streamId: response.streamId },
-          }),
-        )
+        applyAction({
+          type: 'updateCard',
+          columnId,
+          cardId,
+          patch: { streamId: response.streamId },
+        })
       }
 
       const liveCard = getColumn(columnId)?.cards[cardId]
@@ -4133,12 +4140,14 @@ function App() {
         updateLatestKnownAppState(nextState)
       }
 
-      for (const entry of interruptedSessionRecovery.entries) {
-        if (!entry.recoverable) {
-          continue
-        }
+      const recoverableEntries = interruptedSessionRecovery.entries.filter((entry) => entry.recoverable)
+      for (let index = 0; index < recoverableEntries.length; index += maxConcurrentInterruptedSessionResumes) {
+        const batch = recoverableEntries.slice(index, index + maxConcurrentInterruptedSessionResumes)
+        await Promise.all(batch.map((entry) => resumeInterruptedSession(entry)))
 
-        await resumeInterruptedSession(entry)
+        if (index + maxConcurrentInterruptedSessionResumes < recoverableEntries.length) {
+          await delayInterruptedSessionResumeBatch()
+        }
       }
 
       setInterruptedSessionRecovery(null)

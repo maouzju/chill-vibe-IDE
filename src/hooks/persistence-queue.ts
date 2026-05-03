@@ -10,10 +10,30 @@ type QueuedStateSaveSchedulerOptions = {
   clearTimeoutFn?: (handle: TimeoutHandle) => void
 }
 
+type QueuedStateSaveScheduleOptions = {
+  delayMs?: number
+  resetTimer?: boolean
+}
+
+export const defaultQueuedStateSaveDelayMs = 300
+export const streamingQueuedStateSaveDelayMs = 5_000
+export const streamDeltaFlushIntervalMs = 250
+
 export const getPersistenceVersion = (state: Pick<AppState, 'updatedAt'>) =>
   typeof state.updatedAt === 'string' && state.updatedAt.trim().length > 0
     ? state.updatedAt
     : ''
+
+export const hasStreamingCards = (state: Pick<AppState, 'columns'>) =>
+  state.columns.some((column) =>
+    Object.values(column.cards).some((card) => card.status === 'streaming'),
+  )
+
+export const getQueuedStateSaveDelayMs = (state: Pick<AppState, 'columns'>) =>
+  hasStreamingCards(state) ? streamingQueuedStateSaveDelayMs : defaultQueuedStateSaveDelayMs
+
+export const shouldResetQueuedStateSaveTimer = (state: Pick<AppState, 'columns'>) =>
+  !hasStreamingCards(state)
 
 export const shouldPauseQueuedStateSave = (state: Pick<AppState, 'columns'>) => {
   void state
@@ -76,12 +96,16 @@ export const createQueuedStateSaveScheduler = ({
   }
 
   return {
-    schedule(state: AppState) {
+    schedule(state: AppState, options?: QueuedStateSaveScheduleOptions) {
       pendingState = state
+      if (timeoutHandle !== null && options?.resetTimer === false) {
+        return
+      }
+
       clearPendingTimer()
       timeoutHandle = setTimeoutFn(() => {
         void flush()
-      }, delayMs)
+      }, options?.delayMs ?? delayMs)
     },
     flush,
     cancel() {

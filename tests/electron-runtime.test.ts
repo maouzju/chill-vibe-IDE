@@ -252,6 +252,8 @@ test('Electron quit flow flushes renderer persistence and waits for queued state
 test('Electron stream cleanup runs before WebContents destruction during window shutdown', async () => {
   const mainBody = await readFile(path.join(process.cwd(), 'electron', 'main.ts'), 'utf8')
 
+  assert.match(mainBody, /const sendChatStreamEventSafely = \(/)
+  assert.match(mainBody, /try\s*{\s*sender\.send\('chat:stream-event'/)
   assert.match(mainBody, /function cleanupSubscriptionsForContentsId\(webContentsId: number\)/)
   assert.match(
     mainBody,

@@ -1197,6 +1197,51 @@ describe('state-store persistence', () => {
     }
   })
 
+  it('serializes concurrent immediate saves so same-tick writes do not collide on temp files', async () => {
+    const { saveState, loadState } = await import('../server/state-store.ts')
+    const originalDateNow = Date.now
+    const originalWarn = console.warn
+    const writeRetryWarnings: string[] = []
+
+    Date.now = () => 1777000000000
+    console.warn = (...args: unknown[]) => {
+      const message = args.map((arg) => String(arg)).join(' ')
+      if (message.includes('[state-store] Write attempt')) {
+        writeRetryWarnings.push(message)
+      }
+      originalWarn(...args)
+    }
+    try {
+      const states = Array.from({ length: 12 }, (_, index) => {
+        const state = createDefaultState('')
+        state.updatedAt = `2026-05-03T08:57:${String(index).padStart(2, '0')}.000Z`
+        state.columns[0]!.title = `Concurrent immediate save ${index}`
+        return state
+      })
+
+      await Promise.all(states.map((state) => saveState(state)))
+
+      const files = await readdir(tmpDir)
+      assert.equal(
+        files.filter((fileName) => fileName.startsWith('state.tmp.')).length,
+        0,
+        'successful concurrent immediate saves should not leave temp files behind',
+      )
+      assert.equal(files.includes('state.wal'), false, 'successful saves should clear the WAL')
+      assert.deepEqual(
+        writeRetryWarnings,
+        [],
+        'immediate saves should use the shared write lock instead of colliding and retrying',
+      )
+
+      const loaded = await loadState()
+      assert.match(loaded.columns[0]?.title ?? '', /^Concurrent immediate save \d+$/)
+    } finally {
+      Date.now = originalDateNow
+      console.warn = originalWarn
+    }
+  })
+
   it('survives sustained queued writes with large payloads and keeps only the newest snapshot', async () => {
     const { queueSaveState, loadState } = await import('../server/state-store.ts')
 

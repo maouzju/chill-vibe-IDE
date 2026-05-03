@@ -4,7 +4,10 @@ import { queueStateSave, saveState } from '../api'
 import type { LoadStatus, SaveStatus } from '../app-helpers'
 import {
   createQueuedStateSaveScheduler,
+  defaultQueuedStateSaveDelayMs,
+  getQueuedStateSaveDelayMs,
   getPersistenceVersion,
+  shouldResetQueuedStateSaveTimer,
   shouldPauseQueuedStateSave,
 } from './persistence-queue'
 
@@ -22,7 +25,7 @@ export function usePersistence(
 
   if (queuedSaveSchedulerRef.current === null) {
     queuedSaveSchedulerRef.current = createQueuedStateSaveScheduler({
-      delayMs: 300,
+      delayMs: defaultQueuedStateSaveDelayMs,
       queueStateSave: (state) => {
         queueStateSave(state)
         setSaveStatus('saved')
@@ -129,7 +132,10 @@ export function usePersistence(
     setSaveStatus('saving')
     lastQueuedSnapshot.current = version
     lastQueuedState.current = appState
-    queuedSaveSchedulerRef.current?.schedule(appState)
+    queuedSaveSchedulerRef.current?.schedule(appState, {
+      delayMs: getQueuedStateSaveDelayMs(appState),
+      resetTimer: shouldResetQueuedStateSaveTimer(appState),
+    })
   }, [appState, loadStatus, setSaveStatus])
 
   return {

@@ -2018,7 +2018,13 @@ const saveStateToDataDir = async (state: AppState, dataDir: string) => {
   return setCachedState(lightweightState, dataDir, await getStateDiskStamp(dataDir))
 }
 
-export const saveState = async (state: AppState) => saveStateToDataDir(state, getAppDataDir())
+const saveStateToDataDirWithLock = async (state: AppState, dataDir: string) =>
+  withWriteLock(() => saveStateToDataDir(state, dataDir))
+
+export const saveState = async (state: AppState) => {
+  const dataDir = getAppDataDir()
+  return saveStateToDataDirWithLock(state, dataDir)
+}
 export const dismissRecentCrashRecovery = async () => dismissRecentCrashRecoveryForDataDir(getAppDataDir())
 
 export const captureRendererCrash = async (
@@ -2044,7 +2050,7 @@ export const captureRendererCrash = async (
       : recovery
   })()
 
-  await saveStateToDataDir(state, dataDir)
+  await saveStateToDataDirWithLock(state, dataDir)
   await writeFile(
     getRecentCrashRecoveryFilePath(dataDir),
     `${JSON.stringify(taggedRecovery, null, 2)}\n`,
@@ -2109,7 +2115,7 @@ export const resolveStateRecoveryOption = async (optionId: string): Promise<AppS
       throw new Error(`The selected recovery file is no longer valid: ${selectedOption.fileName}`)
     }
 
-    await saveStateToDataDir(selectedState, dataDir)
+    await saveStateToDataDirWithLock(selectedState, dataDir)
   }
 
   await cleanupStartupRecoveryArtifacts(prompt, dataDir)

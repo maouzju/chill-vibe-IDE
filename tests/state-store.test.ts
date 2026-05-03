@@ -1193,6 +1193,52 @@ describe('state-store persistence', () => {
     }
   })
 
+  it('throttles routine snapshots while the queued save circuit is open', async () => {
+    const { queueSaveState, waitForPendingStateWrites } = await import('../server/state-store.ts')
+    const originalDateNow = Date.now
+    const originalSetTimeout = globalThis.setTimeout
+    const originalClearTimeout = globalThis.clearTimeout
+    let now = 3_000_000
+
+    Date.now = () => now
+    globalThis.setTimeout = ((callback: (...args: unknown[]) => void, delay?: number, ...args: unknown[]) => {
+      const delayMs = delay ?? 0
+      return originalSetTimeout(() => {
+        now += delayMs
+        callback(...args)
+      }, 0)
+    }) as typeof setTimeout
+    globalThis.clearTimeout = ((handle: ReturnType<typeof setTimeout>) => {
+      originalClearTimeout(handle)
+    }) as typeof clearTimeout
+
+    try {
+      for (let i = 0; i < 60; i++) {
+        now += 100
+        const state = createDefaultState('')
+        state.updatedAt = new Date(now).toISOString()
+        state.columns[0].title = `Circuit snapshot throttle ${i}`
+        void queueSaveState(state)
+      }
+
+      await waitForPendingStateWrites()
+
+      const files = await readdir(tmpDir)
+      const snapshots = files.filter((fileName) =>
+        fileName.startsWith('state.snapshot-') && fileName.endsWith('.json'),
+      )
+
+      assert.ok(
+        snapshots.length <= 1,
+        `circuit-open queued writes should not create one snapshot per save; got ${snapshots.length}`,
+      )
+    } finally {
+      Date.now = originalDateNow
+      globalThis.setTimeout = originalSetTimeout
+      globalThis.clearTimeout = originalClearTimeout
+    }
+  })
+
   it('waitForPendingStateWrites drains queued saves before quit-sensitive flows continue', async () => {
     const { queueSaveState, waitForPendingStateWrites, loadState } = await import('../server/state-store.ts')
     const state = createDefaultState('')

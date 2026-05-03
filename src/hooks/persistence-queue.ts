@@ -17,7 +17,11 @@ type QueuedStateSaveScheduleOptions = {
 
 export const defaultQueuedStateSaveDelayMs = 300
 export const streamingQueuedStateSaveDelayMs = 5_000
-export const streamDeltaFlushIntervalMs = 250
+export const streamDeltaFlushIntervalMs = 1_000
+const busyStreamingQueuedStateSaveDelayMs = 15_000
+const busyStreamingCardThreshold = 2
+const streamingStateContentBudgetChars = 750_000
+const queuedPersistenceStructuredDataBudgetChars = 4_000
 
 export const getPersistenceVersion = (state: Pick<AppState, 'updatedAt'>) =>
   typeof state.updatedAt === 'string' && state.updatedAt.trim().length > 0
@@ -29,11 +33,41 @@ export const hasStreamingCards = (state: Pick<AppState, 'columns'>) =>
     Object.values(column.cards).some((card) => card.status === 'streaming'),
   )
 
+export const getStreamingCardCount = (state: Pick<AppState, 'columns'>) =>
+  state.columns.reduce(
+    (count, column) =>
+      count + Object.values(column.cards).filter((card) => card.status === 'streaming').length,
+    0,
+  )
+
+export const getLiveChatContentChars = (state: Pick<AppState, 'columns'>) =>
+  state.columns.reduce(
+    (total, column) =>
+      total + Object.values(column.cards).reduce(
+        (cardTotal, card) =>
+          cardTotal + card.messages.reduce(
+            (messageTotal, message) =>
+              messageTotal + message.content.length + (message.meta?.structuredData?.length ?? 0),
+            0,
+          ),
+        0,
+      ),
+    0,
+  )
+
+export const isBusyStreamingState = (state: Pick<AppState, 'columns'>) =>
+  getStreamingCardCount(state) >= busyStreamingCardThreshold ||
+  getLiveChatContentChars(state) >= streamingStateContentBudgetChars
+
 export const getQueuedStateSaveDelayMs = (state: Pick<AppState, 'columns'>) =>
-  hasStreamingCards(state) ? streamingQueuedStateSaveDelayMs : defaultQueuedStateSaveDelayMs
+  isBusyStreamingState(state)
+    ? busyStreamingQueuedStateSaveDelayMs
+    : hasStreamingCards(state)
+      ? streamingQueuedStateSaveDelayMs
+      : defaultQueuedStateSaveDelayMs
 
 export const shouldResetQueuedStateSaveTimer = (state: Pick<AppState, 'columns'>) =>
-  !hasStreamingCards(state)
+  !hasStreamingCards(state) && !isBusyStreamingState(state)
 
 export const shouldPauseQueuedStateSave = (state: Pick<AppState, 'columns'>) => {
   void state
@@ -71,6 +105,67 @@ export const shouldSyncRuntimeSettings = (action: IdeAction) => {
     action.type === 'removeProviderProfile' ||
     action.type === 'setActiveProviderProfile'
 }
+
+const trimQueuedPersistenceText = (value: string) =>
+  value.length <= queuedPersistenceStructuredDataBudgetChars
+    ? value
+    : [
+        value.slice(0, queuedPersistenceStructuredDataBudgetChars / 2),
+        '',
+        `[Output truncated in queued state save. ${value.length - queuedPersistenceStructuredDataBudgetChars} characters omitted.]`,
+        '',
+        value.slice(-queuedPersistenceStructuredDataBudgetChars / 2),
+      ].join('\n')
+
+const trimQueuedPersistenceStructuredData = (structuredData: string) => {
+  if (structuredData.length <= queuedPersistenceStructuredDataBudgetChars) {
+    return structuredData
+  }
+
+  try {
+    const payload = JSON.parse(structuredData) as Record<string, unknown>
+
+    if (typeof payload.output !== 'string' && typeof payload.content !== 'string') {
+      return trimQueuedPersistenceText(structuredData)
+    }
+
+    return JSON.stringify({
+      ...payload,
+      ...(typeof payload.output === 'string'
+        ? { output: trimQueuedPersistenceText(payload.output) }
+        : {}),
+      ...(typeof payload.content === 'string'
+        ? { content: trimQueuedPersistenceText(payload.content) }
+        : {}),
+    })
+  } catch {
+    return trimQueuedPersistenceText(structuredData)
+  }
+}
+
+export const createQueuedPersistenceStateSnapshot = (state: AppState): AppState => ({
+  ...state,
+  columns: state.columns.map((column) => ({
+    ...column,
+    cards: Object.fromEntries(
+      Object.entries(column.cards).map(([cardId, card]) => [
+        cardId,
+        {
+          ...card,
+          messages: card.messages.map((message) => ({
+            ...message,
+            meta: message.meta?.structuredData
+              ? {
+                  ...message.meta,
+                  structuredData: trimQueuedPersistenceStructuredData(message.meta.structuredData),
+                }
+              : message.meta,
+          })),
+        },
+      ]),
+    ),
+  })),
+})
 
 export const createQueuedStateSaveScheduler = ({
   delayMs,

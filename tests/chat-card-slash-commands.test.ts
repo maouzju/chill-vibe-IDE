@@ -5,6 +5,7 @@ import type { SlashCommand } from '../shared/schema.ts'
 import {
   areSlashCommandListsEqual,
   getSlashCommandsLoadKey,
+  resolveSlashMenuDismissedAfterQueryChange,
   resolveRemoteSlashCommands,
   resolveSlashCommandsLoadKeyAfterCancel,
   shouldStartSlashCommandsLoad,
@@ -45,6 +46,11 @@ test('cancelling an in-flight slash command load allows the same request to rest
 
   assert.equal(resolveSlashCommandsLoadKeyAfterCancel(currentKey, currentKey), null)
   assert.equal(resolveSlashCommandsLoadKeyAfterCancel(newerKey, currentKey), newerKey)
+})
+
+test('slash menu query reset is idempotent when the menu is already open', () => {
+  assert.equal(resolveSlashMenuDismissedAfterQueryChange(false), false)
+  assert.equal(resolveSlashMenuDismissedAfterQueryChange(true), false)
 })
 
 test('slash command list equality keeps identical results idempotent', () => {

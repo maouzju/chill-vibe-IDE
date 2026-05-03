@@ -4,9 +4,13 @@ import { describe, it } from 'node:test'
 import { createDefaultState } from '../shared/default-state.ts'
 import {
   createQueuedStateSaveScheduler,
+  createQueuedPersistenceStateSnapshot,
   defaultQueuedStateSaveDelayMs,
+  getLiveChatContentChars,
   getQueuedStateSaveDelayMs,
   getPersistenceVersion,
+  getStreamingCardCount,
+  isBusyStreamingState,
   streamDeltaFlushIntervalMs,
   shouldResetQueuedStateSaveTimer,
   shouldPersistActionImmediately,
@@ -71,7 +75,135 @@ describe('persistence queue', () => {
   })
 
   it('uses a coarse renderer delta flush interval for active streams', () => {
-    assert.equal(streamDeltaFlushIntervalMs, 250)
+    assert.equal(streamDeltaFlushIntervalMs, 1_000)
+  })
+
+  it('backs off queued saves further when several sessions stream at once', () => {
+    const state = createDefaultState('')
+    const firstColumn = state.columns[0]
+    const activeCardId = firstColumn?.layout.type === 'pane'
+      ? firstColumn.layout.activeTabId
+      : ''
+
+    if (!firstColumn || !activeCardId) {
+      throw new Error('Expected default state to include an active card.')
+    }
+
+    const secondCardId = 'second-streaming-card'
+    firstColumn.cards[activeCardId] = {
+      ...firstColumn.cards[activeCardId]!,
+      status: 'streaming',
+    }
+    firstColumn.cards[secondCardId] = {
+      ...firstColumn.cards[activeCardId]!,
+      id: secondCardId,
+      status: 'streaming',
+    }
+
+    assert.equal(getStreamingCardCount(state), 2)
+    assert.equal(isBusyStreamingState(state), true)
+    assert.ok(
+      getQueuedStateSaveDelayMs(state) > streamingQueuedStateSaveDelayMs,
+      'multi-session streaming should use a larger save window than a single active stream',
+    )
+    assert.equal(shouldResetQueuedStateSaveTimer(state), false)
+  })
+
+  it('backs off queued saves for one very large live streaming transcript', () => {
+    const state = createDefaultState('')
+    const activeCardId = state.columns[0]?.layout.type === 'pane'
+      ? state.columns[0].layout.activeTabId
+      : ''
+
+    if (!activeCardId) {
+      throw new Error('Expected default state to include an active card.')
+    }
+
+    state.columns[0]!.cards[activeCardId] = {
+      ...state.columns[0]!.cards[activeCardId]!,
+      status: 'streaming',
+      messages: [
+        {
+          id: 'large-live-message',
+          role: 'assistant',
+          content: 'x'.repeat(800_000),
+          createdAt: '2026-05-03T11:00:00.000Z',
+        },
+      ],
+    }
+
+    assert.ok(getLiveChatContentChars(state) >= 800_000)
+    assert.equal(isBusyStreamingState(state), true)
+    assert.ok(getQueuedStateSaveDelayMs(state) > streamingQueuedStateSaveDelayMs)
+  })
+
+  it('keeps the high-pressure save window after a large transcript leaves streaming', () => {
+    const state = createDefaultState('')
+    const activeCardId = state.columns[0]?.layout.type === 'pane'
+      ? state.columns[0].layout.activeTabId
+      : ''
+
+    if (!activeCardId) {
+      throw new Error('Expected default state to include an active card.')
+    }
+
+    state.columns[0]!.cards[activeCardId] = {
+      ...state.columns[0]!.cards[activeCardId]!,
+      status: 'idle',
+      streamId: undefined,
+      messages: [
+        {
+          id: 'large-idle-message',
+          role: 'assistant',
+          content: 'x'.repeat(800_000),
+          createdAt: '2026-05-03T11:00:00.000Z',
+        },
+      ],
+    }
+
+    assert.equal(isBusyStreamingState(state), true)
+    assert.equal(shouldResetQueuedStateSaveTimer(state), false)
+    assert.ok(getQueuedStateSaveDelayMs(state) > streamingQueuedStateSaveDelayMs)
+  })
+
+  it('creates a compact queued persistence snapshot before crossing the Electron IPC bridge', () => {
+    const state = createDefaultState('')
+    const activeCardId = state.columns[0]?.layout.type === 'pane'
+      ? state.columns[0].layout.activeTabId
+      : ''
+
+    if (!activeCardId) {
+      throw new Error('Expected default state to include an active card.')
+    }
+
+    const hugeOutput = 'A'.repeat(40_000)
+    state.columns[0]!.cards[activeCardId] = {
+      ...state.columns[0]!.cards[activeCardId]!,
+      messages: [
+        {
+          id: 'huge-command',
+          role: 'assistant',
+          content: '',
+          createdAt: '2026-05-03T11:00:00.000Z',
+          meta: {
+            kind: 'command',
+            structuredData: JSON.stringify({
+              kind: 'command',
+              command: 'pnpm test',
+              output: hugeOutput,
+            }),
+          },
+        },
+      ],
+    }
+
+    const snapshot = createQueuedPersistenceStateSnapshot(state)
+    const originalStructuredData = state.columns[0]!.cards[activeCardId]!.messages[0]!.meta?.structuredData ?? ''
+    const snapshotStructuredData = snapshot.columns[0]!.cards[activeCardId]!.messages[0]!.meta?.structuredData ?? ''
+
+    assert.equal(originalStructuredData.includes(hugeOutput), true)
+    assert.ok(snapshotStructuredData.length < originalStructuredData.length)
+    assert.match(snapshotStructuredData, /Output truncated in queued state save/)
   })
 
   it('keeps model picks on the queued path even when another card is still streaming', () => {

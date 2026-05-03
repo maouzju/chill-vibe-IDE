@@ -83,7 +83,7 @@ const sendChatStreamEventSafely = (
     data: unknown
   },
 ) => {
-  if (sender.isDestroyed()) {
+  if (sender.isDestroyed() || sender.isCrashed()) {
     return false
   }
 
@@ -641,6 +641,8 @@ function createWindow() {
 
   win.on('close', cleanupSubscriptionsForWindow)
   win.on('closed', cleanupSubscriptionsForWindow)
+  win.webContents.once('destroyed', cleanupSubscriptionsForWindow)
+  win.webContents.once('render-process-gone', cleanupSubscriptionsForWindow)
 
   const target = getRendererLoadTarget({
     isDev,

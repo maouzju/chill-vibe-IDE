@@ -28,6 +28,9 @@ export const resolveSlashCommandsLoadKeyAfterCancel = (
   cancelledLoadKey: string,
 ) => currentLoadKey === cancelledLoadKey ? null : currentLoadKey
 
+export const resolveSlashMenuDismissedAfterQueryChange = (currentDismissed: boolean) =>
+  currentDismissed ? false : currentDismissed
+
 export const resolveRemoteSlashCommands = (
   commands: SlashCommand[],
   localCommands: SlashCommand[],

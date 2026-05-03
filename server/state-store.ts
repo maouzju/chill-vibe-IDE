@@ -2014,7 +2014,9 @@ const saveStateToDataDir = async (state: AppState, dataDir: string) => {
   }
 
   await atomicWriteFile(getStateFilePathForDir(dataDir), content, dataDir)
-  await writeStateSnapshot(content, dataDir)
+  if (!shouldSkipRoutineStateSnapshot()) {
+    await writeStateSnapshot(content, dataDir)
+  }
   return setCachedState(lightweightState, dataDir, await getStateDiskStamp(dataDir))
 }
 
@@ -2138,10 +2140,11 @@ type ScheduledStateDrain = {
 
 const stateSaveCircuitRequestWindowMs = 10_000
 const maxStateSaveRequestsPerWindow = 24
-const stateSaveCircuitCooldownMs = 2_500
+const stateSaveCircuitCooldownMs = 10_000
 const slowStateSaveDurationMs = 1_500
 const maxConsecutiveSlowStateSaves = 2
 const maxPendingStateReplacements = 10
+const circuitStateSaveSnapshotMinIntervalMs = 60_000
 
 let pendingState: PendingStateWrite | null = null
 let latestQueuedStateWrite: Promise<void> = Promise.resolve()
@@ -2152,9 +2155,26 @@ let stateSaveRequestTimes: number[] = []
 let lastStateSaveRequestAtMs = 0
 let consecutiveSlowStateSaves = 0
 let pendingStateReplacementCount = 0
+let lastCircuitStateSaveSnapshotAtMs = 0
 
 const getStateSaveCircuitDelayMs = (now = Date.now()) =>
   Math.max(0, stateSaveCircuitOpenUntilMs - now)
+
+const shouldSkipRoutineStateSnapshot = (now = Date.now()) => {
+  if (getStateSaveCircuitDelayMs(now) <= 0) {
+    return false
+  }
+
+  if (
+    lastCircuitStateSaveSnapshotAtMs > 0 &&
+    now - lastCircuitStateSaveSnapshotAtMs < circuitStateSaveSnapshotMinIntervalMs
+  ) {
+    return true
+  }
+
+  lastCircuitStateSaveSnapshotAtMs = now
+  return false
+}
 
 const openStateSaveCircuit = (reason: string, now = Date.now()) => {
   const openUntilMs = now + stateSaveCircuitCooldownMs

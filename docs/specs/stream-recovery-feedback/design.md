@@ -71,6 +71,15 @@ export const shouldClearRecoveryStatusOnStreamIdle = (
    - `item/agentMessage/delta` chunks, `item/completed` assistant messages, JSON-RPC error responses, and stderr diagnostic lines that are only Codex native `Reconnecting... n/5` placeholders are treated as recovery control signals.
    - These placeholders update recovery/stats state, but they are not forwarded as visible `delta`, `assistant_message`, or final error text and are not replayed into fresh-session seeded prompts.
 
+6. **Renderer/window lifetime cleanup**:
+   - Electron main owns stream subscription cleanup by `BrowserWindow` / `WebContents` lifetime.
+   - Cleanup runs on `close`, `closed`, `webContents.destroyed`, and `render-process-gone`, so provider stream events stop before they can keep sending into a destroyed renderer.
+   - `sendChatStreamEventSafely()` checks both `isDestroyed()` and `isCrashed()` before forwarding events.
+
+7. **Interrupted-session resume pacing**:
+   - Startup recovery resumes interrupted sessions in small batches instead of starting every provider run at once.
+   - This reduces simultaneous stream events, React updates, and queued persistence writes after a crash/reopen.
+
 5. **i18n**: add three keys in `shared/i18n.ts`:
    - `streamRecoveryReconnecting(attempt, max)` → `正在重连… ${n}/${max}` / `Reconnecting… ${n}/${max}`
    - `streamRecoveryResumed` → `已恢复` / `Resumed`

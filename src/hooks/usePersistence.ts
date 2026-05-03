@@ -3,6 +3,7 @@ import type { AppState } from '../../shared/schema'
 import { queueStateSave, saveState } from '../api'
 import type { LoadStatus, SaveStatus } from '../app-helpers'
 import {
+  createQueuedPersistenceStateSnapshot,
   createQueuedStateSaveScheduler,
   defaultQueuedStateSaveDelayMs,
   getQueuedStateSaveDelayMs,
@@ -27,7 +28,7 @@ export function usePersistence(
     queuedSaveSchedulerRef.current = createQueuedStateSaveScheduler({
       delayMs: defaultQueuedStateSaveDelayMs,
       queueStateSave: (state) => {
-        queueStateSave(state)
+        queueStateSave(createQueuedPersistenceStateSnapshot(state))
         setSaveStatus('saved')
       },
     })

@@ -263,7 +263,12 @@ const hydratePreviewSessionHistory = async (
     const sidecarEntry = sidecarEntriesById.get(entry.id)
 
     return sidecarEntry && getSessionHistoryMessageCount(sidecarEntry) >= messageCount
-      ? sidecarEntry
+      ? {
+          ...entry,
+          messageCount,
+          messagesPreview: undefined,
+          messages: sidecarEntry.messages,
+        }
       : entry
   })
 }
@@ -1660,7 +1665,7 @@ const recoverFromBackups = async (dataDir = getAppDataDir()): Promise<AppState |
 // Zod safeParse deep-clones the entire input; for a 17MB state with thousands
 // of messages, this amplifies heap usage ~200x and triggers V8 OOM.  Trimming
 // first keeps the Zod input small enough to validate safely.
-// The full messages are preserved on disk and restored via mergePersistedSessionHistory.
+// The full archived messages stay in sidecar files and are loaded on demand.
 const preTrimMaxCardMessages = 300
 const preTrimMaxHistoryMessages = 20
 
@@ -1925,51 +1930,54 @@ const loadPersistedSessionHistory = async (dataDir = getAppDataDir()) => {
 }
 
 const mergePersistedSessionHistory = async (state: AppState, dataDir: string): Promise<AppState> => {
-  if (state.sessionHistory.length === 0) {
-    return state
-  }
-
-  const persistedSessionHistory = await loadPersistedSessionHistory(dataDir)
+  // Renderer startup intentionally receives lightweight history previews while
+  // the full archived transcripts live in session-history sidecar files. Saving
+  // that renderer state must not hydrate every sidecar back into the main
+  // process: large real profiles can carry tens of megabytes of archives, and a
+  // routine send/save would otherwise spike packaged Electron memory and exit.
+  //
+  // Full entries in the incoming state are still written below by
+  // writeSessionHistorySidecars(). Preview entries are merged only against the
+  // in-process full cache when available; otherwise they stay lightweight in
+  // state.json and continue to resolve through their existing sidecar on demand.
+  const cachedStateEntry = getCachedStateEntry(dataDir)
   if (
-    persistedSessionHistory.length === 0 &&
+    !cachedStateEntry ||
+    cachedStateEntry.sessionHistoryMode !== 'full' ||
+    cachedStateEntry.state.sessionHistory.length === 0 ||
     state.sessionHistory.every(isFullSessionHistoryEntry)
   ) {
     return state
   }
-  const persistedEntriesById = new Map(
-    persistedSessionHistory.map((entry) => [entry.id, entry] as const),
+
+  const cachedEntriesById = new Map(
+    cachedStateEntry.state.sessionHistory
+      .filter(isFullSessionHistoryEntry)
+      .map((entry) => [entry.id, entry] as const),
   )
+
+  if (cachedEntriesById.size === 0) {
+    return state
+  }
 
   return {
     ...state,
     sessionHistory: state.sessionHistory.map((entry) => {
+      if (isFullSessionHistoryEntry(entry)) {
+        return entry
+      }
+
+      const cachedEntry = cachedEntriesById.get(entry.id)
       const messageCount = getSessionHistoryMessageCount(entry)
-      const persistedEntry = persistedEntriesById.get(entry.id)
-
-      if (!persistedEntry) {
-        return messageCount === entry.messages.length && !entry.messagesPreview
-          ? entry
-          : { ...entry, messageCount, messagesPreview: undefined }
-      }
-
-      if (
-        !entry.messagesPreview &&
-        messageCount <= entry.messages.length
-      ) {
-        return messageCount === entry.messages.length
-          ? { ...entry, messagesPreview: undefined }
-          : { ...entry, messageCount, messagesPreview: undefined }
-      }
-
-      if (getSessionHistoryMessageCount(persistedEntry) < messageCount || persistedEntry.messages.length === 0) {
-        return { ...entry, messageCount, messagesPreview: undefined }
+      if (!cachedEntry || getSessionHistoryMessageCount(cachedEntry) < messageCount) {
+        return entry
       }
 
       return {
         ...entry,
         messageCount,
         messagesPreview: undefined,
-        messages: persistedEntry.messages,
+        messages: cachedEntry.messages,
       }
     }),
   }

@@ -84,3 +84,68 @@ test('Electron runtime can close after renderer startup without main-process shu
     mainErrors.join(''),
   )
 })
+
+test('Electron runtime can close while a chat stream subscription is active', async () => {
+  await ensureElectronRuntimeBuild()
+
+  const env = createHeadlessElectronRuntimeEnv({
+    VITE_DEV_SERVER_URL: getElectronTestRendererUrl(),
+    CHILL_VIBE_DISABLE_SINGLE_INSTANCE_LOCK: '1',
+  })
+
+  const app = await electron.launch({
+    args: ['.'],
+    cwd: process.cwd(),
+    env,
+  })
+
+  const mainErrors: string[] = []
+  app.process().stderr?.on('data', (chunk: Buffer) => {
+    mainErrors.push(chunk.toString())
+  })
+
+  try {
+    const page = await app.firstWindow()
+    await page.waitForFunction(() => {
+      const root = document.getElementById('root')
+      return typeof window.electronAPI !== 'undefined' && (root?.childElementCount ?? 0) > 0
+    }, undefined, {
+      timeout: 30000,
+    })
+
+    const result = await page.evaluate(async () => {
+      const api = window.electronAPI
+      if (!api?.requestChat || !api.subscribeChatStream) {
+        throw new Error('Electron chat bridge is unavailable.')
+      }
+      const response = await api.requestChat({
+        provider: 'codex',
+        model: 'codex-gpt-5.1',
+        reasoningEffort: 'medium',
+        thinkingEnabled: true,
+        planMode: false,
+        prompt: 'runtime close subscription smoke',
+        workspacePath: '.',
+        language: 'zh-CN',
+        systemPrompt: '',
+        modelPromptRules: [],
+        crossProviderSkillReuseEnabled: true,
+        attachments: [],
+      })
+      const subscriptionId = crypto.randomUUID()
+      await api.subscribeChatStream(response.streamId, subscriptionId)
+      return { streamId: response.streamId, subscriptionId }
+    })
+
+    assert.ok(result.streamId)
+    assert.ok(result.subscriptionId)
+  } finally {
+    await app.close()
+  }
+
+  assert.equal(
+    mainErrors.some((message) => message.includes('Object has been destroyed')),
+    false,
+    mainErrors.join(''),
+  )
+})

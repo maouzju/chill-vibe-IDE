@@ -8,10 +8,11 @@
 ## Save flow
 
 1. Sanitize incoming app state.
-2. Merge lightweight renderer previews with existing full sidecar entries, falling back to legacy `state.json` history during migration.
-3. Write complete archived entries to `session-history/` files.
-4. Write `state.json` with `renderSessionHistoryForRenderer(...)` output only.
-5. Cache the lightweight state so ordinary settings/provider reads do not hydrate archived transcripts.
+2. Keep routine renderer preview saves lightweight: do not enumerate or hydrate every `session-history/` sidecar during ordinary board saves.
+3. Merge lightweight renderer previews only with an already-full in-process cache when available; otherwise preserve existing sidecars and leave previews lightweight.
+4. Write complete incoming archived entries to `session-history/` files.
+5. Write `state.json` with `renderSessionHistoryForRenderer(...)` output only.
+6. Cache the lightweight state so ordinary settings/provider reads do not hydrate archived transcripts.
 
 ## Load flow
 
@@ -21,7 +22,7 @@
 ## Compatibility
 
 - Existing states with full `sessionHistory` remain readable.
-- Existing renderer preview saves still preserve full transcripts because merge uses sidecar/legacy persisted content before writing the lightweight state.
+- Existing renderer preview saves preserve full transcripts by leaving unchanged sidecar files in place; per-entry restore reads the matching sidecar on demand.
 - `AppState` schema remains compatible: preview entries are still valid `SessionHistoryEntry` values via existing `messageCount` and `messagesPreview` fields.
 
 ## Risk controls

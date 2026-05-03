@@ -4,10 +4,15 @@ import { describe, it } from 'node:test'
 import { createDefaultState } from '../shared/default-state.ts'
 import {
   createQueuedStateSaveScheduler,
+  defaultQueuedStateSaveDelayMs,
+  getQueuedStateSaveDelayMs,
   getPersistenceVersion,
+  streamDeltaFlushIntervalMs,
+  shouldResetQueuedStateSaveTimer,
   shouldPersistActionImmediately,
   shouldSyncRuntimeSettings,
   shouldPauseQueuedStateSave,
+  streamingQueuedStateSaveDelayMs,
 } from '../src/hooks/persistence-queue.ts'
 
 describe('persistence queue', () => {
@@ -40,6 +45,32 @@ describe('persistence queue', () => {
     const state = createDefaultState('')
 
     assert.equal(shouldPauseQueuedStateSave(state), false)
+  })
+
+  it('uses a longer non-resetting queued save window while streams are active', () => {
+    const state = createDefaultState('')
+    const activeCardId = state.columns[0]?.layout.type === 'pane'
+      ? state.columns[0].layout.activeTabId
+      : ''
+
+    if (!activeCardId) {
+      throw new Error('Expected default state to include an active card.')
+    }
+
+    assert.equal(getQueuedStateSaveDelayMs(state), defaultQueuedStateSaveDelayMs)
+    assert.equal(shouldResetQueuedStateSaveTimer(state), true)
+
+    state.columns[0]!.cards[activeCardId] = {
+      ...state.columns[0]!.cards[activeCardId]!,
+      status: 'streaming',
+    }
+
+    assert.equal(getQueuedStateSaveDelayMs(state), streamingQueuedStateSaveDelayMs)
+    assert.equal(shouldResetQueuedStateSaveTimer(state), false)
+  })
+
+  it('uses a coarse renderer delta flush interval for active streams', () => {
+    assert.equal(streamDeltaFlushIntervalMs, 250)
   })
 
   it('keeps model picks on the queued path even when another card is still streaming', () => {
@@ -174,5 +205,52 @@ describe('persistence queue', () => {
     scheduler.flush()
 
     assert.deepEqual(queuedTitles, ['Flush now'])
+  })
+
+  it('keeps one in-flight streaming save timer while replacing the pending state', () => {
+    const queuedTitles: string[] = []
+    const pendingTimers = new Map<unknown, () => void>()
+    const scheduledDelays: number[] = []
+    let nextTimerId = 1
+
+    const scheduler = createQueuedStateSaveScheduler({
+      delayMs: 200,
+      queueStateSave: (state) => {
+        queuedTitles.push(state.columns[0]?.title ?? '')
+      },
+      setTimeoutFn: (callback, delayMs) => {
+        const id = nextTimerId++
+        pendingTimers.set(id, callback)
+        scheduledDelays.push(delayMs)
+        return id
+      },
+      clearTimeoutFn: (id) => {
+        pendingTimers.delete(id)
+      },
+    })
+
+    const first = createDefaultState('')
+    first.updatedAt = '2026-04-07T10:00:00.000Z'
+    first.columns[0]!.title = 'First streaming save'
+
+    const second = createDefaultState('')
+    second.updatedAt = '2026-04-07T10:00:01.000Z'
+    second.columns[0]!.title = 'Latest streaming save'
+
+    scheduler.schedule(first, {
+      delayMs: streamingQueuedStateSaveDelayMs,
+      resetTimer: false,
+    })
+    scheduler.schedule(second, {
+      delayMs: streamingQueuedStateSaveDelayMs,
+      resetTimer: false,
+    })
+
+    assert.equal(pendingTimers.size, 1, 'expected only the original streaming timer to remain')
+    assert.deepEqual(scheduledDelays, [streamingQueuedStateSaveDelayMs])
+
+    pendingTimers.values().next().value?.()
+
+    assert.deepEqual(queuedTitles, ['Latest streaming save'])
   })
 })

@@ -75,6 +75,27 @@ const hasSingleInstanceLock = bypassSingleInstanceLock ? true : app.requestSingl
 let quitTimer: NodeJS.Timeout | null = null
 let quitAfterFlushPending = false
 
+const sendChatStreamEventSafely = (
+  sender: Electron.WebContents,
+  payload: {
+    subscriptionId: string
+    event: string
+    data: unknown
+  },
+) => {
+  if (sender.isDestroyed()) {
+    return false
+  }
+
+  try {
+    sender.send('chat:stream-event', payload)
+    return true
+  } catch (error) {
+    log.warn('[main] Failed to forward chat stream event to renderer.', error)
+    return false
+  }
+}
+
 function configureDesktopEnvironment() {
   if (desktopWorkingDirectory) {
     process.chdir(desktopWorkingDirectory)
@@ -407,18 +428,17 @@ function registerDesktopHandlers() {
     desktopBackend.loadExternalSession(request),
   )
   ipcMain.handle('desktop:subscribe-chat-stream', (event, streamId: string, subscriptionId: string) => {
+    const sender = event.sender
     const unsubscribe = desktopBackend.subscribeChatStream(streamId, (payload) => {
-      if (!event.sender.isDestroyed()) {
-        event.sender.send('chat:stream-event', {
-          subscriptionId,
-          event: payload.event,
-          data: payload.data,
-        })
-      }
+      sendChatStreamEventSafely(sender, {
+        subscriptionId,
+        event: payload.event,
+        data: payload.data,
+      })
     })
 
     if (!unsubscribe) {
-      event.sender.send('chat:stream-event', {
+      sendChatStreamEventSafely(sender, {
         subscriptionId,
         event: 'error',
         data: { message: 'Stream not found.' },

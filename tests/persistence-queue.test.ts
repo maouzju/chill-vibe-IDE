@@ -10,6 +10,7 @@ import {
   streamDeltaFlushIntervalMs,
   shouldResetQueuedStateSaveTimer,
   shouldPersistActionImmediately,
+  shouldUseQueuedPersistenceForAction,
   shouldSyncRuntimeSettings,
   shouldPauseQueuedStateSave,
   streamingQueuedStateSaveDelayMs,
@@ -96,6 +97,15 @@ describe('persistence queue', () => {
     const state = createDefaultState('')
 
     assert.equal(shouldPersistActionImmediately('selectCardModel', state), false)
+  })
+
+  it('routes high-churn chat mutations through queued persistence', () => {
+    assert.equal(shouldUseQueuedPersistenceForAction('appendAssistantDelta'), true)
+    assert.equal(shouldUseQueuedPersistenceForAction('appendMessages'), true)
+    assert.equal(shouldUseQueuedPersistenceForAction('upsertMessages'), true)
+    assert.equal(shouldUseQueuedPersistenceForAction('updateCard'), true)
+    assert.equal(shouldUseQueuedPersistenceForAction('resetCardConversation'), false)
+    assert.equal(shouldUseQueuedPersistenceForAction('replace'), false)
   })
 
   it('flags runtime-routing changes for immediate backend sync', () => {

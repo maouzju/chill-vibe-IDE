@@ -2122,44 +2122,242 @@ export const resolveStateRecoveryOption = async (optionId: string): Promise<AppS
   return loadStateForRenderer()
 }
 
-// ── Queue with async mutex ───────────────────────────────────────────────────
+// ── Queue with async mutex and dynamic circuit breaker ───────────────────────
 
-let pendingState: { state: AppState; dataDir: string } | null = null
+type PendingStateWrite = { state: AppState; dataDir: string }
+type PendingStateDrainOptions = {
+  force?: boolean
+}
+type ScheduledStateDrain = {
+  dueAtMs: number
+  timer: ReturnType<typeof setTimeout>
+  promise: Promise<void>
+  resolve: () => void
+  reject: (error: unknown) => void
+}
+
+const stateSaveCircuitRequestWindowMs = 10_000
+const maxStateSaveRequestsPerWindow = 24
+const stateSaveCircuitCooldownMs = 2_500
+const slowStateSaveDurationMs = 1_500
+const maxConsecutiveSlowStateSaves = 2
+const maxPendingStateReplacements = 10
+
+let pendingState: PendingStateWrite | null = null
 let latestQueuedStateWrite: Promise<void> = Promise.resolve()
+let activePendingStateDrain: Promise<void> | null = null
+let scheduledStateDrain: ScheduledStateDrain | null = null
+let stateSaveCircuitOpenUntilMs = 0
+let stateSaveRequestTimes: number[] = []
+let lastStateSaveRequestAtMs = 0
+let consecutiveSlowStateSaves = 0
+let pendingStateReplacementCount = 0
 
-const drainPendingStateWrites = () => withWriteLock(async () => {
+const getStateSaveCircuitDelayMs = (now = Date.now()) =>
+  Math.max(0, stateSaveCircuitOpenUntilMs - now)
+
+const openStateSaveCircuit = (reason: string, now = Date.now()) => {
+  const openUntilMs = now + stateSaveCircuitCooldownMs
+  const wasClosed = getStateSaveCircuitDelayMs(now) === 0
+  stateSaveCircuitOpenUntilMs = Math.max(stateSaveCircuitOpenUntilMs, openUntilMs)
+
+  if (wasClosed) {
+    console.warn('[state-store] State save circuit opened.', {
+      reason,
+      cooldownMs: stateSaveCircuitCooldownMs,
+    })
+  }
+}
+
+const recordStateSaveRequest = () => {
+  const now = Date.now()
+  if (now < lastStateSaveRequestAtMs) {
+    stateSaveRequestTimes = []
+  }
+  lastStateSaveRequestAtMs = now
+
+  stateSaveRequestTimes = stateSaveRequestTimes.filter(
+    (requestedAt) => requestedAt <= now && now - requestedAt <= stateSaveCircuitRequestWindowMs,
+  )
+  stateSaveRequestTimes.push(now)
+
+  if (stateSaveRequestTimes.length > maxStateSaveRequestsPerWindow) {
+    openStateSaveCircuit('too-many-save-requests', now)
+  }
+}
+
+const recordPendingStateReplacement = () => {
+  pendingStateReplacementCount += 1
+
+  if (pendingStateReplacementCount > maxPendingStateReplacements) {
+    openStateSaveCircuit('pending-state-replaced-too-often')
+  }
+}
+
+const recordStateSaveFinished = (durationMs: number) => {
+  if (durationMs >= slowStateSaveDurationMs) {
+    consecutiveSlowStateSaves += 1
+    if (consecutiveSlowStateSaves >= maxConsecutiveSlowStateSaves) {
+      openStateSaveCircuit('state-save-too-slow')
+    }
+    return
+  }
+
+  consecutiveSlowStateSaves = 0
+}
+
+const clearScheduledStateDrain = () => {
+  if (!scheduledStateDrain) {
+    return null
+  }
+
+  const scheduled = scheduledStateDrain
+  clearTimeout(scheduled.timer)
+  scheduledStateDrain = null
+  return scheduled
+}
+
+const startPendingStateDrain = (options: PendingStateDrainOptions = {}): Promise<void> => {
+  if (activePendingStateDrain) {
+    return activePendingStateDrain
+  }
+
+  const drain = drainPendingStateWrites(options)
+  activePendingStateDrain = drain
+  latestQueuedStateWrite = drain.catch(() => undefined)
+  void drain.finally(() => {
+    if (activePendingStateDrain === drain) {
+      activePendingStateDrain = null
+    }
+
+    if (pendingState && !options.force) {
+      schedulePendingStateDrain()
+    }
+  }).catch(() => undefined)
+
+  return drain
+}
+
+const runScheduledStateDrain = (scheduled: ScheduledStateDrain) => {
+  if (scheduledStateDrain !== scheduled) {
+    return
+  }
+
+  scheduledStateDrain = null
+  void startPendingStateDrain()
+    .then(scheduled.resolve, scheduled.reject)
+}
+
+const scheduleDelayedStateDrain = (delayMs: number) => {
+  const dueAtMs = Date.now() + delayMs
+
+  if (!scheduledStateDrain) {
+    let resolveScheduled!: () => void
+    let rejectScheduled!: (error: unknown) => void
+    const promise = new Promise<void>((resolve, reject) => {
+      resolveScheduled = resolve
+      rejectScheduled = reject
+    })
+    const scheduled: ScheduledStateDrain = {
+      dueAtMs,
+      timer: setTimeout(() => runScheduledStateDrain(scheduled), delayMs),
+      promise,
+      resolve: resolveScheduled,
+      reject: rejectScheduled,
+    }
+
+    scheduledStateDrain = scheduled
+    latestQueuedStateWrite = promise.catch(() => undefined)
+    return promise
+  }
+
+  if (dueAtMs > scheduledStateDrain.dueAtMs + 10) {
+    const scheduled = scheduledStateDrain
+    clearTimeout(scheduled.timer)
+    scheduled.dueAtMs = dueAtMs
+    scheduled.timer = setTimeout(() => runScheduledStateDrain(scheduled), delayMs)
+  }
+
+  latestQueuedStateWrite = scheduledStateDrain.promise.catch(() => undefined)
+  return scheduledStateDrain.promise
+}
+
+const schedulePendingStateDrain = (options: PendingStateDrainOptions = {}) => {
+  if (!pendingState) {
+    return latestQueuedStateWrite
+  }
+
+  if (!options.force) {
+    const delayMs = getStateSaveCircuitDelayMs()
+    if (delayMs > 0) {
+      return scheduleDelayedStateDrain(delayMs)
+    }
+  }
+
+  return startPendingStateDrain(options)
+}
+
+const drainPendingStateWrites = (options: PendingStateDrainOptions = {}) => withWriteLock(async () => {
   while (pendingState) {
+    if (!options.force) {
+      const delayMs = getStateSaveCircuitDelayMs()
+      if (delayMs > 0) {
+        scheduleDelayedStateDrain(delayMs)
+        return
+      }
+    }
+
     const toWrite = pendingState
     pendingState = null
+    pendingStateReplacementCount = 0
+    const startedAtMs = Date.now()
     await saveStateToDataDir(toWrite.state, toWrite.dataDir)
+    recordStateSaveFinished(Date.now() - startedAtMs)
   }
 })
 
 export const queueSaveState = (state: AppState) => {
   const dataDir = getAppDataDir()
+  recordStateSaveRequest()
+
+  if (pendingState) {
+    recordPendingStateReplacement()
+  }
+
   pendingState = {
     state,
     dataDir,
   }
 
-  const queuedWrite = drainPendingStateWrites()
-
-  latestQueuedStateWrite = queuedWrite.catch(() => undefined)
-  return queuedWrite
+  return schedulePendingStateDrain()
 }
 
 export const waitForPendingStateWrites = async () => {
-  while (pendingState) {
-    const queuedWrite = drainPendingStateWrites()
-    latestQueuedStateWrite = queuedWrite.catch(() => undefined)
-    await queuedWrite
+  const scheduled = clearScheduledStateDrain()
+
+  try {
+    while (activePendingStateDrain || pendingState) {
+      if (activePendingStateDrain) {
+        await activePendingStateDrain
+        continue
+      }
+
+      if (pendingState) {
+        await startPendingStateDrain({ force: true })
+      }
+    }
+
+    scheduled?.resolve()
+  } catch (error) {
+    scheduled?.reject(error)
+    throw error
   }
 
   while (true) {
     const activeWrite = latestQueuedStateWrite
     await activeWrite
 
-    if (activeWrite === latestQueuedStateWrite && !pendingState) {
+    if (activeWrite === latestQueuedStateWrite && !pendingState && !activePendingStateDrain) {
       return
     }
   }

@@ -1130,6 +1130,69 @@ describe('state-store persistence', () => {
     assert.equal(loaded.columns[0].title, 'Workspace-9', 'last queued state should be persisted')
   })
 
+
+  it('opens a cooldown instead of writing every queued snapshot during a save storm', async () => {
+    const { queueSaveState, waitForPendingStateWrites, loadState } = await import('../server/state-store.ts')
+    const originalDateNow = Date.now
+    const originalSetTimeout = globalThis.setTimeout
+    const originalClearTimeout = globalThis.clearTimeout
+    const originalWarn = console.warn
+    let now = 2_000_000
+    const delays: number[] = []
+    const circuitWarnings: string[] = []
+
+    Date.now = () => now
+    globalThis.setTimeout = ((callback: (...args: unknown[]) => void, delay?: number, ...args: unknown[]) => {
+      const delayMs = delay ?? 0
+      delays.push(delayMs)
+      return originalSetTimeout(() => {
+        now += delayMs
+        callback(...args)
+      }, 0)
+    }) as typeof setTimeout
+    globalThis.clearTimeout = ((handle: ReturnType<typeof setTimeout>) => {
+      originalClearTimeout(handle)
+    }) as typeof clearTimeout
+    console.warn = (...args: unknown[]) => {
+      const message = args.map((arg) => String(arg)).join(' ')
+      if (message.includes('[state-store] State save circuit opened')) {
+        circuitWarnings.push(message)
+      }
+      originalWarn(...args)
+    }
+
+    try {
+      let queued: Promise<void> | undefined
+      for (let i = 0; i < 36; i++) {
+        now += 100
+        const state = createDefaultState('')
+        state.updatedAt = new Date(now).toISOString()
+        state.columns[0].title = `Circuit-${i}`
+        queued = queueSaveState(state)
+      }
+
+      await queued
+
+      assert.ok(
+        circuitWarnings.length > 0,
+        'a rapid save storm should open the circuit instead of immediately draining every state',
+      )
+      assert.ok(
+        delays.some((delay) => delay >= 1_000),
+        'cooldown should defer at least one queued write instead of spinning synchronously',
+      )
+
+      await waitForPendingStateWrites()
+      const loaded = await loadState()
+      assert.equal(loaded.columns[0].title, 'Circuit-35', 'the newest state must still be persisted after cooldown')
+    } finally {
+      Date.now = originalDateNow
+      globalThis.setTimeout = originalSetTimeout
+      globalThis.clearTimeout = originalClearTimeout
+      console.warn = originalWarn
+    }
+  })
+
   it('waitForPendingStateWrites drains queued saves before quit-sensitive flows continue', async () => {
     const { queueSaveState, waitForPendingStateWrites, loadState } = await import('../server/state-store.ts')
     const state = createDefaultState('')

@@ -40,10 +40,18 @@ export const shouldPauseQueuedStateSave = (state: Pick<AppState, 'columns'>) => 
   return false
 }
 
+export const shouldUseQueuedPersistenceForAction = (actionType: IdeAction['type']) =>
+  actionType === 'appendAssistantDelta' ||
+  actionType === 'appendMessages' ||
+  actionType === 'upsertMessages' ||
+  actionType === 'updateCard'
+
 export const shouldPersistActionImmediately = (
   actionType: IdeAction['type'],
   state: Pick<AppState, 'columns'>,
-) => actionType === 'selectCardModel' && shouldPauseQueuedStateSave(state)
+) => !shouldUseQueuedPersistenceForAction(actionType) &&
+  actionType === 'selectCardModel' &&
+  shouldPauseQueuedStateSave(state)
 
 const runtimeSyncSettingsKeys = [
   'cliRoutingEnabled',

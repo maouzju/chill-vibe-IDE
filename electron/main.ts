@@ -609,9 +609,18 @@ function createWindow() {
   attachWindowDiagnostics(win)
 
   const webContentsId = win.webContents.id
-  win.webContents.on('destroyed', () => {
+  let didCleanupSubscriptionsForWindow = false
+  const cleanupSubscriptionsForWindow = () => {
+    if (didCleanupSubscriptionsForWindow) {
+      return
+    }
+
+    didCleanupSubscriptionsForWindow = true
     cleanupSubscriptionsForContentsId(webContentsId)
-  })
+  }
+
+  win.on('close', cleanupSubscriptionsForWindow)
+  win.on('closed', cleanupSubscriptionsForWindow)
 
   const target = getRendererLoadTarget({
     isDev,

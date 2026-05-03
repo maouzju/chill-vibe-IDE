@@ -2,7 +2,7 @@ import type { ChildProcess } from 'node:child_process'
 
 import type { Request, Response } from 'express'
 
-import type { ChatRequest, StreamEventMap } from '../shared/schema.js'
+import type { ChatRequest, StreamActivity, StreamAssistantMessage, StreamEventMap } from '../shared/schema.js'
 import { captureWorkspaceSnapshot, diffWorkspaceSnapshot } from './git-workspace.js'
 import { launchProviderRun } from './providers.js'
 
@@ -11,6 +11,16 @@ type StreamName = keyof StreamEventMap
 export type StreamEnvelope = {
   event: StreamName
   data: StreamEventMap[StreamName]
+}
+
+type StreamActivityEnvelope = {
+  event: 'activity'
+  data: StreamActivity
+}
+
+type StreamAssistantMessageEnvelope = {
+  event: 'assistant_message'
+  data: StreamAssistantMessage
 }
 
 type StreamSubscriber = (payload: StreamEnvelope) => void
@@ -28,6 +38,90 @@ type StreamRecord = {
 
 const cleanupDelayMs = 5 * 60 * 1000
 const maxBacklogSize = 2000
+export const maxBacklogCommandOutputChars = 16 * 1024
+const backlogCommandOutputHeadChars = 8 * 1024
+const backlogCommandOutputTailChars = 8 * 1024
+
+const compactBacklogCommandOutput = (output: string) => {
+  if (output.length <= maxBacklogCommandOutputChars) {
+    return output
+  }
+
+  const omittedChars = output.length - backlogCommandOutputHeadChars - backlogCommandOutputTailChars
+
+  return [
+    output.slice(0, backlogCommandOutputHeadChars),
+    '',
+    `[Output truncated in live stream backlog. ${omittedChars} characters omitted.]`,
+    '',
+    output.slice(-backlogCommandOutputTailChars),
+  ].join('\n')
+}
+
+export const compactStreamEnvelopeForBacklog = (payload: StreamEnvelope): StreamEnvelope => {
+  if (payload.event !== 'activity') {
+    return payload
+  }
+
+  const activityPayload = payload as StreamActivityEnvelope
+  if (activityPayload.data.kind !== 'command') {
+    return payload
+  }
+
+  const output = compactBacklogCommandOutput(activityPayload.data.output)
+  if (output === activityPayload.data.output) {
+    return payload
+  }
+
+  return {
+    event: payload.event,
+    data: {
+      ...activityPayload.data,
+      output,
+    },
+  }
+}
+
+const getBacklogCoalesceKey = (payload: StreamEnvelope) => {
+  if (payload.event === 'activity') {
+    const activityPayload = payload as StreamActivityEnvelope
+    return `${payload.event}:${activityPayload.data.itemId}`
+  }
+
+  if (payload.event === 'assistant_message') {
+    const assistantPayload = payload as StreamAssistantMessageEnvelope
+    return `${payload.event}:${assistantPayload.data.itemId}`
+  }
+
+  return null
+}
+
+export const appendStreamEnvelopeToBacklog = (
+  backlog: StreamEnvelope[],
+  payload: StreamEnvelope,
+  maxSize = maxBacklogSize,
+) => {
+  const compactedPayload = compactStreamEnvelopeForBacklog(payload)
+  const coalesceKey = getBacklogCoalesceKey(compactedPayload)
+
+  if (coalesceKey) {
+    const existingIndex = backlog.findLastIndex(
+      (entry) => getBacklogCoalesceKey(entry) === coalesceKey,
+    )
+
+    if (existingIndex >= 0) {
+      backlog[existingIndex] = compactedPayload
+      return compactedPayload
+    }
+  }
+
+  backlog.push(compactedPayload)
+  if (backlog.length > maxSize) {
+    backlog.splice(0, backlog.length - maxSize)
+  }
+
+  return compactedPayload
+}
 
 const writeEvent = <T extends StreamName>(
   response: Response,
@@ -204,14 +298,10 @@ export class ChatManager {
   }
 
   private emit<T extends StreamName>(stream: StreamRecord, event: T, data: StreamEventMap[T]) {
-    const payload: StreamEnvelope = { event, data }
-    stream.backlog.push(payload)
-    if (stream.backlog.length > maxBacklogSize) {
-      stream.backlog.splice(0, stream.backlog.length - maxBacklogSize)
-    }
+    const payload = appendStreamEnvelopeToBacklog(stream.backlog, { event, data } as StreamEnvelope)
 
     for (const listener of stream.listeners) {
-      writeEvent(listener, event, data)
+      writeEvent(listener, payload.event, payload.data)
     }
 
     for (const subscriber of stream.subscribers) {

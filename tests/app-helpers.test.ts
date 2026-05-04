@@ -241,3 +241,43 @@ test('finalizeStructuredActivityMessage keeps a live assistant text bubble when 
   assert.equal(nextMessages[1]?.id, 'claude:stream-2:item:ask-user:question')
   assert.equal(nextMessages[1]?.meta?.kind, 'ask-user')
 })
+
+test('finalizeStructuredActivityMessage keeps Claude prose before an ask-user tool even when XML appears later', () => {
+  const existingMessages = [
+    {
+      id: 'assistant-live-3',
+      role: 'assistant' as const,
+      content:
+        'I reviewed the previous work and found the risky path.\n\n<ask-user-question>{"header":"Confirmation","question":"Which path should I use?","multiSelect":false,"options":[{"label":"Patch now","description":"Keep the smallest diff."},{"label":"Refactor first","description":"Clean the flow before patching."}]}</ask-user-question>',
+      createdAt: '2026-04-16T00:00:00.000Z',
+      meta: {
+        provider: 'claude' as const,
+      },
+    },
+  ]
+
+  const nextMessages = finalizeStructuredActivityMessage(
+    existingMessages,
+    'assistant-live-3',
+    'claude',
+    'stream-3',
+    {
+      itemId: 'toolu_ask_1',
+      kind: 'ask-user',
+      status: 'completed',
+      header: 'Confirmation',
+      question: 'Which path should I use?',
+      multiSelect: false,
+      options: [
+        { label: 'Patch now', description: 'Keep the smallest diff.' },
+        { label: 'Refactor first', description: 'Clean the flow before patching.' },
+      ],
+    },
+  )
+
+  assert.equal(nextMessages.length, 2)
+  assert.equal(nextMessages[0]?.id, 'assistant-live-3')
+  assert.equal(nextMessages[0]?.content, 'I reviewed the previous work and found the risky path.')
+  assert.equal(nextMessages[1]?.id, 'claude:stream-3:item:ask-user:question')
+  assert.equal(nextMessages[1]?.meta?.kind, 'ask-user')
+})

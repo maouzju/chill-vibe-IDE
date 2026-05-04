@@ -1,6 +1,6 @@
 import type { AppLanguage } from '../../shared/schema'
 
-const leadingOptionLikePattern = /^\s*-/
+const leadingOptionLikePattern = /^\s*[-/]/
 
 export const formatAskUserFollowUpPrompt = (
   answer: string,

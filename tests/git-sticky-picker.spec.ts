@@ -156,6 +156,10 @@ const installMockApis = async (
       },
     })
   })
+
+  await page.route('**/api/files/rename', async (route) => {
+    await route.fulfill({ status: 204 })
+  })
 }
 
 for (const theme of ['dark', 'light'] as const) {
@@ -180,4 +184,38 @@ for (const theme of ['dark', 'light'] as const) {
       await expect(modelSelects).toHaveCount(0)
     })
   }
+}
+
+for (const theme of ['dark', 'light'] as const) {
+  test(`file tree rename uses the in-app name dialog instead of unsupported native prompt in ${theme} theme`, async ({
+    page,
+  }) => {
+    await installMockApis(page, theme, FILETREE_TOOL_MODEL, 'Files')
+    await page.goto('http://localhost:5173')
+
+    const fileTreeCard = page.locator('.file-tree-card').first()
+    await expect(fileTreeCard).toBeVisible()
+
+    await fileTreeCard.getByRole('button', { name: /README\.md/ }).click({ button: 'right' })
+    await page.getByRole('button', { name: '重命名…' }).click()
+
+    const dialog = page.locator('.file-tree-name-dialog')
+    await expect(dialog).toBeVisible()
+    await expect(dialog.locator('.file-tree-name-input')).toHaveValue('README.md')
+    await expect(dialog).toContainText('只输入名称')
+
+    const renameRequest = page.waitForRequest((request) =>
+      request.url().endsWith('/api/files/rename') && request.method() === 'POST',
+    )
+    await dialog.locator('.file-tree-name-input').fill('README-renamed.md')
+    await dialog.getByRole('button', { name: '重命名' }).click()
+
+    const request = await renameRequest
+    expect(request.postDataJSON()).toMatchObject({
+      workspacePath: 'd:\\Git\\chill-vibe',
+      relativePath: 'README.md',
+      nextName: 'README-renamed.md',
+    })
+    await expect(dialog).toHaveCount(0)
+  })
 }

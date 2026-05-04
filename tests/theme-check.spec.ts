@@ -9,6 +9,7 @@ import {
 } from '../shared/default-state.ts'
 import {
   BRAINSTORM_TOOL_MODEL,
+  FILETREE_TOOL_MODEL,
   GIT_TOOL_MODEL,
   MUSIC_TOOL_MODEL,
   STICKYNOTE_TOOL_MODEL,
@@ -633,6 +634,58 @@ const createMusicToolState = (theme: 'dark' | 'light'): AppState => {
   ]
 
   return state
+}
+
+const createFileTreeToolState = (theme: 'dark' | 'light'): AppState => {
+  const state = createMockState()
+  state.settings.language = 'zh-CN'
+  state.settings.theme = theme
+  state.columns = [
+    {
+      ...state.columns[0]!,
+      title: 'Files Workspace',
+      cards: [
+        {
+          ...state.columns[0]!.cards[0]!,
+          id: 'file-tree-card',
+          title: 'Files',
+          provider: 'codex',
+          model: FILETREE_TOOL_MODEL,
+          reasoningEffort: 'medium',
+          size: 560,
+          messages: [],
+        },
+      ],
+    },
+  ]
+
+  return state
+}
+
+const installMockFileTreeApis = async (page: Page) => {
+  await page.addInitScript(() => {
+    const renameRequests: Array<{ relativePath: string; nextName: string }> = []
+
+    ;(window as typeof window & {
+      __fileTreeRenameRequests?: Array<{ relativePath: string; nextName: string }>
+    }).__fileTreeRenameRequests = renameRequests
+
+    window.electronAPI = {
+      ...window.electronAPI,
+      listFiles: async () => ({
+        entries: [
+          { name: 'src', isDirectory: true },
+          { name: 'README.md', isDirectory: false },
+        ],
+      }),
+      renameEntry: async (request) => {
+        renameRequests.push({
+          relativePath: request.relativePath,
+          nextName: request.nextName,
+        })
+      },
+    }
+  })
 }
 
 const createMusicSplitDropState = (theme: 'dark' | 'light'): AppState => {
@@ -7033,6 +7086,48 @@ for (const theme of ['dark', 'light'] as const) {
 }
 
 for (const theme of ['dark', 'light'] as const) {
+  test(`file tree rename dialog stays native-free and theme-safe in ${theme} theme`, async ({ page }) => {
+    await mockAppApis(page, { state: createFileTreeToolState(theme) })
+    await installMockFileTreeApis(page)
+    await page.setViewportSize({ width: 1280, height: 800 })
+    await page.goto(appUrl)
+
+    const fileTreeCard = page.locator('.file-tree-card').first()
+    await expect(fileTreeCard).toBeVisible()
+
+    await fileTreeCard.getByRole('button', { name: /README\.md/ }).click({ button: 'right' })
+    await page.getByRole('button', { name: '重命名…' }).click()
+
+    const dialog = page.locator('.file-tree-name-dialog')
+    await expect(dialog).toBeVisible()
+    await expect(dialog.locator('.file-tree-name-input')).toHaveValue('README.md')
+    await expect(dialog).toContainText('只输入名称')
+
+    const renameRequest = page.waitForFunction(() => {
+      const calls = (window as typeof window & {
+        __fileTreeRenameRequests?: Array<{ relativePath: string; nextName: string }>
+      }).__fileTreeRenameRequests
+
+      return calls?.[0] ?? null
+    })
+
+    await dialog.locator('.file-tree-name-input').fill('README-renamed.md')
+
+    await expect(dialog).toHaveScreenshot(`file-tree-rename-dialog-${theme}.png`, {
+      animations: 'disabled',
+      caret: 'hide',
+    })
+
+    await dialog.getByRole('button', { name: '重命名' }).click()
+    const renameRequestPayload = await (await renameRequest).jsonValue()
+
+    expect(renameRequestPayload).toMatchObject({
+      relativePath: 'README.md',
+      nextName: 'README-renamed.md',
+    })
+    await expect(dialog).toHaveCount(0)
+  })
+
   test(`music card matches tool chrome in ${theme} theme`, async ({ page }) => {
     const state = createMusicToolState(theme)
 

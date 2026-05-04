@@ -8,6 +8,7 @@ import {
   createWorkspaceFile,
   deleteWorkspaceEntry,
   ensureWithinWorkspace,
+  listFiles,
   moveWorkspaceEntry,
   renameWorkspaceEntry,
   searchWorkspaceFiles,
@@ -42,7 +43,50 @@ test('ensureWithinWorkspace rejects absolute paths outside workspace and ~/.clau
   )
 })
 
-test('searchWorkspaceFiles finds nested file matches across the workspace path and skips ignored directories', async (t) => {
+test('listFiles includes dotfiles and dot directories while still skipping heavy internal folders', async (t) => {
+  const workspace = await mkdtemp(path.join(os.tmpdir(), 'chill-vibe-file-list-hidden-'))
+  t.after(async () => {
+    await rm(workspace, { recursive: true, force: true })
+  })
+
+  await mkdir(path.join(workspace, '.github'), { recursive: true })
+  await mkdir(path.join(workspace, '.git'), { recursive: true })
+  await mkdir(path.join(workspace, 'node_modules'), { recursive: true })
+  await mkdir(path.join(workspace, 'src'), { recursive: true })
+
+  await writeFile(path.join(workspace, '.env'), 'TOKEN=dev\n', 'utf8')
+  await writeFile(path.join(workspace, '.gitignore'), 'node_modules\n', 'utf8')
+  await writeFile(path.join(workspace, '.github', 'workflow.yml'), 'name: ci\n', 'utf8')
+  await writeFile(path.join(workspace, '.git', 'config'), '[core]\n', 'utf8')
+  await writeFile(path.join(workspace, 'node_modules', 'package.json'), '{}\n', 'utf8')
+
+  const rootEntries = await listFiles({
+    workspacePath: workspace,
+    relativePath: '',
+  })
+  const rootEntryNames = rootEntries.entries.map((entry) => entry.name)
+
+  assert.equal(rootEntryNames.includes('.github'), true)
+  assert.equal(rootEntryNames.includes('.env'), true)
+  assert.equal(rootEntryNames.includes('.gitignore'), true)
+  assert.equal(rootEntryNames.includes('src'), true)
+  assert.equal(rootEntryNames.includes('.git'), false)
+  assert.equal(rootEntryNames.includes('node_modules'), false)
+
+  const githubEntries = await listFiles({
+    workspacePath: workspace,
+    relativePath: '.github',
+  })
+
+  assert.deepEqual(githubEntries.entries, [
+    {
+      name: 'workflow.yml',
+      isDirectory: false,
+    },
+  ])
+})
+
+test('searchWorkspaceFiles finds nested file matches across the workspace path, including dot directories, and skips ignored directories', async (t) => {
   const workspace = await mkdtemp(path.join(os.tmpdir(), 'chill-vibe-file-search-'))
   t.after(async () => {
     await rm(workspace, { recursive: true, force: true })
@@ -52,11 +96,13 @@ test('searchWorkspaceFiles finds nested file matches across the workspace path a
   await mkdir(path.join(workspace, 'docs'), { recursive: true })
   await mkdir(path.join(workspace, 'node_modules', 'tooling'), { recursive: true })
   await mkdir(path.join(workspace, '.github'), { recursive: true })
+  await mkdir(path.join(workspace, '.git'), { recursive: true })
 
   await writeFile(path.join(workspace, 'src', 'components', 'FileTreeCard.tsx'), 'export {}\n', 'utf8')
   await writeFile(path.join(workspace, 'docs', 'file-tree.md'), '# search\n', 'utf8')
   await writeFile(path.join(workspace, 'node_modules', 'tooling', 'file-tree.js'), 'module.exports = {}\n', 'utf8')
   await writeFile(path.join(workspace, '.github', 'file-tree.yml'), 'name: hidden\n', 'utf8')
+  await writeFile(path.join(workspace, '.git', 'file-tree.yml'), 'name: internal\n', 'utf8')
 
   const treeMatches = await searchWorkspaceFiles({
     workspacePath: workspace,
@@ -71,7 +117,7 @@ test('searchWorkspaceFiles finds nested file matches across the workspace path a
 
   assert.deepEqual(
     treeMatches.entries.map((entry) => entry.path),
-    ['docs/file-tree.md', 'src/components/FileTreeCard.tsx'],
+    ['.github/file-tree.yml', 'docs/file-tree.md', 'src/components/FileTreeCard.tsx'],
   )
   assert.equal(treeMatches.entries.every((entry) => entry.isDirectory === false), true)
   assert.deepEqual(folderMatches.entries.map((entry) => entry.path), ['src/components/FileTreeCard.tsx'])

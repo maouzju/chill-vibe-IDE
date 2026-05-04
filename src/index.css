@@ -12264,6 +12264,39 @@ body.is-pane-resizing .split-resize-handle::before {
   font-size: 0.74rem;
 }
 
+.file-tree-name-dialog {
+  width: min(28rem, calc(100vw - 2rem));
+}
+
+.file-tree-name-dialog-card {
+  gap: 0.8rem;
+}
+
+.file-tree-name-dialog-body {
+  display: grid;
+  gap: 0.55rem;
+}
+
+.file-tree-name-input {
+  font-size: 0.9rem;
+}
+
+.file-tree-name-dialog-error {
+  margin: 0;
+  padding: 0.62rem 0.7rem;
+  border: 1px solid color-mix(in srgb, var(--danger) 26%, var(--line-strong));
+  border-radius: 0.8rem;
+  background: color-mix(in srgb, var(--danger-soft) 78%, var(--panel));
+  color: var(--danger);
+  font-size: 0.8rem;
+  font-weight: 700;
+}
+
+.file-tree-name-dialog-actions {
+  justify-content: flex-end;
+  margin-top: 0;
+}
+
 /* -- Text Editor Card --------------------------------------*/
 
 .text-editor-card {

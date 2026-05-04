@@ -321,6 +321,18 @@ export const createStructuredActivityMessage = (
   },
 })
 
+const askUserXmlBlockPattern = /<ask-user-question>\s*[\s\S]*?<\/ask-user-question>/i
+const askUserXmlBlockGlobalPattern = /<ask-user-question>\s*[\s\S]*?<\/ask-user-question>/gi
+const emptyMarkdownFencePattern = /```[a-zA-Z0-9]*\s*```/g
+
+const stripAskUserXmlBlocksFromAssistantText = (content: string) =>
+  content
+    .replace(askUserXmlBlockGlobalPattern, '')
+    .replace(emptyMarkdownFencePattern, '')
+    .replace(/[ \t]+\n/g, '\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim()
+
 export const finalizeStructuredActivityMessage = (
   messages: ChatMessage[],
   streamingMessageId: string | undefined,
@@ -336,11 +348,18 @@ export const finalizeStructuredActivityMessage = (
   const existingStructuredIndex = messages.findIndex((message) => message.id === nextMessage.id)
   const streamingContent =
     streamingIndex >= 0 ? messages[streamingIndex]?.content ?? '' : ''
-  // Only drop the live streaming bubble when it is a synthetic <ask-user-question>
-  // XML blob that the structured card is replacing. Real assistant prose (e.g. Claude
-  // native AskUserQuestion tool flows) must survive so the user does not lose context.
+  const streamingHasAskUserXmlBlock =
+    payload.kind === 'ask-user' && askUserXmlBlockPattern.test(streamingContent)
+  const strippedStreamingContent =
+    streamingHasAskUserXmlBlock
+      ? stripAskUserXmlBlocksFromAssistantText(streamingContent)
+      : streamingContent
+  // Only drop the live streaming bubble when it is purely a synthetic
+  // <ask-user-question> XML blob that the structured card is replacing. If Claude
+  // produced real prose before that XML, keep the prose and strip only the XML so
+  // the user does not lose the context that led to the choice.
   const streamingIsAskUserXmlBlob =
-    payload.kind === 'ask-user' && /<ask-user-question>/i.test(streamingContent)
+    streamingHasAskUserXmlBlock && strippedStreamingContent.length === 0
   const shouldReplaceStreaming =
     streamingIndex >= 0 &&
     messages[streamingIndex]?.id !== nextMessage.id &&
@@ -353,6 +372,18 @@ export const finalizeStructuredActivityMessage = (
   const nextMessages = shouldReplaceStreaming
     ? messages.filter((message) => message.id !== streamingMessageId)
     : [...messages]
+
+  if (!shouldReplaceStreaming && streamingHasAskUserXmlBlock && streamingMessageId) {
+    const nextStreamingIndex = nextMessages.findIndex((message) => message.id === streamingMessageId)
+    const streamingMessage = nextMessages[nextStreamingIndex]
+
+    if (streamingMessage && streamingMessage.content !== strippedStreamingContent) {
+      nextMessages[nextStreamingIndex] = {
+        ...streamingMessage,
+        content: strippedStreamingContent,
+      }
+    }
+  }
 
   const nextIndex = nextMessages.findIndex((message) => message.id === nextMessage.id)
 

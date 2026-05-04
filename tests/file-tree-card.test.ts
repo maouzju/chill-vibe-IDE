@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { readFile } from 'node:fs/promises'
 import test from 'node:test'
 
 import {
@@ -126,4 +127,11 @@ test('applyRefreshedFileTreeDirectories updates nested expanded directories with
       isDirectory: false,
     },
   ])
+})
+
+test('file tree name actions avoid Electron unsupported native prompt dialogs', async () => {
+  const source = await readFile(new URL('../src/components/FileTreeCard.tsx', import.meta.url), 'utf8')
+
+  assert.doesNotMatch(source, /window\.prompt\s*\(/)
+  assert.match(source, /file-tree-name-dialog/)
 })

@@ -27,6 +27,7 @@ import {
   getFileTreeCacheKey,
 } from './tool-card-state'
 import { getFileTreeCardText } from './tool-card-text'
+import { CloseIcon } from './Icons'
 
 type FileTreeCardProps = {
   cardId: string
@@ -54,6 +55,14 @@ type ContextMenuAction = {
   key: string
   label: string
   danger?: boolean
+}
+
+type FileTreeNameDialogMode = 'new-file' | 'new-folder' | 'rename'
+
+type FileTreeNameDialogState = {
+  mode: FileTreeNameDialogMode
+  target: ContextMenuTarget
+  value: string
 }
 
 type FileTreeDropTarget = {
@@ -288,6 +297,24 @@ const getActionText = (language: AppLanguage) => ({
   promptNewFile: language === 'en' ? 'New file name' : '新文件名',
   promptNewFolder: language === 'en' ? 'New folder name' : '新文件夹名',
   promptRename: language === 'en' ? 'Rename to' : '重命名为',
+  newFileDialogTitle: language === 'en' ? 'New file' : '新建文件',
+  newFolderDialogTitle: language === 'en' ? 'New folder' : '新建文件夹',
+  renameDialogTitle: language === 'en' ? 'Rename entry' : '重命名',
+  nameDialogHint:
+    language === 'en'
+      ? 'Enter only the name, not a full path.'
+      : '只输入名称，不要输入完整路径。',
+  nameDialogLocation: (path: string) =>
+    language === 'en'
+      ? `Location: ${path || 'workspace root'}`
+      : `位置：${path || '工作区根目录'}`,
+  nameRequired:
+    language === 'en'
+      ? 'Name cannot be empty.'
+      : '名称不能为空。',
+  cancel: language === 'en' ? 'Cancel' : '取消',
+  create: language === 'en' ? 'Create' : '创建',
+  saveRename: language === 'en' ? 'Rename' : '重命名',
   confirmDelete: (name: string) =>
     language === 'en'
       ? `Delete "${name}"?`
@@ -322,11 +349,17 @@ const FileTreeCardInner = ({ cardId, workspacePath, language, onOpenFile }: File
     y: number
   } | null>(null)
   const [contextMenuPosition, setContextMenuPosition] = useState<{ left: number; top: number } | null>(null)
+  const [nameDialog, setNameDialog] = useState<FileTreeNameDialogState | null>(null)
+  const [nameDialogError, setNameDialogError] = useState<string | null>(null)
+  const [nameDialogPending, setNameDialogPending] = useState(false)
   const [dropTargetPath, setDropTargetPath] = useState<string | null>(null)
   const [rootDropActive, setRootDropActive] = useState(false)
   const mountedRef = useRef(true)
   const searchCacheRef = useRef(new Map<string, FileSearchEntry[]>())
   const contextMenuRef = useRef<HTMLDivElement | null>(null)
+  const nameInputRef = useRef<HTMLInputElement | null>(null)
+  const frame = typeof window === 'undefined' ? undefined : window
+  const ownerDocument = typeof document === 'undefined' ? undefined : document
 
   useEffect(() => {
     mountedRef.current = true
@@ -583,6 +616,54 @@ const FileTreeCardInner = ({ cardId, workspacePath, language, onOpenFile }: File
     setContextMenuPosition({ left: event.clientX, top: event.clientY })
   }, [])
 
+  const openNameDialog = useCallback((mode: FileTreeNameDialogMode, target: ContextMenuTarget) => {
+    setNameDialog({
+      mode,
+      target,
+      value: mode === 'rename' ? target.name : '',
+    })
+    setNameDialogError(null)
+    setNameDialogPending(false)
+  }, [])
+
+  const closeNameDialog = useCallback(() => {
+    if (nameDialogPending) {
+      return
+    }
+
+    setNameDialog(null)
+    setNameDialogError(null)
+  }, [nameDialogPending])
+
+  useLayoutEffect(() => {
+    if (!nameDialog) {
+      return
+    }
+
+    nameInputRef.current?.focus()
+    nameInputRef.current?.select()
+
+    if (!frame) {
+      return
+    }
+
+    const frameId = frame.requestAnimationFrame(() => {
+      nameInputRef.current?.focus()
+      nameInputRef.current?.select()
+    })
+    const handleEscape = (event: globalThis.KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        closeNameDialog()
+      }
+    }
+
+    frame.addEventListener('keydown', handleEscape)
+    return () => {
+      frame.cancelAnimationFrame(frameId)
+      frame.removeEventListener('keydown', handleEscape)
+    }
+  }, [closeNameDialog, frame, nameDialog])
+
   const reportActionError = useCallback((reason: unknown) => {
     const message = reason instanceof Error ? reason.message : actionText.genericError
     window.alert(message)
@@ -730,39 +811,12 @@ const FileTreeCardInner = ({ cardId, workspacePath, language, onOpenFile }: File
       case 'open':
         onOpenFile(target.path)
         return
-      case 'new-file': {
-        const nextName = window.prompt(actionText.promptNewFile, '')
-        const trimmedName = nextName?.trim()
-
-        if (!trimmedName) {
-          return
-        }
-
-        await createWorkspaceFile(workspacePath, target.path, trimmedName)
-        dispatchFileTreeMutation({
-          workspacePath,
-          sourceParentRelativePath: target.path,
-          destinationParentRelativePath: target.path,
-        })
-        onOpenFile(joinRelativePath(target.path, trimmedName))
+      case 'new-file':
+        openNameDialog('new-file', target)
         return
-      }
-      case 'new-folder': {
-        const nextName = window.prompt(actionText.promptNewFolder, '')
-        const trimmedName = nextName?.trim()
-
-        if (!trimmedName) {
-          return
-        }
-
-        await createWorkspaceDirectory(workspacePath, target.path, trimmedName)
-        dispatchFileTreeMutation({
-          workspacePath,
-          sourceParentRelativePath: target.path,
-          destinationParentRelativePath: target.path,
-        })
+      case 'new-folder':
+        openNameDialog('new-folder', target)
         return
-      }
       case 'copy-relative':
         await copyText(target.path)
         return
@@ -772,22 +826,9 @@ const FileTreeCardInner = ({ cardId, workspacePath, language, onOpenFile }: File
       case 'reveal':
         await openMessageLocalLink(target.path, workspacePath)
         return
-      case 'rename': {
-        const nextName = window.prompt(actionText.promptRename, target.name)
-        const trimmedName = nextName?.trim()
-
-        if (!trimmedName || trimmedName === target.name) {
-          return
-        }
-
-        await renameWorkspaceEntry(workspacePath, target.path, trimmedName)
-        dispatchFileTreeMutation({
-          workspacePath,
-          sourceParentRelativePath: parentRelativePath,
-          destinationParentRelativePath: parentRelativePath,
-        })
+      case 'rename':
+        openNameDialog('rename', target)
         return
-      }
       case 'refresh':
         await refreshVisibleTree()
         if (hasSearchQuery) {
@@ -817,11 +858,100 @@ const FileTreeCardInner = ({ cardId, workspacePath, language, onOpenFile }: File
     copyText,
     hasSearchQuery,
     onOpenFile,
+    openNameDialog,
     refreshSearch,
     refreshVisibleTree,
     toggleDirectory,
     workspacePath,
   ])
+
+  const submitNameDialog = useCallback(async () => {
+    if (!nameDialog || nameDialogPending) {
+      return
+    }
+
+    const trimmedName = nameDialog.value.trim()
+
+    if (!trimmedName) {
+      setNameDialogError(actionText.nameRequired)
+      return
+    }
+
+    if (nameDialog.mode === 'rename' && trimmedName === nameDialog.target.name) {
+      setNameDialog(null)
+      setNameDialogError(null)
+      return
+    }
+
+    setNameDialogPending(true)
+    setNameDialogError(null)
+
+    try {
+      if (nameDialog.mode === 'new-file') {
+        await createWorkspaceFile(workspacePath, nameDialog.target.path, trimmedName)
+        dispatchFileTreeMutation({
+          workspacePath,
+          sourceParentRelativePath: nameDialog.target.path,
+          destinationParentRelativePath: nameDialog.target.path,
+        })
+        onOpenFile(joinRelativePath(nameDialog.target.path, trimmedName))
+      } else if (nameDialog.mode === 'new-folder') {
+        await createWorkspaceDirectory(workspacePath, nameDialog.target.path, trimmedName)
+        dispatchFileTreeMutation({
+          workspacePath,
+          sourceParentRelativePath: nameDialog.target.path,
+          destinationParentRelativePath: nameDialog.target.path,
+        })
+      } else {
+        const parentRelativePath = getRelativeParentPath(nameDialog.target.path)
+
+        await renameWorkspaceEntry(workspacePath, nameDialog.target.path, trimmedName)
+        dispatchFileTreeMutation({
+          workspacePath,
+          sourceParentRelativePath: parentRelativePath,
+          destinationParentRelativePath: parentRelativePath,
+        })
+      }
+
+      if (mountedRef.current) {
+        setNameDialog(null)
+        setNameDialogError(null)
+        setNameDialogPending(false)
+      }
+    } catch (reason) {
+      if (mountedRef.current) {
+        setNameDialogError(reason instanceof Error ? reason.message : actionText.genericError)
+        setNameDialogPending(false)
+      }
+    }
+  }, [
+    actionText.genericError,
+    actionText.nameRequired,
+    nameDialog,
+    nameDialogPending,
+    onOpenFile,
+    workspacePath,
+  ])
+
+  const nameDialogTitle = nameDialog?.mode === 'new-file'
+    ? actionText.newFileDialogTitle
+    : nameDialog?.mode === 'new-folder'
+      ? actionText.newFolderDialogTitle
+      : actionText.renameDialogTitle
+  const nameDialogLabel = nameDialog?.mode === 'new-file'
+    ? actionText.promptNewFile
+    : nameDialog?.mode === 'new-folder'
+      ? actionText.promptNewFolder
+      : actionText.promptRename
+  const nameDialogSubmitLabel = nameDialog?.mode === 'rename'
+    ? actionText.saveRename
+    : actionText.create
+  const nameDialogLocationPath = nameDialog
+    ? nameDialog.mode === 'rename'
+      ? getRelativeParentPath(nameDialog.target.path)
+      : nameDialog.target.path
+    : ''
+  const nameDialogTitleId = `file-tree-name-dialog-title-${cardId}`
 
   const handleItemDragStart = useCallback((event: ReactDragEvent<HTMLButtonElement>, target: FileTreeDropTarget) => {
     if (!target) {
@@ -1042,7 +1172,7 @@ const FileTreeCardInner = ({ cardId, workspacePath, language, onOpenFile }: File
           </div>
         )}
       </div>
-      {contextMenu && contextMenuPosition && typeof document !== 'undefined'
+      {contextMenu && contextMenuPosition && ownerDocument
         ? createPortal(
             <div
               ref={contextMenuRef}
@@ -1064,7 +1194,82 @@ const FileTreeCardInner = ({ cardId, workspacePath, language, onOpenFile }: File
                 </button>
               ))}
             </div>,
-            document.body,
+            ownerDocument.body,
+          )
+        : null}
+      {nameDialog && ownerDocument
+        ? createPortal(
+            <div className="structured-preview-layer file-tree-name-dialog-layer">
+              <div className="structured-preview-backdrop" onClick={closeNameDialog} />
+              <section
+                className="structured-preview-dialog file-tree-name-dialog"
+                role="dialog"
+                aria-modal="true"
+                aria-labelledby={nameDialogTitleId}
+              >
+                <form
+                  className="structured-preview-card file-tree-name-dialog-card"
+                  onSubmit={(event) => {
+                    event.preventDefault()
+                    void submitNameDialog()
+                  }}
+                >
+                  <div className="structured-preview-header">
+                    <div className="structured-preview-copy">
+                      <h3 id={nameDialogTitleId}>{nameDialogTitle}</h3>
+                      <p className="settings-note">{actionText.nameDialogLocation(nameDialogLocationPath)}</p>
+                    </div>
+
+                    <button
+                      type="button"
+                      className="btn btn-ghost structured-preview-close"
+                      onClick={closeNameDialog}
+                      disabled={nameDialogPending}
+                      aria-label={actionText.cancel}
+                    >
+                      <CloseIcon />
+                    </button>
+                  </div>
+
+                  <div className="structured-preview-body file-tree-name-dialog-body">
+                    <label className="settings-field">
+                      <span>{nameDialogLabel}</span>
+                      <input
+                        ref={nameInputRef}
+                        className="control settings-input file-tree-name-input"
+                        value={nameDialog.value}
+                        disabled={nameDialogPending}
+                        onChange={(event) => {
+                          setNameDialog((current) =>
+                            current ? { ...current, value: event.target.value } : current,
+                          )
+                          setNameDialogError(null)
+                        }}
+                      />
+                    </label>
+                    <p className="settings-note">{actionText.nameDialogHint}</p>
+                    {nameDialogError ? (
+                      <p className="file-tree-name-dialog-error" role="alert">{nameDialogError}</p>
+                    ) : null}
+                  </div>
+
+                  <div className="settings-actions file-tree-name-dialog-actions">
+                    <button
+                      type="button"
+                      className="btn btn-ghost"
+                      onClick={closeNameDialog}
+                      disabled={nameDialogPending}
+                    >
+                      {actionText.cancel}
+                    </button>
+                    <button type="submit" className="btn btn-primary" disabled={nameDialogPending}>
+                      {nameDialogPending ? '…' : nameDialogSubmitLabel}
+                    </button>
+                  </div>
+                </form>
+              </section>
+            </div>,
+            ownerDocument.body,
           )
         : null}
     </div>

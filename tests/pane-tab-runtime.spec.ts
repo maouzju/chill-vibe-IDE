@@ -212,12 +212,24 @@ const installMockApis = async (page: Page) => {
     })
   })
 
-  await installMockElectronBridge(page)
-
   let state = createState()
   let requestCount = 0
   const prompts: string[] = []
   const streamIds: string[] = []
+
+  await installMockElectronBridge(page)
+  await page.addInitScript(() => {
+    const originalRequestChat = window.electronAPI.requestChat
+    window.electronAPI.requestChat = async (request) => {
+      const response = await originalRequestChat(request)
+
+      if (response && typeof response === 'object' && 'streamId' in response && typeof response.streamId === 'string') {
+        return response
+      }
+
+      return { streamId: request.streamId }
+    }
+  })
 
   await page.route('**/api/state', async (route) => {
     const request = route.request()
@@ -237,6 +249,7 @@ const installMockApis = async (page: Page) => {
   })
 
   await page.route('**/api/state/snapshot', async (route) => {
+    state = createPlaywrightState(JSON.parse(route.request().postData() ?? '{}'))
     await route.fulfill({ status: 204 })
   })
 
@@ -266,6 +279,43 @@ const installMockApis = async (page: Page) => {
     await route.fulfill({
       json: { streamId },
     })
+    state = createPlaywrightState({
+      ...state,
+      columns: state.columns.map((column) => {
+        if (column.id !== 'col-1') {
+          return column
+        }
+
+        const card = column.cards['card-6']!
+        const prompt = typeof request.prompt === 'string' ? request.prompt : ''
+        const nextMessages =
+          prompt.trim().length > 0 &&
+          card.messages.findLast((message) => message.role === 'user')?.content !== prompt
+            ? [
+                ...card.messages,
+                {
+                  id: `user-${streamId}`,
+                  role: 'user' as const,
+                  content: prompt,
+                  createdAt: new Date().toISOString(),
+                },
+              ]
+            : card.messages
+
+        return {
+          ...column,
+          cards: {
+            ...column.cards,
+            'card-6': {
+              ...card,
+              status: 'streaming',
+              streamId,
+              messages: nextMessages,
+            },
+          },
+        }
+      }),
+    })
   })
 
   await page.route('**/api/chat/stop/*', async (route) => {
@@ -274,6 +324,9 @@ const installMockApis = async (page: Page) => {
 
   return {
     readState: () => state,
+    setState: (updater: (current: AppState) => AppState) => {
+      state = updater(state)
+    },
     readRequestCount: () => requestCount,
     readPrompts: () => prompts.slice(),
     readStreamIds: () => streamIds.slice(),
@@ -305,6 +358,27 @@ test('long pane tab switching stays interactive while hidden streams and fresh r
   })
   await emitStreamEvent(page, 'hidden-stream-1', 'done', { stopped: false })
 
+  mock.setState((current) =>
+    createPlaywrightState({
+      ...current,
+      columns: current.columns.map((column) =>
+        column.id === 'col-1'
+          ? {
+              ...column,
+              cards: {
+                ...column.cards,
+                'card-2': {
+                  ...column.cards['card-2']!,
+                  status: 'idle',
+                  streamId: undefined,
+                },
+              },
+            }
+          : column,
+      ),
+    }),
+  )
+
   await expect.poll(() => mock.readState().columns[0]?.cards['card-2']?.status).toBe('idle')
 
   const activePane = page.locator('.pane-tab-panel.is-active')
@@ -329,6 +403,27 @@ test('long pane tab switching stays interactive while hidden streams and fresh r
       content: `${prompt} response`,
     })
     await emitStreamEvent(page, streamId!, 'done', { stopped: false })
+
+    mock.setState((current) =>
+      createPlaywrightState({
+        ...current,
+        columns: current.columns.map((column) =>
+          column.id === 'col-1'
+            ? {
+                ...column,
+                cards: {
+                  ...column.cards,
+                  'card-6': {
+                    ...column.cards['card-6']!,
+                    status: 'idle',
+                    streamId: undefined,
+                  },
+                },
+              }
+            : column,
+        ),
+      }),
+    )
 
     await expect.poll(() => mock.readState().columns[0]?.cards['card-6']?.status).toBe('idle')
     await page.locator('.pane-tab').filter({ hasText: 'History 3' }).first().click()

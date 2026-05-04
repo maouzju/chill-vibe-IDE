@@ -14,6 +14,11 @@ test('leading hyphen ask-user answers are wrapped into a safe follow-up prompt',
   )
 })
 
+test('leading slash ask-user answers are wrapped so they do not run local slash commands', () => {
+  assert.equal(formatAskUserFollowUpPrompt('/clear', 'en'), 'My choice: /clear')
+  assert.equal(formatAskUserFollowUpPrompt('/new', 'zh-CN'), '我选择：/new')
+})
+
 test('normal ask-user answers stay unchanged', () => {
   assert.equal(formatAskUserFollowUpPrompt('Fast path', 'en'), 'Fast path')
   assert.equal(formatAskUserFollowUpPrompt('减速 50%', 'zh-CN'), '减速 50%')

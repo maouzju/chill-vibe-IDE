@@ -130,12 +130,19 @@ const installMockDesktopBridge = async (page: Page) => {
       commitGitChanges: async () => ({ ok: true }),
       pullGitChanges: async () => ({ ok: true }),
       fetchSlashCommands: async () => [],
-      requestChat: async (request) =>
-        jsonRequest('/api/chat/message', {
+      requestChat: async (request) => {
+        const response = await jsonRequest('/api/chat/message', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(request),
-        }),
+        })
+
+        if (response && typeof response === 'object' && 'streamId' in response && typeof response.streamId === 'string') {
+          return response
+        }
+
+        return { streamId: request.streamId }
+      },
       uploadImageAttachment: async () => ({ id: 'image-1', mimeType: 'image/png', size: 1 }),
       stopChat: async (streamId) =>
         jsonRequest(`/api/chat/stop/${encodeURIComponent(streamId)}`, {
@@ -274,6 +281,24 @@ const installMockDesktopBridge = async (page: Page) => {
     })
     await route.fulfill({
       json: { streamId },
+    })
+    state = createPlaywrightState({
+      ...state,
+      columns: state.columns.map((column) =>
+        column.id === 'col-1'
+          ? {
+              ...column,
+              cards: {
+                ...column.cards,
+                'card-1': {
+                  ...column.cards['card-1']!,
+                  status: 'streaming',
+                  streamId,
+                },
+              },
+            }
+          : column,
+      ),
     })
   })
 

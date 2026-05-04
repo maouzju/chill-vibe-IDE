@@ -59,7 +59,9 @@ const getLanguageFromPath = (filePath: string): string => {
   return extensionLanguageMap[path.extname(filePath).toLowerCase()] ?? 'plaintext'
 }
 
-const isIgnoredTreeEntry = (name: string) => name.startsWith('.') || name === 'node_modules'
+const ignoredFileTreeEntryNames = new Set(['.git', 'node_modules'])
+
+const isIgnoredTreeEntry = (name: string) => ignoredFileTreeEntryNames.has(name.toLowerCase())
 
 const compareTreeEntries = (
   a: { name: string; isDirectory: boolean },

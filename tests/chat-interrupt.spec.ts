@@ -6,6 +6,8 @@ type MockCardState = {
   status: 'idle' | 'streaming'
   streamId?: string
   sessionId?: string
+  provider?: 'codex' | 'claude'
+  model?: string
   messages: Array<{
     id: string
     role: 'assistant' | 'user' | 'system'
@@ -279,12 +281,19 @@ const installMockApis = async (
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(request),
         }),
-      requestChat: async (request) =>
-        jsonRequest('/api/chat/message', {
+      requestChat: async (request) => {
+        const response = await jsonRequest('/api/chat/message', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(request),
-        }),
+        })
+
+        if (response && typeof response === 'object' && 'streamId' in response && typeof response.streamId === 'string') {
+          return response
+        }
+
+        return { streamId: request.streamId }
+      },
       uploadImageAttachment: async (request) =>
         jsonRequest('/api/attachments', {
           method: 'POST',
@@ -332,6 +341,8 @@ const installMockApis = async (
       status: 'streaming',
       streamId: 'stream-1',
       sessionId: 'session-1',
+      provider: 'codex' as const,
+      model: 'gpt-5.5',
       messages: [
         {
           id: 'assistant-1',
@@ -343,7 +354,10 @@ const installMockApis = async (
     },
     autoEmitDoneOnStop = true,
   } = options
+  const initialProvider = initialCard.provider ?? 'codex'
+  const initialModel = initialCard.model ?? (initialProvider === 'claude' ? 'claude-opus-4-7' : 'gpt-5.5')
   let nextStreamNumber = 2
+  const chatRequests: Array<{ prompt: string; sessionId?: string; provider?: string; streamId?: string }> = []
 
   let state = createPlaywrightState({
     version: 1 as const,
@@ -386,8 +400,8 @@ const installMockApis = async (
             title: 'Feature Chat',
             status: initialCard.status,
             size: 560,
-            provider: 'codex' as const,
-            model: 'gpt-5.5',
+            provider: initialProvider,
+            model: initialModel,
             reasoningEffort: 'medium',
             draft: '',
             streamId: initialCard.streamId,
@@ -449,16 +463,63 @@ const installMockApis = async (
 
   await page.route('**/api/chat/message', async (route) => {
     const body = JSON.parse(route.request().postData() ?? '{}')
+    const streamId = `stream-${nextStreamNumber++}`
     requests.push(`message:${body.prompt}`)
+    chatRequests.push({
+      prompt: body.prompt,
+      sessionId: body.sessionId,
+      provider: body.provider,
+      streamId: body.streamId,
+    })
     await route.fulfill({
       json: {
-        streamId: `stream-${nextStreamNumber++}`,
+        streamId,
       },
+    })
+    state = createPlaywrightState({
+      ...state,
+      columns: state.columns.map((column) =>
+        {
+          if (column.id === 'col-1') {
+            const messages = column.cards['card-1']!.messages
+            const prompt = typeof body.prompt === 'string' ? body.prompt : ''
+            const nextMessages =
+              prompt.trim().length > 0 &&
+              messages.findLast((message) => message.role === 'user')?.content !== prompt
+                ? [
+                    ...messages,
+                    {
+                      id: `user-${streamId}`,
+                      role: 'user' as const,
+                      content: prompt,
+                      createdAt: new Date().toISOString(),
+                    },
+                  ]
+                : messages
+
+            return {
+              ...column,
+              cards: {
+                ...column.cards,
+                'card-1': {
+                  ...column.cards['card-1']!,
+                  status: 'streaming',
+                  streamId,
+                  messages: nextMessages,
+                },
+              },
+            }
+          }
+
+          return column
+        },
+      ),
     })
   })
 
   return {
     readRequests: () => requests.slice(),
+    readChatRequests: () => chatRequests.slice(),
     readState: () => state,
   }
 }
@@ -496,6 +557,41 @@ test('sending during a running card stops the active stream and immediately star
     .toBe('User interrupted')
   await expect.poll(() => mock.readState().columns[0]?.cards['card-1']?.status).toBe('streaming')
   await expect.poll(() => mock.readState().columns[0]?.cards['card-1']?.streamId).toBe('stream-2')
+})
+
+test('sending during a running Claude chat does not keep the interrupted session id for the follow-up', async ({ page }) => {
+  const mock = await installMockApis(page, {
+    initialCard: {
+      status: 'streaming',
+      streamId: 'stream-1',
+      sessionId: 'claude-session-1',
+      provider: 'claude',
+      model: 'claude-opus-4-7',
+      messages: [
+        {
+          id: 'assistant-1',
+          role: 'assistant',
+          content: 'Still answering from Claude',
+          createdAt: new Date().toISOString(),
+        },
+      ],
+    },
+  })
+  await page.goto('http://localhost:5173')
+
+  const textarea = getActiveComposerTextarea(page)
+  const sendButton = page.getByRole('button', { name: 'Send message' })
+
+  await expect(textarea).toBeVisible()
+  await textarea.fill('Use this replacement instruction')
+  await sendButton.click()
+
+  await expect.poll(() => mock.readRequests()[0]).toBe('stop:stream-1')
+  await expect.poll(() => mock.readChatRequests()[0]?.prompt).toContain('Use this replacement instruction')
+  await expect.poll(() => mock.readChatRequests()[0]?.sessionId).toBeUndefined()
+  await expect(page.locator('.message-entry-user').filter({ hasText: 'Use this replacement instruction' })).toBeVisible()
+  await expect.poll(() => mock.readState().columns[0]?.cards['card-1']?.messages[1]?.meta?.stopReason).toBe('user-interrupt')
+  await expect(page.locator('.streaming-indicator')).toContainText('Writing')
 })
 
 test('sending during /compact still waits for the compaction stream to finish', async ({ page }) => {

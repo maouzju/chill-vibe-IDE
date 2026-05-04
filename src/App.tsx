@@ -470,6 +470,37 @@ const hasPendingAskUserMessage = (messages: ChatMessage[]) =>
   messages.findLastIndex((message) => message.meta?.kind === 'ask-user') >
   messages.findLastIndex((message) => message.role === 'user')
 
+const hasLatestPendingAskUserMessage = (
+  messages: ChatMessage[],
+  latestPrompt?: string,
+) => {
+  const lastAskUserIndex = messages.findLastIndex((message) => message.meta?.kind === 'ask-user')
+
+  if (lastAskUserIndex < 0) {
+    return false
+  }
+
+  const lastUserIndex = messages.findLastIndex((message) => message.role === 'user')
+
+  const trimmedLatestPrompt = latestPrompt?.trim()
+
+  if (lastAskUserIndex > lastUserIndex) {
+    return true
+  }
+
+  if (lastUserIndex < 0 || lastUserIndex < lastAskUserIndex) {
+    return true
+  }
+
+  if (!trimmedLatestPrompt) {
+    return false
+  }
+
+  return messages
+    .slice(lastAskUserIndex + 1)
+    .some((message) => message.role === 'user' && message.content.trim() === trimmedLatestPrompt)
+}
+
 function App() {
   const [appState, dispatch] = useReducer(ideReducer, createDefaultState(''))
   const [providers, setProviders] = useState<ProviderStatus[]>([])
@@ -2297,6 +2328,14 @@ function App() {
             markRecoveryResumedIfActive(card.id)
           }
 
+          // Make the structured block decision against the full live text, not a
+          // stale state snapshot while token deltas are still sitting in the
+          // coalescing buffer. This is especially important for Claude ask-user
+          // XML: the XML may arrive as buffered text right before the structured
+          // ask-user activity, and delayed flushing would otherwise leak or
+          // preserve the wrong bubble.
+          flushBufferedAssistantDeltaForCard(card.id)
+
           // Clear the current assistant message so that any subsequent onDelta
           // (the agent's final answer after tool calls) creates a new message
           // instead of appending to the one that sits *before* the tool calls.
@@ -2482,6 +2521,19 @@ function App() {
                   ? createStoppedRunMessage(appStateRef.current.settings.language, stoppedRunReason)
                   : undefined,
             })
+            if (stoppedRunReason === 'user-interrupt' && card.provider === 'claude') {
+              const nextProviderSessions = { ...(liveCard?.providerSessions ?? card.providerSessions) }
+              delete nextProviderSessions[card.provider]
+              actions.push({
+                type: 'updateCard',
+                columnId,
+                cardId: card.id,
+                patch: {
+                  sessionId: undefined,
+                  providerSessions: nextProviderSessions,
+                },
+              })
+            }
           } else {
             actions.push({
               type: 'updateCard',
@@ -3210,7 +3262,8 @@ function App() {
       const latestUserMessage = [...card.messages].reverse().find((message) => message.role === 'user')
       const shouldAnswerAskUser =
         pendingAskUserDuringStreamRef.current.get(cardId) === true ||
-        hasPendingAskUserMessage(card.messages)
+        hasPendingAskUserMessage(card.messages) ||
+        hasLatestPendingAskUserMessage(card.messages, prompt)
       const shouldQueueUntilDone =
         shouldAnswerAskUser ||
         isCompactBoundaryMessage(latestUserMessage, card.provider)

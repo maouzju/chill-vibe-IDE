@@ -5,6 +5,7 @@ import type { ChatMessage } from '../shared/schema.ts'
 import {
   buildRenderableMessages,
   collectChangesSummaryFilesForStream,
+  getAskUserAnswerKey,
   getRestoredStickyUserAnchor,
   getStickyRenderableUserMessageId,
   getLastRenderableUserMessageId,
@@ -431,4 +432,28 @@ test('buildRenderableMessages does not merge ask-user across non-ask-user bounda
   const result = buildRenderableMessages(messages)
 
   assert.equal(result.length, 3, 'user message in between must break the merge group')
+})
+
+test('getAskUserAnswerKey ignores cosmetic structured data changes after restore', () => {
+  const first = makeAskUserMessage('ask-1', 'Q1?', 'H1', ['A', 'B'])
+  const reordered = {
+    ...first,
+    meta: {
+      ...first.meta!,
+      structuredData: JSON.stringify({
+        status: 'completed',
+        kind: 'ask-user',
+        options: [
+          { description: 'first option text changed later', label: 'A' },
+          { label: 'B', description: '' },
+        ],
+        multiSelect: false,
+        header: 'H1',
+        question: 'Q1?',
+        itemId: 'ask-1',
+      }),
+    },
+  }
+
+  assert.equal(getAskUserAnswerKey(first), getAskUserAnswerKey(reordered))
 })

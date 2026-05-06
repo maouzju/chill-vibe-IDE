@@ -5,6 +5,8 @@ const recoverableErrorPatterns = [
   'closed before completion',
   'stream closed before',
   'unexpected completion',
+  'selected model is at capacity',
+  'model is at capacity',
 ] as const
 
 const zeroExitPattern = /\b(?:codex|claude) exited with status code:\s*0\b/i

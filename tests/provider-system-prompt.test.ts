@@ -1658,6 +1658,39 @@ const buildFakeCodexJsonRpcReconnectPlaceholderErrorScript = () =>
     '})',
   ].join('\n')
 
+
+const buildFakeCodexCapacityErrorAfterSessionScript = () =>
+  [
+    "const readline = require('node:readline')",
+    "const reply = (message) => process.stdout.write(`${JSON.stringify(message)}\n`)",
+    "const rl = readline.createInterface({ input: process.stdin, crlfDelay: Infinity })",
+    "rl.on('line', (line) => {",
+    '  if (!line.trim()) {',
+    '    return',
+    '  }',
+    '  const request = JSON.parse(line)',
+    "  if (request.method === 'initialize' && request.id) {",
+    '    reply({ id: request.id, result: {} })',
+    '    return',
+    '  }',
+    "  if (request.method === 'thread/start' && request.id) {",
+    "    reply({ id: request.id, result: { thread: { id: 'thread-capacity', status: { type: 'active' } } } })",
+    '    return',
+    '  }',
+    "  if (request.method === 'turn/start' && request.id) {",
+    "    reply({ id: request.id, error: { code: -32000, message: 'Selected model is at capacity. Please try a different model.' } })",
+    '  }',
+    '})',
+  ].join('\n')
+
+
+const buildFakeClaudeCapacityErrorAfterSessionScript = () =>
+  [
+    "const reply = (message) => process.stdout.write(`${JSON.stringify(message)}\n`)",
+    "reply({ type: 'system', subtype: 'init', session_id: 'claude-session-capacity' })",
+    "reply({ type: 'result', is_error: true, result: 'Selected model is at capacity. Please try a different model.' })",
+  ].join('\n')
+
 const buildFakeClaudeRecoverableDisconnectScript = () =>
   [
     "const reply = (message) => process.stdout.write(`${JSON.stringify(message)}\\n`)",
@@ -1666,6 +1699,31 @@ const buildFakeClaudeRecoverableDisconnectScript = () =>
     'process.exit(0)',
   ].join('\n')
 
+
+
+test('codex app-server capacity errors after session creation are resumable', async () => {
+  const outcome = await withFakeProviderCommand(
+    'codex',
+    buildFakeCodexCapacityErrorAfterSessionScript(),
+    async (workspacePath) =>
+      captureProviderRecoveryFailure(
+        createRequest({
+          provider: 'codex',
+          language: 'en',
+          workspacePath,
+        }),
+      ),
+  )
+
+  assert.deepEqual(outcome, {
+    kind: 'error',
+    message: 'Selected model is at capacity. Please try a different model.',
+    recovery: {
+      recoverable: true,
+      recoveryMode: 'resume-session',
+    },
+  })
+})
 
 test('codex app-server placeholder-only turn completion is recoverable instead of done', async () => {
   const outcome = await withFakeProviderCommand(
@@ -2289,6 +2347,32 @@ test('claude zero-exit without result is treated as a failed run', async () => {
   assert.deepEqual(outcome, {
     kind: 'error',
     message: 'Claude ended without emitting a terminal completion event.',
+  })
+})
+
+
+test('claude capacity errors after session creation are resumable', async () => {
+  const outcome = await withFakeProviderCommand(
+    'claude',
+    buildFakeClaudeCapacityErrorAfterSessionScript(),
+    async (workspacePath) =>
+      captureProviderRecoveryFailure(
+        createRequest({
+          provider: 'claude',
+          model: 'claude-sonnet-4-6',
+          language: 'en',
+          workspacePath,
+        }),
+      ),
+  )
+
+  assert.deepEqual(outcome, {
+    kind: 'error',
+    message: 'Selected model is at capacity. Please try a different model.',
+    recovery: {
+      recoverable: true,
+      recoveryMode: 'resume-session',
+    },
   })
 })
 

@@ -352,6 +352,10 @@ A living list of traps that have wasted time before. **When you hit a new pitfal
 | 117 | Ask-user answers that start with `/` can be mistaken for app-local slash commands like `/clear` or `/new` | Wrap slash-leading answers before sending them as follow-up prompts, or choosing an option can clear/reset the card and look like a white screen. |
 | 118 | Reusing a Claude `sessionId` after a user interrupt can make the queued replacement prompt fail inside Claude's already-aborted native session | Treat user-interrupt follow-ups as a fresh Claude session and replay visible transcript context, otherwise the UI can surface “Claude run failed” even though the user intentionally stopped the previous run. |
 
+| 119 | Treating a still-usable provider model as a legacy default can overwrite explicit user input in Settings -> Models | Keep model migrations narrowly scoped to genuinely retired model IDs/tool tokens; otherwise typing a valid older model like `gpt-5.4` silently becomes the newest default. |
+
+| 120 | Playwright tests that manually emit mock stream events can race the renderer's async `subscribeChatStream` setup in full-suite concurrency | Wait for the mock stream subscriber to exist before emitting live events, otherwise the event is dropped and the UI looks broken even though the app path works. |
+
 ### Self-maintenance rule
 
 - When you encounter a new non-obvious failure mode — a test that fails for environmental reasons, a build step with hidden prerequisites, a runtime behavior that contradicts the docs — append a row to this table before you finish the task.

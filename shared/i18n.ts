@@ -93,6 +93,10 @@ type LocaleText = {
   imageAttachmentsRequireCodex: string
   stopRun: string
   sendMessage: string
+  deferSendMessage: string
+  queuedSendSummary: (count: number, preview: string, attachmentCount: number) => string
+  queuedSendNow: string
+  queuedSendCancel: string
   slashCommands: string
   loadingSlashCommands: string
   noMatchingSlashCommands: string
@@ -331,6 +335,13 @@ const localeTextByLanguage: Record<AppLanguage, LocaleText> = {
     imageAttachmentsRequireCodex: '粘贴图片暂不支持当前 provider，请移除图片后重试。',
     stopRun: '停止运行',
     sendMessage: '发送消息',
+    deferSendMessage: '延后发送',
+    queuedSendSummary: (count, preview, attachmentCount) => {
+      const suffix = attachmentCount > 0 ? `，含 ${attachmentCount} 张图片` : ''
+      return `已延后 ${count} 条：${preview || '图片消息'}${suffix}`
+    },
+    queuedSendNow: '立即发送',
+    queuedSendCancel: '取消',
     slashCommands: '斜杠命令',
     loadingSlashCommands: '正在加载斜杠命令...',
     noMatchingSlashCommands: '没有匹配的斜杠命令。',
@@ -584,6 +595,15 @@ const localeTextByLanguage: Record<AppLanguage, LocaleText> = {
       'Image attachments are not supported by the current provider. Remove the images and try again.',
     stopRun: 'Stop run',
     sendMessage: 'Send message',
+    deferSendMessage: 'Send later',
+    queuedSendSummary: (count, preview, attachmentCount) => {
+      const suffix = attachmentCount > 0
+        ? `, ${attachmentCount} image${attachmentCount === 1 ? '' : 's'}`
+        : ''
+      return `${count} queued: ${preview || 'image message'}${suffix}`
+    },
+    queuedSendNow: 'Send now',
+    queuedSendCancel: 'Cancel',
     slashCommands: 'Slash commands',
     loadingSlashCommands: 'Loading slash commands...',
     noMatchingSlashCommands: 'No matching slash commands.',

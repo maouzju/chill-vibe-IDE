@@ -3062,6 +3062,55 @@ body.is-card-dragging .lane-drop-zone-top {
   color: var(--danger);
 }
 
+.composer-queued-send {
+  display: flex;
+  align-items: center;
+  gap: 0.38rem;
+  margin-top: 0.34rem;
+  min-width: 0;
+  padding: 0.3rem 0.42rem;
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  background: color-mix(in srgb, var(--panel-strong) 72%, transparent);
+  color: var(--ink-2);
+  font-size: 0.72rem;
+  line-height: calc(1.35 * var(--ui-line-height-scale));
+}
+
+.composer-queued-send-text {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.composer-queued-send-action {
+  appearance: none;
+  -webkit-appearance: none;
+  flex: 0 0 auto;
+  padding: 0.12rem 0.34rem;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--accent);
+  font: inherit;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.composer-queued-send-action:hover:enabled,
+.composer-queued-send-action:focus-visible {
+  outline: none;
+  border-color: var(--accent-line);
+  background: var(--accent-soft);
+}
+
+.composer-queued-send-action:disabled {
+  color: var(--ink-4);
+  cursor: not-allowed;
+}
+
 /* Textarea + action buttons side by side */
 .composer-input-row {
   display: flex;

@@ -574,6 +574,30 @@ describe('ideReducer pane layout', () => {
     assert.equal(addedColumn?.model, 'claude-haiku-4-5-20251001')
   })
 
+  it('preserves Codex 5.4 when editing the configured default model', () => {
+    const state = createState()
+
+    const updated = ideReducer(state, {
+      type: 'updateRequestModels',
+      patch: { codex: 'gpt-5.4' },
+    })
+
+    assert.equal(updated.settings.requestModels.codex, 'gpt-5.4')
+    assert.equal(updated.columns[0]?.model, 'gpt-5.4')
+
+    const afterAddTab = ideReducer(updated, {
+      type: 'addTab',
+      columnId: 'column-1',
+      paneId: 'pane-1',
+    })
+
+    const pane = afterAddTab.columns[0]?.layout as PaneNode
+    const newCard = afterAddTab.columns[0]?.cards[pane.activeTabId]
+
+    assert.equal(newCard?.provider, 'codex')
+    assert.equal(newCard?.model, 'gpt-5.4')
+  })
+
   it('updates untouched empty chats that still point at the previous provider default', () => {
     const state = createState()
     state.settings.requestModels.claude = 'claude-opus-4-7'

@@ -9,6 +9,7 @@ import type {
   SessionHistoryEntry,
 } from '../../shared/schema'
 import type { CardRecoveryStatus } from '../stream-recovery-feedback'
+import type { QueuedSendSummary } from './deferred-send-queue'
 
 type WorkspaceColumnMemoProps = {
   column: BoardColumn
@@ -29,6 +30,7 @@ type WorkspaceColumnMemoProps = {
   recentWorkspaces: RecentWorkspace[]
   sessionHistory: SessionHistoryEntry[]
   cardRecoveryStatuses?: ReadonlyMap<string, CardRecoveryStatus>
+  queuedSendSummaries?: ReadonlyMap<string, QueuedSendSummary>
 }
 
 type PaneViewMemoProps = {
@@ -50,6 +52,7 @@ type PaneViewMemoProps = {
   autoUrgeSuccessKeyword: string
   flashCardIds: Set<string>
   cardRecoveryStatuses?: ReadonlyMap<string, CardRecoveryStatus>
+  queuedSendSummaries?: ReadonlyMap<string, QueuedSendSummary>
 }
 
 const haveSameSessionHistoryEntries = (
@@ -112,6 +115,7 @@ export const areWorkspaceColumnPropsEqual = (
   previous.autoUrgeSuccessKeyword === next.autoUrgeSuccessKeyword &&
   previous.recentWorkspaces === next.recentWorkspaces &&
   previous.cardRecoveryStatuses === next.cardRecoveryStatuses &&
+  previous.queuedSendSummaries === next.queuedSendSummaries &&
   haveSameSessionHistoryEntries(previous.sessionHistory, next.sessionHistory)
 
 const haveSamePaneCardRefs = (previous: PaneViewMemoProps, next: PaneViewMemoProps) => {
@@ -131,6 +135,13 @@ const haveSamePaneCardRefs = (previous: PaneViewMemoProps, next: PaneViewMemoPro
     if (
       (previous.cardRecoveryStatuses?.get(tabId) ?? undefined) !==
       (next.cardRecoveryStatuses?.get(tabId) ?? undefined)
+    ) {
+      return false
+    }
+
+    if (
+      (previous.queuedSendSummaries?.get(tabId) ?? undefined) !==
+      (next.queuedSendSummaries?.get(tabId) ?? undefined)
     ) {
       return false
     }

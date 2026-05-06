@@ -2022,7 +2022,8 @@ export const launchProviderRun = async (request: ChatRequest, sink: StreamSink) 
           if (event.is_error) {
             const message =
               typeof event.result === 'string' ? event.result : formatClaudeRunFailed(language)
-            sink.onError(message, classifyLaunchErrorHint(message))
+            const hint = classifyLaunchErrorHint(message)
+            sink.onError(message, hint, classifyLiveProviderStreamRecovery(currentRequest, message, hint, emittedSessionId))
             return
           }
 

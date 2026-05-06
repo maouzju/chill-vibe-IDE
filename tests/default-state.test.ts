@@ -102,7 +102,7 @@ describe('default-state helpers', () => {
     })
   })
 
-  it('migrates the previous Codex default to the current Codex default', () => {
+  it('preserves explicit Codex 5.4 settings while migrating older retired defaults', () => {
     const migrated = normalizeAppSettings({
       requestModels: {
         codex: 'gpt-5.4',
@@ -112,11 +112,12 @@ describe('default-state helpers', () => {
       lastModel: { provider: 'codex', model: 'gpt-5.4' },
     })
 
-    assert.equal(migrated.gitAgentModel, `${DEFAULT_CODEX_MODEL} high`)
-    assert.equal(migrated.requestModels.codex, DEFAULT_CODEX_MODEL)
-    assert.deepEqual(migrated.lastModel, { provider: 'codex', model: DEFAULT_CODEX_MODEL })
-    assert.equal(createCard('Chat', 440, 'codex', 'gpt-5.4').model, DEFAULT_CODEX_MODEL)
-    assert.equal(createColumn({ provider: 'codex', model: 'gpt-5.4' }).model, DEFAULT_CODEX_MODEL)
+    assert.equal(migrated.gitAgentModel, 'gpt-5.4 high')
+    assert.equal(migrated.requestModels.codex, 'gpt-5.4')
+    assert.deepEqual(migrated.lastModel, { provider: 'codex', model: 'gpt-5.4' })
+    assert.equal(createCard('Chat', 440, 'codex', 'gpt-5.4').model, 'gpt-5.4')
+    assert.equal(createColumn({ provider: 'codex', model: 'gpt-5.4' }).model, 'gpt-5.4')
+    assert.equal(normalizeAppSettings({ gitAgentModel: 'gpt-4.5 high' }).gitAgentModel, `${DEFAULT_CODEX_MODEL} high`)
   })
 
   it('uses the configured provider defaults and preserves explicit default selections on cards', () => {

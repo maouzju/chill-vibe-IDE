@@ -23,6 +23,7 @@ describe('model helpers', () => {
     assert.equal(normalizeStoredModel('codex', ''), '')
     assert.equal(normalizeModel('codex', ''), DEFAULT_CODEX_MODEL)
     assert.equal(normalizeModel('codex', 'gpt-4.5'), DEFAULT_CODEX_MODEL)
+    assert.equal(normalizeModel('codex', 'gpt-5.4'), 'gpt-5.4')
     assert.equal(normalizeStoredModel('codex', '__dream_tool__'), DEFAULT_CODEX_MODEL)
     assert.equal(normalizeStoredModel('codex', '__spec_tool__'), DEFAULT_CODEX_MODEL)
     assert.equal(normalizeStoredModel('claude', ''), '')

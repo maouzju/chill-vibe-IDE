@@ -24,6 +24,7 @@ import type {
 } from '../../shared/schema'
 import { clearDragPayload, readDragPayload, writeDragPayload } from '../dnd'
 import type { CardRecoveryStatus } from '../stream-recovery-feedback'
+import type { QueuedSendSummary, SendMessageOptions } from './deferred-send-queue'
 import { arePaneViewPropsEqual } from './layout-memoization'
 import { getAutoReadCardId } from './pane-read-state'
 import { syncMessageListElementToBottom } from './pane-scroll'
@@ -116,12 +117,20 @@ type PaneViewProps = {
     >,
   ) => void
   onChangeCardTitle: (cardId: string, title: string) => void
-  onSendMessage: (cardId: string, prompt: string, attachments: ImageAttachment[]) => Promise<void>
+  onSendMessage: (
+    cardId: string,
+    prompt: string,
+    attachments: ImageAttachment[],
+    options?: SendMessageOptions,
+  ) => Promise<void>
   onStopMessage: (cardId: string) => Promise<void>
+  onCancelQueuedSends?: (cardId: string) => void
+  onSendNextQueuedNow?: (cardId: string) => void
   onManualRecoverStream?: (cardId: string) => Promise<unknown>
   onForkConversation?: (cardId: string, messageId: string) => void
   onOpenFile?: (paneId: string, relativePath: string) => void
   cardRecoveryStatuses?: ReadonlyMap<string, CardRecoveryStatus>
+  queuedSendSummaries?: ReadonlyMap<string, QueuedSendSummary>
 }
 
 const getHorizontalPlacement = (event: DragEvent<HTMLElement>): DropPlacement => {
@@ -299,10 +308,13 @@ const PaneViewView = ({
   onChangeCardTitle,
   onSendMessage,
   onStopMessage,
+  onCancelQueuedSends,
+  onSendNextQueuedNow,
   onManualRecoverStream,
   onForkConversation,
   onOpenFile,
   cardRecoveryStatuses,
+  queuedSendSummaries,
 }: PaneViewProps) => {
   const text = getLocaleText(language)
   const tabStripRef = useRef<HTMLDivElement | null>(null)
@@ -908,8 +920,19 @@ const PaneViewView = ({
                   autoUrgeSuccessKeyword={autoUrgeSuccessKeyword}
                   onSetAutoUrgeEnabled={onSetAutoUrgeEnabled}
                   onRemove={() => onCloseTab(pane.id, card.id)}
-                  onSend={(prompt, attachments) => onSendMessage(card.id, prompt, attachments)}
+                  queuedSendSummary={queuedSendSummaries?.get(card.id)}
+                  onSend={(prompt, attachments, options) => onSendMessage(card.id, prompt, attachments, options)}
                   onStop={() => onStopMessage(card.id)}
+                  onCancelQueuedSends={
+                    onCancelQueuedSends
+                      ? () => onCancelQueuedSends(card.id)
+                      : undefined
+                  }
+                  onSendNextQueuedNow={
+                    onSendNextQueuedNow
+                      ? () => onSendNextQueuedNow(card.id)
+                      : undefined
+                  }
                   onManualRecoverStream={
                     onManualRecoverStream
                       ? () => onManualRecoverStream(card.id)

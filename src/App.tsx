@@ -167,6 +167,13 @@ import {
   markCompactBoundaryMessage,
 } from './components/chat-card-compaction'
 import { collectChangesSummaryFilesForStream } from './components/chat-card-parsing'
+import {
+  resolveQueuedSendTargetColumnId,
+  summarizeQueuedSends,
+  type QueuedSendRequest,
+  type QueuedSendSummary,
+  type SendMessageOptions,
+} from './components/deferred-send-queue'
 import { getAutoReadCardIdsForVisiblePanes, shouldMarkCardUnreadOnStreamDone } from './components/pane-read-state'
 import { clearFileTreeCacheForCard } from './components/tool-card-state'
 import { buildSeededChatPrompt, collectSeededChatAttachments, hasSeededChatTranscript } from './chat-request-seeding'
@@ -461,11 +468,6 @@ type PaneTarget = {
   paneId: string
 }
 
-type QueuedSendRequest = {
-  prompt: string
-  attachments: ImageAttachment[]
-}
-
 const hasPendingAskUserMessage = (messages: ChatMessage[]) =>
   messages.findLastIndex((message) => message.meta?.kind === 'ask-user') >
   messages.findLastIndex((message) => message.role === 'user')
@@ -625,7 +627,7 @@ function App() {
 
   const activeStreamsRef = useRef(new Map<string, ActiveStream>())
   const queuedSendRequestsRef = useRef(
-    new Map<string, Array<{ prompt: string; attachments: ImageAttachment[] }>>(),
+    new Map<string, QueuedSendRequest[]>(),
   )
   const queueFollowUpDuringStreamRef = useRef(new Map<string, boolean>())
   const pendingAskUserDuringStreamRef = useRef(new Map<string, boolean>())
@@ -640,6 +642,9 @@ function App() {
   const localRecoveryStatsRef = useRef(new Map<string, LocalRecoveryStatsState>())
   const [cardRecoveryStatuses, setCardRecoveryStatuses] = useState<
     ReadonlyMap<string, CardRecoveryStatus>
+  >(() => new Map())
+  const [queuedSendSummaries, setQueuedSendSummaries] = useState<
+    ReadonlyMap<string, QueuedSendSummary>
   >(() => new Map())
   const recoveryResumedTimersRef = useRef(new Map<string, ReturnType<typeof setTimeout>>())
   const updateRecoveryStatus = useCallback(
@@ -718,7 +723,13 @@ function App() {
     [clearRecoveryResumedTimer, updateRecoveryStatus],
   )
   const sendMessageRef = useRef<(
-    (columnId: string, cardId: string, prompt: string, attachments: ImageAttachment[]) => Promise<void>
+    (
+      columnId: string,
+      cardId: string,
+      prompt: string,
+      attachments: ImageAttachment[],
+      options?: SendMessageOptions,
+    ) => Promise<void>
   ) | null>(null)
   const recoverLiveStreamRef = useRef<(
     (
@@ -1577,6 +1588,16 @@ function App() {
     [panelText.importError, panelText.importTooLarge, runCcSwitchImport],
   )
 
+  const clearStopCompletionFallbackTimer = useCallback((cardId: string) => {
+    const fallbackTimer = stopCompletionFallbackTimersRef.current.get(cardId)
+    if (fallbackTimer === undefined) {
+      return
+    }
+
+    window.clearTimeout(fallbackTimer)
+    stopCompletionFallbackTimersRef.current.delete(cardId)
+  }, [])
+
   const closeStream = useCallback(async (cardId: string, stopRemote = false) => {
     const active = activeStreamsRef.current.get(cardId)
     if (!active) {
@@ -1592,11 +1613,7 @@ function App() {
 
     active.source.close()
     activeStreamsRef.current.delete(cardId)
-    const fallbackTimer = stopCompletionFallbackTimersRef.current.get(cardId)
-    if (fallbackTimer !== undefined) {
-      window.clearTimeout(fallbackTimer)
-      stopCompletionFallbackTimersRef.current.delete(cardId)
-    }
+    clearStopCompletionFallbackTimer(cardId)
     streamRetryCountRef.current.delete(cardId)
     transientResumeLoopCountRef.current.delete(cardId)
     queueFollowUpDuringStreamRef.current.delete(cardId)
@@ -1617,7 +1634,7 @@ function App() {
     if (stopRemote) {
       await stopChat(active.streamId).catch(() => undefined)
     }
-  }, [flushBufferedAssistantDeltaForCard])
+  }, [clearStopCompletionFallbackTimer, flushBufferedAssistantDeltaForCard])
 
   const requestStopForCard = useCallback(
     async (cardId: string, reason: StoppedRunReason = 'manual') => {
@@ -1639,11 +1656,7 @@ function App() {
         flushBufferedAssistantDeltaForCard(cardId)
         active?.source.close()
         activeStreamsRef.current.delete(cardId)
-        const fallbackTimer = stopCompletionFallbackTimersRef.current.get(cardId)
-        if (fallbackTimer !== undefined) {
-          window.clearTimeout(fallbackTimer)
-          stopCompletionFallbackTimersRef.current.delete(cardId)
-        }
+        clearStopCompletionFallbackTimer(cardId)
         streamRetryCountRef.current.delete(cardId)
         transientResumeLoopCountRef.current.delete(cardId)
         queueFollowUpDuringStreamRef.current.delete(cardId)
@@ -1671,17 +1684,76 @@ function App() {
         return false
       }
     },
-    [applyActions, flushBufferedAssistantDeltaForCard, persistAfterActions, text.unexpectedError],
+    [
+      applyActions,
+      clearStopCompletionFallbackTimer,
+      flushBufferedAssistantDeltaForCard,
+      persistAfterActions,
+      text.unexpectedError,
+    ],
   )
 
   const enqueueQueuedSend = useCallback((cardId: string, request: QueuedSendRequest) => {
     const currentQueue = queuedSendRequestsRef.current.get(cardId) ?? []
     currentQueue.push(request)
     queuedSendRequestsRef.current.set(cardId, currentQueue)
+    setQueuedSendSummaries((current) => {
+      const nextSummary = summarizeQueuedSends(currentQueue)
+      const previousSummary = current.get(cardId)
+      if (
+        previousSummary &&
+        nextSummary &&
+        previousSummary.count === nextSummary.count &&
+        previousSummary.nextPreview === nextSummary.nextPreview &&
+        previousSummary.nextAttachmentCount === nextSummary.nextAttachmentCount
+      ) {
+        return current
+      }
+
+      const copy = new Map(current)
+      if (nextSummary) copy.set(cardId, nextSummary)
+      else copy.delete(cardId)
+      return copy
+    })
   }, [])
 
   const clearQueuedSends = useCallback((cardId: string) => {
     queuedSendRequestsRef.current.delete(cardId)
+    setQueuedSendSummaries((current) => {
+      if (!current.has(cardId)) {
+        return current
+      }
+
+      const copy = new Map(current)
+      copy.delete(cardId)
+      return copy
+    })
+  }, [])
+
+  const resolveQueuedSendColumnId = useCallback((fallbackColumnId: string, cardId: string) => {
+    return resolveQueuedSendTargetColumnId(appStateRef.current.columns, fallbackColumnId, cardId)
+  }, [])
+
+  const syncQueuedSendSummary = useCallback((cardId: string) => {
+    const nextSummary = summarizeQueuedSends(queuedSendRequestsRef.current.get(cardId))
+    setQueuedSendSummaries((current) => {
+      const previousSummary = current.get(cardId)
+      if (
+        previousSummary === nextSummary ||
+        (previousSummary &&
+          nextSummary &&
+          previousSummary.count === nextSummary.count &&
+          previousSummary.nextPreview === nextSummary.nextPreview &&
+          previousSummary.nextAttachmentCount === nextSummary.nextAttachmentCount)
+      ) {
+        return current
+      }
+
+      const copy = new Map(current)
+      if (nextSummary) copy.set(cardId, nextSummary)
+      else copy.delete(cardId)
+      return copy
+    })
   }, [])
 
   const dispatchNextQueuedSend = useCallback((columnId: string, cardId: string) => {
@@ -1690,45 +1762,125 @@ function App() {
       return
     }
 
+    const targetColumnId = resolveQueuedSendColumnId(columnId, cardId)
+    if (!targetColumnId) {
+      clearQueuedSends(cardId)
+      return
+    }
+
     const nextRequest = currentQueue.shift()
     if (!nextRequest) {
+      syncQueuedSendSummary(cardId)
       return
     }
 
     if (currentQueue.length === 0) {
       queuedSendRequestsRef.current.delete(cardId)
     }
+    syncQueuedSendSummary(cardId)
 
     queueMicrotask(() => {
-      void sendMessageRef.current?.(columnId, cardId, nextRequest.prompt, nextRequest.attachments)
+      void sendMessageRef.current?.(targetColumnId, cardId, nextRequest.prompt, nextRequest.attachments)
     })
-  }, [])
+  }, [clearQueuedSends, resolveQueuedSendColumnId, syncQueuedSendSummary])
 
-  const finalizeStoppedAskUserWithoutServerAck = useCallback(async (
+  const finalizeStoppedStreamWithoutServerAck = useCallback((
     columnId: string,
     cardId: string,
+    reason: StoppedRunReason,
   ) => {
-    await closeStream(cardId, false)
+    const active = activeStreamsRef.current.get(cardId)
+    flushBufferedAssistantDeltaForCard(cardId)
+    active?.source.close()
+    activeStreamsRef.current.delete(cardId)
+    clearStopCompletionFallbackTimer(cardId)
+    streamRetryCountRef.current.delete(cardId)
+    transientResumeLoopCountRef.current.delete(cardId)
+    queueFollowUpDuringStreamRef.current.delete(cardId)
+    pendingAskUserDuringStreamRef.current.delete(cardId)
+
+    if (active?.streamId) {
+      stoppedRunReasonRef.current.delete(active.streamId)
+    }
 
     const liveCard = appStateRef.current.columns.find((column) => column.id === columnId)?.cards[cardId]
     if (!liveCard) {
       return
     }
 
-    const action: IdeAction = {
-      type: 'updateCard',
-      columnId,
-      cardId,
-      patch: { status: 'idle', streamId: undefined },
+    const actions: IdeAction[] = [
+      {
+        type: 'finishStoppedStream',
+        columnId,
+        cardId,
+        stoppedMessage:
+          reason !== 'ask-user-answer'
+            ? createStoppedRunMessage(appStateRef.current.settings.language, reason)
+            : undefined,
+      },
+    ]
+
+    if (reason === 'user-interrupt' && liveCard.provider === 'claude') {
+      const nextProviderSessions = { ...liveCard.providerSessions }
+      delete nextProviderSessions[liveCard.provider]
+      actions.push({
+        type: 'updateCard',
+        columnId,
+        cardId,
+        patch: {
+          sessionId: undefined,
+          providerSessions: nextProviderSessions,
+        },
+      })
     }
-    const nextState = applyAction(action)
-    persistAfterAction(action.type, nextState)
+
+    persistAfterActions(actions, applyActions(actions))
     dispatchNextQueuedSend(columnId, cardId)
   }, [
-    applyAction,
-    closeStream,
+    applyActions,
+    clearStopCompletionFallbackTimer,
     dispatchNextQueuedSend,
-    persistAfterAction,
+    flushBufferedAssistantDeltaForCard,
+    persistAfterActions,
+  ])
+
+  const sendNextQueuedNow = useCallback((columnId: string, cardId: string) => {
+    const currentQueue = queuedSendRequestsRef.current.get(cardId)
+    if (!currentQueue || currentQueue.length === 0) {
+      return
+    }
+
+    const targetColumnId = resolveQueuedSendColumnId(columnId, cardId)
+    if (!targetColumnId) {
+      clearQueuedSends(cardId)
+      return
+    }
+
+    const nextRequest = currentQueue.shift()
+    if (!nextRequest) {
+      syncQueuedSendSummary(cardId)
+      return
+    }
+
+    if (currentQueue.length === 0) {
+      queuedSendRequestsRef.current.delete(cardId)
+    }
+    syncQueuedSendSummary(cardId)
+
+    queueMicrotask(() => {
+      void sendMessageRef.current?.(targetColumnId, cardId, nextRequest.prompt, nextRequest.attachments, {
+        mode: 'interrupt',
+      })
+    })
+  }, [clearQueuedSends, resolveQueuedSendColumnId, syncQueuedSendSummary])
+
+  const finalizeStoppedAskUserWithoutServerAck = useCallback(async (
+    columnId: string,
+    cardId: string,
+  ) => {
+    finalizeStoppedStreamWithoutServerAck(columnId, cardId, 'ask-user-answer')
+  }, [
+    finalizeStoppedStreamWithoutServerAck,
   ])
 
   const providerByName = useMemo(
@@ -2812,6 +2964,7 @@ function App() {
     })
     activeStreamsRef.current.clear()
     queuedSendRequestsRef.current.clear()
+    setQueuedSendSummaries(new Map())
     queueFollowUpDuringStreamRef.current.clear()
     pendingAskUserDuringStreamRef.current.clear()
     stopCompletionFallbackTimersRef.current.forEach((timer) => window.clearTimeout(timer))
@@ -3233,6 +3386,7 @@ function App() {
     cardId: string,
     prompt: string,
     attachments: ImageAttachment[],
+    options: SendMessageOptions = {},
   ) => {
     const column = getColumn(columnId)
     const card = column?.cards[cardId]
@@ -3259,6 +3413,7 @@ function App() {
     forceResetRecoveryStatus(cardId)
 
     if (card.status === 'streaming') {
+      const sendMode = options.mode ?? 'auto'
       const latestUserMessage = [...card.messages].reverse().find((message) => message.role === 'user')
       const shouldAnswerAskUser =
         pendingAskUserDuringStreamRef.current.get(cardId) === true ||
@@ -3268,7 +3423,7 @@ function App() {
         shouldAnswerAskUser ||
         isCompactBoundaryMessage(latestUserMessage, card.provider)
       if (shouldAnswerAskUser) {
-        enqueueQueuedSend(cardId, { prompt, attachments })
+        enqueueQueuedSend(cardId, { id: crypto.randomUUID(), prompt, attachments })
         queueMicrotask(() => {
           void requestStopForCard(cardId, 'ask-user-answer')
         })
@@ -3289,10 +3444,12 @@ function App() {
         return
       }
       if (shouldQueueUntilDone) {
-        enqueueQueuedSend(cardId, { prompt, attachments })
-      } else {
-        enqueueQueuedSend(cardId, { prompt, attachments })
+        enqueueQueuedSend(cardId, { id: crypto.randomUUID(), prompt, attachments })
+      } else if (sendMode === 'interrupt') {
+        enqueueQueuedSend(cardId, { id: crypto.randomUUID(), prompt, attachments })
         await requestStopForCard(cardId, 'user-interrupt')
+      } else {
+        enqueueQueuedSend(cardId, { id: crypto.randomUUID(), prompt, attachments })
       }
       return
     }
@@ -4015,6 +4172,7 @@ function App() {
   const handleReset = async () => {
     await Promise.all([...activeStreamsRef.current.keys()].map((cardId) => closeStream(cardId, true)))
     queuedSendRequestsRef.current.clear()
+    setQueuedSendSummaries(new Map())
     queueFollowUpDuringStreamRef.current.clear()
     pendingAskUserDuringStreamRef.current.clear()
     stopCompletionFallbackTimersRef.current.forEach((timer) => window.clearTimeout(timer))
@@ -6819,10 +6977,12 @@ function App() {
               })
             }
             onActivatePane={(paneId) => rememberPaneTarget(column.id, paneId)}
-            onSendMessage={(cardId, prompt, attachments) =>
-              sendMessage(column.id, cardId, prompt, attachments)
+            onSendMessage={(cardId, prompt, attachments, options) =>
+              sendMessage(column.id, cardId, prompt, attachments, options)
             }
             onStopMessage={(cardId) => stopCard(cardId)}
+            onCancelQueuedSends={(cardId) => clearQueuedSends(cardId)}
+            onSendNextQueuedNow={(cardId) => sendNextQueuedNow(column.id, cardId)}
             onManualRecoverStream={(cardId) => manuallyRecoverStream(column.id, cardId)}
             onForkConversation={(cardId, messageId) =>
               dispatch({ type: 'forkConversation', columnId: column.id, cardId, messageId })
@@ -6836,6 +6996,7 @@ function App() {
             onRemoveRecentWorkspaces={(paths) => applyAction({ type: 'removeRecentWorkspaces', paths })}
             sessionHistory={sessionHistory}
             cardRecoveryStatuses={cardRecoveryStatuses}
+            queuedSendSummaries={queuedSendSummaries}
             onRestoreSession={(entryId) => handleRestoreSession(column.id, entryId)}
             onImportExternalSession={(entry) =>
               applyAction({

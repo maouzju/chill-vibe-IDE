@@ -84,7 +84,9 @@ import { FileTreeCard } from './FileTreeCard'
 import { TextEditorCard } from './TextEditorCard'
 import { BrainstormCard } from './BrainstormCard'
 import { resolveBrainstormRequestTarget } from './brainstorm-card-utils'
+import { getLatestUserAnswerAfterAskUserMessage } from './ask-user-answer-state'
 import { formatAskUserFollowUpPrompt } from './ask-user-follow-up'
+import { HoverTooltip } from './HoverTooltip'
 import {
   areSlashCommandListsEqual,
   getSlashCommandsLoadKey,
@@ -97,6 +99,7 @@ import {
   shouldShowManualStreamRecoveryControl,
   type CardRecoveryStatus,
 } from '../stream-recovery-feedback'
+import type { QueuedSendSummary, SendMessageOptions } from './deferred-send-queue'
 import { MessageBubble, StreamingIndicator } from './MessageBubble'
 import {
   StructuredToolGroupCard,
@@ -209,10 +212,17 @@ type ChatCardProps = {
   autoUrgeProfiles?: AutoUrgeProfile[]
   autoUrgeMessage: string
   autoUrgeSuccessKeyword: string
+  queuedSendSummary?: QueuedSendSummary
   onSetAutoUrgeEnabled: (enabled: boolean) => void
   onRemove: () => void
-  onSend: (prompt: string, attachments: ImageAttachment[]) => Promise<void>
+  onSend: (
+    prompt: string,
+    attachments: ImageAttachment[],
+    options?: SendMessageOptions,
+  ) => Promise<void>
   onStop: () => Promise<void>
+  onCancelQueuedSends?: () => void
+  onSendNextQueuedNow?: () => void
   onManualRecoverStream?: () => void
   onDraftChange: (draft: string) => void
   onChangeModel: (provider: Provider, model: string) => void
@@ -451,6 +461,7 @@ const areChatCardPropsEqual = (previous: ChatCardProps, next: ChatCardProps) =>
   previous.autoUrgeProfiles === next.autoUrgeProfiles &&
   previous.autoUrgeMessage === next.autoUrgeMessage &&
   previous.autoUrgeSuccessKeyword === next.autoUrgeSuccessKeyword &&
+  previous.queuedSendSummary === next.queuedSendSummary &&
   previous.isRestored === next.isRestored &&
   previous.chromeMode === next.chromeMode &&
   previous.isActive === next.isActive &&
@@ -875,7 +886,12 @@ const ChatTranscript = memo(
                   language={language}
                   message={entry.message}
                   workspacePath={workspacePath}
-                  answeredOption={askUserAnswers[getAskUserAnswerKey(entry.message)] ?? null}
+                  answeredOption={
+                    askUserAnswers[getAskUserAnswerKey(entry.message)] ??
+                    (entry.message.meta?.kind === 'ask-user'
+                      ? getLatestUserAnswerAfterAskUserMessage(messages, entry.message)
+                      : null)
+                  }
                   onSelectAskUserOption={onSelectAskUserOption}
                   onOpenFile={onOpenFile}
                   onForkFromHere={
@@ -927,10 +943,13 @@ const ChatCardView = ({
   autoUrgeProfiles = [],
   autoUrgeMessage,
   autoUrgeSuccessKeyword,
+  queuedSendSummary,
   onSetAutoUrgeEnabled,
   onRemove,
   onSend,
   onStop,
+  onCancelQueuedSends,
+  onSendNextQueuedNow,
   onDraftChange,
   onChangeModel,
   onChangeReasoningEffort,
@@ -2260,7 +2279,7 @@ const ChatCardView = ({
     ])
   }
 
-  const handleSubmit = async () => {
+  const handleSubmit = async (options?: SendMessageOptions) => {
     if (sendDisabled) return
     const prompt = draftValueRef.current.trim()
     let attachments: ImageAttachment[] = []
@@ -2273,7 +2292,7 @@ const ChatCardView = ({
     }
 
     scrollMessageListToBottom('instant')
-    await onSend(prompt, attachments)
+    await onSend(prompt, attachments, options)
 
     for (const attachment of pendingAttachments) {
       if (attachment.kind === 'local') {
@@ -2294,6 +2313,12 @@ const ChatCardView = ({
     if ((card.draftAttachments ?? []).length > 0) {
       onPatchCard({ draftAttachments: [] })
     }
+  }
+
+  const handleSendButtonContextMenu = (event: MouseEvent<HTMLButtonElement>) => {
+    event.preventDefault()
+    if (sendDisabled) return
+    void handleSubmit({ mode: 'defer' })
   }
 
   const applySlashCommand = (command: SlashCommand) => {
@@ -2692,6 +2717,18 @@ const ChatCardView = ({
 
   const statusClass =
     card.status === 'streaming' ? ' is-streaming' : card.status === 'error' ? ' is-error' : ''
+  const sendButtonLabel = card.status === 'streaming' ? text.deferSendMessage : text.sendMessage
+  const sendButtonTooltip =
+    card.status === 'streaming'
+      ? `${text.deferSendMessage} · ${language === 'en' ? 'Click or right-click to queue this message for after the current answer.' : '点击或右键都会加入队列，等当前回答结束后自动发送。'}`
+      : `${text.sendMessage} · ${language === 'en' ? 'During a running answer, click or right-click queues it for later.' : '运行中点击或右键会延后发送。'}`
+  const queuedSendText = queuedSendSummary
+    ? text.queuedSendSummary(
+        queuedSendSummary.count,
+        queuedSendSummary.nextPreview,
+        queuedSendSummary.nextAttachmentCount,
+      )
+    : ''
 
   const handleRemoveClick = (event: MouseEvent<HTMLButtonElement>) => {
     event.stopPropagation()
@@ -3257,16 +3294,42 @@ const ChatCardView = ({
                       <StopIcon />
                     </IconButton>
                   ) : null}
-                  <IconButton
-                    label={text.sendMessage}
-                    tone="primary"
-                    onClick={() => void handleSubmit()}
-                    disabled={sendDisabled}
-                  >
-                    <SendIcon />
-                  </IconButton>
+                  <HoverTooltip content={sendButtonTooltip}>
+                    <IconButton
+                      label={sendButtonLabel}
+                      tone="primary"
+                      onClick={() => void handleSubmit()}
+                      onContextMenu={handleSendButtonContextMenu}
+                      disabled={sendDisabled}
+                      title={sendButtonTooltip}
+                    >
+                      <SendIcon />
+                    </IconButton>
+                  </HoverTooltip>
                 </div>
               </div>
+
+              {queuedSendSummary ? (
+                <div className="composer-queued-send" role="status" title={queuedSendText}>
+                  <span className="composer-queued-send-text">{queuedSendText}</span>
+                  <button
+                    type="button"
+                    className="composer-queued-send-action"
+                    onClick={onSendNextQueuedNow}
+                    disabled={!onSendNextQueuedNow}
+                  >
+                    {text.queuedSendNow}
+                  </button>
+                  <button
+                    type="button"
+                    className="composer-queued-send-action"
+                    onClick={onCancelQueuedSends}
+                    disabled={!onCancelQueuedSends}
+                  >
+                    {text.queuedSendCancel}
+                  </button>
+                </div>
+              ) : null}
 
               {composerNotice ? (
                 <div

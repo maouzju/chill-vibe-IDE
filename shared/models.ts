@@ -111,7 +111,7 @@ export const MODEL_OPTIONS: ModelOption[] = [
   },
 ]
 
-const legacyCodexModels = new Set(['gpt-5.4', 'gpt-4.5', '__dream_tool__', '__spec_tool__'])
+const legacyCodexModels = new Set(['gpt-4.5', '__dream_tool__', '__spec_tool__'])
 
 const canonicalizeModelAlias = (value: string) => value.trim().toLowerCase().replace(/\s+/g, '-')
 

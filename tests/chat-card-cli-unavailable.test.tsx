@@ -73,3 +73,59 @@ test('chat composer keeps send clickable when the provider CLI is unavailable so
   assert.match(markup, /aria-label="Send message"/)
   assert.doesNotMatch(markup, /aria-label="Send message"[^>]*disabled/)
 })
+
+test('running chat composer exposes a send-later hover hint and queued-send controls', () => {
+  const markup = renderToStaticMarkup(
+    <ChatCard
+      card={{
+        ...createCard(),
+        status: 'streaming',
+        streamId: 'stream-1',
+        draft: 'Please queue this',
+      }}
+      providerReady={true}
+      workspacePath="D:\\Git\\chill-vibe"
+      language="en"
+      systemPrompt={defaultSystemPrompt}
+      modelPromptRules={[]}
+      crossProviderSkillReuseEnabled={true}
+      musicAlbumCoverEnabled={false}
+      weatherCity=""
+      gitAgentModel="gpt-5.5 low"
+      brainstormRequestModel="gpt-5.5"
+      availableQuickToolModels={[]}
+      autoUrgeEnabled={false}
+      autoUrgeMessage=""
+      autoUrgeSuccessKeyword=""
+      queuedSendSummary={{
+        count: 1,
+        nextPreview: 'Queued follow-up',
+        nextAttachmentCount: 0,
+      }}
+      onSetAutoUrgeEnabled={() => undefined}
+      onRemove={() => undefined}
+      onSend={async (_prompt: string, _attachments: ImageAttachment[]) => undefined}
+      onStop={async () => undefined}
+      onCancelQueuedSends={() => undefined}
+      onSendNextQueuedNow={() => undefined}
+      onDraftChange={() => undefined}
+      onChangeModel={() => undefined}
+      onChangeReasoningEffort={() => undefined}
+      onTogglePlanMode={() => undefined}
+      onToggleThinking={() => undefined}
+      onToggleCollapsed={() => undefined}
+      onMarkRead={() => undefined}
+      onStickyNoteChange={() => undefined}
+      onPatchCard={() => undefined}
+      onChangeTitle={() => undefined}
+      isRestored={false}
+      onRestoredAnimationEnd={() => undefined}
+    />,
+  )
+
+  assert.match(markup, /aria-label="Send later"/)
+  assert.match(markup, /Click or right-click to queue this message for after the current answer\./)
+  assert.match(markup, /1 queued: Queued follow-up/)
+  assert.match(markup, />Send now</)
+  assert.match(markup, />Cancel</)
+})

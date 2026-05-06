@@ -102,13 +102,15 @@ export const evaluateAutoUrge = (
     return { kind: 'skip' }
   }
 
-  const trimmedSuccessKeyword = state.successKeyword.trim()
-  const successFound =
-    trimmedSuccessKeyword.length > 0 &&
-    latestAssistantTurnContainsSuccessKeyword(state.messages, trimmedSuccessKeyword)
+  if (trigger.type === 'stream-finished') {
+    const trimmedSuccessKeyword = state.successKeyword.trim()
+    const successFound =
+      trimmedSuccessKeyword.length > 0 &&
+      latestAssistantTurnContainsSuccessKeyword(state.messages, trimmedSuccessKeyword)
 
-  if (successFound) {
-    return { kind: 'disable' }
+    if (successFound) {
+      return { kind: 'disable' }
+    }
   }
 
   return {

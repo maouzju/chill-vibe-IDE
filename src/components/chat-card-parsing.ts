@@ -78,11 +78,6 @@ export type RenderableMessage =
     }
   | StructuredToolGroup
 
-export const getAskUserAnswerKey = (message: ChatMessage) =>
-  message.meta?.kind === 'ask-user'
-    ? `${message.id}:${message.meta.structuredData ?? message.meta.itemId ?? ''}`
-    : message.id
-
 const structuredDataCache = new WeakMap<ChatMessage, Record<string, unknown> | null>()
 
 export const readStructuredData = (message: ChatMessage) => {
@@ -485,6 +480,25 @@ export const parseStructuredAskUserMessage = (message: ChatMessage): StructuredA
     options: first.options,
     questions,
   }
+}
+
+export const getAskUserAnswerKey = (message: ChatMessage) => {
+  if (message.meta?.kind !== 'ask-user') {
+    return message.id
+  }
+
+  const parsed = parseStructuredAskUserMessage(message)
+  const firstQuestion = parsed?.questions[0]
+  const questionSignature = firstQuestion
+    ? JSON.stringify({
+        question: firstQuestion.question,
+        header: firstQuestion.header,
+        multiSelect: firstQuestion.multiSelect,
+        options: firstQuestion.options.map((option) => option.label),
+      })
+    : ''
+
+  return `${message.id}:${parsed?.itemId ?? message.meta.itemId ?? ''}:${questionSignature}`
 }
 
 export const getToolGroupKey = (items: StructuredToolGroupItem[]): string =>

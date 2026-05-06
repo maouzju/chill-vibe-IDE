@@ -9,6 +9,7 @@ import type {
 } from '../../shared/schema'
 import type { AppLanguage } from '../../shared/schema'
 import type { CardRecoveryStatus } from '../stream-recovery-feedback'
+import type { QueuedSendSummary, SendMessageOptions } from './deferred-send-queue'
 import { PaneView } from './PaneView'
 import { SplitResizeHandle } from './SplitResizeHandle'
 
@@ -83,12 +84,20 @@ type LayoutRendererProps = {
     >,
   ) => void
   onChangeCardTitle: (cardId: string, title: string) => void
-  onSendMessage: (cardId: string, prompt: string, attachments: ImageAttachment[]) => Promise<void>
+  onSendMessage: (
+    cardId: string,
+    prompt: string,
+    attachments: ImageAttachment[],
+    options?: SendMessageOptions,
+  ) => Promise<void>
   onStopMessage: (cardId: string) => Promise<void>
+  onCancelQueuedSends?: (cardId: string) => void
+  onSendNextQueuedNow?: (cardId: string) => void
   onManualRecoverStream?: (cardId: string) => Promise<unknown>
   onForkConversation?: (cardId: string, messageId: string) => void
   onOpenFile?: (paneId: string, relativePath: string) => void
   cardRecoveryStatuses?: ReadonlyMap<string, CardRecoveryStatus>
+  queuedSendSummaries?: ReadonlyMap<string, QueuedSendSummary>
 }
 
 export const LayoutRenderer = ({

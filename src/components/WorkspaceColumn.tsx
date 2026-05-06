@@ -30,6 +30,7 @@ import { listExternalHistory, loadExternalSession } from '../api'
 import { resizeColumnGroups } from '../column-resize'
 import { clearDragPayload, readDragPayload, type Placement, writeDragPayload } from '../dnd'
 import type { CardRecoveryStatus } from '../stream-recovery-feedback'
+import type { QueuedSendSummary, SendMessageOptions } from './deferred-send-queue'
 import { areWorkspaceColumnPropsEqual } from './layout-memoization'
 import { filterExternalSessionHistory, filterSessionHistoryEntries, hasSessionHistorySearch } from './workspace-column-history'
 import { CloseIcon, FolderIcon, HistoryIcon, IconButton } from './Icons'
@@ -143,8 +144,15 @@ type WorkspaceColumnProps = {
   onSetActiveTab: (paneId: string, tabId: string) => void
   onResizePane: (splitId: string, ratios: number[]) => void
   onActivatePane: (paneId: string) => void
-  onSendMessage: (cardId: string, prompt: string, attachments: ImageAttachment[]) => Promise<void>
+  onSendMessage: (
+    cardId: string,
+    prompt: string,
+    attachments: ImageAttachment[],
+    options?: SendMessageOptions,
+  ) => Promise<void>
   onStopMessage: (cardId: string) => Promise<void>
+  onCancelQueuedSends?: (cardId: string) => void
+  onSendNextQueuedNow?: (cardId: string) => void
   onManualRecoverStream?: (cardId: string) => Promise<unknown>
   onForkConversation?: (cardId: string, messageId: string) => void
   onOpenFile?: (paneId: string, relativePath: string) => void
@@ -155,6 +163,7 @@ type WorkspaceColumnProps = {
   onRestoreSession: (entryId: string) => void
   onImportExternalSession: (entry: SessionHistoryEntry) => void
   cardRecoveryStatuses?: ReadonlyMap<string, CardRecoveryStatus>
+  queuedSendSummaries?: ReadonlyMap<string, QueuedSendSummary>
 }
 
 const getHorizontalPlacement = (event: DragEvent<HTMLElement>) => {
@@ -204,6 +213,8 @@ const WorkspaceColumnView = ({
   onActivatePane,
   onSendMessage,
   onStopMessage,
+  onCancelQueuedSends,
+  onSendNextQueuedNow,
   onManualRecoverStream,
   onForkConversation,
   onOpenFile,
@@ -214,6 +225,7 @@ const WorkspaceColumnView = ({
   onRestoreSession,
   onImportExternalSession,
   cardRecoveryStatuses,
+  queuedSendSummaries,
 }: WorkspaceColumnProps) => {
   const text = getLocaleText(language)
   const [editingPath, setEditingPath] = useState(() => !column.workspacePath.trim())
@@ -883,10 +895,13 @@ const WorkspaceColumnView = ({
           onChangeCardTitle={onChangeCardTitle}
           onSendMessage={onSendMessage}
           onStopMessage={onStopMessage}
+          onCancelQueuedSends={onCancelQueuedSends}
+          onSendNextQueuedNow={onSendNextQueuedNow}
           onManualRecoverStream={onManualRecoverStream}
           onForkConversation={onForkConversation}
         onOpenFile={onOpenFile}
         cardRecoveryStatuses={cardRecoveryStatuses}
+        queuedSendSummaries={queuedSendSummaries}
       />
       </div>
 

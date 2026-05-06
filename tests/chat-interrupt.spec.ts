@@ -20,7 +20,27 @@ type MockCardState = {
 const getActiveComposerTextarea = (page: Page) =>
   page.locator('.pane-tab-panel.is-active .composer textarea')
 
-const emitStreamEvent = async (page: Page, streamId: string, eventName: string, data: unknown) => {
+const emitStreamEvent = async (
+  page: Page,
+  streamId: string,
+  eventName: string,
+  data: unknown,
+  options: { waitForSubscriber?: boolean } = {},
+) => {
+  if (options.waitForSubscriber ?? true) {
+    await expect
+      .poll(async () =>
+        page.evaluate((targetStreamId) => {
+          const bridge = window as typeof window & {
+            __getMockChatStreamSubscriberCount: (streamId: string) => number
+          }
+
+          return bridge.__getMockChatStreamSubscriberCount(targetStreamId)
+        }, streamId),
+      )
+      .toBeGreaterThan(0)
+  }
+
   await page.evaluate(
     ({ targetStreamId, targetEventName, payload }) => {
       const bridge = window as typeof window & {
@@ -170,6 +190,15 @@ const installMockApis = async (
         }
 
         return sources.size
+      },
+    })
+
+    Object.defineProperty(window, '__getMockChatStreamSubscriberCount', {
+      configurable: true,
+      writable: true,
+      value: (streamId: string) => {
+        const url = `/api/chat/stream/${encodeURIComponent(streamId)}`
+        return sourcesByUrl.get(url)?.size ?? 0
       },
     })
 
@@ -457,7 +486,7 @@ const installMockApis = async (
     requests.push(`stop:${streamId}`)
     await route.fulfill({ status: 204 })
     if (autoEmitDoneOnStop) {
-      await emitStreamEvent(page, streamId, 'done', { stopped: true })
+      await emitStreamEvent(page, streamId, 'done', { stopped: true }, { waitForSubscriber: false })
     }
   })
 
@@ -524,42 +553,89 @@ const installMockApis = async (
   }
 }
 
-test('sending during a running card stops the active stream and immediately starts the new request', async ({ page }) => {
+test('sending during a running card queues the next request until the active stream finishes', async ({ page }) => {
   const mock = await installMockApis(page)
   await page.goto('http://localhost:5173')
 
   const textarea = getActiveComposerTextarea(page)
-  const sendButton = page.getByRole('button', { name: 'Send message' })
+  const sendButton = page.getByRole('button', { name: 'Send later' })
 
   await expect(textarea).toBeVisible()
-  await textarea.fill('Interrupt with a new instruction')
+  await textarea.fill('Queue this follow-up')
   await expect(sendButton).toBeEnabled()
+  await expect(sendButton).toHaveAttribute('title', /Click or right-click/)
 
   await sendButton.click()
 
   await expect(textarea).toHaveValue('')
-  await expect.poll(() => mock.readRequests()).toEqual([
-    'stop:stream-1',
-    'message:Interrupt with a new instruction',
-  ])
+  await expect(page.locator('.composer-queued-send')).toContainText('1 queued')
+  await expect(page.locator('.composer-queued-send')).toContainText('Queue this follow-up')
+  await expect.poll(() => mock.readRequests()).toEqual([])
 
-  await expect
-    .poll(() => mock.readState().columns[0]?.cards['card-1']?.messages.map((message) => message.role))
-    .toEqual(['assistant', 'system', 'user'])
-  await expect
-    .poll(() => mock.readState().columns[0]?.cards['card-1']?.messages[1]?.meta?.kind)
-    .toBe('run-stopped')
-  await expect
-    .poll(() => mock.readState().columns[0]?.cards['card-1']?.messages[1]?.meta?.stopReason)
-    .toBe('user-interrupt')
-  await expect
-    .poll(() => mock.readState().columns[0]?.cards['card-1']?.messages[1]?.content)
-    .toBe('User interrupted')
+  await emitStreamEvent(page, 'stream-1', 'done', {})
+
+  await expect.poll(() => mock.readRequests()).toEqual(['message:Queue this follow-up'])
   await expect.poll(() => mock.readState().columns[0]?.cards['card-1']?.status).toBe('streaming')
   await expect.poll(() => mock.readState().columns[0]?.cards['card-1']?.streamId).toBe('stream-2')
+  await expect(page.locator('.composer-queued-send')).toHaveCount(0)
 })
 
-test('sending during a running Claude chat does not keep the interrupted session id for the follow-up', async ({ page }) => {
+test('right-clicking send while a card is running queues the composer message', async ({ page }) => {
+  const mock = await installMockApis(page)
+  await page.goto('http://localhost:5173')
+
+  const textarea = getActiveComposerTextarea(page)
+  const sendButton = page.getByRole('button', { name: 'Send later' })
+
+  await expect(textarea).toBeVisible()
+  await textarea.fill('Right-click queue item')
+  await sendButton.click({ button: 'right' })
+
+  await expect(textarea).toHaveValue('')
+  await expect(page.locator('.composer-queued-send')).toContainText('Right-click queue item')
+  await expect.poll(() => mock.readRequests()).toEqual([])
+})
+
+test('queued messages can be cancelled before they are sent', async ({ page }) => {
+  const mock = await installMockApis(page)
+  await page.goto('http://localhost:5173')
+
+  const textarea = getActiveComposerTextarea(page)
+  const sendButton = page.getByRole('button', { name: 'Send later' })
+
+  await textarea.fill('Cancel this queued prompt')
+  await sendButton.click()
+  await expect(page.locator('.composer-queued-send')).toBeVisible()
+
+  await page.getByRole('button', { name: 'Cancel' }).click()
+
+  await expect(page.locator('.composer-queued-send')).toHaveCount(0)
+  await emitStreamEvent(page, 'stream-1', 'done', {})
+  await expect.poll(() => mock.readRequests()).toEqual([])
+})
+
+test('queued messages can be sent now by intentionally interrupting the running card', async ({ page }) => {
+  const mock = await installMockApis(page)
+  await page.goto('http://localhost:5173')
+
+  const textarea = getActiveComposerTextarea(page)
+  const sendButton = page.getByRole('button', { name: 'Send later' })
+
+  await textarea.fill('Send this queued prompt now')
+  await sendButton.click()
+  await expect(page.locator('.composer-queued-send')).toBeVisible()
+
+  await page.getByRole('button', { name: 'Send now' }).click()
+
+  await expect.poll(() => mock.readRequests()).toEqual([
+    'stop:stream-1',
+    'message:Send this queued prompt now',
+  ])
+  await expect(page.locator('.composer-queued-send')).toHaveCount(0)
+  await expect.poll(() => mock.readState().columns[0]?.cards['card-1']?.messages[1]?.meta?.stopReason).toBe('user-interrupt')
+})
+
+test('sending a queued running Claude chat now does not keep the interrupted session id for the follow-up', async ({ page }) => {
   const mock = await installMockApis(page, {
     initialCard: {
       status: 'streaming',
@@ -580,11 +656,12 @@ test('sending during a running Claude chat does not keep the interrupted session
   await page.goto('http://localhost:5173')
 
   const textarea = getActiveComposerTextarea(page)
-  const sendButton = page.getByRole('button', { name: 'Send message' })
+  const sendButton = page.getByRole('button', { name: 'Send later' })
 
   await expect(textarea).toBeVisible()
   await textarea.fill('Use this replacement instruction')
   await sendButton.click()
+  await page.getByRole('button', { name: 'Send now' }).click()
 
   await expect.poll(() => mock.readRequests()[0]).toBe('stop:stream-1')
   await expect.poll(() => mock.readChatRequests()[0]?.prompt).toContain('Use this replacement instruction')
@@ -617,7 +694,9 @@ test('sending during /compact still waits for the compaction stream to finish', 
   await expect.poll(() => mock.readState().columns[0]?.cards['card-1']?.streamId).toBe('stream-2')
 
   await textarea.fill('Follow-up after compact')
-  await sendButton.click()
+  const deferredSendButton = page.getByRole('button', { name: 'Send later' })
+  await expect(deferredSendButton).toBeVisible()
+  await deferredSendButton.click()
 
   await expect(textarea).toHaveValue('')
   await expect.poll(() => mock.readRequests()).toEqual(['message:/compact'])
@@ -687,6 +766,81 @@ test('answering a restored ask-user card stops the recovered stream and immediat
   await expect.poll(() => mock.readState().columns[0]?.cards['card-1']?.streamId).toBe('stream-2')
 })
 
+test('restored answered ask-user cards stay locked and keep the composer at the pane bottom', async ({
+  page,
+}) => {
+  const now = new Date().toISOString()
+  await installMockApis(page, {
+    initialCard: {
+      status: 'idle',
+      sessionId: 'session-1',
+      messages: [
+        createAskUserMessage(now),
+        {
+          id: 'user-answer-1',
+          role: 'user',
+          content: 'Fast',
+          createdAt: now,
+        },
+        {
+          id: 'assistant-after-answer-1',
+          role: 'assistant',
+          content: 'Continuing after your answer.',
+          createdAt: now,
+        },
+      ],
+    },
+  })
+  await page.goto('http://localhost:5173')
+
+  const askUserCard = page.locator('.ask-user-card').first()
+  await expect(askUserCard).toBeVisible()
+  await expect(askUserCard).toHaveClass(/is-answered/)
+  await expect(askUserCard.locator('.ask-user-submit')).toBeDisabled()
+  await expect(askUserCard.locator('.ask-user-submit')).toContainText('Submitted')
+
+  const paneContent = page.locator('.pane-content').first()
+  const cardFooter = page.locator('.pane-tab-panel.is-active .card-footer').first()
+  const [paneBox, footerBox] = await Promise.all([
+    paneContent.boundingBox(),
+    cardFooter.boundingBox(),
+  ])
+
+  expect(paneBox).not.toBeNull()
+  expect(footerBox).not.toBeNull()
+  expect(Math.abs((paneBox!.y + paneBox!.height) - (footerBox!.y + footerBox!.height))).toBeLessThanOrEqual(2)
+})
+
+test('choosing ask-user Other keeps the composer anchored to the pane bottom before submit', async ({
+  page,
+}) => {
+  const now = new Date().toISOString()
+  await installMockApis(page, {
+    initialCard: {
+      status: 'idle',
+      sessionId: 'session-1',
+      messages: [createAskUserMessage(now)],
+    },
+  })
+  await page.goto('http://localhost:5173')
+
+  const askUserCard = page.locator('.ask-user-card').first()
+  await expect(askUserCard).toBeVisible()
+  await askUserCard.locator('.ask-user-option').filter({ hasText: 'Other' }).click()
+  await expect(askUserCard.locator('.ask-user-other-input')).toBeVisible()
+
+  const paneContent = page.locator('.pane-content').first()
+  const cardFooter = page.locator('.pane-tab-panel.is-active .card-footer').first()
+  const [paneBox, footerBox] = await Promise.all([
+    paneContent.boundingBox(),
+    cardFooter.boundingBox(),
+  ])
+
+  expect(paneBox).not.toBeNull()
+  expect(footerBox).not.toBeNull()
+  expect(Math.abs((paneBox!.y + paneBox!.height) - (footerBox!.y + footerBox!.height))).toBeLessThanOrEqual(2)
+})
+
 test('answering a live ask-user activity still sends if stop does not emit done', async ({ page }) => {
   const mock = await installMockApis(page, { autoEmitDoneOnStop: false })
   await page.goto('http://localhost:5173')
@@ -704,7 +858,7 @@ test('answering a live ask-user activity still sends if stop does not emit done'
   await expect.poll(() => mock.readState().columns[0]?.cards['card-1']?.streamId).toBe('stream-2')
 })
 
-test('old answered ask-user cards do not disable ordinary user interrupts', async ({ page }) => {
+test('old answered ask-user cards allow ordinary queued send-now interrupts', async ({ page }) => {
   const now = new Date().toISOString()
   const mock = await installMockApis(page, {
     initialCard: {
@@ -732,11 +886,12 @@ test('old answered ask-user cards do not disable ordinary user interrupts', asyn
   await page.goto('http://localhost:5173')
 
   const textarea = getActiveComposerTextarea(page)
-  const sendButton = page.getByRole('button', { name: 'Send message' })
+  const sendButton = page.getByRole('button', { name: 'Send later' })
 
   await expect(textarea).toBeVisible()
   await textarea.fill('Interrupt the new work')
   await sendButton.click()
+  await page.getByRole('button', { name: 'Send now' }).click()
 
   await expect.poll(() => mock.readRequests()).toEqual([
     'stop:stream-1',

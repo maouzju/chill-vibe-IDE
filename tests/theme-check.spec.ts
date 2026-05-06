@@ -1446,6 +1446,14 @@ const mockAppApis = async (
   },
 ) => {
   await installMockElectronBridge(page)
+  await page.addInitScript(() => {
+    if (!window.electronAPI) {
+      return
+    }
+
+    window.electronAPI.subscribeChatStream = async () => undefined
+    window.electronAPI.unsubscribeChatStream = async () => undefined
+  })
 
   let state = options?.state ?? createMockState()
   const setupStatus: SetupStatus = options?.setupStatus ?? {
@@ -4492,6 +4500,46 @@ for (const theme of ['dark', 'light'] as const) {
     expect(['hidden', 'clip']).toContain(overflowMetrics.overflowY)
 
     await expect(composer).toHaveScreenshot(`composer-multiline-auto-height-${theme}.png`, {
+      animations: 'disabled',
+      caret: 'hide',
+    })
+  })
+
+  test(`queued send notice stays readable in ${theme} theme`, async ({ page }) => {
+    const state = createMockState()
+    state.settings.theme = theme
+    state.settings.language = 'en'
+    state.columns[0]!.cards[0] = {
+      ...state.columns[0]!.cards[0]!,
+      status: 'streaming',
+      draft: 'Queue from theme check',
+      messages: [
+        {
+          id: 'assistant-1',
+          role: 'assistant',
+          content: 'Still writing',
+          createdAt: new Date().toISOString(),
+        },
+      ],
+    }
+
+    await mockAppApis(page, { state })
+    await page.goto(appUrl)
+
+    const textarea = page.locator('.composer textarea').first()
+    const sendButton = page.getByRole('button', { name: 'Send later' }).first()
+    await expect(textarea).toBeVisible()
+    await expect(sendButton).toHaveAttribute('title', /Click or right-click/)
+
+    await sendButton.hover()
+    await expect(page.getByRole('tooltip')).toContainText('Click or right-click')
+
+    await sendButton.click()
+
+    const queueNotice = page.locator('.composer-queued-send').first()
+    await expect(queueNotice).toContainText('1 queued')
+    await expect(queueNotice).toContainText('Queue from theme check')
+    await expect(queueNotice).toHaveScreenshot(`composer-queued-send-${theme}.png`, {
       animations: 'disabled',
       caret: 'hide',
     })

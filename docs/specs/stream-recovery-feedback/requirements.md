@@ -26,6 +26,7 @@ When a chat card's stream enters recovery, the user sees a short status line **i
 8. **Runtime proxy settings are live** - Changes to stall timeout, first-byte timeout, and max retries must be synced to the Electron backend/proxy runtime immediately; otherwise long chats keep using stale retry behavior until a restart.
 9. **Stats reflect local reconnects** - When Codex emits native `Reconnecting... n/5` placeholders before a recoverable local-stream retry, whether as JSON-RPC stdout events, JSON-RPC error responses, or stderr diagnostics, Settings -> Routing -> Auto-retry stats must count a disconnect immediately, and automated recovery attempts must not inflate the request count.
 10. **Native placeholders stay out of chat text** - Codex native `Reconnecting... n/5` placeholder deltas, completed assistant-message items, JSON-RPC error messages, or stderr diagnostics are control signals only; they must not be persisted or rendered as normal assistant content/error text.
+11. **Capacity errors keep resuming** - If a provider reports that the selected model is at capacity after a live session id exists, treat it as recoverable and continue via session resume instead of surfacing a final hard error.
 
 ## Non-goals
 

@@ -38,7 +38,7 @@ test('manual activation sends the selected urge immediately when the chat is idl
   })
 })
 
-test('manual activation disables auto urge when the latest assistant reply already contains the success keyword', () => {
+test('manual activation ignores old success keywords so turning auto urge back on stays enabled', () => {
   const result = evaluateAutoUrge(
     {
       type: 'manual-activation',
@@ -54,7 +54,8 @@ test('manual activation disables auto urge when the latest assistant reply alrea
   )
 
   assert.deepEqual(result, {
-    kind: 'disable',
+    kind: 'send',
+    message: 'Keep verifying until the fix is proven.',
   })
 })
 

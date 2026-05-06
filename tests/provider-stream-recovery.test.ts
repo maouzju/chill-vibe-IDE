@@ -34,6 +34,22 @@ test('provider zero status exit after a live session is resumable', () => {
   )
 })
 
+
+test('capacity errors after a live session are resumable', () => {
+  assert.deepEqual(
+    classifyProviderStreamErrorRecovery(
+      {
+        sessionId: 'session-1',
+      },
+      'Selected model is at capacity. Please try a different model.',
+    ),
+    {
+      recoverable: true,
+      recoveryMode: 'resume-session',
+    },
+  )
+})
+
 test('setup and routing errors stay non-recoverable even with a session', () => {
   assert.deepEqual(
     classifyProviderStreamErrorRecovery(

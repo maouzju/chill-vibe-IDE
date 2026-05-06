@@ -232,6 +232,36 @@ test('composer settings hosts the auto urge toggle for an existing chat', async 
   await expectRecordedPromptsToContain(page, [defaultAutoUrgeMessage])
 })
 
+test('composer settings can turn auto urge back on after an older success reply', async ({ page }) => {
+  await installMockApis(page, {
+    cardMessages: [
+      {
+        id: 'msg-1',
+        role: 'assistant',
+        content: 'Verified earlier. YES',
+        createdAt: new Date().toISOString(),
+      },
+    ],
+  })
+  await page.goto(appUrl)
+  await installMockChatBridge(page)
+
+  const settingsTrigger = page.locator('.composer-settings-trigger').first()
+  const settingsMenu = page.locator('.composer-settings-menu').first()
+  const autoUrgeStatus = page.locator('.composer-auto-urge-status').first()
+
+  await settingsTrigger.click()
+  await expect(settingsMenu).toBeVisible()
+
+  const autoUrgeToggle = settingsMenu.getByLabel('Auto Urge')
+  await expect(autoUrgeToggle).not.toBeChecked()
+  await autoUrgeToggle.check()
+
+  await expect(autoUrgeToggle).toBeChecked()
+  await expect(autoUrgeStatus).toContainText('Urging...')
+  await expectRecordedPromptsToContain(page, [defaultAutoUrgeMessage])
+})
+
 test('fresh chats stay manual even when auto urge is enabled in settings', async ({ page }) => {
   await installMockApis(page)
   await page.goto(appUrl)

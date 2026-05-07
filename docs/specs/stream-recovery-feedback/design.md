@@ -70,6 +70,7 @@ export const shouldClearRecoveryStatusOnStreamIdle = (
 5. **Provider capacity recovery**:
    - `classifyProviderStreamErrorRecovery()` treats model-capacity messages as recoverable only when a session id is available.
    - Codex app-server JSON-RPC failures after `thread/start` and Claude `result.is_error` failures both pass the emitted session id into that classifier, so transient capacity pressure resumes the existing conversation instead of ending the card.
+   - `ChatManager` also attaches the latest backend-known session id to recoverable `resume-session` error events. The renderer patches that id into the card before choosing the recovery mode, covering the race where `session` and `error` arrive close together and persistence has not yet caught up.
 
 6. **Native reconnect placeholder suppression**:
    - `item/agentMessage/delta` chunks, `item/completed` assistant messages, JSON-RPC error responses, and stderr diagnostic lines that are only Codex native `Reconnecting... n/5` placeholders are treated as recovery control signals.

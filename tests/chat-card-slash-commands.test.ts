@@ -8,6 +8,8 @@ import {
   resolveSlashMenuDismissedAfterQueryChange,
   resolveRemoteSlashCommands,
   resolveSlashCommandsLoadKeyAfterCancel,
+  resolveSlashCommandsStatusAfterLoadStart,
+  shouldLoadRemoteSlashCommands,
   shouldStartSlashCommandsLoad,
 } from '../src/components/chat-card-slash-commands.ts'
 
@@ -38,6 +40,43 @@ test('slash command loader only starts again when the effective request changes'
     ),
     true,
   )
+})
+
+test('remote slash command discovery stays lazy until the composer is actually typing a slash command', () => {
+  assert.equal(
+    shouldLoadRemoteSlashCommands({
+      isToolCard: false,
+      hasWorkspacePath: true,
+      slashCommandsEnabled: true,
+      slashQuery: null,
+    }),
+    false,
+  )
+  assert.equal(
+    shouldLoadRemoteSlashCommands({
+      isToolCard: false,
+      hasWorkspacePath: true,
+      slashCommandsEnabled: true,
+      slashQuery: '',
+    }),
+    true,
+  )
+  assert.equal(
+    shouldLoadRemoteSlashCommands({
+      isToolCard: true,
+      hasWorkspacePath: true,
+      slashCommandsEnabled: true,
+      slashQuery: '',
+    }),
+    false,
+  )
+})
+
+test('slash command loading status update is idempotent for repeated effect scheduling', () => {
+  assert.equal(resolveSlashCommandsStatusAfterLoadStart('idle'), 'loading')
+  assert.equal(resolveSlashCommandsStatusAfterLoadStart('ready'), 'loading')
+  assert.equal(resolveSlashCommandsStatusAfterLoadStart('error'), 'loading')
+  assert.equal(resolveSlashCommandsStatusAfterLoadStart('loading'), 'loading')
 })
 
 test('cancelling an in-flight slash command load allows the same request to restart', () => {

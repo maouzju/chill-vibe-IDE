@@ -44,6 +44,7 @@ It exists to reduce subjective back-and-forth. If a UI change violates these rul
 
 - Hover should clarify affordance, not redraw the whole screen.
 - Focus must be accessible and visible in both themes.
+- After sending a chat, the composer should clear and keep focus so follow-up typing stays immediate unless the flow explicitly hands focus elsewhere.
 - Selected state should be stronger than hover.
 - Drag/drop state should be obvious but temporary.
 - Disabled state should reduce affordance without destroying legibility.

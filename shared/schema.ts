@@ -1023,6 +1023,7 @@ export type StreamErrorEvent = {
   recoverable?: boolean
   recoveryMode?: StreamErrorRecoveryMode
   transientOnly?: boolean
+  sessionId?: string
 }
 
 export type StreamEventMap = {

@@ -23,6 +23,22 @@ export const shouldStartSlashCommandsLoad = (
   nextLoadKey: string,
 ) => currentLoadKey !== nextLoadKey
 
+export const resolveSlashCommandsStatusAfterLoadStart = (
+  currentStatus: 'idle' | 'loading' | 'ready' | 'error',
+) => currentStatus === 'loading' ? currentStatus : 'loading'
+
+export const shouldLoadRemoteSlashCommands = ({
+  isToolCard,
+  hasWorkspacePath,
+  slashCommandsEnabled,
+  slashQuery,
+}: {
+  isToolCard: boolean
+  hasWorkspacePath: boolean
+  slashCommandsEnabled: boolean
+  slashQuery: string | null
+}) => !isToolCard && hasWorkspacePath && slashCommandsEnabled && slashQuery !== null
+
 export const resolveSlashCommandsLoadKeyAfterCancel = (
   currentLoadKey: string | null,
   cancelledLoadKey: string,

@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 
 import type { ChatMessage } from '../shared/schema.ts'
+import { buildRenderableMessages } from '../src/components/chat-card-parsing.ts'
 import {
   getAskUserAnsweredOption,
   getLatestUserAnswerAfterAskUserMessage,
@@ -85,5 +86,30 @@ test('ask-user answered option prefers the current in-memory selection', () => {
       'ask-1:ask-1:{"question":"Choose?","header":"Need choice","multiSelect":false,"options":["Fast","Deep"]}': 'Deep',
     }),
     'Deep',
+  )
+})
+
+test('restored merged ask-user answer state resolves the reply after consecutive questions', () => {
+  const firstAsk = askUser('ask-1')
+  const secondAsk = askUser('ask-2')
+  const messages = [
+    firstAsk,
+    secondAsk,
+    message({
+      id: 'user-answer',
+      role: 'user',
+      content: '[1] Choose? -> Fast\n[2] Choose? -> Deep',
+    }),
+    message({ id: 'assistant-after', role: 'assistant', content: 'continuing' }),
+  ]
+  const renderableMessages = buildRenderableMessages(messages)
+  const mergedAskUser = renderableMessages[0]?.type === 'message'
+    ? renderableMessages[0].message
+    : null
+
+  assert.ok(mergedAskUser, 'consecutive ask-user messages should render as one merged card')
+  assert.equal(
+    getAskUserAnsweredOption(messages, mergedAskUser, {}),
+    '[1] Choose? -> Fast\n[2] Choose? -> Deep',
   )
 })

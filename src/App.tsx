@@ -56,6 +56,7 @@ import {
 } from '../shared/system-prompt'
 import {
   getRecoverableStreamRetryLimit,
+  getRecoverableStreamErrorSessionId,
   resolveStreamRecoveryMode,
   shouldKeepRecoveringTransientResumeWithFreshSession,
   shouldResetStreamRecoveryAttemptsForActivity,
@@ -2734,7 +2735,7 @@ function App() {
           persistAfterActions(actions, applyActions(actions))
           dispatchNextQueuedSend(columnId, card.id)
         },
-        onError: ({ message, recoverable, recoveryMode, transientOnly, hint }) => {
+        onError: ({ message, recoverable, recoveryMode, transientOnly, hint, sessionId }) => {
           flushBufferedAssistantDeltaForCard(card.id)
           source.close()
           activeStreamsRef.current.delete(card.id)
@@ -2748,6 +2749,23 @@ function App() {
           }
 
           if (recoverable) {
+            const recoverySessionId = getRecoverableStreamErrorSessionId({
+              recoverable,
+              recoveryMode,
+              sessionId,
+            })
+            if (recoverySessionId) {
+              const liveCard = getColumn(columnId)?.cards[card.id]
+              if (liveCard?.sessionId?.trim() !== recoverySessionId) {
+                const action: IdeAction = {
+                  type: 'updateCard',
+                  columnId,
+                  cardId: card.id,
+                  patch: { sessionId: recoverySessionId },
+                }
+                persistAfterAction(action.type, applyAction(action))
+              }
+            }
             const disconnectedLocalRecoveryStats = noteLocalRecoveryDisconnect(
               localRecoveryStatsRef.current.get(card.id),
             )
@@ -3443,13 +3461,11 @@ function App() {
         }
         return
       }
-      if (shouldQueueUntilDone) {
+      if (shouldQueueUntilDone || sendMode === 'defer') {
         enqueueQueuedSend(cardId, { id: crypto.randomUUID(), prompt, attachments })
-      } else if (sendMode === 'interrupt') {
-        enqueueQueuedSend(cardId, { id: crypto.randomUUID(), prompt, attachments })
-        await requestStopForCard(cardId, 'user-interrupt')
       } else {
         enqueueQueuedSend(cardId, { id: crypto.randomUUID(), prompt, attachments })
+        await requestStopForCard(cardId, 'user-interrupt')
       }
       return
     }

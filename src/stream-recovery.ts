@@ -19,6 +19,16 @@ export const resolveStreamRecoveryMode = (
   return 'reattach-stream'
 }
 
+export const getRecoverableStreamErrorSessionId = (
+  error: Pick<StreamErrorEvent, 'recoverable' | 'recoveryMode' | 'sessionId'>,
+) => {
+  if (error.recoverable !== true || error.recoveryMode !== 'resume-session') {
+    return null
+  }
+
+  const sessionId = error.sessionId?.trim()
+  return sessionId && sessionId.length > 0 ? sessionId : null
+}
 
 const defaultRecoverableStreamRetryLimit = 6
 

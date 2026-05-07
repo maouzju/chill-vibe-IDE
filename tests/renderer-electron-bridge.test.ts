@@ -335,7 +335,7 @@ test('openChatStream requires the Electron bridge and does not fall back to Even
 })
 
 test('openChatStream forwards recoverable desktop error payloads unchanged', async () => {
-  const capturedErrors: Array<{ message: string; recoverable?: boolean; recoveryMode?: string }> = []
+  const capturedErrors: Array<{ message: string; recoverable?: boolean; recoveryMode?: string; sessionId?: string }> = []
   let subscriptionId = ''
   const eventTarget = new EventTarget() as ElectronBridgeWindow
 
@@ -365,6 +365,7 @@ test('openChatStream forwards recoverable desktop error payloads unchanged', asy
           message: 'Temporary disconnect.',
           recoverable: true,
           recoveryMode: 'resume-session',
+          sessionId: 'session-1',
         },
       },
     }),
@@ -375,6 +376,7 @@ test('openChatStream forwards recoverable desktop error payloads unchanged', asy
       message: 'Temporary disconnect.',
       recoverable: true,
       recoveryMode: 'resume-session',
+      sessionId: 'session-1',
     },
   ])
 

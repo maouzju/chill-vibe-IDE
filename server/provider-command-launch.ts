@@ -13,6 +13,7 @@ type ProviderCommandLaunch = {
 }
 
 const windowsCmdShimPattern = /"%dp0%\\([^"\r\n]+?\.(?:js|cjs|mjs))"/i
+const windowsDirectExecutableCmdShimPattern = /"%dp0%\\([^"\r\n]+?\.exe)"\s+%[*\d]/i
 
 const resolveBundledNode = async (commandDir: string) => {
   const bundledNodePath = path.join(commandDir, 'node.exe')
@@ -32,12 +33,24 @@ const resolveWindowsCmdShimLaunch = async (
   try {
     const shimSource = await readFile(command, 'utf8')
     const entrypointMatch = shimSource.match(windowsCmdShimPattern)
+    const directExecutableMatch = shimSource.match(windowsDirectExecutableCmdShimPattern)
+
+    if (!entrypointMatch && !directExecutableMatch) {
+      return { command, args }
+    }
+
+    const commandDir = path.dirname(command)
+    if (directExecutableMatch) {
+      return {
+        command: path.resolve(commandDir, directExecutableMatch[1]!.replace(/\\/g, path.sep)),
+        args,
+      }
+    }
 
     if (!entrypointMatch) {
       return { command, args }
     }
 
-    const commandDir = path.dirname(command)
     const nodeCommand = await resolveBundledNode(commandDir)
     const entrypointPath = path.resolve(commandDir, entrypointMatch[1]!.replace(/\\/g, path.sep))
 

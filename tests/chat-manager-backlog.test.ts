@@ -4,6 +4,7 @@ import test from 'node:test'
 import {
   compactStreamEnvelopeForBacklog,
   appendStreamEnvelopeToBacklog,
+  buildStreamErrorPayload,
   maxBacklogCommandOutputChars,
 } from '../server/chat-manager.ts'
 import type { StreamEnvelope } from '../server/chat-manager.ts'
@@ -63,4 +64,24 @@ test('chat stream backlog coalesces repeated structured activity updates by item
   assert.ok(backlog[1])
   const secondCommand = getCommandActivity(backlog[1])
   assert.equal(secondCommand.data.output, 'third')
+})
+
+test('recoverable resume errors carry the latest known session id', () => {
+  assert.deepEqual(
+    buildStreamErrorPayload(
+      'Selected model is at capacity. Please try a different model.',
+      undefined,
+      {
+        recoverable: true,
+        recoveryMode: 'resume-session',
+      },
+      ' session-1 ',
+    ),
+    {
+      message: 'Selected model is at capacity. Please try a different model.',
+      recoverable: true,
+      recoveryMode: 'resume-session',
+      sessionId: 'session-1',
+    },
+  )
 })

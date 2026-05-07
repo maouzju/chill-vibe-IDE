@@ -4110,6 +4110,11 @@ body.is-card-dragging .lane-drop-zone-top {
   overflow: hidden;
 }
 
+.message-literal-text {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
 .message-attachment-list {
   --message-attachment-thumb-size: 7.25rem;
   --message-attachment-thumb-padding: 0.28rem;

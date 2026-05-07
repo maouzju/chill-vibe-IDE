@@ -3,6 +3,7 @@ import test from 'node:test'
 
 import {
   getRecoverableStreamRetryLimit,
+  getRecoverableStreamErrorSessionId,
   resolveStreamRecoveryMode,
   shouldFallbackToFreshSessionAfterTransientResumeLoop,
   shouldKeepRecoveringTransientResumeWithFreshSession,
@@ -20,6 +21,26 @@ test('recoverable resume-session errors keep the resume strategy when a session 
       true,
     ),
     'resume-session',
+  )
+})
+
+test('recoverable resume-session errors expose their fallback session id', () => {
+  assert.equal(
+    getRecoverableStreamErrorSessionId({
+      recoverable: true,
+      recoveryMode: 'resume-session',
+      sessionId: ' session-1 ',
+    }),
+    'session-1',
+  )
+
+  assert.equal(
+    getRecoverableStreamErrorSessionId({
+      recoverable: true,
+      recoveryMode: 'reattach-stream',
+      sessionId: 'session-1',
+    }),
+    null,
   )
 })
 

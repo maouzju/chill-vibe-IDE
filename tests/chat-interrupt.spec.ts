@@ -96,11 +96,25 @@ const createAskUserMessage = (createdAt: string) => ({
   },
 })
 
+const createFollowUpAskUserMessage = (createdAt: string) => ({
+  id: 'codex:stream-1:item:ask-user:question-2',
+  role: 'assistant' as const,
+  content: '',
+  createdAt,
+  meta: {
+    provider: 'codex',
+    kind: 'ask-user',
+    itemId: followUpAskUserActivity.itemId,
+    structuredData: JSON.stringify(followUpAskUserActivity),
+  },
+})
+
 const installMockApis = async (
   page: Page,
   options: {
     initialCard?: MockCardState
     autoEmitDoneOnStop?: boolean
+    holdChatMessageResponse?: boolean
   } = {},
 ) => {
   await page.addInitScript(() => {
@@ -382,11 +396,29 @@ const installMockApis = async (
       ],
     },
     autoEmitDoneOnStop = true,
+    holdChatMessageResponse: initialHoldChatMessageResponse = false,
   } = options
   const initialProvider = initialCard.provider ?? 'codex'
   const initialModel = initialCard.model ?? (initialProvider === 'claude' ? 'claude-opus-4-7' : 'gpt-5.5')
   let nextStreamNumber = 2
   const chatRequests: Array<{ prompt: string; sessionId?: string; provider?: string; streamId?: string }> = []
+  let holdChatMessageResponse = initialHoldChatMessageResponse
+  const heldChatMessageResponseResolvers: Array<() => void> = []
+  const waitForHeldChatMessageResponse = () => {
+    if (!holdChatMessageResponse) {
+      return Promise.resolve()
+    }
+
+    return new Promise<void>((resolve) => {
+      heldChatMessageResponseResolvers.push(resolve)
+    })
+  }
+  const releaseHeldChatMessageResponses = () => {
+    holdChatMessageResponse = false
+    while (heldChatMessageResponseResolvers.length > 0) {
+      heldChatMessageResponseResolvers.shift()?.()
+    }
+  }
 
   let state = createPlaywrightState({
     version: 1 as const,
@@ -500,6 +532,7 @@ const installMockApis = async (
       provider: body.provider,
       streamId: body.streamId,
     })
+    await waitForHeldChatMessageResponse()
     await route.fulfill({
       json: {
         streamId,
@@ -550,34 +583,71 @@ const installMockApis = async (
     readRequests: () => requests.slice(),
     readChatRequests: () => chatRequests.slice(),
     readState: () => state,
+    releaseHeldChatMessageResponses,
   }
 }
 
-test('sending during a running card queues the next request until the active stream finishes', async ({ page }) => {
+test('idle Claude send clears and refocuses the composer before slow request startup finishes', async ({
+  page,
+}) => {
+  const mock = await installMockApis(page, {
+    holdChatMessageResponse: true,
+    initialCard: {
+      status: 'idle',
+      sessionId: 'session-claude-1',
+      provider: 'claude',
+      model: 'claude-opus-4-7',
+      messages: [],
+    },
+  })
+  await page.goto('http://localhost:5173')
+
+  const textarea = getActiveComposerTextarea(page)
+  const sendButton = page.getByRole('button', { name: 'Send message' })
+
+  try {
+    await expect(textarea).toBeVisible()
+    await textarea.fill('Ask Claude and keep composing')
+    await expect(sendButton).toBeEnabled()
+
+    await sendButton.click()
+
+    await expect.poll(() => mock.readRequests()).toEqual(['message:Ask Claude and keep composing'])
+    await expect(textarea).toHaveValue('')
+    await expect
+      .poll(() => textarea.evaluate((node) => document.activeElement === node))
+      .toBe(true)
+
+    await textarea.type('Next prompt starts immediately')
+    await expect(textarea).toHaveValue('Next prompt starts immediately')
+  } finally {
+    mock.releaseHeldChatMessageResponses()
+  }
+})
+
+test('left-clicking send while a card is running interrupts and sends immediately', async ({ page }) => {
   const mock = await installMockApis(page)
   await page.goto('http://localhost:5173')
 
   const textarea = getActiveComposerTextarea(page)
-  const sendButton = page.getByRole('button', { name: 'Send later' })
+  const sendButton = page.getByRole('button', { name: 'Send message' })
 
   await expect(textarea).toBeVisible()
-  await textarea.fill('Queue this follow-up')
+  await textarea.fill('Send this follow-up now')
   await expect(sendButton).toBeEnabled()
-  await expect(sendButton).toHaveAttribute('title', /Click or right-click/)
+  await expect(sendButton).toHaveAttribute('title', /Right-click sends later/)
 
   await sendButton.click()
 
   await expect(textarea).toHaveValue('')
-  await expect(page.locator('.composer-queued-send')).toContainText('1 queued')
-  await expect(page.locator('.composer-queued-send')).toContainText('Queue this follow-up')
-  await expect.poll(() => mock.readRequests()).toEqual([])
-
-  await emitStreamEvent(page, 'stream-1', 'done', {})
-
-  await expect.poll(() => mock.readRequests()).toEqual(['message:Queue this follow-up'])
+  await expect(page.locator('.composer-queued-send')).toHaveCount(0)
+  await expect.poll(() => mock.readRequests()).toEqual([
+    'stop:stream-1',
+    'message:Send this follow-up now',
+  ])
   await expect.poll(() => mock.readState().columns[0]?.cards['card-1']?.status).toBe('streaming')
   await expect.poll(() => mock.readState().columns[0]?.cards['card-1']?.streamId).toBe('stream-2')
-  await expect(page.locator('.composer-queued-send')).toHaveCount(0)
+  await expect.poll(() => mock.readState().columns[0]?.cards['card-1']?.messages[1]?.meta?.stopReason).toBe('user-interrupt')
 })
 
 test('right-clicking send while a card is running queues the composer message', async ({ page }) => {
@@ -585,7 +655,7 @@ test('right-clicking send while a card is running queues the composer message', 
   await page.goto('http://localhost:5173')
 
   const textarea = getActiveComposerTextarea(page)
-  const sendButton = page.getByRole('button', { name: 'Send later' })
+  const sendButton = page.getByRole('button', { name: 'Send message' })
 
   await expect(textarea).toBeVisible()
   await textarea.fill('Right-click queue item')
@@ -601,10 +671,10 @@ test('queued messages can be cancelled before they are sent', async ({ page }) =
   await page.goto('http://localhost:5173')
 
   const textarea = getActiveComposerTextarea(page)
-  const sendButton = page.getByRole('button', { name: 'Send later' })
+  const sendButton = page.getByRole('button', { name: 'Send message' })
 
   await textarea.fill('Cancel this queued prompt')
-  await sendButton.click()
+  await sendButton.click({ button: 'right' })
   await expect(page.locator('.composer-queued-send')).toBeVisible()
 
   await page.getByRole('button', { name: 'Cancel' }).click()
@@ -619,10 +689,10 @@ test('queued messages can be sent now by intentionally interrupting the running 
   await page.goto('http://localhost:5173')
 
   const textarea = getActiveComposerTextarea(page)
-  const sendButton = page.getByRole('button', { name: 'Send later' })
+  const sendButton = page.getByRole('button', { name: 'Send message' })
 
   await textarea.fill('Send this queued prompt now')
-  await sendButton.click()
+  await sendButton.click({ button: 'right' })
   await expect(page.locator('.composer-queued-send')).toBeVisible()
 
   await page.getByRole('button', { name: 'Send now' }).click()
@@ -656,11 +726,11 @@ test('sending a queued running Claude chat now does not keep the interrupted ses
   await page.goto('http://localhost:5173')
 
   const textarea = getActiveComposerTextarea(page)
-  const sendButton = page.getByRole('button', { name: 'Send later' })
+  const sendButton = page.getByRole('button', { name: 'Send message' })
 
   await expect(textarea).toBeVisible()
   await textarea.fill('Use this replacement instruction')
-  await sendButton.click()
+  await sendButton.click({ button: 'right' })
   await page.getByRole('button', { name: 'Send now' }).click()
 
   await expect.poll(() => mock.readRequests()[0]).toBe('stop:stream-1')
@@ -694,9 +764,9 @@ test('sending during /compact still waits for the compaction stream to finish', 
   await expect.poll(() => mock.readState().columns[0]?.cards['card-1']?.streamId).toBe('stream-2')
 
   await textarea.fill('Follow-up after compact')
-  const deferredSendButton = page.getByRole('button', { name: 'Send later' })
-  await expect(deferredSendButton).toBeVisible()
-  await deferredSendButton.click()
+  const runningSendButton = page.getByRole('button', { name: 'Send message' })
+  await expect(runningSendButton).toBeVisible()
+  await runningSendButton.click()
 
   await expect(textarea).toHaveValue('')
   await expect.poll(() => mock.readRequests()).toEqual(['message:/compact'])
@@ -811,6 +881,81 @@ test('restored answered ask-user cards stay locked and keep the composer at the 
   expect(Math.abs((paneBox!.y + paneBox!.height) - (footerBox!.y + footerBox!.height))).toBeLessThanOrEqual(2)
 })
 
+test('restored answered merged ask-user cards stay locked after consecutive questions', async ({ page }) => {
+  const now = new Date().toISOString()
+  const mock = await installMockApis(page, {
+    initialCard: {
+      status: 'idle',
+      sessionId: 'session-1',
+      messages: [
+        createAskUserMessage(now),
+        createFollowUpAskUserMessage(now),
+        {
+          id: 'user-answer-1',
+          role: 'user',
+          content: '[1] Which path should I take? -> Fast\n[2] How should I handle the popup question tool? -> Continue',
+          createdAt: now,
+        },
+        {
+          id: 'assistant-after-answer-1',
+          role: 'assistant',
+          content: 'Continuing after your answers.',
+          createdAt: now,
+        },
+      ],
+    },
+  })
+  await page.goto('http://localhost:5173')
+
+  const askUserCard = page.locator('.ask-user-card').first()
+  await expect(askUserCard).toBeVisible()
+  await expect(askUserCard).toHaveClass(/is-answered/)
+  await expect(askUserCard.locator('.ask-user-counter')).toContainText('1 / 2')
+  await expect(askUserCard.locator('.ask-user-submit')).toBeDisabled()
+  await expect(askUserCard.locator('.ask-user-submit')).toContainText('Submitted')
+  await expect.poll(() => mock.readRequests()).toEqual([])
+})
+
+test('answered merged ask-user cards stay locked after an actual page reload', async ({ page }) => {
+  const now = new Date().toISOString()
+  const mock = await installMockApis(page, {
+    initialCard: {
+      status: 'idle',
+      sessionId: 'session-1',
+      messages: [
+        createAskUserMessage(now),
+        createFollowUpAskUserMessage(now),
+      ],
+    },
+  })
+  await page.goto('http://localhost:5173')
+
+  const askUserCard = page.locator('.ask-user-card').first()
+  await expect(askUserCard).toBeVisible()
+  await expect(askUserCard.locator('.ask-user-counter')).toContainText('1 / 2')
+
+  await askUserCard.locator('.ask-user-option').filter({ hasText: 'Fast' }).click()
+  await askUserCard.getByRole('button', { name: 'Next' }).click()
+  await askUserCard.locator('.ask-user-option').filter({ hasText: 'Continue' }).click()
+  await expect(askUserCard.locator('.ask-user-submit')).toBeEnabled()
+  await askUserCard.locator('.ask-user-submit').click()
+
+  await expect.poll(() => mock.readRequests().length).toBe(1)
+  await expect
+    .poll(() => mock.readState().columns[0]?.cards['card-1']?.messages.map((message) => message.role))
+    .toEqual(['assistant', 'assistant', 'user'])
+
+  await page.reload()
+
+  const reloadedAskUserCard = page.locator('.ask-user-card').first()
+  await expect(reloadedAskUserCard).toBeVisible()
+  await expect(reloadedAskUserCard).toHaveClass(/is-answered/)
+  await expect(reloadedAskUserCard.locator('.ask-user-counter')).toContainText('1 / 2')
+  await expect(reloadedAskUserCard.locator('.ask-user-submit')).toBeDisabled()
+  await expect(reloadedAskUserCard.locator('.ask-user-submit')).toContainText('Submitted')
+  await expect.poll(() => mock.readRequests().length).toBe(1)
+})
+
 test('choosing ask-user Other keeps the composer anchored to the pane bottom before submit', async ({
   page,
 }) => {
@@ -886,11 +1031,11 @@ test('old answered ask-user cards allow ordinary queued send-now interrupts', as
   await page.goto('http://localhost:5173')
 
   const textarea = getActiveComposerTextarea(page)
-  const sendButton = page.getByRole('button', { name: 'Send later' })
+  const sendButton = page.getByRole('button', { name: 'Send message' })
 
   await expect(textarea).toBeVisible()
   await textarea.fill('Interrupt the new work')
-  await sendButton.click()
+  await sendButton.click({ button: 'right' })
   await page.getByRole('button', { name: 'Send now' }).click()
 
   await expect.poll(() => mock.readRequests()).toEqual([
@@ -1010,18 +1155,7 @@ test('merged consecutive ask-user questions require answering the later question
       sessionId: 'session-1',
       messages: [
         createAskUserMessage(now),
-        {
-          id: 'codex:stream-1:item:ask-user:question-2',
-          role: 'assistant',
-          content: '',
-          createdAt: now,
-          meta: {
-            provider: 'codex',
-            kind: 'ask-user',
-            itemId: followUpAskUserActivity.itemId,
-            structuredData: JSON.stringify(followUpAskUserActivity),
-          },
-        },
+        createFollowUpAskUserMessage(now),
       ],
     },
     autoEmitDoneOnStop: true,

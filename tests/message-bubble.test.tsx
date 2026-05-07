@@ -56,6 +56,28 @@ test('MessageBubble renders an external icon-only fork action for user prompts',
   assert.match(markup, /<\/article><div class="message-actions message-actions-outside">/)
 })
 
+test('MessageBubble preserves literal Windows path separators in user prompts', () => {
+  const pathPrompt = 'C:\\Example\\gpt-image-studio\\ref_images\\_by_preset_name\\'
+  const markup = renderToStaticMarkup(
+    <MessageBubble
+      language="zh-CN"
+      message={{
+        id: 'user-path-1',
+        role: 'user',
+        content: pathPrompt,
+        createdAt: '2026-04-11T10:06:00.000Z',
+      }}
+      workspacePath="D:/workspace"
+      answeredOption={null}
+      onSelectAskUserOption={() => undefined}
+    />,
+  )
+
+  assert.ok(markup.includes(pathPrompt))
+  assert.doesNotMatch(markup, /ref_images_by_preset_name/)
+  assert.doesNotMatch(markup, /<br\/>/)
+})
+
 test('MessageBubble hides fork actions on structured assistant messages', () => {
   const markup = renderToStaticMarkup(
     <MessageBubble

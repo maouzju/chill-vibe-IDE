@@ -1,4 +1,4 @@
-import { memo, startTransition, useCallback, useDeferredValue, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { memo, useCallback, useDeferredValue, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import type {
   ClipboardEvent,
   CompositionEvent,
@@ -91,8 +91,10 @@ import {
   areSlashCommandListsEqual,
   getSlashCommandsLoadKey,
   resolveSlashMenuDismissedAfterQueryChange,
+  resolveSlashCommandsStatusAfterLoadStart,
   resolveSlashCommandsLoadKeyAfterCancel,
   resolveRemoteSlashCommands,
+  shouldLoadRemoteSlashCommands,
   shouldStartSlashCommandsLoad,
 } from './chat-card-slash-commands'
 import {
@@ -2049,8 +2051,17 @@ const ChatCardView = ({
     }
   }, [card.id, suspendPaneRuntimeEffects])
 
+  const deferredSlashDraft = useDeferredValue(slashDraft)
+  const slashQuery = useMemo(() => getSlashCompletionQuery(deferredSlashDraft), [deferredSlashDraft])
+  const loadRemoteSlashCommands = shouldLoadRemoteSlashCommands({
+    isToolCard,
+    hasWorkspacePath,
+    slashCommandsEnabled,
+    slashQuery,
+  })
+
   useEffect(() => {
-    if (isToolCard || !hasWorkspacePath || !slashCommandsEnabled) {
+    if (!loadRemoteSlashCommands) {
       slashCommandsLoadKeyRef.current = null
       return
     }
@@ -2068,14 +2079,7 @@ const ChatCardView = ({
 
     slashCommandsLoadKeyRef.current = loadKey
     let cancelled = false
-    // This flag mirrors the async fetch lifecycle for slash command discovery.
-    queueMicrotask(() => {
-      if (!cancelled && slashCommandsStatusRef.current !== 'loading') {
-        startTransition(() => {
-          setSlashCommandsStatus('loading')
-        })
-      }
-    })
+    setSlashCommandsStatus(resolveSlashCommandsStatusAfterLoadStart)
 
     void fetchSlashCommands(request)
       .then((commands) => {
@@ -2112,39 +2116,18 @@ const ChatCardView = ({
   }, [
     card.provider,
     crossProviderSkillReuseEnabled,
-    hasWorkspacePath,
-    isToolCard,
     language,
-    slashCommandsEnabled,
+    loadRemoteSlashCommands,
     workspacePath,
   ])
 
-  const slashCommands = hasWorkspacePath && slashCommandsEnabled ? remoteSlashCommands : localSlashCommands
+  const slashCommands = loadRemoteSlashCommands ? remoteSlashCommands : localSlashCommands
   const effectiveSlashCommandsStatus =
-    hasWorkspacePath && slashCommandsEnabled ? slashCommandsStatus : 'ready'
+    loadRemoteSlashCommands ? slashCommandsStatus : 'ready'
 
-  const deferredSlashDraft = useDeferredValue(slashDraft)
-  const slashQuery = useMemo(() => getSlashCompletionQuery(deferredSlashDraft), [deferredSlashDraft])
   useEffect(() => {
     setSlashMenuDismissed(resolveSlashMenuDismissedAfterQueryChange)
   }, [slashQuery])
-
-  useEffect(() => {
-    if (isToolCard || !hasWorkspacePath || !slashCommandsEnabled || slashQuery === null) {
-      return
-    }
-
-    return undefined
-  }, [
-    card.provider,
-    crossProviderSkillReuseEnabled,
-    hasWorkspacePath,
-    isToolCard,
-    language,
-    slashCommandsEnabled,
-    slashQuery,
-    workspacePath,
-  ])
 
   const filteredSlashCommands = useMemo(() => {
     if (slashQuery === null) {
@@ -2291,18 +2274,11 @@ const ChatCardView = ({
       return
     }
 
-    scrollMessageListToBottom('instant')
-    await onSend(prompt, attachments, options)
-
-    for (const attachment of pendingAttachments) {
-      if (attachment.kind === 'local') {
-        URL.revokeObjectURL(attachment.previewUrl)
-      }
-    }
-
+    const sentAttachments = pendingAttachments
     draftValueRef.current = ''
     if (textareaRef.current) {
       textareaRef.current.value = ''
+      textareaRef.current.focus()
     }
     syncDraftDerivedState('')
     scheduleComposerResize()
@@ -2312,6 +2288,15 @@ const ChatCardView = ({
     onDraftChange('')
     if ((card.draftAttachments ?? []).length > 0) {
       onPatchCard({ draftAttachments: [] })
+    }
+
+    scrollMessageListToBottom('instant')
+    await onSend(prompt, attachments, options)
+
+    for (const attachment of sentAttachments) {
+      if (attachment.kind === 'local') {
+        URL.revokeObjectURL(attachment.previewUrl)
+      }
     }
   }
 
@@ -2717,11 +2702,11 @@ const ChatCardView = ({
 
   const statusClass =
     card.status === 'streaming' ? ' is-streaming' : card.status === 'error' ? ' is-error' : ''
-  const sendButtonLabel = card.status === 'streaming' ? text.deferSendMessage : text.sendMessage
+  const sendButtonLabel = text.sendMessage
   const sendButtonTooltip =
     card.status === 'streaming'
-      ? `${text.deferSendMessage} · ${language === 'en' ? 'Click or right-click to queue this message for after the current answer.' : '点击或右键都会加入队列，等当前回答结束后自动发送。'}`
-      : `${text.sendMessage} · ${language === 'en' ? 'During a running answer, click or right-click queues it for later.' : '运行中点击或右键会延后发送。'}`
+      ? `${text.sendMessage} \u00b7 ${language === 'en' ? 'Left-click sends now and stops the current answer. Right-click sends later.' : '\u5de6\u952e\u7acb\u5373\u53d1\u9001\u5e76\u505c\u6b62\u5f53\u524d\u56de\u7b54\uff1b\u53f3\u952e\u5ef6\u540e\u53d1\u9001\u3002'}`
+      : `${text.sendMessage} \u00b7 ${language === 'en' ? 'Right-click sends later if an answer is running.' : '\u5982\u679c\u6b63\u5728\u56de\u7b54\uff0c\u53f3\u952e\u4f1a\u5ef6\u540e\u53d1\u9001\u3002'}`
   const queuedSendText = queuedSendSummary
     ? text.queuedSendSummary(
         queuedSendSummary.count,

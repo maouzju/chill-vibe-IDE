@@ -4527,14 +4527,14 @@ for (const theme of ['dark', 'light'] as const) {
     await page.goto(appUrl)
 
     const textarea = page.locator('.composer textarea').first()
-    const sendButton = page.getByRole('button', { name: 'Send later' }).first()
+    const sendButton = page.getByRole('button', { name: 'Send message' }).first()
     await expect(textarea).toBeVisible()
-    await expect(sendButton).toHaveAttribute('title', /Click or right-click/)
+    await expect(sendButton).toHaveAttribute('title', /Right-click sends later/)
 
     await sendButton.hover()
-    await expect(page.getByRole('tooltip')).toContainText('Click or right-click')
+    await expect(page.getByRole('tooltip')).toContainText('Right-click sends later')
 
-    await sendButton.click()
+    await sendButton.click({ button: 'right' })
 
     const queueNotice = page.locator('.composer-queued-send').first()
     await expect(queueNotice).toContainText('1 queued')

@@ -2216,9 +2216,16 @@ const dedupeResolvedPaths = (paths: string[]) => {
 const resolveClaudeAdditionalDirectories = (options?: {
   env?: NodeJS.ProcessEnv
   homeDir?: string | null
+  attachmentPaths?: string[]
 }) => {
+  const attachmentDirectories = dedupeResolvedPaths(
+    (options?.attachmentPaths ?? [])
+      .filter((attachmentPath) => attachmentPath.trim().length > 0)
+      .map((attachmentPath) => resolvePath(dirname(attachmentPath))),
+  )
+
   if (typeof options?.homeDir === 'string' && options.homeDir.trim().length > 0) {
-    return [resolvePath(options.homeDir, '.claude')]
+    return dedupeResolvedPaths([resolvePath(options.homeDir, '.claude'), ...attachmentDirectories])
   }
 
   const env = options?.env ?? process.env
@@ -2231,7 +2238,10 @@ const resolveClaudeAdditionalDirectories = (options?: {
     resolveConfiguredPath(os.homedir()),
   ].filter((candidate): candidate is string => Boolean(candidate))
 
-  return dedupeResolvedPaths(homeCandidates.map((homeDir) => resolvePath(homeDir, '.claude')))
+  return dedupeResolvedPaths([
+    ...homeCandidates.map((homeDir) => resolvePath(homeDir, '.claude')),
+    ...attachmentDirectories,
+  ])
 }
 
 export const buildClaudeArgs = (
@@ -2246,7 +2256,10 @@ export const buildClaudeArgs = (
   const args = ['-p', '--verbose', '--output-format', 'stream-json', '--include-partial-messages']
   const reasoningEffort = normalizeReasoningEffort('claude', request.reasoningEffort)
   const permissionMode = request.planMode ? 'plan' : 'bypassPermissions'
-  const additionalDirectories = resolveClaudeAdditionalDirectories(options)
+  const additionalDirectories = resolveClaudeAdditionalDirectories({
+    ...options,
+    attachmentPaths,
+  })
   const systemPrompt = [
     buildProviderSystemPrompt(request.language, getRequestBaseSystemPrompt(request)),
     getClaudeAskUserQuestionInstruction(request.language),

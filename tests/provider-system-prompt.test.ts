@@ -615,6 +615,38 @@ test('claude image attachment prompts follow the documented image-path format', 
   assert.ok(!promptArg.includes('[Attached image:'))
 })
 
+test('claude image runs pre-authorize the attachment directory for native vision reads', () => {
+  const attachmentPath = path.join(os.tmpdir(), 'chill-vibe-data', 'attachments', 'claude image.png')
+  const args = buildClaudeArgs(
+    createRequest({
+      provider: 'claude',
+      model: 'claude-sonnet-4-6',
+      language: 'en',
+      prompt: 'Please inspect the image.',
+    }),
+    [attachmentPath],
+    {
+      env: {
+        HOME: path.join(os.tmpdir(), 'chill-vibe-home'),
+      },
+      homeDir: path.join(os.tmpdir(), 'chill-vibe-home'),
+    },
+  )
+  const addDirIndex = args.indexOf('--add-dir')
+  const settingsIndex = args.indexOf('--settings')
+
+  assert.notEqual(addDirIndex, -1)
+  assert.ok(args.includes(path.dirname(attachmentPath)))
+  assert.notEqual(settingsIndex, -1)
+
+  const settingsArg = args[settingsIndex + 1] ?? ''
+  const parsedSettings = JSON.parse(settingsArg) as {
+    permissions?: { additionalDirectories?: string[] }
+  }
+
+  assert.ok(parsedSettings.permissions?.additionalDirectories?.includes(path.dirname(attachmentPath)))
+})
+
 test('codex exec args default to danger-full-access sandbox for normal chats', () => {
   const args = buildCodexArgs(
     createRequest({

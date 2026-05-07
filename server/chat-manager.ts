@@ -2,7 +2,14 @@ import type { ChildProcess } from 'node:child_process'
 
 import type { Request, Response } from 'express'
 
-import type { ChatRequest, StreamActivity, StreamAssistantMessage, StreamEventMap } from '../shared/schema.js'
+import type {
+  ChatRequest,
+  StreamActivity,
+  StreamAssistantMessage,
+  StreamErrorEvent,
+  StreamErrorHint,
+  StreamEventMap,
+} from '../shared/schema.js'
 import { captureWorkspaceSnapshot, diffWorkspaceSnapshot } from './git-workspace.js'
 import { launchProviderRun } from './providers.js'
 
@@ -31,6 +38,7 @@ type StreamRecord = {
   listeners: Set<Response>
   subscribers: Set<StreamSubscriber>
   child?: ChildProcess
+  latestSessionId?: string
   terminal: boolean
   stopRequested: boolean
   cleanupTimer?: ReturnType<typeof setTimeout>
@@ -123,6 +131,45 @@ export const appendStreamEnvelopeToBacklog = (
   return compactedPayload
 }
 
+const normalizeSessionId = (sessionId?: string | null) => {
+  const trimmed = sessionId?.trim()
+  return trimmed && trimmed.length > 0 ? trimmed : undefined
+}
+
+export const buildStreamErrorPayload = (
+  message: string,
+  hint?: StreamErrorHint,
+  recovery?: Pick<StreamErrorEvent, 'recoverable' | 'recoveryMode' | 'transientOnly'>,
+  latestSessionId?: string | null,
+): StreamErrorEvent => {
+  const payload: StreamErrorEvent = { message }
+
+  if (hint) {
+    payload.hint = hint
+  }
+
+  if (recovery?.recoverable !== undefined) {
+    payload.recoverable = recovery.recoverable
+  }
+  if (recovery?.recoveryMode !== undefined) {
+    payload.recoveryMode = recovery.recoveryMode
+  }
+  if (recovery?.transientOnly !== undefined) {
+    payload.transientOnly = recovery.transientOnly
+  }
+
+  const normalizedSessionId = normalizeSessionId(latestSessionId)
+  if (
+    normalizedSessionId &&
+    payload.recoverable === true &&
+    payload.recoveryMode === 'resume-session'
+  ) {
+    payload.sessionId = normalizedSessionId
+  }
+
+  return payload
+}
+
 const writeEvent = <T extends StreamName>(
   response: Response,
   event: T,
@@ -146,6 +193,7 @@ export class ChatManager {
       backlog: [],
       listeners: new Set(),
       subscribers: new Set(),
+      latestSessionId: normalizeSessionId(request.sessionId),
       terminal: false,
       stopRequested: false,
     }
@@ -259,7 +307,10 @@ export class ChatManager {
     const touchedPaths = new Set<string>()
 
     const child = await launchProviderRun(request, {
-      onSession: (sessionId) => this.emit(stream, 'session', { sessionId }),
+      onSession: (sessionId) => {
+        stream.latestSessionId = normalizeSessionId(sessionId) ?? stream.latestSessionId
+        this.emit(stream, 'session', { sessionId })
+      },
       onDelta: (content) => this.emit(stream, 'delta', { content }),
       onLog: (message) => this.emit(stream, 'log', { message }),
       onAssistantMessage: (message) => this.emit(stream, 'assistant_message', message),
@@ -282,11 +333,14 @@ export class ChatManager {
           return
         }
 
-        void this.finalizeWithWorkspaceEdits(stream, request, workspaceSnapshot, touchedPaths, 'error', {
-          message,
-          hint,
-          ...recovery,
-        })
+        void this.finalizeWithWorkspaceEdits(
+          stream,
+          request,
+          workspaceSnapshot,
+          touchedPaths,
+          'error',
+          buildStreamErrorPayload(message, hint, recovery, stream.latestSessionId ?? request.sessionId),
+        )
       },
     })
 

@@ -37,7 +37,7 @@ test('chat composer keeps send clickable when the provider CLI is unavailable so
     <ChatCard
       card={createCard()}
       providerReady={false}
-      workspacePath="D:\\Git\\chill-vibe"
+      workspacePath="D:/workspace"
       language="en"
       systemPrompt={defaultSystemPrompt}
       modelPromptRules={[]}
@@ -74,7 +74,7 @@ test('chat composer keeps send clickable when the provider CLI is unavailable so
   assert.doesNotMatch(markup, /aria-label="Send message"[^>]*disabled/)
 })
 
-test('running chat composer exposes a send-later hover hint and queued-send controls', () => {
+test('running chat composer keeps left-click as send-now and exposes right-click queue controls', () => {
   const markup = renderToStaticMarkup(
     <ChatCard
       card={{
@@ -84,7 +84,7 @@ test('running chat composer exposes a send-later hover hint and queued-send cont
         draft: 'Please queue this',
       }}
       providerReady={true}
-      workspacePath="D:\\Git\\chill-vibe"
+      workspacePath="D:/workspace"
       language="en"
       systemPrompt={defaultSystemPrompt}
       modelPromptRules={[]}
@@ -123,8 +123,8 @@ test('running chat composer exposes a send-later hover hint and queued-send cont
     />,
   )
 
-  assert.match(markup, /aria-label="Send later"/)
-  assert.match(markup, /Click or right-click to queue this message for after the current answer\./)
+  assert.match(markup, /aria-label="Send message"/)
+  assert.match(markup, /Left-click sends now and stops the current answer\. Right-click sends later\./)
   assert.match(markup, /1 queued: Queued follow-up/)
   assert.match(markup, />Send now</)
   assert.match(markup, />Cancel</)

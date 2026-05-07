@@ -1,5 +1,5 @@
 import type { ChatMessage } from '../../shared/schema'
-import { getAskUserAnswerKey } from './chat-card-parsing'
+import { getAskUserAnswerKey, parseStructuredAskUserMessage } from './chat-card-parsing'
 
 export const getLatestUserAnswerAfterAskUserMessage = (
   messages: ChatMessage[],
@@ -11,12 +11,27 @@ export const getLatestUserAnswerAfterAskUserMessage = (
     return null
   }
 
+  const parsedAskUser = parseStructuredAskUserMessage(askUserMessage)
+  const questionCount = parsedAskUser?.questions.length ?? 1
+  let answerSearchStartIndex = askUserIndex + 1
+
+  if (questionCount > 1) {
+    let remainingMergedQuestions = questionCount - 1
+    while (
+      remainingMergedQuestions > 0 &&
+      messages[answerSearchStartIndex]?.meta?.kind === 'ask-user'
+    ) {
+      answerSearchStartIndex += 1
+      remainingMergedQuestions -= 1
+    }
+  }
+
   const nextAskUserIndex = messages.findIndex(
-    (message, index) => index > askUserIndex && message.meta?.kind === 'ask-user',
+    (message, index) => index >= answerSearchStartIndex && message.meta?.kind === 'ask-user',
   )
   const boundaryIndex = nextAskUserIndex >= 0 ? nextAskUserIndex : messages.length
   const firstUserAnswer = messages
-    .slice(askUserIndex + 1, boundaryIndex)
+    .slice(answerSearchStartIndex, boundaryIndex)
     .find((message) => message.role === 'user' && message.content.trim().length > 0)
 
   return firstUserAnswer?.content.trim() ?? null

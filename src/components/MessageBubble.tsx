@@ -347,6 +347,8 @@ const MessageContent = ({
       {hasTextContent ? (
         isStickyPreview ? (
           <div className="message-sticky-preview-text">{previewText}</div>
+        ) : message.role === 'user' ? (
+          <p className="message-literal-text">{message.content}</p>
         ) : (
           renderMarkdown(message.content, workspacePath)
         )

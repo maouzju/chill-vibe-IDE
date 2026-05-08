@@ -4,6 +4,7 @@ import test from 'node:test'
 import {
   createStoppedRunMessage,
   createStructuredActivityMessage,
+  createStructuredMessageId,
   finalizeStructuredActivityMessage,
   finalizeStreamedAssistantMessage,
   getAgentDoneSoundUrl,
@@ -24,6 +25,13 @@ test('getColumnById resolves a board column by its id', () => {
 
   assert.equal(getColumnById(columns, 'column-2')?.id, 'column-2')
   assert.equal(getColumnById(columns, 'missing'), undefined)
+})
+
+test('createStructuredMessageId gives assistant snapshots a stable stream item id', () => {
+  assert.equal(
+    createStructuredMessageId('claude', 'stream-1', 'assistant-item-1'),
+    'claude:stream-1:item:assistant-item-1',
+  )
 })
 
 test('createStoppedRunMessage uses the user-interrupted copy for follow-up interrupts', () => {

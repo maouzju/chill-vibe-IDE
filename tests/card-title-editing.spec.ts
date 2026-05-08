@@ -263,6 +263,42 @@ for (const theme of ['dark', 'light'] as const) {
     await expect(composer).toHaveValue('hello after tab switch')
   })
 
+  test(`composer clicks recover focus when a stray non-modal layer sits above it in ${theme} theme`, async ({ page }) => {
+    await installMockApis(page, theme)
+    await page.goto('http://localhost:5173')
+
+    const composer = page
+      .locator('.pane-view')
+      .first()
+      .locator('.pane-content > .pane-tab-panel.is-active .composer textarea')
+
+    await expect(composer).toBeVisible()
+
+    const composerBox = await composer.boundingBox()
+    if (!composerBox) {
+      throw new Error('Expected the composer textarea to have measurable geometry')
+    }
+
+    await page.evaluate((box) => {
+      const blocker = document.createElement('div')
+      blocker.className = 'focus-rescue-fixture-layer'
+      blocker.style.position = 'fixed'
+      blocker.style.left = `${box.x - 4}px`
+      blocker.style.top = `${box.y - 4}px`
+      blocker.style.width = `${box.width + 8}px`
+      blocker.style.height = `${box.height + 8}px`
+      blocker.style.zIndex = '999'
+      blocker.style.background = 'transparent'
+      document.body.appendChild(blocker)
+    }, composerBox)
+
+    await page.mouse.click(composerBox.x + composerBox.width / 2, composerBox.y + composerBox.height / 2)
+
+    await expect(composer).toBeFocused()
+    await page.keyboard.type('focus rescue works')
+    await expect(composer).toHaveValue('focus rescue works')
+  })
+
   test(`double-clicking empty pane tab bar space opens a new tab in ${theme} theme`, async ({ page }) => {
     await installMockApis(page, theme)
     await page.goto('http://localhost:5173')

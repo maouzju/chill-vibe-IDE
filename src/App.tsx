@@ -147,6 +147,7 @@ import {
   createStoppedRunMessage,
   createLogMessages,
   createStructuredActivityMessage,
+  createStructuredMessageId,
   emptyProfileDraft,
   errorMessage,
   finalizeStructuredActivityMessage,
@@ -2433,12 +2434,21 @@ function App() {
           if (buffered && buffered.messageId === active?.assistantMessageId) {
             deltaBufferRef.current.delete(card.id)
           }
+          const assistantMessageId =
+            active?.assistantMessageId ??
+            createStructuredMessageId(card.provider, card.streamId!, payload.itemId)
+          if (active) {
+            activeStreamsRef.current.set(card.id, {
+              ...active,
+              assistantMessageId,
+            })
+          }
 
           const liveCard = getColumn(columnId)?.cards[card.id]
           const nextMessages = liveCard
             ? finalizeStreamedAssistantMessage(
                 liveCard.messages,
-                active?.assistantMessageId,
+                assistantMessageId,
                 card.provider,
                 card.streamId!,
                 payload,

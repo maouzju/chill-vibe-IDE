@@ -201,6 +201,28 @@ app.get('/api/git/status', async (request, response) => {
   }
 })
 
+app.get('/api/git/status/preview', async (request, response) => {
+  const parsed = gitPullRequestSchema.safeParse({
+    workspacePath: request.query.workspacePath,
+  })
+
+  if (!parsed.success) {
+    response.status(400).json({ message: 'A workspace path is required.' })
+    return
+  }
+
+  try {
+    response.json(await inspectGitWorkspace(parsed.data.workspacePath, {
+      includeChangePreviews: false,
+      includeRepositoryDetails: false,
+    }))
+  } catch (error) {
+    response.status(400).json({
+      message: error instanceof Error ? error.message : 'Unable to inspect the Git workspace.',
+    })
+  }
+})
+
 app.post('/api/git/stage', async (request, response) => {
   const parsed = gitStageRequestSchema.safeParse(request.body)
 

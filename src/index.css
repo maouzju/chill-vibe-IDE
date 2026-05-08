@@ -3066,7 +3066,7 @@ body.is-card-dragging .lane-drop-zone-top {
   display: flex;
   align-items: center;
   gap: 0.38rem;
-  margin-top: 0.34rem;
+  margin-bottom: 0.34rem;
   min-width: 0;
   padding: 0.3rem 0.42rem;
   border: 1px solid var(--line);

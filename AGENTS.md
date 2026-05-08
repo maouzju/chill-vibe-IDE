@@ -361,6 +361,8 @@ A living list of traps that have wasted time before. **When you hit a new pitfal
 
 | 122 | Consecutive ask-user messages can be merged into one rendered multi-question card while the persisted transcript still stores separate ask-user messages | Restored answered-state lookup must skip the merged source questions before searching for the user reply, or the merged card unlocks again after refresh. |
 | 123 | If the composer waits for `onSend()` to settle before clearing its textarea, slow Claude startup can make the input feel frozen for several seconds after clicking Send | Clear and refocus the composer immediately after the request payload is captured, then let the async send continue in the background so follow-up typing stays responsive. |
+| 124 | Claude assistant messages that contain real prose before an `AskUserQuestion` tool can be emitted in the wrong order if structured ask-user activity is surfaced first | Preserve the assistant prose first, then promote the ask-user card; otherwise the context sentence disappears or the card looks like it replaced the whole bubble. |
+| 125 | Electron Git staging performance checks can race if they only wait for the selected file title before toggling checkboxes | Wait for the selected diff body to render too, otherwise the later "diff stayed selected" assertion can time out even when checkbox responsiveness is fine. |
 
 ### Self-maintenance rule
 

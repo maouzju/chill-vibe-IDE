@@ -33,7 +33,7 @@ Keep the queue in renderer runtime state. The persisted chat schema stays unchan
 - `onCancelQueuedSends?: () => void`
 - `onSendNextQueuedNow?: () => void`
 
-The composer renders a quiet status row under the input:
+The composer renders a quiet status row above the input:
 
 - count + preview
 - **Send now** text button

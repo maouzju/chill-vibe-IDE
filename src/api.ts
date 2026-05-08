@@ -288,6 +288,12 @@ export const fetchGitStatus = async (workspacePath: string): Promise<GitStatus> 
   return readDesktop(() => desktopFetchGitStatus(workspacePath), gitStatusSchema)
 }
 
+export const fetchGitStatusPreview = async (workspacePath: string): Promise<GitStatus> => {
+  const desktopFetchGitStatusPreview = requireDesktopAction(getDesktopApi()?.fetchGitStatusPreview)
+
+  return readDesktop(() => desktopFetchGitStatusPreview(workspacePath), gitStatusSchema)
+}
+
 export const setGitStage = async (request: GitStageRequest): Promise<GitStatus> => {
   const parsed = gitStageRequestSchema.parse(request)
   const desktopSetGitStage = requireDesktopAction(getDesktopApi()?.setGitStage)

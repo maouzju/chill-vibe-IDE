@@ -391,6 +391,9 @@ function registerDesktopHandlers() {
   ipcMain.handle('desktop:fetch-git-status', (_event, workspacePath) =>
     desktopBackend.fetchGitStatus(workspacePath),
   )
+  ipcMain.handle('desktop:fetch-git-status-preview', (_event, workspacePath) =>
+    desktopBackend.fetchGitStatusPreview(workspacePath),
+  )
   ipcMain.handle('desktop:set-git-stage', (_event, request) => desktopBackend.setGitStage(request))
   ipcMain.handle('desktop:init-git-workspace', (_event, request) =>
     desktopBackend.initGitWorkspace(request),

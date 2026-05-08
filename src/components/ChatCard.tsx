@@ -447,6 +447,26 @@ const cardHeaderControlSelector =
 const isCardHeaderControlTarget = (target: EventTarget | null) =>
   target instanceof Element && target.closest(cardHeaderControlSelector) !== null
 
+const composerFocusRescueIgnoredSelector = [
+  '[aria-modal="true"]',
+  '[role="dialog"]',
+  '.structured-preview-layer',
+  '.onboarding-shell',
+  '.model-dropdown-menu',
+  '.composer-settings-menu',
+  '.slash-command-menu',
+  '.pane-tab-context-menu',
+  '.session-history-menu',
+  '.recent-workspace-menu',
+  '.weather-city-suggestions',
+  '.file-tree-name-dialog-layer',
+  '.git-agent-panel-shell',
+  cardHeaderControlSelector,
+].join(', ')
+
+const shouldIgnoreComposerFocusRescueTarget = (target: EventTarget | null) =>
+  target instanceof Element && target.closest(composerFocusRescueIgnoredSelector) !== null
+
 const areChatCardPropsEqual = (previous: ChatCardProps, next: ChatCardProps) =>
   previous.card === next.card &&
   previous.providerReady === next.providerReady &&
@@ -1418,6 +1438,53 @@ const ChatCardView = ({
       window.cancelAnimationFrame(frame)
     }
   }, [card.id, composerFocusRequest, isToolCard, usesPaneChrome])
+
+  useEffect(() => {
+    if (isToolCard || !isActive || isCollapsed) {
+      return
+    }
+
+    const handleDocumentPointerDownCapture = (event: globalThis.PointerEvent) => {
+      const textarea = textareaRef.current
+      if (!textarea || !textarea.isConnected) {
+        return
+      }
+
+      if (event.button !== 0 || event.defaultPrevented) {
+        return
+      }
+
+      if (shouldIgnoreComposerFocusRescueTarget(event.target)) {
+        return
+      }
+
+      const rect = textarea.getBoundingClientRect()
+      const isInsideTextarea =
+        event.clientX >= rect.left &&
+        event.clientX <= rect.right &&
+        event.clientY >= rect.top &&
+        event.clientY <= rect.bottom
+
+      if (!isInsideTextarea) {
+        return
+      }
+
+      lastFocusedCardId = card.id
+      requestAnimationFrame(() => {
+        const latestTextarea = textareaRef.current
+        if (!latestTextarea || !latestTextarea.isConnected) {
+          return
+        }
+
+        latestTextarea.focus()
+      })
+    }
+
+    document.addEventListener('pointerdown', handleDocumentPointerDownCapture, true)
+    return () => {
+      document.removeEventListener('pointerdown', handleDocumentPointerDownCapture, true)
+    }
+  }, [card.id, isActive, isCollapsed, isToolCard])
 
   useEffect(
     () => () => {
@@ -3118,6 +3185,28 @@ const ChatCardView = ({
                 </div>
               ) : null}
 
+              {queuedSendSummary ? (
+                <div className="composer-queued-send" role="status" title={queuedSendText}>
+                  <span className="composer-queued-send-text">{queuedSendText}</span>
+                  <button
+                    type="button"
+                    className="composer-queued-send-action"
+                    onClick={onSendNextQueuedNow}
+                    disabled={!onSendNextQueuedNow}
+                  >
+                    {text.queuedSendNow}
+                  </button>
+                  <button
+                    type="button"
+                    className="composer-queued-send-action"
+                    onClick={onCancelQueuedSends}
+                    disabled={!onCancelQueuedSends}
+                  >
+                    {text.queuedSendCancel}
+                  </button>
+                </div>
+              ) : null}
+
               <div className="composer-input-row">
                 {showsComposerModelSelect ? renderModelSelect('composer') : null}
                 <textarea
@@ -3293,28 +3382,6 @@ const ChatCardView = ({
                   </HoverTooltip>
                 </div>
               </div>
-
-              {queuedSendSummary ? (
-                <div className="composer-queued-send" role="status" title={queuedSendText}>
-                  <span className="composer-queued-send-text">{queuedSendText}</span>
-                  <button
-                    type="button"
-                    className="composer-queued-send-action"
-                    onClick={onSendNextQueuedNow}
-                    disabled={!onSendNextQueuedNow}
-                  >
-                    {text.queuedSendNow}
-                  </button>
-                  <button
-                    type="button"
-                    className="composer-queued-send-action"
-                    onClick={onCancelQueuedSends}
-                    disabled={!onCancelQueuedSends}
-                  >
-                    {text.queuedSendCancel}
-                  </button>
-                </div>
-              ) : null}
 
               {composerNotice ? (
                 <div

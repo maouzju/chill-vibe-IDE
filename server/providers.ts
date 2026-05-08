@@ -1964,18 +1964,31 @@ export const launchProviderRun = async (request: ChatRequest, sink: StreamSink) 
         const event = JSON.parse(line)
         sawClaudeStreamOutput = true
 
+        if (event.type === 'system' && event.subtype === 'init' && typeof event.session_id === 'string') {
+          emittedSessionId = event.session_id
+          sink.onSession(event.session_id)
+          return
+        }
+
         const claudeStructuredEvents = parseClaudeStructuredOutput(event)
+
+        if (event.type === 'assistant' && !sawClaudeDelta) {
+          if (Array.isArray(event.message?.content)) {
+            const textContent = event.message.content
+              .filter((item: { type?: string; text?: string }) => item.type === 'text')
+              .map((item: { text?: string }) => stripClaudeAskUserXmlBlocks(item.text ?? ''))
+              .join('')
+
+            if (textContent.trim()) {
+              sink.onDelta(textContent)
+            }
+          }
+        }
 
         for (const parsed of claudeStructuredEvents) {
           const activity = { ...parsed }
           delete (activity as { type?: 'activity' }).type
           sink.onActivity(activity)
-        }
-
-        if (event.type === 'system' && event.subtype === 'init' && typeof event.session_id === 'string') {
-          emittedSessionId = event.session_id
-          sink.onSession(event.session_id)
-          return
         }
 
         if (
@@ -2001,17 +2014,7 @@ export const launchProviderRun = async (request: ChatRequest, sink: StreamSink) 
           return
         }
 
-        if (event.type === 'assistant' && !sawClaudeDelta) {
-          if (Array.isArray(event.message?.content)) {
-            const textContent = event.message.content
-              .filter((item: { type?: string; text?: string }) => item.type === 'text')
-              .map((item: { text?: string }) => stripClaudeAskUserXmlBlocks(item.text ?? ''))
-              .join('')
-
-            if (textContent.trim()) {
-              sink.onDelta(textContent)
-            }
-          }
+        if (event.type === 'assistant') {
           return
         }
 

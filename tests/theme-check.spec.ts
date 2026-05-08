@@ -4539,6 +4539,13 @@ for (const theme of ['dark', 'light'] as const) {
     const queueNotice = page.locator('.composer-queued-send').first()
     await expect(queueNotice).toContainText('1 queued')
     await expect(queueNotice).toContainText('Queue from theme check')
+    const [queueBox, inputBox] = await Promise.all([
+      queueNotice.boundingBox(),
+      page.locator('.composer-input-row').first().boundingBox(),
+    ])
+    expect(queueBox).not.toBeNull()
+    expect(inputBox).not.toBeNull()
+    expect(queueBox!.y + queueBox!.height).toBeLessThanOrEqual(inputBox!.y)
     await expect(queueNotice).toHaveScreenshot(`composer-queued-send-${theme}.png`, {
       animations: 'disabled',
       caret: 'hide',

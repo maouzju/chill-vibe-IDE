@@ -1394,6 +1394,39 @@ const buildFakeClaudeCapturePromptScript = (capturePath: string) =>
     "reply({ type: 'result', is_error: false, result: 'ok' })",
   ].join('\n')
 
+const buildFakeClaudeAskUserToolWithProseScript = () =>
+  [
+    "const reply = (message) => process.stdout.write(`${JSON.stringify(message)}\n`)",
+    "reply({",
+    "  type: 'assistant',",
+    "  message: {",
+    "    id: 'msg_ask_user_tool_prose',",
+    "    content: [",
+    "      { type: 'text', text: 'I reviewed the previous work and found the risky path.' },",
+    "      {",
+    "        type: 'tool_use',",
+    "        id: 'toolu_ask_user_prose',",
+    "        name: 'AskUserQuestion',",
+    "        input: {",
+    "          questions: [",
+    "            {",
+    "              header: 'Confirmation',",
+    "              question: 'Which path should I use?',",
+    "              multiSelect: false,",
+    "              options: [",
+    "                { label: 'Patch now', description: 'Keep the smallest diff.' },",
+    "                { label: 'Refactor first', description: 'Clean the flow before patching.' },",
+    "              ],",
+    "            },",
+    "          ],",
+    "        },",
+    "      },",
+    "    ],",
+    "  },",
+    "})",
+    "reply({ type: 'result', is_error: false, result: 'ok' })",
+  ].join('\n')
+
 const buildFakeClaudeAskUserXmlScript = () =>
   [
     "const reply = (message) => process.stdout.write(`${JSON.stringify(message)}\\n`)",
@@ -2526,6 +2559,42 @@ test('claude automatically retries without -r when the resumed session is stale 
   } finally {
     await rm(capturePath, { force: true }).catch(() => {})
   }
+})
+
+test('claude ask-user tool use keeps prose before the question and then emits the structured activity', async () => {
+  const events = await withFakeProviderCommand(
+    'claude',
+    buildFakeClaudeAskUserToolWithProseScript(),
+    async (workspacePath) =>
+      captureProviderEvents(
+        createRequest({
+          provider: 'claude',
+          model: 'claude-sonnet-4-6',
+          language: 'en',
+          workspacePath,
+        }),
+      ),
+  )
+
+  assert.deepEqual(events, [
+    { kind: 'delta', content: 'I reviewed the previous work and found the risky path.' },
+    {
+      kind: 'activity',
+      activity: {
+        itemId: 'toolu_ask_user_prose',
+        kind: 'ask-user',
+        status: 'completed',
+        header: 'Confirmation',
+        question: 'Which path should I use?',
+        multiSelect: false,
+        options: [
+          { label: 'Patch now', description: 'Keep the smallest diff.' },
+          { label: 'Refactor first', description: 'Clean the flow before patching.' },
+        ],
+      },
+    },
+    { kind: 'done' },
+  ])
 })
 
 test('claude ask-user XML emits the interactive activity without leaking the raw XML as a delta', async () => {

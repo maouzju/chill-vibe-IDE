@@ -67,6 +67,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.invoke('desktop:run-environment-setup', request),
   fetchOnboardingStatus: () => ipcRenderer.invoke('desktop:fetch-onboarding-status'),
   fetchGitStatus: (workspacePath: string) => ipcRenderer.invoke('desktop:fetch-git-status', workspacePath),
+  fetchGitStatusPreview: (workspacePath: string) =>
+    ipcRenderer.invoke('desktop:fetch-git-status-preview', workspacePath),
   setGitStage: (request: unknown) => ipcRenderer.invoke('desktop:set-git-stage', request),
   initGitWorkspace: (request: unknown) => ipcRenderer.invoke('desktop:init-git-workspace', request),
   commitGitChanges: (request: unknown) => ipcRenderer.invoke('desktop:commit-git-changes', request),

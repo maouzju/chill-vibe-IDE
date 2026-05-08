@@ -35,6 +35,7 @@ type GitStageOptions = {
 
 type InspectGitWorkspaceOptions = {
   includeChangePreviews?: boolean
+  includeRepositoryDetails?: boolean
 }
 
 export type WorkspaceSnapshot = {
@@ -581,6 +582,7 @@ export const inspectGitWorkspace = async (
     .map(parseStatusLine)
     .filter((change): change is GitChange => change !== null)
   const includeChangePreviews = options?.includeChangePreviews !== false
+  const includeRepositoryDetails = options?.includeRepositoryDetails !== false
   const changes = includeChangePreviews
     ? (
         await (async () => {
@@ -629,8 +631,8 @@ export const inspectGitWorkspace = async (
     clean: changes.length === 0,
     summary,
     changes,
-    lastCommit: await readLastCommit(repoRoot),
-    description: await readRepoDescription(repoRoot),
+    lastCommit: includeRepositoryDetails ? await readLastCommit(repoRoot) : undefined,
+    description: includeRepositoryDetails ? await readRepoDescription(repoRoot) : '',
     note: undefined,
   }
 }

@@ -206,6 +206,12 @@ export const createDesktopBackend = (deps: DesktopBackendDependencies = {}) => {
     async fetchGitStatus(workspacePath: string) {
       return inspectGitWorkspace(gitPullRequestSchema.parse({ workspacePath }).workspacePath)
     },
+    async fetchGitStatusPreview(workspacePath: string) {
+      return inspectGitWorkspace(gitPullRequestSchema.parse({ workspacePath }).workspacePath, {
+        includeChangePreviews: false,
+        includeRepositoryDetails: false,
+      })
+    },
     async setGitStage(request: GitStageRequest) {
       return setGitWorkspaceStage(gitStageRequestSchema.parse(request))
     },

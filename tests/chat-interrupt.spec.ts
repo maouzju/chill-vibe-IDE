@@ -785,6 +785,33 @@ test('sending during /compact still waits for the compaction stream to finish', 
   await expect.poll(() => mock.readState().columns[0]?.cards['card-1']?.streamId).toBe('stream-3')
 })
 
+test('answering a live ask-user activity preserves the prior prose and then sends the answer', async ({ page }) => {
+  const mock = await installMockApis(page, { autoEmitDoneOnStop: true })
+  await page.goto('http://localhost:5173')
+
+  await expect(getActiveComposerTextarea(page)).toBeVisible()
+
+  await emitStreamEvent(page, 'stream-1', 'assistant_message', {
+    itemId: 'assistant-item-1',
+    content: 'I reviewed the previous work and found the risky path.',
+  })
+  await emitStreamEvent(page, 'stream-1', 'activity', askUserActivity)
+
+  await expect(page.locator('article.message.message-assistant').filter({ hasText: 'I reviewed the previous work and found the risky path.' })).toBeVisible()
+  await expect(page.locator('.ask-user-card')).toBeVisible()
+  await page.locator('.ask-user-option').filter({ hasText: 'Fast' }).click()
+  await page.locator('.ask-user-submit').click()
+
+  await expect.poll(() => mock.readRequests()).toEqual([
+    'stop:stream-1',
+    'message:Fast',
+  ])
+  await expect
+    .poll(() => mock.readState().columns[0]?.cards['card-1']?.messages.map((message) => message.role))
+    .toEqual(['assistant', 'assistant', 'assistant', 'user'])
+  await expect.poll(() => mock.readState().columns[0]?.cards['card-1']?.streamId).toBe('stream-2')
+})
+
 test('answering a live ask-user activity stops the waiting stream and immediately sends the answer', async ({ page }) => {
   const mock = await installMockApis(page, { autoEmitDoneOnStop: true })
   await page.goto('http://localhost:5173')

@@ -196,6 +196,18 @@ test('Electron ancient Git checkbox toggles stay responsive while preserving the
       selectedFileName,
       { timeout: 20000 },
     )
+    await page.waitForFunction(
+      ({ selectedFileName: expectedSelected, selectedDiffToken }) => {
+        const selectedTitle = document.querySelector('.git-tool-diff-title strong')?.textContent?.trim()
+        const hasSelectedDiff = Array.from(document.querySelectorAll('.git-tool-diff-code')).some((node) =>
+          node.textContent?.includes(selectedDiffToken),
+        )
+
+        return selectedTitle === expectedSelected && hasSelectedDiff
+      },
+      { selectedFileName, selectedDiffToken: 'changed 1' },
+      { timeout: 60000 },
+    )
     await page.waitForTimeout(1500)
 
     const toggleDurations: number[] = []

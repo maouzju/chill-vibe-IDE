@@ -2,6 +2,7 @@ import { startTransition, useCallback, useEffect, useLayoutEffect, useMemo, useR
 
 import {
   commitGitChanges,
+  fetchGitStatusPreview,
   fetchGitStatus,
   initGitWorkspace,
   pullGitChanges,
@@ -123,7 +124,7 @@ export const GitToolCard = ({
 }: GitToolCardProps) => {
   const text = useMemo(() => getGitLocaleText(language), [language])
   const [gitStatus, setGitStatus] = useState<GitStatus | null>(null)
-  const [loadState, setLoadState] = useState<'idle' | 'loading' | 'ready' | 'error'>('idle')
+  const [loadState, setLoadState] = useState<'idle' | 'loading' | 'preview' | 'ready' | 'error'>('idle')
   const [notice, setNotice] = useState<NoticeState | null>(null)
   const [fullDialogMode, setFullDialogMode] = useState<GitFullDialogMode | null>(null)
   const [agentPanelOpen, setAgentPanelOpen] = useState(false)
@@ -138,7 +139,9 @@ export const GitToolCard = ({
   const fileListRef = useRef<HTMLDivElement>(null)
   const gitStatusRef = useRef<GitStatus | null>(null)
   const refreshingRef = useRef(false)
+  const refreshingWorkspacePathRef = useRef('')
   const autoCompactedRef = useRef(false)
+  const activeRefreshIdRef = useRef(0)
 
   useEffect(() => {
     gitStatusRef.current = gitStatus
@@ -148,6 +151,9 @@ export const GitToolCard = ({
     const nextWorkspacePath = workspacePath.trim()
 
     if (!nextWorkspacePath) {
+      activeRefreshIdRef.current += 1
+      refreshingRef.current = false
+      refreshingWorkspacePathRef.current = ''
       startTransition(() => {
         setGitStatus(null)
         setLoadState('idle')
@@ -156,30 +162,66 @@ export const GitToolCard = ({
       return
     }
 
-    if (refreshingRef.current) return
+    if (refreshingRef.current && refreshingWorkspacePathRef.current === nextWorkspacePath) return
     refreshingRef.current = true
+    refreshingWorkspacePathRef.current = nextWorkspacePath
+    const refreshId = activeRefreshIdRef.current + 1
+    activeRefreshIdRef.current = refreshId
 
     setLoadState((current) =>
       gitStatusRef.current?.workspacePath === nextWorkspacePath ? current : 'loading',
     )
 
+    const hasCurrentWorkspaceStatus = gitStatusRef.current?.workspacePath === nextWorkspacePath
+
+    let previewResolved = false
+
     try {
+      if (!hasCurrentWorkspaceStatus) {
+        try {
+          const previewStatus = await fetchGitStatusPreview(nextWorkspacePath)
+
+          if (activeRefreshIdRef.current === refreshId) {
+            previewResolved = true
+            startTransition(() => {
+              setGitStatus(previewStatus)
+              setLoadState('preview')
+              setNotice(nextNotice ?? null)
+            })
+          }
+        } catch {
+          // The full status request below still owns the final error message.
+        }
+      }
+
       const nextStatus = await fetchGitStatus(nextWorkspacePath)
+
+      if (activeRefreshIdRef.current !== refreshId) {
+        return
+      }
+
       startTransition(() => {
         setGitStatus(nextStatus)
         setLoadState('ready')
         setNotice(nextNotice ?? null)
       })
     } catch (error) {
+      if (activeRefreshIdRef.current !== refreshId) {
+        return
+      }
+
       startTransition(() => {
-        setLoadState('error')
+        setLoadState(previewResolved ? 'preview' : 'error')
         setNotice({
           tone: 'error',
           message: errorMessage(error, text.refreshError),
         })
       })
     } finally {
-      refreshingRef.current = false
+      if (activeRefreshIdRef.current === refreshId) {
+        refreshingRef.current = false
+        refreshingWorkspacePathRef.current = ''
+      }
     }
   }, [text.refreshError, workspacePath])
 
@@ -491,11 +533,39 @@ export const GitToolCard = ({
     onAgentPanelToggle?.(next)
   }, [onAgentPanelToggle])
 
-  const handleAnalyzeToggle = useCallback(() => {
+  const handleAnalyzeToggle = useCallback(async () => {
     const next = !agentPanelOpen
+
+    if (!next) {
+      setAgentAnalysisPending(false)
+      setAgentPanelOpenState(false)
+      return
+    }
+
     setAgentAnalysisPending(next)
+
+    if (loadState === 'preview') {
+      try {
+        const nextStatus = await fetchGitStatus(workspacePath.trim())
+        activeRefreshIdRef.current += 1
+        refreshingRef.current = false
+        refreshingWorkspacePathRef.current = ''
+        setGitStatus(nextStatus)
+        setLoadState('ready')
+      } catch (error) {
+        setAgentAnalysisPending(false)
+        startTransition(() => {
+          setNotice({
+            tone: 'error',
+            message: errorMessage(error, text.refreshError),
+          })
+        })
+        return
+      }
+    }
+
     setAgentPanelOpenState(next)
-  }, [agentPanelOpen, setAgentPanelOpenState])
+  }, [agentPanelOpen, loadState, setAgentPanelOpenState, text.refreshError, workspacePath])
 
   const handleCloseAgentPanel = useCallback(() => {
     setAgentAnalysisPending(false)

@@ -83,6 +83,7 @@ declare global {
       runEnvironmentSetup?: (request?: SetupRunRequestInput) => Promise<SetupStatus>
       fetchOnboardingStatus?: () => Promise<OnboardingStatus>
       fetchGitStatus?: (workspacePath: string) => Promise<GitStatus>
+      fetchGitStatusPreview?: (workspacePath: string) => Promise<GitStatus>
       setGitStage?: (request: GitStageRequest) => Promise<GitStatus>
       initGitWorkspace?: (request: GitPullRequest) => Promise<GitOperationResponse>
       commitGitChanges?: (request: GitCommitRequest) => Promise<GitCommitResponse>

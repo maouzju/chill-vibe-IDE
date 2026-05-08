@@ -8,6 +8,7 @@ import {
   createWorkspaceDirectory,
   createWorkspaceFile,
   deleteWorkspaceEntry,
+  fetchGitStatusPreview,
   fetchSlashCommands,
   fetchState,
   flashWindowOnce,
@@ -30,6 +31,7 @@ type ElectronBridgeWindow = Window & typeof globalThis & {
     isWindowMaximized?: () => Promise<boolean>
     onWindowMaximizedChanged?: (listener: (maximized: boolean) => void) => () => void
     fetchState?: () => Promise<ReturnType<typeof createDefaultState>>
+    fetchGitStatusPreview?: (workspacePath: string) => Promise<unknown>
     fetchSlashCommands?: (request: {
       provider: 'codex' | 'claude'
       workspacePath: string
@@ -254,6 +256,53 @@ test('fetchSlashCommands caches separately when cross-provider skill reuse chang
   assert.deepEqual(requests, [true, false])
   assert.equal(enabled[0]?.name, 'agent-reach')
   assert.equal(disabled[0]?.name, 'check-all')
+})
+
+test('fetchGitStatusPreview reads lightweight Git metadata through the Electron bridge', async () => {
+  const requests: string[] = []
+
+  setWindow({
+    electronAPI: {
+      fetchGitStatusPreview: async (workspacePath) => {
+        requests.push(workspacePath)
+        return {
+          workspacePath,
+          isRepository: true,
+          repoRoot: workspacePath,
+          branch: 'main',
+          upstream: 'origin/main',
+          ahead: 0,
+          behind: 0,
+          hasConflicts: false,
+          clean: false,
+          summary: {
+            staged: 0,
+            unstaged: 1,
+            untracked: 0,
+            conflicted: 0,
+          },
+          changes: [
+            {
+              path: 'src/components/GitToolCard.tsx',
+              kind: 'modified',
+              stagedStatus: ' ',
+              workingTreeStatus: 'M',
+              staged: false,
+              conflicted: false,
+            },
+          ],
+          description: '',
+        }
+      },
+    },
+  } as ElectronBridgeWindow)
+
+  const status = await fetchGitStatusPreview('D:/workspace/repo')
+
+  assert.deepEqual(requests, ['D:/workspace/repo'])
+  assert.equal(status.changes.length, 1)
+  assert.equal(status.changes[0]?.patch, undefined)
+  assert.equal(status.lastCommit, undefined)
 })
 
 test('fetchSlashCommands refreshes shortly so newly-created skills can appear without restarting', async () => {

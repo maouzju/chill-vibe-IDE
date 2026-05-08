@@ -200,6 +200,54 @@ test('non-repo Git cards offer a create-repository action and recover into repo 
   await expect(page.getByText('README.md')).toBeVisible()
 })
 
+test('git card shows preview actions before the full status request finishes', async ({ page }) => {
+  await installMockApis(page, 'dark')
+
+  const previewStatus = createGitStatus([
+    createGitChange('src/components/GitToolCard.tsx', {
+      addedLines: undefined,
+      removedLines: undefined,
+      patch: undefined,
+    }),
+    createGitChange('tests/git-tool-switch.spec.ts', {
+      kind: 'untracked',
+      stagedStatus: '?',
+      workingTreeStatus: '?',
+      addedLines: undefined,
+      removedLines: undefined,
+      patch: undefined,
+    }),
+  ], {
+    branch: 'feature/git-fast-preview',
+    summary: {
+      staged: 0,
+      unstaged: 1,
+      untracked: 1,
+      conflicted: 0,
+    },
+  })
+
+  await page.route('**/api/git/status/preview?workspacePath=*', async (route) => {
+    await route.fulfill({ json: previewStatus })
+  })
+
+  await page.route('**/api/git/status?workspacePath=*', async () => {
+    await new Promise(() => undefined)
+  })
+
+  await page.goto('http://localhost:5173')
+
+  const modelSelect = page.locator('.model-select').first()
+  await modelSelect.waitFor()
+  await selectModel(page, modelSelect, 'Git')
+
+  await expect(page.getByText('2 changed files')).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Commit new' })).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Analyze changes' })).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Full Git' })).toBeVisible()
+  await expect(page.getByText('src/components/GitToolCard.tsx')).toBeVisible()
+})
+
 const installMockApis = async (page: Page, theme: ThemeName, language: AppLanguage = 'en') => {
   await installMockElectronBridge(page)
 

@@ -88,6 +88,8 @@ export const installMockElectronBridge = async (page: Page) => {
           body: JSON.stringify(request ?? {}),
         }),
       fetchOnboardingStatus: async () => jsonRequest('/api/onboarding/status'),
+      fetchGitStatusPreview: async (workspacePath) =>
+        jsonRequest(`/api/git/status/preview?workspacePath=${encodeURIComponent(workspacePath)}`),
       fetchGitStatus: async (workspacePath) =>
         jsonRequest(`/api/git/status?workspacePath=${encodeURIComponent(workspacePath)}`),
       setGitStage: async (request) =>

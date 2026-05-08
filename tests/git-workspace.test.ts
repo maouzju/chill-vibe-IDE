@@ -210,7 +210,7 @@ describe('git workspace helpers', () => {
 
     const status = await inspectGitWorkspace(
       repoPath,
-      { includeChangePreviews: false } as never,
+      { includeChangePreviews: false },
     )
     const modifiedChange = status.changes.find((change) => change.path === 'tracked.txt') as
       | (typeof status.changes)[number] & {
@@ -224,6 +224,30 @@ describe('git workspace helpers', () => {
     assert.equal(modifiedChange.patch, undefined)
     assert.equal(modifiedChange.addedLines, undefined)
     assert.equal(modifiedChange.removedLines, undefined)
+  })
+
+  it('can skip repository details as well as preview patches for faster first paint', async () => {
+    const repoPath = await createTempRepo()
+    await writeFile(path.join(repoPath, 'tracked.txt'), 'base\nwith change\n')
+
+    const status = await inspectGitWorkspace(
+      repoPath,
+      { includeChangePreviews: false, includeRepositoryDetails: false },
+    )
+    const modifiedChange = status.changes.find((change) => change.path === 'tracked.txt') as
+      | (typeof status.changes)[number] & {
+          patch?: string
+          addedLines?: number
+          removedLines?: number
+        }
+      | undefined
+
+    assert.ok(modifiedChange)
+    assert.equal(modifiedChange.patch, undefined)
+    assert.equal(modifiedChange.addedLines, undefined)
+    assert.equal(modifiedChange.removedLines, undefined)
+    assert.equal(status.lastCommit, undefined)
+    assert.equal(status.description, '')
   })
 
   it('omits preview patches for oversized changed files to keep git status safe to render', async () => {

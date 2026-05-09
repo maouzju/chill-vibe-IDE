@@ -21,7 +21,7 @@ Keep the queue in renderer runtime state. The persisted chat schema stays unchan
    - `interrupt`: send immediately, stopping the running stream if needed
 3. Ordinary click and Enter use `auto`, so a normal running-card send behaves like send-now/interruption.
 4. Send-button right-click uses `defer` and prevents the browser context menu.
-5. Ask-user follow-up sends keep their existing immediate-stop behavior.
+5. Ask-user follow-up sends keep their existing immediate-stop behavior, including restored ask-user cards whose old stream may not emit a final `done` event after `stop`, or whose stale stream id is already missing from the backend.
 6. `/compact` follow-ups continue to wait until compaction finishes.
 7. When a stream reaches `done`, `error`, or `Stream not found`, `dispatchNextQueuedSend()` starts the next queued item.
 

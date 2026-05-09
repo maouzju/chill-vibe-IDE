@@ -3451,6 +3451,7 @@ function App() {
         shouldAnswerAskUser ||
         isCompactBoundaryMessage(latestUserMessage, card.provider)
       if (shouldAnswerAskUser) {
+        pendingAskUserDuringStreamRef.current.set(cardId, true)
         enqueueQueuedSend(cardId, { id: crypto.randomUUID(), prompt, attachments })
         queueMicrotask(() => {
           void requestStopForCard(cardId, 'ask-user-answer')

@@ -407,7 +407,16 @@ export const uploadImageAttachment = async (
 
 export const stopChat = async (streamId: string) => {
   const stop = requireDesktopAction(getDesktopApi()?.stopChat)
-  await stop(streamId)
+  try {
+    await stop(streamId)
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    if (message.includes('Stream not found') || message.includes('already finished')) {
+      return
+    }
+
+    throw error
+  }
 }
 
 // ── Music API ──────────────────────────────────────────────────────────────────

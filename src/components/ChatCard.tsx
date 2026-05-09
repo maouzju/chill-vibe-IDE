@@ -461,11 +461,29 @@ const composerFocusRescueIgnoredSelector = [
   '.weather-city-suggestions',
   '.file-tree-name-dialog-layer',
   '.git-agent-panel-shell',
-  cardHeaderControlSelector,
 ].join(', ')
 
 const shouldIgnoreComposerFocusRescueTarget = (target: EventTarget | null) =>
   target instanceof Element && target.closest(composerFocusRescueIgnoredSelector) !== null
+
+const isVisibleComposerFocusRescueControl = (element: Element) => {
+  const style = window.getComputedStyle(element)
+  const rect = element.getBoundingClientRect()
+
+  return (
+    style.display !== 'none' &&
+    style.visibility !== 'hidden' &&
+    style.pointerEvents !== 'none' &&
+    Number(style.opacity || '1') > 0.02 &&
+    rect.width > 0 &&
+    rect.height > 0
+  )
+}
+
+const shouldIgnoreVisibleComposerFocusRescueControl = (target: EventTarget | null) =>
+  target instanceof Element &&
+  target.closest(cardHeaderControlSelector) !== null &&
+  isVisibleComposerFocusRescueControl(target.closest(cardHeaderControlSelector)!)
 
 const areChatCardPropsEqual = (previous: ChatCardProps, next: ChatCardProps) =>
   previous.card === next.card &&
@@ -1466,6 +1484,10 @@ const ChatCardView = ({
         event.clientY <= rect.bottom
 
       if (!isInsideTextarea) {
+        return
+      }
+
+      if (shouldIgnoreVisibleComposerFocusRescueControl(event.target)) {
         return
       }
 

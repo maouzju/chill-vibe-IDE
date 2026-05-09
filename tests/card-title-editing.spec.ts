@@ -299,6 +299,46 @@ for (const theme of ['dark', 'light'] as const) {
     await expect(composer).toHaveValue('focus rescue works')
   })
 
+  test(`composer clicks recover focus when a stale invisible button sits above it in ${theme} theme`, async ({ page }) => {
+    await installMockApis(page, theme)
+    await page.goto('http://localhost:5173')
+
+    const composer = page
+      .locator('.pane-view')
+      .first()
+      .locator('.pane-content > .pane-tab-panel.is-active .composer textarea')
+
+    await expect(composer).toBeVisible()
+
+    const composerBox = await composer.boundingBox()
+    if (!composerBox) {
+      throw new Error('Expected the composer textarea to have measurable geometry')
+    }
+
+    await page.evaluate((box) => {
+      const blocker = document.createElement('button')
+      blocker.type = 'button'
+      blocker.className = 'focus-rescue-fixture-stale-button'
+      blocker.textContent = 'stale invisible control'
+      blocker.style.position = 'fixed'
+      blocker.style.left = `${box.x - 4}px`
+      blocker.style.top = `${box.y - 4}px`
+      blocker.style.width = `${box.width + 8}px`
+      blocker.style.height = `${box.height + 8}px`
+      blocker.style.zIndex = '999'
+      blocker.style.opacity = '0'
+      blocker.style.border = '0'
+      blocker.style.padding = '0'
+      document.body.appendChild(blocker)
+    }, composerBox)
+
+    await page.mouse.click(composerBox.x + composerBox.width / 2, composerBox.y + composerBox.height / 2)
+
+    await expect(composer).toBeFocused()
+    await page.keyboard.type('focus wins over stale button')
+    await expect(composer).toHaveValue('focus wins over stale button')
+  })
+
   test(`double-clicking empty pane tab bar space opens a new tab in ${theme} theme`, async ({ page }) => {
     await installMockApis(page, theme)
     await page.goto('http://localhost:5173')

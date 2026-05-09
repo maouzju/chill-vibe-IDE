@@ -1,5 +1,6 @@
 import { expect, test, type Page } from '@playwright/test'
 
+import { createPane } from '../shared/default-state.ts'
 import type { AppState, ChatMessage } from '../shared/schema.ts'
 import { installMockElectronBridge } from './electron-bridge.ts'
 import { createPlaywrightState } from './playwright-state.ts'
@@ -94,6 +95,30 @@ const createAskUserMessage = (): ChatMessage => ({
   },
 })
 
+const createShortAskUserMessage = (): ChatMessage => ({
+  id: 'short-ask-user-message-1',
+  role: 'assistant',
+  content: '',
+  createdAt: new Date(Date.UTC(2026, 3, 18, 12, 2, 0)).toISOString(),
+  meta: {
+    provider: 'codex',
+    kind: 'ask-user',
+    itemId: 'short-ask-user-message-1',
+    structuredData: JSON.stringify({
+      itemId: 'short-ask-user-message-1',
+      kind: 'ask-user',
+      status: 'completed',
+      header: 'Need direction',
+      question: 'Which approach should I take?',
+      multiSelect: false,
+      options: [
+        { label: 'Fast path', description: '' },
+        { label: 'Safer refactor', description: '' },
+      ],
+    }),
+  },
+})
+
 const createState = (theme: ThemeName): AppState =>
   createPlaywrightState({
     version: 1,
@@ -149,6 +174,78 @@ const createState = (theme: ThemeName): AppState =>
       },
     ],
   })
+
+const createTabbedState = (theme: ThemeName): AppState => {
+  const state = createState(theme)
+  const column = state.columns[0]!
+  const reviewCard = {
+    ...column.cards['card-1']!,
+    id: 'card-2',
+    title: 'Review Tab',
+    messages: [createHistoryMessage(100)],
+  }
+
+  return createPlaywrightState({
+    ...state,
+    columns: [
+      {
+        ...column,
+        cards: {
+          ...column.cards,
+          'card-2': reviewCard,
+        },
+        layout: createPane(['card-1', 'card-2'], 'card-1', 'pane-1'),
+      },
+    ],
+  })
+}
+
+const createRestoredTabbedState = (theme: ThemeName): AppState => {
+  const state = createState(theme)
+  const column = state.columns[0]!
+  const baseCard = column.cards['card-1']!
+  const reviewCard = {
+    ...baseCard,
+    id: 'card-2',
+    title: 'Review Tab',
+    messages: [createHistoryMessage(100)],
+  }
+
+  return createPlaywrightState({
+    ...state,
+    columns: [
+      {
+        ...column,
+        cards: {
+          ...column.cards,
+          'card-2': reviewCard,
+        },
+        layout: createPane(['card-1', 'card-2'], 'card-1', 'pane-1'),
+      },
+    ],
+    sessionHistory: [
+      {
+        id: 'history-restored-ask-user',
+        title: 'Restored Ask User',
+        sessionId: 'restored-session-1',
+        provider: 'codex',
+        model: 'gpt-5.5',
+        workspacePath: column.workspacePath,
+        messages: [
+          ...Array.from({ length: 18 }, (_, index) => createHistoryMessage(index)),
+          {
+            id: 'restored-user-anchor',
+            role: 'user' as const,
+            content: 'Please continue from this restored prompt.',
+            createdAt: new Date(Date.UTC(2026, 3, 18, 12, 3, 0)).toISOString(),
+          },
+          createShortAskUserMessage(),
+        ],
+        archivedAt: new Date(Date.UTC(2026, 3, 18, 12, 4, 0)).toISOString(),
+      },
+    ],
+  })
+}
 
 const installMockStreamingApis = async (page: Page, theme: ThemeName) => {
   await page.addInitScript(() => {
@@ -220,6 +317,21 @@ const installMockStreamingApis = async (page: Page, theme: ThemeName) => {
     await route.fulfill({ status: 204 })
   })
 
+  await page.route('**/api/session-history/*', async (route) => {
+    const entryId = decodeURIComponent(new URL(route.request().url()).pathname.split('/').pop() ?? '')
+    const entry = state.sessionHistory.find((item) => item.id === entryId)
+
+    if (!entry) {
+      await route.fulfill({
+        status: 404,
+        json: { message: 'Session history entry not found.' },
+      })
+      return
+    }
+
+    await route.fulfill({ json: { entry } })
+  })
+
   await page.route('**/api/providers', async (route) => {
     await route.fulfill({
       json: [
@@ -256,6 +368,62 @@ const installMockStreamingApis = async (page: Page, theme: ThemeName) => {
     readChatRequests: () => chatRequests.slice(),
     readStopRequests: () => stopRequests.slice(),
   }
+}
+
+const installMockStreamingApisWithState = async (page: Page, theme: ThemeName, initialState: AppState) => {
+  await installMockElectronBridge(page)
+
+  let state = initialState
+
+  await page.route('**/api/state', async (route) => {
+    const request = route.request()
+
+    if (request.method() === 'GET') {
+      await route.fulfill({ json: state })
+      return
+    }
+
+    if (request.method() === 'PUT') {
+      state = createPlaywrightState(JSON.parse(request.postData() ?? '{}'))
+      await route.fulfill({ json: state })
+      return
+    }
+
+    await route.fallback()
+  })
+
+  await page.route('**/api/state/snapshot', async (route) => {
+    await route.fulfill({ status: 204 })
+  })
+
+  await page.route('**/api/providers', async (route) => {
+    await route.fulfill({
+      json: [
+        { provider: 'codex', available: true, command: 'codex' },
+        { provider: 'claude', available: true, command: 'claude' },
+      ],
+    })
+  })
+
+  await page.route('**/api/setup/status', async (route) => {
+    await route.fulfill({ json: { state: 'idle', logs: [] } })
+  })
+
+  await page.route('**/api/slash-commands', async (route) => {
+    await route.fulfill({ json: [] })
+  })
+
+  await page.route('**/api/chat/message', async (route) => {
+    await route.fulfill({
+      json: {
+        streamId: 'stream-1',
+      },
+    })
+  })
+
+  await page.route('**/api/chat/stop/*', async (route) => {
+    await route.fulfill({ status: 204 })
+  })
 }
 
 for (const theme of ['dark', 'light'] as const) {
@@ -372,4 +540,64 @@ test('ask-user double submit only starts one follow-up send and never interrupts
     .toBe(0)
   await expect(page.locator('.fatal-error-shell')).toHaveCount(0)
   await expect(page.locator('.ask-user-card.is-answered')).toBeVisible()
+})
+
+test('selecting an ask-user option does not leave a blank gap until tab switch', async ({ page }) => {
+  await installMockStreamingApisWithState(page, 'dark', createTabbedState('dark'))
+
+  await page.goto(appUrl)
+  await expect(page.locator('.ask-user-card')).toBeVisible()
+
+  await scrollMessageListToBottom(page)
+  await expect
+    .poll(async () => (await readMessageListMetrics(page)).distanceToBottom)
+    .toBeLessThanOrEqual(1)
+
+  await page.locator('.ask-user-option').filter({ hasText: 'Fast path' }).click()
+  await expect(page.locator('.ask-user-option.is-selected')).toContainText('Fast path')
+
+  const beforeTabSwitch = await readMessageListMetrics(page)
+  expect(beforeTabSwitch.distanceToBottom).toBeLessThanOrEqual(1)
+
+  await page.locator('.pane-tab', { hasText: 'Review Tab' }).click()
+  await expect(page.locator('.pane-tab.is-active .pane-tab-label')).toHaveText('Review Tab')
+  await page.locator('.pane-tab', { hasText: 'Ask User Scroll Repro' }).click()
+  await expect(page.locator('.pane-tab.is-active .pane-tab-label')).toHaveText('Ask User Scroll Repro')
+
+  const afterTabSwitch = await readMessageListMetrics(page)
+  expect(Math.abs(afterTabSwitch.distanceToBottom - beforeTabSwitch.distanceToBottom)).toBeLessThanOrEqual(1)
+})
+
+test('selecting an ask-user option keeps the card footer anchored in restored tabs', async ({ page }) => {
+  await installMockStreamingApisWithState(page, 'dark', createRestoredTabbedState('dark'))
+
+  await page.goto(appUrl)
+  await page.locator('.column-actions .icon-button').first().click()
+  await expect(page.locator('.session-history-menu')).toBeVisible()
+  await page.locator('.session-history-item', { hasText: 'Restored Ask User' }).click()
+  await expect(page.locator('.ask-user-card')).toBeVisible()
+
+  const paneContent = page.locator('.pane-content').first()
+  const cardFooter = page.locator('.pane-tab-panel.is-active .card-footer').first()
+
+  const [paneBeforeBox, footerBeforeBox] = await Promise.all([
+    paneContent.boundingBox(),
+    cardFooter.boundingBox(),
+  ])
+
+  expect(paneBeforeBox).not.toBeNull()
+  expect(footerBeforeBox).not.toBeNull()
+  expect(Math.abs((paneBeforeBox!.y + paneBeforeBox!.height) - (footerBeforeBox!.y + footerBeforeBox!.height))).toBeLessThanOrEqual(2)
+
+  await page.locator('.ask-user-option').filter({ hasText: 'Fast path' }).click()
+  await expect(page.locator('.ask-user-option.is-selected')).toContainText('Fast path')
+
+  const [paneBox, footerBox] = await Promise.all([
+    paneContent.boundingBox(),
+    cardFooter.boundingBox(),
+  ])
+
+  expect(paneBox).not.toBeNull()
+  expect(footerBox).not.toBeNull()
+  expect(Math.abs((paneBox!.y + paneBox!.height) - (footerBox!.y + footerBox!.height))).toBeLessThanOrEqual(2)
 })

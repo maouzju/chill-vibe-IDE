@@ -115,6 +115,7 @@ const installMockApis = async (
     initialCard?: MockCardState
     autoEmitDoneOnStop?: boolean
     holdChatMessageResponse?: boolean
+    stopResponse?: 'ok' | 'not-found'
   } = {},
 ) => {
   await page.addInitScript(() => {
@@ -397,6 +398,7 @@ const installMockApis = async (
     },
     autoEmitDoneOnStop = true,
     holdChatMessageResponse: initialHoldChatMessageResponse = false,
+    stopResponse = 'ok',
   } = options
   const initialProvider = initialCard.provider ?? 'codex'
   const initialModel = initialCard.model ?? (initialProvider === 'claude' ? 'claude-opus-4-7' : 'gpt-5.5')
@@ -516,6 +518,14 @@ const installMockApis = async (
   await page.route('**/api/chat/stop/*', async (route) => {
     const streamId = decodeURIComponent(route.request().url().split('/').at(-1) ?? '')
     requests.push(`stop:${streamId}`)
+    if (stopResponse === 'not-found') {
+      await route.fulfill({
+        status: 404,
+        json: { message: 'Stream not found or already finished.' },
+      })
+      return
+    }
+
     await route.fulfill({ status: 204 })
     if (autoEmitDoneOnStop) {
       await emitStreamEvent(page, streamId, 'done', { stopped: true }, { waitForSubscriber: false })
@@ -860,6 +870,56 @@ test('answering a restored ask-user card stops the recovered stream and immediat
   await expect
     .poll(() => mock.readState().columns[0]?.cards['card-1']?.messages.map((message) => message.role))
     .toEqual(['assistant', 'user'])
+  await expect.poll(() => mock.readState().columns[0]?.cards['card-1']?.streamId).toBe('stream-2')
+})
+
+test('answering a restored ask-user card still sends if stop does not emit done', async ({ page }) => {
+  const now = new Date().toISOString()
+  const mock = await installMockApis(page, {
+    initialCard: {
+      status: 'streaming',
+      streamId: 'stream-1',
+      sessionId: 'session-1',
+      messages: [createAskUserMessage(now)],
+    },
+    autoEmitDoneOnStop: false,
+  })
+  await page.goto('http://localhost:5173')
+
+  await expect(getActiveComposerTextarea(page)).toBeVisible()
+  await expect(page.locator('.ask-user-card')).toBeVisible()
+
+  await page.locator('.ask-user-option').filter({ hasText: 'Fast' }).click()
+  await page.locator('.ask-user-submit').click()
+
+  await expect.poll(() => mock.readRequests()[0]).toBe('stop:stream-1')
+  await expect.poll(() => mock.readRequests().filter((entry) => entry === 'stop:stream-1').length).toBe(1)
+  await expect.poll(() => mock.readRequests()).toContain('message:Fast')
+  await expect.poll(() => mock.readState().columns[0]?.cards['card-1']?.streamId).toBe('stream-2')
+})
+
+test('answering a restored ask-user card still sends if stop says the old stream is gone', async ({ page }) => {
+  const now = new Date().toISOString()
+  const mock = await installMockApis(page, {
+    initialCard: {
+      status: 'streaming',
+      streamId: 'stream-1',
+      sessionId: 'session-1',
+      messages: [createAskUserMessage(now)],
+    },
+    stopResponse: 'not-found',
+  })
+  await page.goto('http://localhost:5173')
+
+  await expect(getActiveComposerTextarea(page)).toBeVisible()
+  await expect(page.locator('.ask-user-card')).toBeVisible()
+
+  await page.locator('.ask-user-option').filter({ hasText: 'Fast' }).click()
+  await page.locator('.ask-user-submit').click()
+
+  await expect.poll(() => mock.readRequests()[0]).toBe('stop:stream-1')
+  await expect.poll(() => mock.readRequests().filter((entry) => entry === 'stop:stream-1').length).toBe(1)
+  await expect.poll(() => mock.readRequests()).toContain('message:Fast')
   await expect.poll(() => mock.readState().columns[0]?.cards['card-1']?.streamId).toBe('stream-2')
 })
 

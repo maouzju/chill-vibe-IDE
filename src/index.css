@@ -6675,6 +6675,7 @@ body.is-card-dragging .lane-drop-zone-top {
 }
 
 .ask-user-option {
+  position: relative;
   display: flex;
   align-items: flex-start;
   gap: 0.45rem;
@@ -6690,8 +6691,9 @@ body.is-card-dragging .lane-drop-zone-top {
 
 .ask-user-radio-input {
   position: absolute;
+  inset: 0;
   opacity: 0;
-  pointer-events: none;
+  cursor: pointer;
 }
 
 .ask-user-radio {

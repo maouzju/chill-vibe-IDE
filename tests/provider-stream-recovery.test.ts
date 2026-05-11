@@ -50,6 +50,22 @@ test('capacity errors after a live session are resumable', () => {
   )
 })
 
+test('third-party extra-usage 403 after a live session is resumable because credits can be claimed externally', () => {
+  assert.deepEqual(
+    classifyProviderStreamErrorRecovery(
+      {
+        sessionId: 'session-1',
+      },
+      'Failed to authenticate. API Error: 403 {"error":{"message":"Third-party apps now draw from your extra usage, not your plan limits. We\'ve added a $200 credit to get you started. Claim it at ***.ai/settings/usage and keep going.","type":"<nil>"},"type":"error"}',
+      'switch-config',
+    ),
+    {
+      recoverable: true,
+      recoveryMode: 'resume-session',
+    },
+  )
+})
+
 test('setup and routing errors stay non-recoverable even with a session', () => {
   assert.deepEqual(
     classifyProviderStreamErrorRecovery(

@@ -14,7 +14,8 @@
 5. Write `state.json` with `renderSessionHistoryForRenderer(...)` output only.
 6. Cache the lightweight state so ordinary settings/provider reads do not hydrate archived transcripts.
 7. When several chats are streaming or live transcripts are already large, batch renderer saves into a wider window and compact oversized `structuredData` before crossing the Electron IPC bridge.
-8. If queued saves keep replacing each other or individual writes become slow, open the state-save circuit breaker: delay the next write, keep only the newest pending state, and throttle routine snapshots while the circuit is open.
+8. Streaming assistant text deltas and structured activity events are coalesced in the renderer before mutating React state, so command/reasoning-heavy runs do not force a board re-render and queued persistence pass for every single stream event.
+9. If queued saves keep replacing each other or individual writes become slow, open the state-save circuit breaker: delay the next write, keep only the newest pending state, and throttle routine snapshots while the circuit is open.
 
 ## Load flow
 

@@ -200,6 +200,7 @@ import { WorkspaceColumn } from './components/WorkspaceColumn'
 import {
   getPersistenceVersion,
   streamDeltaFlushIntervalMs,
+  streamActivityFlushIntervalMs,
   shouldPersistActionImmediately,
   shouldSyncRuntimeSettings,
   shouldUseQueuedPersistenceForAction,
@@ -751,6 +752,10 @@ function App() {
     new Map<string, { columnId: string; cardId: string; messageId: string; buffer: string }>(),
   )
   const deltaFlushHandleRef = useRef<number | null>(null)
+  const activityBufferRef = useRef(
+    new Map<string, { columnId: string; cardId: string; messages: ChatMessage[] }>(),
+  )
+  const activityFlushHandleRef = useRef<number | null>(null)
 
   useEffect(() => {
     appStateRef.current = appState
@@ -1088,6 +1093,80 @@ function App() {
       })
     },
     [applyAction],
+  )
+
+  const flushActivityBuffer = useCallback(() => {
+    activityFlushHandleRef.current = null
+    const buffer = activityBufferRef.current
+    if (buffer.size === 0) {
+      return
+    }
+
+    const actions: IdeAction[] = []
+    for (const entry of buffer.values()) {
+      if (entry.messages.length === 0) continue
+      actions.push({
+        type: 'upsertMessages',
+        columnId: entry.columnId,
+        cardId: entry.cardId,
+        messages: entry.messages,
+      })
+    }
+    buffer.clear()
+
+    if (actions.length === 0) {
+      return
+    }
+
+    startTransition(() => {
+      persistAfterActions(actions, applyActions(actions))
+    })
+  }, [applyActions, persistAfterActions])
+
+  const flushBufferedActivitiesForCard = useCallback(
+    (cardId: string) => {
+      const entry = activityBufferRef.current.get(cardId)
+      if (!entry || entry.messages.length === 0) {
+        return appStateRef.current
+      }
+
+      activityBufferRef.current.delete(cardId)
+      if (activityBufferRef.current.size === 0 && activityFlushHandleRef.current !== null) {
+        window.clearTimeout(activityFlushHandleRef.current)
+        activityFlushHandleRef.current = null
+      }
+
+      const action: IdeAction = {
+        type: 'upsertMessages',
+        columnId: entry.columnId,
+        cardId: entry.cardId,
+        messages: entry.messages,
+      }
+      return applyAction(action)
+    },
+    [applyAction],
+  )
+
+  const enqueueActivityMessage = useCallback(
+    (columnId: string, cardId: string, message: ChatMessage) => {
+      const buffer = activityBufferRef.current
+      const existing = buffer.get(cardId)
+      if (existing) {
+        const existingIndex = existing.messages.findIndex((current) => current.id === message.id)
+        if (existingIndex >= 0) {
+          existing.messages[existingIndex] = message
+        } else {
+          existing.messages.push(message)
+        }
+      } else {
+        buffer.set(cardId, { columnId, cardId, messages: [message] })
+      }
+
+      if (activityFlushHandleRef.current === null) {
+        activityFlushHandleRef.current = window.setTimeout(flushActivityBuffer, streamActivityFlushIntervalMs)
+      }
+    },
+    [flushActivityBuffer],
   )
 
   const updateAutoUrgeProfiles = useCallback(
@@ -1612,6 +1691,7 @@ function App() {
     // the stream. Otherwise a follow-up stream can overwrite the per-card
     // buffer before the next animation-frame flush and make visible text vanish.
     flushBufferedAssistantDeltaForCard(cardId)
+    flushBufferedActivitiesForCard(cardId)
 
     active.source.close()
     activeStreamsRef.current.delete(cardId)
@@ -1636,7 +1716,7 @@ function App() {
     if (stopRemote) {
       await stopChat(active.streamId).catch(() => undefined)
     }
-  }, [clearStopCompletionFallbackTimer, flushBufferedAssistantDeltaForCard])
+  }, [clearStopCompletionFallbackTimer, flushBufferedActivitiesForCard, flushBufferedAssistantDeltaForCard])
 
   const requestStopForCard = useCallback(
     async (cardId: string, reason: StoppedRunReason = 'manual') => {
@@ -1656,6 +1736,7 @@ function App() {
       } catch (error) {
         stoppedRunReasonRef.current.delete(streamId)
         flushBufferedAssistantDeltaForCard(cardId)
+        flushBufferedActivitiesForCard(cardId)
         active?.source.close()
         activeStreamsRef.current.delete(cardId)
         clearStopCompletionFallbackTimer(cardId)
@@ -1689,6 +1770,7 @@ function App() {
     [
       applyActions,
       clearStopCompletionFallbackTimer,
+      flushBufferedActivitiesForCard,
       flushBufferedAssistantDeltaForCard,
       persistAfterActions,
       text.unexpectedError,
@@ -1793,6 +1875,7 @@ function App() {
   ) => {
     const active = activeStreamsRef.current.get(cardId)
     flushBufferedAssistantDeltaForCard(cardId)
+    flushBufferedActivitiesForCard(cardId)
     active?.source.close()
     activeStreamsRef.current.delete(cardId)
     clearStopCompletionFallbackTimer(cardId)
@@ -1842,6 +1925,7 @@ function App() {
     applyActions,
     clearStopCompletionFallbackTimer,
     dispatchNextQueuedSend,
+    flushBufferedActivitiesForCard,
     flushBufferedAssistantDeltaForCard,
     persistAfterActions,
   ])
@@ -2366,6 +2450,7 @@ function App() {
 
       if (existing) {
         flushBufferedAssistantDeltaForCard(card.id)
+        flushBufferedActivitiesForCard(card.id)
         existing.source.close()
         activeStreamsRef.current.delete(card.id)
       }
@@ -2421,6 +2506,7 @@ function App() {
           persistAfterAction(action.type, applyAction(action))
         },
         onAssistantMessage: (payload) => {
+          flushBufferedActivitiesForCard(card.id)
           if (
             shouldResetStreamRecoveryAttemptsForActivity('assistant_message') &&
             shouldResetStreamRecoveryAttemptsForText(payload.content)
@@ -2553,6 +2639,10 @@ function App() {
           if (payload.kind === 'ask-user') {
             const liveCard = getColumn(columnId)?.cards[card.id]
             pendingAskUserDuringStreamRef.current.set(card.id, true)
+            const activityFlushedState = flushBufferedActivitiesForCard(card.id)
+            const liveMessages = activityFlushedState.columns
+              .find((column) => column.id === columnId)
+              ?.cards[card.id]?.messages
 
             const action: IdeAction = {
               type: 'updateCard',
@@ -2560,7 +2650,7 @@ function App() {
               cardId: card.id,
               patch: {
                 messages: finalizeStructuredActivityMessage(
-                  liveCard?.messages ?? [],
+                  liveMessages ?? liveCard?.messages ?? [],
                   streamingMessageId,
                   card.provider,
                   card.streamId!,
@@ -2582,13 +2672,11 @@ function App() {
             return
           }
 
-          const action: IdeAction = {
-            type: 'upsertMessages',
+          enqueueActivityMessage(
             columnId,
-            cardId: card.id,
-            messages: [createStructuredActivityMessage(card.provider, card.streamId!, payload)],
-          }
-          persistAfterAction(action.type, applyAction(action))
+            card.id,
+            createStructuredActivityMessage(card.provider, card.streamId!, payload),
+          )
         },
         onStats: (payload) => {
           const previousLocalRecoveryStats = localRecoveryStatsRef.current.get(card.id)
@@ -2614,6 +2702,7 @@ function App() {
         },
         onDone: ({ stopped }) => {
           flushBufferedAssistantDeltaForCard(card.id)
+          const activityFlushedState = flushBufferedActivitiesForCard(card.id)
           source.close()
           activeStreamsRef.current.delete(card.id)
           const fallbackTimer = stopCompletionFallbackTimersRef.current.get(card.id)
@@ -2657,7 +2746,7 @@ function App() {
             void flashWindowOnce().catch(() => undefined)
           }
 
-          const liveColumn = getColumn(columnId)
+          const liveColumn = getColumnById(activityFlushedState.columns, columnId)
           const unread =
             liveColumn
               ? shouldMarkCardUnreadOnStreamDone(
@@ -2667,7 +2756,7 @@ function App() {
                 )
               : true
 
-          const liveCard = getColumn(columnId)?.cards[card.id]
+          const liveCard = liveColumn?.cards[card.id]
           const pendingCompactBoundary = liveCard
             ? getPendingCompactBoundaryMessage(liveCard.messages)
             : null
@@ -2747,6 +2836,7 @@ function App() {
         },
         onError: ({ message, recoverable, recoveryMode, transientOnly, hint, sessionId }) => {
           flushBufferedAssistantDeltaForCard(card.id)
+          flushBufferedActivitiesForCard(card.id)
           source.close()
           activeStreamsRef.current.delete(card.id)
           const fallbackTimer = stopCompletionFallbackTimersRef.current.get(card.id)
@@ -2893,7 +2983,8 @@ function App() {
           // so the user can continue chatting with their existing messages.
           if (message === 'Stream not found.') {
             forceResetRecoveryStatus(card.id)
-            const liveCard = getColumn(columnId)?.cards[card.id]
+            const activityFlushedState = flushBufferedActivitiesForCard(card.id)
+            const liveCard = getColumnById(activityFlushedState.columns, columnId)?.cards[card.id]
             const pendingCompactBoundary = liveCard
               ? getPendingCompactBoundaryMessage(liveCard.messages)
               : null
@@ -2926,7 +3017,8 @@ function App() {
           // Final, unrecoverable failure (or recoverable retries exhausted) —
           // show the failed recovery banner so the user isn't left wondering.
           markRecoveryFailed(card.id)
-          const liveCard = getColumn(columnId)?.cards[card.id]
+          const activityFlushedState = flushBufferedActivitiesForCard(card.id)
+          const liveCard = getColumnById(activityFlushedState.columns, columnId)?.cards[card.id]
           const pendingCompactBoundary = liveCard
             ? getPendingCompactBoundaryMessage(liveCard.messages)
             : null
@@ -2972,8 +3064,10 @@ function App() {
       clearRecoveryStatusIfAllowed,
       dispatchNextQueuedSend,
       enqueueAssistantDelta,
+      enqueueActivityMessage,
       ensureAssistantMessage,
       forceResetRecoveryStatus,
+      flushBufferedActivitiesForCard,
       flushBufferedAssistantDeltaForCard,
       getColumn,
       markRecoveryFailed,
@@ -3002,6 +3096,11 @@ function App() {
       deltaFlushHandleRef.current = null
     }
     deltaBufferRef.current.clear()
+    if (activityFlushHandleRef.current !== null) {
+      window.clearTimeout(activityFlushHandleRef.current)
+      activityFlushHandleRef.current = null
+    }
+    activityBufferRef.current.clear()
     stoppedRunReasonRef.current.clear()
     streamRetryCountRef.current.clear()
     transientResumeLoopCountRef.current.clear()

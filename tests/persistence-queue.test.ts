@@ -11,6 +11,7 @@ import {
   getPersistenceVersion,
   getStreamingCardCount,
   isBusyStreamingState,
+  streamActivityFlushIntervalMs,
   streamDeltaFlushIntervalMs,
   shouldResetQueuedStateSaveTimer,
   shouldPersistActionImmediately,
@@ -76,6 +77,10 @@ describe('persistence queue', () => {
 
   it('uses a coarse renderer delta flush interval for active streams', () => {
     assert.equal(streamDeltaFlushIntervalMs, 1_000)
+  })
+
+  it('uses a coarser renderer activity flush interval for structured stream events', () => {
+    assert.equal(streamActivityFlushIntervalMs, 2_000)
   })
 
   it('backs off queued saves further when several sessions stream at once', () => {

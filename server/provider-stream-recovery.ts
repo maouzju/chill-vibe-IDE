@@ -11,6 +11,16 @@ const recoverableErrorPatterns = [
 
 const zeroExitPattern = /\b(?:codex|claude) exited with status code:\s*0\b/i
 
+const recoverableSwitchConfigErrorPatterns = [
+  'third-party apps now draw from your extra usage',
+  'claim it at',
+  'settings/usage',
+  'keep going',
+] as const
+
+const isRecoverableSwitchConfigError = (normalizedMessage: string) =>
+  recoverableSwitchConfigErrorPatterns.every((pattern) => normalizedMessage.includes(pattern))
+
 export const classifyProviderStreamErrorRecovery = (
   request: Pick<ChatRequest, 'sessionId'>,
   message: string,
@@ -20,16 +30,19 @@ export const classifyProviderStreamErrorRecovery = (
     return {}
   }
 
-  if (hint === 'switch-config' || hint === 'env-setup') {
-    return {}
-  }
-
   const normalizedMessage = message.trim().toLowerCase()
   if (!normalizedMessage) {
     return {}
   }
 
+  const switchConfigRecoverable = isRecoverableSwitchConfigError(normalizedMessage)
+
+  if (hint === 'env-setup' || (hint === 'switch-config' && !switchConfigRecoverable)) {
+    return {}
+  }
+
   if (
+    switchConfigRecoverable ||
     recoverableErrorPatterns.some((pattern) => normalizedMessage.includes(pattern)) ||
     zeroExitPattern.test(normalizedMessage)
   ) {

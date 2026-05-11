@@ -18,6 +18,7 @@ type QueuedStateSaveScheduleOptions = {
 export const defaultQueuedStateSaveDelayMs = 300
 export const streamingQueuedStateSaveDelayMs = 5_000
 export const streamDeltaFlushIntervalMs = 1_000
+export const streamActivityFlushIntervalMs = 2_000
 const busyStreamingQueuedStateSaveDelayMs = 15_000
 const busyStreamingCardThreshold = 2
 const streamingStateContentBudgetChars = 750_000

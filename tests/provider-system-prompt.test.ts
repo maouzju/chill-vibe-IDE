@@ -1748,6 +1748,30 @@ const buildFakeCodexCapacityErrorAfterSessionScript = () =>
     '})',
   ].join('\n')
 
+const buildFakeCodexThirdPartyExtraUsage403AfterSessionScript = () =>
+  [
+    "const readline = require('node:readline')",
+    "const reply = (message) => process.stdout.write(`${JSON.stringify(message)}\\n`)",
+    "const rl = readline.createInterface({ input: process.stdin, crlfDelay: Infinity })",
+    "rl.on('line', (line) => {",
+    '  if (!line.trim()) {',
+    '    return',
+    '  }',
+    '  const request = JSON.parse(line)',
+    "  if (request.method === 'initialize' && request.id) {",
+    '    reply({ id: request.id, result: {} })',
+    '    return',
+    '  }',
+    "  if (request.method === 'thread/start' && request.id) {",
+    "    reply({ id: request.id, result: { thread: { id: 'thread-extra-usage-403', status: { type: 'active' } } } })",
+    '    return',
+    '  }',
+    "  if (request.method === 'turn/start' && request.id) {",
+    "    reply({ id: request.id, error: { code: -32000, message: 'Failed to authenticate. API Error: 403 {\"error\":{\"message\":\"Third-party apps now draw from your extra usage, not your plan limits. We\\'ve added a $200 credit to get you started. Claim it at ***.ai/settings/usage and keep going.\",\"type\":\"<nil>\"},\"type\":\"error\"}' } })",
+    '  }',
+    '})',
+  ].join('\n')
+
 
 const buildFakeClaudeCapacityErrorAfterSessionScript = () =>
   [
@@ -1783,6 +1807,31 @@ test('codex app-server capacity errors after session creation are resumable', as
   assert.deepEqual(outcome, {
     kind: 'error',
     message: 'Selected model is at capacity. Please try a different model.',
+    recovery: {
+      recoverable: true,
+      recoveryMode: 'resume-session',
+    },
+  })
+})
+
+test('codex app-server third-party extra-usage 403 after session creation is resumable', async () => {
+  const outcome = await withFakeProviderCommand(
+    'codex',
+    buildFakeCodexThirdPartyExtraUsage403AfterSessionScript(),
+    async (workspacePath) =>
+      captureProviderRecoveryFailure(
+        createRequest({
+          provider: 'codex',
+          language: 'en',
+          workspacePath,
+        }),
+      ),
+  )
+
+  assert.deepEqual(outcome, {
+    kind: 'error',
+    message:
+      'Failed to authenticate. API Error: 403 {"error":{"message":"Third-party apps now draw from your extra usage, not your plan limits. We\'ve added a $200 credit to get you started. Claim it at ***.ai/settings/usage and keep going.","type":"<nil>"},"type":"error"}',
     recovery: {
       recoverable: true,
       recoveryMode: 'resume-session',

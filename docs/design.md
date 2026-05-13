@@ -129,6 +129,7 @@ type ChatCard = {
 
 - `workspacePath` 决定 CLI 的工作目录
 - `sessionId` 对应 provider 原生会话 ID
+- `sessionId` 只在当前 provider 路由配置下有效；切换、删除或修改活跃 provider profile 后，相关 provider 的旧会话 ID 必须失效，后续请求改用可见历史重新开始，避免把旧供应商的原生加密上下文续到新供应商
 - `size` 表示卡片的最小高度
 
 ## 6. 技术设计
@@ -144,6 +145,7 @@ type ChatCard = {
 
 - Express 提供状态与会话 API
 - 统一封装本地 Codex / Claude CLI
+- Codex / Claude skill 互相复用时，斜杠菜单、提示词注入和实际 CLI 文件读取权限必须一致；Claude 复用 Codex 用户级 skill 时，需要预授权对应 `.codex` / `CODEX_HOME` 目录。
 - 使用 SSE 将流式输出推给前端
 - 当当前 provider 的本地 CLI 不可用时，聊天发送仍然要进入应用层校验，并在卡片内追加“本地 CLI 不可用”的系统提示；不能只禁用发送按钮让用户反复点击却没有反馈。
 

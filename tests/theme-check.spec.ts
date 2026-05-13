@@ -2378,7 +2378,7 @@ test('language setting updates the interface copy in both themes', async ({ page
 
   await languageSelect.selectOption('en')
   await expect(page.locator('html')).toHaveAttribute('lang', 'en')
-  await expect(page.getByRole('tab', { name: 'Settings' })).toHaveAttribute('aria-selected', 'true')
+  await expect(page.locator('#app-tab-settings')).toHaveAttribute('aria-selected', 'true')
   await expect(page.getByRole('heading', { name: 'Interface and request settings' })).toBeVisible()
   await expect(settingsPanel).toContainText('Reuse Codex / Claude skills')
   await page

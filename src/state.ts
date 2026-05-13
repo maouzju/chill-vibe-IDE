@@ -73,6 +73,68 @@ const isUntouchedEmptyChatCard = (card: ChatCard) =>
   !card.sessionId &&
   !card.streamId
 
+const providerRoutingSignature = (settings: AppSettings, provider: Provider) => {
+  const collection = settings.providerProfiles[provider]
+  const activeProfile = collection.profiles.find((profile) => profile.id === collection.activeProfileId)
+
+  return [
+    collection.activeProfileId.trim(),
+    activeProfile?.baseUrl.trim() ?? '',
+    activeProfile?.apiKey.trim() ?? '',
+  ].join('\0')
+}
+
+const clearProviderNativeSessions = (state: AppState, provider: Provider): AppState => ({
+  ...state,
+  columns: state.columns.map((column) => ({
+    ...column,
+    cards: Object.fromEntries(
+      Object.entries(column.cards).map(([cardId, card]) => {
+        const providerSessions = { ...card.providerSessions }
+        delete providerSessions[provider]
+
+        const sessionId = card.provider === provider ? undefined : card.sessionId
+        if (
+          sessionId === card.sessionId &&
+          Object.keys(providerSessions).length === Object.keys(card.providerSessions).length
+        ) {
+          return [cardId, card]
+        }
+
+        return [
+          cardId,
+          {
+            ...card,
+            sessionId,
+            providerSessions,
+          },
+        ]
+      }),
+    ),
+  })),
+  sessionHistory: state.sessionHistory.map((entry) =>
+    entry.provider === provider && entry.sessionId
+      ? {
+          ...entry,
+          sessionId: undefined,
+        }
+      : entry,
+  ),
+})
+
+const clearSessionsForRoutingChanges = (
+  previous: AppState,
+  next: AppState,
+  providers: Provider[] = ['codex', 'claude'],
+) =>
+  providers.reduce(
+    (current, provider) =>
+      providerRoutingSignature(previous.settings, provider) !== providerRoutingSignature(next.settings, provider)
+        ? clearProviderNativeSessions(current, provider)
+        : current,
+    next,
+  )
+
 export type IdeAction =
   | { type: 'replace'; state: AppState }
   | { type: 'addColumn'; column?: BoardColumn }
@@ -1207,8 +1269,14 @@ export const ideReducer = (state: AppState, action: IdeAction): AppState => {
         ],
       })
     }
-    case 'updateSettings':
-      return touchState(mergeSettings(state, action.patch))
+    case 'updateSettings': {
+      const next = mergeSettings(state, action.patch)
+      return touchState(
+        'providerProfiles' in action.patch
+          ? clearSessionsForRoutingChanges(state, next)
+          : next,
+      )
+    }
     case 'updateRequestModels': {
       return touchState(applyRequestModelPatch(state, action.patch))
     }
@@ -1223,9 +1291,8 @@ export const ideReducer = (state: AppState, action: IdeAction): AppState => {
           ),
         }),
       )
-    case 'upsertProviderProfile':
-      return touchState(
-        updateProviderProfileCollection(state, action.provider, (collection) => {
+    case 'upsertProviderProfile': {
+      const next = updateProviderProfileCollection(state, action.provider, (collection) => {
           const exists = collection.profiles.some((profile) => profile.id === action.profile.id)
           const profiles = exists
             ? collection.profiles.map((profile) =>
@@ -1237,29 +1304,33 @@ export const ideReducer = (state: AppState, action: IdeAction): AppState => {
             activeProfileId: collection.activeProfileId || action.profile.id,
             profiles,
           }
-        }),
-      )
-    case 'removeProviderProfile':
-      return touchState(
-        updateProviderProfileCollection(state, action.provider, (collection) => {
+        })
+
+      return touchState(clearSessionsForRoutingChanges(state, next, [action.provider]))
+    }
+    case 'removeProviderProfile': {
+      const next = updateProviderProfileCollection(state, action.provider, (collection) => {
           const profiles = collection.profiles.filter((profile) => profile.id !== action.profileId)
           return {
             activeProfileId:
               collection.activeProfileId === action.profileId ? (profiles[0]?.id ?? '') : collection.activeProfileId,
             profiles,
           }
-        }),
-      )
-    case 'setActiveProviderProfile':
-      return touchState(
-        updateProviderProfileCollection(state, action.provider, (collection) => ({
+        })
+
+      return touchState(clearSessionsForRoutingChanges(state, next, [action.provider]))
+    }
+    case 'setActiveProviderProfile': {
+      const next = updateProviderProfileCollection(state, action.provider, (collection) => ({
           activeProfileId:
             action.profileId && collection.profiles.some((profile) => profile.id === action.profileId)
               ? action.profileId
               : '',
           profiles: collection.profiles,
-        })),
-      )
+        }))
+
+      return touchState(clearSessionsForRoutingChanges(state, next, [action.provider]))
+    }
     case 'applyConfiguredModels':
       return touchState(applyConfiguredModels(state))
     case 'updateColumn': {

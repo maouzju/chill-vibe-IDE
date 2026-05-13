@@ -32,4 +32,26 @@ describe('message-list scrollbar gutter', () => {
     assert.match(paneErrorRule[0], /border:\s*none/, 'embedded error cards should not keep standalone-card borders')
     assert.match(paneErrorRule[0], /background:\s*transparent/, 'embedded error cards should not repaint a narrower standalone background')
   })
+
+  it('drops paint containment for pane-embedded chat cards so long-running panes keep repainting composer input', () => {
+    const css = readFileSync(cssPath, 'utf8')
+    const containmentRule = css.match(/\.card-shell\.is-streaming,[\s\S]*?\.card-shell:has\(\.message-sticky-overlay\)\s*\{[^}]*\}/)
+    assert.ok(containmentRule, 'expected live chat containment mitigation rule')
+    assert.match(
+      containmentRule[0],
+      /\.card-shell\.is-pane-embedded/,
+      'pane-embedded chat cards should opt out of paint containment to avoid stale compositor/focus surfaces after long runs',
+    )
+    assert.match(
+      containmentRule[0],
+      /contain:\s*layout\s+style\s*;/,
+      'pane-embedded mitigation should keep layout/style containment while dropping paint containment',
+    )
+    assert.doesNotMatch(
+      containmentRule[0],
+      /contain:\s*layout\s+style\s+paint\s*;/,
+      'pane-embedded mitigation must not keep paint containment',
+    )
+  })
+
 })

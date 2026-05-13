@@ -2220,6 +2220,7 @@ const resolveClaudeAdditionalDirectories = (options?: {
   env?: NodeJS.ProcessEnv
   homeDir?: string | null
   attachmentPaths?: string[]
+  crossProviderSkillReuseEnabled?: boolean
 }) => {
   const attachmentDirectories = dedupeResolvedPaths(
     (options?.attachmentPaths ?? [])
@@ -2228,7 +2229,13 @@ const resolveClaudeAdditionalDirectories = (options?: {
   )
 
   if (typeof options?.homeDir === 'string' && options.homeDir.trim().length > 0) {
-    return dedupeResolvedPaths([resolvePath(options.homeDir, '.claude'), ...attachmentDirectories])
+    return dedupeResolvedPaths([
+      resolvePath(options.homeDir, '.claude'),
+      ...(options.crossProviderSkillReuseEnabled === false
+        ? []
+        : [resolvePath(options.homeDir, '.codex')]),
+      ...attachmentDirectories,
+    ])
   }
 
   const env = options?.env ?? process.env
@@ -2240,9 +2247,16 @@ const resolveClaudeAdditionalDirectories = (options?: {
     ),
     resolveConfiguredPath(os.homedir()),
   ].filter((candidate): candidate is string => Boolean(candidate))
+  const codexConfigHome = resolveConfiguredPath(env.CODEX_HOME)
 
   return dedupeResolvedPaths([
     ...homeCandidates.map((homeDir) => resolvePath(homeDir, '.claude')),
+    ...(options?.crossProviderSkillReuseEnabled === false
+      ? []
+      : [
+          ...homeCandidates.map((homeDir) => resolvePath(homeDir, '.codex')),
+          ...(codexConfigHome ? [codexConfigHome] : []),
+        ]),
     ...attachmentDirectories,
   ])
 }
@@ -2262,6 +2276,7 @@ export const buildClaudeArgs = (
   const additionalDirectories = resolveClaudeAdditionalDirectories({
     ...options,
     attachmentPaths,
+    crossProviderSkillReuseEnabled: request.crossProviderSkillReuseEnabled,
   })
   const systemPrompt = [
     buildProviderSystemPrompt(request.language, getRequestBaseSystemPrompt(request)),

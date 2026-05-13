@@ -598,6 +598,72 @@ describe('ideReducer pane layout', () => {
     assert.equal(newCard?.model, 'gpt-5.4')
   })
 
+  it('clears provider-native sessions when the active Codex routing profile changes', () => {
+    const state = createState()
+    state.settings.providerProfiles.codex = {
+      activeProfileId: 'codex-profile-old',
+      profiles: [
+        {
+          id: 'codex-profile-old',
+          name: 'Old Codex',
+          baseUrl: 'https://old.example.com/v1',
+          apiKey: 'sk-old',
+        },
+        {
+          id: 'codex-profile-new',
+          name: 'New Codex',
+          baseUrl: 'https://new.example.com/v1',
+          apiKey: 'sk-new',
+        },
+      ],
+    }
+    state.columns[0]!.cards['card-1'] = createCard({
+      id: 'card-1',
+      provider: 'codex',
+      model: DEFAULT_CODEX_MODEL,
+      sessionId: 'codex-session-old-profile',
+      providerSessions: {
+        claude: 'claude-session-safe',
+      },
+    })
+    state.columns[1]!.cards['card-3'] = createCard({
+      id: 'card-3',
+      provider: 'claude',
+      model: 'claude-opus-4-7',
+      sessionId: 'claude-session-active',
+      providerSessions: {
+        codex: 'codex-session-saved-old-profile',
+      },
+    })
+    state.sessionHistory = [
+      {
+        id: 'history-codex-old-profile',
+        title: 'Old Codex history',
+        sessionId: 'codex-history-session-old-profile',
+        provider: 'codex',
+        model: DEFAULT_CODEX_MODEL,
+        workspacePath: 'D:/repo/one',
+        messages: [assistantMessage],
+        archivedAt: timestamp,
+      },
+    ]
+
+    const next = ideReducer(state, {
+      type: 'setActiveProviderProfile',
+      provider: 'codex',
+      profileId: 'codex-profile-new',
+    })
+
+    assert.equal(next.settings.providerProfiles.codex.activeProfileId, 'codex-profile-new')
+    assert.equal(next.columns[0]!.cards['card-1']?.sessionId, undefined)
+    assert.deepEqual(next.columns[0]!.cards['card-1']?.providerSessions, {
+      claude: 'claude-session-safe',
+    })
+    assert.equal(next.columns[1]!.cards['card-3']?.sessionId, 'claude-session-active')
+    assert.deepEqual(next.columns[1]!.cards['card-3']?.providerSessions, {})
+    assert.equal(next.sessionHistory[0]?.sessionId, undefined)
+  })
+
   it('updates untouched empty chats that still point at the previous provider default', () => {
     const state = createState()
     state.settings.requestModels.claude = 'claude-opus-4-7'

@@ -2299,13 +2299,15 @@ body.is-card-dragging .lane-drop-zone-top {
 }
 
 .card-shell.is-streaming,
+.card-shell.is-pane-embedded,
 .card-shell:has(.ask-user-card),
 .card-shell:has(.message-sticky-overlay) {
   /* Chromium/Electron can occasionally fail to repaint highly dynamic chat
      surfaces until a pane/tab switch forces a fresh paint. Ask-user cards and
      sticky transcript overlays are especially susceptible while a card is
-     streaming, so keep layout/style containment but drop paint containment for
-     those live interactive states. */
+     streaming, and long-lived pane-embedded chats can leave the composer
+     visually stale or unresponsive. Keep layout/style containment but drop
+     paint containment for those live interactive states. */
   contain: layout style;
 }
 

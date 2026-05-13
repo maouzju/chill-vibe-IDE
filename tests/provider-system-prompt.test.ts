@@ -186,6 +186,7 @@ test('claude runs pre-authorize the resolved global .claude directory for tool a
         provider: 'claude',
         model: 'claude-sonnet-4-6',
         language: 'en',
+        crossProviderSkillReuseEnabled: false,
       }),
       [],
       {
@@ -208,6 +209,96 @@ test('claude runs pre-authorize the resolved global .claude directory for tool a
     }
 
     assert.deepEqual(parsedSettings.permissions?.additionalDirectories, [claudeDir])
+  } finally {
+    await rm(tempRoot, { recursive: true, force: true }).catch(() => {})
+  }
+})
+
+test('claude runs pre-authorize the resolved global .codex directory when cross-provider skill reuse is enabled', async () => {
+  const tempRoot = path.join(
+    os.tmpdir(),
+    `chill-vibe-claude-codex-skill-permissions-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+  )
+  const homeDir = path.join(tempRoot, 'home')
+  const claudeDir = path.join(homeDir, '.claude')
+  const codexDir = path.join(homeDir, '.codex')
+
+  await mkdir(claudeDir, { recursive: true })
+  await mkdir(codexDir, { recursive: true })
+
+  try {
+    const args = buildClaudeArgs(
+      createRequest({
+        provider: 'claude',
+        model: 'claude-sonnet-4-6',
+        language: 'en',
+        crossProviderSkillReuseEnabled: true,
+      }),
+      [],
+      {
+        env: {
+          HOME: homeDir,
+        },
+        homeDir,
+      },
+    )
+    const addDirIndex = args.indexOf('--add-dir')
+    const settingsIndex = args.indexOf('--settings')
+
+    assert.notEqual(addDirIndex, -1)
+    assert.deepEqual(args.slice(addDirIndex + 1, addDirIndex + 3), [claudeDir, codexDir])
+    assert.notEqual(settingsIndex, -1)
+
+    const settingsArg = args[settingsIndex + 1] ?? ''
+    const parsedSettings = JSON.parse(settingsArg) as {
+      permissions?: { additionalDirectories?: string[] }
+    }
+
+    assert.deepEqual(parsedSettings.permissions?.additionalDirectories, [claudeDir, codexDir])
+  } finally {
+    await rm(tempRoot, { recursive: true, force: true }).catch(() => {})
+  }
+})
+
+test('claude does not pre-authorize the global .codex directory when cross-provider skill reuse is disabled', async () => {
+  const tempRoot = path.join(
+    os.tmpdir(),
+    `chill-vibe-claude-codex-skill-permissions-off-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+  )
+  const homeDir = path.join(tempRoot, 'home')
+  const claudeDir = path.join(homeDir, '.claude')
+  const codexDir = path.join(homeDir, '.codex')
+
+  await mkdir(claudeDir, { recursive: true })
+  await mkdir(codexDir, { recursive: true })
+
+  try {
+    const args = buildClaudeArgs(
+      createRequest({
+        provider: 'claude',
+        model: 'claude-sonnet-4-6',
+        language: 'en',
+        crossProviderSkillReuseEnabled: false,
+      }),
+      [],
+      {
+        env: {
+          HOME: homeDir,
+        },
+        homeDir,
+      },
+    )
+    const settingsIndex = args.indexOf('--settings')
+
+    assert.notEqual(settingsIndex, -1)
+
+    const settingsArg = args[settingsIndex + 1] ?? ''
+    const parsedSettings = JSON.parse(settingsArg) as {
+      permissions?: { additionalDirectories?: string[] }
+    }
+
+    assert.deepEqual(parsedSettings.permissions?.additionalDirectories, [claudeDir])
+    assert.equal(parsedSettings.permissions?.additionalDirectories?.includes(codexDir), false)
   } finally {
     await rm(tempRoot, { recursive: true, force: true }).catch(() => {})
   }

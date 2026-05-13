@@ -466,6 +466,29 @@ function getBoardWheelDisposition(
   return { type: 'forward' } as const
 }
 
+function isInteractiveEscapeTarget(target: EventTarget | null) {
+  return (
+    target instanceof Element &&
+    (target.closest(
+      [
+        'a[href]',
+        'button',
+        'input',
+        'select',
+        'textarea',
+        '[contenteditable="true"]',
+        '[role="button"]',
+        '[role="combobox"]',
+        '[role="menuitem"]',
+        '[role="option"]',
+        '[role="tab"]',
+        '[role="textbox"]',
+      ].join(', '),
+    ) !== null ||
+      target.closest('#app-panel-routing, #app-panel-settings') !== null)
+  )
+}
+
 type PaneTarget = {
   columnId: string
   paneId: string
@@ -745,6 +768,7 @@ function App() {
   const onboardingAutoSetupStartedRef = useRef(false)
   const setupRunStatusRef = useRef<SetupStatus | null>(null)
   const hydrateRequestIdRef = useRef(0)
+  const hydrateRef = useRef<(() => Promise<void>) | null>(null)
   // Streaming delta buffer: coalesces per-token SSE deltas into a single
   // dispatch window to avoid re-rendering on every character when several
   // sessions stream at once.
@@ -1017,10 +1041,8 @@ function App() {
     setInterruptedSessionActionError(null)
     setInterruptedSessionActionPending(false)
 
-    startTransition(() => {
-      dispatch({ type: 'replace', state })
-      setLoadStatus('ready')
-    })
+    dispatch({ type: 'replace', state })
+    setLoadStatus('ready')
   }, [
     lastQueuedSnapshot,
     lastQueuedState,
@@ -3158,7 +3180,11 @@ function App() {
   }, [attachStreamsForState, clearTransientRuntimeState, commitLoadedState])
 
   useEffect(() => {
-    void hydrate()
+    hydrateRef.current = hydrate
+  }, [hydrate])
+
+  useEffect(() => {
+    void hydrateRef.current?.()
     const activeStreams = activeStreamsRef.current
     const retryCounts = streamRetryCountRef.current
     const transientResumeLoopCounts = transientResumeLoopCountRef.current
@@ -3177,7 +3203,7 @@ function App() {
       retryCounts.clear()
       transientResumeLoopCounts.clear()
     }
-  }, [hydrate])
+  }, [])
 
   useEffect(() => {
     setResolvedTheme(getResolvedAppTheme(appState.settings.theme))
@@ -3220,7 +3246,11 @@ function App() {
     }
 
     const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') {
+      if (
+        event.key === 'Escape' &&
+        !isInteractiveEscapeTarget(event.target) &&
+        !isInteractiveEscapeTarget(document.activeElement)
+      ) {
         setActiveTopTab('ambience')
       }
     }
@@ -4944,7 +4974,7 @@ function App() {
           <h1>{loadErrorCopy.title}</h1>
           <p>{loadErrorCopy.description}</p>
           <div className="loading-actions">
-            <AppButton tone="primary" type="button" onClick={() => void hydrate()}>
+            <AppButton tone="primary" type="button" onClick={() => void hydrateRef.current?.()}>
               {text.retry}
             </AppButton>
             <AppButton type="button" onClick={() => void handleReset()}>

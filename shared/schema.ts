@@ -14,7 +14,7 @@ export type Provider = z.infer<typeof providerSchema>
 export const streamErrorHintSchema = z.enum(['switch-config', 'env-setup'])
 export type StreamErrorHint = z.infer<typeof streamErrorHintSchema>
 
-export const chatActivityKindSchema = z.enum(['command', 'reasoning', 'tool', 'edits', 'todo', 'ask-user'])
+export const chatActivityKindSchema = z.enum(['command', 'reasoning', 'tool', 'edits', 'todo', 'ask-user', 'agents'])
 export type ChatActivityKind = z.infer<typeof chatActivityKindSchema>
 
 export const chatCommandActivityStatusSchema = z.enum(['in_progress', 'completed', 'declined'])
@@ -969,6 +969,45 @@ export const streamCompactionActivitySchema = z.object({
 })
 export type StreamCompactionActivity = z.infer<typeof streamCompactionActivitySchema>
 
+export const streamAgentStatusSchema = z.enum([
+  'pendingInit',
+  'running',
+  'interrupted',
+  'completed',
+  'errored',
+  'shutdown',
+  'notFound',
+])
+export type StreamAgentStatus = z.infer<typeof streamAgentStatusSchema>
+
+export const streamAgentToolSchema = z.enum(['spawnAgent', 'sendInput', 'resumeAgent', 'wait', 'closeAgent'])
+export type StreamAgentTool = z.infer<typeof streamAgentToolSchema>
+
+export const streamAgentToolCallStatusSchema = z.enum(['inProgress', 'completed', 'failed'])
+export type StreamAgentToolCallStatus = z.infer<typeof streamAgentToolCallStatusSchema>
+
+export const streamAgentEntrySchema = z.object({
+  threadId: z.string().min(1),
+  nickname: z.string().optional(),
+  role: z.string().optional(),
+  status: streamAgentStatusSchema.default('pendingInit'),
+  message: z.string().nullable().optional(),
+})
+export type StreamAgentEntry = z.infer<typeof streamAgentEntrySchema>
+
+export const streamAgentsActivitySchema = z.object({
+  itemId: z.string().min(1),
+  kind: z.literal('agents'),
+  status: z.literal('completed'),
+  tool: streamAgentToolSchema,
+  callStatus: streamAgentToolCallStatusSchema,
+  prompt: z.string().nullable().optional(),
+  model: z.string().nullable().optional(),
+  reasoningEffort: z.string().nullable().optional(),
+  agents: z.array(streamAgentEntrySchema).default([]),
+})
+export type StreamAgentsActivity = z.infer<typeof streamAgentsActivitySchema>
+
 export const askUserOptionSchema = z.object({
   label: z.string().min(1),
   description: z.string().default(''),
@@ -1004,6 +1043,7 @@ export const streamActivitySchema = z.union([
   streamTodoActivitySchema,
   streamCompactionActivitySchema,
   streamAskUserActivitySchema,
+  streamAgentsActivitySchema,
 ])
 export type StreamActivity = z.infer<typeof streamActivitySchema>
 

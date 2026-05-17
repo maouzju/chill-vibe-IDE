@@ -1,4 +1,4 @@
-import type { ChatMessage, Provider, StreamEditedFile, StreamTodoItem } from '../../shared/schema'
+import type { ChatMessage, Provider, StreamAgentEntry, StreamAgentTool, StreamAgentToolCallStatus, StreamEditedFile, StreamTodoItem } from '../../shared/schema'
 import { isHiddenCompactBoundaryMessage } from './chat-card-compaction'
 
 export type StructuredCommandMessage = {
@@ -37,6 +37,19 @@ export type StructuredTodoMessage = {
   itemId: string
   status: 'completed'
   items: StructuredTodoItem[]
+}
+
+export type StructuredAgentEntry = StreamAgentEntry
+
+export type StructuredAgentsMessage = {
+  itemId: string
+  status: 'completed'
+  tool: StreamAgentTool
+  callStatus: StreamAgentToolCallStatus
+  prompt?: string | null
+  model?: string | null
+  reasoningEffort?: string | null
+  agents: StructuredAgentEntry[]
 }
 
 export type StructuredAskUserOption = {
@@ -482,6 +495,98 @@ export const parseStructuredAskUserMessage = (message: ChatMessage): StructuredA
   }
 }
 
+const structuredAgentTools = new Set<StreamAgentTool>([
+  'spawnAgent',
+  'sendInput',
+  'resumeAgent',
+  'wait',
+  'closeAgent',
+])
+
+const structuredAgentCallStatuses = new Set<StreamAgentToolCallStatus>([
+  'inProgress',
+  'completed',
+  'failed',
+])
+
+const structuredAgentStatuses = new Set<StructuredAgentEntry['status']>([
+  'pendingInit',
+  'running',
+  'interrupted',
+  'completed',
+  'errored',
+  'shutdown',
+  'notFound',
+])
+
+export const parseStructuredAgentsMessage = (message: ChatMessage): StructuredAgentsMessage | null => {
+  if (message.meta?.kind !== 'agents') {
+    return null
+  }
+
+  const payload = readStructuredData(message)
+
+  if (!payload) {
+    return null
+  }
+
+  const itemId = readStructuredString(payload, 'itemId')
+  const status = readStructuredString(payload, 'status')
+  const tool = readStructuredString(payload, 'tool')
+  const callStatus = readStructuredString(payload, 'callStatus')
+  const rawAgents = payload.agents
+
+  if (
+    !itemId ||
+    status !== 'completed' ||
+    !tool ||
+    !structuredAgentTools.has(tool as StreamAgentTool) ||
+    !callStatus ||
+    !structuredAgentCallStatuses.has(callStatus as StreamAgentToolCallStatus) ||
+    !Array.isArray(rawAgents)
+  ) {
+    return null
+  }
+
+  const agents = rawAgents
+    .map((entry): StructuredAgentEntry | null => {
+      if (typeof entry !== 'object' || entry === null) {
+        return null
+      }
+      const record = entry as Record<string, unknown>
+      const threadId = readStructuredString(record, 'threadId')
+      const entryStatus = readStructuredString(record, 'status') ?? 'pendingInit'
+
+      if (!threadId || !structuredAgentStatuses.has(entryStatus as StructuredAgentEntry['status'])) {
+        return null
+      }
+
+      return {
+        threadId,
+        ...(readStructuredString(record, 'nickname')
+          ? { nickname: readStructuredString(record, 'nickname') }
+          : {}),
+        ...(readStructuredString(record, 'role')
+          ? { role: readStructuredString(record, 'role') }
+          : {}),
+        status: entryStatus as StructuredAgentEntry['status'],
+        message: readStructuredString(record, 'message') ?? null,
+      }
+    })
+    .filter((entry): entry is StructuredAgentEntry => entry !== null)
+
+  return {
+    itemId,
+    status: 'completed',
+    tool: tool as StreamAgentTool,
+    callStatus: callStatus as StreamAgentToolCallStatus,
+    prompt: readStructuredString(payload, 'prompt') ?? null,
+    model: readStructuredString(payload, 'model') ?? null,
+    reasoningEffort: readStructuredString(payload, 'reasoningEffort') ?? null,
+    agents,
+  }
+}
+
 export const getAskUserAnswerKey = (message: ChatMessage) => {
   if (message.meta?.kind !== 'ask-user') {
     return message.id
@@ -590,7 +695,7 @@ const isEmptySkippableMessage = (message: ChatMessage) => {
   if (message.meta?.imageAttachments) return false
 
   const kind = message.meta?.kind
-  if (kind === 'tool' || kind === 'command' || kind === 'edits' || kind === 'todo') return true
+  if (kind === 'tool' || kind === 'command' || kind === 'edits' || kind === 'todo' || kind === 'agents') return true
 
   // Plain assistant messages with no content and no attachments are streaming
   // artifacts that should not render as empty bubbles.
@@ -663,9 +768,10 @@ export const buildRenderableMessages = (messages: ChatMessage[]): RenderableMess
     const tool = parseStructuredToolMessage(currentMessage)
     const edits = parseStructuredEditsMessage(currentMessage)
     const todo = parseStructuredTodoMessage(currentMessage)
+    const agents = parseStructuredAgentsMessage(currentMessage)
 
     if (!command && !tool && !edits) {
-      if (todo) {
+      if (todo || agents) {
         items.push({
           type: 'message',
           message: currentMessage,

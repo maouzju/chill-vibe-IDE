@@ -541,6 +541,32 @@ export const getStructuredLabels = (language: AppLanguage) => {
       exitCode: (code: number) => `Exit code ${code}`,
       changesSummary: 'Changes summary',
       tasks: 'Tasks',
+      agents: 'Background agents',
+      agentsCount: (count: number) => `${count} background agent${count === 1 ? '' : 's'}`,
+      mentionAgentsHint: 'use @ to mention agents',
+      openAgent: 'Open',
+      openAgentUnavailable: 'Agent thread opening is not wired yet',
+      agentTool: {
+        spawnAgent: 'Spawned',
+        sendInput: 'Sent input',
+        resumeAgent: 'Resumed',
+        wait: 'Waiting',
+        closeAgent: 'Closed',
+      },
+      agentCallStatus: {
+        inProgress: 'In progress',
+        completed: 'Completed',
+        failed: 'Failed',
+      },
+      agentStatus: {
+        pendingInit: 'Pending',
+        running: 'Running',
+        interrupted: 'Interrupted',
+        completed: 'Completed',
+        errored: 'Error',
+        shutdown: 'Closed',
+        notFound: 'Not found',
+      },
       tasksCompleted: (completed: number, total: number) => `${completed} of ${total} completed`,
       noTasks: 'No active tasks',
       taskPending: 'Pending',
@@ -576,6 +602,32 @@ export const getStructuredLabels = (language: AppLanguage) => {
     exitCode: (code: number) => `\u9000\u51FA\u7801 ${code}`,
     changesSummary: '\u53D8\u66F4\u6C47\u603B',
     tasks: '\u4EFB\u52A1',
+    agents: '\u540E\u53F0\u667A\u80FD\u4F53',
+    agentsCount: (count: number) => `${count} \u4E2A\u540E\u53F0\u667A\u80FD\u4F53`,
+    mentionAgentsHint: '\u4F7F\u7528 @ \u6807\u8BB0\u667A\u80FD\u4F53',
+    openAgent: '\u6253\u5F00',
+    openAgentUnavailable: '\u6682\u672A\u63A5\u5165\u667A\u80FD\u4F53\u7EBF\u7A0B\u6253\u5F00',
+    agentTool: {
+      spawnAgent: '\u5DF2\u521B\u5EFA',
+      sendInput: '\u5DF2\u53D1\u9001',
+      resumeAgent: '\u5DF2\u6062\u590D',
+      wait: '\u7B49\u5F85\u4E2D',
+      closeAgent: '\u5DF2\u5173\u95ED',
+    },
+    agentCallStatus: {
+      inProgress: '\u8FDB\u884C\u4E2D',
+      completed: '\u5DF2\u5B8C\u6210',
+      failed: '\u5931\u8D25',
+    },
+    agentStatus: {
+      pendingInit: '\u5F85\u542F\u52A8',
+      running: '\u8FD0\u884C\u4E2D',
+      interrupted: '\u5DF2\u4E2D\u65AD',
+      completed: '\u5DF2\u5B8C\u6210',
+      errored: '\u9519\u8BEF',
+      shutdown: '\u5DF2\u5173\u95ED',
+      notFound: '\u672A\u627E\u5230',
+    },
     tasksCompleted: (completed: number, total: number) => `\u5DF2\u5B8C\u6210 ${completed}/${total}`,
     noTasks: '\u6682\u65E0\u4EFB\u52A1',
     taskPending: '\u5F85\u529E',
@@ -599,6 +651,7 @@ const getStreamingActivityLabel = (kind: string, language: AppLanguage): string 
       case 'tool': return 'Using tools'
       case 'edits': return 'Editing files'
       case 'todo': return 'Updating tasks'
+      case 'agents': return 'Coordinating agents'
       case 'ask-user': return 'Waiting for input'
       default: return null
     }
@@ -610,6 +663,7 @@ const getStreamingActivityLabel = (kind: string, language: AppLanguage): string 
     case 'tool': return '\u4F7F\u7528\u5DE5\u5177\u4E2D'
     case 'edits': return '\u7F16\u8F91\u6587\u4EF6\u4E2D'
     case 'todo': return '\u66F4\u65B0\u4EFB\u52A1\u4E2D'
+    case 'agents': return '\u534F\u8C03\u667A\u80FD\u4F53\u4E2D'
     case 'ask-user': return '\u7B49\u5F85\u8F93\u5165'
     default: return null
   }

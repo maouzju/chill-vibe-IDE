@@ -14,6 +14,7 @@ import type { AppLanguage, ChatMessage, ImageAttachment } from '../../shared/sch
 import type { CardRecoveryStatus } from '../stream-recovery-feedback'
 import {
   getAskUserAnswerKey,
+  parseStructuredAgentsMessage,
   parseStructuredAskUserMessage,
   parseStructuredCommandMessage,
   parseStructuredEditsMessage,
@@ -31,6 +32,7 @@ import { CloseIcon, GitBranchIcon } from './Icons'
 import {
   AskUserQuestionCard,
   ChangesSummaryCard,
+  StructuredAgentsCard,
   StructuredCommandCard,
   StructuredEditsCard,
   StructuredPreviewBlock,
@@ -315,6 +317,15 @@ const MessageContent = ({
     return (
       <div className="message-content">
         <StructuredTodoCard language={language} data={todo} />
+      </div>
+    )
+  }
+
+  const agents = parseStructuredAgentsMessage(message)
+  if (agents) {
+    return (
+      <div className="message-content">
+        <StructuredAgentsCard language={language} data={agents} />
       </div>
     )
   }

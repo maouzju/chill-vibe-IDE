@@ -54,4 +54,20 @@ describe('message-list scrollbar gutter', () => {
     )
   })
 
+  it('keeps base chat card shells out of paint containment so stale hit targets cannot block long-lived composers', () => {
+    const css = readFileSync(cssPath, 'utf8')
+    const baseCardRule = css.match(/\n\.card-shell\s*\{[^}]*\}/)
+    assert.ok(baseCardRule, 'expected base .card-shell rule')
+    assert.match(
+      baseCardRule[0],
+      /contain:\s*layout\s+style\s*;/,
+      'base card shells should keep layout/style containment while avoiding Chromium stale paint/hit-test surfaces',
+    )
+    assert.doesNotMatch(
+      baseCardRule[0],
+      /contain:\s*layout\s+style\s+paint\s*;/,
+      'base card shells must not use paint containment because long-lived Electron chats can become visually clickable but hit-test stale',
+    )
+  })
+
 })

@@ -366,6 +366,7 @@ A living list of traps that have wasted time before. **When you hit a new pitfal
 | 126 | Restored ask-user cards may have an ask-user message but no live `pendingAskUserDuringStreamRef` marker | If their old stream accepts `stop` but never emits `done`, the answer can stay queued forever unless answering any pending ask-user explicitly sets the live pending marker before the stop fallback timer starts. |
 | 127 | Restored cards can keep a stale `streamId` after the backend stream is already gone | Treat stop for "Stream not found/already finished" as idempotent success, otherwise ask-user answers and queued follow-ups can be blocked by a stream that no longer exists. |
 | 128 | A hidden radio input positioned absolutely without a containing option can make Chromium scroll the whole card shell on focus | Keep ask-user radio inputs positioned inside their option label, otherwise selecting an option can push the transcript upward and leave a large blank area until a tab switch relayouts it. |
+| 129 | `contain: paint` on long-lived Electron chat card shells can leave Chromium with stale paint/hit-test surfaces | The composer may look present but clicks land on an old layer or nowhere, so card shells should avoid paint containment on interactive chat surfaces. |
 
 ### Self-maintenance rule
 

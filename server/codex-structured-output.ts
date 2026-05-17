@@ -61,8 +61,204 @@ const normalizeCodexItemType = (value: string) => {
       return 'file_change'
     case 'contextCompaction':
       return 'context_compaction'
+    case 'collabAgentToolCall':
+      return 'collab_agent_tool_call'
     default:
       return value
+  }
+}
+
+const normalizeAgentTool = (value: unknown): Extract<StreamActivity, { kind: 'agents' }>['tool'] | null => {
+  switch (value) {
+    case 'spawnAgent':
+    case 'spawn_agent':
+      return 'spawnAgent'
+    case 'sendInput':
+    case 'send_input':
+      return 'sendInput'
+    case 'resumeAgent':
+    case 'resume_agent':
+      return 'resumeAgent'
+    case 'wait':
+      return 'wait'
+    case 'closeAgent':
+    case 'close_agent':
+      return 'closeAgent'
+    default:
+      return null
+  }
+}
+
+const normalizeAgentCallStatus = (
+  value: unknown,
+): Extract<StreamActivity, { kind: 'agents' }>['callStatus'] | null => {
+  switch (value) {
+    case 'inProgress':
+    case 'in_progress':
+      return 'inProgress'
+    case 'completed':
+      return 'completed'
+    case 'failed':
+      return 'failed'
+    default:
+      return null
+  }
+}
+
+const normalizeAgentStatus = (
+  value: unknown,
+): Extract<StreamActivity, { kind: 'agents' }>['agents'][number]['status'] => {
+  switch (value) {
+    case 'pendingInit':
+    case 'pending_init':
+      return 'pendingInit'
+    case 'running':
+      return 'running'
+    case 'interrupted':
+      return 'interrupted'
+    case 'completed':
+      return 'completed'
+    case 'errored':
+      return 'errored'
+    case 'shutdown':
+      return 'shutdown'
+    case 'notFound':
+    case 'not_found':
+      return 'notFound'
+    default:
+      return 'pendingInit'
+  }
+}
+
+const readAgentStatusMessage = (record: Record<string, unknown> | null) => {
+  if (!record) {
+    return null
+  }
+
+  const message = readString(record, 'message')
+
+  if (message) {
+    return message
+  }
+
+  const statusValue = record.status
+  if (isRecord(statusValue)) {
+    return (
+      readString(statusValue, 'message') ??
+      readString(statusValue, 'completed') ??
+      readString(statusValue, 'errored') ??
+      null
+    )
+  }
+
+  return null
+}
+
+const parseCodexAgentMetadataEntry = (value: unknown) => {
+  if (!isRecord(value)) {
+    return null
+  }
+
+  const threadId =
+    readString(value, 'threadId') ??
+    readString(value, 'thread_id') ??
+    readString(value, 'id')
+
+  if (!threadId) {
+    return null
+  }
+
+  return {
+    threadId,
+    nickname:
+      readString(value, 'agentNickname') ??
+      readString(value, 'agent_nickname') ??
+      readString(value, 'nickname'),
+    role:
+      readString(value, 'agentRole') ??
+      readString(value, 'agent_role') ??
+      readString(value, 'agentType') ??
+      readString(value, 'agent_type') ??
+      readString(value, 'role'),
+    status: value.status,
+    message: readAgentStatusMessage(value),
+  }
+}
+
+const readAgentState = (
+  record: Record<string, unknown>,
+  threadId: string,
+  metadata?: ReturnType<typeof parseCodexAgentMetadataEntry>,
+) => {
+  const agentsStates = readRecord(record, 'agentsStates') ?? readRecord(record, 'agents_states')
+  const state = agentsStates && isRecord(agentsStates[threadId])
+    ? agentsStates[threadId] as Record<string, unknown>
+    : null
+  const statusSource = state ?? metadata ?? null
+
+  return {
+    status: normalizeAgentStatus(statusSource?.status),
+    message: readAgentStatusMessage(statusSource),
+  }
+}
+
+const parseCodexCollabAgentActivity = (
+  item: Record<string, unknown>,
+): Extract<StreamActivity, { kind: 'agents' }> | null => {
+  const itemId = readString(item, 'id')
+  const tool = normalizeAgentTool(item.tool)
+  const callStatus = normalizeAgentCallStatus(item.status)
+
+  if (!itemId || !tool || !callStatus) {
+    return null
+  }
+
+  const receiverThreadIds = Array.isArray(item.receiverThreadIds)
+    ? item.receiverThreadIds
+    : Array.isArray(item.receiver_thread_ids)
+      ? item.receiver_thread_ids
+      : []
+  const metadataEntries = [
+    ...(Array.isArray(item.receiverAgents) ? item.receiverAgents : []),
+    ...(Array.isArray(item.receiver_agents) ? item.receiver_agents : []),
+    ...(Array.isArray(item.agentStatuses) ? item.agentStatuses : []),
+    ...(Array.isArray(item.agent_statuses) ? item.agent_statuses : []),
+  ]
+    .map(parseCodexAgentMetadataEntry)
+    .filter((entry): entry is NonNullable<ReturnType<typeof parseCodexAgentMetadataEntry>> => entry !== null)
+  const metadataByThreadId = new Map(metadataEntries.map((entry) => [entry.threadId, entry]))
+  const agentsStates = readRecord(item, 'agentsStates') ?? readRecord(item, 'agents_states')
+  const normalizedReceiverThreadIds = receiverThreadIds
+    .filter((entry): entry is string => typeof entry === 'string' && entry.trim().length > 0)
+    .map((entry) => entry.trim())
+  const threadIds = [
+    ...new Set([
+      ...normalizedReceiverThreadIds,
+      ...metadataEntries.map((entry) => entry.threadId),
+      ...(agentsStates ? Object.keys(agentsStates) : []),
+    ]),
+  ]
+
+  return {
+    itemId,
+    kind: 'agents',
+    status: 'completed',
+    tool,
+    callStatus,
+    prompt: readString(item, 'prompt') ?? null,
+    model: readString(item, 'model') ?? null,
+    reasoningEffort: readString(item, 'reasoningEffort') ?? readString(item, 'reasoning_effort') ?? null,
+    agents: threadIds.map((threadId) => {
+      const metadata = metadataByThreadId.get(threadId)
+      const state = readAgentState(item, threadId, metadata)
+      return {
+        threadId,
+        ...(metadata?.nickname ? { nickname: metadata.nickname } : {}),
+        ...(metadata?.role ? { role: metadata.role } : {}),
+        status: state.status,
+        message: state.message,
+      }
+    }),
   }
 }
 
@@ -470,6 +666,21 @@ export const parseCodexResponseEvent = (event: unknown): CodexStructuredStreamEv
         kind: 'compaction',
         status: 'completed',
         trigger: 'auto',
+      },
+    ]
+  }
+
+  if (normalizedItemType === 'collab_agent_tool_call') {
+    const activity = parseCodexCollabAgentActivity(item)
+
+    if (!activity) {
+      return []
+    }
+
+    return [
+      {
+        type: 'activity',
+        ...activity,
       },
     ]
   }

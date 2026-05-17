@@ -289,3 +289,130 @@ test('parses Codex native compaction notifications from app-server events', () =
     ],
   )
 })
+
+test('parses Codex collab agent tool calls into structured agent activities', () => {
+  assert.deepEqual(
+    parseCodexResponseEvent({
+      method: 'item/completed',
+      params: {
+        item: {
+          id: 'call-wait',
+          type: 'collabAgentToolCall',
+          tool: 'wait',
+          status: 'completed',
+          senderThreadId: 'thread-main',
+          receiverThreadIds: ['thread-lorentz', 'thread-bernoulli', 'thread-maxwell'],
+          prompt: null,
+          model: null,
+          reasoningEffort: null,
+          agentsStates: {
+            'thread-lorentz': { status: 'completed', message: 'Done' },
+            'thread-bernoulli': { status: 'completed', message: 'Done' },
+            'thread-maxwell': { status: 'running', message: null },
+          },
+          receiverAgents: [
+            { threadId: 'thread-lorentz', agentNickname: 'Lorentz', agentRole: 'explorer' },
+            { threadId: 'thread-bernoulli', agentNickname: 'Bernoulli', agentRole: 'explorer' },
+            { threadId: 'thread-maxwell', agentNickname: 'Maxwell', agentRole: 'explorer' },
+          ],
+        },
+      },
+    }),
+    [
+      {
+        type: 'activity',
+        itemId: 'call-wait',
+        kind: 'agents',
+        status: 'completed',
+        tool: 'wait',
+        callStatus: 'completed',
+        prompt: null,
+        model: null,
+        reasoningEffort: null,
+        agents: [
+          {
+            threadId: 'thread-lorentz',
+            nickname: 'Lorentz',
+            role: 'explorer',
+            status: 'completed',
+            message: 'Done',
+          },
+          {
+            threadId: 'thread-bernoulli',
+            nickname: 'Bernoulli',
+            role: 'explorer',
+            status: 'completed',
+            message: 'Done',
+          },
+          {
+            threadId: 'thread-maxwell',
+            nickname: 'Maxwell',
+            role: 'explorer',
+            status: 'running',
+            message: null,
+          },
+        ],
+      },
+    ],
+  )
+})
+
+test('keeps Codex collab agents visible when metadata only arrives in agent status entries', () => {
+  assert.deepEqual(
+    parseCodexResponseEvent({
+      type: 'item.completed',
+      item: {
+        id: 'call-wait-snake',
+        type: 'collabAgentToolCall',
+        tool: 'wait',
+        status: 'completed',
+        sender_thread_id: 'thread-main',
+        receiver_thread_ids: ['thread-robie', 'thread-ada'],
+        agent_statuses: [
+          {
+            thread_id: 'thread-robie',
+            agent_nickname: 'Robie',
+            agent_role: 'explorer',
+            status: 'completed',
+            message: 'Done',
+          },
+          {
+            thread_id: 'thread-ada',
+            agent_nickname: 'Ada',
+            agent_role: 'reviewer',
+            status: 'running',
+          },
+        ],
+      },
+    }),
+    [
+      {
+        type: 'activity',
+        itemId: 'call-wait-snake',
+        kind: 'agents',
+        status: 'completed',
+        tool: 'wait',
+        callStatus: 'completed',
+        prompt: null,
+        model: null,
+        reasoningEffort: null,
+        agents: [
+          {
+            threadId: 'thread-robie',
+            nickname: 'Robie',
+            role: 'explorer',
+            status: 'completed',
+            message: 'Done',
+          },
+          {
+            threadId: 'thread-ada',
+            nickname: 'Ada',
+            role: 'reviewer',
+            status: 'running',
+            message: null,
+          },
+        ],
+      },
+    ],
+  )
+})

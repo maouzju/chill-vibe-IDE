@@ -38,6 +38,7 @@ const isStructuredPerformanceMessage = (message: ChatMessage) => {
     case 'edits':
     case 'reasoning':
     case 'todo':
+    case 'agents':
       return true
     default:
       return false

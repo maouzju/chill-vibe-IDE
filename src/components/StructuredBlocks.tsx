@@ -5,6 +5,7 @@ import { createPortal } from 'react-dom'
 import type { AppLanguage } from '../../shared/schema'
 import type {
   StructuredAskUserMessage,
+  StructuredAgentsMessage,
   StructuredCommandMessage,
   StructuredEditedFile,
   StructuredEditsMessage,
@@ -24,6 +25,11 @@ import {
   structuredTodoCompletionFlashDurationMs,
 } from './structured-todo-flash'
 import { CloseIcon } from './Icons'
+
+const truncateStructuredInlineText = (text: string, maxLength = 180) => {
+  const normalized = text.split(/\s+/).join(' ').trim()
+  return normalized.length > maxLength ? `${normalized.slice(0, maxLength - 1)}…` : normalized
+}
 
 const StructuredDialog = ({
   language,
@@ -512,6 +518,79 @@ export const StructuredToolCard = ({
               <code className="structured-tool-detail-value" title={value}>{value}</code>
             </div>
           ))}
+        </div>
+      ) : null}
+    </section>
+  )
+}
+
+const formatAgentName = (agent: StructuredAgentsMessage['agents'][number]) => {
+  const shortId = agent.threadId.length > 8 ? agent.threadId.slice(0, 8) : agent.threadId
+  const name = agent.nickname || shortId || 'agent'
+  return agent.role ? `${name} (${agent.role})` : name
+}
+
+export const StructuredAgentsCard = ({
+  language,
+  data,
+}: {
+  language: AppLanguage
+  data: StructuredAgentsMessage
+}) => {
+  const labels = getStructuredLabels(language)
+  const isWaitGroup = data.tool === 'wait'
+  const title = isWaitGroup
+    ? labels.agentsCount(data.agents.length)
+    : `${labels.agentTool[data.tool]} ${data.agents.length === 1 ? formatAgentName(data.agents[0]!) : labels.agents}`
+  const promptPreview = data.prompt ? truncateStructuredInlineText(data.prompt) : ''
+
+  return (
+    <section className="structured-agents-card">
+      <div className="structured-agents-header">
+        <span className="structured-agents-icon" aria-hidden="true">☷</span>
+        <div className="structured-agents-heading">
+          <div className="structured-agents-title-row">
+            <span className="structured-agents-title">{title}</span>
+            <span className={`structured-agents-call-status is-${data.callStatus}`}>
+              {labels.agentCallStatus[data.callStatus]}
+            </span>
+          </div>
+          <span className="structured-agents-hint">{labels.mentionAgentsHint}</span>
+        </div>
+      </div>
+
+      {promptPreview ? (
+        <div className="structured-agents-prompt" title={data.prompt ?? undefined}>
+          {promptPreview}
+        </div>
+      ) : null}
+
+      {data.agents.length > 0 ? (
+        <div className="structured-agents-list">
+          {data.agents.map((agent) => {
+            const agentName = formatAgentName(agent)
+            const statusLabel = labels.agentStatus[agent.status]
+            return (
+              <div key={agent.threadId} className={`structured-agent-row is-${agent.status}`}>
+                <div className="structured-agent-main">
+                  <span className="structured-agent-name">{agentName}</span>
+                  <span className="structured-agent-status">{statusLabel}</span>
+                  {agent.message ? (
+                    <span className="structured-agent-message">{truncateStructuredInlineText(agent.message, 96)}</span>
+                  ) : null}
+                </div>
+                <button
+                  type="button"
+                  className="structured-agent-open"
+                  disabled
+                  title={labels.openAgentUnavailable}
+                  aria-label={`${labels.openAgent}: ${agentName}`}
+                >
+                  {labels.openAgent}
+                </button>
+              </div>
+            )
+          })}
         </div>
       ) : null}
     </section>

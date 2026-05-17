@@ -603,6 +603,65 @@ test('renders a VS Code-like structured todo card', () => {
   assert.match(markup, /High priority/)
 })
 
+test('renders Codex multi-agent activity as a compact agent list', () => {
+  const card = createCard()
+  card.status = 'idle'
+  card.messages = [
+    {
+      id: 'agents-1',
+      role: 'assistant',
+      content: '',
+      createdAt: '2026-05-15T08:00:00.000Z',
+      meta: {
+        kind: 'agents',
+        provider: 'codex',
+        structuredData: JSON.stringify({
+          itemId: 'call-wait',
+          kind: 'agents',
+          status: 'completed',
+          tool: 'wait',
+          callStatus: 'completed',
+          agents: [
+            {
+              threadId: 'thread-lorentz',
+              nickname: 'Lorentz',
+              role: 'explorer',
+              status: 'completed',
+              message: 'Done',
+            },
+            {
+              threadId: 'thread-bernoulli',
+              nickname: 'Bernoulli',
+              role: 'explorer',
+              status: 'completed',
+              message: 'Done',
+            },
+            {
+              threadId: 'thread-maxwell',
+              nickname: 'Maxwell',
+              role: 'explorer',
+              status: 'running',
+              message: null,
+            },
+          ],
+        }),
+      },
+    },
+  ]
+
+  const markup = renderCard(card)
+
+  assert.match(markup, /structured-agents-card/)
+  assert.match(markup, /3 background agents/)
+  assert.match(markup, /use @ to mention agents/)
+  assert.match(markup, /Lorentz \(explorer\)/)
+  assert.match(markup, /Bernoulli \(explorer\)/)
+  assert.match(markup, /Maxwell \(explorer\)/)
+  assert.match(markup, /Completed/)
+  assert.match(markup, /Running/)
+  assert.match(markup, />Open</)
+})
+
 test('detects todo items that just transitioned into completed', () => {
   assert.deepEqual(
     getNewlyCompletedStructuredTodoItemIds(

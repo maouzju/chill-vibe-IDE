@@ -2292,7 +2292,7 @@ body.is-card-dragging .lane-drop-zone-top {
     0 3px 10px rgba(14, 20, 16, 0.05),
     inset 0 1px 0 rgba(255, 255, 255, 0.9);
   overflow: hidden;
-  contain: layout style paint;
+  contain: layout style;
   transition: background 300ms var(--ease), box-shadow 180ms var(--ease), opacity 180ms var(--ease);
   /* height is set inline from minHeight prop */
   min-height: 0;
@@ -4400,7 +4400,8 @@ body.is-card-dragging .lane-drop-zone-top {
   gap: 0;
 }
 
-.message-is-tool {
+.message-is-tool,
+.message-is-agents {
   align-self: stretch;
   background: transparent;
   border: none;
@@ -4421,6 +4422,7 @@ body.is-card-dragging .lane-drop-zone-top {
 /* Hide topline for tool/command messages — they render inside groups */
 .message-is-command .message-topline,
 .message-is-tool .message-topline,
+.message-is-agents .message-topline,
 .message-is-reasoning .message-topline,
 .message-is-todo .message-topline {
   display: none;
@@ -4430,14 +4432,22 @@ body.is-card-dragging .lane-drop-zone-top {
 .message-is-command + .message-is-command,
 .message-is-command + .message-is-reasoning,
 .message-is-command + .message-is-tool,
+.message-is-command + .message-is-agents,
 .message-is-command + .message-is-todo,
 .message-is-reasoning + .message-is-command,
 .message-is-reasoning + .message-is-reasoning,
 .message-is-reasoning + .message-is-tool,
+.message-is-reasoning + .message-is-agents,
 .message-is-reasoning + .message-is-todo,
 .message-is-tool + .message-is-command,
 .message-is-tool + .message-is-reasoning,
 .message-is-tool + .message-is-tool,
+.message-is-tool + .message-is-agents,
+.message-is-agents + .message-is-command,
+.message-is-agents + .message-is-reasoning,
+.message-is-agents + .message-is-tool,
+.message-is-agents + .message-is-agents,
+.message-is-agents + .message-is-todo,
 .message-is-tool + .message-is-todo,
 .message-is-todo + .message-is-command,
 .message-is-todo + .message-is-reasoning,
@@ -4800,6 +4810,162 @@ body.is-card-dragging .lane-drop-zone-top {
 .structured-command-inline-row.no-expand:hover {
   background: transparent;
   color: var(--ink-2);
+}
+
+.structured-agents-card {
+  display: grid;
+  gap: 0.42rem;
+  padding: 0.5rem 0.58rem;
+  border: 1px solid var(--structured-card-border);
+  border-radius: var(--r-sm);
+  background: color-mix(in srgb, var(--structured-card-bg) 96%, transparent);
+  color: var(--ink-2);
+}
+
+.structured-agents-header {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.42rem;
+  min-width: 0;
+}
+
+.structured-agents-icon {
+  flex: 0 0 auto;
+  width: 1rem;
+  height: 1rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--ink-4);
+  font-size: 0.78rem;
+  line-height: 1;
+}
+
+.structured-agents-heading {
+  min-width: 0;
+  flex: 1 1 auto;
+  display: grid;
+  gap: 0.08rem;
+}
+
+.structured-agents-title-row {
+  display: flex;
+  align-items: baseline;
+  gap: 0.36rem;
+  min-width: 0;
+  flex-wrap: wrap;
+}
+
+.structured-agents-title {
+  color: var(--ink-2);
+  font-size: 0.74rem;
+  font-weight: 650;
+  line-height: 1.3;
+}
+
+.structured-agents-hint,
+.structured-agents-prompt,
+.structured-agent-message {
+  color: var(--ink-4);
+  font-size: 0.62rem;
+  line-height: 1.35;
+}
+
+.structured-agents-prompt {
+  padding-left: 1.42rem;
+  overflow-wrap: anywhere;
+}
+
+.structured-agents-call-status {
+  color: var(--ink-4);
+  font-size: 0.62rem;
+  font-weight: 600;
+}
+
+.structured-agents-call-status.is-failed {
+  color: var(--danger);
+}
+
+.structured-agents-list {
+  display: grid;
+  gap: 0.12rem;
+}
+
+.structured-agent-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  min-width: 0;
+  padding: 0.08rem 0;
+}
+
+.structured-agent-main {
+  min-width: 0;
+  flex: 1 1 auto;
+  display: flex;
+  align-items: baseline;
+  gap: 0.36rem;
+  flex-wrap: wrap;
+}
+
+.structured-agent-name {
+  color: var(--accent-2);
+  font-size: 0.68rem;
+  font-weight: 650;
+  line-height: 1.35;
+}
+
+.structured-agent-status {
+  color: var(--ink-3);
+  font-size: 0.64rem;
+  font-weight: 650;
+  line-height: 1.35;
+}
+
+.structured-agent-row.is-running .structured-agent-status,
+.structured-agent-row.is-pendingInit .structured-agent-status {
+  color: var(--accent-2);
+}
+
+.structured-agent-row.is-completed .structured-agent-status {
+  color: var(--accent-2);
+}
+
+.structured-agent-row.is-interrupted .structured-agent-status {
+  color: var(--warn);
+}
+
+.structured-agent-row.is-errored .structured-agent-status,
+.structured-agent-row.is-notFound .structured-agent-status {
+  color: var(--danger);
+}
+
+.structured-agent-open {
+  flex: 0 0 auto;
+  border: none;
+  background: transparent;
+  color: var(--ink-3);
+  font: inherit;
+  font-size: 0.64rem;
+  font-weight: 650;
+  line-height: 1.3;
+  padding: 0.08rem 0.18rem;
+  border-radius: var(--r-xs);
+}
+
+.structured-agent-open:not(:disabled) {
+  cursor: pointer;
+}
+
+.structured-agent-open:not(:disabled):hover,
+.structured-agent-open:not(:disabled):focus-visible {
+  color: var(--accent-2);
+  background: var(--accent-soft);
+}
+
+.structured-agent-open:disabled {
+  opacity: 0.72;
+  cursor: default;
 }
 
 /* -- Reasoning card: minimal inline ----------------------- */

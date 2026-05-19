@@ -369,6 +369,49 @@ describe('ideReducer pane layout', () => {
     assert.equal(restoredCard?.sessionId, 'target-pane-session')
   })
 
+  it('rebases workspace-scoped session history when a column workspace path changes', () => {
+    const state = createState()
+    state.sessionHistory = [
+      {
+        id: 'history-current-workspace',
+        title: 'Current workspace archive',
+        sessionId: 'session-current-workspace',
+        provider: 'codex',
+        model: DEFAULT_CODEX_MODEL,
+        workspacePath: 'D:/repo/one',
+        messages: [assistantMessage],
+        archivedAt: '2026-04-11T07:00:00.000Z',
+      },
+      {
+        id: 'history-other-workspace',
+        title: 'Other workspace archive',
+        sessionId: 'session-other-workspace',
+        provider: 'claude',
+        model: 'claude-sonnet-4-6',
+        workspacePath: 'D:/repo/two',
+        messages: [assistantMessage],
+        archivedAt: '2026-04-11T07:05:00.000Z',
+      },
+    ]
+
+    const next = ideReducer(state, {
+      type: 'updateColumn',
+      columnId: 'column-1',
+      patch: { workspacePath: 'D:/repo/new' },
+    })
+
+    assert.equal(
+      next.sessionHistory.find((entry) => entry.id === 'history-current-workspace')?.workspacePath,
+      'D:/repo/new',
+      'history archived from the edited column should follow the current workspace path',
+    )
+    assert.equal(
+      next.sessionHistory.find((entry) => entry.id === 'history-other-workspace')?.workspacePath,
+      'D:/repo/two',
+      'history from a different workspace should stay untouched',
+    )
+  })
+
   it('duplicates a column by cloning its cards and pane layout', () => {
     const next = ideReducer(createState(), {
       type: 'duplicateColumn',

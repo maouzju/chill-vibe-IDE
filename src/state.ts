@@ -1096,6 +1096,36 @@ const restoreSessionEntryToColumn = (
   return insertCardIntoColumn(state, columnId, restoredCard, paneId)
 }
 
+const normalizeWorkspacePathKey = (workspacePath: string) => workspacePath.trim().toLowerCase()
+
+const rebaseSessionHistoryWorkspacePath = (
+  history: SessionHistoryEntry[],
+  fromWorkspacePath: string,
+  toWorkspacePath: string,
+) => {
+  const fromKey = normalizeWorkspacePathKey(fromWorkspacePath)
+  const toPath = toWorkspacePath.trim()
+
+  if (!fromKey || !toPath || fromKey === normalizeWorkspacePathKey(toPath)) {
+    return history
+  }
+
+  let changed = false
+  const nextHistory = history.map((entry) => {
+    if (normalizeWorkspacePathKey(entry.workspacePath) !== fromKey) {
+      return entry
+    }
+
+    changed = true
+    return {
+      ...entry,
+      workspacePath: toPath,
+    }
+  })
+
+  return changed ? nextHistory : history
+}
+
 const insertCardIntoColumn = (
   state: AppState,
   columnId: string,
@@ -1334,6 +1364,10 @@ export const ideReducer = (state: AppState, action: IdeAction): AppState => {
     case 'applyConfiguredModels':
       return touchState(applyConfiguredModels(state))
     case 'updateColumn': {
+      const currentColumn = state.columns.find((column) => column.id === action.columnId)
+      const previousWorkspacePath = currentColumn?.workspacePath ?? ''
+      const nextWorkspacePath =
+        action.patch.workspacePath !== undefined ? action.patch.workspacePath : previousWorkspacePath
       const next = updateColumn(state, action.columnId, (column) => {
         const providerChanged = action.patch.provider && action.patch.provider !== column.provider
         const workspaceChanged =
@@ -1367,7 +1401,16 @@ export const ideReducer = (state: AppState, action: IdeAction): AppState => {
         }
       })
 
-      return touchState(next)
+      const sessionHistory =
+        action.patch.workspacePath !== undefined
+          ? rebaseSessionHistoryWorkspacePath(
+              next.sessionHistory,
+              previousWorkspacePath,
+              nextWorkspacePath,
+            )
+          : next.sessionHistory
+
+      return touchState(sessionHistory === next.sessionHistory ? next : { ...next, sessionHistory })
     }
     case 'setColumnWidth': {
       const width = normalizeColumnWidth(action.width)

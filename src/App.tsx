@@ -592,6 +592,8 @@ function App() {
   const [downloadedUpdatePath, setDownloadedUpdatePath] = useState<string | null>(null)
   const [clearUserDataDialogOpen, setClearUserDataDialogOpen] = useState(false)
   const [clearUserDataPending, setClearUserDataPending] = useState(false)
+  const [closeWorkspaceDialogColumnId, setCloseWorkspaceDialogColumnId] = useState<string | null>(null)
+  const [closeWorkspacePending, setCloseWorkspacePending] = useState(false)
   const [appVersion, setAppVersion] = useState('')
   const [weatherCityDraft, setWeatherCityDraft] = useState('')
   const [weatherCitySuggestions, setWeatherCitySuggestions] = useState<CitySuggestion[]>([])
@@ -4309,15 +4311,42 @@ function App() {
     return () => window.removeEventListener('keydown', handleShortcut)
   }, [resolvePaneTarget, rememberPaneTarget, applyAction])
 
+  const openCloseWorkspaceDialog = useCallback((columnId: string) => {
+    setCloseWorkspaceDialogColumnId(columnId)
+  }, [])
+
+  const closeCloseWorkspaceDialog = useCallback(() => {
+    if (closeWorkspacePending) {
+      return
+    }
+
+    setCloseWorkspaceDialogColumnId(null)
+  }, [closeWorkspacePending])
+
   const removeColumn = async (columnId: string) => {
     const column = getColumn(columnId)
     if (!column) {
+      setCloseWorkspaceDialogColumnId(null)
       return
     }
 
     getOrderedColumnCards(column).forEach((card) => clearQueuedSends(card.id))
     await Promise.all(getOrderedColumnCards(column).map((card) => closeStream(card.id, true)))
     applyAction({ type: 'removeColumn', columnId })
+    setCloseWorkspaceDialogColumnId(null)
+  }
+
+  const confirmCloseWorkspace = async () => {
+    if (!closeWorkspaceDialogColumnId || closeWorkspacePending) {
+      return
+    }
+
+    setCloseWorkspacePending(true)
+    try {
+      await removeColumn(closeWorkspaceDialogColumnId)
+    } finally {
+      setCloseWorkspacePending(false)
+    }
   }
 
   const stopCard = async (cardId: string) => {
@@ -7052,7 +7081,7 @@ function App() {
                 placement,
               })
             }
-            onRemoveColumn={() => void removeColumn(column.id)}
+            onRemoveColumn={() => openCloseWorkspaceDialog(column.id)}
             onResizeColumn={(widths) =>
               applyAction({
                 type: 'setColumnWidths',
@@ -7472,6 +7501,62 @@ function App() {
                     onClick={handleClearUserData}
                   >
                     {clearUserDataPending ? text.clearUserDataPending : text.clearUserDataConfirm}
+                  </AppButton>
+                </div>
+              </div>
+            </div>
+          </section>
+        </div>
+      ) : null}
+
+      {closeWorkspaceDialogColumnId ? (
+        <div className="structured-preview-layer">
+          <div className="structured-preview-backdrop" onClick={closeCloseWorkspaceDialog} />
+          <section
+            className="structured-preview-dialog close-workspace-dialog"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="close-workspace-dialog-title"
+          >
+            <div className="structured-preview-card close-workspace-card">
+              <div className="structured-preview-header">
+                <div className="structured-preview-copy">
+                  <h3 id="close-workspace-dialog-title">{text.closeWorkspaceDialogTitle}</h3>
+                  <p className="settings-note">{text.closeWorkspaceDialogBody}</p>
+                </div>
+
+                <button
+                  type="button"
+                  className="btn btn-ghost structured-preview-close"
+                  onClick={closeCloseWorkspaceDialog}
+                  disabled={closeWorkspacePending}
+                  aria-label={text.closeWorkspaceCancel}
+                >
+                  <CloseIcon />
+                </button>
+              </div>
+
+              <div className="structured-preview-body close-workspace-body">
+                <ul className="settings-danger-list">
+                  <li>{text.closeWorkspaceDialogHistory}</li>
+                  <li>{text.closeWorkspaceDialogStreams}</li>
+                </ul>
+
+                <div className="settings-actions settings-danger-actions">
+                  <AppButton
+                    type="button"
+                    disabled={closeWorkspacePending}
+                    onClick={closeCloseWorkspaceDialog}
+                  >
+                    {text.closeWorkspaceCancel}
+                  </AppButton>
+                  <AppButton
+                    type="button"
+                    className="settings-danger-button settings-danger-button-confirm"
+                    disabled={closeWorkspacePending}
+                    onClick={confirmCloseWorkspace}
+                  >
+                    {closeWorkspacePending ? text.closeWorkspacePending : text.closeWorkspaceConfirm}
                   </AppButton>
                 </div>
               </div>

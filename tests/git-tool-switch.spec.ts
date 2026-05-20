@@ -413,7 +413,7 @@ test('full git opens without auto-staging and still seeds a default commit summa
 
   await expect.poll(() => stageCalls.length).toBe(0)
   await expect(page.locator('.git-commit-summary')).toHaveValue('提交信息')
-  await page.getByRole('button', { name: '关闭' }).click()
+  await page.getByRole('button', { name: '关闭', exact: true }).click()
 
   status = createGitStatus([applyStageState(initialChange, true), laterChange], {
     branch: 'feature/full-git-open-defaults',

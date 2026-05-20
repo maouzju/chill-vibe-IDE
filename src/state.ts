@@ -10,6 +10,7 @@ import {
   getEffectiveCardModel,
   getConfiguredModel,
   getFirstPane,
+  getOrderedColumnCards,
   getPreferredReasoningEffort,
   maxRecentWorkspaces,
   normalizeAppSettings,
@@ -801,6 +802,20 @@ const redistributeWidthsAfterColumnRemoval = (columns: BoardColumn[], removedCol
   })
 }
 
+const archiveColumnChatsToHistory = (
+  history: SessionHistoryEntry[] | undefined,
+  column: BoardColumn | undefined,
+) => {
+  if (!column) {
+    return history ?? []
+  }
+
+  return getOrderedColumnCards(column).reduce(
+    (nextHistory, card) => archiveCardToHistory(nextHistory, card, column.workspacePath),
+    history ?? [],
+  )
+}
+
 const updateColumn = (
   state: AppState,
   columnId: string,
@@ -1463,11 +1478,15 @@ export const ideReducer = (state: AppState, action: IdeAction): AppState => {
       const next = reorderColumn(state, action.sourceColumnId, action.targetColumnId, action.placement)
       return next === state ? state : touchState(next)
     }
-    case 'removeColumn':
+    case 'removeColumn': {
+      const column = state.columns.find((item) => item.id === action.columnId)
+      const sessionHistory = archiveColumnChatsToHistory(state.sessionHistory, column)
       return touchState({
         ...state,
+        sessionHistory,
         columns: redistributeWidthsAfterColumnRemoval(state.columns, action.columnId),
       })
+    }
     case 'addTab': {
       const next = updateColumn(state, action.columnId, (column) => {
         const pane = findPaneInLayout(column.layout, action.paneId)

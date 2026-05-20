@@ -46,6 +46,7 @@ export const shouldClearRecoveryStatusOnStreamIdle = (
    - In `onData` / the text/activity reset branch (wherever `shouldResetStreamRecoveryAttempts*` returns `true`): call `computeRecoveryStatusAfterSuccess` + schedule a 2s clear.
    - When a card transitions to `idle` after `streaming`: clear unless `failed` (use `shouldClearRecoveryStatusOnStreamIdle`).
    - Track consecutive `resume-session` retries whose provider output was only transient reconnect placeholder text. After a small threshold, clear the card's stale `sessionId`, start a fresh provider session, and seed the request with the visible transcript via `buildSeededChatPrompt`; filter placeholder reconnect messages out of that seeded transcript.
+   - Treat Codex app-server stale-session resume errors (`failed to load rollout`, `no rollout found`, `no session path found`, `empty session file`) as recoverable by dropping the stale `sessionId`, logging the automatic fresh-session notice, and starting a new thread for the same prompt/attachments.
    - Resolve the UI retry ceiling from `settings.resilientProxyMaxRetries` via `getRecoverableStreamRetryLimit()`. The value `-1` maps to `Infinity`, so long conversations do not stop after the old hard-coded six attempts when the user intentionally selected unlimited retries.
 
 5. **Runtime proxy settings sync**:

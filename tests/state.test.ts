@@ -1510,6 +1510,38 @@ describe('ideReducer pane layout', () => {
     assert.equal(next.columns[1]?.width, 1000)
   })
 
+  it('archives non-empty chats when a workspace column is removed', () => {
+    const state = createState()
+    state.columns = [
+      createColumn({
+        id: 'column-1',
+        workspacePath: 'D:/repo/one',
+        layout: createPane('pane-1', ['card-1', 'card-2'], 'card-1'),
+        cards: {
+          'card-1': createCard({ id: 'card-1', title: 'Keep this history', messages: [assistantMessage] }),
+          'card-2': createCard({ id: 'card-2', title: 'Empty scratch', messages: [] }),
+        },
+      }),
+      createColumn({
+        id: 'column-2',
+        workspacePath: 'D:/repo/two',
+      }),
+    ]
+
+    const next = ideReducer(state, {
+      type: 'removeColumn',
+      columnId: 'column-1',
+    })
+
+    assert.deepEqual(
+      next.columns.map((column) => column.id),
+      ['column-2'],
+    )
+    assert.equal(next.sessionHistory.length, 1)
+    assert.equal(next.sessionHistory[0]?.title, 'Keep this history')
+    assert.equal(next.sessionHistory[0]?.workspacePath, 'D:/repo/one')
+  })
+
   it('switches the active tab inside a pane', () => {
     const next = ideReducer(createState(), {
       type: 'setActiveTab',

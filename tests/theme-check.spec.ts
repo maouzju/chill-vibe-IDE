@@ -2745,6 +2745,43 @@ test('clear user data dialog stays legible across themes', async ({ page }) => {
   })
 })
 
+test('close workspace confirmation explains preserved history across themes', async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 960 })
+  await mockAppApis(page)
+  await page.goto(appUrl)
+  await page.locator('.workspace-column').first().waitFor()
+
+  const settingsTab = page.locator('#app-tab-settings')
+  const lightThemeButton = page.locator('#app-panel-settings .theme-toggle').first().locator('.theme-chip').first()
+
+  await page.locator('.column-actions .icon-button').nth(1).click()
+  const darkDialog = page.locator('.close-workspace-dialog')
+  await expect(darkDialog).toBeVisible()
+  await expect(darkDialog.locator('.settings-danger-list li')).toHaveCount(2)
+  await expect(darkDialog.locator('.close-workspace-card')).toHaveScreenshot('close-workspace-dialog-dark.png', {
+    animations: 'disabled',
+    caret: 'hide',
+  })
+
+  await darkDialog.locator('.structured-preview-close').click()
+  await expect(darkDialog).toBeHidden()
+
+  await settingsTab.click()
+  await lightThemeButton.click()
+  await expect(page.locator('html')).toHaveAttribute('data-theme', 'light')
+  await page.locator('#app-tab-ambience').click()
+  await page.locator('.workspace-column').first().waitFor()
+  await page.locator('.column-actions .icon-button').nth(1).click()
+
+  const lightDialog = page.locator('.close-workspace-dialog')
+  await expect(lightDialog).toBeVisible()
+  await expect(lightDialog.locator('.settings-danger-list li')).toHaveCount(2)
+  await expect(lightDialog.locator('.close-workspace-card')).toHaveScreenshot('close-workspace-dialog-light.png', {
+    animations: 'disabled',
+    caret: 'hide',
+  })
+})
+
 test('column header actions stay minimal while pane chat chrome keeps destructive controls in tabs', async ({ page }) => {
   await page.setViewportSize({ width: 640, height: 900 })
   await mockAppApis(page)
@@ -6589,7 +6626,7 @@ test('git tool card keeps long zh-CN metadata rows fully visible instead of clip
     caret: 'hide',
   })
 
-  await page.getByRole('button', { name: '关闭' }).click()
+  await page.getByRole('button', { name: '关闭', exact: true }).click()
   await page.locator('#app-tab-settings').click()
   await page.locator('#app-panel-settings .theme-toggle').first().locator('.theme-chip').first().click()
   await expect(page.locator('html')).toHaveAttribute('data-theme', 'light')

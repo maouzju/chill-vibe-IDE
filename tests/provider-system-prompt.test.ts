@@ -1230,6 +1230,40 @@ const buildFakeCodexEmptyRolloutResumeScript = (capturePath: string) =>
     '})',
   ].join('\n')
 
+
+const buildFakeCodexMissingSessionPathResumeScript = (capturePath: string) =>
+  [
+    "const fs = require('node:fs')",
+    "const readline = require('node:readline')",
+    `const capturePath = ${JSON.stringify(capturePath)}`,
+    'const appendMessage = (message) => fs.appendFileSync(capturePath, `${JSON.stringify(message)}\n`, "utf8")',
+    "const reply = (message) => process.stdout.write(`${JSON.stringify(message)}\n`)",
+    "const rl = readline.createInterface({ input: process.stdin, crlfDelay: Infinity })",
+    "rl.on('line', (line) => {",
+    '  if (!line.trim()) {',
+    '    return',
+    '  }',
+    '  const request = JSON.parse(line)',
+    '  appendMessage(request)',
+    "  if (request.method === 'initialize' && request.id) {",
+    '    reply({ id: request.id, result: {} })',
+    '    return',
+    '  }',
+    "  if (request.method === 'thread/resume' && request.id) {",
+    "    reply({ id: request.id, error: { message: 'No session path found for thread id stale-rollout-session' } })",
+    '    return',
+    '  }',
+    "  if (request.method === 'thread/start' && request.id) {",
+    "    reply({ id: request.id, result: { thread: { id: 'thread-fresh', status: { type: 'active' } } } })",
+    '    return',
+    '  }',
+    "  if (request.method === 'turn/start' && request.id) {",
+    '    reply({ id: request.id, result: { turn: { id: "turn-1", status: "inProgress", items: [], error: null } } })',
+    "    reply({ method: 'turn/completed', params: {} })",
+    '  }',
+    '})',
+  ].join('\n')
+
 const buildFakeCodexNoRolloutFoundResumeScript = (capturePath: string) =>
   [
     "const fs = require('node:fs')",
@@ -3167,6 +3201,51 @@ test('codex app-server retries with a fresh thread when the resumed rollout file
     const events = await withFakeProviderCommand(
       'codex',
       buildFakeCodexEmptyRolloutResumeScript(capturePath),
+      async (workspacePath) =>
+        captureProviderLogs(
+          createRequest({
+            provider: 'codex',
+            language: 'en',
+            workspacePath,
+            sessionId: 'stale-rollout-session',
+            prompt: 'Retry with this updated instruction.',
+          }),
+        ),
+    )
+
+    assert.deepEqual(events, [
+      {
+        kind: 'log',
+        message:
+          'The resumed Codex session could not be loaded from its rollout file. Chill Vibe started a new session automatically so your latest prompt and attachments are not lost.',
+      },
+      { kind: 'done' },
+    ])
+
+    const requests = (await readFile(capturePath, 'utf8'))
+      .trim()
+      .split(/\r?\n/)
+      .map((line) => JSON.parse(line) as { method?: string; params?: Record<string, unknown> })
+
+    assert.equal(requests.filter((request) => request.method === 'thread/resume').length, 1)
+    assert.equal(requests.filter((request) => request.method === 'thread/start').length, 1)
+    assert.equal(requests.filter((request) => request.method === 'turn/start').length, 1)
+  } finally {
+    await rm(capturePath, { force: true }).catch(() => {})
+  }
+})
+
+
+test('codex app-server retries with a fresh thread when the resumed session path is missing', async () => {
+  const capturePath = path.join(
+    os.tmpdir(),
+    `chill-vibe-codex-app-server-resume-missing-session-path-${Date.now()}-${Math.random().toString(36).slice(2)}.jsonl`,
+  )
+
+  try {
+    const events = await withFakeProviderCommand(
+      'codex',
+      buildFakeCodexMissingSessionPathResumeScript(capturePath),
       async (workspacePath) =>
         captureProviderLogs(
           createRequest({

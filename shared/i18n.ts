@@ -77,6 +77,13 @@ type LocaleText = {
   copyColumn: string
   addChat: string
   deleteColumn: string
+  closeWorkspaceDialogTitle: string
+  closeWorkspaceDialogBody: string
+  closeWorkspaceDialogHistory: string
+  closeWorkspaceDialogStreams: string
+  closeWorkspaceCancel: string
+  closeWorkspaceConfirm: string
+  closeWorkspacePending: string
   empty: string
   emptyColumnTitle: string
   emptyColumnDescription: string
@@ -315,7 +322,14 @@ const localeTextByLanguage: Record<AppLanguage, LocaleText> = {
     pathPickerOpenFailed: (message) => `打开目录选择器失败：${message}`,
     copyColumn: '复制列',
     addChat: '新增会话',
-    deleteColumn: '删除列',
+    deleteColumn: '关闭工作区',
+    closeWorkspaceDialogTitle: '关闭这个工作区？',
+    closeWorkspaceDialogBody: '这只会从看板移除这一列，不会删除磁盘上的项目文件。',
+    closeWorkspaceDialogHistory: '有内容的会话会先保存到这个工作区的历史会话里，之后可从“历史会话”恢复。',
+    closeWorkspaceDialogStreams: '正在运行的任务会先停止，未发送的排队消息会取消。',
+    closeWorkspaceCancel: '取消',
+    closeWorkspaceConfirm: '关闭工作区',
+    closeWorkspacePending: '正在关闭...',
     empty: '空列',
     emptyColumnTitle: '这一列已经没有卡片了',
     emptyColumnDescription: '点击右上角加号可以新建会话，也可以把别的卡片拖进来。',
@@ -573,7 +587,15 @@ const localeTextByLanguage: Record<AppLanguage, LocaleText> = {
     pathPickerOpenFailed: (message) => `Failed to open the folder picker: ${message}`,
     copyColumn: 'Copy column',
     addChat: 'Add chat',
-    deleteColumn: 'Delete column',
+    deleteColumn: 'Close workspace',
+    closeWorkspaceDialogTitle: 'Close this workspace?',
+    closeWorkspaceDialogBody: 'This only removes the column from the board. It does not delete project files on disk.',
+    closeWorkspaceDialogHistory:
+      'Chats with messages are saved to this workspace history first, so you can restore them from Session history later.',
+    closeWorkspaceDialogStreams: 'Running tasks are stopped first, and queued unsent messages are canceled.',
+    closeWorkspaceCancel: 'Cancel',
+    closeWorkspaceConfirm: 'Close workspace',
+    closeWorkspacePending: 'Closing...',
     empty: 'Empty',
     emptyColumnTitle: 'This column has no cards yet',
     emptyColumnDescription: 'Use the add button above, or drag a card here to keep going.',

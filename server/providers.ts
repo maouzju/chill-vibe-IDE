@@ -442,6 +442,7 @@ const isCodexStaleResumedSession = (message: string) => {
   return (
     normalized.includes('failed to load rollout') ||
     normalized.includes('no rollout found for thread id') ||
+    normalized.includes('no session path found for thread id') ||
     normalized.includes('empty session file') ||
     (normalized.includes('rollout') && normalized.includes('session file'))
   )

@@ -7,7 +7,12 @@ import { createDefaultBrainstormState } from '../shared/brainstorm.ts'
 import { createPane } from '../shared/default-state.ts'
 import type { BoardColumn, ExternalSessionSummary, ProviderStatus, SessionHistoryEntry } from '../shared/schema.ts'
 import { WorkspaceColumn } from '../src/components/WorkspaceColumn.tsx'
-import { filterExternalSessionHistory, filterSessionHistoryEntries } from '../src/components/workspace-column-history.ts'
+import {
+  filterExternalSessionHistory,
+  filterSessionHistoryEntries,
+  getSessionHistoryLifecycle,
+  getSessionHistoryLifecycleLabel,
+} from '../src/components/workspace-column-history.ts'
 
 ;(globalThis as typeof globalThis & { React: typeof React }).React = React
 
@@ -142,12 +147,13 @@ describe('WorkspaceColumn streaming column actions', () => {
     assert.doesNotMatch(columnHeaderMarkup, /aria-label="Add chat"/, 'Add chat button should stay removed from the column header')
     assert.doesNotMatch(columnHeaderMarkup, /aria-label="Copy column"/, 'Copy column button should stay removed from the column header')
 
-    // Delete-column button should not be disabled
+    // Close-workspace button should not be disabled
     assert.doesNotMatch(
       markup,
-      /aria-label="Delete column"[^>]*disabled/,
-      'Delete column button should not be disabled while streaming',
+      /aria-label="Close workspace"[^>]*disabled/,
+      'Close workspace button should not be disabled while streaming',
     )
+    assert.match(columnHeaderMarkup, /aria-label="Close workspace"/, 'Close workspace button should render in the column header')
 
     // Column headline should be draggable
     assert.match(
@@ -224,6 +230,55 @@ describe('WorkspaceColumn session history access', () => {
 })
 
 describe('WorkspaceColumn session history search', () => {
+  it('derives ended or interrupted labels for internal session history entries', () => {
+    const interruptedEntry: SessionHistoryEntry = {
+      id: 'history-interrupted',
+      title: 'Interrupted run',
+      sessionId: 'session-interrupted',
+      provider: 'codex',
+      model: 'gpt-5.5',
+      workspacePath: 'D:\\Git\\chill-vibe',
+      archivedAt: '2026-04-10T03:00:00.000Z',
+      messages: [
+        {
+          id: 'message-1',
+          role: 'assistant',
+          content: 'Partial answer',
+          createdAt: '2026-04-10T02:55:00.000Z',
+        },
+        {
+          id: 'message-2',
+          role: 'system',
+          content: 'User interrupted',
+          createdAt: '2026-04-10T02:56:00.000Z',
+          meta: {
+            kind: 'run-stopped',
+            stopReason: 'user-interrupt',
+          },
+        },
+      ],
+    }
+    const resumedEntry: SessionHistoryEntry = {
+      ...interruptedEntry,
+      id: 'history-ended-after-resume',
+      title: 'Ended after resume',
+      messages: [
+        ...interruptedEntry.messages,
+        {
+          id: 'message-3',
+          role: 'assistant',
+          content: 'Finished after the interruption.',
+          createdAt: '2026-04-10T02:57:00.000Z',
+        },
+      ],
+    }
+
+    assert.equal(getSessionHistoryLifecycle(interruptedEntry), 'interrupted')
+    assert.equal(getSessionHistoryLifecycle(resumedEntry), 'ended')
+    assert.equal(getSessionHistoryLifecycleLabel(interruptedEntry, 'zh-CN'), '中断')
+    assert.equal(getSessionHistoryLifecycleLabel(resumedEntry, 'en'), 'Ended')
+  })
+
   it('filters internal session history by title, workspace details, provider, model, and message content', () => {
     const entries: SessionHistoryEntry[] = [
       {
@@ -258,6 +313,16 @@ describe('WorkspaceColumn session history search', () => {
             content: 'Search the session history menu for the regression details.',
             createdAt: '2026-04-09T02:55:00.000Z',
           },
+          {
+            id: 'message-3',
+            role: 'system',
+            content: 'User interrupted',
+            createdAt: '2026-04-09T02:56:00.000Z',
+            meta: {
+              kind: 'run-stopped',
+              stopReason: 'manual',
+            },
+          },
         ],
       },
     ]
@@ -286,6 +351,11 @@ describe('WorkspaceColumn session history search', () => {
       filterSessionHistoryEntries(entries, 'regression details').map((entry) => entry.id),
       ['history-2'],
       'message content matches should stay visible',
+    )
+    assert.deepEqual(
+      filterSessionHistoryEntries(entries, 'interrupted').map((entry) => entry.id),
+      ['history-2'],
+      'interrupted status matches should stay searchable',
     )
   })
 

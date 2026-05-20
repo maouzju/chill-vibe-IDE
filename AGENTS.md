@@ -367,6 +367,7 @@ A living list of traps that have wasted time before. **When you hit a new pitfal
 | 127 | Restored cards can keep a stale `streamId` after the backend stream is already gone | Treat stop for "Stream not found/already finished" as idempotent success, otherwise ask-user answers and queued follow-ups can be blocked by a stream that no longer exists. |
 | 128 | A hidden radio input positioned absolutely without a containing option can make Chromium scroll the whole card shell on focus | Keep ask-user radio inputs positioned inside their option label, otherwise selecting an option can push the transcript upward and leave a large blank area until a tab switch relayouts it. |
 | 129 | `contain: paint` on long-lived Electron chat card shells can leave Chromium with stale paint/hit-test surfaces | The composer may look present but clicks land on an old layer or nowhere, so card shells should avoid paint containment on interactive chat surfaces. |
+| 130 | Codex app-server `thread/resume` can report `No session path found for thread id ...` instead of mentioning rollout files | Treat it as the same stale-session condition and start a fresh thread, or the UI logs the recovery notice but the card can still end in a raw resume error. |
 
 ### Self-maintenance rule
 

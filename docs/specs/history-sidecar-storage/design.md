@@ -21,6 +21,7 @@
 
 - Renderer startup reads `state.json` and gets only lightweight history entries.
 - Restoring one internal history item calls `loadSessionHistoryEntry({ entryId })`, which reads only that entry's sidecar file; if missing, it falls back to legacy `state.json` for migration compatibility.
+- The history menu derives a lightweight lifecycle label from the preview messages: entries whose latest message is `meta.kind = run-stopped` with `stopReason = manual | user-interrupt` render as **中断 / Interrupted**; all other entries render as **已结束 / Ended**. This stays renderer-only and does not add new persisted fields.
 
 ## Compatibility
 

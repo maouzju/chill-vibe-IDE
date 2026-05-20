@@ -6400,7 +6400,30 @@ body.is-card-dragging .lane-drop-zone-top {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  max-width: 100%;
+  min-width: 0;
+}
+.session-history-title-row {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  width: 100%;
+  min-width: 0;
+}
+.session-history-status {
+  flex: 0 0 auto;
+  border-radius: var(--r-pill);
+  border: 1px solid color-mix(in srgb, var(--line-strong) 86%, transparent);
+  padding: 0.05rem 0.34rem;
+  background: color-mix(in srgb, var(--panel-soft) 74%, transparent);
+  color: var(--ink-3);
+  font-size: 0.62rem;
+  font-weight: 600;
+  line-height: 1.35;
+}
+.session-history-item.is-interrupted .session-history-status {
+  border-color: color-mix(in srgb, var(--warn) 30%, var(--line-strong));
+  background: color-mix(in srgb, var(--warn-soft) 82%, transparent);
+  color: var(--warn);
 }
 .session-history-meta {
   font-size: 0.7rem;

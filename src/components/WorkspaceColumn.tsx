@@ -32,7 +32,13 @@ import { clearDragPayload, readDragPayload, type Placement, writeDragPayload } f
 import type { CardRecoveryStatus } from '../stream-recovery-feedback'
 import type { QueuedSendSummary, SendMessageOptions } from './deferred-send-queue'
 import { areWorkspaceColumnPropsEqual } from './layout-memoization'
-import { filterExternalSessionHistory, filterSessionHistoryEntries, hasSessionHistorySearch } from './workspace-column-history'
+import {
+  filterExternalSessionHistory,
+  filterSessionHistoryEntries,
+  getSessionHistoryLifecycle,
+  getSessionHistoryLifecycleLabel,
+  hasSessionHistorySearch,
+} from './workspace-column-history'
 import { CloseIcon, FolderIcon, HistoryIcon, IconButton } from './Icons'
 import { LayoutRenderer } from './LayoutRenderer'
 
@@ -799,14 +805,19 @@ const WorkspaceColumnView = ({
                   <button
                     key={entry.id}
                     type="button"
-                    className="session-history-item"
+                    className={`session-history-item is-${getSessionHistoryLifecycle(entry)}`}
                     title={entry.title}
                     onClick={() => {
                       onRestoreSession(entry.id)
                       closeHistoryMenu()
                     }}
                   >
-                    <span className="session-history-title">{entry.title}</span>
+                    <span className="session-history-title-row">
+                      <span className="session-history-title">{entry.title}</span>
+                      <span className="session-history-status">
+                        {getSessionHistoryLifecycleLabel(entry, language)}
+                      </span>
+                    </span>
                     <span className="session-history-meta">
                       {entry.provider === 'claude' ? 'Claude' : 'Codex'}
                       {' · '}

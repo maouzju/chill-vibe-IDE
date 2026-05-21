@@ -1052,6 +1052,7 @@ const ChatCardView = ({
   const activeSlashItemRef = useRef<HTMLButtonElement>(null)
   const slashMenuElRef = useRef<HTMLDivElement>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
+  const cancelComposerFocusRescueRef = useRef<(() => void) | null>(null)
   const composerResizeFrameRef = useRef<number | null>(null)
   const messageListRef = useRef<HTMLDivElement>(null)
   const shouldStartPinnedToBottom = isRestored || card.status === 'streaming' || card.messages.length === 0
@@ -1443,9 +1444,15 @@ const ChatCardView = ({
       return
     }
 
+    const cancelComposerFocusRescue = () => {
+      cancelComposerFocusRescueRef.current?.()
+      cancelComposerFocusRescueRef.current = null
+    }
+
     const handleDocumentPointerDownCapture = (event: globalThis.PointerEvent) => {
       const textarea = textareaRef.current
       if (!textarea || !textarea.isConnected) {
+        cancelComposerFocusRescue()
         return
       }
 
@@ -1454,6 +1461,7 @@ const ChatCardView = ({
       }
 
       if (shouldIgnoreComposerFocusRescueTarget(event.target)) {
+        cancelComposerFocusRescue()
         return
       }
 
@@ -1465,23 +1473,68 @@ const ChatCardView = ({
         event.clientY <= rect.bottom
 
       if (!isInsideTextarea) {
+        cancelComposerFocusRescue()
         return
       }
 
       lastFocusedCardId = card.id
-      requestAnimationFrame(() => {
+      cancelComposerFocusRescue()
+      const initialTarget = event.target
+      const timeoutHandles: number[] = []
+      const animationFrame = window.requestAnimationFrame(() => {
+        rescueComposerFocus()
+      })
+      let cancelled = false
+
+      const rescueComposerFocus = () => {
+        if (cancelled) {
+          return
+        }
+
         const latestTextarea = textareaRef.current
         if (!latestTextarea || !latestTextarea.isConnected) {
           return
         }
 
-        latestTextarea.focus()
-      })
+        const activeElement = document.activeElement
+        if (
+          activeElement &&
+          activeElement !== latestTextarea &&
+          activeElement !== document.body &&
+          activeElement !== initialTarget
+        ) {
+          return
+        }
+
+        latestTextarea.focus({ preventScroll: true })
+      }
+
+      for (const delayMs of [80, 160, 260, 400, 560, 760, 920]) {
+        timeoutHandles.push(window.setTimeout(rescueComposerFocus, delayMs))
+      }
+
+      const releaseHandle = window.setTimeout(() => {
+        if (cancelComposerFocusRescueRef.current === cancel) {
+          cancelComposerFocusRescueRef.current = null
+        }
+      }, 1_000)
+
+      const cancel = () => {
+        cancelled = true
+        window.cancelAnimationFrame(animationFrame)
+        for (const handle of timeoutHandles) {
+          window.clearTimeout(handle)
+        }
+        window.clearTimeout(releaseHandle)
+      }
+
+      cancelComposerFocusRescueRef.current = cancel
     }
 
     document.addEventListener('pointerdown', handleDocumentPointerDownCapture, true)
     return () => {
       document.removeEventListener('pointerdown', handleDocumentPointerDownCapture, true)
+      cancelComposerFocusRescue()
     }
   }, [card.id, isActive, isCollapsed, isToolCard])
 

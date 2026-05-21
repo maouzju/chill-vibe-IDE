@@ -2782,6 +2782,64 @@ test('close workspace confirmation explains preserved history across themes', as
   })
 })
 
+test('restore closed workspace dialog stays legible across themes', async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 960 })
+  const state = createMockState()
+  const closedCard = {
+    ...state.columns[0]!.cards[0]!,
+    id: 'closed-card-1',
+    title: 'Saved task draft',
+    draft: 'Bring this draft back',
+  }
+  state.lastClosedColumn = {
+    ...state.columns[0]!,
+    id: 'closed-column-1',
+    title: 'Closed Product Workspace',
+    workspacePath: 'D:\\Git\\closed-product',
+    cards: {
+      [closedCard.id]: closedCard,
+    },
+    layout: createPane([closedCard.id], closedCard.id, 'closed-pane-1'),
+  }
+
+  await mockAppApis(page, { state })
+  await page.goto(appUrl)
+  await page.locator('.workspace-column').first().waitFor()
+
+  const settingsTab = page.locator('#app-tab-settings')
+  const lightThemeButton = page.locator('#app-panel-settings .theme-toggle').first().locator('.theme-chip').first()
+
+  await page.locator('.app-topbar-add-column').click()
+  const darkDialog = page.locator('.restore-closed-workspace-dialog')
+  await expect(darkDialog).toBeVisible()
+  await expect(darkDialog.locator('.restore-closed-workspace-card')).toHaveScreenshot(
+    'restore-closed-workspace-dialog-dark.png',
+    {
+      animations: 'disabled',
+      caret: 'hide',
+    },
+  )
+
+  await darkDialog.locator('.structured-preview-close').click()
+  await expect(darkDialog).toBeHidden()
+
+  await settingsTab.click()
+  await lightThemeButton.click()
+  await expect(page.locator('html')).toHaveAttribute('data-theme', 'light')
+  await page.locator('#app-tab-ambience').click()
+  await page.locator('.app-topbar-add-column').click()
+
+  const lightDialog = page.locator('.restore-closed-workspace-dialog')
+  await expect(lightDialog).toBeVisible()
+  await expect(lightDialog.locator('.restore-closed-workspace-card')).toHaveScreenshot(
+    'restore-closed-workspace-dialog-light.png',
+    {
+      animations: 'disabled',
+      caret: 'hide',
+    },
+  )
+})
+
 test('column header actions stay minimal while pane chat chrome keeps destructive controls in tabs', async ({ page }) => {
   await page.setViewportSize({ width: 640, height: 900 })
   await mockAppApis(page)

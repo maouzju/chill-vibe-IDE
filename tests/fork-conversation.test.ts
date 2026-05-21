@@ -77,6 +77,7 @@ const buildState = (columns: BoardColumn[]): AppState => ({
   version: 1,
   columns,
   settings: createDefaultSettings(),
+  lastClosedColumn: null,
   sessionHistory: [],
   updatedAt: timestamp,
 })

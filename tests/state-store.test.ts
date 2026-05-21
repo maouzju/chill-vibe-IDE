@@ -159,6 +159,51 @@ describe('state-store persistence', () => {
     )
   })
 
+  it('loadState preserves a sanitized last closed workspace column for restore prompts', async () => {
+    const stateFile = path.join(tmpDir, 'state.json')
+    const state = createDefaultState('D:/closed-workspace')
+    const closedColumn = {
+      ...state.columns[0]!,
+      id: 'closed-column-1',
+      title: 'Closed workspace',
+      workspacePath: 'D:/closed-workspace',
+      cards: {
+        ...state.columns[0]!.cards,
+      },
+    }
+    const firstCardId = Object.keys(closedColumn.cards)[0]!
+    closedColumn.cards[firstCardId] = {
+      ...closedColumn.cards[firstCardId]!,
+      status: 'streaming',
+      streamId: 'stale-stream',
+      draft: 'restore this draft',
+    }
+
+    await writeFile(
+      stateFile,
+      `${JSON.stringify(
+        {
+          ...state,
+          columns: state.columns.slice(1),
+          lastClosedColumn: closedColumn,
+        },
+        null,
+        2,
+      )}\n`,
+      'utf8',
+    )
+
+    const { loadState } = await import('../server/state-store.ts')
+    const loaded = await loadState()
+
+    assert.equal(loaded.lastClosedColumn?.id, 'closed-column-1')
+    assert.equal(loaded.lastClosedColumn?.workspacePath, 'D:/closed-workspace')
+    const loadedCard = loaded.lastClosedColumn?.cards[firstCardId]
+    assert.equal(loadedCard?.draft, 'restore this draft')
+    assert.equal(loadedCard?.status, 'idle')
+    assert.equal(loadedCard?.streamId, undefined)
+  })
+
   it('loadState demotes legacy Dream cards into normal Codex chats', async () => {
     const stateFile = path.join(tmpDir, 'state.json')
     const state = createDefaultState('D:/legacy-dream')

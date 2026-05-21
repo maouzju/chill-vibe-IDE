@@ -206,6 +206,8 @@ export const boardColumnSchema = z.object({
 })
 export type BoardColumn = z.infer<typeof boardColumnSchema>
 
+export const lastClosedColumnSchema = boardColumnSchema.nullable().default(null)
+
 export const requestModelSettingsSchema = z.object({
   codex: z.string().default(DEFAULT_CODEX_MODEL),
   claude: z.string().default(DEFAULT_CLAUDE_MODEL),
@@ -498,6 +500,7 @@ export const appStateSchema = z.object({
     recentWorkspaces: [],
   }),
   columns: z.array(boardColumnSchema),
+  lastClosedColumn: lastClosedColumnSchema,
   sessionHistory: z.array(sessionHistoryEntrySchema).default([]),
   updatedAt: z.string().datetime(),
 })

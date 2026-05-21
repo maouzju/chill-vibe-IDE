@@ -147,6 +147,7 @@ const createState = (): AppState => ({
       },
     }),
   ],
+  lastClosedColumn: null,
   sessionHistory: [],
 })
 
@@ -1602,6 +1603,35 @@ describe('ideReducer pane layout', () => {
 
 });
 describe('addColumn follows last-used provider/model when available', () => {
+  it('restores the last closed workspace column once and clears stale stream state', () => {
+    const state = createState()
+
+    const afterClose = ideReducer(state, {
+      type: 'removeColumn',
+      columnId: 'column-1',
+    })
+
+    assert.equal(afterClose.columns.some((column) => column.id === 'column-1'), false)
+    assert.equal(afterClose.lastClosedColumn?.id, 'column-1')
+    assert.equal(afterClose.lastClosedColumn?.workspacePath, 'D:/repo/one')
+    assert.equal(afterClose.lastClosedColumn?.cards['card-1']?.status, 'idle')
+    assert.equal(afterClose.lastClosedColumn?.cards['card-1']?.streamId, undefined)
+
+    const restoredColumn = afterClose.lastClosedColumn!
+    const afterRestore = ideReducer(afterClose, {
+      type: 'addColumn',
+      column: restoredColumn,
+    })
+
+    assert.equal(afterRestore.columns.at(-1)?.id, 'column-1')
+    assert.equal(afterRestore.columns.at(-1)?.cards['card-1']?.draft, 'Keep this note')
+    assert.equal(afterRestore.lastClosedColumn, null)
+
+    const afterFreshAdd = ideReducer(afterClose, { type: 'addColumn' })
+    assert.equal(afterFreshAdd.lastClosedColumn, null)
+    assert.notEqual(afterFreshAdd.columns.at(-1)?.id, 'column-1')
+  })
+
   it('uses the last-used provider and model even when the last column uses another provider', () => {
     const baseState = createState()
     const state: AppState = {

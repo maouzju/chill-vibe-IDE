@@ -380,6 +380,93 @@ for (const theme of ['dark', 'light'] as const) {
     await expect(composer).toHaveValue('focus wins over stale visible button')
   })
 
+  test(`composer keeps focus when a stale overlay repeatedly steals it after the click in ${theme} theme`, async ({ page }) => {
+    await installMockApis(page, theme)
+    await page.goto('http://localhost:5173')
+
+    const composer = page
+      .locator('.pane-view')
+      .first()
+      .locator('.pane-content > .pane-tab-panel.is-active .composer textarea')
+
+    await expect(composer).toBeVisible()
+
+    const composerBox = await composer.boundingBox()
+    if (!composerBox) {
+      throw new Error('Expected the composer textarea to have measurable geometry')
+    }
+
+    await page.evaluate((box) => {
+      const blocker = document.createElement('button')
+      blocker.type = 'button'
+      blocker.className = 'focus-rescue-fixture-delayed-focus-steal'
+      blocker.textContent = 'delayed focus stealer'
+      blocker.style.position = 'fixed'
+      blocker.style.left = `${box.x - 4}px`
+      blocker.style.top = `${box.y - 4}px`
+      blocker.style.width = `${box.width + 8}px`
+      blocker.style.height = `${box.height + 8}px`
+      blocker.style.zIndex = '999'
+      blocker.style.opacity = '0'
+      blocker.style.border = '0'
+      blocker.style.padding = '0'
+      blocker.addEventListener('click', () => {
+        for (const delayMs of [80, 260, 520]) {
+          window.setTimeout(() => blocker.focus(), delayMs)
+        }
+      })
+      document.body.appendChild(blocker)
+    }, composerBox)
+
+    await page.mouse.click(composerBox.x + composerBox.width / 2, composerBox.y + composerBox.height / 2)
+    await page.waitForTimeout(680)
+
+    await expect(composer).toBeFocused()
+    await page.keyboard.type('focus stays locked')
+    await expect(composer).toHaveValue('focus stays locked')
+  })
+
+  test(`composer focus rescue stops when the user intentionally focuses another input in ${theme} theme`, async ({ page }) => {
+    await installMockApis(page, theme)
+    await page.goto('http://localhost:5173')
+
+    const composer = page
+      .locator('.pane-view')
+      .first()
+      .locator('.pane-content > .pane-tab-panel.is-active .composer textarea')
+
+    await expect(composer).toBeVisible()
+
+    const composerBox = await composer.boundingBox()
+    if (!composerBox) {
+      throw new Error('Expected the composer textarea to have measurable geometry')
+    }
+
+    await page.evaluate(() => {
+      const input = document.createElement('input')
+      input.className = 'focus-rescue-fixture-real-input'
+      input.setAttribute('aria-label', 'real focus target')
+      input.style.position = 'fixed'
+      input.style.left = '18px'
+      input.style.top = '72px'
+      input.style.width = '180px'
+      input.style.height = '32px'
+      input.style.zIndex = '999'
+      document.body.appendChild(input)
+    })
+
+    const realInput = page.locator('.focus-rescue-fixture-real-input')
+
+    await page.mouse.click(composerBox.x + composerBox.width / 2, composerBox.y + composerBox.height / 2)
+    await page.waitForTimeout(40)
+    await realInput.click()
+    await page.waitForTimeout(720)
+
+    await expect(realInput).toBeFocused()
+    await page.keyboard.type('real target')
+    await expect(realInput).toHaveValue('real target')
+  })
+
   test(`double-clicking empty pane tab bar space opens a new tab in ${theme} theme`, async ({ page }) => {
     await installMockApis(page, theme)
     await page.goto('http://localhost:5173')

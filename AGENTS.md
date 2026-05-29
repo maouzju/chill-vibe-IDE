@@ -374,6 +374,7 @@ A living list of traps that have wasted time before. **When you hit a new pitfal
 | 132 | Electron/Chromium can miss `dragend`, `drop`, or `dragleave` after a pane tab drag has activated a split drop hint | Pane drop overlays must have a short inactivity watchdog, or the blue `is-drop-*` surface can remain over an idle pane and look like a stuck layout/background bug. |
 | 133 | Codex app-server `thread/resume` can return an `active` thread and then wait forever if Chill Vibe does not send a follow-up `turn/start` | A recovered card stays on `Thinking` with no terminal event, so active resumed threads must be continued with a blank turn just like idle resumed threads. |
 | 134 | A local provider process can stay alive after accepting `turn/start` without emitting visible output or a terminal event | Add a local stream stall watchdog and classify the timeout as recoverable; otherwise the renderer has no event that can clear the streaming state. |
+| 135 | Inactive pane tabs normally do not render their `ChatCard` body, so any tool-card runtime hosted inside the body is unmounted on tab switch | Long-running tool panels such as Git analysis must opt into hidden-body mounting or switching tabs closes their stream subscription and looks like the analysis was interrupted. |
 
 ### Self-maintenance rule
 

@@ -339,7 +339,7 @@ for (const theme of ['dark', 'light'] as const) {
     await expect(composer).toHaveValue('focus wins over stale button')
   })
 
-  test(`composer clicks recover focus when a stale visible button sits above it in ${theme} theme`, async ({ page }) => {
+  test(`composer focus rescue does not steal focus from a visible control above it in ${theme} theme`, async ({ page }) => {
     await installMockApis(page, theme)
     await page.goto('http://localhost:5173')
 
@@ -373,11 +373,11 @@ for (const theme of ['dark', 'light'] as const) {
       document.body.appendChild(blocker)
     }, composerBox)
 
+    const blocker = page.locator('.focus-rescue-fixture-stale-visible-button')
     await page.mouse.click(composerBox.x + composerBox.width / 2, composerBox.y + composerBox.height / 2)
 
-    await expect(composer).toBeFocused()
-    await page.keyboard.type('focus wins over stale visible button')
-    await expect(composer).toHaveValue('focus wins over stale visible button')
+    await expect(blocker).toBeFocused()
+    await expect(composer).not.toBeFocused()
   })
 
   test(`double-clicking empty pane tab bar space opens a new tab in ${theme} theme`, async ({ page }) => {

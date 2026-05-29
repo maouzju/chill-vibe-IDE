@@ -179,6 +179,54 @@ test('dragging a tab onto the lower half of another pane splits it downward', as
     .toBe('vertical')
 })
 
+test('dragging a tab away from a split drop target clears the pending highlight', async ({ page }) => {
+  await mockAppApis(page)
+  await page.setViewportSize({ width: 1440, height: 960 })
+  await page.goto('http://localhost:5173')
+
+  const sourceTab = page.locator('.workspace-column').first().locator('.pane-tab', { hasText: 'Source Chat' })
+  const targetColumn = page.locator('.workspace-column').nth(1)
+  const targetPaneContent = targetColumn.locator('.pane-content').first()
+
+  await expect(sourceTab).toBeVisible()
+  await expect(targetPaneContent).toBeVisible()
+
+  const dataTransfer = await page.evaluateHandle(() => {
+    const dt = new DataTransfer()
+    const payload = JSON.stringify({
+      type: 'tab',
+      columnId: 'col-1',
+      paneId: 'col-1-pane',
+      tabId: 'card-source',
+    })
+    dt.setData('application/x-chill-vibe', payload)
+    dt.setData('text/plain', payload)
+    return dt
+  })
+
+  const paneBox = await targetPaneContent.boundingBox()
+  if (!paneBox) {
+    throw new Error('Expected the target pane content to be visible')
+  }
+
+  const pointer = {
+    clientX: paneBox.x + paneBox.width / 2,
+    clientY: paneBox.y + paneBox.height * 0.72,
+    bubbles: true,
+    cancelable: true,
+  }
+
+  await sourceTab.dispatchEvent('dragstart', { dataTransfer, ...pointer })
+  await targetPaneContent.dispatchEvent('dragenter', { dataTransfer, ...pointer })
+  await targetPaneContent.dispatchEvent('dragover', { dataTransfer, ...pointer })
+
+  await expect(targetPaneContent).toHaveClass(/is-drop-bottom/)
+
+  await sourceTab.dispatchEvent('dragend', { dataTransfer, bubbles: true, cancelable: true })
+
+  await expect(targetPaneContent).not.toHaveClass(/is-drop-bottom/)
+})
+
 test('dragging a tab onto the lower half of another pane in the same column keeps the tab visible', async ({ page }) => {
   await installMockElectronBridge(page)
 

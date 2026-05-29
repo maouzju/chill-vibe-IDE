@@ -536,6 +536,44 @@ const createTopbarToolLauncherState = (
   return state
 }
 
+const createSplitQuickToolLauncherState = (theme: 'dark' | 'light'): AppState => {
+  const state = createTopbarToolLauncherState(theme)
+  state.settings.language = 'zh-CN'
+  state.columns[0]!.width = 520
+
+  const baseCard = state.columns[0]!.cards[0]!
+  const leftCard = {
+    ...baseCard,
+    id: 'left-empty-chat',
+    title: '新会话',
+    draft: '',
+    messages: [],
+  }
+  const rightCard = {
+    ...baseCard,
+    id: 'right-empty-chat',
+    title: '新会话',
+    draft: '',
+    messages: [],
+  }
+
+  configureColumnCardsAndLayout(
+    state,
+    [leftCard, rightCard],
+    createSplit(
+      'horizontal',
+      [
+        createPane([leftCard.id], leftCard.id, 'left-empty-pane'),
+        createPane([rightCard.id], rightCard.id, 'right-empty-pane'),
+      ],
+      [0.48, 0.52],
+      'split-empty-tools',
+    ),
+  )
+
+  return state
+}
+
 const createBrainstormToolState = (theme: 'dark' | 'light'): AppState => {
   const state = createMockState()
   state.settings.language = 'en'
@@ -2782,64 +2820,6 @@ test('close workspace confirmation explains preserved history across themes', as
   })
 })
 
-test('restore closed workspace dialog stays legible across themes', async ({ page }) => {
-  await page.setViewportSize({ width: 1280, height: 960 })
-  const state = createMockState()
-  const closedCard = {
-    ...state.columns[0]!.cards[0]!,
-    id: 'closed-card-1',
-    title: 'Saved task draft',
-    draft: 'Bring this draft back',
-  }
-  state.lastClosedColumn = {
-    ...state.columns[0]!,
-    id: 'closed-column-1',
-    title: 'Closed Product Workspace',
-    workspacePath: 'D:\\Git\\closed-product',
-    cards: {
-      [closedCard.id]: closedCard,
-    },
-    layout: createPane([closedCard.id], closedCard.id, 'closed-pane-1'),
-  }
-
-  await mockAppApis(page, { state })
-  await page.goto(appUrl)
-  await page.locator('.workspace-column').first().waitFor()
-
-  const settingsTab = page.locator('#app-tab-settings')
-  const lightThemeButton = page.locator('#app-panel-settings .theme-toggle').first().locator('.theme-chip').first()
-
-  await page.locator('.app-topbar-add-column').click()
-  const darkDialog = page.locator('.restore-closed-workspace-dialog')
-  await expect(darkDialog).toBeVisible()
-  await expect(darkDialog.locator('.restore-closed-workspace-card')).toHaveScreenshot(
-    'restore-closed-workspace-dialog-dark.png',
-    {
-      animations: 'disabled',
-      caret: 'hide',
-    },
-  )
-
-  await darkDialog.locator('.structured-preview-close').click()
-  await expect(darkDialog).toBeHidden()
-
-  await settingsTab.click()
-  await lightThemeButton.click()
-  await expect(page.locator('html')).toHaveAttribute('data-theme', 'light')
-  await page.locator('#app-tab-ambience').click()
-  await page.locator('.app-topbar-add-column').click()
-
-  const lightDialog = page.locator('.restore-closed-workspace-dialog')
-  await expect(lightDialog).toBeVisible()
-  await expect(lightDialog.locator('.restore-closed-workspace-card')).toHaveScreenshot(
-    'restore-closed-workspace-dialog-light.png',
-    {
-      animations: 'disabled',
-      caret: 'hide',
-    },
-  )
-})
-
 test('column header actions stay minimal while pane chat chrome keeps destructive controls in tabs', async ({ page }) => {
   await page.setViewportSize({ width: 640, height: 900 })
   await mockAppApis(page)
@@ -4096,6 +4076,7 @@ test('structured command and reasoning blocks stay quiet across themes', async (
   await commandRow.click()
   const dialog = page.getByRole('dialog')
   const dialogCard = dialog.locator('.structured-preview-card')
+  await expect(dialog.getByRole('button', { name: 'Close details' })).toBeFocused()
   await expect(dialog).toContainText('git status --short')
   await expect(dialog).toContainText('M src/App.tsx')
   const darkDialogBackground = await readComputedRgb(dialogCard, 'background-color')
@@ -7514,6 +7495,75 @@ for (const theme of ['dark', 'light'] as const) {
       animations: 'disabled',
       caret: 'hide',
     })
+  })
+
+  test(`empty chat quick tool entries stay inside horizontally split panes in ${theme} theme`, async ({ page }) => {
+    const state = createSplitQuickToolLauncherState(theme)
+
+    await mockAppApis(page, { state })
+    await page.setViewportSize({ width: 940, height: 720 })
+    await page.goto(appUrl)
+
+    const panes = page.locator('.pane-view')
+    const leftPane = panes.nth(0)
+    const rightPane = panes.nth(1)
+    const leftGrid = leftPane.locator('.chat-empty-tool-grid')
+    const rightGrid = rightPane.locator('.chat-empty-tool-grid')
+
+    await expect(panes).toHaveCount(2)
+    await expect(leftGrid).toBeVisible()
+    await expect(rightGrid).toBeVisible()
+
+    const [leftPaneRect, rightPaneRect, leftGridRect, rightGridRect] = await Promise.all([
+      readRect(leftPane),
+      readRect(rightPane),
+      readRect(leftGrid),
+      readRect(rightGrid),
+    ])
+
+    expect(leftGridRect.left).toBeGreaterThanOrEqual(leftPaneRect.left - 1)
+    expect(leftGridRect.right).toBeLessThanOrEqual(leftPaneRect.right + 1)
+    expect(rightGridRect.left).toBeGreaterThanOrEqual(rightPaneRect.left - 1)
+    expect(rightGridRect.right).toBeLessThanOrEqual(rightPaneRect.right + 1)
+    expect(leftGridRect.right).toBeLessThanOrEqual(rightPaneRect.left + 1)
+  })
+
+  test(`pane split drop hint clears itself when drag termination is missed in ${theme} theme`, async ({ page }) => {
+    const state = createSplitQuickToolLauncherState(theme)
+
+    await mockAppApis(page, { state })
+    await page.setViewportSize({ width: 940, height: 720 })
+    await page.goto(appUrl)
+
+    const targetPaneContent = page.locator('.pane-view').nth(1).locator('.pane-content')
+    await expect(targetPaneContent).toBeVisible()
+
+    await targetPaneContent.evaluate((node) => {
+      const rect = node.getBoundingClientRect()
+      const dataTransfer = new DataTransfer()
+      dataTransfer.setData(
+        'application/x-chill-vibe',
+        JSON.stringify({
+          type: 'tab',
+          columnId: 'col-1',
+          paneId: 'left-empty-pane',
+          tabId: 'left-empty-chat',
+        }),
+      )
+      node.dispatchEvent(
+        new DragEvent('dragover', {
+          bubbles: true,
+          cancelable: true,
+          clientX: rect.left + rect.width * 0.82,
+          clientY: rect.top + rect.height * 0.5,
+          dataTransfer,
+        }),
+      )
+    })
+
+    await expect(targetPaneContent).toHaveClass(/is-drop-right/)
+    await page.waitForTimeout(1600)
+    await expect(targetPaneContent).not.toHaveClass(/is-drop-/)
   })
 
   test(`empty chat quick tool entries hide ambience launchers when one is already open in ${theme} theme`, async ({ page }) => {

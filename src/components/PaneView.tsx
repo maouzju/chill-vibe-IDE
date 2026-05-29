@@ -268,6 +268,8 @@ const cardUsesComposer = (card: ChatCardState) =>
     WHITENOISE_TOOL_MODEL,
   ].includes(card.model)
 
+const dragHintExpiryMs = 1200
+
 const PaneViewView = ({
   column,
   pane,
@@ -322,6 +324,7 @@ const PaneViewView = ({
   const [tabDropHint, setTabDropHint] = useState<{ tabId: string; placement: DropPlacement } | null>(null)
   const [contentDropEdge, setContentDropEdge] = useState<DropEdge | null>(null)
   const tabSizingRef = useRef<'fit' | 'shrink'>('fit')
+  const dragHintExpiryRef = useRef<number | null>(null)
   const tabStripRefCallback = useCallback((el: HTMLDivElement | null) => {
     tabStripRef.current = el
     if (el) el.dataset.sizing = tabSizingRef.current
@@ -473,10 +476,53 @@ const PaneViewView = ({
     }
   }, [activeTabMounted, pane.activeTabId])
 
-  const clearHints = () => {
+  const clearDragHintExpiry = useCallback(() => {
+    if (dragHintExpiryRef.current === null) {
+      return
+    }
+
+    window.clearTimeout(dragHintExpiryRef.current)
+    dragHintExpiryRef.current = null
+  }, [])
+
+  const clearHints = useCallback(() => {
+    clearDragHintExpiry()
     setTabDropHint(null)
     setContentDropEdge(null)
-  }
+  }, [clearDragHintExpiry, setContentDropEdge, setTabDropHint])
+
+  const scheduleDragHintExpiry = useCallback(() => {
+    clearDragHintExpiry()
+    dragHintExpiryRef.current = window.setTimeout(() => {
+      dragHintExpiryRef.current = null
+      clearDragPayload()
+      setTabDropHint(null)
+      setContentDropEdge(null)
+    }, dragHintExpiryMs)
+  }, [clearDragHintExpiry, setContentDropEdge, setTabDropHint])
+
+  useEffect(() => () => clearDragHintExpiry(), [clearDragHintExpiry])
+
+  useEffect(() => {
+    if (!tabDropHint && !contentDropEdge) {
+      return
+    }
+
+    const clearActiveDragState = () => {
+      clearDragPayload()
+      clearHints()
+    }
+
+    window.addEventListener('dragend', clearActiveDragState)
+    window.addEventListener('drop', clearActiveDragState)
+    window.addEventListener('blur', clearActiveDragState)
+
+    return () => {
+      window.removeEventListener('dragend', clearActiveDragState)
+      window.removeEventListener('drop', clearActiveDragState)
+      window.removeEventListener('blur', clearActiveDragState)
+    }
+  }, [clearHints, contentDropEdge, tabDropHint])
 
   const moveIntoPane = (
     sourceColumnId: string,
@@ -798,6 +844,10 @@ const PaneViewView = ({
                 onAuxClick={handleTabAuxClick(tabId)}
                 onContextMenu={handleTabContextMenu(tabId)}
                 onDragStart={handleTabDragStart(tabId)}
+                onDragEnd={() => {
+                  clearDragPayload()
+                  clearHints()
+                }}
                 onDragOver={(event) => {
                   const payload = readDragPayload(event)
                   if (payload?.type !== 'tab') {
@@ -812,6 +862,7 @@ const PaneViewView = ({
                   event.stopPropagation()
                   setContentDropEdge(null)
                   setTabDropHint({ tabId, placement: getHorizontalPlacement(event) })
+                  scheduleDragHintExpiry()
                 }}
                 onDragLeave={(event) => {
                   const nextTarget = event.relatedTarget
@@ -880,6 +931,7 @@ const PaneViewView = ({
           event.preventDefault()
           setTabDropHint(null)
           setContentDropEdge(getPaneEdge(event))
+          scheduleDragHintExpiry()
         }}
         onDragLeave={(event) => {
           const nextTarget = event.relatedTarget

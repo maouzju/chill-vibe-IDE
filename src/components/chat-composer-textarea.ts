@@ -11,6 +11,17 @@ type CachedTextareaLayout = {
 
 const cachedTextareaLayouts = new WeakMap<HTMLTextAreaElement, CachedTextareaLayout>()
 
+type AppliedTextareaLayout = {
+  value: string
+  clientWidth: number
+  maxVisibleLines: number
+  maxHeightStyle: string
+  heightStyle: string
+  overflowY: 'auto' | 'hidden'
+}
+
+const appliedTextareaLayouts = new WeakMap<HTMLTextAreaElement, AppliedTextareaLayout>()
+
 const readCachedTextareaLayout = (
   node: HTMLTextAreaElement,
   maxVisibleLines: number,
@@ -68,9 +79,30 @@ export const syncComposerTextareaHeight = (
 
   const maxVisibleLines = Math.max(options?.maxVisibleLines ?? 8, 1)
   const { minHeight, maxHeight } = readCachedTextareaLayout(node, maxVisibleLines)
+  const currentValue = node.value
+  const clientWidth = node.clientWidth
+  const previous = appliedTextareaLayouts.get(node)
 
-  node.style.maxHeight = `${maxHeight}px`
-  node.style.height = 'auto'
+  if (
+    previous &&
+    previous.value === currentValue &&
+    previous.clientWidth === clientWidth &&
+    previous.maxVisibleLines === maxVisibleLines &&
+    node.style.maxHeight === previous.maxHeightStyle &&
+    node.style.height === previous.heightStyle &&
+    node.style.overflowY === previous.overflowY
+  ) {
+    return
+  }
+
+  const nextMaxHeight = `${maxHeight}px`
+  if (node.style.maxHeight !== nextMaxHeight) {
+    node.style.maxHeight = nextMaxHeight
+  }
+
+  if (node.style.height !== 'auto') {
+    node.style.height = 'auto'
+  }
 
   const layout = getAutoSizedTextareaLayout({
     scrollHeight: node.scrollHeight,
@@ -78,6 +110,20 @@ export const syncComposerTextareaHeight = (
     maxHeight,
   })
 
-  node.style.height = `${layout.height}px`
-  node.style.overflowY = layout.overflowY
+  const nextHeight = `${layout.height}px`
+  if (node.style.height !== nextHeight) {
+    node.style.height = nextHeight
+  }
+  if (node.style.overflowY !== layout.overflowY) {
+    node.style.overflowY = layout.overflowY
+  }
+
+  appliedTextareaLayouts.set(node, {
+    value: currentValue,
+    clientWidth,
+    maxVisibleLines,
+    maxHeightStyle: nextMaxHeight,
+    heightStyle: nextHeight,
+    overflowY: layout.overflowY,
+  })
 }

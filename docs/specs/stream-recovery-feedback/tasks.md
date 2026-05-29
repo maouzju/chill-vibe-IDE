@@ -37,9 +37,16 @@
 13. Keep those diagnostics out of final user-visible error text and record one local reconnect disconnect stat.
 14. Add focused provider tests for stderr-only and JSON-RPC-error-only placeholder suppression and stats.
 
-## Slice 6 - verification
+## Slice 6 - active resume and silent-stall recovery
 
-15. Run `pnpm test` and confirm green.
-16. Run `pnpm test:quality` (narrow scope).
-17. Restart the active runtime (Electron via `pnpm dev:restart`).
-18. Update handoff notes.
+15. Add focused provider tests showing an `active` Codex `thread/resume` still receives a follow-up blank `turn/start`.
+16. Implement the active-resume continuation path so recovered cards cannot remain on `Thinking` with no terminal event.
+17. Add focused provider tests for a local Codex stream that accepts `turn/start` but emits no visible output or terminal event before the first-byte timeout.
+18. Implement the local stream stall watchdog and classify the timeout as recoverable `resume-session`, pausing it while command activity is in progress.
+
+## Slice 7 - verification
+
+19. Run `pnpm test` and confirm green.
+20. Run `pnpm test:quality` (narrow scope).
+21. Restart the active runtime (Electron via `pnpm dev:restart`).
+22. Update handoff notes.

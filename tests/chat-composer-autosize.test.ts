@@ -41,6 +41,8 @@ test('chat composer shrinks back to its minimum height after multiline content i
       maxHeight: '',
       overflowY: '',
     },
+    value: 'initial multiline draft',
+    clientWidth: 320,
   } as unknown as HTMLTextAreaElement
 
   Object.defineProperty(fakeNode, 'scrollHeight', {
@@ -64,6 +66,7 @@ test('chat composer shrinks back to its minimum height after multiline content i
     assert.equal(fakeNode.style.height, '118px')
 
     scrollHeight = 32
+    fakeNode.value = ''
     syncComposerTextareaHeight(fakeNode)
 
     assert.equal(fakeNode.style.height, '32px')
@@ -86,6 +89,8 @@ test('chat composer reuses cached metrics for repeated height syncs on the same 
       maxHeight: '',
       overflowY: '',
     },
+    value: 'short',
+    clientWidth: 320,
   } as unknown as HTMLTextAreaElement
 
   Object.defineProperty(fakeNode, 'scrollHeight', {
@@ -109,10 +114,79 @@ test('chat composer reuses cached metrics for repeated height syncs on the same 
   try {
     syncComposerTextareaHeight(fakeNode)
     scrollHeight = 84
+    fakeNode.value = 'short\nand longer'
     syncComposerTextareaHeight(fakeNode)
 
     assert.equal(computedStyleReads, 1)
     assert.equal(fakeNode.style.height, '84px')
+  } finally {
+    globalWithWindow.window = originalWindow
+  }
+})
+
+test('chat composer skips DOM writes when autosize layout is already current', () => {
+  const globalWithWindow = globalThis as typeof globalThis & {
+    window?: Window & typeof globalThis
+  }
+  const originalWindow = globalWithWindow.window
+  const fakeStyleValues = {
+    height: '',
+    maxHeight: '',
+    overflowY: '',
+  }
+  const styleWrites: string[] = []
+  const style = {} as CSSStyleDeclaration
+
+  Object.defineProperty(style, 'height', {
+    configurable: true,
+    get: () => fakeStyleValues.height,
+    set: (value) => {
+      fakeStyleValues.height = value
+      styleWrites.push(`height:${value}`)
+    },
+  })
+  Object.defineProperty(style, 'maxHeight', {
+    configurable: true,
+    get: () => fakeStyleValues.maxHeight,
+    set: (value) => {
+      fakeStyleValues.maxHeight = value
+      styleWrites.push(`maxHeight:${value}`)
+    },
+  })
+  Object.defineProperty(style, 'overflowY', {
+    configurable: true,
+    get: () => fakeStyleValues.overflowY,
+    set: (value) => {
+      fakeStyleValues.overflowY = value
+      styleWrites.push(`overflowY:${value}`)
+    },
+  })
+
+  const fakeNode = {
+    style,
+    value: 'stable draft',
+    clientWidth: 320,
+    scrollHeight: 52,
+  } as unknown as HTMLTextAreaElement
+
+  globalWithWindow.window = {
+    getComputedStyle: () =>
+      ({
+        minHeight: '32px',
+        height: fakeStyleValues.height || '32px',
+        lineHeight: '18px',
+        paddingTop: '7px',
+        paddingBottom: '7px',
+      }) as CSSStyleDeclaration,
+  } as unknown as Window & typeof globalThis
+
+  try {
+    syncComposerTextareaHeight(fakeNode)
+    styleWrites.length = 0
+
+    syncComposerTextareaHeight(fakeNode)
+
+    assert.deepEqual(styleWrites, [])
   } finally {
     globalWithWindow.window = originalWindow
   }

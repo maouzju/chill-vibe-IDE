@@ -5,6 +5,8 @@ const recoverableErrorPatterns = [
   'closed before completion',
   'stream closed before',
   'unexpected completion',
+  'stalled without emitting stream output',
+  'stalled after emitting stream output',
   'selected model is at capacity',
   'model is at capacity',
 ] as const

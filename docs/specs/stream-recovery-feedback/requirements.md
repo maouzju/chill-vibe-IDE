@@ -2,7 +2,7 @@
 
 ## Context
 
-When a streaming chat reply is interrupted and the recoverable-retry loop kicks in, the current UI shows nothing to the user. The assistant bubble goes quiet for several seconds (or fails silently after 6 retries). Users cannot tell whether the app is hung, reconnecting, or permanently failed.
+When a streaming chat reply is interrupted and the recoverable-retry loop kicks in, the current UI shows nothing to the user. The assistant bubble goes quiet for several seconds, or fails silently after the configured retry budget is exhausted. Users cannot tell whether the app is hung, reconnecting, or permanently failed.
 
 Related pitfalls (AGENTS.md):
 - **#22** — some Claude streams end without `message_stop`, triggering a recoverable retry.
@@ -16,9 +16,9 @@ When a chat card's stream enters recovery, the user sees a short status line **i
 
 ## Functional requirements
 
-1. **Reconnecting state** — When `onError` receives a recoverable error and a retry is scheduled, the card's streaming indicator must show `正在重连… n/6` (or English equivalent) with the current retry attempt count.
+1. **Reconnecting state** — When `onError` receives a recoverable error and a retry is scheduled, the card's streaming indicator must show `正在重连… n/{max}` (or English equivalent) with the current retry attempt count and the configured retry budget; when retries are unlimited, use an explicit unlimited label instead of a misleading fixed denominator.
 2. **Resumed state** — When real assistant output resumes (i.e. the next `onData` event passes `shouldResetStreamRecoveryAttemptsForText` / `shouldResetStreamRecoveryAttemptsForActivity`), the status line briefly shows `已恢复` (~2s) then disappears so the normal streaming indicator resumes.
-3. **Failed state** — When retry budget is exhausted (`retryCount >= 6`) or an unrecoverable final error arrives, the status line shows `重连失败` and stays until the card leaves streaming status. The existing error-message append in the transcript is still written.
+3. **Failed state** — When the configured retry budget is exhausted, or an unrecoverable final error arrives, the status line shows `重连失败` and stays until the card leaves streaming status. The existing error-message append in the transcript is still written.
 4. **Dead resumed-session escape hatch** — If the same provider session repeatedly resumes into placeholder-only `Reconnecting... n/5` output, Chill Vibe must stop reusing that provider `sessionId`, start a fresh provider session, and replay the visible transcript so the user is not trapped in a dead archive.
 5. **No extra persistence** — Recovery state is per-session in-memory only. It resets on app restart.
 6. **No toast, no global alert** — Per user decision, feedback lives inside the assistant bubble area only.
@@ -27,6 +27,8 @@ When a chat card's stream enters recovery, the user sees a short status line **i
 9. **Stats reflect local reconnects** - When Codex emits native `Reconnecting... n/5` placeholders before a recoverable local-stream retry, whether as JSON-RPC stdout events, JSON-RPC error responses, or stderr diagnostics, Settings -> Routing -> Auto-retry stats must count a disconnect immediately, and automated recovery attempts must not inflate the request count.
 10. **Native placeholders stay out of chat text** - Codex native `Reconnecting... n/5` placeholder deltas, completed assistant-message items, JSON-RPC error messages, or stderr diagnostics are control signals only; they must not be persisted or rendered as normal assistant content/error text.
 11. **Capacity errors keep resuming** - If a provider reports that the selected model is at capacity after a live session id exists, treat it as recoverable and continue via session resume instead of surfacing a final hard error.
+12. **Silent local-provider stalls recover** - If a Codex app-server turn starts but no user-visible stream output or terminal event arrives within the local provider first-byte timeout, emit a recoverable `resume-session` error so the card shows reconnecting instead of staying on `Thinking` forever.
+13. **Active resumed threads continue** - If Codex `thread/resume` returns an already-active thread for a recovered card, still start a follow-up blank turn. A resumed active thread with no follow-up turn must not leave the renderer waiting for a terminal event that can never arrive.
 
 ## Non-goals
 

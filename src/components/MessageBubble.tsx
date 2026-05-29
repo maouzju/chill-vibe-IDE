@@ -1,4 +1,4 @@
-import { memo, useEffect, useId, useState } from 'react'
+import { memo, useId, useState } from 'react'
 import { createPortal } from 'react-dom'
 
 import {
@@ -39,6 +39,7 @@ import {
   StructuredTodoCard,
   StructuredToolCard,
 } from './StructuredBlocks'
+import { useDialogFocus } from './dialog-focus'
 import type { ChangesSummaryFile } from './StructuredBlocks'
 import { areMessageBubblePropsEqual, type MessageBubbleProps } from './message-bubble-memo'
 
@@ -67,20 +68,7 @@ const MessageAttachmentPreviewDialog = ({
 }) => {
   const labels = getStructuredLabels(language)
   const titleId = useId()
-
-  useEffect(() => {
-    const handleKeyDown = (event: globalThis.KeyboardEvent) => {
-      if (event.key === 'Escape') {
-        onClose()
-      }
-    }
-
-    window.addEventListener('keydown', handleKeyDown)
-
-    return () => {
-      window.removeEventListener('keydown', handleKeyDown)
-    }
-  }, [onClose])
+  const dialogRef = useDialogFocus<HTMLElement>({ isOpen: true, onClose })
 
   const dialogLayer = (
     <div className="structured-preview-layer">
@@ -89,10 +77,12 @@ const MessageAttachmentPreviewDialog = ({
         onClick={onClose}
       />
       <section
+        ref={dialogRef}
         className="structured-preview-dialog message-attachment-preview-dialog"
         role="dialog"
         aria-modal="true"
         aria-labelledby={titleId}
+        tabIndex={-1}
       >
         <div className="structured-preview-card message-attachment-preview-card">
           <div className="structured-preview-header">

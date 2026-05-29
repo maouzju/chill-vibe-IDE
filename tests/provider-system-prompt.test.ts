@@ -779,6 +779,8 @@ const withFakeProviderCommand = async <T>(
   const originalPath = process.env.PATH
   const originalDataDir = process.env.CHILL_VIBE_DATA_DIR
   const originalPlaceholderTimeout = process.env.CHILL_VIBE_TRANSIENT_PLACEHOLDER_TIMEOUT_MS
+  const originalLocalFirstByteTimeout = process.env.CHILL_VIBE_LOCAL_PROVIDER_FIRST_BYTE_TIMEOUT_MS
+  const originalLocalStallTimeout = process.env.CHILL_VIBE_LOCAL_PROVIDER_STALL_TIMEOUT_MS
 
   await mkdir(binDir, { recursive: true })
   await mkdir(dataDir, { recursive: true })
@@ -813,6 +815,18 @@ const withFakeProviderCommand = async <T>(
       process.env.CHILL_VIBE_TRANSIENT_PLACEHOLDER_TIMEOUT_MS = originalPlaceholderTimeout
     } else {
       delete process.env.CHILL_VIBE_TRANSIENT_PLACEHOLDER_TIMEOUT_MS
+    }
+
+    if (typeof originalLocalFirstByteTimeout === 'string') {
+      process.env.CHILL_VIBE_LOCAL_PROVIDER_FIRST_BYTE_TIMEOUT_MS = originalLocalFirstByteTimeout
+    } else {
+      delete process.env.CHILL_VIBE_LOCAL_PROVIDER_FIRST_BYTE_TIMEOUT_MS
+    }
+
+    if (typeof originalLocalStallTimeout === 'string') {
+      process.env.CHILL_VIBE_LOCAL_PROVIDER_STALL_TIMEOUT_MS = originalLocalStallTimeout
+    } else {
+      delete process.env.CHILL_VIBE_LOCAL_PROVIDER_STALL_TIMEOUT_MS
     }
 
     setProviderRuntimeSettingsOverride(null)
@@ -1188,6 +1202,35 @@ const buildFakeCodexIdleResumeScript = (capturePath: string) =>
     '  }',
     "  if (request.method === 'thread/resume' && request.id) {",
     "    reply({ id: request.id, result: { thread: { id: request.params.threadId, status: { type: 'idle' } } } })",
+    '    return',
+    '  }',
+    "  if (request.method === 'turn/start' && request.id) {",
+    '    reply({ id: request.id, result: { turn: { id: "turn-1", status: "inProgress", items: [], error: null } } })',
+    "    reply({ method: 'turn/completed', params: {} })",
+    '  }',
+    '})',
+  ].join('\n')
+
+const buildFakeCodexActiveResumeScript = (capturePath: string) =>
+  [
+    "const fs = require('node:fs')",
+    "const readline = require('node:readline')",
+    `const capturePath = ${JSON.stringify(capturePath)}`,
+    'const appendMessage = (message) => fs.appendFileSync(capturePath, `${JSON.stringify(message)}\\n`, "utf8")',
+    "const reply = (message) => process.stdout.write(`${JSON.stringify(message)}\\n`)",
+    "const rl = readline.createInterface({ input: process.stdin, crlfDelay: Infinity })",
+    "rl.on('line', (line) => {",
+    '  if (!line.trim()) {',
+    '    return',
+    '  }',
+    '  const request = JSON.parse(line)',
+    '  appendMessage(request)',
+    "  if (request.method === 'initialize' && request.id) {",
+    '    reply({ id: request.id, result: {} })',
+    '    return',
+    '  }',
+    "  if (request.method === 'thread/resume' && request.id) {",
+    "    reply({ id: request.id, result: { thread: { id: request.params.threadId, status: { type: 'active' } } } })",
     '    return',
     '  }',
     "  if (request.method === 'turn/start' && request.id) {",
@@ -1592,6 +1635,31 @@ const buildFakeCodexRecoverableDisconnectScript = () =>
     '    reply({ id: request.id, result: { turn: { id: "turn-1", status: "inProgress", items: [], error: null } } })',
     "    reply({ method: 'item/agentMessage/delta', params: { itemId: 'assistant-item-1', delta: 'Reconnecting 1/5' } })",
     '    process.exit(0)',
+    '  }',
+    '})',
+  ].join('\n')
+
+const buildFakeCodexSilentAfterTurnStartScript = () =>
+  [
+    "const readline = require('node:readline')",
+    "const reply = (message) => process.stdout.write(`${JSON.stringify(message)}\\n`)",
+    "const rl = readline.createInterface({ input: process.stdin, crlfDelay: Infinity })",
+    "rl.on('line', (line) => {",
+    '  if (!line.trim()) {',
+    '    return',
+    '  }',
+    '  const request = JSON.parse(line)',
+    "  if (request.method === 'initialize' && request.id) {",
+    '    reply({ id: request.id, result: {} })',
+    '    return',
+    '  }',
+    "  if (request.method === 'thread/start' && request.id) {",
+    "    reply({ id: request.id, result: { thread: { id: 'thread-silent-stall', status: { type: 'active' } } } })",
+    '    return',
+    '  }',
+    "  if (request.method === 'turn/start' && request.id) {",
+    '    reply({ id: request.id, result: { turn: { id: "turn-1", status: "inProgress", items: [], error: null } } })',
+    '    setInterval(() => {}, 1000)',
     '  }',
     '})',
   ].join('\n')
@@ -2039,6 +2107,34 @@ test('codex app-server placeholder-only stalls are failed fast as recoverable tr
       recoverable: true,
       recoveryMode: 'resume-session',
       transientOnly: true,
+    },
+  })
+})
+
+test('codex app-server silent stalls fail fast as recoverable resumes', async () => {
+  process.env.CHILL_VIBE_LOCAL_PROVIDER_FIRST_BYTE_TIMEOUT_MS = '200'
+  process.env.CHILL_VIBE_LOCAL_PROVIDER_STALL_TIMEOUT_MS = '200'
+
+  const outcome = await withFakeProviderCommand(
+    'codex',
+    buildFakeCodexSilentAfterTurnStartScript(),
+    async (workspacePath) =>
+      captureProviderRecoveryFailureWithin(
+        createRequest({
+          provider: 'codex',
+          language: 'en',
+          workspacePath,
+        }),
+        1000,
+      ),
+  )
+
+  assert.deepEqual(outcome, {
+    kind: 'error',
+    message: 'Codex stalled without emitting stream output.',
+    recovery: {
+      recoverable: true,
+      recoveryMode: 'resume-session',
     },
   })
 })
@@ -3179,6 +3275,50 @@ test('codex app-server continues an idle resumed thread by starting a blank turn
     const turnStart = requests.find((request) => request.method === 'turn/start')
 
     assert.ok(turnStart, 'expected idle session resume to start a follow-up turn')
+    assert.deepEqual(turnStart.params?.input, [
+      {
+        type: 'text',
+        text: '',
+        text_elements: [],
+      },
+    ])
+  } finally {
+    await rm(capturePath, { force: true }).catch(() => {})
+  }
+})
+
+test('codex app-server continues an active resumed thread by starting a blank turn', async () => {
+  const capturePath = path.join(
+    os.tmpdir(),
+    `chill-vibe-codex-app-server-resume-active-${Date.now()}-${Math.random().toString(36).slice(2)}.jsonl`,
+  )
+
+  try {
+    const outcome = await withFakeProviderCommand(
+      'codex',
+      buildFakeCodexActiveResumeScript(capturePath),
+      async (workspacePath) =>
+        captureProviderOutcome(
+          createRequest({
+            provider: 'codex',
+            language: 'en',
+            workspacePath,
+            sessionId: 'thread-1',
+            prompt: '',
+            attachments: [],
+          }),
+        ),
+    )
+
+    assert.deepEqual(outcome, { kind: 'done' })
+
+    const requests = (await readFile(capturePath, 'utf8'))
+      .trim()
+      .split(/\r?\n/)
+      .map((line) => JSON.parse(line) as { method?: string; params?: Record<string, unknown> })
+    const turnStart = requests.find((request) => request.method === 'turn/start')
+
+    assert.ok(turnStart, 'expected active session resume to start a follow-up turn')
     assert.deepEqual(turnStart.params?.input, [
       {
         type: 'text',

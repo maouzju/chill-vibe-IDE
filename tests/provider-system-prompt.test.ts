@@ -35,6 +35,8 @@ const createRequest = (overrides: Partial<ChatRequest> = {}): ChatRequest => ({
   attachments: overrides.attachments ?? [],
   archiveRecall: overrides.archiveRecall,
   sandboxMode: overrides.sandboxMode,
+  approvalPolicy: overrides.approvalPolicy,
+  networkAccessEnabled: overrides.networkAccessEnabled,
 })
 
 test('provider system prompt prepends the zh-CN language instruction', () => {
@@ -3201,6 +3203,56 @@ test('codex app-server honors a read-only sandbox override', async () => {
     assert.deepEqual(turnStart.params?.sandboxPolicy, {
       type: 'readOnly',
       networkAccess: false,
+    })
+  } finally {
+    await rm(capturePath, { force: true }).catch(() => {})
+  }
+})
+
+test('codex app-server forwards on-request approvals and workspace-write network access', async () => {
+  const capturePath = path.join(
+    os.tmpdir(),
+    `chill-vibe-codex-app-server-approval-network-${Date.now()}-${Math.random().toString(36).slice(2)}.jsonl`,
+  )
+
+  try {
+    let capturedWorkspacePath = ''
+    const outcome = await withFakeProviderCommand(
+      'codex',
+      buildFakeCodexAppServerScript(capturePath),
+      async (workspacePath) => {
+        capturedWorkspacePath = workspacePath
+        return captureProviderOutcome(
+          createRequest({
+            provider: 'codex',
+            language: 'en',
+            workspacePath,
+            sandboxMode: 'workspace-write',
+            approvalPolicy: 'on-request',
+            networkAccessEnabled: true,
+          }),
+        )
+      },
+    )
+
+    assert.deepEqual(outcome, { kind: 'done' })
+
+    const requests = (await readFile(capturePath, 'utf8'))
+      .trim()
+      .split(/\r?\n/)
+      .map((line) => JSON.parse(line) as { method?: string; params?: Record<string, unknown> })
+    const threadStart = requests.find((request) => request.method === 'thread/start')
+    const turnStart = requests.find((request) => request.method === 'turn/start')
+
+    assert.ok(threadStart)
+    assert.equal(threadStart.params?.approvalPolicy, 'on-request')
+    assert.equal(threadStart.params?.sandbox, 'workspace-write')
+    assert.ok(turnStart)
+    assert.equal(turnStart.params?.approvalPolicy, 'on-request')
+    assert.deepEqual(turnStart.params?.sandboxPolicy, {
+      type: 'workspaceWrite',
+      networkAccess: 'enabled',
+      writableRoots: [capturedWorkspacePath],
     })
   } finally {
     await rm(capturePath, { force: true }).catch(() => {})

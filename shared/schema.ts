@@ -44,6 +44,9 @@ export type TopTabName = z.infer<typeof topTabNameSchema>
 export const cardStatusSchema = z.enum(['idle', 'streaming', 'error'])
 export type CardStatus = z.infer<typeof cardStatusSchema>
 
+export const codexApprovalPolicySchema = z.enum(['never', 'on-request'])
+export type CodexApprovalPolicy = z.infer<typeof codexApprovalPolicySchema>
+
 export const chatRoleSchema = z.enum(['user', 'assistant', 'system'])
 export type ChatRole = z.infer<typeof chatRoleSchema>
 
@@ -672,6 +675,8 @@ export const chatRequestSchema = z.object({
   attachments: z.array(imageAttachmentSchema).default([]),
   archiveRecall: archiveRecallSnapshotSchema.optional(),
   sandboxMode: codexSandboxModeSchema.optional(),
+  approvalPolicy: codexApprovalPolicySchema.optional(),
+  networkAccessEnabled: z.boolean().optional(),
 }).refine((value) => {
   const hasPrompt = value.prompt.trim().length > 0
   const hasAttachments = value.attachments.length > 0

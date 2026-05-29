@@ -1151,6 +1151,11 @@ type CodexSandboxMode = NonNullable<ChatRequest['sandboxMode']>
 const getCodexSandboxMode = (request: ChatRequest): CodexSandboxMode =>
   request.sandboxMode ?? 'danger-full-access'
 
+type CodexApprovalPolicy = NonNullable<ChatRequest['approvalPolicy']>
+
+const getCodexApprovalPolicy = (request: ChatRequest): CodexApprovalPolicy =>
+  request.approvalPolicy === 'on-request' ? 'on-request' : 'never'
+
 const buildCodexSandboxPolicy = (request: ChatRequest) => {
   const sandboxMode = getCodexSandboxMode(request)
 
@@ -1163,7 +1168,8 @@ const buildCodexSandboxPolicy = (request: ChatRequest) => {
     case 'workspace-write':
       return {
         type: 'workspaceWrite',
-        networkAccess: false,
+        networkAccess: request.networkAccessEnabled ? 'enabled' : 'restricted',
+        writableRoots: [request.workspacePath],
       } as const
     case 'danger-full-access':
       return {
@@ -1195,7 +1201,7 @@ const writeCodexJsonRpcMessage = (
 const buildCodexThreadStartParams = (request: ChatRequest, workspacePath: string) => ({
   model: request.model || undefined,
   cwd: workspacePath,
-  approvalPolicy: 'never',
+  approvalPolicy: getCodexApprovalPolicy(request),
   sandbox: getCodexSandboxMode(request),
   baseInstructions: buildCodexAppServerBaseInstructions(request),
 })
@@ -1208,7 +1214,7 @@ const buildCodexThreadResumeParams = (
   threadId,
   model: request.model || undefined,
   cwd: workspacePath,
-  approvalPolicy: 'never',
+  approvalPolicy: getCodexApprovalPolicy(request),
   sandbox: getCodexSandboxMode(request),
   baseInstructions: buildCodexAppServerBaseInstructions(request),
 })
@@ -1224,7 +1230,7 @@ const buildCodexTurnStartParams = (
   threadId,
   input: buildCodexAppServerInput(request, attachmentPaths),
   cwd: request.workspacePath,
-  approvalPolicy: 'never',
+  approvalPolicy: getCodexApprovalPolicy(request),
   sandboxPolicy: buildCodexSandboxPolicy(request),
   model: request.model || undefined,
   ...(options?.includeEffort === false

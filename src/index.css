@@ -3909,6 +3909,19 @@ body.is-card-dragging .lane-drop-zone-top {
   opacity: 0.6;
 }
 
+.message-model-pill {
+  margin-left: auto;
+  padding: 0.08rem 0.34rem;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  color: var(--ink-3);
+  background: var(--panel-soft);
+  font-size: 0.6rem;
+  font-weight: 650;
+  line-height: 1.2;
+  opacity: 0.82;
+}
+
 .message-user .message-role  { color: var(--ink-3); }
 .message-user time            { color: var(--ink-4); }
 .message-assistant .message-role { color: var(--ink-3); }

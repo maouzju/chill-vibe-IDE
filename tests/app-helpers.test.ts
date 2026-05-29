@@ -9,6 +9,7 @@ import {
   finalizeStreamedAssistantMessage,
   getAgentDoneSoundUrl,
   getColumnById,
+  getResumeSessionIdForModel,
 } from '../src/app-helpers.ts'
 
 test('agent-done sound URL respects the active base path', () => {
@@ -25,6 +26,33 @@ test('getColumnById resolves a board column by its id', () => {
 
   assert.equal(getColumnById(columns, 'column-2')?.id, 'column-2')
   assert.equal(getColumnById(columns, 'missing'), undefined)
+})
+
+test('getResumeSessionIdForModel refuses model-unknown sessions when the requested model is explicit', () => {
+  assert.equal(
+    getResumeSessionIdForModel(
+      { sessionId: 'legacy-session-without-model', sessionModel: undefined },
+      'claude-opus-4-8',
+    ),
+    undefined,
+  )
+})
+
+test('getResumeSessionIdForModel returns the native session only for the matching model', () => {
+  assert.equal(
+    getResumeSessionIdForModel(
+      { sessionId: 'claude-session-opus-48', sessionModel: 'claude-opus-4-8' },
+      'claude-opus-4-8',
+    ),
+    'claude-session-opus-48',
+  )
+  assert.equal(
+    getResumeSessionIdForModel(
+      { sessionId: 'claude-session-opus-47', sessionModel: 'claude-opus-4-7' },
+      'claude-opus-4-8',
+    ),
+    undefined,
+  )
 })
 
 test('createStructuredMessageId gives assistant snapshots a stable stream item id', () => {
@@ -161,6 +189,32 @@ test('finalizeStreamedAssistantMessage replaces the live streamed bubble in plac
   assert.equal(nextMessages[0]?.content, 'First paragraph\n\nSecond paragraph')
   assert.equal(nextMessages[0]?.meta?.provider, 'codex')
   assert.equal(nextMessages[0]?.meta?.itemId, 'assistant-item-1')
+})
+
+test('finalizeStreamedAssistantMessage records the requested model on assistant output', () => {
+  const nextMessages = finalizeStreamedAssistantMessage(
+    [
+      {
+        id: 'assistant-live-1',
+        role: 'assistant' as const,
+        content: 'Old text',
+        createdAt: '2026-05-29T00:00:00.000Z',
+        meta: {
+          provider: 'claude' as const,
+        },
+      },
+    ],
+    'assistant-live-1',
+    'claude',
+    'stream-1',
+    {
+      itemId: 'assistant-item-1',
+      content: '我是 Claude Opus 4.7。',
+    },
+    'claude-opus-4-8',
+  )
+
+  assert.equal(nextMessages[0]?.meta?.model, 'claude-opus-4-8')
 })
 
 test('finalizeStructuredActivityMessage replaces a live ask-user XML bubble with the structured card', () => {

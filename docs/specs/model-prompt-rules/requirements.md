@@ -12,7 +12,7 @@
 - As a user, I can enter the secondary editor, add / edit / delete rules, and each rule includes:
   - a model keyword used for matching
   - the prompt text to append when matched
-- As a user, if I configure a rule with keyword `claude`, then models such as `claude-sonnet-4-6` or `claude-opus-4-7` automatically receive that extra prompt.
+- As a user, if I configure a rule with keyword `claude`, then models such as `claude-sonnet-4-6` or `claude-opus-4-8` automatically receive that extra prompt.
 - As a user, if multiple rules match the same model, the matched prompts are appended in list order after the base system prompt.
 - As a user, if a rule is incomplete (empty keyword or empty prompt), it should not be persisted as an active rule.
 

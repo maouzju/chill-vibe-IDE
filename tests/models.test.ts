@@ -13,6 +13,7 @@ import {
   WEATHER_TOOL_MODEL,
   WHITENOISE_TOOL_MODEL,
   getModelOptions,
+  isModelPickerOptionVisible,
   normalizeModel,
   normalizeStoredModel,
   resolveSlashModel,
@@ -29,6 +30,7 @@ describe('model helpers', () => {
     assert.equal(normalizeStoredModel('claude', ''), '')
     assert.equal(normalizeModel('claude', ''), DEFAULT_CLAUDE_MODEL)
     assert.equal(normalizeModel('claude', ' claude-opus-4-7 '), 'claude-opus-4-7')
+    assert.equal(normalizeModel('claude', ' claude-opus-4-8 '), DEFAULT_CLAUDE_MODEL)
   })
 
   it('lists Git tool first among codex model options', () => {
@@ -58,6 +60,15 @@ describe('model helpers', () => {
     )
   })
 
+  it('keeps tool cards out of the ordinary model picker', () => {
+    assert.deepEqual(
+      getModelOptions('codex')
+        .filter(isModelPickerOptionVisible)
+        .map((option) => option.model),
+      ['', DEFAULT_CODEX_MODEL],
+    )
+  })
+
   it('resolves slash-command aliases to canonical model names', () => {
     assert.equal(resolveSlashModel('codex', 'gpt'), '')
     assert.equal(resolveSlashModel('codex', '5.5'), DEFAULT_CODEX_MODEL)
@@ -73,7 +84,8 @@ describe('model helpers', () => {
     assert.equal(resolveSlashModel('codex', 'whitenoise'), WHITENOISE_TOOL_MODEL)
     assert.equal(resolveSlashModel('codex', 'ambient'), WHITENOISE_TOOL_MODEL)
     assert.equal(resolveSlashModel('claude', 'claude'), '')
-    assert.equal(resolveSlashModel('claude', 'opus'), 'claude-opus-4-7')
+    assert.equal(resolveSlashModel('claude', 'opus'), DEFAULT_CLAUDE_MODEL)
+    assert.equal(resolveSlashModel('claude', 'opus 4.8'), DEFAULT_CLAUDE_MODEL)
     assert.equal(resolveSlashModel('claude', 'unknown-model'), null)
   })
 })

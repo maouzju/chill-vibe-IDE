@@ -67,13 +67,6 @@ const toolCardModels = new Set([
 const cardHasHistoricalImageAttachments = (card: Pick<ChatCard, 'messages'>) =>
   card.messages.some((message) => getChatMessageAttachments(message).length > 0)
 
-const isUntouchedEmptyChatCard = (card: ChatCard) =>
-  card.status === 'idle' &&
-  card.messages.length === 0 &&
-  !card.draft.trim() &&
-  !card.sessionId &&
-  !card.streamId
-
 const providerRoutingSignature = (settings: AppSettings, provider: Provider) => {
   const collection = settings.providerProfiles[provider]
   const activeProfile = collection.profiles.find((profile) => profile.id === collection.activeProfileId)
@@ -95,8 +88,10 @@ const clearProviderNativeSessions = (state: AppState, provider: Provider): AppSt
         delete providerSessions[provider]
 
         const sessionId = card.provider === provider ? undefined : card.sessionId
+        const sessionModel = card.provider === provider ? undefined : card.sessionModel
         if (
           sessionId === card.sessionId &&
+          sessionModel === card.sessionModel &&
           Object.keys(providerSessions).length === Object.keys(card.providerSessions).length
         ) {
           return [cardId, card]
@@ -107,6 +102,7 @@ const clearProviderNativeSessions = (state: AppState, provider: Provider): AppSt
           {
             ...card,
             sessionId,
+            sessionModel,
             providerSessions,
           },
         ]
@@ -118,6 +114,7 @@ const clearProviderNativeSessions = (state: AppState, provider: Provider): AppSt
       ? {
           ...entry,
           sessionId: undefined,
+          sessionModel: undefined,
         }
       : entry,
   ),
@@ -288,6 +285,7 @@ export type IdeAction =
           | 'title'
           | 'status'
           | 'sessionId'
+          | 'sessionModel'
           | 'providerSessions'
           | 'streamId'
           | 'provider'
@@ -312,6 +310,7 @@ export type IdeAction =
       cardId: string
       messageId: string
       delta: string
+      model?: string
     }
   | {
       type: 'finishStoppedStream'
@@ -350,6 +349,7 @@ const duplicateCardForColumn = (card: ChatCard): ChatCard => ({
   ...card,
   id: createId(),
   sessionId: undefined,
+  sessionModel: undefined,
   providerSessions: {},
   streamId: undefined,
   status: 'idle',
@@ -959,7 +959,7 @@ const applyRequestModelPatch = (state: AppState, patch: Partial<RequestModelSett
             const previousCardConfiguredModel = state.settings.requestModels[card.provider]
             const nextCardConfiguredModel = next.settings.requestModels[card.provider]
             const shouldUpdateCardModel =
-              card.model === previousCardConfiguredModel && isUntouchedEmptyChatCard(card)
+              card.model.trim().length === 0 || card.model === previousCardConfiguredModel
 
             if (shouldUpdateCardModel) {
               return [
@@ -968,21 +968,15 @@ const applyRequestModelPatch = (state: AppState, patch: Partial<RequestModelSett
                   ...card,
                   model: nextCardConfiguredModel,
                   reasoningEffort: getPreferredReasoningEffort(next.settings, card.provider, nextCardConfiguredModel),
+                  sessionId: undefined,
+                  sessionModel: undefined,
+                  providerSessions: {},
+                  streamId: undefined,
                 },
               ]
             }
 
-            if (card.model.trim().length > 0) {
-              return [cardId, card]
-            }
-
-            return [
-              cardId,
-              {
-                ...card,
-                reasoningEffort: getPreferredReasoningEffort(next.settings, card.provider, card.model),
-              },
-            ]
+            return [cardId, card]
           }),
         ),
       }
@@ -1020,10 +1014,11 @@ const selectCardModel = (
   const shouldInvalidateSessionsForImageReplay =
     modelChanged && cardHasHistoricalImageAttachments(card)
 
-  let sessionPatch: Pick<Partial<ChatCard>, 'sessionId' | 'providerSessions'> = {}
+  let sessionPatch: Pick<Partial<ChatCard>, 'sessionId' | 'sessionModel' | 'providerSessions'> = {}
   if (shouldInvalidateSessionsForImageReplay) {
     sessionPatch = {
       sessionId: undefined,
+      sessionModel: undefined,
       providerSessions: {},
     }
   } else if (providerChanged) {
@@ -1035,11 +1030,13 @@ const selectCardModel = (
     delete savedSessions[provider]
     sessionPatch = {
       sessionId: restoredSessionId,
+      sessionModel: undefined,
       providerSessions: savedSessions,
     }
   } else if (modelChanged) {
     sessionPatch = {
       sessionId: undefined,
+      sessionModel: undefined,
       providerSessions: {},
     }
   }
@@ -1078,6 +1075,7 @@ const buildRestoredCard = (state: AppState, entry: SessionHistoryEntry): ChatCar
   id: createId(),
   title: entry.title,
   sessionId: entry.sessionId,
+  sessionModel: entry.sessionModel,
   providerSessions: {},
   streamId: undefined,
   status: 'idle',
@@ -1195,6 +1193,7 @@ const rebindCardToColumn = (
     model: nextModel,
     reasoningEffort: getPreferredReasoningEffort(state.settings, provider, nextModel),
     sessionId: undefined,
+    sessionModel: undefined,
     providerSessions: {},
     streamId: undefined,
     status: 'idle',
@@ -1881,6 +1880,7 @@ export const ideReducer = (state: AppState, action: IdeAction): AppState => {
         title: action.title ?? '',
         status: 'idle',
         sessionId: undefined,
+        sessionModel: undefined,
         providerSessions: {},
         streamId: undefined,
         autoUrgeActive: false,
@@ -1918,11 +1918,14 @@ export const ideReducer = (state: AppState, action: IdeAction): AppState => {
         updateCard(state, action.columnId, action.cardId, (card) => {
           const last = card.messages[card.messages.length - 1]
           if (last && last.id === action.messageId) {
+            const nextMeta = action.model?.trim()
+              ? { ...(last.meta ?? {}), model: action.model.trim() }
+              : last.meta
             return {
               ...card,
               messages: [
                 ...card.messages.slice(0, -1),
-                { ...last, content: `${last.content}${action.delta}` },
+                { ...last, content: `${last.content}${action.delta}`, meta: nextMeta },
               ],
             }
           }
@@ -1931,7 +1934,13 @@ export const ideReducer = (state: AppState, action: IdeAction): AppState => {
             ...card,
             messages: card.messages.map((message) =>
               message.id === action.messageId
-                ? { ...message, content: `${message.content}${action.delta}` }
+                ? {
+                    ...message,
+                    content: `${message.content}${action.delta}`,
+                    meta: action.model?.trim()
+                      ? { ...(message.meta ?? {}), model: action.model.trim() }
+                      : message.meta,
+                  }
                 : message,
             ),
           }
@@ -2029,6 +2038,7 @@ export const ideReducer = (state: AppState, action: IdeAction): AppState => {
         id: createId(),
         title: action.entry.title,
         sessionId: action.entry.sessionId,
+        sessionModel: action.entry.sessionModel,
         providerSessions: {},
         streamId: undefined,
         status: 'idle',
@@ -2093,6 +2103,7 @@ export const ideReducer = (state: AppState, action: IdeAction): AppState => {
         id: createId(),
         title: getForkConversationTitle(language, sourceCard.title),
         sessionId: undefined,
+        sessionModel: undefined,
         providerSessions: {},
         streamId: undefined,
         status: 'idle',

@@ -1,7 +1,7 @@
 import type { Provider } from './schema.js'
 
 export const DEFAULT_CODEX_MODEL = 'gpt-5.5'
-export const DEFAULT_CLAUDE_MODEL = 'claude-opus-4-7'
+export const DEFAULT_CLAUDE_MODEL = 'claude-opus-4-8'
 export const DEFAULT_GIT_AGENT_MODEL = `${DEFAULT_CODEX_MODEL} xhigh`
 export const GIT_TOOL_MODEL = '__git_tool__'
 export const MUSIC_TOOL_MODEL = '__music_tool__'
@@ -92,10 +92,10 @@ export const MODEL_OPTIONS: ModelOption[] = [
     aliases: ['gpt-5.5', '5.5', 'gpt55'],
   },
   {
-    label: 'Opus 4.7',
+    label: 'Opus 4.8',
     provider: 'claude',
     model: DEFAULT_CLAUDE_MODEL,
-    aliases: ['opus', 'opus-4.7', 'claude-opus-4-7'],
+    aliases: ['opus', 'opus-4.8', 'claude-opus-4-8'],
   },
   {
     label: 'Sonnet 4.6',
@@ -110,6 +110,20 @@ export const MODEL_OPTIONS: ModelOption[] = [
     aliases: ['haiku', 'haiku-4.5', 'claude-haiku-4-5-20251001'],
   },
 ]
+
+export const MODEL_PICKER_HIDDEN_TOOL_MODELS = new Set([
+  GIT_TOOL_MODEL,
+  MUSIC_TOOL_MODEL,
+  WHITENOISE_TOOL_MODEL,
+  WEATHER_TOOL_MODEL,
+  STICKYNOTE_TOOL_MODEL,
+  FILETREE_TOOL_MODEL,
+  BRAINSTORM_TOOL_MODEL,
+  TEXTEDITOR_TOOL_MODEL,
+])
+
+export const isModelPickerOptionVisible = (option: Pick<ModelOption, 'model'>) =>
+  !MODEL_PICKER_HIDDEN_TOOL_MODELS.has(option.model)
 
 const legacyCodexModels = new Set(['gpt-4.5', '__dream_tool__', '__spec_tool__'])
 

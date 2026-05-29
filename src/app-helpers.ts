@@ -3,6 +3,7 @@ import type {
   AppLanguage,
   AppState,
   BoardColumn,
+  ChatCard,
   ChatMessage,
   Provider,
   StreamActivity,
@@ -87,6 +88,23 @@ export const importErrorMessage = (error: unknown, fallback: string, tooLargeFal
   return /cc-switch export is too large|payload is too large|entity too large/i.test(message)
     ? tooLargeFallback
     : message
+}
+
+export const getResumeSessionIdForModel = (
+  card: Pick<ChatCard, 'sessionId' | 'sessionModel'>,
+  model: string,
+) => {
+  if (!card.sessionId?.trim()) {
+    return undefined
+  }
+
+  const requestedModel = model.trim()
+  const sessionModel = card.sessionModel?.trim()
+  if (!sessionModel) {
+    return undefined
+  }
+
+  return sessionModel === requestedModel ? card.sessionId : undefined
 }
 
 export const getRoutingImportText = (language: AppState['settings']['language']) =>
@@ -229,6 +247,7 @@ export const createStructuredAssistantMessage = (
   provider: Provider,
   streamId: string,
   payload: StreamAssistantMessage,
+  model?: string,
 ): ChatMessage => ({
   id: createStructuredMessageId(provider, streamId, getStructuredMessageKey(payload)),
   role: 'assistant',
@@ -237,6 +256,7 @@ export const createStructuredAssistantMessage = (
   meta: {
     provider,
     itemId: payload.itemId,
+    ...(model?.trim() ? { model: model.trim() } : {}),
   },
 })
 
@@ -246,7 +266,9 @@ export const finalizeStreamedAssistantMessage = (
   provider: Provider,
   streamId: string,
   payload: StreamAssistantMessage,
+  model?: string,
 ): ChatMessage[] => {
+  const normalizedModel = model?.trim()
   if (streamingMessageId) {
     const existingIndex = messages.findIndex((message) => message.id === streamingMessageId)
 
@@ -256,12 +278,14 @@ export const finalizeStreamedAssistantMessage = (
         ...(existing.meta ?? {}),
         provider,
         itemId: payload.itemId,
+        ...(normalizedModel ? { model: normalizedModel } : {}),
       }
 
       if (
         existing.content === payload.content &&
         existing.meta?.provider === provider &&
-        existing.meta?.itemId === payload.itemId
+        existing.meta?.itemId === payload.itemId &&
+        (!normalizedModel || existing.meta?.model === normalizedModel)
       ) {
         return messages
       }
@@ -279,7 +303,7 @@ export const finalizeStreamedAssistantMessage = (
     }
   }
 
-  const nextMessage = createStructuredAssistantMessage(provider, streamId, payload)
+  const nextMessage = createStructuredAssistantMessage(provider, streamId, payload, normalizedModel)
   const existingIndex = messages.findIndex((message) => message.id === nextMessage.id)
 
   if (existingIndex < 0) {
@@ -289,7 +313,8 @@ export const finalizeStreamedAssistantMessage = (
   if (
     messages[existingIndex]?.content === nextMessage.content &&
     messages[existingIndex]?.meta?.provider === nextMessage.meta?.provider &&
-    messages[existingIndex]?.meta?.itemId === nextMessage.meta?.itemId
+    messages[existingIndex]?.meta?.itemId === nextMessage.meta?.itemId &&
+    (!normalizedModel || messages[existingIndex]?.meta?.model === normalizedModel)
   ) {
     return messages
   }

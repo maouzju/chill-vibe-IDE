@@ -244,7 +244,7 @@ A living list of traps that have wasted time before. **When you hit a new pitfal
 
 | 39 | `pnpm install --frozen-lockfile` can still report `Already up to date` while leaving a damaged `node_modules` tree without top-level `.bin` shims or fresh links | If scripts suddenly stop resolving `eslint`, `tsup`, or `electron` after a partial install, stop any repo-local Electron process and rebuild the dependency links with `pnpm install --force`, then rerun `node node_modules/electron/install.js` if pnpm says Electron build scripts were ignored. |
 
-| 40 | Persisted `column.model` values can drift behind `settings.requestModels` after the provider default model changes | New tabs, new columns, and cross-column rebinds must resolve future chat models from the current request-model settings or stale values like `claude-opus-4-6` keep resurfacing. |
+| 40 | Persisted `column.model` / `card.model` values can drift behind `settings.requestModels` after the provider default model changes | If a card/column is just carrying the old configured default, changing Settings → Models must update it too; only genuinely explicit model choices should remain pinned, or stale values like `claude-opus-4-7` keep resurfacing. |
 
 | 41 | Fixing source and rebuilding `dist/release` does not help a user who is still launching an older timestamped `dist/release-*` package directory | White-screen triage can look like the fix failed until you compare the running executable path or patch the exact packaged folder the user actually opened. |
 
@@ -257,6 +257,7 @@ A living list of traps that have wasted time before. **When you hit a new pitfal
 | 45 | Persisting full `message.meta.structuredData` for large completed command outputs can quietly inflate release `state.json` into tens of megabytes | Release builds may then white-screen during startup or recovery even though the visible chat text is small, so cap persisted command-output metadata and compact oversized historical state on load/save. |
 
 | 46 | A branch can intentionally delete a feature slice like `PmCard.tsx`, `pm-card-utils.ts`, and their tests while shared model constants and legacy cleanup paths still remain elsewhere | When unrelated work touches adjacent files, treat those deletions as active product intent and avoid reintroducing imports or helpers from the removed slice unless the user explicitly asks to restore it. |
+| 47 | Claude/Codex sessions restored without a recorded `sessionModel` must not be blindly resumed after a model setting change | Older persisted sessions can have `sessionId` but no model tag; if the user changes Settings → Models, resuming that unknown-model session can keep answering as the previous model even while the UI shows the new one. Start a fresh request unless `sessionModel` matches the effective model. |
 
 | 47 | Compacting oversized command-output metadata only in active cards is not enough because `sessionHistory` can keep the original giant `structuredData` blobs and re-bloat packaged `state.json` on the next save | Any release-safety compaction for chat messages must cover both live column cards and archived session-history entries, or startup white-screen fixes appear to work in tests but fail on real persisted history. |
 

@@ -545,6 +545,7 @@ const normalizePersistedCard = (
   const shouldInvalidateSession = shouldInvalidatePersistedChatSession(status, rawMessages)
   const providerSessions = shouldInvalidateSession ? {} : normalizeStringRecord(card.providerSessions)
   const sessionId = shouldInvalidateSession ? undefined : normalizeOptionalString(card.sessionId)
+  const sessionModel = shouldInvalidateSession ? undefined : normalizeOptionalString(card.sessionModel)
   const streamId = hasRecoverableStream ? normalizeOptionalString(card.streamId) : undefined
 
   return {
@@ -552,6 +553,7 @@ const normalizePersistedCard = (
     id,
     title: typeof card.title === 'string' ? card.title : fallback.title,
     sessionId,
+    sessionModel,
     providerSessions,
     streamId,
     status,
@@ -647,6 +649,7 @@ const normalizePersistedSessionHistoryEntry = (
     id,
     title: typeof entry.title === 'string' && entry.title.trim() ? entry.title : 'Recovered history',
     sessionId: normalizeOptionalString(entry.sessionId),
+    sessionModel: normalizeOptionalString(entry.sessionModel),
     provider,
     model: typeof entry.model === 'string' ? normalizeStoredModel(provider, entry.model) : getDefaultModel(provider),
     workspacePath,
@@ -880,8 +883,10 @@ const inspectInterruptedSessionRecovery = (state: AppState): InterruptedSessionR
           title: card.title,
           provider: card.provider,
           sessionId: card.sessionId,
+          ...(card.sessionModel?.trim() ? { sessionModel: card.sessionModel.trim() } : {}),
           recoverable: isInterruptedSessionRecoverable({
             sessionId: card.sessionId,
+            sessionModel: card.sessionModel,
             ...resumePayload,
           }),
           ...resumePayload,
@@ -1570,6 +1575,7 @@ const sanitizeStateResult = (raw: unknown): SanitizedStateResult => {
               title: card.title || '',
               draft: card.draft,
               sessionId: shouldInvalidateSession ? undefined : card.sessionId,
+              sessionModel: shouldInvalidateSession ? undefined : card.sessionModel,
               providerSessions: shouldInvalidateSession ? {} : card.providerSessions,
               streamId: hasRecoverableStream ? card.streamId : undefined,
               status,

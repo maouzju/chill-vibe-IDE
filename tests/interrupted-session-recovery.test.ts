@@ -43,3 +43,37 @@ test('empty retry payloads without a session id do not claim to be recoverable',
   assert.equal(isInterruptedSessionRecoverable(entry), false)
   assert.equal(getInterruptedSessionResumeRequest(entry), null)
 })
+
+test('session resume requires a matching recorded model when the request model is known', () => {
+  assert.deepEqual(
+    getInterruptedSessionResumeRequest(
+      {
+        sessionId: 'claude-session-opus-48',
+        sessionModel: 'claude-opus-4-8',
+        resumeMode: 'resume',
+        resumePrompt: '',
+        resumeAttachments: [],
+      },
+      'claude-opus-4-8',
+    ),
+    {
+      sessionId: 'claude-session-opus-48',
+      prompt: '',
+      attachments: [],
+    },
+  )
+
+  assert.equal(
+    getInterruptedSessionResumeRequest(
+      {
+        sessionId: 'legacy-session-without-model',
+        sessionModel: undefined,
+        resumeMode: 'resume',
+        resumePrompt: '',
+        resumeAttachments: [],
+      },
+      'claude-opus-4-8',
+    ),
+    null,
+  )
+})

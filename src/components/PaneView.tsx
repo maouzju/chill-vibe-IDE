@@ -1,4 +1,4 @@
-import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type DragEvent, type MouseEvent, type WheelEvent } from 'react'
+import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type DragEvent, type MouseEvent, type PointerEvent, type WheelEvent } from 'react'
 
 import { getLocaleText } from '../../shared/i18n'
 import {
@@ -538,6 +538,15 @@ const PaneViewView = ({
     onMoveTab(sourceColumnId, sourcePaneId, tabId, column.id, pane.id, index)
   }
 
+  const cancelPendingTabSwitch = () => {
+    if (pendingTabSwitchRef.current === null) {
+      return
+    }
+
+    window.cancelAnimationFrame(pendingTabSwitchRef.current)
+    pendingTabSwitchRef.current = null
+  }
+
   const handleTabDragStart = (tabId: string) => (event: DragEvent<HTMLButtonElement>) => {
     const card = column.cards[tabId]
     if (!card) {
@@ -545,6 +554,7 @@ const PaneViewView = ({
       return
     }
 
+    cancelPendingTabSwitch()
     writeDragPayload(event, { type: 'tab', columnId: column.id, paneId: pane.id, tabId })
   }
 
@@ -565,15 +575,20 @@ const PaneViewView = ({
   }
 
   const pendingTabSwitchRef = useRef<number | null>(null)
+  const tabPointerDownRef = useRef<{
+    tabId: string
+    pointerId: number
+    x: number
+    y: number
+    dragging: boolean
+  } | null>(null)
 
   const activateTab = (tabId: string) => {
     if (pane.activeTabId === tabId) {
       return
     }
 
-    if (pendingTabSwitchRef.current !== null) {
-      window.cancelAnimationFrame(pendingTabSwitchRef.current)
-    }
+    cancelPendingTabSwitch()
 
     pendingTabSwitchRef.current = window.requestAnimationFrame(() => {
       pendingTabSwitchRef.current = null
@@ -605,11 +620,56 @@ const PaneViewView = ({
     setComposerFocusRequest((current) => current + 1)
   }
 
-  const handleTabMouseDown = (tabId: string) => (event: MouseEvent<HTMLButtonElement>) => {
+  const handleTabPointerDown = (tabId: string) => (event: PointerEvent<HTMLButtonElement>) => {
+    if (event.button !== 0 || isTabCloseTarget(event.target)) {
+      return
+    }
+
+    tabPointerDownRef.current = {
+      tabId,
+      pointerId: event.pointerId,
+      x: event.clientX,
+      y: event.clientY,
+      dragging: false,
+    }
+  }
+
+  const handleTabPointerMove = (event: PointerEvent<HTMLButtonElement>) => {
+    const pointerDown = tabPointerDownRef.current
+    if (!pointerDown || pointerDown.pointerId !== event.pointerId) {
+      return
+    }
+
+    const deltaX = Math.abs(event.clientX - pointerDown.x)
+    const deltaY = Math.abs(event.clientY - pointerDown.y)
+    if (deltaX > 12 || deltaY > 12) {
+      tabPointerDownRef.current = { ...pointerDown, dragging: true }
+      cancelPendingTabSwitch()
+    }
+  }
+
+  const handleTabPointerCancel = (event: PointerEvent<HTMLButtonElement>) => {
+    const pointerDown = tabPointerDownRef.current
+    if (pointerDown?.pointerId === event.pointerId) {
+      tabPointerDownRef.current = null
+      cancelPendingTabSwitch()
+    }
+  }
+
+  const handleTabPointerUp = (tabId: string) => (event: PointerEvent<HTMLButtonElement>) => {
+    const pointerDown = tabPointerDownRef.current
+    if (!pointerDown || pointerDown.pointerId !== event.pointerId) {
+      return
+    }
+
+    tabPointerDownRef.current = null
+    if (pointerDown.tabId === tabId && !pointerDown.dragging) {
+      activateTab(tabId)
+    }
+  }
+
+  const handleTabMouseDown = () => (event: MouseEvent<HTMLButtonElement>) => {
     if (event.button !== 1) {
-      if (event.button === 0 && !isTabCloseTarget(event.target)) {
-        activateTab(tabId)
-      }
       return
     }
 
@@ -840,7 +900,11 @@ const PaneViewView = ({
                     activateTab(tabId)
                   }
                 }}
-                onMouseDown={handleTabMouseDown(tabId)}
+                onPointerDown={handleTabPointerDown(tabId)}
+                onPointerMove={handleTabPointerMove}
+                onPointerUp={handleTabPointerUp(tabId)}
+                onPointerCancel={handleTabPointerCancel}
+                onMouseDown={handleTabMouseDown()}
                 onAuxClick={handleTabAuxClick(tabId)}
                 onContextMenu={handleTabContextMenu(tabId)}
                 onDragStart={handleTabDragStart(tabId)}

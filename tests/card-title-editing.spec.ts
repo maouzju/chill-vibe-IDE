@@ -380,6 +380,30 @@ for (const theme of ['dark', 'light'] as const) {
     await expect(composer).not.toBeFocused()
   })
 
+  test(`dragging a pane tab does not switch focus to its composer in ${theme} theme`, async ({ page }) => {
+    await installMockApis(page, theme)
+    await page.goto('http://localhost:5173')
+
+    const featureTab = page.locator('.pane-tab', { hasText: 'Feature Chat' })
+    const reviewTab = page.locator('.pane-tab', { hasText: 'Review' })
+    const reviewBox = await reviewTab.boundingBox()
+
+    if (!reviewBox) {
+      throw new Error('Expected the Review tab to be visible')
+    }
+
+    await expect(featureTab).toHaveClass(/is-active/)
+
+    await page.mouse.move(reviewBox.x + reviewBox.width / 2, reviewBox.y + reviewBox.height / 2)
+    await page.mouse.down()
+    await page.mouse.move(reviewBox.x + reviewBox.width / 2 + 48, reviewBox.y + reviewBox.height / 2 + 2)
+
+    await expect(featureTab).toHaveClass(/is-active/)
+    await expect(reviewTab).not.toHaveClass(/is-active/)
+
+    await page.mouse.up()
+  })
+
   test(`double-clicking empty pane tab bar space opens a new tab in ${theme} theme`, async ({ page }) => {
     await installMockApis(page, theme)
     await page.goto('http://localhost:5173')
@@ -421,16 +445,12 @@ for (const theme of ['dark', 'light'] as const) {
       .locator('.pane-view')
       .first()
       .locator('.pane-content > .pane-tab-panel.is-active .composer textarea')
-    const reviewBox = await reviewTab.boundingBox()
-
-    if (!reviewBox) {
-      throw new Error('Expected the Review tab to be visible')
-    }
-
-    await page.mouse.move(reviewBox.x + reviewBox.width / 2, reviewBox.y + reviewBox.height / 2)
-    await page.mouse.down()
-    await page.mouse.move(reviewBox.x + reviewBox.width / 2 + 4, reviewBox.y + reviewBox.height / 2 + 1)
-    await page.mouse.up()
+    await reviewTab.click({
+      position: {
+        x: 20,
+        y: 12,
+      },
+    })
 
     await expect(reviewTab).toHaveClass(/is-active/)
     await expect(featureTab).not.toHaveClass(/is-active/)

@@ -90,6 +90,7 @@ This section governs agents working on **this Chill Vibe IDE repository**. It is
 - The agent should act as an optimizer for the team's workflow, not wait for the user to repeatedly point out the same friction.
 - When a repeated collaboration issue, review comment, or operating preference becomes clear, convert it into a durable rule in `AGENTS.md` instead of relying on the user to restate it.
 - Prefer proactive process improvement and memory capture over reactive compliance on repetitive issues.
+- For state, restore, persistence, and provider stream recovery work, optimize for small reversible slices: document the intended slice, add the narrow proving test first when behavior can regress, make one recovery-path change at a time, and keep a clear rollback point before starting the next adjacent fix.
 
 ## Handoff Style
 
@@ -132,6 +133,7 @@ This section governs agents working on **this Chill Vibe IDE repository**. It is
 - Default values and factory functions (`createCard`, `createColumn`, `createDefaultSettings`) live in [`shared/default-state.ts`](./shared/default-state.ts).
 - Client state is managed by a pure reducer (`ideReducer` in [`src/state.ts`](./src/state.ts)). Add new mutations as `IdeAction` union members; do not reach for external state libraries.
 - When a new field is added to any persisted type, add normalization logic in `normalizeAppSettings()` or the relevant restore path so existing saved state upgrades gracefully.
+- Avoid storing heavyweight in-state snapshots for restore/undo flows. Persist lightweight restore tokens or compact sidecars that reuse message trimming, structured-data compaction, id regeneration, and layout normalization.
 
 ## AI Request Routing
 
@@ -368,6 +370,10 @@ A living list of traps that have wasted time before. **When you hit a new pitfal
 | 128 | A hidden radio input positioned absolutely without a containing option can make Chromium scroll the whole card shell on focus | Keep ask-user radio inputs positioned inside their option label, otherwise selecting an option can push the transcript upward and leave a large blank area until a tab switch relayouts it. |
 | 129 | `contain: paint` on long-lived Electron chat card shells can leave Chromium with stale paint/hit-test surfaces | The composer may look present but clicks land on an old layer or nowhere, so card shells should avoid paint containment on interactive chat surfaces. |
 | 130 | Codex app-server `thread/resume` can report `No session path found for thread id ...` instead of mentioning rollout files | Treat it as the same stale-session condition and start a fresh thread, or the UI logs the recovery notice but the card can still end in a raw resume error. |
+| 131 | Saving a full `BoardColumn` as an in-state undo/restore snapshot duplicates live cards and messages outside the normal persistence compaction path | Use a lightweight restore token or sidecar that reuses message trimming, structured-data compaction, id regeneration, and width recalculation; otherwise app state can bloat and resurrect stale layout/runtime assumptions. |
+| 132 | Electron/Chromium can miss `dragend`, `drop`, or `dragleave` after a pane tab drag has activated a split drop hint | Pane drop overlays must have a short inactivity watchdog, or the blue `is-drop-*` surface can remain over an idle pane and look like a stuck layout/background bug. |
+| 133 | Codex app-server `thread/resume` can return an `active` thread and then wait forever if Chill Vibe does not send a follow-up `turn/start` | A recovered card stays on `Thinking` with no terminal event, so active resumed threads must be continued with a blank turn just like idle resumed threads. |
+| 134 | A local provider process can stay alive after accepting `turn/start` without emitting visible output or a terminal event | Add a local stream stall watchdog and classify the timeout as recoverable; otherwise the renderer has no event that can clear the streaming state. |
 
 ### Self-maintenance rule
 

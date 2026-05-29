@@ -224,22 +224,6 @@ const maxConcurrentInterruptedSessionResumes = 2
 const interruptedSessionResumeBatchDelayMs = 350
 
 const normalizeWorkspaceHistoryKey = (workspacePath: string) => workspacePath.trim().toLowerCase()
-const getWorkspaceColumnRestoreLabel = (
-  column: AppState['lastClosedColumn'],
-  fallback: string,
-) => {
-  if (!column) {
-    return fallback
-  }
-
-  const title = column.title.trim()
-  if (title) {
-    return title
-  }
-
-  const workspacePath = column.workspacePath.trim()
-  return workspacePath.split(/[/\\]/).filter(Boolean).at(-1) || workspacePath || fallback
-}
 const findSessionRestoreColumnId = (state: AppState, entry: Pick<SessionHistoryEntry, 'workspacePath'>) =>
   state.columns.find(
     (column) => normalizeWorkspaceHistoryKey(column.workspacePath) === normalizeWorkspaceHistoryKey(entry.workspacePath),
@@ -610,7 +594,6 @@ function App() {
   const [clearUserDataPending, setClearUserDataPending] = useState(false)
   const [closeWorkspaceDialogColumnId, setCloseWorkspaceDialogColumnId] = useState<string | null>(null)
   const [closeWorkspacePending, setCloseWorkspacePending] = useState(false)
-  const [closedWorkspaceRestoreDialogOpen, setClosedWorkspaceRestoreDialogOpen] = useState(false)
   const [appVersion, setAppVersion] = useState('')
   const [weatherCityDraft, setWeatherCityDraft] = useState('')
   const [weatherCitySuggestions, setWeatherCitySuggestions] = useState<CitySuggestion[]>([])
@@ -1088,35 +1071,6 @@ function App() {
   }, [])
 
   const applyAction = useCallback((action: IdeAction) => applyActions([action]), [applyActions])
-
-  const openAddWorkspaceFlow = useCallback(() => {
-    if (appStateRef.current.lastClosedColumn) {
-      setClosedWorkspaceRestoreDialogOpen(true)
-      return
-    }
-
-    applyAction({ type: 'addColumn' })
-  }, [applyAction])
-
-  const closeClosedWorkspaceRestoreDialog = useCallback(() => {
-    setClosedWorkspaceRestoreDialogOpen(false)
-  }, [])
-
-  const restoreLastClosedWorkspace = useCallback(() => {
-    const column = appStateRef.current.lastClosedColumn
-    if (!column) {
-      setClosedWorkspaceRestoreDialogOpen(false)
-      return
-    }
-
-    applyAction({ type: 'addColumn', column })
-    setClosedWorkspaceRestoreDialogOpen(false)
-  }, [applyAction])
-
-  const createFreshWorkspaceAfterClosedRestore = useCallback(() => {
-    applyAction({ type: 'addColumn' })
-    setClosedWorkspaceRestoreDialogOpen(false)
-  }, [applyAction])
 
   const persistAfterAction = useCallback(
     (actionType: IdeAction['type'], nextState: AppState) => {
@@ -5846,7 +5800,7 @@ function App() {
               className="app-topbar-add-column"
               title={text.addWorkspace}
               aria-label={text.addWorkspace}
-              onClick={openAddWorkspaceFlow}
+              onClick={() => applyAction({ type: 'addColumn' })}
             >
               <PlusIcon />
             </button>
@@ -7603,60 +7557,6 @@ function App() {
                     onClick={confirmCloseWorkspace}
                   >
                     {closeWorkspacePending ? text.closeWorkspacePending : text.closeWorkspaceConfirm}
-                  </AppButton>
-                </div>
-              </div>
-            </div>
-          </section>
-        </div>
-      ) : null}
-
-      {closedWorkspaceRestoreDialogOpen && appState.lastClosedColumn ? (
-        <div className="structured-preview-layer">
-          <div className="structured-preview-backdrop" onClick={closeClosedWorkspaceRestoreDialog} />
-          <section
-            className="structured-preview-dialog restore-closed-workspace-dialog"
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="restore-closed-workspace-dialog-title"
-          >
-            <div className="structured-preview-card restore-closed-workspace-card">
-              <div className="structured-preview-header">
-                <div className="structured-preview-copy">
-                  <h3 id="restore-closed-workspace-dialog-title">{text.restoreClosedWorkspaceDialogTitle}</h3>
-                  <p className="settings-note">
-                    {text.restoreClosedWorkspaceDialogBody(
-                      getWorkspaceColumnRestoreLabel(appState.lastClosedColumn, text.addWorkspace),
-                    )}
-                  </p>
-                </div>
-
-                <button
-                  type="button"
-                  className="btn btn-ghost structured-preview-close"
-                  onClick={closeClosedWorkspaceRestoreDialog}
-                  aria-label={text.restoreClosedWorkspaceCancel}
-                >
-                  <CloseIcon />
-                </button>
-              </div>
-
-              <div className="structured-preview-body restore-closed-workspace-body">
-                <p className="settings-note">{text.restoreClosedWorkspaceDialogHint}</p>
-
-                <div className="settings-actions settings-danger-actions">
-                  <AppButton
-                    type="button"
-                    onClick={createFreshWorkspaceAfterClosedRestore}
-                  >
-                    {text.restoreClosedWorkspaceFresh}
-                  </AppButton>
-                  <AppButton
-                    tone="primary"
-                    type="button"
-                    onClick={restoreLastClosedWorkspace}
-                  >
-                    {text.restoreClosedWorkspaceConfirm}
                   </AppButton>
                 </div>
               </div>

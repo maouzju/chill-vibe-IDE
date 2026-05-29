@@ -905,7 +905,6 @@ export const createDefaultState = (
     settings: createDefaultSettings(normalizedLanguage),
     updatedAt: now(),
     sessionHistory: [],
-    lastClosedColumn: null,
     columns: [
       createColumn(
         {

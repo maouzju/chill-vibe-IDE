@@ -13,6 +13,7 @@ import {
 import type { AppLanguage, GitChange, GitCommit, GitStatus } from '../../shared/schema'
 import { getGitLocaleText } from '../../shared/i18n'
 import { GitDiffPreview } from './GitDiffPreview'
+import { useDialogFocus } from './dialog-focus'
 import { CloseIcon, IconButton, SlidersIcon } from './Icons'
 import {
   changeMatchesFilter,
@@ -642,6 +643,7 @@ export const GitFullDialog = ({
   const summaryRequiredLabel = language === 'zh-CN' ? '必填' : 'Required'
   const selectedChangeParts = selectedChange ? splitGitPath(selectedChange.path) : null
   const selectedChangeNotice = selectedChange ? describeDiffState(language, selectedChange) : null
+  const dialogRef = useDialogFocus<HTMLDivElement>({ isOpen: true, onClose })
 
   const dialog = (
     <div
@@ -653,9 +655,11 @@ export const GitFullDialog = ({
     >
       <div className="structured-preview-backdrop" aria-hidden="true" />
       <div
+        ref={dialogRef}
         className="structured-preview-dialog is-git-full"
         role="dialog"
         aria-modal="true"
+        tabIndex={-1}
       >
         <div className="structured-preview-card">
           {/* ── Header ─────────────────────────────────────────────────── */}

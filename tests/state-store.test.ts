@@ -6,7 +6,12 @@ import os from 'node:os'
 
 import { attachImagesToMessageMeta } from '../shared/chat-attachments.ts'
 import { createCard, createDefaultState, createPane, getFirstPane } from '../shared/default-state.ts'
-import { BRAINSTORM_TOOL_MODEL, DEFAULT_CODEX_MODEL, PM_TOOL_MODEL } from '../shared/models.ts'
+import {
+  BRAINSTORM_TOOL_MODEL,
+  DEFAULT_CLAUDE_MODEL,
+  DEFAULT_CODEX_MODEL,
+  PM_TOOL_MODEL,
+} from '../shared/models.ts'
 import { appStateLoadResponseSchema } from '../shared/schema.ts'
 
 // We test the module-level functions by setting the env var before importing.
@@ -248,7 +253,7 @@ describe('state-store persistence', () => {
 
     assert.equal(loadedReviewColumn.model, 'claude-sonnet-4-6')
     assert.equal(loadedReviewColumn.cards[untouchedCardId]?.model, 'claude-sonnet-4-6')
-    assert.equal(loadedReviewColumn.cards[pinnedCardId]?.model, 'claude-opus-4-7')
+    assert.equal(loadedReviewColumn.cards[pinnedCardId]?.model, DEFAULT_CLAUDE_MODEL)
   })
 
   it('loadState prefers lastModel over provider defaults for untouched starter chats on startup', async () => {
@@ -343,6 +348,33 @@ describe('state-store persistence', () => {
       firstCard.messages[0]?.meta?.imageAttachments,
       'replayed chats should keep their persisted image attachment metadata',
     )
+  })
+
+  it('loadState preserves the recorded session model for ordinary resumable chats', async () => {
+    const stateFile = path.join(tmpDir, 'state.json')
+    const state = createDefaultState('D:/session-model')
+    const card = getFirstCard(state, 1)
+    assert.ok(card)
+    card.sessionId = 'claude-session-opus-47'
+    card.sessionModel = 'claude-opus-4-7'
+    card.model = 'claude-opus-4-7'
+    card.messages = [
+      {
+        id: 'assistant-with-model-session',
+        role: 'assistant',
+        content: '我是 Claude Opus 4.7。',
+        createdAt: new Date().toISOString(),
+      },
+    ]
+
+    await writeFile(stateFile, JSON.stringify(state, null, 2), 'utf8')
+
+    const { loadState } = await import('../server/state-store.ts')
+    const loaded = await loadState()
+    const loadedCard = getFirstCard(loaded, 1)
+
+    assert.equal(loadedCard?.sessionId, 'claude-session-opus-47')
+    assert.equal(loadedCard?.sessionModel, 'claude-opus-4-7')
   })
 
   it('loadState keeps recoverable streaming session ids even when the chat includes image attachments', async () => {

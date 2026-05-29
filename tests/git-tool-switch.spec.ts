@@ -1,6 +1,6 @@
 import { expect, test, type Locator, type Page } from '@playwright/test'
 
-import { GIT_TOOL_MODEL } from '../shared/models.ts'
+import { DEFAULT_CODEX_MODEL, GIT_TOOL_MODEL, TEXTEDITOR_TOOL_MODEL } from '../shared/models.ts'
 import type { AppLanguage, GitChange, GitStatus } from '../shared/schema.ts'
 import { installMockElectronBridge } from './electron-bridge.ts'
 import { createPlaywrightState } from './playwright-state.ts'
@@ -1096,14 +1096,44 @@ for (const theme of ['dark', 'light'] as const) {
 
   test(`switching a card to Editor without a file keeps a visible empty state in ${theme} theme`, async ({ page }) => {
     await installMockApis(page, theme)
+    await installMockElectronBridge(page, createPlaywrightState({
+      theme,
+      columns: [
+        {
+          id: 'column-editor-empty',
+          title: 'Editor Workspace',
+          provider: 'codex',
+          model: DEFAULT_CODEX_MODEL,
+          cardOrder: ['editor-empty'],
+          cards: {
+            'editor-empty': {
+              id: 'editor-empty',
+              title: 'Editor',
+              provider: 'codex',
+              model: TEXTEDITOR_TOOL_MODEL,
+              status: 'idle',
+              createdAt: new Date().toISOString(),
+              updatedAt: new Date().toISOString(),
+              messages: [],
+              draft: '',
+              size: 440,
+              collapsed: false,
+              unread: false,
+              stickyNote: '',
+              brainstorm: {
+                prompt: '',
+                answerCount: 6,
+                provider: 'codex',
+                model: DEFAULT_CODEX_MODEL,
+                answers: [],
+              },
+            },
+          },
+        },
+      ],
+    }))
 
     await page.goto('http://localhost:5173')
-
-    const modelSelect = page.locator('.model-select').first()
-
-    await modelSelect.waitFor()
-    await selectModel(page, modelSelect, 'Editor')
-
     await expect(page.locator('.text-editor-card')).toBeVisible()
     await expect(page.locator('.text-editor-empty')).toBeVisible()
     await expect(page.locator('.text-editor-empty-title')).toBeVisible()

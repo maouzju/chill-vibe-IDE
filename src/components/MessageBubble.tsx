@@ -372,6 +372,9 @@ const MessageBubbleView = ({
   const structuredKind = message.meta?.kind
   const text = getLocaleText(language)
   const showForkAction = Boolean(onForkFromHere) && message.role === 'user'
+  const actualModel = message.role === 'assistant' && !structuredKind
+    ? message.meta?.model?.trim()
+    : ''
 
   const article = (
     <article
@@ -380,6 +383,7 @@ const MessageBubbleView = ({
     >
       <div className="message-topline">
         <span className="message-role">{getMessageLabel(language, message)}</span>
+        {actualModel ? <span className="message-model-pill">实际模型：{actualModel}</span> : null}
         <time dateTime={message.createdAt}>{formatLocalizedTime(language, message.createdAt)}</time>
       </div>
       <MessageContent

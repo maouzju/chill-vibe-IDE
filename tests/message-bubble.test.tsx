@@ -78,6 +78,29 @@ test('MessageBubble preserves literal Windows path separators in user prompts', 
   assert.doesNotMatch(markup, /<br\/>/)
 })
 
+test('MessageBubble surfaces the actual requested assistant model from metadata', () => {
+  const markup = renderToStaticMarkup(
+    <MessageBubble
+      language="zh-CN"
+      message={{
+        id: 'assistant-model-1',
+        role: 'assistant',
+        content: '我是 Claude Opus 4.7。',
+        createdAt: '2026-05-29T10:00:00.000Z',
+        meta: {
+          provider: 'claude',
+          model: 'claude-opus-4-8',
+        },
+      }}
+      workspacePath="D:/workspace"
+      answeredOption={null}
+      onSelectAskUserOption={() => undefined}
+    />,
+  )
+
+  assert.match(markup, /实际模型：claude-opus-4-8/)
+})
+
 test('MessageBubble hides fork actions on structured assistant messages', () => {
   const markup = renderToStaticMarkup(
     <MessageBubble

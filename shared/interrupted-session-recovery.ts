@@ -2,7 +2,7 @@ import type { InterruptedSessionEntry, ImageAttachment } from './schema.js'
 
 type InterruptedSessionResumeSource = Pick<
   InterruptedSessionEntry,
-  'sessionId' | 'resumeMode' | 'resumePrompt' | 'resumeAttachments'
+  'sessionId' | 'sessionModel' | 'resumeMode' | 'resumePrompt' | 'resumeAttachments'
 >
 
 type InterruptedSessionResumeRequest = {
@@ -27,9 +27,12 @@ export const isInterruptedSessionRecoverable = (entry: InterruptedSessionResumeS
 
 export const getInterruptedSessionResumeRequest = (
   entry: InterruptedSessionResumeSource,
+  requestedModel?: string,
 ): InterruptedSessionResumeRequest | null => {
   const sessionId = normalizeSessionId(entry.sessionId)
-  if (sessionId) {
+  const sessionModel = entry.sessionModel?.trim()
+  const model = requestedModel?.trim()
+  if (sessionId && (!model || (sessionModel && sessionModel === model))) {
     return {
       sessionId,
       prompt: '',

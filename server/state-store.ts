@@ -1474,41 +1474,6 @@ const normalizePersistedColumn = (
   }
 }
 
-const normalizePersistedLastClosedColumn = (
-  column: unknown,
-  options: {
-    settings: AppState['settings']
-    language: AppState['settings']['language']
-    fallbackColumn: BoardColumn
-  },
-): BoardColumn | null => {
-  const normalizedColumn = normalizePersistedColumn(column, 0, options)
-  if (!normalizedColumn) {
-    return null
-  }
-
-  const cards = Object.fromEntries(
-    Object.entries(normalizedColumn.cards).map(([cardId, card]) => [
-      cardId,
-      {
-        ...card,
-        streamId: undefined,
-        status: card.status === 'streaming' ? 'idle' : card.status,
-      },
-    ]),
-  )
-  const layout = normalizeLayoutNode(normalizedColumn.layout, cards)
-
-  return {
-    ...normalizedColumn,
-    layout:
-      layout.type === 'pane' && layout.tabs.length === 0 && Object.keys(cards).length > 0
-        ? createPane(Object.keys(cards))
-        : layout,
-    cards,
-  }
-}
-
 const sanitizeStateResult = (raw: unknown): SanitizedStateResult => {
   const defaultState = createDefaultState(getDefaultWorkspacePath())
 
@@ -1536,11 +1501,6 @@ const sanitizeStateResult = (raw: unknown): SanitizedStateResult => {
       return normalizedColumn ? [normalizedColumn] : []
     })
   const safeSessionHistory = normalizePersistedSessionHistory(data.sessionHistory ?? [])
-  const safeLastClosedColumn = normalizePersistedLastClosedColumn(data.lastClosedColumn, {
-    settings: safeSettings,
-    language: safeSettings.language,
-    fallbackColumn: defaultState.columns[0]!,
-  })
   const language = safeSettings.language
   let didCompactStructuredData = false
 
@@ -1647,7 +1607,6 @@ const sanitizeStateResult = (raw: unknown): SanitizedStateResult => {
         }
       })(),
     })),
-    lastClosedColumn: safeLastClosedColumn,
     sessionHistory: safeSessionHistory.map((entry) => {
       const compactedMessages = compactPersistedMessages(normalizePersistedMessages(entry.messages))
       if (compactedMessages.didCompact) {

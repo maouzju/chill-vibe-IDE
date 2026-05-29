@@ -24,6 +24,7 @@ import {
   getNewlyCompletedStructuredTodoItemIds,
   structuredTodoCompletionFlashDurationMs,
 } from './structured-todo-flash'
+import { useDialogFocus } from './dialog-focus'
 import { CloseIcon } from './Icons'
 
 const truncateStructuredInlineText = (text: string, maxLength = 180) => {
@@ -45,6 +46,7 @@ const StructuredDialog = ({
   children: ReactNode
 }) => {
   const labels = getStructuredLabels(language)
+  const dialogRef = useDialogFocus<HTMLElement>({ isOpen: true, onClose })
 
   useEffect(() => {
     const prev = document.body.style.overflow
@@ -59,10 +61,12 @@ const StructuredDialog = ({
         onClick={onClose}
       />
       <section
+        ref={dialogRef}
         className="structured-preview-dialog"
         role="dialog"
         aria-modal="true"
         aria-labelledby={titleId}
+        tabIndex={-1}
       >
         <div className="structured-preview-card">
           <div className="structured-preview-header">

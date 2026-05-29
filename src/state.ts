@@ -221,7 +221,6 @@ export type IdeAction =
       placement: Placement
     }
   | { type: 'removeColumn'; columnId: string }
-  | { type: 'dismissLastClosedColumnRestore' }
   | {
       type: 'addTab'
       columnId: string
@@ -817,27 +816,6 @@ const archiveColumnChatsToHistory = (
   )
 }
 
-const sanitizeClosedWorkspaceCard = (card: ChatCard): ChatCard => ({
-  ...card,
-  streamId: undefined,
-  status: card.status === 'streaming' ? 'idle' : card.status,
-})
-
-const createClosedWorkspaceRestoreSnapshot = (column: BoardColumn): BoardColumn => {
-  const cards = Object.fromEntries(
-    Object.entries(column.cards).map(([cardId, card]) => [
-      cardId,
-      sanitizeClosedWorkspaceCard(card),
-    ]),
-  )
-
-  return {
-    ...column,
-    layout: normalizeLayoutNode(column.layout, cards),
-    cards,
-  }
-}
-
 const updateColumn = (
   state: AppState,
   columnId: string,
@@ -1319,7 +1297,6 @@ export const ideReducer = (state: AppState, action: IdeAction): AppState => {
 
       return touchState({
         ...state,
-        lastClosedColumn: null,
         columns: [...state.columns, nextColumn],
       })
     }
@@ -1507,17 +1484,9 @@ export const ideReducer = (state: AppState, action: IdeAction): AppState => {
       return touchState({
         ...state,
         sessionHistory,
-        lastClosedColumn: column ? createClosedWorkspaceRestoreSnapshot(column) : state.lastClosedColumn,
         columns: redistributeWidthsAfterColumnRemoval(state.columns, action.columnId),
       })
     }
-    case 'dismissLastClosedColumnRestore':
-      return state.lastClosedColumn
-        ? touchState({
-            ...state,
-            lastClosedColumn: null,
-          })
-        : state
     case 'addTab': {
       const next = updateColumn(state, action.columnId, (column) => {
         const pane = findPaneInLayout(column.layout, action.paneId)

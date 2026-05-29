@@ -84,12 +84,6 @@ type LocaleText = {
   closeWorkspaceCancel: string
   closeWorkspaceConfirm: string
   closeWorkspacePending: string
-  restoreClosedWorkspaceDialogTitle: string
-  restoreClosedWorkspaceDialogBody: (label: string) => string
-  restoreClosedWorkspaceDialogHint: string
-  restoreClosedWorkspaceCancel: string
-  restoreClosedWorkspaceFresh: string
-  restoreClosedWorkspaceConfirm: string
   empty: string
   emptyColumnTitle: string
   emptyColumnDescription: string
@@ -336,12 +330,6 @@ const localeTextByLanguage: Record<AppLanguage, LocaleText> = {
     closeWorkspaceCancel: '取消',
     closeWorkspaceConfirm: '关闭工作区',
     closeWorkspacePending: '正在关闭...',
-    restoreClosedWorkspaceDialogTitle: '恢复上次关闭的工作区？',
-    restoreClosedWorkspaceDialogBody: (label) => `刚刚关闭了「${label}」。要恢复这列的上次状态吗？`,
-    restoreClosedWorkspaceDialogHint: '恢复会带回这列的卡片、草稿、布局和会话内容；新建则创建一个空白工作区。',
-    restoreClosedWorkspaceCancel: '稍后再说',
-    restoreClosedWorkspaceFresh: '新建空白工作区',
-    restoreClosedWorkspaceConfirm: '恢复上次状态',
     empty: '空列',
     emptyColumnTitle: '这一列已经没有卡片了',
     emptyColumnDescription: '点击右上角加号可以新建会话，也可以把别的卡片拖进来。',
@@ -515,7 +503,8 @@ const localeTextByLanguage: Record<AppLanguage, LocaleText> = {
     clearUserDataCancel: '取消',
     clearUserDataConfirm: '清理并重启',
     clearUserDataPending: '正在清理并重启...',
-    streamRecoveryReconnecting: (attempt, max) => `正在重连… ${attempt}/${max}`,
+    streamRecoveryReconnecting: (attempt, max) =>
+      `正在重连… ${attempt}/${max === 'unlimited' ? '无限' : max}`,
     streamRecoveryResumed: '已恢复',
     streamRecoveryFailed: '重连失败',
     streamRecoveryManualResume: '手动续传',
@@ -608,12 +597,6 @@ const localeTextByLanguage: Record<AppLanguage, LocaleText> = {
     closeWorkspaceCancel: 'Cancel',
     closeWorkspaceConfirm: 'Close workspace',
     closeWorkspacePending: 'Closing...',
-    restoreClosedWorkspaceDialogTitle: 'Restore the last closed workspace?',
-    restoreClosedWorkspaceDialogBody: (label) => `You just closed “${label}”. Restore that column state?`,
-    restoreClosedWorkspaceDialogHint: 'Restore brings back that column’s cards, drafts, layout, and chat content. Fresh creates a blank workspace.',
-    restoreClosedWorkspaceCancel: 'Maybe later',
-    restoreClosedWorkspaceFresh: 'Create blank workspace',
-    restoreClosedWorkspaceConfirm: 'Restore last state',
     empty: 'Empty',
     emptyColumnTitle: 'This column has no cards yet',
     emptyColumnDescription: 'Use the add button above, or drag a card here to keep going.',
@@ -796,7 +779,7 @@ const localeTextByLanguage: Record<AppLanguage, LocaleText> = {
     clearUserDataCancel: 'Cancel',
     clearUserDataConfirm: 'Clear and Restart',
     clearUserDataPending: 'Clearing and restarting...',
-    streamRecoveryReconnecting: (attempt, max) => `Reconnecting… ${attempt}/${max}`,
+    streamRecoveryReconnecting: (attempt, max) => `Reconnecting… ${attempt}/${max === 'unlimited' ? '∞' : max}`,
     streamRecoveryResumed: 'Resumed',
     streamRecoveryFailed: 'Reconnect failed',
     streamRecoveryManualResume: 'Resume manually',

@@ -635,6 +635,21 @@ const getTransientPlaceholderStallTimeoutMs = () => {
   return 3000
 }
 
+const getLocalProviderTimeoutMs = (envName: string, fallbackMs: number) => {
+  const parsed = Number.parseInt(process.env[envName] ?? '', 10)
+  if (Number.isFinite(parsed) && parsed >= 50) {
+    return parsed
+  }
+
+  return fallbackMs
+}
+
+const getLocalProviderFirstByteTimeoutMs = () =>
+  getLocalProviderTimeoutMs('CHILL_VIBE_LOCAL_PROVIDER_FIRST_BYTE_TIMEOUT_MS', 90_000)
+
+const getLocalProviderStallTimeoutMs = () =>
+  getLocalProviderTimeoutMs('CHILL_VIBE_LOCAL_PROVIDER_STALL_TIMEOUT_MS', 120_000)
+
 const classifyLiveProviderStreamRecovery = (
   request: Pick<ChatRequest, 'sessionId'>,
   message: string,
@@ -1294,12 +1309,66 @@ const launchCodexAppServerRun = async (
   let currentRequest = request
   let transientPlaceholderStallTimer: ReturnType<typeof setTimeout> | undefined
   let transientPlaceholderDisconnectStatsReported = false
+  let localStreamStallTimer: ReturnType<typeof setTimeout> | undefined
+  let sawVisibleStreamOutput = false
+  let hasOpenProviderWork = false
 
   const clearTransientPlaceholderStallTimer = () => {
     if (transientPlaceholderStallTimer) {
       clearTimeout(transientPlaceholderStallTimer)
       transientPlaceholderStallTimer = undefined
     }
+  }
+
+  const clearLocalStreamStallTimer = () => {
+    if (localStreamStallTimer) {
+      clearTimeout(localStreamStallTimer)
+      localStreamStallTimer = undefined
+    }
+  }
+
+  const scheduleLocalStreamStallTimer = () => {
+    if (finished || hasOpenProviderWork) {
+      return
+    }
+
+    clearLocalStreamStallTimer()
+    const timeoutMs = sawVisibleStreamOutput
+      ? getLocalProviderStallTimeoutMs()
+      : getLocalProviderFirstByteTimeoutMs()
+    localStreamStallTimer = setTimeout(() => {
+      localStreamStallTimer = undefined
+      if (finished || hasOpenProviderWork) {
+        return
+      }
+
+      finishWithError(
+        sawVisibleStreamOutput
+          ? 'Codex stalled after emitting stream output.'
+          : 'Codex stalled without emitting stream output.',
+      )
+    }, timeoutMs)
+  }
+
+  const markVisibleStreamProgress = () => {
+    sawVisibleStreamOutput = true
+    scheduleLocalStreamStallTimer()
+  }
+
+  const markProviderWorkStarted = () => {
+    hasOpenProviderWork = true
+    sawVisibleStreamOutput = true
+    clearLocalStreamStallTimer()
+  }
+
+  const markProviderWorkSettled = () => {
+    if (!hasOpenProviderWork) {
+      return
+    }
+
+    hasOpenProviderWork = false
+    sawVisibleStreamOutput = true
+    scheduleLocalStreamStallTimer()
   }
 
   const reportTransientPlaceholderDisconnectStats = () => {
@@ -1419,6 +1488,7 @@ const launchCodexAppServerRun = async (
     }
 
     clearTransientPlaceholderStallTimer()
+    clearLocalStreamStallTimer()
     finished = true
     rejectPendingRequests('Codex run completed.')
     void cleanupArchiveRecall()
@@ -1440,6 +1510,7 @@ const launchCodexAppServerRun = async (
     }
 
     clearTransientPlaceholderStallTimer()
+    clearLocalStreamStallTimer()
     finished = true
     rejectPendingRequests(visibleMessage)
     void cleanupArchiveRecall()
@@ -1480,6 +1551,7 @@ const launchCodexAppServerRun = async (
 
   const startTurnWithCompatibilityFallback = async (threadId: string) => {
     try {
+      scheduleLocalStreamStallTimer()
       await sendRequest('turn/start', buildCodexTurnStartParams(currentRequest, threadId, attachmentPaths))
       return
     } catch (error) {
@@ -1490,6 +1562,7 @@ const launchCodexAppServerRun = async (
       }
 
       sink.onLog(formatCodexEffortCompatibilityNotice(language))
+      scheduleLocalStreamStallTimer()
       await sendRequest(
         'turn/start',
         buildCodexTurnStartParams(currentRequest, threadId, attachmentPaths, { includeEffort: false }),
@@ -1532,6 +1605,7 @@ const launchCodexAppServerRun = async (
         if (shouldSuppressTransientPlaceholder) {
           continue
         }
+        markVisibleStreamProgress()
         sink.onAssistantMessage({
           itemId: parsed.itemId,
           content: parsed.content,
@@ -1541,6 +1615,14 @@ const launchCodexAppServerRun = async (
 
       const activity = { ...parsed }
       delete (activity as { type?: 'activity' }).type
+
+      if (activity.kind === 'command' && activity.status === 'in_progress') {
+        markProviderWorkStarted()
+      } else if (activity.kind === 'command') {
+        markProviderWorkSettled()
+      } else {
+        markVisibleStreamProgress()
+      }
 
       if (activity.kind === 'compaction') {
         if (compactionActivityDeduper.shouldEmit(event, activity)) {
@@ -1650,6 +1732,7 @@ const launchCodexAppServerRun = async (
           }
 
           const deltaForSink = pendingTransientCandidate ? contentForProgress : delta
+          markVisibleStreamProgress()
 
           if (itemId) {
             const bufferedDelta = bufferedStructuredAgentMessageDeltas.get(itemId)
@@ -1709,6 +1792,7 @@ const launchCodexAppServerRun = async (
     }
 
     clearTransientPlaceholderStallTimer()
+    clearLocalStreamStallTimer()
     finished = true
     rejectPendingRequests(code === 0 ? 'Codex app-server closed before completion.' : formatProviderExit(language, 'codex', code))
 
@@ -1751,6 +1835,8 @@ const launchCodexAppServerRun = async (
 
     void cleanupArchiveRecall()
     finished = true
+    clearTransientPlaceholderStallTimer()
+    clearLocalStreamStallTimer()
     stdoutLines.close()
     stderrLines.close()
     rejectPendingRequests(error.message)
@@ -1796,13 +1882,10 @@ const launchCodexAppServerRun = async (
         return
       }
 
-      const threadStatus = threadRecord ? readRecord(threadRecord, 'status') : null
-      const threadStatusType = readString(threadStatus ?? {}, 'type')
-
       if (
         request.prompt.trim().length > 0 ||
         attachmentPaths.length > 0 ||
-        (currentRequest.sessionId && threadStatusType !== 'active')
+        currentRequest.sessionId
       ) {
         await startTurnWithCompatibilityFallback(threadId)
         return

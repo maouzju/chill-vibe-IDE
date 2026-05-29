@@ -27,6 +27,7 @@ import {
   WEATHER_TOOL_MODEL,
   WHITENOISE_TOOL_MODEL,
   MODEL_OPTIONS,
+  isModelPickerOptionVisible,
   normalizeStoredModel,
   type ModelOption,
 } from '../../shared/models'
@@ -310,14 +311,6 @@ const getModelOptionIcon = (option: ModelOption): ReactNode => {
   return <GptIcon className="model-option-icon" aria-hidden="true" />
 }
 
-const hiddenModelPickerToolModels = new Set([
-  GIT_TOOL_MODEL,
-  STICKYNOTE_TOOL_MODEL,
-  FILETREE_TOOL_MODEL,
-  MUSIC_TOOL_MODEL,
-  WHITENOISE_TOOL_MODEL,
-  WEATHER_TOOL_MODEL,
-])
 const hiddenBrainstormRequestModels = new Set([
   GIT_TOOL_MODEL,
   STICKYNOTE_TOOL_MODEL,
@@ -2461,7 +2454,7 @@ const ChatCardView = ({
 
     const custom = getCustomModelOption(effectiveProvider, card.model ?? '')
     const base = custom ? [custom, ...MODEL_OPTIONS] : MODEL_OPTIONS
-    return base.filter((option) => !hiddenModelPickerToolModels.has(option.model))
+    return base.filter(isModelPickerOptionVisible)
   }, [
     brainstormRequestTarget.model,
     brainstormRequestTarget.provider,

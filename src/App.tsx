@@ -39,6 +39,7 @@ import {
   FILETREE_TOOL_MODEL,
   TEXTEDITOR_TOOL_MODEL,
   getModelOptions,
+  isModelPickerOptionVisible,
   normalizeModel,
   resolveSlashModel,
 } from '../shared/models'
@@ -154,6 +155,7 @@ import {
   finalizeStreamedAssistantMessage,
   getAgentDoneSoundUrl,
   getColumnById,
+  getResumeSessionIdForModel,
   getRoutingImportText,
   importErrorMessage,
   isFirstOpenState,
@@ -775,7 +777,7 @@ function App() {
   // dispatch window to avoid re-rendering on every character when several
   // sessions stream at once.
   const deltaBufferRef = useRef(
-    new Map<string, { columnId: string; cardId: string; messageId: string; buffer: string }>(),
+    new Map<string, { columnId: string; cardId: string; messageId: string; buffer: string; model?: string }>(),
   )
   const deltaFlushHandleRef = useRef<number | null>(null)
   const activityBufferRef = useRef(
@@ -1114,6 +1116,7 @@ function App() {
         cardId: bufferEntry.cardId,
         messageId: bufferEntry.messageId,
         delta: bufferEntry.buffer,
+        model: bufferEntry.model,
       })
     },
     [applyAction],
@@ -1938,6 +1941,7 @@ function App() {
         cardId,
         patch: {
           sessionId: undefined,
+          sessionModel: undefined,
           providerSessions: nextProviderSessions,
         },
       })
@@ -2430,6 +2434,7 @@ function App() {
         cardId: entry.cardId,
         messageId: entry.messageId,
         delta: entry.buffer,
+        model: entry.model,
       })
     }
     buffer.clear()
@@ -2444,14 +2449,15 @@ function App() {
   }, [applyActions, persistAfterActions])
 
   const enqueueAssistantDelta = useCallback(
-    (columnId: string, cardId: string, messageId: string, delta: string) => {
+    (columnId: string, cardId: string, messageId: string, delta: string, model?: string) => {
       if (!delta) return
       const buffer = deltaBufferRef.current
       const existing = buffer.get(cardId)
       if (existing && existing.messageId === messageId) {
         existing.buffer += delta
+        existing.model = existing.model ?? model
       } else {
-        buffer.set(cardId, { columnId, cardId, messageId, buffer: delta })
+        buffer.set(cardId, { columnId, cardId, messageId, buffer: delta, model })
       }
 
       if (deltaFlushHandleRef.current === null) {
@@ -2490,7 +2496,7 @@ function App() {
             type: 'updateCard',
             columnId,
             cardId: card.id,
-            patch: { sessionId },
+            patch: { sessionId, sessionModel: card.model },
           }
           persistAfterAction(action.type, applyAction(action))
         },
@@ -2508,7 +2514,7 @@ function App() {
             transientResumeLoopCountRef.current.delete(card.id)
             markRecoveryResumedIfActive(card.id)
           }
-          enqueueAssistantDelta(columnId, card.id, messageId, content)
+          enqueueAssistantDelta(columnId, card.id, messageId, content, card.model)
         },
         onLog: ({ message }) => {
           const messages = createLogMessages(card.provider, message)
@@ -2562,6 +2568,7 @@ function App() {
                 card.provider,
                 card.streamId!,
                 payload,
+                card.model,
               )
             : null
 
@@ -2589,6 +2596,7 @@ function App() {
                 card.provider,
                 card.streamId!,
                 payload,
+                card.model,
               ),
             },
           }
@@ -2806,6 +2814,7 @@ function App() {
                 cardId: card.id,
                 patch: {
                   sessionId: undefined,
+                  sessionModel: undefined,
                   providerSessions: nextProviderSessions,
                 },
               })
@@ -2815,7 +2824,7 @@ function App() {
               type: 'updateCard',
               columnId,
               cardId: card.id,
-              patch: { status: 'idle', streamId: undefined, unread },
+              patch: { status: 'idle', streamId: undefined, unread, sessionModel: card.model },
             })
           }
 
@@ -2885,7 +2894,7 @@ function App() {
                   type: 'updateCard',
                   columnId,
                   cardId: card.id,
-                  patch: { sessionId: recoverySessionId },
+                  patch: { sessionId: recoverySessionId, sessionModel: card.model },
                 }
                 persistAfterAction(action.type, applyAction(action))
               }
@@ -2953,6 +2962,7 @@ function App() {
                         cardId: card.id,
                         patch: {
                           sessionId: undefined,
+                          sessionModel: undefined,
                           providerSessions: {},
                         },
                       }
@@ -3463,8 +3473,8 @@ function App() {
         }
         case 'model': {
           const settings = appStateRef.current.settings
-          const availableModelOptions = getModelOptions(card.provider).filter((option) =>
-            isQuickToolModelEnabled(settings, option.model),
+          const availableModelOptions = getModelOptions(card.provider).filter(
+            (option) => isModelPickerOptionVisible(option) && isQuickToolModelEnabled(settings, option.model),
           )
 
           if (!parsed.args) {
@@ -3560,6 +3570,8 @@ function App() {
       card.model || appStateRef.current.settings.requestModels[card.provider],
     )
     const resolvedReasoningEffort = normalizeReasoningEffort(card.provider, card.reasoningEffort)
+    const resumeSessionId = getResumeSessionIdForModel(card, resolvedModel)
+    const shouldStartFreshForModelChange = Boolean(card.sessionId?.trim()) && !resumeSessionId
     const parsedSlashCommand = parseSlashCommandInput(prompt)
 
     if (attachments.length === 0 && (await handleLocalSlashCommand(columnId, card, prompt))) {
@@ -3639,7 +3651,7 @@ function App() {
           createMessage('user', prompt, attachImagesToMessageMeta(attachments)),
         )
     const language = appStateRef.current.settings.language
-    const seedsTranscript = hasSeededChatTranscript(card)
+    const seedsTranscript = shouldStartFreshForModelChange || hasSeededChatTranscript(card)
     const seededRequestPrompt = seedsTranscript
       ? buildSeededChatPrompt({
           language,
@@ -3748,7 +3760,7 @@ function App() {
         crossProviderSkillReuseEnabled:
           appStateRef.current.settings.crossProviderSkillReuseEnabled,
         streamId,
-        sessionId: card.sessionId,
+        sessionId: resumeSessionId,
         prompt: requestPrompt,
         attachments: requestAttachments,
         archiveRecall,
@@ -3812,12 +3824,18 @@ function App() {
       return
     }
 
+    const resolvedModel = normalizeModel(
+      card.provider,
+      card.model || appStateRef.current.settings.requestModels[card.provider],
+    )
+    const resolvedReasoningEffort = normalizeReasoningEffort(card.provider, card.reasoningEffort)
     const resumeRequest = getInterruptedSessionResumeRequest({
       sessionId: card.sessionId ?? entry.sessionId,
+      sessionModel: card.sessionModel ?? entry.sessionModel,
       resumeMode: entry.resumeMode,
       resumePrompt: entry.resumePrompt,
       resumeAttachments: entry.resumeAttachments,
-    })
+    }, resolvedModel)
 
     if (!column.workspacePath.trim() || !resumeRequest) {
       const action: IdeAction = {
@@ -3831,11 +3849,6 @@ function App() {
     }
 
     const providerStatus = providerByName[card.provider] as ProviderStatus | undefined
-    const resolvedModel = normalizeModel(
-      card.provider,
-      card.model || appStateRef.current.settings.requestModels[card.provider],
-    )
-    const resolvedReasoningEffort = normalizeReasoningEffort(card.provider, card.reasoningEffort)
 
     if (!providerStatus?.available) {
       const actions: IdeAction[] = [
@@ -4081,6 +4094,7 @@ function App() {
         ...(shouldClearSessionId
           ? {
               sessionId: undefined,
+              sessionModel: undefined,
               providerSessions: {},
             }
           : {}),
@@ -4107,7 +4121,7 @@ function App() {
         crossProviderSkillReuseEnabled:
           appStateRef.current.settings.crossProviderSkillReuseEnabled,
         streamId,
-        sessionId: shouldClearSessionId ? undefined : card.sessionId,
+        sessionId: shouldClearSessionId ? undefined : getResumeSessionIdForModel(card, resolvedModel),
         prompt: shouldClearSessionId ? freshSessionRecoveryPrompt : '',
         attachments: shouldClearSessionId ? freshSessionRecoveryAttachments : [],
         archiveRecall,
@@ -4225,6 +4239,7 @@ function App() {
         cardId,
         patch: {
           sessionId: undefined,
+          sessionModel: undefined,
           providerSessions: {},
           streamId: undefined,
         },

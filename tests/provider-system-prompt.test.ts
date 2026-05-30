@@ -86,7 +86,48 @@ test('claude runs include the final resolution marker instruction', () => {
   const promptValue = args[promptIndex + 1] ?? ''
   assert.match(promptValue, /Always leave a clear final status line\./)
   assert.match(promptValue, /ask-user-question/)
-  assert.match(promptValue, /AskUserQuestion/)
+})
+
+test('claude ask-user instruction scopes the XML block to questions without disparaging tool calls', () => {
+  const enArgs = buildClaudeArgs(
+    createRequest({
+      provider: 'claude',
+      model: 'claude-sonnet-4-6',
+      language: 'en',
+      systemPrompt: 'Base.',
+    }),
+    [],
+  )
+  const enPrompt = enArgs[enArgs.indexOf('--append-system-prompt') + 1] ?? ''
+
+  // The ask-user XML convention must still be taught.
+  assert.match(enPrompt, /ask-user-question/)
+  // But the prompt must NOT disparage the tool mechanism or imply the XML block
+  // is a general-purpose substitute for tools — that wording made the model
+  // generalise and emit `<invoke name="Bash">` text instead of real tool calls.
+  assert.doesNotMatch(enPrompt, /streams reliably/i)
+  assert.doesNotMatch(enPrompt, /does not depend on tool availability/i)
+  // And it must explicitly fence the XML block to the asking-a-question case,
+  // reminding the model that real actions still go through native tool calls.
+  assert.match(enPrompt, /only for asking the user a question/i)
+  assert.match(enPrompt, /native tool calls/i)
+
+  const zhArgs = buildClaudeArgs(
+    createRequest({
+      provider: 'claude',
+      model: 'claude-sonnet-4-6',
+      language: 'zh-CN',
+      systemPrompt: 'Base.',
+    }),
+    [],
+  )
+  const zhPrompt = zhArgs[zhArgs.indexOf('--append-system-prompt') + 1] ?? ''
+
+  assert.match(zhPrompt, /ask-user-question/)
+  assert.doesNotMatch(zhPrompt, /流式更稳/)
+  assert.doesNotMatch(zhPrompt, /不依赖工具可用性/)
+  assert.match(zhPrompt, /仅用于向用户提问/)
+  assert.match(zhPrompt, /原生工具调用/)
 })
 
 test('codex args append matching model prompt rules before provider execution', () => {

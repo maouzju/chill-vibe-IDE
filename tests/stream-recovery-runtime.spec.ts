@@ -226,6 +226,7 @@ const installMockDesktopBridge = async (page: Page) => {
             draft: '',
             streamId: 'stream-1',
             sessionId: 'session-1',
+            sessionModel: 'gpt-5.5',
             messages: [
               {
                 id: 'assistant-1',

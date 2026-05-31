@@ -631,9 +631,22 @@ function createWindow() {
   })
   attachWindowDiagnostics(win)
 
+  win.on('close', (event) => {
+    if (process.platform === 'darwin' || quitAfterFlushPending) {
+      return
+    }
+
+    event.preventDefault()
+    scheduleQuitAfterFlush()
+  })
+
   const webContentsId = win.webContents.id
   let didCleanupSubscriptionsForWindow = false
-  const cleanupSubscriptionsForWindow = () => {
+  const cleanupSubscriptionsForWindow = (event?: Electron.Event) => {
+    if (event?.defaultPrevented) {
+      return
+    }
+
     if (didCleanupSubscriptionsForWindow) {
       return
     }

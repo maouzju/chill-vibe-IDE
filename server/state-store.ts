@@ -2323,6 +2323,39 @@ const schedulePendingStateDrain = (options: PendingStateDrainOptions = {}) => {
   return startPendingStateDrain(options)
 }
 
+const waitForQueuedStateWrite = async () => {
+  while (true) {
+    const scheduled = scheduledStateDrain
+    if (scheduled) {
+      await scheduled.promise
+      continue
+    }
+
+    const active = activePendingStateDrain
+    if (active) {
+      await active
+      continue
+    }
+
+    if (pendingState) {
+      await schedulePendingStateDrain()
+      continue
+    }
+
+    const latestWrite = latestQueuedStateWrite
+    await latestWrite
+
+    if (
+      latestWrite === latestQueuedStateWrite &&
+      !pendingState &&
+      !activePendingStateDrain &&
+      !scheduledStateDrain
+    ) {
+      return
+    }
+  }
+}
+
 const drainPendingStateWrites = (options: PendingStateDrainOptions = {}) => withWriteLock(async () => {
   while (pendingState) {
     if (!options.force) {
@@ -2355,7 +2388,10 @@ export const queueSaveState = (state: AppState) => {
     dataDir,
   }
 
-  return schedulePendingStateDrain()
+  schedulePendingStateDrain()
+  const queuedWrite = waitForQueuedStateWrite()
+  void queuedWrite.catch(() => undefined)
+  return queuedWrite
 }
 
 export const waitForPendingStateWrites = async () => {

@@ -134,6 +134,8 @@ type ChatCard = {
 - `sessionModel` 记录该原生会话开始时使用的实际请求模型；继续会话前必须与本次请求模型一致。旧状态里没有 `sessionModel` 的会话视为模型未知，改模型后不能盲目续用，必须用可见历史开启新会话。
 - `size` 表示卡片的最小高度
 
+- Provider request model changes must sync to the Electron backend immediately, not only through delayed state persistence, so the next CLI launch uses the same configured model shown in the renderer.
+
 ## 6. 技术设计
 
 ### 6.1 前端
@@ -150,6 +152,11 @@ type ChatCard = {
 - Codex / Claude skill 互相复用时，斜杠菜单、提示词注入和实际 CLI 文件读取权限必须一致；Claude 复用 Codex 用户级 skill 时，需要预授权对应 `.codex` / `CODEX_HOME` 目录。
 - 使用 SSE 将流式输出推给前端
 - 当当前 provider 的本地 CLI 不可用时，聊天发送仍然要进入应用层校验，并在卡片内追加“本地 CLI 不可用”的系统提示；不能只禁用发送按钮让用户反复点击却没有反馈。
+- Claude 流式输出的健壮性（`server/claude-structured-output.ts` + `server/providers.ts` + `server/provider-stream-recovery.ts`）：
+  - 模型偶尔把工具调用打成文本（`<function_calls>`/`<invoke>`/`<parameter>`）。增量去除器会剥离这些 XML；遇到**未闭合**的工具调用/ask-user 块时，`flush()` 必须**丢弃**而不是原样吐出——否则渲染层（ReactMarkdown，仅 remark-gfm）会吃掉标签只留下 `<parameter>` 里的内层文本（如 `count`），形成孤立气泡。容器常被换行美化，所以 `<function_calls>` 需容忍其后空白。
+  - 一轮如果**只**产出了被剥离的工具调用文本（没有真正执行工具、没有有效正文），干净的 `result` 会让聊天静默“停住”。用 `shouldRecoverEmptyToolCallTurn(...)` 判定后改发可恢复的 `resume-session` 错误，交给前端有上限的重试机制自动续跑。
+  - Claude 流路径带有失速看门狗：每条 stdout 行都会重置计时器，长时间静默且无终止事件时发可恢复的 `stalled …` 错误；但**有命令在执行时必须停表**（`resolveLocalStreamStallTimeoutMs` 在 `openCommandCount > 0` 时返回 `null`），因为 CLI 执行工具期间本就没有 stdout，否则会误杀正常的长命令。
+  - Claude 的扩展思考（thinking）默认要显示，和 Codex 的 reasoning 一致。`--include-partial-messages` 会把思考以 `content_block_start/delta(thinking_delta)/stop` 的 partial 事件流式吐出（位于答案文本之前的 index 0）。`createClaudeStructuredOutputParser` 按块索引累积 `thinking_delta`，在 `content_block_stop` 时吐出一条 `kind: 'reasoning'`、`status: 'completed'` 的 activity，复用与 Codex 完全相同的「思考中」卡片渲染。`signature_delta` 只是校验元数据，忽略即可；思考被省略（omitted display，无 `thinking_delta`）时不产出任何 reasoning 块。reasoning 是模型内部独白，**不算**用户可见产出，所以 `sawStructuredActivity` 不能被 reasoning 置真（`structuredActivityCountsAsTurnOutput('reasoning') === false`）；否则思考默认开启后，会悄悄让「工具调用被打成文本」的空轮兜底（`shouldRecoverEmptyToolCallTurn`）失效。
 
 ### 6.3 持久化
 

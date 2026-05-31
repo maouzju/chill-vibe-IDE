@@ -102,7 +102,8 @@ export const shouldSyncRuntimeSettings = (action: IdeAction) => {
     return runtimeSyncSettingsKeys.some((key) => key in action.patch)
   }
 
-  return action.type === 'upsertProviderProfile' ||
+  return action.type === 'updateRequestModels' ||
+    action.type === 'upsertProviderProfile' ||
     action.type === 'removeProviderProfile' ||
     action.type === 'setActiveProviderProfile'
 }

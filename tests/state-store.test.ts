@@ -1880,6 +1880,45 @@ describe('state-store persistence', () => {
     })
   })
 
+  it('loadStateForRenderer keeps resumable interrupted sessions recoverable after configured default model changes', async () => {
+    const { saveState, loadStateForRenderer } = await import('../server/state-store.ts')
+    const state = createDefaultState('D:/resume-recovery-model-default')
+    const firstCard = getFirstCard(state)
+    assert.ok(firstCard, 'expected a default card to exist in the first column')
+
+    firstCard.provider = 'claude'
+    firstCard.model = 'claude-opus-4-7'
+    firstCard.status = 'streaming'
+    firstCard.streamId = 'stream-interrupted-model-default-1'
+    firstCard.sessionId = 'session-interrupted-model-default-1'
+    firstCard.sessionModel = 'claude-opus-4-7'
+    firstCard.title = 'Resume old configured default'
+    firstCard.messages = [
+      {
+        id: 'msg-user',
+        role: 'user',
+        content: 'Keep working after reopen.',
+        createdAt: new Date('2026-04-11T06:10:00.000Z').toISOString(),
+      },
+    ]
+    state.settings.requestModels.claude = 'claude-opus-4-8'
+
+    await saveState(state)
+
+    const loaded = await loadStateForRenderer()
+
+    assert.equal(loaded.recovery.interruptedSessions?.entries.length, 1)
+    assert.equal(
+      loaded.recovery.interruptedSessions?.entries[0]?.recoverable,
+      true,
+      'a recorded session that matched the card model at save time should remain directly resumable after the global default changes',
+    )
+    assert.equal(loaded.recovery.interruptedSessions?.entries[0]?.sessionModel, 'claude-opus-4-7')
+    const loadedFirstCard = getFirstCard(loaded.state)
+    assert.equal(loadedFirstCard?.model, 'claude-opus-4-7')
+    assert.equal(loadedFirstCard?.sessionModel, 'claude-opus-4-7')
+  })
+
   it('loadStateForRenderer keeps retryable pre-session interruptions resumable', async () => {
     const { saveState, loadStateForRenderer } = await import('../server/state-store.ts')
     const state = createDefaultState('D:/resume-recovery-no-session')

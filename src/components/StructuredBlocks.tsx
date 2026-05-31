@@ -305,6 +305,20 @@ export const StructuredCommandCard = ({
           {data.exitCode !== null && data.exitCode !== 0 ? (
             <span className="structured-command-exit is-inline">{labels.exitCode(data.exitCode)}</span>
           ) : null}
+          {data.status === 'in_progress' ? (
+            <span
+              className="structured-command-running-indicator"
+              role="status"
+              aria-label={labels.commandRunning}
+              title={labels.commandRunning}
+            >
+              <span className="structured-command-running-dots" aria-hidden="true">
+                <span />
+                <span />
+                <span />
+              </span>
+            </span>
+          ) : null}
         </div>
       </section>
 

@@ -249,6 +249,19 @@ test('Electron quit flow flushes renderer persistence and waits for queued state
   assert.match(persistenceBody, /window\.addEventListener\('chill-vibe:flush-state-before-quit', handlePageHide\)/)
 })
 
+test('Electron window close keeps renderer alive until persistence flush is scheduled', async () => {
+  const mainBody = await readFile(path.join(process.cwd(), 'electron', 'main.ts'), 'utf8')
+
+  assert.match(
+    mainBody,
+    /win\.on\('close', \(event\) => \{[\s\S]+event\.preventDefault\(\)[\s\S]+scheduleQuitAfterFlush\(\)[\s\S]+const webContentsId = win\.webContents\.id/,
+  )
+  assert.match(
+    mainBody,
+    /const cleanupSubscriptionsForWindow = \(event\?: Electron\.Event\) => \{[\s\S]+if \(event\?\.defaultPrevented\) \{[\s\S]+return[\s\S]+cleanupSubscriptionsForContentsId\(webContentsId\)/,
+  )
+})
+
 test('Electron stream cleanup runs before WebContents destruction during window shutdown', async () => {
   const mainBody = await readFile(path.join(process.cwd(), 'electron', 'main.ts'), 'utf8')
 
@@ -258,7 +271,7 @@ test('Electron stream cleanup runs before WebContents destruction during window 
   assert.match(mainBody, /function cleanupSubscriptionsForContentsId\(webContentsId: number\)/)
   assert.match(
     mainBody,
-    /const webContentsId = win\.webContents\.id\s+let didCleanupSubscriptionsForWindow = false\s+const cleanupSubscriptionsForWindow = \(\) => {[\s\S]+cleanupSubscriptionsForContentsId\(webContentsId\)[\s\S]+win\.on\('close', cleanupSubscriptionsForWindow\)/,
+    /const webContentsId = win\.webContents\.id\s+let didCleanupSubscriptionsForWindow = false\s+const cleanupSubscriptionsForWindow = \(event\?: Electron\.Event\) => {[\s\S]+cleanupSubscriptionsForContentsId\(webContentsId\)[\s\S]+win\.on\('close', cleanupSubscriptionsForWindow\)/,
   )
   assert.match(mainBody, /win\.on\('closed', cleanupSubscriptionsForWindow\)/)
   assert.match(mainBody, /win\.webContents\.once\('destroyed', cleanupSubscriptionsForWindow\)/)

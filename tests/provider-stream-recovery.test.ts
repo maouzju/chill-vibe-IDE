@@ -1,7 +1,12 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
-import { classifyProviderStreamErrorRecovery } from '../server/provider-stream-recovery.ts'
+import {
+  classifyProviderStreamErrorRecovery,
+  resolveLocalStreamStallTimeoutMs,
+  shouldRecoverEmptyToolCallTurn,
+  structuredActivityCountsAsTurnOutput,
+} from '../server/provider-stream-recovery.ts'
 
 test('provider unexpected completion with an existing session becomes resumable', () => {
   assert.deepEqual(
@@ -66,6 +71,55 @@ test('third-party extra-usage 403 after a live session is resumable because cred
   )
 })
 
+test('Anthropic malformed tool-call turns after a live session are resumable', () => {
+  assert.deepEqual(
+    classifyProviderStreamErrorRecovery(
+      {
+        sessionId: 'session-1',
+      },
+      "The model's tool call could not be parsed (retry also failed).",
+    ),
+    {
+      recoverable: true,
+      recoveryMode: 'resume-session',
+    },
+  )
+})
+
+test('the malformed tool-call retry prompt itself is also treated as resumable', () => {
+  assert.deepEqual(
+    classifyProviderStreamErrorRecovery(
+      {
+        sessionId: 'session-1',
+      },
+      'Your tool call was malformed and could not be parsed. Please retry.',
+    ),
+    {
+      recoverable: true,
+      recoveryMode: 'resume-session',
+    },
+  )
+})
+
+test('a mid-stream socket disconnect after a live session is resumable', () => {
+  // The Anthropic SDK / Node fetch (undici) surfaces a dropped socket mid-stream
+  // as "The socket connection was closed unexpectedly". That is a transient
+  // network disconnect (same class as "closed before completion"), so with an
+  // existing session it should auto-resume instead of dead-ending the chat.
+  assert.deepEqual(
+    classifyProviderStreamErrorRecovery(
+      {
+        sessionId: 'session-1',
+      },
+      'API Error: The socket connection was closed unexpectedly. For more information, pass `verbose: true` in the second argument to fetch()',
+    ),
+    {
+      recoverable: true,
+      recoveryMode: 'resume-session',
+    },
+  )
+})
+
 test('setup and routing errors stay non-recoverable even with a session', () => {
   assert.deepEqual(
     classifyProviderStreamErrorRecovery(
@@ -88,5 +142,146 @@ test('errors without a session id are not resumable', () => {
       'Claude ended without emitting a terminal completion event.',
     ),
     {},
+  )
+})
+
+test('a turn whose only output was a tool call typed as text is auto-resumed', () => {
+  // Claude typed a tool call as prose (so nothing executed), the stripper removed
+  // it, and no real activity or text survived. The non-error `result` would
+  // otherwise dead-end the chat ("老是停住"); classify it as resumable so the
+  // bounded renderer retry machinery re-issues a fresh turn.
+  assert.deepEqual(
+    shouldRecoverEmptyToolCallTurn({
+      consumedRealToolCallBlock: true,
+      sawStructuredActivity: false,
+      sawMeaningfulAssistantText: false,
+      hasSessionId: true,
+    }),
+    {
+      recoverable: true,
+      recoveryMode: 'resume-session',
+    },
+  )
+})
+
+test('a turn that actually ran a tool is not treated as a dead-end', () => {
+  assert.equal(
+    shouldRecoverEmptyToolCallTurn({
+      consumedRealToolCallBlock: true,
+      sawStructuredActivity: true,
+      sawMeaningfulAssistantText: false,
+      hasSessionId: true,
+    }),
+    null,
+  )
+})
+
+test('a turn that produced real assistant text is not auto-resumed', () => {
+  assert.equal(
+    shouldRecoverEmptyToolCallTurn({
+      consumedRealToolCallBlock: true,
+      sawStructuredActivity: false,
+      sawMeaningfulAssistantText: true,
+      hasSessionId: true,
+    }),
+    null,
+  )
+})
+
+test('an ordinary empty turn with no stripped tool call is not auto-resumed', () => {
+  assert.equal(
+    shouldRecoverEmptyToolCallTurn({
+      consumedRealToolCallBlock: false,
+      sawStructuredActivity: false,
+      sawMeaningfulAssistantText: false,
+      hasSessionId: true,
+    }),
+    null,
+  )
+})
+
+test('a dead-end tool-call turn without a session id cannot be resumed', () => {
+  assert.equal(
+    shouldRecoverEmptyToolCallTurn({
+      consumedRealToolCallBlock: true,
+      sawStructuredActivity: false,
+      sawMeaningfulAssistantText: false,
+      hasSessionId: false,
+    }),
+    null,
+  )
+})
+
+test('stall watchdog disarms while a tool command is running (CLI owns its own timeout)', () => {
+  // While the claude CLI executes a Bash command it emits no stdout for the whole
+  // command duration. Arming the watchdog then would false-kill a legitimately
+  // long command, so it must disarm (null) whenever a command is in progress.
+  assert.equal(
+    resolveLocalStreamStallTimeoutMs({
+      sawStreamOutput: true,
+      openCommandCount: 1,
+      firstByteTimeoutMs: 90_000,
+      stallTimeoutMs: 120_000,
+    }),
+    null,
+  )
+})
+
+test('stall watchdog uses the between-events timeout once output has started', () => {
+  assert.equal(
+    resolveLocalStreamStallTimeoutMs({
+      sawStreamOutput: true,
+      openCommandCount: 0,
+      firstByteTimeoutMs: 90_000,
+      stallTimeoutMs: 120_000,
+    }),
+    120_000,
+  )
+})
+
+test('stall watchdog uses the first-byte timeout before any output arrives', () => {
+  assert.equal(
+    resolveLocalStreamStallTimeoutMs({
+      sawStreamOutput: false,
+      openCommandCount: 0,
+      firstByteTimeoutMs: 90_000,
+      stallTimeoutMs: 120_000,
+    }),
+    90_000,
+  )
+})
+
+test('reasoning activity does not count as turn output, while real work does', () => {
+  // Reasoning/thinking is the model's internal monologue, not user-facing work.
+  // It must NOT mark the turn as having produced output, or enabling thinking
+  // (now on by default) would silently disable the typed-as-text tool-call
+  // recovery whenever a turn also emits a thinking block.
+  assert.equal(structuredActivityCountsAsTurnOutput('reasoning'), false)
+  assert.equal(structuredActivityCountsAsTurnOutput('command'), true)
+  assert.equal(structuredActivityCountsAsTurnOutput('tool'), true)
+  assert.equal(structuredActivityCountsAsTurnOutput('edits'), true)
+  assert.equal(structuredActivityCountsAsTurnOutput('todo'), true)
+  assert.equal(structuredActivityCountsAsTurnOutput('compaction'), true)
+  assert.equal(structuredActivityCountsAsTurnOutput('ask-user'), true)
+  assert.equal(structuredActivityCountsAsTurnOutput('agents'), true)
+})
+
+test('a turn that only emitted thinking plus a phantom tool call still recovers', () => {
+  // Mirror the providers.ts fold: only non-reasoning activities flip the flag,
+  // so a thinking-only turn whose sole concrete output was a stripped
+  // (typed-as-text) tool call must still auto-resume.
+  const sawStructuredActivity = (['reasoning'] as const).some(structuredActivityCountsAsTurnOutput)
+
+  assert.deepEqual(
+    shouldRecoverEmptyToolCallTurn({
+      consumedRealToolCallBlock: true,
+      sawStructuredActivity,
+      sawMeaningfulAssistantText: false,
+      hasSessionId: true,
+    }),
+    {
+      recoverable: true,
+      recoveryMode: 'resume-session',
+    },
   )
 })

@@ -2,6 +2,7 @@ import { memo, useCallback, useDeferredValue, useEffect, useLayoutEffect, useMem
 import type {
   ClipboardEvent,
   CompositionEvent,
+  CSSProperties,
   KeyboardEvent,
   MouseEvent,
   ReactNode,
@@ -458,6 +459,16 @@ const composerFocusRescueIgnoredSelector = [
 
 const shouldIgnoreComposerFocusRescueTarget = (target: EventTarget | null) =>
   target instanceof Element && target.closest(composerFocusRescueIgnoredSelector) !== null
+
+type SlashMenuStyle = {
+  top: number
+  left: number
+  width: number
+  maxHeight: number
+}
+
+const clampNumber = (value: number, min: number, max: number) =>
+  Math.min(Math.max(value, min), Math.max(min, max))
 
 const isTransparentComposerFocusBlocker = (target: EventTarget | null) => {
   if (!(target instanceof Element)) {
@@ -1032,6 +1043,7 @@ const ChatCardView = ({
   const slashCommandsLoadKeyRef = useRef<string | null>(null)
   const [selectedSlashIndex, setSelectedSlashIndex] = useState(0)
   const [slashMenuDismissed, setSlashMenuDismissed] = useState(false)
+  const [slashMenuStyle, setSlashMenuStyle] = useState<SlashMenuStyle | null>(null)
   const [pendingAttachments, setPendingAttachments] = useState<PendingAttachment[]>(() =>
     hydrateDraftAttachments(card.draftAttachments ?? []),
   )
@@ -2726,7 +2738,12 @@ const ChatCardView = ({
   useEffect(() => {
     if (!slashMenuOpen) return
     const handleClickOutside = (event: Event) => {
-      if (slashMenuElRef.current && !slashMenuElRef.current.contains(event.target as Node)) {
+      const target = event.target as Node
+      if (
+        slashMenuElRef.current &&
+        !slashMenuElRef.current.contains(target) &&
+        !composerRef.current?.contains(target)
+      ) {
         setSlashMenuDismissed(true)
       }
     }
@@ -2740,6 +2757,64 @@ const ChatCardView = ({
     return () => {
       document.removeEventListener('mousedown', handleClickOutside)
       document.removeEventListener('keydown', handleEscape)
+    }
+  }, [slashMenuOpen])
+
+  useLayoutEffect(() => {
+    if (!slashMenuOpen) {
+      setSlashMenuStyle(null)
+      return
+    }
+
+    const updateSlashMenuStyle = () => {
+      const composer = composerRef.current
+      if (!composer || typeof window === 'undefined') {
+        return
+      }
+
+      const composerRect = composer.getBoundingClientRect()
+      const paneRect = composer.closest('.pane-content')?.getBoundingClientRect()
+      const boundaryRect = paneRect ?? composer.closest('.card-shell')?.getBoundingClientRect() ?? composerRect
+      const viewportPadding = 8
+      const gap = 6
+      const paneLeft = clampNumber(boundaryRect.left, viewportPadding, window.innerWidth - viewportPadding)
+      const paneRight = clampNumber(boundaryRect.right, viewportPadding, window.innerWidth - viewportPadding)
+      const paneTop = clampNumber(boundaryRect.top, viewportPadding, window.innerHeight - viewportPadding)
+      const paneBottom = clampNumber(boundaryRect.bottom, viewportPadding, window.innerHeight - viewportPadding)
+      const availableWidth = Math.max(160, paneRight - paneLeft)
+      const targetWidth = Math.min(448, Math.max(288, availableWidth))
+      const width = Math.min(targetWidth, availableWidth)
+      const preferredLeft = composerRect.left
+      const left = clampNumber(preferredLeft, paneLeft, paneRight - width)
+      const availableAbove = Math.max(0, composerRect.top - paneTop - gap)
+      const availableBelow = Math.max(0, paneBottom - composerRect.bottom - gap)
+      const openAbove = availableAbove >= Math.min(288, availableBelow)
+      const maxHeight = Math.max(96, Math.min(384, openAbove ? availableAbove : availableBelow || availableAbove))
+      const top = openAbove
+        ? Math.max(paneTop, composerRect.top - gap - maxHeight)
+        : Math.min(composerRect.bottom + gap, paneBottom - maxHeight)
+
+      setSlashMenuStyle((current) => {
+        const next = { top, left, width, maxHeight }
+        return current &&
+          Math.abs(current.top - next.top) < 0.5 &&
+          Math.abs(current.left - next.left) < 0.5 &&
+          Math.abs(current.width - next.width) < 0.5 &&
+          Math.abs(current.maxHeight - next.maxHeight) < 0.5
+          ? current
+          : next
+      })
+    }
+
+    updateSlashMenuStyle()
+    const frame = window.requestAnimationFrame(updateSlashMenuStyle)
+    window.addEventListener('resize', updateSlashMenuStyle)
+    window.addEventListener('scroll', updateSlashMenuStyle, true)
+
+    return () => {
+      window.cancelAnimationFrame(frame)
+      window.removeEventListener('resize', updateSlashMenuStyle)
+      window.removeEventListener('scroll', updateSlashMenuStyle, true)
     }
   }, [slashMenuOpen])
 
@@ -2773,17 +2848,9 @@ const ChatCardView = ({
     })
   }, [autoUrgeActive, card.status, card.id, runAutoUrge])
 
-  const hasFloatingUi = slashMenuOpen || gitAgentPanelOpen
-  const slashMenuSideRef = useRef<'left' | 'right'>('right')
+  const hasFloatingUi = gitAgentPanelOpen
   const slashMenuRef = (el: HTMLDivElement | null) => {
     slashMenuElRef.current = el
-    if (!el || !composerRef.current) return
-    const rect = composerRef.current.getBoundingClientRect()
-    const spaceRight = window.innerWidth - rect.right
-    const side = spaceRight >= rect.left ? 'right' : 'left'
-    slashMenuSideRef.current = side
-    el.classList.toggle('is-side-right', side === 'right')
-    el.classList.toggle('is-side-left', side === 'left')
   }
   const highlightedSlashCommand =
     filteredSlashCommands.length > 0 ? filteredSlashCommands[activeSlashIndex] : null
@@ -2802,6 +2869,71 @@ const ChatCardView = ({
         queuedSendSummary.nextAttachmentCount,
       )
     : ''
+  const slashMenuInlineStyle: CSSProperties = slashMenuStyle
+    ? {
+        position: 'fixed',
+        top: `${slashMenuStyle.top}px`,
+        left: `${slashMenuStyle.left}px`,
+        width: `${slashMenuStyle.width}px`,
+        maxHeight: `${slashMenuStyle.maxHeight}px`,
+      }
+    : {
+        position: 'fixed',
+        top: '0px',
+        left: '0px',
+        visibility: 'hidden',
+      }
+  const slashMenu = slashMenuOpen && typeof document !== 'undefined'
+    ? createPortal(
+        <div
+          ref={slashMenuRef}
+          className="slash-command-menu"
+          role="listbox"
+          aria-label={text.slashCommands}
+          style={slashMenuInlineStyle}
+        >
+          {filteredSlashCommands.length > 0 ? (
+            filteredSlashCommands.map((command, index) => (
+              <button
+                key={`${command.source}:${command.name}`}
+                ref={index === activeSlashIndex ? activeSlashItemRef : undefined}
+                type="button"
+                className={`slash-command-item${index === activeSlashIndex ? ' is-selected' : ''}`}
+                title={command.description ?? `/${command.name}`}
+                onMouseDown={(event) => {
+                  event.preventDefault()
+                  applySlashCommand(command)
+                }}
+              >
+                <span className="slash-command-header">
+                  <span className="slash-command-name">/{command.name}</span>
+                  <span className="slash-command-badges">
+                    <span className={`slash-command-badge is-${command.source}`}>
+                      {getSlashCommandSourceLabel(language, command.source)}
+                    </span>
+                    {command.source === 'skill' && command.skillProvider ? (
+                      <span className={`slash-command-badge is-provider-${command.skillProvider}`}>
+                        {command.skillProvider === 'codex' ? 'Codex' : 'Claude'}
+                      </span>
+                    ) : null}
+                  </span>
+                </span>
+                <span className="slash-command-description">
+                  {command.description ?? `/${command.name}`}
+                </span>
+              </button>
+            ))
+          ) : (
+            <div className="slash-command-empty">
+              {effectiveSlashCommandsStatus === 'loading'
+                ? text.loadingSlashCommands
+                : text.noMatchingSlashCommands}
+            </div>
+          )}
+        </div>,
+        document.body,
+      )
+    : null
 
   const handleRemoveClick = (event: MouseEvent<HTMLButtonElement>) => {
     event.stopPropagation()
@@ -3413,48 +3545,7 @@ const ChatCardView = ({
                 </div>
               ) : null}
 
-              {slashMenuOpen ? (
-                <div ref={slashMenuRef} className="slash-command-menu" role="listbox" aria-label={text.slashCommands}>
-                  {filteredSlashCommands.length > 0 ? (
-                    filteredSlashCommands.map((command, index) => (
-                      <button
-                        key={`${command.source}:${command.name}`}
-                        ref={index === activeSlashIndex ? activeSlashItemRef : undefined}
-                        type="button"
-                        className={`slash-command-item${index === activeSlashIndex ? ' is-selected' : ''}`}
-                        title={command.description ?? `/${command.name}`}
-                        onMouseDown={(event) => {
-                          event.preventDefault()
-                          applySlashCommand(command)
-                        }}
-                      >
-                        <span className="slash-command-header">
-                          <span className="slash-command-name">/{command.name}</span>
-                          <span className="slash-command-badges">
-                            <span className={`slash-command-badge is-${command.source}`}>
-                              {getSlashCommandSourceLabel(language, command.source)}
-                            </span>
-                            {command.source === 'skill' && command.skillProvider ? (
-                              <span className={`slash-command-badge is-provider-${command.skillProvider}`}>
-                                {command.skillProvider === 'codex' ? 'Codex' : 'Claude'}
-                              </span>
-                            ) : null}
-                          </span>
-                        </span>
-                        <span className="slash-command-description">
-                          {command.description ?? `/${command.name}`}
-                        </span>
-                      </button>
-                    ))
-                  ) : (
-                    <div className="slash-command-empty">
-                      {effectiveSlashCommandsStatus === 'loading'
-                        ? text.loadingSlashCommands
-                        : text.noMatchingSlashCommands}
-                    </div>
-                  )}
-                </div>
-              ) : null}
+              {slashMenu}
                 </div>
               </footer>
             </>

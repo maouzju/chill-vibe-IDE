@@ -255,6 +255,13 @@ describe('persistence queue', () => {
     assert.equal(shouldSyncRuntimeSettings({ type: 'updateSettings', patch: { resilientProxyMaxRetries: -1 } }), true)
     assert.equal(
       shouldSyncRuntimeSettings({
+        type: 'updateRequestModels',
+        patch: { claude: 'claude-opus-4-8' },
+      }),
+      true,
+    )
+    assert.equal(
+      shouldSyncRuntimeSettings({
         type: 'updateSettings',
         patch: {
           providerProfiles: state.settings.providerProfiles,

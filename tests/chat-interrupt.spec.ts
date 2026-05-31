@@ -6,6 +6,7 @@ type MockCardState = {
   status: 'idle' | 'streaming'
   streamId?: string
   sessionId?: string
+  sessionModel?: string
   provider?: 'codex' | 'claude'
   model?: string
   messages: Array<{
@@ -385,6 +386,7 @@ const installMockApis = async (
       status: 'streaming',
       streamId: 'stream-1',
       sessionId: 'session-1',
+      sessionModel: 'gpt-5.5',
       provider: 'codex' as const,
       model: 'gpt-5.5',
       messages: [
@@ -469,6 +471,7 @@ const installMockApis = async (
             draft: '',
             streamId: initialCard.streamId,
             sessionId: initialCard.sessionId,
+            sessionModel: initialCard.sessionModel ?? (initialCard.sessionId ? initialModel : undefined),
             messages: initialCard.messages,
           },
         ],

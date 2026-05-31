@@ -21,7 +21,13 @@ function Write-Step {
 function Refresh-Path {
     $machinePath = [System.Environment]::GetEnvironmentVariable('Path', 'Machine')
     $userPath = [System.Environment]::GetEnvironmentVariable('Path', 'User')
-    $env:Path = "$machinePath;$userPath"
+    $extraPath = $env:CHILL_VIBE_EXTRA_PATH
+    if ([string]::IsNullOrWhiteSpace($extraPath)) {
+        $env:Path = "$machinePath;$userPath"
+    }
+    else {
+        $env:Path = "$extraPath;$machinePath;$userPath"
+    }
 }
 
 function Get-CommandSafe {
@@ -132,11 +138,28 @@ function Install-NpmGlobal {
     $packageSpec = "${PackageName}@${normalizedVersion}"
     $actionLabel = if ($Force) { 'Updating' } else { 'Installing' }
     Write-Step "$actionLabel $DisplayName with npm ($normalizedVersion)..."
-    & npm install -g $packageSpec 2>&1 | ForEach-Object {
-        $line = $_.ToString().Trim()
-        if ($line) {
-            Write-Step "  $line"
+    # npm writes harmless warnings (e.g. "npm warn cleanup") to stderr. With 2>&1
+    # those lines surface as NativeCommandError records, which the script-wide
+    # 'Stop' preference would treat as terminating and abort even a successful
+    # install. Relax the preference around the npm call and decide success from the
+    # real process exit code instead.
+    $previousErrorActionPreference = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    try {
+        & npm install -g $packageSpec 2>&1 | ForEach-Object {
+            $line = $_.ToString().Trim()
+            if ($line) {
+                Write-Step "  $line"
+            }
         }
+        $npmExitCode = $LASTEXITCODE
+    }
+    finally {
+        $ErrorActionPreference = $previousErrorActionPreference
+    }
+
+    if ($npmExitCode -ne 0) {
+        throw "$DisplayName installation failed with npm exit code $npmExitCode."
     }
 
     Refresh-Path

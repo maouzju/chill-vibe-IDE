@@ -355,6 +355,101 @@ const installMockApis = async (page: Page, theme: ThemeName, language: AppLangua
 
 }
 
+const installEditorEmptyStateApis = async (page: Page, theme: ThemeName) => {
+  await installMockElectronBridge(page)
+
+  let state = createPlaywrightState({
+    version: 1 as const,
+    settings: {
+      language: 'en',
+      theme,
+      fontScale: 1,
+      lineHeightScale: 1,
+      resilientProxyEnabled: true,
+      requestModels: {
+        codex: DEFAULT_CODEX_MODEL,
+        claude: 'claude-opus-4-7',
+      },
+      modelReasoningEfforts: {
+        codex: {},
+        claude: {},
+      },
+      providerProfiles: {
+        codex: {
+          activeProfileId: '',
+          profiles: [],
+        },
+        claude: {
+          activeProfileId: '',
+          profiles: [],
+        },
+      },
+    },
+    updatedAt: new Date().toISOString(),
+    columns: [
+      {
+        id: 'column-editor-empty',
+        title: 'Editor Workspace',
+        provider: 'codex',
+        workspacePath: 'd:\\Git\\chill-vibe',
+        model: DEFAULT_CODEX_MODEL,
+        cards: [
+          {
+            id: 'editor-empty',
+            title: 'Editor',
+            provider: 'codex',
+            model: TEXTEDITOR_TOOL_MODEL,
+            status: 'idle',
+            messages: [],
+            draft: '',
+            size: 440,
+          },
+        ],
+      },
+    ],
+  })
+
+  await page.route('**/api/state', async (route) => {
+    const request = route.request()
+
+    if (request.method() === 'GET') {
+      await route.fulfill({ json: state })
+      return
+    }
+
+    if (request.method() === 'PUT') {
+      state = createPlaywrightState(JSON.parse(request.postData() ?? '{}'))
+      await route.fulfill({ json: state })
+      return
+    }
+
+    await route.fallback()
+  })
+
+  await page.route('**/api/state/snapshot', async (route) => {
+    state = createPlaywrightState(JSON.parse(route.request().postData() ?? '{}'))
+    await route.fulfill({ status: 204 })
+  })
+
+  await page.route('**/api/providers', async (route) => {
+    await route.fulfill({
+      json: [
+        { provider: 'codex', available: true, command: 'codex' },
+        { provider: 'claude', available: true, command: 'claude' },
+      ],
+    })
+  })
+
+  await page.route('**/api/setup/status', async (route) => {
+    await route.fulfill({
+      json: {
+        state: 'idle',
+        logs: [],
+      },
+    })
+  })
+}
+
 test('full git opens without auto-staging and still seeds a default commit summary', async ({ page }) => {
   await installMockApis(page, 'dark', 'zh-CN')
 
@@ -1095,43 +1190,7 @@ for (const theme of ['dark', 'light'] as const) {
   })
 
   test(`switching a card to Editor without a file keeps a visible empty state in ${theme} theme`, async ({ page }) => {
-    await installMockApis(page, theme)
-    await installMockElectronBridge(page, createPlaywrightState({
-      theme,
-      columns: [
-        {
-          id: 'column-editor-empty',
-          title: 'Editor Workspace',
-          provider: 'codex',
-          model: DEFAULT_CODEX_MODEL,
-          cardOrder: ['editor-empty'],
-          cards: {
-            'editor-empty': {
-              id: 'editor-empty',
-              title: 'Editor',
-              provider: 'codex',
-              model: TEXTEDITOR_TOOL_MODEL,
-              status: 'idle',
-              createdAt: new Date().toISOString(),
-              updatedAt: new Date().toISOString(),
-              messages: [],
-              draft: '',
-              size: 440,
-              collapsed: false,
-              unread: false,
-              stickyNote: '',
-              brainstorm: {
-                prompt: '',
-                answerCount: 6,
-                provider: 'codex',
-                model: DEFAULT_CODEX_MODEL,
-                answers: [],
-              },
-            },
-          },
-        },
-      ],
-    }))
+    await installEditorEmptyStateApis(page, theme)
 
     await page.goto('http://localhost:5173')
     await expect(page.locator('.text-editor-card')).toBeVisible()

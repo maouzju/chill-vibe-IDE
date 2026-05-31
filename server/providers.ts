@@ -35,14 +35,23 @@ import type {
   StreamErrorHint,
 } from '../shared/schema.js'
 import { resolveImageAttachmentPath } from './attachments.js'
-import { createClaudeStructuredOutputParser, stripClaudeAskUserXmlBlocks } from './claude-structured-output.js'
+import {
+  createClaudeAskUserDeltaStripper,
+  createClaudeStructuredOutputParser,
+  stripClaudeAskUserXmlBlocks,
+} from './claude-structured-output.js'
 import { createCodexCompactionActivityDeduper } from './codex-compaction-dedupe.js'
 import { resolveClaudeRuntimeEnvironment } from './claude-runtime-environment.js'
 import {
   looksLikeCodexStructuredAgentMessage,
   parseCodexResponseEvent,
 } from './codex-structured-output.js'
-import { classifyProviderStreamErrorRecovery } from './provider-stream-recovery.js'
+import {
+  classifyProviderStreamErrorRecovery,
+  resolveLocalStreamStallTimeoutMs,
+  shouldRecoverEmptyToolCallTurn,
+  structuredActivityCountsAsTurnOutput,
+} from './provider-stream-recovery.js'
 import { readStringPreserveWhitespace } from './provider-stream-text.js'
 import { resolveProviderCommandLaunch } from './provider-command-launch.js'
 import {
@@ -542,6 +551,15 @@ const formatProviderExit = (language: AppLanguage, provider: Provider, code: num
 
 const formatClaudeRunFailed = (language: AppLanguage) =>
   language === 'en' ? 'Claude run failed.' : 'Claude 运行失败。'
+
+// Shown when a turn produced only a tool call typed as text (which never
+// executed) and nothing else, so it would otherwise dead-end silently. The
+// renderer treats the recoverable classification as the real signal and
+// auto-resumes; this message is only a fallback label.
+const formatClaudeTypedToolCallStalled = (language: AppLanguage) =>
+  language === 'en'
+    ? 'Claude ended a turn without running its tool call. Resuming.'
+    : 'Claude 这一轮没有真正执行工具调用就结束了，正在自动继续。'
 
 const formatImageAttachmentsUnsupported = (language: AppLanguage, provider: Provider) =>
   language === 'en'
@@ -2042,8 +2060,67 @@ export const launchProviderRun = async (request: ChatRequest, sink: StreamSink) 
 
     let sawClaudeDelta = false
     let sawClaudeStreamOutput = false
+    // Track whether the turn produced anything real, so a turn whose only output
+    // was a tool call typed as text (stripped, never executed) can be auto-resumed
+    // instead of silently dead-ending.
+    let sawStructuredActivity = false
+    let sawMeaningfulAssistantText = false
+    const askUserDeltaStripper = createClaudeAskUserDeltaStripper()
     let stderr = ''
     let emittedSessionId: string | null = currentRequest.sessionId?.trim() || null
+    // Stall watchdog: the Claude path otherwise has no timeout, so a CLI that
+    // goes silent without a terminal `result` event spins the card forever
+    // ("使用工具也经常卡住不动"). The watchdog disarms while a tool command is in
+    // progress (the CLI emits no stdout for the command duration and owns its own
+    // per-tool timeout), so it never false-kills a legitimately long command.
+    let openClaudeCommandCount = 0
+    let claudeStallTimer: ReturnType<typeof setTimeout> | undefined
+
+    const clearClaudeStallTimer = () => {
+      if (claudeStallTimer) {
+        clearTimeout(claudeStallTimer)
+        claudeStallTimer = undefined
+      }
+    }
+
+    const scheduleClaudeStallTimer = () => {
+      clearClaudeStallTimer()
+
+      if (finished) {
+        return
+      }
+
+      const timeoutMs = resolveLocalStreamStallTimeoutMs({
+        sawStreamOutput: sawClaudeStreamOutput,
+        openCommandCount: openClaudeCommandCount,
+        firstByteTimeoutMs: getLocalProviderFirstByteTimeoutMs(),
+        stallTimeoutMs: getLocalProviderStallTimeoutMs(),
+      })
+
+      if (timeoutMs === null) {
+        return
+      }
+
+      claudeStallTimer = setTimeout(() => {
+        claudeStallTimer = undefined
+
+        if (finished) {
+          return
+        }
+
+        finished = true
+        managedChild.setActiveChild(null)
+        const message = sawClaudeStreamOutput
+          ? 'Claude stalled after emitting stream output.'
+          : 'Claude stalled without emitting stream output.'
+        sink.onError(
+          message,
+          undefined,
+          classifyLiveProviderStreamRecovery(currentRequest, message, undefined, emittedSessionId),
+        )
+        child.kill()
+      }, timeoutMs)
+    }
 
     const stdoutLines = readLines(child.stdout, (line) => {
       if (!line.trim()) {
@@ -2053,6 +2130,9 @@ export const launchProviderRun = async (request: ChatRequest, sink: StreamSink) 
       try {
         const event = JSON.parse(line)
         sawClaudeStreamOutput = true
+        // Any line is progress: reset the watchdog. The command-count update in
+        // the activity loop below re-evaluates (and disarms) it for tool runs.
+        scheduleClaudeStallTimer()
 
         if (event.type === 'system' && event.subtype === 'init' && typeof event.session_id === 'string') {
           emittedSessionId = event.session_id
@@ -2070,15 +2150,32 @@ export const launchProviderRun = async (request: ChatRequest, sink: StreamSink) 
               .join('')
 
             if (textContent.trim()) {
+              sawMeaningfulAssistantText = true
               sink.onDelta(textContent)
             }
           }
         }
 
         for (const parsed of claudeStructuredEvents) {
+          if (structuredActivityCountsAsTurnOutput(parsed.kind)) {
+            sawStructuredActivity = true
+          }
+          if (parsed.kind === 'command') {
+            if (parsed.status === 'in_progress') {
+              openClaudeCommandCount += 1
+            } else if (parsed.status === 'completed') {
+              openClaudeCommandCount = Math.max(0, openClaudeCommandCount - 1)
+            }
+          }
           const activity = { ...parsed }
           delete (activity as { type?: 'activity' }).type
           sink.onActivity(activity)
+        }
+
+        if (claudeStructuredEvents.length > 0) {
+          // Re-evaluate the watchdog now that the in-progress command count may
+          // have changed: disarm while a command runs, re-arm once it completes.
+          scheduleClaudeStallTimer()
         }
 
         if (
@@ -2100,7 +2197,13 @@ export const launchProviderRun = async (request: ChatRequest, sink: StreamSink) 
           typeof event.event.delta.text === 'string'
         ) {
           sawClaudeDelta = true
-          sink.onDelta(event.event.delta.text)
+          const safeText = askUserDeltaStripper.push(event.event.delta.text)
+          if (safeText) {
+            if (safeText.trim()) {
+              sawMeaningfulAssistantText = true
+            }
+            sink.onDelta(safeText)
+          }
           return
         }
 
@@ -2110,13 +2213,38 @@ export const launchProviderRun = async (request: ChatRequest, sink: StreamSink) 
 
         if (event.type === 'result') {
           finished = true
+          clearClaudeStallTimer()
           managedChild.setActiveChild(null)
+
+          const residualDelta = askUserDeltaStripper.flush()
+          if (residualDelta) {
+            if (residualDelta.trim()) {
+              sawMeaningfulAssistantText = true
+            }
+            sink.onDelta(residualDelta)
+          }
 
           if (event.is_error) {
             const message =
               typeof event.result === 'string' ? event.result : formatClaudeRunFailed(language)
             const hint = classifyLaunchErrorHint(message)
             sink.onError(message, hint, classifyLiveProviderStreamRecovery(currentRequest, message, hint, emittedSessionId))
+            return
+          }
+
+          // A clean `result` can still be a dead-end: the model typed a tool call
+          // as text (now stripped) and produced no real activity or prose, so the
+          // turn did nothing. Auto-resume it via the bounded renderer retry path
+          // instead of calling onDone() and stalling the chat ("老是停住").
+          const emptyToolCallRecovery = shouldRecoverEmptyToolCallTurn({
+            consumedRealToolCallBlock: askUserDeltaStripper.consumedToolCallBlockCount() > 0,
+            sawStructuredActivity,
+            sawMeaningfulAssistantText,
+            hasSessionId: Boolean((emittedSessionId ?? currentRequest.sessionId)?.trim()),
+          })
+
+          if (emptyToolCallRecovery) {
+            sink.onError(formatClaudeTypedToolCallStalled(language), undefined, emptyToolCallRecovery)
             return
           }
 
@@ -2136,7 +2264,12 @@ export const launchProviderRun = async (request: ChatRequest, sink: StreamSink) 
       stderr += `${line}\n`
     })
 
+    // Arm the first-byte watchdog: if the CLI never produces output (or a
+    // terminal event) it would otherwise hang the card indefinitely.
+    scheduleClaudeStallTimer()
+
     child.on('close', (code) => {
+      clearClaudeStallTimer()
       stdoutLines.close()
       stderrLines.close()
 
@@ -2188,6 +2321,8 @@ export const launchProviderRun = async (request: ChatRequest, sink: StreamSink) 
     })
 
     child.on('error', (error) => {
+      clearClaudeStallTimer()
+
       if (finished) {
         managedChild.setActiveChild(null)
         return

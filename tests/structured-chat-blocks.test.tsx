@@ -374,6 +374,34 @@ test('shows non-zero exit code for failed commands', () => {
   assert.match(markup, /Exit code 1/)
 })
 
+test('shows a running indicator on an in-progress command card', () => {
+  const card = createCard()
+  card.messages[1] = {
+    ...card.messages[1],
+    meta: {
+      ...card.messages[1].meta,
+      structuredData: JSON.stringify({
+        itemId: 'item_1',
+        status: 'in_progress',
+        command: 'pnpm test:full',
+        output: '',
+        exitCode: null,
+      }),
+    },
+  }
+
+  const markup = renderCard(card)
+
+  assert.match(markup, /structured-command-running-indicator/)
+})
+
+test('does not show a running indicator on a completed command card', () => {
+  // createCard()'s first command (item_1) is already completed with exit 0.
+  const markup = renderCard(createCard())
+
+  assert.doesNotMatch(markup, /structured-command-running-indicator/)
+})
+
 test('strips shell wrapper from command display', () => {
   assert.equal(
     cleanCommandDisplay(

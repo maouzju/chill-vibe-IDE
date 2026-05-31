@@ -1656,6 +1656,58 @@ const buildFakeClaudeAskUserXmlScript = () =>
     "reply({ type: 'result', is_error: false, result: 'ok' })",
   ].join('\n')
 
+const buildFakeClaudeAskUserXmlPartialStreamScript = () => {
+  const fullXml =
+    '<ask-user-question>{"header":"Confirmation","question":"Which path should I use?","multiSelect":false,"options":[{"label":"Delete normally","description":"Delete only the current skill."},{"label":"Check impact first","description":"Inspect remotes and refs before deciding."}]}</ask-user-question>'
+  // Split the XML into uneven chunks to mimic real char-by-char partial-message
+  // streaming where the tag boundaries land mid-chunk.
+  const chunks = [
+    fullXml.slice(0, 5),
+    fullXml.slice(5, 18),
+    fullXml.slice(18, 60),
+    fullXml.slice(60, fullXml.length - 12),
+    fullXml.slice(fullXml.length - 12),
+  ]
+
+  return [
+    "const reply = (message) => process.stdout.write(`${JSON.stringify(message)}\\n`)",
+    `const chunks = ${JSON.stringify(chunks)}`,
+    `const fullXml = ${JSON.stringify(fullXml)}`,
+    "for (const text of chunks) {",
+    "  reply({ type: 'stream_event', event: { type: 'content_block_delta', delta: { type: 'text_delta', text } } })",
+    '}',
+    // Real Claude CLI follows partial-message deltas with the complete assistant
+    // message carrying the same text; the ask-user card is parsed from it.
+    "reply({ type: 'assistant', message: { id: 'msg_ask_user', content: [{ type: 'text', text: fullXml }] } })",
+    "reply({ type: 'result', is_error: false, result: 'ok' })",
+  ].join('\n')
+}
+
+const buildFakeClaudeProseThenAskUserXmlPartialStreamScript = () => {
+  const prose = 'Here is the context before I ask. '
+  const fullXml =
+    '<ask-user-question>{"header":"Confirmation","question":"Which path should I use?","multiSelect":false,"options":[{"label":"Delete normally","description":"Delete only the current skill."},{"label":"Check impact first","description":"Inspect remotes and refs before deciding."}]}</ask-user-question>'
+  const combined = `${prose}${fullXml}`
+  const chunks = [
+    combined.slice(0, 12),
+    combined.slice(12, prose.length + 4),
+    combined.slice(prose.length + 4, prose.length + 50),
+    combined.slice(prose.length + 50, combined.length - 8),
+    combined.slice(combined.length - 8),
+  ]
+
+  return [
+    "const reply = (message) => process.stdout.write(`${JSON.stringify(message)}\\n`)",
+    `const chunks = ${JSON.stringify(chunks)}`,
+    `const combined = ${JSON.stringify(combined)}`,
+    "for (const text of chunks) {",
+    "  reply({ type: 'stream_event', event: { type: 'content_block_delta', delta: { type: 'text_delta', text } } })",
+    '}',
+    "reply({ type: 'assistant', message: { id: 'msg_ask_user', content: [{ type: 'text', text: combined }] } })",
+    "reply({ type: 'result', is_error: false, result: 'ok' })",
+  ].join('\n')
+}
+
 const buildFakeCodexRecoverableDisconnectScript = () =>
   [
     "const readline = require('node:readline')",
@@ -2128,58 +2180,83 @@ test('codex app-server chunked placeholder-only turn completion is recoverable i
 })
 
 test('codex app-server placeholder-only stalls are failed fast as recoverable transient resumes', async () => {
+  const originalPlaceholderTimeout = process.env.CHILL_VIBE_TRANSIENT_PLACEHOLDER_TIMEOUT_MS
   process.env.CHILL_VIBE_TRANSIENT_PLACEHOLDER_TIMEOUT_MS = '60'
 
-  const outcome = await withFakeProviderCommand(
-    'codex',
-    buildFakeCodexReconnectPlaceholderStallScript(),
-    async (workspacePath) =>
-      captureProviderRecoveryFailure(
-        createRequest({
-          provider: 'codex',
-          language: 'en',
-          workspacePath,
-        }),
-      ),
-  )
+  try {
+    const outcome = await withFakeProviderCommand(
+      'codex',
+      buildFakeCodexReconnectPlaceholderStallScript(),
+      async (workspacePath) =>
+        captureProviderRecoveryFailure(
+          createRequest({
+            provider: 'codex',
+            language: 'en',
+            workspacePath,
+          }),
+        ),
+    )
 
-  assert.deepEqual(outcome, {
-    kind: 'error',
-    message: 'Codex stalled after producing only transient reconnect placeholders.',
-    recovery: {
-      recoverable: true,
-      recoveryMode: 'resume-session',
-      transientOnly: true,
-    },
-  })
+    assert.deepEqual(outcome, {
+      kind: 'error',
+      message: 'Codex stalled after producing only transient reconnect placeholders.',
+      recovery: {
+        recoverable: true,
+        recoveryMode: 'resume-session',
+        transientOnly: true,
+      },
+    })
+  } finally {
+    if (typeof originalPlaceholderTimeout === 'string') {
+      process.env.CHILL_VIBE_TRANSIENT_PLACEHOLDER_TIMEOUT_MS = originalPlaceholderTimeout
+    } else {
+      delete process.env.CHILL_VIBE_TRANSIENT_PLACEHOLDER_TIMEOUT_MS
+    }
+  }
 })
 
 test('codex app-server silent stalls fail fast as recoverable resumes', async () => {
+  const originalLocalFirstByteTimeout = process.env.CHILL_VIBE_LOCAL_PROVIDER_FIRST_BYTE_TIMEOUT_MS
+  const originalLocalStallTimeout = process.env.CHILL_VIBE_LOCAL_PROVIDER_STALL_TIMEOUT_MS
   process.env.CHILL_VIBE_LOCAL_PROVIDER_FIRST_BYTE_TIMEOUT_MS = '200'
   process.env.CHILL_VIBE_LOCAL_PROVIDER_STALL_TIMEOUT_MS = '200'
 
-  const outcome = await withFakeProviderCommand(
-    'codex',
-    buildFakeCodexSilentAfterTurnStartScript(),
-    async (workspacePath) =>
-      captureProviderRecoveryFailureWithin(
-        createRequest({
-          provider: 'codex',
-          language: 'en',
-          workspacePath,
-        }),
-        1000,
-      ),
-  )
+  try {
+    const outcome = await withFakeProviderCommand(
+      'codex',
+      buildFakeCodexSilentAfterTurnStartScript(),
+      async (workspacePath) =>
+        captureProviderRecoveryFailureWithin(
+          createRequest({
+            provider: 'codex',
+            language: 'en',
+            workspacePath,
+          }),
+          1000,
+        ),
+    )
 
-  assert.deepEqual(outcome, {
-    kind: 'error',
-    message: 'Codex stalled without emitting stream output.',
-    recovery: {
-      recoverable: true,
-      recoveryMode: 'resume-session',
-    },
-  })
+    assert.deepEqual(outcome, {
+      kind: 'error',
+      message: 'Codex stalled without emitting stream output.',
+      recovery: {
+        recoverable: true,
+        recoveryMode: 'resume-session',
+      },
+    })
+  } finally {
+    if (typeof originalLocalFirstByteTimeout === 'string') {
+      process.env.CHILL_VIBE_LOCAL_PROVIDER_FIRST_BYTE_TIMEOUT_MS = originalLocalFirstByteTimeout
+    } else {
+      delete process.env.CHILL_VIBE_LOCAL_PROVIDER_FIRST_BYTE_TIMEOUT_MS
+    }
+
+    if (typeof originalLocalStallTimeout === 'string') {
+      process.env.CHILL_VIBE_LOCAL_PROVIDER_STALL_TIMEOUT_MS = originalLocalStallTimeout
+    } else {
+      delete process.env.CHILL_VIBE_LOCAL_PROVIDER_STALL_TIMEOUT_MS
+    }
+  }
 })
 
 
@@ -2943,6 +3020,70 @@ test('claude ask-user XML emits the interactive activity without leaking the raw
     },
     { kind: 'done' },
   ])
+})
+
+test('claude ask-user XML streamed as partial-message deltas does not leak raw XML', async () => {
+  const events = await withFakeProviderCommand(
+    'claude',
+    buildFakeClaudeAskUserXmlPartialStreamScript(),
+    async (workspacePath) =>
+      captureProviderEvents(
+        createRequest({
+          provider: 'claude',
+          model: 'claude-sonnet-4-6',
+          language: 'en',
+          workspacePath,
+        }),
+      ),
+  )
+
+  const deltaText = events
+    .filter((event): event is { kind: 'delta'; content: string } => event.kind === 'delta')
+    .map((event) => event.content)
+    .join('')
+
+  assert.equal(
+    deltaText.includes('ask-user-question'),
+    false,
+    `raw ask-user XML leaked into deltas: ${JSON.stringify(deltaText)}`,
+  )
+  assert.equal(deltaText.includes('<ask-user'), false)
+  assert.equal(deltaText.trim(), '')
+
+  const askUserActivity = events.find(
+    (event) => event.kind === 'activity' && event.activity.kind === 'ask-user',
+  )
+  assert.ok(askUserActivity, 'expected an ask-user activity to be emitted')
+})
+
+test('claude prose before ask-user XML keeps the prose delta and strips only the XML', async () => {
+  const events = await withFakeProviderCommand(
+    'claude',
+    buildFakeClaudeProseThenAskUserXmlPartialStreamScript(),
+    async (workspacePath) =>
+      captureProviderEvents(
+        createRequest({
+          provider: 'claude',
+          model: 'claude-sonnet-4-6',
+          language: 'en',
+          workspacePath,
+        }),
+      ),
+  )
+
+  const deltaText = events
+    .filter((event): event is { kind: 'delta'; content: string } => event.kind === 'delta')
+    .map((event) => event.content)
+    .join('')
+
+  assert.equal(deltaText.includes('ask-user-question'), false)
+  assert.equal(deltaText.includes('<ask-user'), false)
+  assert.equal(deltaText.trim(), 'Here is the context before I ask.')
+
+  const askUserActivity = events.find(
+    (event) => event.kind === 'activity' && event.activity.kind === 'ask-user',
+  )
+  assert.ok(askUserActivity, 'expected an ask-user activity to be emitted')
 })
 
 test('codex app-server retries turn/start without effort when an older CLI rejects that field', async () => {

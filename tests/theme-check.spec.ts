@@ -1992,12 +1992,8 @@ test('theme toggle applies dark and light surfaces consistently', async ({ page 
     animations: 'disabled',
   })
 
-  const slashMenuPosition = await readComputedValue(page.locator('#fixture-slash-menu'), 'position')
-  expect(slashMenuPosition).toBe('absolute')
   const slashMenuOverflowY = await readComputedValue(page.locator('#fixture-slash-menu'), 'overflow-y')
   expect(slashMenuOverflowY).toBe('auto')
-  const slashMenuMaxHeight = await readComputedValue(page.locator('#fixture-slash-menu'), 'max-height')
-  expect(slashMenuMaxHeight).not.toBe('none')
 
   await settingsTab.click()
   await expect(settingsTab).toHaveAttribute('aria-selected', 'true')

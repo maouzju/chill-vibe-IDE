@@ -11,6 +11,92 @@ import type { StructuredToolGroupItem } from './chat-card-parsing'
 const REMARK_PLUGINS = [remarkGfm]
 const markdownComponentsCache = new Map<string, ReturnType<typeof createMarkdownComponents>>()
 
+// While a reply is still streaming, the text can end mid-markdown: a lone
+// opening backtick (the closing one has not arrived yet) or an unterminated
+// ``` fenced block. CommonMark then keeps the trailing prose inside an
+// unterminated code context, which can make the tail of the bubble disappear
+// until the closing marker streams in — surfacing as a reply that looks
+// truncated at the backtick. Auto-closing these dangling spans before handing
+// the text to ReactMarkdown keeps every character visible during streaming
+// without changing already-balanced content.
+export const closeUnclosedMarkdownSpans = (content: string): string => {
+  if (!content || !content.includes('`')) {
+    return content
+  }
+
+  const lines = content.split('\n')
+  let fenceOpen = false
+  let fenceMarker = '```'
+  let fenceStartLine = -1
+
+  for (let i = 0; i < lines.length; i += 1) {
+    const fenceMatch = lines[i]!.match(/^\s*(`{3,})/)
+    if (fenceMatch) {
+      const marker = fenceMatch[1]!
+      if (!fenceOpen) {
+        fenceOpen = true
+        fenceMarker = marker
+        fenceStartLine = i
+      } else if (marker.length >= fenceMarker.length) {
+        fenceOpen = false
+        fenceStartLine = -1
+      }
+    }
+  }
+
+  if (fenceOpen) {
+    // An unterminated fenced block. If real prose already follows the fenced
+    // content (a blank line, then a non-fence non-empty line), the author has
+    // moved on past the code: closing the fence at the very end would swallow
+    // that prose into one giant code block (the screenshot regression). So look
+    // for the first "blank line + content" boundary after the fence and close
+    // it there, leaving the trailing prose to render as normal paragraphs.
+    // While text is still streaming the tail code, no such boundary exists yet,
+    // so we fall back to appending the closing fence at the end.
+    for (let i = fenceStartLine + 2; i < lines.length; i += 1) {
+      const prevBlank = lines[i - 1]!.trim() === ''
+      const current = lines[i]!
+      const isContent = current.trim() !== '' && !/^\s*(`{3,})/.test(current)
+      if (prevBlank && isContent) {
+        const head = lines.slice(0, i - 1)
+        const tail = lines.slice(i - 1)
+        return [...head, fenceMarker, ...tail].join('\n')
+      }
+    }
+    const needsNewline = content.endsWith('\n') ? '' : '\n'
+    return `${content}${needsNewline}${fenceMarker}`
+  }
+
+  // Outside fences, count inline-code backticks that are not part of a ``` fence
+  // marker. An odd count means a single inline span is still open.
+  let inlineTicks = 0
+  let lineFenceOpen = false
+  let lineFenceMarker = '```'
+  for (const line of lines) {
+    const fenceMatch = line.match(/^\s*(`{3,})/)
+    if (fenceMatch) {
+      const marker = fenceMatch[1]!
+      if (!lineFenceOpen) {
+        lineFenceOpen = true
+        lineFenceMarker = marker
+      } else if (marker.length >= lineFenceMarker.length) {
+        lineFenceOpen = false
+      }
+      continue
+    }
+    if (lineFenceOpen) {
+      continue
+    }
+    inlineTicks += (line.match(/`/g) ?? []).length
+  }
+
+  if (inlineTicks % 2 === 1) {
+    return `${content}\``
+  }
+
+  return content
+}
+
 export const isLocalMessageLinkHref = (href: string | null | undefined) => {
   const value = href?.trim() ?? ''
 
@@ -465,7 +551,7 @@ const renderPlainMarkdown = (content: string, workspacePath: string | undefined,
     remarkPlugins={REMARK_PLUGINS}
     components={getMarkdownComponents(workspacePath)}
   >
-    {content}
+    {closeUnclosedMarkdownSpans(content)}
   </ReactMarkdown>
 )
 
@@ -532,6 +618,7 @@ export const getStructuredLabels = (language: AppLanguage) => {
       running: 'Running',
       completed: 'Completed',
       declined: 'Declined',
+      commandRunning: 'Running command',
       viewDetails: 'View details',
       closeDetails: 'Close details',
       toolSummary: (toolName: string) => `${toolName} summary`,
@@ -593,6 +680,7 @@ export const getStructuredLabels = (language: AppLanguage) => {
     running: '\u8FDB\u884C\u4E2D',
     completed: '\u5DF2\u5B8C\u6210',
     declined: '\u5DF2\u62D2\u7EDD',
+    commandRunning: '\u547D\u4EE4\u6267\u884C\u4E2D',
     viewDetails: '\u67E5\u770B\u5168\u90E8',
     closeDetails: '\u5173\u95ED\u8BE6\u60C5',
       toolSummary: (toolName: string) => `${toolName} \u6458\u8981`,

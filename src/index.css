@@ -3268,11 +3268,7 @@ body.is-card-dragging .lane-drop-zone-top {
 
 /* Slash command side popup — floats beside the card */
 .slash-command-menu {
-  position: absolute;
-  bottom: 0;
-  width: clamp(18rem, 32vw, 28rem);
   max-width: min(28rem, calc(100vw - 1rem));
-  max-height: min(24rem, 60vh);
   overflow-y: auto;
   overscroll-behavior: contain;
   scrollbar-gutter: stable;
@@ -3282,15 +3278,7 @@ body.is-card-dragging .lane-drop-zone-top {
   border-radius: 12px;
   background: var(--menu-bg);
   box-shadow: var(--shadow-sm);
-  z-index: 10;
-}
-
-.slash-command-menu.is-side-right {
-  left: calc(100% + 0.5rem);
-}
-
-.slash-command-menu.is-side-left {
-  right: calc(100% + 0.5rem);
+  z-index: 9999;
 }
 
 .slash-command-item {
@@ -4646,6 +4634,32 @@ body.is-card-dragging .lane-drop-zone-top {
 .structured-command-inline {
   --structured-command-inline-accent: var(--accent-line-strong);
 }
+
+.structured-command-running-indicator {
+  display: inline-flex;
+  align-items: center;
+  flex: 0 0 auto;
+  margin-left: auto;
+  padding-left: 0.3rem;
+}
+
+.structured-command-running-dots {
+  display: inline-flex;
+  gap: 3px;
+  align-items: center;
+}
+
+.structured-command-running-dots span {
+  display: inline-block;
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: var(--accent);
+  animation: bounce-dot 1.4s ease-in-out infinite;
+}
+
+.structured-command-running-dots span:nth-child(2) { animation-delay: 0.16s; }
+.structured-command-running-dots span:nth-child(3) { animation-delay: 0.32s; }
 
 .structured-command-inline-row {
   display: flex;

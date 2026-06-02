@@ -541,6 +541,74 @@ test('renders tool card without toolInput (backward compatible)', () => {
   assert.doesNotMatch(markup, /structured-tool-details/)
 })
 
+test('hides generic Claude tool-call labels like call from the visible chat card', () => {
+  const card = createClaudeToolCard()
+  card.messages[0] = {
+    ...card.messages[0],
+    meta: {
+      kind: 'tool',
+      provider: 'claude',
+      structuredData: JSON.stringify({
+        itemId: 'toolu_generic_call',
+        status: 'completed',
+        toolName: 'call',
+        summary: 'Read App.tsx',
+        toolInput: {
+          file_path: 'src/App.tsx',
+        },
+      }),
+    },
+  }
+
+  const markup = renderCard(card)
+
+  assert.doesNotMatch(markup, />call</)
+  assert.match(markup, /Read App\.tsx/)
+})
+
+test('hides leaked Claude call marker bubbles next to structured tool groups', () => {
+  const card = createClaudeToolCard()
+  card.messages = [
+    {
+      id: 'leaked-call-marker',
+      role: 'assistant',
+      content: 'call',
+      createdAt: '2026-04-05T12:00:59.000Z',
+      meta: {
+        provider: 'claude',
+      },
+    },
+    ...card.messages,
+  ]
+
+  const markup = renderCard(card)
+
+  assert.doesNotMatch(markup, />call</)
+  assert.match(markup, /Used 1 tool/)
+  assert.match(markup, /Read App\.tsx/)
+})
+
+test('hides leaked Claude call marker lines inside assistant text bubbles', () => {
+  const card = createClaudeToolCard()
+  card.messages = [
+    {
+      id: 'assistant-with-call-lines',
+      role: 'assistant',
+      content: 'call\nEdit failed, retrying with PowerShell.\n\ncall\nNow checking the file.',
+      createdAt: '2026-04-05T12:00:59.000Z',
+      meta: {
+        provider: 'claude',
+      },
+    },
+  ]
+
+  const markup = renderCard(card)
+
+  assert.doesNotMatch(markup, />call</)
+  assert.match(markup, /Edit failed, retrying with PowerShell/)
+  assert.match(markup, /Now checking the file/)
+})
+
 test('renders structured edited-file diff blocks', () => {
   const markup = renderCard(createEditedFilesCard())
 

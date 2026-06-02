@@ -439,6 +439,16 @@ const buildToolSummary = (
     : summary
 }
 
+const getVisibleToolName = (language: AppLanguage, toolName: string) => {
+  const normalized = toolName.trim().toLowerCase()
+
+  if (normalized === 'call') {
+    return language === 'en' ? 'Tool' : '工具'
+  }
+
+  return toolName
+}
+
 const buildToolDetails = (
   language: AppLanguage,
   toolName: string,
@@ -503,6 +513,7 @@ export const StructuredToolCard = ({
 }) => {
   const details = buildToolDetails(language, data.toolName, data.toolInput)
   const summary = buildToolSummary(language, data.toolName, data.summary, data.toolInput)
+  const visibleToolName = getVisibleToolName(language, data.toolName)
   const [collapsed, setCollapsed] = useState(true)
   const hasDetails = details.length > 0
 
@@ -521,7 +532,7 @@ export const StructuredToolCard = ({
         } : undefined}
       >
         <div className="structured-command-main">
-          <strong className="structured-command-label">{data.toolName}</strong>
+          <strong className="structured-command-label">{visibleToolName}</strong>
           <span className="structured-command-text">{summary}</span>
         </div>
         {hasDetails ? (

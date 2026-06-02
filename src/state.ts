@@ -707,6 +707,39 @@ const upsertCardMessages = (messages: ChatMessage[], updates: ChatMessage[]) => 
   return nextMessages
 }
 
+const settleStoppedStreamMessages = (messages: ChatMessage[]) => {
+  let didChange = false
+
+  const nextMessages = messages.map((message) => {
+    if (message.meta?.kind !== 'command' || typeof message.meta.structuredData !== 'string') {
+      return message
+    }
+
+    try {
+      const payload = JSON.parse(message.meta.structuredData) as Record<string, unknown>
+      if (payload.status !== 'in_progress') {
+        return message
+      }
+
+      didChange = true
+      return {
+        ...message,
+        meta: {
+          ...message.meta,
+          structuredData: JSON.stringify({
+            ...payload,
+            status: 'declined',
+          }),
+        },
+      }
+    } catch {
+      return message
+    }
+  })
+
+  return didChange ? nextMessages : messages
+}
+
 const getAverageColumnWidth = (columns: BoardColumn[]) => {
   const widths = columns
     .map((column) => normalizeColumnWidth(column.width))
@@ -1948,15 +1981,19 @@ export const ideReducer = (state: AppState, action: IdeAction): AppState => {
       )
     case 'finishStoppedStream':
       return touchState(
-        updateCard(state, action.columnId, action.cardId, (card) => ({
-          ...card,
-          status: 'idle',
-          streamId: undefined,
-          unread: action.unread ?? card.unread,
-          messages: action.stoppedMessage
-            ? [...card.messages, action.stoppedMessage]
-            : card.messages,
-        })),
+        updateCard(state, action.columnId, action.cardId, (card) => {
+          const settledMessages = settleStoppedStreamMessages(card.messages)
+
+          return {
+            ...card,
+            status: 'idle',
+            streamId: undefined,
+            unread: action.unread ?? card.unread,
+            messages: action.stoppedMessage
+              ? [...settledMessages, action.stoppedMessage]
+              : settledMessages,
+          }
+        }),
       )
     case 'recordRecentWorkspace': {
       const path = action.path.trim()

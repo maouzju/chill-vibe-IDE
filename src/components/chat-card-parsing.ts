@@ -175,7 +175,7 @@ export const parseStructuredReasoningMessage = (message: ChatMessage): Structure
   }
 
   const itemId = readStructuredString(payload, 'itemId')
-  const text = readStructuredString(payload, 'text')
+  const text = sanitizeLeakedCallMarkerLines(readStructuredString(payload, 'text') ?? '')
 
   if (!itemId || !text) {
     return null
@@ -691,7 +691,7 @@ export const getStickyRenderableUserMessageId = (
 
 const isEmptySkippableMessage = (message: ChatMessage) => {
   if (isHiddenCompactBoundaryMessage(message)) return true
-  if (message.content.trim()) return false
+  if (sanitizeLeakedClaudeCallMarkerContent(message).trim()) return false
   if (message.meta?.imageAttachments) return false
 
   const kind = message.meta?.kind
@@ -702,6 +702,38 @@ const isEmptySkippableMessage = (message: ChatMessage) => {
   if (message.role === 'assistant' && !kind) return true
 
   return false
+}
+
+const sanitizeLeakedCallMarkerLines = (content: string) => {
+  const lines = content.split(/\r?\n/)
+  const cleanedLines = lines.filter((line) => line.trim().toLowerCase() !== 'call')
+  if (cleanedLines.length === lines.length) {
+    return content
+  }
+
+  return cleanedLines.join('\n').trim()
+}
+
+
+const canContainLeakedClaudeCallMarker = (message: ChatMessage) => {
+  if (message.role !== 'assistant') return false
+  if (message.meta?.kind) return false
+  if (message.meta?.imageAttachments) return false
+
+  return true
+}
+
+const sanitizeLeakedClaudeCallMarkerContent = (message: ChatMessage) => {
+  if (!canContainLeakedClaudeCallMarker(message)) return message.content
+
+  return sanitizeLeakedCallMarkerLines(message.content)
+}
+
+
+const normalizeLeakedClaudeCallMarkerMessage = (message: ChatMessage): ChatMessage => {
+  const content = sanitizeLeakedClaudeCallMarkerContent(message)
+
+  return content === message.content ? message : { ...message, content }
 }
 
 const mergeAdjacentAskUserMessages = (
@@ -763,7 +795,8 @@ export const buildRenderableMessages = (messages: ChatMessage[]): RenderableMess
   let index = 0
 
   while (index < messages.length) {
-    const currentMessage = messages[index]!
+    const currentMessage = normalizeLeakedClaudeCallMarkerMessage(messages[index]!)
+
     const command = parseStructuredCommandMessage(currentMessage)
     const tool = parseStructuredToolMessage(currentMessage)
     const edits = parseStructuredEditsMessage(currentMessage)
@@ -802,7 +835,7 @@ export const buildRenderableMessages = (messages: ChatMessage[]): RenderableMess
     const groupItems: StructuredToolGroupItem[] = []
 
     while (index < messages.length) {
-      const msg = messages[index]!
+      const msg = normalizeLeakedClaudeCallMarkerMessage(messages[index]!)
       const cmd = parseStructuredCommandMessage(msg)
       const tl = parseStructuredToolMessage(msg)
       const ed = parseStructuredEditsMessage(msg)

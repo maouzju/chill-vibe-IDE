@@ -1671,6 +1671,66 @@ describe('ideReducer pane layout', () => {
     assert.equal(card?.messages[1]?.meta?.kind, 'run-stopped')
   })
 
+  it('settles in-progress command activity when a streaming card is stopped', () => {
+    const state = createState()
+    state.columns[0] = createColumn({
+      id: 'column-1',
+      layout: createPane('pane-1', ['card-1'], 'card-1'),
+      cards: {
+        'card-1': createCard({
+          id: 'card-1',
+          status: 'streaming',
+          streamId: 'stream-1',
+          messages: [
+            {
+              id: 'cmd-1',
+              role: 'assistant',
+              content: '',
+              createdAt: timestamp,
+              meta: {
+                provider: 'claude',
+                kind: 'command',
+                itemId: 'toolu_cmd_1',
+                structuredData: JSON.stringify({
+                  itemId: 'toolu_cmd_1',
+                  kind: 'command',
+                  status: 'in_progress',
+                  command: 'pnpm test',
+                  output: '',
+                  exitCode: null,
+                }),
+              },
+            },
+          ],
+        }),
+      },
+    })
+
+    const next = ideReducer(state, {
+      type: 'finishStoppedStream',
+      columnId: 'column-1',
+      cardId: 'card-1',
+      stoppedMessage: {
+        id: 'stopped-1',
+        role: 'system',
+        content: 'This run was stopped.',
+        createdAt: timestamp,
+        meta: {
+          kind: 'run-stopped',
+          stopReason: 'manual',
+        },
+      },
+    })
+
+    const card = next.columns[0]?.cards['card-1']
+    assert.equal(card?.status, 'idle')
+    const commandPayload = JSON.parse(card?.messages[0]?.meta?.structuredData ?? '{}') as {
+      status?: string
+    }
+    assert.equal(commandPayload.status, 'declined')
+    assert.equal(card?.messages[1]?.meta?.kind, 'run-stopped')
+  })
+
 });
 describe('addColumn follows last-used provider/model when available', () => {
   it('uses the last-used provider and model even when the last column uses another provider', () => {

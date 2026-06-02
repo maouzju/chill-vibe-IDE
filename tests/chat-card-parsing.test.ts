@@ -11,6 +11,7 @@ import {
   getLastRenderableUserMessageId,
   getTopVisibleRenderableEntryId,
   parseStructuredAskUserMessage,
+  parseStructuredReasoningMessage,
   parseStructuredTodoMessage,
 } from '../src/components/chat-card-parsing.ts'
 
@@ -153,6 +154,80 @@ test('buildRenderableMessages skips broken tool messages between valid tool grou
   assert.equal(result[0]!.type, 'tool-group')
   if (result[0]!.type === 'tool-group') {
     assert.equal(result[0]!.items.length, 2)
+  }
+})
+
+
+test('buildRenderableMessages skips standalone leaked Claude call marker messages', () => {
+  const before = makeMessage({ id: 'before-call', content: 'Before the leaked marker.' })
+  const leaked = makeMessage({
+    id: 'leaked-call',
+    content: 'call',
+    meta: { provider: 'claude' },
+  })
+  const after = makeMessage({ id: 'after-call', content: 'After the leaked marker.' })
+
+  const result = buildRenderableMessages([before, leaked, after])
+
+  assert.equal(result.length, 2)
+  assert.deepEqual(
+    result.flatMap((entry) => (entry.type === 'message' ? [entry.message.id] : [])),
+    ['before-call', 'after-call'],
+  )
+})
+
+
+test('buildRenderableMessages removes leaked call marker lines even when provider is not Claude', () => {
+  const leaked = makeMessage({
+    id: 'leaked-codex-call-lines',
+    content: 'First line.\n\ncall\nSecond line.\n\ncall',
+    meta: { provider: 'codex' },
+  })
+
+  const result = buildRenderableMessages([leaked])
+
+  assert.equal(result.length, 1)
+  assert.equal(result[0]!.type, 'message')
+  if (result[0]!.type === 'message') {
+    assert.equal(result[0]!.message.content, 'First line.\n\nSecond line.')
+  }
+})
+
+
+test('parseStructuredReasoningMessage removes leaked call marker lines from reasoning text', () => {
+  const reasoning = makeMessage({
+    id: 'reasoning-call-lines',
+    content: '',
+    meta: {
+      kind: 'reasoning',
+      provider: 'claude',
+      structuredData: JSON.stringify({
+        itemId: 'reasoning-1',
+        text: 'First thought.\n\ncall\nSecond thought.\ncall',
+      }),
+    },
+  })
+
+  const parsed = parseStructuredReasoningMessage(reasoning)
+
+  assert.ok(parsed)
+  assert.equal(parsed.text, 'First thought.\n\nSecond thought.')
+})
+
+test('buildRenderableMessages removes leaked Claude call marker lines from assistant text', () => {
+  const leaked = makeMessage({
+    id: 'leaked-call-lines',
+    content: 'call\nEdit failed, retrying with PowerShell.\n\ncall\nNow checking the file.',
+    meta: { provider: 'claude' },
+  })
+
+  const result = buildRenderableMessages([leaked])
+
+  assert.equal(result.length, 1)
+  assert.equal(result[0]!.type, 'message')
+  if (result[0]!.type === 'message') {
+    assert.equal(result[0]!.message.id, 'leaked-call-lines')
+    assert.equal(result[0]!.message.content, 'Edit failed, retrying with PowerShell.\n\nNow checking the file.')
   }
 })
 

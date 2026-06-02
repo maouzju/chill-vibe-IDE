@@ -409,6 +409,9 @@ const bodyLooksLikeRealBlock = (pair: StrippedTagPair, rest: string): boolean =>
   })
 }
 
+const isBacktickPrefixedTagMention = (text: string, openTagIndex: number): boolean =>
+  openTagIndex > 0 && text[openTagIndex - 1] === '`'
+
 const stripCompletedBlocks = (text: string): string => {
   let result = text
   for (const { open, close, bodyStartsWith, allowLeadingWhitespace } of STRIPPED_TAG_PAIRS) {
@@ -519,6 +522,12 @@ export const createClaudeAskUserDeltaStripper = () => {
         const absoluteIndex = scanFrom + openTag.index
         const bodyStart = absoluteIndex + openTag.pair.open.length
         const body = buffer.slice(bodyStart)
+
+        if (isBacktickPrefixedTagMention(buffer, absoluteIndex)) {
+          safe += buffer.slice(scanFrom, bodyStart)
+          scanFrom = bodyStart
+          continue
+        }
 
         if (!bodyLooksLikeRealBlock(openTag.pair, body)) {
           // The tag name is merely mentioned in prose (e.g. inside backticks).
@@ -705,6 +714,24 @@ const parseClaudeAskUserXmlBlock = (
 
 export const createClaudeStructuredOutputParser = (language: AppLanguage) => {
   let lastCommand: { itemId: string; command: string } | null = null
+
+  const settleLastCommand = (): Extract<StreamActivity, { kind: 'command' }> | null => {
+    if (!lastCommand) {
+      return null
+    }
+
+    const completedCommand = {
+      itemId: lastCommand.itemId,
+      kind: 'command' as const,
+      status: 'completed' as const,
+      command: lastCommand.command,
+      output: '',
+      exitCode: null,
+    }
+
+    lastCommand = null
+    return completedCommand
+  }
   let lastWrittenFile: string | null = null
   // Extended thinking arrives as partial-message stream events: a `thinking`
   // content block opens at index 0 (before the text answer), streams
@@ -817,6 +844,10 @@ export const createClaudeStructuredOutputParser = (language: AppLanguage) => {
 
         if (isClaudeCommandTool(toolName)) {
           const command = readString(input, 'command') ?? ''
+          const previousCommand = settleLastCommand()
+          if (previousCommand) {
+            activities.push({ type: 'activity', ...previousCommand })
+          }
           lastCommand = { itemId, command }
           activities.push({
             type: 'activity',
@@ -951,22 +982,25 @@ export const createClaudeStructuredOutputParser = (language: AppLanguage) => {
       const content = typeof message?.content === 'string' ? message.content : ''
       const output = extractClaudeLocalCommandOutput(content)
 
-      if (!output || !lastCommand) {
+      if (!lastCommand) {
         return []
       }
 
-      const completedCommand = {
-        type: 'activity' as const,
-        itemId: lastCommand.itemId,
-        kind: 'command' as const,
-        status: 'completed' as const,
-        command: lastCommand.command,
-        output,
-        exitCode: null,
-      }
+      const completedCommand = settleLastCommand()
+      return completedCommand
+        ? [
+            {
+              type: 'activity' as const,
+              ...completedCommand,
+              output: output ?? '',
+            },
+          ]
+        : []
+    }
 
-      lastCommand = null
-      return [completedCommand]
+    if (event.type === 'result') {
+      const completedCommand = settleLastCommand()
+      return completedCommand ? [{ type: 'activity' as const, ...completedCommand }] : []
     }
 
     return []

@@ -154,8 +154,11 @@ type ChatCard = {
 - 当当前 provider 的本地 CLI 不可用时，聊天发送仍然要进入应用层校验，并在卡片内追加“本地 CLI 不可用”的系统提示；不能只禁用发送按钮让用户反复点击却没有反馈。
 - Claude 流式输出的健壮性（`server/claude-structured-output.ts` + `server/providers.ts` + `server/provider-stream-recovery.ts`）：
   - 模型偶尔把工具调用打成文本（`<function_calls>`/`<invoke>`/`<parameter>`）。增量去除器会剥离这些 XML；遇到**未闭合**的工具调用/ask-user 块时，`flush()` 必须**丢弃**而不是原样吐出——否则渲染层（ReactMarkdown，仅 remark-gfm）会吃掉标签只留下 `<parameter>` 里的内层文本（如 `count`），形成孤立气泡。容器常被换行美化，所以 `<function_calls>` 需容忍其后空白。
+  - When Claude is only mentioning those XML tag names in prose, a leading backtick is enough proof that the tag is user-visible text; stream it immediately instead of waiting for the next body byte, or the live reply looks cut off at the tag.
   - 一轮如果**只**产出了被剥离的工具调用文本（没有真正执行工具、没有有效正文），干净的 `result` 会让聊天静默“停住”。用 `shouldRecoverEmptyToolCallTurn(...)` 判定后改发可恢复的 `resume-session` 错误，交给前端有上限的重试机制自动续跑。
   - Claude 流路径带有失速看门狗：每条 stdout 行都会重置计时器，长时间静默且无终止事件时发可恢复的 `stalled …` 错误；但**有命令在执行时必须停表**（`resolveLocalStreamStallTimeoutMs` 在 `openCommandCount > 0` 时返回 `null`），因为 CLI 执行工具期间本就没有 stdout，否则会误杀正常的长命令。
+  - Claude CLI can start a later Bash/tool_use or finish the turn without emitting a local-command completion block for the previous command. The parser must settle the still-open command as `completed` when the next command starts or when the final `result` arrives; otherwise old command rows keep animated blue dots forever and the stream watchdog stays disarmed.
+  - 手动停止或用户打断运行时，前端 `finishStoppedStream` 必须把当前卡片里仍是 `in_progress` 的命令活动落成 `declined`，再追加“这次运行已停止”提示；否则命令行已经停了，但旧命令行卡片仍会保留蓝点动画。
   - Claude 的扩展思考（thinking）默认要显示，和 Codex 的 reasoning 一致。`--include-partial-messages` 会把思考以 `content_block_start/delta(thinking_delta)/stop` 的 partial 事件流式吐出（位于答案文本之前的 index 0）。`createClaudeStructuredOutputParser` 按块索引累积 `thinking_delta`，在 `content_block_stop` 时吐出一条 `kind: 'reasoning'`、`status: 'completed'` 的 activity，复用与 Codex 完全相同的「思考中」卡片渲染。`signature_delta` 只是校验元数据，忽略即可；思考被省略（omitted display，无 `thinking_delta`）时不产出任何 reasoning 块。reasoning 是模型内部独白，**不算**用户可见产出，所以 `sawStructuredActivity` 不能被 reasoning 置真（`structuredActivityCountsAsTurnOutput('reasoning') === false`）；否则思考默认开启后，会悄悄让「工具调用被打成文本」的空轮兜底（`shouldRecoverEmptyToolCallTurn`）失效。
 
 ### 6.3 持久化

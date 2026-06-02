@@ -39,6 +39,30 @@ const askUser = (id: string): ChatMessage =>
     },
   })
 
+const planApproval = (id: string): ChatMessage =>
+  message({
+    id,
+    role: 'assistant',
+    meta: {
+      kind: 'ask-user',
+      provider: 'claude',
+      itemId: id,
+      structuredData: JSON.stringify({
+        itemId: id,
+        kind: 'ask-user',
+        status: 'completed',
+        planFile: 'plan.md',
+        question: '是否批准这个计划？',
+        header: '计划审批',
+        multiSelect: false,
+        options: [
+          { label: '批准计划', description: '' },
+          { label: '拒绝计划', description: '' },
+        ],
+      }),
+    },
+  })
+
 test('restored ask-user answer state resolves the user reply after the question', () => {
   const firstAsk = askUser('ask-1')
   const messages = [
@@ -62,6 +86,39 @@ test('restored ask-user answer state stops at the next ask-user question', () =>
 
   assert.equal(getLatestUserAnswerAfterAskUserMessage(messages, firstAsk), null)
   assert.equal(getLatestUserAnswerAfterAskUserMessage(messages, secondAsk), 'Deep')
+})
+
+test('plan approval card is not auto-answered by an unrelated following user message', () => {
+  const approval = planApproval('approval-1')
+  const messages = [
+    message({ id: 'assistant-plan', role: 'assistant', content: 'here is the plan' }),
+    approval,
+    message({ id: 'user-unrelated', role: 'user', content: '继续' }),
+    message({ id: 'assistant-after', role: 'assistant', content: 'working' }),
+  ]
+
+  assert.equal(getLatestUserAnswerAfterAskUserMessage(messages, approval), null)
+  assert.equal(getAskUserAnsweredOption(messages, approval, {}), null)
+})
+
+test('plan approval card still resolves when the user actually picks an option', () => {
+  const approval = planApproval('approval-1')
+  const messages = [
+    approval,
+    message({ id: 'user-answer', role: 'user', content: '拒绝计划' }),
+  ]
+
+  assert.equal(getLatestUserAnswerAfterAskUserMessage(messages, approval), '拒绝计划')
+})
+
+test('ask-user card is not auto-answered by an unrelated following user message', () => {
+  const firstAsk = askUser('ask-1')
+  const messages = [
+    firstAsk,
+    message({ id: 'user-unrelated', role: 'user', content: '你看下这个文件' }),
+  ]
+
+  assert.equal(getLatestUserAnswerAfterAskUserMessage(messages, firstAsk), null)
 })
 
 test('ask-user answered option falls back to restored transcript answers', () => {

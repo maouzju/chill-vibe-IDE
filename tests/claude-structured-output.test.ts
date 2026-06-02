@@ -163,6 +163,129 @@ test('parses Claude tool use, edited files, and local command output into struct
   )
 })
 
+test('starting a new Claude command settles the previous command when no local output completion arrived', () => {
+  const parseClaudeStreamEvent = createClaudeStructuredOutputParser('en')
+
+  assert.deepEqual(
+    parseClaudeStreamEvent({
+      type: 'assistant',
+      message: {
+        content: [
+          {
+            type: 'tool_use',
+            id: 'toolu_first_bash',
+            name: 'Bash',
+            input: {
+              command: 'find . -type f | head -20',
+            },
+          },
+        ],
+      },
+    }),
+    [
+      {
+        type: 'activity',
+        itemId: 'toolu_first_bash',
+        kind: 'command',
+        status: 'in_progress',
+        command: 'find . -type f | head -20',
+        output: '',
+        exitCode: null,
+      },
+    ],
+  )
+
+  assert.deepEqual(
+    parseClaudeStreamEvent({
+      type: 'assistant',
+      message: {
+        content: [
+          {
+            type: 'tool_use',
+            id: 'toolu_second_bash',
+            name: 'Bash',
+            input: {
+              command: 'grep -R art_generate src | head -20',
+            },
+          },
+        ],
+      },
+    }),
+    [
+      {
+        type: 'activity',
+        itemId: 'toolu_first_bash',
+        kind: 'command',
+        status: 'completed',
+        command: 'find . -type f | head -20',
+        output: '',
+        exitCode: null,
+      },
+      {
+        type: 'activity',
+        itemId: 'toolu_second_bash',
+        kind: 'command',
+        status: 'in_progress',
+        command: 'grep -R art_generate src | head -20',
+        output: '',
+        exitCode: null,
+      },
+    ],
+  )
+})
+
+test('Claude result settles the final command when no local output completion arrived', () => {
+  const parseClaudeStreamEvent = createClaudeStructuredOutputParser('en')
+
+  assert.deepEqual(
+    parseClaudeStreamEvent({
+      type: 'assistant',
+      message: {
+        content: [
+          {
+            type: 'tool_use',
+            id: 'toolu_final_bash',
+            name: 'Bash',
+            input: {
+              command: 'ls -la',
+            },
+          },
+        ],
+      },
+    }),
+    [
+      {
+        type: 'activity',
+        itemId: 'toolu_final_bash',
+        kind: 'command',
+        status: 'in_progress',
+        command: 'ls -la',
+        output: '',
+        exitCode: null,
+      },
+    ],
+  )
+
+  assert.deepEqual(
+    parseClaudeStreamEvent({
+      type: 'result',
+      is_error: false,
+      result: 'done',
+    }),
+    [
+      {
+        type: 'activity',
+        itemId: 'toolu_final_bash',
+        kind: 'command',
+        status: 'completed',
+        command: 'ls -la',
+        output: '',
+        exitCode: null,
+      },
+    ],
+  )
+})
+
 test('TodoWrite emits a structured todo activity that can update in place', () => {
   const parseClaudeStreamEvent = createClaudeStructuredOutputParser('en')
 
@@ -961,6 +1084,16 @@ test('delta stripper does not buffer prose after a backtick-wrapped function-cal
 
   assert.equal(released, full)
   assert.equal(stripper.flush(), '')
+})
+
+
+test('delta stripper releases a backtick-prefixed function-call tag immediately', () => {
+  const stripper = createClaudeAskUserDeltaStripper()
+  const openContainer = '<function' + '_calls>'
+  const lead = 'The text is `' + openContainer
+
+  assert.equal(stripper.push(lead), lead)
+  assert.equal(stripper.consumedToolCallBlockCount(), 0)
 })
 
 test('emits Claude extended thinking as a reasoning activity (parity with Codex)', () => {

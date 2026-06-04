@@ -102,8 +102,6 @@ const createPaneComparatorProps = () => {
     autoUrgeSuccessKeyword: '',
     workspaceCards: Object.values(column.cards),
     sessionHistory: [],
-    flashCardIds: new Set<string>(),
-    onRestoredAnimationEnd: () => undefined,
     onAddTab: () => undefined,
     onSplitPane: () => undefined,
     onSplitMoveTab: () => undefined,

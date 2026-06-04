@@ -154,6 +154,7 @@ type ChatCard = {
 - 当当前 provider 的本地 CLI 不可用时，聊天发送仍然要进入应用层校验，并在卡片内追加“本地 CLI 不可用”的系统提示；不能只禁用发送按钮让用户反复点击却没有反馈。
 - Claude 流式输出的健壮性（`server/claude-structured-output.ts` + `server/providers.ts` + `server/provider-stream-recovery.ts`）：
   - 模型偶尔把工具调用打成文本（`<function_calls>`/`<invoke>`/`<parameter>`）。增量去除器会剥离这些 XML；遇到**未闭合**的工具调用/ask-user 块时，`flush()` 必须**丢弃**而不是原样吐出——否则渲染层（ReactMarkdown，仅 remark-gfm）会吃掉标签只留下 `<parameter>` 里的内层文本（如 `count`），形成孤立气泡。容器常被换行美化，所以 `<function_calls>` 需容忍其后空白。
+  - If malformed Claude text reaches final assistant Markdown (not only streamed deltas), the renderer fallback must remove complete or unterminated `<function_calls>` / `<invoke>` blocks and nested attribute-bearing `<parameter ...>` blocks; otherwise Markdown hides the tags but shows inner values like `count`.
   - When Claude is only mentioning those XML tag names in prose, a leading backtick is enough proof that the tag is user-visible text; stream it immediately instead of waiting for the next body byte, or the live reply looks cut off at the tag.
   - 一轮如果**只**产出了被剥离的工具调用文本（没有真正执行工具、没有有效正文），干净的 `result` 会让聊天静默“停住”。用 `shouldRecoverEmptyToolCallTurn(...)` 判定后改发可恢复的 `resume-session` 错误，交给前端有上限的重试机制自动续跑。
   - Claude 流路径带有失速看门狗：每条 stdout 行都会重置计时器，长时间静默且无终止事件时发可恢复的 `stalled …` 错误；但**有命令在执行时必须停表**（`resolveLocalStreamStallTimeoutMs` 在 `openCommandCount > 0` 时返回 `null`），因为 CLI 执行工具期间本就没有 stdout，否则会误杀正常的长命令。

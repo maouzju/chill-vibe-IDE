@@ -395,6 +395,8 @@ A living list of traps that have wasted time before. **When you hit a new pitfal
 | 152 | Claude CLI may start another Bash/tool_use or finish the turn without emitting a local-command completion block for the previous command | Settle any still-open Claude command when the next command starts or when the final `result` arrives, otherwise old command rows keep animated blue dots forever and the stream watchdog stays disarmed. |
 | 153 | A streaming prose mention can arrive as `` `<function_calls>`` with no following backtick yet | The delta stripper must release any stripped tag that is immediately preceded by a backtick, instead of waiting for the body byte after the open tag; otherwise live text appears cut off until a later chunk/flush disambiguates it. |
 
+| 154 | Claude typed-as-text tool XML can survive as final assistant Markdown, not only as streamed deltas | The renderer fallback must strip complete and unterminated `<function_calls>` / `<invoke>` / attribute-bearing `<parameter>` blocks before ReactMarkdown, otherwise Markdown hides the tags and renders only inner values like `count`. |
+
 ### Self-maintenance rule
 
 - When you encounter a new non-obvious failure mode — a test that fails for environmental reasons, a build step with hidden prerequisites, a runtime behavior that contradicts the docs — append a row to this table before you finish the task.

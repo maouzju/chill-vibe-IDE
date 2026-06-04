@@ -384,6 +384,19 @@ const STRIPPED_TAG_PAIRS = [
     toolCall: true,
     allowLeadingWhitespace: false,
   },
+  {
+    // If Claude's malformed text loses the outer wrapper/invoke tag, the nested
+    // parameter can still leak by itself. ReactMarkdown hides `<parameter ...>`
+    // but renders the inner value (`count`), so strip attribute-bearing
+    // parameter blocks as tool-call internals too. A plain `<parameter>` mention
+    // is not treated as a real block unless it is backtick-prefixed prose, so
+    // ordinary explanations are not swallowed just for naming the tag.
+    open: '<parameter',
+    close: '</parameter>',
+    bodyStartsWith: [' ', '\t', '\n', '\r'],
+    toolCall: true,
+    allowLeadingWhitespace: false,
+  },
 ] as const
 
 type StrippedTagPair = (typeof STRIPPED_TAG_PAIRS)[number]

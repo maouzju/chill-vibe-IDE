@@ -393,7 +393,7 @@ const openSessionHistoryMenu = async (page: Page) => {
   await page.locator('.session-history-menu').waitFor()
 }
 
-test('restored session card receives a border flash animation class', async ({ page }) => {
+test('restored session card does not use a border flash animation', async ({ page }) => {
   await mockAppApis(page)
   await page.goto('http://localhost:5173')
   await page.locator('.card-shell').first().waitFor()
@@ -402,10 +402,10 @@ test('restored session card receives a border flash animation class', async ({ p
   await page.locator('.session-history-item').first().click()
 
   const firstCard = page.locator('.card-shell').first()
-  await expect(firstCard).toHaveClass(/is-restored-flash/)
+  await expect(firstCard).not.toHaveClass(/is-restored-flash/)
 })
 
-test('restored card flash works in light theme', async ({ page }) => {
+test('restored card avoids border flash in light theme', async ({ page }) => {
   await mockAppApis(page)
   await page.goto('http://localhost:5173')
   await page.locator('.card-shell').first().waitFor()
@@ -418,10 +418,10 @@ test('restored card flash works in light theme', async ({ page }) => {
   await page.locator('.session-history-item').first().click()
 
   const firstCard = page.locator('.card-shell').first()
-  await expect(firstCard).toHaveClass(/is-restored-flash/)
+  await expect(firstCard).not.toHaveClass(/is-restored-flash/)
 })
 
-test('restored card flash animation class is removed after animation ends', async ({ page }) => {
+test('restored card stays free of border flash after restore settles', async ({ page }) => {
   await mockAppApis(page)
   await page.goto('http://localhost:5173')
   await page.locator('.card-shell').first().waitFor()
@@ -430,8 +430,6 @@ test('restored card flash animation class is removed after animation ends', asyn
   await page.locator('.session-history-item').first().click()
 
   const firstCard = page.locator('.card-shell').first()
-  await expect(firstCard).toHaveClass(/is-restored-flash/)
-
   await page.waitForTimeout(1500)
   await expect(firstCard).not.toHaveClass(/is-restored-flash/)
 })

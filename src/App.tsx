@@ -173,6 +173,7 @@ import {
 import { collectChangesSummaryFilesForStream } from './components/chat-card-parsing'
 import {
   resolveQueuedSendTargetColumnId,
+  shouldStopStreamForAskUserActivity,
   summarizeQueuedSends,
   type QueuedSendRequest,
   type QueuedSendSummary,
@@ -2701,6 +2702,12 @@ function App() {
               }
             }
 
+            if (shouldStopStreamForAskUserActivity(payload)) {
+              queueMicrotask(() => {
+                void requestStopForCard(card.id, 'ask-user-answer')
+              })
+            }
+
             return
           }
 
@@ -3111,6 +3118,7 @@ function App() {
       openRemediationPanel,
       persistAfterAction,
       persistAfterActions,
+      requestStopForCard,
     ],
   )
 

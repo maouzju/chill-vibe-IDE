@@ -65,8 +65,6 @@ type PaneViewProps = {
   autoUrgeMessage: string
   autoUrgeSuccessKeyword: string
   onSetAutoUrgeEnabled: (enabled: boolean) => void
-  flashCardIds: Set<string>
-  onRestoredAnimationEnd: (cardId: string) => void
   onAddTab: (paneId: string) => void
   onSplitPane: (
     paneId: string,
@@ -288,8 +286,6 @@ const PaneViewView = ({
   autoUrgeMessage,
   autoUrgeSuccessKeyword,
   onSetAutoUrgeEnabled,
-  flashCardIds,
-  onRestoredAnimationEnd,
   onAddTab,
   onSplitPane,
   onSplitMoveTab,
@@ -427,10 +423,6 @@ const PaneViewView = ({
 
       const activeMessageList = paneContentRef.current?.querySelector<HTMLElement>('.pane-tab-panel.is-active .message-list')
       if (!activeMessageList) {
-        return false
-      }
-
-      if (activeMessageList.closest('.card-shell.is-restored-flash')) {
         return false
       }
 
@@ -1072,8 +1064,7 @@ const PaneViewView = ({
                   onToggleCollapsed={() => onToggleCardCollapsed(card.id)}
                   onMarkRead={() => onMarkCardRead(card.id)}
                   onOpenFile={(relativePath) => onOpenFile?.(pane.id, relativePath)}
-                  isRestored={flashCardIds.has(card.id)}
-                  onRestoredAnimationEnd={() => onRestoredAnimationEnd(card.id)}
+                  isRestored={false}
                   chromeMode="pane"
                   isActive
                   composerFocusRequest={composerFocusRequest}

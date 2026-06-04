@@ -339,6 +339,42 @@ for (const theme of ['dark', 'light'] as const) {
     await expect(composer).toHaveValue('focus wins over stale button')
   })
 
+  test(`composer hover recovers when a stale transparent layer sits above it in ${theme} theme`, async ({ page }) => {
+    await installMockApis(page, theme)
+    await page.goto('http://localhost:5173')
+
+    const composer = page
+      .locator('.pane-view')
+      .first()
+      .locator('.pane-content > .pane-tab-panel.is-active .composer textarea')
+
+    await expect(composer).toBeVisible()
+
+    const composerBox = await composer.boundingBox()
+    if (!composerBox) {
+      throw new Error('Expected the composer textarea to have measurable geometry')
+    }
+
+    await page.evaluate((box) => {
+      const blocker = document.createElement('div')
+      blocker.className = 'focus-rescue-fixture-hover-layer'
+      blocker.style.position = 'fixed'
+      blocker.style.left = `${box.x - 4}px`
+      blocker.style.top = `${box.y - 4}px`
+      blocker.style.width = `${box.width + 8}px`
+      blocker.style.height = `${box.height + 8}px`
+      blocker.style.zIndex = '999'
+      blocker.style.background = 'transparent'
+      document.body.appendChild(blocker)
+    }, composerBox)
+
+    await page.mouse.move(composerBox.x + composerBox.width / 2, composerBox.y + composerBox.height / 2)
+
+    await expect
+      .poll(() => composer.evaluate((node) => node.matches(':hover')))
+      .toBeTruthy()
+  })
+
   test(`composer focus rescue does not steal focus from a visible control above it in ${theme} theme`, async ({ page }) => {
     await installMockApis(page, theme)
     await page.goto('http://localhost:5173')
@@ -378,6 +414,54 @@ for (const theme of ['dark', 'light'] as const) {
 
     await expect(blocker).toBeFocused()
     await expect(composer).not.toBeFocused()
+  })
+
+  test(`composer clicks recover focus after focus already left the same card in ${theme} theme`, async ({ page }) => {
+    await installMockApis(page, theme)
+    await page.goto('http://localhost:5173')
+
+    const composer = page
+      .locator('.pane-view')
+      .first()
+      .locator('.pane-content > .pane-tab-panel.is-active .composer textarea')
+
+    await expect(composer).toBeVisible()
+
+    const composerBox = await composer.boundingBox()
+    if (!composerBox) {
+      throw new Error('Expected the composer textarea to have measurable geometry')
+    }
+
+    const centerX = composerBox.x + composerBox.width / 2
+    const centerY = composerBox.y + composerBox.height / 2
+
+    // 1) Focus the composer normally so the card becomes the last-focused card.
+    await page.mouse.click(centerX, centerY)
+    await expect(composer).toBeFocused()
+
+    // 2) Focus leaves the textarea (e.g. user clicked a header control), but the
+    //    card is still the last-focused card. Then simulate the real-world stuck
+    //    condition: the next pointerdown is defaultPrevented, so neither the
+    //    native focus nor the pointerdown-based rescue fires. The click-capture
+    //    fallback is the only thing that can recover focus.
+    await page.evaluate(() => {
+      const textarea = document.activeElement as HTMLElement | null
+      textarea?.blur()
+      const swallowPointerDown = (event: Event) => {
+        event.preventDefault()
+        window.removeEventListener('pointerdown', swallowPointerDown, true)
+      }
+      window.addEventListener('pointerdown', swallowPointerDown, true)
+    })
+
+    await expect(composer).not.toBeFocused()
+
+    // 3) Click back into the composer. Focus must come back.
+    await page.mouse.click(centerX, centerY)
+
+    await expect(composer).toBeFocused()
+    await page.keyboard.type('focus recovers on the same card')
+    await expect(composer).toHaveValue('focus recovers on the same card')
   })
 
   test(`dragging a pane tab does not switch focus to its composer in ${theme} theme`, async ({ page }) => {

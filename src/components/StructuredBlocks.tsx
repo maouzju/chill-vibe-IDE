@@ -20,10 +20,6 @@ import {
   getAskUserDraft,
   setAskUserDraft,
 } from './ask-user-draft-cache'
-import {
-  getNewlyCompletedStructuredTodoItemIds,
-  structuredTodoCompletionFlashDurationMs,
-} from './structured-todo-flash'
 import { useDialogFocus } from './dialog-focus'
 import { CloseIcon } from './Icons'
 
@@ -1050,66 +1046,9 @@ export const StructuredTodoCard = ({
   const labels = getStructuredLabels(language)
   const completedCount = data.items.filter((item) => item.status === 'completed').length
   const previousItemsRef = useRef<StructuredTodoMessage['items'] | null>(null)
-  const flashTimeoutsRef = useRef(new Map<string, ReturnType<typeof setTimeout>>())
-  const [flashingItemIds, setFlashingItemIds] = useState<Set<string>>(new Set())
-
   useEffect(() => {
-    const previousItems = previousItemsRef.current
     previousItemsRef.current = data.items
-
-    if (!previousItems) {
-      return
-    }
-
-    const newlyCompletedItemIds = getNewlyCompletedStructuredTodoItemIds(previousItems, data.items)
-
-    if (newlyCompletedItemIds.length === 0) {
-      return
-    }
-
-    setFlashingItemIds((current) => {
-      const next = new Set(current)
-
-      for (const itemId of newlyCompletedItemIds) {
-        next.add(itemId)
-      }
-
-      return next
-    })
-
-    for (const itemId of newlyCompletedItemIds) {
-      const existingTimeout = flashTimeoutsRef.current.get(itemId)
-      if (existingTimeout) {
-        clearTimeout(existingTimeout)
-      }
-
-      flashTimeoutsRef.current.set(
-        itemId,
-        setTimeout(() => {
-          flashTimeoutsRef.current.delete(itemId)
-          setFlashingItemIds((current) => {
-            if (!current.has(itemId)) {
-              return current
-            }
-
-            const next = new Set(current)
-            next.delete(itemId)
-            return next
-          })
-        }, structuredTodoCompletionFlashDurationMs),
-      )
-    }
   }, [data.items])
-
-  useEffect(
-    () => () => {
-      for (const timeoutId of flashTimeoutsRef.current.values()) {
-        clearTimeout(timeoutId)
-      }
-      flashTimeoutsRef.current.clear()
-    },
-    [],
-  )
 
   return (
     <section className="structured-todo-card">
@@ -1130,12 +1069,10 @@ export const StructuredTodoCard = ({
               item.status === 'in_progress' && item.activeForm && item.activeForm !== item.content
                 ? item.activeForm
                 : null
-            const isNewlyCompleted = flashingItemIds.has(item.id)
-
             return (
               <article
                 key={item.id}
-                className={`structured-todo-item is-${item.status}${isNewlyCompleted ? ' is-newly-completed' : ''}`}
+                className={`structured-todo-item is-${item.status}`}
               >
                 <div className="structured-todo-main">
                   <span className={`structured-todo-status is-${item.status}`} aria-hidden="true">

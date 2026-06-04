@@ -706,7 +706,10 @@ const isEmptySkippableMessage = (message: ChatMessage) => {
 
 const sanitizeLeakedCallMarkerLines = (content: string) => {
   const lines = content.split(/\r?\n/)
-  const cleanedLines = lines.filter((line) => line.trim().toLowerCase() !== 'call')
+  const cleanedLines = lines.filter((line) => {
+    const normalized = line.trim().toLowerCase()
+    return normalized !== 'call' && normalized !== 'call:'
+  })
   if (cleanedLines.length === lines.length) {
     return content
   }

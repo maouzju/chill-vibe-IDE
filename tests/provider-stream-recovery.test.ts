@@ -176,15 +176,38 @@ test('a turn that actually ran a tool is not treated as a dead-end', () => {
   )
 })
 
-test('a turn that produced real assistant text is not auto-resumed', () => {
-  assert.equal(
+test('assistant prose alone does not prevent malformed typed-tool recovery', () => {
+  assert.deepEqual(
     shouldRecoverEmptyToolCallTurn({
       consumedRealToolCallBlock: true,
       sawStructuredActivity: false,
       sawMeaningfulAssistantText: true,
       hasSessionId: true,
     }),
-    null,
+    {
+      recoverable: true,
+      recoveryMode: 'resume-session',
+    },
+  )
+})
+
+test('a Claude turn with only prose plus a stripped typed tool call is auto-resumed', () => {
+  // Claude can emit a small lead-in such as "先把任务设为进行中。" and then type a
+  // tool call as XML instead of issuing a native tool_use block. The prose alone
+  // is not enough proof that the requested work happened; if no real structured
+  // activity followed, the renderer should resume the session instead of ending
+  // on a misleading chat bubble.
+  assert.deepEqual(
+    shouldRecoverEmptyToolCallTurn({
+      consumedRealToolCallBlock: true,
+      sawStructuredActivity: false,
+      sawMeaningfulAssistantText: true,
+      hasSessionId: true,
+    }),
+    {
+      recoverable: true,
+      recoveryMode: 'resume-session',
+    },
   )
 })
 

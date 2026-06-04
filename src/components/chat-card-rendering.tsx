@@ -11,6 +11,106 @@ import type { StructuredToolGroupItem } from './chat-card-parsing'
 const REMARK_PLUGINS = [remarkGfm]
 const markdownComponentsCache = new Map<string, ReturnType<typeof createMarkdownComponents>>()
 
+const normalizeLooseStrongMarkersInSegment = (segment: string) =>
+  segment.replace(/\*\*\s+([^\s*\n][^*\n]*?\S)\s+\*\*/g, (_match, body: string) => `**${body}**`)
+
+const transformMarkdownOutsideCode = (
+  content: string,
+  transformSegment: (segment: string) => string,
+) => {
+  const lines = content.split('\n')
+  let fenceOpen = false
+  let fenceMarker = '```'
+
+  return lines
+    .map((line) => {
+      const fenceMatch = line.match(/^\s*(`{3,})/)
+      if (fenceMatch) {
+        const marker = fenceMatch[1]!
+        if (!fenceOpen) {
+          fenceOpen = true
+          fenceMarker = marker
+        } else if (marker.length >= fenceMarker.length) {
+          fenceOpen = false
+        }
+        return line
+      }
+
+      if (fenceOpen || !line.includes('`')) {
+        return fenceOpen ? line : transformSegment(line)
+      }
+
+      let nextLine = ''
+      let cursor = 0
+      let inlineCodeOpen = false
+      for (let index = 0; index < line.length; index += 1) {
+        if (line[index] !== '`') {
+          continue
+        }
+
+        const chunk = line.slice(cursor, index)
+        nextLine += inlineCodeOpen ? chunk : transformSegment(chunk)
+        nextLine += '`'
+        inlineCodeOpen = !inlineCodeOpen
+        cursor = index + 1
+      }
+
+      const rest = line.slice(cursor)
+      nextLine += inlineCodeOpen ? rest : transformSegment(rest)
+      return nextLine
+    })
+    .join('\n')
+}
+
+const normalizeLooseStrongMarkers = (content: string) =>
+  content.includes('**')
+    ? transformMarkdownOutsideCode(content, normalizeLooseStrongMarkersInSegment)
+    : content
+
+const isMarkdownWhitespace = (char: string | undefined) => !char || /\s/.test(char)
+const isMarkdownDelimiterBoundary = (char: string | undefined) =>
+  !char || isMarkdownWhitespace(char) || /[a-z0-9]/i.test(char) === false
+
+const closeDanglingStrongSpan = (content: string) => {
+  if (!content.includes('**')) {
+    return content
+  }
+
+  let openStrongSpans = 0
+
+  const countSegment = (segment: string) => {
+    for (let index = 0; index < segment.length - 1; index += 1) {
+      if (segment[index] !== '*' || segment[index + 1] !== '*') {
+        continue
+      }
+
+      const prev = index > 0 ? segment[index - 1] : undefined
+      const next = index + 2 < segment.length ? segment[index + 2] : undefined
+      const partOfLongerRun = prev === '*' || next === '*'
+      if (partOfLongerRun) {
+        continue
+      }
+
+      const canOpen = !isMarkdownWhitespace(next) && next !== '/' && isMarkdownDelimiterBoundary(prev)
+      const canClose = !isMarkdownWhitespace(prev) && isMarkdownDelimiterBoundary(next)
+
+      if (canClose && openStrongSpans > 0) {
+        openStrongSpans -= 1
+      } else if (canOpen) {
+        openStrongSpans += 1
+      }
+
+      index += 1
+    }
+
+    return segment
+  }
+
+  transformMarkdownOutsideCode(content, countSegment)
+
+  return openStrongSpans > 0 ? `${content}${'**'.repeat(openStrongSpans)}` : content
+}
+
 // While a reply is still streaming, the text can end mid-markdown: a lone
 // opening backtick (the closing one has not arrived yet) or an unterminated
 // ``` fenced block. CommonMark then keeps the trailing prose inside an
@@ -20,7 +120,7 @@ const markdownComponentsCache = new Map<string, ReturnType<typeof createMarkdown
 // the text to ReactMarkdown keeps every character visible during streaming
 // without changing already-balanced content.
 export const closeUnclosedMarkdownSpans = (content: string): string => {
-  if (!content || !content.includes('`')) {
+  if (!content || (!content.includes('`') && !content.includes('**'))) {
     return content
   }
 
@@ -67,12 +167,15 @@ export const closeUnclosedMarkdownSpans = (content: string): string => {
     return `${content}${needsNewline}${fenceMarker}`
   }
 
+  const normalizedContent = normalizeLooseStrongMarkers(content)
+  const normalizedLines = normalizedContent === content ? lines : normalizedContent.split('\n')
+
   // Outside fences, count inline-code backticks that are not part of a ``` fence
   // marker. An odd count means a single inline span is still open.
   let inlineTicks = 0
   let lineFenceOpen = false
   let lineFenceMarker = '```'
-  for (const line of lines) {
+  for (const line of normalizedLines) {
     const fenceMatch = line.match(/^\s*(`{3,})/)
     if (fenceMatch) {
       const marker = fenceMatch[1]!
@@ -91,10 +194,10 @@ export const closeUnclosedMarkdownSpans = (content: string): string => {
   }
 
   if (inlineTicks % 2 === 1) {
-    return `${content}\``
+    return `${normalizedContent}\``
   }
 
-  return content
+  return closeDanglingStrongSpan(normalizedContent)
 }
 
 export const isLocalMessageLinkHref = (href: string | null | undefined) => {
@@ -555,8 +658,15 @@ const renderPlainMarkdown = (content: string, workspacePath: string | undefined,
   </ReactMarkdown>
 )
 
+export const stripLeakedClaudeToolXmlFromMarkdown = (content: string) =>
+  content
+    .replace(/(?<!`)<function_calls>\s*<invoke(?:\s+[^>\n]*?)?>[\s\S]*?(?:<\/invoke>\s*<\/function_calls>|$)/gi, '')
+    .replace(/(?<!`)<invoke(?:\s+[^>\n]*?)?>[\s\S]*?(?:<\/invoke>|$)/gi, '')
+    .replace(/(?<!`)<parameter\s+[^>\n]*?>[\s\S]*?(?:<\/parameter>|$)/gi, '')
+
 export const renderMarkdown = (content: string, workspacePath?: string) => {
-  const chunks = splitMarkdownAndSafeHtmlTables(content)
+  const safeContent = stripLeakedClaudeToolXmlFromMarkdown(content)
+  const chunks = splitMarkdownAndSafeHtmlTables(safeContent)
 
   if (chunks.length === 1 && chunks[0]?.kind === 'markdown') {
     return renderPlainMarkdown(chunks[0].content, workspacePath)

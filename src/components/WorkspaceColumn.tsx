@@ -256,8 +256,6 @@ const WorkspaceColumnView = ({
   const [externalLoading, setExternalLoading] = useState(false)
   const [importingSessionId, setImportingSessionId] = useState<string | null>(null)
   const historyMenuRef = useRef<HTMLDivElement>(null)
-  const [flashCardIds, setFlashCardIds] = useState<Set<string>>(new Set())
-  const previousCardIdsRef = useRef<Set<string>>(new Set(Object.keys(column.cards)))
   const deferredHistorySearch = useDeferredValue(historySearch)
   const filteredSessionHistory = useMemo(
     () => filterSessionHistoryEntries(sessionHistory, deferredHistorySearch),
@@ -277,25 +275,6 @@ const WorkspaceColumnView = ({
   useEffect(() => {
     setPathValue(column.workspacePath)
   }, [column.workspacePath])
-
-  useEffect(() => {
-    const previous = previousCardIdsRef.current
-    const nextIds = new Set(Object.keys(column.cards))
-    const added = Object.keys(column.cards).filter((cardId) => !previous.has(cardId))
-    previousCardIdsRef.current = nextIds
-    if (added.length > 0) {
-      setFlashCardIds((current) => {
-        const next = new Set(current)
-        for (const cardId of added) {
-          const card = column.cards[cardId]
-          if (card && card.messages.length > 0) {
-            next.add(cardId)
-          }
-        }
-        return next.size === current.size ? current : next
-      })
-    }
-  }, [column.cards])
 
   useEffect(() => {
     if (!recentMenuView) {
@@ -877,14 +856,6 @@ const WorkspaceColumnView = ({
           autoUrgeMessage={autoUrgeMessage}
           autoUrgeSuccessKeyword={autoUrgeSuccessKeyword}
           onSetAutoUrgeEnabled={onSetAutoUrgeEnabled}
-          flashCardIds={flashCardIds}
-          onRestoredAnimationEnd={(cardId) =>
-            setFlashCardIds((current) => {
-              const next = new Set(current)
-              next.delete(cardId)
-              return next
-            })
-          }
           onAddTab={onAddTab}
           onSplitPane={onSplitPane}
           onSplitMoveTab={onSplitMoveTab}

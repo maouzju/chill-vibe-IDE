@@ -397,6 +397,8 @@ A living list of traps that have wasted time before. **When you hit a new pitfal
 
 | 154 | Claude typed-as-text tool XML can survive as final assistant Markdown, not only as streamed deltas | The renderer fallback must strip complete and unterminated `<function_calls>` / `<invoke>` / attribute-bearing `<parameter>` blocks before ReactMarkdown, otherwise Markdown hides the tags and renders only inner values like `count`. |
 
+| 155 | Claude `stream-json` assistant events can include a text block containing only `call:` immediately before a real `tool_use` block | Treat that bare text as a provider protocol marker in the server fold, not as user-visible assistant prose; otherwise the UI fills with `call:` even though the native tool call is actually present. |
+
 ### Self-maintenance rule
 
 - When you encounter a new non-obvious failure mode — a test that fails for environmental reasons, a build step with hidden prerequisites, a runtime behavior that contradicts the docs — append a row to this table before you finish the task.

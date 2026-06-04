@@ -562,6 +562,15 @@ const formatClaudeTypedToolCallStalled = (language: AppLanguage) =>
     ? 'Claude ended a turn without running its tool call. Resuming.'
     : 'Claude 这一轮没有真正执行工具调用就结束了，正在自动继续。'
 
+
+const isBareClaudeToolCallMarkerText = (text: string) =>
+  text
+    .split(/\r?\n/)
+    .every((line) => {
+      const normalized = line.trim().toLowerCase()
+      return !normalized || normalized === 'call' || normalized === 'call:'
+    })
+
 const formatImageAttachmentsUnsupported = (language: AppLanguage, provider: Provider) =>
   language === 'en'
     ? `${getProviderLabel(language, provider)} does not currently support pasted image attachments in this app. Switch the card to Codex to send images.`
@@ -2145,12 +2154,15 @@ export const launchProviderRun = async (request: ChatRequest, sink: StreamSink) 
 
         if (event.type === 'assistant' && !sawClaudeDelta) {
           if (Array.isArray(event.message?.content)) {
+            const hasToolUse = event.message.content.some(
+              (item: { type?: string }) => item.type === 'tool_use',
+            )
             const textContent = event.message.content
               .filter((item: { type?: string; text?: string }) => item.type === 'text')
               .map((item: { text?: string }) => stripClaudeAskUserXmlBlocks(item.text ?? ''))
               .join('')
 
-            if (textContent.trim()) {
+            if (textContent.trim() && !(hasToolUse && isBareClaudeToolCallMarkerText(textContent))) {
               sawMeaningfulAssistantText = true
               sink.onDelta(textContent)
             }

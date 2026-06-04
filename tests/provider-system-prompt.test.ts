@@ -2947,6 +2947,58 @@ test('claude automatically retries without -r when the resumed session is stale 
   }
 })
 
+
+test('claude assistant tool_use messages do not leak bare call protocol markers as deltas', async () => {
+  const script = [
+    "const reply = (message) => process.stdout.write(`${JSON.stringify(message)}\\n`)",
+    "reply({ type: 'system', subtype: 'init', session_id: 'claude-session-tool-call-marker' })",
+    "reply({",
+    "  type: 'assistant',",
+    "  message: {",
+    "    id: 'msg_tool_call_marker',",
+    "    content: [",
+    "      { type: 'text', text: 'call:' },",
+    "      {",
+    "        type: 'tool_use',",
+    "        id: 'toolu_read_marker',",
+    "        name: 'Read',",
+    "        input: { file_path: 'src/App.tsx' },",
+    "      },",
+    "    ],",
+    "  },",
+    "})",
+    "reply({ type: 'result', is_error: false, result: 'ok' })",
+  ].join('\n')
+
+  const events = await withFakeProviderCommand(
+    'claude',
+    script,
+    async (workspacePath) =>
+      captureProviderEvents(
+        createRequest({
+          provider: 'claude',
+          language: 'en',
+          workspacePath,
+        }),
+      ),
+  )
+
+  assert.equal(
+    events.some((event) => event.kind === 'delta' && /call\s*:/i.test(event.content)),
+    false,
+    `bare call marker leaked as delta: ${JSON.stringify(events)}`,
+  )
+  assert.ok(
+    events.some(
+      (event) =>
+        event.kind === 'activity' &&
+        event.activity.kind === 'tool' &&
+        event.activity.toolName === 'Read',
+    ),
+    `expected native Read tool activity, got ${JSON.stringify(events)}`,
+  )
+})
+
 test('claude ask-user tool use keeps prose before the question and then emits the structured activity', async () => {
   const events = await withFakeProviderCommand(
     'claude',

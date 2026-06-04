@@ -152,6 +152,23 @@ describe('chat scroll helpers', () => {
     })
   })
 
+  it('turns off auto-scroll when the user scrolls up during a guarded no-op bottom sync', () => {
+    const next = getAutoScrollStateDuringProgrammaticScroll(
+      {
+        startScrollTop: 660,
+        targetScrollTop: 660,
+      },
+      620,
+      true,
+    )
+
+    assert.deepEqual(next, {
+      interrupted: true,
+      shouldAutoScroll: false,
+      lastScrollTop: 620,
+    })
+  })
+
   it('keeps the current scroll position when the child is already visible inside the menu viewport', () => {
     const next = getScrollTopToRevealChild(
       {

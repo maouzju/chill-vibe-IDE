@@ -1,4 +1,4 @@
-import type { ImageAttachment } from '../../shared/schema'
+import type { ImageAttachment, StreamAskUserActivity } from '../../shared/schema'
 
 export type SendMessageMode = 'auto' | 'defer' | 'interrupt'
 
@@ -59,3 +59,7 @@ export const resolveQueuedSendTargetColumnId = (
 
   return columns.find((column) => ownsCardInWorkspace(column, cardId))?.id ?? null
 }
+
+export const shouldStopStreamForAskUserActivity = (
+  activity: Pick<StreamAskUserActivity, 'planFile'>,
+) => Boolean(activity.planFile?.trim())

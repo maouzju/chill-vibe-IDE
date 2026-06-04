@@ -65,7 +65,6 @@ test('chat composer keeps send clickable when the provider CLI is unavailable so
       onPatchCard={() => undefined}
       onChangeTitle={() => undefined}
       isRestored={false}
-      onRestoredAnimationEnd={() => undefined}
     />,
   )
 
@@ -119,7 +118,6 @@ test('running chat composer keeps left-click as send-now and exposes right-click
       onPatchCard={() => undefined}
       onChangeTitle={() => undefined}
       isRestored={false}
-      onRestoredAnimationEnd={() => undefined}
     />,
   )
 

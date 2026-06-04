@@ -8,7 +8,6 @@ import type { ChatCard as ChatCardModel, ImageAttachment } from '../shared/schem
 import { defaultSystemPrompt } from '../shared/system-prompt.ts'
 import { ChatCard } from '../src/components/ChatCard.tsx'
 import { cleanCommandDisplay, summarizeCommandDisplay } from '../src/components/chat-card-rendering.tsx'
-import { getNewlyCompletedStructuredTodoItemIds } from '../src/components/structured-todo-flash.ts'
 
 ;(globalThis as typeof globalThis & { React: typeof React }).React = React
 
@@ -323,7 +322,6 @@ const renderCard = (
       onOpenFile={onOpenFile}
       onForkConversation={onForkConversation}
       isRestored={false}
-      onRestoredAnimationEnd={() => undefined}
     />,
   )
 
@@ -566,6 +564,29 @@ test('hides generic Claude tool-call labels like call from the visible chat card
   assert.match(markup, /Read App\.tsx/)
 })
 
+
+test('hides leaked Claude call marker bubbles with a trailing colon', () => {
+  const card = createClaudeToolCard()
+  card.messages = [
+    {
+      id: 'leaked-call-marker-colon',
+      role: 'assistant',
+      content: 'call:',
+      createdAt: '2026-04-05T12:00:58.000Z',
+      meta: {
+        provider: 'claude',
+      },
+    },
+    ...card.messages,
+  ]
+
+  const markup = renderCard(card)
+
+  assert.doesNotMatch(markup, />call:</)
+  assert.match(markup, /Used 1 tool/)
+  assert.match(markup, /Read App\.tsx/)
+})
+
 test('hides leaked Claude call marker bubbles next to structured tool groups', () => {
   const card = createClaudeToolCard()
   card.messages = [
@@ -696,6 +717,7 @@ test('renders a VS Code-like structured todo card', () => {
   assert.match(markup, /structured-todo-item is-in_progress/)
   assert.match(markup, /structured-todo-item is-pending/)
   assert.match(markup, /structured-todo-item is-completed/)
+  assert.doesNotMatch(markup, /is-newly-completed/)
   assert.match(markup, /High priority/)
 })
 
@@ -758,49 +780,3 @@ test('renders Codex multi-agent activity as a compact agent list', () => {
   assert.match(markup, />Open</)
 })
 
-test('detects todo items that just transitioned into completed', () => {
-  assert.deepEqual(
-    getNewlyCompletedStructuredTodoItemIds(
-      [
-        {
-          id: 'task-1',
-          content: 'Inspect the activity pipeline',
-          status: 'completed',
-        },
-        {
-          id: 'task-2',
-          content: 'Render the VS Code-like task list',
-          status: 'in_progress',
-        },
-        {
-          id: 'task-3',
-          content: 'Verify both themes',
-          status: 'pending',
-        },
-      ],
-      [
-        {
-          id: 'task-1',
-          content: 'Inspect the activity pipeline',
-          status: 'completed',
-        },
-        {
-          id: 'task-2',
-          content: 'Render the VS Code-like task list',
-          status: 'completed',
-        },
-        {
-          id: 'task-3',
-          content: 'Verify both themes',
-          status: 'completed',
-        },
-        {
-          id: 'task-4',
-          content: 'Ship the visual polish',
-          status: 'completed',
-        },
-      ],
-    ),
-    ['task-2', 'task-3'],
-  )
-})

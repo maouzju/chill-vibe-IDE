@@ -31,8 +31,6 @@ type LayoutRendererProps = {
   autoUrgeMessage: string
   autoUrgeSuccessKeyword: string
   onSetAutoUrgeEnabled: (enabled: boolean) => void
-  flashCardIds: Set<string>
-  onRestoredAnimationEnd: (cardId: string) => void
   onAddTab: (paneId: string) => void
   onSplitPane: (
     paneId: string,

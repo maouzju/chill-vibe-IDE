@@ -253,7 +253,6 @@ type ChatCardProps = {
   onForkConversation?: (messageId: string) => void
   onOpenFile?: (relativePath: string) => void
   isRestored: boolean
-  onRestoredAnimationEnd: () => void
   chromeMode?: 'card' | 'pane'
   isActive?: boolean
   composerFocusRequest?: number
@@ -498,6 +497,16 @@ const isTransparentComposerFocusBlocker = (target: EventTarget | null) => {
 
   return opacity <= 0.02 || (!visibleControl && transparentBackground)
 }
+
+const canRetireTransparentComposerHoverBlocker = (
+  target: EventTarget | null,
+  textarea: HTMLTextAreaElement,
+): target is HTMLElement =>
+  target instanceof HTMLElement &&
+  target !== document.body &&
+  target !== document.documentElement &&
+  !target.contains(textarea) &&
+  isTransparentComposerFocusBlocker(target)
 
 const areChatCardPropsEqual = (previous: ChatCardProps, next: ChatCardProps) =>
   previous.card === next.card &&
@@ -1018,7 +1027,6 @@ const ChatCardView = ({
   onOpenFile,
   onManualRecoverStream,
   isRestored,
-  onRestoredAnimationEnd,
   chromeMode = 'card',
   isActive = true,
   composerFocusRequest = 0,
@@ -1477,6 +1485,42 @@ const ChatCardView = ({
       return
     }
 
+    const isPointerInsideTextarea = (
+      textarea: HTMLTextAreaElement,
+      clientX: number,
+      clientY: number,
+    ) => {
+      const rect = textarea.getBoundingClientRect()
+      return (
+        clientX >= rect.left &&
+        clientX <= rect.right &&
+        clientY >= rect.top &&
+        clientY <= rect.bottom
+      )
+    }
+
+    const retireTransparentHoverBlocker = (event: globalThis.PointerEvent) => {
+      const textarea = textareaRef.current
+      if (!textarea || !textarea.isConnected || event.buttons !== 0 || event.defaultPrevented) {
+        return
+      }
+
+      if (
+        !isPointerInsideTextarea(textarea, event.clientX, event.clientY) ||
+        shouldIgnoreComposerFocusRescueTarget(event.target) ||
+        !canRetireTransparentComposerHoverBlocker(event.target, textarea)
+      ) {
+        return
+      }
+
+      const blocker = event.target
+      // A long-lived transparent layer above the composer can leave Chromium
+      // routing hover/clicks to the stale layer instead of the textarea. Do not
+      // focus on hover; only make that transparent stale layer non-interactive
+      // so normal textarea hover and future clicks work again.
+      blocker.style.pointerEvents = 'none'
+    }
+
     const handleDocumentPointerDownCapture = (event: globalThis.PointerEvent) => {
       const textarea = textareaRef.current
       if (!textarea || !textarea.isConnected) {
@@ -1496,14 +1540,7 @@ const ChatCardView = ({
         return
       }
 
-      const rect = textarea.getBoundingClientRect()
-      const isInsideTextarea =
-        event.clientX >= rect.left &&
-        event.clientX <= rect.right &&
-        event.clientY >= rect.top &&
-        event.clientY <= rect.bottom
-
-      if (!isInsideTextarea) {
+      if (!isPointerInsideTextarea(textarea, event.clientX, event.clientY)) {
         return
       }
 
@@ -1513,8 +1550,10 @@ const ChatCardView = ({
       }
     }
 
+    document.addEventListener('pointermove', retireTransparentHoverBlocker, true)
     document.addEventListener('pointerdown', handleDocumentPointerDownCapture, true)
     return () => {
+      document.removeEventListener('pointermove', retireTransparentHoverBlocker, true)
       document.removeEventListener('pointerdown', handleDocumentPointerDownCapture, true)
     }
   }, [card.id, isActive, isCollapsed, isToolCard])
@@ -3108,16 +3147,25 @@ const ChatCardView = ({
 
   return (
     <article
-      className={`card-shell${isCollapsed ? ' is-collapsed' : ''}${isRestored ? ' is-restored-flash' : ''}${hasFloatingUi ? ' has-floating-ui' : ''}${usesPaneChrome ? ' is-pane-embedded' : ''}${statusClass}`}
+      className={`card-shell${isCollapsed ? ' is-collapsed' : ''}${hasFloatingUi ? ' has-floating-ui' : ''}${usesPaneChrome ? ' is-pane-embedded' : ''}${statusClass}`}
       style={isCollapsed ? undefined : { height: '100%' }}
-      onAnimationEnd={(e) => {
-        if (e.animationName === 'card-restored-flash' && isRestored) {
-          onRestoredAnimationEnd()
-        }
-      }}
       onClickCapture={(event) => {
         if (card.unread) onMarkRead()
-        if (!isToolCard && !isCardHeaderControlTarget(event.target) && lastFocusedCardId !== card.id) {
+        // Recover focus based on the *current* focus state, not a shared
+        // last-focused-card flag: the flag drifts out of sync once focus leaves
+        // the textarea (header control, blur, etc.) while still pointing at this
+        // card, which then blocks the click-capture rescue and leaves the
+        // composer un-clickable. Rescue whenever the click lands inside this
+        // card's composer and the textarea is not already focused.
+        const textarea = textareaRef.current
+        const clickedInComposer =
+          event.target instanceof Element && event.target.closest('.composer') !== null
+        if (
+          !isToolCard &&
+          textarea &&
+          clickedInComposer &&
+          document.activeElement !== textarea
+        ) {
           lastFocusedCardId = card.id
           requestAnimationFrame(() => textareaRef.current?.focus())
         }

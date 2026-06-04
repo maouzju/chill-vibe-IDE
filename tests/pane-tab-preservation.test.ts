@@ -44,8 +44,6 @@ const createMarkup = (column: BoardColumn) =>
       autoUrgeMessage: '',
       autoUrgeSuccessKeyword: '',
       onSetAutoUrgeEnabled: () => {},
-      flashCardIds: new Set<string>(),
-      onRestoredAnimationEnd: () => {},
       onAddTab: () => {},
       onSplitPane: () => {},
       onSplitMoveTab: () => {},

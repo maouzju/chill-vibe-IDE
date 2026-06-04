@@ -911,6 +911,24 @@ test('delta stripper drops a char-streamed unterminated wrapped tool call (no co
   assert.equal(released.includes('count'), false)
 })
 
+test('delta stripper drops a bare parameter block when Claude omits the invoke wrapper', () => {
+  // Sometimes the malformed text that reaches the stream is only the nested
+  // parameter tag. ReactMarkdown hides the tag but keeps the inner text, which
+  // is exactly how a lone `count` bubble reaches the UI.
+  const stripper = createClaudeAskUserDeltaStripper()
+  const full = '<parameter name="output_mode">count</parameter>'
+
+  let released = ''
+  for (const char of full) {
+    released += stripper.push(char)
+  }
+  released += stripper.flush()
+
+  assert.equal(released, '')
+  assert.equal(released.includes('count'), false)
+  assert.equal(stripper.consumedToolCallBlockCount(), 1)
+})
+
 test('delta stripper drops an unterminated ask-user block on flush', () => {
   const stripper = createClaudeAskUserDeltaStripper()
 

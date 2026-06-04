@@ -74,15 +74,14 @@ export const classifyProviderStreamErrorRecovery = (
   return {}
 }
 
-// A Claude turn can "succeed" (non-error `result`) yet do nothing: the model
-// typed a tool call as text instead of issuing a real tool_use block, the
-// stripper removed that XML, and no structured activity or meaningful prose
-// survived. Left alone that turn dead-ends the chat and the user must manually
-// nudge ("老是停住"). When every signal points at that specific dead-end and a
-// session exists to resume, classify it as resumable so the bounded renderer
-// retry machinery re-issues a fresh turn (Pitfall #141: re-issuing usually
-// succeeds). All three guards are required to avoid resuming a legitimately
-// empty turn, a turn that actually ran a tool, or one that produced real text.
+// A Claude turn can "succeed" (non-error `result`) yet do no real work: the
+// model may type a tool call as text instead of issuing a native tool_use block,
+// the stripper removes that XML, and the UI is left with either an empty bubble
+// or a misleading lead-in such as "先把任务设为进行中。". That prose alone is not
+// proof that the requested action happened. If the turn contained a stripped
+// tool-call block but produced no real structured activity, classify it as
+// resumable so the bounded renderer retry machinery re-issues a fresh turn
+// (Pitfall #141: re-issuing usually succeeds).
 export const shouldRecoverEmptyToolCallTurn = (input: {
   consumedRealToolCallBlock: boolean
   sawStructuredActivity: boolean
@@ -97,7 +96,7 @@ export const shouldRecoverEmptyToolCallTurn = (input: {
     return null
   }
 
-  if (input.sawStructuredActivity || input.sawMeaningfulAssistantText) {
+  if (input.sawStructuredActivity) {
     return null
   }
 

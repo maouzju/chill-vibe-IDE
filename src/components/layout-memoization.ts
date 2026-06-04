@@ -50,7 +50,6 @@ type PaneViewMemoProps = {
   autoUrgeProfiles?: AutoUrgeProfile[]
   autoUrgeMessage: string
   autoUrgeSuccessKeyword: string
-  flashCardIds: Set<string>
   cardRecoveryStatuses?: ReadonlyMap<string, CardRecoveryStatus>
   queuedSendSummaries?: ReadonlyMap<string, QueuedSendSummary>
 }
@@ -125,10 +124,6 @@ const haveSamePaneCardRefs = (previous: PaneViewMemoProps, next: PaneViewMemoPro
 
   for (const tabId of next.pane.tabs) {
     if (previous.column.cards[tabId] !== next.column.cards[tabId]) {
-      return false
-    }
-
-    if (previous.flashCardIds.has(tabId) !== next.flashCardIds.has(tabId)) {
       return false
     }
 

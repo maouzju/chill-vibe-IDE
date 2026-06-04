@@ -103,8 +103,6 @@ const renderLayout = () => {
       autoUrgeMessage=""
       autoUrgeSuccessKeyword=""
       onSetAutoUrgeEnabled={() => undefined}
-      flashCardIds={new Set()}
-      onRestoredAnimationEnd={() => undefined}
       onAddTab={() => undefined}
       onSplitPane={() => undefined}
       onSplitMoveTab={() => undefined}

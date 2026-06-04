@@ -66,7 +66,6 @@ test('text editor cards without a file show a usable empty state instead of a bl
       onPatchCard={() => undefined}
       onChangeTitle={() => undefined}
       isRestored={false}
-      onRestoredAnimationEnd={() => undefined}
     />,
   )
 

@@ -1,7 +1,15 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
+import * as React from 'react'
+import { renderToStaticMarkup } from 'react-dom/server'
 
-import { closeUnclosedMarkdownSpans } from '../src/components/chat-card-rendering.tsx'
+import {
+  closeUnclosedMarkdownSpans,
+  renderMarkdown,
+  stripLeakedClaudeToolXmlFromMarkdown,
+} from '../src/components/chat-card-rendering.tsx'
+
+;(globalThis as typeof globalThis & { React: typeof React }).React = React
 
 test('closeUnclosedMarkdownSpans leaves balanced inline code untouched', () => {
   const input = '正常情况 `code` 闭合后,这段当然可见。'
@@ -55,6 +63,111 @@ test('closeUnclosedMarkdownSpans handles the real ask-user tag-name-in-backticks
   const out = closeUnclosedMarkdownSpans(input)
   assert.ok(out.startsWith(input))
   assert.equal((out.match(/`/g) ?? []).length % 2, 0)
+})
+
+
+test('closeUnclosedMarkdownSpans closes an unterminated strong span at the streaming tail', () => {
+  const input = 'broken copy -> **fix'
+  assert.equal(closeUnclosedMarkdownSpans(input), 'broken copy -> **fix**')
+})
+
+test('closeUnclosedMarkdownSpans normalizes loose strong markers that AI often streams', () => {
+  const input = '- ** fix **\n\nLabel:** keep this plain.'
+  assert.equal(
+    closeUnclosedMarkdownSpans(input),
+    '- **fix**\n\nLabel:** keep this plain.',
+  )
+})
+
+test('closeUnclosedMarkdownSpans does not auto-close glob patterns as emphasis', () => {
+  const input = 'Search files: **/*.ts'
+  assert.equal(closeUnclosedMarkdownSpans(input), input)
+})
+
+
+test('renderMarkdown renders AI loose and trailing strong markers as bold text', () => {
+  const markup = renderToStaticMarkup(
+    React.createElement(
+      React.Fragment,
+      null,
+      renderMarkdown('- ** fix **\n\nbroken copy -> **fix'),
+    ),
+  )
+
+  assert.equal((markup.match(/<strong>/g) ?? []).length, 2)
+  assert.doesNotMatch(markup, /\*\*\s*fix/)
+})
+
+test('renderMarkdown hides leaked Claude parameter XML instead of showing count', () => {
+  const content = [
+    '刚才那次又被当成文本吐出来了。',
+    '',
+    '<parameter name="output_mode">count</parameter>',
+    '',
+    '我换用单个工具调用。',
+  ].join('\n')
+
+  assert.equal(
+    stripLeakedClaudeToolXmlFromMarkdown(content),
+    ['刚才那次又被当成文本吐出来了。', '', '', '', '我换用单个工具调用。'].join('\n'),
+  )
+
+  const markup = renderToStaticMarkup(
+    React.createElement(
+      React.Fragment,
+      null,
+      renderMarkdown(content),
+    ),
+  )
+
+  assert.match(markup, /刚才那次又被当成文本吐出来了/)
+  assert.match(markup, /我换用单个工具调用/)
+  assert.doesNotMatch(markup, /count/)
+  assert.doesNotMatch(markup, /parameter/)
+})
+
+test('renderMarkdown hides unterminated leaked Claude tool XML instead of showing count', () => {
+  const content = [
+    '现在改发射音调用点。',
+    '',
+    '<function_calls>',
+    '  <invoke name="Grep">',
+    '    <parameter name="output_mode">count',
+  ].join('\n')
+
+  const cleaned = stripLeakedClaudeToolXmlFromMarkdown(content)
+
+  assert.equal(cleaned, '现在改发射音调用点。\n\n')
+
+  const markup = renderToStaticMarkup(
+    React.createElement(
+      React.Fragment,
+      null,
+      renderMarkdown(content),
+    ),
+  )
+
+  assert.match(markup, /现在改发射音调用点/)
+  assert.doesNotMatch(markup, /count/)
+  assert.doesNotMatch(markup, /function_calls/)
+  assert.doesNotMatch(markup, /parameter/)
+})
+
+test('renderMarkdown keeps backtick-prefixed Claude XML tag mentions as prose', () => {
+  const content = '解释：`<invoke name="Bash">` 这里只是在说标签，不是真工具调用。'
+
+  assert.equal(stripLeakedClaudeToolXmlFromMarkdown(content), content)
+
+  const markup = renderToStaticMarkup(
+    React.createElement(
+      React.Fragment,
+      null,
+      renderMarkdown(content),
+    ),
+  )
+
+  assert.match(markup, /invoke name=&quot;Bash&quot;/)
+  assert.match(markup, /这里只是在说标签/)
 })
 
 test('closeUnclosedMarkdownSpans closes a fence right before the prose that follows it', () => {

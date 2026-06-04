@@ -4694,49 +4694,17 @@ test('structured todo cards stay readable across themes', async ({ page }) => {
   const settingsTab = page.locator('#app-tab-settings')
   const ambienceTab = page.locator('#app-tab-ambience')
   const lightThemeButton = page.locator('#app-panel-settings .theme-toggle').first().locator('.theme-chip').first()
-  const pinCompletionFlashPreview = async () => {
-    await page.evaluate(() => {
-      const previewStyleId = 'structured-todo-flash-preview-style'
-      document.getElementById(previewStyleId)?.remove()
-
-      const target = document.querySelector('.structured-todo-item.is-completed')
-      if (!(target instanceof HTMLElement)) {
-        throw new Error('Expected a completed structured todo item for flash preview.')
-      }
-
-      target.classList.add('is-newly-completed')
-      target.setAttribute('data-flash-preview', 'true')
-
-      const style = document.createElement('style')
-      style.id = previewStyleId
-      style.textContent = `
-        .structured-todo-item[data-flash-preview='true'],
-        .structured-todo-item[data-flash-preview='true']::after,
-        .structured-todo-item[data-flash-preview='true'] .structured-todo-status.is-completed,
-        .structured-todo-item[data-flash-preview='true'] .structured-todo-badge.is-completed {
-          animation-delay: -180ms !important;
-          animation-play-state: paused !important;
-        }
-      `
-      document.head.append(style)
-    })
-  }
 
   await expect(todoItems).toHaveCount(3)
   await expect(todoCard).toContainText('Tasks')
   await expect(todoCard).toContainText('1 of 3 completed')
   await expect(inProgressItem).toBeVisible()
   await expect(priorityBadge).toContainText('High priority')
+  await expect(completedItem).not.toHaveClass(/is-newly-completed/)
   expect(await readComputedValue(completedTitle, 'text-decoration-line')).toBe('line-through')
 
   await expect(todoCard).toHaveScreenshot('structured-todo-card-dark.png', {
     animations: 'disabled',
-    caret: 'hide',
-  })
-
-  await pinCompletionFlashPreview()
-  await expect(completedItem).toHaveClass(/is-newly-completed/)
-  await expect(completedItem).toHaveScreenshot('structured-todo-card-complete-flash-dark.png', {
     caret: 'hide',
   })
 
@@ -4751,11 +4719,7 @@ test('structured todo cards stay readable across themes', async ({ page }) => {
     caret: 'hide',
   })
 
-  await pinCompletionFlashPreview()
-  await expect(completedItem).toHaveClass(/is-newly-completed/)
-  await expect(completedItem).toHaveScreenshot('structured-todo-card-complete-flash-light.png', {
-    caret: 'hide',
-  })
+  await expect(completedItem).not.toHaveClass(/is-newly-completed/)
 })
 
 test('changes summary cards keep file hierarchy readable across themes', async ({ page }) => {

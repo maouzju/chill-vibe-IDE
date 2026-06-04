@@ -2999,6 +2999,60 @@ test('claude assistant tool_use messages do not leak bare call protocol markers 
   )
 })
 
+test('claude final assistant text tool-call XML is stripped and resumes instead of ending on count', async () => {
+  const script = [
+    "const reply = (message) => process.stdout.write(`${JSON.stringify(message)}\\n`)",
+    "reply({ type: 'system', subtype: 'init', session_id: 'claude-session-final-typed-tool' })",
+    "reply({",
+    "  type: 'assistant',",
+    "  message: {",
+    "    id: 'msg_final_typed_tool',",
+    "    content: [",
+    "      {",
+    "        type: 'text',",
+    "        text: 'Inspect first.\\n\\n<function_calls>\\n  <invoke name=\"Grep\">\\n    <parameter name=\"output_mode\">count',",
+    "      },",
+    "    ],",
+    "  },",
+    "})",
+    "reply({ type: 'result', is_error: false, result: 'ok' })",
+  ].join('\n')
+
+  const events = await withFakeProviderCommand(
+    'claude',
+    script,
+    async (workspacePath) =>
+      captureProviderEvents(
+        createRequest({
+          provider: 'claude',
+          language: 'en',
+          workspacePath,
+        }),
+      ),
+  )
+
+  const visibleText = events
+    .filter((event) => event.kind === 'delta')
+    .map((event) => event.content)
+    .join('')
+
+  assert.match(visibleText, /Inspect first\./)
+  assert.doesNotMatch(visibleText, /count|parameter|function_calls|invoke/i)
+  assert.ok(
+    events.some(
+      (event) =>
+        event.kind === 'error' &&
+        /without running its tool call/i.test(event.message),
+    ),
+    `expected resumable typed-tool-call error, got ${JSON.stringify(events)}`,
+  )
+  assert.equal(
+    events.some((event) => event.kind === 'done'),
+    false,
+    `typed tool-call turn should not end cleanly: ${JSON.stringify(events)}`,
+  )
+})
+
 test('claude ask-user tool use keeps prose before the question and then emits the structured activity', async () => {
   const events = await withFakeProviderCommand(
     'claude',

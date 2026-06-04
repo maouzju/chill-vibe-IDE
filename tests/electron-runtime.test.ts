@@ -308,7 +308,7 @@ test('Playwright browser validation is forced into headless mode by config and r
   assert.match(configBody, /headless:\s*true/)
   assert.match(configBody, /webServer:\s*{/)
   assert.match(configBody, /command:\s*['"]node scripts\/run-vite\.mjs --host 127\.0\.0\.1 --strictPort['"]/)
-  assert.match(configBody, /reuseExistingServer:\s*false/)
+  assert.match(configBody, /reuseExistingServer:\s*process\.env\.PW_REUSE_SERVER\s*===\s*['"]1['"]/)
   assert.match(runnerBody, /Remove-Item Env:PWDEBUG -ErrorAction SilentlyContinue/)
   assert.match(runnerBody, /\('exec', 'playwright', 'test', '--config', 'playwright\.config\.ts'\)/)
 })

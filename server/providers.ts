@@ -38,7 +38,6 @@ import { resolveImageAttachmentPath } from './attachments.js'
 import {
   createClaudeAskUserDeltaStripper,
   createClaudeStructuredOutputParser,
-  stripClaudeAskUserXmlBlocks,
 } from './claude-structured-output.js'
 import { createCodexCompactionActivityDeduper } from './codex-compaction-dedupe.js'
 import { resolveClaudeRuntimeEnvironment } from './claude-runtime-environment.js'
@@ -2159,12 +2158,17 @@ export const launchProviderRun = async (request: ChatRequest, sink: StreamSink) 
             )
             const textContent = event.message.content
               .filter((item: { type?: string; text?: string }) => item.type === 'text')
-              .map((item: { text?: string }) => stripClaudeAskUserXmlBlocks(item.text ?? ''))
+              .map((item: { text?: string }) => item.text ?? '')
               .join('')
+            const safeTextContent =
+              askUserDeltaStripper.push(textContent) + askUserDeltaStripper.flush()
 
-            if (textContent.trim() && !(hasToolUse && isBareClaudeToolCallMarkerText(textContent))) {
+            if (
+              safeTextContent.trim() &&
+              !(hasToolUse && isBareClaudeToolCallMarkerText(safeTextContent))
+            ) {
               sawMeaningfulAssistantText = true
-              sink.onDelta(textContent)
+              sink.onDelta(safeTextContent)
             }
           }
         }

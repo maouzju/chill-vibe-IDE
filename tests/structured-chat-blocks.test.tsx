@@ -779,4 +779,3 @@ test('renders Codex multi-agent activity as a compact agent list', () => {
   assert.match(markup, /Running/)
   assert.match(markup, />Open</)
 })
-

@@ -142,6 +142,12 @@ export const didUserInterruptProgrammaticScroll = (
   currentScrollTop: number,
   tolerancePx = programmaticScrollInterruptTolerancePx,
 ) => {
+  if (
+    Math.abs(intent.targetScrollTop - intent.startScrollTop) <= tolerancePx
+  ) {
+    return Math.abs(currentScrollTop - intent.startScrollTop) > tolerancePx
+  }
+
   if (intent.targetScrollTop > intent.startScrollTop) {
     return currentScrollTop < intent.startScrollTop - tolerancePx
   }

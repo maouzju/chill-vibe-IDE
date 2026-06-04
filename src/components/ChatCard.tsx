@@ -128,7 +128,6 @@ import {
   StopIcon,
 } from './Icons'
 
-let lastFocusedCardId: string | null = null
 const supportedImageMimeTypes = new Set(['image/png', 'image/jpeg', 'image/webp', 'image/gif'])
 const emptyCompactMessageWindow: CompactMessageWindow = {
   hiddenMessageCount: 0,
@@ -1469,8 +1468,6 @@ const ChatCardView = ({
       return
     }
 
-    lastFocusedCardId = card.id
-
     const frame = window.requestAnimationFrame(() => {
       textareaRef.current?.focus()
     })
@@ -1544,7 +1541,6 @@ const ChatCardView = ({
         return
       }
 
-      lastFocusedCardId = card.id
       if (shouldRescueTransparentBlocker) {
         requestAnimationFrame(() => textareaRef.current?.focus({ preventScroll: true }))
       }
@@ -3166,7 +3162,6 @@ const ChatCardView = ({
           clickedInComposer &&
           document.activeElement !== textarea
         ) {
-          lastFocusedCardId = card.id
           requestAnimationFrame(() => textareaRef.current?.focus())
         }
       }}

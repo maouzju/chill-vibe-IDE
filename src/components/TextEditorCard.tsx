@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react'
 
 import {
+  copyFileToClipboard,
   fetchFileContent,
   fetchGitFileLineDiff,
   fetchGitHeadFileState,
@@ -106,6 +107,8 @@ const TextEditorCardInner = ({ workspacePath, filePath, language }: TextEditorCa
   const [cursorPosition, setCursorPosition] = useState<{ line: number; column: number } | null>(null)
   const [eol, setEol] = useState<'LF' | 'CRLF' | null>(null)
   const [fileEncoding, setFileEncoding] = useState<string | null>(null)
+  const [copyState, setCopyState] = useState<'idle' | 'copying' | 'copied' | 'failed'>('idle')
+  const copyResetTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const editorContainerRef = useRef<HTMLDivElement>(null)
   const diffContainerRef = useRef<HTMLDivElement>(null)
   const editorRef = useRef<MonacoEditorInstance | null>(null)
@@ -128,6 +131,39 @@ const TextEditorCardInner = ({ workspacePath, filePath, language }: TextEditorCa
       mountedRef.current = false
     }
   }, [])
+
+  useEffect(() => () => {
+    if (copyResetTimerRef.current) {
+      clearTimeout(copyResetTimerRef.current)
+      copyResetTimerRef.current = null
+    }
+  }, [])
+
+  const handleCopyFile = useCallback(async () => {
+    setCopyState('copying')
+
+    let nextState: 'copied' | 'failed' = 'copied'
+    try {
+      await copyFileToClipboard(workspacePath, normalizedFilePath)
+    } catch {
+      nextState = 'failed'
+    }
+
+    if (!mountedRef.current) {
+      return
+    }
+
+    setCopyState(nextState)
+    if (copyResetTimerRef.current) {
+      clearTimeout(copyResetTimerRef.current)
+    }
+    copyResetTimerRef.current = setTimeout(() => {
+      copyResetTimerRef.current = null
+      if (mountedRef.current) {
+        setCopyState('idle')
+      }
+    }, 2000)
+  }, [workspacePath, normalizedFilePath])
 
   useEffect(() => {
     if (typeof document === 'undefined') {
@@ -880,6 +916,18 @@ const TextEditorCardInner = ({ workspacePath, filePath, language }: TextEditorCa
 
   const isDirty = content !== savedContent
 
+  const copyFileButton = (
+    <button
+      type="button"
+      className="text-editor-toolbar-button"
+      title={text.copyFileHint}
+      disabled={copyState === 'copying'}
+      onClick={() => void handleCopyFile()}
+    >
+      {copyState === 'copied' ? text.copied : copyState === 'failed' ? text.copyFailed : text.copyFile}
+    </button>
+  )
+
   if (!normalizedFilePath) {
     return (
       <div className="text-editor-card">
@@ -913,6 +961,7 @@ const TextEditorCardInner = ({ workspacePath, filePath, language }: TextEditorCa
       <div className="text-editor-card">
         <div className="text-editor-toolbar">
           <span className="text-editor-filepath">{filePath}</span>
+          <div className="text-editor-toolbar-actions">{copyFileButton}</div>
         </div>
         <div className="text-editor-empty">
           <FileTextIcon className="text-editor-empty-icon" />
@@ -945,6 +994,7 @@ const TextEditorCardInner = ({ workspacePath, filePath, language }: TextEditorCa
               {text.compareWithHead}
             </button>
           ) : null}
+          {copyFileButton}
           <span className="text-editor-status">
             {saving ? (
               text.saving

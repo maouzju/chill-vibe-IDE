@@ -580,6 +580,9 @@ function registerDesktopHandlers() {
   ipcMain.handle('desktop:read-file', (_event, request) =>
     desktopBackend.readFile(request),
   )
+  ipcMain.handle('desktop:copy-file-to-clipboard', (_event, request) =>
+    desktopBackend.copyFileToClipboard(request),
+  )
   ipcMain.handle('desktop:write-file', (_event, request) =>
     desktopBackend.writeFile(request),
   )

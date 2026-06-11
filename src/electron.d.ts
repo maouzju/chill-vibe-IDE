@@ -148,6 +148,7 @@ declare global {
       moveEntry?: (request: FileMoveRequest) => Promise<void>
       deleteEntry?: (request: FileDeleteRequest) => Promise<void>
       readFile?: (request: FileReadRequest) => Promise<FileReadResponse>
+      copyFileToClipboard?: (request: FileReadRequest) => Promise<void>
       writeFile?: (request: FileWriteRequest) => Promise<FileWriteResponse | void>
       readNearestTsconfig?: (request: FileReadRequest) => Promise<{
         compilerOptions: Record<string, unknown> | null

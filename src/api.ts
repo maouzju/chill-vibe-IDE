@@ -879,6 +879,29 @@ export const fetchFileContent = async (workspacePath: string, relativePath: stri
   return response.json() as Promise<FileReadResponse>
 }
 
+export const copyFileToClipboard = async (workspacePath: string, relativePath: string): Promise<void> => {
+  const desktop = getDesktopApi()
+  if (desktop?.copyFileToClipboard) {
+    await desktop.copyFileToClipboard({ workspacePath, relativePath })
+    return
+  }
+
+  const response = await fetch('/api/files/copy-to-clipboard', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ workspacePath, relativePath }),
+  })
+
+  if (!response.ok) {
+    const payload = await response.json().catch(() => null)
+    throw new Error(
+      payload && typeof payload.message === 'string'
+        ? payload.message
+        : 'Failed to copy file to clipboard',
+    )
+  }
+}
+
 export const fetchNearestTsconfig = async (
   workspacePath: string,
   relativePath: string,

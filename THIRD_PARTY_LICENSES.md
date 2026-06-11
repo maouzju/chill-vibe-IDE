@@ -5,8 +5,8 @@ Do not edit manually.
 
 ## Summary
 
-- Total packages: 669
-- License families: 17
+- Total packages: 670
+- License families: 18
 
 ## License Families
 
@@ -21,6 +21,7 @@ Do not edit manually.
 - `CC-BY-4.0`: 1 package
 - `CC0-1.0`: 1 package
 - `ISC`: 49 packages
+- `LGPL-2.1+`: 1 package
 - `MIT`: 542 packages
 - `MPL-2.0`: 1 package
 - `Python-2.0`: 1 package
@@ -184,6 +185,10 @@ Do not edit manually.
 - `y18n@4.0.3, 5.0.8` - https://github.com/yargs/y18n
 - `yallist@3.1.1, 4.0.0` - https://github.com/isaacs/yallist#readme
 - `yargs-parser@18.1.3, 21.1.1` - https://github.com/yargs/yargs-parser#readme
+
+### LGPL-2.1+ (1)
+
+- `jschardet@3.1.4` - https://github.com/aadsm/jschardet#readme
 
 ### MIT (542)
 

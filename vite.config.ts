@@ -24,6 +24,19 @@ export default defineConfig({
     proxy: {
       '/api': 'http://localhost:8787',
     },
+    watch: {
+      // Keep the file watcher off non-source trees: dist/release payloads,
+      // runtime state (.chill-vibe), and ad-hoc .tmp* scratch dirs add up to
+      // 100k+ files, which can OOM the dev server's watcher on Windows.
+      ignored: [
+        '**/dist/**',
+        '**/.chill-vibe/**',
+        '**/.tmp*/**',
+        '**/tmp/**',
+        '**/test-results/**',
+        '**/.codex-artifacts/**',
+      ],
+    },
   },
   resolve: {
     alias: {

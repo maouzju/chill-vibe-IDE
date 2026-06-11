@@ -396,6 +396,37 @@ export const requestChat = async (request: ChatRequest): Promise<ChatStartRespon
   return readDesktop(() => desktopRequestChat(request), chatStartResponseSchema)
 }
 
+export type UnsolicitedStreamNotification = {
+  cardId: string
+  streamId: string
+}
+
+// Desktop push channel: a pooled Claude keepalive process woke itself between
+// turns (background task finished → agent re-invoked). The payload names the
+// owning card and the fresh stream it should attach to.
+export const subscribeUnsolicitedStreams = (
+  handler: (notification: UnsolicitedStreamNotification) => void,
+) => {
+  const listener = (event: Event) => {
+    const detail = (event as CustomEvent<UnsolicitedStreamNotification>).detail
+    if (
+      detail &&
+      typeof detail.cardId === 'string' &&
+      detail.cardId.length > 0 &&
+      typeof detail.streamId === 'string' &&
+      detail.streamId.length > 0
+    ) {
+      handler(detail)
+    }
+  }
+
+  window.addEventListener('chill-vibe:unsolicited-stream', listener)
+
+  return () => {
+    window.removeEventListener('chill-vibe:unsolicited-stream', listener)
+  }
+}
+
 export const uploadImageAttachment = async (
   request: AttachmentUploadRequest,
 ): Promise<ImageAttachment> => {

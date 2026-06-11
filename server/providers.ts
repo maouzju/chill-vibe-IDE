@@ -64,6 +64,11 @@ import { proxyStats, type ProxyStatsEvent } from './proxy-stats-store.js'
 import type { ResilientProxyRuntimeConfig } from './resilient-proxy.js'
 import { resilientProxyPool } from './resilient-proxy.js'
 import { createArchiveRecallRuntimeOverrides, getCodexArchiveRecallInstruction } from './archive-recall.js'
+import {
+  ClaudeSessionPool,
+  type ClaudeSessionPoolEntryView,
+  type ClaudeTurnAttachment,
+} from './claude-session-pool.js'
 
 type StreamSink = {
   onSession: (sessionId: string) => void
@@ -1938,7 +1943,15 @@ const launchCodexAppServerRun = async (
   return child
 }
 
-export const launchProviderRun = async (request: ChatRequest, sink: StreamSink) => {
+export const launchProviderRun = async (
+  request: ChatRequest,
+  sink: StreamSink,
+  options?: {
+    // Long-lived Claude process pool (Electron host only). When present and
+    // the request carries a cardId, Claude turns reuse a pooled CLI process.
+    claudeSessionPool?: ClaudeSessionPool | null
+  },
+) => {
   const language = normalizeLanguage(request.language)
   let currentRequest = request
 
@@ -2029,9 +2042,341 @@ export const launchProviderRun = async (request: ChatRequest, sink: StreamSink) 
     )
   }
 
+  return launchClaudeRun(currentRequest, sink, language, runtime, attachmentPaths, options?.claudeSessionPool ?? null)
+}
+
+// ---------------------------------------------------------------------------
+// Claude turn parser
+//
+// One instance per turn. Folds the CLI's stream-json stdout lines into sink
+// calls, owns the stall watchdog and the result/error terminal handling. The
+// single-shot path and the keepalive (pooled, `--input-format stream-json`)
+// path share this state machine so the stripper/watchdog/recovery behavior can
+// never drift between them.
+// ---------------------------------------------------------------------------
+
+type ClaudeTurnParser = {
+  handleLine: (line: string) => void
+  handleStderrLine: (line: string) => void
+  // Fallback-free terminal handling for an unexpected process exit. The caller
+  // is responsible for the effort/stale-session restart checks first.
+  handleProcessClosed: (code: number | null) => void
+  handleSpawnError: (error: Error) => void
+  armWatchdog: () => void
+  // Drop the parser without settling (the caller is restarting the attempt).
+  cancel: () => void
+  settled: () => boolean
+  sawStreamOutput: () => boolean
+  stderrText: () => string
+}
+
+// Exported for the keepalive integration test, which drives a real fake-CLI
+// child process through the pool + parser composition.
+export const createClaudeTurnParser = (hooks: {
+  request: ChatRequest
+  sink: StreamSink
+  language: AppLanguage
+  killChild: () => void
+  // Fired exactly once after the turn's final sink call (done or error), so a
+  // pooled process can be returned to idle only after the stream settled.
+  onSettled?: () => void
+  onSessionId?: (sessionId: string) => void
+}): ClaudeTurnParser => {
+  const { request, sink, language } = hooks
   const parseClaudeStructuredOutput = createClaudeStructuredOutputParser(language)
-  const managedChild = createManagedChildHandle()
+  let sawClaudeDelta = false
+  let sawClaudeStreamOutput = false
+  // Track whether the turn produced anything real, so a turn whose only output
+  // was a tool call typed as text (stripped, never executed) can be auto-resumed
+  // instead of silently dead-ending.
+  let sawStructuredActivity = false
+  let sawMeaningfulAssistantText = false
+  const askUserDeltaStripper = createClaudeAskUserDeltaStripper()
+  let stderr = ''
+  let emittedSessionId: string | null = request.sessionId?.trim() || null
+  // Stall watchdog: the Claude path otherwise has no timeout, so a CLI that
+  // goes silent without a terminal `result` event spins the card forever
+  // ("使用工具也经常卡住不动"). The watchdog disarms while a tool command is in
+  // progress (the CLI emits no stdout for the command duration and owns its own
+  // per-tool timeout), so it never false-kills a legitimately long command.
+  let openClaudeCommandCount = 0
+  let claudeStallTimer: ReturnType<typeof setTimeout> | undefined
   let finished = false
+
+  const clearClaudeStallTimer = () => {
+    if (claudeStallTimer) {
+      clearTimeout(claudeStallTimer)
+      claudeStallTimer = undefined
+    }
+  }
+
+  const markFinished = () => {
+    finished = true
+    clearClaudeStallTimer()
+  }
+
+  const scheduleClaudeStallTimer = () => {
+    clearClaudeStallTimer()
+
+    if (finished) {
+      return
+    }
+
+    const timeoutMs = resolveLocalStreamStallTimeoutMs({
+      sawStreamOutput: sawClaudeStreamOutput,
+      openCommandCount: openClaudeCommandCount,
+      firstByteTimeoutMs: getLocalProviderFirstByteTimeoutMs(),
+      stallTimeoutMs: getLocalProviderStallTimeoutMs(),
+    })
+
+    if (timeoutMs === null) {
+      return
+    }
+
+    claudeStallTimer = setTimeout(() => {
+      claudeStallTimer = undefined
+
+      if (finished) {
+        return
+      }
+
+      markFinished()
+      const message = sawClaudeStreamOutput
+        ? 'Claude stalled after emitting stream output.'
+        : 'Claude stalled without emitting stream output.'
+      sink.onError(
+        message,
+        undefined,
+        classifyLiveProviderStreamRecovery(request, message, undefined, emittedSessionId),
+      )
+      hooks.killChild()
+      hooks.onSettled?.()
+    }, timeoutMs)
+  }
+
+  const handleLine = (line: string) => {
+    if (!line.trim() || finished) {
+      return
+    }
+
+    try {
+      const event = JSON.parse(line)
+      sawClaudeStreamOutput = true
+      // Any line is progress: reset the watchdog. The command-count update in
+      // the activity loop below re-evaluates (and disarms) it for tool runs.
+      scheduleClaudeStallTimer()
+
+      if (event.type === 'system' && event.subtype === 'init' && typeof event.session_id === 'string') {
+        emittedSessionId = event.session_id
+        hooks.onSessionId?.(event.session_id)
+        sink.onSession(event.session_id)
+        return
+      }
+
+      const claudeStructuredEvents = parseClaudeStructuredOutput(event)
+
+      if (event.type === 'assistant' && !sawClaudeDelta) {
+        if (Array.isArray(event.message?.content)) {
+          const hasToolUse = event.message.content.some(
+            (item: { type?: string }) => item.type === 'tool_use',
+          )
+          const textContent = event.message.content
+            .filter((item: { type?: string; text?: string }) => item.type === 'text')
+            .map((item: { text?: string }) => item.text ?? '')
+            .join('')
+          const safeTextContent =
+            askUserDeltaStripper.push(textContent) + askUserDeltaStripper.flush()
+
+          if (
+            safeTextContent.trim() &&
+            !(hasToolUse && isBareClaudeToolCallMarkerText(safeTextContent))
+          ) {
+            sawMeaningfulAssistantText = true
+            sink.onDelta(safeTextContent)
+          }
+        }
+      }
+
+      for (const parsed of claudeStructuredEvents) {
+        if (structuredActivityCountsAsTurnOutput(parsed.kind)) {
+          sawStructuredActivity = true
+        }
+        if (parsed.kind === 'command') {
+          if (parsed.status === 'in_progress') {
+            openClaudeCommandCount += 1
+          } else if (parsed.status === 'completed') {
+            openClaudeCommandCount = Math.max(0, openClaudeCommandCount - 1)
+          }
+        }
+        const activity = { ...parsed }
+        delete (activity as { type?: 'activity' }).type
+        sink.onActivity(activity)
+      }
+
+      if (claudeStructuredEvents.length > 0) {
+        // Re-evaluate the watchdog now that the in-progress command count may
+        // have changed: disarm while a command runs, re-arm once it completes.
+        scheduleClaudeStallTimer()
+      }
+
+      if (
+        event.type === 'user' &&
+        typeof event.message?.content === 'string' &&
+        claudeStructuredEvents.length === 0
+      ) {
+        const localCommandOutput = extractClaudeLocalCommandOutput(event.message.content)
+        if (localCommandOutput) {
+          sink.onLog(localCommandOutput)
+          return
+        }
+      }
+
+      if (
+        event.type === 'stream_event' &&
+        event.event?.type === 'content_block_delta' &&
+        event.event.delta?.type === 'text_delta' &&
+        typeof event.event.delta.text === 'string'
+      ) {
+        sawClaudeDelta = true
+        const safeText = askUserDeltaStripper.push(event.event.delta.text)
+        if (safeText) {
+          if (safeText.trim()) {
+            sawMeaningfulAssistantText = true
+          }
+          sink.onDelta(safeText)
+        }
+        return
+      }
+
+      if (event.type === 'assistant') {
+        return
+      }
+
+      if (event.type === 'result') {
+        markFinished()
+
+        const residualDelta = askUserDeltaStripper.flush()
+        if (residualDelta) {
+          if (residualDelta.trim()) {
+            sawMeaningfulAssistantText = true
+          }
+          sink.onDelta(residualDelta)
+        }
+
+        if (event.is_error) {
+          const message =
+            typeof event.result === 'string' ? event.result : formatClaudeRunFailed(language)
+          const hint = classifyLaunchErrorHint(message)
+          sink.onError(message, hint, classifyLiveProviderStreamRecovery(request, message, hint, emittedSessionId))
+          hooks.onSettled?.()
+          return
+        }
+
+        // A clean `result` can still be a dead-end: the model typed a tool call
+        // as text (now stripped) and produced no real activity or prose, so the
+        // turn did nothing. Auto-resume it via the bounded renderer retry path
+        // instead of calling onDone() and stalling the chat ("老是停住").
+        const emptyToolCallRecovery = shouldRecoverEmptyToolCallTurn({
+          consumedRealToolCallBlock: askUserDeltaStripper.consumedToolCallBlockCount() > 0,
+          sawStructuredActivity,
+          sawMeaningfulAssistantText,
+          hasSessionId: Boolean((emittedSessionId ?? request.sessionId)?.trim()),
+        })
+
+        if (emptyToolCallRecovery) {
+          sink.onError(formatClaudeTypedToolCallStalled(language), undefined, emptyToolCallRecovery)
+          hooks.onSettled?.()
+          return
+        }
+
+        sink.onDone()
+        hooks.onSettled?.()
+        return
+      }
+    } catch {
+      // Ignore non-JSON stdout noise unless the run eventually fails.
+    }
+  }
+
+  const handleStderrLine = (line: string) => {
+    if (!line.trim()) {
+      return
+    }
+
+    stderr += `${line}\n`
+  }
+
+  const handleProcessClosed = (code: number | null) => {
+    if (finished) {
+      return
+    }
+
+    markFinished()
+    const diagnostics = summarizeDiagnostics(stderr)
+    const message =
+      code === 0
+        ? diagnostics || formatProviderUnexpectedCompletion(language, request.provider)
+        : diagnostics || formatProviderExit(language, request.provider, code)
+    const detail = `${message}\n${stderr}`
+    const hint = classifyLaunchErrorHint(detail)
+    sink.onError(message, hint, classifyLiveProviderStreamRecovery(request, message, hint, emittedSessionId))
+    hooks.onSettled?.()
+  }
+
+  const handleSpawnError = (error: Error) => {
+    if (finished) {
+      return
+    }
+
+    markFinished()
+    const hint = classifyLaunchErrorHint(error.message)
+    sink.onError(error.message, hint, classifyLiveProviderStreamRecovery(request, error.message, hint, emittedSessionId))
+    hooks.onSettled?.()
+  }
+
+  return {
+    handleLine,
+    handleStderrLine,
+    handleProcessClosed,
+    handleSpawnError,
+    // Arm the first-byte watchdog: if the CLI never produces output (or a
+    // terminal event) it would otherwise hang the card indefinitely.
+    armWatchdog: scheduleClaudeStallTimer,
+    cancel: clearClaudeStallTimer,
+    settled: () => finished,
+    sawStreamOutput: () => sawClaudeStreamOutput,
+    stderrText: () => stderr,
+  }
+}
+
+const isClaudeKeepaliveEnabled = () => process.env.CHILL_VIBE_CLAUDE_KEEPALIVE !== '0'
+
+const launchClaudeRun = async (
+  request: ChatRequest,
+  sink: StreamSink,
+  language: AppLanguage,
+  runtime: ProviderRuntime,
+  attachmentPaths: string[],
+  pool: ClaudeSessionPool | null,
+) => {
+  const cardId = request.cardId?.trim()
+
+  if (pool && cardId && isClaudeKeepaliveEnabled()) {
+    return launchClaudeKeepaliveRun(request, sink, language, runtime, attachmentPaths, pool, cardId)
+  }
+
+  return launchClaudeSingleShotRun(request, sink, language, runtime, attachmentPaths)
+}
+
+const launchClaudeSingleShotRun = async (
+  request: ChatRequest,
+  sink: StreamSink,
+  language: AppLanguage,
+  runtime: ProviderRuntime,
+  attachmentPaths: string[],
+) => {
+  const managedChild = createManagedChildHandle()
+  let currentRequest = request
   let fallbackAttempted = false
   let staleSessionFallbackAttempted = false
 
@@ -2051,7 +2396,6 @@ export const launchProviderRun = async (request: ChatRequest, sink: StreamSink) 
     )
 
     if (!child) {
-      finished = true
       managedChild.setActiveChild(null)
       return false
     }
@@ -2060,256 +2404,57 @@ export const launchProviderRun = async (request: ChatRequest, sink: StreamSink) 
 
     if (!child.stdout || !child.stderr) {
       const message = formatProviderUnexpectedCompletion(language, currentRequest.provider)
-      finished = true
       managedChild.setActiveChild(null)
       sink.onError(message, undefined, classifyProviderStreamErrorRecovery(currentRequest, message))
       child.kill()
       return false
     }
 
-    let sawClaudeDelta = false
-    let sawClaudeStreamOutput = false
-    // Track whether the turn produced anything real, so a turn whose only output
-    // was a tool call typed as text (stripped, never executed) can be auto-resumed
-    // instead of silently dead-ending.
-    let sawStructuredActivity = false
-    let sawMeaningfulAssistantText = false
-    const askUserDeltaStripper = createClaudeAskUserDeltaStripper()
-    let stderr = ''
-    let emittedSessionId: string | null = currentRequest.sessionId?.trim() || null
-    // Stall watchdog: the Claude path otherwise has no timeout, so a CLI that
-    // goes silent without a terminal `result` event spins the card forever
-    // ("使用工具也经常卡住不动"). The watchdog disarms while a tool command is in
-    // progress (the CLI emits no stdout for the command duration and owns its own
-    // per-tool timeout), so it never false-kills a legitimately long command.
-    let openClaudeCommandCount = 0
-    let claudeStallTimer: ReturnType<typeof setTimeout> | undefined
-
-    const clearClaudeStallTimer = () => {
-      if (claudeStallTimer) {
-        clearTimeout(claudeStallTimer)
-        claudeStallTimer = undefined
-      }
-    }
-
-    const scheduleClaudeStallTimer = () => {
-      clearClaudeStallTimer()
-
-      if (finished) {
-        return
-      }
-
-      const timeoutMs = resolveLocalStreamStallTimeoutMs({
-        sawStreamOutput: sawClaudeStreamOutput,
-        openCommandCount: openClaudeCommandCount,
-        firstByteTimeoutMs: getLocalProviderFirstByteTimeoutMs(),
-        stallTimeoutMs: getLocalProviderStallTimeoutMs(),
-      })
-
-      if (timeoutMs === null) {
-        return
-      }
-
-      claudeStallTimer = setTimeout(() => {
-        claudeStallTimer = undefined
-
-        if (finished) {
-          return
+    const parser = createClaudeTurnParser({
+      request: currentRequest,
+      sink,
+      language,
+      killChild: () => {
+        try {
+          child.kill()
+        } catch {
+          // The process may already be gone.
         }
-
-        finished = true
-        managedChild.setActiveChild(null)
-        const message = sawClaudeStreamOutput
-          ? 'Claude stalled after emitting stream output.'
-          : 'Claude stalled without emitting stream output.'
-        sink.onError(
-          message,
-          undefined,
-          classifyLiveProviderStreamRecovery(currentRequest, message, undefined, emittedSessionId),
-        )
-        child.kill()
-      }, timeoutMs)
-    }
-
-    const stdoutLines = readLines(child.stdout, (line) => {
-      if (!line.trim()) {
-        return
-      }
-
-      try {
-        const event = JSON.parse(line)
-        sawClaudeStreamOutput = true
-        // Any line is progress: reset the watchdog. The command-count update in
-        // the activity loop below re-evaluates (and disarms) it for tool runs.
-        scheduleClaudeStallTimer()
-
-        if (event.type === 'system' && event.subtype === 'init' && typeof event.session_id === 'string') {
-          emittedSessionId = event.session_id
-          sink.onSession(event.session_id)
-          return
-        }
-
-        const claudeStructuredEvents = parseClaudeStructuredOutput(event)
-
-        if (event.type === 'assistant' && !sawClaudeDelta) {
-          if (Array.isArray(event.message?.content)) {
-            const hasToolUse = event.message.content.some(
-              (item: { type?: string }) => item.type === 'tool_use',
-            )
-            const textContent = event.message.content
-              .filter((item: { type?: string; text?: string }) => item.type === 'text')
-              .map((item: { text?: string }) => item.text ?? '')
-              .join('')
-            const safeTextContent =
-              askUserDeltaStripper.push(textContent) + askUserDeltaStripper.flush()
-
-            if (
-              safeTextContent.trim() &&
-              !(hasToolUse && isBareClaudeToolCallMarkerText(safeTextContent))
-            ) {
-              sawMeaningfulAssistantText = true
-              sink.onDelta(safeTextContent)
-            }
-          }
-        }
-
-        for (const parsed of claudeStructuredEvents) {
-          if (structuredActivityCountsAsTurnOutput(parsed.kind)) {
-            sawStructuredActivity = true
-          }
-          if (parsed.kind === 'command') {
-            if (parsed.status === 'in_progress') {
-              openClaudeCommandCount += 1
-            } else if (parsed.status === 'completed') {
-              openClaudeCommandCount = Math.max(0, openClaudeCommandCount - 1)
-            }
-          }
-          const activity = { ...parsed }
-          delete (activity as { type?: 'activity' }).type
-          sink.onActivity(activity)
-        }
-
-        if (claudeStructuredEvents.length > 0) {
-          // Re-evaluate the watchdog now that the in-progress command count may
-          // have changed: disarm while a command runs, re-arm once it completes.
-          scheduleClaudeStallTimer()
-        }
-
-        if (
-          event.type === 'user' &&
-          typeof event.message?.content === 'string' &&
-          claudeStructuredEvents.length === 0
-        ) {
-          const localCommandOutput = extractClaudeLocalCommandOutput(event.message.content)
-          if (localCommandOutput) {
-            sink.onLog(localCommandOutput)
-            return
-          }
-        }
-
-        if (
-          event.type === 'stream_event' &&
-          event.event?.type === 'content_block_delta' &&
-          event.event.delta?.type === 'text_delta' &&
-          typeof event.event.delta.text === 'string'
-        ) {
-          sawClaudeDelta = true
-          const safeText = askUserDeltaStripper.push(event.event.delta.text)
-          if (safeText) {
-            if (safeText.trim()) {
-              sawMeaningfulAssistantText = true
-            }
-            sink.onDelta(safeText)
-          }
-          return
-        }
-
-        if (event.type === 'assistant') {
-          return
-        }
-
-        if (event.type === 'result') {
-          finished = true
-          clearClaudeStallTimer()
-          managedChild.setActiveChild(null)
-
-          const residualDelta = askUserDeltaStripper.flush()
-          if (residualDelta) {
-            if (residualDelta.trim()) {
-              sawMeaningfulAssistantText = true
-            }
-            sink.onDelta(residualDelta)
-          }
-
-          if (event.is_error) {
-            const message =
-              typeof event.result === 'string' ? event.result : formatClaudeRunFailed(language)
-            const hint = classifyLaunchErrorHint(message)
-            sink.onError(message, hint, classifyLiveProviderStreamRecovery(currentRequest, message, hint, emittedSessionId))
-            return
-          }
-
-          // A clean `result` can still be a dead-end: the model typed a tool call
-          // as text (now stripped) and produced no real activity or prose, so the
-          // turn did nothing. Auto-resume it via the bounded renderer retry path
-          // instead of calling onDone() and stalling the chat ("老是停住").
-          const emptyToolCallRecovery = shouldRecoverEmptyToolCallTurn({
-            consumedRealToolCallBlock: askUserDeltaStripper.consumedToolCallBlockCount() > 0,
-            sawStructuredActivity,
-            sawMeaningfulAssistantText,
-            hasSessionId: Boolean((emittedSessionId ?? currentRequest.sessionId)?.trim()),
-          })
-
-          if (emptyToolCallRecovery) {
-            sink.onError(formatClaudeTypedToolCallStalled(language), undefined, emptyToolCallRecovery)
-            return
-          }
-
-          sink.onDone()
-          return
-        }
-      } catch {
-        // Ignore non-JSON stdout noise unless the run eventually fails.
-      }
+      },
+      onSettled: () => managedChild.setActiveChild(null),
     })
 
-    const stderrLines = readLines(child.stderr, (line) => {
-      if (!line.trim()) {
-        return
-      }
+    const stdoutLines = readLines(child.stdout, parser.handleLine)
+    const stderrLines = readLines(child.stderr, parser.handleStderrLine)
 
-      stderr += `${line}\n`
-    })
-
-    // Arm the first-byte watchdog: if the CLI never produces output (or a
-    // terminal event) it would otherwise hang the card indefinitely.
-    scheduleClaudeStallTimer()
+    parser.armWatchdog()
 
     child.on('close', (code) => {
-      clearClaudeStallTimer()
       stdoutLines.close()
       stderrLines.close()
 
-      if (finished) {
+      if (parser.settled()) {
         managedChild.setActiveChild(null)
         return
       }
 
-      const diagnostics = summarizeDiagnostics(stderr)
+      const stderrText = parser.stderrText()
+      const diagnostics = summarizeDiagnostics(stderrText)
       const message =
         code === 0
           ? diagnostics || formatProviderUnexpectedCompletion(language, currentRequest.provider)
           : diagnostics || formatProviderExit(language, currentRequest.provider, code)
-      const detail = `${message}\n${stderr}`
+      const detail = `${message}\n${stderrText}`
 
       if (
         includeEffort &&
         !fallbackAttempted &&
         code !== 0 &&
-        !sawClaudeStreamOutput &&
+        !parser.sawStreamOutput() &&
         isClaudeEffortUnsupported(detail)
       ) {
         fallbackAttempted = true
+        parser.cancel()
         managedChild.setActiveChild(null)
         sink.onLog(formatClaudeEffortCompatibilityNotice(language))
         void startClaudeAttempt(false)
@@ -2319,11 +2464,12 @@ export const launchProviderRun = async (request: ChatRequest, sink: StreamSink) 
       if (
         !staleSessionFallbackAttempted &&
         code !== 0 &&
-        !sawClaudeStreamOutput &&
+        !parser.sawStreamOutput() &&
         currentRequest.sessionId?.trim() &&
         isClaudeStaleResumedSession(detail)
       ) {
         staleSessionFallbackAttempted = true
+        parser.cancel()
         managedChild.setActiveChild(null)
         sink.onLog(formatClaudeStaleSessionRecoveryNotice(language))
         currentRequest = { ...currentRequest, sessionId: undefined }
@@ -2331,26 +2477,18 @@ export const launchProviderRun = async (request: ChatRequest, sink: StreamSink) 
         return
       }
 
-      finished = true
-      managedChild.setActiveChild(null)
-      const hint = classifyLaunchErrorHint(detail)
-      sink.onError(message, hint, classifyLiveProviderStreamRecovery(currentRequest, message, hint, emittedSessionId))
+      parser.handleProcessClosed(code)
     })
 
     child.on('error', (error) => {
-      clearClaudeStallTimer()
-
-      if (finished) {
+      if (parser.settled()) {
         managedChild.setActiveChild(null)
         return
       }
 
-      finished = true
-      managedChild.setActiveChild(null)
       stdoutLines.close()
       stderrLines.close()
-      const hint = classifyLaunchErrorHint(error.message)
-      sink.onError(error.message, hint, classifyLiveProviderStreamRecovery(currentRequest, error.message, hint, emittedSessionId))
+      parser.handleSpawnError(error)
     })
 
     return true
@@ -2358,6 +2496,243 @@ export const launchProviderRun = async (request: ChatRequest, sink: StreamSink) 
 
   const started = await startClaudeAttempt(true)
   return started ? managedChild.handle : null
+}
+
+// ---------------------------------------------------------------------------
+// Claude keepalive run
+//
+// The CLI process is pooled per card and stays alive between turns
+// (`--input-format stream-json`), so background tasks started by the agent
+// survive the turn and their completion wakes the agent for an unsolicited
+// follow-up turn. User messages are written to stdin as stream-json lines.
+// ---------------------------------------------------------------------------
+
+const buildClaudeKeepaliveSignature = (
+  request: ChatRequest,
+  includeEffort: boolean,
+  runtime: ProviderRuntime,
+) =>
+  JSON.stringify({
+    workspace: request.workspacePath,
+    model: request.model ?? '',
+    effort: includeEffort
+      ? `${request.thinkingEnabled === false ? 'none' : normalizeReasoningEffort('claude', request.reasoningEffort)}`
+      : 'omitted',
+    plan: Boolean(request.planMode),
+    language: normalizeLanguage(request.language),
+    systemPrompt: request.systemPrompt,
+    modelPromptRules: request.modelPromptRules,
+    skills: request.crossProviderSkillReuseEnabled !== false,
+    runtimeArgs: runtime.args,
+  })
+
+const launchClaudeKeepaliveRun = async (
+  request: ChatRequest,
+  sink: StreamSink,
+  language: AppLanguage,
+  runtime: ProviderRuntime,
+  attachmentPaths: string[],
+  pool: ClaudeSessionPool,
+  cardId: string,
+) => {
+  const managedChild = createManagedChildHandle()
+  let currentRequest = request
+  let fallbackAttempted = false
+  let staleSessionFallbackAttempted = false
+
+  const startAttempt = async (includeEffort: boolean): Promise<boolean> => {
+    const signature = buildClaudeKeepaliveSignature(currentRequest, includeEffort, runtime)
+
+    const acquired = await pool.acquireForTurn({
+      key: cardId,
+      signature,
+      sessionId: currentRequest.sessionId,
+      spawn: async () => {
+        const args = [
+          ...runtime.args,
+          ...buildClaudeArgs(currentRequest, attachmentPaths, {
+            includeEffort,
+            streamingInput: true,
+          }),
+        ]
+
+        const spawned = await spawnProvider(
+          currentRequest.provider,
+          args,
+          currentRequest.workspacePath,
+          sink,
+          language,
+          runtime.env,
+          { stdin: 'pipe' },
+        )
+
+        if (spawned && (!spawned.stdout || !spawned.stderr || !spawned.stdin)) {
+          const message = formatProviderUnexpectedCompletion(language, currentRequest.provider)
+          sink.onError(message, undefined, classifyProviderStreamErrorRecovery(currentRequest, message))
+          spawned.kill()
+          return null
+        }
+
+        return spawned
+      },
+      meta: {
+        language,
+        workspacePath: currentRequest.workspacePath,
+        model: currentRequest.model ?? '',
+      },
+    })
+
+    if (!acquired) {
+      return false
+    }
+
+    const child = acquired.child as ChildProcess
+    managedChild.setActiveChild(child)
+
+    const parser = createClaudeTurnParser({
+      request: currentRequest,
+      sink,
+      language,
+      killChild: () => pool.releaseEntry(cardId),
+      onSettled: () => {
+        managedChild.setActiveChild(null)
+        pool.endTurn(cardId)
+      },
+      onSessionId: (sessionId) => pool.updateSessionId(cardId, sessionId),
+    })
+
+    pool.beginTurn(cardId, {
+      onLine: parser.handleLine,
+      onStderrLine: parser.handleStderrLine,
+      onProcessClosed: (code) => {
+        if (parser.settled()) {
+          managedChild.setActiveChild(null)
+          return
+        }
+
+        const stderrText = parser.stderrText()
+        const diagnostics = summarizeDiagnostics(stderrText)
+        const message =
+          code === 0
+            ? diagnostics || formatProviderUnexpectedCompletion(language, currentRequest.provider)
+            : diagnostics || formatProviderExit(language, currentRequest.provider, code)
+        const detail = `${message}\n${stderrText}`
+
+        if (
+          includeEffort &&
+          !fallbackAttempted &&
+          code !== 0 &&
+          !parser.sawStreamOutput() &&
+          isClaudeEffortUnsupported(detail)
+        ) {
+          fallbackAttempted = true
+          parser.cancel()
+          managedChild.setActiveChild(null)
+          sink.onLog(formatClaudeEffortCompatibilityNotice(language))
+          void startAttempt(false)
+          return
+        }
+
+        if (
+          !staleSessionFallbackAttempted &&
+          code !== 0 &&
+          !parser.sawStreamOutput() &&
+          currentRequest.sessionId?.trim() &&
+          isClaudeStaleResumedSession(detail)
+        ) {
+          staleSessionFallbackAttempted = true
+          parser.cancel()
+          managedChild.setActiveChild(null)
+          sink.onLog(formatClaudeStaleSessionRecoveryNotice(language))
+          currentRequest = { ...currentRequest, sessionId: undefined }
+          void startAttempt(includeEffort)
+          return
+        }
+
+        parser.handleProcessClosed(code)
+      },
+    })
+
+    const prompt = getClaudePrompt(currentRequest, attachmentPaths)
+    const written = pool.writeUserMessage(
+      cardId,
+      JSON.stringify({
+        type: 'user',
+        message: { role: 'user', content: [{ type: 'text', text: prompt }] },
+      }),
+    )
+
+    if (!written) {
+      parser.cancel()
+      pool.releaseEntry(cardId)
+      managedChild.setActiveChild(null)
+      const message = formatProviderUnexpectedCompletion(language, currentRequest.provider)
+      sink.onError(message, undefined, classifyProviderStreamErrorRecovery(currentRequest, message))
+      return false
+    }
+
+    parser.armWatchdog()
+    return true
+  }
+
+  const started = await startAttempt(true)
+  return started ? managedChild.handle : null
+}
+
+// Builds the per-turn attachment for an unsolicited keepalive turn: the CLI
+// woke itself between turns (background task finished → agent re-invoked), so
+// there is no originating ChatRequest. Recovery classification only needs the
+// session id and provider, which the pool entry carries.
+export const createClaudeUnsolicitedTurnAttachment = (options: {
+  entry: ClaudeSessionPoolEntryView
+  sink: StreamSink
+  killChild: () => void
+  onSettled: () => void
+}): ClaudeTurnAttachment => {
+  const language = normalizeLanguage(
+    typeof options.entry.meta.language === 'string'
+      ? (options.entry.meta.language as AppLanguage)
+      : undefined,
+  )
+
+  const pseudoRequest: ChatRequest = {
+    provider: 'claude',
+    workspacePath:
+      typeof options.entry.meta.workspacePath === 'string' && options.entry.meta.workspacePath
+        ? options.entry.meta.workspacePath
+        : '.',
+    model: typeof options.entry.meta.model === 'string' ? options.entry.meta.model : '',
+    reasoningEffort: 'max',
+    thinkingEnabled: true,
+    planMode: false,
+    sessionId: options.entry.sessionId ?? undefined,
+    language,
+    systemPrompt: '',
+    modelPromptRules: [],
+    crossProviderSkillReuseEnabled: true,
+    prompt: '',
+    attachments: [],
+  }
+
+  const parser = createClaudeTurnParser({
+    request: pseudoRequest,
+    sink: options.sink,
+    language,
+    killChild: options.killChild,
+    onSettled: options.onSettled,
+  })
+
+  parser.armWatchdog()
+
+  return {
+    onLine: parser.handleLine,
+    onStderrLine: parser.handleStderrLine,
+    onProcessClosed: (code) => {
+      if (!parser.settled()) {
+        parser.handleProcessClosed(code)
+      }
+    },
+  }
 }
 
 export type RunningCliProcess = ChildProcess
@@ -2510,9 +2885,16 @@ export const buildClaudeArgs = (
     includeEffort?: boolean
     env?: NodeJS.ProcessEnv
     homeDir?: string | null
+    // Keepalive mode: keep the CLI alive between turns and feed user messages
+    // over stdin (`--input-format stream-json`) instead of a one-shot argv
+    // prompt, so background tasks survive the turn and can wake the agent.
+    streamingInput?: boolean
   },
 ) => {
   const args = ['-p', '--verbose', '--output-format', 'stream-json', '--include-partial-messages']
+  if (options?.streamingInput) {
+    args.push('--input-format', 'stream-json')
+  }
   const reasoningEffort = normalizeReasoningEffort('claude', request.reasoningEffort)
   const permissionMode = request.planMode ? 'plan' : 'bypassPermissions'
   const additionalDirectories = resolveClaudeAdditionalDirectories({

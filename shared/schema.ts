@@ -670,6 +670,9 @@ export const chatRequestSchema = z.object({
   planMode: z.boolean().default(false),
   streamId: z.string().min(1).optional(),
   sessionId: z.string().optional(),
+  // Card identity lets the Claude keepalive pool key long-lived CLI processes
+  // and route unsolicited turns (background-task wake-ups) back to the card.
+  cardId: z.string().min(1).optional(),
   language: appLanguageSchema.default('zh-CN'),
   systemPrompt: z.string().default(defaultSystemPrompt),
   modelPromptRules: z.array(modelPromptRuleSchema).default([]),

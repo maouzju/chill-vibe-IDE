@@ -399,6 +399,10 @@ A living list of traps that have wasted time before. **When you hit a new pitfal
 
 | 155 | Claude `stream-json` assistant events can include a text block containing only `call:` immediately before a real `tool_use` block | Treat that bare text as a provider protocol marker in the server fold, not as user-visible assistant prose; otherwise the UI fills with `call:` even though the native tool call is actually present. |
 
+| 156 | Monaco ≥0.55 types expose `monaco.languages.typescript` only as a `{ deprecated: true }` stub | The real TS language service (typescriptDefaults / javascriptDefaults / CompilerOptions) lives on the top-level `monaco.typescript` namespace, so compiler-option wiring must target that or `tsc` fails even though older snippets still show the `languages.` path. |
+
+| 157 | Components rendered by SSR-based unit tests (react-dom/server) crash on `useSyncExternalStore` without a `getServerSnapshot` argument | Always pass the third snapshot argument when adding `useSyncExternalStore` to any card that `tests/*.test.tsx` renders server-side, or the suite fails with "Missing getServerSnapshot" far from the actual change. |
+
 ### Self-maintenance rule
 
 - When you encounter a new non-obvious failure mode — a test that fails for environmental reasons, a build step with hidden prerequisites, a runtime behavior that contradicts the docs — append a row to this table before you finish the task.

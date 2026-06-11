@@ -12572,9 +12572,163 @@ body.is-pane-resizing .split-resize-handle::before {
   opacity: 0.7;
 }
 
+.text-editor-save-retry {
+  border: none;
+  background: none;
+  padding: 0;
+  font: inherit;
+  font-size: 0.72rem;
+  color: var(--danger, #e55);
+  cursor: pointer;
+}
+
+.text-editor-save-retry:hover {
+  text-decoration: underline;
+}
+
+.text-editor-conflict {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 0.4rem 0.75rem;
+  padding: 0.45rem 0.6rem;
+  border-bottom: 1px solid color-mix(in srgb, var(--warn) 35%, var(--border));
+  background: var(--warn-soft);
+  color: color-mix(in srgb, var(--warn) 90%, var(--ink-1));
+  font-size: 0.76rem;
+}
+
+.text-editor-conflict-message {
+  min-width: 0;
+}
+
+.text-editor-conflict-actions {
+  display: flex;
+  flex-shrink: 0;
+  gap: 0.4rem;
+}
+
+.text-editor-conflict-button {
+  border: 1px solid color-mix(in srgb, var(--warn) 45%, var(--border));
+  border-radius: 0.35rem;
+  padding: 0.18rem 0.55rem;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-size: 0.72rem;
+  cursor: pointer;
+}
+
+.text-editor-conflict-button:hover {
+  background: color-mix(in srgb, var(--warn-soft) 60%, transparent);
+}
+
+.text-editor-conflict-button.is-primary {
+  background: var(--warn);
+  border-color: var(--warn);
+  color: var(--panel-strong);
+}
+
+.text-editor-conflict-button.is-primary:hover {
+  background: color-mix(in srgb, var(--warn) 88%, var(--ink-1));
+}
+
+.text-editor-toolbar-actions {
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+  gap: 0.5rem;
+}
+
+.text-editor-toolbar-button {
+  border: 1px solid var(--border);
+  border-radius: 0.35rem;
+  padding: 0.12rem 0.5rem;
+  background: transparent;
+  color: var(--ink-2);
+  font: inherit;
+  font-size: 0.72rem;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.text-editor-toolbar-button:hover {
+  color: var(--ink-1);
+  border-color: color-mix(in srgb, var(--accent) 45%, var(--border));
+}
+
 .text-editor-surface {
   flex: 1;
   min-height: 0;
   overflow: hidden;
+}
+
+.text-editor-surface.is-hidden {
+  display: none;
+}
+
+.text-editor-diff-surface {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.text-editor-statusbar {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.18rem 0.6rem;
+  border-top: 1px solid var(--border);
+  font-size: 0.7rem;
+  color: var(--ink-2);
+}
+
+.text-editor-statusbar-item {
+  white-space: nowrap;
+  font-family: var(--font-mono, monospace);
+}
+
+.text-editor-statusbar-spacer {
+  flex: 1;
+}
+
+.text-editor-statusbar-button {
+  border: none;
+  border-radius: 0.3rem;
+  padding: 0.05rem 0.4rem;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-size: 0.7rem;
+  font-family: var(--font-mono, monospace);
+  cursor: pointer;
+}
+
+.text-editor-statusbar-button:hover {
+  background: color-mix(in srgb, var(--ink-2) 12%, transparent);
+  color: var(--ink-1);
+}
+
+/* Git gutter markers rendered through Monaco linesDecorationsClassName. */
+.text-editor-gutter-added,
+.text-editor-gutter-modified,
+.text-editor-gutter-removed {
+  width: 3px !important;
+  margin-left: 2px;
+}
+
+.text-editor-gutter-added {
+  background: var(--structured-diff-added-ink);
+}
+
+.text-editor-gutter-modified {
+  background: var(--accent);
+}
+
+.text-editor-gutter-removed {
+  background: var(--danger);
+  height: 40% !important;
+  align-self: flex-end;
 }
 

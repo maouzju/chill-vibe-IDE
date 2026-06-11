@@ -17,6 +17,11 @@ type LocaleText = {
   settingsPanelHeading: string
   settingsGroupAppearance: string
   settingsGroupMusic: string
+  settingsGroupEditor: string
+  editorFontSizeLabel: string
+  editorWordWrapLabel: string
+  editorMinimapLabel: string
+  editorTabSizeLabel: string
   settingsGroupModels: string
   settingsGroupEnvironment: string
   settingsGroupUtility: string
@@ -261,6 +266,11 @@ const localeTextByLanguage: Record<AppLanguage, LocaleText> = {
     settingsTitle: '设置',
     settingsGroupAppearance: '外观',
     settingsGroupMusic: '音乐',
+    settingsGroupEditor: '编辑器',
+    editorFontSizeLabel: '字号',
+    editorWordWrapLabel: '自动换行',
+    editorMinimapLabel: '缩略图',
+    editorTabSizeLabel: '缩进宽度',
     settingsGroupModels: '模型',
     settingsGroupEnvironment: '环境设置',
     settingsGroupUtility: '实用',
@@ -524,6 +534,11 @@ const localeTextByLanguage: Record<AppLanguage, LocaleText> = {
     settingsPanelHeading: 'Interface and request settings',
     settingsGroupAppearance: 'Appearance',
     settingsGroupMusic: 'Music',
+    settingsGroupEditor: 'Editor',
+    editorFontSizeLabel: 'Font size',
+    editorWordWrapLabel: 'Word wrap',
+    editorMinimapLabel: 'Minimap',
+    editorTabSizeLabel: 'Tab size',
     settingsGroupModels: 'Models',
     settingsGroupEnvironment: 'Environment',
     settingsGroupUtility: 'Utility',

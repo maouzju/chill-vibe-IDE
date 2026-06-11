@@ -28,12 +28,27 @@ export const clearFileTreeCacheForCard = (cardId: string) => {
 export const shouldFlushTextEditorSave = (savedContent: string, content: string) =>
   savedContent !== content
 
+export type TextEditorRefreshResolution =
+  | { kind: 'refresh'; content: string }
+  | { kind: 'conflict'; diskContent: string }
+  | null
+
 export const resolveTextEditorExternalRefresh = (
   savedContent: string,
   content: string,
   diskContent: string,
-) => {
+): TextEditorRefreshResolution => {
   if (shouldFlushTextEditorSave(savedContent, content)) {
+    // The disk caught up with the local buffer — treat it as an external save.
+    if (diskContent === content) {
+      return { kind: 'refresh', content: diskContent }
+    }
+
+    // Local edits and external edits diverged; never silently drop either side.
+    if (diskContent !== savedContent) {
+      return { kind: 'conflict', diskContent }
+    }
+
     return null
   }
 
@@ -41,8 +56,5 @@ export const resolveTextEditorExternalRefresh = (
     return null
   }
 
-  return {
-    content: diskContent,
-    savedContent: diskContent,
-  }
+  return { kind: 'refresh', content: diskContent }
 }

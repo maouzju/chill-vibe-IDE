@@ -70,6 +70,7 @@ if (desktopRuntimeProfilePaths) {
 
 const desktopBackend = createDesktopBackend()
 const streamSubscriptions = new Map<string, { webContentsId: number; unsubscribe: () => void }>()
+const fileWatchSubscriptions = new Map<string, { webContentsId: number }>()
 const hasSingleInstanceLock = bypassSingleInstanceLock ? true : app.requestSingleInstanceLock()
 
 let quitTimer: NodeJS.Timeout | null = null
@@ -228,6 +229,15 @@ function cleanupSubscriptionsForContentsId(webContentsId: number) {
 
     entry.unsubscribe()
     streamSubscriptions.delete(subscriptionId)
+  }
+
+  for (const [subscriptionId, entry] of fileWatchSubscriptions.entries()) {
+    if (entry.webContentsId !== webContentsId) {
+      continue
+    }
+
+    desktopBackend.unwatchFile(subscriptionId)
+    fileWatchSubscriptions.delete(subscriptionId)
   }
 }
 
@@ -457,6 +467,44 @@ function registerDesktopHandlers() {
   ipcMain.handle('desktop:unsubscribe-chat-stream', (_event, subscriptionId: string) => {
     streamSubscriptions.get(subscriptionId)?.unsubscribe()
     streamSubscriptions.delete(subscriptionId)
+  })
+  ipcMain.handle('desktop:read-nearest-tsconfig', (_event, request) =>
+    desktopBackend.readNearestTsconfig(request),
+  )
+  ipcMain.handle('desktop:read-git-head-file', (_event, request) =>
+    desktopBackend.readGitHeadFile(request),
+  )
+  ipcMain.handle('desktop:read-git-file-line-diff', (_event, request) =>
+    desktopBackend.readGitFileLineDiff(request),
+  )
+  ipcMain.handle(
+    'desktop:watch-file',
+    (event, request: { workspacePath: string; relativePath: string; subscriptionId: string }) => {
+      const sender = event.sender
+      const { workspacePath, relativePath, subscriptionId } = request
+
+      const subscribed = desktopBackend.watchFile(workspacePath, relativePath, subscriptionId, () => {
+        if (sender.isDestroyed() || sender.isCrashed()) {
+          return
+        }
+
+        try {
+          sender.send('file:changed', { subscriptionId })
+        } catch (error) {
+          log.warn('[main] Failed to forward file change event to renderer.', error)
+        }
+      })
+
+      if (subscribed) {
+        fileWatchSubscriptions.set(subscriptionId, { webContentsId: sender.id })
+      }
+
+      return subscribed
+    },
+  )
+  ipcMain.handle('desktop:unwatch-file', (_event, subscriptionId: string) => {
+    desktopBackend.unwatchFile(subscriptionId)
+    fileWatchSubscriptions.delete(subscriptionId)
   })
 
   // ── Music IPC ──────────────────────────────────────────────────────────────

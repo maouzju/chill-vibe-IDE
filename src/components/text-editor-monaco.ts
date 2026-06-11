@@ -121,6 +121,15 @@ export const createTextEditorModel = (
     })
 }
 
+// Untitled in-memory models back the read-only "original" side of diff views.
+export const createTextEditorInMemoryModel = (
+  content: string,
+  languageId: string | null | undefined,
+) => {
+  return ensureTextEditorMonacoLanguage(languageId)
+    .then((resolvedLanguage) => monaco.editor.createModel(content, resolvedLanguage))
+}
+
 export const replaceTextEditorModelLanguage = async (
   model: MonacoTextModel,
   content: string,

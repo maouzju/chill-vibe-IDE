@@ -320,10 +320,31 @@ const normalizeRecentWorkspaces = (
     .slice(0, maxRecentWorkspaces)
 }
 
+export const createDefaultEditorSettings = (): AppSettings['editor'] => ({
+  fontSize: 13,
+  wordWrap: false,
+  minimap: false,
+  tabSize: 2,
+})
+
+const normalizeEditorSettings = (
+  editor: Partial<AppSettings['editor']> | null | undefined,
+): AppSettings['editor'] => {
+  const defaults = createDefaultEditorSettings()
+
+  return {
+    fontSize: clampScale(editor?.fontSize, 10, 24, defaults.fontSize),
+    wordWrap: typeof editor?.wordWrap === 'boolean' ? editor.wordWrap : defaults.wordWrap,
+    minimap: typeof editor?.minimap === 'boolean' ? editor.minimap : defaults.minimap,
+    tabSize: editor?.tabSize === 4 ? 4 : defaults.tabSize,
+  }
+}
+
 export const createDefaultSettings = (language: AppLanguage = defaultAppLanguage): AppSettings => ({
   language: normalizeLanguage(language),
   theme: 'dark',
   activeTopTab: 'ambience',
+  editor: createDefaultEditorSettings(),
   uiScale: 1,
   fontScale: 1,
   lineHeightScale: 1,
@@ -376,6 +397,7 @@ export const normalizeAppSettings = (settings?: Partial<AppSettings> | null): Ap
         ? settings.theme
         : 'dark',
     activeTopTab: normalizeTopTab(settings?.activeTopTab),
+    editor: normalizeEditorSettings(settings?.editor),
     uiScale: clampScale(settings?.uiScale, minUiScale, maxUiScale, defaults.uiScale),
     fontScale: clampScale(settings?.fontScale, minFontScale, maxFontScale, defaults.fontScale),
     lineHeightScale: clampScale(

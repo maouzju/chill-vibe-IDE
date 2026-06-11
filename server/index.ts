@@ -23,6 +23,7 @@ import {
   fileRenameRequestSchema,
   fileSearchRequestSchema,
   fileWriteRequestSchema,
+  gitFilePathRequestSchema,
   setupRunRequestSchema,
   slashCommandRequestSchema,
   workspaceValidationRequestSchema,
@@ -35,6 +36,7 @@ import {
   createWorkspaceDirectory,
   createWorkspaceFile,
   deleteWorkspaceEntry,
+  FileRevisionConflictError,
   listFiles,
   moveWorkspaceEntry,
   readWorkspaceFile,
@@ -48,6 +50,8 @@ import {
   initGitWorkspace,
   inspectGitWorkspace,
   pullGitWorkspace,
+  readGitFileLineDiff,
+  readGitHeadFileState,
   setGitWorkspaceStage,
 } from './git-workspace.js'
 import { inspectOnboardingStatus } from './onboarding-status.js'
@@ -55,6 +59,7 @@ import { getProviderSlashCommands, getProviderStatuses, validateWorkspacePath } 
 import { resilientProxyPool } from './resilient-proxy.js'
 import { SetupManager } from './setup-manager.js'
 import { loadSessionHistoryEntry, loadState, loadStateForRenderer, queueSaveState, resetState, saveState } from './state-store.js'
+import { readNearestTsconfig } from './tsconfig-discovery.js'
 import { initServerCrashLogger, writeServerLog } from './crash-logger.js'
 
 initServerCrashLogger()
@@ -441,15 +446,70 @@ app.post('/api/files/write', async (request, response) => {
   }
 
   try {
-    await writeWorkspaceFile(parsed.data)
-    response.status(204).end()
+    response.json(await writeWorkspaceFile(parsed.data))
   } catch (error) {
+    if (error instanceof FileRevisionConflictError) {
+      response.status(409).json({ conflict: true, message: error.message })
+      return
+    }
+
     response.status(400).json({
       message: error instanceof Error ? error.message : 'Unable to write file.',
     })
   }
 })
 
+
+app.post('/api/files/nearest-tsconfig', async (request, response) => {
+  const parsed = fileReadRequestSchema.safeParse(request.body)
+
+  if (!parsed.success) {
+    response.status(400).json({ message: 'Invalid tsconfig discovery request.' })
+    return
+  }
+
+  try {
+    response.json(await readNearestTsconfig(parsed.data))
+  } catch (error) {
+    response.status(400).json({
+      message: error instanceof Error ? error.message : 'Unable to locate tsconfig.',
+    })
+  }
+})
+
+app.post('/api/git/head-file', async (request, response) => {
+  const parsed = gitFilePathRequestSchema.safeParse(request.body)
+
+  if (!parsed.success) {
+    response.status(400).json({ message: 'Invalid git head file request.' })
+    return
+  }
+
+  try {
+    response.json(await readGitHeadFileState(parsed.data))
+  } catch (error) {
+    response.status(400).json({
+      message: error instanceof Error ? error.message : 'Unable to read HEAD file.',
+    })
+  }
+})
+
+app.post('/api/git/file-line-diff', async (request, response) => {
+  const parsed = gitFilePathRequestSchema.safeParse(request.body)
+
+  if (!parsed.success) {
+    response.status(400).json({ message: 'Invalid git line diff request.' })
+    return
+  }
+
+  try {
+    response.json(await readGitFileLineDiff(parsed.data))
+  } catch (error) {
+    response.status(400).json({
+      message: error instanceof Error ? error.message : 'Unable to diff file.',
+    })
+  }
+})
 
 app.post('/api/attachments', async (request, response) => {
   const parsed = attachmentUploadRequestSchema.safeParse(request.body)

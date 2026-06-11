@@ -5,6 +5,7 @@ import {
   createWorkspaceDirectory,
   createWorkspaceFile,
   deleteWorkspaceEntry,
+  FileRevisionConflictError,
   listFiles,
   moveWorkspaceEntry,
   readWorkspaceFile,
@@ -12,6 +13,8 @@ import {
   searchWorkspaceFiles,
   writeWorkspaceFile,
 } from '../server/file-system.ts'
+import { FileWatcherManager } from '../server/file-watcher.ts'
+import { readNearestTsconfig } from '../server/tsconfig-discovery.ts'
 import { listExternalSessions, loadExternalSession } from '../server/external-history.ts'
 import {
   commitAllGitWorkspace,
@@ -22,6 +25,8 @@ import {
   inspectGitWorkspace,
   pullGitWorkspace,
   pushGitWorkspace,
+  readGitFileLineDiff,
+  readGitHeadFileState,
   setGitWorkspaceStage,
 } from '../server/git-workspace.ts'
 import { inspectOnboardingStatus } from '../server/onboarding-status.ts'
@@ -82,6 +87,7 @@ import {
   fileRenameRequestSchema,
   fileSearchRequestSchema,
   fileWriteRequestSchema,
+  gitFilePathRequestSchema,
   type AppState,
   type AttachmentUploadRequest,
   type CcSwitchImportRequest,
@@ -126,6 +132,15 @@ export const createDesktopBackend = (deps: DesktopBackendDependencies = {}) => {
   let chatManager: ChatManagerLike | null = null
   let setupManager: SetupManagerLike | null = null
   let musicManager: MusicManagerLike | null = null
+  let fileWatcherManager: FileWatcherManager | null = null
+
+  const getFileWatcherManager = () => {
+    if (!fileWatcherManager) {
+      fileWatcherManager = new FileWatcherManager()
+    }
+
+    return fileWatcherManager
+  }
 
   const getChatManager = () => {
     if (!chatManager) {
@@ -361,7 +376,35 @@ export const createDesktopBackend = (deps: DesktopBackendDependencies = {}) => {
       return readWorkspaceFile(fileReadRequestSchema.parse(request))
     },
     async writeFile(request: unknown) {
-      await writeWorkspaceFile(fileWriteRequestSchema.parse(request))
+      try {
+        return await writeWorkspaceFile(fileWriteRequestSchema.parse(request))
+      } catch (error) {
+        // Conflicts cross the IPC bridge as structured data — Error subclasses lose
+        // their custom fields during serialization, so they cannot be detected there.
+        if (error instanceof FileRevisionConflictError) {
+          return { conflict: true }
+        }
+        throw error
+      }
+    },
+    async readNearestTsconfig(request: unknown) {
+      return readNearestTsconfig(fileReadRequestSchema.parse(request))
+    },
+    async readGitHeadFile(request: unknown) {
+      return readGitHeadFileState(gitFilePathRequestSchema.parse(request))
+    },
+    async readGitFileLineDiff(request: unknown) {
+      return readGitFileLineDiff(gitFilePathRequestSchema.parse(request))
+    },
+    watchFile(workspacePath: string, relativePath: string, subscriptionId: string, listener: () => void) {
+      return getFileWatcherManager().subscribe(workspacePath, relativePath, subscriptionId, listener)
+    },
+    unwatchFile(subscriptionId: string) {
+      fileWatcherManager?.unsubscribe(subscriptionId)
+    },
+    disposeFileWatchers() {
+      fileWatcherManager?.dispose()
+      fileWatcherManager = null
     },
 
     // ── Proxy Stats ────────────────────────────────────────────────────────

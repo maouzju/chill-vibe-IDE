@@ -374,10 +374,19 @@ export const autoUrgeProfileSchema = z.object({
 })
 export type AutoUrgeProfile = z.infer<typeof autoUrgeProfileSchema>
 
+export const editorSettingsSchema = z.object({
+  fontSize: z.number().finite().min(10).max(24).default(13),
+  wordWrap: z.boolean().default(false),
+  minimap: z.boolean().default(false),
+  tabSize: z.union([z.literal(2), z.literal(4)]).default(2),
+})
+export type EditorSettings = z.infer<typeof editorSettingsSchema>
+
 export const appSettingsSchema = z.object({
   language: appLanguageSchema.default('zh-CN'),
   theme: themeSchema.default('dark'),
   activeTopTab: topTabNameSchema.default('ambience'),
+  editor: editorSettingsSchema.default({ fontSize: 13, wordWrap: false, minimap: false, tabSize: 2 }),
   uiScale: z.number().finite().default(1),
   fontScale: z.number().finite().default(1),
   lineHeightScale: z.number().finite().default(1),
@@ -446,6 +455,7 @@ export const appStateSchema = z.object({
     language: 'zh-CN',
     theme: 'dark',
     activeTopTab: 'ambience',
+    editor: { fontSize: 13, wordWrap: false, minimap: false, tabSize: 2 },
     uiScale: 1,
     fontScale: 1,
     lineHeightScale: 1,
@@ -1159,6 +1169,16 @@ export type FileReadRequest = z.infer<typeof fileReadRequestSchema>
 export const fileReadResponseSchema = z.object({
   content: z.string(),
   language: z.string(),
+  /** Content fingerprint used for optimistic-lock saves. Absent for binary/oversized reads. */
+  revision: z.string().optional(),
+  /** File size in bytes, present whenever the file was stat-ed successfully. */
+  size: z.number().optional(),
+  /** Editable but big enough that the editor should degrade (no folding, no polling). */
+  large: z.boolean().optional(),
+  /** Over the hard limit — content is omitted and the file must not be edited. */
+  tooLarge: z.boolean().optional(),
+  /** Binary sniffed (NUL bytes) — content is omitted and the file must not be edited. */
+  binary: z.boolean().optional(),
 })
 export type FileReadResponse = z.infer<typeof fileReadResponseSchema>
 
@@ -1166,5 +1186,44 @@ export const fileWriteRequestSchema = z.object({
   workspacePath: z.string().min(1),
   relativePath: z.string().min(1),
   content: z.string(),
+  /**
+   * Optimistic lock: when present, the write is rejected if the on-disk content
+   * no longer matches this revision. Absent keeps the legacy overwrite behavior.
+   */
+  expectedRevision: z.string().optional(),
 })
 export type FileWriteRequest = z.infer<typeof fileWriteRequestSchema>
+
+export const fileWriteResponseSchema = z.object({
+  /** Revision of the freshly written content; becomes the client's next expectedRevision. */
+  revision: z.string().optional(),
+  /** True when the write was rejected because the file changed on disk. */
+  conflict: z.boolean().optional(),
+})
+export type FileWriteResponse = z.infer<typeof fileWriteResponseSchema>
+
+export const gitFilePathRequestSchema = z.object({
+  workspacePath: z.string().min(1),
+  relativePath: z.string().min(1),
+})
+export type GitFilePathRequest = z.infer<typeof gitFilePathRequestSchema>
+
+export const gitFileHeadStateSchema = z.object({
+  isRepository: z.boolean(),
+  headContent: z.string().nullable(),
+})
+export type GitFileHeadStateResponse = z.infer<typeof gitFileHeadStateSchema>
+
+const gitLineDiffRangeSchema = z.object({
+  start: z.number(),
+  end: z.number(),
+})
+
+export const gitFileLineDiffSchema = z.object({
+  isRepository: z.boolean(),
+  tracked: z.boolean(),
+  added: z.array(gitLineDiffRangeSchema),
+  modified: z.array(gitLineDiffRangeSchema),
+  removed: z.array(z.number()),
+})
+export type GitFileLineDiffResponse = z.infer<typeof gitFileLineDiffSchema>

@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto'
 import { mkdir, readdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
@@ -14,6 +15,7 @@ import type {
   FileReadResponse,
   FileSearchEntry,
   FileSearchRequest,
+  FileWriteResponse,
 } from '../shared/schema.js'
 
 const extensionLanguageMap: Record<string, string> = {
@@ -322,13 +324,80 @@ export const deleteWorkspaceEntry = async (request: FileDeleteRequest): Promise<
   await rm(targetPath, { recursive: true, force: false })
 }
 
-export const readWorkspaceFile = async (request: FileReadRequest): Promise<FileReadResponse> => {
-  const targetPath = ensureWithinWorkspace(request.workspacePath, request.relativePath)
-  const content = await readFile(targetPath, 'utf8')
-  return { content, language: getLanguageFromPath(request.relativePath) }
+// Reads above the hard limit never load content; between the thresholds the editor degrades.
+const FILE_READ_HARD_LIMIT_BYTES = 10 * 1024 * 1024
+const FILE_READ_LARGE_THRESHOLD_BYTES = 1.5 * 1024 * 1024
+const BINARY_SNIFF_BYTES = 8192
+
+export const computeFileRevision = (content: string): string =>
+  createHash('sha1').update(content, 'utf8').digest('hex')
+
+const looksBinary = (buffer: Buffer): boolean => {
+  const sniffLength = Math.min(buffer.length, BINARY_SNIFF_BYTES)
+  for (let index = 0; index < sniffLength; index += 1) {
+    if (buffer[index] === 0) {
+      return true
+    }
+  }
+  return false
 }
 
-export const writeWorkspaceFile = async (request: FileWriteRequest): Promise<void> => {
+export class FileRevisionConflictError extends Error {
+  readonly conflict = true
+
+  constructor() {
+    super('File changed on disk since it was loaded.')
+    this.name = 'FileRevisionConflictError'
+  }
+}
+
+export const readWorkspaceFile = async (request: FileReadRequest): Promise<FileReadResponse> => {
   const targetPath = ensureWithinWorkspace(request.workspacePath, request.relativePath)
+  const language = getLanguageFromPath(request.relativePath)
+  const stats = await stat(targetPath)
+
+  if (stats.size > FILE_READ_HARD_LIMIT_BYTES) {
+    return { content: '', language, size: stats.size, tooLarge: true }
+  }
+
+  const buffer = await readFile(targetPath)
+
+  if (looksBinary(buffer)) {
+    return { content: '', language, size: stats.size, binary: true }
+  }
+
+  const content = buffer.toString('utf8')
+  const response: FileReadResponse = {
+    content,
+    language,
+    size: stats.size,
+    revision: computeFileRevision(content),
+  }
+
+  if (stats.size > FILE_READ_LARGE_THRESHOLD_BYTES) {
+    response.large = true
+  }
+
+  return response
+}
+
+export const writeWorkspaceFile = async (request: FileWriteRequest): Promise<FileWriteResponse> => {
+  const targetPath = ensureWithinWorkspace(request.workspacePath, request.relativePath)
+
+  if (request.expectedRevision) {
+    const currentContent = await readFile(targetPath, 'utf8').catch((error: NodeJS.ErrnoException) => {
+      // A deleted file cannot lose anyone's edits, so restoring it is not a conflict.
+      if (error?.code === 'ENOENT') {
+        return null
+      }
+      throw error
+    })
+
+    if (currentContent !== null && computeFileRevision(currentContent) !== request.expectedRevision) {
+      throw new FileRevisionConflictError()
+    }
+  }
+
   await writeFile(targetPath, request.content, 'utf8')
+  return { revision: computeFileRevision(request.content) }
 }

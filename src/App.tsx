@@ -181,6 +181,8 @@ import {
 } from './components/deferred-send-queue'
 import { getAutoReadCardIdsForVisiblePanes, shouldMarkCardUnreadOnStreamDone } from './components/pane-read-state'
 import { clearFileTreeCacheForCard } from './components/tool-card-state'
+import { evictTextEditorModel } from './components/text-editor-model-cache'
+import { publishTextEditorSettings } from './components/text-editor-settings'
 import { buildSeededChatPrompt, collectSeededChatAttachments, hasSeededChatTranscript } from './chat-request-seeding'
 import { buildArchiveRecallSnapshot } from './archive-recall'
 import { getOnboardingText, getPanelText, getResilientProxyText, getTopTabText } from './app-panel-text'
@@ -3261,6 +3263,11 @@ function App() {
   }, [appState.settings.uiScale])
 
   useEffect(() => {
+    // Mounted editor cards pick this up through the settings bridge.
+    publishTextEditorSettings(appState.settings.editor)
+  }, [appState.settings.editor])
+
+  useEffect(() => {
     if (activeTab === 'ambience') {
       return
     }
@@ -4268,6 +4275,11 @@ function App() {
 
     if (card?.model === FILETREE_TOOL_MODEL) {
       clearFileTreeCacheForCard(cardId)
+    }
+
+    if (card?.model === TEXTEDITOR_TOOL_MODEL && column) {
+      // Closing the editor card ends the editing session; release its parked model.
+      evictTextEditorModel(column.workspacePath, card.stickyNote ?? '')
     }
 
     applyAction({ type: 'closeTab', columnId, paneId, tabId: cardId })
@@ -5311,6 +5323,97 @@ function App() {
         >
           {text.resetInterfaceDefaults}
         </AppButton>
+      </div>
+    </div>,
+
+    <div key="editor" className="settings-group">
+      <h3 className="settings-group-title">{text.settingsGroupEditor}</h3>
+
+      <div className="settings-section">
+        <div className="settings-row">
+          <div className="settings-row-copy">
+            <label htmlFor="editor-font-size-range">{text.editorFontSizeLabel}</label>
+            <span>{appState.settings.editor.fontSize}px</span>
+          </div>
+          <input
+            id="editor-font-size-range"
+            className="settings-range"
+            type="range"
+            min={10}
+            max={24}
+            step={1}
+            value={appState.settings.editor.fontSize}
+            onChange={(event) =>
+              applyAction({
+                type: 'updateSettings',
+                patch: {
+                  editor: { ...appState.settings.editor, fontSize: Number(event.target.value) },
+                },
+              })
+            }
+          />
+        </div>
+
+        <div className="settings-row">
+          <label className="settings-toggle">
+            <input
+              type="checkbox"
+              checked={appState.settings.editor.wordWrap}
+              onChange={(event) =>
+                applyAction({
+                  type: 'updateSettings',
+                  patch: {
+                    editor: { ...appState.settings.editor, wordWrap: event.target.checked },
+                  },
+                })
+              }
+            />
+            <span>{text.editorWordWrapLabel}</span>
+          </label>
+        </div>
+
+        <div className="settings-row">
+          <label className="settings-toggle">
+            <input
+              type="checkbox"
+              checked={appState.settings.editor.minimap}
+              onChange={(event) =>
+                applyAction({
+                  type: 'updateSettings',
+                  patch: {
+                    editor: { ...appState.settings.editor, minimap: event.target.checked },
+                  },
+                })
+              }
+            />
+            <span>{text.editorMinimapLabel}</span>
+          </label>
+        </div>
+
+        <div className="settings-row">
+          <div className="settings-row-copy">
+            <label htmlFor="editor-tab-size-select">{text.editorTabSizeLabel}</label>
+          </div>
+          <select
+            id="editor-tab-size-select"
+            className="control settings-input"
+            value={appState.settings.editor.tabSize}
+            onChange={(event) =>
+              applyAction({
+                type: 'updateSettings',
+                patch: {
+                  editor: {
+                    ...appState.settings.editor,
+                    tabSize: Number(event.target.value) === 4 ? 4 : 2,
+                  },
+                },
+              })
+            }
+          >
+            <option value={2}>2</option>
+            <option value={4}>4</option>
+          </select>
+        </div>
       </div>
     </div>,
 

@@ -40,4 +40,11 @@ export const getTextEditorCardText = (language: AppLanguage) => ({
   compareWithHead: language === 'en' ? 'Compare with HEAD' : '\u5bf9\u6bd4 HEAD',
   exitDiff: language === 'en' ? 'Exit diff' : '\u9000\u51fa\u5bf9\u6bd4',
   switchEol: language === 'en' ? 'Switch line endings' : '\u5207\u6362\u6362\u884c\u7b26',
+  copyFile: language === 'en' ? 'Copy file' : '\u590d\u5236\u6587\u4ef6',
+  copyFileHint:
+    language === 'en'
+      ? 'Copy the file to the system clipboard'
+      : '\u5c06\u6587\u4ef6\u590d\u5236\u5230\u7cfb\u7edf\u526a\u8d34\u677f',
+  copied: language === 'en' ? 'Copied' : '\u5df2\u590d\u5236',
+  copyFailed: language === 'en' ? 'Copy failed' : '\u590d\u5236\u5931\u8d25',
 })

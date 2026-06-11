@@ -154,6 +154,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.invoke('desktop:delete-entry', request),
   readFile: (request: unknown) =>
     ipcRenderer.invoke('desktop:read-file', request),
+  copyFileToClipboard: (request: unknown) =>
+    ipcRenderer.invoke('desktop:copy-file-to-clipboard', request),
   writeFile: (request: unknown) =>
     ipcRenderer.invoke('desktop:write-file', request),
   readNearestTsconfig: (request: unknown) =>

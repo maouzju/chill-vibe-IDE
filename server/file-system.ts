@@ -1,3 +1,4 @@
+import { spawn } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { mkdir, readdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises'
 import os from 'node:os'
@@ -324,6 +325,76 @@ export const deleteWorkspaceEntry = async (request: FileDeleteRequest): Promise<
   const targetPath = ensureWithinWorkspace(request.workspacePath, request.relativePath)
   await stat(targetPath)
   await rm(targetPath, { recursive: true, force: false })
+}
+
+export type ClipboardCopyInvocation = { command: string; args: string[] }
+
+type ClipboardCopyRunner = (command: string, args: string[]) => Promise<{ exitCode: number; stderr: string }>
+
+type ClipboardCopyOptions = {
+  platform?: NodeJS.Platform
+  run?: ClipboardCopyRunner
+}
+
+const runClipboardCommand: ClipboardCopyRunner = (command, args) =>
+  new Promise((resolve, reject) => {
+    const child = spawn(command, args, { stdio: ['ignore', 'ignore', 'pipe'], windowsHide: true })
+    let stderr = ''
+    child.stderr?.on('data', (chunk) => {
+      stderr += String(chunk)
+    })
+    child.on('error', reject)
+    child.on('close', (code) => resolve({ exitCode: code ?? 1, stderr }))
+  })
+
+// pwsh 7 dropped Set-Clipboard -LiteralPath, so target Windows PowerShell 5.1 explicitly.
+const resolveWindowsPowerShellPath = (): string => {
+  const systemRoot = process.env.SystemRoot ?? process.env.windir
+  return systemRoot
+    ? path.join(systemRoot, 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe')
+    : 'powershell.exe'
+}
+
+const buildClipboardCopyInvocation = (platform: NodeJS.Platform, filePath: string): ClipboardCopyInvocation => {
+  if (platform === 'win32') {
+    const escapedPath = filePath.replace(/'/g, "''")
+    return {
+      command: resolveWindowsPowerShellPath(),
+      args: ['-NoProfile', '-NonInteractive', '-Command', `Set-Clipboard -LiteralPath '${escapedPath}'`],
+    }
+  }
+
+  if (platform === 'darwin') {
+    const escapedPath = filePath.replace(/\\/g, '\\\\').replace(/"/g, '\\"')
+    return {
+      command: 'osascript',
+      args: ['-e', `set the clipboard to (POSIX file "${escapedPath}")`],
+    }
+  }
+
+  throw new Error(`Copying files to the clipboard is not supported on ${platform}.`)
+}
+
+/** Places the file itself (not its text) on the OS clipboard, like Ctrl+C in Explorer/Finder. */
+export const copyWorkspaceFileToClipboard = async (
+  request: FileReadRequest,
+  options: ClipboardCopyOptions = {},
+): Promise<void> => {
+  const filePath = ensureWithinWorkspace(request.workspacePath, request.relativePath)
+  const stats = await stat(filePath)
+
+  if (!stats.isFile()) {
+    throw new Error('The selected path is not a file.')
+  }
+
+  const invocation = buildClipboardCopyInvocation(options.platform ?? process.platform, filePath)
+  const run = options.run ?? runClipboardCommand
+  const result = await run(invocation.command, invocation.args)
+
+  if (result.exitCode !== 0) {
+    const detail = result.stderr.trim()
+    throw new Error(detail.length > 0 ? `Unable to copy file to clipboard: ${detail}` : 'Unable to copy file to clipboard.')
+  }
 }
 
 // Reads above the hard limit never load content; between the thresholds the editor degrades.

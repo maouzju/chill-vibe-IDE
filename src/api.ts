@@ -633,7 +633,13 @@ export const searchCities = async (query: string): Promise<CitySuggestion[]> => 
 
 // ── File System ─────────────────────────────────────────────────────────────
 
-import type { FileEntry, FileReadResponse } from '../shared/schema'
+import type {
+  FileEntry,
+  FileReadResponse,
+  FileWriteResponse,
+  GitFileHeadStateResponse,
+  GitFileLineDiffResponse,
+} from '../shared/schema'
 
 export const fetchFileList = async (workspacePath: string, relativePath = ''): Promise<FileEntry[]> => {
   const desktop = getDesktopApi()
@@ -842,19 +848,120 @@ export const fetchFileContent = async (workspacePath: string, relativePath: stri
   return response.json() as Promise<FileReadResponse>
 }
 
-export const saveFileContent = async (workspacePath: string, relativePath: string, content: string): Promise<void> => {
+export const fetchNearestTsconfig = async (
+  workspacePath: string,
+  relativePath: string,
+): Promise<{ compilerOptions: Record<string, unknown> | null }> => {
+  const desktop = getDesktopApi()
+  if (desktop?.readNearestTsconfig) {
+    return desktop.readNearestTsconfig({ workspacePath, relativePath })
+  }
+
+  const response = await fetch('/api/files/nearest-tsconfig', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ workspacePath, relativePath }),
+  })
+
+  if (!response.ok) throw new Error('Failed to locate tsconfig')
+  return response.json() as Promise<{ compilerOptions: Record<string, unknown> | null }>
+}
+
+export const fetchGitHeadFileState = async (
+  workspacePath: string,
+  relativePath: string,
+): Promise<GitFileHeadStateResponse> => {
+  const desktop = getDesktopApi()
+  if (desktop?.readGitHeadFile) {
+    return desktop.readGitHeadFile({ workspacePath, relativePath })
+  }
+
+  const response = await fetch('/api/git/head-file', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ workspacePath, relativePath }),
+  })
+
+  if (!response.ok) throw new Error('Failed to read HEAD file')
+  return response.json() as Promise<GitFileHeadStateResponse>
+}
+
+export const fetchGitFileLineDiff = async (
+  workspacePath: string,
+  relativePath: string,
+): Promise<GitFileLineDiffResponse> => {
+  const desktop = getDesktopApi()
+  if (desktop?.readGitFileLineDiff) {
+    return desktop.readGitFileLineDiff({ workspacePath, relativePath })
+  }
+
+  const response = await fetch('/api/git/file-line-diff', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ workspacePath, relativePath }),
+  })
+
+  if (!response.ok) throw new Error('Failed to diff file')
+  return response.json() as Promise<GitFileLineDiffResponse>
+}
+
+/**
+ * Subscribes to push-based change events for a single workspace file.
+ * Returns an unsubscribe function, or null when the desktop watcher bridge is
+ * unavailable (browser mode) so callers can fall back to polling.
+ */
+export const subscribeFileChanges = (
+  workspacePath: string,
+  relativePath: string,
+  onChange: () => void,
+): (() => void) | null => {
+  const desktop = getDesktopApi()
+  if (!desktop?.watchFile || !desktop.unwatchFile) {
+    return null
+  }
+
+  const subscriptionId = crypto.randomUUID()
+  const handler = (event: WindowEventMap['chill-vibe:file-changed']) => {
+    if (event.detail?.subscriptionId === subscriptionId) {
+      onChange()
+    }
+  }
+
+  window.addEventListener('chill-vibe:file-changed', handler)
+  void desktop.watchFile({ workspacePath, relativePath, subscriptionId }).catch(() => {
+    // A failed arm leaves the polling fallback in charge.
+  })
+
+  return () => {
+    window.removeEventListener('chill-vibe:file-changed', handler)
+    void desktop.unwatchFile?.(subscriptionId)
+  }
+}
+
+export const saveFileContent = async (
+  workspacePath: string,
+  relativePath: string,
+  content: string,
+  expectedRevision?: string,
+): Promise<FileWriteResponse> => {
   const desktop = getDesktopApi()
   if (desktop?.writeFile) {
-    return desktop.writeFile({ workspacePath, relativePath, content })
+    const result = await desktop.writeFile({ workspacePath, relativePath, content, expectedRevision })
+    return result ?? {}
   }
 
   const response = await fetch('/api/files/write', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ workspacePath, relativePath, content }),
+    body: JSON.stringify({ workspacePath, relativePath, content, expectedRevision }),
   })
 
+  if (response.status === 409) return { conflict: true }
   if (!response.ok) throw new Error('Failed to write file')
+
+  const raw = await response.text()
+  if (!raw) return {}
+  return JSON.parse(raw) as FileWriteResponse
 }
 
 // ── App Update ───────────────────────────────────────────────────────────────

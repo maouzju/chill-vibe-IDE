@@ -10,8 +10,10 @@ import {
   ensureWithinWorkspace,
   listFiles,
   moveWorkspaceEntry,
+  readWorkspaceFile,
   renameWorkspaceEntry,
   searchWorkspaceFiles,
+  writeWorkspaceFile,
 } from '../server/file-system.js'
 
 test('ensureWithinWorkspace allows paths inside the workspace', () => {
@@ -233,6 +235,174 @@ test('workspace entry mutations reject invalid names and duplicate targets', asy
       }),
     /already exists|EEXIST/i,
   )
+})
+
+test('readWorkspaceFile flags oversized files without loading their content', async (t) => {
+  const workspace = await mkdtemp(path.join(os.tmpdir(), 'chill-vibe-file-read-huge-'))
+  t.after(async () => {
+    await rm(workspace, { recursive: true, force: true })
+  })
+
+  await writeFile(path.join(workspace, 'huge.log'), Buffer.alloc(10 * 1024 * 1024 + 1, 0x61))
+
+  const result = await readWorkspaceFile({ workspacePath: workspace, relativePath: 'huge.log' })
+
+  assert.equal(result.tooLarge, true)
+  assert.equal(result.content, '')
+  assert.equal(result.size, 10 * 1024 * 1024 + 1)
+})
+
+test('readWorkspaceFile flags binary files instead of returning mojibake', async (t) => {
+  const workspace = await mkdtemp(path.join(os.tmpdir(), 'chill-vibe-file-read-binary-'))
+  t.after(async () => {
+    await rm(workspace, { recursive: true, force: true })
+  })
+
+  await writeFile(
+    path.join(workspace, 'image.png'),
+    Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d]),
+  )
+
+  const result = await readWorkspaceFile({ workspacePath: workspace, relativePath: 'image.png' })
+
+  assert.equal(result.binary, true)
+  assert.equal(result.content, '')
+})
+
+test('readWorkspaceFile marks large-but-editable files and still returns content', async (t) => {
+  const workspace = await mkdtemp(path.join(os.tmpdir(), 'chill-vibe-file-read-large-'))
+  t.after(async () => {
+    await rm(workspace, { recursive: true, force: true })
+  })
+
+  await writeFile(path.join(workspace, 'big.txt'), Buffer.alloc(2 * 1024 * 1024, 0x62))
+
+  const result = await readWorkspaceFile({ workspacePath: workspace, relativePath: 'big.txt' })
+
+  assert.equal(result.large, true)
+  assert.equal(result.content.length, 2 * 1024 * 1024)
+  assert.equal(result.tooLarge, undefined)
+  assert.equal(result.binary, undefined)
+})
+
+test('readWorkspaceFile returns a content revision that changes with the content', async (t) => {
+  const workspace = await mkdtemp(path.join(os.tmpdir(), 'chill-vibe-file-read-revision-'))
+  t.after(async () => {
+    await rm(workspace, { recursive: true, force: true })
+  })
+
+  const target = path.join(workspace, 'note.md')
+  await writeFile(target, 'first version\n', 'utf8')
+
+  const first = await readWorkspaceFile({ workspacePath: workspace, relativePath: 'note.md' })
+  const second = await readWorkspaceFile({ workspacePath: workspace, relativePath: 'note.md' })
+
+  assert.equal(typeof first.revision, 'string')
+  assert.ok(first.revision)
+  assert.equal(first.revision, second.revision)
+
+  await writeFile(target, 'second version\n', 'utf8')
+  const third = await readWorkspaceFile({ workspacePath: workspace, relativePath: 'note.md' })
+
+  assert.notEqual(third.revision, first.revision)
+})
+
+test('writeWorkspaceFile rejects a stale expectedRevision instead of overwriting external changes', async (t) => {
+  const workspace = await mkdtemp(path.join(os.tmpdir(), 'chill-vibe-file-write-conflict-'))
+  t.after(async () => {
+    await rm(workspace, { recursive: true, force: true })
+  })
+
+  const target = path.join(workspace, 'shared.ts')
+  await writeFile(target, 'const original = 1\n', 'utf8')
+
+  const read = await readWorkspaceFile({ workspacePath: workspace, relativePath: 'shared.ts' })
+
+  // Simulate an external (agent) edit landing between read and save.
+  await writeFile(target, 'const externalEdit = 2\n', 'utf8')
+
+  await assert.rejects(
+    () =>
+      writeWorkspaceFile({
+        workspacePath: workspace,
+        relativePath: 'shared.ts',
+        content: 'const mine = 3\n',
+        expectedRevision: read.revision,
+      }),
+    (error: unknown) =>
+      error instanceof Error &&
+      (error as { conflict?: boolean }).conflict === true,
+  )
+
+  const { readFile: readRaw } = await import('node:fs/promises')
+  assert.equal(await readRaw(target, 'utf8'), 'const externalEdit = 2\n')
+})
+
+test('writeWorkspaceFile succeeds when expectedRevision matches and returns the new revision', async (t) => {
+  const workspace = await mkdtemp(path.join(os.tmpdir(), 'chill-vibe-file-write-match-'))
+  t.after(async () => {
+    await rm(workspace, { recursive: true, force: true })
+  })
+
+  const target = path.join(workspace, 'shared.ts')
+  await writeFile(target, 'const original = 1\n', 'utf8')
+
+  const read = await readWorkspaceFile({ workspacePath: workspace, relativePath: 'shared.ts' })
+  const result = await writeWorkspaceFile({
+    workspacePath: workspace,
+    relativePath: 'shared.ts',
+    content: 'const mine = 3\n',
+    expectedRevision: read.revision,
+  })
+
+  const { readFile: readRaw } = await import('node:fs/promises')
+  assert.equal(await readRaw(target, 'utf8'), 'const mine = 3\n')
+
+  const after = await readWorkspaceFile({ workspacePath: workspace, relativePath: 'shared.ts' })
+  assert.equal(result?.revision, after.revision)
+})
+
+test('writeWorkspaceFile without expectedRevision keeps the legacy overwrite behavior', async (t) => {
+  const workspace = await mkdtemp(path.join(os.tmpdir(), 'chill-vibe-file-write-legacy-'))
+  t.after(async () => {
+    await rm(workspace, { recursive: true, force: true })
+  })
+
+  const target = path.join(workspace, 'legacy.txt')
+  await writeFile(target, 'old\n', 'utf8')
+  await writeFile(target, 'external\n', 'utf8')
+
+  await writeWorkspaceFile({
+    workspacePath: workspace,
+    relativePath: 'legacy.txt',
+    content: 'forced\n',
+  })
+
+  const { readFile: readRaw } = await import('node:fs/promises')
+  assert.equal(await readRaw(target, 'utf8'), 'forced\n')
+})
+
+test('writeWorkspaceFile with expectedRevision still writes when the file was deleted externally', async (t) => {
+  const workspace = await mkdtemp(path.join(os.tmpdir(), 'chill-vibe-file-write-deleted-'))
+  t.after(async () => {
+    await rm(workspace, { recursive: true, force: true })
+  })
+
+  const target = path.join(workspace, 'gone.txt')
+  await writeFile(target, 'original\n', 'utf8')
+
+  const read = await readWorkspaceFile({ workspacePath: workspace, relativePath: 'gone.txt' })
+  await rm(target)
+
+  await writeWorkspaceFile({
+    workspacePath: workspace,
+    relativePath: 'gone.txt',
+    content: 'restored\n',
+    expectedRevision: read.revision,
+  })
+
+  const { readFile: readRaw } = await import('node:fs/promises')
+  assert.equal(await readRaw(target, 'utf8'), 'restored\n')
 })
 
 test('moveWorkspaceEntry relocates entries across directories and rejects moving folders into their descendants', async (t) => {

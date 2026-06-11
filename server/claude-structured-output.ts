@@ -154,6 +154,7 @@ const extractToolInput = (
       addString('path')
       break
     case 'Bash':
+    case 'PowerShell':
       addString('command')
       addString('description')
       break
@@ -177,7 +178,7 @@ const extractToolInput = (
 }
 
 const isClaudeCommandTool = (toolName: string) =>
-  toolName === 'Bash' || toolName === 'BashOutput' || toolName === 'KillShell'
+  toolName === 'Bash' || toolName === 'PowerShell' || toolName === 'BashOutput' || toolName === 'KillShell'
 
 const isClaudeEditTool = (toolName: string) =>
   toolName === 'Write' ||

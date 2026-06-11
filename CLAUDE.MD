@@ -12,13 +12,3 @@
 > - **All tiers: never finish with an unverified code change.**
 >
 > If you proceed without following these rules, your output is considered invalid.
-
-## Bug 兜底策略
-
-如果遇到难以处理的 bug（例如反复尝试 2 次以上仍无法定位根因），需要调用 Codex CLI 来兜底排查：
-
-```bash
-codex "请分析以下 bug 并给出修复方案: <bug 描述>"
-```
-
-优先自行排查，Codex CLI 作为最后手段使用。

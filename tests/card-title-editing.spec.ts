@@ -550,6 +550,116 @@ for (const theme of ['dark', 'light'] as const) {
     await expect(composer).not.toBeFocused()
   })
 
+  test(`hover rescue never disables another card's transparent surfaces on stale-routed events in ${theme} theme`, async ({
+    page,
+  }) => {
+    const baseState = createState(theme)
+    baseState.columns.push({
+      id: 'col-2',
+      title: 'Second Column',
+      provider: 'codex' as const,
+      workspacePath: 'd:\\Git\\chill-vibe',
+      model: 'gpt-5.5',
+      cards: [createCardState('card-b1', 'Neighbor Chat')],
+    } as (typeof baseState.columns)[number])
+    // Re-normalize so the appended column gains the same derived fields
+    // (layout, timestamps) as the factory-built first column.
+    const state = createPlaywrightState(baseState)
+
+    await installMockApis(page, theme, { state })
+    await page.goto('http://localhost:5173')
+
+    const firstComposer = page
+      .locator('.pane-view')
+      .first()
+      .locator('.pane-content > .pane-tab-panel.is-active .composer textarea')
+    const neighborShell = page
+      .locator('.pane-view')
+      .nth(1)
+      .locator('.pane-content > .pane-tab-panel.is-active .card-shell')
+    const neighborComposer = neighborShell.locator('.composer textarea')
+
+    await expect(firstComposer).toBeVisible()
+    await expect(neighborComposer).toBeVisible()
+
+    const composerBox = await firstComposer.boundingBox()
+    if (!composerBox) {
+      throw new Error('Expected the first composer textarea to have measurable geometry')
+    }
+
+    // Stale compositor routing can hand card A's rescue listener an event whose
+    // target is card B's transparent shell even though the pointer is over
+    // card A's textarea. The rescue must never retire that real surface: doing
+    // so would kill all interaction on the neighbor card. Read the inline
+    // style synchronously right after dispatch so a delayed auto-restore
+    // cannot mask a wrongful retire.
+    const inlinePointerEventsAfterDispatch = await page.evaluate((box) => {
+      const shells = document.querySelectorAll('.pane-view')
+      const neighbor = shells[1]?.querySelector<HTMLElement>('.pane-tab-panel.is-active .card-shell')
+      if (!neighbor) {
+        throw new Error('Expected the neighbor card shell to exist')
+      }
+      neighbor.dispatchEvent(
+        new PointerEvent('pointermove', {
+          bubbles: true,
+          cancelable: true,
+          clientX: box.x + box.width / 2,
+          clientY: box.y + box.height / 2,
+          buttons: 0,
+        }),
+      )
+      return neighbor.style.pointerEvents
+    }, composerBox)
+
+    expect(inlinePointerEventsAfterDispatch).toBe('')
+
+    // The neighbor card must stay fully interactive.
+    await expect(neighborShell).not.toHaveCSS('pointer-events', 'none')
+    await neighborComposer.click()
+    await expect(neighborComposer).toBeFocused()
+  })
+
+  test(`composer clicks self-heal a card whose ancestors were wrongly made non-interactive in ${theme} theme`, async ({
+    page,
+  }) => {
+    await installMockApis(page, theme)
+    await page.goto('http://localhost:5173')
+
+    const composer = page
+      .locator('.pane-view')
+      .first()
+      .locator('.pane-content > .pane-tab-panel.is-active .composer textarea')
+
+    await expect(composer).toBeVisible()
+
+    const composerBox = await composer.boundingBox()
+    if (!composerBox) {
+      throw new Error('Expected the composer textarea to have measurable geometry')
+    }
+
+    // Reproduce the killed-card state: an earlier mis-retire left a stray
+    // inline pointer-events: none on the card's tab panel, so clicks fall
+    // through to the opaque pane background, event target and elementFromPoint
+    // agree on the wrong element, and the textarea blurs right after focusing.
+    await page.evaluate(() => {
+      const panel = document.querySelector<HTMLElement>('.pane-content > .pane-tab-panel.is-active')
+      if (!panel) {
+        throw new Error('Expected the active pane tab panel to exist')
+      }
+      panel.style.pointerEvents = 'none'
+    })
+
+    await page.mouse.click(composerBox.x + composerBox.width / 2, composerBox.y + composerBox.height / 2)
+
+    await expect(composer).toBeFocused()
+    await expect(
+      page.locator('.pane-content > .pane-tab-panel.is-active'),
+    ).not.toHaveCSS('pointer-events', 'none')
+
+    await page.keyboard.type('healed after pointer-events damage')
+    await expect(composer).toHaveValue('healed after pointer-events damage')
+  })
+
   test(`composer clicks recover focus after focus already left the same card in ${theme} theme`, async ({ page }) => {
     await installMockApis(page, theme)
     await page.goto('http://localhost:5173')

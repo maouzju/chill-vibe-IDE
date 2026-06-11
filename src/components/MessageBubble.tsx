@@ -7,6 +7,7 @@ import {
 } from '../../shared/chat-attachments'
 import {
   formatLocalizedTime,
+  formatMessageHoverTimestamp,
   getLocaleText,
   getMessageLabel,
 } from '../../shared/i18n'
@@ -384,7 +385,7 @@ const MessageBubbleView = ({
       <div className="message-topline">
         <span className="message-role">{getMessageLabel(language, message)}</span>
         {actualModel ? <span className="message-model-pill">实际模型：{actualModel}</span> : null}
-        <time dateTime={message.createdAt}>{formatLocalizedTime(language, message.createdAt)}</time>
+        <time dateTime={message.createdAt} title={formatMessageHoverTimestamp(language, message.createdAt)}>{formatLocalizedTime(language, message.createdAt)}</time>
       </div>
       <MessageContent
         language={language}

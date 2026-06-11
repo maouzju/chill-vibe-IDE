@@ -163,6 +163,40 @@ test('parses Claude tool use, edited files, and local command output into struct
   )
 })
 
+test('parses Claude PowerShell tool use as a command activity like Bash', () => {
+  const parseClaudeStreamEvent = createClaudeStructuredOutputParser('zh-CN')
+
+  assert.deepEqual(
+    parseClaudeStreamEvent({
+      type: 'assistant',
+      message: {
+        content: [
+          {
+            type: 'tool_use',
+            id: 'toolu_pwsh',
+            name: 'PowerShell',
+            input: {
+              command: 'Get-ChildItem src',
+              description: 'List files in src',
+            },
+          },
+        ],
+      },
+    }),
+    [
+      {
+        type: 'activity',
+        itemId: 'toolu_pwsh',
+        kind: 'command',
+        status: 'in_progress',
+        command: 'Get-ChildItem src',
+        output: '',
+        exitCode: null,
+      },
+    ],
+  )
+})
+
 test('starting a new Claude command settles the previous command when no local output completion arrived', () => {
   const parseClaudeStreamEvent = createClaudeStructuredOutputParser('en')
 

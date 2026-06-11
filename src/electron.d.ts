@@ -24,11 +24,15 @@ import type {
   FileReadResponse,
   FileRenameRequest,
   FileWriteRequest,
+  FileWriteResponse,
   GitCommitAllRequest,
   GitCommitDiffRequest,
   GitCommitDiffResponse,
   GitCommitRequest,
   GitCommitResponse,
+  GitFileHeadStateResponse,
+  GitFileLineDiffResponse,
+  GitFilePathRequest,
   GitLogRequest,
   GitLogResponse,
   GitOperationResponse,
@@ -144,7 +148,18 @@ declare global {
       moveEntry?: (request: FileMoveRequest) => Promise<void>
       deleteEntry?: (request: FileDeleteRequest) => Promise<void>
       readFile?: (request: FileReadRequest) => Promise<FileReadResponse>
-      writeFile?: (request: FileWriteRequest) => Promise<void>
+      writeFile?: (request: FileWriteRequest) => Promise<FileWriteResponse | void>
+      readNearestTsconfig?: (request: FileReadRequest) => Promise<{
+        compilerOptions: Record<string, unknown> | null
+      }>
+      readGitHeadFile?: (request: GitFilePathRequest) => Promise<GitFileHeadStateResponse>
+      readGitFileLineDiff?: (request: GitFilePathRequest) => Promise<GitFileLineDiffResponse>
+      watchFile?: (request: {
+        workspacePath: string
+        relativePath: string
+        subscriptionId: string
+      }) => Promise<boolean>
+      unwatchFile?: (subscriptionId: string) => Promise<void>
 
       // App Update
       getAppVersion?: () => Promise<string>
@@ -161,6 +176,7 @@ declare global {
 
   interface WindowEventMap {
     'chill-vibe:chat-stream': CustomEvent<DesktopStreamEventDetail>
+    'chill-vibe:file-changed': CustomEvent<{ subscriptionId: string }>
   }
 }
 

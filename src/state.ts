@@ -145,6 +145,7 @@ export type IdeAction =
           | 'language'
           | 'theme'
           | 'activeTopTab'
+          | 'editor'
           | 'uiScale'
           | 'fontScale'
           | 'lineHeightScale'

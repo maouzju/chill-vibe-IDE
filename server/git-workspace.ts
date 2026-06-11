@@ -314,6 +314,122 @@ const readHeadFile = async (repoRoot: string, relativePath: string) => {
   return result.stdout
 }
 
+const isInsideGitRepository = async (workspacePath: string) => {
+  const result = await runGit(workspacePath, ['rev-parse', '--is-inside-work-tree'], {
+    allowFailure: true,
+  })
+
+  return result.exitCode === 0 && result.stdout.trim() === 'true'
+}
+
+export type GitFileHeadState = {
+  isRepository: boolean
+  /** HEAD revision content, or null for untracked files / non-repositories. */
+  headContent: string | null
+}
+
+export const readGitHeadFileState = async (request: {
+  workspacePath: string
+  relativePath: string
+}): Promise<GitFileHeadState> => {
+  if (!(await isInsideGitRepository(request.workspacePath))) {
+    return { isRepository: false, headContent: null }
+  }
+
+  // The `./` prefix makes git resolve the path relative to the cwd, which keeps
+  // sub-directory workspaces working without resolving the repo root first.
+  const normalizedPath = request.relativePath.replace(/\\/g, '/')
+  const result = await runGit(request.workspacePath, ['show', `HEAD:./${normalizedPath}`], {
+    allowFailure: true,
+  })
+
+  if (result.exitCode !== 0) {
+    return { isRepository: true, headContent: null }
+  }
+
+  return { isRepository: true, headContent: result.stdout }
+}
+
+export type GitLineDiffRange = { start: number; end: number }
+
+export type GitFileLineDiff = {
+  isRepository: boolean
+  tracked: boolean
+  added: GitLineDiffRange[]
+  modified: GitLineDiffRange[]
+  /** New-side line numbers after which content was removed (0 = before line 1). */
+  removed: number[]
+}
+
+const unifiedZeroHunkPattern = /^@@ -\d+(?:,(\d+))? \+(\d+)(?:,(\d+))? @@/
+
+export const parseGitUnifiedZeroHunks = (
+  patch: string,
+): Pick<GitFileLineDiff, 'added' | 'modified' | 'removed'> => {
+  const added: GitLineDiffRange[] = []
+  const modified: GitLineDiffRange[] = []
+  const removed: number[] = []
+
+  for (const line of patch.split('\n')) {
+    const match = unifiedZeroHunkPattern.exec(line)
+    if (!match) {
+      continue
+    }
+
+    const oldCount = match[1] === undefined ? 1 : Number(match[1])
+    const newStart = Number(match[2])
+    const newCount = match[3] === undefined ? 1 : Number(match[3])
+
+    if (newCount === 0) {
+      removed.push(newStart)
+      continue
+    }
+
+    const range: GitLineDiffRange = { start: newStart, end: newStart + newCount - 1 }
+    if (oldCount === 0) {
+      added.push(range)
+    } else {
+      modified.push(range)
+    }
+  }
+
+  return { added, modified, removed }
+}
+
+export const readGitFileLineDiff = async (request: {
+  workspacePath: string
+  relativePath: string
+}): Promise<GitFileLineDiff> => {
+  const emptyRanges = { added: [], modified: [], removed: [] }
+
+  if (!(await isInsideGitRepository(request.workspacePath))) {
+    return { isRepository: false, tracked: false, ...emptyRanges }
+  }
+
+  const normalizedPath = request.relativePath.replace(/\\/g, '/')
+  const trackedResult = await runGit(
+    request.workspacePath,
+    ['ls-files', '--error-unmatch', '--', normalizedPath],
+    { allowFailure: true },
+  )
+
+  if (trackedResult.exitCode !== 0) {
+    return { isRepository: true, tracked: false, ...emptyRanges }
+  }
+
+  const diffResult = await runGit(
+    request.workspacePath,
+    ['diff', 'HEAD', '--unified=0', '--', normalizedPath],
+    { allowFailure: true },
+  )
+
+  if (diffResult.exitCode !== 0) {
+    return { isRepository: true, tracked: true, ...emptyRanges }
+  }
+
+  return { isRepository: true, tracked: true, ...parseGitUnifiedZeroHunks(diffResult.stdout) }
+}
+
 const readHeadFileSize = async (repoRoot: string, relativePath: string) => {
   const normalizedPath = relativePath.replace(/\\/g, '/')
   const result = await runGit(repoRoot, ['cat-file', '-s', `HEAD:${normalizedPath}`], {

@@ -63,6 +63,21 @@ const getCurrentUiTheme = (): UiTheme => {
 // One tsconfig application per workspace per session keeps the worker stable.
 const appliedTsconfigWorkspaces = new Set<string>()
 
+// Server encoding ids → human labels for the statusbar.
+const encodingDisplayLabels: Record<string, string> = {
+  utf8: 'UTF-8',
+  utf8bom: 'UTF-8 BOM',
+  utf16le: 'UTF-16 LE',
+  utf16be: 'UTF-16 BE',
+  gb18030: 'GB18030',
+  big5: 'Big5',
+  shiftjis: 'Shift-JIS',
+  euckr: 'EUC-KR',
+}
+
+const formatEncodingLabel = (encoding: string): string =>
+  encodingDisplayLabels[encoding] ?? encoding.toUpperCase()
+
 const TextEditorCardInner = ({ workspacePath, filePath, language }: TextEditorCardProps) => {
   const text = getTextEditorCardText(language)
   const normalizedFilePath = filePath.trim()
@@ -90,6 +105,7 @@ const TextEditorCardInner = ({ workspacePath, filePath, language }: TextEditorCa
   const [editorTick, setEditorTick] = useState(0)
   const [cursorPosition, setCursorPosition] = useState<{ line: number; column: number } | null>(null)
   const [eol, setEol] = useState<'LF' | 'CRLF' | null>(null)
+  const [fileEncoding, setFileEncoding] = useState<string | null>(null)
   const editorContainerRef = useRef<HTMLDivElement>(null)
   const diffContainerRef = useRef<HTMLDivElement>(null)
   const editorRef = useRef<MonacoEditorInstance | null>(null)
@@ -102,6 +118,7 @@ const TextEditorCardInner = ({ workspacePath, filePath, language }: TextEditorCa
   const contentRef = useRef('')
   const savedContentRef = useRef('')
   const revisionRef = useRef<string | null>(null)
+  const encodingRef = useRef<string | null>(null)
   const conflictRef = useRef(false)
   const suppressEditorChangeRef = useRef(false)
 
@@ -204,9 +221,14 @@ const TextEditorCardInner = ({ workspacePath, filePath, language }: TextEditorCa
       revisionRef.current = result.revision ?? revisionRef.current
     }
 
+    // The on-disk encoding is a property of the file itself — adopt it on
+    // every snapshot so saves always echo back what the read detected.
+    encodingRef.current = result.encoding ?? null
+
     if (mountedRef.current) {
       setIsLargeFile(result.large === true)
       setFileLanguage(result.language)
+      setFileEncoding(result.encoding ?? null)
       setError(null)
       setLoading(false)
     }
@@ -233,9 +255,11 @@ const TextEditorCardInner = ({ workspacePath, filePath, language }: TextEditorCa
       contentRef.current = bufferContent
       savedContentRef.current = cached.savedContent
       revisionRef.current = cached.revision
+      encodingRef.current = cached.encoding
       setContent(bufferContent)
       setSavedContent(cached.savedContent)
       setFileLanguage(cached.languageId)
+      setFileEncoding(cached.encoding)
       setLoading(false)
     }
 
@@ -289,6 +313,7 @@ const TextEditorCardInner = ({ workspacePath, filePath, language }: TextEditorCa
         normalizedFilePath,
         textContent,
         force ? undefined : revisionRef.current ?? undefined,
+        encodingRef.current ?? undefined,
       )
 
       if (result.conflict) {
@@ -434,7 +459,9 @@ const TextEditorCardInner = ({ workspacePath, filePath, language }: TextEditorCa
       // would see the still-dirty local content and re-enter the conflict.
       applyResolvedRefresh(result.content)
       revisionRef.current = result.revision ?? null
+      encodingRef.current = result.encoding ?? null
       setFileLanguage(result.language)
+      setFileEncoding(result.encoding ?? null)
       setIsLargeFile(result.large === true)
       setGitTick((tick) => tick + 1)
       clearConflict()
@@ -644,6 +671,7 @@ const TextEditorCardInner = ({ workspacePath, filePath, language }: TextEditorCa
           revision: revisionRef.current,
           savedContent: savedContentRef.current,
           languageId: model.getLanguageId(),
+          encoding: encodingRef.current,
         })
         editor.dispose()
       } else {
@@ -981,6 +1009,9 @@ const TextEditorCardInner = ({ workspacePath, filePath, language }: TextEditorCa
           {cursorPosition ? `${cursorPosition.line}:${cursorPosition.column}` : ''}
         </span>
         <span className="text-editor-statusbar-spacer" />
+        {fileEncoding !== null && (
+          <span className="text-editor-statusbar-item">{formatEncodingLabel(fileEncoding)}</span>
+        )}
         <span className="text-editor-statusbar-item">{fileLanguage}</span>
         {eol !== null && (
           <button

@@ -1179,6 +1179,8 @@ export const fileReadResponseSchema = z.object({
   tooLarge: z.boolean().optional(),
   /** Binary sniffed (NUL bytes) — content is omitted and the file must not be edited. */
   binary: z.boolean().optional(),
+  /** Detected text encoding id ('utf8', 'utf8bom', 'utf16le', 'gb18030', ...). Echo it back on writes. */
+  encoding: z.string().optional(),
 })
 export type FileReadResponse = z.infer<typeof fileReadResponseSchema>
 
@@ -1191,6 +1193,8 @@ export const fileWriteRequestSchema = z.object({
    * no longer matches this revision. Absent keeps the legacy overwrite behavior.
    */
   expectedRevision: z.string().optional(),
+  /** Encoding id from the matching read; content is written back in these bytes. Absent = utf8. */
+  encoding: z.string().optional(),
 })
 export type FileWriteRequest = z.infer<typeof fileWriteRequestSchema>
 

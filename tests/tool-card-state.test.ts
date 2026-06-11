@@ -39,16 +39,36 @@ test('text editor refreshes clean cards when the file changes on disk', () => {
   assert.deepEqual(
     resolveTextEditorExternalRefresh('saved text', 'saved text', 'disk text'),
     {
+      kind: 'refresh',
       content: 'disk text',
-      savedContent: 'disk text',
     },
   )
 })
 
-test('text editor keeps local unsaved edits when the file changes on disk', () => {
-  assert.equal(
+test('text editor reports a conflict when local edits and disk edits diverge', () => {
+  assert.deepEqual(
     resolveTextEditorExternalRefresh('saved text', 'edited text', 'disk text'),
+    {
+      kind: 'conflict',
+      diskContent: 'disk text',
+    },
+  )
+})
+
+test('text editor keeps local unsaved edits while the disk still matches the last save', () => {
+  assert.equal(
+    resolveTextEditorExternalRefresh('saved text', 'edited text', 'saved text'),
     null,
+  )
+})
+
+test('text editor treats disk content equal to the local buffer as an external save', () => {
+  assert.deepEqual(
+    resolveTextEditorExternalRefresh('saved text', 'edited text', 'edited text'),
+    {
+      kind: 'refresh',
+      content: 'edited text',
+    },
   )
 })
 

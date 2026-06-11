@@ -35,6 +35,21 @@ import { defaultSystemPrompt } from '../shared/system-prompt.ts'
 import { resolveAppTheme } from '../shared/theme.ts'
 
 describe('default-state helpers', () => {
+  it('fills missing editor settings with defaults and clamps invalid values', () => {
+    const missing = normalizeAppSettings({})
+    assert.deepEqual(missing.editor, { fontSize: 13, wordWrap: false, minimap: false, tabSize: 2 })
+
+    const invalid = normalizeAppSettings({
+      editor: { fontSize: 99, wordWrap: 'yes', minimap: 1, tabSize: 3 } as never,
+    })
+    assert.deepEqual(invalid.editor, { fontSize: 24, wordWrap: false, minimap: false, tabSize: 2 })
+
+    const valid = normalizeAppSettings({
+      editor: { fontSize: 16, wordWrap: true, minimap: true, tabSize: 4 },
+    })
+    assert.deepEqual(valid.editor, { fontSize: 16, wordWrap: true, minimap: true, tabSize: 4 })
+  })
+
   it('normalizes settings into safe persisted values', () => {
     const defaults = createDefaultSettings()
     const next = normalizeAppSettings({

@@ -68,7 +68,17 @@ if (desktopRuntimeProfilePaths) {
   app.setPath('sessionData', desktopRuntimeProfilePaths.sessionData)
 }
 
-const desktopBackend = createDesktopBackend()
+const desktopBackend = createDesktopBackend({
+  onUnsolicitedStream: (notification) => {
+    // A pooled Claude process woke itself (background task finished). Tell
+    // every renderer so the owning card can subscribe to the new stream.
+    for (const win of BrowserWindow.getAllWindows()) {
+      if (!win.isDestroyed()) {
+        win.webContents.send('chat:unsolicited-stream', notification)
+      }
+    }
+  },
+})
 const streamSubscriptions = new Map<string, { webContentsId: number; unsubscribe: () => void }>()
 const fileWatchSubscriptions = new Map<string, { webContentsId: number }>()
 const hasSingleInstanceLock = bypassSingleInstanceLock ? true : app.requestSingleInstanceLock()

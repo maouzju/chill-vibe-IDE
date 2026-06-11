@@ -10,8 +10,13 @@ import type {
   StreamErrorHint,
   StreamEventMap,
 } from '../shared/schema.js'
+import {
+  ClaudeSessionPool,
+  type ClaudeSessionPoolEntryView,
+  type ClaudeTurnAttachment,
+} from './claude-session-pool.js'
 import { captureWorkspaceSnapshot, diffWorkspaceSnapshot } from './git-workspace.js'
-import { launchProviderRun } from './providers.js'
+import { createClaudeUnsolicitedTurnAttachment, launchProviderRun } from './providers.js'
 
 type StreamName = keyof StreamEventMap
 
@@ -38,10 +43,18 @@ type StreamRecord = {
   listeners: Set<Response>
   subscribers: Set<StreamSubscriber>
   child?: ChildProcess
+  // Unsolicited keepalive turns have no ChildProcess handle; stopping them
+  // tears down the pooled process through this hook instead.
+  stopHook?: () => void
   latestSessionId?: string
   terminal: boolean
   stopRequested: boolean
   cleanupTimer?: ReturnType<typeof setTimeout>
+}
+
+export type UnsolicitedStreamNotification = {
+  cardId: string
+  streamId: string
 }
 
 const cleanupDelayMs = 5 * 60 * 1000
@@ -181,6 +194,28 @@ const writeEvent = <T extends StreamName>(
 
 export class ChatManager {
   private readonly streams = new Map<string, StreamRecord>()
+  private readonly claudePool: ClaudeSessionPool | null
+  private readonly onUnsolicitedStream?: (notification: UnsolicitedStreamNotification) => void
+
+  constructor(options?: {
+    // Keepalive is host-opt-in: the Electron desktop backend enables it so
+    // background tasks survive between turns; the plain web server keeps the
+    // single-shot behavior (it has no push channel for unsolicited streams).
+    enableClaudeKeepalive?: boolean
+    onUnsolicitedStream?: (notification: UnsolicitedStreamNotification) => void
+  }) {
+    this.onUnsolicitedStream = options?.onUnsolicitedStream
+    this.claudePool = options?.enableClaudeKeepalive
+      ? new ClaudeSessionPool({
+          onUnsolicited: (entry, attach) => {
+            void this.handleUnsolicitedClaudeTurn(entry, attach).catch(() => {
+              // If the unsolicited stream could not be set up, the pool's idle
+              // timer recycles the process; nothing else to clean up here.
+            })
+          },
+        })
+      : null
+  }
 
   createStream(request: ChatRequest) {
     const id = request.streamId ?? crypto.randomUUID()
@@ -280,12 +315,17 @@ export class ChatManager {
     }
 
     stream.stopRequested = true
-    stream.child?.kill()
+    if (stream.stopHook) {
+      stream.stopHook()
+    } else {
+      stream.child?.kill()
+    }
     this.finalize(stream, 'done', { stopped: true })
     return true
   }
 
   closeAll() {
+    this.claudePool?.closeAll()
     for (const stream of this.streams.values()) {
       stream.child?.kill()
       stream.listeners.forEach((response) => response.end())
@@ -293,6 +333,92 @@ export class ChatManager {
       stream.subscribers.clear()
     }
     this.streams.clear()
+  }
+
+  // An idle pooled Claude process produced output on its own: a background
+  // task finished and the CLI re-invoked the agent. Wrap the new turn in a
+  // fresh stream and tell the host so the renderer can attach the card to it.
+  private async handleUnsolicitedClaudeTurn(
+    entry: ClaudeSessionPoolEntryView,
+    attach: (attachment: ClaudeTurnAttachment) => void,
+  ) {
+    const streamId = crypto.randomUUID()
+    const record: StreamRecord = {
+      id: streamId,
+      backlog: [],
+      listeners: new Set(),
+      subscribers: new Set(),
+      stopHook: () => this.claudePool?.releaseEntry(entry.key),
+      latestSessionId: normalizeSessionId(entry.sessionId),
+      terminal: false,
+      stopRequested: false,
+    }
+    this.streams.set(streamId, record)
+
+    const workspacePath =
+      typeof entry.meta.workspacePath === 'string' ? entry.meta.workspacePath : ''
+
+    let workspaceSnapshot = null
+    try {
+      workspaceSnapshot = workspacePath ? await captureWorkspaceSnapshot(workspacePath) : null
+    } catch {
+      workspaceSnapshot = null
+    }
+
+    const touchedPaths = new Set<string>()
+
+    const attachment = createClaudeUnsolicitedTurnAttachment({
+      entry,
+      sink: {
+        onSession: (sessionId) => {
+          record.latestSessionId = normalizeSessionId(sessionId) ?? record.latestSessionId
+          this.emit(record, 'session', { sessionId })
+        },
+        onDelta: (content) => this.emit(record, 'delta', { content }),
+        onLog: (message) => this.emit(record, 'log', { message }),
+        onAssistantMessage: (message) => this.emit(record, 'assistant_message', message),
+        onActivity: (activity) => {
+          if (activity.kind === 'edits' && 'files' in activity) {
+            for (const file of activity.files) {
+              touchedPaths.add(file.path)
+            }
+          }
+          this.emit(record, 'activity', activity)
+        },
+        onStats: (event) => this.emit(record, 'stats', event),
+        onDone: () => {
+          if (!record.stopRequested) {
+            void this.finalizeWithWorkspaceEdits(
+              record,
+              workspacePath,
+              workspaceSnapshot,
+              touchedPaths,
+              'done',
+              {},
+            )
+          }
+        },
+        onError: (message, hint, recovery) => {
+          if (record.stopRequested) {
+            return
+          }
+
+          void this.finalizeWithWorkspaceEdits(
+            record,
+            workspacePath,
+            workspaceSnapshot,
+            touchedPaths,
+            'error',
+            buildStreamErrorPayload(message, hint, recovery, record.latestSessionId),
+          )
+        },
+      },
+      killChild: () => this.claudePool?.releaseEntry(entry.key),
+      onSettled: () => this.claudePool?.endTurn(entry.key),
+    })
+
+    attach(attachment)
+    this.onUnsolicitedStream?.({ cardId: entry.key, streamId })
   }
 
   private async startProvider(stream: StreamRecord, request: ChatRequest) {
@@ -325,7 +451,7 @@ export class ChatManager {
       onStats: (event) => this.emit(stream, 'stats', event),
       onDone: () => {
         if (!stream.stopRequested) {
-          void this.finalizeWithWorkspaceEdits(stream, request, workspaceSnapshot, touchedPaths, 'done', {})
+          void this.finalizeWithWorkspaceEdits(stream, request.workspacePath, workspaceSnapshot, touchedPaths, 'done', {})
         }
       },
       onError: (message, hint, recovery) => {
@@ -335,14 +461,14 @@ export class ChatManager {
 
         void this.finalizeWithWorkspaceEdits(
           stream,
-          request,
+          request.workspacePath,
           workspaceSnapshot,
           touchedPaths,
           'error',
           buildStreamErrorPayload(message, hint, recovery, stream.latestSessionId ?? request.sessionId),
         )
       },
-    })
+    }, { claudeSessionPool: this.claudePool })
 
     if (!child) {
       return
@@ -385,7 +511,7 @@ export class ChatManager {
 
   private async finalizeWithWorkspaceEdits<T extends Extract<StreamName, 'done' | 'error'>>(
     stream: StreamRecord,
-    request: ChatRequest,
+    workspacePath: string,
     snapshot: Awaited<ReturnType<typeof captureWorkspaceSnapshot>>,
     touchedPaths: Set<string>,
     event: T,
@@ -398,7 +524,7 @@ export class ChatManager {
     try {
       const diff = await diffWorkspaceSnapshot(
         snapshot,
-        request.workspacePath,
+        workspacePath,
         touchedPaths,
       )
 

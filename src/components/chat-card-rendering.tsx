@@ -67,6 +67,45 @@ const normalizeLooseStrongMarkers = (content: string) =>
     ? transformMarkdownOutsideCode(content, normalizeLooseStrongMarkersInSegment)
     : content
 
+// GFM autolink-literal trims only ASCII trailing punctuation, so a bare URL
+// followed by `**` or CJK fullwidth punctuation swallows those characters into
+// the href (e.g. `**http://127.0.0.1:5273**（dev` → href `…5273**（dev`), which
+// later fails `new URL()` in the main process and the click silently does
+// nothing. Cut the URL at the first such character and rewrite it as an
+// explicit [url](url) link so the href stays clean and `**` keeps working as a
+// strong delimiter. CJK ideographs are NOT cut points — they are legal in URL
+// paths (e.g. zh.wikipedia.org/wiki/中文); only fullwidth/CJK punctuation is.
+const BARE_URL_PATTERN = /https?:\/\/[^\s<>]+/g
+const BARE_URL_CUT_PATTERN = /\*\*|[\u2000-\u206F\u3000-\u303F\uFF00-\uFFEF]/
+const BARE_URL_TRAILING_ASCII_PUNCTUATION = /[?!.,:;*_~'"]+$/
+
+const normalizeBareUrlBoundariesInSegment = (segment: string) =>
+  segment.replace(BARE_URL_PATTERN, (match: string, offset: number) => {
+    // Skip URLs already inside explicit links `[text](url)`, link texts
+    // `[http://…]`, plain parentheses, or `<autolinks>`.
+    const prevChar = offset > 0 ? segment[offset - 1] : undefined
+    if (prevChar === '<' || prevChar === '[' || prevChar === '(') {
+      return match
+    }
+
+    const cut = match.match(BARE_URL_CUT_PATTERN)
+    if (!cut || cut.index === undefined) {
+      return match
+    }
+
+    const url = match.slice(0, cut.index).replace(BARE_URL_TRAILING_ASCII_PUNCTUATION, '')
+    if (!/^https?:\/\/[^\s/]/.test(url)) {
+      return match
+    }
+
+    return `[${url}](${url})${match.slice(cut.index)}`
+  })
+
+export const normalizeBareUrlBoundaries = (content: string) =>
+  /https?:\/\//.test(content)
+    ? transformMarkdownOutsideCode(content, normalizeBareUrlBoundariesInSegment)
+    : content
+
 const isMarkdownWhitespace = (char: string | undefined) => !char || /\s/.test(char)
 const isMarkdownDelimiterBoundary = (char: string | undefined) =>
   !char || isMarkdownWhitespace(char) || /[a-z0-9]/i.test(char) === false
@@ -654,7 +693,7 @@ const renderPlainMarkdown = (content: string, workspacePath: string | undefined,
     remarkPlugins={REMARK_PLUGINS}
     components={getMarkdownComponents(workspacePath)}
   >
-    {closeUnclosedMarkdownSpans(content)}
+    {normalizeBareUrlBoundaries(closeUnclosedMarkdownSpans(content))}
   </ReactMarkdown>
 )
 

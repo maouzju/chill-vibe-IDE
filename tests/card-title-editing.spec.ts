@@ -416,6 +416,140 @@ for (const theme of ['dark', 'light'] as const) {
     await expect(composer).not.toBeFocused()
   })
 
+  test(`composer repairs stale hit-test routing when hover events land on an unrelated opaque element in ${theme} theme`, async ({
+    page,
+  }) => {
+    await installMockApis(page, theme)
+    await page.goto('http://localhost:5173')
+
+    const composer = page
+      .locator('.pane-view')
+      .first()
+      .locator('.pane-content > .pane-tab-panel.is-active .composer textarea')
+
+    await expect(composer).toBeVisible()
+
+    const composerBox = await composer.boundingBox()
+    if (!composerBox) {
+      throw new Error('Expected the composer textarea to have measurable geometry')
+    }
+
+    // Simulate Chromium stale compositor hit-testing: the pointer is physically
+    // over the textarea, but the event is routed to an unrelated opaque element
+    // (here: the pane tab). Layout-wise nothing covers the textarea, so
+    // elementFromPoint still reports the textarea as the truth.
+    await page.evaluate((box) => {
+      const staleTarget = document.querySelector('.pane-tab')
+      if (!staleTarget) {
+        throw new Error('Expected a pane tab to exist as the stale routing target')
+      }
+      staleTarget.dispatchEvent(
+        new PointerEvent('pointermove', {
+          bubbles: true,
+          cancelable: true,
+          clientX: box.x + box.width / 2,
+          clientY: box.y + box.height / 2,
+          buttons: 0,
+        }),
+      )
+    }, composerBox)
+
+    const cardShell = page
+      .locator('.pane-view')
+      .first()
+      .locator('.pane-content > .pane-tab-panel.is-active .card-shell')
+
+    await expect
+      .poll(async () => cardShell.getAttribute('data-hit-test-repair-count'))
+      .not.toBeNull()
+  })
+
+  test(`composer clicks recover focus when stale hit-testing routes the click to the page body in ${theme} theme`, async ({
+    page,
+  }) => {
+    await installMockApis(page, theme)
+    await page.goto('http://localhost:5173')
+
+    const composer = page
+      .locator('.pane-view')
+      .first()
+      .locator('.pane-content > .pane-tab-panel.is-active .composer textarea')
+
+    await expect(composer).toBeVisible()
+    await expect(composer).not.toBeFocused()
+
+    const composerBox = await composer.boundingBox()
+    if (!composerBox) {
+      throw new Error('Expected the composer textarea to have measurable geometry')
+    }
+
+    // Simulate a stale-routed click: pointer coordinates sit on the textarea,
+    // but the event target is the opaque page body, so neither the native focus
+    // nor the transparent-blocker rescue path fires.
+    await page.evaluate((box) => {
+      document.body.dispatchEvent(
+        new PointerEvent('pointerdown', {
+          bubbles: true,
+          cancelable: true,
+          clientX: box.x + box.width / 2,
+          clientY: box.y + box.height / 2,
+          button: 0,
+          buttons: 1,
+        }),
+      )
+    }, composerBox)
+
+    await expect(composer).toBeFocused()
+  })
+
+  test(`composer hit-test repair does not fire while a real visible control covers the textarea in ${theme} theme`, async ({
+    page,
+  }) => {
+    await installMockApis(page, theme)
+    await page.goto('http://localhost:5173')
+
+    const composer = page
+      .locator('.pane-view')
+      .first()
+      .locator('.pane-content > .pane-tab-panel.is-active .composer textarea')
+
+    await expect(composer).toBeVisible()
+
+    const composerBox = await composer.boundingBox()
+    if (!composerBox) {
+      throw new Error('Expected the composer textarea to have measurable geometry')
+    }
+
+    // A genuinely visible control above the textarea is real UI, not a stale
+    // layer: elementFromPoint reports the control, so no repair may fire even
+    // though the event target sits outside the composer.
+    await page.evaluate((box) => {
+      const cover = document.createElement('button')
+      cover.type = 'button'
+      cover.className = 'focus-rescue-fixture-visible-cover'
+      cover.textContent = 'visible cover control'
+      cover.style.position = 'fixed'
+      cover.style.left = `${box.x - 4}px`
+      cover.style.top = `${box.y - 4}px`
+      cover.style.width = `${box.width + 8}px`
+      cover.style.height = `${box.height + 8}px`
+      cover.style.zIndex = '999'
+      document.body.appendChild(cover)
+    }, composerBox)
+
+    await page.mouse.move(composerBox.x + composerBox.width / 2, composerBox.y + composerBox.height / 2)
+    await page.mouse.down()
+    await page.mouse.up()
+
+    const cardShell = page
+      .locator('.pane-view')
+      .first()
+      .locator('.pane-content > .pane-tab-panel.is-active .card-shell')
+
+    await expect(cardShell).not.toHaveAttribute('data-hit-test-repair-count', /.+/)
+    await expect(composer).not.toBeFocused()
+  })
+
   test(`composer clicks recover focus after focus already left the same card in ${theme} theme`, async ({ page }) => {
     await installMockApis(page, theme)
     await page.goto('http://localhost:5173')
@@ -462,6 +596,56 @@ for (const theme of ['dark', 'light'] as const) {
     await expect(composer).toBeFocused()
     await page.keyboard.type('focus recovers on the same card')
     await expect(composer).toHaveValue('focus recovers on the same card')
+  })
+
+  test(`composer clicks recover focus when a stale transparent layer also swallows pointerdown in ${theme} theme`, async ({
+    page,
+  }) => {
+    await installMockApis(page, theme)
+    await page.goto('http://localhost:5173')
+
+    const composer = page
+      .locator('.pane-view')
+      .first()
+      .locator('.pane-content > .pane-tab-panel.is-active .composer textarea')
+
+    await expect(composer).toBeVisible()
+
+    const composerBox = await composer.boundingBox()
+    if (!composerBox) {
+      throw new Error('Expected the composer textarea to have measurable geometry')
+    }
+
+    const centerX = composerBox.x + composerBox.width / 2
+    const centerY = composerBox.y + composerBox.height / 2
+
+    await page.mouse.move(centerX, centerY)
+
+    await page.evaluate((box) => {
+      const blocker = document.createElement('div')
+      blocker.className = 'focus-rescue-fixture-swallowing-layer'
+      blocker.style.position = 'fixed'
+      blocker.style.left = `${box.x - 4}px`
+      blocker.style.top = `${box.y - 4}px`
+      blocker.style.width = `${box.width + 8}px`
+      blocker.style.height = `${box.height + 8}px`
+      blocker.style.zIndex = '999'
+      blocker.style.background = 'transparent'
+      document.body.appendChild(blocker)
+
+      const swallowPointerDown = (event: Event) => {
+        event.preventDefault()
+        window.removeEventListener('pointerdown', swallowPointerDown, true)
+      }
+      window.addEventListener('pointerdown', swallowPointerDown, true)
+    }, composerBox)
+
+    await page.mouse.down()
+    await page.mouse.up()
+
+    await expect(composer).toBeFocused()
+    await page.keyboard.type('focus survives swallowed pointerdown')
+    await expect(composer).toHaveValue('focus survives swallowed pointerdown')
   })
 
   test(`dragging a pane tab does not switch focus to its composer in ${theme} theme`, async ({ page }) => {

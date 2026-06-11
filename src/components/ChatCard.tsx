@@ -1,4 +1,4 @@
-import { memo, useCallback, useDeferredValue, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { memo, useCallback, useDeferredValue, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import type {
   ClipboardEvent,
   CompositionEvent,
@@ -105,6 +105,8 @@ import {
 } from '../stream-recovery-feedback'
 import type { QueuedSendSummary, SendMessageOptions } from './deferred-send-queue'
 import { MessageBubble, StreamingIndicator } from './MessageBubble'
+import { getStructuredLabels } from './chat-card-rendering'
+import { useDialogFocus } from './dialog-focus'
 import {
   StructuredToolGroupCard,
 } from './StructuredBlocks'
@@ -151,6 +153,75 @@ type PendingAttachment =
       attachment: ImageAttachment
       previewUrl: string
     }
+
+type ComposerAttachmentPreview = {
+  attachment: PendingAttachment
+  altText: string
+}
+
+const getPendingAttachmentFileName = (attachment: PendingAttachment) =>
+  attachment.kind === 'local' ? attachment.file.name : attachment.attachment.fileName
+
+const ComposerAttachmentPreviewDialog = ({
+  language,
+  preview,
+  onClose,
+}: {
+  language: AppLanguage
+  preview: ComposerAttachmentPreview
+  onClose: () => void
+}) => {
+  const labels = getStructuredLabels(language)
+  const titleId = useId()
+  const dialogRef = useDialogFocus<HTMLElement>({ isOpen: true, onClose })
+  const title = getPendingAttachmentFileName(preview.attachment) || preview.altText
+
+  const dialogLayer = (
+    <div className="structured-preview-layer">
+      <div
+        className="structured-preview-backdrop"
+        onClick={onClose}
+      />
+      <section
+        ref={dialogRef}
+        className="structured-preview-dialog composer-attachment-preview-dialog"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby={titleId}
+        tabIndex={-1}
+      >
+        <div className="structured-preview-card composer-attachment-preview-card">
+          <div className="structured-preview-header">
+            <div className="structured-preview-copy">
+              <h3 id={titleId}>{title}</h3>
+            </div>
+
+            <button
+              type="button"
+              className="btn btn-ghost structured-preview-close composer-attachment-preview-close"
+              onClick={onClose}
+              aria-label={labels.closeDetails}
+            >
+              <CloseIcon />
+            </button>
+          </div>
+
+          <div className="structured-preview-body composer-attachment-preview-body">
+            <img
+              className="composer-attachment-preview-image"
+              src={preview.attachment.previewUrl}
+              alt={preview.altText}
+            />
+          </div>
+        </div>
+      </section>
+    </div>
+  )
+
+  return typeof document !== 'undefined'
+    ? createPortal(dialogLayer, document.body)
+    : dialogLayer
+}
 
 type EmptyStateToolEntry = {
   model: string
@@ -506,6 +577,64 @@ const canRetireTransparentComposerHoverBlocker = (
   target !== document.documentElement &&
   !target.contains(textarea) &&
   isTransparentComposerFocusBlocker(target)
+
+const hitTestRepairThrottleMs = 1500
+
+type ComposerPointerRouting =
+  | 'expected'
+  | 'misrouted-to-textarea'
+  | 'misrouted-to-composer'
+  | 'unrelated'
+
+const classifyComposerPointerRouting = (
+  textarea: HTMLTextAreaElement,
+  event: globalThis.PointerEvent,
+): ComposerPointerRouting => {
+  const scope = textarea.closest('.composer') ?? textarea
+  if (event.target instanceof Node && scope.contains(event.target)) {
+    return 'expected'
+  }
+
+  // Layout truth for this point: any genuinely visible overlay (menu, dialog,
+  // covering control) wins elementFromPoint, so a composer hit here proves the
+  // event was routed through a stale Chromium compositor hit-test surface —
+  // the long-lived-pane bug where the composer stops responding to hover.
+  const hit = document.elementFromPoint(event.clientX, event.clientY)
+  if (!hit || !scope.contains(hit)) {
+    return 'unrelated'
+  }
+  return hit === textarea ? 'misrouted-to-textarea' : 'misrouted-to-composer'
+}
+
+const repairStaleCardHitTest = (
+  textarea: HTMLTextAreaElement,
+  lastRepairAtRef: RefObject<number>,
+) => {
+  const shell = textarea.closest('.card-shell')
+  if (!(shell instanceof HTMLElement)) {
+    return
+  }
+
+  const now = Date.now()
+  if (now - lastRepairAtRef.current < hitTestRepairThrottleMs) {
+    return
+  }
+  lastRepairAtRef.current = now
+
+  // Toggling a transient transform rebuilds this card subtree's compositor
+  // layers and hit-test data — the lightweight equivalent of the pane/tab
+  // switch that historically cleared the stale surface. The data attribute is
+  // an observability hook for tests and triage.
+  shell.dataset.hitTestRepairCount = String(
+    Number(shell.dataset.hitTestRepairCount ?? '0') + 1,
+  )
+  shell.classList.add('is-hit-test-repair')
+  window.requestAnimationFrame(() => {
+    window.requestAnimationFrame(() => {
+      shell.classList.remove('is-hit-test-repair')
+    })
+  })
+}
 
 const areChatCardPropsEqual = (previous: ChatCardProps, next: ChatCardProps) =>
   previous.card === next.card &&
@@ -1055,6 +1184,8 @@ const ChatCardView = ({
     hydrateDraftAttachments(card.draftAttachments ?? []),
   )
   const [composerError, setComposerError] = useState<string | null>(null)
+  const [composerAttachmentPreview, setComposerAttachmentPreview] =
+    useState<ComposerAttachmentPreview | null>(null)
   const [askUserAnswers, setAskUserAnswers] = useState<Record<string, string>>({})
   const [modelMenuOpen, setModelMenuOpen] = useState(false)
   const [settingsMenuOpen, setSettingsMenuOpen] = useState(false)
@@ -1093,6 +1224,7 @@ const ChatCardView = ({
   const activeSlashItemRef = useRef<HTMLButtonElement>(null)
   const slashMenuElRef = useRef<HTMLDivElement>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
+  const lastHitTestRepairAtRef = useRef(0)
   const composerResizeFrameRef = useRef<number | null>(null)
   const messageListRef = useRef<HTMLDivElement>(null)
   const shouldStartPinnedToBottom = isRestored || card.status === 'streaming' || card.messages.length === 0
@@ -1189,15 +1321,14 @@ const ChatCardView = ({
     !isWhiteNoiseCard &&
     !isWeatherCard &&
     !(isMusicToolCard && !musicTitleOverride)
-  const showsToolFooterModelSelect = isTextEditorCard
   const showsComposerModelSelect = !isToolCard
   const showsHeaderModelSelect =
     isToolCard &&
     !isTopbarToolCard &&
-    !showsToolFooterModelSelect &&
     !isGitToolCard &&
     !isStickyNoteCard &&
-    !isFileTreeCard
+    !isFileTreeCard &&
+    !isTextEditorCard
   const showsCardHeader = showsHeaderModelSelect || showsCardTitle || (isGitToolCard && gitInfo)
   const isCollapsed = usesPaneChrome ? false : card.collapsed
   const displayTitle =
@@ -1386,6 +1517,7 @@ const ChatCardView = ({
       }
     }
     setPendingAttachments(hydrateDraftAttachments(card.draftAttachments ?? []))
+    setComposerAttachmentPreview(null)
     hydratedAttachmentsCardIdRef.current = card.id
   }, [card.id, card.draftAttachments])
 
@@ -1496,7 +1628,7 @@ const ChatCardView = ({
       )
     }
 
-    const retireTransparentHoverBlocker = (event: globalThis.PointerEvent) => {
+    const recoverComposerHoverRouting = (event: globalThis.PointerEvent) => {
       const textarea = textareaRef.current
       if (!textarea || !textarea.isConnected || event.buttons !== 0 || event.defaultPrevented) {
         return
@@ -1504,18 +1636,30 @@ const ChatCardView = ({
 
       if (
         !isPointerInsideTextarea(textarea, event.clientX, event.clientY) ||
-        shouldIgnoreComposerFocusRescueTarget(event.target) ||
-        !canRetireTransparentComposerHoverBlocker(event.target, textarea)
+        shouldIgnoreComposerFocusRescueTarget(event.target)
       ) {
         return
       }
 
-      const blocker = event.target
-      // A long-lived transparent layer above the composer can leave Chromium
-      // routing hover/clicks to the stale layer instead of the textarea. Do not
-      // focus on hover; only make that transparent stale layer non-interactive
-      // so normal textarea hover and future clicks work again.
-      blocker.style.pointerEvents = 'none'
+      if (canRetireTransparentComposerHoverBlocker(event.target, textarea)) {
+        const blocker = event.target
+        // A long-lived transparent layer above the composer can leave Chromium
+        // routing hover/clicks to the stale layer instead of the textarea. Do not
+        // focus on hover; only make that transparent stale layer non-interactive
+        // so normal textarea hover and future clicks work again.
+        blocker.style.pointerEvents = 'none'
+        return
+      }
+
+      // The pointer is physically over the textarea but the event landed on an
+      // unrelated (often opaque) element — e.g. the body or another card chunk —
+      // while layout proves nothing covers this point. Rebuild the card's layer
+      // tree so the next real hover/click resolves against fresh hit-test data.
+      // No focus here: hover must never steal focus.
+      const routing = classifyComposerPointerRouting(textarea, event)
+      if (routing === 'misrouted-to-textarea' || routing === 'misrouted-to-composer') {
+        repairStaleCardHitTest(textarea, lastHitTestRepairAtRef)
+      }
     }
 
     const handleDocumentPointerDownCapture = (event: globalThis.PointerEvent) => {
@@ -1524,7 +1668,7 @@ const ChatCardView = ({
         return
       }
 
-      if (event.button !== 0 || event.defaultPrevented) {
+      if (event.button !== 0) {
         return
       }
 
@@ -1532,24 +1676,35 @@ const ChatCardView = ({
         return
       }
 
-      const shouldRescueTransparentBlocker = isTransparentComposerFocusBlocker(event.target)
-      if (event.target !== textarea && !shouldRescueTransparentBlocker) {
-        return
-      }
-
       if (!isPointerInsideTextarea(textarea, event.clientX, event.clientY)) {
         return
       }
 
-      if (shouldRescueTransparentBlocker) {
+      if (event.target === textarea) {
+        // Native focus handles the normal case.
+        return
+      }
+
+      const shouldRescueTransparentBlocker = isTransparentComposerFocusBlocker(event.target)
+      // Stale-routed clicks can carry defaultPrevented from the wrong target's
+      // handlers (e.g. a pane tab's drag setup), so rescue paths ignore it.
+      const routing = shouldRescueTransparentBlocker
+        ? 'unrelated'
+        : classifyComposerPointerRouting(textarea, event)
+
+      if (routing === 'misrouted-to-textarea' || routing === 'misrouted-to-composer') {
+        repairStaleCardHitTest(textarea, lastHitTestRepairAtRef)
+      }
+
+      if (shouldRescueTransparentBlocker || routing === 'misrouted-to-textarea') {
         requestAnimationFrame(() => textareaRef.current?.focus({ preventScroll: true }))
       }
     }
 
-    document.addEventListener('pointermove', retireTransparentHoverBlocker, true)
+    document.addEventListener('pointermove', recoverComposerHoverRouting, true)
     document.addEventListener('pointerdown', handleDocumentPointerDownCapture, true)
     return () => {
-      document.removeEventListener('pointermove', retireTransparentHoverBlocker, true)
+      document.removeEventListener('pointermove', recoverComposerHoverRouting, true)
       document.removeEventListener('pointerdown', handleDocumentPointerDownCapture, true)
     }
   }, [card.id, isActive, isCollapsed, isToolCard])
@@ -2314,6 +2469,9 @@ const ChatCardView = ({
 
       return current.filter((attachment) => attachment.id !== attachmentId)
     })
+    setComposerAttachmentPreview((preview) =>
+      preview?.attachment.id === attachmentId ? null : preview,
+    )
   }
 
   const handleMessageListCopy = useCallback(async (event: globalThis.ClipboardEvent) => {
@@ -2418,6 +2576,7 @@ const ChatCardView = ({
     syncDraftDerivedState('')
     scheduleComposerResize()
     setPendingAttachments([])
+    setComposerAttachmentPreview(null)
     setComposerError(null)
     discardPendingDraftSync()
     onDraftChange('')
@@ -3316,13 +3475,6 @@ const ChatCardView = ({
         />
       )}
 
-      {!isCollapsed && showsToolFooterModelSelect ? (
-        <footer className="card-footer tool-model-footer">
-          <div className="tool-model-footer-row">
-            {renderModelSelect('composer')}
-          </div>
-        </footer>
-      ) : null}
 
       {!isCollapsed && (
         <>
@@ -3362,11 +3514,25 @@ const ChatCardView = ({
                 <div className="composer-attachment-list">
                   {pendingAttachments.map((attachment, index) => (
                     <div key={attachment.id} className="composer-attachment-item">
-                      <img
-                        className="composer-attachment-image"
-                        src={attachment.previewUrl}
-                        alt={text.pastedImageAlt(index + 1)}
-                      />
+                      <button
+                        type="button"
+                        className="composer-attachment-preview-trigger"
+                        aria-label={getStructuredLabels(language).openDetails(
+                          getPendingAttachmentFileName(attachment) || text.pastedImageAlt(index + 1),
+                        )}
+                        onClick={() =>
+                          setComposerAttachmentPreview({
+                            attachment,
+                            altText: text.pastedImageAlt(index + 1),
+                          })
+                        }
+                      >
+                        <img
+                          className="composer-attachment-image"
+                          src={attachment.previewUrl}
+                          alt={text.pastedImageAlt(index + 1)}
+                        />
+                      </button>
                       <button
                         type="button"
                         className="composer-attachment-remove"
@@ -3379,6 +3545,14 @@ const ChatCardView = ({
                     </div>
                   ))}
                 </div>
+              ) : null}
+
+              {composerAttachmentPreview ? (
+                <ComposerAttachmentPreviewDialog
+                  language={language}
+                  preview={composerAttachmentPreview}
+                  onClose={() => setComposerAttachmentPreview(null)}
+                />
               ) : null}
 
               {queuedSendSummary ? (

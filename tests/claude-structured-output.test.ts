@@ -355,9 +355,40 @@ test('TodoWrite emits a structured todo activity that can update in place', () =
   )
 })
 
+test('ExitPlanMode is rendered as a normal tool when the card is not in plan mode', () => {
+  const parse = createClaudeStructuredOutputParser('en', { planMode: false })
+
+  assert.deepEqual(
+    parse({
+      type: 'assistant',
+      message: {
+        content: [
+          {
+            type: 'tool_use',
+            id: 'toolu_exit_plan_non_plan',
+            name: 'ExitPlanMode',
+            input: {},
+          },
+        ],
+      },
+    }),
+    [
+      {
+        type: 'activity',
+        itemId: 'toolu_exit_plan_non_plan',
+        kind: 'tool',
+        status: 'completed',
+        toolName: 'ExitPlanMode',
+        summary: 'Exit plan mode',
+        toolInput: undefined,
+      },
+    ],
+  )
+})
+
 test('ExitPlanMode emits an ask-user activity with approve and reject options', () => {
-  const parseEn = createClaudeStructuredOutputParser('en')
-  const parseZh = createClaudeStructuredOutputParser('zh-CN')
+  const parseEn = createClaudeStructuredOutputParser('en', { planMode: true })
+  const parseZh = createClaudeStructuredOutputParser('zh-CN', { planMode: true })
 
   // ExitPlanMode without a preceding Write — no planFile
   assert.deepEqual(
@@ -455,7 +486,7 @@ test('ExitPlanMode emits an ask-user activity with approve and reject options', 
 })
 
 test('ExitPlanMode attaches planFile from the most recent Write activity', () => {
-  const parse = createClaudeStructuredOutputParser('en')
+  const parse = createClaudeStructuredOutputParser('en', { planMode: true })
 
   // First: a Write tool creates the plan file
   parse({

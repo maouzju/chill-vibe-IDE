@@ -2317,6 +2317,16 @@ body.is-card-dragging .lane-drop-zone-top {
   contain: layout style;
 }
 
+.card-shell.is-hit-test-repair {
+  /* Self-heal for stale Chromium compositor hit-test surfaces (composer stops
+     responding to hover/clicks in long-lived panes): a transient transform
+     forces this subtree's layer tree to rebuild — the lightweight equivalent
+     of the pane/tab switch that historically cleared the bug. Applied by
+     ChatCard's pointer-routing repair for two frames, never at rest, and
+     transform is not in the card transition list so nothing animates. */
+  transform: translateZ(0);
+}
+
 .card-shell::after {
   content: '';
   position: absolute;
@@ -2982,6 +2992,22 @@ body.is-card-dragging .lane-drop-zone-top {
   box-shadow: var(--shadow-xs);
 }
 
+.composer-attachment-preview-trigger {
+  display: block;
+  width: 100%;
+  height: 100%;
+  padding: 0;
+  appearance: none;
+  border: 0;
+  background: transparent;
+  cursor: zoom-in;
+}
+
+.composer-attachment-preview-trigger:focus-visible {
+  outline: none;
+  box-shadow: inset 0 0 0 2px var(--accent-line-strong);
+}
+
 .composer-attachment-image {
   display: block;
   width: 100%;
@@ -3041,6 +3067,31 @@ body.is-card-dragging .lane-drop-zone-top {
   border-color: rgba(187, 65, 48, 0.22);
   background: rgba(187, 65, 48, 0.08);
   color: var(--danger);
+}
+
+.composer-attachment-preview-dialog {
+  width: min(60rem, calc(100vw - 2rem));
+}
+
+.composer-attachment-preview-card {
+  gap: 0.8rem;
+}
+
+.composer-attachment-preview-body {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0.25rem 0;
+}
+
+.composer-attachment-preview-image {
+  display: block;
+  width: auto;
+  max-width: 100%;
+  max-height: calc(100vh - 9rem);
+  object-fit: contain;
+  border-radius: calc(var(--r-sm) + 2px);
+  box-shadow: var(--shadow-sm);
 }
 
 .composer-queued-send {
@@ -3113,27 +3164,6 @@ body.is-card-dragging .lane-drop-zone-top {
   box-shadow: none;
 }
 
-.tool-model-footer {
-  padding-top: 0.28rem;
-  padding-bottom: 0.28rem;
-}
-
-.tool-model-footer-row {
-  display: flex;
-  align-items: flex-end;
-  justify-content: flex-start;
-  gap: 0.3rem;
-  min-height: 1.85rem;
-}
-
-.tool-model-footer .composer-model-select {
-  align-self: auto;
-  padding-bottom: 0;
-}
-
-.tool-model-footer .composer-model-select .model-select {
-  height: 1.85rem;
-}
 
 .composer-input-row .textarea {
   flex: 1;

@@ -72,4 +72,5 @@ test('text editor cards without a file show a usable empty state instead of a bl
   assert.match(markup, /text-editor-empty/)
   assert.match(markup, /Open a file to start editing\./)
   assert.match(markup, /Use Files or a generated plan result to open one here\./)
+  assert.doesNotMatch(markup, /model-select/)
 })

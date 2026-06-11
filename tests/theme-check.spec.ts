@@ -2706,7 +2706,7 @@ test('settings panel flows category cards through two waterfall columns in both 
 
   await settingsTab.click()
   await expect(settingsPanel).toBeVisible()
-  await expect(settingsGroups).toHaveCount(7)
+  await expect(settingsGroups).toHaveCount(8)
 
   const settingsGroupRects = await settingsGroups.evaluateAll((nodes) =>
     nodes.map((node) => {
@@ -2761,7 +2761,7 @@ test('settings panel stacks category cards cleanly on a narrow viewport', async 
 
   await settingsTab.click()
   await expect(settingsPanel).toBeVisible()
-  await expect(settingsGroups).toHaveCount(7)
+  await expect(settingsGroups).toHaveCount(8)
 
   const [firstGroupRect, secondGroupRect] = await Promise.all([
     readRect(settingsGroups.nth(0)),

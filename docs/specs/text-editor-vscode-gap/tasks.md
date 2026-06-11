@@ -53,6 +53,12 @@
   - 行:列、语言、EOL 显示；EOL 切换走 `model.setEOL` + dirty
   - 双主题快照
 
+- [ ] **P2-5** 编码检测与按原编码写回（Tier 1，新 `server/file-encoding.ts` + `server/file-system.ts` + `shared/schema.ts` + `src/api.ts` + `TextEditorCard.tsx`）
+  - 红：GBK 文件读出正确中文 + `encoding` 字段、UTF-16 LE BOM 不判 binary、GBK round-trip 写回字节不变且不误报冲突、UTF-8 BOM strip 后保存保留 BOM 的单测先失败
+  - BOM → 严格 UTF-8 → jschardet 猜测 → iconv-lite 解码；write 按原编码回写；冲突比对同编码解码
+  - 状态栏显示编码标签；缺省 encoding 保持 utf8 兼容
+  - backlog：手动重选编码、git diff HEAD 侧编码对齐
+
 ## P3 — 远期备选（不承诺）
 
 - [x] **P3-1** TS/JS 轻语义：tsconfig 探测端点 + compilerOptions 映射

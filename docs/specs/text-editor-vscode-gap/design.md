@@ -81,6 +81,21 @@
 - EOL 点击切换：`model.setEOL()` + 标记 dirty 走正常保存流。
 - 主题敏感面，加双主题快照。
 
+## E3+ — 编码检测与按原编码写回
+
+问题：`readWorkspaceFile` 写死 `buffer.toString('utf8')`，GBK/GB2312 文件（中文 Windows bat 日志、老 HTML）全部乱成 `�`；带 BOM 的 UTF-16 文件（PowerShell 5.1 默认输出）被 NUL 嗅探误判为二进制拒绝编辑；乱码态保存会把替换字符按 UTF-8 写回，**永久损坏原文件**；GBK 文件的 expectedRevision 冲突比对用 utf8 解码，必然误报冲突。
+
+方案（对标 VSCode：jschardet 猜测 + iconv-lite 解码）：
+
+- 新模块 `server/file-encoding.ts`：
+  - `detectAndDecode(buffer)`：BOM 嗅探（UTF-8 / UTF-16 LE / UTF-16 BE）→ 无 BOM 先严格 UTF-8 校验（`TextDecoder('utf-8', { fatal: true })`）→ 失败用 jschardet 猜（嗅探前 64KB），GB 系归一化为 `gb18030`，低置信度或 iconv 不支持时兜底 `gb18030`（中文用户主场景）→ iconv-lite 解码，strip BOM。
+  - `encodeForWrite(content, encoding)`：按原编码编码回写，`utf8bom`/UTF-16 重建 BOM。
+  - 编码 id 规范：`utf8`、`utf8bom`、`utf16le`、`utf16be`、`gb18030` 等 iconv-lite 名称小写。
+- `readWorkspaceFile`：有 BOM 直接按文本处理（跳过 NUL 嗅探）；response 增加 `encoding` 字段。
+- `writeWorkspaceFile`：request 增加可选 `encoding`；冲突比对用同编码解码磁盘内容再算 revision；写入走 `encodeForWrite`。缺省 `encoding` 保持 utf8 旧行为（兼容）。
+- 前端 `TextEditorCard`：读取后记住 encoding，保存回传；状态栏显示编码标签（`UTF-8`、`GB18030`、`UTF-16 LE`…）。
+- 不在本期：手动"以指定编码重新打开"、无 BOM UTF-16 猜测、git diff HEAD 侧编码对齐（HEAD 读取仍为 utf8，GBK 文件 diff 视图可能乱码，记 backlog）。
+
 ## 实施顺序依赖
 
 ```

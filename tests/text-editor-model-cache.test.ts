@@ -27,6 +27,7 @@ const makeEntry = () => ({
   revision: 'rev-1',
   savedContent: 'saved',
   languageId: 'plaintext',
+  encoding: 'utf8',
 })
 
 test('model cache keys stay isolated per workspace and file', () => {

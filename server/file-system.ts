@@ -3,6 +3,8 @@ import { mkdir, readdir, readFile, rename, rm, stat, writeFile } from 'node:fs/p
 import os from 'node:os'
 import path from 'node:path'
 
+import { decodeWithEncoding, detectAndDecode, encodeForWrite, sniffBomEncoding } from './file-encoding.js'
+
 import type {
   FileCreateRequest,
   FileDeleteRequest,
@@ -362,15 +364,17 @@ export const readWorkspaceFile = async (request: FileReadRequest): Promise<FileR
 
   const buffer = await readFile(targetPath)
 
-  if (looksBinary(buffer)) {
+  // A BOM proves text — UTF-16 ASCII would otherwise trip the NUL sniffer.
+  if (!sniffBomEncoding(buffer) && looksBinary(buffer)) {
     return { content: '', language, size: stats.size, binary: true }
   }
 
-  const content = buffer.toString('utf8')
+  const { content, encoding } = detectAndDecode(buffer)
   const response: FileReadResponse = {
     content,
     language,
     size: stats.size,
+    encoding,
     revision: computeFileRevision(content),
   }
 
@@ -385,7 +389,7 @@ export const writeWorkspaceFile = async (request: FileWriteRequest): Promise<Fil
   const targetPath = ensureWithinWorkspace(request.workspacePath, request.relativePath)
 
   if (request.expectedRevision) {
-    const currentContent = await readFile(targetPath, 'utf8').catch((error: NodeJS.ErrnoException) => {
+    const currentBuffer = await readFile(targetPath).catch((error: NodeJS.ErrnoException) => {
       // A deleted file cannot lose anyone's edits, so restoring it is not a conflict.
       if (error?.code === 'ENOENT') {
         return null
@@ -393,11 +397,16 @@ export const writeWorkspaceFile = async (request: FileWriteRequest): Promise<Fil
       throw error
     })
 
-    if (currentContent !== null && computeFileRevision(currentContent) !== request.expectedRevision) {
-      throw new FileRevisionConflictError()
+    if (currentBuffer !== null) {
+      // Decode with the same encoding the read used, or non-UTF-8 files would
+      // always look conflicted against their own revision.
+      const currentContent = decodeWithEncoding(currentBuffer, request.encoding)
+      if (computeFileRevision(currentContent) !== request.expectedRevision) {
+        throw new FileRevisionConflictError()
+      }
     }
   }
 
-  await writeFile(targetPath, request.content, 'utf8')
+  await writeFile(targetPath, encodeForWrite(request.content, request.encoding))
   return { revision: computeFileRevision(request.content) }
 }

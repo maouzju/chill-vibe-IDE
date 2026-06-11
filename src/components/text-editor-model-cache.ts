@@ -16,6 +16,8 @@ export type TextEditorModelCacheEntry<
   revision: string | null
   savedContent: string
   languageId: string
+  /** Detected file encoding id from the last read; echoed back on saves. */
+  encoding: string | null
 }
 
 export const TEXT_EDITOR_MODEL_CACHE_LIMIT = 12

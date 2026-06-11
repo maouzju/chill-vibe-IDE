@@ -943,17 +943,18 @@ export const saveFileContent = async (
   relativePath: string,
   content: string,
   expectedRevision?: string,
+  encoding?: string,
 ): Promise<FileWriteResponse> => {
   const desktop = getDesktopApi()
   if (desktop?.writeFile) {
-    const result = await desktop.writeFile({ workspacePath, relativePath, content, expectedRevision })
+    const result = await desktop.writeFile({ workspacePath, relativePath, content, expectedRevision, encoding })
     return result ?? {}
   }
 
   const response = await fetch('/api/files/write', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ workspacePath, relativePath, content, expectedRevision }),
+    body: JSON.stringify({ workspacePath, relativePath, content, expectedRevision, encoding }),
   })
 
   if (response.status === 409) return { conflict: true }

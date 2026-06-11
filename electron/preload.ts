@@ -15,6 +15,14 @@ ipcRenderer.on('chat:stream-event', (_event, payload) => {
   )
 })
 
+ipcRenderer.on('file:changed', (_event, payload) => {
+  window.dispatchEvent(
+    new CustomEvent('chill-vibe:file-changed', {
+      detail: payload as { subscriptionId: string },
+    }),
+  )
+})
+
 ipcRenderer.on('app:flush-state-before-quit', () => {
   window.dispatchEvent(new Event('chill-vibe:flush-state-before-quit'))
 })
@@ -137,6 +145,16 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.invoke('desktop:read-file', request),
   writeFile: (request: unknown) =>
     ipcRenderer.invoke('desktop:write-file', request),
+  readNearestTsconfig: (request: unknown) =>
+    ipcRenderer.invoke('desktop:read-nearest-tsconfig', request),
+  readGitHeadFile: (request: unknown) =>
+    ipcRenderer.invoke('desktop:read-git-head-file', request),
+  readGitFileLineDiff: (request: unknown) =>
+    ipcRenderer.invoke('desktop:read-git-file-line-diff', request),
+  watchFile: (request: unknown) =>
+    ipcRenderer.invoke('desktop:watch-file', request) as Promise<boolean>,
+  unwatchFile: (subscriptionId: string) =>
+    ipcRenderer.invoke('desktop:unwatch-file', subscriptionId) as Promise<void>,
 
   // ── Proxy Stats ───────────────────────────────────────────────────────────
   fetchProxyStats: (since?: number) =>

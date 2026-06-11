@@ -33,6 +33,7 @@ import { getDefaultWorkspacePath } from './app-paths.js'
 import { importCcSwitchProfiles } from './cc-switch-import.js'
 import { listExternalSessions, loadExternalSession } from './external-history.js'
 import {
+  copyWorkspaceFileToClipboard,
   createWorkspaceDirectory,
   createWorkspaceFile,
   deleteWorkspaceEntry,
@@ -459,6 +460,24 @@ app.post('/api/files/write', async (request, response) => {
   }
 })
 
+
+app.post('/api/files/copy-to-clipboard', async (request, response) => {
+  const parsed = fileReadRequestSchema.safeParse(request.body)
+
+  if (!parsed.success) {
+    response.status(400).json({ message: 'Invalid file clipboard request.' })
+    return
+  }
+
+  try {
+    await copyWorkspaceFileToClipboard(parsed.data)
+    response.status(204).end()
+  } catch (error) {
+    response.status(400).json({
+      message: error instanceof Error ? error.message : 'Unable to copy file to clipboard.',
+    })
+  }
+})
 
 app.post('/api/files/nearest-tsconfig', async (request, response) => {
   const parsed = fileReadRequestSchema.safeParse(request.body)

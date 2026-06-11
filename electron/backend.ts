@@ -2,6 +2,7 @@ import { resolveImageAttachmentPath, storeImageAttachment } from '../server/atta
 import { ChatManager, type StreamEnvelope } from '../server/chat-manager.ts'
 import { importCcSwitchProfiles } from '../server/cc-switch-import.ts'
 import {
+  copyWorkspaceFileToClipboard,
   createWorkspaceDirectory,
   createWorkspaceFile,
   deleteWorkspaceEntry,
@@ -383,6 +384,9 @@ export const createDesktopBackend = (deps: DesktopBackendDependencies = {}) => {
     },
     async readFile(request: unknown) {
       return readWorkspaceFile(fileReadRequestSchema.parse(request))
+    },
+    async copyFileToClipboard(request: unknown) {
+      await copyWorkspaceFileToClipboard(fileReadRequestSchema.parse(request))
     },
     async writeFile(request: unknown) {
       try {

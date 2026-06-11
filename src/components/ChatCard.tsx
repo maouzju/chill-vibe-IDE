@@ -579,6 +579,43 @@ const canRetireTransparentComposerHoverBlocker = (
   isTransparentComposerFocusBlocker(target)
 
 const hitTestRepairThrottleMs = 1500
+const retiredHoverBlockerRestoreMs = 2500
+
+const retiredHoverBlockerTimers = new Map<HTMLElement, number>()
+
+// Retiring a transparent hover blocker must be temporary: if a stale-routed
+// event ever names a real app surface as the blocker, a permanent inline
+// pointer-events: none would silently kill that surface's interaction until
+// remount. Real stale overlays simply get re-retired after the restore window.
+const retireTransparentHoverBlockerTemporarily = (blocker: HTMLElement) => {
+  const existingTimer = retiredHoverBlockerTimers.get(blocker)
+  if (existingTimer !== undefined) {
+    window.clearTimeout(existingTimer)
+  }
+  blocker.style.pointerEvents = 'none'
+  const timer = window.setTimeout(() => {
+    retiredHoverBlockerTimers.delete(blocker)
+    blocker.style.pointerEvents = ''
+  }, retiredHoverBlockerRestoreMs)
+  retiredHoverBlockerTimers.set(blocker, timer)
+}
+
+// Clears stray inline pointer-events: none from the textarea's ancestor chain.
+// Only inline styles are touched — that is the only damage the hover retire
+// path can leave behind; stylesheet-driven pointer-events stay untouched.
+const healDisabledComposerAncestors = (textarea: HTMLTextAreaElement) => {
+  let healed = false
+  let node: HTMLElement | null = textarea.parentElement
+  while (node && node !== document.body) {
+    if (node.style.pointerEvents === 'none') {
+      node.style.pointerEvents = ''
+      retiredHoverBlockerTimers.delete(node)
+      healed = true
+    }
+    node = node.parentElement
+  }
+  return healed
+}
 
 type ComposerPointerRouting =
   | 'expected'
@@ -1647,8 +1684,16 @@ const ChatCardView = ({
         // routing hover/clicks to the stale layer instead of the textarea. Do not
         // focus on hover; only make that transparent stale layer non-interactive
         // so normal textarea hover and future clicks work again.
-        blocker.style.pointerEvents = 'none'
-        return
+        //
+        // Retire only when the layout engine itself reports this element at the
+        // pointer position: a stale-routed event can name a far-away transparent
+        // surface (another card's shell or tab panel) as target, and disabling
+        // that real surface would kill the whole neighbor card's interaction.
+        const hit = document.elementFromPoint(event.clientX, event.clientY)
+        if (hit !== null && (hit === blocker || blocker.contains(hit))) {
+          retireTransparentHoverBlockerTemporarily(blocker)
+          return
+        }
       }
 
       // The pointer is physically over the textarea but the event landed on an
@@ -1658,6 +1703,15 @@ const ChatCardView = ({
       // No focus here: hover must never steal focus.
       const routing = classifyComposerPointerRouting(textarea, event)
       if (routing === 'misrouted-to-textarea' || routing === 'misrouted-to-composer') {
+        repairStaleCardHitTest(textarea, lastHitTestRepairAtRef)
+        return
+      }
+
+      // Target and layout agree on a non-composer element even though the
+      // pointer sits on the textarea: that is the killed-card signature — a
+      // stray inline pointer-events: none on this card's ancestors makes every
+      // event fall through to the opaque pane background. Heal it in place.
+      if (routing === 'unrelated' && healDisabledComposerAncestors(textarea)) {
         repairStaleCardHitTest(textarea, lastHitTestRepairAtRef)
       }
     }
@@ -1698,6 +1752,24 @@ const ChatCardView = ({
 
       if (shouldRescueTransparentBlocker || routing === 'misrouted-to-textarea') {
         requestAnimationFrame(() => textareaRef.current?.focus({ preventScroll: true }))
+        return
+      }
+
+      // Killed-card signature: target and layout agree on a non-composer
+      // element under the pointer because a stray inline pointer-events: none
+      // on this card's ancestors lets clicks fall through to the pane
+      // background (which also blurs the textarea). Heal the ancestors, then
+      // focus only if the layout now resolves this point to the composer.
+      if (routing === 'unrelated' && !shouldRescueTransparentBlocker) {
+        if (!healDisabledComposerAncestors(textarea)) {
+          return
+        }
+        repairStaleCardHitTest(textarea, lastHitTestRepairAtRef)
+        const healedHit = document.elementFromPoint(event.clientX, event.clientY)
+        const scope = textarea.closest('.composer') ?? textarea
+        if (healedHit !== null && scope.contains(healedHit)) {
+          requestAnimationFrame(() => textareaRef.current?.focus({ preventScroll: true }))
+        }
       }
     }
 

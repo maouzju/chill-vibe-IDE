@@ -115,6 +115,8 @@ const summarizeClaudeToolUse = (
       return language === 'en' ? 'Update todo list' : '更新任务列表'
     case 'EnterPlanMode':
       return language === 'en' ? 'Enter plan mode' : '进入计划模式'
+    case 'ExitPlanMode':
+      return language === 'en' ? 'Exit plan mode' : '退出计划模式'
     default:
       return language === 'en' ? `Use tool: ${toolName}` : `使用工具: ${toolName}`
   }
@@ -725,7 +727,10 @@ const parseClaudeAskUserXmlBlock = (
   }
 }
 
-export const createClaudeStructuredOutputParser = (language: AppLanguage) => {
+export const createClaudeStructuredOutputParser = (
+  language: AppLanguage,
+  options: { planMode?: boolean } = {},
+) => {
   let lastCommand: { itemId: string; command: string } | null = null
 
   const settleLastCommand = (): Extract<StreamActivity, { kind: 'command' }> | null => {
@@ -905,7 +910,7 @@ export const createClaudeStructuredOutputParser = (language: AppLanguage) => {
           }
         }
 
-        if (toolName === 'ExitPlanMode') {
+        if (toolName === 'ExitPlanMode' && options.planMode === true) {
           const planFile = lastWrittenFile ?? undefined
           activities.push({
             type: 'activity',

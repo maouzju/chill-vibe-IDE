@@ -143,6 +143,47 @@ const pasteImageIntoTextarea = async (textarea: Locator) => {
   }, tinyGifBase64)
 }
 
+const pasteLargeImageIntoTextarea = async (textarea: Locator) => {
+  await textarea.evaluate(async (node) => {
+    const canvas = document.createElement('canvas')
+    canvas.width = 640
+    canvas.height = 360
+    const context = canvas.getContext('2d')
+    if (!context) throw new Error('Canvas is unavailable')
+
+    const gradient = context.createLinearGradient(0, 0, canvas.width, canvas.height)
+    gradient.addColorStop(0, '#7cc7ff')
+    gradient.addColorStop(1, '#1d4ed8')
+    context.fillStyle = gradient
+    context.fillRect(0, 0, canvas.width, canvas.height)
+    context.fillStyle = 'rgba(255, 255, 255, 0.92)'
+    context.fillRect(54, 52, 252, 72)
+    context.fillRect(54, 148, 492, 34)
+    context.fillRect(54, 206, 390, 34)
+
+    const blob = await new Promise<Blob>((resolve, reject) => {
+      canvas.toBlob((result) => {
+        if (result) {
+          resolve(result)
+        } else {
+          reject(new Error('Unable to create image blob'))
+        }
+      }, 'image/png')
+    })
+    const file = new File([blob], 'wide-preview.png', { type: 'image/png' })
+    const dataTransfer = new DataTransfer()
+    const event = new Event('paste', { bubbles: true, cancelable: true })
+
+    dataTransfer.items.add(file)
+    Object.defineProperty(event, 'clipboardData', {
+      configurable: true,
+      value: dataTransfer,
+    })
+
+    node.dispatchEvent(event)
+  })
+}
+
 const expectChildToFitWithinParent = async (parent: Locator, child: Locator, label: string) => {
   const [parentRect, childRect] = await Promise.all([readRect(parent), readRect(child)])
 
@@ -4514,6 +4555,51 @@ for (const theme of ['dark', 'light'] as const) {
     await expect(composer.locator('.composer-attachment-note')).toHaveCount(0)
 
     await expect(composer).toHaveScreenshot(`composer-pasted-image-no-ready-note-${theme}.png`, {
+      animations: 'disabled',
+      caret: 'hide',
+    })
+  })
+
+
+  test(`pasted image composer previews open larger dialogs in ${theme} theme`, async ({ page }) => {
+    const state = createMockState()
+    state.settings.theme = theme
+
+    await mockAppApis(page, { state })
+    await page.goto(appUrl)
+
+    const composer = page.locator('.composer').first()
+    const textarea = composer.locator('textarea').first()
+    const attachmentFrame = composer.locator('.composer-attachment-item').first()
+    const attachmentTrigger = composer.locator('.composer-attachment-preview-trigger').first()
+    const attachmentImage = composer.locator('.composer-attachment-image').first()
+
+    await expect(textarea).toBeVisible()
+    await pasteLargeImageIntoTextarea(textarea)
+    await expect(attachmentImage).toBeVisible()
+    await expect
+      .poll(() => attachmentImage.evaluate((node) => (node as HTMLImageElement).complete))
+      .toBeTruthy()
+
+    const inlineFrameRect = await readRect(attachmentFrame)
+    await attachmentTrigger.click()
+
+    const dialog = page.getByRole('dialog')
+    const dialogCard = dialog.locator('.composer-attachment-preview-card')
+    const dialogImage = dialog.locator('.composer-attachment-preview-image')
+
+    await expect(dialog).toBeVisible()
+    await expect(dialogImage).toBeVisible()
+    await expect.poll(async () => (await readRect(dialogImage)).width).toBeGreaterThan(inlineFrameRect.width * 1.6)
+
+    if (theme === 'dark') {
+      expect(maxChannel(await readComputedRgb(dialogCard, 'background-color'))).toBeLessThan(90)
+      expect(lacksGreenCast(await readComputedRgb(dialogCard, 'background-color'))).toBeTruthy()
+    } else {
+      expect(maxChannel(await readComputedRgb(dialogCard, 'background-color'))).toBeGreaterThan(180)
+    }
+
+    await expect(dialogCard).toHaveScreenshot(`composer-attachment-preview-${theme}.png`, {
       animations: 'disabled',
       caret: 'hide',
     })

@@ -141,6 +141,7 @@ This section governs agents working on **this Chill Vibe IDE repository**. It is
 - The CLI resolves authentication and base URLs from the provider profile configured in Settings → Routing.
 - Only fall back to direct API calls via local settings if the CLI routing is not available.
 - When adding a new feature that needs AI, reuse `resolveCommand` and `resolveProviderRuntime` from [`server/providers.ts`](./server/providers.ts) rather than making direct HTTP API calls.
+- On the Electron host, Claude chat turns run through a per-card keepalive process pool ([`server/claude-session-pool.ts`](./server/claude-session-pool.ts), spec in `docs/specs/claude-session-keepalive/`): the CLI stays alive between turns (`--input-format stream-json`), follow-up messages go over stdin, and idle-period output (a background task waking the agent) becomes an unsolicited stream pushed to the owning card. The plain web server path stays single-shot. Escape hatches: `CHILL_VIBE_CLAUDE_KEEPALIVE=0` disables pooling, `CHILL_VIBE_CLAUDE_KEEPALIVE_IDLE_MS` tunes idle recycling.
 
 ## Test Organization
 
@@ -155,6 +156,7 @@ This section governs agents working on **this Chill Vibe IDE repository**. It is
 - Prefer the narrowest proof that matches the risk: strict red-first TDD for high-risk logic, targeted post-change verification for low-risk logic, and only expand to broader suites when the surface area or the user request justifies it.
 - For a broad regression sweep, release verification, or any task where the user explicitly wants comprehensive validation, invoke the repo-local `chill-vibe-full-regression` skill and follow its workflow.
 - Do not treat `pnpm test:risk` or `pnpm test:full` as unconditional handoff gates for every risky change; start with the narrowest proving test unless the user asks for a wider sweep.
+- Full-suite sweeps (`pnpm test`, `pnpm test:full`) belong to the release-pipeline flow: run them there and fix what they surface during release verification. Routine changes hand off with the narrowest proving tests plus `pnpm test:quality`.
 - Use the repo Playwright scripts instead of bare `playwright test`; `pnpm test:playwright` is the default smoke sweep, `pnpm test:playwright:full` is the exhaustive suite, and `pnpm test:theme` covers theme snapshots through the same harness.
 - Repo-local browser verification is headless-only by default and by policy; do not add headed validation scripts back into the standard release/test workflow.
 - Repo-local Electron validation is hidden-window by default; do not rely on visible desktop windows as a standard release gate.
@@ -403,6 +405,8 @@ A living list of traps that have wasted time before. **When you hit a new pitfal
 
 | 157 | Components rendered by SSR-based unit tests (react-dom/server) crash on `useSyncExternalStore` without a `getServerSnapshot` argument | Always pass the third snapshot argument when adding `useSyncExternalStore` to any card that `tests/*.test.tsx` renders server-side, or the suite fails with "Missing getServerSnapshot" far from the actual change. |
 
+| 158 | Claude CLI `-p --input-format stream-json` keeps the process alive after each `result` (until stdin closes) and re-emits `system/init` with the same session id on every turn | Keepalive turn parsing must treat per-turn `init` as an idempotent session update, and anything that assumes "result ⇒ process exit" (watchdogs, cleanup, tests) must key off turn settlement instead of process close. |
+
 ### Self-maintenance rule
 
 - When you encounter a new non-obvious failure mode — a test that fails for environmental reasons, a build step with hidden prerequisites, a runtime behavior that contradicts the docs — append a row to this table before you finish the task.
@@ -420,7 +424,7 @@ A living list of traps that have wasted time before. **When you hit a new pitfal
   1. `EnterWorktree` to start isolated work.
   2. Commit all changes inside the worktree.
   3. Merge the worktree branch back to main (`git checkout main && git merge <branch>`).
-  4. Run `pnpm test:full` after merge to verify integration.
+  4. After merge, rerun the narrowest proving tests for the merged change (plus `pnpm test:quality` when types/lint surface was touched); full-suite sweeps stay in the release-pipeline flow.
   5. `ExitWorktree` with `action: "remove"` to clean up.
   6. If merge conflicts occur, resolve them automatically; only ask the user when the intent is ambiguous.
 - When multiple agents run in parallel, split tasks along module boundaries (e.g., `shared/` vs `src/components/`) to minimize merge conflicts.

@@ -117,6 +117,7 @@ import {
   resetState,
   runEnvironmentSetup,
   stopChat,
+  subscribeUnsolicitedStreams,
   syncRuntimeSettings,
   toggleMaximizeWindow,
   type ProxyStatsCounts,
@@ -3161,6 +3162,45 @@ function App() {
     }
   }, [attachStream])
 
+  // Claude keepalive: a pooled CLI process woke itself between turns (a
+  // background task finished and re-invoked the agent). The server wrapped the
+  // new turn in a fresh stream — attach the owning card so the unsolicited
+  // report renders exactly like a normal streamed reply.
+  useEffect(() => {
+    return subscribeUnsolicitedStreams(({ cardId, streamId }) => {
+      for (const column of appStateRef.current.columns) {
+        const card = column.cards[cardId]
+        if (!card) {
+          continue
+        }
+
+        if (card.status === 'streaming' && card.streamId) {
+          // The card already has a live stream (the user just sent a follow-up
+          // in parallel); that request supersedes the unsolicited turn.
+          return
+        }
+
+        const action: IdeAction = {
+          type: 'updateCard',
+          columnId: column.id,
+          cardId,
+          patch: { status: 'streaming', streamId },
+        }
+        persistAfterAction(action.type, applyAction(action))
+
+        const liveCard = getColumn(column.id)?.cards[cardId]
+        if (liveCard && liveCard.streamId === streamId) {
+          attachStream(column.id, liveCard)
+        }
+        return
+      }
+
+      // The card is gone (closed/deleted): stop the orphaned stream so the
+      // pooled process is not left running an unobserved turn.
+      void stopChat(streamId).catch(() => undefined)
+    })
+  }, [applyAction, attachStream, getColumn, persistAfterAction])
+
   const hydrate = useCallback(async () => {
     clearTransientRuntimeState()
     const requestId = hydrateRequestIdRef.current + 1
@@ -3776,6 +3816,7 @@ function App() {
           appStateRef.current.settings.crossProviderSkillReuseEnabled,
         streamId,
         sessionId: resumeSessionId,
+        cardId,
         prompt: requestPrompt,
         attachments: requestAttachments,
         archiveRecall,
@@ -3946,6 +3987,7 @@ function App() {
           appStateRef.current.settings.crossProviderSkillReuseEnabled,
         streamId,
         sessionId: resumeRequest.sessionId,
+        cardId,
         prompt: resumeRequest.prompt,
         attachments: resumeRequest.attachments,
         archiveRecall,
@@ -4137,6 +4179,7 @@ function App() {
           appStateRef.current.settings.crossProviderSkillReuseEnabled,
         streamId,
         sessionId: shouldClearSessionId ? undefined : getResumeSessionIdForModel(card, resolvedModel),
+        cardId,
         prompt: shouldClearSessionId ? freshSessionRecoveryPrompt : '',
         attachments: shouldClearSessionId ? freshSessionRecoveryAttachments : [],
         archiveRecall,

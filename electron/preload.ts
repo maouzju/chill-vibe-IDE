@@ -23,6 +23,17 @@ ipcRenderer.on('file:changed', (_event, payload) => {
   )
 })
 
+ipcRenderer.on('chat:unsolicited-stream', (_event, payload) => {
+  window.dispatchEvent(
+    new CustomEvent('chill-vibe:unsolicited-stream', {
+      detail: payload as {
+        cardId: string
+        streamId: string
+      },
+    }),
+  )
+})
+
 ipcRenderer.on('app:flush-state-before-quit', () => {
   window.dispatchEvent(new Event('chill-vibe:flush-state-before-quit'))
 })

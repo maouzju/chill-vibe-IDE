@@ -70,6 +70,24 @@ test('codex runs include the final resolution marker instruction', () => {
   assert.match(instructionsArg, /request_user_input/i)
 })
 
+test('codex instructions warn Windows PowerShell not to double-quote patterns with embedded quotes', () => {
+  const args = buildCodexArgs(
+    createRequest({
+      provider: 'codex',
+      language: 'en',
+      systemPrompt: 'Base.',
+    }),
+    [],
+  )
+  const instructionsArg = args.find((arg) => arg.startsWith('instructions='))
+
+  assert.ok(instructionsArg)
+  assert.match(instructionsArg, /PowerShell/)
+  assert.match(instructionsArg, /TerminatorExpectedAtEndOfString/)
+  assert.match(instructionsArg, /single quotes/i)
+  assert.match(instructionsArg, /rg --fixed-strings/)
+})
+
 test('claude runs include the final resolution marker instruction', () => {
   const args = buildClaudeArgs(
     createRequest({
@@ -3050,6 +3068,106 @@ test('claude final assistant text tool-call XML is stripped and resumes instead 
     events.some((event) => event.kind === 'done'),
     false,
     `typed tool-call turn should not end cleanly: ${JSON.stringify(events)}`,
+  )
+})
+
+test('claude malformed tool-call retry chatter is hidden while the session auto-resumes', async () => {
+  const script = [
+    "const reply = (message) => process.stdout.write(`${JSON.stringify(message)}\\n`)",
+    "reply({ type: 'system', subtype: 'init', session_id: 'claude-session-hidden-typed-tool-chatter' })",
+    "reply({",
+    "  type: 'assistant',",
+    "  message: {",
+    "    id: 'msg_hidden_typed_tool_chatter',",
+    "    content: [",
+    "      {",
+    "        type: 'text',",
+    "        text: '工具调用格式坏了,我重新发。\\n\\n<invoke name=\"Grep\"><parameter name=\"output_mode\">count',",
+    "      },",
+    "    ],",
+    "  },",
+    "})",
+    "reply({ type: 'result', is_error: false, result: 'ok' })",
+  ].join('\n')
+
+  const events = await withFakeProviderCommand(
+    'claude',
+    script,
+    async (workspacePath) =>
+      Promise.all([
+        captureProviderEvents(
+          createRequest({
+            provider: 'claude',
+            language: 'zh-CN',
+            workspacePath,
+          }),
+        ),
+        captureProviderRecoveryFailure(
+          createRequest({
+            provider: 'claude',
+            language: 'zh-CN',
+            workspacePath,
+          }),
+        ),
+      ]).then(([visibleEvents, recoveryFailure]) => ({ visibleEvents, recoveryFailure })),
+  )
+
+  const visibleText = events.visibleEvents
+    .filter((event) => event.kind === 'delta')
+    .map((event) => event.content)
+    .join('')
+
+  assert.doesNotMatch(visibleText, /工具调用|重新发|count|parameter|invoke/i)
+  assert.deepEqual(events.recoveryFailure.recovery, {
+    recoverable: true,
+    recoveryMode: 'resume-session',
+  })
+})
+
+test('claude malformed tool-call retry chatter remains hidden in ordinary event capture', async () => {
+  const script = [
+    "const reply = (message) => process.stdout.write(`${JSON.stringify(message)}\\n`)",
+    "reply({ type: 'system', subtype: 'init', session_id: 'claude-session-hidden-typed-tool-chatter-events' })",
+    "reply({",
+    "  type: 'assistant',",
+    "  message: {",
+    "    id: 'msg_hidden_typed_tool_chatter_events',",
+    "    content: [",
+    "      {",
+    "        type: 'text',",
+    "        text: '工具调用格式坏了,我重新发。\\n\\n<invoke name=\"Grep\"><parameter name=\"output_mode\">count',",
+    "      },",
+    "    ],",
+    "  },",
+    "})",
+    "reply({ type: 'result', is_error: false, result: 'ok' })",
+  ].join('\n')
+
+  const events = await withFakeProviderCommand(
+    'claude',
+    script,
+    async (workspacePath) =>
+      captureProviderEvents(
+        createRequest({
+          provider: 'claude',
+          language: 'zh-CN',
+          workspacePath,
+        }),
+      ),
+  )
+
+  const visibleText = events
+    .filter((event) => event.kind === 'delta')
+    .map((event) => event.content)
+    .join('')
+
+  assert.doesNotMatch(visibleText, /工具调用|重新发|count|parameter|invoke/i)
+  assert.ok(
+    events.some(
+      (event) =>
+        event.kind === 'error',
+    ),
+    `expected typed-tool-call error, got ${JSON.stringify(events)}`,
   )
 })
 

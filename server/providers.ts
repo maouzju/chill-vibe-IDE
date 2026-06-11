@@ -201,6 +201,9 @@ const getCodexAskUserQuestionInstruction = (language: AppLanguage) =>
     ? 'In this Chill Vibe Codex exec environment, the native request_user_input tool is unavailable. When you must ask the user to choose before you can continue safely, do not call request_user_input and do not ask a plain-text multiple-choice question. Instead, reply with only one XML block in this exact shape and no extra text: <ask-user-question>{"header":"Short title","question":"One concise question","multiSelect":false,"options":[{"label":"Option A","description":"Short tradeoff"},{"label":"Option B","description":"Short tradeoff"}]}</ask-user-question>. Use 2-3 options, keep labels short, omit any Other option, and wait for the next user reply after emitting the block.'
     : '在这个 Chill Vibe 的 Codex exec 运行环境里，原生 request_user_input 工具不可用。当你必须在继续之前让用户做选择时，不要调用 request_user_input，也不要用普通文本写多选题。而是只输出一个完整的 XML 块，并且不要加任何其他文本：<ask-user-question>{"header":"简短标题","question":"一句简洁问题","multiSelect":false,"options":[{"label":"选项 A","description":"简短权衡"},{"label":"选项 B","description":"简短权衡"}]}</ask-user-question>。选项保持 2-3 个，label 要简短，不要自己加 Other，并在输出这个块后等待用户下一条回复。'
 
+const getCodexWindowsShellSafetyInstruction = () =>
+  'Windows shell safety: shell commands run in PowerShell. If a command argument contains double quotes (for example ripgrep patterns that search JSON such as name": "value), wrap that argument in single quotes or use a here-string/script file. Do not put unescaped embedded double quotes inside a double-quoted PowerShell argument; it causes ParserError: TerminatorExpectedAtEndOfString. Prefer rg --fixed-strings for literal JSON/key searches.'
+
 const getClaudeAskUserQuestionInstruction = (language: AppLanguage) =>
   normalizeLanguage(language) === 'en'
     ? 'In this Chill Vibe Claude runtime, ask-user-question is only a renderer convention for asking the user to choose. Do not use it for normal replies unless you truly need a user decision before continuing. Every real action (running commands, reading files, editing files, searching, etc.) must go through native tool calls. Do not write tool calls as text, XML, JSON, markdown, or the word call.'
@@ -569,6 +572,92 @@ const isBareClaudeToolCallMarkerText = (text: string) =>
       const normalized = line.trim().toLowerCase()
       return !normalized || normalized === 'call' || normalized === 'call:'
     })
+
+const isPotentialClaudeTypedToolChatterPrefix = (text: string) => {
+  const normalized = text
+    .trimStart()
+    .replace(/^[`"'“”‘’（([{\s]+/, '')
+    .toLowerCase()
+
+  if (!normalized) {
+    return true
+  }
+
+  if (normalized === 'call' || normalized === 'call:') {
+    return true
+  }
+
+  if ('工具调用'.startsWith(normalized)) {
+    return true
+  }
+
+  return 'tool call'.startsWith(normalized.replace(/\s+/g, ' '))
+}
+
+const isClaudeTypedToolRetryChatter = (text: string) => {
+  const normalized = text.replace(/\s+/g, ' ').trim()
+
+  if (!normalized) {
+    return false
+  }
+
+  return (
+    /工具调用.{0,160}(?:格式|坏|重新|重试|再发|解析|失败|改用|触发|避免)/i.test(normalized) ||
+    /(?:重新|重试|再发|改用).{0,120}工具调用/i.test(normalized) ||
+    /tool\s+call.{0,180}(?:malformed|format|parse|retry|again|failed|broken|resend|re-send)/i.test(
+      normalized,
+    ) ||
+    /(?:retry|resend|re-send).{0,120}tool\s+call/i.test(normalized)
+  )
+}
+
+const createClaudeTypedToolChatterFilter = () => {
+  let pending = ''
+  const maxPrefixBufferLength = 240
+
+  return {
+    push(text: string) {
+      if (!text) {
+        return ''
+      }
+
+      pending += text
+
+      if (isClaudeTypedToolRetryChatter(pending)) {
+        return ''
+      }
+
+      if (
+        pending.length <= maxPrefixBufferLength &&
+        isPotentialClaudeTypedToolChatterPrefix(pending)
+      ) {
+        return ''
+      }
+
+      const released = pending
+      pending = ''
+      return released
+    },
+    dropIfChatter() {
+      if (!pending) {
+        return
+      }
+
+      if (
+        isClaudeTypedToolRetryChatter(pending) ||
+        (pending.length <= maxPrefixBufferLength &&
+          isPotentialClaudeTypedToolChatterPrefix(pending))
+      ) {
+        pending = ''
+      }
+    },
+    flush() {
+      const released = pending
+      pending = ''
+      return released
+    },
+  }
+}
 
 const formatImageAttachmentsUnsupported = (language: AppLanguage, provider: Provider) =>
   language === 'en'
@@ -1149,6 +1238,7 @@ const buildCodexAppServerBaseInstructions = (request: ChatRequest) =>
   [
     buildProviderSystemPrompt(request.language, request.systemPrompt),
     getCodexAskUserQuestionInstruction(request.language),
+    getCodexWindowsShellSafetyInstruction(),
   ].join(' ')
 
 const buildCodexAppServerInput = (request: ChatRequest, attachmentPaths: string[]) => {
@@ -2029,7 +2119,9 @@ export const launchProviderRun = async (request: ChatRequest, sink: StreamSink) 
     )
   }
 
-  const parseClaudeStructuredOutput = createClaudeStructuredOutputParser(language)
+  const parseClaudeStructuredOutput = createClaudeStructuredOutputParser(language, {
+    planMode: currentRequest.planMode,
+  })
   const managedChild = createManagedChildHandle()
   let finished = false
   let fallbackAttempted = false
@@ -2075,6 +2167,7 @@ export const launchProviderRun = async (request: ChatRequest, sink: StreamSink) 
     let sawStructuredActivity = false
     let sawMeaningfulAssistantText = false
     const askUserDeltaStripper = createClaudeAskUserDeltaStripper()
+    const typedToolChatterFilter = createClaudeTypedToolChatterFilter()
     let stderr = ''
     let emittedSessionId: string | null = currentRequest.sessionId?.trim() || null
     // Stall watchdog: the Claude path otherwise has no timeout, so a CLI that
@@ -2162,13 +2255,14 @@ export const launchProviderRun = async (request: ChatRequest, sink: StreamSink) 
               .join('')
             const safeTextContent =
               askUserDeltaStripper.push(textContent) + askUserDeltaStripper.flush()
+            const visibleTextContent = typedToolChatterFilter.push(safeTextContent)
 
             if (
-              safeTextContent.trim() &&
-              !(hasToolUse && isBareClaudeToolCallMarkerText(safeTextContent))
+              visibleTextContent.trim() &&
+              !(hasToolUse && isBareClaudeToolCallMarkerText(visibleTextContent))
             ) {
               sawMeaningfulAssistantText = true
-              sink.onDelta(safeTextContent)
+              sink.onDelta(visibleTextContent)
             }
           }
         }
@@ -2215,11 +2309,12 @@ export const launchProviderRun = async (request: ChatRequest, sink: StreamSink) 
         ) {
           sawClaudeDelta = true
           const safeText = askUserDeltaStripper.push(event.event.delta.text)
-          if (safeText) {
-            if (safeText.trim()) {
+          const visibleText = typedToolChatterFilter.push(safeText)
+          if (visibleText) {
+            if (visibleText.trim()) {
               sawMeaningfulAssistantText = true
             }
-            sink.onDelta(safeText)
+            sink.onDelta(visibleText)
           }
           return
         }
@@ -2234,11 +2329,19 @@ export const launchProviderRun = async (request: ChatRequest, sink: StreamSink) 
           managedChild.setActiveChild(null)
 
           const residualDelta = askUserDeltaStripper.flush()
-          if (residualDelta) {
-            if (residualDelta.trim()) {
+          if (askUserDeltaStripper.consumedToolCallBlockCount() > 0) {
+            typedToolChatterFilter.dropIfChatter()
+          }
+          const visibleResidualDelta =
+            typedToolChatterFilter.push(residualDelta) + typedToolChatterFilter.flush()
+          if (
+            visibleResidualDelta &&
+            !(sawStructuredActivity && isBareClaudeToolCallMarkerText(visibleResidualDelta))
+          ) {
+            if (visibleResidualDelta.trim()) {
               sawMeaningfulAssistantText = true
             }
-            sink.onDelta(residualDelta)
+            sink.onDelta(visibleResidualDelta)
           }
 
           if (event.is_error) {
@@ -2390,6 +2493,7 @@ export const buildCodexArgs = (request: ChatRequest, attachmentPaths: string[]) 
   const systemPrompt = [
     buildProviderSystemPrompt(request.language, getRequestBaseSystemPrompt(request)),
     getCodexAskUserQuestionInstruction(request.language),
+    getCodexWindowsShellSafetyInstruction(),
   ].join(' ')
 
   if (request.model) {

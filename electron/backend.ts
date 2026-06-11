@@ -120,6 +120,10 @@ type DesktopBackendDependencies = {
   createChatManager?: () => ChatManagerLike
   createSetupManager?: () => SetupManagerLike
   createMusicManager?: () => MusicManagerLike
+  // Desktop push channel for Claude keepalive: when a pooled CLI process wakes
+  // itself between turns (background task finished), the new stream is
+  // announced here so the renderer can attach the owning card to it.
+  onUnsolicitedStream?: (notification: { cardId: string; streamId: string }) => void
 }
 
 export const createDesktopBackend = (deps: DesktopBackendDependencies = {}) => {
@@ -129,7 +133,12 @@ export const createDesktopBackend = (deps: DesktopBackendDependencies = {}) => {
 
   const getChatManager = () => {
     if (!chatManager) {
-      chatManager = deps.createChatManager?.() ?? new ChatManager()
+      chatManager =
+        deps.createChatManager?.() ??
+        new ChatManager({
+          enableClaudeKeepalive: true,
+          onUnsolicitedStream: (notification) => deps.onUnsolicitedStream?.(notification),
+        })
     }
 
     return chatManager

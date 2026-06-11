@@ -455,7 +455,7 @@ const buildToolDetails = (
 
   if (toolName === 'Read') {
     const details: ToolDetail[] = []
-    if (toolInput.file_path) details.push({ label: en ? 'file' : '鏂囦欢', value: toolInput.file_path })
+    if (toolInput.file_path) details.push({ label: en ? 'file' : '文件', value: toolInput.file_path })
     const readLinePresentation = buildReadLinePresentation(language, toolInput)
     if (readLinePresentation) details.push(readLinePresentation.detail)
     return details
@@ -483,6 +483,13 @@ const buildToolDetails = (
       if (toolInput.pattern) details.push({ label: en ? 'pattern' : '模式', value: toolInput.pattern })
       if (toolInput.glob) details.push({ label: en ? 'files' : '文件', value: toolInput.glob })
       if (toolInput.path) details.push({ label: en ? 'in' : '目录', value: toolInput.path })
+      return details
+    }
+    case 'Bash':
+    case 'PowerShell': {
+      const details: ToolDetail[] = []
+      if (toolInput.command) details.push({ label: en ? 'command' : '命令', value: toolInput.command })
+      if (toolInput.description) details.push({ label: en ? 'description' : '说明', value: toolInput.description })
       return details
     }
     case 'WebFetch': {

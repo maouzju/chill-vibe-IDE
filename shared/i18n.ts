@@ -1122,6 +1122,29 @@ export const formatLocalizedDateTime = (language: AppLanguage, value: string) =>
     minute: '2-digit',
   }).format(new Date(value))
 
+export const formatMessageHoverTimestamp = (
+  language: AppLanguage,
+  value: string,
+  now: Date = new Date(),
+) => {
+  const time = formatLocalizedTime(language, value)
+  const created = new Date(value)
+  const startOfDay = (date: Date) =>
+    new Date(date.getFullYear(), date.getMonth(), date.getDate()).getTime()
+  const dayDiff = Math.round((startOfDay(now) - startOfDay(created)) / 86_400_000)
+
+  // 按日历日（而非 24 小时差）区分今天/昨天；未来或无效差值不加前缀。
+  if (!Number.isFinite(dayDiff) || dayDiff <= 0) {
+    return time
+  }
+
+  if (dayDiff === 1) {
+    return language === 'en' ? `Yesterday ${time}` : `昨天 ${time}`
+  }
+
+  return language === 'en' ? `${dayDiff} days ago ${time}` : `${dayDiff}天前 ${time}`
+}
+
 export const getSlashCommandSourceLabel = (
   language: AppLanguage,
   source: SlashCommandSource,

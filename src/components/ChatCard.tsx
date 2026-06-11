@@ -1510,7 +1510,7 @@ const ChatCardView = ({
   const hydratedAttachmentsCardIdRef = useRef(card.id)
   useEffect(() => {
     if (hydratedAttachmentsCardIdRef.current === card.id) return
-    // Card switched (e.g. fork created a new tab) 鈥?pull the persisted draft attachments in.
+    // Card switched (e.g. fork created a new tab) —pull the persisted draft attachments in.
     for (const existing of pendingAttachmentsRef.current) {
       if (existing.kind === 'local') {
         URL.revokeObjectURL(existing.previewUrl)

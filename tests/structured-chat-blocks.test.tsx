@@ -517,6 +517,29 @@ test('renders tool card with toolInput details', () => {
   assert.match(markup, /structured-tool-chevron/)
 })
 
+test('renders an expandable PowerShell tool card when only toolInput details are available', () => {
+  const card = createClaudeToolCard()
+  card.messages[0] = {
+    ...card.messages[0],
+    meta: {
+      kind: 'tool',
+      provider: 'claude',
+      structuredData: JSON.stringify({
+        itemId: 'toolu_pwsh',
+        status: 'completed',
+        toolName: 'PowerShell',
+        summary: '使用工具: PowerShell',
+        toolInput: { command: 'Get-ChildItem src', description: 'List files in src' },
+      }),
+    },
+  }
+
+  const markup = renderCard(card)
+
+  assert.match(markup, />PowerShell</)
+  assert.match(markup, /structured-tool-chevron/)
+})
+
 test('renders tool card without toolInput (backward compatible)', () => {
   const card = createClaudeToolCard()
   card.messages[0] = {

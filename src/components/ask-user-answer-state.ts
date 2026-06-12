@@ -14,6 +14,57 @@ const stripAskUserChoicePrefix = (text: string) => {
   return text
 }
 
+// Approving a plan-approval card must also flip the card out of plan mode before
+// the follow-up send. Resuming with `--permission-mode plan` would make the
+// headless CLI intercept the model's next ExitPlanMode call again, re-emitting
+// the same approval card in an endless loop. `planApproval` marks current cards;
+// `planFile` keeps cards persisted before that flag existed working.
+export const shouldExitPlanModeForAskUserAnswer = (
+  messages: ChatMessage[],
+  prompt: string,
+): boolean => {
+  const lastAskUserIndex = messages.findLastIndex((message) => message.meta?.kind === 'ask-user')
+  if (lastAskUserIndex < 0) {
+    return false
+  }
+
+  const lastUserIndex = messages.findLastIndex((message) => message.role === 'user')
+  if (lastUserIndex > lastAskUserIndex) {
+    return false
+  }
+
+  const askUserMessage = messages[lastAskUserIndex]!
+  const rawStructuredData = askUserMessage.meta?.structuredData
+  if (!rawStructuredData) {
+    return false
+  }
+
+  let payload: Record<string, unknown>
+  try {
+    const parsedPayload = JSON.parse(rawStructuredData) as unknown
+    if (typeof parsedPayload !== 'object' || parsedPayload === null) {
+      return false
+    }
+    payload = parsedPayload as Record<string, unknown>
+  } catch {
+    return false
+  }
+
+  const isPlanApprovalCard =
+    payload.planApproval === true ||
+    (typeof payload.planFile === 'string' && payload.planFile.trim().length > 0)
+  if (!isPlanApprovalCard) {
+    return false
+  }
+
+  const approveLabel = parseStructuredAskUserMessage(askUserMessage)?.options[0]?.label.trim()
+  if (!approveLabel) {
+    return false
+  }
+
+  return stripAskUserChoicePrefix(prompt.trim()) === approveLabel
+}
+
 // A restored transcript reply only counts as an answer to a given ask-user card
 // when its content is recognizably one of that card's options. Otherwise an
 // unrelated follow-up message ("继续", "look at this file", …) that simply happens

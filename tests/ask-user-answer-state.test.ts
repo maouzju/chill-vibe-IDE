@@ -6,6 +6,7 @@ import { buildRenderableMessages } from '../src/components/chat-card-parsing.ts'
 import {
   getAskUserAnsweredOption,
   getLatestUserAnswerAfterAskUserMessage,
+  shouldExitPlanModeForAskUserAnswer,
 } from '../src/components/ask-user-answer-state.ts'
 
 const message = (overrides: Partial<ChatMessage>): ChatMessage => ({
@@ -144,6 +145,93 @@ test('ask-user answered option prefers the current in-memory selection', () => {
     }),
     'Deep',
   )
+})
+
+const planApprovalWithFlag = (id: string, language: 'zh' | 'en' = 'zh'): ChatMessage =>
+  message({
+    id,
+    role: 'assistant',
+    meta: {
+      kind: 'ask-user',
+      provider: 'claude',
+      itemId: id,
+      structuredData: JSON.stringify({
+        itemId: id,
+        kind: 'ask-user',
+        status: 'completed',
+        planApproval: true,
+        question: language === 'en' ? 'Plan is ready for review' : '计划已准备好，请审阅',
+        header: language === 'en' ? 'Plan approval' : '计划审批',
+        multiSelect: false,
+        options:
+          language === 'en'
+            ? [
+                { label: 'Approve plan', description: '' },
+                { label: 'Reject plan', description: '' },
+              ]
+            : [
+                { label: '批准计划', description: '' },
+                { label: '拒绝计划', description: '' },
+              ],
+      }),
+    },
+  })
+
+test('approving a pending plan-approval card exits plan mode', () => {
+  const messages = [planApprovalWithFlag('approval-1')]
+
+  assert.equal(shouldExitPlanModeForAskUserAnswer(messages, '批准计划'), true)
+})
+
+test('approve answer wrapped with a choice prefix still exits plan mode', () => {
+  const messages = [planApprovalWithFlag('approval-1')]
+
+  assert.equal(shouldExitPlanModeForAskUserAnswer(messages, '我选择：批准计划'), true)
+})
+
+test('English approve label exits plan mode', () => {
+  const messages = [planApprovalWithFlag('approval-1', 'en')]
+
+  assert.equal(shouldExitPlanModeForAskUserAnswer(messages, 'Approve plan'), true)
+})
+
+test('rejecting or free-form feedback keeps plan mode', () => {
+  const messages = [planApprovalWithFlag('approval-1')]
+
+  assert.equal(shouldExitPlanModeForAskUserAnswer(messages, '拒绝计划'), false)
+  assert.equal(shouldExitPlanModeForAskUserAnswer(messages, '先把第三步改成分批迁移'), false)
+})
+
+test('legacy plan-approval card with only planFile still exits plan mode on approve', () => {
+  const messages = [planApproval('approval-legacy')]
+
+  assert.equal(shouldExitPlanModeForAskUserAnswer(messages, '批准计划'), true)
+})
+
+test('already-answered plan-approval card does not exit plan mode again', () => {
+  const messages = [
+    planApprovalWithFlag('approval-1'),
+    message({ id: 'user-answer', role: 'user', content: '批准计划' }),
+    message({ id: 'assistant-after', role: 'assistant', content: 'implementing' }),
+  ]
+
+  assert.equal(shouldExitPlanModeForAskUserAnswer(messages, '继续'), false)
+})
+
+test('a fresh plan-approval card after an earlier answered one can still be approved', () => {
+  const messages = [
+    planApprovalWithFlag('approval-1'),
+    message({ id: 'user-answer-1', role: 'user', content: '批准计划' }),
+    planApprovalWithFlag('approval-2'),
+  ]
+
+  assert.equal(shouldExitPlanModeForAskUserAnswer(messages, '批准计划'), true)
+})
+
+test('ordinary ask-user cards never exit plan mode', () => {
+  const messages = [askUser('ask-1')]
+
+  assert.equal(shouldExitPlanModeForAskUserAnswer(messages, 'Fast'), false)
 })
 
 test('restored merged ask-user answer state resolves the reply after consecutive questions', () => {

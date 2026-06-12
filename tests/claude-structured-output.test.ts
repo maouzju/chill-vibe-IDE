@@ -453,6 +453,7 @@ test('ExitPlanMode emits an ask-user activity with approve and reject options', 
           { label: 'Reject plan', description: '' },
         ],
         planFile: undefined,
+        nativeTool: true,
       },
     ],
   )
@@ -486,6 +487,7 @@ test('ExitPlanMode emits an ask-user activity with approve and reject options', 
           { label: '拒绝计划', description: '' },
         ],
         planFile: undefined,
+        nativeTool: true,
       },
     ],
   )
@@ -569,6 +571,7 @@ test('ExitPlanMode attaches planFile from the most recent Write activity', () =>
           { label: 'Reject plan', description: '' },
         ],
         planFile: '.claude/plan.md',
+        nativeTool: true,
       },
     ],
   )
@@ -670,6 +673,9 @@ test('AskUserQuestion tool with multiple questions keeps all of them on the acti
   const activity = activities[0] as Extract<typeof activities[number], { kind: 'ask-user' }>
   assert.equal(activity.kind, 'ask-user')
   assert.equal(activity.itemId, 'toolu_multi_ask')
+  // Native AskUserQuestion tool calls are auto-answered by the headless CLI,
+  // so the activity must be flagged for the renderer to stop the stream.
+  assert.equal(activity.nativeTool, true)
   assert.ok(Array.isArray(activity.questions), 'expected questions array to be kept')
   assert.equal(activity.questions?.length, 3)
   assert.equal(activity.questions?.[0]?.question, 'Which layout?')

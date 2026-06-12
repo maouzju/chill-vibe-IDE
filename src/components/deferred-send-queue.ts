@@ -61,5 +61,9 @@ export const resolveQueuedSendTargetColumnId = (
 }
 
 export const shouldStopStreamForAskUserActivity = (
-  activity: Pick<StreamAskUserActivity, 'planFile'>,
-) => Boolean(activity.planFile?.trim())
+  activity: Pick<StreamAskUserActivity, 'planFile' | 'nativeTool'>,
+) =>
+  // Native CLI tool questions (AskUserQuestion / ExitPlanMode) are auto-answered
+  // by the headless CLI, so the run keeps going unless we stop it here. Text-
+  // convention ask-user blocks end the turn naturally and must not be stopped.
+  activity.nativeTool === true || Boolean(activity.planFile?.trim())

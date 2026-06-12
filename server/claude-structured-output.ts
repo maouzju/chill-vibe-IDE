@@ -926,6 +926,7 @@ export const createClaudeStructuredOutputParser = (
               { label: language === 'en' ? 'Reject plan' : '拒绝计划', description: '' },
             ],
             planFile,
+            nativeTool: true,
           })
           continue
         }
@@ -977,6 +978,9 @@ export const createClaudeStructuredOutputParser = (
               multiSelect: first.multiSelect,
               options: first.options,
               ...(normalizedQuestions.length > 1 ? { questions: normalizedQuestions } : {}),
+              // The headless CLI auto-answers this native tool call, so the
+              // renderer must stop the stream until the user really answers.
+              nativeTool: true,
             })
             continue
           }

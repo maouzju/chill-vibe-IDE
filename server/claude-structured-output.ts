@@ -927,6 +927,7 @@ export const createClaudeStructuredOutputParser = (
             ],
             planFile,
             nativeTool: true,
+            planApproval: true,
           })
           continue
         }

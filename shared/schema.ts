@@ -1053,6 +1053,10 @@ export const streamAskUserActivitySchema = z.object({
   options: z.array(askUserOptionSchema).default([]),
   questions: z.array(askUserQuestionItemSchema).optional(),
   planFile: z.string().optional(),
+  // True when the question came from a native CLI tool call (AskUserQuestion /
+  // ExitPlanMode). The headless CLI auto-answers those tools immediately, so
+  // the renderer must stop the stream until the user actually answers.
+  nativeTool: z.boolean().optional(),
 })
 export type StreamAskUserActivity = z.infer<typeof streamAskUserActivitySchema>
 

@@ -410,6 +410,8 @@ A living list of traps that have wasted time before. **When you hit a new pitfal
 
 | 158 | Claude CLI `-p --input-format stream-json` keeps the process alive after each `result` (until stdin closes) and re-emits `system/init` with the same session id on every turn | Keepalive turn parsing must treat per-turn `init` as an idempotent session update, and anything that assumes "result ⇒ process exit" (watchdogs, cleanup, tests) must key off turn settlement instead of process close. |
 
+| 159 | Claude 原生 `AskUserQuestion` / `ExitPlanMode` tool_use 在 headless `-p` CLI 里会被 CLI 立即自动应答，Claude 拿到结果就自顾自继续执行 | 渲染出的 ask-user 卡片只是 UI 层等待，server 解析这两个原生工具时必须打 `nativeTool: true`，renderer 据此立刻停流（复用 plan 审批的 stop→answer→续传路径）；XML 文本约定的 ask-user 是 turn 自然结束，不能跟着停。 |
+
 ### Self-maintenance rule
 
 - When you encounter a new non-obvious failure mode — a test that fails for environmental reasons, a build step with hidden prerequisites, a runtime behavior that contradicts the docs — append a row to this table before you finish the task.

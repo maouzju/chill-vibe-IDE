@@ -180,6 +180,7 @@ import {
   type QueuedSendSummary,
   type SendMessageOptions,
 } from './components/deferred-send-queue'
+import { shouldExitPlanModeForAskUserAnswer } from './components/ask-user-answer-state'
 import { getAutoReadCardIdsForVisiblePanes, shouldMarkCardUnreadOnStreamDone } from './components/pane-read-state'
 import { clearFileTreeCacheForCard } from './components/tool-card-state'
 import { evictTextEditorModel } from './components/text-editor-model-cache'
@@ -3680,6 +3681,12 @@ function App() {
     }
 
     pendingAskUserDuringStreamRef.current.delete(cardId)
+    // Approving a plan-approval card must drop plan mode before this send:
+    // resuming with `--permission-mode plan` would intercept the model's next
+    // ExitPlanMode call again and re-emit the same approval card forever.
+    const approvedPlanExit =
+      card.planMode === true && shouldExitPlanModeForAskUserAnswer(card.messages, prompt)
+    const effectivePlanMode = approvedPlanExit ? false : card.planMode ?? false
     const nextTitle =
       card.messages.length === 0 && !card.title
         ? titleFromPrompt(prompt)
@@ -3791,6 +3798,7 @@ function App() {
           status: 'streaming',
           streamId,
           title: nextTitle,
+          ...(approvedPlanExit ? { planMode: false } : {}),
         },
       },
     ]
@@ -3808,7 +3816,7 @@ function App() {
         model: resolvedModel,
         reasoningEffort: resolvedReasoningEffort,
         thinkingEnabled: card.thinkingEnabled !== false,
-        planMode: card.planMode ?? false,
+        planMode: effectivePlanMode,
         language,
         systemPrompt: composedSystemPrompt,
         modelPromptRules: appStateRef.current.settings.modelPromptRules,

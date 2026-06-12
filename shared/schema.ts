@@ -1057,6 +1057,10 @@ export const streamAskUserActivitySchema = z.object({
   // ExitPlanMode). The headless CLI auto-answers those tools immediately, so
   // the renderer must stop the stream until the user actually answers.
   nativeTool: z.boolean().optional(),
+  // True only for ExitPlanMode approval cards. Approving one must also flip the
+  // card out of plan mode before the follow-up send; resuming with
+  // `--permission-mode plan` would intercept the next ExitPlanMode again.
+  planApproval: z.boolean().optional(),
 })
 export type StreamAskUserActivity = z.infer<typeof streamAskUserActivitySchema>
 

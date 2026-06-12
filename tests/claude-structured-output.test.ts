@@ -454,6 +454,7 @@ test('ExitPlanMode emits an ask-user activity with approve and reject options', 
         ],
         planFile: undefined,
         nativeTool: true,
+        planApproval: true,
       },
     ],
   )
@@ -488,6 +489,7 @@ test('ExitPlanMode emits an ask-user activity with approve and reject options', 
         ],
         planFile: undefined,
         nativeTool: true,
+        planApproval: true,
       },
     ],
   )
@@ -572,6 +574,7 @@ test('ExitPlanMode attaches planFile from the most recent Write activity', () =>
         ],
         planFile: '.claude/plan.md',
         nativeTool: true,
+        planApproval: true,
       },
     ],
   )

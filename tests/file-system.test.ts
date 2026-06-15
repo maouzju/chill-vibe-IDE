@@ -45,6 +45,26 @@ test('ensureWithinWorkspace rejects absolute paths outside workspace and ~/.clau
   )
 })
 
+test('ensureWithinWorkspace allows absolute paths under ~/.codex/', () => {
+  const workspace = path.resolve('/projects/my-app')
+  const codexSessionFile = path.join(os.homedir(), '.codex', 'sessions', 'log.md')
+  const result = ensureWithinWorkspace(workspace, codexSessionFile)
+  assert.equal(result, codexSessionFile)
+})
+
+test(
+  'ensureWithinWorkspace matches agent home whitelists case-insensitively on Windows',
+  { skip: process.platform !== 'win32' },
+  () => {
+    const workspace = path.resolve('/projects/my-app')
+    const claudePlanFile = path.join(os.homedir(), '.claude', 'plans', 'my-plan.md')
+    // Renderer-normalized paths can arrive with a lowercase drive letter.
+    const loweredDrive = claudePlanFile.charAt(0).toLowerCase() + claudePlanFile.slice(1)
+    const result = ensureWithinWorkspace(workspace, loweredDrive)
+    assert.equal(result, path.resolve(loweredDrive))
+  },
+)
+
 test('listFiles includes dotfiles and dot directories while still skipping heavy internal folders', async (t) => {
   const workspace = await mkdtemp(path.join(os.tmpdir(), 'chill-vibe-file-list-hidden-'))
   t.after(async () => {

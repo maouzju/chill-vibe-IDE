@@ -575,8 +575,11 @@ const isBareClaudeToolCallMarkerText = (text: string) =>
     .split(/\r?\n/)
     .every((line) => {
       const normalized = line.trim().toLowerCase()
-      return !normalized || normalized === 'call' || normalized === 'call:'
+      return !normalized || normalized === 'call' || normalized === 'call:' || normalized === 'court'
     })
+
+const stripTrailingClaudeTypedToolMarkerLines = (text: string) =>
+  text.replace(/(?:[ \t]*(?:\r?\n|^)[ \t]*(?:call:?|court)[ \t]*)+$/i, '')
 
 const isPotentialClaudeTypedToolChatterPrefix = (text: string) => {
   const normalized = text
@@ -589,6 +592,10 @@ const isPotentialClaudeTypedToolChatterPrefix = (text: string) => {
   }
 
   if (normalized === 'call' || normalized === 'call:') {
+    return true
+  }
+
+  if (normalized === 'court') {
     return true
   }
 
@@ -1110,14 +1117,17 @@ export const getProviderSlashCommands = async ({
     getReusableSkillProviders(provider, crossProviderSkillReuseEnabled),
   )
 
+  // Native CLI command lists (especially Claude's init-event `slash_commands`) can include
+  // user skills by name; skills must dedupe first so their metadata wins, matching the
+  // send-path priority in expandSkillSlashPrompt.
   if (provider === 'codex') {
     const native = buildNativeSlashCommands('codex', ['compact', 'init', 'plan'], normalizedLanguage)
-    return dedupeSlashCommands([...local, ...native, ...skills])
+    return dedupeSlashCommands([...local, ...skills, ...native])
   }
 
   if (provider === 'claude') {
     const native = await discoverClaudeSlashCommands(workspacePath, normalizedLanguage)
-    return dedupeSlashCommands([...local, ...native, ...skills])
+    return dedupeSlashCommands([...local, ...skills, ...native])
   }
 
   return dedupeSlashCommands([...local, ...skills])
@@ -2279,7 +2289,11 @@ export const createClaudeTurnParser = (hooks: {
             .join('')
           const safeTextContent =
             askUserDeltaStripper.push(textContent) + askUserDeltaStripper.flush()
-          const visibleTextContent = typedToolChatterFilter.push(safeTextContent)
+          const visibleTextContent = typedToolChatterFilter.push(
+            askUserDeltaStripper.consumedToolCallBlockCount() > 0
+              ? stripTrailingClaudeTypedToolMarkerLines(safeTextContent)
+              : safeTextContent,
+          )
 
           if (
             visibleTextContent.trim() &&
@@ -2355,7 +2369,11 @@ export const createClaudeTurnParser = (hooks: {
           typedToolChatterFilter.dropIfChatter()
         }
         const visibleResidualDelta =
-          typedToolChatterFilter.push(residualDelta) + typedToolChatterFilter.flush()
+          typedToolChatterFilter.push(
+            askUserDeltaStripper.consumedToolCallBlockCount() > 0
+              ? stripTrailingClaudeTypedToolMarkerLines(residualDelta)
+              : residualDelta,
+          ) + typedToolChatterFilter.flush()
         if (
           visibleResidualDelta &&
           !(sawStructuredActivity && isBareClaudeToolCallMarkerText(visibleResidualDelta))

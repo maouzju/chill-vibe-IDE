@@ -21,6 +21,7 @@ export type ActiveStream = {
   provider: Provider
   source: ChatStreamSource
   assistantMessageId?: string
+  suppressOutputAfterAskUser?: boolean
 }
 
 export type OnboardingStage = 'loading' | 'setup' | 'import' | 'complete'

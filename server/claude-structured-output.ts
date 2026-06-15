@@ -428,6 +428,15 @@ const bodyLooksLikeRealBlock = (pair: StrippedTagPair, rest: string): boolean =>
 const isBacktickPrefixedTagMention = (text: string, openTagIndex: number): boolean =>
   openTagIndex > 0 && text[openTagIndex - 1] === '`'
 
+// Some malformed typed tool calls are preceded by a stray one-word marker line
+// (for example `court`) immediately before `<invoke ...>`. That marker is not
+// user prose; it is part of the broken tool-call payload and should disappear
+// with the XML block, while earlier explanatory text stays visible.
+const stripTrailingTypedToolMarkerLine = (text: string): string =>
+  text.replace(/(?:^|\r?\n)[ \t]*(?:call:?|court)[ \t]*(?:\r?\n)?$/iu, (match, offset: number) =>
+    offset === 0 ? '' : match.startsWith('\n') ? '\n' : '',
+  )
+
 const stripCompletedBlocks = (text: string): string => {
   let result = text
   for (const { open, close, bodyStartsWith, allowLeadingWhitespace } of STRIPPED_TAG_PAIRS) {
@@ -555,8 +564,13 @@ export const createClaudeAskUserDeltaStripper = () => {
           continue
         }
 
-        // Everything before the open tag is outside the block and safe.
-        safe += buffer.slice(scanFrom, absoluteIndex)
+        // Everything before the open tag is outside the block and safe. For
+        // malformed typed tool calls, drop a trailing synthetic marker line that
+        // belongs to the broken tool payload rather than to the user-visible prose.
+        const prefixBeforeBlock = buffer.slice(scanFrom, absoluteIndex)
+        safe += openTag.pair.toolCall
+          ? stripTrailingTypedToolMarkerLine(prefixBeforeBlock)
+          : prefixBeforeBlock
         buffer = buffer.slice(absoluteIndex)
 
         const closeIndex = buffer.indexOf(openTag.pair.close)
@@ -601,7 +615,10 @@ export const createClaudeAskUserDeltaStripper = () => {
           if (openTag.pair.toolCall) {
             realToolCallBlockCount += 1
           }
-          return stripped.slice(0, openTag.index)
+          const prefixBeforeBlock = stripped.slice(0, openTag.index)
+          return openTag.pair.toolCall
+            ? stripTrailingTypedToolMarkerLine(prefixBeforeBlock)
+            : prefixBeforeBlock
         }
       }
 

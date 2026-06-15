@@ -66,7 +66,7 @@ export const installMockElectronBridge = async (page: Page) => {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(state),
           keepalive: true,
-        })
+        }).catch(() => undefined)
       },
       resetState: async () =>
         jsonRequest('/api/state/reset', {

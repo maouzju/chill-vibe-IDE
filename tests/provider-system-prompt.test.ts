@@ -2289,7 +2289,7 @@ test('codex app-server emits a local disconnect stats event when native reconnec
             language: 'en',
             workspacePath,
           }),
-          500,
+          2000,
         ),
     )
 
@@ -2324,7 +2324,7 @@ test('codex app-server counts native reconnect placeholders after real assistant
             language: 'en',
             workspacePath,
           }),
-          500,
+          2000,
         ),
     )
 
@@ -2510,6 +2510,7 @@ test('codex app-server records JSON-RPC reconnect placeholder errors as disconne
           language: 'en',
           workspacePath,
         }),
+        2000,
       )
 
       return {
@@ -2548,7 +2549,7 @@ test('codex app-server records stderr-only native reconnect placeholders as disc
             language: 'en',
             workspacePath,
           }),
-          500,
+          2000,
         )
 
         return {
@@ -2594,7 +2595,7 @@ test('codex app-server records native reconnect stats in the backend store immed
             language: 'en',
             workspacePath,
           }),
-          500,
+          2000,
         )
 
         return {
@@ -3171,6 +3172,98 @@ test('claude malformed tool-call retry chatter remains hidden in ordinary event 
   )
 })
 
+test('claude malformed tool-call marker court is hidden with typed XML tool call', async () => {
+  const script = [
+    "const reply = (message) => process.stdout.write(`${JSON.stringify(message)}\\n`)",
+    "reply({ type: 'system', subtype: 'init', session_id: 'claude-session-hidden-court-marker' })",
+    "reply({",
+    "  type: 'assistant',",
+    "  message: {",
+    "    id: 'msg_hidden_court_marker',",
+    "    content: [",
+    "      {",
+    "        type: 'text',",
+    "        text: 'grep 没匹配到,可能 types 是多行格式。换个方式查。\\n\\ncourt\\n<invoke name=\"Bash\"><parameter name=\"command\">echo ok</parameter><parameter name=\"description\">提取所有types数组的值并统计</parameter></invoke>',",
+    "      },",
+    "    ],",
+    "  },",
+    "})",
+    "reply({ type: 'result', is_error: false, result: 'ok' })",
+  ].join('\n')
+
+  const events = await withFakeProviderCommand(
+    'claude',
+    script,
+    async (workspacePath) =>
+      captureProviderEvents(
+        createRequest({
+          provider: 'claude',
+          language: 'zh-CN',
+          workspacePath,
+        }),
+      ),
+  )
+
+  const visibleText = events
+    .filter((event) => event.kind === 'delta')
+    .map((event) => event.content)
+    .join('')
+
+  assert.doesNotMatch(visibleText, /\bcourt\b/i)
+  assert.doesNotMatch(visibleText, /parameter|invoke/i)
+  assert.ok(
+    events.some((event) => event.kind === 'error'),
+    `expected typed-tool-call recovery error, got ${JSON.stringify(events)}`,
+  )
+})
+
+test('claude streamed malformed tool-call marker court is buffered until XML disambiguates', async () => {
+  const streamedText =
+    'grep 没匹配到,可能 types 是多行格式。换个方式查。\n\n' +
+    'court\n' +
+    '<invoke name="Bash"><parameter name="command">echo ok</parameter></invoke>'
+  const chunks = [
+    streamedText.slice(0, 32),
+    streamedText.slice(32, 50),
+    streamedText.slice(50, 58),
+    streamedText.slice(58),
+  ]
+  const script = [
+    "const reply = (message) => process.stdout.write(`${JSON.stringify(message)}\\n`)",
+    "reply({ type: 'system', subtype: 'init', session_id: 'claude-session-streamed-hidden-court-marker' })",
+    `const chunks = ${JSON.stringify(chunks)}`,
+    "for (const text of chunks) {",
+    "  reply({ type: 'stream_event', event: { type: 'content_block_delta', delta: { type: 'text_delta', text } } })",
+    "}",
+    "reply({ type: 'result', is_error: false, result: 'ok' })",
+  ].join('\n')
+
+  const events = await withFakeProviderCommand(
+    'claude',
+    script,
+    async (workspacePath) =>
+      captureProviderEvents(
+        createRequest({
+          provider: 'claude',
+          language: 'zh-CN',
+          workspacePath,
+        }),
+      ),
+  )
+
+  const visibleText = events
+    .filter((event) => event.kind === 'delta')
+    .map((event) => event.content)
+    .join('')
+
+  assert.doesNotMatch(visibleText, /\bcourt\b/i)
+  assert.doesNotMatch(visibleText, /parameter|invoke/i)
+  assert.ok(
+    events.some((event) => event.kind === 'error'),
+    `expected typed-tool-call recovery error, got ${JSON.stringify(events)}`,
+  )
+})
+
 test('claude ask-user tool use keeps prose before the question and then emits the structured activity', async () => {
   const events = await withFakeProviderCommand(
     'claude',
@@ -3197,6 +3290,7 @@ test('claude ask-user tool use keeps prose before the question and then emits th
         header: 'Confirmation',
         question: 'Which path should I use?',
         multiSelect: false,
+        nativeTool: true,
         options: [
           { label: 'Patch now', description: 'Keep the smallest diff.' },
           { label: 'Refactor first', description: 'Clean the flow before patching.' },

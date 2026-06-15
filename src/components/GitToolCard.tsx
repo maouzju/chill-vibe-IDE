@@ -11,7 +11,7 @@ import {
 import { defaultGitToolCardSize, minGitToolCardSize } from '../../shared/default-state'
 import type { AppLanguage, GitChange, GitStatus, ModelPromptRule } from '../../shared/schema'
 import { getGitLocaleText } from '../../shared/i18n'
-import { errorMessage, computeTotalStats, getRepositoryName } from './git-utils'
+import { errorMessage, computeTotalStats, getRepositoryName, shouldShowConflictBanner } from './git-utils'
 import { GitFullDialog, type GitFullDialogMode } from './GitFullDialog'
 import { GitAgentPanel } from './GitAgentPanel'
 import { GitSyncPanel } from './GitSyncPanel'
@@ -670,7 +670,7 @@ export const GitToolCard = ({
       ) : null}
 
       {/* ── Conflict banner ────────────────────────────────────────────────── */}
-      {gitStatus.hasConflicts ? (
+      {shouldShowConflictBanner({ hasConflicts: gitStatus.hasConflicts, syncPanelOpen }) ? (
         <div className="git-tool-conflict-banner" role="alert">
           <strong>{text.conflicted}</strong>
           <p>{text.resolveConflicts}</p>

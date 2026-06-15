@@ -101,6 +101,7 @@ This section governs agents working on **this Chill Vibe IDE repository**. It is
 
 ## Packaging Defaults
 
+- **Auto-package after confirmed bug fixes (mandatory):** once an agent confirms a bug fix is verified (proving test green / verification passed), it must automatically run `pnpm electron:build` before finishing the handoff — do not wait for the user to ask. Multiple fixes confirmed in the same response share one build at the end. Report the artifact path (or the build failure) in the handoff. Docs/config/tooling-only changes (Tier 3) do not trigger this.
 - For routine Windows handoff builds, default to a zipped app payload instead of a single-file `portable` executable.
 - Windows zip handoff artifacts should extract into a single top-level `Chill Vibe IDE` folder instead of spilling loose binaries into the unzip target.
 - Every published version release must include a matching Windows `.zip` asset on the cloud/GitHub release; a versioned release is not complete until that zip is uploaded and visible on the release page.
@@ -411,6 +412,11 @@ A living list of traps that have wasted time before. **When you hit a new pitfal
 | 158 | Claude CLI `-p --input-format stream-json` keeps the process alive after each `result` (until stdin closes) and re-emits `system/init` with the same session id on every turn | Keepalive turn parsing must treat per-turn `init` as an idempotent session update, and anything that assumes "result ⇒ process exit" (watchdogs, cleanup, tests) must key off turn settlement instead of process close. |
 
 | 159 | Claude 原生 `AskUserQuestion` / `ExitPlanMode` tool_use 在 headless `-p` CLI 里会被 CLI 立即自动应答，Claude 拿到结果就自顾自继续执行 | 渲染出的 ask-user 卡片只是 UI 层等待，server 解析这两个原生工具时必须打 `nativeTool: true`，renderer 据此立刻停流（复用 plan 审批的 stop→answer→续传路径）；XML 文本约定的 ask-user 是 turn 自然结束，不能跟着停。 |
+
+| 160 | 用户点了"批准计划"后若续聊仍带 `--permission-mode plan` resume，headless CLI 会再次拦截模型的下一个 `ExitPlanMode`（tool_result 报 "Exit plan mode?" 被拒），同一张计划审批卡无限重弹 | 批准答案必须在发送前把卡的 `planMode` 翻为 false（`shouldExitPlanModeForAskUserAnswer`，靠 activity 的 `planApproval` 标志识别、旧卡用 `planFile` 兜底）；拒绝/自由反馈则保持计划模式继续改计划。 |
+
+| 161 | Native Claude `AskUserQuestion` / `ExitPlanMode` can continue emitting assistant text after the renderer has shown the question but before the stop request settles | Suppress further stream output for that card once a native ask-user activity is rendered; otherwise the auto-answered CLI result can appear as if the user skipped or rejected a question they never touched. |
+| 162 | Claude can prefix malformed text tool-call XML with the stray marker `court` instead of `call` | Treat `court` as provider protocol noise when it directly precedes a stripped typed tool call; otherwise Markdown hides the XML and leaves a confusing `court` bubble in chat. |
 
 ### Self-maintenance rule
 

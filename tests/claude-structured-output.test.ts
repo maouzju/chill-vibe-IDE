@@ -1036,6 +1036,22 @@ test('stripper counts a truncated tool-call block dropped on flush', () => {
   assert.equal(stripper.consumedToolCallBlockCount(), 1)
 })
 
+test('delta stripper keeps ordinary prose before a typed tool-call block', () => {
+  const stripper = createClaudeAskUserDeltaStripper()
+  const full =
+    'Please inspect the dragon type first.\n' +
+    '<invoke name="Grep"><parameter name="pattern">dragon</parameter></invoke>'
+
+  let released = ''
+  for (const char of full) {
+    released += stripper.push(char)
+  }
+  released += stripper.flush()
+
+  assert.equal(released, 'Please inspect the dragon type first.\n')
+  assert.equal(stripper.consumedToolCallBlockCount(), 1)
+})
+
 test('stripper does not count a tool-call tag merely mentioned in prose', () => {
   const stripper = createClaudeAskUserDeltaStripper()
   const full = '我这条回复停在一个孤立的反引号 `<invoke` 之后,后面这段解释不能被吞掉。'

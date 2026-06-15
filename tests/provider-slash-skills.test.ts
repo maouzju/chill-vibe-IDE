@@ -139,6 +139,33 @@ test('codex slash commands include current-provider and cross-provider skills fr
   }
 })
 
+test('same-name skills win over native slash commands in completion metadata', async () => {
+  const workspacePath = await mkdtemp(path.join(os.tmpdir(), 'chill-vibe-skill-priority-'))
+  const homePath = await mkdtemp(path.join(os.tmpdir(), 'chill-vibe-skill-priority-home-'))
+
+  try {
+    const skillPath = await writeSkill(workspacePath, 'codex', 'plan', 'Run the plan skill workflow')
+
+    await withTemporarySkillHome(homePath, async () => {
+      const commands = await getProviderSlashCommands({
+        provider: 'codex',
+        workspacePath,
+        language: 'en',
+        crossProviderSkillReuseEnabled: true,
+      })
+
+      const planCommands = commands.filter((command) => command.name === 'plan')
+      assert.equal(planCommands.length, 1)
+      assert.equal(planCommands[0]?.source, 'skill')
+      assert.equal(planCommands[0]?.skillPath, skillPath)
+      assert.equal(planCommands[0]?.description, 'Run the plan skill workflow')
+    })
+  } finally {
+    await rm(workspacePath, { recursive: true, force: true })
+    await rm(homePath, { recursive: true, force: true })
+  }
+})
+
 test('codex slash commands do not import opposite-provider skills when reuse is disabled', async () => {
   const workspacePath = await mkdtemp(path.join(os.tmpdir(), 'chill-vibe-skill-isolation-'))
 

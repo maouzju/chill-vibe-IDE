@@ -67,3 +67,7 @@ export const shouldStopStreamForAskUserActivity = (
   // by the headless CLI, so the run keeps going unless we stop it here. Text-
   // convention ask-user blocks end the turn naturally and must not be stopped.
   activity.nativeTool === true || Boolean(activity.planFile?.trim())
+
+export const shouldSuppressStreamOutputAfterAskUserActivity = (
+  activity: Pick<StreamAskUserActivity, 'planFile' | 'nativeTool'>,
+) => shouldStopStreamForAskUserActivity(activity)

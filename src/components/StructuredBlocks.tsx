@@ -14,7 +14,7 @@ import type {
   StructuredToolMessage,
 } from './chat-card-parsing'
 import { cleanCommandDisplay, buildToolGroupSummary, getStructuredLabels, summarizeCommandDisplay } from './chat-card-rendering'
-import { resolveWorkspaceRelativeFilePath } from './structured-file-paths'
+import { resolveOpenableFilePath } from './structured-file-paths'
 import {
   clearAskUserDraft,
   getAskUserDraft,
@@ -912,7 +912,7 @@ export const StructuredEditsCard = ({
       <div className="structured-edits-list">
         {data.files.map((file) => {
           const { directory, fileName } = splitStructuredEditPath(file.path)
-          const openPath = onOpenFile ? resolveWorkspaceRelativeFilePath(workspacePath, file.path) : null
+          const openPath = onOpenFile ? resolveOpenableFilePath(workspacePath, file.path) : null
           const summaryContent = (
             <>
               <div className="structured-edits-copy">
@@ -1429,7 +1429,7 @@ export const ChangesSummaryCard = ({
       <div className="changes-summary-list">
         {files.map((file) => {
           const { fileName, directory } = splitChangesSummaryPath(file.path)
-          const openPath = onOpenFile ? resolveWorkspaceRelativeFilePath(workspacePath, file.path) : null
+          const openPath = onOpenFile ? resolveOpenableFilePath(workspacePath, file.path) : null
           const fileContent = (
             <>
               <div className="changes-summary-file-copy" title={file.path}>

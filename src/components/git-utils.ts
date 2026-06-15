@@ -3,6 +3,15 @@ import type { AppLanguage, GitChange } from '../../shared/schema'
 export const errorMessage = (error: unknown, fallback: string) =>
   error instanceof Error ? error.message : fallback
 
+// 同步面板打开时 Codex 正在自动解决冲突，此时手动解决横幅会与其矛盾，必须隐藏。
+export const shouldShowConflictBanner = ({
+  hasConflicts,
+  syncPanelOpen,
+}: {
+  hasConflicts: boolean
+  syncPanelOpen: boolean
+}) => hasConflicts && !syncPanelOpen
+
 export const statusBadge = (change: GitChange) => {
   if (change.conflicted) {
     return '!'

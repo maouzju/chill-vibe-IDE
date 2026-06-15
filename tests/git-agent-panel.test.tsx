@@ -10,6 +10,7 @@ import {
 } from '../src/components/git-agent-stream.ts'
 import { GitAgentStrategyList } from '../src/components/GitAgentStrategyList.tsx'
 import { buildAnalysisPrompt } from '../src/components/git-agent-panel-utils.ts'
+import { shouldShowConflictBanner } from '../src/components/git-utils.ts'
 
 ;(globalThis as typeof globalThis & { React: typeof React }).React = React
 
@@ -39,6 +40,18 @@ const createGitStatus = (): GitStatus => ({
     },
   ],
   lastCommit: null,
+})
+
+test('shouldShowConflictBanner hides the manual-resolve banner while the sync panel auto-resolves', () => {
+  // 没有冲突时永远不显示
+  assert.equal(shouldShowConflictBanner({ hasConflicts: false, syncPanelOpen: false }), false)
+  assert.equal(shouldShowConflictBanner({ hasConflicts: false, syncPanelOpen: true }), false)
+
+  // 有冲突且没有同步面板在跑 → 提示用户手动解决
+  assert.equal(shouldShowConflictBanner({ hasConflicts: true, syncPanelOpen: false }), true)
+
+  // 同步面板打开 = Codex 正在自动解决冲突，手动提示会和它互相矛盾，必须隐藏
+  assert.equal(shouldShowConflictBanner({ hasConflicts: true, syncPanelOpen: true }), false)
 })
 
 test('buildAnalysisPrompt requires human-readable output in the active UI language', () => {

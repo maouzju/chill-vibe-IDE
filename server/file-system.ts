@@ -124,17 +124,28 @@ const scoreSearchEntry = (entry: FileSearchEntry, normalizedQuery: string) => {
   return 4
 }
 
+// Windows paths are case-insensitive, and renderer-normalized paths can arrive
+// with a lowercase drive letter that a case-sensitive prefix check would miss.
+const toPathComparisonKey = (value: string) =>
+  process.platform === 'win32' ? value.toLowerCase() : value
+
 export const ensureWithinWorkspace = (workspacePath: string, relativePath: string): string => {
   const resolved = path.resolve(workspacePath, relativePath)
   const normalizedWorkspace = path.resolve(workspacePath)
-  if (resolved.startsWith(normalizedWorkspace + path.sep) || resolved === normalizedWorkspace) {
+  const resolvedKey = toPathComparisonKey(resolved)
+  if (
+    resolvedKey.startsWith(toPathComparisonKey(normalizedWorkspace + path.sep)) ||
+    resolvedKey === toPathComparisonKey(normalizedWorkspace)
+  ) {
     return resolved
   }
 
-  // Allow reading files under the user's ~/.claude/ directory (e.g. plan files)
-  const claudeDir = path.join(os.homedir(), '.claude')
-  if (resolved.startsWith(claudeDir + path.sep)) {
-    return resolved
+  // Allow files under the user's agent home directories (e.g. plan files, agent memory)
+  for (const agentDirName of ['.claude', '.codex']) {
+    const agentDir = path.join(os.homedir(), agentDirName)
+    if (resolvedKey.startsWith(toPathComparisonKey(agentDir + path.sep))) {
+      return resolved
+    }
   }
 
   throw new Error('Path traversal is not allowed.')

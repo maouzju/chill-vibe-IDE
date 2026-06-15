@@ -298,6 +298,7 @@ export type IdeAction =
           | 'autoUrgeProfileId'
           | 'collapsed'
           | 'unread'
+          | 'completionGlow'
           | 'stickyNote'
           | 'messages'
           | 'brainstorm'
@@ -1989,6 +1990,7 @@ export const ideReducer = (state: AppState, action: IdeAction): AppState => {
             ...card,
             status: 'idle',
             streamId: undefined,
+            completionGlow: false,
             unread: action.unread ?? card.unread,
             messages: action.stoppedMessage
               ? [...settledMessages, action.stoppedMessage]

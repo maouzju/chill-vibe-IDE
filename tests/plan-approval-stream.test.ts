@@ -1,7 +1,10 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
-import { shouldStopStreamForAskUserActivity } from '../src/components/deferred-send-queue.ts'
+import {
+  shouldStopStreamForAskUserActivity,
+  shouldSuppressStreamOutputAfterAskUserActivity,
+} from '../src/components/deferred-send-queue.ts'
 import type { StreamAskUserActivity } from '../shared/schema.ts'
 
 const askUserActivity = (overrides: Partial<StreamAskUserActivity> = {}): StreamAskUserActivity => ({
@@ -41,6 +44,20 @@ test('text-convention ask-user activity does not force-stop the active stream', 
   // so stopping the stream would be redundant and risky.
   assert.equal(
     shouldStopStreamForAskUserActivity(askUserActivity({ planFile: undefined, nativeTool: undefined })),
+    false,
+  )
+})
+
+test('native ask-user follow-up output is suppressed until the user answers', () => {
+  assert.equal(
+    shouldSuppressStreamOutputAfterAskUserActivity(askUserActivity({ nativeTool: true })),
+    true,
+  )
+})
+
+test('text-convention ask-user follow-up output is not suppressed by the stop gate', () => {
+  assert.equal(
+    shouldSuppressStreamOutputAfterAskUserActivity(askUserActivity({ planFile: undefined, nativeTool: undefined })),
     false,
   )
 })

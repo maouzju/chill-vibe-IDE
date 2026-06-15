@@ -3122,7 +3122,13 @@ const ChatCardView = ({
     filteredSlashCommands.length > 0 ? filteredSlashCommands[activeSlashIndex] : null
 
   const statusClass =
-    card.status === 'streaming' ? ' is-streaming' : card.status === 'error' ? ' is-error' : ''
+    card.status === 'streaming'
+      ? ' is-streaming'
+      : card.status === 'error'
+        ? ' is-error'
+        : card.completionGlow
+          ? ' is-complete-unread'
+          : ''
   const sendButtonLabel = text.sendMessage
   const sendButtonTooltip =
     card.status === 'streaming'
@@ -3376,8 +3382,17 @@ const ChatCardView = ({
     <article
       className={`card-shell${isCollapsed ? ' is-collapsed' : ''}${hasFloatingUi ? ' has-floating-ui' : ''}${usesPaneChrome ? ' is-pane-embedded' : ''}${statusClass}`}
       style={isCollapsed ? undefined : { height: '100%' }}
+      onPointerDownCapture={() => {
+        if (card.unread || card.completionGlow) onMarkRead()
+      }}
+      onFocusCapture={() => {
+        if (card.unread || card.completionGlow) onMarkRead()
+      }}
+      onInputCapture={() => {
+        if (card.unread || card.completionGlow) onMarkRead()
+      }}
       onClickCapture={(event) => {
-        if (card.unread) onMarkRead()
+        if (card.unread || card.completionGlow) onMarkRead()
         // Recover focus based on the *current* focus state, not a shared
         // last-focused-card flag: the flag drifts out of sync once focus leaves
         // the textarea (header control, blur, etc.) while still pointing at this

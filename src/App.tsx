@@ -174,6 +174,7 @@ import {
 import { collectChangesSummaryFilesForStream } from './components/chat-card-parsing'
 import {
   resolveQueuedSendTargetColumnId,
+  shouldSuppressStreamOutputAfterAskUserActivity,
   shouldStopStreamForAskUserActivity,
   summarizeQueuedSends,
   type QueuedSendRequest,
@@ -2404,6 +2405,7 @@ function App() {
         provider,
         source,
         assistantMessageId: active?.assistantMessageId ?? assistantMessage.id,
+        suppressOutputAfterAskUser: active?.suppressOutputAfterAskUser,
       })
 
       if (active?.assistantMessageId) {
@@ -2506,6 +2508,11 @@ function App() {
           persistAfterAction(action.type, applyAction(action))
         },
         onDelta: ({ content }) => {
+          const active = activeStreamsRef.current.get(card.id)
+          if (active?.suppressOutputAfterAskUser) {
+            return
+          }
+
           const messageId = ensureAssistantMessage(
             columnId,
             card.id,
@@ -2522,6 +2529,11 @@ function App() {
           enqueueAssistantDelta(columnId, card.id, messageId, content, card.model)
         },
         onLog: ({ message }) => {
+          const active = activeStreamsRef.current.get(card.id)
+          if (active?.suppressOutputAfterAskUser) {
+            return
+          }
+
           const messages = createLogMessages(card.provider, message)
           if (messages.length === 0) {
             return
@@ -2541,6 +2553,11 @@ function App() {
           persistAfterAction(action.type, applyAction(action))
         },
         onAssistantMessage: (payload) => {
+          const active = activeStreamsRef.current.get(card.id)
+          if (active?.suppressOutputAfterAskUser) {
+            return
+          }
+
           flushBufferedActivitiesForCard(card.id)
           if (
             shouldResetStreamRecoveryAttemptsForActivity('assistant_message') &&
@@ -2550,7 +2567,6 @@ function App() {
             transientResumeLoopCountRef.current.delete(card.id)
             markRecoveryResumedIfActive(card.id)
           }
-          const active = activeStreamsRef.current.get(card.id)
           const buffered = deltaBufferRef.current.get(card.id)
           if (buffered && buffered.messageId === active?.assistantMessageId) {
             deltaBufferRef.current.delete(card.id)
@@ -2608,6 +2624,11 @@ function App() {
           persistAfterAction(action.type, applyAction(action))
         },
         onActivity: (payload) => {
+          const currentActive = activeStreamsRef.current.get(card.id)
+          if (currentActive?.suppressOutputAfterAskUser && payload.kind !== 'ask-user') {
+            return
+          }
+
           if (shouldResetStreamRecoveryAttemptsForActivity('activity')) {
             streamRetryCountRef.current.delete(card.id)
             transientResumeLoopCountRef.current.delete(card.id)
@@ -2707,6 +2728,13 @@ function App() {
             }
 
             if (shouldStopStreamForAskUserActivity(payload)) {
+              const activeAfterAskUser = activeStreamsRef.current.get(card.id)
+              if (activeAfterAskUser && shouldSuppressStreamOutputAfterAskUserActivity(payload)) {
+                activeStreamsRef.current.set(card.id, {
+                  ...activeAfterAskUser,
+                  suppressOutputAfterAskUser: true,
+                })
+              }
               queueMicrotask(() => {
                 void requestStopForCard(card.id, 'ask-user-answer')
               })
@@ -2835,7 +2863,7 @@ function App() {
               type: 'updateCard',
               columnId,
               cardId: card.id,
-              patch: { status: 'idle', streamId: undefined, unread, sessionModel: card.model },
+              patch: { status: 'idle', streamId: undefined, unread, completionGlow: true, sessionModel: card.model },
             })
           }
 
@@ -7198,7 +7226,7 @@ function App() {
                   type: 'updateCard',
                   columnId: column.id,
                   cardId,
-                  patch: { unread: false },
+                  patch: { unread: false, completionGlow: false },
                 }
                 persistAfterAction(action.type, applyAction(action))
               })()

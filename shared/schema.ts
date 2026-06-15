@@ -126,6 +126,7 @@ export const chatCardSchema = z.object({
   autoUrgeProfileId: z.string().default('auto-urge-default'),
   collapsed: z.boolean().default(false),
   unread: z.boolean().default(false),
+  completionGlow: z.boolean().optional(),
   draft: z.string().default(''),
   draftAttachments: z.array(imageAttachmentSchema).default([]),
   stickyNote: z.string().default(''),

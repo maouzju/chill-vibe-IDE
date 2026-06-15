@@ -17,6 +17,20 @@ const createAssistantMessage = (content: string): ChatMessage => createChatMessa
 
 const createUserMessage = (content: string): ChatMessage => createChatMessage('user', content)
 
+const createAskUserMessage = (content: string): ChatMessage => ({
+  ...createAssistantMessage(content),
+  meta: {
+    kind: 'ask-user',
+    structuredData: JSON.stringify({
+      itemId: 'ask-user-1',
+      kind: 'ask-user',
+      header: '确认',
+      question: content,
+      options: [{ label: '继续', description: '继续验证。' }],
+    }),
+  },
+})
+
 test('manual activation sends the selected urge immediately when the chat is idle', () => {
   const result = evaluateAutoUrge(
     {
@@ -123,6 +137,32 @@ test('stream completion disables auto urge when the latest assistant turn contai
 
   assert.deepEqual(result, {
     kind: 'disable',
+  })
+})
+
+test('stream completion ignores success keywords inside ask-user questions', () => {
+  const result = evaluateAutoUrge(
+    {
+      type: 'stream-finished',
+      previousStatus: 'streaming',
+      status: 'idle',
+    },
+    {
+      active: true,
+      enabled: true,
+      message: 'Keep verifying until the fix is proven.',
+      successKeyword: 'YES',
+      messages: [
+        createUserMessage('Fix the bug and verify it.'),
+        createAssistantMessage('I still need confirmation before continuing.'),
+        createAskUserMessage('If the problem is solved, reply YES; otherwise do not stop.'),
+      ],
+    },
+  )
+
+  assert.deepEqual(result, {
+    kind: 'send',
+    message: 'Keep verifying until the fix is proven.',
   })
 })
 

@@ -35,7 +35,9 @@ const normalizePathInput = (value: string) => {
 const getAbsolutePathRoot = (value: string) => {
   if (windowsDrivePattern.test(value)) {
     return {
-      root: value.slice(0, 2).toLowerCase(),
+      // Preserve the original casing — server-side whitelist checks compare the
+      // resolved path against e.g. ~/.claude, and the rendered path stays readable.
+      root: value.slice(0, 2),
       rest: value.slice(2),
     }
   }
@@ -48,7 +50,7 @@ const getAbsolutePathRoot = (value: string) => {
     }
 
     return {
-      root: `//${parts[0]}/${parts[1]}`.toLowerCase(),
+      root: `//${parts[0]}/${parts[1]}`,
       rest: `/${parts.slice(2).join('/')}`,
     }
   }
@@ -152,4 +154,29 @@ export const resolveWorkspaceRelativeFilePath = (workspacePath: string, candidat
   }
 
   return normalizeRelativePath(normalizedCandidate.slice(workspacePrefix.length))
+}
+
+// Like resolveWorkspaceRelativeFilePath, but out-of-workspace absolute paths stay
+// openable as absolute paths — the server-side workspace/agent-home whitelist is
+// the final gate on whether the file can actually be read.
+export const resolveOpenableFilePath = (workspacePath: string, candidatePath: string) => {
+  const relativePath = resolveWorkspaceRelativeFilePath(workspacePath, candidatePath)
+
+  if (relativePath) {
+    return relativePath
+  }
+
+  const normalizedCandidate = normalizeAbsolutePath(candidatePath)
+
+  if (!normalizedCandidate) {
+    return null
+  }
+
+  const normalizedWorkspace = workspacePath.trim() ? normalizeAbsolutePath(workspacePath) : null
+
+  if (normalizedWorkspace && normalizedCandidate.toLowerCase() === normalizedWorkspace.toLowerCase()) {
+    return null
+  }
+
+  return normalizedCandidate
 }

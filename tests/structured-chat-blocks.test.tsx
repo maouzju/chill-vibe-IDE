@@ -727,6 +727,24 @@ test('renders open-file buttons for absolute changes-summary paths inside the wo
   assert.match(markup, /aria-label="Open D:\/Git\/chill-vibe\/docs\/release-notes\.md"/)
 })
 
+test('renders open-file buttons for changes-summary paths outside the workspace', () => {
+  const card = createChangesSummaryCard()
+  card.messages[0]!.meta!.structuredData = JSON.stringify([
+    {
+      path: 'C:\\Users\\yuze\\.claude\\projects\\demo\\MEMORY.md',
+      addedLines: 2,
+      removedLines: 1,
+    },
+  ])
+
+  const markup = renderCard(card, {
+    onOpenFile: () => undefined,
+  })
+
+  assert.match(markup, /changes-summary-file-button/)
+  assert.match(markup, /data-open-file-path="C:\/Users\/yuze\/\.claude\/projects\/demo\/MEMORY\.md"/)
+})
+
 test('renders a VS Code-like structured todo card', () => {
   const markup = renderCard(createTodoCard())
 

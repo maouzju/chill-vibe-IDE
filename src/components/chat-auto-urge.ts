@@ -59,6 +59,7 @@ const latestAssistantTurnContainsSuccessKeyword = (
     .some(
       (entry) =>
         entry.role === 'assistant' &&
+        entry.meta?.kind !== 'ask-user' &&
         typeof entry.content === 'string' &&
         entry.content.includes(successKeyword),
     )

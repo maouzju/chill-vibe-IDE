@@ -67,7 +67,6 @@ test('chat composer keeps send clickable when the provider CLI is unavailable so
       isRestored={false}
     />,
   )
-
   assert.match(markup, /placeholder="CLI unavailable"/)
   assert.match(markup, /aria-label="Send message"/)
   assert.doesNotMatch(markup, /aria-label="Send message"[^>]*disabled/)
@@ -120,10 +119,54 @@ test('running chat composer keeps left-click as send-now and exposes right-click
       isRestored={false}
     />,
   )
-
   assert.match(markup, /aria-label="Send message"/)
   assert.match(markup, /Left-click sends now and stops the current answer\. Right-click sends later\./)
   assert.match(markup, /1 queued: Queued follow-up/)
   assert.match(markup, />Send now</)
   assert.match(markup, />Cancel</)
+})
+
+test('idle unread chat cards render a completion glow until they are read', () => {
+  const baseCard = createCard()
+  const renderShell = (card: ChatCardModel) => renderToStaticMarkup(
+    <ChatCard
+      card={card}
+      providerReady={true}
+      workspacePath="D:/workspace"
+      language="en"
+      systemPrompt={defaultSystemPrompt}
+      modelPromptRules={[]}
+      crossProviderSkillReuseEnabled={true}
+      musicAlbumCoverEnabled={false}
+      weatherCity=""
+      gitAgentModel="gpt-5.5 low"
+      brainstormRequestModel="gpt-5.5"
+      availableQuickToolModels={[]}
+      autoUrgeEnabled={false}
+      autoUrgeMessage=""
+      autoUrgeSuccessKeyword=""
+      onSetAutoUrgeEnabled={() => undefined}
+      onRemove={() => undefined}
+      onSend={async (_prompt: string, _attachments: ImageAttachment[]) => undefined}
+      onStop={async () => undefined}
+      onDraftChange={() => undefined}
+      onChangeModel={() => undefined}
+      onChangeReasoningEffort={() => undefined}
+      onTogglePlanMode={() => undefined}
+      onToggleThinking={() => undefined}
+      onToggleCollapsed={() => undefined}
+      onMarkRead={() => undefined}
+      onStickyNoteChange={() => undefined}
+      onPatchCard={() => undefined}
+      onChangeTitle={() => undefined}
+      isRestored={false}
+    />,
+  )
+  assert.match(renderShell({ ...baseCard, completionGlow: true }), /card-shell[^"']*is-complete-unread/)
+  assert.doesNotMatch(renderShell({ ...baseCard, completionGlow: false }), /is-complete-unread/)
+  assert.doesNotMatch(renderShell({ ...baseCard, status: 'streaming', completionGlow: true }), /is-complete-unread/)
+  assert.doesNotMatch(renderShell({ ...baseCard, status: 'error', completionGlow: true }), /is-complete-unread/)
+  // The glow is now its own state, decoupled from the unread dot: an unread card
+  // that is being looked at no longer implies a completion glow.
+  assert.doesNotMatch(renderShell({ ...baseCard, unread: true }), /is-complete-unread/)
 })

@@ -287,6 +287,8 @@ test('readWorkspaceFile flags binary files instead of returning mojibake', async
 
   assert.equal(result.binary, true)
   assert.equal(result.content, '')
+  assert.equal(result.mimeType, 'image/png')
+  assert.equal(result.dataBase64, 'iVBORw0KGgoAAAAN')
 })
 
 test('readWorkspaceFile marks large-but-editable files and still returns content', async (t) => {

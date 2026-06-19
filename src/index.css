@@ -1982,6 +1982,7 @@ body.is-card-dragging .lane-drop-zone-top {
 
 /* -- Column Header ---------------------------------------*/
 .column-header {
+  position: relative;
   display: flex;
   flex-direction: column;
   gap: 0.2rem;
@@ -6357,6 +6358,11 @@ body.is-card-dragging .lane-drop-zone-top {
 
 /* -- Session history dropdown --------------------------*/
 .session-history-menu {
+  position: absolute;
+  top: calc(100% + 0.3rem);
+  right: var(--column-inline-padding);
+  left: var(--column-inline-padding);
+  z-index: 120;
   border: 1px solid var(--line-strong);
   border-radius: var(--r-sm);
   background: var(--menu-bg);
@@ -12814,3 +12820,179 @@ body.is-pane-resizing .split-resize-handle::before {
   align-self: flex-end;
 }
 
+.image-editor-card {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  color: var(--ink-1);
+}
+
+.image-editor-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  padding: 0.35rem 0.6rem;
+  border-bottom: 1px solid var(--border);
+  color: var(--ink-2);
+  font-size: 0.76rem;
+}
+
+.image-editor-filepath {
+  min-width: 0;
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--font-mono, monospace);
+  color: var(--ink-1);
+}
+
+.image-editor-meta {
+  flex-shrink: 0;
+  opacity: 0.72;
+}
+
+.image-editor-actions,
+.image-editor-transform-grid {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.image-editor-actions button,
+.image-editor-transform-grid button {
+  border: 1px solid var(--border);
+  border-radius: 0.35rem;
+  padding: 0.14rem 0.5rem;
+  background: transparent;
+  color: var(--ink-2);
+  font: inherit;
+  font-size: 0.72rem;
+  cursor: pointer;
+}
+
+.image-editor-actions button:hover,
+.image-editor-transform-grid button:hover {
+  color: var(--ink-1);
+  border-color: color-mix(in srgb, var(--accent) 45%, var(--border));
+}
+
+.image-editor-actions button.is-primary {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 16%, transparent);
+  color: var(--ink-1);
+}
+
+.image-editor-body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  overflow: hidden;
+}
+
+.image-editor-panel {
+  width: 12.5rem;
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.55rem;
+  padding: 0.65rem;
+  border-right: 1px solid var(--border);
+  background: color-mix(in srgb, var(--panel) 92%, transparent);
+  overflow: auto;
+}
+
+.image-editor-panel-title {
+  margin-top: 0.1rem;
+  font-size: 0.72rem;
+  font-weight: 700;
+  color: var(--ink-1);
+}
+
+.image-editor-panel label {
+  display: grid;
+  gap: 0.25rem;
+  color: var(--ink-2);
+  font-size: 0.72rem;
+}
+
+.image-editor-panel input[type='range'] {
+  width: 100%;
+  accent-color: var(--accent);
+}
+
+.image-editor-panel input[type='number'] {
+  width: 100%;
+  box-sizing: border-box;
+  border: 1px solid var(--border);
+  border-radius: 0.35rem;
+  padding: 0.18rem 0.35rem;
+  background: var(--panel);
+  color: var(--ink-1);
+  font: inherit;
+}
+
+.image-editor-transform-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+}
+
+.image-editor-stage {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: auto;
+  padding: 1rem;
+  background:
+    linear-gradient(45deg, color-mix(in srgb, var(--ink-1) 6%, transparent) 25%, transparent 25%),
+    linear-gradient(-45deg, color-mix(in srgb, var(--ink-1) 6%, transparent) 25%, transparent 25%),
+    linear-gradient(45deg, transparent 75%, color-mix(in srgb, var(--ink-1) 6%, transparent) 75%),
+    linear-gradient(-45deg, transparent 75%, color-mix(in srgb, var(--ink-1) 6%, transparent) 75%);
+  background-size: 18px 18px;
+  background-position: 0 0, 0 9px, 9px -9px, -9px 0;
+}
+
+.image-editor-stage canvas {
+  height: auto;
+  box-shadow: 0 10px 30px color-mix(in srgb, black 22%, transparent);
+  background: transparent;
+}
+
+.image-editor-empty,
+.image-editor-error {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1rem;
+  text-align: center;
+  color: var(--ink-2);
+}
+
+.image-editor-error {
+  color: var(--danger, #e55);
+}
+
+@media (max-width: 760px) {
+  .image-editor-toolbar,
+  .image-editor-body {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .image-editor-panel {
+    width: auto;
+    max-height: 12rem;
+    border-right: none;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .image-editor-actions {
+    flex-wrap: wrap;
+  }
+}

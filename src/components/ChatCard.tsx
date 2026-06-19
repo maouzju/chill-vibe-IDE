@@ -22,6 +22,7 @@ import {
   BRAINSTORM_TOOL_MODEL,
   FILETREE_TOOL_MODEL,
   GIT_TOOL_MODEL,
+  IMAGEEDITOR_TOOL_MODEL,
   MUSIC_TOOL_MODEL,
   STICKYNOTE_TOOL_MODEL,
   TEXTEDITOR_TOOL_MODEL,
@@ -84,6 +85,7 @@ import { WeatherCard } from './WeatherCard'
 import { StickyNoteCard } from './StickyNoteCard'
 import { FileTreeCard } from './FileTreeCard'
 import { TextEditorCard } from './TextEditorCard'
+import { ImageEditorCard } from './ImageEditorCard'
 import { BrainstormCard } from './BrainstormCard'
 import { resolveBrainstormRequestTarget } from './brainstorm-card-utils'
 import { getLatestUserAnswerAfterAskUserMessage } from './ask-user-answer-state'
@@ -1307,6 +1309,7 @@ const ChatCardView = ({
   const isFileTreeCard = card.model === FILETREE_TOOL_MODEL
   const isBrainstormCard = card.model === BRAINSTORM_TOOL_MODEL
   const isTextEditorCard = card.model === TEXTEDITOR_TOOL_MODEL
+  const isImageEditorCard = card.model === IMAGEEDITOR_TOOL_MODEL
   const isTopbarToolCard = isMusicToolCard || isWhiteNoiseCard || isWeatherCard
   const isToolCard =
     isGitToolCard ||
@@ -1316,7 +1319,8 @@ const ChatCardView = ({
     isStickyNoteCard ||
     isFileTreeCard ||
     isBrainstormCard ||
-    isTextEditorCard
+    isTextEditorCard ||
+    isImageEditorCard
   const usesPaneChrome = chromeMode === 'pane'
   const suspendPaneRuntimeEffects = usesPaneChrome && !isActive
   const deferInactivePaneChatBody = suspendPaneRuntimeEffects && !isToolCard
@@ -1365,7 +1369,8 @@ const ChatCardView = ({
     !isGitToolCard &&
     !isStickyNoteCard &&
     !isFileTreeCard &&
-    !isTextEditorCard
+    !isTextEditorCard &&
+    !isImageEditorCard
   const showsCardHeader = showsHeaderModelSelect || showsCardTitle || (isGitToolCard && gitInfo)
   const isCollapsed = usesPaneChrome ? false : card.collapsed
   const displayTitle =
@@ -3556,6 +3561,14 @@ const ChatCardView = ({
 
       {isTextEditorCard && !isCollapsed && (
         <TextEditorCard
+          workspacePath={workspacePath}
+          filePath={card.stickyNote}
+          language={language}
+        />
+      )}
+
+      {isImageEditorCard && !isCollapsed && (
+        <ImageEditorCard
           workspacePath={workspacePath}
           filePath={card.stickyNote}
           language={language}

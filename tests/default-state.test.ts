@@ -50,6 +50,20 @@ describe('default-state helpers', () => {
     assert.deepEqual(valid.editor, { fontSize: 16, wordWrap: true, minimap: true, tabSize: 4 })
   })
 
+  it('normalizes font family settings with the current app font as the default', () => {
+    const defaults = createDefaultSettings()
+    assert.equal(defaults.fontFamily, 'default')
+
+    const missing = normalizeAppSettings({})
+    assert.equal(missing.fontFamily, 'default')
+
+    const invalid = normalizeAppSettings({ fontFamily: 'papyrus' } as never)
+    assert.equal(invalid.fontFamily, 'default')
+
+    const valid = normalizeAppSettings({ fontFamily: 'mono' } as never)
+    assert.equal(valid.fontFamily, 'mono')
+  })
+
   it('normalizes settings into safe persisted values', () => {
     const defaults = createDefaultSettings()
     const next = normalizeAppSettings({

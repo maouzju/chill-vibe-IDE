@@ -135,6 +135,21 @@ const runGit = async (
 const isConflictStatus = (status: string) =>
   new Set(['DD', 'AU', 'UD', 'UA', 'DU', 'AA', 'UU']).has(status)
 
+const decodeGitStatusPath = (rawPath: string) => {
+  const trimmedPath = rawPath.trim()
+
+  if (!trimmedPath.startsWith('"') || !trimmedPath.endsWith('"')) {
+    return trimmedPath
+  }
+
+  try {
+    const decoded = JSON.parse(trimmedPath) as unknown
+    return typeof decoded === 'string' ? decoded : trimmedPath
+  } catch {
+    return trimmedPath.slice(1, -1)
+  }
+}
+
 const classifyGitChange = (
   stagedStatus: string,
   workingTreeStatus: string,
@@ -233,8 +248,8 @@ const parseStatusLine = (line: string): GitChange | null => {
 
   const conflicted = isConflictStatus(`${stagedStatus}${workingTreeStatus}`)
   const renameParts = rawPath.split(' -> ')
-  const originalPath = renameParts.length > 1 ? renameParts[0] : undefined
-  const filePath = renameParts.length > 1 ? renameParts[renameParts.length - 1] : rawPath
+  const originalPath = renameParts.length > 1 ? decodeGitStatusPath(renameParts[0] ?? '') : undefined
+  const filePath = decodeGitStatusPath(renameParts.length > 1 ? (renameParts[renameParts.length - 1] ?? '') : rawPath)
 
   return {
     path: filePath,

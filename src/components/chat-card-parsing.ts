@@ -717,6 +717,11 @@ const sanitizeLeakedCallMarkerLines = (content: string) => {
   return cleanedLines.join('\n').trim()
 }
 
+const stripTrailingClaudeProtocolResidueLines = (content: string) =>
+  content
+    .replace(/(?:[ \t]*(?:\r?\n|^)[ \t]*(?:call:?|court)[ \t]*(?:\r?\n)?)+$/i, '')
+    .replace(/(?:[ \t]*(?:\r?\n|^)[ \t]*count[ \t]*(?:\r?\n)?)+$/i, '')
+    .trim()
 
 const canContainLeakedClaudeCallMarker = (message: ChatMessage) => {
   if (message.role !== 'assistant') return false
@@ -729,7 +734,10 @@ const canContainLeakedClaudeCallMarker = (message: ChatMessage) => {
 const sanitizeLeakedClaudeCallMarkerContent = (message: ChatMessage) => {
   if (!canContainLeakedClaudeCallMarker(message)) return message.content
 
-  return sanitizeLeakedCallMarkerLines(message.content)
+  const withoutCallMarkers = sanitizeLeakedCallMarkerLines(message.content)
+  if (message.meta?.provider !== 'claude') return withoutCallMarkers
+
+  return stripTrailingClaudeProtocolResidueLines(withoutCallMarkers)
 }
 
 
@@ -737,6 +745,27 @@ const normalizeLeakedClaudeCallMarkerMessage = (message: ChatMessage): ChatMessa
   const content = sanitizeLeakedClaudeCallMarkerContent(message)
 
   return content === message.content ? message : { ...message, content }
+}
+
+const isClaudeStructuredActivityMessage = (message: ChatMessage | undefined) => {
+  if (!message) return false
+  if (message.meta?.provider !== 'claude') return false
+
+  const kind = message.meta?.kind
+  return kind === 'tool' || kind === 'command' || kind === 'edits'
+}
+
+const isStandaloneClaudeCountResidueNearToolActivity = (
+  message: ChatMessage,
+  previous: ChatMessage | undefined,
+  next: ChatMessage | undefined,
+) => {
+  if (message.role !== 'assistant') return false
+  if (message.meta?.kind) return false
+  if (message.meta?.imageAttachments) return false
+  if (message.content.trim().toLowerCase() !== 'count') return false
+
+  return isClaudeStructuredActivityMessage(previous) || isClaudeStructuredActivityMessage(next)
 }
 
 const mergeAdjacentAskUserMessages = (
@@ -807,6 +836,11 @@ export const buildRenderableMessages = (messages: ChatMessage[]): RenderableMess
     const agents = parseStructuredAgentsMessage(currentMessage)
 
     if (!command && !tool && !edits) {
+      if (isStandaloneClaudeCountResidueNearToolActivity(currentMessage, messages[index - 1], messages[index + 1])) {
+        index += 1
+        continue
+      }
+
       if (todo || agents) {
         items.push({
           type: 'message',
@@ -849,8 +883,12 @@ export const buildRenderableMessages = (messages: ChatMessage[]): RenderableMess
         groupItems.push({ kind: 'tool', message: msg, data: tl })
       } else if (ed) {
         groupItems.push({ kind: 'edits', message: msg, data: ed })
-      } else if (isEmptySkippableMessage(msg)) {
-        // Skip broken structured messages that failed to parse
+      } else if (
+        isEmptySkippableMessage(msg) ||
+        isStandaloneClaudeCountResidueNearToolActivity(msg, messages[index - 1], messages[index + 1])
+      ) {
+        // Skip broken structured messages that failed to parse, plus Claude
+        // protocol residue that can appear between adjacent tool groups.
         index += 1
         continue
       } else {

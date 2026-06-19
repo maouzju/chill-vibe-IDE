@@ -11,6 +11,7 @@ export const STICKYNOTE_TOOL_MODEL = '__stickynote_tool__'
 export const FILETREE_TOOL_MODEL = '__filetree_tool__'
 export const BRAINSTORM_TOOL_MODEL = '__brainstorm_tool__'
 export const TEXTEDITOR_TOOL_MODEL = '__texteditor_tool__'
+export const IMAGEEDITOR_TOOL_MODEL = '__imageeditor_tool__'
 // Legacy-only token kept so persisted PM cards can be demoted safely during load.
 export const PM_TOOL_MODEL = '__pm_tool__'
 
@@ -72,6 +73,12 @@ export const MODEL_OPTIONS: ModelOption[] = [
     aliases: ['editor', 'text-editor', 'texteditor', 'edit'],
   },
   {
+    label: 'Images',
+    provider: 'codex',
+    model: IMAGEEDITOR_TOOL_MODEL,
+    aliases: ['image', 'images', 'photo', 'photoshop'],
+  },
+  {
     label: 'Codex',
     provider: 'codex',
     model: '',
@@ -120,6 +127,7 @@ export const MODEL_PICKER_HIDDEN_TOOL_MODELS = new Set([
   FILETREE_TOOL_MODEL,
   BRAINSTORM_TOOL_MODEL,
   TEXTEDITOR_TOOL_MODEL,
+  IMAGEEDITOR_TOOL_MODEL,
 ])
 
 export const isModelPickerOptionVisible = (option: Pick<ModelOption, 'model'>) =>

@@ -65,6 +65,14 @@ const getLanguageFromPath = (filePath: string): string => {
 }
 
 const ignoredFileTreeEntryNames = new Set(['.git', 'node_modules'])
+const imageMimeTypesByExtension = new Map([
+  ['.png', 'image/png'],
+  ['.jpg', 'image/jpeg'],
+  ['.jpeg', 'image/jpeg'],
+  ['.webp', 'image/webp'],
+  ['.gif', 'image/gif'],
+  ['.svg', 'image/svg+xml'],
+])
 
 const isIgnoredTreeEntry = (name: string) => ignoredFileTreeEntryNames.has(name.toLowerCase())
 
@@ -448,7 +456,14 @@ export const readWorkspaceFile = async (request: FileReadRequest): Promise<FileR
 
   // A BOM proves text — UTF-16 ASCII would otherwise trip the NUL sniffer.
   if (!sniffBomEncoding(buffer) && looksBinary(buffer)) {
-    return { content: '', language, size: stats.size, binary: true }
+    const mimeType = imageMimeTypesByExtension.get(path.extname(request.relativePath).toLowerCase())
+    return {
+      content: '',
+      language,
+      size: stats.size,
+      binary: true,
+      ...(mimeType ? { dataBase64: buffer.toString('base64'), mimeType } : {}),
+    }
   }
 
   const { content, encoding } = detectAndDecode(buffer)

@@ -35,6 +35,9 @@ export type SlashCommand = z.infer<typeof slashCommandSchema>
 export const themeSchema = z.enum(['light', 'dark', 'system'])
 export type AppTheme = z.infer<typeof themeSchema>
 
+export const fontFamilySchema = z.enum(['default', 'system', 'serif', 'mono'])
+export type AppFontFamily = z.infer<typeof fontFamilySchema>
+
 export const appLanguageSchema = z.enum(['zh-CN', 'en'])
 export type AppLanguage = z.infer<typeof appLanguageSchema>
 
@@ -389,6 +392,7 @@ export const appSettingsSchema = z.object({
   activeTopTab: topTabNameSchema.default('ambience'),
   editor: editorSettingsSchema.default({ fontSize: 13, wordWrap: false, minimap: false, tabSize: 2 }),
   uiScale: z.number().finite().default(1),
+  fontFamily: fontFamilySchema.default('default'),
   fontScale: z.number().finite().default(1),
   lineHeightScale: z.number().finite().default(1),
   resilientProxyEnabled: z.boolean().default(true),
@@ -458,6 +462,7 @@ export const appStateSchema = z.object({
     activeTopTab: 'ambience',
     editor: { fontSize: 13, wordWrap: false, minimap: false, tabSize: 2 },
     uiScale: 1,
+    fontFamily: 'default',
     fontScale: 1,
     lineHeightScale: 1,
     resilientProxyEnabled: true,
@@ -1191,6 +1196,10 @@ export const fileReadResponseSchema = z.object({
   tooLarge: z.boolean().optional(),
   /** Binary sniffed (NUL bytes) — content is omitted and the file must not be edited. */
   binary: z.boolean().optional(),
+  /** Base64 payload for supported image previews. */
+  dataBase64: z.string().optional(),
+  /** MIME type for supported image previews. */
+  mimeType: z.string().optional(),
   /** Detected text encoding id ('utf8', 'utf8bom', 'utf16le', 'gb18030', ...). Echo it back on writes. */
   encoding: z.string().optional(),
 })

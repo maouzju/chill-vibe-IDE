@@ -1,5 +1,6 @@
 import type {
   AppLanguage,
+  AppFontFamily,
   AppSettings,
   AppState,
   AutoUrgeProfile,
@@ -66,6 +67,47 @@ export const minFontScale = 0.85
 export const maxFontScale = 1.35
 export const minLineHeightScale = 0.75
 export const maxLineHeightScale = 1.5
+
+export const defaultAppFontFamily: AppFontFamily = 'default'
+
+export const appFontFamilyOptions: ReadonlyArray<{
+  value: AppFontFamily
+  label: string
+  labelEn: string
+  css: string
+}> = [
+  {
+    value: 'default',
+    label: '默认字体',
+    labelEn: 'Default font',
+    css: "'Aptos', 'IBM Plex Sans', 'Segoe UI Variable', 'Segoe UI', system-ui, sans-serif",
+  },
+  {
+    value: 'system',
+    label: '系统字体',
+    labelEn: 'System sans',
+    css: "system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif",
+  },
+  {
+    value: 'serif',
+    label: '衬线字体',
+    labelEn: 'Serif',
+    css: "Georgia, 'Times New Roman', serif",
+  },
+  {
+    value: 'mono',
+    label: '等宽字体',
+    labelEn: 'Monospace',
+    css: "'IBM Plex Mono', 'Cascadia Mono', Consolas, monospace",
+  },
+]
+
+export const normalizeAppFontFamily = (value: unknown): AppFontFamily =>
+  appFontFamilyOptions.some((option) => option.value === value) ? (value as AppFontFamily) : defaultAppFontFamily
+
+export const resolveAppFontFamilyCss = (value: unknown): string =>
+  appFontFamilyOptions.find((option) => option.value === normalizeAppFontFamily(value))?.css ??
+  appFontFamilyOptions[0]!.css
 
 export const createId = (): string => crypto.randomUUID()
 
@@ -346,6 +388,7 @@ export const createDefaultSettings = (language: AppLanguage = defaultAppLanguage
   activeTopTab: 'ambience',
   editor: createDefaultEditorSettings(),
   uiScale: 1,
+  fontFamily: defaultAppFontFamily,
   fontScale: 1,
   lineHeightScale: 1,
   resilientProxyEnabled: true,
@@ -399,6 +442,7 @@ export const normalizeAppSettings = (settings?: Partial<AppSettings> | null): Ap
     activeTopTab: normalizeTopTab(settings?.activeTopTab),
     editor: normalizeEditorSettings(settings?.editor),
     uiScale: clampScale(settings?.uiScale, minUiScale, maxUiScale, defaults.uiScale),
+    fontFamily: normalizeAppFontFamily(settings?.fontFamily),
     fontScale: clampScale(settings?.fontScale, minFontScale, maxFontScale, defaults.fontScale),
     lineHeightScale: clampScale(
       settings?.lineHeightScale,

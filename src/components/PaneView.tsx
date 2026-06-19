@@ -5,6 +5,7 @@ import {
   BRAINSTORM_TOOL_MODEL,
   FILETREE_TOOL_MODEL,
   GIT_TOOL_MODEL,
+  IMAGEEDITOR_TOOL_MODEL,
   MUSIC_TOOL_MODEL,
   STICKYNOTE_TOOL_MODEL,
   TEXTEDITOR_TOOL_MODEL,
@@ -38,6 +39,7 @@ import {
   GitBranchIcon,
   GptIcon,
   HeadphonesIcon,
+  ImageIcon,
   NeteaseCloudMusicIcon,
   PlusIcon,
   SparklesIcon,
@@ -228,6 +230,10 @@ const getPaneTabIcon = (card: ChatCardState) => {
     return <FileTextIcon className="pane-tab-icon" aria-hidden="true" />
   }
 
+  if (card.model === IMAGEEDITOR_TOOL_MODEL) {
+    return <ImageIcon className="pane-tab-icon" aria-hidden="true" />
+  }
+
   if (card.provider === 'claude') {
     return <ClaudeIcon className="pane-tab-icon" aria-hidden="true" />
   }
@@ -262,6 +268,7 @@ const cardUsesComposer = (card: ChatCardState) =>
     MUSIC_TOOL_MODEL,
     STICKYNOTE_TOOL_MODEL,
     TEXTEDITOR_TOOL_MODEL,
+    IMAGEEDITOR_TOOL_MODEL,
     WEATHER_TOOL_MODEL,
     WHITENOISE_TOOL_MODEL,
   ].includes(card.model)

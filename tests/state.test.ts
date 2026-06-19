@@ -305,6 +305,63 @@ describe('ideReducer pane layout', () => {
     assert.equal(restoredCard?.sessionId, 'external-claude-session-1')
   })
 
+  it('restores a history session as the newest tab even if the pane tab history still points at an existing tab', () => {
+    const state = createState()
+    state.columns[0] = createColumn({
+      id: 'column-1',
+      provider: 'codex',
+      workspacePath: 'D:/repo/one',
+      model: DEFAULT_CODEX_MODEL,
+      layout: {
+        ...createPane('pane-1', ['card-1', 'card-2'], 'card-2'),
+        tabHistory: ['card-1', 'card-2'],
+      },
+      cards: {
+        'card-1': createCard({
+          id: 'card-1',
+          title: 'Already Open 1',
+          provider: 'codex',
+          model: DEFAULT_CODEX_MODEL,
+        }),
+        'card-2': createCard({
+          id: 'card-2',
+          title: 'Already Open 2',
+          provider: 'codex',
+          model: DEFAULT_CODEX_MODEL,
+        }),
+      },
+    })
+
+    const next = ideReducer(state, {
+      type: 'importExternalSession',
+      columnId: 'column-1',
+      paneId: 'pane-1',
+      entry: {
+        id: 'external-history-newest-tab',
+        title: 'Restored History Should Open',
+        sessionId: 'external-history-newest-session',
+        provider: 'claude',
+        model: 'claude-sonnet-4-6',
+        workspacePath: 'D:/repo/one',
+        messages: [assistantMessage],
+        archivedAt: '2026-04-11T06:08:00.000Z',
+      },
+    })
+
+    const restoredColumn = next.columns[0]
+    const restoredPane = restoredColumn.layout as PaneNode
+    const restoredCardId = Object.keys(restoredColumn.cards).find((cardId) => !state.columns[0]?.cards[cardId])
+
+    assert.ok(restoredCardId, 'expected a new history card to be inserted')
+    assert.equal(restoredPane.tabs[0], restoredCardId, 'restored history should be inserted at the front')
+    assert.equal(restoredPane.activeTabId, restoredCardId, 'restored history should become the active tab')
+    assert.equal(
+      restoredPane.tabHistory?.at(-1),
+      restoredCardId,
+      'restored history must be the newest tab-history entry so normalization cannot reactivate an old tab',
+    )
+  })
+
   it('restores a history session into the requested pane instead of always hijacking the first pane', () => {
     const state = createState()
     state.columns[0] = createColumn({
@@ -1669,6 +1726,50 @@ describe('ideReducer pane layout', () => {
     assert.equal(card?.messages[0]?.id, 'live-assistant-1')
     assert.equal(card?.messages[0]?.content, 'Partially generated answer that must survive interrupt.')
     assert.equal(card?.messages[1]?.meta?.kind, 'run-stopped')
+  })
+
+  it('turns off auto urge when a streaming card is stopped manually', () => {
+    const state = createState()
+    state.columns[0] = createColumn({
+      id: 'column-1',
+      layout: createPane('pane-1', ['card-1'], 'card-1'),
+      cards: {
+        'card-1': createCard({
+          id: 'card-1',
+          status: 'streaming',
+          streamId: 'stream-1',
+          autoUrgeActive: true,
+          messages: [
+            {
+              id: 'live-assistant-1',
+              role: 'assistant',
+              content: 'Still verifying.',
+              createdAt: timestamp,
+            },
+          ],
+        }),
+      },
+    })
+
+    const next = ideReducer(state, {
+      type: 'finishStoppedStream',
+      columnId: 'column-1',
+      cardId: 'card-1',
+      stoppedMessage: {
+        id: 'stopped-1',
+        role: 'system',
+        content: 'This run was stopped.',
+        createdAt: timestamp,
+        meta: {
+          kind: 'run-stopped',
+          stopReason: 'manual',
+        },
+      },
+    })
+
+    const card = next.columns[0]?.cards['card-1']
+    assert.equal(card?.status, 'idle')
+    assert.equal(card?.autoUrgeActive, false)
   })
 
   it('settles in-progress command activity when a streaming card is stopped', () => {

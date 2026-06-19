@@ -58,6 +58,7 @@ type LocaleText = {
   dark: string
   systemTheme: string
   uiScale: string
+  fontFamily: string
   fontScale: string
   lineHeight: string
   neteaseMusic: string
@@ -307,6 +308,7 @@ const localeTextByLanguage: Record<AppLanguage, LocaleText> = {
     dark: '深色',
     systemTheme: '系统',
     uiScale: '界面缩放',
+    fontFamily: '字体',
     fontScale: '字体缩放',
     lineHeight: '行高',
     neteaseMusic: '网易云音乐',
@@ -576,6 +578,7 @@ const localeTextByLanguage: Record<AppLanguage, LocaleText> = {
     dark: 'Dark',
     systemTheme: 'System',
     uiScale: 'UI scale',
+    fontFamily: 'Font',
     fontScale: 'Font scale',
     lineHeight: 'Line height',
     neteaseMusic: 'NetEase Music',

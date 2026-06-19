@@ -406,3 +406,11 @@ export const FileTextIcon = (props: SVGProps<SVGSVGElement>) => (
     <path d="M16 13h-2" />
   </BaseIcon>
 )
+
+export const ImageIcon = (props: SVGProps<SVGSVGElement>) => (
+  <BaseIcon {...props}>
+    <rect x="4" y="5" width="16" height="14" rx="2" />
+    <circle cx="9" cy="10" r="1.5" />
+    <path d="m7 17 4-4 2.5 2.5L15 14l3 3" strokeLinecap="round" strokeLinejoin="round" />
+  </BaseIcon>
+)

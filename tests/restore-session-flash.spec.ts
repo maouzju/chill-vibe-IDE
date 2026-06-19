@@ -1,4 +1,5 @@
 ﻿import { expect, test, type Page } from '@playwright/test'
+import { createPane } from '../shared/default-state.ts'
 import { installMockElectronBridge } from './electron-bridge.ts'
 import { createPlaywrightState } from './playwright-state.ts'
 
@@ -264,6 +265,96 @@ const mockBackgroundTabApis = async (page: Page) => {
   }))
 }
 
+
+const mockMultiTabHistoryApis = async (page: Page) => {
+  await installMockElectronBridge(page)
+
+  const now = new Date().toISOString()
+  await installStateApis(page, createPlaywrightState({
+    version: 1 as const,
+    settings: {
+      language: 'zh-CN',
+      theme: 'dark' as const,
+      fontScale: 1,
+      lineHeightScale: 1,
+      resilientProxyEnabled: true,
+      requestModels: {
+        codex: 'gpt-5.5',
+        claude: 'claude-opus-4-7',
+      },
+      modelReasoningEfforts: { codex: {}, claude: {} },
+      providerProfiles: {
+        codex: {
+          activeProfileId: 'codex-profile-1',
+          profiles: [
+            { id: 'codex-profile-1', name: 'Codex', apiKey: 'sk-codex', baseUrl: 'https://api.openai.example/v1' },
+          ],
+        },
+        claude: {
+          activeProfileId: 'claude-profile-1',
+          profiles: [
+            { id: 'claude-profile-1', name: 'Claude', apiKey: 'sk-claude', baseUrl: 'https://api.anthropic.example' },
+          ],
+        },
+      },
+    },
+    updatedAt: now,
+    columns: [
+      {
+        id: 'col-1',
+        title: 'Workspace 1',
+        provider: 'codex' as const,
+        workspacePath: String.raw`d:\Git\chill-vibe`,
+        model: 'gpt-5.5',
+        layout: createPane(['card-1', 'card-2'], 'card-2', 'pane-1'),
+        cards: [
+          {
+            id: 'card-1',
+            title: 'Already Open 1',
+            status: 'idle' as const,
+            size: 440,
+            provider: 'codex' as const,
+            model: 'gpt-5.5',
+            reasoningEffort: 'medium',
+            draft: '',
+            messages: [],
+          },
+          {
+            id: 'card-2',
+            title: 'Already Open 2',
+            status: 'idle' as const,
+            size: 440,
+            provider: 'codex' as const,
+            model: 'gpt-5.5',
+            reasoningEffort: 'medium',
+            draft: '',
+            messages: [],
+          },
+        ],
+      },
+    ],
+    sessionHistory: [
+      {
+        id: 'hist-new-tab',
+        title: 'History Should Open New Tab',
+        sessionId: 'hist-new-tab-session',
+        provider: 'codex' as const,
+        model: 'gpt-5.5',
+        workspacePath: String.raw`d:\Git\chill-vibe`,
+        messages: [
+          {
+            id: 'hist-new-tab-message',
+            role: 'assistant' as const,
+            content: 'This restored history should be visible immediately.',
+            createdAt: now,
+          },
+        ],
+        archivedAt: now,
+      },
+    ],
+  }))
+}
+
 const mockHistorySearchApis = async (page: Page) => {
   await installMockElectronBridge(page)
   await installExternalHistoryBridge(page)
@@ -392,6 +483,43 @@ const openSessionHistoryMenu = async (page: Page) => {
   await page.locator('.column-actions .icon-button').first().click()
   await page.locator('.session-history-menu').waitFor()
 }
+
+test('opening session history does not push the pane tabs under the pointer', async ({ page }) => {
+  await mockMultiTabHistoryApis(page)
+  await page.goto('http://localhost:5173')
+
+  const tabBar = page.locator('.pane-tab-bar').first()
+  await expect(tabBar).toBeVisible()
+  const before = await tabBar.boundingBox()
+  if (!before) {
+    throw new Error('Expected pane tab bar before opening history')
+  }
+
+  await openSessionHistoryMenu(page)
+
+  const after = await tabBar.boundingBox()
+  if (!after) {
+    throw new Error('Expected pane tab bar after opening history')
+  }
+
+  expect(after.y).toBeCloseTo(before.y, 1)
+})
+
+test('clicking session history opens the restored chat instead of reactivating an already-open tab', async ({ page }) => {
+  await mockMultiTabHistoryApis(page)
+  await page.goto('http://localhost:5173')
+
+  await expect(page.locator('.pane-tab.is-active')).toContainText('Already Open 2')
+
+  await openSessionHistoryMenu(page)
+  await page.locator('.session-history-item', { hasText: 'History Should Open New Tab' }).dblclick()
+
+  await expect(page.locator('.pane-tab.is-active')).toContainText('History Should Open New Tab')
+  await expect(page.locator('.pane-tab.is-active')).not.toContainText('Already Open')
+  await expect(page.locator('.pane-tab-panel.is-active')).toContainText(
+    'This restored history should be visible immediately.',
+  )
+})
 
 test('restored session card does not use a border flash animation', async ({ page }) => {
   await mockAppApis(page)

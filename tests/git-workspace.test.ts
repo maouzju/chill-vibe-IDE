@@ -378,6 +378,37 @@ describe('git workspace helpers', () => {
     assert.equal(restaged.summary.unstaged, 0)
   })
 
+  it('round-trips untracked files whose paths contain spaces through stage and commit', async () => {
+    const repoPath = await createTempRepo()
+    const nestedDir = path.join(repoPath, 'itch-gd')
+    await mkdir(nestedDir, { recursive: true })
+    const spacedPath = 'itch-gd/itch-gd MOC.md'
+    await writeFile(path.join(repoPath, spacedPath), '# MOC\n')
+
+    const initial = await inspectGitWorkspace(repoPath)
+    const change = initial.changes.find((entry) => entry.path === spacedPath)
+    assert.ok(change, `expected unquoted change path ${spacedPath}, got ${JSON.stringify(initial.changes)}`)
+    assert.equal(change.kind, 'untracked')
+
+    const staged = await setGitWorkspaceStage({
+      workspacePath: repoPath,
+      paths: [spacedPath],
+      staged: true,
+    })
+    assert.equal(staged.changes.find((entry) => entry.path === spacedPath)?.staged, true)
+
+    const commitResult = await commitGitWorkspace({
+      workspacePath: repoPath,
+      paths: [spacedPath],
+      summary: 'Add spaced MOC file',
+      description: '',
+    })
+    assert.equal(commitResult.commit.summary, 'Add spaced MOC file')
+
+    const afterCommit = await inspectGitWorkspace(repoPath)
+    assert.equal(afterCommit.clean, true)
+  })
+
   it('stages and commits files whose names contain non-ASCII (Chinese) characters', async () => {
     const repoPath = await createTempRepo()
     const chineseName = '大学笔记.md'

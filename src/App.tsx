@@ -19,6 +19,7 @@ import {
   createAutoUrgeProfile,
   createDefaultState,
   createMessage,
+  appFontFamilyOptions,
   getAvailableQuickToolModels,
   getFirstPane,
   isQuickToolModelEnabled,
@@ -29,6 +30,7 @@ import {
   minFontScale,
   minLineHeightScale,
   minUiScale,
+  resolveAppFontFamilyCss,
   titleFromPrompt,
 } from '../shared/default-state'
 import { attachImagesToMessageMeta } from '../shared/chat-attachments'
@@ -37,12 +39,14 @@ import {
   DEFAULT_CLAUDE_MODEL,
   DEFAULT_CODEX_MODEL,
   FILETREE_TOOL_MODEL,
+  IMAGEEDITOR_TOOL_MODEL,
   TEXTEDITOR_TOOL_MODEL,
   getModelOptions,
   isModelPickerOptionVisible,
   normalizeModel,
   resolveSlashModel,
 } from '../shared/models'
+import { isImageFilePath } from './components/image-file-routing'
 import {
   mergeImportedProviderProfiles,
   summarizeImportedProfiles,
@@ -2085,7 +2089,7 @@ function App() {
         columnId,
         paneId,
         title,
-        model: TEXTEDITOR_TOOL_MODEL,
+        model: isImageFilePath(relativePath) ? IMAGEEDITOR_TOOL_MODEL : TEXTEDITOR_TOOL_MODEL,
         stickyNote: relativePath,
       })
     },
@@ -3312,9 +3316,16 @@ function App() {
     const root = document.documentElement
     root.lang = appState.settings.language
     root.dataset.theme = resolvedTheme
+    root.style.fontFamily = resolveAppFontFamilyCss(appState.settings.fontFamily)
     root.style.setProperty('--ui-font-scale', appState.settings.fontScale.toFixed(2))
     root.style.setProperty('--ui-line-height-scale', appState.settings.lineHeightScale.toFixed(2))
-  }, [appState.settings.fontScale, appState.settings.language, appState.settings.lineHeightScale, resolvedTheme])
+  }, [
+    appState.settings.fontFamily,
+    appState.settings.fontScale,
+    appState.settings.language,
+    appState.settings.lineHeightScale,
+    resolvedTheme,
+  ])
 
   useEffect(() => {
     const root = document.documentElement
@@ -4356,7 +4367,7 @@ function App() {
       clearFileTreeCacheForCard(cardId)
     }
 
-    if (card?.model === TEXTEDITOR_TOOL_MODEL && column) {
+    if ((card?.model === TEXTEDITOR_TOOL_MODEL || card?.model === IMAGEEDITOR_TOOL_MODEL) && column) {
       // Closing the editor card ends the editing session; release its parked model.
       evictTextEditorModel(column.workspacePath, card.stickyNote ?? '')
     }
@@ -5318,6 +5329,29 @@ function App() {
       </div>
 
       <div className="settings-section">
+        <label className="settings-field" htmlFor="font-family-select">
+          <span>{text.fontFamily}</span>
+          <select
+            id="font-family-select"
+            className="control settings-input"
+            value={appState.settings.fontFamily}
+            onChange={(event) =>
+              applyAction({
+                type: 'updateSettings',
+                patch: { fontFamily: event.target.value as AppState['settings']['fontFamily'] },
+              })
+            }
+          >
+            {appFontFamilyOptions.map((option) => (
+              <option key={option.value} value={option.value}>
+                {appState.settings.language === 'en' ? option.labelEn : option.label}
+              </option>
+            ))}
+          </select>
+        </label>
+      </div>
+
+      <div className="settings-section">
         <div className="settings-row">
           <div className="settings-row-copy">
             <label htmlFor="ui-scale-range">{text.uiScale}</label>
@@ -5393,6 +5427,7 @@ function App() {
               type: 'updateSettings',
               patch: {
                 uiScale: 1,
+                fontFamily: 'default',
                 fontScale: 1,
                 lineHeightScale: 1,
                 theme: 'light',
@@ -6638,6 +6673,29 @@ function App() {
               </div>
 
               <div className="settings-section">
+                <label className="settings-field" htmlFor="font-family-select">
+                  <span>{text.fontFamily}</span>
+                  <select
+                    id="font-family-select"
+                    className="control settings-input"
+                    value={appState.settings.fontFamily}
+                    onChange={(event) =>
+                      applyAction({
+                        type: 'updateSettings',
+                        patch: { fontFamily: event.target.value as AppState['settings']['fontFamily'] },
+                      })
+                    }
+                  >
+                    {appFontFamilyOptions.map((option) => (
+                      <option key={option.value} value={option.value}>
+                        {appState.settings.language === 'en' ? option.labelEn : option.label}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              </div>
+
+              <div className="settings-section">
                 <div className="settings-row">
                   <div className="settings-row-copy">
                     <label htmlFor="ui-scale-range">{text.uiScale}</label>
@@ -6713,6 +6771,7 @@ function App() {
                       type: 'updateSettings',
                       patch: {
                         uiScale: 1,
+                        fontFamily: 'default',
                         fontScale: 1,
                         lineHeightScale: 1,
                         theme: 'light',

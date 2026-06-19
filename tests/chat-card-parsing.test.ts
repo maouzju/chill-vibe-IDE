@@ -231,6 +231,61 @@ test('buildRenderableMessages removes leaked Claude call marker lines from assis
   }
 })
 
+test('buildRenderableMessages removes trailing Claude count residue near tool activity', () => {
+  const beforeTool = makeToolMessage('Grep', '搜索文本: targetRule')
+  const leaked = makeMessage({
+    id: 'leaked-count-line',
+    content:
+      '我需要看用那个带 `targetRule`/`targetCount` 模板的卡，以及运行时 taggedAllies 后续的 targetRule 处理逻辑。\n\ncount\n',
+    meta: { provider: 'claude' },
+  })
+  const afterTool = makeToolMessage('Read', '读取 binding.json')
+
+  const result = buildRenderableMessages([beforeTool, leaked, afterTool])
+
+  assert.equal(result.length, 3)
+  assert.equal(result[1]!.type, 'message')
+  if (result[1]!.type === 'message') {
+    assert.equal(
+      result[1]!.message.content,
+      '我需要看用那个带 `targetRule`/`targetCount` 模板的卡，以及运行时 taggedAllies 后续的 targetRule 处理逻辑。',
+    )
+  }
+})
+
+test('buildRenderableMessages removes standalone count residue between Claude tool groups without provider meta', () => {
+  const beforeTool = makeToolMessage('Grep', 'Search text: output_mode')
+  const leaked = makeMessage({
+    id: 'standalone-count-residue',
+    content: 'count',
+  })
+  const afterTool = makeToolMessage('Read', 'Read results.json')
+
+  const result = buildRenderableMessages([beforeTool, leaked, afterTool])
+
+  assert.equal(result.length, 1)
+  assert.equal(result[0]!.type, 'tool-group')
+  if (result[0]!.type === 'tool-group') {
+    assert.equal(result[0]!.items.length, 2)
+  }
+})
+
+test('buildRenderableMessages keeps normal Claude prose that mentions count inline', () => {
+  const message = makeMessage({
+    id: 'normal-count-prose',
+    content: 'The count value should remain visible when it is part of a sentence.',
+    meta: { provider: 'claude' },
+  })
+
+  const result = buildRenderableMessages([message])
+
+  assert.equal(result.length, 1)
+  assert.equal(result[0]!.type, 'message')
+  if (result[0]!.type === 'message') {
+    assert.equal(result[0]!.message.content, message.content)
+  }
+})
+
 test('buildRenderableMessages skips empty assistant messages (streaming artifacts)', () => {
   const textBefore = makeMessage({ content: 'Before tools' })
   const emptyAssistant1 = makeMessage({ content: '' })

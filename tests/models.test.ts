@@ -7,6 +7,7 @@ import {
   DEFAULT_CODEX_MODEL,
   FILETREE_TOOL_MODEL,
   GIT_TOOL_MODEL,
+  IMAGEEDITOR_TOOL_MODEL,
   MUSIC_TOOL_MODEL,
   STICKYNOTE_TOOL_MODEL,
   TEXTEDITOR_TOOL_MODEL,
@@ -50,6 +51,7 @@ describe('model helpers', () => {
         FILETREE_TOOL_MODEL,
         BRAINSTORM_TOOL_MODEL,
         TEXTEDITOR_TOOL_MODEL,
+        IMAGEEDITOR_TOOL_MODEL,
         '',
         DEFAULT_CODEX_MODEL,
       ],
@@ -79,6 +81,7 @@ describe('model helpers', () => {
     assert.equal(resolveSlashModel('codex', 'dream'), null)
     assert.equal(resolveSlashModel('codex', 'reflection'), null)
     assert.equal(resolveSlashModel('codex', 'editor'), TEXTEDITOR_TOOL_MODEL)
+    assert.equal(resolveSlashModel('codex', 'image'), IMAGEEDITOR_TOOL_MODEL)
     assert.equal(resolveSlashModel('codex', 'spec'), null)
     assert.equal(resolveSlashModel('codex', 'spec-first'), null)
     assert.equal(resolveSlashModel('codex', 'whitenoise'), WHITENOISE_TOOL_MODEL)

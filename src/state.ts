@@ -28,6 +28,7 @@ import {
   BRAINSTORM_TOOL_MODEL,
   FILETREE_TOOL_MODEL,
   GIT_TOOL_MODEL,
+  IMAGEEDITOR_TOOL_MODEL,
   MUSIC_TOOL_MODEL,
   normalizeStoredModel,
   STICKYNOTE_TOOL_MODEL,
@@ -57,6 +58,7 @@ const toolCardModels = new Set([
   BRAINSTORM_TOOL_MODEL,
   FILETREE_TOOL_MODEL,
   GIT_TOOL_MODEL,
+  IMAGEEDITOR_TOOL_MODEL,
   MUSIC_TOOL_MODEL,
   STICKYNOTE_TOOL_MODEL,
   TEXTEDITOR_TOOL_MODEL,
@@ -147,6 +149,7 @@ export type IdeAction =
           | 'activeTopTab'
           | 'editor'
           | 'uiScale'
+          | 'fontFamily'
           | 'fontScale'
           | 'lineHeightScale'
           | 'resilientProxyEnabled'
@@ -1985,11 +1988,17 @@ export const ideReducer = (state: AppState, action: IdeAction): AppState => {
       return touchState(
         updateCard(state, action.columnId, action.cardId, (card) => {
           const settledMessages = settleStoppedStreamMessages(card.messages)
+          const stopReason = action.stoppedMessage?.meta?.kind === 'run-stopped'
+            ? action.stoppedMessage.meta.stopReason
+            : undefined
+          const shouldCancelAutoUrge =
+            stopReason === 'manual' || stopReason === 'user-interrupt'
 
           return {
             ...card,
             status: 'idle',
             streamId: undefined,
+            autoUrgeActive: shouldCancelAutoUrge ? false : card.autoUrgeActive,
             completionGlow: false,
             unread: action.unread ?? card.unread,
             messages: action.stoppedMessage
@@ -2133,7 +2142,7 @@ export const ideReducer = (state: AppState, action: IdeAction): AppState => {
       if (messageIndex < 0) return state
 
       const forkPointMessage = sourceCard.messages[messageIndex]!
-      // Messages BEFORE the fork point — the selected user prompt is restored into the composer instead.
+      // Messages BEFORE the fork point —the selected user prompt is restored into the composer instead.
       const forkedMessages = sourceCard.messages.slice(0, messageIndex)
       const forkedDraft = forkPointMessage.content
       const forkedDraftAttachments = getChatMessageAttachments(forkPointMessage)

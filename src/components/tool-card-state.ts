@@ -28,6 +28,12 @@ export const clearFileTreeCacheForCard = (cardId: string) => {
 export const shouldFlushTextEditorSave = (savedContent: string, content: string) =>
   savedContent !== content
 
+export type TextEditorSaveIntent =
+  | { kind: 'save'; expectedRevision: string }
+  | { kind: 'refresh'; content: string; revision: string | null }
+  | { kind: 'conflict'; diskContent: string; revision: string | null }
+  | { kind: 'blocked-missing-revision' }
+
 export type TextEditorRefreshResolution =
   | { kind: 'refresh'; content: string }
   | { kind: 'conflict'; diskContent: string }
@@ -57,4 +63,42 @@ export const resolveTextEditorExternalRefresh = (
   }
 
   return { kind: 'refresh', content: diskContent }
+}
+
+export const resolveTextEditorSaveIntent = ({
+  savedContent,
+  content,
+  diskContent,
+  diskRevision,
+  currentRevision,
+}: {
+  savedContent: string
+  content: string
+  diskContent: string | null
+  diskRevision: string | null
+  currentRevision: string | null
+}): TextEditorSaveIntent => {
+  if (currentRevision) {
+    return { kind: 'save', expectedRevision: currentRevision }
+  }
+
+  if (diskContent === null) {
+    return { kind: 'blocked-missing-revision' }
+  }
+
+  const resolution = resolveTextEditorExternalRefresh(savedContent, content, diskContent)
+
+  if (resolution?.kind === 'refresh') {
+    return { kind: 'refresh', content: resolution.content, revision: diskRevision }
+  }
+
+  if (resolution?.kind === 'conflict') {
+    return { kind: 'conflict', diskContent: resolution.diskContent, revision: diskRevision }
+  }
+
+  if (diskRevision) {
+    return { kind: 'save', expectedRevision: diskRevision }
+  }
+
+  return { kind: 'blocked-missing-revision' }
 }

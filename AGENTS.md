@@ -417,6 +417,7 @@ A living list of traps that have wasted time before. **When you hit a new pitfal
 
 | 161 | Native Claude `AskUserQuestion` / `ExitPlanMode` can continue emitting assistant text after the renderer has shown the question but before the stop request settles | Suppress further stream output for that card once a native ask-user activity is rendered; otherwise the auto-answered CLI result can appear as if the user skipped or rejected a question they never touched. |
 | 162 | Claude can prefix malformed text tool-call XML with the stray marker `court` instead of `call` | Treat `court` as provider protocol noise when it directly precedes a stripped typed tool call; otherwise Markdown hides the XML and leaves a confusing `court` bubble in chat. |
+| 163 | Text editor autosave must never fall back to a blind write when its cached `revision` is missing | Re-read the file and resolve refresh/conflict first; otherwise an old file-card buffer can overwrite fresh agent edits even though normal `expectedRevision` saves are protected. |
 
 ### Self-maintenance rule
 

@@ -714,8 +714,8 @@ function App() {
   const markRecoveryReconnecting = useCallback(
     (cardId: string, retryCount: number, maxAttempts = defaultRecoverableStreamRetryLimit) => {
       clearRecoveryResumedTimer(cardId)
-      updateRecoveryStatus(cardId, () =>
-        computeRecoveryStatusAfterRetryScheduled(retryCount, maxAttempts),
+      updateRecoveryStatus(cardId, (previous) =>
+        computeRecoveryStatusAfterRetryScheduled(retryCount, maxAttempts, previous),
       )
     },
     [clearRecoveryResumedTimer, updateRecoveryStatus],
@@ -2976,9 +2976,9 @@ function App() {
               }
               // Show the reconnecting banner. The helper adds 1 internally so the
               // visible label becomes "n/max" where n is the attempt about to run.
-              // Transient placeholder-only errors do not move the budget, so the
-              // label stays on whatever attempt the previous non-transient failure
-              // put us on.
+              // Transient placeholder-only errors do not move the retry budget,
+              // but the visible counter still advances so unlimited recovery does
+              // not look stuck on "1/unlimited".
               markRecoveryReconnecting(card.id, retryCount, maxRecoverableRetries)
 
               window.setTimeout(() => {

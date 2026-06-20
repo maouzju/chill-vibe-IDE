@@ -23,6 +23,12 @@ describe('stream-recovery-feedback — pure transitions', () => {
     assert.deepEqual(unlimited, { kind: 'reconnecting', attempt: 10, max: 'unlimited' })
   })
 
+  it('unbudgeted retry scheduled still advances the visible reconnect attempt', () => {
+    const previous: CardRecoveryStatus = { kind: 'reconnecting', attempt: 1, max: 'unlimited' }
+    const next = computeRecoveryStatusAfterRetryScheduled(0, Number.POSITIVE_INFINITY, previous)
+    assert.deepEqual(next, { kind: 'reconnecting', attempt: 2, max: 'unlimited' })
+  })
+
   it('success after reconnecting flips to resumed', () => {
     const previous: CardRecoveryStatus = { kind: 'reconnecting', attempt: 2, max: 6 }
     assert.deepEqual(computeRecoveryStatusAfterSuccess(previous), { kind: 'resumed' })

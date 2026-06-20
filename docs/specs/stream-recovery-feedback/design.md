@@ -49,6 +49,7 @@ export const shouldClearRecoveryStatusOnStreamIdle = (
    - Treat Codex app-server stale-session resume errors (`failed to load rollout`, `no rollout found`, `no session path found`, `empty session file`) as recoverable by dropping the stale `sessionId`, logging the automatic fresh-session notice, and starting a new thread for the same prompt/attachments.
    - When `thread/resume` returns a thread in `active` or `idle` state for a recovered Codex session, always send a follow-up blank `turn/start` so the stream has a real terminal path.
    - Resolve the UI retry ceiling from `settings.resilientProxyMaxRetries` via `getRecoverableStreamRetryLimit()`. The value `-1` maps to `Infinity`, so long conversations do not stop after the old hard-coded six attempts when the user intentionally selected unlimited retries.
+   - Keep the visible reconnect attempt separate from the retry-budget counter for placeholder-only/transient retries. Those retries still must not consume the budget, but the label should advance from `1/无限` to `2/无限`, `3/无限`, etc. so the user can tell recovery is still actively looping.
 
 2. **Runtime proxy settings sync**:
    - `shouldSyncRuntimeSettings()` treats `resilientProxyStallTimeoutSec`, `resilientProxyFirstByteTimeoutSec`, and `resilientProxyMaxRetries` like routing settings.

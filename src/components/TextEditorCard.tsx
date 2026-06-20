@@ -10,7 +10,11 @@ import {
   subscribeFileChanges,
 } from '../api'
 import type { AppLanguage, FileReadResponse } from '../../shared/schema'
-import { resolveTextEditorExternalRefresh, shouldFlushTextEditorSave } from './tool-card-state'
+import {
+  resolveTextEditorExternalRefresh,
+  resolveTextEditorSaveIntent,
+  shouldFlushTextEditorSave,
+} from './tool-card-state'
 import { getTextEditorCardText } from './tool-card-text'
 import {
   cacheTextEditorModel,
@@ -344,11 +348,50 @@ const TextEditorCardInner = ({ workspacePath, filePath, language }: TextEditorCa
     }
 
     try {
+      let expectedRevision = revisionRef.current
+
+      if (!force && !expectedRevision) {
+        const diskResult = await fetchFileContent(workspacePath, normalizedFilePath).catch(() => null)
+        const intent = resolveTextEditorSaveIntent({
+          savedContent: savedContentRef.current,
+          content: textContent,
+          diskContent: diskResult && !diskResult.binary && !diskResult.tooLarge ? diskResult.content : null,
+          diskRevision: diskResult?.revision ?? null,
+          currentRevision: expectedRevision,
+        })
+
+        if (intent.kind === 'refresh') {
+          applyResolvedRefresh(intent.content)
+          revisionRef.current = intent.revision
+          clearConflict()
+          if (mountedRef.current) {
+            setSaveFailed(false)
+          }
+          return
+        }
+
+        if (intent.kind === 'conflict') {
+          revisionRef.current = intent.revision
+          enterConflict(intent.diskContent)
+          return
+        }
+
+        if (intent.kind === 'blocked-missing-revision') {
+          if (mountedRef.current) {
+            setSaveFailed(true)
+          }
+          return
+        }
+
+        expectedRevision = intent.expectedRevision
+        revisionRef.current = expectedRevision
+      }
+
       const result = await saveFileContent(
         workspacePath,
         normalizedFilePath,
         textContent,
-        force ? undefined : revisionRef.current ?? undefined,
+        force ? undefined : expectedRevision ?? undefined,
         encodingRef.current ?? undefined,
       )
 

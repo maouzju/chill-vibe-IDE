@@ -6,6 +6,7 @@ import {
   clearFileTreeCacheForCard,
   getCachedFileTreeNodes,
   getFileTreeCacheKey,
+  resolveTextEditorSaveIntent,
   resolveTextEditorExternalRefresh,
   shouldFlushTextEditorSave,
 } from '../src/components/tool-card-state.ts'
@@ -76,5 +77,39 @@ test('text editor skips refresh work when disk content already matches the card'
   assert.equal(
     resolveTextEditorExternalRefresh('saved text', 'saved text', 'saved text'),
     null,
+  )
+})
+
+test('text editor blocks autosave from writing without a revision when disk diverged', () => {
+  assert.deepEqual(
+    resolveTextEditorSaveIntent({
+      savedContent: 'old file\n',
+      content: 'old file with local stale edit\n',
+      diskContent: 'agent wrote new file\n',
+      diskRevision: 'disk-revision',
+      currentRevision: null,
+    }),
+    {
+      kind: 'conflict',
+      diskContent: 'agent wrote new file\n',
+      revision: 'disk-revision',
+    },
+  )
+})
+
+test('text editor refreshes missing-revision saves when disk already matches the buffer', () => {
+  assert.deepEqual(
+    resolveTextEditorSaveIntent({
+      savedContent: 'old file\n',
+      content: 'agent wrote new file\n',
+      diskContent: 'agent wrote new file\n',
+      diskRevision: 'disk-revision',
+      currentRevision: null,
+    }),
+    {
+      kind: 'refresh',
+      content: 'agent wrote new file\n',
+      revision: 'disk-revision',
+    },
   )
 })

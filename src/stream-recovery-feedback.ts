@@ -6,9 +6,13 @@ export type CardRecoveryStatus =
 export const computeRecoveryStatusAfterRetryScheduled = (
   currentAttempt: number,
   max: number,
+  previous?: CardRecoveryStatus,
 ): CardRecoveryStatus => ({
   kind: 'reconnecting',
-  attempt: currentAttempt + 1,
+  attempt:
+    previous?.kind === 'reconnecting'
+      ? Math.max(currentAttempt + 1, previous.attempt + 1)
+      : currentAttempt + 1,
   max: Number.isFinite(max) ? max : 'unlimited',
 })
 

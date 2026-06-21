@@ -35,7 +35,7 @@ export type SlashCommand = z.infer<typeof slashCommandSchema>
 export const themeSchema = z.enum(['light', 'dark', 'system'])
 export type AppTheme = z.infer<typeof themeSchema>
 
-export const fontFamilySchema = z.enum(['default', 'system', 'serif', 'mono'])
+export const fontFamilySchema = z.enum(['default', 'system', 'aptos', 'segoe-ui', 'arial', 'microsoft-yahei', 'dengxian', 'simsun', 'simhei', 'kaiti', 'fangsong', 'serif', 'georgia', 'times-new-roman', 'mono', 'cascadia-code', 'consolas'])
 export type AppFontFamily = z.infer<typeof fontFamilySchema>
 
 export const appLanguageSchema = z.enum(['zh-CN', 'en'])

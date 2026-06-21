@@ -4,6 +4,7 @@ import { describe, it } from 'node:test'
 import {
   createCard,
   createColumn,
+  appFontFamilyOptions,
   createDefaultState,
   createDefaultSettings,
   getAvailableQuickToolModels,
@@ -17,6 +18,7 @@ import {
   normalizeAppSettings,
   normalizeCardSize,
   normalizeColumnWidth,
+  resolveAppFontFamilyCss,
   rememberModelReasoningEffort,
   titleFromPrompt,
 } from '../shared/default-state.ts'
@@ -62,6 +64,41 @@ describe('default-state helpers', () => {
 
     const valid = normalizeAppSettings({ fontFamily: 'mono' } as never)
     assert.equal(valid.fontFamily, 'mono')
+
+    const songti = normalizeAppSettings({ fontFamily: 'simsun' } as never)
+    assert.equal(songti.fontFamily, 'simsun')
+
+    const yahei = normalizeAppSettings({ fontFamily: 'microsoft-yahei' } as never)
+    assert.equal(yahei.fontFamily, 'microsoft-yahei')
+
+    const expectedFontValues = [
+      'default',
+      'system',
+      'aptos',
+      'segoe-ui',
+      'arial',
+      'microsoft-yahei',
+      'dengxian',
+      'simsun',
+      'simhei',
+      'kaiti',
+      'fangsong',
+      'serif',
+      'georgia',
+      'times-new-roman',
+      'mono',
+      'cascadia-code',
+      'consolas',
+    ]
+    assert.deepEqual(
+      expectedFontValues.filter((value) => !appFontFamilyOptions.some((option) => option.value === value)),
+      [],
+    )
+
+    assert.match(resolveAppFontFamilyCss('simsun'), /SimSun/)
+    assert.match(resolveAppFontFamilyCss('microsoft-yahei'), /Microsoft YaHei/)
+    assert.match(resolveAppFontFamilyCss('kaiti'), /KaiTi/)
+    assert.match(resolveAppFontFamilyCss('cascadia-code'), /Cascadia Code/)
   })
 
   it('normalizes settings into safe persisted values', () => {

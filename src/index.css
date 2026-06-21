@@ -7,7 +7,8 @@
 
 /* -- Design Tokens ---------------------------------------*/
 :root {
-  font-family: 'Aptos', 'IBM Plex Sans', 'Segoe UI Variable', 'Segoe UI', system-ui, sans-serif;
+  --BaseStyles-fontFamily: 'Aptos', 'IBM Plex Sans', 'Segoe UI Variable', 'Segoe UI', system-ui, sans-serif;
+  font-family: var(--BaseStyles-fontFamily);
   line-height: calc(1.4 * var(--ui-line-height-scale));
   font-weight: 400;
   font-synthesis: none;
@@ -1308,6 +1309,38 @@ body.is-card-dragging .lane-drop-zone-top {
 
 .settings-input {
   font-size: 0.82rem;
+}
+
+.font-preview-card {
+  margin-top: 0.72rem;
+  padding: 0.78rem 0.86rem;
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  background: color-mix(in srgb, var(--panel-strong) 72%, transparent);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.2);
+}
+
+.font-preview-title {
+  margin-bottom: 0.36rem;
+  font-size: 0.68rem;
+  font-weight: 700;
+  color: var(--ink-3);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.font-preview-sample {
+  font-size: 1.05rem;
+  font-weight: 600;
+  color: var(--ink-1);
+  line-height: 1.45;
+}
+
+.font-preview-meta {
+  margin-top: 0.34rem;
+  font-size: 0.78rem;
+  color: var(--ink-2);
+  line-height: 1.45;
 }
 
 /* -- Settings sub-field (indented child of a toggle) ----- */

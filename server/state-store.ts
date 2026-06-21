@@ -59,6 +59,8 @@ import {
 } from '../shared/schema.js'
 import { getAppDataDir, getDefaultWorkspacePath } from './app-paths.js'
 
+type PersistedChatMessage = ChatCard['messages'][number]
+
 type SessionHistoryCacheMode = 'full' | 'preview'
 
 type StateCacheEntry = {
@@ -413,10 +415,42 @@ const normalizePersistedImageAttachments = (value: unknown): ImageAttachment[] =
   })
 }
 
+const canContainClaudeProtocolResidue = (message: PersistedChatMessage) => {
+  if (message.role !== 'assistant') return false
+  if (message.meta?.kind) return false
+  if (message.meta?.imageAttachments) return false
+
+  return true
+}
+
+const stripPersistedClaudeProtocolResidueLines = (content: string) =>
+  content
+    .replace(/(?:[ \t]*(?:\r?\n|^)[ \t]*(?:call:?|court)[ \t]*(?:\r?\n)?)+$/iu, '')
+    .replace(/(?:[ \t]*(?:\r?\n|^)[ \t]*count[ \t]*(?:\r?\n)?)+$/iu, '')
+    .trim()
+
+const sanitizePersistedClaudeProtocolResidue = (
+  message: PersistedChatMessage,
+): PersistedChatMessage | null => {
+  if (!canContainClaudeProtocolResidue(message)) {
+    return message
+  }
+
+  const content = message.meta?.provider === 'claude'
+    ? stripPersistedClaudeProtocolResidueLines(message.content)
+    : message.content
+
+  if (!content) {
+    return null
+  }
+
+  return content === message.content ? message : { ...message, content }
+}
+
 const normalizePersistedMessage = (
   message: unknown,
   index: number,
-): ChatCard['messages'][number] => {
+): PersistedChatMessage => {
   const record = isRecord(message) ? message : {}
   const id = typeof record.id === 'string' && record.id.trim()
     ? record.id
@@ -437,11 +471,18 @@ const normalizePersistedMessage = (
     meta: Object.keys(meta).length > 0 ? meta : undefined,
   }
 
-  return normalized as ChatCard['messages'][number]
+  return normalized as PersistedChatMessage
 }
 
 const normalizePersistedMessages = (messages: unknown): ChatCard['messages'] =>
-  Array.isArray(messages) ? messages.map(normalizePersistedMessage) : []
+  Array.isArray(messages)
+    ? messages.flatMap((message, index) => {
+        const normalized = sanitizePersistedClaudeProtocolResidue(
+          normalizePersistedMessage(message, index),
+        )
+        return normalized ? [normalized] : []
+      })
+    : []
 
 const normalizePersistedBrainstorm = (
   value: unknown,

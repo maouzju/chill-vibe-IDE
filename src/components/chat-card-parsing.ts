@@ -717,6 +717,31 @@ const sanitizeLeakedCallMarkerLines = (content: string) => {
   return cleanedLines.join('\n').trim()
 }
 
+const stripStandaloneEmptyMarkdownBulletResidue = (content: string) => {
+  const lines = content.split(/\r?\n/)
+  let inFence = false
+  const cleaned: string[] = []
+
+  for (const line of lines) {
+    const trimmed = line.trim()
+    const isFence = /^(```|~~~)/.test(trimmed)
+
+    if (isFence) {
+      cleaned.push(line)
+      inFence = !inFence
+      continue
+    }
+
+    if (!inFence && /^[-*]$/.test(trimmed)) {
+      continue
+    }
+
+    cleaned.push(line)
+  }
+
+  return cleaned.join('\n').trim()
+}
+
 const stripTrailingClaudeProtocolResidueLines = (content: string) =>
   content
     .replace(/(?:[ \t]*(?:\r?\n|^)[ \t]*(?:call:?|court)[ \t]*(?:\r?\n)?)+$/i, '')
@@ -734,7 +759,9 @@ const canContainLeakedClaudeCallMarker = (message: ChatMessage) => {
 const sanitizeLeakedClaudeCallMarkerContent = (message: ChatMessage) => {
   if (!canContainLeakedClaudeCallMarker(message)) return message.content
 
-  const withoutCallMarkers = sanitizeLeakedCallMarkerLines(message.content)
+  const withoutCallMarkers = stripStandaloneEmptyMarkdownBulletResidue(
+    sanitizeLeakedCallMarkerLines(message.content),
+  )
   if (message.meta?.provider !== 'claude') return withoutCallMarkers
 
   return stripTrailingClaudeProtocolResidueLines(withoutCallMarkers)
@@ -755,6 +782,15 @@ const isClaudeStructuredActivityMessage = (message: ChatMessage | undefined) => 
   return kind === 'tool' || kind === 'command' || kind === 'edits'
 }
 
+const isClaudeAssistantTextMessage = (message: ChatMessage | undefined) => {
+  if (!message) return false
+  if (message.role !== 'assistant') return false
+  if (message.meta?.provider !== 'claude') return false
+  if (message.meta?.kind) return false
+
+  return true
+}
+
 const isStandaloneClaudeCountResidueNearToolActivity = (
   message: ChatMessage,
   previous: ChatMessage | undefined,
@@ -765,7 +801,13 @@ const isStandaloneClaudeCountResidueNearToolActivity = (
   if (message.meta?.imageAttachments) return false
   if (message.content.trim().toLowerCase() !== 'count') return false
 
-  return isClaudeStructuredActivityMessage(previous) || isClaudeStructuredActivityMessage(next)
+  return (
+    message.meta?.provider === 'claude' ||
+    isClaudeStructuredActivityMessage(previous) ||
+    isClaudeStructuredActivityMessage(next) ||
+    isClaudeAssistantTextMessage(previous) ||
+    isClaudeAssistantTextMessage(next)
+  )
 }
 
 const mergeAdjacentAskUserMessages = (

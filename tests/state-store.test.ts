@@ -839,6 +839,47 @@ describe('state-store persistence', () => {
     assert.match(loaded.state.sessionHistory[0]?.messages[0]?.createdAt ?? '', /^\d{4}-\d{2}-\d{2}T/)
   })
 
+  it('loadStateForRenderer drops legacy Claude count residue messages during startup repair', async () => {
+    const { loadStateForRenderer } = await import('../server/state-store.ts')
+    const state = createDefaultState('D:/legacy-claude-count-residue')
+    const firstCard = getFirstCard(state)
+    assert.ok(firstCard, 'expected a default card to exist in the first column')
+
+    firstCard.provider = 'claude'
+    firstCard.messages = [
+      {
+        id: 'assistant-before-count',
+        role: 'assistant',
+        content: '逻辑严密。现在读取 sidecar 文件本体确认 JSON 结构正确，并生成进度报告。',
+        createdAt: new Date('2026-06-21T12:00:00.000Z').toISOString(),
+        meta: { provider: 'claude' },
+      },
+      {
+        id: 'legacy-count-residue',
+        role: 'assistant',
+        content: 'count',
+        createdAt: new Date('2026-06-21T12:00:01.000Z').toISOString(),
+        meta: { provider: 'claude' },
+      },
+      {
+        id: 'user-after-count',
+        role: 'user',
+        content: '我',
+        createdAt: new Date('2026-06-21T12:00:02.000Z').toISOString(),
+      },
+    ]
+
+    await writeFile(path.join(tmpDir, 'state.json'), `${JSON.stringify(state, null, 2)}\n`, 'utf8')
+
+    const loaded = await loadStateForRenderer()
+    const loadedMessages = getFirstCard(loaded.state)?.messages ?? []
+
+    assert.deepEqual(
+      loadedMessages.map((message) => message.id),
+      ['assistant-before-count', 'user-after-count'],
+    )
+  })
+
   it('loadSessionHistoryEntry upgrades legacy sidecar messages without createdAt before bridge validation', async () => {
     const { loadSessionHistoryEntry } = await import('../server/state-store.ts')
     const sidecarDir = path.join(tmpDir, 'session-history')

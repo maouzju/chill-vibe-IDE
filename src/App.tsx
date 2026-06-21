@@ -3314,9 +3314,11 @@ function App() {
 
   useEffect(() => {
     const root = document.documentElement
+    const fontFamily = resolveAppFontFamilyCss(appState.settings.fontFamily)
     root.lang = appState.settings.language
     root.dataset.theme = resolvedTheme
-    root.style.fontFamily = resolveAppFontFamilyCss(appState.settings.fontFamily)
+    root.style.fontFamily = fontFamily
+    root.style.setProperty('--BaseStyles-fontFamily', fontFamily)
     root.style.setProperty('--ui-font-scale', appState.settings.fontScale.toFixed(2))
     root.style.setProperty('--ui-line-height-scale', appState.settings.lineHeightScale.toFixed(2))
   }, [
@@ -5007,6 +5009,43 @@ function App() {
     </ThemeProvider>
   )
 
+  const selectedAppFontFamilyCss = resolveAppFontFamilyCss(appState.settings.fontFamily)
+  const renderFontFamilySettings = (selectId: string) => (
+    <div className="settings-section">
+      <label className="settings-field" htmlFor={selectId}>
+        <span>{text.fontFamily}</span>
+        <select
+          id={selectId}
+          className="control settings-input"
+          value={appState.settings.fontFamily}
+          onChange={(event) =>
+            applyAction({
+              type: 'updateSettings',
+              patch: { fontFamily: event.target.value as AppState['settings']['fontFamily'] },
+            })
+          }
+        >
+          {appFontFamilyOptions.map((option) => (
+            <option key={option.value} value={option.value}>
+              {appState.settings.language === 'en' ? option.labelEn : option.label}
+            </option>
+          ))}
+        </select>
+      </label>
+      <div
+        className="font-preview-card"
+        style={{ fontFamily: selectedAppFontFamilyCss }}
+        aria-label={appState.settings.language === 'en' ? 'Font preview' : '字体预览'}
+      >
+        <div className="font-preview-title">
+          {appState.settings.language === 'en' ? 'Preview' : '预览'}
+        </div>
+        <div className="font-preview-sample">你好 Chill Vibe · The quick brown fox jumps over 12345</div>
+        <div className="font-preview-meta">Aa Bb Cc · 中文字体测试 · 0O1lI</div>
+      </div>
+    </div>
+  )
+
   const renderThemeToggle = () => {
     const themeOptions: Array<{ value: AppState['settings']['theme']; label: string }> = [
       { value: 'light', label: text.light },
@@ -5328,28 +5367,7 @@ function App() {
         {renderThemeToggle()}
       </div>
 
-      <div className="settings-section">
-        <label className="settings-field" htmlFor="font-family-select">
-          <span>{text.fontFamily}</span>
-          <select
-            id="font-family-select"
-            className="control settings-input"
-            value={appState.settings.fontFamily}
-            onChange={(event) =>
-              applyAction({
-                type: 'updateSettings',
-                patch: { fontFamily: event.target.value as AppState['settings']['fontFamily'] },
-              })
-            }
-          >
-            {appFontFamilyOptions.map((option) => (
-              <option key={option.value} value={option.value}>
-                {appState.settings.language === 'en' ? option.labelEn : option.label}
-              </option>
-            ))}
-          </select>
-        </label>
-      </div>
+      {renderFontFamilySettings('font-family-select')}
 
       <div className="settings-section">
         <div className="settings-row">
@@ -6672,28 +6690,7 @@ function App() {
                 {renderThemeToggle()}
               </div>
 
-              <div className="settings-section">
-                <label className="settings-field" htmlFor="font-family-select">
-                  <span>{text.fontFamily}</span>
-                  <select
-                    id="font-family-select"
-                    className="control settings-input"
-                    value={appState.settings.fontFamily}
-                    onChange={(event) =>
-                      applyAction({
-                        type: 'updateSettings',
-                        patch: { fontFamily: event.target.value as AppState['settings']['fontFamily'] },
-                      })
-                    }
-                  >
-                    {appFontFamilyOptions.map((option) => (
-                      <option key={option.value} value={option.value}>
-                        {appState.settings.language === 'en' ? option.labelEn : option.label}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-              </div>
+              {renderFontFamilySettings('font-family-select-inline')}
 
               <div className="settings-section">
                 <div className="settings-row">

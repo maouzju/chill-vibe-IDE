@@ -231,6 +231,58 @@ test('buildRenderableMessages removes leaked Claude call marker lines from assis
   }
 })
 
+test('buildRenderableMessages removes standalone empty markdown bullet residue from assistant text', () => {
+  const leaked = makeMessage({
+    id: 'empty-bullet-residue',
+    content:
+      '-\n\n**Blocked work**: visual review started, but the tool channel failed.\n\nSuggestion\n\nRestart the session.',
+    meta: { provider: 'claude' },
+  })
+
+  const result = buildRenderableMessages([leaked])
+
+  assert.equal(result.length, 1)
+  assert.equal(result[0]!.type, 'message')
+  if (result[0]!.type === 'message') {
+    assert.equal(
+      result[0]!.message.content,
+      '**Blocked work**: visual review started, but the tool channel failed.\n\nSuggestion\n\nRestart the session.',
+    )
+  }
+})
+
+test('buildRenderableMessages keeps real markdown lists while removing only empty bullet residue', () => {
+  const message = makeMessage({
+    id: 'real-list-with-empty-residue',
+    content: '-\n\n- first item\n- second item\n\nKeep inline - dash.',
+    meta: { provider: 'claude' },
+  })
+
+  const result = buildRenderableMessages([message])
+
+  assert.equal(result.length, 1)
+  assert.equal(result[0]!.type, 'message')
+  if (result[0]!.type === 'message') {
+    assert.equal(result[0]!.message.content, '- first item\n- second item\n\nKeep inline - dash.')
+  }
+})
+
+test('buildRenderableMessages keeps standalone dash inside fenced code blocks', () => {
+  const message = makeMessage({
+    id: 'code-block-dash',
+    content: 'Example:\n\n```txt\n-\n```\n\nDone.',
+    meta: { provider: 'claude' },
+  })
+
+  const result = buildRenderableMessages([message])
+
+  assert.equal(result.length, 1)
+  assert.equal(result[0]!.type, 'message')
+  if (result[0]!.type === 'message') {
+    assert.equal(result[0]!.message.content, message.content)
+  }
+})
+
 test('buildRenderableMessages removes trailing Claude count residue near tool activity', () => {
   const beforeTool = makeToolMessage('Grep', '搜索文本: targetRule')
   const leaked = makeMessage({
@@ -268,6 +320,30 @@ test('buildRenderableMessages removes standalone count residue between Claude to
   if (result[0]!.type === 'tool-group') {
     assert.equal(result[0]!.items.length, 2)
   }
+})
+
+test('buildRenderableMessages removes standalone count residue even when provider meta is missing and a user reply follows', () => {
+  const assistantText = makeMessage({
+    id: 'assistant-before-count',
+    content: '逻辑严密。现在读回 sidecar 文件本体确认 JSON 结构正确，并生成进度报告。',
+    meta: { provider: 'claude' },
+  })
+  const leaked = makeMessage({
+    id: 'standalone-count-residue-before-user',
+    content: 'count',
+  })
+  const userReply = makeMessage({
+    id: 'user-reply-after-count',
+    role: 'user',
+    content: '我',
+  })
+
+  const result = buildRenderableMessages([assistantText, leaked, userReply])
+
+  assert.deepEqual(
+    result.flatMap((entry) => (entry.type === 'message' ? [entry.message.id] : [])),
+    ['assistant-before-count', 'user-reply-after-count'],
+  )
 })
 
 test('buildRenderableMessages keeps normal Claude prose that mentions count inline', () => {

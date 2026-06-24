@@ -840,6 +840,10 @@ export const diffWorkspaceSnapshot = async (
     return { files: [] }
   }
 
+  if (touchedPaths && touchedPaths.size === 0) {
+    return { files: [] }
+  }
+
   const currentStatus = await inspectGitWorkspace(workspacePath, { includeChangePreviews: false })
 
   if (!currentStatus.isRepository || currentStatus.repoRoot !== snapshot.repoRoot) {
@@ -848,7 +852,7 @@ export const diffWorkspaceSnapshot = async (
 
   const editedFiles: StreamEditedFile[] = []
   const handledSnapshotPaths = new Set<string>()
-  const hasTouchedPathFilter = Boolean(touchedPaths && touchedPaths.size > 0)
+  const hasTouchedPathFilter = Boolean(touchedPaths)
 
   for (const change of currentStatus.changes) {
     if (hasTouchedPathFilter && !touchedPaths!.has(change.path)) {

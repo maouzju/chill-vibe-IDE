@@ -313,7 +313,7 @@ describe('git workspace helpers', () => {
     assert.match(diff.files[0]?.patch ?? '', /\+agent line/)
   })
 
-  it('treats an empty touched path set as no filter for workspace edit fallback', async () => {
+  it('does not attribute workspace changes to an agent when no touched paths are known', async () => {
     const repoPath = await createTempRepo()
 
     await writeFile(path.join(repoPath, 'tracked.txt'), 'base\n')
@@ -324,9 +324,7 @@ describe('git workspace helpers', () => {
 
     const diff = await diffWorkspaceSnapshot(snapshot, repoPath, new Set())
 
-    assert.equal(diff.files.length, 1)
-    assert.equal(diff.files[0]?.path, 'tracked.txt')
-    assert.match(diff.files[0]?.patch ?? '', /\+agent line/)
+    assert.equal(diff.files.length, 0)
   })
 
   it('returns last commit timestamps accepted by the shared Git status schema', async () => {

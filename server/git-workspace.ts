@@ -848,9 +848,10 @@ export const diffWorkspaceSnapshot = async (
 
   const editedFiles: StreamEditedFile[] = []
   const handledSnapshotPaths = new Set<string>()
+  const hasTouchedPathFilter = Boolean(touchedPaths && touchedPaths.size > 0)
 
   for (const change of currentStatus.changes) {
-    if (touchedPaths && !touchedPaths.has(change.path)) {
+    if (hasTouchedPathFilter && !touchedPaths!.has(change.path)) {
       continue
     }
 
@@ -899,7 +900,7 @@ export const diffWorkspaceSnapshot = async (
       continue
     }
 
-    if (touchedPaths && !touchedPaths.has(snapshotFile.path)) {
+    if (hasTouchedPathFilter && !touchedPaths!.has(snapshotFile.path)) {
       continue
     }
 

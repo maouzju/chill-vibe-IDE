@@ -162,7 +162,14 @@ export const GitToolCard = ({
       return
     }
 
-    if (refreshingRef.current && refreshingWorkspacePathRef.current === nextWorkspacePath) return
+    if (refreshingRef.current && refreshingWorkspacePathRef.current === nextWorkspacePath) {
+      if (nextNotice !== undefined) {
+        startTransition(() => {
+          setNotice(nextNotice)
+        })
+      }
+      return
+    }
     refreshingRef.current = true
     refreshingWorkspacePathRef.current = nextWorkspacePath
     const refreshId = activeRefreshIdRef.current + 1
@@ -321,6 +328,9 @@ export const GitToolCard = ({
   }, [])
   const repositoryName = getRepositoryName(gitStatus?.repoRoot ?? workspacePath)
   const totalStats = useMemo(() => computeTotalStats(gitStatus?.changes ?? []), [gitStatus?.changes])
+  const totalStatsLabel = totalStats.hasKnownLineStats
+    ? text.totalAddRemove(totalStats.added ?? 0, totalStats.removed ?? 0)
+    : '+? / -?'
   const fileListWindow = useMemo(
     () =>
       gitStatus && !gitStatus.clean
@@ -404,6 +414,10 @@ export const GitToolCard = ({
   }, [gitStatus, isFileListVirtualized, syncFileListMetrics])
 
   const handleStatusChange = useCallback((nextStatus: GitStatus) => {
+    activeRefreshIdRef.current += 1
+    refreshingRef.current = false
+    refreshingWorkspacePathRef.current = ''
+
     startTransition(() => {
       setGitStatus(nextStatus)
       setLoadState('ready')
@@ -701,7 +715,7 @@ export const GitToolCard = ({
                 {text.changedFiles(gitStatus.changes.length)}
               </span>
               <span className="git-dashboard-stats">
-                {text.totalAddRemove(totalStats.added, totalStats.removed)}
+                {totalStatsLabel}
               </span>
             </div>
             <div className="git-dashboard-actions-bar">

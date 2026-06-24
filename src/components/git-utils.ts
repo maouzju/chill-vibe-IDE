@@ -66,13 +66,25 @@ export const getDiffLineClassName = (line: string) => {
 export const computeTotalStats = (changes: GitChange[]) => {
   let added = 0
   let removed = 0
+  let hasKnownLineStats = false
 
   for (const change of changes) {
-    if (typeof change.addedLines === 'number') added += change.addedLines
-    if (typeof change.removedLines === 'number') removed += change.removedLines
+    if (typeof change.addedLines === 'number') {
+      added += change.addedLines
+      hasKnownLineStats = true
+    }
+
+    if (typeof change.removedLines === 'number') {
+      removed += change.removedLines
+      hasKnownLineStats = true
+    }
   }
 
-  return { added, removed }
+  return {
+    added: hasKnownLineStats ? added : undefined,
+    removed: hasKnownLineStats ? removed : undefined,
+    hasKnownLineStats,
+  }
 }
 
 export const summarizeGitChanges = (changes: GitChange[]) =>

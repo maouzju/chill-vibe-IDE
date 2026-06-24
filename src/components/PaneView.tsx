@@ -273,6 +273,9 @@ const cardUsesComposer = (card: ChatCardState) =>
     WHITENOISE_TOOL_MODEL,
   ].includes(card.model)
 
+const cardKeepsPaneRuntimeWhenInactive = (card: ChatCardState) =>
+  card.model === GIT_TOOL_MODEL
+
 const dragHintExpiryMs = 1200
 
 const PaneViewView = ({
@@ -1009,13 +1012,14 @@ const PaneViewView = ({
           const card = column.cards[tabId]
           if (!card) return null
           const isActive = tabId === pane.activeTabId
+          const keepInactiveRuntime = !isActive && cardKeepsPaneRuntimeWhenInactive(card)
           return (
             <div
               key={tabId}
               className={`pane-tab-panel${isActive ? ' is-active' : ''}`}
               hidden={!isActive}
             >
-              {isActive ? (
+              {isActive || keepInactiveRuntime ? (
                 <ChatCard
                   card={card}
                   providerReady={providers[card.provider]?.available ?? false}
@@ -1073,7 +1077,7 @@ const PaneViewView = ({
                   onOpenFile={(relativePath) => onOpenFile?.(pane.id, relativePath)}
                   isRestored={false}
                   chromeMode="pane"
-                  isActive
+                  isActive={isActive}
                   composerFocusRequest={composerFocusRequest}
                   recoveryStatus={cardRecoveryStatuses?.get(card.id)}
                 />

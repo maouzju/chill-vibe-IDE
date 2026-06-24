@@ -242,10 +242,99 @@ test('git card shows preview actions before the full status request finishes', a
   await selectModel(page, modelSelect, 'Git')
 
   await expect(page.getByText('2 changed files')).toBeVisible()
+  await expect(page.getByText('+? / -?')).toBeVisible()
   await expect(page.getByRole('button', { name: 'Commit new' })).toBeVisible()
   await expect(page.getByRole('button', { name: 'Analyze changes' })).toBeVisible()
   await expect(page.getByRole('button', { name: 'Full Git' })).toBeVisible()
   await expect(page.getByText('src/components/GitToolCard.tsx')).toBeVisible()
+})
+
+test('commit new ignores an older background status refresh after the commit finishes', async ({ page }) => {
+  await installMockApis(page, 'dark')
+
+  const previewChange = createGitChange('src/components/GitFullDialog.tsx', {
+    addedLines: undefined,
+    removedLines: undefined,
+    patch: undefined,
+  })
+  const change = createGitChange('src/components/GitFullDialog.tsx', {
+    patch: '@@ -1 +1 @@\n-old line\n+later change',
+  })
+  const previewStatus = createGitStatus([previewChange], {
+    branch: 'feature/commit-new-error-notice',
+    lastCommit: null,
+  })
+  const status = createGitStatus([change], previewStatus)
+  const cleanStatus = createGitStatus([], {
+    branch: status.branch,
+    lastCommit: {
+      hash: 'abc9999def0000',
+      shortHash: 'abc9999',
+      summary: 'Update GitFullDialog.tsx',
+      description: '',
+      authorName: 'Alex',
+      authoredAt: '2026-04-06T04:00:00.000Z',
+    },
+  })
+  const commitCalls: Array<{ summary: string; description?: string; paths?: string[] }> = []
+  let statusRequestCount = 0
+  let releaseInitialStatus!: () => void
+  const initialStatusReleased = new Promise<void>((resolve) => {
+    releaseInitialStatus = resolve
+  })
+
+  await page.route('**/api/git/status/preview?workspacePath=*', async (route) => {
+    await route.fulfill({ json: previewStatus })
+  })
+
+  await page.route('**/api/git/status?workspacePath=*', async (route) => {
+    statusRequestCount += 1
+
+    if (statusRequestCount === 1) {
+      await initialStatusReleased
+      await route.fulfill({ json: status })
+      return
+    }
+
+    await route.fulfill({ json: status })
+  })
+
+  await page.route('**/api/git/stage', async (route) => {
+    await route.fulfill({
+      json: createGitStatus([applyStageState(change, true)], {
+        branch: status.branch,
+        lastCommit: null,
+      }),
+    })
+  })
+
+  await page.route('**/api/git/commit', async (route) => {
+    commitCalls.push(JSON.parse(route.request().postData() ?? '{}'))
+    await route.fulfill({
+      json: {
+        status: cleanStatus,
+        commit: cleanStatus.lastCommit,
+      },
+    })
+  })
+
+  await page.goto('http://localhost:5173')
+
+  const modelSelect = page.locator('.model-select').first()
+  await modelSelect.waitFor()
+  await selectModel(page, modelSelect, 'Git')
+
+  await expect(page.getByRole('button', { name: 'Commit new' })).toBeVisible()
+  await page.getByRole('button', { name: 'Commit new' }).click()
+
+  await expect.poll(() => commitCalls.length).toBe(1)
+  await expect(page.getByText('Created abc9999: Update GitFullDialog.tsx')).toBeVisible()
+
+  releaseInitialStatus()
+
+  await expect(page.getByText('Created abc9999: Update GitFullDialog.tsx')).toBeVisible()
+  await expect(page.getByText('Working tree clean')).toBeVisible()
+  await expect(page.getByText('src/components/GitFullDialog.tsx')).toHaveCount(0)
 })
 
 const installMockApis = async (page: Page, theme: ThemeName, language: AppLanguage = 'en') => {
@@ -1092,6 +1181,148 @@ test('inactive pane-mounted Git tabs defer status fetch until activated', async 
   await page.locator('.pane-tab').nth(1).click()
   await page.locator('.pane-tab.is-active').nth(0).waitFor()
   await expect.poll(() => gitStatusRequests).toBe(2)
+})
+
+test('pane-mounted Git tab keeps its loaded state after being backgrounded and restored', async ({ page }) => {
+  await installMockElectronBridge(page)
+
+  let state = createPlaywrightState({
+    version: 1 as const,
+    settings: {
+      language: 'en',
+      theme: 'dark',
+      fontScale: 1,
+      lineHeightScale: 1,
+      resilientProxyEnabled: true,
+      requestModels: {
+        codex: 'gpt-5.5',
+        claude: 'claude-opus-4-7',
+      },
+      modelReasoningEfforts: {
+        codex: {},
+        claude: {},
+      },
+      providerProfiles: {
+        codex: {
+          activeProfileId: '',
+          profiles: [],
+        },
+        claude: {
+          activeProfileId: '',
+          profiles: [],
+        },
+      },
+    },
+    updatedAt: new Date().toISOString(),
+    columns: [
+      {
+        id: 'col-1',
+        title: 'Git Pane Restore Test',
+        provider: 'codex' as const,
+        workspacePath: 'd:\\Git\\chill-vibe',
+        model: 'gpt-5.5',
+        cards: [
+          {
+            id: 'git-card',
+            title: 'Git',
+            status: 'idle' as const,
+            size: 560,
+            provider: 'codex' as const,
+            model: GIT_TOOL_MODEL,
+            reasoningEffort: 'medium',
+            draft: '',
+            messages: [],
+          },
+          {
+            id: 'chat-card',
+            title: 'Chat',
+            status: 'idle' as const,
+            size: 560,
+            provider: 'codex' as const,
+            model: 'gpt-5.5',
+            reasoningEffort: 'medium',
+            draft: '',
+            messages: [],
+          },
+        ],
+      },
+    ],
+  })
+  const status = createGitStatus([
+    createGitChange('src/components/GitToolCard.tsx', {
+      addedLines: 4,
+      removedLines: 2,
+    }),
+  ], {
+    branch: 'feature/git-background-restore',
+  })
+  let gitStatusRequests = 0
+  let holdRefreshRequests = false
+
+  await page.route('**/api/state', async (route) => {
+    const request = route.request()
+
+    if (request.method() === 'GET') {
+      await route.fulfill({ json: state })
+      return
+    }
+
+    if (request.method() === 'PUT') {
+      state = JSON.parse(request.postData() ?? '{}')
+      await route.fulfill({ json: state })
+      return
+    }
+
+    await route.fallback()
+  })
+
+  await page.route('**/api/state/snapshot', async (route) => {
+    state = JSON.parse(route.request().postData() ?? '{}')
+    await route.fulfill({ status: 204 })
+  })
+
+  await page.route('**/api/providers', async (route) => {
+    await route.fulfill({
+      json: [
+        { provider: 'codex', available: true, command: 'codex' },
+        { provider: 'claude', available: true, command: 'claude' },
+      ],
+    })
+  })
+
+  await page.route('**/api/setup/status', async (route) => {
+    await route.fulfill({ json: { state: 'idle', logs: [] } })
+  })
+
+  await page.route('**/api/slash-commands', async (route) => {
+    await route.fulfill({ json: [] })
+  })
+
+  await page.route('**/api/git/status?workspacePath=*', async (route) => {
+    gitStatusRequests += 1
+    if (holdRefreshRequests) {
+      await new Promise(() => undefined)
+      return
+    }
+
+    await route.fulfill({ json: status })
+  })
+
+  await page.goto('http://localhost:5173')
+
+  await expect(page.getByText('1 changed file')).toBeVisible()
+  await expect(page.getByText('src/components/GitToolCard.tsx')).toBeVisible()
+  await expect.poll(() => gitStatusRequests).toBe(1)
+
+  await page.locator('.pane-tab').filter({ hasText: 'Chat' }).click()
+  await expect(page.locator('.pane-tab.is-active .pane-tab-label')).toHaveText('Chat')
+
+  holdRefreshRequests = true
+  await page.locator('.pane-tab').filter({ hasText: 'Git' }).click()
+  await expect(page.locator('.pane-tab.is-active .pane-tab-label')).toHaveText('Git')
+
+  await expect(page.getByText('1 changed file')).toBeVisible()
+  await expect(page.getByText('src/components/GitToolCard.tsx')).toBeVisible()
 })
 
 for (const theme of ['dark', 'light'] as const) {

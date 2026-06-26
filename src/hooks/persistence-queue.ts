@@ -79,7 +79,9 @@ export const shouldUseQueuedPersistenceForAction = (actionType: IdeAction['type'
   actionType === 'appendAssistantDelta' ||
   actionType === 'appendMessages' ||
   actionType === 'upsertMessages' ||
-  actionType === 'updateCard'
+  actionType === 'updateCard' ||
+  actionType === 'importExternalSession' ||
+  actionType === 'removeSessionHistory'
 
 export const shouldPersistActionImmediately = (
   actionType: IdeAction['type'],

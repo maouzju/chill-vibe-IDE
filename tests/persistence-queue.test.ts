@@ -142,6 +142,31 @@ describe('persistence queue', () => {
     assert.ok(getQueuedStateSaveDelayMs(state) > streamingQueuedStateSaveDelayMs)
   })
 
+  it('backs off queued saves after restoring a large archived transcript', () => {
+    const state = createDefaultState('')
+    const activeCardId = state.columns[0]?.layout.type === 'pane'
+      ? state.columns[0].layout.activeTabId
+      : ''
+
+    if (!activeCardId) {
+      throw new Error('Expected default state to include an active card.')
+    }
+
+    state.columns[0]!.cards[activeCardId] = {
+      ...state.columns[0]!.cards[activeCardId]!,
+      status: 'idle',
+      messages: Array.from({ length: 900 }, (_, index) => ({
+        id: `restored-large-${index + 1}`,
+        role: index % 2 === 0 ? 'user' : 'assistant',
+        content: 'x'.repeat(1_000),
+        createdAt: '2026-05-03T11:00:00.000Z',
+      })),
+    }
+
+    assert.ok(getQueuedStateSaveDelayMs(state) > defaultQueuedStateSaveDelayMs)
+    assert.equal(shouldResetQueuedStateSaveTimer(state), false)
+  })
+
   it('keeps the high-pressure save window after a large transcript leaves streaming', () => {
     const state = createDefaultState('')
     const activeCardId = state.columns[0]?.layout.type === 'pane'
@@ -241,6 +266,8 @@ describe('persistence queue', () => {
     assert.equal(shouldUseQueuedPersistenceForAction('appendMessages'), true)
     assert.equal(shouldUseQueuedPersistenceForAction('upsertMessages'), true)
     assert.equal(shouldUseQueuedPersistenceForAction('updateCard'), true)
+    assert.equal(shouldUseQueuedPersistenceForAction('importExternalSession'), true)
+    assert.equal(shouldUseQueuedPersistenceForAction('removeSessionHistory'), true)
     assert.equal(shouldUseQueuedPersistenceForAction('resetCardConversation'), false)
     assert.equal(shouldUseQueuedPersistenceForAction('replace'), false)
   })

@@ -18,8 +18,8 @@ import {
 } from './components/chat-card-parsing'
 import { shouldResetStreamRecoveryAttemptsForText } from './stream-recovery'
 
-const MAX_SEEDED_PROMPT_CHARS = 6_000
-const MAX_REPLAY_ENTRY_CHARS = 1_100
+const MIN_SEEDED_PROMPT_CHARS = 6_000
+const MAX_STRUCTURED_REPLAY_ENTRY_CHARS = 1_100
 const MIN_REPLAY_ENTRY_CHARS = 260
 
 const indentBlock = (value: string, prefix = '  ') =>
@@ -280,9 +280,14 @@ const getSeedingWindow = ({
   }).visibleMessages
 }
 
-const formatReplayMessage = (language: AppLanguage, message: ChatMessage) => {
+type ReplayEntry = {
+  text: string
+  protected: boolean
+}
+
+const formatReplayMessage = (language: AppLanguage, message: ChatMessage): ReplayEntry | null => {
   if (!isReplayableMessage(message)) {
-    return ''
+    return null
   }
 
   const copy = getSeededPromptCopy(language)
@@ -301,19 +306,31 @@ const formatReplayMessage = (language: AppLanguage, message: ChatMessage) => {
     }
   }
 
-  sections.push(...formatStructuredSections(message))
+  const structuredSections = formatStructuredSections(message).map((section) =>
+    truncateWithNotice(
+      section,
+      MAX_STRUCTURED_REPLAY_ENTRY_CHARS,
+      copy.truncatedBlock,
+    ),
+  )
+  sections.push(...structuredSections)
 
   const content = message.content.trim()
   if (content && shouldResetStreamRecoveryAttemptsForText(content)) {
     sections.push(sections.length === 0 ? content : `Content:\n${indentBlock(content)}`)
   }
 
-  return `${getReplaySpeakerLabel(language, message.role)}:\n${sections.join('\n')}`
+  const text = `${getReplaySpeakerLabel(language, message.role)}:\n${sections.join('\n')}`
+
+  return {
+    text,
+    protected: message.role === 'user' && content.length > MAX_STRUCTURED_REPLAY_ENTRY_CHARS,
+  }
 }
 
 const buildBoundedTranscript = (
   language: AppLanguage,
-  entries: string[],
+  entries: ReplayEntry[],
   transcriptBudget: number,
 ) => {
   if (entries.length === 0 || transcriptBudget <= 0) {
@@ -321,38 +338,44 @@ const buildBoundedTranscript = (
   }
 
   const copy = getSeededPromptCopy(language)
-  const selected: string[] = []
+  const selected: ReplayEntry[] = []
   let usedChars = 0
   let omittedCount = 0
 
+  const joinSelected = () => selected.map((entry) => entry.text).join('\n\n')
+  const firstDisposableSelectedIndex = () => selected.findIndex((entry) => !entry.protected)
+
   for (let index = entries.length - 1; index >= 0; index -= 1) {
-    const compactEntry = truncateWithNotice(
-      entries[index]!,
-      MAX_REPLAY_ENTRY_CHARS,
-      copy.truncatedBlock,
-    )
+    const entry = entries[index]!
     const separatorLength = selected.length > 0 ? 2 : 0
     const remainingBudget = transcriptBudget - usedChars - separatorLength
+
+    if (entry.protected) {
+      selected.unshift(entry)
+      usedChars += entry.text.length + separatorLength
+      continue
+    }
 
     if (remainingBudget <= 0) {
       omittedCount += 1
       continue
     }
 
-    if (compactEntry.length <= remainingBudget) {
-      selected.unshift(compactEntry)
-      usedChars += compactEntry.length + separatorLength
+    if (entry.text.length <= remainingBudget) {
+      selected.unshift(entry)
+      usedChars += entry.text.length + separatorLength
       continue
     }
 
     if (selected.length === 0) {
-      selected.unshift(
-        truncateWithNotice(
-          compactEntry,
+      selected.unshift({
+        text: truncateWithNotice(
+          entry.text,
           Math.max(remainingBudget, MIN_REPLAY_ENTRY_CHARS),
           copy.truncatedBlock,
         ),
-      )
+        protected: false,
+      })
       omittedCount += index
       break
     }
@@ -364,7 +387,7 @@ const buildBoundedTranscript = (
     return ''
   }
 
-  let transcript = selected.join('\n\n')
+  let transcript = joinSelected()
   while (omittedCount > 0) {
     const notice = copy.omittedTranscript(omittedCount)
     const candidate = `${notice}\n\n${transcript}`
@@ -372,19 +395,27 @@ const buildBoundedTranscript = (
       return candidate
     }
 
-    if (selected.length > 1) {
-      selected.shift()
+    const disposableIndex = firstDisposableSelectedIndex()
+    if (disposableIndex !== -1) {
+      selected.splice(disposableIndex, 1)
       omittedCount += 1
-      transcript = selected.join('\n\n')
+      transcript = joinSelected()
       continue
     }
 
-    selected[0] = truncateWithNotice(
-      selected[0]!,
-      Math.max(transcriptBudget - notice.length - 2, MIN_REPLAY_ENTRY_CHARS),
-      copy.truncatedBlock,
-    )
-    transcript = selected.join('\n\n')
+    if (selected.some((entry) => entry.protected)) {
+      return candidate
+    }
+
+    selected[0] = {
+      text: truncateWithNotice(
+        selected[0]!.text,
+        Math.max(transcriptBudget - notice.length - 2, MIN_REPLAY_ENTRY_CHARS),
+        copy.truncatedBlock,
+      ),
+      protected: false,
+    }
+    transcript = joinSelected()
     return `${notice}\n\n${transcript}`
   }
 
@@ -474,7 +505,7 @@ export const buildSeededChatPrompt = ({
   const replayWindow = getSeedingWindow({ messages, provider, status })
   const transcriptEntries = replayWindow
     .map((message) => formatReplayMessage(language, message))
-    .filter((entry) => entry.length > 0)
+    .filter((entry): entry is ReplayEntry => entry !== null && entry.text.length > 0)
 
   if (transcriptEntries.length === 0) {
     return prompt
@@ -493,7 +524,14 @@ export const buildSeededChatPrompt = ({
 
   const latestTurn = latestTurnParts.join('\n')
   const emptyTranscriptPrompt = buildSeededPromptBody(language, '', latestTurn)
-  const transcriptBudget = Math.max(MAX_SEEDED_PROMPT_CHARS - emptyTranscriptPrompt.length, 0)
+  const protectedTranscriptChars = transcriptEntries
+    .filter((entry) => entry.protected)
+    .reduce((total, entry) => total + entry.text.length + 2, 0)
+  const transcriptBudget = Math.max(
+    MIN_SEEDED_PROMPT_CHARS - emptyTranscriptPrompt.length,
+    protectedTranscriptChars,
+    0,
+  )
   const transcript = buildBoundedTranscript(language, transcriptEntries, transcriptBudget)
 
   return buildSeededPromptBody(language, transcript, latestTurn)

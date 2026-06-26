@@ -296,8 +296,13 @@ export const GitAgentPanel = ({
   return (
     <div className="git-agent-panel">
       {phase.kind === 'idle' || phase.kind === 'analyzing' ? (
-        <div className="git-agent-loading">
+        <div className="git-agent-loading" role="status" aria-live="polite">
           <span>{text.analyzing}</span>
+          <span className="streaming-dots" aria-hidden="true">
+            <span />
+            <span />
+            <span />
+          </span>
         </div>
       ) : null}
 
@@ -319,8 +324,13 @@ export const GitAgentPanel = ({
       ) : null}
 
       {phase.kind === 'executing' ? (
-        <div className="git-agent-loading">
+        <div className="git-agent-loading" role="status" aria-live="polite">
           <span>{phase.progress || text.analyzing}</span>
+          <span className="streaming-dots" aria-hidden="true">
+            <span />
+            <span />
+            <span />
+          </span>
         </div>
       ) : null}
 

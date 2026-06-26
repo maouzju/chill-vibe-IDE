@@ -33,6 +33,8 @@ claude -p --verbose --output-format stream-json --include-partial-messages \
 {"type":"user","message":{"role":"user","content":[{"type":"text","text":"<getClaudePrompt() 输出>"}]}}
 ```
 
+注意：keepalive 模式不能同时把 prompt 放进 argv。长对话恢复会把完整用户原文写入 replay prompt，若再作为 positional 参数传给 Claude CLI，会在 Windows 上撞命令行长度限制；stdin 是唯一的用户消息通道。
+
 `spawnProvider` 的 stdio 需要 stdin: 'pipe'（现为 'ignore'，加参数开关）。
 
 ### D4：turn 路由状态机（池内每进程）

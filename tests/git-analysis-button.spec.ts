@@ -178,6 +178,11 @@ test('git analysis button switches to a disabled analyzing state while the agent
   await expect(page.locator('.git-tool-card')).toBeVisible()
   await page.getByRole('button', { name: '分析改动' }).click()
 
-  await expect(page.locator('.git-agent-loading')).toBeVisible()
+  const loading = page.locator('.git-agent-loading')
+  await expect(loading).toBeVisible()
+  // Waiting state must show the animated streaming dots so the user can tell
+  // the agent is still working (polling) rather than frozen.
+  await expect(loading).toHaveAttribute('role', 'status')
+  await expect(loading.locator('.streaming-dots span')).toHaveCount(3)
   await expect(page.getByRole('button', { name: '正在分析', exact: true })).toBeDisabled()
 })

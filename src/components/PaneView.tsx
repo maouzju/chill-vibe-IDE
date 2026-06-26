@@ -584,6 +584,7 @@ const PaneViewView = ({
     y: number
     dragging: boolean
   } | null>(null)
+  const suppressNextTabClickRef = useRef<string | null>(null)
 
   const activateTab = (tabId: string) => {
     if (pane.activeTabId === tabId) {
@@ -612,6 +613,11 @@ const PaneViewView = ({
     setComposerFocusRequest((current) => current + 1)
   }
 
+  const handleAddTab = () => {
+    onAddTab(pane.id)
+    setComposerFocusRequest((current) => current + 1)
+  }
+
   const handleTabBarDoubleClick = (event: MouseEvent<HTMLDivElement>) => {
     if (event.button !== 0 || isTabChromeActionTarget(event.target)) {
       return
@@ -627,6 +633,7 @@ const PaneViewView = ({
       return
     }
 
+    suppressNextTabClickRef.current = null
     tabPointerDownRef.current = {
       tabId,
       pointerId: event.pointerId,
@@ -646,6 +653,7 @@ const PaneViewView = ({
     const deltaY = Math.abs(event.clientY - pointerDown.y)
     if (deltaX > 12 || deltaY > 12) {
       tabPointerDownRef.current = { ...pointerDown, dragging: true }
+      suppressNextTabClickRef.current = pointerDown.tabId
       cancelPendingTabSwitch()
     }
   }
@@ -653,6 +661,9 @@ const PaneViewView = ({
   const handleTabPointerCancel = (event: PointerEvent<HTMLButtonElement>) => {
     const pointerDown = tabPointerDownRef.current
     if (pointerDown?.pointerId === event.pointerId) {
+      if (pointerDown.dragging) {
+        suppressNextTabClickRef.current = pointerDown.tabId
+      }
       tabPointerDownRef.current = null
       cancelPendingTabSwitch()
     }
@@ -666,8 +677,22 @@ const PaneViewView = ({
 
     tabPointerDownRef.current = null
     if (pointerDown.tabId === tabId && !pointerDown.dragging) {
+      suppressNextTabClickRef.current = tabId
       activateTab(tabId)
     }
+  }
+
+  const handleTabClick = (tabId: string) => (event: MouseEvent<HTMLButtonElement>) => {
+    if (event.button !== 0 || isTabCloseTarget(event.target)) {
+      return
+    }
+
+    if (suppressNextTabClickRef.current === tabId) {
+      suppressNextTabClickRef.current = null
+      return
+    }
+
+    activateTab(tabId)
   }
 
   const handleTabMouseDown = () => (event: MouseEvent<HTMLButtonElement>) => {
@@ -897,11 +922,7 @@ const PaneViewView = ({
                 className={tabClassName}
                 title={tabTitle}
                 draggable
-                onClick={(event) => {
-                  if (event.detail === 0) {
-                    activateTab(tabId)
-                  }
-                }}
+                onClick={handleTabClick(tabId)}
                 onPointerDown={handleTabPointerDown(tabId)}
                 onPointerMove={handleTabPointerMove}
                 onPointerUp={handleTabPointerUp(tabId)}
@@ -911,6 +932,7 @@ const PaneViewView = ({
                 onContextMenu={handleTabContextMenu(tabId)}
                 onDragStart={handleTabDragStart(tabId)}
                 onDragEnd={() => {
+                  suppressNextTabClickRef.current = null
                   clearDragPayload()
                   clearHints()
                 }}
@@ -974,7 +996,7 @@ const PaneViewView = ({
             className="pane-add-tab"
             aria-label={text.addChat}
             title={text.addChat}
-            onClick={() => onAddTab(pane.id)}
+            onClick={handleAddTab}
           >
             <PlusIcon />
           </button>

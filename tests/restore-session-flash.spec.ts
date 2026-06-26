@@ -646,6 +646,100 @@ test('bringing a background tab to the front scrolls its message list to the lat
     .toBeLessThanOrEqual(1)
 })
 
+
+
+test('restoring session history queues persistence instead of immediate full-state save', async ({ page }) => {
+  await mockAppApis(page, {
+    restoredMessages: Array.from({ length: 80 }, (_, index) => ({
+      id: `restored-save-path-${index + 1}`,
+      role: index % 2 === 0 ? ('user' as const) : ('assistant' as const),
+      content: `Restored save path message ${index + 1}`,
+      createdAt: new Date(Date.UTC(2026, 3, 5, 15, 0, index)).toISOString(),
+    })),
+  })
+  await page.addInitScript(() => {
+    window.addEventListener('DOMContentLoaded', () => {
+      const api = window.electronAPI
+      if (!api) return
+      const originalSaveState = api.saveState
+      const originalQueueStateSave = api.queueStateSave
+      let saveCount = 0
+      let queueCount = 0
+      api.saveState = async (state) => {
+        saveCount += 1
+        return originalSaveState?.(state)
+      }
+      api.queueStateSave = (state) => {
+        queueCount += 1
+        return originalQueueStateSave?.(state)
+      }
+      Object.defineProperty(window, '__historyRestorePersistenceCalls', {
+        configurable: true,
+        value: {
+          read: () => ({ saveCount, queueCount }),
+        },
+      })
+    })
+  })
+
+  await page.goto('http://localhost:5173')
+  await page.locator('.card-shell').first().waitFor()
+
+  await openSessionHistoryMenu(page)
+  await page.locator('.session-history-item').first().click()
+  await expect(page.locator('.pane-tab.is-active')).toContainText('Old Session')
+
+  await expect
+    .poll(() =>
+      page.evaluate(() =>
+        (window as typeof window & {
+          __historyRestorePersistenceCalls?: { read: () => { saveCount: number; queueCount: number } }
+        }).__historyRestorePersistenceCalls?.read() ?? { saveCount: -1, queueCount: -1 },
+      ),
+    )
+    .toEqual({ saveCount: 0, queueCount: 1 })
+})
+
+test('opening a large session history keeps the pane responsive', async ({ page }) => {
+  const restoredMessages = Array.from({ length: 900 }, (_, index) => ({
+    id: `restored-large-${index + 1}`,
+    role: index % 2 === 0 ? ('user' as const) : ('assistant' as const),
+    content: `Large restored message ${index + 1}: ${'detail '.repeat(80)}`,
+    createdAt: new Date(Date.UTC(2026, 3, 5, 14, Math.floor(index / 60), index % 60)).toISOString(),
+    meta: index % 5 === 0
+      ? {
+          provider: 'codex',
+          kind: 'command',
+          itemId: `large-command-${index + 1}`,
+          structuredData: JSON.stringify({
+            itemId: `large-command-${index + 1}`,
+            status: 'completed',
+            command: 'pnpm test',
+            output: 'x'.repeat(20_000),
+            exitCode: 0,
+          }),
+        }
+      : undefined,
+  }))
+
+  await mockAppApis(page, { restoredMessages })
+  await page.goto('http://localhost:5173')
+  await page.locator('.card-shell').first().waitFor()
+
+  await openSessionHistoryMenu(page)
+  await page.locator('.session-history-item').first().click()
+
+  await expect(page.locator('.pane-tab.is-active')).toContainText('Old Session')
+  await expect(page.locator('.pane-add-tab')).toBeEnabled()
+  await page.locator('.pane-add-tab').click({ timeout: 1000 })
+  await expect(page.locator('.pane-tab.is-active')).not.toContainText('Old Session')
+
+  const composer = page.locator('.pane-tab-panel.is-active .composer textarea')
+  await expect(composer).toBeFocused({ timeout: 1000 })
+  await page.keyboard.type('responsive after large history restore')
+  await expect(composer).toHaveValue('responsive after large history restore')
+})
+
 test('session history search filters internal entries by message content and shows a no-match empty state', async ({
   page,
 }) => {

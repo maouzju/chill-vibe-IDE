@@ -19,7 +19,7 @@ import {
   getLocalSlashCommands,
   parseSlashCommandInput,
 } from '../shared/slash-commands.js'
-import { normalizeReasoningEffort } from '../shared/reasoning.js'
+import { isUltracodeEffort, normalizeReasoningEffort, toClaudeEffortFlag } from '../shared/reasoning.js'
 import { providerSupportsImageAttachments } from '../shared/chat-attachments.js'
 import type {
   AppLanguage,
@@ -213,6 +213,15 @@ const getClaudeAskUserQuestionInstruction = (language: AppLanguage) =>
   normalizeLanguage(language) === 'en'
     ? 'In this Chill Vibe Claude runtime, ask-user-question is only a renderer convention for asking the user to choose. Do not use it for normal replies unless you truly need a user decision before continuing. Every real action (running commands, reading files, editing files, searching, etc.) must go through native tool calls. Do not write tool calls as text, XML, JSON, markdown, or the word call.'
     : '在这个 Chill Vibe 的 Claude 运行环境里，ask-user-question 只是一种向用户提问并让用户选择的渲染约定。除非继续前确实需要用户做决定，否则不要在普通回复里使用它。所有实际操作（运行命令、读取文件、编辑文件、搜索等）都必须走原生工具调用。不要把工具调用写成文本、XML、JSON、Markdown，也不要输出单独的 call。'
+
+// The "ultracode" tier maps to `--effort xhigh`; the workflow-orchestration half
+// of ultracode is opt-in via the `ultracode` keyword. The CLI honors that keyword
+// anywhere in the prompt, so we surface it in the system prompt for the whole
+// session. Mention the keyword verbatim — that literal token is the trigger.
+const getClaudeUltracodeInstruction = (language: AppLanguage) =>
+  normalizeLanguage(language) === 'en'
+    ? 'ultracode is enabled for this session: treat this as standing opt-in to multi-agent orchestration. For every substantive task, author and run a dynamic workflow (Workflow tool) by default — fan out subagents, verify adversarially, then synthesize. Solo only on trivial or conversational turns.'
+    : '本会话已启用 ultracode：将其视为对多智能体编排的长期授权。对每个实质性任务，默认编写并运行动态工作流（Workflow 工具）——扇出子智能体、对抗式验证、再综合。仅在琐碎或纯对话场景下单独完成。'
 
 
 const maybeResolveProxyBaseUrl = async (
@@ -2636,6 +2645,9 @@ const buildClaudeKeepaliveSignature = (
   JSON.stringify({
     workspace: request.workspacePath,
     model: request.model ?? '',
+    // Use the normalized tier (not the --effort flag value) so ultracode keeps a
+    // distinct keepalive process from xhigh/max: ultracode injects an extra
+    // workflow-orchestration system prompt, so it must not share a pooled CLI.
     effort: includeEffort
       ? `${request.thinkingEnabled === false ? 'none' : normalizeReasoningEffort('claude', request.reasoningEffort)}`
       : 'omitted',
@@ -3017,7 +3029,11 @@ export const buildClaudeArgs = (
   if (options?.streamingInput) {
     args.push('--input-format', 'stream-json')
   }
-  const reasoningEffort = normalizeReasoningEffort('claude', request.reasoningEffort)
+  const thinkingDisabled = request.thinkingEnabled === false
+  // `--effort` only accepts low/medium/high/xhigh/max; the ultracode tier rides
+  // on xhigh here and is activated via the injected keyword below.
+  const effortFlagValue = thinkingDisabled ? 'none' : toClaudeEffortFlag(request.reasoningEffort)
+  const ultracodeActive = !thinkingDisabled && isUltracodeEffort(request.reasoningEffort)
   const permissionMode = request.planMode ? 'plan' : 'bypassPermissions'
   const additionalDirectories = resolveClaudeAdditionalDirectories({
     ...options,
@@ -3027,6 +3043,7 @@ export const buildClaudeArgs = (
   const systemPrompt = [
     buildProviderSystemPrompt(request.language, getRequestBaseSystemPrompt(request)),
     getClaudeAskUserQuestionInstruction(request.language),
+    ...(ultracodeActive ? [getClaudeUltracodeInstruction(request.language)] : []),
   ].join(' ')
 
   args.push('--permission-mode', permissionMode)
@@ -3062,12 +3079,12 @@ export const buildClaudeArgs = (
   }
 
   if (options?.includeEffort !== false) {
-    args.push('--effort', request.thinkingEnabled === false ? 'none' : reasoningEffort)
+    args.push('--effort', effortFlagValue)
   }
   args.push('--append-system-prompt', systemPrompt)
 
   const prompt = getClaudePrompt(request, attachmentPaths)
-  if (prompt.length > 0) {
+  if (!options?.streamingInput && prompt.length > 0) {
     args.push(prompt)
   }
   return args

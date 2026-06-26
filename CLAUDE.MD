@@ -12,3 +12,12 @@
 > - **All tiers: never finish with an unverified code change.**
 >
 > If you proceed without following these rules, your output is considered invalid.
+
+## Larger Tasks — Use Orchestration
+
+For larger tasks (multi-step, cross-cutting, broad audits/migrations, or anything one context can't comfortably hold), drive the work through an orchestration harness instead of one long linear pass:
+
+- **Claude:** use the `Workflow` tool (fan-out subagents, pipeline/parallel stages, adversarial verify, synthesis).
+- **Codex:** use its goal mode.
+
+Scout inline first to discover the work-list, then orchestrate over it. Keep small, well-scoped tasks linear.

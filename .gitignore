@@ -46,3 +46,4 @@ test-results
 .claude/settings.json
 .claude/skills/
 .claude/scheduled_tasks.lock
+.claude/worktrees/

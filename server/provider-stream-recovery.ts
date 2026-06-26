@@ -26,6 +26,12 @@ const recoverableErrorPatterns = [
   // block, so the CLI's own retry fails and it surfaces "tool call could not be
   // parsed". Re-issuing a fresh turn usually succeeds, so treat it as resumable.
   'could not be parsed',
+  // A proxy/gateway in front of Claude can intermittently return HTTP 200 with an
+  // empty or malformed body; the CLI surfaces it as "API returned an empty or
+  // malformed response". The turn produced no real output (only stray fragments
+  // from the broken stream), so it is a transient upstream failure that should
+  // auto-resume rather than dead-end the chat with an error bubble.
+  'empty or malformed response',
 ] as const
 
 const zeroExitPattern = /\b(?:codex|claude) exited with status code:\s*0\b/i

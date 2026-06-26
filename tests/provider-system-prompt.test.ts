@@ -106,6 +106,38 @@ test('claude runs include the final resolution marker instruction', () => {
   assert.match(promptValue, /ask-user-question/)
 })
 
+test('claude ultracode tier sends --effort xhigh (the CLI rejects "ultracode")', () => {
+  const args = buildClaudeArgs(
+    createRequest({ provider: 'claude', model: 'claude-opus-4-8', reasoningEffort: 'ultracode' }),
+    [],
+  )
+  const effortIndex = args.indexOf('--effort')
+  assert.notEqual(effortIndex, -1)
+  // --effort only accepts low/medium/high/xhigh/max; ultracode maps to xhigh.
+  assert.equal(args[effortIndex + 1], 'xhigh')
+  // The literal string "ultracode" must never reach the --effort flag.
+  assert.notEqual(args[effortIndex + 1], 'ultracode')
+})
+
+test('claude ultracode tier injects the ultracode keyword to trigger workflows', () => {
+  const ultracodeArgs = buildClaudeArgs(
+    createRequest({ provider: 'claude', model: 'claude-opus-4-8', reasoningEffort: 'ultracode' }),
+    [],
+  )
+  const sysIndex = ultracodeArgs.indexOf('--append-system-prompt')
+  assert.notEqual(sysIndex, -1)
+  assert.match(ultracodeArgs[sysIndex + 1] ?? '', /ultracode/)
+
+  // A non-ultracode tier must NOT inject the keyword (no surprise token burn).
+  const maxArgs = buildClaudeArgs(
+    createRequest({ provider: 'claude', model: 'claude-opus-4-8', reasoningEffort: 'max' }),
+    [],
+  )
+  const maxSysIndex = maxArgs.indexOf('--append-system-prompt')
+  assert.equal(maxArgs[maxArgs.indexOf('--effort') + 1], 'max')
+  assert.doesNotMatch(maxArgs[maxSysIndex + 1] ?? '', /ultracode/)
+})
+
 test('claude ask-user instruction avoids raw XML examples that prime text tool calls', () => {
   const enArgs = buildClaudeArgs(
     createRequest({
@@ -710,6 +742,28 @@ test('resume args omit an empty prompt when continuing a codex session', () => {
   ])
   assert.ok(args.includes('resume-session-1'))
   assert.ok(!args.includes(''))
+})
+
+test('claude streaming-input args keep the user prompt off argv', () => {
+  const longPrompt = 'line\n'.repeat(2000)
+  const args = buildClaudeArgs(
+    createRequest({
+      provider: 'claude',
+      model: 'claude-sonnet-4-6',
+      language: 'en',
+      prompt: longPrompt,
+      attachments: [],
+    }),
+    [],
+    { streamingInput: true },
+  )
+
+  assert.ok(args.includes('--input-format'))
+  assert.ok(args.includes('stream-json'))
+  assert.ok(!args.includes(longPrompt), 'streaming-input prompt must be sent over stdin, not argv')
+  const systemPromptIndex = args.indexOf('--append-system-prompt')
+  assert.notEqual(systemPromptIndex, -1)
+  assert.deepEqual(args.slice(systemPromptIndex + 2), [])
 })
 
 test('resume args include a fallback prompt when continuing a claude session with no new input', () => {

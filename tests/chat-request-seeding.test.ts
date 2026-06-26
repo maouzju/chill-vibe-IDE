@@ -417,4 +417,55 @@ describe('chat request seeding', () => {
     assert.match(prompt, /Transcript chunk 17/i)
     assert.doesNotMatch(prompt, /Transcript chunk 1:/i)
   })
+
+  it('keeps the full latest historical user prompt when seeding a fresh session', () => {
+    const longPrompt = Array.from({ length: 1000 }, (_, index) =>
+      index === 999
+        ? 'line 1000: KEEP_THIS_TAIL_SENTINEL'
+        : `line ${index + 1}: context detail`,
+    ).join('\n')
+
+    const prompt = buildSeededChatPrompt({
+      language: 'en',
+      prompt: 'What did I ask at the very end of my previous message?',
+      attachments: [],
+      messages: [
+        createMessage('user-long', 'user', longPrompt),
+        createMessage('assistant-ack', 'assistant', 'I will use the full request as context.'),
+      ],
+    })
+
+    for (let index = 1; index <= 1000; index += 1) {
+      const expectedLine = index === 1000
+        ? 'line 1000: KEEP_THIS_TAIL_SENTINEL'
+        : `line ${index}: context detail`
+      assert.ok(prompt.includes(expectedLine), `missing replayed prompt line ${index}`)
+    }
+    assert.doesNotMatch(prompt, /Fork transcript truncated/i)
+  })
+
+  it('keeps a protected long user prompt even when earlier omitted messages need a notice', () => {
+    const longPrompt = Array.from({ length: 1000 }, (_, index) =>
+      index === 999
+        ? 'line 1000: KEEP_PROTECTED_WITH_OMISSION_NOTICE'
+        : `line ${index + 1}: protected context detail`,
+    ).join('\n')
+
+    const prompt = buildSeededChatPrompt({
+      language: 'en',
+      prompt: 'Continue from the preserved long request.',
+      attachments: [],
+      messages: [
+        createMessage('older-assistant-1', 'assistant', `older assistant context ${'x'.repeat(3500)}`),
+        createMessage('older-assistant-2', 'assistant', `another older assistant context ${'y'.repeat(3500)}`),
+        createMessage('user-long', 'user', longPrompt),
+      ],
+    })
+
+    assert.match(prompt, /Earlier transcript omitted:/i)
+    assert.match(prompt, /line 1: protected context detail/i)
+    assert.match(prompt, /line 1000: KEEP_PROTECTED_WITH_OMISSION_NOTICE/i)
+    assert.doesNotMatch(prompt, /Fork transcript truncated/i)
+  })
+
 })

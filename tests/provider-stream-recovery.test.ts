@@ -120,6 +120,28 @@ test('a mid-stream socket disconnect after a live session is resumable', () => {
   )
 })
 
+test('an empty or malformed HTTP 200 upstream response after a live session is resumable', () => {
+  // A proxy/gateway in front of Claude can intermittently return HTTP 200 with an
+  // empty or malformed body, and the CLI surfaces it verbatim as
+  // "API returned an empty or malformed response (HTTP 200)". That is a transient
+  // upstream failure in the same class as a dropped socket: the turn produced no
+  // real assistant output, so with an existing session it must auto-resume
+  // instead of dead-ending the chat with a stray error bubble and the half
+  // fragments left over from the broken stream.
+  assert.deepEqual(
+    classifyProviderStreamErrorRecovery(
+      {
+        sessionId: 'session-1',
+      },
+      'API Error: API returned an empty or malformed response (HTTP 200) — check for a proxy or gateway intercepting the request',
+    ),
+    {
+      recoverable: true,
+      recoveryMode: 'resume-session',
+    },
+  )
+})
+
 test('setup and routing errors stay non-recoverable even with a session', () => {
   assert.deepEqual(
     classifyProviderStreamErrorRecovery(

@@ -4618,7 +4618,7 @@ function App() {
           state: appStateRef.current,
           loadEntry: loadSessionHistoryEntry,
         })
-        const nextState = applyActions([
+        const actions: IdeAction[] = [
           {
             type: 'importExternalSession',
             columnId,
@@ -4629,15 +4629,16 @@ function App() {
             type: 'removeSessionHistory',
             entryIds: [entryId],
           },
-        ])
+        ]
+        const nextState = applyActions(actions)
 
-        persistImmediately(nextState)
+        persistAfterActions(actions, nextState)
         updateLatestKnownAppState(nextState)
       } catch (error) {
         console.error('[history] Failed to restore archived session.', error)
       }
     })()
-  }, [applyActions, getColumn, persistImmediately, resolveColumnPaneTarget])
+  }, [applyActions, getColumn, persistAfterActions, resolveColumnPaneTarget])
 
   const handleDismissInterruptedSessions = useCallback(() => {
     if (!interruptedSessionRecovery) {

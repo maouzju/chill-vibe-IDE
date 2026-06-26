@@ -1579,15 +1579,10 @@ const ChatCardView = ({
   }, [pendingAttachments])
 
   useEffect(() => {
-    let cancelled = false
-    queueMicrotask(() => {
-      if (!cancelled) {
-        setAutoUrgeActive(card.autoUrgeActive === true)
-      }
-    })
-    return () => {
-      cancelled = true
-    }
+    const nextAutoUrgeActive = card.autoUrgeActive === true
+    setAutoUrgeActive((current) =>
+      current === nextAutoUrgeActive ? current : nextAutoUrgeActive,
+    )
   }, [card.autoUrgeActive, card.id])
 
   useEffect(() => {
@@ -1595,31 +1590,10 @@ const ChatCardView = ({
   }, [card.id])
 
   useEffect(() => {
-    let cancelled = false
-    queueMicrotask(() => {
-      if (!cancelled) {
-        setSelectedAutoUrgeProfileId(card.autoUrgeProfileId)
-      }
-    })
-    return () => {
-      cancelled = true
-    }
+    setSelectedAutoUrgeProfileId((current) =>
+      current === card.autoUrgeProfileId ? current : card.autoUrgeProfileId,
+    )
   }, [card.autoUrgeProfileId, card.id])
-
-  useEffect(() => {
-    if (!autoUrgeEnabled || !activeAutoUrgeProfile) {
-      return
-    }
-
-    if (selectedAutoUrgeProfileId === activeAutoUrgeProfile.id) {
-      return
-    }
-
-    queueMicrotask(() => {
-      setSelectedAutoUrgeProfileId(activeAutoUrgeProfile.id)
-    })
-    patchCard({ autoUrgeProfileId: activeAutoUrgeProfile.id })
-  }, [activeAutoUrgeProfile, autoUrgeEnabled, patchCard, selectedAutoUrgeProfileId])
 
   useEffect(() => {
     autoUrgeStateRef.current = {

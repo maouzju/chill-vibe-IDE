@@ -333,6 +333,67 @@ const installMockApis = async (page: Page) => {
   }
 }
 
+
+test('pane tab click still switches when pointer-up activation is missed', async ({ page }) => {
+  await installMockApis(page)
+  await page.goto(appUrl)
+
+  await expect(page.locator('.pane-tab.is-active .pane-tab-label')).toHaveText('History 1')
+
+  const targetTab = page.locator('.pane-tab').filter({ hasText: 'History 2' }).first()
+  await targetTab.dispatchEvent('click', {
+    bubbles: true,
+    cancelable: true,
+    detail: 1,
+    button: 0,
+  })
+
+  await expect(page.locator('.pane-tab.is-active .pane-tab-label')).toHaveText('History 2')
+})
+
+
+test('pane tab click still switches after a canceled drag gesture', async ({ page }) => {
+  await installMockApis(page)
+  await page.goto(appUrl)
+
+  await expect(page.locator('.pane-tab.is-active .pane-tab-label')).toHaveText('History 1')
+
+  const targetTab = page.locator('.pane-tab').filter({ hasText: 'History 2' }).first()
+  const box = await targetTab.boundingBox()
+  if (!box) {
+    throw new Error('Expected History 2 tab to be visible.')
+  }
+
+  await targetTab.dispatchEvent('pointerdown', {
+    bubbles: true,
+    cancelable: true,
+    button: 0,
+    pointerId: 17,
+    clientX: box.x + box.width / 2,
+    clientY: box.y + box.height / 2,
+  })
+  await targetTab.dispatchEvent('pointermove', {
+    bubbles: true,
+    cancelable: true,
+    button: 0,
+    pointerId: 17,
+    clientX: box.x + box.width / 2 + 24,
+    clientY: box.y + box.height / 2,
+  })
+  await targetTab.dispatchEvent('pointercancel', {
+    bubbles: true,
+    cancelable: true,
+    pointerId: 17,
+  })
+  await targetTab.dispatchEvent('dragend', {
+    bubbles: true,
+    cancelable: true,
+  })
+
+  await targetTab.click()
+  await expect(page.locator('.pane-tab.is-active .pane-tab-label')).toHaveText('History 2')
+})
+
 test('long pane tab switching stays interactive while hidden streams and fresh runs continue', async ({ page }) => {
   const pageErrors: string[] = []
   page.on('pageerror', (error) => {

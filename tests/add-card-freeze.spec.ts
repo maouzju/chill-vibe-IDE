@@ -181,6 +181,22 @@ test('adding a card in a narrow column does not freeze', async ({ page }) => {
   await expect(newCardTextarea).toBeFocused()
 })
 
+
+test('newly added tab focuses its composer immediately', async ({ page }) => {
+  await mockAppApis(page, { language: 'en' })
+  await page.goto(appUrl)
+
+  await expect(page.locator('.pane-tab.is-active')).toContainText('Chat 1')
+  await page.locator('.pane-add-tab').click()
+
+  await expect(page.locator('.pane-tab.is-active')).toContainText('New chat')
+  const composer = page.locator('.pane-tab-panel.is-active .composer textarea')
+  await expect(composer).toBeFocused()
+
+  await page.keyboard.type('typing works right after add tab')
+  await expect(composer).toHaveValue('typing works right after add tab')
+})
+
 test('adding a tab with many existing chats stays responsive without maximum-depth crashes', async ({ page }) => {
   const pageErrors: string[] = []
   page.on('pageerror', (error) => {

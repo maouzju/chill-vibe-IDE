@@ -296,6 +296,52 @@ test('stall watchdog uses the first-byte timeout before any output arrives', () 
   )
 })
 
+test('stall watchdog stays patient while a background-await tool (Workflow/subagent) is in flight', () => {
+  // `claude -p` synchronously waits for a dispatched Workflow/subagent (default
+  // cap 10 min), emitting no stdout for the whole run. The watchdog must use that
+  // long ceiling instead of the 120s stall window, or it false-kills the CLI
+  // mid-workflow. The result still streams back on the same turn afterwards.
+  assert.equal(
+    resolveLocalStreamStallTimeoutMs({
+      sawStreamOutput: true,
+      openCommandCount: 0,
+      firstByteTimeoutMs: 90_000,
+      stallTimeoutMs: 120_000,
+      backgroundAwaitActive: true,
+      backgroundAwaitTimeoutMs: 660_000,
+    }),
+    660_000,
+  )
+})
+
+test('stall watchdog fully disarms when a background-await wait is uncapped', () => {
+  assert.equal(
+    resolveLocalStreamStallTimeoutMs({
+      sawStreamOutput: true,
+      openCommandCount: 0,
+      firstByteTimeoutMs: 90_000,
+      stallTimeoutMs: 120_000,
+      backgroundAwaitActive: true,
+      backgroundAwaitTimeoutMs: null,
+    }),
+    null,
+  )
+})
+
+test('an open command still disarms the watchdog even with a background-await in flight', () => {
+  assert.equal(
+    resolveLocalStreamStallTimeoutMs({
+      sawStreamOutput: true,
+      openCommandCount: 1,
+      firstByteTimeoutMs: 90_000,
+      stallTimeoutMs: 120_000,
+      backgroundAwaitActive: true,
+      backgroundAwaitTimeoutMs: 660_000,
+    }),
+    null,
+  )
+})
+
 test('reasoning activity does not count as turn output, while real work does', () => {
   // Reasoning/thinking is the model's internal monologue, not user-facing work.
   // It must NOT mark the turn as having produced output, or enabling thinking

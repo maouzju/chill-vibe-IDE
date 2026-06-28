@@ -116,18 +116,28 @@ export const shouldRecoverEmptyToolCallTurn = (input: {
 // or `null` to disarm. The claude CLI runs tools (e.g. Bash) internally and emits
 // no stdout for the entire command duration, so while any command is in progress
 // the watchdog must disarm and let the CLI own its own per-tool timeout —
-// otherwise a legitimately long command would be false-killed. With no command
-// open, a shorter first-byte window covers a launch that never produces output,
-// and a longer between-events window covers a process that streamed something
-// and then went silent without a terminal event (Pitfall #42/#134).
+// otherwise a legitimately long command would be false-killed. The same is true
+// for a synchronously-awaited background tool (Workflow/subagent): `claude -p`
+// waits for it (default cap 10 min via CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS) and
+// streams nothing meanwhile, so the watchdog must stretch to that ceiling (or
+// disarm when the wait is uncapped) instead of false-killing the CLI mid-run.
+// With nothing in flight, a shorter first-byte window covers a launch that never
+// produces output, and a longer between-events window covers a process that
+// streamed something and then went silent without a terminal event (#42/#134).
 export const resolveLocalStreamStallTimeoutMs = (input: {
   sawStreamOutput: boolean
   openCommandCount: number
   firstByteTimeoutMs: number
   stallTimeoutMs: number
+  backgroundAwaitActive?: boolean
+  backgroundAwaitTimeoutMs?: number | null
 }): number | null => {
   if (input.openCommandCount > 0) {
     return null
+  }
+
+  if (input.backgroundAwaitActive) {
+    return input.backgroundAwaitTimeoutMs ?? null
   }
 
   return input.sawStreamOutput ? input.stallTimeoutMs : input.firstByteTimeoutMs

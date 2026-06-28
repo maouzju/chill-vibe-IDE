@@ -78,6 +78,7 @@ import { syncComposerTextareaHeight } from './chat-composer-textarea'
 import { createDraftSyncScheduler, draftSyncIdleMs } from './chat-draft-sync'
 import { evaluateAutoUrge, getNextAutoUrgeToggleState } from './chat-auto-urge'
 import { fetchSlashCommands, uploadImageAttachment } from '../api'
+import { canSendEmptyContinuation } from '../app-helpers'
 import { GitToolCard, type GitInfoSummary } from './GitToolCard'
 import { MusicCard } from './MusicCard'
 import { WhiteNoiseCard } from './WhiteNoiseCard'
@@ -2505,8 +2506,12 @@ const ChatCardView = ({
     return null
   }, [composerError, hasPendingAttachments, providerCanSendImages, text])
   const localSlashDraft = !hasPendingAttachments && isLocalSlashCommandInput(slashDraft)
+  // An empty draft normally disables Send. On a chat card that already has a
+  // conversation (AI finished or the run was interrupted), an empty send means
+  // "continue from here", so allow it.
+  const canContinueEmpty = !isToolCard && canSendEmptyContinuation(card)
   const sendDisabled =
-    (!draftHasText && !hasPendingAttachments) ||
+    (!draftHasText && !hasPendingAttachments && !canContinueEmpty) ||
     (hasPendingAttachments && !providerCanSendImages) ||
     (!localSlashDraft && !workspacePath.trim())
 

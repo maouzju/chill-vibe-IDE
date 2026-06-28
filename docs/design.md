@@ -132,6 +132,7 @@ type ChatCard = {
 - `sessionId` 对应 provider 原生会话 ID
 - `sessionId` 只在当前 provider 路由配置下有效；切换、删除或修改活跃 provider profile 后，相关 provider 的旧会话 ID 必须失效，后续请求改用可见历史重新开始，避免把旧供应商的原生加密上下文续到新供应商
 - `sessionModel` 记录该原生会话开始时使用的实际请求模型；继续会话前必须与本次请求模型一致。旧状态里没有 `sessionModel` 的会话视为模型未知，改模型后不能盲目续用，必须用可见历史开启新会话。
+- 已完成且包含历史图片附件的聊天也应保留 `sessionId` / `providerSessions`。重启后优先用 provider 原生会话恢复上下文，而不是把历史图片附件重新塞进 fresh-session replay；如果原生恢复真的失效，再走既有 stale-session → fresh-session 回退。
 - `size` 表示卡片的最小高度
 
 - Provider request model changes must sync to the Electron backend immediately, not only through delayed state persistence, so the next CLI launch uses the same configured model shown in the renderer.

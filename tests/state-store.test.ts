@@ -293,13 +293,14 @@ describe('state-store persistence', () => {
     assert.equal(loadedReviewColumn.cards[pinnedCardId]?.model, 'claude-opus-4-7')
   })
 
-  it('loadState drops persisted session ids for idle chats with historical image attachments', async () => {
+  it('loadState preserves persisted session ids for idle chats with historical image attachments', async () => {
     const stateFile = path.join(tmpDir, 'state.json')
     const state = createDefaultState('D:/image-session-replay')
     const firstCard = getFirstCard(state)
     assert.ok(firstCard, 'expected a default card to exist in the first column')
 
     firstCard.sessionId = 'resume-image-session'
+    firstCard.sessionModel = firstCard.model
     firstCard.providerSessions = {
       codex: 'resume-image-session',
       claude: 'resume-image-session-claude',
@@ -335,18 +336,74 @@ describe('state-store persistence', () => {
 
     assert.equal(
       loadedFirstCard?.sessionId,
-      undefined,
-      'image-bearing chats should replay into a fresh CLI session after app restart',
+      'resume-image-session',
+      'image-bearing chats should keep their CLI session id so restart resumes natively instead of re-stat-ing historical attachments',
+    )
+    assert.equal(
+      loadedFirstCard?.sessionModel,
+      firstCard.model,
+      'the recorded session model gates resume and must survive restart for image-bearing chats',
     )
     assert.deepEqual(
       loadedFirstCard?.providerSessions,
-      {},
-      'provider-specific resume sessions should also be discarded for image-bearing chats',
+      {
+        codex: 'resume-image-session',
+        claude: 'resume-image-session-claude',
+      },
+      'provider-specific resume sessions should also be preserved for image-bearing chats',
     )
     assert.equal(
       loadedFirstCard?.messages[0]?.meta?.imageAttachments,
       firstCard.messages[0]?.meta?.imageAttachments,
-      'replayed chats should keep their persisted image attachment metadata',
+      'resumable chats should keep their persisted image attachment metadata',
+    )
+  })
+
+  it('loadState preserves session ids for idle codex chats with historical image attachments', async () => {
+    const stateFile = path.join(tmpDir, 'state.json')
+    const state = createDefaultState('D:/image-session-replay-codex')
+    const card = getFirstCard(state, 1)
+    assert.ok(card, 'expected a default card to exist in the second column')
+
+    card.provider = 'codex'
+    card.model = DEFAULT_CODEX_MODEL
+    card.sessionId = 'resume-image-session-codex'
+    card.sessionModel = DEFAULT_CODEX_MODEL
+    card.providerSessions = {
+      codex: 'resume-image-session-codex',
+    }
+    card.messages = [
+      {
+        id: 'msg-user-image-codex',
+        role: 'user',
+        content: 'Look at this attached screenshot.',
+        createdAt: new Date('2026-04-11T07:05:00.000Z').toISOString(),
+        meta: attachImagesToMessageMeta([
+          {
+            id: 'image-codex-1',
+            fileName: 'screenshot.png',
+            mimeType: 'image/png',
+            sizeBytes: 4096,
+          },
+        ]),
+      },
+    ]
+
+    await writeFile(stateFile, JSON.stringify(state, null, 2), 'utf8')
+
+    const { loadState } = await import('../server/state-store.ts')
+    const loaded = await loadState()
+    const loadedCard = getFirstCard(loaded, 1)
+
+    assert.equal(
+      loadedCard?.sessionId,
+      'resume-image-session-codex',
+      'codex image-bearing chats should keep their session id so restart resumes natively',
+    )
+    assert.deepEqual(
+      loadedCard?.providerSessions,
+      { codex: 'resume-image-session-codex' },
+      'codex provider-specific resume sessions should also be preserved for image-bearing chats',
     )
   })
 

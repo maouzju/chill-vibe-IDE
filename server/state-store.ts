@@ -134,11 +134,6 @@ const getStartupPreferredModel = (settings: AppState['settings'], provider: Chat
   return rememberedModel || getConfiguredModel(settings, provider)
 }
 
-const shouldInvalidatePersistedChatSession = (
-  status: ChatCard['status'],
-  messages: ChatCard['messages'],
-) => status !== 'streaming' && messages.some((message) => getChatMessageAttachments(message).length > 0)
-
 const getSessionHistoryMessageCount = (
   entry: Pick<SessionHistoryEntry, 'messages' | 'messageCount'>,
 ) => Math.max(typeof entry.messageCount === 'number' ? entry.messageCount : 0, entry.messages.length)
@@ -583,10 +578,17 @@ const normalizePersistedCard = (
   const rawMessages = normalizePersistedMessages(
     hasRecoverableStream ? trimStreamingMessages(card.messages as ChatCard['messages']) : card.messages,
   )
-  const shouldInvalidateSession = shouldInvalidatePersistedChatSession(status, rawMessages)
-  const providerSessions = shouldInvalidateSession ? {} : normalizeStringRecord(card.providerSessions)
-  const sessionId = shouldInvalidateSession ? undefined : normalizeOptionalString(card.sessionId)
-  const sessionModel = shouldInvalidateSession ? undefined : normalizeOptionalString(card.sessionModel)
+  // Image-bearing chats keep their session so restart resumes natively rather
+  // than forcing a fresh-session replay that re-stat-s every historical
+  // attachment (collectSeededChatAttachments → resolveImageAttachmentPath, which
+  // can throw "Attachment not found."). Native resume (`claude -r` / codex exec
+  // resume) replays from the provider's own transcript and only carries the
+  // current turn's attachmentPaths. getResumeSessionIdForModel still gates resume
+  // on a matching sessionModel, and provider-stream-recovery's stale → fresh
+  // fallback still covers a genuinely broken resume (AGENTS.md pitfalls 47/105/118).
+  const providerSessions = normalizeStringRecord(card.providerSessions)
+  const sessionId = normalizeOptionalString(card.sessionId)
+  const sessionModel = normalizeOptionalString(card.sessionModel)
   const streamId = hasRecoverableStream ? normalizeOptionalString(card.streamId) : undefined
 
   return {
@@ -1578,7 +1580,6 @@ const sanitizeStateResult = (raw: unknown): SanitizedStateResult => {
           const messages = compactedMessages.messages.length > maxPersistedCardMessages
             ? compactedMessages.messages.slice(-maxPersistedCardMessages)
             : compactedMessages.messages
-          const shouldInvalidateSession = shouldInvalidatePersistedChatSession(status, messages)
           const normalizedModel = normalizeStoredModel(card.provider, card.model)
           const configuredModel = getConfiguredModel(safeSettings, card.provider)
           const startupPreferredModel = getStartupPreferredModel(safeSettings, card.provider)
@@ -1615,9 +1616,11 @@ const sanitizeStateResult = (raw: unknown): SanitizedStateResult => {
                   : getPreferredReasoningEffort(safeSettings, card.provider, migratedModel),
               title: card.title || '',
               draft: card.draft,
-              sessionId: shouldInvalidateSession ? undefined : card.sessionId,
-              sessionModel: shouldInvalidateSession ? undefined : card.sessionModel,
-              providerSessions: shouldInvalidateSession ? {} : card.providerSessions,
+              // Image-bearing chats keep their session so restart resumes natively
+              // (see normalizePersistedCard above) — no longer dropped here.
+              sessionId: card.sessionId,
+              sessionModel: card.sessionModel,
+              providerSessions: card.providerSessions,
               streamId: hasRecoverableStream ? card.streamId : undefined,
               status,
               pmTaskCardId: '',

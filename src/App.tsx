@@ -40,6 +40,7 @@ import {
   DEFAULT_CODEX_MODEL,
   FILETREE_TOOL_MODEL,
   IMAGEEDITOR_TOOL_MODEL,
+  MODEL_PICKER_HIDDEN_TOOL_MODELS,
   TEXTEDITOR_TOOL_MODEL,
   getModelOptions,
   isModelPickerOptionVisible,
@@ -158,6 +159,7 @@ import {
   errorMessage,
   finalizeStructuredActivityMessage,
   finalizeStreamedAssistantMessage,
+  canSendEmptyContinuation,
   getAgentDoneSoundUrl,
   getColumnById,
   getResumeSessionIdForModel,
@@ -3745,6 +3747,15 @@ function App() {
       attachments.length === 0 &&
       parsedSlashCommand?.name === 'compact' &&
       parsedSlashCommand.args.length === 0
+    // An empty send on a normal chat card that already has history or a native
+    // session means "continue from here". The user typed nothing, so no blank
+    // user bubble should be appended, even if the provider later reports that
+    // the local CLI is unavailable.
+    const isEmptyContinuation =
+      prompt.trim().length === 0 &&
+      attachments.length === 0 &&
+      !MODEL_PICKER_HIDDEN_TOOL_MODELS.has(card.model) &&
+      canSendEmptyContinuation(card)
     const baseUserMessage = isManualCodexCompactRequest
       ? markCompactBoundaryMessage(
           createMessage('user', '/compact', attachImagesToMessageMeta(attachments)),
@@ -3780,7 +3791,10 @@ function App() {
           type: 'appendMessages',
           columnId,
           cardId,
-          messages: [baseUserMessage, createMessage('system', text.localCliUnavailable)],
+          messages: [
+            ...(isEmptyContinuation ? [] : [baseUserMessage]),
+            createMessage('system', text.localCliUnavailable),
+          ],
         },
         {
           type: 'updateCard',
@@ -3802,7 +3816,7 @@ function App() {
     const userMessage = baseUserMessage
     let requestPrompt = seededRequestPrompt
     let requestAttachments = seededRequestAttachments
-    const requestMessages = [userMessage]
+    const requestMessages = isEmptyContinuation ? [] : [userMessage]
 
     if (isManualCodexCompactRequest) {
       requestPrompt = '/compact'

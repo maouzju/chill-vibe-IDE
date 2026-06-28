@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 
 import {
+  canSendEmptyContinuation,
   createStoppedRunMessage,
   createStructuredActivityMessage,
   createStructuredMessageId,
@@ -11,6 +12,14 @@ import {
   getColumnById,
   getResumeSessionIdForModel,
 } from '../src/app-helpers.ts'
+import type { ChatMessage } from '../shared/schema.ts'
+
+const makeMessage = (role: ChatMessage['role'], content = ''): ChatMessage => ({
+  id: `msg-${role}-${content || 'empty'}`,
+  role,
+  content,
+  createdAt: '2026-06-28T00:00:00.000Z',
+})
 
 test('agent-done sound URL respects the active base path', () => {
   assert.equal(getAgentDoneSoundUrl('/'), '/agent-done.wav')
@@ -342,4 +351,70 @@ test('finalizeStructuredActivityMessage keeps Claude prose before an ask-user to
   assert.equal(nextMessages[0]?.content, 'I reviewed the previous work and found the risky path.')
   assert.equal(nextMessages[1]?.id, 'claude:stream-3:item:ask-user:question')
   assert.equal(nextMessages[1]?.meta?.kind, 'ask-user')
+})
+
+test('canSendEmptyContinuation allows an idle card with assistant history', () => {
+  assert.equal(
+    canSendEmptyContinuation({
+      messages: [makeMessage('user', 'hi'), makeMessage('assistant', 'hello')],
+      sessionId: undefined,
+      status: 'idle',
+    }),
+    true,
+  )
+})
+
+test('canSendEmptyContinuation allows an idle card that only has a resumable session', () => {
+  assert.equal(
+    canSendEmptyContinuation({
+      messages: [],
+      sessionId: 'codex-session-1',
+      status: 'idle',
+    }),
+    true,
+  )
+})
+
+test('canSendEmptyContinuation allows continuing an error/interrupted card', () => {
+  assert.equal(
+    canSendEmptyContinuation({
+      messages: [makeMessage('user', 'do it'), makeMessage('assistant', 'partial...')],
+      sessionId: undefined,
+      status: 'error',
+    }),
+    true,
+  )
+})
+
+test('canSendEmptyContinuation refuses while the card is streaming', () => {
+  assert.equal(
+    canSendEmptyContinuation({
+      messages: [makeMessage('user', 'hi'), makeMessage('assistant', 'hello')],
+      sessionId: 'codex-session-1',
+      status: 'streaming',
+    }),
+    false,
+  )
+})
+
+test('canSendEmptyContinuation refuses a fresh card with no history and no session', () => {
+  assert.equal(
+    canSendEmptyContinuation({
+      messages: [],
+      sessionId: undefined,
+      status: 'idle',
+    }),
+    false,
+  )
+})
+
+test('canSendEmptyContinuation refuses a card that only holds a system notice', () => {
+  assert.equal(
+    canSendEmptyContinuation({
+      messages: [makeMessage('system', 'Local CLI unavailable')],
+      sessionId: undefined,
+      status: 'idle',
+    }),
+    false,
+  )
 })

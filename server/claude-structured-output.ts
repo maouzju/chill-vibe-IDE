@@ -180,6 +180,14 @@ const extractToolInput = (
 const isClaudeCommandTool = (toolName: string) =>
   toolName === 'Bash' || toolName === 'PowerShell' || toolName === 'BashOutput' || toolName === 'KillShell'
 
+// Tools that spawn subagents / workflows. In headless `claude -p` mode the CLI
+// SYNCHRONOUSLY waits for these to complete (their result is part of the turn's
+// final output, capped by CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS, default 10 min)
+// and emits no stdout for the whole run. The stall watchdog must treat them like
+// a long-running command and stay patient, or it false-kills the CLI mid-run.
+export const isClaudeBackgroundAwaitTool = (toolName: string) =>
+  toolName === 'Workflow' || toolName === 'Task' || toolName === 'Agent'
+
 const isClaudeEditTool = (toolName: string) =>
   toolName === 'Write' ||
   toolName === 'Edit' ||

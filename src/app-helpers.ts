@@ -108,6 +108,24 @@ export const getResumeSessionIdForModel = (
   return sessionModel === requestedModel ? card.sessionId : undefined
 }
 
+// An empty send means "continue from here": only allowed when the card already
+// has something to continue (resumable session or user/assistant history) and
+// is not mid-stream. A card holding just a system notice is not continuable.
+export const canSendEmptyContinuation = (
+  card: Pick<ChatCard, 'messages' | 'sessionId' | 'status'>,
+): boolean => {
+  if (card.status === 'streaming') {
+    return false
+  }
+
+  const hasResumableSession = Boolean(card.sessionId?.trim())
+  const hasHistory = card.messages.some(
+    (message) => message.role === 'user' || message.role === 'assistant',
+  )
+
+  return hasResumableSession || hasHistory
+}
+
 export const getRoutingImportText = (language: AppState['settings']['language']) =>
   language === 'en'
     ? {

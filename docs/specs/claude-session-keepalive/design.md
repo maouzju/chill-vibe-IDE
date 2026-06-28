@@ -52,7 +52,8 @@ idle 状态收到输出   ：触发 onUnsolicited(cardId) → 宿主创建 unsol
 stream-json 解析复用 providers.ts 现有折叠逻辑（事件类型、stripper、watchdog、openCommandCount），通过把现有 Claude 行处理器抽成可复用函数（按 turn 实例化）实现，不复制粘贴。
 
 ### D5：watchdog 适配
-- turn-active：现有规则照旧（first-byte / stall / openCommandCount>0 时 disarm，`resolveLocalStreamStallTimeoutMs` 不动）。
+- turn-active：first-byte / stall / `openCommandCount>0` 时 disarm。
+- **后台等待型工具豁免（Workflow / 子代理）**：headless `claude -p` 对 `Workflow`/`Task`/`Agent` 这类工具是**同步等待**的——结果是本 turn 最终输出的一部分，CLI 默认等到 10 分钟（`CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS`，`0`=不限时），其间不吐 stdout。这类工具不会增加 `openCommandCount`，所以 120s 的 stall 看门狗会在 workflow 还没跑完时误杀 CLI（卡片表现为"卡住/回答中断"）。`createClaudeTurnParser` 现在用 `isClaudeBackgroundAwaitTool` 在解析到这类 tool_use 时**按 turn 锁存** `sawBackgroundAwaitTool`，`resolveLocalStreamStallTimeoutMs` 据此把 stall 窗口拉到 `CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS + 60s`（不限时则完全 disarm），让 CLI 自己的 cap / 进程关闭兜底，workflow 合成结果随后在**同一条 stream** 上正常续出。
 - idle（turn 之间）：**完全 disarm** —— 静默是正常态。
 - 自发 turn 开始：作为新 turn 布防 stall watchdog。
 

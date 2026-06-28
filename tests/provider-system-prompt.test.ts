@@ -3845,7 +3845,7 @@ test('codex app-server omits unsupported experimental history fields on thread/r
   }
 })
 
-test('codex app-server continues an idle resumed thread by starting a blank turn', async () => {
+test('codex app-server continues an idle resumed thread with a neutral continue nudge', async () => {
   const capturePath = path.join(
     os.tmpdir(),
     `chill-vibe-codex-app-server-resume-idle-${Date.now()}-${Math.random().toString(36).slice(2)}.jsonl`,
@@ -3880,7 +3880,7 @@ test('codex app-server continues an idle resumed thread by starting a blank turn
     assert.deepEqual(turnStart.params?.input, [
       {
         type: 'text',
-        text: '',
+        text: 'Please continue.',
         text_elements: [],
       },
     ])
@@ -3889,7 +3889,7 @@ test('codex app-server continues an idle resumed thread by starting a blank turn
   }
 })
 
-test('codex app-server continues an active resumed thread by starting a blank turn', async () => {
+test('codex app-server continues an active resumed thread with a neutral continue nudge', async () => {
   const capturePath = path.join(
     os.tmpdir(),
     `chill-vibe-codex-app-server-resume-active-${Date.now()}-${Math.random().toString(36).slice(2)}.jsonl`,
@@ -3924,7 +3924,7 @@ test('codex app-server continues an active resumed thread by starting a blank tu
     assert.deepEqual(turnStart.params?.input, [
       {
         type: 'text',
-        text: '',
+        text: 'Please continue.',
         text_elements: [],
       },
     ])

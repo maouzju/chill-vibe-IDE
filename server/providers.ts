@@ -38,6 +38,7 @@ import { resolveImageAttachmentPath } from './attachments.js'
 import {
   createClaudeAskUserDeltaStripper,
   createClaudeStructuredOutputParser,
+  isClaudeBackgroundAwaitTool,
 } from './claude-structured-output.js'
 import { createCodexCompactionActivityDeduper } from './codex-compaction-dedupe.js'
 import { resolveClaudeRuntimeEnvironment } from './claude-runtime-environment.js'
@@ -787,6 +788,21 @@ const getLocalProviderFirstByteTimeoutMs = () =>
 const getLocalProviderStallTimeoutMs = () =>
   getLocalProviderTimeoutMs('CHILL_VIBE_LOCAL_PROVIDER_STALL_TIMEOUT_MS', 120_000)
 
+// How long the stall watchdog may wait while the CLI synchronously runs a
+// background tool (Workflow/subagent). `claude -p` caps that wait at 10 min by
+// default and exits when it lapses; we mirror the CLI's own knob
+// (CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS) and add a buffer so the CLI surfaces its
+// own terminal result/error first. `0` means "wait without a limit" per the CLI
+// docs, so the watchdog disarms entirely (null) and relies on process-close.
+const getBackgroundAwaitWatchdogMs = (): number | null => {
+  const parsed = Number.parseInt(process.env.CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS ?? '', 10)
+  if (Number.isFinite(parsed) && parsed === 0) {
+    return null
+  }
+  const ceilingMs = Number.isFinite(parsed) && parsed >= 50 ? parsed : 600_000
+  return ceilingMs + 60_000
+}
+
 const classifyLiveProviderStreamRecovery = (
   request: Pick<ChatRequest, 'sessionId'>,
   message: string,
@@ -1265,14 +1281,20 @@ const buildCodexAppServerBaseInstructions = (request: ChatRequest) =>
     getCodexWindowsShellSafetyInstruction(),
   ].join(' ')
 
-const buildCodexAppServerInput = (request: ChatRequest, attachmentPaths: string[]) => {
+export const buildCodexAppServerInput = (request: ChatRequest, attachmentPaths: string[]) => {
   const prompt = request.prompt.trim()
   const items: Array<Record<string, unknown>> = []
 
   if (prompt || attachmentPaths.length > 0 || request.sessionId) {
     items.push({
       type: 'text',
-      text: prompt || (attachmentPaths.length > 0 ? getCodexPrompt(request, attachmentPaths) : ''),
+      // An empty prompt on a resumed session means "continue". Send a neutral
+      // nudge instead of an empty text item, mirroring getClaudePrompt, so the
+      // model actually continues rather than receiving a blank turn.
+      text:
+        prompt ||
+        (attachmentPaths.length > 0 ? getCodexPrompt(request, attachmentPaths) : '') ||
+        (request.sessionId ? 'Please continue.' : ''),
       text_elements: [],
     })
   }
@@ -2212,6 +2234,12 @@ export const createClaudeTurnParser = (hooks: {
   // progress (the CLI emits no stdout for the command duration and owns its own
   // per-tool timeout), so it never false-kills a legitimately long command.
   let openClaudeCommandCount = 0
+  // Latched once the turn dispatches a synchronously-awaited background tool
+  // (Workflow/subagent). The CLI then runs it silently and waits (up to its own
+  // 10-min cap); the watchdog must stay patient for the rest of the turn instead
+  // of false-killing the CLI during that silent wait. Resets per turn (the parser
+  // is created fresh each turn).
+  let sawBackgroundAwaitTool = false
   let claudeStallTimer: ReturnType<typeof setTimeout> | undefined
   let finished = false
 
@@ -2239,6 +2267,8 @@ export const createClaudeTurnParser = (hooks: {
       openCommandCount: openClaudeCommandCount,
       firstByteTimeoutMs: getLocalProviderFirstByteTimeoutMs(),
       stallTimeoutMs: getLocalProviderStallTimeoutMs(),
+      backgroundAwaitActive: sawBackgroundAwaitTool,
+      backgroundAwaitTimeoutMs: getBackgroundAwaitWatchdogMs(),
     })
 
     if (timeoutMs === null) {
@@ -2324,6 +2354,15 @@ export const createClaudeTurnParser = (hooks: {
           } else if (parsed.status === 'completed') {
             openClaudeCommandCount = Math.max(0, openClaudeCommandCount - 1)
           }
+        }
+        if (
+          parsed.kind === 'tool' &&
+          typeof parsed.toolName === 'string' &&
+          isClaudeBackgroundAwaitTool(parsed.toolName)
+        ) {
+          // A Workflow/subagent was dispatched: the CLI now runs it silently and
+          // waits for it. Keep the watchdog patient for the rest of this turn.
+          sawBackgroundAwaitTool = true
         }
         const activity = { ...parsed }
         delete (activity as { type?: 'activity' }).type

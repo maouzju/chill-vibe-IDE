@@ -8,6 +8,7 @@ type Listener = (event?: unknown) => void
 const createFakeWindow = () => {
   const windowListeners = new Map<string, Set<Listener>>()
   const documentListeners = new Map<string, Set<Listener>>()
+  const hoverTargetListeners = new Map<string, Set<Listener>>()
 
   const fakeWindow = {
     addEventListener(name: string, listener: Listener) {
@@ -30,15 +31,34 @@ const createFakeWindow = () => {
     },
   }
 
+  const fakeHoverTarget = {
+    addEventListener(name: string, listener: Listener) {
+      if (!hoverTargetListeners.has(name)) hoverTargetListeners.set(name, new Set())
+      hoverTargetListeners.get(name)!.add(listener)
+    },
+    removeEventListener(name: string, listener: Listener) {
+      hoverTargetListeners.get(name)?.delete(listener)
+    },
+  }
+
   return {
     fakeWindow,
     fakeDocument,
-    fire(target: 'window' | 'document', name: string) {
-      const bucket = target === 'window' ? windowListeners : documentListeners
+    fakeHoverTarget,
+    fire(target: 'window' | 'document' | 'hoverTarget', name: string) {
+      const bucket = target === 'window'
+        ? windowListeners
+        : target === 'document'
+          ? documentListeners
+          : hoverTargetListeners
       bucket.get(name)?.forEach((listener) => listener())
     },
-    listenerCount(target: 'window' | 'document', name: string) {
-      const bucket = target === 'window' ? windowListeners : documentListeners
+    listenerCount(target: 'window' | 'document' | 'hoverTarget', name: string) {
+      const bucket = target === 'window'
+        ? windowListeners
+        : target === 'document'
+          ? documentListeners
+          : hoverTargetListeners
       return bucket.get(name)?.size ?? 0
     },
   }
@@ -85,20 +105,44 @@ test('attachFileTreeAutoRefreshTriggers runs refresh when the document becomes v
   detach()
 })
 
+test('attachFileTreeAutoRefreshTriggers runs refresh every time the file tree card is hovered', () => {
+  const env = createFakeWindow()
+  let refreshCalls = 0
+
+  const detach = attachFileTreeAutoRefreshTriggers({
+    win: env.fakeWindow,
+    doc: env.fakeDocument,
+    hoverTarget: env.fakeHoverTarget,
+    onRefresh: () => {
+      refreshCalls += 1
+    },
+  })
+
+  env.fire('hoverTarget', 'pointerenter')
+  env.fire('hoverTarget', 'pointerenter')
+
+  assert.equal(refreshCalls, 2)
+
+  detach()
+})
+
 test('attachFileTreeAutoRefreshTriggers detaches all listeners on teardown', () => {
   const env = createFakeWindow()
 
   const detach = attachFileTreeAutoRefreshTriggers({
     win: env.fakeWindow,
     doc: env.fakeDocument,
+    hoverTarget: env.fakeHoverTarget,
     onRefresh: () => undefined,
   })
 
   assert.equal(env.listenerCount('window', 'focus'), 1)
   assert.equal(env.listenerCount('document', 'visibilitychange'), 1)
+  assert.equal(env.listenerCount('hoverTarget', 'pointerenter'), 1)
 
   detach()
 
   assert.equal(env.listenerCount('window', 'focus'), 0)
   assert.equal(env.listenerCount('document', 'visibilitychange'), 0)
+  assert.equal(env.listenerCount('hoverTarget', 'pointerenter'), 0)
 })

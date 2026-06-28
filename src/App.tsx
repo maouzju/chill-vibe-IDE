@@ -7445,9 +7445,10 @@ function App() {
             onCancelQueuedSends={(cardId) => clearQueuedSends(cardId)}
             onSendNextQueuedNow={(cardId) => sendNextQueuedNow(column.id, cardId)}
             onManualRecoverStream={(cardId) => manuallyRecoverStream(column.id, cardId)}
-            onForkConversation={(cardId, messageId) =>
-              dispatch({ type: 'forkConversation', columnId: column.id, cardId, messageId })
-            }
+            onForkConversation={(cardId, messageId) => {
+              const action: IdeAction = { type: 'forkConversation', columnId: column.id, cardId, messageId }
+              persistAfterAction(action.type, applyAction(action))
+            }}
             onOpenFile={(paneId, relativePath) => {
               const fileName = relativePath.split('/').pop() ?? relativePath
               openTextEditorTab(column.id, paneId, relativePath, fileName)

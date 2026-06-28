@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { readFile } from 'node:fs/promises'
 import { describe, it } from 'node:test'
 
 import { createDefaultBrainstormState } from '../shared/brainstorm.ts'
@@ -132,6 +133,21 @@ describe('forkConversation', () => {
     ])
   })
 
+  it('fork updates the state timestamp so the new tab is not lost before delayed autosave', () => {
+    const next = ideReducer(state, {
+      type: 'forkConversation',
+      columnId: 'col-1',
+      cardId: 'card-1',
+      messageId: 'm3',
+    })
+
+    assert.notEqual(
+      next.updatedAt,
+      state.updatedAt,
+      'forked cards must bump updatedAt so persistence sees a new snapshot',
+    )
+  })
+
   it('forking on an assistant message falls back to the preceding user prompt', () => {
     const next = ideReducer(state, {
       type: 'forkConversation',
@@ -250,5 +266,19 @@ describe('forkConversation', () => {
     const forkedCard = nextColumn.cards[forkedCardId]!
     // Default settings language is 'zh-CN'
     assert.equal(forkedCard.title, getForkConversationTitle('zh-CN', 'Chat 1'))
+  })
+
+  it('App persists forked conversations immediately instead of relying on delayed autosave', async () => {
+    const source = await readFile(new URL('../src/App.tsx', import.meta.url), 'utf8')
+    const handlerStart = source.indexOf('onForkConversation={(cardId, messageId)')
+    const handlerEnd = handlerStart >= 0 ? source.indexOf('onOpenFile=', handlerStart) : -1
+    const handlerBlock =
+      handlerStart >= 0 && handlerEnd > handlerStart
+        ? source.slice(handlerStart, handlerEnd)
+        : ''
+
+    assert.match(handlerBlock, /const action: IdeAction = \{\s*type: 'forkConversation'/)
+    assert.match(handlerBlock, /persistAfterAction\(action\.type,\s*applyAction\(action\)\)/)
+    assert.doesNotMatch(handlerBlock, /dispatch\(\{\s*type: 'forkConversation'/)
   })
 })

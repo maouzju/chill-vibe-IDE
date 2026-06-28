@@ -356,6 +356,7 @@ const FileTreeCardInner = ({ cardId, workspacePath, language, onOpenFile }: File
   const [rootDropActive, setRootDropActive] = useState(false)
   const mountedRef = useRef(true)
   const searchCacheRef = useRef(new Map<string, FileSearchEntry[]>())
+  const cardRef = useRef<HTMLDivElement | null>(null)
   const contextMenuRef = useRef<HTMLDivElement | null>(null)
   const nameInputRef = useRef<HTMLInputElement | null>(null)
   const frame = typeof window === 'undefined' ? undefined : window
@@ -730,6 +731,7 @@ const FileTreeCardInner = ({ cardId, workspacePath, language, onOpenFile }: File
     return attachFileTreeAutoRefreshTriggers({
       win: window,
       doc: document,
+      hoverTarget: cardRef.current,
       onRefresh: triggerRefresh,
     })
   }, [clearSearchCache, refreshSearch, refreshVisibleTree, searchQuery])
@@ -1092,7 +1094,7 @@ const FileTreeCardInner = ({ cardId, workspacePath, language, onOpenFile }: File
   }, [clearDropState])
 
   return (
-    <div className="file-tree-card">
+    <div ref={cardRef} className="file-tree-card">
       <div className="file-tree-toolbar">
         <input
           className="control file-tree-search-input"

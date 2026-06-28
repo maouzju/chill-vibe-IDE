@@ -23,6 +23,7 @@ When the user clicks an image in the Files card, Chill Vibe should open it insid
 ## UX Requirements
 - Image preview must live inside a Chill Vibe card.
 - The Files card click should route images to the image viewer/editor and text files to the existing text editor.
+- The Files card should refresh its visible tree/search data from disk whenever the user hovers the card, so recently created, renamed, moved, or deleted files are visible before opening.
 - UI should stay quiet and theme-safe in light and dark themes.
 - If image loading fails, show a readable card-local error and keep the user on the board.
 

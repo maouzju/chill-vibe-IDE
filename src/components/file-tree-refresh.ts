@@ -80,12 +80,14 @@ type AutoRefreshDocumentLike = AutoRefreshWindowLike & {
 export type AttachFileTreeAutoRefreshOptions = {
   win: AutoRefreshWindowLike
   doc: AutoRefreshDocumentLike
+  hoverTarget?: AutoRefreshWindowLike | null
   onRefresh: () => void
 }
 
 export const attachFileTreeAutoRefreshTriggers = ({
   win,
   doc,
+  hoverTarget,
   onRefresh,
 }: AttachFileTreeAutoRefreshOptions) => {
   const handleFocus: AutoRefreshListener = () => {
@@ -98,12 +100,18 @@ export const attachFileTreeAutoRefreshTriggers = ({
     }
   }
 
+  const handleHover: AutoRefreshListener = () => {
+    onRefresh()
+  }
+
   win.addEventListener('focus', handleFocus)
   doc.addEventListener('visibilitychange', handleVisibilityChange)
+  hoverTarget?.addEventListener('pointerenter', handleHover)
 
   return () => {
     win.removeEventListener('focus', handleFocus)
     doc.removeEventListener('visibilitychange', handleVisibilityChange)
+    hoverTarget?.removeEventListener('pointerenter', handleHover)
   }
 }
 

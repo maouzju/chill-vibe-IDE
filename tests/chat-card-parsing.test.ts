@@ -214,6 +214,39 @@ test('parseStructuredReasoningMessage removes leaked call marker lines from reas
   assert.equal(parsed.text, 'First thought.\n\nSecond thought.')
 })
 
+
+
+test('buildRenderableMessages hides Claude typed-tool retry chatter between tool activities', () => {
+  const chatter = makeMessage({
+    id: 'typed-tool-retry-chatter',
+    content: 'call\nEdit 工具反复解析失败,改用 Write 整文件重写。',
+    meta: { provider: 'claude' },
+  })
+  const messages = [
+    makeToolMessage('Read', '读取 character-row-20284.json'),
+    chatter,
+    makeEditsMessage('stream-1', [
+      {
+        path: 'fixtures/catalog/characters/character-row-20284.json',
+        addedLines: 25,
+        removedLines: 0,
+      },
+    ]),
+  ]
+
+  const result = buildRenderableMessages(messages)
+
+  assert.equal(result.length, 1)
+  assert.equal(result[0]!.type, 'tool-group')
+  if (result[0]!.type === 'tool-group') {
+    assert.equal(result[0]!.items.length, 2)
+    assert.deepEqual(
+      result[0]!.items.map((item) => item.kind),
+      ['tool', 'edits'],
+    )
+  }
+})
+
 test('buildRenderableMessages removes leaked Claude call marker lines from assistant text', () => {
   const leaked = makeMessage({
     id: 'leaked-call-lines',

@@ -60,7 +60,7 @@ export const minStickyNoteCardSize = 96
 export const defaultWhiteNoiseCardSize = 286
 export const minWhiteNoiseCardSize = 208
 export const minWeatherCardSize = 160
-export const minColumnWidth = 260
+export const minColumnWidth = 130
 export const minUiScale = 0.8
 export const maxUiScale = 1.35
 export const minFontScale = 0.85
@@ -291,6 +291,9 @@ export const getAutoUrgeProfileFallbackName = (
   return index === 0 ? '默认鞭策' : `鞭策类型 ${index + 1}`
 }
 
+const normalizeAutoUrgeMessage = (value: unknown, fallback: string) =>
+  typeof value === 'string' ? value : fallback
+
 const normalizeAutoUrgeText = (value: unknown, fallback: string) =>
   typeof value === 'string' && value.trim() ? value : fallback
 
@@ -301,7 +304,7 @@ export const createAutoUrgeProfile = (
 ): AutoUrgeProfile => ({
   id: normalizeText(overrides.id) || options.fallbackId || createId(),
   name: normalizeText(overrides.name) || getAutoUrgeProfileFallbackName(language, options.index ?? 0),
-  message: normalizeAutoUrgeText(overrides.message, defaultAutoUrgeMessage),
+  message: normalizeAutoUrgeMessage(overrides.message, defaultAutoUrgeMessage),
   successKeyword: normalizeAutoUrgeText(overrides.successKeyword, defaultAutoUrgeSuccessKeyword),
 })
 

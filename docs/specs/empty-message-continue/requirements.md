@@ -10,11 +10,13 @@ When an agent chat card already has a conversation — the AI has finished its a
 2. **Both providers behave the same** — Empty continuation works for both `claude` and `codex` cards. Neither should fail to launch, error out, or send a meaningless blank turn to the model.
 3. **No empty user bubble** — An empty continuation must not leave a blank user message bubble in the transcript; the user typed nothing, so nothing user-authored should appear.
 4. **Send affordances reflect it** — The send button and Enter key are enabled for an empty draft only when the card is in a continuable state.
+5. **Blank Auto Urge = continue** — An Auto Urge profile may intentionally leave its urge message empty. When it fires on a continuable chat, it should trigger the same empty-message continuation path instead of being skipped or replaced by the default urge text.
 
 ## Non-goals
 
 - Empty send on a brand-new card with no history and no session (there is nothing to continue — stays disabled).
 - Empty send on tool cards (Git / Music / White-noise / Weather / Sticky / Files / Brainstorm / Text-editor / Image-editor) — their send semantics differ.
+- Blank Auto Urge on a non-continuable chat — it stays skipped because there is no prior context to continue.
 - Changing streaming-time behavior. While a card is streaming, the existing queue / interrupt logic owns the send button; this feature only relaxes the "blank draft is disabled" gate for idle cards.
 - Persisting any new state or schema change.
 
@@ -31,4 +33,5 @@ A card may send an empty continuation when **all** of:
 - On a claude card that just finished an answer, clearing the composer and pressing Enter starts a new turn and the agent continues; no blank user bubble appears.
 - Same on a codex card.
 - On a fresh empty card (no history, no session), the send button stays disabled for a blank draft.
+- An Auto Urge profile with an empty message is preserved as empty in settings, and when it fires after an unfinished assistant turn it starts a continuation without adding a blank user bubble.
 - The schema-level chat request validation (`shared/schema.ts`) is unchanged and still accepts these requests (resumable session, or seeded transcript for sessionless history).

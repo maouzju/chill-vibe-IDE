@@ -1,4 +1,6 @@
 import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
+import { fileURLToPath } from 'node:url'
 import { describe, it } from 'node:test'
 
 import {
@@ -401,9 +403,19 @@ describe('default-state helpers', () => {
   })
 
   it('normalizes persisted column widths and leaves unset columns flexible', () => {
-    assert.equal(normalizeColumnWidth(180), minColumnWidth)
+    assert.equal(minColumnWidth, 130)
+    assert.equal(normalizeColumnWidth(100), minColumnWidth)
+    assert.equal(normalizeColumnWidth(180), 180)
     assert.equal(normalizeColumnWidth(520.4), 520)
     assert.equal(normalizeColumnWidth(undefined), undefined)
+  })
+
+  it('keeps the workspace column CSS minimum in sync with the persisted width minimum', () => {
+    const css = readFileSync(fileURLToPath(new URL('../src/index.css', import.meta.url)), 'utf8')
+    const rule = css.match(/\n\.workspace-column\s*\{[^}]*\}/)
+
+    assert.ok(rule, 'workspace column CSS rule should exist')
+    assert.match(rule[0], new RegExp(`min-width:\\s*${minColumnWidth}px`))
   })
 
   it('builds compact chat titles from prompts', () => {

@@ -40,6 +40,26 @@ describe('auto urge profile settings', () => {
     assert.equal(settings.autoUrgeSuccessKeyword, 'APPROVED')
   })
 
+
+  it('preserves an explicitly empty auto urge profile message so blank urges can continue', () => {
+    const settings = normalizeAppSettings({
+      autoUrgeEnabled: true,
+      autoUrgeProfiles: [
+        {
+          id: 'profile-empty',
+          name: 'Continue only',
+          message: '',
+          successKeyword: 'DONE',
+        },
+      ],
+      autoUrgeActiveProfileId: 'profile-empty',
+    })
+
+    assert.equal(settings.autoUrgeProfiles[0]?.message, '')
+    assert.equal(settings.autoUrgeMessage, '')
+    assert.equal(settings.autoUrgeSuccessKeyword, 'DONE')
+  })
+
   it('upgrades legacy single-message settings into the new profile list', () => {
     const settings = normalizeAppSettings({
       autoUrgeEnabled: true,

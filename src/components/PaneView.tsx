@@ -48,6 +48,7 @@ import {
 
 type DropEdge = 'left' | 'right' | 'top' | 'bottom'
 type DropPlacement = 'before' | 'after'
+const tabPointerDownFallbackDelayMs = 80
 
 type PaneViewProps = {
   column: BoardColumn
@@ -545,7 +546,7 @@ const PaneViewView = ({
       return
     }
 
-    window.cancelAnimationFrame(pendingTabSwitchRef.current)
+    window.clearTimeout(pendingTabSwitchRef.current)
     pendingTabSwitchRef.current = null
   }
 
@@ -593,15 +594,20 @@ const PaneViewView = ({
 
     cancelPendingTabSwitch()
 
-    pendingTabSwitchRef.current = window.requestAnimationFrame(() => {
+    const autoReadCardId = getAutoReadCardId(column.cards[tabId], true)
+    onSetActiveTab(pane.id, tabId)
+    if (autoReadCardId) {
+      onMarkCardRead(autoReadCardId)
+    }
+    requestComposerFocus(tabId)
+  }
+
+  const schedulePointerDownTabActivation = (tabId: string) => {
+    cancelPendingTabSwitch()
+    pendingTabSwitchRef.current = window.setTimeout(() => {
       pendingTabSwitchRef.current = null
-      const autoReadCardId = getAutoReadCardId(column.cards[tabId], true)
-      onSetActiveTab(pane.id, tabId)
-      if (autoReadCardId) {
-        onMarkCardRead(autoReadCardId)
-      }
-      requestComposerFocus(tabId)
-    })
+      activateTab(tabId)
+    }, tabPointerDownFallbackDelayMs)
   }
 
   const requestComposerFocus = (tabId: string) => {
@@ -641,6 +647,7 @@ const PaneViewView = ({
       y: event.clientY,
       dragging: false,
     }
+    schedulePointerDownTabActivation(tabId)
   }
 
   const handleTabPointerMove = (event: PointerEvent<HTMLButtonElement>) => {
@@ -677,8 +684,9 @@ const PaneViewView = ({
 
     tabPointerDownRef.current = null
     if (pointerDown.tabId === tabId && !pointerDown.dragging) {
-      suppressNextTabClickRef.current = tabId
+      cancelPendingTabSwitch()
       activateTab(tabId)
+      suppressNextTabClickRef.current = tabId
     }
   }
 

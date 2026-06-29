@@ -76,6 +76,58 @@ const getFixedColumnFlexStyle = (width: number) => ({
   flexShrink: 1,
 })
 
+type PrimaryMouseDownActivationOptions = {
+  preventDefault?: boolean
+  stopPropagation?: boolean
+}
+
+const usePrimaryMouseDownActivation = <T extends HTMLElement>(
+  onActivate: (event: MouseEvent<T>) => void,
+  {
+    preventDefault = true,
+    stopPropagation = false,
+  }: PrimaryMouseDownActivationOptions = {},
+) => {
+  const activatedOnMouseDownRef = useRef(false)
+
+  return useMemo(
+    () => ({
+      onMouseDown: (event: MouseEvent<T>) => {
+        if (event.button !== 0) {
+          return
+        }
+
+        activatedOnMouseDownRef.current = true
+        if (preventDefault) {
+          event.preventDefault()
+        }
+        if (stopPropagation) {
+          event.stopPropagation()
+        }
+        onActivate(event)
+      },
+      onClick: (event: MouseEvent<T>) => {
+        if (activatedOnMouseDownRef.current) {
+          activatedOnMouseDownRef.current = false
+          if (preventDefault) {
+            event.preventDefault()
+          }
+          if (stopPropagation) {
+            event.stopPropagation()
+          }
+          return
+        }
+
+        if (stopPropagation) {
+          event.stopPropagation()
+        }
+        onActivate(event)
+      },
+    }),
+    [onActivate, preventDefault, stopPropagation],
+  )
+}
+
 type WorkspaceColumnProps = {
   column: BoardColumn
   providers: Record<string, ProviderStatus>
@@ -362,6 +414,24 @@ const WorkspaceColumnView = ({
     setHistoryMenuOpen(true)
   }
 
+  const historyMenuTogglePressHandlers = usePrimaryMouseDownActivation<HTMLButtonElement>(
+    () => {
+      setEditingPath(false)
+      setRecentMenuView(false)
+      setHistoryMenuOpen((current) => {
+        if (current) {
+          setHistorySearch('')
+          return false
+        }
+
+        setHistoryTab('internal')
+        setHistorySearch('')
+        return true
+      })
+    },
+    { stopPropagation: true },
+  )
+
   const handlePathEditorBlur = (event: FocusEvent<HTMLDivElement>) => {
     const nextTarget = event.relatedTarget
     if (nextTarget instanceof Node && event.currentTarget.contains(nextTarget)) {
@@ -435,25 +505,99 @@ const WorkspaceColumnView = ({
     setColumnDropHint(null)
   }
 
-  const handleImportExternalSession = async (session: ExternalSessionSummary) => {
-    setImportingSessionId(session.id)
+  const activatedHistoryRestoreIdRef = useRef<string | null>(null)
+  const activatedExternalImportIdRef = useRef<string | null>(null)
 
-    try {
-      const response = await loadExternalSession({
-        provider: session.provider,
-        sessionId: session.id,
-        workspacePath: session.workspacePath,
-      })
-
-      onImportExternalSession(response.entry)
+  const restoreSessionHistoryEntry = useCallback(
+    (entryId: string) => {
+      onRestoreSession(entryId)
       closeHistoryMenu()
-      setHistoryTab('internal')
-    } catch {
-      // Ignore import errors and leave the menu open.
-    } finally {
-      setImportingSessionId(null)
-    }
-  }
+    },
+    [closeHistoryMenu, onRestoreSession],
+  )
+
+  const handleRestoreSessionHistoryPress = useCallback(
+    (event: MouseEvent<HTMLButtonElement>, entryId: string) => {
+      if (event.button !== 0) {
+        return
+      }
+
+      event.preventDefault()
+      activatedHistoryRestoreIdRef.current = entryId
+      window.setTimeout(() => {
+        if (activatedHistoryRestoreIdRef.current === entryId) {
+          activatedHistoryRestoreIdRef.current = null
+        }
+      }, 0)
+      restoreSessionHistoryEntry(entryId)
+    },
+    [restoreSessionHistoryEntry],
+  )
+
+  const handleRestoreSessionHistoryClick = useCallback(
+    (entryId: string) => {
+      if (activatedHistoryRestoreIdRef.current === entryId) {
+        activatedHistoryRestoreIdRef.current = null
+        return
+      }
+
+      restoreSessionHistoryEntry(entryId)
+    },
+    [restoreSessionHistoryEntry],
+  )
+
+  const handleImportExternalSession = useCallback(
+    async (session: ExternalSessionSummary) => {
+      setImportingSessionId(session.id)
+
+      try {
+        const response = await loadExternalSession({
+          provider: session.provider,
+          sessionId: session.id,
+          workspacePath: session.workspacePath,
+        })
+
+        onImportExternalSession(response.entry)
+        closeHistoryMenu()
+        setHistoryTab('internal')
+      } catch {
+        // Ignore import errors and leave the menu open.
+      } finally {
+        setImportingSessionId(null)
+      }
+    },
+    [closeHistoryMenu, onImportExternalSession],
+  )
+
+  const handleImportExternalSessionPress = useCallback(
+    (event: MouseEvent<HTMLButtonElement>, session: ExternalSessionSummary) => {
+      if (event.button !== 0 || importingSessionId === session.id) {
+        return
+      }
+
+      event.preventDefault()
+      activatedExternalImportIdRef.current = session.id
+      window.setTimeout(() => {
+        if (activatedExternalImportIdRef.current === session.id) {
+          activatedExternalImportIdRef.current = null
+        }
+      }, 0)
+      void handleImportExternalSession(session)
+    },
+    [handleImportExternalSession, importingSessionId],
+  )
+
+  const handleImportExternalSessionClick = useCallback(
+    (session: ExternalSessionSummary) => {
+      if (activatedExternalImportIdRef.current === session.id) {
+        activatedExternalImportIdRef.current = null
+        return
+      }
+
+      void handleImportExternalSession(session)
+    },
+    [handleImportExternalSession],
+  )
 
   const handleColumnResizeStart = (event: PointerEvent<HTMLDivElement>) => {
     event.preventDefault()
@@ -614,22 +758,7 @@ const WorkspaceColumnView = ({
                 label={text.sessionHistory}
                 className="column-secondary-action"
                 draggable={false}
-                onMouseDown={(event) => event.stopPropagation()}
-                onClick={(event) => {
-                  event.stopPropagation()
-                  setEditingPath(false)
-                  setRecentMenuView(false)
-                  setHistoryMenuOpen((current) => {
-                    if (current) {
-                      setHistorySearch('')
-                      return false
-                    }
-
-                    setHistoryTab('internal')
-                    setHistorySearch('')
-                    return true
-                  })
-                }}
+                {...historyMenuTogglePressHandlers}
               >
                 <HistoryIcon />
               </IconButton>
@@ -786,10 +915,8 @@ const WorkspaceColumnView = ({
                     type="button"
                     className={`session-history-item is-${getSessionHistoryLifecycle(entry)}`}
                     title={entry.title}
-                    onClick={() => {
-                      onRestoreSession(entry.id)
-                      closeHistoryMenu()
-                    }}
+                    onMouseDown={(event) => handleRestoreSessionHistoryPress(event, entry.id)}
+                    onClick={() => handleRestoreSessionHistoryClick(entry.id)}
                   >
                     <span className="session-history-title-row">
                       <span className="session-history-title">{entry.title}</span>
@@ -820,7 +947,8 @@ const WorkspaceColumnView = ({
                   className="session-history-item"
                   title={session.title}
                   disabled={importingSessionId === session.id}
-                  onClick={() => void handleImportExternalSession(session)}
+                  onMouseDown={(event) => handleImportExternalSessionPress(event, session)}
+                  onClick={() => handleImportExternalSessionClick(session)}
                 >
                   <span className="session-history-title">{session.title}</span>
                   <span className="session-history-meta">

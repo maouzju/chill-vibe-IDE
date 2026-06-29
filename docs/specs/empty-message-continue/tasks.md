@@ -21,6 +21,14 @@
 - [x] In `src/App.tsx` `sendMessage`, compute `isEmptyContinuation` and skip appending the empty `user` message in `startActions` when true.
 - [x] Also skip the empty user bubble on the provider-unavailable branch so a blank continue attempt never creates visible blank user text.
 
+## Slice 4A — Auto Urge blank message continuation (red → green)
+
+- [x] Add failing unit coverage in `tests/chat-auto-urge.test.ts` showing a blank Auto Urge message sends `''` when the chat is continuable.
+- [x] Add failing settings coverage in `tests/auto-urge-settings.test.ts` showing an explicitly empty profile message is preserved.
+- [x] Thread `canSendEmptyContinuation(card)` into Auto Urge evaluation at the ChatCard call site.
+- [x] Preserve explicit empty Auto Urge messages in `createAutoUrgeProfile()` while keeping the default for absent/non-string values.
+- [x] Run the focused tests and confirm green.
+
 ## Slice 4 — Codex continuation fallback (red → green)
 
 - [x] Export `buildCodexAppServerInput` from `server/providers.ts`.

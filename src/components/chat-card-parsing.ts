@@ -810,6 +810,39 @@ const isStandaloneClaudeCountResidueNearToolActivity = (
   )
 }
 
+const isClaudeTypedToolRetryChatterContent = (content: string) => {
+  const normalized = sanitizeLeakedCallMarkerLines(content).replace(/\s+/g, ' ').trim()
+
+  if (!normalized) return false
+
+  return (
+    /工具.{0,160}(?:格式|坏|重新|重试|再发|解析|失败|改用|触发|避免|反复)/iu.test(normalized) ||
+    /(?:重新|重试|再发|改用).{0,120}工具/iu.test(normalized) ||
+    /(?:edit|write|tool\s+call|tool).{0,180}(?:malformed|format|parse|parsing|retry|again|failed|failure|broken|resend|re-send|fallback|fall\s+back|switch)/iu.test(
+      normalized,
+    ) ||
+    /(?:retry|resend|re-send|fallback|fall\s+back|switch).{0,120}(?:edit|write|tool\s+call|tool)/iu.test(
+      normalized,
+    )
+  )
+}
+
+const isClaudeTypedToolRetryChatterNearToolActivity = (
+  message: ChatMessage,
+  previous: ChatMessage | undefined,
+  next: ChatMessage | undefined,
+) => {
+  if (message.role !== 'assistant') return false
+  if (message.meta?.kind) return false
+  if (message.meta?.imageAttachments) return false
+  if (!isClaudeTypedToolRetryChatterContent(message.content)) return false
+
+  return (
+    isClaudeStructuredActivityMessage(previous) ||
+    isClaudeStructuredActivityMessage(next)
+  )
+}
+
 const mergeAdjacentAskUserMessages = (
   messages: ChatMessage[],
   startIndex: number,
@@ -882,6 +915,10 @@ export const buildRenderableMessages = (messages: ChatMessage[]): RenderableMess
         index += 1
         continue
       }
+      if (isClaudeTypedToolRetryChatterNearToolActivity(currentMessage, messages[index - 1], messages[index + 1])) {
+        index += 1
+        continue
+      }
 
       if (todo || agents) {
         items.push({
@@ -927,7 +964,8 @@ export const buildRenderableMessages = (messages: ChatMessage[]): RenderableMess
         groupItems.push({ kind: 'edits', message: msg, data: ed })
       } else if (
         isEmptySkippableMessage(msg) ||
-        isStandaloneClaudeCountResidueNearToolActivity(msg, messages[index - 1], messages[index + 1])
+        isStandaloneClaudeCountResidueNearToolActivity(msg, messages[index - 1], messages[index + 1]) ||
+        isClaudeTypedToolRetryChatterNearToolActivity(msg, messages[index - 1], messages[index + 1])
       ) {
         // Skip broken structured messages that failed to parse, plus Claude
         // protocol residue that can appear between adjacent tool groups.

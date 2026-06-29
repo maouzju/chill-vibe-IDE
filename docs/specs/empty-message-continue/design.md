@@ -10,6 +10,8 @@ Three layers currently stop a blank send; only two need changes, because the req
 | App send | `src/App.tsx` `sendMessage` | Always appends a `user` message | Skip the empty user bubble on empty continuation |
 | Codex input | `server/providers.ts` `buildCodexAppServerInput` | Sends `text: ''` for blank prompt + sessionId | Fall back to a neutral `'Please continue.'` |
 | Schema | `shared/schema.ts` | Allows blank prompt when attachment or sessionId present | **No change** — both continuation cases already pass |
+| Auto Urge evaluation | `src/components/chat-auto-urge.ts` | Trims and skips blank urge messages | Allow blank messages when the target chat is continuable |
+| Auto Urge settings | `shared/default-state.ts` | Normalization treats blank message as missing and restores default text | Preserve explicit empty messages so users can configure "continue only" profiles |
 | Claude input | `server/providers.ts` `getClaudePrompt` | Already returns `'Please continue.'` for blank + sessionId | **No change** |
 
 ## 1. Continuable-state helper — `src/app-helpers.ts`
@@ -61,7 +63,16 @@ does not append a blank user bubble for the empty continuation attempt.
 - `nextTitle` is only taken when `card.messages.length === 0`, so an empty continuation (which always has history) never re-titles.
 - `requestPrompt` keeps its existing value: `''` when a `sessionId` is resumed, or the seeded transcript when the card is sessionless-with-history. The provider layer supplies the continuation nudge.
 
-## 4. Codex continuation fallback — `server/providers.ts`
+## 4. Auto Urge blank-message continuation
+
+Auto Urge uses the same send path as the composer (`onSend(message, [])`). To make a blank Auto Urge mean "continue":
+
+- `ChatCard.tsx` stores `canSendEmptyContinuation: !isToolCard && canSendEmptyContinuation(card)` in `autoUrgeStateRef`.
+- `evaluateAutoUrge()` no longer treats a blank `message.trim()` as an unconditional skip. It returns `{ kind: 'send', message: '' }` when the chat is continuable.
+- The normal `sendMessage` empty-continuation logic then skips the user bubble and routes the request through the existing continuation behavior.
+- `createAutoUrgeProfile()` preserves an explicit empty `message` string while still using the default message when the field is absent/non-string. This keeps legacy settings upgraded safely but allows deliberate "continue only" profiles.
+
+## 5. Codex continuation fallback — `server/providers.ts`
 
 `buildCodexAppServerInput` text fallback, aligned with Claude's `getClaudePrompt`:
 

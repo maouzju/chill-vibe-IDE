@@ -143,6 +143,58 @@ const emptyCompactMessageWindow: CompactMessageWindow = {
 }
 const compactHistoryRevealBatchSize = 32
 
+type PrimaryMouseDownActivationOptions = {
+  preventDefault?: boolean
+  stopPropagation?: boolean
+}
+
+const usePrimaryMouseDownActivation = <T extends HTMLElement>(
+  onActivate: (event: MouseEvent<T>) => void,
+  {
+    preventDefault = true,
+    stopPropagation = false,
+  }: PrimaryMouseDownActivationOptions = {},
+) => {
+  const activatedOnMouseDownRef = useRef(false)
+
+  return useMemo(
+    () => ({
+      onMouseDown: (event: MouseEvent<T>) => {
+        if (event.button !== 0) {
+          return
+        }
+
+        activatedOnMouseDownRef.current = true
+        if (preventDefault) {
+          event.preventDefault()
+        }
+        if (stopPropagation) {
+          event.stopPropagation()
+        }
+        onActivate(event)
+      },
+      onClick: (event: MouseEvent<T>) => {
+        if (activatedOnMouseDownRef.current) {
+          activatedOnMouseDownRef.current = false
+          if (preventDefault) {
+            event.preventDefault()
+          }
+          if (stopPropagation) {
+            event.stopPropagation()
+          }
+          return
+        }
+
+        if (stopPropagation) {
+          event.stopPropagation()
+        }
+        onActivate(event)
+      },
+    }),
+    [onActivate, preventDefault, stopPropagation],
+  )
+}
+
 type PendingAttachment =
   | {
       kind: 'local'
@@ -1021,6 +1073,9 @@ const ChatTranscript = memo(
       event.preventDefault()
       handleJumpToStickyMessage()
     }, [handleJumpToStickyMessage])
+    const revealAllCompactedHistoryPressHandlers = usePrimaryMouseDownActivation<HTMLButtonElement>(
+      onRevealAllCompactedHistory,
+    )
 
     return (
       <>
@@ -1062,7 +1117,7 @@ const ChatTranscript = memo(
                   <button
                     type="button"
                     className="btn btn-ghost"
-                    onClick={onRevealAllCompactedHistory}
+                    {...revealAllCompactedHistoryPressHandlers}
                   >
                     {compactionBannerCopy.action}
                   </button>
@@ -1255,6 +1310,7 @@ const ChatCardView = ({
     enabled: autoUrgeEnabled,
     message: effectiveAutoUrgeMessage,
     successKeyword: effectiveAutoUrgeSuccessKeyword,
+    canSendEmptyContinuation: false,
   })
   const titleInputRef = useRef<HTMLInputElement>(null)
   const modelMenuRef = useRef<HTMLDivElement>(null)
@@ -1603,13 +1659,23 @@ const ChatCardView = ({
       enabled: autoUrgeEnabled,
       message: effectiveAutoUrgeMessage,
       successKeyword: effectiveAutoUrgeSuccessKeyword,
+      canSendEmptyContinuation:
+        !isToolCard &&
+        canSendEmptyContinuation({
+          messages: card.messages,
+          sessionId: card.sessionId,
+          status: card.status,
+        }),
     }
   }, [
     card.messages,
+    card.sessionId,
+    card.status,
     autoUrgeActive,
     autoUrgeEnabled,
     effectiveAutoUrgeMessage,
     effectiveAutoUrgeSuccessKeyword,
+    isToolCard,
   ])
 
   useEffect(() => {
@@ -3195,6 +3261,9 @@ const ChatCardView = ({
     event.stopPropagation()
     onRemove()
   }
+  const stopRunPressHandlers = usePrimaryMouseDownActivation<HTMLButtonElement>(() => {
+    void onStop()
+  })
 
   const startTitleEditing = () => {
     if (!showsCardTitle) {
@@ -3813,7 +3882,7 @@ const ChatCardView = ({
                     </IconButton>
                   ) : null}
                   {card.status === 'streaming' ? (
-                    <IconButton label={text.stopRun} onClick={onStop}>
+                    <IconButton label={text.stopRun} {...stopRunPressHandlers}>
                       <StopIcon />
                     </IconButton>
                   ) : null}

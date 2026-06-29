@@ -55,20 +55,25 @@
 - 在目标列左半区或右半区落下
 - 分别对应插入到目标列前后
 
-### 3.2 卡片拖拽
+### 3.2 列宽调整
+
+- 列之间的分隔手柄可横向拖动，用于给当前工作流快速让出更多横向空间。
+- 单列最窄宽度为 130px，允许临时压缩成窄栏，但不应破坏列头与列内容的对齐关系。
+
+### 3.3 卡片拖拽
 
 - 通过卡片头部手柄拖动
 - 可在同列内重排
 - 可跨列移动
 - 可拖到列底部空白处插入到末尾
 
-### 3.3 卡片高度拉伸
+### 3.4 卡片高度拉伸
 
 - 卡片底部有专用拉伸手柄
 - 用户拖动后改变卡片最小高度
 - 内容超出时继续向下增长，而不是强制固定在内部滚动框
 
-### 3.4 新增列
+### 3.5 新增列
 
 - 顶部新增按钮已移除
 - 看板最右侧保留一个加号占位列
@@ -157,7 +162,7 @@ type ChatCard = {
 - Claude 流式输出的健壮性（`server/claude-structured-output.ts` + `server/providers.ts` + `server/provider-stream-recovery.ts`）：
   - 模型偶尔把工具调用打成文本（`<function_calls>`/`<invoke>`/`<parameter>`）。增量去除器会剥离这些 XML；遇到**未闭合**的工具调用/ask-user 块时，`flush()` 必须**丢弃**而不是原样吐出——否则渲染层（ReactMarkdown，仅 remark-gfm）会吃掉标签只留下 `<parameter>` 里的内层文本（如 `count`），形成孤立气泡。容器常被换行美化，所以 `<function_calls>` 需容忍其后空白。
   - If malformed Claude text reaches final assistant text (not only streamed deltas), the provider final-assistant path must run the same stripper before emitting deltas, and the renderer fallback must still remove complete or unterminated `<function_calls>` / `<invoke>` blocks plus nested attribute-bearing `<parameter ...>` blocks; otherwise Markdown hides the tags but shows inner values like `count`.
-  - When Claude prefixes a malformed typed tool call with retry chatter such as "tool call format broke, retrying" / "工具调用格式坏了，我重新发", suppress that chatter together with the stripped XML and surface only the bounded resume-session recovery. The user should not see fake progress bubbles that describe a broken internal call.
+  - When Claude prefixes a malformed typed tool call with retry chatter such as "tool call format broke, retrying" / "工具调用格式坏了，我重新发", suppress that chatter together with the stripped XML and surface only the bounded resume-session recovery. The user should not see fake progress bubbles that describe a broken internal call. Renderer-side fallback must also hide persisted retry chatter such as `call\nEdit 工具反复解析失败,改用 Write 整文件重写。` when it sits next to real tool/edit activity, so old saved transcripts do not keep showing provider protocol noise after a parser fix.
   - When Claude is only mentioning those XML tag names in prose, a leading backtick is enough proof that the tag is user-visible text; stream it immediately instead of waiting for the next body byte, or the live reply looks cut off at the tag.
   - 一轮如果**只**产出了被剥离的工具调用文本（没有真正执行工具、没有有效正文），干净的 `result` 会让聊天静默“停住”。用 `shouldRecoverEmptyToolCallTurn(...)` 判定后改发可恢复的 `resume-session` 错误，交给前端有上限的重试机制自动续跑。
   - Claude 流路径带有失速看门狗：每条 stdout 行都会重置计时器，长时间静默且无终止事件时发可恢复的 `stalled …` 错误；但**有命令在执行时必须停表**（`resolveLocalStreamStallTimeoutMs` 在 `openCommandCount > 0` 时返回 `null`），因为 CLI 执行工具期间本就没有 stdout，否则会误杀正常的长命令。

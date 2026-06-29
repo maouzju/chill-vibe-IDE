@@ -93,6 +93,29 @@ test('manual activation does not send while the chat is still streaming', () => 
   })
 })
 
+
+test('stream completion sends an empty urge message as a continuation nudge', () => {
+  const result = evaluateAutoUrge(
+    {
+      type: 'stream-finished',
+      previousStatus: 'streaming',
+      status: 'idle',
+    },
+    {
+      active: true,
+      enabled: true,
+      message: '   ',
+      successKeyword: 'YES',
+      messages: [createAssistantMessage('I only have a guess so far.')],
+    },
+  )
+
+  assert.deepEqual(result, {
+    kind: 'send',
+    message: '',
+  })
+})
+
 test('stream completion still sends the urge when verification is not finished', () => {
   const result = evaluateAutoUrge(
     {

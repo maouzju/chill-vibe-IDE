@@ -341,11 +341,19 @@ test('pane tab click still switches when pointer-up activation is missed', async
   await expect(page.locator('.pane-tab.is-active .pane-tab-label')).toHaveText('History 1')
 
   const targetTab = page.locator('.pane-tab').filter({ hasText: 'History 2' }).first()
-  await targetTab.dispatchEvent('click', {
+  const box = await targetTab.boundingBox()
+  if (!box) {
+    throw new Error('Expected History 2 tab to be visible.')
+  }
+
+  await targetTab.dispatchEvent('pointerdown', {
     bubbles: true,
     cancelable: true,
-    detail: 1,
     button: 0,
+    buttons: 1,
+    pointerId: 23,
+    clientX: box.x + box.width / 2,
+    clientY: box.y + box.height / 2,
   })
 
   await expect(page.locator('.pane-tab.is-active .pane-tab-label')).toHaveText('History 2')

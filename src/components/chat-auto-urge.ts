@@ -11,6 +11,7 @@ type AutoUrgeState = {
   message: string
   successKeyword: string
   messages: ChatMessage[]
+  canSendEmptyContinuation?: boolean
 }
 
 type StreamFinishedTrigger = {
@@ -99,7 +100,10 @@ export const evaluateAutoUrge = (
   }
 
   const trimmedMessage = state.message.trim()
-  if (!trimmedMessage) {
+  const canSendBlankContinuation =
+    state.canSendEmptyContinuation ??
+    state.messages.some((message) => message.role === 'user' || message.role === 'assistant')
+  if (!trimmedMessage && !canSendBlankContinuation) {
     return { kind: 'skip' }
   }
 

@@ -12,7 +12,7 @@ describe('resizeColumnGroups', () => {
   it('clamps the drag when a group would shrink below the minimum width', () => {
     assert.deepEqual(
       resizeColumnGroups([420, 420, 300], 1, 200),
-      [440, 440, minColumnWidth],
+      [505, 505, minColumnWidth],
     )
   })
 

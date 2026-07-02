@@ -129,6 +129,10 @@ function buildInventory(raw) {
   return `${lines.join('\n')}\n`
 }
 
+// Windows CI runners check the repo out with core.autocrlf=true, so the
+// on-disk file can carry CRLF endings while the generated content is LF.
+const normalizeLineEndings = (value) => value.replace(/\r\n/g, '\n')
+
 async function verifyOutput(nextContent) {
   let currentContent = ''
 
@@ -142,7 +146,7 @@ async function verifyOutput(nextContent) {
     }
   }
 
-  if (currentContent !== nextContent) {
+  if (normalizeLineEndings(currentContent) !== normalizeLineEndings(nextContent)) {
     throw new Error('THIRD_PARTY_LICENSES.md is out of date. Run `pnpm legal:generate` and commit the result.')
   }
 }

@@ -6706,9 +6706,12 @@ test('git tool card keeps long zh-CN metadata rows fully visible instead of clip
   await expectChildToFitWithinParent(topbar, titleRow, 'git full dialog title row')
   await expectChildToFitWithinParent(topbar, actionsEl, 'git actions')
   await expectChildToFitWithinParent(listHeader, listHeaderMeta, 'git change summary row')
+  // zh-CN glyph antialiasing differs slightly between local and CI Windows
+  // machines (~41px on CI), so allow a small pixel budget for this CJK-heavy card.
   await expect(fullDialogCard).toHaveScreenshot('git-tool-card-long-path-dark.png', {
     animations: 'disabled',
     caret: 'hide',
+    maxDiffPixels: 200,
   })
 
   await page.getByRole('button', { name: '关闭', exact: true }).click()
@@ -6722,6 +6725,7 @@ test('git tool card keeps long zh-CN metadata rows fully visible instead of clip
   await expect(fullDialogCard).toHaveScreenshot('git-tool-card-long-path-light.png', {
     animations: 'disabled',
     caret: 'hide',
+    maxDiffPixels: 200,
   })
 })
 

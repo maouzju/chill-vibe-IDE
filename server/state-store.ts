@@ -421,7 +421,7 @@ const canContainClaudeProtocolResidue = (message: PersistedChatMessage) => {
 // Exported for tests.
 export const stripPersistedClaudeProtocolResidueLines = (content: string) =>
   content
-    .replace(/(?:[ \t]*(?:\r?\n|^)[ \t]*(?:call:?|court|course|card|课)[ \t]*(?:\r?\n)?)+$/iu, '')
+    .replace(/(?:[ \t]*(?:\r?\n|^)[ \t]*(?:call:?|court|course|card|课){1,3}[ \t]*(?:\r?\n)?)+$/iu, '')
     .replace(/(?:[ \t]*(?:\r?\n|^)[ \t]*count[ \t]*(?:\r?\n)?)+$/iu, '')
     .trim()
 

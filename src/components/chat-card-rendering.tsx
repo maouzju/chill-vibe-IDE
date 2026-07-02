@@ -4,6 +4,7 @@ import remarkGfm from 'remark-gfm'
 
 import type { AppLanguage, ChatMessage } from '../../shared/schema'
 import { openExternalLink, openMessageLocalLink } from '../api'
+import { stripLeakedClaudeToolXml } from './chat-card-parsing'
 import type { StructuredToolGroupItem } from './chat-card-parsing'
 
 // Module-level constants prevent ReactMarkdown from re-initializing its plugin
@@ -697,11 +698,9 @@ const renderPlainMarkdown = (content: string, workspacePath: string | undefined,
   </ReactMarkdown>
 )
 
-export const stripLeakedClaudeToolXmlFromMarkdown = (content: string) =>
-  content
-    .replace(/(?<!`)<function_calls>\s*<invoke(?:\s+[^>\n]*?)?>[\s\S]*?(?:<\/invoke>\s*<\/function_calls>|$)/gi, '')
-    .replace(/(?<!`)<invoke(?:\s+[^>\n]*?)?>[\s\S]*?(?:<\/invoke>|$)/gi, '')
-    .replace(/(?<!`)<parameter\s+[^>\n]*?>[\s\S]*?(?:<\/parameter>|$)/gi, '')
+// Single source of truth lives in chat-card-parsing.ts (shared with the
+// message sanitize chain); keep the old export name for existing callers.
+export const stripLeakedClaudeToolXmlFromMarkdown = stripLeakedClaudeToolXml
 
 export const renderMarkdown = (content: string, workspacePath?: string) => {
   const safeContent = stripLeakedClaudeToolXmlFromMarkdown(content)

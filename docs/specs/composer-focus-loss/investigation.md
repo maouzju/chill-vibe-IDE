@@ -1,5 +1,7 @@
 # Composer / Tab 聚焦失效 —— 深度调查报告
 
+> **⚠️ 实证修正（2026-07-02 晚，取证器首战）**：取证 dump `stuck-pane-forensics-2026-07-02T13-52-09-883Z.json` 抓到复发现场，**推翻本报告对"新 tab 卡死/整 pane 锁死"形态的 stale hit-test 主线归因**。实测：20/20 pointerdown 的 event.target 与 elementFromPoint 完全一致（事件路由零病变）、救援系统零开火、焦点正常在 textarea（focus-visible 在），但 **9 个连续 1s 心跳采样返回同一 rAF 帧时间戳 = 渲染器 ≥9 秒零产帧**，把窗口带回前台的瞬间恢复。真实根因：**Chromium 120+ Windows 原生窗口遮挡误判（CalculateNativeWinOcclusion）→ 可见窗口停止产帧**，JS/事件/布局照常运转，用户面对死画面——"点击无反应"实为"点击全部生效但画面不更新"，caret 闪现即偶发单帧恢复。修复（commit 7ca3203）：禁用该 feature + `backgroundThrottling: false`（§2.2 点名的放大器）+ 主进程帧看门狗（10s 无帧且窗口可见 → `webContents.invalidate()` 强制重绘自愈）。第一/二层修复针对的事件层缺口独立存在、保留；但对本形态它们天然无感（无 misroute 信号可触发）。
+>
 > 2026-07-02。针对「使用久了之后，点击新 tab 或鼠标点击 agent 聊天输入框无法聚焦」的系统性审计。
 > 方法：5 方向并行调查（git 考古 / rescue 系统审计 / tab 聚焦链路 / 合成层诱因 / 全局焦点竞争）+ 对每个根因候选做代码级对抗验证（14 个候选全部核实，其中若干被收窄或降级，无一凭空捏造）。
 > 本文所有结论均带 `文件:行号` 或 commit 级证据，且以对抗验证后的修正表述为准。

@@ -26,6 +26,33 @@ test('pane tab activation fallback is timer-based so drag gestures can cancel it
   )
 })
 
+test('clicking the already-active tab still requests composer focus as a recovery gesture', async () => {
+  const source = await readFile(paneViewSourcePath, 'utf8')
+  const activateTabBlock =
+    source.match(/const activateTab = \(tabId: string\) => \{[\s\S]*?\n {2}\}/)?.[0] ?? ''
+
+  assert.ok(activateTabBlock, 'expected PaneView to define activateTab')
+  const earlyReturnBranch =
+    activateTabBlock.match(/if \(pane\.activeTabId === tabId\) \{[\s\S]*?\n {4}\}/)?.[0] ?? ''
+  assert.ok(earlyReturnBranch, 'expected activateTab to keep its already-active early return')
+  assert.ok(
+    /requestComposerFocus\(tabId\)/.test(earlyReturnBranch),
+    'clicking the active tab is the natural focus-recovery gesture when the composer looks dead; it must re-request composer focus instead of no-op (investigation §4.1)',
+  )
+})
+
+test('left-clicking a tab button must not natively steal focus from the composer', async () => {
+  const source = await readFile(paneViewSourcePath, 'utf8')
+  const mouseDownBlock =
+    source.match(/const handleTabMouseDown = [\s\S]*?\n {2}\}/)?.[0] ?? ''
+
+  assert.ok(mouseDownBlock, 'expected PaneView to define handleTabMouseDown')
+  assert.ok(
+    /button === 0[\s\S]*?preventDefault\(\)/.test(mouseDownBlock),
+    'left mousedown on a tab button natively focuses the button and blurs the composer before requestComposerFocus runs; prevent the default focus grab (investigation §4.1)',
+  )
+})
+
 test('pane tab activation has a pointer-down fallback and still activates on pointer up for normal clicks', async () => {
   const source = await readFile(paneViewSourcePath, 'utf8')
   const pointerDownBlock =

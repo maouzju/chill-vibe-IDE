@@ -41,15 +41,24 @@ test('clicking the already-active tab still requests composer focus as a recover
   )
 })
 
-test('left-clicking a tab button must not natively steal focus from the composer', async () => {
+test('tab mousedown must never preventDefault the left button or tab dragging dies', async () => {
   const source = await readFile(paneViewSourcePath, 'utf8')
   const mouseDownBlock =
     source.match(/const handleTabMouseDown = [\s\S]*?\n {2}\}/)?.[0] ?? ''
 
   assert.ok(mouseDownBlock, 'expected PaneView to define handleTabMouseDown')
+  // Starting a drag is part of mousedown's default action in every browser:
+  // preventDefault on a left mousedown suppresses dragstart entirely, which
+  // silently kills drag-to-split/reorder on these draggable tabs. The button
+  // briefly taking native focus is acceptable because activateTab re-requests
+  // composer focus and the retry driver moves focus unconditionally.
   assert.ok(
-    /button === 0[\s\S]*?preventDefault\(\)/.test(mouseDownBlock),
-    'left mousedown on a tab button natively focuses the button and blurs the composer before requestComposerFocus runs; prevent the default focus grab (investigation §4.1)',
+    !/button === 0[\s\S]*?preventDefault\(\)/.test(mouseDownBlock),
+    'do not preventDefault left mousedown on draggable pane tabs; it cancels dragstart in all browsers',
+  )
+  assert.ok(
+    /button !== 1[\s\S]*?preventDefault\(\)/.test(mouseDownBlock),
+    'middle-click autoscroll suppression must stay in place',
   )
 })
 

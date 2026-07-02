@@ -731,15 +731,11 @@ const PaneViewView = ({
   }
 
   const handleTabMouseDown = () => (event: MouseEvent<HTMLButtonElement>) => {
-    if (event.button === 0) {
-      // Left mousedown would natively focus the tab button and blur the
-      // composer before requestComposerFocus can run; the tab never needs
-      // mouse-driven focus itself (keyboard focus is unaffected, and the
-      // close control stops propagation before reaching this handler).
-      event.preventDefault()
-      return
-    }
-
+    // Never preventDefault a left mousedown here: starting a drag is part of
+    // mousedown's default action, so cancelling it kills dragstart on this
+    // draggable tab in every browser. The button briefly taking native focus
+    // is fine — activateTab always re-requests composer focus and the
+    // verify+retry driver moves focus onto the textarea unconditionally.
     if (event.button !== 1) {
       return
     }

@@ -423,6 +423,59 @@ describe('git workspace helpers', () => {
     assert.equal(afterCommit.clean, true)
   })
 
+  it('stages and commits a large selected file set without overflowing the process argument list', async () => {
+    const repoPath = await createTempRepo()
+    const bulkPaths = Array.from(
+      { length: 700 },
+      (_, index) => `bulk-${String(index).padStart(4, '0')}-${'x'.repeat(48)}.txt`,
+    )
+
+    for (const relativePath of bulkPaths) {
+      await writeFile(path.join(repoPath, relativePath), `bulk ${relativePath}\n`, 'utf8')
+    }
+
+    const staged = await setGitWorkspaceStage({
+      workspacePath: repoPath,
+      paths: bulkPaths,
+      staged: true,
+    })
+
+    assert.equal(staged.summary.staged, bulkPaths.length)
+    assert.equal(staged.summary.untracked, 0)
+    assert.equal(staged.changes.length, bulkPaths.length)
+    assert.ok(staged.changes.every((change) => change.staged))
+
+    const unstaged = await setGitWorkspaceStage({
+      workspacePath: repoPath,
+      paths: bulkPaths,
+      staged: false,
+    })
+
+    assert.equal(unstaged.summary.staged, 0)
+    assert.equal(unstaged.summary.untracked, bulkPaths.length)
+
+    const restaged = await setGitWorkspaceStage({
+      workspacePath: repoPath,
+      paths: bulkPaths,
+      staged: true,
+    })
+
+    assert.equal(restaged.summary.staged, bulkPaths.length)
+    assert.equal(restaged.summary.untracked, 0)
+
+    const commitResult = await commitGitWorkspace({
+      workspacePath: repoPath,
+      paths: bulkPaths,
+      summary: 'Add bulk files',
+      description: '',
+    })
+
+    assert.equal(commitResult.commit.summary, 'Add bulk files')
+
+    const afterCommit = await inspectGitWorkspace(repoPath)
+    assert.equal(afterCommit.clean, true)
+  })
+
   it('stages and commits files whose names contain non-ASCII (Chinese) characters', async () => {
     const repoPath = await createTempRepo()
     const chineseName = '大学笔记.md'

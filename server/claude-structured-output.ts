@@ -437,12 +437,15 @@ const isBacktickPrefixedTagMention = (text: string, openTagIndex: number): boole
   openTagIndex > 0 && text[openTagIndex - 1] === '`'
 
 // Some malformed typed tool calls are preceded by a stray one-word marker line
-// (for example `court`) immediately before `<invoke ...>`. That marker is not
-// user prose; it is part of the broken tool-call payload and should disappear
-// with the XML block, while earlier explanatory text stays visible.
+// (`court`, `card`, …the word keeps mutating) immediately before `<invoke ...>`.
+// That marker is not user prose; it is part of the broken tool-call payload and
+// should disappear with the XML block, while earlier explanatory text stays
+// visible. Because this only ever runs on the text directly touching a stripped
+// tool-call block, any lone short word here is residue, not prose.
 const stripTrailingTypedToolMarkerLine = (text: string): string =>
-  text.replace(/(?:^|\r?\n)[ \t]*(?:call:?|court)[ \t]*(?:\r?\n)?$/iu, (match, offset: number) =>
-    offset === 0 ? '' : match.startsWith('\n') ? '\n' : '',
+  text.replace(
+    /(?:^|\r?\n)[ \t]*(?:call:?|[a-zA-Z]{2,12}|[一-鿿])[ \t]*(?:\r?\n)?$/iu,
+    (match, offset: number) => (offset === 0 ? '' : match.startsWith('\n') ? '\n' : ''),
   )
 
 const stripCompletedBlocks = (text: string): string => {

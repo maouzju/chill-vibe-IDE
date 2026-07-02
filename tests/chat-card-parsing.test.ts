@@ -247,6 +247,55 @@ test('buildRenderableMessages hides Claude typed-tool retry chatter between tool
   }
 })
 
+test('buildRenderableMessages hides Claude typed-tool recovery fragments before recovered edit activity', () => {
+  const messages = [
+    makeToolMessage('Grep', '搜索文本: plan-excute'),
+    makeMessage({
+      id: 'typed-tool-fragment-summary',
+      content:
+        '共 4 处：3 个文件的 frontmatter description（第 3 行）+ canonical 正文第 31 行。全部去掉 ` / plan-excute`。\n\ncourse\n课',
+      meta: { provider: 'claude' },
+    }),
+    makeMessage({
+      id: 'typed-tool-fragment-apology',
+      content: '抱歉，我的',
+      meta: { provider: 'claude' },
+    }),
+    makeMessage({
+      id: 'typed-tool-fragment-invoke',
+      content: 'course\n\n\n\n我一直在用错误的裸 `<invoke>` 文本格式。必',
+      meta: { provider: 'claude' },
+    }),
+    makeEditsMessage('stream-typed-tool-recovery', [
+      {
+        path: 'Docs/AI/skills/plan-execute/SKILL.md',
+        addedLines: 1,
+        removedLines: 1,
+      },
+    ]),
+  ]
+
+  const result = buildRenderableMessages(messages)
+
+  assert.equal(result.length, 3)
+  assert.equal(result[0]!.type, 'tool-group')
+  assert.equal(result[1]!.type, 'message')
+  assert.equal(result[2]!.type, 'tool-group')
+
+  if (result[1]!.type === 'message') {
+    assert.equal(result[1]!.message.id, 'typed-tool-fragment-summary')
+    assert.equal(
+      result[1]!.message.content,
+      '共 4 处：3 个文件的 frontmatter description（第 3 行）+ canonical 正文第 31 行。全部去掉 ` / plan-excute`。',
+    )
+  }
+
+  const renderedText = result
+    .flatMap((entry) => (entry.type === 'message' ? [entry.message.content] : []))
+    .join('\n')
+  assert.doesNotMatch(renderedText, /course|课|错误的裸|invoke/i)
+})
+
 test('buildRenderableMessages removes leaked Claude call marker lines from assistant text', () => {
   const leaked = makeMessage({
     id: 'leaked-call-lines',
@@ -392,6 +441,111 @@ test('buildRenderableMessages keeps normal Claude prose that mentions count inli
   assert.equal(result[0]!.type, 'message')
   if (result[0]!.type === 'message') {
     assert.equal(result[0]!.message.content, message.content)
+  }
+})
+
+test('buildRenderableMessages removes standalone card residue between Claude tool activity', () => {
+  const beforeTool = makeToolMessage('Bash', '执行了 1 条命令')
+  const leaked = makeMessage({
+    id: 'standalone-card-residue',
+    content: 'card',
+    meta: { provider: 'claude' },
+  })
+  const afterTool = makeToolMessage('Read', 'Read grade-pass.ts')
+
+  const result = buildRenderableMessages([beforeTool, leaked, afterTool])
+
+  assert.equal(result.length, 1)
+  assert.equal(result[0]!.type, 'tool-group')
+  if (result[0]!.type === 'tool-group') {
+    assert.equal(result[0]!.items.length, 2)
+  }
+})
+
+test('buildRenderableMessages removes unknown single-word residue sandwiched between Claude tool activity', () => {
+  const beforeTool = makeToolMessage('Bash', '执行了 1 条命令')
+  const leaked = makeMessage({
+    id: 'unknown-word-residue',
+    content: 'cart',
+  })
+  const afterEdits = makeEditsMessage('stream-residue', [
+    { path: 'src/grade.ts', addedLines: 3, removedLines: 1 },
+  ])
+
+  const result = buildRenderableMessages([beforeTool, leaked, afterEdits])
+
+  assert.equal(result.length, 1)
+  assert.equal(result[0]!.type, 'tool-group')
+  if (result[0]!.type === 'tool-group') {
+    assert.equal(result[0]!.items.length, 2)
+  }
+})
+
+test('buildRenderableMessages strips trailing card residue attached to Claude prose near tool activity', () => {
+  const beforeTool = makeToolMessage('Bash', '执行了 1 条命令')
+  const leaked = makeMessage({
+    id: 'trailing-card-line',
+    content: '整体高度一致，色调略微偏移，需要压一压中间调。\n\ncard\n',
+    meta: { provider: 'claude' },
+  })
+  const afterTool = makeToolMessage('Read', 'Read grade-pass.ts')
+
+  const result = buildRenderableMessages([beforeTool, leaked, afterTool])
+
+  assert.equal(result.length, 3)
+  assert.equal(result[1]!.type, 'message')
+  if (result[1]!.type === 'message') {
+    assert.equal(result[1]!.message.content, '整体高度一致，色调略微偏移，需要压一压中间调。')
+  }
+})
+
+test('buildRenderableMessages keeps a short final assistant word that only follows tool activity', () => {
+  const beforeTool = makeToolMessage('Bash', '执行了 1 条命令')
+  const finalWord = makeMessage({
+    id: 'final-short-word',
+    content: 'Done',
+    meta: { provider: 'claude' },
+  })
+
+  const result = buildRenderableMessages([beforeTool, finalWord])
+
+  assert.deepEqual(
+    result.flatMap((entry) => (entry.type === 'message' ? [entry.message.id] : [])),
+    ['final-short-word'],
+  )
+})
+
+test('buildRenderableMessages keeps normal Claude prose that mentions card inline', () => {
+  const message = makeMessage({
+    id: 'normal-card-prose',
+    content: 'The card component should stay visible when card is part of a sentence.',
+    meta: { provider: 'claude' },
+  })
+
+  const result = buildRenderableMessages([message])
+
+  assert.equal(result.length, 1)
+  assert.equal(result[0]!.type, 'message')
+  if (result[0]!.type === 'message') {
+    assert.equal(result[0]!.message.content, message.content)
+  }
+})
+
+test('buildRenderableMessages keeps card lines inside fenced code blocks near tool activity', () => {
+  const beforeTool = makeToolMessage('Bash', '执行了 1 条命令')
+  const withCodeBlock = makeMessage({
+    id: 'code-block-card-line',
+    content: '组件清单：\n\n```txt\ncard\ncourt\n```\n\ncard\n',
+    meta: { provider: 'claude' },
+  })
+  const afterTool = makeToolMessage('Read', 'Read components.md')
+
+  const result = buildRenderableMessages([beforeTool, withCodeBlock, afterTool])
+
+  assert.equal(result.length, 3)
+  assert.equal(result[1]!.type, 'message')
+  if (result[1]!.type === 'message') {
+    assert.equal(result[1]!.message.content, '组件清单：\n\n```txt\ncard\ncourt\n```')
   }
 })
 

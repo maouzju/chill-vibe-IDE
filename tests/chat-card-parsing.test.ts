@@ -531,6 +531,79 @@ test('buildRenderableMessages keeps normal Claude prose that mentions card inlin
   }
 })
 
+test('buildRenderableMessages hides gateway-mangled antml:invoke residue between tool activity', () => {
+  // Exact shapes captured from live state.json (jp gateway eats the leading `<`).
+  const shapes = [
+    'card\n\nantml:invoke name="Edit">\n\n\n\n\n</invoke>card',
+    'card\n\nantml:invoke name="Read">\n\n</invoke>card',
+    'card\n\nantml:invoke name="Read">\n\n\n\n</invoke">',
+    'cardcard',
+  ]
+
+  for (const content of shapes) {
+    const beforeTool = makeToolMessage('Bash', '执行了 1 条命令')
+    const leaked = makeMessage({ id: `mangled-${shapes.indexOf(content)}`, content, meta: { provider: 'claude' } })
+    const afterTool = makeToolMessage('Read', 'Read outline.js')
+
+    const result = buildRenderableMessages([beforeTool, leaked, afterTool])
+
+    assert.equal(result.length, 1, `shape must be hidden: ${JSON.stringify(content.slice(0, 40))}`)
+    assert.equal(result[0]!.type, 'tool-group')
+  }
+})
+
+test('buildRenderableMessages strips mangled antml:invoke residue but keeps surrounding prose', () => {
+  const beforeTool = makeToolMessage('Bash', '执行了 1 条命令')
+  const leaked = makeMessage({
+    id: 'mangled-with-prose',
+    content: '现在整体结构对了,我把当前版和原图并排看差距:\n\nantml:invoke name="Bash">\n\n</invoke">',
+    meta: { provider: 'claude' },
+  })
+  const afterTool = makeToolMessage('Read', 'Read outline.js')
+
+  const result = buildRenderableMessages([beforeTool, leaked, afterTool])
+
+  assert.equal(result.length, 3)
+  assert.equal(result[1]!.type, 'message')
+  if (result[1]!.type === 'message') {
+    assert.equal(result[1]!.message.content, '现在整体结构对了,我把当前版和原图并排看差距:')
+  }
+})
+
+test('buildRenderableMessages strips repeated marker words attached to Claude prose near tool activity', () => {
+  const beforeTool = makeToolMessage('Bash', '执行了 1 条命令')
+  const leaked = makeMessage({
+    id: 'trailing-doubled-card',
+    content: '截图已生成，先检查一下渲染结果。\n\ncardcard\n',
+    meta: { provider: 'claude' },
+  })
+  const afterTool = makeToolMessage('Read', 'Read shot.png')
+
+  const result = buildRenderableMessages([beforeTool, leaked, afterTool])
+
+  assert.equal(result.length, 3)
+  assert.equal(result[1]!.type, 'message')
+  if (result[1]!.type === 'message') {
+    assert.equal(result[1]!.message.content, '截图已生成，先检查一下渲染结果。')
+  }
+})
+
+test('buildRenderableMessages keeps prose that mentions antml:invoke in backticks', () => {
+  const message = makeMessage({
+    id: 'antml-prose-mention',
+    content: '坏节点会把 `antml:invoke` 这样的协议标记泄漏成正文。',
+    meta: { provider: 'claude' },
+  })
+
+  const result = buildRenderableMessages([message])
+
+  assert.equal(result.length, 1)
+  assert.equal(result[0]!.type, 'message')
+  if (result[0]!.type === 'message') {
+    assert.equal(result[0]!.message.content, message.content)
+  }
+})
+
 test('buildRenderableMessages keeps card lines inside fenced code blocks near tool activity', () => {
   const beforeTool = makeToolMessage('Bash', '执行了 1 条命令')
   const withCodeBlock = makeMessage({

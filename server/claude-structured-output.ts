@@ -396,6 +396,19 @@ const STRIPPED_TAG_PAIRS = [
     allowLeadingWhitespace: false,
   },
   {
+    // Gateway-mangled typed tool call: a bad proxy node can eat the leading `<`
+    // and expose the internal namespace, leaving `antml:invoke name="...">`.
+    // The close tag may arrive intact or mangled (`</invoke">`); a mangled
+    // close never matches, so the block is held and dropped on flush like any
+    // truncated real tool call. Body is pinned to ` name` so prose that merely
+    // mentions antml:invoke (e.g. discussing this very bug) passes through.
+    open: 'antml:invoke',
+    close: '</invoke>',
+    bodyStartsWith: [' name'],
+    toolCall: true,
+    allowLeadingWhitespace: false,
+  },
+  {
     // If Claude's malformed text loses the outer wrapper/invoke tag, the nested
     // parameter can still leak by itself. ReactMarkdown hides `<parameter ...>`
     // but renders the inner value (`count`), so strip attribute-bearing

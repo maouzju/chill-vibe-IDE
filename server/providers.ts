@@ -606,7 +606,7 @@ export const isBareClaudeToolCallMarkerText = (text: string) => {
 // Exported for tests. Only called on text a typed tool-call XML block was just
 // stripped from (consumedToolCallBlockCount > 0 at both call sites).
 export const stripTrailingClaudeTypedToolMarkerLines = (text: string) =>
-  text.replace(/(?:[ \t]*(?:\r?\n|^)[ \t]*(?:call:?|court|course|count|card|课)[ \t]*)+$/iu, '')
+  text.replace(/(?:[ \t]*(?:\r?\n|^)[ \t]*(?:call:?|court|course|count|card|课){1,3}[ \t]*)+$/iu, '')
 
 const isPotentialClaudeTypedToolChatterPrefix = (text: string) => {
   const normalized = text

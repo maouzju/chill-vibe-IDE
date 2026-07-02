@@ -502,7 +502,7 @@ for (const theme of ['dark', 'light'] as const) {
     await expect(composer).toBeFocused()
   })
 
-  test(`composer hit-test repair does not fire while a real visible control covers the textarea in ${theme} theme`, async ({
+  test(`a real visible control covering the textarea never steals composer focus in ${theme} theme`, async ({
     page,
   }) => {
     await installMockApis(page, theme)
@@ -520,9 +520,12 @@ for (const theme of ['dark', 'light'] as const) {
       throw new Error('Expected the composer textarea to have measurable geometry')
     }
 
-    // A genuinely visible control above the textarea is real UI, not a stale
-    // layer: elementFromPoint reports the control, so no repair may fire even
-    // though the event target sits outside the composer.
+    // A genuinely visible control above the textarea is real UI: target and
+    // elementFromPoint agree on it, so the click lands on the F9 dead-end path.
+    // A stale frozen frame is indistinguishable from this in the DOM, so the
+    // harmless panel-level repair is allowed to fire — but the composer must
+    // never steal focus from real UI, and the dead end must leave its
+    // diagnostic trace (investigation §3.6 / F9).
     await page.evaluate((box) => {
       const cover = document.createElement('button')
       cover.type = 'button'
@@ -546,7 +549,7 @@ for (const theme of ['dark', 'light'] as const) {
       .first()
       .locator('.pane-content > .pane-tab-panel.is-active .card-shell')
 
-    await expect(cardShell).not.toHaveAttribute('data-hit-test-repair-count', /.+/)
+    await expect(cardShell).toHaveAttribute('data-composer-rescue-unhandled-count', /.+/)
     await expect(composer).not.toBeFocused()
   })
 

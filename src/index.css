@@ -2369,6 +2369,18 @@ body.is-card-dragging .lane-drop-zone-top {
   transform: translateZ(0);
 }
 
+.pane-tab-panel.is-hit-test-repair {
+  /* Escalated variant of the card-shell rule above (F9): when a card-level
+     rebuild demonstrably did not clear the misrouting — or a rescue dead end /
+     focus-ladder exhaustion signals a frozen pane — rebuild the whole panel's
+     layer tree. Two frames, never at rest, no transition on this property.
+     Structural precondition: the panel's only child is .card-shell (itself a
+     containing block via contain/isolation) and every floating menu/dialog
+     portals to document.body — a non-portaled position:fixed child added
+     between panel and shell would jump while this transform is live. */
+  transform: translateZ(0);
+}
+
 .card-shell::before,
 .card-shell::after {
   content: '';
@@ -2412,12 +2424,26 @@ body.is-card-dragging .lane-drop-zone-top {
 
 .card-shell.is-complete-unread::before {
   opacity: 1;
-  animation: card-complete-halo-breathe 2800ms ease-in-out infinite;
+  /* Bounded breathe budget (F7, investigation §2.2): these pseudo-elements
+     cover the whole card (inset: 0), so an infinite idle loop is a permanent
+     compositor-layer stimulus — the main "used for hours" aging vector behind
+     stale hit-test surfaces. 8 cycles ≈ 22s of breathing, then the animation
+     stops (fill-mode none) and these static declarations — deliberately equal
+     to the keyframes' 0% frame — keep the resting glow visible without a
+     jump. The unread glow itself still only clears on real user interaction
+     (docs/specs/chat-completion-glow/design.md). */
+  box-shadow:
+    inset 0 0 0 1px var(--completion-glow-border),
+    0 0 0 0 rgba(0, 0, 0, 0),
+    0 0 18px var(--completion-glow-soft);
+  animation: card-complete-halo-breathe 2800ms ease-in-out 8;
 }
 
 .card-shell.is-complete-unread::after {
   opacity: 1;
-  animation: card-complete-border-breathe 2800ms ease-in-out infinite;
+  border-color: var(--completion-glow-border);
+  box-shadow: inset 0 0 10px rgba(10, 132, 255, 0.06);
+  animation: card-complete-border-breathe 2800ms ease-in-out 8;
 }
 
 @keyframes card-streaming-border-breathe {

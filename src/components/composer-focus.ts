@@ -26,6 +26,10 @@ export type ComposerFocusAttemptDeps = {
   cancelFrame: (handle: number) => void
   schedule: (callback: () => void, delayMs: number) => number
   cancel: (handle: number) => void
+  // Fired once when the whole ladder ran and focus is still vacant — the
+  // stuck-pane signature (every focus() call was issued but none landed).
+  // Never fired when focus settled, moved to a real element, or on cancel.
+  onExhausted?: () => void
 }
 
 // A composer focus request must survive a dropped requestAnimationFrame
@@ -59,6 +63,9 @@ export const startComposerFocusAttempt = (deps: ComposerFocusAttemptDeps): (() =
   const armRetry = (index: number) => {
     if (index >= composerFocusRetryDelaysMs.length) {
       timerHandle = null
+      if (!cancelled && !deps.isFocusSettled() && deps.isFocusVacant()) {
+        deps.onExhausted?.()
+      }
       return
     }
     timerHandle = deps.schedule(() => {
@@ -85,6 +92,45 @@ export const startComposerFocusAttempt = (deps: ComposerFocusAttemptDeps): (() =
       timerHandle = null
     }
   }
+}
+
+// Focus parked on the pane's own chrome (tab button, "+" button) is not a
+// deliberate user placement — clicking those IS the composer-focus gesture
+// (investigation §4.1), so retries may run over it. Chrome belonging to any
+// other pane stays off-limits: the user moved on.
+export const isComposerFocusEffectivelyVacant = (
+  activeElement: Element | null,
+  bodyElement: Element | null,
+  isOwnPaneChrome: (element: Element) => boolean,
+) => {
+  if (activeElement === null || activeElement === bodyElement) {
+    return true
+  }
+  return isOwnPaneChrome(activeElement)
+}
+
+// A card-level layer rebuild that ran recently and demonstrably did not stop
+// the misrouting is the signal to widen the rebuild to the pane panel — the
+// lightweight equivalent of the tab switch that historically cleared stale
+// compositor surfaces (investigation §3.5/F9).
+export const hitTestRepairEscalationWindowMs = 5000
+
+export type HitTestRepairScope = 'skip' | 'card' | 'card-and-panel'
+
+export const decideHitTestRepairScope = (
+  nowMs: number,
+  lastRepairAtMs: number,
+  throttleMs: number,
+  escalationWindowMs: number,
+): HitTestRepairScope => {
+  const elapsed = nowMs - lastRepairAtMs
+  if (elapsed < throttleMs) {
+    return 'skip'
+  }
+  if (elapsed < escalationWindowMs) {
+    return 'card-and-panel'
+  }
+  return 'card'
 }
 
 // A stale-routed event can falsely name a long-lived ignored surface (menu,

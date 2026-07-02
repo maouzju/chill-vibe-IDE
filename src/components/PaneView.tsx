@@ -29,6 +29,7 @@ import {
   composerFocusRequestEventName,
   type ComposerFocusRequestDetail,
 } from './composer-focus'
+import { decideMisroutedTabPointerRescue, isPointerWithinRect } from './pane-tab-rescue'
 import type { QueuedSendSummary, SendMessageOptions } from './deferred-send-queue'
 import { arePaneViewPropsEqual } from './layout-memoization'
 import { getAutoReadCardId } from './pane-read-state'
@@ -360,6 +361,60 @@ const PaneViewView = ({
     }
   }, [pane.id])
 
+  // A stale compositor hit-test surface can misroute tab-strip pointerdowns to
+  // unrelated subtrees, leaving tabs impossible to activate or close from the
+  // user's side (investigation §3.6/F8). Watch at document capture — misrouted
+  // events never bubble through this pane — and route manually only when the
+  // pure decision core confirms coordinates + layout truth against the target.
+  const tabRescueActionsRef = useRef<{
+    activate: (tabId: string) => void
+    close: (tabId: string) => void
+  }>({ activate: () => {}, close: () => {} })
+
+  useEffect(() => {
+    const handleMisroutedTabPointerDown = (event: globalThis.PointerEvent) => {
+      if (event.button !== 0) {
+        return
+      }
+
+      const strip = tabStripRef.current
+      if (!strip) {
+        return
+      }
+
+      const point = { x: event.clientX, y: event.clientY }
+      if (!isPointerWithinRect(point, strip.getBoundingClientRect())) {
+        return
+      }
+
+      const target = event.target
+      const tabs = [...strip.querySelectorAll<HTMLButtonElement>('button[data-pane-tab-id]')].map(
+        (button) => ({
+          tabId: button.dataset.paneTabId ?? '',
+          rect: button.getBoundingClientRect(),
+          ownsEventTarget: target instanceof Node && button.contains(target),
+          ownsElement: (element: Element) => button.contains(element),
+          ownsCloseElement: (element: Element) =>
+            button.querySelector('.pane-tab-close')?.contains(element) ?? false,
+        }),
+      )
+
+      const decision = decideMisroutedTabPointerRescue(point, tabs, () =>
+        document.elementFromPoint(point.x, point.y),
+      )
+      if (decision.kind === 'activate') {
+        tabRescueActionsRef.current.activate(decision.tabId)
+      } else if (decision.kind === 'close') {
+        tabRescueActionsRef.current.close(decision.tabId)
+      }
+    }
+
+    document.addEventListener('pointerdown', handleMisroutedTabPointerDown, true)
+    return () => {
+      document.removeEventListener('pointerdown', handleMisroutedTabPointerDown, true)
+    }
+  }, [])
+
   const [contextMenu, setContextMenu] = useState<{ tabId: string; x: number; y: number } | null>(null)
   const contextMenuRef = useRef<HTMLDivElement | null>(null)
   const activeCard = pane.activeTabId ? column.cards[pane.activeTabId] : undefined
@@ -638,13 +693,35 @@ const PaneViewView = ({
   }
 
   const requestComposerFocus = (tabId: string) => {
+    // The rescue reads tab ids from the live DOM but runs the previous
+    // render's closure: in the one-frame window after a new tab mounts, its
+    // card is not in this cards map yet — never dereference it.
     const card = column.cards[tabId]
-    if (!cardUsesComposer(card)) {
+    if (!card || !cardUsesComposer(card)) {
       return
     }
 
     setComposerFocusRequest((current) => current + 1)
   }
+
+  // Keep the document-capture tab rescue pointed at this render's handlers
+  // without re-registering the listener on every render. Rescued actions must
+  // also activate the pane: the native click would have done it via the
+  // section's onMouseDownCapture, but a misrouted event travelled through a
+  // different React subtree — without this, global shortcuts (Ctrl+W/T) keep
+  // targeting the previously active pane while this pane looks active.
+  useEffect(() => {
+    tabRescueActionsRef.current = {
+      activate: (tabId: string) => {
+        onActivatePane(pane.id)
+        activateTab(tabId)
+      },
+      close: (tabId: string) => {
+        onActivatePane(pane.id)
+        onCloseTab(pane.id, tabId)
+      },
+    }
+  })
 
   const handleAddTab = () => {
     onAddTab(pane.id)
@@ -666,7 +743,23 @@ const PaneViewView = ({
       return
     }
 
+    // The stale-suppress reset must precede the coordinate guard: a rejected
+    // pointerdown that skipped it would let a stranded suppress (touch-drag
+    // cancel paths) eat the next legitimate click.
     suppressNextTabClickRef.current = null
+
+    // A stale-routed pointerdown can name this tab as target while its real
+    // coordinates sit on a different surface; scheduling the 80ms fallback
+    // from such an event phantom-activates a tab the user never touched
+    // (investigation §3.5). Only coordinate-confirmed pointerdowns count.
+    if (
+      !isPointerWithinRect(
+        { x: event.clientX, y: event.clientY },
+        event.currentTarget.getBoundingClientRect(),
+      )
+    ) {
+      return
+    }
     tabPointerDownRef.current = {
       tabId,
       pointerId: event.pointerId,
@@ -722,6 +815,21 @@ const PaneViewView = ({
       return
     }
 
+    // Same phantom guard as pointerdown: a stale surface that misroutes both
+    // halves of a click delivers a click whose coordinates sit elsewhere, and
+    // acting on it would override the capture rescue's correct routing.
+    // Keyboard-synthesized clicks (Enter on the focused tab) carry detail 0
+    // and no meaningful coordinates — they always pass.
+    if (
+      event.detail > 0 &&
+      !isPointerWithinRect(
+        { x: event.clientX, y: event.clientY },
+        event.currentTarget.getBoundingClientRect(),
+      )
+    ) {
+      return
+    }
+
     if (suppressNextTabClickRef.current === tabId) {
       suppressNextTabClickRef.current = null
       return
@@ -745,6 +853,17 @@ const PaneViewView = ({
 
   const handleTabAuxClick = (tabId: string) => (event: MouseEvent<HTMLButtonElement>) => {
     if (event.button !== 1) {
+      return
+    }
+
+    // Middle-click close is destructive; never act on a phantom-routed event
+    // whose coordinates disagree with this button (investigation §3.5).
+    if (
+      !isPointerWithinRect(
+        { x: event.clientX, y: event.clientY },
+        event.currentTarget.getBoundingClientRect(),
+      )
+    ) {
       return
     }
 
@@ -961,6 +1080,7 @@ const PaneViewView = ({
                 type="button"
                 className={tabClassName}
                 title={tabTitle}
+                data-pane-tab-id={tabId}
                 draggable
                 onClick={handleTabClick(tabId)}
                 onPointerDown={handleTabPointerDown(tabId)}
@@ -1013,6 +1133,18 @@ const PaneViewView = ({
                   }}
                   onClick={(event) => {
                     event.stopPropagation()
+                    // Destructive close must ignore phantom-routed clicks whose
+                    // coordinates sit outside this control; keyboard-synthesized
+                    // clicks (detail 0) pass — Enter/Space use onKeyDown anyway.
+                    if (
+                      event.detail > 0 &&
+                      !isPointerWithinRect(
+                        { x: event.clientX, y: event.clientY },
+                        event.currentTarget.getBoundingClientRect(),
+                      )
+                    ) {
+                      return
+                    }
                     onCloseTab(pane.id, tabId)
                   }}
                   onKeyDown={(event) => {

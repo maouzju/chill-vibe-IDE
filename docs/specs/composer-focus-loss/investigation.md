@@ -101,7 +101,9 @@ tab 按钮 `draggable`，Chromium ~4px 即触发原生 dragstart（吞掉后续 
 
 ## 6. 修复建议（分级）
 
-> **实施状态（2026-07-02）**：第一层 F1-F6 已全部实施并合并（分支 `worktree-fix-composer-focus-tier1`），红→绿 TDD：`tests/composer-focus.test.ts`（新增，12 项：6 项重试 driver 行为测试 + 6 项布线断言）+ `tests/pane-tab-activation.test.ts`（新增 2 项）。核心新模块：`src/components/composer-focus.ts`（`startComposerFocusAttempt` 验证+有界重试 driver、`shouldSkipComposerRescueForIgnoredSurface` 布局真相判定、`chill-vibe:composer-focus-request` 跨树聚焦事件）。第二、三层未实施。
+> **实施状态（2026-07-02）**：第一层 F1-F6 已全部实施并合并（分支 `worktree-fix-composer-focus-tier1`），红→绿 TDD：`tests/composer-focus.test.ts`（新增，12 项：6 项重试 driver 行为测试 + 6 项布线断言）+ `tests/pane-tab-activation.test.ts`（新增 2 项）。核心新模块：`src/components/composer-focus.ts`（`startComposerFocusAttempt` 验证+有界重试 driver、`shouldSkipComposerRescueForIgnoredSurface` 布局真相判定、`chill-vibe:composer-focus-request` 跨树聚焦事件）。
+>
+> **第二层 F7-F9 已实施（2026-07-02 同日，分支 `worktree-fix-composer-focus-tier2`）**，触发动机：第一层上线后用户复现新形态——新建会话 tab 偶发无法关闭/无法聚焦、重症整 pane 锁死、点击任意处坏 tab 输入框 caret 闪现（§3.6 stale paint/帧冻结指纹，第一层不覆盖）。实施内容经 3 路对抗审查修正：F8 落地为 `src/components/pane-tab-rescue.ts`（document capture + 坐标/布局真相双确认，关闭判定用 elementFromPoint 布局真相而非几何——隐藏 X 的 pointer-events:none 使其不可命中，点非激活 tab 右缘正确判激活；救援动作先激活 pane；click/auxclick/close 路径补幻影坐标守卫，键盘 detail=0 豁免）；F9 落地为 repair scope 升级（`decideHitTestRepairScope`：1.5s 节流→5s 窗口内二次升级 `pane-tab-panel` 级 translateZ 重建；救援死路径与聚焦梯队耗尽强制升级且不被节流吞；耗尽后一轮无升级 followUp；vacant 判定扩展本 pane chrome 可重试）；F7 落地为呼吸动画 infinite→8 次 + 静态规则补 0% 帧样式（fill-mode none 播完 keyframes 失效，无静态样式光环会整体消失——对抗审查拦下）。测试：`tests/pane-tab-rescue.test.ts`（16 项）+ `tests/composer-focus.test.ts` 扩展（12 项）+ `tests/idle-animation-budget.test.ts`（2 项守护）；theme 视觉回归 136/136。F10 与第三层未实施。已知取舍：聚焦梯队耗尽腿在「DOM focus 成功但画面冻结」形态下不触发（focus settled 即停，对抗审查证实该形态 focus 必成功）——它只兜「textarea 真不可聚焦」的罕见形态，主力自愈是死路径/重复修复触发的 pane 级重建。
 
 ### 第一层：低风险确定性修复（每条独立、可红→绿 TDD、互不依赖）——已实施
 | # | 修复 | 对应症状 | 位置 |
@@ -113,11 +115,11 @@ tab 按钮 `draggable`，Chromium ~4px 即触发原生 dragstart（吞掉后续 
 | F5 | 忽略列表改用 `elementFromPoint` 布局真相判定（保留 target 判定作为快速通过路径） | S2 | `ChatCard.tsx:1775,1722` |
 | F6 | 观测性：`'unrelated'` 死路径与 repair 触发补 dev 日志/计数（消费已有 `data-hit-test-repair-count`），让未来复发可归因 | 诊断 | `ChatCard.tsx:1809-1819` |
 
-### 第二层：消减诱因（中风险，Tier 2 视觉回归验证）
-- F7 idle 呼吸动画限次/限时（如 N 个循环后停），或把动画从覆盖整卡的 `inset:0` 伪元素挪到卡头小元素——直接削减长时层激励。
-- F8 tab strip 增加同款误路由兜底：pane 级 pointerdown capture，坐标在某 tab rect 内但 target 不是它 → 直接激活该 tab。
-- F9 repair 分级升级：同一坐标 1.5s 内二次 misroute → 升级为对 `pane-tab-panel` 级祖先做 contain/overflow 瞬时切换（模拟真 tab 切换的清层效果）。
-- F10 修 §3.7 小项：heal 时 clearTimeout、retire 恢复还原原值、pointerdown 透明分支补 elementFromPoint 确认。
+### 第二层：消减诱因（中风险，Tier 2 视觉回归验证）——F7-F9 已实施（见上方实施状态）
+- F7 idle 呼吸动画限次/限时（如 N 个循环后停），或把动画从覆盖整卡的 `inset:0` 伪元素挪到卡头小元素——直接削减长时层激励。**已实施：8 次限次 + 静态基线样式。**
+- F8 tab strip 增加同款误路由兜底：pane 级 pointerdown capture，坐标在某 tab rect 内但 target 不是它 → 直接激活该 tab。**已实施：`pane-tab-rescue.ts` + 幻影坐标守卫全家桶。**
+- F9 repair 分级升级：同一坐标 1.5s 内二次 misroute → 升级为对 `pane-tab-panel` 级祖先做 contain/overflow 瞬时切换（模拟真 tab 切换的清层效果）。**已实施：translateZ 两帧变体 + 死路径/耗尽强制升级。**
+- F10 修 §3.7 小项：heal 时 clearTimeout、retire 恢复还原原值、pointerdown 透明分支补 elementFromPoint 确认。**未实施。**
 
 ### 第三层：结构性（长期）
 - 行为级测试补网（真 pointer 序列 + 聚焦断言替换源码正则断言）。

@@ -18,6 +18,7 @@ import {
   resolveDesktopRuntimeKind,
   resolveDesktopWorkingDirectory,
 } from './runtime-environment.js'
+import { attachFrameStallWatchdog } from './frame-stall-watchdog.js'
 import { checkForUpdate, downloadUpdate, installUpdate } from './updater.js'
 import {
   attachmentProtocolScheme,
@@ -57,6 +58,13 @@ const allowSharedDataDirOverride =
 const shouldKeepValidationWindowHidden = process.env.CHILL_VIBE_HEADLESS_RUNTIME_TESTS === '1'
 
 const audioProtocolScheme = 'chill-vibe-audio'
+
+// Chromium 120+ can misjudge a fully visible window as natively occluded on
+// Windows and stop producing frames entirely — JS/events/layout keep running
+// against a dead picture (proven by forensics dump 2026-07-02T13-52-09: nine
+// 1s heartbeat samples returned the same rAF timestamp until a foreground
+// change revived rendering). Disable the miscalculating feature outright.
+app.commandLine.appendSwitch('disable-features', 'CalculateNativeWinOcclusion')
 
 protocol.registerSchemesAsPrivileged([
   { scheme: attachmentProtocolScheme, privileges: { supportFetchAPI: true, secure: true } },
@@ -696,7 +704,10 @@ function createWindow() {
     ...(titleBarStyle ? { titleBarStyle } : {}),
     webPreferences: {
       preload: path.join(moduleDir, 'preload.cjs'),
-      backgroundThrottling: !shouldKeepValidationWindowHidden,
+      // Throttling turns every occlusion misjudgment into a full rAF/timer
+      // stall (investigation §2.2; forensics 2026-07-02T13-52-09). An IDE
+      // with live streams must keep rendering like one.
+      backgroundThrottling: false,
       contextIsolation: true,
       nodeIntegration: false,
     },
@@ -716,6 +727,7 @@ function createWindow() {
     }
   })
   attachWindowDiagnostics(win)
+  attachFrameStallWatchdog(win, (message, meta) => log.warn(message, meta))
 
   win.on('close', (event) => {
     if (process.platform === 'darwin' || quitAfterFlushPending) {

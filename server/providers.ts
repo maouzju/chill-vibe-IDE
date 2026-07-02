@@ -2361,8 +2361,11 @@ export const createClaudeTurnParser = (hooks: {
             .join('')
           const safeTextContent =
             askUserDeltaStripper.push(textContent) + askUserDeltaStripper.flush()
+          // A native tool_use in the same assistant event is as strong a signal
+          // as a stripped typed tool-call block: a trailing marker word on the
+          // preceding prose belongs to the tool-call payload, not the prose.
           const visibleTextContent = typedToolChatterFilter.push(
-            askUserDeltaStripper.consumedToolCallBlockCount() > 0
+            askUserDeltaStripper.consumedToolCallBlockCount() > 0 || hasToolUse
               ? stripTrailingClaudeTypedToolMarkerLines(safeTextContent)
               : safeTextContent,
           )

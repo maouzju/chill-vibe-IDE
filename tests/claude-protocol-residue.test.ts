@@ -1,7 +1,9 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
+import type { ChatRequest } from '../shared/schema.ts'
 import {
+  createClaudeTurnParser,
   isBareClaudeToolCallMarkerText,
   stripTrailingClaudeTypedToolMarkerLines,
 } from '../server/providers.ts'
@@ -81,4 +83,90 @@ test('delta stripper drops a novel stray marker word attached to a typed tool-ca
     ) + stripper.flush()
 
   assert.equal(released.trim(), '前置说明。')
+})
+
+// --- Claude turn fold: trailing residue on prose that shares an assistant
+// event with a native tool_use block (the dominant leak shape observed in the
+// wild: "让我近距离看招牌区:\n\ncard" immediately followed by a command card).
+
+const baseTurnRequest: ChatRequest = {
+  provider: 'claude',
+  workspacePath: '.',
+  model: '',
+  reasoningEffort: 'max',
+  thinkingEnabled: true,
+  planMode: false,
+  language: 'zh-CN',
+  systemPrompt: '',
+  modelPromptRules: [],
+  crossProviderSkillReuseEnabled: true,
+  prompt: 'hi',
+  attachments: [],
+}
+
+const createTurnRecorder = () => {
+  const record = { deltas: [] as string[], errors: [] as string[], done: false }
+  return {
+    record,
+    sink: {
+      onSession: () => {},
+      onDelta: (content: string) => record.deltas.push(content),
+      onLog: () => {},
+      onAssistantMessage: () => {},
+      onActivity: () => {},
+      onDone: () => {
+        record.done = true
+      },
+      onError: (message: string) => {
+        record.errors.push(message)
+      },
+    },
+  }
+}
+
+const assistantEventLine = (blocks: unknown[]) =>
+  JSON.stringify({ type: 'assistant', message: { content: blocks } })
+
+const makeTurnParser = (sink: ReturnType<typeof createTurnRecorder>['sink']) =>
+  createClaudeTurnParser({
+    request: baseTurnRequest,
+    sink,
+    language: 'zh-CN',
+    killChild: () => {},
+    onSettled: () => {},
+  })
+
+test('turn fold strips trailing card residue from prose sharing an event with a tool_use', () => {
+  const { record, sink } = createTurnRecorder()
+  const parser = makeTurnParser(sink)
+
+  parser.handleLine(JSON.stringify({ type: 'system', subtype: 'init', session_id: 's1' }))
+  parser.handleLine(
+    assistantEventLine([
+      { type: 'text', text: '让我近距离看招牌区:\n\ncard' },
+      {
+        type: 'tool_use',
+        id: 'toolu_shot',
+        name: 'Bash',
+        input: { command: 'node shot.mjs iso_signs.png 5000' },
+      },
+    ]),
+  )
+
+  const streamed = record.deltas.join('')
+  assert.ok(streamed.includes('让我近距离看招牌区'), 'prose must stay visible')
+  assert.ok(!/(^|\n)\s*card\s*(\n|$)/.test(streamed), 'trailing card residue must not stream out')
+})
+
+test('turn fold keeps a prose reply that merely ends with the word card when no tool runs', () => {
+  const { record, sink } = createTurnRecorder()
+  const parser = makeTurnParser(sink)
+
+  parser.handleLine(JSON.stringify({ type: 'system', subtype: 'init', session_id: 's2' }))
+  parser.handleLine(
+    assistantEventLine([{ type: 'text', text: '这个组件的名字叫\ncard' }]),
+  )
+
+  const streamed = record.deltas.join('')
+  assert.ok(streamed.includes('card'), 'a text-only reply must keep its trailing word')
 })

@@ -58,8 +58,29 @@ describe('model helpers', () => {
     )
     assert.deepEqual(
       getModelOptions('claude').map((option) => option.model),
-      ['', DEFAULT_CLAUDE_MODEL, 'claude-sonnet-4-6', 'claude-haiku-4-5-20251001'],
+      [
+        '',
+        'claude-fable-5',
+        DEFAULT_CLAUDE_MODEL,
+        'claude-sonnet-5',
+        'claude-sonnet-4-6',
+        'claude-haiku-4-5-20251001',
+      ],
     )
+  })
+
+  it('resolves Fable 5 and Sonnet 5 aliases while keeping Sonnet 4.6 pinned', () => {
+    assert.equal(resolveSlashModel('claude', 'fable'), 'claude-fable-5')
+    assert.equal(resolveSlashModel('claude', 'fable-5'), 'claude-fable-5')
+    assert.equal(resolveSlashModel('claude', 'claude-fable-5'), 'claude-fable-5')
+    // Bare "sonnet" follows the official Claude Code alias to Sonnet 5.
+    assert.equal(resolveSlashModel('claude', 'sonnet'), 'claude-sonnet-5')
+    assert.equal(resolveSlashModel('claude', 'sonnet-5'), 'claude-sonnet-5')
+    // Sonnet 4.6 is still a live model: exact names keep working, and stored
+    // values must not be migrated (Pitfall #119).
+    assert.equal(resolveSlashModel('claude', 'sonnet-4.6'), 'claude-sonnet-4-6')
+    assert.equal(resolveSlashModel('claude', 'claude-sonnet-4-6'), 'claude-sonnet-4-6')
+    assert.equal(normalizeModel('claude', 'claude-sonnet-4-6'), 'claude-sonnet-4-6')
   })
 
   it('keeps tool cards out of the ordinary model picker', () => {

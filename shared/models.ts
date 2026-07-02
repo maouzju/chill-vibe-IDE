@@ -99,16 +99,31 @@ export const MODEL_OPTIONS: ModelOption[] = [
     aliases: ['gpt-5.5', '5.5', 'gpt55'],
   },
   {
+    // Mythos-class tier above Opus (Claude Code v2.1.170+); never the default.
+    label: 'Fable 5',
+    provider: 'claude',
+    model: 'claude-fable-5',
+    aliases: ['fable', 'fable-5', 'claude-fable-5'],
+  },
+  {
     label: 'Opus 4.8',
     provider: 'claude',
     model: DEFAULT_CLAUDE_MODEL,
     aliases: ['opus', 'opus-4.8', 'claude-opus-4-8'],
   },
   {
+    // Bare "sonnet" follows the official alias to Sonnet 5 (native 1M window).
+    label: 'Sonnet 5',
+    provider: 'claude',
+    model: 'claude-sonnet-5',
+    aliases: ['sonnet', 'sonnet-5', 'claude-sonnet-5'],
+  },
+  {
+    // Still a live model: exact names only, stored values stay pinned.
     label: 'Sonnet 4.6',
     provider: 'claude',
     model: 'claude-sonnet-4-6',
-    aliases: ['sonnet', 'sonnet-4.6', 'claude-sonnet-4-6'],
+    aliases: ['sonnet-4.6', 'claude-sonnet-4-6'],
   },
   {
     label: 'Haiku 4.5',

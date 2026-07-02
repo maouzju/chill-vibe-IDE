@@ -42,7 +42,7 @@ import {
   normalizeModel,
   normalizeStoredModel,
 } from './models.js'
-import { getDefaultReasoningEffort, normalizeReasoningEffort } from './reasoning.js'
+import { normalizeReasoningEffortForModel } from './reasoning.js'
 import {
   defaultSystemPrompt,
   normalizeModelPromptRules,
@@ -381,7 +381,7 @@ const normalizeModelReasoningEfforts = (
           return []
         }
 
-        return [[normalizedModel, normalizeReasoningEffort(provider, reasoningEffort)]]
+        return [[normalizedModel, normalizeReasoningEffortForModel(provider, normalizedModel, reasoningEffort)]]
       }),
     )
   }
@@ -712,7 +712,11 @@ export const getPreferredReasoningEffort = (
   model?: string | null,
 ) => {
   const effectiveModel = getEffectiveCardModel(settings, provider, model)
-  return normalizeReasoningEffort(provider, settings.modelReasoningEfforts[provider][effectiveModel])
+  return normalizeReasoningEffortForModel(
+    provider,
+    effectiveModel,
+    settings.modelReasoningEfforts[provider][effectiveModel],
+  )
 }
 
 export const rememberModelReasoningEffort = (
@@ -722,7 +726,7 @@ export const rememberModelReasoningEffort = (
   reasoningEffort?: string | null,
 ): AppSettings['modelReasoningEfforts'] => {
   const effectiveModel = getEffectiveCardModel(settings, provider, model)
-  const normalizedReasoningEffort = normalizeReasoningEffort(provider, reasoningEffort)
+  const normalizedReasoningEffort = normalizeReasoningEffortForModel(provider, effectiveModel, reasoningEffort)
   const existingReasoningEffort = settings.modelReasoningEfforts[provider][effectiveModel]
 
   if (existingReasoningEffort === normalizedReasoningEffort) {
@@ -971,7 +975,7 @@ export const createCard = (
   size?: number,
   provider: Provider = 'codex',
   model = getDefaultModel(provider),
-  reasoningEffort: string | null | undefined = getDefaultReasoningEffort(provider),
+  reasoningEffort: string | null | undefined = undefined,
   language: AppLanguage = defaultAppLanguage,
 ): ChatCard => {
   void language
@@ -985,7 +989,9 @@ export const createCard = (
     size: normalizeCardSize(effectiveSize, getCardMinimumSize(normalizedModel), getCardDefaultSize(normalizedModel)),
     provider,
     model: normalizedModel,
-    reasoningEffort: normalizeReasoningEffort(provider, reasoningEffort),
+    // Model-aware: an empty tier lands on the model default (high on Fable 5,
+    // provider default elsewhere).
+    reasoningEffort: normalizeReasoningEffortForModel(provider, normalizedModel, reasoningEffort),
     thinkingEnabled: true,
     planMode: false,
     autoUrgeActive: false,

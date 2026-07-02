@@ -294,7 +294,7 @@ test('Electron runtime validation keeps desktop windows hidden by default', asyn
   assert.match(runnerBody, /Remove-Item Env:PWDEBUG -ErrorAction SilentlyContinue/)
   assert.match(mainBody, /CHILL_VIBE_HEADLESS_RUNTIME_TESTS\s*===\s*'1'/)
   assert.match(mainBody, /presentWindow\(win\)/)
-  assert.match(mainBody, /backgroundThrottling:\s*!shouldKeepValidationWindowHidden/)
+  assert.match(mainBody, /backgroundThrottling:\s*false/)
   assert.match(helperBody, /CHILL_VIBE_HEADLESS_RUNTIME_TESTS:\s*'1'/)
 })
 

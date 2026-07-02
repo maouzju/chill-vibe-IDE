@@ -25,6 +25,10 @@ import type {
 } from '../../shared/schema'
 import { clearDragPayload, readDragPayload, writeDragPayload } from '../dnd'
 import type { CardRecoveryStatus } from '../stream-recovery-feedback'
+import {
+  composerFocusRequestEventName,
+  type ComposerFocusRequestDetail,
+} from './composer-focus'
 import type { QueuedSendSummary, SendMessageOptions } from './deferred-send-queue'
 import { arePaneViewPropsEqual } from './layout-memoization'
 import { getAutoReadCardId } from './pane-read-state'
@@ -337,6 +341,25 @@ const PaneViewView = ({
     if (el) el.dataset.sizing = tabSizingRef.current
   }, [])
   const [composerFocusRequest, setComposerFocusRequest] = useState(0)
+
+  // Keyboard tab shortcuts (Ctrl+T / Ctrl+Tab) live in App and cannot reach
+  // this pane-local counter directly; they dispatch an app-wide focus request
+  // event instead (investigation §4.3).
+  useEffect(() => {
+    const handleComposerFocusRequest = (event: Event) => {
+      const detail = (event as CustomEvent<ComposerFocusRequestDetail>).detail
+      if (detail?.paneId !== pane.id) {
+        return
+      }
+      setComposerFocusRequest((current) => current + 1)
+    }
+
+    window.addEventListener(composerFocusRequestEventName, handleComposerFocusRequest)
+    return () => {
+      window.removeEventListener(composerFocusRequestEventName, handleComposerFocusRequest)
+    }
+  }, [pane.id])
+
   const [contextMenu, setContextMenu] = useState<{ tabId: string; x: number; y: number } | null>(null)
   const contextMenuRef = useRef<HTMLDivElement | null>(null)
   const activeCard = pane.activeTabId ? column.cards[pane.activeTabId] : undefined
@@ -589,6 +612,10 @@ const PaneViewView = ({
 
   const activateTab = (tabId: string) => {
     if (pane.activeTabId === tabId) {
+      // Re-clicking the already-active tab is the user's natural recovery
+      // gesture when the composer looks dead (stale hit-test surfaces);
+      // re-request composer focus instead of silently doing nothing.
+      requestComposerFocus(tabId)
       return
     }
 
@@ -704,6 +731,11 @@ const PaneViewView = ({
   }
 
   const handleTabMouseDown = () => (event: MouseEvent<HTMLButtonElement>) => {
+    // Never preventDefault a left mousedown here: starting a drag is part of
+    // mousedown's default action, so cancelling it kills dragstart on this
+    // draggable tab in every browser. The button briefly taking native focus
+    // is fine — activateTab always re-requests composer focus and the
+    // verify+retry driver moves focus onto the textarea unconditionally.
     if (event.button !== 1) {
       return
     }

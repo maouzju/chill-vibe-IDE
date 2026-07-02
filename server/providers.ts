@@ -570,16 +570,43 @@ const formatClaudeTypedToolCallStalled = (language: AppLanguage) =>
     : 'Claude 这一轮没有真正执行工具调用就结束了，正在自动继续。'
 
 
-const isBareClaudeToolCallMarkerText = (text: string) =>
-  text
-    .split(/\r?\n/)
-    .every((line) => {
-      const normalized = line.trim().toLowerCase()
-      return !normalized || normalized === 'call' || normalized === 'call:' || normalized === 'court'
-    })
+// Exported for tests. Both call sites guard on real tool activity in the same
+// turn (hasToolUse / sawStructuredActivity), so besides the known marker words
+// this may also treat 1-2 bare short words as protocol residue: leaked markers
+// keep mutating (call → court → course → count → card → …) and an assistant
+// text that is nothing but a lone word beside a real tool call is never
+// meaningful prose.
+export const isBareClaudeToolCallMarkerText = (text: string) => {
+  const lines = text.split(/\r?\n/)
+  const isKnownMarkerLine = (line: string) => {
+    const normalized = line.trim().toLowerCase()
+    return (
+      !normalized ||
+      normalized === 'call' ||
+      normalized === 'call:' ||
+      normalized === 'court' ||
+      normalized === 'course' ||
+      normalized === 'count' ||
+      normalized === 'card' ||
+      normalized === '课'
+    )
+  }
+  if (lines.every(isKnownMarkerLine)) {
+    return true
+  }
 
-const stripTrailingClaudeTypedToolMarkerLines = (text: string) =>
-  text.replace(/(?:[ \t]*(?:\r?\n|^)[ \t]*(?:call:?|court)[ \t]*)+$/i, '')
+  const isBareResidueWordLine = (line: string) => {
+    const normalized = line.trim()
+    return !normalized || /^[a-zA-Z]{2,12}$/.test(normalized) || /^[一-鿿]$/.test(normalized)
+  }
+  const nonEmptyLineCount = lines.filter((line) => line.trim()).length
+  return nonEmptyLineCount > 0 && nonEmptyLineCount <= 2 && lines.every(isBareResidueWordLine)
+}
+
+// Exported for tests. Only called on text a typed tool-call XML block was just
+// stripped from (consumedToolCallBlockCount > 0 at both call sites).
+export const stripTrailingClaudeTypedToolMarkerLines = (text: string) =>
+  text.replace(/(?:[ \t]*(?:\r?\n|^)[ \t]*(?:call:?|court|course|count|card|课)[ \t]*)+$/iu, '')
 
 const isPotentialClaudeTypedToolChatterPrefix = (text: string) => {
   const normalized = text
@@ -595,7 +622,13 @@ const isPotentialClaudeTypedToolChatterPrefix = (text: string) => {
     return true
   }
 
-  if (normalized === 'court') {
+  if (
+    normalized === 'court' ||
+    normalized === 'course' ||
+    normalized === 'count' ||
+    normalized === 'card' ||
+    normalized === '课'
+  ) {
     return true
   }
 
@@ -2318,8 +2351,11 @@ export const createClaudeTurnParser = (hooks: {
             .join('')
           const safeTextContent =
             askUserDeltaStripper.push(textContent) + askUserDeltaStripper.flush()
+          // A native tool_use in the same assistant event is as strong a signal
+          // as a stripped typed tool-call block: a trailing marker word on the
+          // preceding prose belongs to the tool-call payload, not the prose.
           const visibleTextContent = typedToolChatterFilter.push(
-            askUserDeltaStripper.consumedToolCallBlockCount() > 0
+            askUserDeltaStripper.consumedToolCallBlockCount() > 0 || hasToolUse
               ? stripTrailingClaudeTypedToolMarkerLines(safeTextContent)
               : safeTextContent,
           )

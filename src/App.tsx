@@ -196,6 +196,7 @@ import { buildSeededChatPrompt, collectSeededChatAttachments, hasSeededChatTrans
 import { buildArchiveRecallSnapshot } from './archive-recall'
 import { getOnboardingText, getPanelText, getResilientProxyText, getTopTabText } from './app-panel-text'
 import { AppButton } from './components/AppButton'
+import { dispatchComposerFocusRequest } from './components/composer-focus'
 import {
   getStableSettingsPanelColumnCount,
   splitSettingsGroupsIntoStableColumns,
@@ -4421,6 +4422,9 @@ function App() {
         event.preventDefault()
         rememberPaneTarget(target.columnId, target.paneId)
         applyAction({ type: 'addTab', columnId: target.columnId, paneId: target.paneId })
+        // Keyboard tab creation must focus the new composer just like the
+        // pointer path does; the pane-local counter is bumped via this event.
+        dispatchComposerFocusRequest(target.paneId)
         return
       }
 
@@ -4433,6 +4437,7 @@ function App() {
           ? (currentIndex - 1 + tabs.length) % tabs.length
           : (currentIndex + 1) % tabs.length
         applyAction({ type: 'setActiveTab', columnId: target.columnId, paneId: target.paneId, tabId: tabs[nextIndex]! })
+        dispatchComposerFocusRequest(target.paneId)
         return
       }
 

@@ -6,6 +6,9 @@ import test from 'node:test'
 import {
   composerFocusRequestEventName,
   composerFocusRetryDelaysMs,
+  decideHitTestRepairScope,
+  hitTestRepairEscalationWindowMs,
+  isComposerFocusEffectivelyVacant,
   startComposerFocusAttempt,
   type ComposerFocusAttemptDeps,
 } from '../src/components/composer-focus'
@@ -21,7 +24,10 @@ type FakeEnv = {
   setActiveElement: (state: 'settled' | 'vacant' | 'elsewhere') => void
 }
 
-const createFakeEnv = (options?: { focusSucceeds?: boolean }): FakeEnv => {
+const createFakeEnv = (options?: {
+  focusSucceeds?: boolean
+  onExhausted?: () => void
+}): FakeEnv => {
   let focusCount = 0
   let cancelledFrameCount = 0
   let cancelledTimerCount = 0
@@ -60,6 +66,7 @@ const createFakeEnv = (options?: { focusSucceeds?: boolean }): FakeEnv => {
         cancelledTimerCount += 1
       }
     },
+    onExhausted: options?.onExhausted,
   }
 
   return {
@@ -181,6 +188,115 @@ test('composer focus request event name matches the app-wide custom event conven
   assert.match(composerFocusRequestEventName, /^chill-vibe:/)
 })
 
+// ── F9: exhaustion reporting (investigation §6 second tier) ────────────────
+
+test('composer focus attempt reports exhaustion once when the ladder ends with focus still vacant', () => {
+  let exhausted = 0
+  const env = createFakeEnv({ focusSucceeds: false, onExhausted: () => (exhausted += 1) })
+  startComposerFocusAttempt(env.deps)
+
+  env.runFrame()
+  let guard = 0
+  while (env.runNextTimer() !== null && guard < 20) {
+    guard += 1
+  }
+
+  assert.equal(exhausted, 1, 'a fully failed ladder with vacant focus is the stuck-pane signature and must be reported')
+})
+
+test('composer focus attempt does not report exhaustion when focus settles', () => {
+  let exhausted = 0
+  const env = createFakeEnv({ onExhausted: () => (exhausted += 1) })
+  startComposerFocusAttempt(env.deps)
+
+  env.runFrame()
+  let guard = 0
+  while (env.runNextTimer() !== null && guard < 20) {
+    guard += 1
+  }
+
+  assert.equal(exhausted, 0)
+})
+
+test('composer focus attempt does not report exhaustion when another element owns focus', () => {
+  let exhausted = 0
+  const env = createFakeEnv({ focusSucceeds: false, onExhausted: () => (exhausted += 1) })
+  startComposerFocusAttempt(env.deps)
+
+  env.runFrame()
+  env.setActiveElement('elsewhere')
+  let guard = 0
+  while (env.runNextTimer() !== null && guard < 20) {
+    guard += 1
+  }
+
+  assert.equal(exhausted, 0, 'focus deliberately placed elsewhere is not a failure and must not escalate')
+})
+
+test('a cancelled composer focus attempt never reports exhaustion', () => {
+  let exhausted = 0
+  const env = createFakeEnv({ focusSucceeds: false, onExhausted: () => (exhausted += 1) })
+  const cancel = startComposerFocusAttempt(env.deps)
+
+  env.runFrame()
+  cancel()
+  let guard = 0
+  while (env.runNextTimer() !== null && guard < 20) {
+    guard += 1
+  }
+
+  assert.equal(exhausted, 0)
+})
+
+// ── F9: hit-test repair scope escalation ───────────────────────────────────
+
+test('repair scope inside the throttle window is skipped', () => {
+  assert.equal(decideHitTestRepairScope(2000, 1000, 1500, 5000), 'skip')
+})
+
+test('a repeated repair shortly after the last one escalates to the pane panel', () => {
+  // The card-level rebuild ran recently and the surface is still misrouting:
+  // card scope demonstrably did not clear it, so widen to the pane panel.
+  assert.equal(decideHitTestRepairScope(4000, 1000, 1500, 5000), 'card-and-panel')
+})
+
+test('a long-quiet card repairs at card level only', () => {
+  assert.equal(decideHitTestRepairScope(60_000, 1000, 1500, 5000), 'card')
+})
+
+test('the first-ever repair stays at card level', () => {
+  assert.equal(decideHitTestRepairScope(100_000, 0, 1500, 5000), 'card')
+})
+
+test('the escalation window is meaningfully wider than the repair throttle', () => {
+  assert.ok(hitTestRepairEscalationWindowMs > 1500)
+})
+
+// ── F9: effective vacancy (own pane chrome does not block retries) ─────────
+
+const chromeElement = { __chrome: true } as unknown as Element
+const foreignElement = { __foreign: true } as unknown as Element
+const bodyElement = { __body: true } as unknown as Element
+
+test('effective vacancy: null and body are vacant', () => {
+  assert.equal(isComposerFocusEffectivelyVacant(null, bodyElement, () => false), true)
+  assert.equal(isComposerFocusEffectivelyVacant(bodyElement, bodyElement, () => false), true)
+})
+
+test('effective vacancy: focus resting on this pane\'s own chrome is vacant (the tab click IS the focus request)', () => {
+  assert.equal(
+    isComposerFocusEffectivelyVacant(chromeElement, bodyElement, (element) => element === chromeElement),
+    true,
+  )
+})
+
+test('effective vacancy: focus on any other element is not vacant', () => {
+  assert.equal(
+    isComposerFocusEffectivelyVacant(foreignElement, bodyElement, (element) => element === chromeElement),
+    false,
+  )
+})
+
 const chatCardSourcePath = path.join(process.cwd(), 'src', 'components', 'ChatCard.tsx')
 const paneViewSourcePath = path.join(process.cwd(), 'src', 'components', 'PaneView.tsx')
 const appSourcePath = path.join(process.cwd(), 'src', 'App.tsx')
@@ -194,6 +310,53 @@ test('composerFocusRequest effect drives the shared verify+retry helper instead 
   assert.ok(
     /startComposerFocusAttempt/.test(effectBlock),
     'tab-switch focus must verify activeElement and retry; a lost rAF otherwise strands the composer unfocused (investigation §4.2)',
+  )
+})
+
+test('ChatCard escalates repeated or dead-end repairs to the pane panel (F9)', async () => {
+  const source = await readFile(chatCardSourcePath, 'utf8')
+  assert.match(
+    source,
+    /decideHitTestRepairScope/,
+    'repair scope must be decided by the shared escalation helper',
+  )
+  assert.match(
+    source,
+    /closest\('\.pane-tab-panel'\)/,
+    'panel-level escalation must target the pane-tab-panel ancestor',
+  )
+  assert.match(
+    source,
+    /markComposerRescueUnhandled\(textarea, event\)[\s\S]{0,600}escalateToPanel/,
+    'the unhandled rescue dead end must escalate to a panel-level repair instead of silently returning',
+  )
+})
+
+test('ChatCard focus effect reports exhaustion into a panel repair plus one follow-up attempt (F9)', async () => {
+  const source = await readFile(chatCardSourcePath, 'utf8')
+  const effectBlock =
+    source.match(/if \(!usesPaneChrome \|\| isToolCard \|\| composerFocusRequest === 0\) \{[\s\S]*?\n {2}\}, \[card\.id, composerFocusRequest/)?.[0] ?? ''
+
+  assert.ok(effectBlock, 'expected the composerFocusRequest focus effect to exist')
+  assert.match(effectBlock, /onExhausted/, 'the ladder dead end must not stay silent')
+  assert.match(
+    effectBlock,
+    /composerFocusExhaustedCount/,
+    'exhaustion needs an observability counter like the other rescue dead ends',
+  )
+  assert.match(
+    effectBlock,
+    /isComposerFocusEffectivelyVacant/,
+    'vacancy must treat this pane\'s own chrome as retryable (tab clicks park focus on the tab button)',
+  )
+})
+
+test('the pane panel carries the transient hit-test repair CSS hook', async () => {
+  const css = await readFile(path.join(process.cwd(), 'src', 'index.css'), 'utf8')
+  assert.match(
+    css,
+    /\.pane-tab-panel\.is-hit-test-repair\s*\{[^}]*translateZ\(0\)/,
+    'panel-level escalation needs the same transient translateZ(0) layer rebuild as the card shell',
   )
 })
 

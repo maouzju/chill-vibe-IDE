@@ -976,6 +976,10 @@ const applyRequestModelPatch = (state: AppState, patch: Partial<RequestModelSett
     lastModel: nextLastModel,
   })
 
+  // Default-model changes only affect future chats: refresh the column's
+  // remembered model (the seed for newly opened tabs) when it was just carrying
+  // the previous default, but never touch already-open cards — their model and
+  // session stay pinned to what the user sees.
   return {
     ...next,
     columns: next.columns.map((column) => {
@@ -985,38 +989,13 @@ const applyRequestModelPatch = (state: AppState, patch: Partial<RequestModelSett
       const shouldUpdateColumnModel =
         providerWasUpdated && (column.model.trim().length === 0 || column.model === previousConfiguredModel)
 
+      if (!shouldUpdateColumnModel) {
+        return column
+      }
+
       return {
         ...column,
-        model: shouldUpdateColumnModel ? nextConfiguredModel : column.model,
-        cards: Object.fromEntries(
-          Object.entries(column.cards).map(([cardId, card]) => {
-            if (toolCardModels.has(card.model) || !updatedProviders.includes(card.provider)) {
-              return [cardId, card]
-            }
-
-            const previousCardConfiguredModel = state.settings.requestModels[card.provider]
-            const nextCardConfiguredModel = next.settings.requestModels[card.provider]
-            const shouldUpdateCardModel =
-              card.model.trim().length === 0 || card.model === previousCardConfiguredModel
-
-            if (shouldUpdateCardModel) {
-              return [
-                cardId,
-                {
-                  ...card,
-                  model: nextCardConfiguredModel,
-                  reasoningEffort: getPreferredReasoningEffort(next.settings, card.provider, nextCardConfiguredModel),
-                  sessionId: undefined,
-                  sessionModel: undefined,
-                  providerSessions: {},
-                  streamId: undefined,
-                },
-              ]
-            }
-
-            return [cardId, card]
-          }),
-        ),
+        model: nextConfiguredModel,
       }
     }),
   }

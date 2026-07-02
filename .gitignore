@@ -47,3 +47,4 @@ test-results
 .claude/skills/
 .claude/scheduled_tasks.lock
 .claude/worktrees/
+*.tsbuildinfo

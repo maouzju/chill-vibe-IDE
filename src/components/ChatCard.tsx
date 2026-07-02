@@ -87,6 +87,7 @@ import {
   startComposerFocusAttempt,
   type ComposerFocusAttemptDeps,
 } from './composer-focus'
+import { notifyForensicsRescueEvent } from '../diagnostics/stuck-pane-forensics'
 import { createDraftSyncScheduler, draftSyncIdleMs } from './chat-draft-sync'
 import { evaluateAutoUrge, getNextAutoUrgeToggleState } from './chat-auto-urge'
 import { fetchSlashCommands, uploadImageAttachment } from '../api'
@@ -786,6 +787,7 @@ const markComposerRescueUnhandled = (
   console.debug(
     `[composer-rescue] unhandled pointerdown inside textarea rect at (${event.clientX}, ${event.clientY}); target=${targetLabel}`,
   )
+  notifyForensicsRescueEvent('composer-rescue-unhandled')
 }
 
 const areChatCardPropsEqual = (previous: ChatCardProps, next: ChatCardProps) =>

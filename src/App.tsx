@@ -197,6 +197,7 @@ import { buildArchiveRecallSnapshot } from './archive-recall'
 import { getOnboardingText, getPanelText, getResilientProxyText, getTopTabText } from './app-panel-text'
 import { AppButton } from './components/AppButton'
 import { dispatchComposerFocusRequest } from './components/composer-focus'
+import { installStuckPaneForensics } from './diagnostics/stuck-pane-forensics'
 import {
   getStableSettingsPanelColumnCount,
   splitSettingsGroupsIntoStableColumns,
@@ -802,6 +803,12 @@ function App() {
     appStateRef.current = appState
     updateLatestKnownAppState(appState)
   }, [appState])
+
+  // Stuck-pane crime-scene capture: Ctrl+Shift+F9 dumps focus/pane/hit-test
+  // state to logs/, and repeated rescue firings auto-dump. This is how a
+  // misroute recurrence in the wild finally becomes attributable instead of
+  // symptom-guessed (docs/specs/composer-focus-loss/investigation.md §3.8).
+  useEffect(() => installStuckPaneForensics(), [])
 
   const handleBoardWheelCapture = useCallback((event: WheelEvent<HTMLElement>) => {
     if (Math.abs(event.deltaY) < Math.abs(event.deltaX) || event.deltaY === 0) {

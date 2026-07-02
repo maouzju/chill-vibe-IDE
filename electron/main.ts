@@ -1,5 +1,5 @@
 import { app, BrowserWindow, dialog, ipcMain, net, protocol, shell } from 'electron'
-import { rm, stat } from 'node:fs/promises'
+import { mkdir, rm, stat, writeFile } from 'node:fs/promises'
 import path from 'path'
 import { fileURLToPath, pathToFileURL } from 'url'
 import type { IpcMainInvokeEvent } from 'electron'
@@ -273,6 +273,15 @@ function attachWindowDiagnostics(win: BrowserWindow) {
     windowId: win.id,
   })
 
+  // The packaged app removes the menu, which silently removes every devtools
+  // accelerator with it — leaving zero on-machine inspection paths when the
+  // UI misbehaves. Restore F12 explicitly.
+  win.webContents.on('before-input-event', (_event, input) => {
+    if (input.type === 'keyDown' && input.key === 'F12') {
+      win.webContents.toggleDevTools()
+    }
+  })
+
   win.on('close', () => {
     log.warn('[main] BrowserWindow close requested.', {
       windowId: win.id,
@@ -377,6 +386,22 @@ function registerDesktopHandlers() {
     getEventWindow(event)?.webContents.setZoomFactor(clampUiZoomFactor(zoomFactor))
   })
   ipcMain.handle('window:is-maximized', (event) => getEventWindow(event)?.isMaximized() ?? false)
+
+  // Stuck-pane forensics dumps land next to main.log so a single logs/ folder
+  // carries everything needed to attribute a misroute recurrence in the wild.
+  ipcMain.handle('diagnostics:write-forensics', async (_event, json: string) => {
+    if (typeof json !== 'string' || json.length > 4 * 1024 * 1024) {
+      return null
+    }
+    const dataDir = process.env.CHILL_VIBE_DATA_DIR ?? path.join(process.cwd(), '.chill-vibe')
+    const logsDir = path.join(dataDir, 'logs')
+    await mkdir(logsDir, { recursive: true })
+    const stamp = new Date().toISOString().replace(/[:.]/g, '-')
+    const filePath = path.join(logsDir, `stuck-pane-forensics-${stamp}.json`)
+    await writeFile(filePath, json, 'utf8')
+    log.warn('[main] stuck-pane forensics dump written.', { filePath })
+    return filePath
+  })
 
   ipcMain.handle('desktop:fetch-state', () => desktopBackend.fetchState())
   ipcMain.handle('desktop:load-session-history-entry', (_event, request) =>

@@ -30,6 +30,7 @@ import {
   type ComposerFocusRequestDetail,
 } from './composer-focus'
 import { decideMisroutedTabPointerRescue, isPointerWithinRect } from './pane-tab-rescue'
+import { notifyForensicsRescueEvent } from '../diagnostics/stuck-pane-forensics'
 import type { QueuedSendSummary, SendMessageOptions } from './deferred-send-queue'
 import { arePaneViewPropsEqual } from './layout-memoization'
 import { getAutoReadCardId } from './pane-read-state'
@@ -403,8 +404,10 @@ const PaneViewView = ({
         document.elementFromPoint(point.x, point.y),
       )
       if (decision.kind === 'activate') {
+        notifyForensicsRescueEvent('tab-rescue')
         tabRescueActionsRef.current.activate(decision.tabId)
       } else if (decision.kind === 'close') {
+        notifyForensicsRescueEvent('tab-rescue')
         tabRescueActionsRef.current.close(decision.tabId)
       }
     }

@@ -7,7 +7,10 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
 $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
-$playwrightScript = Join-Path $repoRoot 'scripts\run-playwright-specs.ps1'
+$playwrightScript = Join-Path $repoRoot 'scripts/run-playwright-specs.ps1'
+
+# Windows PowerShell only exists on Windows; Linux/macOS runners ship pwsh.
+$powerShellCommand = if (Get-Command 'powershell' -ErrorAction SilentlyContinue) { 'powershell' } else { 'pwsh' }
 
 Push-Location $repoRoot
 
@@ -30,7 +33,7 @@ try {
     exit $LASTEXITCODE
   }
 
-  & powershell -ExecutionPolicy Bypass -File $playwrightScript -Specs 'tests/add-card-freeze.spec.ts'
+  & $powerShellCommand -ExecutionPolicy Bypass -File $playwrightScript -Specs 'tests/add-card-freeze.spec.ts'
 
   if ($LASTEXITCODE -ne 0) {
     exit $LASTEXITCODE

@@ -118,7 +118,9 @@ test('packaged Electron ignores an inherited shared data dir by default', () => 
 })
 
 test('Electron only honors an explicit shared data dir override when isolation is opt-in', () => {
-  const configuredDataDir = path.join('D:', 'shared', 'chill-vibe-data')
+  // path.win32.join keeps the expected value byte-identical to the production
+  // normalizePortableAbsolutePath output on Linux CI runners too.
+  const configuredDataDir = path.win32.join('D:', 'shared', 'chill-vibe-data')
 
   assert.equal(
     resolveDesktopDataDir({

@@ -58,21 +58,23 @@ test('classifies workspace file links as local message links', () => {
   assert.equal(isLocalMessageLinkHref('#details'), false)
 })
 
+// Drive-letter workspaces always take the path.win32 branch in production,
+// so the expected values must use path.win32 too or they diverge on Linux CI.
 test('resolves relative message links against the active workspace', () => {
   assert.equal(
     resolveMessageLocalLinkTarget('dist/release-20260410-234915', 'D:/Git/chill-vibe'),
-    path.resolve('D:/Git/chill-vibe', 'dist/release-20260410-234915'),
+    path.win32.resolve('D:/Git/chill-vibe', 'dist/release-20260410-234915'),
   )
   assert.equal(
     resolveMessageLocalLinkTarget('win-unpacked', 'D:/Git/chill-vibe'),
-    path.resolve('D:/Git/chill-vibe', 'win-unpacked'),
+    path.win32.resolve('D:/Git/chill-vibe', 'win-unpacked'),
   )
   assert.equal(
     resolveMessageLocalLinkTarget(
       'file:///D:/Git/chill-vibe/dist/release-20260410-234915',
       'D:/Git/chill-vibe',
     ),
-    path.resolve('D:/Git/chill-vibe', 'dist/release-20260410-234915'),
+    path.win32.resolve('D:/Git/chill-vibe', 'dist/release-20260410-234915'),
   )
   assert.equal(
     resolveMessageLocalLinkTarget('https://example.com/releases/latest', 'D:/Git/chill-vibe'),
@@ -83,11 +85,11 @@ test('resolves relative message links against the active workspace', () => {
 test('resolves slash-prefixed Windows file links and ignores line fragments', () => {
   assert.equal(
     resolveMessageLocalLinkTarget('/D:/Git/chill-vibe/AGENTS.md', 'D:/Git/chill-vibe'),
-    path.resolve('D:/Git/chill-vibe/AGENTS.md'),
+    path.win32.normalize('D:/Git/chill-vibe/AGENTS.md'),
   )
   assert.equal(
     resolveMessageLocalLinkTarget('/D:/Git/chill-vibe/AGENTS.md#L74', 'D:/Git/chill-vibe'),
-    path.resolve('D:/Git/chill-vibe/AGENTS.md'),
+    path.win32.normalize('D:/Git/chill-vibe/AGENTS.md'),
   )
 })
 

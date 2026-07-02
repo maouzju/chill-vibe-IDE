@@ -85,6 +85,36 @@ test('delta stripper drops a novel stray marker word attached to a typed tool-ca
   assert.equal(released.trim(), '前置说明。')
 })
 
+// --- Gateway-mangled tool-call XML: the bad proxy node can eat the leading `<`
+// (and expose the antml namespace), leaving `antml:invoke name="...">` with a
+// normal or mangled (`</invoke">`) close. Observed live on a relay gateway node.
+
+test('delta stripper strips a mangled antml:invoke block with a normal close', () => {
+  const stripper = createClaudeAskUserDeltaStripper()
+  const released =
+    stripper.push('card\n\nantml:invoke name="Read">\n\n</invoke>card') + stripper.flush()
+
+  assert.ok(!/invoke/i.test(released), 'no invoke fragment may survive')
+  assert.ok(!/antml/i.test(released), 'no antml fragment may survive')
+  assert.ok(stripper.consumedToolCallBlockCount() > 0, 'counts as a consumed tool-call block')
+})
+
+test('delta stripper drops a mangled antml:invoke block whose close tag is also mangled', () => {
+  const stripper = createClaudeAskUserDeltaStripper()
+  const released =
+    stripper.push('antml:invoke name="Edit">\n\n\n\n</invoke">') + stripper.flush()
+
+  assert.equal(released.trim(), '')
+})
+
+test('delta stripper keeps prose that merely mentions antml:invoke', () => {
+  const stripper = createClaudeAskUserDeltaStripper()
+  const released =
+    stripper.push('antml:invoke 这个词是坏节点泄漏出来的协议标记，不是正常输出。') + stripper.flush()
+
+  assert.equal(released, 'antml:invoke 这个词是坏节点泄漏出来的协议标记，不是正常输出。')
+})
+
 // --- Claude turn fold: trailing residue on prose that shares an assistant
 // event with a native tool_use block (the dominant leak shape observed in the
 // wild: "让我近距离看招牌区:\n\ncard" immediately followed by a command card).

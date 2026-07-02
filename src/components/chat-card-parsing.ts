@@ -720,9 +720,25 @@ const isAmbiguousClaudeProtocolMarkerLine = (line: string) => {
     isClaudeProtocolMarkerLine(line) ||
     normalized === 'course' ||
     normalized === 'card' ||
-    normalized === '课'
+    normalized === '课' ||
+    // The gateway can also double or triple the marker word (`cardcard`).
+    /^(?:call:?|court|course|count|card|课){2,3}$/.test(normalized)
   )
 }
+
+// Strips tool-call XML that Claude typed as text — including the
+// gateway-mangled variant where the leading `<` was eaten and the internal
+// namespace leaks (`antml:invoke name="...">`), with an intact or mangled
+// (`</invoke">`) close. Backtick-prefixed mentions stay untouched, and the
+// antml form additionally requires ` name="` so prose discussing the marker
+// itself is never swallowed. Shared by the message sanitize chain here and the
+// markdown renderer fallback.
+export const stripLeakedClaudeToolXml = (content: string) =>
+  content
+    .replace(/(?<!`)<function_calls>\s*<invoke(?:\s+[^>\n]*?)?>[\s\S]*?(?:<\/invoke>\s*<\/function_calls>|$)/gi, '')
+    .replace(/(?<!`)<invoke(?:\s+[^>\n]*?)?>[\s\S]*?(?:<\/invoke>|$)/gi, '')
+    .replace(/(?<!`)<?antml:invoke\s+name="[\s\S]*?(?:<\/invoke[^\n<]*?>|$)/gi, '')
+    .replace(/(?<!`)<parameter\s+[^>\n]*?>[\s\S]*?(?:<\/parameter>|$)/gi, '')
 
 const sanitizeMarkerLines = (
   content: string,
@@ -788,7 +804,7 @@ const stripTrailingClaudeProtocolResidueLines = (
   options: { includeAmbiguousMarkers?: boolean } = {},
 ) => {
   const markerPattern = options.includeAmbiguousMarkers
-    ? /(?:[ \t]*(?:\r?\n|^)[ \t]*(?:call:?|court|course|card|课)[ \t]*(?:\r?\n)?)+$/iu
+    ? /(?:[ \t]*(?:\r?\n|^)[ \t]*(?:call:?|court|course|card|课){1,3}[ \t]*(?:\r?\n)?)+$/iu
     : /(?:[ \t]*(?:\r?\n|^)[ \t]*(?:call:?|court)[ \t]*(?:\r?\n)?)+$/iu
 
   return content
@@ -818,7 +834,7 @@ const sanitizeLeakedClaudeCallMarkerContent = (
   }
 
   const withoutCallMarkers = stripStandaloneEmptyMarkdownBulletResidue(
-    sanitizeClaudeProtocolMarkerLines(message.content, {
+    sanitizeClaudeProtocolMarkerLines(stripLeakedClaudeToolXml(message.content), {
       includeAmbiguousMarkers: options.includeAmbiguousClaudeMarkers,
     }),
   )

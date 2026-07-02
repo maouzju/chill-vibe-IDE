@@ -80,8 +80,12 @@ import {
 } from './chat-scroll'
 import { syncComposerTextareaHeight } from './chat-composer-textarea'
 import {
+  decideHitTestRepairScope,
+  hitTestRepairEscalationWindowMs,
+  isComposerFocusEffectivelyVacant,
   shouldSkipComposerRescueForIgnoredSurface,
   startComposerFocusAttempt,
+  type ComposerFocusAttemptDeps,
 } from './composer-focus'
 import { createDraftSyncScheduler, draftSyncIdleMs } from './chat-draft-sync'
 import { evaluateAutoUrge, getNextAutoUrgeToggleState } from './chat-auto-urge'
@@ -706,9 +710,26 @@ const classifyComposerPointerRouting = (
   return hit === textarea ? 'misrouted-to-textarea' : 'misrouted-to-composer'
 }
 
+// Toggling a transient transform rebuilds the subtree's compositor layers and
+// hit-test data — the lightweight equivalent of the pane/tab switch that
+// historically cleared the stale surface. The data attribute is an
+// observability hook for tests and triage.
+const applyTransientHitTestRepair = (element: HTMLElement) => {
+  element.dataset.hitTestRepairCount = String(
+    Number(element.dataset.hitTestRepairCount ?? '0') + 1,
+  )
+  element.classList.add('is-hit-test-repair')
+  window.requestAnimationFrame(() => {
+    window.requestAnimationFrame(() => {
+      element.classList.remove('is-hit-test-repair')
+    })
+  })
+}
+
 const repairStaleCardHitTest = (
   textarea: HTMLTextAreaElement,
   lastRepairAtRef: RefObject<number>,
+  options?: { escalateToPanel?: boolean },
 ) => {
   const shell = textarea.closest('.card-shell')
   if (!(shell instanceof HTMLElement)) {
@@ -716,24 +737,32 @@ const repairStaleCardHitTest = (
   }
 
   const now = Date.now()
-  if (now - lastRepairAtRef.current < hitTestRepairThrottleMs) {
+  const decidedScope = decideHitTestRepairScope(
+    now,
+    lastRepairAtRef.current,
+    hitTestRepairThrottleMs,
+    hitTestRepairEscalationWindowMs,
+  )
+  // Caller-forced escalations (rescue dead end, focus-ladder exhaustion) are
+  // click-driven and rare; the hover-frequency throttle must not swallow them
+  // or the promised "dead end → immediate panel rebuild" degrades to "third
+  // click, 1.5s later" under the frantic re-clicking a stuck pane provokes.
+  if (decidedScope === 'skip' && !options?.escalateToPanel) {
     return
   }
+  // A second repair inside the escalation window means the card-level rebuild
+  // demonstrably did not clear the misrouting; a caller-forced escalation
+  // carries the same meaning.
+  const scope = options?.escalateToPanel ? 'card-and-panel' : decidedScope
   lastRepairAtRef.current = now
 
-  // Toggling a transient transform rebuilds this card subtree's compositor
-  // layers and hit-test data — the lightweight equivalent of the pane/tab
-  // switch that historically cleared the stale surface. The data attribute is
-  // an observability hook for tests and triage.
-  shell.dataset.hitTestRepairCount = String(
-    Number(shell.dataset.hitTestRepairCount ?? '0') + 1,
-  )
-  shell.classList.add('is-hit-test-repair')
-  window.requestAnimationFrame(() => {
-    window.requestAnimationFrame(() => {
-      shell.classList.remove('is-hit-test-repair')
-    })
-  })
+  applyTransientHitTestRepair(shell)
+  if (scope === 'card-and-panel') {
+    const panel = shell.closest('.pane-tab-panel')
+    if (panel instanceof HTMLElement) {
+      applyTransientHitTestRepair(panel)
+    }
+  }
 }
 
 // Diagnostic trail for the one rescue path that ends with no action: target
@@ -1717,7 +1746,21 @@ const ChatCardView = ({
     // A bare one-shot rAF focus is lost whenever the frame is dropped or the
     // focus call races another mount; verify and retry while focus stays
     // vacant, but never steal focus a user moved elsewhere (investigation §4.2).
-    return startComposerFocusAttempt({
+    let followUpCancel: (() => void) | null = null
+
+    // Focus resting on this pane's own tab strip is the direct result of the
+    // click that requested composer focus — retrying over it is the point of
+    // the request. Any other pane's chrome means the user moved on.
+    const isOwnPaneChrome = (element: Element) => {
+      const pane = textareaRef.current?.closest('.pane-view') ?? null
+      return (
+        pane !== null &&
+        element.closest('.pane-view') === pane &&
+        element.closest('.pane-tab-bar') !== null
+      )
+    }
+
+    const makeDeps = (withEscalation: boolean): ComposerFocusAttemptDeps => ({
       focusTextarea: () => {
         const textarea = textareaRef.current
         if (!textarea) {
@@ -1729,12 +1772,49 @@ const ChatCardView = ({
       isFocusSettled: () =>
         textareaRef.current !== null && document.activeElement === textareaRef.current,
       isFocusVacant: () =>
-        document.activeElement === null || document.activeElement === document.body,
+        isComposerFocusEffectivelyVacant(document.activeElement, document.body, isOwnPaneChrome),
       requestFrame: (callback) => window.requestAnimationFrame(callback),
       cancelFrame: (handle) => window.cancelAnimationFrame(handle),
       schedule: (callback, delayMs) => window.setTimeout(callback, delayMs),
       cancel: (handle) => window.clearTimeout(handle),
+      onExhausted: withEscalation
+        ? () => {
+            // Every focus() in the ladder was issued and none landed while
+            // focus stayed vacant: the new-tab stuck-pane signature. Rebuild
+            // the panel's layer tree, then run one follow-up ladder — without
+            // an exhaustion handler, so a truly unfocusable composer cannot
+            // loop (F9).
+            const textarea = textareaRef.current
+            if (!textarea) {
+              // No DOM anchor to repair from, but the dead end must not be
+              // silent — an unmounted textarea after a focus request is the
+              // severest new-tab failure shape there is.
+              console.debug(
+                '[composer-focus] retry ladder exhausted but the textarea is unmounted; nothing to repair',
+              )
+              return
+            }
+            const shell = textarea.closest('.card-shell')
+            if (shell instanceof HTMLElement) {
+              shell.dataset.composerFocusExhaustedCount = String(
+                Number(shell.dataset.composerFocusExhaustedCount ?? '0') + 1,
+              )
+            }
+            console.debug(
+              '[composer-focus] retry ladder exhausted with focus still vacant; escalating to a panel-level repair',
+            )
+            repairStaleCardHitTest(textarea, lastHitTestRepairAtRef, { escalateToPanel: true })
+            followUpCancel?.()
+            followUpCancel = startComposerFocusAttempt(makeDeps(false))
+          }
+        : undefined,
     })
+
+    const cancelInitial = startComposerFocusAttempt(makeDeps(true))
+    return () => {
+      cancelInitial()
+      followUpCancel?.()
+    }
   }, [card.id, composerFocusRequest, isToolCard, usesPaneChrome])
 
   useEffect(() => {
@@ -1878,6 +1958,11 @@ const ChatCardView = ({
       if (routing === 'unrelated' && !shouldRescueTransparentBlocker) {
         if (!healDisabledComposerAncestors(textarea)) {
           markComposerRescueUnhandled(textarea, event)
+          // Layout truth itself disagrees with what the user is clicking at —
+          // the strongest stuck-pane signal there is (frozen frame / stale
+          // paint, investigation §3.6). Rebuild the whole panel's layer tree
+          // instead of returning silently (F9).
+          repairStaleCardHitTest(textarea, lastHitTestRepairAtRef, { escalateToPanel: true })
           return
         }
         repairStaleCardHitTest(textarea, lastHitTestRepairAtRef)

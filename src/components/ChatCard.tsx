@@ -33,7 +33,11 @@ import {
   normalizeStoredModel,
   type ModelOption,
 } from '../../shared/models'
-import { getReasoningOptions, normalizeReasoningEffort } from '../../shared/reasoning'
+import {
+  getReasoningOptionsForModel,
+  isClaudeAlwaysThinkingModel,
+  normalizeReasoningEffortForModel,
+} from '../../shared/reasoning'
 import {
   getLocalSlashCommands,
   getSlashCompletionQuery,
@@ -2792,13 +2796,21 @@ const ChatCardView = ({
   ])
   const currentModelOption =
     selectOptions.find((option) => `${option.provider}:${option.model}` === selectValue) ?? selectOptions[0]
-  const reasoningValue = normalizeReasoningEffort(effectiveProvider, card.reasoningEffort)
+  // Fable 5 always thinks: the thinking toggle is disabled there and the auto
+  // tier is hidden from its menu.
+  const alwaysThinkingModel =
+    effectiveProvider === 'claude' && isClaudeAlwaysThinkingModel(card.model)
+  const reasoningValue = normalizeReasoningEffortForModel(
+    effectiveProvider,
+    card.model,
+    card.reasoningEffort,
+  )
   const menuMinWidth = modelMenuStyle?.minWidth ?? 0
   const menuMaxWidth = modelMenuStyle?.maxWidth ?? 0
   const menuMaxHeight = modelMenuStyle?.maxHeight ?? 0
   const reasoningOptions = useMemo(
-    () => getReasoningOptions(effectiveProvider, language),
-    [effectiveProvider, language],
+    () => getReasoningOptionsForModel(effectiveProvider, card.model, language),
+    [card.model, effectiveProvider, language],
   )
   const compactMessageWindow = useMemo(
     () =>
@@ -3793,7 +3805,8 @@ const ChatCardView = ({
                             <input
                               type="checkbox"
                               className="composer-settings-checkbox"
-                              checked={card.thinkingEnabled !== false}
+                              checked={alwaysThinkingModel || card.thinkingEnabled !== false}
+                              disabled={alwaysThinkingModel}
                               onChange={() => onToggleThinking()}
                             />
                           </label>
@@ -3802,7 +3815,7 @@ const ChatCardView = ({
                             <select
                               className="reasoning-select"
                               value={reasoningValue}
-                              disabled={card.thinkingEnabled === false}
+                              disabled={!alwaysThinkingModel && card.thinkingEnabled === false}
                               onChange={(event) => onChangeReasoningEffort(event.target.value)}
                             >
                               {reasoningOptions.map((option) => (

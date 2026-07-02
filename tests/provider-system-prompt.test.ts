@@ -119,23 +119,72 @@ test('claude ultracode tier sends --effort xhigh (the CLI rejects "ultracode")',
   assert.notEqual(args[effortIndex + 1], 'ultracode')
 })
 
-test('claude ultracode tier injects the ultracode keyword to trigger workflows', () => {
+test('claude ultracode tier activates via --settings instead of prompt keyword injection', () => {
   const ultracodeArgs = buildClaudeArgs(
     createRequest({ provider: 'claude', model: 'claude-opus-4-8', reasoningEffort: 'ultracode' }),
     [],
   )
+  const settingsIndex = ultracodeArgs.indexOf('--settings')
+  assert.notEqual(settingsIndex, -1)
+  const settings = JSON.parse(ultracodeArgs[settingsIndex + 1] ?? '{}')
+  // Official channel (Claude Code v2.1.157+): a session-level settings key.
+  assert.equal(settings.ultracode, true)
+  // The old keyword-injection hack depended on workflowKeywordTriggerEnabled
+  // staying on and polluted the system prompt; it must be gone.
   const sysIndex = ultracodeArgs.indexOf('--append-system-prompt')
   assert.notEqual(sysIndex, -1)
-  assert.match(ultracodeArgs[sysIndex + 1] ?? '', /ultracode/)
+  assert.doesNotMatch(ultracodeArgs[sysIndex + 1] ?? '', /ultracode/i)
 
-  // A non-ultracode tier must NOT inject the keyword (no surprise token burn).
+  // A non-ultracode tier must carry neither the settings key nor the keyword.
   const maxArgs = buildClaudeArgs(
     createRequest({ provider: 'claude', model: 'claude-opus-4-8', reasoningEffort: 'max' }),
     [],
   )
+  const maxSettings = JSON.parse(maxArgs[maxArgs.indexOf('--settings') + 1] ?? '{}')
+  assert.equal('ultracode' in maxSettings, false)
   const maxSysIndex = maxArgs.indexOf('--append-system-prompt')
   assert.equal(maxArgs[maxArgs.indexOf('--effort') + 1], 'max')
   assert.doesNotMatch(maxArgs[maxSysIndex + 1] ?? '', /ultracode/)
+})
+
+test('claude fable 5 never sends --effort none because thinking cannot be turned off', () => {
+  // Thinking toggled off on Fable 5 degrades to its official high default.
+  const fableThinkingOffArgs = buildClaudeArgs(
+    createRequest({
+      provider: 'claude',
+      model: 'claude-fable-5',
+      reasoningEffort: 'max',
+      thinkingEnabled: false,
+    }),
+    [],
+  )
+  assert.equal(fableThinkingOffArgs[fableThinkingOffArgs.indexOf('--effort') + 1], 'high')
+
+  // Persisted auto tiers degrade to the Fable default as well.
+  const fableAutoArgs = buildClaudeArgs(
+    createRequest({ provider: 'claude', model: 'claude-fable-5', reasoningEffort: 'auto' }),
+    [],
+  )
+  assert.equal(fableAutoArgs[fableAutoArgs.indexOf('--effort') + 1], 'high')
+
+  // An explicitly chosen tier still passes through unchanged.
+  const fableXhighArgs = buildClaudeArgs(
+    createRequest({ provider: 'claude', model: 'claude-fable-5', reasoningEffort: 'xhigh' }),
+    [],
+  )
+  assert.equal(fableXhighArgs[fableXhighArgs.indexOf('--effort') + 1], 'xhigh')
+
+  // Other Claude models keep the legacy thinking-off contract.
+  const opusArgs = buildClaudeArgs(
+    createRequest({
+      provider: 'claude',
+      model: 'claude-opus-4-8',
+      reasoningEffort: 'max',
+      thinkingEnabled: false,
+    }),
+    [],
+  )
+  assert.equal(opusArgs[opusArgs.indexOf('--effort') + 1], 'none')
 })
 
 test('claude ask-user instruction avoids raw XML examples that prime text tool calls', () => {

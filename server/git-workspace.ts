@@ -92,6 +92,7 @@ const runGit = async (
   args: string[],
   options?: {
     allowFailure?: boolean
+    stdin?: string | Buffer
   },
 ): Promise<GitRunResult> =>
   await new Promise((resolve, reject) => {
@@ -100,22 +101,25 @@ const runGit = async (
     // so paths we read from `git status` round-trip cleanly back into `git add`.
     const child = spawn('git', ['-c', 'core.quotepath=false', ...args], {
       cwd: workspacePath,
-      stdio: ['ignore', 'pipe', 'pipe'],
+      stdio: [options?.stdin === undefined ? 'ignore' : 'pipe', 'pipe', 'pipe'],
       windowsHide: true,
     })
 
     let stdout = ''
     let stderr = ''
 
-    child.stdout.on('data', (chunk: Buffer) => {
+    child.stdout?.on('data', (chunk: Buffer) => {
       stdout += chunk.toString()
     })
 
-    child.stderr.on('data', (chunk: Buffer) => {
+    child.stderr?.on('data', (chunk: Buffer) => {
       stderr += chunk.toString()
     })
 
     child.on('error', reject)
+    if (options?.stdin !== undefined && child.stdin) {
+      child.stdin.end(options.stdin)
+    }
     child.on('close', (code) => {
       const result: GitRunResult = {
         stdout,
@@ -131,6 +135,26 @@ const runGit = async (
       resolve(result)
     })
   })
+
+const encodeGitPathspecStdin = (paths: string[]) =>
+  Buffer.from(`${paths.join('\0')}\0`, 'utf8')
+
+const runGitWithPathspecs = (
+  workspacePath: string,
+  args: string[],
+  paths: string[],
+  options?: {
+    allowFailure?: boolean
+  },
+) =>
+  runGit(
+    workspacePath,
+    [...args, '--pathspec-from-file=-', '--pathspec-file-nul'],
+    {
+      ...options,
+      stdin: encodeGitPathspecStdin(paths),
+    },
+  )
 
 const isConflictStatus = (status: string) =>
   new Set(['DD', 'AU', 'UD', 'UA', 'DU', 'AA', 'UU']).has(status)
@@ -953,21 +977,26 @@ export const setGitWorkspaceStage = async ({
   }
 
   if (staged) {
-    await runGit(status.repoRoot, ['add', '--', ...normalizedPaths])
+    await runGitWithPathspecs(status.repoRoot, ['add'], normalizedPaths)
     return await inspectGitWorkspace(workspacePath, { includeChangePreviews: false })
   }
 
-  const restoreResult = await runGit(status.repoRoot, ['restore', '--staged', '--', ...normalizedPaths], {
+  const restoreResult = await runGitWithPathspecs(status.repoRoot, ['restore', '--staged'], normalizedPaths, {
     allowFailure: true,
   })
 
   if (restoreResult.exitCode !== 0) {
     if (await hasHeadCommit(status.repoRoot)) {
-      await runGit(status.repoRoot, ['reset', '--quiet', 'HEAD', '--', ...normalizedPaths])
+      await runGitWithPathspecs(status.repoRoot, ['reset', '--quiet', 'HEAD'], normalizedPaths)
     } else {
-      await runGit(status.repoRoot, ['rm', '--cached', '--quiet', '--ignore-unmatch', '--', ...normalizedPaths], {
-        allowFailure: true,
-      })
+      await runGitWithPathspecs(
+        status.repoRoot,
+        ['rm', '--cached', '--quiet', '--ignore-unmatch'],
+        normalizedPaths,
+        {
+          allowFailure: true,
+        },
+      )
     }
   }
 
@@ -1010,7 +1039,11 @@ export const commitGitWorkspace = async ({
       .map((change) => change.path)
 
     if (canceledAdditionPaths.length > 0) {
-      await runGit(status.repoRoot, ['rm', '--cached', '--quiet', '--ignore-unmatch', '--', ...canceledAdditionPaths])
+      await runGitWithPathspecs(
+        status.repoRoot,
+        ['rm', '--cached', '--quiet', '--ignore-unmatch'],
+        canceledAdditionPaths,
+      )
     }
 
     const pathsToStage = requestedChanges
@@ -1049,10 +1082,16 @@ export const commitGitWorkspace = async ({
   }
 
   if (normalizedPaths.length > 0) {
-    args.push('--only', '--', ...normalizedPaths)
+    args.push('--only', '--pathspec-from-file=-', '--pathspec-file-nul')
   }
 
-  await runGit(status.repoRoot, args)
+  await runGit(
+    status.repoRoot,
+    args,
+    normalizedPaths.length > 0
+      ? { stdin: encodeGitPathspecStdin(normalizedPaths) }
+      : undefined,
+  )
 
   const nextStatus = await inspectGitWorkspace(workspacePath)
 

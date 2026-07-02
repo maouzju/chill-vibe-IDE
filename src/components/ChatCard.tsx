@@ -75,6 +75,10 @@ import {
   type ProgrammaticScrollIntent,
 } from './chat-scroll'
 import { syncComposerTextareaHeight } from './chat-composer-textarea'
+import {
+  shouldSkipComposerRescueForIgnoredSurface,
+  startComposerFocusAttempt,
+} from './composer-focus'
 import { createDraftSyncScheduler, draftSyncIdleMs } from './chat-draft-sync'
 import { evaluateAutoUrge, getNextAutoUrgeToggleState } from './chat-auto-urge'
 import { fetchSlashCommands, uploadImageAttachment } from '../api'
@@ -726,6 +730,29 @@ const repairStaleCardHitTest = (
       shell.classList.remove('is-hit-test-repair')
     })
   })
+}
+
+// Diagnostic trail for the one rescue path that ends with no action: target
+// and layout agree on a non-composer element under the pointer and no inline
+// pointer-events damage was found. Recurrences in the wild are only
+// attributable if this dead end leaves a trace (investigation §3.8).
+const markComposerRescueUnhandled = (
+  textarea: HTMLTextAreaElement,
+  event: globalThis.PointerEvent,
+) => {
+  const shell = textarea.closest('.card-shell')
+  if (shell instanceof HTMLElement) {
+    shell.dataset.composerRescueUnhandledCount = String(
+      Number(shell.dataset.composerRescueUnhandledCount ?? '0') + 1,
+    )
+  }
+  const target = event.target instanceof Element ? event.target : null
+  const targetLabel = target
+    ? `${target.tagName.toLowerCase()}${target.getAttribute('class') ? `.${target.getAttribute('class')}` : ''}`
+    : String(event.target)
+  console.debug(
+    `[composer-rescue] unhandled pointerdown inside textarea rect at (${event.clientX}, ${event.clientY}); target=${targetLabel}`,
+  )
 }
 
 const areChatCardPropsEqual = (previous: ChatCardProps, next: ChatCardProps) =>
@@ -1683,13 +1710,27 @@ const ChatCardView = ({
       return
     }
 
-    const frame = window.requestAnimationFrame(() => {
-      textareaRef.current?.focus()
+    // A bare one-shot rAF focus is lost whenever the frame is dropped or the
+    // focus call races another mount; verify and retry while focus stays
+    // vacant, but never steal focus a user moved elsewhere (investigation §4.2).
+    return startComposerFocusAttempt({
+      focusTextarea: () => {
+        const textarea = textareaRef.current
+        if (!textarea) {
+          return false
+        }
+        textarea.focus({ preventScroll: true })
+        return true
+      },
+      isFocusSettled: () =>
+        textareaRef.current !== null && document.activeElement === textareaRef.current,
+      isFocusVacant: () =>
+        document.activeElement === null || document.activeElement === document.body,
+      requestFrame: (callback) => window.requestAnimationFrame(callback),
+      cancelFrame: (handle) => window.cancelAnimationFrame(handle),
+      schedule: (callback, delayMs) => window.setTimeout(callback, delayMs),
+      cancel: (handle) => window.clearTimeout(handle),
     })
-
-    return () => {
-      window.cancelAnimationFrame(frame)
-    }
   }, [card.id, composerFocusRequest, isToolCard, usesPaneChrome])
 
   useEffect(() => {
@@ -1717,9 +1758,19 @@ const ChatCardView = ({
         return
       }
 
+      if (!isPointerInsideTextarea(textarea, event.clientX, event.clientY)) {
+        return
+      }
+
+      // The ignore list must not trust the stale event target alone: a
+      // misrouted event can falsely name a long-lived menu/panel as target.
+      // Skip only when layout confirms an ignored surface covers this point.
       if (
-        !isPointerInsideTextarea(textarea, event.clientX, event.clientY) ||
-        shouldIgnoreComposerFocusRescueTarget(event.target)
+        shouldSkipComposerRescueForIgnoredSurface(
+          shouldIgnoreComposerFocusRescueTarget(event.target),
+          () => document.elementFromPoint(event.clientX, event.clientY),
+          shouldIgnoreComposerFocusRescueTarget,
+        )
       ) {
         return
       }
@@ -1772,11 +1823,20 @@ const ChatCardView = ({
         return
       }
 
-      if (shouldIgnoreComposerFocusRescueTarget(event.target)) {
+      if (!isPointerInsideTextarea(textarea, event.clientX, event.clientY)) {
         return
       }
 
-      if (!isPointerInsideTextarea(textarea, event.clientX, event.clientY)) {
+      // The ignore list must not trust the stale event target alone: a
+      // misrouted event can falsely name a long-lived menu/panel as target.
+      // Skip only when layout confirms an ignored surface covers this point.
+      if (
+        shouldSkipComposerRescueForIgnoredSurface(
+          shouldIgnoreComposerFocusRescueTarget(event.target),
+          () => document.elementFromPoint(event.clientX, event.clientY),
+          shouldIgnoreComposerFocusRescueTarget,
+        )
+      ) {
         return
       }
 
@@ -1794,9 +1854,14 @@ const ChatCardView = ({
 
       if (routing === 'misrouted-to-textarea' || routing === 'misrouted-to-composer') {
         repairStaleCardHitTest(textarea, lastHitTestRepairAtRef)
+        // The click physically landed inside the textarea rect and only stale
+        // routing sent it elsewhere; both misrouted flavors must restore focus
+        // or the user's click is silently swallowed (investigation §3.2).
+        requestAnimationFrame(() => textareaRef.current?.focus({ preventScroll: true }))
+        return
       }
 
-      if (shouldRescueTransparentBlocker || routing === 'misrouted-to-textarea') {
+      if (shouldRescueTransparentBlocker) {
         requestAnimationFrame(() => textareaRef.current?.focus({ preventScroll: true }))
         return
       }
@@ -1808,6 +1873,7 @@ const ChatCardView = ({
       // focus only if the layout now resolves this point to the composer.
       if (routing === 'unrelated' && !shouldRescueTransparentBlocker) {
         if (!healDisabledComposerAncestors(textarea)) {
+          markComposerRescueUnhandled(textarea, event)
           return
         }
         repairStaleCardHitTest(textarea, lastHitTestRepairAtRef)

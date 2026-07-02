@@ -704,11 +704,38 @@ const isEmptySkippableMessage = (message: ChatMessage) => {
   return false
 }
 
-const sanitizeLeakedCallMarkerLines = (content: string) => {
+const isLeakedCallMarkerLine = (line: string) => {
+  const normalized = line.trim().toLowerCase()
+  return normalized === 'call' || normalized === 'call:'
+}
+
+const isClaudeProtocolMarkerLine = (line: string) => {
+  const normalized = line.trim().toLowerCase()
+  return isLeakedCallMarkerLine(line) || normalized === 'court'
+}
+
+const isAmbiguousClaudeProtocolMarkerLine = (line: string) => {
+  const normalized = line.trim().toLowerCase()
+  return (
+    isClaudeProtocolMarkerLine(line) ||
+    normalized === 'course' ||
+    normalized === 'card' ||
+    normalized === '课'
+  )
+}
+
+const sanitizeMarkerLines = (
+  content: string,
+  isMarkerLine: (line: string) => boolean,
+) => {
   const lines = content.split(/\r?\n/)
+  let inFence = false
   const cleanedLines = lines.filter((line) => {
-    const normalized = line.trim().toLowerCase()
-    return normalized !== 'call' && normalized !== 'call:'
+    if (/^(```|~~~)/.test(line.trim())) {
+      inFence = !inFence
+      return true
+    }
+    return inFence || !isMarkerLine(line)
   })
   if (cleanedLines.length === lines.length) {
     return content
@@ -716,6 +743,20 @@ const sanitizeLeakedCallMarkerLines = (content: string) => {
 
   return cleanedLines.join('\n').trim()
 }
+
+const sanitizeLeakedCallMarkerLines = (content: string) =>
+  sanitizeMarkerLines(content, isLeakedCallMarkerLine)
+
+const sanitizeClaudeProtocolMarkerLines = (
+  content: string,
+  options: { includeAmbiguousMarkers?: boolean } = {},
+) =>
+  sanitizeMarkerLines(
+    content,
+    options.includeAmbiguousMarkers
+      ? isAmbiguousClaudeProtocolMarkerLine
+      : isClaudeProtocolMarkerLine,
+  )
 
 const stripStandaloneEmptyMarkdownBulletResidue = (content: string) => {
   const lines = content.split(/\r?\n/)
@@ -742,11 +783,19 @@ const stripStandaloneEmptyMarkdownBulletResidue = (content: string) => {
   return cleaned.join('\n').trim()
 }
 
-const stripTrailingClaudeProtocolResidueLines = (content: string) =>
-  content
-    .replace(/(?:[ \t]*(?:\r?\n|^)[ \t]*(?:call:?|court)[ \t]*(?:\r?\n)?)+$/i, '')
+const stripTrailingClaudeProtocolResidueLines = (
+  content: string,
+  options: { includeAmbiguousMarkers?: boolean } = {},
+) => {
+  const markerPattern = options.includeAmbiguousMarkers
+    ? /(?:[ \t]*(?:\r?\n|^)[ \t]*(?:call:?|court|course|card|课)[ \t]*(?:\r?\n)?)+$/iu
+    : /(?:[ \t]*(?:\r?\n|^)[ \t]*(?:call:?|court)[ \t]*(?:\r?\n)?)+$/iu
+
+  return content
+    .replace(markerPattern, '')
     .replace(/(?:[ \t]*(?:\r?\n|^)[ \t]*count[ \t]*(?:\r?\n)?)+$/i, '')
     .trim()
+}
 
 const canContainLeakedClaudeCallMarker = (message: ChatMessage) => {
   if (message.role !== 'assistant') return false
@@ -756,20 +805,35 @@ const canContainLeakedClaudeCallMarker = (message: ChatMessage) => {
   return true
 }
 
-const sanitizeLeakedClaudeCallMarkerContent = (message: ChatMessage) => {
+const sanitizeLeakedClaudeCallMarkerContent = (
+  message: ChatMessage,
+  options: { includeAmbiguousClaudeMarkers?: boolean } = {},
+) => {
   if (!canContainLeakedClaudeCallMarker(message)) return message.content
 
-  const withoutCallMarkers = stripStandaloneEmptyMarkdownBulletResidue(
-    sanitizeLeakedCallMarkerLines(message.content),
-  )
-  if (message.meta?.provider !== 'claude') return withoutCallMarkers
+  if (message.meta?.provider !== 'claude') {
+    return stripStandaloneEmptyMarkdownBulletResidue(
+      sanitizeLeakedCallMarkerLines(message.content),
+    )
+  }
 
-  return stripTrailingClaudeProtocolResidueLines(withoutCallMarkers)
+  const withoutCallMarkers = stripStandaloneEmptyMarkdownBulletResidue(
+    sanitizeClaudeProtocolMarkerLines(message.content, {
+      includeAmbiguousMarkers: options.includeAmbiguousClaudeMarkers,
+    }),
+  )
+
+  return stripTrailingClaudeProtocolResidueLines(withoutCallMarkers, {
+    includeAmbiguousMarkers: options.includeAmbiguousClaudeMarkers,
+  })
 }
 
 
-const normalizeLeakedClaudeCallMarkerMessage = (message: ChatMessage): ChatMessage => {
-  const content = sanitizeLeakedClaudeCallMarkerContent(message)
+const normalizeLeakedClaudeCallMarkerMessage = (
+  message: ChatMessage,
+  options: { includeAmbiguousClaudeMarkers?: boolean } = {},
+): ChatMessage => {
+  const content = sanitizeLeakedClaudeCallMarkerContent(message, options)
 
   return content === message.content ? message : { ...message, content }
 }
@@ -810,13 +874,52 @@ const isStandaloneClaudeCountResidueNearToolActivity = (
   )
 }
 
+// Leaked protocol markers are single short words (call/court/course/count/card/课…),
+// so any lone word wedged between two Claude tool activities is treated as residue
+// instead of growing the enumerated marker list one leak at a time. A real assistant
+// reply is never a bare word sandwiched by tool cards; final one-word replies only
+// *follow* tool activity and stay visible.
+const isStandaloneProtocolResidueWordContent = (content: string) => {
+  const normalized = content.trim()
+  return /^[a-zA-Z]{2,12}$/.test(normalized) || /^[一-鿿]$/.test(normalized)
+}
+
+const isStandaloneClaudeResidueWordBetweenToolActivity = (
+  message: ChatMessage,
+  previous: ChatMessage | undefined,
+  next: ChatMessage | undefined,
+) => {
+  if (message.role !== 'assistant') return false
+  if (message.meta?.kind) return false
+  if (message.meta?.imageAttachments) return false
+  if (message.meta?.provider && message.meta.provider !== 'claude') return false
+  if (!isStandaloneProtocolResidueWordContent(message.content)) return false
+
+  return (
+    isClaudeStructuredActivityMessage(previous) &&
+    isClaudeStructuredActivityMessage(next)
+  )
+}
+
+const isStandaloneClaudeProtocolResidueNearToolActivity = (
+  message: ChatMessage,
+  previous: ChatMessage | undefined,
+  next: ChatMessage | undefined,
+) =>
+  isStandaloneClaudeCountResidueNearToolActivity(message, previous, next) ||
+  isStandaloneClaudeResidueWordBetweenToolActivity(message, previous, next)
+
 const isClaudeTypedToolRetryChatterContent = (content: string) => {
-  const normalized = sanitizeLeakedCallMarkerLines(content).replace(/\s+/g, ' ').trim()
+  const normalized = sanitizeClaudeProtocolMarkerLines(content, {
+    includeAmbiguousMarkers: true,
+  }).replace(/\s+/g, ' ').trim()
 
   if (!normalized) return false
 
   return (
     /工具.{0,160}(?:格式|坏|重新|重试|再发|解析|失败|改用|触发|避免|反复)/iu.test(normalized) ||
+    /错误.{0,80}裸.{0,80}(?:<invoke|invoke).{0,80}(?:文本格式|格式)?/iu.test(normalized) ||
+    /(?:<invoke|invoke).{0,80}(?:文本格式|格式).{0,80}(?:错误|裸)/iu.test(normalized) ||
     /(?:重新|重试|再发|改用).{0,120}工具/iu.test(normalized) ||
     /(?:edit|write|tool\s+call|tool).{0,180}(?:malformed|format|parse|parsing|retry|again|failed|failure|broken|resend|re-send|fallback|fall\s+back|switch)/iu.test(
       normalized,
@@ -827,20 +930,93 @@ const isClaudeTypedToolRetryChatterContent = (content: string) => {
   )
 }
 
-const isClaudeTypedToolRetryChatterNearToolActivity = (
-  message: ChatMessage,
-  previous: ChatMessage | undefined,
-  next: ChatMessage | undefined,
+const isClaudeTypedToolApologyFragmentContent = (content: string) => {
+  const normalized = sanitizeClaudeProtocolMarkerLines(content, {
+    includeAmbiguousMarkers: true,
+  }).replace(/\s+/g, ' ').trim()
+  return /^抱歉[，,]?\s*我的?$/.test(normalized) || /^sorry[,\s]+my$/i.test(normalized)
+}
+
+const hasClaudeStructuredActivityNearby = (
+  messages: ChatMessage[],
+  index: number,
+  distance: number,
 ) => {
+  for (let offset = 1; offset <= distance; offset += 1) {
+    if (
+      isClaudeStructuredActivityMessage(messages[index - offset]) ||
+      isClaudeStructuredActivityMessage(messages[index + offset])
+    ) {
+      return true
+    }
+  }
+
+  return false
+}
+
+const hasClaudeTypedToolRetryChatterNearby = (
+  messages: ChatMessage[],
+  index: number,
+  distance: number,
+) => {
+  for (let offset = 1; offset <= distance; offset += 1) {
+    const previous = messages[index - offset]
+    const next = messages[index + offset]
+    if (
+      (previous && isClaudeTypedToolRetryChatterContent(previous.content)) ||
+      (next && isClaudeTypedToolRetryChatterContent(next.content))
+    ) {
+      return true
+    }
+  }
+
+  return false
+}
+
+const isAmbiguousClaudeProtocolMarkerResidueNearToolActivity = (
+  messages: ChatMessage[],
+  index: number,
+) => {
+  const message = messages[index]
+  if (!message) return false
+  if (message.role !== 'assistant') return false
+  if (message.meta?.provider !== 'claude') return false
+  if (message.meta?.kind) return false
+  if (message.meta?.imageAttachments) return false
+
+  const lines = message.content.split(/\r?\n/)
+  if (!lines.some((line) => isAmbiguousClaudeProtocolMarkerLine(line))) {
+    return false
+  }
+
+  return (
+    hasClaudeStructuredActivityNearby(messages, index, 1) ||
+    hasClaudeTypedToolRetryChatterNearby(messages, index, 2)
+  )
+}
+
+const isClaudeTypedToolRetryChatterNearToolActivity = (
+  messages: ChatMessage[],
+  index: number,
+) => {
+  const message = messages[index]
+  if (!message) return false
   if (message.role !== 'assistant') return false
   if (message.meta?.kind) return false
   if (message.meta?.imageAttachments) return false
-  if (!isClaudeTypedToolRetryChatterContent(message.content)) return false
 
-  return (
-    isClaudeStructuredActivityMessage(previous) ||
-    isClaudeStructuredActivityMessage(next)
-  )
+  if (isClaudeTypedToolRetryChatterContent(message.content)) {
+    return hasClaudeStructuredActivityNearby(messages, index, 2)
+  }
+
+  if (isClaudeTypedToolApologyFragmentContent(message.content)) {
+    return (
+      hasClaudeTypedToolRetryChatterNearby(messages, index, 1) &&
+      hasClaudeStructuredActivityNearby(messages, index, 3)
+    )
+  }
+
+  return false
 }
 
 const mergeAdjacentAskUserMessages = (
@@ -902,7 +1078,13 @@ export const buildRenderableMessages = (messages: ChatMessage[]): RenderableMess
   let index = 0
 
   while (index < messages.length) {
-    const currentMessage = normalizeLeakedClaudeCallMarkerMessage(messages[index]!)
+    const isTypedToolRetryChatter = isClaudeTypedToolRetryChatterNearToolActivity(messages, index)
+    const hasAmbiguousProtocolMarkerResidue =
+      isAmbiguousClaudeProtocolMarkerResidueNearToolActivity(messages, index)
+    const currentMessage = normalizeLeakedClaudeCallMarkerMessage(messages[index]!, {
+      includeAmbiguousClaudeMarkers:
+        isTypedToolRetryChatter || hasAmbiguousProtocolMarkerResidue,
+    })
 
     const command = parseStructuredCommandMessage(currentMessage)
     const tool = parseStructuredToolMessage(currentMessage)
@@ -911,11 +1093,11 @@ export const buildRenderableMessages = (messages: ChatMessage[]): RenderableMess
     const agents = parseStructuredAgentsMessage(currentMessage)
 
     if (!command && !tool && !edits) {
-      if (isStandaloneClaudeCountResidueNearToolActivity(currentMessage, messages[index - 1], messages[index + 1])) {
+      if (isStandaloneClaudeProtocolResidueNearToolActivity(currentMessage, messages[index - 1], messages[index + 1])) {
         index += 1
         continue
       }
-      if (isClaudeTypedToolRetryChatterNearToolActivity(currentMessage, messages[index - 1], messages[index + 1])) {
+      if (isTypedToolRetryChatter) {
         index += 1
         continue
       }
@@ -951,7 +1133,13 @@ export const buildRenderableMessages = (messages: ChatMessage[]): RenderableMess
     const groupItems: StructuredToolGroupItem[] = []
 
     while (index < messages.length) {
-      const msg = normalizeLeakedClaudeCallMarkerMessage(messages[index]!)
+      const shouldSkipTypedToolRetryChatter = isClaudeTypedToolRetryChatterNearToolActivity(messages, index)
+      const hasAmbiguousProtocolMarkerResidue =
+        isAmbiguousClaudeProtocolMarkerResidueNearToolActivity(messages, index)
+      const msg = normalizeLeakedClaudeCallMarkerMessage(messages[index]!, {
+        includeAmbiguousClaudeMarkers:
+          shouldSkipTypedToolRetryChatter || hasAmbiguousProtocolMarkerResidue,
+      })
       const cmd = parseStructuredCommandMessage(msg)
       const tl = parseStructuredToolMessage(msg)
       const ed = parseStructuredEditsMessage(msg)
@@ -964,8 +1152,8 @@ export const buildRenderableMessages = (messages: ChatMessage[]): RenderableMess
         groupItems.push({ kind: 'edits', message: msg, data: ed })
       } else if (
         isEmptySkippableMessage(msg) ||
-        isStandaloneClaudeCountResidueNearToolActivity(msg, messages[index - 1], messages[index + 1]) ||
-        isClaudeTypedToolRetryChatterNearToolActivity(msg, messages[index - 1], messages[index + 1])
+        isStandaloneClaudeProtocolResidueNearToolActivity(msg, messages[index - 1], messages[index + 1]) ||
+        shouldSkipTypedToolRetryChatter
       ) {
         // Skip broken structured messages that failed to parse, plus Claude
         // protocol residue that can appear between adjacent tool groups.

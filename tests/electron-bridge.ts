@@ -98,6 +98,12 @@ export const installMockElectronBridge = async (page: Page) => {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(request),
         }),
+      discardGitChanges: async (request) =>
+        jsonRequest('/api/git/discard', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(request),
+        }),
       initGitWorkspace: async (request) =>
         jsonRequest('/api/git/init', {
           method: 'POST',

@@ -8474,6 +8474,67 @@ body,
   flex-shrink: 0;
 }
 
+.git-tool-button.is-danger {
+  color: var(--danger);
+}
+
+.git-tool-button.is-danger:hover:enabled,
+.git-tool-button.is-danger:focus-visible {
+  color: var(--danger);
+  border-color: var(--danger);
+  box-shadow: none;
+}
+
+.git-discard-confirm {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  flex-shrink: 0;
+  padding: 0.65rem 0.85rem;
+  border-bottom: 1px solid var(--git-desktop-panel-border);
+  background: var(--git-tool-muted-bg);
+}
+
+.git-discard-confirm-copy strong {
+  color: var(--ink-1);
+  font-size: 0.82rem;
+}
+
+.git-discard-confirm-copy p {
+  margin: 0.15rem 0 0;
+  color: var(--ink-3);
+  font-size: 0.74rem;
+  line-height: 1.35;
+}
+
+.git-discard-confirm-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  flex-shrink: 0;
+}
+
+.git-discard-all-button {
+  margin-left: auto;
+  border: none;
+  background: none;
+  padding: 0.1rem 0.25rem;
+  color: var(--ink-3);
+  font-size: 0.72rem;
+  border-radius: var(--r-xs);
+  transition: color 140ms var(--ease);
+}
+
+.git-discard-all-button:hover:enabled,
+.git-discard-all-button:focus-visible {
+  color: var(--danger);
+}
+
+.git-discard-all-button:disabled {
+  opacity: 0.52;
+}
+
 .git-tool-notice {
   color: var(--ink-2);
   background: var(--git-tool-muted-bg);

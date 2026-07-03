@@ -30,6 +30,7 @@ import type {
   GitCommitDiffResponse,
   GitCommitRequest,
   GitCommitResponse,
+  GitDiscardRequest,
   GitFileHeadStateResponse,
   GitFileLineDiffResponse,
   GitFilePathRequest,
@@ -89,6 +90,7 @@ declare global {
       fetchGitStatus?: (workspacePath: string) => Promise<GitStatus>
       fetchGitStatusPreview?: (workspacePath: string) => Promise<GitStatus>
       setGitStage?: (request: GitStageRequest) => Promise<GitStatus>
+      discardGitChanges?: (request: GitDiscardRequest) => Promise<GitStatus>
       initGitWorkspace?: (request: GitPullRequest) => Promise<GitOperationResponse>
       commitGitChanges?: (request: GitCommitRequest) => Promise<GitCommitResponse>
       pullGitChanges?: (request: GitPullRequest) => Promise<GitOperationResponse>

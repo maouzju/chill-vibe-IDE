@@ -33,6 +33,11 @@ type GitStageOptions = {
   staged: boolean
 }
 
+type GitDiscardOptions = {
+  workspacePath: string
+  paths: string[]
+}
+
 type InspectGitWorkspaceOptions = {
   includeChangePreviews?: boolean
   includeRepositoryDetails?: boolean
@@ -998,6 +1003,89 @@ export const setGitWorkspaceStage = async ({
         },
       )
     }
+  }
+
+  return await inspectGitWorkspace(workspacePath, { includeChangePreviews: false })
+}
+
+export const discardGitWorkspaceChanges = async ({
+  workspacePath,
+  paths,
+}: GitDiscardOptions): Promise<GitStatus> => {
+  const status = await inspectGitWorkspace(workspacePath, { includeChangePreviews: false })
+  const normalizedPaths = normalizePathList(paths)
+
+  if (!status.isRepository) {
+    throw new Error(status.note ?? notRepositoryNote)
+  }
+
+  if (normalizedPaths.length === 0) {
+    throw new Error('Choose at least one file to discard.')
+  }
+
+  const requestedPathSet = new Set(normalizedPaths)
+  const requestedChanges = status.changes.filter((change) => requestedPathSet.has(change.path))
+
+  if (requestedChanges.length === 0) {
+    throw new Error('Choose at least one changed file to discard.')
+  }
+
+  if (requestedChanges.some((change) => change.conflicted)) {
+    throw new Error('Resolve merge conflicts before discarding these files.')
+  }
+
+  // Staged-new paths (including the new side of renames/copies) leave the
+  // index first; restoring them from HEAD would fail because HEAD has no blob.
+  const indexRemovePaths: string[] = []
+  const deleteWorkingTreePaths: string[] = []
+  const restorePaths: string[] = []
+
+  for (const change of requestedChanges) {
+    const isRenameOrCopy =
+      (change.stagedStatus === 'R' || change.stagedStatus === 'C') && Boolean(change.originalPath)
+
+    if (isRenameOrCopy) {
+      indexRemovePaths.push(change.path)
+      deleteWorkingTreePaths.push(change.path)
+      restorePaths.push(change.originalPath!)
+      continue
+    }
+
+    if (change.kind === 'untracked') {
+      deleteWorkingTreePaths.push(change.path)
+      continue
+    }
+
+    if (change.stagedStatus === 'A') {
+      indexRemovePaths.push(change.path)
+      if (change.workingTreeStatus !== 'D') {
+        deleteWorkingTreePaths.push(change.path)
+      }
+      continue
+    }
+
+    restorePaths.push(change.path)
+  }
+
+  if (indexRemovePaths.length > 0) {
+    await runGitWithPathspecs(
+      status.repoRoot,
+      ['rm', '--cached', '--quiet', '--ignore-unmatch'],
+      indexRemovePaths,
+      { allowFailure: true },
+    )
+  }
+
+  for (const relativePath of deleteWorkingTreePaths) {
+    await rm(path.join(status.repoRoot, relativePath), { force: true })
+  }
+
+  if (restorePaths.length > 0) {
+    await runGitWithPathspecs(
+      status.repoRoot,
+      ['restore', '--source=HEAD', '--staged', '--worktree'],
+      restorePaths,
+    )
   }
 
   return await inspectGitWorkspace(workspacePath, { includeChangePreviews: false })

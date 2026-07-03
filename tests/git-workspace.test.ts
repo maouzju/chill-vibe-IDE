@@ -8,6 +8,7 @@ import {
   captureWorkspaceSnapshot,
   commitGitWorkspace,
   diffWorkspaceSnapshot,
+  discardGitWorkspaceChanges,
   initGitWorkspace,
   inspectGitWorkspace,
   setGitWorkspaceStage,
@@ -504,5 +505,111 @@ describe('git workspace helpers', () => {
     const afterCommit = await inspectGitWorkspace(repoPath)
     assert.equal(afterCommit.clean, true)
     assert.equal(afterCommit.changes.length, 0)
+  })
+
+  it('discards unstaged tracked modifications back to HEAD', async () => {
+    const repoPath = await createTempRepo()
+    await writeFile(path.join(repoPath, 'tracked.txt'), 'base\nlocal edit\n')
+
+    const status = await discardGitWorkspaceChanges({
+      workspacePath: repoPath,
+      paths: ['tracked.txt'],
+    })
+
+    assert.equal(status.clean, true)
+    const { readFile } = await import('node:fs/promises')
+    assert.equal((await readFile(path.join(repoPath, 'tracked.txt'), 'utf8')).replace(/\r\n/g, '\n'), 'base\n')
+  })
+
+  it('discards staged tracked modifications in both the index and the working tree', async () => {
+    const repoPath = await createTempRepo()
+    await writeFile(path.join(repoPath, 'tracked.txt'), 'base\nstaged edit\n')
+    await runGit(repoPath, ['add', 'tracked.txt'])
+
+    const status = await discardGitWorkspaceChanges({
+      workspacePath: repoPath,
+      paths: ['tracked.txt'],
+    })
+
+    assert.equal(status.clean, true)
+    const { readFile } = await import('node:fs/promises')
+    assert.equal((await readFile(path.join(repoPath, 'tracked.txt'), 'utf8')).replace(/\r\n/g, '\n'), 'base\n')
+  })
+
+  it('discards untracked files by deleting them from the working tree', async () => {
+    const repoPath = await createTempRepo()
+    await mkdir(path.join(repoPath, 'notes'), { recursive: true })
+    await writeFile(path.join(repoPath, 'notes/new-file.md'), 'scratch\n')
+
+    const status = await discardGitWorkspaceChanges({
+      workspacePath: repoPath,
+      paths: ['notes/new-file.md'],
+    })
+
+    assert.equal(status.clean, true)
+    const { stat } = await import('node:fs/promises')
+    await assert.rejects(stat(path.join(repoPath, 'notes/new-file.md')))
+  })
+
+  it('discards staged additions by removing them from the index and deleting the file', async () => {
+    const repoPath = await createTempRepo()
+    await writeFile(path.join(repoPath, 'brand-new.txt'), 'added\n')
+    await runGit(repoPath, ['add', 'brand-new.txt'])
+
+    const status = await discardGitWorkspaceChanges({
+      workspacePath: repoPath,
+      paths: ['brand-new.txt'],
+    })
+
+    assert.equal(status.clean, true)
+    const { stat } = await import('node:fs/promises')
+    await assert.rejects(stat(path.join(repoPath, 'brand-new.txt')))
+  })
+
+  it('restores files that were deleted from the working tree', async () => {
+    const repoPath = await createTempRepo()
+    await rm(path.join(repoPath, 'tracked.txt'))
+
+    const status = await discardGitWorkspaceChanges({
+      workspacePath: repoPath,
+      paths: ['tracked.txt'],
+    })
+
+    assert.equal(status.clean, true)
+    const { readFile } = await import('node:fs/promises')
+    assert.equal((await readFile(path.join(repoPath, 'tracked.txt'), 'utf8')).replace(/\r\n/g, '\n'), 'base\n')
+  })
+
+  it('discards a staged rename by restoring the original path and deleting the new one', async () => {
+    const repoPath = await createTempRepo()
+    await runGit(repoPath, ['mv', 'tracked.txt', 'renamed.txt'])
+
+    const status = await discardGitWorkspaceChanges({
+      workspacePath: repoPath,
+      paths: ['renamed.txt'],
+    })
+
+    assert.equal(status.clean, true)
+    const { readFile, stat } = await import('node:fs/promises')
+    assert.equal((await readFile(path.join(repoPath, 'tracked.txt'), 'utf8')).replace(/\r\n/g, '\n'), 'base\n')
+    await assert.rejects(stat(path.join(repoPath, 'renamed.txt')))
+  })
+
+  it('discards only the requested paths and leaves other changes untouched', async () => {
+    const repoPath = await createTempRepo()
+    await writeFile(path.join(repoPath, 'tracked.txt'), 'base\ndiscard me\n')
+    await writeFile(path.join(repoPath, 'keep.md'), 'keep this draft\n')
+
+    const status = await discardGitWorkspaceChanges({
+      workspacePath: repoPath,
+      paths: ['tracked.txt'],
+    })
+
+    assert.deepEqual(
+      status.changes.map((change) => [change.path, change.kind]),
+      [['keep.md', 'untracked']],
+    )
+    const { readFile } = await import('node:fs/promises')
+    assert.equal(await readFile(path.join(repoPath, 'keep.md'), 'utf8'), 'keep this draft\n')
   })
 })

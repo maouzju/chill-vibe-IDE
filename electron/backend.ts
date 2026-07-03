@@ -22,6 +22,7 @@ import {
   commitGitWorkspace,
   fetchCommitDiff,
   fetchGitLog,
+  discardGitWorkspaceChanges,
   initGitWorkspace,
   inspectGitWorkspace,
   pullGitWorkspace,
@@ -73,6 +74,7 @@ import {
   gitCommitAllRequestSchema,
   gitCommitDiffRequestSchema,
   gitCommitRequestSchema,
+  gitDiscardRequestSchema,
   gitLogRequestSchema,
   gitPullRequestSchema,
   gitPushRequestSchema,
@@ -99,6 +101,7 @@ import {
   type GitCommitAllRequest,
   type GitCommitDiffRequest,
   type GitCommitRequest,
+  type GitDiscardRequest,
   type GitLogRequest,
   type GitPullRequest,
   type GitPushRequest,
@@ -239,6 +242,9 @@ export const createDesktopBackend = (deps: DesktopBackendDependencies = {}) => {
     },
     async setGitStage(request: GitStageRequest) {
       return setGitWorkspaceStage(gitStageRequestSchema.parse(request))
+    },
+    async discardGitChanges(request: GitDiscardRequest) {
+      return discardGitWorkspaceChanges(gitDiscardRequestSchema.parse(request))
     },
     async initGitWorkspace(request: GitPullRequest) {
       return initGitWorkspace(gitPullRequestSchema.parse(request).workspacePath)

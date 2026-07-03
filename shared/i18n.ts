@@ -883,6 +883,14 @@ type GitLocaleText = {
   openFullGitTooltip: string
   stageAll: string
   unstageAll: string
+  discardChanges: string
+  discardAll: string
+  discardConfirmTitle: (count: number) => string
+  discardConfirmCopy: string
+  discardConfirm: string
+  discardCancel: string
+  discardError: string
+  discardSuccess: (count: number) => string
   agentSuggestion: string
   executeStrategy: string
   agentCommitAll: string
@@ -977,6 +985,15 @@ const gitLocaleTextByLanguage: Record<AppLanguage, GitLocaleText> = {
     openFullGitTooltip: '打开完整 Git 视图，手动勾选文件、查看 diff 和历史。',
     stageAll: '全选',
     unstageAll: '取消全选',
+    discardChanges: '回退改动',
+    discardAll: '全部回退',
+    discardConfirmTitle: (count) =>
+      count === 1 ? '回退这个文件的改动？' : `回退 ${count} 个文件的改动？`,
+    discardConfirmCopy: '本地修改会恢复到最近一次提交，新文件会被删除。此操作无法撤销。',
+    discardConfirm: '确认回退',
+    discardCancel: '取消',
+    discardError: '无法回退所选改动。',
+    discardSuccess: (count) => `已回退 ${count} 个文件的改动。`,
     agentSuggestion: 'Agent 建议',
     executeStrategy: '执行策略',
     agentCommitAll: '全部提交',
@@ -1070,6 +1087,16 @@ const gitLocaleTextByLanguage: Record<AppLanguage, GitLocaleText> = {
     openFullGitTooltip: 'Open the full Git view for diffs, history, and manual staging.',
     stageAll: 'Select all',
     unstageAll: 'Deselect all',
+    discardChanges: 'Discard changes',
+    discardAll: 'Discard all',
+    discardConfirmTitle: (count) =>
+      count === 1 ? 'Discard changes to this file?' : `Discard changes to ${count} files?`,
+    discardConfirmCopy:
+      'Local edits are restored to the last commit and new files are deleted. This cannot be undone.',
+    discardConfirm: 'Discard',
+    discardCancel: 'Cancel',
+    discardError: 'Unable to discard the selected changes.',
+    discardSuccess: (count) => `Discarded changes to ${count} file${count === 1 ? '' : 's'}.`,
     agentSuggestion: 'Agent suggestion',
     executeStrategy: 'Execute strategy',
     agentCommitAll: 'Commit all',

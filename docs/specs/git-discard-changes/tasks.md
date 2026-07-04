@@ -8,4 +8,14 @@
 6. [ ] `shared/i18n.ts`：中英文案。
 7. [ ] `GitFullDialog.tsx`：单文件回退按钮 + 全部回退 + 内联确认。
 8. [ ] tests/electron-bridge.ts mock 增加 discard 转发。
-9. [ ] 验证：单测绿 + `pnpm test:quality`；合并回 main；重启用户运行时。
+9. [x] 验证：单测绿 + `pnpm test:quality`；合并回 main；重启用户运行时。
+
+## 第二期：多选 + 右键丢弃
+
+10. [ ] SPEC 增补（requirements 11–18、design 选择模型与菜单）。
+11. [ ] 红测试：`tests/git-selection.test.ts`（单击/Ctrl/Shift/prune/右键目标解析），确认失败。
+12. [ ] `src/components/git-selection.ts`：纯函数实现，测试转绿。
+13. [ ] `shared/i18n.ts`：`discardSelected(count)`、`multiSelectTitle(count)`、`multiSelectCopy` 中英文案。
+14. [ ] `GitFullDialog.tsx`：多选状态接线、行级 onContextMenu、右键菜单、diff 面板多选占位。
+15. [ ] `src/index.css`：菜单与多选行样式（两主题 token）。
+16. [ ] 验证：单测绿 + file-scoped lint/类型；合并回用户分支；打包。

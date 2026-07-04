@@ -33,6 +33,13 @@ import {
   mergeGitStatusPreservingPreviews,
 } from './git-status-previews'
 import { getVirtualizedListWindow } from './git-change-windowing'
+import {
+  applyGitSelectionClick,
+  emptyGitSelection,
+  pruneGitSelection,
+  resolveGitContextTarget,
+  type GitChangeSelection,
+} from './git-selection'
 
 type NoticeTone = 'info' | 'success' | 'error'
 
@@ -132,7 +139,9 @@ export const GitFullDialog = ({
   const [commitPending, setCommitPending] = useState(false)
   const [discardTargetPaths, setDiscardTargetPaths] = useState<string[] | null>(null)
   const [discardPending, setDiscardPending] = useState(false)
-  const [selectedPath, setSelectedPath] = useState<string | null>(null)
+  const [selection, setSelection] = useState<GitChangeSelection>(emptyGitSelection)
+  const [contextMenuPosition, setContextMenuPosition] = useState<{ x: number; y: number } | null>(null)
+  const contextMenuRef = useRef<HTMLDivElement | null>(null)
   const [filterValue, setFilterValue] = useState('')
   const [activeTab, setActiveTab] = useState<ActiveTab>('changes')
   const [scopedPaths, setScopedPaths] = useState<string[] | null>(mode === 'incremental' ? [] : null)
@@ -310,22 +319,86 @@ export const GitFullDialog = ({
     }
   }, [mode, propagateStatus, seedCommitSummary, text.commitNewEmptyCopy, text.refreshError, workspacePath])
 
+  const orderedVisiblePaths = useMemo(
+    () => renderedChanges.map((change) => change.path),
+    [renderedChanges],
+  )
+
   useEffect(() => {
     if (activeTab !== 'changes') return
-    const nextSelectedPath = renderedChanges[0]?.path ?? null
-    if (!nextSelectedPath) {
-      setSelectedPath(null)
-      return
-    }
-    if (!selectedPath || !renderedChanges.some((change) => change.path === selectedPath)) {
-      setSelectedPath(nextSelectedPath)
-    }
-  }, [activeTab, renderedChanges, selectedPath])
+    setSelection((current) => {
+      const pruned = pruneGitSelection(current, orderedVisiblePaths)
+      if (pruned.paths.length > 0) {
+        return pruned
+      }
+      const first = orderedVisiblePaths[0]
+      return first ? { paths: [first], anchorPath: first } : pruned
+    })
+  }, [activeTab, orderedVisiblePaths])
 
+  const selectedPathSet = useMemo(() => new Set(selection.paths), [selection.paths])
+  const selectedPath = selection.paths.length === 1 ? selection.paths[0] : null
   const selectedChange = useMemo(
     () => renderedChanges.find((change) => change.path === selectedPath) ?? null,
     [renderedChanges, selectedPath],
   )
+  const selectedDiscardablePaths = useMemo(
+    () =>
+      renderedChanges
+        .filter((change) => selectedPathSet.has(change.path) && !change.conflicted)
+        .map((change) => change.path),
+    [renderedChanges, selectedPathSet],
+  )
+
+  const handleRowClick = useCallback(
+    (path: string, event: React.MouseEvent) => {
+      setContextMenuPosition(null)
+      setSelection((current) =>
+        applyGitSelectionClick(current, orderedVisiblePaths, path, {
+          ctrlKey: event.ctrlKey || event.metaKey,
+          shiftKey: event.shiftKey,
+        }),
+      )
+    },
+    [orderedVisiblePaths],
+  )
+
+  const handleRowContextMenu = useCallback((path: string, event: React.MouseEvent) => {
+    event.preventDefault()
+    setSelection((current) => resolveGitContextTarget(current, path))
+    setContextMenuPosition({ x: event.clientX, y: event.clientY })
+  }, [])
+
+  useEffect(() => {
+    if (!contextMenuPosition) {
+      return
+    }
+
+    const closeMenu = () => setContextMenuPosition(null)
+    const handlePointerDown = (event: PointerEvent) => {
+      const menu = contextMenuRef.current
+      if (menu && event.target instanceof Node && menu.contains(event.target)) {
+        return
+      }
+      closeMenu()
+    }
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        event.stopPropagation()
+        closeMenu()
+      }
+    }
+
+    window.addEventListener('pointerdown', handlePointerDown, true)
+    window.addEventListener('keydown', handleKeyDown, true)
+    window.addEventListener('resize', closeMenu)
+
+    return () => {
+      window.removeEventListener('pointerdown', handlePointerDown, true)
+      window.removeEventListener('keydown', handleKeyDown, true)
+      window.removeEventListener('resize', closeMenu)
+    }
+  }, [contextMenuPosition])
 
   useEffect(() => {
     if (activeTab !== 'changes') {
@@ -894,7 +967,10 @@ export const GitFullDialog = ({
                     ref={changeListRef}
                     className="git-change-list"
                     data-virtualized={changeListWindow.isVirtualized ? 'true' : 'false'}
-                    onScroll={syncChangeListMetrics}
+                    onScroll={() => {
+                      syncChangeListMetrics()
+                      setContextMenuPosition((current) => (current === null ? current : null))
+                    }}
                   >
                     {gitStatus.clean ? (
                       <div className="git-tool-empty-state is-inline">
@@ -930,7 +1006,7 @@ export const GitFullDialog = ({
                             stageAllPending ||
                             change.conflicted ||
                             pendingStagePaths[change.path] === true
-                          const isSelected = change.path === selectedChange?.path
+                          const isSelected = selectedPathSet.has(change.path)
                           const pathParts = splitGitPath(change.path)
                           const secondaryPath = change.originalPath ?? pathParts.directory
 
@@ -940,11 +1016,13 @@ export const GitFullDialog = ({
                               className={`git-change-row${change.conflicted ? ' is-conflicted' : ''}${change.staged ? ' is-staged' : ''}${isSelected ? ' is-selected' : ''}`}
                               role="button"
                               tabIndex={0}
-                              onClick={() => setSelectedPath(change.path)}
+                              aria-pressed={isSelected}
+                              onClick={(event) => handleRowClick(change.path, event)}
+                              onContextMenu={(event) => handleRowContextMenu(change.path, event)}
                               onKeyDown={(event) => {
                                 if (event.key === 'Enter' || event.key === ' ') {
                                   event.preventDefault()
-                                  setSelectedPath(change.path)
+                                  setSelection({ paths: [change.path], anchorPath: change.path })
                                 }
                               }}
                             >
@@ -1105,7 +1183,20 @@ export const GitFullDialog = ({
 
             <div className="git-tool-diff-panel">
               {activeTab === 'changes' ? (
-                selectedChange ? (
+                selection.paths.length > 1 ? (
+                  <div className="git-tool-diff-empty is-multi-select">
+                    <strong>{text.multiSelectTitle(selection.paths.length)}</strong>
+                    <p>{text.multiSelectCopy}</p>
+                    <button
+                      type="button"
+                      className="git-tool-button is-danger"
+                      disabled={isBusy || selectedDiscardablePaths.length === 0}
+                      onClick={() => setDiscardTargetPaths(selectedDiscardablePaths)}
+                    >
+                      {text.discardSelected(selectedDiscardablePaths.length || selection.paths.length)}
+                    </button>
+                  </div>
+                ) : selectedChange ? (
                   <>
                     <div className="git-tool-diff-header">
                       <div className="git-tool-diff-title">
@@ -1173,6 +1264,33 @@ export const GitFullDialog = ({
           </div>
         </div>
       </div>
+
+      {contextMenuPosition ? (
+        <div
+          ref={contextMenuRef}
+          className="git-context-menu"
+          role="menu"
+          aria-label={text.discardSelected(selection.paths.length)}
+          style={{
+            left: `${Math.max(8, Math.min(contextMenuPosition.x, window.innerWidth - 248))}px`,
+            top: `${Math.max(8, Math.min(contextMenuPosition.y, window.innerHeight - 64))}px`,
+          }}
+          onContextMenu={(event) => event.preventDefault()}
+        >
+          <button
+            type="button"
+            role="menuitem"
+            className="git-context-menu-item is-danger"
+            disabled={isBusy || selectedDiscardablePaths.length === 0}
+            onClick={() => {
+              setContextMenuPosition(null)
+              setDiscardTargetPaths(selectedDiscardablePaths)
+            }}
+          >
+            {text.discardSelected(selectedDiscardablePaths.length || selection.paths.length)}
+          </button>
+        </div>
+      ) : null}
     </div>
   )
 

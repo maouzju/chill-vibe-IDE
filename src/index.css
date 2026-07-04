@@ -8535,6 +8535,49 @@ body,
   opacity: 0.52;
 }
 
+.git-context-menu {
+  position: fixed;
+  z-index: 60;
+  min-width: 220px;
+  padding: 0.3rem;
+  border: 1px solid var(--menu-line);
+  border-radius: var(--r-sm);
+  background: var(--menu-bg);
+  box-shadow: var(--shadow-2, 0 8px 24px rgba(0, 0, 0, 0.18));
+  backdrop-filter: blur(10px);
+}
+
+.git-context-menu-item {
+  display: block;
+  width: 100%;
+  padding: 0.42rem 0.6rem;
+  border: none;
+  background: none;
+  text-align: left;
+  font-size: 0.78rem;
+  color: var(--ink-1);
+  border-radius: var(--r-xs);
+  transition: background 120ms var(--ease);
+}
+
+.git-context-menu-item:hover:enabled,
+.git-context-menu-item:focus-visible {
+  background: var(--menu-hover-bg);
+}
+
+.git-context-menu-item.is-danger:hover:enabled,
+.git-context-menu-item.is-danger:focus-visible {
+  color: var(--danger);
+}
+
+.git-context-menu-item:disabled {
+  opacity: 0.52;
+}
+
+.git-tool-diff-empty.is-multi-select .git-tool-button {
+  margin-top: 0.75rem;
+}
+
 .git-tool-notice {
   color: var(--ink-2);
   background: var(--git-tool-muted-bg);

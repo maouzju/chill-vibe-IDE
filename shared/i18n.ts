@@ -891,6 +891,9 @@ type GitLocaleText = {
   discardCancel: string
   discardError: string
   discardSuccess: (count: number) => string
+  discardSelected: (count: number) => string
+  multiSelectTitle: (count: number) => string
+  multiSelectCopy: string
   agentSuggestion: string
   executeStrategy: string
   agentCommitAll: string
@@ -994,6 +997,9 @@ const gitLocaleTextByLanguage: Record<AppLanguage, GitLocaleText> = {
     discardCancel: '取消',
     discardError: '无法回退所选改动。',
     discardSuccess: (count) => `已回退 ${count} 个文件的改动。`,
+    discardSelected: (count) => (count === 1 ? '回退改动' : `回退 ${count} 个文件的改动`),
+    multiSelectTitle: (count) => `已选择 ${count} 个文件`,
+    multiSelectCopy: '右键任意选中行即可批量回退这些文件的改动。',
     agentSuggestion: 'Agent 建议',
     executeStrategy: '执行策略',
     agentCommitAll: '全部提交',
@@ -1097,6 +1103,10 @@ const gitLocaleTextByLanguage: Record<AppLanguage, GitLocaleText> = {
     discardCancel: 'Cancel',
     discardError: 'Unable to discard the selected changes.',
     discardSuccess: (count) => `Discarded changes to ${count} file${count === 1 ? '' : 's'}.`,
+    discardSelected: (count) =>
+      count === 1 ? 'Discard changes' : `Discard changes to ${count} files`,
+    multiSelectTitle: (count) => `${count} files selected`,
+    multiSelectCopy: 'Right-click any selected row to discard these files together.',
     agentSuggestion: 'Agent suggestion',
     executeStrategy: 'Execute strategy',
     agentCommitAll: 'Commit all',

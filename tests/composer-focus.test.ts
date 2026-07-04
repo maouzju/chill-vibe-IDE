@@ -412,7 +412,11 @@ test('a composer blur that drops focus to a vacant spot on the active card must 
   // ladder only runs on structural actions (tab switch/add), so this
   // click-then-focus-fell-to-body path had no rescue. This gate is that rescue.
   assert.equal(
-    shouldRefocusAfterComposerBlur({ focusBecameVacant: true, cardHoldsFocus: true }),
+    shouldRefocusAfterComposerBlur({
+      focusBecameVacant: true,
+      cardHoldsFocus: true,
+      blurCausedByPointerOutsideComposer: false,
+    }),
     true,
     'focus falling to body/own-chrome while the active card still owns the composer is the stuck signature',
   )
@@ -420,7 +424,11 @@ test('a composer blur that drops focus to a vacant spot on the active card must 
 
 test('a deliberate blur to a real element elsewhere must never be wrestled back', () => {
   assert.equal(
-    shouldRefocusAfterComposerBlur({ focusBecameVacant: false, cardHoldsFocus: true }),
+    shouldRefocusAfterComposerBlur({
+      focusBecameVacant: false,
+      cardHoldsFocus: true,
+      blurCausedByPointerOutsideComposer: false,
+    }),
     false,
     'the user moving focus to another real element is intentional — refocusing would trap them',
   )
@@ -428,9 +436,42 @@ test('a deliberate blur to a real element elsewhere must never be wrestled back'
 
 test('an inactive/collapsed/tool card never reclaims composer focus on blur', () => {
   assert.equal(
-    shouldRefocusAfterComposerBlur({ focusBecameVacant: true, cardHoldsFocus: false }),
+    shouldRefocusAfterComposerBlur({
+      focusBecameVacant: true,
+      cardHoldsFocus: false,
+      blurCausedByPointerOutsideComposer: false,
+    }),
     false,
     'only a card that should hold the composer may reclaim focus; otherwise leave it vacant',
+  )
+})
+
+test('a blur caused by pressing the pointer outside the composer (text selection) must never reclaim focus', () => {
+  // Regression (v0.17.7): dragging to select conversation text starts with a
+  // pointerdown on a non-focusable message node — the textarea blurs and focus
+  // falls to <body>, which looks identical to the stuck signature. Reclaiming
+  // focus there moves the document selection into the textarea and kills the
+  // drag-selection mid-gesture. A pointer press outside the composer is a
+  // deliberate departure even when the landing spot is not focusable.
+  assert.equal(
+    shouldRefocusAfterComposerBlur({
+      focusBecameVacant: true,
+      cardHoldsFocus: true,
+      blurCausedByPointerOutsideComposer: true,
+    }),
+    false,
+    'vacant focus caused by a pointer press outside the composer is a deliberate move, not the stuck signature',
+  )
+})
+
+test('ChatCard blur rescue consults the outside-pointer signal so drag-selection is never interrupted', async () => {
+  const source = await readFile(chatCardSourcePath, 'utf8')
+  const blurBlock = source.match(/const handleComposerBlur = [\s\S]*?\n {2}\}, \[/)?.[0] ?? ''
+  assert.ok(blurBlock, 'expected handleComposerBlur to exist')
+  assert.match(
+    blurBlock,
+    /blurCausedByPointerOutsideComposer/,
+    'the blur rescue must read the recent outside-composer pointerdown signal before reclaiming focus',
   )
 })
 

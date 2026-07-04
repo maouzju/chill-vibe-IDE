@@ -236,6 +236,59 @@ describe('persistence queue', () => {
     assert.match(snapshotStructuredData, /Output truncated in queued state save/)
   })
 
+  // 真实事故回归：edits 载荷没有顶层 output/content 字符串，旧逻辑对原始 JSON
+  // 整串头尾截断，产出非法 JSON —— 重启后改动卡解析失败、渲染降级。
+  it('keeps oversized edits structuredData valid JSON in queued snapshots', () => {
+    const state = createDefaultState('')
+    const activeCardId = state.columns[0]?.layout.type === 'pane'
+      ? state.columns[0].layout.activeTabId
+      : ''
+
+    if (!activeCardId) {
+      throw new Error('Expected default state to include an active card.')
+    }
+
+    const hugePatch = `@@ -1,2 +1,2 @@\n-${'a'.repeat(9_000)}\n+${'b'.repeat(9_000)}\n`
+    state.columns[0]!.cards[activeCardId] = {
+      ...state.columns[0]!.cards[activeCardId]!,
+      messages: [
+        {
+          id: 'huge-edits',
+          role: 'assistant',
+          content: '',
+          createdAt: '2026-05-03T11:00:00.000Z',
+          meta: {
+            kind: 'edits',
+            structuredData: JSON.stringify({
+              itemId: 'toolu_x',
+              kind: 'edits',
+              status: 'completed',
+              files: [
+                { path: 'src/renderer/app.js', kind: 'modified', addedLines: 1, removedLines: 1, patch: hugePatch },
+                { path: 'src/other.ts', kind: 'modified', addedLines: 1, removedLines: 1, patch: hugePatch },
+              ],
+            }),
+          },
+        },
+      ],
+    }
+
+    const snapshot = createQueuedPersistenceStateSnapshot(state)
+    const snapshotStructuredData = snapshot.columns[0]!.cards[activeCardId]!.messages[0]!.meta?.structuredData ?? ''
+    const original = state.columns[0]!.cards[activeCardId]!.messages[0]!.meta?.structuredData ?? ''
+
+    assert.ok(snapshotStructuredData.length < original.length, 'oversized edits payload should shrink')
+
+    const parsed = JSON.parse(snapshotStructuredData) as {
+      kind?: string
+      files?: Array<{ path?: string; patch?: string }>
+    }
+    assert.equal(parsed.kind, 'edits')
+    assert.equal(parsed.files?.length, 2)
+    assert.equal(parsed.files?.[0]?.path, 'src/renderer/app.js')
+    assert.match(parsed.files?.[0]?.patch ?? '', /truncated in queued state save/)
+  })
+
   it('keeps model picks on the queued path even when another card is still streaming', () => {
     const state = createDefaultState('')
     const activeCardId = state.columns[0]?.layout.type === 'pane'

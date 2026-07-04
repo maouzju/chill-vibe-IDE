@@ -83,6 +83,7 @@ import {
   decideHitTestRepairScope,
   hitTestRepairEscalationWindowMs,
   isComposerFocusEffectivelyVacant,
+  shouldRefocusAfterComposerBlur,
   shouldSkipComposerRescueForIgnoredSurface,
   startComposerFocusAttempt,
   type ComposerFocusAttemptDeps,
@@ -1818,6 +1819,46 @@ const ChatCardView = ({
       followUpCancel?.()
     }
   }, [card.id, composerFocusRequest, isToolCard, usesPaneChrome])
+
+  // Rescue for the forensic "locked in the input but nothing works" freeze:
+  // clicks land on the textarea (agree=true) yet native focus falls to <body>,
+  // and the request-driven ladder above never wakes because no structural
+  // action fired. On blur, if focus went vacant while this active card still
+  // owns the composer, pull it back — but only then, so a deliberate move to
+  // another real element is never wrestled away.
+  const handleComposerBlur = useCallback(() => {
+    flushPendingDraftSync()
+    if (!usesPaneChrome || isToolCard || !isActive || isCollapsed) {
+      return
+    }
+    const textarea = textareaRef.current
+    if (!textarea) {
+      return
+    }
+    const pane = textarea.closest('.pane-view')
+    const isOwnPaneChrome = (element: Element) =>
+      pane !== null &&
+      element.closest('.pane-view') === pane &&
+      element.closest('.pane-tab-bar') !== null
+    // Focus moves after blur; check on the next frame, then again shortly after
+    // in case the vacancy is created a beat later by a competing focus handler.
+    const reclaim = () => {
+      if (!textarea.isConnected) {
+        return
+      }
+      const focusBecameVacant = isComposerFocusEffectivelyVacant(
+        document.activeElement,
+        document.body,
+        isOwnPaneChrome,
+      )
+      if (shouldRefocusAfterComposerBlur({ focusBecameVacant, cardHoldsFocus: true })) {
+        textarea.focus({ preventScroll: true })
+      }
+    }
+    window.requestAnimationFrame(reclaim)
+    // flushPendingDraftSync is a stable ref-backed closure (no reactive
+    // captures), so it is intentionally omitted to keep this callback stable.
+  }, [isActive, isCollapsed, isToolCard, usesPaneChrome])
 
   useEffect(() => {
     if (isToolCard || !isActive || isCollapsed) {
@@ -3910,9 +3951,7 @@ const ChatCardView = ({
                   onPaste={handlePaste}
                   onCompositionStart={handleCompositionStart}
                   onCompositionEnd={handleCompositionEnd}
-                  onBlur={() => {
-                    flushPendingDraftSync()
-                  }}
+                  onBlur={handleComposerBlur}
                   onKeyDown={handleTextareaKeyDown}
                 />
                 <div className="composer-actions">

@@ -113,6 +113,49 @@ export const shouldAutoDumpAfterRescueEvent = (
   return { dump: false, next: { eventTimesMs: fresh, lastDumpAtMs: state.lastDumpAtMs } }
 }
 
+// The composer's send-gate, projected from the DOM. A render stall and a
+// silently-locked input look identical from focus/pointer/frame data alone —
+// both leave a focusable textarea the user "can't do anything with". The gate
+// signals (is the send button disabled while the textarea holds text? what is
+// the placeholder telling the user? is the card streaming?) are what tell the
+// two apart in a dump, so we capture them explicitly.
+export type ComposerStateQuery = {
+  hasShell: boolean
+  streaming?: boolean
+  textarea?: {
+    present: boolean
+    disabled: boolean
+    hasText: boolean
+    placeholder: string
+  }
+  sendButton?: {
+    present: boolean
+    disabled: boolean
+  }
+}
+
+export type ComposerStateSummary = {
+  present: boolean
+  streaming: boolean
+  textareaPresent: boolean
+  textareaDisabled: boolean
+  textareaHasText: boolean
+  placeholder: string
+  sendButtonPresent: boolean
+  sendButtonDisabled: boolean
+}
+
+export const summarizeComposerState = (query: ComposerStateQuery): ComposerStateSummary => ({
+  present: query.hasShell,
+  streaming: query.streaming ?? false,
+  textareaPresent: query.textarea?.present ?? false,
+  textareaDisabled: query.textarea?.disabled ?? false,
+  textareaHasText: query.textarea?.hasText ?? false,
+  placeholder: query.textarea?.placeholder ?? '',
+  sendButtonPresent: query.sendButton?.present ?? false,
+  sendButtonDisabled: query.sendButton?.disabled ?? false,
+})
+
 export type RectSummary = { left: number; top: number; right: number; bottom: number }
 
 export type ForensicsPaneSummary = {
@@ -125,6 +168,7 @@ export type ForensicsPaneSummary = {
     hitTestRepairCount: number
     rescueUnhandledCount: number
     focusExhaustedCount: number
+    composer?: ComposerStateSummary
   }>
 }
 
@@ -168,6 +212,34 @@ const roundRect = (rect: DOMRect): RectSummary => ({
 const readCount = (element: Element | null, attribute: string): number =>
   element instanceof HTMLElement ? Number(element.dataset[attribute] ?? '0') : 0
 
+const readComposerState = (shell: HTMLElement | null): ComposerStateSummary => {
+  if (!shell) {
+    return summarizeComposerState({ hasShell: false })
+  }
+  const textarea = shell.querySelector<HTMLTextAreaElement>('textarea.control.textarea')
+  // The send button is the only primary IconButton in the composer action row;
+  // its disabled state IS the projection of `sendDisabled`, the exact gate that
+  // silently swallows Enter/click when a message can't be sent.
+  const sendButton = shell.querySelector<HTMLButtonElement>(
+    '.composer-actions button.icon-button.is-primary',
+  )
+  return summarizeComposerState({
+    hasShell: true,
+    streaming: shell.classList.contains('is-streaming'),
+    textarea: textarea
+      ? {
+          present: true,
+          disabled: textarea.disabled,
+          hasText: textarea.value.trim().length > 0,
+          placeholder: textarea.placeholder,
+        }
+      : { present: false, disabled: false, hasText: false, placeholder: '' },
+    sendButton: sendButton
+      ? { present: true, disabled: sendButton.disabled }
+      : { present: false, disabled: false },
+  })
+}
+
 const collectPanes = (): ForensicsPaneSummary[] =>
   [...document.querySelectorAll('.pane-view')].map((pane) => ({
     paneClassName: pane.className,
@@ -187,6 +259,7 @@ const collectPanes = (): ForensicsPaneSummary[] =>
         hitTestRepairCount: readCount(panel, 'hitTestRepairCount') + readCount(shell, 'hitTestRepairCount'),
         rescueUnhandledCount: readCount(shell, 'composerRescueUnhandledCount'),
         focusExhaustedCount: readCount(shell, 'composerFocusExhaustedCount'),
+        composer: readComposerState(shell),
       }
     }),
   }))

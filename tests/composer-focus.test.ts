@@ -9,6 +9,7 @@ import {
   decideHitTestRepairScope,
   hitTestRepairEscalationWindowMs,
   isComposerFocusEffectivelyVacant,
+  shouldRefocusAfterComposerBlur,
   startComposerFocusAttempt,
   type ComposerFocusAttemptDeps,
 } from '../src/components/composer-focus'
@@ -401,5 +402,42 @@ test('keyboard tab shortcuts request composer focus like pointer activation does
   assert.ok(
     /composerFocusRequestEventName/.test(paneSource),
     'PaneView must listen for the app-level composer focus request event and bump its counter',
+  )
+})
+
+test('a composer blur that drops focus to a vacant spot on the active card must request refocus', () => {
+  // The forensic dump of the "locked in the input but nothing works" freeze
+  // showed pointer clicks landing on the textarea (agree=true) while
+  // document.activeElement was <body>: native focus never stuck. The retry
+  // ladder only runs on structural actions (tab switch/add), so this
+  // click-then-focus-fell-to-body path had no rescue. This gate is that rescue.
+  assert.equal(
+    shouldRefocusAfterComposerBlur({ focusBecameVacant: true, cardHoldsFocus: true }),
+    true,
+    'focus falling to body/own-chrome while the active card still owns the composer is the stuck signature',
+  )
+})
+
+test('a deliberate blur to a real element elsewhere must never be wrestled back', () => {
+  assert.equal(
+    shouldRefocusAfterComposerBlur({ focusBecameVacant: false, cardHoldsFocus: true }),
+    false,
+    'the user moving focus to another real element is intentional — refocusing would trap them',
+  )
+})
+
+test('an inactive/collapsed/tool card never reclaims composer focus on blur', () => {
+  assert.equal(
+    shouldRefocusAfterComposerBlur({ focusBecameVacant: true, cardHoldsFocus: false }),
+    false,
+    'only a card that should hold the composer may reclaim focus; otherwise leave it vacant',
+  )
+})
+
+test('ChatCard wires the textarea onBlur to the vacant-focus refocus rescue', async () => {
+  const source = await readFile(chatCardSourcePath, 'utf8')
+  assert.ok(
+    /shouldRefocusAfterComposerBlur/.test(source),
+    'the textarea onBlur must consult shouldRefocusAfterComposerBlur so a focus drop to body is rescued',
   )
 })

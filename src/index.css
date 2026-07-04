@@ -4354,6 +4354,7 @@ body.is-card-dragging .lane-drop-zone-top {
 /* Markdown elements inside messages */
 .message-content p         { margin: 0 0 0.15em; }
 .message-content p:last-child { margin-bottom: 0; }
+.message-content img       { max-width: 100%; height: auto; border-radius: 6px; }
 .message-content ul,
 .message-content ol        { margin: 0.12em 0 0.12em 1.2em; padding: 0; }
 .message-content li        { margin-bottom: 0.05em; }

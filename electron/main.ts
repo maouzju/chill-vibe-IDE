@@ -12,6 +12,8 @@ import {
   resolveMessageLocalLinkTarget,
   revealMessageLocalLinkTarget,
 } from './message-local-link.js'
+import { localImageProtocolScheme } from '../shared/local-image-protocol.js'
+import { resolveLocalImageRequestTarget } from './local-image-protocol.js'
 import {
   resolveDesktopDataDir,
   resolveDesktopRuntimeProfilePaths,
@@ -61,6 +63,7 @@ const audioProtocolScheme = 'chill-vibe-audio'
 protocol.registerSchemesAsPrivileged([
   { scheme: attachmentProtocolScheme, privileges: { supportFetchAPI: true, secure: true } },
   { scheme: audioProtocolScheme, privileges: { supportFetchAPI: true, secure: true, stream: true } },
+  { scheme: localImageProtocolScheme, privileges: { supportFetchAPI: true, secure: true } },
 ])
 
 if (desktopRuntimeProfilePaths) {
@@ -354,6 +357,22 @@ function registerAudioProtocol() {
       return net.fetch(pathToFileURL(filePath).toString())
     } catch {
       return new Response('Audio not found.', { status: 404 })
+    }
+  })
+}
+
+function registerLocalImageProtocol() {
+  protocol.handle(localImageProtocolScheme, async (request) => {
+    const filePath = resolveLocalImageRequestTarget(request.url)
+
+    if (!filePath) {
+      return new Response('Image not found.', { status: 404 })
+    }
+
+    try {
+      return await net.fetch(pathToFileURL(filePath).toString())
+    } catch {
+      return new Response('Image not found.', { status: 404 })
     }
   })
 }
@@ -803,6 +822,7 @@ app.whenReady().then(async () => {
   registerDesktopHandlers()
   await registerAttachmentProtocol()
   registerAudioProtocol()
+  registerLocalImageProtocol()
   createWindow()
 
   app.on('activate', () => {

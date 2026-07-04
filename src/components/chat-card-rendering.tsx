@@ -1,8 +1,9 @@
 import type { ComponentProps, CSSProperties, ReactNode } from 'react'
-import ReactMarkdown from 'react-markdown'
+import ReactMarkdown, { defaultUrlTransform } from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 
 import type { AppLanguage, ChatMessage } from '../../shared/schema'
+import { resolveMarkdownImageSrc } from '../../shared/local-image-protocol'
 import { openExternalLink, openMessageLocalLink } from '../api'
 import { stripLeakedClaudeToolXml } from './chat-card-parsing'
 import type { StructuredToolGroupItem } from './chat-card-parsing'
@@ -62,6 +63,36 @@ const transformMarkdownOutsideCode = (
     })
     .join('\n')
 }
+
+// CommonMark treats backslashes in a link destination as escapes and silently
+// drops them, so `![预览](D:\proj\shot.png)` reaches the <img> as
+// `D:projshot.png` — unrecoverable once parsed. Rewrite Windows-style image
+// destinations to forward slashes before parsing; path.win32 resolution in the
+// main process accepts both separators.
+const MARKDOWN_IMAGE_PATTERN = /(!\[[^\]]*\]\()([^()\n]+)(\))/g
+
+const normalizeWindowsImagePathsInSegment = (segment: string) =>
+  segment.replace(MARKDOWN_IMAGE_PATTERN, (match, open: string, dest: string, close: string) => {
+    const trimmed = dest.trim()
+
+    if (!trimmed.includes('\\')) {
+      return match
+    }
+
+    const isWindowsDrivePath = /^[a-z]:\\/i.test(trimmed)
+    const hasExplicitScheme = /^[a-z][a-z\d+.-]*:/i.test(trimmed)
+
+    if (!isWindowsDrivePath && hasExplicitScheme) {
+      return match
+    }
+
+    return `${open}${trimmed.replace(/\\/g, '/')}${close}`
+  })
+
+const normalizeWindowsImagePaths = (content: string) =>
+  content.includes('![')
+    ? transformMarkdownOutsideCode(content, normalizeWindowsImagePathsInSegment)
+    : content
 
 const normalizeLooseStrongMarkers = (content: string) =>
   content.includes('**')
@@ -658,7 +689,36 @@ export const handleMessageLinkClick = async (
   return false
 }
 
+// react-markdown's default transform strips every non-http(s) URL to an empty
+// string, which turns local-path / data / app-protocol images into broken
+// icons. Keep the values our own components know how to handle, and fall back
+// to the default sanitizer for everything else (javascript: etc. stays dead).
+const messageMarkdownUrlTransform = (value: string) => {
+  const trimmed = value.trim()
+
+  if (
+    isLocalMessageLinkHref(trimmed)
+    || /^(file:|data:image\/|chill-vibe-[a-z-]+:)/i.test(trimmed)
+  ) {
+    return value
+  }
+
+  return defaultUrlTransform(value)
+}
+
 const createMarkdownComponents = (workspacePath?: string) => ({
+  img: ({ src, ...props }: ComponentProps<'img'>) => {
+    const resolvedSrc = resolveMarkdownImageSrc(
+      typeof src === 'string' ? src : undefined,
+      workspacePath,
+    )
+
+    if (!resolvedSrc) {
+      return null
+    }
+
+    return <img {...props} src={resolvedSrc} loading="lazy" />
+  },
   a: ({ href, ...props }: ComponentProps<'a'>) => {
     const isLocalLink = isLocalMessageLinkHref(href)
 
@@ -693,8 +753,9 @@ const renderPlainMarkdown = (content: string, workspacePath: string | undefined,
     key={key}
     remarkPlugins={REMARK_PLUGINS}
     components={getMarkdownComponents(workspacePath)}
+    urlTransform={messageMarkdownUrlTransform}
   >
-    {normalizeBareUrlBoundaries(closeUnclosedMarkdownSpans(content))}
+    {normalizeWindowsImagePaths(normalizeBareUrlBoundaries(closeUnclosedMarkdownSpans(content)))}
   </ReactMarkdown>
 )
 

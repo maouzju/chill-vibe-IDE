@@ -29,6 +29,7 @@ const createCard = (overrides: Partial<ChatCard> = {}): ChatCard => ({
   id: overrides.id ?? 'card-1',
   title: overrides.title ?? 'Chat 1',
   sessionId: overrides.sessionId,
+  sessionModel: overrides.sessionModel,
   providerSessions: overrides.providerSessions ?? {},
   streamId: overrides.streamId,
   status: overrides.status ?? 'idle',
@@ -711,7 +712,7 @@ describe('ideReducer pane layout', () => {
     assert.equal(newCard?.model, 'claude-opus-4-8')
   })
 
-  it('updates an idle chat card when it still points at the previous typed Claude default', () => {
+  it('keeps an idle open chat card on its model when the typed Claude default changes', () => {
     const state = createState()
     state.settings.requestModels.claude = 'claude-opus-4-7'
     state.columns[1] = {
@@ -739,10 +740,14 @@ describe('ideReducer pane layout', () => {
       patch: { claude: 'claude-opus-4-8' },
     })
 
-    assert.equal(updated.columns[1]?.cards['card-3']?.model, 'claude-opus-4-8')
-    assert.equal(updated.columns[1]?.cards['card-3']?.sessionId, undefined)
-    assert.equal(updated.columns[1]?.cards['card-3']?.sessionModel, undefined)
-    assert.deepEqual(updated.columns[1]?.cards['card-3']?.providerSessions, {})
+    assert.equal(updated.settings.requestModels.claude, 'claude-opus-4-8')
+    assert.equal(updated.columns[1]?.model, 'claude-opus-4-8')
+    assert.equal(updated.columns[1]?.cards['card-3']?.model, 'claude-opus-4-7')
+    assert.equal(updated.columns[1]?.cards['card-3']?.sessionId, 'claude-old-default-session')
+    assert.equal(updated.columns[1]?.cards['card-3']?.sessionModel, 'claude-opus-4-7')
+    assert.deepEqual(updated.columns[1]?.cards['card-3']?.providerSessions, {
+      codex: 'saved-codex-session',
+    })
   })
 
   it('preserves Codex 5.4 when editing the configured default model', () => {
@@ -835,7 +840,7 @@ describe('ideReducer pane layout', () => {
     assert.equal(next.sessionHistory[0]?.sessionId, undefined)
   })
 
-  it('updates chats that still point at the previous provider default', () => {
+  it('changes only the selected card and leaves other open chats on their model', () => {
     const state = createState()
     state.settings.requestModels.claude = 'claude-opus-4-7'
     const claudeColumn = state.columns[1]!
@@ -864,8 +869,8 @@ describe('ideReducer pane layout', () => {
 
     assert.equal(next.settings.requestModels.claude, 'claude-sonnet-4-6')
     assert.equal(next.columns[1]?.cards['card-3']?.model, 'claude-sonnet-4-6')
-    assert.equal(next.columns[1]?.cards['card-4']?.model, 'claude-sonnet-4-6')
-    assert.equal(next.columns[1]?.cards['card-5']?.model, 'claude-sonnet-4-6')
+    assert.equal(next.columns[1]?.cards['card-4']?.model, 'claude-opus-4-7')
+    assert.equal(next.columns[1]?.cards['card-5']?.model, 'claude-opus-4-7')
   })
 
   it('does not replace future chat defaults when switching the current card to a tool model', () => {

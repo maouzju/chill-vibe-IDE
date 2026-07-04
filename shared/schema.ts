@@ -871,6 +871,12 @@ export const gitStageRequestSchema = z.object({
 })
 export type GitStageRequest = z.infer<typeof gitStageRequestSchema>
 
+export const gitDiscardRequestSchema = z.object({
+  workspacePath: z.string().min(1),
+  paths: z.array(z.string().min(1)).min(1),
+})
+export type GitDiscardRequest = z.infer<typeof gitDiscardRequestSchema>
+
 export const gitCommitRequestSchema = z.object({
   workspacePath: z.string().min(1),
   summary: z.string().min(1),

@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom'
 
 import {
   commitGitChanges,
+  discardGitChanges,
   fetchCommitDiff,
   fetchGitLog,
   fetchGitStatus,
@@ -129,6 +130,8 @@ export const GitFullDialog = ({
   const [pullPending, setPullPending] = useState(false)
   const [pushPending, setPushPending] = useState(false)
   const [commitPending, setCommitPending] = useState(false)
+  const [discardTargetPaths, setDiscardTargetPaths] = useState<string[] | null>(null)
+  const [discardPending, setDiscardPending] = useState(false)
   const [selectedPath, setSelectedPath] = useState<string | null>(null)
   const [filterValue, setFilterValue] = useState('')
   const [activeTab, setActiveTab] = useState<ActiveTab>('changes')
@@ -411,7 +414,7 @@ export const GitFullDialog = ({
   const stagedCount = mode === 'incremental' ? scopedStagedPaths.length : gitStatus.summary.staged
   const hasPendingStageChanges = Object.keys(pendingStagePaths).length > 0
   const stageAllPending = pendingStagePaths.__all__ === true
-  const isBusy = hasPendingStageChanges || pullPending || pushPending || commitPending
+  const isBusy = hasPendingStageChanges || pullPending || pushPending || commitPending || discardPending
   const canCommit =
     stagedCount > 0 &&
     !gitStatus.hasConflicts &&
@@ -542,6 +545,39 @@ export const GitFullDialog = ({
       await refreshStatus()
     } finally {
       clearStagePending([change.path])
+    }
+  }
+
+  const discardablePaths = useMemo(
+    () => renderedChanges.filter((change) => !change.conflicted).map((change) => change.path),
+    [renderedChanges],
+  )
+
+  const handleDiscardConfirm = async () => {
+    if (!discardTargetPaths || discardTargetPaths.length === 0) {
+      return
+    }
+
+    setDiscardPending(true)
+    try {
+      const nextStatus = await discardGitChanges({ workspacePath, paths: discardTargetPaths })
+      const hydratedStatus = mergeGitStatusPreservingPreviews(gitStatus, nextStatus)
+      startTransition(() => {
+        setDiscardTargetPaths(null)
+        propagateStatus(hydratedStatus)
+        setNotice({
+          tone: 'success',
+          message: text.discardSuccess(discardTargetPaths.length),
+        })
+      })
+    } catch (error) {
+      setDiscardTargetPaths(null)
+      await refreshStatus({
+        tone: 'error',
+        message: errorMessage(error, text.discardError),
+      })
+    } finally {
+      setDiscardPending(false)
     }
   }
 
@@ -729,6 +765,38 @@ export const GitFullDialog = ({
             </div>
           </div>
 
+          {/* ── Discard confirm ─────────────────────────────────────────── */}
+          {discardTargetPaths ? (
+            <div
+              className="git-discard-confirm"
+              role="alertdialog"
+              aria-label={text.discardConfirmTitle(discardTargetPaths.length)}
+            >
+              <div className="git-discard-confirm-copy">
+                <strong>{text.discardConfirmTitle(discardTargetPaths.length)}</strong>
+                <p>{text.discardConfirmCopy}</p>
+              </div>
+              <div className="git-discard-confirm-actions">
+                <button
+                  type="button"
+                  className="git-tool-button"
+                  disabled={discardPending}
+                  onClick={() => setDiscardTargetPaths(null)}
+                >
+                  {text.discardCancel}
+                </button>
+                <button
+                  type="button"
+                  className="git-tool-button is-danger"
+                  disabled={discardPending}
+                  onClick={() => void handleDiscardConfirm()}
+                >
+                  {text.discardConfirm}
+                </button>
+              </div>
+            </div>
+          ) : null}
+
           {/* ── Notice ──────────────────────────────────────────────────── */}
           {notice ? (
             <div
@@ -806,6 +874,14 @@ export const GitFullDialog = ({
                         onChange={() => void handleStageAll(!allStaged)}
                       />
                       <strong>{text.changedFiles(filteredChangeCount)}</strong>
+                      <button
+                        type="button"
+                        className="git-discard-all-button"
+                        disabled={isBusy || discardablePaths.length === 0}
+                        onClick={() => setDiscardTargetPaths(discardablePaths)}
+                      >
+                        {text.discardAll}
+                      </button>
                     </div>
                     <span>
                       {text.staged} {visibleSummary.staged} · {text.unstaged} {visibleSummary.unstaged} ·{' '}
@@ -1046,6 +1122,14 @@ export const GitFullDialog = ({
                         {typeof selectedChange.removedLines === 'number' ? (
                           <span className="structured-diff-stat is-removed">{`-${selectedChange.removedLines}`}</span>
                         ) : null}
+                        <button
+                          type="button"
+                          className="git-tool-button is-danger"
+                          disabled={isBusy || selectedChange.conflicted}
+                          onClick={() => setDiscardTargetPaths([selectedChange.path])}
+                        >
+                          {text.discardChanges}
+                        </button>
                       </div>
                     </div>
 

@@ -14,6 +14,7 @@ import {
   chatRequestSchema,
   forkSessionRequestSchema,
   gitCommitRequestSchema,
+  gitDiscardRequestSchema,
   gitPullRequestSchema,
   gitStageRequestSchema,
   fileCreateRequestSchema,
@@ -50,6 +51,7 @@ import {
 import { ChatManager } from './chat-manager.js'
 import {
   commitGitWorkspace,
+  discardGitWorkspaceChanges,
   initGitWorkspace,
   inspectGitWorkspace,
   pullGitWorkspace,
@@ -244,6 +246,23 @@ app.post('/api/git/stage', async (request, response) => {
   } catch (error) {
     response.status(400).json({
       message: error instanceof Error ? error.message : 'Unable to update the staged files.',
+    })
+  }
+})
+
+app.post('/api/git/discard', async (request, response) => {
+  const parsed = gitDiscardRequestSchema.safeParse(request.body)
+
+  if (!parsed.success) {
+    response.status(400).json({ message: 'Invalid Git discard request.' })
+    return
+  }
+
+  try {
+    response.json(await discardGitWorkspaceChanges(parsed.data))
+  } catch (error) {
+    response.status(400).json({
+      message: error instanceof Error ? error.message : 'Unable to discard the selected changes.',
     })
   }
 })

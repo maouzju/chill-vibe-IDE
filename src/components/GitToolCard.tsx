@@ -1,15 +1,21 @@
-import { startTransition, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import {
+  startTransition,
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from 'react'
 
 import {
-  commitGitChanges,
   fetchGitStatusPreview,
   fetchGitStatus,
   initGitWorkspace,
-  pullGitChanges,
-  setGitStage,
 } from '../api'
 import { defaultGitToolCardSize, minGitToolCardSize } from '../../shared/default-state'
-import type { AppLanguage, GitChange, GitStatus, ModelPromptRule } from '../../shared/schema'
+import type { AppLanguage, GitStatus, ModelPromptRule } from '../../shared/schema'
 import { getGitLocaleText } from '../../shared/i18n'
 import { errorMessage, computeTotalStats, getRepositoryName, shouldShowConflictBanner } from './git-utils'
 import { GitFullDialog, type GitFullDialogMode } from './GitFullDialog'
@@ -17,7 +23,7 @@ import { GitAgentPanel } from './GitAgentPanel'
 import { GitSyncPanel } from './GitSyncPanel'
 import { HoverTooltip } from './HoverTooltip'
 import { GitBranchIcon } from './Icons'
-import { getGitChangesSinceLastSnapshot, rememberGitChangeSnapshot } from './git-change-tracker'
+import { gitOperationHub, type GitOperationContext } from './git-operation-hub'
 import {
   getGitDashboardFileListWindow,
   getGitDashboardVisibleChanges,
@@ -64,51 +70,6 @@ const compactableGitCardHeights = new Set([
   560,
 ])
 
-const getCommitNewVerb = (change: GitChange) => {
-  switch (change.kind) {
-    case 'added':
-    case 'untracked':
-      return { zh: '新增', en: 'Add' }
-    case 'deleted':
-      return { zh: '删除', en: 'Delete' }
-    case 'renamed':
-      return { zh: '重命名', en: 'Rename' }
-    default:
-      return { zh: '更新', en: 'Update' }
-  }
-}
-
-const getFileLabel = (relativePath: string) =>
-  relativePath.split(/[\\/]/).filter(Boolean).at(-1) ?? relativePath
-
-const buildCommitNewSummary = (language: AppLanguage, changes: GitChange[]) => {
-  const relevantChanges = changes.filter((change) => !change.conflicted)
-
-  if (relevantChanges.length === 0) {
-    return language === 'zh-CN' ? '提交新增改动' : 'Commit new changes'
-  }
-
-  if (relevantChanges.length === 1) {
-    const change = relevantChanges[0]!
-    const verb = getCommitNewVerb(change)
-    return language === 'zh-CN'
-      ? `${verb.zh} ${getFileLabel(change.path)}`
-      : `${verb.en} ${getFileLabel(change.path)}`
-  }
-
-  const primaryVerb = getCommitNewVerb(relevantChanges[0]!)
-  const mixedKinds = relevantChanges.some((change) => {
-    const verb = getCommitNewVerb(change)
-    return verb.zh !== primaryVerb.zh
-  })
-
-  if (language === 'zh-CN') {
-    return `${mixedKinds ? '更新' : primaryVerb.zh} ${relevantChanges.length} 个文件`
-  }
-
-  return `${mixedKinds ? 'Update' : primaryVerb.en} ${relevantChanges.length} files`
-}
-
 export const GitToolCard = ({
   workspacePath,
   language,
@@ -123,16 +84,57 @@ export const GitToolCard = ({
   onGitInfoChange,
 }: GitToolCardProps) => {
   const text = useMemo(() => getGitLocaleText(language), [language])
-  const [gitStatus, setGitStatus] = useState<GitStatus | null>(null)
-  const [loadState, setLoadState] = useState<'idle' | 'loading' | 'preview' | 'ready' | 'error'>('idle')
+
+  // 进行中的 git 操作（AI 分析、策略执行、同步、快速提交）全部住在 gitOperationHub 里，
+  // 卡片被拖到别的 pane / unmount 时操作继续跑，remount 后从快照恢复画面。
+  const subscribeToHub = useCallback(
+    (listener: () => void) => gitOperationHub.subscribe(workspacePath, listener),
+    [workspacePath],
+  )
+  const getHubSnapshot = useCallback(
+    () => gitOperationHub.getSnapshot(workspacePath),
+    [workspacePath],
+  )
+  const operationState = useSyncExternalStore(subscribeToHub, getHubSnapshot, getHubSnapshot)
+  const {
+    agentPanelOpen,
+    agentPhase,
+    syncPanelOpen,
+    syncStep,
+    blockedFiles,
+    commitingBlocked,
+    commitNewPending,
+  } = operationState
+  const agentAnalysisPending =
+    agentPanelOpen && (agentPhase.kind === 'idle' || agentPhase.kind === 'analyzing')
+
+  const operationContext = useMemo<GitOperationContext>(
+    () => ({
+      workspacePath,
+      language,
+      gitAgentModel,
+      systemPrompt,
+      modelPromptRules,
+      crossProviderSkillReuseEnabled,
+    }),
+    [
+      crossProviderSkillReuseEnabled,
+      gitAgentModel,
+      language,
+      modelPromptRules,
+      systemPrompt,
+      workspacePath,
+    ],
+  )
+
+  const [gitStatus, setGitStatus] = useState<GitStatus | null>(
+    () => gitOperationHub.getSnapshot(workspacePath).lastStatus,
+  )
+  const [loadState, setLoadState] = useState<'idle' | 'loading' | 'preview' | 'ready' | 'error'>(
+    () => (gitOperationHub.getSnapshot(workspacePath).lastStatus ? 'ready' : 'idle'),
+  )
   const [notice, setNotice] = useState<NoticeState | null>(null)
   const [fullDialogMode, setFullDialogMode] = useState<GitFullDialogMode | null>(null)
-  const [agentPanelOpen, setAgentPanelOpen] = useState(false)
-  const [agentAnalysisPending, setAgentAnalysisPending] = useState(false)
-  const [syncPanelOpen, setSyncPanelOpen] = useState(false)
-  const [blockedFiles, setBlockedFiles] = useState<string[] | null>(null)
-  const [commitingBlocked, setCommitingBlocked] = useState(false)
-  const [commitNewPending, setCommitNewPending] = useState(false)
   const [createRepoPending, setCreateRepoPending] = useState(false)
   const [fileListMetrics, setFileListMetrics] = useState({ scrollTop: 0, clientHeight: 0 })
   const cardRef = useRef<HTMLDivElement>(null)
@@ -207,6 +209,7 @@ export const GitToolCard = ({
         return
       }
 
+      gitOperationHub.reportStatus(nextWorkspacePath, nextStatus)
       startTransition(() => {
         setGitStatus(nextStatus)
         setLoadState('ready')
@@ -239,6 +242,26 @@ export const GitToolCard = ({
 
     void refreshStatus()
   }, [isActive, refreshStatus])
+
+  // 后台操作（同步、提交、策略执行）在 hub 里完成后回写的最新仓库状态
+  useEffect(() => {
+    const nextStatus = operationState.lastStatus
+    if (!nextStatus || nextStatus === gitStatusRef.current) {
+      return
+    }
+
+    activeRefreshIdRef.current += 1
+    refreshingRef.current = false
+    refreshingWorkspacePathRef.current = ''
+    startTransition(() => {
+      setGitStatus(nextStatus)
+      setLoadState('ready')
+    })
+  }, [operationState.lastStatus])
+
+  useEffect(() => {
+    onAgentPanelToggle?.(agentPanelOpen)
+  }, [agentPanelOpen, onAgentPanelToggle])
 
   useLayoutEffect(() => {
     if (autoCompactedRef.current || agentPanelOpen || !onCompactHeightChange) {
@@ -301,14 +324,18 @@ export const GitToolCard = ({
     ? text.analyzing.replace(/[\s.。…]+$/u, '')
     : text.analyzeChanges
 
+  // 后台操作产生的通知优先展示，其次才是本卡片本地的刷新错误等提示
+  const displayNotice = operationState.notice ?? notice
+
   // Auto-refresh when the card gains focus (throttled to once per 3s)
   const lastRefreshRef = useRef(0)
   const handleCardFocus = useCallback(() => {
     const now = Date.now()
     if (now - lastRefreshRef.current < 3000 || isBusy) return
     lastRefreshRef.current = now
+    gitOperationHub.clearNotice(workspacePath)
     void refreshStatus()
-  }, [isBusy, refreshStatus])
+  }, [isBusy, refreshStatus, workspacePath])
   const syncFileListMetrics = useCallback(() => {
     const node = fileListRef.current
     if (!node) {
@@ -418,89 +445,16 @@ export const GitToolCard = ({
     refreshingRef.current = false
     refreshingWorkspacePathRef.current = ''
 
+    gitOperationHub.reportStatus(workspacePath.trim(), nextStatus)
     startTransition(() => {
       setGitStatus(nextStatus)
       setLoadState('ready')
     })
-  }, [])
+  }, [workspacePath])
 
-  const handleCommitNew = useCallback(async () => {
-    const nextWorkspacePath = workspacePath.trim()
-
-    if (!nextWorkspacePath) {
-      return
-    }
-
-    setCommitNewPending(true)
-
-    try {
-      const latestStatus = await fetchGitStatus(nextWorkspacePath)
-      const { changedPaths, autoStagePaths } = getGitChangesSinceLastSnapshot(
-        nextWorkspacePath,
-        latestStatus.changes,
-      )
-
-      if (changedPaths.length === 0) {
-        rememberGitChangeSnapshot(nextWorkspacePath, latestStatus.changes)
-        startTransition(() => {
-          handleStatusChange(latestStatus)
-          setNotice({
-            tone: 'info',
-            message: text.commitNewEmptyCopy,
-          })
-        })
-        return
-      }
-
-      const changedPathSet = new Set(changedPaths)
-      const stagedStatus =
-        autoStagePaths.length > 0
-          ? await setGitStage({
-              workspacePath: nextWorkspacePath,
-              paths: autoStagePaths,
-              staged: true,
-            })
-          : latestStatus
-      const scopedChanges = stagedStatus.changes.filter((change) => changedPathSet.has(change.path))
-      const commitPaths = scopedChanges.filter((change) => !change.conflicted).map((change) => change.path)
-
-      if (commitPaths.length === 0) {
-        rememberGitChangeSnapshot(nextWorkspacePath, stagedStatus.changes)
-        startTransition(() => {
-          handleStatusChange(stagedStatus)
-          setNotice({
-            tone: 'info',
-            message: text.commitNewEmptyCopy,
-          })
-        })
-        return
-      }
-
-      const result = await commitGitChanges({
-        workspacePath: nextWorkspacePath,
-        summary: buildCommitNewSummary(language, scopedChanges),
-        description: '',
-        paths: commitPaths,
-      })
-
-      rememberGitChangeSnapshot(nextWorkspacePath, result.status.changes)
-      startTransition(() => {
-        handleStatusChange(result.status)
-        setNotice({
-          tone: 'success',
-          message: text.commitSuccess(result.commit.shortHash, result.commit.summary),
-        })
-      })
-    } catch (error) {
-      const nextNotice: NoticeState = {
-        tone: 'error',
-        message: errorMessage(error, text.commitError),
-      }
-      await refreshStatus(nextNotice)
-    } finally {
-      setCommitNewPending(false)
-    }
-  }, [handleStatusChange, language, refreshStatus, text, workspacePath])
+  const handleCommitNew = useCallback(() => {
+    void gitOperationHub.runCommitNew(operationContext)
+  }, [operationContext])
 
   const handleCreateRepository = useCallback(async () => {
     const nextWorkspacePath = workspacePath.trim()
@@ -542,21 +496,13 @@ export const GitToolCard = ({
     workspacePath,
   ])
 
-  const setAgentPanelOpenState = useCallback((next: boolean) => {
-    setAgentPanelOpen(next)
-    onAgentPanelToggle?.(next)
-  }, [onAgentPanelToggle])
-
   const handleAnalyzeToggle = useCallback(async () => {
-    const next = !agentPanelOpen
-
-    if (!next) {
-      setAgentAnalysisPending(false)
-      setAgentPanelOpenState(false)
+    if (agentPanelOpen) {
+      gitOperationHub.closeAgentPanel(workspacePath)
       return
     }
 
-    setAgentAnalysisPending(next)
+    let statusForAnalysis = gitStatusRef.current
 
     if (loadState === 'preview') {
       try {
@@ -564,10 +510,11 @@ export const GitToolCard = ({
         activeRefreshIdRef.current += 1
         refreshingRef.current = false
         refreshingWorkspacePathRef.current = ''
+        gitOperationHub.reportStatus(workspacePath.trim(), nextStatus)
         setGitStatus(nextStatus)
         setLoadState('ready')
+        statusForAnalysis = nextStatus
       } catch (error) {
-        setAgentAnalysisPending(false)
         startTransition(() => {
           setNotice({
             tone: 'error',
@@ -578,13 +525,16 @@ export const GitToolCard = ({
       }
     }
 
-    setAgentPanelOpenState(next)
-  }, [agentPanelOpen, loadState, setAgentPanelOpenState, text.refreshError, workspacePath])
+    if (!statusForAnalysis) {
+      return
+    }
+
+    void gitOperationHub.openAgentAnalysis(operationContext, statusForAnalysis)
+  }, [agentPanelOpen, loadState, operationContext, text.refreshError, workspacePath])
 
   const handleCloseAgentPanel = useCallback(() => {
-    setAgentAnalysisPending(false)
-    setAgentPanelOpenState(false)
-  }, [setAgentPanelOpenState])
+    gitOperationHub.closeAgentPanel(workspacePath)
+  }, [workspacePath])
 
   const renderNotRepositoryState = (message?: string) => (
     <div ref={cardRef} className="git-tool-card git-tool-empty-state git-onboarding-empty">
@@ -674,12 +624,12 @@ export const GitToolCard = ({
       onMouseEnter={handleCardFocus}
     >
       {/* ── Notice ─────────────────────────────────────────────────────────── */}
-      {notice ? (
+      {displayNotice ? (
         <div
-          className={`git-tool-notice is-${notice.tone}`}
-          role={notice.tone === 'error' ? 'alert' : 'status'}
+          className={`git-tool-notice is-${displayNotice.tone}`}
+          role={displayNotice.tone === 'error' ? 'alert' : 'status'}
         >
-          {notice.message}
+          {displayNotice.message}
         </div>
       ) : null}
 
@@ -726,7 +676,7 @@ export const GitToolCard = ({
                     type="button"
                     className="git-tool-button"
                     disabled={isBusy || gitStatus.clean || syncPanelOpen || agentPanelOpen}
-                    onClick={() => void handleCommitNew()}
+                    onClick={handleCommitNew}
                   >
                     {text.commitNew}
                   </button>
@@ -736,7 +686,7 @@ export const GitToolCard = ({
                     type="button"
                     className="git-tool-button"
                     disabled={isBusy || gitStatus.clean || syncPanelOpen || agentAnalysisPending}
-                    onClick={handleAnalyzeToggle}
+                    onClick={() => void handleAnalyzeToggle()}
                   >
                     {analyzeButtonLabel}
                   </button>
@@ -747,21 +697,7 @@ export const GitToolCard = ({
                     type="button"
                     className="git-tool-button"
                     disabled={isBusy || syncPanelOpen || agentPanelOpen || blockedFiles !== null || commitingBlocked}
-                    onClick={async () => {
-                      try {
-                        const result = await pullGitChanges({ workspacePath })
-                        if (result.blockedFiles && result.blockedFiles.length > 0) {
-                          startTransition(() => {
-                            handleStatusChange(result.status)
-                            setBlockedFiles(result.blockedFiles!)
-                          })
-                          return
-                        }
-                      } catch {
-                        // pull failed for other reasons — let SyncPanel handle it
-                      }
-                      setSyncPanelOpen(true)
-                    }}
+                    onClick={() => void gitOperationHub.beginSync(operationContext)}
                   >
                     {text.sync}
                     {(gitStatus.ahead > 0 || gitStatus.behind > 0) ? (
@@ -833,16 +769,18 @@ export const GitToolCard = ({
       {agentPanelOpen && gitStatus && !gitStatus.clean ? (
         <div className="git-agent-panel-shell">
           <GitAgentPanel
-            gitStatus={gitStatus}
-            workspacePath={workspacePath}
+            phase={agentPhase}
             language={language}
-            gitAgentModel={gitAgentModel}
-            systemPrompt={systemPrompt}
-            modelPromptRules={modelPromptRules}
-            crossProviderSkillReuseEnabled={crossProviderSkillReuseEnabled}
-            onAnalysisPendingChange={setAgentAnalysisPending}
+            onExecute={(strategy, index) => {
+              void gitOperationHub.executeAgentStrategy(operationContext, strategy, index)
+            }}
+            onRetry={() => {
+              const statusForRetry = gitStatusRef.current
+              if (statusForRetry) {
+                void gitOperationHub.openAgentAnalysis(operationContext, statusForRetry)
+              }
+            }}
             onClose={handleCloseAgentPanel}
-            onStatusChange={handleStatusChange}
           />
         </div>
       ) : null}
@@ -865,31 +803,14 @@ export const GitToolCard = ({
                 <button
                   type="button"
                   className="git-tool-button"
-                  onClick={async () => {
-                    setCommitingBlocked(true)
-                    try {
-                      await setGitStage({ workspacePath, paths: blockedFiles, staged: true })
-                      const summary = language === 'zh-CN' ? '同步前自动提交冲突文件' : 'Auto-commit conflicting files before sync'
-                      await commitGitChanges({ workspacePath, summary, description: '' })
-                      const updated = await fetchGitStatus(workspacePath)
-                      startTransition(() => handleStatusChange(updated))
-                    } catch (error) {
-                      setCommitingBlocked(false)
-                      setBlockedFiles(null)
-                      setNotice({ tone: 'error', message: errorMessage(error, text.commitError) })
-                      return
-                    }
-                    setCommitingBlocked(false)
-                    setBlockedFiles(null)
-                    setSyncPanelOpen(true)
-                  }}
+                  onClick={() => void gitOperationHub.confirmBlockedCommit(operationContext)}
                 >
                   {text.syncConfirmCommitYes}
                 </button>
                 <button
                   type="button"
                   className="git-tool-button"
-                  onClick={() => setBlockedFiles(null)}
+                  onClick={() => gitOperationHub.dismissBlockedFiles(workspacePath)}
                 >
                   {text.syncConfirmCommitNo}
                 </button>
@@ -904,15 +825,10 @@ export const GitToolCard = ({
       {syncPanelOpen && gitStatus ? (
         <div className="git-agent-panel-shell">
           <GitSyncPanel
-            gitStatus={gitStatus}
-            workspacePath={workspacePath}
+            step={syncStep}
             language={language}
-            gitAgentModel={gitAgentModel}
-            systemPrompt={systemPrompt}
-            modelPromptRules={modelPromptRules}
-            crossProviderSkillReuseEnabled={crossProviderSkillReuseEnabled}
-            onClose={() => setSyncPanelOpen(false)}
-            onStatusChange={handleStatusChange}
+            onRetry={() => void gitOperationHub.retrySync(operationContext)}
+            onClose={() => gitOperationHub.closeSyncPanel(workspacePath)}
           />
         </div>
       ) : null}

@@ -3,7 +3,8 @@ param(
     'tests/electron-bridge-runtime.test.ts',
     'tests/electron-git-tool-runtime.test.ts',
     'tests/electron-slash-menu-runtime.test.ts',
-    'tests/electron-slash-history-tab-runtime.test.ts'
+    'tests/electron-slash-history-tab-runtime.test.ts',
+    'tests/electron-texteditor-wordwrap-runtime.test.ts'
   )
 )
 

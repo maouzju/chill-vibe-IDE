@@ -440,6 +440,8 @@ A living list of traps that have wasted time before. **When you hit a new pitfal
 | 176 | 给 `draggable` 元素的左键 mousedown 加 `preventDefault`（哪怕只想阻止按钮抢焦点）会让 `dragstart` 永不触发——启动拖拽是 mousedown 默认动作的一部分，全浏览器一致 | pane tab 的拖拽分屏/排序会静默失效且没有任何报错；要防按钮原生抢焦点，改用显式焦点转移（`requestComposerFocus` + `startComposerFocusAttempt` 重试驱动的首次无条件尝试），`tests/pane-tab-activation.test.ts` 已用反向断言钉死禁止该 preventDefault。 |
 | 177 | Claude Code 文档的模型版本门槛（"Sonnet 5 requires v2.1.197"、"Fable 5 requires v2.1.170"）只约束 `/model` picker 的内置列表；显式 `--model claude-sonnet-5` 在 2.1.174 上照样透传给 API 并成功，只是旧 CLI 按 200K 窗口对待（没有原生 1M 认知）。另外 Fable 5 思考不可关闭：`--effort none`、思考开关在它上面无效 | 判断"这个模型这台机器能不能用"不要只对照文档版本号，用一次便宜的 `claude -p ... --output-format json` smoke 实测 `modelUsage` 里的实际模型；Claude 档位/思考逻辑必须走 `shared/reasoning.ts` 的模型感知出口（`toClaudeEffortFlagValue` 等），Fable 5 永不发 none；也不要在 Chill Vibe 自己的 Claude 会话运行中升级全局 claude CLI——运行中的进程可能懒加载到换掉一半的不兼容模块。 |
 
+| 178 | Monaco `fontFamily` 里引用未定义的 CSS 变量（如 `var(--font-mono, monospace)`）会静默退化成裸 `monospace`，而 zh-CN Chromium/Electron 把 `monospace` 映射到一个空格字形为全角宽的字体（space 13px vs 半角 6.5px，`isMonospace: false`），Monaco 的 simple 折行按半角宽做预算，含空格的行实际渲染超出视口 → 自动换行开着却仍有水平滚动条/左右晃动；纯英文或 headless 浏览器环境复现不出来 | 编辑器 fontFamily 要么留空走 Monaco 平台默认栈（Windows=Consolas），要么给出具体字体名，绝不要传裸 `monospace` 或未定义的 var()；回归钉在 `tests/electron-texteditor-wordwrap-runtime.test.ts`（真实 Electron zh-CN 环境断言 wrap 开启时水平滚动条 slider 必须占满轨道）。 |
+
 ### Self-maintenance rule
 
 - When you encounter a new non-obvious failure mode — a test that fails for environmental reasons, a build step with hidden prerequisites, a runtime behavior that contradicts the docs — append a row to this table before you finish the task.

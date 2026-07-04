@@ -188,7 +188,12 @@ export class ClaudeSessionPool {
     }
 
     try {
-      return entry.child.stdin.write(`${jsonLine}\n`)
+      // stdin.write returning false only means backpressure — the chunk is
+      // already queued and will drain. Long prompts routinely overflow the
+      // pipe's high-water mark, so that return value must not be treated as a
+      // failed write (it used to kill the CLI and error the card).
+      entry.child.stdin.write(`${jsonLine}\n`)
+      return true
     } catch {
       return false
     }

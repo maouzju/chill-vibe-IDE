@@ -798,6 +798,11 @@ function App() {
     new Map<string, { columnId: string; cardId: string; messages: ChatMessage[] }>(),
   )
   const activityFlushHandleRef = useRef<number | null>(null)
+  // Forensics counter: edits activities received per card during the live
+  // stream. If the turn ends with edits received but zero edits messages in
+  // state, something between onActivity and the reducer ate them — log loudly
+  // so the next occurrence in the wild is attributable (真实事故取证缺口).
+  const streamEditsActivityCountRef = useRef(new Map<string, number>())
 
   useEffect(() => {
     appStateRef.current = appState
@@ -1165,9 +1170,12 @@ function App() {
       return
     }
 
-    startTransition(() => {
-      persistAfterActions(actions, applyActions(actions))
-    })
+    // Deliberately NOT wrapped in startTransition: transition-lane updates can
+    // be deferred for seconds under heavy host load while urgent delta commits
+    // keep landing, which opened a window where tool/edits messages lived only
+    // in an uncommitted lane (真实事故：一整轮工具/改动卡全部丢失、纯文字存活)。
+    // The flush is already batched on a 2s timer, so an urgent commit is cheap.
+    persistAfterActions(actions, applyActions(actions))
   }, [applyActions, persistAfterActions])
 
   const flushBufferedActivitiesForCard = useCallback(
@@ -2757,6 +2765,13 @@ function App() {
             return
           }
 
+          if (payload.kind === 'edits') {
+            streamEditsActivityCountRef.current.set(
+              card.id,
+              (streamEditsActivityCountRef.current.get(card.id) ?? 0) + 1,
+            )
+          }
+
           enqueueActivityMessage(
             columnId,
             card.id,
@@ -2788,6 +2803,8 @@ function App() {
         onDone: ({ stopped }) => {
           flushBufferedAssistantDeltaForCard(card.id)
           const activityFlushedState = flushBufferedActivitiesForCard(card.id)
+          const receivedEditsActivities = streamEditsActivityCountRef.current.get(card.id) ?? 0
+          streamEditsActivityCountRef.current.delete(card.id)
           source.close()
           activeStreamsRef.current.delete(card.id)
           const fallbackTimer = stopCompletionFallbackTimersRef.current.get(card.id)
@@ -2902,6 +2919,15 @@ function App() {
               card.streamId!,
             )
 
+            if (receivedEditsActivities > 0 && summaryFiles.length === 0) {
+              // Received live edits activities but none survived into card
+              // state — the exact silent-loss shape we could not attribute in
+              // the wild. Keep this loud so main.log captures the next hit.
+              console.error(
+                `[chill-vibe] stream ${card.streamId} on card ${card.id} received ${receivedEditsActivities} edits activities but zero edits messages survived to stream completion`,
+              )
+            }
+
             if (summaryFiles.length > 0) {
               actions.push({
                 type: 'appendMessages',
@@ -2923,6 +2949,7 @@ function App() {
         onError: ({ message, recoverable, recoveryMode, transientOnly, hint, sessionId }) => {
           flushBufferedAssistantDeltaForCard(card.id)
           flushBufferedActivitiesForCard(card.id)
+          streamEditsActivityCountRef.current.delete(card.id)
           source.close()
           activeStreamsRef.current.delete(card.id)
           const fallbackTimer = stopCompletionFallbackTimersRef.current.get(card.id)

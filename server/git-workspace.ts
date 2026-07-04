@@ -855,6 +855,42 @@ export const captureWorkspaceSnapshot = async (
   }
 }
 
+// Providers report edited files in whatever shape their tool inputs use —
+// Claude sends absolute OS paths (`D:\repo\src\app.js`), Codex may send either
+// form — while git status yields repo-relative posix paths. Normalize both
+// sides to one canonical key or the touched-path filter silently matches
+// nothing and the end-of-turn fallback edits card never fires.
+const canonicalTouchedPathKey = (rawPath: string, repoRootKey: string) => {
+  let key = rawPath.trim().replaceAll('\\', '/')
+
+  if (process.platform === 'win32') {
+    key = key.toLowerCase()
+  }
+
+  if (repoRootKey && key.startsWith(`${repoRootKey}/`)) {
+    key = key.slice(repoRootKey.length + 1)
+  }
+
+  return key
+}
+
+const buildTouchedPathMatcher = (repoRoot: string, touchedPaths: Set<string>) => {
+  let repoRootKey = repoRoot.replaceAll('\\', '/').replace(/\/+$/, '')
+  if (process.platform === 'win32') {
+    repoRootKey = repoRootKey.toLowerCase()
+  }
+
+  const touchedKeys = new Set<string>()
+  for (const touched of touchedPaths) {
+    const key = canonicalTouchedPathKey(touched, repoRootKey)
+    if (key) {
+      touchedKeys.add(key)
+    }
+  }
+
+  return (repoRelativePath: string) => touchedKeys.has(canonicalTouchedPathKey(repoRelativePath, repoRootKey))
+}
+
 export const diffWorkspaceSnapshot = async (
   snapshot: WorkspaceSnapshot | null,
   workspacePath: string,
@@ -876,10 +912,10 @@ export const diffWorkspaceSnapshot = async (
 
   const editedFiles: StreamEditedFile[] = []
   const handledSnapshotPaths = new Set<string>()
-  const hasTouchedPathFilter = Boolean(touchedPaths)
+  const isTouchedPath = touchedPaths ? buildTouchedPathMatcher(snapshot.repoRoot, touchedPaths) : null
 
   for (const change of currentStatus.changes) {
-    if (hasTouchedPathFilter && !touchedPaths!.has(change.path)) {
+    if (isTouchedPath && !isTouchedPath(change.path)) {
       continue
     }
 
@@ -928,7 +964,7 @@ export const diffWorkspaceSnapshot = async (
       continue
     }
 
-    if (hasTouchedPathFilter && !touchedPaths!.has(snapshotFile.path)) {
+    if (isTouchedPath && !isTouchedPath(snapshotFile.path)) {
       continue
     }
 

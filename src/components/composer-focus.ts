@@ -118,10 +118,22 @@ export const isComposerFocusEffectivelyVacant = (
 // chrome) while this card should still own the composer, request refocus. A
 // blur to any real element elsewhere is a deliberate move and must be left
 // alone — refocusing there would trap the user in the input.
+//
+// A pointer press outside the composer is also a deliberate move even though
+// it leaves focus vacant (message text is not focusable): reclaiming there
+// moves the document selection into the textarea and kills a drag-selection
+// of conversation text mid-gesture. Vacancy only counts as the stuck
+// signature when no outside press explains it.
 export const shouldRefocusAfterComposerBlur = (state: {
   focusBecameVacant: boolean
   cardHoldsFocus: boolean
-}): boolean => state.focusBecameVacant && state.cardHoldsFocus
+  blurCausedByPointerOutsideComposer: boolean
+}): boolean =>
+  state.focusBecameVacant && state.cardHoldsFocus && !state.blurCausedByPointerOutsideComposer
+
+// The blur fired by an outside press follows the pointerdown within the same
+// gesture (a handful of ms); the window only needs to absorb event-loop lag.
+export const composerBlurOutsidePressWindowMs = 500
 
 // A card-level layer rebuild that ran recently and demonstrably did not stop
 // the misrouting is the signal to widen the rebuild to the pane panel — the

@@ -3,6 +3,7 @@ import type {
   ClipboardEvent,
   CompositionEvent,
   CSSProperties,
+  FocusEvent,
   KeyboardEvent,
   MouseEvent,
   ReactNode,
@@ -80,6 +81,7 @@ import {
 } from './chat-scroll'
 import { syncComposerTextareaHeight } from './chat-composer-textarea'
 import {
+  composerBlurOutsidePressWindowMs,
   decideHitTestRepairScope,
   hitTestRepairEscalationWindowMs,
   isComposerFocusEffectivelyVacant,
@@ -1825,40 +1827,55 @@ const ChatCardView = ({
   // and the request-driven ladder above never wakes because no structural
   // action fired. On blur, if focus went vacant while this active card still
   // owns the composer, pull it back — but only then, so a deliberate move to
-  // another real element is never wrestled away.
-  const handleComposerBlur = useCallback(() => {
-    flushPendingDraftSync()
-    if (!usesPaneChrome || isToolCard || !isActive || isCollapsed) {
-      return
-    }
-    const textarea = textareaRef.current
-    if (!textarea) {
-      return
-    }
-    const pane = textarea.closest('.pane-view')
-    const isOwnPaneChrome = (element: Element) =>
-      pane !== null &&
-      element.closest('.pane-view') === pane &&
-      element.closest('.pane-tab-bar') !== null
-    // Focus moves after blur; check on the next frame, then again shortly after
-    // in case the vacancy is created a beat later by a competing focus handler.
-    const reclaim = () => {
-      if (!textarea.isConnected) {
+  // another real element is never wrestled away. A press outside the composer
+  // also leaves focus vacant (message text is not focusable) and must be left
+  // alone: reclaiming there kills a conversation-text drag-selection.
+  const lastPointerDownOutsideComposerAtRef = useRef(Number.NEGATIVE_INFINITY)
+  const handleComposerBlur = useCallback(
+    (event: FocusEvent<HTMLTextAreaElement>) => {
+      flushPendingDraftSync()
+      if (!usesPaneChrome || isToolCard || !isActive || isCollapsed) {
         return
       }
-      const focusBecameVacant = isComposerFocusEffectivelyVacant(
-        document.activeElement,
-        document.body,
-        isOwnPaneChrome,
-      )
-      if (shouldRefocusAfterComposerBlur({ focusBecameVacant, cardHoldsFocus: true })) {
-        textarea.focus({ preventScroll: true })
+      const textarea = textareaRef.current
+      if (!textarea) {
+        return
       }
-    }
-    window.requestAnimationFrame(reclaim)
-    // flushPendingDraftSync is a stable ref-backed closure (no reactive
-    // captures), so it is intentionally omitted to keep this callback stable.
-  }, [isActive, isCollapsed, isToolCard, usesPaneChrome])
+      const blurCausedByPointerOutsideComposer =
+        event.timeStamp - lastPointerDownOutsideComposerAtRef.current <
+        composerBlurOutsidePressWindowMs
+      const pane = textarea.closest('.pane-view')
+      const isOwnPaneChrome = (element: Element) =>
+        pane !== null &&
+        element.closest('.pane-view') === pane &&
+        element.closest('.pane-tab-bar') !== null
+      // Focus moves after blur; check on the next frame, then again shortly after
+      // in case the vacancy is created a beat later by a competing focus handler.
+      const reclaim = () => {
+        if (!textarea.isConnected) {
+          return
+        }
+        const focusBecameVacant = isComposerFocusEffectivelyVacant(
+          document.activeElement,
+          document.body,
+          isOwnPaneChrome,
+        )
+        if (
+          shouldRefocusAfterComposerBlur({
+            focusBecameVacant,
+            cardHoldsFocus: true,
+            blurCausedByPointerOutsideComposer,
+          })
+        ) {
+          textarea.focus({ preventScroll: true })
+        }
+      }
+      window.requestAnimationFrame(reclaim)
+      // flushPendingDraftSync is a stable ref-backed closure (no reactive
+      // captures), so it is intentionally omitted to keep this callback stable.
+    },
+    [isActive, isCollapsed, isToolCard, usesPaneChrome],
+  )
 
   useEffect(() => {
     if (isToolCard || !isActive || isCollapsed) {
@@ -1946,11 +1963,16 @@ const ChatCardView = ({
         return
       }
 
-      if (event.button !== 0) {
+      if (!isPointerInsideTextarea(textarea, event.clientX, event.clientY)) {
+        // A press outside the composer rect is a deliberate departure — often
+        // the start of a conversation-text drag-selection. The blur rescue
+        // reads this stamp to avoid reclaiming focus over it. Recorded before
+        // the button gate so non-left presses count too.
+        lastPointerDownOutsideComposerAtRef.current = event.timeStamp
         return
       }
 
-      if (!isPointerInsideTextarea(textarea, event.clientX, event.clientY)) {
+      if (event.button !== 0) {
         return
       }
 

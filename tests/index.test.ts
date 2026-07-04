@@ -123,6 +123,7 @@ import './whitenoise.test.ts'
 import './electron-bridge-runtime.test.ts'
 import './electron-git-tool-runtime.test.ts'
 import './fork-conversation.test.ts'
+import './session-fork.test.ts'
 import './git-dashboard-windowing.test.ts'
 
 import './archive-recall.test.ts'

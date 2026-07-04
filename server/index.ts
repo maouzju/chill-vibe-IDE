@@ -12,6 +12,7 @@ import {
   externalSessionLoadRequestSchema,
   internalSessionHistoryLoadRequestSchema,
   chatRequestSchema,
+  forkSessionRequestSchema,
   gitCommitRequestSchema,
   gitPullRequestSchema,
   gitStageRequestSchema,
@@ -32,6 +33,7 @@ import { resolveImageAttachmentPath, storeImageAttachment } from './attachments.
 import { getDefaultWorkspacePath } from './app-paths.js'
 import { importCcSwitchProfiles } from './cc-switch-import.js'
 import { listExternalSessions, loadExternalSession } from './external-history.js'
+import { forkProviderSession } from './session-fork.js'
 import {
   copyWorkspaceFileToClipboard,
   createWorkspaceDirectory,
@@ -633,6 +635,20 @@ app.post('/api/chat/message', async (request, response) => {
     const message = error instanceof Error ? error.message : 'Unable to create chat stream.'
     response.status(409).json({ message })
   }
+})
+
+app.post('/api/chat/fork-session', async (request, response) => {
+  const parsed = forkSessionRequestSchema.safeParse(request.body)
+
+  if (!parsed.success) {
+    response.status(400).json({ message: 'Invalid fork session request.' })
+    return
+  }
+
+  // Fork is best-effort by contract: any failure means "no native fork" and the
+  // renderer falls back to the seeded replay, so this never returns an error.
+  const sessionId = await forkProviderSession(parsed.data)
+  response.json({ sessionId })
 })
 
 app.get('/api/chat/stream/:streamId', (request, response) => {

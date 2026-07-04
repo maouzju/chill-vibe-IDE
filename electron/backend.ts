@@ -17,6 +17,7 @@ import {
 import { FileWatcherManager } from '../server/file-watcher.ts'
 import { readNearestTsconfig } from '../server/tsconfig-discovery.ts'
 import { listExternalSessions, loadExternalSession } from '../server/external-history.ts'
+import { forkProviderSession } from '../server/session-fork.ts'
 import {
   commitAllGitWorkspace,
   commitGitWorkspace,
@@ -70,6 +71,7 @@ import {
   externalSessionLoadRequestSchema,
   internalSessionHistoryLoadRequestSchema,
   chatRequestSchema,
+  forkSessionRequestSchema,
   gitCommitAllRequestSchema,
   gitCommitDiffRequestSchema,
   gitCommitRequestSchema,
@@ -279,6 +281,16 @@ export const createDesktopBackend = (deps: DesktopBackendDependencies = {}) => {
     },
     async uploadImageAttachment(request: AttachmentUploadRequest) {
       return storeImageAttachment(attachmentUploadRequestSchema.parse(request))
+    },
+    async forkProviderSession(request: unknown) {
+      const parsed = forkSessionRequestSchema.parse(request)
+      const sessionId = await forkProviderSession({
+        provider: parsed.provider,
+        workspacePath: parsed.workspacePath,
+        sessionId: parsed.sessionId,
+        forkPoint: parsed.forkPoint,
+      })
+      return { sessionId }
     },
     async stopChat(streamId: string) {
       // Stop is intentionally idempotent from the renderer's point of view.

@@ -676,7 +676,12 @@ const TextEditorCardInner = ({ workspacePath, filePath, language }: TextEditorCa
           automaticLayout: true,
           detectIndentation: false,
           folding: !isLargeFile,
-          fontFamily: 'var(--font-mono, monospace)',
+          // No fontFamily override: `--font-mono` was never defined, so the
+          // var() fell back to bare `monospace`, which zh-CN Chromium maps to
+          // a font whose space glyph is fullwidth (13px vs 6.5px typical).
+          // Monaco's simple wrapping budget then underestimates line width
+          // and wrapped lines overflow the viewport sideways. The platform
+          // default stack (Consolas on Windows) measures consistently.
           fontSize: settings.fontSize,
           insertSpaces: true,
           lineNumbersMinChars: 3,
@@ -684,6 +689,11 @@ const TextEditorCardInner = ({ workspacePath, filePath, language }: TextEditorCa
           model,
           padding: { top: 8, bottom: 8 },
           scrollBeyondLastLine: false,
+          // With wrap on, scrollBeyondLastColumn still widens scrollWidth past
+          // the viewport, so the pane can jiggle sideways and flash a ghost
+          // horizontal scrollbar even though every line fits. Kill both.
+          scrollBeyondLastColumn: settings.wordWrap ? 0 : 5,
+          scrollbar: { horizontal: settings.wordWrap ? 'hidden' : 'auto' },
           tabSize: settings.tabSize,
           wordWrap: settings.wordWrap ? 'on' : 'off',
         })
@@ -825,6 +835,8 @@ const TextEditorCardInner = ({ workspacePath, filePath, language }: TextEditorCa
     editorRef.current?.updateOptions({
       fontSize: editorSettings.fontSize,
       minimap: { enabled: editorSettings.minimap && !isLargeFile },
+      scrollBeyondLastColumn: editorSettings.wordWrap ? 0 : 5,
+      scrollbar: { horizontal: editorSettings.wordWrap ? 'hidden' : 'auto' },
       wordWrap: editorSettings.wordWrap ? 'on' : 'off',
     })
     modelRef.current?.updateOptions({ tabSize: editorSettings.tabSize })
@@ -920,7 +932,6 @@ const TextEditorCardInner = ({ workspacePath, filePath, language }: TextEditorCa
 
         diffEditor = module.monaco.editor.createDiffEditor(diffContainerRef.current, {
           automaticLayout: true,
-          fontFamily: 'var(--font-mono, monospace)',
           fontSize: 13,
           minimap: { enabled: false },
           originalEditable: false,

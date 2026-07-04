@@ -10,6 +10,8 @@ import {
   pointerLedgerCapacity,
   pushPointerLedgerEntry,
   shouldAutoDumpAfterRescueEvent,
+  summarizeComposerState,
+  type ComposerStateQuery,
   type ForensicsElementLike,
   type PointerLedgerEntry,
 } from '../src/diagnostics/stuck-pane-forensics'
@@ -159,6 +161,47 @@ test('events older than the window slide out of the auto dump count', () => {
   assert.equal(decision.dump, false, 'two stale events plus one fresh must not trip the threshold')
 })
 
+test('composer state summary exposes the send-gate signals that distinguish a locked input from a render stall', () => {
+  // The forensic dumps could never tell "input focused but send silently
+  // swallowed" apart from a real render stall, because nothing captured the
+  // composer's send-gate. This models the DOM the summary must read.
+  const query: ComposerStateQuery = {
+    hasShell: true,
+    streaming: true,
+    textarea: {
+      present: true,
+      disabled: false,
+      hasText: true,
+      placeholder: '',
+    },
+    sendButton: {
+      present: true,
+      disabled: true,
+    },
+  }
+
+  const summary = summarizeComposerState(query)
+  assert.equal(summary.present, true)
+  assert.equal(summary.streaming, true)
+  assert.equal(summary.textareaPresent, true)
+  assert.equal(summary.textareaDisabled, false)
+  assert.equal(summary.textareaHasText, true)
+  assert.equal(summary.placeholder, '')
+  assert.equal(summary.sendButtonPresent, true)
+  assert.equal(
+    summary.sendButtonDisabled,
+    true,
+    'send button disabled while the textarea is focusable and holds text is the "silently locked input" signature',
+  )
+})
+
+test('composer state summary reports absence cleanly when no composer is mounted', () => {
+  const summary = summarizeComposerState({ hasShell: false })
+  assert.equal(summary.present, false)
+  assert.equal(summary.textareaPresent, false)
+  assert.equal(summary.sendButtonPresent, false)
+})
+
 test('the snapshot assembles every forensic section from injected collectors', () => {
   const snapshot = assembleForensicsSnapshot({
     reason: 'hotkey',
@@ -179,6 +222,16 @@ test('the snapshot assembles every forensic section from injected collectors', (
             hitTestRepairCount: 2,
             rescueUnhandledCount: 1,
             focusExhaustedCount: 0,
+            composer: {
+              present: true,
+              streaming: true,
+              textareaPresent: true,
+              textareaDisabled: false,
+              textareaHasText: true,
+              placeholder: '',
+              sendButtonPresent: true,
+              sendButtonDisabled: true,
+            },
           },
         ],
       },
@@ -193,6 +246,7 @@ test('the snapshot assembles every forensic section from injected collectors', (
   assert.equal(snapshot.reason, 'hotkey')
   assert.equal(snapshot.activeElementPath, 'textarea.composer-input > div.composer')
   assert.equal(snapshot.panes.length, 1)
+  assert.equal(snapshot.panes[0]?.panels[0]?.composer?.sendButtonDisabled, true)
   assert.equal(snapshot.pointerLedger[0]?.atMs, 123)
   assert.equal(snapshot.hitGrid.length, 1)
   assert.deepEqual(snapshot.rafTimestampsMs, [16.6, 33.2])

@@ -109,6 +109,20 @@ export const isComposerFocusEffectivelyVacant = (
   return isOwnPaneChrome(activeElement)
 }
 
+// The retry ladder above is request-driven: it only runs when a structural
+// action (tab switch/add, keyboard shortcut) bumps composerFocusRequest. That
+// leaves a gap the forensic dump caught red-handed — the user clicks the
+// textarea, the click lands (agree=true), yet native focus falls to <body>
+// with no structural action to wake the ladder, so the composer looks dead.
+// This gate closes it: on textarea blur, if focus went vacant (body/own
+// chrome) while this card should still own the composer, request refocus. A
+// blur to any real element elsewhere is a deliberate move and must be left
+// alone — refocusing there would trap the user in the input.
+export const shouldRefocusAfterComposerBlur = (state: {
+  focusBecameVacant: boolean
+  cardHoldsFocus: boolean
+}): boolean => state.focusBecameVacant && state.cardHoldsFocus
+
 // A card-level layer rebuild that ran recently and demonstrably did not stop
 // the misrouting is the signal to widen the rebuild to the pane panel — the
 // lightweight equivalent of the tab switch that historically cleared stale

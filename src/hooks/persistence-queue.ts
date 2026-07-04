@@ -17,8 +17,12 @@ type QueuedStateSaveScheduleOptions = {
 
 export const defaultQueuedStateSaveDelayMs = 300
 export const streamingQueuedStateSaveDelayMs = 5_000
-export const streamDeltaFlushIntervalMs = 1_000
-export const streamActivityFlushIntervalMs = 2_000
+// Renderer-facing flush cadence for streaming output. These only batch React
+// renders; disk persistence has its own independent streaming throttle below.
+// 80ms keeps the typewriter feel (~12 paints/s) while still coalescing
+// per-token deltas — the original 1s window made replies appear line-by-line.
+export const streamDeltaFlushIntervalMs = 80
+export const streamActivityFlushIntervalMs = 250
 const busyStreamingQueuedStateSaveDelayMs = 15_000
 const busyStreamingCardThreshold = 2
 const streamingStateContentBudgetChars = 750_000

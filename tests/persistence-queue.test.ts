@@ -75,12 +75,12 @@ describe('persistence queue', () => {
     assert.equal(shouldResetQueuedStateSaveTimer(state), false)
   })
 
-  it('uses a coarse renderer delta flush interval for active streams', () => {
-    assert.equal(streamDeltaFlushIntervalMs, 1_000)
+  it('flushes streaming deltas fast enough to read as live typing while still batching per-token renders', () => {
+    assert.equal(streamDeltaFlushIntervalMs, 80)
   })
 
-  it('uses a coarser renderer activity flush interval for structured stream events', () => {
-    assert.equal(streamActivityFlushIntervalMs, 2_000)
+  it('flushes structured stream activities promptly without per-event renders', () => {
+    assert.equal(streamActivityFlushIntervalMs, 250)
   })
 
   it('backs off queued saves further when several sessions stream at once', () => {

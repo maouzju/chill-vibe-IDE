@@ -12,12 +12,15 @@ import {
   resolveMessageLocalLinkTarget,
   revealMessageLocalLinkTarget,
 } from './message-local-link.js'
+import { localImageProtocolScheme } from '../shared/local-image-protocol.js'
+import { resolveLocalImageRequestTarget } from './local-image-protocol.js'
 import {
   resolveDesktopDataDir,
   resolveDesktopRuntimeProfilePaths,
   resolveDesktopRuntimeKind,
   resolveDesktopWorkingDirectory,
 } from './runtime-environment.js'
+import { attachFrameStallWatchdog } from './frame-stall-watchdog.js'
 import { checkForUpdate, downloadUpdate, installUpdate } from './updater.js'
 import {
   attachmentProtocolScheme,
@@ -58,9 +61,17 @@ const shouldKeepValidationWindowHidden = process.env.CHILL_VIBE_HEADLESS_RUNTIME
 
 const audioProtocolScheme = 'chill-vibe-audio'
 
+// Chromium 120+ can misjudge a fully visible window as natively occluded on
+// Windows and stop producing frames entirely — JS/events/layout keep running
+// against a dead picture (proven by forensics dump 2026-07-02T13-52-09: nine
+// 1s heartbeat samples returned the same rAF timestamp until a foreground
+// change revived rendering). Disable the miscalculating feature outright.
+app.commandLine.appendSwitch('disable-features', 'CalculateNativeWinOcclusion')
+
 protocol.registerSchemesAsPrivileged([
   { scheme: attachmentProtocolScheme, privileges: { supportFetchAPI: true, secure: true } },
   { scheme: audioProtocolScheme, privileges: { supportFetchAPI: true, secure: true, stream: true } },
+  { scheme: localImageProtocolScheme, privileges: { supportFetchAPI: true, secure: true } },
 ])
 
 if (desktopRuntimeProfilePaths) {
@@ -358,6 +369,22 @@ function registerAudioProtocol() {
   })
 }
 
+function registerLocalImageProtocol() {
+  protocol.handle(localImageProtocolScheme, async (request) => {
+    const filePath = resolveLocalImageRequestTarget(request.url)
+
+    if (!filePath) {
+      return new Response('Image not found.', { status: 404 })
+    }
+
+    try {
+      return await net.fetch(pathToFileURL(filePath).toString())
+    } catch {
+      return new Response('Image not found.', { status: 404 })
+    }
+  })
+}
+
 function registerDesktopHandlers() {
   ipcMain.handle('window:minimize', (event) => {
     const win = getEventWindow(event)
@@ -440,6 +467,9 @@ function registerDesktopHandlers() {
     desktopBackend.fetchGitStatusPreview(workspacePath),
   )
   ipcMain.handle('desktop:set-git-stage', (_event, request) => desktopBackend.setGitStage(request))
+  ipcMain.handle('desktop:discard-git-changes', (_event, request) =>
+    desktopBackend.discardGitChanges(request),
+  )
   ipcMain.handle('desktop:init-git-workspace', (_event, request) =>
     desktopBackend.initGitWorkspace(request),
   )
@@ -699,7 +729,10 @@ function createWindow() {
     ...(titleBarStyle ? { titleBarStyle } : {}),
     webPreferences: {
       preload: path.join(moduleDir, 'preload.cjs'),
-      backgroundThrottling: !shouldKeepValidationWindowHidden,
+      // Throttling turns every occlusion misjudgment into a full rAF/timer
+      // stall (investigation §2.2; forensics 2026-07-02T13-52-09). An IDE
+      // with live streams must keep rendering like one.
+      backgroundThrottling: false,
       contextIsolation: true,
       nodeIntegration: false,
     },
@@ -719,6 +752,7 @@ function createWindow() {
     }
   })
   attachWindowDiagnostics(win)
+  attachFrameStallWatchdog(win, (message, meta) => log.warn(message, meta))
 
   win.on('close', (event) => {
     if (process.platform === 'darwin' || quitAfterFlushPending) {
@@ -806,6 +840,7 @@ app.whenReady().then(async () => {
   registerDesktopHandlers()
   await registerAttachmentProtocol()
   registerAudioProtocol()
+  registerLocalImageProtocol()
   createWindow()
 
   app.on('activate', () => {

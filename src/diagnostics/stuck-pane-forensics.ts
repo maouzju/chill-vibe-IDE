@@ -238,6 +238,11 @@ export const installStuckPaneForensics = () => {
   const sampleFrame = () => {
     rafHandle = window.requestAnimationFrame((timestamp) => {
       rafTimestamps = [...rafTimestamps.slice(-9), Math.round(timestamp)]
+      // Published for the main-process frame-stall watchdog: a visible window
+      // whose value stops advancing is a compositor stall, and main-side
+      // timers keep polling even when renderer timers are throttled.
+      ;(window as { __chillVibeLastFrameTimestamp?: number }).__chillVibeLastFrameTimestamp =
+        Math.round(timestamp)
     })
   }
   const heartbeatTimer = window.setInterval(sampleFrame, 1_000)

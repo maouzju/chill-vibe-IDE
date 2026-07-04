@@ -19,6 +19,7 @@ import {
   gitCommitDiffResponseSchema,
   gitCommitRequestSchema,
   gitCommitResponseSchema,
+  gitDiscardRequestSchema,
   gitLogRequestSchema,
   gitLogResponseSchema,
   gitOperationResponseSchema,
@@ -62,6 +63,7 @@ import {
   type GitCommitDiffResponse,
   type GitCommitRequest,
   type GitCommitResponse,
+  type GitDiscardRequest,
   type GitLogRequest,
   type GitLogResponse,
   type GitOperationResponse,
@@ -302,6 +304,13 @@ export const setGitStage = async (request: GitStageRequest): Promise<GitStatus> 
   const desktopSetGitStage = requireDesktopAction(getDesktopApi()?.setGitStage)
 
   return readDesktop(() => desktopSetGitStage(parsed), gitStatusSchema)
+}
+
+export const discardGitChanges = async (request: GitDiscardRequest): Promise<GitStatus> => {
+  const parsed = gitDiscardRequestSchema.parse(request)
+  const desktopDiscardGitChanges = requireDesktopAction(getDesktopApi()?.discardGitChanges)
+
+  return readDesktop(() => desktopDiscardGitChanges(parsed), gitStatusSchema)
 }
 
 export const initGitWorkspace = async (request: GitPullRequest): Promise<GitOperationResponse> => {

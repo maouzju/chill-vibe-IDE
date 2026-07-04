@@ -327,6 +327,59 @@ describe('git workspace helpers', () => {
     assert.equal(diff.files.length, 0)
   })
 
+  // Claude reports Edit/Write tool inputs as absolute OS paths while git status
+  // yields repo-relative posix paths. The fallback edits card silently matched
+  // nothing for months because of that mismatch (真实事故: 7 次 Edit 全部丢失后
+  // 兜底 diff 也返回空). These tests pin the cross-format matching.
+  it('matches absolute touched paths against repo-relative git changes', async () => {
+    const repoPath = await createTempRepo()
+
+    await mkdir(path.join(repoPath, 'src', 'renderer'), { recursive: true })
+    await writeFile(path.join(repoPath, 'src', 'renderer', 'app.js'), 'before\n')
+    await runGit(repoPath, ['add', '.'])
+    await runGit(repoPath, ['commit', '-m', 'add nested file'])
+
+    const snapshot = await captureWorkspaceSnapshot(repoPath)
+
+    await writeFile(path.join(repoPath, 'src', 'renderer', 'app.js'), 'before\nagent line\n')
+    await writeFile(path.join(repoPath, 'external-file.ts'), 'unrelated change\n')
+
+    const diff = await diffWorkspaceSnapshot(
+      snapshot,
+      repoPath,
+      new Set([path.join(repoPath, 'src', 'renderer', 'app.js')]),
+    )
+
+    assert.equal(diff.files.length, 1, 'absolute touched path should match the relative git change')
+    assert.equal(diff.files[0]?.path, 'src/renderer/app.js')
+    assert.match(diff.files[0]?.patch ?? '', /\+agent line/)
+  })
+
+  it('matches touched paths regardless of separator style', async () => {
+    const repoPath = await createTempRepo()
+
+    await mkdir(path.join(repoPath, 'src'), { recursive: true })
+    await writeFile(path.join(repoPath, 'src', 'index.ts'), 'export const a = 1\n')
+    await runGit(repoPath, ['add', '.'])
+    await runGit(repoPath, ['commit', '-m', 'add src file'])
+
+    const snapshot = await captureWorkspaceSnapshot(repoPath)
+
+    await writeFile(path.join(repoPath, 'src', 'index.ts'), 'export const a = 2\n')
+
+    // Backslash-joined absolute form, as a Windows CLI would report it. On
+    // posix this degenerates into the plain relative form exercised elsewhere,
+    // so keep the assertion on the windows-shaped input win32-only.
+    const touched =
+      process.platform === 'win32'
+        ? new Set([`${repoPath}\\src\\index.ts`.replaceAll('/', '\\')])
+        : new Set([`${repoPath}/src/index.ts`])
+    const diff = await diffWorkspaceSnapshot(snapshot, repoPath, touched)
+
+    assert.equal(diff.files.length, 1)
+    assert.equal(diff.files[0]?.path, 'src/index.ts')
+  })
+
   it('returns last commit timestamps accepted by the shared Git status schema', async () => {
     const repoPath = await createTempRepo()
 

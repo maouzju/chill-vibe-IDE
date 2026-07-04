@@ -383,6 +383,30 @@ test('writeUserMessage writes one JSON line to stdin for the pooled process', as
   pool.dispose()
 })
 
+// stdin.write returning false only signals backpressure — Node has already
+// queued the chunk. Treating it as failure used to kill the CLI mid-launch for
+// long prompts that overflow the pipe's high-water mark.
+test('writeUserMessage treats stdin backpressure as success', async () => {
+  const pool = createPool()
+  const child = createFakeChild()
+  child.stdin!.write = (chunk: string) => {
+    child.stdinChunks.push(chunk)
+    return false
+  }
+
+  await pool.acquireForTurn({
+    key: 'card-1',
+    signature: 'sig-a',
+    sessionId: undefined,
+    spawn: async () => child,
+  })
+
+  const written = pool.writeUserMessage('card-1', '{"type":"user","big":"prompt"}')
+  assert.equal(written, true, 'backpressure must not be reported as a failed write')
+  assert.deepEqual(child.stdinChunks, ['{"type":"user","big":"prompt"}\n'])
+  pool.dispose()
+})
+
 test('an idle process is recycled after the idle timeout but stdout resets the timer', async () => {
   const pool = createPool({ idleTimeoutMs: 60 })
   const child = createFakeChild()

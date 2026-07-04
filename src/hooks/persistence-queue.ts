@@ -121,6 +121,35 @@ const trimQueuedPersistenceText = (value: string) =>
         value.slice(-queuedPersistenceStructuredDataBudgetChars / 2),
       ].join('\n')
 
+// Payloads without a top-level output/content string (edits files[].patch,
+// tool summaries, …) must never fall back to trimming the raw JSON string —
+// that produces invalid JSON and the card renders degraded after a restart.
+// Trim oversized string leaves in place instead so the payload stays parseable.
+const trimQueuedPersistenceJsonStrings = (value: unknown, depth = 0): unknown => {
+  if (typeof value === 'string') {
+    return trimQueuedPersistenceText(value)
+  }
+
+  if (depth >= 6) {
+    return value
+  }
+
+  if (Array.isArray(value)) {
+    return value.map((entry) => trimQueuedPersistenceJsonStrings(entry, depth + 1))
+  }
+
+  if (value && typeof value === 'object') {
+    return Object.fromEntries(
+      Object.entries(value as Record<string, unknown>).map(([key, entry]) => [
+        key,
+        trimQueuedPersistenceJsonStrings(entry, depth + 1),
+      ]),
+    )
+  }
+
+  return value
+}
+
 const trimQueuedPersistenceStructuredData = (structuredData: string) => {
   if (structuredData.length <= queuedPersistenceStructuredDataBudgetChars) {
     return structuredData
@@ -130,7 +159,7 @@ const trimQueuedPersistenceStructuredData = (structuredData: string) => {
     const payload = JSON.parse(structuredData) as Record<string, unknown>
 
     if (typeof payload.output !== 'string' && typeof payload.content !== 'string') {
-      return trimQueuedPersistenceText(structuredData)
+      return JSON.stringify(trimQueuedPersistenceJsonStrings(payload))
     }
 
     return JSON.stringify({

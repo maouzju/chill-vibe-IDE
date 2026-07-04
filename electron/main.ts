@@ -465,6 +465,9 @@ function registerDesktopHandlers() {
     desktopBackend.fetchSlashCommands(request),
   )
   ipcMain.handle('desktop:request-chat', (_event, request) => desktopBackend.requestChat(request))
+  ipcMain.handle('desktop:fork-provider-session', (_event, request) =>
+    desktopBackend.forkProviderSession(request),
+  )
   ipcMain.handle('desktop:upload-image-attachment', (_event, request) =>
     desktopBackend.uploadImageAttachment(request),
   )

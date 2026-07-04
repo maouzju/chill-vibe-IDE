@@ -12,6 +12,8 @@ import {
   internalSessionHistoryLoadRequestSchema,
   internalSessionHistoryLoadResponseSchema,
   chatStartResponseSchema,
+  forkSessionRequestSchema,
+  forkSessionResponseSchema,
   gitCommitAllRequestSchema,
   gitCommitDiffRequestSchema,
   gitCommitDiffResponseSchema,
@@ -48,6 +50,7 @@ import {
   type CcSwitchImportResponse,
   type ChatRequest,
   type ChatStartResponse,
+  type ForkSessionRequest,
   type ExternalHistoryListRequest,
   type ExternalHistoryListResponse,
   type ExternalSessionLoadRequest,
@@ -394,6 +397,16 @@ export const requestChat = async (request: ChatRequest): Promise<ChatStartRespon
   const desktopRequestChat = requireDesktopAction(getDesktopApi()?.requestChat)
 
   return readDesktop(() => desktopRequestChat(request), chatStartResponseSchema)
+}
+
+// Lossless fork: ask the backend to copy the provider's native session file
+// truncated before the fork point. Returns the new session id, or null when no
+// native fork was possible (caller falls back to the seeded replay path).
+export const forkProviderSession = async (request: ForkSessionRequest): Promise<string | null> => {
+  const parsed = forkSessionRequestSchema.parse(request)
+  const fn = requireDesktopAction(getDesktopApi()?.forkProviderSession)
+  const response = await readDesktop(() => fn(parsed), forkSessionResponseSchema)
+  return response.sessionId
 }
 
 export type UnsolicitedStreamNotification = {

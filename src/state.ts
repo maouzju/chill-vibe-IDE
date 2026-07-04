@@ -271,7 +271,15 @@ export type IdeAction =
   | { type: 'appendMessages'; columnId: string; cardId: string; messages: ChatMessage[] }
   | { type: 'upsertMessages'; columnId: string; cardId: string; messages: ChatMessage[] }
   | { type: 'resetCardConversation'; columnId: string; cardId: string; title?: string }
-  | { type: 'forkConversation'; columnId: string; cardId: string; messageId: string }
+  | {
+      type: 'forkConversation'
+      columnId: string
+      cardId: string
+      messageId: string
+      // Native provider session copied for this fork (lossless path); absent
+      // when the fork falls back to the seeded-transcript replay.
+      forkedSessionId?: string
+    }
   | {
       type: 'selectCardModel'
       columnId: string
@@ -1308,6 +1316,29 @@ const reorderColumn = (
   }
 }
 
+// Shared by the fork reducer and the App fork handler: forking from an
+// assistant message falls back to the preceding user prompt, and the fork
+// context is everything strictly before that user message.
+export const resolveForkPointMessage = (
+  messages: ChatMessage[],
+  messageId: string,
+): { messageIndex: number; message: ChatMessage } | null => {
+  const selectedMessageIndex = messages.findIndex((message) => message.id === messageId)
+  if (selectedMessageIndex < 0) return null
+
+  const messageIndex =
+    messages[selectedMessageIndex]?.role === 'user'
+      ? selectedMessageIndex
+      : messages
+          .slice(0, selectedMessageIndex)
+          .map((message, index) => ({ message, index }))
+          .reverse()
+          .find(({ message }) => message.role === 'user')?.index ?? -1
+  if (messageIndex < 0) return null
+
+  return { messageIndex, message: messages[messageIndex]! }
+}
+
 export const ideReducer = (state: AppState, action: IdeAction): AppState => {
   switch (action.type) {
     case 'replace':
@@ -2128,31 +2159,24 @@ export const ideReducer = (state: AppState, action: IdeAction): AppState => {
       const sourceCard = column.cards[action.cardId]
       if (!sourceCard) return state
 
-      const selectedMessageIndex = sourceCard.messages.findIndex((message) => message.id === action.messageId)
-      if (selectedMessageIndex < 0) return state
+      const forkPoint = resolveForkPointMessage(sourceCard.messages, action.messageId)
+      if (!forkPoint) return state
 
-      const messageIndex =
-        sourceCard.messages[selectedMessageIndex]?.role === 'user'
-          ? selectedMessageIndex
-          : sourceCard.messages
-              .slice(0, selectedMessageIndex)
-              .map((message, index) => ({ message, index }))
-              .reverse()
-              .find(({ message }) => message.role === 'user')?.index ?? -1
-      if (messageIndex < 0) return state
-
-      const forkPointMessage = sourceCard.messages[messageIndex]!
+      const { messageIndex, message: forkPointMessage } = forkPoint
       // Messages BEFORE the fork point —the selected user prompt is restored into the composer instead.
       const forkedMessages = sourceCard.messages.slice(0, messageIndex)
       const forkedDraft = forkPointMessage.content
       const forkedDraftAttachments = getChatMessageAttachments(forkPointMessage)
       const language = state.settings.language
 
+      const forkedSessionId = action.forkedSessionId?.trim() || undefined
       const forkedCard: ChatCard = {
         id: createId(),
         title: getForkConversationTitle(language, sourceCard.title),
-        sessionId: undefined,
-        sessionModel: undefined,
+        sessionId: forkedSessionId,
+        // A natively forked session carries the source model's context, so the
+        // resume guard (pitfall 47) must keep the same session model tag.
+        sessionModel: forkedSessionId ? sourceCard.sessionModel : undefined,
         providerSessions: {},
         streamId: undefined,
         status: 'idle',

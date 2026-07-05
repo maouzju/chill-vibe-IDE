@@ -370,13 +370,75 @@ export const defaultAutoUrgeMessage =
   '你必须百分百验证通过你要解决的问题，才能结束回答，如果确定解决了，回复YES，否则不准停下来'
 export const defaultAutoUrgeSuccessKeyword = 'YES'
 
+export const autoUrgeJudgeModes = ['keyword', 'local-model'] as const
+export const autoUrgeJudgeModeSchema = z.enum(autoUrgeJudgeModes)
+export type AutoUrgeJudgeMode = z.infer<typeof autoUrgeJudgeModeSchema>
+
 export const autoUrgeProfileSchema = z.object({
   id: z.string().default(defaultAutoUrgeProfileId),
   name: z.string().default(defaultAutoUrgeProfileName),
   message: z.string().default(defaultAutoUrgeMessage),
   successKeyword: z.string().default(defaultAutoUrgeSuccessKeyword),
+  judgeMode: autoUrgeJudgeModeSchema.default('keyword'),
+  judgeModel: z.string().default(''),
 })
 export type AutoUrgeProfile = z.infer<typeof autoUrgeProfileSchema>
+
+// ── Local Ollama integration ─────────────────────────────────────────────────
+
+export const ollamaTaskSchema = z.object({
+  state: z.enum(['idle', 'running', 'success', 'error']),
+  kind: z.enum(['install-ollama', 'start-service', 'pull-model']).optional(),
+  model: z.string().optional(),
+  logs: z
+    .array(
+      z.object({
+        createdAt: z.string(),
+        level: z.enum(['info', 'error']),
+        message: z.string(),
+      }),
+    )
+    .default([]),
+})
+export type OllamaTask = z.infer<typeof ollamaTaskSchema>
+
+export const ollamaStatusSchema = z.object({
+  installed: z.boolean(),
+  running: z.boolean(),
+  version: z.string().default(''),
+  models: z
+    .array(
+      z.object({
+        name: z.string(),
+        sizeBytes: z.number().optional(),
+      }),
+    )
+    .default([]),
+  recommendedModel: z.object({
+    name: z.string(),
+    totalMemoryGb: z.number(),
+  }),
+  task: ollamaTaskSchema,
+})
+export type OllamaStatus = z.infer<typeof ollamaStatusSchema>
+
+export const ollamaPullRequestSchema = z.object({
+  model: z.string().trim().min(1),
+})
+export type OllamaPullRequest = z.infer<typeof ollamaPullRequestSchema>
+
+export const ollamaJudgeRequestSchema = z.object({
+  model: z.string().trim().min(1),
+  text: z.string(),
+})
+export type OllamaJudgeRequest = z.infer<typeof ollamaJudgeRequestSchema>
+
+export const ollamaJudgeResponseSchema = z.object({
+  ok: z.boolean(),
+  shouldContinue: z.boolean().optional(),
+  error: z.string().optional(),
+})
+export type OllamaJudgeResponse = z.infer<typeof ollamaJudgeResponseSchema>
 
 export const editorSettingsSchema = z.object({
   fontSize: z.number().finite().min(10).max(24).default(13),
@@ -419,6 +481,8 @@ export const appSettingsSchema = z.object({
       name: defaultAutoUrgeProfileName,
       message: defaultAutoUrgeMessage,
       successKeyword: defaultAutoUrgeSuccessKeyword,
+      judgeMode: 'keyword' as const,
+      judgeModel: '',
     },
   ]),
   autoUrgeActiveProfileId: z.string().default(defaultAutoUrgeProfileId),
@@ -492,6 +556,8 @@ export const appStateSchema = z.object({
         name: defaultAutoUrgeProfileName,
         message: defaultAutoUrgeMessage,
         successKeyword: defaultAutoUrgeSuccessKeyword,
+        judgeMode: 'keyword' as const,
+        judgeModel: '',
       },
     ],
     autoUrgeActiveProfileId: defaultAutoUrgeProfileId,

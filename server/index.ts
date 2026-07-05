@@ -26,6 +26,8 @@ import {
   fileWriteRequestSchema,
   gitFilePathRequestSchema,
   setupRunRequestSchema,
+  ollamaJudgeRequestSchema,
+  ollamaPullRequestSchema,
   slashCommandRequestSchema,
   workspaceValidationRequestSchema,
 } from '../shared/schema.js'
@@ -61,6 +63,7 @@ import { inspectOnboardingStatus } from './onboarding-status.js'
 import { getProviderSlashCommands, getProviderStatuses, validateWorkspacePath } from './providers.js'
 import { resilientProxyPool } from './resilient-proxy.js'
 import { SetupManager } from './setup-manager.js'
+import { OllamaManager } from './ollama-manager.js'
 import { loadSessionHistoryEntry, loadState, loadStateForRenderer, queueSaveState, resetState, saveState } from './state-store.js'
 import { readNearestTsconfig } from './tsconfig-discovery.js'
 import { initServerCrashLogger, writeServerLog } from './crash-logger.js'
@@ -81,6 +84,7 @@ const formatHttpUrl = (listenHost: string, listenPort: number) =>
 const app = express()
 const chatManager = new ChatManager()
 const setupManager = new SetupManager()
+const ollamaManager = new OllamaManager()
 
 app.disable('x-powered-by')
 app.use((request, response, next) => {
@@ -166,6 +170,36 @@ app.post('/api/setup/run', (request, response) => {
   }
 
   response.status(202).json(setupManager.start(parsed.data))
+})
+
+app.get('/api/ollama/status', async (_request, response) => {
+  response.json(await ollamaManager.getStatus())
+})
+
+app.post('/api/ollama/install', (_request, response) => {
+  response.status(202).json(ollamaManager.startInstall())
+})
+
+app.post('/api/ollama/pull', (request, response) => {
+  const parsed = ollamaPullRequestSchema.safeParse(request.body ?? {})
+
+  if (!parsed.success) {
+    response.status(400).json({ message: 'Invalid Ollama pull request.' })
+    return
+  }
+
+  response.status(202).json(ollamaManager.startPull(parsed.data.model))
+})
+
+app.post('/api/ollama/judge', async (request, response) => {
+  const parsed = ollamaJudgeRequestSchema.safeParse(request.body ?? {})
+
+  if (!parsed.success) {
+    response.status(400).json({ message: 'Invalid Ollama judge request.' })
+    return
+  }
+
+  response.json(await ollamaManager.judge(parsed.data))
 })
 
 app.post('/api/slash-commands', async (request, response) => {

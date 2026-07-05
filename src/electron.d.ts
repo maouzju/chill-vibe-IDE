@@ -48,6 +48,11 @@ import type {
   RendererCrashCaptureRequest,
   SetupRunRequestInput,
   SetupStatus,
+  OllamaJudgeRequest,
+  OllamaJudgeResponse,
+  OllamaPullRequest,
+  OllamaStatus,
+  OllamaTask,
   SlashCommand,
   SlashCommandRequest,
   StateRecoverySelection,
@@ -86,6 +91,10 @@ declare global {
       importCcSwitchRouting?: (request: CcSwitchImportRequest) => Promise<CcSwitchImportResponse>
       fetchSetupStatus?: () => Promise<SetupStatus>
       runEnvironmentSetup?: (request?: SetupRunRequestInput) => Promise<SetupStatus>
+      fetchOllamaStatus?: () => Promise<OllamaStatus>
+      runOllamaInstall?: () => Promise<OllamaTask>
+      runOllamaPull?: (request: OllamaPullRequest) => Promise<OllamaTask>
+      judgeUrgeWithOllama?: (request: OllamaJudgeRequest) => Promise<OllamaJudgeResponse>
       fetchOnboardingStatus?: () => Promise<OnboardingStatus>
       fetchGitStatus?: (workspacePath: string) => Promise<GitStatus>
       fetchGitStatusPreview?: (workspacePath: string) => Promise<GitStatus>

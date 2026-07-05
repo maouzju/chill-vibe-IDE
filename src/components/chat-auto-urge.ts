@@ -1,9 +1,10 @@
-import type { CardStatus, ChatMessage } from '../../shared/schema'
+import type { AutoUrgeJudgeMode, CardStatus, ChatMessage } from '../../shared/schema'
 
 export type AutoUrgeEvaluation =
   | { kind: 'skip' }
   | { kind: 'disable' }
   | { kind: 'send'; message: string }
+  | { kind: 'judge'; message: string }
 
 type AutoUrgeState = {
   active: boolean
@@ -12,6 +13,7 @@ type AutoUrgeState = {
   successKeyword: string
   messages: ChatMessage[]
   canSendEmptyContinuation?: boolean
+  judgeMode?: AutoUrgeJudgeMode
 }
 
 type StreamFinishedTrigger = {
@@ -64,6 +66,36 @@ const latestAssistantTurnContainsSuccessKeyword = (
         typeof entry.content === 'string' &&
         entry.content.includes(successKeyword),
     )
+}
+
+export const latestTurnHasPendingAskUser = (messages: ChatMessage[]) => {
+  const latestUserMessageIndex = findLastUserMessageIndex(messages)
+
+  return messages
+    .slice(latestUserMessageIndex + 1)
+    .some((entry) => entry.meta?.kind === 'ask-user')
+}
+
+const judgeTextTailLimit = 4000
+
+export const getLatestAssistantTurnText = (messages: ChatMessage[]) => {
+  const latestUserMessageIndex = findLastUserMessageIndex(messages)
+  const turnMessages = messages.slice(latestUserMessageIndex + 1)
+
+  for (let index = turnMessages.length - 1; index >= 0; index -= 1) {
+    const entry = turnMessages[index]
+    if (
+      entry?.role === 'assistant' &&
+      entry.meta?.kind !== 'ask-user' &&
+      typeof entry.content === 'string' &&
+      entry.content.trim()
+    ) {
+      const content = entry.content.trim()
+      return content.length > judgeTextTailLimit ? content.slice(-judgeTextTailLimit) : content
+    }
+  }
+
+  return ''
 }
 
 export type EffectiveAutoUrgeSource = 'card' | 'global' | 'none'
@@ -131,6 +163,12 @@ export const evaluateAutoUrge = (
     return { kind: 'skip' }
   }
 
+  // A pending question to the user always wins: never urge over an
+  // unanswered ask-user, regardless of trigger or judge mode.
+  if (latestTurnHasPendingAskUser(state.messages)) {
+    return { kind: 'skip' }
+  }
+
   const trimmedMessage = state.message.trim()
   const canSendBlankContinuation =
     state.canSendEmptyContinuation ??
@@ -140,6 +178,10 @@ export const evaluateAutoUrge = (
   }
 
   if (trigger.type === 'stream-finished') {
+    if (state.judgeMode === 'local-model') {
+      return { kind: 'judge', message: trimmedMessage }
+    }
+
     const trimmedSuccessKeyword = state.successKeyword.trim()
     const successFound =
       trimmedSuccessKeyword.length > 0 &&

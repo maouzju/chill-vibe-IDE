@@ -440,6 +440,14 @@ function registerDesktopHandlers() {
   ipcMain.handle('desktop:run-environment-setup', (_event, request: unknown) =>
     desktopBackend.runEnvironmentSetup(request),
   )
+  ipcMain.handle('desktop:fetch-ollama-status', () => desktopBackend.fetchOllamaStatus())
+  ipcMain.handle('desktop:run-ollama-install', () => desktopBackend.runOllamaInstall())
+  ipcMain.handle('desktop:run-ollama-pull', (_event, request: unknown) =>
+    desktopBackend.runOllamaPull(request),
+  )
+  ipcMain.handle('desktop:judge-urge-with-ollama', (_event, request: unknown) =>
+    desktopBackend.judgeUrgeWithOllama(request),
+  )
   ipcMain.handle('desktop:fetch-onboarding-status', () => desktopBackend.fetchOnboardingStatus())
   ipcMain.handle('desktop:fetch-git-status', (_event, workspacePath) =>
     desktopBackend.fetchGitStatus(workspacePath),

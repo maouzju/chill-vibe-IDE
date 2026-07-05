@@ -52,6 +52,25 @@ type LocaleText = {
   autoUrgeGlobalControlHint: string
   autoUrgeGlobalToggleLabel: string
   autoUrgeGlobalTypeAriaLabel: string
+  autoUrgeJudgeModeLabel: string
+  autoUrgeJudgeModeKeyword: string
+  autoUrgeJudgeModeLocalModel: string
+  autoUrgeJudgeModelLabel: string
+  autoUrgeJudgeModelEmpty: string
+  ollamaSectionTitle: string
+  ollamaSectionHint: string
+  ollamaStatusNotInstalled: string
+  ollamaStatusNotRunning: string
+  ollamaStatusRunning: string
+  ollamaModelsLabel: string
+  ollamaInstallButton: string
+  ollamaStartButton: string
+  ollamaPullRecommendedButton: string
+  ollamaRecommendHint: string
+  ollamaRefreshButton: string
+  ollamaTaskRunningLabel: string
+  ollamaTaskErrorLabel: string
+  ollamaTaskSuccessLabel: string
   weatherCityLabel: string
   weatherCityPlaceholder: string
   language: string
@@ -306,6 +325,25 @@ const localeTextByLanguage: Record<AppLanguage, LocaleText> = {
     autoUrgeGlobalControlHint: '勾选后，顶部栏右侧会出现全员鞭策开关和鞭策类型选择，作用于所有没有单独开启鞭策的 agent 窗口。',
     autoUrgeGlobalToggleLabel: '全员鞭策',
     autoUrgeGlobalTypeAriaLabel: '全员鞭策类型',
+    autoUrgeJudgeModeLabel: '判定方式',
+    autoUrgeJudgeModeKeyword: '关键词匹配',
+    autoUrgeJudgeModeLocalModel: '由本地大模型判断',
+    autoUrgeJudgeModelLabel: '判定模型',
+    autoUrgeJudgeModelEmpty: '暂无可用本地模型，请先在下方"本地大模型"区安装',
+    ollamaSectionTitle: '本地大模型（Ollama）',
+    ollamaSectionHint: '用于鞭策判定等本地 AI 能力。安装与模型都在本机运行，不产生 API 费用。',
+    ollamaStatusNotInstalled: '未安装',
+    ollamaStatusNotRunning: '已安装，服务未运行',
+    ollamaStatusRunning: '运行中',
+    ollamaModelsLabel: '已安装模型',
+    ollamaInstallButton: '一键安装 Ollama',
+    ollamaStartButton: '启动服务',
+    ollamaPullRecommendedButton: '安装推荐模型',
+    ollamaRecommendHint: '按本机内存推荐',
+    ollamaRefreshButton: '刷新',
+    ollamaTaskRunningLabel: '任务进行中…',
+    ollamaTaskErrorLabel: '任务失败',
+    ollamaTaskSuccessLabel: '任务完成',
     weatherCityLabel: '天气城市',
     weatherCityPlaceholder: '留空自动定位，如：上海、Tokyo',
     language: '语言',
@@ -581,6 +619,26 @@ const localeTextByLanguage: Record<AppLanguage, LocaleText> = {
       'When checked, a global urge toggle and urge type picker appear on the right side of the top bar, applying the urge to every agent window without its own urge setting.',
     autoUrgeGlobalToggleLabel: 'Urge All',
     autoUrgeGlobalTypeAriaLabel: 'Global urge type',
+    autoUrgeJudgeModeLabel: 'Judge mode',
+    autoUrgeJudgeModeKeyword: 'Keyword match',
+    autoUrgeJudgeModeLocalModel: 'Judged by local LLM',
+    autoUrgeJudgeModelLabel: 'Judge model',
+    autoUrgeJudgeModelEmpty: 'No local models yet — install one in the Local LLM section below.',
+    ollamaSectionTitle: 'Local LLM (Ollama)',
+    ollamaSectionHint:
+      'Powers local AI features such as urge verdicts. Everything runs on this machine with no API cost.',
+    ollamaStatusNotInstalled: 'Not installed',
+    ollamaStatusNotRunning: 'Installed, service not running',
+    ollamaStatusRunning: 'Running',
+    ollamaModelsLabel: 'Installed models',
+    ollamaInstallButton: 'Install Ollama',
+    ollamaStartButton: 'Start service',
+    ollamaPullRecommendedButton: 'Install recommended model',
+    ollamaRecommendHint: 'recommended for this machine’s memory',
+    ollamaRefreshButton: 'Refresh',
+    ollamaTaskRunningLabel: 'Task running…',
+    ollamaTaskErrorLabel: 'Task failed',
+    ollamaTaskSuccessLabel: 'Task done',
     weatherCityLabel: 'Weather city',
     weatherCityPlaceholder: 'Auto-detect if empty, e.g. Shanghai, Tokyo',
     language: 'Language',

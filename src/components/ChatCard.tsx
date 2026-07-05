@@ -1694,6 +1694,7 @@ const ChatCardView = ({
         | {
             type: 'manual-activation'
             status: ChatCardModel['status']
+            source?: 'card' | 'global'
           },
     ) => {
       const result = evaluateAutoUrge(trigger, autoUrgeStateRef.current)
@@ -3500,6 +3501,7 @@ const ChatCardView = ({
     runAutoUrge({
       type: 'manual-activation',
       status: card.status,
+      source: 'card',
     })
   }, [autoUrgeActive, card.status, card.id, runAutoUrge])
 
@@ -3516,6 +3518,7 @@ const ChatCardView = ({
     runAutoUrge({
       type: 'manual-activation',
       status: card.status,
+      source: 'global',
     })
   }, [effectiveUrge.source, card.status, runAutoUrge])
 

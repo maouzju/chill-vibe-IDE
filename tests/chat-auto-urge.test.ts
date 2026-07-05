@@ -405,6 +405,153 @@ test('local-model judge mode is still blocked by an unanswered ask-user question
   assert.deepEqual(result, { kind: 'skip' })
 })
 
+const createRunStoppedMessage = (stopReason: 'manual' | 'user-interrupt'): ChatMessage => ({
+  ...createChatMessage('system', stopReason === 'user-interrupt' ? '已打断本次回答' : '已停止本次运行'),
+  meta: {
+    kind: 'run-stopped',
+    stopReason,
+  },
+})
+
+test('stream-finished never urges a turn the user stopped manually', () => {
+  const result = evaluateAutoUrge(
+    {
+      type: 'stream-finished',
+      previousStatus: 'streaming',
+      status: 'idle',
+    },
+    {
+      active: true,
+      enabled: true,
+      message: 'Keep going.',
+      successKeyword: 'YES',
+      messages: [
+        createUserMessage('做完这个任务'),
+        createAssistantMessage('做到一半。'),
+        createRunStoppedMessage('manual'),
+      ],
+    },
+  )
+
+  assert.deepEqual(result, { kind: 'skip' })
+})
+
+test('stream-finished never urges a turn the user interrupted with a new send', () => {
+  const result = evaluateAutoUrge(
+    {
+      type: 'stream-finished',
+      previousStatus: 'streaming',
+      status: 'idle',
+    },
+    {
+      active: true,
+      enabled: true,
+      message: 'Keep going.',
+      successKeyword: 'YES',
+      messages: [
+        createUserMessage('做完这个任务'),
+        createRunStoppedMessage('user-interrupt'),
+      ],
+    },
+  )
+
+  assert.deepEqual(result, { kind: 'skip' })
+})
+
+test('local-model judge mode also skips a manually stopped turn without judging', () => {
+  const result = evaluateAutoUrge(
+    {
+      type: 'stream-finished',
+      previousStatus: 'streaming',
+      status: 'idle',
+    },
+    {
+      active: true,
+      enabled: true,
+      message: 'Keep going.',
+      successKeyword: '',
+      judgeMode: 'local-model',
+      messages: [
+        createUserMessage('任务'),
+        createAssistantMessage('停在半路。'),
+        createRunStoppedMessage('manual'),
+      ],
+    },
+  )
+
+  assert.deepEqual(result, { kind: 'skip' })
+})
+
+test('global urge activation does not urge a card whose latest turn was stopped manually', () => {
+  const result = evaluateAutoUrge(
+    {
+      type: 'manual-activation',
+      status: 'idle',
+      source: 'global',
+    },
+    {
+      active: true,
+      enabled: true,
+      message: 'Keep going.',
+      successKeyword: 'YES',
+      messages: [
+        createUserMessage('任务'),
+        createAssistantMessage('停在半路。'),
+        createRunStoppedMessage('manual'),
+      ],
+    },
+  )
+
+  assert.deepEqual(result, { kind: 'skip' })
+})
+
+test('card-level manual activation still urges after a manual stop because the user explicitly asked', () => {
+  const result = evaluateAutoUrge(
+    {
+      type: 'manual-activation',
+      status: 'idle',
+      source: 'card',
+    },
+    {
+      active: true,
+      enabled: true,
+      message: 'Keep going.',
+      successKeyword: 'YES',
+      messages: [
+        createUserMessage('任务'),
+        createAssistantMessage('停在半路。'),
+        createRunStoppedMessage('manual'),
+      ],
+    },
+  )
+
+  assert.deepEqual(result, { kind: 'send', message: 'Keep going.' })
+})
+
+test('a manual stop in an older turn does not block urging the latest turn', () => {
+  const result = evaluateAutoUrge(
+    {
+      type: 'stream-finished',
+      previousStatus: 'streaming',
+      status: 'idle',
+    },
+    {
+      active: true,
+      enabled: true,
+      message: 'Keep going.',
+      successKeyword: 'YES',
+      messages: [
+        createUserMessage('第一个任务'),
+        createRunStoppedMessage('manual'),
+        createUserMessage('继续做第二个任务'),
+        createAssistantMessage('还没做完。'),
+      ],
+    },
+  )
+
+  assert.deepEqual(result, { kind: 'send', message: 'Keep going.' })
+})
+
 test('getLatestAssistantTurnText returns the last assistant prose of the latest turn', () => {
   const text = getLatestAssistantTurnText([
     createUserMessage('旧任务'),

@@ -48,6 +48,10 @@ type LocaleText = {
   autoUrgeSuccessKeywordPlaceholder: string
   autoUrgeReenableHint: string
   autoUrgeToggleTooltip: string
+  autoUrgeGlobalControlLabel: string
+  autoUrgeGlobalControlHint: string
+  autoUrgeGlobalToggleLabel: string
+  autoUrgeGlobalTypeAriaLabel: string
   weatherCityLabel: string
   weatherCityPlaceholder: string
   language: string
@@ -298,6 +302,10 @@ const localeTextByLanguage: Record<AppLanguage, LocaleText> = {
     autoUrgeSuccessKeywordPlaceholder: 'Agent 回复包含此词时停止鞭策',
     autoUrgeReenableHint: '当前已全局关闭；在这里勾选会重新打开，并只为当前会话启用。',
     autoUrgeToggleTooltip: '自动鞭策',
+    autoUrgeGlobalControlLabel: '全员鞭策按钮',
+    autoUrgeGlobalControlHint: '勾选后，顶部栏右侧会出现全员鞭策开关和鞭策类型选择，作用于所有没有单独开启鞭策的 agent 窗口。',
+    autoUrgeGlobalToggleLabel: '全员鞭策',
+    autoUrgeGlobalTypeAriaLabel: '全员鞭策类型',
     weatherCityLabel: '天气城市',
     weatherCityPlaceholder: '留空自动定位，如：上海、Tokyo',
     language: '语言',
@@ -568,6 +576,11 @@ const localeTextByLanguage: Record<AppLanguage, LocaleText> = {
     autoUrgeReenableHint:
       'Auto Urge is currently off globally. Checking it here turns it back on for this chat.',
     autoUrgeToggleTooltip: 'Auto Urge',
+    autoUrgeGlobalControlLabel: 'Global Urge Button',
+    autoUrgeGlobalControlHint:
+      'When checked, a global urge toggle and urge type picker appear on the right side of the top bar, applying the urge to every agent window without its own urge setting.',
+    autoUrgeGlobalToggleLabel: 'Urge All',
+    autoUrgeGlobalTypeAriaLabel: 'Global urge type',
     weatherCityLabel: 'Weather city',
     weatherCityPlaceholder: 'Auto-detect if empty, e.g. Shanghai, Tokyo',
     language: 'Language',

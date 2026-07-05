@@ -107,6 +107,7 @@ declare global {
       subscribeChatStream?: (streamId: string, subscriptionId: string) => Promise<void>
       unsubscribeChatStream?: (subscriptionId: string) => Promise<void>
       getAttachmentUrl?: (attachmentId: string) => string
+      getPathForFile?: (file: File) => string
 
       // Music
       fetchMusicLoginStatus?: () => Promise<unknown>

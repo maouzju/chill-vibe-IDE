@@ -81,6 +81,11 @@ import {
 } from './chat-scroll'
 import { syncComposerTextareaHeight } from './chat-composer-textarea'
 import {
+  collectPastedFilePaths,
+  formatPastedFilePathInsertion,
+  insertTextAtSelection,
+} from './composer-paste'
+import {
   composerBlurOutsidePressWindowMs,
   decideHitTestRepairScope,
   hitTestRepairEscalationWindowMs,
@@ -2875,26 +2880,53 @@ const ChatCardView = ({
   }, [handleMessageListCopy])
 
   const handlePaste = (event: ClipboardEvent<HTMLTextAreaElement>) => {
-    const imageFiles = Array.from(event.clipboardData.items)
-      .filter((item) => item.kind === 'file' && supportedImageMimeTypes.has(item.type))
+    const fileItems = Array.from(event.clipboardData.items).filter((item) => item.kind === 'file')
+    const imageFiles = fileItems
+      .filter((item) => supportedImageMimeTypes.has(item.type))
       .map((item) => item.getAsFile())
       .filter((file): file is File => file !== null)
+    const pathCandidateFiles = fileItems
+      .filter((item) => !supportedImageMimeTypes.has(item.type))
+      .map((item) => item.getAsFile())
+      .filter((file): file is File => file !== null)
+    const getPathForFile = window.electronAPI?.getPathForFile
+    const pastedFilePaths = getPathForFile
+      ? collectPastedFilePaths(pathCandidateFiles, getPathForFile)
+      : []
 
-    if (imageFiles.length === 0) {
+    if (imageFiles.length === 0 && pastedFilePaths.length === 0) {
       return
     }
 
     event.preventDefault()
     setComposerError(null)
-    setPendingAttachments((current) => [
-      ...current,
-      ...imageFiles.map<PendingAttachment>((file) => ({
-        kind: 'local',
-        id: crypto.randomUUID(),
-        file,
-        previewUrl: URL.createObjectURL(file),
-      })),
-    ])
+    if (imageFiles.length > 0) {
+      setPendingAttachments((current) => [
+        ...current,
+        ...imageFiles.map<PendingAttachment>((file) => ({
+          kind: 'local',
+          id: crypto.randomUUID(),
+          file,
+          previewUrl: URL.createObjectURL(file),
+        })),
+      ])
+    }
+
+    if (pastedFilePaths.length > 0) {
+      const textarea = textareaRef.current
+      const currentValue = textarea?.value ?? draftValueRef.current
+      const { value, caret } = insertTextAtSelection(
+        currentValue,
+        textarea?.selectionStart ?? currentValue.length,
+        textarea?.selectionEnd ?? currentValue.length,
+        formatPastedFilePathInsertion(pastedFilePaths),
+      )
+      if (textarea) {
+        textarea.value = value
+        textarea.setSelectionRange(caret, caret)
+      }
+      syncLocalDraft(value)
+    }
   }
 
   const handleSubmit = async (options?: SendMessageOptions) => {

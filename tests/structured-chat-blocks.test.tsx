@@ -303,6 +303,8 @@ const renderCard = (
       brainstormRequestModel="gpt-5.5"
       availableQuickToolModels={[]}
       autoUrgeEnabled={false}
+      globalUrgeActive={false}
+      globalUrgeProfileId="auto-urge-default"
       autoUrgeMessage=""
       autoUrgeSuccessKeyword=""
       onSetAutoUrgeEnabled={() => undefined}

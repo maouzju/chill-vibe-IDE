@@ -30,6 +30,8 @@ type LayoutRendererProps = {
   autoUrgeProfiles?: AutoUrgeProfile[]
   autoUrgeMessage: string
   autoUrgeSuccessKeyword: string
+  globalUrgeActive: boolean
+  globalUrgeProfileId: string
   onSetAutoUrgeEnabled: (enabled: boolean) => void
   onAddTab: (paneId: string) => void
   onSplitPane: (

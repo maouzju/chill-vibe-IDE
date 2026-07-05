@@ -66,6 +66,38 @@ const latestAssistantTurnContainsSuccessKeyword = (
     )
 }
 
+export type EffectiveAutoUrgeSource = 'card' | 'global' | 'none'
+
+export type EffectiveAutoUrge = {
+  active: boolean
+  profileId: string
+  source: EffectiveAutoUrgeSource
+}
+
+export const resolveEffectiveAutoUrge = ({
+  cardAutoUrgeActive,
+  cardAutoUrgeProfileId,
+  globalUrgeActive,
+  globalUrgeProfileId,
+  isToolCard,
+}: {
+  cardAutoUrgeActive: boolean
+  cardAutoUrgeProfileId: string
+  globalUrgeActive: boolean
+  globalUrgeProfileId: string
+  isToolCard: boolean
+}): EffectiveAutoUrge => {
+  if (cardAutoUrgeActive) {
+    return { active: true, profileId: cardAutoUrgeProfileId, source: 'card' }
+  }
+
+  if (globalUrgeActive && !isToolCard) {
+    return { active: true, profileId: globalUrgeProfileId, source: 'global' }
+  }
+
+  return { active: false, profileId: cardAutoUrgeProfileId, source: 'none' }
+}
+
 export const getNextAutoUrgeToggleState = ({
   featureEnabled,
   chatActive,

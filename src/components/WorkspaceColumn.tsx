@@ -144,6 +144,8 @@ type WorkspaceColumnProps = {
   autoUrgeProfiles?: AutoUrgeProfile[]
   autoUrgeMessage: string
   autoUrgeSuccessKeyword: string
+  globalUrgeActive: boolean
+  globalUrgeProfileId: string
   onSetAutoUrgeEnabled: (enabled: boolean) => void
   onChangeColumn: (
     patch: Partial<Pick<BoardColumn, 'title' | 'provider' | 'workspacePath' | 'model'>>,
@@ -245,6 +247,8 @@ const WorkspaceColumnView = ({
   autoUrgeProfiles = [],
   autoUrgeMessage,
   autoUrgeSuccessKeyword,
+  globalUrgeActive,
+  globalUrgeProfileId,
   onSetAutoUrgeEnabled,
   onChangeColumn,
   onChangeCardModel,
@@ -983,6 +987,8 @@ const WorkspaceColumnView = ({
           autoUrgeProfiles={autoUrgeProfiles}
           autoUrgeMessage={autoUrgeMessage}
           autoUrgeSuccessKeyword={autoUrgeSuccessKeyword}
+          globalUrgeActive={globalUrgeActive}
+          globalUrgeProfileId={globalUrgeProfileId}
           onSetAutoUrgeEnabled={onSetAutoUrgeEnabled}
           onAddTab={onAddTab}
           onSplitPane={onSplitPane}

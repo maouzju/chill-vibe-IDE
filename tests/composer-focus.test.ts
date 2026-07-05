@@ -6,6 +6,7 @@ import test from 'node:test'
 import {
   composerFocusRequestEventName,
   composerFocusRetryDelaysMs,
+  decideComposerFocusRequest,
   decideHitTestRepairScope,
   hitTestRepairEscalationWindowMs,
   isComposerFocusEffectivelyVacant,
@@ -295,6 +296,37 @@ test('effective vacancy: focus on any other element is not vacant', () => {
   assert.equal(
     isComposerFocusEffectivelyVacant(foreignElement, bodyElement, (element) => element === chromeElement),
     false,
+  )
+})
+
+// ── New-tab focus request: never swallow the bump on a closure-miss ─────────
+// The forensic deadlock: clicking "+" (or a rescue firing) hands a tabId whose
+// card is not in this render's cards map yet (the one-frame window after a new
+// tab mounts). requestComposerFocus used to return early there, dropping the
+// bump entirely, so the freshly-mounted composer never started its retry ladder
+// and focus stayed on <body> forever (no blur ⇒ blur-reclaim never woke either).
+// The request carries only a counter, so a closure-miss must still bump; only a
+// present, genuine tool card (no composer) may suppress it.
+
+test('composer focus request is bumped when the new tab card is not in this render closure yet', () => {
+  assert.equal(
+    decideComposerFocusRequest({ cardPresent: false, cardUsesComposer: false }),
+    'bump',
+    'a card missing from this render closure must still bump — the mounted composer starts its ladder from the counter',
+  )
+})
+
+test('composer focus request is suppressed only for a present, genuine tool card', () => {
+  assert.equal(
+    decideComposerFocusRequest({ cardPresent: true, cardUsesComposer: false }),
+    'suppress',
+  )
+})
+
+test('composer focus request is bumped for a present composer card', () => {
+  assert.equal(
+    decideComposerFocusRequest({ cardPresent: true, cardUsesComposer: true }),
+    'bump',
   )
 })
 

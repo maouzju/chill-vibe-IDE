@@ -18,6 +18,22 @@ export const dispatchComposerFocusRequest = (paneId: string) => {
   )
 }
 
+// A composer-focus request carries only a counter, never a tabId. When the
+// rescue/add path hands a tabId whose card is not yet in this render's cards
+// map (the one-frame window after a new tab mounts), the request must STILL be
+// emitted so the freshly-mounted card can start its retry ladder from the bump.
+// Dropping it there is the forensic new-tab deadlock: focus never leaves <body>,
+// and because it never entered the composer there is no blur to wake the
+// blur-reclaim self-heal either. Suppress the bump only when the card is present
+// AND is a genuine tool card with no composer — never for the transient miss.
+export type ComposerFocusRequestDecision = 'bump' | 'suppress'
+
+export const decideComposerFocusRequest = (input: {
+  cardPresent: boolean
+  cardUsesComposer: boolean
+}): ComposerFocusRequestDecision =>
+  !input.cardPresent || input.cardUsesComposer ? 'bump' : 'suppress'
+
 export type ComposerFocusAttemptDeps = {
   focusTextarea: () => boolean
   isFocusSettled: () => boolean

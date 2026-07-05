@@ -214,15 +214,26 @@ test('tab click and aux-click paths carry the same phantom coordinate guard (key
   )
 })
 
-test('requestComposerFocus tolerates a tab id whose card is not in this render\'s closure yet', async () => {
+test('requestComposerFocus delegates the closure-miss decision instead of swallowing the bump', async () => {
   const source = await paneViewSourcePromise
   const requestBlock = source.slice(
     source.indexOf('const requestComposerFocus'),
     source.indexOf('// Keep the document-capture tab rescue'),
   )
+  // A rescue/add firing in the one-frame window after a new tab mounts hands a
+  // tabId the previous render's cards map lacks. Dereferencing it must not
+  // throw AND — the forensic deadlock fix — must NOT drop the bump: a
+  // closure-miss still needs to bump so the mounted composer starts its ladder.
+  // The decision lives in the pure decideComposerFocusRequest, not an inline
+  // `!card` early-return that silently swallowed the request.
   assert.match(
     requestBlock,
-    /!card \|\|/,
-    'a rescue firing in the one-frame window after a new tab mounts hands a tabId the previous render\'s cards map lacks; dereferencing it must not throw',
+    /decideComposerFocusRequest\(/,
+    'requestComposerFocus must route through decideComposerFocusRequest so a closure-miss still bumps rather than being swallowed',
+  )
+  assert.doesNotMatch(
+    requestBlock,
+    /if \(!card \|\| !cardUsesComposer\(card\)\) \{\s*return/,
+    'the old early-return that dropped the focus bump on a closure-miss must be gone (new-tab focus deadlock)',
   )
 })

@@ -58,6 +58,11 @@ import {
   type StateRecoveryOption,
 } from '../shared/schema.js'
 import { getAppDataDir, getDefaultWorkspacePath } from './app-paths.js'
+import {
+  compactPersistedMessages,
+  compactSessionHistoryEntryForTransfer,
+  maxPersistedCardMessages,
+} from './session-history-compaction.js'
 
 type PersistedChatMessage = ChatCard['messages'][number]
 
@@ -84,7 +89,6 @@ const sessionHistoryDirName = 'session-history'
 const sessionHistoryFileSuffix = '.json'
 const legacyRecentCrashRecoveryFileName = 'state.crash-recovery.json'
 const rendererSessionHistoryPreviewMessageLimit = 8
-const maxPersistedCardMessages = 500
 
 const getCurrentDesktopRuntimeKind = (): DesktopRuntimeKind | null => {
   const parsed = desktopRuntimeKindSchema.safeParse(process.env.CHILL_VIBE_RUNTIME_KIND)
@@ -207,9 +211,11 @@ const readSessionHistorySidecarEntry = async (
 ): Promise<SessionHistoryEntry | null> => {
   try {
     const content = await readFile(getSessionHistoryEntryFilePath(entryId, dataDir), 'utf8')
-    return internalSessionHistoryLoadResponseSchema.parse({
-      entry: normalizePersistedSessionHistoryEntry(JSON.parse(content) as SessionHistoryEntry),
-    }).entry
+    // No Zod parse on the raw sidecar here: legacy archives can be tens of
+    // megabytes and Zod's deep-clone amplification OOMs on large inputs (see
+    // sanitizeStateResult). The normalizer plus the schema check that
+    // loadSessionHistoryEntry runs on the compacted payload cover validation.
+    return normalizePersistedSessionHistoryEntry(JSON.parse(content))
   } catch {
     return null
   }
@@ -1364,96 +1370,6 @@ const withWriteLock = async <T>(fn: () => Promise<T>): Promise<T> => {
 
 // ── Sanitize ─────────────────────────────────────────────────────────────────
 
-const maxPersistedCommandOutputChars = 512
-const persistedCommandOutputHeadChars = 256
-const persistedCommandOutputTailChars = 256
-
-const compactPersistedCommandOutput = (output: string) => {
-  if (output.length <= maxPersistedCommandOutputChars) {
-    return {
-      output,
-      didCompact: false,
-    }
-  }
-
-  const omittedChars = output.length - persistedCommandOutputHeadChars - persistedCommandOutputTailChars
-
-  return {
-    output: [
-      output.slice(0, persistedCommandOutputHeadChars),
-      '',
-      `[Output truncated in saved state. ${omittedChars} characters omitted.]`,
-      '',
-      output.slice(-persistedCommandOutputTailChars),
-    ].join('\n'),
-    didCompact: true,
-  }
-}
-
-const compactPersistedMessageMeta = (meta: ChatCard['messages'][number]['meta']) => {
-  if (!meta?.structuredData || meta.kind !== 'command') {
-    return {
-      meta,
-      didCompact: false,
-    }
-  }
-
-  try {
-    const payload = JSON.parse(meta.structuredData) as Record<string, unknown>
-
-    if (payload.kind !== 'command' || typeof payload.output !== 'string') {
-      return {
-        meta,
-        didCompact: false,
-      }
-    }
-
-    const compactedOutput = compactPersistedCommandOutput(payload.output)
-    if (!compactedOutput.didCompact) {
-      return {
-        meta,
-        didCompact: false,
-      }
-    }
-
-    return {
-      meta: {
-        ...meta,
-        structuredData: JSON.stringify({
-          ...payload,
-          output: compactedOutput.output,
-        }),
-      },
-      didCompact: true,
-    }
-  } catch {
-    return {
-      meta,
-      didCompact: false,
-    }
-  }
-}
-
-const compactPersistedMessages = (messages: ChatCard['messages']) => {
-  let didCompact = false
-
-  return {
-    messages: messages.map((message) => {
-      const compactedMeta = compactPersistedMessageMeta(message.meta)
-      if (!compactedMeta.didCompact) {
-        return message
-      }
-
-      didCompact = true
-      return {
-        ...message,
-        meta: compactedMeta.meta,
-      }
-    }),
-    didCompact,
-  }
-}
-
 const isPlausibleRawState = (raw: unknown): raw is AppState =>
   typeof raw === 'object' &&
   raw !== null &&
@@ -2146,7 +2062,12 @@ export const loadSessionHistoryEntry = async (request: { entryId: string }) => {
     throw new Error(`Session history entry not found: ${request.entryId}`)
   }
 
-  return internalSessionHistoryLoadResponseSchema.parse({ entry })
+  // Cap the restore payload like live cards before it crosses the IPC bridge —
+  // the on-disk sidecar keeps the full archive, but shipping a legacy oversized
+  // transcript to the renderer can freeze or OOM the app on open.
+  return internalSessionHistoryLoadResponseSchema.parse({
+    entry: compactSessionHistoryEntryForTransfer(entry),
+  })
 }
 
 export const resolveStateRecoveryOption = async (optionId: string): Promise<AppStateLoadResponse> => {

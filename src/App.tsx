@@ -1239,6 +1239,22 @@ function App() {
 
       {appState.settings.autoUrgeEnabled && (
         <div className="settings-sub-field auto-urge-settings">
+          <label className="settings-toggle" htmlFor="global-urge-control-toggle">
+            <span>{text.autoUrgeGlobalControlLabel}</span>
+            <input
+              id="global-urge-control-toggle"
+              type="checkbox"
+              checked={appState.settings.autoUrgeGlobalControlEnabled}
+              onChange={(event) =>
+                applyAction({
+                  type: 'updateSettings',
+                  patch: { autoUrgeGlobalControlEnabled: event.target.checked },
+                })
+              }
+            />
+          </label>
+          <p className="settings-note">{text.autoUrgeGlobalControlHint}</p>
+
           <div className="auto-urge-settings-header">
             <div className="settings-row-copy auto-urge-types-header">
               <label>{text.autoUrgeTypesLabel}</label>
@@ -6020,6 +6036,42 @@ function App() {
             </button>
           </div>
 
+          {appState.settings.autoUrgeEnabled && appState.settings.autoUrgeGlobalControlEnabled ? (
+            <div className="app-topbar-urge">
+              <label className="app-topbar-urge-toggle" htmlFor="global-urge-active-toggle">
+                <input
+                  id="global-urge-active-toggle"
+                  type="checkbox"
+                  checked={appState.settings.autoUrgeGlobalActive}
+                  onChange={(event) =>
+                    applyAction({
+                      type: 'updateSettings',
+                      patch: { autoUrgeGlobalActive: event.target.checked },
+                    })
+                  }
+                />
+                <span>{text.autoUrgeGlobalToggleLabel}</span>
+              </label>
+              <select
+                className="app-topbar-urge-type"
+                aria-label={text.autoUrgeGlobalTypeAriaLabel}
+                value={appState.settings.autoUrgeGlobalProfileId}
+                onChange={(event) =>
+                  applyAction({
+                    type: 'updateSettings',
+                    patch: { autoUrgeGlobalProfileId: event.target.value },
+                  })
+                }
+              >
+                {appState.settings.autoUrgeProfiles.map((profile) => (
+                  <option key={profile.id} value={profile.id}>
+                    {profile.name.trim() || text.autoUrgeTypeNamePlaceholder}
+                  </option>
+                ))}
+              </select>
+            </div>
+          ) : null}
+
           {usesCustomWindowFrame ? (
             <div className="app-titlebar-controls" aria-label="Window controls">
               <button
@@ -7221,6 +7273,12 @@ function App() {
             autoUrgeProfiles={appState.settings.autoUrgeProfiles}
             autoUrgeMessage={appState.settings.autoUrgeMessage}
             autoUrgeSuccessKeyword={appState.settings.autoUrgeSuccessKeyword}
+            globalUrgeActive={
+              appState.settings.autoUrgeEnabled &&
+              appState.settings.autoUrgeGlobalControlEnabled &&
+              appState.settings.autoUrgeGlobalActive
+            }
+            globalUrgeProfileId={appState.settings.autoUrgeGlobalProfileId}
             onSetAutoUrgeEnabled={setAutoUrgeEnabled}
             onChangeColumn={(patch) => applyAction({ type: 'updateColumn', columnId: column.id, patch })}
             onChangeCardModel={(cardId, provider, model) =>

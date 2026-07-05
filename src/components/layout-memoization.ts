@@ -27,6 +27,8 @@ type WorkspaceColumnMemoProps = {
   autoUrgeProfiles?: AutoUrgeProfile[]
   autoUrgeMessage: string
   autoUrgeSuccessKeyword: string
+  globalUrgeActive: boolean
+  globalUrgeProfileId: string
   recentWorkspaces: RecentWorkspace[]
   sessionHistory: SessionHistoryEntry[]
   cardRecoveryStatuses?: ReadonlyMap<string, CardRecoveryStatus>
@@ -50,6 +52,8 @@ type PaneViewMemoProps = {
   autoUrgeProfiles?: AutoUrgeProfile[]
   autoUrgeMessage: string
   autoUrgeSuccessKeyword: string
+  globalUrgeActive: boolean
+  globalUrgeProfileId: string
   cardRecoveryStatuses?: ReadonlyMap<string, CardRecoveryStatus>
   queuedSendSummaries?: ReadonlyMap<string, QueuedSendSummary>
 }
@@ -112,6 +116,8 @@ export const areWorkspaceColumnPropsEqual = (
   previous.autoUrgeProfiles === next.autoUrgeProfiles &&
   previous.autoUrgeMessage === next.autoUrgeMessage &&
   previous.autoUrgeSuccessKeyword === next.autoUrgeSuccessKeyword &&
+  previous.globalUrgeActive === next.globalUrgeActive &&
+  previous.globalUrgeProfileId === next.globalUrgeProfileId &&
   previous.recentWorkspaces === next.recentWorkspaces &&
   previous.cardRecoveryStatuses === next.cardRecoveryStatuses &&
   previous.queuedSendSummaries === next.queuedSendSummaries &&
@@ -163,4 +169,6 @@ export const arePaneViewPropsEqual = (previous: PaneViewMemoProps, next: PaneVie
   previous.autoUrgeProfiles === next.autoUrgeProfiles &&
   previous.autoUrgeMessage === next.autoUrgeMessage &&
   previous.autoUrgeSuccessKeyword === next.autoUrgeSuccessKeyword &&
+  previous.globalUrgeActive === next.globalUrgeActive &&
+  previous.globalUrgeProfileId === next.globalUrgeProfileId &&
   haveSamePaneCardRefs(previous, next)

@@ -48,6 +48,8 @@ test('chat composer keeps send clickable when the provider CLI is unavailable so
       brainstormRequestModel="gpt-5.5"
       availableQuickToolModels={[]}
       autoUrgeEnabled={false}
+      globalUrgeActive={false}
+      globalUrgeProfileId="auto-urge-default"
       autoUrgeMessage=""
       autoUrgeSuccessKeyword=""
       onSetAutoUrgeEnabled={() => undefined}
@@ -93,6 +95,8 @@ test('running chat composer keeps left-click as send-now and exposes right-click
       brainstormRequestModel="gpt-5.5"
       availableQuickToolModels={[]}
       autoUrgeEnabled={false}
+      globalUrgeActive={false}
+      globalUrgeProfileId="auto-urge-default"
       autoUrgeMessage=""
       autoUrgeSuccessKeyword=""
       queuedSendSummary={{
@@ -143,6 +147,8 @@ test('idle unread chat cards render a completion glow until they are read', () =
       brainstormRequestModel="gpt-5.5"
       availableQuickToolModels={[]}
       autoUrgeEnabled={false}
+      globalUrgeActive={false}
+      globalUrgeProfileId="auto-urge-default"
       autoUrgeMessage=""
       autoUrgeSuccessKeyword=""
       onSetAutoUrgeEnabled={() => undefined}

@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 
 import type { ChatMessage } from '../shared/schema.ts'
-import { evaluateAutoUrge, getNextAutoUrgeToggleState } from '../src/components/chat-auto-urge.ts'
+import { evaluateAutoUrge, getNextAutoUrgeToggleState, resolveEffectiveAutoUrge } from '../src/components/chat-auto-urge.ts'
 
 let messageSequence = 0
 
@@ -242,4 +242,52 @@ test('composer toggle turns off only the current chat when auto urge is already 
     chatActive: false,
     shouldSendImmediately: false,
   })
+})
+
+test('resolveEffectiveAutoUrge prefers the card own urge over the global urge', () => {
+  const result = resolveEffectiveAutoUrge({
+    cardAutoUrgeActive: true,
+    cardAutoUrgeProfileId: 'profile-card',
+    globalUrgeActive: true,
+    globalUrgeProfileId: 'profile-global',
+    isToolCard: false,
+  })
+
+  assert.deepEqual(result, { active: true, profileId: 'profile-card', source: 'card' })
+})
+
+test('resolveEffectiveAutoUrge applies the global urge to cards without their own urge', () => {
+  const result = resolveEffectiveAutoUrge({
+    cardAutoUrgeActive: false,
+    cardAutoUrgeProfileId: 'profile-card',
+    globalUrgeActive: true,
+    globalUrgeProfileId: 'profile-global',
+    isToolCard: false,
+  })
+
+  assert.deepEqual(result, { active: true, profileId: 'profile-global', source: 'global' })
+})
+
+test('resolveEffectiveAutoUrge never applies the global urge to tool cards', () => {
+  const result = resolveEffectiveAutoUrge({
+    cardAutoUrgeActive: false,
+    cardAutoUrgeProfileId: 'profile-card',
+    globalUrgeActive: true,
+    globalUrgeProfileId: 'profile-global',
+    isToolCard: true,
+  })
+
+  assert.deepEqual(result, { active: false, profileId: 'profile-card', source: 'none' })
+})
+
+test('resolveEffectiveAutoUrge stays inactive when neither the card nor the global urge is on', () => {
+  const result = resolveEffectiveAutoUrge({
+    cardAutoUrgeActive: false,
+    cardAutoUrgeProfileId: 'profile-card',
+    globalUrgeActive: false,
+    globalUrgeProfileId: 'profile-global',
+    isToolCard: false,
+  })
+
+  assert.deepEqual(result, { active: false, profileId: 'profile-card', source: 'none' })
 })

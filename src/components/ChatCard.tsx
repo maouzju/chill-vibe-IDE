@@ -97,7 +97,7 @@ import {
 } from './composer-focus'
 import { notifyForensicsRescueEvent } from '../diagnostics/stuck-pane-forensics'
 import { createDraftSyncScheduler, draftSyncIdleMs } from './chat-draft-sync'
-import { evaluateAutoUrge, getNextAutoUrgeToggleState } from './chat-auto-urge'
+import { evaluateAutoUrge, getNextAutoUrgeToggleState, resolveEffectiveAutoUrge } from './chat-auto-urge'
 import { fetchSlashCommands, uploadImageAttachment } from '../api'
 import { canSendEmptyContinuation } from '../app-helpers'
 import { GitToolCard, type GitInfoSummary } from './GitToolCard'
@@ -153,6 +153,19 @@ import {
   StickyNoteIcon,
   StopIcon,
 } from './Icons'
+
+
+const urgeExcludedToolModels = new Set([
+  BRAINSTORM_TOOL_MODEL,
+  FILETREE_TOOL_MODEL,
+  GIT_TOOL_MODEL,
+  IMAGEEDITOR_TOOL_MODEL,
+  MUSIC_TOOL_MODEL,
+  STICKYNOTE_TOOL_MODEL,
+  TEXTEDITOR_TOOL_MODEL,
+  WEATHER_TOOL_MODEL,
+  WHITENOISE_TOOL_MODEL,
+])
 
 const supportedImageMimeTypes = new Set(['image/png', 'image/jpeg', 'image/webp', 'image/gif'])
 const emptyCompactMessageWindow: CompactMessageWindow = {
@@ -362,6 +375,8 @@ type ChatCardProps = {
   autoUrgeProfiles?: AutoUrgeProfile[]
   autoUrgeMessage: string
   autoUrgeSuccessKeyword: string
+  globalUrgeActive: boolean
+  globalUrgeProfileId: string
   queuedSendSummary?: QueuedSendSummary
   onSetAutoUrgeEnabled: (enabled: boolean) => void
   onRemove: () => void
@@ -814,6 +829,8 @@ const areChatCardPropsEqual = (previous: ChatCardProps, next: ChatCardProps) =>
   previous.autoUrgeProfiles === next.autoUrgeProfiles &&
   previous.autoUrgeMessage === next.autoUrgeMessage &&
   previous.autoUrgeSuccessKeyword === next.autoUrgeSuccessKeyword &&
+  previous.globalUrgeActive === next.globalUrgeActive &&
+  previous.globalUrgeProfileId === next.globalUrgeProfileId &&
   previous.queuedSendSummary === next.queuedSendSummary &&
   previous.isRestored === next.isRestored &&
   previous.chromeMode === next.chromeMode &&
@@ -1299,6 +1316,8 @@ const ChatCardView = ({
   autoUrgeProfiles = [],
   autoUrgeMessage,
   autoUrgeSuccessKeyword,
+  globalUrgeActive,
+  globalUrgeProfileId,
   queuedSendSummary,
   onSetAutoUrgeEnabled,
   onRemove,
@@ -1362,12 +1381,21 @@ const ChatCardView = ({
   const [selectedAutoUrgeProfileId, setSelectedAutoUrgeProfileId] = useState(
     () => card.autoUrgeProfileId,
   )
+  const effectiveUrge = resolveEffectiveAutoUrge({
+    cardAutoUrgeActive: autoUrgeActive,
+    cardAutoUrgeProfileId: selectedAutoUrgeProfileId,
+    globalUrgeActive,
+    globalUrgeProfileId,
+    isToolCard: urgeExcludedToolModels.has(card.model),
+  })
+  const effectiveUrgeSourceRef = useRef(effectiveUrge.source)
+  effectiveUrgeSourceRef.current = effectiveUrge.source
   const activeAutoUrgeProfile = useMemo(
     () =>
-      autoUrgeProfiles.find((profile) => profile.id === selectedAutoUrgeProfileId) ??
+      autoUrgeProfiles.find((profile) => profile.id === effectiveUrge.profileId) ??
       autoUrgeProfiles[0] ??
       null,
-    [autoUrgeProfiles, selectedAutoUrgeProfileId],
+    [autoUrgeProfiles, effectiveUrge.profileId],
   )
   const effectiveAutoUrgeProfileId = activeAutoUrgeProfile?.id ?? ''
   const effectiveAutoUrgeMessage = activeAutoUrgeProfile?.message ?? autoUrgeMessage
@@ -1376,7 +1404,7 @@ const ChatCardView = ({
   const composerAutoUrgeChecked = autoUrgeEnabled && autoUrgeActive
   const autoUrgeStateRef = useRef({
     messages: card.messages,
-    active: autoUrgeActive,
+    active: effectiveUrge.active,
     enabled: autoUrgeEnabled,
     message: effectiveAutoUrgeMessage,
     successKeyword: effectiveAutoUrgeSuccessKeyword,
@@ -1659,8 +1687,10 @@ const ChatCardView = ({
       const result = evaluateAutoUrge(trigger, autoUrgeStateRef.current)
 
       if (result.kind === 'disable') {
-        setAutoUrgeActive(false)
-        patchCard({ autoUrgeActive: false })
+        if (effectiveUrgeSourceRef.current === 'card') {
+          setAutoUrgeActive(false)
+          patchCard({ autoUrgeActive: false })
+        }
         return
       }
 
@@ -1725,7 +1755,7 @@ const ChatCardView = ({
   useEffect(() => {
     autoUrgeStateRef.current = {
       messages: card.messages,
-      active: autoUrgeActive,
+      active: effectiveUrge.active,
       enabled: autoUrgeEnabled,
       message: effectiveAutoUrgeMessage,
       successKeyword: effectiveAutoUrgeSuccessKeyword,
@@ -1741,7 +1771,7 @@ const ChatCardView = ({
     card.messages,
     card.sessionId,
     card.status,
-    autoUrgeActive,
+    effectiveUrge.active,
     autoUrgeEnabled,
     effectiveAutoUrgeMessage,
     effectiveAutoUrgeSuccessKeyword,
@@ -3424,6 +3454,22 @@ const ChatCardView = ({
     })
   }, [autoUrgeActive, card.status, card.id, runAutoUrge])
 
+  const previousGlobalUrgeAppliesRef = useRef(effectiveUrge.source === 'global')
+  useEffect(() => {
+    const applies = effectiveUrge.source === 'global'
+    const appliedBefore = previousGlobalUrgeAppliesRef.current
+    previousGlobalUrgeAppliesRef.current = applies
+
+    if (appliedBefore || !applies || card.status !== 'idle') {
+      return
+    }
+
+    runAutoUrge({
+      type: 'manual-activation',
+      status: card.status,
+    })
+  }, [effectiveUrge.source, card.status, runAutoUrge])
+
   const hasFloatingUi = gitAgentPanelOpen
   const slashMenuRef = (el: HTMLDivElement | null) => {
     slashMenuElRef.current = el
@@ -4009,13 +4055,13 @@ const ChatCardView = ({
                   onKeyDown={handleTextareaKeyDown}
                 />
                 <div className="composer-actions">
-                  {autoUrgeEnabled && autoUrgeActive ? (
+                  {autoUrgeEnabled && effectiveUrge.active ? (
                     <span className="composer-auto-urge-status">{text.autoUrgeRunningStatus}</span>
                   ) : null}
                   <div className="composer-settings-shell" ref={settingsMenuRef}>
                     <IconButton
                       label={text.composerSettings}
-                      className={`composer-settings-trigger${settingsMenuOpen ? ' is-open' : ''}${autoUrgeEnabled && autoUrgeActive ? ' has-auto-urge' : ''}`}
+                      className={`composer-settings-trigger${settingsMenuOpen ? ' is-open' : ''}${autoUrgeEnabled && effectiveUrge.active ? ' has-auto-urge' : ''}`}
                       aria-expanded={settingsMenuOpen}
                       onClick={() => {
                         setSettingsMenuStyle(null)

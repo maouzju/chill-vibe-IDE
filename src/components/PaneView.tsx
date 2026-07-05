@@ -73,6 +73,8 @@ type PaneViewProps = {
   autoUrgeProfiles?: AutoUrgeProfile[]
   autoUrgeMessage: string
   autoUrgeSuccessKeyword: string
+  globalUrgeActive: boolean
+  globalUrgeProfileId: string
   onSetAutoUrgeEnabled: (enabled: boolean) => void
   onAddTab: (paneId: string) => void
   onSplitPane: (
@@ -302,6 +304,8 @@ const PaneViewView = ({
   autoUrgeProfiles = [],
   autoUrgeMessage,
   autoUrgeSuccessKeyword,
+  globalUrgeActive,
+  globalUrgeProfileId,
   onSetAutoUrgeEnabled,
   onAddTab,
   onSplitPane,
@@ -1234,6 +1238,8 @@ const PaneViewView = ({
                   autoUrgeProfiles={autoUrgeProfiles}
                   autoUrgeMessage={autoUrgeMessage}
                   autoUrgeSuccessKeyword={autoUrgeSuccessKeyword}
+                  globalUrgeActive={globalUrgeActive}
+                  globalUrgeProfileId={globalUrgeProfileId}
                   onSetAutoUrgeEnabled={onSetAutoUrgeEnabled}
                   onRemove={() => onCloseTab(pane.id, card.id)}
                   queuedSendSummary={queuedSendSummaries?.get(card.id)}

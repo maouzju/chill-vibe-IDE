@@ -151,6 +151,33 @@ export const shouldRefocusAfterComposerBlur = (state: {
 // gesture (a handful of ms); the window only needs to absorb event-loop lag.
 export const composerBlurOutsidePressWindowMs = 500
 
+// Forensic dump 2026-07-05T14-58-02 (v0.17.10): a pointerdown lands ON the
+// textarea (agree=true, disabled=false), yet native click-to-focus never
+// lands — activeElement stays <body>. That press sits in the blind spot of
+// every rescue above: the capture handler trusted "native focus handles the
+// normal case", no blur ever fires (focus never entered the composer), and no
+// structural action bumps the request counter — all three counters read 0.
+// So a primary press that directly hits the textarea must arm the verify
+// ladder itself. A press outside the rect is the departure gesture (often a
+// drag-selection start) and must disarm a pending verification instead, or a
+// late retry would reclaim focus mid-drag. A press inside the rect that names
+// another element is the misroute case, which already repairs and refocuses.
+export type TextareaPressVerifyAction = 'arm' | 'cancel' | 'none'
+
+export const decideTextareaPressFocusVerification = (input: {
+  pressInsideTextareaRect: boolean
+  targetIsTextarea: boolean
+  isPrimaryButton: boolean
+}): TextareaPressVerifyAction => {
+  if (!input.pressInsideTextareaRect) {
+    return 'cancel'
+  }
+  if (!input.isPrimaryButton) {
+    return 'none'
+  }
+  return input.targetIsTextarea ? 'arm' : 'none'
+}
+
 // A card-level layer rebuild that ran recently and demonstrably did not stop
 // the misrouting is the signal to widen the rebuild to the pane panel — the
 // lightweight equivalent of the tab switch that historically cleared stale

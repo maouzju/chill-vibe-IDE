@@ -8,6 +8,7 @@ import {
   composerFocusRetryDelaysMs,
   decideComposerFocusRequest,
   decideHitTestRepairScope,
+  decideTextareaPressFocusVerification,
   hitTestRepairEscalationWindowMs,
   isComposerFocusEffectivelyVacant,
   shouldRefocusAfterComposerBlur,
@@ -512,5 +513,80 @@ test('ChatCard wires the textarea onBlur to the vacant-focus refocus rescue', as
   assert.ok(
     /shouldRefocusAfterComposerBlur/.test(source),
     'the textarea onBlur must consult shouldRefocusAfterComposerBlur so a focus drop to body is rescued',
+  )
+})
+
+// ── Direct textarea press: never trust native click-to-focus blindly ────────
+// Forensic dump 2026-07-05T14-58-02: pointerdown lands ON the textarea
+// (agree=true, targetPath=textarea, disabled=false), yet activeElement stays
+// <body>. Every existing rescue was structurally blind there: the pointerdown
+// capture handler returned early on `target === textarea` ("native focus
+// handles the normal case"), the blur-reclaim never woke because focus never
+// entered the composer (no blur), and the retry ladder never started because
+// no structural action bumped composerFocusRequest. All three counters read 0.
+// The fix: a press that directly hits the textarea arms the verify ladder —
+// which no-ops when native focus settled and never steals focus that moved.
+
+test('a primary press directly on the textarea arms the focus verification ladder', () => {
+  assert.equal(
+    decideTextareaPressFocusVerification({
+      pressInsideTextareaRect: true,
+      targetIsTextarea: true,
+      isPrimaryButton: true,
+    }),
+    'arm',
+    'native click-to-focus demonstrably fails while the event still targets the textarea; the press must verify focus landed',
+  )
+})
+
+test('a press outside the textarea rect cancels any pending press verification', () => {
+  // The departure gesture (often a conversation-text drag-selection start)
+  // must also disarm the verify ladder, or its retry would reclaim focus
+  // mid-drag — the exact regression v0.17.7/v0.17.8 fixed for blur-reclaim.
+  assert.equal(
+    decideTextareaPressFocusVerification({
+      pressInsideTextareaRect: false,
+      targetIsTextarea: false,
+      isPrimaryButton: true,
+    }),
+    'cancel',
+  )
+})
+
+test('a non-primary press inside the rect neither arms nor cancels', () => {
+  assert.equal(
+    decideTextareaPressFocusVerification({
+      pressInsideTextareaRect: true,
+      targetIsTextarea: true,
+      isPrimaryButton: false,
+    }),
+    'none',
+  )
+})
+
+test('a press inside the rect but routed to another element is left to the misroute rescue', () => {
+  assert.equal(
+    decideTextareaPressFocusVerification({
+      pressInsideTextareaRect: true,
+      targetIsTextarea: false,
+      isPrimaryButton: true,
+    }),
+    'none',
+    'misrouted presses already have their own repair+refocus path; arming here would double-handle',
+  )
+})
+
+test('ChatCard verifies native focus after a direct textarea press instead of returning blind', async () => {
+  const source = await readFile(chatCardSourcePath, 'utf8')
+  const rescueBlock =
+    source.match(/const handleDocumentPointerDownCapture = [\s\S]*?\r?\n {4}\}\r?\n/)?.[0] ?? ''
+  assert.ok(rescueBlock, 'expected handleDocumentPointerDownCapture to exist')
+  assert.ok(
+    /decideTextareaPressFocusVerification/.test(rescueBlock),
+    'the target===textarea branch must arm the verify ladder — native focus provably fails there (dump 07-05T14-58, all counters 0)',
+  )
+  assert.ok(
+    /startComposerFocusAttempt/.test(rescueBlock),
+    'the press verification must reuse the shared verify+retry ladder so it never wrestles deliberately-moved focus',
   )
 })

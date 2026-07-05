@@ -88,6 +88,7 @@ import {
 import {
   composerBlurOutsidePressWindowMs,
   decideHitTestRepairScope,
+  decideTextareaPressFocusVerification,
   hitTestRepairEscalationWindowMs,
   isComposerFocusEffectivelyVacant,
   shouldRefocusAfterComposerBlur,
@@ -2042,18 +2043,92 @@ const ChatCardView = ({
       }
     }
 
+    // Verify ladder for a press that directly hits the textarea (forensic dump
+    // 07-05T14-58: native click-to-focus silently failed there). One pending
+    // ladder at a time; a follow-up runs once after an exhaustion repair.
+    let cancelTextareaPressVerify: (() => void) | null = null
+    let cancelTextareaPressFollowUp: (() => void) | null = null
+    const disarmTextareaPressVerify = () => {
+      cancelTextareaPressVerify?.()
+      cancelTextareaPressVerify = null
+      cancelTextareaPressFollowUp?.()
+      cancelTextareaPressFollowUp = null
+    }
+
+    const makeTextareaPressVerifyDeps = (withEscalation: boolean): ComposerFocusAttemptDeps => ({
+      focusTextarea: () => {
+        const textarea = textareaRef.current
+        if (!textarea) {
+          return false
+        }
+        textarea.focus({ preventScroll: true })
+        return true
+      },
+      isFocusSettled: () =>
+        textareaRef.current !== null && document.activeElement === textareaRef.current,
+      isFocusVacant: () => {
+        const pane = textareaRef.current?.closest('.pane-view') ?? null
+        return isComposerFocusEffectivelyVacant(
+          document.activeElement,
+          document.body,
+          (element) =>
+            pane !== null &&
+            element.closest('.pane-view') === pane &&
+            element.closest('.pane-tab-bar') !== null,
+        )
+      },
+      requestFrame: (callback) => window.requestAnimationFrame(callback),
+      cancelFrame: (handle) => window.cancelAnimationFrame(handle),
+      schedule: (callback, delayMs) => window.setTimeout(callback, delayMs),
+      cancel: (handle) => window.clearTimeout(handle),
+      onExhausted: withEscalation
+        ? () => {
+            // Every focus() was issued on a press that named the textarea
+            // itself and none landed: the strongest native-focus-failure
+            // signal there is. Same escalation as the request ladder.
+            const textarea = textareaRef.current
+            if (!textarea) {
+              return
+            }
+            const shell = textarea.closest('.card-shell')
+            if (shell instanceof HTMLElement) {
+              shell.dataset.composerFocusExhaustedCount = String(
+                Number(shell.dataset.composerFocusExhaustedCount ?? '0') + 1,
+              )
+            }
+            console.debug(
+              '[composer-focus] textarea press verification exhausted with focus still vacant; escalating to a panel-level repair',
+            )
+            repairStaleCardHitTest(textarea, lastHitTestRepairAtRef, { escalateToPanel: true })
+            cancelTextareaPressFollowUp?.()
+            cancelTextareaPressFollowUp = startComposerFocusAttempt(
+              makeTextareaPressVerifyDeps(false),
+            )
+          }
+        : undefined,
+    })
+
     const handleDocumentPointerDownCapture = (event: globalThis.PointerEvent) => {
       const textarea = textareaRef.current
       if (!textarea || !textarea.isConnected) {
         return
       }
 
-      if (!isPointerInsideTextarea(textarea, event.clientX, event.clientY)) {
+      const pressVerification = decideTextareaPressFocusVerification({
+        pressInsideTextareaRect: isPointerInsideTextarea(textarea, event.clientX, event.clientY),
+        targetIsTextarea: event.target === textarea,
+        isPrimaryButton: event.button === 0,
+      })
+
+      if (pressVerification === 'cancel') {
         // A press outside the composer rect is a deliberate departure — often
         // the start of a conversation-text drag-selection. The blur rescue
-        // reads this stamp to avoid reclaiming focus over it. Recorded before
-        // the button gate so non-left presses count too.
+        // reads this stamp to avoid reclaiming focus over it, and any pending
+        // press verification must disarm for the same reason: a late retry
+        // would reclaim focus mid-drag. Recorded before the button gate so
+        // non-left presses count too.
         lastPointerDownOutsideComposerAtRef.current = event.timeStamp
+        disarmTextareaPressVerify()
         return
       }
 
@@ -2074,8 +2149,16 @@ const ChatCardView = ({
         return
       }
 
-      if (event.target === textarea) {
-        // Native focus handles the normal case.
+      if (pressVerification === 'arm') {
+        // Native focus handles the normal case — but the 07-05T14-58 forensic
+        // dump proved this exact press can leave focus on <body> (target
+        // correct, agree=true, every rescue counter 0). Arm the shared verify
+        // ladder: it no-ops once native focus settles and yields the moment
+        // any other real element takes focus.
+        disarmTextareaPressVerify()
+        cancelTextareaPressVerify = startComposerFocusAttempt(
+          makeTextareaPressVerifyDeps(true),
+        )
         return
       }
 
@@ -2129,6 +2212,7 @@ const ChatCardView = ({
     return () => {
       document.removeEventListener('pointermove', recoverComposerHoverRouting, true)
       document.removeEventListener('pointerdown', handleDocumentPointerDownCapture, true)
+      disarmTextareaPressVerify()
     }
   }, [card.id, isActive, isCollapsed, isToolCard])
 

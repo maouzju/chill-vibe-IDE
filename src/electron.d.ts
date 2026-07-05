@@ -7,6 +7,8 @@ import type {
   CcSwitchImportResponse,
   ChatRequest,
   ChatStartResponse,
+  ForkSessionRequest,
+  ForkSessionResponse,
   ExternalHistoryListRequest,
   ExternalHistoryListResponse,
   ExternalSessionLoadRequest,
@@ -109,6 +111,7 @@ declare global {
       fetchCommitDiff?: (request: GitCommitDiffRequest) => Promise<GitCommitDiffResponse>
       fetchSlashCommands?: (request: SlashCommandRequest) => Promise<SlashCommand[]>
       requestChat?: (request: ChatRequest) => Promise<ChatStartResponse>
+      forkProviderSession?: (request: ForkSessionRequest) => Promise<ForkSessionResponse>
       uploadImageAttachment?: (request: AttachmentUploadRequest) => Promise<ImageAttachment>
       stopChat?: (streamId: string) => Promise<void>
       listExternalHistory?: (request: ExternalHistoryListRequest) => Promise<ExternalHistoryListResponse>

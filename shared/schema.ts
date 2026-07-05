@@ -782,6 +782,26 @@ export const chatRequestSchema = z.object({
 })
 export type ChatRequest = z.infer<typeof chatRequestSchema>
 
+// Lossless conversation fork: ask the backend to copy the provider's native
+// session file truncated before the fork-point user message. A null sessionId
+// response means "no native fork was possible" and the renderer falls back to
+// the seeded-transcript replay path.
+export const forkSessionRequestSchema = z.object({
+  provider: providerSchema,
+  workspacePath: z.string().min(1),
+  sessionId: z.string().min(1),
+  forkPoint: z.object({
+    content: z.string(),
+    createdAt: z.string().datetime().optional(),
+  }),
+})
+export type ForkSessionRequest = z.infer<typeof forkSessionRequestSchema>
+
+export const forkSessionResponseSchema = z.object({
+  sessionId: z.string().nullable(),
+})
+export type ForkSessionResponse = z.infer<typeof forkSessionResponseSchema>
+
 export const attachmentUploadRequestSchema = z.object({
   fileName: z.string().min(1).optional(),
   mimeType: imageAttachmentMimeTypeSchema,

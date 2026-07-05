@@ -37,6 +37,15 @@ test('buildUrgeJudgePrompt embeds the tail of the assistant text', () => {
   assert.ok(longPrompt.length < 9000)
 })
 
+test('buildUrgeJudgePrompt tells the judge that waiting for a user decision means stop', () => {
+  const prompt = buildUrgeJudgePrompt('还没提交 git——你要的话说一声"提交"。已解决。')
+  // 等待用户拍板（如"要不要提交"）必须优先于"还有未完成事项"判为不催促，
+  // 否则会在 agent 明确交还决策权时误鞭策。
+  assert.ok(prompt.includes('等待用户'))
+  assert.ok(prompt.includes('即使'))
+  assert.ok(prompt.includes('优先'))
+})
+
 test('parseUrgeJudgeVerdict tolerates fenced JSON and rejects garbage', () => {
   assert.equal(parseUrgeJudgeVerdict('{"shouldContinue": true}'), true)
   assert.equal(parseUrgeJudgeVerdict('```json\n{"shouldContinue": false}\n```'), false)

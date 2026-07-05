@@ -112,6 +112,31 @@ describe('chat request seeding', () => {
     assert.match(prompt, /latest user turn includes 1 attached image/i)
   })
 
+  it('turns a blank continuation into an explicit continue instruction instead of "no text"', () => {
+    const messages = [
+      createMessage('user-1', 'user', 'Fix the reducer bug.'),
+      createMessage('assistant-1', 'assistant', 'I found the bug but have not verified the fix yet.'),
+    ]
+
+    const englishPrompt = buildSeededChatPrompt({
+      language: 'en',
+      prompt: '',
+      attachments: [],
+      messages,
+    })
+    assert.doesNotMatch(englishPrompt, /includes no text/i)
+    assert.match(englishPrompt, /Please continue\./)
+
+    const chinesePrompt = buildSeededChatPrompt({
+      language: 'zh-CN',
+      prompt: '',
+      attachments: [],
+      messages,
+    })
+    assert.doesNotMatch(chinesePrompt, /没有文本内容/)
+    assert.match(chinesePrompt, /请继续。/)
+  })
+
   it('replays historical image attachments into the first forked request', () => {
     const attachments = collectSeededChatAttachments({
       messages: [

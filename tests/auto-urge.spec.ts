@@ -232,6 +232,46 @@ test('composer settings hosts the auto urge toggle for an existing chat', async 
   await expectRecordedPromptsToContain(page, [defaultAutoUrgeMessage])
 })
 
+test('a blank auto urge message sends an empty continuation without a blank user bubble', async ({ page }) => {
+  await installMockApis(page, {
+    autoUrgeMessage: '',
+    cardMessages: [
+      {
+        id: 'msg-1',
+        role: 'assistant',
+        content: 'I have not finished verifying yet.',
+        createdAt: new Date().toISOString(),
+      },
+    ],
+  })
+  await page.goto(appUrl)
+  await installMockChatBridge(page)
+
+  const settingsTrigger = page.locator('.composer-settings-trigger').first()
+  const settingsMenu = page.locator('.composer-settings-menu').first()
+  const autoUrgeStatus = page.locator('.composer-auto-urge-status').first()
+
+  await settingsTrigger.click()
+  await expect(settingsMenu).toBeVisible()
+
+  const autoUrgeToggle = settingsMenu.getByLabel('Auto Urge')
+  await autoUrgeToggle.check()
+  await expect(autoUrgeToggle).toBeChecked()
+  await expect(autoUrgeStatus).toContainText('Urging...')
+
+  // The card has history but no native session, so the blank urge goes out as a
+  // seeded transcript whose latest turn must read as an explicit "continue".
+  await expect.poll(async () => {
+    const prompts = await readPrompts(page)
+    return prompts.length > 0 && prompts.every((prompt) => prompt.includes('Please continue.'))
+  }).toBe(true)
+  const prompts = await readPrompts(page)
+  for (const prompt of prompts) {
+    expect(prompt).not.toContain('includes no text')
+  }
+  await expect(page.locator('.message.message-user')).toHaveCount(0)
+})
+
 test('composer settings can turn auto urge back on after an older success reply', async ({ page }) => {
   await installMockApis(page, {
     cardMessages: [

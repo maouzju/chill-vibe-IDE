@@ -95,7 +95,8 @@ const getSeededPromptCopy = (language: AppLanguage) =>
         context: 'Treat the transcript below as prior context for the reply.',
         transcriptLabel: 'Prior transcript:',
         latestMessageLabel: 'Latest user message:',
-        emptyLatestMessage: 'The latest user turn includes no text.',
+        emptyLatestMessage:
+          'Please continue. (The user sent an empty message, which means: keep working on the task above.)',
         replyInstruction: 'Reply to the latest user message using the prior transcript as context.',
         doNotMentionFork:
           'Do not mention that the conversation was forked or replayed unless the user asks.',
@@ -110,7 +111,7 @@ const getSeededPromptCopy = (language: AppLanguage) =>
         context: '把下面的 transcript 当作这次回复的已有上下文。',
         transcriptLabel: '已有 transcript：',
         latestMessageLabel: '当前用户消息：',
-        emptyLatestMessage: '当前用户消息没有文本内容。',
+        emptyLatestMessage: '请继续。（用户发送了空消息，含义是：继续完成上面的任务。）',
         replyInstruction: '请基于上面的 transcript 回答当前用户消息。',
         doNotMentionFork: '除非用户主动问起，否则不要提到这是分叉或重放出来的上下文。',
         attachedImagesLabel: '附图',

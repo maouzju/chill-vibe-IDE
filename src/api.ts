@@ -40,6 +40,11 @@ import {
   slashCommandSchema,
   setupRunRequestSchema,
   setupStatusSchema,
+  ollamaJudgeRequestSchema,
+  ollamaJudgeResponseSchema,
+  ollamaPullRequestSchema,
+  ollamaStatusSchema,
+  ollamaTaskSchema,
   stateRecoverySelectionSchema,
   type AppStateLoadResponse,
   type AppSettings,
@@ -80,6 +85,10 @@ import {
   type RendererCrashCaptureRequest,
   type SetupRunRequestInput,
   type SetupStatus,
+  type OllamaJudgeRequest,
+  type OllamaJudgeResponse,
+  type OllamaStatus,
+  type OllamaTask,
   type SlashCommand,
   type SlashCommandRequest,
   type StateRecoverySelection,
@@ -279,6 +288,62 @@ export const runEnvironmentSetup = async (request: SetupRunRequestInput = {}): P
   const desktopSetup = requireDesktopAction(getDesktopApi()?.runEnvironmentSetup)
 
   return readDesktop(() => desktopSetup(parsed), setupStatusSchema)
+}
+
+const postJson = async (url: string, body: unknown) => {
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body ?? {}),
+  })
+
+  if (!response.ok) {
+    throw new Error(`Request to ${url} failed with HTTP ${response.status}`)
+  }
+
+  return (await response.json()) as unknown
+}
+
+export const fetchOllamaStatus = async (): Promise<OllamaStatus> => {
+  const desktop = getDesktopApi()
+  if (desktop?.fetchOllamaStatus) {
+    return readDesktop(() => desktop.fetchOllamaStatus!(), ollamaStatusSchema)
+  }
+
+  const response = await fetch('/api/ollama/status')
+  if (!response.ok) throw new Error('Failed to fetch Ollama status')
+  return ollamaStatusSchema.parse(await response.json())
+}
+
+export const runOllamaInstall = async (): Promise<OllamaTask> => {
+  const desktop = getDesktopApi()
+  if (desktop?.runOllamaInstall) {
+    return readDesktop(() => desktop.runOllamaInstall!(), ollamaTaskSchema)
+  }
+
+  return ollamaTaskSchema.parse(await postJson('/api/ollama/install', {}))
+}
+
+export const runOllamaPull = async (model: string): Promise<OllamaTask> => {
+  const parsed = ollamaPullRequestSchema.parse({ model })
+  const desktop = getDesktopApi()
+  if (desktop?.runOllamaPull) {
+    return readDesktop(() => desktop.runOllamaPull!(parsed), ollamaTaskSchema)
+  }
+
+  return ollamaTaskSchema.parse(await postJson('/api/ollama/pull', parsed))
+}
+
+export const judgeUrgeWithOllama = async (
+  request: OllamaJudgeRequest,
+): Promise<OllamaJudgeResponse> => {
+  const parsed = ollamaJudgeRequestSchema.parse(request)
+  const desktop = getDesktopApi()
+  if (desktop?.judgeUrgeWithOllama) {
+    return readDesktop(() => desktop.judgeUrgeWithOllama!(parsed), ollamaJudgeResponseSchema)
+  }
+
+  return ollamaJudgeResponseSchema.parse(await postJson('/api/ollama/judge', parsed))
 }
 
 export const fetchOnboardingStatus = async (): Promise<OnboardingStatus> =>

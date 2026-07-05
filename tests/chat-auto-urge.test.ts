@@ -2,7 +2,12 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 
 import type { ChatMessage } from '../shared/schema.ts'
-import { evaluateAutoUrge, getNextAutoUrgeToggleState, resolveEffectiveAutoUrge } from '../src/components/chat-auto-urge.ts'
+import {
+  evaluateAutoUrge,
+  getLatestAssistantTurnText,
+  getNextAutoUrgeToggleState,
+  resolveEffectiveAutoUrge,
+} from '../src/components/chat-auto-urge.ts'
 
 let messageSequence = 0
 
@@ -163,7 +168,10 @@ test('stream completion disables auto urge when the latest assistant turn contai
   })
 })
 
-test('stream completion ignores success keywords inside ask-user questions', () => {
+test('stream completion never treats an ask-user question as success and waits for the answer instead', () => {
+  // A success keyword inside the question text must not disable the urge, and
+  // a pending ask-user question must block urging entirely (the agent is
+  // waiting on the user, so nudging it would interrupt the question).
   const result = evaluateAutoUrge(
     {
       type: 'stream-finished',
@@ -183,10 +191,7 @@ test('stream completion ignores success keywords inside ask-user questions', () 
     },
   )
 
-  assert.deepEqual(result, {
-    kind: 'send',
-    message: 'Keep verifying until the fix is proven.',
-  })
+  assert.deepEqual(result, { kind: 'skip' })
 })
 
 test('stream completion does not reuse a success keyword from an older assistant turn', () => {
@@ -290,4 +295,129 @@ test('resolveEffectiveAutoUrge stays inactive when neither the card nor the glob
   })
 
   assert.deepEqual(result, { active: false, profileId: 'profile-card', source: 'none' })
+})
+
+test('stream-finished never urges while the latest turn has an unanswered ask-user question', () => {
+  const result = evaluateAutoUrge(
+    {
+      type: 'stream-finished',
+      previousStatus: 'streaming',
+      status: 'idle',
+    },
+    {
+      active: true,
+      enabled: true,
+      message: 'Keep going.',
+      successKeyword: 'YES',
+      messages: [
+        createUserMessage('做完这个任务'),
+        createAssistantMessage('我有一个问题需要确认。'),
+        createAskUserMessage('要用哪种方案？'),
+      ],
+    },
+  )
+
+  assert.deepEqual(result, { kind: 'skip' })
+})
+
+test('manual activation is also blocked by an unanswered ask-user question', () => {
+  const result = evaluateAutoUrge(
+    {
+      type: 'manual-activation',
+      status: 'idle',
+    },
+    {
+      active: true,
+      enabled: true,
+      message: 'Keep going.',
+      successKeyword: 'YES',
+      messages: [createUserMessage('任务'), createAskUserMessage('选哪个？')],
+    },
+  )
+
+  assert.deepEqual(result, { kind: 'skip' })
+})
+
+test('an answered ask-user question no longer blocks urging', () => {
+  const result = evaluateAutoUrge(
+    {
+      type: 'stream-finished',
+      previousStatus: 'streaming',
+      status: 'idle',
+    },
+    {
+      active: true,
+      enabled: true,
+      message: 'Keep going.',
+      successKeyword: 'YES',
+      messages: [
+        createUserMessage('任务'),
+        createAskUserMessage('选哪个？'),
+        createUserMessage('选 A'),
+        createAssistantMessage('好的，继续做但还没做完。'),
+      ],
+    },
+  )
+
+  assert.deepEqual(result, { kind: 'send', message: 'Keep going.' })
+})
+
+test('local-model judge mode returns a judge request instead of matching keywords', () => {
+  const result = evaluateAutoUrge(
+    {
+      type: 'stream-finished',
+      previousStatus: 'streaming',
+      status: 'idle',
+    },
+    {
+      active: true,
+      enabled: true,
+      message: 'Keep going.',
+      successKeyword: 'YES',
+      judgeMode: 'local-model',
+      messages: [
+        createUserMessage('任务'),
+        createAssistantMessage('YES 我觉得差不多了但没验证。'),
+      ],
+    },
+  )
+
+  assert.deepEqual(result, { kind: 'judge', message: 'Keep going.' })
+})
+
+test('local-model judge mode is still blocked by an unanswered ask-user question', () => {
+  const result = evaluateAutoUrge(
+    {
+      type: 'stream-finished',
+      previousStatus: 'streaming',
+      status: 'idle',
+    },
+    {
+      active: true,
+      enabled: true,
+      message: 'Keep going.',
+      successKeyword: '',
+      judgeMode: 'local-model',
+      messages: [createUserMessage('任务'), createAskUserMessage('选哪个？')],
+    },
+  )
+
+  assert.deepEqual(result, { kind: 'skip' })
+})
+
+test('getLatestAssistantTurnText returns the last assistant prose of the latest turn', () => {
+  const text = getLatestAssistantTurnText([
+    createUserMessage('旧任务'),
+    createAssistantMessage('旧回复'),
+    createUserMessage('新任务'),
+    createAssistantMessage('中间进展。'),
+    createAskUserMessage('这个不该被选中'),
+    createAssistantMessage('最终结论：还差一步。'),
+  ])
+
+  assert.equal(text, '最终结论：还差一步。')
+})
+
+test('getLatestAssistantTurnText returns an empty string when the latest turn has no assistant prose', () => {
+  assert.equal(getLatestAssistantTurnText([createUserMessage('任务')]), '')
 })

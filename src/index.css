@@ -597,6 +597,23 @@ body.is-card-dragging .lane-drop-zone-top {
   outline: none;
 }
 
+.ollama-settings {
+  margin-top: 0.9rem;
+  padding-top: 0.9rem;
+  border-top: 1px solid var(--line-strong);
+}
+
+.ollama-actions {
+  margin-top: 0.4rem;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.ollama-task-line.is-error {
+  color: var(--danger);
+}
+
 .app-tab {
   appearance: none;
   border: none;

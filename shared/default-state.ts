@@ -21,6 +21,7 @@ import {
   defaultAutoUrgeMessage,
   defaultAutoUrgeProfileId,
   defaultAutoUrgeSuccessKeyword,
+  autoUrgeJudgeModes,
 } from './schema.js'
 import {
   defaultAppLanguage,
@@ -297,6 +298,11 @@ const normalizeAutoUrgeMessage = (value: unknown, fallback: string) =>
 const normalizeAutoUrgeText = (value: unknown, fallback: string) =>
   typeof value === 'string' && value.trim() ? value : fallback
 
+const normalizeAutoUrgeJudgeMode = (value: unknown): AutoUrgeProfile['judgeMode'] =>
+  typeof value === 'string' && (autoUrgeJudgeModes as readonly string[]).includes(value)
+    ? (value as AutoUrgeProfile['judgeMode'])
+    : 'keyword'
+
 export const createAutoUrgeProfile = (
   language: AppLanguage = defaultAppLanguage,
   overrides: Partial<AutoUrgeProfile> = {},
@@ -306,6 +312,8 @@ export const createAutoUrgeProfile = (
   name: normalizeText(overrides.name) || getAutoUrgeProfileFallbackName(language, options.index ?? 0),
   message: normalizeAutoUrgeMessage(overrides.message, defaultAutoUrgeMessage),
   successKeyword: normalizeAutoUrgeText(overrides.successKeyword, defaultAutoUrgeSuccessKeyword),
+  judgeMode: normalizeAutoUrgeJudgeMode(overrides.judgeMode),
+  judgeModel: normalizeText(overrides.judgeModel),
 })
 
 const normalizeAutoUrgeSettings = (

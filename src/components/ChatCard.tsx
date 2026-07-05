@@ -97,8 +97,13 @@ import {
 } from './composer-focus'
 import { notifyForensicsRescueEvent } from '../diagnostics/stuck-pane-forensics'
 import { createDraftSyncScheduler, draftSyncIdleMs } from './chat-draft-sync'
-import { evaluateAutoUrge, getNextAutoUrgeToggleState, resolveEffectiveAutoUrge } from './chat-auto-urge'
-import { fetchSlashCommands, uploadImageAttachment } from '../api'
+import {
+  evaluateAutoUrge,
+  getLatestAssistantTurnText,
+  getNextAutoUrgeToggleState,
+  resolveEffectiveAutoUrge,
+} from './chat-auto-urge'
+import { fetchSlashCommands, judgeUrgeWithOllama, uploadImageAttachment } from '../api'
 import { canSendEmptyContinuation } from '../app-helpers'
 import { GitToolCard, type GitInfoSummary } from './GitToolCard'
 import { MusicCard } from './MusicCard'
@@ -1402,6 +1407,12 @@ const ChatCardView = ({
   const effectiveAutoUrgeSuccessKeyword =
     activeAutoUrgeProfile?.successKeyword ?? autoUrgeSuccessKeyword
   const composerAutoUrgeChecked = autoUrgeEnabled && autoUrgeActive
+  const effectiveAutoUrgeJudgeMode = activeAutoUrgeProfile?.judgeMode ?? 'keyword'
+  const effectiveAutoUrgeJudgeModel = activeAutoUrgeProfile?.judgeModel ?? ''
+  const autoUrgeJudgeModelRef = useRef(effectiveAutoUrgeJudgeModel)
+  autoUrgeJudgeModelRef.current = effectiveAutoUrgeJudgeModel
+  const cardStatusRef = useRef(card.status)
+  cardStatusRef.current = card.status
   const autoUrgeStateRef = useRef({
     messages: card.messages,
     active: effectiveUrge.active,
@@ -1409,6 +1420,7 @@ const ChatCardView = ({
     message: effectiveAutoUrgeMessage,
     successKeyword: effectiveAutoUrgeSuccessKeyword,
     canSendEmptyContinuation: false,
+    judgeMode: effectiveAutoUrgeJudgeMode,
   })
   const titleInputRef = useRef<HTMLInputElement>(null)
   const modelMenuRef = useRef<HTMLDivElement>(null)
@@ -1694,6 +1706,41 @@ const ChatCardView = ({
         return
       }
 
+      if (result.kind === 'judge') {
+        const judgeModel = autoUrgeJudgeModelRef.current.trim()
+        const judgeText = getLatestAssistantTurnText(autoUrgeStateRef.current.messages)
+        if (!judgeModel || !judgeText) {
+          return
+        }
+
+        void judgeUrgeWithOllama({ model: judgeModel, text: judgeText })
+          .then((verdict) => {
+            if (!verdict.ok || typeof verdict.shouldContinue !== 'boolean') {
+              // Judge unavailable or unparseable — stay quiet rather than
+              // urging blindly.
+              return
+            }
+
+            if (!verdict.shouldContinue) {
+              if (effectiveUrgeSourceRef.current === 'card') {
+                setAutoUrgeActive(false)
+                patchCard({ autoUrgeActive: false })
+              }
+              return
+            }
+
+            // The card may have started a new turn while the local model was
+            // thinking; only urge a still-idle chat.
+            if (cardStatusRef.current !== 'idle') {
+              return
+            }
+
+            sendAutoUrge(result.message)
+          })
+          .catch(() => undefined)
+        return
+      }
+
       if (result.kind === 'send') {
         sendAutoUrge(result.message)
       }
@@ -1766,6 +1813,7 @@ const ChatCardView = ({
           sessionId: card.sessionId,
           status: card.status,
         }),
+      judgeMode: effectiveAutoUrgeJudgeMode,
     }
   }, [
     card.messages,
@@ -1775,6 +1823,7 @@ const ChatCardView = ({
     autoUrgeEnabled,
     effectiveAutoUrgeMessage,
     effectiveAutoUrgeSuccessKeyword,
+    effectiveAutoUrgeJudgeMode,
     isToolCard,
   ])
 

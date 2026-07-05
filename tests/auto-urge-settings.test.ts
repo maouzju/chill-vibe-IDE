@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
 
 import { createDefaultSettings, normalizeAppSettings } from '../shared/default-state.ts'
+import type { AutoUrgeProfile } from '../shared/schema.ts'
 
 describe('auto urge profile settings', () => {
   it('creates a default named profile and mirrors it to the legacy fields', () => {
@@ -23,13 +24,13 @@ describe('auto urge profile settings', () => {
           name: '开发验收',
           message: '继续验证，给出证据。',
           successKeyword: 'DONE',
-        },
+        } as AutoUrgeProfile,
         {
           id: 'profile-review',
           name: '代码审查',
           message: '继续审查，列出风险。',
           successKeyword: 'APPROVED',
-        },
+        } as AutoUrgeProfile,
       ],
       autoUrgeActiveProfileId: 'profile-review',
     })
@@ -50,7 +51,7 @@ describe('auto urge profile settings', () => {
           name: 'Continue only',
           message: '',
           successKeyword: 'DONE',
-        },
+        } as AutoUrgeProfile,
       ],
       autoUrgeActiveProfileId: 'profile-empty',
     })
@@ -84,8 +85,22 @@ describe('auto urge profile settings', () => {
     const base = {
       autoUrgeEnabled: true,
       autoUrgeProfiles: [
-        { id: 'profile-dev', name: '开发验收', message: '继续验证。', successKeyword: 'DONE' },
-        { id: 'profile-review', name: '代码审查', message: '继续审查。', successKeyword: 'APPROVED' },
+        {
+          id: 'profile-dev',
+          name: '开发验收',
+          message: '继续验证。',
+          successKeyword: 'DONE',
+          judgeMode: 'keyword' as const,
+          judgeModel: '',
+        },
+        {
+          id: 'profile-review',
+          name: '代码审查',
+          message: '继续审查。',
+          successKeyword: 'APPROVED',
+          judgeMode: 'keyword' as const,
+          judgeModel: '',
+        },
       ],
       autoUrgeActiveProfileId: 'profile-dev',
     }
@@ -105,6 +120,40 @@ describe('auto urge profile settings', () => {
       autoUrgeGlobalProfileId: 'profile-removed',
     })
     assert.equal(fallback.autoUrgeGlobalProfileId, 'profile-dev')
+  })
+
+  it('defaults new judge fields to keyword mode and normalizes invalid judge modes', () => {
+    const defaults = createDefaultSettings()
+    assert.equal(defaults.autoUrgeProfiles[0]?.judgeMode, 'keyword')
+    assert.equal(defaults.autoUrgeProfiles[0]?.judgeModel, '')
+
+    const settings = normalizeAppSettings({
+      autoUrgeEnabled: true,
+      autoUrgeProfiles: [
+        {
+          id: 'profile-llm',
+          name: '模型判定',
+          message: '继续。',
+          successKeyword: '',
+          judgeMode: 'local-model',
+          judgeModel: 'qwen3:4b',
+        },
+        {
+          id: 'profile-bad',
+          name: '坏模式',
+          message: '继续。',
+          successKeyword: 'DONE',
+          judgeMode: 'cloud-magic' as AutoUrgeProfile['judgeMode'],
+          judgeModel: '',
+        },
+      ],
+      autoUrgeActiveProfileId: 'profile-llm',
+    })
+
+    assert.equal(settings.autoUrgeProfiles[0]?.judgeMode, 'local-model')
+    assert.equal(settings.autoUrgeProfiles[0]?.judgeModel, 'qwen3:4b')
+    assert.equal(settings.autoUrgeProfiles[1]?.judgeMode, 'keyword')
+    assert.equal(settings.autoUrgeProfiles[1]?.judgeModel, '')
   })
 
   it('upgrades legacy single-message settings into the new profile list', () => {

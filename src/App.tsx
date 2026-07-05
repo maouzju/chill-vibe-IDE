@@ -97,6 +97,7 @@ import type {
   RecentCrashRecovery,
   SessionHistoryEntry,
   SetupStatus,
+  OllamaStatus,
   StartupStateRecovery,
   StateRecoveryIssue,
   StateRecoveryOption,
@@ -121,6 +122,9 @@ import {
   requestChat,
   resetState,
   runEnvironmentSetup,
+  fetchOllamaStatus,
+  runOllamaInstall,
+  runOllamaPull,
   stopChat,
   subscribeUnsolicitedStreams,
   syncRuntimeSettings,
@@ -471,6 +475,8 @@ function App() {
   const [modelPromptRulesDraft, setModelPromptRulesDraft] = useState<ModelPromptRule[]>([])
   const [setupStatus, setSetupStatus] = useState<SetupStatus | null>(null)
   const [setupStatusPending, setSetupStatusPending] = useState(false)
+  const [ollamaStatus, setOllamaStatus] = useState<OllamaStatus | null>(null)
+  const [ollamaActionPending, setOllamaActionPending] = useState(false)
   const [cliUpdateTarget, setCliUpdateTarget] = useState<'all' | 'claude' | 'codex'>('all')
   const [cliUpdateVersion, setCliUpdateVersion] = useState('')
   const [routingImportPending, setRoutingImportPending] = useState(false)
@@ -1142,8 +1148,82 @@ function App() {
     [applyAction, appState.settings.autoUrgeActiveProfileId],
   )
 
+  const refreshOllamaStatus = useCallback(async () => {
+    try {
+      setOllamaStatus(await fetchOllamaStatus())
+    } catch {
+      setOllamaStatus(null)
+    }
+  }, [])
+
+  const handleOllamaInstall = useCallback(async () => {
+    setOllamaActionPending(true)
+    try {
+      await runOllamaInstall()
+    } catch {
+      // status refresh below surfaces the failure
+    } finally {
+      setOllamaActionPending(false)
+      void refreshOllamaStatus()
+    }
+  }, [refreshOllamaStatus])
+
+  const handleOllamaPullRecommended = useCallback(async () => {
+    const model = ollamaStatus?.recommendedModel.name
+    if (!model) {
+      return
+    }
+
+    setOllamaActionPending(true)
+    try {
+      await runOllamaPull(model)
+    } catch {
+      // status refresh below surfaces the failure
+    } finally {
+      setOllamaActionPending(false)
+      void refreshOllamaStatus()
+    }
+  }, [ollamaStatus?.recommendedModel.name, refreshOllamaStatus])
+
+  const ollamaTaskState = ollamaStatus?.task.state
+  useEffect(() => {
+    if (!appState.settings.autoUrgeEnabled || appState.settings.activeTopTab !== 'settings') {
+      return
+    }
+
+    let cancelled = false
+    const sync = async () => {
+      try {
+        const status = await fetchOllamaStatus()
+        if (!cancelled) {
+          setOllamaStatus(status)
+        }
+      } catch {
+        if (!cancelled) {
+          setOllamaStatus(null)
+        }
+      }
+    }
+
+    void sync()
+    const timer =
+      ollamaTaskState === 'running' ? window.setInterval(() => void sync(), 2000) : null
+
+    return () => {
+      cancelled = true
+      if (timer !== null) {
+        window.clearInterval(timer)
+      }
+    }
+  }, [appState.settings.autoUrgeEnabled, appState.settings.activeTopTab, ollamaTaskState])
+
   const updateAutoUrgeProfile = useCallback(
-    (profileId: string, patch: Partial<Pick<AutoUrgeProfile, 'name' | 'message' | 'successKeyword'>>) => {
+    (
+      profileId: string,
+      patch: Partial<
+        Pick<AutoUrgeProfile, 'name' | 'message' | 'successKeyword' | 'judgeMode' | 'judgeModel'>
+      >,
+    ) => {
       updateAutoUrgeProfiles(
         appState.settings.autoUrgeProfiles.map((profile) =>
           profile.id === profileId
@@ -1271,7 +1351,13 @@ function App() {
               const active = profile.id === activeAutoUrgeProfile?.id
               const displayName = profile.name.trim() || text.autoUrgeTypeNamePlaceholder
               const messagePreview = profile.message.trim()
-              const successKeyword = profile.successKeyword.trim() || '-'
+              const usesLocalModelJudge = profile.judgeMode === 'local-model'
+              const successKeyword = usesLocalModelJudge
+                ? profile.judgeModel.trim() || text.autoUrgeJudgeModeLocalModel
+                : profile.successKeyword.trim() || '-'
+              const successKeywordLabel = usesLocalModelJudge
+                ? text.autoUrgeJudgeModeLabel
+                : text.autoUrgeSuccessKeywordLabel
 
               return (
                 <div
@@ -1287,7 +1373,7 @@ function App() {
                         </div>
                         <div className="auto-urge-profile-card-meta">
                           <span className="auto-urge-profile-card-keyword-label">
-                            {text.autoUrgeSuccessKeywordLabel}
+                            {successKeywordLabel}
                           </span>
                           <span className="auto-urge-profile-card-keyword">{successKeyword}</span>
                         </div>
@@ -1302,7 +1388,7 @@ function App() {
                           <div className="auto-urge-profile-card-title">{displayName}</div>
                           <div className="auto-urge-profile-card-meta">
                             <span className="auto-urge-profile-card-keyword-label">
-                              {text.autoUrgeSuccessKeywordLabel}
+                              {successKeywordLabel}
                             </span>
                             <span className="auto-urge-profile-card-keyword">{successKeyword}</span>
                           </div>
@@ -1342,19 +1428,79 @@ function App() {
                         </div>
 
                         <div className="auto-urge-profile-field">
-                          <label className="settings-label" htmlFor={`auto-urge-keyword-${profile.id}`}>
-                            {text.autoUrgeSuccessKeywordLabel}
+                          <label className="settings-label" htmlFor={`auto-urge-judge-mode-${profile.id}`}>
+                            {text.autoUrgeJudgeModeLabel}
                           </label>
-                          <input
-                            id={`auto-urge-keyword-${profile.id}`}
+                          <select
+                            id={`auto-urge-judge-mode-${profile.id}`}
                             className="control settings-input"
-                            value={profile.successKeyword}
+                            value={profile.judgeMode}
                             onChange={(event) =>
-                              updateAutoUrgeProfile(profile.id, { successKeyword: event.target.value })
+                              updateAutoUrgeProfile(profile.id, {
+                                judgeMode:
+                                  event.target.value === 'local-model' ? 'local-model' : 'keyword',
+                              })
                             }
-                            placeholder={text.autoUrgeSuccessKeywordPlaceholder}
-                          />
+                          >
+                            <option value="keyword">{text.autoUrgeJudgeModeKeyword}</option>
+                            <option value="local-model">{text.autoUrgeJudgeModeLocalModel}</option>
+                          </select>
                         </div>
+
+                        {usesLocalModelJudge ? (
+                          <div className="auto-urge-profile-field">
+                            <label
+                              className="settings-label"
+                              htmlFor={`auto-urge-judge-model-${profile.id}`}
+                            >
+                              {text.autoUrgeJudgeModelLabel}
+                            </label>
+                            {(() => {
+                              const installedModels = ollamaStatus?.models.map((model) => model.name) ?? []
+                              const currentModel = profile.judgeModel.trim()
+                              const options = currentModel && !installedModels.includes(currentModel)
+                                ? [currentModel, ...installedModels]
+                                : installedModels
+
+                              if (options.length === 0) {
+                                return <p className="settings-note">{text.autoUrgeJudgeModelEmpty}</p>
+                              }
+
+                              return (
+                                <select
+                                  id={`auto-urge-judge-model-${profile.id}`}
+                                  className="control settings-input"
+                                  value={currentModel}
+                                  onChange={(event) =>
+                                    updateAutoUrgeProfile(profile.id, { judgeModel: event.target.value })
+                                  }
+                                >
+                                  {currentModel ? null : <option value="">—</option>}
+                                  {options.map((modelName) => (
+                                    <option key={modelName} value={modelName}>
+                                      {modelName}
+                                    </option>
+                                  ))}
+                                </select>
+                              )
+                            })()}
+                          </div>
+                        ) : (
+                          <div className="auto-urge-profile-field">
+                            <label className="settings-label" htmlFor={`auto-urge-keyword-${profile.id}`}>
+                              {text.autoUrgeSuccessKeywordLabel}
+                            </label>
+                            <input
+                              id={`auto-urge-keyword-${profile.id}`}
+                              className="control settings-input"
+                              value={profile.successKeyword}
+                              onChange={(event) =>
+                                updateAutoUrgeProfile(profile.id, { successKeyword: event.target.value })
+                              }
+                              placeholder={text.autoUrgeSuccessKeywordPlaceholder}
+                            />
+                          </div>
+                        )}
 
                         <div className="auto-urge-profile-field auto-urge-profile-field-message">
                           <label className="settings-label" htmlFor={`auto-urge-message-${profile.id}`}>
@@ -1377,6 +1523,79 @@ function App() {
                 </div>
               )
             })}
+          </div>
+
+          <div className="ollama-settings">
+            <div className="auto-urge-settings-header">
+              <div className="settings-row-copy">
+                <label>{text.ollamaSectionTitle}</label>
+              </div>
+              <div className="settings-actions">
+                <AppButton
+                  type="button"
+                  disabled={ollamaActionPending}
+                  onClick={() => void refreshOllamaStatus()}
+                >
+                  {text.ollamaRefreshButton}
+                </AppButton>
+              </div>
+            </div>
+            <p className="settings-note">{text.ollamaSectionHint}</p>
+            <p className="settings-note ollama-status-line">
+              {ollamaStatus === null
+                ? text.ollamaStatusNotInstalled
+                : ollamaStatus.running
+                  ? `${text.ollamaStatusRunning}${ollamaStatus.version ? ` · v${ollamaStatus.version}` : ''}`
+                  : ollamaStatus.installed
+                    ? text.ollamaStatusNotRunning
+                    : text.ollamaStatusNotInstalled}
+            </p>
+            {ollamaStatus?.running ? (
+              <p className="settings-note">
+                {text.ollamaModelsLabel}
+                {': '}
+                {ollamaStatus.models.length > 0
+                  ? ollamaStatus.models.map((model) => model.name).join(', ')
+                  : '-'}
+              </p>
+            ) : null}
+            <div className="settings-actions ollama-actions">
+              {!ollamaStatus?.running ? (
+                <AppButton
+                  type="button"
+                  disabled={ollamaActionPending || ollamaStatus?.task.state === 'running'}
+                  onClick={() => void handleOllamaInstall()}
+                >
+                  {ollamaStatus?.installed ? text.ollamaStartButton : text.ollamaInstallButton}
+                </AppButton>
+              ) : null}
+              {ollamaStatus?.running &&
+              !ollamaStatus.models.some(
+                (model) => model.name === ollamaStatus.recommendedModel.name,
+              ) ? (
+                <AppButton
+                  type="button"
+                  disabled={ollamaActionPending || ollamaStatus.task.state === 'running'}
+                  onClick={() => void handleOllamaPullRecommended()}
+                >
+                  {`${text.ollamaPullRecommendedButton} ${ollamaStatus.recommendedModel.name}（${text.ollamaRecommendHint} ${ollamaStatus.recommendedModel.totalMemoryGb}GB）`}
+                </AppButton>
+              ) : null}
+            </div>
+            {ollamaStatus && ollamaStatus.task.state !== 'idle' ? (
+              <p
+                className={`settings-note ollama-task-line${ollamaStatus.task.state === 'error' ? ' is-error' : ''}`}
+              >
+                {ollamaStatus.task.state === 'running'
+                  ? text.ollamaTaskRunningLabel
+                  : ollamaStatus.task.state === 'error'
+                    ? text.ollamaTaskErrorLabel
+                    : text.ollamaTaskSuccessLabel}
+                {ollamaStatus.task.logs.length > 0
+                  ? ` — ${ollamaStatus.task.logs[ollamaStatus.task.logs.length - 1]?.message ?? ''}`
+                  : ''}
+              </p>
+            ) : null}
           </div>
         </div>
       )}

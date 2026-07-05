@@ -41,6 +41,7 @@ import {
 } from '../server/providers.ts'
 import { resilientProxyPool } from '../server/resilient-proxy.ts'
 import { SetupManager } from '../server/setup-manager.ts'
+import { OllamaManager } from '../server/ollama-manager.ts'
 import {
   captureRendererCrash as captureRendererCrashState,
   dismissRecentCrashRecovery as dismissRecentCrashRecoveryState,
@@ -80,6 +81,8 @@ import {
   gitPushRequestSchema,
   gitStageRequestSchema,
   setupRunRequestSchema,
+  ollamaJudgeRequestSchema,
+  ollamaPullRequestSchema,
   stateRecoverySelectionSchema,
   slashCommandRequestSchema,
   fileCreateRequestSchema,
@@ -113,6 +116,7 @@ type StreamListener = (payload: StreamEnvelope) => void
 
 type ChatManagerLike = Pick<ChatManager, 'closeAll' | 'createStream' | 'stop' | 'subscribe'>
 type SetupManagerLike = Pick<SetupManager, 'dispose' | 'getStatus' | 'start'>
+type OllamaManagerLike = Pick<OllamaManager, 'dispose' | 'getStatus' | 'startInstall' | 'startPull' | 'judge'>
 type MusicManagerLike = Pick<
   MusicManager,
   | 'getLoginStatus'
@@ -129,6 +133,7 @@ type MusicManagerLike = Pick<
 type DesktopBackendDependencies = {
   createChatManager?: () => ChatManagerLike
   createSetupManager?: () => SetupManagerLike
+  createOllamaManager?: () => OllamaManagerLike
   createMusicManager?: () => MusicManagerLike
   // Desktop push channel for Claude keepalive: when a pooled CLI process wakes
   // itself between turns (background task finished), the new stream is
@@ -139,6 +144,7 @@ type DesktopBackendDependencies = {
 export const createDesktopBackend = (deps: DesktopBackendDependencies = {}) => {
   let chatManager: ChatManagerLike | null = null
   let setupManager: SetupManagerLike | null = null
+  let ollamaManager: OllamaManagerLike | null = null
   let musicManager: MusicManagerLike | null = null
   let fileWatcherManager: FileWatcherManager | null = null
 
@@ -169,6 +175,14 @@ export const createDesktopBackend = (deps: DesktopBackendDependencies = {}) => {
     }
 
     return setupManager
+  }
+
+  const getOllamaManager = () => {
+    if (!ollamaManager) {
+      ollamaManager = deps.createOllamaManager?.() ?? new OllamaManager()
+    }
+
+    return ollamaManager
   }
 
   const getMusicManager = () => {
@@ -227,6 +241,18 @@ export const createDesktopBackend = (deps: DesktopBackendDependencies = {}) => {
     },
     runEnvironmentSetup(request?: unknown) {
       return getSetupManager().start(setupRunRequestSchema.parse(request ?? {}))
+    },
+    async fetchOllamaStatus() {
+      return getOllamaManager().getStatus()
+    },
+    runOllamaInstall() {
+      return getOllamaManager().startInstall()
+    },
+    runOllamaPull(request: unknown) {
+      return getOllamaManager().startPull(ollamaPullRequestSchema.parse(request ?? {}).model)
+    },
+    async judgeUrgeWithOllama(request: unknown) {
+      return getOllamaManager().judge(ollamaJudgeRequestSchema.parse(request ?? {}))
     },
     async fetchOnboardingStatus() {
       return inspectOnboardingStatus()
@@ -312,6 +338,7 @@ export const createDesktopBackend = (deps: DesktopBackendDependencies = {}) => {
     async dispose() {
       chatManager?.closeAll()
       setupManager?.dispose()
+      ollamaManager?.dispose()
       await resilientProxyPool.dispose()
     },
 

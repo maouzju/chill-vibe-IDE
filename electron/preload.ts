@@ -86,6 +86,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
   fetchSetupStatus: () => ipcRenderer.invoke('desktop:fetch-setup-status'),
   runEnvironmentSetup: (request: unknown) =>
     ipcRenderer.invoke('desktop:run-environment-setup', request),
+  fetchOllamaStatus: () => ipcRenderer.invoke('desktop:fetch-ollama-status'),
+  runOllamaInstall: () => ipcRenderer.invoke('desktop:run-ollama-install'),
+  runOllamaPull: (request: unknown) => ipcRenderer.invoke('desktop:run-ollama-pull', request),
+  judgeUrgeWithOllama: (request: unknown) =>
+    ipcRenderer.invoke('desktop:judge-urge-with-ollama', request),
   fetchOnboardingStatus: () => ipcRenderer.invoke('desktop:fetch-onboarding-status'),
   fetchGitStatus: (workspacePath: string) => ipcRenderer.invoke('desktop:fetch-git-status', workspacePath),
   fetchGitStatusPreview: (workspacePath: string) =>

@@ -25,6 +25,7 @@ type StreamFinishedTrigger = {
 type ManualActivationTrigger = {
   type: 'manual-activation'
   status: CardStatus
+  source?: 'card' | 'global'
 }
 
 export type AutoUrgeTrigger = StreamFinishedTrigger | ManualActivationTrigger
@@ -74,6 +75,17 @@ export const latestTurnHasPendingAskUser = (messages: ChatMessage[]) => {
   return messages
     .slice(latestUserMessageIndex + 1)
     .some((entry) => entry.meta?.kind === 'ask-user')
+}
+
+export const latestTurnEndedByManualStop = (messages: ChatMessage[]) => {
+  const latestUserMessageIndex = findLastUserMessageIndex(messages)
+
+  return messages
+    .slice(latestUserMessageIndex + 1)
+    .some(
+      (entry) =>
+        entry.meta?.kind === 'run-stopped' && entry.meta?.stopReason !== 'ask-user-answer',
+    )
 }
 
 const judgeTextTailLimit = 4000
@@ -166,6 +178,16 @@ export const evaluateAutoUrge = (
   // A pending question to the user always wins: never urge over an
   // unanswered ask-user, regardless of trigger or judge mode.
   if (latestTurnHasPendingAskUser(state.messages)) {
+    return { kind: 'skip' }
+  }
+
+  // A turn the user stopped by hand is a deliberate "wait" — neither the
+  // stream-finished path nor a global-urge sweep may override it. Only an
+  // explicit card-level re-activation counts as a new user instruction.
+  const respectsManualStop =
+    trigger.type === 'stream-finished' ||
+    (trigger.type === 'manual-activation' && trigger.source === 'global')
+  if (respectsManualStop && latestTurnEndedByManualStop(state.messages)) {
     return { kind: 'skip' }
   }
 

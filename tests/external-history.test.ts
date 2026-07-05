@@ -308,6 +308,65 @@ describe('external-history', () => {
     }
   })
 
+  it('loadExternalSession caps very long external transcripts before returning them to the renderer', async () => {
+    const baseName = 'rollout-2026-04-01T10-04-00-0195e0fd-5555-7555-8555-555555555555'
+    const sessionId = '0195e0fd-5555-7555-8555-555555555555'
+    const dayDir = path.join(codexSessionsDir, '2026', '04', '01')
+    const filePath = path.join(dayDir, `${baseName}.jsonl`)
+    fs.mkdirSync(dayDir, { recursive: true })
+
+    const events: unknown[] = [
+      {
+        type: 'session_meta',
+        timestamp: ts1,
+        payload: { id: sessionId, cwd: fakeWorkspace, model: 'gpt-5.5', timestamp: ts1 },
+      },
+    ]
+    for (let index = 0; index < 1200; index += 1) {
+      events.push(
+        index % 2 === 0
+          ? {
+              type: 'event_msg',
+              timestamp: ts1,
+              payload: { type: 'user_message', message: `External user message ${index + 1}` },
+            }
+          : {
+              type: 'response_item',
+              timestamp: ts2,
+              payload: {
+                role: 'assistant',
+                type: 'message',
+                content: [{ type: 'output_text', text: `External assistant reply ${index + 1}` }],
+              },
+            },
+      )
+    }
+    fs.writeFileSync(filePath, `${events.map((event) => JSON.stringify(event)).join('\n')}\n`, 'utf8')
+
+    const result = await loadExternalSession({
+      provider: 'codex',
+      sessionId: `codex:${baseName}`,
+      workspacePath: fakeWorkspace,
+    })
+
+    assert.equal(
+      result.entry.messages.length,
+      500,
+      'external transcripts should be capped like archived restores instead of shipping thousands of messages across IPC',
+    )
+    assert.equal(
+      result.entry.title,
+      'External user message 1',
+      'the title should still come from the first user message of the full transcript',
+    )
+    assert.equal(result.entry.messageCount, 1200, 'messageCount should report the full transcript length')
+    assert.equal(
+      result.entry.messages[result.entry.messages.length - 1]?.content,
+      'External assistant reply 1200',
+      'capping should keep the newest messages',
+    )
+  })
+
   it('prefers HOME-backed Codex history when packaged apps inherit a different USERPROFILE', async () => {
     delete process.env.CHILL_VIBE_EXTERNAL_HISTORY_HOME
     process.env.HOME = externalHomeDir

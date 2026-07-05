@@ -14,6 +14,7 @@ import type {
 } from '../shared/schema.js'
 import { stripXmlTags } from '../shared/default-state.js'
 import { getAppDataDir } from './app-paths.js'
+import { compactSessionHistoryMessagesForTransfer } from './session-history-compaction.js'
 
 type CachedEntry = { mtimeMs: number; size: number; summary: ExternalSessionSummary | null }
 type FileStatSnapshot = { mtimeMs: number; size: number }
@@ -927,6 +928,9 @@ export const loadExternalSession = async (
       'Codex session'
   }
 
+  // Cap the payload before it crosses the IPC bridge — external CLI transcripts
+  // can hold thousands of messages, and shipping them uncompacted can freeze or
+  // OOM the app. Title/model above are read from the full transcript first.
   return {
     entry: {
       id: createId(),
@@ -934,7 +938,8 @@ export const loadExternalSession = async (
       provider: provider as Provider,
       model,
       workspacePath,
-      messages,
+      messages: compactSessionHistoryMessagesForTransfer(messages),
+      messageCount: messages.length,
       archivedAt: new Date().toISOString(),
     },
   }

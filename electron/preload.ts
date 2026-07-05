@@ -1,4 +1,4 @@
-import { contextBridge, ipcRenderer } from 'electron'
+import { contextBridge, ipcRenderer, webUtils } from 'electron'
 import type { IpcRendererEvent } from 'electron'
 
 import { getAttachmentProtocolUrl } from '../shared/attachment-protocol.js'
@@ -112,6 +112,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   unsubscribeChatStream: (subscriptionId: string) =>
     ipcRenderer.invoke('desktop:unsubscribe-chat-stream', subscriptionId),
   getAttachmentUrl: getAttachmentProtocolUrl,
+  getPathForFile: (file: File) => webUtils.getPathForFile(file),
 
   // ── Music ──────────────────────────────────────────────────────────────────
   fetchMusicLoginStatus: () => ipcRenderer.invoke('desktop:music-login-status'),

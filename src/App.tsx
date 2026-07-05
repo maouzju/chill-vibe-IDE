@@ -222,11 +222,11 @@ import {
   shouldUseQueuedPersistenceForAction,
 } from './hooks/persistence-queue'
 import { usePersistence } from './hooks/usePersistence'
+import { getBoardWheelDisposition, getVerticalScrollLimit, overflowScrollablePattern } from './board-wheel'
 import { updateLatestKnownAppState } from './renderer-crash-state'
 import { resolveSessionHistoryEntryForRestore } from './session-history-restore'
 import { findPaneForTab, findPaneInLayout, ideReducer, type IdeAction } from './state'
 
-const overflowScrollablePattern = /(auto|scroll|overlay)/
 const emptyProxyStatsCounts: ProxyStatsCounts = {
   requests: 0,
   disconnects: 0,
@@ -382,104 +382,6 @@ function getAppScrollHost() {
   }
 
   return document.scrollingElement instanceof HTMLElement ? document.scrollingElement : document.documentElement
-}
-
-function canConsumeVerticalWheel(node: HTMLElement, deltaY: number) {
-  const style = getComputedStyle(node)
-  if (!overflowScrollablePattern.test(style.overflowY)) {
-    return false
-  }
-
-  const maxScrollTop = node.scrollHeight - node.clientHeight
-  if (maxScrollTop <= 1) {
-    return false
-  }
-
-  if (deltaY < 0) {
-    return node.scrollTop > 1
-  }
-
-  if (deltaY > 0) {
-    return node.scrollTop < maxScrollTop - 1
-  }
-
-  return false
-}
-
-function getVerticalScrollLimit(node: HTMLElement) {
-  return node.scrollHeight - node.clientHeight
-}
-
-function isCardVerticalScrollRegion(node: HTMLElement) {
-  if (!node.closest('.card-shell')) {
-    return false
-  }
-
-  const style = getComputedStyle(node)
-  if (!overflowScrollablePattern.test(style.overflowY)) {
-    return false
-  }
-
-  return getVerticalScrollLimit(node) > 1
-}
-
-function getBoardWheelPath(target: EventTarget | null, board: HTMLElement, composedPath: EventTarget[] | null) {
-  if (composedPath && composedPath.length > 0) {
-    const path: HTMLElement[] = []
-
-    for (const entry of composedPath) {
-      if (!(entry instanceof HTMLElement)) {
-        continue
-      }
-      if (entry === board) {
-        break
-      }
-      path.push(entry)
-    }
-
-    if (path.length > 0) {
-      return path
-    }
-  }
-
-  const path: HTMLElement[] = []
-  let current = target instanceof HTMLElement ? target : null
-
-  while (current && current !== board) {
-    path.push(current)
-    current = current.parentElement
-  }
-
-  return path
-}
-
-function getBoardWheelDisposition(
-  target: EventTarget | null,
-  board: HTMLElement,
-  deltaY: number,
-  composedPath: EventTarget[] | null = null,
-) {
-  const path = getBoardWheelPath(target, board, composedPath)
-
-  for (const current of path) {
-    if (isCardVerticalScrollRegion(current)) {
-      if (deltaY > 0) {
-        if (canConsumeVerticalWheel(current, deltaY)) {
-          return { type: 'scroll-card', node: current } as const
-        }
-
-        return { type: 'trap' } as const
-      }
-
-      return { type: 'pass' } as const
-    }
-
-    if (canConsumeVerticalWheel(current, deltaY)) {
-      return { type: 'pass' } as const
-    }
-  }
-
-  return { type: 'forward' } as const
 }
 
 function isInteractiveEscapeTarget(target: EventTarget | null) {

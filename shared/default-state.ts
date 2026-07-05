@@ -355,11 +355,16 @@ const normalizeAutoUrgeSettings = (
     autoUrgeProfiles[0] ??
     fallbackProfile
 
+  const requestedGlobalProfileId = normalizeText(settings?.autoUrgeGlobalProfileId)
+  const globalProfile =
+    autoUrgeProfiles.find((profile) => profile.id === requestedGlobalProfileId) ?? activeProfile
+
   return {
     autoUrgeProfiles,
     autoUrgeActiveProfileId: activeProfile.id,
     autoUrgeMessage: activeProfile.message,
     autoUrgeSuccessKeyword: activeProfile.successKeyword,
+    autoUrgeGlobalProfileId: globalProfile.id,
   }
 }
 
@@ -496,6 +501,9 @@ export const createDefaultSettings = (language: AppLanguage = defaultAppLanguage
   autoUrgeActiveProfileId: defaultAutoUrgeProfileId,
   autoUrgeMessage: defaultAutoUrgeMessage,
   autoUrgeSuccessKeyword: defaultAutoUrgeSuccessKeyword,
+  autoUrgeGlobalControlEnabled: false,
+  autoUrgeGlobalActive: false,
+  autoUrgeGlobalProfileId: defaultAutoUrgeProfileId,
   weatherCity: '',
   systemPrompt: defaultSystemPrompt,
   modelPromptRules: [],
@@ -611,6 +619,15 @@ export const normalizeAppSettings = (settings?: Partial<AppSettings> | null): Ap
     autoUrgeActiveProfileId: autoUrgeSettings.autoUrgeActiveProfileId,
     autoUrgeMessage: autoUrgeSettings.autoUrgeMessage,
     autoUrgeSuccessKeyword: autoUrgeSettings.autoUrgeSuccessKeyword,
+    autoUrgeGlobalControlEnabled:
+      typeof settings?.autoUrgeGlobalControlEnabled === 'boolean'
+        ? settings.autoUrgeGlobalControlEnabled
+        : defaults.autoUrgeGlobalControlEnabled,
+    autoUrgeGlobalActive:
+      typeof settings?.autoUrgeGlobalActive === 'boolean'
+        ? settings.autoUrgeGlobalActive
+        : defaults.autoUrgeGlobalActive,
+    autoUrgeGlobalProfileId: autoUrgeSettings.autoUrgeGlobalProfileId,
     weatherCity: normalizeText(settings?.weatherCity) || defaults.weatherCity,
     systemPrompt: normalizeSystemPrompt(settings?.systemPrompt),
     modelPromptRules: normalizeModelPromptRules(settings?.modelPromptRules),

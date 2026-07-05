@@ -60,6 +60,53 @@ describe('auto urge profile settings', () => {
     assert.equal(settings.autoUrgeSuccessKeyword, 'DONE')
   })
 
+  it('defaults the global urge control to hidden and inactive', () => {
+    const settings = createDefaultSettings()
+
+    assert.equal(settings.autoUrgeGlobalControlEnabled, false)
+    assert.equal(settings.autoUrgeGlobalActive, false)
+    assert.equal(settings.autoUrgeGlobalProfileId, settings.autoUrgeProfiles[0]?.id)
+  })
+
+  it('normalizes legacy saved settings without global urge fields to safe defaults', () => {
+    const settings = normalizeAppSettings({
+      autoUrgeEnabled: true,
+      autoUrgeMessage: '不要停，继续验证。',
+      autoUrgeSuccessKeyword: 'YES',
+    })
+
+    assert.equal(settings.autoUrgeGlobalControlEnabled, false)
+    assert.equal(settings.autoUrgeGlobalActive, false)
+    assert.equal(settings.autoUrgeGlobalProfileId, settings.autoUrgeProfiles[0]?.id)
+  })
+
+  it('keeps a valid global urge profile id and falls back when the profile is gone', () => {
+    const base = {
+      autoUrgeEnabled: true,
+      autoUrgeProfiles: [
+        { id: 'profile-dev', name: '开发验收', message: '继续验证。', successKeyword: 'DONE' },
+        { id: 'profile-review', name: '代码审查', message: '继续审查。', successKeyword: 'APPROVED' },
+      ],
+      autoUrgeActiveProfileId: 'profile-dev',
+    }
+
+    const kept = normalizeAppSettings({
+      ...base,
+      autoUrgeGlobalControlEnabled: true,
+      autoUrgeGlobalActive: true,
+      autoUrgeGlobalProfileId: 'profile-review',
+    })
+    assert.equal(kept.autoUrgeGlobalControlEnabled, true)
+    assert.equal(kept.autoUrgeGlobalActive, true)
+    assert.equal(kept.autoUrgeGlobalProfileId, 'profile-review')
+
+    const fallback = normalizeAppSettings({
+      ...base,
+      autoUrgeGlobalProfileId: 'profile-removed',
+    })
+    assert.equal(fallback.autoUrgeGlobalProfileId, 'profile-dev')
+  })
+
   it('upgrades legacy single-message settings into the new profile list', () => {
     const settings = normalizeAppSettings({
       autoUrgeEnabled: true,

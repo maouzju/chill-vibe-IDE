@@ -49,6 +49,8 @@ test('text editor cards without a file show a usable empty state instead of a bl
       brainstormRequestModel="gpt-5.5"
       availableQuickToolModels={[]}
       autoUrgeEnabled={false}
+      globalUrgeActive={false}
+      globalUrgeProfileId="auto-urge-default"
       autoUrgeMessage=""
       autoUrgeSuccessKeyword=""
       onSetAutoUrgeEnabled={() => undefined}

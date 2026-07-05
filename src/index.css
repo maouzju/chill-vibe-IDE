@@ -548,6 +548,55 @@ body.is-card-dragging .lane-drop-zone-top {
   outline: none;
 }
 
+.app-topbar-urge {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.55rem;
+  flex: 0 0 auto;
+  padding-left: 0.4rem;
+  -webkit-app-region: no-drag;
+  app-region: no-drag;
+}
+
+.app-topbar-urge-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  color: var(--ink-2);
+  font-size: 0.82rem;
+  font-weight: 600;
+  line-height: 1;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.app-topbar-urge-toggle input {
+  margin: 0;
+  cursor: pointer;
+}
+
+.app-topbar-urge-type {
+  appearance: none;
+  max-width: 9rem;
+  padding: 0.15rem 0.45rem;
+  border: 1px solid var(--line-strong);
+  border-radius: 6px;
+  background-color: color-mix(in srgb, var(--panel) 92%, var(--page-bg));
+  color: var(--ink-2);
+  font: inherit;
+  font-size: 0.78rem;
+  line-height: 1.2;
+  cursor: pointer;
+  transition: color 140ms var(--ease), border-color 140ms var(--ease);
+}
+
+.app-topbar-urge-type:hover,
+.app-topbar-urge-type:focus-visible {
+  color: var(--ink-1);
+  border-color: var(--ink-3);
+  outline: none;
+}
+
 .app-tab {
   appearance: none;
   border: none;

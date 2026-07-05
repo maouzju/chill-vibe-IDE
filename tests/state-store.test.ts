@@ -1740,6 +1740,105 @@ describe('state-store persistence', () => {
     assert.equal(restored.entry.messages.length, 30)
     assert.equal(restored.entry.messages[29]?.content, 'Archived sidecar message 30')
   })
+
+  it('loadSessionHistoryEntry compacts oversized legacy sidecar transcripts before returning them to the renderer', async () => {
+    const { loadSessionHistoryEntry } = await import('../server/state-store.ts')
+    const totalMessages = 1200
+    const giantCommandOutput = 'command-output-'.repeat(20_000)
+    const giantToolSummary = 'tool-summary-'.repeat(20_000)
+
+    // Simulate a sidecar archived by an older build: full transcript, giant
+    // structured payloads, written straight to disk without today's compaction.
+    const legacyEntry = {
+      id: 'history-oversized-1',
+      title: 'Legacy oversized archive',
+      sessionId: 'history-oversized-session-1',
+      provider: 'codex',
+      model: 'gpt-5.5',
+      workspacePath: 'D:/history-oversized',
+      messageCount: totalMessages,
+      messages: Array.from({ length: totalMessages }, (_, index) => ({
+        id: `history-oversized-message-${index + 1}`,
+        role: index % 2 === 0 ? 'user' : 'assistant',
+        content: `Legacy oversized message ${index + 1}`,
+        createdAt: new Date(Date.UTC(2026, 3, 13, 8, 0, 0, index)).toISOString(),
+        meta:
+          index === totalMessages - 2
+            ? {
+                provider: 'codex',
+                kind: 'command',
+                structuredData: JSON.stringify({
+                  itemId: 'history-oversized-command',
+                  kind: 'command',
+                  status: 'completed',
+                  command: 'node big-output.js',
+                  output: giantCommandOutput,
+                  exitCode: 0,
+                }),
+              }
+            : index === totalMessages - 1
+              ? {
+                  provider: 'codex',
+                  kind: 'tool',
+                  structuredData: JSON.stringify({
+                    itemId: 'history-oversized-tool',
+                    kind: 'tool',
+                    status: 'completed',
+                    summary: giantToolSummary,
+                  }),
+                }
+              : undefined,
+      })),
+      archivedAt: new Date('2026-04-13T08:20:00.000Z').toISOString(),
+    }
+
+    const sidecarDir = path.join(tmpDir, 'session-history')
+    await mkdir(sidecarDir, { recursive: true })
+    const sidecarPath = path.join(sidecarDir, 'history-oversized-1.json')
+    await writeFile(sidecarPath, `${JSON.stringify(legacyEntry, null, 2)}\n`, 'utf8')
+
+    const restored = await loadSessionHistoryEntry({ entryId: 'history-oversized-1' })
+
+    assert.equal(
+      restored.entry.messages.length,
+      500,
+      'restore payload should be capped like live cards instead of shipping the full transcript across IPC',
+    )
+    assert.equal(
+      restored.entry.messages[restored.entry.messages.length - 1]?.id,
+      `history-oversized-message-${totalMessages}`,
+      'capping should keep the newest messages',
+    )
+    assert.equal(restored.entry.messageCount, totalMessages, 'messageCount should still report the archived total')
+
+    const commandMeta = restored.entry.messages[restored.entry.messages.length - 2]?.meta
+    assert.ok(commandMeta?.structuredData, 'command message should keep structured data')
+    assert.ok(
+      (commandMeta?.structuredData?.length ?? 0) < 10_000,
+      'giant command output should be truncated in the restore payload',
+    )
+    const commandPayload = JSON.parse(commandMeta?.structuredData ?? '{}') as { command?: string; output?: string }
+    assert.equal(commandPayload.command, 'node big-output.js')
+    assert.match(commandPayload.output ?? '', /omitted/)
+
+    const toolMeta = restored.entry.messages[restored.entry.messages.length - 1]?.meta
+    assert.ok(toolMeta?.structuredData, 'tool message should keep structured data')
+    assert.ok(
+      (toolMeta?.structuredData?.length ?? 0) < 10_000,
+      'giant tool payloads without a top-level output/content string must also be truncated',
+    )
+    assert.doesNotThrow(
+      () => JSON.parse(toolMeta?.structuredData ?? ''),
+      'truncated tool payload must stay valid JSON',
+    )
+
+    const sidecarAfter = await readFile(sidecarPath, 'utf8')
+    assert.ok(
+      sidecarAfter.includes(giantCommandOutput),
+      'the on-disk sidecar archive must keep the full transcript untouched',
+    )
+  })
+
   it('saveState does not hydrate or rewrite unchanged archived sidecars for lightweight preview saves', async () => {
     const { saveState, loadState } = await import('../server/state-store.ts')
     const { stat } = await import('node:fs/promises')

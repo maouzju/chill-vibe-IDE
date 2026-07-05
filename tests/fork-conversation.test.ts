@@ -34,6 +34,7 @@ const createCard = (overrides: Partial<ChatCard> = {}): ChatCard => ({
   id: overrides.id ?? 'card-1',
   title: overrides.title ?? 'Chat 1',
   sessionId: overrides.sessionId ?? 'session-abc',
+  sessionModel: overrides.sessionModel,
   providerSessions: overrides.providerSessions ?? {},
   streamId: overrides.streamId,
   status: overrides.status ?? 'idle',
@@ -193,7 +194,7 @@ describe('forkConversation', () => {
     assert.equal(originalCard.sessionId, 'session-abc')
   })
 
-  it('forked card has no sessionId', () => {
+  it('forked card has no sessionId when no native fork was produced', () => {
     const next = ideReducer(state, {
       type: 'forkConversation',
       columnId: 'col-1',
@@ -205,6 +206,39 @@ describe('forkConversation', () => {
     const forkedCardId = Object.keys(nextColumn.cards).find((id) => id !== 'card-1')!
     const forkedCard = nextColumn.cards[forkedCardId]!
     assert.equal(forkedCard.sessionId, undefined)
+  })
+
+  it('forked card adopts the forked native session id and the source session model', () => {
+    const modelTaggedCard = createCard({
+      id: 'card-1',
+      title: 'Chat 1',
+      messages,
+      sessionModel: 'gpt-5.5-codex',
+    })
+    const modelTaggedColumn = createColumn({
+      id: 'col-1',
+      cards: { 'card-1': modelTaggedCard },
+      layout: createPane('pane-1', ['card-1'], 'card-1'),
+    })
+    const modelTaggedState = buildState([modelTaggedColumn])
+
+    const next = ideReducer(modelTaggedState, {
+      type: 'forkConversation',
+      columnId: 'col-1',
+      cardId: 'card-1',
+      messageId: 'm3',
+      forkedSessionId: 'forked-session-xyz',
+    })
+
+    const nextColumn = next.columns.find((c) => c.id === 'col-1')!
+    const forkedCardId = Object.keys(nextColumn.cards).find((id) => id !== 'card-1')!
+    const forkedCard = nextColumn.cards[forkedCardId]!
+    assert.equal(forkedCard.sessionId, 'forked-session-xyz')
+    assert.equal(forkedCard.sessionModel, 'gpt-5.5-codex')
+    // Only the active provider's session is forked.
+    assert.deepEqual(forkedCard.providerSessions, {})
+    // The source card keeps its own session untouched.
+    assert.equal(nextColumn.cards['card-1']!.sessionId, 'session-abc')
   })
 
   it('forked card appears in same pane and is active', () => {
@@ -280,5 +314,21 @@ describe('forkConversation', () => {
     assert.match(handlerBlock, /const action: IdeAction = \{\s*type: 'forkConversation'/)
     assert.match(handlerBlock, /persistAfterAction\(action\.type,\s*applyAction\(action\)\)/)
     assert.doesNotMatch(handlerBlock, /dispatch\(\{\s*type: 'forkConversation'/)
+  })
+
+  it('App requests a native session fork before dispatching and falls back on null', async () => {
+    const source = await readFile(new URL('../src/App.tsx', import.meta.url), 'utf8')
+    const handlerStart = source.indexOf('onForkConversation={(cardId, messageId)')
+    const handlerEnd = handlerStart >= 0 ? source.indexOf('onOpenFile=', handlerStart) : -1
+    const handlerBlock =
+      handlerStart >= 0 && handlerEnd > handlerStart
+        ? source.slice(handlerStart, handlerEnd)
+        : ''
+
+    // The native fork must be attempted for session-bearing cards, and any
+    // failure must degrade to the old sessionless fork instead of blocking the UI.
+    assert.match(handlerBlock, /forkProviderSession\(/)
+    assert.match(handlerBlock, /catch/)
+    assert.match(handlerBlock, /forkedSessionId/)
   })
 })

@@ -12,6 +12,8 @@ import {
   resolveMessageLocalLinkTarget,
   revealMessageLocalLinkTarget,
 } from './message-local-link.js'
+import { localImageProtocolScheme } from '../shared/local-image-protocol.js'
+import { resolveLocalImageRequestTarget } from './local-image-protocol.js'
 import {
   resolveDesktopDataDir,
   resolveDesktopRuntimeProfilePaths,
@@ -69,6 +71,7 @@ app.commandLine.appendSwitch('disable-features', 'CalculateNativeWinOcclusion')
 protocol.registerSchemesAsPrivileged([
   { scheme: attachmentProtocolScheme, privileges: { supportFetchAPI: true, secure: true } },
   { scheme: audioProtocolScheme, privileges: { supportFetchAPI: true, secure: true, stream: true } },
+  { scheme: localImageProtocolScheme, privileges: { supportFetchAPI: true, secure: true } },
 ])
 
 if (desktopRuntimeProfilePaths) {
@@ -366,6 +369,22 @@ function registerAudioProtocol() {
   })
 }
 
+function registerLocalImageProtocol() {
+  protocol.handle(localImageProtocolScheme, async (request) => {
+    const filePath = resolveLocalImageRequestTarget(request.url)
+
+    if (!filePath) {
+      return new Response('Image not found.', { status: 404 })
+    }
+
+    try {
+      return await net.fetch(pathToFileURL(filePath).toString())
+    } catch {
+      return new Response('Image not found.', { status: 404 })
+    }
+  })
+}
+
 function registerDesktopHandlers() {
   ipcMain.handle('window:minimize', (event) => {
     const win = getEventWindow(event)
@@ -484,6 +503,9 @@ function registerDesktopHandlers() {
     desktopBackend.fetchSlashCommands(request),
   )
   ipcMain.handle('desktop:request-chat', (_event, request) => desktopBackend.requestChat(request))
+  ipcMain.handle('desktop:fork-provider-session', (_event, request) =>
+    desktopBackend.forkProviderSession(request),
+  )
   ipcMain.handle('desktop:upload-image-attachment', (_event, request) =>
     desktopBackend.uploadImageAttachment(request),
   )
@@ -826,6 +848,7 @@ app.whenReady().then(async () => {
   registerDesktopHandlers()
   await registerAttachmentProtocol()
   registerAudioProtocol()
+  registerLocalImageProtocol()
   createWindow()
 
   app.on('activate', () => {

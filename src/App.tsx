@@ -120,6 +120,7 @@ import {
   onWindowMaximizedChanged,
   openChatStream,
   requestChat,
+  forkProviderSession,
   resetState,
   runEnvironmentSetup,
   fetchOllamaStatus,
@@ -229,7 +230,7 @@ import { usePersistence } from './hooks/usePersistence'
 import { getBoardWheelDisposition, getVerticalScrollLimit, overflowScrollablePattern } from './board-wheel'
 import { updateLatestKnownAppState } from './renderer-crash-state'
 import { resolveSessionHistoryEntryForRestore } from './session-history-restore'
-import { findPaneForTab, findPaneInLayout, ideReducer, type IdeAction } from './state'
+import { findPaneForTab, findPaneInLayout, ideReducer, resolveForkPointMessage, type IdeAction } from './state'
 
 const emptyProxyStatsCounts: ProxyStatsCounts = {
   requests: 0,
@@ -7664,8 +7665,35 @@ function App() {
             onSendNextQueuedNow={(cardId) => sendNextQueuedNow(column.id, cardId)}
             onManualRecoverStream={(cardId) => manuallyRecoverStream(column.id, cardId)}
             onForkConversation={(cardId, messageId) => {
-              const action: IdeAction = { type: 'forkConversation', columnId: column.id, cardId, messageId }
-              persistAfterAction(action.type, applyAction(action))
+              void (async () => {
+                // Lossless path: copy the provider's native session file
+                // truncated before the fork point, so the forked card resumes
+                // with full context instead of the budgeted transcript replay.
+                const sourceCard = column.cards[cardId]
+                const forkPoint = sourceCard
+                  ? resolveForkPointMessage(sourceCard.messages, messageId)
+                  : null
+                const forkedSessionId =
+                  sourceCard?.sessionId?.trim() && forkPoint && forkPoint.messageIndex > 0
+                    ? await forkProviderSession({
+                        provider: sourceCard.provider,
+                        workspacePath: column.workspacePath,
+                        sessionId: sourceCard.sessionId,
+                        forkPoint: {
+                          content: forkPoint.message.content,
+                          createdAt: forkPoint.message.createdAt,
+                        },
+                      }).catch(() => null)
+                    : null
+                const action: IdeAction = {
+                  type: 'forkConversation',
+                  columnId: column.id,
+                  cardId,
+                  messageId,
+                  ...(forkedSessionId ? { forkedSessionId } : {}),
+                }
+                persistAfterAction(action.type, applyAction(action))
+              })()
             }}
             onOpenFile={(paneId, relativePath) => {
               const fileName = relativePath.split('/').pop() ?? relativePath

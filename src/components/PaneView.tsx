@@ -27,6 +27,7 @@ import { clearDragPayload, readDragPayload, writeDragPayload } from '../dnd'
 import type { CardRecoveryStatus } from '../stream-recovery-feedback'
 import {
   composerFocusRequestEventName,
+  decideComposerFocusRequest,
   type ComposerFocusRequestDetail,
 } from './composer-focus'
 import { decideMisroutedTabPointerRescue, isPointerWithinRect } from './pane-tab-rescue'
@@ -700,11 +701,13 @@ const PaneViewView = ({
     // render's closure: in the one-frame window after a new tab mounts, its
     // card is not in this cards map yet — never dereference it.
     const card = column.cards[tabId]
-    if (!card || !cardUsesComposer(card)) {
-      return
+    const decision = decideComposerFocusRequest({
+      cardPresent: card != null,
+      cardUsesComposer: card != null && cardUsesComposer(card),
+    })
+    if (decision === 'bump') {
+      setComposerFocusRequest((current) => current + 1)
     }
-
-    setComposerFocusRequest((current) => current + 1)
   }
 
   // Keep the document-capture tab rescue pointed at this render's handlers

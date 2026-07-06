@@ -1,4 +1,4 @@
-import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type DragEvent, type MouseEvent, type PointerEvent, type WheelEvent } from 'react'
+import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type DragEvent, type MouseEvent, type PointerEvent } from 'react'
 
 import { getLocaleText } from '../../shared/i18n'
 import {
@@ -31,6 +31,7 @@ import {
   type ComposerFocusRequestDetail,
 } from './composer-focus'
 import { decideMisroutedTabPointerRescue, isPointerWithinRect } from './pane-tab-rescue'
+import { decideTabStripWheelScroll } from './pane-tab-wheel'
 import { notifyForensicsRescueEvent } from '../diagnostics/stuck-pane-forensics'
 import type { QueuedSendSummary, SendMessageOptions } from './deferred-send-queue'
 import { arePaneViewPropsEqual } from './layout-memoization'
@@ -420,6 +421,52 @@ const PaneViewView = ({
     document.addEventListener('pointerdown', handleMisroutedTabPointerDown, true)
     return () => {
       document.removeEventListener('pointerdown', handleMisroutedTabPointerDown, true)
+    }
+  }, [])
+
+  // Tab strip wheel scrolling lives on the same misroute-proof footing as the
+  // pointerdown rescue above: a React onWheel handler needs the event target
+  // to bubble through this pane, so a stale compositor hit-test surface that
+  // routes the wheel elsewhere makes an overflowing tab bar impossible to
+  // scroll. Watch at document capture with a non-passive listener (React
+  // registers root wheel listeners passive, so its preventDefault never
+  // worked) and decide purely from pointer geometry + layout truth.
+  useEffect(() => {
+    const handleTabStripWheel = (event: globalThis.WheelEvent) => {
+      const strip = tabStripRef.current
+      const bar = strip?.parentElement
+      if (!strip || !bar) {
+        return
+      }
+
+      const point = { x: event.clientX, y: event.clientY }
+      const decision = decideTabStripWheelScroll(
+        point,
+        { deltaX: event.deltaX, deltaY: event.deltaY },
+        {
+          rect: bar.getBoundingClientRect(),
+          scrollLeft: strip.scrollLeft,
+          scrollWidth: strip.scrollWidth,
+          clientWidth: strip.clientWidth,
+        },
+        () => {
+          const hit = document.elementFromPoint(point.x, point.y)
+          return hit !== null && bar.contains(hit)
+        },
+      )
+
+      if (decision.kind !== 'scroll') {
+        return
+      }
+
+      strip.scrollLeft = decision.nextScrollLeft
+      event.preventDefault()
+      event.stopPropagation()
+    }
+
+    document.addEventListener('wheel', handleTabStripWheel, { capture: true, passive: false })
+    return () => {
+      document.removeEventListener('wheel', handleTabStripWheel, { capture: true })
     }
   }, [])
 
@@ -917,38 +964,6 @@ const PaneViewView = ({
     clearHints()
   }
 
-  const handleTabBarWheel = (event: WheelEvent<HTMLDivElement>) => {
-    const strip = tabStripRef.current
-    if (!strip) {
-      return
-    }
-
-    const maxScrollLeft = strip.scrollWidth - strip.clientWidth
-    if (maxScrollLeft <= 1) {
-      return
-    }
-
-    const dominantDelta =
-      Math.abs(event.deltaX) > Math.abs(event.deltaY) ? event.deltaX : event.deltaY
-
-    if (dominantDelta === 0) {
-      return
-    }
-
-    const nextScrollLeft = Math.min(
-      Math.max(strip.scrollLeft + dominantDelta, 0),
-      maxScrollLeft,
-    )
-
-    if (Math.abs(nextScrollLeft - strip.scrollLeft) < 1) {
-      return
-    }
-
-    strip.scrollLeft = nextScrollLeft
-    event.preventDefault()
-    event.stopPropagation()
-  }
-
   // Close context menu on outside click or Escape
   useEffect(() => {
     if (!contextMenu) return
@@ -1016,7 +1031,6 @@ const PaneViewView = ({
     >
       <div
         className="pane-tab-bar"
-        onWheel={handleTabBarWheel}
         onDoubleClick={handleTabBarDoubleClick}
         onDragOver={(event) => {
           const payload = readDragPayload(event)

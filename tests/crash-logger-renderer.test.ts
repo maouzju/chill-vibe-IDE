@@ -115,7 +115,11 @@ test('trimStateForRendererCrashCapture keeps crash payload bounded without dropp
   assert.equal(trimmedCard?.messageCount, 240)
   assert.ok((trimmedCard?.messages.at(-1)?.content.length ?? 0) < 8_000)
   assert.ok((trimmedCard?.messages.at(-2)?.meta?.structuredData?.length ?? 0) < 8_000)
-  assert.equal(trimmed.sessionHistory.length, 20)
-  assert.equal(trimmed.sessionHistory[0]?.messages.length, 0)
-  assert.equal(trimmed.sessionHistory[0]?.messagesPreview, true)
+  // Session history entries become tiny previews (messages emptied), so the
+  // crash payload must keep every index entry: captureRendererCrash persists
+  // this state verbatim, and a sliced index permanently drops the older
+  // archived sessions from state.json (real data loss on 2026-07-04).
+  assert.equal(trimmed.sessionHistory.length, 30)
+  assert.ok(trimmed.sessionHistory.every((entry) => entry.messages.length === 0))
+  assert.ok(trimmed.sessionHistory.every((entry) => entry.messagesPreview === true))
 })

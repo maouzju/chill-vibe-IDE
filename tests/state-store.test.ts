@@ -1571,6 +1571,131 @@ describe('state-store persistence', () => {
     assert.match(loaded.recovery.recentCrash?.errorSummary ?? '', /renderBoard is not defined/i)
   })
 
+  it('captureRendererCrash merges archived history entries missing from the truncated crash state back from disk', async () => {
+    const { saveState, captureRendererCrash, loadStateForRenderer } = await import('../server/state-store.ts')
+    const workspacePath = 'D:/crash-history-merge'
+    const makeHistoryEntry = (index: number) => ({
+      id: `crash-merge-history-${index}`,
+      title: `Archived session ${index}`,
+      sessionId: `crash-merge-session-${index}`,
+      provider: 'codex' as const,
+      model: 'gpt-5.5',
+      workspacePath,
+      messageCount: 1,
+      messages: [
+        {
+          id: `crash-merge-history-message-${index}`,
+          role: 'assistant' as const,
+          content: `archived answer ${index}`,
+          createdAt: new Date(Date.UTC(2026, 6, 1, 10, index)).toISOString(),
+        },
+      ],
+      archivedAt: new Date(Date.UTC(2026, 6, 1, 10, index)).toISOString(),
+    })
+
+    const state = createDefaultState(workspacePath)
+    state.sessionHistory = [makeHistoryEntry(3), makeHistoryEntry(2), makeHistoryEntry(1)]
+    await saveState(state)
+
+    // Simulate the renderer crash payload: live chat content survives, but the
+    // history index arrives truncated to its most recent entry only.
+    const crashState = createDefaultState(workspacePath)
+    const crashCard = getFirstCard(crashState)
+    assert.ok(crashCard, 'expected a default card to exist in the first column')
+    crashCard.messages = [
+      {
+        id: 'crash-merge-live-message',
+        role: 'user',
+        content: 'The board just went blank.',
+        createdAt: new Date('2026-07-04T06:30:00.000Z').toISOString(),
+      },
+    ]
+    crashState.sessionHistory = [makeHistoryEntry(3)]
+
+    const recentCrash = await captureRendererCrash({
+      source: 'react-boundary',
+      message: 'RangeError: invalid array length',
+      stack: 'RangeError: invalid array length',
+      state: crashState,
+    })
+    assert.ok(recentCrash, 'renderer crash capture should persist recovery metadata')
+
+    const loaded = await loadStateForRenderer()
+    const persistedIds = loaded.state.sessionHistory.map((entry) => entry.id)
+    assert.ok(persistedIds.includes('crash-merge-history-3'), 'entry present in the crash state should survive')
+    assert.ok(persistedIds.includes('crash-merge-history-2'), 'entry missing from the crash state must be merged back from disk')
+    assert.ok(persistedIds.includes('crash-merge-history-1'), 'entry missing from the crash state must be merged back from disk')
+    assert.ok(
+      persistedIds.indexOf('crash-merge-history-3') < persistedIds.indexOf('crash-merge-history-2'),
+      'entries from the crash state should stay ahead of merged-back older entries',
+    )
+  })
+
+  it('captureRendererCrash keeps the merged history bounded by the per-workspace cap', async () => {
+    const { saveState, captureRendererCrash, loadStateForRenderer } = await import('../server/state-store.ts')
+    const { maxSessionHistoryPerWorkspace } = await import('../shared/default-state.ts')
+    const workspacePath = 'D:/crash-history-cap'
+    const makeHistoryEntry = (index: number) => ({
+      id: `crash-cap-history-${index}`,
+      title: `Archived session ${index}`,
+      provider: 'codex' as const,
+      model: 'gpt-5.5',
+      workspacePath,
+      messageCount: 1,
+      messages: [
+        {
+          id: `crash-cap-history-message-${index}`,
+          role: 'assistant' as const,
+          content: `archived answer ${index}`,
+          createdAt: new Date(Date.UTC(2026, 5, 1, 8, 0, index)).toISOString(),
+        },
+      ],
+      archivedAt: new Date(Date.UTC(2026, 5, 1, 8, 0, index)).toISOString(),
+    })
+
+    const overCap = maxSessionHistoryPerWorkspace + 5
+    const state = createDefaultState(workspacePath)
+    state.sessionHistory = Array.from({ length: overCap }, (_, index) => makeHistoryEntry(overCap - index))
+    await saveState(state)
+
+    const crashState = createDefaultState(workspacePath)
+    const crashCard = getFirstCard(crashState)
+    assert.ok(crashCard, 'expected a default card to exist in the first column')
+    crashCard.messages = [
+      {
+        id: 'crash-cap-live-message',
+        role: 'user',
+        content: 'Crash while archiving.',
+        createdAt: new Date('2026-07-04T06:31:00.000Z').toISOString(),
+      },
+    ]
+    crashState.sessionHistory = [makeHistoryEntry(overCap)]
+
+    await captureRendererCrash({
+      source: 'react-boundary',
+      message: 'RangeError: invalid array length',
+      stack: 'RangeError: invalid array length',
+      state: crashState,
+    })
+
+    const loaded = await loadStateForRenderer()
+    const workspaceEntries = loaded.state.sessionHistory.filter(
+      (entry) => entry.workspacePath.toLowerCase() === workspacePath.toLowerCase(),
+    )
+    assert.ok(
+      workspaceEntries.length <= maxSessionHistoryPerWorkspace,
+      `merged history should stay within ${maxSessionHistoryPerWorkspace} entries per workspace, got ${workspaceEntries.length}`,
+    )
+    const capHistoryIds = workspaceEntries
+      .map((entry) => entry.id)
+      .filter((id) => id.startsWith('crash-cap-history-'))
+    assert.equal(
+      capHistoryIds[0],
+      `crash-cap-history-${overCap}`,
+      'the newest entry from the crash state should stay ahead of merged-back entries',
+    )
+  })
+
   it('recent crash recovery stays isolated to the current desktop runtime kind', async () => {
     process.env.CHILL_VIBE_RUNTIME_KIND = 'dev'
 

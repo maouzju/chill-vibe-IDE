@@ -8,7 +8,6 @@ let latestKnownState: AppState | null = null
 let lastCaptureSignature = ''
 let pendingCapture: Promise<Awaited<ReturnType<typeof captureRendererCrash>>> | null = null
 const crashCaptureStateMaxLiveMessages = 160
-const crashCaptureStateMaxSessionHistoryEntries = 20
 const crashCaptureMessageContentChars = 6_000
 
 const trimTextForCrashCapture = (value: string) =>
@@ -54,7 +53,10 @@ export const trimStateForRendererCrashCapture = (state: AppState): AppState => (
       }),
     ),
   })),
-  sessionHistory: state.sessionHistory.slice(0, crashCaptureStateMaxSessionHistoryEntries).map((entry) => ({
+  // Keep every index entry: captureRendererCrash persists this state verbatim,
+  // so slicing here permanently drops older archived sessions from state.json.
+  // Preview-izing (messages: []) already keeps the payload small.
+  sessionHistory: state.sessionHistory.map((entry) => ({
     ...entry,
     messages: [],
     messageCount: Math.max(entry.messageCount ?? 0, entry.messages.length),

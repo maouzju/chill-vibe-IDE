@@ -18,6 +18,7 @@ import {
   normalizeColumnWidth,
   normalizeSessionHistory,
   maxRecentWorkspaces,
+  maxSessionHistoryPerWorkspace,
 } from '../shared/default-state.js'
 import { normalizeBrainstormAnswerCount } from '../shared/brainstorm.js'
 import { getWorkspaceTitle } from '../shared/i18n.js'
@@ -1851,6 +1852,60 @@ const loadRendererStartupState = async (dataDir = getAppDataDir()): Promise<AppS
   }
 }
 
+/**
+ * Lightweight index read for merge decisions: cached lightweight state first,
+ * then the raw state.json history array. Never hydrates session-history
+ * sidecars — crash capture must stay cheap even on multi-thousand-entry
+ * archives (see loadSessionHistorySidecars memory pitfalls).
+ */
+const loadPersistedSessionHistoryIndex = async (dataDir = getAppDataDir()): Promise<SessionHistoryEntry[]> => {
+  const cachedSessionHistory = getCachedStateEntry(dataDir)?.state.sessionHistory
+  if (Array.isArray(cachedSessionHistory) && cachedSessionHistory.length > 0) {
+    return cachedSessionHistory
+  }
+
+  try {
+    const file = await readFile(getStateFilePathForDir(dataDir), 'utf8')
+    const raw = JSON.parse(file) as Record<string, unknown>
+    return normalizePersistedSessionHistory(raw.sessionHistory)
+  } catch {
+    return []
+  }
+}
+
+const capSessionHistoryPerWorkspace = (entries: SessionHistoryEntry[]): SessionHistoryEntry[] => {
+  const counts = new Map<string, number>()
+  return entries.filter((entry) => {
+    const key = entry.workspacePath.toLowerCase()
+    const count = (counts.get(key) ?? 0) + 1
+    counts.set(key, count)
+    return count <= maxSessionHistoryPerWorkspace
+  })
+}
+
+/**
+ * The renderer crash payload deliberately trims heavy state before crossing
+ * IPC, and historically it also sliced the session-history index — persisting
+ * that truncated index verbatim permanently dropped older archived sessions
+ * from state.json (real data loss on 2026-07-04). Union the incoming index
+ * with what is already on disk so a crash save can only add entries, never
+ * silently forget them. Incoming entries keep their order (newest first);
+ * disk-only entries are appended behind them, then the per-workspace cap is
+ * re-applied.
+ */
+const mergeMissingPersistedHistoryEntries = (
+  incoming: SessionHistoryEntry[],
+  persisted: SessionHistoryEntry[],
+): SessionHistoryEntry[] => {
+  const seen = new Set(incoming.map((entry) => entry.id))
+  const missing = persisted.filter((entry) => !seen.has(entry.id))
+  if (missing.length === 0) {
+    return incoming
+  }
+
+  return capSessionHistoryPerWorkspace([...incoming, ...missing])
+}
+
 const loadPersistedSessionHistory = async (dataDir = getAppDataDir()) => {
   const cachedStateEntry = getCachedStateEntry(dataDir)
   const cachedState = cachedStateEntry?.state
@@ -2008,6 +2063,14 @@ export const captureRendererCrash = async (
   if (!recovery) {
     return null
   }
+
+  // The crash payload's history index may be incomplete (renderer-side
+  // trimming, partial state at crash time) — union it with the on-disk index
+  // before persisting so the crash save never erases older archived sessions.
+  state.sessionHistory = mergeMissingPersistedHistoryEntries(
+    state.sessionHistory,
+    await loadPersistedSessionHistoryIndex(dataDir),
+  )
 
   const taggedRecovery = (() => {
     const runtimeKind = getCurrentDesktopRuntimeKind()

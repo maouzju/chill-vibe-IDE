@@ -91,6 +91,7 @@ import {
   decideTextareaPressFocusVerification,
   hitTestRepairEscalationWindowMs,
   isComposerFocusEffectivelyVacant,
+  isReclaimableOwnPaneChrome,
   shouldRefocusAfterComposerBlur,
   shouldSkipComposerRescueForIgnoredSurface,
   startComposerFocusAttempt,
@@ -1841,15 +1842,11 @@ const ChatCardView = ({
 
     // Focus resting on this pane's own tab strip is the direct result of the
     // click that requested composer focus — retrying over it is the point of
-    // the request. Any other pane's chrome means the user moved on.
-    const isOwnPaneChrome = (element: Element) => {
-      const pane = textareaRef.current?.closest('.pane-view') ?? null
-      return (
-        pane !== null &&
-        element.closest('.pane-view') === pane &&
-        element.closest('.pane-tab-bar') !== null
-      )
-    }
+    // the request. Any other pane's chrome means the user moved on, and a
+    // non-active tab button in this same strip is a switch-away to another
+    // session that must not be wrestled back (dump 2026-07-06T03-24-57).
+    const isOwnPaneChrome = (element: Element) =>
+      isReclaimableOwnPaneChrome(element, textareaRef.current?.closest('.pane-view') ?? null)
 
     const makeDeps = (withEscalation: boolean): ComposerFocusAttemptDeps => ({
       focusTextarea: () => {
@@ -1931,10 +1928,7 @@ const ChatCardView = ({
         event.timeStamp - lastPointerDownOutsideComposerAtRef.current <
         composerBlurOutsidePressWindowMs
       const pane = textarea.closest('.pane-view')
-      const isOwnPaneChrome = (element: Element) =>
-        pane !== null &&
-        element.closest('.pane-view') === pane &&
-        element.closest('.pane-tab-bar') !== null
+      const isOwnPaneChrome = (element: Element) => isReclaimableOwnPaneChrome(element, pane)
       // Focus moves after blur; check on the next frame, then again shortly after
       // in case the vacancy is created a beat later by a competing focus handler.
       const reclaim = () => {
@@ -2071,10 +2065,7 @@ const ChatCardView = ({
         return isComposerFocusEffectivelyVacant(
           document.activeElement,
           document.body,
-          (element) =>
-            pane !== null &&
-            element.closest('.pane-view') === pane &&
-            element.closest('.pane-tab-bar') !== null,
+          (element) => isReclaimableOwnPaneChrome(element, pane),
         )
       },
       requestFrame: (callback) => window.requestAnimationFrame(callback),

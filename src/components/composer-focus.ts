@@ -125,6 +125,56 @@ export const isComposerFocusEffectivelyVacant = (
   return isOwnPaneChrome(activeElement)
 }
 
+// Forensic dump 2026-07-06T03-24-57: a pane holds several streaming session
+// tabs; clicking a DIFFERENT tab to switch away lands focus on that tab's
+// button, which sits in this pane's own .pane-tab-bar. The blur-reclaim then
+// saw "own pane chrome ⇒ vacant" and yanked focus back into the still-active
+// card's composer — the tab switch never took, so new sessions were unclickable.
+// A tab button that would switch AWAY from the card holding the composer is a
+// deliberate departure, not the composer-focus gesture. Only the card's own
+// tab button and non-tab chrome (the "+" add button, tab-bar whitespace) may be
+// treated as retryable vacancy.
+export const isOwnPaneChromeReclaimable = (input: {
+  focusIsInOwnPaneTabBar: boolean
+  focusIsOnTabButton: boolean
+  focusIsOnThisCardsTab: boolean
+}): boolean => {
+  if (!input.focusIsInOwnPaneTabBar) {
+    return false
+  }
+  // Non-tab chrome (add button, strip whitespace) is always the focus gesture.
+  if (!input.focusIsOnTabButton) {
+    return true
+  }
+  // A tab button only counts as the focus gesture when it is THIS card's own
+  // tab; any other tab button is a switch-away the user asked for.
+  return input.focusIsOnThisCardsTab
+}
+
+// DOM adapter for isOwnPaneChromeReclaimable, shared by the three blur/verify
+// reclaim closures in ChatCard. `element` is the current activeElement; `pane`
+// is the .pane-view that owns this card's composer. The blur-reclaim only runs
+// for the active card, so the pane's own `.pane-tab.is-active` button IS this
+// card's tab — a non-active tab button in the same strip is the switch-away.
+export const isReclaimableOwnPaneChrome = (
+  element: Element,
+  pane: Element | null,
+): boolean => {
+  if (pane === null || element.closest('.pane-view') !== pane) {
+    return false
+  }
+  const tabBar = element.closest('.pane-tab-bar')
+  if (tabBar === null) {
+    return false
+  }
+  const tabButton = element.closest('.pane-tab')
+  return isOwnPaneChromeReclaimable({
+    focusIsInOwnPaneTabBar: true,
+    focusIsOnTabButton: tabButton !== null,
+    focusIsOnThisCardsTab: tabButton !== null && tabButton.classList.contains('is-active'),
+  })
+}
+
 // The retry ladder above is request-driven: it only runs when a structural
 // action (tab switch/add, keyboard shortcut) bumps composerFocusRequest. That
 // leaves a gap the forensic dump caught red-handed — the user clicks the

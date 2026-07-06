@@ -11,10 +11,62 @@ import {
   decideTextareaPressFocusVerification,
   hitTestRepairEscalationWindowMs,
   isComposerFocusEffectivelyVacant,
+  isOwnPaneChromeReclaimable,
+  isReclaimableOwnPaneChrome,
   shouldRefocusAfterComposerBlur,
   startComposerFocusAttempt,
   type ComposerFocusAttemptDeps,
 } from '../src/components/composer-focus'
+
+// Minimal Element stub with the closest()/classList surface the DOM adapter
+// uses, so the tab-strip traversal can be exercised without a full DOM engine.
+type StubNode = {
+  classes: string[]
+  parent: StubNode | null
+  el?: Element
+}
+// Each StubNode maps to exactly one Element (memoized on the node) so that
+// closest() returns a STABLE reference — real DOM closest() does, and the
+// adapter relies on `closest('.pane-view') === pane` reference equality.
+const makeStubElement = (node: StubNode): Element => {
+  if (node.el) {
+    return node.el
+  }
+  const el = {
+    classList: {
+      contains: (name: string) => node.classes.includes(name),
+    },
+    closest: (selector: string): Element | null => {
+      const wanted = selector.replace(/^\./, '')
+      let current: StubNode | null = node
+      while (current) {
+        if (current.classes.includes(wanted)) {
+          return makeStubElement(current)
+        }
+        current = current.parent
+      }
+      return null
+    },
+  }
+  node.el = el as unknown as Element
+  return node.el
+}
+
+// Build: .pane-view > .pane-tab-bar > .pane-tab[.is-active] (the real strip
+// nesting the adapter walks). `activeTab` toggles is-active on the focused tab.
+const buildTabButton = (options: { activeTab: boolean; inTabBar?: boolean; inPane?: boolean }) => {
+  const pane: StubNode = { classes: ['pane-view'], parent: null }
+  const tabBar: StubNode = {
+    classes: options.inTabBar === false ? ['pane-column-body'] : ['pane-tab-bar'],
+    parent: options.inPane === false ? { classes: ['other-pane-view', 'pane-view'], parent: null } : pane,
+  }
+  const tabClasses = ['pane-tab']
+  if (options.activeTab) {
+    tabClasses.push('is-active')
+  }
+  const tab: StubNode = { classes: tabClasses, parent: tabBar }
+  return { paneEl: makeStubElement(pane), focusEl: makeStubElement(tab) }
+}
 
 type FakeEnv = {
   deps: ComposerFocusAttemptDeps
@@ -298,6 +350,91 @@ test('effective vacancy: focus on any other element is not vacant', () => {
     isComposerFocusEffectivelyVacant(foreignElement, bodyElement, (element) => element === chromeElement),
     false,
   )
+})
+
+// ── Multi-tab pane: switching to another session tab must NOT reclaim focus ──
+// Forensic dump 2026-07-06T03-24-57: a pane held three streaming session tabs.
+// Clicking a different tab to switch away parked focus on that tab's button,
+// which lives in this pane's own .pane-tab-bar. The blur-reclaim treated all
+// own-pane tab-bar chrome as vacant and yanked focus back into the still-active
+// card's composer, so the tab switch never took and new sessions were
+// unclickable. Only THIS card's own tab and non-tab chrome may be reclaimable.
+
+test('own-pane chrome: the add button / strip whitespace (not a tab button) is reclaimable', () => {
+  assert.equal(
+    isOwnPaneChromeReclaimable({
+      focusIsInOwnPaneTabBar: true,
+      focusIsOnTabButton: false,
+      focusIsOnThisCardsTab: false,
+    }),
+    true,
+    'non-tab chrome in the own pane strip IS the composer-focus gesture and may be retried over',
+  )
+})
+
+test("own-pane chrome: this card's own tab button is reclaimable", () => {
+  assert.equal(
+    isOwnPaneChromeReclaimable({
+      focusIsInOwnPaneTabBar: true,
+      focusIsOnTabButton: true,
+      focusIsOnThisCardsTab: true,
+    }),
+    true,
+    "focus resting on the card's own tab button is the tab-click focus gesture",
+  )
+})
+
+test('own-pane chrome: ANOTHER session tab button is a switch-away and must NOT reclaim', () => {
+  assert.equal(
+    isOwnPaneChromeReclaimable({
+      focusIsInOwnPaneTabBar: true,
+      focusIsOnTabButton: true,
+      focusIsOnThisCardsTab: false,
+    }),
+    false,
+    'clicking a different tab to switch sessions is a deliberate departure; reclaiming traps the user in the old session',
+  )
+})
+
+test('own-pane chrome: chrome outside the own pane tab bar is never reclaimable', () => {
+  assert.equal(
+    isOwnPaneChromeReclaimable({
+      focusIsInOwnPaneTabBar: false,
+      focusIsOnTabButton: false,
+      focusIsOnThisCardsTab: false,
+    }),
+    false,
+  )
+})
+
+// ── DOM adapter: real .pane-view/.pane-tab-bar/.pane-tab traversal ──────────
+
+test('DOM adapter: focus on the ACTIVE own-pane tab button is reclaimable', () => {
+  const { paneEl, focusEl } = buildTabButton({ activeTab: true })
+  assert.equal(
+    isReclaimableOwnPaneChrome(focusEl, paneEl),
+    true,
+    "the active tab is this card's own tab; its button is the focus gesture",
+  )
+})
+
+test('DOM adapter: focus on a NON-active own-pane tab button is NOT reclaimable (the switch-away bug)', () => {
+  const { paneEl, focusEl } = buildTabButton({ activeTab: false })
+  assert.equal(
+    isReclaimableOwnPaneChrome(focusEl, paneEl),
+    false,
+    'clicking a different (non-active) session tab must not be wrestled back into the old composer',
+  )
+})
+
+test('DOM adapter: a tab button in ANOTHER pane is never reclaimable', () => {
+  const { paneEl, focusEl } = buildTabButton({ activeTab: true, inPane: false })
+  assert.equal(isReclaimableOwnPaneChrome(focusEl, paneEl), false)
+})
+
+test('DOM adapter: null pane is never reclaimable', () => {
+  const { focusEl } = buildTabButton({ activeTab: true })
+  assert.equal(isReclaimableOwnPaneChrome(focusEl, null), false)
 })
 
 // ── New-tab focus request: never swallow the bump on a closure-miss ─────────

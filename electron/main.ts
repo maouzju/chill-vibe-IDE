@@ -21,6 +21,7 @@ import {
   resolveDesktopWorkingDirectory,
 } from './runtime-environment.js'
 import { attachFrameStallWatchdog } from './frame-stall-watchdog.js'
+import { summarizeUnresponsiveCallStack } from './unresponsive-forensics.js'
 import { checkForUpdate, downloadUpdate, installUpdate } from './updater.js'
 import {
   attachmentProtocolScheme,
@@ -309,6 +310,39 @@ function attachWindowDiagnostics(win: BrowserWindow) {
 
   win.on('unresponsive', () => {
     log.warn('[main] BrowserWindow became unresponsive.', { windowId: win.id })
+    // The plain event never says WHAT is blocking the renderer's main thread.
+    // collectJavaScriptCallStack() (Electron 34+) returns the blocked main
+    // thread's JS stack without attaching a debugger — turning a dead-end
+    // "unresponsive" into an actionable hot-path stack (dump 2026-07-07T14-50:
+    // 5 panes × multiple streaming, page fully non-interactive, never recovered).
+    const mainFrame = win.webContents.mainFrame
+    const collect = mainFrame?.collectJavaScriptCallStack?.bind(mainFrame) as
+      | (() => Promise<string>)
+      | undefined
+    if (collect) {
+      collect()
+        .then((rawCallStack: string) => {
+          const summary = summarizeUnresponsiveCallStack({
+            windowId: win.id,
+            capturedAtIso: new Date().toISOString(),
+            rawCallStack,
+          })
+          log.warn('[main] unresponsive renderer JS call stack captured.', summary)
+        })
+        .catch((error: unknown) => {
+          log.warn('[main] failed to capture unresponsive renderer call stack.', {
+            windowId: win.id,
+            error: error instanceof Error ? error.message : String(error),
+          })
+        })
+    }
+  })
+
+  win.on('responsive', () => {
+    // Previously there was no 'responsive' listener at all, so a recovery was
+    // invisible in the logs — every unresponsive read as permanent. Record it so
+    // triage can tell a transient hitch from a terminal freeze.
+    log.warn('[main] BrowserWindow became responsive again.', { windowId: win.id })
   })
 
   win.webContents.on('did-finish-load', () => {

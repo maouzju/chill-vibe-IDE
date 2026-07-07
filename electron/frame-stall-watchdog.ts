@@ -53,12 +53,25 @@ export function attachFrameStallWatchdog(
 ) {
   let previousFrameTimestamp: number | null = null
   let consecutiveStalls = 0
+  // In-flight guard: executeJavaScript is dispatched to the renderer and, when
+  // the renderer's main thread is blocked, these calls queue there instead of
+  // resolving. Without this guard the 5s poll keeps firing, the queued probes
+  // all resolve in a burst the instant the thread frees, and the stall logic
+  // trips repaint many times in the same millisecond (main.log 2026-07-07
+  // 22:49:39: 10 "forcing repaint" lines within one second). Skip a poll while
+  // the previous probe is still outstanding so one stall == one repaint attempt.
+  let probeInFlight = false
 
   const timer = setInterval(() => {
     if (win.isDestroyed()) {
       clearInterval(timer)
       return
     }
+
+    if (probeInFlight) {
+      return
+    }
+    probeInFlight = true
 
     void win.webContents
       .executeJavaScript('window.__chillVibeLastFrameTimestamp ?? null', true)
@@ -84,6 +97,9 @@ export function attachFrameStallWatchdog(
       })
       .catch(() => {
         // A navigating/crashed renderer cannot answer; the next poll retries.
+      })
+      .finally(() => {
+        probeInFlight = false
       })
   }, frameStallPollIntervalMs)
 

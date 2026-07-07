@@ -120,3 +120,39 @@ test('the renderer forensics heartbeat exposes the frame timestamp the watchdog 
   )
   assert.match(forensics, /__chillVibeLastFrameTimestamp/)
 })
+
+test('the frame-stall watchdog skips a poll while the previous probe is still in flight', async () => {
+  // main.log 2026-07-07 22:49:39 recorded 10 "forcing repaint" lines within one
+  // second: while the renderer main thread was blocked, executeJavaScript probes
+  // queued and all resolved in a burst, tripping repaint repeatedly. An in-flight
+  // guard makes one stall produce one repaint attempt.
+  const watchdog = await readFile(
+    path.join(process.cwd(), 'electron', 'frame-stall-watchdog.ts'),
+    'utf8',
+  )
+  assert.match(watchdog, /probeInFlight/, 'the watchdog must guard against overlapping probes')
+  assert.match(
+    watchdog,
+    /\.finally\(\(\) => \{\s*probeInFlight = false/,
+    'the in-flight flag must be cleared when the probe settles',
+  )
+})
+
+test('the main window captures the JS call stack when the renderer goes unresponsive', async () => {
+  const main = await readFile(path.join(process.cwd(), 'electron', 'main.ts'), 'utf8')
+  assert.match(
+    main,
+    /collectJavaScriptCallStack/,
+    'unresponsive handling must capture the blocked main thread JS stack (dump 2026-07-07T14-50)',
+  )
+  assert.match(
+    main,
+    /summarizeUnresponsiveCallStack/,
+    'the captured stack must be summarized into the log',
+  )
+  assert.match(
+    main,
+    /win\.on\('responsive'/,
+    'a responsive-again listener must exist so recovery is not invisible',
+  )
+})

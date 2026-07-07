@@ -1831,7 +1831,13 @@ const ChatCardView = ({
   ])
 
   useEffect(() => {
-    if (!usesPaneChrome || isToolCard || composerFocusRequest === 0) {
+    // An INACTIVE card must never arm the focus ladder: a streaming card that
+    // the user just switched away from would otherwise keep re-grabbing focus
+    // on every streaming re-render, gluing focus to its textarea while the user
+    // clicks other tabs (dump 2026-07-07T03-25-44). isActive is a dependency so
+    // this effect's cleanup tears the ladder down the instant the card stops
+    // being active.
+    if (!usesPaneChrome || isToolCard || !isActive || composerFocusRequest === 0) {
       return
     }
 
@@ -1903,7 +1909,7 @@ const ChatCardView = ({
       cancelInitial()
       followUpCancel?.()
     }
-  }, [card.id, composerFocusRequest, isToolCard, usesPaneChrome])
+  }, [card.id, composerFocusRequest, isActive, isToolCard, usesPaneChrome])
 
   // Rescue for the forensic "locked in the input but nothing works" freeze:
   // clicks land on the textarea (agree=true) yet native focus falls to <body>,

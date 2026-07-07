@@ -730,15 +730,40 @@ test('a non-primary press inside the rect neither arms nor cancels', () => {
   )
 })
 
-test('a press inside the rect but routed to another element is left to the misroute rescue', () => {
+test('a press inside the rect routed to another COMPOSER element still arms the ladder', () => {
+  // Forensic dump 2026-07-07T08-30: clicks land geometrically inside the
+  // textarea rect (agree=true) but native focus stays on <body>, IME can no
+  // longer compose (can't type Chinese), and every rescue counter reads 0. The
+  // press targeted a composer child (e.g. div.composer-input-row / a padding
+  // overlay), not the textarea node itself — so targetIsTextarea is false, yet
+  // classifyComposerPointerRouting returns 'expected' (target is inside the
+  // composer scope) and the misroute rescue never fires. That is the blind spot:
+  // when the press lands inside the composer, arm the verify ladder regardless
+  // of the exact target node. The ladder is idempotent (no-ops once focus lands,
+  // yields the instant another real element takes focus).
   assert.equal(
     decideTextareaPressFocusVerification({
       pressInsideTextareaRect: true,
       targetIsTextarea: false,
+      targetInsideComposer: true,
+      isPrimaryButton: true,
+    }),
+    'arm',
+  )
+})
+
+test('a press inside the rect routed truly elsewhere is left to the misroute rescue', () => {
+  // target is NOT inside the composer scope: a genuine stale-routing misroute
+  // that classifyComposerPointerRouting will handle (repair + refocus). Arming
+  // here would double-handle.
+  assert.equal(
+    decideTextareaPressFocusVerification({
+      pressInsideTextareaRect: true,
+      targetIsTextarea: false,
+      targetInsideComposer: false,
       isPrimaryButton: true,
     }),
     'none',
-    'misrouted presses already have their own repair+refocus path; arming here would double-handle',
   )
 })
 

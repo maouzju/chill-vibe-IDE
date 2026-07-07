@@ -217,6 +217,15 @@ export type TextareaPressVerifyAction = 'arm' | 'cancel' | 'none'
 export const decideTextareaPressFocusVerification = (input: {
   pressInsideTextareaRect: boolean
   targetIsTextarea: boolean
+  // Whether the event target sits anywhere inside the composer scope (the
+  // textarea node OR a composer child like div.composer-input-row / a padding
+  // overlay). classifyComposerPointerRouting returns 'expected' for such a
+  // target, so the misroute rescue never fires for it — leaving a blind spot
+  // when native focus also fails (dump 2026-07-07T08-30: focus stuck on <body>,
+  // IME dead, all counters 0). Defaults to the targetIsTextarea value so older
+  // callers keep their exact behavior. A press inside the rect whose target is
+  // outside the composer is a genuine misroute the routing rescue owns.
+  targetInsideComposer?: boolean
   isPrimaryButton: boolean
 }): TextareaPressVerifyAction => {
   if (!input.pressInsideTextareaRect) {
@@ -225,7 +234,12 @@ export const decideTextareaPressFocusVerification = (input: {
   if (!input.isPrimaryButton) {
     return 'none'
   }
-  return input.targetIsTextarea ? 'arm' : 'none'
+  const targetInsideComposer = input.targetInsideComposer ?? input.targetIsTextarea
+  // Native click-to-focus provably fails even when the press lands squarely
+  // inside the composer; arm the idempotent verify ladder whenever the target
+  // is the textarea itself or any composer child. Only a target genuinely
+  // outside the composer is left to the misroute repair+refocus path.
+  return input.targetIsTextarea || targetInsideComposer ? 'arm' : 'none'
 }
 
 // A card-level layer rebuild that ran recently and demonstrably did not stop

@@ -124,6 +124,14 @@ export const shouldRecoverEmptyToolCallTurn = (input: {
 // With nothing in flight, a shorter first-byte window covers a launch that never
 // produces output, and a longer between-events window covers a process that
 // streamed something and then went silent without a terminal event (#42/#134).
+// `absoluteHardCapMs` is a last-resort ceiling that bounds even the intentionally
+// disarmed cases (an in-progress command, or an uncapped background-await). Those
+// disarm the watchdog so a legitimately long command/workflow is never false-
+// killed — but if the CLI process silently dies or wedges without ever emitting
+// the command's `completed` event or a terminal result (child `close` never
+// fires either), the disarm becomes permanent and the card spins in `streaming`
+// forever (observed: 5 cards stuck, main.log silent 14 min). The hard cap sits
+// far above any real command/workflow, so it only trips on genuine silent death.
 export const resolveLocalStreamStallTimeoutMs = (input: {
   sawStreamOutput: boolean
   openCommandCount: number
@@ -131,13 +139,21 @@ export const resolveLocalStreamStallTimeoutMs = (input: {
   stallTimeoutMs: number
   backgroundAwaitActive?: boolean
   backgroundAwaitTimeoutMs?: number | null
+  absoluteHardCapMs?: number | null
 }): number | null => {
+  const hardCap =
+    typeof input.absoluteHardCapMs === 'number' && input.absoluteHardCapMs > 0
+      ? input.absoluteHardCapMs
+      : null
+
   if (input.openCommandCount > 0) {
-    return null
+    return hardCap
   }
 
   if (input.backgroundAwaitActive) {
-    return input.backgroundAwaitTimeoutMs ?? null
+    // Honor the (shorter) background-await ceiling when present, else fall back
+    // to the hard cap so an uncapped wait can never disarm the watchdog forever.
+    return input.backgroundAwaitTimeoutMs ?? hardCap
   }
 
   return input.sawStreamOutput ? input.stallTimeoutMs : input.firstByteTimeoutMs

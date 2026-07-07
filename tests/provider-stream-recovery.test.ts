@@ -342,6 +342,70 @@ test('an open command still disarms the watchdog even with a background-await in
   )
 })
 
+test('an open command that never completes is still bounded by the absolute hard cap', () => {
+  // A command whose `completed` event never arrives (process silently dies, SSE
+  // drops, HTTP200 empty) otherwise disarms the watchdog forever, spinning the
+  // card in `streaming` indefinitely with recovery=None (observed in the field:
+  // 5 cards stuck streaming, main.log silent for 14 min). The absolute hard cap
+  // is a last-resort ceiling far above any legitimate command so the card can
+  // still settle instead of hanging forever.
+  assert.equal(
+    resolveLocalStreamStallTimeoutMs({
+      sawStreamOutput: true,
+      openCommandCount: 1,
+      firstByteTimeoutMs: 90_000,
+      stallTimeoutMs: 120_000,
+      absoluteHardCapMs: 900_000,
+    }),
+    900_000,
+  )
+})
+
+test('an uncapped background-await is still bounded by the absolute hard cap', () => {
+  // backgroundAwaitTimeoutMs=null means "wait without limit" — but a CLI wedged
+  // waiting on a background task that never returns would then hang forever. The
+  // hard cap bounds that too.
+  assert.equal(
+    resolveLocalStreamStallTimeoutMs({
+      sawStreamOutput: true,
+      openCommandCount: 0,
+      firstByteTimeoutMs: 90_000,
+      stallTimeoutMs: 120_000,
+      backgroundAwaitActive: true,
+      backgroundAwaitTimeoutMs: null,
+      absoluteHardCapMs: 900_000,
+    }),
+    900_000,
+  )
+})
+
+test('the absolute hard cap never shortens a normal (armed) stall window', () => {
+  // When the watchdog is already armed with a concrete window, the hard cap must
+  // not clamp it below the intended value — it only rescues the disarmed cases.
+  assert.equal(
+    resolveLocalStreamStallTimeoutMs({
+      sawStreamOutput: true,
+      openCommandCount: 0,
+      firstByteTimeoutMs: 90_000,
+      stallTimeoutMs: 120_000,
+      absoluteHardCapMs: 900_000,
+    }),
+    120_000,
+  )
+})
+
+test('without an absolute hard cap, disarm behavior is unchanged (backward compatible)', () => {
+  assert.equal(
+    resolveLocalStreamStallTimeoutMs({
+      sawStreamOutput: true,
+      openCommandCount: 1,
+      firstByteTimeoutMs: 90_000,
+      stallTimeoutMs: 120_000,
+    }),
+    null,
+  )
+})
+
 test('reasoning activity does not count as turn output, while real work does', () => {
   // Reasoning/thinking is the model's internal monologue, not user-facing work.
   // It must NOT mark the turn as having produced output, or enabling thinking

@@ -2111,9 +2111,12 @@ const ChatCardView = ({
         return
       }
 
+      const composerScope = textarea.closest('.composer') ?? textarea
       const pressVerification = decideTextareaPressFocusVerification({
         pressInsideTextareaRect: isPointerInsideTextarea(textarea, event.clientX, event.clientY),
         targetIsTextarea: event.target === textarea,
+        targetInsideComposer:
+          event.target instanceof Node && composerScope.contains(event.target),
         isPrimaryButton: event.button === 0,
       })
 

@@ -811,6 +811,14 @@ const getLocalProviderFirstByteTimeoutMs = () =>
 const getLocalProviderStallTimeoutMs = () =>
   getLocalProviderTimeoutMs('CHILL_VIBE_LOCAL_PROVIDER_STALL_TIMEOUT_MS', 120_000)
 
+// Absolute last-resort ceiling that bounds even the intentionally-disarmed
+// watchdog cases (in-progress command, uncapped background-await). It must sit
+// far above any legitimate command/workflow so it only trips when the CLI has
+// genuinely gone silent-dead without ever emitting a terminal event or closing
+// its process — the state that otherwise spins a card in `streaming` forever.
+const getLocalProviderAbsoluteHardCapMs = () =>
+  getLocalProviderTimeoutMs('CHILL_VIBE_LOCAL_PROVIDER_ABSOLUTE_HARD_CAP_MS', 1_800_000)
+
 // How long the stall watchdog may wait while the CLI synchronously runs a
 // background tool (Workflow/subagent). `claude -p` caps that wait at 10 min by
 // default and exits when it lapses; we mirror the CLI's own knob
@@ -2292,6 +2300,7 @@ export const createClaudeTurnParser = (hooks: {
       stallTimeoutMs: getLocalProviderStallTimeoutMs(),
       backgroundAwaitActive: sawBackgroundAwaitTool,
       backgroundAwaitTimeoutMs: getBackgroundAwaitWatchdogMs(),
+      absoluteHardCapMs: getLocalProviderAbsoluteHardCapMs(),
     })
 
     if (timeoutMs === null) {

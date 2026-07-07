@@ -475,12 +475,41 @@ const appSourcePath = path.join(process.cwd(), 'src', 'App.tsx')
 test('composerFocusRequest effect drives the shared verify+retry helper instead of a bare one-shot rAF', async () => {
   const source = await readFile(chatCardSourcePath, 'utf8')
   const effectBlock =
-    source.match(/if \(!usesPaneChrome \|\| isToolCard \|\| composerFocusRequest === 0\) \{[\s\S]*?\n {2}\}, \[card\.id, composerFocusRequest/)?.[0] ?? ''
+    source.match(/if \(!usesPaneChrome \|\| isToolCard[^\n]*composerFocusRequest === 0\) \{[\s\S]*?\n {2}\}, \[card\.id, composerFocusRequest[^\]]*\]/)?.[0] ?? ''
 
   assert.ok(effectBlock, 'expected the composerFocusRequest focus effect to exist')
   assert.ok(
     /startComposerFocusAttempt/.test(effectBlock),
     'tab-switch focus must verify activeElement and retry; a lost rAF otherwise strands the composer unfocused (investigation §4.2)',
+  )
+})
+
+// ── Forensic dump 2026-07-07T03-25-44: streaming card's focus ladder never
+// cancels on tab-switch-away ────────────────────────────────────────────────
+// A streaming card was active; the user clicked ANOTHER pane's tab to switch
+// sessions. The click landed (agree=true) but focus stayed glued to the
+// streaming card's textarea, and the active tab / focused card were mismatched.
+// Root cause: the composerFocusRequest focus-ladder effect neither guards on
+// isActive nor lists it as a dependency, so when the card goes isActive:false
+// its armed retry ladder is never torn down — every streaming re-render lets it
+// re-grab focus. The effect must (a) not arm while inactive and (b) cancel when
+// the card transitions away from active.
+
+test('the composer focus ladder effect guards on isActive so an inactive streaming card never re-grabs focus', async () => {
+  const source = await readFile(chatCardSourcePath, 'utf8')
+  const effectBlock =
+    source.match(/if \(!usesPaneChrome \|\| isToolCard[^\n]*composerFocusRequest === 0\) \{[\s\S]*?\n {2}\}, \[card\.id, composerFocusRequest[^\]]*\]/)?.[0] ?? ''
+
+  assert.ok(effectBlock, 'expected the composerFocusRequest focus effect to exist')
+  assert.match(
+    effectBlock,
+    /!isActive/,
+    'the focus ladder must bail when the card is not active, or a streaming card keeps re-grabbing focus after the user switches tabs (dump 2026-07-07T03-25-44)',
+  )
+  assert.match(
+    effectBlock,
+    /\}, \[card\.id, composerFocusRequest[^\]]*isActive[^\]]*\]/,
+    'isActive must be a dependency so the ladder is torn down when the card stops being active — otherwise cleanup never runs on switch-away',
   )
 })
 
@@ -506,7 +535,7 @@ test('ChatCard escalates repeated or dead-end repairs to the pane panel (F9)', a
 test('ChatCard focus effect reports exhaustion into a panel repair plus one follow-up attempt (F9)', async () => {
   const source = await readFile(chatCardSourcePath, 'utf8')
   const effectBlock =
-    source.match(/if \(!usesPaneChrome \|\| isToolCard \|\| composerFocusRequest === 0\) \{[\s\S]*?\n {2}\}, \[card\.id, composerFocusRequest/)?.[0] ?? ''
+    source.match(/if \(!usesPaneChrome \|\| isToolCard[^\n]*composerFocusRequest === 0\) \{[\s\S]*?\n {2}\}, \[card\.id, composerFocusRequest[^\]]*\]/)?.[0] ?? ''
 
   assert.ok(effectBlock, 'expected the composerFocusRequest focus effect to exist')
   assert.match(effectBlock, /onExhausted/, 'the ladder dead end must not stay silent')

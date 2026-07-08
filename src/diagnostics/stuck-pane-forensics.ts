@@ -49,6 +49,10 @@ export type FocusLedgerEntry = {
   atMs: number
   kind: 'focusin' | 'focusout'
   path: string
+  // focusout only: where focus went (relatedTarget). '(null)' means focus fell
+  // to nowhere — the fingerprint of a programmatic blur()/attribute flip, since
+  // a user press always names the element it moved to.
+  relatedPath?: string
 }
 
 export const focusLedgerCapacity = 30
@@ -60,6 +64,114 @@ export const pushFocusLedgerEntry = (
 ): FocusLedgerEntry[] => {
   const next = [...ledger, entry]
   return next.length > capacity ? next.slice(next.length - capacity) : next
+}
+
+// Reactive focus kick (dump 07-08T06-22): focusin lands on an element and a
+// focusout to NOWHERE follows within milliseconds — something reacts to the
+// focus itself and kicks it out. A focusout that hands focus to a real element
+// is a deliberate move; one that takes hundreds of ms is user pacing. Only the
+// fast focusin→focusout-to-nowhere pair on the same element is the kick.
+export const reactiveFocusKickWindowMs = 50
+
+export const countReactiveFocusKicks = (
+  ledger: FocusLedgerEntry[],
+  kickWindowMs = reactiveFocusKickWindowMs,
+): number => {
+  let kicks = 0
+  for (let index = 1; index < ledger.length; index += 1) {
+    const previous = ledger[index - 1]!
+    const current = ledger[index]!
+    if (
+      previous.kind === 'focusin' &&
+      current.kind === 'focusout' &&
+      current.path === previous.path &&
+      current.relatedPath === '(null)' &&
+      current.atMs - previous.atMs <= kickWindowMs
+    ) {
+      kicks += 1
+    }
+  }
+  return kicks
+}
+
+// Programmatic focus/blur call ledger. A reactive kick is necessarily
+// programmatic — only blur()/focus() calls or attribute flips move focus with
+// no gesture — so recording every caller with a stack top names the culprit
+// directly. `landed` on focus() calls also proves whether the self-heal
+// ladders' reclaim attempts actually took (a false here with the textarea as
+// the target is the "unfocusable composer" smoking gun).
+export type FocusMethodCallEntry = {
+  atMs: number
+  kind: 'focus' | 'blur'
+  path: string
+  landed?: boolean
+  stackTop: string
+}
+
+export const focusMethodCallCapacity = 30
+
+export const pushFocusMethodCallEntry = (
+  ledger: FocusMethodCallEntry[],
+  entry: FocusMethodCallEntry,
+  capacity = focusMethodCallCapacity,
+): FocusMethodCallEntry[] => {
+  const next = [...ledger, entry]
+  return next.length > capacity ? next.slice(next.length - capacity) : next
+}
+
+export const summarizeCallStack = (stack: string | undefined, maxFrames: number): string => {
+  if (!stack) {
+    return ''
+  }
+  return stack.split('\n').slice(0, maxFrames).join('\n')
+}
+
+// Composer attribute mutation ledger — the OTHER way to kick focus without a
+// gesture: flipping disabled/hidden/inert (or a display-changing style) on the
+// focused element's chain runs the browser's focus fixup. Noise rules:
+// focus-visible class churn tracks every focus transition and says nothing;
+// style writes are the textarea height sync unless they touch
+// display/visibility.
+export type ComposerAttributeMutationEntry = {
+  atMs: number
+  attr: string
+  value: string | null
+  path: string
+}
+
+export const composerAttributeMutationCapacity = 40
+
+export const pushComposerAttributeMutationEntry = (
+  ledger: ComposerAttributeMutationEntry[],
+  entry: ComposerAttributeMutationEntry,
+  capacity = composerAttributeMutationCapacity,
+): ComposerAttributeMutationEntry[] => {
+  const next = [...ledger, entry]
+  return next.length > capacity ? next.slice(next.length - capacity) : next
+}
+
+const stripFocusVisible = (classValue: string | null): string =>
+  (classValue ?? '')
+    .split(/\s+/)
+    .filter((token) => token && token !== 'focus-visible')
+    .sort()
+    .join(' ')
+
+const touchesDisplayOrVisibility = (styleValue: string | null): boolean =>
+  /display|visibility/i.test(styleValue ?? '')
+
+export const shouldRecordComposerAttributeMutation = (input: {
+  attributeName: string
+  oldValue: string | null
+  newValue: string | null
+}): boolean => {
+  if (input.attributeName === 'class') {
+    return stripFocusVisible(input.oldValue) !== stripFocusVisible(input.newValue)
+  }
+  if (input.attributeName === 'style') {
+    return touchesDisplayOrVisibility(input.oldValue) || touchesDisplayOrVisibility(input.newValue)
+  }
+  return true
 }
 
 export const hasSilentFocusLossSignature = (
@@ -224,6 +336,9 @@ export type ForensicsSnapshot = {
   rescueEventTimesMs: number[]
   focusLedger?: FocusLedgerEntry[]
   silentFocusLoss?: boolean
+  reactiveFocusKickCount?: number
+  focusMethodCalls?: FocusMethodCallEntry[]
+  composerAttrMutations?: ComposerAttributeMutationEntry[]
 }
 
 export type ForensicsSnapshotInput = Omit<ForensicsSnapshot, 'schema'>
@@ -393,8 +508,83 @@ export const installStuckPaneForensics = () => {
       atMs: Math.round(performance.now()),
       kind: 'focusout',
       path: describeElementPath(event.target as ForensicsElementLike | null),
+      // Where focus went. '(null)' = nowhere: the programmatic-kick fingerprint.
+      relatedPath: describeElementPath(event.relatedTarget as ForensicsElementLike | null),
     })
   }
+
+  // Programmatic focus/blur callers, with stack tops. A reactive kick can only
+  // come from one of these (or an attribute flip, observed below), so the next
+  // dump names the culprit instead of us inferring it from timing.
+  let focusMethodCalls: FocusMethodCallEntry[] = []
+  const originalBlur = HTMLElement.prototype.blur
+  const originalFocus = HTMLElement.prototype.focus
+  HTMLElement.prototype.blur = function blurWithForensics(this: HTMLElement) {
+    focusMethodCalls = pushFocusMethodCallEntry(focusMethodCalls, {
+      atMs: Math.round(performance.now()),
+      kind: 'blur',
+      path: describeElementPath(this as unknown as ForensicsElementLike),
+      stackTop: summarizeCallStack(new Error('blur-trace').stack ?? undefined, 6),
+    })
+    originalBlur.call(this)
+  }
+  HTMLElement.prototype.focus = function focusWithForensics(
+    this: HTMLElement,
+    options?: FocusOptions,
+  ) {
+    originalFocus.call(this, options)
+    focusMethodCalls = pushFocusMethodCallEntry(focusMethodCalls, {
+      atMs: Math.round(performance.now()),
+      kind: 'focus',
+      path: describeElementPath(this as unknown as ForensicsElementLike),
+      // false while the self-heals are calling = the composer is unfocusable
+      // right now (disabled/hidden/inert somewhere on its chain).
+      landed: document.activeElement === this,
+      stackTop: summarizeCallStack(new Error('focus-trace').stack ?? undefined, 6),
+    })
+  }
+
+  // Attribute flips on the composer chain kick focus via the browser's focus
+  // fixup without any blur() call; pair them with the ledger timestamps.
+  let composerAttrMutations: ComposerAttributeMutationEntry[] = []
+  const attributeObserver = new MutationObserver((records) => {
+    for (const record of records) {
+      if (record.type !== 'attributes' || !(record.target instanceof Element)) {
+        continue
+      }
+      const target = record.target
+      const isComposerRelated =
+        target.tagName === 'TEXTAREA' ||
+        target.closest('.composer') !== null ||
+        target.classList.contains('pane-tab-panel')
+      if (!isComposerRelated) {
+        continue
+      }
+      const attributeName = record.attributeName ?? ''
+      const newValue = target.getAttribute(attributeName)
+      if (
+        !shouldRecordComposerAttributeMutation({
+          attributeName,
+          oldValue: record.oldValue,
+          newValue,
+        })
+      ) {
+        continue
+      }
+      composerAttrMutations = pushComposerAttributeMutationEntry(composerAttrMutations, {
+        atMs: Math.round(performance.now()),
+        attr: attributeName,
+        value: newValue,
+        path: describeElementPath(target as ForensicsElementLike | null),
+      })
+    }
+  })
+  attributeObserver.observe(document.documentElement, {
+    subtree: true,
+    attributes: true,
+    attributeOldValue: true,
+    attributeFilter: ['disabled', 'hidden', 'inert', 'readonly', 'class', 'style'],
+  })
 
   const capture = (reason: string) => {
     const focusIsVacant =
@@ -415,6 +605,9 @@ export const installStuckPaneForensics = () => {
       rescueEventTimesMs: autoDumpState.eventTimesMs,
       focusLedger,
       silentFocusLoss: hasSilentFocusLossSignature(focusLedger, focusIsVacant),
+      reactiveFocusKickCount: countReactiveFocusKicks(focusLedger),
+      focusMethodCalls,
+      composerAttrMutations,
     })
     void persistSnapshot(snapshot)
   }
@@ -449,5 +642,8 @@ export const installStuckPaneForensics = () => {
     window.removeEventListener(forensicsRescueEventName, handleRescueEvent)
     window.clearInterval(heartbeatTimer)
     window.cancelAnimationFrame(rafHandle)
+    HTMLElement.prototype.blur = originalBlur
+    HTMLElement.prototype.focus = originalFocus
+    attributeObserver.disconnect()
   }
 }

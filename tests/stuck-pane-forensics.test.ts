@@ -5,17 +5,26 @@ import test from 'node:test'
 
 import {
   assembleForensicsSnapshot,
+  composerAttributeMutationCapacity,
+  countReactiveFocusKicks,
   describeElementPath,
   doTargetAndHitAgree,
   focusLedgerCapacity,
+  focusMethodCallCapacity,
   hasSilentFocusLossSignature,
   pointerLedgerCapacity,
+  pushComposerAttributeMutationEntry,
   pushFocusLedgerEntry,
+  pushFocusMethodCallEntry,
   pushPointerLedgerEntry,
   shouldAutoDumpAfterRescueEvent,
+  shouldRecordComposerAttributeMutation,
+  summarizeCallStack,
   summarizeComposerState,
+  type ComposerAttributeMutationEntry,
   type ComposerStateQuery,
   type FocusLedgerEntry,
+  type FocusMethodCallEntry,
   type ForensicsElementLike,
   type PointerLedgerEntry,
 } from '../src/diagnostics/stuck-pane-forensics'
@@ -323,6 +332,207 @@ test('the forensics runtime records focusin/focusout transitions', async () => {
   assert.match(source, /addEventListener\('focusin'/, 'runtime must observe focusin')
   assert.match(source, /addEventListener\('focusout'/, 'runtime must observe focusout')
   assert.match(source, /silentFocusLoss/, 'capture must include the silent-loss verdict')
+})
+
+// ── reactive focus kick (dump 07-08T06-22) ──────────────────────────────────
+// The user clicks the textarea, focusin lands, and 5-10ms later a focusout
+// fires with NO user gesture and no destination element — something reacts to
+// the focus itself and kicks it back out. Every focus() the self-heals issue
+// afterwards fails silently, so all counters read 0. The ledger must record
+// where focus went on focusout (relatedTarget) and the dump must count these
+// reactive kicks so the signature is a first-class verdict, not a manual diff.
+
+test('a focusin followed within the kick window by a focusout to nowhere counts as a reactive kick', () => {
+  const ledger: FocusLedgerEntry[] = [
+    { atMs: 1_000, kind: 'focusin', path: 'textarea.control.textarea > div.composer' },
+    { atMs: 1_008, kind: 'focusout', path: 'textarea.control.textarea > div.composer', relatedPath: '(null)' },
+    { atMs: 2_000, kind: 'focusin', path: 'textarea.control.textarea > div.composer' },
+    { atMs: 2_006, kind: 'focusout', path: 'textarea.control.textarea > div.composer', relatedPath: '(null)' },
+  ]
+  assert.equal(countReactiveFocusKicks(ledger), 2)
+})
+
+test('a focusout that hands focus to a real element is a deliberate move, not a kick', () => {
+  const ledger: FocusLedgerEntry[] = [
+    { atMs: 1_000, kind: 'focusin', path: 'textarea.control.textarea > div.composer' },
+    {
+      atMs: 1_010,
+      kind: 'focusout',
+      path: 'textarea.control.textarea > div.composer',
+      relatedPath: 'button.pane-tab > div.pane-tab-bar',
+    },
+  ]
+  assert.equal(countReactiveFocusKicks(ledger), 0)
+})
+
+test('a focusout hundreds of ms after focusin is user pacing, not a reactive kick', () => {
+  const ledger: FocusLedgerEntry[] = [
+    { atMs: 1_000, kind: 'focusin', path: 'textarea.control.textarea > div.composer' },
+    { atMs: 1_400, kind: 'focusout', path: 'textarea.control.textarea > div.composer', relatedPath: '(null)' },
+  ]
+  assert.equal(countReactiveFocusKicks(ledger), 0)
+})
+
+test('legacy ledger entries without relatedPath never count as kicks', () => {
+  const ledger: FocusLedgerEntry[] = [
+    { atMs: 1_000, kind: 'focusin', path: 'textarea.control.textarea > div.composer' },
+    { atMs: 1_008, kind: 'focusout', path: 'textarea.control.textarea > div.composer' },
+  ]
+  assert.equal(countReactiveFocusKicks(ledger), 0)
+})
+
+// ── focus method call ledger ────────────────────────────────────────────────
+// The kicks above are programmatic: only a blur()/focus() call (or an
+// attribute flip) moves focus without a gesture. Recording who CALLS the focus
+// methods — with a stack top — names the culprit directly in the next dump.
+
+const methodCall = (atMs: number, kind: 'focus' | 'blur'): FocusMethodCallEntry => ({
+  atMs,
+  kind,
+  path: 'textarea.control.textarea > div.composer',
+  landed: kind === 'focus' ? true : undefined,
+  stackTop: 'at focusTextarea (ChatCard.tsx:1868)',
+})
+
+test('focus method call ledger keeps only the newest entries up to capacity', () => {
+  let ledger: FocusMethodCallEntry[] = []
+  for (let index = 0; index < focusMethodCallCapacity + 3; index += 1) {
+    ledger = pushFocusMethodCallEntry(ledger, methodCall(index, index % 2 === 0 ? 'focus' : 'blur'))
+  }
+  assert.equal(ledger.length, focusMethodCallCapacity)
+  assert.equal(ledger[0]?.atMs, 3)
+  assert.equal(ledger.at(-1)?.atMs, focusMethodCallCapacity + 2)
+})
+
+test('call stacks are trimmed to a bounded top for the dump', () => {
+  const stack = [
+    'Error: focus-trace',
+    '    at HTMLTextAreaElement.focus (forensics.ts:10)',
+    '    at focusTextarea (ChatCard.tsx:1868)',
+    '    at runAttempt (composer-focus.ts:137)',
+    '    at frame4 (x.ts:4)',
+    '    at frame5 (x.ts:5)',
+    '    at frame6 (x.ts:6)',
+    '    at frame7 (x.ts:7)',
+  ].join('\n')
+  const trimmed = summarizeCallStack(stack, 4)
+  const lines = trimmed.split('\n')
+  assert.equal(lines.length, 4, 'the stack must trim to the requested frame count')
+  assert.match(trimmed, /focusTextarea/)
+  assert.ok(!trimmed.includes('frame7'))
+  assert.equal(summarizeCallStack(undefined, 4), '')
+})
+
+// ── composer attribute mutation ledger ──────────────────────────────────────
+// The other way to kick focus without a gesture is an attribute flip
+// (disabled/hidden/inert or a display-changing style) on the composer chain.
+// Noise rules: focus-visible class churn tracks every focus transition and
+// says nothing; style writes are the textarea height sync unless they touch
+// display/visibility.
+
+test('disabled/hidden/inert flips on the composer chain are always recorded', () => {
+  assert.equal(
+    shouldRecordComposerAttributeMutation({ attributeName: 'disabled', oldValue: null, newValue: '' }),
+    true,
+  )
+  assert.equal(
+    shouldRecordComposerAttributeMutation({ attributeName: 'inert', oldValue: '', newValue: null }),
+    true,
+  )
+  assert.equal(
+    shouldRecordComposerAttributeMutation({ attributeName: 'hidden', oldValue: null, newValue: '' }),
+    true,
+  )
+})
+
+test('class churn that only toggles focus-visible is noise, real class changes are signal', () => {
+  assert.equal(
+    shouldRecordComposerAttributeMutation({
+      attributeName: 'class',
+      oldValue: 'control textarea focus-visible',
+      newValue: 'control textarea',
+    }),
+    false,
+  )
+  assert.equal(
+    shouldRecordComposerAttributeMutation({
+      attributeName: 'class',
+      oldValue: 'pane-tab-panel is-active',
+      newValue: 'pane-tab-panel',
+    }),
+    true,
+  )
+})
+
+test('style writes are noise unless they touch display or visibility', () => {
+  assert.equal(
+    shouldRecordComposerAttributeMutation({
+      attributeName: 'style',
+      oldValue: 'height: 30px;',
+      newValue: 'height: 32px;',
+    }),
+    false,
+  )
+  assert.equal(
+    shouldRecordComposerAttributeMutation({
+      attributeName: 'style',
+      oldValue: 'height: 30px;',
+      newValue: 'height: 30px; display: none;',
+    }),
+    true,
+  )
+})
+
+test('composer attribute mutation ledger keeps only the newest entries up to capacity', () => {
+  let ledger: ComposerAttributeMutationEntry[] = []
+  for (let index = 0; index < composerAttributeMutationCapacity + 2; index += 1) {
+    ledger = pushComposerAttributeMutationEntry(ledger, {
+      atMs: index,
+      attr: 'class',
+      value: 'pane-tab-panel',
+      path: 'div.pane-tab-panel',
+    })
+  }
+  assert.equal(ledger.length, composerAttributeMutationCapacity)
+  assert.equal(ledger[0]?.atMs, 2)
+})
+
+test('the snapshot carries the reactive-kick verdict and the new ledgers', () => {
+  const snapshot = assembleForensicsSnapshot({
+    reason: 'hotkey',
+    nowIso: '2026-07-08T15:00:00.000Z',
+    activeElementPath: 'body > html',
+    documentHasFocus: true,
+    visibilityState: 'visible',
+    windowSize: { width: 1400, height: 900 },
+    panes: [],
+    hitGrid: [],
+    pointerLedger: [],
+    rafTimestampsMs: [],
+    rescueEventTimesMs: [],
+    focusLedger: [],
+    silentFocusLoss: false,
+    reactiveFocusKickCount: 3,
+    focusMethodCalls: [methodCall(1_000, 'blur')],
+    composerAttrMutations: [
+      { atMs: 900, attr: 'disabled', value: '', path: 'textarea.control.textarea' },
+    ],
+  })
+  assert.equal(snapshot.reactiveFocusKickCount, 3)
+  assert.equal(snapshot.focusMethodCalls?.[0]?.kind, 'blur')
+  assert.equal(snapshot.composerAttrMutations?.[0]?.attr, 'disabled')
+})
+
+test('the forensics runtime hooks the focus methods, records focusout destinations, and observes attribute flips', async () => {
+  const source = await readFile(
+    path.join(process.cwd(), 'src', 'diagnostics', 'stuck-pane-forensics.ts'),
+    'utf8',
+  )
+  assert.match(source, /HTMLElement\.prototype\.blur/, 'runtime must hook blur() to name the caller')
+  assert.match(source, /HTMLElement\.prototype\.focus/, 'runtime must hook focus() to prove self-heals ran')
+  assert.match(source, /relatedTarget/, 'focusout must record where focus went')
+  assert.match(source, /MutationObserver/, 'runtime must observe composer attribute flips')
+  assert.match(source, /reactiveFocusKickCount/, 'capture must include the reactive-kick verdict')
 })
 
 // ── wiring assertions ───────────────────────────────────────────────────────

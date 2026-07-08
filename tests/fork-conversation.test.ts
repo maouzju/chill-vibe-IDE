@@ -80,6 +80,7 @@ const buildState = (columns: BoardColumn[]): AppState => ({
   columns,
   settings: createDefaultSettings(),
   sessionHistory: [],
+  stickyNoteArchive: {},
   updatedAt: timestamp,
 })
 

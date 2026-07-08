@@ -114,6 +114,8 @@ type PaneViewProps = {
   onMarkCardRead: (cardId: string) => void
   onChangeCardDraft: (cardId: string, draft: string) => void
   onChangeCardStickyNote: (cardId: string, content: string) => void
+  stickyNoteArchivedContent?: string
+  onDiscardStickyNoteArchive?: () => void
   onPatchCard: (
     cardId: string,
     patch: Partial<
@@ -325,6 +327,8 @@ const PaneViewView = ({
   onMarkCardRead,
   onChangeCardDraft,
   onChangeCardStickyNote,
+  stickyNoteArchivedContent,
+  onDiscardStickyNoteArchive,
   onPatchCard,
   onChangeCardTitle,
   onSendMessage,
@@ -1284,6 +1288,8 @@ const PaneViewView = ({
                   }
                   onDraftChange={(draft) => onChangeCardDraft(card.id, draft)}
                   onStickyNoteChange={(content) => onChangeCardStickyNote(card.id, content)}
+                  stickyNoteArchivedContent={stickyNoteArchivedContent}
+                  onDiscardStickyNoteArchive={onDiscardStickyNoteArchive}
                   onPatchCard={(patch) => onPatchCard(card.id, patch)}
                   onChangeTitle={(title) => onChangeCardTitle(card.id, title)}
                   onChangeModel={(provider, model) => onChangeCardModel(card.id, provider, model)}

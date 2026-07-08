@@ -97,6 +97,7 @@ const createColumn = (overrides: Partial<BoardColumn> = {}): BoardColumn => {
 const createState = (): AppState => ({
   version: 1,
   updatedAt: timestamp,
+  stickyNoteArchive: {},
   settings: {
     ...createDefaultSettings(),
     requestModels: {

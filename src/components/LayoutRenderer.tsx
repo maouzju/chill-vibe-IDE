@@ -70,6 +70,8 @@ type LayoutRendererProps = {
   onMarkCardRead: (cardId: string) => void
   onChangeCardDraft: (cardId: string, draft: string) => void
   onChangeCardStickyNote: (cardId: string, content: string) => void
+  stickyNoteArchivedContent?: string
+  onDiscardStickyNoteArchive?: () => void
   onPatchCard: (
     cardId: string,
     patch: Partial<

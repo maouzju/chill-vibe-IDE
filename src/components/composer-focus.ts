@@ -34,6 +34,16 @@ export const decideComposerFocusRequest = (input: {
 }): ComposerFocusRequestDecision =>
   !input.cardPresent || input.cardUsesComposer ? 'bump' : 'suppress'
 
+// Guard phase after focus settles (dump 2026-07-08T04-05: seven presses land
+// on the textarea, focus settles each time — no exhaustion — yet ends on
+// <body>). Whatever steals it fires no blur (unmount/remount and disable both
+// do that), so blur-driven rescues stay deaf. The guard re-checks on these
+// delays and pulls vacant focus back, capped so a hostile steal loop cannot
+// fight forever; the reclaim count is the forensic signature of the silent
+// steal.
+export const composerFocusGuardDelaysMs = [300, 800, 1600]
+export const composerFocusGuardMaxReclaims = 5
+
 export type ComposerFocusAttemptDeps = {
   focusTextarea: () => boolean
   isFocusSettled: () => boolean
@@ -46,6 +56,11 @@ export type ComposerFocusAttemptDeps = {
   // stuck-pane signature (every focus() call was issued but none landed).
   // Never fired when focus settled, moved to a real element, or on cancel.
   onExhausted?: () => void
+  // Opt-in guard phase: after focus settles, keep observing on these delays
+  // and reclaim focus that goes vacant again. Omitted = legacy behavior.
+  guardDelaysMs?: number[]
+  // Fired on every guard reclaim — the count proves focus was silently stolen.
+  onGuardReclaim?: () => void
 }
 
 // A composer focus request must survive a dropped requestAnimationFrame
@@ -60,9 +75,56 @@ export const startComposerFocusAttempt = (deps: ComposerFocusAttemptDeps): (() =
   let cancelled = false
   let attempted = false
   let timerHandle: number | null = null
+  let guardTimerHandle: number | null = null
+  let guardEntered = false
+  let guardReclaims = 0
+
+  const guardDelays = deps.guardDelaysMs ?? []
+
+  const armGuard = (index: number) => {
+    if (cancelled || index >= guardDelays.length) {
+      guardTimerHandle = null
+      return
+    }
+    guardTimerHandle = deps.schedule(() => {
+      guardTimerHandle = null
+      if (cancelled) {
+        return
+      }
+      if (deps.isFocusSettled()) {
+        armGuard(index + 1)
+        return
+      }
+      if (deps.isFocusVacant()) {
+        if (guardReclaims >= composerFocusGuardMaxReclaims) {
+          return
+        }
+        guardReclaims += 1
+        deps.focusTextarea()
+        deps.onGuardReclaim?.()
+        // Restart the guard window: focus was just stolen once, so it is the
+        // most likely moment for it to be stolen again.
+        armGuard(0)
+        return
+      }
+      // A real element owns focus: the user moved on. Never fight that.
+    }, guardDelays[index]!)
+  }
+
+  const enterGuard = () => {
+    if (guardEntered || cancelled || guardDelays.length === 0) {
+      return
+    }
+    guardEntered = true
+    armGuard(0)
+  }
 
   const shouldStop = () => {
-    if (cancelled || deps.isFocusSettled()) {
+    if (cancelled) {
+      return true
+    }
+    if (deps.isFocusSettled()) {
+      enterGuard()
       return true
     }
     return attempted && !deps.isFocusVacant()
@@ -79,8 +141,12 @@ export const startComposerFocusAttempt = (deps: ComposerFocusAttemptDeps): (() =
   const armRetry = (index: number) => {
     if (index >= composerFocusRetryDelaysMs.length) {
       timerHandle = null
-      if (!cancelled && !deps.isFocusSettled() && deps.isFocusVacant()) {
-        deps.onExhausted?.()
+      if (!cancelled) {
+        if (deps.isFocusSettled()) {
+          enterGuard()
+        } else if (deps.isFocusVacant()) {
+          deps.onExhausted?.()
+        }
       }
       return
     }
@@ -106,6 +172,10 @@ export const startComposerFocusAttempt = (deps: ComposerFocusAttemptDeps): (() =
     if (timerHandle !== null) {
       deps.cancel(timerHandle)
       timerHandle = null
+    }
+    if (guardTimerHandle !== null) {
+      deps.cancel(guardTimerHandle)
+      guardTimerHandle = null
     }
   }
 }

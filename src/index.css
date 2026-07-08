@@ -5761,36 +5761,22 @@ body.is-card-dragging .lane-drop-zone-top {
 .structured-edits-file .structured-preview-text {
   border-color: color-mix(in srgb, var(--structured-output-border) 78%, transparent);
   background: color-mix(in srgb, var(--structured-output-bg) 92%, var(--structured-card-bg));
+  cursor: pointer;
+  transition: border-color 0.12s ease, background 0.12s ease;
 }
 
-.structured-edits-card .structured-preview-footer {
-  justify-content: flex-end;
+.structured-edits-file .structured-preview-shell:hover .structured-preview-text {
+  border-color: color-mix(in srgb, var(--accent-line) 48%, transparent);
+  background: color-mix(in srgb, var(--structured-output-bg) 82%, var(--structured-card-bg));
 }
 
-.structured-edits-card .structured-preview-trigger {
-  border: none;
-  background: transparent;
-  box-shadow: none;
-  padding: 0;
-  color: var(--ink-3);
-  font-size: 0.68rem;
-  font-weight: 650;
+.structured-edits-file .structured-preview-shell:focus-visible {
+  outline: none;
 }
 
-.structured-edits-card .structured-preview-trigger:hover {
-  transform: none;
-  background: transparent;
-  box-shadow: none;
-  color: var(--ink-1);
-}
-
-.structured-edits-card .structured-preview-shell.is-action-footer .structured-preview-trigger {
-  padding-inline: 0;
-}
-
-.structured-edits-card .structured-preview-trigger:focus-visible {
-  border-radius: var(--r-xs);
-  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 32%, transparent);
+.structured-edits-file .structured-preview-shell:focus-visible .structured-preview-text {
+  border-color: var(--accent-line-strong);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 30%, transparent);
 }
 
 .structured-inline-diff-preview {
@@ -11649,9 +11635,74 @@ body,
 /* ── Sticky Note Card ── */
 .sticky-note-card {
   display: flex;
+  flex-direction: column;
   flex: 1;
   min-height: 0;
   padding: 8px;
+}
+
+.sticky-note-restore-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin: 0 2px 6px;
+  padding: 6px 10px;
+  border: 1px solid var(--accent-line);
+  border-radius: var(--r-xs);
+  background: var(--accent-soft);
+}
+
+.sticky-note-restore-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.sticky-note-restore-title {
+  font-size: 0.8em;
+  color: var(--ink-2);
+}
+
+.sticky-note-restore-preview {
+  font-size: 0.76em;
+  color: var(--ink-3);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.sticky-note-restore-actions {
+  display: flex;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.sticky-note-restore-button,
+.sticky-note-discard-button {
+  border: 1px solid var(--accent-line);
+  border-radius: var(--r-xs);
+  background: transparent;
+  padding: 3px 10px;
+  font-size: 0.78em;
+  cursor: pointer;
+  color: var(--accent);
+}
+
+.sticky-note-restore-button:hover {
+  background: var(--accent-glow);
+}
+
+.sticky-note-discard-button {
+  color: var(--ink-3);
+  border-color: var(--line);
+}
+
+.sticky-note-discard-button:hover {
+  color: var(--danger);
+  border-color: var(--danger-soft);
+  background: var(--danger-soft);
 }
 
 .sticky-note-textarea {

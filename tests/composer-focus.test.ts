@@ -4,6 +4,7 @@ import path from 'node:path'
 import test from 'node:test'
 
 import {
+  composerFocusGuardMaxReclaims,
   composerFocusRequestEventName,
   composerFocusRetryDelaysMs,
   decideComposerFocusRequest,
@@ -82,6 +83,8 @@ type FakeEnv = {
 const createFakeEnv = (options?: {
   focusSucceeds?: boolean
   onExhausted?: () => void
+  guardDelaysMs?: number[]
+  onGuardReclaim?: () => void
 }): FakeEnv => {
   let focusCount = 0
   let cancelledFrameCount = 0
@@ -122,6 +125,8 @@ const createFakeEnv = (options?: {
       }
     },
     onExhausted: options?.onExhausted,
+    guardDelaysMs: options?.guardDelaysMs,
+    onGuardReclaim: options?.onGuardReclaim,
   }
 
   return {
@@ -780,4 +785,104 @@ test('ChatCard verifies native focus after a direct textarea press instead of re
     /startComposerFocusAttempt/.test(rescueBlock),
     'the press verification must reuse the shared verify+retry ladder so it never wrestles deliberately-moved focus',
   )
+})
+
+// ── Guard phase: focus settled, then silently stolen (dump 07-08T04-05) ─────
+// Forensic dump 2026-07-08T04-05: seven primary presses land ON the textarea
+// (agree=true), focus provably settles each time (no exhaustion, counter 0),
+// yet activeElement ends on <body>. Something steals focus WITHOUT firing
+// blur (unmount/remount and disable both do that), so every blur-driven
+// rescue stays deaf. The ladder must keep watching for a short guard window
+// after settling and pull vacant focus back — and count each reclaim so the
+// dump can prove the silent-steal signature.
+
+test('guard phase reclaims focus that goes vacant after settling and reports it', () => {
+  let reclaims = 0
+  const env = createFakeEnv({ guardDelaysMs: [300, 800], onGuardReclaim: () => (reclaims += 1) })
+  startComposerFocusAttempt(env.deps)
+
+  env.runFrame()
+  assert.equal(env.focusCalls(), 1, 'first attempt focuses')
+  // The first retry tick observes settled focus, retires the ladder, and arms
+  // the guard — the moment the old implementation walked away for good.
+  env.runNextTimer()
+
+  // Something silently steals focus (unmount/remount fires no blur).
+  env.setActiveElement('vacant')
+  let guard = 0
+  while (env.runNextTimer() !== null && guard < 20) {
+    guard += 1
+  }
+
+  assert.ok(env.focusCalls() >= 2, 'the guard must pull silently-stolen focus back')
+  assert.ok(reclaims >= 1, 'each guard reclaim must be reported for the forensics dump')
+})
+
+test('guard phase never steals focus deliberately moved to another element', () => {
+  let reclaims = 0
+  const env = createFakeEnv({ guardDelaysMs: [300, 800], onGuardReclaim: () => (reclaims += 1) })
+  startComposerFocusAttempt(env.deps)
+
+  env.runFrame()
+  env.setActiveElement('elsewhere')
+  let guard = 0
+  while (env.runNextTimer() !== null && guard < 20) {
+    guard += 1
+  }
+
+  assert.equal(env.focusCalls(), 1, 'focus owned by a real element must never be reclaimed by the guard')
+  assert.equal(reclaims, 0)
+})
+
+test('guard phase stops reclaiming after the cap so a hostile steal loop cannot fight forever', () => {
+  let reclaims = 0
+  const env = createFakeEnv({ guardDelaysMs: [300], onGuardReclaim: () => (reclaims += 1) })
+  startComposerFocusAttempt(env.deps)
+
+  env.runFrame()
+  let guard = 0
+  while (guard < 60) {
+    // Steal focus again after every reclaim: the guard must give up at the cap.
+    env.setActiveElement('vacant')
+    if (env.runNextTimer() === null) {
+      break
+    }
+    guard += 1
+  }
+
+  assert.equal(
+    reclaims,
+    composerFocusGuardMaxReclaims,
+    'reclaims must stop at the cap; the recorded count is the forensic signal',
+  )
+})
+
+test('cancelling the attempt also clears a pending guard timer', () => {
+  const env = createFakeEnv({ guardDelaysMs: [300] })
+  const cancel = startComposerFocusAttempt(env.deps)
+
+  env.runFrame()
+  // Settled focus arms the guard on the next observation tick.
+  env.runNextTimer()
+  cancel()
+
+  env.setActiveElement('vacant')
+  let guard = 0
+  while (env.runNextTimer() !== null && guard < 10) {
+    guard += 1
+  }
+  assert.equal(env.focusCalls(), 1, 'a cancelled guard must not reclaim')
+})
+
+test('without guardDelaysMs the ladder behaves exactly as before (no extra timers after settle)', () => {
+  const env = createFakeEnv()
+  startComposerFocusAttempt(env.deps)
+
+  env.runFrame()
+  let guard = 0
+  while (env.runNextTimer() !== null && guard < 10) {
+    guard += 1
+  }
+  assert.equal(env.focusCalls(), 1)
+  assert.equal(env.pendingTimerDelays().length, 0, 'no guard timers may linger for legacy callers')
 })

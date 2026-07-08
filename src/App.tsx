@@ -7546,6 +7546,18 @@ function App() {
                 persistAfterAction(action.type, applyAction(action))
               })()
             }
+            stickyNoteArchivedContent={
+              appState.stickyNoteArchive[column.workspacePath]?.content ?? ''
+            }
+            onDiscardStickyNoteArchive={() =>
+              (() => {
+                const action: IdeAction = {
+                  type: 'clearStickyNoteArchive',
+                  workspacePath: column.workspacePath,
+                }
+                persistAfterAction(action.type, applyAction(action))
+              })()
+            }
             onPatchCard={(cardId, patch) =>
               (() => {
                 const action: IdeAction = {

@@ -225,6 +225,9 @@ type LocaleText = {
   composerSettings: string
   stickyNotePlaceholder: string
   stickyNoteTitle: string
+  stickyNoteRestorePrompt: string
+  stickyNoteRestoreAction: string
+  stickyNoteDiscardAction: string
   brainstormTitle: string
   brainstormPlaceholder: string
   brainstormAnswerCountLabel: string
@@ -519,6 +522,9 @@ const localeTextByLanguage: Record<AppLanguage, LocaleText> = {
     },
     stickyNotePlaceholder: '写点什么…',
     stickyNoteTitle: '便签',
+    stickyNoteRestorePrompt: '此工作区有之前的便签记录',
+    stickyNoteRestoreAction: '恢复',
+    stickyNoteDiscardAction: '删除记录',
     brainstormTitle: '头脑风暴',
     brainstormPlaceholder: '输入主题…',
     brainstormAnswerCountLabel: '答案数量',
@@ -823,6 +829,9 @@ const localeTextByLanguage: Record<AppLanguage, LocaleText> = {
     },
     stickyNotePlaceholder: 'Write something…',
     stickyNoteTitle: 'Sticky Note',
+    stickyNoteRestorePrompt: 'This workspace has a previous note',
+    stickyNoteRestoreAction: 'Restore',
+    stickyNoteDiscardAction: 'Delete it',
     brainstormTitle: 'Brainstorm',
     brainstormPlaceholder: 'Enter a topic…',
     brainstormAnswerCountLabel: 'Answer count',

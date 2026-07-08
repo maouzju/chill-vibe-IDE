@@ -7,7 +7,6 @@ import type {
   StructuredAskUserMessage,
   StructuredAgentsMessage,
   StructuredCommandMessage,
-  StructuredEditedFile,
   StructuredEditsMessage,
   StructuredTodoMessage,
   StructuredToolGroupItem,
@@ -217,18 +216,6 @@ export const StructuredPreviewBlock = ({
           >
             {labels.viewDetails}
           </button>
-        ) : null}
-        {isOverflowing && actionPlacement === 'footer' ? (
-          <div className="structured-preview-footer">
-            <button
-              type="button"
-              className="btn btn-ghost structured-preview-trigger"
-              aria-label={labels.openDetails(dialogTitle)}
-              onClick={(e) => { e.stopPropagation(); setIsDialogOpen(true) }}
-            >
-              {labels.viewDetails}
-            </button>
-          </div>
         ) : null}
       </div>
       {dialogLayer}
@@ -861,35 +848,6 @@ const splitStructuredEditPath = (path: string) => {
   }
 }
 
-const getStructuredEditKindLabel = (
-  language: AppLanguage,
-  kind: StructuredEditedFile['kind'],
-) => {
-  if (language === 'en') {
-    switch (kind) {
-      case 'added':
-        return 'Added'
-      case 'deleted':
-        return 'Deleted'
-      case 'renamed':
-        return 'Renamed'
-      default:
-        return 'Modified'
-    }
-  }
-
-  switch (kind) {
-    case 'added':
-      return '新增'
-    case 'deleted':
-      return '删除'
-    case 'renamed':
-      return '重命名'
-    default:
-      return '修改'
-  }
-}
-
 export const StructuredEditsCard = ({
   language,
   data,
@@ -905,10 +863,6 @@ export const StructuredEditsCard = ({
 
   return (
     <section className="structured-edits-card">
-      <div className="structured-edits-header">
-        <span className="structured-block-label">{labels.editedFiles}</span>
-        <span className="structured-command-summary">{labels.changedFiles(data.files.length)}</span>
-      </div>
       <div className="structured-edits-list">
         {data.files.map((file) => {
           const { directory, fileName } = splitStructuredEditPath(file.path)
@@ -941,17 +895,14 @@ export const StructuredEditsCard = ({
                     </div>
                   ) : null}
                 </div>
-                <div className="structured-edits-meta-row">
-                  <span className={`structured-edits-kind is-${file.kind}`}>
-                    {getStructuredEditKindLabel(language, file.kind)}
-                  </span>
-                  {file.originalPath && file.originalPath !== file.path ? (
+                {file.originalPath && file.originalPath !== file.path ? (
+                  <div className="structured-edits-meta-row">
                     <span className="structured-edits-origin" title={file.originalPath}>
                       <span className="structured-edits-arrow" aria-hidden="true">←</span>
                       <code className="structured-edits-path is-original">{file.originalPath}</code>
                     </span>
-                  ) : null}
-                </div>
+                  </div>
+                ) : null}
               </div>
             </>
           )

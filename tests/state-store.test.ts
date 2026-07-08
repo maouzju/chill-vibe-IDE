@@ -132,6 +132,31 @@ describe('state-store persistence', () => {
     )
   })
 
+  it('loadState fills stickyNoteArchive for legacy state files and keeps existing entries', async () => {
+    const stateFile = path.join(tmpDir, 'state.json')
+    const legacyState = JSON.parse(JSON.stringify(createDefaultState('D:/legacy-archive'))) as Record<string, unknown>
+    delete legacyState.stickyNoteArchive
+    await writeFile(stateFile, JSON.stringify(legacyState), 'utf8')
+
+    const { loadState, saveState } = await import('../server/state-store.ts')
+    const loaded = await loadState()
+    assert.deepEqual(loaded.stickyNoteArchive, {}, 'legacy state should hydrate with an empty archive')
+
+    const withArchive = {
+      ...loaded,
+      stickyNoteArchive: {
+        'D:/legacy-archive': { content: '记住我', updatedAt: '2026-04-04T12:00:00.000Z' },
+      },
+    }
+    await saveState(withArchive)
+    const reloaded = await loadState()
+    assert.equal(
+      reloaded.stickyNoteArchive['D:/legacy-archive']?.content,
+      '记住我',
+      'saved archive entries should survive a save/load round trip',
+    )
+  })
+
   it('loadState strips archived brainstorm cards from persisted panes', async () => {
     const stateFile = path.join(tmpDir, 'state.json')
     const state = createDefaultState('D:/brainstorm-archive')

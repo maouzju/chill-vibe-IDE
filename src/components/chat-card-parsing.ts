@@ -740,6 +740,24 @@ export const stripLeakedClaudeToolXml = (content: string) =>
     .replace(/(?<!`)<?antml:invoke\s+name="[\s\S]*?(?:<\/invoke[^\n<]*?>|$)/gi, '')
     .replace(/(?<!`)<parameter\s+[^>\n]*?>[\s\S]*?(?:<\/parameter>|$)/gi, '')
 
+// Streaming re-renders call the sanitize/detection chain below on every
+// history message for every delta, and each call line-splits and regex-scans
+// the full content. History message contents never change, so a bounded
+// content-keyed cache turns the per-delta cost from O(total session chars)
+// into O(streaming tail chars). Without it, 5 panes × long sessions overload
+// the renderer main thread (the stuck-pane bug family).
+const createBoundedContentCache = <V>(limit: number) => {
+  const cache = new Map<string, V>()
+  return (key: string, compute: () => V): V => {
+    const hit = cache.get(key)
+    if (hit !== undefined || cache.has(key)) return hit as V
+    const value = compute()
+    if (cache.size >= limit) cache.clear()
+    cache.set(key, value)
+    return value
+  }
+}
+
 const sanitizeMarkerLines = (
   content: string,
   isMarkerLine: (line: string) => boolean,
@@ -821,6 +839,8 @@ const canContainLeakedClaudeCallMarker = (message: ChatMessage) => {
   return true
 }
 
+const sanitizedCallMarkerContentCache = createBoundedContentCache<string>(400)
+
 const sanitizeLeakedClaudeCallMarkerContent = (
   message: ChatMessage,
   options: { includeAmbiguousClaudeMarkers?: boolean } = {},
@@ -828,19 +848,24 @@ const sanitizeLeakedClaudeCallMarkerContent = (
   if (!canContainLeakedClaudeCallMarker(message)) return message.content
 
   if (message.meta?.provider !== 'claude') {
-    return stripStandaloneEmptyMarkdownBulletResidue(
-      sanitizeLeakedCallMarkerLines(message.content),
+    return sanitizedCallMarkerContentCache(`g ${message.content}`, () =>
+      stripStandaloneEmptyMarkdownBulletResidue(
+        sanitizeLeakedCallMarkerLines(message.content),
+      ),
     )
   }
 
-  const withoutCallMarkers = stripStandaloneEmptyMarkdownBulletResidue(
-    sanitizeClaudeProtocolMarkerLines(stripLeakedClaudeToolXml(message.content), {
-      includeAmbiguousMarkers: options.includeAmbiguousClaudeMarkers,
-    }),
-  )
+  const variant = options.includeAmbiguousClaudeMarkers ? 'a' : 'c'
+  return sanitizedCallMarkerContentCache(`${variant} ${message.content}`, () => {
+    const withoutCallMarkers = stripStandaloneEmptyMarkdownBulletResidue(
+      sanitizeClaudeProtocolMarkerLines(stripLeakedClaudeToolXml(message.content), {
+        includeAmbiguousMarkers: options.includeAmbiguousClaudeMarkers,
+      }),
+    )
 
-  return stripTrailingClaudeProtocolResidueLines(withoutCallMarkers, {
-    includeAmbiguousMarkers: options.includeAmbiguousClaudeMarkers,
+    return stripTrailingClaudeProtocolResidueLines(withoutCallMarkers, {
+      includeAmbiguousMarkers: options.includeAmbiguousClaudeMarkers,
+    })
   })
 }
 
@@ -925,7 +950,21 @@ const isStandaloneClaudeProtocolResidueNearToolActivity = (
   isStandaloneClaudeCountResidueNearToolActivity(message, previous, next) ||
   isStandaloneClaudeResidueWordBetweenToolActivity(message, previous, next)
 
+const retryChatterContentCache = createBoundedContentCache<boolean>(400)
+
+// Retry chatter is a short apologize-and-resend fragment. Long-form prose is
+// never chatter even when it mentions tooling keywords ("重试工具" in an
+// essay), and the length gate also bounds the per-delta cost of scanning a
+// still-streaming tail message that the content cache can never hit.
+const maxClaudeTypedToolRetryChatterChars = 4096
+const maxClaudeTypedToolApologyFragmentChars = 256
+
 const isClaudeTypedToolRetryChatterContent = (content: string) => {
+  if (content.length > maxClaudeTypedToolRetryChatterChars) return false
+  return retryChatterContentCache(content, () => computeClaudeTypedToolRetryChatterContent(content))
+}
+
+const computeClaudeTypedToolRetryChatterContent = (content: string) => {
   const normalized = sanitizeClaudeProtocolMarkerLines(content, {
     includeAmbiguousMarkers: true,
   }).replace(/\s+/g, ' ').trim()
@@ -946,11 +985,16 @@ const isClaudeTypedToolRetryChatterContent = (content: string) => {
   )
 }
 
+const apologyFragmentContentCache = createBoundedContentCache<boolean>(400)
+
 const isClaudeTypedToolApologyFragmentContent = (content: string) => {
-  const normalized = sanitizeClaudeProtocolMarkerLines(content, {
-    includeAmbiguousMarkers: true,
-  }).replace(/\s+/g, ' ').trim()
-  return /^抱歉[，,]?\s*我的?$/.test(normalized) || /^sorry[,\s]+my$/i.test(normalized)
+  if (content.length > maxClaudeTypedToolApologyFragmentChars) return false
+  return apologyFragmentContentCache(content, () => {
+    const normalized = sanitizeClaudeProtocolMarkerLines(content, {
+      includeAmbiguousMarkers: true,
+    }).replace(/\s+/g, ' ').trim()
+    return /^抱歉[，,]?\s*我的?$/.test(normalized) || /^sorry[,\s]+my$/i.test(normalized)
+  })
 }
 
 const hasClaudeStructuredActivityNearby = (
@@ -989,6 +1033,13 @@ const hasClaudeTypedToolRetryChatterNearby = (
   return false
 }
 
+const ambiguousMarkerLineCache = createBoundedContentCache<boolean>(400)
+
+const contentHasAmbiguousClaudeProtocolMarkerLine = (content: string) =>
+  ambiguousMarkerLineCache(content, () =>
+    content.split(/\r?\n/).some((line) => isAmbiguousClaudeProtocolMarkerLine(line)),
+  )
+
 const isAmbiguousClaudeProtocolMarkerResidueNearToolActivity = (
   messages: ChatMessage[],
   index: number,
@@ -1000,8 +1051,7 @@ const isAmbiguousClaudeProtocolMarkerResidueNearToolActivity = (
   if (message.meta?.kind) return false
   if (message.meta?.imageAttachments) return false
 
-  const lines = message.content.split(/\r?\n/)
-  if (!lines.some((line) => isAmbiguousClaudeProtocolMarkerLine(line))) {
+  if (!contentHasAmbiguousClaudeProtocolMarkerLine(message.content)) {
     return false
   }
 

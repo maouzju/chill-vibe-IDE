@@ -7,11 +7,15 @@ import {
   assembleForensicsSnapshot,
   describeElementPath,
   doTargetAndHitAgree,
+  focusLedgerCapacity,
+  hasSilentFocusLossSignature,
   pointerLedgerCapacity,
+  pushFocusLedgerEntry,
   pushPointerLedgerEntry,
   shouldAutoDumpAfterRescueEvent,
   summarizeComposerState,
   type ComposerStateQuery,
+  type FocusLedgerEntry,
   type ForensicsElementLike,
   type PointerLedgerEntry,
 } from '../src/diagnostics/stuck-pane-forensics'
@@ -222,6 +226,7 @@ test('the snapshot assembles every forensic section from injected collectors', (
             hitTestRepairCount: 2,
             rescueUnhandledCount: 1,
             focusExhaustedCount: 0,
+            focusGuardReclaimCount: 0,
             composer: {
               present: true,
               streaming: true,
@@ -250,6 +255,74 @@ test('the snapshot assembles every forensic section from injected collectors', (
   assert.equal(snapshot.pointerLedger[0]?.atMs, 123)
   assert.equal(snapshot.hitGrid.length, 1)
   assert.deepEqual(snapshot.rafTimestampsMs, [16.6, 33.2])
+})
+
+// ── focus ledger: the silent-loss signature (dump 07-08T04-05) ──────────────
+// Seven presses land on the textarea, focus settles each time, yet the dump
+// shows activeElement=<body> with every rescue counter 0. Whatever stole the
+// focus fired no blur — unmount/remount and disable both do that — so the
+// dump needs a focusin/focusout ledger: a trailing focusin with no matching
+// focusout while focus sits vacant is the silent-steal fingerprint.
+
+const focusEntry = (atMs: number, kind: 'focusin' | 'focusout'): FocusLedgerEntry => ({
+  atMs,
+  kind,
+  path: 'textarea.control.textarea > div.composer',
+})
+
+test('focus ledger keeps only the newest entries up to capacity, in order', () => {
+  let ledger: FocusLedgerEntry[] = []
+  for (let index = 0; index < focusLedgerCapacity + 4; index += 1) {
+    ledger = pushFocusLedgerEntry(ledger, focusEntry(index, index % 2 === 0 ? 'focusin' : 'focusout'))
+  }
+  assert.equal(ledger.length, focusLedgerCapacity)
+  assert.equal(ledger[0]?.atMs, 4)
+  assert.equal(ledger.at(-1)?.atMs, focusLedgerCapacity + 3)
+})
+
+test('a trailing focusin with vacant focus is the silent-loss signature', () => {
+  const ledger = [focusEntry(1, 'focusin')]
+  assert.equal(hasSilentFocusLossSignature(ledger, true), true)
+})
+
+test('a trailing focusout is a normal blur — rescues had their chance, no silent loss', () => {
+  const ledger = [focusEntry(1, 'focusin'), focusEntry(2, 'focusout')]
+  assert.equal(hasSilentFocusLossSignature(ledger, true), false)
+})
+
+test('no silent loss is reported while focus is actually held or the ledger is empty', () => {
+  assert.equal(hasSilentFocusLossSignature([focusEntry(1, 'focusin')], false), false)
+  assert.equal(hasSilentFocusLossSignature([], true), false)
+})
+
+test('the snapshot carries the focus ledger and the silent-loss verdict', () => {
+  const snapshot = assembleForensicsSnapshot({
+    reason: 'hotkey',
+    nowIso: '2026-07-08T12:00:00.000Z',
+    activeElementPath: 'body > html',
+    documentHasFocus: true,
+    visibilityState: 'visible',
+    windowSize: { width: 1400, height: 900 },
+    panes: [],
+    hitGrid: [],
+    pointerLedger: [],
+    rafTimestampsMs: [],
+    rescueEventTimesMs: [],
+    focusLedger: [focusEntry(500, 'focusin')],
+    silentFocusLoss: true,
+  })
+  assert.equal(snapshot.focusLedger?.[0]?.atMs, 500)
+  assert.equal(snapshot.silentFocusLoss, true)
+})
+
+test('the forensics runtime records focusin/focusout transitions', async () => {
+  const source = await readFile(
+    path.join(process.cwd(), 'src', 'diagnostics', 'stuck-pane-forensics.ts'),
+    'utf8',
+  )
+  assert.match(source, /addEventListener\('focusin'/, 'runtime must observe focusin')
+  assert.match(source, /addEventListener\('focusout'/, 'runtime must observe focusout')
+  assert.match(source, /silentFocusLoss/, 'capture must include the silent-loss verdict')
 })
 
 // ── wiring assertions ───────────────────────────────────────────────────────

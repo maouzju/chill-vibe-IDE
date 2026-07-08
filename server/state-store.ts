@@ -1440,6 +1440,30 @@ const normalizePersistedColumn = (
   }
 }
 
+const normalizePersistedStickyNoteArchive = (raw: unknown): AppState['stickyNoteArchive'] => {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
+    return {}
+  }
+
+  const result: AppState['stickyNoteArchive'] = {}
+  for (const [workspacePath, entry] of Object.entries(raw as Record<string, unknown>)) {
+    if (!workspacePath || !entry || typeof entry !== 'object') {
+      continue
+    }
+    const content = (entry as { content?: unknown }).content
+    if (typeof content !== 'string' || !content) {
+      continue
+    }
+    const updatedAt = (entry as { updatedAt?: unknown }).updatedAt
+    result[workspacePath] = {
+      content,
+      updatedAt: typeof updatedAt === 'string' ? updatedAt : new Date().toISOString(),
+    }
+  }
+
+  return result
+}
+
 const sanitizeStateResult = (raw: unknown): SanitizedStateResult => {
   const defaultState = createDefaultState(getDefaultWorkspacePath())
 
@@ -1474,6 +1498,7 @@ const sanitizeStateResult = (raw: unknown): SanitizedStateResult => {
     ...data,
     version: 1,
     settings: safeSettings,
+    stickyNoteArchive: normalizePersistedStickyNoteArchive(data.stickyNoteArchive),
     updatedAt: new Date().toISOString(),
     columns: safeColumns.map((column: BoardColumn, columnIndex: number) => ({
       ...(() => {

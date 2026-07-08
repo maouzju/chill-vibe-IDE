@@ -521,6 +521,12 @@ export const appSettingsSchema = z.object({
 })
 export type AppSettings = z.infer<typeof appSettingsSchema>
 
+export const stickyNoteArchiveEntrySchema = z.object({
+  content: z.string().default(''),
+  updatedAt: z.string().datetime(),
+})
+export type StickyNoteArchiveEntry = z.infer<typeof stickyNoteArchiveEntrySchema>
+
 export const appStateSchema = z.object({
   version: z.literal(1),
   settings: appSettingsSchema.default({
@@ -592,6 +598,7 @@ export const appStateSchema = z.object({
   }),
   columns: z.array(boardColumnSchema),
   sessionHistory: z.array(sessionHistoryEntrySchema).default([]),
+  stickyNoteArchive: z.record(z.string(), stickyNoteArchiveEntrySchema).default({}),
   updatedAt: z.string().datetime(),
 })
 export type AppState = z.infer<typeof appStateSchema>

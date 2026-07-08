@@ -658,7 +658,12 @@ test('hides leaked Claude call marker lines inside assistant text bubbles', () =
 test('renders structured edited-file diff blocks', () => {
   const markup = renderCard(createEditedFilesCard())
 
-  assert.match(markup, /Edited files/)
+  // Header badge ("Edited files"), the "N files changed" summary, and the per-file
+  // "Modified" kind chip were removed for a VSCode-style compact layout: just the
+  // file name, +/- stats, and the clickable diff preview.
+  assert.doesNotMatch(markup, /Edited files/)
+  assert.doesNotMatch(markup, /structured-edits-header/)
+  assert.doesNotMatch(markup, /structured-edits-kind/)
   assert.match(markup, /shared\/schema\.ts/)
   assert.match(markup, /\+11/)
   assert.match(markup, /-1/)

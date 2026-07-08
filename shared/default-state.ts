@@ -15,6 +15,7 @@ import type {
   SessionHistoryEntry,
   SplitDirection,
   SplitNode,
+  StickyNoteArchiveEntry,
 } from './schema.js'
 import { createDefaultBrainstormState } from './brainstorm.js'
 import {
@@ -58,6 +59,8 @@ export const defaultGitToolCardSize = 100
 export const minGitToolCardSize = 1
 export const defaultStickyNoteCardSize = 164
 export const minStickyNoteCardSize = 96
+export const stickyNoteArchiveMaxEntries = 50
+export const stickyNoteArchiveMaxContentLength = 64_000
 export const defaultWhiteNoiseCardSize = 286
 export const minWhiteNoiseCardSize = 208
 export const minWeatherCardSize = 160
@@ -1083,6 +1086,7 @@ export const createDefaultState = (
     settings: createDefaultSettings(normalizedLanguage),
     updatedAt: now(),
     sessionHistory: [],
+    stickyNoteArchive: {},
     columns: [
       createColumn(
         {
@@ -1167,6 +1171,41 @@ export const touchState = (state: AppState): AppState => ({
   ...state,
   updatedAt: now(),
 })
+
+export const upsertStickyNoteArchiveEntry = (
+  archive: Record<string, StickyNoteArchiveEntry>,
+  workspacePath: string,
+  content: string,
+): Record<string, StickyNoteArchiveEntry> => {
+  const key = workspacePath.trim()
+  if (!key) {
+    return archive
+  }
+
+  const next = { ...archive }
+  if (!content.trim()) {
+    if (!(key in next)) {
+      return archive
+    }
+    delete next[key]
+    return next
+  }
+
+  next[key] = {
+    content: content.slice(0, stickyNoteArchiveMaxContentLength),
+    updatedAt: now(),
+  }
+
+  const keys = Object.keys(next)
+  if (keys.length > stickyNoteArchiveMaxEntries) {
+    keys.sort((a, b) => next[a].updatedAt.localeCompare(next[b].updatedAt))
+    for (const staleKey of keys.slice(0, keys.length - stickyNoteArchiveMaxEntries)) {
+      delete next[staleKey]
+    }
+  }
+
+  return next
+}
 
 export const archiveCardToHistory = (
   history: SessionHistoryEntry[] | undefined,

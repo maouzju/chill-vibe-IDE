@@ -87,6 +87,7 @@ import {
 } from './composer-paste'
 import {
   composerBlurOutsidePressWindowMs,
+  composerFocusGuardDelaysMs,
   decideHitTestRepairScope,
   decideTextareaPressFocusVerification,
   hitTestRepairEscalationWindowMs,
@@ -404,6 +405,8 @@ type ChatCardProps = {
   onToggleCollapsed: () => void
   onMarkRead: () => void
   onStickyNoteChange: (content: string) => void
+  stickyNoteArchivedContent?: string
+  onDiscardStickyNoteArchive?: () => void
   onPatchCard: (
     patch: Partial<
       Pick<
@@ -1340,6 +1343,8 @@ const ChatCardView = ({
   onToggleCollapsed,
   onMarkRead,
   onStickyNoteChange,
+  stickyNoteArchivedContent,
+  onDiscardStickyNoteArchive,
   onPatchCard,
   onChangeTitle,
   onForkConversation,
@@ -2063,6 +2068,19 @@ const ChatCardView = ({
         }
         textarea.focus({ preventScroll: true })
         return true
+      },
+      // Guard phase (dump 07-08T04-05): focus settles on the press, then gets
+      // silently stolen (no blur fires on unmount/remount or disable), so the
+      // ladder must keep watching after settling. Each reclaim is counted on
+      // the shell for the forensics dump — >0 proves the silent-steal class.
+      guardDelaysMs: composerFocusGuardDelaysMs,
+      onGuardReclaim: () => {
+        const shell = textareaRef.current?.closest('.card-shell')
+        if (shell instanceof HTMLElement) {
+          shell.dataset.composerFocusGuardReclaimCount = String(
+            Number(shell.dataset.composerFocusGuardReclaimCount ?? '0') + 1,
+          )
+        }
       },
       isFocusSettled: () =>
         textareaRef.current !== null && document.activeElement === textareaRef.current,
@@ -4015,11 +4033,17 @@ const ChatCardView = ({
 
       {isStickyNoteCard && (
         <div style={isCollapsed ? { display: 'none' } : { display: 'contents' }}>
-          <StickyNoteCard content={card.stickyNote} language={language} onChange={(content) => {
-            onStickyNoteChange(content)
-            const firstLine = content.split('\n')[0].trim()
-            onChangeTitle(firstLine)
-          }} />
+          <StickyNoteCard
+            content={card.stickyNote}
+            archivedContent={stickyNoteArchivedContent}
+            language={language}
+            onChange={(content) => {
+              onStickyNoteChange(content)
+              const firstLine = content.split('\n')[0].trim()
+              onChangeTitle(firstLine)
+            }}
+            onDiscardArchive={onDiscardStickyNoteArchive}
+          />
         </div>
       )}
 

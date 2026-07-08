@@ -39,6 +39,39 @@ export const pushPointerLedgerEntry = (
   return next.length > capacity ? next.slice(next.length - capacity) : next
 }
 
+// Focus transitions ledger (dump 07-08T04-05: presses land on the textarea,
+// focus settles, yet ends on <body> with all rescue counters 0). An element
+// removed or disabled while focused loses focus WITHOUT firing blur/focusout,
+// leaving every blur-driven rescue deaf. The ledger makes that visible: a
+// trailing focusin with no matching focusout while focus sits vacant is the
+// silent-steal fingerprint.
+export type FocusLedgerEntry = {
+  atMs: number
+  kind: 'focusin' | 'focusout'
+  path: string
+}
+
+export const focusLedgerCapacity = 30
+
+export const pushFocusLedgerEntry = (
+  ledger: FocusLedgerEntry[],
+  entry: FocusLedgerEntry,
+  capacity = focusLedgerCapacity,
+): FocusLedgerEntry[] => {
+  const next = [...ledger, entry]
+  return next.length > capacity ? next.slice(next.length - capacity) : next
+}
+
+export const hasSilentFocusLossSignature = (
+  ledger: FocusLedgerEntry[],
+  focusIsVacant: boolean,
+): boolean => {
+  if (!focusIsVacant || ledger.length === 0) {
+    return false
+  }
+  return ledger[ledger.length - 1]!.kind === 'focusin'
+}
+
 const describeSingleElement = (element: ForensicsElementLike): string => {
   const tag = element.tagName.toLowerCase()
   const className =
@@ -168,6 +201,10 @@ export type ForensicsPaneSummary = {
     hitTestRepairCount: number
     rescueUnhandledCount: number
     focusExhaustedCount: number
+    // Guard reclaims: focus settled on the textarea and was silently stolen
+    // again (no blur). >0 here + a trailing focusin in focusLedger = the
+    // silent-steal class, not a click-routing failure.
+    focusGuardReclaimCount: number
     composer?: ComposerStateSummary
   }>
 }
@@ -185,6 +222,8 @@ export type ForensicsSnapshot = {
   pointerLedger: PointerLedgerEntry[]
   rafTimestampsMs: number[]
   rescueEventTimesMs: number[]
+  focusLedger?: FocusLedgerEntry[]
+  silentFocusLoss?: boolean
 }
 
 export type ForensicsSnapshotInput = Omit<ForensicsSnapshot, 'schema'>
@@ -259,6 +298,7 @@ const collectPanes = (): ForensicsPaneSummary[] =>
         hitTestRepairCount: readCount(panel, 'hitTestRepairCount') + readCount(shell, 'hitTestRepairCount'),
         rescueUnhandledCount: readCount(shell, 'composerRescueUnhandledCount'),
         focusExhaustedCount: readCount(shell, 'composerFocusExhaustedCount'),
+        focusGuardReclaimCount: readCount(shell, 'composerFocusGuardReclaimCount'),
         composer: readComposerState(shell),
       }
     }),
@@ -337,7 +377,28 @@ export const installStuckPaneForensics = () => {
     })
   }
 
+  // Focus transitions: an element removed/disabled while focused loses focus
+  // WITHOUT firing focusout, so a trailing focusin while activeElement sits on
+  // <body> is the silent-steal fingerprint (dump 07-08T04-05).
+  let focusLedger: FocusLedgerEntry[] = []
+  const recordFocusIn = (event: FocusEvent) => {
+    focusLedger = pushFocusLedgerEntry(focusLedger, {
+      atMs: Math.round(performance.now()),
+      kind: 'focusin',
+      path: describeElementPath(event.target as ForensicsElementLike | null),
+    })
+  }
+  const recordFocusOut = (event: FocusEvent) => {
+    focusLedger = pushFocusLedgerEntry(focusLedger, {
+      atMs: Math.round(performance.now()),
+      kind: 'focusout',
+      path: describeElementPath(event.target as ForensicsElementLike | null),
+    })
+  }
+
   const capture = (reason: string) => {
+    const focusIsVacant =
+      document.activeElement === null || document.activeElement === document.body
     const snapshot = assembleForensicsSnapshot({
       reason,
       nowIso: new Date().toISOString(),
@@ -352,6 +413,8 @@ export const installStuckPaneForensics = () => {
       pointerLedger: ledger,
       rafTimestampsMs: rafTimestamps,
       rescueEventTimesMs: autoDumpState.eventTimesMs,
+      focusLedger,
+      silentFocusLoss: hasSilentFocusLossSignature(focusLedger, focusIsVacant),
     })
     void persistSnapshot(snapshot)
   }
@@ -373,11 +436,15 @@ export const installStuckPaneForensics = () => {
   }
 
   document.addEventListener('pointerdown', recordPointer, true)
+  document.addEventListener('focusin', recordFocusIn, true)
+  document.addEventListener('focusout', recordFocusOut, true)
   window.addEventListener('keydown', handleKeyDown)
   window.addEventListener(forensicsRescueEventName, handleRescueEvent)
 
   return () => {
     document.removeEventListener('pointerdown', recordPointer, true)
+    document.removeEventListener('focusin', recordFocusIn, true)
+    document.removeEventListener('focusout', recordFocusOut, true)
     window.removeEventListener('keydown', handleKeyDown)
     window.removeEventListener(forensicsRescueEventName, handleRescueEvent)
     window.clearInterval(heartbeatTimer)

@@ -20,6 +20,7 @@ import {
   rememberModelReasoningEffort,
   resetCardSessions,
   touchState,
+  upsertStickyNoteArchiveEntry,
 } from '../shared/default-state'
 import { createDefaultBrainstormState } from '../shared/brainstorm'
 import { getChatMessageAttachments } from '../shared/chat-attachments'
@@ -271,6 +272,7 @@ export type IdeAction =
   | { type: 'setActiveTab'; columnId: string; paneId: string; tabId: string }
   | { type: 'resizePane'; columnId: string; splitId: string; ratios: number[] }
   | { type: 'setCardDraft'; columnId: string; cardId: string; draft: string }
+  | { type: 'clearStickyNoteArchive'; workspacePath: string }
   | { type: 'appendMessages'; columnId: string; cardId: string; messages: ChatMessage[] }
   | { type: 'upsertMessages'; columnId: string; cardId: string; messages: ChatMessage[] }
   | { type: 'resetCardConversation'; columnId: string; cardId: string; title?: string }
@@ -1904,6 +1906,15 @@ export const ideReducer = (state: AppState, action: IdeAction): AppState => {
         })),
       )
     }
+    case 'clearStickyNoteArchive': {
+      if (!(action.workspacePath in state.stickyNoteArchive)) {
+        return state
+      }
+
+      const stickyNoteArchive = { ...state.stickyNoteArchive }
+      delete stickyNoteArchive[action.workspacePath]
+      return touchState({ ...state, stickyNoteArchive })
+    }
     case 'appendMessages':
       return touchState(
         updateCard(state, action.columnId, action.cardId, (card) => ({
@@ -1957,12 +1968,30 @@ export const ideReducer = (state: AppState, action: IdeAction): AppState => {
         return state
       }
 
-      return touchState(
+      const next = touchState(
         updateCard(state, action.columnId, action.cardId, (card) => ({
           ...card,
           ...action.patch,
         })),
       )
+
+      // Sticky note edits also refresh the per-workspace archive so the note
+      // survives closing the card or the whole workspace column. Editor tool
+      // cards reuse `stickyNote` as a file path and must not be archived.
+      if (typeof action.patch.stickyNote === 'string' && current.model === STICKYNOTE_TOOL_MODEL) {
+        const workspacePath =
+          state.columns.find((column) => column.id === action.columnId)?.workspacePath ?? ''
+        const archive = upsertStickyNoteArchiveEntry(
+          next.stickyNoteArchive,
+          workspacePath,
+          action.patch.stickyNote,
+        )
+        if (archive !== next.stickyNoteArchive) {
+          return { ...next, stickyNoteArchive: archive }
+        }
+      }
+
+      return next
     }
     case 'appendAssistantDelta':
       return touchState(

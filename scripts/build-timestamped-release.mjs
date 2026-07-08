@@ -29,6 +29,24 @@ Examples:
   node scripts/build-timestamped-release.mjs --dry-run
 `.trim()
 
+// Each build drops a ~636MB release-* directory and never removed old ones, so
+// dist grew unbounded (49 dirs / 31GB observed 2026-07-07). Keep the newest N
+// and delete the rest. Pure/decidable so it can be unit-tested without touching
+// disk; the caller does the actual rm. `keep` < 1 is treated as "keep all"
+// (disables pruning) so an accidental 0 never wipes every build.
+export function selectReleaseDirsToPrune(dirNames, keep, protectedNames = []) {
+  const releases = dirNames
+    .filter((name) => /^release-\d{8}-\d{6}/.test(name))
+    .sort() // timestamped names sort chronologically as strings
+  if (!Number.isFinite(keep) || keep < 1) {
+    return []
+  }
+  const protectedSet = new Set(protectedNames)
+  const kept = releases.slice(-keep)
+  const keptSet = new Set(kept)
+  return releases.filter((name) => !keptSet.has(name) && !protectedSet.has(name))
+}
+
 function pad(value) {
   return String(value).padStart(2, '0')
 }
@@ -249,6 +267,34 @@ async function main() {
   console.log(`[packaging] release dir: ${outputDirAbsolute}`)
   console.log(`[packaging] unpacked exe: ${exePath}`)
   console.log(`[packaging] note: each build uses its own timestamped release-* directory`)
+
+  // Prune old builds so dist/ does not grow unbounded (~636MB each). Only after
+  // a successful build, never in --dry-run. The just-built dir is protected even
+  // if keep is small. CHILL_VIBE_KEEP_RELEASES overrides the default of 5; set
+  // it to 0 (or negative) to disable pruning entirely.
+  if (!options.dryRun) {
+    const keepRaw = Number.parseInt(process.env.CHILL_VIBE_KEEP_RELEASES ?? '', 10)
+    const keep = Number.isFinite(keepRaw) ? keepRaw : 5
+    const dirNames = fs
+      .readdirSync(distDir, { withFileTypes: true })
+      .filter((entry) => entry.isDirectory())
+      .map((entry) => entry.name)
+    const toPrune = selectReleaseDirsToPrune(dirNames, keep, [outputDirName])
+    for (const name of toPrune) {
+      const fullPath = path.join(distDir, name)
+      try {
+        fs.rmSync(fullPath, { recursive: true, force: true })
+        console.log(`[packaging] pruned old release: ${name}`)
+      } catch (error) {
+        console.warn(
+          `[packaging] warning: could not prune ${name}: ${error instanceof Error ? error.message : String(error)}`,
+        )
+      }
+    }
+    if (toPrune.length > 0) {
+      console.log(`[packaging] pruned ${toPrune.length} old release dir(s), kept newest ${keep}`)
+    }
+  }
 }
 
 try {

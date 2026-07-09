@@ -6,8 +6,10 @@ import test from 'node:test'
 import {
   assembleForensicsSnapshot,
   composerAttributeMutationCapacity,
+  composerChainLayerClasses,
   countReactiveFocusKicks,
   describeElementPath,
+  diagnoseUnfocusableCause,
   doTargetAndHitAgree,
   focusLedgerCapacity,
   focusMethodCallCapacity,
@@ -352,6 +354,28 @@ test('a focusin followed within the kick window by a focusout to nowhere counts 
   assert.equal(countReactiveFocusKicks(ledger), 2)
 })
 
+// Dump 07-09T09-16: every real kick pair reads focusin on
+// `textarea.control.textarea.focus-visible > …` but focusout on
+// `textarea.control.textarea > …` — the browser drops :focus-visible (and its
+// class mirror) the instant focus leaves, so a strict path comparison misses
+// every kick and the verdict counter stays 0 while the ledger is full of them.
+test('focus-visible class churn between focusin and focusout does not hide a kick', () => {
+  const ledger: FocusLedgerEntry[] = [
+    {
+      atMs: 1_000,
+      kind: 'focusin',
+      path: 'textarea.control.textarea.focus-visible > div.composer-input-row > div.composer',
+    },
+    {
+      atMs: 1_008,
+      kind: 'focusout',
+      path: 'textarea.control.textarea > div.composer-input-row > div.composer',
+      relatedPath: '(null)',
+    },
+  ]
+  assert.equal(countReactiveFocusKicks(ledger), 1)
+})
+
 test('a focusout that hands focus to a real element is a deliberate move, not a kick', () => {
   const ledger: FocusLedgerEntry[] = [
     { atMs: 1_000, kind: 'focusin', path: 'textarea.control.textarea > div.composer' },
@@ -379,6 +403,121 @@ test('legacy ledger entries without relatedPath never count as kicks', () => {
     { atMs: 1_008, kind: 'focusout', path: 'textarea.control.textarea > div.composer' },
   ]
   assert.equal(countReactiveFocusKicks(ledger), 0)
+})
+
+// ── unfocusable-cause snapshot on focusout-to-nowhere ───────────────────────
+// Dump 07-09T09-16 narrowed the kick mechanism: every kick DID fire focusout
+// (removal is silent, so the element survived) — meaning either the browser's
+// focus fixup ran (something on the chain went unfocusable for an instant) or
+// the OS window lost focus. Both culprits recover before the next dump, so the
+// only way to catch them is to interrogate the chain SYNCHRONOUSLY inside the
+// focusout listener, while the flipped attribute is still in effect.
+
+test('a connected, enabled, visible element has no unfocusable cause', () => {
+  const shell = makeNode('article', { className: 'card-shell' })
+  const composer = appendChild(shell, makeNode('div', { className: 'composer' }))
+  const textarea = appendChild(composer, makeNode('textarea', { className: 'control textarea' }))
+  assert.equal(
+    diagnoseUnfocusableCause(textarea, () => ({ display: 'block', visibility: 'visible' })),
+    null,
+  )
+})
+
+test('a detached element reports detached', () => {
+  const textarea = makeNode('textarea', { className: 'control textarea' })
+  ;(textarea as { isConnected?: boolean }).isConnected = false
+  const cause = diagnoseUnfocusableCause(textarea, () => null)
+  assert.equal(cause?.kind, 'detached')
+})
+
+test('a disabled element reports disabled on itself', () => {
+  const composer = makeNode('div', { className: 'composer' })
+  const textarea = appendChild(
+    composer,
+    makeNode('textarea', { className: 'control textarea', attrs: { disabled: '' } }),
+  )
+  const cause = diagnoseUnfocusableCause(textarea, () => ({ display: 'block', visibility: 'visible' }))
+  assert.equal(cause?.kind, 'disabled')
+  assert.match(cause?.path ?? '', /textarea/)
+})
+
+test('a hidden or inert ancestor reports the flipped layer, not the element', () => {
+  const panel = makeNode('div', { className: 'pane-tab-panel', attrs: { hidden: '' } })
+  const composer = appendChild(panel, makeNode('div', { className: 'composer' }))
+  const textarea = appendChild(composer, makeNode('textarea', { className: 'control textarea' }))
+  const cause = diagnoseUnfocusableCause(textarea, () => ({ display: 'block', visibility: 'visible' }))
+  assert.equal(cause?.kind, 'hidden-attr')
+  assert.match(cause?.path ?? '', /pane-tab-panel/)
+
+  const inertShell = makeNode('article', { className: 'card-shell', attrs: { inert: '' } })
+  const inertComposer = appendChild(inertShell, makeNode('div', { className: 'composer' }))
+  const inertTextarea = appendChild(inertComposer, makeNode('textarea', { className: 'control textarea' }))
+  const inertCause = diagnoseUnfocusableCause(inertTextarea, () => ({ display: 'block', visibility: 'visible' }))
+  assert.equal(inertCause?.kind, 'inert')
+  assert.match(inertCause?.path ?? '', /card-shell/)
+})
+
+test('a display:none or visibility:hidden ancestor reports the styled layer', () => {
+  const shell = makeNode('article', { className: 'card-shell' })
+  const composer = appendChild(shell, makeNode('div', { className: 'composer' }))
+  const textarea = appendChild(composer, makeNode('textarea', { className: 'control textarea' }))
+  const cause = diagnoseUnfocusableCause(textarea, (el) =>
+    el === shell
+      ? { display: 'none', visibility: 'visible' }
+      : { display: 'block', visibility: 'visible' },
+  )
+  assert.equal(cause?.kind, 'display-none')
+  assert.match(cause?.path ?? '', /card-shell/)
+
+  const visCause = diagnoseUnfocusableCause(textarea, (el) =>
+    el === composer
+      ? { display: 'block', visibility: 'hidden' }
+      : { display: 'block', visibility: 'visible' },
+  )
+  assert.equal(visCause?.kind, 'visibility-hidden')
+  assert.match(visCause?.path ?? '', /composer/)
+})
+
+test('the forensics runtime interrogates focusout-to-nowhere in place', async () => {
+  const source = await readFile(
+    path.join(process.cwd(), 'src', 'diagnostics', 'stuck-pane-forensics.ts'),
+    'utf8',
+  )
+  assert.match(source, /docHasFocus/, 'focusout-to-nowhere must record document.hasFocus() to split window-level steals (IME/system) from DOM-level fixup')
+  assert.match(source, /diagnoseUnfocusableCause\(/, 'focusout-to-nowhere must snapshot the unfocusable cause while the flip is still live')
+  assert.match(source, /focusout-trace/, 'focusout-to-nowhere must record a stack top — a synchronous fixup carries the flipping commit in its frames')
+})
+
+// ── attribute-mutation ledger coverage ──────────────────────────────────────
+// Dump 07-09T09-16 blind spot: the ledger only admitted TEXTAREA, .composer
+// descendants, and pane-tab-panel — card-footer, card-shell, split-child,
+// pane-content and friends could flip display-affecting attributes without a
+// trace, which is exactly the layer range the focus fixup walks. The admitted
+// set must name every fixed layout layer on the textarea's ancestor chain
+// (and only those — admitting the whole card-shell subtree would let
+// streaming message churn flush the 40-entry ledger).
+
+test('the mutation ledger admits every fixed layout layer on the composer ancestor chain', () => {
+  for (const layer of [
+    'card-shell',
+    'card-footer',
+    'composer',
+    'composer-input-row',
+    'pane-tab-panel',
+    'pane-content',
+    'pane-view',
+    'split-child',
+    'split-container',
+  ]) {
+    assert.ok(
+      composerChainLayerClasses.includes(layer),
+      `layout layer ${layer} must be admitted — it sits on the focus fixup's walk`,
+    )
+  }
+  assert.ok(
+    !composerChainLayerClasses.includes('message-list'),
+    'message content layers stay out — their churn would flush the ledger',
+  )
 })
 
 // ── focus method call ledger ────────────────────────────────────────────────

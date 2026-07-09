@@ -53,6 +53,17 @@ export type FocusLedgerEntry = {
   // to nowhere — the fingerprint of a programmatic blur()/attribute flip, since
   // a user press always names the element it moved to.
   relatedPath?: string
+  // focusout-to-nowhere only. false = the OS window itself lost focus (IME
+  // candidate window, system popup) — a DOM-level fixup keeps the document
+  // focused while kicking the element.
+  docHasFocus?: boolean
+  // focusout-to-nowhere only: what made the element unfocusable, interrogated
+  // synchronously while the flip is still in effect. null = the chain looks
+  // focusable from here, so the steal was window-level or a plain focus move.
+  unfocusableCause?: UnfocusableCause | null
+  // focusout-to-nowhere only: a fixup dispatched synchronously from an
+  // attribute flip carries the flipping commit in these frames.
+  stackTop?: string
 }
 
 export const focusLedgerCapacity = 30
@@ -73,6 +84,13 @@ export const pushFocusLedgerEntry = (
 // fast focusin→focusout-to-nowhere pair on the same element is the kick.
 export const reactiveFocusKickWindowMs = 50
 
+// The browser drops the focus-visible class the instant focus leaves, so the
+// focusin path reads `textarea.….focus-visible > …` while the paired focusout
+// reads `textarea.… > …` (dump 07-09T09-16 missed every kick this way). Strip
+// it before comparing so class churn can't hide a same-element pair.
+const normalizeFocusPath = (path: string): string =>
+  path.replace(/\.focus-visible(?=[\s.[]|$)/g, '')
+
 export const countReactiveFocusKicks = (
   ledger: FocusLedgerEntry[],
   kickWindowMs = reactiveFocusKickWindowMs,
@@ -84,7 +102,7 @@ export const countReactiveFocusKicks = (
     if (
       previous.kind === 'focusin' &&
       current.kind === 'focusout' &&
-      current.path === previous.path &&
+      normalizeFocusPath(current.path) === normalizeFocusPath(previous.path) &&
       current.relatedPath === '(null)' &&
       current.atMs - previous.atMs <= kickWindowMs
     ) {
@@ -150,6 +168,26 @@ export const pushComposerAttributeMutationEntry = (
   return next.length > capacity ? next.slice(next.length - capacity) : next
 }
 
+// The fixed layout layers on the composer textarea's ancestor chain — the
+// exact walk the browser's focus fixup takes. Dump 07-09T09-16 blind spot:
+// only TEXTAREA/.composer/pane-tab-panel were admitted, so card-footer,
+// card-shell and the pane/split layers could flip display-affecting
+// attributes without a trace. Message content layers stay out on purpose:
+// their streaming churn would flush the bounded ledger.
+export const composerChainLayerClasses = [
+  'card-shell',
+  'card-footer',
+  'composer',
+  'composer-input-row',
+  'pane-tab-panel',
+  'pane-content',
+  'pane-view',
+  'pane-tab-strip',
+  'pane-tab-bar',
+  'split-child',
+  'split-container',
+]
+
 const stripFocusVisible = (classValue: string | null): string =>
   (classValue ?? '')
     .split(/\s+/)
@@ -210,6 +248,51 @@ export const describeElementPath = (
     cursor = cursor.parentElement
   }
   return parts.join(' > ')
+}
+
+// Unfocusable-cause interrogation (dump 07-09T09-16): every kick fired a real
+// focusout (removal is silent — the element survived), which leaves exactly
+// two mechanisms: the browser's focus fixup (something on the chain flipped
+// unfocusable for an instant) or a window-level steal. The flip recovers
+// within milliseconds, so the only place it can be caught is synchronously
+// inside the focusout listener — walk the chain and name the flipped layer
+// while it is still flipped.
+export type UnfocusableCause = {
+  kind: 'detached' | 'disabled' | 'hidden-attr' | 'inert' | 'display-none' | 'visibility-hidden'
+  path: string
+}
+
+export const diagnoseUnfocusableCause = (
+  element: (ForensicsElementLike & { isConnected?: boolean }) | null,
+  getStyle: (el: ForensicsElementLike) => { display: string; visibility: string } | null,
+): UnfocusableCause | null => {
+  if (!element) {
+    return null
+  }
+  if (element.isConnected === false) {
+    return { kind: 'detached', path: describeElementPath(element) }
+  }
+  if (element.getAttribute('disabled') !== null) {
+    return { kind: 'disabled', path: describeElementPath(element) }
+  }
+  let cursor: ForensicsElementLike | null = element
+  while (cursor) {
+    if (cursor.getAttribute('hidden') !== null) {
+      return { kind: 'hidden-attr', path: describeElementPath(cursor) }
+    }
+    if (cursor.getAttribute('inert') !== null) {
+      return { kind: 'inert', path: describeElementPath(cursor) }
+    }
+    const style = getStyle(cursor)
+    if (style?.display === 'none') {
+      return { kind: 'display-none', path: describeElementPath(cursor) }
+    }
+    if (style?.visibility === 'hidden') {
+      return { kind: 'visibility-hidden', path: describeElementPath(cursor) }
+    }
+    cursor = cursor.parentElement
+  }
+  return null
 }
 
 // Normal routing: the event target and the layout hit are the same element or
@@ -504,13 +587,32 @@ export const installStuckPaneForensics = () => {
     })
   }
   const recordFocusOut = (event: FocusEvent) => {
-    focusLedger = pushFocusLedgerEntry(focusLedger, {
+    const relatedPath = describeElementPath(event.relatedTarget as ForensicsElementLike | null)
+    const entry: FocusLedgerEntry = {
       atMs: Math.round(performance.now()),
       kind: 'focusout',
       path: describeElementPath(event.target as ForensicsElementLike | null),
       // Where focus went. '(null)' = nowhere: the programmatic-kick fingerprint.
-      relatedPath: describeElementPath(event.relatedTarget as ForensicsElementLike | null),
-    })
+      relatedPath,
+    }
+    if (relatedPath === '(null)') {
+      // Interrogate the kick in place: the flipped attribute is still in
+      // effect during this synchronous dispatch, and a fixup triggered from a
+      // commit carries the flipper in the current stack.
+      entry.docHasFocus = document.hasFocus()
+      entry.unfocusableCause =
+        event.target instanceof HTMLElement
+          ? diagnoseUnfocusableCause(
+              event.target as unknown as ForensicsElementLike & { isConnected?: boolean },
+              (el) => {
+                const style = window.getComputedStyle(el as unknown as Element)
+                return { display: style.display, visibility: style.visibility }
+              },
+            )
+          : null
+      entry.stackTop = summarizeCallStack(new Error('focusout-trace').stack ?? undefined, 6)
+    }
+    focusLedger = pushFocusLedgerEntry(focusLedger, entry)
   }
 
   // Programmatic focus/blur callers, with stack tops. A reactive kick can only
@@ -556,7 +658,7 @@ export const installStuckPaneForensics = () => {
       const isComposerRelated =
         target.tagName === 'TEXTAREA' ||
         target.closest('.composer') !== null ||
-        target.classList.contains('pane-tab-panel')
+        composerChainLayerClasses.some((layer) => target.classList.contains(layer))
       if (!isComposerRelated) {
         continue
       }

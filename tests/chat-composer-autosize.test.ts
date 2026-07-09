@@ -76,6 +76,48 @@ test('chat composer shrinks back to its minimum height after multiline content i
   }
 })
 
+test('an empty composer ignores a stale inflated scrollHeight and pins to its minimum height', () => {
+  const globalWithWindow = globalThis as typeof globalThis & {
+    window?: Window & typeof globalThis
+  }
+  const originalWindow = globalWithWindow.window
+  const fakeNode = {
+    style: {
+      height: '',
+      maxHeight: '',
+      overflowY: '',
+    },
+    value: '',
+    clientWidth: 320,
+  } as unknown as HTMLTextAreaElement
+
+  Object.defineProperty(fakeNode, 'scrollHeight', {
+    configurable: true,
+    // 瞬态布局（面板拖拽/隐藏期测量）可以让空 textarea 报出虚高 scrollHeight
+    get: () => 118,
+  })
+
+  globalWithWindow.window = {
+    getComputedStyle: () =>
+      ({
+        minHeight: '32px',
+        height: fakeNode.style.height || '32px',
+        lineHeight: '18px',
+        paddingTop: '7px',
+        paddingBottom: '7px',
+      }) as CSSStyleDeclaration,
+  } as unknown as Window & typeof globalThis
+
+  try {
+    syncComposerTextareaHeight(fakeNode)
+
+    assert.equal(fakeNode.style.height, '32px')
+    assert.equal(fakeNode.style.overflowY, 'hidden')
+  } finally {
+    globalWithWindow.window = originalWindow
+  }
+})
+
 test('chat composer reuses cached metrics for repeated height syncs on the same textarea', () => {
   const globalWithWindow = globalThis as typeof globalThis & {
     window?: Window & typeof globalThis

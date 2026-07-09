@@ -1787,6 +1787,29 @@ const ChatCardView = ({
   }, [card.id, scheduleComposerResize])
 
   useEffect(() => {
+    const node = textareaRef.current
+    if (!node || typeof ResizeObserver === 'undefined') {
+      return
+    }
+
+    // 自动增高依赖宽度（换行数随宽度变化），但布局记忆化只在输入时失效；
+    // 面板拖拽/窗口缩放改变宽度后必须重算，否则旧宽度下量出的高度会一直留着。
+    let lastWidth = node.clientWidth
+    const observer = new ResizeObserver(() => {
+      const nextWidth = node.clientWidth
+      if (nextWidth !== lastWidth) {
+        lastWidth = nextWidth
+        scheduleComposerResize()
+      }
+    })
+    observer.observe(node)
+
+    return () => {
+      observer.disconnect()
+    }
+  }, [scheduleComposerResize])
+
+  useEffect(() => {
     pendingAttachmentsRef.current = pendingAttachments
   }, [pendingAttachments])
 

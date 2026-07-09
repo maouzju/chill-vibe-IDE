@@ -7,46 +7,49 @@ description: Audit the current Chill Vibe repo diff for sensitive or irrelevant 
 
 Use this skill from the `chill-vibe` repo root when the task is not just “run tests”, but “safely turn the current checkout into a shipped GitHub release”.
 
-Reuse the verification posture from `../chill-vibe-full-regression/SKILL.md`, but own the full release chain: diff audit → verification → version bump → commit/push → tag/release → asset verification.
+Reuse the verification posture from `../chill-vibe-full-regression/SKILL.md`, but own the full release chain: pre-flight → diff audit → verification → version bump → commit/push/tag → release (server-side build) → asset verification.
+
+**Primary asset path: pushing the `v*` tag triggers `.github/workflows/release-zip.yml`, which builds the Windows zip server-side, uploads the canonical `Chill.Vibe-<version>-win.zip` (spaces normalized to dots), and verifies asset state + download URL itself — all within ~4 minutes.** Do NOT build the zip locally or `gh release upload` manually on the happy path; that wastes minutes and races the workflow (HTTP 404/409). Local build is a fallback only (step 6b).
 
 ## Workflow
 
-1. Inspect the repo state before touching anything:
-   - `git status --short --branch`
-   - `git diff --stat`
-   - `git remote -v`
-   - `gh auth status`
-   - read `package.json` version
+1. Pre-flight — inspect repo state and rule out interference before touching anything:
+   - `git status --short --branch`, `git diff --stat`, `git remote -v`, `gh auth status`
+   - read `package.json` version and `git tag --sort=-version:refname` (top few)
+   - **Concurrency check: `git reflog -8`.** If another agent made checkout/merge entries within the last few minutes, do NOT verify or release from the main checkout — a concurrent agent can switch HEAD mid-run, so a long `pnpm test:risk` silently validates the wrong tree (happened for v0.17.11: the merge result was checked out away 28s after merging). Instead: `git worktree add -b release/vX.Y.Z .claude/worktrees/<name> <commit>` (use `git rev-parse HEAD` for the commit if the current tree is the intended release state), `pnpm install` there, and run ALL remaining steps (verify, bump, commit, tag, push) from that worktree. Remove the worktree after the release.
 2. Audit the pending diff for release blockers before any commit:
    - look for secrets, tokens, auth headers, local absolute paths, debug-only noise, or unrelated files
    - treat obvious test fixtures like `sk-test` as expected only if they stay inside tests
    - explicitly review new docs/spec files so accidental scratch notes do not ship
    - if something is suspicious, stop and fix or exclude it before continuing
-3. Verify the code at the narrowest level that still matches release risk:
-   - for a real release, prefer the `chill-vibe-full-regression` path
-   - start with `pnpm test:risk`
-   - if release confidence is still needed or the user asked to publish, run `pnpm test:full`
+3. Verify — a release warrants the release posture from `../chill-vibe-full-regression/SKILL.md`:
+   - run `pnpm test:full` (it already includes `pnpm build`, so it also proves the production build)
+   - `pnpm test:risk` is acceptable mid-iteration, but the final pre-tag gate for a real release is `test:full`
    - if Playwright tooling noise from `AGENTS.md` blocks a clean run, capture the exact failure and continue with the strongest proven alternative only if the release is still honestly defensible
 4. Bump the version only after the code is judged releasable:
-   - inspect recent tags with `git tag --sort=-version:refname`
    - default to the next patch version unless the diff clearly justifies a bigger bump
    - update `package.json` and any other repo-owned version references that must stay in sync
    - stage the version bump together with the already-audited product changes
-5. Commit and publish the source changes:
-   - write a concise release-oriented commit message
-   - `git add` only the intended files
-   - `git commit`
-   - `git push origin <current-branch>`
-   - create and push the matching annotated tag like `v0.14.2`
-6. Create the GitHub release and attach the verified zip:
-   - first build the Windows zip locally with `pnpm electron:build:zip`
-   - capture the newest timestamped `dist/release-*` directory and the zip path inside it
-   - create the release with `gh release create` if it does not already exist
-   - upload the zip asset
-   - verify the asset list after upload and record the final direct download URL
+   - if the bump touched files covered by verification, rerun the strongest relevant gate
+5. Commit, push, tag, and **immediately create the release** (order is load-bearing):
+   - write a concise release-oriented commit message; `git add` only the intended files; `git commit`; `git push origin <current-branch>`
+   - `git tag -a v<version> -m "v<version>"` and `git push origin v<version>`
+   - **immediately after the tag push:** `gh release create v<version> --verify-tag --title v<version> --notes <concise notes>`
+   - Why immediately: the tag push already started `release-zip.yml`, and its "Remove stale in-progress zip assets" step does `gh api releases/tags/<tag>` — it hard-fails with HTTP 404 if no release exists yet (v0.17.8 and v0.17.11 both died here after 3+ min of server build). Recovery is cheap (`gh release create v<tag> --verify-tag --notes ...` then `gh run rerun <failed-run-id>`), but the right order avoids it entirely.
+6. Let the workflow deliver the asset, then verify:
+   - `gh run list --workflow release-zip.yml --limit 1 --json databaseId,status,conclusion` then `gh run watch <databaseId>` (expect ~4 minutes)
+   - the workflow itself verifies `assets[].state == 'uploaded'` and that the download URL returns HTTP 200, so a green run IS the asset verification
+   - confirm and record: `gh release view v<version> --json url,assets --jq '{url, assets: [.assets[] | {name, size, state}]}'`
+   - 6b. Fallback, ONLY if the workflow failed or never produced the asset:
+     - first try `gh workflow run release-zip.yml -f tag=v<version>` (server-side rebuild — preferred; it builds from the tag and self-verifies)
+     - only if server-side is unusable: build locally with `pnpm electron:build:zip`, take the newest `dist/release-*` zip, upload with the call-operator form `& gh release upload v<version> $zip --clobber`, then re-verify the asset list yourself
 7. Restart the active repo runtime before handoff:
-   - follow `AGENTS.md`
-   - prefer `pnpm dev:restart` for the repo-local dev runtime
+   - follow `AGENTS.md`; prefer `pnpm dev:restart`
+   - **skip the restart if the concurrency check (step 1) found another active agent** — never restart the shared dev runtime while another agent is working
+   - remove any release worktree created in step 1
+8. Retrospect and update this skill (mandatory, see Skill Self-Maintenance):
+   - review the run you just did: where did reality diverge from this document? Which step was wasted, wrong, missing, or only survived thanks to improvisation?
+   - apply the resulting edits to this SKILL.md before handoff — a release is not finished while the skill still describes a flow you did not actually follow
 
 ## Audit Rules
 
@@ -63,7 +66,6 @@ Reuse the verification posture from `../chill-vibe-full-regression/SKILL.md`, bu
 
 - Prefer repo scripts over ad hoc commands.
 - Use the release posture from `../chill-vibe-full-regression/SKILL.md`.
-- Before shipping, rerun the strongest relevant verification after the version bump if the bump touched tracked files.
 - If a verification command fails, do not publish anyway unless the failure is clearly a pre-existing harness issue and you can explain why the release remains safe.
 
 ## Versioning Rules
@@ -75,29 +77,40 @@ Reuse the verification posture from `../chill-vibe-full-regression/SKILL.md`, bu
 
 ## GitHub Release Rules
 
-- Prefer the local zip artifact produced by `pnpm electron:build:zip`.
-- Confirm the release asset actually exists after upload; do not trust command success alone.
+- Server-side build via `release-zip.yml` is the canonical asset path; a green workflow run is the asset verification.
+- Confirm the release asset actually exists after the run; do not trust command success alone.
 - In the final handoff, report:
   - commit hash
   - pushed branch
   - new version
   - tag
-  - local zip path
   - GitHub release URL
-  - final downloadable asset URL
+  - final downloadable asset URL (and local zip path only if the fallback was used)
+
+## Skill Self-Maintenance
+
+This skill maintains itself. Step 8 of the Workflow is not optional: every run ends with a retrospective edit pass over this file. History shows why — the "push tag → create release immediately" rule and the concurrency worktree rule both sat in the pitfall list for multiple releases while the main Workflow kept teaching the outdated local-build flow, and agents following the main flow re-hit the same failures.
+
+Classify every lesson from the run before writing it down:
+
+- **It changed how the release should be done** (a step order, a command, a decision rule) → edit the Workflow step itself. Never record a flow change only as a pitfall bullet; that is how the main flow drifts.
+- **It was a one-off accident with a recovery trick** (a hang, a quoting bug, an environment failure) → add a bullet to Release Pitfalls / Fast Recovery.
+- **A recorded pitfall no longer applies** (the main flow now prevents it, or the referenced tool/workflow changed) → delete it. Stale pitfalls are as harmful as missing ones.
+
+Guardrails:
+
+- Keep Release Pitfalls under roughly 10 bullets. Before adding a new one over that budget, merge or delete an old one first.
+- Also check for silent drift even on a clean run: do the commands and file paths this skill references (`.github/workflows/release-zip.yml`, `package.json` scripts like `test:full` / `electron:build:zip`, `gh` invocations) still exist and behave as described? If the repo moved, move the skill.
+- If the release commit/tag is already pushed, make the skill update a separate follow-up commit so the shipped tag stays immutable. Otherwise fold it into the release commit.
+- Release-specific traps belong here, not only in `AGENTS.md`.
 
 ## Release Pitfalls / Fast Recovery
 
-- **If another agent is concurrently working in the main checkout (check `git reflog -8` for minutes-old checkout/merge entries), do NOT verify or release from it.** A concurrent agent can switch HEAD to another branch mid-run, so a long `pnpm test:risk` silently validates the wrong tree (this happened for v0.17.11: the merge result was checked out away 28s after merging). Instead: `git worktree add -b release/vX.Y.Z .claude/worktrees/<name> <merge-commit>`, `pnpm install` there, run the full verification inside the worktree, and do the bump/commit/tag/push from the worktree. Remove the worktree after the release; never restart the shared dev runtime while the other agent is active.
-- Release-specific slowdown traps belong here, not only in `AGENTS.md`. If a release run hits a repeatable release-only failure, update this skill before handoff. If the release commit/tag is already pushed, make the skill update as a separate follow-up commit so the shipped tag stays immutable.
 - `gh release create` can time out after partially creating a draft or empty release. After any timeout, do not rerun blindly:
   - stop orphaned `gh.exe` create/upload processes first, then inspect `gh release view v<tag> --json apiUrl,uploadUrl,url,assets,isDraft,isPrerelease,tagName,publishedAt`;
-  - if the release exists but has no asset, keep it and upload the asset explicitly;
+  - if the release exists but has no asset, keep it and let the workflow (or a `workflow_dispatch` rerun) upload the asset;
   - if it is an accidental draft with an `untagged-*` URL, verify whether it still exists through the API/list view before deleting or recreating.
-- For large Windows zip assets, prefer a two-step publish: create the release notes/tag release first, then upload the zip, then verify `assets[].name`, `assets[].size`, `assets[].state`, and the direct download URL. This makes partial failures easier to recover than a single `gh release create ... <zip>` call.
-- **Create the GitHub release BEFORE (or immediately after) pushing the `v*` tag.** The workflow's "Remove stale in-progress zip assets" step does `gh api releases/tags/<tag>` and hard-fails with HTTP 404 when no release exists yet (v0.17.11 hit this: tag pushed → build ran 3+ min → died at the cleanup step). Recovery is cheap — `gh release create v<tag> --verify-tag --notes ...` then `gh run rerun <failed-run-id>` — but the right order is: push tag, create the release right away, let the already-running workflow finish into it.
-- Pushing a `v*` tag already triggers `release-zip.yml` automatically: it builds the zip from that commit server-side and uploads the canonical `Chill.Vibe-<version>-win.zip` asset (spaces normalized to dots) within ~4 minutes. A manual `gh release upload` racing that workflow can fail with HTTP 404 even though the release page ends up healthy. After pushing the tag, check `gh run list --workflow release-zip.yml` and the release asset list first; only upload the local zip if the workflow did not produce the asset.
-- If `gh release upload` hangs on the large zip while a tiny probe asset uploads successfully, prefer the repo's existing `release-zip.yml` workflow_dispatch for the tag so GitHub builds/uploads/verifies the canonical asset server-side. Use a manual `curl.exe --http1.1` upload against the release `uploadUrl` only as a fallback; put the token only in a temporary curl config, never echo it to logs, and delete probe assets immediately after the check.
+- If a manual `gh release upload` (fallback path only) hangs on the large zip while a tiny probe asset uploads successfully, prefer `gh workflow run release-zip.yml -f tag=v<tag>` so GitHub builds/uploads/verifies server-side. Use a manual `curl.exe --http1.1` upload against the release `uploadUrl` only as a last resort; put the token only in a temporary curl config, never echo it to logs, and delete probe assets immediately after the check.
 - When uploading a Windows zip whose path contains spaces, avoid `Start-Process -ArgumentList @(..., $zip, ...)` unless the path is explicitly quoted; PowerShell joins the array into one string and `gh release upload` can split `Chill Vibe-...zip` at the space. Prefer the call operator form: `& gh release upload v<tag> $zip --clobber`.
 - When generating temporary curl config lines in PowerShell, wrap concatenated strings in parentheses inside arrays, e.g. `('output = "' + $path + '"')`; otherwise PowerShell can split the config value across multiple lines and curl fails before uploading.
 - Do not keep retrying the full regression wrapper when it is blocked by known fixed-port `5173` ownership or a flaky Playwright check. Capture the exact wrapper failure, confirm the port owner is repo-local before stopping it, and rerun the failing spec or strongest targeted gate in isolation.

@@ -86,6 +86,13 @@ import {
   insertTextAtSelection,
 } from './composer-paste'
 import {
+  collectPersistedDraftAttachments,
+  hydrateDraftAttachments,
+  promoteDraftAttachment,
+  sameImageAttachmentLists,
+  type PendingComposerAttachment,
+} from './composer-draft-attachments'
+import {
   composerBlurOutsidePressWindowMs,
   composerFocusGuardDelaysMs,
   decideHitTestRepairScope,
@@ -237,19 +244,7 @@ const usePrimaryMouseDownActivation = <T extends HTMLElement>(
   )
 }
 
-type PendingAttachment =
-  | {
-      kind: 'local'
-      id: string
-      file: File
-      previewUrl: string
-    }
-  | {
-      kind: 'uploaded'
-      id: string
-      attachment: ImageAttachment
-      previewUrl: string
-    }
+type PendingAttachment = PendingComposerAttachment
 
 type ComposerAttachmentPreview = {
   attachment: PendingAttachment
@@ -597,13 +592,6 @@ const uploadPendingImage = async (attachment: PendingAttachment): Promise<ImageA
   })
 }
 
-const hydrateDraftAttachments = (attachments: ImageAttachment[]): PendingAttachment[] =>
-  attachments.map((attachment) => ({
-    kind: 'uploaded',
-    id: attachment.id,
-    attachment,
-    previewUrl: getImageAttachmentUrl(attachment.id),
-  }))
 
 const cardHeaderControlSelector =
   'button, label, select, input, textarea, a, [role="button"], [role="link"], [contenteditable="true"], [data-card-header-control="true"]'
@@ -1468,6 +1456,12 @@ const ChatCardView = ({
     previousAutoScrollCardIdRef.current = card.id
   }, [card.id, shouldStartPinnedToBottom])
   const pendingAttachmentsRef = useRef<PendingAttachment[]>([])
+  // The ref is the source of truth for pending attachments so async upload
+  // callbacks and unmount-time persistence never race a stale render snapshot.
+  const applyPendingAttachments = useCallback((next: readonly PendingAttachment[]) => {
+    pendingAttachmentsRef.current = [...next]
+    setPendingAttachments([...next])
+  }, [])
   const composingRef = useRef(false)
   const compositionEndUnlockHandleRef = useRef<number | null>(null)
   const composerRef = useRef<HTMLDivElement>(null)
@@ -1770,10 +1764,10 @@ const ChatCardView = ({
         URL.revokeObjectURL(existing.previewUrl)
       }
     }
-    setPendingAttachments(hydrateDraftAttachments(card.draftAttachments ?? []))
+    applyPendingAttachments(hydrateDraftAttachments(card.draftAttachments ?? []))
     setComposerAttachmentPreview(null)
     hydratedAttachmentsCardIdRef.current = card.id
-  }, [card.id, card.draftAttachments])
+  }, [applyPendingAttachments, card.id, card.draftAttachments])
 
   useEffect(() => {
     scheduleComposerResize()
@@ -3011,16 +3005,51 @@ const ChatCardView = ({
     (hasPendingAttachments && !providerCanSendImages) ||
     (!localSlashDraft && !workspacePath.trim())
 
+  // Mirror the uploaded subset of pending attachments into the persisted card
+  // draft so pasted images survive a ChatCard unmount (pane tab switch, restart).
+  const persistDraftAttachments = (next: readonly PendingAttachment[]) => {
+    const persisted = collectPersistedDraftAttachments(next)
+    if (!sameImageAttachmentLists(persisted, card.draftAttachments ?? [])) {
+      onPatchCard({ draftAttachments: persisted })
+    }
+  }
+  const persistDraftAttachmentsRef = useRef(persistDraftAttachments)
+  persistDraftAttachmentsRef.current = persistDraftAttachments
+
+  const promotePendingAttachmentUpload = async (entry: PendingAttachment) => {
+    if (entry.kind !== 'local') return
+    let uploaded: ImageAttachment
+    try {
+      uploaded = await uploadPendingImage(entry)
+    } catch {
+      // Keep the local entry; submit retries the upload and surfaces the error.
+      return
+    }
+    const { next, replaced } = promoteDraftAttachment(
+      pendingAttachmentsRef.current,
+      entry.id,
+      uploaded,
+      getImageAttachmentUrl(uploaded.id),
+    )
+    if (!replaced) return
+    if (replaced.kind === 'local') {
+      URL.revokeObjectURL(replaced.previewUrl)
+    }
+    applyPendingAttachments(next)
+    persistDraftAttachmentsRef.current(next)
+  }
+
   const removePendingAttachment = (attachmentId: string) => {
-    setPendingAttachments((current) => {
-      const match = current.find((attachment) => attachment.id === attachmentId)
+    const current = pendingAttachmentsRef.current
+    const match = current.find((attachment) => attachment.id === attachmentId)
 
-      if (match) {
-        URL.revokeObjectURL(match.previewUrl)
-      }
+    if (match) {
+      URL.revokeObjectURL(match.previewUrl)
+    }
 
-      return current.filter((attachment) => attachment.id !== attachmentId)
-    })
+    const next = current.filter((attachment) => attachment.id !== attachmentId)
+    applyPendingAttachments(next)
+    persistDraftAttachments(next)
     setComposerAttachmentPreview((preview) =>
       preview?.attachment.id === attachmentId ? null : preview,
     )
@@ -3106,15 +3135,18 @@ const ChatCardView = ({
     event.preventDefault()
     setComposerError(null)
     if (imageFiles.length > 0) {
-      setPendingAttachments((current) => [
-        ...current,
-        ...imageFiles.map<PendingAttachment>((file) => ({
-          kind: 'local',
-          id: crypto.randomUUID(),
-          file,
-          previewUrl: URL.createObjectURL(file),
-        })),
-      ])
+      const added = imageFiles.map<PendingAttachment>((file) => ({
+        kind: 'local',
+        id: crypto.randomUUID(),
+        file,
+        previewUrl: URL.createObjectURL(file),
+      }))
+      applyPendingAttachments([...pendingAttachmentsRef.current, ...added])
+      // Upload in the background so the image survives an unmount (tab/window
+      // switch) via card.draftAttachments instead of dying with the local File.
+      for (const entry of added) {
+        void promotePendingAttachmentUpload(entry)
+      }
     }
 
     if (pastedFilePaths.length > 0) {
@@ -3137,16 +3169,17 @@ const ChatCardView = ({
   const handleSubmit = async (options?: SendMessageOptions) => {
     if (sendDisabled) return
     const prompt = draftValueRef.current.trim()
+    // The ref is the attachment source of truth: a background paste upload may
+    // have promoted entries after this render's state snapshot was taken.
+    const sentAttachments = pendingAttachmentsRef.current
     let attachments: ImageAttachment[] = []
 
     try {
-      attachments = await Promise.all(pendingAttachments.map((attachment) => uploadPendingImage(attachment)))
+      attachments = await Promise.all(sentAttachments.map((attachment) => uploadPendingImage(attachment)))
     } catch (error) {
       setComposerError(error instanceof Error ? error.message : text.unexpectedError)
       return
     }
-
-    const sentAttachments = pendingAttachments
     draftValueRef.current = ''
     if (textareaRef.current) {
       textareaRef.current.value = ''
@@ -3154,12 +3187,14 @@ const ChatCardView = ({
     }
     syncDraftDerivedState('')
     scheduleComposerResize()
-    setPendingAttachments([])
+    applyPendingAttachments([])
     setComposerAttachmentPreview(null)
     setComposerError(null)
     discardPendingDraftSync()
     onDraftChange('')
-    if ((card.draftAttachments ?? []).length > 0) {
+    // The background paste upload may have persisted draft attachments after
+    // this render's card snapshot, so clear whenever anything was sent too.
+    if (sentAttachments.length > 0 || (card.draftAttachments ?? []).length > 0) {
       onPatchCard({ draftAttachments: [] })
     }
 

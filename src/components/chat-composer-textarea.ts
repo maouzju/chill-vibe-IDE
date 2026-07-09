@@ -104,11 +104,16 @@ export const syncComposerTextareaHeight = (
     node.style.height = 'auto'
   }
 
-  const layout = getAutoSizedTextareaLayout({
-    scrollHeight: node.scrollHeight,
-    minHeight,
-    maxHeight,
-  })
+  // 空草稿不信 scrollHeight：瞬态布局（面板拖拽/隐藏期/拉伸对齐）可以让空
+  // textarea 报出多行高度，而 (value, clientWidth) 记忆化会把这次误测永久锁住。
+  const layout =
+    currentValue === ''
+      ? ({ height: minHeight, overflowY: 'hidden' } as const)
+      : getAutoSizedTextareaLayout({
+          scrollHeight: node.scrollHeight,
+          minHeight,
+          maxHeight,
+        })
 
   const nextHeight = `${layout.height}px`
   if (node.style.height !== nextHeight) {

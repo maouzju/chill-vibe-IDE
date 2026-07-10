@@ -70,6 +70,9 @@ export const renderRemoteMonitorPage = () => `<!DOCTYPE html>
   }
   .msg { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 10px 12px; margin-bottom: 8px; white-space: pre-wrap; word-break: break-word; overflow-wrap: anywhere; }
   .msg.live { border-color: var(--run); }
+  .msg.user { border-left: 3px solid var(--accent); background: rgba(88,166,255,0.07); }
+  .msg.sys { color: var(--muted); font-size: 13px; }
+  .history-loading { color: var(--muted); font-size: 13px; text-align: center; padding: 12px 0; }
   .act { border-left: 3px solid var(--accent); background: var(--panel); border-radius: 6px; padding: 8px 10px; margin-bottom: 8px; font-size: 13px; color: var(--muted); word-break: break-word; }
   .act.edits { border-left-color: var(--ok); }
   .act.ask { border-left-color: var(--run); color: var(--text); }
@@ -156,6 +159,9 @@ export const renderRemoteMonitorPage = () => `<!DOCTYPE html>
   var streams = new Map()
   // cardId -> [streamId...]（按首次出现顺序，详情页串联渲染多轮）
   var cardStreams = new Map()
+  // cardId -> { entries, itemIds: Set, textKeys: Set, loading }
+  // 落库历史转录；实时流按 itemId / 文本内容与它去重。
+  var historyByCard = new Map()
   var cardsById = new Map()
   var columns = []
   var selectedCardId = null
@@ -399,6 +405,28 @@ export const renderRemoteMonitorPage = () => `<!DOCTYPE html>
     )
   })
 
+  function loadCardHistory(cardId) {
+    var record = { entries: [], itemIds: new Set(), textKeys: new Set(), loading: true }
+    historyByCard.set(cardId, record)
+    fetch('/api/history?cardId=' + encodeURIComponent(cardId) + '&token=' + encodeURIComponent(token))
+      .then(function (response) { return response.ok ? response.json() : null })
+      .then(function (payload) {
+        record.loading = false
+        if (payload && payload.messages) {
+          record.entries = payload.messages
+          payload.messages.forEach(function (entry) {
+            if (entry.itemId) { record.itemIds.add(entry.itemId) }
+            if (entry.content && entry.role === 'assistant') { record.textKeys.add(entry.content.trim()) }
+          })
+        }
+        if (selectedCardId === cardId) { renderDetail(); window.scrollTo(0, document.body.scrollHeight) }
+      })
+      .catch(function () {
+        record.loading = false
+        if (selectedCardId === cardId) { renderDetail() }
+      })
+  }
+
   function openDetail(cardId) {
     selectedCardId = cardId
     var card = cardsById.get(cardId)
@@ -407,6 +435,7 @@ export const renderRemoteMonitorPage = () => `<!DOCTYPE html>
     listView.hidden = true
     detailView.hidden = false
     composerEl.hidden = false
+    loadCardHistory(cardId)
     renderDetail()
     window.scrollTo(0, document.body.scrollHeight)
   }
@@ -553,14 +582,37 @@ export const renderRemoteMonitorPage = () => `<!DOCTYPE html>
     container.appendChild(box)
   }
 
-  function renderStreamInto(container, entry, isLast) {
+  function renderHistoryInto(container, record) {
+    record.entries.forEach(function (entry) {
+      if (entry.activity) {
+        renderActivity(container, entry.activity)
+        return
+      }
+      var msg = document.createElement('div')
+      msg.className = entry.role === 'user' ? 'msg user' : entry.role === 'system' ? 'msg sys' : 'msg'
+      msg.textContent = entry.content
+      container.appendChild(msg)
+    })
+    if (record.loading) {
+      var loading = document.createElement('div')
+      loading.className = 'history-loading'
+      loading.textContent = '正在加载历史…'
+      container.appendChild(loading)
+    }
+  }
+
+  function renderStreamInto(container, entry, isLast, history) {
     entry.items.forEach(function (item) {
       if (item.type === 'text') {
+        var text = entry.texts.get(item.id) || ''
+        // 已随落库历史渲染过的内容不重复出现。
+        if (history && text && history.textKeys.has(text.trim())) { return }
         var msg = document.createElement('div')
         msg.className = 'msg'
-        msg.textContent = entry.texts.get(item.id) || ''
+        msg.textContent = text
         container.appendChild(msg)
       } else {
+        if (history && history.itemIds.has(item.id)) { return }
         renderActivity(container, entry.acts.get(item.id) || {})
       }
     })
@@ -587,18 +639,21 @@ export const renderRemoteMonitorPage = () => `<!DOCTYPE html>
     detailBody.textContent = ''
     var card = selectedCardId ? cardsById.get(selectedCardId) : null
     updateComposerState(card)
+    var history = card ? historyByCard.get(card.id) : null
+    var hasHistory = history && (history.entries.length > 0 || history.loading)
     var ids = card ? streamIdsForCard(card) : []
     var known = ids.filter(function (id) { return streams.has(id) })
-    if (!card || known.length === 0) {
+    if (!card || (known.length === 0 && !hasHistory)) {
       var emptyEl = document.createElement('div')
       emptyEl.className = 'empty'
-      emptyEl.textContent = '这张卡当前没有活跃输出，输入需求即可开始'
+      emptyEl.textContent = '这张卡还没有任何输出，输入需求即可开始'
       detailBody.appendChild(emptyEl)
       return
     }
     var nearBottom = window.innerHeight + window.scrollY >= document.body.scrollHeight - 160
+    if (hasHistory) { renderHistoryInto(detailBody, history) }
     known.forEach(function (id, index) {
-      renderStreamInto(detailBody, streams.get(id), index === known.length - 1)
+      renderStreamInto(detailBody, streams.get(id), index === known.length - 1, history)
     })
     if (nearBottom) { window.scrollTo(0, document.body.scrollHeight) }
   }

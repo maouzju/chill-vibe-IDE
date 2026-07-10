@@ -41,6 +41,7 @@ import {
   validateWorkspacePath,
 } from '../server/providers.ts'
 import {
+  buildRemoteMonitorCardHistory,
   buildRemoteMonitorSnapshot,
   createRemoteMonitorManager,
   type RemoteMonitorManager,
@@ -208,6 +209,16 @@ export const createDesktopBackend = (deps: DesktopBackendDependencies = {}) => {
         loadSnapshot: async () => {
           const response = await loadStateForRenderer()
           return buildRemoteMonitorSnapshot(response.state)
+        },
+        loadCardHistory: async (cardId) => {
+          const response = await loadStateForRenderer()
+          for (const column of response.state.columns) {
+            const card = column.cards[cardId]
+            if (card) {
+              return buildRemoteMonitorCardHistory(card.messages)
+            }
+          }
+          return null
         },
         tapStreams: (listener) => getChatManager().tapAll(listener),
         listActiveStreams: () => getChatManager().listActiveStreams(),

@@ -47,3 +47,12 @@
 - [x] 顺手修 reasoning 字段错读：schema 是 `text`，原读 `content||summary` 恒空白
 - [x] buildRemoteMonitorSnapshot 列标题与电脑端同源：workspacePath 末段目录名，空路径回退 column.title
 - [x] Playwright headless 实测截屏验证所有 kind 渲染
+
+## V2.2 — 详情页历史转录（2026-07-10）
+
+用户反馈：手机端只能看实时输出，看不了会话历史。
+
+- [x] server/remote-monitor.ts: buildRemoteMonitorCardHistory（transfer 压缩 → 轻量条目，activity 直接复用 StreamActivity 形状）+ GET /api/history?cardId=（token 守卫/400/404）
+- [x] electron/backend.ts: loadCardHistory 接线（loadStateForRenderer 找卡）
+- [x] 手机页面: openDetail 先拉历史渲染（user 蓝边/assistant/system 样式区分，活动走 renderActivity），实时流按 itemId + 文本内容与历史去重
+- [x] Playwright 实测：历史与 backlog 重叠内容只渲染一次

@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 
 import {
+  buildRemoteMonitorCardHistory,
   buildRemoteMonitorSnapshot,
   createRemoteMonitorManager,
   pickLanIPv4,
@@ -41,12 +42,14 @@ type Harness = {
 const createHarness = (options?: {
   activeStreams?: Array<{ streamId: string; cardId?: string; backlog: Array<{ event: string; data: unknown }> }>
   dispatchResult?: boolean
+  cardHistory?: Record<string, ReturnType<typeof buildRemoteMonitorCardHistory>>
 }): Harness => {
   const listeners = new Set<(event: ChatStreamTapEvent) => void>()
   const dispatchedCommands: RemoteMonitorCommand[] = []
 
   const manager = createRemoteMonitorManager({
     loadSnapshot: async () => sampleSnapshot,
+    loadCardHistory: async (cardId) => options?.cardHistory?.[cardId] ?? null,
     tapStreams: (listener) => {
       listeners.add(listener)
       return () => listeners.delete(listener)
@@ -196,6 +199,104 @@ test('remote monitor page renders every activity kind with real content, not a b
     assert.match(html, /act\.question/, 'ask-user activity must render the question')
     // reasoning：schema 字段是 text，读 content/summary 会永远空白。
     assert.match(html, /act\.text/, 'reasoning activity must read the schema text field')
+  } finally {
+    await harness.manager.stop()
+  }
+})
+
+test('buildRemoteMonitorCardHistory maps persisted messages into renderable history entries', () => {
+  const bigOutput = 'x'.repeat(9_000)
+  const history = buildRemoteMonitorCardHistory([
+    { id: 'm-1', role: 'user', content: '修一下登录', createdAt: '2026-07-10T10:00:00.000Z' },
+    {
+      id: 'm-2',
+      role: 'assistant',
+      content: '',
+      createdAt: '2026-07-10T10:00:05.000Z',
+      meta: {
+        kind: 'tool',
+        itemId: 'it-1',
+        structuredData: JSON.stringify({
+          itemId: 'it-1', kind: 'tool', status: 'completed', toolName: 'Read', summary: '读取 login.ts',
+        }),
+      },
+    },
+    {
+      id: 'm-3',
+      role: 'assistant',
+      content: '',
+      createdAt: '2026-07-10T10:00:06.000Z',
+      meta: {
+        kind: 'command',
+        itemId: 'it-2',
+        structuredData: JSON.stringify({
+          itemId: 'it-2', kind: 'command', status: 'completed', command: 'pnpm test', output: bigOutput, exitCode: 0,
+        }),
+      },
+    },
+    { id: 'm-4', role: 'assistant', content: '修好了。', createdAt: '2026-07-10T10:01:00.000Z' },
+    // 空文本且无活动的消息是渲染噪音，不出门。
+    { id: 'm-5', role: 'assistant', content: '', createdAt: '2026-07-10T10:01:01.000Z' },
+  ])
+
+  assert.equal(history.length, 4)
+  assert.deepEqual(
+    history.map((entry) => entry.role),
+    ['user', 'assistant', 'assistant', 'assistant'],
+  )
+  assert.equal(history[0]?.content, '修一下登录')
+  const toolEntry = history[1]
+  assert.ok(toolEntry?.activity)
+  assert.equal((toolEntry.activity as { summary?: string }).summary, '读取 login.ts')
+  assert.equal(toolEntry.itemId, 'it-1')
+  // 巨型命令输出必须被 transfer 压缩截断，绝不全量出门（pitfall 183）。
+  const commandEntry = history[2]
+  const commandOutput = (commandEntry?.activity as { output?: string })?.output ?? ''
+  assert.ok(commandOutput.length < 2_000, `command output should be compacted, got ${commandOutput.length}`)
+  assert.equal(history[3]?.content, '修好了。')
+})
+
+test('remote monitor serves compacted card history with a valid token', async () => {
+  const harness = createHarness({
+    cardHistory: {
+      'card-1': [
+        { id: 'm-1', role: 'user', content: '开始', itemId: undefined, kind: undefined, activity: undefined },
+      ],
+    },
+  })
+  const info = await startOnLoopback(harness)
+  const base = `http://127.0.0.1:${info.port}`
+
+  try {
+    const noToken = await fetch(`${base}/api/history?cardId=card-1`)
+    assert.equal(noToken.status, 401)
+
+    const ok = await fetch(`${base}/api/history?cardId=card-1&token=${info.token}`)
+    assert.equal(ok.status, 200)
+    const payload = (await ok.json()) as { messages: Array<{ role: string; content: string }> }
+    assert.equal(payload.messages.length, 1)
+    assert.equal(payload.messages[0]?.content, '开始')
+
+    const missing = await fetch(`${base}/api/history?cardId=nope&token=${info.token}`)
+    assert.equal(missing.status, 404)
+
+    const noCard = await fetch(`${base}/api/history?token=${info.token}`)
+    assert.equal(noCard.status, 400)
+  } finally {
+    await harness.manager.stop()
+  }
+})
+
+test('remote monitor page loads card history into the detail view', async () => {
+  const harness = createHarness()
+  const info = await startOnLoopback(harness)
+
+  try {
+    const response = await fetch(`http://127.0.0.1:${info.port}/?token=${info.token}`)
+    const html = await response.text()
+    // 详情页必须请求历史端点，并按 itemId/文本内容对实时流去重。
+    assert.match(html, /\/api\/history/, 'detail view must fetch the card history endpoint')
+    assert.match(html, /historyByCard|cardHistory/, 'page must keep per-card history state')
   } finally {
     await harness.manager.stop()
   }

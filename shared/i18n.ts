@@ -89,6 +89,14 @@ type LocaleText = {
   neteaseLogout: string
   defaultRequestModels: string
   defaultRequestModelsNote: string
+  codexPersonalityLabel: string
+  codexPersonalityNote: string
+  codexPersonalityDefault: string
+  codexPersonalityNone: string
+  codexPersonalityFriendly: string
+  codexPersonalityPragmatic: string
+  codexFastModeLabel: string
+  codexFastModeNote: string
   gitAgentModel: string
   gitAgentModelNote: string
   systemPromptLabel: string
@@ -364,9 +372,17 @@ const localeTextByLanguage: Record<AppLanguage, LocaleText> = {
     showAlbumCover: '显示专辑封面',
     neteaseLogout: '注销网易云',
     defaultRequestModels: '默认请求模型',
-    defaultRequestModelsNote: '新会话会默认使用这些模型，你也可以同步到现有会话。',
+    defaultRequestModelsNote: 'Codex 推荐默认使用 GPT-5.6 Sol + 中等推理；你也可以同步到现有会话。',
+    codexPersonalityLabel: 'Codex Agent 人格',
+    codexPersonalityNote: '默认跟随 Codex CLI；只在需要固定表达风格时覆盖。',
+    codexPersonalityDefault: '跟随 Codex',
+    codexPersonalityNone: '无预设',
+    codexPersonalityFriendly: '友好',
+    codexPersonalityPragmatic: '务实',
+    codexFastModeLabel: 'Codex Fast 加速',
+    codexFastModeNote: '使用 priority 服务档提高响应速度，但会增加用量；默认关闭。',
     gitAgentModel: 'Git 卡片 AI 模型',
-    gitAgentModelNote: 'Git 分析使用的模型，格式：模型名称 推理强度（如 gpt-5.5 xhigh）。',
+    gitAgentModelNote: 'Git 分析默认使用均衡的 GPT-5.6 Terra；格式：模型名称 推理强度（如 gpt-5.6-terra medium）。',
     systemPromptLabel: '系统提示词',
     systemPromptNote: '每次 AI 运行前都会附加这条系统提示词。恢复默认可回到内置提示词。',
     crossProviderSkillReuseLabel: 'Codex / Claude Skill 互相复用',
@@ -663,9 +679,17 @@ const localeTextByLanguage: Record<AppLanguage, LocaleText> = {
     neteaseLogout: 'Sign out of NetEase',
     defaultRequestModels: 'Default request models',
     defaultRequestModelsNote:
-      'New chats will use these models by default, and you can sync them into existing chats.',
+      'Codex recommends GPT-5.6 Sol with medium reasoning by default; you can also sync it into existing chats.',
+    codexPersonalityLabel: 'Codex Agent personality',
+    codexPersonalityNote: 'Follow Codex CLI by default; override only when you need a fixed communication style.',
+    codexPersonalityDefault: 'Follow Codex',
+    codexPersonalityNone: 'None',
+    codexPersonalityFriendly: 'Friendly',
+    codexPersonalityPragmatic: 'Pragmatic',
+    codexFastModeLabel: 'Codex Fast mode',
+    codexFastModeNote: 'Uses the priority service tier for faster responses with increased usage. Off by default.',
     gitAgentModel: 'Git card AI model',
-    gitAgentModelNote: 'Model used for Git analysis. Format: model-name reasoning-effort (e.g. gpt-5.5 xhigh).',
+    gitAgentModelNote: 'Git analysis defaults to balanced GPT-5.6 Terra. Format: model-name reasoning-effort (e.g. gpt-5.6-terra medium).',
     systemPromptLabel: 'System prompt',
     systemPromptNote:
       'This prompt is appended before each AI run. Restore default to go back to the built-in prompt.',

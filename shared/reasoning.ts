@@ -1,6 +1,6 @@
 import type { AppLanguage, Provider } from './schema.js'
 
-type CodexReasoningEffort = 'low' | 'medium' | 'high' | 'xhigh'
+type CodexReasoningEffort = 'low' | 'medium' | 'high' | 'xhigh' | 'max' | 'ultra'
 type ClaudeReasoningEffort = 'auto' | 'low' | 'medium' | 'high' | 'xhigh' | 'max' | 'ultracode'
 export type ReasoningEffort = CodexReasoningEffort | ClaudeReasoningEffort
 
@@ -15,7 +15,9 @@ export type ReasoningOption = {
 // sends xhigh to the model and additionally has Claude orchestrate dynamic
 // workflows. We surface it as a selectable tier and activate it by sending
 // `--effort xhigh` plus `"ultracode": true` in `--settings` (see providers.ts).
-// Codex tops out at xhigh and has no max/ultracode equivalent.
+// Current Codex 5.6 models can add max and, for Sol/Terra, Ultra. Older
+// Codex models still top out at xhigh; model-aware filtering below keeps the
+// persisted tier compatible with the selected model.
 const reasoningOptionLabels: Record<AppLanguage, Record<ReasoningEffort, string>> = {
   'zh-CN': {
     auto: '自动',
@@ -24,6 +26,7 @@ const reasoningOptionLabels: Record<AppLanguage, Record<ReasoningEffort, string>
     high: '高',
     xhigh: '超高',
     max: '最高',
+    ultra: 'Ultra（多 Agent）',
     ultracode: 'Ultracode（超高＋工作流）',
   },
   en: {
@@ -33,6 +36,7 @@ const reasoningOptionLabels: Record<AppLanguage, Record<ReasoningEffort, string>
     high: 'High',
     xhigh: 'X-High',
     max: 'Max',
+    ultra: 'Ultra (multi-agent)',
     ultracode: 'Ultracode (xhigh + workflows)',
   },
 }
@@ -43,6 +47,8 @@ const reasoningOptionsByProvider = {
     { value: 'medium' },
     { value: 'high' },
     { value: 'xhigh' },
+    { value: 'max' },
+    { value: 'ultra' },
   ],
   claude: [
     { value: 'auto' },
@@ -57,15 +63,13 @@ const reasoningOptionsByProvider = {
 
 const reasoningAliasesByProvider: Record<Provider, Partial<Record<string, ReasoningEffort>>> = {
   codex: {
-    // Codex has no max/ultracode rung — snap both to its xhigh top tier.
-    max: 'xhigh',
-    ultracode: 'xhigh',
+    ultracode: 'ultra',
   },
   claude: {},
 }
 
 const defaultReasoningEffortByProvider: Record<Provider, ReasoningEffort> = {
-  codex: 'xhigh',
+  codex: 'medium',
   claude: 'max',
 }
 
@@ -104,16 +108,43 @@ export const getReasoningOptions = (provider: Provider, language: AppLanguage = 
     label: reasoningOptionLabels[language][option.value],
   }))
 
+const getCodexReasoningOptionValuesForModel = (model?: string | null): CodexReasoningEffort[] => {
+  const normalizedModel = model?.trim().toLowerCase() ?? ''
+  const base: CodexReasoningEffort[] = ['low', 'medium', 'high', 'xhigh']
+
+  if (
+    normalizedModel === 'gpt-5.6-sol' ||
+    normalizedModel === 'gpt-5.6-terra' ||
+    normalizedModel === 'gpt-5.6'
+  ) {
+    return [...base, 'max', 'ultra']
+  }
+
+  if (normalizedModel === 'gpt-5.6-luna') {
+    return [...base, 'max']
+  }
+
+  return base
+}
+
 // Model-aware tier menu: Fable 5 hides `auto` because auto rides the
 // thinking-disabled path, which does not exist on an always-thinking model.
 export const getReasoningOptionsForModel = (
   provider: Provider,
   model?: string | null,
   language: AppLanguage = 'en',
-) =>
-  provider === 'claude' && isClaudeAlwaysThinkingModel(model)
+) => {
+  if (provider === 'codex') {
+    const supportedValues = new Set(getCodexReasoningOptionValuesForModel(model))
+    return getReasoningOptions(provider, language).filter((option) =>
+      supportedValues.has(option.value as CodexReasoningEffort),
+    )
+  }
+
+  return isClaudeAlwaysThinkingModel(model)
     ? getReasoningOptions(provider, language).filter((option) => option.value !== 'auto')
     : getReasoningOptions(provider, language)
+}
 
 export const normalizeReasoningEffort = (
   provider: Provider,
@@ -151,7 +182,18 @@ export const normalizeReasoningEffortForModel = (
   model?: string | null,
   effort?: string | null,
 ): ReasoningEffort => {
-  if (provider !== 'claude' || !isClaudeAlwaysThinkingModel(model)) {
+  if (provider === 'codex') {
+    const normalized = normalizeReasoningEffort(provider, effort) as CodexReasoningEffort
+    const supportedValues = getCodexReasoningOptionValuesForModel(model)
+
+    if (supportedValues.includes(normalized)) {
+      return normalized
+    }
+
+    return supportedValues.includes('max') ? 'max' : 'xhigh'
+  }
+
+  if (!isClaudeAlwaysThinkingModel(model)) {
     return normalizeReasoningEffort(provider, effort)
   }
 

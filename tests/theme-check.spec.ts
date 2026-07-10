@@ -2707,6 +2707,12 @@ test('settings panel flows category cards through two waterfall columns in both 
   await settingsTab.click()
   await expect(settingsPanel).toBeVisible()
   await expect(settingsGroups).toHaveCount(8)
+  await expect(
+    settingsPanel.getByLabel(/Codex Agent 人格|Codex Agent personality/).first(),
+  ).toHaveValue('default')
+  await expect(
+    settingsPanel.getByLabel(/Codex Fast 加速|Codex Fast mode/).first(),
+  ).not.toBeChecked()
 
   const settingsGroupRects = await settingsGroups.evaluateAll((nodes) =>
     nodes.map((node) => {

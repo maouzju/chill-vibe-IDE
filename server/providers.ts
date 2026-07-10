@@ -454,6 +454,25 @@ const isCodexAppServerEffortUnsupported = (message: string) => {
   )
 }
 
+const isCodexAppServerAgentParamsUnsupported = (message: string) => {
+  const normalized = message.toLowerCase()
+  const mentionsAgentParam =
+    normalized.includes('personality') ||
+    normalized.includes('servicetier') ||
+    normalized.includes('service tier')
+
+  return (
+    mentionsAgentParam &&
+    (
+      normalized.includes('requires newer codex cli') ||
+      normalized.includes('unknown field') ||
+      normalized.includes('unexpected field') ||
+      normalized.includes('unsupported field') ||
+      normalized.includes('invalid field')
+    )
+  )
+}
+
 const isCodexStaleResumedSession = (message: string) => {
   const normalized = message.toLowerCase()
   return (
@@ -479,6 +498,11 @@ const formatCodexEffortCompatibilityNotice = (language: AppLanguage) =>
   language === 'en'
     ? 'Detected an older local Codex CLI that does not support app-server reasoning effort. Chill Vibe retried automatically without that field for this run.'
     : '检测到本地 Codex CLI 版本较旧，不支持 app-server 的 reasoning effort 字段。Chill Vibe 已自动改为不传该字段后重试本次请求。'
+
+const formatCodexAgentParamsCompatibilityNotice = (language: AppLanguage) =>
+  language === 'en'
+    ? 'Detected an older local Codex CLI that does not support Agent personality or Fast mode. Chill Vibe retried automatically without those optional fields for this run.'
+    : '检测到本地 Codex CLI 版本较旧，不支持 Agent 人格或 Fast 模式。Chill Vibe 已自动移除这些可选参数并重试本次请求。'
 
 const formatCodexStaleSessionRecoveryNotice = (language: AppLanguage) =>
   language === 'en'
@@ -1419,6 +1443,7 @@ const buildCodexTurnStartParams = (
   attachmentPaths: string[],
   options?: {
     includeEffort?: boolean
+    includeAgentParams?: boolean
   },
 ) => ({
   threadId,
@@ -1427,6 +1452,12 @@ const buildCodexTurnStartParams = (
   approvalPolicy: getCodexApprovalPolicy(request),
   sandboxPolicy: buildCodexSandboxPolicy(request),
   model: request.model || undefined,
+  ...(options?.includeAgentParams === false
+    ? {}
+    : {
+        ...(request.personality ? { personality: request.personality } : {}),
+        ...(request.serviceTier ? { serviceTier: request.serviceTier } : {}),
+      }),
   ...(options?.includeEffort === false
     ? {}
     : {
@@ -1750,23 +1781,37 @@ const launchCodexAppServerRun = async (
   }
 
   const startTurnWithCompatibilityFallback = async (threadId: string) => {
-    try {
-      scheduleLocalStreamStallTimer()
-      await sendRequest('turn/start', buildCodexTurnStartParams(currentRequest, threadId, attachmentPaths))
-      return
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error)
+    let includeEffort = true
+    let includeAgentParams = true
 
-      if (!isCodexAppServerEffortUnsupported(message)) {
+    while (true) {
+      scheduleLocalStreamStallTimer()
+      try {
+        await sendRequest(
+          'turn/start',
+          buildCodexTurnStartParams(currentRequest, threadId, attachmentPaths, {
+            includeEffort,
+            includeAgentParams,
+          }),
+        )
+        return
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error)
+
+        if (includeEffort && isCodexAppServerEffortUnsupported(message)) {
+          includeEffort = false
+          sink.onLog(formatCodexEffortCompatibilityNotice(language))
+          continue
+        }
+
+        if (includeAgentParams && isCodexAppServerAgentParamsUnsupported(message)) {
+          includeAgentParams = false
+          sink.onLog(formatCodexAgentParamsCompatibilityNotice(language))
+          continue
+        }
+
         throw error
       }
-
-      sink.onLog(formatCodexEffortCompatibilityNotice(language))
-      scheduleLocalStreamStallTimer()
-      await sendRequest(
-        'turn/start',
-        buildCodexTurnStartParams(currentRequest, threadId, attachmentPaths, { includeEffort: false }),
-      )
     }
   }
 

@@ -14,15 +14,15 @@ import {
 } from '../shared/reasoning.ts'
 
 describe('reasoning helpers', () => {
-  it('defaults cards to each provider\'s highest reasoning effort', () => {
-    assert.equal(createCard(undefined, undefined, 'codex').reasoningEffort, 'xhigh')
+  it('defaults new Codex cards to the official balanced reasoning effort', () => {
+    assert.equal(createCard(undefined, undefined, 'codex').reasoningEffort, 'medium')
     assert.equal(createCard(undefined, undefined, 'claude').reasoningEffort, 'max')
   })
 
   it('lists provider-specific reasoning options with full Claude tiers plus ultracode', () => {
     assert.deepEqual(
       getReasoningOptions('codex').map((option) => option.value),
-      ['low', 'medium', 'high', 'xhigh'],
+      ['low', 'medium', 'high', 'xhigh', 'max', 'ultra'],
     )
     assert.deepEqual(
       getReasoningOptions('claude').map((option) => option.value),
@@ -31,25 +31,25 @@ describe('reasoning helpers', () => {
   })
 
   it('normalizes empty and cross-provider effort values', () => {
-    assert.equal(normalizeReasoningEffort('codex', ''), 'xhigh')
-    assert.equal(normalizeReasoningEffort('codex', 'max'), 'xhigh')
+    assert.equal(normalizeReasoningEffort('codex', ''), 'medium')
+    assert.equal(normalizeReasoningEffort('codex', 'max'), 'max')
     // xhigh is now a real, distinct Claude tier (no longer aliased to max).
     assert.equal(normalizeReasoningEffort('claude', 'xhigh'), 'xhigh')
     assert.equal(normalizeReasoningEffort('claude', 'unknown'), 'max')
   })
 
-  it('keeps ultracode as a distinct Claude top rung but rejects it for Codex', () => {
+  it('keeps provider-specific top-level orchestration names distinct', () => {
     assert.equal(normalizeReasoningEffort('claude', 'ultracode'), 'ultracode')
-    // Codex has no ultracode/max concept; both collapse to its xhigh top tier.
-    assert.equal(normalizeReasoningEffort('codex', 'ultracode'), 'xhigh')
+    assert.equal(normalizeReasoningEffort('codex', 'ultra'), 'ultra')
+    assert.equal(normalizeReasoningEffort('codex', 'ultracode'), 'ultra')
   })
 
   it('normalizes unsupported Codex auto to the default while keeping Claude auto', () => {
-    assert.equal(normalizeReasoningEffort('codex', 'auto'), 'xhigh')
+    assert.equal(normalizeReasoningEffort('codex', 'auto'), 'medium')
     assert.equal(normalizeReasoningEffort('claude', 'auto'), 'auto')
   })
 
-  it('uses the highest reasoning alias in schema defaults', () => {
+  it('keeps schema fallbacks provider-neutral while createCard applies model defaults', () => {
     assert.equal(
       chatCardSchema.parse({
         id: 'card-1',
@@ -92,7 +92,8 @@ describe('reasoning helpers', () => {
     assert.equal(getDefaultReasoningEffortForModel('claude', 'claude-fable-5'), 'high')
     assert.equal(getDefaultReasoningEffortForModel('claude', 'claude-opus-4-8'), 'max')
     assert.equal(getDefaultReasoningEffortForModel('claude', ''), 'max')
-    assert.equal(getDefaultReasoningEffortForModel('codex', 'gpt-5.5'), 'xhigh')
+    assert.equal(getDefaultReasoningEffortForModel('codex', 'gpt-5.6-sol'), 'medium')
+    assert.equal(getDefaultReasoningEffortForModel('codex', 'gpt-5.5'), 'medium')
   })
 
   it('hides auto from the Fable 5 tier menu because thinking cannot be turned off', () => {
@@ -105,9 +106,28 @@ describe('reasoning helpers', () => {
       ['auto', 'low', 'medium', 'high', 'xhigh', 'max', 'ultracode'],
     )
     assert.deepEqual(
+      getReasoningOptionsForModel('codex', 'gpt-5.6-sol').map((option) => option.value),
+      ['low', 'medium', 'high', 'xhigh', 'max', 'ultra'],
+    )
+    assert.deepEqual(
+      getReasoningOptionsForModel('codex', 'gpt-5.6-terra').map((option) => option.value),
+      ['low', 'medium', 'high', 'xhigh', 'max', 'ultra'],
+    )
+    assert.deepEqual(
+      getReasoningOptionsForModel('codex', 'gpt-5.6-luna').map((option) => option.value),
+      ['low', 'medium', 'high', 'xhigh', 'max'],
+    )
+    assert.deepEqual(
       getReasoningOptionsForModel('codex', 'gpt-5.5').map((option) => option.value),
       ['low', 'medium', 'high', 'xhigh'],
     )
+  })
+
+  it('clamps saved Codex 5.6 tiers to each model capability', () => {
+    assert.equal(normalizeReasoningEffortForModel('codex', 'gpt-5.6-sol', 'ultra'), 'ultra')
+    assert.equal(normalizeReasoningEffortForModel('codex', 'gpt-5.6-terra', 'max'), 'max')
+    assert.equal(normalizeReasoningEffortForModel('codex', 'gpt-5.6-luna', 'ultra'), 'max')
+    assert.equal(normalizeReasoningEffortForModel('codex', 'gpt-5.5', 'max'), 'xhigh')
   })
 
   it('normalizes persisted auto and empty tiers to high on Fable 5', () => {

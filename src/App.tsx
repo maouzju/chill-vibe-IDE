@@ -34,6 +34,7 @@ import {
   titleFromPrompt,
 } from '../shared/default-state'
 import { attachImagesToMessageMeta } from '../shared/chat-attachments'
+import { buildCodexChatRequestOverrides } from '../shared/codex-chat-settings'
 import { formatLocalizedDateTime, getLocaleText, getProviderLabel } from '../shared/i18n'
 import {
   DEFAULT_CLAUDE_MODEL,
@@ -498,6 +499,13 @@ function App() {
     claude: emptyProfileDraft(),
   })
   const text = useMemo(() => getLocaleText(appState.settings.language), [appState.settings.language])
+  const codexChatSettings = useMemo(
+    () => ({
+      codexPersonality: appState.settings.codexPersonality,
+      codexFastMode: appState.settings.codexFastMode,
+    }),
+    [appState.settings.codexFastMode, appState.settings.codexPersonality],
+  )
   const panelText = useMemo(() => getPanelText(appState.settings.language), [appState.settings.language])
   const topTabText = useMemo(() => getTopTabText(appState.settings.language), [appState.settings.language])
   const autoUrgeDescription = appState.settings.language === 'zh-CN'
@@ -2285,8 +2293,8 @@ function App() {
       : 'Match by model keyword substring. For example, claude matches claude-sonnet-4-6. When multiple rules match, prompts are appended in order.'
     const keywordLabel = appState.settings.language === 'zh-CN' ? '模型关键字' : 'Model keyword'
     const keywordPlaceholder = appState.settings.language === 'zh-CN'
-      ? '例如：claude / sonnet / gpt-5.5'
-      : 'For example: claude / sonnet / gpt-5.5'
+      ? '例如：claude / sonnet / gpt-5.6'
+      : 'For example: claude / sonnet / gpt-5.6'
     const promptLabel = appState.settings.language === 'zh-CN' ? '追加提示词' : 'Prompt to append'
     const promptPlaceholder = appState.settings.language === 'zh-CN'
       ? '命中这个模型时追加的系统提示词'
@@ -4040,6 +4048,7 @@ function App() {
       )
       const response = await requestChat({
         provider: card.provider,
+        ...buildCodexChatRequestOverrides(card.provider, appStateRef.current.settings),
         workspacePath: column.workspacePath,
         model: resolvedModel,
         reasoningEffort: resolvedReasoningEffort,
@@ -4211,6 +4220,7 @@ function App() {
       )
       const response = await requestChat({
         provider: card.provider,
+        ...buildCodexChatRequestOverrides(card.provider, appStateRef.current.settings),
         workspacePath: column.workspacePath,
         model: resolvedModel,
         reasoningEffort: resolvedReasoningEffort,
@@ -4403,6 +4413,7 @@ function App() {
       )
       const response = await requestChat({
         provider: card.provider,
+        ...buildCodexChatRequestOverrides(card.provider, appStateRef.current.settings),
         workspacePath: column.workspacePath,
         model: resolvedModel,
         reasoningEffort: resolvedReasoningEffort,
@@ -5766,6 +5777,46 @@ function App() {
           />
         </label>
 
+        <label className="settings-field">
+          <span className="settings-field-label">
+            <ModelIcon className="settings-field-icon" aria-hidden="true" />
+            <span className="settings-field-label-text">{text.codexPersonalityLabel}</span>
+          </span>
+          <select
+            className="control settings-input"
+            value={appState.settings.codexPersonality}
+            onChange={(event) =>
+              applyAction({
+                type: 'updateSettings',
+                patch: {
+                  codexPersonality: event.target.value as AppState['settings']['codexPersonality'],
+                },
+              })
+            }
+          >
+            <option value="default">{text.codexPersonalityDefault}</option>
+            <option value="none">{text.codexPersonalityNone}</option>
+            <option value="friendly">{text.codexPersonalityFriendly}</option>
+            <option value="pragmatic">{text.codexPersonalityPragmatic}</option>
+          </select>
+        </label>
+        <p className="settings-note">{text.codexPersonalityNote}</p>
+
+        <label className="settings-toggle">
+          <span>{text.codexFastModeLabel}</span>
+          <input
+            type="checkbox"
+            checked={appState.settings.codexFastMode}
+            onChange={(event) =>
+              applyAction({
+                type: 'updateSettings',
+                patch: { codexFastMode: event.target.checked },
+              })
+            }
+          />
+        </label>
+        <p className="settings-note">{text.codexFastModeNote}</p>
+
         <label className="settings-field" htmlFor="claude-model-input">
           <span className="settings-field-label">
             <ModelIcon className="settings-field-icon" aria-hidden="true" />
@@ -5800,7 +5851,7 @@ function App() {
                 patch: { gitAgentModel: event.target.value },
               })
             }
-            placeholder="gpt-5.5 xhigh"
+            placeholder="gpt-5.6-terra medium"
           />
         </label>
 
@@ -7035,6 +7086,46 @@ function App() {
                   />
                 </label>
 
+                <label className="settings-field">
+                  <span className="settings-field-label">
+                    <ModelIcon className="settings-field-icon" aria-hidden="true" />
+                    <span className="settings-field-label-text">{text.codexPersonalityLabel}</span>
+                  </span>
+                  <select
+                    className="control settings-input"
+                    value={appState.settings.codexPersonality}
+                    onChange={(event) =>
+                      applyAction({
+                        type: 'updateSettings',
+                        patch: {
+                          codexPersonality: event.target.value as AppState['settings']['codexPersonality'],
+                        },
+                      })
+                    }
+                  >
+                    <option value="default">{text.codexPersonalityDefault}</option>
+                    <option value="none">{text.codexPersonalityNone}</option>
+                    <option value="friendly">{text.codexPersonalityFriendly}</option>
+                    <option value="pragmatic">{text.codexPersonalityPragmatic}</option>
+                  </select>
+                </label>
+                <p className="settings-note">{text.codexPersonalityNote}</p>
+
+                <label className="settings-toggle">
+                  <span>{text.codexFastModeLabel}</span>
+                  <input
+                    type="checkbox"
+                    checked={appState.settings.codexFastMode}
+                    onChange={(event) =>
+                      applyAction({
+                        type: 'updateSettings',
+                        patch: { codexFastMode: event.target.checked },
+                      })
+                    }
+                  />
+                </label>
+                <p className="settings-note">{text.codexFastModeNote}</p>
+
                 <label className="settings-field" htmlFor="claude-model-input">
                   <span className="settings-field-label">
                     <ModelIcon className="settings-field-icon" aria-hidden="true" />
@@ -7069,7 +7160,7 @@ function App() {
                         patch: { gitAgentModel: event.target.value },
                       })
                     }
-                    placeholder="gpt-5.5 xhigh"
+                    placeholder="gpt-5.6-terra medium"
                   />
                 </label>
 
@@ -7483,6 +7574,7 @@ function App() {
             language={appState.settings.language}
             systemPrompt={appState.settings.systemPrompt}
             modelPromptRules={appState.settings.modelPromptRules}
+            codexChatSettings={codexChatSettings}
             crossProviderSkillReuseEnabled={appState.settings.crossProviderSkillReuseEnabled}
             musicAlbumCoverEnabled={appState.settings.musicAlbumCoverEnabled}
             weatherCity={appState.settings.weatherCity}

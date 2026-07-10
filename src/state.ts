@@ -181,6 +181,8 @@ export type IdeAction =
           | 'weatherCity'
           | 'systemPrompt'
           | 'modelPromptRules'
+          | 'codexPersonality'
+          | 'codexFastMode'
           | 'gitAgentModel'
           | 'providerProfiles'
         >

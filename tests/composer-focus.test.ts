@@ -14,6 +14,7 @@ import {
   isComposerFocusEffectivelyVacant,
   isOwnPaneChromeReclaimable,
   isReclaimableOwnPaneChrome,
+  shouldPreserveComposerFocusAfterVacantFocusOut,
   shouldRefocusAfterComposerBlur,
   startComposerFocusAttempt,
   type ComposerFocusAttemptDeps,
@@ -684,6 +685,105 @@ test('ChatCard wires the textarea onBlur to the vacant-focus refocus rescue', as
   assert.ok(
     /shouldRefocusAfterComposerBlur/.test(source),
     'the textarea onBlur must consult shouldRefocusAfterComposerBlur so a focus drop to body is rescued',
+  )
+})
+
+// ── Focusout-to-nowhere: keep rescuing beyond the short press guard ───────
+// Dump 2026-07-10T04-23-45 caught the tenth class again with the final
+// interrogation fields populated: document still focused, no unfocusable
+// attribute, no blur() caller, and the kick arrived from React's commit phase.
+// The React commit deletes the focused textarea subtree. The existing blur
+// rescue captures that old textarea, then returns on `!textarea.isConnected`,
+// so it never hands focus to the replacement composer mounted in the same
+// pane. The recovery must resolve the pane's live textarea after the commit.
+
+test('an active composer focusout to nowhere remains reclaimable after the press guard expires', () => {
+  assert.equal(
+    shouldPreserveComposerFocusAfterVacantFocusOut({
+      targetIsComposerTextarea: true,
+      cardIsActive: true,
+      cardUsesComposer: true,
+      blurCausedByPointerOutsideComposer: false,
+      documentStillFocused: true,
+      focusWentNowhere: true,
+    }),
+    true,
+  )
+})
+
+test('a real focus destination or an outside pointer departure is never reclaimed', () => {
+  const base = {
+    targetIsComposerTextarea: true,
+    cardIsActive: true,
+    cardUsesComposer: true,
+    documentStillFocused: true,
+  }
+
+  assert.equal(
+    shouldPreserveComposerFocusAfterVacantFocusOut({
+      ...base,
+      blurCausedByPointerOutsideComposer: false,
+      focusWentNowhere: false,
+    }),
+    false,
+  )
+  assert.equal(
+    shouldPreserveComposerFocusAfterVacantFocusOut({
+      ...base,
+      blurCausedByPointerOutsideComposer: true,
+      focusWentNowhere: true,
+    }),
+    false,
+  )
+})
+
+test('window-level focus loss and inactive cards never fight for the composer', () => {
+  const base = {
+    targetIsComposerTextarea: true,
+    cardUsesComposer: true,
+    blurCausedByPointerOutsideComposer: false,
+    focusWentNowhere: true,
+  }
+
+  assert.equal(
+    shouldPreserveComposerFocusAfterVacantFocusOut({
+      ...base,
+      cardIsActive: true,
+      documentStillFocused: false,
+    }),
+    false,
+  )
+  assert.equal(
+    shouldPreserveComposerFocusAfterVacantFocusOut({
+      ...base,
+      cardIsActive: false,
+      documentStillFocused: true,
+    }),
+    false,
+  )
+})
+
+test('ChatCard blur rescue hands focus to the live replacement composer after a React deletion', async () => {
+  const source = await readFile(chatCardSourcePath, 'utf8')
+  assert.match(
+    source,
+    /shouldPreserveComposerFocusAfterVacantFocusOut/,
+    'the blur rescue must gate the React-deletion recovery narrowly',
+  )
+  assert.match(
+    source,
+    /const textarea = event\.currentTarget/,
+    'React may clear textareaRef before removeChild dispatches focusout; the event target must anchor the handoff',
+  )
+  assert.match(
+    source,
+    /pane\?\.querySelector<HTMLTextAreaElement>\([\s\S]*pane-tab-panel\.is-active:not\(\[hidden\]\)[\s\S]*textarea\.control\.textarea/,
+    'the disconnected old textarea must fall back to the live active composer in the same pane',
+  )
+  assert.match(
+    source,
+    /window\.setTimeout\(reclaim, composerBlurFollowUpDelayMs\)/,
+    'a short post-commit retry must cover the replacement textarea mounting after the first frame',
   )
 })
 

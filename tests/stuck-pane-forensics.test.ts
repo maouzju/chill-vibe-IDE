@@ -674,6 +674,17 @@ test('the forensics runtime hooks the focus methods, records focusout destinatio
   assert.match(source, /reactiveFocusKickCount/, 'capture must include the reactive-kick verdict')
 })
 
+test('focusout forensics records whether React disconnects the focused subtree after dispatch', async () => {
+  const source = await readFile(
+    path.join(process.cwd(), 'src', 'diagnostics', 'stuck-pane-forensics.ts'),
+    'utf8',
+  )
+  assert.match(source, /connectedAtDispatch/, 'focusout must snapshot connectivity before React removes the node')
+  assert.match(source, /queueMicrotask/, 'connectivity must be checked again after the removal commit completes')
+  assert.match(source, /connectedAfterMicrotask/, 'the dump must distinguish a live focus target from a deleted one')
+  assert.match(source, /detachedRootPath/, 'a deleted focus target must name the detached subtree root')
+})
+
 // ── wiring assertions ───────────────────────────────────────────────────────
 
 test('the forensics runtime is installed at the app root', async () => {

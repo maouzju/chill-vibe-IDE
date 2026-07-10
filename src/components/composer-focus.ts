@@ -267,6 +267,33 @@ export const shouldRefocusAfterComposerBlur = (state: {
 }): boolean =>
   state.focusBecameVacant && state.cardHoldsFocus && !state.blurCausedByPointerOutsideComposer
 
+// Dump 2026-07-10T04-23-45 closed the remaining blur-reclaim gap: focusout
+// fired from React's commit/removal path, the old textarea became disconnected,
+// and the existing handler returned before it could focus the replacement
+// composer mounted in the same pane. Only arm that replacement handoff for the
+// exact stuck signature. Window-level focus loss (IME/system popup), a real
+// destination, an inactive card, or an outside-pointer departure must never be
+// fought.
+export const shouldPreserveComposerFocusAfterVacantFocusOut = (state: {
+  targetIsComposerTextarea: boolean
+  cardIsActive: boolean
+  cardUsesComposer: boolean
+  blurCausedByPointerOutsideComposer: boolean
+  documentStillFocused: boolean
+  focusWentNowhere: boolean
+}): boolean =>
+  state.targetIsComposerTextarea &&
+  state.cardIsActive &&
+  state.cardUsesComposer &&
+  !state.blurCausedByPointerOutsideComposer &&
+  state.documentStillFocused &&
+  state.focusWentNowhere
+
+// React may mount the replacement composer just after the focusout/removal
+// commit. Try once on the next frame and once shortly after; both attempts are
+// idempotent and still re-check that focus remains vacant.
+export const composerBlurFollowUpDelayMs = 80
+
 // The blur fired by an outside press follows the pointerdown within the same
 // gesture (a handful of ms); the window only needs to absorb event-loop lag.
 export const composerBlurOutsidePressWindowMs = 500

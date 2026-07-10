@@ -2058,7 +2058,7 @@ test('theme toggle applies dark and light surfaces consistently', async ({ page 
     page.locator('#language-select'),
     'background-color',
   )
-  await expect(page.locator('.settings-field-icon')).toHaveCount(5)
+  await expect(page.locator('.settings-field-icon')).toHaveCount(6)
   const darkSettingsModelIconColor = await readComputedRgb(page.locator('.settings-field-icon').first(), 'color')
   expect(darkActiveThemeChipBackgroundImage).toBe('none')
   expect(darkProxyEnabledBackgroundImage).toBe('none')
@@ -2431,6 +2431,146 @@ test('routing proxy panel keeps the same card rhythm in both themes', async ({ p
   })
 })
 
+test('custom theme unlocks accent color with its own base appearance', async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 900 })
+  await mockAppApis(page)
+  await page.goto(appUrl)
+  await page.locator('.card-shell').first().waitFor()
+
+  const settingsPanel = page.locator('#app-panel-settings')
+  const themeSettings = settingsPanel.locator('.theme-settings:visible').first()
+  const customThemeButton = themeSettings
+    .locator(':scope > .theme-toggle .theme-chip')
+    .filter({ hasText: /\u81ea\u5b9a\u4e49|Custom/ })
+  const darkThemeButton = themeSettings
+    .locator(':scope > .theme-toggle .theme-chip')
+    .filter({ hasText: /\u6df1\u8272|Dark/ })
+  const customSettings = themeSettings.locator('.theme-custom-settings')
+  const lightBaseButton = customSettings
+    .locator('.theme-custom-base .theme-chip')
+    .filter({ hasText: /\u6d45\u8272|Light/ })
+  const colorControl = customSettings.locator('.theme-color-control')
+  const colorInput = colorControl.locator('input[type="color"]')
+  const resetButton = colorControl.locator('.theme-color-reset')
+
+  await page.locator('#app-tab-settings').click()
+  await expect(settingsPanel).toBeVisible()
+
+  // The built-in themes expose no accent color control.
+  await expect(customSettings).toHaveCount(0)
+
+  await customThemeButton.click()
+  await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark')
+  await expect(colorControl).toBeVisible()
+  await expect(colorInput).toHaveValue('#2f81f7')
+  await expect(resetButton).toBeDisabled()
+
+  await colorInput.fill('#c2410c')
+
+  await expect(colorControl).toHaveClass(/is-custom/)
+  await expect(resetButton).toBeEnabled()
+  await expect
+    .poll(() => page.locator('html').evaluate((node) => node.style.getPropertyValue('--accent')))
+    .toBe('#c2410c')
+  await expect(customSettings.locator('.theme-base-picker')).toBeVisible()
+  await expect(customSettings).toHaveScreenshot('custom-accent-control-dark.png', {
+    animations: 'disabled',
+    caret: 'hide',
+  })
+
+  await lightBaseButton.click()
+  await expect(page.locator('html')).toHaveAttribute('data-theme', 'light')
+  await expect
+    .poll(() => page.locator('html').evaluate((node) => node.style.getPropertyValue('--accent')))
+    .toBe('#c2410c')
+  await expect(customSettings).toHaveScreenshot('custom-accent-control-light.png', {
+    animations: 'disabled',
+    caret: 'hide',
+  })
+
+  await page.setViewportSize({ width: 520, height: 820 })
+  const controlBox = await colorControl.boundingBox()
+  const panelBox = await settingsPanel.locator('.settings-panel:visible').first().boundingBox()
+  expect(controlBox).not.toBeNull()
+  expect(panelBox).not.toBeNull()
+  expect(controlBox!.x).toBeGreaterThanOrEqual(panelBox!.x)
+  expect(controlBox!.x + controlBox!.width).toBeLessThanOrEqual(panelBox!.x + panelBox!.width + 1)
+  await expect(customSettings).toHaveScreenshot('custom-accent-control-light-narrow.png', {
+    animations: 'disabled',
+    caret: 'hide',
+  })
+
+  await expect
+    .poll(() =>
+      page.evaluate(async () => {
+        const response = await fetch('/api/state')
+        const saved = await response.json()
+        return [
+          saved.settings?.theme ?? null,
+          saved.settings?.customThemeBase ?? null,
+          saved.settings?.accentColor ?? null,
+        ].join('|')
+      }),
+    )
+    .toBe('custom|light|#c2410c')
+
+  await page.reload()
+  await page.locator('.card-shell').first().waitFor({ state: 'attached' })
+  await page.locator('#app-tab-settings').click()
+  await expect(page.locator('html')).toHaveAttribute('data-theme', 'light')
+  await expect(colorInput).toHaveValue('#c2410c')
+  await expect
+    .poll(() => page.locator('html').evaluate((node) => node.style.getPropertyValue('--accent')))
+    .toBe('#c2410c')
+
+  await resetButton.click()
+  await expect(colorControl).not.toHaveClass(/is-custom/)
+  await expect(resetButton).toBeDisabled()
+  await expect(colorInput).toHaveValue('#0969da')
+  await expect
+    .poll(() => page.locator('html').evaluate((node) => node.style.getPropertyValue('--accent')))
+    .toBe('')
+
+  // The base row exposes its own color picker: any color works as the page
+  // surface and the ink template follows the picked color's brightness.
+  const basePicker = customSettings.locator('.theme-base-picker input[type="color"]')
+  const darkBaseButton = customSettings
+    .locator('.theme-custom-base .theme-chip')
+    .filter({ hasText: /深色|Dark/ })
+
+  await basePicker.fill('#1a2b1e')
+  await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark')
+  await expect
+    .poll(() => page.locator('html').evaluate((node) => node.style.getPropertyValue('--page-bg')))
+    .toBe('#1a2b1e')
+  await expect(customSettings.locator('.theme-base-color-value')).toContainText('#1a2b1e')
+
+  await basePicker.fill('#f0e8d8')
+  await expect(page.locator('html')).toHaveAttribute('data-theme', 'light')
+  await expect
+    .poll(() => page.locator('html').evaluate((node) => node.style.getPropertyValue('--page-bg')))
+    .toBe('#f0e8d8')
+
+  await darkBaseButton.click()
+  await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark')
+  await expect
+    .poll(() => page.locator('html').evaluate((node) => node.style.getPropertyValue('--page-bg')))
+    .toBe('')
+  await expect(customSettings.locator('.theme-base-color-value')).toHaveCount(0)
+
+  // Leaving the custom theme hides the accent controls and drops the override.
+  await colorInput.fill('#c2410c')
+  await expect
+    .poll(() => page.locator('html').evaluate((node) => node.style.getPropertyValue('--accent')))
+    .toBe('#c2410c')
+  await darkThemeButton.click()
+  await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark')
+  await expect(customSettings).toHaveCount(0)
+  await expect
+    .poll(() => page.locator('html').evaluate((node) => node.style.getPropertyValue('--accent')))
+    .toBe('')
+})
+
 test('language setting updates the interface copy in both themes', async ({ page }) => {
   await mockAppApis(page)
   await page.goto(appUrl)
@@ -2785,6 +2925,68 @@ test('settings panel stacks category cards cleanly on a narrow viewport', async 
   await expect(page.locator('html')).toHaveAttribute('data-theme', 'light')
   await expect(settingsPanel).toHaveScreenshot('settings-panel-card-stack-light.png', {
     animations: 'disabled',
+  })
+})
+
+test('Codex Fast mode requires a visible cost confirmation across themes', async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 960 })
+  await mockAppApis(page)
+  await mockMissingEnvironmentStatus(page)
+  await page.goto(appUrl)
+  await page.locator('.card-shell').first().waitFor()
+
+  const settingsTab = page.locator('#app-tab-settings')
+  const settingsPanel = page.locator('#app-panel-settings .settings-panel')
+  const fastToggle = settingsPanel.getByLabel(/Codex Fast 加速|Codex Fast mode/).first()
+  const lightThemeButton = page.locator('#app-panel-settings .theme-toggle').first().locator('.theme-chip').first()
+
+  await settingsTab.click()
+  await expect(settingsPanel).toBeVisible()
+  await expect(fastToggle).not.toBeChecked()
+
+  await fastToggle.click()
+  const darkDialog = page.getByRole('dialog', { name: /开启 Codex Fast 加速？|Enable Codex Fast mode\?/ })
+  await expect(darkDialog).toBeVisible()
+  await expect(fastToggle).not.toBeChecked()
+  await expect(darkDialog).toContainText(/显著增加用量和费用|significantly increase usage and cost/)
+  await expect(darkDialog).toContainText(/Git Agent/)
+  await expect(darkDialog.locator('.settings-danger-card')).toHaveScreenshot('codex-fast-mode-warning-dark.png', {
+    animations: 'disabled',
+    caret: 'hide',
+  })
+
+  await darkDialog.locator('.settings-danger-actions').getByRole('button', { name: /保持关闭|Keep off/ }).click()
+  await expect(darkDialog).toBeHidden()
+  await expect(fastToggle).not.toBeChecked()
+
+  await fastToggle.click()
+  await page.getByRole('dialog', { name: /开启 Codex Fast 加速？|Enable Codex Fast mode\?/ })
+    .getByRole('button', { name: /了解费用并开启|I understand the cost/ })
+    .click()
+  await expect(fastToggle).toBeChecked()
+
+  await fastToggle.click()
+  await expect(fastToggle).not.toBeChecked()
+  await expect(darkDialog).toBeHidden()
+
+  await lightThemeButton.click()
+  await expect(page.locator('html')).toHaveAttribute('data-theme', 'light')
+  await fastToggle.click()
+
+  const lightDialog = page.getByRole('dialog', { name: /开启 Codex Fast 加速？|Enable Codex Fast mode\?/ })
+  await expect(lightDialog).toBeVisible()
+  await expect(lightDialog.locator('.settings-danger-card')).toHaveScreenshot('codex-fast-mode-warning-light.png', {
+    animations: 'disabled',
+    caret: 'hide',
+  })
+
+  await lightDialog.locator('.settings-danger-actions').getByRole('button', { name: /保持关闭|Keep off/ }).click()
+  await page.setViewportSize({ width: 390, height: 844 })
+  await fastToggle.click()
+  await expect(lightDialog).toBeVisible()
+  await expect(lightDialog.locator('.settings-danger-card')).toHaveScreenshot('codex-fast-mode-warning-light-narrow.png', {
+    animations: 'disabled',
+    caret: 'hide',
   })
 })
 
@@ -4867,13 +5069,13 @@ test('structured edited-file blocks stay legible across themes', async ({ page }
   const ambienceTab = page.locator('#app-tab-ambience')
   const lightThemeButton = page.locator('#app-panel-settings .theme-toggle').first().locator('.theme-chip').first()
 
-  await expect(editsCard).toContainText('Edited files')
   await expect(editsCard).toContainText('GitFullDialog.tsx')
-  await expect(editsCard).toContainText('Modified')
   await expect(editsCard).toContainText('+1')
   await expect(editsCard).toContainText('-1')
   await expect(diffBlock.locator('.structured-inline-diff-row.is-added')).toHaveCount(1)
   await expect(diffBlock.locator('.structured-inline-diff-row.is-removed')).toHaveCount(1)
+  await expect(diffBlock.locator('.structured-inline-diff-code').first()).toHaveCSS('white-space', 'pre')
+  await expect(diffBlock.locator('.structured-inline-diff-code').first()).toHaveCSS('text-overflow', 'ellipsis')
 
   const darkEditsBackground = await readComputedRgb(editsCard, 'background-color')
   const darkDiffBackground = await readComputedRgb(diffBlock, 'background-color')
@@ -4886,6 +5088,13 @@ test('structured edited-file blocks stay legible across themes', async ({ page }
     animations: 'disabled',
     caret: 'hide',
   })
+
+  await page.setViewportSize({ width: 440, height: 900 })
+  await expect(editsCard).toHaveScreenshot('structured-edits-card-dark-narrow.png', {
+    animations: 'disabled',
+    caret: 'hide',
+  })
+  await page.setViewportSize({ width: 1280, height: 720 })
 
   await settingsTab.click()
   await lightThemeButton.click()
@@ -4905,7 +5114,7 @@ test('structured edited-file blocks stay legible across themes', async ({ page }
   })
 })
 
-test('structured edited-file overflow actions stay quiet across themes', async ({ page }) => {
+test('structured edited-file overflow previews stay compact across themes', async ({ page }) => {
   await page.setViewportSize({ width: 1280, height: 900 })
   await mockAppApis(page, { state: createOverflowEditedFilesStructuredState() })
   await page.goto(appUrl)
@@ -4913,18 +5122,17 @@ test('structured edited-file overflow actions stay quiet across themes', async (
 
   const editsCard = page.locator('.structured-edits-card').first()
   const preview = editsCard.locator('.structured-preview-text').first()
-  const viewDetailsButton = editsCard.locator('.structured-preview-footer .structured-preview-trigger')
+  const previewShell = editsCard.locator('.structured-preview-shell').first()
   const settingsTab = page.locator('#app-tab-settings')
   const ambienceTab = page.locator('#app-tab-ambience')
   const lightThemeButton = page.locator('#app-panel-settings .theme-toggle').first().locator('.theme-chip').first()
 
-  await expect(editsCard).toContainText('已编辑文件')
   await expect(editsCard).toContainText('BazEffectGuaranteedPatchedItemOnShopRefreshPerRound.cs.meta')
-  await expect(editsCard).toContainText('新增')
   await expect(editsCard).toContainText('+11')
   await expect(preview).not.toContainText('new file mode')
-  await expect(viewDetailsButton).toBeVisible()
-  await expect(viewDetailsButton).toHaveText('查看全部')
+  await expect(previewShell).toHaveAttribute('role', 'button')
+  await expect(previewShell).toHaveAttribute('tabindex', '0')
+  await expect(editsCard.locator('.structured-preview-trigger')).toHaveCount(0)
 
   await expect(editsCard).toHaveScreenshot('structured-edits-card-overflow-dark.png', {
     animations: 'disabled',
@@ -4936,7 +5144,6 @@ test('structured edited-file overflow actions stay quiet across themes', async (
   await expect(page.locator('html')).toHaveAttribute('data-theme', 'light')
   await ambienceTab.click()
 
-  await expect(viewDetailsButton).toBeVisible()
   await expect(editsCard).toHaveScreenshot('structured-edits-card-overflow-light.png', {
     animations: 'disabled',
     caret: 'hide',
@@ -5321,7 +5528,7 @@ for (const theme of ['dark', 'light'] as const) {
 
     await expect(tabBar).toContainText('新会话')
     await expect(contentHeader).toHaveCount(0)
-    await expect(composerModelSelect).toContainText(/GPT-5\.5/i)
+    await expect(composerModelSelect).toContainText(/GPT-5\.6 Sol/i)
     await expect(duplicatedTitle).toHaveCount(0)
     await expect(paneView).toHaveScreenshot(`pane-single-tab-chrome-${theme}.png`, {
       animations: 'disabled',

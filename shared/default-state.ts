@@ -45,6 +45,7 @@ import {
   normalizeStoredModel,
 } from './models.js'
 import { normalizeReasoningEffortForModel } from './reasoning.js'
+import { normalizeAccentColor } from './theme.js'
 import {
   defaultSystemPrompt,
   normalizeModelPromptRules,
@@ -484,6 +485,9 @@ const normalizeEditorSettings = (
 export const createDefaultSettings = (language: AppLanguage = defaultAppLanguage): AppSettings => ({
   language: normalizeLanguage(language),
   theme: 'dark',
+  customThemeBase: 'dark',
+  customBaseColor: null,
+  accentColor: null,
   activeTopTab: 'ambience',
   editor: createDefaultEditorSettings(),
   uiScale: 1,
@@ -540,9 +544,12 @@ export const normalizeAppSettings = (settings?: Partial<AppSettings> | null): Ap
   return {
     language,
     theme:
-      settings?.theme === 'light' || settings?.theme === 'system'
+      settings?.theme === 'light' || settings?.theme === 'system' || settings?.theme === 'custom'
         ? settings.theme
         : 'dark',
+    customThemeBase: settings?.customThemeBase === 'light' ? 'light' : 'dark',
+    customBaseColor: normalizeAccentColor(settings?.customBaseColor),
+    accentColor: normalizeAccentColor(settings?.accentColor),
     activeTopTab: normalizeTopTab(settings?.activeTopTab),
     editor: normalizeEditorSettings(settings?.editor),
     uiScale: clampScale(settings?.uiScale, minUiScale, maxUiScale, defaults.uiScale),

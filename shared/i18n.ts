@@ -80,6 +80,12 @@ type LocaleText = {
   light: string
   dark: string
   systemTheme: string
+  customTheme: string
+  customThemeBase: string
+  accentColor: string
+  accentColorHint: string
+  defaultAccentColor: string
+  resetAccentColor: string
   uiScale: string
   fontFamily: string
   fontScale: string
@@ -97,6 +103,11 @@ type LocaleText = {
   codexPersonalityPragmatic: string
   codexFastModeLabel: string
   codexFastModeNote: string
+  codexFastModeDialogTitle: string
+  codexFastModeDialogBody: string
+  codexFastModeDialogWarning: string
+  codexFastModeDialogCancel: string
+  codexFastModeDialogConfirm: string
   gitAgentModel: string
   gitAgentModelNote: string
   systemPromptLabel: string
@@ -364,6 +375,12 @@ const localeTextByLanguage: Record<AppLanguage, LocaleText> = {
     light: '浅色',
     dark: '深色',
     systemTheme: '系统',
+    customTheme: '自定义',
+    customThemeBase: '底色',
+    accentColor: '主题色',
+    accentColorHint: '用于按钮、选中和高亮，会根据底色自动适配。',
+    defaultAccentColor: '默认',
+    resetAccentColor: '恢复默认',
     uiScale: '界面缩放',
     fontFamily: '字体',
     fontScale: '字体缩放',
@@ -380,7 +397,13 @@ const localeTextByLanguage: Record<AppLanguage, LocaleText> = {
     codexPersonalityFriendly: '友好',
     codexPersonalityPragmatic: '务实',
     codexFastModeLabel: 'Codex Fast 加速',
-    codexFastModeNote: '使用 priority 服务档提高响应速度，但会增加用量；默认关闭。',
+    codexFastModeNote: '使用费用较高的 priority 服务档提高响应速度；默认关闭，开启前需要确认。',
+    codexFastModeDialogTitle: '开启 Codex Fast 加速？',
+    codexFastModeDialogBody: 'Fast 会使用 priority 服务档提高响应速度，但可能显著增加用量和费用。',
+    codexFastModeDialogWarning:
+      '开启后，普通聊天、恢复与重试、Brainstorm 和 Git Agent 的 Codex 请求都会使用高价服务档，直到你再次关闭。',
+    codexFastModeDialogCancel: '保持关闭',
+    codexFastModeDialogConfirm: '了解费用并开启',
     gitAgentModel: 'Git 卡片 AI 模型',
     gitAgentModelNote: 'Git 分析默认使用均衡的 GPT-5.6 Terra；格式：模型名称 推理强度（如 gpt-5.6-terra medium）。',
     systemPromptLabel: '系统提示词',
@@ -670,6 +693,12 @@ const localeTextByLanguage: Record<AppLanguage, LocaleText> = {
     light: 'Light',
     dark: 'Dark',
     systemTheme: 'System',
+    customTheme: 'Custom',
+    customThemeBase: 'Base',
+    accentColor: 'Accent color',
+    accentColorHint: 'Used for buttons, selections, and highlights; adapts to the base appearance.',
+    defaultAccentColor: 'Default',
+    resetAccentColor: 'Reset',
     uiScale: 'UI scale',
     fontFamily: 'Font',
     fontScale: 'Font scale',
@@ -687,7 +716,13 @@ const localeTextByLanguage: Record<AppLanguage, LocaleText> = {
     codexPersonalityFriendly: 'Friendly',
     codexPersonalityPragmatic: 'Pragmatic',
     codexFastModeLabel: 'Codex Fast mode',
-    codexFastModeNote: 'Uses the priority service tier for faster responses with increased usage. Off by default.',
+    codexFastModeNote: 'Uses the higher-cost priority service tier for faster responses. Off by default and requires confirmation.',
+    codexFastModeDialogTitle: 'Enable Codex Fast mode?',
+    codexFastModeDialogBody: 'Fast uses the priority service tier for quicker responses, but may significantly increase usage and cost.',
+    codexFastModeDialogWarning:
+      'Once enabled, Codex requests from regular chats, recovery and retries, Brainstorm, and Git Agent will use the higher-cost tier until you turn it off.',
+    codexFastModeDialogCancel: 'Keep off',
+    codexFastModeDialogConfirm: 'I understand the cost — enable',
     gitAgentModel: 'Git card AI model',
     gitAgentModelNote: 'Git analysis defaults to balanced GPT-5.6 Terra. Format: model-name reasoning-effort (e.g. gpt-5.6-terra medium).',
     systemPromptLabel: 'System prompt',

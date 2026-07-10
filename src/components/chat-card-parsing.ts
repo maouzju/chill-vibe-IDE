@@ -3,7 +3,7 @@ import { isHiddenCompactBoundaryMessage } from './chat-card-compaction'
 
 export type StructuredCommandMessage = {
   itemId: string
-  status: 'in_progress' | 'completed' | 'declined'
+  status: 'in_progress' | 'completed' | 'failed' | 'declined'
   command: string
   output: string
   exitCode: number | null
@@ -149,7 +149,7 @@ export const parseStructuredCommandMessage = (message: ChatMessage): StructuredC
 
   if (
     !itemId ||
-    (status !== 'in_progress' && status !== 'completed' && status !== 'declined')
+    (status !== 'in_progress' && status !== 'completed' && status !== 'failed' && status !== 'declined')
   ) {
     return null
   }

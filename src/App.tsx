@@ -62,6 +62,13 @@ import {
   type ModelPromptRule,
 } from '../shared/system-prompt'
 import {
+  createThemeAccentTokens,
+  createThemeSurfaceTokens,
+  getDefaultThemeAccentColor,
+  getDefaultThemeSurfaceColor,
+  getSurfaceBaseAppearance,
+} from '../shared/theme'
+import {
   getRecoverableStreamRetryLimit,
   getRecoverableStreamErrorSessionId,
   resolveStreamRecoveryMode,
@@ -221,7 +228,7 @@ import {
 import { WorkspaceColumn } from './components/WorkspaceColumn'
 import {
   getPersistenceVersion,
-  streamDeltaFlushIntervalMs,
+  getStreamDeltaFlushIntervalMs,
   streamActivityFlushIntervalMs,
   shouldPersistActionImmediately,
   shouldSyncRuntimeSettings,
@@ -523,6 +530,7 @@ function App() {
   const [updateResult, setUpdateResult] = useState<UpdateCheckResult | null>(null)
   const [downloadProgress, setDownloadProgress] = useState(0)
   const [downloadedUpdatePath, setDownloadedUpdatePath] = useState<string | null>(null)
+  const [codexFastModeDialogOpen, setCodexFastModeDialogOpen] = useState(false)
   const [clearUserDataDialogOpen, setClearUserDataDialogOpen] = useState(false)
   const [clearUserDataPending, setClearUserDataPending] = useState(false)
   const [closeWorkspaceDialogColumnId, setCloseWorkspaceDialogColumnId] = useState<string | null>(null)
@@ -890,6 +898,27 @@ function App() {
     }
   }, [clearUserDataDialogOpen, clearUserDataPending])
 
+  useEffect(() => {
+    if (!codexFastModeDialogOpen) {
+      return
+    }
+
+    const previousOverflow = document.body.style.overflow
+    document.body.style.overflow = 'hidden'
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        setCodexFastModeDialogOpen(false)
+      }
+    }
+
+    window.addEventListener('keydown', handleKeyDown)
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown)
+      document.body.style.overflow = previousOverflow
+    }
+  }, [codexFastModeDialogOpen])
+
   const handleCheckForUpdate = useCallback(() => {
     setUpdateStatus('checking')
     setDownloadProgress(0)
@@ -1015,6 +1044,34 @@ function App() {
   }, [])
 
   const applyAction = useCallback((action: IdeAction) => applyActions([action]), [applyActions])
+
+  const closeCodexFastModeDialog = useCallback(() => {
+    setCodexFastModeDialogOpen(false)
+  }, [])
+
+  const handleCodexFastModeToggle = useCallback(
+    (enabled: boolean) => {
+      if (enabled) {
+        setCodexFastModeDialogOpen(true)
+        return
+      }
+
+      setCodexFastModeDialogOpen(false)
+      applyAction({
+        type: 'updateSettings',
+        patch: { codexFastMode: false },
+      })
+    },
+    [applyAction],
+  )
+
+  const confirmCodexFastMode = useCallback(() => {
+    applyAction({
+      type: 'updateSettings',
+      patch: { codexFastMode: true },
+    })
+    setCodexFastModeDialogOpen(false)
+  }, [applyAction])
 
   const persistAfterAction = useCallback(
     (actionType: IdeAction['type'], nextState: AppState) => {
@@ -2636,7 +2693,8 @@ function App() {
       }
 
       if (deltaFlushHandleRef.current === null) {
-        deltaFlushHandleRef.current = window.setTimeout(flushDeltaBuffer, streamDeltaFlushIntervalMs)
+        const flushIntervalMs = getStreamDeltaFlushIntervalMs(activeStreamsRef.current.size)
+        deltaFlushHandleRef.current = window.setTimeout(flushDeltaBuffer, flushIntervalMs)
       }
     },
     [flushDeltaBuffer],
@@ -3484,7 +3542,7 @@ function App() {
   }, [])
 
   useEffect(() => {
-    setResolvedTheme(getResolvedAppTheme(appState.settings.theme))
+    setResolvedTheme(getResolvedAppTheme(appState.settings.theme, appState.settings.customThemeBase))
 
     if (appState.settings.theme !== 'system') {
       return
@@ -3493,7 +3551,7 @@ function App() {
     return subscribeToSystemThemeChange(() => {
       setResolvedTheme(getResolvedAppTheme('system'))
     })
-  }, [appState.settings.theme])
+  }, [appState.settings.theme, appState.settings.customThemeBase])
 
   useEffect(() => {
     const root = document.documentElement
@@ -3511,6 +3569,50 @@ function App() {
     appState.settings.lineHeightScale,
     resolvedTheme,
   ])
+
+  useEffect(() => {
+    const root = document.documentElement
+    const accentTokens =
+      appState.settings.theme === 'custom'
+        ? createThemeAccentTokens(appState.settings.accentColor, resolvedTheme)
+        : null
+
+    if (!accentTokens) {
+      return
+    }
+
+    for (const [property, value] of Object.entries(accentTokens)) {
+      root.style.setProperty(property, value)
+    }
+
+    return () => {
+      for (const property of Object.keys(accentTokens)) {
+        root.style.removeProperty(property)
+      }
+    }
+  }, [appState.settings.accentColor, appState.settings.theme, resolvedTheme])
+
+  useEffect(() => {
+    const root = document.documentElement
+    const surfaceTokens =
+      appState.settings.theme === 'custom'
+        ? createThemeSurfaceTokens(appState.settings.customBaseColor)
+        : null
+
+    if (!surfaceTokens) {
+      return
+    }
+
+    for (const [property, value] of Object.entries(surfaceTokens)) {
+      root.style.setProperty(property, value)
+    }
+
+    return () => {
+      for (const property of Object.keys(surfaceTokens)) {
+        root.style.removeProperty(property)
+      }
+    }
+  }, [appState.settings.customBaseColor, appState.settings.theme])
 
   useEffect(() => {
     const root = document.documentElement
@@ -5254,20 +5356,120 @@ function App() {
       { value: 'light', label: text.light },
       { value: 'dark', label: text.dark },
       { value: 'system', label: text.systemTheme },
+      { value: 'custom', label: text.customTheme },
     ]
+    const isCustomTheme = appState.settings.theme === 'custom'
+    const displayedAccentColor =
+      appState.settings.accentColor ?? getDefaultThemeAccentColor(resolvedTheme)
+    const customBaseOptions: Array<{ value: AppState['settings']['customThemeBase']; label: string }> = [
+      { value: 'light', label: text.light },
+      { value: 'dark', label: text.dark },
+    ]
+    const customBaseColor = appState.settings.customBaseColor
+    const displayedBaseColor =
+      customBaseColor ?? getDefaultThemeSurfaceColor(appState.settings.customThemeBase)
 
     return (
-      <div className="theme-toggle">
-        {themeOptions.map((option) => (
-          <button
-            key={option.value}
-            type="button"
-            className={`theme-chip${appState.settings.theme === option.value ? ' is-active' : ''}`}
-            onClick={() => applyAction({ type: 'updateSettings', patch: { theme: option.value } })}
-          >
-            {option.label}
-          </button>
-        ))}
+      <div className="theme-settings">
+        <div className="theme-toggle">
+          {themeOptions.map((option) => (
+            <button
+              key={option.value}
+              type="button"
+              className={`theme-chip${appState.settings.theme === option.value ? ' is-active' : ''}`}
+              onClick={() => applyAction({ type: 'updateSettings', patch: { theme: option.value } })}
+            >
+              {option.label}
+            </button>
+          ))}
+        </div>
+
+        {isCustomTheme && (
+          <div className="theme-custom-settings">
+            <div className="theme-custom-base">
+              <span className="theme-custom-base-label">{text.customThemeBase}</span>
+              <div className="theme-toggle">
+                {customBaseOptions.map((option) => (
+                  <button
+                    key={option.value}
+                    type="button"
+                    className={`theme-chip${
+                      !customBaseColor && appState.settings.customThemeBase === option.value
+                        ? ' is-active'
+                        : ''
+                    }`}
+                    onClick={() =>
+                      applyAction({
+                        type: 'updateSettings',
+                        patch: { customThemeBase: option.value, customBaseColor: null },
+                      })
+                    }
+                  >
+                    {option.label}
+                  </button>
+                ))}
+              </div>
+              <label
+                className={`theme-color-picker theme-base-picker${customBaseColor ? ' is-custom' : ''}`}
+                title={text.customThemeBase}
+              >
+                <input
+                  type="color"
+                  value={displayedBaseColor}
+                  aria-label={text.customThemeBase}
+                  onChange={(event) => {
+                    const nextBaseColor = event.target.value
+                    applyAction({
+                      type: 'updateSettings',
+                      patch: {
+                        customBaseColor: nextBaseColor,
+                        customThemeBase: getSurfaceBaseAppearance(nextBaseColor) ?? 'dark',
+                      },
+                    })
+                  }}
+                />
+              </label>
+              {customBaseColor && <code className="theme-base-color-value">{customBaseColor}</code>}
+            </div>
+
+            <div className={`theme-color-control${appState.settings.accentColor ? ' is-custom' : ''}`}>
+              <label className="theme-color-picker" title={text.accentColor}>
+                <input
+                  type="color"
+                  value={displayedAccentColor}
+                  aria-label={text.accentColor}
+                  onChange={(event) =>
+                    applyAction({
+                      type: 'updateSettings',
+                      patch: { accentColor: event.target.value },
+                    })
+                  }
+                />
+              </label>
+              <div className="theme-color-copy">
+                <div className="theme-color-heading">
+                  <span>{text.accentColor}</span>
+                  <code>{displayedAccentColor}</code>
+                  {!appState.settings.accentColor && <em>{text.defaultAccentColor}</em>}
+                </div>
+                <p>{text.accentColorHint}</p>
+              </div>
+              <button
+                type="button"
+                className="theme-color-reset"
+                disabled={!appState.settings.accentColor}
+                onClick={() =>
+                  applyAction({
+                    type: 'updateSettings',
+                    patch: { accentColor: null },
+                  })
+                }
+              >
+                {text.resetAccentColor}
+              </button>
+            </div>
+          </div>
+        )}
       </div>
     )
   }
@@ -5652,6 +5854,9 @@ function App() {
                 fontScale: 1,
                 lineHeightScale: 1,
                 theme: 'light',
+                customThemeBase: 'dark',
+                customBaseColor: null,
+                accentColor: null,
               },
             })
           }
@@ -5807,12 +6012,7 @@ function App() {
           <input
             type="checkbox"
             checked={appState.settings.codexFastMode}
-            onChange={(event) =>
-              applyAction({
-                type: 'updateSettings',
-                patch: { codexFastMode: event.target.checked },
-              })
-            }
+            onChange={(event) => handleCodexFastModeToggle(event.target.checked)}
           />
         </label>
         <p className="settings-note">{text.codexFastModeNote}</p>
@@ -7051,6 +7251,9 @@ function App() {
                         fontScale: 1,
                         lineHeightScale: 1,
                         theme: 'light',
+                        customThemeBase: 'dark',
+                        customBaseColor: null,
+                        accentColor: null,
                       },
                     })
                   }
@@ -7116,12 +7319,7 @@ function App() {
                   <input
                     type="checkbox"
                     checked={appState.settings.codexFastMode}
-                    onChange={(event) =>
-                      applyAction({
-                        type: 'updateSettings',
-                        patch: { codexFastMode: event.target.checked },
-                      })
-                    }
+                    onChange={(event) => handleCodexFastModeToggle(event.target.checked)}
                   />
                 </label>
                 <p className="settings-note">{text.codexFastModeNote}</p>
@@ -8128,6 +8326,55 @@ function App() {
                     onClick={handleClearUserData}
                   >
                     {clearUserDataPending ? text.clearUserDataPending : text.clearUserDataConfirm}
+                  </AppButton>
+                </div>
+              </div>
+            </div>
+          </section>
+        </div>
+      ) : null}
+
+      {codexFastModeDialogOpen ? (
+        <div className="structured-preview-layer">
+          <div className="structured-preview-backdrop" onClick={closeCodexFastModeDialog} />
+          <section
+            className="structured-preview-dialog settings-danger-dialog codex-fast-mode-dialog"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="codex-fast-mode-dialog-title"
+          >
+            <div className="structured-preview-card settings-danger-card">
+              <div className="structured-preview-header">
+                <div className="structured-preview-copy">
+                  <h3 id="codex-fast-mode-dialog-title">{text.codexFastModeDialogTitle}</h3>
+                  <p className="settings-note">{text.codexFastModeDialogBody}</p>
+                </div>
+
+                <button
+                  type="button"
+                  className="btn btn-ghost structured-preview-close"
+                  onClick={closeCodexFastModeDialog}
+                  aria-label={text.codexFastModeDialogCancel}
+                >
+                  <CloseIcon />
+                </button>
+              </div>
+
+              <div className="structured-preview-body settings-danger-body">
+                <p className="settings-danger-warning" role="alert">
+                  {text.codexFastModeDialogWarning}
+                </p>
+
+                <div className="settings-actions settings-danger-actions">
+                  <AppButton type="button" onClick={closeCodexFastModeDialog}>
+                    {text.codexFastModeDialogCancel}
+                  </AppButton>
+                  <AppButton
+                    type="button"
+                    className="settings-danger-button settings-danger-button-confirm"
+                    onClick={confirmCodexFastMode}
+                  >
+                    {text.codexFastModeDialogConfirm}
                   </AppButton>
                 </div>
               </div>

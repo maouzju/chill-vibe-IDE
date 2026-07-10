@@ -19,10 +19,13 @@ export const defaultQueuedStateSaveDelayMs = 300
 export const streamingQueuedStateSaveDelayMs = 5_000
 // Renderer-facing flush cadence for streaming output. These only batch React
 // renders; disk persistence has its own independent streaming throttle below.
-// 80ms keeps the typewriter feel (~12 paints/s) while still coalescing
-// per-token deltas — the original 1s window made replies appear line-by-line.
+// 80ms keeps a single reply feeling like live typing (~12 paints/s) while
+// still coalescing per-token deltas. Multi-stream boards back off below so the
+// combined card render rate cannot scale linearly with every open agent pane.
 export const streamDeltaFlushIntervalMs = 80
 export const streamActivityFlushIntervalMs = 250
+const moderateMultiStreamDeltaFlushIntervalMs = 120
+const busyMultiStreamDeltaFlushIntervalMs = 180
 const busyStreamingQueuedStateSaveDelayMs = 15_000
 const busyStreamingCardThreshold = 2
 const streamingStateContentBudgetChars = 750_000
@@ -44,6 +47,18 @@ export const getStreamingCardCount = (state: Pick<AppState, 'columns'>) =>
       count + Object.values(column.cards).filter((card) => card.status === 'streaming').length,
     0,
   )
+
+export const getStreamDeltaFlushIntervalMs = (activeStreamCount: number) => {
+  if (activeStreamCount >= 4) {
+    return busyMultiStreamDeltaFlushIntervalMs
+  }
+
+  if (activeStreamCount >= 2) {
+    return moderateMultiStreamDeltaFlushIntervalMs
+  }
+
+  return streamDeltaFlushIntervalMs
+}
 
 export const getLiveChatContentChars = (state: Pick<AppState, 'columns'>) =>
   state.columns.reduce(

@@ -26,6 +26,8 @@ Reuse the verification posture from `../chill-vibe-full-regression/SKILL.md`, bu
    - run `pnpm test:full` (it already includes `pnpm build`, so it also proves the production build)
    - `pnpm test:risk` is acceptable mid-iteration, but the final pre-tag gate for a real release is `test:full`
    - if Playwright tooling noise from `AGENTS.md` blocks a clean run, capture the exact failure and continue with the strongest proven alternative only if the release is still honestly defensible
+   - if a narrow failure looks pre-existing, prove that instead of guessing: reproduce the same test against `origin/main` in a temporary detached comparison worktree, then remove it. Only classify the failure as baseline noise when the release candidate's affected/targeted gates pass and the baseline shows the same failure.
+   - when `test:full` exits early, run the unreached stages separately (`test:quality`, the strongest practical unit/Playwright gates, `test:electron`, and `build`). An early wrapper failure is not evidence that later gates passed.
 4. Bump the version only after the code is judged releasable:
    - default to the next patch version unless the diff clearly justifies a bigger bump
    - update `package.json` and any other repo-owned version references that must stay in sync
@@ -116,6 +118,8 @@ Guardrails:
 - Do not keep retrying the full regression wrapper when it is blocked by known fixed-port `5173` ownership or a flaky Playwright check. Capture the exact wrapper failure, confirm the port owner is repo-local before stopping it, and rerun the failing spec or strongest targeted gate in isolation.
 - If the full Playwright suite collapses after Chromium reports `FATAL ... Failed to start BrowserThread:IO`, expect cascading `ERR_CONNECTION_REFUSED` once the Vite web server dies. Treat that as a local browser harness/resource failure, stop only orphaned `ms-playwright` Chromium processes, verify `5173` is free, then rerun the strongest practical gates (`pnpm test:risk` or targeted Playwright + smoke + Electron + build) instead of blindly looping the full suite.
 - If `pnpm test:risk` fails with `ENOSPC` while tests copy `node.exe` into `%TEMP%`, move `TEMP`/`TMP` to a repo-external drive with free space (for example `D:\Temp\chill-vibe-release-temp`) before rerunning. Do not point temp at a directory inside this repo: fake CLI `.js` files then inherit the repo `"type": "module"` package scope and fail with `require is not defined`.
+- Avoid piping release verification commands through `Tee-Object` when their harness launches Vite, Electron, or other background children. A detached child can inherit the pipe and keep PowerShell alive after the tests have already printed a green summary; run the command directly, and inspect the repo log files/process tree separately when progress stalls.
+- A temporary comparison worktree may share dependencies through a `node_modules` junction, but PowerShell `Remove-Item` can throw while deleting that junction. Remove the junction with `[System.IO.Directory]::Delete($junction)` before `git worktree remove --force`, and verify both the worktree list and filesystem afterward.
 - Clean up release scratch files before final handoff (`.tmp-release-notes-*`, `.tmp-gh-upload-*`, `.tmp-curl-*`) unless they are intentionally needed for audit evidence.
 
 ## Suggested Prompt Shapes

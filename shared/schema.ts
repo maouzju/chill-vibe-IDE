@@ -17,7 +17,7 @@ export type StreamErrorHint = z.infer<typeof streamErrorHintSchema>
 export const chatActivityKindSchema = z.enum(['command', 'reasoning', 'tool', 'edits', 'todo', 'ask-user', 'agents'])
 export type ChatActivityKind = z.infer<typeof chatActivityKindSchema>
 
-export const chatCommandActivityStatusSchema = z.enum(['in_progress', 'completed', 'declined'])
+export const chatCommandActivityStatusSchema = z.enum(['in_progress', 'completed', 'failed', 'declined'])
 export type ChatCommandActivityStatus = z.infer<typeof chatCommandActivityStatusSchema>
 
 export const slashCommandSourceSchema = z.enum(['app', 'native', 'skill'])
@@ -32,8 +32,11 @@ export const slashCommandSchema = z.object({
 })
 export type SlashCommand = z.infer<typeof slashCommandSchema>
 
-export const themeSchema = z.enum(['light', 'dark', 'system'])
+export const themeSchema = z.enum(['light', 'dark', 'system', 'custom'])
 export type AppTheme = z.infer<typeof themeSchema>
+
+export const customThemeBaseSchema = z.enum(['light', 'dark'])
+export type CustomThemeBase = z.infer<typeof customThemeBaseSchema>
 
 export const fontFamilySchema = z.enum(['default', 'system', 'aptos', 'segoe-ui', 'arial', 'microsoft-yahei', 'dengxian', 'simsun', 'simhei', 'kaiti', 'fangsong', 'serif', 'georgia', 'times-new-roman', 'mono', 'cascadia-code', 'consolas'])
 export type AppFontFamily = z.infer<typeof fontFamilySchema>
@@ -457,6 +460,9 @@ export type CodexPersonality = z.infer<typeof codexPersonalitySchema>
 export const appSettingsSchema = z.object({
   language: appLanguageSchema.default('zh-CN'),
   theme: themeSchema.default('dark'),
+  customThemeBase: customThemeBaseSchema.catch('dark').default('dark'),
+  customBaseColor: z.string().nullable().catch(null).default(null),
+  accentColor: z.string().nullable().catch(null).default(null),
   activeTopTab: topTabNameSchema.default('ambience'),
   editor: editorSettingsSchema.default({ fontSize: 13, wordWrap: false, minimap: false, tabSize: 2 }),
   uiScale: z.number().finite().default(1),
@@ -540,6 +546,9 @@ export const appStateSchema = z.object({
   settings: appSettingsSchema.default({
     language: 'zh-CN',
     theme: 'dark',
+    customThemeBase: 'dark',
+    customBaseColor: null,
+    accentColor: null,
     activeTopTab: 'ambience',
     editor: { fontSize: 13, wordWrap: false, minimap: false, tabSize: 2 },
     uiScale: 1,

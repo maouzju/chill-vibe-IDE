@@ -70,7 +70,10 @@ export const updateLatestKnownAppState = (state: AppState) => {
 
 export const getLatestKnownAppPresentation = () => ({
   language: latestKnownState?.settings.language ?? 'zh-CN',
-  theme: getResolvedAppTheme(latestKnownState?.settings.theme ?? 'dark'),
+  theme: getResolvedAppTheme(
+    latestKnownState?.settings.theme ?? 'dark',
+    latestKnownState?.settings.customThemeBase ?? 'dark',
+  ),
 })
 
 const buildCrashSignature = (source: RendererCrashCaptureSource, message: string, stack: string) =>

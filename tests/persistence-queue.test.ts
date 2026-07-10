@@ -9,6 +9,7 @@ import {
   getLiveChatContentChars,
   getQueuedStateSaveDelayMs,
   getPersistenceVersion,
+  getStreamDeltaFlushIntervalMs,
   getStreamingCardCount,
   isBusyStreamingState,
   streamActivityFlushIntervalMs,
@@ -77,6 +78,15 @@ describe('persistence queue', () => {
 
   it('flushes streaming deltas fast enough to read as live typing while still batching per-token renders', () => {
     assert.equal(streamDeltaFlushIntervalMs, 80)
+  })
+
+  it('backs off renderer delta flushes as more sessions stream concurrently', () => {
+    assert.equal(getStreamDeltaFlushIntervalMs(0), 80)
+    assert.equal(getStreamDeltaFlushIntervalMs(1), 80)
+    assert.equal(getStreamDeltaFlushIntervalMs(2), 120)
+    assert.equal(getStreamDeltaFlushIntervalMs(3), 120)
+    assert.equal(getStreamDeltaFlushIntervalMs(4), 180)
+    assert.equal(getStreamDeltaFlushIntervalMs(7), 180)
   })
 
   it('flushes structured stream activities promptly without per-event renders', () => {

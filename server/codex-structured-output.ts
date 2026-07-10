@@ -44,6 +44,10 @@ const normalizeCommandStatus = (
     return value
   }
 
+  if (value === 'failed') {
+    return value
+  }
+
   if (value === 'declined') {
     return 'declined'
   }

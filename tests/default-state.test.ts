@@ -34,7 +34,7 @@ import {
   WEATHER_TOOL_MODEL,
   WHITENOISE_TOOL_MODEL,
 } from '../shared/models.ts'
-import type { PaneNode } from '../shared/schema.ts'
+import { appSettingsSchema, type PaneNode } from '../shared/schema.ts'
 import { defaultSystemPrompt } from '../shared/system-prompt.ts'
 import { resolveAppTheme } from '../shared/theme.ts'
 
@@ -101,6 +101,50 @@ describe('default-state helpers', () => {
     assert.match(resolveAppFontFamilyCss('microsoft-yahei'), /Microsoft YaHei/)
     assert.match(resolveAppFontFamilyCss('kaiti'), /KaiTi/)
     assert.match(resolveAppFontFamilyCss('cascadia-code'), /Cascadia Code/)
+  })
+
+  it('normalizes custom accent colors without breaking older settings', () => {
+    assert.equal(createDefaultSettings().accentColor, null)
+    assert.equal(normalizeAppSettings({}).accentColor, null)
+    assert.equal(normalizeAppSettings({ accentColor: '#AbC' } as never).accentColor, '#aabbcc')
+    assert.equal(normalizeAppSettings({ accentColor: '  #12aBcF  ' } as never).accentColor, '#12abcf')
+    assert.equal(normalizeAppSettings({ accentColor: '#12xz90' } as never).accentColor, null)
+    assert.equal(normalizeAppSettings({ accentColor: '' } as never).accentColor, null)
+  })
+
+  it('keeps a malformed persisted accent color from rejecting the whole settings object', () => {
+    const parsed = appSettingsSchema.parse({ accentColor: 42 })
+
+    assert.equal(parsed.accentColor, null)
+  })
+
+  it('supports the custom theme and normalizes its base appearance', () => {
+    assert.equal(createDefaultSettings().customThemeBase, 'dark')
+    assert.equal(normalizeAppSettings({ theme: 'custom' } as never).theme, 'custom')
+    assert.equal(
+      normalizeAppSettings({ theme: 'custom', customThemeBase: 'light' } as never).customThemeBase,
+      'light',
+    )
+    assert.equal(normalizeAppSettings({ customThemeBase: 'weird' } as never).customThemeBase, 'dark')
+    assert.equal(normalizeAppSettings({}).customThemeBase, 'dark')
+  })
+
+  it('keeps a malformed persisted custom theme base from rejecting the whole settings object', () => {
+    const parsed = appSettingsSchema.parse({ theme: 'custom', customThemeBase: 42 })
+
+    assert.equal(parsed.theme, 'custom')
+    assert.equal(parsed.customThemeBase, 'dark')
+  })
+
+  it('normalizes the custom base color like the accent color', () => {
+    assert.equal(createDefaultSettings().customBaseColor, null)
+    assert.equal(normalizeAppSettings({}).customBaseColor, null)
+    assert.equal(
+      normalizeAppSettings({ customBaseColor: '#1A2B1E' } as never).customBaseColor,
+      '#1a2b1e',
+    )
+    assert.equal(normalizeAppSettings({ customBaseColor: 'oops' } as never).customBaseColor, null)
+    assert.equal(appSettingsSchema.parse({ customBaseColor: 42 }).customBaseColor, null)
   })
 
   it('normalizes settings into safe persisted values', () => {

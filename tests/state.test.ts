@@ -153,6 +153,42 @@ const createState = (): AppState => ({
 })
 
 describe('ideReducer pane layout', () => {
+  it('stores normalized custom accent colors through the settings action', () => {
+    const state = createState()
+    const customized = ideReducer(state, {
+      type: 'updateSettings',
+      patch: { accentColor: '#AbC' },
+    })
+
+    assert.equal(customized.settings.accentColor, '#aabbcc')
+
+    const reset = ideReducer(customized, {
+      type: 'updateSettings',
+      patch: { accentColor: null },
+    })
+
+    assert.equal(reset.settings.accentColor, null)
+  })
+
+  it('switches into the custom theme and keeps its base appearance', () => {
+    const state = createState()
+    const custom = ideReducer(state, {
+      type: 'updateSettings',
+      patch: { theme: 'custom', customThemeBase: 'light' },
+    })
+
+    assert.equal(custom.settings.theme, 'custom')
+    assert.equal(custom.settings.customThemeBase, 'light')
+
+    const backToDark = ideReducer(custom, {
+      type: 'updateSettings',
+      patch: { theme: 'dark' },
+    })
+
+    assert.equal(backToDark.settings.theme, 'dark')
+    assert.equal(backToDark.settings.customThemeBase, 'light')
+  })
+
   it('finds the nearest larger pane for auxiliary tabs like plan previews', () => {
     const layout = createSplit(
       'split-root',

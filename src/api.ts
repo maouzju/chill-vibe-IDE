@@ -117,6 +117,37 @@ export type ChatStreamSource = {
   close: () => void
 }
 
+// 桌面桥流事件 → handler 的分发。error 必须显式匹配而不是 fall-through
+// 兜底：服务端会新增事件种类（如镜像给手机监工的 user_message），电脑端
+// 不认识的事件要安静忽略，不能把正常对话渲染成"出错"。
+export const dispatchChatStreamEvent = (
+  eventName: string,
+  data: unknown,
+  handlers: StreamHandlers,
+) => {
+  if (eventName === 'session') {
+    handlers.onSession?.(data as StreamEventMap['session'])
+  } else if (eventName === 'delta') {
+    handlers.onDelta?.(data as StreamEventMap['delta'])
+  } else if (eventName === 'log') {
+    handlers.onLog?.(data as StreamEventMap['log'])
+  } else if (eventName === 'assistant_message') {
+    handlers.onAssistantMessage?.(data as StreamEventMap['assistant_message'])
+  } else if (eventName === 'activity') {
+    handlers.onActivity?.(data as StreamEventMap['activity'])
+  } else if (eventName === 'stats') {
+    handlers.onStats?.(data as StreamEventMap['stats'])
+  } else if (eventName === 'done') {
+    handlers.onDone?.(data as StreamEventMap['done'])
+  } else if (eventName === 'error') {
+    const errorPayload = data as StreamEventMap['error']
+    handlers.onError?.({
+      ...errorPayload,
+      recoverable: errorPayload.recoverable ?? false,
+    })
+  }
+}
+
 const desktopBridgeUnavailableMessage = 'Electron desktop bridge is unavailable.'
 
 const getDesktopApi = () =>
@@ -1222,48 +1253,7 @@ export const openChatStream = (streamId: string, handlers: StreamHandlers): Chat
       return
     }
 
-    const { data } = event.detail
-
-    if (event.detail.event === 'session') {
-      handlers.onSession?.(data as StreamEventMap['session'])
-      return
-    }
-
-    if (event.detail.event === 'delta') {
-      handlers.onDelta?.(data as StreamEventMap['delta'])
-      return
-    }
-
-    if (event.detail.event === 'log') {
-      handlers.onLog?.(data as StreamEventMap['log'])
-      return
-    }
-
-    if (event.detail.event === 'assistant_message') {
-      handlers.onAssistantMessage?.(data as StreamEventMap['assistant_message'])
-      return
-    }
-
-    if (event.detail.event === 'activity') {
-      handlers.onActivity?.(data as StreamEventMap['activity'])
-      return
-    }
-
-    if (event.detail.event === 'stats') {
-      handlers.onStats?.(data as StreamEventMap['stats'])
-      return
-    }
-
-    if (event.detail.event === 'done') {
-      handlers.onDone?.(data as StreamEventMap['done'])
-      return
-    }
-
-    const errorPayload = data as StreamEventMap['error']
-    handlers.onError?.({
-      ...errorPayload,
-      recoverable: errorPayload.recoverable ?? false,
-    })
+    dispatchChatStreamEvent(event.detail.event, event.detail.data, handlers)
   }
 
   window.addEventListener('chill-vibe:chat-stream', onDesktopEvent)

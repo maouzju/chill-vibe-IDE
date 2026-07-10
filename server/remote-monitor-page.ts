@@ -115,6 +115,12 @@ export const renderRemoteMonitorPage = () => `<!DOCTYPE html>
   .send-btn { background: var(--accent); color: #08131f; }
   .send-btn:disabled { opacity: 0.45; }
   .stop-btn { background: transparent; color: var(--err); border: 1px solid var(--err); }
+  .jump-bottom {
+    position: fixed; right: 16px; bottom: calc(96px + env(safe-area-inset-bottom)); z-index: 25;
+    border: 1px solid var(--border); background: var(--panel); color: var(--accent);
+    border-radius: 999px; padding: 8px 14px; font-size: 13px;
+    box-shadow: 0 6px 18px rgba(0,0,0,0.45);
+  }
   .notice { position: fixed; left: 50%; bottom: 88px; transform: translateX(-50%); background: var(--panel); border: 1px solid var(--ok); color: var(--text); border-radius: 10px; padding: 10px 16px; font-size: 14px; box-shadow: 0 8px 24px rgba(0,0,0,0.5); opacity: 0; pointer-events: none; transition: opacity .25s; max-width: 90vw; z-index: 30; }
   .notice.show { opacity: 1; }
   .notice.is-error { border-color: var(--err); }
@@ -143,6 +149,7 @@ export const renderRemoteMonitorPage = () => `<!DOCTYPE html>
     <button class="send-btn" id="sendBtn" type="button">发送</button>
   </div>
 </div>
+<button class="jump-bottom" id="jumpBottomBtn" type="button" hidden>↓ 回到底部</button>
 <div class="notice" id="notice"></div>
 <script>
 (function () {
@@ -161,7 +168,29 @@ export const renderRemoteMonitorPage = () => `<!DOCTYPE html>
   var stopBtn = document.getElementById('stopBtn')
   var modelSelect = document.getElementById('modelSelect')
   var effortSelect = document.getElementById('effortSelect')
+  var jumpBottomBtn = document.getElementById('jumpBottomBtn')
   var baseTitle = document.title
+
+  function isNearBottom() {
+    return window.innerHeight + window.scrollY >= document.body.scrollHeight - 160
+  }
+
+  // 必须在清空 detailBody 之前调用：清空瞬间页面变矮，scrollY 被浏览器
+  // 钳到顶，事后再看 isNearBottom() 会恒真，输出一来就把人拉回底部。
+  function captureScrollAnchor() {
+    return { nearBottom: isNearBottom() }
+  }
+
+  function updateJumpBottom() {
+    jumpBottomBtn.hidden = detailView.hidden || isNearBottom()
+  }
+
+  jumpBottomBtn.addEventListener('click', function () {
+    window.scrollTo(0, document.body.scrollHeight)
+    updateJumpBottom()
+  })
+  window.addEventListener('scroll', updateJumpBottom, { passive: true })
+  window.addEventListener('resize', updateJumpBottom)
 
   // streamId -> { cardId, liveText, items, texts, acts, state }
   var streams = new Map()
@@ -275,6 +304,10 @@ export const renderRemoteMonitorPage = () => `<!DOCTYPE html>
 
     if (kind === 'delta') {
       entry.liveText += (data.content || '')
+    } else if (kind === 'user_message') {
+      // 每轮的用户需求（手机或电脑发的都有）：进块列表，渲染时与落库
+      // 历史里的同文 user 消息去重。
+      entry.items.push({ type: 'user', content: data.content || '' })
     } else if (kind === 'assistant_message') {
       if (!entry.texts.has(data.itemId)) { entry.items.push({ type: 'text', id: data.itemId }) }
       entry.texts.set(data.itemId, data.content || '')
@@ -414,7 +447,7 @@ export const renderRemoteMonitorPage = () => `<!DOCTYPE html>
   })
 
   function loadCardHistory(cardId) {
-    var record = { entries: [], itemIds: new Set(), textKeys: new Set(), loading: true }
+    var record = { entries: [], itemIds: new Set(), textKeys: new Set(), userKeys: new Set(), loading: true }
     historyByCard.set(cardId, record)
     fetch('/api/history?cardId=' + encodeURIComponent(cardId) + '&token=' + encodeURIComponent(token))
       .then(function (response) { return response.ok ? response.json() : null })
@@ -425,6 +458,7 @@ export const renderRemoteMonitorPage = () => `<!DOCTYPE html>
           payload.messages.forEach(function (entry) {
             if (entry.itemId) { record.itemIds.add(entry.itemId) }
             if (entry.content && entry.role === 'assistant') { record.textKeys.add(entry.content.trim()) }
+            if (entry.content && entry.role === 'user') { record.userKeys.add(entry.content.trim()) }
           })
         }
         if (selectedCardId === cardId) { renderDetail(); window.scrollTo(0, document.body.scrollHeight) }
@@ -455,6 +489,7 @@ export const renderRemoteMonitorPage = () => `<!DOCTYPE html>
     listView.hidden = false
     renderList()
     window.scrollTo(0, 0)
+    updateJumpBottom()
   })
 
   function sendPrompt() {
@@ -663,7 +698,11 @@ export const renderRemoteMonitorPage = () => `<!DOCTYPE html>
       var entry = streams.get(id)
       var isLast = index === knownStreamIds.length - 1
       entry.items.forEach(function (item) {
-        if (item.type === 'text') {
+        if (item.type === 'user') {
+          // 退出重进详情页后这条需求已随落库历史渲染过，不重复出现。
+          if (history && item.content && history.userKeys.has(item.content.trim())) { return }
+          blocks.push({ type: 'msg', role: 'user', content: item.content })
+        } else if (item.type === 'text') {
           var text = entry.texts.get(item.id) || ''
           // 已随落库历史渲染过的内容不重复出现。
           if (history && text && history.textKeys.has(text.trim())) { return }
@@ -730,6 +769,7 @@ export const renderRemoteMonitorPage = () => `<!DOCTYPE html>
   }
 
   function renderDetail() {
+    var anchor = captureScrollAnchor()
     detailBody.textContent = ''
     var card = selectedCardId ? cardsById.get(selectedCardId) : null
     updateComposerState(card)
@@ -742,13 +782,14 @@ export const renderRemoteMonitorPage = () => `<!DOCTYPE html>
       emptyEl.className = 'empty'
       emptyEl.textContent = '这张卡还没有任何输出，输入需求即可开始'
       detailBody.appendChild(emptyEl)
+      updateJumpBottom()
       return
     }
-    var nearBottom = window.innerHeight + window.scrollY >= document.body.scrollHeight - 160
     var lastStream = known.length ? streams.get(known[known.length - 1]) : null
     var streamingActive = Boolean(lastStream && lastStream.state === 'streaming')
     renderBlocks(detailBody, buildDetailBlocks(hasHistory ? history : null, known), streamingActive)
-    if (nearBottom) { window.scrollTo(0, document.body.scrollHeight) }
+    if (anchor.nearBottom) { window.scrollTo(0, document.body.scrollHeight) }
+    updateJumpBottom()
   }
 
   function loadSnapshot() {

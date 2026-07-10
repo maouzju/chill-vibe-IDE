@@ -203,6 +203,18 @@ test('remote monitor page renders every activity kind with real content, not a b
     assert.match(html, /tool-group/, 'consecutive tool activities must collapse into a group')
     assert.match(html, /条命令/, 'group summary must count commands like the desktop UI')
     assert.match(html, /次工具/, 'group summary must count tool calls like the desktop UI')
+    // 阅读历史时新输出不得强制拉回底部：nearBottom 判定必须发生在清空
+    // DOM 之前（清空瞬间 scrollY 被 clamp 会让判定恒真），且要有回到底部按钮。
+    assert.match(html, /jump-bottom/, 'detail view needs a jump-to-bottom button')
+    assert.ok(
+      html.indexOf('captureScrollAnchor()') < html.indexOf("detailBody.textContent = ''"),
+      'nearBottom must be captured before the DOM rebuild clears the body',
+    )
+    // 手机端/电脑端发出的需求要实时出现在详情页消息流：页面必须消费
+    // user_message 流事件，并与落库历史里的同文 user 消息去重（退出重进
+    // 详情页后 history 已含这条消息，不能双份）。
+    assert.match(html, /user_message/, 'page must consume the user_message stream event')
+    assert.match(html, /userKeys/, 'user prompts must dedupe against persisted history entries')
   } finally {
     await harness.manager.stop()
   }

@@ -37,6 +37,8 @@ import {
   fileSearchResponseSchema,
   imageAttachmentSchema,
   onboardingStatusSchema,
+  remoteMonitorCommandSchema,
+  type RemoteMonitorCommand,
   providerStatusSchema,
   recentCrashRecoverySchema,
   rendererCrashCaptureRequestSchema,
@@ -550,6 +552,23 @@ export const subscribeUnsolicitedStreams = (
 
   return () => {
     window.removeEventListener('chill-vibe:unsolicited-stream', listener)
+  }
+}
+
+// 手机监工写命令的渲染端入口：主进程广播 → preload CustomEvent → 这里
+// schema 校验后交给 App 的执行器（复用电脑端 handler）。
+export const subscribeRemoteCommands = (handler: (command: RemoteMonitorCommand) => void) => {
+  const listener = (event: Event) => {
+    const parsed = remoteMonitorCommandSchema.safeParse((event as CustomEvent<unknown>).detail)
+    if (parsed.success) {
+      handler(parsed.data)
+    }
+  }
+
+  window.addEventListener('chill-vibe:remote-command', listener)
+
+  return () => {
+    window.removeEventListener('chill-vibe:remote-command', listener)
   }
 }
 

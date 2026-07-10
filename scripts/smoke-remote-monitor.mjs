@@ -31,6 +31,20 @@ assert.equal(sse.status, 200)
 assert.match(sse.headers.get('content-type') ?? '', /text\/event-stream/)
 await sse.body.cancel()
 
+// V2: 写命令端点——本脚本未注入 dispatchRemoteCommand，应精确落在 503 分支。
+const action = await fetch(`${base}/api/actions?token=${info.token}`, {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({ type: 'stop-stream', cardId: 'card-x' }),
+})
+assert.equal(action.status, 503)
+const badAction = await fetch(`${base}/api/actions?token=${info.token}`, {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({ type: 'nope' }),
+})
+assert.equal(badAction.status, 400)
+
 const status = backend.fetchRemoteMonitorStatus()
 assert.equal(status.running, true)
 

@@ -1,6 +1,8 @@
 // 手机监工页面：单文件内联 HTML/CSS/JS，零外部依赖，不进 Vite 构建管线。
-// 页面是纯只读镜像；所有会话文本一律走 textContent 渲染，绝不 innerHTML
-// 插值 agent 输出。页内脚本刻意避免模板字符串，绕开外层 TS 模板的转义。
+// V2 起可互动：发需求 / 停止 / 新建会话 / 调模型档位，全部 POST /api/actions
+// 由渲染进程复用电脑端 handler 执行。所有会话文本一律走 textContent 渲染，
+// 绝不 innerHTML 插值 agent 输出。页内脚本刻意避免模板字符串，绕开外层
+// TS 模板的转义。
 export const renderRemoteMonitorPage = () => `<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
@@ -37,7 +39,13 @@ export const renderRemoteMonitorPage = () => `<!DOCTYPE html>
   }
   .sound-btn.is-on { color: var(--ok); border-color: var(--ok); }
   main { padding: 12px 12px 32px; max-width: 720px; margin: 0 auto; }
-  .col-title { color: var(--muted); font-size: 12px; margin: 14px 4px 6px; text-transform: none; }
+  main#detailView { padding-bottom: 150px; }
+  .col-head { display: flex; align-items: center; gap: 8px; margin: 14px 4px 6px; }
+  .col-title { color: var(--muted); font-size: 12px; flex: 1; }
+  .col-add {
+    border: 1px solid var(--border); background: var(--panel); color: var(--accent);
+    border-radius: 999px; padding: 2px 10px; font-size: 12px;
+  }
   .card {
     display: block; width: 100%; text-align: left;
     background: var(--panel); border: 1px solid var(--border); border-radius: 12px;
@@ -52,7 +60,14 @@ export const renderRemoteMonitorPage = () => `<!DOCTYPE html>
   .card-meta { color: var(--muted); font-size: 12px; margin-top: 3px; }
   .card-preview { color: var(--muted); font-size: 13px; margin-top: 6px; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
   .back-btn { border: none; background: none; color: var(--accent); font-size: 15px; padding: 8px 0; }
-  .detail-title { font-size: 17px; margin: 4px 0 12px; }
+  .detail-title { font-size: 17px; margin: 4px 0 8px; }
+  .picker-row { display: flex; gap: 8px; margin-bottom: 12px; }
+  .picker-row select {
+    flex: 1; min-width: 0;
+    background: var(--panel); color: var(--text);
+    border: 1px solid var(--border); border-radius: 8px;
+    padding: 7px 8px; font-size: 13px;
+  }
   .msg { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 10px 12px; margin-bottom: 8px; white-space: pre-wrap; word-break: break-word; overflow-wrap: anywhere; }
   .msg.live { border-color: var(--run); }
   .act { border-left: 3px solid var(--accent); background: var(--panel); border-radius: 6px; padding: 8px 10px; margin-bottom: 8px; font-size: 13px; color: var(--muted); word-break: break-word; }
@@ -65,8 +80,30 @@ export const renderRemoteMonitorPage = () => `<!DOCTYPE html>
   details.patch summary { color: var(--accent); font-size: 12px; cursor: pointer; }
   details.patch pre { overflow-x: auto; font-size: 11px; line-height: 1.45; background: #0a0d12; border-radius: 6px; padding: 8px; margin-top: 6px; }
   .empty { color: var(--muted); text-align: center; padding: 48px 0; }
-  .notice { position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%); background: var(--panel); border: 1px solid var(--ok); color: var(--text); border-radius: 10px; padding: 10px 16px; font-size: 14px; box-shadow: 0 8px 24px rgba(0,0,0,0.5); opacity: 0; pointer-events: none; transition: opacity .25s; max-width: 90vw; }
+  .composer {
+    position: fixed; left: 0; right: 0; bottom: 0; z-index: 20;
+    background: rgba(13,17,23,0.96); backdrop-filter: blur(8px);
+    border-top: 1px solid var(--border);
+    padding: 10px 12px calc(10px + env(safe-area-inset-bottom));
+  }
+  .composer-inner { max-width: 720px; margin: 0 auto; display: flex; gap: 8px; align-items: flex-end; }
+  .composer textarea {
+    flex: 1; min-height: 42px; max-height: 120px; resize: none;
+    background: var(--panel); color: var(--text);
+    border: 1px solid var(--border); border-radius: 10px;
+    padding: 10px 12px; font: inherit; font-size: 14px;
+  }
+  .composer textarea:focus { outline: none; border-color: var(--accent); }
+  .send-btn, .stop-btn {
+    flex: none; border: none; border-radius: 10px;
+    padding: 10px 16px; font-size: 14px; font-weight: 600;
+  }
+  .send-btn { background: var(--accent); color: #08131f; }
+  .send-btn:disabled { opacity: 0.45; }
+  .stop-btn { background: transparent; color: var(--err); border: 1px solid var(--err); }
+  .notice { position: fixed; left: 50%; bottom: 88px; transform: translateX(-50%); background: var(--panel); border: 1px solid var(--ok); color: var(--text); border-radius: 10px; padding: 10px 16px; font-size: 14px; box-shadow: 0 8px 24px rgba(0,0,0,0.5); opacity: 0; pointer-events: none; transition: opacity .25s; max-width: 90vw; z-index: 30; }
   .notice.show { opacity: 1; }
+  .notice.is-error { border-color: var(--err); }
 </style>
 </head>
 <body>
@@ -79,8 +116,19 @@ export const renderRemoteMonitorPage = () => `<!DOCTYPE html>
 <main id="detailView" hidden>
   <button class="back-btn" id="backBtn" type="button">‹ 返回列表</button>
   <h2 class="detail-title" id="detailTitle"></h2>
+  <div class="picker-row">
+    <select id="modelSelect" aria-label="模型"></select>
+    <select id="effortSelect" aria-label="推理档位"></select>
+  </div>
   <div id="detailBody"></div>
 </main>
+<div class="composer" id="composer" hidden>
+  <div class="composer-inner">
+    <textarea id="promptInput" rows="1" placeholder="输入需求，直接发给这张卡…"></textarea>
+    <button class="stop-btn" id="stopBtn" type="button" hidden>停止</button>
+    <button class="send-btn" id="sendBtn" type="button">发送</button>
+  </div>
+</div>
 <div class="notice" id="notice"></div>
 <script>
 (function () {
@@ -93,13 +141,21 @@ export const renderRemoteMonitorPage = () => `<!DOCTYPE html>
   var connDot = document.getElementById('connDot')
   var noticeEl = document.getElementById('notice')
   var soundBtn = document.getElementById('soundBtn')
+  var composerEl = document.getElementById('composer')
+  var promptInput = document.getElementById('promptInput')
+  var sendBtn = document.getElementById('sendBtn')
+  var stopBtn = document.getElementById('stopBtn')
+  var modelSelect = document.getElementById('modelSelect')
+  var effortSelect = document.getElementById('effortSelect')
   var baseTitle = document.title
 
-  // streamId -> { cardId, liveText, items: [{type,id}], texts: Map, acts: Map, state }
+  // streamId -> { cardId, liveText, items, texts, acts, state }
   var streams = new Map()
+  // cardId -> [streamId...]（按首次出现顺序，详情页串联渲染多轮）
+  var cardStreams = new Map()
   var cardsById = new Map()
   var columns = []
-  var selectedStreamId = null
+  var selectedCardId = null
   var doneCount = 0
   var notifiedStreams = new Set()
   var audioCtx = null
@@ -132,10 +188,34 @@ export const renderRemoteMonitorPage = () => `<!DOCTYPE html>
     } catch (e) {}
   }
 
-  function showNotice(text) {
+  function showNotice(text, isError) {
     noticeEl.textContent = text
+    noticeEl.classList.toggle('is-error', Boolean(isError))
     noticeEl.classList.add('show')
     setTimeout(function () { noticeEl.classList.remove('show') }, 4000)
+  }
+
+  function postAction(command, okText) {
+    return fetch('/api/actions?token=' + encodeURIComponent(token), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(command),
+    }).then(function (response) {
+      if (response.status === 202) {
+        if (okText) { showNotice(okText) }
+        scheduleSnapshot()
+        return true
+      }
+      if (response.status === 503) {
+        showNotice('电脑端窗口暂时不可用，稍后再试', true)
+      } else {
+        showNotice('操作失败（' + response.status + '）', true)
+      }
+      return false
+    }).catch(function () {
+      showNotice('网络错误，操作未送达', true)
+      return false
+    })
   }
 
   function notifyFinished(streamId, isError) {
@@ -149,7 +229,7 @@ export const renderRemoteMonitorPage = () => `<!DOCTYPE html>
     var text = isError ? (name + ' 出错了') : (name + ' 跑完了')
     if (navigator.vibrate) { try { navigator.vibrate([200, 100, 200]) } catch (e) {} }
     beep()
-    showNotice(text)
+    showNotice(text, isError)
     if ('Notification' in window && Notification.permission === 'granted') {
       try { new Notification('Chill Vibe 监工', { body: text }) } catch (e) {}
     }
@@ -163,6 +243,11 @@ export const renderRemoteMonitorPage = () => `<!DOCTYPE html>
       scheduleSnapshot()
     }
     if (cardId && !entry.cardId) { entry.cardId = cardId }
+    if (entry.cardId) {
+      var order = cardStreams.get(entry.cardId)
+      if (!order) { order = []; cardStreams.set(entry.cardId, order) }
+      if (order.indexOf(streamId) < 0) { order.push(streamId) }
+    }
     return entry
   }
 
@@ -190,23 +275,29 @@ export const renderRemoteMonitorPage = () => `<!DOCTYPE html>
       scheduleSnapshot()
     }
 
-    if (selectedStreamId === payload.streamId) { renderDetail() }
+    if (selectedCardId && entry.cardId === selectedCardId) { renderDetail() }
     else if (kind === 'done' || kind === 'error') { renderList() }
   }
 
-  function findStreamForCard(card) {
-    if (card.streamId && streams.has(card.streamId)) { return card.streamId }
-    var found = null
-    streams.forEach(function (entry, id) { if (entry.cardId === card.id) { found = id } })
-    return found || card.streamId || null
+  function streamIdsForCard(card) {
+    var order = cardStreams.get(card.id)
+    if (order && order.length) { return order }
+    return card.streamId ? [card.streamId] : []
+  }
+
+  function isCardRunning(card) {
+    var ids = streamIdsForCard(card)
+    var last = ids.length ? streams.get(ids[ids.length - 1]) : null
+    if (last) { return last.state === 'streaming' }
+    return card.status === 'streaming'
   }
 
   function statusOfCard(card) {
-    var sid = findStreamForCard(card)
-    if (sid && streams.has(sid)) {
-      var st = streams.get(sid).state
-      if (st === 'streaming') { return 'streaming' }
-      if (st === 'error') { return 'error' }
+    var ids = streamIdsForCard(card)
+    var last = ids.length ? streams.get(ids[ids.length - 1]) : null
+    if (last) {
+      if (last.state === 'streaming') { return 'streaming' }
+      if (last.state === 'error') { return 'error' }
       return 'done'
     }
     return card.status
@@ -216,12 +307,21 @@ export const renderRemoteMonitorPage = () => `<!DOCTYPE html>
     listView.textContent = ''
     var hasAny = false
     columns.forEach(function (column) {
-      if (!column.cards.length) { return }
       hasAny = true
-      var colTitle = document.createElement('div')
+      var head = document.createElement('div')
+      head.className = 'col-head'
+      var colTitle = document.createElement('span')
       colTitle.className = 'col-title'
       colTitle.textContent = column.title
-      listView.appendChild(colTitle)
+      var addBtn = document.createElement('button')
+      addBtn.type = 'button'
+      addBtn.className = 'col-add'
+      addBtn.textContent = '＋ 新会话'
+      addBtn.addEventListener('click', function () {
+        postAction({ type: 'add-tab', columnId: column.id }, '已创建新会话')
+      })
+      head.appendChild(colTitle); head.appendChild(addBtn)
+      listView.appendChild(head)
       column.cards.forEach(function (card) {
         cardsById.set(card.id, card)
         var btn = document.createElement('button')
@@ -247,7 +347,7 @@ export const renderRemoteMonitorPage = () => `<!DOCTYPE html>
           preview.textContent = card.lastMessagePreview
           btn.appendChild(preview)
         }
-        btn.addEventListener('click', function () { openDetail(card) })
+        btn.addEventListener('click', function () { openDetail(card.id) })
         listView.appendChild(btn)
       })
     })
@@ -259,20 +359,88 @@ export const renderRemoteMonitorPage = () => `<!DOCTYPE html>
     }
   }
 
-  function openDetail(card) {
-    selectedStreamId = findStreamForCard(card)
-    detailTitle.textContent = card.title
+  function renderPickers(card) {
+    modelSelect.textContent = ''
+    ;(card.modelOptions || []).forEach(function (option) {
+      var el = document.createElement('option')
+      el.value = option.model
+      el.textContent = option.label
+      modelSelect.appendChild(el)
+    })
+    modelSelect.value = card.model || ''
+    effortSelect.textContent = ''
+    ;(card.reasoningOptions || []).forEach(function (option) {
+      var el = document.createElement('option')
+      el.value = option.value
+      el.textContent = option.label
+      effortSelect.appendChild(el)
+    })
+    if (card.reasoningEffort) { effortSelect.value = card.reasoningEffort }
+  }
+
+  modelSelect.addEventListener('change', function () {
+    var card = selectedCardId ? cardsById.get(selectedCardId) : null
+    if (!card) { return }
+    postAction(
+      { type: 'set-card-model', cardId: card.id, provider: card.provider, model: modelSelect.value },
+      '模型已切换',
+    )
+  })
+
+  effortSelect.addEventListener('change', function () {
+    var card = selectedCardId ? cardsById.get(selectedCardId) : null
+    if (!card || !effortSelect.value) { return }
+    postAction(
+      { type: 'set-card-reasoning-effort', cardId: card.id, reasoningEffort: effortSelect.value },
+      '推理档位已调整',
+    )
+  })
+
+  function openDetail(cardId) {
+    selectedCardId = cardId
+    var card = cardsById.get(cardId)
+    detailTitle.textContent = card ? card.title : ''
+    if (card) { renderPickers(card) }
     listView.hidden = true
     detailView.hidden = false
+    composerEl.hidden = false
     renderDetail()
-    window.scrollTo(0, 0)
+    window.scrollTo(0, document.body.scrollHeight)
   }
 
   document.getElementById('backBtn').addEventListener('click', function () {
-    selectedStreamId = null
+    selectedCardId = null
     detailView.hidden = true
+    composerEl.hidden = true
     listView.hidden = false
     renderList()
+    window.scrollTo(0, 0)
+  })
+
+  function sendPrompt() {
+    var card = selectedCardId ? cardsById.get(selectedCardId) : null
+    var prompt = promptInput.value.trim()
+    if (!card || !prompt) { return }
+    sendBtn.disabled = true
+    postAction({ type: 'send-message', cardId: card.id, prompt: prompt }, '已发送').then(function (ok) {
+      sendBtn.disabled = false
+      if (ok) {
+        promptInput.value = ''
+        promptInput.style.height = ''
+      }
+    })
+  }
+
+  sendBtn.addEventListener('click', sendPrompt)
+  promptInput.addEventListener('input', function () {
+    promptInput.style.height = ''
+    promptInput.style.height = Math.min(promptInput.scrollHeight, 120) + 'px'
+  })
+
+  stopBtn.addEventListener('click', function () {
+    var card = selectedCardId ? cardsById.get(selectedCardId) : null
+    if (!card) { return }
+    postAction({ type: 'stop-stream', cardId: card.id }, '已请求停止')
   })
 
   function renderActivity(container, act) {
@@ -324,39 +492,53 @@ export const renderRemoteMonitorPage = () => `<!DOCTYPE html>
     container.appendChild(box)
   }
 
-  function renderDetail() {
-    detailBody.textContent = ''
-    if (!selectedStreamId || !streams.has(selectedStreamId)) {
-      var emptyEl = document.createElement('div')
-      emptyEl.className = 'empty'
-      emptyEl.textContent = '这张卡当前没有活跃输出（可能已跑完或还没开始）'
-      detailBody.appendChild(emptyEl)
-      return
-    }
-    var nearBottom = window.innerHeight + window.scrollY >= document.body.scrollHeight - 120
-    var entry = streams.get(selectedStreamId)
+  function renderStreamInto(container, entry, isLast) {
     entry.items.forEach(function (item) {
       if (item.type === 'text') {
         var msg = document.createElement('div')
         msg.className = 'msg'
         msg.textContent = entry.texts.get(item.id) || ''
-        detailBody.appendChild(msg)
+        container.appendChild(msg)
       } else {
-        renderActivity(detailBody, entry.acts.get(item.id) || {})
+        renderActivity(container, entry.acts.get(item.id) || {})
       }
     })
     if (entry.liveText) {
       var live = document.createElement('div')
       live.className = 'msg live'
       live.textContent = entry.liveText
-      detailBody.appendChild(live)
+      container.appendChild(live)
     }
-    if (entry.state !== 'streaming') {
+    if (entry.state !== 'streaming' && isLast) {
       var doneEl = document.createElement('div')
       doneEl.className = 'act'
-      doneEl.textContent = entry.state === 'error' ? '❌ 本轮出错结束' : '✅ 本轮已完成'
-      detailBody.appendChild(doneEl)
+      doneEl.textContent = entry.state === 'error' ? '❌ 本轮出错结束' : entry.state === 'stopped' ? '⏹ 已停止' : '✅ 本轮已完成'
+      container.appendChild(doneEl)
     }
+  }
+
+  function updateComposerState(card) {
+    var running = card ? isCardRunning(card) : false
+    stopBtn.hidden = !running
+  }
+
+  function renderDetail() {
+    detailBody.textContent = ''
+    var card = selectedCardId ? cardsById.get(selectedCardId) : null
+    updateComposerState(card)
+    var ids = card ? streamIdsForCard(card) : []
+    var known = ids.filter(function (id) { return streams.has(id) })
+    if (!card || known.length === 0) {
+      var emptyEl = document.createElement('div')
+      emptyEl.className = 'empty'
+      emptyEl.textContent = '这张卡当前没有活跃输出，输入需求即可开始'
+      detailBody.appendChild(emptyEl)
+      return
+    }
+    var nearBottom = window.innerHeight + window.scrollY >= document.body.scrollHeight - 160
+    known.forEach(function (id, index) {
+      renderStreamInto(detailBody, streams.get(id), index === known.length - 1)
+    })
     if (nearBottom) { window.scrollTo(0, document.body.scrollHeight) }
   }
 
@@ -368,7 +550,15 @@ export const renderRemoteMonitorPage = () => `<!DOCTYPE html>
         columns.forEach(function (column) {
           column.cards.forEach(function (card) { cardsById.set(card.id, card) })
         })
-        if (!selectedStreamId) { renderList() }
+        if (!selectedCardId) { renderList() }
+        else {
+          var card = cardsById.get(selectedCardId)
+          if (card) {
+            detailTitle.textContent = card.title
+            renderPickers(card)
+            updateComposerState(card)
+          }
+        }
       })
       .catch(function () {})
   }
@@ -378,7 +568,7 @@ export const renderRemoteMonitorPage = () => `<!DOCTYPE html>
     snapshotTimer = setTimeout(function () {
       snapshotTimer = null
       loadSnapshot()
-    }, 1500)
+    }, 1200)
   }
 
   function connect() {

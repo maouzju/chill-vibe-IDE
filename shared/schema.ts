@@ -810,6 +810,37 @@ export const chatRequestSchema = z.object({
 })
 export type ChatRequest = z.infer<typeof chatRequestSchema>
 
+// 手机远程监工的写命令：由手机页面 POST 到主进程的监工服务，再转发进渲染
+// 进程复用电脑端同一条 handler 路径执行（渲染进程是 board state 唯一主人）。
+export const remoteMonitorCommandSchema = z.discriminatedUnion('type', [
+  z.object({
+    type: z.literal('send-message'),
+    cardId: z.string().min(1),
+    prompt: z.string().min(1),
+  }),
+  z.object({
+    type: z.literal('stop-stream'),
+    cardId: z.string().min(1),
+  }),
+  z.object({
+    type: z.literal('add-tab'),
+    columnId: z.string().min(1),
+  }),
+  z.object({
+    type: z.literal('set-card-model'),
+    cardId: z.string().min(1),
+    provider: providerSchema,
+    // 空串 = "跟随 provider 默认模型"，与电脑端选择器的第一个选项一致。
+    model: z.string(),
+  }),
+  z.object({
+    type: z.literal('set-card-reasoning-effort'),
+    cardId: z.string().min(1),
+    reasoningEffort: z.string().min(1),
+  }),
+])
+export type RemoteMonitorCommand = z.infer<typeof remoteMonitorCommandSchema>
+
 // Lossless conversation fork: ask the backend to copy the provider's native
 // session file truncated before the fork-point user message. A null sessionId
 // response means "no native fork was possible" and the renderer falls back to

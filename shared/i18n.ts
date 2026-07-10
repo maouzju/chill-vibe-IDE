@@ -419,7 +419,7 @@ const localeTextByLanguage: Record<AppLanguage, LocaleText> = {
     remoteMonitorButtonLabel: '手机监工',
     remoteMonitorDialogTitle: '手机远程监工',
     remoteMonitorDialogBody:
-      '用手机扫码打开只读监工页面：实时查看各会话的流式输出与文件改动，任务跑完手机会震动提醒。',
+      '用手机扫码打开监工页面：实时查看流式输出与文件改动、发送需求、停止会话、调整模型，任务跑完手机会震动提醒。',
     remoteMonitorStarting: '正在启动监工服务…',
     remoteMonitorStartFailed: (message: string) => `监工服务启动失败：${message}`,
     remoteMonitorCopyLink: '复制链接',
@@ -428,7 +428,7 @@ const localeTextByLanguage: Record<AppLanguage, LocaleText> = {
     remoteMonitorCloseDialog: '关闭',
     remoteMonitorLanFallbackWarning: '没有找到局域网地址，这个链接只有本机能打开，手机可能连不上。',
     remoteMonitorClientCount: (count: number) => `${count} 台设备在看`,
-    remoteMonitorSecurityNote: '链接内含访问令牌，页面为只读；请只在可信的局域网内分享。',
+    remoteMonitorSecurityNote: '链接内含访问令牌，拿到链接即可远程发送需求、停止会话、调整模型；请只在可信的局域网内分享。',
     gitAgentModel: 'Git 卡片 AI 模型',
     gitAgentModelNote: 'Git 分析默认使用均衡的 GPT-5.6 Terra；格式：模型名称 推理强度（如 gpt-5.6-terra medium）。',
     systemPromptLabel: '系统提示词',
@@ -751,7 +751,7 @@ const localeTextByLanguage: Record<AppLanguage, LocaleText> = {
     remoteMonitorButtonLabel: 'Phone monitor',
     remoteMonitorDialogTitle: 'Remote monitor on your phone',
     remoteMonitorDialogBody:
-      'Scan the QR code to open a read-only monitor page: watch live streaming output and file edits, and get a vibration alert when a run finishes.',
+      'Scan the QR code to open the monitor page: watch live output and file edits, send prompts, stop runs, change models, and get a vibration alert when a run finishes.',
     remoteMonitorStarting: 'Starting the monitor service…',
     remoteMonitorStartFailed: (message: string) => `Failed to start the monitor service: ${message}`,
     remoteMonitorCopyLink: 'Copy link',
@@ -762,7 +762,7 @@ const localeTextByLanguage: Record<AppLanguage, LocaleText> = {
       'No LAN address was found — this link only works on this machine, so your phone may not reach it.',
     remoteMonitorClientCount: (count: number) => `${count} device(s) watching`,
     remoteMonitorSecurityNote:
-      'The link embeds an access token and the page is read-only; share it only on a trusted local network.',
+      'The link embeds an access token that allows sending prompts, stopping runs, and changing models remotely; share it only on a trusted local network.',
     gitAgentModel: 'Git card AI model',
     gitAgentModelNote: 'Git analysis defaults to balanced GPT-5.6 Terra. Format: model-name reasoning-effort (e.g. gpt-5.6-terra medium).',
     systemPromptLabel: 'System prompt',

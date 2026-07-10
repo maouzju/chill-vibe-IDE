@@ -3,12 +3,17 @@ import http from 'node:http'
 import os from 'node:os'
 import type { AddressInfo } from 'node:net'
 
+import { getModelOptions, isModelPickerOptionVisible } from '../shared/models.js'
+import { getReasoningOptionsForModel } from '../shared/reasoning.js'
+import { remoteMonitorCommandSchema, type RemoteMonitorCommand } from '../shared/schema.js'
+import type { Provider } from '../shared/schema.js'
 import type { ActiveStreamView, ChatStreamTapEvent } from './chat-stream-tap.js'
 import { renderRemoteMonitorPage } from './remote-monitor-page.js'
 
-// 手机远程监工模式：主进程内的只读 HTTP/SSE 服务。手机浏览器扫码打开后
-// 实时镜像所有会话的流式输出与改动卡。整个服务没有任何写路径 —— 它对
-// ChatManager 只有 tap（观察）与 backlog 读取，对状态只有轻量快照读取。
+// 手机远程监工模式：主进程内的 HTTP/SSE 服务。手机浏览器扫码打开后实时
+// 镜像所有会话的流式输出与改动卡；V2 起支持有限的写命令（发需求/停止/
+// 建 tab/调模型），但命令一律经 dispatchCommand 转发给渲染进程复用电脑端
+// 同一条 handler 路径执行 —— 本服务自身仍不直接改任何 state。
 export type RemoteMonitorCardSnapshot = {
   id: string
   title: string
@@ -17,6 +22,9 @@ export type RemoteMonitorCardSnapshot = {
   status: string
   streamId?: string
   lastMessagePreview?: string
+  reasoningEffort?: string
+  modelOptions?: Array<{ model: string; label: string }>
+  reasoningOptions?: Array<{ value: string; label: string }>
 }
 
 export type RemoteMonitorSnapshot = {
@@ -24,6 +32,7 @@ export type RemoteMonitorSnapshot = {
   columns: Array<{
     id: string
     title: string
+    provider?: string
     cards: RemoteMonitorCardSnapshot[]
   }>
 }
@@ -32,6 +41,9 @@ export type RemoteMonitorDeps = {
   loadSnapshot: () => Promise<RemoteMonitorSnapshot>
   tapStreams: (listener: (event: ChatStreamTapEvent) => void) => () => void
   listActiveStreams: () => ActiveStreamView[]
+  // 把手机写命令递给渲染进程执行；返回 false 表示当前没有任何渲染窗口
+  // 能接收（HTTP 层回 503 让手机端稍后重试）。
+  dispatchCommand: (command: RemoteMonitorCommand) => boolean
 }
 
 export type RemoteMonitorRuntimeInfo = {
@@ -60,6 +72,7 @@ type SnapshotSourceCard = {
   model: string
   status: string
   streamId?: string
+  reasoningEffort?: string
   messages: Array<{ role: string; content: string }>
 }
 
@@ -68,17 +81,35 @@ type SnapshotSourceState = {
   columns: Array<{
     id: string
     title: string
+    provider?: string
     cards: Record<string, SnapshotSourceCard>
   }>
 }
 
 const previewMaxChars = 200
 
+// 手机端的模型/档位选择器数据在服务端算好随快照下发，过滤逻辑与电脑端
+// 选择器同源（picker-visible 模型 + 模型感知档位，如 Fable 5 无 auto）。
+const buildCardPickerOptions = (provider: string, model: string) => {
+  const typedProvider = provider as Provider
+
+  return {
+    modelOptions: getModelOptions(typedProvider)
+      .filter((option) => isModelPickerOptionVisible(option))
+      .map((option) => ({ model: option.model, label: option.label })),
+    reasoningOptions: getReasoningOptionsForModel(typedProvider, model, 'zh-CN').map((option) => ({
+      value: option.value,
+      label: option.label,
+    })),
+  }
+}
+
 export const buildRemoteMonitorSnapshot = (state: SnapshotSourceState): RemoteMonitorSnapshot => ({
   generatedAt: Date.now(),
   columns: state.columns.map((column) => ({
     id: column.id,
     title: column.title,
+    provider: column.provider,
     cards: Object.values(column.cards).map((card) => {
       const lastConversationMessage = card.messages.findLast(
         (message) =>
@@ -93,6 +124,8 @@ export const buildRemoteMonitorSnapshot = (state: SnapshotSourceState): RemoteMo
         model: card.model,
         status: card.status,
         streamId: card.streamId,
+        reasoningEffort: card.reasoningEffort,
+        ...buildCardPickerOptions(card.provider, card.model),
         lastMessagePreview: lastConversationMessage
           ? lastConversationMessage.content.slice(0, previewMaxChars)
           : undefined,
@@ -100,6 +133,26 @@ export const buildRemoteMonitorSnapshot = (state: SnapshotSourceState): RemoteMo
     }),
   })),
 })
+
+const maxActionBodyBytes = 64 * 1024
+
+const readRequestBody = (request: http.IncomingMessage, maxBytes = maxActionBodyBytes) =>
+  new Promise<string>((resolve, reject) => {
+    const chunks: Buffer[] = []
+    let total = 0
+
+    request.on('data', (chunk: Buffer) => {
+      total += chunk.length
+      if (total > maxBytes) {
+        reject(new Error('Request body too large.'))
+        request.destroy()
+        return
+      }
+      chunks.push(chunk)
+    })
+    request.on('end', () => resolve(Buffer.concat(chunks).toString('utf8')))
+    request.on('error', reject)
+  })
 
 const defaultPort = 8791
 const sseHeartbeatIntervalMs = 15_000
@@ -223,11 +276,52 @@ export const createRemoteMonitorManager = (deps: RemoteMonitorDeps) => {
       return
     }
 
-    // Read-only surface by construction: everything except GET is refused
-    // before any route is considered.
+    // 写命令只有这一个入口；其余端点保持 GET-only。
+    if (url.pathname === '/api/actions') {
+      if (request.method !== 'POST') {
+        response.writeHead(405, { 'Content-Type': 'application/json; charset=utf-8', Allow: 'POST' })
+        response.end(JSON.stringify({ message: 'Actions endpoint accepts POST only.' }))
+        return
+      }
+
+      void readRequestBody(request)
+        .then((body) => {
+          let parsedBody: unknown
+          try {
+            parsedBody = JSON.parse(body)
+          } catch {
+            response.writeHead(400, { 'Content-Type': 'application/json; charset=utf-8' })
+            response.end(JSON.stringify({ message: 'Invalid JSON body.' }))
+            return
+          }
+
+          const command = remoteMonitorCommandSchema.safeParse(parsedBody)
+          if (!command.success) {
+            response.writeHead(400, { 'Content-Type': 'application/json; charset=utf-8' })
+            response.end(JSON.stringify({ message: 'Invalid command payload.' }))
+            return
+          }
+
+          const dispatched = deps.dispatchCommand(command.data)
+          if (!dispatched) {
+            response.writeHead(503, { 'Content-Type': 'application/json; charset=utf-8' })
+            response.end(JSON.stringify({ message: 'No desktop window can execute commands right now.' }))
+            return
+          }
+
+          response.writeHead(202, { 'Content-Type': 'application/json; charset=utf-8' })
+          response.end(JSON.stringify({ accepted: true }))
+        })
+        .catch(() => {
+          response.writeHead(400, { 'Content-Type': 'application/json; charset=utf-8' })
+          response.end(JSON.stringify({ message: 'Unreadable request body.' }))
+        })
+      return
+    }
+
     if (request.method !== 'GET') {
       response.writeHead(405, { 'Content-Type': 'application/json; charset=utf-8', Allow: 'GET' })
-      response.end(JSON.stringify({ message: 'Read-only monitor: only GET is allowed.' }))
+      response.end(JSON.stringify({ message: 'Only GET is allowed outside /api/actions.' }))
       return
     }
 

@@ -27,3 +27,13 @@
 - [ ] 真机烟测：dev Electron 开监工 → 桌面浏览器模拟手机访问验证流式/改动卡/done 提醒
 - [ ] AGENTS.md 补充（若发现新 pitfall）
 - [ ] 合并回 main，`pnpm electron:build`
+
+## V2 — 手机端互动（2026-07-10）
+
+- [ ] shared/schema.ts: remoteMonitorCommandSchema
+- [ ] tests/remote-monitor.test.ts: POST /api/actions 校验/转发/503（先红）
+- [ ] server/remote-monitor.ts: 写端点 + snapshot 附模型/档位选项
+- [ ] electron: backend dispatchCommand deps + main.ts remote:command 广播 + preload + api.ts
+- [ ] App.tsx: 远程命令执行器 useEffect（复用现有 handlers）
+- [ ] 手机页面: composer/停止/模型档位选择/新建会话
+- [ ] i18n 安全文案升级；验证 + 合并 + 打包

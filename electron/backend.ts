@@ -108,6 +108,7 @@ import {
   type ExternalSessionLoadRequest,
   type InternalSessionHistoryLoadRequest,
   type ChatRequest,
+  type RemoteMonitorCommand,
   type GitCommitAllRequest,
   type GitCommitDiffRequest,
   type GitCommitRequest,
@@ -149,6 +150,9 @@ type DesktopBackendDependencies = {
   // itself between turns (background task finished), the new stream is
   // announced here so the renderer can attach the owning card to it.
   onUnsolicitedStream?: (notification: { cardId: string; streamId: string }) => void
+  // 手机监工的写命令出口：宿主（electron/main.ts）把命令广播给渲染窗口，
+  // 渲染进程复用电脑端 handler 执行。返回 false = 当前无窗口可执行。
+  dispatchRemoteCommand?: (command: RemoteMonitorCommand) => boolean
 }
 
 export const createDesktopBackend = (deps: DesktopBackendDependencies = {}) => {
@@ -207,6 +211,7 @@ export const createDesktopBackend = (deps: DesktopBackendDependencies = {}) => {
         },
         tapStreams: (listener) => getChatManager().tapAll(listener),
         listActiveStreams: () => getChatManager().listActiveStreams(),
+        dispatchCommand: (command) => deps.dispatchRemoteCommand?.(command) ?? false,
       })
     }
 

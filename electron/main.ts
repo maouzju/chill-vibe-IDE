@@ -90,6 +90,18 @@ const desktopBackend = createDesktopBackend({
       }
     }
   },
+  dispatchRemoteCommand: (command) => {
+    // 手机监工的写命令：广播给渲染窗口，由渲染进程复用电脑端 handler 执行。
+    // 返回 false（无可用窗口）时 HTTP 层回 503。
+    let delivered = false
+    for (const win of BrowserWindow.getAllWindows()) {
+      if (!win.isDestroyed() && !win.webContents.isCrashed()) {
+        win.webContents.send('remote:command', command)
+        delivered = true
+      }
+    }
+    return delivered
+  },
 })
 const streamSubscriptions = new Map<string, { webContentsId: number; unsubscribe: () => void }>()
 const fileWatchSubscriptions = new Map<string, { webContentsId: number }>()

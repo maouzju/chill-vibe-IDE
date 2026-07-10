@@ -155,6 +155,7 @@ import {
   isRemoteMonitorSupported,
   startRemoteMonitor,
   stopRemoteMonitor,
+  subscribeRemoteCommands,
   type RemoteMonitorStartResponse,
 } from './api'
 import { resolveAppLoadError } from './app-load-error'
@@ -3544,6 +3545,55 @@ function App() {
       void stopChat(streamId).catch(() => undefined)
     })
   }, [applyAction, attachStream, getColumn, persistAfterAction])
+
+  // 手机监工的写命令执行器：与电脑端共用同一批 handler，保证行为一致
+  //（模型切换的 session 作废在 selectCardModel reducer，发送的 session
+  // 续传在 sendMessage 内部 —— 这里绝不自己另写一条捷径）。
+  useEffect(() => {
+    return subscribeRemoteCommands((command) => {
+      const findColumnIdForCard = (cardId: string) =>
+        appStateRef.current.columns.find((column) => Boolean(column.cards[cardId]))?.id
+
+      switch (command.type) {
+        case 'send-message': {
+          const columnId = findColumnIdForCard(command.cardId)
+          if (columnId) {
+            void sendMessageRef.current?.(columnId, command.cardId, command.prompt, [])
+          }
+          return
+        }
+        case 'stop-stream': {
+          void requestStopForCard(command.cardId, 'manual')
+          return
+        }
+        case 'add-tab': {
+          const column = appStateRef.current.columns.find((entry) => entry.id === command.columnId)
+          if (column) {
+            applyAction({
+              type: 'addTab',
+              columnId: column.id,
+              paneId: getFirstPane(column.layout).id,
+            })
+          }
+          return
+        }
+        case 'set-card-model': {
+          const columnId = findColumnIdForCard(command.cardId)
+          if (columnId) {
+            changeCardModelSelection(columnId, command.cardId, command.provider, command.model)
+          }
+          return
+        }
+        case 'set-card-reasoning-effort': {
+          const columnId = findColumnIdForCard(command.cardId)
+          if (columnId) {
+            changeCardReasoningEffort(columnId, command.cardId, command.reasoningEffort)
+          }
+          return
+        }
+      }
+    })
+  }, [applyAction, changeCardModelSelection, changeCardReasoningEffort, requestStopForCard])
 
   const hydrate = useCallback(async () => {
     clearTransientRuntimeState()

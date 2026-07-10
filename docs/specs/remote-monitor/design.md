@@ -112,3 +112,57 @@ createRemoteMonitorManager(deps) => {
 （ChatManager 测试需要 fake provider——检查现有 `tests/chat-manager-backlog.test.ts` 怎么做，复用其手法。）
 
 注册进 `tests/index.test.ts`（pitfall 3）。
+
+## V2 — 互动命令链（2026-07-10）
+
+### 原则
+
+渲染进程是 board state 的唯一主人（reducer + 现有 handler 承载全部业务规则：
+模型切换的 session 作废、发送的 session 续传/模型解析、addTab 的模型继承）。
+手机写命令因此**不在主进程执行**，而是转发进渲染进程复用同一条代码路径：
+
+```
+手机 POST /api/actions（token + zod 校验）
+  → RemoteMonitorManager deps.dispatchCommand(command)
+  → electron/main.ts: 广播 webContents.send('remote:command', command)（无窗口 → false → 503）
+  → preload: CustomEvent 'chill-vibe:remote-command'
+  → src/api.ts: subscribeRemoteCommands(handler)
+  → App.tsx useEffect 执行器（仿 unsolicited-stream 先例）：
+      send-message              → sendMessageRef.current(columnId 反查, cardId, prompt, [])
+      stop-stream               → requestStopForCard(cardId, 'manual')
+      add-tab                   → applyAction({type:'addTab', columnId, paneId: getFirstPane(layout).id})
+      set-card-model            → changeCardModelSelection(columnId, cardId, provider, model)
+      set-card-reasoning-effort → changeCardReasoningEffort(columnId, cardId, effort)
+```
+
+命令为 fire-and-forget（主→渲染单向 send）；手机端提交后延时刷新 snapshot 观察结果，
+流式反馈天然经由已有 SSE tap 到达。
+
+### 命令 schema（shared/schema.ts）
+
+`remoteMonitorCommandSchema` = discriminatedUnion('type')：
+- `send-message` { cardId, prompt: min(1) }
+- `stop-stream` { cardId }
+- `add-tab` { columnId }
+- `set-card-model` { cardId, provider, model }
+- `set-card-reasoning-effort` { cardId, reasoningEffort }
+
+服务端 POST /api/actions 用它校验（400 on 校验失败），渲染端执行器共享同一类型。
+
+### snapshot V2
+
+每卡追加：`reasoningEffort`、`modelOptions: [{model,label}]`（shared/models.ts 按 provider 过滤
+picker-visible）、`reasoningOptions: [{value,label}]`（shared/reasoning.ts 按 provider+model
+过滤，zh-CN 标签）。列追加 `provider`。
+
+### 手机页面 V2
+
+- 详情页底部固定 composer（textarea + 发送；运行中变停止）；
+- 详情页头部模型/档位 select，改动即 POST set-card-model / set-card-reasoning-effort；
+- 列表页每列尾 "＋ 新会话"（POST add-tab 后延时刷 snapshot）；
+- 详情视图以 cardId 为主键（streams 按 cardId 关联最新 streamId），发送后新流自动接上。
+
+### 安全升级
+
+token 从"只读观看"升级为"远程操作"。i18n `remoteMonitorSecurityNote` 更新为操作权警示。
+405 语义调整：仅 `/api/actions` 接受 POST，其余端点仍 GET-only。

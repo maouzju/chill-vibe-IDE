@@ -34,6 +34,14 @@ ipcRenderer.on('chat:unsolicited-stream', (_event, payload) => {
   )
 })
 
+ipcRenderer.on('remote:command', (_event, payload) => {
+  window.dispatchEvent(
+    new CustomEvent('chill-vibe:remote-command', {
+      detail: payload as unknown,
+    }),
+  )
+})
+
 ipcRenderer.on('app:flush-state-before-quit', () => {
   window.dispatchEvent(new Event('chill-vibe:flush-state-before-quit'))
 })

@@ -8,6 +8,7 @@ import {
   type RemoteMonitorSnapshot,
 } from '../server/remote-monitor.ts'
 import type { ChatStreamTapEvent } from '../server/chat-stream-tap.ts'
+import type { RemoteMonitorCommand } from '../shared/schema.ts'
 
 const sampleSnapshot: RemoteMonitorSnapshot = {
   generatedAt: 1,
@@ -34,12 +35,15 @@ type Harness = {
   manager: ReturnType<typeof createRemoteMonitorManager>
   emitTap: (event: ChatStreamTapEvent) => void
   tapCount: () => number
+  dispatchedCommands: RemoteMonitorCommand[]
 }
 
 const createHarness = (options?: {
   activeStreams?: Array<{ streamId: string; cardId?: string; backlog: Array<{ event: string; data: unknown }> }>
+  dispatchResult?: boolean
 }): Harness => {
   const listeners = new Set<(event: ChatStreamTapEvent) => void>()
+  const dispatchedCommands: RemoteMonitorCommand[] = []
 
   const manager = createRemoteMonitorManager({
     loadSnapshot: async () => sampleSnapshot,
@@ -53,6 +57,10 @@ const createHarness = (options?: {
         cardId: stream.cardId,
         backlog: stream.backlog as ChatStreamTapEvent['envelope'][],
       })),
+    dispatchCommand: (command) => {
+      dispatchedCommands.push(command)
+      return options?.dispatchResult ?? true
+    },
   })
 
   return {
@@ -63,6 +71,7 @@ const createHarness = (options?: {
       }
     },
     tapCount: () => listeners.size,
+    dispatchedCommands,
   }
 }
 
@@ -296,6 +305,109 @@ test('pickLanIPv4 prefers real private LAN addresses over VPN/benchmark ranges',
   assert.equal(pickLanIPv4(vpnOnly), '198.18.0.1')
 
   assert.equal(pickLanIPv4({}), null)
+})
+
+test('remote monitor actions endpoint validates, dispatches, and stays token-guarded', async () => {
+  const harness = createHarness()
+  const info = await startOnLoopback(harness)
+  const base = `http://127.0.0.1:${info.port}`
+
+  try {
+    const noToken = await fetch(`${base}/api/actions`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ type: 'stop-stream', cardId: 'card-1' }),
+    })
+    assert.equal(noToken.status, 401)
+
+    const valid = await fetch(`${base}/api/actions?token=${info.token}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ type: 'send-message', cardId: 'card-1', prompt: '继续' }),
+    })
+    assert.equal(valid.status, 202)
+    assert.deepEqual(harness.dispatchedCommands, [
+      { type: 'send-message', cardId: 'card-1', prompt: '继续' },
+    ])
+
+    const invalid = await fetch(`${base}/api/actions?token=${info.token}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ type: 'send-message', cardId: 'card-1', prompt: '' }),
+    })
+    assert.equal(invalid.status, 400)
+
+    const notJson = await fetch(`${base}/api/actions?token=${info.token}`, {
+      method: 'POST',
+      body: 'not json',
+    })
+    assert.equal(notJson.status, 400)
+
+    const wrongMethod = await fetch(`${base}/api/actions?token=${info.token}`)
+    assert.equal(wrongMethod.status, 405)
+
+    // Non-action routes stay read-only.
+    const postElsewhere = await fetch(`${base}/api/snapshot?token=${info.token}`, {
+      method: 'POST',
+    })
+    assert.equal(postElsewhere.status, 405)
+
+    assert.equal(harness.dispatchedCommands.length, 1)
+  } finally {
+    await harness.manager.stop()
+  }
+})
+
+test('remote monitor actions endpoint reports 503 when no renderer can execute', async () => {
+  const harness = createHarness({ dispatchResult: false })
+  const info = await startOnLoopback(harness)
+
+  try {
+    const response = await fetch(`http://127.0.0.1:${info.port}/api/actions?token=${info.token}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ type: 'stop-stream', cardId: 'card-1' }),
+    })
+    assert.equal(response.status, 503)
+  } finally {
+    await harness.manager.stop()
+  }
+})
+
+test('buildRemoteMonitorSnapshot attaches model and reasoning options per card', () => {
+  const snapshot = buildRemoteMonitorSnapshot({
+    columns: [
+      {
+        id: 'col-1',
+        title: '工作区',
+        provider: 'claude',
+        cards: {
+          'card-1': {
+            id: 'card-1',
+            title: '长任务',
+            provider: 'claude',
+            model: 'claude-fable-5',
+            status: 'idle',
+            reasoningEffort: 'max',
+            messages: [],
+          },
+        },
+      },
+    ],
+  })
+
+  const card = snapshot.columns[0]?.cards[0]
+  assert.ok(card)
+  assert.equal(card.reasoningEffort, 'max')
+  assert.ok((card.modelOptions?.length ?? 0) > 0, 'card should list selectable models')
+  // model 允许空串（电脑端选择器的"跟随 provider 默认"选项），label 必须有。
+  assert.ok(
+    card.modelOptions?.every((option) => typeof option.model === 'string' && option.label),
+    'model options need model + label',
+  )
+  assert.ok((card.reasoningOptions?.length ?? 0) > 0, 'card should list reasoning tiers')
+  // Fable 5 是常思考模型，auto 档必须被模型感知过滤掉（和电脑端选择器一致）。
+  assert.ok(card.reasoningOptions?.every((option) => option.value !== 'auto'))
 })
 
 test('remote monitor start is idempotent and reports status', async () => {

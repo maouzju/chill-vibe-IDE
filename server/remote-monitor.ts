@@ -82,9 +82,15 @@ type SnapshotSourceState = {
     id: string
     title: string
     provider?: string
+    workspacePath?: string
     cards: Record<string, SnapshotSourceCard>
   }>
 }
+
+// 与电脑端 WorkspaceColumn 的 workspaceLabel 同源：列头显示 workspacePath
+// 最后一段目录名；没设路径时退回创建时的 column.title。
+const columnDisplayTitle = (column: { title: string; workspacePath?: string }) =>
+  column.workspacePath?.split(/[/\\]/).filter(Boolean).at(-1) ?? column.title
 
 const previewMaxChars = 200
 
@@ -108,7 +114,7 @@ export const buildRemoteMonitorSnapshot = (state: SnapshotSourceState): RemoteMo
   generatedAt: Date.now(),
   columns: state.columns.map((column) => ({
     id: column.id,
-    title: column.title,
+    title: columnDisplayTitle(column),
     provider: column.provider,
     cards: Object.values(column.cards).map((card) => {
       const lastConversationMessage = card.messages.findLast(

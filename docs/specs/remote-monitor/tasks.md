@@ -37,3 +37,13 @@
 - [ ] App.tsx: 远程命令执行器 useEffect（复用现有 handlers）
 - [ ] 手机页面: composer/停止/模型档位选择/新建会话
 - [ ] i18n 安全文案升级；验证 + 合并 + 打包
+
+## V2.1 — 详情页活动渲染补全（2026-07-10）
+
+实机截图暴露：tool 活动掉进 `⚙️ kind` 兜底，详情页满屏光板 "tool"，信息量为零。
+
+- [x] tests/remote-monitor.test.ts: 页面必须渲染各活动 kind 的真实内容（先红）
+- [x] remote-monitor-page.ts renderActivity 补分支：tool（summary + 可展开 toolInput）、todo（进度+清单）、agents（子代理状态）、ask-user（问题+选项，黄边高亮）、compaction
+- [x] 顺手修 reasoning 字段错读：schema 是 `text`，原读 `content||summary` 恒空白
+- [x] buildRemoteMonitorSnapshot 列标题与电脑端同源：workspacePath 末段目录名，空路径回退 column.title
+- [x] Playwright headless 实测截屏验证所有 kind 渲染

@@ -174,6 +174,33 @@ test('remote monitor serves the mobile page shell with a valid token', async () 
   }
 })
 
+test('remote monitor page renders every activity kind with real content, not a bare kind label', async () => {
+  // 截图实锤：tool 活动全部掉进 '⚙️ kind' 兜底，满屏只有 "tool" 三个字母。
+  // 页面是内联脚本，直接断言各 kind 的渲染分支引用了对应数据字段。
+  const harness = createHarness()
+  const info = await startOnLoopback(harness)
+
+  try {
+    const response = await fetch(`http://127.0.0.1:${info.port}/?token=${info.token}`)
+    const html = await response.text()
+
+    // tool：必须展示服务端算好的 summary（含工具语义），并可展开 toolInput。
+    assert.match(html, /act\.toolName/, 'tool activity must render toolName')
+    assert.match(html, /act\.summary/, 'tool activity must render its summary')
+    assert.match(html, /act\.toolInput/, 'tool activity must expose toolInput details')
+    // todo：渲染任务清单条目而不是光板。
+    assert.match(html, /act\.items/, 'todo activity must render its checklist items')
+    // agents：渲染子代理状态。
+    assert.match(html, /act\.agents/, 'agents activity must render sub-agent entries')
+    // ask-user：把问题展示出来，手机端才知道电脑在等什么输入。
+    assert.match(html, /act\.question/, 'ask-user activity must render the question')
+    // reasoning：schema 字段是 text，读 content/summary 会永远空白。
+    assert.match(html, /act\.text/, 'reasoning activity must read the schema text field')
+  } finally {
+    await harness.manager.stop()
+  }
+})
+
 test('remote monitor SSE replays active stream backlog before forwarding live tap events', async () => {
   const harness = createHarness({
     activeStreams: [
@@ -282,6 +309,38 @@ test('buildRemoteMonitorSnapshot maps cards to a lightweight preview without ful
   assert.ok((card.lastMessagePreview?.length ?? 0) <= 200)
   assert.ok(!('messages' in card), 'snapshot cards must not carry full transcripts')
   assert.ok(snapshot.generatedAt > 0)
+})
+
+test('buildRemoteMonitorSnapshot titles columns by workspace folder name like the desktop header', () => {
+  // 电脑端列头显示的是 workspacePath 最后一段目录名（WorkspaceColumn 的
+  // workspaceLabel），不是创建时默认的 column.title（"工作区 4"）。
+  const snapshot = buildRemoteMonitorSnapshot({
+    columns: [
+      {
+        id: 'col-1',
+        title: '工作区 4',
+        workspacePath: 'D:\\Git\\chill-vibe',
+        cards: {},
+      },
+      {
+        id: 'col-2',
+        title: '工作区 5',
+        workspacePath: '/home/demo/projects/my-app/',
+        cards: {},
+      },
+      {
+        id: 'col-3',
+        title: '工作区 6',
+        workspacePath: '',
+        cards: {},
+      },
+    ],
+  })
+
+  assert.equal(snapshot.columns[0]?.title, 'chill-vibe')
+  assert.equal(snapshot.columns[1]?.title, 'my-app')
+  // 没设路径时回退到 column.title，至少不是空白。
+  assert.equal(snapshot.columns[2]?.title, '工作区 6')
 })
 
 test('pickLanIPv4 prefers real private LAN addresses over VPN/benchmark ranges', () => {

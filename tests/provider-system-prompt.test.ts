@@ -37,6 +37,8 @@ const createRequest = (overrides: Partial<ChatRequest> = {}): ChatRequest => ({
   sandboxMode: overrides.sandboxMode,
   approvalPolicy: overrides.approvalPolicy,
   networkAccessEnabled: overrides.networkAccessEnabled,
+  personality: (overrides as Partial<ChatRequest> & { personality?: 'none' | 'friendly' | 'pragmatic' }).personality,
+  serviceTier: (overrides as Partial<ChatRequest> & { serviceTier?: 'priority' }).serviceTier,
 })
 
 test('provider system prompt prepends the zh-CN language instruction', () => {
@@ -1673,6 +1675,38 @@ const buildFakeCodexLegacyTurnEffortScript = (capturePath: string) =>
     '      return',
     '    }',
     '    reply({ id: request.id, result: { turn: { id: "turn-1", status: "inProgress", items: [], error: null } } })',
+    "    reply({ method: 'turn/completed', params: {} })",
+    '  }',
+    '})',
+  ].join('\n')
+
+const buildFakeCodexLegacyAgentParamsScript = (capturePath: string) =>
+  [
+    "const fs = require('node:fs')",
+    "const readline = require('node:readline')",
+    `const capturePath = ${JSON.stringify(capturePath)}`,
+    'const appendMessage = (message) => fs.appendFileSync(capturePath, `${JSON.stringify(message)}\\n`, "utf8")',
+    "const hasOwn = (value, key) => Object.prototype.hasOwnProperty.call(value ?? {}, key)",
+    "const reply = (message) => process.stdout.write(`${JSON.stringify(message)}\\n`)",
+    "const rl = readline.createInterface({ input: process.stdin, crlfDelay: Infinity })",
+    "rl.on('line', (line) => {",
+    '  if (!line.trim()) return',
+    '  const request = JSON.parse(line)',
+    '  appendMessage(request)',
+    "  if (request.method === 'initialize' && request.id) {",
+    '    reply({ id: request.id, result: {} })',
+    '    return',
+    '  }',
+    "  if (request.method === 'thread/start' && request.id) {",
+    "    reply({ id: request.id, result: { thread: { id: 'thread-1', status: { type: 'active' } } } })",
+    '    return',
+    '  }',
+    "  if (request.method === 'turn/start' && request.id) {",
+    "    if (hasOwn(request.params, 'personality') || hasOwn(request.params, 'serviceTier')) {",
+    "      reply({ id: request.id, error: { message: 'turn/start.personality requires newer Codex CLI support' } })",
+    '      return',
+    '    }',
+    '    reply({ id: request.id, result: {} })',
     "    reply({ method: 'turn/completed', params: {} })",
     '  }',
     '})',
@@ -3853,6 +3887,92 @@ test('codex app-server forwards on-request approvals and workspace-write network
       networkAccess: 'enabled',
       writableRoots: [capturedWorkspacePath],
     })
+  } finally {
+    await rm(capturePath, { force: true }).catch(() => {})
+  }
+})
+
+test('codex app-server retries without optional agent params when an older CLI rejects them', async () => {
+  const capturePath = path.join(
+    os.tmpdir(),
+    `chill-vibe-codex-turn-agent-params-legacy-${Date.now()}-${Math.random().toString(36).slice(2)}.jsonl`,
+  )
+
+  try {
+    const events = await withFakeProviderCommand(
+      'codex',
+      buildFakeCodexLegacyAgentParamsScript(capturePath),
+      async (workspacePath) =>
+        captureProviderLogs(
+          createRequest({
+            provider: 'codex',
+            language: 'en',
+            workspacePath,
+            personality: 'friendly',
+            serviceTier: 'priority',
+          } as Partial<ChatRequest>),
+        ),
+    )
+
+    assert.deepEqual(events, [
+      {
+        kind: 'log',
+        message:
+          'Detected an older local Codex CLI that does not support Agent personality or Fast mode. Chill Vibe retried automatically without those optional fields for this run.',
+      },
+      { kind: 'done' },
+    ])
+
+    const requests = (await readFile(capturePath, 'utf8'))
+      .trim()
+      .split(/\r?\n/)
+      .map((line) => JSON.parse(line) as { method?: string; params?: Record<string, unknown> })
+      .filter((request) => request.method === 'turn/start')
+
+    assert.equal(requests.length, 2)
+    assert.equal(requests[0]?.params?.personality, 'friendly')
+    assert.equal(requests[0]?.params?.serviceTier, 'priority')
+    assert.ok(Object.hasOwn(requests[1]?.params ?? {}, 'effort'))
+    assert.equal(Object.hasOwn(requests[1]?.params ?? {}, 'personality'), false)
+    assert.equal(Object.hasOwn(requests[1]?.params ?? {}, 'serviceTier'), false)
+  } finally {
+    await rm(capturePath, { force: true }).catch(() => {})
+  }
+})
+
+test('codex app-server forwards personality and Fast service tier on turn/start', async () => {
+  const capturePath = path.join(
+    os.tmpdir(),
+    `chill-vibe-codex-app-server-agent-params-${Date.now()}-${Math.random().toString(36).slice(2)}.jsonl`,
+  )
+
+  try {
+    const outcome = await withFakeProviderCommand(
+      'codex',
+      buildFakeCodexAppServerScript(capturePath),
+      async (workspacePath) =>
+        captureProviderOutcome(
+          createRequest({
+            provider: 'codex',
+            language: 'en',
+            workspacePath,
+            personality: 'pragmatic',
+            serviceTier: 'priority',
+          } as Partial<ChatRequest>),
+        ),
+    )
+
+    assert.deepEqual(outcome, { kind: 'done' })
+
+    const requests = (await readFile(capturePath, 'utf8'))
+      .trim()
+      .split(/\r?\n/)
+      .map((line) => JSON.parse(line) as { method?: string; params?: Record<string, unknown> })
+    const turnStart = requests.find((request) => request.method === 'turn/start')
+
+    assert.ok(turnStart)
+    assert.equal(turnStart.params?.personality, 'pragmatic')
+    assert.equal(turnStart.params?.serviceTier, 'priority')
   } finally {
     await rm(capturePath, { force: true }).catch(() => {})
   }

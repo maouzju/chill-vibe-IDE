@@ -15,6 +15,10 @@ import {
   initGitWorkspace,
 } from '../api'
 import { defaultGitToolCardSize, minGitToolCardSize } from '../../shared/default-state'
+import {
+  defaultCodexChatSettings,
+  type CodexChatSettings,
+} from '../../shared/codex-chat-settings'
 import type { AppLanguage, GitStatus, ModelPromptRule } from '../../shared/schema'
 import { getGitLocaleText } from '../../shared/i18n'
 import { errorMessage, computeTotalStats, getRepositoryName, shouldShowConflictBanner } from './git-utils'
@@ -49,6 +53,7 @@ type GitToolCardProps = {
   gitAgentModel: string
   systemPrompt: string
   modelPromptRules?: ModelPromptRule[]
+  codexChatSettings?: CodexChatSettings
   crossProviderSkillReuseEnabled: boolean
   isActive?: boolean
   requestedHeight: number
@@ -76,6 +81,7 @@ export const GitToolCard = ({
   gitAgentModel,
   systemPrompt,
   modelPromptRules = [],
+  codexChatSettings = defaultCodexChatSettings,
   crossProviderSkillReuseEnabled,
   isActive = true,
   requestedHeight,
@@ -115,10 +121,12 @@ export const GitToolCard = ({
       gitAgentModel,
       systemPrompt,
       modelPromptRules,
+      codexChatSettings,
       crossProviderSkillReuseEnabled,
     }),
     [
       crossProviderSkillReuseEnabled,
+      codexChatSettings,
       gitAgentModel,
       language,
       modelPromptRules,

@@ -146,7 +146,9 @@ describe('default-state helpers', () => {
       weatherCity: '',
       systemPrompt: defaultSystemPrompt,
       modelPromptRules: [],
-      gitAgentModel: 'gpt-5.5 xhigh',
+      codexPersonality: 'default',
+      codexFastMode: false,
+      gitAgentModel: 'gpt-5.6-terra medium',
       lastModel: undefined,
       requestModels: {
         codex: DEFAULT_CODEX_MODEL,
@@ -239,9 +241,32 @@ describe('default-state helpers', () => {
   })
 
   it('normalizes gitAgentModel with default fallback', () => {
-    assert.equal(normalizeAppSettings({}).gitAgentModel, 'gpt-5.5 xhigh')
+    assert.equal(normalizeAppSettings({}).gitAgentModel, 'gpt-5.6-terra medium')
     assert.equal(normalizeAppSettings({ gitAgentModel: '  o3-pro high  ' }).gitAgentModel, 'o3-pro high')
-    assert.equal(normalizeAppSettings({ gitAgentModel: '' }).gitAgentModel, 'gpt-5.5 xhigh')
+    assert.equal(normalizeAppSettings({ gitAgentModel: '' }).gitAgentModel, 'gpt-5.6-terra medium')
+  })
+
+  it('normalizes Codex agent personality and Fast mode settings', () => {
+    const defaults = normalizeAppSettings({}) as ReturnType<typeof normalizeAppSettings> & {
+      codexPersonality: string
+      codexFastMode: boolean
+    }
+    assert.equal(defaults.codexPersonality, 'default')
+    assert.equal(defaults.codexFastMode, false)
+
+    const configured = normalizeAppSettings({
+      codexPersonality: 'pragmatic',
+      codexFastMode: true,
+    } as never) as typeof defaults
+    assert.equal(configured.codexPersonality, 'pragmatic')
+    assert.equal(configured.codexFastMode, true)
+
+    const invalid = normalizeAppSettings({
+      codexPersonality: 'verbose',
+      codexFastMode: 'yes',
+    } as never) as typeof defaults
+    assert.equal(invalid.codexPersonality, 'default')
+    assert.equal(invalid.codexFastMode, false)
   })
 
   it('enables cross-provider skill reuse by default and preserves explicit opt-out', () => {

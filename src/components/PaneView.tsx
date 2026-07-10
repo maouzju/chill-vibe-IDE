@@ -1,6 +1,7 @@
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type DragEvent, type MouseEvent, type PointerEvent } from 'react'
 
 import { getLocaleText } from '../../shared/i18n'
+import type { CodexChatSettings } from '../../shared/codex-chat-settings'
 import {
   BRAINSTORM_TOOL_MODEL,
   FILETREE_TOOL_MODEL,
@@ -65,6 +66,7 @@ type PaneViewProps = {
   language: AppLanguage
   systemPrompt: string
   modelPromptRules?: ModelPromptRule[]
+  codexChatSettings?: CodexChatSettings
   crossProviderSkillReuseEnabled: boolean
   musicAlbumCoverEnabled: boolean
   weatherCity: string
@@ -298,6 +300,7 @@ const PaneViewView = ({
   language,
   systemPrompt,
   modelPromptRules = [],
+  codexChatSettings,
   crossProviderSkillReuseEnabled,
   musicAlbumCoverEnabled,
   weatherCity,
@@ -1249,6 +1252,7 @@ const PaneViewView = ({
                   language={language}
                   systemPrompt={systemPrompt}
                   modelPromptRules={modelPromptRules}
+                  codexChatSettings={codexChatSettings}
                   crossProviderSkillReuseEnabled={crossProviderSkillReuseEnabled}
                   musicAlbumCoverEnabled={musicAlbumCoverEnabled}
                   weatherCity={weatherCity}

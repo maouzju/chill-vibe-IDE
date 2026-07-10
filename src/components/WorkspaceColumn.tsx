@@ -26,6 +26,7 @@ import type {
   RecentWorkspace,
   SessionHistoryEntry,
 } from '../../shared/schema'
+import type { CodexChatSettings } from '../../shared/codex-chat-settings'
 import { listExternalHistory, loadExternalSession } from '../api'
 import { resizeColumnGroups } from '../column-resize'
 import { clearDragPayload, readDragPayload, type Placement, writeDragPayload } from '../dnd'
@@ -134,6 +135,7 @@ type WorkspaceColumnProps = {
   language: AppLanguage
   systemPrompt: string
   modelPromptRules?: ModelPromptRule[]
+  codexChatSettings?: CodexChatSettings
   crossProviderSkillReuseEnabled: boolean
   musicAlbumCoverEnabled: boolean
   weatherCity: string
@@ -239,6 +241,7 @@ const WorkspaceColumnView = ({
   language,
   systemPrompt,
   modelPromptRules = [],
+  codexChatSettings,
   crossProviderSkillReuseEnabled,
   musicAlbumCoverEnabled,
   weatherCity,
@@ -981,6 +984,7 @@ const WorkspaceColumnView = ({
           language={language}
           systemPrompt={systemPrompt}
           modelPromptRules={modelPromptRules}
+          codexChatSettings={codexChatSettings}
           crossProviderSkillReuseEnabled={crossProviderSkillReuseEnabled}
           musicAlbumCoverEnabled={musicAlbumCoverEnabled}
           weatherCity={weatherCity}

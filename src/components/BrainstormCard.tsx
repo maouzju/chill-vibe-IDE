@@ -1,6 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 
 import { getLocaleText } from '../../shared/i18n'
+import {
+  buildCodexChatRequestOverrides,
+  defaultCodexChatSettings,
+  type CodexChatSettings,
+} from '../../shared/codex-chat-settings'
 import type {
   AppLanguage,
   BrainstormAnswer,
@@ -22,6 +27,7 @@ type BrainstormCardProps = {
   language: AppLanguage
   systemPrompt: string
   modelPromptRules?: ModelPromptRule[]
+  codexChatSettings?: CodexChatSettings
   crossProviderSkillReuseEnabled: boolean
   providerReady: boolean
   workspacePath: string
@@ -67,6 +73,7 @@ export function BrainstormCard({
   language,
   systemPrompt,
   modelPromptRules = [],
+  codexChatSettings = defaultCodexChatSettings,
   crossProviderSkillReuseEnabled,
   providerReady,
   workspacePath,
@@ -232,6 +239,7 @@ export function BrainstormCard({
       const composedSystemPrompt = buildSystemPromptForModel(systemPrompt, model, modelPromptRules)
       const response = await requestChat({
         provider,
+        ...buildCodexChatRequestOverrides(provider, codexChatSettings),
         workspacePath,
         model,
         reasoningEffort: latestCardRef.current.reasoningEffort,
@@ -276,6 +284,7 @@ export function BrainstormCard({
   }, [
     attachAnswerStream,
     crossProviderSkillReuseEnabled,
+    codexChatSettings,
     language,
     modelPromptRules,
     requestModel,

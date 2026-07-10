@@ -10,6 +10,11 @@ import {
   stopChat as apiStopChat,
 } from '../api'
 import type { AppLanguage, GitStatus, ModelPromptRule } from '../../shared/schema'
+import {
+  buildCodexChatRequestOverrides,
+  defaultCodexChatSettings,
+  type CodexChatSettings,
+} from '../../shared/codex-chat-settings'
 import { getGitLocaleText } from '../../shared/i18n'
 import { getDefaultReasoningEffort } from '../../shared/reasoning'
 import { buildSystemPromptForModel } from '../../shared/system-prompt'
@@ -70,6 +75,7 @@ export type GitOperationContext = {
   gitAgentModel: string
   systemPrompt: string
   modelPromptRules: ModelPromptRule[]
+  codexChatSettings?: CodexChatSettings
   crossProviderSkillReuseEnabled: boolean
 }
 
@@ -226,6 +232,10 @@ export const createGitOperationHub = (deps: GitOperationHubDeps) => {
     const reasoningEffort = parts[1] || getDefaultReasoningEffort('codex')
     return {
       provider: 'codex',
+      ...buildCodexChatRequestOverrides(
+        'codex',
+        context.codexChatSettings ?? defaultCodexChatSettings,
+      ),
       workspacePath: context.workspacePath,
       language: context.language,
       systemPrompt: buildSystemPromptForModel(context.systemPrompt, model, context.modelPromptRules),

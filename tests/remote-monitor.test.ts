@@ -199,6 +199,10 @@ test('remote monitor page renders every activity kind with real content, not a b
     assert.match(html, /act\.question/, 'ask-user activity must render the question')
     // reasoning：schema 字段是 text，读 content/summary 会永远空白。
     assert.match(html, /act\.text/, 'reasoning activity must read the schema text field')
+    // 工具活动默认折叠成组（对齐 PC 端）：摘要头 + 展开看明细。
+    assert.match(html, /tool-group/, 'consecutive tool activities must collapse into a group')
+    assert.match(html, /条命令/, 'group summary must count commands like the desktop UI')
+    assert.match(html, /次工具/, 'group summary must count tool calls like the desktop UI')
   } finally {
     await harness.manager.stop()
   }

@@ -56,3 +56,12 @@
 - [x] electron/backend.ts: loadCardHistory 接线（loadStateForRenderer 找卡）
 - [x] 手机页面: openDetail 先拉历史渲染（user 蓝边/assistant/system 样式区分，活动走 renderActivity），实时流按 itemId + 文本内容与历史去重
 - [x] Playwright 实测：历史与 backlog 重叠内容只渲染一次
+
+## V2.3 — 工具活动折叠成组（2026-07-10）
+
+用户要求：工具调用默认省略，对齐 PC 端 tool-group 折叠表现。
+
+- [x] 手机页面：历史+流式归一成统一块列表，连续 command/tool/edits 聚合为 details.tool-group（先红测试钉摘要文案）
+- [x] 摘要与 PC 端同款文案：执行了 N 条命令，改动 N 个文件，调用了 N 次工具 + 计数徽标
+- [x] 默认折叠；流式中的尾部组保持展开，agent 继续输出后自动折叠；用户手动展开跨重渲染记住（程序性展开的首次 toggle 不计入）
+- [x] Playwright 实测折叠/展开/摘要计数

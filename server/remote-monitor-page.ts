@@ -73,6 +73,14 @@ export const renderRemoteMonitorPage = () => `<!DOCTYPE html>
   .msg.user { border-left: 3px solid var(--accent); background: rgba(88,166,255,0.07); }
   .msg.sys { color: var(--muted); font-size: 13px; }
   .history-loading { color: var(--muted); font-size: 13px; text-align: center; padding: 12px 0; }
+  details.tool-group { border-left: 3px solid var(--border); background: var(--panel); border-radius: 6px; margin-bottom: 8px; }
+  details.tool-group > summary { list-style: none; cursor: pointer; padding: 8px 10px; font-size: 13px; color: var(--muted); display: flex; align-items: center; gap: 8px; }
+  details.tool-group > summary::-webkit-details-marker { display: none; }
+  .tool-group-chevron { flex: none; font-size: 10px; transition: transform .15s; }
+  details.tool-group[open] > .tool-group-chevron, details.tool-group[open] > summary .tool-group-chevron { transform: rotate(90deg); }
+  .tool-group-count { flex: none; margin-left: auto; font-size: 11px; border: 1px solid var(--border); border-radius: 999px; padding: 1px 8px; }
+  .tool-group-body { padding: 0 8px 8px; }
+  .tool-group-body .act { margin-bottom: 6px; }
   .act { border-left: 3px solid var(--accent); background: var(--panel); border-radius: 6px; padding: 8px 10px; margin-bottom: 8px; font-size: 13px; color: var(--muted); word-break: break-word; }
   .act.edits { border-left-color: var(--ok); }
   .act.ask { border-left-color: var(--run); color: var(--text); }
@@ -582,51 +590,137 @@ export const renderRemoteMonitorPage = () => `<!DOCTYPE html>
     container.appendChild(box)
   }
 
-  function renderHistoryInto(container, record) {
-    record.entries.forEach(function (entry) {
-      if (entry.activity) {
-        renderActivity(container, entry.activity)
-        return
-      }
-      var msg = document.createElement('div')
-      msg.className = entry.role === 'user' ? 'msg user' : entry.role === 'system' ? 'msg sys' : 'msg'
-      msg.textContent = entry.content
-      container.appendChild(msg)
-    })
-    if (record.loading) {
-      var loading = document.createElement('div')
-      loading.className = 'history-loading'
-      loading.textContent = '正在加载历史…'
-      container.appendChild(loading)
-    }
+  // 与电脑端一致：连续的命令/工具/改动活动折叠成一个摘要组，默认收起。
+  function isGroupableAct(act) {
+    return act && (act.kind === 'command' || act.kind === 'tool' || act.kind === 'edits')
   }
 
-  function renderStreamInto(container, entry, isLast, history) {
-    entry.items.forEach(function (item) {
-      if (item.type === 'text') {
-        var text = entry.texts.get(item.id) || ''
-        // 已随落库历史渲染过的内容不重复出现。
-        if (history && text && history.textKeys.has(text.trim())) { return }
-        var msg = document.createElement('div')
-        msg.className = 'msg'
-        msg.textContent = text
-        container.appendChild(msg)
-      } else {
-        if (history && history.itemIds.has(item.id)) { return }
-        renderActivity(container, entry.acts.get(item.id) || {})
-      }
+  function toolGroupSummary(acts) {
+    var commands = 0
+    var tools = 0
+    var files = 0
+    acts.forEach(function (act) {
+      if (act.kind === 'command') { commands += 1 }
+      else if (act.kind === 'tool') { tools += 1 }
+      else if (act.kind === 'edits') { files += (act.files || []).length }
     })
-    if (entry.liveText) {
-      var live = document.createElement('div')
-      live.className = 'msg live'
-      live.textContent = entry.liveText
-      container.appendChild(live)
+    var parts = []
+    if (commands) { parts.push('执行了 ' + commands + ' 条命令') }
+    if (files) { parts.push('改动 ' + files + ' 个文件') }
+    if (tools) { parts.push('调用了 ' + tools + ' 次工具') }
+    return parts.join('，') || '工具活动'
+  }
+
+  // 用户手动展开的组跨重渲染记住（renderDetail 每次全量重建 DOM）。
+  var expandedGroups = new Set()
+
+  function renderToolGroup(container, groupBlocks, groupKey, forceOpen) {
+    var acts = groupBlocks.map(function (block) { return block.act })
+    var det = document.createElement('details')
+    det.className = 'tool-group'
+    var shouldOpen = forceOpen || expandedGroups.has(groupKey)
+    if (shouldOpen) { det.open = true }
+    if (shouldOpen && !expandedGroups.has(groupKey)) {
+      // 程序性展开（流式中的最新组）触发的首次 toggle 不算用户操作。
+      det.dataset.auto = '1'
     }
-    if (entry.state !== 'streaming' && isLast) {
-      var doneEl = document.createElement('div')
-      doneEl.className = 'act'
-      doneEl.textContent = entry.state === 'error' ? '❌ 本轮出错结束' : entry.state === 'stopped' ? '⏹ 已停止' : '✅ 本轮已完成'
-      container.appendChild(doneEl)
+    det.addEventListener('toggle', function () {
+      if (det.dataset.auto === '1') { delete det.dataset.auto; return }
+      if (det.open) { expandedGroups.add(groupKey) } else { expandedGroups.delete(groupKey) }
+    })
+    var sum = document.createElement('summary')
+    var chevron = document.createElement('span')
+    chevron.className = 'tool-group-chevron'
+    chevron.textContent = '▶'
+    var text = document.createElement('span')
+    text.textContent = toolGroupSummary(acts)
+    var count = document.createElement('span')
+    count.className = 'tool-group-count'
+    count.textContent = String(acts.length)
+    sum.appendChild(chevron); sum.appendChild(text); sum.appendChild(count)
+    det.appendChild(sum)
+    var body = document.createElement('div')
+    body.className = 'tool-group-body'
+    acts.forEach(function (act) { renderActivity(body, act) })
+    det.appendChild(body)
+    container.appendChild(det)
+  }
+
+  // 历史 + 各流去重后归一成一个待渲染块列表，供统一分组。
+  function buildDetailBlocks(history, knownStreamIds) {
+    var blocks = []
+    if (history) {
+      history.entries.forEach(function (entry) {
+        if (entry.activity) {
+          blocks.push({ type: 'act', act: entry.activity, key: entry.itemId || entry.id })
+        } else {
+          blocks.push({ type: 'msg', role: entry.role, content: entry.content })
+        }
+      })
+      if (history.loading) { blocks.push({ type: 'loading' }) }
+    }
+    knownStreamIds.forEach(function (id, index) {
+      var entry = streams.get(id)
+      var isLast = index === knownStreamIds.length - 1
+      entry.items.forEach(function (item) {
+        if (item.type === 'text') {
+          var text = entry.texts.get(item.id) || ''
+          // 已随落库历史渲染过的内容不重复出现。
+          if (history && text && history.textKeys.has(text.trim())) { return }
+          blocks.push({ type: 'msg', role: 'assistant', content: text })
+        } else {
+          if (history && history.itemIds.has(item.id)) { return }
+          blocks.push({ type: 'act', act: entry.acts.get(item.id) || {}, key: id + ':' + item.id })
+        }
+      })
+      if (entry.liveText) { blocks.push({ type: 'live', text: entry.liveText }) }
+      if (entry.state !== 'streaming' && isLast) { blocks.push({ type: 'state', state: entry.state }) }
+    })
+    return blocks
+  }
+
+  function renderBlocks(container, blocks, streamingActive) {
+    var i = 0
+    while (i < blocks.length) {
+      var block = blocks[i]
+      if (block.type === 'act' && isGroupableAct(block.act)) {
+        var group = []
+        var j = i
+        while (j < blocks.length && blocks[j].type === 'act' && isGroupableAct(blocks[j].act)) {
+          group.push(blocks[j])
+          j += 1
+        }
+        // 流式进行中且组是最后一个块时保持展开（对齐电脑端），
+        // agent 一旦继续输出别的内容就自动折叠。
+        var isTrailing = j >= blocks.length
+        renderToolGroup(container, group, group[0].key || 'g' + i, streamingActive && isTrailing)
+        i = j
+        continue
+      }
+      if (block.type === 'act') {
+        renderActivity(container, block.act)
+      } else if (block.type === 'msg') {
+        var msg = document.createElement('div')
+        msg.className = block.role === 'user' ? 'msg user' : block.role === 'system' ? 'msg sys' : 'msg'
+        msg.textContent = block.content
+        container.appendChild(msg)
+      } else if (block.type === 'live') {
+        var live = document.createElement('div')
+        live.className = 'msg live'
+        live.textContent = block.text
+        container.appendChild(live)
+      } else if (block.type === 'loading') {
+        var loading = document.createElement('div')
+        loading.className = 'history-loading'
+        loading.textContent = '正在加载历史…'
+        container.appendChild(loading)
+      } else if (block.type === 'state') {
+        var doneEl = document.createElement('div')
+        doneEl.className = 'act'
+        doneEl.textContent = block.state === 'error' ? '❌ 本轮出错结束' : block.state === 'stopped' ? '⏹ 已停止' : '✅ 本轮已完成'
+        container.appendChild(doneEl)
+      }
+      i += 1
     }
   }
 
@@ -651,10 +745,9 @@ export const renderRemoteMonitorPage = () => `<!DOCTYPE html>
       return
     }
     var nearBottom = window.innerHeight + window.scrollY >= document.body.scrollHeight - 160
-    if (hasHistory) { renderHistoryInto(detailBody, history) }
-    known.forEach(function (id, index) {
-      renderStreamInto(detailBody, streams.get(id), index === known.length - 1, history)
-    })
+    var lastStream = known.length ? streams.get(known[known.length - 1]) : null
+    var streamingActive = Boolean(lastStream && lastStream.state === 'streaming')
+    renderBlocks(detailBody, buildDetailBlocks(hasHistory ? history : null, known), streamingActive)
     if (nearBottom) { window.scrollTo(0, document.body.scrollHeight) }
   }
 

@@ -466,6 +466,9 @@ A living list of traps that have wasted time before. **When you hit a new pitfal
 | 189 | Electron 全局关闭硬件加速时，每个可见 streaming 卡的全卡 `box-shadow` 呼吸动画会落到软件合成；再叠加固定 80ms 的全局 delta flush，7 个并发 pane 可同时把 renderer 与 software-GPU 各压满约 1 个 CPU 核，直接表现为输入框掉帧 | 后台 streaming 卡只保留静态状态边框，仅焦点所在卡运行全卡呼吸；renderer delta flush 必须按活跃流数量自适应退让（当前 80/120/180ms），不要让“每个会话都很顺”累加成“整个板子卡”。回归钉在 `tests/idle-animation-budget.test.ts` 与 `tests/persistence-queue.test.ts`。 |
 | 190 | React commit 删除一个仍聚焦的 textarea 子树时，可以先派发 `focusout(null)`，同时在 DOM 删除前清空 React ref；blur handler 若重新读 `textareaRef.current` 或在旧节点断开后直接返回，就会错过同 pane 新挂载的替代输入框，留下永久 `activeElement=body` | 删除期焦点接力必须以 `event.currentTarget` 保存旧节点，并在 commit 后重新查询同 pane 的 `.pane-tab-panel.is-active:not([hidden]) textarea`；只在窗口仍聚焦、无真实 relatedTarget、无外部 pointer 离开且卡仍 active 时重聚焦。取证要同时记录 focusout dispatch 与微任务后的 `isConnected`，否则会把“派发后删除”误判成普通 blur。 |
 
+| 191 | 用 junction 把主 checkout 的 `node_modules` 链进 worktree 后，在 worktree 里跑 `pnpm add` 会直接失败（`ERR_PNPM_UNEXPECTED_VIRTUAL_STORE`：virtual store 位置与 worktree 不符） | 给 worktree 加依赖要在主 checkout 执行 `pnpm add`（node_modules 本就共享），再把 `package.json`/`pnpm-lock.yaml` 复制进 worktree 并 `git checkout --` 还原主 checkout；删 worktree 前先用 `cmd /c rmdir` 摘掉 junction 链接点，防止递归删除跟进主 checkout 的真实依赖。 |
+| 192 | `os.networkInterfaces()` 里第一个非 internal IPv4 常是 Clash/VPN 的 TUN 虚拟网卡（`198.18.0.0/15` benchmark 保留段）或 link-local（`169.254.*`），拿它拼局域网 URL/二维码时手机根本路由不到 | 对外广播本机地址必须按网段打分挑选（`192.168.*` > `10.*` > `172.16-31.*`，TUN/link-local 垫底），见 `server/remote-monitor.ts` 的 `pickLanIPv4`，回归钉在 `tests/remote-monitor.test.ts`。 |
+
 ### Self-maintenance rule
 
 - When you encounter a new non-obvious failure mode — a test that fails for environmental reasons, a build step with hidden prerequisites, a runtime behavior that contradicts the docs — append a row to this table before you finish the task.

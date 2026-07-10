@@ -72,6 +72,9 @@ export const renderRemoteMonitorPage = () => `<!DOCTYPE html>
   .msg.live { border-color: var(--run); }
   .act { border-left: 3px solid var(--accent); background: var(--panel); border-radius: 6px; padding: 8px 10px; margin-bottom: 8px; font-size: 13px; color: var(--muted); word-break: break-word; }
   .act.edits { border-left-color: var(--ok); }
+  .act.ask { border-left-color: var(--run); color: var(--text); }
+  .act-line { padding: 1px 0; }
+  .tool-input { font-family: ui-monospace, Consolas, monospace; font-size: 12px; padding: 1px 0; word-break: break-all; }
   .edit-file { display: flex; gap: 8px; align-items: baseline; padding: 2px 0; font-family: ui-monospace, Consolas, monospace; font-size: 12px; }
   .edit-path { flex: 1; word-break: break-all; color: var(--text); }
   .lines-add { color: var(--ok); flex: none; }
@@ -483,9 +486,67 @@ export const renderRemoteMonitorPage = () => `<!DOCTYPE html>
       sumR.textContent = '🧠 思考过程'
       var preR = document.createElement('div')
       preR.style.whiteSpace = 'pre-wrap'
-      preR.textContent = act.content || act.summary || ''
+      preR.textContent = act.text || act.content || act.summary || ''
       detR.appendChild(sumR); detR.appendChild(preR)
       box.appendChild(detR)
+    } else if (act.kind === 'tool') {
+      var toolHead = document.createElement('div')
+      toolHead.textContent = '🔧 ' + (act.summary || act.toolName || '工具调用')
+      box.appendChild(toolHead)
+      var inputKeys = act.toolInput ? Object.keys(act.toolInput) : []
+      if (inputKeys.length) {
+        var detT = document.createElement('details')
+        detT.className = 'patch'
+        var sumT = document.createElement('summary')
+        sumT.textContent = (act.toolName || '工具') + ' 参数'
+        detT.appendChild(sumT)
+        inputKeys.forEach(function (key) {
+          var rowT = document.createElement('div')
+          rowT.className = 'tool-input'
+          rowT.textContent = key + ': ' + act.toolInput[key]
+          detT.appendChild(rowT)
+        })
+        box.appendChild(detT)
+      }
+    } else if (act.kind === 'todo') {
+      var todoItems = act.items || []
+      var doneItems = todoItems.filter(function (it) { return it.status === 'completed' }).length
+      var todoHead = document.createElement('div')
+      todoHead.textContent = '📋 任务清单 ' + doneItems + '/' + todoItems.length
+      box.appendChild(todoHead)
+      todoItems.forEach(function (it) {
+        var rowI = document.createElement('div')
+        rowI.className = 'act-line'
+        var mark = it.status === 'completed' ? '✅' : it.status === 'in_progress' ? '▶️' : '⬜'
+        rowI.textContent = mark + ' ' + (it.status === 'in_progress' && it.activeForm ? it.activeForm : it.content)
+        box.appendChild(rowI)
+      })
+    } else if (act.kind === 'agents') {
+      var agentHead = document.createElement('div')
+      agentHead.textContent = '🤖 子智能体' + (act.tool ? ' · ' + act.tool : '')
+      box.appendChild(agentHead)
+      ;(act.agents || []).forEach(function (agentEntry) {
+        var rowA = document.createElement('div')
+        rowA.className = 'act-line'
+        rowA.textContent = (agentEntry.nickname || agentEntry.role || agentEntry.threadId) + ' · ' + (agentEntry.status || '')
+        box.appendChild(rowA)
+      })
+    } else if (act.kind === 'ask-user') {
+      box.classList.add('ask')
+      var questionList = act.questions && act.questions.length ? act.questions : [act]
+      questionList.forEach(function (questionEntry) {
+        var headQ = document.createElement('div')
+        headQ.textContent = '❓ ' + (questionEntry.question || '等待你的输入')
+        box.appendChild(headQ)
+        ;(questionEntry.options || []).forEach(function (option) {
+          var rowO = document.createElement('div')
+          rowO.className = 'act-line'
+          rowO.textContent = '· ' + option.label + (option.description ? '：' + option.description : '')
+          box.appendChild(rowO)
+        })
+      })
+    } else if (act.kind === 'compaction') {
+      box.textContent = '🗜️ 上下文已压缩，会话继续'
     } else {
       box.textContent = '⚙️ ' + (act.kind || 'activity')
     }

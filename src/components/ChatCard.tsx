@@ -98,12 +98,14 @@ import {
 } from './composer-draft-attachments'
 import {
   composerBlurOutsidePressWindowMs,
+  composerBlurFollowUpDelayMs,
   composerFocusGuardDelaysMs,
   decideHitTestRepairScope,
   decideTextareaPressFocusVerification,
   hitTestRepairEscalationWindowMs,
   isComposerFocusEffectivelyVacant,
   isReclaimableOwnPaneChrome,
+  shouldPreserveComposerFocusAfterVacantFocusOut,
   shouldRefocusAfterComposerBlur,
   shouldSkipComposerRescueForIgnoredSurface,
   startComposerFocusAttempt,
@@ -1956,19 +1958,38 @@ const ChatCardView = ({
       if (!usesPaneChrome || isToolCard || !isActive || isCollapsed) {
         return
       }
-      const textarea = textareaRef.current
-      if (!textarea) {
-        return
-      }
+      // React can clear textareaRef before removeChild dispatches focusout.
+      // The synthetic event still owns the exact node that lost focus, so use
+      // currentTarget as the durable handoff anchor across the deletion commit.
+      const textarea = event.currentTarget
       const blurCausedByPointerOutsideComposer =
         event.timeStamp - lastPointerDownOutsideComposerAtRef.current <
         composerBlurOutsidePressWindowMs
       const pane = textarea.closest('.pane-view')
+      const focusPreservationArmed = shouldPreserveComposerFocusAfterVacantFocusOut({
+        targetIsComposerTextarea: event.target === textarea,
+        cardIsActive: isActive,
+        cardUsesComposer: !isToolCard,
+        blurCausedByPointerOutsideComposer,
+        documentStillFocused: document.hasFocus(),
+        focusWentNowhere: event.relatedTarget === null,
+      })
       const isOwnPaneChrome = (element: Element) => isReclaimableOwnPaneChrome(element, pane)
       // Focus moves after blur; check on the next frame, then again shortly after
       // in case the vacancy is created a beat later by a competing focus handler.
       const reclaim = () => {
-        if (!textarea.isConnected) {
+        // A React deletion commit can disconnect the textarea that fired this
+        // focusout, then mount its replacement in the same active pane. Resolve
+        // the live DOM instead of returning on the stale ref (dump 07-10T04-23).
+        const focusTarget =
+          (textarea.isConnected ? textarea : null) ??
+          (focusPreservationArmed
+            ? pane?.querySelector<HTMLTextAreaElement>(
+                '.pane-tab-panel.is-active:not([hidden]) textarea.control.textarea',
+              )
+            : null) ??
+          null
+        if (!focusTarget?.isConnected) {
           return
         }
         const focusBecameVacant = isComposerFocusEffectivelyVacant(
@@ -1983,10 +2004,11 @@ const ChatCardView = ({
             blurCausedByPointerOutsideComposer,
           })
         ) {
-          textarea.focus({ preventScroll: true })
+          focusTarget.focus({ preventScroll: true })
         }
       }
       window.requestAnimationFrame(reclaim)
+      window.setTimeout(reclaim, composerBlurFollowUpDelayMs)
       // flushPendingDraftSync is a stable ref-backed closure (no reactive
       // captures), so it is intentionally omitted to keep this callback stable.
     },

@@ -147,6 +147,9 @@ export type IdeAction =
           AppSettings,
           | 'language'
           | 'theme'
+          | 'customThemeBase'
+          | 'customBaseColor'
+          | 'accentColor'
           | 'activeTopTab'
           | 'editor'
           | 'uiScale'

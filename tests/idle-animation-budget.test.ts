@@ -70,3 +70,27 @@ test('the static unread affordance survives after the animation budget runs out'
     'the border needs a static resting border-color equal to the 0% keyframe',
   )
 })
+
+test('only the focused streaming card may run the full-card breathe animation', async () => {
+  const css = await indexCssPromise
+  const backgroundStreamingBlock =
+    css.match(/\.card-shell\.is-streaming::after\s*\{[^}]*\}/)?.[0] ?? ''
+  const focusedStreamingBlock =
+    css.match(/\.card-shell\.is-streaming:focus-within::after\s*\{[^}]*\}/)?.[0] ?? ''
+
+  assert.match(
+    backgroundStreamingBlock,
+    /border-color:\s*var\(--stream-border\)/,
+    'background streaming cards still need a visible static border',
+  )
+  assert.doesNotMatch(
+    backgroundStreamingBlock,
+    /\binfinite\b/,
+    'multiple background streaming panes must not repaint full-card box shadows forever',
+  )
+  assert.match(
+    focusedStreamingBlock,
+    /animation:\s*card-streaming-border-breathe\b[^;]*\binfinite\b/,
+    'the focused composer may keep one live streaming breathe animation',
+  )
+})

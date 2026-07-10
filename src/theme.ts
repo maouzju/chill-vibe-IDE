@@ -9,8 +9,10 @@ const supportsSystemThemeQuery = () =>
 export const getSystemPrefersDark = () =>
   supportsSystemThemeQuery() ? window.matchMedia(systemDarkModeQuery).matches : true
 
-export const getResolvedAppTheme = (theme: AppTheme): ResolvedAppTheme =>
-  resolveAppTheme(theme, getSystemPrefersDark())
+export const getResolvedAppTheme = (
+  theme: AppTheme,
+  customThemeBase: ResolvedAppTheme = 'dark',
+): ResolvedAppTheme => resolveAppTheme(theme, getSystemPrefersDark(), customThemeBase)
 
 export const subscribeToSystemThemeChange = (onChange: () => void) => {
   if (!supportsSystemThemeQuery()) {

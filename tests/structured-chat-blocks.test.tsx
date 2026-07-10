@@ -402,6 +402,29 @@ test('does not show a running indicator on a completed command card', () => {
   assert.doesNotMatch(markup, /structured-command-running-indicator/)
 })
 
+test('renders failed command details without a running indicator', () => {
+  const card = createCard()
+  card.messages[1] = {
+    ...card.messages[1],
+    meta: {
+      ...card.messages[1].meta,
+      structuredData: JSON.stringify({
+        itemId: 'item_1',
+        status: 'failed',
+        command: 'pnpm test',
+        output: '1 test failed',
+        exitCode: 1,
+      }),
+    },
+  }
+
+  const markup = renderCard(card)
+
+  assert.match(markup, /pnpm test/)
+  assert.match(markup, /Exit code 1/)
+  assert.doesNotMatch(markup, /structured-command-running-indicator/)
+})
+
 test('strips shell wrapper from command display', () => {
   assert.equal(
     cleanCommandDisplay(

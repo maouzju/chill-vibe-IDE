@@ -227,6 +227,35 @@ test('parses synthetic ask-user blocks from Codex assistant messages', () => {
   )
 })
 
+test('parses failed Codex commands as terminal activities instead of leaving them running', () => {
+  assert.deepEqual(
+    parseCodexResponseEvent({
+      method: 'item/completed',
+      params: {
+        item: {
+          id: 'item_failed_command',
+          type: 'commandExecution',
+          command: 'pnpm test',
+          aggregatedOutput: '1 test failed',
+          exitCode: 1,
+          status: 'failed',
+        },
+      },
+    }),
+    [
+      {
+        type: 'activity',
+        itemId: 'item_failed_command',
+        kind: 'command',
+        status: 'failed',
+        command: 'pnpm test',
+        output: '1 test failed',
+        exitCode: 1,
+      },
+    ],
+  )
+})
+
 test('parses Codex commentary JSON assistant messages into reasoning activities', () => {
   assert.deepEqual(
     parseCodexResponseEvent({

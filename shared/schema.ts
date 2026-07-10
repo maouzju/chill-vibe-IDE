@@ -1262,6 +1262,9 @@ export type StreamEventMap = {
   session: { sessionId: string }
   delta: { content: string }
   log: { message: string }
+  // 开流即广播的用户需求原文：手机监工靠它把"谁发了什么"实时镜像到
+  // 详情页消息流（电脑端渲染器自己维护 user 消息，收到后忽略）。
+  user_message: { content: string }
   assistant_message: StreamAssistantMessage
   activity: StreamActivity
   stats: StreamStatsEvent

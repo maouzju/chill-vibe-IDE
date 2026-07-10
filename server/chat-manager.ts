@@ -110,6 +110,16 @@ export const compactStreamEnvelopeForBacklog = (payload: StreamEnvelope): Stream
   }
 }
 
+// 每轮的用户需求以 user_message 事件进 backlog 并镜像给手机监工；空 prompt
+// （纯图片轮/续跑轮）不广播。
+export const buildUserMessageEnvelope = (prompt: string): StreamEnvelope | null => {
+  if (prompt.trim().length === 0) {
+    return null
+  }
+
+  return { event: 'user_message', data: { content: prompt } }
+}
+
 const getBacklogCoalesceKey = (payload: StreamEnvelope) => {
   if (payload.event === 'activity') {
     const activityPayload = payload as StreamActivityEnvelope
@@ -243,6 +253,14 @@ export class ChatManager {
     }
 
     this.streams.set(id, record)
+
+    // 用户需求先于一切 assistant 输出进 backlog：手机监工（含 late-joiner
+    // 重放）才能看到"需求在前、回答在后"的正确时间线。
+    const userEnvelope = buildUserMessageEnvelope(request.prompt)
+    if (userEnvelope) {
+      this.emit(record, 'user_message', userEnvelope.data as StreamEventMap['user_message'])
+    }
+
     void this.startProvider(record, request)
 
     return id

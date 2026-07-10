@@ -1,10 +1,12 @@
 import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
 import test from 'node:test'
 
 import {
   compactStreamEnvelopeForBacklog,
   appendStreamEnvelopeToBacklog,
   buildStreamErrorPayload,
+  buildUserMessageEnvelope,
   maxBacklogCommandOutputChars,
 } from '../server/chat-manager.ts'
 import type { StreamEnvelope } from '../server/chat-manager.ts'
@@ -84,4 +86,26 @@ test('recoverable resume errors carry the latest known session id', () => {
       sessionId: 'session-1',
     },
   )
+})
+
+test('user prompts become user_message envelopes so remote monitors can mirror them', () => {
+  // 手机监工发的需求（以及电脑端发的）都要能出现在手机详情页的消息流里：
+  // createStream 必须把 prompt 作为 user_message 事件进 backlog 并广播。
+  assert.deepEqual(buildUserMessageEnvelope('谢谢'), {
+    event: 'user_message',
+    data: { content: '谢谢' },
+  })
+  assert.equal(buildUserMessageEnvelope('   '), null)
+  assert.equal(buildUserMessageEnvelope(''), null)
+})
+
+test('createStream emits the user_message envelope before the provider starts', () => {
+  // 顺序保证：user 消息要先于任何 assistant 输出进 backlog，late-joiner
+  // 重放 backlog 时才能看到"需求在前、回答在后"的正确时间线。
+  const source = readFileSync(new URL('../server/chat-manager.ts', import.meta.url), 'utf8')
+  const createStreamBody = source.slice(source.indexOf('createStream('))
+  const emitIndex = createStreamBody.indexOf('buildUserMessageEnvelope')
+  const startIndex = createStreamBody.indexOf('this.startProvider')
+  assert.ok(emitIndex >= 0, 'createStream must broadcast the user prompt envelope')
+  assert.ok(emitIndex < startIndex, 'user_message must be emitted before startProvider')
 })

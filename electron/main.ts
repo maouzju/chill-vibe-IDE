@@ -617,6 +617,11 @@ function registerDesktopHandlers() {
     fileWatchSubscriptions.delete(subscriptionId)
   })
 
+  // ── Remote Monitor IPC（手机远程监工）──────────────────────────────────────
+  ipcMain.handle('desktop:remote-monitor-start', () => desktopBackend.startRemoteMonitor())
+  ipcMain.handle('desktop:remote-monitor-stop', () => desktopBackend.stopRemoteMonitor())
+  ipcMain.handle('desktop:remote-monitor-status', () => desktopBackend.fetchRemoteMonitorStatus())
+
   // ── Music IPC ──────────────────────────────────────────────────────────────
   ipcMain.handle('desktop:music-login-status', () => desktopBackend.fetchMusicLoginStatus())
   ipcMain.handle('desktop:music-qr-create', () => desktopBackend.createMusicQrLogin())

@@ -15,6 +15,12 @@ import {
   type ClaudeSessionPoolEntryView,
   type ClaudeTurnAttachment,
 } from './claude-session-pool.js'
+import {
+  buildActiveStreamViews,
+  createChatStreamTapRegistry,
+  type ActiveStreamView,
+  type ChatStreamTapEvent,
+} from './chat-stream-tap.js'
 import { captureWorkspaceSnapshot, diffWorkspaceSnapshot } from './git-workspace.js'
 import { createClaudeUnsolicitedTurnAttachment, launchProviderRun } from './providers.js'
 
@@ -39,6 +45,7 @@ type StreamSubscriber = (payload: StreamEnvelope) => void
 
 type StreamRecord = {
   id: string
+  cardId?: string
   backlog: StreamEnvelope[]
   listeners: Set<Response>
   subscribers: Set<StreamSubscriber>
@@ -194,6 +201,7 @@ const writeEvent = <T extends StreamName>(
 
 export class ChatManager {
   private readonly streams = new Map<string, StreamRecord>()
+  private readonly tapRegistry = createChatStreamTapRegistry()
   private readonly claudePool: ClaudeSessionPool | null
   private readonly onUnsolicitedStream?: (notification: UnsolicitedStreamNotification) => void
 
@@ -225,6 +233,7 @@ export class ChatManager {
 
     const record: StreamRecord = {
       id,
+      cardId: request.cardId,
       backlog: [],
       listeners: new Set(),
       subscribers: new Set(),
@@ -307,6 +316,17 @@ export class ChatManager {
     }
   }
 
+  // Global read-only mirror of every stream: the remote monitor observes all
+  // sessions at once here, while per-card renderer consumers keep using
+  // subscribe(streamId, ...).
+  tapAll(listener: (event: ChatStreamTapEvent) => void) {
+    return this.tapRegistry.tap(listener)
+  }
+
+  listActiveStreams(): ActiveStreamView[] {
+    return buildActiveStreamViews(this.streams.values())
+  }
+
   stop(streamId: string) {
     const stream = this.streams.get(streamId)
 
@@ -345,6 +365,7 @@ export class ChatManager {
     const streamId = crypto.randomUUID()
     const record: StreamRecord = {
       id: streamId,
+      cardId: entry.key,
       backlog: [],
       listeners: new Set(),
       subscribers: new Set(),
@@ -487,6 +508,8 @@ export class ChatManager {
     for (const subscriber of stream.subscribers) {
       subscriber(payload)
     }
+
+    this.tapRegistry.broadcast({ streamId: stream.id, cardId: stream.cardId, envelope: payload })
   }
 
   private finalize<T extends Extract<StreamName, 'done' | 'error'>>(

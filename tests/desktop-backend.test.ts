@@ -25,6 +25,12 @@ test('desktop backend delays manager construction until the matching feature is 
         subscribe() {
           return null
         },
+        tapAll() {
+          return () => undefined
+        },
+        listActiveStreams() {
+          return []
+        },
       }
     },
     createSetupManager: () => {
@@ -121,6 +127,12 @@ test('desktop backend treats stopping an already-settled stream as idempotent', 
       },
       subscribe() {
         return null
+      },
+      tapAll() {
+        return () => undefined
+      },
+      listActiveStreams() {
+        return []
       },
     }),
   })

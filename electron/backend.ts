@@ -40,6 +40,11 @@ import {
   setProviderRuntimeSettingsOverride,
   validateWorkspacePath,
 } from '../server/providers.ts'
+import {
+  buildRemoteMonitorSnapshot,
+  createRemoteMonitorManager,
+  type RemoteMonitorManager,
+} from '../server/remote-monitor.ts'
 import { resilientProxyPool } from '../server/resilient-proxy.ts'
 import { SetupManager } from '../server/setup-manager.ts'
 import { OllamaManager } from '../server/ollama-manager.ts'
@@ -116,7 +121,10 @@ import {
 
 type StreamListener = (payload: StreamEnvelope) => void
 
-type ChatManagerLike = Pick<ChatManager, 'closeAll' | 'createStream' | 'stop' | 'subscribe'>
+type ChatManagerLike = Pick<
+  ChatManager,
+  'closeAll' | 'createStream' | 'stop' | 'subscribe' | 'tapAll' | 'listActiveStreams'
+>
 type SetupManagerLike = Pick<SetupManager, 'dispose' | 'getStatus' | 'start'>
 type OllamaManagerLike = Pick<OllamaManager, 'dispose' | 'getStatus' | 'startInstall' | 'startPull' | 'judge'>
 type MusicManagerLike = Pick<
@@ -149,6 +157,7 @@ export const createDesktopBackend = (deps: DesktopBackendDependencies = {}) => {
   let ollamaManager: OllamaManagerLike | null = null
   let musicManager: MusicManagerLike | null = null
   let fileWatcherManager: FileWatcherManager | null = null
+  let remoteMonitorManager: RemoteMonitorManager | null = null
 
   const getFileWatcherManager = () => {
     if (!fileWatcherManager) {
@@ -185,6 +194,23 @@ export const createDesktopBackend = (deps: DesktopBackendDependencies = {}) => {
     }
 
     return ollamaManager
+  }
+
+  // Lazy like the other desktop services (pitfall 79): nothing about the
+  // monitor may resolve paths or bind sockets before the user turns it on.
+  const getRemoteMonitorManager = () => {
+    if (!remoteMonitorManager) {
+      remoteMonitorManager = createRemoteMonitorManager({
+        loadSnapshot: async () => {
+          const response = await loadStateForRenderer()
+          return buildRemoteMonitorSnapshot(response.state)
+        },
+        tapStreams: (listener) => getChatManager().tapAll(listener),
+        listActiveStreams: () => getChatManager().listActiveStreams(),
+      })
+    }
+
+    return remoteMonitorManager
   }
 
   const getMusicManager = () => {
@@ -347,7 +373,24 @@ export const createDesktopBackend = (deps: DesktopBackendDependencies = {}) => {
       return loadExternalSession(externalSessionLoadRequestSchema.parse(request))
     },
 
+    // ── Remote Monitor（手机远程监工）────────────────────────────────────────
+    async startRemoteMonitor() {
+      const info = await getRemoteMonitorManager().start()
+      const { toDataURL } = await import('qrcode')
+      const qrDataUrl = await toDataURL(info.url, { margin: 1, width: 320 })
+      return { ...info, qrDataUrl }
+    },
+    async stopRemoteMonitor() {
+      await remoteMonitorManager?.stop()
+    },
+    fetchRemoteMonitorStatus() {
+      return (
+        remoteMonitorManager?.getStatus() ?? { running: false, clientCount: 0 }
+      )
+    },
+
     async dispose() {
+      await remoteMonitorManager?.stop()
       chatManager?.closeAll()
       setupManager?.dispose()
       ollamaManager?.dispose()

@@ -121,6 +121,11 @@ declare global {
       getAttachmentUrl?: (attachmentId: string) => string
       getPathForFile?: (file: File) => string
 
+      // Remote Monitor
+      startRemoteMonitor?: () => Promise<unknown>
+      stopRemoteMonitor?: () => Promise<void>
+      fetchRemoteMonitorStatus?: () => Promise<unknown>
+
       // Music
       fetchMusicLoginStatus?: () => Promise<unknown>
       createMusicQrLogin?: () => Promise<unknown>

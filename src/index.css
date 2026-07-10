@@ -502,6 +502,86 @@ body.is-card-dragging .lane-drop-zone-top {
   color: var(--ink-1);
 }
 
+.app-topbar-remote-monitor {
+  appearance: none;
+  border: none;
+  background: transparent;
+  color: var(--ink-3);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  padding: 0.15rem;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: color 140ms var(--ease);
+  -webkit-app-region: no-drag;
+  app-region: no-drag;
+}
+
+.app-topbar-remote-monitor svg {
+  width: 0.85rem;
+  height: 0.85rem;
+}
+
+.app-topbar-remote-monitor:hover {
+  color: var(--ink-1);
+}
+
+.app-topbar-remote-monitor.is-active {
+  color: var(--accent);
+}
+
+.remote-monitor-body {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.65rem;
+  text-align: center;
+}
+
+.remote-monitor-qr-frame {
+  /* QR 码本体永远白底黑码：扫码可靠性优先，不跟随主题换色 */
+  background: #ffffff;
+  border-radius: 12px;
+  padding: 0.6rem;
+  border: 1px solid var(--line-strong);
+}
+
+.remote-monitor-qr-image {
+  display: block;
+  width: 220px;
+  height: 220px;
+}
+
+.remote-monitor-url {
+  appearance: none;
+  border: 1px dashed var(--line-strong);
+  background: var(--panel-soft);
+  color: var(--ink-2);
+  border-radius: 8px;
+  padding: 0.4rem 0.6rem;
+  font-family: 'IBM Plex Mono', 'Cascadia Mono', Consolas, monospace;
+  font-size: 0.75rem;
+  word-break: break-all;
+  cursor: pointer;
+  max-width: 100%;
+  transition: color 140ms var(--ease), border-color 140ms var(--ease);
+}
+
+.remote-monitor-url:hover {
+  color: var(--ink-1);
+  border-color: var(--accent-line-strong);
+}
+
+.remote-monitor-meta {
+  min-height: 1.2em;
+}
+
+.remote-monitor-actions {
+  justify-content: center;
+}
+
 .app-topbar-tools {
   display: inline-flex;
   align-items: center;

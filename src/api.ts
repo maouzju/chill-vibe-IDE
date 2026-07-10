@@ -1,3 +1,5 @@
+import { z } from 'zod'
+
 import {
   appSettingsSchema,
   attachmentUploadRequestSchema,
@@ -154,6 +156,43 @@ const desktopAppStateLoadResponseSchema = appStateLoadResponseSchema.or(appState
 
 export const fetchState = async (): Promise<AppStateLoadResponse> =>
   readDesktop(requireDesktopAction(getDesktopApi()?.fetchState), desktopAppStateLoadResponseSchema)
+
+// ── Remote Monitor（手机远程监工，仅桌面端）──────────────────────────────────
+const remoteMonitorStartResponseSchema = z.object({
+  url: z.string().min(1),
+  port: z.number().int(),
+  token: z.string().min(1),
+  lanFallback: z.boolean(),
+  qrDataUrl: z.string().min(1),
+})
+export type RemoteMonitorStartResponse = z.infer<typeof remoteMonitorStartResponseSchema>
+
+const remoteMonitorStatusSchema = z.object({
+  running: z.boolean(),
+  url: z.string().optional(),
+  port: z.number().int().optional(),
+  clientCount: z.number().int(),
+})
+export type RemoteMonitorStatusResponse = z.infer<typeof remoteMonitorStatusSchema>
+
+export const isRemoteMonitorSupported = () =>
+  typeof getDesktopApi()?.startRemoteMonitor === 'function'
+
+export const startRemoteMonitor = async (): Promise<RemoteMonitorStartResponse> =>
+  readDesktop(
+    requireDesktopAction(getDesktopApi()?.startRemoteMonitor),
+    remoteMonitorStartResponseSchema,
+  )
+
+export const stopRemoteMonitor = async (): Promise<void> => {
+  await requireDesktopAction(getDesktopApi()?.stopRemoteMonitor)()
+}
+
+export const fetchRemoteMonitorStatus = async (): Promise<RemoteMonitorStatusResponse> =>
+  readDesktop(
+    requireDesktopAction(getDesktopApi()?.fetchRemoteMonitorStatus),
+    remoteMonitorStatusSchema,
+  )
 
 export const loadSessionHistoryEntry = async (
   request: InternalSessionHistoryLoadRequest,

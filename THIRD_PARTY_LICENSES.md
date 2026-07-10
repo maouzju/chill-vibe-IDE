@@ -5,7 +5,7 @@ Do not edit manually.
 
 ## Summary
 
-- Total packages: 670
+- Total packages: 671
 - License families: 18
 
 ## License Families
@@ -22,7 +22,7 @@ Do not edit manually.
 - `CC0-1.0`: 1 package
 - `ISC`: 49 packages
 - `LGPL-2.1+`: 1 package
-- `MIT`: 542 packages
+- `MIT`: 543 packages
 - `MPL-2.0`: 1 package
 - `Python-2.0`: 1 package
 - `W3C`: 1 package
@@ -190,7 +190,7 @@ Do not edit manually.
 
 - `jschardet@3.1.4` - https://github.com/aadsm/jschardet#readme
 
-### MIT (542)
+### MIT (543)
 
 - `@babel/code-frame@7.29.0` - https://babel.dev/docs/en/next/babel-code-frame
 - `@babel/compat-data@7.29.0` - https://github.com/babel/babel#readme
@@ -268,6 +268,7 @@ Do not edit manually.
 - `@types/mdast@4.0.4` - https://github.com/DefinitelyTyped/DefinitelyTyped/tree/master/types/mdast
 - `@types/ms@2.1.0` - https://github.com/DefinitelyTyped/DefinitelyTyped/tree/master/types/ms
 - `@types/node@22.19.17, 24.12.2` - https://github.com/DefinitelyTyped/DefinitelyTyped/tree/master/types/node
+- `@types/qrcode@1.5.6` - https://github.com/DefinitelyTyped/DefinitelyTyped/tree/master/types/qrcode
 - `@types/qs@6.15.0` - https://github.com/DefinitelyTyped/DefinitelyTyped/tree/master/types/qs
 - `@types/range-parser@1.2.7` - https://github.com/DefinitelyTyped/DefinitelyTyped/tree/master/types/range-parser
 - `@types/react@19.2.14` - https://github.com/DefinitelyTyped/DefinitelyTyped/tree/master/types/react

@@ -151,6 +151,11 @@ import {
   resolveStateRecoveryOption,
   searchCities,
   type CitySuggestion,
+  fetchRemoteMonitorStatus,
+  isRemoteMonitorSupported,
+  startRemoteMonitor,
+  stopRemoteMonitor,
+  type RemoteMonitorStartResponse,
 } from './api'
 import { resolveAppLoadError } from './app-load-error'
 import { startInitialAppLoad } from './app-initial-load'
@@ -220,6 +225,7 @@ import {
   MaximizeWindowIcon,
   MinimizeWindowIcon,
   ModelIcon,
+  PhoneMonitorIcon,
   PlusIcon,
   RestoreWindowIcon,
   EyeIcon,
@@ -531,6 +537,11 @@ function App() {
   const [downloadProgress, setDownloadProgress] = useState(0)
   const [downloadedUpdatePath, setDownloadedUpdatePath] = useState<string | null>(null)
   const [codexFastModeDialogOpen, setCodexFastModeDialogOpen] = useState(false)
+  const [remoteMonitorDialogOpen, setRemoteMonitorDialogOpen] = useState(false)
+  const [remoteMonitorInfo, setRemoteMonitorInfo] = useState<RemoteMonitorStartResponse | null>(null)
+  const [remoteMonitorError, setRemoteMonitorError] = useState<string | null>(null)
+  const [remoteMonitorClientCount, setRemoteMonitorClientCount] = useState(0)
+  const [remoteMonitorLinkCopied, setRemoteMonitorLinkCopied] = useState(false)
   const [clearUserDataDialogOpen, setClearUserDataDialogOpen] = useState(false)
   const [clearUserDataPending, setClearUserDataPending] = useState(false)
   const [closeWorkspaceDialogColumnId, setCloseWorkspaceDialogColumnId] = useState<string | null>(null)
@@ -1048,6 +1059,65 @@ function App() {
   const closeCodexFastModeDialog = useCallback(() => {
     setCodexFastModeDialogOpen(false)
   }, [])
+
+  // 手机远程监工：打开弹窗即启动只读服务（幂等），关闭弹窗不停服务 ——
+  // 用户扫完码就去沙发了，服务要一直挂着；只有点"停止监工"才真正关。
+  const openRemoteMonitorDialog = useCallback(() => {
+    setRemoteMonitorDialogOpen(true)
+    setRemoteMonitorError(null)
+    setRemoteMonitorLinkCopied(false)
+    void startRemoteMonitor()
+      .then((info) => {
+        setRemoteMonitorInfo(info)
+      })
+      .catch((error: unknown) => {
+        setRemoteMonitorError(error instanceof Error ? error.message : String(error))
+      })
+  }, [])
+
+  const closeRemoteMonitorDialog = useCallback(() => {
+    setRemoteMonitorDialogOpen(false)
+  }, [])
+
+  const handleStopRemoteMonitor = useCallback(() => {
+    void stopRemoteMonitor().catch(() => undefined)
+    setRemoteMonitorInfo(null)
+    setRemoteMonitorClientCount(0)
+    setRemoteMonitorDialogOpen(false)
+  }, [])
+
+  const handleCopyRemoteMonitorLink = useCallback(() => {
+    const url = remoteMonitorInfo?.url
+    if (!url) {
+      return
+    }
+    void navigator.clipboard
+      .writeText(url)
+      .then(() => {
+        setRemoteMonitorLinkCopied(true)
+        window.setTimeout(() => setRemoteMonitorLinkCopied(false), 2000)
+      })
+      .catch(() => undefined)
+  }, [remoteMonitorInfo])
+
+  useEffect(() => {
+    if (!remoteMonitorDialogOpen || !remoteMonitorInfo) {
+      return
+    }
+
+    const timer = window.setInterval(() => {
+      void fetchRemoteMonitorStatus()
+        .then((status) => {
+          setRemoteMonitorClientCount(status.clientCount)
+          if (!status.running) {
+            setRemoteMonitorInfo(null)
+          }
+        })
+        .catch(() => undefined)
+    }, 4000)
+
+    return () => window.clearInterval(timer)
+  }, [remoteMonitorDialogOpen, remoteMonitorInfo])
 
   const handleCodexFastModeToggle = useCallback(
     (enabled: boolean) => {
@@ -6505,6 +6575,17 @@ function App() {
             >
               <PlusIcon />
             </button>
+            {isRemoteMonitorSupported() ? (
+              <button
+                type="button"
+                className={`app-topbar-remote-monitor${remoteMonitorInfo ? ' is-active' : ''}`}
+                title={text.remoteMonitorButtonLabel}
+                aria-label={text.remoteMonitorButtonLabel}
+                onClick={openRemoteMonitorDialog}
+              >
+                <PhoneMonitorIcon />
+              </button>
+            ) : null}
           </div>
 
           {appState.settings.autoUrgeEnabled && appState.settings.autoUrgeGlobalControlEnabled ? (
@@ -8328,6 +8409,87 @@ function App() {
                     {clearUserDataPending ? text.clearUserDataPending : text.clearUserDataConfirm}
                   </AppButton>
                 </div>
+              </div>
+            </div>
+          </section>
+        </div>
+      ) : null}
+
+      {remoteMonitorDialogOpen ? (
+        <div className="structured-preview-layer">
+          <div className="structured-preview-backdrop" onClick={closeRemoteMonitorDialog} />
+          <section
+            className="structured-preview-dialog remote-monitor-dialog"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="remote-monitor-dialog-title"
+          >
+            <div className="structured-preview-card remote-monitor-card">
+              <div className="structured-preview-header">
+                <div className="structured-preview-copy">
+                  <h3 id="remote-monitor-dialog-title">{text.remoteMonitorDialogTitle}</h3>
+                  <p className="settings-note">{text.remoteMonitorDialogBody}</p>
+                </div>
+
+                <button
+                  type="button"
+                  className="btn btn-ghost structured-preview-close"
+                  onClick={closeRemoteMonitorDialog}
+                  aria-label={text.remoteMonitorCloseDialog}
+                >
+                  <CloseIcon />
+                </button>
+              </div>
+
+              <div className="structured-preview-body remote-monitor-body">
+                {remoteMonitorError ? (
+                  <p className="settings-danger-warning" role="alert">
+                    {text.remoteMonitorStartFailed(remoteMonitorError)}
+                  </p>
+                ) : remoteMonitorInfo ? (
+                  <>
+                    <div className="remote-monitor-qr-frame">
+                      <img
+                        className="remote-monitor-qr-image"
+                        src={remoteMonitorInfo.qrDataUrl}
+                        alt={text.remoteMonitorDialogTitle}
+                      />
+                    </div>
+                    {remoteMonitorInfo.lanFallback ? (
+                      <p className="settings-danger-warning" role="alert">
+                        {text.remoteMonitorLanFallbackWarning}
+                      </p>
+                    ) : null}
+                    <button
+                      type="button"
+                      className="remote-monitor-url"
+                      title={text.remoteMonitorCopyLink}
+                      onClick={handleCopyRemoteMonitorLink}
+                    >
+                      {remoteMonitorInfo.url}
+                    </button>
+                    <p className="settings-note remote-monitor-meta">
+                      {remoteMonitorLinkCopied
+                        ? text.remoteMonitorLinkCopied
+                        : text.remoteMonitorClientCount(remoteMonitorClientCount)}
+                    </p>
+                    <p className="settings-note">{text.remoteMonitorSecurityNote}</p>
+                    <div className="settings-actions remote-monitor-actions">
+                      <AppButton type="button" onClick={handleCopyRemoteMonitorLink}>
+                        {text.remoteMonitorCopyLink}
+                      </AppButton>
+                      <AppButton
+                        type="button"
+                        className="settings-danger-button settings-danger-button-confirm"
+                        onClick={handleStopRemoteMonitor}
+                      >
+                        {text.remoteMonitorStop}
+                      </AppButton>
+                    </div>
+                  </>
+                ) : (
+                  <p className="settings-note">{text.remoteMonitorStarting}</p>
+                )}
               </div>
             </div>
           </section>

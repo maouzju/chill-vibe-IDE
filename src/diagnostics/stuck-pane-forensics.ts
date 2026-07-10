@@ -40,11 +40,10 @@ export const pushPointerLedgerEntry = (
 }
 
 // Focus transitions ledger (dump 07-08T04-05: presses land on the textarea,
-// focus settles, yet ends on <body> with all rescue counters 0). An element
-// removed or disabled while focused loses focus WITHOUT firing blur/focusout,
-// leaving every blur-driven rescue deaf. The ledger makes that visible: a
-// trailing focusin with no matching focusout while focus sits vacant is the
-// silent-steal fingerprint.
+// focus settles, yet ends on <body> with all rescue counters 0). Some removal
+// paths are silent; React's commit deletion path can instead fire focusout
+// while the target is still connected, then detach it before the microtask
+// checkpoint (dump 07-10T04-23). Record both sides of that boundary.
 export type FocusLedgerEntry = {
   atMs: number
   kind: 'focusin' | 'focusout'
@@ -64,6 +63,14 @@ export type FocusLedgerEntry = {
   // focusout-to-nowhere only: a fixup dispatched synchronously from an
   // attribute flip carries the flipping commit in these frames.
   stackTop?: string
+  // focusout-to-nowhere only: connectivity during dispatch and immediately
+  // after the current commit. true -> false is a React/DOM removal signature.
+  connectedAtDispatch?: boolean
+  connectedAfterMicrotask?: boolean
+  // When the target was detached, name both the detached subtree root and the
+  // old target-to-root chain so the next dump identifies what React removed.
+  detachedRootPath?: string
+  detachedTargetPath?: string
 }
 
 export const focusLedgerCapacity = 30
@@ -575,9 +582,9 @@ export const installStuckPaneForensics = () => {
     })
   }
 
-  // Focus transitions: an element removed/disabled while focused loses focus
-  // WITHOUT firing focusout, so a trailing focusin while activeElement sits on
-  // <body> is the silent-steal fingerprint (dump 07-08T04-05).
+  // Focus transitions: silent removals still show as a trailing focusin, while
+  // React commit deletion can dispatch focusout first and detach the target by
+  // the following microtask (dump 07-10T04-23).
   let focusLedger: FocusLedgerEntry[] = []
   const recordFocusIn = (event: FocusEvent) => {
     focusLedger = pushFocusLedgerEntry(focusLedger, {
@@ -611,6 +618,28 @@ export const installStuckPaneForensics = () => {
             )
           : null
       entry.stackTop = summarizeCallStack(new Error('focusout-trace').stack ?? undefined, 6)
+      if (event.target instanceof HTMLElement) {
+        const focusTarget = event.target
+        entry.connectedAtDispatch = focusTarget.isConnected
+        queueMicrotask(() => {
+          entry.connectedAfterMicrotask = focusTarget.isConnected
+          if (focusTarget.isConnected) {
+            return
+          }
+          let detachedRoot: HTMLElement = focusTarget
+          while (detachedRoot.parentElement instanceof HTMLElement) {
+            detachedRoot = detachedRoot.parentElement
+          }
+          entry.detachedRootPath = describeElementPath(
+            detachedRoot as unknown as ForensicsElementLike,
+            1,
+          )
+          entry.detachedTargetPath = describeElementPath(
+            focusTarget as unknown as ForensicsElementLike,
+            12,
+          )
+        })
+      }
     }
     focusLedger = pushFocusLedgerEntry(focusLedger, entry)
   }

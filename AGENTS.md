@@ -463,6 +463,8 @@ A living list of traps that have wasted time before. **When you hit a new pitfal
 
 | 188 | Composer 自动增高把 `scrollHeight` 一次实测值当真相并用 `(value, clientWidth)` 记忆化锁存：瞬态布局（面板拖拽、隐藏期测量、`align-items:stretch` 下 `height:auto` 的一帧）能让**空** textarea 报出多行 scrollHeight，之后既没有输入也没有宽度变化触发重算，空输入框就永久卡在虚高高度，模型胶囊（`height:100%`）跟着拉成大长条 | `syncComposerTextareaHeight` 对空草稿必须无条件钉回 minHeight（不读 scrollHeight），且 ChatCard 要用 ResizeObserver 在 textarea 宽度变化时重新调度高度同步；今后任何"量一次 DOM 尺寸 + 按输入失效缓存"的逻辑都要问：宽度/可见性变了谁来失效？回归钉在 `tests/chat-composer-autosize.test.ts`。 |
 
+| 190 | React commit 删除一个仍聚焦的 textarea 子树时，可以先派发 `focusout(null)`，同时在 DOM 删除前清空 React ref；blur handler 若重新读 `textareaRef.current` 或在旧节点断开后直接返回，就会错过同 pane 新挂载的替代输入框，留下永久 `activeElement=body` | 删除期焦点接力必须以 `event.currentTarget` 保存旧节点，并在 commit 后重新查询同 pane 的 `.pane-tab-panel.is-active:not([hidden]) textarea`；只在窗口仍聚焦、无真实 relatedTarget、无外部 pointer 离开且卡仍 active 时重聚焦。取证要同时记录 focusout dispatch 与微任务后的 `isConnected`，否则会把“派发后删除”误判成普通 blur。 |
+
 ### Self-maintenance rule
 
 - When you encounter a new non-obvious failure mode — a test that fails for environmental reasons, a build step with hidden prerequisites, a runtime behavior that contradicts the docs — append a row to this table before you finish the task.

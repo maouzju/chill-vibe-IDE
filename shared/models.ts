@@ -1,8 +1,8 @@
 import type { Provider } from './schema.js'
 
-export const DEFAULT_CODEX_MODEL = 'gpt-5.5'
+export const DEFAULT_CODEX_MODEL = 'gpt-5.6-sol'
 export const DEFAULT_CLAUDE_MODEL = 'claude-opus-4-8'
-export const DEFAULT_GIT_AGENT_MODEL = `${DEFAULT_CODEX_MODEL} xhigh`
+export const DEFAULT_GIT_AGENT_MODEL = 'gpt-5.6-terra medium'
 export const GIT_TOOL_MODEL = '__git_tool__'
 export const MUSIC_TOOL_MODEL = '__music_tool__'
 export const WHITENOISE_TOOL_MODEL = '__whitenoise_tool__'
@@ -93,9 +93,27 @@ export const MODEL_OPTIONS: ModelOption[] = [
     usesConfiguredDefault: true,
   },
   {
-    label: 'GPT-5.5',
+    label: 'GPT-5.6 Sol',
     provider: 'codex',
     model: DEFAULT_CODEX_MODEL,
+    aliases: ['gpt-5.6', 'gpt-5.6-sol', '5.6', '5.6-sol', 'sol', 'gpt56'],
+  },
+  {
+    label: 'GPT-5.6 Terra',
+    provider: 'codex',
+    model: 'gpt-5.6-terra',
+    aliases: ['gpt-5.6-terra', '5.6-terra', 'terra'],
+  },
+  {
+    label: 'GPT-5.6 Luna',
+    provider: 'codex',
+    model: 'gpt-5.6-luna',
+    aliases: ['gpt-5.6-luna', '5.6-luna', 'luna'],
+  },
+  {
+    label: 'GPT-5.5',
+    provider: 'codex',
+    model: 'gpt-5.5',
     aliases: ['gpt-5.5', '5.5', 'gpt55'],
   },
   {

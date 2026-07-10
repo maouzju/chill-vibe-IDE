@@ -54,6 +54,10 @@ import type {
   SlashCommand,
 } from '../../shared/schema'
 import {
+  defaultCodexChatSettings,
+  type CodexChatSettings,
+} from '../../shared/codex-chat-settings'
+import {
   buildRenderableMessages,
   getAskUserAnswerKey,
   getRestoredStickyUserAnchor,
@@ -368,6 +372,7 @@ type ChatCardProps = {
   language: AppLanguage
   systemPrompt: string
   modelPromptRules?: ModelPromptRule[]
+  codexChatSettings?: CodexChatSettings
   crossProviderSkillReuseEnabled: boolean
   musicAlbumCoverEnabled: boolean
   weatherCity: string
@@ -817,6 +822,8 @@ const areChatCardPropsEqual = (previous: ChatCardProps, next: ChatCardProps) =>
   previous.workspacePath === next.workspacePath &&
   previous.language === next.language &&
   previous.systemPrompt === next.systemPrompt &&
+  previous.modelPromptRules === next.modelPromptRules &&
+  previous.codexChatSettings === next.codexChatSettings &&
   previous.crossProviderSkillReuseEnabled === next.crossProviderSkillReuseEnabled &&
   previous.musicAlbumCoverEnabled === next.musicAlbumCoverEnabled &&
   previous.weatherCity === next.weatherCity &&
@@ -1304,6 +1311,7 @@ const ChatCardView = ({
   language,
   systemPrompt,
   modelPromptRules = [],
+  codexChatSettings = defaultCodexChatSettings,
   crossProviderSkillReuseEnabled,
   musicAlbumCoverEnabled,
   weatherCity,
@@ -3288,17 +3296,19 @@ const ChatCardView = ({
   // tier is hidden from its menu.
   const alwaysThinkingModel =
     effectiveProvider === 'claude' && isClaudeAlwaysThinkingModel(card.model)
+  const reasoningModel =
+    card.model || (effectiveProvider === 'codex' ? brainstormRequestModel : '')
   const reasoningValue = normalizeReasoningEffortForModel(
     effectiveProvider,
-    card.model,
+    reasoningModel,
     card.reasoningEffort,
   )
   const menuMinWidth = modelMenuStyle?.minWidth ?? 0
   const menuMaxWidth = modelMenuStyle?.maxWidth ?? 0
   const menuMaxHeight = modelMenuStyle?.maxHeight ?? 0
   const reasoningOptions = useMemo(
-    () => getReasoningOptionsForModel(effectiveProvider, card.model, language),
-    [card.model, effectiveProvider, language],
+    () => getReasoningOptionsForModel(effectiveProvider, reasoningModel, language),
+    [effectiveProvider, language, reasoningModel],
   )
   const compactMessageWindow = useMemo(
     () =>
@@ -4062,6 +4072,7 @@ const ChatCardView = ({
             gitAgentModel={gitAgentModel}
             systemPrompt={systemPrompt}
             modelPromptRules={modelPromptRules}
+            codexChatSettings={codexChatSettings}
             crossProviderSkillReuseEnabled={crossProviderSkillReuseEnabled}
             isActive={!suspendPaneRuntimeEffects}
             requestedHeight={card.size ?? 440}
@@ -4121,6 +4132,7 @@ const ChatCardView = ({
           language={language}
           systemPrompt={systemPrompt}
           modelPromptRules={modelPromptRules}
+          codexChatSettings={codexChatSettings}
           crossProviderSkillReuseEnabled={crossProviderSkillReuseEnabled}
           providerReady={providerReady}
           workspacePath={workspacePath}

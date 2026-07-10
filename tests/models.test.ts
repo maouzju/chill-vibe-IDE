@@ -5,6 +5,7 @@ import {
   BRAINSTORM_TOOL_MODEL,
   DEFAULT_CLAUDE_MODEL,
   DEFAULT_CODEX_MODEL,
+  DEFAULT_GIT_AGENT_MODEL,
   FILETREE_TOOL_MODEL,
   GIT_TOOL_MODEL,
   IMAGEEDITOR_TOOL_MODEL,
@@ -21,6 +22,11 @@ import {
 } from '../shared/models.ts'
 
 describe('model helpers', () => {
+  it('uses the current Codex 5.6 defaults for new agent and Git chats', () => {
+    assert.equal(DEFAULT_CODEX_MODEL, 'gpt-5.6-sol')
+    assert.equal(DEFAULT_GIT_AGENT_MODEL, 'gpt-5.6-terra medium')
+  })
+
   it('resolves configured defaults and preserves stored default selections', () => {
     assert.equal(normalizeStoredModel('codex', ''), '')
     assert.equal(normalizeModel('codex', ''), DEFAULT_CODEX_MODEL)
@@ -54,6 +60,9 @@ describe('model helpers', () => {
         IMAGEEDITOR_TOOL_MODEL,
         '',
         DEFAULT_CODEX_MODEL,
+        'gpt-5.6-terra',
+        'gpt-5.6-luna',
+        'gpt-5.5',
       ],
     )
     assert.deepEqual(
@@ -88,13 +97,16 @@ describe('model helpers', () => {
       getModelOptions('codex')
         .filter(isModelPickerOptionVisible)
         .map((option) => option.model),
-      ['', DEFAULT_CODEX_MODEL],
+      ['', DEFAULT_CODEX_MODEL, 'gpt-5.6-terra', 'gpt-5.6-luna', 'gpt-5.5'],
     )
   })
 
   it('resolves slash-command aliases to canonical model names', () => {
     assert.equal(resolveSlashModel('codex', 'gpt'), '')
-    assert.equal(resolveSlashModel('codex', '5.5'), DEFAULT_CODEX_MODEL)
+    assert.equal(resolveSlashModel('codex', '5.6'), DEFAULT_CODEX_MODEL)
+    assert.equal(resolveSlashModel('codex', 'terra'), 'gpt-5.6-terra')
+    assert.equal(resolveSlashModel('codex', 'luna'), 'gpt-5.6-luna')
+    assert.equal(resolveSlashModel('codex', '5.5'), 'gpt-5.5')
     assert.equal(resolveSlashModel('codex', 'git'), GIT_TOOL_MODEL)
     assert.equal(resolveSlashModel('codex', 'files'), FILETREE_TOOL_MODEL)
     assert.equal(resolveSlashModel('codex', 'brainstorm'), BRAINSTORM_TOOL_MODEL)

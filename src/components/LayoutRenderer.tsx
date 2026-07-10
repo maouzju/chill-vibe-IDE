@@ -8,6 +8,7 @@ import type {
   ProviderStatus,
 } from '../../shared/schema'
 import type { AppLanguage } from '../../shared/schema'
+import type { CodexChatSettings } from '../../shared/codex-chat-settings'
 import type { CardRecoveryStatus } from '../stream-recovery-feedback'
 import type { QueuedSendSummary, SendMessageOptions } from './deferred-send-queue'
 import { PaneView } from './PaneView'
@@ -20,6 +21,7 @@ type LayoutRendererProps = {
   language: AppLanguage
   systemPrompt: string
   modelPromptRules?: ModelPromptRule[]
+  codexChatSettings?: CodexChatSettings
   crossProviderSkillReuseEnabled: boolean
   musicAlbumCoverEnabled: boolean
   weatherCity: string

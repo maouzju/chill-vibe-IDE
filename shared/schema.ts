@@ -448,6 +448,12 @@ export const editorSettingsSchema = z.object({
 })
 export type EditorSettings = z.infer<typeof editorSettingsSchema>
 
+export const codexPersonalitySettingSchema = z.enum(['default', 'none', 'friendly', 'pragmatic'])
+export type CodexPersonalitySetting = z.infer<typeof codexPersonalitySettingSchema>
+
+export const codexPersonalitySchema = z.enum(['none', 'friendly', 'pragmatic'])
+export type CodexPersonality = z.infer<typeof codexPersonalitySchema>
+
 export const appSettingsSchema = z.object({
   language: appLanguageSchema.default('zh-CN'),
   theme: themeSchema.default('dark'),
@@ -494,6 +500,8 @@ export const appSettingsSchema = z.object({
   weatherCity: z.string().default(''),
   systemPrompt: z.string().default(defaultSystemPrompt),
   modelPromptRules: z.array(modelPromptRuleSchema).default([]),
+  codexPersonality: codexPersonalitySettingSchema.default('default'),
+  codexFastMode: z.boolean().default(false),
   requestModels: requestModelSettingsSchema.default({
     codex: DEFAULT_CODEX_MODEL,
     claude: DEFAULT_CLAUDE_MODEL,
@@ -575,6 +583,8 @@ export const appStateSchema = z.object({
     weatherCity: '',
     systemPrompt: defaultSystemPrompt,
     modelPromptRules: [],
+    codexPersonality: 'default',
+    codexFastMode: false,
     requestModels: {
       codex: DEFAULT_CODEX_MODEL,
       claude: DEFAULT_CLAUDE_MODEL,
@@ -778,6 +788,8 @@ export const chatRequestSchema = z.object({
   sandboxMode: codexSandboxModeSchema.optional(),
   approvalPolicy: codexApprovalPolicySchema.optional(),
   networkAccessEnabled: z.boolean().optional(),
+  personality: codexPersonalitySchema.optional(),
+  serviceTier: z.literal('priority').optional(),
 }).refine((value) => {
   const hasPrompt = value.prompt.trim().length > 0
   const hasAttachments = value.attachments.length > 0

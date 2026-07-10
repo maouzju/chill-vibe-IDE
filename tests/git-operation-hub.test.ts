@@ -53,10 +53,12 @@ const createFakeDeps = () => {
   let streamHandlers: StreamHandlers | null = null
   let streamClosedCount = 0
   const stoppedStreams: string[] = []
+  const chatRequests: Record<string, unknown>[] = []
 
   const deps: GitOperationHubDeps = {
-    requestChat: async () => {
+    requestChat: async (request) => {
       calls.push('requestChat')
+      chatRequests.push(request)
       return { streamId: 'stream-1' }
     },
     openChatStream: (_streamId: string, handlers: StreamHandlers) => {
@@ -103,6 +105,7 @@ const createFakeDeps = () => {
     getStreamHandlers: () => streamHandlers,
     getStreamClosedCount: () => streamClosedCount,
     stoppedStreams,
+    chatRequests,
   }
 }
 
@@ -156,6 +159,23 @@ test('agent analysis survives subscriber detach (card unmount) and reattach sees
   const snapshot = hub.getSnapshot(ws)
   assert.equal(snapshot.agentPanelOpen, true)
   assert.equal(snapshot.agentPhase.kind, 'result')
+})
+
+test('agent analysis forwards Codex personality and Fast settings', async () => {
+  const fake = createFakeDeps()
+  const hub = createGitOperationHub(fake.deps)
+  const ws = 'D:\\repo'
+
+  await hub.openAgentAnalysis({
+    ...createContext(ws),
+    codexChatSettings: {
+      codexPersonality: 'pragmatic',
+      codexFastMode: true,
+    },
+  }, createGitStatus())
+
+  assert.equal(fake.chatRequests[0]?.personality, 'pragmatic')
+  assert.equal(fake.chatRequests[0]?.serviceTier, 'priority')
 })
 
 test('executeAgentStrategy runs every commit to completion with no subscribers attached', async () => {

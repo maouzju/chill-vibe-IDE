@@ -9,6 +9,7 @@ import type {
   SessionHistoryEntry,
 } from '../../shared/schema'
 import type { CardRecoveryStatus } from '../stream-recovery-feedback'
+import type { CodexChatSettings } from '../../shared/codex-chat-settings'
 import type { QueuedSendSummary } from './deferred-send-queue'
 
 type WorkspaceColumnMemoProps = {
@@ -17,6 +18,7 @@ type WorkspaceColumnMemoProps = {
   language: AppLanguage
   systemPrompt: string
   modelPromptRules?: ModelPromptRule[]
+  codexChatSettings?: CodexChatSettings
   crossProviderSkillReuseEnabled: boolean
   musicAlbumCoverEnabled: boolean
   weatherCity: string
@@ -42,6 +44,7 @@ type PaneViewMemoProps = {
   language: AppLanguage
   systemPrompt: string
   modelPromptRules?: ModelPromptRule[]
+  codexChatSettings?: CodexChatSettings
   crossProviderSkillReuseEnabled: boolean
   musicAlbumCoverEnabled: boolean
   weatherCity: string
@@ -106,6 +109,7 @@ export const areWorkspaceColumnPropsEqual = (
   previous.language === next.language &&
   previous.systemPrompt === next.systemPrompt &&
   previous.modelPromptRules === next.modelPromptRules &&
+  previous.codexChatSettings === next.codexChatSettings &&
   previous.crossProviderSkillReuseEnabled === next.crossProviderSkillReuseEnabled &&
   previous.musicAlbumCoverEnabled === next.musicAlbumCoverEnabled &&
   previous.weatherCity === next.weatherCity &&
@@ -159,6 +163,7 @@ export const arePaneViewPropsEqual = (previous: PaneViewMemoProps, next: PaneVie
   previous.language === next.language &&
   previous.systemPrompt === next.systemPrompt &&
   previous.modelPromptRules === next.modelPromptRules &&
+  previous.codexChatSettings === next.codexChatSettings &&
   previous.crossProviderSkillReuseEnabled === next.crossProviderSkillReuseEnabled &&
   previous.musicAlbumCoverEnabled === next.musicAlbumCoverEnabled &&
   previous.weatherCity === next.weatherCity &&

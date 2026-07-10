@@ -243,6 +243,8 @@ const clampScale = (value: unknown, min: number, max: number, fallback: number) 
 }
 
 const normalizeText = (value: unknown) => (typeof value === 'string' ? value.trim() : '')
+const normalizeCodexPersonality = (value: unknown): AppSettings['codexPersonality'] =>
+  value === 'none' || value === 'friendly' || value === 'pragmatic' ? value : 'default'
 const normalizeGitAgentModel = (value: unknown, fallback: string) => {
   const trimmed = normalizeText(value)
 
@@ -518,6 +520,8 @@ export const createDefaultSettings = (language: AppLanguage = defaultAppLanguage
   weatherCity: '',
   systemPrompt: defaultSystemPrompt,
   modelPromptRules: [],
+  codexPersonality: 'default',
+  codexFastMode: false,
   gitAgentModel: DEFAULT_GIT_AGENT_MODEL,
   requestModels: {
     codex: DEFAULT_CODEX_MODEL,
@@ -642,6 +646,8 @@ export const normalizeAppSettings = (settings?: Partial<AppSettings> | null): Ap
     weatherCity: normalizeText(settings?.weatherCity) || defaults.weatherCity,
     systemPrompt: normalizeSystemPrompt(settings?.systemPrompt),
     modelPromptRules: normalizeModelPromptRules(settings?.modelPromptRules),
+    codexPersonality: normalizeCodexPersonality(settings?.codexPersonality),
+    codexFastMode: typeof settings?.codexFastMode === 'boolean' ? settings.codexFastMode : false,
     gitAgentModel: normalizeGitAgentModel(settings?.gitAgentModel, defaults.gitAgentModel),
     lastModel: settings?.lastModel
       ? {

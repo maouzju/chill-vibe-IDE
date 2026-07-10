@@ -79,6 +79,13 @@ export const PlusIcon = (props: SVGProps<SVGSVGElement>) => (
   </BaseIcon>
 )
 
+export const PhoneMonitorIcon = (props: SVGProps<SVGSVGElement>) => (
+  <BaseIcon {...props}>
+    <rect x="7" y="3" width="10" height="18" rx="2" />
+    <path d="M11 17.5h2" strokeLinecap="round" />
+  </BaseIcon>
+)
+
 export const RefreshIcon = (props: SVGProps<SVGSVGElement>) => (
   <BaseIcon {...props}>
     <path d="M20 11a8 8 0 1 0 2 5.3" />

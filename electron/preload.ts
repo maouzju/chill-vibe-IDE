@@ -122,6 +122,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
   getAttachmentUrl: getAttachmentProtocolUrl,
   getPathForFile: (file: File) => webUtils.getPathForFile(file),
 
+  // ── Remote Monitor ─────────────────────────────────────────────────────────
+  startRemoteMonitor: () => ipcRenderer.invoke('desktop:remote-monitor-start'),
+  stopRemoteMonitor: () => ipcRenderer.invoke('desktop:remote-monitor-stop'),
+  fetchRemoteMonitorStatus: () => ipcRenderer.invoke('desktop:remote-monitor-status'),
+
   // ── Music ──────────────────────────────────────────────────────────────────
   fetchMusicLoginStatus: () => ipcRenderer.invoke('desktop:music-login-status'),
   createMusicQrLogin: () => ipcRenderer.invoke('desktop:music-qr-create'),

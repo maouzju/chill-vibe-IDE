@@ -6,8 +6,9 @@ import type { AddressInfo } from 'node:net'
 import { getModelOptions, isModelPickerOptionVisible } from '../shared/models.js'
 import { getReasoningOptionsForModel } from '../shared/reasoning.js'
 import { remoteMonitorCommandSchema, type RemoteMonitorCommand } from '../shared/schema.js'
-import type { Provider } from '../shared/schema.js'
+import type { ChatMessage, Provider } from '../shared/schema.js'
 import type { ActiveStreamView, ChatStreamTapEvent } from './chat-stream-tap.js'
+import { compactSessionHistoryMessagesForTransfer } from './session-history-compaction.js'
 import { renderRemoteMonitorPage } from './remote-monitor-page.js'
 
 // 手机远程监工模式：主进程内的 HTTP/SSE 服务。手机浏览器扫码打开后实时
@@ -37,8 +38,21 @@ export type RemoteMonitorSnapshot = {
   }>
 }
 
+// 手机详情页的历史转录条目：落库消息经 transfer 压缩后的轻量映射。
+// activity 就是持久化的 StreamActivity 形状，手机页面 renderActivity 直接吃。
+export type RemoteMonitorHistoryEntry = {
+  id: string
+  role: string
+  content: string
+  itemId?: string
+  kind?: string
+  activity?: unknown
+}
+
 export type RemoteMonitorDeps = {
   loadSnapshot: () => Promise<RemoteMonitorSnapshot>
+  // 返回 null 表示卡不存在（HTTP 层回 404）。
+  loadCardHistory: (cardId: string) => Promise<RemoteMonitorHistoryEntry[] | null>
   tapStreams: (listener: (event: ChatStreamTapEvent) => void) => () => void
   listActiveStreams: () => ActiveStreamView[]
   // 把手机写命令递给渲染进程执行；返回 false 表示当前没有任何渲染窗口
@@ -139,6 +153,34 @@ export const buildRemoteMonitorSnapshot = (state: SnapshotSourceState): RemoteMo
     }),
   })),
 })
+
+// 历史转录出门前统一走 session-history-compaction 的 transfer 压缩（消息数
+// 上限 + command/structuredData 字段级截断），再映射成手机端可直接渲染的
+// 轻量条目 —— 与快照同一条红线：绝不把全量转录发出程序边界（pitfall 183）。
+export const buildRemoteMonitorCardHistory = (
+  messages: ChatMessage[],
+): RemoteMonitorHistoryEntry[] =>
+  compactSessionHistoryMessagesForTransfer(messages)
+    .map((message) => {
+      let activity: unknown
+      if (message.meta?.structuredData) {
+        try {
+          activity = JSON.parse(message.meta.structuredData)
+        } catch {
+          activity = undefined
+        }
+      }
+
+      return {
+        id: message.id,
+        role: message.role,
+        content: message.content,
+        itemId: message.meta?.itemId,
+        kind: message.meta?.kind,
+        activity,
+      }
+    })
+    .filter((entry) => entry.content.trim().length > 0 || entry.activity !== undefined)
 
 const maxActionBodyBytes = 64 * 1024
 
@@ -353,6 +395,35 @@ export const createRemoteMonitorManager = (deps: RemoteMonitorDeps) => {
         .catch(() => {
           response.writeHead(500, { 'Content-Type': 'application/json; charset=utf-8' })
           response.end(JSON.stringify({ message: 'Snapshot unavailable.' }))
+        })
+      return
+    }
+
+    if (url.pathname === '/api/history') {
+      const cardId = url.searchParams.get('cardId')
+      if (!cardId) {
+        response.writeHead(400, { 'Content-Type': 'application/json; charset=utf-8' })
+        response.end(JSON.stringify({ message: 'cardId is required.' }))
+        return
+      }
+
+      void deps
+        .loadCardHistory(cardId)
+        .then((messages) => {
+          if (!messages) {
+            response.writeHead(404, { 'Content-Type': 'application/json; charset=utf-8' })
+            response.end(JSON.stringify({ message: 'Card not found.' }))
+            return
+          }
+          response.writeHead(200, {
+            'Content-Type': 'application/json; charset=utf-8',
+            'Cache-Control': 'no-store',
+          })
+          response.end(JSON.stringify({ messages }))
+        })
+        .catch(() => {
+          response.writeHead(500, { 'Content-Type': 'application/json; charset=utf-8' })
+          response.end(JSON.stringify({ message: 'History unavailable.' }))
         })
       return
     }

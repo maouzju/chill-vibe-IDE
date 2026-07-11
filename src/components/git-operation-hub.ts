@@ -600,7 +600,9 @@ export const createGitOperationHub = (deps: GitOperationHubDeps) => {
     if (!workspacePath.trim()) return
     const text = getGitLocaleText(language)
 
-    patch(workspacePath, { syncPanelOpen: false, syncStep: { kind: 'pull' } })
+    // pull 走远程网络可能耗时数秒到数十秒，面板必须在点击瞬间就打开显示进度，
+    // 否则用户看到的就是"点了同步没反应"。blocked 分支再把面板收回去。
+    patch(workspacePath, { syncPanelOpen: true, syncStep: { kind: 'pull' } })
 
     try {
       const result = await deps.pullGitChanges({ workspacePath })
@@ -608,6 +610,7 @@ export const createGitOperationHub = (deps: GitOperationHubDeps) => {
         patch(workspacePath, {
           lastStatus: result.status,
           blockedFiles: result.blockedFiles,
+          syncPanelOpen: false,
           syncStep: { kind: 'idle' },
         })
         return

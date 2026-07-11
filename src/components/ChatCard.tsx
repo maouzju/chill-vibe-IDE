@@ -2919,7 +2919,6 @@ const ChatCardView = ({
     isToolCard,
     hasWorkspacePath,
     slashCommandsEnabled,
-    slashQuery,
   })
 
   useEffect(() => {

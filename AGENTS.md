@@ -468,6 +468,7 @@ A living list of traps that have wasted time before. **When you hit a new pitfal
 
 | 191 | 用 junction 把主 checkout 的 `node_modules` 链进 worktree 后，在 worktree 里跑 `pnpm add` 会直接失败（`ERR_PNPM_UNEXPECTED_VIRTUAL_STORE`：virtual store 位置与 worktree 不符） | 给 worktree 加依赖要在主 checkout 执行 `pnpm add`（node_modules 本就共享），再把 `package.json`/`pnpm-lock.yaml` 复制进 worktree 并 `git checkout --` 还原主 checkout；删 worktree 前先用 `cmd /c rmdir` 摘掉 junction 链接点，防止递归删除跟进主 checkout 的真实依赖。 |
 | 192 | `os.networkInterfaces()` 里第一个非 internal IPv4 常是 Clash/VPN 的 TUN 虚拟网卡（`198.18.0.0/15` benchmark 保留段）或 link-local（`169.254.*`），拿它拼局域网 URL/二维码时手机根本路由不到 | 对外广播本机地址必须按网段打分挑选（`192.168.*` > `10.*` > `172.16-31.*`，TUN/link-local 垫底），见 `server/remote-monitor.ts` 的 `pickLanIPv4`，回归钉在 `tests/remote-monitor.test.ts`。 |
+| 193 | Claude slash-command discovery launches a real CLI process and can take 1-2 seconds | Prewarm discovery for the active chat card, keep native Claude commands cached per workspace/language, and do not let one workspace's short-lived renderer cache evict another workspace's entry; otherwise opening `/` repeatedly feels blocked even though skill scanning itself is fast. |
 
 ### Self-maintenance rule
 

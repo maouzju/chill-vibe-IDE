@@ -42,22 +42,20 @@ test('slash command loader only starts again when the effective request changes'
   )
 })
 
-test('remote slash command discovery stays lazy until the composer is actually typing a slash command', () => {
+test('remote slash command discovery prewarms for the active chat card before slash typing', () => {
   assert.equal(
     shouldLoadRemoteSlashCommands({
       isToolCard: false,
       hasWorkspacePath: true,
       slashCommandsEnabled: true,
-      slashQuery: null,
     }),
-    false,
+    true,
   )
   assert.equal(
     shouldLoadRemoteSlashCommands({
       isToolCard: false,
       hasWorkspacePath: true,
       slashCommandsEnabled: true,
-      slashQuery: '',
     }),
     true,
   )
@@ -66,7 +64,6 @@ test('remote slash command discovery stays lazy until the composer is actually t
       isToolCard: true,
       hasWorkspacePath: true,
       slashCommandsEnabled: true,
-      slashQuery: '',
     }),
     false,
   )

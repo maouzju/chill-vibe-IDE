@@ -258,6 +258,42 @@ test('fetchSlashCommands caches separately when cross-provider skill reuse chang
   assert.equal(disabled[0]?.name, 'check-all')
 })
 
+test('fetchSlashCommands keeps warm entries for multiple chat workspaces', async () => {
+  const requests: string[] = []
+
+  setWindow({
+    electronAPI: {
+      fetchSlashCommands: async (request) => {
+        requests.push(request.workspacePath)
+        return [
+          {
+            name: request.workspacePath.endsWith('one') ? 'workspace-one' : 'workspace-two',
+            description: 'Skill',
+            source: 'skill',
+          },
+        ]
+      },
+    },
+  } as ElectronBridgeWindow)
+
+  const request = (workspacePath: string) => fetchSlashCommands({
+    provider: 'claude',
+    workspacePath,
+    language: 'en',
+    crossProviderSkillReuseEnabled: true,
+  })
+
+  await request('D:/workspace/slash-cache-multi-one')
+  await request('D:/workspace/slash-cache-multi-two')
+  const firstWorkspaceAgain = await request('D:/workspace/slash-cache-multi-one')
+
+  assert.deepEqual(requests, [
+    'D:/workspace/slash-cache-multi-one',
+    'D:/workspace/slash-cache-multi-two',
+  ])
+  assert.equal(firstWorkspaceAgain[0]?.name, 'workspace-one')
+})
+
 test('fetchGitStatusPreview reads lightweight Git metadata through the Electron bridge', async () => {
   const requests: string[] = []
 

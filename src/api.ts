@@ -505,17 +505,27 @@ export const fetchCommitDiff = async (
   return readDesktop(() => desktopFetchCommitDiff(parsed), gitCommitDiffResponseSchema)
 }
 
-const slashCommandCache = new Map<string, Promise<SlashCommand[]>>()
+type SlashCommandCacheEntry = {
+  expiresAt: number
+  promise: Promise<SlashCommand[]>
+}
+
+const slashCommandCache = new Map<string, SlashCommandCacheEntry>()
 const slashCommandCacheTtlMs = 5_000
+const slashCommandCacheMaxEntries = 32
 
 export const fetchSlashCommands = async (request: SlashCommandRequest): Promise<SlashCommand[]> => {
   const parsed = slashCommandRequestSchema.parse(request)
-  const cacheBucket = Math.floor(Date.now() / slashCommandCacheTtlMs)
-  const cacheKey = `${parsed.provider}:${parsed.workspacePath}:${parsed.language}:${parsed.crossProviderSkillReuseEnabled}:${cacheBucket}`
+  const now = Date.now()
+  const cacheKey = `${parsed.provider}:${parsed.workspacePath}:${parsed.language}:${parsed.crossProviderSkillReuseEnabled}`
   const cached = slashCommandCache.get(cacheKey)
 
+  if (cached && cached.expiresAt > now) {
+    return cached.promise
+  }
+
   if (cached) {
-    return cached
+    slashCommandCache.delete(cacheKey)
   }
 
   const promise = (async () => {
@@ -530,12 +540,24 @@ export const fetchSlashCommands = async (request: SlashCommandRequest): Promise<
     throw error
   })
 
-  for (const key of slashCommandCache.keys()) {
-    if (key !== cacheKey) {
+  for (const [key, entry] of slashCommandCache) {
+    if (entry.expiresAt <= now) {
       slashCommandCache.delete(key)
     }
   }
-  slashCommandCache.set(cacheKey, promise)
+
+  while (slashCommandCache.size >= slashCommandCacheMaxEntries) {
+    const oldestKey = slashCommandCache.keys().next().value
+    if (typeof oldestKey !== 'string') {
+      break
+    }
+    slashCommandCache.delete(oldestKey)
+  }
+
+  slashCommandCache.set(cacheKey, {
+    expiresAt: now + slashCommandCacheTtlMs,
+    promise,
+  })
   return promise
 }
 

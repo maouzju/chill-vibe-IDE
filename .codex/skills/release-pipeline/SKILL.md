@@ -29,6 +29,7 @@ Reuse the verification posture from `../chill-vibe-full-regression/SKILL.md`, bu
    - if Playwright tooling noise from `AGENTS.md` blocks a clean run, capture the exact failure and continue with the strongest proven alternative only if the release is still honestly defensible
    - if a narrow failure looks pre-existing, prove that instead of guessing: reproduce the same test against `origin/main` in a temporary detached comparison worktree, then remove it. Only classify the failure as baseline noise when the release candidate's affected/targeted gates pass and the baseline shows the same failure.
    - when `test:full` exits early, run the unreached stages separately (`test:quality`, the strongest practical unit/Playwright gates, `test:electron`, and `build`). An early wrapper failure is not evidence that later gates passed.
+   - if the native unit stage stalls after producing passing cases, rerun it decoupled with `node --import tsx --test --test-force-exit tests/index.test.ts`; then run the affected tests directly and compare any remaining failure against `origin/main` before classifying it as harness or baseline noise.
 4. Bump the version only after the code is judged releasable:
    - default to the next patch version unless the diff clearly justifies a bigger bump
    - update `package.json` and any other repo-owned version references that must stay in sync

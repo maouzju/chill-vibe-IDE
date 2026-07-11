@@ -1,5 +1,4 @@
 import {
-  startTransition,
   useCallback,
   useEffect,
   useMemo,
@@ -216,7 +215,11 @@ import { buildArchiveRecallSnapshot } from './archive-recall'
 import { getOnboardingText, getPanelText, getResilientProxyText, getTopTabText } from './app-panel-text'
 import { AppButton } from './components/AppButton'
 import { dispatchComposerFocusRequest } from './components/composer-focus'
-import { installStuckPaneForensics } from './diagnostics/stuck-pane-forensics'
+import {
+  installStuckPaneForensics,
+  recordAppliedActionsForForensics,
+  registerForensicsAppStateTruth,
+} from './diagnostics/stuck-pane-forensics'
 import {
   getStableSettingsPanelColumnCount,
   splitSettingsGroupsIntoStableColumns,
@@ -752,6 +755,14 @@ function App() {
   // symptom-guessed (docs/specs/composer-focus-loss/investigation.md §3.8).
   useEffect(() => installStuckPaneForensics(), [])
 
+  // The panel-unmount probe needs the data-layer truth (appStateRef, updated
+  // synchronously in applyActions) to tell "render dropped a tab the data
+  // still holds" (React lane divergence) apart from a real tab removal.
+  useEffect(() => {
+    registerForensicsAppStateTruth(() => appStateRef.current)
+    return () => registerForensicsAppStateTruth(null)
+  }, [])
+
   const handleBoardWheelCapture = useCallback((event: WheelEvent<HTMLElement>) => {
     if (Math.abs(event.deltaY) < Math.abs(event.deltaX) || event.deltaY === 0) {
       return
@@ -1044,6 +1055,7 @@ function App() {
 
     const nextState = actions.reduce(ideReducer, appStateRef.current)
     appStateRef.current = nextState
+    recordAppliedActionsForForensics(actions.map((action) => action.type))
     if (actions.some((action) => shouldSyncRuntimeSettings(action))) {
       void syncRuntimeSettings(nextState.settings).catch(() => undefined)
     }
@@ -2671,15 +2683,16 @@ function App() {
         return
       }
 
-      startTransition(() => {
-        const action: IdeAction = {
-          type: 'appendMessages',
-          columnId,
-          cardId,
-          messages,
-        }
-        persistAfterAction(action.type, applyAction(action))
-      })
+      // Urgent on purpose — see flushDeltaBuffer: reducer updates must stay in
+      // one React lane or interleaved commits can render rebased intermediate
+      // states (2026-07-11 panel delete/remount oscillation).
+      const action: IdeAction = {
+        type: 'appendMessages',
+        columnId,
+        cardId,
+        messages,
+      }
+      persistAfterAction(action.type, applyAction(action))
     },
     [applyAction, persistAfterAction],
   )
@@ -2746,9 +2759,15 @@ function App() {
       return
     }
 
-    startTransition(() => {
-      persistAfterActions(actions, applyActions(actions))
-    })
+    // Deliberately NOT wrapped in startTransition (same reasoning as the
+    // activity flush above): transition-lane reducer updates split the app
+    // into two React lanes, and interleaved urgent commits then render from a
+    // rebased intermediate state. Forensics dump 2026-07-11T07-19 caught React
+    // commit-deleting the focused `pane-tab-panel.is-active` and remounting
+    // the same tabId in a ~3s oscillation during exactly such a streaming
+    // window, with zero tab-removing actions in the reducer. The flush is
+    // already throttled (80-180ms adaptive), so an urgent commit is cheap.
+    persistAfterActions(actions, applyActions(actions))
   }, [applyActions, persistAfterActions])
 
   const enqueueAssistantDelta = useCallback(

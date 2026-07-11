@@ -714,3 +714,105 @@ test('main process persists forensics dumps and enables devtools via F12', async
   const preload = await readFile(path.join(process.cwd(), 'electron', 'preload.ts'), 'utf8')
   assert.match(preload, /writeForensicsDump/)
 })
+
+// ── panel unmount probe (2026-07-11 dump: React commitDeletion removed the
+// focused `pane-tab-panel.is-active` itself — connectedAfterMicrotask=false,
+// detachedRootPath=the panel div — while the reducer has no tab-removal path
+// in the streaming window. The probe records, at the exact unmount moment,
+// whether the DATA layer still contains the tab: a divergence (render dropped
+// it, data kept it) is the React-lane smoking gun; agreement names the action.)
+
+test('pushPanelUnmountEntry keeps the newest entries within capacity', async () => {
+  const { pushPanelUnmountEntry, panelUnmountCapacity } = await import(
+    '../src/diagnostics/stuck-pane-forensics'
+  )
+  let ledger: import('../src/diagnostics/stuck-pane-forensics').PanelUnmountEntry[] = []
+  for (let index = 0; index < panelUnmountCapacity + 5; index += 1) {
+    ledger = pushPanelUnmountEntry(ledger, {
+      atMs: index,
+      tabId: `tab-${index}`,
+      paneId: 'pane-1',
+      activeAtUnmount: true,
+      dataLayerHasTab: null,
+      dataLayerHasCard: null,
+    })
+  }
+  assert.equal(ledger.length, panelUnmountCapacity)
+  assert.equal(ledger[0]?.tabId, 'tab-5')
+  assert.equal(ledger.at(-1)?.tabId, `tab-${panelUnmountCapacity + 4}`)
+})
+
+test('locateTabInAppState reports layout membership and card presence independently', async () => {
+  const { locateTabInAppState } = await import('../src/diagnostics/stuck-pane-forensics')
+  const state = {
+    columns: [
+      {
+        cards: { 'tab-a': {}, 'tab-orphan-card': {} },
+        layout: {
+          type: 'split' as const,
+          children: [
+            { type: 'pane' as const, id: 'p1', tabs: ['tab-a'] },
+            { type: 'pane' as const, id: 'p2', tabs: ['tab-layout-only'] },
+          ],
+        },
+      },
+    ],
+  }
+  assert.deepEqual(locateTabInAppState(state, 'tab-a'), {
+    tabInLayout: true,
+    cardPresent: true,
+  })
+  // Layout references a tab whose card object vanished — the `if (!card)
+  // return null` branch in PaneView would delete the panel for exactly this.
+  assert.deepEqual(locateTabInAppState(state, 'tab-layout-only'), {
+    tabInLayout: true,
+    cardPresent: false,
+  })
+  assert.deepEqual(locateTabInAppState(state, 'tab-orphan-card'), {
+    tabInLayout: false,
+    cardPresent: true,
+  })
+  assert.deepEqual(locateTabInAppState(state, 'tab-gone'), {
+    tabInLayout: false,
+    cardPresent: false,
+  })
+})
+
+test('recordPanelUnmountForForensics interrogates the registered data-layer truth', async () => {
+  const {
+    registerForensicsAppStateTruth,
+    recordPanelUnmountForForensics,
+    drainPanelUnmountLedgerForTest,
+  } = await import('../src/diagnostics/stuck-pane-forensics')
+  drainPanelUnmountLedgerForTest()
+  registerForensicsAppStateTruth(() => ({
+    columns: [
+      {
+        cards: { 'tab-live': {} },
+        layout: { type: 'pane' as const, id: 'p1', tabs: ['tab-live'] },
+      },
+    ],
+  }))
+  recordPanelUnmountForForensics({ tabId: 'tab-live', paneId: 'p1', activeAtUnmount: true })
+  recordPanelUnmountForForensics({ tabId: 'tab-dead', paneId: 'p1', activeAtUnmount: false })
+  const ledger = drainPanelUnmountLedgerForTest()
+  assert.equal(ledger.length, 2)
+  // Data layer still holds the tab the render just dropped -> lane divergence.
+  assert.equal(ledger[0]?.dataLayerHasTab, true)
+  assert.equal(ledger[0]?.dataLayerHasCard, true)
+  assert.equal(ledger[1]?.dataLayerHasTab, false)
+  assert.equal(ledger[1]?.dataLayerHasCard, false)
+  registerForensicsAppStateTruth(null)
+})
+
+test('applied-action ledger keeps the newest batches within capacity', async () => {
+  const { pushAppliedActionsEntry, appliedActionsCapacity } = await import(
+    '../src/diagnostics/stuck-pane-forensics'
+  )
+  let ledger: import('../src/diagnostics/stuck-pane-forensics').AppliedActionsEntry[] = []
+  for (let index = 0; index < appliedActionsCapacity + 3; index += 1) {
+    ledger = pushAppliedActionsEntry(ledger, { atMs: index, types: ['updateCard'] })
+  }
+  assert.equal(ledger.length, appliedActionsCapacity)
+  assert.equal(ledger[0]?.atMs, 3)
+})

@@ -237,6 +237,30 @@ test('sync flow completes pull -> push in the background and reattach sees done'
   assert.ok(fake.calls.includes('pushGitChanges'))
 })
 
+test('beginSync opens the panel with pull progress immediately, before pull resolves', async () => {
+  const fake = createFakeDeps()
+  let resolvePull!: (value: { status: GitStatus }) => void
+  fake.deps.pullGitChanges = async () =>
+    new Promise<{ status: GitStatus }>((resolve) => {
+      resolvePull = resolve
+    })
+  const hub = createGitOperationHub(fake.deps)
+  const ws = 'D:\\repo'
+
+  const syncPromise = hub.beginSync(createContext(ws))
+  await flushAsync()
+
+  // pull 还在网络阶段：面板必须已经打开并显示 pull 进度，否则用户看到"点了没反应"
+  const midSnapshot = hub.getSnapshot(ws)
+  assert.equal(midSnapshot.syncPanelOpen, true)
+  assert.equal(midSnapshot.syncStep.kind, 'pull')
+
+  resolvePull({ status: createGitStatus() })
+  await syncPromise
+
+  assert.equal(hub.getSnapshot(ws).syncStep.kind, 'done')
+})
+
 test('sync flow surfaces blocked files instead of opening the panel', async () => {
   const fake = createFakeDeps()
   fake.deps.pullGitChanges = async () => ({

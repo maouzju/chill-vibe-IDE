@@ -31,13 +31,11 @@ export const shouldLoadRemoteSlashCommands = ({
   isToolCard,
   hasWorkspacePath,
   slashCommandsEnabled,
-  slashQuery,
 }: {
   isToolCard: boolean
   hasWorkspacePath: boolean
   slashCommandsEnabled: boolean
-  slashQuery: string | null
-}) => !isToolCard && hasWorkspacePath && slashCommandsEnabled && slashQuery !== null
+}) => !isToolCard && hasWorkspacePath && slashCommandsEnabled
 
 export const resolveSlashCommandsLoadKeyAfterCancel = (
   currentLoadKey: string | null,

@@ -60,6 +60,7 @@ import {
   expandSkillSlashPrompt,
   getReusableSkillProviders,
 } from './provider-skills.js'
+import { createAsyncTtlCache } from './provider-slash-command-cache.js'
 import { loadState } from './state-store.js'
 import { proxyStats, type ProxyStatsEvent } from './proxy-stats-store.js'
 import type { ResilientProxyRuntimeConfig } from './resilient-proxy.js'
@@ -173,6 +174,10 @@ const providerCommandPreferences: Record<Provider, string[]> =
 
 const commandLookupTool = process.platform === 'win32' ? 'where.exe' : 'which'
 const slashCommandDiscoveryTimeoutMs = 6_000
+const claudeSlashCommandCacheTtlMs = 5 * 60_000
+const claudeSlashCommandCache = createAsyncTtlCache<SlashCommand[]>({
+  ttlMs: claudeSlashCommandCacheTtlMs,
+})
 const defaultProviderBaseUrls: Record<Provider, string> = {
   codex: 'https://api.openai.com/v1',
   claude: 'https://api.anthropic.com',
@@ -1123,6 +1128,22 @@ const discoverClaudeSlashCommands = async (
   })
 }
 
+const getCachedClaudeSlashCommands = (
+  workspacePath: string,
+  language: AppLanguage,
+) => {
+  const normalizedWorkspacePath = resolvePath(workspacePath.trim())
+  const workspaceKey = process.platform === 'win32'
+    ? normalizedWorkspacePath.toLowerCase()
+    : normalizedWorkspacePath
+  const cacheKey = `${workspaceKey}\u0000${language}`
+
+  return claudeSlashCommandCache.get(
+    cacheKey,
+    () => discoverClaudeSlashCommands(workspacePath, language),
+  )
+}
+
 const spawnProvider = async (
   provider: Provider,
   args: string[],
@@ -1206,7 +1227,7 @@ export const getProviderSlashCommands = async ({
   }
 
   if (provider === 'claude') {
-    const native = await discoverClaudeSlashCommands(workspacePath, normalizedLanguage)
+    const native = await getCachedClaudeSlashCommands(workspacePath, normalizedLanguage)
     return dedupeSlashCommands([...local, ...skills, ...native])
   }
 

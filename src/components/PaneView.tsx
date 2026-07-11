@@ -33,7 +33,10 @@ import {
 } from './composer-focus'
 import { decideMisroutedTabPointerRescue, isPointerWithinRect } from './pane-tab-rescue'
 import { decideTabStripWheelScroll } from './pane-tab-wheel'
-import { notifyForensicsRescueEvent } from '../diagnostics/stuck-pane-forensics'
+import {
+  notifyForensicsRescueEvent,
+  recordPanelUnmountForForensics,
+} from '../diagnostics/stuck-pane-forensics'
 import type { QueuedSendSummary, SendMessageOptions } from './deferred-send-queue'
 import { arePaneViewPropsEqual } from './layout-memoization'
 import { getAutoReadCardId } from './pane-read-state'
@@ -292,6 +295,34 @@ const cardKeepsPaneRuntimeWhenInactive = (card: ChatCardState) =>
   card.model === GIT_TOOL_MODEL
 
 const dragHintExpiryMs = 1200
+
+// Forensics probe (dump 2026-07-11T07-19): React commitDeletion removed the
+// focused `pane-tab-panel.is-active` and remounted the same tabId moments
+// later, while the reducer has no tab-removal path in a streaming window. The
+// cleanup fires at the exact unmount commit and records whether the DATA
+// layer still holds the tab — divergence is the React-lane smoking gun.
+// Dependencies stay [tabId, paneId] only, so prop churn never fakes an
+// unmount; isActive rides a ref for the same reason.
+const PaneTabPanelUnmountProbe = ({
+  tabId,
+  paneId,
+  isActive,
+}: {
+  tabId: string
+  paneId: string
+  isActive: boolean
+}) => {
+  const activeRef = useRef(isActive)
+  useEffect(() => {
+    activeRef.current = isActive
+  })
+  useEffect(
+    () => () =>
+      recordPanelUnmountForForensics({ tabId, paneId, activeAtUnmount: activeRef.current }),
+    [tabId, paneId],
+  )
+  return null
+}
 
 const PaneViewView = ({
   column,
@@ -1244,6 +1275,7 @@ const PaneViewView = ({
               className={`pane-tab-panel${isActive ? ' is-active' : ''}`}
               hidden={!isActive}
             >
+              <PaneTabPanelUnmountProbe tabId={tabId} paneId={pane.id} isActive={isActive} />
               {isActive || keepInactiveRuntime ? (
                 <ChatCard
                   card={card}

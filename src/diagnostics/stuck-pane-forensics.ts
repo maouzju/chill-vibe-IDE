@@ -219,6 +219,146 @@ export const shouldRecordComposerAttributeMutation = (input: {
   return true
 }
 
+// ── panel unmount probe ──────────────────────────────────────────────────────
+// Dump 2026-07-11T07-19: React commitDeletion removed the focused
+// `pane-tab-panel.is-active` itself (focusout stack = react-dom removeChild,
+// connectedAfterMicrotask=false, detachedRootPath=the panel div), then the
+// same tabId remounted — 8 delete/rebuild oscillations in ~3s. The reducer has
+// no tab-removal path in a streaming window, so the next dump must answer ONE
+// question at the unmount instant: does the DATA layer (appStateRef truth)
+// still contain the tab the render just dropped? Divergence = a committed
+// render used a state missing the tab (React lane/rebase class); agreement =
+// a real action removed it, and the applied-actions ledger names it.
+
+export type PanelUnmountEntry = {
+  atMs: number
+  tabId: string
+  paneId: string
+  activeAtUnmount: boolean
+  // null = no truth getter registered (probe fired before App wiring).
+  dataLayerHasTab: boolean | null
+  dataLayerHasCard: boolean | null
+}
+
+export const panelUnmountCapacity = 20
+
+export const pushPanelUnmountEntry = (
+  ledger: PanelUnmountEntry[],
+  entry: PanelUnmountEntry,
+  capacity = panelUnmountCapacity,
+): PanelUnmountEntry[] => {
+  const next = [...ledger, entry]
+  return next.length > capacity ? next.slice(next.length - capacity) : next
+}
+
+// Minimal structural view of AppState so the walk stays node:test-able and
+// this module does not depend on the full schema types.
+type ForensicsLayoutNodeLike =
+  | { type: 'pane'; tabs: string[] }
+  | { type: 'split'; children: ForensicsLayoutNodeLike[] }
+
+export type ForensicsAppStateLike = {
+  columns: Array<{
+    cards: Record<string, unknown>
+    layout?: ForensicsLayoutNodeLike | null
+  }>
+}
+
+const layoutContainsTab = (node: ForensicsLayoutNodeLike | null | undefined, tabId: string): boolean => {
+  if (!node) {
+    return false
+  }
+  if (node.type === 'pane') {
+    return node.tabs.includes(tabId)
+  }
+  return node.children.some((child) => layoutContainsTab(child, tabId))
+}
+
+export const locateTabInAppState = (
+  state: ForensicsAppStateLike,
+  tabId: string,
+): { tabInLayout: boolean; cardPresent: boolean } => ({
+  tabInLayout: state.columns.some((column) => layoutContainsTab(column.layout, tabId)),
+  cardPresent: state.columns.some((column) => tabId in column.cards),
+})
+
+// Applied-action ledger: every reducer batch, so a real tab-removing action
+// (or a suspicious absence of any action around an unmount) is visible in the
+// same dump timeline.
+export type AppliedActionsEntry = {
+  atMs: number
+  types: string[]
+}
+
+export const appliedActionsCapacity = 40
+
+export const pushAppliedActionsEntry = (
+  ledger: AppliedActionsEntry[],
+  entry: AppliedActionsEntry,
+  capacity = appliedActionsCapacity,
+): AppliedActionsEntry[] => {
+  const next = [...ledger, entry]
+  return next.length > capacity ? next.slice(next.length - capacity) : next
+}
+
+// Module-level channels: the probe reports from React components and App's
+// reducer wiring, both outside installStuckPaneForensics' closure.
+let panelUnmountLedger: PanelUnmountEntry[] = []
+let appliedActionsLedger: AppliedActionsEntry[] = []
+let appStateTruthGetter: (() => ForensicsAppStateLike) | null = null
+
+export const registerForensicsAppStateTruth = (
+  getter: (() => ForensicsAppStateLike) | null,
+) => {
+  appStateTruthGetter = getter
+}
+
+export const recordPanelUnmountForForensics = (input: {
+  tabId: string
+  paneId: string
+  activeAtUnmount: boolean
+}) => {
+  let dataLayerHasTab: boolean | null = null
+  let dataLayerHasCard: boolean | null = null
+  if (appStateTruthGetter) {
+    try {
+      const located = locateTabInAppState(appStateTruthGetter(), input.tabId)
+      dataLayerHasTab = located.tabInLayout
+      dataLayerHasCard = located.cardPresent
+    } catch {
+      // Truth interrogation must never break an unmount.
+    }
+  }
+  panelUnmountLedger = pushPanelUnmountEntry(panelUnmountLedger, {
+    atMs: Math.round(globalThis.performance?.now() ?? 0),
+    tabId: input.tabId,
+    paneId: input.paneId,
+    activeAtUnmount: input.activeAtUnmount,
+    dataLayerHasTab,
+    dataLayerHasCard,
+  })
+}
+
+export const recordAppliedActionsForForensics = (types: string[]) => {
+  if (types.length === 0) {
+    return
+  }
+  appliedActionsLedger = pushAppliedActionsEntry(appliedActionsLedger, {
+    atMs: Math.round(globalThis.performance?.now() ?? 0),
+    types,
+  })
+}
+
+export const readPanelUnmountLedger = (): PanelUnmountEntry[] => panelUnmountLedger
+
+export const readAppliedActionsLedger = (): AppliedActionsEntry[] => appliedActionsLedger
+
+export const drainPanelUnmountLedgerForTest = (): PanelUnmountEntry[] => {
+  const drained = panelUnmountLedger
+  panelUnmountLedger = []
+  return drained
+}
+
 export const hasSilentFocusLossSignature = (
   ledger: FocusLedgerEntry[],
   focusIsVacant: boolean,
@@ -429,6 +569,8 @@ export type ForensicsSnapshot = {
   reactiveFocusKickCount?: number
   focusMethodCalls?: FocusMethodCallEntry[]
   composerAttrMutations?: ComposerAttributeMutationEntry[]
+  panelUnmounts?: PanelUnmountEntry[]
+  appliedActions?: AppliedActionsEntry[]
 }
 
 export type ForensicsSnapshotInput = Omit<ForensicsSnapshot, 'schema'>
@@ -739,6 +881,8 @@ export const installStuckPaneForensics = () => {
       reactiveFocusKickCount: countReactiveFocusKicks(focusLedger),
       focusMethodCalls,
       composerAttrMutations,
+      panelUnmounts: readPanelUnmountLedger(),
+      appliedActions: readAppliedActionsLedger(),
     })
     void persistSnapshot(snapshot)
   }

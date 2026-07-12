@@ -471,6 +471,8 @@ A living list of traps that have wasted time before. **When you hit a new pitfal
 | 193 | Claude slash-command discovery launches a real CLI process and can take 1-2 seconds | Prewarm discovery for the active chat card, keep native Claude commands cached per workspace/language, and do not let one workspace's short-lived renderer cache evict another workspace's entry; otherwise opening `/` repeatedly feels blocked even though skill scanning itself is fast. |
 | 194 | 把 reducer 提交包进 `startTransition` 会让应用状态分裂成两条 React lane：transition 渲染在重负载下可被 urgent 更新反复打断并饿数秒，交错的 urgent commit 则从 rebase 后的中间态渲染——2026-07-11 dump 实锤 React commitDeletion 把**当前聚焦的 `pane-tab-panel.is-active` 整树删除重建**（3 秒 8 次振荡，焦点反复掉 body），而数据层 reducer 全程没有任何删 tab 的 action；此前活动 flush 也发生过"工具卡只活在未提交 lane"的真实事故 | 本仓库所有走 `ideReducer` 的提交必须保持单一（urgent）lane，不要用 `startTransition` 包 `applyAction(s)`——delta/activity flush 本身已有节流，urgent commit 很便宜；组件内局部 setState 的 transition（如 GitToolCard）不受此限。另注意：**Chrome 删除聚焦子树时会派发 focusout(relatedTarget=null) 但不派发 blur**，"有 focusout 所以不是 remount"是错误排除法，要用 `connectedAfterMicrotask=false` + `detachedRootPath` 判 remount。 |
 
+| 195 | 测试里直接用 `getProviderSlashCommands({ provider: 'claude' })` 会启动真实 Claude CLI；临时工作区可能在进程退出前仍被占用，导致清理时报 Windows `EBUSY` | 只验证 Skill 映射时优先测 Codex 路径或直接测 Skill 发现层；必须测 Claude 原生命令时使用假的 Provider 命令并等待子进程完整退出后再删临时目录。 |
+
 ### Self-maintenance rule
 
 - When you encounter a new non-obvious failure mode — a test that fails for environmental reasons, a build step with hidden prerequisites, a runtime behavior that contradicts the docs — append a row to this table before you finish the task.

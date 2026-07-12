@@ -499,6 +499,128 @@ test('codex app-server injects opposite-provider workspace skills when cross-pro
   }
 })
 
+test('codex app-server does not inject a claude skill shadowed by a same-name codex skill', async () => {
+  const capturePath = path.join(
+    os.tmpdir(),
+    `chill-vibe-codex-cross-skill-shadow-${Date.now()}-${Math.random().toString(36).slice(2)}.jsonl`,
+  )
+
+  try {
+    let claudeShadowedSkillPath = ''
+
+    const outcome = await withFakeProviderCommand(
+      'codex',
+      buildFakeCodexAppServerScript(capturePath),
+      async (workspacePath) => {
+        const codexSkillDir = path.join(workspacePath, '.codex', 'skills', 'shared-review')
+        const claudeSkillDir = path.join(workspacePath, '.claude', 'skills', 'shared-review')
+        const claudeUniqueSkillDir = path.join(workspacePath, '.claude', 'skills', 'claude-only')
+        await mkdir(codexSkillDir, { recursive: true })
+        await mkdir(claudeSkillDir, { recursive: true })
+        await mkdir(claudeUniqueSkillDir, { recursive: true })
+        await writeFile(
+          path.join(codexSkillDir, 'SKILL.md'),
+          '---\nname: shared-review\ndescription: Codex-native review workflow\n---\n',
+          'utf8',
+        )
+        claudeShadowedSkillPath = path.join(claudeSkillDir, 'SKILL.md')
+        await writeFile(
+          claudeShadowedSkillPath,
+          '---\nname: shared-review\ndescription: Claude duplicate review workflow\n---\n',
+          'utf8',
+        )
+        await writeFile(
+          path.join(claudeUniqueSkillDir, 'SKILL.md'),
+          '---\nname: claude-only\ndescription: Claude-only workflow\n---\n',
+          'utf8',
+        )
+
+        return captureProviderOutcome(
+          createRequest({
+            provider: 'codex',
+            language: 'en',
+            workspacePath,
+            crossProviderSkillReuseEnabled: true,
+          }),
+        )
+      },
+    )
+
+    assert.deepEqual(outcome, { kind: 'done' })
+
+    const requests = (await readFile(capturePath, 'utf8'))
+      .trim()
+      .split(/\r?\n/)
+      .map((line) => JSON.parse(line) as { method?: string; params?: Record<string, unknown> })
+    const threadStart = requests.find((request) => request.method === 'thread/start')
+    const baseInstructions = String(threadStart?.params?.baseInstructions ?? '')
+
+    assert.match(baseInstructions, /claude-only \(claude\)/)
+    assert.doesNotMatch(baseInstructions, /shared-review \(claude\)/)
+    assert.ok(!baseInstructions.includes(claudeShadowedSkillPath))
+  } finally {
+    await rm(capturePath, { force: true }).catch(() => {})
+  }
+})
+
+test('explicit cross-provider skill invocation is not repeated in system instructions', async () => {
+  const capturePath = path.join(
+    os.tmpdir(),
+    `chill-vibe-codex-cross-skill-explicit-${Date.now()}-${Math.random().toString(36).slice(2)}.jsonl`,
+  )
+
+  try {
+    let skillPath = ''
+
+    const outcome = await withFakeProviderCommand(
+      'codex',
+      buildFakeCodexAppServerScript(capturePath),
+      async (workspacePath) => {
+        const skillDir = path.join(workspacePath, '.claude', 'skills', 'agent-reach')
+        await mkdir(skillDir, { recursive: true })
+        skillPath = path.join(skillDir, 'SKILL.md')
+        await writeFile(
+          skillPath,
+          '---\nname: agent-reach\ndescription: Search supported platforms\n---\n',
+          'utf8',
+        )
+
+        return captureProviderOutcome(
+          createRequest({
+            provider: 'codex',
+            language: 'en',
+            workspacePath,
+            prompt: '/agent-reach Find the latest docs.',
+            crossProviderSkillReuseEnabled: true,
+          }),
+        )
+      },
+    )
+
+    assert.deepEqual(outcome, { kind: 'done' })
+
+    const requests = (await readFile(capturePath, 'utf8'))
+      .trim()
+      .split(/\r?\n/)
+      .map((line) => JSON.parse(line) as { method?: string; params?: Record<string, unknown> })
+    const threadStart = requests.find((request) => request.method === 'thread/start')
+    const turnStart = requests.find((request) => request.method === 'turn/start')
+    const baseInstructions = String(threadStart?.params?.baseInstructions ?? '')
+    const input = Array.isArray(turnStart?.params?.input) ? turnStart.params.input : []
+    const promptText =
+      input.length > 0 && typeof input[0] === 'object' && input[0] !== null && 'text' in input[0]
+        ? String((input[0] as { text?: unknown }).text ?? '')
+        : ''
+
+    assert.ok(promptText.includes(skillPath))
+    assert.match(promptText, /Use \$agent-reach at /)
+    assert.doesNotMatch(baseInstructions, /agent-reach \(claude\)/)
+    assert.ok(!baseInstructions.includes(skillPath))
+  } finally {
+    await rm(capturePath, { force: true }).catch(() => {})
+  }
+})
+
 test('codex app-server skips opposite-provider skill injection when cross-provider reuse is disabled', async () => {
   const capturePath = path.join(
     os.tmpdir(),

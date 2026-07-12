@@ -15,7 +15,8 @@ Reuse the verification posture from `../chill-vibe-full-regression/SKILL.md`, bu
 
 1. Pre-flight — inspect repo state and rule out interference before touching anything:
    - `git status --short --branch`, `git diff --stat`, `git remote -v`, `gh auth status`
-   - read `package.json` version and `git tag --sort=-version:refname` (top few)
+   - read `package.json` version and `git tag --sort=-version:refname` (top few), then check the authoritative remote state with `gh release list --limit 5` or `git ls-remote --tags origin`; local tags can diverge from GitHub and the package version can lag an already-published release, so choose the next version above the highest published remote tag instead of trusting either source alone
+   - if `git fetch --tags` reports `would clobber existing tag`, do not force-rewrite tags during the release. Record the mismatch, use the remote tag/release state for versioning and collision checks, and leave unrelated local tag repair for a separate task.
    - **Concurrency check: `git reflog -8`.** If another agent made checkout/merge entries within the last few minutes, do NOT verify or release from the main checkout — a concurrent agent can switch HEAD mid-run, so a long `pnpm test:risk` silently validates the wrong tree (happened for v0.17.11: the merge result was checked out away 28s after merging). Instead: `git worktree add -b release/vX.Y.Z .claude/worktrees/<name> <commit>` (use `git rev-parse HEAD` for the commit if the current tree is the intended release state), `pnpm install` there, and run ALL remaining steps (verify, bump, commit, tag, push) from that worktree. Remove the worktree after the release.
 2. Audit the pending diff for release blockers before any commit:
    - look for secrets, tokens, auth headers, local absolute paths, debug-only noise, or unrelated files
@@ -28,6 +29,7 @@ Reuse the verification posture from `../chill-vibe-full-regression/SKILL.md`, bu
    - `pnpm test:risk` is acceptable mid-iteration, but the final pre-tag gate for a real release is `test:full`
    - if Playwright tooling noise from `AGENTS.md` blocks a clean run, capture the exact failure and continue with the strongest proven alternative only if the release is still honestly defensible
    - if a narrow failure looks pre-existing, prove that instead of guessing: reproduce the same test against `origin/main` in a temporary detached comparison worktree, then remove it. Only classify the failure as baseline noise when the release candidate's affected/targeted gates pass and the baseline shows the same failure.
+   - if the Node test stage prints its final assertions but the wrapper stays alive with no output or CPU because of leaked handles, terminate only that verified wrapper process tree and rerun the same suite with `node --import tsx --test --test-force-exit tests/index.test.ts` to obtain a trustworthy pass/fail summary. Do not treat assertion output without the runner summary as a green unit gate.
    - when `test:full` exits early, run the unreached stages separately (`test:quality`, the strongest practical unit/Playwright gates, `test:electron`, and `build`). An early wrapper failure is not evidence that later gates passed.
 4. Bump the version only after the code is judged releasable:
    - default to the next patch version unless the diff clearly justifies a bigger bump

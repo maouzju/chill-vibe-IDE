@@ -55,10 +55,9 @@ import {
 import { readStringPreserveWhitespace } from './provider-stream-text.js'
 import { resolveProviderCommandLaunch } from './provider-command-launch.js'
 import {
-  buildCrossProviderSkillInstructions,
   discoverProviderSkills,
-  expandSkillSlashPrompt,
   getReusableSkillProviders,
+  prepareProviderSkillReuse,
 } from './provider-skills.js'
 import { createAsyncTtlCache } from './provider-slash-command-cache.js'
 import { loadState } from './state-store.js'
@@ -2184,23 +2183,22 @@ export const launchProviderRun = async (
   let currentRequest = request
 
   try {
-    const expandedPrompt = await expandSkillSlashPrompt({
+    const skillReuse = await prepareProviderSkillReuse({
       ...request,
       prompt: expandCodexNativeSlashPrompt(request),
     })
-    const crossProviderSkillInstructions = await buildCrossProviderSkillInstructions(request)
 
-    if (expandedPrompt !== currentRequest.prompt) {
+    if (skillReuse.prompt !== currentRequest.prompt) {
       currentRequest = {
         ...currentRequest,
-        prompt: expandedPrompt,
+        prompt: skillReuse.prompt,
       }
     }
 
-    if (crossProviderSkillInstructions) {
+    if (skillReuse.systemInstructions) {
       currentRequest = {
         ...currentRequest,
-        systemPrompt: [currentRequest.systemPrompt, crossProviderSkillInstructions]
+        systemPrompt: [currentRequest.systemPrompt, skillReuse.systemInstructions]
           .filter((part) => part.trim().length > 0)
           .join('\n\n'),
       }

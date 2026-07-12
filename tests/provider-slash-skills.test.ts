@@ -4,6 +4,7 @@ import os from 'node:os'
 import path from 'node:path'
 import test from 'node:test'
 
+import { prepareProviderSkillReuse } from '../server/provider-skills.ts'
 import { getProviderSlashCommands } from '../server/providers.ts'
 
 const skillHomeEnvKeys = ['HOME', 'USERPROFILE', 'CODEX_HOME', 'CLAUDE_HOME', 'CLAUDE_CONFIG_DIR'] as const
@@ -159,6 +160,83 @@ test('same-name skills win over native slash commands in completion metadata', a
       assert.equal(planCommands[0]?.source, 'skill')
       assert.equal(planCommands[0]?.skillPath, skillPath)
       assert.equal(planCommands[0]?.description, 'Run the plan skill workflow')
+    })
+  } finally {
+    await rm(workspacePath, { recursive: true, force: true })
+    await rm(homePath, { recursive: true, force: true })
+  }
+})
+
+test('same-name cross-provider skills map to the current codex version for codex runs', async () => {
+  const workspacePath = await mkdtemp(path.join(os.tmpdir(), 'chill-vibe-skill-provider-priority-'))
+  const homePath = await mkdtemp(path.join(os.tmpdir(), 'chill-vibe-skill-provider-priority-home-'))
+
+  try {
+    const codexSkillPath = await writeSkill(
+      workspacePath,
+      'codex',
+      'shared-review',
+      'Codex-native review workflow',
+    )
+    const claudeSkillPath = await writeSkill(
+      workspacePath,
+      'claude',
+      'shared-review',
+      'Claude-native review workflow',
+    )
+
+    await withTemporarySkillHome(homePath, async () => {
+      const codexCommands = await getProviderSlashCommands({
+        provider: 'codex',
+        workspacePath,
+        language: 'en',
+        crossProviderSkillReuseEnabled: true,
+      })
+      const codexMatches = codexCommands.filter((command) => command.name === 'shared-review')
+
+      assert.equal(codexMatches.length, 1)
+      assert.equal(codexMatches[0]?.skillProvider, 'codex')
+      assert.equal(codexMatches[0]?.skillPath, codexSkillPath)
+      assert.notEqual(codexMatches[0]?.skillPath, claudeSkillPath)
+    })
+  } finally {
+    await rm(workspacePath, { recursive: true, force: true })
+    await rm(homePath, { recursive: true, force: true })
+  }
+})
+
+test('cross-provider instructions map same-name skills to the current claude version', async () => {
+  const workspacePath = await mkdtemp(path.join(os.tmpdir(), 'chill-vibe-skill-claude-priority-'))
+  const homePath = await mkdtemp(path.join(os.tmpdir(), 'chill-vibe-skill-claude-priority-home-'))
+
+  try {
+    await writeSkill(workspacePath, 'claude', 'shared-review', 'Claude-native review workflow')
+    const codexShadowedSkillPath = await writeSkill(
+      workspacePath,
+      'codex',
+      'shared-review',
+      'Codex duplicate review workflow',
+    )
+    const codexOnlySkillPath = await writeSkill(
+      workspacePath,
+      'codex',
+      'codex-only',
+      'Codex-only workflow',
+    )
+
+    await withTemporarySkillHome(homePath, async () => {
+      const prepared = await prepareProviderSkillReuse({
+        provider: 'claude',
+        workspacePath,
+        language: 'en',
+        prompt: 'Review this change.',
+        crossProviderSkillReuseEnabled: true,
+      })
+
+      assert.match(prepared.systemInstructions, /codex-only \(codex\)/)
+      assert.ok(prepared.systemInstructions.includes(codexOnlySkillPath))
+      assert.doesNotMatch(prepared.systemInstructions, /shared-review \(codex\)/)
+      assert.ok(!prepared.systemInstructions.includes(codexShadowedSkillPath))
     })
   } finally {
     await rm(workspacePath, { recursive: true, force: true })

@@ -396,22 +396,15 @@ export const expandSkillSlashPrompt = async (
   return skill ? buildSkillSlashPrompt(request, skill) : request.prompt
 }
 
-export const buildCrossProviderSkillInstructions = async (
-  request: Pick<ChatRequest, 'provider' | 'workspacePath' | 'language'> & {
-    crossProviderSkillReuseEnabled?: boolean
-  },
+const formatCrossProviderSkillInstructions = (
+  request: Pick<ChatRequest, 'provider' | 'language'>,
+  skills: readonly DiscoveredProviderSkill[],
 ) => {
-  if (request.crossProviderSkillReuseEnabled === false) {
-    return ''
-  }
-
-  const provider = oppositeProvider(request.provider)
-  const skills = await discoverProviderSkills(request.workspacePath, [provider])
-
   if (skills.length === 0) {
     return ''
   }
 
+  const provider = oppositeProvider(request.provider)
   const skillList = skills
     .map((skill) => {
       const description = skill.description ? ` - ${skill.description}` : ''
@@ -434,4 +427,54 @@ export const buildCrossProviderSkillInstructions = async (
     skillList,
     '当用户点名某个 skill，或任务明显匹配它时，先读取对应 SKILL.md，再按其中流程执行。复用 skill 不代表切换 CLI，只是复用本地说明文件。',
   ].join('\n')
+}
+
+export const buildCrossProviderSkillInstructions = async (
+  request: Pick<ChatRequest, 'provider' | 'workspacePath' | 'language'> & {
+    crossProviderSkillReuseEnabled?: boolean
+  },
+  excludedSkillNames: ReadonlySet<string> = new Set(),
+) => {
+  if (request.crossProviderSkillReuseEnabled === false) {
+    return ''
+  }
+
+  const skills = await discoverProviderSkills(
+    request.workspacePath,
+    getReusableSkillProviders(request.provider, true),
+  )
+  const crossProviderSkills = skills.filter(
+    (skill) =>
+      skill.skillProvider !== request.provider && !excludedSkillNames.has(skill.name),
+  )
+
+  return formatCrossProviderSkillInstructions(request, crossProviderSkills)
+}
+
+export const prepareProviderSkillReuse = async (
+  request: Pick<ChatRequest, 'provider' | 'workspacePath' | 'language' | 'prompt'> & {
+    crossProviderSkillReuseEnabled?: boolean
+  },
+) => {
+  const skills = await discoverProviderSkills(
+    request.workspacePath,
+    getReusableSkillProviders(request.provider, request.crossProviderSkillReuseEnabled),
+  )
+  const parsed = parseSlashCommandInput(request.prompt)
+  const explicitSkill = parsed?.name
+    ? skills.find((skill) => skill.name === parsed.name) ?? null
+    : null
+  const prompt = explicitSkill ? buildSkillSlashPrompt(request, explicitSkill) : request.prompt
+  const crossProviderSkills =
+    request.crossProviderSkillReuseEnabled === false
+      ? []
+      : skills.filter(
+          (skill) =>
+            skill.skillProvider !== request.provider && skill.name !== explicitSkill?.name,
+        )
+
+  return {
+    prompt,
+    systemInstructions: formatCrossProviderSkillInstructions(request, crossProviderSkills),
+  }
 }

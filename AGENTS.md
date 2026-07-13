@@ -480,6 +480,7 @@ A living list of traps that have wasted time before. **When you hit a new pitfal
 | 198 | 为验证 256 文件 / 4 MiB 这类生产预算而在单测里真的创建数百文件和巨型补丁，会让 Windows Node 测试长时间占满 CPU；外层 timeout 结束后子测试进程还可能继续跑 | 给预算函数保留测试专用的小额可注入 limits，用 2-3 个小文件钉住边界语义；不要靠制造生产规模数据验证纯预算分支。 |
 
 | 199 | 已被工作区基线预算省略的脏路径，若本轮把它删掉或恢复到 HEAD，会同时从 `currentStatus.changes` 和 `snapshot.files` 消失；只遍历这两处会让 provider 明确报告的文件名再次静默丢失 | `diffWorkspaceSnapshot()` 还要对照 `snapshot.changes` 与 touched paths 补发 `baseline-unavailable` 条目；回归钉在 `tests/git-workspace.test.ts` 的“omitted pre-existing untracked file is deleted”用例。 |
+| 200 | 助手消息外层 `.message` 使用 `white-space: pre-wrap`，若 Markdown 区域未重置，provider 源文本里的连续空白行会在 ReactMarkdown 已生成段落间距之外再次膨胀；若行内代码反引号还被跨空白行拆开，就会出现裸反引号、中文词被断成两块和大段假空白 | 助手 `.message-content` 必须用 `white-space: normal`，代码块自身继续用 `pre`；渲染前把“上一行末尾悬空反引号 + 下一非空行内已有闭合反引号”合回同一 Markdown 行，回归钉在 `tests/markdown-unclosed-spans.test.ts`。 |
 
 ### Self-maintenance rule
 

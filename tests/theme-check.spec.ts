@@ -1061,6 +1061,28 @@ const createQuietMarkdownState = (): AppState => {
   return state
 }
 
+const createMalformedMarkdownRecoveryState = (): AppState => {
+  const state = createMockState()
+  state.settings.language = 'zh-CN'
+  state.columns[0]!.cards[0]!.messages = [
+    {
+      id: 'assistant-malformed-markdown-recovery-1',
+      role: 'assistant',
+      content: [
+        '- **根因**',
+        '  - 卧`',
+        '',
+        '室同时塞入床、衣柜、书架、书桌，最后落到 PowerHandset.gd`，现有床尺寸与双通道冲突。',
+        '',
+        '- 之前只解决了全部中文提示。',
+      ].join('\n'),
+      createdAt: '2026-07-13T13:30:00.000Z',
+    },
+  ]
+
+  return state
+}
+
 const createStreamingPlainTranscriptState = (): AppState => {
   const state = createMockState()
   state.settings.language = 'zh-CN'
@@ -3744,7 +3766,7 @@ test('the latest user prompt stays pinned to the top once its reply takes over a
       id: 'message-assistant-reply-1',
       role: 'assistant',
       content: Array.from(
-        { length: 14 },
+        { length: 24 },
         (_, index) => `Reply section ${index + 1}: ${'detail '.repeat(48)}`,
       ).join('\n\n'),
       createdAt: new Date(now).toISOString(),
@@ -3759,7 +3781,7 @@ test('the latest user prompt stays pinned to the top once its reply takes over a
       id: 'message-assistant-reply-2',
       role: 'assistant',
       content: Array.from(
-        { length: 14 },
+        { length: 30 },
         (_, index) => `Second reply section ${index + 1}: ${'detail '.repeat(48)}`,
       ).join('\n\n'),
       createdAt: new Date(now + 2_000).toISOString(),
@@ -3835,7 +3857,7 @@ test('sticky user prompts keep image attachments compact while reading the reply
     id: 'assistant-image-sticky-reply',
     role: 'assistant',
     content: Array.from(
-      { length: 12 },
+      { length: 30 },
       (_, index) => `Reply block ${index + 1}: ${'detail '.repeat(40)}`,
     ).join('\n\n'),
     createdAt: '2026-04-05T12:09:00.000Z',
@@ -3928,7 +3950,7 @@ test('sticky user prompts clamp long prompt previews in both themes', async ({ p
       id: 'message-assistant-long-sticky-reply',
       role: 'assistant',
       content: Array.from(
-        { length: 14 },
+        { length: 30 },
         (_, index) => `Reply section ${index + 1}: ${'detail '.repeat(48)}`,
       ).join('\n\n'),
       createdAt: new Date(now).toISOString(),
@@ -4084,7 +4106,7 @@ test('sticky prompt waits until the latest image prompt has fully cleared the to
       id: 'assistant-image-boundary-reply-1',
       role: 'assistant',
       content: Array.from(
-        { length: 14 },
+        { length: 24 },
         (_, index) => `First reply block ${index + 1}: ${'detail '.repeat(44)}`,
       ).join('\n\n'),
       createdAt: new Date(now).toISOString(),
@@ -4107,7 +4129,7 @@ test('sticky prompt waits until the latest image prompt has fully cleared the to
       id: 'assistant-image-boundary-reply-2',
       role: 'assistant',
       content: Array.from(
-        { length: 12 },
+        { length: 30 },
         (_, index) => `Second reply block ${index + 1}: ${'detail '.repeat(40)}`,
       ).join('\n\n'),
       createdAt: new Date(now + 2_000).toISOString(),
@@ -4320,6 +4342,35 @@ test('assistant markdown inline code and file links stay quiet in both themes', 
   await ambienceTab.click()
 
   await expectQuietMarkdown('light')
+})
+
+test('malformed assistant markdown does not expose backticks or inflate blank space in both themes', async ({ page }) => {
+  await page.setViewportSize({ width: 520, height: 720 })
+  await mockAppApis(page, { state: createMalformedMarkdownRecoveryState() })
+  await page.goto(appUrl)
+
+  const assistantMessage = page.locator('[data-renderable-id="assistant-malformed-markdown-recovery-1"]').first()
+
+  const expectRecoveredMarkdown = async (theme: 'dark' | 'light') => {
+    await expect(assistantMessage).toBeVisible()
+    await expect(assistantMessage).toContainText('卧室同时塞入床')
+    await expect(assistantMessage).not.toContainText('`')
+    expect((await readRect(assistantMessage)).height).toBeLessThan(150)
+
+    await expect(assistantMessage).toHaveScreenshot(`message-malformed-markdown-recovery-${theme}.png`, {
+      animations: 'disabled',
+      caret: 'hide',
+    })
+  }
+
+  await expectRecoveredMarkdown('dark')
+
+  await page.evaluate(() => {
+    document.documentElement.setAttribute('data-theme', 'light')
+  })
+  await expect(page.locator('html')).toHaveAttribute('data-theme', 'light')
+
+  await expectRecoveredMarkdown('light')
 })
 
 test('structured command and reasoning blocks stay quiet across themes', async ({ page }) => {

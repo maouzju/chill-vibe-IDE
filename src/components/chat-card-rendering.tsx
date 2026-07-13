@@ -2,7 +2,7 @@ import type { ComponentProps, CSSProperties, ReactNode } from 'react'
 import ReactMarkdown, { defaultUrlTransform } from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 
-import type { AppLanguage, ChatMessage } from '../../shared/schema'
+import type { AppLanguage, ChatMessage, StreamEditedFile } from '../../shared/schema'
 import { resolveMarkdownImageSrc } from '../../shared/local-image-protocol'
 import { openExternalLink, openMessageLocalLink } from '../api'
 import { stripLeakedClaudeToolXml } from './chat-card-parsing'
@@ -831,6 +831,13 @@ export const getStructuredLabels = (language: AppLanguage) => {
       closeDetails: 'Close details',
       toolSummary: (toolName: string) => `${toolName} summary`,
       filePatch: (path: string) => `${path} patch`,
+      patchOmittedShort: 'Diff omitted',
+      patchOmitted: (reason: NonNullable<StreamEditedFile['patchOmittedReason']>) => ({
+        'file-too-large': 'Diff omitted because this file is too large.',
+        'baseline-unavailable': 'Diff omitted because the turn-start baseline was not retained.',
+        'detail-file-limit': 'Filename kept; the detailed diff file limit was reached.',
+        'patch-budget': 'Filename kept; the diff content budget was reached.',
+      })[reason],
       openFile: (path: string) => `Open ${path}`,
       openDetails: (section: string) => `Open full ${section}`,
       exitCode: (code: number) => `Exit code ${code}`,
@@ -870,8 +877,10 @@ export const getStructuredLabels = (language: AppLanguage) => {
       priorityHigh: 'High priority',
       priorityMedium: 'Medium priority',
       priorityLow: 'Low priority',
-      totalChanges: (files: number, added: number, removed: number) =>
-        `${files} file${files === 1 ? '' : 's'} changed, ${added} insertion${added === 1 ? '' : 's'}(+), ${removed} deletion${removed === 1 ? '' : 's'}(-)`,
+      totalChanges: (files: number, added: number, removed: number, omitted = 0) =>
+        omitted > 0
+          ? `${files} file${files === 1 ? '' : 's'} changed · ${omitted} without diff details`
+          : `${files} file${files === 1 ? '' : 's'} changed, ${added} insertion${added === 1 ? '' : 's'}(+), ${removed} deletion${removed === 1 ? '' : 's'}(-)`,
     }
   }
 
@@ -892,6 +901,13 @@ export const getStructuredLabels = (language: AppLanguage) => {
     closeDetails: '\u5173\u95ED\u8BE6\u60C5',
       toolSummary: (toolName: string) => `${toolName} \u6458\u8981`,
       filePatch: (path: string) => `${path} \u8865\u4E01`,
+      patchOmittedShort: '\u5DEE\u5F02\u5DF2\u7701\u7565',
+      patchOmitted: (reason: NonNullable<StreamEditedFile['patchOmittedReason']>) => ({
+        'file-too-large': '\u6587\u4EF6\u8FC7\u5927\uFF0C\u5DF2\u4FDD\u7559\u6587\u4EF6\u540D\uFF0C\u672A\u751F\u6210\u5DEE\u5F02\u3002',
+        'baseline-unavailable': '\u672A\u4FDD\u7559\u4F1A\u8BDD\u5F00\u59CB\u65F6\u7684\u57FA\u7EBF\uFF0C\u65E0\u6CD5\u751F\u6210\u672C\u8F6E\u5DEE\u5F02\u3002',
+        'detail-file-limit': '\u5DF2\u4FDD\u7559\u6587\u4EF6\u540D\uFF0C\u4F46\u8BE6\u7EC6\u5DEE\u5F02\u6587\u4EF6\u6570\u5DF2\u8FBE\u4E0A\u9650\u3002',
+        'patch-budget': '\u5DF2\u4FDD\u7559\u6587\u4EF6\u540D\uFF0C\u4F46\u5DEE\u5F02\u5185\u5BB9\u9884\u7B97\u5DF2\u7528\u5B8C\u3002',
+      })[reason],
       openFile: (path: string) => `\u6253\u5F00 ${path}`,
       openDetails: (section: string) => `\u6253\u5F00${section}\u5168\u91CF\u8BE6\u60C5`,
     exitCode: (code: number) => `\u9000\u51FA\u7801 ${code}`,
@@ -931,8 +947,10 @@ export const getStructuredLabels = (language: AppLanguage) => {
     priorityHigh: '\u9AD8\u4F18\u5148\u7EA7',
     priorityMedium: '\u4E2D\u4F18\u5148\u7EA7',
     priorityLow: '\u4F4E\u4F18\u5148\u7EA7',
-    totalChanges: (files: number, added: number, removed: number) =>
-      `\u5171\u53D8\u66F4 ${files} \u4E2A\u6587\u4EF6\uFF0C${added} \u884C\u63D2\u5165(+)\uFF0C${removed} \u884C\u5220\u9664(-)`,
+    totalChanges: (files: number, added: number, removed: number, omitted = 0) =>
+      omitted > 0
+        ? `\u5171\u53D8\u66F4 ${files} \u4E2A\u6587\u4EF6 \u00B7 ${omitted} \u4E2A\u672A\u751F\u6210\u5DEE\u5F02\u8BE6\u60C5`
+        : `\u5171\u53D8\u66F4 ${files} \u4E2A\u6587\u4EF6\uFF0C${added} \u884C\u63D2\u5165(+)\uFF0C${removed} \u884C\u5220\u9664(-)`,
   }
 }
 

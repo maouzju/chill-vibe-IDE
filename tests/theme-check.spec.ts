@@ -1335,6 +1335,57 @@ const createEditedFilesStructuredState = (): AppState => {
   return state
 }
 
+const createFilenameOnlyEditedFilesState = (): AppState => {
+  const state = createMockState()
+  state.settings.language = 'en'
+  state.columns[0]!.cards[0]!.messages = [
+    {
+      id: 'edits-omitted-1',
+      role: 'assistant',
+      content: '',
+      createdAt: '2026-04-05T12:06:10.000Z',
+      meta: {
+        provider: 'codex',
+        kind: 'edits',
+        structuredData: JSON.stringify({
+          itemId: 'workspace_edits_omitted',
+          status: 'completed',
+          files: [
+            {
+              path: 'D:\\Git\\chill-vibe\\artifacts\\large-output.bin',
+              kind: 'untracked',
+              addedLines: 0,
+              removedLines: 0,
+              patch: '',
+              patchOmittedReason: 'file-too-large',
+            },
+          ],
+        }),
+      },
+    },
+    {
+      id: 'changes-summary-omitted-1',
+      role: 'assistant',
+      content: '',
+      createdAt: '2026-04-05T12:06:11.000Z',
+      meta: {
+        provider: 'codex',
+        kind: 'changes-summary',
+        structuredData: JSON.stringify([
+          {
+            path: 'D:\\Git\\chill-vibe\\artifacts\\large-output.bin',
+            addedLines: 0,
+            removedLines: 0,
+            patchOmittedReason: 'file-too-large',
+          },
+        ]),
+      },
+    },
+  ]
+
+  return state
+}
+
 const createOverflowEditedFilesStructuredState = (): AppState => {
   const state = createMockState()
   state.settings.language = 'zh-CN'
@@ -5109,6 +5160,40 @@ test('structured edited-file blocks stay legible across themes', async ({ page }
   expect(maxChannel(lightDiffBackground)).toBeGreaterThan(180)
 
   await expect(editsCard).toHaveScreenshot('structured-edits-card-light.png', {
+    animations: 'disabled',
+    caret: 'hide',
+  })
+})
+
+test('filename-only edited files stay visible across themes', async ({ page }) => {
+  await mockAppApis(page, { state: createFilenameOnlyEditedFilesState() })
+  await page.goto(appUrl)
+
+  const messageList = page.locator('.message-list').first()
+  const editsCard = messageList.locator('.structured-edits-card').first()
+  const summaryCard = messageList.locator('.changes-summary-card').first()
+  const settingsTab = page.locator('#app-tab-settings')
+  const ambienceTab = page.locator('#app-tab-ambience')
+  const lightThemeButton = page.locator('#app-panel-settings .theme-toggle').first().locator('.theme-chip').first()
+
+  await messageList.locator('.structured-group-summary-row').first().click()
+  await expect(editsCard).toContainText('large-output.bin')
+  await expect(editsCard.locator('.structured-edits-omitted')).toContainText('Diff omitted')
+  await expect(editsCard.locator('.structured-preview-shell')).toHaveCount(0)
+  await expect(summaryCard).toContainText('1 file changed · 1 without diff details')
+  await expect(summaryCard).toContainText('Diff omitted')
+
+  await expect(messageList).toHaveScreenshot('filename-only-edits-dark.png', {
+    animations: 'disabled',
+    caret: 'hide',
+  })
+
+  await settingsTab.click()
+  await lightThemeButton.click()
+  await expect(page.locator('html')).toHaveAttribute('data-theme', 'light')
+  await ambienceTab.click()
+
+  await expect(messageList).toHaveScreenshot('filename-only-edits-light.png', {
     animations: 'disabled',
     caret: 'hide',
   })

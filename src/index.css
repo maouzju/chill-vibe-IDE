@@ -6006,6 +6006,13 @@ body.is-card-dragging .lane-drop-zone-top {
   text-overflow: ellipsis;
 }
 
+.structured-edits-omitted {
+  margin-top: 0.24rem;
+  color: var(--ink-3);
+  font-size: 0.66rem;
+  line-height: calc(1.4 * var(--ui-line-height-scale));
+}
+
 .structured-edits-stats {
   display: inline-flex;
   align-items: center;
@@ -6467,6 +6474,13 @@ body.is-card-dragging .lane-drop-zone-top {
   min-width: 3.1ch;
   padding: 0.02rem 0.42rem;
   font-size: 0.66rem;
+}
+
+.changes-summary-omitted {
+  color: var(--ink-4);
+  font-size: 0.62rem;
+  line-height: calc(1.3 * var(--ui-line-height-scale));
+  white-space: nowrap;
 }
 
 .changes-summary-stats .structured-diff-stat.is-added {

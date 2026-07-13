@@ -1111,6 +1111,12 @@ export const streamEditedFileSchema = z.object({
   addedLines: z.number().int().nonnegative(),
   removedLines: z.number().int().nonnegative(),
   patch: z.string(),
+  patchOmittedReason: z.enum([
+    'file-too-large',
+    'baseline-unavailable',
+    'detail-file-limit',
+    'patch-budget',
+  ]).optional(),
 })
 export type StreamEditedFile = z.infer<typeof streamEditedFileSchema>
 

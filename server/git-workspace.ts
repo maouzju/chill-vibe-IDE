@@ -1,4 +1,5 @@
 import { spawn } from 'node:child_process'
+import { createHash } from 'node:crypto'
 import { mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
@@ -61,6 +62,12 @@ export type WorkspaceSnapshotDiff = {
   files: StreamEditedFile[]
 }
 
+export type WorkspaceSnapshotDiffLimits = {
+  maxFileBytes?: number
+  maxTotalBytes?: number
+  maxFiles?: number
+}
+
 const emptyGitSummary = () => ({
   staged: 0,
   unstaged: 0,
@@ -72,6 +79,84 @@ const notRepositoryNote = 'This workspace is not a Git repository yet.'
 const gitChangePreviewMaxFileBytes = 256 * 1024
 const gitChangePreviewMaxTotalBytes = 512 * 1024
 const gitChangePreviewMaxPatchChars = 128 * 1024
+// A chat stream keeps this snapshot alive until the provider turn settles.
+// Keep the retained baseline strictly bounded so several concurrent streams
+// cannot each clone gigabytes of untracked build/test output into Electron's
+// main process.
+const workspaceSnapshotMaxFileBytes = 256 * 1024
+const workspaceSnapshotMaxTotalBytes = 4 * 1024 * 1024
+const workspaceSnapshotMaxFiles = 256
+const workspaceSnapshotSharedContentMaxBytes = 32 * 1024 * 1024
+
+type WorkspaceSnapshotContentStoreStats = {
+  entries: number
+  bytes: number
+  hits: number
+  misses: number
+  evictions: number
+}
+
+/**
+ * Baselines remain per-turn, but identical immutable strings can be shared.
+ * The LRU is byte-bounded so deduplication never becomes a new global leak.
+ */
+export const createWorkspaceSnapshotContentStore = (maxBytes: number) => {
+  const entries = new Map<string, { content: string; bytes: number }>()
+  let retainedBytes = 0
+  let hits = 0
+  let misses = 0
+  let evictions = 0
+
+  const intern = (content: string) => {
+    const bytes = Buffer.byteLength(content)
+    const digest = createHash('sha256').update(content).digest('hex')
+    const key = `${bytes}:${digest}`
+    const cached = entries.get(key)
+
+    if (cached) {
+      hits += 1
+      entries.delete(key)
+      entries.set(key, cached)
+      return cached.content
+    }
+
+    misses += 1
+    if (bytes > maxBytes) {
+      return content
+    }
+
+    while (retainedBytes + bytes > maxBytes && entries.size > 0) {
+      const oldestKey = entries.keys().next().value as string | undefined
+      if (!oldestKey) {
+        break
+      }
+      const oldest = entries.get(oldestKey)
+      entries.delete(oldestKey)
+      if (oldest) {
+        retainedBytes -= oldest.bytes
+        evictions += 1
+      }
+    }
+
+    entries.set(key, { content, bytes })
+    retainedBytes += bytes
+    return content
+  }
+
+  const getStats = (): WorkspaceSnapshotContentStoreStats => ({
+    entries: entries.size,
+    bytes: retainedBytes,
+    hits,
+    misses,
+    evictions,
+  })
+
+  return { intern, getStats }
+}
+
+const workspaceSnapshotContentStore = createWorkspaceSnapshotContentStore(
+  workspaceSnapshotSharedContentMaxBytes,
+)
 
 const normalizePathList = (paths: string[]) =>
   Array.from(
@@ -345,6 +430,19 @@ const readWorkspaceFileSize = async (repoRoot: string, relativePath: string) => 
   }
 }
 
+const workspaceFileExists = async (repoRoot: string, relativePath: string) => {
+  try {
+    await stat(path.join(repoRoot, relativePath))
+    return true
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+      return false
+    }
+
+    throw error
+  }
+}
+
 const readHeadFile = async (repoRoot: string, relativePath: string) => {
   const normalizedPath = relativePath.replace(/\\/g, '/')
   const result = await runGit(repoRoot, ['show', `HEAD:${normalizedPath}`], {
@@ -561,6 +659,19 @@ const createPatch = async (
 
 const sortEditedFiles = (left: StreamEditedFile, right: StreamEditedFile) =>
   left.path.localeCompare(right.path)
+
+const createOmittedEditedFile = (
+  change: Pick<GitChange, 'path' | 'originalPath' | 'kind'>,
+  patchOmittedReason: NonNullable<StreamEditedFile['patchOmittedReason']>,
+): StreamEditedFile => ({
+  path: change.path,
+  ...(change.originalPath ? { originalPath: change.originalPath } : {}),
+  kind: change.kind,
+  addedLines: 0,
+  removedLines: 0,
+  patch: '',
+  patchOmittedReason,
+})
 
 const shouldSkipGitChangePreview = async (
   repoRoot: string,
@@ -839,18 +950,45 @@ export const captureWorkspaceSnapshot = async (
     return null
   }
 
-  const files = Object.fromEntries(
-    await Promise.all(
-      status.changes.map(async (change) => [
-        change.path,
-        {
-          path: change.path,
-          originalPath: change.originalPath,
-          content: await readWorkspaceFile(status.repoRoot, change.path),
-        },
-      ]),
-    ),
+  const files: WorkspaceSnapshot['files'] = {}
+  let retainedBytes = 0
+  let retainedFiles = 0
+  // Preserve tracked dirty baselines first. Untracked cache/build output is
+  // lower value for the end-of-turn fallback and is the common explosion path.
+  const prioritizedChanges = [...status.changes].sort(
+    (left, right) => Number(left.kind === 'untracked') - Number(right.kind === 'untracked'),
   )
+
+  for (const change of prioritizedChanges) {
+    if (retainedFiles >= workspaceSnapshotMaxFiles) {
+      break
+    }
+
+    const fileSize = await readWorkspaceFileSize(status.repoRoot, change.path)
+    if (
+      fileSize > workspaceSnapshotMaxFileBytes ||
+      retainedBytes + fileSize > workspaceSnapshotMaxTotalBytes
+    ) {
+      continue
+    }
+
+    const content = await readWorkspaceFile(status.repoRoot, change.path)
+    const contentBytes = content === null ? 0 : Buffer.byteLength(content)
+    if (
+      contentBytes > workspaceSnapshotMaxFileBytes ||
+      retainedBytes + contentBytes > workspaceSnapshotMaxTotalBytes
+    ) {
+      continue
+    }
+
+    files[change.path] = {
+      path: change.path,
+      originalPath: change.originalPath,
+      content: content === null ? null : workspaceSnapshotContentStore.intern(content),
+    }
+    retainedBytes += contentBytes
+    retainedFiles += 1
+  }
 
   return {
     workspacePath,
@@ -900,6 +1038,7 @@ export const diffWorkspaceSnapshot = async (
   snapshot: WorkspaceSnapshot | null,
   workspacePath: string,
   touchedPaths?: Set<string>,
+  limits: WorkspaceSnapshotDiffLimits = {},
 ): Promise<WorkspaceSnapshotDiff> => {
   if (!snapshot) {
     return { files: [] }
@@ -916,17 +1055,72 @@ export const diffWorkspaceSnapshot = async (
   }
 
   const editedFiles: StreamEditedFile[] = []
+  const maxFileBytes = limits.maxFileBytes ?? workspaceSnapshotMaxFileBytes
+  const maxTotalBytes = limits.maxTotalBytes ?? workspaceSnapshotMaxTotalBytes
+  const maxFiles = limits.maxFiles ?? workspaceSnapshotMaxFiles
   const handledSnapshotPaths = new Set<string>()
   const isTouchedPath = touchedPaths ? buildTouchedPathMatcher(snapshot.repoRoot, touchedPaths) : null
+  const isChangeTouched = (change: Pick<GitChange, 'path'>) =>
+    !isTouchedPath || isTouchedPath(change.path)
+  const baselineChangePaths = new Set(
+    snapshot.changes.flatMap((change) =>
+      change.originalPath ? [change.path, change.originalPath] : [change.path],
+    ),
+  )
+  const currentChangePaths = new Set(
+    currentStatus.changes.flatMap((change) =>
+      change.originalPath ? [change.path, change.originalPath] : [change.path],
+    ),
+  )
+  let retainedPatchBytes = 0
+  let retainedDetailFiles = 0
 
   for (const change of currentStatus.changes) {
-    if (isTouchedPath && !isTouchedPath(change.path)) {
+    if (!isChangeTouched(change)) {
       continue
     }
 
     const snapshotFile =
       snapshot.files[change.path] ??
       (change.originalPath ? snapshot.files[change.originalPath] : undefined)
+    if (snapshotFile) {
+      handledSnapshotPaths.add(snapshotFile.path)
+    }
+
+    // The path was already dirty when the turn started but its baseline was
+    // omitted by the safety budget. Comparing it with HEAD/null would falsely
+    // attribute old content to the agent and could reload the same huge file.
+    if (
+      !snapshotFile &&
+      (baselineChangePaths.has(change.path) ||
+        (change.originalPath ? baselineChangePaths.has(change.originalPath) : false))
+    ) {
+      if (isTouchedPath) {
+        editedFiles.push(createOmittedEditedFile(change, 'baseline-unavailable'))
+      }
+      continue
+    }
+
+    if (retainedDetailFiles >= maxFiles) {
+      editedFiles.push(createOmittedEditedFile(change, 'detail-file-limit'))
+      continue
+    }
+
+    const currentFileSize = await readWorkspaceFileSize(snapshot.repoRoot, change.path)
+    if (currentFileSize > maxFileBytes) {
+      editedFiles.push(createOmittedEditedFile(change, 'file-too-large'))
+      continue
+    }
+
+    const needsHeadBaseline =
+      !snapshotFile && change.kind !== 'untracked' && change.kind !== 'added'
+    const headFileSize = needsHeadBaseline
+      ? await readHeadFileSize(snapshot.repoRoot, change.originalPath ?? change.path)
+      : 0
+    if (headFileSize > maxFileBytes) {
+      editedFiles.push(createOmittedEditedFile(change, 'file-too-large'))
+      continue
+    }
 
     const currentContent = await readWorkspaceFile(snapshot.repoRoot, change.path)
     const baselineContent = snapshotFile
@@ -943,9 +1137,12 @@ export const diffWorkspaceSnapshot = async (
     )
 
     if (!patch) {
-      if (snapshotFile) {
-        handledSnapshotPaths.add(snapshotFile.path)
-      }
+      continue
+    }
+
+    const patchBytes = Buffer.byteLength(patch)
+    if (retainedPatchBytes + patchBytes > maxTotalBytes) {
+      editedFiles.push(createOmittedEditedFile(change, 'patch-budget'))
       continue
     }
 
@@ -958,10 +1155,8 @@ export const diffWorkspaceSnapshot = async (
       removedLines,
       patch,
     })
-
-    if (snapshotFile) {
-      handledSnapshotPaths.add(snapshotFile.path)
-    }
+    retainedPatchBytes += patchBytes
+    retainedDetailFiles += 1
   }
 
   for (const snapshotFile of Object.values(snapshot.files)) {
@@ -973,7 +1168,31 @@ export const diffWorkspaceSnapshot = async (
       continue
     }
 
+    const currentFileSize = await readWorkspaceFileSize(snapshot.repoRoot, snapshotFile.path)
+    if (currentFileSize > maxFileBytes) {
+      editedFiles.push(createOmittedEditedFile({
+        path: snapshotFile.path,
+        originalPath: snapshotFile.originalPath,
+        kind: 'modified',
+      }, 'file-too-large'))
+      continue
+    }
+
     const currentContent = await readWorkspaceFile(snapshot.repoRoot, snapshotFile.path)
+    if (currentContent === snapshotFile.content) {
+      continue
+    }
+
+    const fallbackChange = {
+      path: snapshotFile.path,
+      originalPath: snapshotFile.originalPath,
+      kind: currentContent === null ? 'deleted' as const : 'modified' as const,
+    }
+    if (retainedDetailFiles >= maxFiles) {
+      editedFiles.push(createOmittedEditedFile(fallbackChange, 'detail-file-limit'))
+      continue
+    }
+
     const patch = await createPatch(
       snapshotFile.originalPath ?? snapshotFile.path,
       snapshotFile.content,
@@ -985,15 +1204,54 @@ export const diffWorkspaceSnapshot = async (
       continue
     }
 
+    const patchBytes = Buffer.byteLength(patch)
+    if (retainedPatchBytes + patchBytes > maxTotalBytes) {
+      editedFiles.push(createOmittedEditedFile(fallbackChange, 'patch-budget'))
+      continue
+    }
+
     const { addedLines, removedLines } = countPatchLines(patch)
     editedFiles.push({
       path: snapshotFile.path,
       originalPath: snapshotFile.originalPath,
-      kind: currentContent === null ? 'deleted' : 'modified',
+      kind: fallbackChange.kind,
       addedLines,
       removedLines,
       patch,
     })
+    retainedPatchBytes += patchBytes
+    retainedDetailFiles += 1
+  }
+
+  // An omitted dirty baseline can disappear from `git status` altogether
+  // (for example, a pre-existing untracked file is deleted or a dirty tracked
+  // file is restored to HEAD). The provider-reported touched path is still
+  // authoritative evidence that the turn changed it, so preserve the filename
+  // even though neither currentStatus.changes nor snapshot.files can carry it.
+  if (isTouchedPath) {
+    for (const baselineChange of snapshot.changes) {
+      if (
+        snapshot.files[baselineChange.path] ||
+        currentChangePaths.has(baselineChange.path) ||
+        (baselineChange.originalPath && currentChangePaths.has(baselineChange.originalPath)) ||
+        !isChangeTouched(baselineChange)
+      ) {
+        continue
+      }
+
+      const currentFileExists = await workspaceFileExists(snapshot.repoRoot, baselineChange.path)
+      const fallbackKind: GitChangeKind = !currentFileExists
+        ? 'deleted'
+        : baselineChange.kind === 'deleted'
+          ? 'added'
+          : 'modified'
+
+      editedFiles.push(createOmittedEditedFile({
+        path: baselineChange.path,
+        originalPath: baselineChange.originalPath,
+        kind: fallbackKind,
+      }, 'baseline-unavailable'))
+    }
   }
 
   return {

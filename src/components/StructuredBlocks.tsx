@@ -2,7 +2,7 @@ import { memo, useCallback, useEffect, useId, useLayoutEffect, useRef, useState 
 import type { ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 
-import type { AppLanguage } from '../../shared/schema'
+import type { AppLanguage, StreamEditedFile } from '../../shared/schema'
 import type {
   StructuredAskUserMessage,
   StructuredAgentsMessage,
@@ -925,15 +925,21 @@ export const StructuredEditsCard = ({
                   {summaryContent}
                 </div>
               )}
-              <StructuredPreviewBlock
-                language={language}
-                previewText={stripDiffMetadata(file.patch)}
-                dialogTitle={labels.filePatch(file.path)}
-                variant="code"
-                actionPlacement="footer"
-                renderPreviewContent={() => <StructuredInlineDiffPreview patch={file.patch} />}
-                renderDialogContent={() => <StructuredDiffBlock patch={file.patch} />}
-              />
+              {file.patchOmittedReason ? (
+                <div className="structured-edits-omitted" role="note">
+                  {labels.patchOmitted(file.patchOmittedReason)}
+                </div>
+              ) : (
+                <StructuredPreviewBlock
+                  language={language}
+                  previewText={stripDiffMetadata(file.patch)}
+                  dialogTitle={labels.filePatch(file.path)}
+                  variant="code"
+                  actionPlacement="footer"
+                  renderPreviewContent={() => <StructuredInlineDiffPreview patch={file.patch} />}
+                  renderDialogContent={() => <StructuredDiffBlock patch={file.patch} />}
+                />
+              )}
             </article>
           )
         })}
@@ -1328,6 +1334,7 @@ export type ChangesSummaryFile = {
   path: string
   addedLines: number
   removedLines: number
+  patchOmittedReason?: StreamEditedFile['patchOmittedReason']
 }
 
 const splitChangesSummaryPath = (path: string) => {
@@ -1369,12 +1376,13 @@ export const ChangesSummaryCard = ({
   const labels = getStructuredLabels(language)
   const totalAdded = files.reduce((sum, f) => sum + f.addedLines, 0)
   const totalRemoved = files.reduce((sum, f) => sum + f.removedLines, 0)
+  const omittedFileCount = files.filter((file) => file.patchOmittedReason).length
 
   return (
     <section className="changes-summary-card">
       <div className="changes-summary-header">
         <span className="changes-summary-total">
-          {labels.totalChanges(files.length, totalAdded, totalRemoved)}
+          {labels.totalChanges(files.length, totalAdded, totalRemoved, omittedFileCount)}
         </span>
       </div>
       <div className="changes-summary-list">
@@ -1388,10 +1396,15 @@ export const ChangesSummaryCard = ({
                 {directory ? <span className="changes-summary-path">{directory}</span> : null}
               </div>
               <div className="changes-summary-stats">
-                {file.addedLines > 0 && (
+                {file.patchOmittedReason ? (
+                  <span className="changes-summary-omitted" title={labels.patchOmitted(file.patchOmittedReason)}>
+                    {labels.patchOmittedShort}
+                  </span>
+                ) : null}
+                {!file.patchOmittedReason && file.addedLines > 0 && (
                   <span className="structured-diff-stat is-added">{`+${file.addedLines}`}</span>
                 )}
-                {file.removedLines > 0 && (
+                {!file.patchOmittedReason && file.removedLines > 0 && (
                   <span className="structured-diff-stat is-removed">{`-${file.removedLines}`}</span>
                 )}
               </div>

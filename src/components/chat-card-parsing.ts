@@ -237,6 +237,13 @@ const structuredEditedFileKinds = new Set<StreamEditedFile['kind']>([
   'conflicted',
 ])
 
+const structuredPatchOmittedReasons = new Set<NonNullable<StreamEditedFile['patchOmittedReason']>>([
+  'file-too-large',
+  'baseline-unavailable',
+  'detail-file-limit',
+  'patch-budget',
+])
+
 export const parseStructuredEditedFile = (value: unknown): StreamEditedFile | null => {
   if (typeof value !== 'object' || value === null) {
     return null
@@ -249,6 +256,7 @@ export const parseStructuredEditedFile = (value: unknown): StreamEditedFile | nu
   const addedLines = readStructuredInteger(record, 'addedLines')
   const removedLines = readStructuredInteger(record, 'removedLines')
   const patch = readStructuredString(record, 'patch')
+  const patchOmittedReason = readStructuredString(record, 'patchOmittedReason')
 
   if (
     !path ||
@@ -268,6 +276,14 @@ export const parseStructuredEditedFile = (value: unknown): StreamEditedFile | nu
     addedLines,
     removedLines,
     patch,
+    ...(patchOmittedReason && structuredPatchOmittedReasons.has(
+      patchOmittedReason as NonNullable<StreamEditedFile['patchOmittedReason']>,
+    )
+      ? {
+          patchOmittedReason:
+            patchOmittedReason as NonNullable<StreamEditedFile['patchOmittedReason']>,
+        }
+      : {}),
   }
 }
 
@@ -368,7 +384,12 @@ export const collectChangesSummaryFilesForStream = (
   provider: Provider,
   streamId: string,
 ) => {
-  const fileMap = new Map<string, { addedLines: number; removedLines: number }>()
+  const fileMap = new Map<string, {
+    addedLines: number
+    removedLines: number
+    patchOmittedReason?: StreamEditedFile['patchOmittedReason']
+    hasDetailedPatch: boolean
+  }>()
   const streamPrefix = createStructuredStreamPrefix(provider, streamId)
 
   for (const message of messages) {
@@ -386,10 +407,18 @@ export const collectChangesSummaryFilesForStream = (
       if (existing) {
         existing.addedLines += file.addedLines
         existing.removedLines += file.removedLines
+        if (!file.patchOmittedReason) {
+          existing.hasDetailedPatch = true
+          existing.patchOmittedReason = undefined
+        } else if (!existing.hasDetailedPatch) {
+          existing.patchOmittedReason = file.patchOmittedReason
+        }
       } else {
         fileMap.set(file.path, {
           addedLines: file.addedLines,
           removedLines: file.removedLines,
+          patchOmittedReason: file.patchOmittedReason,
+          hasDetailedPatch: !file.patchOmittedReason,
         })
       }
     }
@@ -397,7 +426,9 @@ export const collectChangesSummaryFilesForStream = (
 
   return [...fileMap.entries()].map(([path, stats]) => ({
     path,
-    ...stats,
+    addedLines: stats.addedLines,
+    removedLines: stats.removedLines,
+    ...(stats.patchOmittedReason ? { patchOmittedReason: stats.patchOmittedReason } : {}),
   }))
 }
 

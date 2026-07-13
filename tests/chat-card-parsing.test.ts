@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
-import type { ChatMessage } from '../shared/schema.ts'
+import type { ChatMessage, StreamEditedFile } from '../shared/schema.ts'
 import {
   buildRenderableMessages,
   collectChangesSummaryFilesForStream,
@@ -42,7 +42,12 @@ const makeToolMessage = (toolName: string, summary: string): ChatMessage =>
 
 const makeEditsMessage = (
   streamId: string,
-  files: Array<{ path: string; addedLines: number; removedLines: number }>,
+  files: Array<{
+    path: string
+    addedLines: number
+    removedLines: number
+    patchOmittedReason?: StreamEditedFile['patchOmittedReason']
+  }>,
 ): ChatMessage =>
   makeMessage({
     id: `claude:${streamId}:item:edits-${Math.random().toString(36).slice(2, 8)}`,
@@ -61,6 +66,7 @@ const makeEditsMessage = (
           addedLines: file.addedLines,
           removedLines: file.removedLines,
           patch: '@@',
+          ...(file.patchOmittedReason ? { patchOmittedReason: file.patchOmittedReason } : {}),
         })),
       }),
     },
@@ -788,6 +794,32 @@ test('collectChangesSummaryFilesForStream only includes edits from the active st
   assert.deepEqual(result, [
     { path: 'src/current.ts', addedLines: 3, removedLines: 3 },
     { path: 'src/other.ts', addedLines: 4, removedLines: 2 },
+  ])
+})
+
+test('collectChangesSummaryFilesForStream preserves omitted-detail state for filename-only edits', () => {
+  const result = collectChangesSummaryFilesForStream(
+    [
+      makeEditsMessage('stream-omitted', [
+        {
+          path: 'artifacts/large-output.bin',
+          addedLines: 0,
+          removedLines: 0,
+          patchOmittedReason: 'file-too-large',
+        },
+      ]),
+    ],
+    'claude',
+    'stream-omitted',
+  )
+
+  assert.deepEqual(result, [
+    {
+      path: 'artifacts/large-output.bin',
+      addedLines: 0,
+      removedLines: 0,
+      patchOmittedReason: 'file-too-large',
+    },
   ])
 })
 

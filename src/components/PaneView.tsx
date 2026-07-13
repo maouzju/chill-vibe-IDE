@@ -24,7 +24,7 @@ import type {
   Provider,
   ProviderStatus,
 } from '../../shared/schema'
-import { clearDragPayload, readDragPayload, writeDragPayload } from '../dnd'
+import { clearDragPayload, readDragPayload, releaseDragPayloadIfStale, writeDragPayload } from '../dnd'
 import type { CardRecoveryStatus } from '../stream-recovery-feedback'
 import {
   composerFocusRequestEventName,
@@ -667,12 +667,22 @@ const PaneViewView = ({
 
   const scheduleDragHintExpiry = useCallback(() => {
     clearDragHintExpiry()
-    dragHintExpiryRef.current = window.setTimeout(() => {
-      dragHintExpiryRef.current = null
-      clearDragPayload()
-      setTabDropHint(null)
-      setContentDropEdge(null)
-    }, dragHintExpiryMs)
+    const arm = () => {
+      dragHintExpiryRef.current = window.setTimeout(() => {
+        dragHintExpiryRef.current = null
+        setTabDropHint(null)
+        setContentDropEdge(null)
+        // Stale hints may be cleared, but the shared drag payload must
+        // survive a drag that is still in flight — dragover handlers cannot
+        // read dataTransfer mid-drag, so releasing it would silently kill
+        // every remaining drop target. Re-arm so a drag that later dies
+        // without dragend/drop (pitfall 132) still gets cleaned up.
+        if (!releaseDragPayloadIfStale(Date.now())) {
+          arm()
+        }
+      }, dragHintExpiryMs)
+    }
+    arm()
   }, [clearDragHintExpiry, setContentDropEdge, setTabDropHint])
 
   useEffect(() => () => clearDragHintExpiry(), [clearDragHintExpiry])

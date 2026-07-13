@@ -99,6 +99,76 @@ const normalizeLooseStrongMarkers = (content: string) =>
     ? transformMarkdownOutsideCode(content, normalizeLooseStrongMarkersInSegment)
     : content
 
+const hasOddStandaloneInlineBacktickCount = (line: string) =>
+  ((line.match(/(?<![\\`])`(?!`)/g) ?? []).length % 2) === 1
+
+// Inline code cannot legally span a CommonMark block boundary. Providers can
+// still emit exactly that while streaming or after a retry, for example:
+//
+//   - 卧`
+//
+//   室同时塞入床 ... PowerHandset.gd`
+//
+// ReactMarkdown then renders both backticks literally and splits one sentence
+// into separate blocks. Join the next non-empty text line back onto the line
+// holding the opener, but only when that later line already contains the
+// matching close marker. This repairs the broken span without inventing a
+// close marker for content that is still streaming.
+const normalizeInlineCodeAcrossBlankLines = (content: string) => {
+  if (!/`\r?\n/.test(content)) {
+    return content
+  }
+
+  const lines = content.split('\n')
+  let fenceOpen = false
+  let fenceMarker = '```'
+
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = lines[index]!
+    const fenceMatch = line.match(/^\s*(`{3,})/)
+    if (fenceMatch) {
+      const marker = fenceMatch[1]!
+      if (!fenceOpen) {
+        fenceOpen = true
+        fenceMarker = marker
+      } else if (marker.length >= fenceMarker.length) {
+        fenceOpen = false
+      }
+      continue
+    }
+
+    if (
+      fenceOpen ||
+      !/(?<!`)`\s*$/.test(line) ||
+      !hasOddStandaloneInlineBacktickCount(line)
+    ) {
+      continue
+    }
+
+    let nextContentLineIndex = index + 1
+    while (
+      nextContentLineIndex < lines.length &&
+      lines[nextContentLineIndex]!.trim() === ''
+    ) {
+      nextContentLineIndex += 1
+    }
+
+    if (nextContentLineIndex === index + 1) {
+      continue
+    }
+
+    const nextLine = lines[nextContentLineIndex]
+    if (!nextLine || !hasOddStandaloneInlineBacktickCount(nextLine)) {
+      continue
+    }
+
+    lines[index] = `${line.trimEnd()}${nextLine.trimStart()}`
+    lines.splice(index + 1, nextContentLineIndex - index)
+  }
+
+  return lines.join('\n')
+}
+
 // GFM autolink-literal trims only ASCII trailing punctuation, so a bare URL
 // followed by `**` or CJK fullwidth punctuation swallows those characters into
 // the href (e.g. `**http://127.0.0.1:5273**（dev` → href `…5273**（dev`), which
@@ -755,7 +825,11 @@ const renderPlainMarkdown = (content: string, workspacePath: string | undefined,
     components={getMarkdownComponents(workspacePath)}
     urlTransform={messageMarkdownUrlTransform}
   >
-    {normalizeWindowsImagePaths(normalizeBareUrlBoundaries(closeUnclosedMarkdownSpans(content)))}
+    {normalizeWindowsImagePaths(
+      normalizeBareUrlBoundaries(
+        closeUnclosedMarkdownSpans(normalizeInlineCodeAcrossBlankLines(content)),
+      ),
+    )}
   </ReactMarkdown>
 )
 

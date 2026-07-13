@@ -4578,6 +4578,14 @@ body.is-card-dragging .lane-drop-zone-top {
   word-break: break-word;
 }
 
+/* Assistant text is Markdown, so source newlines are structural input for the
+   parser rather than literal whitespace to preserve. The message shell also
+   hosts literal-text surfaces; reset it here so blank provider lines cannot
+   inflate the rendered transcript into large empty bands. */
+.message-assistant .message-content {
+  white-space: normal;
+}
+
 .message-content.is-sticky-preview {
   display: flex;
   min-width: 0;
@@ -4763,6 +4771,7 @@ body.is-card-dragging .lane-drop-zone-top {
   padding: 0.4em 0.7em;
   border-radius: 8px;
   overflow-x: auto;
+  white-space: pre;
   font-size: 0.78em;
   line-height: calc(1.5 * var(--ui-line-height-scale));
   scrollbar-width: thin;

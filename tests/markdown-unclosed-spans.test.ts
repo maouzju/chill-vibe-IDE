@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
 import test from 'node:test'
 import * as React from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
@@ -201,4 +202,58 @@ test('closeUnclosedMarkdownSpans still appends the fence at the end for a tail s
   const lines = out.split('\n')
   assert.equal(lines[lines.length - 1], '```')
   assert.equal((out.match(/```/g) ?? []).length, 2)
+})
+
+test('renderMarkdown repairs an inline-code span split across a blank line instead of exposing raw backticks', () => {
+  // Screenshot regression: a provider reply placed the opening backtick after
+  // the first CJK character, then inserted a blank line before the rest of the
+  // sentence. CommonMark cannot carry an inline-code span across that block
+  // boundary, so both backticks rendered literally and "卧室" looked torn in
+  // half with a large blank region between the two fragments.
+  const content = [
+    '- **根因**',
+    '  - 卧`',
+    '',
+    '室同时塞入床、衣柜、书架、书桌，最后落到 PowerHandset.gd`，现有床尺寸与双通道冲突。',
+  ].join('\n')
+
+  const markup = renderToStaticMarkup(
+    React.createElement(
+      React.Fragment,
+      null,
+      renderMarkdown(content),
+    ),
+  )
+
+  assert.match(
+    markup,
+    /卧<code>室同时塞入床、衣柜、书架、书桌，最后落到 PowerHandset\.gd<\/code>，现有床尺寸与双通道冲突。/,
+  )
+  assert.doesNotMatch(markup, /卧`/)
+  assert.doesNotMatch(markup, /PowerHandset\.gd`/)
+  assert.doesNotMatch(markup, /<\/ul>\n<p>室同时/)
+})
+
+test('renderMarkdown does not join paragraphs whose inline-code spans are already balanced', () => {
+  const markup = renderToStaticMarkup(
+    React.createElement(
+      React.Fragment,
+      null,
+      renderMarkdown('第一段 `done`\n\n第二段 `other`'),
+    ),
+  )
+
+  assert.equal(
+    markup,
+    '<p>第一段 <code>done</code></p>\n<p>第二段 <code>other</code></p>',
+  )
+})
+
+test('assistant markdown collapses source whitespace instead of inheriting pre-wrap from the message shell', () => {
+  const css = readFileSync(new URL('../src/index.css', import.meta.url), 'utf8')
+
+  assert.match(
+    css,
+    /\.message-assistant\s+\.message-content\s*\{[^}]*white-space:\s*normal\s*;/s,
+  )
 })

@@ -7,6 +7,7 @@ import { after, describe, it } from 'node:test'
 import {
   captureWorkspaceSnapshot,
   commitGitWorkspace,
+  createWorkspaceSnapshotContentStore,
   diffWorkspaceSnapshot,
   discardGitWorkspaceChanges,
   initGitWorkspace,
@@ -66,6 +67,29 @@ after(async () => {
 })
 
 describe('git workspace helpers', () => {
+  it('shares identical snapshot content through a bounded content-addressed store', () => {
+    const store = createWorkspaceSnapshotContentStore(10)
+
+    assert.equal(store.intern('123456'), '123456')
+    assert.equal(store.intern('123456'), '123456')
+    assert.deepEqual(store.getStats(), {
+      entries: 1,
+      bytes: 6,
+      hits: 1,
+      misses: 1,
+      evictions: 0,
+    })
+
+    assert.equal(store.intern('abcdef'), 'abcdef')
+    assert.deepEqual(store.getStats(), {
+      entries: 1,
+      bytes: 6,
+      hits: 1,
+      misses: 2,
+      evictions: 1,
+    })
+  })
+
   it('initializes a Git repository when the workspace is not one yet', async () => {
     const workspacePath = await mkdtemp(path.join(tmpdir(), 'chill-vibe-git-init-'))
     tempRoots.push(workspacePath)
@@ -293,6 +317,168 @@ describe('git workspace helpers', () => {
     assert.match(diff.files[0]?.patch ?? '', /export const value = 1/)
     assert.match(diff.files[1]?.patch ?? '', /\+agent line/)
     assert.doesNotMatch(diff.files[1]?.patch ?? '', /existing dirty line\n\+existing dirty line/)
+  })
+
+  it('bounds workspace snapshot content when noisy untracked output fills the repository', async () => {
+    const repoPath = await createTempRepo()
+    const noisyOutputDir = path.join(repoPath, 'test-results', 'browser-profile')
+    await mkdir(noisyOutputDir, { recursive: true })
+
+    await Promise.all(
+      Array.from({ length: 48 }, (_, index) =>
+        writeFile(
+          path.join(noisyOutputDir, `cache-${index}.bin`),
+          Buffer.alloc(128 * 1024, index),
+        ),
+      ),
+    )
+
+    const snapshot = await captureWorkspaceSnapshot(repoPath)
+    assert.ok(snapshot)
+
+    const capturedBytes = Object.values(snapshot.files).reduce(
+      (total, file) => total + (file.content === null ? 0 : Buffer.byteLength(file.content)),
+      0,
+    )
+
+    assert.ok(
+      capturedBytes <= 4 * 1024 * 1024,
+      `snapshot retained ${capturedBytes} bytes of pre-existing workspace output`,
+    )
+    assert.ok(
+      Object.keys(snapshot.files).length < 48,
+      'a bounded snapshot must not retain every noisy untracked file',
+    )
+  })
+
+  it('keeps the filename when a stream creates a file too large for a fallback patch', async () => {
+    const repoPath = await createTempRepo()
+    const snapshot = await captureWorkspaceSnapshot(repoPath)
+
+    await writeFile(path.join(repoPath, 'large-agent-output.bin'), Buffer.alloc(512 * 1024, 7))
+
+    const diff = await diffWorkspaceSnapshot(
+      snapshot,
+      repoPath,
+      new Set(['large-agent-output.bin']),
+    )
+
+    assert.equal(diff.files.length, 1)
+    assert.deepEqual(diff.files[0], {
+      path: 'large-agent-output.bin',
+      kind: 'untracked',
+      addedLines: 0,
+      removedLines: 0,
+      patch: '',
+      patchOmittedReason: 'file-too-large',
+    })
+  })
+
+  it('keeps the filename when a pre-existing dirty baseline did not fit the snapshot budget', async () => {
+    const repoPath = await createTempRepo()
+
+    await Promise.all(
+      Array.from({ length: 36 }, (_, index) =>
+        writeFile(
+          path.join(repoPath, `cache-${String(index).padStart(2, '0')}.bin`),
+          Buffer.alloc(128 * 1024, index),
+        ),
+      ),
+    )
+    await writeFile(path.join(repoPath, 'zz-existing.txt'), 'before\n')
+
+    const snapshot = await captureWorkspaceSnapshot(repoPath)
+    assert.ok(snapshot)
+    assert.equal(snapshot.files['zz-existing.txt'], undefined)
+
+    const unchangedDiff = await diffWorkspaceSnapshot(snapshot, repoPath)
+    assert.equal(unchangedDiff.files.length, 0, 'an omitted pre-existing baseline is not itself a turn edit')
+
+    await writeFile(path.join(repoPath, 'zz-existing.txt'), 'after\n')
+    const diff = await diffWorkspaceSnapshot(snapshot, repoPath, new Set(['zz-existing.txt']))
+
+    assert.equal(diff.files.length, 1)
+    assert.deepEqual(diff.files[0], {
+      path: 'zz-existing.txt',
+      kind: 'untracked',
+      addedLines: 0,
+      removedLines: 0,
+      patch: '',
+      patchOmittedReason: 'baseline-unavailable',
+    })
+  })
+
+  it('keeps a touched filename when an omitted pre-existing untracked file is deleted', async () => {
+    const repoPath = await createTempRepo()
+    const relativePath = 'temporary-output.txt'
+    const absolutePath = path.join(repoPath, relativePath)
+    await writeFile(absolutePath, 'before\n')
+
+    const snapshot = await captureWorkspaceSnapshot(repoPath)
+    assert.ok(snapshot)
+    assert.ok(snapshot.files[relativePath])
+
+    // Model a baseline entry that was known to Git status but whose content
+    // was omitted by the snapshot safety budget.
+    delete snapshot.files[relativePath]
+    await rm(absolutePath)
+
+    const diff = await diffWorkspaceSnapshot(snapshot, repoPath, new Set([relativePath]))
+
+    assert.deepEqual(diff.files, [{
+      path: relativePath,
+      kind: 'deleted',
+      addedLines: 0,
+      removedLines: 0,
+      patch: '',
+      patchOmittedReason: 'baseline-unavailable',
+    }])
+  })
+
+  it('keeps every touched filename after the detailed diff file limit is reached', async () => {
+    const repoPath = await createTempRepo()
+    const snapshot = await captureWorkspaceSnapshot(repoPath)
+    const touchedPaths = new Set<string>()
+
+    await Promise.all(
+      Array.from({ length: 3 }, async (_, index) => {
+        const relativePath = `generated/file-${String(index).padStart(3, '0')}.txt`
+        const absolutePath = path.join(repoPath, relativePath)
+        await mkdir(path.dirname(absolutePath), { recursive: true })
+        await writeFile(absolutePath, `value ${index}\n`)
+        touchedPaths.add(relativePath)
+      }),
+    )
+
+    const diff = await diffWorkspaceSnapshot(snapshot, repoPath, touchedPaths, { maxFiles: 2 })
+
+    assert.equal(diff.files.length, 3)
+    assert.equal(diff.files.filter((file) => file.patchOmittedReason === 'detail-file-limit').length, 1)
+    assert.equal(diff.files.at(-1)?.path, 'generated/file-002.txt')
+  })
+
+  it('keeps filenames after the total fallback patch budget is exhausted', async () => {
+    const repoPath = await createTempRepo()
+    const snapshot = await captureWorkspaceSnapshot(repoPath)
+    const touchedPaths = new Set<string>()
+
+    await Promise.all(
+      Array.from({ length: 3 }, async (_, index) => {
+        const relativePath = `generated/large-${String(index).padStart(2, '0')}.txt`
+        const absolutePath = path.join(repoPath, relativePath)
+        await mkdir(path.dirname(absolutePath), { recursive: true })
+        await writeFile(absolutePath, `${String.fromCharCode(65 + index).repeat(1024)}\n`)
+        touchedPaths.add(relativePath)
+      }),
+    )
+
+    const diff = await diffWorkspaceSnapshot(snapshot, repoPath, touchedPaths, {
+      maxTotalBytes: 2_200,
+    })
+
+    assert.equal(diff.files.length, 3)
+    assert.ok(diff.files.some((file) => file.patchOmittedReason === 'patch-budget'))
+    assert.ok(diff.files.every((file) => file.path.startsWith('generated/large-')))
   })
 
   it('excludes external file changes when touchedPaths is provided', async () => {

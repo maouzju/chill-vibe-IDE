@@ -473,6 +473,14 @@ A living list of traps that have wasted time before. **When you hit a new pitfal
 
 | 195 | 测试里直接用 `getProviderSlashCommands({ provider: 'claude' })` 会启动真实 Claude CLI；临时工作区可能在进程退出前仍被占用，导致清理时报 Windows `EBUSY` | 只验证 Skill 映射时优先测 Codex 路径或直接测 Skill 发现层；必须测 Claude 原生命令时使用假的 Provider 命令并等待子进程完整退出后再删临时目录。 |
 
+| 196 | 原生拖拽进行期间浏览器禁止 dragover 读 `dataTransfer.getData()`，所以拖拽全靠模块级 `activeDragPayload`；任何"防提示残留"看门狗若超时顺手 `clearDragPayload()`，会把仍在飞行中的拖拽整个杀死——之后所有 dragover 读不到 payload 不再 preventDefault，落点提示永久消失且无法 drop（跨 pane 拖动或悬停非落点区超 1.2s 必现） | 看门狗超时只准清视觉提示；payload 只能在拖拽确认已死时释放——用 `releaseDragPayloadIfStale`（document capture 级 drag/dragover 活动心跳，静默超 800ms 才算死，拖拽存活则重新武装看门狗）。回归钉在 `tests/drag-payload-liveness.test.ts`。 |
+
+| 197 | `captureWorkspaceSnapshot()` 曾在每个聊天回合启动时用 `Promise.all` 把工作区全部已修改/未跟踪文件读进内存并持有到回合结束；一个含 5458 个浏览器测试缓存（约 0.96GB）的工作区会让 Electron 主进程按并发会话数复制这批内容，数个会话即可无日志硬闪退 | 回合级 Git 基线必须同时限制单文件、总字节数和详细文件数，顺序读取并优先已跟踪文件；相同正文通过有界内容寻址缓存复用。超限时保留文件名和省略原因，既有脏文件正文缺失时不得从 HEAD/null 伪造本轮差异。回归钉在 `tests/git-workspace.test.ts`。 |
+
+| 198 | 为验证 256 文件 / 4 MiB 这类生产预算而在单测里真的创建数百文件和巨型补丁，会让 Windows Node 测试长时间占满 CPU；外层 timeout 结束后子测试进程还可能继续跑 | 给预算函数保留测试专用的小额可注入 limits，用 2-3 个小文件钉住边界语义；不要靠制造生产规模数据验证纯预算分支。 |
+
+| 199 | 已被工作区基线预算省略的脏路径，若本轮把它删掉或恢复到 HEAD，会同时从 `currentStatus.changes` 和 `snapshot.files` 消失；只遍历这两处会让 provider 明确报告的文件名再次静默丢失 | `diffWorkspaceSnapshot()` 还要对照 `snapshot.changes` 与 touched paths 补发 `baseline-unavailable` 条目；回归钉在 `tests/git-workspace.test.ts` 的“omitted pre-existing untracked file is deleted”用例。 |
+
 ### Self-maintenance rule
 
 - When you encounter a new non-obvious failure mode — a test that fails for environmental reasons, a build step with hidden prerequisites, a runtime behavior that contradicts the docs — append a row to this table before you finish the task.

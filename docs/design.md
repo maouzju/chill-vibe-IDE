@@ -158,6 +158,7 @@ type ChatCard = {
 - Codex / Claude skill 互相复用时，斜杠菜单、提示词注入和实际 CLI 文件读取权限必须一致；Claude 复用 Codex 用户级 skill 时，需要预授权对应 `.codex` / `CODEX_HOME` 目录。
 - 斜杠命令列表必须在当前聊天卡片激活后后台预热，不能等用户输入 `/` 才启动 provider 探测。Claude 原生命令探测会启动一次 CLI，按工作区和语言缓存 5 分钟；技能目录仍通过前端 5 秒刷新窗口重新扫描，使新建技能无需重启即可出现，同时避免反复启动 Claude CLI 阻塞菜单。
 - 使用 SSE 将流式输出推给前端
+- 每个 provider 回合为“兜底改动卡”保留的 Git 工作区基线必须有硬上限：优先保留已跟踪的脏文件，单文件最多 256 KiB、每回合最多 256 个详细文件 / 4 MiB；相同基线正文通过 32 MiB 有界内容寻址缓存跨会话复用。超限文件仍必须展示文件名和省略原因，不能因差异正文超限而静默消失；启动时已脏但未保留正文的文件不得伪造相对 HEAD 的本轮差异。
 - Codex shell tools run through PowerShell on Windows. The Codex base instructions must warn that search patterns containing embedded double quotes, especially JSON literals, should use single quotes, a here-string/script file, or `rg --fixed-strings` instead of a double-quoted PowerShell argument, otherwise PowerShell can fail with `TerminatorExpectedAtEndOfString`.
 - 当当前 provider 的本地 CLI 不可用时，聊天发送仍然要进入应用层校验，并在卡片内追加“本地 CLI 不可用”的系统提示；不能只禁用发送按钮让用户反复点击却没有反馈。
 - Claude 流式输出的健壮性（`server/claude-structured-output.ts` + `server/providers.ts` + `server/provider-stream-recovery.ts`）：

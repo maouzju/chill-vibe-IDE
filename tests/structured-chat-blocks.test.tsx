@@ -695,6 +695,31 @@ test('renders structured edited-file diff blocks', () => {
   assert.match(markup, /export const newLine = true/)
 })
 
+test('renders an explanation instead of a blank diff preview when patch details are omitted', () => {
+  const card = createEditedFilesCard()
+  card.messages[0]!.meta!.structuredData = JSON.stringify({
+    itemId: 'workspace_edits',
+    status: 'completed',
+    files: [
+      {
+        path: 'artifacts/large-output.bin',
+        kind: 'untracked',
+        addedLines: 0,
+        removedLines: 0,
+        patch: '',
+        patchOmittedReason: 'file-too-large',
+      },
+    ],
+  })
+
+  const markup = renderCard(card)
+
+  assert.match(markup, /large-output\.bin/)
+  assert.match(markup, /Diff omitted because this file is too large/)
+  assert.match(markup, /structured-edits-omitted/)
+  assert.doesNotMatch(markup, /structured-preview-shell/)
+})
+
 test('renders streaming ask-user cards inside the normal chat shell', () => {
   const card = createCard()
   card.messages = [
@@ -773,6 +798,25 @@ test('renders open-file buttons for changes-summary paths outside the workspace'
 
   assert.match(markup, /changes-summary-file-button/)
   assert.match(markup, /data-open-file-path="C:\/Users\/demo\/\.claude\/projects\/demo\/MEMORY\.md"/)
+})
+
+test('changes summary keeps filename-only edits without claiming zero changed lines', () => {
+  const card = createChangesSummaryCard()
+  card.messages[0]!.meta!.structuredData = JSON.stringify([
+    {
+      path: 'artifacts/large-output.bin',
+      addedLines: 0,
+      removedLines: 0,
+      patchOmittedReason: 'file-too-large',
+    },
+  ])
+
+  const markup = renderCard(card)
+
+  assert.match(markup, /large-output\.bin/)
+  assert.match(markup, /1 file changed · 1 without diff details/)
+  assert.doesNotMatch(markup, /0 insertions/)
+  assert.match(markup, /Diff omitted/)
 })
 
 test('renders a VS Code-like structured todo card', () => {

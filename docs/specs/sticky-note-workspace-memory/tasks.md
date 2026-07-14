@@ -13,3 +13,4 @@
    `--ink-*`/`--danger-soft`），双主题自动适配。
 6. [x] 验证：窄测试绿（10 项新测试 + 130 项受影响既有测试）+ `pnpm test:quality`；
    `pnpm electron:build` 打包。
+7. [x] 便签按工作区保存并恢复滚动位置与光标/选区。

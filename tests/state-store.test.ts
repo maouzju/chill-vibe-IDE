@@ -145,7 +145,11 @@ describe('state-store persistence', () => {
     const withArchive = {
       ...loaded,
       stickyNoteArchive: {
-        'D:/legacy-archive': { content: '记住我', updatedAt: '2026-04-04T12:00:00.000Z' },
+        'D:/legacy-archive': {
+          content: '记住我',
+          updatedAt: '2026-04-04T12:00:00.000Z',
+          viewState: { scrollTop: 96, selectionStart: 2, selectionEnd: 3 },
+        },
       },
     }
     await saveState(withArchive)
@@ -154,6 +158,11 @@ describe('state-store persistence', () => {
       reloaded.stickyNoteArchive['D:/legacy-archive']?.content,
       '记住我',
       'saved archive entries should survive a save/load round trip',
+    )
+    assert.deepEqual(
+      reloaded.stickyNoteArchive['D:/legacy-archive']?.viewState,
+      { scrollTop: 96, selectionStart: 2, selectionEnd: 3 },
+      'saved sticky note position should survive a save/load round trip',
     )
   })
 

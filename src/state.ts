@@ -21,6 +21,7 @@ import {
   resetCardSessions,
   touchState,
   upsertStickyNoteArchiveEntry,
+  updateStickyNoteArchiveViewState,
 } from '../shared/default-state'
 import { createDefaultBrainstormState } from '../shared/brainstorm'
 import { getChatMessageAttachments } from '../shared/chat-attachments'
@@ -278,6 +279,11 @@ export type IdeAction =
   | { type: 'resizePane'; columnId: string; splitId: string; ratios: number[] }
   | { type: 'setCardDraft'; columnId: string; cardId: string; draft: string }
   | { type: 'clearStickyNoteArchive'; workspacePath: string }
+  | {
+      type: 'updateStickyNoteViewState'
+      workspacePath: string
+      viewState: { scrollTop: number; selectionStart: number; selectionEnd: number }
+    }
   | { type: 'appendMessages'; columnId: string; cardId: string; messages: ChatMessage[] }
   | { type: 'upsertMessages'; columnId: string; cardId: string; messages: ChatMessage[] }
   | { type: 'resetCardConversation'; columnId: string; cardId: string; title?: string }
@@ -1919,6 +1925,16 @@ export const ideReducer = (state: AppState, action: IdeAction): AppState => {
       const stickyNoteArchive = { ...state.stickyNoteArchive }
       delete stickyNoteArchive[action.workspacePath]
       return touchState({ ...state, stickyNoteArchive })
+    }
+    case 'updateStickyNoteViewState': {
+      const stickyNoteArchive = updateStickyNoteArchiveViewState(
+        state.stickyNoteArchive,
+        action.workspacePath,
+        action.viewState,
+      )
+      return stickyNoteArchive === state.stickyNoteArchive
+        ? state
+        : touchState({ ...state, stickyNoteArchive })
     }
     case 'appendMessages':
       return touchState(

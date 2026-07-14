@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { after, afterEach, beforeEach, describe, it } from 'node:test'
+import { after, describe, it } from 'node:test'
 import fs from 'fs'
 import path from 'path'
 import os from 'os'
@@ -11,20 +11,9 @@ import {
 } from '../server/session-fork.ts'
 
 const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'session-fork-test-'))
-const externalHomeDir = path.join(tmpDir, 'home')
 
 after(() => {
   fs.rmSync(tmpDir, { recursive: true, force: true })
-})
-
-beforeEach(() => {
-  fs.rmSync(externalHomeDir, { recursive: true, force: true })
-  fs.mkdirSync(externalHomeDir, { recursive: true })
-  process.env.CHILL_VIBE_EXTERNAL_HISTORY_HOME = externalHomeDir
-})
-
-afterEach(() => {
-  delete process.env.CHILL_VIBE_EXTERNAL_HISTORY_HOME
 })
 
 const srcClaudeId = 'aaaaaaaa-0000-0000-0000-000000000001'
@@ -393,18 +382,21 @@ describe('planCodexSessionFork', () => {
 
 describe('forkProviderSession', () => {
   it('forks a Claude session file next to the source without touching it', async () => {
-    const projectDir = path.join(externalHomeDir, '.claude', 'projects', 'D--Git-project')
+    const projectDir = path.join(tmpDir, 'claude-project')
     fs.mkdirSync(projectDir, { recursive: true })
     const sourcePath = path.join(projectDir, `${srcClaudeId}.jsonl`)
     const sourceContent = buildClaudeFixture()
     fs.writeFileSync(sourcePath, sourceContent, 'utf8')
 
-    const forkedId = await forkProviderSession({
-      provider: 'claude',
-      workspacePath: 'D:\\Git\\project',
-      sessionId: srcClaudeId,
-      forkPoint: { content: '第二个问题', createdAt: '2026-07-01T10:04:58.000Z' },
-    })
+    const forkedId = await forkProviderSession(
+      {
+        provider: 'claude',
+        workspacePath: 'D:\\Git\\project',
+        sessionId: srcClaudeId,
+        forkPoint: { content: '第二个问题', createdAt: '2026-07-01T10:04:58.000Z' },
+      },
+      { findClaudeSessionFile: () => sourcePath },
+    )
 
     assert.ok(forkedId)
     assert.notEqual(forkedId, srcClaudeId)
@@ -417,18 +409,21 @@ describe('forkProviderSession', () => {
   })
 
   it('forks a Codex rollout with the new id in the filename and meta line', async () => {
-    const dayDir = path.join(externalHomeDir, '.codex', 'sessions', '2026', '07', '01')
+    const dayDir = path.join(tmpDir, 'codex-sessions', '2026', '07', '01')
     fs.mkdirSync(dayDir, { recursive: true })
     const sourcePath = path.join(dayDir, `rollout-2026-07-01T10-00-00-${srcCodexId}.jsonl`)
     const sourceContent = buildCodexFixture()
     fs.writeFileSync(sourcePath, sourceContent, 'utf8')
 
-    const forkedId = await forkProviderSession({
-      provider: 'codex',
-      workspacePath: 'D:\\Git\\project',
-      sessionId: srcCodexId,
-      forkPoint: { content: '问题二', createdAt: '2026-07-01T10:04:58.000Z' },
-    })
+    const forkedId = await forkProviderSession(
+      {
+        provider: 'codex',
+        workspacePath: 'D:\\Git\\project',
+        sessionId: srcCodexId,
+        forkPoint: { content: '问题二', createdAt: '2026-07-01T10:04:58.000Z' },
+      },
+      { findCodexRolloutFile: () => sourcePath },
+    )
 
     assert.ok(forkedId)
     assert.notEqual(forkedId, srcCodexId)
@@ -442,12 +437,15 @@ describe('forkProviderSession', () => {
   })
 
   it('returns null when the source session file cannot be found', async () => {
-    const forkedId = await forkProviderSession({
-      provider: 'claude',
-      workspacePath: 'D:\\Git\\project',
-      sessionId: 'cccccccc-0000-0000-0000-000000000009',
-      forkPoint: { content: '第二个问题', createdAt: '2026-07-01T10:04:58.000Z' },
-    })
+    const forkedId = await forkProviderSession(
+      {
+        provider: 'claude',
+        workspacePath: 'D:\\Git\\project',
+        sessionId: 'cccccccc-0000-0000-0000-000000000009',
+        forkPoint: { content: '第二个问题', createdAt: '2026-07-01T10:04:58.000Z' },
+      },
+      { findClaudeSessionFile: () => null },
+    )
     assert.equal(forkedId, null)
   })
 })

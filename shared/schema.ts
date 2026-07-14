@@ -538,8 +538,14 @@ export type AppSettings = z.infer<typeof appSettingsSchema>
 export const stickyNoteArchiveEntrySchema = z.object({
   content: z.string().default(''),
   updatedAt: z.string().datetime(),
+  viewState: z.object({
+    scrollTop: z.number().nonnegative().default(0),
+    selectionStart: z.number().int().nonnegative().default(0),
+    selectionEnd: z.number().int().nonnegative().default(0),
+  }).optional(),
 })
 export type StickyNoteArchiveEntry = z.infer<typeof stickyNoteArchiveEntrySchema>
+export type StickyNoteViewState = NonNullable<StickyNoteArchiveEntry['viewState']>
 
 export const appStateSchema = z.object({
   version: z.literal(1),
@@ -860,6 +866,21 @@ export const forkSessionResponseSchema = z.object({
   sessionId: z.string().nullable(),
 })
 export type ForkSessionResponse = z.infer<typeof forkSessionResponseSchema>
+
+// Fact-check before stream recovery auto-resume: ask the provider's native
+// on-disk session transcript whether the last turn actually finished. Only
+// Claude is supported for now; other providers report 'unknown' (fail-open,
+// caller keeps the existing resume behavior).
+export const nativeTurnCompletionRequestSchema = z.object({
+  provider: providerSchema,
+  sessionId: z.string().min(1),
+})
+export type NativeTurnCompletionRequest = z.infer<typeof nativeTurnCompletionRequestSchema>
+
+export const nativeTurnCompletionResponseSchema = z.object({
+  completion: z.enum(['completed', 'incomplete', 'unknown']),
+})
+export type NativeTurnCompletionResponse = z.infer<typeof nativeTurnCompletionResponseSchema>
 
 export const attachmentUploadRequestSchema = z.object({
   fileName: z.string().min(1).optional(),

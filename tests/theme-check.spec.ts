@@ -7417,6 +7417,39 @@ test('pane-embedded chats keep the title in tab chrome instead of the content he
 })
 
 for (const theme of ['dark', 'light'] as const) {
+  test(`composer model picker yields width to the textarea in a narrow card in ${theme} theme`, async ({ page }) => {
+    const state = createMockState()
+    state.settings.theme = theme
+
+    await mockAppApis(page, { state })
+    await page.setViewportSize({ width: 360, height: 800 })
+    await page.goto(appUrl)
+
+    const composerRow = page.locator('.pane-tab-panel.is-active .composer-input-row').first()
+    const modelShell = composerRow.locator('.composer-model-select')
+    const modelButton = modelShell.locator('.model-select')
+    const modelLabel = modelButton.locator('.model-select-label')
+    const textarea = composerRow.locator('.textarea')
+
+    await expect(composerRow).toBeVisible()
+    await expect(modelLabel).toHaveCSS('text-overflow', 'ellipsis')
+    await expect
+      .poll(async () => {
+        const [rowBox, modelBox, textareaBox] = await Promise.all([
+          composerRow.boundingBox(),
+          modelShell.boundingBox(),
+          textarea.boundingBox(),
+        ])
+        return {
+          modelFits: Boolean(rowBox && modelBox && modelBox.width < rowBox.width / 2),
+          textareaRemainsUsable: Boolean(textareaBox && textareaBox.width >= 32),
+        }
+      })
+      .toEqual({ modelFits: true, textareaRemainsUsable: true })
+  })
+}
+
+for (const theme of ['dark', 'light'] as const) {
   test(`long pane tab titles keep the close affordance clear in ${theme} theme`, async ({ page }) => {
     const state = createMockState()
     state.settings.language = 'zh-CN'

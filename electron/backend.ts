@@ -18,6 +18,7 @@ import { FileWatcherManager } from '../server/file-watcher.ts'
 import { readNearestTsconfig } from '../server/tsconfig-discovery.ts'
 import { listExternalSessions, loadExternalSession } from '../server/external-history.ts'
 import { forkProviderSession } from '../server/session-fork.ts'
+import { getClaudeNativeTurnCompletion } from '../server/native-turn-completion.ts'
 import {
   commitAllGitWorkspace,
   commitGitWorkspace,
@@ -80,6 +81,7 @@ import {
   internalSessionHistoryLoadRequestSchema,
   chatRequestSchema,
   forkSessionRequestSchema,
+  nativeTurnCompletionRequestSchema,
   gitCommitAllRequestSchema,
   gitCommitDiffRequestSchema,
   gitCommitRequestSchema,
@@ -355,6 +357,13 @@ export const createDesktopBackend = (deps: DesktopBackendDependencies = {}) => {
     },
     async uploadImageAttachment(request: AttachmentUploadRequest) {
       return storeImageAttachment(attachmentUploadRequestSchema.parse(request))
+    },
+    async getNativeTurnCompletion(request: unknown) {
+      const parsed = nativeTurnCompletionRequestSchema.parse(request)
+      if (parsed.provider !== 'claude') {
+        return { completion: 'unknown' as const }
+      }
+      return { completion: await getClaudeNativeTurnCompletion(parsed.sessionId) }
     },
     async forkProviderSession(request: unknown) {
       const parsed = forkSessionRequestSchema.parse(request)

@@ -408,6 +408,8 @@ type ChatCardProps = {
   onMarkRead: () => void
   onStickyNoteChange: (content: string) => void
   stickyNoteArchivedContent?: string
+  stickyNoteArchivedViewState?: import('../../shared/schema').StickyNoteViewState
+  onChangeStickyNoteViewState?: (viewState: import('../../shared/schema').StickyNoteViewState) => void
   onDiscardStickyNoteArchive?: () => void
   onPatchCard: (
     patch: Partial<
@@ -1342,6 +1344,8 @@ const ChatCardView = ({
   onMarkRead,
   onStickyNoteChange,
   stickyNoteArchivedContent,
+  stickyNoteArchivedViewState,
+  onChangeStickyNoteViewState,
   onDiscardStickyNoteArchive,
   onPatchCard,
   onChangeTitle,
@@ -4126,12 +4130,14 @@ const ChatCardView = ({
           <StickyNoteCard
             content={card.stickyNote}
             archivedContent={stickyNoteArchivedContent}
+            archivedViewState={stickyNoteArchivedViewState}
             language={language}
             onChange={(content) => {
               onStickyNoteChange(content)
               const firstLine = content.split('\n')[0].trim()
               onChangeTitle(firstLine)
             }}
+            onViewStateChange={onChangeStickyNoteViewState}
             onDiscardArchive={onDiscardStickyNoteArchive}
           />
         </div>

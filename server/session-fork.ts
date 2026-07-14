@@ -21,6 +21,11 @@ export type ForkProviderSessionOptions = {
   forkPoint: { content: string; createdAt?: string | null }
 }
 
+type ForkProviderSessionDependencies = {
+  findClaudeSessionFile?: (sessionId: string) => string | null
+  findCodexRolloutFile?: (sessionId: string) => string | null
+}
+
 // A containment match this far away from the UI message timestamp is more
 // likely a coincidental repeat than the actual fork-point turn.
 const matchToleranceMs = 10 * 60_000
@@ -376,7 +381,7 @@ const listSubdirectories = (dirPath: string) => {
 // Locate `<sessionId>.jsonl` by scanning project dirs instead of deriving the
 // cwd slug: slug rules have drifted between CLI versions and a scan can never
 // pick the wrong directory for an exact session-id filename.
-const findClaudeSessionFile = (sessionId: string) => {
+export const findClaudeSessionFile = (sessionId: string) => {
   for (const homeDir of resolveHomeDirs()) {
     const projectsDir = path.join(homeDir, '.claude', 'projects')
     for (const projectDir of listSubdirectories(projectsDir)) {
@@ -416,6 +421,7 @@ const findCodexRolloutFile = (sessionId: string) => {
 
 export const forkProviderSession = async (
   options: ForkProviderSessionOptions,
+  dependencies: ForkProviderSessionDependencies = {},
 ): Promise<string | null> => {
   try {
     const forkPoint: SessionForkPoint = {
@@ -425,7 +431,9 @@ export const forkProviderSession = async (
     const newSessionId = crypto.randomUUID()
 
     if (options.provider === 'claude') {
-      const sourcePath = findClaudeSessionFile(options.sessionId)
+      const sourcePath = (dependencies.findClaudeSessionFile ?? findClaudeSessionFile)(
+        options.sessionId,
+      )
       if (!sourcePath) {
         return null
       }
@@ -444,7 +452,9 @@ export const forkProviderSession = async (
       return newSessionId
     }
 
-    const sourcePath = findCodexRolloutFile(options.sessionId)
+    const sourcePath = (dependencies.findCodexRolloutFile ?? findCodexRolloutFile)(
+      options.sessionId,
+    )
     if (!sourcePath) {
       return null
     }

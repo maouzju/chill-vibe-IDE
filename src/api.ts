@@ -15,6 +15,8 @@ import {
   internalSessionHistoryLoadResponseSchema,
   chatStartResponseSchema,
   forkSessionRequestSchema,
+  nativeTurnCompletionRequestSchema,
+  nativeTurnCompletionResponseSchema,
   forkSessionResponseSchema,
   gitCommitAllRequestSchema,
   gitCommitDiffRequestSchema,
@@ -61,6 +63,8 @@ import {
   type ChatRequest,
   type ChatStartResponse,
   type ForkSessionRequest,
+  type NativeTurnCompletionRequest,
+  type NativeTurnCompletionResponse,
   type ExternalHistoryListRequest,
   type ExternalHistoryListResponse,
   type ExternalSessionLoadRequest,
@@ -575,6 +579,30 @@ export const forkProviderSession = async (request: ForkSessionRequest): Promise<
   const fn = requireDesktopAction(getDesktopApi()?.forkProviderSession)
   const response = await readDesktop(() => fn(parsed), forkSessionResponseSchema)
   return response.sessionId
+}
+
+// Fact-check before an auto-resume: ask the backend whether the provider's
+// native on-disk session transcript shows the last turn already finished.
+// Fail-open by contract — any transport or lookup failure reports 'unknown'
+// so the caller keeps the existing resume behavior.
+export const getNativeTurnCompletion = async (
+  request: NativeTurnCompletionRequest,
+): Promise<NativeTurnCompletionResponse['completion']> => {
+  try {
+    const parsed = nativeTurnCompletionRequestSchema.parse(request)
+    const desktop = getDesktopApi()
+    const response = desktop?.getNativeTurnCompletion
+      ? await readDesktop(
+          () => desktop.getNativeTurnCompletion!(parsed),
+          nativeTurnCompletionResponseSchema,
+        )
+      : nativeTurnCompletionResponseSchema.parse(
+          await postJson('/api/chat/native-turn-completion', parsed),
+        )
+    return response.completion
+  } catch {
+    return 'unknown'
+  }
 }
 
 export type UnsolicitedStreamNotification = {

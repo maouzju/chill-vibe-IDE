@@ -16,6 +16,7 @@ import type {
   SplitDirection,
   SplitNode,
   StickyNoteArchiveEntry,
+  StickyNoteViewState,
 } from './schema.js'
 import { createDefaultBrainstormState } from './brainstorm.js'
 import {
@@ -1207,6 +1208,7 @@ export const upsertStickyNoteArchiveEntry = (
   next[key] = {
     content: content.slice(0, stickyNoteArchiveMaxContentLength),
     updatedAt: now(),
+    viewState: archive[key]?.viewState,
   }
 
   const keys = Object.keys(next)
@@ -1218,6 +1220,44 @@ export const upsertStickyNoteArchiveEntry = (
   }
 
   return next
+}
+
+export const updateStickyNoteArchiveViewState = (
+  archive: Record<string, StickyNoteArchiveEntry>,
+  workspacePath: string,
+  viewState: StickyNoteViewState,
+): Record<string, StickyNoteArchiveEntry> => {
+  const key = workspacePath.trim()
+  const current = archive[key]
+  if (!key || !current) {
+    return archive
+  }
+
+  const contentLength = current.content.length
+  const selectionStart = Math.min(contentLength, Math.max(0, Math.round(viewState.selectionStart)))
+  const selectionEnd = Math.min(contentLength, Math.max(selectionStart, Math.round(viewState.selectionEnd)))
+  const normalized = {
+    scrollTop: Math.max(0, viewState.scrollTop),
+    selectionStart,
+    selectionEnd,
+  }
+
+  if (
+    current.viewState?.scrollTop === normalized.scrollTop &&
+    current.viewState.selectionStart === normalized.selectionStart &&
+    current.viewState.selectionEnd === normalized.selectionEnd
+  ) {
+    return archive
+  }
+
+  return {
+    ...archive,
+    [key]: {
+      ...current,
+      updatedAt: now(),
+      viewState: normalized,
+    },
+  }
 }
 
 export const archiveCardToHistory = (

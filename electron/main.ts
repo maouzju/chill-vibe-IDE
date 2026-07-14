@@ -552,6 +552,9 @@ function registerDesktopHandlers() {
   ipcMain.handle('desktop:fork-provider-session', (_event, request) =>
     desktopBackend.forkProviderSession(request),
   )
+  ipcMain.handle('desktop:get-native-turn-completion', (_event, request) =>
+    desktopBackend.getNativeTurnCompletion(request),
+  )
   ipcMain.handle('desktop:upload-image-attachment', (_event, request) =>
     desktopBackend.uploadImageAttachment(request),
   )

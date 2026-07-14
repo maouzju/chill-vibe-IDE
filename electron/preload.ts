@@ -116,6 +116,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   requestChat: (request: unknown) => ipcRenderer.invoke('desktop:request-chat', request),
   forkProviderSession: (request: unknown) =>
     ipcRenderer.invoke('desktop:fork-provider-session', request),
+  getNativeTurnCompletion: (request: unknown) =>
+    ipcRenderer.invoke('desktop:get-native-turn-completion', request),
   uploadImageAttachment: (request: unknown) =>
     ipcRenderer.invoke('desktop:upload-image-attachment', request),
   stopChat: (streamId: string) => ipcRenderer.invoke('desktop:stop-chat', streamId),

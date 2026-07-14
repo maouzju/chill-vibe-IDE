@@ -9,6 +9,8 @@ import type {
   ChatStartResponse,
   ForkSessionRequest,
   ForkSessionResponse,
+  NativeTurnCompletionRequest,
+  NativeTurnCompletionResponse,
   ExternalHistoryListRequest,
   ExternalHistoryListResponse,
   ExternalSessionLoadRequest,
@@ -112,6 +114,9 @@ declare global {
       fetchSlashCommands?: (request: SlashCommandRequest) => Promise<SlashCommand[]>
       requestChat?: (request: ChatRequest) => Promise<ChatStartResponse>
       forkProviderSession?: (request: ForkSessionRequest) => Promise<ForkSessionResponse>
+      getNativeTurnCompletion?: (
+        request: NativeTurnCompletionRequest,
+      ) => Promise<NativeTurnCompletionResponse>
       uploadImageAttachment?: (request: AttachmentUploadRequest) => Promise<ImageAttachment>
       stopChat?: (streamId: string) => Promise<void>
       listExternalHistory?: (request: ExternalHistoryListRequest) => Promise<ExternalHistoryListResponse>

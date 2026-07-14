@@ -13,6 +13,7 @@ import {
   internalSessionHistoryLoadRequestSchema,
   chatRequestSchema,
   forkSessionRequestSchema,
+  nativeTurnCompletionRequestSchema,
   gitCommitRequestSchema,
   gitDiscardRequestSchema,
   gitPullRequestSchema,
@@ -37,6 +38,7 @@ import { getDefaultWorkspacePath } from './app-paths.js'
 import { importCcSwitchProfiles } from './cc-switch-import.js'
 import { listExternalSessions, loadExternalSession } from './external-history.js'
 import { forkProviderSession } from './session-fork.js'
+import { getClaudeNativeTurnCompletion } from './native-turn-completion.js'
 import {
   copyWorkspaceFileToClipboard,
   createWorkspaceDirectory,
@@ -702,6 +704,23 @@ app.post('/api/chat/fork-session', async (request, response) => {
   // renderer falls back to the seeded replay, so this never returns an error.
   const sessionId = await forkProviderSession(parsed.data)
   response.json({ sessionId })
+})
+
+app.post('/api/chat/native-turn-completion', async (request, response) => {
+  const parsed = nativeTurnCompletionRequestSchema.safeParse(request.body)
+
+  if (!parsed.success) {
+    response.status(400).json({ message: 'Invalid native turn completion request.' })
+    return
+  }
+
+  // Fail-open by contract: 'unknown' keeps the caller on the existing resume
+  // path, so this endpoint never returns an error for lookup failures.
+  const completion =
+    parsed.data.provider === 'claude'
+      ? await getClaudeNativeTurnCompletion(parsed.data.sessionId)
+      : ('unknown' as const)
+  response.json({ completion })
 })
 
 app.get('/api/chat/stream/:streamId', (request, response) => {

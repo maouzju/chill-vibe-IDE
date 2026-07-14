@@ -8,6 +8,11 @@
 export const stickyNoteArchiveEntrySchema = z.object({
   content: z.string().default(''),
   updatedAt: z.string().datetime(),
+  viewState: z.object({
+    scrollTop: z.number().nonnegative().default(0),
+    selectionStart: z.number().int().nonnegative().default(0),
+    selectionEnd: z.number().int().nonnegative().default(0),
+  }).optional(),
 })
 // workspacePath -> entry
 stickyNoteArchive: z.record(z.string(), stickyNoteArchiveEntrySchema).default({})
@@ -51,6 +56,7 @@ stickyNoteArchive: z.record(z.string(), stickyNoteArchiveEntrySchema).default({}
 - 「删除记录」：调用 `onDiscardArchive()`，App 层 dispatch
   `clearStickyNoteArchive`。
 - 用户直接输入 → 文本非空，恢复条自然消失，新内容照常写档覆盖。
+- textarea 的滚动位置与光标/选区在滚动、选择变化和卸载时回写到工作区存档；便签重新挂载时在布局完成后恢复，并将选区限制在当前文本长度内。
 
 ### 顺带修复：卸载丢输入
 

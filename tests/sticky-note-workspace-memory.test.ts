@@ -104,6 +104,52 @@ describe('sticky note workspace memory', () => {
     assert.equal(next.stickyNoteArchive['D:/repo/one']?.content, '买牛奶\n回邮件')
   })
 
+  it('remembers the sticky note scroll and cursor position for the workspace', () => {
+    const state = createState({
+      stickyNoteArchive: {
+        'D:/repo/one': { content: 'line 1\nline 2\nline 3', updatedAt: timestamp },
+      },
+    })
+
+    const next = ideReducer(state, {
+      type: 'updateStickyNoteViewState',
+      workspacePath: 'D:/repo/one',
+      viewState: { scrollTop: 128, selectionStart: 9, selectionEnd: 15 },
+    })
+
+    assert.deepEqual(next.stickyNoteArchive['D:/repo/one']?.viewState, {
+      scrollTop: 128,
+      selectionStart: 9,
+      selectionEnd: 15,
+    })
+    assert.equal(next.stickyNoteArchive['D:/repo/one']?.content, 'line 1\nline 2\nline 3')
+  })
+
+  it('keeps the remembered view position when note content is updated', () => {
+    const state = createState({
+      stickyNoteArchive: {
+        'D:/repo/one': {
+          content: 'old',
+          updatedAt: timestamp,
+          viewState: { scrollTop: 72, selectionStart: 2, selectionEnd: 2 },
+        },
+      },
+    })
+
+    const next = ideReducer(state, {
+      type: 'updateCard',
+      columnId: 'column-1',
+      cardId: 'card-1',
+      patch: { stickyNote: 'new content' },
+    })
+
+    assert.deepEqual(next.stickyNoteArchive['D:/repo/one']?.viewState, {
+      scrollTop: 72,
+      selectionStart: 2,
+      selectionEnd: 2,
+    })
+  })
+
   it('does not archive stickyNote patches for non-sticky tool cards', () => {
     const state = createState({
       columns: [

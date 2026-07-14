@@ -6,6 +6,7 @@ import type {
   ModelPromptRule,
   Provider,
   ProviderStatus,
+  StickyNoteViewState,
 } from '../../shared/schema'
 import type { AppLanguage } from '../../shared/schema'
 import type { CodexChatSettings } from '../../shared/codex-chat-settings'
@@ -73,6 +74,8 @@ type LayoutRendererProps = {
   onChangeCardDraft: (cardId: string, draft: string) => void
   onChangeCardStickyNote: (cardId: string, content: string) => void
   stickyNoteArchivedContent?: string
+  stickyNoteArchivedViewState?: StickyNoteViewState
+  onChangeStickyNoteViewState?: (viewState: StickyNoteViewState) => void
   onDiscardStickyNoteArchive?: () => void
   onPatchCard: (
     cardId: string,

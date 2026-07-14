@@ -128,6 +128,7 @@ import {
   openChatStream,
   requestChat,
   forkProviderSession,
+  getNativeTurnCompletion,
   resetState,
   runEnvironmentSetup,
   fetchOllamaStatus,
@@ -4587,6 +4588,54 @@ function App() {
       return false
     }
 
+    // Fact-check against the provider's native on-disk transcript before
+    // resuming: a flaky relay can eat or corrupt the terminal event after the
+    // reply already finished, and resuming a finished turn silently wakes the
+    // model with an empty continuation — it then invents follow-up work
+    // ("已解决" replies that revive themselves). 'completed' finalizes the card
+    // instead of waking the provider; 'incomplete'/'unknown' fall through to
+    // the normal resume so a genuinely interrupted turn is never stranded.
+    if (!shouldClearSessionId && card.provider === 'claude' && card.sessionId) {
+      const completion = await getNativeTurnCompletion({
+        provider: card.provider,
+        sessionId: card.sessionId,
+      })
+      const liveCard = getColumn(columnId)?.cards[cardId]
+      if (!liveCard || liveCard.streamId !== card.streamId) {
+        // Another send/recovery took over while we were checking.
+        return false
+      }
+      if (completion === 'completed') {
+        streamRetryCountRef.current.delete(cardId)
+        transientResumeLoopCountRef.current.delete(cardId)
+        forceResetRecoveryStatus(cardId)
+        const activityFlushedState = flushBufferedActivitiesForCard(cardId)
+        const flushedCard = getColumnById(activityFlushedState.columns, columnId)?.cards[cardId]
+        const pendingCompactBoundary = flushedCard
+          ? getPendingCompactBoundaryMessage(flushedCard.messages)
+          : null
+        const finalizeActions: IdeAction[] = [
+          {
+            type: 'updateCard',
+            columnId,
+            cardId,
+            patch: { status: 'idle', streamId: undefined },
+          },
+        ]
+        if (pendingCompactBoundary) {
+          finalizeActions.unshift({
+            type: 'upsertMessages',
+            columnId,
+            cardId,
+            messages: [clearPendingCompactBoundaryMessage(pendingCompactBoundary)],
+          })
+        }
+        persistAfterActions(finalizeActions, applyActions(finalizeActions))
+        dispatchNextQueuedSend(columnId, cardId)
+        return true
+      }
+    }
+
     const language = appStateRef.current.settings.language
     const freshSessionRecoveryPrompt = shouldClearSessionId
       ? buildSeededChatPrompt({
@@ -4726,6 +4775,9 @@ function App() {
     applyAction,
     applyActions,
     attachStream,
+    dispatchNextQueuedSend,
+    flushBufferedActivitiesForCard,
+    forceResetRecoveryStatus,
     getColumn,
     persistAfterAction,
     persistAfterActions,
@@ -7988,6 +8040,20 @@ function App() {
             }
             stickyNoteArchivedContent={
               appState.stickyNoteArchive[column.workspacePath]?.content ?? ''
+            }
+            stickyNoteArchivedViewState={
+              appState.stickyNoteArchive[column.workspacePath]?.viewState
+            }
+            onChangeStickyNoteViewState={(viewState) =>
+              (() => {
+                const action: IdeAction = {
+                  type: 'updateStickyNoteViewState',
+                  workspacePath: column.workspacePath,
+                  viewState,
+                }
+                const nextState = applyAction(action)
+                persistQueued(nextState)
+              })()
             }
             onDiscardStickyNoteArchive={() =>
               (() => {

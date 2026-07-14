@@ -1455,9 +1455,25 @@ const normalizePersistedStickyNoteArchive = (raw: unknown): AppState['stickyNote
       continue
     }
     const updatedAt = (entry as { updatedAt?: unknown }).updatedAt
+    const rawViewState = (entry as { viewState?: unknown }).viewState
+    const viewState =
+      rawViewState && typeof rawViewState === 'object' && !Array.isArray(rawViewState)
+        ? {
+            scrollTop: Math.max(0, Number((rawViewState as { scrollTop?: unknown }).scrollTop) || 0),
+            selectionStart: Math.max(
+              0,
+              Math.round(Number((rawViewState as { selectionStart?: unknown }).selectionStart) || 0),
+            ),
+            selectionEnd: Math.max(
+              0,
+              Math.round(Number((rawViewState as { selectionEnd?: unknown }).selectionEnd) || 0),
+            ),
+          }
+        : undefined
     result[workspacePath] = {
       content,
       updatedAt: typeof updatedAt === 'string' ? updatedAt : new Date().toISOString(),
+      viewState,
     }
   }
 

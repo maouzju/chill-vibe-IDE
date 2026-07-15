@@ -172,6 +172,21 @@ test('remote monitor serves the mobile page shell with a valid token', async () 
     const html = await response.text()
     assert.match(html, /Chill Vibe/)
     assert.match(html, /api\/events/)
+    assert.match(
+      html,
+      /<header>[\s\S]*id="backBtn"[\s\S]*<\/header>/,
+      'the detail back action must live in the sticky header instead of above the transcript',
+    )
+    assert.match(
+      html,
+      /html, body \{ min-height: 100%; \}/,
+      'the document must grow with long transcripts so the sticky header is not bounded to one viewport',
+    )
+    assert.match(
+      html,
+      /selectedOption\.dataset\.provider/,
+      'the model picker must dispatch the provider carried by the selected mixed-provider option',
+    )
   } finally {
     await harness.manager.stop()
   }
@@ -578,8 +593,18 @@ test('buildRemoteMonitorSnapshot attaches model and reasoning options per card',
   assert.ok((card.modelOptions?.length ?? 0) > 0, 'card should list selectable models')
   // model 允许空串（电脑端选择器的"跟随 provider 默认"选项），label 必须有。
   assert.ok(
-    card.modelOptions?.every((option) => typeof option.model === 'string' && option.label),
-    'model options need model + label',
+    card.modelOptions?.every(
+      (option) =>
+        (option.provider === 'codex' || option.provider === 'claude') &&
+        typeof option.model === 'string' &&
+        option.label,
+    ),
+    'model options need provider + model + label',
+  )
+  assert.deepEqual(
+    new Set(card.modelOptions?.map((option) => option.provider)),
+    new Set(['codex', 'claude']),
+    'mobile model picker should combine Codex and Claude in one list',
   )
   assert.ok((card.reasoningOptions?.length ?? 0) > 0, 'card should list reasoning tiers')
   // Fable 5 是常思考模型，auto 档必须被模型感知过滤掉（和电脑端选择器一致）。

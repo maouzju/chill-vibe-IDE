@@ -16,6 +16,60 @@ const markdownComponentsCache = new Map<string, ReturnType<typeof createMarkdown
 const normalizeLooseStrongMarkersInSegment = (segment: string) =>
   segment.replace(/\*\*\s+([^\s*\n][^*\n]*?\S)\s+\*\*/g, (_match, body: string) => `**${body}**`)
 
+const getBacktickRunEnd = (line: string, start: number) => {
+  let end = start
+  while (line[end] === '`') {
+    end += 1
+  }
+  return end
+}
+
+const transformMarkdownLineOutsideInlineCode = (
+  line: string,
+  transformSegment: (segment: string) => string,
+) => {
+  let nextLine = ''
+  let cursor = 0
+
+  while (cursor < line.length) {
+    const openerStart = line.indexOf('`', cursor)
+    if (openerStart < 0) {
+      nextLine += transformSegment(line.slice(cursor))
+      break
+    }
+
+    const openerEnd = getBacktickRunEnd(line, openerStart)
+    const openerLength = openerEnd - openerStart
+    let searchFrom = openerEnd
+    let closerEnd = -1
+
+    while (searchFrom < line.length) {
+      const candidateStart = line.indexOf('`', searchFrom)
+      if (candidateStart < 0) {
+        break
+      }
+
+      const candidateEnd = getBacktickRunEnd(line, candidateStart)
+      if (candidateEnd - candidateStart === openerLength) {
+        closerEnd = candidateEnd
+        break
+      }
+      searchFrom = candidateEnd
+    }
+
+    nextLine += transformSegment(line.slice(cursor, openerStart))
+    if (closerEnd < 0) {
+      nextLine += line.slice(openerStart)
+      break
+    }
+
+    nextLine += line.slice(openerStart, closerEnd)
+    cursor = closerEnd
+  }
+
+  return nextLine
+}
+
 const transformMarkdownOutsideCode = (
   content: string,
   transformSegment: (segment: string) => string,
@@ -26,72 +80,92 @@ const transformMarkdownOutsideCode = (
 
   return lines
     .map((line) => {
-      const fenceMatch = line.match(/^\s*(`{3,})/)
+      const fenceMatch = line.match(/^\s{0,3}(`{3,}|~{3,})/)
       if (fenceMatch) {
         const marker = fenceMatch[1]!
         if (!fenceOpen) {
           fenceOpen = true
           fenceMarker = marker
-        } else if (marker.length >= fenceMarker.length) {
+        } else if (marker[0] === fenceMarker[0] && marker.length >= fenceMarker.length) {
           fenceOpen = false
         }
         return line
       }
 
-      if (fenceOpen || !line.includes('`')) {
-        return fenceOpen ? line : transformSegment(line)
+      if (fenceOpen) {
+        return line
       }
 
-      let nextLine = ''
-      let cursor = 0
-      let inlineCodeOpen = false
-      for (let index = 0; index < line.length; index += 1) {
-        if (line[index] !== '`') {
-          continue
-        }
-
-        const chunk = line.slice(cursor, index)
-        nextLine += inlineCodeOpen ? chunk : transformSegment(chunk)
-        nextLine += '`'
-        inlineCodeOpen = !inlineCodeOpen
-        cursor = index + 1
-      }
-
-      const rest = line.slice(cursor)
-      nextLine += inlineCodeOpen ? rest : transformSegment(rest)
-      return nextLine
+      return line.includes('`')
+        ? transformMarkdownLineOutsideInlineCode(line, transformSegment)
+        : transformSegment(line)
     })
     .join('\n')
 }
 
-// CommonMark treats backslashes in a link destination as escapes and silently
-// drops them, so `![预览](D:\proj\shot.png)` reaches the <img> as
-// `D:projshot.png` — unrecoverable once parsed. Rewrite Windows-style image
+// CommonMark treats backslashes in link destinations as escapes and silently
+// drops them, so `[file](D:\proj\note.md)` reaches the <a> as `D:projnote.md`
+// and `![preview](D:\proj\shot.png)` breaks the same way. Rewrite Windows-style
 // destinations to forward slashes before parsing; path.win32 resolution in the
 // main process accepts both separators.
-const MARKDOWN_IMAGE_PATTERN = /(!\[[^\]]*\]\()([^()\n]+)(\))/g
+const MARKDOWN_INLINE_LINK_PATTERN =
+  /(!?\[[^\]\n]*\]\(\s*)(<[^>\n]+>|(?:[^()\s]+|\([^()\n]*\))+)([^)\n]*)(\))/g
+const MARKDOWN_REFERENCE_LINK_PATTERN =
+  /^(\s{0,3}\[[^\]\n]+\]:\s*)(<[^>\n]+>|(?:[^()\s]+|\([^()\n]*\))+)(.*)$/
 
-const normalizeWindowsImagePathsInSegment = (segment: string) =>
-  segment.replace(MARKDOWN_IMAGE_PATTERN, (match, open: string, dest: string, close: string) => {
-    const trimmed = dest.trim()
+const normalizeWindowsLinkDestination = (destination: string) => {
+  const isAngleWrapped = destination.startsWith('<') && destination.endsWith('>')
+  const pathValue = isAngleWrapped ? destination.slice(1, -1) : destination
 
-    if (!trimmed.includes('\\')) {
-      return match
-    }
+  if (
+    !pathValue.includes('\\')
+    || pathValue.startsWith('#')
+    || pathValue.startsWith('?')
+  ) {
+    return destination
+  }
 
-    const isWindowsDrivePath = /^[a-z]:\\/i.test(trimmed)
-    const hasExplicitScheme = /^[a-z][a-z\d+.-]*:/i.test(trimmed)
+  const isWindowsDrivePath = /^[a-z]:\\/i.test(pathValue)
+  const hasExplicitScheme = /^[a-z][a-z\d+.-]*:/i.test(pathValue)
+  if (!isWindowsDrivePath && hasExplicitScheme) {
+    return destination
+  }
 
-    if (!isWindowsDrivePath && hasExplicitScheme) {
-      return match
-    }
+  const normalizedPath = pathValue.replace(/\\/g, '/')
+  return isAngleWrapped ? `<${normalizedPath}>` : normalizedPath
+}
 
-    return `${open}${trimmed.replace(/\\/g, '/')}${close}`
-  })
+const normalizeWindowsLinkPathsInSegment = (segment: string) => {
+  const withInlineLinks = segment.replace(
+    MARKDOWN_INLINE_LINK_PATTERN,
+    (
+      match,
+      open: string,
+      destination: string,
+      suffix: string,
+      close: string,
+    ) => {
+      const normalizedDestination = normalizeWindowsLinkDestination(destination)
+      return normalizedDestination === destination
+        ? match
+        : `${open}${normalizedDestination}${suffix}${close}`
+    },
+  )
 
-const normalizeWindowsImagePaths = (content: string) =>
-  content.includes('![')
-    ? transformMarkdownOutsideCode(content, normalizeWindowsImagePathsInSegment)
+  return withInlineLinks.replace(
+    MARKDOWN_REFERENCE_LINK_PATTERN,
+    (match, open: string, destination: string, suffix: string) => {
+      const normalizedDestination = normalizeWindowsLinkDestination(destination)
+      return normalizedDestination === destination
+        ? match
+        : `${open}${normalizedDestination}${suffix}`
+    },
+  )
+}
+
+const normalizeWindowsLinkPaths = (content: string) =>
+  content.includes('\\')
+    ? transformMarkdownOutsideCode(content, normalizeWindowsLinkPathsInSegment)
     : content
 
 const normalizeLooseStrongMarkers = (content: string) =>
@@ -825,7 +899,7 @@ const renderPlainMarkdown = (content: string, workspacePath: string | undefined,
     components={getMarkdownComponents(workspacePath)}
     urlTransform={messageMarkdownUrlTransform}
   >
-    {normalizeWindowsImagePaths(
+    {normalizeWindowsLinkPaths(
       normalizeBareUrlBoundaries(
         closeUnclosedMarkdownSpans(normalizeInlineCodeAcrossBlankLines(content)),
       ),

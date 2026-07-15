@@ -29,14 +29,27 @@ const fileUrlToPortablePath = (href: string) => {
   return path.normalize(fileURLToPath(url))
 }
 
-const normalizeMessageLocalHref = (href: string) => {
-  const withoutFileAnchor = href.replace(fileLineAnchorPattern, '')
-
-  if (slashPrefixedWindowsDrivePathPattern.test(withoutFileAnchor)) {
-    return withoutFileAnchor.slice(1)
+const decodeLocalPathHref = (href: string) => {
+  if (isFileUrl(href)) {
+    return href
   }
 
-  return withoutFileAnchor
+  try {
+    return decodeURIComponent(href)
+  } catch {
+    return href
+  }
+}
+
+const normalizeMessageLocalHref = (href: string) => {
+  const withoutFileAnchor = href.replace(fileLineAnchorPattern, '')
+  const decodedHref = decodeLocalPathHref(withoutFileAnchor)
+
+  if (slashPrefixedWindowsDrivePathPattern.test(decodedHref)) {
+    return decodedHref.slice(1)
+  }
+
+  return decodedHref
 }
 
 export const isLocalMessageLinkHref = (href: string | null | undefined) => {

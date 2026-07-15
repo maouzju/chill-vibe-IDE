@@ -23,3 +23,5 @@
      file; full reply blocked only by an upstream provider outage unrelated to the fork —
      the same outage failed identical resumes of the unforked parent).
 9. [x] `pnpm test:quality` + narrow unit tests green; merged to main; `pnpm electron:build`.
+10. [x] Reuse the native fork for stream-recovery/manual-resume checkpoint rollback, with red-first
+    current-turn selection and renderer runtime coverage; keep seeded replay as graceful fallback.

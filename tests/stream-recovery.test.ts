@@ -1,15 +1,26 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
+import { attachImagesToMessageMeta } from '../shared/chat-attachments.ts'
 import {
   getRecoverableStreamRetryLimit,
   getRecoverableStreamErrorSessionId,
   resolveStreamRecoveryMode,
+  resolveStreamRecoveryCheckpointTurn,
+  shouldFallbackToFreshSessionAfterResumeLoop,
   shouldFallbackToFreshSessionAfterTransientResumeLoop,
+  shouldKeepRecoveringResumeWithFreshSession,
   shouldKeepRecoveringTransientResumeWithFreshSession,
   shouldResetStreamRecoveryAttemptsForActivity,
   shouldResetStreamRecoveryAttemptsForText,
 } from '../src/stream-recovery.ts'
+
+const recoveryMessage = (
+  id: string,
+  role: 'user' | 'assistant',
+  content: string,
+  meta?: Record<string, string>,
+) => ({ id, role, content, createdAt: '2026-07-15T01:08:29.358Z', meta })
 
 test('recoverable resume-session errors keep the resume strategy when a session id exists', () => {
   assert.equal(
@@ -84,6 +95,8 @@ test('only meaningful activity resets the recovery retry budget', () => {
   assert.equal(shouldResetStreamRecoveryAttemptsForActivity('session'), false)
   assert.equal(shouldResetStreamRecoveryAttemptsForActivity('log'), false)
   assert.equal(shouldResetStreamRecoveryAttemptsForActivity('activity'), true)
+  assert.equal(shouldResetStreamRecoveryAttemptsForActivity('activity', 'reasoning'), false)
+  assert.equal(shouldResetStreamRecoveryAttemptsForActivity('activity', 'command'), true)
   assert.equal(shouldResetStreamRecoveryAttemptsForActivity('assistant_message'), true)
 })
 
@@ -110,6 +123,62 @@ test('repeated transient resume loops fall back to a fresh session escape hatch'
       maxTransientResumeAttempts: 3,
     }),
     true,
+  )
+})
+
+test('repeated ordinary stalled resume loops also fall back to a fresh session', () => {
+  assert.equal(
+    shouldFallbackToFreshSessionAfterResumeLoop({
+      recoverable: true,
+      recoveryMode: 'resume-session',
+      hasSessionId: true,
+      resumeAttempt: 1,
+      maxResumeAttempts: 2,
+    }),
+    false,
+  )
+
+  assert.equal(
+    shouldFallbackToFreshSessionAfterResumeLoop({
+      recoverable: true,
+      recoveryMode: 'resume-session',
+      hasSessionId: true,
+      resumeAttempt: 2,
+      maxResumeAttempts: 2,
+    }),
+    true,
+  )
+})
+
+test('recoverable resume failures without a usable session keep recovering through a fresh session', () => {
+  assert.equal(
+    shouldKeepRecoveringResumeWithFreshSession({
+      recoverable: true,
+      recoveryMode: 'resume-session',
+      hasSessionId: false,
+      resumeAttempt: 1,
+      maxResumeAttempts: 2,
+    }),
+    true,
+  )
+})
+
+test('fresh-session fallback ignores unrecoverable and reattach-only failures', () => {
+  const base = {
+    recoverable: true,
+    recoveryMode: 'resume-session' as const,
+    hasSessionId: true,
+    resumeAttempt: 2,
+    maxResumeAttempts: 2,
+  }
+
+  assert.equal(
+    shouldFallbackToFreshSessionAfterResumeLoop({ ...base, recoverable: false }),
+    false,
+  )
+  assert.equal(
+    shouldFallbackToFreshSessionAfterResumeLoop({ ...base, recoveryMode: 'reattach-stream' }),
+    false,
   )
 })
 
@@ -223,4 +292,76 @@ test('recoverable stream retry limit accepts unlimited and clamps invalid config
   assert.equal(getRecoverableStreamRetryLimit(0), 0)
   assert.equal(getRecoverableStreamRetryLimit(51), 6)
   assert.equal(getRecoverableStreamRetryLimit(undefined), 6)
+})
+
+test('checkpoint recovery selects the latest user turn when it is still the visible tail', () => {
+  const turn = resolveStreamRecoveryCheckpointTurn({
+    messages: [
+      recoveryMessage('assistant-old', 'assistant', 'Earlier completed reply'),
+      recoveryMessage('user-current', 'user', 'Finish the current repair'),
+    ],
+    streamId: 'stream-current',
+  })
+
+  assert.equal(turn?.message.id, 'user-current')
+  assert.equal(turn?.prompt, 'Finish the current repair')
+  assert.deepEqual(turn?.attachments, [])
+})
+
+test('checkpoint recovery accepts current-stream output after the unfinished user turn', () => {
+  const turn = resolveStreamRecoveryCheckpointTurn({
+    messages: [
+      recoveryMessage('user-current', 'user', 'Finish the current repair'),
+      recoveryMessage('reasoning-current', 'assistant', '', {
+        kind: 'reasoning',
+        streamId: 'stream-current',
+      }),
+    ],
+    streamId: 'stream-current',
+  })
+
+  assert.equal(turn?.message.id, 'user-current')
+})
+
+test('checkpoint recovery rejects ambiguous old turns and empty continuations', () => {
+  assert.equal(
+    resolveStreamRecoveryCheckpointTurn({
+      messages: [
+        recoveryMessage('user-old', 'user', 'Old request'),
+        recoveryMessage('assistant-old', 'assistant', 'Already completed'),
+      ],
+      streamId: 'stream-current',
+    }),
+    null,
+  )
+
+  assert.equal(
+    resolveStreamRecoveryCheckpointTurn({
+      messages: [recoveryMessage('user-empty', 'user', '   ')],
+      streamId: 'stream-current',
+    }),
+    null,
+  )
+})
+
+test('checkpoint recovery preserves attachment-only user turns', () => {
+  const attachment = {
+    id: 'image-current',
+    fileName: 'evidence.png',
+    mimeType: 'image/png' as const,
+    sizeBytes: 2048,
+  }
+  const turn = resolveStreamRecoveryCheckpointTurn({
+    messages: [
+      recoveryMessage(
+        'user-image',
+        'user',
+        '',
+        attachImagesToMessageMeta([attachment]),
+      ),
+    ],
+    streamId: 'stream-current',
+  })
+
+  assert.deepEqual(turn?.attachments, [attachment])
 })

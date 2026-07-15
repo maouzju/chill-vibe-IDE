@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 
 import {
+  buildQueuedSendRuntimeState,
   resolveQueuedSendTargetColumnId,
   summarizeQueuedSends,
 } from '../src/components/deferred-send-queue.ts'
@@ -59,4 +60,34 @@ test('queued sends are dropped when the card no longer belongs to a workspace co
     ),
     null,
   )
+})
+
+test('restored queued sends rebuild runtime queues without sharing persisted arrays', () => {
+  const persistedQueue = [{
+    id: 'request-1',
+    prompt: 'send after restart',
+    attachments: [{ id: 'image-1', fileName: 'shot.png', mimeType: 'image/png' as const, sizeBytes: 128 }],
+  }]
+  const restored = buildQueuedSendRuntimeState([{
+    cards: {
+      'card-1': {
+        id: 'card-1',
+        queuedSends: persistedQueue,
+      },
+      'card-2': {
+        id: 'card-2',
+        queuedSends: [],
+      },
+    },
+  }])
+
+  assert.deepEqual(restored.queues.get('card-1'), persistedQueue)
+  assert.deepEqual(restored.summaries.get('card-1'), {
+    count: 1,
+    nextPreview: 'send after restart',
+    nextAttachmentCount: 1,
+  })
+  assert.equal(restored.queues.has('card-2'), false)
+  assert.notEqual(restored.queues.get('card-1'), persistedQueue)
+  assert.notEqual(restored.queues.get('card-1')?.[0]?.attachments, persistedQueue[0]?.attachments)
 })

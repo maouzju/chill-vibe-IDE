@@ -73,6 +73,15 @@ gets `sessionId: forkedSessionId`, `sessionModel: sourceCard.sessionModel` (cont
 model — pitfall 47), and `providerSessions: {}` (only the active provider's session is forked).
 `hasSeededChatTranscript` then naturally skips seeding because `sessionId` exists.
 
+### Stream-recovery reuse
+
+The reconnect escape hatch and **手动续传** call the same backend fork API with the current visible
+user message as the fork point. A successful fork is resumed with only that unfinished prompt and
+its attachments, so failed `Please continue.` turns/reasoning residue are absent while all earlier
+provider-native context remains. Current-turn selection is conservative; empty continuations or
+messages not attributable to the current `streamId` skip native surgery. A `null` fork response
+retains the existing seeded-transcript fallback.
+
 ## Failure containment
 
 - Fork file surgery is synchronous-read/atomic-write (`writeFile` to final name; ids are fresh

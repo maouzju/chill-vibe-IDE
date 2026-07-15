@@ -1042,6 +1042,7 @@ export const createCard = (
     unread: false,
     draft: '',
     draftAttachments: [],
+    queuedSends: [],
     stickyNote: '',
     brainstorm: createDefaultBrainstormState(),
     pm: createDefaultPmState(),

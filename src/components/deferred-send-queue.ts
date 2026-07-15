@@ -1,15 +1,14 @@
-import type { ImageAttachment, StreamAskUserActivity } from '../../shared/schema'
+import type {
+  QueuedSendRequest,
+  StreamAskUserActivity,
+} from '../../shared/schema'
+
+export type { QueuedSendRequest } from '../../shared/schema'
 
 export type SendMessageMode = 'auto' | 'defer' | 'interrupt'
 
 export type SendMessageOptions = {
   mode?: SendMessageMode
-}
-
-export type QueuedSendRequest = {
-  id: string
-  prompt: string
-  attachments: ImageAttachment[]
 }
 
 export type QueuedSendSummary = {
@@ -36,6 +35,38 @@ export const summarizeQueuedSends = (
     nextPreview: getQueuedSendPreview(next),
     nextAttachmentCount: next.attachments.length,
   }
+}
+
+type QueuedSendRuntimeCard = {
+  id: string
+  queuedSends?: readonly QueuedSendRequest[]
+}
+
+export const buildQueuedSendRuntimeState = (
+  columns: readonly { cards: Record<string, QueuedSendRuntimeCard> }[],
+) => {
+  const queues = new Map<string, QueuedSendRequest[]>()
+  const summaries = new Map<string, QueuedSendSummary>()
+
+  for (const column of columns) {
+    for (const card of Object.values(column.cards)) {
+      if (!card.queuedSends || card.queuedSends.length === 0) {
+        continue
+      }
+
+      const queue = card.queuedSends.map((request) => ({
+        ...request,
+        attachments: request.attachments.map((attachment) => ({ ...attachment })),
+      }))
+      const summary = summarizeQueuedSends(queue)
+      queues.set(card.id, queue)
+      if (summary) {
+        summaries.set(card.id, summary)
+      }
+    }
+  }
+
+  return { queues, summaries }
 }
 
 type QueuedSendTargetColumn = {

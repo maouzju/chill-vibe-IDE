@@ -6,6 +6,7 @@ import {
   createQueuedStateSaveScheduler,
   createQueuedPersistenceStateSnapshot,
   defaultQueuedStateSaveDelayMs,
+  enqueueStreamDeltaBufferEntry,
   getLiveChatContentChars,
   getQueuedStateSaveDelayMs,
   getPersistenceVersion,
@@ -14,6 +15,7 @@ import {
   isBusyStreamingState,
   streamActivityFlushIntervalMs,
   streamDeltaFlushIntervalMs,
+  takeStreamDeltaBufferEntriesForCard,
   shouldResetQueuedStateSaveTimer,
   shouldPersistActionImmediately,
   shouldUseQueuedPersistenceForAction,
@@ -87,6 +89,41 @@ describe('persistence queue', () => {
     assert.equal(getStreamDeltaFlushIntervalMs(3), 120)
     assert.equal(getStreamDeltaFlushIntervalMs(4), 180)
     assert.equal(getStreamDeltaFlushIntervalMs(7), 180)
+  })
+
+  it('keeps interleaved agent-message deltas in separate lossless buffer slots', () => {
+    const buffer = new Map()
+    enqueueStreamDeltaBufferEntry(buffer, {
+      columnId: 'column-1',
+      cardId: 'card-1',
+      messageId: 'assistant-a',
+      buffer: 'A1',
+    })
+    enqueueStreamDeltaBufferEntry(buffer, {
+      columnId: 'column-1',
+      cardId: 'card-1',
+      messageId: 'assistant-b',
+      buffer: 'B1',
+    })
+    enqueueStreamDeltaBufferEntry(buffer, {
+      columnId: 'column-1',
+      cardId: 'card-1',
+      messageId: 'assistant-a',
+      buffer: 'A2',
+    })
+
+    assert.equal(buffer.size, 2)
+    assert.deepEqual(
+      takeStreamDeltaBufferEntriesForCard(buffer, 'card-1').map((entry) => ({
+        messageId: entry.messageId,
+        buffer: entry.buffer,
+      })),
+      [
+        { messageId: 'assistant-a', buffer: 'A1A2' },
+        { messageId: 'assistant-b', buffer: 'B1' },
+      ],
+    )
+    assert.equal(buffer.size, 0)
   })
 
   it('flushes structured stream activities promptly without per-event renders', () => {

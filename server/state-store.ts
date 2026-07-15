@@ -417,6 +417,34 @@ const normalizePersistedImageAttachments = (value: unknown): ImageAttachment[] =
   })
 }
 
+const normalizePersistedQueuedSends = (value: unknown): ChatCard['queuedSends'] => {
+  if (!Array.isArray(value)) {
+    return []
+  }
+
+  return value.flatMap((request) => {
+    if (
+      !isRecord(request) ||
+      typeof request.id !== 'string' ||
+      !request.id.trim()
+    ) {
+      return []
+    }
+
+    const prompt = typeof request.prompt === 'string' ? request.prompt : ''
+    const attachments = normalizePersistedImageAttachments(request.attachments)
+    if (!prompt.trim() && attachments.length === 0) {
+      return []
+    }
+
+    return [{
+      id: request.id,
+      prompt,
+      attachments,
+    }]
+  })
+}
+
 const canContainClaudeProtocolResidue = (message: PersistedChatMessage) => {
   if (message.role !== 'assistant') return false
   if (message.meta?.kind) return false
@@ -624,6 +652,7 @@ const normalizePersistedCard = (
     unread: typeof card.unread === 'boolean' ? card.unread : fallback.unread,
     draft: typeof card.draft === 'string' ? card.draft : fallback.draft,
     draftAttachments: normalizePersistedImageAttachments(card.draftAttachments),
+    queuedSends: normalizePersistedQueuedSends(card.queuedSends),
     stickyNote: typeof card.stickyNote === 'string' ? card.stickyNote : fallback.stickyNote,
     brainstorm: normalizePersistedBrainstorm(card.brainstorm, fallback.brainstorm),
     pm: normalizePersistedPm(card.pm, fallback.pm),

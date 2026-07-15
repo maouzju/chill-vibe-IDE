@@ -49,6 +49,7 @@ const createCard = (overrides: Partial<ChatCard> = {}): ChatCard => ({
   unread: overrides.unread ?? false,
   draft: overrides.draft ?? '',
   draftAttachments: overrides.draftAttachments ?? [],
+  queuedSends: overrides.queuedSends ?? [],
   stickyNote: overrides.stickyNote ?? '',
   brainstorm: overrides.brainstorm ?? createDefaultBrainstormState(),
   messages: overrides.messages ?? [],

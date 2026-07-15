@@ -81,6 +81,16 @@ export const imageAttachmentSchema = z.object({
 })
 export type ImageAttachment = z.infer<typeof imageAttachmentSchema>
 
+export const queuedSendRequestSchema = z.object({
+  id: z.string().min(1),
+  prompt: z.string(),
+  attachments: z.array(imageAttachmentSchema).default([]),
+}).refine(
+  (request) => request.prompt.trim().length > 0 || request.attachments.length > 0,
+  { message: 'Queued send must include a prompt or attachment.' },
+)
+export type QueuedSendRequest = z.infer<typeof queuedSendRequestSchema>
+
 export const brainstormAnswerStatusSchema = z.enum(['streaming', 'done', 'error'])
 export type BrainstormAnswerStatus = z.infer<typeof brainstormAnswerStatusSchema>
 
@@ -135,6 +145,7 @@ export const chatCardSchema = z.object({
   completionGlow: z.boolean().optional(),
   draft: z.string().default(''),
   draftAttachments: z.array(imageAttachmentSchema).default([]),
+  queuedSends: z.array(queuedSendRequestSchema).default([]),
   stickyNote: z.string().default(''),
   brainstorm: brainstormStateSchema.default({
     prompt: '',
@@ -1287,7 +1298,7 @@ export type StreamErrorEvent = {
 
 export type StreamEventMap = {
   session: { sessionId: string }
-  delta: { content: string }
+  delta: { content: string; itemId?: string }
   log: { message: string }
   // 开流即广播的用户需求原文：手机监工靠它把"谁发了什么"实时镜像到
   // 详情页消息流（电脑端渲染器自己维护 user 消息，收到后忽略）。

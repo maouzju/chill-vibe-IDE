@@ -73,7 +73,7 @@ import {
 
 type StreamSink = {
   onSession: (sessionId: string) => void
-  onDelta: (content: string) => void
+  onDelta: (content: string, itemId?: string) => void
   onLog: (message: string) => void
   onAssistantMessage: (message: { itemId: string; content: string }) => void
   onActivity: (activity: StreamActivity) => void
@@ -2008,7 +2008,7 @@ const launchCodexAppServerRun = async (
             }
           }
 
-          sink.onDelta(deltaForSink)
+          sink.onDelta(deltaForSink, itemId)
         }
 
         return

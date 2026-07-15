@@ -28,7 +28,10 @@ const hasDesktopStreamSubscription = async (page: Page, streamId: string) =>
     return bridge.__hasMockDesktopStreamSubscription(targetStreamId)
   }, streamId)
 
-const installMockDesktopBridge = async (page: Page) => {
+const installMockDesktopBridge = async (
+  page: Page,
+  options: { maxRetries?: number; nativeFork?: boolean; deferNativeFork?: boolean } = {},
+) => {
   await page.addInitScript(() => {
     const subscriptionsByStream = new Map<string, Set<string>>()
     const streamBySubscription = new Map<string, string>()
@@ -143,6 +146,17 @@ const installMockDesktopBridge = async (page: Page) => {
 
         return { streamId: request.streamId }
       },
+      forkProviderSession: async (request) => {
+        try {
+          return await jsonRequest('/api/chat/fork-session', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(request),
+          })
+        } finally {
+          window.dispatchEvent(new Event('chill-vibe:test-native-fork-resolved'))
+        }
+      },
       uploadImageAttachment: async () => ({ id: 'image-1', mimeType: 'image/png', size: 1 }),
       stopChat: async (streamId) =>
         jsonRequest(`/api/chat/stop/${encodeURIComponent(streamId)}`, {
@@ -176,6 +190,13 @@ const installMockDesktopBridge = async (page: Page) => {
 
   const now = new Date().toISOString()
   const requests: Array<{ prompt: string; sessionId?: string; streamId: string }> = []
+  const forkRequests: Array<{
+    provider: string
+    workspacePath: string
+    sessionId: string
+    forkPoint: { content: string; createdAt?: string }
+  }> = []
+  let releasePendingNativeFork: (() => void) | null = null
   let nextStreamNumber = 2
 
   let state = createPlaywrightState({
@@ -187,6 +208,7 @@ const installMockDesktopBridge = async (page: Page) => {
       fontScale: 1,
       lineHeightScale: 1,
       resilientProxyEnabled: true,
+      resilientProxyMaxRetries: options.maxRetries ?? -1,
       requestModels: {
         codex: 'gpt-5.5',
         claude: 'claude-opus-4-7',
@@ -229,10 +251,20 @@ const installMockDesktopBridge = async (page: Page) => {
             sessionModel: 'gpt-5.5',
             messages: [
               {
+                id: 'user-current',
+                role: 'user',
+                content: 'Finish the current repair',
+                createdAt: now,
+              },
+              {
                 id: 'assistant-1',
                 role: 'assistant',
-                content: 'Still answering',
+                content: 'Reconnecting... 1/5',
                 createdAt: now,
+                meta: {
+                  provider: 'codex',
+                  streamId: 'stream-1',
+                },
               },
             ],
           },
@@ -303,13 +335,36 @@ const installMockDesktopBridge = async (page: Page) => {
     })
   })
 
+  await page.route('**/api/chat/fork-session', async (route) => {
+    const body = JSON.parse(route.request().postData() ?? '{}')
+    forkRequests.push(body)
+    if (options.deferNativeFork) {
+      await new Promise<void>((resolve) => {
+        releasePendingNativeFork = resolve
+      })
+      releasePendingNativeFork = null
+    }
+    await route.fulfill({
+      json: {
+        sessionId: options.nativeFork === false ? null : `forked-session-${forkRequests.length}`,
+      },
+    })
+  })
+
   await page.route('**/api/chat/stop/*', async (route) => {
     await route.fulfill({ status: 204 })
   })
 
   return {
     readRequests: () => requests.slice(),
+    readForkRequests: () => forkRequests.slice(),
     readState: () => state,
+    releaseNativeFork: () => {
+      if (!releasePendingNativeFork) {
+        throw new Error('No native session fork is waiting for release.')
+      }
+      releasePendingNativeFork()
+    },
   }
 }
 
@@ -342,6 +397,179 @@ test('recoverable streaming errors resume the session instead of stopping immedi
   await emitDesktopStreamEvent(page, 'stream-2', 'done', {})
 
   await expect.poll(() => mock.readState().columns[0]?.cards['card-1']?.status).toBe('idle')
+})
+
+test('ordinary stalled resume loops roll back to a native checkpoint after reasoning-only progress', async ({ page }) => {
+  const mock = await installMockDesktopBridge(page)
+  await page.goto('http://localhost:5173')
+
+  await expect(page.locator('.pane-tab-panel.is-active .composer textarea').first()).toBeVisible()
+  await expect.poll(() => hasDesktopStreamSubscription(page, 'stream-1')).toBe(true)
+
+  await emitDesktopStreamEvent(page, 'stream-1', 'error', {
+    message: 'Codex stalled after emitting stream output.',
+    recoverable: true,
+    recoveryMode: 'resume-session',
+  })
+
+  await expect.poll(() => hasDesktopStreamSubscription(page, 'stream-2')).toBe(true)
+  await expect.poll(() => mock.readRequests()[0]?.sessionId).toBe('session-1')
+
+  await emitDesktopStreamEvent(page, 'stream-2', 'activity', {
+    itemId: 'reasoning-1',
+    kind: 'reasoning',
+    status: 'completed',
+    text: 'Internal reasoning without user-visible completion.',
+  })
+  await emitDesktopStreamEvent(page, 'stream-2', 'error', {
+    message: 'Codex stalled after emitting stream output.',
+    recoverable: true,
+    recoveryMode: 'resume-session',
+  })
+
+  await expect.poll(() => mock.readRequests().length).toBe(2)
+  await expect.poll(() => mock.readForkRequests()).toEqual([
+    {
+      provider: 'codex',
+      workspacePath: 'd:\\Git\\chill-vibe',
+      sessionId: 'session-1',
+      forkPoint: {
+        content: 'Finish the current repair',
+        createdAt: expect.any(String),
+      },
+    },
+  ])
+  const checkpointRequest = mock.readRequests()[1]
+  expect(checkpointRequest?.sessionId).toBe('forked-session-1')
+  expect(checkpointRequest?.prompt).toBe('Finish the current repair')
+  await expect.poll(() => hasDesktopStreamSubscription(page, 'stream-3')).toBe(true)
+
+  await emitDesktopStreamEvent(page, 'stream-3', 'done', {})
+  await expect.poll(() => mock.readState().columns[0]?.cards['card-1']?.status).toBe('idle')
+})
+
+test('native checkpoint failure degrades to the seeded fresh-session recovery', async ({ page }) => {
+  const mock = await installMockDesktopBridge(page, { nativeFork: false })
+  await page.goto('http://localhost:5173')
+
+  await expect.poll(() => hasDesktopStreamSubscription(page, 'stream-1')).toBe(true)
+  for (const streamId of ['stream-1', 'stream-2']) {
+    await emitDesktopStreamEvent(page, streamId, 'error', {
+      message: 'Codex stalled after emitting stream output.',
+      recoverable: true,
+      recoveryMode: 'resume-session',
+    })
+    if (streamId === 'stream-1') {
+      await expect.poll(() => hasDesktopStreamSubscription(page, 'stream-2')).toBe(true)
+    }
+  }
+
+  await expect.poll(() => mock.readRequests().length).toBe(2)
+  expect(mock.readForkRequests()).toHaveLength(1)
+  expect(mock.readRequests()[1]?.sessionId).toBeUndefined()
+  expect(mock.readRequests()[1]?.prompt).toContain('Finish the current repair')
+})
+
+test('manual stream recovery also prefers the native checkpoint path', async ({ page }) => {
+  const mock = await installMockDesktopBridge(page)
+  await page.goto('http://localhost:5173')
+
+  const manualRecover = page.locator('.manual-stream-recovery-composer-button').first()
+  await expect(manualRecover).toBeVisible()
+  await manualRecover.click()
+
+  await expect.poll(() => mock.readForkRequests().length).toBe(1)
+  await expect.poll(() => mock.readRequests().length).toBe(1)
+  expect(mock.readRequests()[0]?.sessionId).toBe('forked-session-1')
+  expect(mock.readRequests()[0]?.prompt).toBe('Finish the current repair')
+})
+
+test('a late native checkpoint fork cannot overwrite a newer user-owned stream', async ({ page }) => {
+  const mock = await installMockDesktopBridge(page, { deferNativeFork: true })
+  await page.goto('http://localhost:5173')
+
+  const composer = page.locator('.pane-tab-panel.is-active .composer textarea').first()
+  const sendButton = page.getByRole('button', { name: 'Send message' })
+  await expect(composer).toBeVisible()
+  await expect.poll(() => hasDesktopStreamSubscription(page, 'stream-1')).toBe(true)
+
+  await emitDesktopStreamEvent(page, 'stream-1', 'error', {
+    message: 'Codex stalled after emitting stream output.',
+    recoverable: true,
+    recoveryMode: 'resume-session',
+  })
+  await expect.poll(() => hasDesktopStreamSubscription(page, 'stream-2')).toBe(true)
+
+  await emitDesktopStreamEvent(page, 'stream-2', 'error', {
+    message: 'Codex stalled after emitting stream output.',
+    recoverable: true,
+    recoveryMode: 'resume-session',
+  })
+  await expect.poll(() => mock.readForkRequests().length).toBe(1)
+
+  await composer.fill('/new')
+  await sendButton.click()
+  await expect.poll(() => mock.readState().columns[0]?.cards['card-1']?.status).toBe('idle')
+  await expect.poll(() => mock.readState().columns[0]?.cards['card-1']?.sessionId).toBeUndefined()
+
+  await composer.fill('Start a newer task')
+  await sendButton.click()
+  await expect.poll(() => mock.readRequests().length).toBe(2)
+  expect(mock.readRequests()[1]).toEqual({
+    prompt: 'Start a newer task',
+    sessionId: undefined,
+    streamId: 'stream-3',
+  })
+  await expect.poll(() => hasDesktopStreamSubscription(page, 'stream-3')).toBe(true)
+
+  await emitDesktopStreamEvent(page, 'stream-3', 'session', { sessionId: 'session-new' })
+  await expect.poll(() => mock.readState().columns[0]?.cards['card-1']?.sessionId).toBe('session-new')
+
+  const forkResolved = page.evaluate(
+    () => new Promise<void>((resolve) => {
+      window.addEventListener('chill-vibe:test-native-fork-resolved', () => resolve(), { once: true })
+    }),
+  )
+  mock.releaseNativeFork()
+  await forkResolved
+  await page.evaluate(() => new Promise<void>((resolve) => window.setTimeout(resolve, 0)))
+
+  expect(mock.readRequests()).toHaveLength(2)
+  await expect.poll(() => mock.readState().columns[0]?.cards['card-1']?.streamId).toBe('stream-3')
+  await expect.poll(() => mock.readState().columns[0]?.cards['card-1']?.sessionId).toBe('session-new')
+
+  await emitDesktopStreamEvent(page, 'stream-3', 'done', {})
+  await expect.poll(() => mock.readState().columns[0]?.cards['card-1']?.status).toBe('idle')
+})
+
+test('reasoning-only progress does not bypass a finite recovery budget', async ({ page }) => {
+  const mock = await installMockDesktopBridge(page, { maxRetries: 1 })
+  await page.goto('http://localhost:5173')
+
+  await expect(page.locator('.pane-tab-panel.is-active .composer textarea').first()).toBeVisible()
+  await expect.poll(() => hasDesktopStreamSubscription(page, 'stream-1')).toBe(true)
+
+  await emitDesktopStreamEvent(page, 'stream-1', 'error', {
+    message: 'Codex stalled after emitting stream output.',
+    recoverable: true,
+    recoveryMode: 'resume-session',
+  })
+  await expect.poll(() => hasDesktopStreamSubscription(page, 'stream-2')).toBe(true)
+
+  await emitDesktopStreamEvent(page, 'stream-2', 'activity', {
+    itemId: 'reasoning-budget-1',
+    kind: 'reasoning',
+    status: 'completed',
+    text: 'Internal reasoning only.',
+  })
+  await emitDesktopStreamEvent(page, 'stream-2', 'error', {
+    message: 'Codex stalled after emitting stream output.',
+    recoverable: true,
+    recoveryMode: 'resume-session',
+  })
+
+  await expect.poll(() => mock.readState().columns[0]?.cards['card-1']?.status).toBe('error')
+  expect(mock.readRequests()).toHaveLength(1)
 })
 
 test('transient-only reconnect errors do not exhaust the recovery budget', async ({ page }) => {

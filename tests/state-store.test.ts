@@ -47,6 +47,75 @@ describe('state-store persistence', () => {
     assert.ok(loaded.columns.length > 0)
   })
 
+  it('loadState restores deferred sends with attachment metadata after an IDE restart', async () => {
+    const state = createDefaultState('D:/queued-send-restart')
+    const card = getFirstCard(state)
+    assert.ok(card)
+
+    const rawState = structuredClone(state) as unknown as Record<string, unknown>
+    const rawColumns = rawState.columns as Array<Record<string, unknown>>
+    const rawCards = rawColumns[0]?.cards as Record<string, Record<string, unknown>>
+    rawCards[card.id]!.queuedSends = [
+      {
+        id: 'queued-request-1',
+        prompt: '重启后继续发送这条消息',
+        attachments: [
+          {
+            id: 'queued-image-1',
+            fileName: 'evidence.png',
+            mimeType: 'image/png',
+            sizeBytes: 256,
+          },
+        ],
+      },
+    ]
+    await writeFile(path.join(tmpDir, 'state.json'), JSON.stringify(rawState, null, 2), 'utf8')
+
+    const { loadState } = await import('../server/state-store.ts')
+    const loaded = await loadState()
+    const restoredCard = loaded.columns[0]?.cards[card.id] as
+      | (typeof card & { queuedSends?: unknown[] })
+      | undefined
+
+    assert.deepEqual(restoredCard?.queuedSends, rawCards[card.id]!.queuedSends)
+  })
+
+  it('loadState drops malformed deferred sends and defaults legacy cards to an empty queue', async () => {
+    const state = createDefaultState('D:/queued-send-normalization')
+    const cards = Object.values(state.columns[0]!.cards)
+    const malformedCard = cards[0]
+    const legacyCard = cards[1] ?? createCard('Legacy queue card')
+    if (!cards[1]) {
+      state.columns[0]!.cards[legacyCard.id] = legacyCard
+    }
+
+    const rawState = structuredClone(state) as unknown as Record<string, unknown>
+    const rawColumns = rawState.columns as Array<Record<string, unknown>>
+    const rawCards = rawColumns[0]?.cards as Record<string, Record<string, unknown>>
+    rawCards[malformedCard!.id]!.queuedSends = [
+      { id: '', prompt: 'missing id', attachments: [] },
+      { id: 'empty-request', prompt: '   ', attachments: [] },
+      {
+        id: 'valid-request',
+        prompt: 'keep the prompt',
+        attachments: [{ id: 'bad-image', fileName: '', mimeType: 'image/png', sizeBytes: 0 }],
+      },
+    ]
+    delete rawCards[legacyCard.id]!.queuedSends
+    await writeFile(path.join(tmpDir, 'state.json'), JSON.stringify(rawState, null, 2), 'utf8')
+
+    const { loadState } = await import('../server/state-store.ts')
+    const loaded = await loadState()
+    const loadedCards = loaded.columns[0]!.cards
+
+    assert.deepEqual(loadedCards[malformedCard!.id]!.queuedSends, [{
+      id: 'valid-request',
+      prompt: 'keep the prompt',
+      attachments: [],
+    }])
+    assert.deepEqual(loadedCards[legacyCard.id]!.queuedSends, [])
+  })
+
   it('loadState returns defaults when file is missing', async () => {
     const { loadState } = await import('../server/state-store.ts')
     const loaded = await loadState()

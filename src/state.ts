@@ -330,6 +330,7 @@ export type IdeAction =
           | 'messages'
           | 'brainstorm'
           | 'draftAttachments'
+          | 'queuedSends'
         >
       >
     }
@@ -1131,6 +1132,7 @@ const buildRestoredCard = (state: AppState, entry: SessionHistoryEntry): ChatCar
   unread: false,
   draft: '',
   draftAttachments: [],
+  queuedSends: [],
   stickyNote: '',
   brainstorm: createDefaultBrainstormState(),
   pm: createDefaultPmState(),
@@ -1969,6 +1971,7 @@ export const ideReducer = (state: AppState, action: IdeAction): AppState => {
         autoUrgeActive: false,
         unread: false,
         draft: '',
+        queuedSends: [],
         messages: [],
       }))
 
@@ -2167,9 +2170,10 @@ export const ideReducer = (state: AppState, action: IdeAction): AppState => {
         autoUrgeProfileId: defaultAutoUrgeProfileId,
         collapsed: false,
         unread: false,
-        draft: '',
-        draftAttachments: [],
-        stickyNote: '',
+  draft: '',
+  draftAttachments: [],
+  queuedSends: [],
+  stickyNote: '',
         brainstorm: createDefaultBrainstormState(),
         pm: createDefaultPmState(),
         pmTaskCardId: '',
@@ -2223,6 +2227,7 @@ export const ideReducer = (state: AppState, action: IdeAction): AppState => {
         unread: false,
         draft: forkedDraft,
         draftAttachments: forkedDraftAttachments,
+        queuedSends: [],
         stickyNote: '',
         brainstorm: createDefaultBrainstormState(),
         pm: sourceCard.pm ? { ...sourceCard.pm } : createDefaultPmState(),

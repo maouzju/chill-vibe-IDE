@@ -17,7 +17,7 @@ export const renderRemoteMonitorPage = () => `<!DOCTYPE html>
     --ok: #3fb950; --run: #d29922; --err: #f85149;
   }
   * { box-sizing: border-box; margin: 0; padding: 0; }
-  html, body { height: 100%; }
+  html, body { min-height: 100%; }
   body {
     background: var(--bg); color: var(--text);
     font: 15px/1.6 -apple-system, "Segoe UI", Roboto, "PingFang SC", "Microsoft YaHei", sans-serif;
@@ -30,7 +30,7 @@ export const renderRemoteMonitorPage = () => `<!DOCTYPE html>
     background: rgba(13,17,23,0.92); backdrop-filter: blur(8px);
     border-bottom: 1px solid var(--border);
   }
-  header h1 { font-size: 16px; font-weight: 600; flex: 1; }
+  header h1 { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 16px; font-weight: 600; flex: 1; }
   .conn-dot { width: 9px; height: 9px; border-radius: 50%; background: var(--err); flex: none; }
   .conn-dot.is-on { background: var(--ok); }
   .sound-btn {
@@ -59,7 +59,7 @@ export const renderRemoteMonitorPage = () => `<!DOCTYPE html>
   .badge.is-done { color: var(--ok); border-color: var(--ok); }
   .card-meta { color: var(--muted); font-size: 12px; margin-top: 3px; }
   .card-preview { color: var(--muted); font-size: 13px; margin-top: 6px; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
-  .back-btn { border: none; background: none; color: var(--accent); font-size: 15px; padding: 8px 0; }
+  .back-btn { flex: none; border: none; background: none; color: var(--accent); font-size: 14px; padding: 5px 0; }
   .detail-title { font-size: 17px; margin: 4px 0 8px; }
   .picker-row { display: flex; gap: 8px; margin-bottom: 12px; }
   .picker-row select {
@@ -128,13 +128,13 @@ export const renderRemoteMonitorPage = () => `<!DOCTYPE html>
 </head>
 <body>
 <header>
+  <button class="back-btn" id="backBtn" type="button" hidden>‹ 返回列表</button>
   <span class="conn-dot" id="connDot"></span>
   <h1 id="headerTitle">Chill Vibe 监工</h1>
   <button class="sound-btn" id="soundBtn" type="button">🔕 提醒</button>
 </header>
 <main id="listView"><div class="empty">加载中…</div></main>
 <main id="detailView" hidden>
-  <button class="back-btn" id="backBtn" type="button">‹ 返回列表</button>
   <h2 class="detail-title" id="detailTitle"></h2>
   <div class="picker-row">
     <select id="modelSelect" aria-label="模型"></select>
@@ -157,6 +157,8 @@ export const renderRemoteMonitorPage = () => `<!DOCTYPE html>
   var token = new URLSearchParams(location.search).get('token') || ''
   var listView = document.getElementById('listView')
   var detailView = document.getElementById('detailView')
+  var backBtn = document.getElementById('backBtn')
+  var headerTitle = document.getElementById('headerTitle')
   var detailTitle = document.getElementById('detailTitle')
   var detailBody = document.getElementById('detailBody')
   var connDot = document.getElementById('connDot')
@@ -413,11 +415,13 @@ export const renderRemoteMonitorPage = () => `<!DOCTYPE html>
     modelSelect.textContent = ''
     ;(card.modelOptions || []).forEach(function (option) {
       var el = document.createElement('option')
-      el.value = option.model
+      el.value = option.provider + ':' + option.model
+      el.dataset.provider = option.provider
+      el.dataset.model = option.model
       el.textContent = option.label
       modelSelect.appendChild(el)
     })
-    modelSelect.value = card.model || ''
+    modelSelect.value = card.provider + ':' + (card.model || '')
     effortSelect.textContent = ''
     ;(card.reasoningOptions || []).forEach(function (option) {
       var el = document.createElement('option')
@@ -430,9 +434,15 @@ export const renderRemoteMonitorPage = () => `<!DOCTYPE html>
 
   modelSelect.addEventListener('change', function () {
     var card = selectedCardId ? cardsById.get(selectedCardId) : null
-    if (!card) { return }
+    var selectedOption = modelSelect.options[modelSelect.selectedIndex]
+    if (!card || !selectedOption) { return }
     postAction(
-      { type: 'set-card-model', cardId: card.id, provider: card.provider, model: modelSelect.value },
+      {
+        type: 'set-card-model',
+        cardId: card.id,
+        provider: selectedOption.dataset.provider,
+        model: selectedOption.dataset.model || '',
+      },
       '模型已切换',
     )
   })
@@ -473,6 +483,8 @@ export const renderRemoteMonitorPage = () => `<!DOCTYPE html>
     selectedCardId = cardId
     var card = cardsById.get(cardId)
     detailTitle.textContent = card ? card.title : ''
+    headerTitle.textContent = card ? card.title : '会话详情'
+    backBtn.hidden = false
     if (card) { renderPickers(card) }
     listView.hidden = true
     detailView.hidden = false
@@ -482,8 +494,10 @@ export const renderRemoteMonitorPage = () => `<!DOCTYPE html>
     window.scrollTo(0, document.body.scrollHeight)
   }
 
-  document.getElementById('backBtn').addEventListener('click', function () {
+  backBtn.addEventListener('click', function () {
     selectedCardId = null
+    backBtn.hidden = true
+    headerTitle.textContent = 'Chill Vibe 监工'
     detailView.hidden = true
     composerEl.hidden = true
     listView.hidden = false
@@ -805,6 +819,7 @@ export const renderRemoteMonitorPage = () => `<!DOCTYPE html>
           var card = cardsById.get(selectedCardId)
           if (card) {
             detailTitle.textContent = card.title
+            headerTitle.textContent = card.title
             renderPickers(card)
             updateComposerState(card)
           }

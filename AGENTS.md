@@ -485,6 +485,8 @@ A living list of traps that have wasted time before. **When you hit a new pitfal
 | 202 | 死掉的 Codex 会话可能每次续传只追加一条内部 reasoning，随后被本地 stall watchdog 判为普通 `resume-session` 错误，而不是 `transientOnly` 的原生 `Reconnecting... n/5` 占位错误 | 只统计占位错误会让无限重试不断向同一个坏会话发送 `Please continue.`；失败会话计数必须覆盖所有未终结的 resume turn，达到小阈值后切换恢复策略，且 reasoning 不能重置有限重试预算或误报“已恢复”。 |
 | 203 | “手动续传能成功”不代表恢复无损：清空 `sessionId` 后用有字符预算的可见聊天记录重建新会话，会丢失原生隐藏上下文、reasoning、精确工具状态和被压缩的旧输出 | 自动恢复和手动续传都应优先从当前失败用户回合之前 fork provider 原生会话，只重跑这个未完成回合；仅在无法保守定位原生检查点时才降级到 seeded transcript。 |
 
+| 204 | A mobile page with `html, body { height: 100% }` can visually defeat a `position: sticky` header once a long transcript scrolls past the first viewport | Let the document grow with `min-height: 100%` and verify the header after scrolling a real long mobile viewport; checking only the CSS declaration or the first screen misses this failure. |
+
 ### Self-maintenance rule
 
 - When you encounter a new non-obvious failure mode — a test that fails for environmental reasons, a build step with hidden prerequisites, a runtime behavior that contradicts the docs — append a row to this table before you finish the task.

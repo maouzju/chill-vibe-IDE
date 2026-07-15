@@ -370,6 +370,120 @@ describe('planCodexSessionFork', () => {
     assert.ok(plan.includes('回答一'))
   })
 
+  it('rolls a poisoned retry tail back to the complete turn before its original prompt', () => {
+    const responseItemLine = (timestamp: string, payload: Record<string, unknown>) =>
+      JSON.stringify({ timestamp, type: 'response_item', payload })
+    const eventLine = (timestamp: string, payload: Record<string, unknown>) =>
+      JSON.stringify({ timestamp, type: 'event_msg', payload })
+    const turnContextLine = (timestamp: string, turnId: string) =>
+      JSON.stringify({ timestamp, type: 'turn_context', payload: { turn_id: turnId } })
+    const taskStartedLine = (timestamp: string, turnId: string) =>
+      eventLine(timestamp, { type: 'task_started', turn_id: turnId })
+
+    const completeTurnALines = [
+      taskStartedLine('2026-07-01T10:00:01.000Z', 'turn-a'),
+      turnContextLine('2026-07-01T10:00:01.100Z', 'turn-a'),
+      codexUserLine('完整回合 A', '2026-07-01T10:00:02.000Z'),
+      eventLine('2026-07-01T10:00:02.100Z', {
+        type: 'user_message',
+        message: '完整回合 A',
+      }),
+      responseItemLine('2026-07-01T10:00:05.000Z', {
+        type: 'reasoning',
+        id: 'reasoning-a',
+        encrypted_content: 'encrypted-reasoning-a',
+      }),
+      responseItemLine('2026-07-01T10:00:10.000Z', {
+        type: 'custom_tool_call',
+        id: 'tool-a',
+        call_id: 'call-a',
+        name: 'shell_command',
+        input: '{"command":"verify-a"}',
+      }),
+      responseItemLine('2026-07-01T10:00:11.000Z', {
+        type: 'custom_tool_call_output',
+        call_id: 'call-a',
+        output: 'tool-output-a',
+      }),
+      codexAssistantLine('完整回答 A', '2026-07-01T10:00:30.000Z'),
+    ]
+
+    const failedTurnB = '失败回合 B 原始请求'
+    const poisonedTailLines = [
+      taskStartedLine('2026-07-01T10:04:59.000Z', 'turn-b'),
+      turnContextLine('2026-07-01T10:04:59.100Z', 'turn-b'),
+      codexUserLine(failedTurnB, '2026-07-01T10:05:00.000Z'),
+      eventLine('2026-07-01T10:05:00.100Z', {
+        type: 'user_message',
+        message: failedTurnB,
+      }),
+      responseItemLine('2026-07-01T10:05:05.000Z', {
+        type: 'reasoning',
+        id: 'reasoning-b-residue',
+        encrypted_content: 'encrypted-reasoning-b-residue',
+      }),
+      responseItemLine('2026-07-01T10:05:10.000Z', {
+        type: 'custom_tool_call',
+        id: 'tool-b-residue',
+        call_id: 'call-b-residue',
+        name: 'shell_command',
+        input: '{"command":"partial-b"}',
+      }),
+      responseItemLine('2026-07-01T10:05:11.000Z', {
+        type: 'custom_tool_call_output',
+        call_id: 'call-b-residue',
+        output: 'tool-output-b-residue',
+      }),
+      taskStartedLine('2026-07-01T10:06:00.000Z', 'continue-1'),
+      turnContextLine('2026-07-01T10:06:00.100Z', 'continue-1'),
+      codexUserLine('Please continue.', '2026-07-01T10:06:01.000Z'),
+      responseItemLine('2026-07-01T10:06:05.000Z', {
+        type: 'reasoning',
+        id: 'reasoning-continue-1',
+        encrypted_content: 'encrypted-continue-1',
+      }),
+      taskStartedLine('2026-07-01T10:07:00.000Z', 'continue-2'),
+      turnContextLine('2026-07-01T10:07:00.100Z', 'continue-2'),
+      codexUserLine('Please continue.', '2026-07-01T10:07:01.000Z'),
+      responseItemLine('2026-07-01T10:07:05.000Z', {
+        type: 'reasoning',
+        id: 'reasoning-continue-2',
+        encrypted_content: 'encrypted-continue-2',
+      }),
+      taskStartedLine('2026-07-01T10:08:00.000Z', 'continue-3'),
+      turnContextLine('2026-07-01T10:08:00.100Z', 'continue-3'),
+      codexUserLine('Please continue.', '2026-07-01T10:08:01.000Z'),
+      responseItemLine('2026-07-01T10:08:05.000Z', {
+        type: 'reasoning',
+        id: 'reasoning-continue-3',
+        encrypted_content: 'encrypted-continue-3',
+      }),
+    ]
+    const content = [codexMetaLine, ...completeTurnALines, ...poisonedTailLines].join('\n') + '\n'
+
+    const plan = planCodexSessionFork(content, {
+      newSessionId: newCodexId,
+      forkPoint: {
+        content: failedTurnB,
+        createdAtMs: Date.parse('2026-07-01T10:04:58.000Z'),
+      },
+    })
+
+    assert.ok(plan)
+    const forkedLines = plan.trimEnd().split('\n')
+    const meta = JSON.parse(forkedLines[0]!) as { payload?: { id?: string } }
+    assert.equal(meta.payload?.id, newCodexId)
+    assert.deepEqual(
+      forkedLines.slice(1),
+      completeTurnALines,
+      'the complete native records for turn A must be preserved byte-for-byte',
+    )
+    assert.ok(!plan.includes(failedTurnB), 'the unfinished original turn must be rolled back')
+    assert.ok(!plan.includes('reasoning-b-residue'), 'failed-turn reasoning residue must be removed')
+    assert.ok(!plan.includes('tool-output-b-residue'), 'failed-turn tool residue must be removed')
+    assert.ok(!plan.includes('Please continue.'), 'every automatic continuation must be removed')
+  })
+
   it('returns null when the rollout has no session_meta line', () => {
     const content = buildCodexFixture().split('\n').slice(1).join('\n')
     const plan = planCodexSessionFork(content, {

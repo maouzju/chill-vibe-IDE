@@ -44,9 +44,20 @@
 17. Add focused provider tests for a local Codex stream that accepts `turn/start` but emits no visible output or terminal event before the first-byte timeout.
 18. Implement the local stream stall watchdog and classify the timeout as recoverable `resume-session`, pausing it while command activity is in progress.
 
+## Slice 6A - dead non-transient resume escape hatch
+
+19. Add a red-first helper test proving two consecutive ordinary `resume-session` stall failures switch to fresh-session recovery even when `transientOnly` is false.
+20. Count all failed session-resume turns in `App.tsx`, clear the count only after terminal cleanup/new user control flow, and route the threshold hit through the shared recovery entry used by **手动续传**.
+
+## Slice 6B - lossless native-checkpoint recovery
+
+21. Add red-first tests for conservative current-turn selection and a runtime recovery that forks before the failed user turn, keeps the native context, and replays only that turn.
+22. Reuse `forkProviderSession` from the lossless-fork flow in automatic recovery and **手动续传**.
+23. Keep seeded transcript replay only when native fork creation is unavailable or the current turn cannot be mapped safely.
+
 ## Slice 7 - verification
 
-19. Run `pnpm test` and confirm green.
-20. Run `pnpm test:quality` (narrow scope).
-21. Restart the active runtime (Electron via `pnpm dev:restart`).
-22. Update handoff notes.
+24. Run the focused unit/runtime recovery tests and confirm green.
+25. Run `pnpm test:quality` (narrow scope).
+26. Restart the active runtime (Electron via `pnpm dev:restart`).
+27. Update handoff notes.

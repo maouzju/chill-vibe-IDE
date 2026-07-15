@@ -38,6 +38,7 @@ const createColumn = (): BoardColumn => {
         unread: false,
         draft: '',
         draftAttachments: [],
+        queuedSends: [],
         stickyNote: '',
         brainstorm: {
           prompt: '',
@@ -66,6 +67,7 @@ const createColumn = (): BoardColumn => {
         unread: false,
         draft: '',
         draftAttachments: [],
+        queuedSends: [],
         stickyNote: '',
         brainstorm: {
           prompt: '',

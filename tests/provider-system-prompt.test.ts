@@ -1139,7 +1139,7 @@ const captureProviderOutcome = async (request: ChatRequest) =>
 const captureProviderEvents = async (request: ChatRequest) =>
   new Promise<
     Array<
-      | { kind: 'delta'; content: string }
+      | { kind: 'delta'; content: string; itemId?: string }
       | { kind: 'assistant_message'; itemId: string; content: string }
       | { kind: 'activity'; activity: StreamActivity }
       | { kind: 'done' }
@@ -1147,7 +1147,7 @@ const captureProviderEvents = async (request: ChatRequest) =>
     >
   >((resolve, reject) => {
     const events: Array<
-      | { kind: 'delta'; content: string }
+      | { kind: 'delta'; content: string; itemId?: string }
       | { kind: 'assistant_message'; itemId: string; content: string }
       | { kind: 'activity'; activity: StreamActivity }
       | { kind: 'done' }
@@ -1156,8 +1156,8 @@ const captureProviderEvents = async (request: ChatRequest) =>
 
     void launchProviderRun(request, {
       onSession: () => undefined,
-      onDelta: (content) => {
-        events.push({ kind: 'delta', content })
+      onDelta: (content, itemId?: string) => {
+        events.push({ kind: 'delta', content, ...(itemId ? { itemId } : {}) })
       },
       onLog: () => undefined,
       onAssistantMessage: (message) => {
@@ -3717,7 +3717,11 @@ test('codex app-server forwards the final assistant message even after delta str
   )
 
   assert.deepEqual(events, [
-    { kind: 'delta', content: 'First paragraph Second paragraph' },
+    {
+      kind: 'delta',
+      content: 'First paragraph Second paragraph',
+      itemId: 'assistant-item-1',
+    },
     {
       kind: 'assistant_message',
       itemId: 'assistant-item-1',
@@ -3742,9 +3746,9 @@ test('codex app-server preserves newline-only delta chunks during streaming', as
   )
 
   assert.deepEqual(events, [
-    { kind: 'delta', content: 'First paragraph' },
-    { kind: 'delta', content: '\n\n' },
-    { kind: 'delta', content: 'Second paragraph' },
+    { kind: 'delta', content: 'First paragraph', itemId: 'assistant-item-1' },
+    { kind: 'delta', content: '\n\n', itemId: 'assistant-item-1' },
+    { kind: 'delta', content: 'Second paragraph', itemId: 'assistant-item-1' },
     {
       kind: 'assistant_message',
       itemId: 'assistant-item-1',

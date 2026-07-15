@@ -70,8 +70,9 @@ import {
 import {
   getRecoverableStreamRetryLimit,
   getRecoverableStreamErrorSessionId,
+  resolveStreamRecoveryCheckpointTurn,
   resolveStreamRecoveryMode,
-  shouldKeepRecoveringTransientResumeWithFreshSession,
+  shouldKeepRecoveringResumeWithFreshSession,
   shouldResetStreamRecoveryAttemptsForActivity,
   shouldResetStreamRecoveryAttemptsForText,
 } from './stream-recovery'
@@ -188,6 +189,7 @@ import {
   onboardingLanguages,
   onboardingStorageKey,
   readFileAsBase64,
+  resolveStreamedAssistantMessageTarget,
 } from './app-helpers'
 import {
   clearPendingCompactBoundaryMessage,
@@ -198,6 +200,7 @@ import {
 } from './components/chat-card-compaction'
 import { collectChangesSummaryFilesForStream } from './components/chat-card-parsing'
 import {
+  buildQueuedSendRuntimeState,
   resolveQueuedSendTargetColumnId,
   shouldSuppressStreamOutputAfterAskUserActivity,
   shouldStopStreamForAskUserActivity,
@@ -238,12 +241,15 @@ import {
 } from './components/Icons'
 import { WorkspaceColumn } from './components/WorkspaceColumn'
 import {
+  enqueueStreamDeltaBufferEntry,
   getPersistenceVersion,
   getStreamDeltaFlushIntervalMs,
   streamActivityFlushIntervalMs,
   shouldPersistActionImmediately,
   shouldSyncRuntimeSettings,
   shouldUseQueuedPersistenceForAction,
+  takeStreamDeltaBufferEntriesForCard,
+  type StreamDeltaBufferEntry,
 } from './hooks/persistence-queue'
 import { usePersistence } from './hooks/usePersistence'
 import { getBoardWheelDisposition, getVerticalScrollLimit, overflowScrollablePattern } from './board-wheel'
@@ -258,7 +264,7 @@ const emptyProxyStatsCounts: ProxyStatsCounts = {
   recoveryFailures: 0,
 }
 const emptySessionHistory: SessionHistoryEntry[] = []
-const maxTransientResumeLoopAttempts = 2
+const maxResumeSessionLoopAttempts = 2
 const defaultRecoverableStreamRetryLimit = 6
 const maxConcurrentInterruptedSessionResumes = 2
 const interruptedSessionResumeBatchDelayMs = 350
@@ -434,6 +440,20 @@ function isInteractiveEscapeTarget(target: EventTarget | null) {
 type PaneTarget = {
   columnId: string
   paneId: string
+}
+
+type StreamRecoveryTurnSnapshot = {
+  forkPoint: {
+    content: string
+    createdAt: string
+  }
+  prompt: string
+  attachments: ImageAttachment[]
+}
+
+type RecoverLiveStreamOptions = {
+  clearSessionId?: boolean
+  preferNativeCheckpoint?: boolean
 }
 
 const hasPendingAskUserMessage = (messages: ChatMessage[]) =>
@@ -623,7 +643,8 @@ function App() {
   const appStateRef = useRef(appState)
   const activePaneTargetRef = useRef<PaneTarget | null>(null)
   const streamRetryCountRef = useRef(new Map<string, number>())
-  const transientResumeLoopCountRef = useRef(new Map<string, number>())
+  const resumeSessionLoopCountRef = useRef(new Map<string, number>())
+  const streamRecoveryTurnRef = useRef(new Map<string, StreamRecoveryTurnSnapshot>())
   const localRecoveryStatsRef = useRef(new Map<string, LocalRecoveryStatsState>())
   const [cardRecoveryStatuses, setCardRecoveryStatuses] = useState<
     ReadonlyMap<string, CardRecoveryStatus>
@@ -720,7 +741,7 @@ function App() {
     (
       columnId: string,
       cardId: string,
-      options?: { clearSessionId?: boolean },
+      options?: RecoverLiveStreamOptions,
     ) => Promise<boolean>
   ) | null>(null)
   const routingImportInputRef = useRef<HTMLInputElement | null>(null)
@@ -732,7 +753,7 @@ function App() {
   // dispatch window to avoid re-rendering on every character when several
   // sessions stream at once.
   const deltaBufferRef = useRef(
-    new Map<string, { columnId: string; cardId: string; messageId: string; buffer: string; model?: string }>(),
+    new Map<string, StreamDeltaBufferEntry>(),
   )
   const deltaFlushHandleRef = useRef<number | null>(null)
   const activityBufferRef = useRef(
@@ -1013,6 +1034,9 @@ function App() {
       interruptedSessions: null,
     },
   ) => {
+    const restoredQueuedSends = buildQueuedSendRuntimeState(state.columns)
+    queuedSendRequestsRef.current = restoredQueuedSends.queues
+    setQueuedSendSummaries(restoredQueuedSends.summaries)
     appStateRef.current = state
     updateLatestKnownAppState(state)
     void syncRuntimeSettings(state.settings).catch(() => undefined)
@@ -1183,26 +1207,33 @@ function App() {
 
   const flushBufferedAssistantDeltaForCard = useCallback(
     (cardId: string) => {
-      const bufferEntry = deltaBufferRef.current.get(cardId)
-      if (!bufferEntry) {
+      const bufferEntries = takeStreamDeltaBufferEntriesForCard(deltaBufferRef.current, cardId)
+      if (bufferEntries.length === 0) {
         return appStateRef.current
       }
 
-      deltaBufferRef.current.delete(cardId)
-      if (bufferEntry.buffer.length === 0) {
+      if (deltaBufferRef.current.size === 0 && deltaFlushHandleRef.current !== null) {
+        window.clearTimeout(deltaFlushHandleRef.current)
+        deltaFlushHandleRef.current = null
+      }
+
+      const actions: IdeAction[] = bufferEntries
+        .filter((entry) => entry.buffer.length > 0)
+        .map((entry) => ({
+          type: 'appendAssistantDelta',
+          columnId: entry.columnId,
+          cardId: entry.cardId,
+          messageId: entry.messageId,
+          delta: entry.buffer,
+          model: entry.model,
+        }))
+      if (actions.length === 0) {
         return appStateRef.current
       }
 
-      return applyAction({
-        type: 'appendAssistantDelta',
-        columnId: bufferEntry.columnId,
-        cardId: bufferEntry.cardId,
-        messageId: bufferEntry.messageId,
-        delta: bufferEntry.buffer,
-        model: bufferEntry.model,
-      })
+      return applyActions(actions)
     },
-    [applyAction],
+    [applyActions],
   )
 
   const flushActivityBuffer = useCallback(() => {
@@ -2024,6 +2055,9 @@ function App() {
   const closeStream = useCallback(async (cardId: string, stopRemote = false) => {
     const active = activeStreamsRef.current.get(cardId)
     if (!active) {
+      streamRetryCountRef.current.delete(cardId)
+      resumeSessionLoopCountRef.current.delete(cardId)
+      streamRecoveryTurnRef.current.delete(cardId)
       queueFollowUpDuringStreamRef.current.delete(cardId)
       pendingAskUserDuringStreamRef.current.delete(cardId)
       return
@@ -2039,7 +2073,8 @@ function App() {
     activeStreamsRef.current.delete(cardId)
     clearStopCompletionFallbackTimer(cardId)
     streamRetryCountRef.current.delete(cardId)
-    transientResumeLoopCountRef.current.delete(cardId)
+    resumeSessionLoopCountRef.current.delete(cardId)
+    streamRecoveryTurnRef.current.delete(cardId)
     queueFollowUpDuringStreamRef.current.delete(cardId)
     pendingAskUserDuringStreamRef.current.delete(cardId)
     const settledRecoveryStats = settleLocalRecoveryStatsRun(
@@ -2083,7 +2118,8 @@ function App() {
         activeStreamsRef.current.delete(cardId)
         clearStopCompletionFallbackTimer(cardId)
         streamRetryCountRef.current.delete(cardId)
-        transientResumeLoopCountRef.current.delete(cardId)
+        resumeSessionLoopCountRef.current.delete(cardId)
+        streamRecoveryTurnRef.current.delete(cardId)
         queueFollowUpDuringStreamRef.current.delete(cardId)
         pendingAskUserDuringStreamRef.current.delete(cardId)
 
@@ -2119,12 +2155,19 @@ function App() {
     ],
   )
 
-  const enqueueQueuedSend = useCallback((cardId: string, request: QueuedSendRequest) => {
-    const currentQueue = queuedSendRequestsRef.current.get(cardId) ?? []
-    currentQueue.push(request)
-    queuedSendRequestsRef.current.set(cardId, currentQueue)
+  const commitQueuedSends = useCallback((cardId: string, queue: readonly QueuedSendRequest[]) => {
+    const nextQueue = queue.map((request) => ({
+      ...request,
+      attachments: request.attachments.map((attachment) => ({ ...attachment })),
+    }))
+    if (nextQueue.length > 0) {
+      queuedSendRequestsRef.current.set(cardId, nextQueue)
+    } else {
+      queuedSendRequestsRef.current.delete(cardId)
+    }
+
     setQueuedSendSummaries((current) => {
-      const nextSummary = summarizeQueuedSends(currentQueue)
+      const nextSummary = summarizeQueuedSends(nextQueue)
       const previousSummary = current.get(cardId)
       if (
         previousSummary &&
@@ -2141,45 +2184,32 @@ function App() {
       else copy.delete(cardId)
       return copy
     })
-  }, [])
+
+    const owner = appStateRef.current.columns.find((column) => Boolean(column.cards[cardId]))
+    if (!owner) {
+      return
+    }
+
+    const action: IdeAction = {
+      type: 'updateCard',
+      columnId: owner.id,
+      cardId,
+      patch: { queuedSends: nextQueue },
+    }
+    persistImmediately(applyAction(action))
+  }, [applyAction, persistImmediately])
+
+  const enqueueQueuedSend = useCallback((cardId: string, request: QueuedSendRequest) => {
+    const currentQueue = queuedSendRequestsRef.current.get(cardId) ?? []
+    commitQueuedSends(cardId, [...currentQueue, request])
+  }, [commitQueuedSends])
 
   const clearQueuedSends = useCallback((cardId: string) => {
-    queuedSendRequestsRef.current.delete(cardId)
-    setQueuedSendSummaries((current) => {
-      if (!current.has(cardId)) {
-        return current
-      }
-
-      const copy = new Map(current)
-      copy.delete(cardId)
-      return copy
-    })
-  }, [])
+    commitQueuedSends(cardId, [])
+  }, [commitQueuedSends])
 
   const resolveQueuedSendColumnId = useCallback((fallbackColumnId: string, cardId: string) => {
     return resolveQueuedSendTargetColumnId(appStateRef.current.columns, fallbackColumnId, cardId)
-  }, [])
-
-  const syncQueuedSendSummary = useCallback((cardId: string) => {
-    const nextSummary = summarizeQueuedSends(queuedSendRequestsRef.current.get(cardId))
-    setQueuedSendSummaries((current) => {
-      const previousSummary = current.get(cardId)
-      if (
-        previousSummary === nextSummary ||
-        (previousSummary &&
-          nextSummary &&
-          previousSummary.count === nextSummary.count &&
-          previousSummary.nextPreview === nextSummary.nextPreview &&
-          previousSummary.nextAttachmentCount === nextSummary.nextAttachmentCount)
-      ) {
-        return current
-      }
-
-      const copy = new Map(current)
-      if (nextSummary) copy.set(cardId, nextSummary)
-      else copy.delete(cardId)
-      return copy
-    })
   }, [])
 
   const dispatchNextQueuedSend = useCallback((columnId: string, cardId: string) => {
@@ -2194,21 +2224,17 @@ function App() {
       return
     }
 
-    const nextRequest = currentQueue.shift()
+    const nextRequest = currentQueue[0]
     if (!nextRequest) {
-      syncQueuedSendSummary(cardId)
       return
     }
 
-    if (currentQueue.length === 0) {
-      queuedSendRequestsRef.current.delete(cardId)
-    }
-    syncQueuedSendSummary(cardId)
+    commitQueuedSends(cardId, currentQueue.slice(1))
 
     queueMicrotask(() => {
       void sendMessageRef.current?.(targetColumnId, cardId, nextRequest.prompt, nextRequest.attachments)
     })
-  }, [clearQueuedSends, resolveQueuedSendColumnId, syncQueuedSendSummary])
+  }, [clearQueuedSends, commitQueuedSends, resolveQueuedSendColumnId])
 
   const finalizeStoppedStreamWithoutServerAck = useCallback((
     columnId: string,
@@ -2222,7 +2248,8 @@ function App() {
     activeStreamsRef.current.delete(cardId)
     clearStopCompletionFallbackTimer(cardId)
     streamRetryCountRef.current.delete(cardId)
-    transientResumeLoopCountRef.current.delete(cardId)
+    resumeSessionLoopCountRef.current.delete(cardId)
+    streamRecoveryTurnRef.current.delete(cardId)
     queueFollowUpDuringStreamRef.current.delete(cardId)
     pendingAskUserDuringStreamRef.current.delete(cardId)
 
@@ -2285,23 +2312,19 @@ function App() {
       return
     }
 
-    const nextRequest = currentQueue.shift()
+    const nextRequest = currentQueue[0]
     if (!nextRequest) {
-      syncQueuedSendSummary(cardId)
       return
     }
 
-    if (currentQueue.length === 0) {
-      queuedSendRequestsRef.current.delete(cardId)
-    }
-    syncQueuedSendSummary(cardId)
+    commitQueuedSends(cardId, currentQueue.slice(1))
 
     queueMicrotask(() => {
       void sendMessageRef.current?.(targetColumnId, cardId, nextRequest.prompt, nextRequest.attachments, {
         mode: 'interrupt',
       })
     })
-  }, [clearQueuedSends, resolveQueuedSendColumnId, syncQueuedSendSummary])
+  }, [clearQueuedSends, commitQueuedSends, resolveQueuedSendColumnId])
 
   const finalizeStoppedAskUserWithoutServerAck = useCallback(async (
     columnId: string,
@@ -2705,34 +2728,46 @@ function App() {
       provider: Provider,
       streamId: string,
       source: ChatStreamSource,
+      itemId?: string,
+      model?: string,
     ) => {
-      const assistantMessage = createMessage('assistant', '', { provider })
       const active = activeStreamsRef.current.get(cardId)
+      const messages = getColumn(columnId)?.cards[cardId]?.messages ?? []
+      const target = resolveStreamedAssistantMessageTarget({
+        messages,
+        provider,
+        streamId,
+        itemId,
+        activeMessageId: active?.assistantMessageId,
+        activeItemId: active?.assistantItemId,
+        model,
+      })
 
       activeStreamsRef.current.set(cardId, {
         cardId,
         streamId,
         provider,
         source,
-        assistantMessageId: active?.assistantMessageId ?? assistantMessage.id,
+        assistantMessageId: target.messageId,
+        assistantItemId: target.assistantItemId,
         suppressOutputAfterAskUser: active?.suppressOutputAfterAskUser,
       })
 
-      if (active?.assistantMessageId) {
-        return active.assistantMessageId
+      if (!target.messageToAppend) {
+        return target.messageId
       }
 
       const action: IdeAction = {
         type: 'appendMessages',
         columnId,
         cardId,
-        messages: [assistantMessage],
+        messages: [target.messageToAppend],
       }
       persistAfterAction(action.type, applyAction(action))
 
-      return assistantMessage.id
+      return target.messageId
     },
-    [applyAction, persistAfterAction],
+    [applyAction, getColumn, persistAfterAction],
   )
 
   const flushDeltaBuffer = useCallback(() => {
@@ -2775,13 +2810,13 @@ function App() {
     (columnId: string, cardId: string, messageId: string, delta: string, model?: string) => {
       if (!delta) return
       const buffer = deltaBufferRef.current
-      const existing = buffer.get(cardId)
-      if (existing && existing.messageId === messageId) {
-        existing.buffer += delta
-        existing.model = existing.model ?? model
-      } else {
-        buffer.set(cardId, { columnId, cardId, messageId, buffer: delta, model })
-      }
+      enqueueStreamDeltaBufferEntry(buffer, {
+        columnId,
+        cardId,
+        messageId,
+        buffer: delta,
+        model,
+      })
 
       if (deltaFlushHandleRef.current === null) {
         const flushIntervalMs = getStreamDeltaFlushIntervalMs(activeStreamsRef.current.size)
@@ -2813,7 +2848,6 @@ function App() {
         onSession: ({ sessionId }) => {
           if (shouldResetStreamRecoveryAttemptsForActivity('session')) {
             streamRetryCountRef.current.delete(card.id)
-            transientResumeLoopCountRef.current.delete(card.id)
             markRecoveryResumedIfActive(card.id)
           }
           const action: IdeAction = {
@@ -2824,7 +2858,7 @@ function App() {
           }
           persistAfterAction(action.type, applyAction(action))
         },
-        onDelta: ({ content }) => {
+        onDelta: ({ content, itemId }) => {
           const active = activeStreamsRef.current.get(card.id)
           if (active?.suppressOutputAfterAskUser) {
             return
@@ -2836,11 +2870,12 @@ function App() {
             card.provider,
             card.streamId!,
             source,
+            itemId,
+            card.model,
           )
 
           if (shouldResetStreamRecoveryAttemptsForText(content)) {
             streamRetryCountRef.current.delete(card.id)
-            transientResumeLoopCountRef.current.delete(card.id)
             markRecoveryResumedIfActive(card.id)
           }
           enqueueAssistantDelta(columnId, card.id, messageId, content, card.model)
@@ -2858,7 +2893,6 @@ function App() {
 
           if (shouldResetStreamRecoveryAttemptsForActivity('log')) {
             streamRetryCountRef.current.delete(card.id)
-            transientResumeLoopCountRef.current.delete(card.id)
             markRecoveryResumedIfActive(card.id)
           }
           const action: IdeAction = {
@@ -2881,20 +2915,20 @@ function App() {
             shouldResetStreamRecoveryAttemptsForText(payload.content)
           ) {
             streamRetryCountRef.current.delete(card.id)
-            transientResumeLoopCountRef.current.delete(card.id)
             markRecoveryResumedIfActive(card.id)
           }
-          const buffered = deltaBufferRef.current.get(card.id)
-          if (buffered && buffered.messageId === active?.assistantMessageId) {
-            deltaBufferRef.current.delete(card.id)
-          }
           const assistantMessageId =
-            active?.assistantMessageId ??
-            createStructuredMessageId(card.provider, card.streamId!, payload.itemId)
+            active?.assistantMessageId &&
+            (!active.assistantItemId || active.assistantItemId === payload.itemId)
+              ? active.assistantMessageId
+              : createStructuredMessageId(card.provider, card.streamId!, payload.itemId)
+          deltaBufferRef.current.delete(assistantMessageId)
+          flushBufferedAssistantDeltaForCard(card.id)
           if (active) {
             activeStreamsRef.current.set(card.id, {
               ...active,
               assistantMessageId,
+              assistantItemId: payload.itemId,
             })
           }
 
@@ -2946,9 +2980,8 @@ function App() {
             return
           }
 
-          if (shouldResetStreamRecoveryAttemptsForActivity('activity')) {
+          if (shouldResetStreamRecoveryAttemptsForActivity('activity', payload.kind)) {
             streamRetryCountRef.current.delete(card.id)
-            transientResumeLoopCountRef.current.delete(card.id)
             markRecoveryResumedIfActive(card.id)
           }
 
@@ -2969,6 +3002,7 @@ function App() {
             activeStreamsRef.current.set(card.id, {
               ...active,
               assistantMessageId: undefined,
+              assistantItemId: undefined,
             })
           }
 
@@ -3108,7 +3142,8 @@ function App() {
             stopCompletionFallbackTimersRef.current.delete(card.id)
           }
           streamRetryCountRef.current.delete(card.id)
-          transientResumeLoopCountRef.current.delete(card.id)
+          resumeSessionLoopCountRef.current.delete(card.id)
+          streamRecoveryTurnRef.current.delete(card.id)
           queueFollowUpDuringStreamRef.current.delete(card.id)
           pendingAskUserDuringStreamRef.current.delete(card.id)
           const settledLocalRecoveryStats = settleLocalRecoveryStatsRun(
@@ -3257,6 +3292,23 @@ function App() {
           }
 
           if (recoverable) {
+            if (!streamRecoveryTurnRef.current.has(card.id)) {
+              const liveCard = getColumn(columnId)?.cards[card.id] ?? card
+              const inferredCheckpointTurn = resolveStreamRecoveryCheckpointTurn({
+                messages: liveCard.messages,
+                streamId: card.streamId,
+              })
+              if (inferredCheckpointTurn) {
+                streamRecoveryTurnRef.current.set(card.id, {
+                  forkPoint: {
+                    content: inferredCheckpointTurn.message.content,
+                    createdAt: inferredCheckpointTurn.message.createdAt,
+                  },
+                  prompt: inferredCheckpointTurn.prompt,
+                  attachments: inferredCheckpointTurn.attachments,
+                })
+              }
+            }
             const recoverySessionId = getRecoverableStreamErrorSessionId({
               recoverable,
               recoveryMode,
@@ -3294,14 +3346,18 @@ function App() {
 
             if (retryCount < maxRecoverableRetries) {
               const shouldCountAgainstBudget = transientOnly !== true
-              const transientResumeAttempt =
-                recoveryMode === 'resume-session' && transientOnly === true
-                  ? (transientResumeLoopCountRef.current.get(card.id) ?? 0) + 1
+              // This counter tracks failed resume turns, not visible progress.
+              // A poisoned Codex session can emit reasoning (or even partial
+              // output) and still end in the stall watchdog; only a terminal
+              // completion proves that the resumed session is healthy again.
+              const resumeSessionAttempt =
+                recoveryMode === 'resume-session'
+                  ? (resumeSessionLoopCountRef.current.get(card.id) ?? 0) + 1
                   : 0
-              if (transientResumeAttempt > 0) {
-                transientResumeLoopCountRef.current.set(card.id, transientResumeAttempt)
+              if (resumeSessionAttempt > 0) {
+                resumeSessionLoopCountRef.current.set(card.id, resumeSessionAttempt)
               } else {
-                transientResumeLoopCountRef.current.delete(card.id)
+                resumeSessionLoopCountRef.current.delete(card.id)
               }
               if (shouldCountAgainstBudget) {
                 streamRetryCountRef.current.set(card.id, retryCount + 1)
@@ -3320,31 +3376,18 @@ function App() {
                     typeof liveCard.sessionId === 'string' &&
                     liveCard.sessionId.trim().length > 0
                   if (
-                    shouldKeepRecoveringTransientResumeWithFreshSession({
+                    shouldKeepRecoveringResumeWithFreshSession({
                       recoverable,
                       recoveryMode,
-                      transientOnly,
                       hasSessionId: hasLiveSessionId,
-                      transientResumeAttempt,
-                      maxTransientResumeAttempts: maxTransientResumeLoopAttempts,
+                      resumeAttempt: resumeSessionAttempt,
+                      maxResumeAttempts: maxResumeSessionLoopAttempts,
                     })
                   ) {
-                    transientResumeLoopCountRef.current.delete(card.id)
-                    if (hasLiveSessionId) {
-                      const action: IdeAction = {
-                        type: 'updateCard',
-                        columnId,
-                        cardId: card.id,
-                        patch: {
-                          sessionId: undefined,
-                          sessionModel: undefined,
-                          providerSessions: {},
-                        },
-                      }
-                      persistAfterAction(action.type, applyAction(action))
-                    }
+                    resumeSessionLoopCountRef.current.delete(card.id)
                     void recoverLiveStreamRef.current?.(columnId, card.id, {
                       clearSessionId: true,
+                      preferNativeCheckpoint: true,
                     })
                     return
                   }
@@ -3371,7 +3414,7 @@ function App() {
           }
 
           streamRetryCountRef.current.delete(card.id)
-          transientResumeLoopCountRef.current.delete(card.id)
+          resumeSessionLoopCountRef.current.delete(card.id)
           queueFollowUpDuringStreamRef.current.delete(card.id)
           pendingAskUserDuringStreamRef.current.delete(card.id)
           const settledLocalRecoveryStats = settleLocalRecoveryStatsRun(
@@ -3513,7 +3556,8 @@ function App() {
     activityBufferRef.current.clear()
     stoppedRunReasonRef.current.clear()
     streamRetryCountRef.current.clear()
-    transientResumeLoopCountRef.current.clear()
+    resumeSessionLoopCountRef.current.clear()
+    streamRecoveryTurnRef.current.clear()
     localRecoveryStatsRef.current.clear()
   }, [])
 
@@ -3663,7 +3707,8 @@ function App() {
     void hydrateRef.current?.()
     const activeStreams = activeStreamsRef.current
     const retryCounts = streamRetryCountRef.current
-    const transientResumeLoopCounts = transientResumeLoopCountRef.current
+    const resumeSessionLoopCounts = resumeSessionLoopCountRef.current
+    const streamRecoveryTurns = streamRecoveryTurnRef.current
     const deltaBuffer = deltaBufferRef.current
 
     return () => {
@@ -3677,7 +3722,8 @@ function App() {
       }
       deltaBuffer.clear()
       retryCounts.clear()
-      transientResumeLoopCounts.clear()
+      resumeSessionLoopCounts.clear()
+      streamRecoveryTurns.clear()
     }
   }, [])
 
@@ -4146,6 +4192,12 @@ function App() {
       return
     }
 
+    // A user-authored turn starts a new recovery lifecycle. This also protects
+    // reused card ids after a terminal startup/provider failure left no active
+    // stream to own the normal cleanup path.
+    streamRetryCountRef.current.delete(cardId)
+    resumeSessionLoopCountRef.current.delete(cardId)
+    streamRecoveryTurnRef.current.delete(cardId)
     pendingAskUserDuringStreamRef.current.delete(cardId)
     // Approving a plan-approval card must drop plan mode before this send:
     // resuming with `--permission-mode plan` would intercept the model's next
@@ -4209,6 +4261,8 @@ function App() {
       : attachments
 
     if (!providerStatus?.available) {
+      streamRetryCountRef.current.delete(cardId)
+      resumeSessionLoopCountRef.current.delete(cardId)
       const actions: IdeAction[] = [
         {
           type: 'appendMessages',
@@ -4244,6 +4298,19 @@ function App() {
     if (isManualCodexCompactRequest) {
       requestPrompt = '/compact'
       requestAttachments = []
+    }
+
+    if (!isEmptyContinuation) {
+      streamRecoveryTurnRef.current.set(cardId, {
+        forkPoint: {
+          content: userMessage.content,
+          createdAt: userMessage.createdAt,
+        },
+        // Keep the user-authored turn, not a seeded transcript wrapper. A
+        // native checkpoint already contains every completed earlier turn.
+        prompt,
+        attachments: attachments.slice(),
+      })
     }
 
     const streamId = crypto.randomUUID()
@@ -4499,6 +4566,8 @@ function App() {
 
       attachStream(columnId, liveCard)
     } catch (error) {
+      streamRetryCountRef.current.delete(cardId)
+      resumeSessionLoopCountRef.current.delete(cardId)
       const settledLocalRecoveryStats = settleLocalRecoveryStatsRun(
         localRecoveryStatsRef.current.get(cardId),
         'failure',
@@ -4543,7 +4612,7 @@ function App() {
   const recoverLiveStream = useCallback(async (
     columnId: string,
     cardId: string,
-    options?: { clearSessionId?: boolean },
+    options?: RecoverLiveStreamOptions,
   ) => {
     const column = getColumn(columnId)
     const card = column?.cards[cardId]
@@ -4552,8 +4621,9 @@ function App() {
       return false
     }
 
-    const shouldClearSessionId = options?.clearSessionId === true
-    if (!shouldClearSessionId && !card.sessionId) {
+    const prefersNativeCheckpoint = options?.preferNativeCheckpoint === true
+    const requestsSessionClear = options?.clearSessionId === true
+    if (!requestsSessionClear && !prefersNativeCheckpoint && !card.sessionId) {
       return false
     }
 
@@ -4565,6 +4635,8 @@ function App() {
     const resolvedReasoningEffort = normalizeReasoningEffort(card.provider, card.reasoningEffort)
 
     if (!providerStatus?.available) {
+      streamRetryCountRef.current.delete(cardId)
+      resumeSessionLoopCountRef.current.delete(cardId)
       const actions: IdeAction[] = [
         {
           type: 'appendMessages',
@@ -4588,6 +4660,55 @@ function App() {
       return false
     }
 
+    const inferredCheckpointTurn = prefersNativeCheckpoint
+      ? resolveStreamRecoveryCheckpointTurn({
+          messages: card.messages,
+          streamId: card.streamId,
+        })
+      : null
+    const checkpointTurn = prefersNativeCheckpoint
+      ? (
+          streamRecoveryTurnRef.current.get(cardId) ??
+          (inferredCheckpointTurn
+            ? {
+                forkPoint: {
+                  content: inferredCheckpointTurn.message.content,
+                  createdAt: inferredCheckpointTurn.message.createdAt,
+                },
+                prompt: inferredCheckpointTurn.prompt,
+                attachments: inferredCheckpointTurn.attachments,
+              }
+            : null)
+        )
+      : null
+    const sourceSessionId = card.sessionId?.trim() || null
+    const sourceStreamId = card.streamId
+    const forkedSessionId =
+      checkpointTurn && sourceSessionId
+        ? await forkProviderSession({
+            provider: card.provider,
+            workspacePath: column.workspacePath,
+            sessionId: sourceSessionId,
+            forkPoint: checkpointTurn.forkPoint,
+          }).catch(() => null)
+        : null
+
+    if (prefersNativeCheckpoint) {
+      const liveCard = getColumn(columnId)?.cards[cardId]
+      if (
+        !liveCard ||
+        liveCard.streamId !== sourceStreamId ||
+        (liveCard.sessionId?.trim() || null) !== sourceSessionId
+      ) {
+        // The local file fork is async. Never let a late result overwrite a
+        // newer send/manual action that already took ownership of this card.
+        return false
+      }
+    }
+
+    const shouldClearSessionId =
+      !forkedSessionId && (requestsSessionClear || prefersNativeCheckpoint)
+
     // Fact-check against the provider's native on-disk transcript before
     // resuming: a flaky relay can eat or corrupt the terminal event after the
     // reply already finished, and resuming a finished turn silently wakes the
@@ -4595,7 +4716,7 @@ function App() {
     // ("已解决" replies that revive themselves). 'completed' finalizes the card
     // instead of waking the provider; 'incomplete'/'unknown' fall through to
     // the normal resume so a genuinely interrupted turn is never stranded.
-    if (!shouldClearSessionId && card.provider === 'claude' && card.sessionId) {
+    if (!shouldClearSessionId && !forkedSessionId && card.provider === 'claude' && card.sessionId) {
       const completion = await getNativeTurnCompletion({
         provider: card.provider,
         sessionId: card.sessionId,
@@ -4607,7 +4728,8 @@ function App() {
       }
       if (completion === 'completed') {
         streamRetryCountRef.current.delete(cardId)
-        transientResumeLoopCountRef.current.delete(cardId)
+        resumeSessionLoopCountRef.current.delete(cardId)
+        streamRecoveryTurnRef.current.delete(cardId)
         forceResetRecoveryStatus(cardId)
         const activityFlushedState = flushBufferedActivitiesForCard(cardId)
         const flushedCard = getColumnById(activityFlushedState.columns, columnId)?.cards[cardId]
@@ -4655,8 +4777,18 @@ function App() {
           status: card.status,
         })
       : []
+    const recoveryPrompt = forkedSessionId
+      ? (checkpointTurn?.prompt ?? '')
+      : shouldClearSessionId
+        ? freshSessionRecoveryPrompt
+        : ''
+    const recoveryAttachments = forkedSessionId
+      ? (checkpointTurn?.attachments ?? [])
+      : shouldClearSessionId
+        ? freshSessionRecoveryAttachments
+        : []
     const archiveRecall =
-      card.provider === 'codex'
+      card.provider === 'codex' && !forkedSessionId
         ? buildArchiveRecallSnapshot({
             messages: card.messages,
             provider: card.provider,
@@ -4675,6 +4807,8 @@ function App() {
         endpoint: '/cli/local-stream',
       }).catch(() => undefined)
     }
+    const checkpointProviderSessions = { ...card.providerSessions }
+    delete checkpointProviderSessions[card.provider]
     const startAction: IdeAction = {
       type: 'updateCard',
       columnId,
@@ -4684,7 +4818,13 @@ function App() {
         reasoningEffort: resolvedReasoningEffort,
         status: 'streaming',
         streamId,
-        ...(shouldClearSessionId
+        ...(forkedSessionId
+          ? {
+              sessionId: forkedSessionId,
+              sessionModel: card.sessionModel ?? resolvedModel,
+              providerSessions: checkpointProviderSessions,
+            }
+          : shouldClearSessionId
           ? {
               sessionId: undefined,
               sessionModel: undefined,
@@ -4715,10 +4855,12 @@ function App() {
         crossProviderSkillReuseEnabled:
           appStateRef.current.settings.crossProviderSkillReuseEnabled,
         streamId,
-        sessionId: shouldClearSessionId ? undefined : getResumeSessionIdForModel(card, resolvedModel),
+        sessionId:
+          forkedSessionId ??
+          (shouldClearSessionId ? undefined : getResumeSessionIdForModel(card, resolvedModel)),
         cardId,
-        prompt: shouldClearSessionId ? freshSessionRecoveryPrompt : '',
-        attachments: shouldClearSessionId ? freshSessionRecoveryAttachments : [],
+        prompt: recoveryPrompt,
+        attachments: recoveryAttachments,
         archiveRecall,
       })
 
@@ -4741,6 +4883,8 @@ function App() {
       attachStream(columnId, liveCard)
       return true
     } catch (error) {
+      streamRetryCountRef.current.delete(cardId)
+      resumeSessionLoopCountRef.current.delete(cardId)
       const settledLocalRecoveryStats = settleLocalRecoveryStatsRun(
         localRecoveryStatsRef.current.get(cardId),
         'failure',
@@ -4794,6 +4938,23 @@ function App() {
         return false
       }
 
+      if (!streamRecoveryTurnRef.current.has(cardId)) {
+        const inferredCheckpointTurn = resolveStreamRecoveryCheckpointTurn({
+          messages: liveCard.messages,
+          streamId: liveCard.streamId,
+        })
+        if (inferredCheckpointTurn) {
+          streamRecoveryTurnRef.current.set(cardId, {
+            forkPoint: {
+              content: inferredCheckpointTurn.message.content,
+              createdAt: inferredCheckpointTurn.message.createdAt,
+            },
+            prompt: inferredCheckpointTurn.prompt,
+            attachments: inferredCheckpointTurn.attachments,
+          })
+        }
+      }
+
       if (liveCard.streamId) {
         activeStreamsRef.current.get(cardId)?.source.close()
         activeStreamsRef.current.delete(cardId)
@@ -4821,7 +4982,7 @@ function App() {
       }
 
       streamRetryCountRef.current.delete(cardId)
-      transientResumeLoopCountRef.current.delete(cardId)
+      resumeSessionLoopCountRef.current.delete(cardId)
       queueFollowUpDuringStreamRef.current.delete(cardId)
       pendingAskUserDuringStreamRef.current.delete(cardId)
       forceResetRecoveryStatus(cardId)
@@ -4836,15 +4997,15 @@ function App() {
         columnId,
         cardId,
         patch: {
-          sessionId: undefined,
-          sessionModel: undefined,
-          providerSessions: {},
           streamId: undefined,
         },
       }
       persistAfterAction(action.type, applyAction(action))
 
-      return recoverLiveStreamRef.current?.(columnId, cardId, { clearSessionId: true }) ?? false
+      return recoverLiveStreamRef.current?.(columnId, cardId, {
+        clearSessionId: true,
+        preferNativeCheckpoint: true,
+      }) ?? false
     },
     [applyAction, forceResetRecoveryStatus, getColumn, persistAfterAction],
   )

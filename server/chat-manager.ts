@@ -413,7 +413,10 @@ export class ChatManager {
           record.latestSessionId = normalizeSessionId(sessionId) ?? record.latestSessionId
           this.emit(record, 'session', { sessionId })
         },
-        onDelta: (content) => this.emit(record, 'delta', { content }),
+        onDelta: (content, itemId) => this.emit(record, 'delta', {
+          content,
+          ...(itemId ? { itemId } : {}),
+        }),
         onLog: (message) => this.emit(record, 'log', { message }),
         onAssistantMessage: (message) => this.emit(record, 'assistant_message', message),
         onActivity: (activity) => {
@@ -476,7 +479,10 @@ export class ChatManager {
         stream.latestSessionId = normalizeSessionId(sessionId) ?? stream.latestSessionId
         this.emit(stream, 'session', { sessionId })
       },
-      onDelta: (content) => this.emit(stream, 'delta', { content }),
+      onDelta: (content, itemId) => this.emit(stream, 'delta', {
+        content,
+        ...(itemId ? { itemId } : {}),
+      }),
       onLog: (message) => this.emit(stream, 'log', { message }),
       onAssistantMessage: (message) => this.emit(stream, 'assistant_message', message),
       onActivity: (activity) => {

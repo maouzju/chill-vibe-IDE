@@ -679,6 +679,24 @@ test('right-clicking send while a card is running queues the composer message', 
   await expect.poll(() => mock.readRequests()).toEqual([])
 })
 
+test('queued messages survive a renderer reload without dispatching on startup', async ({ page }) => {
+  const mock = await installMockApis(page)
+  await page.goto('http://localhost:5173')
+
+  const textarea = getActiveComposerTextarea(page)
+  const sendButton = page.getByRole('button', { name: 'Send message' })
+  await textarea.fill('Keep this queued across reload')
+  await sendButton.click({ button: 'right' })
+
+  await expect.poll(
+    () => mock.readState().columns[0]?.cards['card-1']?.queuedSends?.[0]?.prompt,
+  ).toBe('Keep this queued across reload')
+  await page.reload()
+
+  await expect(page.locator('.composer-queued-send')).toContainText('Keep this queued across reload')
+  await expect.poll(() => mock.readRequests()).toEqual([])
+})
+
 test('queued messages can be cancelled before they are sent', async ({ page }) => {
   const mock = await installMockApis(page)
   await page.goto('http://localhost:5173')

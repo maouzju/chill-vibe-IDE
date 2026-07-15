@@ -11,6 +11,7 @@ import {
   getAgentDoneSoundUrl,
   getColumnById,
   getResumeSessionIdForModel,
+  resolveStreamedAssistantMessageTarget,
 } from '../src/app-helpers.ts'
 import type { ChatMessage } from '../shared/schema.ts'
 
@@ -69,6 +70,90 @@ test('createStructuredMessageId gives assistant snapshots a stable stream item i
     createStructuredMessageId('claude', 'stream-1', 'assistant-item-1'),
     'claude:stream-1:item:assistant-item-1',
   )
+})
+
+test('Codex deltas reuse one message target when command activity interrupts the same item', () => {
+  const first = resolveStreamedAssistantMessageTarget({
+    messages: [],
+    provider: 'codex',
+    streamId: 'stream-1',
+    itemId: 'assistant-item-1',
+    model: 'gpt-5.6-sol',
+  })
+
+  assert.equal(first.messageId, 'codex:stream-1:item:assistant-item-1')
+  assert.equal(first.assistantItemId, 'assistant-item-1')
+  assert.equal(first.messageToAppend?.meta?.itemId, 'assistant-item-1')
+
+  const interruptedMessages: ChatMessage[] = [
+    {
+      ...first.messageToAppend!,
+      content: '用 Demo 两天完成',
+    },
+    {
+      id: 'codex:stream-1:item:command-1',
+      role: 'assistant',
+      content: '',
+      createdAt: '2026-07-15T02:30:02.304Z',
+      meta: {
+        provider: 'codex',
+        kind: 'command',
+        itemId: 'command-1',
+      },
+    },
+  ]
+
+  const resumed = resolveStreamedAssistantMessageTarget({
+    messages: interruptedMessages,
+    provider: 'codex',
+    streamId: 'stream-1',
+    itemId: 'assistant-item-1',
+    model: 'gpt-5.6-sol',
+  })
+
+  assert.equal(resumed.messageId, first.messageId)
+  assert.equal(resumed.messageToAppend, undefined)
+
+  const finalized = finalizeStreamedAssistantMessage(
+    interruptedMessages,
+    resumed.messageId,
+    'codex',
+    'stream-1',
+    {
+      itemId: 'assistant-item-1',
+      content: '用 Demo 两天完成，项目几个月收不了尾。',
+    },
+    'gpt-5.6-sol',
+  )
+  assert.equal(finalized.filter((message) => message.meta?.itemId === 'assistant-item-1').length, 1)
+  assert.equal(finalized[0]?.content, '用 Demo 两天完成，项目几个月收不了尾。')
+})
+
+test('a new Codex item cannot append into the previous completed assistant message', () => {
+  const previousMessageId = createStructuredMessageId('codex', 'stream-1', 'assistant-item-1')
+  const target = resolveStreamedAssistantMessageTarget({
+    messages: [
+      {
+        id: previousMessageId,
+        role: 'assistant',
+        content: 'Previous sub-agent report',
+        createdAt: '2026-07-15T02:29:52.588Z',
+        meta: {
+          provider: 'codex',
+          itemId: 'assistant-item-1',
+        },
+      },
+    ],
+    provider: 'codex',
+    streamId: 'stream-1',
+    itemId: 'assistant-item-2',
+    activeMessageId: previousMessageId,
+    activeItemId: 'assistant-item-1',
+  })
+
+  assert.equal(target.messageId, 'codex:stream-1:item:assistant-item-2')
+  assert.notEqual(target.messageId, previousMessageId)
+  assert.equal(target.messageToAppend?.meta?.itemId, 'assistant-item-2')
 })
 
 test('createStoppedRunMessage uses the user-interrupted copy for follow-up interrupts', () => {

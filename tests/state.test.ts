@@ -45,6 +45,7 @@ const createCard = (overrides: Partial<ChatCard> = {}): ChatCard => ({
   draft: overrides.draft ?? '',
   stickyNote: overrides.stickyNote ?? '',
   draftAttachments: overrides.draftAttachments ?? [],
+  queuedSends: overrides.queuedSends ?? [],
   brainstorm: overrides.brainstorm ?? {
     prompt: '',
     provider: 'codex',
@@ -153,6 +154,23 @@ const createState = (): AppState => ({
 })
 
 describe('ideReducer pane layout', () => {
+  it('clears persisted deferred sends when resetting a conversation', () => {
+    const state = createState()
+    state.columns[0]!.cards['card-1']!.queuedSends = [{
+      id: 'queued-1',
+      prompt: 'send later',
+      attachments: [],
+    }]
+
+    const reset = ideReducer(state, {
+      type: 'resetCardConversation',
+      columnId: 'column-1',
+      cardId: 'card-1',
+    })
+
+    assert.deepEqual(reset.columns[0]!.cards['card-1']!.queuedSends, [])
+  })
+
   it('stores normalized custom accent colors through the settings action', () => {
     const state = createState()
     const customized = ideReducer(state, {

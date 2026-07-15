@@ -33,6 +33,7 @@ const createCard = (overrides: Partial<ChatCard> = {}): ChatCard => ({
   draft: '',
   stickyNote: overrides.stickyNote ?? '',
   draftAttachments: [],
+  queuedSends: overrides.queuedSends ?? [],
   brainstorm: {
     prompt: '',
     provider: 'codex',

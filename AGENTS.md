@@ -482,6 +482,8 @@ A living list of traps that have wasted time before. **When you hit a new pitfal
 | 199 | 已被工作区基线预算省略的脏路径，若本轮把它删掉或恢复到 HEAD，会同时从 `currentStatus.changes` 和 `snapshot.files` 消失；只遍历这两处会让 provider 明确报告的文件名再次静默丢失 | `diffWorkspaceSnapshot()` 还要对照 `snapshot.changes` 与 touched paths 补发 `baseline-unavailable` 条目；回归钉在 `tests/git-workspace.test.ts` 的“omitted pre-existing untracked file is deleted”用例。 |
 | 200 | 助手消息外层 `.message` 使用 `white-space: pre-wrap`，若 Markdown 区域未重置，provider 源文本里的连续空白行会在 ReactMarkdown 已生成段落间距之外再次膨胀；若行内代码反引号还被跨空白行拆开，就会出现裸反引号、中文词被断成两块和大段假空白 | 助手 `.message-content` 必须用 `white-space: normal`，代码块自身继续用 `pre`；渲染前把“上一行末尾悬空反引号 + 下一非空行内已有闭合反引号”合回同一 Markdown 行，回归钉在 `tests/markdown-unclosed-spans.test.ts`。 |
 | 201 | 劣质中转会在回复**已经完整结束后**吃掉/污染终止事件（空 200、缺 result、零退出无终止事件），错误分类器如实判成 recoverable，`resume-session` 用空输入无声唤醒模型——模型把这当成“用户让我继续”，刚答完“已解决”又自己编出后续工作（幽灵续跑） | 恢复前先问权威事实而不是猜：`server/native-turn-completion.ts` 读 Claude CLI 自己落盘的会话 jsonl，尾部实质条目是 text assistant 且 `stop_reason` 非 `tool_use` → `completed`，`recoverLiveStream` 只收尾 UI 不再唤醒；`incomplete`/`unknown` 照旧 resume（fail-open）。判定规则改动必须同步 `tests/native-turn-completion.test.ts`。 |
+| 202 | 死掉的 Codex 会话可能每次续传只追加一条内部 reasoning，随后被本地 stall watchdog 判为普通 `resume-session` 错误，而不是 `transientOnly` 的原生 `Reconnecting... n/5` 占位错误 | 只统计占位错误会让无限重试不断向同一个坏会话发送 `Please continue.`；失败会话计数必须覆盖所有未终结的 resume turn，达到小阈值后切换恢复策略，且 reasoning 不能重置有限重试预算或误报“已恢复”。 |
+| 203 | “手动续传能成功”不代表恢复无损：清空 `sessionId` 后用有字符预算的可见聊天记录重建新会话，会丢失原生隐藏上下文、reasoning、精确工具状态和被压缩的旧输出 | 自动恢复和手动续传都应优先从当前失败用户回合之前 fork provider 原生会话，只重跑这个未完成回合；仅在无法保守定位原生检查点时才降级到 seeded transcript。 |
 
 ### Self-maintenance rule
 

@@ -26,6 +26,7 @@ const createCard = (): ChatCardModel => ({
   unread: false,
   draft: 'Please help with this task',
   draftAttachments: [],
+  queuedSends: [],
   stickyNote: '',
   brainstorm: createDefaultBrainstormState(),
   providerSessions: {},

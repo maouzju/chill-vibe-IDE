@@ -32,9 +32,14 @@ Tool outputs, thinking, and long history are lost. The user requirement is expli
    as a tie-breaker. If no confident match exists, fall back (R4) instead of guessing.
 7. **R7 — Cards without sessions unchanged.** Forking a card that has no `sessionId` keeps today's
    behavior untouched.
+8. **R8 — Recovery checkpoint reuse.** Automatic stream recovery and **手动续传** must reuse the
+   native fork mechanism before falling back to seeded transcript replay. The fork is cut before
+   the current unfinished user turn, then that turn alone is replayed into the new native session.
+   Failure/ambiguity still degrades safely to the existing seeded path.
 
 ## Non-goals
 
 - Changing the seeded replay path itself.
-- Forking mid-turn streaming state (the fork uses the session file as-is at fork time).
+- Preserving partial work inside the failed turn. Recovery deliberately rolls that unfinished turn
+  back and replays it; completed native context before the turn remains lossless.
 - A UI toggle; lossless fork is the default whenever possible.

@@ -45,7 +45,11 @@ export const shouldClearRecoveryStatusOnStreamIdle = (
    - In `onError` final-failure branch: `computeRecoveryStatusAfterFinalFailure`.
    - In `onData` / the text/activity reset branch (wherever `shouldResetStreamRecoveryAttempts*` returns `true`): call `computeRecoveryStatusAfterSuccess` + schedule a 2s clear.
    - When a card transitions to `idle` after `streaming`: clear unless `failed` (use `shouldClearRecoveryStatusOnStreamIdle`).
-   - Track consecutive `resume-session` retries whose provider output was only transient reconnect placeholder text. After a small threshold, clear the card's stale `sessionId`, start a fresh provider session, and seed the request with the visible transcript via `buildSeededChatPrompt`; filter placeholder reconnect messages out of that seeded transcript.
+   - Track every consecutive failed `resume-session` turn, not only errors marked `transientOnly`. A dead Codex turn can append an internal reasoning record and then hit `Codex stalled after emitting stream output`; that error is recoverable but non-transient, so a placeholder-only counter never advances and unlimited retry mode otherwise loops forever. After two failed resume turns, stop retrying the poisoned tip. Meaningful text/tool activity may reset the visible retry budget, but internal reasoning does not, and only terminal completion clears the failed-resume counter.
+   - Resolve the unfinished visible user turn conservatively: it is either the last card message, or later messages must belong to the current `streamId`. Use its content/timestamp as the existing `forkProviderSession` fork point and its attachment metadata as the replay payload. Empty continuations or ambiguous turn ownership do not guess.
+   - Ask the backend to fork the native provider transcript strictly before that user turn. On success, patch the card to the new native `sessionId`, preserve the session model, clear parked provider sessions, and resend only the unfinished user prompt/attachments. This rolls back failed reasoning/tool residue while retaining the full completed native context.
+   - If native fork creation returns `null` or throws, use the existing `clearSessionId + buildSeededChatPrompt` path as the last-resort lossy fallback; placeholder reconnect messages remain filtered from that seeded transcript.
+   - Both the automatic two-failure escape hatch and **手动续传** call this same native-checkpoint-first recovery flow.
    - Fresh-session seeded prompts must preserve long user-authored transcript turns in full. The size budget may still omit older non-protected turns and compact structured/tool output, but it must not silently drop the middle of a pasted multi-hundred-line user prompt.
    - Treat Codex app-server stale-session resume errors (`failed to load rollout`, `no rollout found`, `no session path found`, `empty session file`) as recoverable by dropping the stale `sessionId`, logging the automatic fresh-session notice, and starting a new thread for the same prompt/attachments.
    - When `thread/resume` returns a thread in `active` or `idle` state for a recovered Codex session, always send a follow-up blank `turn/start` so the stream has a real terminal path.
@@ -114,7 +118,10 @@ Unit test `src/stream-recovery-feedback.ts`:
 - `resumed` only emits when previous was `reconnecting` (no false positives on fresh streams).
 - `failed` overrides `reconnecting`.
 - `shouldClearRecoveryStatusOnStreamIdle` preserves `failed` but clears others.
-- `shouldFallbackToFreshSessionAfterTransientResumeLoop` only triggers for recoverable `resume-session` placeholder-only loops at the configured threshold.
+- `shouldFallbackToFreshSessionAfterResumeLoop` triggers for any recoverable repeated `resume-session` failure at the configured threshold, including ordinary stall errors where `transientOnly` is false.
+- The legacy transient-only wrapper retains its narrower contract for callers/tests that explicitly need placeholder semantics.
+- Recovery-turn selection rejects ambiguous/empty-continuation shapes and accepts a latest user message followed only by messages owned by the current stream.
+- Runtime recovery proves that the second ordinary resume failure requests a native fork and sends the unfinished turn against the forked session; a null fork response still reaches seeded replay.
 - `buildSeededChatPrompt` skips placeholder reconnect messages when replaying a fresh-session recovery prompt.
 - `buildSeededChatPrompt` keeps long user-authored historical prompts intact while still bounding noisy replay content such as structured tool output.
 - Codex app-server JSON-RPC-error-only and stderr-only placeholder diagnostics produce recoverable failure text, stay out of user-visible errors, and record one disconnect stat.

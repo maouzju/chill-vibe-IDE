@@ -21,6 +21,7 @@ export type ActiveStream = {
   provider: Provider
   source: ChatStreamSource
   assistantMessageId?: string
+  assistantItemId?: string
   suppressOutputAfterAskUser?: boolean
 }
 
@@ -245,6 +246,68 @@ export const createStoppedRunMessage = (
 
 export const createStructuredMessageId = (provider: Provider, streamId: string, itemId: string) =>
   `${provider}:${streamId}:item:${itemId}`
+
+export const resolveStreamedAssistantMessageTarget = ({
+  messages,
+  provider,
+  streamId,
+  itemId,
+  activeMessageId,
+  activeItemId,
+  model,
+}: {
+  messages: ChatMessage[]
+  provider: Provider
+  streamId: string
+  itemId?: string
+  activeMessageId?: string
+  activeItemId?: string
+  model?: string
+}): {
+  messageId: string
+  assistantItemId?: string
+  messageToAppend?: ChatMessage
+} => {
+  const normalizedItemId = itemId?.trim()
+  if (normalizedItemId) {
+    const messageId = createStructuredMessageId(provider, streamId, normalizedItemId)
+    if (messages.some((message) => message.id === messageId)) {
+      return { messageId, assistantItemId: normalizedItemId }
+    }
+
+    const message = createMessage('assistant', '', { provider })
+    return {
+      messageId,
+      assistantItemId: normalizedItemId,
+      messageToAppend: {
+        ...message,
+        id: messageId,
+        meta: {
+          ...(message.meta ?? {}),
+          provider,
+          itemId: normalizedItemId,
+          ...(model?.trim() ? { model: model.trim() } : {}),
+        },
+      },
+    }
+  }
+
+  if (activeMessageId && !activeItemId) {
+    return { messageId: activeMessageId }
+  }
+
+  const message = createMessage('assistant', '', { provider })
+  return {
+    messageId: message.id,
+    messageToAppend: {
+      ...message,
+      meta: {
+        ...(message.meta ?? {}),
+        ...(model?.trim() ? { model: model.trim() } : {}),
+      },
+    },
+  }
+}
 
 const getStructuredMessageKey = (payload: StreamActivity | StreamAssistantMessage) => {
   if ('content' in payload) {

@@ -31,6 +31,43 @@ const busyStreamingCardThreshold = 2
 const streamingStateContentBudgetChars = 750_000
 const queuedPersistenceStructuredDataBudgetChars = 4_000
 
+export type StreamDeltaBufferEntry = {
+  columnId: string
+  cardId: string
+  messageId: string
+  buffer: string
+  model?: string
+}
+
+export const enqueueStreamDeltaBufferEntry = (
+  buffer: Map<string, StreamDeltaBufferEntry>,
+  entry: StreamDeltaBufferEntry,
+) => {
+  const existing = buffer.get(entry.messageId)
+  if (existing) {
+    existing.buffer += entry.buffer
+    existing.model = existing.model ?? entry.model
+    return
+  }
+
+  buffer.set(entry.messageId, { ...entry })
+}
+
+export const takeStreamDeltaBufferEntriesForCard = (
+  buffer: Map<string, StreamDeltaBufferEntry>,
+  cardId: string,
+) => {
+  const entries: StreamDeltaBufferEntry[] = []
+  for (const [messageId, entry] of buffer.entries()) {
+    if (entry.cardId !== cardId) {
+      continue
+    }
+    buffer.delete(messageId)
+    entries.push(entry)
+  }
+  return entries
+}
+
 export const getPersistenceVersion = (state: Pick<AppState, 'updatedAt'>) =>
   typeof state.updatedAt === 'string' && state.updatedAt.trim().length > 0
     ? state.updatedAt

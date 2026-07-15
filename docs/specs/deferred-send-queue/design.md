@@ -2,15 +2,18 @@
 
 ## Scope
 
-Keep the queue in renderer runtime state. The persisted chat schema stays unchanged.
+Persist the queue on its owning `ChatCard` so the existing app-state save/restore path carries it across renderer reloads and full IDE restarts. Keep the current renderer ref as the low-churn dispatch cache, but make every queue mutation update both the cache and the persisted card field through the reducer.
 
 ## State
 
-`App.tsx` already has a per-card `queuedSendRequestsRef`. Promote it from an invisible implementation detail to a small runtime queue model:
+Add a shared `queuedSendRequestSchema` and a `queuedSends` array on `chatCardSchema`:
 
 - each item has `id`, `prompt`, and `attachments`
-- React state mirrors lightweight queue summaries per card so the UI can render count/preview
-- the full attachments stay in the ref and are not persisted
+- `createCard()` defaults the field to an empty array
+- persisted-state normalization restores valid items, drops malformed/empty entries, and defaults legacy cards to an empty queue
+- uploaded attachment metadata is persisted with the prompt; image bytes remain in the existing attachment store
+
+`App.tsx` keeps the existing per-card `queuedSendRequestsRef` and lightweight React summaries for dispatch/UI performance. `commitLoadedState()` repopulates both from `queuedSends`, and enqueue/dequeue/cancel mutations synchronously update the ref, summary, and reducer state before requesting an immediate save.
 
 ## Sending behavior
 
@@ -24,6 +27,8 @@ Keep the queue in renderer runtime state. The persisted chat schema stays unchan
 5. Ask-user follow-up sends keep their existing immediate-stop behavior, including restored ask-user cards whose old stream may not emit a final `done` event after `stop`, or whose stale stream id is already missing from the backend.
 6. `/compact` follow-ups continue to wait until compaction finishes.
 7. When a stream reaches `done`, `error`, or `Stream not found`, `dispatchNextQueuedSend()` starts the next queued item.
+8. Startup hydration restores the queue but does not dispatch merely because the restored card is idle. A resumed interrupted stream still reaches the normal completion path and dispatches FIFO; otherwise the restored controls remain available for an explicit user choice.
+9. Conversation reset and card/workspace removal clear the owning queue. Moving a card preserves it because the data travels with the card.
 
 ## UI
 
@@ -50,5 +55,9 @@ Use existing theme tokens and subdued composer-note styling so the queue does no
   3. queued message can be cancelled
   4. queued message can be sent now
   5. queued FIFO sends after stream completion
+- Add focused unit coverage proving:
+  1. a queued prompt and its attachment metadata survive save/load normalization
+  2. legacy and malformed persisted queues normalize safely
+  3. loaded queues rebuild the runtime cache/summary without auto-dispatch
 - Run the focused spec via the repo Playwright wrapper.
 - Run `pnpm test:quality` to prove TypeScript/ESLint.

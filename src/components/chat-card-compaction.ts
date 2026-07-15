@@ -26,8 +26,8 @@ const performanceVisibleMessageCount = 360
 const contentPerformanceWindowThresholdChars = 2_000_000
 const contentPerformanceVisibleChars = 900_000
 const contentPerformanceMinimumMessageCount = 160
-const structuredPerformanceWindowThreshold = 420
-const structuredPerformanceVisibleMessageCount = 180
+const structuredPerformanceWindowThreshold = 300
+const structuredPerformanceVisibleMessageCount = 160
 const structuredPerformanceScanCount = 96
 const structuredPerformanceActivationCount = 36
 

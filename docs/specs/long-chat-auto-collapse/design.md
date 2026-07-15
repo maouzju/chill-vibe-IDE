@@ -12,7 +12,7 @@ The app already has two related mechanisms:
 This feature formalizes the second mechanism as an emergency renderer fallback, not routine conversation cleanup:
 
 - plain conversations start windowing after 1200 messages and keep the latest 360 rendered;
-- structured/tool-heavy conversations start windowing after 420 messages and keep the latest 180 rendered;
+- structured/tool-heavy conversations start windowing after 300 messages and keep the latest 160 rendered; this targets the sustained command/edit transcript shape seen in real multi-pane sessions while leaving ordinary and short tool runs untouched;
 - content-weight windowing only triggers after both a large transcript length and a multi-megabyte render payload, so moderately heavy command output remains visible;
 - the banner copy explains that older messages are temporarily hidden for responsiveness;
 - content-weight windowing has a minimum transcript length so one large command output in a short conversation does not hide the whole setup;

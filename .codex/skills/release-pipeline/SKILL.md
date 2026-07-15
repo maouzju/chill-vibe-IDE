@@ -23,6 +23,7 @@ Reuse the verification posture from `../chill-vibe-full-regression/SKILL.md`, bu
    - treat obvious test fixtures like `sk-test` as expected only if they stay inside tests
    - explicitly review new docs/spec files so accidental scratch notes do not ship
    - treat changed SPEC task lists with unchecked implementation/verification boxes as a release blocker until the corresponding slice is completed or explicitly excluded; run any newly added proving test narrowly so an intentional red test cannot hide inside the later full-suite output
+   - if the checkout mixes a release-ready slice with unfinished user/agent WIP, preserve that WIP in place: create a repo-external detached release worktree from the intended base commit, apply only a path-limited patch for the audited slice, and run verification there. After verification, mirror and stage only those exact verified paths plus the version/skill updates on the target branch; do not stash, revert, or accidentally commit the excluded WIP.
    - if something is suspicious, stop and fix or exclude it before continuing
 3. Verify — a release warrants the release posture from `../chill-vibe-full-regression/SKILL.md`:
    - run `pnpm test:full` (it already includes `pnpm build`, so it also proves the production build)

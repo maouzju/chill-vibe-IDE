@@ -193,8 +193,8 @@ describe('chat card compaction window', () => {
     })
   })
 
-  it('uses a lower but still emergency-sized fallback for command-heavy chats', () => {
-    const messages = Array.from({ length: 420 }, (_, index) =>
+  it('windows sustained command-heavy chats before they make the active pane sluggish', () => {
+    const messages = Array.from({ length: 300 }, (_, index) =>
       makeMessage(
         `m${index + 1}`,
         'assistant',
@@ -204,11 +204,11 @@ describe('chat card compaction window', () => {
     )
 
     assert.deepEqual(getWindow(messages, 'codex'), {
-      hiddenMessageCount: 240,
-      compactMessageId: 'm241',
+      hiddenMessageCount: 140,
+      compactMessageId: 'm141',
       hiddenReason: 'performance',
       compactTrigger: null,
-      visibleMessages: messages.slice(240),
+      visibleMessages: messages.slice(140),
     })
   })
 

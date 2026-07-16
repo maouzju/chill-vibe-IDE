@@ -10,8 +10,10 @@ import { WorkspaceColumn } from '../src/components/WorkspaceColumn.tsx'
 import {
   filterExternalSessionHistory,
   filterSessionHistoryEntries,
+  getSessionHistoryDisplayMessageCount,
   getSessionHistoryLifecycle,
   getSessionHistoryLifecycleLabel,
+  mergeSessionHistorySearchResults,
 } from '../src/components/workspace-column-history.ts'
 
 ;(globalThis as typeof globalThis & { React: typeof React }).React = React
@@ -231,6 +233,79 @@ describe('WorkspaceColumn session history access', () => {
 })
 
 describe('WorkspaceColumn session history search', () => {
+  it('merges local and deep results in newest-first order without duplicate entries or provider sessions', () => {
+    const createEntry = (
+      id: string,
+      archivedAt: string,
+      sessionId: string,
+      provider: SessionHistoryEntry['provider'] = 'codex',
+    ): SessionHistoryEntry => ({
+      id,
+      title: id,
+      sessionId,
+      provider,
+      model: provider === 'claude' ? 'claude-sonnet-4-5' : 'gpt-5.5',
+      workspacePath: 'D:\\Git\\chill-vibe',
+      archivedAt,
+      messages: [],
+      messageCount: 12,
+    })
+
+    const localResults = [
+      createEntry('shared-session-older', '2026-04-10T10:00:00.000Z', 'shared-session'),
+      createEntry('local-result', '2026-04-10T11:00:00.000Z', 'local-session'),
+    ]
+    const deepResults = [
+      createEntry('shared-session-newer', '2026-04-10T12:00:00.000Z', 'shared-session'),
+      createEntry('claude-same-id', '2026-04-10T11:30:00.000Z', 'shared-session', 'claude'),
+      createEntry('local-result', '2026-04-10T11:00:00.000Z', 'local-session'),
+      createEntry('deep-old-result', '2026-04-10T09:00:00.000Z', 'deep-old-session'),
+    ]
+
+    assert.deepEqual(
+      mergeSessionHistorySearchResults(localResults, deepResults).map((entry) => entry.id),
+      ['shared-session-newer', 'claude-same-id', 'local-result', 'deep-old-result'],
+    )
+  })
+
+  it('uses the archived transcript count instead of the number of preview messages', () => {
+    const previewEntry: SessionHistoryEntry = {
+      id: 'preview-entry',
+      title: 'Preview-only history',
+      sessionId: 'preview-session',
+      provider: 'codex',
+      model: 'gpt-5.5',
+      workspacePath: 'D:\\Git\\chill-vibe',
+      archivedAt: '2026-04-10T12:00:00.000Z',
+      messages: [
+        {
+          id: 'preview-message-1',
+          role: 'user',
+          content: 'First preview message',
+          createdAt: '2026-04-10T11:58:00.000Z',
+        },
+        {
+          id: 'preview-message-2',
+          role: 'assistant',
+          content: 'Last preview message',
+          createdAt: '2026-04-10T11:59:00.000Z',
+        },
+      ],
+      messageCount: 47,
+      messagesPreview: true,
+    }
+    const legacyFullEntry: SessionHistoryEntry = {
+      ...previewEntry,
+      id: 'legacy-full-entry',
+      messages: previewEntry.messages.slice(0, 1),
+      messageCount: undefined,
+      messagesPreview: undefined,
+    }
+
+    assert.equal(getSessionHistoryDisplayMessageCount(previewEntry), 47)
+    assert.equal(getSessionHistoryDisplayMessageCount(legacyFullEntry), 1)
+  })
+
   it('derives ended or interrupted labels for internal session history entries', () => {
     const interruptedEntry: SessionHistoryEntry = {
       id: 'history-interrupted',

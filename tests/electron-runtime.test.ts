@@ -79,6 +79,23 @@ test('development Electron uses a repo-local runtime profile so it does not shar
   )
 })
 
+test('headless Electron validation can opt into an isolated runtime profile root', () => {
+  const projectRoot = path.join('D:', 'Git', 'chill-vibe')
+  const configuredProfileRoot = path.join('D:', 'Temp', 'chill-vibe-electron-test-profile')
+
+  assert.deepEqual(
+    resolveDesktopRuntimeProfilePaths({
+      isDev: true,
+      projectRoot,
+      configuredProfileRoot,
+    }),
+    {
+      userData: path.join(configuredProfileRoot, 'user-data'),
+      sessionData: path.join(configuredProfileRoot, 'session-data'),
+    },
+  )
+})
+
 test('packaged Electron keeps the default OS-managed runtime profile paths', () => {
   assert.equal(
     resolveDesktopRuntimeProfilePaths({

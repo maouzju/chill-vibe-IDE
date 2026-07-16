@@ -51,7 +51,11 @@ const quitFlushTimeoutMs = 5000
 const devRendererBootstrapDelayMs = 750
 const bypassSingleInstanceLock = process.env.CHILL_VIBE_DISABLE_SINGLE_INSTANCE_LOCK === '1'
 const desktopWorkingDirectory = resolveDesktopWorkingDirectory({ isDev, moduleDir })
-const desktopRuntimeProfilePaths = resolveDesktopRuntimeProfilePaths({ isDev, projectRoot })
+const desktopRuntimeProfilePaths = resolveDesktopRuntimeProfilePaths({
+  isDev,
+  projectRoot,
+  configuredProfileRoot: process.env.CHILL_VIBE_RUNTIME_PROFILE_ROOT,
+})
 const desktopRuntimeKind = resolveDesktopRuntimeKind({ isDev })
 const clearUserDataArg = '--clear-user-data'
 const shouldClearUserDataOnLaunch = process.argv.includes(clearUserDataArg)

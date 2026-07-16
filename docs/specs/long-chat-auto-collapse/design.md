@@ -19,6 +19,19 @@ This feature formalizes the second mechanism as an emergency renderer fallback, 
 - performance window boundaries are clamped back to the latest ordinary user turn so the current question stays visible with its assistant/tool output;
 - reveal actions reuse the existing compacted-history reveal path.
 
+### Structured group tail window
+
+Transcript-level prefix folding cannot safely solve the common single-turn shape of `one user message -> hundreds of tool items`: clamping the fold boundary to the latest user message keeps the entire tool run mounted. Add a second, narrower window at the structured-group renderer:
+
+- expanded tool groups render the newest 60 items by default;
+- the group header continues to show the full item count;
+- when older items are hidden, a quiet inline action above the rendered stack reveals 60 more items per activation;
+- newly appended streaming items stay inside the visible tail;
+- collapsed groups remain header-only;
+- the full `items` array and full card message state remain unchanged, so persistence, provider context, archive recall, and session restore are unaffected.
+
+This window belongs in a pure helper consumed by `StructuredToolGroupCard`, with focused Node tests for boundaries and incremental reveal. The component keeps only the revealed-older count as local UI state. It deliberately avoids virtualizing the whole transcript or changing reducer state in this first reversible slice.
+
 ## Why UI-only windowing
 
 Provider-side compaction is more invasive because it can alter session semantics and requires provider support. The user's immediate problem is renderer slowdown from too much DOM/content on the board, so UI-only folding is the smallest safe slice.
@@ -33,5 +46,7 @@ Provider-side compaction is more invasive because it can alter session semantics
 ## Verification
 
 - Add/keep focused unit coverage for `getCompactMessageWindow()` thresholds and reveal behavior.
+- Add pure coverage for a 300-item structured group rendering only the latest 60 items, then 120 after one reveal action, without mutating the source array.
+- Add component markup coverage that the hidden-count action is present only for expanded windowed groups and that collapsed groups stay header-only.
 - Add coverage that automatic provider compaction is not requested by this UI-only feature.
 - Run the narrow chat compaction test file, then the full unit suite if time permits.

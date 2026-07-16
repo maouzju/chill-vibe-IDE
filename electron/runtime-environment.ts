@@ -36,15 +36,20 @@ export function resolveDesktopDataDir({
 export function resolveDesktopRuntimeProfilePaths({
   isDev,
   projectRoot,
+  configuredProfileRoot,
 }: {
   isDev: boolean
   projectRoot: string
+  configuredProfileRoot?: string | null
 }) {
   if (!isDev) {
     return null
   }
 
-  const runtimeRoot = path.join(projectRoot, '.chill-vibe', 'electron-dev')
+  const normalizedConfiguredProfileRoot = configuredProfileRoot?.trim()
+  const runtimeRoot = normalizedConfiguredProfileRoot
+    ? normalizePortableAbsolutePath(normalizedConfiguredProfileRoot)
+    : path.join(projectRoot, '.chill-vibe', 'electron-dev')
   return {
     userData: path.join(runtimeRoot, 'user-data'),
     sessionData: path.join(runtimeRoot, 'session-data'),

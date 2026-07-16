@@ -737,6 +737,26 @@ const upsertCardMessages = (messages: ChatMessage[], updates: ChatMessage[]) => 
   return nextMessages
 }
 
+const appendUniqueCardMessages = (messages: ChatMessage[], additions: ChatMessage[]) => {
+  if (additions.length === 0) {
+    return messages
+  }
+
+  const seenIds = new Set(messages.map((message) => message.id))
+  const uniqueAdditions: ChatMessage[] = []
+
+  for (const addition of additions) {
+    if (seenIds.has(addition.id)) {
+      continue
+    }
+
+    seenIds.add(addition.id)
+    uniqueAdditions.push(addition)
+  }
+
+  return uniqueAdditions.length > 0 ? [...messages, ...uniqueAdditions] : messages
+}
+
 const settleStoppedStreamMessages = (messages: ChatMessage[]) => {
   let didChange = false
 
@@ -1942,7 +1962,7 @@ export const ideReducer = (state: AppState, action: IdeAction): AppState => {
       return touchState(
         updateCard(state, action.columnId, action.cardId, (card) => ({
           ...card,
-          messages: [...card.messages, ...action.messages],
+          messages: appendUniqueCardMessages(card.messages, action.messages),
         })),
       )
     case 'upsertMessages':

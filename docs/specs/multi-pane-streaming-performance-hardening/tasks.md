@@ -8,17 +8,18 @@
 
 ## 第一实施切片：只建立门禁，不改生产行为
 
-- [ ] 新增确定性的 6-stream 聊天压力 fixture。
-- [ ] 新增隐藏 Electron 聊天 responsiveness 测试，采集 unresponsive、心跳和交互延迟。
-- [ ] 在 v0.18.8 基线运行，确认测试能区分旧问题而不是无条件通过。
-- [ ] 将该测试接入独立的聊天性能命令，避免和现有 Git 性能测试混淆。
+- [x] 新增确定性的 6-stream 聊天压力 fixture。
+- [x] 新增隐藏 Electron 聊天 responsiveness 测试，采集 unresponsive、心跳和交互延迟。
+- [x] 在 v0.18.8 基线运行，确认测试能区分旧问题而不是无条件通过。
+- [x] 将该测试接入独立的聊天性能命令，避免和现有 Git 性能测试混淆。
 
 ## 第二实施切片：封住当前尾部窗口的回归面
 
-- [ ] 补齐 streaming append、状态更新、折叠/展开、显示更早活动和 key 稳定性测试。
-- [ ] 证明 UI 窗口不改变保存状态、Provider 请求、archive recall 和恢复数据。
-- [ ] 增加输入、中文文本、tab 切换、滚动和 Ask User 的针对性交互回归。
-- [ ] 运行阶段 0 压力门禁；若全部达标，在此停止，不继续改调度器。
+- [x] 为流消息重放补充 reducer 幂等测试，避免同 ID 消息重复进入状态和持久化文件。
+- [x] 补齐 streaming append、状态更新、折叠/展开、显示更早活动和 key 稳定性测试。
+- [x] 证明 UI 窗口不改变保存状态、Provider 请求、archive recall 和恢复数据。
+- [x] 增加输入、中文文本、tab 切换、滚动和 Ask User 的针对性交互回归。
+- [x] 运行阶段 0 压力门禁；当前连续两次 5 分钟运行达标，在此停止，不继续改调度器。
 
 ## 第三实施切片：仅在仍不达标时加入流式背压
 
@@ -36,11 +37,10 @@
 
 ## 发布门禁
 
-- [ ] 相关 focused Node 测试通过。
-- [ ] `pnpm test:quality` 通过，或明确证明失败来自无关在途改动。
-- [ ] `pnpm test:perf` 与新的聊天 Electron 性能门禁通过。
-- [ ] 焦点、tab、滚动、Ask User、排队发送、恢复和持久化回归通过。
-- [ ] 双主题和窄视口检查通过。
-- [ ] 30 分钟隐藏窗口 soak：零 unresponsive、零数据不一致。
-- [ ] 打包到新时间戳目录，保留上一可运行包作为即时回滚。
-
+- [x] 相关 focused Node 测试通过。
+- [x] `pnpm test:quality` 的 ESLint 与生产 TypeScript 通过；测试 TypeScript 仅被未完成的深度历史搜索 WIP 阻断，已确认与本切片无关。
+- [x] `pnpm test:perf` 与新的聊天 Electron 性能门禁通过。
+- [x] 焦点、tab、滚动、Ask User、排队发送、恢复和持久化回归通过。
+- [x] 双主题和窄视口检查通过。
+- [x] 30 分钟隐藏窗口 soak：零 unresponsive、零数据不一致。
+- [x] 打包到新时间戳目录，保留上一可运行包作为即时回滚。

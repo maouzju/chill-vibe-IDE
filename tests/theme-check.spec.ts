@@ -1164,6 +1164,31 @@ const createStreamingStructuredCommandGroupState = (): AppState => {
   return state
 }
 
+const createWindowedStreamingStructuredCommandGroupState = (): AppState => {
+  const state = createMockState()
+  state.settings.language = 'en'
+  state.columns[0]!.cards[0]!.status = 'streaming'
+  state.columns[0]!.cards[0]!.messages = Array.from({ length: 65 }, (_, index) => ({
+    id: `command-windowed-${index}`,
+    role: 'assistant' as const,
+    content: '',
+    createdAt: new Date(index + 1).toISOString(),
+    meta: {
+      provider: 'codex' as const,
+      kind: 'command' as const,
+      structuredData: JSON.stringify({
+        itemId: `command-windowed-${index}`,
+        status: index === 64 ? 'in_progress' : 'completed',
+        command: `echo command-${index}`,
+        output: '',
+        exitCode: index === 64 ? null : 0,
+      }),
+    },
+  }))
+
+  return state
+}
+
 const createClaudeStructuredChatState = (): AppState => {
   const state = createMockState()
   state.columns[0]!.provider = 'claude'
@@ -4634,6 +4659,42 @@ test('streaming structured command groups avoid duplicate inline cursors across 
     animations: 'disabled',
     caret: 'hide',
   })
+})
+
+test('windowed structured tool groups reveal older activity quietly across themes', async ({ page }) => {
+  await page.setViewportSize({ width: 560, height: 800 })
+  await mockAppApis(page, { state: createWindowedStreamingStructuredCommandGroupState() })
+  await page.goto(appUrl)
+
+  const commandGroup = page.locator('.structured-command-group').first()
+  const commandRows = commandGroup.locator('.structured-command-inline-row')
+  const windowNote = commandGroup.locator('.structured-group-window-note')
+  const revealButton = windowNote.locator('.structured-group-reveal-button')
+  const settingsTab = page.locator('#app-tab-settings')
+  const ambienceTab = page.locator('#app-tab-ambience')
+  const lightThemeButton = page.locator('#app-panel-settings .theme-toggle').first().locator('.theme-chip').first()
+
+  await expect(commandRows).toHaveCount(60)
+  await expect(windowNote).toContainText('5 earlier activities hidden')
+  await expect(revealButton).toHaveText('Show 5 earlier')
+  await expect(windowNote).toHaveScreenshot('structured-group-window-note-dark.png', {
+    animations: 'disabled',
+    caret: 'hide',
+  })
+
+  await settingsTab.click()
+  await lightThemeButton.click()
+  await expect(page.locator('html')).toHaveAttribute('data-theme', 'light')
+  await ambienceTab.click()
+
+  await expect(windowNote).toHaveScreenshot('structured-group-window-note-light.png', {
+    animations: 'disabled',
+    caret: 'hide',
+  })
+
+  await revealButton.click()
+  await expect(commandRows).toHaveCount(65)
+  await expect(windowNote).toHaveCount(0)
 })
 
 test('streaming plain replies keep inline cursor blocks out of the transcript across themes', async ({ page }) => {

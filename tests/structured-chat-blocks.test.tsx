@@ -7,7 +7,12 @@ import { createDefaultBrainstormState } from '../shared/brainstorm.ts'
 import type { ChatCard as ChatCardModel, ImageAttachment } from '../shared/schema.ts'
 import { defaultSystemPrompt } from '../shared/system-prompt.ts'
 import { ChatCard } from '../src/components/ChatCard.tsx'
-import { cleanCommandDisplay, summarizeCommandDisplay } from '../src/components/chat-card-rendering.tsx'
+import {
+  cleanCommandDisplay,
+  getStructuredLabels,
+  summarizeCommandDisplay,
+} from '../src/components/chat-card-rendering.tsx'
+import { getStructuredToolGroupRenderWindow } from '../src/components/structured-tool-group-window.ts'
 
 ;(globalThis as typeof globalThis & { React: typeof React }).React = React
 
@@ -332,6 +337,36 @@ const renderCard = (
     />,
   )
 
+const createLongCommandCard = (commandCount = 300): ChatCardModel => {
+  const card = createCard()
+  card.messages = [
+    {
+      id: 'long-run-user',
+      role: 'user',
+      content: 'Run the long task.',
+      createdAt: '2026-07-16T00:00:00.000Z',
+    },
+    ...Array.from({ length: commandCount }, (_, index) => ({
+      id: `long-run-command-${index}`,
+      role: 'assistant' as const,
+      content: '',
+      createdAt: new Date(index + 1).toISOString(),
+      meta: {
+        kind: 'command' as const,
+        provider: 'codex' as const,
+        structuredData: JSON.stringify({
+          itemId: `long-run-command-${index}`,
+          status: index === commandCount - 1 ? 'in_progress' : 'completed',
+          command: `echo command-${index}`,
+          output: '',
+          exitCode: index === commandCount - 1 ? null : 0,
+        }),
+      },
+    })),
+  ]
+  return card
+}
+
 test('renders inline structured command summaries and reasoning blocks', () => {
   const markup = renderCard(createCard())
 
@@ -521,6 +556,42 @@ test('does not render fork actions for structured tool groups', () => {
 
   assert.match(markup, /structured-command-group/)
   assert.doesNotMatch(markup, /message-fork-btn/)
+})
+
+test('windows long structured tool groups to the newest 60 items without mutating source data', () => {
+  const items = Array.from({ length: 300 }, (_, index) => `item-${index}`)
+  const original = [...items]
+
+  const initial = getStructuredToolGroupRenderWindow(items)
+  assert.equal(initial.hiddenItemCount, 240)
+  assert.deepEqual(initial.visibleItems, items.slice(-60))
+
+  const revealed = getStructuredToolGroupRenderWindow(items, 60)
+  assert.equal(revealed.hiddenItemCount, 180)
+  assert.deepEqual(revealed.visibleItems, items.slice(-120))
+
+  const all = getStructuredToolGroupRenderWindow(items, Number.POSITIVE_INFINITY)
+  assert.equal(all.hiddenItemCount, 0)
+  assert.deepEqual(all.visibleItems, items)
+  assert.deepEqual(items, original)
+})
+
+test('localizes structured group window copy for zh-CN', () => {
+  const labels = getStructuredLabels('zh-CN')
+
+  assert.equal(labels.olderActivityHidden(240), '\u5df2\u6536\u8d77\u8f83\u65e9\u7684 240 \u6761\u6d3b\u52a8')
+  assert.equal(labels.revealOlderActivity(60), '\u518d\u663e\u793a 60 \u6761')
+})
+
+test('renders only the recent tail of a 300-command live group', () => {
+  const markup = renderCard(createLongCommandCard())
+  const renderedCommandCount = markup.match(/class="structured-command-inline /g)?.length ?? 0
+
+  assert.equal(renderedCommandCount, 60)
+  assert.match(markup, /240 earlier activities hidden/)
+  assert.match(markup, /Show 60 earlier/)
+  assert.match(markup, /echo command-299/)
+  assert.doesNotMatch(markup, /echo command-0</)
 })
 
 test('renders tool card with toolInput details', () => {

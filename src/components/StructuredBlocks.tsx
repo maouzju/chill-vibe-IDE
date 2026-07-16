@@ -21,6 +21,10 @@ import {
 } from './ask-user-draft-cache'
 import { useDialogFocus } from './dialog-focus'
 import { CloseIcon } from './Icons'
+import {
+  getStructuredToolGroupRenderWindow,
+  structuredToolGroupRevealBatchCount,
+} from './structured-tool-group-window'
 
 const truncateStructuredInlineText = (text: string, maxLength = 180) => {
   const normalized = text.split(/\s+/).join(' ').trim()
@@ -636,6 +640,13 @@ const StructuredToolGroupCardView = ({
   onOpenFile?: (relativePath: string) => void
 }) => {
   const summary = buildToolGroupSummary(items, language)
+  const labels = getStructuredLabels(language)
+  const [revealedOlderItemCount, setRevealedOlderItemCount] = useState(0)
+  const { hiddenItemCount, visibleItems } = getStructuredToolGroupRenderWindow(
+    items,
+    revealedOlderItemCount,
+  )
+  const nextRevealCount = Math.min(structuredToolGroupRevealBatchCount, hiddenItemCount)
 
   const header = (
     <div className="structured-group-header">
@@ -679,8 +690,22 @@ const StructuredToolGroupCardView = ({
       data-renderable-id={entryId}
     >
       {header}
+      {hiddenItemCount > 0 ? (
+        <div className="structured-group-window-note">
+          <span>{labels.olderActivityHidden(hiddenItemCount)}</span>
+          <button
+            type="button"
+            className="structured-group-reveal-button"
+            onClick={() => {
+              setRevealedOlderItemCount((current) => current + structuredToolGroupRevealBatchCount)
+            }}
+          >
+            {labels.revealOlderActivity(nextRevealCount)}
+          </button>
+        </div>
+      ) : null}
       <div className="structured-command-stack">
-        {items.map((item) =>
+        {visibleItems.map((item) =>
           item.kind === 'command' ? (
             <StructuredCommandCard
               key={item.message.id}

@@ -26,6 +26,7 @@ const durationMs = Math.max(
   10_000,
   Number.parseInt(process.env.CHILL_VIBE_CHAT_STRESS_DURATION_MS ?? '300000', 10),
 )
+const keepStressArtifacts = process.env.CHILL_VIBE_KEEP_CHAT_STRESS_ARTIFACTS === '1'
 const tempRoots: string[] = []
 
 type StressMetrics = {
@@ -69,12 +70,13 @@ const createFakeCodexBin = async () => {
 const createStressDataDir = async (workspacePath: string) => {
   const dataDir = await mkdtemp(path.join(tmpdir(), 'chill-vibe-chat-stress-state-'))
   tempRoots.push(dataDir)
+  const runtimeProfileRoot = path.join(dataDir, 'runtime-profile')
 
   const initialState = createChatStreamStressState(workspacePath)
   await mkdir(dataDir, { recursive: true })
   await writeFile(path.join(dataDir, 'state.json'), `${JSON.stringify(initialState, null, 2)}\n`, 'utf8')
 
-  return { dataDir, initialState }
+  return { dataDir, initialState, runtimeProfileRoot }
 }
 
 const countLogMatches = (body: string, text: string) => body.split(text).length - 1
@@ -105,6 +107,8 @@ const installHeartbeatProbe = async (page: Page) => {
         frameGaps: number[]
         lastFrameAt: number
         maxFrameGapMs: number
+        maxMountedStructuredItemCount: number
+        maxMountedItemsPerGroup: number
       }
     }
     const now = performance.now()
@@ -115,7 +119,35 @@ const installHeartbeatProbe = async (page: Page) => {
       frameGaps: [],
       lastFrameAt: now,
       maxFrameGapMs: 0,
+      maxMountedStructuredItemCount: 0,
+      maxMountedItemsPerGroup: 0,
     }
+
+    target.__chillVibeChatStressProbe.maxMountedStructuredItemCount =
+      document.querySelectorAll('.structured-command-inline-row').length
+    target.__chillVibeChatStressProbe.maxMountedItemsPerGroup = Math.max(
+      0,
+      ...Array.from(document.querySelectorAll('.structured-command-group')).map(
+        (group) => group.querySelectorAll('.structured-command-inline-row').length,
+      ),
+    )
+
+    window.setInterval(() => {
+      const probe = target.__chillVibeChatStressProbe
+      if (!probe) return
+
+      const groupCounts = Array.from(document.querySelectorAll('.structured-command-group')).map(
+        (group) => group.querySelectorAll('.structured-command-inline-row').length,
+      )
+      probe.maxMountedStructuredItemCount = Math.max(
+        probe.maxMountedStructuredItemCount,
+        document.querySelectorAll('.structured-command-inline-row').length,
+      )
+      probe.maxMountedItemsPerGroup = Math.max(
+        probe.maxMountedItemsPerGroup,
+        ...groupCounts,
+      )
+    }, 250)
 
     window.setInterval(() => {
       const probe = target.__chillVibeChatStressProbe
@@ -335,7 +367,14 @@ const assertPersistedMessagesRemainComplete = (
     // does not redefine that older persistence policy.
     const initialIds = initialCard.messages.slice(-300).map((message) => message.id)
     const persistedIds = persistedCard.messages.map((message) => message.id)
-    assert.equal(new Set(persistedIds).size, persistedIds.length, `${cardId} persisted duplicate message ids`)
+    const duplicateIds = persistedIds.filter(
+      (messageId, messageIndex) => persistedIds.indexOf(messageId) !== messageIndex,
+    )
+    assert.deepEqual(
+      duplicateIds,
+      [],
+      `${cardId} persisted duplicate message ids: ${JSON.stringify(duplicateIds)}`,
+    )
     assert.ok(
       persistedIds.length > initialIds.length,
       `${cardId} did not persist newly streamed messages`,
@@ -351,6 +390,11 @@ const assertPersistedMessagesRemainComplete = (
 }
 
 after(async () => {
+  if (keepStressArtifacts) {
+    console.log(`CHAT_STREAM_STRESS_ARTIFACTS ${JSON.stringify(tempRoots)}`)
+    return
+  }
+
   await Promise.all(tempRoots.map((root) => rm(root, { recursive: true, force: true })))
 })
 
@@ -359,13 +403,14 @@ test('six simultaneous Electron chat streams stay responsive and persist complet
 
   const workspacePath = process.cwd()
   const fakeBin = await createFakeCodexBin()
-  const { dataDir, initialState } = await createStressDataDir(workspacePath)
+  const { dataDir, initialState, runtimeProfileRoot } = await createStressDataDir(workspacePath)
   const startupStartedAt = Date.now()
   const env = createHeadlessElectronRuntimeEnv({
     VITE_DEV_SERVER_URL: getElectronTestRendererUrl(),
     CHILL_VIBE_DISABLE_SINGLE_INSTANCE_LOCK: '1',
     CHILL_VIBE_ALLOW_SHARED_DATA_DIR: '1',
     CHILL_VIBE_DATA_DIR: dataDir,
+    CHILL_VIBE_RUNTIME_PROFILE_ROOT: runtimeProfileRoot,
     CHILL_VIBE_DEFAULT_WORKSPACE: workspacePath,
     CHILL_VIBE_CHAT_STRESS_DURATION_MS: String(durationMs),
     PATH: `${fakeBin}${path.delimiter}${process.env.PATH ?? ''}`,
@@ -413,19 +458,20 @@ test('six simultaneous Electron chat streams stay responsive and persist complet
           maxGapMs: number
           frameGaps: number[]
           maxFrameGapMs: number
+          maxMountedStructuredItemCount: number
+          maxMountedItemsPerGroup: number
         }
       }).__chillVibeChatStressProbe
-      const groupCounts = Array.from(document.querySelectorAll('.structured-command-group')).map(
-        (group) => group.querySelectorAll('.structured-command-inline-row').length,
-      )
 
       return {
         heartbeatMaxGapMs: probe?.maxGapMs ?? Number.POSITIVE_INFINITY,
         heartbeatGaps: probe?.gaps ?? [],
         frameMaxGapMs: probe?.maxFrameGapMs ?? Number.POSITIVE_INFINITY,
         frameGaps: probe?.frameGaps ?? [],
-        mountedStructuredItemCount: document.querySelectorAll('.structured-command-inline-row').length,
-        maxMountedItemsPerGroup: Math.max(0, ...groupCounts),
+        mountedStructuredItemCount:
+          probe?.maxMountedStructuredItemCount ?? Number.POSITIVE_INFINITY,
+        maxMountedItemsPerGroup:
+          probe?.maxMountedItemsPerGroup ?? Number.POSITIVE_INFINITY,
       }
     })
     mainWorkingSetKb = await app.evaluate(async () => {

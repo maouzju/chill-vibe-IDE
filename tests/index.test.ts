@@ -151,6 +151,7 @@ import './fork-conversation.test.ts'
 import './session-fork.test.ts'
 import './native-turn-completion.test.ts'
 import './git-dashboard-windowing.test.ts'
+import './chat-stream-performance-fixture.test.ts'
 
 import './archive-recall.test.ts'
 import './archive-recall-mcp.test.ts'

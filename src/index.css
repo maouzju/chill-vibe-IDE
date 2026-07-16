@@ -5080,6 +5080,41 @@ body.is-card-dragging .lane-drop-zone-top {
   padding-left: 0;
 }
 
+.structured-group-window-note {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  min-width: 0;
+  padding: 0.12rem 0;
+  color: var(--ink-4);
+  font-size: 0.62rem;
+  line-height: 1.2;
+}
+
+.structured-group-reveal-button {
+  appearance: none;
+  flex: 0 0 auto;
+  margin: 0;
+  padding: 0.08rem 0.2rem;
+  border: 0;
+  border-radius: var(--r-xs);
+  background: transparent;
+  color: var(--accent-2);
+  font: inherit;
+  font-weight: 650;
+  cursor: pointer;
+}
+
+.structured-group-reveal-button:hover {
+  background: var(--accent-soft);
+}
+
+.structured-group-reveal-button:focus-visible {
+  outline: 2px solid var(--accent-line-strong);
+  outline-offset: 1px;
+}
+
 .structured-command-card,
 .structured-tool-card,
 .structured-edits-card {

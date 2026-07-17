@@ -1438,7 +1438,7 @@ const buildFakeCodexAppServerScript = (capturePath: string) =>
     '})',
   ].join('\n')
 
-const buildFakeCodexSafetyHandshakeScript = (capturePath: string) =>
+const buildFakeCodexSafetyHandshakeScript = (capturePath: string, persistTrust = true) =>
   [
     "const fs = require('node:fs')",
     "const readline = require('node:readline')",
@@ -1446,7 +1446,7 @@ const buildFakeCodexSafetyHandshakeScript = (capturePath: string) =>
     'const appendMessage = (message) => fs.appendFileSync(capturePath, `${JSON.stringify(message)}\\n`, "utf8")',
     "const reply = (message) => process.stdout.write(`${JSON.stringify(message)}\\n`)",
     "let trusted = false",
-    "appendMessage({ kind: 'startup', argv: process.argv.slice(2), env: { HOME: process.env.HOME, USERPROFILE: process.env.USERPROFILE, CODEX_HOME: process.env.CODEX_HOME, hookCommand: process.env.CHILL_VIBE_CODEX_SAFETY_HOOK_COMMAND } })",
+    "appendMessage({ kind: 'startup', argv: process.argv.slice(2), env: { HOME: process.env.HOME, USERPROFILE: process.env.USERPROFILE, CODEX_HOME: process.env.CODEX_HOME, hookCommand: process.env.CHILL_VIBE_CODEX_SAFETY_HOOK_COMMAND, protectedWorkspace: process.env.CHILL_VIBE_PROTECTED_WORKSPACE, guardExecutable: process.env.CHILL_VIBE_CODEX_GUARD_EXECUTABLE, guardScript: process.env.CHILL_VIBE_CODEX_GUARD_SCRIPT } })",
     "const rl = readline.createInterface({ input: process.stdin, crlfDelay: Infinity })",
     "rl.on('line', (line) => {",
     "  if (!line.trim()) return",
@@ -1457,7 +1457,7 @@ const buildFakeCodexSafetyHandshakeScript = (capturePath: string) =>
     "    reply({ id: request.id, result: { data: [{ cwd: request.params.cwds[0], hooks: [{ key: '<session-flags>/config.toml:pre_tool_use:0:0', eventName: 'pre_tool_use', handlerType: 'command', isManaged: false, matcher: 'Bash|apply_patch|Edit|Write', command: process.env.CHILL_VIBE_CODEX_SAFETY_HOOK_COMMAND, timeoutSec: 5, statusMessage: 'Chill Vibe safety check', sourcePath: '<session-flags>/config.toml', source: 'sessionFlags', pluginId: null, displayOrder: 0, enabled: true, currentHash: 'sha256:chill-vibe-safety', trustStatus: trusted ? 'trusted' : 'untrusted' }], warnings: [], errors: [] }] } })",
     "    return",
     "  }",
-    "  if (request.method === 'config/batchWrite' && request.id) { trusted = true; reply({ id: request.id, result: { status: 'ok' } }); return }",
+    `  if (request.method === 'config/batchWrite' && request.id) { trusted = ${persistTrust ? 'true' : 'false'}; reply({ id: request.id, result: { status: 'ok' } }); return }`,
     "  if (request.method === 'thread/start' && request.id) { reply({ id: request.id, result: { thread: { id: 'thread-safety', status: { type: 'active' } } } }); return }",
     "  if (request.method === 'turn/start' && request.id) { reply({ id: request.id, result: {} }); reply({ method: 'turn/completed', params: {} }) }",
     "})",
@@ -3958,13 +3958,15 @@ test('codex app-server installs and precisely trusts the Chill Vibe safety hook 
     os.tmpdir(),
     `chill-vibe-codex-safety-hook-${Date.now()}-${Math.random().toString(36).slice(2)}.jsonl`,
   )
+  let expectedWorkspacePath = ''
 
   try {
     const outcome = await withFakeProviderCommand(
       'codex',
       buildFakeCodexSafetyHandshakeScript(capturePath),
-      async (workspacePath) =>
-        captureProviderOutcome(
+      async (workspacePath) => {
+        expectedWorkspacePath = workspacePath
+        return captureProviderOutcome(
           createRequest({
             provider: 'codex',
             language: 'en',
@@ -3973,7 +3975,8 @@ test('codex app-server installs and precisely trusts the Chill Vibe safety hook 
             codexDestructiveCommandProtectionEnabled: true,
             codexIsolatedHomeEnabled: true,
           }),
-        ),
+        )
+      },
     )
 
     assert.deepEqual(outcome, { kind: 'done' })
@@ -3995,6 +3998,9 @@ test('codex app-server installs and precisely trusts the Chill Vibe safety hook 
     assert.match(startup.argv?.join(' ') ?? '', /hooks\.PreToolUse/)
     assert.doesNotMatch(startup.argv?.join(' ') ?? '', /dangerously-bypass-hook-trust/)
     assert.ok(startup.env?.hookCommand)
+    assert.equal(path.resolve(startup.env?.protectedWorkspace ?? ''), path.resolve(expectedWorkspacePath))
+    assert.ok(startup.env?.guardExecutable)
+    assert.match(startup.env?.guardScript ?? '', /codex-destructive-command-guard\.js$/)
     assert.notEqual(path.resolve(startup.env?.USERPROFILE ?? ''), path.resolve(os.homedir()))
     if (process.platform === 'win32') {
       assert.equal(startup.env?.HOME, process.env.HOME ?? os.homedir())
@@ -4018,6 +4024,69 @@ test('codex app-server installs and precisely trusts the Chill Vibe safety hook 
     const trustWrite = messages.find((message) => message.method === 'config/batchWrite')
     assert.match(JSON.stringify(trustWrite?.params), /sha256:chill-vibe-safety/)
     assert.match(JSON.stringify(trustWrite?.params), /trusted_hash/)
+  } finally {
+    await rm(capturePath, { force: true }).catch(() => {})
+  }
+})
+
+test('codex app-server treats a non-persisting safety hook trust write as a fatal env setup error', async () => {
+  const capturePath = path.join(
+    os.tmpdir(),
+    `chill-vibe-codex-safety-trust-failure-${Date.now()}-${Math.random().toString(36).slice(2)}.jsonl`,
+  )
+
+  try {
+    const outcome = await withFakeProviderCommand(
+      'codex',
+      buildFakeCodexSafetyHandshakeScript(capturePath, false),
+      async (workspacePath) =>
+        new Promise<{
+          message: string
+          hint?: string
+          recovery?: { recoverable?: boolean; recoveryMode?: string }
+        }>((resolve, reject) => {
+          void launchProviderRun(
+            createRequest({
+              provider: 'codex',
+              language: 'en',
+              workspacePath,
+              cardId: 'safety-failure-card',
+              codexDestructiveCommandProtectionEnabled: true,
+              codexIsolatedHomeEnabled: true,
+            }),
+            {
+              onSession: () => undefined,
+              onDelta: () => undefined,
+              onLog: () => undefined,
+              onAssistantMessage: () => undefined,
+              onActivity: () => undefined,
+              onDone: () => reject(new Error('Safety initialization failure must not complete or continue.')),
+              onError: (message, hint, recovery) => resolve({ message, hint, recovery }),
+            },
+          ).then((child) => {
+            if (!child) {
+              reject(new Error('Expected fake provider command to launch before trust verification.'))
+            }
+          }).catch(reject)
+        }),
+    )
+
+    assert.match(outcome.message, /trust verification did not persist/i)
+    assert.equal(outcome.hint, 'env-setup')
+    assert.notEqual(outcome.recovery?.recoverable, true)
+
+    const methods = (await readFile(capturePath, 'utf8'))
+      .trim()
+      .split(/\r?\n/)
+      .map((line) => JSON.parse(line) as { method?: string })
+      .flatMap((message) => message.method ? [message.method] : [])
+    assert.deepEqual(methods, [
+      'initialize',
+      'initialized',
+      'hooks/list',
+      'config/batchWrite',
+      'hooks/list',
+    ])
   } finally {
     await rm(capturePath, { force: true }).catch(() => {})
   }

@@ -1,5 +1,5 @@
 import crypto from 'node:crypto'
-import { chmod, mkdir, writeFile } from 'node:fs/promises'
+import { chmod, mkdir, readFile, writeFile } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -10,6 +10,15 @@ import { getAppDataDir } from './app-paths.js'
 const safetyHookMatcher = 'Bash|apply_patch|Edit|Write'
 const safetyHookTimeoutSec = 5
 const guardScriptPath = fileURLToPath(new URL('./codex-destructive-command-guard.js', import.meta.url))
+const safetyEnvironmentKeys = [
+  'CHILL_VIBE_PROTECTED_HOME',
+  'CHILL_VIBE_PROTECTED_WORKSPACE',
+  'CHILL_VIBE_PROTECTED_CODEX_HOME',
+  'CHILL_VIBE_PROTECTED_APP_DATA',
+  'CHILL_VIBE_CODEX_GUARD_EXECUTABLE',
+  'CHILL_VIBE_CODEX_GUARD_SCRIPT',
+  'CHILL_VIBE_CODEX_SAFETY_HOOK_COMMAND',
+] as const
 
 export type PreparedCodexSafetyRuntime = {
   args: string[]
@@ -21,8 +30,6 @@ const formatTomlString = (value: string) => JSON.stringify(value)
 
 const normalizeHookCommand = (value: string) =>
   value.trim().replace(/^(["'])(.*)\1$/, '$2').replace(/[\\/]+/g, path.sep).toLowerCase()
-
-const escapeBatchValue = (value: string) => value.replace(/%/g, '%%')
 
 const resolveOriginalHome = (env: NodeJS.ProcessEnv) =>
   env.CHILL_VIBE_PROTECTED_HOME?.trim() ||
@@ -40,48 +47,47 @@ const buildRuntimeKey = (request: ChatRequest) =>
     .digest('hex')
     .slice(0, 20)
 
-const writeSafetyLauncher = async ({
-  launcherPath,
-  protectedHome,
-  workspacePath,
-  codexHome,
-  appDataDir,
-}: {
-  launcherPath: string
-  protectedHome: string
-  workspacePath: string
-  codexHome: string
-  appDataDir: string
-}) => {
+const writeLauncherIfNeeded = async (launcherPath: string, content: string) => {
+  const current = await readFile(launcherPath, 'utf8').catch(() => null)
+  if (current === content) {
+    return
+  }
+
+  try {
+    await writeFile(launcherPath, content, { encoding: 'utf8', flag: 'wx' })
+  } catch {
+    const afterConcurrentWrite = await readFile(launcherPath, 'utf8').catch(() => null)
+    if (afterConcurrentWrite !== content) {
+      await writeFile(launcherPath, content, 'utf8')
+    }
+  }
+}
+
+const writeSafetyLauncher = async (launcherPath: string) => {
   if (process.platform === 'win32') {
     const content = [
       '@echo off',
       'setlocal',
+      'if not defined CHILL_VIBE_CODEX_GUARD_EXECUTABLE exit /b 2',
+      'if not defined CHILL_VIBE_CODEX_GUARD_SCRIPT exit /b 2',
       'set "ELECTRON_RUN_AS_NODE=1"',
-      `set "CHILL_VIBE_PROTECTED_HOME=${escapeBatchValue(protectedHome)}"`,
-      `set "CHILL_VIBE_PROTECTED_WORKSPACE=${escapeBatchValue(workspacePath)}"`,
-      `set "CHILL_VIBE_PROTECTED_CODEX_HOME=${escapeBatchValue(codexHome)}"`,
-      `set "CHILL_VIBE_PROTECTED_APP_DATA=${escapeBatchValue(appDataDir)}"`,
-      `"${process.execPath}" "${guardScriptPath}"`,
+      '"%CHILL_VIBE_CODEX_GUARD_EXECUTABLE%" "%CHILL_VIBE_CODEX_GUARD_SCRIPT%"',
       'exit /b %ERRORLEVEL%',
       '',
     ].join('\r\n')
-    await writeFile(launcherPath, content, 'utf8')
+    await writeLauncherIfNeeded(launcherPath, content)
     return
   }
 
-  const quote = (value: string) => `'${value.replace(/'/g, `'"'"'`)}'`
   const content = [
     '#!/bin/sh',
-    `export ELECTRON_RUN_AS_NODE=1`,
-    `export CHILL_VIBE_PROTECTED_HOME=${quote(protectedHome)}`,
-    `export CHILL_VIBE_PROTECTED_WORKSPACE=${quote(workspacePath)}`,
-    `export CHILL_VIBE_PROTECTED_CODEX_HOME=${quote(codexHome)}`,
-    `export CHILL_VIBE_PROTECTED_APP_DATA=${quote(appDataDir)}`,
-    `exec ${quote(process.execPath)} ${quote(guardScriptPath)}`,
+    '[ -n "$CHILL_VIBE_CODEX_GUARD_EXECUTABLE" ] || exit 2',
+    '[ -n "$CHILL_VIBE_CODEX_GUARD_SCRIPT" ] || exit 2',
+    'export ELECTRON_RUN_AS_NODE=1',
+    'exec "$CHILL_VIBE_CODEX_GUARD_EXECUTABLE" "$CHILL_VIBE_CODEX_GUARD_SCRIPT"',
     '',
   ].join('\n')
-  await writeFile(launcherPath, content, 'utf8')
+  await writeLauncherIfNeeded(launcherPath, content)
   await chmod(launcherPath, 0o700)
 }
 
@@ -112,6 +118,10 @@ export const prepareCodexSafetyRuntime = async (
   const originalCodexHome = resolveOriginalCodexHome(baseEnv, originalHome)
   const runtimeKey = buildRuntimeKey(request)
 
+  for (const key of safetyEnvironmentKeys) {
+    delete env[key]
+  }
+
   if (request.codexIsolatedHomeEnabled === true) {
     const isolatedHome = path.join(appDataDir, 'codex-agent-homes', runtimeKey)
     await mkdir(isolatedHome, { recursive: true })
@@ -140,17 +150,16 @@ export const prepareCodexSafetyRuntime = async (
   await mkdir(safetyDir, { recursive: true })
   const launcherPath = path.join(
     safetyDir,
-    process.platform === 'win32'
-      ? `pre-tool-use-guard-${runtimeKey}.cmd`
-      : `pre-tool-use-guard-${runtimeKey}.sh`,
+    process.platform === 'win32' ? 'pre-tool-use-guard.cmd' : 'pre-tool-use-guard.sh',
   )
-  await writeSafetyLauncher({
-    launcherPath,
-    protectedHome: originalHome,
-    workspacePath: request.workspacePath,
-    codexHome: originalCodexHome,
-    appDataDir,
-  })
+  await writeSafetyLauncher(launcherPath)
+
+  env.CHILL_VIBE_PROTECTED_HOME = originalHome
+  env.CHILL_VIBE_PROTECTED_WORKSPACE = path.resolve(request.workspacePath)
+  env.CHILL_VIBE_PROTECTED_CODEX_HOME = originalCodexHome
+  env.CHILL_VIBE_PROTECTED_APP_DATA = appDataDir
+  env.CHILL_VIBE_CODEX_GUARD_EXECUTABLE = process.execPath
+  env.CHILL_VIBE_CODEX_GUARD_SCRIPT = guardScriptPath
 
   const hookCommand = process.platform === 'win32'
     ? `& '${launcherPath.replace(/'/g, "''")}'`
@@ -262,6 +271,8 @@ export const ensureCodexSafetyHookTrusted = async ({
           mergeStrategy: 'upsert',
         },
       ],
+      filePath: null,
+      expectedVersion: null,
       reloadUserConfig: true,
     })
     hook = readHookMetadata(await listHooks(), hookCommand)

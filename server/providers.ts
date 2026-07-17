@@ -2142,12 +2142,18 @@ const launchCodexAppServerRun = async (
       await sendNotification('initialized')
 
       if (safetyRuntime.hookCommand) {
-        await ensureCodexSafetyHookTrusted({
-          sendRequest,
-          workspacePath: request.workspacePath,
-          hookCommand: safetyRuntime.hookCommand,
-          language,
-        })
+        try {
+          await ensureCodexSafetyHookTrusted({
+            sendRequest,
+            workspacePath: request.workspacePath,
+            hookCommand: safetyRuntime.hookCommand,
+            language,
+          })
+        } catch (error) {
+          const message = error instanceof Error ? error.message : 'Codex safety initialization failed.'
+          finishWithError(message, 'env-setup')
+          return
+        }
       }
 
       const threadResponse = await startThread()

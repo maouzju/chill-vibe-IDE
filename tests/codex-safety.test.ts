@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { execFile } from 'node:child_process'
-import { mkdtemp, rm } from 'node:fs/promises'
+import { mkdtemp, readFile, rm } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import test from 'node:test'
@@ -8,7 +8,7 @@ import { promisify } from 'node:util'
 
 const execFileAsync = promisify(execFile)
 
-test('parallel Codex cards receive separate workspace-bound safety launchers', async () => {
+test('parallel Codex cards share one trusted hook definition while keeping protected roots process-local', async () => {
   const dataDir = await mkdtemp(path.join(os.tmpdir(), 'chill-vibe-codex-safety-'))
   const workspaceA = path.join(dataDir, 'workspace-a')
   const workspaceB = path.join(dataDir, 'workspace-b')
@@ -25,7 +25,13 @@ test('parallel Codex cards receive separate workspace-bound safety launchers', a
     const first = await prepareCodexSafetyRuntime(makeRequest('card-a', ${JSON.stringify(workspaceA)}), [], process.env)
     const second = await prepareCodexSafetyRuntime(makeRequest('card-b', ${JSON.stringify(workspaceB)}), [], process.env)
     const moved = await prepareCodexSafetyRuntime(makeRequest('card-a', ${JSON.stringify(workspaceB)}), [], process.env)
-    process.stdout.write(JSON.stringify([first.hookCommand, second.hookCommand, moved.hookCommand]))
+    const summarize = (runtime) => ({
+      hookCommand: runtime.hookCommand,
+      protectedWorkspace: runtime.env.CHILL_VIBE_PROTECTED_WORKSPACE,
+      guardExecutable: runtime.env.CHILL_VIBE_CODEX_GUARD_EXECUTABLE,
+      guardScript: runtime.env.CHILL_VIBE_CODEX_GUARD_SCRIPT,
+    })
+    process.stdout.write(JSON.stringify([summarize(first), summarize(second), summarize(moved)]))
   `
 
   try {
@@ -38,13 +44,32 @@ test('parallel Codex cards receive separate workspace-bound safety launchers', a
         windowsHide: true,
       },
     )
-    const commands = JSON.parse(stdout) as [string, string, string]
+    const runtimes = JSON.parse(stdout) as Array<{
+      hookCommand?: string
+      protectedWorkspace?: string
+      guardExecutable?: string
+      guardScript?: string
+    }>
 
-    assert.ok(commands[0])
-    assert.ok(commands[1])
-    assert.ok(commands[2])
-    assert.notEqual(commands[0], commands[1])
-    assert.notEqual(commands[0], commands[2])
+    assert.ok(runtimes[0]?.hookCommand)
+    assert.equal(runtimes[0]?.hookCommand, runtimes[1]?.hookCommand)
+    assert.equal(runtimes[0]?.hookCommand, runtimes[2]?.hookCommand)
+    assert.equal(path.resolve(runtimes[0]?.protectedWorkspace ?? ''), path.resolve(workspaceA))
+    assert.equal(path.resolve(runtimes[1]?.protectedWorkspace ?? ''), path.resolve(workspaceB))
+    assert.equal(path.resolve(runtimes[2]?.protectedWorkspace ?? ''), path.resolve(workspaceB))
+    assert.equal(runtimes[0]?.guardExecutable, process.execPath)
+    assert.match(runtimes[0]?.guardScript ?? '', /codex-destructive-command-guard\.js$/)
+
+    const launcherPath = path.join(
+      dataDir,
+      'codex-safety',
+      process.platform === 'win32' ? 'pre-tool-use-guard.cmd' : 'pre-tool-use-guard.sh',
+    )
+    const launcher = await readFile(launcherPath, 'utf8')
+    assert.doesNotMatch(launcher, new RegExp(workspaceA.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i'))
+    assert.doesNotMatch(launcher, new RegExp(workspaceB.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i'))
+    assert.match(launcher, /CHILL_VIBE_CODEX_GUARD_EXECUTABLE/)
+    assert.match(launcher, /CHILL_VIBE_CODEX_GUARD_SCRIPT/)
   } finally {
     await rm(dataDir, { recursive: true, force: true })
   }

@@ -14,5 +14,5 @@
 - [x] 设置页增加默认开启的双语开关和说明，并复用现有安静的 settings 样式。
 - [x] 更新匹配的架构文档，记录 workspacePath 不是安全边界及 IDE 防护层。
 - [x] 运行目标测试、`pnpm test:quality`、双主题视觉验证（目标测试、lint、app/server/node 类型检查及 6 项快照通过；`tsconfig.test.json` 仍被仓库已有的缺失模块/导出错误阻塞）。
-- [ ] 运行 `pnpm electron:build`，报告 zip 和可运行目录。
-- [ ] 重启当前开发运行时并检查日志/进程。
+- [x] 运行 `pnpm electron:build`；产物为 `dist/release-20260717-232607/Chill Vibe-0.18.8-win.zip`，可运行目录为同级 `win-unpacked/Chill Vibe.exe`，并已用打包后的 `app.asar` 防护脚本验证危险命令退出码为 `2`。
+- [x] 重启当前 Electron 开发运行时并检查日志/进程；`localhost:5173` 返回 200，开发 Electron 进程使用仓库隔离 profile，未停止用户正在使用的旧 packaged 实例。

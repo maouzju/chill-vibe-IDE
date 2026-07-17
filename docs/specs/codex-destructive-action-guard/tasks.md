@@ -6,7 +6,7 @@
 - [x] 红测：Codex 请求透传两个安全开关，Claude 不透传。
 - [x] 红测：危险命令判定覆盖主目录、工作区根/外路径、`$home` 冲突、未解析/运行时展开变量、相对递归删除、绑定挂载清理、危险 Git；明确的工作区绝对子目录清理允许。
 - [x] 红测：app-server 在开启时注入 Hook，并在 thread start 前完成精准 Hook 信任握手；关闭时不注入。
-- [x] 红测：并行卡片和移动工作区不会共用可被覆盖的安全 launcher。
+- [x] 红测：并行卡片共享稳定 Hook launcher/hash，同时各自保留独立的受保护工作区环境。
 - [x] 实现 schema、default state、normalization、reducer 和请求映射。
 - [x] 实现 `server/codex-destructive-command-guard.js` 与平台 launcher。
 - [x] 实现隔离 home 环境与原始 `CODEX_HOME` 保留。
@@ -16,3 +16,6 @@
 - [x] 运行目标测试、`pnpm test:quality`、双主题视觉验证（目标测试、lint、app/server/node 类型检查及 6 项快照通过；`tsconfig.test.json` 仍被仓库已有的缺失模块/导出错误阻塞）。
 - [x] 运行 `pnpm electron:build`；产物为 `dist/release-20260717-232607/Chill Vibe-0.18.8-win.zip`，可运行目录为同级 `win-unpacked/Chill Vibe.exe`，并已用打包后的 `app.asar` 防护脚本验证危险命令退出码为 `2`。
 - [x] 重启当前 Electron 开发运行时并检查日志/进程；`localhost:5173` 返回 200，开发 Electron 进程使用仓库隔离 profile，未停止用户正在使用的旧 packaged 实例。
+- [x] 修复并行卡片使用不同 Hook 命令/hash 导致同一 session-flags trust key 相互覆盖、出现 `hook trust verification did not persist` 的问题。
+- [x] 将两个安全开关从长“模型”表单迁移到独立、靠前的“Codex 安全防护”设置卡。
+- [x] 将 Hook 信任初始化失败明确标记为不可自动恢复的 `env-setup` 错误，验证失败后不再启动 thread/turn。

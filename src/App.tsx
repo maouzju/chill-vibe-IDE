@@ -6137,6 +6137,13 @@ function App() {
       </div>
     </div>,
 
+    <div key="codex-safety" className="settings-group codex-safety-settings-group">
+      <h3 className="settings-group-title">{text.settingsGroupCodexSafety}</h3>
+      <div className="settings-section">
+        {renderCodexSafetySettings('modal')}
+      </div>
+    </div>,
+
     <div key="appearance" className="settings-group">
       <h3 className="settings-group-title">{text.settingsGroupAppearance}</h3>
 
@@ -6412,8 +6419,6 @@ function App() {
           />
         </label>
         <p className="settings-note">{text.codexFastModeNote}</p>
-
-        {renderCodexSafetySettings('modal')}
 
         <label className="settings-field" htmlFor="claude-model-input">
           <span className="settings-field-label">
@@ -7547,6 +7552,13 @@ function App() {
               </div>
             </div>
 
+            <div className="settings-group codex-safety-settings-group">
+              <h3 className="settings-group-title">{text.settingsGroupCodexSafety}</h3>
+              <div className="settings-section">
+                {renderCodexSafetySettings('inline')}
+              </div>
+            </div>
+
             <div className="settings-group">
               <h3 className="settings-group-title">{text.settingsGroupAppearance}</h3>
 
@@ -7732,8 +7744,6 @@ function App() {
                   />
                 </label>
                 <p className="settings-note">{text.codexFastModeNote}</p>
-
-                {renderCodexSafetySettings('inline')}
 
                 <label className="settings-field" htmlFor="claude-model-input">
                   <span className="settings-field-label">

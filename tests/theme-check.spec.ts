@@ -2773,11 +2773,17 @@ for (const theme of ['dark', 'light'] as const) {
     await page.locator('.card-shell').first().waitFor()
 
     const settingsPanel = page.locator('#app-panel-settings')
-    const safetySettings = settingsPanel.locator('.codex-safety-settings:visible').first()
+    const safetyGroupTitle = theme === 'dark' ? 'Codex 安全防护' : 'Codex Safety'
+    const safetyGroup = settingsPanel
+      .locator('.settings-group:visible')
+      .filter({ has: page.getByRole('heading', { name: safetyGroupTitle, exact: true }) })
+      .first()
+    const safetySettings = safetyGroup.locator('.codex-safety-settings:visible').first()
 
     await page.locator('#app-tab-settings').click()
     await expect(settingsPanel).toBeVisible()
     await expect(page.locator('html')).toHaveAttribute('data-theme', theme)
+    await expect(safetyGroup).toBeVisible()
     await expect(safetySettings.locator('input[type="checkbox"]')).toHaveCount(2)
     await expect(safetySettings.locator('input[type="checkbox"]').first()).toBeChecked()
     await expect(safetySettings.locator('input[type="checkbox"]').last()).toBeChecked()
@@ -2975,7 +2981,7 @@ test('settings panel flows category cards through two waterfall columns in both 
 
   await settingsTab.click()
   await expect(settingsPanel).toBeVisible()
-  await expect(settingsGroups).toHaveCount(8)
+  await expect(settingsGroups).toHaveCount(9)
   await expect(
     settingsPanel.getByLabel(/Codex Agent 人格|Codex Agent personality/).first(),
   ).toHaveValue('default')
@@ -3036,7 +3042,7 @@ test('settings panel stacks category cards cleanly on a narrow viewport', async 
 
   await settingsTab.click()
   await expect(settingsPanel).toBeVisible()
-  await expect(settingsGroups).toHaveCount(8)
+  await expect(settingsGroups).toHaveCount(9)
 
   const [firstGroupRect, secondGroupRect] = await Promise.all([
     readRect(settingsGroups.nth(0)),

@@ -23,6 +23,7 @@ type LocaleText = {
   editorMinimapLabel: string
   editorTabSizeLabel: string
   settingsGroupModels: string
+  settingsGroupCodexSafety: string
   settingsGroupEnvironment: string
   settingsGroupUtility: string
   settingsGroupExperimental: string
@@ -334,6 +335,7 @@ const localeTextByLanguage: Record<AppLanguage, LocaleText> = {
     editorMinimapLabel: '缩略图',
     editorTabSizeLabel: '缩进宽度',
     settingsGroupModels: '模型',
+    settingsGroupCodexSafety: 'Codex 安全防护',
     settingsGroupEnvironment: '环境设置',
     settingsGroupUtility: '实用',
     settingsGroupExperimental: '卡片类型',
@@ -668,6 +670,7 @@ const localeTextByLanguage: Record<AppLanguage, LocaleText> = {
     editorMinimapLabel: 'Minimap',
     editorTabSizeLabel: 'Tab size',
     settingsGroupModels: 'Models',
+    settingsGroupCodexSafety: 'Codex Safety',
     settingsGroupEnvironment: 'Environment',
     settingsGroupUtility: 'Utility',
     settingsGroupExperimental: 'Card Type',

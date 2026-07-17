@@ -108,6 +108,10 @@ type LocaleText = {
   codexFastModeDialogWarning: string
   codexFastModeDialogCancel: string
   codexFastModeDialogConfirm: string
+  codexDestructiveCommandProtectionLabel: string
+  codexDestructiveCommandProtectionNote: string
+  codexIsolatedHomeLabel: string
+  codexIsolatedHomeNote: string
   remoteMonitorButtonLabel: string
   remoteMonitorDialogTitle: string
   remoteMonitorDialogBody: string
@@ -416,6 +420,12 @@ const localeTextByLanguage: Record<AppLanguage, LocaleText> = {
       '开启后，普通聊天、恢复与重试、Brainstorm 和 Git Agent 的 Codex 请求都会使用高价服务档，直到你再次关闭。',
     codexFastModeDialogCancel: '保持关闭',
     codexFastModeDialogConfirm: '了解费用并开启',
+    codexDestructiveCommandProtectionLabel: '阻止 Codex 高风险删除命令',
+    codexDestructiveCommandProtectionNote:
+      '默认开启。执行前拦截常见 Shell / 脚本中的主目录、工作区外路径、工作区根目录、Git 元数据、未解析变量和大范围不可恢复删除；递归清理需使用工作区内绝对路径。不改变 Codex Full Access 或审批设置。这不是完整 OS 沙箱，关闭后将恢复原有无额外 IDE 拦截的行为。',
+    codexIsolatedHomeLabel: '使用隔离的 Codex Agent 主目录',
+    codexIsolatedHomeNote:
+      '默认开启。在 Windows 隔离 USERPROFILE 和 PowerShell 的 $HOME；其他平台隔离 HOME，降低主目录变量展开错误的风险。Codex 登录、配置及 Windows Git 全局配置仍沿用原位置。它不能隔离绝对路径或任意外部程序，需与上方命令防护配合。',
     remoteMonitorButtonLabel: '手机监工',
     remoteMonitorDialogTitle: '手机远程监工',
     remoteMonitorDialogBody:
@@ -748,6 +758,12 @@ const localeTextByLanguage: Record<AppLanguage, LocaleText> = {
       'Once enabled, Codex requests from regular chats, recovery and retries, Brainstorm, and Git Agent will use the higher-cost tier until you turn it off.',
     codexFastModeDialogCancel: 'Keep off',
     codexFastModeDialogConfirm: 'I understand the cost — enable',
+    codexDestructiveCommandProtectionLabel: 'Block high-risk Codex deletion commands',
+    codexDestructiveCommandProtectionNote:
+      'On by default. Blocks common shell/script forms of machine-scale or irreversible deletion involving home paths, targets outside the workspace, workspace roots, Git metadata, unresolved variables, and unsafe broad targets before execution. Recursive cleanup must use an absolute path inside the workspace. It does not change Codex Full Access or approval settings and is not a complete OS sandbox.',
+    codexIsolatedHomeLabel: 'Use an isolated Codex Agent home',
+    codexIsolatedHomeNote:
+      'On by default. Windows isolates USERPROFILE and PowerShell $HOME while other platforms isolate HOME, reducing damage from home-variable expansion mistakes. Codex login/configuration and Windows Git global config stay in their original location. Absolute paths and arbitrary external programs are not isolated, so keep the command guard above enabled too.',
     remoteMonitorButtonLabel: 'Phone monitor',
     remoteMonitorDialogTitle: 'Remote monitor on your phone',
     remoteMonitorDialogBody:

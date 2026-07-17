@@ -541,8 +541,16 @@ function App() {
     () => ({
       codexPersonality: appState.settings.codexPersonality,
       codexFastMode: appState.settings.codexFastMode,
+      codexDestructiveCommandProtectionEnabled:
+        appState.settings.codexDestructiveCommandProtectionEnabled,
+      codexIsolatedHomeEnabled: appState.settings.codexIsolatedHomeEnabled,
     }),
-    [appState.settings.codexFastMode, appState.settings.codexPersonality],
+    [
+      appState.settings.codexDestructiveCommandProtectionEnabled,
+      appState.settings.codexFastMode,
+      appState.settings.codexIsolatedHomeEnabled,
+      appState.settings.codexPersonality,
+    ],
   )
   const panelText = useMemo(() => getPanelText(appState.settings.language), [appState.settings.language])
   const topTabText = useMemo(() => getTopTabText(appState.settings.language), [appState.settings.language])
@@ -5703,6 +5711,42 @@ function App() {
     </div>
   )
 
+  const renderCodexSafetySettings = (idPrefix: string) => (
+    <div className="codex-safety-settings">
+      <label className="settings-toggle" htmlFor={`${idPrefix}-codex-destructive-command-protection`}>
+        <span>{text.codexDestructiveCommandProtectionLabel}</span>
+        <input
+          id={`${idPrefix}-codex-destructive-command-protection`}
+          type="checkbox"
+          checked={appState.settings.codexDestructiveCommandProtectionEnabled}
+          onChange={(event) =>
+            applyAction({
+              type: 'updateSettings',
+              patch: { codexDestructiveCommandProtectionEnabled: event.target.checked },
+            })
+          }
+        />
+      </label>
+      <p className="settings-note">{text.codexDestructiveCommandProtectionNote}</p>
+
+      <label className="settings-toggle" htmlFor={`${idPrefix}-codex-isolated-home`}>
+        <span>{text.codexIsolatedHomeLabel}</span>
+        <input
+          id={`${idPrefix}-codex-isolated-home`}
+          type="checkbox"
+          checked={appState.settings.codexIsolatedHomeEnabled}
+          onChange={(event) =>
+            applyAction({
+              type: 'updateSettings',
+              patch: { codexIsolatedHomeEnabled: event.target.checked },
+            })
+          }
+        />
+      </label>
+      <p className="settings-note">{text.codexIsolatedHomeNote}</p>
+    </div>
+  )
+
   const renderThemeToggle = () => {
     const themeOptions: Array<{ value: AppState['settings']['theme']; label: string }> = [
       { value: 'light', label: text.light },
@@ -6368,6 +6412,8 @@ function App() {
           />
         </label>
         <p className="settings-note">{text.codexFastModeNote}</p>
+
+        {renderCodexSafetySettings('modal')}
 
         <label className="settings-field" htmlFor="claude-model-input">
           <span className="settings-field-label">
@@ -7686,6 +7732,8 @@ function App() {
                   />
                 </label>
                 <p className="settings-note">{text.codexFastModeNote}</p>
+
+                {renderCodexSafetySettings('inline')}
 
                 <label className="settings-field" htmlFor="claude-model-input">
                   <span className="settings-field-label">

@@ -486,6 +486,7 @@ A living list of traps that have wasted time before. **When you hit a new pitfal
 | 203 | “手动续传能成功”不代表恢复无损：清空 `sessionId` 后用有字符预算的可见聊天记录重建新会话，会丢失原生隐藏上下文、reasoning、精确工具状态和被压缩的旧输出 | 自动恢复和手动续传都应优先从当前失败用户回合之前 fork provider 原生会话，只重跑这个未完成回合；仅在无法保守定位原生检查点时才降级到 seeded transcript。 |
 
 | 204 | A mobile page with `html, body { height: 100% }` can visually defeat a `position: sticky` header once a long transcript scrolls past the first viewport | Let the document grow with `min-height: 100%` and verify the header after scrolling a real long mobile viewport; checking only the CSS declaration or the first screen misses this failure. |
+| 205 | On Windows, PowerShell's automatic `$HOME` follows `USERPROFILE`, while Git for Windows commonly uses the separate `HOME` environment variable for `~/.gitconfig` | Isolate Codex `USERPROFILE` / `HOMEDRIVE` / `HOMEPATH` but preserve an existing `HOME` and the original `CODEX_HOME`; changing both makes the safety feature silently break Git identity/config even though PowerShell only needs `USERPROFILE` redirected. |
 
 ### Self-maintenance rule
 

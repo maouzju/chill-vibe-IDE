@@ -171,11 +171,15 @@ test('agent analysis forwards Codex personality and Fast settings', async () => 
     codexChatSettings: {
       codexPersonality: 'pragmatic',
       codexFastMode: true,
+      codexDestructiveCommandProtectionEnabled: true,
+      codexIsolatedHomeEnabled: true,
     },
   }, createGitStatus())
 
   assert.equal(fake.chatRequests[0]?.personality, 'pragmatic')
   assert.equal(fake.chatRequests[0]?.serviceTier, 'priority')
+  assert.equal(fake.chatRequests[0]?.codexDestructiveCommandProtectionEnabled, true)
+  assert.equal(fake.chatRequests[0]?.codexIsolatedHomeEnabled, true)
 })
 
 test('executeAgentStrategy runs every commit to completion with no subscribers attached', async () => {

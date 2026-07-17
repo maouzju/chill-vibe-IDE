@@ -2762,6 +2762,37 @@ for (const scenario of [
 }
 
 for (const theme of ['dark', 'light'] as const) {
+  test(`Codex destructive-command protection settings stay clear in ${theme} theme`, async ({ page }) => {
+    const state = createMockState()
+    state.settings.language = theme === 'dark' ? 'zh-CN' : 'en'
+    state.settings.theme = theme
+
+    await page.setViewportSize({ width: 1280, height: 960 })
+    await mockAppApis(page, { state })
+    await page.goto(appUrl)
+    await page.locator('.card-shell').first().waitFor()
+
+    const settingsPanel = page.locator('#app-panel-settings')
+    const safetySettings = settingsPanel.locator('.codex-safety-settings:visible').first()
+
+    await page.locator('#app-tab-settings').click()
+    await expect(settingsPanel).toBeVisible()
+    await expect(page.locator('html')).toHaveAttribute('data-theme', theme)
+    await expect(safetySettings.locator('input[type="checkbox"]')).toHaveCount(2)
+    await expect(safetySettings.locator('input[type="checkbox"]').first()).toBeChecked()
+    await expect(safetySettings.locator('input[type="checkbox"]').last()).toBeChecked()
+    await expect(safetySettings).toContainText(
+      theme === 'dark' ? '阻止 Codex 高风险删除命令' : 'Block high-risk Codex deletion commands',
+    )
+    await expect(safetySettings).toContainText(
+      theme === 'dark' ? '使用隔离的 Codex Agent 主目录' : 'Use an isolated Codex Agent home',
+    )
+    await expect(safetySettings).toHaveScreenshot(`codex-safety-settings-${theme}.png`, {
+      animations: 'disabled',
+      caret: 'hide',
+    })
+  })
+
   test(`model prompt rules editor stays legible in ${theme} theme`, async ({ page }) => {
     const state = createMockState()
     state.settings.language = theme === 'dark' ? 'zh-CN' : 'en'

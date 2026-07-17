@@ -527,6 +527,8 @@ export const createDefaultSettings = (language: AppLanguage = defaultAppLanguage
   modelPromptRules: [],
   codexPersonality: 'default',
   codexFastMode: false,
+  codexDestructiveCommandProtectionEnabled: true,
+  codexIsolatedHomeEnabled: true,
   gitAgentModel: DEFAULT_GIT_AGENT_MODEL,
   requestModels: {
     codex: DEFAULT_CODEX_MODEL,
@@ -656,6 +658,14 @@ export const normalizeAppSettings = (settings?: Partial<AppSettings> | null): Ap
     modelPromptRules: normalizeModelPromptRules(settings?.modelPromptRules),
     codexPersonality: normalizeCodexPersonality(settings?.codexPersonality),
     codexFastMode: typeof settings?.codexFastMode === 'boolean' ? settings.codexFastMode : false,
+    codexDestructiveCommandProtectionEnabled:
+      typeof settings?.codexDestructiveCommandProtectionEnabled === 'boolean'
+        ? settings.codexDestructiveCommandProtectionEnabled
+        : defaults.codexDestructiveCommandProtectionEnabled,
+    codexIsolatedHomeEnabled:
+      typeof settings?.codexIsolatedHomeEnabled === 'boolean'
+        ? settings.codexIsolatedHomeEnabled
+        : defaults.codexIsolatedHomeEnabled,
     gitAgentModel: normalizeGitAgentModel(settings?.gitAgentModel, defaults.gitAgentModel),
     lastModel: settings?.lastModel
       ? {

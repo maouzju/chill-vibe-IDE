@@ -1,0 +1,18 @@
+# Codex 破坏性操作防护任务
+
+- [x] 调查公开数据删除事故、官方系统卡、Codex Hook 能力和 Chill Vibe 当前权限链。
+- [x] 编写 requirements / design / tasks，限定第一实现切片。
+- [x] 红测：两个设置默认开启、旧状态缺字段时回落开启、显式关闭被保留。
+- [x] 红测：Codex 请求透传两个安全开关，Claude 不透传。
+- [x] 红测：危险命令判定覆盖主目录、工作区根/外路径、`$home` 冲突、未解析/运行时展开变量、相对递归删除、绑定挂载清理、危险 Git；明确的工作区绝对子目录清理允许。
+- [x] 红测：app-server 在开启时注入 Hook，并在 thread start 前完成精准 Hook 信任握手；关闭时不注入。
+- [x] 红测：并行卡片和移动工作区不会共用可被覆盖的安全 launcher。
+- [x] 实现 schema、default state、normalization、reducer 和请求映射。
+- [x] 实现 `server/codex-destructive-command-guard.js` 与平台 launcher。
+- [x] 实现隔离 home 环境与原始 `CODEX_HOME` 保留。
+- [x] 实现 app-server Hook 信任握手与失败关闭提示。
+- [x] 设置页增加默认开启的双语开关和说明，并复用现有安静的 settings 样式。
+- [x] 更新匹配的架构文档，记录 workspacePath 不是安全边界及 IDE 防护层。
+- [x] 运行目标测试、`pnpm test:quality`、双主题视觉验证（目标测试、lint、app/server/node 类型检查及 6 项快照通过；`tsconfig.test.json` 仍被仓库已有的缺失模块/导出错误阻塞）。
+- [ ] 运行 `pnpm electron:build`，报告 zip 和可运行目录。
+- [ ] 重启当前开发运行时并检查日志/进程。

@@ -66,6 +66,10 @@ import type { ResilientProxyRuntimeConfig } from './resilient-proxy.js'
 import { resilientProxyPool } from './resilient-proxy.js'
 import { createArchiveRecallRuntimeOverrides, getCodexArchiveRecallInstruction } from './archive-recall.js'
 import {
+  ensureCodexSafetyHookTrusted,
+  prepareCodexSafetyRuntime,
+} from './codex-safety.js'
+import {
   ClaudeSessionPool,
   type ClaudeSessionPoolEntryView,
   type ClaudeTurnAttachment,
@@ -1500,13 +1504,22 @@ const launchCodexAppServerRun = async (
     return null
   }
 
+  let safetyRuntime
+  try {
+    safetyRuntime = await prepareCodexSafetyRuntime(request, runtime.args, runtime.env)
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Unable to prepare Codex safety protection.'
+    sink.onError(message, 'env-setup')
+    return null
+  }
+
   const child = await spawnProvider(
     'codex',
-    buildCodexAppServerArgs(runtime.args),
+    buildCodexAppServerArgs(safetyRuntime.args),
     request.workspacePath,
     sink,
     language,
-    runtime.env,
+    safetyRuntime.env,
     { stdin: 'pipe' },
   )
 
@@ -2127,6 +2140,15 @@ const launchCodexAppServerRun = async (
         capabilities: null,
       })
       await sendNotification('initialized')
+
+      if (safetyRuntime.hookCommand) {
+        await ensureCodexSafetyHookTrusted({
+          sendRequest,
+          workspacePath: request.workspacePath,
+          hookCommand: safetyRuntime.hookCommand,
+          language,
+        })
+      }
 
       const threadResponse = await startThread()
 

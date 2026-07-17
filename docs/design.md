@@ -134,6 +134,8 @@ type ChatCard = {
 说明：
 
 - `workspacePath` 决定 CLI 的工作目录
+- `workspacePath` 只是 CLI 的 cwd，不是文件系统权限边界。普通 Codex 会话仍可保持既有 `danger-full-access + approvalPolicy=never`，但 IDE 默认注入独立的 `PreToolUse` 高风险删除防护，并在设置中允许用户明确关闭；Hook 未被当前 CLI 发现、信任或启用时必须失败关闭，不能静默裸跑。
+- Codex Agent 主目录隔离默认开启：Windows 隔离 `USERPROFILE` / `HOMEDRIVE` / `HOMEPATH`，让 PowerShell 自动 `$HOME` 指向 Chill Vibe 数据目录下的 Agent home，同时保留既有 `HOME` 兼容 Git 全局配置；macOS/Linux 隔离 `HOME`。所有平台显式保留原始 `CODEX_HOME`，登录、原生会话和 Skill 不迁移。
 - `sessionId` 对应 provider 原生会话 ID
 - `sessionId` 只在当前 provider 路由配置下有效；切换、删除或修改活跃 provider profile 后，相关 provider 的旧会话 ID 必须失效，后续请求改用可见历史重新开始，避免把旧供应商的原生加密上下文续到新供应商
 - `sessionModel` 记录该原生会话开始时使用的实际请求模型；继续会话前必须与本次请求模型一致。旧状态里没有 `sessionModel` 的会话视为模型未知，改模型后不能盲目续用，必须用可见历史开启新会话。
@@ -161,6 +163,7 @@ type ChatCard = {
 - 助手消息使用 Markdown 渲染时，外层消息容器不得把源文本的空白行再次按 `pre-wrap` 原样展开；Markdown 自己负责段落、列表与代码块的间距。若 provider 把一组行内代码反引号错误地跨空白行拆开，渲染前应把两段合回同一条 Markdown 行，避免一条中文句子被拆成裸反引号和大段异常留白。
 - 每个 provider 回合为“兜底改动卡”保留的 Git 工作区基线必须有硬上限：优先保留已跟踪的脏文件，单文件最多 256 KiB、每回合最多 256 个详细文件 / 4 MiB；相同基线正文通过 32 MiB 有界内容寻址缓存跨会话复用。超限文件仍必须展示文件名和省略原因，不能因差异正文超限而静默消失；启动时已脏但未保留正文的文件不得伪造相对 HEAD 的本轮差异。
 - Codex shell tools run through PowerShell on Windows. The Codex base instructions must warn that search patterns containing embedded double quotes, especially JSON literals, should use single quotes, a here-string/script file, or `rg --fixed-strings` instead of a double-quoted PowerShell argument, otherwise PowerShell can fail with `TerminatorExpectedAtEndOfString`.
+- Codex destructive-command protection is structural rather than prompt-only: an IDE-owned `PreToolUse` hook canonicalizes deletion targets and blocks user-home/workspace-root ancestors, paths outside the workspace, drive roots, `.git`, Codex/Chill Vibe data, unresolved/runtime-expanded variables, recursive wildcards, relative recursive-delete targets, PowerShell `$home` assignment collisions, `TemporaryDirectory` + bind-mount cleanup hazards, and broad destructive Git operations. Relative recursive deletes fail closed because the current hook payload omits a shell tool's separate `workdir`; explicit absolute workspace-child targets remain allowed. The session-flags hook is trusted by exact key/hash through `hooks/list` + `config/batchWrite`; never use `--dangerously-bypass-hook-trust`, which would also run unrelated untrusted hooks.
 - 当当前 provider 的本地 CLI 不可用时，聊天发送仍然要进入应用层校验，并在卡片内追加“本地 CLI 不可用”的系统提示；不能只禁用发送按钮让用户反复点击却没有反馈。
 - Claude 流式输出的健壮性（`server/claude-structured-output.ts` + `server/providers.ts` + `server/provider-stream-recovery.ts`）：
   - 模型偶尔把工具调用打成文本（`<function_calls>`/`<invoke>`/`<parameter>`）。增量去除器会剥离这些 XML；遇到**未闭合**的工具调用/ask-user 块时，`flush()` 必须**丢弃**而不是原样吐出——否则渲染层（ReactMarkdown，仅 remark-gfm）会吃掉标签只留下 `<parameter>` 里的内层文本（如 `count`），形成孤立气泡。容器常被换行美化，所以 `<function_calls>` 需容忍其后空白。

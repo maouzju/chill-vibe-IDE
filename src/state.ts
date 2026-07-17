@@ -187,6 +187,8 @@ export type IdeAction =
           | 'modelPromptRules'
           | 'codexPersonality'
           | 'codexFastMode'
+          | 'codexDestructiveCommandProtectionEnabled'
+          | 'codexIsolatedHomeEnabled'
           | 'gitAgentModel'
           | 'providerProfiles'
         >

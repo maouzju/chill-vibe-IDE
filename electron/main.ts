@@ -19,6 +19,7 @@ import {
   resolveDesktopRuntimeProfilePaths,
   resolveDesktopRuntimeKind,
   resolveDesktopWorkingDirectory,
+  resolveHardwareAccelerationEnabled,
 } from './runtime-environment.js'
 import { attachFrameStallWatchdog } from './frame-stall-watchdog.js'
 import { summarizeUnresponsiveCallStack } from './unresponsive-forensics.js'
@@ -44,7 +45,14 @@ if (process.platform === 'linux') {
   app.commandLine.appendSwitch('gtk-version', '3')
 }
 
-app.disableHardwareAcceleration()
+const shouldEnableHardwareAcceleration = resolveHardwareAccelerationEnabled({
+  platform: process.platform,
+  enableOverride: process.env.CHILL_VIBE_ENABLE_HARDWARE_ACCELERATION,
+  disableOverride: process.env.CHILL_VIBE_DISABLE_HARDWARE_ACCELERATION,
+})
+if (!shouldEnableHardwareAcceleration) {
+  app.disableHardwareAcceleration()
+}
 const devClientUrl = process.env.VITE_DEV_SERVER_URL ?? 'http://localhost:5173'
 const quitFlushDelayMs = 750
 const quitFlushTimeoutMs = 5000
@@ -63,6 +71,8 @@ const allowSharedDataDirOverride =
   process.env.CHILL_VIBE_ALLOW_SHARED_DATA_DIR === '1' ||
   process.argv.includes('--allow-shared-data-dir')
 const shouldKeepValidationWindowHidden = process.env.CHILL_VIBE_HEADLESS_RUNTIME_TESTS === '1'
+const shouldUseOffscreenValidationRendering =
+  process.env.CHILL_VIBE_OFFSCREEN_RUNTIME_TESTS === '1'
 
 const audioProtocolScheme = 'chill-vibe-audio'
 
@@ -795,6 +805,7 @@ function createWindow() {
     ...(titleBarStyle ? { titleBarStyle } : {}),
     webPreferences: {
       preload: path.join(moduleDir, 'preload.cjs'),
+      offscreen: shouldUseOffscreenValidationRendering,
       // Throttling turns every occlusion misjudgment into a full rAF/timer
       // stall (investigation §2.2; forensics 2026-07-02T13-52-09). An IDE
       // with live streams must keep rendering like one.
@@ -803,6 +814,14 @@ function createWindow() {
       nodeIntegration: false,
     },
   })
+
+  if (shouldUseOffscreenValidationRendering) {
+    win.webContents.setFrameRate(15)
+    // Offscreen rendering only models a visible compositor when paint frames
+    // are consumed. Without a listener Chromium can backpressure the surface
+    // for seconds, creating a test-only rAF stall unrelated to production.
+    win.webContents.on('paint', () => {})
+  }
 
   if (shouldRemoveMenu) {
     win.removeMenu()

@@ -1,5 +1,19 @@
 # 多窗口流式性能兜底 — 验证记录
 
+## 2026-07-18 真实复发与门禁修正
+
+- 最新发布包 `release-20260718-002246` 在四个长任务并行约 31 分钟后两次记录
+  `BrowserWindow became unresponsive`，无 OOM、无 renderer gone，JS 调用栈均为空。
+- 重启后的同类负载下，SwiftShader GPU 进程实测约 103% 单核 CPU，renderer 约 22%；
+  说明旧默认的软件合成已经吃满光栅预算。
+- 旧性能门禁的窗口完全隐藏，因此没有覆盖可见绘制，30 分钟 soak 的“零 unresponsive”
+  不能证明真实合成路径安全。
+- 门禁开启离屏绘制后，旧软件路径 30 秒即出现 `frameMaxGapMs=4366ms`、
+  `tabSwitchP95Ms=1221ms`（红）。
+- Windows 默认硬件加速 + 统一按列切片调度后的最终默认配置：
+  `frameMaxGapMs=232ms`、`inputP95Ms=12ms`、`focusP95Ms=139ms`、
+  `tabSwitchP95Ms=69ms`，零 unresponsive（绿）。
+
 ## 基线区分度
 
 同一套隐藏 Electron 夹具分别在 `v0.18.8` 和当前尾部窗口切片运行。基线多次越过交互或挂载上限，例如：

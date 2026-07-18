@@ -1,4 +1,4 @@
-import type { AppState } from '../../shared/schema'
+import type { AppState, ChatMessage } from '../../shared/schema'
 import type { IdeAction } from '../state'
 
 type TimeoutHandle = ReturnType<typeof setTimeout> | number
@@ -22,10 +22,10 @@ export const streamingQueuedStateSaveDelayMs = 5_000
 // 80ms keeps a single reply feeling like live typing (~12 paints/s) while
 // still coalescing per-token deltas. Multi-stream boards back off below so the
 // combined card render rate cannot scale linearly with every open agent pane.
-export const streamDeltaFlushIntervalMs = 80
-export const streamActivityFlushIntervalMs = 250
-const moderateMultiStreamDeltaFlushIntervalMs = 120
-const busyMultiStreamDeltaFlushIntervalMs = 180
+export const streamRenderFlushIntervalMs = 80
+export const streamRenderColumnYieldMs = 50
+const moderateMultiStreamRenderFlushIntervalMs = 200
+const busyMultiStreamRenderFlushIntervalMs = 500
 const busyStreamingQueuedStateSaveDelayMs = 15_000
 const busyStreamingCardThreshold = 2
 const streamingStateContentBudgetChars = 750_000
@@ -37,6 +37,12 @@ export type StreamDeltaBufferEntry = {
   messageId: string
   buffer: string
   model?: string
+}
+
+export type StreamActivityBufferEntry = {
+  columnId: string
+  cardId: string
+  messages: ChatMessage[]
 }
 
 export const enqueueStreamDeltaBufferEntry = (
@@ -85,16 +91,66 @@ export const getStreamingCardCount = (state: Pick<AppState, 'columns'>) =>
     0,
   )
 
-export const getStreamDeltaFlushIntervalMs = (activeStreamCount: number) => {
+export const getStreamRenderFlushIntervalMs = (activeStreamCount: number) => {
   if (activeStreamCount >= 4) {
-    return busyMultiStreamDeltaFlushIntervalMs
+    return busyMultiStreamRenderFlushIntervalMs
   }
 
   if (activeStreamCount >= 2) {
-    return moderateMultiStreamDeltaFlushIntervalMs
+    return moderateMultiStreamRenderFlushIntervalMs
   }
 
-  return streamDeltaFlushIntervalMs
+  return streamRenderFlushIntervalMs
+}
+
+export const getStreamRenderBufferColumnIds = (
+  deltaBuffer: Map<string, StreamDeltaBufferEntry>,
+  activityBuffer: Map<string, StreamActivityBufferEntry>,
+) => {
+  const columnIds = new Set<string>()
+  for (const entry of deltaBuffer.values()) {
+    columnIds.add(entry.columnId)
+  }
+  for (const entry of activityBuffer.values()) {
+    columnIds.add(entry.columnId)
+  }
+  return Array.from(columnIds)
+}
+
+export const drainStreamRenderBufferActionsForColumn = (
+  deltaBuffer: Map<string, StreamDeltaBufferEntry>,
+  activityBuffer: Map<string, StreamActivityBufferEntry>,
+  columnId: string,
+) => {
+  const actions: IdeAction[] = []
+
+  for (const [messageId, entry] of deltaBuffer.entries()) {
+    if (entry.columnId !== columnId) continue
+    deltaBuffer.delete(messageId)
+    if (entry.buffer.length === 0) continue
+    actions.push({
+      type: 'appendAssistantDelta',
+      columnId: entry.columnId,
+      cardId: entry.cardId,
+      messageId: entry.messageId,
+      delta: entry.buffer,
+      model: entry.model,
+    })
+  }
+
+  for (const [cardId, entry] of activityBuffer.entries()) {
+    if (entry.columnId !== columnId) continue
+    activityBuffer.delete(cardId)
+    if (entry.messages.length === 0) continue
+    actions.push({
+      type: 'upsertMessages',
+      columnId: entry.columnId,
+      cardId: entry.cardId,
+      messages: entry.messages,
+    })
+  }
+
+  return actions
 }
 
 export const getLiveChatContentChars = (state: Pick<AppState, 'columns'>) =>

@@ -371,6 +371,45 @@ test('buildRenderableMessages keeps standalone dash inside fenced code blocks', 
   }
 })
 
+test('buildRenderableMessages hides a trailing empty Codex markdown fence', () => {
+  const message = makeMessage({
+    id: 'codex-empty-trailing-fence',
+    content: '### Recommended structure\n\n```json\n',
+    meta: { provider: 'codex' },
+  })
+
+  const result = buildRenderableMessages([message])
+
+  assert.equal(result.length, 1)
+  assert.equal(result[0]!.type, 'message')
+  if (result[0]!.type === 'message') {
+    assert.equal(result[0]!.message.content, '### Recommended structure')
+  }
+})
+
+test('buildRenderableMessages keeps populated and completed Codex markdown fences', () => {
+  const populated = makeMessage({
+    id: 'codex-populated-fence',
+    content: '### Recommended structure\n\n```json\n{ "version": 1 }',
+    meta: { provider: 'codex' },
+  })
+  const completed = makeMessage({
+    id: 'codex-completed-fence',
+    content: '```json\n{ "version": 1 }\n```',
+    meta: { provider: 'codex' },
+  })
+
+  const result = buildRenderableMessages([populated, completed])
+
+  assert.equal(result.length, 2)
+  assert.equal(result[0]!.type, 'message')
+  assert.equal(result[1]!.type, 'message')
+  if (result[0]!.type === 'message' && result[1]!.type === 'message') {
+    assert.equal(result[0]!.message.content, populated.content)
+    assert.equal(result[1]!.message.content, completed.content)
+  }
+})
+
 test('buildRenderableMessages removes trailing Claude count residue near tool activity', () => {
   const beforeTool = makeToolMessage('Grep', '搜索文本: targetRule')
   const leaked = makeMessage({

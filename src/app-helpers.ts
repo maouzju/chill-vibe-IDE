@@ -109,6 +109,14 @@ export const getResumeSessionIdForModel = (
   return sessionModel === requestedModel ? card.sessionId : undefined
 }
 
+export const resolveChatReplayMode = (
+  card: Pick<ChatCard, 'provider' | 'contextTransfer'>,
+  resumeSessionId: string | undefined,
+): 'fallback' | 'model-transfer' =>
+  card.provider === 'codex' && card.contextTransfer && !resumeSessionId
+    ? 'model-transfer'
+    : 'fallback'
+
 // An empty send means "continue from here": only allowed when the card already
 // has something to continue (resumable session or user/assistant history) and
 // is not mid-stream. A card holding just a system notice is not continuable.

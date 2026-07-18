@@ -1170,6 +1170,7 @@ export const resetCardSessions = (cards: Record<string, ChatCard>): Record<strin
         sessionId: undefined,
         sessionModel: undefined,
         providerSessions: {},
+        contextTransfer: undefined,
         streamId: undefined,
         status: 'idle',
       },
@@ -1326,6 +1327,7 @@ const createSessionHistoryEntry = (
     title: getSessionHistoryTitle(card),
     sessionId: card.sessionId,
     sessionModel: card.sessionModel,
+    contextTransfer: card.contextTransfer,
     provider: card.provider,
     model: card.model,
     workspacePath,
@@ -1353,6 +1355,10 @@ const matchesCrashArchivedEntry = (
   }
 
   if ((entry.sessionModel ?? '') !== (card.sessionModel ?? '')) {
+    return false
+  }
+
+  if (JSON.stringify(entry.contextTransfer ?? null) !== JSON.stringify(card.contextTransfer ?? null)) {
     return false
   }
 

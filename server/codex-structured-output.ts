@@ -355,40 +355,60 @@ const parseCodexAskUserActivity = (
   try {
     const parsed = JSON.parse(match[1]!) as unknown
 
-    if (!isRecord(parsed) || !Array.isArray(parsed.options)) {
+    if (!isRecord(parsed)) {
       return null
     }
 
-    const question = readString(parsed, 'question')?.trim()
+    const parseQuestion = (value: unknown) => {
+      if (!isRecord(value) || !Array.isArray(value.options)) {
+        return null
+      }
 
-    if (!question) {
-      return null
+      const question = readString(value, 'question')?.trim()
+      if (!question) {
+        return null
+      }
+
+      const options = value.options
+        .map((entry) => {
+          if (!isRecord(entry)) {
+            return null
+          }
+
+          const label = readString(entry, 'label')?.trim()
+          if (!label) {
+            return null
+          }
+
+          return {
+            label,
+            description: readString(entry, 'description')?.trim() ?? '',
+          }
+        })
+        .filter(
+          (
+            entry,
+          ): entry is Extract<StreamActivity, { kind: 'ask-user' }>['options'][number] => entry !== null,
+        )
+
+      if (options.length === 0) {
+        return null
+      }
+
+      return {
+        header: readString(value, 'header')?.trim() ?? '',
+        question,
+        multiSelect: value.multiSelect === true,
+        options,
+      }
     }
 
-    const options = parsed.options
-      .map((entry) => {
-        if (!isRecord(entry)) {
-          return null
-        }
+    const questions = (Array.isArray(parsed.questions) ? parsed.questions : [parsed])
+      .map(parseQuestion)
+      .filter((question): question is NonNullable<ReturnType<typeof parseQuestion>> => question !== null)
 
-        const label = readString(entry, 'label')?.trim()
-
-        if (!label) {
-          return null
-        }
-
-        return {
-          label,
-          description: readString(entry, 'description')?.trim() ?? '',
-        }
-      })
-      .filter(
-        (
-          entry,
-        ): entry is Extract<StreamActivity, { kind: 'ask-user' }>['options'][number] => entry !== null,
-      )
-
-    if (options.length === 0) {
+    const first = questions[0]
+    if (!first) {
       return null
     }
 
@@ -396,10 +416,11 @@ const parseCodexAskUserActivity = (
       itemId,
       kind: 'ask-user',
       status: 'completed',
-      header: readString(parsed, 'header')?.trim() ?? '',
-      question,
-      multiSelect: parsed.multiSelect === true,
-      options,
+      header: first.header,
+      question: first.question,
+      multiSelect: first.multiSelect,
+      options: first.options,
+      ...(questions.length > 1 ? { questions } : {}),
     }
   } catch {
     return null

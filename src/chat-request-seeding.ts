@@ -22,6 +22,8 @@ const MIN_SEEDED_PROMPT_CHARS = 6_000
 const MAX_STRUCTURED_REPLAY_ENTRY_CHARS = 1_100
 const MIN_REPLAY_ENTRY_CHARS = 260
 
+export type ChatReplayMode = 'fallback' | 'model-transfer'
+
 const indentBlock = (value: string, prefix = '  ') =>
   value
     .split('\n')
@@ -286,7 +288,11 @@ type ReplayEntry = {
   protected: boolean
 }
 
-const formatReplayMessage = (language: AppLanguage, message: ChatMessage): ReplayEntry | null => {
+const formatReplayMessage = (
+  language: AppLanguage,
+  message: ChatMessage,
+  mode: ChatReplayMode,
+): ReplayEntry | null => {
   if (!isReplayableMessage(message)) {
     return null
   }
@@ -317,7 +323,8 @@ const formatReplayMessage = (language: AppLanguage, message: ChatMessage): Repla
   sections.push(...structuredSections)
 
   const content = message.content.trim()
-  if (content && shouldResetStreamRecoveryAttemptsForText(content)) {
+  const includesMeaningfulContent = Boolean(content && shouldResetStreamRecoveryAttemptsForText(content))
+  if (includesMeaningfulContent) {
     sections.push(sections.length === 0 ? content : `Content:\n${indentBlock(content)}`)
   }
 
@@ -325,7 +332,9 @@ const formatReplayMessage = (language: AppLanguage, message: ChatMessage): Repla
 
   return {
     text,
-    protected: message.role === 'user' && content.length > MAX_STRUCTURED_REPLAY_ENTRY_CHARS,
+    protected:
+      (mode === 'model-transfer' && includesMeaningfulContent) ||
+      (message.role === 'user' && content.length > MAX_STRUCTURED_REPLAY_ENTRY_CHARS),
   }
 }
 
@@ -495,6 +504,7 @@ export const buildSeededChatPrompt = ({
   messages,
   provider,
   status,
+  mode = 'fallback',
 }: {
   language: AppLanguage
   prompt: string
@@ -502,10 +512,11 @@ export const buildSeededChatPrompt = ({
   messages: ChatMessage[]
   provider?: Provider
   status?: CardStatus
+  mode?: ChatReplayMode
 }) => {
   const replayWindow = getSeedingWindow({ messages, provider, status })
   const transcriptEntries = replayWindow
-    .map((message) => formatReplayMessage(language, message))
+    .map((message) => formatReplayMessage(language, message, mode))
     .filter((entry): entry is ReplayEntry => entry !== null && entry.text.length > 0)
 
   if (transcriptEntries.length === 0) {

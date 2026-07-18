@@ -75,6 +75,38 @@ test('codex runs include the final resolution marker instruction', () => {
   assert.match(instructionsArg, /request_user_input/i)
 })
 
+test('codex ask-user instructions support question groups without a question count limit', () => {
+  const enArgs = buildCodexArgs(
+    createRequest({
+      provider: 'codex',
+      language: 'en',
+      systemPrompt: 'Base.',
+    }),
+    [],
+  )
+  const enInstructions = enArgs.find((arg) => arg.startsWith('instructions=')) ?? ''
+
+  assert.match(enInstructions, /questions/)
+  assert.match(enInstructions, /multiple questions/i)
+  assert.match(enInstructions, /single-question/i)
+  assert.doesNotMatch(enInstructions, /2-3 questions|more than 3 questions/i)
+
+  const zhArgs = buildCodexArgs(
+    createRequest({
+      provider: 'codex',
+      language: 'zh-CN',
+      systemPrompt: 'Base.',
+    }),
+    [],
+  )
+  const zhInstructions = zhArgs.find((arg) => arg.startsWith('instructions=')) ?? ''
+
+  assert.match(zhInstructions, /questions/)
+  assert.match(zhInstructions, /多个问题/)
+  assert.match(zhInstructions, /单题/)
+  assert.doesNotMatch(zhInstructions, /2-3\s*题|最多\s*3\s*题/)
+})
+
 test('codex instructions warn Windows PowerShell not to double-quote patterns with embedded quotes', () => {
   const args = buildCodexArgs(
     createRequest({

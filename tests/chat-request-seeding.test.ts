@@ -493,4 +493,52 @@ describe('chat request seeding', () => {
     assert.doesNotMatch(prompt, /Fork transcript truncated/i)
   })
 
+  it('keeps the full meaningful dialogue when transferring a long conversation to another model', () => {
+    const messages: ChatMessage[] = [
+      createMessage('foundational-user', 'user', 'FOUNDATIONAL GOAL: preserve the simulation design pillars.'),
+      createMessage(
+        'foundational-assistant',
+        'assistant',
+        `FOUNDATIONAL DECISION: the city simulation must stay event-driven. ${'decision-detail '.repeat(120)}`,
+      ),
+      ...Array.from({ length: 80 }, (_, index) =>
+        createMessage(`command-${index + 1}`, 'assistant', '', {
+          kind: 'command',
+          structuredData: JSON.stringify({
+            itemId: `command-${index + 1}`,
+            kind: 'command',
+            status: 'completed',
+            command: `inspect-${index + 1}`,
+            output: `late command output ${index + 1} ${'x'.repeat(900)}`,
+            exitCode: 0,
+          }),
+        }),
+      ),
+      createMessage('latest-user', 'user', 'Continue from every decision above.'),
+    ]
+
+    const fallbackPrompt = buildSeededChatPrompt({
+      language: 'en',
+      prompt: 'Continue.',
+      attachments: [],
+      messages,
+      provider: 'claude',
+      status: 'idle',
+    })
+    const transferPrompt = buildSeededChatPrompt({
+      language: 'en',
+      prompt: 'Continue.',
+      attachments: [],
+      messages,
+      provider: 'claude',
+      status: 'idle',
+      mode: 'model-transfer',
+    })
+
+    assert.doesNotMatch(fallbackPrompt, /FOUNDATIONAL DECISION/)
+    assert.match(transferPrompt, /FOUNDATIONAL GOAL/)
+    assert.match(transferPrompt, /FOUNDATIONAL DECISION/)
+    assert.match(transferPrompt, /Continue from every decision above/)
+  })
+
 })

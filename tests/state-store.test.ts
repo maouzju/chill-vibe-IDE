@@ -537,6 +537,34 @@ describe('state-store persistence', () => {
     assert.equal(loadedCard?.sessionModel, 'claude-opus-4-7')
   })
 
+  it('loadState preserves valid context-transfer anchors and drops malformed ones', async () => {
+    const stateFile = path.join(tmpDir, 'state.json')
+    const state = createDefaultState('D:/context-transfer-normalization')
+    const validCard = getFirstCard(state, 0)
+    const malformedCard = getFirstCard(state, 1)
+    assert.ok(validCard)
+    assert.ok(malformedCard)
+
+    validCard.contextTransfer = {
+      sourceProvider: 'claude',
+      sourceModel: 'claude-fable-5',
+      sourceSessionId: 'fable-session-anchor',
+    }
+    ;(malformedCard as unknown as Record<string, unknown>).contextTransfer = {
+      sourceProvider: 'unknown-provider',
+      sourceModel: '',
+      sourceSessionId: 123,
+    }
+
+    await writeFile(stateFile, JSON.stringify(state, null, 2), 'utf8')
+
+    const { loadState } = await import('../server/state-store.ts')
+    const loaded = await loadState()
+
+    assert.deepEqual(getFirstCard(loaded, 0)?.contextTransfer, validCard.contextTransfer)
+    assert.equal(getFirstCard(loaded, 1)?.contextTransfer, undefined)
+  })
+
   it('loadState keeps recoverable streaming session ids even when the chat includes image attachments', async () => {
     const stateFile = path.join(tmpDir, 'state.json')
     const state = createDefaultState('D:/image-session-stream')

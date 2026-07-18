@@ -227,6 +227,117 @@ test('parses synthetic ask-user blocks from Codex assistant messages', () => {
   )
 })
 
+test('parses grouped ask-user blocks from Codex assistant messages', () => {
+  assert.deepEqual(
+    parseCodexResponseEvent({
+      type: 'item.completed',
+      item: {
+        id: 'item_6_grouped',
+        type: 'agent_message',
+        text: `<ask-user-question>${JSON.stringify({
+          questions: [
+            {
+              header: 'Scope',
+              question: 'Which area should I change first?',
+              multiSelect: false,
+              options: [
+                { label: 'Editor', description: 'Start with the editor surface.' },
+                { label: 'Board', description: 'Start with the board layout.' },
+              ],
+            },
+            {
+              header: 'Validation',
+              question: 'How broad should verification be?',
+              multiSelect: false,
+              options: [
+                { label: 'Focused', description: 'Run the narrow proving checks.' },
+                { label: 'Broad', description: 'Run the wider regression sweep.' },
+              ],
+            },
+            {
+              header: 'Ignored',
+              question: '',
+              multiSelect: false,
+              options: [{ label: 'Invalid', description: 'Missing question text.' }],
+            },
+            {
+              header: 'Delivery',
+              question: 'How should I deliver the result?',
+              multiSelect: false,
+              options: [
+                { label: 'Patch', description: 'Leave the verified source changes.' },
+                { label: 'Package', description: 'Also produce a runnable package.' },
+              ],
+            },
+            {
+              header: 'Follow-up',
+              question: 'Should I continue with adjacent cleanup?',
+              multiSelect: false,
+              options: [
+                { label: 'Stop', description: 'Keep the change tightly scoped.' },
+                { label: 'Continue', description: 'Include the adjacent cleanup.' },
+              ],
+            },
+          ],
+        })}</ask-user-question>`,
+      },
+    }),
+    [
+      {
+        type: 'activity',
+        itemId: 'item_6_grouped',
+        kind: 'ask-user',
+        status: 'completed',
+        header: 'Scope',
+        question: 'Which area should I change first?',
+        multiSelect: false,
+        options: [
+          { label: 'Editor', description: 'Start with the editor surface.' },
+          { label: 'Board', description: 'Start with the board layout.' },
+        ],
+        questions: [
+          {
+            header: 'Scope',
+            question: 'Which area should I change first?',
+            multiSelect: false,
+            options: [
+              { label: 'Editor', description: 'Start with the editor surface.' },
+              { label: 'Board', description: 'Start with the board layout.' },
+            ],
+          },
+          {
+            header: 'Validation',
+            question: 'How broad should verification be?',
+            multiSelect: false,
+            options: [
+              { label: 'Focused', description: 'Run the narrow proving checks.' },
+              { label: 'Broad', description: 'Run the wider regression sweep.' },
+            ],
+          },
+          {
+            header: 'Delivery',
+            question: 'How should I deliver the result?',
+            multiSelect: false,
+            options: [
+              { label: 'Patch', description: 'Leave the verified source changes.' },
+              { label: 'Package', description: 'Also produce a runnable package.' },
+            ],
+          },
+          {
+            header: 'Follow-up',
+            question: 'Should I continue with adjacent cleanup?',
+            multiSelect: false,
+            options: [
+              { label: 'Stop', description: 'Keep the change tightly scoped.' },
+              { label: 'Continue', description: 'Include the adjacent cleanup.' },
+            ],
+          },
+        ],
+      },
+    ],
+  )
+})
+
 test('parses failed Codex commands as terminal activities instead of leaving them running', () => {
   assert.deepEqual(
     parseCodexResponseEvent({

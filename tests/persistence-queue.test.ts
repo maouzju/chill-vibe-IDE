@@ -5,16 +5,18 @@ import { createDefaultState } from '../shared/default-state.ts'
 import {
   createQueuedStateSaveScheduler,
   createQueuedPersistenceStateSnapshot,
+  drainStreamRenderBufferActionsForColumn,
   defaultQueuedStateSaveDelayMs,
   enqueueStreamDeltaBufferEntry,
   getLiveChatContentChars,
   getQueuedStateSaveDelayMs,
   getPersistenceVersion,
-  getStreamDeltaFlushIntervalMs,
+  getStreamRenderFlushIntervalMs,
+  getStreamRenderBufferColumnIds,
   getStreamingCardCount,
   isBusyStreamingState,
-  streamActivityFlushIntervalMs,
-  streamDeltaFlushIntervalMs,
+  streamRenderFlushIntervalMs,
+  streamRenderColumnYieldMs,
   takeStreamDeltaBufferEntriesForCard,
   shouldResetQueuedStateSaveTimer,
   shouldPersistActionImmediately,
@@ -78,17 +80,18 @@ describe('persistence queue', () => {
     assert.equal(shouldResetQueuedStateSaveTimer(state), false)
   })
 
-  it('flushes streaming deltas fast enough to read as live typing while still batching per-token renders', () => {
-    assert.equal(streamDeltaFlushIntervalMs, 80)
+  it('flushes one stream fast enough to read as live typing while batching all render work together', () => {
+    assert.equal(streamRenderFlushIntervalMs, 80)
+    assert.equal(streamRenderColumnYieldMs, 50)
   })
 
-  it('backs off renderer delta flushes as more sessions stream concurrently', () => {
-    assert.equal(getStreamDeltaFlushIntervalMs(0), 80)
-    assert.equal(getStreamDeltaFlushIntervalMs(1), 80)
-    assert.equal(getStreamDeltaFlushIntervalMs(2), 120)
-    assert.equal(getStreamDeltaFlushIntervalMs(3), 120)
-    assert.equal(getStreamDeltaFlushIntervalMs(4), 180)
-    assert.equal(getStreamDeltaFlushIntervalMs(7), 180)
+  it('backs off the unified renderer flush as more sessions stream concurrently', () => {
+    assert.equal(getStreamRenderFlushIntervalMs(0), 80)
+    assert.equal(getStreamRenderFlushIntervalMs(1), 80)
+    assert.equal(getStreamRenderFlushIntervalMs(2), 200)
+    assert.equal(getStreamRenderFlushIntervalMs(3), 200)
+    assert.equal(getStreamRenderFlushIntervalMs(4), 500)
+    assert.equal(getStreamRenderFlushIntervalMs(7), 500)
   })
 
   it('keeps interleaved agent-message deltas in separate lossless buffer slots', () => {
@@ -126,8 +129,71 @@ describe('persistence queue', () => {
     assert.equal(buffer.size, 0)
   })
 
-  it('flushes structured stream activities promptly without per-event renders', () => {
-    assert.equal(streamActivityFlushIntervalMs, 250)
+  it('drains one column of text and structured work per reducer batch', () => {
+    const activityMessage = {
+      id: 'tool-1',
+      role: 'assistant' as const,
+      content: '',
+      createdAt: '2026-07-18T00:00:00.000Z',
+    }
+    const deltaBuffer = new Map([
+      ['assistant-a', {
+        columnId: 'column-1',
+        cardId: 'card-1',
+        messageId: 'assistant-a',
+        buffer: 'hello',
+        model: 'gpt-test',
+      }],
+      ['assistant-b', {
+        columnId: 'column-2',
+        cardId: 'card-2',
+        messageId: 'assistant-b',
+        buffer: 'world',
+      }],
+    ])
+    const activityBuffer = new Map([
+      ['card-2', {
+        columnId: 'column-2',
+        cardId: 'card-2',
+        messages: [activityMessage],
+      }],
+    ])
+
+    assert.deepEqual(getStreamRenderBufferColumnIds(deltaBuffer, activityBuffer), [
+      'column-1',
+      'column-2',
+    ])
+    assert.deepEqual(
+      drainStreamRenderBufferActionsForColumn(deltaBuffer, activityBuffer, 'column-2'),
+      [
+        {
+          type: 'appendAssistantDelta',
+          columnId: 'column-2',
+          cardId: 'card-2',
+          messageId: 'assistant-b',
+          delta: 'world',
+          model: undefined,
+        },
+        {
+          type: 'upsertMessages',
+          columnId: 'column-2',
+          cardId: 'card-2',
+          messages: [activityMessage],
+        },
+      ],
+    )
+    assert.deepEqual(drainStreamRenderBufferActionsForColumn(deltaBuffer, activityBuffer, 'column-1'), [
+      {
+        type: 'appendAssistantDelta',
+        columnId: 'column-1',
+        cardId: 'card-1',
+        messageId: 'assistant-a',
+        delta: 'hello',
+        model: 'gpt-test',
+      },
+    ])
+    assert.equal(deltaBuffer.size, 0)
+    assert.equal(activityBuffer.size, 0)
   })
 
   it('backs off queued saves further when several sessions stream at once', () => {

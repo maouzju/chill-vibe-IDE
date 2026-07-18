@@ -1,11 +1,10 @@
-# Provider Run Resource Guard — Tasks
+# Provider Run Resource Forensics — Tasks
 
-- [x] 读取崩溃日志、进程树和多窗性能/恢复文档，确认主进程为无清理硬退出，重启同类负载后代进程约 5 GB。
-- [x] 红测：并发上限只启动前 N 条，释放槽位后 FIFO 启动下一条。
-- [x] 红测：停止排队流后永不补启动；环境变量解析安全回退。
-- [x] 实现 ChatManager provider 启动队列、幂等槽位释放和启动异常收束。
-- [x] 红测并实现 Electron 资源心跳聚合，保留硬退出前的最后资源证据。
-- [x] 更新多窗性能文档与 AGENTS 已知坑。
+- [x] 接受用户校正：VSCode Codex 可稳定并行十几个会话，并发数量不能作为限制理由。
+- [x] 更新 requirements/design，明确恢复无限制即时启动并保留客观心跳。
+- [x] 红测：同步创建 12 条流时 12 条 provider launcher 都立即启动。
+- [x] 红测：启动失败只终止自己的流，不阻塞其他并行流。
+- [x] 删除 ChatManager 并发槽位、FIFO 队列、环境变量和排队文案。
+- [x] 更新多窗性能文档和 AGENTS 已知坑，撤回错误根因表述。
 - [x] 运行针对性测试与 `pnpm test:quality`。
-- [x] 自动构建并校验 Windows zip。
-- [x] 合并回主工作区；用户当前运行的是 `D:\下载\Chill Vibe IDE` 打包版，按运行时安全规则不关闭或替换该工作窗口。当前没有 Chill Vibe 开发实例可重启，且 `5173` 属于 `life-sim`，因此未误启动到其他项目的 renderer。
+- [ ] 自动构建并校验 Windows zip；不关闭用户当前打包版工作窗口。

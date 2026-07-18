@@ -1285,4 +1285,9 @@ test('merged consecutive ask-user questions require answering the later question
 
   await card.locator('.ask-user-option').filter({ hasText: 'Continue' }).click()
   await expect(card.locator('.ask-user-submit')).toBeEnabled()
+  await card.locator('.ask-user-submit').click()
+
+  await expect.poll(() => mock.readRequests()).toContain(
+    'message:[1] Which path should I take? → Fast\n[2] How should I handle the popup question tool? → Continue',
+  )
 })

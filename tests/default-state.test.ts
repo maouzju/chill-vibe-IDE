@@ -319,6 +319,22 @@ describe('default-state helpers', () => {
     assert.equal(normalizeAppSettings({ crossProviderSkillReuseEnabled: false }).crossProviderSkillReuseEnabled, false)
   })
 
+  it('enables Codex destructive-command and isolated-home protection by default', () => {
+    const defaults = createDefaultSettings()
+
+    assert.equal(defaults.codexDestructiveCommandProtectionEnabled, true)
+    assert.equal(defaults.codexIsolatedHomeEnabled, true)
+    assert.equal(normalizeAppSettings({}).codexDestructiveCommandProtectionEnabled, true)
+    assert.equal(normalizeAppSettings({}).codexIsolatedHomeEnabled, true)
+
+    const disabled = normalizeAppSettings({
+      codexDestructiveCommandProtectionEnabled: false,
+      codexIsolatedHomeEnabled: false,
+    } as never) as typeof defaults
+    assert.equal(disabled.codexDestructiveCommandProtectionEnabled, false)
+    assert.equal(disabled.codexIsolatedHomeEnabled, false)
+  })
+
   it('normalizes the system prompt with the built-in default fallback', () => {
     assert.equal(createDefaultSettings().systemPrompt, defaultSystemPrompt)
     assert.equal(normalizeAppSettings({}).systemPrompt, defaultSystemPrompt)

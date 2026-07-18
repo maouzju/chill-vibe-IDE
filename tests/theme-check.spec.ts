@@ -1164,6 +1164,31 @@ const createStreamingStructuredCommandGroupState = (): AppState => {
   return state
 }
 
+const createWindowedStreamingStructuredCommandGroupState = (): AppState => {
+  const state = createMockState()
+  state.settings.language = 'en'
+  state.columns[0]!.cards[0]!.status = 'streaming'
+  state.columns[0]!.cards[0]!.messages = Array.from({ length: 65 }, (_, index) => ({
+    id: `command-windowed-${index}`,
+    role: 'assistant' as const,
+    content: '',
+    createdAt: new Date(index + 1).toISOString(),
+    meta: {
+      provider: 'codex' as const,
+      kind: 'command' as const,
+      structuredData: JSON.stringify({
+        itemId: `command-windowed-${index}`,
+        status: index === 64 ? 'in_progress' : 'completed',
+        command: `echo command-${index}`,
+        output: '',
+        exitCode: index === 64 ? null : 0,
+      }),
+    },
+  }))
+
+  return state
+}
+
 const createClaudeStructuredChatState = (): AppState => {
   const state = createMockState()
   state.columns[0]!.provider = 'claude'
@@ -2737,6 +2762,43 @@ for (const scenario of [
 }
 
 for (const theme of ['dark', 'light'] as const) {
+  test(`Agent destructive-command protection settings stay clear in ${theme} theme`, async ({ page }) => {
+    const state = createMockState()
+    state.settings.language = theme === 'dark' ? 'zh-CN' : 'en'
+    state.settings.theme = theme
+
+    await page.setViewportSize({ width: 1280, height: 960 })
+    await mockAppApis(page, { state })
+    await page.goto(appUrl)
+    await page.locator('.card-shell').first().waitFor()
+
+    const settingsPanel = page.locator('#app-panel-settings')
+    const safetyGroupTitle = theme === 'dark' ? 'Agent 安全防护' : 'Agent Safety'
+    const safetyGroup = settingsPanel
+      .locator('.settings-group:visible')
+      .filter({ has: page.getByRole('heading', { name: safetyGroupTitle, exact: true }) })
+      .first()
+    const safetySettings = safetyGroup.locator('.codex-safety-settings:visible').first()
+
+    await page.locator('#app-tab-settings').click()
+    await expect(settingsPanel).toBeVisible()
+    await expect(page.locator('html')).toHaveAttribute('data-theme', theme)
+    await expect(safetyGroup).toBeVisible()
+    await expect(safetySettings.locator('input[type="checkbox"]')).toHaveCount(2)
+    await expect(safetySettings.locator('input[type="checkbox"]').first()).toBeChecked()
+    await expect(safetySettings.locator('input[type="checkbox"]').last()).toBeChecked()
+    await expect(safetySettings).toContainText(
+      theme === 'dark' ? '阻止 Agent 高风险删除命令' : 'Block high-risk Agent deletion commands',
+    )
+    await expect(safetySettings).toContainText(
+      theme === 'dark' ? '使用隔离的 Codex Agent 主目录' : 'Use an isolated Codex Agent home',
+    )
+    await expect(safetySettings).toHaveScreenshot(`codex-safety-settings-${theme}.png`, {
+      animations: 'disabled',
+      caret: 'hide',
+    })
+  })
+
   test(`model prompt rules editor stays legible in ${theme} theme`, async ({ page }) => {
     const state = createMockState()
     state.settings.language = theme === 'dark' ? 'zh-CN' : 'en'
@@ -2919,7 +2981,7 @@ test('settings panel flows category cards through two waterfall columns in both 
 
   await settingsTab.click()
   await expect(settingsPanel).toBeVisible()
-  await expect(settingsGroups).toHaveCount(8)
+  await expect(settingsGroups).toHaveCount(9)
   await expect(
     settingsPanel.getByLabel(/Codex Agent 人格|Codex Agent personality/).first(),
   ).toHaveValue('default')
@@ -2980,7 +3042,7 @@ test('settings panel stacks category cards cleanly on a narrow viewport', async 
 
   await settingsTab.click()
   await expect(settingsPanel).toBeVisible()
-  await expect(settingsGroups).toHaveCount(8)
+  await expect(settingsGroups).toHaveCount(9)
 
   const [firstGroupRect, secondGroupRect] = await Promise.all([
     readRect(settingsGroups.nth(0)),
@@ -4634,6 +4696,42 @@ test('streaming structured command groups avoid duplicate inline cursors across 
     animations: 'disabled',
     caret: 'hide',
   })
+})
+
+test('windowed structured tool groups reveal older activity quietly across themes', async ({ page }) => {
+  await page.setViewportSize({ width: 560, height: 800 })
+  await mockAppApis(page, { state: createWindowedStreamingStructuredCommandGroupState() })
+  await page.goto(appUrl)
+
+  const commandGroup = page.locator('.structured-command-group').first()
+  const commandRows = commandGroup.locator('.structured-command-inline-row')
+  const windowNote = commandGroup.locator('.structured-group-window-note')
+  const revealButton = windowNote.locator('.structured-group-reveal-button')
+  const settingsTab = page.locator('#app-tab-settings')
+  const ambienceTab = page.locator('#app-tab-ambience')
+  const lightThemeButton = page.locator('#app-panel-settings .theme-toggle').first().locator('.theme-chip').first()
+
+  await expect(commandRows).toHaveCount(60)
+  await expect(windowNote).toContainText('5 earlier activities hidden')
+  await expect(revealButton).toHaveText('Show 5 earlier')
+  await expect(windowNote).toHaveScreenshot('structured-group-window-note-dark.png', {
+    animations: 'disabled',
+    caret: 'hide',
+  })
+
+  await settingsTab.click()
+  await lightThemeButton.click()
+  await expect(page.locator('html')).toHaveAttribute('data-theme', 'light')
+  await ambienceTab.click()
+
+  await expect(windowNote).toHaveScreenshot('structured-group-window-note-light.png', {
+    animations: 'disabled',
+    caret: 'hide',
+  })
+
+  await revealButton.click()
+  await expect(commandRows).toHaveCount(65)
+  await expect(windowNote).toHaveCount(0)
 })
 
 test('streaming plain replies keep inline cursor blocks out of the transcript across themes', async ({ page }) => {

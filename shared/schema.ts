@@ -519,6 +519,8 @@ export const appSettingsSchema = z.object({
   modelPromptRules: z.array(modelPromptRuleSchema).default([]),
   codexPersonality: codexPersonalitySettingSchema.default('default'),
   codexFastMode: z.boolean().default(false),
+  codexDestructiveCommandProtectionEnabled: z.boolean().default(true),
+  codexIsolatedHomeEnabled: z.boolean().default(true),
   requestModels: requestModelSettingsSchema.default({
     codex: DEFAULT_CODEX_MODEL,
     claude: DEFAULT_CLAUDE_MODEL,
@@ -611,6 +613,8 @@ export const appStateSchema = z.object({
     modelPromptRules: [],
     codexPersonality: 'default',
     codexFastMode: false,
+    codexDestructiveCommandProtectionEnabled: true,
+    codexIsolatedHomeEnabled: true,
     requestModels: {
       codex: DEFAULT_CODEX_MODEL,
       claude: DEFAULT_CLAUDE_MODEL,
@@ -814,6 +818,8 @@ export const chatRequestSchema = z.object({
   sandboxMode: codexSandboxModeSchema.optional(),
   approvalPolicy: codexApprovalPolicySchema.optional(),
   networkAccessEnabled: z.boolean().optional(),
+  codexDestructiveCommandProtectionEnabled: z.boolean().default(true),
+  codexIsolatedHomeEnabled: z.boolean().default(true),
   personality: codexPersonalitySchema.optional(),
   serviceTier: z.literal('priority').optional(),
 }).refine((value) => {
@@ -825,7 +831,16 @@ export const chatRequestSchema = z.object({
 }, {
   message: 'A prompt or image attachment is required.',
 })
-export type ChatRequest = z.infer<typeof chatRequestSchema>
+type ParsedChatRequest = z.infer<typeof chatRequestSchema>
+export type ChatRequest = Omit<
+  ParsedChatRequest,
+  'codexDestructiveCommandProtectionEnabled' | 'codexIsolatedHomeEnabled'
+> & Partial<
+  Pick<
+    ParsedChatRequest,
+    'codexDestructiveCommandProtectionEnabled' | 'codexIsolatedHomeEnabled'
+  >
+>
 
 // 手机远程监工的写命令：由手机页面 POST 到主进程的监工服务，再转发进渲染
 // 进程复用电脑端同一条 handler 路径执行（渲染进程是 board state 唯一主人）。

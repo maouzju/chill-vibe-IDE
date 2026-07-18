@@ -10,12 +10,13 @@
 1. Sanitize incoming app state.
 2. Keep routine renderer preview saves lightweight: do not enumerate or hydrate every `session-history/` sidecar during ordinary board saves.
 3. Merge lightweight renderer previews only with an already-full in-process cache when available; otherwise preserve existing sidecars and leave previews lightweight.
-4. Write complete incoming archived entries to `session-history/` files.
+4. Write complete incoming archived entries to a sibling temporary file, then atomically rename it over the `session-history/` target. Never trim archived messages before this first durable write.
 5. Write `state.json` with `renderSessionHistoryForRenderer(...)` output only.
 6. Cache the lightweight state so ordinary settings/provider reads do not hydrate archived transcripts.
 7. When several chats are streaming or live transcripts are already large, batch renderer saves into a wider window and compact oversized `structuredData` before crossing the Electron IPC bridge.
 8. Streaming assistant text deltas and structured activity events are coalesced in the renderer before mutating React state, so command/reasoning-heavy runs do not force a board re-render and queued persistence pass for every single stream event.
 9. If queued saves keep replacing each other or individual writes become slow, open the state-save circuit breaker: delay the next write, keep only the newest pending state, and throttle routine snapshots while the circuit is open.
+10. Assign monotonic revisions to queued and immediate saves. A queued revision older than the latest immediate save is discarded before writing; explicit reset uses an intentional-empty override so data-loss protection does not turn reset into a false success.
 
 ## Load flow
 

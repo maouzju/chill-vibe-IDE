@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises'
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import os from 'node:os'
@@ -50,6 +50,52 @@ test('ensureWithinWorkspace allows absolute paths under ~/.codex/', () => {
   const codexSessionFile = path.join(os.homedir(), '.codex', 'sessions', 'log.md')
   const result = ensureWithinWorkspace(workspace, codexSessionFile)
   assert.equal(result, codexSessionFile)
+})
+
+test('workspace file reads reject directory links that escape the workspace', async (t) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'chill-vibe-file-link-boundary-'))
+  const workspace = path.join(root, 'workspace')
+  const outside = path.join(root, 'outside')
+  await mkdir(workspace)
+  await mkdir(outside)
+  await writeFile(path.join(outside, 'secret.txt'), 'outside-secret', 'utf8')
+  await symlink(outside, path.join(workspace, 'linked-outside'), process.platform === 'win32' ? 'junction' : 'dir')
+
+  t.after(async () => {
+    await rm(root, { recursive: true, force: true })
+  })
+
+  await assert.rejects(
+    readWorkspaceFile({
+      workspacePath: workspace,
+      relativePath: 'linked-outside/secret.txt',
+    }),
+    /Path traversal is not allowed/,
+  )
+})
+
+test('workspace file writes reject directory links that escape the workspace', async (t) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'chill-vibe-file-link-write-boundary-'))
+  const workspace = path.join(root, 'workspace')
+  const outside = path.join(root, 'outside')
+  await mkdir(workspace)
+  await mkdir(outside)
+  await writeFile(path.join(outside, 'secret.txt'), 'outside-secret', 'utf8')
+  await symlink(outside, path.join(workspace, 'linked-outside'), process.platform === 'win32' ? 'junction' : 'dir')
+
+  t.after(async () => {
+    await rm(root, { recursive: true, force: true })
+  })
+
+  await assert.rejects(
+    writeWorkspaceFile({
+      workspacePath: workspace,
+      relativePath: 'linked-outside/secret.txt',
+      content: 'overwritten',
+      encoding: 'utf8',
+    }),
+    /Path traversal is not allowed/,
+  )
 })
 
 test(

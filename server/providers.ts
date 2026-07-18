@@ -66,6 +66,11 @@ import type { ResilientProxyRuntimeConfig } from './resilient-proxy.js'
 import { resilientProxyPool } from './resilient-proxy.js'
 import { createArchiveRecallRuntimeOverrides, getCodexArchiveRecallInstruction } from './archive-recall.js'
 import {
+  ensureCodexSafetyHookTrusted,
+  prepareCodexSafetyRuntime,
+  prepareDestructiveCommandGuardRuntime,
+} from './codex-safety.js'
+import {
   ClaudeSessionPool,
   type ClaudeSessionPoolEntryView,
   type ClaudeTurnAttachment,
@@ -208,8 +213,8 @@ const getRequestBaseSystemPrompt = (request: ChatRequest) =>
 
 const getCodexAskUserQuestionInstruction = (language: AppLanguage) =>
   normalizeLanguage(language) === 'en'
-    ? 'In this Chill Vibe Codex exec environment, the native request_user_input tool is unavailable. When you must ask the user to choose before you can continue safely, do not call request_user_input and do not ask a plain-text multiple-choice question. Instead, reply with only one XML block in this exact shape and no extra text: <ask-user-question>{"header":"Short title","question":"One concise question","multiSelect":false,"options":[{"label":"Option A","description":"Short tradeoff"},{"label":"Option B","description":"Short tradeoff"}]}</ask-user-question>. Use 2-3 options, keep labels short, omit any Other option, and wait for the next user reply after emitting the block.'
-    : '在这个 Chill Vibe 的 Codex exec 运行环境里，原生 request_user_input 工具不可用。当你必须在继续之前让用户做选择时，不要调用 request_user_input，也不要用普通文本写多选题。而是只输出一个完整的 XML 块，并且不要加任何其他文本：<ask-user-question>{"header":"简短标题","question":"一句简洁问题","multiSelect":false,"options":[{"label":"选项 A","description":"简短权衡"},{"label":"选项 B","description":"简短权衡"}]}</ask-user-question>。选项保持 2-3 个，label 要简短，不要自己加 Other，并在输出这个块后等待用户下一条回复。'
+    ? 'In this Chill Vibe Codex exec environment, the native request_user_input tool is unavailable. When you must ask the user to choose before you can continue safely, do not call request_user_input and do not ask a plain-text multiple-choice question. Reply with only one complete XML block and no extra text. For one question, use this single-question shape: <ask-user-question>{"header":"Short title","question":"One concise question","multiSelect":false,"options":[{"label":"Option A","description":"Short tradeoff"},{"label":"Option B","description":"Short tradeoff"}]}</ask-user-question>. When multiple questions can be answered together, use this grouped shape: <ask-user-question>{"questions":[{"header":"First title","question":"First concise question","multiSelect":false,"options":[{"label":"Option A","description":"Short tradeoff"},{"label":"Option B","description":"Short tradeoff"}]},{"header":"Second title","question":"Second concise question","multiSelect":false,"options":[{"label":"Option A","description":"Short tradeoff"},{"label":"Option B","description":"Short tradeoff"}]}]}</ask-user-question>. The question group has no count limit. Use 2-3 options per question, keep labels short, omit any Other option, keep multiSelect false, and wait for the next user reply after emitting the block.'
+    : '在这个 Chill Vibe 的 Codex exec 运行环境里，原生 request_user_input 工具不可用。当你必须在继续之前让用户做选择时，不要调用 request_user_input，也不要用普通文本写多选题。只输出一个完整的 XML 块，不要添加任何其他文本。只有一个问题时，使用这个单题格式：<ask-user-question>{"header":"简短标题","question":"一句简洁问题","multiSelect":false,"options":[{"label":"选项 A","description":"简短权衡"},{"label":"选项 B","description":"简短权衡"}]}</ask-user-question>。有多个问题可以一起回答时，使用这个题组格式：<ask-user-question>{"questions":[{"header":"第一题标题","question":"第一句简洁问题","multiSelect":false,"options":[{"label":"选项 A","description":"简短权衡"},{"label":"选项 B","description":"简短权衡"}]},{"header":"第二题标题","question":"第二句简洁问题","multiSelect":false,"options":[{"label":"选项 A","description":"简短权衡"},{"label":"选项 B","description":"简短权衡"}]}]}</ask-user-question>。题组数量不设上限；每题保持 2-3 个选项，label 要简短，不要自己添加 Other，multiSelect 保持 false，并在输出这个块后等待用户下一条回复。'
 
 const getCodexWindowsShellSafetyInstruction = () =>
   'Windows shell safety: shell commands run in PowerShell. If a command argument contains double quotes (for example ripgrep patterns that search JSON such as name": "value), wrap that argument in single quotes or use a here-string/script file. Do not put unescaped embedded double quotes inside a double-quoted PowerShell argument; it causes ParserError: TerminatorExpectedAtEndOfString. Prefer rg --fixed-strings for literal JSON/key searches.'
@@ -1500,13 +1505,22 @@ const launchCodexAppServerRun = async (
     return null
   }
 
+  let safetyRuntime
+  try {
+    safetyRuntime = await prepareCodexSafetyRuntime(request, runtime.args, runtime.env)
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Unable to prepare Codex safety protection.'
+    sink.onError(message, 'env-setup')
+    return null
+  }
+
   const child = await spawnProvider(
     'codex',
-    buildCodexAppServerArgs(runtime.args),
+    buildCodexAppServerArgs(safetyRuntime.args),
     request.workspacePath,
     sink,
     language,
-    runtime.env,
+    safetyRuntime.env,
     { stdin: 'pipe' },
   )
 
@@ -2128,6 +2142,21 @@ const launchCodexAppServerRun = async (
       })
       await sendNotification('initialized')
 
+      if (safetyRuntime.hookCommand) {
+        try {
+          await ensureCodexSafetyHookTrusted({
+            sendRequest,
+            workspacePath: request.workspacePath,
+            hookCommand: safetyRuntime.hookCommand,
+            language,
+          })
+        } catch (error) {
+          const message = error instanceof Error ? error.message : 'Codex safety initialization failed.'
+          finishWithError(message, 'env-setup')
+          return
+        }
+      }
+
       const threadResponse = await startThread()
 
       const threadRecord = isRecord(threadResponse) ? readRecord(threadResponse, 'thread') : null
@@ -2629,11 +2658,43 @@ const launchClaudeRun = async (
 ) => {
   const cardId = request.cardId?.trim()
 
-  if (pool && cardId && isClaudeKeepaliveEnabled()) {
-    return launchClaudeKeepaliveRun(request, sink, language, runtime, attachmentPaths, pool, cardId)
+  let safetyRuntime
+  try {
+    safetyRuntime = await prepareDestructiveCommandGuardRuntime(request, runtime.env)
+  } catch (error) {
+    const message = error instanceof Error
+      ? error.message
+      : 'Unable to prepare Claude destructive-command protection.'
+    sink.onError(message, 'env-setup')
+    return null
   }
 
-  return launchClaudeSingleShotRun(request, sink, language, runtime, attachmentPaths)
+  const preparedRuntime = {
+    ...runtime,
+    env: safetyRuntime.env,
+  }
+
+  if (pool && cardId && isClaudeKeepaliveEnabled()) {
+    return launchClaudeKeepaliveRun(
+      request,
+      sink,
+      language,
+      preparedRuntime,
+      attachmentPaths,
+      pool,
+      cardId,
+      safetyRuntime.hookCommand,
+    )
+  }
+
+  return launchClaudeSingleShotRun(
+    request,
+    sink,
+    language,
+    preparedRuntime,
+    attachmentPaths,
+    safetyRuntime.hookCommand,
+  )
 }
 
 const launchClaudeSingleShotRun = async (
@@ -2642,6 +2703,7 @@ const launchClaudeSingleShotRun = async (
   language: AppLanguage,
   runtime: ProviderRuntime,
   attachmentPaths: string[],
+  safetyHookCommand?: string,
 ) => {
   const managedChild = createManagedChildHandle()
   let currentRequest = request
@@ -2651,7 +2713,10 @@ const launchClaudeSingleShotRun = async (
   const startClaudeAttempt = async (includeEffort: boolean) => {
     const args = [
       ...runtime.args,
-      ...buildClaudeArgs(currentRequest, attachmentPaths, { includeEffort }),
+      ...buildClaudeArgs(currentRequest, attachmentPaths, {
+        includeEffort,
+        safetyHookCommand,
+      }),
     ]
 
     const child = await spawnProvider(
@@ -2775,10 +2840,12 @@ const launchClaudeSingleShotRun = async (
 // follow-up turn. User messages are written to stdin as stream-json lines.
 // ---------------------------------------------------------------------------
 
-const buildClaudeKeepaliveSignature = (
+export const buildClaudeKeepaliveSignature = (
   request: ChatRequest,
   includeEffort: boolean,
   runtime: ProviderRuntime,
+  attachmentPaths: string[] = [],
+  safetyHookCommand?: string,
 ) =>
   JSON.stringify({
     workspace: request.workspacePath,
@@ -2795,6 +2862,14 @@ const buildClaudeKeepaliveSignature = (
     modelPromptRules: request.modelPromptRules,
     skills: request.crossProviderSkillReuseEnabled !== false,
     runtimeArgs: runtime.args,
+    runtimeEnv: Object.fromEntries(Object.entries(runtime.env).sort(([left], [right]) => left.localeCompare(right))),
+    attachmentDirectories: dedupeResolvedPaths(
+      attachmentPaths
+        .filter((attachmentPath) => attachmentPath.trim().length > 0)
+        .map((attachmentPath) => resolvePath(dirname(attachmentPath))),
+    ),
+    destructiveCommandProtection: request.codexDestructiveCommandProtectionEnabled === true,
+    safetyHookCommand: safetyHookCommand ?? '',
   })
 
 const launchClaudeKeepaliveRun = async (
@@ -2805,6 +2880,7 @@ const launchClaudeKeepaliveRun = async (
   attachmentPaths: string[],
   pool: ClaudeSessionPool,
   cardId: string,
+  safetyHookCommand?: string,
 ) => {
   const managedChild = createManagedChildHandle()
   let currentRequest = request
@@ -2812,7 +2888,13 @@ const launchClaudeKeepaliveRun = async (
   let staleSessionFallbackAttempted = false
 
   const startAttempt = async (includeEffort: boolean): Promise<boolean> => {
-    const signature = buildClaudeKeepaliveSignature(currentRequest, includeEffort, runtime)
+    const signature = buildClaudeKeepaliveSignature(
+      currentRequest,
+      includeEffort,
+      runtime,
+      attachmentPaths,
+      safetyHookCommand,
+    )
 
     const acquired = await pool.acquireForTurn({
       key: cardId,
@@ -2824,6 +2906,7 @@ const launchClaudeKeepaliveRun = async (
           ...buildClaudeArgs(currentRequest, attachmentPaths, {
             includeEffort,
             streamingInput: true,
+            safetyHookCommand,
           }),
         ]
 
@@ -2864,12 +2947,12 @@ const launchClaudeKeepaliveRun = async (
       request: currentRequest,
       sink,
       language,
-      killChild: () => pool.releaseEntry(cardId),
+      killChild: () => pool.releaseEntry(cardId, child),
       onSettled: () => {
         managedChild.setActiveChild(null)
-        pool.endTurn(cardId)
+        pool.endTurn(cardId, child)
       },
-      onSessionId: (sessionId) => pool.updateSessionId(cardId, sessionId),
+      onSessionId: (sessionId) => pool.updateSessionId(cardId, sessionId, child),
     })
 
     pool.beginTurn(cardId, {
@@ -2922,7 +3005,7 @@ const launchClaudeKeepaliveRun = async (
 
         parser.handleProcessClosed(code)
       },
-    })
+    }, child)
 
     const prompt = getClaudePrompt(currentRequest, attachmentPaths)
     const written = pool.writeUserMessage(
@@ -2931,11 +3014,12 @@ const launchClaudeKeepaliveRun = async (
         type: 'user',
         message: { role: 'user', content: [{ type: 'text', text: prompt }] },
       }),
+      child,
     )
 
     if (!written) {
       parser.cancel()
-      pool.releaseEntry(cardId)
+      pool.releaseEntry(cardId, child)
       managedChild.setActiveChild(null)
       const message = formatProviderUnexpectedCompletion(language, currentRequest.provider)
       sink.onError(message, undefined, classifyProviderStreamErrorRecovery(currentRequest, message))
@@ -3161,6 +3245,7 @@ export const buildClaudeArgs = (
     // over stdin (`--input-format stream-json`) instead of a one-shot argv
     // prompt, so background tasks survive the turn and can wake the agent.
     streamingInput?: boolean
+    safetyHookCommand?: string
   },
 ) => {
   const args = ['-p', '--verbose', '--output-format', 'stream-json', '--include-partial-messages']
@@ -3178,6 +3263,9 @@ export const buildClaudeArgs = (
   )
   const ultracodeActive = !thinkingDisabled && isUltracodeEffort(request.reasoningEffort)
   const permissionMode = request.planMode ? 'plan' : 'bypassPermissions'
+  const safetyHookCommand = request.codexDestructiveCommandProtectionEnabled === true
+    ? options?.safetyHookCommand
+    : undefined
   const additionalDirectories = resolveClaudeAdditionalDirectories({
     ...options,
     attachmentPaths,
@@ -3205,6 +3293,35 @@ export const buildClaudeArgs = (
       // Older CLIs treat unknown settings keys as a warning, degrading to
       // plain xhigh.
       ...(ultracodeActive ? { ultracode: true } : {}),
+      ...(safetyHookCommand
+        ? {
+            hooks: {
+              PreToolUse: [
+                {
+                  matcher: 'Bash',
+                  hooks: [
+                    {
+                      type: 'command',
+                      command: process.platform === 'win32' ? 'powershell.exe' : '/bin/sh',
+                      args: process.platform === 'win32'
+                        ? [
+                            '-NoProfile',
+                            '-NonInteractive',
+                            '-ExecutionPolicy',
+                            'Bypass',
+                            '-Command',
+                            safetyHookCommand,
+                          ]
+                        : ['-c', safetyHookCommand],
+                      timeout: 5,
+                      statusMessage: 'Chill Vibe safety check',
+                    },
+                  ],
+                },
+              ],
+            },
+          }
+        : {}),
       permissions: {
         defaultMode: permissionMode,
         ...(additionalDirectories.length > 0

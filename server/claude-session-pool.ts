@@ -27,6 +27,7 @@ export type ClaudeSessionPoolEntryView = {
   key: string
   sessionId: string | null
   meta: Record<string, unknown>
+  child: ClaudeSessionPoolChild
 }
 
 type PoolEntry = {
@@ -60,6 +61,7 @@ const resolveDefaultIdleTimeoutMs = () => {
 
 export class ClaudeSessionPool {
   private readonly entries = new Map<string, PoolEntry>()
+  private readonly acquireGenerations = new Map<string, number>()
   private readonly onUnsolicited: (
     entry: ClaudeSessionPoolEntryView,
     attach: (attachment: ClaudeTurnAttachment) => void,
@@ -97,6 +99,8 @@ export class ClaudeSessionPool {
     spawn: () => Promise<ClaudeSessionPoolChild | null>
     meta?: Record<string, unknown>
   }): Promise<{ child: ClaudeSessionPoolChild; reused: boolean } | null> {
+    const generation = (this.acquireGenerations.get(options.key) ?? 0) + 1
+    this.acquireGenerations.set(options.key, generation)
     const existing = this.entries.get(options.key)
 
     if (existing) {
@@ -118,6 +122,11 @@ export class ClaudeSessionPool {
 
     const child = await options.spawn()
     if (!child) {
+      return null
+    }
+
+    if (this.disposed || this.acquireGenerations.get(options.key) !== generation) {
+      child.kill()
       return null
     }
 
@@ -145,9 +154,9 @@ export class ClaudeSessionPool {
     return { child, reused: false }
   }
 
-  beginTurn(key: string, attachment: ClaudeTurnAttachment) {
+  beginTurn(key: string, attachment: ClaudeTurnAttachment, expectedChild?: ClaudeSessionPoolChild) {
     const entry = this.entries.get(key)
-    if (!entry) {
+    if (!entry || (expectedChild && entry.child !== expectedChild)) {
       return false
     }
 
@@ -160,9 +169,9 @@ export class ClaudeSessionPool {
     return true
   }
 
-  endTurn(key: string) {
+  endTurn(key: string, expectedChild?: ClaudeSessionPoolChild) {
     const entry = this.entries.get(key)
-    if (!entry) {
+    if (!entry || (expectedChild && entry.child !== expectedChild)) {
       return
     }
 
@@ -174,16 +183,21 @@ export class ClaudeSessionPool {
     this.armIdleTimer(entry)
   }
 
-  updateSessionId(key: string, sessionId: string) {
+  updateSessionId(key: string, sessionId: string, expectedChild?: ClaudeSessionPoolChild) {
     const entry = this.entries.get(key)
-    if (entry && sessionId.trim()) {
+    if (entry && (!expectedChild || entry.child === expectedChild) && sessionId.trim()) {
       entry.sessionId = sessionId.trim()
     }
   }
 
-  writeUserMessage(key: string, jsonLine: string) {
+  writeUserMessage(key: string, jsonLine: string, expectedChild?: ClaudeSessionPoolChild) {
     const entry = this.entries.get(key)
-    if (!entry || entry.closed || !entry.child.stdin) {
+    if (
+      !entry ||
+      (expectedChild && entry.child !== expectedChild) ||
+      entry.closed ||
+      !entry.child.stdin
+    ) {
       return false
     }
 
@@ -199,14 +213,20 @@ export class ClaudeSessionPool {
     }
   }
 
-  releaseEntry(key: string) {
+  releaseEntry(key: string, expectedChild?: ClaudeSessionPoolChild) {
     const entry = this.entries.get(key)
-    if (entry) {
+    if (entry && (!expectedChild || entry.child === expectedChild)) {
+      this.invalidatePendingAcquire(key)
       this.removeEntry(entry, { kill: true })
+    } else if (!expectedChild) {
+      this.invalidatePendingAcquire(key)
     }
   }
 
   closeAll() {
+    for (const key of this.acquireGenerations.keys()) {
+      this.invalidatePendingAcquire(key)
+    }
     for (const entry of [...this.entries.values()]) {
       this.removeEntry(entry, { kill: true })
     }
@@ -215,6 +235,10 @@ export class ClaudeSessionPool {
   dispose() {
     this.disposed = true
     this.closeAll()
+  }
+
+  private invalidatePendingAcquire(key: string) {
+    this.acquireGenerations.set(key, (this.acquireGenerations.get(key) ?? 0) + 1)
   }
 
   private wireChild(entry: PoolEntry) {
@@ -248,6 +272,7 @@ export class ClaudeSessionPool {
         key: entry.key,
         sessionId: entry.sessionId,
         meta: entry.meta,
+        child: entry.child,
       }
       this.onUnsolicited(view, (attachment) => this.attachUnsolicited(entry, attachment))
     }

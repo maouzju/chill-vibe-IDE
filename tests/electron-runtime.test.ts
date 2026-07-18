@@ -269,6 +269,20 @@ test('Electron quit flow flushes renderer persistence and waits for queued state
   assert.match(persistenceBody, /window\.addEventListener\('chill-vibe:flush-state-before-quit', handlePageHide\)/)
 })
 
+test('Electron update install flushes renderer and queued main-process state before updater exit', async () => {
+  const mainBody = await readFile(path.join(process.cwd(), 'electron', 'main.ts'), 'utf8')
+
+  assert.match(mainBody, /async function flushStateBeforeUpdate\(\)/)
+  assert.match(
+    mainBody,
+    /flushStateBeforeUpdate[\s\S]+webContents\.send\('app:flush-state-before-quit'\)[\s\S]+desktopBackend\.flushStateWrites\(\)/,
+  )
+  assert.match(
+    mainBody,
+    /ipcMain\.handle\('desktop:install-update',[\s\S]+await flushStateBeforeUpdate\(\)[\s\S]+await installUpdate\(assetPath\)/,
+  )
+})
+
 test('Electron window close keeps renderer alive until persistence flush is scheduled', async () => {
   const mainBody = await readFile(path.join(process.cwd(), 'electron', 'main.ts'), 'utf8')
 

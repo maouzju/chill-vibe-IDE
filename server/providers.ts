@@ -2803,10 +2803,11 @@ const launchClaudeSingleShotRun = async (
 // follow-up turn. User messages are written to stdin as stream-json lines.
 // ---------------------------------------------------------------------------
 
-const buildClaudeKeepaliveSignature = (
+export const buildClaudeKeepaliveSignature = (
   request: ChatRequest,
   includeEffort: boolean,
   runtime: ProviderRuntime,
+  attachmentPaths: string[] = [],
 ) =>
   JSON.stringify({
     workspace: request.workspacePath,
@@ -2823,6 +2824,12 @@ const buildClaudeKeepaliveSignature = (
     modelPromptRules: request.modelPromptRules,
     skills: request.crossProviderSkillReuseEnabled !== false,
     runtimeArgs: runtime.args,
+    runtimeEnv: Object.fromEntries(Object.entries(runtime.env).sort(([left], [right]) => left.localeCompare(right))),
+    attachmentDirectories: dedupeResolvedPaths(
+      attachmentPaths
+        .filter((attachmentPath) => attachmentPath.trim().length > 0)
+        .map((attachmentPath) => resolvePath(dirname(attachmentPath))),
+    ),
   })
 
 const launchClaudeKeepaliveRun = async (
@@ -2840,7 +2847,7 @@ const launchClaudeKeepaliveRun = async (
   let staleSessionFallbackAttempted = false
 
   const startAttempt = async (includeEffort: boolean): Promise<boolean> => {
-    const signature = buildClaudeKeepaliveSignature(currentRequest, includeEffort, runtime)
+    const signature = buildClaudeKeepaliveSignature(currentRequest, includeEffort, runtime, attachmentPaths)
 
     const acquired = await pool.acquireForTurn({
       key: cardId,
@@ -2892,12 +2899,12 @@ const launchClaudeKeepaliveRun = async (
       request: currentRequest,
       sink,
       language,
-      killChild: () => pool.releaseEntry(cardId),
+      killChild: () => pool.releaseEntry(cardId, child),
       onSettled: () => {
         managedChild.setActiveChild(null)
-        pool.endTurn(cardId)
+        pool.endTurn(cardId, child)
       },
-      onSessionId: (sessionId) => pool.updateSessionId(cardId, sessionId),
+      onSessionId: (sessionId) => pool.updateSessionId(cardId, sessionId, child),
     })
 
     pool.beginTurn(cardId, {
@@ -2950,7 +2957,7 @@ const launchClaudeKeepaliveRun = async (
 
         parser.handleProcessClosed(code)
       },
-    })
+    }, child)
 
     const prompt = getClaudePrompt(currentRequest, attachmentPaths)
     const written = pool.writeUserMessage(
@@ -2959,11 +2966,12 @@ const launchClaudeKeepaliveRun = async (
         type: 'user',
         message: { role: 'user', content: [{ type: 'text', text: prompt }] },
       }),
+      child,
     )
 
     if (!written) {
       parser.cancel()
-      pool.releaseEntry(cardId)
+      pool.releaseEntry(cardId, child)
       managedChild.setActiveChild(null)
       const message = formatProviderUnexpectedCompletion(language, currentRequest.provider)
       sink.onError(message, undefined, classifyProviderStreamErrorRecovery(currentRequest, message))

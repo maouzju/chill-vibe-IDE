@@ -334,6 +334,74 @@ test('process exit while idle removes the entry without firing onUnsolicited', a
   pool.dispose()
 })
 
+test('a slower older acquire cannot replace or leak the newer process for the same card', async () => {
+  const pool = createPool()
+  const olderChild = createFakeChild()
+  const newerChild = createFakeChild()
+  let resolveOlder!: () => void
+  let resolveNewer!: () => void
+  const olderGate = new Promise<void>((resolve) => { resolveOlder = resolve })
+  const newerGate = new Promise<void>((resolve) => { resolveNewer = resolve })
+
+  const olderAcquire = pool.acquireForTurn({
+    key: 'card-1',
+    signature: 'sig-old',
+    sessionId: undefined,
+    spawn: async () => {
+      await olderGate
+      return olderChild
+    },
+  })
+  const newerAcquire = pool.acquireForTurn({
+    key: 'card-1',
+    signature: 'sig-new',
+    sessionId: undefined,
+    spawn: async () => {
+      await newerGate
+      return newerChild
+    },
+  })
+
+  resolveNewer()
+  const newerResult = await newerAcquire
+  resolveOlder()
+  const olderResult = await olderAcquire
+
+  assert.equal(newerResult?.child, newerChild)
+  assert.equal(olderResult, null)
+  assert.equal(olderChild.killed, true)
+  assert.equal(pool.beginTurn('card-1', createAttachment().attachment, newerChild), true)
+  pool.dispose()
+})
+
+test('a delayed settled callback from a replaced entry cannot end the new active turn', async () => {
+  const pool = createPool()
+  const oldChild = createFakeChild()
+  const newChild = createFakeChild()
+
+  await pool.acquireForTurn({
+    key: 'card-1',
+    signature: 'sig-old',
+    sessionId: undefined,
+    spawn: async () => oldChild,
+  })
+  pool.beginTurn('card-1', createAttachment().attachment, oldChild)
+
+  await pool.acquireForTurn({
+    key: 'card-1',
+    signature: 'sig-new',
+    sessionId: undefined,
+    spawn: async () => newChild,
+  })
+  pool.beginTurn('card-1', createAttachment().attachment, newChild)
+
+  pool.endTurn('card-1', oldChild)
+
+  assert.equal(pool.isTurnActive('card-1'), true)
+  assert.equal(newChild.killed, false)
+  pool.dispose()
+})
+
 test('a pending unsolicited turn that loses its process replays lines then reports closure', async () => {
   let pendingAttach: ((attachment: ClaudeTurnAttachment) => void) | null = null
   const pool = createPool({

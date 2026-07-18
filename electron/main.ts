@@ -238,6 +238,35 @@ function scheduleQuitAfterFlush() {
   })()
 }
 
+async function flushStateBeforeUpdate() {
+  for (const win of BrowserWindow.getAllWindows()) {
+    if (!win.isDestroyed()) {
+      win.webContents.send('app:flush-state-before-quit')
+    }
+  }
+
+  await new Promise((resolve) => setTimeout(resolve, quitFlushDelayMs))
+
+  let timeout: NodeJS.Timeout | null = null
+  try {
+    await Promise.race([
+      desktopBackend.flushStateWrites(),
+      new Promise<void>((_, reject) => {
+        timeout = setTimeout(
+          () => reject(new Error('Pending state flush timed out before update install.')),
+          quitFlushTimeoutMs,
+        )
+      }),
+    ])
+  } catch (error) {
+    log.warn('[main] Failed to flush pending state before update install.', error)
+  } finally {
+    if (timeout) {
+      clearTimeout(timeout)
+    }
+  }
+}
+
 function getRelaunchArgs(extraArgs: string[] = []) {
   const baseArgs = process.argv.slice(1).filter((value) => value !== clearUserDataArg)
   return [...baseArgs, ...extraArgs]
@@ -772,7 +801,10 @@ function registerDesktopHandlers() {
     })
     return installerPath
   })
-  ipcMain.handle('desktop:install-update', (_event, assetPath: string) => installUpdate(assetPath))
+  ipcMain.handle('desktop:install-update', async (_event, assetPath: string) => {
+    await flushStateBeforeUpdate()
+    await installUpdate(assetPath)
+  })
   ipcMain.handle('desktop:clear-user-data', async () => {
     relaunchToClearUserData()
   })

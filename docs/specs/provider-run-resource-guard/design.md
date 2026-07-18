@@ -19,4 +19,3 @@
 - 移除此前的 `maxConcurrentProviderRuns`、`activeProviderRuns`、`providerStartQueue`、slot 生命周期和排队文案。
 - 删除 `CHILL_VIBE_MAX_CONCURRENT_PROVIDER_RUNS`，避免留下看似可调、实则违背产品定位的行为。
 - 保留资源心跳和启动异常收束，两者不改变正常会话并发能力。
-

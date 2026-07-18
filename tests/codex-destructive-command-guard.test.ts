@@ -20,6 +20,7 @@ const assess = (command: string): CodexSafetyAssessment =>
     tool_input: { command },
   }, {
     platform: 'win32',
+    workspaceRoot: workspace,
     protectedHome: home,
     codexHome,
     appDataDir: appData,
@@ -79,6 +80,7 @@ test('blocks real-home descendants outside the workspace but allows workspace ch
       tool_input: { command },
     }, {
       platform: 'win32',
+      workspaceRoot: nestedWorkspace,
       protectedHome: home,
       codexHome,
       appDataDir: appData,

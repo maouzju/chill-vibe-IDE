@@ -26,8 +26,11 @@ export const buildCodexChatRequestOverrides = (
   provider: Provider,
   settings: CodexChatSettings,
 ): Partial<CodexChatRequestOverrides> => {
-  if (provider !== 'codex') {
-    return {}
+  if (provider === 'claude') {
+    return {
+      codexDestructiveCommandProtectionEnabled:
+        settings.codexDestructiveCommandProtectionEnabled,
+    }
   }
 
   return {

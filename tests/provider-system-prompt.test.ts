@@ -9,6 +9,7 @@ import { chatRequestSchema, type ChatRequest, type StreamActivity } from '../sha
 import { defaultSystemPrompt } from '../shared/system-prompt.ts'
 import {
   buildClaudeArgs,
+  buildClaudeKeepaliveSignature,
   buildCodexArgs,
   buildProviderSystemPrompt,
   isCodexNativeReconnectPlaceholderForTesting,
@@ -310,6 +311,131 @@ test('claude runs pin the permission default mode so spawned subagents inherit i
 
   assert.equal(parsedSettings.permissions?.defaultMode, 'bypassPermissions')
   assert.equal(parsedSettings.skipDangerousModePermissionPrompt, true)
+})
+
+test('Claude safety hook is injected into session settings and keepalive identity', () => {
+  const hookCommand = process.platform === 'win32'
+    ? "& 'D:\\safe path\\pre-tool-use-guard.cmd'"
+    : "'/tmp/safe path/pre-tool-use-guard.sh'"
+  const request = createRequest({
+    provider: 'claude',
+    model: 'claude-sonnet-4-6',
+    language: 'en',
+    codexDestructiveCommandProtectionEnabled: true,
+  })
+  const args = buildClaudeArgs(request, [], { safetyHookCommand: hookCommand })
+  const settingsIndex = args.indexOf('--settings')
+
+  assert.notEqual(settingsIndex, -1)
+  const settings = JSON.parse(args[settingsIndex + 1] ?? '{}') as {
+    hooks?: {
+      PreToolUse?: Array<{
+        matcher?: string
+        hooks?: Array<Record<string, unknown>>
+      }>
+    }
+  }
+  const hookGroup = settings.hooks?.PreToolUse?.[0]
+  const hook = hookGroup?.hooks?.[0]
+  assert.equal(hookGroup?.matcher, 'Bash')
+  assert.equal(hook?.type, 'command')
+  assert.equal(hook?.command, process.platform === 'win32' ? 'powershell.exe' : '/bin/sh')
+  assert.deepEqual(
+    (hook?.args as string[] | undefined)?.slice(-2),
+    process.platform === 'win32' ? ['-Command', hookCommand] : ['-c', hookCommand],
+  )
+  assert.equal(hook?.timeout, 5)
+
+  const enabledSignature = buildClaudeKeepaliveSignature(
+    request,
+    true,
+    { args: [], env: {} },
+    [],
+    hookCommand,
+  )
+  const disabledSignature = buildClaudeKeepaliveSignature(
+    { ...request, codexDestructiveCommandProtectionEnabled: false },
+    true,
+    { args: [], env: {} },
+    [],
+  )
+  assert.notEqual(enabledSignature, disabledSignature)
+
+  const disabledArgs = buildClaudeArgs(
+    { ...request, codexDestructiveCommandProtectionEnabled: false },
+    [],
+    { safetyHookCommand: hookCommand },
+  )
+  const disabledSettings = JSON.parse(
+    disabledArgs[disabledArgs.indexOf('--settings') + 1] ?? '{}',
+  ) as { hooks?: unknown }
+  assert.equal(disabledSettings.hooks, undefined)
+})
+
+test('Claude launch applies and removes the shared destructive-command guard with the setting', async () => {
+  const capturePath = path.join(
+    os.tmpdir(),
+    `chill-vibe-claude-safety-launch-${Date.now()}-${Math.random().toString(36).slice(2)}.jsonl`,
+  )
+
+  try {
+    const enabledOutcome = await withFakeProviderCommand(
+      'claude',
+      buildFakeClaudeSafetyCaptureScript(capturePath),
+      async (workspacePath) =>
+        captureProviderOutcome(
+          createRequest({
+            provider: 'claude',
+            workspacePath,
+            codexDestructiveCommandProtectionEnabled: true,
+          }),
+        ),
+    )
+    const disabledOutcome = await withFakeProviderCommand(
+      'claude',
+      buildFakeClaudeSafetyCaptureScript(capturePath),
+      async (workspacePath) =>
+        captureProviderOutcome(
+          createRequest({
+            provider: 'claude',
+            workspacePath,
+            codexDestructiveCommandProtectionEnabled: false,
+          }),
+        ),
+    )
+
+    assert.deepEqual(enabledOutcome, { kind: 'done' })
+    assert.deepEqual(disabledOutcome, { kind: 'done' })
+
+    const launches = (await readFile(capturePath, 'utf8'))
+      .trim()
+      .split(/\r?\n/)
+      .map((line) => JSON.parse(line) as {
+        argv?: string[]
+        env?: Record<string, string | undefined>
+      })
+    assert.equal(launches.length, 2)
+
+    const enabledSettingsIndex = launches[0]?.argv?.indexOf('--settings') ?? -1
+    const enabledSettings = JSON.parse(
+      launches[0]?.argv?.[enabledSettingsIndex + 1] ?? '{}',
+    ) as { hooks?: { PreToolUse?: unknown[] } }
+    assert.equal(enabledSettings.hooks?.PreToolUse?.length, 1)
+    assert.ok(launches[0]?.env?.hookCommand)
+    assert.ok(launches[0]?.env?.protectedWorkspace)
+    assert.match(launches[0]?.env?.guardScript ?? '', /codex-destructive-command-guard\.js$/)
+
+    const disabledSettingsIndex = launches[1]?.argv?.indexOf('--settings') ?? -1
+    const disabledSettings = JSON.parse(
+      launches[1]?.argv?.[disabledSettingsIndex + 1] ?? '{}',
+    ) as { hooks?: unknown }
+    assert.equal(disabledSettings.hooks, undefined)
+    assert.equal(launches[1]?.env?.hookCommand, undefined)
+    assert.equal(launches[1]?.env?.protectedWorkspace, undefined)
+    assert.equal(launches[1]?.env?.guardScript, undefined)
+  } finally {
+    await rm(capturePath, { force: true }).catch(() => {})
+  }
 })
 
 test('claude runs pre-authorize the resolved global .claude directory for tool access', async () => {
@@ -1902,6 +2028,17 @@ const buildFakeClaudeCapturePromptScript = (capturePath: string) =>
     "const reply = (message) => process.stdout.write(`${JSON.stringify(message)}\\n`)",
     "reply({ type: 'system', subtype: 'init', session_id: 'claude-session-capture' })",
     "reply({ type: 'assistant', message: { content: [{ type: 'text', text: 'Captured prompt' }] } })",
+    "reply({ type: 'result', is_error: false, result: 'ok' })",
+  ].join('\n')
+
+const buildFakeClaudeSafetyCaptureScript = (capturePath: string) =>
+  [
+    "const fs = require('node:fs')",
+    `const capturePath = ${JSON.stringify(capturePath)}`,
+    "fs.appendFileSync(capturePath, `${JSON.stringify({ argv: process.argv.slice(2), env: { hookCommand: process.env.CHILL_VIBE_CODEX_SAFETY_HOOK_COMMAND, protectedWorkspace: process.env.CHILL_VIBE_PROTECTED_WORKSPACE, guardScript: process.env.CHILL_VIBE_CODEX_GUARD_SCRIPT } })}\\n`, 'utf8')",
+    "const reply = (message) => process.stdout.write(`${JSON.stringify(message)}\\n`)",
+    "reply({ type: 'system', subtype: 'init', session_id: 'claude-session-safety-capture' })",
+    "reply({ type: 'assistant', message: { content: [{ type: 'text', text: 'Safety capture complete' }] } })",
     "reply({ type: 'result', is_error: false, result: 'ok' })",
   ].join('\n')
 

@@ -24,4 +24,4 @@
 - [x] 红测：Claude 单次运行和 keepalive 运行在开启时注入 `PreToolUse` / `Bash` Hook 与保护环境，关闭时不注入；设置变化使 keepalive 签名变化。
 - [x] 实现 Claude session-level Hook 注入，复用既有 launcher 与防护判定脚本，不写用户设置文件。
 - [x] 将设置卡与双语文案改为“Agent 安全防护”，明确命令防护覆盖 Codex + Claude、隔离 home 仅覆盖 Codex。
-- [x] 更新架构文档；目标 Node 测试、`pnpm test:quality`、设置卡双主题定向快照及复跑均通过；Claude Code 2.1.206 `doctor` 接受同结构 Hook 设置；`pnpm electron:build` 产出 `dist/release-20260718-130004/Chill Vibe-0.18.8-win.zip` 与 `win-unpacked/Chill Vibe.exe`，打包后防护脚本用 Claude `PreToolUse` 输入验证退出码为 `2`；当前 worktree Electron 开发运行时已重启且 renderer 返回 200。
+- [x] 更新架构文档；目标 Node 测试、`pnpm test:quality`、设置卡双主题定向快照及复跑均通过；Claude Code 2.1.206 `doctor` 接受同结构 Hook 设置；合并后 `pnpm electron:build` 产出 `dist/release-20260718-130825/Chill Vibe-0.18.8-win.zip` 与 `win-unpacked/Chill Vibe.exe`，打包后防护脚本用 Claude `PreToolUse` 输入验证退出码为 `2`；Electron 开发运行时已重启且 renderer 返回 200。

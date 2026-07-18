@@ -18,14 +18,12 @@ const otherWorkspace = 'D:\\Git\\other-project'
 const createHistoryEntry = (
   overrides: Partial<SessionHistoryEntry> & Pick<SessionHistoryEntry, 'id' | 'archivedAt'>,
 ): SessionHistoryEntry => ({
-  id: overrides.id,
   title: overrides.title ?? 'Archived session',
   sessionId: overrides.sessionId,
   provider: overrides.provider ?? 'codex',
   model: overrides.model ?? 'gpt-5.5',
   workspacePath: overrides.workspacePath ?? currentWorkspace,
   messages: overrides.messages ?? [],
-  archivedAt: overrides.archivedAt,
   ...overrides,
 })
 

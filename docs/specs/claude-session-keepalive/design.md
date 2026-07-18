@@ -89,3 +89,10 @@ stream-json 解析复用 providers.ts 现有折叠逻辑（事件类型、stripp
 - **stdin 写入与 CLI 兼容**：本机 CLI 2.1.158 已确认支持 `--input-format stream-json`；fake CLI 集成测试 + 真 CLI 手动冒烟双重验证。
 - **自发 turn 与用户同时发送竞态**：池 sendTurn 仅在 idle 时接受；turn-active 时新用户请求按"不可复用"处理（杀进程起新进程会丢后台任务 —— 但该场景 = 用户在 agent 自发汇报中途发新消息，与现状打断语义一致，可接受）。
 - **泄漏**：closeAll/dispose 必杀全部池进程；BrowserWindow close 清理沿用现有路径（pitfall #112/#136 不触碰）。
+
+## 2026-07-18 lifecycle hardening
+
+- Reuse identity includes the resolved runtime environment and every attachment authorization parent directory. Environment keys are sorted before serialization so equivalent profiles do not cause needless respawns.
+- Every pool mutation may carry the expected child identity. Delayed callbacks from a replaced process are ignored and cannot end, rename, write to, or release the newer process.
+- Concurrent acquisition for one card uses a monotonic generation. If an older spawn resolves after a newer acquisition, the older child is killed and is never installed in the pool.
+- Stop requested before provider launch completes is sticky: a late child is killed immediately rather than escaping stream ownership.

@@ -124,12 +124,20 @@ export const pmStateSchema = z.object({
 })
 export type PmState = z.infer<typeof pmStateSchema>
 
+export const contextTransferSchema = z.object({
+  sourceProvider: providerSchema,
+  sourceModel: z.string().min(1),
+  sourceSessionId: z.string().min(1).optional(),
+})
+export type ContextTransfer = z.infer<typeof contextTransferSchema>
+
 export const chatCardSchema = z.object({
   id: z.string().min(1),
   title: z.string(),
   sessionId: z.string().optional(),
   sessionModel: z.string().optional(),
   providerSessions: z.record(z.string(), z.string()).default({}),
+  contextTransfer: contextTransferSchema.optional(),
   streamId: z.string().min(1).optional(),
   status: cardStatusSchema,
   size: z.number().positive().optional(),
@@ -284,6 +292,7 @@ export const sessionHistoryEntrySchema = z.object({
   title: z.string().min(1),
   sessionId: z.string().optional(),
   sessionModel: z.string().optional(),
+  contextTransfer: contextTransferSchema.optional(),
   provider: providerSchema,
   model: z.string().default(''),
   workspacePath: z.string().min(1),

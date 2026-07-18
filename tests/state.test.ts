@@ -31,6 +31,7 @@ const createCard = (overrides: Partial<ChatCard> = {}): ChatCard => ({
   sessionId: overrides.sessionId,
   sessionModel: overrides.sessionModel,
   providerSessions: overrides.providerSessions ?? {},
+  contextTransfer: overrides.contextTransfer,
   streamId: overrides.streamId,
   status: overrides.status ?? 'idle',
   provider: overrides.provider ?? 'codex',
@@ -343,6 +344,11 @@ describe('ideReducer pane layout', () => {
         id: 'session-history-claude',
         title: 'Claude archived thread',
         sessionId: 'claude-session-1',
+        contextTransfer: {
+          sourceProvider: 'codex',
+          sourceModel: 'gpt-5.6-sol',
+          sourceSessionId: 'codex-return-session',
+        },
         provider: 'claude',
         model: 'claude-sonnet-4-6',
         workspacePath: 'D:/repo/one',
@@ -365,6 +371,7 @@ describe('ideReducer pane layout', () => {
     assert.equal(restoredCard?.provider, 'claude')
     assert.equal(restoredCard?.model, 'claude-sonnet-4-6')
     assert.equal(restoredCard?.sessionId, 'claude-session-1')
+    assert.deepEqual(restoredCard?.contextTransfer, state.sessionHistory[0]?.contextTransfer)
   })
 
   it('imports an external session with its archived provider, model, and session id', () => {
@@ -899,12 +906,22 @@ describe('ideReducer pane layout', () => {
       providerSessions: {
         codex: 'codex-session-saved-old-profile',
       },
+      contextTransfer: {
+        sourceProvider: 'codex',
+        sourceModel: DEFAULT_CODEX_MODEL,
+        sourceSessionId: 'codex-transfer-old-profile',
+      },
     })
     state.sessionHistory = [
       {
         id: 'history-codex-old-profile',
         title: 'Old Codex history',
         sessionId: 'codex-history-session-old-profile',
+        contextTransfer: {
+          sourceProvider: 'codex',
+          sourceModel: DEFAULT_CODEX_MODEL,
+          sourceSessionId: 'codex-history-transfer-old-profile',
+        },
         provider: 'codex',
         model: DEFAULT_CODEX_MODEL,
         workspacePath: 'D:/repo/one',
@@ -926,7 +943,9 @@ describe('ideReducer pane layout', () => {
     })
     assert.equal(next.columns[1]!.cards['card-3']?.sessionId, 'claude-session-active')
     assert.deepEqual(next.columns[1]!.cards['card-3']?.providerSessions, {})
+    assert.equal(next.columns[1]!.cards['card-3']?.contextTransfer, undefined)
     assert.equal(next.sessionHistory[0]?.sessionId, undefined)
+    assert.equal(next.sessionHistory[0]?.contextTransfer, undefined)
   })
 
   it('changes only the selected card and leaves other open chats on their model', () => {
@@ -1139,6 +1158,126 @@ describe('ideReducer pane layout', () => {
       {},
       'saved sessions from other providers also become stale once the active chat switches model',
     )
+  })
+
+  it('anchors a Fable session while switching to Sol and restores it when switching back', () => {
+    const state = createState()
+    state.columns[1]!.cards['card-3'] = createCard({
+      id: 'card-3',
+      title: 'Long-running Fable design chat',
+      provider: 'claude',
+      model: 'claude-fable-5',
+      sessionId: 'fable-session-active',
+      sessionModel: 'claude-fable-5',
+      status: 'idle',
+      streamId: undefined,
+      messages: [
+        {
+          id: 'msg-user-context',
+          role: 'user',
+          content: 'Keep every earlier design decision when changing models.',
+          createdAt: timestamp,
+        },
+      ],
+    })
+
+    const switchedToSol = ideReducer(state, {
+      type: 'selectCardModel',
+      columnId: 'column-2',
+      cardId: 'card-3',
+      provider: 'codex',
+      model: 'gpt-5.6-sol',
+    })
+    const solCard = switchedToSol.columns[1]!.cards['card-3']
+
+    assert.equal(solCard?.sessionId, undefined)
+    assert.deepEqual(solCard?.contextTransfer, {
+      sourceProvider: 'claude',
+      sourceModel: 'claude-fable-5',
+      sourceSessionId: 'fable-session-active',
+    })
+
+    const switchedBack = ideReducer(switchedToSol, {
+      type: 'selectCardModel',
+      columnId: 'column-2',
+      cardId: 'card-3',
+      provider: 'claude',
+      model: 'claude-fable-5',
+    })
+    const restoredFableCard = switchedBack.columns[1]!.cards['card-3']
+
+    assert.equal(restoredFableCard?.sessionId, 'fable-session-active')
+    assert.equal(restoredFableCard?.sessionModel, 'claude-fable-5')
+    assert.equal(restoredFableCard?.contextTransfer, undefined)
+
+    const solSessionEstablished = ideReducer(switchedToSol, {
+      type: 'updateCard',
+      columnId: 'column-2',
+      cardId: 'card-3',
+      patch: {
+        sessionId: 'sol-session-active',
+        sessionModel: 'gpt-5.6-sol',
+      },
+    })
+    const switchedBackAfterSolTurn = ideReducer(solSessionEstablished, {
+      type: 'selectCardModel',
+      columnId: 'column-2',
+      cardId: 'card-3',
+      provider: 'claude',
+      model: 'claude-fable-5',
+    })
+    const fableWithSolReturnAnchor = switchedBackAfterSolTurn.columns[1]!.cards['card-3']
+
+    assert.equal(fableWithSolReturnAnchor?.sessionId, 'fable-session-active')
+    assert.deepEqual(fableWithSolReturnAnchor?.contextTransfer, {
+      sourceProvider: 'codex',
+      sourceModel: 'gpt-5.6-sol',
+      sourceSessionId: 'sol-session-active',
+    })
+  })
+
+  it('does not make an unknown-model legacy session resumable through a transfer anchor', () => {
+    const state = createState()
+    state.columns[1]!.cards['card-3'] = createCard({
+      id: 'card-3',
+      title: 'Legacy Fable chat',
+      provider: 'claude',
+      model: 'claude-fable-5',
+      sessionId: 'legacy-session-without-model-tag',
+      sessionModel: undefined,
+      messages: [
+        {
+          id: 'legacy-user-context',
+          role: 'user',
+          content: 'Preserve this visible context safely.',
+          createdAt: timestamp,
+        },
+      ],
+    })
+
+    const switchedToSol = ideReducer(state, {
+      type: 'selectCardModel',
+      columnId: 'column-2',
+      cardId: 'card-3',
+      provider: 'codex',
+      model: 'gpt-5.6-sol',
+    })
+    const solCard = switchedToSol.columns[1]!.cards['card-3']
+
+    assert.deepEqual(solCard?.contextTransfer, {
+      sourceProvider: 'claude',
+      sourceModel: 'claude-fable-5',
+    })
+
+    const switchedBack = ideReducer(switchedToSol, {
+      type: 'selectCardModel',
+      columnId: 'column-2',
+      cardId: 'card-3',
+      provider: 'claude',
+      model: 'claude-fable-5',
+    })
+
+    assert.equal(switchedBack.columns[1]!.cards['card-3']?.sessionId, undefined)
   })
 
   it('keeps the session when an image-bearing chat switches from an explicit model to the same configured default', () => {
@@ -1740,7 +1879,16 @@ describe('ideReducer pane layout', () => {
         workspacePath: 'D:/repo/one',
         layout: createPane('pane-1', ['card-1', 'card-2'], 'card-1'),
         cards: {
-          'card-1': createCard({ id: 'card-1', title: 'Keep this history', messages: [assistantMessage] }),
+          'card-1': createCard({
+            id: 'card-1',
+            title: 'Keep this history',
+            messages: [assistantMessage],
+            contextTransfer: {
+              sourceProvider: 'claude',
+              sourceModel: 'claude-fable-5',
+              sourceSessionId: 'fable-history-anchor',
+            },
+          }),
           'card-2': createCard({ id: 'card-2', title: 'Empty scratch', messages: [] }),
         },
       }),
@@ -1762,6 +1910,11 @@ describe('ideReducer pane layout', () => {
     assert.equal(next.sessionHistory.length, 1)
     assert.equal(next.sessionHistory[0]?.title, 'Keep this history')
     assert.equal(next.sessionHistory[0]?.workspacePath, 'D:/repo/one')
+    assert.deepEqual(next.sessionHistory[0]?.contextTransfer, {
+      sourceProvider: 'claude',
+      sourceModel: 'claude-fable-5',
+      sourceSessionId: 'fable-history-anchor',
+    })
   })
 
   it('switches the active tab inside a pane', () => {

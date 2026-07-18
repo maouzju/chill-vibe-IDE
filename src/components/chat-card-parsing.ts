@@ -848,6 +848,42 @@ const stripStandaloneEmptyMarkdownBulletResidue = (content: string) => {
   return cleaned.join('\n').trim()
 }
 
+const stripTrailingEmptyMarkdownFenceResidue = (content: string) => {
+  const lines = content.split(/\r?\n/)
+  let openFence: { marker: '`' | '~'; length: number; lineIndex: number } | null = null
+
+  for (let lineIndex = 0; lineIndex < lines.length; lineIndex += 1) {
+    const match = lines[lineIndex]?.match(/^[ \t]{0,3}(`{3,}|~{3,})(.*)$/)
+    if (!match) continue
+
+    const fence = match[1]!
+    const marker = fence[0] as '`' | '~'
+    const suffix = match[2] ?? ''
+
+    if (!openFence) {
+      openFence = { marker, length: fence.length, lineIndex }
+      continue
+    }
+
+    if (
+      marker === openFence.marker &&
+      fence.length >= openFence.length &&
+      suffix.trim().length === 0
+    ) {
+      openFence = null
+    }
+  }
+
+  if (
+    !openFence ||
+    lines.slice(openFence.lineIndex + 1).some((line) => line.trim().length > 0)
+  ) {
+    return content
+  }
+
+  return lines.slice(0, openFence.lineIndex).join('\n').trim()
+}
+
 const stripTrailingClaudeProtocolResidueLines = (
   content: string,
   options: { includeAmbiguousMarkers?: boolean } = {},
@@ -880,23 +916,29 @@ const sanitizeLeakedClaudeCallMarkerContent = (
 
   if (message.meta?.provider !== 'claude') {
     return sanitizedCallMarkerContentCache(`g ${message.content}`, () =>
-      stripStandaloneEmptyMarkdownBulletResidue(
-        sanitizeLeakedCallMarkerLines(message.content),
+      stripTrailingEmptyMarkdownFenceResidue(
+        stripStandaloneEmptyMarkdownBulletResidue(
+          sanitizeLeakedCallMarkerLines(message.content),
+        ),
       ),
     )
   }
 
   const variant = options.includeAmbiguousClaudeMarkers ? 'a' : 'c'
   return sanitizedCallMarkerContentCache(`${variant} ${message.content}`, () => {
-    const withoutCallMarkers = stripStandaloneEmptyMarkdownBulletResidue(
-      sanitizeClaudeProtocolMarkerLines(stripLeakedClaudeToolXml(message.content), {
+    const withoutCallMarkers = stripTrailingEmptyMarkdownFenceResidue(
+      stripStandaloneEmptyMarkdownBulletResidue(
+        sanitizeClaudeProtocolMarkerLines(stripLeakedClaudeToolXml(message.content), {
+          includeAmbiguousMarkers: options.includeAmbiguousClaudeMarkers,
+        }),
+      ),
+    )
+
+    return stripTrailingEmptyMarkdownFenceResidue(
+      stripTrailingClaudeProtocolResidueLines(withoutCallMarkers, {
         includeAmbiguousMarkers: options.includeAmbiguousClaudeMarkers,
       }),
     )
-
-    return stripTrailingClaudeProtocolResidueLines(withoutCallMarkers, {
-      includeAmbiguousMarkers: options.includeAmbiguousClaudeMarkers,
-    })
   })
 }
 

@@ -513,6 +513,14 @@ const formatCodexAgentParamsCompatibilityNotice = (language: AppLanguage) =>
     ? 'Detected an older local Codex CLI that does not support Agent personality or Fast mode. Chill Vibe retried automatically without those optional fields for this run.'
     : '检测到本地 Codex CLI 版本较旧，不支持 Agent 人格或 Fast 模式。Chill Vibe 已自动移除这些可选参数并重试本次请求。'
 
+const formatCodexSandboxRequirementsFallbackNotice = (
+  language: AppLanguage,
+  sandboxMode: CodexSandboxMode,
+) =>
+  language === 'en'
+    ? `Codex requirements denied the requested sandbox. Chill Vibe narrowed this run to ${sandboxMode} without changing your Codex settings.`
+    : `Codex 管理策略不允许原沙箱。本次运行已自动收窄为 ${sandboxMode}，未修改你的 Codex 设置。`
+
 const formatCodexStaleSessionRecoveryNotice = (language: AppLanguage) =>
   language === 'en'
     ? 'The resumed Codex session could not be loaded from its rollout file. Chill Vibe started a new session automatically so your latest prompt and attachments are not lost.'
@@ -1391,6 +1399,12 @@ export const buildCodexAppServerInput = (request: ChatRequest, attachmentPaths: 
 
 type CodexSandboxMode = NonNullable<ChatRequest['sandboxMode']>
 
+const codexSandboxModesByAccess: CodexSandboxMode[] = [
+  'danger-full-access',
+  'workspace-write',
+  'read-only',
+]
+
 const getCodexSandboxMode = (request: ChatRequest): CodexSandboxMode =>
   request.sandboxMode ?? 'danger-full-access'
 
@@ -1398,6 +1412,76 @@ type CodexApprovalPolicy = NonNullable<ChatRequest['approvalPolicy']>
 
 const getCodexApprovalPolicy = (request: ChatRequest): CodexApprovalPolicy =>
   request.approvalPolicy === 'on-request' ? 'on-request' : 'never'
+
+const isCodexSandboxRequirementsConflict = (
+  message: string,
+  sandboxMode: CodexSandboxMode,
+) => {
+  const normalized = message.toLowerCase()
+  return normalized.includes('requirements') &&
+    normalized.includes(sandboxMode) &&
+    (
+      normalized.includes('do not allow') ||
+      normalized.includes('does not allow') ||
+      normalized.includes('not allowed') ||
+      normalized.includes('not permitted') ||
+      normalized.includes('denied')
+    )
+}
+
+const readCodexAllowedSandboxModes = (
+  result: unknown,
+  approvalPolicy: CodexApprovalPolicy,
+): CodexSandboxMode[] | null => {
+  if (!isRecord(result) || !isRecord(result.requirements)) {
+    return null
+  }
+
+  const requirements = result.requirements
+  let constrained = false
+  let allowed = new Set<CodexSandboxMode>(codexSandboxModesByAccess)
+
+  if (Array.isArray(requirements.allowedApprovalPolicies)) {
+    constrained = true
+    const approvalAllowed = requirements.allowedApprovalPolicies.some(
+      (candidate) => candidate === approvalPolicy,
+    )
+    if (!approvalAllowed) {
+      return []
+    }
+  }
+
+  if (Array.isArray(requirements.allowedSandboxModes)) {
+    constrained = true
+    const allowedLegacyModes = new Set(
+      requirements.allowedSandboxModes.filter(
+        (candidate): candidate is CodexSandboxMode =>
+          typeof candidate === 'string' &&
+          codexSandboxModesByAccess.includes(candidate as CodexSandboxMode),
+      ),
+    )
+    allowed = new Set([...allowed].filter((candidate) => allowedLegacyModes.has(candidate)))
+  }
+
+  if (isRecord(requirements.allowedPermissionProfiles)) {
+    constrained = true
+    const profileModes = new Set<CodexSandboxMode>()
+    if (requirements.allowedPermissionProfiles[':danger-full-access'] === true) {
+      profileModes.add('danger-full-access')
+    }
+    if (requirements.allowedPermissionProfiles[':workspace'] === true) {
+      profileModes.add('workspace-write')
+    }
+    if (requirements.allowedPermissionProfiles[':read-only'] === true) {
+      profileModes.add('read-only')
+    }
+    allowed = new Set([...allowed].filter((candidate) => profileModes.has(candidate)))
+  }
+
+  return constrained
+    ? codexSandboxModesByAccess.filter((candidate) => allowed.has(candidate))
+    : null
+}
 
 const buildCodexSandboxPolicy = (request: ChatRequest) => {
   const sandboxMode = getCodexSandboxMode(request)
@@ -1411,7 +1495,7 @@ const buildCodexSandboxPolicy = (request: ChatRequest) => {
     case 'workspace-write':
       return {
         type: 'workspaceWrite',
-        networkAccess: request.networkAccessEnabled ? 'enabled' : 'restricted',
+        networkAccess: request.networkAccessEnabled === true,
         writableRoots: [request.workspacePath],
       } as const
     case 'danger-full-access':
@@ -1814,6 +1898,46 @@ const launchCodexAppServerRun = async (
     })
   }
 
+  const narrowCodexSandboxForRequirementsConflict = async (message: string) => {
+    const currentSandboxMode = getCodexSandboxMode(currentRequest)
+    if (!isCodexSandboxRequirementsConflict(message, currentSandboxMode)) {
+      return false
+    }
+
+    const currentIndex = codexSandboxModesByAccess.indexOf(currentSandboxMode)
+    const narrowerModes = codexSandboxModesByAccess.slice(currentIndex + 1)
+    if (narrowerModes.length === 0) {
+      return false
+    }
+
+    let allowedModes: CodexSandboxMode[] | null = null
+    try {
+      const requirements = await sendRequest('configRequirements/read')
+      allowedModes = readCodexAllowedSandboxModes(
+        requirements,
+        getCodexApprovalPolicy(currentRequest),
+      )
+    } catch {
+      // Older app-server builds do not expose configRequirements/read. In that
+      // case, retry progressively narrower built-in modes and let Codex enforce
+      // the effective local or managed policy.
+    }
+
+    const nextSandboxMode = narrowerModes.find(
+      (candidate) => allowedModes === null || allowedModes.includes(candidate),
+    )
+    if (!nextSandboxMode) {
+      return false
+    }
+
+    currentRequest = {
+      ...currentRequest,
+      sandboxMode: nextSandboxMode,
+    }
+    sink.onLog(formatCodexSandboxRequirementsFallbackNotice(language, nextSandboxMode))
+    return true
+  }
+
   const startTurnWithCompatibilityFallback = async (threadId: string) => {
     let includeEffort = true
     let includeAgentParams = true
@@ -1844,12 +1968,16 @@ const launchCodexAppServerRun = async (
           continue
         }
 
+        if (await narrowCodexSandboxForRequirementsConflict(message)) {
+          continue
+        }
+
         throw error
       }
     }
   }
 
-  const startThread = async () => {
+  const startThreadOnce = async () => {
     if (!currentRequest.sessionId) {
       return await sendRequest('thread/start', buildCodexThreadStartParams(currentRequest, currentRequest.workspacePath))
     }
@@ -1869,6 +1997,20 @@ const launchCodexAppServerRun = async (
       currentRequest = { ...currentRequest, sessionId: undefined }
       emittedSessionId = null
       return await sendRequest('thread/start', buildCodexThreadStartParams(currentRequest, currentRequest.workspacePath))
+    }
+  }
+
+  const startThread = async () => {
+    while (true) {
+      try {
+        return await startThreadOnce()
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error)
+        if (await narrowCodexSandboxForRequirementsConflict(message)) {
+          continue
+        }
+        throw error
+      }
     }
   }
 

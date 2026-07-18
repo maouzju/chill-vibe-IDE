@@ -407,6 +407,7 @@ test('six simultaneous Electron chat streams stay responsive and persist complet
   const startupStartedAt = Date.now()
   const env = createHeadlessElectronRuntimeEnv({
     VITE_DEV_SERVER_URL: getElectronTestRendererUrl(),
+    CHILL_VIBE_OFFSCREEN_RUNTIME_TESTS: '1',
     CHILL_VIBE_DISABLE_SINGLE_INSTANCE_LOCK: '1',
     CHILL_VIBE_ALLOW_SHARED_DATA_DIR: '1',
     CHILL_VIBE_DATA_DIR: dataDir,

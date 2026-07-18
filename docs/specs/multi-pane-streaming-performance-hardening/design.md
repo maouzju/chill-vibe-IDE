@@ -86,15 +86,25 @@
 
 整条 transcript 虚拟化是最后手段。可变高度消息、自动滚动、Ask User、portal、折叠组和历史显示都会提高回归风险，未有证据前不实施。
 
-## 硬件加速策略
+## Windows 合成策略（2026-07-18 实证更新）
 
-硬件加速从初版起被关闭。重新启用可能显著降低软件绘制压力，也可能带来驱动兼容、黑屏或崩溃。
+历史版本从启动起无条件调用 `app.disableHardwareAcceleration()`。真实四流现场中，
+SwiftShader GPU 进程持续占满约一个 CPU 核，随后 `BrowserWindow unresponsive`；同时
+JS 心跳仍健康、调用栈采集连续为空，说明瓶颈在合成/光栅路径而非 JS 热循环。
 
-因此它不与上述修复混在一起：
+- Windows 恢复 Electron 默认硬件加速，把合成和光栅工作交回 GPU；
+- Linux/macOS 暂时维持旧默认，等待各自 soak 证据；
+- `CHILL_VIBE_DISABLE_HARDWARE_ACCELERATION=1` 可回退软件渲染；
+- `CHILL_VIBE_ENABLE_HARDWARE_ACCELERATION=1` 可用于非 Windows 实验。
 
-- 只做独立环境开关实验；
-- 收集 GPU 型号、启动成功率、黑屏/崩溃和性能对比；
-- 未覆盖常用 Windows 机器前不改默认值。
+压力门禁使用隐藏离屏窗口并消费 paint 帧，避免原先“隐藏窗口不产生真实绘制”的假绿。
+离屏位图回读限制为 15fps，避免测试自身用 60fps CPU 拷贝制造非生产瓶颈。
+
+## 阶段 2 落地：单 lane、按列切片的统一流式调度
+
+delta 与 activity 不再各自启动定时器。统一调度器一次只提交一个 column 的动作批次，
+列之间让出 50ms；多流时刷新间隔自适应为 80/200/500ms。这样既不恢复
+`startTransition`，也避免六列同时换引用后在同一帧触发整板布局/绘制。
 
 ## 验证矩阵
 

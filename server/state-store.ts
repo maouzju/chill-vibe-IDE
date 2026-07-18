@@ -197,11 +197,15 @@ const writeSessionHistorySidecars = async (entries: SessionHistoryEntry[], dataD
 
   await Promise.all(
     entries.filter(isFullSessionHistoryEntry).map(async (entry) => {
-      await writeFile(
-        getSessionHistoryEntryFilePath(entry.id, dataDir),
-        `${JSON.stringify(entry, null, 2)}\n`,
-        'utf8',
-      )
+      const filePath = getSessionHistoryEntryFilePath(entry.id, dataDir)
+      const tmpFilePath = `${filePath}.tmp`
+      try {
+        await writeFile(tmpFilePath, `${JSON.stringify(entry, null, 2)}\n`, 'utf8')
+        await rename(tmpFilePath, filePath)
+      } catch (error) {
+        await unlink(tmpFilePath).catch(() => undefined)
+        throw error
+      }
     }),
   )
 }
@@ -1651,13 +1655,12 @@ const sanitizeStateResult = (raw: unknown): SanitizedStateResult => {
         didCompactStructuredData = true
       }
 
-      const trimmedMessages = compactedMessages.messages.length > maxPersistedCardMessages
-        ? compactedMessages.messages.slice(-maxPersistedCardMessages)
-        : compactedMessages.messages
-
       return {
         ...entry,
-        messages: trimmedMessages,
+        // Archived session bodies are the durable source of truth. Unlike live
+        // cards, they must never be tail-trimmed before their first sidecar is
+        // written, or the discarded prefix cannot be recovered later.
+        messages: compactedMessages.messages,
       }
     }),
   }
@@ -1705,7 +1708,6 @@ const recoverFromBackups = async (dataDir = getAppDataDir()): Promise<AppState |
 // first keeps the Zod input small enough to validate safely.
 // The full archived messages stay in sidecar files and are loaded on demand.
 const preTrimMaxCardMessages = 300
-const preTrimMaxHistoryMessages = 20
 
 const preTrimOversizedMessages = (raw: unknown) => {
   if (!raw || typeof raw !== 'object') return
@@ -1726,18 +1728,8 @@ const preTrimOversizedMessages = (raw: unknown) => {
     }
   }
 
-  if (Array.isArray(state.sessionHistory)) {
-    for (const entry of state.sessionHistory) {
-      if (!entry || typeof entry !== 'object') continue
-      const e = entry as Record<string, unknown>
-      if (Array.isArray(e.messages) && e.messages.length > preTrimMaxHistoryMessages) {
-        e.messages = [
-          ...e.messages.slice(0, Math.ceil(preTrimMaxHistoryMessages / 2)),
-          ...e.messages.slice(-Math.floor(preTrimMaxHistoryMessages / 2)),
-        ]
-      }
-    }
-  }
+  // Do not pre-trim legacy sessionHistory. Its first successful save is the
+  // only opportunity to migrate the complete transcript into a sidecar.
 }
 
 // ── Public API ────────────────────────────────────────────────────────────────
@@ -2075,7 +2067,11 @@ const mergePersistedSessionHistory = async (state: AppState, dataDir: string): P
   }
 }
 
-const saveStateToDataDir = async (state: AppState, dataDir: string) => {
+const saveStateToDataDir = async (
+  state: AppState,
+  dataDir: string,
+  options: { allowEmptyOverwrite?: boolean } = {},
+) => {
   await mkdir(dataDir, { recursive: true })
   const sanitizedState = sanitizeStateResult(state).state
   const safeState = await mergePersistedSessionHistory(sanitizedState, dataDir)
@@ -2092,7 +2088,7 @@ const saveStateToDataDir = async (state: AppState, dataDir: string) => {
     safeState.columns.some((col) =>
       Object.values(col.cards).some((card) => card.messages.length > 0),
     ) || safeState.sessionHistory.some((entry) => getSessionHistoryMessageCount(entry) > 0)
-  if (!hasRealContent) {
+  if (!hasRealContent && !options.allowEmptyOverwrite) {
     try {
       const existing = await readFile(getStateFilePathForDir(dataDir), 'utf8')
       if (existing.length > content.length * 2) {
@@ -2117,6 +2113,7 @@ const saveStateToDataDirWithLock = async (state: AppState, dataDir: string) =>
 
 export const saveState = async (state: AppState) => {
   const dataDir = getAppDataDir()
+  latestImmediateSaveRevision = ++stateSaveRevision
   return saveStateToDataDirWithLock(state, dataDir)
 }
 export const dismissRecentCrashRecovery = async () => dismissRecentCrashRecoveryForDataDir(getAppDataDir())
@@ -2231,7 +2228,7 @@ export const resolveStateRecoveryOption = async (optionId: string): Promise<AppS
 
 // ── Queue with async mutex and dynamic circuit breaker ───────────────────────
 
-type PendingStateWrite = { state: AppState; dataDir: string }
+type PendingStateWrite = { state: AppState; dataDir: string; revision: number }
 type PendingStateDrainOptions = {
   force?: boolean
 }
@@ -2261,6 +2258,8 @@ let lastStateSaveRequestAtMs = 0
 let consecutiveSlowStateSaves = 0
 let pendingStateReplacementCount = 0
 let lastCircuitStateSaveSnapshotAtMs = 0
+let stateSaveRevision = 0
+let latestImmediateSaveRevision = 0
 
 const getStateSaveCircuitDelayMs = (now = Date.now()) =>
   Math.max(0, stateSaveCircuitOpenUntilMs - now)
@@ -2468,6 +2467,9 @@ const drainPendingStateWrites = (options: PendingStateDrainOptions = {}) => with
     const toWrite = pendingState
     pendingState = null
     pendingStateReplacementCount = 0
+    if (toWrite.revision < latestImmediateSaveRevision) {
+      continue
+    }
     const startedAtMs = Date.now()
     await saveStateToDataDir(toWrite.state, toWrite.dataDir)
     recordStateSaveFinished(Date.now() - startedAtMs)
@@ -2485,6 +2487,7 @@ export const queueSaveState = (state: AppState) => {
   pendingState = {
     state,
     dataDir,
+    revision: ++stateSaveRevision,
   }
 
   schedulePendingStateDrain()
@@ -2526,5 +2529,11 @@ export const waitForPendingStateWrites = async () => {
 
 export const resetState = async () => {
   await dismissRecentCrashRecoveryForDataDir(getAppDataDir())
-  return saveState(createDefaultState(getDefaultWorkspacePath()))
+  const dataDir = getAppDataDir()
+  latestImmediateSaveRevision = ++stateSaveRevision
+  return withWriteLock(() => saveStateToDataDir(
+    createDefaultState(getDefaultWorkspacePath()),
+    dataDir,
+    { allowEmptyOverwrite: true },
+  ))
 }

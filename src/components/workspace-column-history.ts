@@ -67,3 +67,25 @@ export const filterExternalSessionHistory = (entries: ExternalSessionSummary[], 
 }
 
 export const hasSessionHistorySearch = (query: string) => normalizeHistorySearchQuery(query).length > 0
+
+export const getSessionHistoryDisplayMessageCount = (entry: SessionHistoryEntry) =>
+  entry.messageCount ?? entry.messages.length
+
+export const mergeSessionHistorySearchResults = (
+  localEntries: SessionHistoryEntry[],
+  deepEntries: SessionHistoryEntry[],
+) => {
+  const sorted = [...localEntries, ...deepEntries].sort((left, right) =>
+    right.archivedAt.localeCompare(left.archivedAt),
+  )
+  const seenEntries = new Set<string>()
+  const seenSessions = new Set<string>()
+  return sorted.filter((entry) => {
+    if (seenEntries.has(entry.id)) return false
+    const key = entry.sessionId?.trim() ? `${entry.provider}:${entry.sessionId.trim()}` : ''
+    if (key && seenSessions.has(key)) return false
+    seenEntries.add(entry.id)
+    if (key) seenSessions.add(key)
+    return true
+  })
+}

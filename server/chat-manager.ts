@@ -56,7 +56,13 @@ type StreamRecord = {
   latestSessionId?: string
   terminal: boolean
   stopRequested: boolean
+  providerSlotHeld: boolean
   cleanupTimer?: ReturnType<typeof setTimeout>
+}
+
+type QueuedProviderStart = {
+  stream: StreamRecord
+  request: ChatRequest
 }
 
 export type UnsolicitedStreamNotification = {
@@ -66,6 +72,7 @@ export type UnsolicitedStreamNotification = {
 
 const cleanupDelayMs = 5 * 60 * 1000
 const maxBacklogSize = 2000
+export const defaultMaxConcurrentProviderRuns = 6
 export const maxBacklogCommandOutputChars = 16 * 1024
 const backlogCommandOutputHeadChars = 8 * 1024
 const backlogCommandOutputTailChars = 8 * 1024
@@ -166,6 +173,32 @@ const normalizeSessionId = (sessionId?: string | null) => {
   return trimmed && trimmed.length > 0 ? trimmed : undefined
 }
 
+export const resolveMaxConcurrentProviderRuns = (
+  value: string | number | undefined = process.env.CHILL_VIBE_MAX_CONCURRENT_PROVIDER_RUNS,
+) => {
+  const normalized = typeof value === 'number' ? String(value) : value?.trim()
+  if (!normalized || !/^\d+$/.test(normalized)) {
+    return defaultMaxConcurrentProviderRuns
+  }
+
+  const parsed = Number(normalized)
+  return Number.isSafeInteger(parsed) && parsed > 0
+    ? parsed
+    : defaultMaxConcurrentProviderRuns
+}
+
+const formatProviderQueueNotice = (language: ChatRequest['language'], limit: number) =>
+  language === 'en'
+    ? `The parallel task limit (${limit}) is currently in use. This session is queued and will start automatically when capacity is available.`
+    : `并行任务已达上限（${limit}），此会话已排队，将在有空位时自动开始。`
+
+const formatProviderStartError = (language: ChatRequest['language'], error: unknown) => {
+  const message = error instanceof Error ? error.message : String(error)
+  return language === 'en'
+    ? `Provider failed to start: ${message}`
+    : `Provider 启动失败：${message}`
+}
+
 export const buildStreamErrorPayload = (
   message: string,
   hint?: StreamErrorHint,
@@ -215,6 +248,12 @@ export class ChatManager {
   private readonly claudePool: ClaudeSessionPool | null
   private readonly onUnsolicitedStream?: (notification: UnsolicitedStreamNotification) => void
   private readonly providerLauncher: typeof launchProviderRun
+  private readonly workspaceSnapshotter: typeof captureWorkspaceSnapshot
+  private readonly workspaceDiffer: typeof diffWorkspaceSnapshot
+  private readonly maxConcurrentProviderRuns: number
+  private readonly providerStartQueue: QueuedProviderStart[] = []
+  private activeProviderRuns = 0
+  private closing = false
 
   constructor(options?: {
     // Keepalive is host-opt-in: the Electron desktop backend enables it so
@@ -223,9 +262,17 @@ export class ChatManager {
     enableClaudeKeepalive?: boolean
     onUnsolicitedStream?: (notification: UnsolicitedStreamNotification) => void
     providerLauncher?: typeof launchProviderRun
+    workspaceSnapshotter?: typeof captureWorkspaceSnapshot
+    workspaceDiffer?: typeof diffWorkspaceSnapshot
+    maxConcurrentProviderRuns?: number
   }) {
     this.onUnsolicitedStream = options?.onUnsolicitedStream
     this.providerLauncher = options?.providerLauncher ?? launchProviderRun
+    this.workspaceSnapshotter = options?.workspaceSnapshotter ?? captureWorkspaceSnapshot
+    this.workspaceDiffer = options?.workspaceDiffer ?? diffWorkspaceSnapshot
+    this.maxConcurrentProviderRuns = resolveMaxConcurrentProviderRuns(
+      options?.maxConcurrentProviderRuns,
+    )
     this.claudePool = options?.enableClaudeKeepalive
       ? new ClaudeSessionPool({
           onUnsolicited: (entry, attach) => {
@@ -253,6 +300,7 @@ export class ChatManager {
       latestSessionId: normalizeSessionId(request.sessionId),
       terminal: false,
       stopRequested: false,
+      providerSlotHeld: false,
     }
 
     this.streams.set(id, record)
@@ -264,7 +312,7 @@ export class ChatManager {
       this.emit(record, 'user_message', userEnvelope.data as StreamEventMap['user_message'])
     }
 
-    void this.startProvider(record, request)
+    this.scheduleProviderStart(record, request)
 
     return id
   }
@@ -361,11 +409,14 @@ export class ChatManager {
     } else {
       stream.child?.kill()
     }
+    this.releaseProviderSlot(stream)
     this.finalize(stream, 'done', { stopped: true })
     return true
   }
 
   closeAll() {
+    this.closing = true
+    this.providerStartQueue.length = 0
     this.claudePool?.closeAll()
     for (const stream of this.streams.values()) {
       if (stream.cleanupTimer) {
@@ -376,7 +427,9 @@ export class ChatManager {
       stream.listeners.forEach((response) => response.end())
       stream.listeners.clear()
       stream.subscribers.clear()
+      stream.providerSlotHeld = false
     }
+    this.activeProviderRuns = 0
     this.streams.clear()
   }
 
@@ -398,6 +451,7 @@ export class ChatManager {
       latestSessionId: normalizeSessionId(entry.sessionId),
       terminal: false,
       stopRequested: false,
+      providerSlotHeld: false,
     }
     this.streams.set(streamId, record)
 
@@ -406,7 +460,7 @@ export class ChatManager {
 
     let workspaceSnapshot = null
     try {
-      workspaceSnapshot = workspacePath ? await captureWorkspaceSnapshot(workspacePath) : null
+      workspaceSnapshot = workspacePath ? await this.workspaceSnapshotter(workspacePath) : null
     } catch {
       workspaceSnapshot = null
     }
@@ -470,11 +524,79 @@ export class ChatManager {
     this.onUnsolicitedStream?.({ cardId: entry.key, streamId })
   }
 
+  private scheduleProviderStart(stream: StreamRecord, request: ChatRequest) {
+    if (this.closing || stream.stopRequested || stream.terminal) {
+      return
+    }
+
+    if (this.activeProviderRuns >= this.maxConcurrentProviderRuns) {
+      this.providerStartQueue.push({ stream, request })
+      this.emit(stream, 'log', {
+        message: formatProviderQueueNotice(request.language, this.maxConcurrentProviderRuns),
+      })
+      return
+    }
+
+    this.startProviderWithSlot(stream, request)
+  }
+
+  private startProviderWithSlot(stream: StreamRecord, request: ChatRequest) {
+    if (this.closing || stream.stopRequested || stream.terminal || stream.providerSlotHeld) {
+      return
+    }
+
+    stream.providerSlotHeld = true
+    this.activeProviderRuns += 1
+
+    void this.startProvider(stream, request).catch((error) => {
+      this.releaseProviderSlot(stream)
+      if (stream.stopRequested || stream.terminal) {
+        return
+      }
+      this.finalize(stream, 'error', {
+        message: formatProviderStartError(request.language, error),
+      })
+    })
+  }
+
+  private releaseProviderSlot(stream: StreamRecord) {
+    if (!stream.providerSlotHeld) {
+      return
+    }
+
+    stream.providerSlotHeld = false
+    this.activeProviderRuns = Math.max(0, this.activeProviderRuns - 1)
+    this.drainProviderStartQueue()
+  }
+
+  private drainProviderStartQueue() {
+    if (this.closing) {
+      return
+    }
+
+    while (
+      this.activeProviderRuns < this.maxConcurrentProviderRuns &&
+      this.providerStartQueue.length > 0
+    ) {
+      const queued = this.providerStartQueue.shift()
+      if (!queued) {
+        return
+      }
+
+      const { stream, request } = queued
+      if (stream.stopRequested || stream.terminal || !this.streams.has(stream.id)) {
+        continue
+      }
+
+      this.startProviderWithSlot(stream, request)
+    }
+  }
+
   private async startProvider(stream: StreamRecord, request: ChatRequest) {
     let workspaceSnapshot = null
 
     try {
-      workspaceSnapshot = await captureWorkspaceSnapshot(request.workspacePath)
+      workspaceSnapshot = await this.workspaceSnapshotter(request.workspacePath)
     } catch {
       workspaceSnapshot = null
     }
@@ -503,6 +625,7 @@ export class ChatManager {
       onStats: (event) => this.emit(stream, 'stats', event),
       onDone: () => {
         if (!stream.stopRequested) {
+          this.releaseProviderSlot(stream)
           void this.finalizeWithWorkspaceEdits(stream, request.workspacePath, workspaceSnapshot, touchedPaths, 'done', {})
         }
       },
@@ -511,6 +634,7 @@ export class ChatManager {
           return
         }
 
+        this.releaseProviderSlot(stream)
         void this.finalizeWithWorkspaceEdits(
           stream,
           request.workspacePath,
@@ -581,7 +705,7 @@ export class ChatManager {
     }
 
     try {
-      const diff = await diffWorkspaceSnapshot(
+      const diff = await this.workspaceDiffer(
         snapshot,
         workspacePath,
         touchedPaths,

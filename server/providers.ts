@@ -68,6 +68,7 @@ import { createArchiveRecallRuntimeOverrides, getCodexArchiveRecallInstruction }
 import {
   ensureCodexSafetyHookTrusted,
   prepareCodexSafetyRuntime,
+  prepareDestructiveCommandGuardRuntime,
 } from './codex-safety.js'
 import {
   ClaudeSessionPool,
@@ -2657,11 +2658,43 @@ const launchClaudeRun = async (
 ) => {
   const cardId = request.cardId?.trim()
 
-  if (pool && cardId && isClaudeKeepaliveEnabled()) {
-    return launchClaudeKeepaliveRun(request, sink, language, runtime, attachmentPaths, pool, cardId)
+  let safetyRuntime
+  try {
+    safetyRuntime = await prepareDestructiveCommandGuardRuntime(request, runtime.env)
+  } catch (error) {
+    const message = error instanceof Error
+      ? error.message
+      : 'Unable to prepare Claude destructive-command protection.'
+    sink.onError(message, 'env-setup')
+    return null
   }
 
-  return launchClaudeSingleShotRun(request, sink, language, runtime, attachmentPaths)
+  const preparedRuntime = {
+    ...runtime,
+    env: safetyRuntime.env,
+  }
+
+  if (pool && cardId && isClaudeKeepaliveEnabled()) {
+    return launchClaudeKeepaliveRun(
+      request,
+      sink,
+      language,
+      preparedRuntime,
+      attachmentPaths,
+      pool,
+      cardId,
+      safetyRuntime.hookCommand,
+    )
+  }
+
+  return launchClaudeSingleShotRun(
+    request,
+    sink,
+    language,
+    preparedRuntime,
+    attachmentPaths,
+    safetyRuntime.hookCommand,
+  )
 }
 
 const launchClaudeSingleShotRun = async (
@@ -2670,6 +2703,7 @@ const launchClaudeSingleShotRun = async (
   language: AppLanguage,
   runtime: ProviderRuntime,
   attachmentPaths: string[],
+  safetyHookCommand?: string,
 ) => {
   const managedChild = createManagedChildHandle()
   let currentRequest = request
@@ -2679,7 +2713,10 @@ const launchClaudeSingleShotRun = async (
   const startClaudeAttempt = async (includeEffort: boolean) => {
     const args = [
       ...runtime.args,
-      ...buildClaudeArgs(currentRequest, attachmentPaths, { includeEffort }),
+      ...buildClaudeArgs(currentRequest, attachmentPaths, {
+        includeEffort,
+        safetyHookCommand,
+      }),
     ]
 
     const child = await spawnProvider(
@@ -2808,6 +2845,7 @@ export const buildClaudeKeepaliveSignature = (
   includeEffort: boolean,
   runtime: ProviderRuntime,
   attachmentPaths: string[] = [],
+  safetyHookCommand?: string,
 ) =>
   JSON.stringify({
     workspace: request.workspacePath,
@@ -2830,6 +2868,8 @@ export const buildClaudeKeepaliveSignature = (
         .filter((attachmentPath) => attachmentPath.trim().length > 0)
         .map((attachmentPath) => resolvePath(dirname(attachmentPath))),
     ),
+    destructiveCommandProtection: request.codexDestructiveCommandProtectionEnabled === true,
+    safetyHookCommand: safetyHookCommand ?? '',
   })
 
 const launchClaudeKeepaliveRun = async (
@@ -2840,6 +2880,7 @@ const launchClaudeKeepaliveRun = async (
   attachmentPaths: string[],
   pool: ClaudeSessionPool,
   cardId: string,
+  safetyHookCommand?: string,
 ) => {
   const managedChild = createManagedChildHandle()
   let currentRequest = request
@@ -2847,7 +2888,13 @@ const launchClaudeKeepaliveRun = async (
   let staleSessionFallbackAttempted = false
 
   const startAttempt = async (includeEffort: boolean): Promise<boolean> => {
-    const signature = buildClaudeKeepaliveSignature(currentRequest, includeEffort, runtime, attachmentPaths)
+    const signature = buildClaudeKeepaliveSignature(
+      currentRequest,
+      includeEffort,
+      runtime,
+      attachmentPaths,
+      safetyHookCommand,
+    )
 
     const acquired = await pool.acquireForTurn({
       key: cardId,
@@ -2859,6 +2906,7 @@ const launchClaudeKeepaliveRun = async (
           ...buildClaudeArgs(currentRequest, attachmentPaths, {
             includeEffort,
             streamingInput: true,
+            safetyHookCommand,
           }),
         ]
 
@@ -3197,6 +3245,7 @@ export const buildClaudeArgs = (
     // over stdin (`--input-format stream-json`) instead of a one-shot argv
     // prompt, so background tasks survive the turn and can wake the agent.
     streamingInput?: boolean
+    safetyHookCommand?: string
   },
 ) => {
   const args = ['-p', '--verbose', '--output-format', 'stream-json', '--include-partial-messages']
@@ -3214,6 +3263,9 @@ export const buildClaudeArgs = (
   )
   const ultracodeActive = !thinkingDisabled && isUltracodeEffort(request.reasoningEffort)
   const permissionMode = request.planMode ? 'plan' : 'bypassPermissions'
+  const safetyHookCommand = request.codexDestructiveCommandProtectionEnabled === true
+    ? options?.safetyHookCommand
+    : undefined
   const additionalDirectories = resolveClaudeAdditionalDirectories({
     ...options,
     attachmentPaths,
@@ -3241,6 +3293,35 @@ export const buildClaudeArgs = (
       // Older CLIs treat unknown settings keys as a warning, degrading to
       // plain xhigh.
       ...(ultracodeActive ? { ultracode: true } : {}),
+      ...(safetyHookCommand
+        ? {
+            hooks: {
+              PreToolUse: [
+                {
+                  matcher: 'Bash',
+                  hooks: [
+                    {
+                      type: 'command',
+                      command: process.platform === 'win32' ? 'powershell.exe' : '/bin/sh',
+                      args: process.platform === 'win32'
+                        ? [
+                            '-NoProfile',
+                            '-NonInteractive',
+                            '-ExecutionPolicy',
+                            'Bypass',
+                            '-Command',
+                            safetyHookCommand,
+                          ]
+                        : ['-c', safetyHookCommand],
+                      timeout: 5,
+                      statusMessage: 'Chill Vibe safety check',
+                    },
+                  ],
+                },
+              ],
+            },
+          }
+        : {}),
       permissions: {
         defaultMode: permissionMode,
         ...(additionalDirectories.length > 0

@@ -8,12 +8,12 @@ import { promisify } from 'node:util'
 
 const execFileAsync = promisify(execFile)
 
-test('parallel Codex cards share one trusted hook definition while keeping protected roots process-local', async () => {
+test('Codex and Claude share one destructive-command guard launcher while keeping protected roots process-local', async () => {
   const dataDir = await mkdtemp(path.join(os.tmpdir(), 'chill-vibe-codex-safety-'))
   const workspaceA = path.join(dataDir, 'workspace-a')
   const workspaceB = path.join(dataDir, 'workspace-b')
   const script = `
-    import { prepareCodexSafetyRuntime } from './server/codex-safety.ts'
+    import { prepareCodexSafetyRuntime, prepareDestructiveCommandGuardRuntime } from './server/codex-safety.ts'
     const makeRequest = (cardId, workspacePath) => ({
       provider: 'codex',
       workspacePath,
@@ -25,13 +25,18 @@ test('parallel Codex cards share one trusted hook definition while keeping prote
     const first = await prepareCodexSafetyRuntime(makeRequest('card-a', ${JSON.stringify(workspaceA)}), [], process.env)
     const second = await prepareCodexSafetyRuntime(makeRequest('card-b', ${JSON.stringify(workspaceB)}), [], process.env)
     const moved = await prepareCodexSafetyRuntime(makeRequest('card-a', ${JSON.stringify(workspaceB)}), [], process.env)
+    const claude = await prepareDestructiveCommandGuardRuntime({
+      ...makeRequest('claude-card', ${JSON.stringify(workspaceA)}),
+      provider: 'claude',
+      codexIsolatedHomeEnabled: true,
+    }, process.env)
     const summarize = (runtime) => ({
       hookCommand: runtime.hookCommand,
       protectedWorkspace: runtime.env.CHILL_VIBE_PROTECTED_WORKSPACE,
       guardExecutable: runtime.env.CHILL_VIBE_CODEX_GUARD_EXECUTABLE,
       guardScript: runtime.env.CHILL_VIBE_CODEX_GUARD_SCRIPT,
     })
-    process.stdout.write(JSON.stringify([summarize(first), summarize(second), summarize(moved)]))
+    process.stdout.write(JSON.stringify([summarize(first), summarize(second), summarize(moved), summarize(claude)]))
   `
 
   try {
@@ -54,9 +59,11 @@ test('parallel Codex cards share one trusted hook definition while keeping prote
     assert.ok(runtimes[0]?.hookCommand)
     assert.equal(runtimes[0]?.hookCommand, runtimes[1]?.hookCommand)
     assert.equal(runtimes[0]?.hookCommand, runtimes[2]?.hookCommand)
+    assert.equal(runtimes[0]?.hookCommand, runtimes[3]?.hookCommand)
     assert.equal(path.resolve(runtimes[0]?.protectedWorkspace ?? ''), path.resolve(workspaceA))
     assert.equal(path.resolve(runtimes[1]?.protectedWorkspace ?? ''), path.resolve(workspaceB))
     assert.equal(path.resolve(runtimes[2]?.protectedWorkspace ?? ''), path.resolve(workspaceB))
+    assert.equal(path.resolve(runtimes[3]?.protectedWorkspace ?? ''), path.resolve(workspaceA))
     assert.equal(runtimes[0]?.guardExecutable, process.execPath)
     assert.match(runtimes[0]?.guardScript ?? '', /codex-destructive-command-guard\.js$/)
 

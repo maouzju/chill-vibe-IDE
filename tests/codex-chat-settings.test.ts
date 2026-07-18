@@ -4,7 +4,7 @@ import { describe, it } from 'node:test'
 import { buildCodexChatRequestOverrides } from '../shared/codex-chat-settings.ts'
 import { chatRequestSchema } from '../shared/schema.ts'
 
-describe('Codex chat request settings', () => {
+describe('Agent chat request settings', () => {
   it('defaults parsed Codex safety request fields on for older callers', () => {
     const request = chatRequestSchema.parse({
       provider: 'codex',
@@ -48,7 +48,7 @@ describe('Codex chat request settings', () => {
     )
   })
 
-  it('never sends Codex-only overrides to Claude', () => {
+  it('sends the shared destructive-command protection setting to Claude without Codex-only overrides', () => {
     assert.deepEqual(
       buildCodexChatRequestOverrides('claude', {
         codexPersonality: 'friendly',
@@ -56,7 +56,21 @@ describe('Codex chat request settings', () => {
         codexDestructiveCommandProtectionEnabled: true,
         codexIsolatedHomeEnabled: true,
       }),
-      {},
+      {
+        codexDestructiveCommandProtectionEnabled: true,
+      },
+    )
+
+    assert.deepEqual(
+      buildCodexChatRequestOverrides('claude', {
+        codexPersonality: 'default',
+        codexFastMode: false,
+        codexDestructiveCommandProtectionEnabled: false,
+        codexIsolatedHomeEnabled: true,
+      }),
+      {
+        codexDestructiveCommandProtectionEnabled: false,
+      },
     )
   })
 })

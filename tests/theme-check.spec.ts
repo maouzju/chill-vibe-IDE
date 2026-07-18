@@ -2762,7 +2762,7 @@ for (const scenario of [
 }
 
 for (const theme of ['dark', 'light'] as const) {
-  test(`Codex destructive-command protection settings stay clear in ${theme} theme`, async ({ page }) => {
+  test(`Agent destructive-command protection settings stay clear in ${theme} theme`, async ({ page }) => {
     const state = createMockState()
     state.settings.language = theme === 'dark' ? 'zh-CN' : 'en'
     state.settings.theme = theme
@@ -2773,7 +2773,7 @@ for (const theme of ['dark', 'light'] as const) {
     await page.locator('.card-shell').first().waitFor()
 
     const settingsPanel = page.locator('#app-panel-settings')
-    const safetyGroupTitle = theme === 'dark' ? 'Codex 安全防护' : 'Codex Safety'
+    const safetyGroupTitle = theme === 'dark' ? 'Agent 安全防护' : 'Agent Safety'
     const safetyGroup = settingsPanel
       .locator('.settings-group:visible')
       .filter({ has: page.getByRole('heading', { name: safetyGroupTitle, exact: true }) })
@@ -2788,7 +2788,7 @@ for (const theme of ['dark', 'light'] as const) {
     await expect(safetySettings.locator('input[type="checkbox"]').first()).toBeChecked()
     await expect(safetySettings.locator('input[type="checkbox"]').last()).toBeChecked()
     await expect(safetySettings).toContainText(
-      theme === 'dark' ? '阻止 Codex 高风险删除命令' : 'Block high-risk Codex deletion commands',
+      theme === 'dark' ? '阻止 Agent 高风险删除命令' : 'Block high-risk Agent deletion commands',
     )
     await expect(safetySettings).toContainText(
       theme === 'dark' ? '使用隔离的 Codex Agent 主目录' : 'Use an isolated Codex Agent home',

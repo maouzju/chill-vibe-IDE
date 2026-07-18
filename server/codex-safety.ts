@@ -26,6 +26,11 @@ export type PreparedCodexSafetyRuntime = {
   hookCommand?: string
 }
 
+export type PreparedDestructiveCommandGuardRuntime = {
+  env: NodeJS.ProcessEnv
+  hookCommand?: string
+}
+
 const formatTomlString = (value: string) => JSON.stringify(value)
 
 const normalizeHookCommand = (value: string) =>
@@ -107,6 +112,51 @@ const buildSafetyHookConfig = (hookCommand: string) => [
   ].join(' '),
 ]
 
+export const prepareDestructiveCommandGuardRuntime = async (
+  request: ChatRequest,
+  baseEnv: NodeJS.ProcessEnv,
+  options?: {
+    originalHome?: string
+    originalCodexHome?: string
+  },
+): Promise<PreparedDestructiveCommandGuardRuntime> => {
+  const env = { ...baseEnv }
+
+  for (const key of safetyEnvironmentKeys) {
+    delete env[key]
+  }
+
+  if (request.codexDestructiveCommandProtectionEnabled !== true) {
+    return { env }
+  }
+
+  const appDataDir = getAppDataDir()
+  const originalHome = options?.originalHome ?? resolveOriginalHome(baseEnv)
+  const originalCodexHome =
+    options?.originalCodexHome ?? resolveOriginalCodexHome(baseEnv, originalHome)
+  const safetyDir = path.join(appDataDir, 'codex-safety')
+  await mkdir(safetyDir, { recursive: true })
+  const launcherPath = path.join(
+    safetyDir,
+    process.platform === 'win32' ? 'pre-tool-use-guard.cmd' : 'pre-tool-use-guard.sh',
+  )
+  await writeSafetyLauncher(launcherPath)
+
+  env.CHILL_VIBE_PROTECTED_HOME = originalHome
+  env.CHILL_VIBE_PROTECTED_WORKSPACE = path.resolve(request.workspacePath)
+  env.CHILL_VIBE_PROTECTED_CODEX_HOME = originalCodexHome
+  env.CHILL_VIBE_PROTECTED_APP_DATA = appDataDir
+  env.CHILL_VIBE_CODEX_GUARD_EXECUTABLE = process.execPath
+  env.CHILL_VIBE_CODEX_GUARD_SCRIPT = guardScriptPath
+
+  const hookCommand = process.platform === 'win32'
+    ? `& '${launcherPath.replace(/'/g, "''")}'`
+    : `'${launcherPath.replace(/'/g, `'"'"'`)}'`
+  env.CHILL_VIBE_CODEX_SAFETY_HOOK_COMMAND = hookCommand
+
+  return { env, hookCommand }
+}
+
 export const prepareCodexSafetyRuntime = async (
   request: ChatRequest,
   baseArgs: string[],
@@ -117,10 +167,6 @@ export const prepareCodexSafetyRuntime = async (
   const originalHome = resolveOriginalHome(baseEnv)
   const originalCodexHome = resolveOriginalCodexHome(baseEnv, originalHome)
   const runtimeKey = buildRuntimeKey(request)
-
-  for (const key of safetyEnvironmentKeys) {
-    delete env[key]
-  }
 
   if (request.codexIsolatedHomeEnabled === true) {
     const isolatedHome = path.join(appDataDir, 'codex-agent-homes', runtimeKey)
@@ -142,34 +188,17 @@ export const prepareCodexSafetyRuntime = async (
     }
   }
 
-  if (request.codexDestructiveCommandProtectionEnabled !== true) {
-    return { args: [...baseArgs], env }
-  }
-
-  const safetyDir = path.join(appDataDir, 'codex-safety')
-  await mkdir(safetyDir, { recursive: true })
-  const launcherPath = path.join(
-    safetyDir,
-    process.platform === 'win32' ? 'pre-tool-use-guard.cmd' : 'pre-tool-use-guard.sh',
-  )
-  await writeSafetyLauncher(launcherPath)
-
-  env.CHILL_VIBE_PROTECTED_HOME = originalHome
-  env.CHILL_VIBE_PROTECTED_WORKSPACE = path.resolve(request.workspacePath)
-  env.CHILL_VIBE_PROTECTED_CODEX_HOME = originalCodexHome
-  env.CHILL_VIBE_PROTECTED_APP_DATA = appDataDir
-  env.CHILL_VIBE_CODEX_GUARD_EXECUTABLE = process.execPath
-  env.CHILL_VIBE_CODEX_GUARD_SCRIPT = guardScriptPath
-
-  const hookCommand = process.platform === 'win32'
-    ? `& '${launcherPath.replace(/'/g, "''")}'`
-    : `'${launcherPath.replace(/'/g, `'"'"'`)}'`
-  env.CHILL_VIBE_CODEX_SAFETY_HOOK_COMMAND = hookCommand
+  const guardRuntime = await prepareDestructiveCommandGuardRuntime(request, env, {
+    originalHome,
+    originalCodexHome,
+  })
 
   return {
-    args: [...baseArgs, ...buildSafetyHookConfig(hookCommand)],
-    env,
-    hookCommand,
+    args: guardRuntime.hookCommand
+      ? [...baseArgs, ...buildSafetyHookConfig(guardRuntime.hookCommand)]
+      : [...baseArgs],
+    env: guardRuntime.env,
+    hookCommand: guardRuntime.hookCommand,
   }
 }
 

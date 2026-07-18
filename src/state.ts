@@ -93,9 +93,12 @@ const clearProviderNativeSessions = (state: AppState, provider: Provider): AppSt
 
         const sessionId = card.provider === provider ? undefined : card.sessionId
         const sessionModel = card.provider === provider ? undefined : card.sessionModel
+        const contextTransfer =
+          card.contextTransfer?.sourceProvider === provider ? undefined : card.contextTransfer
         if (
           sessionId === card.sessionId &&
           sessionModel === card.sessionModel &&
+          contextTransfer === card.contextTransfer &&
           Object.keys(providerSessions).length === Object.keys(card.providerSessions).length
         ) {
           return [cardId, card]
@@ -108,17 +111,22 @@ const clearProviderNativeSessions = (state: AppState, provider: Provider): AppSt
             sessionId,
             sessionModel,
             providerSessions,
+            contextTransfer,
           },
         ]
       }),
     ),
   })),
   sessionHistory: state.sessionHistory.map((entry) =>
-    entry.provider === provider && entry.sessionId
+    (entry.provider === provider && entry.sessionId) || entry.contextTransfer?.sourceProvider === provider
       ? {
           ...entry,
-          sessionId: undefined,
-          sessionModel: undefined,
+          ...(entry.provider === provider
+            ? { sessionId: undefined, sessionModel: undefined }
+            : {}),
+          ...(entry.contextTransfer?.sourceProvider === provider
+            ? { contextTransfer: undefined }
+            : {}),
         }
       : entry,
   ),
@@ -1075,11 +1083,48 @@ const selectCardModel = (
   const previousEffectiveModel = getEffectiveCardModel(nextState.settings, card.provider, card.model)
   const nextEffectiveModel = getEffectiveCardModel(nextState.settings, provider, normalizedModel)
   const modelChanged = providerChanged || previousEffectiveModel !== nextEffectiveModel
+  const hasTransferableContext = card.messages.some(
+    (message) =>
+      (message.role === 'user' || message.role === 'assistant') &&
+      (message.content.trim().length > 0 ||
+        Boolean(message.meta?.structuredData?.trim()) ||
+        getChatMessageAttachments(message).length > 0),
+  )
+  const existingTransfer = card.contextTransfer
+  const returnsToTransferSource = Boolean(
+    existingTransfer &&
+      provider === existingTransfer.sourceProvider &&
+      nextEffectiveModel === normalizeStoredModel(existingTransfer.sourceProvider, existingTransfer.sourceModel),
+  )
   const shouldInvalidateSessionsForImageReplay =
     modelChanged && cardHasHistoricalImageAttachments(card)
 
-  let sessionPatch: Pick<Partial<ChatCard>, 'sessionId' | 'sessionModel' | 'providerSessions'> = {}
-  if (shouldInvalidateSessionsForImageReplay) {
+  let sessionPatch: Pick<
+    Partial<ChatCard>,
+    'sessionId' | 'sessionModel' | 'providerSessions' | 'contextTransfer'
+  > = {}
+  if (modelChanged && returnsToTransferSource && existingTransfer) {
+    const savedSessions = { ...card.providerSessions }
+    delete savedSessions[provider]
+    const currentSessionId =
+      card.sessionModel?.trim() === previousEffectiveModel
+        ? card.sessionId?.trim() || undefined
+        : undefined
+    sessionPatch = {
+      sessionId: existingTransfer.sourceSessionId,
+      sessionModel: existingTransfer.sourceSessionId
+        ? normalizeStoredModel(existingTransfer.sourceProvider, existingTransfer.sourceModel)
+        : undefined,
+      providerSessions: savedSessions,
+      contextTransfer: currentSessionId
+        ? {
+            sourceProvider: card.provider,
+            sourceModel: card.sessionModel?.trim() || previousEffectiveModel,
+            sourceSessionId: currentSessionId,
+          }
+        : undefined,
+    }
+  } else if (shouldInvalidateSessionsForImageReplay) {
     sessionPatch = {
       sessionId: undefined,
       sessionModel: undefined,
@@ -1103,6 +1148,27 @@ const selectCardModel = (
       sessionModel: undefined,
       providerSessions: {},
     }
+  }
+
+  if (
+    modelChanged &&
+    !returnsToTransferSource &&
+    hasTransferableContext &&
+    !toolCardModels.has(normalizedModel) &&
+    !toolCardModels.has(card.model)
+  ) {
+    const currentSessionId =
+      card.sessionModel?.trim() === previousEffectiveModel
+        ? card.sessionId?.trim() || undefined
+        : undefined
+    sessionPatch.contextTransfer =
+      currentSessionId || !existingTransfer
+        ? {
+            sourceProvider: card.provider,
+            sourceModel: card.sessionModel?.trim() || previousEffectiveModel,
+            ...(currentSessionId ? { sourceSessionId: currentSessionId } : {}),
+          }
+        : existingTransfer
   }
 
   const updatedState = updateColumn(nextState, columnId, (currentColumn) => {
@@ -1140,6 +1206,7 @@ const buildRestoredCard = (state: AppState, entry: SessionHistoryEntry): ChatCar
   title: entry.title,
   sessionId: entry.sessionId,
   sessionModel: entry.sessionModel,
+  contextTransfer: entry.contextTransfer,
   providerSessions: {},
   streamId: undefined,
   status: 'idle',
@@ -1989,6 +2056,7 @@ export const ideReducer = (state: AppState, action: IdeAction): AppState => {
         sessionId: undefined,
         sessionModel: undefined,
         providerSessions: {},
+        contextTransfer: undefined,
         streamId: undefined,
         autoUrgeActive: false,
         unread: false,

@@ -11,6 +11,7 @@ import {
   getAgentDoneSoundUrl,
   getColumnById,
   getResumeSessionIdForModel,
+  resolveChatReplayMode,
   resolveStreamedAssistantMessageTarget,
 } from '../src/app-helpers.ts'
 import type { ChatMessage } from '../shared/schema.ts'
@@ -69,6 +70,27 @@ test('createStructuredMessageId gives assistant snapshots a stable stream item i
   assert.equal(
     createStructuredMessageId('claude', 'stream-1', 'assistant-item-1'),
     'claude:stream-1:item:assistant-item-1',
+  )
+})
+
+test('resolveChatReplayMode uses high-fidelity replay only for pending Codex transfers', () => {
+  const contextTransfer = {
+    sourceProvider: 'claude' as const,
+    sourceModel: 'claude-fable-5',
+    sourceSessionId: 'fable-session',
+  }
+
+  assert.equal(
+    resolveChatReplayMode({ provider: 'codex', contextTransfer }, undefined),
+    'model-transfer',
+  )
+  assert.equal(
+    resolveChatReplayMode({ provider: 'codex', contextTransfer }, 'codex-session'),
+    'fallback',
+  )
+  assert.equal(
+    resolveChatReplayMode({ provider: 'claude', contextTransfer }, undefined),
+    'fallback',
   )
 })
 

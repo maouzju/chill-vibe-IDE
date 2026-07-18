@@ -46,6 +46,7 @@ import {
   type AppStateLoadResponse,
   type BoardColumn,
   type ChatCard,
+  type ContextTransfer,
   type DesktopRuntimeKind,
   type ImageAttachment,
   type InterruptedSessionRecovery,
@@ -354,6 +355,28 @@ const normalizeStringRecord = (value: unknown): Record<string, string> =>
       )
     : {}
 
+const normalizeContextTransfer = (value: unknown): ContextTransfer | undefined => {
+  if (!isRecord(value) || !isProvider(value.sourceProvider)) {
+    return undefined
+  }
+
+  const sourceModel = typeof value.sourceModel === 'string' ? value.sourceModel.trim() : ''
+  if (!sourceModel) {
+    return undefined
+  }
+
+  const sourceSessionId =
+    typeof value.sourceSessionId === 'string' && value.sourceSessionId.trim()
+      ? value.sourceSessionId.trim()
+      : undefined
+
+  return {
+    sourceProvider: value.sourceProvider,
+    sourceModel: normalizeStoredModel(value.sourceProvider, sourceModel),
+    ...(sourceSessionId ? { sourceSessionId } : {}),
+  }
+}
+
 const normalizePositiveInteger = (value: unknown, fallback: number) =>
   typeof value === 'number' && Number.isInteger(value) && value >= 0 ? value : fallback
 
@@ -629,6 +652,7 @@ const normalizePersistedCard = (
   const providerSessions = normalizeStringRecord(card.providerSessions)
   const sessionId = normalizeOptionalString(card.sessionId)
   const sessionModel = normalizeOptionalString(card.sessionModel)
+  const contextTransfer = normalizeContextTransfer(card.contextTransfer)
   const streamId = hasRecoverableStream ? normalizeOptionalString(card.streamId) : undefined
 
   return {
@@ -638,6 +662,7 @@ const normalizePersistedCard = (
     sessionId,
     sessionModel,
     providerSessions,
+    contextTransfer,
     streamId,
     status,
     size: normalizeCardSize(
@@ -734,6 +759,7 @@ const normalizePersistedSessionHistoryEntry = (
     title: typeof entry.title === 'string' && entry.title.trim() ? entry.title : 'Recovered history',
     sessionId: normalizeOptionalString(entry.sessionId),
     sessionModel: normalizeOptionalString(entry.sessionModel),
+    contextTransfer: normalizeContextTransfer(entry.contextTransfer),
     provider,
     model: typeof entry.model === 'string' ? normalizeStoredModel(provider, entry.model) : getDefaultModel(provider),
     workspacePath,

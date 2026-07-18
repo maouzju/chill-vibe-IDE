@@ -920,6 +920,59 @@ test('buildRenderableMessages merges consecutive ask-user messages into a single
   assert.equal(merged!.questions[1]!.header, 'H2')
 })
 
+test('parseStructuredAskUserMessage reads a grouped Codex activity directly', () => {
+  const message = makeMessage({
+    id: 'codex-ask-group',
+    role: 'assistant',
+    content: '',
+    meta: {
+      provider: 'codex',
+      kind: 'ask-user',
+      itemId: 'codex-ask-group',
+      structuredData: JSON.stringify({
+        itemId: 'codex-ask-group',
+        kind: 'ask-user',
+        status: 'completed',
+        question: 'Q1?',
+        header: 'H1',
+        multiSelect: false,
+        options: [
+          { label: 'A', description: '' },
+          { label: 'B', description: '' },
+        ],
+        questions: [
+          {
+            question: 'Q1?',
+            header: 'H1',
+            multiSelect: false,
+            options: [
+              { label: 'A', description: '' },
+              { label: 'B', description: '' },
+            ],
+          },
+          {
+            question: 'Q2?',
+            header: 'H2',
+            multiSelect: false,
+            options: [
+              { label: 'C', description: '' },
+              { label: 'D', description: '' },
+            ],
+          },
+        ],
+      }),
+    },
+  })
+
+  const parsed = parseStructuredAskUserMessage(message)
+
+  assert.ok(parsed)
+  assert.equal(parsed.questions.length, 2)
+  assert.equal(parsed.questions[0]!.question, 'Q1?')
+  assert.equal(parsed.questions[1]!.question, 'Q2?')
+  assert.equal(parsed.questions[1]!.options[1]!.label, 'D')
+})
+
 test('buildRenderableMessages does not merge ask-user across non-ask-user boundary', () => {
   const messages = [
     makeAskUserMessage('ask-1', 'Q1?', 'H1', ['A', 'B']),

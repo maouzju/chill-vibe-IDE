@@ -1,5 +1,7 @@
 # 手机远程监工模式 — Tasks
 
+> 发布范围说明：Slice 1–5 与 V2 是早期规划清单，不属于本次发布改动；本次只发布下方已完成的 V2.4 切片。历史未勾选项保留原样，需另开任务核对或补录。
+
 ## Slice 1 — ChatManager tap（TDD 红→绿）
 - [ ] `tests/chat-manager-tap.test.ts`：tapAll 广播 / listActiveStreams backlog / 退订，先确认红
 - [ ] `server/chat-manager.ts`：StreamRecord.cardId、tapAll、listActiveStreams，测试转绿
@@ -65,3 +67,10 @@
 - [x] 摘要与 PC 端同款文案：执行了 N 条命令，改动 N 个文件，调用了 N 次工具 + 计数徽标
 - [x] 默认折叠；流式中的尾部组保持展开，agent 继续输出后自动折叠；用户手动展开跨重渲染记住（程序性展开的首次 toggle 不计入）
 - [x] Playwright 实测折叠/展开/摘要计数
+
+## V2.4 — 手机端混合模型与吸顶返回（2026-07-15）
+
+- [x] 红测：快照模型选项必须同时包含 Codex/Claude provider；页面命令必须读取选中项 provider；返回按钮必须位于 sticky header。
+- [x] 快照改为下发混合 provider 模型列表，手机端按选项自身 provider 切换。
+- [x] 返回按钮移入吸顶页头，详情/列表切换时同步标题与显隐。
+- [x] 定向测试、质量检查、手机窄视口验证、Electron 打包与运行时重启。

@@ -2395,4 +2395,99 @@ describe('state-store persistence', () => {
       ],
     })
   })
+
+  it('archives all 600 messages on the first sidecar save without truncation', async () => {
+    const { saveState } = await import('../server/state-store.ts')
+    const state = createDefaultState('D:/history-600')
+    state.sessionHistory = [{
+      id: 'history-600', title: 'Long archive', sessionId: 'session-600', provider: 'codex',
+      model: 'gpt-5', workspacePath: 'D:/history-600', archivedAt: '2026-07-18T00:00:00.000Z',
+      messages: Array.from({ length: 600 }, (_, index) => ({
+        id: `msg-${index}`, role: index % 2 === 0 ? 'user' as const : 'assistant' as const,
+        content: `message-${index}`, createdAt: new Date(1_700_000_000_000 + index).toISOString(),
+      })),
+    }]
+
+    await saveState(state)
+    const sidecarPath = path.join(tmpDir, 'session-history', `${Buffer.from('history-600').toString('base64url')}.json`)
+    const archived = JSON.parse(await readFile(sidecarPath, 'utf8'))
+    assert.equal(archived.messages.length, 600)
+    assert.equal(archived.messages[0]?.content, 'message-0')
+    assert.equal(archived.messages[599]?.content, 'message-599')
+  })
+
+  it('migrates legacy history without messageCount into a lossless sidecar', async () => {
+    const { loadState, saveState, loadSessionHistoryEntry } = await import('../server/state-store.ts')
+    const state = createDefaultState('D:/legacy-history')
+    const legacyEntry = {
+      id: 'legacy-30', title: 'Legacy archive', sessionId: 'legacy-session', provider: 'codex',
+      model: 'gpt-5', workspacePath: 'D:/legacy-history', archivedAt: '2026-07-18T00:00:00.000Z',
+      messages: Array.from({ length: 30 }, (_, index) => ({
+        id: `legacy-msg-${index}`, role: 'user', content: `legacy-${index}`,
+        createdAt: new Date(1_700_000_000_000 + index).toISOString(),
+      })),
+    }
+    await writeFile(path.join(tmpDir, 'state.json'), JSON.stringify({ ...state, sessionHistory: [legacyEntry] }), 'utf8')
+
+    const loaded = await loadState()
+    await saveState(loaded)
+    const restored = await loadSessionHistoryEntry({ entryId: 'legacy-30' })
+    assert.equal(restored.entry.messages.length, 30)
+    assert.equal(restored.entry.messages[0]?.content, 'legacy-0')
+  })
+
+  it('does not let an older queued save overwrite a newer immediate save', async () => {
+    const { queueSaveState, saveState, waitForPendingStateWrites, loadState } = await import('../server/state-store.ts')
+    const queued = createDefaultState('D:/queued-old')
+    queued.settings.language = 'en'
+    const immediate = createDefaultState('D:/immediate-new')
+    immediate.settings.language = 'zh-CN'
+
+    for (let index = 0; index < 30; index += 1) {
+      const stale = structuredClone(queued)
+      stale.settings.language = 'en'
+      void queueSaveState(stale)
+    }
+    await saveState(immediate)
+    await waitForPendingStateWrites()
+    assert.equal((await loadState()).settings.language, 'zh-CN')
+  })
+
+  it('explicit reset persists even when replacing a content-rich state', async () => {
+    const { saveState, resetState, loadState } = await import('../server/state-store.ts')
+    const rich = createDefaultState('D:/rich')
+    const card = getFirstCard(rich)
+    assert.ok(card)
+    card.messages = [{ id: 'important', role: 'user', content: 'important content'.repeat(2_000), createdAt: new Date().toISOString() }]
+    await saveState(rich)
+
+    await resetState()
+    const persisted = JSON.parse(
+      await readFile(path.join(tmpDir, 'state.json'), 'utf8'),
+    ) as ReturnType<typeof createDefaultState>
+    assert.equal(persisted.columns.flatMap((column) => Object.values(column.cards)).flatMap((card) => card.messages).length, 0)
+    assert.equal((await loadState()).columns.flatMap((column) => Object.values(column.cards)).flatMap((item) => item.messages).length, 0)
+  })
+
+  it('keeps the previous sidecar intact when an atomic replacement fails', async () => {
+    const { saveState } = await import('../server/state-store.ts')
+    const makeState = (content: string) => {
+      const state = createDefaultState('D:/atomic-sidecar')
+      state.sessionHistory = [{
+        id: 'atomic-entry', title: 'Atomic', sessionId: 'atomic-session', provider: 'codex',
+        model: 'gpt-5', workspacePath: 'D:/atomic-sidecar', archivedAt: '2026-07-18T00:00:00.000Z',
+        messages: [{ id: content, role: 'user', content, createdAt: '2026-07-18T00:00:00.000Z' }],
+      }]
+      return state
+    }
+    await saveState(makeState('old-content'))
+    const sidecarPath = path.join(tmpDir, 'session-history', `${Buffer.from('atomic-entry').toString('base64url')}.json`)
+    await mkdir(`${sidecarPath}.tmp`)
+
+    await assert.rejects(saveState(makeState('new-content')))
+    const content = await readFile(sidecarPath, 'utf8')
+    assert.match(content, /old-content/)
+    assert.doesNotMatch(content, /new-content/)
+  })
+
 })

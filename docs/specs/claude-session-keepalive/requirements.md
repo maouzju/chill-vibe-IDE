@@ -31,3 +31,9 @@ Chill Vibe 当前为 Claude 卡片的**每一轮对话**启动一个一次性 CL
 6. turn 之间的静默不触发 stall watchdog（watchdog 仅在 turn 进行中布防，沿用 openCommandCount disarm 规则，pitfall #145）。
 7. 现有恢复链路（resume-session、重试预算、可恢复错误分类）行为不变；keepalive 进程在 turn 进行中死亡时走现有 close → recovery 分类。
 8. 纯 web server 路径行为完全不变。
+
+## Lifecycle safety addendum (2026-07-18)
+
+9. A pooled process must not be reused across different provider runtime environments or attachment authorization directories.
+10. Delayed events from a replaced child must not mutate the current entry for the same card.
+11. When two acquisitions race for the same card, only the newest acquisition may own the pool entry; any late older child must be terminated.

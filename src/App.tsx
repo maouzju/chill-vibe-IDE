@@ -241,14 +241,17 @@ import {
 } from './components/Icons'
 import { WorkspaceColumn } from './components/WorkspaceColumn'
 import {
+  drainStreamRenderBufferActionsForColumn,
   enqueueStreamDeltaBufferEntry,
   getPersistenceVersion,
-  getStreamDeltaFlushIntervalMs,
-  streamActivityFlushIntervalMs,
+  getStreamRenderBufferColumnIds,
+  getStreamRenderFlushIntervalMs,
   shouldPersistActionImmediately,
   shouldSyncRuntimeSettings,
   shouldUseQueuedPersistenceForAction,
+  streamRenderColumnYieldMs,
   takeStreamDeltaBufferEntriesForCard,
+  type StreamActivityBufferEntry,
   type StreamDeltaBufferEntry,
 } from './hooks/persistence-queue'
 import { usePersistence } from './hooks/usePersistence'
@@ -541,8 +544,16 @@ function App() {
     () => ({
       codexPersonality: appState.settings.codexPersonality,
       codexFastMode: appState.settings.codexFastMode,
+      codexDestructiveCommandProtectionEnabled:
+        appState.settings.codexDestructiveCommandProtectionEnabled,
+      codexIsolatedHomeEnabled: appState.settings.codexIsolatedHomeEnabled,
     }),
-    [appState.settings.codexFastMode, appState.settings.codexPersonality],
+    [
+      appState.settings.codexDestructiveCommandProtectionEnabled,
+      appState.settings.codexFastMode,
+      appState.settings.codexIsolatedHomeEnabled,
+      appState.settings.codexPersonality,
+    ],
   )
   const panelText = useMemo(() => getPanelText(appState.settings.language), [appState.settings.language])
   const topTabText = useMemo(() => getTopTabText(appState.settings.language), [appState.settings.language])
@@ -755,11 +766,11 @@ function App() {
   const deltaBufferRef = useRef(
     new Map<string, StreamDeltaBufferEntry>(),
   )
-  const deltaFlushHandleRef = useRef<number | null>(null)
+  const streamRenderFlushHandleRef = useRef<number | null>(null)
+  const streamRenderCycleColumnIdsRef = useRef<string[]>([])
   const activityBufferRef = useRef(
-    new Map<string, { columnId: string; cardId: string; messages: ChatMessage[] }>(),
+    new Map<string, StreamActivityBufferEntry>(),
   )
-  const activityFlushHandleRef = useRef<number | null>(null)
   // Forensics counter: edits activities received per card during the live
   // stream. If the turn ends with edits received but zero edits messages in
   // state, something between onActivity and the reducer ate them — log loudly
@@ -1212,9 +1223,14 @@ function App() {
         return appStateRef.current
       }
 
-      if (deltaBufferRef.current.size === 0 && deltaFlushHandleRef.current !== null) {
-        window.clearTimeout(deltaFlushHandleRef.current)
-        deltaFlushHandleRef.current = null
+      if (
+        deltaBufferRef.current.size === 0 &&
+        activityBufferRef.current.size === 0 &&
+        streamRenderCycleColumnIdsRef.current.length === 0 &&
+        streamRenderFlushHandleRef.current !== null
+      ) {
+        window.clearTimeout(streamRenderFlushHandleRef.current)
+        streamRenderFlushHandleRef.current = null
       }
 
       const actions: IdeAction[] = bufferEntries
@@ -1236,35 +1252,48 @@ function App() {
     [applyActions],
   )
 
-  const flushActivityBuffer = useCallback(() => {
-    activityFlushHandleRef.current = null
-    const buffer = activityBufferRef.current
-    if (buffer.size === 0) {
+  const flushStreamRenderBuffers = useCallback(() => {
+    streamRenderFlushHandleRef.current = null
+    const cycleColumnIds = streamRenderCycleColumnIdsRef.current
+    if (cycleColumnIds.length === 0) {
+      cycleColumnIds.push(...getStreamRenderBufferColumnIds(
+        deltaBufferRef.current,
+        activityBufferRef.current,
+      ))
+    }
+
+    const columnId = cycleColumnIds.shift()
+    if (columnId) {
+      const actions = drainStreamRenderBufferActionsForColumn(
+        deltaBufferRef.current,
+        activityBufferRef.current,
+        columnId,
+      )
+      if (actions.length > 0) {
+        // Delta and activity timers used to race independently and flush every
+        // streaming column in one full-board commit. On the production
+        // software compositor that saturated the GPU process and eventually
+        // entered BrowserWindow unresponsive with no JS stack. Keep one urgent
+        // React lane, but isolate each commit to one column and yield between
+        // columns so input/compositor work can run between paint slices.
+        persistAfterActions(actions, applyActions(actions))
+      }
+    }
+
+    if (cycleColumnIds.length > 0) {
+      streamRenderFlushHandleRef.current = window.setTimeout(
+        flushStreamRenderBuffers,
+        streamRenderColumnYieldMs,
+      )
       return
     }
 
-    const actions: IdeAction[] = []
-    for (const entry of buffer.values()) {
-      if (entry.messages.length === 0) continue
-      actions.push({
-        type: 'upsertMessages',
-        columnId: entry.columnId,
-        cardId: entry.cardId,
-        messages: entry.messages,
-      })
+    if (deltaBufferRef.current.size > 0 || activityBufferRef.current.size > 0) {
+      streamRenderFlushHandleRef.current = window.setTimeout(
+        flushStreamRenderBuffers,
+        getStreamRenderFlushIntervalMs(activeStreamsRef.current.size),
+      )
     }
-    buffer.clear()
-
-    if (actions.length === 0) {
-      return
-    }
-
-    // Deliberately NOT wrapped in startTransition: transition-lane updates can
-    // be deferred for seconds under heavy host load while urgent delta commits
-    // keep landing, which opened a window where tool/edits messages lived only
-    // in an uncommitted lane (真实事故：一整轮工具/改动卡全部丢失、纯文字存活)。
-    // The flush is already batched on a 2s timer, so an urgent commit is cheap.
-    persistAfterActions(actions, applyActions(actions))
   }, [applyActions, persistAfterActions])
 
   const flushBufferedActivitiesForCard = useCallback(
@@ -1275,9 +1304,14 @@ function App() {
       }
 
       activityBufferRef.current.delete(cardId)
-      if (activityBufferRef.current.size === 0 && activityFlushHandleRef.current !== null) {
-        window.clearTimeout(activityFlushHandleRef.current)
-        activityFlushHandleRef.current = null
+      if (
+        activityBufferRef.current.size === 0 &&
+        deltaBufferRef.current.size === 0 &&
+        streamRenderCycleColumnIdsRef.current.length === 0 &&
+        streamRenderFlushHandleRef.current !== null
+      ) {
+        window.clearTimeout(streamRenderFlushHandleRef.current)
+        streamRenderFlushHandleRef.current = null
       }
 
       const action: IdeAction = {
@@ -1306,11 +1340,17 @@ function App() {
         buffer.set(cardId, { columnId, cardId, messages: [message] })
       }
 
-      if (activityFlushHandleRef.current === null) {
-        activityFlushHandleRef.current = window.setTimeout(flushActivityBuffer, streamActivityFlushIntervalMs)
+      if (
+        streamRenderFlushHandleRef.current === null &&
+        streamRenderCycleColumnIdsRef.current.length === 0
+      ) {
+        streamRenderFlushHandleRef.current = window.setTimeout(
+          flushStreamRenderBuffers,
+          getStreamRenderFlushIntervalMs(activeStreamsRef.current.size),
+        )
       }
     },
-    [flushActivityBuffer],
+    [flushStreamRenderBuffers],
   )
 
   const updateAutoUrgeProfiles = useCallback(
@@ -2707,7 +2747,7 @@ function App() {
         return
       }
 
-      // Urgent on purpose — see flushDeltaBuffer: reducer updates must stay in
+      // Urgent on purpose — see flushStreamRenderBuffers: reducer updates must stay in
       // one React lane or interleaved commits can render rebased intermediate
       // states (2026-07-11 panel delete/remount oscillation).
       const action: IdeAction = {
@@ -2770,42 +2810,6 @@ function App() {
     [applyAction, getColumn, persistAfterAction],
   )
 
-  const flushDeltaBuffer = useCallback(() => {
-    deltaFlushHandleRef.current = null
-    const buffer = deltaBufferRef.current
-    if (buffer.size === 0) {
-      return
-    }
-
-    const actions: IdeAction[] = []
-    for (const entry of buffer.values()) {
-      if (entry.buffer.length === 0) continue
-      actions.push({
-        type: 'appendAssistantDelta',
-        columnId: entry.columnId,
-        cardId: entry.cardId,
-        messageId: entry.messageId,
-        delta: entry.buffer,
-        model: entry.model,
-      })
-    }
-    buffer.clear()
-
-    if (actions.length === 0) {
-      return
-    }
-
-    // Deliberately NOT wrapped in startTransition (same reasoning as the
-    // activity flush above): transition-lane reducer updates split the app
-    // into two React lanes, and interleaved urgent commits then render from a
-    // rebased intermediate state. Forensics dump 2026-07-11T07-19 caught React
-    // commit-deleting the focused `pane-tab-panel.is-active` and remounting
-    // the same tabId in a ~3s oscillation during exactly such a streaming
-    // window, with zero tab-removing actions in the reducer. The flush is
-    // already throttled (80-180ms adaptive), so an urgent commit is cheap.
-    persistAfterActions(actions, applyActions(actions))
-  }, [applyActions, persistAfterActions])
-
   const enqueueAssistantDelta = useCallback(
     (columnId: string, cardId: string, messageId: string, delta: string, model?: string) => {
       if (!delta) return
@@ -2818,12 +2822,17 @@ function App() {
         model,
       })
 
-      if (deltaFlushHandleRef.current === null) {
-        const flushIntervalMs = getStreamDeltaFlushIntervalMs(activeStreamsRef.current.size)
-        deltaFlushHandleRef.current = window.setTimeout(flushDeltaBuffer, flushIntervalMs)
+      if (
+        streamRenderFlushHandleRef.current === null &&
+        streamRenderCycleColumnIdsRef.current.length === 0
+      ) {
+        streamRenderFlushHandleRef.current = window.setTimeout(
+          flushStreamRenderBuffers,
+          getStreamRenderFlushIntervalMs(activeStreamsRef.current.size),
+        )
       }
     },
-    [flushDeltaBuffer],
+    [flushStreamRenderBuffers],
   )
 
   const attachStream = useCallback(
@@ -3544,16 +3553,13 @@ function App() {
     pendingAskUserDuringStreamRef.current.clear()
     stopCompletionFallbackTimersRef.current.forEach((timer) => window.clearTimeout(timer))
     stopCompletionFallbackTimersRef.current.clear()
-    if (deltaFlushHandleRef.current !== null) {
-      window.clearTimeout(deltaFlushHandleRef.current)
-      deltaFlushHandleRef.current = null
+    if (streamRenderFlushHandleRef.current !== null) {
+      window.clearTimeout(streamRenderFlushHandleRef.current)
+      streamRenderFlushHandleRef.current = null
     }
     deltaBufferRef.current.clear()
-    if (activityFlushHandleRef.current !== null) {
-      window.clearTimeout(activityFlushHandleRef.current)
-      activityFlushHandleRef.current = null
-    }
     activityBufferRef.current.clear()
+    streamRenderCycleColumnIdsRef.current.length = 0
     stoppedRunReasonRef.current.clear()
     streamRetryCountRef.current.clear()
     resumeSessionLoopCountRef.current.clear()
@@ -3710,17 +3716,21 @@ function App() {
     const resumeSessionLoopCounts = resumeSessionLoopCountRef.current
     const streamRecoveryTurns = streamRecoveryTurnRef.current
     const deltaBuffer = deltaBufferRef.current
+    const activityBuffer = activityBufferRef.current
+    const streamRenderCycleColumnIds = streamRenderCycleColumnIdsRef.current
 
     return () => {
       activeStreams.forEach((stream) => {
         stream.source.close()
       })
       activeStreams.clear()
-      if (deltaFlushHandleRef.current !== null) {
-        window.clearTimeout(deltaFlushHandleRef.current)
-        deltaFlushHandleRef.current = null
+      if (streamRenderFlushHandleRef.current !== null) {
+        window.clearTimeout(streamRenderFlushHandleRef.current)
+        streamRenderFlushHandleRef.current = null
       }
       deltaBuffer.clear()
+      activityBuffer.clear()
+      streamRenderCycleColumnIds.length = 0
       retryCounts.clear()
       resumeSessionLoopCounts.clear()
       streamRecoveryTurns.clear()
@@ -5703,6 +5713,42 @@ function App() {
     </div>
   )
 
+  const renderCodexSafetySettings = (idPrefix: string) => (
+    <div className="codex-safety-settings">
+      <label className="settings-toggle" htmlFor={`${idPrefix}-codex-destructive-command-protection`}>
+        <span>{text.codexDestructiveCommandProtectionLabel}</span>
+        <input
+          id={`${idPrefix}-codex-destructive-command-protection`}
+          type="checkbox"
+          checked={appState.settings.codexDestructiveCommandProtectionEnabled}
+          onChange={(event) =>
+            applyAction({
+              type: 'updateSettings',
+              patch: { codexDestructiveCommandProtectionEnabled: event.target.checked },
+            })
+          }
+        />
+      </label>
+      <p className="settings-note">{text.codexDestructiveCommandProtectionNote}</p>
+
+      <label className="settings-toggle" htmlFor={`${idPrefix}-codex-isolated-home`}>
+        <span>{text.codexIsolatedHomeLabel}</span>
+        <input
+          id={`${idPrefix}-codex-isolated-home`}
+          type="checkbox"
+          checked={appState.settings.codexIsolatedHomeEnabled}
+          onChange={(event) =>
+            applyAction({
+              type: 'updateSettings',
+              patch: { codexIsolatedHomeEnabled: event.target.checked },
+            })
+          }
+        />
+      </label>
+      <p className="settings-note">{text.codexIsolatedHomeNote}</p>
+    </div>
+  )
+
   const renderThemeToggle = () => {
     const themeOptions: Array<{ value: AppState['settings']['theme']; label: string }> = [
       { value: 'light', label: text.light },
@@ -6090,6 +6136,13 @@ function App() {
             {text.updateCheckNow}
           </AppButton>
         </div>
+      </div>
+    </div>,
+
+    <div key="codex-safety" className="settings-group codex-safety-settings-group">
+      <h3 className="settings-group-title">{text.settingsGroupCodexSafety}</h3>
+      <div className="settings-section">
+        {renderCodexSafetySettings('modal')}
       </div>
     </div>,
 
@@ -7498,6 +7551,13 @@ function App() {
                     {text.updateCheckNow}
                   </AppButton>
                 </div>
+              </div>
+            </div>
+
+            <div className="settings-group codex-safety-settings-group">
+              <h3 className="settings-group-title">{text.settingsGroupCodexSafety}</h3>
+              <div className="settings-section">
+                {renderCodexSafetySettings('inline')}
               </div>
             </div>
 

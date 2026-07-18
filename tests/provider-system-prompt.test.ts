@@ -9,6 +9,7 @@ import { chatRequestSchema, type ChatRequest, type StreamActivity } from '../sha
 import { defaultSystemPrompt } from '../shared/system-prompt.ts'
 import {
   buildClaudeArgs,
+  buildClaudeKeepaliveSignature,
   buildCodexArgs,
   buildProviderSystemPrompt,
   isCodexNativeReconnectPlaceholderForTesting,
@@ -37,6 +38,8 @@ const createRequest = (overrides: Partial<ChatRequest> = {}): ChatRequest => ({
   sandboxMode: overrides.sandboxMode,
   approvalPolicy: overrides.approvalPolicy,
   networkAccessEnabled: overrides.networkAccessEnabled,
+  codexDestructiveCommandProtectionEnabled: overrides.codexDestructiveCommandProtectionEnabled,
+  codexIsolatedHomeEnabled: overrides.codexIsolatedHomeEnabled,
   personality: (overrides as Partial<ChatRequest> & { personality?: 'none' | 'friendly' | 'pragmatic' }).personality,
   serviceTier: (overrides as Partial<ChatRequest> & { serviceTier?: 'priority' }).serviceTier,
 })
@@ -70,6 +73,38 @@ test('codex runs include the final resolution marker instruction', () => {
   assert.match(instructionsArg, /Always leave a clear final status line\./)
   assert.match(instructionsArg, /ask-user-question/)
   assert.match(instructionsArg, /request_user_input/i)
+})
+
+test('codex ask-user instructions support question groups without a question count limit', () => {
+  const enArgs = buildCodexArgs(
+    createRequest({
+      provider: 'codex',
+      language: 'en',
+      systemPrompt: 'Base.',
+    }),
+    [],
+  )
+  const enInstructions = enArgs.find((arg) => arg.startsWith('instructions=')) ?? ''
+
+  assert.match(enInstructions, /questions/)
+  assert.match(enInstructions, /multiple questions/i)
+  assert.match(enInstructions, /single-question/i)
+  assert.doesNotMatch(enInstructions, /2-3 questions|more than 3 questions/i)
+
+  const zhArgs = buildCodexArgs(
+    createRequest({
+      provider: 'codex',
+      language: 'zh-CN',
+      systemPrompt: 'Base.',
+    }),
+    [],
+  )
+  const zhInstructions = zhArgs.find((arg) => arg.startsWith('instructions=')) ?? ''
+
+  assert.match(zhInstructions, /questions/)
+  assert.match(zhInstructions, /多个问题/)
+  assert.match(zhInstructions, /单题/)
+  assert.doesNotMatch(zhInstructions, /2-3\s*题|最多\s*3\s*题/)
 })
 
 test('codex instructions warn Windows PowerShell not to double-quote patterns with embedded quotes', () => {
@@ -308,6 +343,131 @@ test('claude runs pin the permission default mode so spawned subagents inherit i
 
   assert.equal(parsedSettings.permissions?.defaultMode, 'bypassPermissions')
   assert.equal(parsedSettings.skipDangerousModePermissionPrompt, true)
+})
+
+test('Claude safety hook is injected into session settings and keepalive identity', () => {
+  const hookCommand = process.platform === 'win32'
+    ? "& 'D:\\safe path\\pre-tool-use-guard.cmd'"
+    : "'/tmp/safe path/pre-tool-use-guard.sh'"
+  const request = createRequest({
+    provider: 'claude',
+    model: 'claude-sonnet-4-6',
+    language: 'en',
+    codexDestructiveCommandProtectionEnabled: true,
+  })
+  const args = buildClaudeArgs(request, [], { safetyHookCommand: hookCommand })
+  const settingsIndex = args.indexOf('--settings')
+
+  assert.notEqual(settingsIndex, -1)
+  const settings = JSON.parse(args[settingsIndex + 1] ?? '{}') as {
+    hooks?: {
+      PreToolUse?: Array<{
+        matcher?: string
+        hooks?: Array<Record<string, unknown>>
+      }>
+    }
+  }
+  const hookGroup = settings.hooks?.PreToolUse?.[0]
+  const hook = hookGroup?.hooks?.[0]
+  assert.equal(hookGroup?.matcher, 'Bash')
+  assert.equal(hook?.type, 'command')
+  assert.equal(hook?.command, process.platform === 'win32' ? 'powershell.exe' : '/bin/sh')
+  assert.deepEqual(
+    (hook?.args as string[] | undefined)?.slice(-2),
+    process.platform === 'win32' ? ['-Command', hookCommand] : ['-c', hookCommand],
+  )
+  assert.equal(hook?.timeout, 5)
+
+  const enabledSignature = buildClaudeKeepaliveSignature(
+    request,
+    true,
+    { args: [], env: {} },
+    [],
+    hookCommand,
+  )
+  const disabledSignature = buildClaudeKeepaliveSignature(
+    { ...request, codexDestructiveCommandProtectionEnabled: false },
+    true,
+    { args: [], env: {} },
+    [],
+  )
+  assert.notEqual(enabledSignature, disabledSignature)
+
+  const disabledArgs = buildClaudeArgs(
+    { ...request, codexDestructiveCommandProtectionEnabled: false },
+    [],
+    { safetyHookCommand: hookCommand },
+  )
+  const disabledSettings = JSON.parse(
+    disabledArgs[disabledArgs.indexOf('--settings') + 1] ?? '{}',
+  ) as { hooks?: unknown }
+  assert.equal(disabledSettings.hooks, undefined)
+})
+
+test('Claude launch applies and removes the shared destructive-command guard with the setting', async () => {
+  const capturePath = path.join(
+    os.tmpdir(),
+    `chill-vibe-claude-safety-launch-${Date.now()}-${Math.random().toString(36).slice(2)}.jsonl`,
+  )
+
+  try {
+    const enabledOutcome = await withFakeProviderCommand(
+      'claude',
+      buildFakeClaudeSafetyCaptureScript(capturePath),
+      async (workspacePath) =>
+        captureProviderOutcome(
+          createRequest({
+            provider: 'claude',
+            workspacePath,
+            codexDestructiveCommandProtectionEnabled: true,
+          }),
+        ),
+    )
+    const disabledOutcome = await withFakeProviderCommand(
+      'claude',
+      buildFakeClaudeSafetyCaptureScript(capturePath),
+      async (workspacePath) =>
+        captureProviderOutcome(
+          createRequest({
+            provider: 'claude',
+            workspacePath,
+            codexDestructiveCommandProtectionEnabled: false,
+          }),
+        ),
+    )
+
+    assert.deepEqual(enabledOutcome, { kind: 'done' })
+    assert.deepEqual(disabledOutcome, { kind: 'done' })
+
+    const launches = (await readFile(capturePath, 'utf8'))
+      .trim()
+      .split(/\r?\n/)
+      .map((line) => JSON.parse(line) as {
+        argv?: string[]
+        env?: Record<string, string | undefined>
+      })
+    assert.equal(launches.length, 2)
+
+    const enabledSettingsIndex = launches[0]?.argv?.indexOf('--settings') ?? -1
+    const enabledSettings = JSON.parse(
+      launches[0]?.argv?.[enabledSettingsIndex + 1] ?? '{}',
+    ) as { hooks?: { PreToolUse?: unknown[] } }
+    assert.equal(enabledSettings.hooks?.PreToolUse?.length, 1)
+    assert.ok(launches[0]?.env?.hookCommand)
+    assert.ok(launches[0]?.env?.protectedWorkspace)
+    assert.match(launches[0]?.env?.guardScript ?? '', /codex-destructive-command-guard\.js$/)
+
+    const disabledSettingsIndex = launches[1]?.argv?.indexOf('--settings') ?? -1
+    const disabledSettings = JSON.parse(
+      launches[1]?.argv?.[disabledSettingsIndex + 1] ?? '{}',
+    ) as { hooks?: unknown }
+    assert.equal(disabledSettings.hooks, undefined)
+    assert.equal(launches[1]?.env?.hookCommand, undefined)
+    assert.equal(launches[1]?.env?.protectedWorkspace, undefined)
+    assert.equal(launches[1]?.env?.guardScript, undefined)
+  } finally {
+    await rm(capturePath, { force: true }).catch(() => {})
+  }
 })
 
 test('claude runs pre-authorize the resolved global .claude directory for tool access', async () => {
@@ -1436,6 +1596,31 @@ const buildFakeCodexAppServerScript = (capturePath: string) =>
     '})',
   ].join('\n')
 
+const buildFakeCodexSafetyHandshakeScript = (capturePath: string, persistTrust = true) =>
+  [
+    "const fs = require('node:fs')",
+    "const readline = require('node:readline')",
+    `const capturePath = ${JSON.stringify(capturePath)}`,
+    'const appendMessage = (message) => fs.appendFileSync(capturePath, `${JSON.stringify(message)}\\n`, "utf8")',
+    "const reply = (message) => process.stdout.write(`${JSON.stringify(message)}\\n`)",
+    "let trusted = false",
+    "appendMessage({ kind: 'startup', argv: process.argv.slice(2), env: { HOME: process.env.HOME, USERPROFILE: process.env.USERPROFILE, CODEX_HOME: process.env.CODEX_HOME, hookCommand: process.env.CHILL_VIBE_CODEX_SAFETY_HOOK_COMMAND, protectedWorkspace: process.env.CHILL_VIBE_PROTECTED_WORKSPACE, guardExecutable: process.env.CHILL_VIBE_CODEX_GUARD_EXECUTABLE, guardScript: process.env.CHILL_VIBE_CODEX_GUARD_SCRIPT } })",
+    "const rl = readline.createInterface({ input: process.stdin, crlfDelay: Infinity })",
+    "rl.on('line', (line) => {",
+    "  if (!line.trim()) return",
+    "  const request = JSON.parse(line)",
+    "  appendMessage(request)",
+    "  if (request.method === 'initialize' && request.id) { reply({ id: request.id, result: {} }); return }",
+    "  if (request.method === 'hooks/list' && request.id) {",
+    "    reply({ id: request.id, result: { data: [{ cwd: request.params.cwds[0], hooks: [{ key: '<session-flags>/config.toml:pre_tool_use:0:0', eventName: 'pre_tool_use', handlerType: 'command', isManaged: false, matcher: 'Bash|apply_patch|Edit|Write', command: process.env.CHILL_VIBE_CODEX_SAFETY_HOOK_COMMAND, timeoutSec: 5, statusMessage: 'Chill Vibe safety check', sourcePath: '<session-flags>/config.toml', source: 'sessionFlags', pluginId: null, displayOrder: 0, enabled: true, currentHash: 'sha256:chill-vibe-safety', trustStatus: trusted ? 'trusted' : 'untrusted' }], warnings: [], errors: [] }] } })",
+    "    return",
+    "  }",
+    `  if (request.method === 'config/batchWrite' && request.id) { trusted = ${persistTrust ? 'true' : 'false'}; reply({ id: request.id, result: { status: 'ok' } }); return }`,
+    "  if (request.method === 'thread/start' && request.id) { reply({ id: request.id, result: { thread: { id: 'thread-safety', status: { type: 'active' } } } }); return }",
+    "  if (request.method === 'turn/start' && request.id) { reply({ id: request.id, result: {} }); reply({ method: 'turn/completed', params: {} }) }",
+    "})",
+  ].join('\n')
+
 const buildFakeCodexArchiveRecallScript = (capturePath: string) =>
   [
     "const fs = require('node:fs')",
@@ -1875,6 +2060,17 @@ const buildFakeClaudeCapturePromptScript = (capturePath: string) =>
     "const reply = (message) => process.stdout.write(`${JSON.stringify(message)}\\n`)",
     "reply({ type: 'system', subtype: 'init', session_id: 'claude-session-capture' })",
     "reply({ type: 'assistant', message: { content: [{ type: 'text', text: 'Captured prompt' }] } })",
+    "reply({ type: 'result', is_error: false, result: 'ok' })",
+  ].join('\n')
+
+const buildFakeClaudeSafetyCaptureScript = (capturePath: string) =>
+  [
+    "const fs = require('node:fs')",
+    `const capturePath = ${JSON.stringify(capturePath)}`,
+    "fs.appendFileSync(capturePath, `${JSON.stringify({ argv: process.argv.slice(2), env: { hookCommand: process.env.CHILL_VIBE_CODEX_SAFETY_HOOK_COMMAND, protectedWorkspace: process.env.CHILL_VIBE_PROTECTED_WORKSPACE, guardScript: process.env.CHILL_VIBE_CODEX_GUARD_SCRIPT } })}\\n`, 'utf8')",
+    "const reply = (message) => process.stdout.write(`${JSON.stringify(message)}\\n`)",
+    "reply({ type: 'system', subtype: 'init', session_id: 'claude-session-safety-capture' })",
+    "reply({ type: 'assistant', message: { content: [{ type: 'text', text: 'Safety capture complete' }] } })",
     "reply({ type: 'result', is_error: false, result: 'ok' })",
   ].join('\n')
 
@@ -3921,6 +4117,193 @@ test('codex app-server defaults to danger-full-access sandbox for normal chats',
     assert.deepEqual(turnStart.params?.sandboxPolicy, {
       type: 'dangerFullAccess',
     })
+  } finally {
+    await rm(capturePath, { force: true }).catch(() => {})
+  }
+})
+
+test('codex app-server installs and precisely trusts the Chill Vibe safety hook before starting a protected thread', async () => {
+  const capturePath = path.join(
+    os.tmpdir(),
+    `chill-vibe-codex-safety-hook-${Date.now()}-${Math.random().toString(36).slice(2)}.jsonl`,
+  )
+  let expectedWorkspacePath = ''
+
+  try {
+    const outcome = await withFakeProviderCommand(
+      'codex',
+      buildFakeCodexSafetyHandshakeScript(capturePath),
+      async (workspacePath) => {
+        expectedWorkspacePath = workspacePath
+        return captureProviderOutcome(
+          createRequest({
+            provider: 'codex',
+            language: 'en',
+            workspacePath,
+            cardId: 'safety-card',
+            codexDestructiveCommandProtectionEnabled: true,
+            codexIsolatedHomeEnabled: true,
+          }),
+        )
+      },
+    )
+
+    assert.deepEqual(outcome, { kind: 'done' })
+
+    const messages = (await readFile(capturePath, 'utf8'))
+      .trim()
+      .split(/\r?\n/)
+      .map((line) => JSON.parse(line) as {
+        kind?: string
+        argv?: string[]
+        env?: Record<string, string | undefined>
+        method?: string
+        params?: Record<string, unknown>
+      })
+    const startup = messages.find((message) => message.kind === 'startup')
+    const methods = messages.flatMap((message) => message.method ? [message.method] : [])
+
+    assert.ok(startup)
+    assert.match(startup.argv?.join(' ') ?? '', /hooks\.PreToolUse/)
+    assert.doesNotMatch(startup.argv?.join(' ') ?? '', /dangerously-bypass-hook-trust/)
+    assert.ok(startup.env?.hookCommand)
+    assert.equal(path.resolve(startup.env?.protectedWorkspace ?? ''), path.resolve(expectedWorkspacePath))
+    assert.ok(startup.env?.guardExecutable)
+    assert.match(startup.env?.guardScript ?? '', /codex-destructive-command-guard\.js$/)
+    assert.notEqual(path.resolve(startup.env?.USERPROFILE ?? ''), path.resolve(os.homedir()))
+    if (process.platform === 'win32') {
+      assert.equal(startup.env?.HOME, process.env.HOME ?? os.homedir())
+    } else {
+      assert.notEqual(path.resolve(startup.env?.HOME ?? ''), path.resolve(os.homedir()))
+    }
+    assert.equal(
+      path.resolve(startup.env?.CODEX_HOME ?? ''),
+      path.resolve(process.env.CODEX_HOME ?? path.join(os.homedir(), '.codex')),
+    )
+    assert.deepEqual(methods, [
+      'initialize',
+      'initialized',
+      'hooks/list',
+      'config/batchWrite',
+      'hooks/list',
+      'thread/start',
+      'turn/start',
+    ])
+
+    const trustWrite = messages.find((message) => message.method === 'config/batchWrite')
+    assert.match(JSON.stringify(trustWrite?.params), /sha256:chill-vibe-safety/)
+    assert.match(JSON.stringify(trustWrite?.params), /trusted_hash/)
+  } finally {
+    await rm(capturePath, { force: true }).catch(() => {})
+  }
+})
+
+test('codex app-server treats a non-persisting safety hook trust write as a fatal env setup error', async () => {
+  const capturePath = path.join(
+    os.tmpdir(),
+    `chill-vibe-codex-safety-trust-failure-${Date.now()}-${Math.random().toString(36).slice(2)}.jsonl`,
+  )
+
+  try {
+    const outcome = await withFakeProviderCommand(
+      'codex',
+      buildFakeCodexSafetyHandshakeScript(capturePath, false),
+      async (workspacePath) =>
+        new Promise<{
+          message: string
+          hint?: string
+          recovery?: { recoverable?: boolean; recoveryMode?: string }
+        }>((resolve, reject) => {
+          void launchProviderRun(
+            createRequest({
+              provider: 'codex',
+              language: 'en',
+              workspacePath,
+              cardId: 'safety-failure-card',
+              codexDestructiveCommandProtectionEnabled: true,
+              codexIsolatedHomeEnabled: true,
+            }),
+            {
+              onSession: () => undefined,
+              onDelta: () => undefined,
+              onLog: () => undefined,
+              onAssistantMessage: () => undefined,
+              onActivity: () => undefined,
+              onDone: () => reject(new Error('Safety initialization failure must not complete or continue.')),
+              onError: (message, hint, recovery) => resolve({ message, hint, recovery }),
+            },
+          ).then((child) => {
+            if (!child) {
+              reject(new Error('Expected fake provider command to launch before trust verification.'))
+            }
+          }).catch(reject)
+        }),
+    )
+
+    assert.match(outcome.message, /trust verification did not persist/i)
+    assert.equal(outcome.hint, 'env-setup')
+    assert.notEqual(outcome.recovery?.recoverable, true)
+
+    const methods = (await readFile(capturePath, 'utf8'))
+      .trim()
+      .split(/\r?\n/)
+      .map((line) => JSON.parse(line) as { method?: string })
+      .flatMap((message) => message.method ? [message.method] : [])
+    assert.deepEqual(methods, [
+      'initialize',
+      'initialized',
+      'hooks/list',
+      'config/batchWrite',
+      'hooks/list',
+    ])
+  } finally {
+    await rm(capturePath, { force: true }).catch(() => {})
+  }
+})
+
+test('codex app-server leaves hook args and home environment unchanged when both safety switches are off', async () => {
+  const capturePath = path.join(
+    os.tmpdir(),
+    `chill-vibe-codex-safety-disabled-${Date.now()}-${Math.random().toString(36).slice(2)}.jsonl`,
+  )
+
+  try {
+    const outcome = await withFakeProviderCommand(
+      'codex',
+      buildFakeCodexSafetyHandshakeScript(capturePath),
+      async (workspacePath) =>
+        captureProviderOutcome(
+          createRequest({
+            provider: 'codex',
+            language: 'en',
+            workspacePath,
+            codexDestructiveCommandProtectionEnabled: false,
+            codexIsolatedHomeEnabled: false,
+          }),
+        ),
+    )
+
+    assert.deepEqual(outcome, { kind: 'done' })
+
+    const messages = (await readFile(capturePath, 'utf8'))
+      .trim()
+      .split(/\r?\n/)
+      .map((line) => JSON.parse(line) as {
+        kind?: string
+        argv?: string[]
+        env?: Record<string, string | undefined>
+        method?: string
+      })
+    const startup = messages.find((message) => message.kind === 'startup')
+    const methods = messages.flatMap((message) => message.method ? [message.method] : [])
+
+    assert.ok(startup)
+    assert.doesNotMatch(startup.argv?.join(' ') ?? '', /hooks\.PreToolUse/)
+    assert.equal(startup.env?.hookCommand, undefined)
+    assert.equal(startup.env?.HOME, process.env.HOME)
+    assert.equal(startup.env?.USERPROFILE, process.env.USERPROFILE)
+    assert.equal(startup.env?.CODEX_HOME, process.env.CODEX_HOME)
+    assert.deepEqual(methods, ['initialize', 'initialized', 'thread/start', 'turn/start'])
   } finally {
     await rm(capturePath, { force: true }).catch(() => {})
   }

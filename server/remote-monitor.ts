@@ -3,7 +3,7 @@ import http from 'node:http'
 import os from 'node:os'
 import type { AddressInfo } from 'node:net'
 
-import { getModelOptions, isModelPickerOptionVisible } from '../shared/models.js'
+import { MODEL_OPTIONS, isModelPickerOptionVisible } from '../shared/models.js'
 import { getReasoningOptionsForModel } from '../shared/reasoning.js'
 import { remoteMonitorCommandSchema, type RemoteMonitorCommand } from '../shared/schema.js'
 import type { ChatMessage, Provider } from '../shared/schema.js'
@@ -24,7 +24,7 @@ export type RemoteMonitorCardSnapshot = {
   streamId?: string
   lastMessagePreview?: string
   reasoningEffort?: string
-  modelOptions?: Array<{ model: string; label: string }>
+  modelOptions?: Array<{ provider: Provider; model: string; label: string }>
   reasoningOptions?: Array<{ value: string; label: string }>
 }
 
@@ -114,9 +114,13 @@ const buildCardPickerOptions = (provider: string, model: string) => {
   const typedProvider = provider as Provider
 
   return {
-    modelOptions: getModelOptions(typedProvider)
+    modelOptions: MODEL_OPTIONS
       .filter((option) => isModelPickerOptionVisible(option))
-      .map((option) => ({ model: option.model, label: option.label })),
+      .map((option) => ({
+        provider: option.provider,
+        model: option.model,
+        label: option.label,
+      })),
     reasoningOptions: getReasoningOptionsForModel(typedProvider, model, 'zh-CN').map((option) => ({
       value: option.value,
       label: option.label,

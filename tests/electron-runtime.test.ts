@@ -7,6 +7,7 @@ import test from 'node:test'
 
 import {
   resolveDesktopDataDir,
+  resolveHardwareAccelerationEnabled,
   resolveDesktopRuntimeProfilePaths,
   resolveDesktopWorkingDirectory,
 } from '../electron/runtime-environment.ts'
@@ -75,6 +76,23 @@ test('development Electron uses a repo-local runtime profile so it does not shar
     {
       userData: path.join(projectRoot, '.chill-vibe', 'electron-dev', 'user-data'),
       sessionData: path.join(projectRoot, '.chill-vibe', 'electron-dev', 'session-data'),
+    },
+  )
+})
+
+test('headless Electron validation can opt into an isolated runtime profile root', () => {
+  const projectRoot = path.join('D:', 'Git', 'chill-vibe')
+  const configuredProfileRoot = path.join('D:', 'Temp', 'chill-vibe-electron-test-profile')
+
+  assert.deepEqual(
+    resolveDesktopRuntimeProfilePaths({
+      isDev: true,
+      projectRoot,
+      configuredProfileRoot,
+    }),
+    {
+      userData: path.join(configuredProfileRoot, 'user-data'),
+      sessionData: path.join(configuredProfileRoot, 'session-data'),
     },
   )
 })
@@ -251,6 +269,20 @@ test('Electron quit flow flushes renderer persistence and waits for queued state
   assert.match(persistenceBody, /window\.addEventListener\('chill-vibe:flush-state-before-quit', handlePageHide\)/)
 })
 
+test('Electron update install flushes renderer and queued main-process state before updater exit', async () => {
+  const mainBody = await readFile(path.join(process.cwd(), 'electron', 'main.ts'), 'utf8')
+
+  assert.match(mainBody, /async function flushStateBeforeUpdate\(\)/)
+  assert.match(
+    mainBody,
+    /flushStateBeforeUpdate[\s\S]+webContents\.send\('app:flush-state-before-quit'\)[\s\S]+desktopBackend\.flushStateWrites\(\)/,
+  )
+  assert.match(
+    mainBody,
+    /ipcMain\.handle\('desktop:install-update',[\s\S]+await flushStateBeforeUpdate\(\)[\s\S]+await installUpdate\(assetPath\)/,
+  )
+})
+
 test('Electron window close keeps renderer alive until persistence flush is scheduled', async () => {
   const mainBody = await readFile(path.join(process.cwd(), 'electron', 'main.ts'), 'utf8')
 
@@ -296,6 +328,42 @@ test('Electron runtime validation keeps desktop windows hidden by default', asyn
   assert.match(mainBody, /presentWindow\(win\)/)
   assert.match(mainBody, /backgroundThrottling:\s*false/)
   assert.match(helperBody, /CHILL_VIBE_HEADLESS_RUNTIME_TESTS:\s*'1'/)
+})
+
+test('Windows uses hardware acceleration by default with explicit compatibility overrides', () => {
+  assert.equal(resolveHardwareAccelerationEnabled({ platform: 'win32' }), true)
+  assert.equal(resolveHardwareAccelerationEnabled({
+    platform: 'win32',
+    disableOverride: '1',
+  }), false)
+  assert.equal(resolveHardwareAccelerationEnabled({ platform: 'linux' }), false)
+  assert.equal(resolveHardwareAccelerationEnabled({
+    platform: 'linux',
+    enableOverride: '1',
+  }), true)
+})
+
+test('chat performance validation enables offscreen painting instead of testing an unpainted hidden window', async () => {
+  const projectRoot = process.cwd()
+  const [mainBody, performanceBody] = await Promise.all([
+    readFile(path.join(projectRoot, 'electron', 'main.ts'), 'utf8'),
+    readFile(path.join(projectRoot, 'tests', 'electron-chat-stream-performance.test.ts'), 'utf8'),
+  ])
+
+  assert.match(mainBody, /CHILL_VIBE_OFFSCREEN_RUNTIME_TESTS\s*===\s*'1'/)
+  assert.match(mainBody, /offscreen:\s*shouldUseOffscreenValidationRendering/)
+  assert.match(mainBody, /if \(shouldUseOffscreenValidationRendering\)\s*{[\s\S]+webContents\.setFrameRate\(15\)[\s\S]+webContents\.on\('paint'/)
+  assert.match(performanceBody, /CHILL_VIBE_OFFSCREEN_RUNTIME_TESTS:\s*'1'/)
+})
+
+test('Electron can opt into hardware acceleration for raster performance validation', async () => {
+  const projectRoot = process.cwd()
+  const mainBody = await readFile(path.join(projectRoot, 'electron', 'main.ts'), 'utf8')
+
+  assert.match(mainBody, /resolveHardwareAccelerationEnabled\({/)
+  assert.match(mainBody, /enableOverride:\s*process\.env\.CHILL_VIBE_ENABLE_HARDWARE_ACCELERATION/)
+  assert.match(mainBody, /disableOverride:\s*process\.env\.CHILL_VIBE_DISABLE_HARDWARE_ACCELERATION/)
+  assert.match(mainBody, /if \(!shouldEnableHardwareAcceleration\)\s*{\s*app\.disableHardwareAcceleration\(\)/)
 })
 
 test('Playwright browser validation is forced into headless mode by config and repo harness', async () => {

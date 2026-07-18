@@ -154,6 +154,40 @@ const createState = (): AppState => ({
 })
 
 describe('ideReducer pane layout', () => {
+  it('keeps appendMessages idempotent when a streamed message is replayed', () => {
+    const state = createState()
+    state.columns[0]!.cards['card-1']!.messages = [assistantMessage]
+
+    const next = ideReducer(state, {
+      type: 'appendMessages',
+      columnId: 'column-1',
+      cardId: 'card-1',
+      messages: [
+        {
+          ...assistantMessage,
+          content: '',
+        },
+        {
+          id: 'msg-new',
+          role: 'assistant',
+          content: 'New streamed item',
+          createdAt: timestamp,
+        },
+        {
+          id: 'msg-new',
+          role: 'assistant',
+          content: 'Duplicate replay',
+          createdAt: timestamp,
+        },
+      ],
+    })
+
+    const messages = next.columns[0]!.cards['card-1']!.messages
+    assert.deepEqual(messages.map((message) => message.id), ['msg-assistant', 'msg-new'])
+    assert.equal(messages[0]?.content, 'Hello')
+    assert.equal(messages[1]?.content, 'New streamed item')
+  })
+
   it('clears persisted deferred sends when resetting a conversation', () => {
     const state = createState()
     state.columns[0]!.cards['card-1']!.queuedSends = [{

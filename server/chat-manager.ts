@@ -214,6 +214,7 @@ export class ChatManager {
   private readonly tapRegistry = createChatStreamTapRegistry()
   private readonly claudePool: ClaudeSessionPool | null
   private readonly onUnsolicitedStream?: (notification: UnsolicitedStreamNotification) => void
+  private readonly providerLauncher: typeof launchProviderRun
 
   constructor(options?: {
     // Keepalive is host-opt-in: the Electron desktop backend enables it so
@@ -221,8 +222,10 @@ export class ChatManager {
     // single-shot behavior (it has no push channel for unsolicited streams).
     enableClaudeKeepalive?: boolean
     onUnsolicitedStream?: (notification: UnsolicitedStreamNotification) => void
+    providerLauncher?: typeof launchProviderRun
   }) {
     this.onUnsolicitedStream = options?.onUnsolicitedStream
+    this.providerLauncher = options?.providerLauncher ?? launchProviderRun
     this.claudePool = options?.enableClaudeKeepalive
       ? new ClaudeSessionPool({
           onUnsolicited: (entry, attach) => {
@@ -365,6 +368,10 @@ export class ChatManager {
   closeAll() {
     this.claudePool?.closeAll()
     for (const stream of this.streams.values()) {
+      if (stream.cleanupTimer) {
+        clearTimeout(stream.cleanupTimer)
+        stream.cleanupTimer = undefined
+      }
       stream.child?.kill()
       stream.listeners.forEach((response) => response.end())
       stream.listeners.clear()
@@ -387,7 +394,7 @@ export class ChatManager {
       backlog: [],
       listeners: new Set(),
       subscribers: new Set(),
-      stopHook: () => this.claudePool?.releaseEntry(entry.key),
+      stopHook: () => this.claudePool?.releaseEntry(entry.key, entry.child),
       latestSessionId: normalizeSessionId(entry.sessionId),
       terminal: false,
       stopRequested: false,
@@ -455,8 +462,8 @@ export class ChatManager {
           )
         },
       },
-      killChild: () => this.claudePool?.releaseEntry(entry.key),
-      onSettled: () => this.claudePool?.endTurn(entry.key),
+      killChild: () => this.claudePool?.releaseEntry(entry.key, entry.child),
+      onSettled: () => this.claudePool?.endTurn(entry.key, entry.child),
     })
 
     attach(attachment)
@@ -474,7 +481,7 @@ export class ChatManager {
 
     const touchedPaths = new Set<string>()
 
-    const child = await launchProviderRun(request, {
+    const child = await this.providerLauncher(request, {
       onSession: (sessionId) => {
         stream.latestSessionId = normalizeSessionId(sessionId) ?? stream.latestSessionId
         this.emit(stream, 'session', { sessionId })
@@ -516,6 +523,11 @@ export class ChatManager {
     }, { claudeSessionPool: this.claudePool })
 
     if (!child) {
+      return
+    }
+
+    if (stream.stopRequested || stream.terminal) {
+      child.kill()
       return
     }
 

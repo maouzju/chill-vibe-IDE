@@ -1,6 +1,6 @@
 import { spawn } from 'node:child_process'
 import { createHash } from 'node:crypto'
-import { mkdir, readdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises'
+import { mkdir, readdir, readFile, realpath, rename, rm, stat, writeFile } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 
@@ -159,8 +159,60 @@ export const ensureWithinWorkspace = (workspacePath: string, relativePath: strin
   throw new Error('Path traversal is not allowed.')
 }
 
+const isPathInsideRoot = (candidatePath: string, rootPath: string) => {
+  const candidateKey = toPathComparisonKey(path.resolve(candidatePath))
+  const rootKey = toPathComparisonKey(path.resolve(rootPath))
+  return candidateKey === rootKey || candidateKey.startsWith(`${rootKey}${path.sep}`)
+}
+
+// Resolve links in the nearest existing ancestor. This also works for create/write
+// targets that do not exist yet while still exposing a junction or symlink in any
+// parent directory before the filesystem mutation happens.
+const resolveCanonicalPath = async (targetPath: string): Promise<string> => {
+  const missingSegments: string[] = []
+  let candidate = path.resolve(targetPath)
+
+  for (;;) {
+    try {
+      const canonicalAncestor = await realpath(candidate)
+      return path.resolve(canonicalAncestor, ...missingSegments.reverse())
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code
+      if (code !== 'ENOENT') {
+        throw error
+      }
+
+      const parent = path.dirname(candidate)
+      if (parent === candidate) {
+        throw error
+      }
+      missingSegments.push(path.basename(candidate))
+      candidate = parent
+    }
+  }
+}
+
+const ensureWithinWorkspaceCanonical = async (workspacePath: string, relativePath: string) => {
+  const lexicalTarget = ensureWithinWorkspace(workspacePath, relativePath)
+  const canonicalTarget = await resolveCanonicalPath(lexicalTarget)
+  const allowedRoots = [
+    workspacePath,
+    path.join(os.homedir(), '.claude'),
+    path.join(os.homedir(), '.codex'),
+  ]
+
+  for (const allowedRoot of allowedRoots) {
+    const canonicalRoot = await resolveCanonicalPath(allowedRoot)
+    if (isPathInsideRoot(canonicalTarget, canonicalRoot)) {
+      return lexicalTarget
+    }
+  }
+
+  throw new Error('Path traversal is not allowed.')
+}
+
 export const listFiles = async (request: FileListRequest): Promise<{ entries: FileEntry[] }> => {
-  const targetPath = ensureWithinWorkspace(request.workspacePath, request.relativePath)
+  const targetPath = await ensureWithinWorkspaceCanonical(request.workspacePath, request.relativePath)
   const dirEntries = await readdir(targetPath, { withFileTypes: true })
 
   const entries: FileEntry[] = dirEntries
@@ -177,7 +229,7 @@ export const listFiles = async (request: FileListRequest): Promise<{ entries: Fi
 export const searchWorkspaceFiles = async (
   request: FileSearchRequest,
 ): Promise<{ entries: FileSearchEntry[] }> => {
-  const workspacePath = ensureWithinWorkspace(request.workspacePath, '')
+  const workspacePath = await ensureWithinWorkspaceCanonical(request.workspacePath, '')
   const query = normalizeSearchValue(request.query)
 
   if (query.length === 0) {
@@ -239,14 +291,14 @@ export const searchWorkspaceFiles = async (
 
 export const createWorkspaceFile = async (request: FileCreateRequest): Promise<void> => {
   const entryName = normalizeEntryName(request.name)
-  const parentPath = ensureWithinWorkspace(request.workspacePath, request.parentRelativePath)
+  const parentPath = await ensureWithinWorkspaceCanonical(request.workspacePath, request.parentRelativePath)
   const parentStats = await stat(parentPath)
 
   if (!parentStats.isDirectory()) {
     throw new Error('Parent path must be a directory.')
   }
 
-  const targetPath = ensureWithinWorkspace(
+  const targetPath = await ensureWithinWorkspaceCanonical(
     request.workspacePath,
     joinRelativePath(request.parentRelativePath, entryName),
   )
@@ -255,14 +307,14 @@ export const createWorkspaceFile = async (request: FileCreateRequest): Promise<v
 
 export const createWorkspaceDirectory = async (request: FileCreateRequest): Promise<void> => {
   const entryName = normalizeEntryName(request.name)
-  const parentPath = ensureWithinWorkspace(request.workspacePath, request.parentRelativePath)
+  const parentPath = await ensureWithinWorkspaceCanonical(request.workspacePath, request.parentRelativePath)
   const parentStats = await stat(parentPath)
 
   if (!parentStats.isDirectory()) {
     throw new Error('Parent path must be a directory.')
   }
 
-  const targetPath = ensureWithinWorkspace(
+  const targetPath = await ensureWithinWorkspaceCanonical(
     request.workspacePath,
     joinRelativePath(request.parentRelativePath, entryName),
   )
@@ -271,7 +323,7 @@ export const createWorkspaceDirectory = async (request: FileCreateRequest): Prom
 
 export const renameWorkspaceEntry = async (request: FileRenameRequest): Promise<void> => {
   const nextName = normalizeEntryName(request.nextName)
-  const sourcePath = ensureWithinWorkspace(request.workspacePath, request.relativePath)
+  const sourcePath = await ensureWithinWorkspaceCanonical(request.workspacePath, request.relativePath)
   const sourceStats = await stat(sourcePath)
 
   if (!sourceStats) {
@@ -283,7 +335,7 @@ export const renameWorkspaceEntry = async (request: FileRenameRequest): Promise<
     relativeParentPath === '.'
       ? nextName
       : joinRelativePath(relativeParentPath.replace(/\\/g, '/'), nextName)
-  const targetPath = ensureWithinWorkspace(request.workspacePath, targetRelativePath)
+  const targetPath = await ensureWithinWorkspaceCanonical(request.workspacePath, targetRelativePath)
   const targetStats = await stat(targetPath).catch(() => null)
 
   if (targetStats) {
@@ -296,7 +348,7 @@ export const renameWorkspaceEntry = async (request: FileRenameRequest): Promise<
 export const moveWorkspaceEntry = async (request: FileMoveRequest): Promise<void> => {
   const sourceRelativePath = normalizeRelativePath(request.relativePath)
   const destinationParentRelativePath = normalizeRelativePath(request.destinationParentRelativePath)
-  const sourcePath = ensureWithinWorkspace(request.workspacePath, sourceRelativePath)
+  const sourcePath = await ensureWithinWorkspaceCanonical(request.workspacePath, sourceRelativePath)
   const sourceStats = await stat(sourcePath)
 
   if (!sourceStats) {
@@ -321,7 +373,7 @@ export const moveWorkspaceEntry = async (request: FileMoveRequest): Promise<void
     throw new Error('Cannot move a directory into its own descendant.')
   }
 
-  const destinationParentPath = ensureWithinWorkspace(request.workspacePath, destinationParentRelativePath)
+  const destinationParentPath = await ensureWithinWorkspaceCanonical(request.workspacePath, destinationParentRelativePath)
   const destinationParentStats = await stat(destinationParentPath)
 
   if (!destinationParentStats.isDirectory()) {
@@ -330,7 +382,7 @@ export const moveWorkspaceEntry = async (request: FileMoveRequest): Promise<void
 
   const entryName = path.posix.basename(sourceRelativePath)
   const targetRelativePath = joinRelativePath(destinationParentRelativePath, entryName)
-  const targetPath = ensureWithinWorkspace(request.workspacePath, targetRelativePath)
+  const targetPath = await ensureWithinWorkspaceCanonical(request.workspacePath, targetRelativePath)
   const targetStats = await stat(targetPath).catch(() => null)
 
   if (targetStats) {
@@ -341,7 +393,7 @@ export const moveWorkspaceEntry = async (request: FileMoveRequest): Promise<void
 }
 
 export const deleteWorkspaceEntry = async (request: FileDeleteRequest): Promise<void> => {
-  const targetPath = ensureWithinWorkspace(request.workspacePath, request.relativePath)
+  const targetPath = await ensureWithinWorkspaceCanonical(request.workspacePath, request.relativePath)
   await stat(targetPath)
   await rm(targetPath, { recursive: true, force: false })
 }
@@ -399,7 +451,7 @@ export const copyWorkspaceFileToClipboard = async (
   request: FileReadRequest,
   options: ClipboardCopyOptions = {},
 ): Promise<void> => {
-  const filePath = ensureWithinWorkspace(request.workspacePath, request.relativePath)
+  const filePath = await ensureWithinWorkspaceCanonical(request.workspacePath, request.relativePath)
   const stats = await stat(filePath)
 
   if (!stats.isFile()) {
@@ -444,7 +496,7 @@ export class FileRevisionConflictError extends Error {
 }
 
 export const readWorkspaceFile = async (request: FileReadRequest): Promise<FileReadResponse> => {
-  const targetPath = ensureWithinWorkspace(request.workspacePath, request.relativePath)
+  const targetPath = await ensureWithinWorkspaceCanonical(request.workspacePath, request.relativePath)
   const language = getLanguageFromPath(request.relativePath)
   const stats = await stat(targetPath)
 
@@ -454,7 +506,7 @@ export const readWorkspaceFile = async (request: FileReadRequest): Promise<FileR
 
   const buffer = await readFile(targetPath)
 
-  // A BOM proves text — UTF-16 ASCII would otherwise trip the NUL sniffer.
+  // A BOM proves text; UTF-16 ASCII would otherwise trip the NUL sniffer.
   if (!sniffBomEncoding(buffer) && looksBinary(buffer)) {
     const mimeType = imageMimeTypesByExtension.get(path.extname(request.relativePath).toLowerCase())
     return {
@@ -483,7 +535,7 @@ export const readWorkspaceFile = async (request: FileReadRequest): Promise<FileR
 }
 
 export const writeWorkspaceFile = async (request: FileWriteRequest): Promise<FileWriteResponse> => {
-  const targetPath = ensureWithinWorkspace(request.workspacePath, request.relativePath)
+  const targetPath = await ensureWithinWorkspaceCanonical(request.workspacePath, request.relativePath)
 
   if (request.expectedRevision) {
     const currentBuffer = await readFile(targetPath).catch((error: NodeJS.ErrnoException) => {

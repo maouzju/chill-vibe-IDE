@@ -183,6 +183,7 @@ import {
   getAgentDoneSoundUrl,
   getColumnById,
   getResumeSessionIdForModel,
+  resolveChatReplayMode,
   getRoutingImportText,
   importErrorMessage,
   isFirstOpenState,
@@ -4150,6 +4151,7 @@ function App() {
     const resolvedReasoningEffort = normalizeReasoningEffort(card.provider, card.reasoningEffort)
     const resumeSessionId = getResumeSessionIdForModel(card, resolvedModel)
     const shouldStartFreshForModelChange = Boolean(card.sessionId?.trim()) && !resumeSessionId
+    const replayMode = resolveChatReplayMode(card, resumeSessionId)
     const parsedSlashCommand = parseSlashCommandInput(prompt)
 
     if (attachments.length === 0 && (await handleLocalSlashCommand(columnId, card, prompt))) {
@@ -4259,6 +4261,7 @@ function App() {
           messages: card.messages,
           provider: card.provider,
           status: card.status,
+          mode: replayMode,
         })
       : prompt
     const seededRequestAttachments = seedsTranscript

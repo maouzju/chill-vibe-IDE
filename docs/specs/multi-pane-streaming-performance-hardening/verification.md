@@ -8,8 +8,8 @@
   本次改为输入、聚焦和两次 tab 切换都等待实际下一帧后再计时。
 - 新增普通流式 commit 的交互保护：输入、IME、pointer、click、wheel 后 120ms 内延后刷新，
   单次到期刷新最多额外延迟 300ms；完成、停止、报错、恢复、退出前的强制 flush 不变。
-- 30 秒 6-stream 离屏真实绘制门禁：`frameMaxGapMs=211.9ms`、
-  `inputP95Ms=72.8ms`、`focusP95Ms=72.2ms`、`tabSwitchP95Ms=149ms`，
+- 合并后的 30 秒 6-stream 离屏真实绘制门禁：`frameMaxGapMs=234.9ms`、
+  `inputP95Ms=75.1ms`、`focusP95Ms=60.3ms`、`tabSwitchP95Ms=100.7ms`，
   零 unresponsive、零 renderer gone，持久化顺序与消息完整性通过。
 - focused Node 测试 22/22 通过，`pnpm test:quality` 通过。
 

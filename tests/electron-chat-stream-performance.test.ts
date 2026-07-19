@@ -298,55 +298,80 @@ const runInteractions = async (page: Page) => {
     if (cycle % 4 === 0) {
       const standbyTitle = `Standby ${columnIndex + 1}`
       const streamTitle = `Stream ${columnIndex + 1}`
-      const tabSwitchStartedAt = Date.now()
-      const clickedStandby = await page.evaluate(({ targetColumnIndex, title }) => {
+      const tabSwitchDurationMs = await page.evaluate(async ({
+        targetColumnIndex,
+        standbyTitle: targetStandbyTitle,
+        streamTitle: targetStreamTitle,
+      }) => {
         const targetColumn = document.querySelectorAll('.workspace-column').item(targetColumnIndex)
-        if (!targetColumn) return false
+        if (!targetColumn) return Number.POSITIVE_INFINITY
 
-        const tabs = targetColumn.querySelectorAll<HTMLButtonElement>('.pane-tab')
-        for (let tabIndex = 0; tabIndex < tabs.length; tabIndex += 1) {
-          const tab = tabs.item(tabIndex)
-          if (tab.textContent?.trim() === title) {
-            tab.click()
-            return true
+        const startedAt = performance.now()
+        let standbyTab: HTMLButtonElement | null = null
+        const standbyTabs = targetColumn.querySelectorAll<HTMLButtonElement>('.pane-tab')
+        for (let tabIndex = 0; tabIndex < standbyTabs.length; tabIndex += 1) {
+          const tab = standbyTabs.item(tabIndex)
+          if (tab.textContent?.trim() === targetStandbyTitle) {
+            standbyTab = tab
+            break
           }
         }
-        return false
-      }, { targetColumnIndex: columnIndex, title: standbyTitle })
-      assert.equal(clickedStandby, true)
-      await page.waitForFunction(
-        ({ targetColumnIndex, title }) =>
-          document.querySelectorAll('.workspace-column').item(targetColumnIndex)
-            ?.querySelector('.pane-tab.is-active')?.textContent?.trim() === title,
-        { targetColumnIndex: columnIndex, title: standbyTitle },
-        { timeout: 5_000 },
-      )
-      await page.evaluate(() => new Promise<void>((resolve) => requestAnimationFrame(() => resolve())))
-
-      const clickedStream = await page.evaluate(({ targetColumnIndex, title }) => {
-        const targetColumn = document.querySelectorAll('.workspace-column').item(targetColumnIndex)
-        if (!targetColumn) return false
-
-        const tabs = targetColumn.querySelectorAll<HTMLButtonElement>('.pane-tab')
-        for (let tabIndex = 0; tabIndex < tabs.length; tabIndex += 1) {
-          const tab = tabs.item(tabIndex)
-          if (tab.textContent?.trim() === title) {
-            tab.click()
-            return true
+        if (!standbyTab) {
+          return Number.POSITIVE_INFINITY
+        }
+        standbyTab.click()
+        const standbyDeadline = performance.now() + 5_000
+        let standbyPainted = false
+        while (performance.now() < standbyDeadline) {
+          await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()))
+          if (
+            targetColumn.querySelector('.pane-tab.is-active')?.textContent?.trim() ===
+            targetStandbyTitle
+          ) {
+            standbyPainted = true
+            break
           }
         }
-        return false
-      }, { targetColumnIndex: columnIndex, title: streamTitle })
-      assert.equal(clickedStream, true)
-      await page.waitForFunction(
-        ({ targetColumnIndex, title }) =>
-          document.querySelectorAll('.workspace-column').item(targetColumnIndex)
-            ?.querySelector('.pane-tab.is-active')?.textContent?.trim() === title,
-        { targetColumnIndex: columnIndex, title: streamTitle },
-        { timeout: 5_000 },
-      )
-      await page.evaluate(() => new Promise<void>((resolve) => requestAnimationFrame(() => resolve())))
-      tabSwitchDurations.push(Date.now() - tabSwitchStartedAt)
+        if (!standbyPainted) {
+          return Number.POSITIVE_INFINITY
+        }
+
+        let streamTab: HTMLButtonElement | null = null
+        const streamTabs = targetColumn.querySelectorAll<HTMLButtonElement>('.pane-tab')
+        for (let tabIndex = 0; tabIndex < streamTabs.length; tabIndex += 1) {
+          const tab = streamTabs.item(tabIndex)
+          if (tab.textContent?.trim() === targetStreamTitle) {
+            streamTab = tab
+            break
+          }
+        }
+        if (!streamTab) {
+          return Number.POSITIVE_INFINITY
+        }
+        streamTab.click()
+        const streamDeadline = performance.now() + 5_000
+        let streamPainted = false
+        while (performance.now() < streamDeadline) {
+          await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()))
+          if (
+            targetColumn.querySelector('.pane-tab.is-active')?.textContent?.trim() ===
+            targetStreamTitle
+          ) {
+            streamPainted = true
+            break
+          }
+        }
+        if (!streamPainted) {
+          return Number.POSITIVE_INFINITY
+        }
+        return performance.now() - startedAt
+      }, {
+        targetColumnIndex: columnIndex,
+        standbyTitle,
+        streamTitle,
+      })
+      assert.equal(Number.isFinite(tabSwitchDurationMs), true)
+      tabSwitchDurations.push(tabSwitchDurationMs)
     }
 
     cycle += 1

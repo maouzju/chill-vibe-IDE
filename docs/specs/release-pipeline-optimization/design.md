@@ -83,9 +83,52 @@ Supported controls:
 - `test:full` and `verify` → aliases of `test:release` for compatibility.
 - Individual gates remain unchanged for narrow reruns.
 
+## Branch Convergence and Publish Gate
+
+The default release source is the checked-out local `main`. An isolated worktree remains useful for long verification or for assembling an audited candidate without disturbing unrelated work, but it is no longer a remote publication surface.
+
+### Candidate preparation
+
+1. Fetch `origin/main` and confirm local `main` is not behind it before candidate assembly.
+2. Keep unfinished work off `main`. If the current checkout mixes releasable and excluded work, move the excluded work to a named branch/worktree before the final release gate; do not hide it with an implicit stash or discard it.
+3. Create any release worktree from the current local `main` commit, not from a stale `origin/main` baseline.
+4. Run verification and create the versioned release commit on the release branch when isolation is necessary.
+
+### Local-first integration
+
+Before any push to `origin/main`:
+
+1. Re-check the recorded refs: `origin/main` must still equal the remote base; when a release worktree was used, local `main` must still equal its local base; when the candidate was committed directly on `main`, local `main` must equal the verified candidate commit. An unexpected move invalidates the exact-tree fingerprint and requires reconciliation plus verification of the new candidate.
+2. Require the primary `main` checkout to be clean and free of unmerged paths.
+3. Integrate the verified release branch into local `main` with `git merge --ff-only release/vX.Y.Z`. If fast-forward is impossible, stop and reconcile deliberately; do not bypass the problem with `git push origin HEAD:main`.
+4. Push with `git push origin main`.
+
+This ordering ensures the branch visible in the user's normal workspace is the branch that is published.
+
+### Convergence proof
+
+Immediately after the push and before creating the tag:
+
+1. `git fetch origin main`
+2. Compare `git rev-parse main` and `git rev-parse origin/main`.
+3. Require `git rev-list --left-right --count main...origin/main` to print `0 0`.
+4. Create the annotated tag from local `main`, then require `git rev-parse vX.Y.Z^{}` to equal both branch hashes.
+
+Any mismatch leaves the release incomplete. The workflow must repair the branch state and re-verify as needed rather than reporting success or cleaning up the release worktree.
+
+### Documentation contract test
+
+`tests/release-pipeline-skill.test.ts` reads the checked-in skill and treats the publish order as a repository contract. It verifies that local fast-forward integration precedes `git push origin main`, that the post-push fetch/divergence proof precedes tag and Release creation, and that every occurrence of `git push origin HEAD:main` is explicitly prohibitive. This keeps a future skill rewrite from silently restoring the remote-only failure mode.
+
+### Concurrency behavior
+
+If another agent is actively changing the primary checkout, verification may continue in isolation, but publication waits. The release is blocked until the local-first integration and convergence proof can run safely. This trades a delayed release for a deterministic branch history and avoids recreating the v0.18.12/v0.18.13 remote-only divergence.
+
 ## Safety
 
 - Resume is content-addressed, not time-based or path-risk-based.
 - Any tracked/staged/untracked content change invalidates all cached evidence.
 - The verifier never marks an interrupted process green.
 - Existing full Playwright, Electron, legal, quality, and build gates remain mandatory.
+- Release isolation must not leave the primary local branch behind the branch it publishes.
+- Force-push, hard reset, automatic stash, and direct worktree-to-`main` refspecs are not convergence mechanisms.

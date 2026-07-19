@@ -36,7 +36,7 @@
 
 ## 阶段 1：结构化工具组尾部窗口
 
-当前工作树已有的 60 条尾部窗口是第一可逆切片：
+当前工作树已有的 20 条尾部窗口是第一可逆切片：
 
 - 只在 `StructuredToolGroupCard` 的展开内容层选择 `visibleItems`；
 - 完整 `items`、消息 state、session 和持久化保持不变；

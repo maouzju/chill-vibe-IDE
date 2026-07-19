@@ -558,17 +558,17 @@ test('does not render fork actions for structured tool groups', () => {
   assert.doesNotMatch(markup, /message-fork-btn/)
 })
 
-test('windows long structured tool groups to the newest 60 items without mutating source data', () => {
+test('windows long structured tool groups to the newest 20 items without mutating source data', () => {
   const items = Array.from({ length: 300 }, (_, index) => `item-${index}`)
   const original = [...items]
 
   const initial = getStructuredToolGroupRenderWindow(items)
-  assert.equal(initial.hiddenItemCount, 240)
-  assert.deepEqual(initial.visibleItems, items.slice(-60))
+  assert.equal(initial.hiddenItemCount, 280)
+  assert.deepEqual(initial.visibleItems, items.slice(-20))
 
   const revealed = getStructuredToolGroupRenderWindow(items, 60)
-  assert.equal(revealed.hiddenItemCount, 180)
-  assert.deepEqual(revealed.visibleItems, items.slice(-120))
+  assert.equal(revealed.hiddenItemCount, 220)
+  assert.deepEqual(revealed.visibleItems, items.slice(-80))
 
   const all = getStructuredToolGroupRenderWindow(items, Number.POSITIVE_INFINITY)
   assert.equal(all.hiddenItemCount, 0)
@@ -587,8 +587,8 @@ test('renders only the recent tail of a 300-command live group', () => {
   const markup = renderCard(createLongCommandCard())
   const renderedCommandCount = markup.match(/class="structured-command-inline /g)?.length ?? 0
 
-  assert.equal(renderedCommandCount, 60)
-  assert.match(markup, /240 earlier activities hidden/)
+  assert.equal(renderedCommandCount, 20)
+  assert.match(markup, /280 earlier activities hidden/)
   assert.match(markup, /Show 60 earlier/)
   assert.match(markup, /echo command-299/)
   assert.doesNotMatch(markup, /echo command-0</)

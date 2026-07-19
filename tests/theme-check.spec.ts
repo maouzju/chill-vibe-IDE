@@ -319,6 +319,54 @@ const createMockState = (): AppState => ({
     ],
   })
 
+const createRunDurationSummaryState = (theme: 'dark' | 'light'): AppState => {
+  const state = createMockState()
+  state.settings.theme = theme
+  state.columns[0]!.cards[0]!.messages = [
+    {
+      id: 'run-user-1',
+      role: 'user',
+      content: '请检查并完成这项工作。',
+      createdAt: '2026-07-19T12:00:00.000Z',
+    },
+    {
+      id: 'run-assistant-1',
+      role: 'assistant',
+      content: '已经完成检查并处理好相关问题。',
+      createdAt: '2026-07-19T12:00:04.000Z',
+    },
+    {
+      id: 'run-duration-1',
+      role: 'system',
+      content: '',
+      createdAt: '2026-07-19T12:03:24.000Z',
+      meta: {
+        kind: 'run-duration',
+        durationMs: '204000',
+      },
+    },
+  ]
+
+  return state
+}
+
+test.describe('agent run duration summary', () => {
+  for (const theme of ['dark', 'light'] as const) {
+    test(`stays quiet and legible in ${theme} theme`, async ({ page }) => {
+      await mockAppApis(page, { state: createRunDurationSummaryState(theme) })
+      await page.setViewportSize({ width: 900, height: 720 })
+      await page.goto(appUrl)
+
+      const duration = page.locator('.message-run-duration')
+      await expect(duration).toHaveText('已运行 3分钟24秒')
+      await expect(duration).toHaveScreenshot(`agent-run-duration-${theme}.png`, {
+        animations: 'disabled',
+        caret: 'hide',
+      })
+    })
+  }
+})
+
 const createColumnHeaderDropState = (): AppState => {
   const state = createMockState()
   state.settings.language = 'en'
@@ -4711,9 +4759,9 @@ test('windowed structured tool groups reveal older activity quietly across theme
   const ambienceTab = page.locator('#app-tab-ambience')
   const lightThemeButton = page.locator('#app-panel-settings .theme-toggle').first().locator('.theme-chip').first()
 
-  await expect(commandRows).toHaveCount(60)
-  await expect(windowNote).toContainText('5 earlier activities hidden')
-  await expect(revealButton).toHaveText('Show 5 earlier')
+  await expect(commandRows).toHaveCount(20)
+  await expect(windowNote).toContainText('45 earlier activities hidden')
+  await expect(revealButton).toHaveText('Show 45 earlier')
   await expect(windowNote).toHaveScreenshot('structured-group-window-note-dark.png', {
     animations: 'disabled',
     caret: 'hide',

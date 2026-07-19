@@ -90,6 +90,10 @@ import {
   shouldClearRecoveryStatusOnStreamIdle,
   type CardRecoveryStatus,
 } from './stream-recovery-feedback'
+import {
+  consumeRunDurationMessage,
+  recordRunStart,
+} from './run-duration-summary'
 import type {
   AppState,
   AutoUrgeProfile,
@@ -653,6 +657,7 @@ function App() {
     new Map<string, number>(),
   )
   const stoppedRunReasonRef = useRef(new Map<string, StoppedRunReason>())
+  const runStartedAtRef = useRef(new Map<string, number>())
   const appStateRef = useRef(appState)
   const activePaneTargetRef = useRef<PaneTarget | null>(null)
   const streamRetryCountRef = useRef(new Map<string, number>())
@@ -2154,6 +2159,7 @@ function App() {
   const closeStream = useCallback(async (cardId: string, stopRemote = false) => {
     const active = activeStreamsRef.current.get(cardId)
     if (!active) {
+      runStartedAtRef.current.delete(cardId)
       streamRetryCountRef.current.delete(cardId)
       resumeSessionLoopCountRef.current.delete(cardId)
       streamRecoveryTurnRef.current.delete(cardId)
@@ -2170,6 +2176,7 @@ function App() {
 
     active.source.close()
     activeStreamsRef.current.delete(cardId)
+    runStartedAtRef.current.delete(cardId)
     clearStopCompletionFallbackTimer(cardId)
     streamRetryCountRef.current.delete(cardId)
     resumeSessionLoopCountRef.current.delete(cardId)
@@ -2223,9 +2230,11 @@ function App() {
         pendingAskUserDuringStreamRef.current.delete(cardId)
 
         if (!owner) {
+          runStartedAtRef.current.delete(cardId)
           return false
         }
 
+        const durationMessage = consumeRunDurationMessage(runStartedAtRef.current, cardId)
         const actions: IdeAction[] = [
           {
             type: 'appendMessages',
@@ -2240,6 +2249,14 @@ function App() {
             patch: { status: 'error', streamId: undefined },
           },
         ]
+        if (durationMessage) {
+          actions.push({
+            type: 'appendMessages',
+            columnId: owner.id,
+            cardId,
+            messages: [durationMessage],
+          })
+        }
         persistAfterActions(actions, applyActions(actions))
         return false
       }
@@ -2372,6 +2389,15 @@ function App() {
             : undefined,
       },
     ]
+    const durationMessage = consumeRunDurationMessage(runStartedAtRef.current, cardId)
+    if (durationMessage) {
+      actions.push({
+        type: 'appendMessages',
+        columnId,
+        cardId,
+        messages: [durationMessage],
+      })
+    }
 
     if (reason === 'user-interrupt' && liveCard.provider === 'claude') {
       const nextProviderSessions = { ...liveCard.providerSessions }
@@ -2900,6 +2926,17 @@ function App() {
         return
       }
 
+      const latestUserCreatedAt = [...card.messages]
+        .reverse()
+        .find((message) => message.role === 'user')
+        ?.createdAt
+      const restoredStartedAtMs = latestUserCreatedAt ? Date.parse(latestUserCreatedAt) : Number.NaN
+      recordRunStart(
+        runStartedAtRef.current,
+        card.id,
+        Number.isFinite(restoredStartedAtMs) ? restoredStartedAtMs : Date.now(),
+      )
+
       const existing = activeStreamsRef.current.get(card.id)
       if (existing?.streamId === card.streamId) {
         return
@@ -3341,6 +3378,16 @@ function App() {
             }
           }
 
+          const durationMessage = consumeRunDurationMessage(runStartedAtRef.current, card.id)
+          if (durationMessage) {
+            actions.push({
+              type: 'appendMessages',
+              columnId,
+              cardId: card.id,
+              messages: [durationMessage],
+            })
+          }
+
           persistAfterActions(actions, applyActions(actions))
           dispatchNextQueuedSend(columnId, card.id)
         },
@@ -3516,6 +3563,15 @@ function App() {
                 patch: { status: 'idle', streamId: undefined },
               },
             ]
+            const durationMessage = consumeRunDurationMessage(runStartedAtRef.current, card.id)
+            if (durationMessage) {
+              actions.push({
+                type: 'appendMessages',
+                columnId,
+                cardId: card.id,
+                messages: [durationMessage],
+              })
+            }
 
             if (pendingCompactBoundary) {
               actions.unshift({
@@ -3556,6 +3612,15 @@ function App() {
               patch: { status: 'error', streamId: undefined },
             },
           ]
+          const durationMessage = consumeRunDurationMessage(runStartedAtRef.current, card.id)
+          if (durationMessage) {
+            actions.push({
+              type: 'appendMessages',
+              columnId,
+              cardId: card.id,
+              messages: [durationMessage],
+            })
+          }
 
           if (pendingCompactBoundary) {
             actions.unshift({
@@ -3606,6 +3671,7 @@ function App() {
       stream.source.close()
     })
     activeStreamsRef.current.clear()
+    runStartedAtRef.current.clear()
     queuedSendRequestsRef.current.clear()
     setQueuedSendSummaries(new Map())
     queueFollowUpDuringStreamRef.current.clear()
@@ -4267,6 +4333,7 @@ function App() {
     // A user-authored turn starts a new recovery lifecycle. This also protects
     // reused card ids after a terminal startup/provider failure left no active
     // stream to own the normal cleanup path.
+    runStartedAtRef.current.delete(cardId)
     streamRetryCountRef.current.delete(cardId)
     resumeSessionLoopCountRef.current.delete(cardId)
     streamRecoveryTurnRef.current.delete(cardId)
@@ -4336,6 +4403,7 @@ function App() {
     if (!providerStatus?.available) {
       streamRetryCountRef.current.delete(cardId)
       resumeSessionLoopCountRef.current.delete(cardId)
+      const durationMessage = consumeRunDurationMessage(runStartedAtRef.current, cardId)
       const actions: IdeAction[] = [
         {
           type: 'appendMessages',
@@ -4359,6 +4427,14 @@ function App() {
           },
         },
       ]
+      if (durationMessage) {
+        actions.push({
+          type: 'appendMessages',
+          columnId,
+          cardId,
+          messages: [durationMessage],
+        })
+      }
       persistAfterActions(actions, applyActions(actions))
       return
     }
@@ -4387,6 +4463,7 @@ function App() {
     }
 
     const streamId = crypto.randomUUID()
+    recordRunStart(runStartedAtRef.current, cardId, Date.now())
     const startedLocalRecoveryStats = beginOrContinueLocalRecoveryStatsRun(
       localRecoveryStatsRef.current.get(cardId),
     )
@@ -4483,6 +4560,15 @@ function App() {
           patch: { status: 'error', streamId: undefined },
         },
       ]
+      const durationMessage = consumeRunDurationMessage(runStartedAtRef.current, cardId)
+      if (durationMessage) {
+        actions.push({
+          type: 'appendMessages',
+          columnId,
+          cardId,
+          messages: [durationMessage],
+        })
+      }
 
       if (isManualCodexCompactRequest) {
         actions.unshift({
@@ -4566,6 +4652,7 @@ function App() {
           })
         : undefined
     const streamId = crypto.randomUUID()
+    recordRunStart(runStartedAtRef.current, cardId, Date.now())
     const continuedLocalRecoveryStats = continueLocalRecoveryStatsRun(
       localRecoveryStatsRef.current.get(cardId),
     )
@@ -4668,6 +4755,15 @@ function App() {
           patch: { status: 'error', streamId: undefined },
         },
       ]
+      const durationMessage = consumeRunDurationMessage(runStartedAtRef.current, cardId)
+      if (durationMessage) {
+        actions.push({
+          type: 'appendMessages',
+          columnId,
+          cardId,
+          messages: [durationMessage],
+        })
+      }
       persistAfterActions(actions, applyActions(actions))
     }
   }, [
@@ -4710,6 +4806,7 @@ function App() {
     if (!providerStatus?.available) {
       streamRetryCountRef.current.delete(cardId)
       resumeSessionLoopCountRef.current.delete(cardId)
+      const durationMessage = consumeRunDurationMessage(runStartedAtRef.current, cardId)
       const actions: IdeAction[] = [
         {
           type: 'appendMessages',
@@ -4729,6 +4826,14 @@ function App() {
           },
         },
       ]
+      if (durationMessage) {
+        actions.push({
+          type: 'appendMessages',
+          columnId,
+          cardId,
+          messages: [durationMessage],
+        })
+      }
       persistAfterActions(actions, applyActions(actions))
       return false
     }
@@ -4817,6 +4922,15 @@ function App() {
             patch: { status: 'idle', streamId: undefined },
           },
         ]
+        const durationMessage = consumeRunDurationMessage(runStartedAtRef.current, cardId)
+        if (durationMessage) {
+          finalizeActions.push({
+            type: 'appendMessages',
+            columnId,
+            cardId,
+            messages: [durationMessage],
+          })
+        }
         if (pendingCompactBoundary) {
           finalizeActions.unshift({
             type: 'upsertMessages',
@@ -4869,6 +4983,7 @@ function App() {
           })
         : undefined
     const streamId = crypto.randomUUID()
+    recordRunStart(runStartedAtRef.current, cardId, Date.now())
     const startedLocalRecoveryStats = beginOrContinueLocalRecoveryStatsRun(
       localRecoveryStatsRef.current.get(cardId),
     )
@@ -4985,6 +5100,15 @@ function App() {
           patch: { status: 'error', streamId: undefined },
         },
       ]
+      const durationMessage = consumeRunDurationMessage(runStartedAtRef.current, cardId)
+      if (durationMessage) {
+        actions.push({
+          type: 'appendMessages',
+          columnId,
+          cardId,
+          messages: [durationMessage],
+        })
+      }
       persistAfterActions(actions, applyActions(actions))
       return false
     }

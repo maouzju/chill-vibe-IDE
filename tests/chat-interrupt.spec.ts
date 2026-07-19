@@ -2,6 +2,8 @@ import { expect, test, type Page } from '@playwright/test'
 
 import { createPlaywrightState } from './playwright-state.ts'
 
+const appUrl = process.env.PLAYWRIGHT_APP_URL ?? 'http://localhost:5173'
+
 type MockCardState = {
   status: 'idle' | 'streaming'
   streamId?: string
@@ -636,6 +638,42 @@ test('idle Claude send clears and refocuses the composer before slow request sta
   } finally {
     mock.releaseHeldChatMessageResponses()
   }
+})
+
+test('a completed agent run appends one persisted duration summary', async ({ page }) => {
+  const mock = await installMockApis(page, {
+    initialCard: {
+      status: 'idle',
+      provider: 'codex',
+      model: 'gpt-5.5',
+      messages: [],
+    },
+  })
+  await page.goto(appUrl)
+
+  const textarea = getActiveComposerTextarea(page)
+  await textarea.fill('Finish this task')
+  await page.getByRole('button', { name: 'Send message' }).click()
+
+  await expect.poll(() => mock.readRequests()).toEqual(['message:Finish this task'])
+  await emitStreamEvent(page, 'stream-2', 'delta', { content: 'Done.' })
+  await expect(page.locator('.message-assistant')).toContainText('Done.')
+  await emitStreamEvent(page, 'stream-2', 'done', {})
+
+  const duration = page.locator('.message-run-duration')
+  await expect(duration).toHaveCount(1)
+  await expect(duration).toHaveText(/Ran for \d+s/)
+  await expect.poll(() => {
+    const messages = mock.readState().columns[0]?.cards['card-1']?.messages ?? []
+    const marker = messages.find((message) => message.meta?.kind === 'run-duration')
+    return marker
+      ? {
+          role: marker.role,
+          count: messages.filter((message) => message.meta?.kind === 'run-duration').length,
+          hasFiniteDuration: Number.isFinite(Number(marker.meta?.durationMs)),
+        }
+      : null
+  }).toEqual({ role: 'system', count: 1, hasFiniteDuration: true })
 })
 
 test('left-clicking send while a card is running interrupts and sends immediately', async ({ page }) => {

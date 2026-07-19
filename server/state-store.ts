@@ -23,6 +23,7 @@ import {
 import { normalizeBrainstormAnswerCount } from '../shared/brainstorm.js'
 import { getWorkspaceTitle } from '../shared/i18n.js'
 import { isInterruptedSessionRecoverable } from '../shared/interrupted-session-recovery.js'
+import { revealInternalSessionHistorySession } from './session-history-catalog.js'
 import {
   BRAINSTORM_TOOL_MODEL,
   FILETREE_TOOL_MODEL,
@@ -196,19 +197,30 @@ const writeSessionHistorySidecars = async (entries: SessionHistoryEntry[], dataD
   const sidecarDir = getSessionHistoryDirPath(dataDir)
   await mkdir(sidecarDir, { recursive: true })
 
-  await Promise.all(
+  const newlyCreated = await Promise.all(
     entries.filter(isFullSessionHistoryEntry).map(async (entry) => {
       const filePath = getSessionHistoryEntryFilePath(entry.id, dataDir)
       const tmpFilePath = `${filePath}.tmp`
+      const existed = await stat(filePath).then(() => true).catch(() => false)
       try {
         await writeFile(tmpFilePath, `${JSON.stringify(entry, null, 2)}\n`, 'utf8')
         await rename(tmpFilePath, filePath)
+        return existed ? null : entry
       } catch (error) {
         await unlink(tmpFilePath).catch(() => undefined)
         throw error
       }
     }),
   )
+
+  for (const entry of newlyCreated) {
+    if (!entry) continue
+    await revealInternalSessionHistorySession({
+      provider: entry.provider,
+      sessionId: entry.sessionId,
+      dataDir,
+    }).catch(() => undefined)
+  }
 }
 
 const readSessionHistorySidecarEntry = async (

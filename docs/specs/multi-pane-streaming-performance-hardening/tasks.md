@@ -51,6 +51,13 @@
 - [x] 普通流式提交避开输入、IME、pointer、click、wheel 的关键帧；强制 flush 语义保持不变。
 - [x] 重跑 focused 测试、质量检查和 Electron 聊天性能门禁。
 
+## 2026-07-19 晚间复发：transcript 观测器降频
+
+- [x] 核对现场包、main.log、state 规模和进程资源：确认是 E 类 unresponsive，JS 栈为空、非 OOM。
+- [x] 红测证明内容更新不应改变 transcript 结构签名，新增/重排条目必须改变签名。
+- [x] 让 sticky/scroll/ResizeObserver effect 只在 transcript 结构变化时重建。
+- [x] 重跑 focused 测试、质量检查和 Electron 聊天性能门禁。
+
 ## 发布门禁
 
 - [x] 相关 focused Node 测试通过。

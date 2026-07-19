@@ -11,6 +11,10 @@ type InitialAppLoad = {
   providersPromise: Promise<ProviderStatus[] | null>
 }
 
+export const isProviderStatusExplicitlyUnavailable = (
+  status: ProviderStatus | undefined,
+) => status?.available === false
+
 export const startInitialAppLoad = async ({
   fetchState,
   fetchProviders,

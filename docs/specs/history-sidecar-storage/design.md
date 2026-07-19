@@ -23,6 +23,10 @@
 - Renderer startup reads `state.json` and gets only lightweight history entries.
 - Restoring one internal history item calls `loadSessionHistoryEntry({ entryId })`, which reads only that entry's sidecar file; if missing, it falls back to legacy `state.json` for migration compatibility.
 - 非空历史搜索按需走独立轻量目录并读取当前工作区候选 sidecar；不会把全部正文重新水合到 renderer 或普通保存路径。详见 `docs/specs/deep-session-history-search/`。
+- 跨版本索引修复使用 `session-history/catalog.json` 小清单与
+  `maintenance/session-history-catalog/catalog-segment-*.json` 分段摘要。分段文件不放在
+  `session-history/` 内，避免旧版本的全文 sidecar 扫描把派生目录当成聊天正文。任务按硬性
+  文件数/字节数/时间预算切片；异常或过大归档只标记跳过，不阻塞启动和 renderer。
 - The history menu derives a lightweight lifecycle label from the preview messages: entries whose latest message is `meta.kind = run-stopped` with `stopReason = manual | user-interrupt` render as **中断 / Interrupted**; all other entries render as **已结束 / Ended**. This stays renderer-only and does not add new persisted fields.
 
 ## Compatibility

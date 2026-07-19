@@ -7,6 +7,7 @@ import {
   collectChangesSummaryFilesForStream,
   getAskUserAnswerKey,
   getRestoredStickyUserAnchor,
+  getRenderableEntryStructureKey,
   getStickyRenderableUserMessageId,
   getLastRenderableUserMessageId,
   getTopVisibleRenderableEntryId,
@@ -14,6 +15,25 @@ import {
   parseStructuredReasoningMessage,
   parseStructuredTodoMessage,
 } from '../src/components/chat-card-parsing.ts'
+
+test('renderable entry structure key ignores streaming content-only updates', () => {
+  const initial = buildRenderableMessages([
+    makeMessage({ id: 'user-1', role: 'user', content: 'Start.' }),
+    makeMessage({ id: 'assistant-1', content: 'partial' }),
+  ])
+  const updated = buildRenderableMessages([
+    makeMessage({ id: 'user-1', role: 'user', content: 'Start.' }),
+    makeMessage({ id: 'assistant-1', content: 'partial plus more streamed text' }),
+  ])
+  const appended = buildRenderableMessages([
+    makeMessage({ id: 'user-1', role: 'user', content: 'Start.' }),
+    makeMessage({ id: 'assistant-1', content: 'done' }),
+    makeMessage({ id: 'assistant-2', content: 'next item' }),
+  ])
+
+  assert.equal(getRenderableEntryStructureKey(initial), getRenderableEntryStructureKey(updated))
+  assert.notEqual(getRenderableEntryStructureKey(initial), getRenderableEntryStructureKey(appended))
+})
 
 const makeMessage = (overrides: Partial<ChatMessage> = {}): ChatMessage => ({
   id: `msg-${Math.random().toString(36).slice(2, 8)}`,

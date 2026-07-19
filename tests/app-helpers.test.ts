@@ -381,6 +381,43 @@ test('finalizeStructuredActivityMessage replaces a live ask-user XML bubble with
   assert.match(nextMessages[0]?.meta?.structuredData ?? '', /Which path should I use\?/)
 })
 
+test('finalizeStructuredActivityMessage removes a truncated live ask-user XML prefix', () => {
+  const existingMessages = [
+    {
+      id: 'assistant-live-truncated',
+      role: 'assistant' as const,
+      content: '<ask-user-question>{"questions":[',
+      createdAt: '2026-07-19T00:00:00.000Z',
+      meta: {
+        provider: 'codex' as const,
+      },
+    },
+  ]
+
+  const nextMessages = finalizeStructuredActivityMessage(
+    existingMessages,
+    'assistant-live-truncated',
+    'codex',
+    'stream-truncated',
+    {
+      itemId: 'agent_message_truncated',
+      kind: 'ask-user',
+      status: 'completed',
+      header: 'Scope',
+      question: 'Which direction?',
+      multiSelect: false,
+      options: [
+        { label: 'A', description: 'First direction.' },
+        { label: 'B', description: 'Second direction.' },
+      ],
+    },
+  )
+
+  assert.equal(nextMessages.length, 1)
+  assert.equal(nextMessages[0]?.meta?.kind, 'ask-user')
+  assert.equal(nextMessages[0]?.content, '')
+})
+
 test('finalizeStructuredActivityMessage keeps a live assistant text bubble when an ask-user activity arrives alongside it', () => {
   const existingMessages = [
     {

@@ -1,5 +1,20 @@
 # 多窗口流式性能兜底 — 验证记录
 
+## 2026-07-19 晚间 E 类复发与 transcript 观测器降频
+
+- `release-20260719-183247` 在 5 张真实卡持续 streaming 约 28 分钟后于 22:21:05
+  记录 `BrowserWindow became unresponsive`；调用栈采集 `available=false/frameCount=0`，
+  事件前 Electron 总私有内存约 660 MiB，排除 OOM 和明确 JS 热循环栈。
+- 现场 state 约 1.1 MiB、5 列、12 卡、265 条消息、5 卡 streaming；后续同类负载下
+  renderer / GPU 分别持续约 52% / 36% 单核，说明仍有可去除的持续 UI 工作。
+- 红测确认同一批 renderable 条目仅更新流式内容时结构签名保持不变；新增条目时签名变化。
+- `ChatTranscript` 的 sticky、scroll watch、`ResizeObserver` 生命周期改为只受条目 ID/顺序驱动，
+  不再随每个 delta 断开并重挂全部 DOM 观测器。
+- focused Node 测试 46/46 通过，`pnpm test:quality` 通过。
+- 30 秒 6-stream 离屏真实绘制门禁通过：`frameMaxGapMs=169.9ms`、
+  `inputP95Ms=75.1ms`、`focusP95Ms=74.2ms`、`tabSwitchP95Ms=112.6ms`，
+  零 unresponsive、零 renderer gone，持久化完整性通过。
+
 ## 2026-07-19 输入与 Tab 交互优先补强
 
 - 当前用户包 `v0.18.12` 运行约 12 小时、5 张卡 streaming 时，10 秒现场采样显示

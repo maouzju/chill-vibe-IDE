@@ -17,6 +17,7 @@ When a chat card is already streaming, clicking **Send message** currently behav
 9. **Restart persistence** — Queued prompts and uploaded image-attachment metadata are stored with their owning chat card and survive renderer reloads and full IDE restarts.
 10. **Safe startup behavior** — Restored items stay visibly queued; reopening the IDE alone must not send them. If the interrupted run is resumed, the existing FIFO auto-dispatch continues after that run finishes. Otherwise the user can still choose **Send now** or **Cancel**.
 11. **Intentional cleanup only** — Resetting the conversation, closing its card/workspace, cancelling the queue, or resetting app state removes the stored queue. Moving the card between columns does not.
+12. **Fast interrupt safety** — When left-click send interrupts an in-flight answer, the interrupted provider session must not be resumed immediately. The queued follow-up starts from the settled visible transcript in a fresh native session, avoiding partially written Codex rollout files and equivalent interrupted-session races.
 
 ## Non-goals
 

@@ -80,6 +80,16 @@ test('closeUnclosedMarkdownSpans normalizes loose strong markers that AI often s
   )
 })
 
+test('closeUnclosedMarkdownSpans keeps strong text balanced when it wraps inline code', () => {
+  const input = [
+    '**顶部的 `<ask-user-question>{"questions":[`**',
+    '',
+    '后续正文没有未闭合的加粗。',
+  ].join('\r\n')
+
+  assert.equal(closeUnclosedMarkdownSpans(input), input)
+})
+
 test('closeUnclosedMarkdownSpans does not auto-close glob patterns as emphasis', () => {
   const input = 'Search files: **/*.ts'
   assert.equal(closeUnclosedMarkdownSpans(input), input)

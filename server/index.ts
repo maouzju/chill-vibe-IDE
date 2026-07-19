@@ -10,6 +10,8 @@ import {
   ccSwitchImportRequestSchema,
   externalHistoryListRequestSchema,
   externalSessionLoadRequestSchema,
+  internalSessionHistoryHideRequestSchema,
+  internalSessionHistoryListRequestSchema,
   internalSessionHistoryLoadRequestSchema,
   chatRequestSchema,
   forkSessionRequestSchema,
@@ -39,6 +41,11 @@ import { importCcSwitchProfiles } from './cc-switch-import.js'
 import { listExternalSessions, loadExternalSession } from './external-history.js'
 import { forkProviderSession } from './session-fork.js'
 import { getClaudeNativeTurnCompletion } from './native-turn-completion.js'
+import {
+  hideInternalSessionHistoryEntries,
+  listInternalSessionHistory,
+  runSessionHistoryCatalogMaintenanceSlice,
+} from './session-history-catalog.js'
 import {
   copyWorkspaceFileToClipboard,
   createWorkspaceDirectory,
@@ -122,6 +129,30 @@ app.get('/api/session-history/:entryId', async (request, response) => {
       message: error instanceof Error ? error.message : 'Session history entry not found.',
     })
   }
+})
+
+app.get('/api/session-history', async (request, response) => {
+  const parsed = internalSessionHistoryListRequestSchema.safeParse({
+    workspacePath: request.query.workspacePath,
+    query: request.query.query ?? '',
+  })
+  if (!parsed.success) {
+    response.status(400).json({ message: 'Invalid internal session history list request.' })
+    return
+  }
+
+  await runSessionHistoryCatalogMaintenanceSlice().catch(() => undefined)
+  response.json(await listInternalSessionHistory(parsed.data))
+})
+
+app.post('/api/session-history/hide', async (request, response) => {
+  const parsed = internalSessionHistoryHideRequestSchema.safeParse(request.body)
+  if (!parsed.success) {
+    response.status(400).json({ message: 'Invalid internal session history hide request.' })
+    return
+  }
+  await hideInternalSessionHistoryEntries(parsed.data)
+  response.status(204).end()
 })
 
 app.put('/api/state', async (request, response) => {

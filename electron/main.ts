@@ -523,6 +523,12 @@ function registerDesktopHandlers() {
   ipcMain.handle('desktop:load-session-history-entry', (_event, request) =>
     desktopBackend.loadSessionHistoryEntry(request),
   )
+  ipcMain.handle('desktop:list-internal-session-history', (_event, request) =>
+    desktopBackend.listInternalSessionHistory(request),
+  )
+  ipcMain.handle('desktop:hide-internal-session-history', (_event, request) =>
+    desktopBackend.hideInternalSessionHistory(request),
+  )
   ipcMain.handle('desktop:save-state', (_event, state) => desktopBackend.saveState(state))
   ipcMain.on('desktop:queue-state-save', (_event, state) => {
     desktopBackend.queueStateSave(state)

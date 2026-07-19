@@ -3,7 +3,10 @@ import test from 'node:test'
 
 import { createDefaultSettings } from '../shared/default-state.ts'
 import type { AppState, AppStateLoadResponse, ProviderStatus } from '../shared/schema.ts'
-import { startInitialAppLoad } from '../src/app-initial-load.ts'
+import {
+  isProviderStatusExplicitlyUnavailable,
+  startInitialAppLoad,
+} from '../src/app-initial-load.ts'
 
 const createState = (): AppState => ({
   version: 1,
@@ -103,6 +106,18 @@ test('startInitialAppLoad does not block restored state on slow provider checks'
 
   resolveProviders?.(providers)
   assert.deepEqual(await providersPromise, providers)
+})
+
+test('a provider status that has not loaded yet is not treated as CLI unavailable', () => {
+  assert.equal(isProviderStatusExplicitlyUnavailable(undefined), false)
+  assert.equal(
+    isProviderStatusExplicitlyUnavailable({ provider: 'codex', available: false }),
+    true,
+  )
+  assert.equal(
+    isProviderStatusExplicitlyUnavailable({ provider: 'codex', available: true, command: 'codex' }),
+    false,
+  )
 })
 
 test('startInitialAppLoad treats provider lookup failures as non-blocking', async () => {

@@ -18,6 +18,7 @@ import type {
   AppLanguage,
   AutoUrgeProfile,
   BoardColumn,
+  DataMaintenanceStatus,
   ExternalSessionSummary,
   ImageAttachment,
   ModelPromptRule,
@@ -27,7 +28,7 @@ import type {
   SessionHistoryEntry,
 } from '../../shared/schema'
 import type { CodexChatSettings } from '../../shared/codex-chat-settings'
-import { listExternalHistory, loadExternalSession } from '../api'
+import { listExternalHistory, listInternalSessionHistory, loadExternalSession } from '../api'
 import { resizeColumnGroups } from '../column-resize'
 import { clearDragPayload, readDragPayload, type Placement, writeDragPayload } from '../dnd'
 import type { CardRecoveryStatus } from '../stream-recovery-feedback'
@@ -35,10 +36,13 @@ import type { QueuedSendSummary, SendMessageOptions } from './deferred-send-queu
 import { areWorkspaceColumnPropsEqual } from './layout-memoization'
 import {
   filterExternalSessionHistory,
+  filterCatalogSessionHistoryForWorkspace,
   filterSessionHistoryEntries,
+  getSessionHistoryDisplayMessageCount,
   getSessionHistoryLifecycle,
   getSessionHistoryLifecycleLabel,
   hasSessionHistorySearch,
+  mergeSessionHistorySearchResults,
 } from './workspace-column-history'
 import { CloseIcon, FolderIcon, HistoryIcon, IconButton } from './Icons'
 import { LayoutRenderer } from './LayoutRenderer'
@@ -321,13 +325,20 @@ const WorkspaceColumnView = ({
   const [historySearch, setHistorySearch] = useState('')
   const [externalSessions, setExternalSessions] = useState<ExternalSessionSummary[]>([])
   const [externalLoading, setExternalLoading] = useState(false)
+  const [catalogSessions, setCatalogSessions] = useState<SessionHistoryEntry[]>([])
+  const [internalMaintenance, setInternalMaintenance] = useState<DataMaintenanceStatus>({
+    phase: 'idle',
+    processed: 0,
+    skipped: 0,
+  })
+  const [internalLoading, setInternalLoading] = useState(false)
   const [importingSessionId, setImportingSessionId] = useState<string | null>(null)
   const historyMenuRef = useRef<HTMLDivElement>(null)
   const deferredHistorySearch = useDeferredValue(historySearch)
-  const filteredSessionHistory = useMemo(
-    () => filterSessionHistoryEntries(sessionHistory, deferredHistorySearch),
-    [deferredHistorySearch, sessionHistory],
-  )
+  const filteredSessionHistory = useMemo(() => mergeSessionHistorySearchResults(
+    filterSessionHistoryEntries(sessionHistory, deferredHistorySearch),
+    filterCatalogSessionHistoryForWorkspace(catalogSessions, column.workspacePath),
+  ), [catalogSessions, column.workspacePath, deferredHistorySearch, sessionHistory])
   const filteredExternalSessions = useMemo(
     () => filterExternalSessionHistory(externalSessions, deferredHistorySearch),
     [deferredHistorySearch, externalSessions],
@@ -372,6 +383,48 @@ const WorkspaceColumnView = ({
     document.addEventListener('mousedown', handleOutsideClick)
     return () => document.removeEventListener('mousedown', handleOutsideClick)
   }, [closeHistoryMenu, historyMenuOpen])
+
+  useEffect(() => {
+    if (!historyMenuOpen || historyTab !== 'internal' || !column.workspacePath.trim()) {
+      return
+    }
+
+    let cancelled = false
+    let timer: ReturnType<typeof setTimeout> | undefined
+    setCatalogSessions([])
+    const loadCatalog = async () => {
+      setInternalLoading(true)
+      try {
+        const response = await listInternalSessionHistory({
+          workspacePath: column.workspacePath,
+          query: deferredHistorySearch,
+        })
+        if (cancelled) return
+        setCatalogSessions(response.entries)
+        setInternalMaintenance(response.maintenance)
+        if (response.maintenance.phase === 'running') {
+          timer = setTimeout(() => void loadCatalog(), 300)
+        }
+      } catch {
+        if (!cancelled) {
+          setInternalMaintenance({
+            phase: 'degraded',
+            processed: 0,
+            skipped: 0,
+            lastError: 'history catalog unavailable',
+          })
+        }
+      } finally {
+        if (!cancelled) setInternalLoading(false)
+      }
+    }
+
+    void loadCatalog()
+    return () => {
+      cancelled = true
+      if (timer) clearTimeout(timer)
+    }
+  }, [column.workspacePath, deferredHistorySearch, historyMenuOpen, historyTab])
 
   useEffect(() => {
     if (!historyMenuOpen || historyTab !== 'external' || !column.workspacePath.trim()) {
@@ -919,34 +972,56 @@ const WorkspaceColumnView = ({
             </div>
 
             {historyTab === 'internal' ? (
-              filteredSessionHistory.length === 0 ? (
+              filteredSessionHistory.length === 0 && (internalLoading || internalMaintenance.phase === 'running') ? (
+                <div className="session-history-empty" role="status">
+                  {language === 'zh-CN'
+                    ? `正在安全整理历史 ${internalMaintenance.processed}/${internalMaintenance.total ?? '…'}`
+                    : `Safely indexing history ${internalMaintenance.processed}/${internalMaintenance.total ?? '…'}`}
+                </div>
+              ) : filteredSessionHistory.length === 0 ? (
                 <div className="session-history-empty">
                   {hasHistorySearch ? text.noMatchingSessionHistory : text.noSessionHistory}
+                  {internalMaintenance.phase === 'degraded' && internalMaintenance.skipped > 0
+                    ? language === 'zh-CN'
+                      ? `（已跳过 ${internalMaintenance.skipped} 个异常或过大的归档）`
+                      : ` (${internalMaintenance.skipped} damaged or oversized archives skipped)`
+                    : ''}
                 </div>
               ) : (
-                filteredSessionHistory.map((entry) => (
-                  <button
-                    key={entry.id}
-                    type="button"
-                    className={`session-history-item is-${getSessionHistoryLifecycle(entry)}`}
-                    title={entry.title}
-                    onMouseDown={(event) => handleRestoreSessionHistoryPress(event, entry.id)}
-                    onClick={() => handleRestoreSessionHistoryClick(entry.id)}
-                  >
-                    <span className="session-history-title-row">
-                      <span className="session-history-title">{entry.title}</span>
-                      <span className="session-history-status">
-                        {getSessionHistoryLifecycleLabel(entry, language)}
+                <>
+                  {internalMaintenance.phase === 'running' ? (
+                    <div className="session-history-empty" role="status">
+                      {language === 'zh-CN'
+                        ? `仍在后台整理 ${internalMaintenance.processed}/${internalMaintenance.total ?? '…'}`
+                        : `Still indexing ${internalMaintenance.processed}/${internalMaintenance.total ?? '…'}`}
+                    </div>
+                  ) : null}
+                  {filteredSessionHistory.map((entry) => (
+                    <button
+                      key={entry.id}
+                      type="button"
+                      className={`session-history-item is-${getSessionHistoryLifecycle(entry)}`}
+                      title={entry.title}
+                      onMouseDown={(event) => handleRestoreSessionHistoryPress(event, entry.id)}
+                      onClick={() => handleRestoreSessionHistoryClick(entry.id)}
+                    >
+                      <span className="session-history-title-row">
+                        <span className="session-history-title">{entry.title}</span>
+                        <span className="session-history-status">
+                          {getSessionHistoryLifecycleLabel(entry, language)}
+                        </span>
                       </span>
-                    </span>
-                    <span className="session-history-meta">
-                      {entry.provider === 'claude' ? 'Claude' : 'Codex'}
-                      {' · '}
-                      {formatLocalizedDateTime(language, entry.archivedAt)}
-                      {entry.messages.length > 0 ? ` · ${entry.messages.length} msgs` : ''}
-                    </span>
-                  </button>
-                ))
+                      <span className="session-history-meta">
+                        {entry.provider === 'claude' ? 'Claude' : 'Codex'}
+                        {' · '}
+                        {formatLocalizedDateTime(language, entry.archivedAt)}
+                        {getSessionHistoryDisplayMessageCount(entry) > 0
+                          ? ` · ${getSessionHistoryDisplayMessageCount(entry)} msgs`
+                          : ''}
+                      </span>
+                    </button>
+                  ))}
+                </>
               )
             ) : externalLoading ? (
               <div className="session-history-empty">{text.loadingExternalHistory}</div>

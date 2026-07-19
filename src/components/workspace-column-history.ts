@@ -2,6 +2,9 @@ import type { AppLanguage, ExternalSessionSummary, Provider, SessionHistoryEntry
 
 const normalizeHistorySearchQuery = (value: string) => value.trim().toLocaleLowerCase()
 
+const normalizeHistoryWorkspacePath = (value: string) =>
+  value.trim().replace(/\\/g, '/').replace(/\/+$/, '').toLocaleLowerCase()
+
 const providerSearchLabel = (provider: Provider) => (provider === 'claude' ? 'claude' : 'codex')
 
 type SessionHistoryLifecycle = 'ended' | 'interrupted'
@@ -55,6 +58,16 @@ export const filterSessionHistoryEntries = (entries: SessionHistoryEntry[], quer
   }
 
   return entries.filter((entry) => createInternalHistorySearchText(entry).includes(normalizedQuery))
+}
+
+export const filterCatalogSessionHistoryForWorkspace = (
+  entries: SessionHistoryEntry[],
+  workspacePath: string,
+) => {
+  const normalizedWorkspacePath = normalizeHistoryWorkspacePath(workspacePath)
+  return entries.filter(
+    (entry) => normalizeHistoryWorkspacePath(entry.workspacePath) === normalizedWorkspacePath,
+  )
 }
 
 export const filterExternalSessionHistory = (entries: ExternalSessionSummary[], query: string) => {

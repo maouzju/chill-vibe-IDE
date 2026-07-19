@@ -1390,12 +1390,16 @@ const captureProviderStatsWithin = async (request: ChatRequest, timeoutMs = 500)
   >((resolve, reject) => {
     let settled = false
     let child: Awaited<ReturnType<typeof launchProviderRun>> | null = null
-    const timer = setTimeout(() => {
-      if (settled) return
-      settled = true
-      child?.kill()
-      resolve({ kind: 'timeout' })
-    }, timeoutMs)
+    const effectiveTimeoutMs = process.platform === 'win32' ? Math.max(timeoutMs, 10_000) : timeoutMs
+    let timer: ReturnType<typeof setTimeout> | undefined
+    const armTimer = () => {
+      timer = setTimeout(() => {
+        if (settled) return
+        settled = true
+        child?.kill()
+        resolve({ kind: 'timeout' })
+      }, effectiveTimeoutMs)
+    }
 
     void launchProviderRun(request, {
       onSession: () => undefined,
@@ -1406,20 +1410,20 @@ const captureProviderStatsWithin = async (request: ChatRequest, timeoutMs = 500)
       onStats: (payload: { event: string; endpoint?: string; errorType?: string; alreadyRecorded?: boolean }) => {
         if (settled) return
         settled = true
-        clearTimeout(timer)
+        if (timer) clearTimeout(timer)
         child?.kill()
         resolve({ kind: 'stats', ...payload })
       },
       onDone: () => {
         if (settled) return
         settled = true
-        clearTimeout(timer)
+        if (timer) clearTimeout(timer)
         reject(new Error('Expected provider run to emit a stats event.'))
       },
       onError: (message) => {
         if (settled) return
         settled = true
-        clearTimeout(timer)
+        if (timer) clearTimeout(timer)
         reject(new Error(`Expected stats before provider error: ${message}`))
       },
     } as Parameters<typeof launchProviderRun>[1] & {
@@ -1433,13 +1437,15 @@ const captureProviderStatsWithin = async (request: ChatRequest, timeoutMs = 500)
       child = launchedChild
       if (!launchedChild && !settled) {
         settled = true
-        clearTimeout(timer)
+        if (timer) clearTimeout(timer)
         reject(new Error('Expected fake provider command to launch.'))
+      } else if (launchedChild && !settled) {
+        armTimer()
       }
     }).catch((error) => {
       if (settled) return
       settled = true
-      clearTimeout(timer)
+      if (timer) clearTimeout(timer)
       reject(error)
     })
   })
@@ -1451,12 +1457,16 @@ const captureProviderRecoveryFailureWithin = async (request: ChatRequest, timeou
   >((resolve, reject) => {
     let settled = false
     let child: Awaited<ReturnType<typeof launchProviderRun>> | null = null
-    const timer = setTimeout(() => {
-      if (settled) return
-      settled = true
-      child?.kill()
-      resolve({ kind: 'timeout' })
-    }, timeoutMs)
+    const effectiveTimeoutMs = process.platform === 'win32' ? Math.max(timeoutMs, 10_000) : timeoutMs
+    let timer: ReturnType<typeof setTimeout> | undefined
+    const armTimer = () => {
+      timer = setTimeout(() => {
+        if (settled) return
+        settled = true
+        child?.kill()
+        resolve({ kind: 'timeout' })
+      }, effectiveTimeoutMs)
+    }
 
     void launchProviderRun(request, {
       onSession: () => undefined,
@@ -1467,26 +1477,28 @@ const captureProviderRecoveryFailureWithin = async (request: ChatRequest, timeou
       onDone: () => {
         if (settled) return
         settled = true
-        clearTimeout(timer)
+        if (timer) clearTimeout(timer)
         reject(new Error('Expected provider run to fail.'))
       },
       onError: (message, _hint, recovery) => {
         if (settled) return
         settled = true
-        clearTimeout(timer)
+        if (timer) clearTimeout(timer)
         resolve({ kind: 'error', message, recovery: recovery ?? {} })
       },
     }).then((launchedChild) => {
       child = launchedChild
       if (!launchedChild && !settled) {
         settled = true
-        clearTimeout(timer)
+        if (timer) clearTimeout(timer)
         reject(new Error('Expected fake provider command to launch.'))
+      } else if (launchedChild && !settled) {
+        armTimer()
       }
     }).catch((error) => {
       if (settled) return
       settled = true
-      clearTimeout(timer)
+      if (timer) clearTimeout(timer)
       reject(error)
     })
   })

@@ -313,6 +313,38 @@ export const internalSessionHistoryLoadResponseSchema = z.object({
 })
 export type InternalSessionHistoryLoadResponse = z.infer<typeof internalSessionHistoryLoadResponseSchema>
 
+export const dataMaintenancePhaseSchema = z.enum(['idle', 'running', 'complete', 'degraded'])
+export type DataMaintenancePhase = z.infer<typeof dataMaintenancePhaseSchema>
+
+export const dataMaintenanceStatusSchema = z.object({
+  phase: dataMaintenancePhaseSchema,
+  processed: z.number().int().nonnegative().default(0),
+  skipped: z.number().int().nonnegative().default(0),
+  total: z.number().int().nonnegative().optional(),
+  lastError: z.string().optional(),
+})
+export type DataMaintenanceStatus = z.infer<typeof dataMaintenanceStatusSchema>
+
+export const internalSessionHistoryListRequestSchema = z.object({
+  workspacePath: z.string().min(1),
+  query: z.string().default(''),
+})
+export type InternalSessionHistoryListRequest = z.infer<typeof internalSessionHistoryListRequestSchema>
+
+export const internalSessionHistoryListResponseSchema = z.object({
+  entries: z.array(sessionHistoryEntrySchema),
+  total: z.number().int().nonnegative(),
+  maintenance: dataMaintenanceStatusSchema,
+})
+export type InternalSessionHistoryListResponse = z.infer<typeof internalSessionHistoryListResponseSchema>
+
+export const internalSessionHistoryHideRequestSchema = z.object({
+  entryId: z.string().min(1),
+  provider: providerSchema,
+  sessionId: z.string().optional(),
+})
+export type InternalSessionHistoryHideRequest = z.infer<typeof internalSessionHistoryHideRequestSchema>
+
 export const archiveRecallHiddenReasonSchema = z.enum(['compact'])
 export type ArchiveRecallHiddenReason = z.infer<typeof archiveRecallHiddenReasonSchema>
 

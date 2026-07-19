@@ -75,6 +75,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
   fetchState: () => ipcRenderer.invoke('desktop:fetch-state'),
   loadSessionHistoryEntry: (request: unknown) =>
     ipcRenderer.invoke('desktop:load-session-history-entry', request),
+  listInternalSessionHistory: (request: unknown) =>
+    ipcRenderer.invoke('desktop:list-internal-session-history', request),
+  hideInternalSessionHistory: (request: unknown) =>
+    ipcRenderer.invoke('desktop:hide-internal-session-history', request),
   saveState: (state: unknown) => ipcRenderer.invoke('desktop:save-state', state),
   syncRuntimeSettings: (settings: unknown) =>
     ipcRenderer.invoke('desktop:sync-runtime-settings', settings),

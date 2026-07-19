@@ -13,4 +13,4 @@
 - [x] E1 添加 Windows junction/symlink workspace escape 红测并修复 canonical 边界。
 - [x] F1 添加更新前等待主进程保存测试并接线。
 - [x] 同步 history-sidecar-storage 与 claude-session-keepalive 文档。
-- [ ] 跑窄测、quality、unit、risk、build、打包、合并和清理 worktree。
+- [x] 跑窄测、quality、unit、risk、build、打包、合并和清理 worktree；发布审计再次复核定向测试、Electron、生产构建与 5 分钟六流性能门禁，基线同现的 Windows 计时/快照噪声已单独记录。

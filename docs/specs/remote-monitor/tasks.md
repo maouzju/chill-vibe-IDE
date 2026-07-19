@@ -1,5 +1,7 @@
 # 手机远程监工模式 — Tasks
 
+> 发布范围说明：Slice 1–5 与 V2 是早期规划清单，不属于本次发布改动；本次只发布下方已完成的 V2.4 切片。历史未勾选项保留原样，需另开任务核对或补录。
+
 ## Slice 1 — ChatManager tap（TDD 红→绿）
 - [ ] `tests/chat-manager-tap.test.ts`：tapAll 广播 / listActiveStreams backlog / 退订，先确认红
 - [ ] `server/chat-manager.ts`：StreamRecord.cardId、tapAll、listActiveStreams，测试转绿

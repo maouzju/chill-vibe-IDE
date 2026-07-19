@@ -75,4 +75,3 @@ an explicit switch back.
 3. Persistence tests: transfer metadata survives normalize/archive/restore and malformed metadata
    is discarded.
 4. App helper test: only pending Codex transfers choose the high-fidelity replay mode.
-

@@ -1,5 +1,18 @@
 # 多窗口流式性能兜底 — 验证记录
 
+## 2026-07-19 输入与 Tab 交互优先补强
+
+- 当前用户包 `v0.18.12` 运行约 12 小时、5 张卡 streaming 时，10 秒现场采样显示
+  renderer / GPU 分别持续占用约 60% / 74% 单核；状态约 1.83 MiB、15 张卡、855 条消息。
+- 旧门禁的输入指标只统计同步 textarea 赋值，没有等待下一帧，无法代表用户何时真正看到文字；
+  本次改为输入、聚焦和两次 tab 切换都等待实际下一帧后再计时。
+- 新增普通流式 commit 的交互保护：输入、IME、pointer、click、wheel 后 120ms 内延后刷新，
+  单次到期刷新最多额外延迟 300ms；完成、停止、报错、恢复、退出前的强制 flush 不变。
+- 30 秒 6-stream 离屏真实绘制门禁：`frameMaxGapMs=211.9ms`、
+  `inputP95Ms=72.8ms`、`focusP95Ms=72.2ms`、`tabSwitchP95Ms=149ms`，
+  零 unresponsive、零 renderer gone，持久化顺序与消息完整性通过。
+- focused Node 测试 22/22 通过，`pnpm test:quality` 通过。
+
 ## 2026-07-18 真实复发与门禁修正
 
 - 最新发布包 `release-20260718-002246` 在四个长任务并行约 31 分钟后两次记录

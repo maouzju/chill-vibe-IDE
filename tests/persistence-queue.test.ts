@@ -12,11 +12,14 @@ import {
   getQueuedStateSaveDelayMs,
   getPersistenceVersion,
   getStreamRenderFlushIntervalMs,
+  getStreamRenderInteractionDelayMs,
   getStreamRenderBufferColumnIds,
   getStreamingCardCount,
   isBusyStreamingState,
   streamRenderFlushIntervalMs,
   streamRenderColumnYieldMs,
+  streamRenderInteractionProtectionMs,
+  streamRenderMaxInteractionDeferralMs,
   takeStreamDeltaBufferEntriesForCard,
   shouldResetQueuedStateSaveTimer,
   shouldPersistActionImmediately,
@@ -92,6 +95,32 @@ describe('persistence queue', () => {
     assert.equal(getStreamRenderFlushIntervalMs(3), 200)
     assert.equal(getStreamRenderFlushIntervalMs(4), 500)
     assert.equal(getStreamRenderFlushIntervalMs(7), 500)
+  })
+
+  it('keeps ordinary stream commits out of the immediate user-interaction frame without starving output', () => {
+    assert.equal(streamRenderInteractionProtectionMs, 120)
+    assert.equal(streamRenderMaxInteractionDeferralMs, 300)
+
+    assert.equal(getStreamRenderInteractionDelayMs({
+      nowMs: 1_000,
+      lastInteractionAtMs: 940,
+      firstAttemptAtMs: 1_000,
+    }), 60)
+    assert.equal(getStreamRenderInteractionDelayMs({
+      nowMs: 1_290,
+      lastInteractionAtMs: 1_280,
+      firstAttemptAtMs: 1_000,
+    }), 10)
+    assert.equal(getStreamRenderInteractionDelayMs({
+      nowMs: 1_300,
+      lastInteractionAtMs: 1_295,
+      firstAttemptAtMs: 1_000,
+    }), 0)
+    assert.equal(getStreamRenderInteractionDelayMs({
+      nowMs: 1_000,
+      lastInteractionAtMs: 800,
+      firstAttemptAtMs: 1_000,
+    }), 0)
   })
 
   it('keeps interleaved agent-message deltas in separate lossless buffer slots', () => {

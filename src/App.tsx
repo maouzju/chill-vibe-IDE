@@ -247,6 +247,7 @@ import {
   getPersistenceVersion,
   getStreamRenderBufferColumnIds,
   getStreamRenderFlushIntervalMs,
+  getStreamRenderInteractionDelayMs,
   shouldPersistActionImmediately,
   shouldSyncRuntimeSettings,
   shouldUseQueuedPersistenceForAction,
@@ -769,6 +770,8 @@ function App() {
   )
   const streamRenderFlushHandleRef = useRef<number | null>(null)
   const streamRenderCycleColumnIdsRef = useRef<string[]>([])
+  const streamRenderInteractionDeferralStartedAtRef = useRef<number | null>(null)
+  const lastStreamRenderInteractionAtRef = useRef(Number.NEGATIVE_INFINITY)
   const activityBufferRef = useRef(
     new Map<string, StreamActivityBufferEntry>(),
   )
@@ -788,6 +791,33 @@ function App() {
   // misroute recurrence in the wild finally becomes attributable instead of
   // symptom-guessed (docs/specs/composer-focus-loss/investigation.md §3.8).
   useEffect(() => installStuckPaneForensics(), [])
+
+  useEffect(() => {
+    const markInteraction = () => {
+      lastStreamRenderInteractionAtRef.current = performance.now()
+    }
+    const interactionEvents: Array<keyof WindowEventMap> = [
+      'pointerdown',
+      'click',
+      'keydown',
+      'input',
+      'compositionstart',
+      'compositionupdate',
+      'compositionend',
+      'wheel',
+    ]
+    const listenerOptions: AddEventListenerOptions = { capture: true, passive: true }
+
+    for (const eventName of interactionEvents) {
+      window.addEventListener(eventName, markInteraction, listenerOptions)
+    }
+
+    return () => {
+      for (const eventName of interactionEvents) {
+        window.removeEventListener(eventName, markInteraction, true)
+      }
+    }
+  }, [])
 
   // The panel-unmount probe needs the data-layer truth (appStateRef, updated
   // synchronously in applyActions) to tell "render dropped a tab the data
@@ -1232,6 +1262,7 @@ function App() {
       ) {
         window.clearTimeout(streamRenderFlushHandleRef.current)
         streamRenderFlushHandleRef.current = null
+        streamRenderInteractionDeferralStartedAtRef.current = null
       }
 
       const actions: IdeAction[] = bufferEntries
@@ -1256,6 +1287,32 @@ function App() {
   const flushStreamRenderBuffers = useCallback(() => {
     streamRenderFlushHandleRef.current = null
     const cycleColumnIds = streamRenderCycleColumnIdsRef.current
+    const hasBufferedRenderWork =
+      cycleColumnIds.length > 0 ||
+      deltaBufferRef.current.size > 0 ||
+      activityBufferRef.current.size > 0
+    if (!hasBufferedRenderWork) {
+      streamRenderInteractionDeferralStartedAtRef.current = null
+      return
+    }
+
+    const nowMs = performance.now()
+    const firstAttemptAtMs = streamRenderInteractionDeferralStartedAtRef.current ?? nowMs
+    const interactionDelayMs = getStreamRenderInteractionDelayMs({
+      nowMs,
+      lastInteractionAtMs: lastStreamRenderInteractionAtRef.current,
+      firstAttemptAtMs,
+    })
+    if (interactionDelayMs > 0) {
+      streamRenderInteractionDeferralStartedAtRef.current = firstAttemptAtMs
+      streamRenderFlushHandleRef.current = window.setTimeout(
+        flushStreamRenderBuffers,
+        interactionDelayMs,
+      )
+      return
+    }
+    streamRenderInteractionDeferralStartedAtRef.current = null
+
     if (cycleColumnIds.length === 0) {
       cycleColumnIds.push(...getStreamRenderBufferColumnIds(
         deltaBufferRef.current,
@@ -1313,6 +1370,7 @@ function App() {
       ) {
         window.clearTimeout(streamRenderFlushHandleRef.current)
         streamRenderFlushHandleRef.current = null
+        streamRenderInteractionDeferralStartedAtRef.current = null
       }
 
       const action: IdeAction = {
@@ -3558,6 +3616,7 @@ function App() {
       window.clearTimeout(streamRenderFlushHandleRef.current)
       streamRenderFlushHandleRef.current = null
     }
+    streamRenderInteractionDeferralStartedAtRef.current = null
     deltaBufferRef.current.clear()
     activityBufferRef.current.clear()
     streamRenderCycleColumnIdsRef.current.length = 0
@@ -3729,6 +3788,7 @@ function App() {
         window.clearTimeout(streamRenderFlushHandleRef.current)
         streamRenderFlushHandleRef.current = null
       }
+      streamRenderInteractionDeferralStartedAtRef.current = null
       deltaBuffer.clear()
       activityBuffer.clear()
       streamRenderCycleColumnIds.length = 0

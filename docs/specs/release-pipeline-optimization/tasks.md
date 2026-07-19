@@ -29,6 +29,15 @@
 - [x] Update `release-pipeline` skill commands and recovery guidance.
 - [x] Update `AGENTS.md`, README, regression skill, and stale script-contract tests.
 
+## Branch Synchronization
+
+- [x] Document the local-first release invariant and the v0.18.12/v0.18.13 remote-only divergence failure mode.
+- [x] Ban `git push origin HEAD:main` from release worktrees.
+- [x] Require the verified candidate to fast-forward local `main` before pushing `origin/main`.
+- [x] Add final branch divergence and tag-target equality checks.
+- [x] Record the same invariant in `AGENTS.md` packaging defaults.
+- [x] Add a focused skill-contract test and register it in the Node test manifest.
+
 ## Verification
 
 - [x] Run focused tooling tests.
@@ -40,6 +49,8 @@
 
 ## Evidence
 
+- Branch-convergence skill contract: 2 tests passed; it verifies local fast-forward → `git push origin main` → fetch/divergence proof → tag → GitHub Release ordering and rejects instructional worktree `HEAD:main` pushes.
+- `pnpm test:quality` passed after the branch-convergence workflow and contract test changes.
 - Focused tooling/package-contract verification: 47 tests passed in 1.67 seconds.
 - `pnpm test:quality`: passed in 75.7 seconds on the final code state.
 - Historical Node release run: 788.99 seconds. Optimized manifest-isolated run with Windows concurrency 2 and force-exit cleanup: 352.83 seconds runner time / 355.7 seconds wall time, about 55% faster.

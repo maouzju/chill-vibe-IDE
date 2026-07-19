@@ -7,7 +7,7 @@ description: Audit the current Chill Vibe repo diff for sensitive or irrelevant 
 
 Use this skill from the `chill-vibe` repo root when the task is not just “run tests”, but “safely turn the current checkout into a shipped GitHub release”.
 
-Reuse the verification posture from `../chill-vibe-full-regression/SKILL.md`, but own the full release chain: pre-flight → diff audit → final version bump → exact-tree verification → commit/push/tag → release (server-side build) → asset verification.
+Reuse the verification posture from `../chill-vibe-full-regression/SKILL.md`, but own the full release chain: pre-flight → diff audit → final version bump → exact-tree verification → local `main` integration → push/convergence proof → tag/release (server-side build) → asset verification.
 
 **Primary asset path: pushing the `v*` tag triggers `.github/workflows/release-zip.yml`, which builds the Windows zip server-side, uploads the canonical `Chill.Vibe-<version>-win.zip` (spaces normalized to dots), and verifies asset state + download URL itself — normally within ~3–4 minutes.** Do NOT build the zip locally or `gh release upload` manually on the happy path; that wastes minutes and races the workflow (HTTP 404/409). Local build is a fallback only (step 6b).
 
@@ -15,15 +15,16 @@ Reuse the verification posture from `../chill-vibe-full-regression/SKILL.md`, bu
 
 1. Pre-flight — inspect repo state and rule out interference before touching anything:
    - `git status --short --branch`, `git diff --stat`, `git remote -v`, `gh auth status`
+   - `git fetch origin main`; record `git rev-parse main` and `git rev-parse origin/main`. The release target is the local `main` branch. If local `main` is behind or diverged, reconcile it before assembling a candidate; do not build a new release on a stale branch graph.
    - read `package.json` version and `git tag --sort=-version:refname` (top few), then check the authoritative remote state with `gh release list --limit 5` or `git ls-remote --tags origin`; local tags can diverge from GitHub and the package version can lag an already-published release, so choose the next version above the highest published remote tag instead of trusting either source alone
    - if `git fetch --tags` reports `would clobber existing tag`, do not force-rewrite tags during the release. Record the mismatch, use the remote tag/release state for versioning and collision checks, and leave unrelated local tag repair for a separate task.
-   - **Concurrency check: `git reflog -8`.** If another agent made checkout/merge entries within the last few minutes, do NOT verify or release from the main checkout — a concurrent agent can switch HEAD mid-run, so a long `pnpm test:risk` silently validates the wrong tree (happened for v0.17.11: the merge result was checked out away 28s after merging). Instead: `git worktree add -b release/vX.Y.Z .claude/worktrees/<name> <commit>` (use `git rev-parse HEAD` for the commit if the current tree is the intended release state), `pnpm install` there, and run ALL remaining steps (verify, bump, commit, tag, push) from that worktree. Remove the worktree after the release.
+   - **Concurrency check: `git reflog -8`.** If another agent made checkout/merge entries within the last few minutes, do NOT run long verification in the main checkout — a concurrent agent can switch HEAD mid-run, so a long release gate can silently validate the wrong tree (happened for v0.17.11). Instead, create a repo-external worktree from the recorded local `main` commit: `git worktree add -b release/vX.Y.Z <external-path> <local-main-commit>`, install there, and prepare/verify the candidate there. **That worktree is verification isolation only: it must never run `git push origin HEAD:main`, create the final tag, or publish the release.** Final integration and publication return to the primary local `main` checkout after concurrent writes stop.
 2. Audit the pending diff for release blockers before any commit:
    - look for secrets, tokens, auth headers, local absolute paths, debug-only noise, or unrelated files
    - treat obvious test fixtures like `sk-test` as expected only if they stay inside tests
    - explicitly review new docs/spec files so accidental scratch notes do not ship
    - treat changed SPEC task lists with unchecked implementation/verification boxes as a release blocker until the corresponding slice is completed or explicitly excluded; run any newly added proving test narrowly so an intentional red test cannot hide inside the later full-suite output
-   - if the checkout mixes a release-ready slice with unfinished user/agent WIP, preserve that WIP in place: create a repo-external detached release worktree from the intended base commit, apply only a path-limited patch for the audited slice, and run verification there. After verification, mirror and stage only those exact verified paths plus the version/skill updates on the target branch; do not stash, revert, or accidentally commit the excluded WIP.
+   - if the checkout mixes a release-ready slice with unfinished user/agent WIP, preserve the WIP on a named branch/worktree and make local `main` release-ready before publication. A repo-external release worktree may assemble and verify a path-limited candidate, but it does not make remote-only publication safe. Do not stash, revert, discard, or accidentally commit excluded WIP; if local `main` cannot safely become clean and accept the candidate, the release is blocked.
    - if something is suspicious, stop and fix or exclude it before continuing
 3. Set the final release version after the audit and before the final verification:
    - default to the next patch version unless the diff clearly justifies a bigger bump
@@ -45,9 +46,13 @@ Reuse the verification posture from `../chill-vibe-full-regression/SKILL.md`, bu
    - when a broad Playwright run mixes baseline snapshot drift with candidate-only snapshot changes, baseline-compare the failing spec first. For candidate-only diffs, inspect the actual/diff images in both themes and narrow layouts, update only the snapshots whose new rendering is intentional, then rerun those exact specs without `--update-snapshots`; never accept unrelated baseline drift along with them.
    - if fixed port `5173` is owned by an unrelated checkout, do not stop or reuse that process. Record the Playwright gate as port-blocked, then prove Electron runtime coverage against a free strict Vite port with the repo-local test environment. Do not run the stock `test:electron` while an unrelated service owns `5173`; its harness can validate the wrong renderer.
    - when a standalone harness has printed its final green summary but its process stays alive, inspect the process tree and port `5173` before calling it hung. Stop only the verified test child, record the printed summary, and never touch a packaged Chill Vibe process.
-5. Commit, push, tag, and **immediately create the release** (order is load-bearing):
-   - write a concise release-oriented commit message; `git add` only the intended files; `git commit`; `git push origin <current-branch>`
-   - `git tag -a v<version> -m "v<version>"` and `git push origin v<version>`
+5. Integrate into local `main`, push, prove convergence, tag, and **immediately create the release** (order is load-bearing):
+   - write a concise release-oriented commit message and commit only the intended verified files. If the commit was created in a release worktree, record its branch and commit hash, then return to the primary checkout.
+   - before publication, fetch `origin/main` again and require it to still equal the recorded remote base. If a release worktree was used, require local `main` to still equal its recorded local base; if the candidate was committed directly on local `main`, require `main` to equal the verified candidate commit. Also require the primary checkout to have no unmerged paths or unrelated dirty files. If an expected ref moved or the checkout cannot safely integrate, stop, reconcile, and rerun verification for the changed fingerprint.
+   - advance the primary local branch first: when a release branch was used, run `git merge --ff-only release/v<version>` from the local `main` checkout. If fast-forward is impossible, do not bypass it with a direct refspec; reconcile the history deliberately and re-verify.
+   - push only the local branch ref: `git push origin main`. **Never use `git push origin HEAD:main` from a release worktree or detached checkout.**
+   - immediately run `git fetch origin main`, require `git rev-parse main` to equal `git rev-parse origin/main`, and require `git rev-list --left-right --count main...origin/main` to return `0 0`. A release is not publishable while the normal local workspace is ahead, behind, or diverged from the remote branch it just updated.
+   - create the annotated tag from synchronized local `main`: `git tag -a v<version> -m "v<version>" main`. Require `git rev-parse v<version>^{}` to equal both branch hashes, then `git push origin v<version>`.
    - **immediately after the tag push:** `gh release create v<version> --verify-tag --title v<version> --notes <concise notes>`
    - Why immediately: the tag push already started `release-zip.yml`, and its "Remove stale in-progress zip assets" step does `gh api releases/tags/<tag>` — it hard-fails with HTTP 404 if no release exists yet (v0.17.8 and v0.17.11 both died here after 3+ min of server build). Recovery is cheap (`gh release create v<tag> --verify-tag --notes ...` then `gh run rerun <failed-run-id>`), but the right order avoids it entirely.
 6. Let the workflow deliver the asset, then verify:
@@ -60,7 +65,7 @@ Reuse the verification posture from `../chill-vibe-full-regression/SKILL.md`, bu
 7. Restart the active repo runtime before handoff:
    - follow `AGENTS.md`; prefer `pnpm dev:restart`
    - **skip the restart if the concurrency check (step 1) found another active agent** — never restart the shared dev runtime while another agent is working
-   - remove any release worktree created in step 1
+   - remove any release worktree created in step 1 only after local `main`, `origin/main`, and the release tag have passed the equality checks and the release asset is verified
 8. Retrospect and update this skill (mandatory, see Skill Self-Maintenance):
    - review the run you just did: where did reality diverge from this document? Which step was wasted, wrong, missing, or only survived thanks to improvisation?
    - apply the resulting edits to this SKILL.md before handoff — a release is not finished while the skill still describes a flow you did not actually follow
@@ -92,6 +97,7 @@ Reuse the verification posture from `../chill-vibe-full-regression/SKILL.md`, bu
 ## GitHub Release Rules
 
 - Server-side build via `release-zip.yml` is the canonical asset path; a green workflow run is the asset verification.
+- Local `main`, `origin/main`, and the annotated release tag must resolve to the same commit before the release is created. Remote-only success is a failed release handoff.
 - Confirm the release asset actually exists after the run; do not trust command success alone.
 - In the final handoff, report:
   - commit hash

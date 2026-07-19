@@ -3316,6 +3316,18 @@ body.is-card-dragging .lane-drop-zone-top {
   padding: 0.5rem 0.9rem;
 }
 
+.message-entry-run-duration {
+  align-self: stretch;
+}
+
+.message-run-duration {
+  padding: 0.08rem 0.9rem 0.34rem;
+  color: var(--ink-3);
+  font-size: 0.66rem;
+  line-height: 1.25;
+  opacity: 0.72;
+}
+
 
 /* -- Streaming Activity Indicator --------------------------*/
 .streaming-indicator {

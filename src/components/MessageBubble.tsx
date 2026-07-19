@@ -13,6 +13,7 @@ import {
 } from '../../shared/i18n'
 import type { AppLanguage, ChatMessage, ImageAttachment } from '../../shared/schema'
 import type { CardRecoveryStatus } from '../stream-recovery-feedback'
+import { formatRunDuration, readRunDurationMs } from '../run-duration-summary'
 import {
   getAskUserAnswerKey,
   parseStructuredAgentsMessage,
@@ -370,6 +371,21 @@ const MessageBubbleView = ({
   onForkFromHere,
   entryRef,
 }: MessageBubbleProps) => {
+  const runDurationMs = readRunDurationMs(message)
+  if (runDurationMs !== null) {
+    return (
+      <div
+        ref={entryRef}
+        className="message-entry message-entry-system message-entry-run-duration"
+        data-renderable-id={message.id}
+      >
+        <div className="message-run-duration" role="note">
+          {formatRunDuration(runDurationMs, language)}
+        </div>
+      </div>
+    )
+  }
+
   const structuredKind = message.meta?.kind
   const text = getLocaleText(language)
   const showForkAction = Boolean(onForkFromHere) && message.role === 'user'

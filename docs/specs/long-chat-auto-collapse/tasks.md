@@ -17,3 +17,9 @@
 - [x] Implement default 60-item tail rendering in expanded structured tool groups.
 - [x] Add quiet "reveal older activity" UI with 60-item increments.
 - [x] Verify focused tests, touched app type/lint, both themes, and a packaged Windows handoff without stopping the user's current release instance. Repo-wide `pnpm test:quality` was also attempted; it is currently blocked by unrelated in-progress deep-session-history-search test imports/exports.
+
+## 2026-07-19 command collapse threshold adjustment
+
+- [x] Lower the default expanded structured command/tool tail from 60 items to 20 items.
+- [x] Keep the existing 60-item bounded reveal increment.
+- [x] Update focused unit and theme coverage for the new threshold.

@@ -1,4 +1,4 @@
-export const structuredToolGroupVisibleTailCount = 60
+export const structuredToolGroupVisibleTailCount = 20
 export const structuredToolGroupRevealBatchCount = 60
 
 const normalizeCount = (value: number) => {

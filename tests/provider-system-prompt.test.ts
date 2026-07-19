@@ -1596,6 +1596,38 @@ const buildFakeCodexAppServerScript = (capturePath: string) =>
     '})',
   ].join('\n')
 
+const buildFakeCodexManagedSandboxScript = (capturePath: string) =>
+  [
+    "const fs = require('node:fs')",
+    "const readline = require('node:readline')",
+    `const capturePath = ${JSON.stringify(capturePath)}`,
+    'const appendMessage = (message) => fs.appendFileSync(capturePath, `${JSON.stringify(message)}\\n`, "utf8")',
+    "const reply = (message) => process.stdout.write(`${JSON.stringify(message)}\\n`)",
+    "const rl = readline.createInterface({ input: process.stdin, crlfDelay: Infinity })",
+    "rl.on('line', (line) => {",
+    "  if (!line.trim()) return",
+    "  const request = JSON.parse(line)",
+    "  appendMessage(request)",
+    "  if (request.method === 'initialize' && request.id) { reply({ id: request.id, result: {} }); return }",
+    "  if (request.method === 'configRequirements/read' && request.id) {",
+    "    reply({ id: request.id, result: { requirements: { allowedApprovalPolicies: ['never'], allowedSandboxModes: ['read-only', 'workspace-write'], allowedPermissionProfiles: { ':read-only': true, ':workspace': true } } } })",
+    "    return",
+    "  }",
+    "  if (request.method === 'thread/start' && request.id) {",
+    "    if (request.params.sandbox === 'danger-full-access') {",
+    "      reply({ id: request.id, error: { message: 'failed to load configuration: approval_policy = \\\"never\\\" cannot be used because requirements do not allow sandbox_mode = \\\"danger-full-access\\\"; Codex would fall back to read-only permissions with approvals disabled.' } })",
+    "      return",
+    "    }",
+    "    reply({ id: request.id, result: { thread: { id: 'thread-managed-sandbox', status: { type: 'active' } } } })",
+    "    return",
+    "  }",
+    "  if (request.method === 'turn/start' && request.id) {",
+    "    reply({ id: request.id, result: {} })",
+    "    reply({ method: 'turn/completed', params: {} })",
+    "  }",
+    "})",
+  ].join('\n')
+
 const buildFakeCodexSafetyHandshakeScript = (capturePath: string, persistTrust = true) =>
   [
     "const fs = require('node:fs')",
@@ -4122,6 +4154,52 @@ test('codex app-server defaults to danger-full-access sandbox for normal chats',
   }
 })
 
+test('codex app-server narrows the sandbox without changing user config when requirements deny full access', async () => {
+  const capturePath = path.join(
+    os.tmpdir(),
+    `chill-vibe-codex-managed-sandbox-${Date.now()}-${Math.random().toString(36).slice(2)}.jsonl`,
+  )
+
+  try {
+    const events = await withFakeProviderCommand(
+      'codex',
+      buildFakeCodexManagedSandboxScript(capturePath),
+      async (workspacePath) =>
+        captureProviderLogs(
+          createRequest({
+            provider: 'codex',
+            language: 'en',
+            workspacePath,
+          }),
+        ),
+    )
+
+    assert.deepEqual(events.map((event) => event.kind), ['log', 'done'])
+    assert.match(events[0]?.kind === 'log' ? events[0].message : '', /workspace-write/i)
+
+    const requests = (await readFile(capturePath, 'utf8'))
+      .trim()
+      .split(/\r?\n/)
+      .map((line) => JSON.parse(line) as { method?: string; params?: Record<string, unknown> })
+    const threadStarts = requests.filter((request) => request.method === 'thread/start')
+    const turnStart = requests.find((request) => request.method === 'turn/start')
+
+    assert.deepEqual(threadStarts.map((request) => request.params?.sandbox), [
+      'danger-full-access',
+      'workspace-write',
+    ])
+    assert.equal(threadStarts[1]?.params?.approvalPolicy, 'never')
+    assert.deepEqual(turnStart?.params?.sandboxPolicy, {
+      type: 'workspaceWrite',
+      networkAccess: false,
+      writableRoots: [threadStarts[1]?.params?.cwd],
+    })
+    assert.equal(requests.some((request) => request.method === 'config/batchWrite'), false)
+  } finally {
+    await rm(capturePath, { force: true }).catch(() => {})
+  }
+})
+
 test('codex app-server installs and precisely trusts the Chill Vibe safety hook before starting a protected thread', async () => {
   const capturePath = path.join(
     os.tmpdir(),
@@ -4191,8 +4269,22 @@ test('codex app-server installs and precisely trusts the Chill Vibe safety hook 
     ])
 
     const trustWrite = messages.find((message) => message.method === 'config/batchWrite')
-    assert.match(JSON.stringify(trustWrite?.params), /sha256:chill-vibe-safety/)
-    assert.match(JSON.stringify(trustWrite?.params), /trusted_hash/)
+    assert.deepEqual(trustWrite?.params, {
+      edits: [
+        {
+          keyPath: 'hooks.state',
+          value: {
+            '<session-flags>/config.toml:pre_tool_use:0:0': {
+              trusted_hash: 'sha256:chill-vibe-safety',
+            },
+          },
+          mergeStrategy: 'upsert',
+        },
+      ],
+      filePath: null,
+      expectedVersion: null,
+      reloadUserConfig: true,
+    })
   } finally {
     await rm(capturePath, { force: true }).catch(() => {})
   }
@@ -4393,7 +4485,7 @@ test('codex app-server forwards on-request approvals and workspace-write network
     assert.equal(turnStart.params?.approvalPolicy, 'on-request')
     assert.deepEqual(turnStart.params?.sandboxPolicy, {
       type: 'workspaceWrite',
-      networkAccess: 'enabled',
+      networkAccess: true,
       writableRoots: [capturedWorkspacePath],
     })
   } finally {

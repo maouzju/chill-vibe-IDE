@@ -496,6 +496,7 @@ A living list of traps that have wasted time before. **When you hit a new pitfal
 
 | 211 | Importing a tooling module that unconditionally calls its CLI `main()` can turn a pure Node test import into a complete Electron package build | Keep packaging/verification modules side-effect free on import with a direct-entry guard; otherwise `pnpm test` silently performs minutes of duplicate build and ZIP work. |
 | 212 | Playwright clears `test-results/` before workers import the selected config, so a temporary `--config` file stored there can disappear after discovery and fail with `Cannot find module` | Keep isolated-port Playwright configs outside the configured output directory, then remove the temporary config after the run. |
+| 213 | PowerShell `Remove-Item` can throw `Object reference not set` when deleting a `node_modules` junction, after which `git worktree remove` may unregister the worktree but leave most files on disk | Verify the reparse target, remove only the junction with `[System.IO.Directory]::Delete()`, confirm the shared target still exists, then recursively delete the verified leftover worktree directory. |
 
 ### Self-maintenance rule
 

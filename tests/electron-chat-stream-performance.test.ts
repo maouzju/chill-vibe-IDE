@@ -211,22 +211,26 @@ const runInteractions = async (page: Page) => {
     const columnIndex = cycle % chatStreamStressCardCount
     const column = columns.nth(columnIndex)
 
-    const focusStartedAt = Date.now()
-    const focused = await page.evaluate((targetColumnIndex) => {
+    const focusResult = await page.evaluate(async (targetColumnIndex) => {
+      const startedAt = performance.now()
       const targetColumn = document.querySelectorAll('.workspace-column').item(targetColumnIndex)
       const textarea = targetColumn?.querySelector<HTMLTextAreaElement>(
         '.pane-tab-panel.is-active textarea.control.textarea',
       )
       textarea?.focus()
       textarea?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
-      return Boolean(textarea && document.activeElement === textarea)
+      await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()))
+      return {
+        focused: Boolean(textarea && document.activeElement === textarea),
+        durationMs: performance.now() - startedAt,
+      }
     }, columnIndex)
-    assert.equal(focused, true)
-    focusDurations.push(Date.now() - focusStartedAt)
+    assert.equal(focusResult.focused, true)
+    focusDurations.push(focusResult.durationMs)
 
     const nextDraft = `性能交互 ${cycle + 1}：中文输入保持可用`
-    const inputStartedAt = Date.now()
-    const reflectedDraft = await page.evaluate(({ targetColumnIndex, value }) => {
+    const inputResult = await page.evaluate(async ({ targetColumnIndex, value }) => {
+      const startedAt = performance.now()
       const targetColumn = document.querySelectorAll('.workspace-column').item(targetColumnIndex)
       const textarea = targetColumn?.querySelector<HTMLTextAreaElement>(
         '.pane-tab-panel.is-active textarea.control.textarea',
@@ -243,10 +247,14 @@ const runInteractions = async (page: Page) => {
         data: value,
         inputType: 'insertText',
       }))
-      return textarea.value
+      await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()))
+      return {
+        value: textarea.value,
+        durationMs: performance.now() - startedAt,
+      }
     }, { targetColumnIndex: columnIndex, value: nextDraft })
-    assert.equal(reflectedDraft, nextDraft)
-    inputDurations.push(Date.now() - inputStartedAt)
+    assert.equal(inputResult?.value, nextDraft)
+    inputDurations.push(inputResult?.durationMs ?? Number.POSITIVE_INFINITY)
 
     const messageList = column.locator('.pane-tab-panel.is-active .message-list').first()
     if (await messageList.isVisible()) {
@@ -313,6 +321,7 @@ const runInteractions = async (page: Page) => {
         { targetColumnIndex: columnIndex, title: standbyTitle },
         { timeout: 5_000 },
       )
+      await page.evaluate(() => new Promise<void>((resolve) => requestAnimationFrame(() => resolve())))
 
       const clickedStream = await page.evaluate(({ targetColumnIndex, title }) => {
         const targetColumn = document.querySelectorAll('.workspace-column').item(targetColumnIndex)
@@ -336,6 +345,7 @@ const runInteractions = async (page: Page) => {
         { targetColumnIndex: columnIndex, title: streamTitle },
         { timeout: 5_000 },
       )
+      await page.evaluate(() => new Promise<void>((resolve) => requestAnimationFrame(() => resolve())))
       tabSwitchDurations.push(Date.now() - tabSwitchStartedAt)
     }
 
@@ -520,9 +530,9 @@ test('six simultaneous Electron chat streams stay responsive and persist complet
   assert.ok(metrics.startupMs < 30_000, `startup exceeded 30s: ${JSON.stringify(metrics)}`)
   assert.ok(metrics.heartbeatMaxGapMs < 2_000, `heartbeat stalled for 2s: ${JSON.stringify(metrics)}`)
   assert.ok(metrics.heartbeatMaxGapMs < 500, `heartbeat missed the 500ms target: ${JSON.stringify(metrics)}`)
-  // Hidden Electron windows throttle requestAnimationFrame to roughly 1 Hz on
-  // Windows. Keep it as a hard-hang signal only; the unthrottled interval
-  // heartbeat above is the authoritative <500 ms responsiveness gate.
+  // Offscreen validation consumes paint frames at 15 fps. Interaction metrics
+  // above wait for the next frame so they cover visible feedback rather than
+  // only synchronous DOM mutation.
   assert.ok(metrics.frameMaxGapMs < 2_000, `rendering stalled for 2s: ${JSON.stringify(metrics)}`)
   assert.ok(metrics.inputP95Ms < 100, `input p95 exceeded 100ms: ${JSON.stringify(metrics)}`)
   assert.ok(metrics.focusP95Ms < 150, `focus p95 exceeded 150ms: ${JSON.stringify(metrics)}`)

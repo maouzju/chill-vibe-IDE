@@ -6,6 +6,7 @@ param(
     'tests/electron-slash-history-tab-runtime.test.ts',
     'tests/electron-texteditor-wordwrap-runtime.test.ts',
     'tests/electron-session-history-restore-runtime.test.ts',
+    'tests/electron-session-history-catalog-runtime.test.ts',
     'tests/electron-git-stage-performance.test.ts'
   )
 )

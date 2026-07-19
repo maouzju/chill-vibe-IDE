@@ -9,13 +9,16 @@
 
 1. 空查询继续使用现有 renderer 最近历史，保证菜单秒开。
 2. 非空查询 debounce 后调用新的内部历史搜索 bridge。
-3. 主进程按需加载或重建 `session-history/catalog.json`。目录只保存轻量摘要、sidecar 文件名和隐藏键，不保存消息正文。
+3. 主进程按需加载或重建 `session-history/catalog.json` 清单与
+   `maintenance/session-history-catalog/catalog-segment-*.json` 轻量分段。目录只保存轻量
+   摘要、sidecar 文件名和隐藏键，不保存消息正文。
 4. 先用摘要字段匹配；仍未命中的当前工作区候选再以有界并发读取 sidecar，并只检查消息 `content`。
 5. 返回最多 100 条轻量摘要及总命中数；renderer 与本地即时结果去重、倒序合并。
 
 ## Catalog lifecycle
 
-- 首次搜索且目录缺失/文件数变化时，以有界并发扫描 sidecar，构建目录；普通启动不做这件事。
+- 首次打开内部历史且目录缺失时，以硬性文件数/字节数/时间预算切片扫描 sidecar；普通
+  启动不等待这件事。已知文件名写入小清单，后续新增归档只跑增量切片。
 - 新归档写 sidecar 后，如果目录已经存在则增量 upsert。
 - 恢复历史后，通过显式 bridge 记录隐藏 entry/session key。相同 provider session 再次归档时解除该 session key 的隐藏状态。
 - 目录写入采用临时文件 + rename，失败时搜索可以回退到重新扫描。

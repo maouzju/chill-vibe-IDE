@@ -643,6 +643,9 @@ export const getToolGroupKey = (items: StructuredToolGroupItem[]): string =>
 export const getRenderableEntryId = (entry: RenderableMessage) =>
   entry.type === 'message' ? entry.message.id : getToolGroupKey(entry.items)
 
+export const getRenderableEntryStructureKey = (entries: RenderableMessage[]) =>
+  entries.map(getRenderableEntryId).join('\u001f')
+
 export const getTopVisibleRenderableEntryId = (
   messages: RenderableMessage[],
   isEntryVisibleAtTop: (entryId: string) => boolean,

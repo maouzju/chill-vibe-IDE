@@ -286,6 +286,52 @@ const isMarkdownWhitespace = (char: string | undefined) => !char || /\s/.test(ch
 const isMarkdownDelimiterBoundary = (char: string | undefined) =>
   !char || isMarkdownWhitespace(char) || /[a-z0-9]/i.test(char) === false
 
+const maskInlineCodeContent = (line: string) => {
+  let masked = ''
+  let cursor = 0
+
+  while (cursor < line.length) {
+    const openerStart = line.indexOf('`', cursor)
+    if (openerStart < 0) {
+      masked += line.slice(cursor)
+      break
+    }
+
+    const openerEnd = getBacktickRunEnd(line, openerStart)
+    const openerLength = openerEnd - openerStart
+    let searchFrom = openerEnd
+    let closerStart = -1
+    let closerEnd = -1
+
+    while (searchFrom < line.length) {
+      const candidateStart = line.indexOf('`', searchFrom)
+      if (candidateStart < 0) {
+        break
+      }
+
+      const candidateEnd = getBacktickRunEnd(line, candidateStart)
+      if (candidateEnd - candidateStart === openerLength) {
+        closerStart = candidateStart
+        closerEnd = candidateEnd
+        break
+      }
+      searchFrom = candidateEnd
+    }
+
+    masked += line.slice(cursor, openerEnd)
+    if (closerStart < 0) {
+      masked += line.slice(openerEnd)
+      break
+    }
+
+    masked += ' '.repeat(closerStart - openerEnd)
+    masked += line.slice(closerStart, closerEnd)
+    cursor = closerEnd
+  }
+
+  return masked
+}
+
 const closeDanglingStrongSpan = (content: string) => {
   if (!content.includes('**')) {
     return content
@@ -321,7 +367,26 @@ const closeDanglingStrongSpan = (content: string) => {
     return segment
   }
 
-  transformMarkdownOutsideCode(content, countSegment)
+  let fenceOpen = false
+  let fenceMarker = '```'
+
+  for (const line of content.split('\n')) {
+    const fenceMatch = line.match(/^\s{0,3}(`{3,}|~{3,})/)
+    if (fenceMatch) {
+      const marker = fenceMatch[1]!
+      if (!fenceOpen) {
+        fenceOpen = true
+        fenceMarker = marker
+      } else if (marker[0] === fenceMarker[0] && marker.length >= fenceMarker.length) {
+        fenceOpen = false
+      }
+      continue
+    }
+
+    if (!fenceOpen) {
+      countSegment(line.includes('`') ? maskInlineCodeContent(line) : line)
+    }
+  }
 
   return openStrongSpans > 0 ? `${content}${'**'.repeat(openStrongSpans)}` : content
 }

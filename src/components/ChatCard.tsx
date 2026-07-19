@@ -61,6 +61,7 @@ import {
   buildRenderableMessages,
   getAskUserAnswerKey,
   getRestoredStickyUserAnchor,
+  getRenderableEntryStructureKey,
   getTopVisibleRenderableEntryId,
   getStickyRenderableUserMessageId,
   getToolGroupKey,
@@ -905,11 +906,17 @@ const ChatTranscript = memo(
     onForkConversation,
   }: ChatTranscriptProps) => {
     const renderableEntryRefs = useRef(new Map<string, HTMLElement>())
+    const renderableMessagesRef = useRef(renderableMessages)
     const stickySyncFrameRef = useRef<number | null>(null)
     const scrollWatchFrameRef = useRef<number | null>(null)
     const observedScrollTopRef = useRef<number | null>(null)
     const stickyPreviewRef = useRef<HTMLDivElement | null>(null)
     const [stickyMessageId, setStickyMessageId] = useState<string | null>(null)
+    const renderableEntryStructureKey = getRenderableEntryStructureKey(renderableMessages)
+
+    useLayoutEffect(() => {
+      renderableMessagesRef.current = renderableMessages
+    }, [renderableMessages])
 
     const registerRenderableEntry = useCallback((entryId: string, node: HTMLElement | null) => {
       if (node) {
@@ -928,7 +935,7 @@ const ChatTranscript = memo(
       }
 
       const messageListTop = messageList.getBoundingClientRect().top + 1
-      const activeContentEntryId = getTopVisibleRenderableEntryId(renderableMessages, (entryId) => {
+      const activeContentEntryId = getTopVisibleRenderableEntryId(renderableMessagesRef.current, (entryId) => {
         const entryNode = renderableEntryRefs.current.get(entryId)
         if (!entryNode) {
           return false
@@ -937,9 +944,12 @@ const ChatTranscript = memo(
         return entryNode.getBoundingClientRect().bottom > messageListTop
       })
 
-      const nextStickyMessageId = getStickyRenderableUserMessageId(renderableMessages, activeContentEntryId)
+      const nextStickyMessageId = getStickyRenderableUserMessageId(
+        renderableMessagesRef.current,
+        activeContentEntryId,
+      )
       setStickyMessageId((current) => (current === nextStickyMessageId ? current : nextStickyMessageId))
-    }, [messageListRef, renderableMessages])
+    }, [messageListRef])
 
     const scheduleStickyMessageIdSync = useCallback(() => {
       if (!isActive) {
@@ -1086,7 +1096,7 @@ const ChatTranscript = memo(
           scrollWatchFrameRef.current = null
         }
       }
-    }, [handleScroll, isActive, messageListRef, renderableMessages])
+    }, [handleScroll, isActive, messageListRef, renderableEntryStructureKey])
 
     useEffect(() => {
       if (!isActive) {
@@ -1113,7 +1123,7 @@ const ChatTranscript = memo(
       return () => {
         resizeObserver.disconnect()
       }
-    }, [isActive, messageListRef, renderableMessages, scheduleStickyMessageIdSync])
+    }, [isActive, messageListRef, renderableEntryStructureKey, scheduleStickyMessageIdSync])
 
     const stickyMessage = useMemo(() => {
       if (!stickyMessageId) {

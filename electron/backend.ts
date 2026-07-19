@@ -20,6 +20,11 @@ import { listExternalSessions, loadExternalSession } from '../server/external-hi
 import { forkProviderSession } from '../server/session-fork.ts'
 import { getClaudeNativeTurnCompletion } from '../server/native-turn-completion.ts'
 import {
+  hideInternalSessionHistoryEntries,
+  listInternalSessionHistory,
+  runSessionHistoryCatalogMaintenanceSlice,
+} from '../server/session-history-catalog.ts'
+import {
   commitAllGitWorkspace,
   commitGitWorkspace,
   fetchCommitDiff,
@@ -78,6 +83,8 @@ import {
   ccSwitchImportRequestSchema,
   externalHistoryListRequestSchema,
   externalSessionLoadRequestSchema,
+  internalSessionHistoryHideRequestSchema,
+  internalSessionHistoryListRequestSchema,
   internalSessionHistoryLoadRequestSchema,
   chatRequestSchema,
   forkSessionRequestSchema,
@@ -109,6 +116,8 @@ import {
   type CcSwitchImportRequest,
   type ExternalHistoryListRequest,
   type ExternalSessionLoadRequest,
+  type InternalSessionHistoryHideRequest,
+  type InternalSessionHistoryListRequest,
   type InternalSessionHistoryLoadRequest,
   type ChatRequest,
   type RemoteMonitorCommand,
@@ -245,6 +254,14 @@ export const createDesktopBackend = (deps: DesktopBackendDependencies = {}) => {
     },
     async loadSessionHistoryEntry(request: InternalSessionHistoryLoadRequest) {
       return loadInternalSessionHistoryEntry(internalSessionHistoryLoadRequestSchema.parse(request))
+    },
+    async listInternalSessionHistory(request: InternalSessionHistoryListRequest) {
+      const parsed = internalSessionHistoryListRequestSchema.parse(request)
+      await runSessionHistoryCatalogMaintenanceSlice().catch(() => undefined)
+      return listInternalSessionHistory(parsed)
+    },
+    async hideInternalSessionHistory(request: InternalSessionHistoryHideRequest) {
+      await hideInternalSessionHistoryEntries(internalSessionHistoryHideRequestSchema.parse(request))
     },
     async saveState(state: AppState) {
       return saveState(appStateSchema.parse(state))

@@ -25,6 +25,7 @@ import type {
   ProviderStatus,
 } from '../../shared/schema'
 import { clearDragPayload, readDragPayload, releaseDragPayloadIfStale, writeDragPayload } from '../dnd'
+import { isProviderStatusExplicitlyUnavailable } from '../app-initial-load'
 import type { CardRecoveryStatus } from '../stream-recovery-feedback'
 import {
   composerFocusRequestEventName,
@@ -1293,7 +1294,7 @@ const PaneViewView = ({
               {isActive || keepInactiveRuntime ? (
                 <ChatCard
                   card={card}
-                  providerReady={providers[card.provider]?.available ?? false}
+                  providerReady={!isProviderStatusExplicitlyUnavailable(providers[card.provider])}
                   workspacePath={column.workspacePath}
                   language={language}
                   systemPrompt={systemPrompt}

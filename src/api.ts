@@ -13,6 +13,9 @@ import {
   externalSessionLoadResponseSchema,
   internalSessionHistoryLoadRequestSchema,
   internalSessionHistoryLoadResponseSchema,
+  internalSessionHistoryHideRequestSchema,
+  internalSessionHistoryListRequestSchema,
+  internalSessionHistoryListResponseSchema,
   chatStartResponseSchema,
   forkSessionRequestSchema,
   nativeTurnCompletionRequestSchema,
@@ -71,6 +74,9 @@ import {
   type ExternalSessionLoadResponse,
   type InternalSessionHistoryLoadRequest,
   type InternalSessionHistoryLoadResponse,
+  type InternalSessionHistoryHideRequest,
+  type InternalSessionHistoryListRequest,
+  type InternalSessionHistoryListResponse,
   type GitCommitAllRequest,
   type GitCommitDiffRequest,
   type GitCommitDiffResponse,
@@ -238,6 +244,22 @@ export const loadSessionHistoryEntry = async (
   const fn = requireDesktopAction(getDesktopApi()?.loadSessionHistoryEntry)
 
   return readDesktop(() => fn(parsed), internalSessionHistoryLoadResponseSchema)
+}
+
+export const listInternalSessionHistory = async (
+  request: InternalSessionHistoryListRequest,
+): Promise<InternalSessionHistoryListResponse> => {
+  const parsed = internalSessionHistoryListRequestSchema.parse(request)
+  const fn = requireDesktopAction(getDesktopApi()?.listInternalSessionHistory)
+  return readDesktop(() => fn(parsed), internalSessionHistoryListResponseSchema)
+}
+
+export const hideInternalSessionHistory = async (
+  request: InternalSessionHistoryHideRequest,
+): Promise<void> => {
+  const parsed = internalSessionHistoryHideRequestSchema.parse(request)
+  const fn = requireDesktopAction(getDesktopApi()?.hideInternalSessionHistory)
+  await fn(parsed)
 }
 
 export const saveState = async (state: AppState): Promise<AppState> => {

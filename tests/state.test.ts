@@ -1937,8 +1937,15 @@ describe('ideReducer pane layout', () => {
       cards: {
         'card-1': createCard({
           id: 'card-1',
+          provider: 'codex',
           status: 'streaming',
           streamId: 'stream-1',
+          sessionId: 'codex-session-being-written',
+          sessionModel: 'gpt-5.4',
+          providerSessions: {
+            codex: 'codex-session-being-written',
+            claude: 'claude-session-safe-to-keep',
+          },
           messages: [
             {
               id: 'live-assistant-1',
@@ -1973,6 +1980,11 @@ describe('ideReducer pane layout', () => {
     assert.equal(card?.messages[0]?.id, 'live-assistant-1')
     assert.equal(card?.messages[0]?.content, 'Partially generated answer that must survive interrupt.')
     assert.equal(card?.messages[1]?.meta?.kind, 'run-stopped')
+    assert.equal(card?.sessionId, undefined)
+    assert.equal(card?.sessionModel, undefined)
+    assert.deepEqual(card?.providerSessions, {
+      claude: 'claude-session-safe-to-keep',
+    })
   })
 
   it('turns off auto urge when a streaming card is stopped manually', () => {
@@ -1985,6 +1997,9 @@ describe('ideReducer pane layout', () => {
           id: 'card-1',
           status: 'streaming',
           streamId: 'stream-1',
+          sessionId: 'session-safe-to-resume',
+          sessionModel: 'gpt-5.4',
+          providerSessions: { codex: 'session-safe-to-resume' },
           autoUrgeActive: true,
           messages: [
             {
@@ -2017,6 +2032,9 @@ describe('ideReducer pane layout', () => {
     const card = next.columns[0]?.cards['card-1']
     assert.equal(card?.status, 'idle')
     assert.equal(card?.autoUrgeActive, false)
+    assert.equal(card?.sessionId, 'session-safe-to-resume')
+    assert.equal(card?.sessionModel, 'gpt-5.4')
+    assert.deepEqual(card?.providerSessions, { codex: 'session-safe-to-resume' })
   })
 
   it('settles in-progress command activity when a streaming card is stopped', () => {

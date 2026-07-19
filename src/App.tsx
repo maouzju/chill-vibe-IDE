@@ -124,6 +124,7 @@ import {
   fetchProxyStats,
   recordProxyStatsEvent,
   fetchSetupStatus,
+  hideInternalSessionHistory,
   loadSessionHistoryEntry,
   fetchState,
   importCcSwitchRouting,
@@ -164,7 +165,10 @@ import {
   type RemoteMonitorStartResponse,
 } from './api'
 import { resolveAppLoadError } from './app-load-error'
-import { startInitialAppLoad } from './app-initial-load'
+import {
+  isProviderStatusExplicitlyUnavailable,
+  startInitialAppLoad,
+} from './app-initial-load'
 import { getResolvedAppTheme, subscribeToSystemThemeChange } from './theme'
 import { WeatherAmbientOverlay } from './components/WeatherAmbientOverlay'
 import {
@@ -2399,21 +2403,6 @@ function App() {
       })
     }
 
-    if (reason === 'user-interrupt' && liveCard.provider === 'claude') {
-      const nextProviderSessions = { ...liveCard.providerSessions }
-      delete nextProviderSessions[liveCard.provider]
-      actions.push({
-        type: 'updateCard',
-        columnId,
-        cardId,
-        patch: {
-          sessionId: undefined,
-          sessionModel: undefined,
-          providerSessions: nextProviderSessions,
-        },
-      })
-    }
-
     persistAfterActions(actions, applyActions(actions))
     dispatchNextQueuedSend(columnId, cardId)
   }, [
@@ -3310,20 +3299,6 @@ function App() {
                   ? createStoppedRunMessage(appStateRef.current.settings.language, stoppedRunReason)
                   : undefined,
             })
-            if (stoppedRunReason === 'user-interrupt' && card.provider === 'claude') {
-              const nextProviderSessions = { ...(liveCard?.providerSessions ?? card.providerSessions) }
-              delete nextProviderSessions[card.provider]
-              actions.push({
-                type: 'updateCard',
-                columnId,
-                cardId: card.id,
-                patch: {
-                  sessionId: undefined,
-                  sessionModel: undefined,
-                  providerSessions: nextProviderSessions,
-                },
-              })
-            }
           } else {
             actions.push({
               type: 'updateCard',
@@ -3804,14 +3779,17 @@ function App() {
       }
 
       commitLoadedState(state, recovery)
-      setProviders([])
 
       void providersPromise.then((nextProviders) => {
-        if (hydrateRequestIdRef.current !== requestId || !nextProviders) {
+        if (hydrateRequestIdRef.current !== requestId) {
           return
         }
 
-        setProviders(nextProviders)
+        if (nextProviders) {
+          setProviders(nextProviders)
+        } else {
+          void syncProviderStatuses()
+        }
       })
 
       if (!recovery.startup && !recovery.interruptedSessions) {
@@ -3829,7 +3807,7 @@ function App() {
       setRecentCrashActionError(null)
       setInterruptedSessionActionError(null)
     }
-  }, [attachStreamsForState, clearTransientRuntimeState, commitLoadedState])
+  }, [attachStreamsForState, clearTransientRuntimeState, commitLoadedState, syncProviderStatuses])
 
   useEffect(() => {
     hydrateRef.current = hydrate
@@ -4400,7 +4378,7 @@ function App() {
         })
       : attachments
 
-    if (!providerStatus?.available) {
+    if (isProviderStatusExplicitlyUnavailable(providerStatus)) {
       streamRetryCountRef.current.delete(cardId)
       resumeSessionLoopCountRef.current.delete(cardId)
       const durationMessage = consumeRunDurationMessage(runStartedAtRef.current, cardId)
@@ -4619,7 +4597,7 @@ function App() {
 
     const providerStatus = providerByName[card.provider] as ProviderStatus | undefined
 
-    if (!providerStatus?.available) {
+    if (isProviderStatusExplicitlyUnavailable(providerStatus)) {
       const actions: IdeAction[] = [
         {
           type: 'appendMessages',
@@ -4803,7 +4781,7 @@ function App() {
     )
     const resolvedReasoningEffort = normalizeReasoningEffort(card.provider, card.reasoningEffort)
 
-    if (!providerStatus?.available) {
+    if (isProviderStatusExplicitlyUnavailable(providerStatus)) {
       streamRetryCountRef.current.delete(cardId)
       resumeSessionLoopCountRef.current.delete(cardId)
       const durationMessage = consumeRunDurationMessage(runStartedAtRef.current, cardId)
@@ -5487,6 +5465,11 @@ function App() {
 
         persistAfterActions(actions, nextState)
         updateLatestKnownAppState(nextState)
+        await hideInternalSessionHistory({
+          entryId,
+          provider: entry.provider,
+          sessionId: entry.sessionId,
+        })
       } catch (error) {
         console.error('[history] Failed to restore archived session.', error)
       }

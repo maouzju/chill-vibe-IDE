@@ -692,10 +692,9 @@ test('left-clicking send while a card is running interrupts and sends immediatel
 
   await expect(textarea).toHaveValue('')
   await expect(page.locator('.composer-queued-send')).toHaveCount(0)
-  await expect.poll(() => mock.readRequests()).toEqual([
-    'stop:stream-1',
-    'message:Send this follow-up now',
-  ])
+  await expect.poll(() => mock.readRequests()).toHaveLength(2)
+  await expect.poll(() => mock.readRequests()[0]).toBe('stop:stream-1')
+  await expect.poll(() => mock.readRequests()[1]).toContain('Latest user message:\nSend this follow-up now')
   await expect.poll(() => mock.readState().columns[0]?.cards['card-1']?.status).toBe('streaming')
   await expect.poll(() => mock.readState().columns[0]?.cards['card-1']?.streamId).toBe('stream-2')
   await expect.poll(() => mock.readState().columns[0]?.cards['card-1']?.messages[1]?.meta?.stopReason).toBe('user-interrupt')
@@ -766,10 +765,9 @@ test('queued messages can be sent now by intentionally interrupting the running 
 
   await page.getByRole('button', { name: 'Send now' }).click()
 
-  await expect.poll(() => mock.readRequests()).toEqual([
-    'stop:stream-1',
-    'message:Send this queued prompt now',
-  ])
+  await expect.poll(() => mock.readRequests()).toHaveLength(2)
+  await expect.poll(() => mock.readRequests()[0]).toBe('stop:stream-1')
+  await expect.poll(() => mock.readRequests()[1]).toContain('Latest user message:\nSend this queued prompt now')
   await expect(page.locator('.composer-queued-send')).toHaveCount(0)
   await expect.poll(() => mock.readState().columns[0]?.cards['card-1']?.messages[1]?.meta?.stopReason).toBe('user-interrupt')
 })
@@ -877,7 +875,7 @@ test('answering a live ask-user activity preserves the prior prose and then send
   ])
   await expect
     .poll(() => mock.readState().columns[0]?.cards['card-1']?.messages.map((message) => message.role))
-    .toEqual(['assistant', 'assistant', 'assistant', 'user'])
+    .toEqual(['assistant', 'assistant', 'assistant', 'system', 'user'])
   await expect.poll(() => mock.readState().columns[0]?.cards['card-1']?.streamId).toBe('stream-2')
 })
 
@@ -899,7 +897,7 @@ test('answering a live ask-user activity stops the waiting stream and immediatel
   ])
   await expect
     .poll(() => mock.readState().columns[0]?.cards['card-1']?.messages.map((message) => message.role))
-    .toEqual(['assistant', 'assistant', 'user'])
+    .toEqual(['assistant', 'assistant', 'system', 'user'])
   await expect.poll(() => mock.readState().columns[0]?.cards['card-1']?.streamId).toBe('stream-2')
 })
 
@@ -928,7 +926,7 @@ test('answering a restored ask-user card stops the recovered stream and immediat
   ])
   await expect
     .poll(() => mock.readState().columns[0]?.cards['card-1']?.messages.map((message) => message.role))
-    .toEqual(['assistant', 'user'])
+    .toEqual(['assistant', 'system', 'user'])
   await expect.poll(() => mock.readState().columns[0]?.cards['card-1']?.streamId).toBe('stream-2')
 })
 
@@ -1184,10 +1182,9 @@ test('old answered ask-user cards allow ordinary queued send-now interrupts', as
   await sendButton.click({ button: 'right' })
   await page.getByRole('button', { name: 'Send now' }).click()
 
-  await expect.poll(() => mock.readRequests()).toEqual([
-    'stop:stream-1',
-    'message:Interrupt the new work',
-  ])
+  await expect.poll(() => mock.readRequests()).toHaveLength(2)
+  await expect.poll(() => mock.readRequests()[0]).toBe('stop:stream-1')
+  await expect.poll(() => mock.readRequests()[1]).toContain('Latest user message:\nInterrupt the new work')
   await expect.poll(() => mock.readState().columns[0]?.cards['card-1']?.streamId).toBe('stream-2')
 })
 

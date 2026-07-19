@@ -438,11 +438,13 @@ export const createStructuredActivityMessage = (
 
 const askUserXmlBlockPattern = /<ask-user-question>\s*[\s\S]*?<\/ask-user-question>/i
 const askUserXmlBlockGlobalPattern = /<ask-user-question>\s*[\s\S]*?<\/ask-user-question>/gi
+const askUserXmlStartPattern = /<ask-user-question>/i
 const emptyMarkdownFencePattern = /```[a-zA-Z0-9]*\s*```/g
 
 const stripAskUserXmlBlocksFromAssistantText = (content: string) =>
   content
     .replace(askUserXmlBlockGlobalPattern, '')
+    .replace(/<ask-user-question>[\s\S]*$/i, '')
     .replace(emptyMarkdownFencePattern, '')
     .replace(/[ \t]+\n/g, '\n')
     .replace(/\n{3,}/g, '\n\n')
@@ -464,7 +466,8 @@ export const finalizeStructuredActivityMessage = (
   const streamingContent =
     streamingIndex >= 0 ? messages[streamingIndex]?.content ?? '' : ''
   const streamingHasAskUserXmlBlock =
-    payload.kind === 'ask-user' && askUserXmlBlockPattern.test(streamingContent)
+    payload.kind === 'ask-user' &&
+    (askUserXmlBlockPattern.test(streamingContent) || askUserXmlStartPattern.test(streamingContent))
   const strippedStreamingContent =
     streamingHasAskUserXmlBlock
       ? stripAskUserXmlBlocksFromAssistantText(streamingContent)

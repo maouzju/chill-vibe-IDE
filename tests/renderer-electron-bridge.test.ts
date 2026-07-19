@@ -13,6 +13,7 @@ import {
   fetchState,
   flashWindowOnce,
   isWindowMaximized,
+  listInternalSessionHistory,
   minimizeWindow,
   moveWorkspaceEntry,
   onWindowMaximizedChanged,
@@ -31,6 +32,7 @@ type ElectronBridgeWindow = Window & typeof globalThis & {
     isWindowMaximized?: () => Promise<boolean>
     onWindowMaximizedChanged?: (listener: (maximized: boolean) => void) => () => void
     fetchState?: () => Promise<ReturnType<typeof createDefaultState>>
+    listInternalSessionHistory?: (request: { workspacePath: string; query: string }) => Promise<unknown>
     fetchGitStatusPreview?: (workspacePath: string) => Promise<unknown>
     fetchSlashCommands?: (request: {
       provider: 'codex' | 'claude'
@@ -134,6 +136,46 @@ test('fetchState requires the Electron bridge and does not fall back to HTTP', a
     /Electron desktop bridge is unavailable/,
   )
   assert.equal(fetchCalls, 0)
+})
+
+test('listInternalSessionHistory uses the bounded Electron maintenance bridge', async () => {
+  const requests: Array<{ workspacePath: string; query: string }> = []
+  setWindow({
+    electronAPI: {
+      listInternalSessionHistory: async (request) => {
+        requests.push(request)
+        return {
+          entries: [{
+            id: 'orphan-history-entry',
+            title: 'Recovered orphan history',
+            provider: 'codex',
+            model: 'gpt-5.6-sol',
+            workspacePath: 'D:/workspace',
+            messages: [],
+            messageCount: 42,
+            messagesPreview: true,
+            archivedAt: '2026-07-19T00:00:00.000Z',
+          }],
+          total: 1,
+          maintenance: {
+            phase: 'running',
+            processed: 128,
+            skipped: 0,
+            total: 7000,
+          },
+        }
+      },
+    },
+  } as ElectronBridgeWindow)
+
+  const response = await listInternalSessionHistory({
+    workspacePath: 'D:/workspace',
+    query: '',
+  })
+
+  assert.deepEqual(requests, [{ workspacePath: 'D:/workspace', query: '' }])
+  assert.equal(response.entries[0]?.messageCount, 42)
+  assert.equal(response.maintenance.phase, 'running')
 })
 
 test('queueStateSave flushes through the Electron bridge when available', () => {

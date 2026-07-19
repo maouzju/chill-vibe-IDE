@@ -17,6 +17,9 @@ import type {
   ExternalSessionLoadResponse,
   InternalSessionHistoryLoadRequest,
   InternalSessionHistoryLoadResponse,
+  InternalSessionHistoryHideRequest,
+  InternalSessionHistoryListRequest,
+  InternalSessionHistoryListResponse,
   FileCreateRequest,
   FileDeleteRequest,
   FileListRequest,
@@ -84,6 +87,8 @@ declare global {
       openExternalLink?: (href: string) => Promise<void>
       fetchState?: () => Promise<AppStateLoadResponse | AppState>
       loadSessionHistoryEntry?: (request: InternalSessionHistoryLoadRequest) => Promise<InternalSessionHistoryLoadResponse>
+      listInternalSessionHistory?: (request: InternalSessionHistoryListRequest) => Promise<InternalSessionHistoryListResponse>
+      hideInternalSessionHistory?: (request: InternalSessionHistoryHideRequest) => Promise<void>
       saveState?: (state: AppState) => Promise<AppState>
       syncRuntimeSettings?: (settings: AppSettings) => Promise<void>
       queueStateSave?: (state: AppState) => void

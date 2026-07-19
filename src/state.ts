@@ -2149,11 +2149,22 @@ export const ideReducer = (state: AppState, action: IdeAction): AppState => {
             : undefined
           const shouldCancelAutoUrge =
             stopReason === 'manual' || stopReason === 'user-interrupt'
+          const shouldResetInterruptedSession = stopReason === 'user-interrupt'
+          const nextProviderSessions = shouldResetInterruptedSession
+            ? { ...card.providerSessions }
+            : card.providerSessions
+
+          if (shouldResetInterruptedSession) {
+            delete nextProviderSessions[card.provider]
+          }
 
           return {
             ...card,
             status: 'idle',
             streamId: undefined,
+            sessionId: shouldResetInterruptedSession ? undefined : card.sessionId,
+            sessionModel: shouldResetInterruptedSession ? undefined : card.sessionModel,
+            providerSessions: nextProviderSessions,
             autoUrgeActive: shouldCancelAutoUrge ? false : card.autoUrgeActive,
             completionGlow: false,
             unread: action.unread ?? card.unread,

@@ -817,16 +817,7 @@ test('git sync disables analysis while the sync panel is open', async ({ page })
     }
 
     win.electronAPI.fetchGitStatus = async () => JSON.parse(JSON.stringify(gitStatus))
-    let pullCalls = 0
-    win.electronAPI.pullGitChanges = async () => {
-      pullCalls += 1
-
-      if (pullCalls === 1) {
-        throw new Error('Open the sync panel.')
-      }
-
-      return new Promise(() => undefined)
-    }
+    win.electronAPI.pullGitChanges = async () => new Promise(() => undefined)
   })
 
   const modelSelect = page.locator('.model-select').first()

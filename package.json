@@ -43,7 +43,7 @@
     "check": "tsc -p tsconfig.app.json --noEmit && tsc -p tsconfig.server.json --noEmit && tsc -p tsconfig.node.json --noEmit && tsc -p tsconfig.test.json --noEmit",
     "lint": "eslint .",
     "start": "node scripts/start-electron-prod.mjs",
-    "test": "node --import tsx --test tests/index.test.ts",
+    "test": "node scripts/run-node-tests.mjs",
     "test:theme": "powershell -ExecutionPolicy Bypass -File scripts/run-playwright-specs.ps1 -Suite theme",
     "test:playwright": "powershell -ExecutionPolicy Bypass -File scripts/run-playwright-specs.ps1",
     "test:playwright:full": "powershell -ExecutionPolicy Bypass -File scripts/run-playwright-specs.ps1 -Suite full",
@@ -53,9 +53,10 @@
     "test:electron": "powershell -ExecutionPolicy Bypass -File scripts/run-electron-runtime-tests.ps1",
     "test:quality": "pnpm lint && pnpm check",
     "test:risk": "pnpm test:quality && pnpm test && pnpm test:playwright && pnpm test:electron",
-    "test:full": "pnpm legal:check && pnpm test:quality && pnpm test && pnpm test:playwright:full && pnpm test:electron && pnpm build",
+    "test:release": "node scripts/run-release-verification.mjs",
+    "test:full": "pnpm test:release",
     "test:watch": "node --import tsx --test --watch tests/index.test.ts",
-    "verify": "pnpm test:full"
+    "verify": "pnpm test:release"
   },
   "dependencies": {
     "@primer/primitives": "^11.6.0",

@@ -21,6 +21,7 @@ test-results
 /.tmp-*
 /tmp-*
 .tmp-release-backup*/
+/Microsoft/
 .env*
 /tests/.artifacts/*
 !/tests/.artifacts/.gitkeep

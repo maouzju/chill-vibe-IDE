@@ -7,9 +7,9 @@ description: Audit the current Chill Vibe repo diff for sensitive or irrelevant 
 
 Use this skill from the `chill-vibe` repo root when the task is not just “run tests”, but “safely turn the current checkout into a shipped GitHub release”.
 
-Reuse the verification posture from `../chill-vibe-full-regression/SKILL.md`, but own the full release chain: pre-flight → diff audit → verification → version bump → commit/push/tag → release (server-side build) → asset verification.
+Reuse the verification posture from `../chill-vibe-full-regression/SKILL.md`, but own the full release chain: pre-flight → diff audit → final version bump → exact-tree verification → commit/push/tag → release (server-side build) → asset verification.
 
-**Primary asset path: pushing the `v*` tag triggers `.github/workflows/release-zip.yml`, which builds the Windows zip server-side, uploads the canonical `Chill.Vibe-<version>-win.zip` (spaces normalized to dots), and verifies asset state + download URL itself — all within ~4 minutes.** Do NOT build the zip locally or `gh release upload` manually on the happy path; that wastes minutes and races the workflow (HTTP 404/409). Local build is a fallback only (step 6b).
+**Primary asset path: pushing the `v*` tag triggers `.github/workflows/release-zip.yml`, which builds the Windows zip server-side, uploads the canonical `Chill.Vibe-<version>-win.zip` (spaces normalized to dots), and verifies asset state + download URL itself — normally within ~3–4 minutes.** Do NOT build the zip locally or `gh release upload` manually on the happy path; that wastes minutes and races the workflow (HTTP 404/409). Local build is a fallback only (step 6b).
 
 ## Workflow
 
@@ -25,29 +25,31 @@ Reuse the verification posture from `../chill-vibe-full-regression/SKILL.md`, bu
    - treat changed SPEC task lists with unchecked implementation/verification boxes as a release blocker until the corresponding slice is completed or explicitly excluded; run any newly added proving test narrowly so an intentional red test cannot hide inside the later full-suite output
    - if the checkout mixes a release-ready slice with unfinished user/agent WIP, preserve that WIP in place: create a repo-external detached release worktree from the intended base commit, apply only a path-limited patch for the audited slice, and run verification there. After verification, mirror and stage only those exact verified paths plus the version/skill updates on the target branch; do not stash, revert, or accidentally commit the excluded WIP.
    - if something is suspicious, stop and fix or exclude it before continuing
-3. Verify — a release warrants the release posture from `../chill-vibe-full-regression/SKILL.md`:
-   - run `pnpm test:full` (it already includes `pnpm build`, so it also proves the production build)
-   - **run long verification decoupled from the host session.** Background shell tasks die silently (no partial output) when the driving CLI session restarts — v0.18.1 lost two full `test:full` runs this way. Launch via `Start-Process -WindowStyle Hidden cmd.exe '/c', 'pnpm test:full > <repo-external log> 2>&1 && echo ALL_GATES_GREEN >> <log> || echo GATE_FAILED >> <log>'`, then tail/monitor the log. Do NOT trust `echo EXITCODE=%ERRORLEVEL%` after an unconditional `&` — in a single-line `cmd /c` string `%ERRORLEVEL%` expands at parse time and always prints 0; use the `&& echo GREEN || echo FAILED` marker pair instead. On session restart, re-read the log to resume instead of rerunning.
-   - `pnpm test:risk` is acceptable mid-iteration, but the final pre-tag gate for a real release is `test:full`
-   - The Node suite currently exercises the timestamped Windows zip packager and can create `dist/release-*` plus a local `Chill Vibe-<version>-win.zip` during `test:full`. Treat those as verification artifacts, not the release asset or fallback path: do not upload them, and keep the server-side `release-zip.yml` workflow canonical unless step 6b is actually needed.
-   - if Playwright tooling noise from `AGENTS.md` blocks a clean run, capture the exact failure and continue with the strongest proven alternative only if the release is still honestly defensible
-   - if a narrow failure looks pre-existing, prove that instead of guessing: reproduce the same test against `origin/main` in a temporary detached comparison worktree, then remove it. Only classify the failure as baseline noise when the release candidate's affected/targeted gates pass and the baseline shows the same failure.
-   - if the Node test stage prints its final assertions but the wrapper stays alive with no output or CPU because of leaked handles, terminate only that verified wrapper process tree and rerun the same suite with `node --import tsx --test --test-force-exit tests/index.test.ts` to obtain a trustworthy pass/fail summary. If the force-exit run still lacks a summary, search its log for completed failing cases and inspect descendants before stopping anything: let active Electron/Git children finish, then rerun every reported failure narrowly (and baseline-compare it when needed). Do not treat assertion output without the runner summary as a green unit gate.
-   - Node test files run concurrently inside `tests/index.test.ts`. New tests must not mutate process-global routing/home environment variables (`HOME`, `USERPROFILE`, `CHILL_VIBE_EXTERNAL_HISTORY_HOME`, etc.) while unrelated suites are active; inject file locators or dependencies instead. If full-suite-only failures disappear in isolated tests, audit for global-state collisions before calling them flaky.
-   - when `test:full` exits early, run the unreached stages separately (`test:quality`, the strongest practical unit/Playwright gates, `test:electron`, and `build`). An early wrapper failure is not evidence that later gates passed.
-   - when a standalone harness has printed its final green summary but the detached marker never arrives, inspect the process tree and port `5173` before calling it hung. `test:electron` can leave only its repo-local Vite child alive after all tests pass; stop only that verified test server, record the printed summary as the gate result, and never touch a packaged Chill Vibe process.
-4. Bump the version only after the code is judged releasable:
+3. Set the final release version after the audit and before the final verification:
    - default to the next patch version unless the diff clearly justifies a bigger bump
    - update `package.json` and any other repo-owned version references that must stay in sync
    - stage the version bump together with the already-audited product changes
-   - if the bump touched files covered by verification, rerun the strongest relevant gate
+   - the final release verifier fingerprints the complete tree, so changing the version after verification would invalidate every cached gate and force another full pass
+4. Verify the final versioned tree — a release warrants the release posture from `../chill-vibe-full-regression/SKILL.md`:
+   - run `pnpm test:release` (`pnpm test:full` remains a compatibility alias). It runs legal inventory, quality, manifest-isolated Node tests, full Playwright, one combined Electron runtime/performance session, and the production build.
+   - the verifier stores per-stage logs and evidence outside the repo, keyed by HEAD plus staged, unstaged, and untracked content. It only reuses a green stage when the exact fingerprint is unchanged; any source, test, version, or untracked-content change creates a new verification set.
+   - **run long verification decoupled from the host session.** Launch via `Start-Process -WindowStyle Hidden cmd.exe '/d', '/s', '/c', 'pnpm test:release > <repo-external log> 2>&1 && echo ALL_GATES_GREEN >> <log> || echo GATE_FAILED >> <log>'`, then monitor the outer log plus the evidence directory printed near the top. If the driving CLI restarts, run `pnpm test:release` again: passed stages for the unchanged fingerprint are reused, while interrupted/running/failed stages run again.
+   - `pnpm test:risk` is acceptable mid-iteration, but the final pre-tag gate for a real release is `test:release`
+   - the verifier deliberately continues after a failed stage so one pass reveals the complete failure set. Do not manually restart unreached stages unless the verifier itself crashed before recording them.
+   - use `pnpm test:release --stage <id>` only to retry an environmental failure on an unchanged tree. If code or test files changed, the fingerprint changes and the command remains non-green until every required stage passes for the new tree.
+   - use `pnpm test:release --plan` to inspect resume decisions and `pnpm test:release --fresh` only when matching cached evidence must be discarded intentionally.
+   - Node tests run as separate registered files with bounded concurrency. Rerun one file with `pnpm test -- --files=<name>.test.ts`; do not boot the old all-imports entrypoint for focused triage.
+   - importing the timestamped packager is side-effect free, so Node verification must not create a release directory or ZIP. The only happy-path package build remains the server-side `release-zip.yml` workflow.
+   - if Playwright tooling noise from `AGENTS.md` blocks a clean run, capture the exact failure and continue with the strongest proven alternative only if the release is still honestly defensible
+   - if a narrow failure looks pre-existing, prove that instead of guessing: reproduce the same test against `origin/main` in a repo-external detached comparison worktree, then remove it. Only classify the failure as baseline noise when the release candidate's affected/targeted gates pass and the baseline shows the same failure.
+   - when a standalone harness has printed its final green summary but its process stays alive, inspect the process tree and port `5173` before calling it hung. Stop only the verified test child, record the printed summary, and never touch a packaged Chill Vibe process.
 5. Commit, push, tag, and **immediately create the release** (order is load-bearing):
    - write a concise release-oriented commit message; `git add` only the intended files; `git commit`; `git push origin <current-branch>`
    - `git tag -a v<version> -m "v<version>"` and `git push origin v<version>`
    - **immediately after the tag push:** `gh release create v<version> --verify-tag --title v<version> --notes <concise notes>`
    - Why immediately: the tag push already started `release-zip.yml`, and its "Remove stale in-progress zip assets" step does `gh api releases/tags/<tag>` — it hard-fails with HTTP 404 if no release exists yet (v0.17.8 and v0.17.11 both died here after 3+ min of server build). Recovery is cheap (`gh release create v<tag> --verify-tag --notes ...` then `gh run rerun <failed-run-id>`), but the right order avoids it entirely.
 6. Let the workflow deliver the asset, then verify:
-   - `gh run list --workflow release-zip.yml --limit 1 --json databaseId,status,conclusion` then `gh run watch <databaseId>` (expect ~4 minutes)
+   - `gh run list --workflow release-zip.yml --limit 1 --json databaseId,status,conclusion` then `gh run watch <databaseId>` (expect ~3–4 minutes)
    - the workflow itself verifies `assets[].state == 'uploaded'` and that the download URL returns HTTP 200, so a green run IS the asset verification
    - confirm and record: `gh release view v<version> --json url,assets --jq '{url, assets: [.assets[] | {name, size, state}]}'`
    - 6b. Fallback, ONLY if the workflow failed or never produced the asset:
@@ -110,7 +112,7 @@ Classify every lesson from the run before writing it down:
 Guardrails:
 
 - Keep Release Pitfalls under roughly 10 bullets. Before adding a new one over that budget, merge or delete an old one first.
-- Also check for silent drift even on a clean run: do the commands and file paths this skill references (`.github/workflows/release-zip.yml`, `package.json` scripts like `test:full` / `electron:build:zip`, `gh` invocations) still exist and behave as described? If the repo moved, move the skill.
+- Also check for silent drift even on a clean run: do the commands and file paths this skill references (`.github/workflows/release-zip.yml`, `package.json` scripts like `test:release` / `electron:build:zip`, `gh` invocations) still exist and behave as described? If the repo moved, move the skill.
 - If the release commit/tag is already pushed, make the skill update a separate follow-up commit so the shipped tag stays immutable. Otherwise fold it into the release commit.
 - Release-specific traps belong here, not only in `AGENTS.md`.
 

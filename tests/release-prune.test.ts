@@ -1,11 +1,12 @@
 import assert from 'node:assert/strict'
+import { fileURLToPath } from 'node:url'
 import test from 'node:test'
 
-// The packaging script is plain JS with no .d.ts; the pure helper is typed by
-// its usage below. ts-expect-error keeps the tsconfig.test type-check green
-// without adding a declaration file just for one exported function.
-// @ts-expect-error - no type declarations for the .mjs packaging script
-import { selectReleaseDirsToPrune } from '../scripts/build-timestamped-release.mjs'
+import {
+  createElectronBuilderArgs,
+  isDirectExecution,
+  selectReleaseDirsToPrune,
+} from '../scripts/build-timestamped-release.mjs'
 
 // dist/ accumulated 49 release-* dirs / 31GB (2026-07-07) because each ~636MB
 // build was never cleaned up. These pin the pruning decision: keep the newest N,
@@ -66,4 +67,30 @@ test('handles suffixed release dir names', () => {
   ]
   const pruned = selectReleaseDirsToPrune(dirs, 1)
   assert.deepEqual(pruned, ['release-20260707-120000-demo'])
+})
+
+test('packaging module only executes its CLI for the direct entrypoint', () => {
+  const moduleUrl = new URL('../scripts/build-timestamped-release.mjs', import.meta.url)
+  const modulePath = fileURLToPath(moduleUrl)
+
+  assert.equal(isDirectExecution(moduleUrl.href, modulePath), true)
+  assert.equal(isDirectExecution(moduleUrl.href, fileURLToPath(import.meta.url)), false)
+  assert.equal(isDirectExecution(moduleUrl.href, undefined), false)
+})
+
+test('zip packaging asks electron-builder for an unpacked directory only', () => {
+  const zipArgs = createElectronBuilderArgs('zip', 'dist/release-example')
+  const installerArgs = createElectronBuilderArgs('nsis', 'dist/release-example')
+
+  assert.deepEqual(zipArgs.slice(0, 3), [
+    'node_modules/electron-builder/cli.js',
+    '--win',
+    '--dir',
+  ])
+  assert.equal(zipArgs.includes('zip'), false)
+  assert.deepEqual(installerArgs.slice(0, 3), [
+    'node_modules/electron-builder/cli.js',
+    '--win',
+    'nsis',
+  ])
 })

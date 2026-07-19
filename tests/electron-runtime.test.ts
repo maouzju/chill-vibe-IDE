@@ -204,11 +204,10 @@ test('package scripts expose risk and full regression entrypoints', async () => 
     packageJson.scripts?.['test:risk'],
     'pnpm test:quality && pnpm test && pnpm test:playwright && pnpm test:electron',
   )
-  assert.equal(
-    packageJson.scripts?.['test:full'],
-    'pnpm legal:check && pnpm test:quality && pnpm test && pnpm test:playwright:full && pnpm test:electron && pnpm build',
-  )
-  assert.equal(packageJson.scripts?.verify, 'pnpm test:full')
+  assert.equal(packageJson.scripts?.test, 'node scripts/run-node-tests.mjs')
+  assert.equal(packageJson.scripts?.['test:release'], 'node scripts/run-release-verification.mjs')
+  assert.equal(packageJson.scripts?.['test:full'], 'pnpm test:release')
+  assert.equal(packageJson.scripts?.verify, 'pnpm test:release')
 })
 
 test('Electron build emits an ESM main bundle and a CJS preload bundle', async () => {
@@ -414,21 +413,24 @@ test('README verification docs match the packaged regression scripts in both lan
   assert.equal('test:perf:headed' in (packageJson.scripts ?? {}), false)
   assert.equal(packageJson.scripts?.['test:perf:electron'], 'powershell -ExecutionPolicy Bypass -File scripts/run-electron-runtime-tests.ps1 -Tests tests/electron-git-tool-runtime.test.ts,tests/electron-git-stage-performance.test.ts')
   assert.equal(packageJson.scripts?.['test:risk'], 'pnpm test:quality && pnpm test && pnpm test:playwright && pnpm test:electron')
-  assert.equal(packageJson.scripts?.['test:full'], 'pnpm legal:check && pnpm test:quality && pnpm test && pnpm test:playwright:full && pnpm test:electron && pnpm build')
+  assert.equal(packageJson.scripts?.['test:release'], 'node scripts/run-release-verification.mjs')
+  assert.equal(packageJson.scripts?.['test:full'], 'pnpm test:release')
 
   assert.match(readmeBody, /- `pnpm test:playwright` runs the default Playwright smoke suite in headless mode\./)
   assert.match(readmeBody, /- `pnpm test:playwright:full` runs the full Playwright browser-flow regression suite in headless mode\./)
   assert.match(readmeBody, /- `pnpm test:theme` runs the Playwright theme and board-layout regression checks through the repo harness in headless mode\./)
   assert.match(readmeBody, /- `pnpm test:perf` runs the browser-performance smoke slice in headless mode: long-chat compaction logic, layout memoization safeguards, and the add-card freeze regression\./)
   assert.match(readmeBody, /- `pnpm test:perf:electron` runs the hidden-window Electron responsiveness smoke for desktop-only performance issues\./)
-  assert.match(readmeBody, /- `pnpm test:electron` runs the hidden-window Electron runtime suite\./)
+  assert.match(readmeBody, /- `pnpm test:electron` runs the hidden-window Electron runtime and release responsiveness suite once\./)
   assert.match(readmeBody, /- `pnpm test:risk` runs lint, type checks, Node tests, the Playwright smoke suite, and Electron runtime checks\./)
-  assert.match(readmeBody, /- `pnpm test:full` runs the legal inventory check, lint, type checks, Node tests, the full Playwright suite, Electron runtime checks, and the production build\./)
+  assert.match(readmeBody, /- `pnpm test:release` runs resumable exact-tree release verification with per-stage logs\./)
+  assert.match(readmeBody, /- `pnpm test:full` remains a compatibility alias for `pnpm test:release`\./)
 
   assert.match(readmeBody, /- `pnpm test:playwright` 运行默认 Playwright smoke 回归测试。/)
   assert.match(readmeBody, /- `pnpm test:playwright:full` 运行完整的 Playwright 浏览器流程回归测试。/)
   assert.match(readmeBody, /- `pnpm test:risk` 运行 lint、类型检查、Node 测试、Playwright smoke 套件和 Electron 运行时检查。/)
-  assert.match(readmeBody, /- `pnpm test:full` 运行 legal 清单校验、lint、类型检查、Node 测试、完整 Playwright 套件、Electron 运行时检查和生产构建。/)
+  assert.match(readmeBody, /- `pnpm test:release` 按工作区精确指纹运行可恢复的发布校验，并为每个阶段保存日志。/)
+  assert.match(readmeBody, /- `pnpm test:full` 保留为 `pnpm test:release` 的兼容别名。/)
 })
 
 test('package scripts restart the active Electron runtime instead of only the renderer server', async () => {
@@ -474,7 +476,7 @@ test('repo ships a local full-regression skill for future risky changes', async 
 
   assert.match(skillBody, /^---[\s\S]*name:\s*chill-vibe-full-regression/m)
   assert.match(skillBody, /After each risky change,\s+run `pnpm test:risk`/i)
-  assert.match(skillBody, /Before handoff,\s+run `pnpm test:full`/i)
+  assert.match(skillBody, /Before handoff,\s+run `pnpm test:release`/i)
   assert.match(skillBody, /For Git-related UI work, include the switch flow/i)
 })
 

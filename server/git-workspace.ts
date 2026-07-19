@@ -226,7 +226,7 @@ const runGit = async (
     })
   })
 
-const encodeGitPathspecStdin = (paths: string[]) =>
+export const encodeGitPathspecStdin = (paths: string[]) =>
   Buffer.from(`${paths.join('\0')}\0`, 'utf8')
 
 const runGitWithPathspecs = (

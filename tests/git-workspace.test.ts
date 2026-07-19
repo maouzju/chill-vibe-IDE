@@ -10,6 +10,7 @@ import {
   createWorkspaceSnapshotContentStore,
   diffWorkspaceSnapshot,
   discardGitWorkspaceChanges,
+  encodeGitPathspecStdin,
   initGitWorkspace,
   inspectGitWorkspace,
   setGitWorkspaceStage,
@@ -663,10 +664,22 @@ describe('git workspace helpers', () => {
     assert.equal(afterCommit.clean, true)
   })
 
-  it('stages and commits a large selected file set without overflowing the process argument list', async () => {
-    const repoPath = await createTempRepo()
+  it('encodes a Windows-command-line-sized selected file set through NUL-delimited stdin', () => {
     const bulkPaths = Array.from(
       { length: 700 },
+      (_, index) => `bulk-${String(index).padStart(4, '0')}-${'x'.repeat(48)}.txt`,
+    )
+    const encoded = encodeGitPathspecStdin(bulkPaths)
+
+    assert.ok(encoded.byteLength > 32_767)
+    assert.equal(encoded.at(-1), 0)
+    assert.equal(encoded.toString('utf8').split('\0').filter(Boolean).length, bulkPaths.length)
+  })
+
+  it('stages and commits a representative selected file set through stdin pathspecs', async () => {
+    const repoPath = await createTempRepo()
+    const bulkPaths = Array.from(
+      { length: 12 },
       (_, index) => `bulk-${String(index).padStart(4, '0')}-${'x'.repeat(48)}.txt`,
     )
 

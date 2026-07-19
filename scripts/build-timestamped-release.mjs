@@ -67,6 +67,37 @@ function sanitizeSegment(value) {
     .replace(/-+$/, '')
 }
 
+export function isDirectExecution(moduleUrl, argvEntry) {
+  if (!argvEntry) {
+    return false
+  }
+
+  try {
+    const modulePath = path.resolve(fileURLToPath(moduleUrl))
+    const entryPath = path.resolve(argvEntry)
+
+    if (process.platform === 'win32') {
+      return modulePath.toLowerCase() === entryPath.toLowerCase()
+    }
+
+    return modulePath === entryPath
+  } catch {
+    return false
+  }
+}
+
+export function createElectronBuilderArgs(target, outputDirRelative) {
+  const targetArgs = target === 'zip' ? ['--dir'] : [target]
+
+  return [
+    'node_modules/electron-builder/cli.js',
+    '--win',
+    ...targetArgs,
+    '--config.win.signAndEditExecutable=false',
+    `--config.directories.output=${outputDirRelative}`,
+  ]
+}
+
 function parseArgs(argv) {
   const options = {
     target: 'zip',
@@ -187,16 +218,7 @@ async function main() {
   const commands = [
     [nodeCommand, ['scripts/run-vite.mjs', 'build']],
     [nodeCommand, ['scripts/build-electron.mjs']],
-    [
-      process.execPath,
-      [
-        'node_modules/electron-builder/cli.js',
-        '--win',
-        options.target,
-        '--config.win.signAndEditExecutable=false',
-        `--config.directories.output=${outputDirRelative}`,
-      ],
-    ],
+    [process.execPath, createElectronBuilderArgs(options.target, outputDirRelative)],
   ]
 
   console.log(`[packaging] target: ${options.target}`)
@@ -297,9 +319,11 @@ async function main() {
   }
 }
 
-try {
-  await main()
-} catch (error) {
-  console.error(`[packaging] ${error instanceof Error ? error.message : String(error)}`)
-  process.exitCode = 1
+if (isDirectExecution(import.meta.url, process.argv[1])) {
+  try {
+    await main()
+  } catch (error) {
+    console.error(`[packaging] ${error instanceof Error ? error.message : String(error)}`)
+    process.exitCode = 1
+  }
 }

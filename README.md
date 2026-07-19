@@ -179,6 +179,7 @@ pnpm test:perf
 pnpm test:perf:electron
 pnpm test:electron
 pnpm test:risk
+pnpm test:release
 pnpm test:full
 pnpm verify
 ```
@@ -187,16 +188,17 @@ pnpm verify
 
 - `pnpm legal:check` verifies that the generated third-party dependency inventory is current.
 - `pnpm test:quality` runs ESLint and TypeScript checks.
-- `pnpm test` runs the automated unit test suite.
+- `pnpm test` runs manifest-registered Node tests as isolated files with bounded concurrency.
 - `pnpm test:playwright` runs the default Playwright smoke suite in headless mode.
 - `pnpm test:playwright:full` runs the full Playwright browser-flow regression suite in headless mode.
 - `pnpm test:theme` runs the Playwright theme and board-layout regression checks through the repo harness in headless mode.
 - `pnpm test:perf` runs the browser-performance smoke slice in headless mode: long-chat compaction logic, layout memoization safeguards, and the add-card freeze regression.
 - `pnpm test:perf:electron` runs the hidden-window Electron responsiveness smoke for desktop-only performance issues.
-- `pnpm test:electron` runs the hidden-window Electron runtime suite.
+- `pnpm test:electron` runs the hidden-window Electron runtime and release responsiveness suite once.
 - `pnpm test:risk` runs lint, type checks, Node tests, the Playwright smoke suite, and Electron runtime checks.
-- `pnpm test:full` runs the legal inventory check, lint, type checks, Node tests, the full Playwright suite, Electron runtime checks, and the production build.
-- `pnpm verify` runs `pnpm test:full`, including the legal inventory check.
+- `pnpm test:release` runs resumable exact-tree release verification with per-stage logs.
+- `pnpm test:full` remains a compatibility alias for `pnpm test:release`.
+- `pnpm verify` runs `pnpm test:release`.
 
 Electron dev note:
 
@@ -399,6 +401,7 @@ pnpm test:perf
 pnpm test:perf:electron
 pnpm test:electron
 pnpm test:risk
+pnpm test:release
 pnpm test:full
 pnpm verify
 ```
@@ -407,16 +410,17 @@ pnpm verify
 
 - `pnpm legal:check` 校验生成的第三方依赖清单是否为最新。
 - `pnpm test:quality` 运行 ESLint 和 TypeScript 检查。
-- `pnpm test` 运行自动化单元测试。
+- `pnpm test` 以有界并发、文件隔离的方式运行清单中注册的 Node 测试。
 - `pnpm test:playwright` 运行默认 Playwright smoke 回归测试。
 - `pnpm test:playwright:full` 运行完整的 Playwright 浏览器流程回归测试。
 - `pnpm test:theme` 运行 Playwright 主题回归测试。
 - `pnpm test:perf` 运行浏览器性能 smoke 切片：长聊天压缩逻辑、布局 memo 防护和加卡冻结回归。
 - `pnpm test:perf:electron` 运行针对桌面端性能问题的隐藏窗口 Electron 响应性 smoke。
-- `pnpm test:electron` 运行隐藏窗口 Electron 运行时测试套件。
+- `pnpm test:electron` 通过一次隐藏窗口会话运行 Electron 运行时和发布响应性测试。
 - `pnpm test:risk` 运行 lint、类型检查、Node 测试、Playwright smoke 套件和 Electron 运行时检查。
-- `pnpm test:full` 运行 legal 清单校验、lint、类型检查、Node 测试、完整 Playwright 套件、Electron 运行时检查和生产构建。
-- `pnpm verify` 运行 `pnpm test:full`。
+- `pnpm test:release` 按工作区精确指纹运行可恢复的发布校验，并为每个阶段保存日志。
+- `pnpm test:full` 保留为 `pnpm test:release` 的兼容别名。
+- `pnpm verify` 运行 `pnpm test:release`。
 
 Electron 开发说明：
 

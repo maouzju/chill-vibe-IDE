@@ -12,22 +12,22 @@ Use this skill from the `chill-vibe` repo root. Favor the repo scripts over ad h
 1. Write or update the narrowest relevant test before changing production code.
 2. Run that narrow test first and confirm it fails when fixing a bug or regression.
 3. After each risky change, run `pnpm test:risk`.
-4. Before handoff, run `pnpm test:full`.
+4. Before handoff, run `pnpm test:release` (`pnpm test:full` remains a compatibility alias).
 5. Choose the smallest wider sweep that matches the request:
    - `pnpm test:quality` for lint and type confidence.
    - `pnpm test:risk` for broad runtime coverage without a production build.
-   - `pnpm test:full` only when the user asks for full verification, release validation, or a build-confirmed handoff.
+   - `pnpm test:release` only when the user asks for full verification, release validation, or a build-confirmed handoff. It records exact-tree stage evidence and resumes green stages only while the working-tree fingerprint is unchanged.
 6. Restart the active runtime with `pnpm dev:restart` only when the user wants a runtime restart or the handoff specifically needs a live runtime check.
 
 ## Command Set
 
 - `pnpm test:quality`: ESLint plus TypeScript checks.
-- `pnpm test`: Node unit and integration tests from `tests/index.test.ts`.
+- `pnpm test`: manifest-registered Node tests launched as isolated files with bounded concurrency.
 - `pnpm test:playwright`: full Playwright browser-flow coverage through `scripts/run-playwright-specs.ps1`.
-- `pnpm test:electron`: real Electron runtime smoke coverage through `scripts/run-electron-runtime-tests.ps1`.
+- `pnpm test:electron`: real Electron runtime plus release responsiveness coverage through one `scripts/run-electron-runtime-tests.ps1` session.
 - `pnpm test:risk`: quality checks, Node tests, Playwright flows, and Electron runtime smoke coverage.
-- `pnpm test:full`: `test:risk` plus the production build. Reserve this for explicit full-verification or release-style requests.
-- `pnpm verify`: alias for `pnpm test:full`.
+- `pnpm test:release`: legal, quality, Node, full Playwright, Electron, and production-build gates with per-stage logs and exact-tree resume.
+- `pnpm test:full` / `pnpm verify`: compatibility aliases for `pnpm test:release`.
 - `pnpm dev:restart`: restart the Electron runtime used for local development in this repo.
 
 ## UI Guardrails

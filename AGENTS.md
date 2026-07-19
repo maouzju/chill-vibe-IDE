@@ -147,7 +147,7 @@ This section governs agents working on **this Chill Vibe IDE repository**. It is
 
 ## Test Organization
 
-- **Unit tests** use Node's native `--test` runner via tsx. Every test file must be registered in [`tests/index.test.ts`](./tests/index.test.ts) — adding a file without an import there means it will never run.
+- **Node tests** use the manifest in [`tests/index.test.ts`](./tests/index.test.ts), but `pnpm test` launches each registered file as an isolated Node `--test` entrypoint with bounded concurrency. Dedicated Electron runtime/performance files belong in [`scripts/run-electron-runtime-tests.ps1`](./scripts/run-electron-runtime-tests.ps1), not the Node manifest, so release verification does not execute them twice.
 - **Playwright specs** (`.spec.ts`) handle E2E and visual regression. Visual snapshots live alongside their spec in `*-snapshots/` dirs.
 - When updating UI that has visual regression coverage, expect snapshot diffs. Update snapshots deliberately; do not blindly accept.
 - When a failing test, fixture, or snapshot is clearly out of sync with the current intended product behavior, update that coverage in the same task instead of preserving a known-stale assertion. Confirm the live behavior first, then align the test.
@@ -158,7 +158,7 @@ This section governs agents working on **this Chill Vibe IDE repository**. It is
 - Prefer the narrowest proof that matches the risk: strict red-first TDD for high-risk logic, targeted post-change verification for low-risk logic, and only expand to broader suites when the surface area or the user request justifies it.
 - For a broad regression sweep, release verification, or any task where the user explicitly wants comprehensive validation, invoke the repo-local `chill-vibe-full-regression` skill and follow its workflow.
 - Do not treat `pnpm test:risk` or `pnpm test:full` as unconditional handoff gates for every risky change; start with the narrowest proving test unless the user asks for a wider sweep.
-- Full-suite sweeps (`pnpm test`, `pnpm test:full`) belong to the release-pipeline flow: run them there and fix what they surface during release verification. Routine changes hand off with the narrowest proving tests plus `pnpm test:quality`.
+- Full-suite sweeps (`pnpm test`, `pnpm test:release` / `pnpm test:full`) belong to the release-pipeline flow: run them there and fix what they surface during release verification. Routine changes hand off with the narrowest proving tests plus `pnpm test:quality`.
 - Use the repo Playwright scripts instead of bare `playwright test`; `pnpm test:playwright` is the default smoke sweep, `pnpm test:playwright:full` is the exhaustive suite, and `pnpm test:theme` covers theme snapshots through the same harness.
 - Repo-local browser verification is headless-only by default and by policy; do not add headed validation scripts back into the standard release/test workflow.
 - Repo-local Electron validation is hidden-window by default; do not rely on visible desktop windows as a standard release gate.
@@ -169,16 +169,17 @@ This section governs agents working on **this Chill Vibe IDE repository**. It is
 
 | Command | What it runs |
 |---------|-------------|
-| `pnpm test` | Unit tests (Node `--test` via tsx) |
+| `pnpm test` | Manifest-registered Node tests in isolated files with bounded concurrency |
 | `pnpm test:theme` | Headless Playwright visual regression (theme-check + board-layout) via the repo harness |
 | `pnpm test:playwright` | Default Playwright smoke suite via the repo harness in headless mode |
 | `pnpm test:playwright:full` | Full Playwright suite via PowerShell harness |
 | `pnpm test:perf` | Headless browser performance smoke: compaction + memoization + add-card freeze regression |
 | `pnpm test:perf:electron` | Hidden-window Electron responsiveness smoke for desktop-only performance issues |
-| `pnpm test:electron` | Hidden-window Electron runtime tests |
+| `pnpm test:electron` | Hidden-window Electron runtime and release responsiveness tests, executed once |
 | `pnpm test:quality` | ESLint + TypeScript type-check |
 | `pnpm test:risk` | quality → unit → Playwright smoke → electron |
-| `pnpm test:full` | quality → unit → full Playwright → electron → production build |
+| `pnpm test:release` | Resumable exact-tree release gates: legal → quality → Node → full Playwright → Electron → build |
+| `pnpm test:full` | Compatibility alias for `pnpm test:release` |
 
 ## Runtime Restart
 
@@ -208,7 +209,7 @@ A living list of traps that have wasted time before. **When you hit a new pitfal
 | 1A | React effects that queue an unconditional state setter can loop under StrictMode and surface only as minified React error #185 in packaged builds | Guard the setter with an idempotent updater or skip the update when the state is already correct, especially for composer/slash-menu effects that run across many mounted chat cards. |
 | 1B | Huge live `message.meta.structuredData` can still cross the Electron IPC bridge on every queued preview save even if the server later compacts it | Compact queued renderer snapshots before `desktop:queue-state-save`; otherwise multi-session streaming can spend memory cloning giant command metadata before the server-side sanitizer ever runs. |
 | 2 | Port `5173` ≠ standalone web app | In this repo `5173` is the Vite dev server for the Electron renderer. Do not treat it as proof of a running web product. |
-| 3 | Adding a test file without importing it in [`tests/index.test.ts`](./tests/index.test.ts) | Node's `--test` runner only sees files imported from the entrypoint. A new `.test.ts` file that is not registered there will silently never run. |
+| 3 | Adding a Node test file without importing it in [`tests/index.test.ts`](./tests/index.test.ts) | The manifest-driven runner only launches registered files. Dedicated Electron runtime/performance tests are the exception and must be listed in `scripts/run-electron-runtime-tests.ps1`. |
 | 4 | Hard-coding colors instead of using theme tokens | Looks fine in one theme, broken in the other. Always use CSS custom properties from [`src/index.css`](./src/index.css). |
 | 5 | Forgetting normalization when adding a persisted field | Old saved state won't have the new field. Add a default in `normalizeAppSettings()` or the relevant restore path, or the app crashes on existing installs. |
 | 6 | Editing `shared/schema.ts` without updating `default-state.ts` | Zod schema and factory functions must stay in sync. A schema-only change breaks `createCard` / `createColumn` / `createDefaultSettings`. |
@@ -303,7 +304,7 @@ A living list of traps that have wasted time before. **When you hit a new pitfal
 | 73 | In this Windows Codex exec sandbox, `node:child_process` can still hit `spawn EPERM` for ordinary `.exe` launches like packaged `Chill Vibe.exe`, `electron.exe`, or even nested `powershell.exe` smoke checks | If you need packaging verification here, rely on shell-level commands or pure-JS staging/zip validation instead of assuming a Node-launched Windows executable can be used for runtime smoke tests. |
 | 74 | Playwright locators that grab `.message-entry-user`.first() can hit the sticky overlay clone instead of the real transcript row | Theme and fork-action specs should scope to `.message-list` or filter for the visible control they care about, or assertions can fail against the wrong copy of the same message. |
 | 75 | Theme assertions that read `background-color` from gradient-backed surfaces like `.message-attachment-frame` can misread them as transparent black in light mode | When a UI surface paints through `background-image`, assert the gradient/image presence or use a screenshot instead of assuming `background-color` carries the visible tone. |
-| 76 | `tests/electron-bridge-runtime.test.ts` can time out under full-suite load even when the Electron bridge is healthy because the cold renderer launch sometimes needs longer than 15 seconds on this Windows setup | Keep the bridge smoke wait budget aligned with real cold-start latency during `pnpm test:full`, or the suite flakes red only at the end of an otherwise clean run. |
+| 76 | `tests/electron-bridge-runtime.test.ts` can time out under full-suite load even when the Electron bridge is healthy because the cold renderer launch sometimes needs longer than 15 seconds on this Windows setup | Keep the bridge smoke wait budget aligned with real cold-start latency during `pnpm test:release`, or the Electron stage flakes red late in an otherwise clean run. |
 | 77 | `server/proxy-stats-store.ts` used to instantiate its shared tracker before Electron finished setting `CHILL_VIBE_DATA_DIR`, so packaged proxy stats could read the wrong folder and show all zeros | Any singleton that resolves persistence paths at import time can drift away from the runtime-selected data dir; keep those stores lazy or explicitly rebind them after desktop environment setup. |
 | 78 | Packaged one-click environment setup cannot resolve `scripts/setup-ai-cli.ps1` via `process.cwd()` because the current working directory may be the user's workspace or an unpacked release folder that does not contain the repo `scripts/` tree | Resolve setup/install helpers from the module location or `process.resourcesPath`, and explicitly ship the script in Electron `extraResources`, or the Settings installer fails before it can install a missing CLI. |
 | 79 | `createDesktopBackend()` used to eagerly construct managers like `MusicManager` before Electron called `configureDesktopEnvironment()`, so any constructor-time state reads could still hit the wrong fallback data dir | Keep desktop backend services lazy unless they are pure, or packaged/runtime-specific path setup can be bypassed during startup by an innocent top-level constructor. |
@@ -320,7 +321,6 @@ A living list of traps that have wasted time before. **When you hit a new pitfal
 | 90 | Playwright freeze regressions that add a short explicit action timeout like `click({ timeout: 5000 })` can flake under full parallel load even when the real assertion is the post-click UI state and absence of renderer errors | Let the click use the normal action budget and assert the resulting tab/render state instead, or suite-wide resource contention will produce false reds that are not real freeze regressions. |
 | 91 | Codex app-server can emit only transient `Reconnecting... n/5` assistant deltas and then exit without `turn/completed` | Treat those errors as recoverable but do not count them against the UI retry budget; otherwise the card hits a false hard-failure loop even though no real assistant output ever arrived. |
 | 92 | Codex app-server `thread/resume` can fail with rollout-file errors such as `empty session file` or `no rollout found for thread id` | Fall back to a fresh thread with the latest prompt/attachments instead of surfacing the raw rollout error, or one stale local CLI session blocks continued work. |
-| 93 | `pnpm test -- --test-name-pattern ...` still boots the repo-wide `tests/index.test.ts`, so narrow Node test runs can crash on unrelated React/CSS imports before your targeted reducer test executes | For focused logic debugging in this repo, run `node --import tsx --test <file>.ts` on the exact test file instead of relying on the package script’s name-pattern filter. |
 
 | 94 | Ubuntu GitHub Actions runners can fail `pnpm test` in the CI `quality` job with `Missing X server or $DISPLAY` because the Node test suite launches hidden Electron runtime tests through Playwright | Wrap the Ubuntu `pnpm test` step with `xvfb-run -a` (or provide an equivalent virtual display), or the release commit looks red in CI even when the app itself is fine. |
 | 94A | Unit tests that model Windows scenarios with plain `path.join('D:', ...)` / `path.resolve('D:/...')` / `pathToFileURL('D:\\...')` pass locally but fail on Ubuntu CI, because posix `path` treats `D:/...` as relative while production helpers deliberately route drive-letter inputs through `path.win32` | Build such expected values and module URLs with explicit `path.win32.*` or literal `file:///D:/...` strings so they are byte-identical on both platforms; likewise repo `.ps1` scripts must not hard-code `powershell` (Linux runners only ship `pwsh`) — probe with `Get-Command` and fall back. |
@@ -492,6 +492,8 @@ A living list of traps that have wasted time before. **When you hit a new pitfal
 | 208 | Destructive-command guard unit tests can inherit `CHILL_VIBE_PROTECTED_WORKSPACE` from the Chill Vibe session that launched the agent | The production guard correctly prefers the IDE-injected protected workspace over Hook-reported `cwd`, but tests using only a synthetic `input.cwd` then validate the real repo and fail misleadingly. Pass `workspaceRoot` explicitly in unit-test options. |
 | 209 | A lossless native fork becomes lossy again if the card immediately switches from Claude/Fable to Codex/Sol and uses the generic ~6000-character seeded replay | Persist a `contextTransfer` source anchor and use dialogue-first `model-transfer` replay for the first sessionless Codex turn; meaningful user/assistant prose must be protected before structured command output, and unknown-model legacy sessions must never become resumable merely because they were switched away and back. |
 | 210 | 一次无 WER/dump 的硬闪退与多路 Codex 同时出现，不等于“并发数量就是根因”；VSCode Codex 可稳定并行十几个会话，贸然给 Chill Vibe 加 6 路上限会直接破坏产品核心价值 | `ChatManager` 不设 provider 并发上限。保留两分钟资源心跳和启动异常收束；再次发生时依据最后心跳、子进程树和事件日志定位 Chill Vibe 的额外放大路径，不用排队代替根因修复。 |
+
+| 211 | Importing a tooling module that unconditionally calls its CLI `main()` can turn a pure Node test import into a complete Electron package build | Keep packaging/verification modules side-effect free on import with a direct-entry guard; otherwise `pnpm test` silently performs minutes of duplicate build and ZIP work. |
 
 ### Self-maintenance rule
 

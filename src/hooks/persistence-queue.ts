@@ -24,6 +24,8 @@ export const streamingQueuedStateSaveDelayMs = 5_000
 // combined card render rate cannot scale linearly with every open agent pane.
 export const streamRenderFlushIntervalMs = 80
 export const streamRenderColumnYieldMs = 50
+export const streamRenderInteractionProtectionMs = 120
+export const streamRenderMaxInteractionDeferralMs = 300
 const moderateMultiStreamRenderFlushIntervalMs = 200
 const busyMultiStreamRenderFlushIntervalMs = 500
 const busyStreamingQueuedStateSaveDelayMs = 15_000
@@ -101,6 +103,38 @@ export const getStreamRenderFlushIntervalMs = (activeStreamCount: number) => {
   }
 
   return streamRenderFlushIntervalMs
+}
+
+export const getStreamRenderInteractionDelayMs = ({
+  nowMs,
+  lastInteractionAtMs,
+  firstAttemptAtMs,
+}: {
+  nowMs: number
+  lastInteractionAtMs: number
+  firstAttemptAtMs: number
+}) => {
+  if (
+    !Number.isFinite(nowMs) ||
+    !Number.isFinite(lastInteractionAtMs) ||
+    !Number.isFinite(firstAttemptAtMs)
+  ) {
+    return 0
+  }
+
+  const interactionProtectionRemainingMs =
+    streamRenderInteractionProtectionMs - Math.max(0, nowMs - lastInteractionAtMs)
+  if (interactionProtectionRemainingMs <= 0) {
+    return 0
+  }
+
+  const deferralBudgetRemainingMs =
+    streamRenderMaxInteractionDeferralMs - Math.max(0, nowMs - firstAttemptAtMs)
+  if (deferralBudgetRemainingMs <= 0) {
+    return 0
+  }
+
+  return Math.min(interactionProtectionRemainingMs, deferralBudgetRemainingMs)
 }
 
 export const getStreamRenderBufferColumnIds = (

@@ -495,6 +495,7 @@ A living list of traps that have wasted time before. **When you hit a new pitfal
 | 210 | 一次无 WER/dump 的硬闪退与多路 Codex 同时出现，不等于“并发数量就是根因”；VSCode Codex 可稳定并行十几个会话，贸然给 Chill Vibe 加 6 路上限会直接破坏产品核心价值 | `ChatManager` 不设 provider 并发上限。保留两分钟资源心跳和启动异常收束；再次发生时依据最后心跳、子进程树和事件日志定位 Chill Vibe 的额外放大路径，不用排队代替根因修复。 |
 
 | 211 | Importing a tooling module that unconditionally calls its CLI `main()` can turn a pure Node test import into a complete Electron package build | Keep packaging/verification modules side-effect free on import with a direct-entry guard; otherwise `pnpm test` silently performs minutes of duplicate build and ZIP work. |
+| 212 | Playwright clears `test-results/` before workers import the selected config, so a temporary `--config` file stored there can disappear after discovery and fail with `Cannot find module` | Keep isolated-port Playwright configs outside the configured output directory, then remove the temporary config after the run. |
 
 ### Self-maintenance rule
 

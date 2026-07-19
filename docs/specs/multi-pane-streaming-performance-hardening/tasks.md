@@ -44,6 +44,13 @@
 - [x] 保留 Electron 资源心跳，硬退出前记录系统剩余内存和 Electron 进程内存证据。
 - [ ] 基于下一次客观证据继续定位 Chill Vibe 相比 VSCode Codex 的额外资源放大点，不用并发限制代替根因修复。
 
+## 2026-07-19 交互优先补强
+
+- [x] 读取当前运行包、状态和进程证据：5 张卡 streaming 时 renderer / GPU 在 10 秒采样中分别占用约 60% / 74% 单核。
+- [x] 红测覆盖交互保护窗、连续输入最大延迟和保护窗过期后的立即 flush。
+- [x] 普通流式提交避开输入、IME、pointer、click、wheel 的关键帧；强制 flush 语义保持不变。
+- [x] 重跑 focused 测试、质量检查和 Electron 聊天性能门禁。
+
 ## 发布门禁
 
 - [x] 相关 focused Node 测试通过。

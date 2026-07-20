@@ -79,6 +79,7 @@ const notRepositoryNote = 'This workspace is not a Git repository yet.'
 const gitChangePreviewMaxFileBytes = 256 * 1024
 const gitChangePreviewMaxTotalBytes = 512 * 1024
 const gitChangePreviewMaxPatchChars = 128 * 1024
+const gitChangePreviewDiffBatchChars = 12 * 1024
 // A chat stream keeps this snapshot alive until the provider turn settles.
 // Keep the retained baseline strictly bounded so several concurrent streams
 // cannot each clone gigabytes of untracked build/test output into Electron's
@@ -586,6 +587,34 @@ const readHeadFileSize = async (repoRoot: string, relativePath: string) => {
   return Number.isFinite(parsedSize) && parsedSize > 0 ? parsedSize : 0
 }
 
+const readHeadFileSizes = async (repoRoot: string) => {
+  const result = await runGit(repoRoot, ['ls-tree', '-r', '-l', '-z', 'HEAD'], {
+    allowFailure: true,
+  })
+
+  if (result.exitCode !== 0) {
+    return null
+  }
+
+  const sizes = new Map<string, number>()
+  for (const entry of result.stdout.split('\0')) {
+    const separatorIndex = entry.indexOf('\t')
+    if (separatorIndex < 0) {
+      continue
+    }
+
+    const metadata = entry.slice(0, separatorIndex).trim().split(/\s+/)
+    const relativePath = entry.slice(separatorIndex + 1)
+    const size = Number(metadata.at(-1))
+
+    if (relativePath && Number.isFinite(size) && size >= 0) {
+      sizes.set(relativePath, size)
+    }
+  }
+
+  return sizes
+}
+
 const countPatchLines = (patch: string) =>
   patch.split(/\r?\n/).reduce(
     (summary, line) => {
@@ -738,6 +767,277 @@ const readGitChangePreview = async (
   }
 }
 
+const normalizeGitDiffPath = (rawPath: string) => {
+  const withoutTimestamp = rawPath.split('\t', 1)[0] ?? rawPath
+  if (withoutTimestamp === '/dev/null') {
+    return null
+  }
+
+  const decoded = decodeGitStatusPath(withoutTimestamp)
+  return decoded.replace(/^[ab]\//, '')
+}
+
+const splitGitPatchBlocks = (patch: string) => {
+  const blocks: string[] = []
+  let current: string[] = []
+
+  for (const line of patch.split(/\r?\n/)) {
+    if (line.startsWith('diff --git ') && current.length > 0) {
+      blocks.push(current.join('\n').trim())
+      current = []
+    }
+
+    if (current.length > 0 || line.startsWith('diff --git ')) {
+      current.push(line)
+    }
+  }
+
+  if (current.length > 0) {
+    blocks.push(current.join('\n').trim())
+  }
+
+  return blocks.filter(Boolean)
+}
+
+const findGitPatchBlock = (blocks: string[], change: GitChange) => {
+  const expectedOldPath = change.kind === 'added'
+    ? null
+    : (change.originalPath ?? change.path).replace(/\\/g, '/')
+  const expectedNewPath = change.kind === 'deleted'
+    ? null
+    : change.path.replace(/\\/g, '/')
+  const expectedHeader = `diff --git a/${change.originalPath ?? change.path} b/${change.path}`
+
+  return blocks.find((block) => {
+    const lines = block.split('\n')
+    const oldMarker = lines.find((line) => line.startsWith('--- '))
+    const newMarker = lines.find((line) => line.startsWith('+++ '))
+
+    if (oldMarker && newMarker) {
+      return normalizeGitDiffPath(oldMarker.slice(4)) === expectedOldPath &&
+        normalizeGitDiffPath(newMarker.slice(4)) === expectedNewPath
+    }
+
+    return lines[0] === expectedHeader
+  }) ?? ''
+}
+
+const createAddedFilePatch = (relativePath: string, content: string | null) => {
+  if (!content) {
+    return ''
+  }
+
+  const normalized = content.replace(/\r\n/g, '\n')
+  const hasTrailingNewline = normalized.endsWith('\n')
+  const lines = normalized.split('\n')
+  if (hasTrailingNewline) {
+    lines.pop()
+  }
+  if (lines.length === 0) {
+    return ''
+  }
+
+  const range = lines.length === 1 ? '+1' : `+1,${lines.length}`
+  return [
+    `diff --git a/${relativePath} b/${relativePath}`,
+    'new file mode 100644',
+    '--- /dev/null',
+    `+++ b/${relativePath}`,
+    `@@ -0,0 ${range} @@`,
+    ...lines.map((line) => `+${line}`),
+    ...(hasTrailingNewline ? [] : ['\\ No newline at end of file']),
+  ].join('\n')
+}
+
+type GitPreviewCandidate = {
+  change: GitChange
+  currentFileSize: number
+  baselineFileSize: number
+  combinedFileSize: number
+}
+
+const getGitPreviewCandidate = async (
+  repoRoot: string,
+  change: GitChange,
+  headFileSizes: Map<string, number> | null,
+): Promise<GitPreviewCandidate> => {
+  const currentFileSize = change.kind === 'deleted'
+    ? 0
+    : await readWorkspaceFileSize(repoRoot, change.path)
+  const baselinePath = (change.originalPath ?? change.path).replace(/\\/g, '/')
+  const baselineFileSize = change.kind === 'untracked' || change.kind === 'added'
+    ? 0
+    : (headFileSizes?.get(baselinePath) ?? await readHeadFileSize(repoRoot, baselinePath))
+
+  return {
+    change,
+    currentFileSize,
+    baselineFileSize,
+    combinedFileSize: currentFileSize + baselineFileSize,
+  }
+}
+
+const getGitDiffBatchPathChars = (change: GitChange) =>
+  change.path.length + (change.originalPath?.length ?? 0) + 2
+
+const readTrackedGitPatchBlocks = async (
+  repoRoot: string,
+  candidates: GitPreviewCandidate[],
+) => {
+  const paths = Array.from(new Set(candidates.flatMap(({ change }) => [
+    ...(change.originalPath ? [change.originalPath] : []),
+    change.path,
+  ])))
+  const result = await runGit(
+    repoRoot,
+    ['diff', '--unified=3', '--no-color', '--no-ext-diff', 'HEAD', '--', ...paths],
+    { allowFailure: true },
+  )
+
+  return result.exitCode === 0 ? splitGitPatchBlocks(result.stdout) : []
+}
+
+const hydrateGitChangePreviews = async (repoRoot: string, changes: GitChange[]) => {
+  const headFileSizes = await readHeadFileSizes(repoRoot)
+  const candidates = await Promise.all(
+    changes.map(async (change) => {
+      try {
+        return await getGitPreviewCandidate(repoRoot, change, headFileSizes)
+      } catch {
+        return {
+          change,
+          currentFileSize: Number.POSITIVE_INFINITY,
+          baselineFileSize: Number.POSITIVE_INFINITY,
+          combinedFileSize: Number.POSITIVE_INFINITY,
+        }
+      }
+    }),
+  )
+  const hydratedChanges: GitChange[] = []
+  let remainingPreviewBudgetBytes = gitChangePreviewMaxTotalBytes
+  let index = 0
+
+  const appendPreview = (change: GitChange, patch: string) => {
+    const { addedLines, removedLines } = countPatchLines(patch)
+    const preview = patch.length > gitChangePreviewMaxPatchChars
+      ? { patch: '', addedLines, removedLines }
+      : { patch, addedLines, removedLines }
+
+    if (preview.patch) {
+      remainingPreviewBudgetBytes = Math.max(
+        0,
+        remainingPreviewBudgetBytes - preview.patch.length,
+      )
+    }
+
+    hydratedChanges.push({ ...change, ...preview })
+  }
+
+  while (index < candidates.length) {
+    const candidate = candidates[index]!
+    const { change } = candidate
+    const shouldSkip =
+      remainingPreviewBudgetBytes <= 0 ||
+      candidate.currentFileSize > gitChangePreviewMaxFileBytes ||
+      candidate.baselineFileSize > gitChangePreviewMaxFileBytes ||
+      candidate.combinedFileSize > remainingPreviewBudgetBytes
+
+    if (shouldSkip) {
+      hydratedChanges.push({ ...change, patch: '' })
+      index += 1
+      continue
+    }
+
+    if (change.kind === 'untracked') {
+      try {
+        appendPreview(
+          change,
+          createAddedFilePatch(change.path, await readWorkspaceFile(repoRoot, change.path)),
+        )
+      } catch {
+        hydratedChanges.push(change)
+      }
+      index += 1
+      continue
+    }
+
+    const batch: GitPreviewCandidate[] = []
+    let batchCombinedBytes = 0
+    let batchPathChars = 0
+
+    for (let batchIndex = index; batchIndex < candidates.length; batchIndex += 1) {
+      const nextCandidate = candidates[batchIndex]!
+      if (nextCandidate.change.kind === 'untracked') {
+        break
+      }
+      if (
+        nextCandidate.currentFileSize > gitChangePreviewMaxFileBytes ||
+        nextCandidate.baselineFileSize > gitChangePreviewMaxFileBytes ||
+        nextCandidate.combinedFileSize > remainingPreviewBudgetBytes
+      ) {
+        break
+      }
+
+      const nextPathChars = getGitDiffBatchPathChars(nextCandidate.change)
+      if (
+        batch.length > 0 && (
+          batchCombinedBytes + nextCandidate.combinedFileSize > remainingPreviewBudgetBytes ||
+          batchPathChars + nextPathChars > gitChangePreviewDiffBatchChars
+        )
+      ) {
+        break
+      }
+
+      batch.push(nextCandidate)
+      batchCombinedBytes += nextCandidate.combinedFileSize
+      batchPathChars += nextPathChars
+    }
+
+    if (batch.length === 0) {
+      try {
+        const preview = await readGitChangePreview(
+          repoRoot,
+          change,
+          remainingPreviewBudgetBytes,
+        )
+        appendPreview(change, preview.patch ?? '')
+      } catch {
+        hydratedChanges.push(change)
+      }
+      index += 1
+      continue
+    }
+
+    const blocks = await readTrackedGitPatchBlocks(repoRoot, batch)
+    for (const batchCandidate of batch) {
+      if (batchCandidate.combinedFileSize > remainingPreviewBudgetBytes) {
+        hydratedChanges.push({ ...batchCandidate.change, patch: '' })
+        continue
+      }
+
+      const patch = findGitPatchBlock(blocks, batchCandidate.change)
+      if (patch) {
+        appendPreview(batchCandidate.change, patch)
+        continue
+      }
+
+      try {
+        const preview = await readGitChangePreview(
+          repoRoot,
+          batchCandidate.change,
+          remainingPreviewBudgetBytes,
+        )
+        appendPreview(batchCandidate.change, preview.patch ?? '')
+      } catch {
+        hydratedChanges.push(batchCandidate.change)
+      }
+    }
+    index += batch.length
+  }
+
+  return hydratedChanges
+}
+
 const readLastCommit = async (workspacePath: string): Promise<GitCommit | null> => {
   const format = '%H%x1f%h%x1f%s%x1f%b%x1f%an%x1f%aI%x1e'
   const result = await runGit(workspacePath, ['log', '-1', `--format=${format}`], {
@@ -855,38 +1155,7 @@ export const inspectGitWorkspace = async (
   const includeChangePreviews = options?.includeChangePreviews !== false
   const includeRepositoryDetails = options?.includeRepositoryDetails !== false
   const changes = includeChangePreviews
-    ? (
-        await (async () => {
-          const hydratedChanges: GitChange[] = []
-          let remainingPreviewBudgetBytes = gitChangePreviewMaxTotalBytes
-
-          for (const change of parsedChanges) {
-            try {
-              const preview = await readGitChangePreview(
-                repoRoot,
-                change,
-                remainingPreviewBudgetBytes,
-              )
-
-              if (preview.patch) {
-                remainingPreviewBudgetBytes = Math.max(
-                  0,
-                  remainingPreviewBudgetBytes - preview.patch.length,
-                )
-              }
-
-              hydratedChanges.push({
-                ...change,
-                ...preview,
-              })
-            } catch {
-              hydratedChanges.push(change)
-            }
-          }
-
-          return hydratedChanges
-        })()
-      ).sort(sortChanges)
+    ? (await hydrateGitChangePreviews(repoRoot, parsedChanges)).sort(sortChanges)
     : parsedChanges.sort(sortChanges)
   const summary = summarizeChanges(changes)
 

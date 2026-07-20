@@ -11,6 +11,23 @@
 
 完整 `fetchGitStatus()` 仍保留现有行为，用于 full Git、diff 预览、分析提示等需要更多上下文的场景。
 
+## 完整预览批量补齐（2026-07-20）
+
+完整状态原先对每个已跟踪文件分别执行 `git cat-file -s`、读取 HEAD 内容，再执行一次
+`git diff --no-index`。文件数增加时，进程数和等待时间近似线性放大；6 个普通文件已可
+触发 21 个 Git 进程。
+
+后续补强保持 API 和 UI 不变：
+
+1. 用一次 `git ls-tree -r -l -z HEAD` 建立 HEAD 文件大小表，继续执行 256 KiB 单文件和
+   512 KiB 总预览预算；
+2. 将预算内的已跟踪路径按命令行长度分成有界批次，通过 `git diff HEAD` 批量取得 patch；
+3. 按已知的旧/新路径把 patch block 映射回 `GitChange`，保留 rename/delete/add 语义；
+4. untracked 文件使用等价的新增文件 unified patch，不再为每个文件启动 Git；
+5. 批量输出缺失或无法安全匹配时，才回退现有单文件路径，正确性优先于跑分。
+
+该切片不改变 `GitStatus` schema、按钮流程、暂存/提交语义或前端渲染结构。
+
 ## 前端加载流程
 
 `GitToolCard` 首次刷新时并行/串行组织为：

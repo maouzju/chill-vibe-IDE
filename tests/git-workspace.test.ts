@@ -276,6 +276,39 @@ describe('git workspace helpers', () => {
     )
   })
 
+  it('preserves added, deleted, renamed, and untracked previews when hydration is batched', async () => {
+    const repoPath = await createTempRepo()
+    await writeFile(path.join(repoPath, 'delete me.txt'), 'remove this line\n')
+    await writeFile(path.join(repoPath, 'rename source.txt'), 'rename base\n')
+    await runGit(repoPath, ['add', 'delete me.txt', 'rename source.txt'])
+    await runGit(repoPath, ['commit', '-m', 'Add preview semantics fixtures'])
+
+    await rm(path.join(repoPath, 'delete me.txt'))
+    await runGit(repoPath, ['mv', 'rename source.txt', 'rename target.txt'])
+    await writeFile(path.join(repoPath, 'rename target.txt'), 'rename base\nrenamed update\n')
+    await writeFile(path.join(repoPath, 'staged addition.txt'), 'staged line\n')
+    await runGit(repoPath, ['add', 'staged addition.txt'])
+    await writeFile(path.join(repoPath, 'untracked draft.txt'), 'draft line\n')
+
+    const status = await inspectGitWorkspace(repoPath)
+    const changes = new Map(status.changes.map((change) => [change.path, change]))
+
+    assert.equal(changes.get('delete me.txt')?.kind, 'deleted')
+    assert.match(changes.get('delete me.txt')?.patch ?? '', /-remove this line/)
+    assert.equal(changes.get('delete me.txt')?.removedLines, 1)
+
+    assert.equal(changes.get('rename target.txt')?.kind, 'renamed')
+    assert.equal(changes.get('rename target.txt')?.originalPath, 'rename source.txt')
+    assert.match(changes.get('rename target.txt')?.patch ?? '', /\+renamed update/)
+
+    assert.equal(changes.get('staged addition.txt')?.kind, 'added')
+    assert.match(changes.get('staged addition.txt')?.patch ?? '', /\+staged line/)
+
+    assert.equal(changes.get('untracked draft.txt')?.kind, 'untracked')
+    assert.match(changes.get('untracked draft.txt')?.patch ?? '', /\+draft line/)
+    assert.equal(changes.get('untracked draft.txt')?.addedLines, 1)
+  })
+
   it('can skip preview patches when only change metadata is needed', async () => {
     const repoPath = await createTempRepo()
     await writeFile(path.join(repoPath, 'tracked.txt'), 'base\nwith change\n')

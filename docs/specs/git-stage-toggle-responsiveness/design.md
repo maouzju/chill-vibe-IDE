@@ -39,3 +39,23 @@
 因此旧的 7.7s / 2.2s / 4.0s 数字不是产品渲染延迟，而是 Playwright 宿主墙钟混入了
 跨进程调度和测试机负载。本切片只修正性能门禁和 Electron profile 隔离；没有证据支持修改
 `GitFullDialog` 调度、增加暂存队列或继续减少服务端扫描。
+
+## 后台收敛补强（2026-07-20）
+
+用户允许继续做证据明确的优化后，代码审查确认 `setGitWorkspaceStage()` 在正常路径中会：
+
+1. 完整 `inspectGitWorkspace()` 一次以确认仓库；
+2. 执行 `git add` / `git restore --staged`；
+3. 再完整 `inspectGitWorkspace()` 一次返回状态。
+
+普通操作因此重复执行 `rev-parse`、`status` 和 `log`，单文件暂存约启动 7 个 Git 进程。
+
+最小改法：
+
+- 抽出接受已解析 `repoRoot` 的内部状态读取函数；公共 `inspectGitWorkspace()` 仍先解析根目录再调用它。
+- `setGitWorkspaceStage()` 只解析一次 repoRoot，直接执行暂存命令，再用已知 repoRoot 读取一次完整返回状态。
+- 正常路径保留 `lastCommit` 和 `description`，不改变 bridge/schema/UI 合并语义。
+- 无 HEAD 仓库的取消暂存仍保留 `restore` → `hasHeadCommit` → `rm --cached` 回退；该异常路径不套用正常路径 4 进程上限。
+
+红绿结果：同一 fixture 在改动前 trace 到 **7 个** Git 进程，重构后稳定为 **4 个**；返回的
+`lastCommit`、`description`、分支和变更状态保持完整。

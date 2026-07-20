@@ -658,6 +658,77 @@ describe('git workspace helpers', () => {
     })
   })
 
+  it('stages a tracked file with a bounded number of Git processes', async () => {
+    const repoPath = await createTempRepo()
+    await writeFile(
+      path.join(repoPath, 'package.json'),
+      '{\n  "name": "stage-process-fixture",\n  "description": "Stage process fixture"\n}\n',
+    )
+    await runGit(repoPath, ['add', 'package.json'])
+    await runGit(repoPath, ['commit', '-m', 'Add package description'])
+    await writeFile(path.join(repoPath, 'tracked.txt'), 'base\nwith change\n')
+
+    const tracePath = path.join(repoPath, '.git', 'chill-vibe-stage-trace.json')
+    const previousTracePath = process.env.GIT_TRACE2_EVENT
+    process.env.GIT_TRACE2_EVENT = tracePath
+
+    let staged
+    try {
+      staged = await setGitWorkspaceStage({
+        workspacePath: repoPath,
+        paths: ['tracked.txt'],
+        staged: true,
+      })
+    } finally {
+      if (previousTracePath === undefined) {
+        delete process.env.GIT_TRACE2_EVENT
+      } else {
+        process.env.GIT_TRACE2_EVENT = previousTracePath
+      }
+    }
+
+    const commandStarts = (await readFile(tracePath, 'utf8'))
+      .split(/\r?\n/)
+      .filter(Boolean)
+      .map((line) => JSON.parse(line) as { event?: string; argv?: string[] })
+      .filter((event) => event.event === 'start' && Array.isArray(event.argv))
+
+    assert.equal(staged.changes.find((change) => change.path === 'tracked.txt')?.staged, true)
+    assert.equal(staged.lastCommit?.summary, 'Add package description')
+    assert.equal(staged.description, 'Stage process fixture')
+    assert.equal(
+      commandStarts.length,
+      4,
+      `expected one repository lookup, one stage command, one status command, and one log command; saw ${commandStarts.length} Git processes`,
+    )
+  })
+
+  it('stages and unstages an addition before the repository has its first commit', async () => {
+    const repoPath = await mkdtemp(path.join(tmpdir(), 'chill-vibe-git-no-head-'))
+    tempRoots.push(repoPath)
+    await runGit(repoPath, ['init', '--initial-branch=main'])
+    await writeFile(path.join(repoPath, 'first-draft.txt'), 'first draft\n')
+
+    const staged = await setGitWorkspaceStage({
+      workspacePath: repoPath,
+      paths: ['first-draft.txt'],
+      staged: true,
+    })
+    assert.equal(staged.lastCommit, null)
+    assert.equal(staged.changes[0]?.path, 'first-draft.txt')
+    assert.equal(staged.changes[0]?.staged, true)
+
+    const unstaged = await setGitWorkspaceStage({
+      workspacePath: repoPath,
+      paths: ['first-draft.txt'],
+      staged: false,
+    })
+    assert.equal(unstaged.lastCommit, null)
+    assert.equal(unstaged.changes[0]?.path, 'first-draft.txt')
+    assert.equal(unstaged.changes[0]?.kind, 'untracked')
+    assert.equal(unstaged.changes[0]?.staged, false)
+  })
+
   it('keeps staged checkboxes in sync with git index state until explicitly toggled again', async () => {
     const repoPath = await createTempRepo()
     await writeFile(path.join(repoPath, 'tracked.txt'), 'base\nwith change\n')

@@ -1616,6 +1616,30 @@ body.is-card-dragging .lane-drop-zone-top {
   margin-top: 0.55rem;
 }
 
+.codex-management-policy-row {
+  gap: 0.75rem;
+  cursor: default;
+}
+
+.codex-management-policy-row > span {
+  min-width: 0;
+}
+
+.codex-management-policy-row strong,
+.codex-management-policy-row small {
+  display: block;
+}
+
+.codex-management-policy-row small.settings-note {
+  margin-top: 0.15rem;
+  font-size: 0.78rem;
+  font-weight: 400;
+}
+
+.codex-management-policy-row .control {
+  flex: 0 0 auto;
+}
+
 .settings-field-label {
   display: flex;
   align-items: center;

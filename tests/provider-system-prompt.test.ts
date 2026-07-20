@@ -4422,6 +4422,7 @@ test('codex app-server installs and precisely trusts the Chill Vibe safety hook 
     assert.deepEqual(methods, [
       'initialize',
       'initialized',
+      'configRequirements/read',
       'hooks/list',
       'config/batchWrite',
       'hooks/list',
@@ -4505,6 +4506,7 @@ test('codex app-server treats a non-persisting safety hook trust write as a fata
     assert.deepEqual(methods, [
       'initialize',
       'initialized',
+      'configRequirements/read',
       'hooks/list',
       'config/batchWrite',
       'hooks/list',
@@ -4557,7 +4559,13 @@ test('codex app-server leaves hook args and home environment unchanged when both
     assert.equal(startup.env?.HOME, process.env.HOME)
     assert.equal(startup.env?.USERPROFILE, process.env.USERPROFILE)
     assert.equal(startup.env?.CODEX_HOME, process.env.CODEX_HOME)
-    assert.deepEqual(methods, ['initialize', 'initialized', 'thread/start', 'turn/start'])
+    assert.deepEqual(methods, [
+      'initialize',
+      'initialized',
+      'configRequirements/read',
+      'thread/start',
+      'turn/start',
+    ])
   } finally {
     await rm(capturePath, { force: true }).catch(() => {})
   }

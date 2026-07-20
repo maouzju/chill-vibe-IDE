@@ -1118,31 +1118,11 @@ const hasStagedChanges = async (workspacePath: string) => {
     .filter(Boolean).length > 0
 }
 
-export const inspectGitWorkspace = async (
+const inspectResolvedGitWorkspace = async (
   workspacePath: string,
+  repoRoot: string,
   options?: InspectGitWorkspaceOptions,
 ): Promise<GitStatus> => {
-  const repoRoot = await getRepositoryRoot(workspacePath)
-
-  if (!repoRoot) {
-    return {
-      workspacePath,
-      isRepository: false,
-      repoRoot: '',
-      branch: '',
-      upstream: undefined,
-      ahead: 0,
-      behind: 0,
-      hasConflicts: false,
-      clean: true,
-      summary: emptyGitSummary(),
-      changes: [],
-      lastCommit: null,
-      description: '',
-      note: notRepositoryNote,
-    }
-  }
-
   const statusResult = await runGit(repoRoot, ['status', '--branch', '--porcelain=v1', '--untracked-files=all'])
   const lines = statusResult.stdout
     .split(/\r?\n/)
@@ -1175,6 +1155,34 @@ export const inspectGitWorkspace = async (
     description: includeRepositoryDetails ? await readRepoDescription(repoRoot) : '',
     note: undefined,
   }
+}
+
+export const inspectGitWorkspace = async (
+  workspacePath: string,
+  options?: InspectGitWorkspaceOptions,
+): Promise<GitStatus> => {
+  const repoRoot = await getRepositoryRoot(workspacePath)
+
+  if (!repoRoot) {
+    return {
+      workspacePath,
+      isRepository: false,
+      repoRoot: '',
+      branch: '',
+      upstream: undefined,
+      ahead: 0,
+      behind: 0,
+      hasConflicts: false,
+      clean: true,
+      summary: emptyGitSummary(),
+      changes: [],
+      lastCommit: null,
+      description: '',
+      note: notRepositoryNote,
+    }
+  }
+
+  return await inspectResolvedGitWorkspace(workspacePath, repoRoot, options)
 }
 
 export const initGitWorkspace = async (workspacePath: string): Promise<GitOperationResponse> => {
@@ -1533,11 +1541,11 @@ export const setGitWorkspaceStage = async ({
   paths,
   staged,
 }: GitStageOptions): Promise<GitStatus> => {
-  const status = await inspectGitWorkspace(workspacePath, { includeChangePreviews: false })
+  const repoRoot = await getRepositoryRoot(workspacePath)
   const normalizedPaths = normalizePathList(paths)
 
-  if (!status.isRepository) {
-    throw new Error(status.note ?? notRepositoryNote)
+  if (!repoRoot) {
+    throw new Error(notRepositoryNote)
   }
 
   if (normalizedPaths.length === 0) {
@@ -1545,20 +1553,24 @@ export const setGitWorkspaceStage = async ({
   }
 
   if (staged) {
-    await runGitWithPathspecs(status.repoRoot, ['add'], normalizedPaths)
-    return await inspectGitWorkspace(workspacePath, { includeChangePreviews: false })
+    await runGitWithPathspecs(repoRoot, ['add'], normalizedPaths)
+    return await inspectResolvedGitWorkspace(
+      workspacePath,
+      repoRoot,
+      { includeChangePreviews: false },
+    )
   }
 
-  const restoreResult = await runGitWithPathspecs(status.repoRoot, ['restore', '--staged'], normalizedPaths, {
+  const restoreResult = await runGitWithPathspecs(repoRoot, ['restore', '--staged'], normalizedPaths, {
     allowFailure: true,
   })
 
   if (restoreResult.exitCode !== 0) {
-    if (await hasHeadCommit(status.repoRoot)) {
-      await runGitWithPathspecs(status.repoRoot, ['reset', '--quiet', 'HEAD'], normalizedPaths)
+    if (await hasHeadCommit(repoRoot)) {
+      await runGitWithPathspecs(repoRoot, ['reset', '--quiet', 'HEAD'], normalizedPaths)
     } else {
       await runGitWithPathspecs(
-        status.repoRoot,
+        repoRoot,
         ['rm', '--cached', '--quiet', '--ignore-unmatch'],
         normalizedPaths,
         {
@@ -1568,7 +1580,11 @@ export const setGitWorkspaceStage = async ({
     }
   }
 
-  return await inspectGitWorkspace(workspacePath, { includeChangePreviews: false })
+  return await inspectResolvedGitWorkspace(
+    workspacePath,
+    repoRoot,
+    { includeChangePreviews: false },
+  )
 }
 
 export const discardGitWorkspaceChanges = async ({

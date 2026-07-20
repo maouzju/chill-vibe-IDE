@@ -195,6 +195,7 @@ export type IdeAction =
           | 'modelPromptRules'
           | 'codexPersonality'
           | 'codexFastMode'
+          | 'agentOutsideWorkspaceWriteEnabled'
           | 'codexDestructiveCommandProtectionEnabled'
           | 'codexIsolatedHomeEnabled'
           | 'gitAgentModel'

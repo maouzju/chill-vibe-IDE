@@ -319,18 +319,22 @@ describe('default-state helpers', () => {
     assert.equal(normalizeAppSettings({ crossProviderSkillReuseEnabled: false }).crossProviderSkillReuseEnabled, false)
   })
 
-  it('enables Codex destructive-command and isolated-home protection by default', () => {
+  it('keeps outside-workspace writes enabled by default and preserves all Agent safety opt-outs', () => {
     const defaults = createDefaultSettings()
 
+    assert.equal(defaults.agentOutsideWorkspaceWriteEnabled, true)
     assert.equal(defaults.codexDestructiveCommandProtectionEnabled, true)
     assert.equal(defaults.codexIsolatedHomeEnabled, true)
+    assert.equal(normalizeAppSettings({}).agentOutsideWorkspaceWriteEnabled, true)
     assert.equal(normalizeAppSettings({}).codexDestructiveCommandProtectionEnabled, true)
     assert.equal(normalizeAppSettings({}).codexIsolatedHomeEnabled, true)
 
     const disabled = normalizeAppSettings({
+      agentOutsideWorkspaceWriteEnabled: false,
       codexDestructiveCommandProtectionEnabled: false,
       codexIsolatedHomeEnabled: false,
     } as never) as typeof defaults
+    assert.equal(disabled.agentOutsideWorkspaceWriteEnabled, false)
     assert.equal(disabled.codexDestructiveCommandProtectionEnabled, false)
     assert.equal(disabled.codexIsolatedHomeEnabled, false)
   })

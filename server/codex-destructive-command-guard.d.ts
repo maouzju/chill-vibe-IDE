@@ -19,6 +19,8 @@ export type CodexSafetyAssessmentOptions = {
   codexHome?: string
   appDataDir?: string
   mountPoints?: string[]
+  destructiveCommandProtectionEnabled?: boolean
+  outsideWorkspaceWriteEnabled?: boolean
 }
 
 export function assessCodexToolUse(

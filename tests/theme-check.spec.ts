@@ -2832,9 +2832,14 @@ for (const theme of ['dark', 'light'] as const) {
     await expect(settingsPanel).toBeVisible()
     await expect(page.locator('html')).toHaveAttribute('data-theme', theme)
     await expect(safetyGroup).toBeVisible()
-    await expect(safetySettings.locator('input[type="checkbox"]')).toHaveCount(2)
+    await expect(safetySettings.locator('input[type="checkbox"]')).toHaveCount(3)
     await expect(safetySettings.locator('input[type="checkbox"]').first()).toBeChecked()
     await expect(safetySettings.locator('input[type="checkbox"]').last()).toBeChecked()
+    await expect(safetySettings).toContainText(
+      theme === 'dark'
+        ? '允许 Agent 修改项目文件夹外的文件'
+        : 'Allow Agent writes outside the project folder',
+    )
     await expect(safetySettings).toContainText(
       theme === 'dark' ? '阻止 Agent 高风险删除命令' : 'Block high-risk Agent deletion commands',
     )

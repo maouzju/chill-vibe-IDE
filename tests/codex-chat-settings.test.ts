@@ -12,6 +12,7 @@ describe('Agent chat request settings', () => {
       prompt: 'Inspect this workspace.',
     })
 
+    assert.equal(request.agentOutsideWorkspaceWriteEnabled, true)
     assert.equal(request.codexDestructiveCommandProtectionEnabled, true)
     assert.equal(request.codexIsolatedHomeEnabled, true)
   })
@@ -21,10 +22,12 @@ describe('Agent chat request settings', () => {
       buildCodexChatRequestOverrides('codex', {
         codexPersonality: 'default',
         codexFastMode: false,
+        agentOutsideWorkspaceWriteEnabled: true,
         codexDestructiveCommandProtectionEnabled: true,
         codexIsolatedHomeEnabled: true,
       }),
       {
+        agentOutsideWorkspaceWriteEnabled: true,
         codexDestructiveCommandProtectionEnabled: true,
         codexIsolatedHomeEnabled: true,
       },
@@ -36,12 +39,14 @@ describe('Agent chat request settings', () => {
       buildCodexChatRequestOverrides('codex', {
         codexPersonality: 'pragmatic',
         codexFastMode: true,
+        agentOutsideWorkspaceWriteEnabled: false,
         codexDestructiveCommandProtectionEnabled: false,
         codexIsolatedHomeEnabled: false,
       }),
       {
         personality: 'pragmatic',
         serviceTier: 'priority',
+        agentOutsideWorkspaceWriteEnabled: false,
         codexDestructiveCommandProtectionEnabled: false,
         codexIsolatedHomeEnabled: false,
       },
@@ -53,10 +58,12 @@ describe('Agent chat request settings', () => {
       buildCodexChatRequestOverrides('claude', {
         codexPersonality: 'friendly',
         codexFastMode: true,
+        agentOutsideWorkspaceWriteEnabled: false,
         codexDestructiveCommandProtectionEnabled: true,
         codexIsolatedHomeEnabled: true,
       }),
       {
+        agentOutsideWorkspaceWriteEnabled: false,
         codexDestructiveCommandProtectionEnabled: true,
       },
     )
@@ -65,10 +72,12 @@ describe('Agent chat request settings', () => {
       buildCodexChatRequestOverrides('claude', {
         codexPersonality: 'default',
         codexFastMode: false,
+        agentOutsideWorkspaceWriteEnabled: true,
         codexDestructiveCommandProtectionEnabled: false,
         codexIsolatedHomeEnabled: true,
       }),
       {
+        agentOutsideWorkspaceWriteEnabled: true,
         codexDestructiveCommandProtectionEnabled: false,
       },
     )

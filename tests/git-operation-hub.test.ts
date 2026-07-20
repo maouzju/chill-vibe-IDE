@@ -171,6 +171,7 @@ test('agent analysis forwards Codex personality and Fast settings', async () => 
     codexChatSettings: {
       codexPersonality: 'pragmatic',
       codexFastMode: true,
+      agentOutsideWorkspaceWriteEnabled: true,
       codexDestructiveCommandProtectionEnabled: true,
       codexIsolatedHomeEnabled: true,
     },

@@ -554,11 +554,14 @@ function App() {
     () => ({
       codexPersonality: appState.settings.codexPersonality,
       codexFastMode: appState.settings.codexFastMode,
+      agentOutsideWorkspaceWriteEnabled:
+        appState.settings.agentOutsideWorkspaceWriteEnabled,
       codexDestructiveCommandProtectionEnabled:
         appState.settings.codexDestructiveCommandProtectionEnabled,
       codexIsolatedHomeEnabled: appState.settings.codexIsolatedHomeEnabled,
     }),
     [
+      appState.settings.agentOutsideWorkspaceWriteEnabled,
       appState.settings.codexDestructiveCommandProtectionEnabled,
       appState.settings.codexFastMode,
       appState.settings.codexIsolatedHomeEnabled,
@@ -5885,6 +5888,22 @@ function App() {
 
   const renderCodexSafetySettings = (idPrefix: string) => (
     <div className="codex-safety-settings">
+      <label className="settings-toggle" htmlFor={`${idPrefix}-agent-outside-workspace-write`}>
+        <span>{text.agentOutsideWorkspaceWriteLabel}</span>
+        <input
+          id={`${idPrefix}-agent-outside-workspace-write`}
+          type="checkbox"
+          checked={appState.settings.agentOutsideWorkspaceWriteEnabled}
+          onChange={(event) =>
+            applyAction({
+              type: 'updateSettings',
+              patch: { agentOutsideWorkspaceWriteEnabled: event.target.checked },
+            })
+          }
+        />
+      </label>
+      <p className="settings-note">{text.agentOutsideWorkspaceWriteNote}</p>
+
       <label className="settings-toggle" htmlFor={`${idPrefix}-codex-destructive-command-protection`}>
         <span>{text.codexDestructiveCommandProtectionLabel}</span>
         <input

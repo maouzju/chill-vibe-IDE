@@ -7,7 +7,7 @@ import { fileURLToPath } from 'node:url'
 import type { AppLanguage, ChatRequest } from '../shared/schema.js'
 import { getAppDataDir } from './app-paths.js'
 
-const safetyHookMatcher = 'Bash|apply_patch|Edit|Write'
+const safetyHookMatcher = 'Bash|apply_patch|Edit|Write|NotebookEdit'
 const safetyHookTimeoutSec = 5
 const guardScriptPath = fileURLToPath(new URL('./codex-destructive-command-guard.js', import.meta.url))
 const safetyEnvironmentKeys = [
@@ -15,6 +15,8 @@ const safetyEnvironmentKeys = [
   'CHILL_VIBE_PROTECTED_WORKSPACE',
   'CHILL_VIBE_PROTECTED_CODEX_HOME',
   'CHILL_VIBE_PROTECTED_APP_DATA',
+  'CHILL_VIBE_DESTRUCTIVE_COMMAND_PROTECTION_ENABLED',
+  'CHILL_VIBE_OUTSIDE_WORKSPACE_WRITE_ENABLED',
   'CHILL_VIBE_CODEX_GUARD_EXECUTABLE',
   'CHILL_VIBE_CODEX_GUARD_SCRIPT',
   'CHILL_VIBE_CODEX_SAFETY_HOOK_COMMAND',
@@ -126,7 +128,11 @@ export const prepareDestructiveCommandGuardRuntime = async (
     delete env[key]
   }
 
-  if (request.codexDestructiveCommandProtectionEnabled !== true) {
+  const destructiveCommandProtectionEnabled =
+    request.codexDestructiveCommandProtectionEnabled === true
+  const outsideWorkspaceWriteEnabled = request.agentOutsideWorkspaceWriteEnabled !== false
+
+  if (outsideWorkspaceWriteEnabled && !destructiveCommandProtectionEnabled) {
     return { env }
   }
 
@@ -146,6 +152,9 @@ export const prepareDestructiveCommandGuardRuntime = async (
   env.CHILL_VIBE_PROTECTED_WORKSPACE = path.resolve(request.workspacePath)
   env.CHILL_VIBE_PROTECTED_CODEX_HOME = originalCodexHome
   env.CHILL_VIBE_PROTECTED_APP_DATA = appDataDir
+  env.CHILL_VIBE_DESTRUCTIVE_COMMAND_PROTECTION_ENABLED =
+    destructiveCommandProtectionEnabled ? '1' : '0'
+  env.CHILL_VIBE_OUTSIDE_WORKSPACE_WRITE_ENABLED = outsideWorkspaceWriteEnabled ? '1' : '0'
   env.CHILL_VIBE_CODEX_GUARD_EXECUTABLE = process.execPath
   env.CHILL_VIBE_CODEX_GUARD_SCRIPT = guardScriptPath
 
@@ -260,8 +269,8 @@ const readHookMetadata = (
 
 const formatSafetySetupError = (language: AppLanguage, detail: string) =>
   language === 'en'
-    ? `Codex destructive-command protection could not start safely: ${detail}. Update the local Codex CLI or turn off the protection in Settings only if you accept the risk.`
-    : `Codex 高风险删除防护无法安全启动：${detail}。请更新本地 Codex CLI；只有在明确接受风险时，才在设置中关闭该防护。`
+    ? `Codex Agent safety protection could not start safely: ${detail}. Update the local Codex CLI or adjust Agent Safety in Settings only if you accept the risk.`
+    : `Codex Agent 安全防护无法安全启动：${detail}。请更新本地 Codex CLI；只有在明确接受风险时，才调整设置中的 Agent 安全选项。`
 
 export const ensureCodexSafetyHookTrusted = async ({
   sendRequest,

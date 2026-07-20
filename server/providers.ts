@@ -3,7 +3,15 @@ import { spawn } from 'node:child_process'
 import { EventEmitter } from 'node:events'
 import { stat } from 'node:fs/promises'
 import os from 'node:os'
-import { basename, delimiter, dirname, resolve as resolvePath } from 'node:path'
+import {
+  basename,
+  delimiter,
+  dirname,
+  isAbsolute,
+  relative,
+  resolve as resolvePath,
+  sep,
+} from 'node:path'
 import readline from 'node:readline'
 import type { Readable } from 'node:stream'
 
@@ -1406,7 +1414,11 @@ const codexSandboxModesByAccess: CodexSandboxMode[] = [
 ]
 
 const getCodexSandboxMode = (request: ChatRequest): CodexSandboxMode =>
-  request.sandboxMode ?? 'danger-full-access'
+  request.sandboxMode ?? (
+    request.agentOutsideWorkspaceWriteEnabled === false
+      ? 'workspace-write'
+      : 'danger-full-access'
+  )
 
 type CodexApprovalPolicy = NonNullable<ChatRequest['approvalPolicy']>
 
@@ -2806,7 +2818,7 @@ const launchClaudeRun = async (
   } catch (error) {
     const message = error instanceof Error
       ? error.message
-      : 'Unable to prepare Claude destructive-command protection.'
+      : 'Unable to prepare Claude Agent safety protection.'
     sink.onError(message, 'env-setup')
     return null
   }
@@ -3010,6 +3022,7 @@ export const buildClaudeKeepaliveSignature = (
         .filter((attachmentPath) => attachmentPath.trim().length > 0)
         .map((attachmentPath) => resolvePath(dirname(attachmentPath))),
     ),
+    outsideWorkspaceWrite: request.agentOutsideWorkspaceWriteEnabled !== false,
     destructiveCommandProtection: request.codexDestructiveCommandProtectionEnabled === true,
     safetyHookCommand: safetyHookCommand ?? '',
   })
@@ -3331,6 +3344,15 @@ const dedupeResolvedPaths = (paths: string[]) => {
   })
 }
 
+const isResolvedPathInside = (candidatePath: string, rootPath: string) => {
+  const relativePath = relative(resolvePath(rootPath), resolvePath(candidatePath))
+  return relativePath === '' || (
+    relativePath !== '..' &&
+    !relativePath.startsWith(`..${sep}`) &&
+    !isAbsolute(relativePath)
+  )
+}
+
 const resolveClaudeAdditionalDirectories = (options?: {
   env?: NodeJS.ProcessEnv
   homeDir?: string | null
@@ -3388,6 +3410,7 @@ export const buildClaudeArgs = (
     // prompt, so background tasks survive the turn and can wake the agent.
     streamingInput?: boolean
     safetyHookCommand?: string
+    platform?: NodeJS.Platform
   },
 ) => {
   const args = ['-p', '--verbose', '--output-format', 'stream-json', '--include-partial-messages']
@@ -3405,14 +3428,41 @@ export const buildClaudeArgs = (
   )
   const ultracodeActive = !thinkingDisabled && isUltracodeEffort(request.reasoningEffort)
   const permissionMode = request.planMode ? 'plan' : 'bypassPermissions'
-  const safetyHookCommand = request.codexDestructiveCommandProtectionEnabled === true
+  const outsideWorkspaceWriteRestricted = request.agentOutsideWorkspaceWriteEnabled === false
+  const safetyHookCommand = (
+    request.codexDestructiveCommandProtectionEnabled === true ||
+    outsideWorkspaceWriteRestricted
+  )
     ? options?.safetyHookCommand
     : undefined
+  const platform = options?.platform ?? process.platform
   const additionalDirectories = resolveClaudeAdditionalDirectories({
     ...options,
     attachmentPaths,
     crossProviderSkillReuseEnabled: request.crossProviderSkillReuseEnabled,
   })
+  const outsideWorkspaceReadDirectories = outsideWorkspaceWriteRestricted
+    ? additionalDirectories.filter((directory) =>
+        !isResolvedPathInside(directory, request.workspacePath))
+    : []
+  const sandboxSettings = outsideWorkspaceWriteRestricted && platform !== 'win32'
+    ? {
+        enabled: true,
+        failIfUnavailable: true,
+        allowUnsandboxedCommands: false,
+        autoAllowBashIfSandboxed: true,
+        network: {
+          allowedDomains: ['*'],
+        },
+        ...(outsideWorkspaceReadDirectories.length > 0
+          ? {
+              filesystem: {
+                denyWrite: outsideWorkspaceReadDirectories,
+              },
+            }
+          : {}),
+      }
+    : undefined
   const systemPrompt = [
     buildProviderSystemPrompt(request.language, getRequestBaseSystemPrompt(request)),
     getClaudeAskUserQuestionInstruction(request.language),
@@ -3435,17 +3485,18 @@ export const buildClaudeArgs = (
       // Older CLIs treat unknown settings keys as a warning, degrading to
       // plain xhigh.
       ...(ultracodeActive ? { ultracode: true } : {}),
+      ...(sandboxSettings ? { sandbox: sandboxSettings } : {}),
       ...(safetyHookCommand
         ? {
             hooks: {
               PreToolUse: [
                 {
-                  matcher: 'Bash',
+                  matcher: 'Bash|Edit|Write|NotebookEdit',
                   hooks: [
                     {
                       type: 'command',
-                      command: process.platform === 'win32' ? 'powershell.exe' : '/bin/sh',
-                      args: process.platform === 'win32'
+                      command: platform === 'win32' ? 'powershell.exe' : '/bin/sh',
+                      args: platform === 'win32'
                         ? [
                             '-NoProfile',
                             '-NonInteractive',

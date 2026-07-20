@@ -3,6 +3,7 @@ import path from 'node:path'
 import { pathToFileURL } from 'node:url'
 
 const shellToolPattern = /^(?:Bash|shell|shell_command|exec_command|write_stdin)$/i
+const directWriteToolPattern = /^(?:apply_patch|Edit|Write|NotebookEdit)$/i
 const powershellDeletePattern = /(?:^|[;&|{}]\s*)Remove-Item\b/i
 const posixDeletePattern = /(?:^|[;&|]\s*)rm\s+-[^\r\n;&|]*r/i
 const cmdRmdirPattern = /(?:^|[;&|]\s*)rmdir\s+[^\r\n;&|]*\/s/i
@@ -16,6 +17,7 @@ const bindMountPattern = /\b(?:mount_bind\s*\(|mount\s+(?:--bind\b|-o\s+bind\b)|
 const unresolvedVariablePattern = /(?:\$\(|\$\{[^}\r\n]+\}|\$(?:env:)?[A-Za-z_][\w:]*|%[^%\r\n]+%|@\s*\()/i
 const runtimeExpansionPattern = /[`]|^~[^\\/]/
 const wildcardPattern = /[*?\[\]]/
+const shellWriteCommandPattern = /(?:^|[;&|]\s*)(?:Set-Content|Add-Content|Out-File|New-Item|Copy-Item|Move-Item|Rename-Item|Remove-Item|touch|mkdir|md|cp|mv|copy|move|install|tee|del|rmdir)\b|>{1,2}\s*/i
 
 const normalizeCommand = (value) => {
   if (typeof value === 'string') {
@@ -110,6 +112,123 @@ const extractFunctionTargets = (command) => {
   return targets
 }
 
+const findNamedArgument = (tokens, names) => {
+  const normalizedNames = new Set(names.map((name) => name.toLowerCase()))
+  for (let index = 0; index < tokens.length - 1; index += 1) {
+    if (normalizedNames.has(tokens[index].toLowerCase())) {
+      return tokens[index + 1]
+    }
+  }
+  return null
+}
+
+const extractRedirectionTargets = (command) => {
+  const targets = []
+  const pattern = />{1,2}\s*("(?:\\.|[^"\\])*"|'(?:''|[^'])*'|[^\s;&|]+)/g
+  for (const match of command.matchAll(pattern)) {
+    if (match[1]) {
+      targets.push(stripOuterQuotes(match[1]))
+    }
+  }
+  return targets
+}
+
+const extractPowerShellWriteTargets = (command) => {
+  const targets = []
+  const pattern = /(?:^|[;&|]\s*)(Set-Content|Add-Content|Out-File|New-Item|Copy-Item|Move-Item|Rename-Item)\s+([^\r\n;&|]+)/gi
+
+  for (const match of command.matchAll(pattern)) {
+    const operation = match[1].toLowerCase()
+    const tokens = tokenize(match[2])
+    const pathValue = findNamedArgument(tokens, ['-LiteralPath', '-Path', '-FilePath'])
+    const destination = findNamedArgument(tokens, ['-Destination', '-NewName'])
+    const positional = tokens.filter((token) => !token.startsWith('-'))
+
+    if (operation === 'copy-item') {
+      const target = destination ?? positional.at(-1)
+      if (target) targets.push(target)
+      continue
+    }
+
+    if (operation === 'move-item' || operation === 'rename-item') {
+      const source = pathValue ?? positional[0]
+      const target = destination ?? positional.at(-1)
+      if (source) targets.push(source)
+      if (target && target !== source) targets.push(target)
+      continue
+    }
+
+    const target = pathValue ?? positional[0]
+    if (target) targets.push(target)
+  }
+
+  return targets
+}
+
+const extractPosixAndCmdWriteTargets = (command) => {
+  const targets = []
+  const pattern = /(?:^|[;&|]\s*)(touch|mkdir|md|cp|mv|copy|move|install|tee)\s+([^\r\n;&|]+)/gi
+
+  for (const match of command.matchAll(pattern)) {
+    const operation = match[1].toLowerCase()
+    const positional = tokenize(match[2]).filter((token) => !token.startsWith('-'))
+    if (positional.length === 0) continue
+
+    if (operation === 'cp' || operation === 'copy' || operation === 'install') {
+      targets.push(positional.at(-1))
+      continue
+    }
+
+    targets.push(...positional)
+  }
+
+  return targets
+}
+
+const extractDirectWriteTargets = (toolName, toolInput) => {
+  const targets = []
+  for (const key of [
+    'file_path',
+    'filePath',
+    'path',
+    'notebook_path',
+    'notebookPath',
+    'target_path',
+    'targetPath',
+  ]) {
+    const value = toolInput?.[key]
+    if (typeof value === 'string' && value.trim()) {
+      targets.push(value.trim())
+    }
+  }
+
+  if (/^apply_patch$/i.test(toolName)) {
+    const patchText = typeof toolInput?.patch === 'string'
+      ? toolInput.patch
+      : typeof toolInput?.input === 'string'
+        ? toolInput.input
+        : ''
+    const patchPathPattern = /^\*\*\* (?:Add|Update|Delete) File:\s*(.+)$/gm
+    for (const match of patchText.matchAll(patchPathPattern)) {
+      if (match[1]?.trim()) {
+        targets.push(match[1].trim())
+      }
+    }
+  }
+
+  return targets
+}
+
+const extractShellWriteTargets = (command) => [
+  ...extractRedirectionTargets(command),
+  ...extractPowerShellWriteTargets(command),
+  ...extractPosixAndCmdWriteTargets(command),
+  ...extractRmTargets(command),
+  ...extractPowerShellTargets(command),
+  ...extractCmdTargets(command),
+  ...extractFunctionTargets(command),
+]
+
 const normalizeComparablePath = (value, pathApi) => {
   const normalized = pathApi.normalize(value)
   const withoutTrailing = normalized.length > pathApi.parse(normalized).root.length
@@ -173,6 +292,72 @@ const resolveExistingPath = (candidate, pathApi) => {
     }
     return candidate
   }
+}
+
+const resolveBooleanSetting = (explicitValue, environmentValue, fallback) => {
+  if (typeof explicitValue === 'boolean') {
+    return explicitValue
+  }
+  if (environmentValue === '1') {
+    return true
+  }
+  if (environmentValue === '0') {
+    return false
+  }
+  return fallback
+}
+
+const createAssessmentContext = (input, options) => ({
+  platform: options.platform ?? process.platform,
+  workspaceRoot:
+    options.workspaceRoot ??
+    process.env.CHILL_VIBE_PROTECTED_WORKSPACE ??
+    (typeof input.cwd === 'string' && input.cwd.trim() ? input.cwd : process.cwd()),
+  protectedHome: options.protectedHome ?? process.env.CHILL_VIBE_PROTECTED_HOME ?? '',
+  codexHome: options.codexHome ?? process.env.CHILL_VIBE_PROTECTED_CODEX_HOME ?? '',
+  appDataDir: options.appDataDir ?? process.env.CHILL_VIBE_PROTECTED_APP_DATA ?? '',
+  mountPoints: options.mountPoints ?? readLinuxMountPoints(options.platform ?? process.platform),
+})
+
+const assessWorkspaceWriteTarget = (rawTarget, context) => {
+  const pathApi = context.platform === 'win32' ? path.win32 : path.posix
+  const stripped = stripOuterQuotes(rawTarget)
+  const expanded = expandKnownHomeVariables(stripped, context.protectedHome)
+
+  if (!expanded) {
+    return '项目写入目标为空，无法安全确认范围。'
+  }
+  if (unresolvedVariablePattern.test(expanded) || runtimeExpansionPattern.test(expanded)) {
+    return `项目写入目标包含未解析或运行时展开表达式：${stripped}`
+  }
+  if (wildcardPattern.test(expanded)) {
+    return `项目写入目标包含通配符，无法安全确认最终范围：${stripped}`
+  }
+
+  const workspaceRoot = resolveExistingPath(
+    pathApi.resolve(context.workspaceRoot),
+    pathApi,
+  )
+  const lexicalTarget = pathApi.isAbsolute(expanded)
+    ? pathApi.normalize(expanded)
+    : pathApi.resolve(context.workspaceRoot, expanded)
+  const candidate = resolveExistingPath(lexicalTarget, pathApi)
+
+  if (!pathContains(workspaceRoot, candidate, pathApi)) {
+    return `不允许修改当前项目文件夹之外的路径：${candidate}`
+  }
+
+  return null
+}
+
+const assessWorkspaceWriteTargets = (targets, context) => {
+  for (const target of targets) {
+    const reason = assessWorkspaceWriteTarget(target, context)
+    if (reason) {
+      return reason
+    }
+  }
+  return null
 }
 
 const readLinuxMountPoints = (platform) => {
@@ -295,12 +480,59 @@ const assessGitCommand = (command) => {
 
 export const assessCodexToolUse = (input, options = {}) => {
   const toolName = typeof input?.tool_name === 'string' ? input.tool_name : ''
+  const destructiveCommandProtectionEnabled = resolveBooleanSetting(
+    options.destructiveCommandProtectionEnabled,
+    process.env.CHILL_VIBE_DESTRUCTIVE_COMMAND_PROTECTION_ENABLED,
+    true,
+  )
+  const outsideWorkspaceWriteEnabled = resolveBooleanSetting(
+    options.outsideWorkspaceWriteEnabled,
+    process.env.CHILL_VIBE_OUTSIDE_WORKSPACE_WRITE_ENABLED,
+    true,
+  )
+  const context = createAssessmentContext(input, options)
+
+  if (directWriteToolPattern.test(toolName)) {
+    if (outsideWorkspaceWriteEnabled) {
+      return { allowed: true }
+    }
+
+    const targets = extractDirectWriteTargets(toolName, input?.tool_input)
+    if (targets.length === 0) {
+      return {
+        allowed: false,
+        reason: `无法安全确定 ${toolName || '文件工具'} 的最终写入路径。`,
+      }
+    }
+
+    const reason = assessWorkspaceWriteTargets(targets, context)
+    return reason ? { allowed: false, reason } : { allowed: true }
+  }
+
   if (!shellToolPattern.test(toolName)) {
     return { allowed: true }
   }
 
   const command = normalizeCommand(input?.tool_input?.command)
   if (!command) {
+    return { allowed: true }
+  }
+
+  if (!outsideWorkspaceWriteEnabled) {
+    const writeTargets = extractShellWriteTargets(command)
+    if (writeTargets.length === 0 && shellWriteCommandPattern.test(command)) {
+      return {
+        allowed: false,
+        reason: '检测到文件写入命令，但无法安全确定最终目标是否位于当前项目内。',
+      }
+    }
+    const writeReason = assessWorkspaceWriteTargets(writeTargets, context)
+    if (writeReason) {
+      return { allowed: false, reason: writeReason }
+    }
+  }
+
+  if (!destructiveCommandProtectionEnabled) {
     return { allowed: true }
   }
 
@@ -359,18 +591,6 @@ export const assessCodexToolUse = (input, options = {}) => {
       allowed: false,
       reason: '检测到递归删除，但无法安全确定最终目标。请改用明确的工作区子目录。',
     }
-  }
-
-  const context = {
-    platform: options.platform ?? process.platform,
-    workspaceRoot:
-      options.workspaceRoot ??
-      process.env.CHILL_VIBE_PROTECTED_WORKSPACE ??
-      (typeof input.cwd === 'string' && input.cwd.trim() ? input.cwd : process.cwd()),
-    protectedHome: options.protectedHome ?? process.env.CHILL_VIBE_PROTECTED_HOME ?? '',
-    codexHome: options.codexHome ?? process.env.CHILL_VIBE_PROTECTED_CODEX_HOME ?? '',
-    appDataDir: options.appDataDir ?? process.env.CHILL_VIBE_PROTECTED_APP_DATA ?? '',
-    mountPoints: options.mountPoints ?? readLinuxMountPoints(options.platform ?? process.platform),
   }
 
   for (const target of targets) {

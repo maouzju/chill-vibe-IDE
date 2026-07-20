@@ -57,5 +57,5 @@
 - 本切片不实现完整虚拟机、容器或 OS 级沙箱。
 - 本切片不承诺静态识别任意二进制或任意外部脚本内部的全部文件操作。
 - 本切片不实现删除隔离回收站、全盘备份或 Windows Job Object 进程树治理；这些作为后续加强项。
-- 本切片不改变 `danger-full-access`、`workspace-write`、`approvalPolicy`、Claude `bypassPermissions` 的既有默认值或 UI。
+- 本切片自身不改变 `danger-full-access`、`workspace-write`、`approvalPolicy`、Claude `bypassPermissions` 的既有默认值。后续的 `agent-outside-workspace-write-access` SPEC 增加了默认开启的独立设置：用户关闭后，单次运行会收窄项目外写入，但仍不改变这些默认值的兼容基线。
 - 本切片不为 Claude 增加隔离主目录；Claude 仍依赖共享命令防护兜住高风险删除。

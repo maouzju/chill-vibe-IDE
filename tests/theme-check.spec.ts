@@ -4924,6 +4924,7 @@ for (const theme of ['dark', 'light'] as const) {
     state.settings.autoUrgeMessage = 'Keep reviewing until every risk is grounded in evidence.'
     state.settings.autoUrgeSuccessKeyword = 'APPROVED'
 
+    await page.setViewportSize({ width: 1280, height: 1200 })
     await mockAppApis(page, { state })
     await page.goto(appUrl)
 

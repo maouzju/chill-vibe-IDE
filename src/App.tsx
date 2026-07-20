@@ -5917,28 +5917,28 @@ function App() {
 
   const renderCodexSafetySettings = (idPrefix: string) => (
     <div className="codex-safety-settings">
-      <div className="settings-field">
-        <span>{text.codexManagementPolicyTitle}</span>
-        <div className="settings-actions">
-          <button
-            type="button"
-            className="control"
-            disabled={codexManagementPolicyPending}
-            onClick={() => void detectCodexManagementPolicy()}
-          >
-            {codexManagementPolicyPending
+      <div className="settings-toggle codex-management-policy-row">
+        <span>
+          <strong>{text.codexManagementPolicyTitle}</strong>
+          <small className="settings-note" data-testid="codex-management-policy-status">
+            {codexManagementPolicyPending && !codexManagementPolicy
               ? text.codexManagementPolicyDetecting
-              : text.codexManagementPolicyRefresh}
-          </button>
-        </div>
+              : codexManagementPolicy?.supported
+                ? text.codexManagementPolicyAllowed(codexManagementPolicy.allowedSandboxModes.join(' / '))
+                : text.codexManagementPolicyUnavailable(codexManagementPolicy?.message ?? 'Codex CLI')}
+          </small>
+        </span>
+        <button
+          type="button"
+          className="control"
+          disabled={codexManagementPolicyPending}
+          onClick={() => void detectCodexManagementPolicy()}
+        >
+          {codexManagementPolicyPending
+            ? text.codexManagementPolicyDetecting
+            : text.codexManagementPolicyRefresh}
+        </button>
       </div>
-      <p className="settings-note" data-testid="codex-management-policy-status">
-        {codexManagementPolicyPending && !codexManagementPolicy
-          ? text.codexManagementPolicyDetecting
-          : codexManagementPolicy?.supported
-            ? text.codexManagementPolicyAllowed(codexManagementPolicy.allowedSandboxModes.join('、'))
-            : text.codexManagementPolicyUnavailable(codexManagementPolicy?.message ?? 'Codex CLI')}
-      </p>
       <label className="settings-toggle" htmlFor={`${idPrefix}-agent-outside-workspace-write`}>
         <span>{text.agentOutsideWorkspaceWriteLabel}</span>
         <input

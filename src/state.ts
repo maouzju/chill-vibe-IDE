@@ -1651,8 +1651,15 @@ export const ideReducer = (state: AppState, action: IdeAction): AppState => {
 
         const activeCardId = pane.activeTabId || pane.tabs[0] || ''
         const activeCard = column.cards[activeCardId]
-        const activeChatProvider =
-          activeCard && !toolCardModels.has(activeCard.model) ? activeCard.provider : undefined
+        const recentChatCard = [
+          ...(pane.tabHistory ?? []).slice().reverse(),
+          ...pane.tabs.slice().reverse(),
+        ]
+          .map((tabId) => column.cards[tabId])
+          .find((card) => card && !toolCardModels.has(card.model))
+        const inheritedChatCard =
+          activeCard && !toolCardModels.has(activeCard.model) ? activeCard : recentChatCard
+        const activeChatProvider = inheritedChatCard?.provider
         const hasExplicitProvider = action.provider !== undefined
         const hasExplicitModel = action.model !== undefined
         const provider = toolCardModels.has(action.model ?? '')
@@ -1668,10 +1675,9 @@ export const ideReducer = (state: AppState, action: IdeAction): AppState => {
         const rememberedActiveModel =
           !hasExplicitProvider &&
           !hasExplicitModel &&
-          activeCard &&
-          !toolCardModels.has(activeCard.model) &&
-          activeCard.provider === provider
-            ? normalizeStoredModel(provider, activeCard.model) || undefined
+          inheritedChatCard &&
+          inheritedChatCard.provider === provider
+            ? normalizeStoredModel(provider, inheritedChatCard.model) || undefined
             : undefined
         const rememberedGlobalModel =
           !hasExplicitProvider && !hasExplicitModel && state.settings.lastModel?.provider === provider

@@ -93,6 +93,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   dismissRecentCrashRecovery: () =>
     ipcRenderer.invoke('desktop:dismiss-recent-crash-recovery'),
   fetchProviders: () => ipcRenderer.invoke('desktop:fetch-providers'),
+  fetchCodexManagementPolicy: () => ipcRenderer.invoke('desktop:fetch-codex-management-policy'),
   importCcSwitchRouting: (request: unknown) =>
     ipcRenderer.invoke('desktop:import-cc-switch-routing', request),
   fetchSetupStatus: () => ipcRenderer.invoke('desktop:fetch-setup-status'),

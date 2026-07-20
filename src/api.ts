@@ -354,6 +354,22 @@ export const openExternalLink = async (href: string) => {
 export const fetchProviders = async (): Promise<ProviderStatus[]> =>
   readDesktop(requireDesktopAction(getDesktopApi()?.fetchProviders), providerStatusSchema.array())
 
+const codexManagementPolicySchema = z.object({
+  supported: z.boolean(),
+  allowedSandboxModes: z.array(z.enum(['read-only', 'workspace-write', 'danger-full-access'])),
+  allowedApprovalPolicies: z.array(z.enum(['never', 'on-request'])),
+  effectiveSandboxMode: z.enum(['read-only', 'workspace-write', 'danger-full-access']),
+  message: z.string().optional(),
+})
+
+export type CodexManagementPolicy = z.infer<typeof codexManagementPolicySchema>
+
+export const fetchCodexManagementPolicy = async (): Promise<CodexManagementPolicy> =>
+  readDesktop(
+    requireDesktopAction(getDesktopApi()?.fetchCodexManagementPolicy),
+    codexManagementPolicySchema,
+  )
+
 export const importCcSwitchRouting = async (
   request: CcSwitchImportRequest,
 ): Promise<CcSwitchImportResponse> => {

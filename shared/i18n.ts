@@ -111,6 +111,11 @@ type LocaleText = {
   codexFastModeDialogConfirm: string
   agentOutsideWorkspaceWriteLabel: string
   agentOutsideWorkspaceWriteNote: string
+  codexManagementPolicyTitle: string
+  codexManagementPolicyDetecting: string
+  codexManagementPolicyRefresh: string
+  codexManagementPolicyAllowed: (modes: string) => string
+  codexManagementPolicyUnavailable: (message: string) => string
   codexDestructiveCommandProtectionLabel: string
   codexDestructiveCommandProtectionNote: string
   codexIsolatedHomeLabel: string
@@ -426,7 +431,12 @@ const localeTextByLanguage: Record<AppLanguage, LocaleText> = {
     codexFastModeDialogConfirm: '了解费用并开启',
     agentOutsideWorkspaceWriteLabel: '允许 Agent 修改项目文件夹外的文件',
     agentOutsideWorkspaceWriteNote:
-      '默认允许，和现有行为一致。开启只代表 Chill Vibe 允许请求该权限，Codex、Claude、组织或机器策略仍可继续收紧。关闭后只写当前项目：Codex 使用工作区沙箱；Claude 在支持的平台使用严格沙箱，原生 Windows 用 IDE 路径防护兜底（不是完整 OS 沙箱）。项目外 Skill、配置和附件仍可读取。',
+      '这是 Chill Vibe 的权限请求上限。Codex 会在运行前自动读取并服从本机或组织管理策略，直接选择允许的最宽权限，不修改或绕过系统策略。关闭后只写当前项目：Codex 使用工作区沙箱；Claude 在支持的平台使用严格沙箱，原生 Windows 用 IDE 路径防护兜底（不是完整 OS 沙箱）。项目外 Skill、配置和附件仍可读取。',
+    codexManagementPolicyTitle: 'Codex 管理策略',
+    codexManagementPolicyDetecting: '正在自动检测…',
+    codexManagementPolicyRefresh: '重新检测',
+    codexManagementPolicyAllowed: (modes: string) => `允许的沙箱：${modes}`,
+    codexManagementPolicyUnavailable: (message: string) => `暂时无法读取：${message}`,
     codexDestructiveCommandProtectionLabel: '阻止 Agent 高风险删除命令',
     codexDestructiveCommandProtectionNote:
       '默认同时保护 Codex 和 Claude CLI。执行前拦截主目录、工作区外路径、工作区根目录、Git 元数据、未解析变量和大范围不可恢复删除；递归清理需使用工作区内绝对路径。不改变 Full Access、审批或 Claude 权限模式。这不是完整 OS 沙箱，关闭后两个 CLI 都会恢复原有无额外 IDE 拦截的行为。',
@@ -768,7 +778,12 @@ const localeTextByLanguage: Record<AppLanguage, LocaleText> = {
     codexFastModeDialogConfirm: 'I understand the cost — enable',
     agentOutsideWorkspaceWriteLabel: 'Allow Agent writes outside the project folder',
     agentOutsideWorkspaceWriteNote:
-      'On by default to preserve current behavior. Enabling it only lets Chill Vibe request this access; Codex, Claude, organization, or machine policy may still narrow it. Turn it off to keep writes in the current project: Codex uses workspace-write; Claude uses strict sandboxing where supported and IDE path guards on native Windows (not a complete OS sandbox). Skills, configuration, and attachments remain readable.',
+      'This is Chill Vibe’s requested access ceiling. Before each run, Codex automatically reads and follows machine or organization policy, selecting the widest permitted access without modifying or bypassing system policy. Turn it off to keep writes in the current project: Codex uses workspace-write; Claude uses strict sandboxing where supported and IDE path guards on native Windows (not a complete OS sandbox). Skills, configuration, and attachments remain readable.',
+    codexManagementPolicyTitle: 'Codex managed policy',
+    codexManagementPolicyDetecting: 'Detecting automatically…',
+    codexManagementPolicyRefresh: 'Detect again',
+    codexManagementPolicyAllowed: (modes: string) => `Allowed sandboxes: ${modes}`,
+    codexManagementPolicyUnavailable: (message: string) => `Unable to read: ${message}`,
     codexDestructiveCommandProtectionLabel: 'Block high-risk Agent deletion commands',
     codexDestructiveCommandProtectionNote:
       'On by default for both Codex and Claude CLI. Blocks common shell/script forms of machine-scale or irreversible deletion involving home paths, targets outside the workspace, workspace roots, Git metadata, unresolved variables, and unsafe broad targets before execution. Recursive cleanup must use an absolute path inside the workspace. It does not change Full Access, approval, or Claude permission modes and is not a complete OS sandbox.',

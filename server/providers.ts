@@ -1422,6 +1422,14 @@ const getCodexSandboxMode = (request: ChatRequest): CodexSandboxMode =>
 
 type CodexApprovalPolicy = NonNullable<ChatRequest['approvalPolicy']>
 
+export type CodexManagementPolicy = {
+  supported: boolean
+  allowedSandboxModes: CodexSandboxMode[]
+  allowedApprovalPolicies: CodexApprovalPolicy[]
+  effectiveSandboxMode: CodexSandboxMode
+  message?: string
+}
+
 const getCodexApprovalPolicy = (request: ChatRequest): CodexApprovalPolicy =>
   request.approvalPolicy === 'on-request' ? 'on-request' : 'never'
 
@@ -1886,11 +1894,31 @@ const launchCodexAppServerRun = async (
     child.kill()
   }
 
-  const sendRequest = async (method: string, params?: Record<string, unknown>) => {
+  const sendRequest = async (
+    method: string,
+    params?: Record<string, unknown>,
+    timeoutMs?: number,
+  ) => {
     const id = nextRequestId()
 
     return await new Promise<unknown>((resolve, reject) => {
-      pendingRequests.set(id, { method, resolve, reject })
+      const timer = timeoutMs
+        ? setTimeout(() => {
+            pendingRequests.delete(id)
+            reject(new Error(`${method} timed out.`))
+          }, timeoutMs)
+        : null
+      pendingRequests.set(id, {
+        method,
+        resolve: (value) => {
+          if (timer) clearTimeout(timer)
+          resolve(value)
+        },
+        reject: (error) => {
+          if (timer) clearTimeout(timer)
+          reject(error)
+        },
+      })
 
       void writeCodexJsonRpcMessage(child.stdin!, {
         id,
@@ -1898,6 +1926,7 @@ const launchCodexAppServerRun = async (
         ...(params ? { params } : {}),
       }).catch((error) => {
         pendingRequests.delete(id)
+        if (timer) clearTimeout(timer)
         reject(error instanceof Error ? error : new Error(String(error)))
       })
     })
@@ -1948,6 +1977,35 @@ const launchCodexAppServerRun = async (
     }
     sink.onLog(formatCodexSandboxRequirementsFallbackNotice(language, nextSandboxMode))
     return true
+  }
+
+  const applyCodexManagedSandboxRequirements = async () => {
+    try {
+      const requirements = await sendRequest('configRequirements/read', undefined, 1_000)
+      const allowedModes = readCodexAllowedSandboxModes(
+        requirements,
+        getCodexApprovalPolicy(currentRequest),
+      )
+      if (allowedModes === null) {
+        return
+      }
+
+      const currentSandboxMode = getCodexSandboxMode(currentRequest)
+      const currentIndex = codexSandboxModesByAccess.indexOf(currentSandboxMode)
+      const effectiveMode = codexSandboxModesByAccess
+        .slice(currentIndex)
+        .find((candidate) => allowedModes.includes(candidate))
+
+      if (effectiveMode && effectiveMode !== currentSandboxMode) {
+        currentRequest = {
+          ...currentRequest,
+          sandboxMode: effectiveMode,
+        }
+      }
+    } catch {
+      // Older app-server builds may not expose configRequirements/read. Keep
+      // the existing conflict-driven compatibility fallback for those builds.
+    }
   }
 
   const startTurnWithCompatibilityFallback = async (threadId: string) => {
@@ -2295,6 +2353,7 @@ const launchCodexAppServerRun = async (
         capabilities: null,
       })
       await sendNotification('initialized')
+      await applyCodexManagedSandboxRequirements()
 
       if (safetyRuntime.hookCommand) {
         try {
@@ -3341,6 +3400,106 @@ const dedupeResolvedPaths = (paths: string[]) => {
 
     seen.add(key)
     return true
+  })
+}
+
+export const readCodexManagementPolicy = async (): Promise<CodexManagementPolicy> => {
+  const settings = providerRuntimeSettingsOverride ?? (await loadState()).settings
+  const requestedMode: CodexSandboxMode = settings.agentOutsideWorkspaceWriteEnabled
+    ? 'danger-full-access'
+    : 'workspace-write'
+  const fallback = (message?: string): CodexManagementPolicy => ({
+    supported: false,
+    allowedSandboxModes: [],
+    allowedApprovalPolicies: [],
+    effectiveSandboxMode: requestedMode,
+    ...(message ? { message } : {}),
+  })
+  const command = await resolveCommand('codex')
+  if (!command) {
+    return fallback('Codex CLI was not found.')
+  }
+
+  const runtime = await resolveProviderRuntime('codex')
+  const launch = await resolveProviderCommandLaunch({
+    command,
+    args: buildCodexAppServerArgs(runtime.args),
+  })
+
+  return await new Promise<CodexManagementPolicy>((resolve) => {
+    let settled = false
+    let child: ChildProcess
+    const finish = (result: CodexManagementPolicy) => {
+      if (settled) return
+      settled = true
+      clearTimeout(timer)
+      child?.kill()
+      resolve(result)
+    }
+    const timer = setTimeout(() => finish(fallback('Codex management policy detection timed out.')), 6_000)
+
+    try {
+      child = spawn(launch.command, launch.args, {
+        cwd: process.cwd(),
+        env: runtime.env,
+        stdio: ['pipe', 'pipe', 'ignore'],
+        windowsHide: true,
+      })
+    } catch (error) {
+      finish(fallback(error instanceof Error ? error.message : String(error)))
+      return
+    }
+
+    if (!child.stdin || !child.stdout) {
+      finish(fallback('Codex app-server did not expose stdio.'))
+      return
+    }
+
+    const lines = readline.createInterface({ input: child.stdout })
+    lines.on('line', (line) => {
+      let payload: unknown
+      try {
+        payload = JSON.parse(line)
+      } catch {
+        return
+      }
+      if (!isRecord(payload) || typeof payload.id !== 'string') return
+      if (payload.id === 'policy-initialize') {
+        void writeCodexJsonRpcMessage(child.stdin!, { method: 'initialized' })
+        void writeCodexJsonRpcMessage(child.stdin!, { id: 'policy-read', method: 'configRequirements/read' })
+        return
+      }
+      if (payload.id !== 'policy-read') return
+      const result = readRecord(payload, 'result')
+      const requirements = result ? readRecord(result, 'requirements') : null
+      const allowedSandboxModes = readCodexAllowedSandboxModes(result, 'never')
+      if (!requirements || allowedSandboxModes === null) {
+        finish(fallback('This Codex CLI does not expose managed requirements.'))
+        return
+      }
+      const allowedApprovalPolicies = Array.isArray(requirements.allowedApprovalPolicies)
+        ? requirements.allowedApprovalPolicies.filter(
+            (value): value is CodexApprovalPolicy => value === 'never' || value === 'on-request',
+          )
+        : (['never', 'on-request'] satisfies CodexApprovalPolicy[])
+      const requestedIndex = codexSandboxModesByAccess.indexOf(requestedMode)
+      const effectiveSandboxMode = codexSandboxModesByAccess
+        .slice(requestedIndex)
+        .find((mode) => allowedSandboxModes.includes(mode)) ?? requestedMode
+      finish({
+        supported: true,
+        allowedSandboxModes,
+        allowedApprovalPolicies,
+        effectiveSandboxMode,
+      })
+    })
+    child.on('error', (error) => finish(fallback(error.message)))
+    child.on('exit', () => finish(fallback('Codex app-server closed before returning policy.')))
+    void writeCodexJsonRpcMessage(child.stdin, {
+      id: 'policy-initialize',
+      method: 'initialize',
+      params: { clientInfo: { name: 'chill-vibe', title: 'Chill Vibe', version: '0.1.0' }, capabilities: null },
+    })
   })
 }
 

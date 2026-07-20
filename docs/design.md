@@ -139,7 +139,7 @@ type ChatCard = {
 说明：
 
 - `workspacePath` 决定 CLI 的工作目录
-- `workspacePath` 决定 cwd，但 Chill Vibe 的权限请求上限由“允许 Agent 修改项目文件夹外的文件”设置决定。该开关默认开启以兼容既有行为：普通 Codex 请求 `danger-full-access + approvalPolicy=never`，Claude 请求 `bypassPermissions`；Provider、组织或机器级策略仍可继续收紧，应用不会绕过或改写这些约束。关闭后，Codex 改用 `workspace-write`；Claude 的直接文件工具由共享 `PreToolUse` Hook 做真实路径边界校验，macOS/Linux/WSL2 的 Bash 再进入官方严格 sandbox，原生 Windows 使用 IDE Hook 兜底并明确不冒充完整 OS 沙箱。项目外的用户级 Skill、配置和附件仍可读取。
+- `workspacePath` 决定 cwd，但 Chill Vibe 的权限请求上限由“允许 Agent 修改项目文件夹外的文件”设置决定。该开关默认开启以兼容既有行为：普通 Codex 的上限为 `danger-full-access + approvalPolicy=never`，Claude 请求 `bypassPermissions`。Codex app-server 会在创建或恢复线程前读取 `configRequirements/read`，在该上限内直接选择本机或组织策略允许的最宽沙箱，避免先失败再反复提示；旧 CLI 才使用冲突后逐级收窄的兼容路径。应用不会绕过或改写 Provider、组织或机器级约束。关闭后，Codex 上限改为 `workspace-write`；Claude 的直接文件工具由共享 `PreToolUse` Hook 做真实路径边界校验，macOS/Linux/WSL2 的 Bash 再进入官方严格 sandbox，原生 Windows 使用 IDE Hook 兜底并明确不冒充完整 OS 沙箱。项目外的用户级 Skill、配置和附件仍可读取。
 - Codex Agent 主目录隔离默认开启：Windows 隔离 `USERPROFILE` / `HOMEDRIVE` / `HOMEPATH`，让 PowerShell 自动 `$HOME` 指向 Chill Vibe 数据目录下的 Agent home，同时保留既有 `HOME` 兼容 Git 全局配置；macOS/Linux 隔离 `HOME`。所有平台显式保留原始 `CODEX_HOME`，登录、原生会话和 Skill 不迁移。
 - `sessionId` 对应 provider 原生会话 ID
 - `sessionId` 只在当前 provider 路由配置下有效；切换、删除或修改活跃 provider profile 后，相关 provider 的旧会话 ID 必须失效，后续请求改用可见历史重新开始，避免把旧供应商的原生加密上下文续到新供应商

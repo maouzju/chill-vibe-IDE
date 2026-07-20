@@ -19,6 +19,7 @@ Claude Code v2.1.170（2026-06-09）发布了 Mythos 级模型 **Claude Fable 5*
 - `/model fable`、`/model fable-5` 解析到 `claude-fable-5`；裸 `sonnet` 别名改指 `claude-sonnet-5`（对齐官方别名语义）。
 - **Sonnet 4.6 条目保留**，仅保留精确别名（`sonnet-4.6`、`claude-sonnet-4-6`）：它仍是可用模型，显式选择不得被静默迁移（Pitfall #119）。
 - `DEFAULT_CLAUDE_MODEL` 维持 `claude-opus-4-8`（官方也不把 Fable 5 设为默认）。
+- 新建 Agent 聊天应继承当前 pane 最近使用的聊天模型；即使当前激活的是天气、Git 等工具 tab，也不能回退到列中残留的 Fable 5。
 
 ### R2 Fable 5 思考约束
 

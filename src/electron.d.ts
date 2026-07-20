@@ -97,6 +97,13 @@ declare global {
       captureRendererCrash?: (request: RendererCrashCaptureRequest) => Promise<RecentCrashRecovery | null>
       dismissRecentCrashRecovery?: () => Promise<void>
       fetchProviders?: () => Promise<ProviderStatus[]>
+      fetchCodexManagementPolicy?: () => Promise<{
+        supported: boolean
+        allowedSandboxModes: Array<'read-only' | 'workspace-write' | 'danger-full-access'>
+        allowedApprovalPolicies: Array<'never' | 'on-request'>
+        effectiveSandboxMode: 'read-only' | 'workspace-write' | 'danger-full-access'
+        message?: string
+      }>
       importCcSwitchRouting?: (request: CcSwitchImportRequest) => Promise<CcSwitchImportResponse>
       fetchSetupStatus?: () => Promise<SetupStatus>
       runEnvironmentSetup?: (request?: SetupRunRequestInput) => Promise<SetupStatus>

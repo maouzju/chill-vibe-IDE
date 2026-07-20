@@ -2841,6 +2841,9 @@ for (const theme of ['dark', 'light'] as const) {
         : 'Allow Agent writes outside the project folder',
     )
     await expect(safetySettings).toContainText(
+      theme === 'dark' ? 'Codex 管理策略' : 'Codex managed policy',
+    )
+    await expect(safetySettings).toContainText(
       theme === 'dark' ? '阻止 Agent 高风险删除命令' : 'Block high-risk Agent deletion commands',
     )
     await expect(safetySettings).toContainText(

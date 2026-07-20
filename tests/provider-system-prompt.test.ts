@@ -4317,7 +4317,7 @@ test('codex app-server confines normal chats to workspace-write when outside wri
   }
 })
 
-test('codex app-server narrows the sandbox without changing user config when requirements deny full access', async () => {
+test('codex app-server applies managed sandbox requirements before starting the thread', async () => {
   const capturePath = path.join(
     os.tmpdir(),
     `chill-vibe-codex-managed-sandbox-${Date.now()}-${Math.random().toString(36).slice(2)}.jsonl`,
@@ -4338,8 +4338,8 @@ test('codex app-server narrows the sandbox without changing user config when req
         ),
     )
 
-    assert.deepEqual(events.map((event) => event.kind), ['log', 'done'])
-    assert.match(events[0]?.kind === 'log' ? events[0].message : '', /workspace-write/i)
+    assert.deepEqual(events.map((event) => event.kind), ['done'])
+    assert.equal(events.some((event) => event.kind === 'log' && /workspace-write/i.test(event.message)), false)
 
     const requests = (await readFile(capturePath, 'utf8'))
       .trim()
@@ -4348,15 +4348,12 @@ test('codex app-server narrows the sandbox without changing user config when req
     const threadStarts = requests.filter((request) => request.method === 'thread/start')
     const turnStart = requests.find((request) => request.method === 'turn/start')
 
-    assert.deepEqual(threadStarts.map((request) => request.params?.sandbox), [
-      'danger-full-access',
-      'workspace-write',
-    ])
-    assert.equal(threadStarts[1]?.params?.approvalPolicy, 'never')
+    assert.deepEqual(threadStarts.map((request) => request.params?.sandbox), ['workspace-write'])
+    assert.equal(threadStarts[0]?.params?.approvalPolicy, 'never')
     assert.deepEqual(turnStart?.params?.sandboxPolicy, {
       type: 'workspaceWrite',
       networkAccess: false,
-      writableRoots: [threadStarts[1]?.params?.cwd],
+      writableRoots: [threadStarts[0]?.params?.cwd],
     })
     assert.equal(requests.some((request) => request.method === 'config/batchWrite'), false)
   } finally {

@@ -547,6 +547,9 @@ function registerDesktopHandlers() {
     desktopBackend.dismissRecentCrashRecovery(),
   )
   ipcMain.handle('desktop:fetch-providers', () => desktopBackend.fetchProviders())
+  ipcMain.handle('desktop:fetch-codex-management-policy', () =>
+    desktopBackend.fetchCodexManagementPolicy(),
+  )
   ipcMain.handle('desktop:import-cc-switch-routing', (_event, request) =>
     desktopBackend.importCcSwitchRouting(request),
   )

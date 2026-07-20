@@ -121,6 +121,7 @@ import {
   flashWindowOnce,
   fetchOnboardingStatus,
   fetchProviders,
+  fetchCodexManagementPolicy,
   fetchProxyStats,
   recordProxyStatsEvent,
   fetchSetupStatus,
@@ -157,6 +158,7 @@ import {
   resolveStateRecoveryOption,
   searchCities,
   type CitySuggestion,
+  type CodexManagementPolicy,
   fetchRemoteMonitorStatus,
   isRemoteMonitorSupported,
   startRemoteMonitor,
@@ -523,6 +525,8 @@ function App() {
   const [routingSubTab, setRoutingSubTab] = useState<'providers' | 'proxy'>('providers')
   const [visibleApiKeys, setVisibleApiKeys] = useState<Set<string>>(() => new Set())
   const [settingsNotice, setSettingsNotice] = useState<string | null>(null)
+  const [codexManagementPolicy, setCodexManagementPolicy] = useState<CodexManagementPolicy | null>(null)
+  const [codexManagementPolicyPending, setCodexManagementPolicyPending] = useState(false)
   const [resolvedTheme, setResolvedTheme] = useState(() => getResolvedAppTheme('dark'))
   const [modelPromptRulesDialogOpen, setModelPromptRulesDialogOpen] = useState(false)
   const [modelPromptRulesDraft, setModelPromptRulesDraft] = useState<ModelPromptRule[]>([])
@@ -4094,6 +4098,31 @@ function App() {
     void loadOnboarding().catch(() => undefined)
   }, [loadOnboarding, settingsOpen])
 
+  const detectCodexManagementPolicy = useCallback(async () => {
+    setCodexManagementPolicyPending(true)
+    try {
+      setCodexManagementPolicy(await fetchCodexManagementPolicy())
+    } catch (error) {
+      setCodexManagementPolicy({
+        supported: false,
+        allowedSandboxModes: [],
+        allowedApprovalPolicies: [],
+        effectiveSandboxMode: appStateRef.current.settings.agentOutsideWorkspaceWriteEnabled
+          ? 'danger-full-access'
+          : 'workspace-write',
+        message: error instanceof Error ? error.message : String(error),
+      })
+    } finally {
+      setCodexManagementPolicyPending(false)
+    }
+  }, [])
+
+  useEffect(() => {
+    if (settingsOpen) {
+      void detectCodexManagementPolicy()
+    }
+  }, [detectCodexManagementPolicy, settingsOpen])
+
   useEffect(() => {
     if (setupStatus?.state === 'success') {
       void syncProviderStatuses()
@@ -5888,6 +5917,28 @@ function App() {
 
   const renderCodexSafetySettings = (idPrefix: string) => (
     <div className="codex-safety-settings">
+      <div className="settings-field">
+        <span>{text.codexManagementPolicyTitle}</span>
+        <div className="settings-actions">
+          <button
+            type="button"
+            className="control"
+            disabled={codexManagementPolicyPending}
+            onClick={() => void detectCodexManagementPolicy()}
+          >
+            {codexManagementPolicyPending
+              ? text.codexManagementPolicyDetecting
+              : text.codexManagementPolicyRefresh}
+          </button>
+        </div>
+      </div>
+      <p className="settings-note" data-testid="codex-management-policy-status">
+        {codexManagementPolicyPending && !codexManagementPolicy
+          ? text.codexManagementPolicyDetecting
+          : codexManagementPolicy?.supported
+            ? text.codexManagementPolicyAllowed(codexManagementPolicy.allowedSandboxModes.join('、'))
+            : text.codexManagementPolicyUnavailable(codexManagementPolicy?.message ?? 'Codex CLI')}
+      </p>
       <label className="settings-toggle" htmlFor={`${idPrefix}-agent-outside-workspace-write`}>
         <span>{text.agentOutsideWorkspaceWriteLabel}</span>
         <input

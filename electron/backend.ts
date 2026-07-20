@@ -41,6 +41,7 @@ import {
 import { inspectOnboardingStatus } from '../server/onboarding-status.ts'
 import {
   getProviderSlashCommands,
+  readCodexManagementPolicy,
   recordProviderProxyStatsEvent,
   getProviderStatuses,
   setProviderRuntimeSettingsOverride,
@@ -295,6 +296,9 @@ export const createDesktopBackend = (deps: DesktopBackendDependencies = {}) => {
     },
     async fetchProviders() {
       return getProviderStatuses()
+    },
+    async fetchCodexManagementPolicy() {
+      return readCodexManagementPolicy()
     },
     async importCcSwitchRouting(request: CcSwitchImportRequest) {
       return importCcSwitchProfiles(ccSwitchImportRequestSchema.parse(request))

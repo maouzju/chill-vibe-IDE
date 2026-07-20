@@ -728,6 +728,48 @@ describe('ideReducer pane layout', () => {
     assert.equal(newCard?.model, DEFAULT_CODEX_MODEL)
   })
 
+  it('inherits the most recent pane chat model when a tool tab is active', () => {
+    const state = createState()
+    state.columns[1] = {
+      ...state.columns[1]!,
+      provider: 'claude',
+      model: 'claude-fable-5',
+      cards: {
+        'card-sol': createCard({
+          id: 'card-sol',
+          title: 'Sol Chat',
+          provider: 'codex',
+          model: DEFAULT_CODEX_MODEL,
+          messages: [],
+        }),
+        'card-tool': createCard({
+          id: 'card-tool',
+          title: 'Weather',
+          provider: 'codex',
+          model: WEATHER_TOOL_MODEL,
+          messages: [],
+        }),
+      },
+      layout: {
+        ...createPane('pane-2', ['card-sol', 'card-tool'], 'card-tool'),
+        tabHistory: ['card-sol', 'card-tool'],
+      },
+    }
+    state.settings.lastModel = { provider: 'claude', model: 'claude-fable-5' }
+
+    const next = ideReducer(state, {
+      type: 'addTab',
+      columnId: 'column-2',
+      paneId: 'pane-2',
+    })
+
+    const pane = next.columns[1]?.layout as PaneNode
+    const newCard = next.columns[1]?.cards[pane.activeTabId]
+
+    assert.equal(newCard?.provider, 'codex')
+    assert.equal(newCard?.model, DEFAULT_CODEX_MODEL)
+  })
+
   it('uses the updated provider default for future chats after settings change', () => {
     const state = createState()
     state.columns[1] = {

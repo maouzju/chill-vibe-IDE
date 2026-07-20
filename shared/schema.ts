@@ -560,6 +560,7 @@ export const appSettingsSchema = z.object({
   modelPromptRules: z.array(modelPromptRuleSchema).default([]),
   codexPersonality: codexPersonalitySettingSchema.default('default'),
   codexFastMode: z.boolean().default(false),
+  agentOutsideWorkspaceWriteEnabled: z.boolean().default(true),
   codexDestructiveCommandProtectionEnabled: z.boolean().default(true),
   codexIsolatedHomeEnabled: z.boolean().default(true),
   requestModels: requestModelSettingsSchema.default({
@@ -654,6 +655,7 @@ export const appStateSchema = z.object({
     modelPromptRules: [],
     codexPersonality: 'default',
     codexFastMode: false,
+    agentOutsideWorkspaceWriteEnabled: true,
     codexDestructiveCommandProtectionEnabled: true,
     codexIsolatedHomeEnabled: true,
     requestModels: {
@@ -859,6 +861,7 @@ export const chatRequestSchema = z.object({
   sandboxMode: codexSandboxModeSchema.optional(),
   approvalPolicy: codexApprovalPolicySchema.optional(),
   networkAccessEnabled: z.boolean().optional(),
+  agentOutsideWorkspaceWriteEnabled: z.boolean().default(true),
   codexDestructiveCommandProtectionEnabled: z.boolean().default(true),
   codexIsolatedHomeEnabled: z.boolean().default(true),
   personality: codexPersonalitySchema.optional(),
@@ -875,11 +878,15 @@ export const chatRequestSchema = z.object({
 type ParsedChatRequest = z.infer<typeof chatRequestSchema>
 export type ChatRequest = Omit<
   ParsedChatRequest,
-  'codexDestructiveCommandProtectionEnabled' | 'codexIsolatedHomeEnabled'
+  | 'agentOutsideWorkspaceWriteEnabled'
+  | 'codexDestructiveCommandProtectionEnabled'
+  | 'codexIsolatedHomeEnabled'
 > & Partial<
   Pick<
     ParsedChatRequest,
-    'codexDestructiveCommandProtectionEnabled' | 'codexIsolatedHomeEnabled'
+    | 'agentOutsideWorkspaceWriteEnabled'
+    | 'codexDestructiveCommandProtectionEnabled'
+    | 'codexIsolatedHomeEnabled'
   >
 >
 

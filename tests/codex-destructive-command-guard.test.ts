@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { mkdir, rm, symlink } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import test from 'node:test'
@@ -24,6 +25,25 @@ const assess = (command: string): CodexSafetyAssessment =>
     protectedHome: home,
     codexHome,
     appDataDir: appData,
+  })
+
+const assessWorkspaceBoundary = (
+  toolName: string,
+  toolInput: Record<string, unknown>,
+  workspaceRoot = workspace,
+): CodexSafetyAssessment =>
+  assessCodexToolUse({
+    cwd: workspaceRoot,
+    tool_name: toolName,
+    tool_input: toolInput,
+  }, {
+    platform: process.platform,
+    workspaceRoot,
+    protectedHome: home,
+    codexHome,
+    appDataDir: appData,
+    destructiveCommandProtectionEnabled: false,
+    outsideWorkspaceWriteEnabled: false,
   })
 
 test('blocks the PowerShell $home collision followed by recursive deletion', () => {
@@ -158,4 +178,88 @@ test('blocks recursive cleanup that would traverse a mounted descendant', () => 
 test('allows non-destructive shell commands', () => {
   assert.deepEqual(assess('pnpm test:quality'), { allowed: true })
   assert.deepEqual(assess("rg --fixed-strings 'Remove-Item' server"), { allowed: true })
+})
+
+test('allows direct file writes inside the workspace and blocks outside or parent traversal targets', () => {
+  assert.deepEqual(
+    assessWorkspaceBoundary('Write', { file_path: path.join(workspace, 'src', 'inside.ts') }),
+    { allowed: true },
+  )
+
+  for (const filePath of [
+    path.join(path.dirname(workspace), 'outside.ts'),
+    path.join('..', 'outside.ts'),
+  ]) {
+    const result = assessWorkspaceBoundary('Edit', { file_path: filePath })
+    assert.equal(result.allowed, false, filePath)
+    assert.match(result.reason ?? '', /工作区|项目/i)
+  }
+})
+
+test('blocks common shell writes outside the workspace while allowing the same forms inside', () => {
+  const inside = path.join(workspace, 'generated', 'result.txt')
+  const outside = path.join(path.dirname(workspace), 'result.txt')
+
+  assert.deepEqual(
+    assessWorkspaceBoundary('Bash', { command: `Set-Content -LiteralPath '${inside}' -Value ok` }),
+    { allowed: true },
+  )
+
+  for (const command of [
+    `Set-Content -LiteralPath '${outside}' -Value no`,
+    `Copy-Item '${inside}' -Destination '${outside}'`,
+    `echo no > '${outside}'`,
+  ]) {
+    assert.equal(assessWorkspaceBoundary('Bash', { command }).allowed, false, command)
+  }
+})
+
+test('resolves existing symlink or junction ancestors before allowing a direct write', async () => {
+  const tempRoot = path.join(
+    os.tmpdir(),
+    `chill-vibe-workspace-write-boundary-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+  )
+  const workspaceRoot = path.join(tempRoot, 'workspace')
+  const outsideRoot = path.join(tempRoot, 'outside')
+  const linkedRoot = path.join(workspaceRoot, 'linked-outside')
+
+  await mkdir(workspaceRoot, { recursive: true })
+  await mkdir(outsideRoot, { recursive: true })
+
+  try {
+    await symlink(outsideRoot, linkedRoot, process.platform === 'win32' ? 'junction' : 'dir')
+    const result = assessWorkspaceBoundary(
+      'Write',
+      { file_path: path.join(linkedRoot, 'escaped.txt') },
+      workspaceRoot,
+    )
+
+    assert.equal(result.allowed, false)
+  } finally {
+    await rm(tempRoot, { recursive: true, force: true }).catch(() => {})
+  }
+})
+
+test('keeps destructive-command protection independent from the workspace write boundary', () => {
+  const outside = path.join(path.dirname(workspace), 'outside-cleanup')
+  const command = `Remove-Item -LiteralPath '${outside}' -Recurse -Force`
+
+  assert.deepEqual(
+    assessCodexToolUse({
+      cwd: workspace,
+      tool_name: 'Bash',
+      tool_input: { command },
+    }, {
+      platform: process.platform,
+      workspaceRoot: workspace,
+      protectedHome: home,
+      codexHome,
+      appDataDir: appData,
+      destructiveCommandProtectionEnabled: false,
+      outsideWorkspaceWriteEnabled: true,
+    }),
+    { allowed: true },
+  )
+
+  assert.equal(assessWorkspaceBoundary('Bash', { command }).allowed, false)
 })

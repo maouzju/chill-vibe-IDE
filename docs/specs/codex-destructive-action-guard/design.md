@@ -4,6 +4,7 @@
 
 在 `AppSettings` 增加：
 
+- `agentOutsideWorkspaceWriteEnabled: boolean`，默认 `true`（由后续项目外写入 SPEC 增加）；
 - `codexDestructiveCommandProtectionEnabled: boolean`，默认 `true`；
 - `codexIsolatedHomeEnabled: boolean`，默认 `true`。
 
@@ -13,10 +14,11 @@
 
 ## 2. 设置 UI
 
-使用独立的“Agent 安全防护”设置卡放置两个普通 `settings-toggle`，并排在设置卡列表前部，避免用户必须在很长的“模型”卡中向下查找：
+使用独立的“Agent 安全防护”设置卡放置三个普通 `settings-toggle`，并排在设置卡列表前部，避免用户必须在很长的“模型”卡中向下查找：
 
-1. 阻止 Agent 高风险删除命令（Codex + Claude CLI）；
-2. 使用隔离的 Codex Agent 主目录。
+1. 允许 Agent 修改项目文件夹外的文件；
+2. 阻止 Agent 高风险删除命令（Codex + Claude CLI）；
+3. 使用隔离的 Codex Agent 主目录。
 
 每个开关紧跟一段 `settings-note`，不用警告色常驻轰炸用户；防护是默认、安全、安静的基础能力。设置页的弹出式与完整面板两处复用同一个渲染 helper，避免文案或行为漂移。
 
@@ -31,7 +33,7 @@
    Hook 命令、launcher 路径和内容在所有卡片间保持一致，使 Codex 的 positional session-flags trust key 始终对应同一 hash。真实 home、工作区、`CODEX_HOME` 和数据目录通过每个 Codex app-server 子进程自己的 `CHILL_VIBE_*` 环境传入，避免并行卡片互相覆盖；
 5. 向 Codex CLI 追加 session-flags Hook 配置，只增加 Chill Vibe 自己的 `PreToolUse` command hook，不使用 `--dangerously-bypass-hook-trust`。
 
-Hook matcher 覆盖 shell、`apply_patch` / `Edit` / `Write`。当前主要硬防护集中在 shell command；patch 输入保留扩展入口。
+Codex Hook matcher 覆盖 shell、`apply_patch` / `Edit` / `Write` / `NotebookEdit`。高风险删除硬防护集中在 shell command；项目外写入关闭时，直接文件工具和常见 shell 写入目标也会做真实路径边界校验。
 
 ## 4. Hook 信任握手
 
@@ -66,7 +68,7 @@ app-server `initialize` 后、线程启动前：
 Claude 复用 Codex 已有的 launcher、防护脚本和 `CHILL_VIBE_PROTECTED_*` 进程环境，不复制第二套规则：
 
 1. Claude 运行前只准备命令防护环境，不启用 Codex 隔离 home；
-2. `buildClaudeArgs()` 在已有的 session-level `--settings` JSON 中追加 `hooks.PreToolUse`，matcher 为 `Bash`；
+2. `buildClaudeArgs()` 在已有的 session-level `--settings` JSON 中追加 `hooks.PreToolUse`，matcher 为 `Bash|Edit|Write|NotebookEdit`；
 3. Windows 通过 PowerShell exec-form 执行稳定 launcher，其他平台通过 `/bin/sh` exec-form 执行；Hook 超时 5 秒，退出码 `2` 作为 Claude 官方阻断语义；
 4. 不写入 `~/.claude/settings.json` 或项目设置，因此不污染用户配置；Claude 会合并不同设置来源的 Hook，用户已有 Hook 继续生效；
 5. keepalive signature 纳入命令防护开关与 Hook 命令，切换设置后旧进程会被回收并按新配置重建；

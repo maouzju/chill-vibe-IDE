@@ -38,6 +38,7 @@ const createRequest = (overrides: Partial<ChatRequest> = {}): ChatRequest => ({
   sandboxMode: overrides.sandboxMode,
   approvalPolicy: overrides.approvalPolicy,
   networkAccessEnabled: overrides.networkAccessEnabled,
+  agentOutsideWorkspaceWriteEnabled: overrides.agentOutsideWorkspaceWriteEnabled,
   codexDestructiveCommandProtectionEnabled: overrides.codexDestructiveCommandProtectionEnabled,
   codexIsolatedHomeEnabled: overrides.codexIsolatedHomeEnabled,
   personality: (overrides as Partial<ChatRequest> & { personality?: 'none' | 'friendly' | 'pragmatic' }).personality,
@@ -345,7 +346,7 @@ test('claude runs pin the permission default mode so spawned subagents inherit i
   assert.equal(parsedSettings.skipDangerousModePermissionPrompt, true)
 })
 
-test('Claude safety hook is injected into session settings and keepalive identity', () => {
+test('Claude safety hook covers direct file writes and is injected into keepalive identity', () => {
   const hookCommand = process.platform === 'win32'
     ? "& 'D:\\safe path\\pre-tool-use-guard.cmd'"
     : "'/tmp/safe path/pre-tool-use-guard.sh'"
@@ -353,6 +354,7 @@ test('Claude safety hook is injected into session settings and keepalive identit
     provider: 'claude',
     model: 'claude-sonnet-4-6',
     language: 'en',
+    agentOutsideWorkspaceWriteEnabled: false,
     codexDestructiveCommandProtectionEnabled: true,
   })
   const args = buildClaudeArgs(request, [], { safetyHookCommand: hookCommand })
@@ -369,7 +371,7 @@ test('Claude safety hook is injected into session settings and keepalive identit
   }
   const hookGroup = settings.hooks?.PreToolUse?.[0]
   const hook = hookGroup?.hooks?.[0]
-  assert.equal(hookGroup?.matcher, 'Bash')
+  assert.equal(hookGroup?.matcher, 'Bash|Edit|Write|NotebookEdit')
   assert.equal(hook?.type, 'command')
   assert.equal(hook?.command, process.platform === 'win32' ? 'powershell.exe' : '/bin/sh')
   assert.deepEqual(
@@ -386,7 +388,11 @@ test('Claude safety hook is injected into session settings and keepalive identit
     hookCommand,
   )
   const disabledSignature = buildClaudeKeepaliveSignature(
-    { ...request, codexDestructiveCommandProtectionEnabled: false },
+    {
+      ...request,
+      agentOutsideWorkspaceWriteEnabled: true,
+      codexDestructiveCommandProtectionEnabled: false,
+    },
     true,
     { args: [], env: {} },
     [],
@@ -394,7 +400,11 @@ test('Claude safety hook is injected into session settings and keepalive identit
   assert.notEqual(enabledSignature, disabledSignature)
 
   const disabledArgs = buildClaudeArgs(
-    { ...request, codexDestructiveCommandProtectionEnabled: false },
+    {
+      ...request,
+      agentOutsideWorkspaceWriteEnabled: true,
+      codexDestructiveCommandProtectionEnabled: false,
+    },
     [],
     { safetyHookCommand: hookCommand },
   )
@@ -404,7 +414,69 @@ test('Claude safety hook is injected into session settings and keepalive identit
   assert.equal(disabledSettings.hooks, undefined)
 })
 
-test('Claude launch applies and removes the shared destructive-command guard with the setting', async () => {
+test('Claude restricts outside-workspace writes with strict sandbox settings on supported platforms', () => {
+  const workspacePath = path.join(os.tmpdir(), 'chill-vibe-claude-workspace')
+  const homeDir = path.join(os.tmpdir(), 'chill-vibe-claude-home')
+  const attachmentPath = path.join(os.tmpdir(), 'chill-vibe-attachment', 'input.png')
+  const args = buildClaudeArgs(
+    createRequest({
+      provider: 'claude',
+      workspacePath,
+      agentOutsideWorkspaceWriteEnabled: false,
+    }),
+    [attachmentPath],
+    {
+      platform: 'linux',
+      homeDir,
+      env: { HOME: homeDir },
+      safetyHookCommand: "'/tmp/chill-vibe-agent-safety.sh'",
+    },
+  )
+  const settings = JSON.parse(args[args.indexOf('--settings') + 1] ?? '{}') as {
+    sandbox?: {
+      enabled?: boolean
+      failIfUnavailable?: boolean
+      allowUnsandboxedCommands?: boolean
+      autoAllowBashIfSandboxed?: boolean
+      network?: { allowedDomains?: string[] }
+      filesystem?: { denyWrite?: string[] }
+    }
+  }
+  const outsideReadDirectories = [
+    path.resolve(homeDir, '.claude'),
+    path.resolve(homeDir, '.codex'),
+    path.resolve(path.dirname(attachmentPath)),
+  ]
+
+  assert.deepEqual(settings.sandbox, {
+    enabled: true,
+    failIfUnavailable: true,
+    allowUnsandboxedCommands: false,
+    autoAllowBashIfSandboxed: true,
+    network: { allowedDomains: ['*'] },
+    filesystem: { denyWrite: outsideReadDirectories },
+  })
+})
+
+test('Claude does not inject its unsupported Bash sandbox on native Windows', () => {
+  const request = createRequest({
+    provider: 'claude',
+    agentOutsideWorkspaceWriteEnabled: false,
+  })
+  const args = buildClaudeArgs(request, [], {
+    platform: 'win32',
+    safetyHookCommand: "& 'D:\\safe path\\pre-tool-use-guard.cmd'",
+  })
+  const settings = JSON.parse(args[args.indexOf('--settings') + 1] ?? '{}') as {
+    sandbox?: unknown
+    hooks?: { PreToolUse?: Array<{ matcher?: string }> }
+  }
+
+  assert.equal(settings.sandbox, undefined)
+  assert.equal(settings.hooks?.PreToolUse?.[0]?.matcher, 'Bash|Edit|Write|NotebookEdit')
+})
+
+test('Claude launch applies and removes the shared Agent safety hook with the settings', async () => {
   const capturePath = path.join(
     os.tmpdir(),
     `chill-vibe-claude-safety-launch-${Date.now()}-${Math.random().toString(36).slice(2)}.jsonl`,
@@ -435,9 +507,23 @@ test('Claude launch applies and removes the shared destructive-command guard wit
           }),
         ),
     )
+    const workspaceBoundaryOutcome = await withFakeProviderCommand(
+      'claude',
+      buildFakeClaudeSafetyCaptureScript(capturePath),
+      async (workspacePath) =>
+        captureProviderOutcome(
+          createRequest({
+            provider: 'claude',
+            workspacePath,
+            agentOutsideWorkspaceWriteEnabled: false,
+            codexDestructiveCommandProtectionEnabled: false,
+          }),
+        ),
+    )
 
     assert.deepEqual(enabledOutcome, { kind: 'done' })
     assert.deepEqual(disabledOutcome, { kind: 'done' })
+    assert.deepEqual(workspaceBoundaryOutcome, { kind: 'done' })
 
     const launches = (await readFile(capturePath, 'utf8'))
       .trim()
@@ -446,7 +532,7 @@ test('Claude launch applies and removes the shared destructive-command guard wit
         argv?: string[]
         env?: Record<string, string | undefined>
       })
-    assert.equal(launches.length, 2)
+    assert.equal(launches.length, 3)
 
     const enabledSettingsIndex = launches[0]?.argv?.indexOf('--settings') ?? -1
     const enabledSettings = JSON.parse(
@@ -465,6 +551,14 @@ test('Claude launch applies and removes the shared destructive-command guard wit
     assert.equal(launches[1]?.env?.hookCommand, undefined)
     assert.equal(launches[1]?.env?.protectedWorkspace, undefined)
     assert.equal(launches[1]?.env?.guardScript, undefined)
+
+    const boundarySettingsIndex = launches[2]?.argv?.indexOf('--settings') ?? -1
+    const boundarySettings = JSON.parse(
+      launches[2]?.argv?.[boundarySettingsIndex + 1] ?? '{}',
+    ) as { hooks?: { PreToolUse?: unknown[] } }
+    assert.equal(boundarySettings.hooks?.PreToolUse?.length, 1)
+    assert.equal(launches[2]?.env?.destructiveProtection, '0')
+    assert.equal(launches[2]?.env?.outsideWorkspaceWrite, '0')
   } finally {
     await rm(capturePath, { force: true }).catch(() => {})
   }
@@ -1195,6 +1289,19 @@ test('codex exec args default to danger-full-access sandbox for normal chats', (
   assert.match(args.join(' '), /--ask-for-approval never --sandbox danger-full-access/)
 })
 
+test('codex exec args use workspace-write when outside-workspace writes are disabled', () => {
+  const args = buildCodexArgs(
+    createRequest({
+      provider: 'codex',
+      language: 'en',
+      agentOutsideWorkspaceWriteEnabled: false,
+    }),
+    [],
+  )
+
+  assert.match(args.join(' '), /--ask-for-approval never --sandbox workspace-write/)
+})
+
 test('normalizes Windows unsigned exit codes back to signed values', () => {
   assert.equal(normalizeProviderExitCode(4294967295), -1)
   assert.equal(normalizeProviderExitCode(1), 1)
@@ -1656,7 +1763,7 @@ const buildFakeCodexSafetyHandshakeScript = (capturePath: string, persistTrust =
     "  appendMessage(request)",
     "  if (request.method === 'initialize' && request.id) { reply({ id: request.id, result: {} }); return }",
     "  if (request.method === 'hooks/list' && request.id) {",
-    "    reply({ id: request.id, result: { data: [{ cwd: request.params.cwds[0], hooks: [{ key: '<session-flags>/config.toml:pre_tool_use:0:0', eventName: 'pre_tool_use', handlerType: 'command', isManaged: false, matcher: 'Bash|apply_patch|Edit|Write', command: process.env.CHILL_VIBE_CODEX_SAFETY_HOOK_COMMAND, timeoutSec: 5, statusMessage: 'Chill Vibe safety check', sourcePath: '<session-flags>/config.toml', source: 'sessionFlags', pluginId: null, displayOrder: 0, enabled: true, currentHash: 'sha256:chill-vibe-safety', trustStatus: trusted ? 'trusted' : 'untrusted' }], warnings: [], errors: [] }] } })",
+    "    reply({ id: request.id, result: { data: [{ cwd: request.params.cwds[0], hooks: [{ key: '<session-flags>/config.toml:pre_tool_use:0:0', eventName: 'pre_tool_use', handlerType: 'command', isManaged: false, matcher: 'Bash|apply_patch|Edit|Write|NotebookEdit', command: process.env.CHILL_VIBE_CODEX_SAFETY_HOOK_COMMAND, timeoutSec: 5, statusMessage: 'Chill Vibe safety check', sourcePath: '<session-flags>/config.toml', source: 'sessionFlags', pluginId: null, displayOrder: 0, enabled: true, currentHash: 'sha256:chill-vibe-safety', trustStatus: trusted ? 'trusted' : 'untrusted' }], warnings: [], errors: [] }] } })",
     "    return",
     "  }",
     `  if (request.method === 'config/batchWrite' && request.id) { trusted = ${persistTrust ? 'true' : 'false'}; reply({ id: request.id, result: { status: 'ok' } }); return }`,
@@ -2111,7 +2218,7 @@ const buildFakeClaudeSafetyCaptureScript = (capturePath: string) =>
   [
     "const fs = require('node:fs')",
     `const capturePath = ${JSON.stringify(capturePath)}`,
-    "fs.appendFileSync(capturePath, `${JSON.stringify({ argv: process.argv.slice(2), env: { hookCommand: process.env.CHILL_VIBE_CODEX_SAFETY_HOOK_COMMAND, protectedWorkspace: process.env.CHILL_VIBE_PROTECTED_WORKSPACE, guardScript: process.env.CHILL_VIBE_CODEX_GUARD_SCRIPT } })}\\n`, 'utf8')",
+    "fs.appendFileSync(capturePath, `${JSON.stringify({ argv: process.argv.slice(2), env: { hookCommand: process.env.CHILL_VIBE_CODEX_SAFETY_HOOK_COMMAND, protectedWorkspace: process.env.CHILL_VIBE_PROTECTED_WORKSPACE, guardScript: process.env.CHILL_VIBE_CODEX_GUARD_SCRIPT, destructiveProtection: process.env.CHILL_VIBE_DESTRUCTIVE_COMMAND_PROTECTION_ENABLED, outsideWorkspaceWrite: process.env.CHILL_VIBE_OUTSIDE_WORKSPACE_WRITE_ENABLED } })}\\n`, 'utf8')",
     "const reply = (message) => process.stdout.write(`${JSON.stringify(message)}\\n`)",
     "reply({ type: 'system', subtype: 'init', session_id: 'claude-session-safety-capture' })",
     "reply({ type: 'assistant', message: { content: [{ type: 'text', text: 'Safety capture complete' }] } })",
@@ -4166,6 +4273,50 @@ test('codex app-server defaults to danger-full-access sandbox for normal chats',
   }
 })
 
+test('codex app-server confines normal chats to workspace-write when outside writes are disabled', async () => {
+  const capturePath = path.join(
+    os.tmpdir(),
+    `chill-vibe-codex-app-server-workspace-boundary-${Date.now()}-${Math.random().toString(36).slice(2)}.jsonl`,
+  )
+
+  try {
+    const outcome = await withFakeProviderCommand(
+      'codex',
+      buildFakeCodexSafetyHandshakeScript(capturePath),
+      async (workspacePath) =>
+        captureProviderOutcome(
+          createRequest({
+            provider: 'codex',
+            language: 'en',
+            workspacePath,
+            cardId: 'workspace-boundary-card',
+            agentOutsideWorkspaceWriteEnabled: false,
+            codexDestructiveCommandProtectionEnabled: false,
+            codexIsolatedHomeEnabled: false,
+          }),
+        ),
+    )
+
+    assert.deepEqual(outcome, { kind: 'done' })
+
+    const requests = (await readFile(capturePath, 'utf8'))
+      .trim()
+      .split(/\r?\n/)
+      .map((line) => JSON.parse(line) as { method?: string; params?: Record<string, unknown> })
+    const threadStart = requests.find((request) => request.method === 'thread/start')
+    const turnStart = requests.find((request) => request.method === 'turn/start')
+
+    assert.equal(threadStart?.params?.sandbox, 'workspace-write')
+    assert.deepEqual(turnStart?.params?.sandboxPolicy, {
+      type: 'workspaceWrite',
+      networkAccess: false,
+      writableRoots: [threadStart?.params?.cwd],
+    })
+  } finally {
+    await rm(capturePath, { force: true }).catch(() => {})
+  }
+})
+
 test('codex app-server narrows the sandbox without changing user config when requirements deny full access', async () => {
   const capturePath = path.join(
     os.tmpdir(),
@@ -4182,6 +4333,7 @@ test('codex app-server narrows the sandbox without changing user config when req
             provider: 'codex',
             language: 'en',
             workspacePath,
+            agentOutsideWorkspaceWriteEnabled: true,
           }),
         ),
     )
@@ -4381,6 +4533,7 @@ test('codex app-server leaves hook args and home environment unchanged when both
             provider: 'codex',
             language: 'en',
             workspacePath,
+            agentOutsideWorkspaceWriteEnabled: true,
             codexDestructiveCommandProtectionEnabled: false,
             codexIsolatedHomeEnabled: false,
           }),

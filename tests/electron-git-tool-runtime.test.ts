@@ -207,6 +207,7 @@ const createElectronRuntimeEnv = (dataDir: string, repoPath: string) => {
     CHILL_VIBE_DISABLE_SINGLE_INSTANCE_LOCK: '1',
     CHILL_VIBE_ALLOW_SHARED_DATA_DIR: '1',
     CHILL_VIBE_DATA_DIR: dataDir,
+    CHILL_VIBE_RUNTIME_PROFILE_ROOT: path.join(dataDir, 'runtime-profile'),
     CHILL_VIBE_DEFAULT_WORKSPACE: repoPath,
   })
 }

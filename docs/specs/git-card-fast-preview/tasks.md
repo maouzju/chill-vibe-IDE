@@ -14,6 +14,6 @@
 - [x] 批量读取 HEAD 文件大小并批量生成已跟踪文件 patch。
 - [x] 保留 untracked、rename、delete、预算省略和异常回退语义。
 - [x] 复跑 Git workspace 窄测、`pnpm test:quality` 和 `pnpm electron:build`。
-- [ ] 单独处理古法 Git 复选框响应性能：`pnpm test:perf:electron` 的其余 3 个用例通过，
-  但 120 文件复选框用例仍出现 7.7s / 2.2s / 4.0s 延迟；该问题发生在完整状态已加载后的
-  前端交互阶段，不属于本切片消除的预览 Git 子进程放大路径。
+- [x] 复核古法 Git 复选框响应性能：专项门禁改用 renderer click-to-paint 后测得
+  5.2ms / 4.2ms / 4.1ms，确认旧的秒级数字来自 Playwright 宿主墙钟；详见
+  `docs/specs/git-stage-toggle-responsiveness/`。

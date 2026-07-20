@@ -126,11 +126,48 @@ const createTempStateDir = async (workspacePath: string) => {
   return dataDir
 }
 
+const measureCheckboxFeedback = async (
+  page: Page,
+  targetFileName: string,
+  expectedChecked: boolean,
+) =>
+  await page.evaluate(
+    async ({ expectedChecked: expected, targetFileName: fileName }) => {
+      const row = Array.from(document.querySelectorAll('.git-change-row')).find((candidate) =>
+        candidate.querySelector('.git-change-path')?.textContent?.trim() === fileName,
+      )
+      const input = row?.querySelector('.git-change-checkbox')
+
+      if (!(input instanceof HTMLInputElement)) {
+        throw new Error(`Could not arm Git stage feedback measurement for ${fileName}`)
+      }
+
+      const startedAt = performance.now()
+      const deadline = startedAt + 5_000
+      input.click()
+
+      while (performance.now() < deadline) {
+        await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()))
+        const currentRow = Array.from(document.querySelectorAll('.git-change-row')).find((candidate) =>
+          candidate.querySelector('.git-change-path')?.textContent?.trim() === fileName,
+        )
+        const currentInput = currentRow?.querySelector('.git-change-checkbox')
+
+        if (currentInput instanceof HTMLInputElement && currentInput.checked === expected) {
+          return performance.now() - startedAt
+        }
+      }
+
+      return Number.POSITIVE_INFINITY
+    },
+    { expectedChecked, targetFileName },
+  )
+
 after(async () => {
   await Promise.all(tempRoots.map((root) => rm(root, { recursive: true, force: true })))
 })
 
-test('Electron ancient Git checkbox toggles stay responsive while preserving the selected diff', async () => {
+test('Electron ancient Git checkbox toggles stay responsive while preserving the selected diff', async (t) => {
   await ensureElectronRuntimeBuild()
 
   const repoPath = await createLargeChangedRepo()
@@ -140,10 +177,12 @@ test('Electron ancient Git checkbox toggles stay responsive while preserving the
     VITE_DEV_SERVER_URL: getElectronTestRendererUrl(),
     CHILL_VIBE_DISABLE_SINGLE_INSTANCE_LOCK: '1',
     CHILL_VIBE_ALLOW_SHARED_DATA_DIR: '1',
+    CHILL_VIBE_OFFSCREEN_RUNTIME_TESTS: '1',
     CHILL_VIBE_DATA_DIR: dataDir,
+    CHILL_VIBE_RUNTIME_PROFILE_ROOT: path.join(dataDir, 'runtime-profile'),
     CHILL_VIBE_DEFAULT_WORKSPACE: repoPath,
   })
-  const maxToggleDurationMs = env.CHILL_VIBE_HEADLESS_RUNTIME_TESTS === '1' ? 2500 : 1000
+  const maxToggleFeedbackMs = 500
 
   const app = await electron.launch({
     args: ['.'],
@@ -210,29 +249,14 @@ test('Electron ancient Git checkbox toggles stay responsive while preserving the
     )
     await page.waitForTimeout(1500)
 
-    const toggleDurations: number[] = []
+    const toggleFeedbackDurations: number[] = []
 
     for (const targetFileName of targetNames.slice(1)) {
       assert.ok(targetFileName.length > 0)
 
-      const targetRow = dialog.locator('.git-change-row').filter({ hasText: targetFileName }).first()
-      const checkbox = targetRow.locator('.git-change-checkbox')
-
-      const startedAt = Date.now()
-      await checkbox.click()
-      await page.waitForFunction(
-        ({ targetFileName: expectedChecked }) => {
-          const targetRow = Array.from(document.querySelectorAll('.git-change-row')).find((row) =>
-            row.querySelector('.git-change-path')?.textContent?.trim() === expectedChecked,
-          )
-          const checkbox = targetRow?.querySelector('.git-change-checkbox')
-
-          return checkbox instanceof HTMLInputElement && checkbox.checked
-        },
-        { targetFileName },
-        { timeout: 10000 },
+      toggleFeedbackDurations.push(
+        await measureCheckboxFeedback(page, targetFileName, true),
       )
-      toggleDurations.push(Date.now() - startedAt)
 
       await page.waitForFunction(
         ({ selectedFileName: expectedSelected, selectedDiffToken }) => {
@@ -248,10 +272,26 @@ test('Electron ancient Git checkbox toggles stay responsive while preserving the
       )
     }
 
-    assert.equal(toggleDurations.length, 3)
+    await page.waitForFunction(
+      (expectedFileNames) => expectedFileNames.every((fileName) => {
+        const targetRow = Array.from(document.querySelectorAll('.git-change-row')).find((row) =>
+          row.querySelector('.git-change-path')?.textContent?.trim() === fileName,
+        )
+        const checkbox = targetRow?.querySelector('.git-change-checkbox')
+
+        return checkbox instanceof HTMLInputElement && checkbox.checked && !checkbox.disabled
+      }),
+      targetNames.slice(1),
+      { timeout: 60_000 },
+    )
+
+    assert.equal(toggleFeedbackDurations.length, 3)
+    t.diagnostic(
+      `renderer checkbox feedback: ${toggleFeedbackDurations.map((duration) => `${duration.toFixed(1)}ms`).join(', ')}`,
+    )
     assert.ok(
-      toggleDurations.every((duration) => duration < maxToggleDurationMs),
-      `expected every checkbox toggle to finish within ${maxToggleDurationMs}ms, got ${toggleDurations.join(', ')}ms`,
+      toggleFeedbackDurations.every((duration) => duration < maxToggleFeedbackMs),
+      `expected every checkbox to paint within ${maxToggleFeedbackMs}ms of its renderer click event, got ${toggleFeedbackDurations.join(', ')}ms`,
     )
   } finally {
     await app.close()

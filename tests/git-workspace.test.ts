@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { after, describe, it } from 'node:test'
@@ -228,6 +228,52 @@ describe('git workspace helpers', () => {
     assert.match(modifiedChange.patch ?? '', /\+with change/)
     assert.equal(modifiedChange.addedLines, 1)
     assert.equal(modifiedChange.removedLines, 0)
+  })
+
+  it('hydrates several tracked previews with a bounded number of Git processes', async () => {
+    const repoPath = await createTempRepo()
+    const paths = Array.from({ length: 6 }, (_, index) => `tracked-${index}.txt`)
+
+    await Promise.all(
+      paths.map((relativePath, index) =>
+        writeFile(path.join(repoPath, relativePath), `base ${index}\n`),
+      ),
+    )
+    await runGit(repoPath, ['add', ...paths])
+    await runGit(repoPath, ['commit', '-m', 'Add preview fixtures'])
+    await Promise.all(
+      paths.map((relativePath, index) =>
+        writeFile(path.join(repoPath, relativePath), `base ${index}\nupdated ${index}\n`),
+      ),
+    )
+
+    const tracePath = path.join(repoPath, '.git', 'chill-vibe-preview-trace.json')
+    const previousTracePath = process.env.GIT_TRACE2_EVENT
+    process.env.GIT_TRACE2_EVENT = tracePath
+
+    let status
+    try {
+      status = await inspectGitWorkspace(repoPath)
+    } finally {
+      if (previousTracePath === undefined) {
+        delete process.env.GIT_TRACE2_EVENT
+      } else {
+        process.env.GIT_TRACE2_EVENT = previousTracePath
+      }
+    }
+
+    const commandStarts = (await readFile(tracePath, 'utf8'))
+      .split(/\r?\n/)
+      .filter(Boolean)
+      .map((line) => JSON.parse(line) as { event?: string; argv?: string[] })
+      .filter((event) => event.event === 'start' && Array.isArray(event.argv))
+
+    assert.equal(status.changes.length, paths.length)
+    assert.ok(status.changes.every((change) => change.patch?.includes('+updated ')))
+    assert.ok(
+      commandStarts.length <= 6,
+      `expected batched preview hydration, saw ${commandStarts.length} Git processes`,
+    )
   })
 
   it('can skip preview patches when only change metadata is needed', async () => {

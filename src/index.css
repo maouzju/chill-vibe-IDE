@@ -2772,11 +2772,13 @@ body.is-card-dragging .lane-drop-zone-top {
   border-color: var(--stream-border);
 }
 
-/* Full-card box-shadow animation is paint-heavy in Electron's software
-   compositor. Keep every background stream visibly outlined, but let only the
-   one card that owns keyboard focus breathe so multi-pane typing stays smooth. */
+/* Never animate a full-card box shadow while streaming. Even one focused card
+   plus several animated tab outlines kept renderer/GPU work near half a core
+   each in the 2026-07-21 recurrence and eventually reached Electron's
+   unresponsive threshold without a JS stack. Keep the focused state visible
+   through a stronger static border instead. */
 .card-shell.is-streaming:focus-within::after {
-  animation: card-streaming-border-breathe 2200ms ease-in-out infinite;
+  border-color: var(--stream-border-active);
 }
 
 /* Completed: a persistent blue breathing halo until the user interacts with the card */
@@ -2806,18 +2808,6 @@ body.is-card-dragging .lane-drop-zone-top {
   border-color: var(--completion-glow-border);
   box-shadow: inset 0 0 10px rgba(10, 132, 255, 0.06);
   animation: card-complete-border-breathe 2800ms ease-in-out 8;
-}
-
-@keyframes card-streaming-border-breathe {
-  0%, 100% {
-    border-color: var(--stream-border);
-    box-shadow: 0 0 0 0 rgba(0, 0, 0, 0);
-  }
-
-  50% {
-    border-color: var(--stream-border-active);
-    box-shadow: 0 0 0 3px var(--stream-border-glow);
-  }
 }
 
 @keyframes card-complete-halo-breathe {
@@ -12723,7 +12713,6 @@ body.is-pane-resizing .split-resize-handle::before {
     inset 1px 0 0 color-mix(in srgb, var(--stream-border) 34%, var(--pane-tab-divider)),
     inset -1px 0 0 color-mix(in srgb, var(--stream-border) 34%, var(--pane-tab-divider)),
     0 0 0 1px color-mix(in srgb, var(--stream-border) 18%, transparent);
-  animation: pane-tab-streaming-border-breathe 2200ms ease-in-out infinite;
 }
 
 .pane-tab.is-streaming:not(.is-active):hover {
@@ -12898,26 +12887,6 @@ body.is-pane-resizing .split-resize-handle::before {
 .pane-tab-strip:has(.pane-tab:last-child.is-active) + .pane-tab-actions .pane-add-tab::before {
   opacity: 0;
 }
-
-@keyframes pane-tab-streaming-border-breathe {
-  0%, 100% {
-    box-shadow:
-      inset 0 1px 0 color-mix(in srgb, var(--stream-border) 54%, transparent),
-      inset 1px 0 0 color-mix(in srgb, var(--stream-border) 34%, var(--pane-tab-divider)),
-      inset -1px 0 0 color-mix(in srgb, var(--stream-border) 34%, var(--pane-tab-divider)),
-      0 0 0 1px color-mix(in srgb, var(--stream-border) 18%, transparent);
-  }
-
-  50% {
-    box-shadow:
-      inset 0 1px 0 var(--stream-border-active),
-      inset 1px 0 0 color-mix(in srgb, var(--stream-border-active) 58%, var(--pane-tab-divider)),
-      inset -1px 0 0 color-mix(in srgb, var(--stream-border-active) 58%, var(--pane-tab-divider)),
-      0 0 0 1px color-mix(in srgb, var(--stream-border-active) 34%, transparent),
-      0 0 14px -8px var(--stream-border-active);
-  }
-}
-
 
 .pane-content {
   position: relative;

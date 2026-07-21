@@ -58,6 +58,22 @@
 - [x] 让 sticky/scroll/ResizeObserver effect 只在 transcript 结构变化时重建。
 - [x] 重跑 focused 测试、质量检查和 Electron 聊天性能门禁。
 
+## 2026-07-21 E 类复发：持续合成负载降档
+
+- [x] 核对现场包、unresponsive 日志、空调用栈和资源曲线，排除旧包与系统 OOM。
+- [x] 现场四流采样确认 renderer / GPU 各持续约 43% 单核。
+- [x] 红测禁止流式卡片和流式 tab 使用无限 box-shadow 动画。
+- [x] 红测把 2～3 流刷新窗口放宽到 400ms、4 流以上放宽到 800ms。
+- [x] 重跑 focused 测试、quality、主题相关检查和 5 分钟 Electron 流式压力门禁。
+- [x] 构建新的 Windows zip 与可直接运行目录。
+
+## 2026-07-21 发送后短时卡顿：持久化压缩去重
+
+- [x] 红测证明连续发送时，未变化的巨型历史工具消息不应重复生成压缩快照。
+- [x] 使用弱引用缓存复用已压缩消息，并校验源 `structuredData` 防止原地变更返回旧数据。
+- [x] 重跑 focused 测试、quality 和 Electron 聊天性能门禁。
+- [x] 构建新的 Windows zip 与可直接运行目录。
+
 ## 发布门禁
 
 - [x] 相关 focused Node 测试通过。

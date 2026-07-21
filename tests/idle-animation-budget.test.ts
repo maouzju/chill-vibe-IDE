@@ -71,7 +71,7 @@ test('the static unread affordance survives after the animation budget runs out'
   )
 })
 
-test('only the focused streaming card may run the full-card breathe animation', async () => {
+test('streaming cards keep a static border without an unbounded paint animation', async () => {
   const css = await indexCssPromise
   const backgroundStreamingBlock =
     css.match(/\.card-shell\.is-streaming::after\s*\{[^}]*\}/)?.[0] ?? ''
@@ -88,9 +88,26 @@ test('only the focused streaming card may run the full-card breathe animation', 
     /\binfinite\b/,
     'multiple background streaming panes must not repaint full-card box shadows forever',
   )
-  assert.match(
+  assert.doesNotMatch(
     focusedStreamingBlock,
-    /animation:\s*card-streaming-border-breathe\b[^;]*\binfinite\b/,
-    'the focused composer may keep one live streaming breathe animation',
+    /\binfinite\b/,
+    'even the focused streaming card must not repaint a full-card box shadow forever',
+  )
+})
+
+test('streaming pane tabs do not run an infinite box-shadow animation', async () => {
+  const css = await indexCssPromise
+  const inactiveStreamingTabBlock =
+    css.match(/\.pane-tab\.is-streaming:not\(\.is-active\)\s*\{[^}]*\}/)?.[0] ?? ''
+
+  assert.match(
+    inactiveStreamingTabBlock,
+    /box-shadow:/,
+    'inactive streaming tabs still need a visible static outline',
+  )
+  assert.doesNotMatch(
+    inactiveStreamingTabBlock,
+    /\binfinite\b/,
+    'streaming tab chrome must not keep the compositor repainting forever',
   )
 })

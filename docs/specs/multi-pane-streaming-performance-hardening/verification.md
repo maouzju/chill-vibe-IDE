@@ -1,5 +1,26 @@
 # 多窗口流式性能兜底 — 验证记录
 
+## 2026-07-21 E 类复发与持续光栅降档
+
+- `release-20260720-165915` 于 13:28:15 记录 `BrowserWindow became unresponsive`；
+  `collectJavaScriptCallStack` 返回空栈，事件前系统仍有约 8 GiB 空闲。
+- 复发后的同类四流现场 10 秒采样显示 renderer / GPU 分别持续约 43.4% / 42.8%
+  单核，说明即使没有可采集 JS 热栈，持续 commit 与光栅预算仍偏高。
+- 修复切片：删除流式卡片/流式 tab 的无限 box-shadow 动画；2～3 流刷新间隔
+  200→400ms，4 流以上 500→800ms。消息与强制 flush 语义不变。
+- 红测先确认旧实现仍有两处无限光栅动画且多流间隔仍为 200/500ms；修复后 focused
+  Node 测试 26/26、`pnpm test:quality` 均通过。
+- light/dark 的 pane streaming 主题用例均通过；完整 `pnpm test:theme` 的相关用例通过，
+  但套件仍有 6 个与本切片无关的既有快照差异，未盲目更新快照。
+- 修复后的 5 分钟 6-stream 离屏门禁通过：frame max 304.7ms、input/focus/tab p95
+  74.8/76.3/132.4ms，零 unresponsive、零 renderer gone，持久化顺序完整。
+- 门禁运行中的 10 秒进程采样：6-stream renderer 约 5.9% 单核、GPU 约 15.3%；同时仍
+  运行旧包的四流真实窗口约 40.3%/49.2%，支持本切片确实移除了持续合成放大器。
+- Windows zip 构建完成：`dist/release-20260721-141037/Chill Vibe-0.18.16-win.zip`，
+  解压根目录只有 `Chill Vibe IDE`，SHA-256
+  `6BA4B6F2CFBE8387871D8C6CB19F2724DE2C9739E680E998F74A8E6069BD9719`；可直接运行
+  `dist/release-20260721-141037/win-unpacked/Chill Vibe.exe`。
+
 ## 2026-07-19 晚间 E 类复发与 transcript 观测器降频
 
 - `release-20260719-183247` 在 5 张真实卡持续 streaming 约 28 分钟后于 22:21:05
@@ -72,3 +93,17 @@
 - `pnpm test:perf` 通过：34 条 Node 性能测试与 3 条 Playwright 加卡响应性测试全绿。
 - 定向主题检查通过：窄视口结构化活动，以及 light/dark 下窗口化工具组“显示更早”活动均通过快照断言。
 - Windows zip 已构建到 `dist/release-20260716-195614/Chill Vibe-0.18.8-win.zip`，压缩包只有一个顶层 `Chill Vibe IDE` 目录；SHA-256 为 `3EFDAA8ABF4FF4D125D8130853662AB97FDF210A4B5522A04683DBE48BEA9F19`。
+## 2026-07-21 发送后短时卡顿：持久化压缩缓存
+
+- 红测确认：第二次发送产生的新状态如果仍引用同一条巨型历史工具消息，持久化快照必须复用
+  上一次的压缩消息对象；旧实现会重新解析和生成整条压缩消息。
+- 修复后 focused Node 测试 27/27 通过，`pnpm test:quality` 通过。
+- 30 秒 6-stream Electron 离屏绘制门禁通过：`frameMaxGapMs=222.3ms`、
+  `inputP95Ms=75.1ms`、`focusP95Ms=62.9ms`、`tabSwitchP95Ms=105.8ms`，
+  零 unresponsive、零 renderer gone，持久化完整性通过。
+- 40 MB 合成历史工具输出的本地快照基准中，首次压缩约 16ms，复用后的连续快照低于
+  1ms；该基准只用于证明重复工作被消除，不替代 Electron 响应性门禁。
+- Windows zip：`dist/release-20260721-162832/Chill Vibe-0.18.16-win.zip`，解压根目录
+  只有 `Chill Vibe IDE`，SHA-256
+  `FB3BF7A5DDD9554F0365B709490273301AD81E6767CFDE0B215DFBE86462CFBF`；可直接运行
+  `dist/release-20260721-162832/win-unpacked/Chill Vibe.exe`。

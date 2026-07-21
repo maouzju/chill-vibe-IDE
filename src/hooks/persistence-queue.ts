@@ -26,12 +26,16 @@ export const streamRenderFlushIntervalMs = 80
 export const streamRenderColumnYieldMs = 50
 export const streamRenderInteractionProtectionMs = 120
 export const streamRenderMaxInteractionDeferralMs = 300
-const moderateMultiStreamRenderFlushIntervalMs = 200
-const busyMultiStreamRenderFlushIntervalMs = 500
+const moderateMultiStreamRenderFlushIntervalMs = 400
+const busyMultiStreamRenderFlushIntervalMs = 800
 const busyStreamingQueuedStateSaveDelayMs = 15_000
 const busyStreamingCardThreshold = 2
 const streamingStateContentBudgetChars = 750_000
 const queuedPersistenceStructuredDataBudgetChars = 4_000
+const queuedPersistenceMessageSnapshotCache = new WeakMap<
+  ChatMessage,
+  { sourceStructuredData: string; snapshot: ChatMessage }
+>()
 
 export type StreamDeltaBufferEntry = {
   columnId: string
@@ -322,6 +326,28 @@ const trimQueuedPersistenceStructuredData = (structuredData: string) => {
   }
 }
 
+const createQueuedPersistenceMessageSnapshot = (message: ChatMessage): ChatMessage => {
+  const structuredData = message.meta?.structuredData
+  if (!structuredData || structuredData.length <= queuedPersistenceStructuredDataBudgetChars) {
+    return message
+  }
+
+  const cached = queuedPersistenceMessageSnapshotCache.get(message)
+  if (cached?.sourceStructuredData === structuredData) {
+    return cached.snapshot
+  }
+
+  const snapshot: ChatMessage = {
+    ...message,
+    meta: {
+      ...message.meta,
+      structuredData: trimQueuedPersistenceStructuredData(structuredData),
+    },
+  }
+  queuedPersistenceMessageSnapshotCache.set(message, { sourceStructuredData: structuredData, snapshot })
+  return snapshot
+}
+
 export const createQueuedPersistenceStateSnapshot = (state: AppState): AppState => ({
   ...state,
   columns: state.columns.map((column) => ({
@@ -331,15 +357,7 @@ export const createQueuedPersistenceStateSnapshot = (state: AppState): AppState 
         cardId,
         {
           ...card,
-          messages: card.messages.map((message) => ({
-            ...message,
-            meta: message.meta?.structuredData
-              ? {
-                  ...message.meta,
-                  structuredData: trimQueuedPersistenceStructuredData(message.meta.structuredData),
-                }
-              : message.meta,
-          })),
+          messages: card.messages.map(createQueuedPersistenceMessageSnapshot),
         },
       ]),
     ),

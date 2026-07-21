@@ -146,6 +146,7 @@ type ChatCard = {
 - `sessionModel` 记录该原生会话开始时使用的实际请求模型；继续会话前必须与本次请求模型一致。旧状态里没有 `sessionModel` 的会话视为模型未知，改模型后不能盲目续用，必须用可见历史开启新会话。
 - `contextTransfer` 记录模型/Provider 切换前的来源会话锚点。Claude/Fable 切到 Codex/Sol 时，首轮新会话必须优先保留全部有意义的用户/助手对话，命令与工具明细只能占剩余预算；来源会话模型已知时，切回原 Provider/模型可恢复原生 session。目标 Codex session 建立后，后续回合正常原生续聊，不重复重放。
 - 已完成且包含历史图片附件的聊天也应保留 `sessionId` / `providerSessions`。重启后优先用 provider 原生会话恢复上下文，而不是把历史图片附件重新塞进 fresh-session replay；如果原生恢复真的失效，再走既有 stale-session → fresh-session 回退。
+- Codex 恢复旧会话时，如果 CLI 报告 rollout 为空（包括新版 thread store 的 `failed to read session metadata ... rollout ... is empty` 文案），应视为原生会话已损坏，自动新建线程并继续发送当前需求，而不是把内部文件错误直接显示给用户。
 - `size` 表示卡片的最小高度
 
 - Provider request model changes must sync to the Electron backend immediately, not only through delayed state persistence, so the next CLI launch uses the same configured model shown in the renderer.

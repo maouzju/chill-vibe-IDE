@@ -5632,7 +5632,7 @@ for (const theme of ['dark', 'light'] as const) {
     expect(await readComputedValue(resizeHandle, 'width')).toBe('4px')
     expect(await readComputedValue(tabBar, 'overflow-x')).toBe('hidden')
     expect(await readComputedValue(tabStrip, 'overflow-x')).toBe('hidden')
-    expect(await readComputedValue(inactiveStreamingTab, 'animation-name')).toContain('pane-tab-streaming-border-breathe')
+    expect(await readComputedValue(inactiveStreamingTab, 'animation-name')).toBe('none')
     expect(Number(await readComputedValue(activeTabClose, 'opacity'))).toBeGreaterThan(0.9)
     expect(Number(await readComputedValue(inactiveTabClose, 'opacity'))).toBeLessThan(0.1)
     expect(

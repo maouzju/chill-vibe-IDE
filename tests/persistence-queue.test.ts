@@ -91,10 +91,10 @@ describe('persistence queue', () => {
   it('backs off the unified renderer flush as more sessions stream concurrently', () => {
     assert.equal(getStreamRenderFlushIntervalMs(0), 80)
     assert.equal(getStreamRenderFlushIntervalMs(1), 80)
-    assert.equal(getStreamRenderFlushIntervalMs(2), 200)
-    assert.equal(getStreamRenderFlushIntervalMs(3), 200)
-    assert.equal(getStreamRenderFlushIntervalMs(4), 500)
-    assert.equal(getStreamRenderFlushIntervalMs(7), 500)
+    assert.equal(getStreamRenderFlushIntervalMs(2), 400)
+    assert.equal(getStreamRenderFlushIntervalMs(3), 400)
+    assert.equal(getStreamRenderFlushIntervalMs(4), 800)
+    assert.equal(getStreamRenderFlushIntervalMs(7), 800)
   })
 
   it('keeps ordinary stream commits out of the immediate user-interaction frame without starving output', () => {
@@ -376,6 +376,77 @@ describe('persistence queue', () => {
     assert.equal(originalStructuredData.includes(hugeOutput), true)
     assert.ok(snapshotStructuredData.length < originalStructuredData.length)
     assert.match(snapshotStructuredData, /Output truncated in queued state save/)
+  })
+
+  it('reuses compacted message snapshots so repeated sends do not reprocess unchanged tool output', () => {
+    const state = createDefaultState('')
+    const activeCardId = state.columns[0]?.layout.type === 'pane'
+      ? state.columns[0].layout.activeTabId
+      : ''
+
+    if (!activeCardId) {
+      throw new Error('Expected default state to include an active card.')
+    }
+
+    const hugeOutput = 'A'.repeat(40_000)
+    const historicalMessage = {
+      id: 'cached-command',
+      role: 'assistant' as const,
+      content: '',
+      createdAt: '2026-07-21T08:30:00.000Z',
+      meta: {
+        kind: 'command' as const,
+        structuredData: JSON.stringify({
+          kind: 'command',
+          command: 'pnpm test',
+          output: hugeOutput,
+        }),
+      },
+    }
+    state.columns[0]!.cards[activeCardId] = {
+      ...state.columns[0]!.cards[activeCardId]!,
+      messages: [historicalMessage],
+    }
+
+    const firstSnapshot = createQueuedPersistenceStateSnapshot(state)
+    const firstSnapshotMessage = firstSnapshot.columns[0]!.cards[activeCardId]!.messages[0]!
+
+    const nextState = {
+      ...state,
+      updatedAt: '2026-07-21T08:30:01.000Z',
+      columns: state.columns.map((column, index) => index === 0
+        ? {
+            ...column,
+            cards: {
+              ...column.cards,
+              [activeCardId]: {
+                ...column.cards[activeCardId]!,
+                status: 'streaming' as const,
+                messages: [
+                  historicalMessage,
+                  {
+                    id: 'new-user-message',
+                    role: 'user' as const,
+                    content: '继续',
+                    createdAt: '2026-07-21T08:30:01.000Z',
+                  },
+                ],
+              },
+            },
+          }
+        : column),
+    }
+
+    const secondSnapshot = createQueuedPersistenceStateSnapshot(nextState)
+    const secondSnapshotMessage = secondSnapshot.columns[0]!.cards[activeCardId]!.messages[0]!
+
+    assert.equal(
+      secondSnapshotMessage,
+      firstSnapshotMessage,
+      'an unchanged historical tool message should reuse its already-compacted snapshot',
+    )
+    assert.notEqual(firstSnapshotMessage, historicalMessage)
+    assert.ok((firstSnapshotMessage.meta?.structuredData?.length ?? 0) < historicalMessage.meta.structuredData.length)
   })
 
   // 真实事故回归：edits 载荷没有顶层 output/content 字符串，旧逻辑对原始 JSON

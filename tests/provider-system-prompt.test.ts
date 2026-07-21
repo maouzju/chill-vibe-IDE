@@ -1860,7 +1860,10 @@ const buildFakeCodexActiveResumeScript = (capturePath: string) =>
     '})',
   ].join('\n')
 
-const buildFakeCodexEmptyRolloutResumeScript = (capturePath: string) =>
+const buildFakeCodexEmptyRolloutResumeScript = (
+  capturePath: string,
+  resumeError = 'failed to load rollout C:\\Users\\tester\\.codex\\sessions\\2026\\04\\17\\rollout-stale.jsonl: empty session file',
+) =>
   [
     "const fs = require('node:fs')",
     "const readline = require('node:readline')",
@@ -1879,7 +1882,7 @@ const buildFakeCodexEmptyRolloutResumeScript = (capturePath: string) =>
     '    return',
     '  }',
     "  if (request.method === 'thread/resume' && request.id) {",
-    "    reply({ id: request.id, error: { message: 'failed to load rollout C:\\\\Users\\\\tester\\\\.codex\\\\sessions\\\\2026\\\\04\\\\17\\\\rollout-stale.jsonl: empty session file' } })",
+    `    reply({ id: request.id, error: { message: ${JSON.stringify(resumeError)} } })`,
     '    return',
     '  }',
     "  if (request.method === 'thread/start' && request.id) {",
@@ -4891,6 +4894,53 @@ test('codex app-server retries with a fresh thread when the resumed rollout file
             workspacePath,
             sessionId: 'stale-rollout-session',
             prompt: 'Retry with this updated instruction.',
+          }),
+        ),
+    )
+
+    assert.deepEqual(events, [
+      {
+        kind: 'log',
+        message:
+          'The resumed Codex session could not be loaded from its rollout file. Chill Vibe started a new session automatically so your latest prompt and attachments are not lost.',
+      },
+      { kind: 'done' },
+    ])
+
+    const requests = (await readFile(capturePath, 'utf8'))
+      .trim()
+      .split(/\r?\n/)
+      .map((line) => JSON.parse(line) as { method?: string; params?: Record<string, unknown> })
+
+    assert.equal(requests.filter((request) => request.method === 'thread/resume').length, 1)
+    assert.equal(requests.filter((request) => request.method === 'thread/start').length, 1)
+    assert.equal(requests.filter((request) => request.method === 'turn/start').length, 1)
+  } finally {
+    await rm(capturePath, { force: true }).catch(() => {})
+  }
+})
+
+test('codex app-server retries with a fresh thread when thread store reports empty rollout metadata', async () => {
+  const capturePath = path.join(
+    os.tmpdir(),
+    `chill-vibe-codex-app-server-resume-empty-rollout-metadata-${Date.now()}-${Math.random().toString(36).slice(2)}.jsonl`,
+  )
+
+  try {
+    const events = await withFakeProviderCommand(
+      'codex',
+      buildFakeCodexEmptyRolloutResumeScript(
+        capturePath,
+        'failed to read thread: thread store internal error: failed to read session metadata C:\\Users\\tester\\.codex\\sessions\\2026\\07\\21\\rollout-stale.jsonl: rollout at C:\\Users\\tester\\.codex\\sessions\\2026\\07\\21\\rollout-stale.jsonl is empty',
+      ),
+      async (workspacePath) =>
+        captureProviderLogs(
+          createRequest({
+            provider: 'codex',
+            language: 'en',
+            workspacePath,
+            sessionId: 'stale-rollout-session',
+            prompt: 'Continue with my second instruction.',
           }),
         ),
     )

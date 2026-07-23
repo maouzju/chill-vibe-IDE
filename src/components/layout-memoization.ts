@@ -2,12 +2,14 @@ import type {
   AppLanguage,
   AutoUrgeProfile,
   BoardColumn,
+  ChatCard,
   ModelPromptRule,
   PaneNode,
   ProviderStatus,
   RecentWorkspace,
   SessionHistoryEntry,
 } from '../../shared/schema'
+import { GIT_TOOL_MODEL } from '../../shared/models'
 import type { CardRecoveryStatus } from '../stream-recovery-feedback'
 import type { CodexChatSettings } from '../../shared/codex-chat-settings'
 import type { QueuedSendSummary } from './deferred-send-queue'
@@ -127,28 +129,57 @@ export const areWorkspaceColumnPropsEqual = (
   previous.queuedSendSummaries === next.queuedSendSummaries &&
   haveSameSessionHistoryEntries(previous.sessionHistory, next.sessionHistory)
 
+export const cardKeepsPaneRuntimeWhenInactive = (card: Pick<ChatCard, 'model'>) =>
+  card.model === GIT_TOOL_MODEL
+
+const haveSameInactivePaneTabChrome = (previous: ChatCard | undefined, next: ChatCard | undefined) =>
+  previous === next ||
+  (
+    previous !== undefined &&
+    next !== undefined &&
+    previous.id === next.id &&
+    previous.title === next.title &&
+    previous.provider === next.provider &&
+    previous.model === next.model &&
+    previous.status === next.status &&
+    previous.unread === next.unread
+  )
+
 const haveSamePaneCardRefs = (previous: PaneViewMemoProps, next: PaneViewMemoProps) => {
   if (previous.pane.tabs.length !== next.pane.tabs.length) {
     return false
   }
 
   for (const tabId of next.pane.tabs) {
-    if (previous.column.cards[tabId] !== next.column.cards[tabId]) {
-      return false
-    }
+    const previousCard = previous.column.cards[tabId]
+    const nextCard = next.column.cards[tabId]
+    const keepsInactiveRuntime =
+      (previousCard !== undefined && cardKeepsPaneRuntimeWhenInactive(previousCard)) ||
+      (nextCard !== undefined && cardKeepsPaneRuntimeWhenInactive(nextCard))
+    const needsFullCard = tabId === next.pane.activeTabId || keepsInactiveRuntime
 
     if (
-      (previous.cardRecoveryStatuses?.get(tabId) ?? undefined) !==
-      (next.cardRecoveryStatuses?.get(tabId) ?? undefined)
+      needsFullCard
+        ? previousCard !== nextCard
+        : !haveSameInactivePaneTabChrome(previousCard, nextCard)
     ) {
       return false
     }
 
-    if (
-      (previous.queuedSendSummaries?.get(tabId) ?? undefined) !==
-      (next.queuedSendSummaries?.get(tabId) ?? undefined)
-    ) {
-      return false
+    if (needsFullCard) {
+      if (
+        (previous.cardRecoveryStatuses?.get(tabId) ?? undefined) !==
+        (next.cardRecoveryStatuses?.get(tabId) ?? undefined)
+      ) {
+        return false
+      }
+
+      if (
+        (previous.queuedSendSummaries?.get(tabId) ?? undefined) !==
+        (next.queuedSendSummaries?.get(tabId) ?? undefined)
+      ) {
+        return false
+      }
     }
   }
 

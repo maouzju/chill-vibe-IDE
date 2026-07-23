@@ -4,7 +4,12 @@ import { describe, it } from 'node:test'
 import { attachImagesToMessageMeta } from '../shared/chat-attachments.ts'
 import { createDefaultSettings } from '../shared/default-state.ts'
 import { getDuplicateColumnTitle } from '../shared/i18n.ts'
-import { BRAINSTORM_TOOL_MODEL, DEFAULT_CODEX_MODEL, WEATHER_TOOL_MODEL } from '../shared/models.ts'
+import {
+  BRAINSTORM_TOOL_MODEL,
+  DEFAULT_CODEX_MODEL,
+  STICKYNOTE_TOOL_MODEL,
+  WEATHER_TOOL_MODEL,
+} from '../shared/models.ts'
 import { defaultAutoUrgeProfileId } from '../shared/schema.ts'
 import type {
   AppState,
@@ -756,6 +761,82 @@ describe('ideReducer pane layout', () => {
       },
     }
     state.settings.lastModel = { provider: 'claude', model: 'claude-fable-5' }
+
+    const next = ideReducer(state, {
+      type: 'addTab',
+      columnId: 'column-2',
+      paneId: 'pane-2',
+    })
+
+    const pane = next.columns[1]?.layout as PaneNode
+    const newCard = next.columns[1]?.cards[pane.activeTabId]
+
+    assert.equal(newCard?.provider, 'codex')
+    assert.equal(newCard?.model, DEFAULT_CODEX_MODEL)
+  })
+
+  it('prefers the most recent pane chat model over a stale column model from the same provider', () => {
+    const state = createState()
+    state.columns[1] = {
+      ...state.columns[1]!,
+      provider: 'claude',
+      model: 'claude-fable-5',
+      cards: {
+        'card-chat': createCard({
+          id: 'card-chat',
+          title: 'Current Sonnet chat',
+          provider: 'claude',
+          model: 'claude-sonnet-5',
+          messages: [],
+        }),
+        'card-tool': createCard({
+          id: 'card-tool',
+          title: 'Weather',
+          provider: 'codex',
+          model: WEATHER_TOOL_MODEL,
+          messages: [],
+        }),
+      },
+      layout: {
+        ...createPane('pane-2', ['card-chat', 'card-tool'], 'card-tool'),
+        tabHistory: ['card-chat', 'card-tool'],
+      },
+    }
+    state.settings.requestModels.claude = 'claude-fable-5'
+    state.settings.lastModel = { provider: 'claude', model: 'claude-sonnet-5' }
+
+    const next = ideReducer(state, {
+      type: 'addTab',
+      columnId: 'column-2',
+      paneId: 'pane-2',
+    })
+
+    const pane = next.columns[1]?.layout as PaneNode
+    const newCard = next.columns[1]?.cards[pane.activeTabId]
+
+    assert.equal(newCard?.provider, 'claude')
+    assert.equal(newCard?.model, 'claude-sonnet-5')
+  })
+
+  it('uses the global last chat when a tool-only pane belongs to a stale Fable column', () => {
+    const state = createState()
+    state.columns[1] = {
+      ...state.columns[1]!,
+      provider: 'claude',
+      model: 'claude-fable-5',
+      cards: {
+        'card-note': createCard({
+          id: 'card-note',
+          title: 'Design notes',
+          provider: 'claude',
+          model: STICKYNOTE_TOOL_MODEL,
+          messages: [],
+        }),
+      },
+      layout: createPane('pane-2', ['card-note'], 'card-note'),
+    }
+    state.settings.requestModels.claude = 'claude-fable-5'
+    state.settings.lastModel = { provider: 'codex', model: DEFAULT_CODEX_MODEL }
 
     const next = ideReducer(state, {
       type: 'addTab',

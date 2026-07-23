@@ -74,3 +74,7 @@ UI 封装（第 5 节）为低风险 glue，走 prove-after：类型检查 + 现
 
 - 旧 CLI 对 `--settings` 未知键 `ultracode` 的容忍：Claude Code settings 校验为宽松模式（未知键警告不报错），最坏退化为 xhigh；本机对新 CLI 做一次 smoke。
 - `sonnet` 裸别名移交 Sonnet 5 后，仅影响新的 `/model sonnet` 输入；已持久化的完整 id 不受别名变化影响。
+
+## 8. New-chat inheritance correction (2026-07-23)
+
+`src/state.ts` now lets the current pane's recent chat choose the provider first, then falls back to the global recent chat before the column provider. Tool tabs do not count as chat-model memory. For model selection, an old column-level `claude-fable-5` seed is ignored when a different recent pane/global chat model is available; other explicit column defaults keep their existing precedence. This prevents tool-only panes and old Fable columns from reviving Fable 5 while preserving deliberate Settings default changes.

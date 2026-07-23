@@ -2817,6 +2817,16 @@ for (const theme of ['dark', 'light'] as const) {
 
     await page.setViewportSize({ width: 1280, height: 960 })
     await mockAppApis(page, { state })
+    await page.addInitScript(() => {
+      if (window.electronAPI) {
+        window.electronAPI.fetchCodexManagementPolicy = async () => ({
+          supported: true,
+          allowedSandboxModes: ['workspace-write'],
+          allowedApprovalPolicies: ['never'],
+          effectiveSandboxMode: 'workspace-write',
+        })
+      }
+    })
     await page.goto(appUrl)
     await page.locator('.card-shell').first().waitFor()
 
@@ -2849,10 +2859,48 @@ for (const theme of ['dark', 'light'] as const) {
     await expect(safetySettings).toContainText(
       theme === 'dark' ? '使用隔离的 Codex Agent 主目录' : 'Use an isolated Codex Agent home',
     )
+    const safetyDetails = safetySettings.locator('.settings-hover-note')
+    await expect(safetyDetails).toHaveCount(3)
+    await expect(safetyDetails.first()).toBeHidden()
+    await safetySettings.locator('.settings-hover-detail').first().hover()
+    await expect(safetyDetails.first()).toBeVisible()
+    const policyRow = safetySettings.locator('.codex-management-policy-row')
+    await policyRow.hover()
+    await expect(safetyDetails.first()).toBeHidden()
+    const [policyCopyBox, refreshButtonBox] = await Promise.all([
+      policyRow.locator(':scope > span').boundingBox(),
+      policyRow.getByRole('button').boundingBox(),
+    ])
+    expect(policyCopyBox?.width ?? 0).toBeGreaterThan(refreshButtonBox?.width ?? 0)
     await expect(safetySettings).toHaveScreenshot(`codex-safety-settings-${theme}.png`, {
       animations: 'disabled',
       caret: 'hide',
     })
+  })
+
+  test(`unsupported Codex management policy stays hidden in ${theme} theme`, async ({ page }) => {
+    const state = createMockState()
+    state.settings.language = theme === 'dark' ? 'zh-CN' : 'en'
+    state.settings.theme = theme
+
+    await page.setViewportSize({ width: 1280, height: 960 })
+    await mockAppApis(page, { state })
+    await page.addInitScript(() => {
+      if (window.electronAPI) {
+        window.electronAPI.fetchCodexManagementPolicy = async () => ({
+          supported: false,
+          allowedSandboxModes: [],
+          allowedApprovalPolicies: [],
+          effectiveSandboxMode: 'workspace-write',
+          message: 'This Codex CLI does not expose managed requirements.',
+        })
+      }
+    })
+    await page.goto(appUrl)
+    await page.locator('.card-shell').first().waitFor()
+    await page.locator('#app-tab-settings').click()
+
+    await expect(page.locator('.codex-management-policy-row:visible')).toHaveCount(0)
   })
 
   test(`model prompt rules editor stays legible in ${theme} theme`, async ({ page }) => {

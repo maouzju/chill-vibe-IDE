@@ -39,7 +39,7 @@ import {
   recordPanelUnmountForForensics,
 } from '../diagnostics/stuck-pane-forensics'
 import type { QueuedSendSummary, SendMessageOptions } from './deferred-send-queue'
-import { arePaneViewPropsEqual } from './layout-memoization'
+import { arePaneViewPropsEqual, cardKeepsPaneRuntimeWhenInactive } from './layout-memoization'
 import { getAutoReadCardId } from './pane-read-state'
 import { syncMessageListElementToBottom } from './pane-scroll'
 import { ChatCard } from './ChatCard'
@@ -293,9 +293,6 @@ const cardUsesComposer = (card: ChatCardState) =>
     WEATHER_TOOL_MODEL,
     WHITENOISE_TOOL_MODEL,
   ].includes(card.model)
-
-const cardKeepsPaneRuntimeWhenInactive = (card: ChatCardState) =>
-  card.model === GIT_TOOL_MODEL
 
 const dragHintExpiryMs = 1200
 

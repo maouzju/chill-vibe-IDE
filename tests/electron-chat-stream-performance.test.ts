@@ -9,10 +9,18 @@ import { _electron as electron, type Page } from '@playwright/test'
 
 import type { AppState } from '../shared/schema.ts'
 import {
-  chatStreamStressCardCount,
+  chatStreamStressColumnCount,
+  chatStreamStressConcurrentStreamCount,
   chatStreamStressHeartbeatIntervalMs,
   chatStreamStressInteractionIntervalMs,
+  chatStreamStressStreamsPerColumn,
+  chatStreamStressTabsPerPane,
+  chatStreamStressVisibleStreamColumnCount,
   createChatStreamStressState,
+  getChatStreamStressBackgroundTitle,
+  getChatStreamStressForegroundTitle,
+  getChatStreamStressRunningCardIds,
+  getChatStreamStressRunningTitles,
   getPercentile,
 } from './chat-stream-performance-fixture.ts'
 import {
@@ -37,12 +45,18 @@ type StressMetrics = {
   frameP95GapMs: number
   inputP95Ms: number
   focusP95Ms: number
+  queuedSendP95Ms: number
   tabSwitchP95Ms: number
   inputSampleCount: number
   focusSampleCount: number
+  queuedSendSampleCount: number
   tabSwitchSampleCount: number
   mountedStructuredItemCount: number
   maxMountedItemsPerGroup: number
+  mountedTabCount: number
+  mountedPanelCount: number
+  streamingTabCount: number
+  activeStreamingCardCount: number
   interactionError: string | null
   unresponsiveCount: number
   responsiveCount: number
@@ -83,16 +97,22 @@ const countLogMatches = (body: string, text: string) => body.split(text).length 
 
 const waitForBoardReady = async (page: Page) => {
   await page.waitForFunction(
-    (expectedColumnCount) => {
+    ({ expectedColumnCount, expectedTabCount }) => {
       const root = document.getElementById('root')
       return (
         typeof window.electronAPI !== 'undefined' &&
         (root?.childElementCount ?? 0) > 0 &&
         document.querySelectorAll('.workspace-column').length === expectedColumnCount &&
-        document.querySelectorAll('.pane-tab-panel.is-active textarea.control.textarea').length === expectedColumnCount
+        document.querySelectorAll('.pane-tab').length === expectedTabCount &&
+        document.querySelectorAll('.pane-tab-panel').length === expectedTabCount &&
+        document.querySelectorAll('.pane-tab-panel.is-active textarea.control.textarea').length === expectedColumnCount &&
+        document.querySelectorAll('.card-shell').length === expectedColumnCount
       )
     },
-    chatStreamStressCardCount,
+    {
+      expectedColumnCount: chatStreamStressColumnCount,
+      expectedTabCount: chatStreamStressColumnCount * chatStreamStressTabsPerPane,
+    },
     { timeout: 90_000 },
   )
 }
@@ -180,35 +200,129 @@ const installHeartbeatProbe = async (page: Page) => {
   }, chatStreamStressHeartbeatIntervalMs)
 }
 
-const startAllStreams = async (page: Page) => {
-  const columns = page.locator('.workspace-column')
+const activatePaneTab = async (page: Page, columnIndex: number, title: string) => {
+  const activated = await page.evaluate(({ targetColumnIndex, targetTitle }) => {
+    const targetColumn = document.querySelectorAll('.workspace-column').item(targetColumnIndex)
+    const tabs = targetColumn?.querySelectorAll<HTMLButtonElement>('.pane-tab') ?? []
+    for (const tab of tabs) {
+      if (tab.textContent?.trim() === targetTitle) {
+        tab.click()
+        return true
+      }
+    }
+    return false
+  }, { targetColumnIndex: columnIndex, targetTitle: title })
+  assert.equal(activated, true, `missing pane tab ${title} in column ${columnIndex + 1}`)
 
-  for (let index = 0; index < chatStreamStressCardCount; index += 1) {
-    const textarea = columns
-      .nth(index)
-      .locator('.pane-tab-panel.is-active textarea.control.textarea')
-    await textarea.fill(`Start deterministic stress stream ${index + 1}.`)
-    await textarea.press('Enter')
+  await page.waitForFunction(
+    ({ targetColumnIndex, targetTitle }) => {
+      const targetColumn = document.querySelectorAll('.workspace-column').item(targetColumnIndex)
+      return (
+        targetColumn?.querySelector('.pane-tab.is-active')?.textContent?.trim() === targetTitle &&
+        targetColumn.querySelector('.pane-tab-panel.is-active textarea.control.textarea') !== null
+      )
+    },
+    { targetColumnIndex: columnIndex, targetTitle: title },
+    { timeout: 10_000 },
+  )
+}
+
+const sendActiveStreamPrompt = async (page: Page, columnIndex: number, prompt: string) => {
+  const columns = page.locator('.workspace-column')
+  const textarea = columns
+    .nth(columnIndex)
+    .locator('.pane-tab-panel.is-active textarea.control.textarea')
+  await textarea.fill(prompt)
+  await textarea.press('Enter')
+  await page.waitForFunction(
+    (targetColumnIndex) => {
+      const targetColumn = document.querySelectorAll('.workspace-column').item(targetColumnIndex)
+      return (
+        targetColumn?.querySelector('.pane-tab.is-active')?.classList.contains('is-streaming') === true &&
+        targetColumn.querySelector<HTMLTextAreaElement>(
+          '.pane-tab-panel.is-active textarea.control.textarea',
+        )?.value === ''
+      )
+    },
+    columnIndex,
+    { timeout: 10_000 },
+  )
+}
+
+const waitForActiveLiveStressOutput = async (page: Page, columnIndex: number) => {
+  await page.waitForFunction(
+    (targetColumnIndex) => {
+      const activePanel = document
+        .querySelectorAll('.workspace-column')
+        .item(targetColumnIndex)
+        ?.querySelector('.pane-tab-panel.is-active')
+      const text = activePanel?.textContent ?? ''
+      return text.includes('live stress') || text.includes('stream-')
+    },
+    columnIndex,
+    { timeout: 60_000 },
+  )
+}
+
+const startAllStreams = async (page: Page) => {
+  const maxStreamsPerColumn = Math.max(...chatStreamStressStreamsPerColumn)
+  for (let streamIndex = 0; streamIndex < maxStreamsPerColumn; streamIndex += 1) {
+    const launchedColumnIndexes: number[] = []
+
+    for (let columnIndex = 0; columnIndex < chatStreamStressColumnCount; columnIndex += 1) {
+      const cardIndex = columnIndex + 1
+      const runningTitle = getChatStreamStressRunningTitles(cardIndex)[streamIndex]
+      if (!runningTitle) continue
+
+      await activatePaneTab(page, columnIndex, runningTitle)
+      await sendActiveStreamPrompt(
+        page,
+        columnIndex,
+        `Start stress agent ${cardIndex}.${streamIndex + 1}.`,
+      )
+      launchedColumnIndexes.push(columnIndex)
+    }
+
+    await Promise.all(
+      launchedColumnIndexes.map((columnIndex) => waitForActiveLiveStressOutput(page, columnIndex)),
+    )
+  }
+
+  for (let index = 0; index < chatStreamStressColumnCount; index += 1) {
+    const cardIndex = index + 1
+    await activatePaneTab(page, index, getChatStreamStressForegroundTitle(cardIndex))
   }
 
   await page.waitForFunction(
-    (expectedCount) => document.querySelectorAll('.card-shell.is-streaming').length === expectedCount,
-    chatStreamStressCardCount,
+    ({ expectedCount, expectedActiveCount }) =>
+      document.querySelectorAll('.pane-tab.is-streaming').length === expectedCount &&
+      document.querySelectorAll('.card-shell.is-streaming').length === expectedActiveCount,
+    {
+      expectedCount: chatStreamStressConcurrentStreamCount,
+      expectedActiveCount: chatStreamStressVisibleStreamColumnCount,
+    },
     { timeout: 60_000 },
   )
+
+  // Starting the last background tab arms the normal composer focus guards.
+  // Let those bounded guards expire before measuring steady-state cross-column
+  // focus, otherwise setup cleanup can be mistaken for a streaming stall.
+  await page.waitForTimeout(2_000)
 }
 
 const runInteractions = async (page: Page) => {
   const inputDurations: number[] = []
   const focusDurations: number[] = []
+  const queuedSendDurations: number[] = []
   const tabSwitchDurations: number[] = []
   const columns = page.locator('.workspace-column')
   const deadline = Date.now() + durationMs
   let cycle = 0
   let revealedOlderActivity = false
+  const queuedColumns = new Set<number>()
 
   while (Date.now() < deadline) {
-    const columnIndex = cycle % chatStreamStressCardCount
+    const columnIndex = cycle % chatStreamStressColumnCount
     const column = columns.nth(columnIndex)
 
     const focusResult = await page.evaluate(async (targetColumnIndex) => {
@@ -256,6 +370,58 @@ const runInteractions = async (page: Page) => {
     assert.equal(inputResult?.value, nextDraft)
     inputDurations.push(inputResult?.durationMs ?? Number.POSITIVE_INFINITY)
 
+    if (!queuedColumns.has(columnIndex)) {
+      const queuedSendResult = await page.evaluate(async ({ targetColumnIndex, expectedStreamCount }) => {
+        const startedAt = performance.now()
+        const targetColumn = document.querySelectorAll('.workspace-column').item(targetColumnIndex)
+        const activePanel = targetColumn?.querySelector('.pane-tab-panel.is-active')
+        const textarea = activePanel?.querySelector<HTMLTextAreaElement>('textarea.control.textarea')
+        const sendButton = activePanel?.querySelector<HTMLButtonElement>(
+          'button[aria-label="Send message"]',
+        )
+        if (!activePanel || !textarea || !sendButton) {
+          return {
+            queued: false,
+            durationMs: Number.POSITIVE_INFINITY,
+            streamingTabCount: document.querySelectorAll('.pane-tab.is-streaming').length,
+          }
+        }
+
+        sendButton.dispatchEvent(new MouseEvent('contextmenu', {
+          bubbles: true,
+          cancelable: true,
+          button: 2,
+        }))
+
+        const deadline = performance.now() + 5_000
+        while (performance.now() < deadline) {
+          await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()))
+          const queued = activePanel.querySelector('.composer-queued-send') !== null
+          const streamingTabCount = document.querySelectorAll('.pane-tab.is-streaming').length
+          if (queued && textarea.value === '' && streamingTabCount === expectedStreamCount) {
+            return {
+              queued: true,
+              durationMs: performance.now() - startedAt,
+              streamingTabCount,
+            }
+          }
+        }
+
+        return {
+          queued: false,
+          durationMs: Number.POSITIVE_INFINITY,
+          streamingTabCount: document.querySelectorAll('.pane-tab.is-streaming').length,
+        }
+      }, {
+        targetColumnIndex: columnIndex,
+        expectedStreamCount: chatStreamStressConcurrentStreamCount,
+      })
+      assert.equal(queuedSendResult.queued, true)
+      assert.equal(queuedSendResult.streamingTabCount, chatStreamStressConcurrentStreamCount)
+      queuedSendDurations.push(queuedSendResult.durationMs)
+      queuedColumns.add(columnIndex)
+    }
+
     const messageList = column.locator('.pane-tab-panel.is-active .message-list').first()
     if (await messageList.isVisible()) {
       await messageList.evaluate((node) => {
@@ -295,83 +461,93 @@ const runInteractions = async (page: Page) => {
       }, columnIndex)
     }
 
-    if (cycle % 4 === 0) {
-      const standbyTitle = `Standby ${columnIndex + 1}`
-      const streamTitle = `Stream ${columnIndex + 1}`
-      const tabSwitchDurationMs = await page.evaluate(async ({
+    {
+      const backgroundTitle = getChatStreamStressBackgroundTitle(columnIndex + 1)
+      const returnTitle = getChatStreamStressForegroundTitle(columnIndex + 1)
+      const tabSwitchResult = await page.evaluate(async ({
         targetColumnIndex,
-        standbyTitle: targetStandbyTitle,
-        streamTitle: targetStreamTitle,
+        backgroundTitle: targetBackgroundTitle,
+        returnTitle: targetReturnTitle,
       }) => {
         const targetColumn = document.querySelectorAll('.workspace-column').item(targetColumnIndex)
-        if (!targetColumn) return Number.POSITIVE_INFINITY
+        if (!targetColumn) {
+          return { durationMs: Number.POSITIVE_INFINITY, backgroundOutputVisible: false }
+        }
 
         const startedAt = performance.now()
-        let standbyTab: HTMLButtonElement | null = null
-        const standbyTabs = targetColumn.querySelectorAll<HTMLButtonElement>('.pane-tab')
-        for (let tabIndex = 0; tabIndex < standbyTabs.length; tabIndex += 1) {
-          const tab = standbyTabs.item(tabIndex)
-          if (tab.textContent?.trim() === targetStandbyTitle) {
-            standbyTab = tab
+        let backgroundTab: HTMLButtonElement | null = null
+        const backgroundTabs = targetColumn.querySelectorAll<HTMLButtonElement>('.pane-tab')
+        for (let tabIndex = 0; tabIndex < backgroundTabs.length; tabIndex += 1) {
+          const tab = backgroundTabs.item(tabIndex)
+          if (tab.textContent?.trim() === targetBackgroundTitle) {
+            backgroundTab = tab
             break
           }
         }
-        if (!standbyTab) {
-          return Number.POSITIVE_INFINITY
+        if (!backgroundTab) {
+          return { durationMs: Number.POSITIVE_INFINITY, backgroundOutputVisible: false }
         }
-        standbyTab.click()
-        const standbyDeadline = performance.now() + 5_000
-        let standbyPainted = false
-        while (performance.now() < standbyDeadline) {
+        backgroundTab.click()
+        const backgroundDeadline = performance.now() + 5_000
+        let backgroundOutputVisible = false
+        while (performance.now() < backgroundDeadline) {
           await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()))
+          const activePanel = targetColumn.querySelector('.pane-tab-panel.is-active')
+          const hasLiveDelta = activePanel?.querySelector('.message-list')?.textContent?.includes('stream-') === true
+          const hasLiveActivity = activePanel?.querySelector('.structured-command-inline-row') !== null
           if (
             targetColumn.querySelector('.pane-tab.is-active')?.textContent?.trim() ===
-            targetStandbyTitle
+              targetBackgroundTitle &&
+            (hasLiveDelta || hasLiveActivity)
           ) {
-            standbyPainted = true
+            backgroundOutputVisible = true
             break
           }
         }
-        if (!standbyPainted) {
-          return Number.POSITIVE_INFINITY
+        if (!backgroundOutputVisible) {
+          return { durationMs: Number.POSITIVE_INFINITY, backgroundOutputVisible: false }
         }
 
-        let streamTab: HTMLButtonElement | null = null
-        const streamTabs = targetColumn.querySelectorAll<HTMLButtonElement>('.pane-tab')
-        for (let tabIndex = 0; tabIndex < streamTabs.length; tabIndex += 1) {
-          const tab = streamTabs.item(tabIndex)
-          if (tab.textContent?.trim() === targetStreamTitle) {
-            streamTab = tab
+        let returnTab: HTMLButtonElement | null = null
+        const returnTabs = targetColumn.querySelectorAll<HTMLButtonElement>('.pane-tab')
+        for (let tabIndex = 0; tabIndex < returnTabs.length; tabIndex += 1) {
+          const tab = returnTabs.item(tabIndex)
+          if (tab.textContent?.trim() === targetReturnTitle) {
+            returnTab = tab
             break
           }
         }
-        if (!streamTab) {
-          return Number.POSITIVE_INFINITY
+        if (!returnTab) {
+          return { durationMs: Number.POSITIVE_INFINITY, backgroundOutputVisible }
         }
-        streamTab.click()
-        const streamDeadline = performance.now() + 5_000
-        let streamPainted = false
-        while (performance.now() < streamDeadline) {
+        returnTab.click()
+        const returnDeadline = performance.now() + 5_000
+        let returnPainted = false
+        while (performance.now() < returnDeadline) {
           await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()))
           if (
             targetColumn.querySelector('.pane-tab.is-active')?.textContent?.trim() ===
-            targetStreamTitle
+            targetReturnTitle
           ) {
-            streamPainted = true
+            returnPainted = true
             break
           }
         }
-        if (!streamPainted) {
-          return Number.POSITIVE_INFINITY
+        if (!returnPainted) {
+          return { durationMs: Number.POSITIVE_INFINITY, backgroundOutputVisible }
         }
-        return performance.now() - startedAt
+        return {
+          durationMs: performance.now() - startedAt,
+          backgroundOutputVisible,
+        }
       }, {
         targetColumnIndex: columnIndex,
-        standbyTitle,
-        streamTitle,
+        backgroundTitle,
+        returnTitle,
       })
-      assert.equal(Number.isFinite(tabSwitchDurationMs), true)
-      tabSwitchDurations.push(tabSwitchDurationMs)
+      assert.equal(tabSwitchResult.backgroundOutputVisible, true)
+      assert.equal(Number.isFinite(tabSwitchResult.durationMs), true)
+      tabSwitchDurations.push(tabSwitchResult.durationMs)
     }
 
     cycle += 1
@@ -381,45 +557,49 @@ const runInteractions = async (page: Page) => {
     }
   }
 
-  return { focusDurations, inputDurations, tabSwitchDurations }
+  return { focusDurations, inputDurations, queuedSendDurations, tabSwitchDurations }
 }
 
 const assertPersistedMessagesRemainComplete = (
   initialState: AppState,
   persistedState: AppState,
 ) => {
-  for (let index = 0; index < chatStreamStressCardCount; index += 1) {
-    const cardId = `card-chat-stress-${index + 1}`
-    const initialCard = initialState.columns[index]?.cards[cardId]
-    const persistedCard = persistedState.columns[index]?.cards[cardId]
+  for (let index = 0; index < chatStreamStressColumnCount; index += 1) {
+    const cardIndex = index + 1
+    const streamedCardIds = getChatStreamStressRunningCardIds(cardIndex)
 
-    assert.ok(initialCard, `missing initial stress card ${cardId}`)
-    assert.ok(persistedCard, `missing persisted stress card ${cardId}`)
+    for (const cardId of streamedCardIds) {
+      const initialCard = initialState.columns[index]?.cards[cardId]
+      const persistedCard = persistedState.columns[index]?.cards[cardId]
 
-    // Startup normalization deliberately pre-trims oversized live-card arrays
-    // to 300 messages before schema validation. The gate proves that every
-    // message which entered the renderer survives this optimization slice; it
-    // does not redefine that older persistence policy.
-    const initialIds = initialCard.messages.slice(-300).map((message) => message.id)
-    const persistedIds = persistedCard.messages.map((message) => message.id)
-    const duplicateIds = persistedIds.filter(
-      (messageId, messageIndex) => persistedIds.indexOf(messageId) !== messageIndex,
-    )
-    assert.deepEqual(
-      duplicateIds,
-      [],
-      `${cardId} persisted duplicate message ids: ${JSON.stringify(duplicateIds)}`,
-    )
-    assert.ok(
-      persistedIds.length > initialIds.length,
-      `${cardId} did not persist newly streamed messages`,
-    )
+      assert.ok(initialCard, `missing initial stress card ${cardId}`)
+      assert.ok(persistedCard, `missing persisted stress card ${cardId}`)
 
-    let lastIndex = -1
-    for (const messageId of initialIds) {
-      const persistedIndex = persistedIds.indexOf(messageId)
-      assert.ok(persistedIndex > lastIndex, `${cardId} lost or reordered ${messageId}`)
-      lastIndex = persistedIndex
+      // Startup normalization deliberately pre-trims oversized live-card arrays
+      // to 300 messages before schema validation. The gate proves that every
+      // message which entered the renderer survives this optimization slice; it
+      // does not redefine that older persistence policy.
+      const initialIds = initialCard.messages.slice(-300).map((message) => message.id)
+      const persistedIds = persistedCard.messages.map((message) => message.id)
+      const duplicateIds = persistedIds.filter(
+        (messageId, messageIndex) => persistedIds.indexOf(messageId) !== messageIndex,
+      )
+      assert.deepEqual(
+        duplicateIds,
+        [],
+        `${cardId} persisted duplicate message ids: ${JSON.stringify(duplicateIds)}`,
+      )
+      assert.ok(
+        persistedIds.length > initialIds.length,
+        `${cardId} did not persist newly streamed messages`,
+      )
+
+      let lastIndex = -1
+      for (const messageId of initialIds) {
+        const persistedIndex = persistedIds.indexOf(messageId)
+        assert.ok(persistedIndex > lastIndex, `${cardId} lost or reordered ${messageId}`)
+        lastIndex = persistedIndex
+      }
     }
   }
 }
@@ -433,7 +613,7 @@ after(async () => {
   await Promise.all(tempRoots.map((root) => rm(root, { recursive: true, force: true })))
 })
 
-test('six simultaneous Electron chat streams stay responsive and persist complete ordered data', async () => {
+test('twenty simultaneous Electron agent tabs stay responsive while typing, queueing messages, and switching tabs', async () => {
   await ensureElectronRuntimeBuild()
 
   const workspacePath = process.cwd()
@@ -462,6 +642,7 @@ test('six simultaneous Electron chat streams stay responsive and persist complet
   let interactionMetrics = {
     focusDurations: [] as number[],
     inputDurations: [] as number[],
+    queuedSendDurations: [] as number[],
     tabSwitchDurations: [] as number[],
   }
   let rendererMetrics = {
@@ -471,6 +652,10 @@ test('six simultaneous Electron chat streams stay responsive and persist complet
     frameGaps: [] as number[],
     mountedStructuredItemCount: Number.POSITIVE_INFINITY,
     maxMountedItemsPerGroup: Number.POSITIVE_INFINITY,
+    mountedTabCount: 0,
+    mountedPanelCount: 0,
+    streamingTabCount: 0,
+    activeStreamingCardCount: 0,
   }
   let mainWorkingSetKb = 0
 
@@ -508,6 +693,10 @@ test('six simultaneous Electron chat streams stay responsive and persist complet
           probe?.maxMountedStructuredItemCount ?? Number.POSITIVE_INFINITY,
         maxMountedItemsPerGroup:
           probe?.maxMountedItemsPerGroup ?? Number.POSITIVE_INFINITY,
+        mountedTabCount: document.querySelectorAll('.pane-tab').length,
+        mountedPanelCount: document.querySelectorAll('.pane-tab-panel').length,
+        streamingTabCount: document.querySelectorAll('.pane-tab.is-streaming').length,
+        activeStreamingCardCount: document.querySelectorAll('.card-shell.is-streaming').length,
       }
     })
     mainWorkingSetKb = await app.evaluate(async () => {
@@ -530,12 +719,18 @@ test('six simultaneous Electron chat streams stay responsive and persist complet
     frameP95GapMs: getPercentile(rendererMetrics.frameGaps, 0.95),
     inputP95Ms: getPercentile(interactionMetrics.inputDurations, 0.95),
     focusP95Ms: getPercentile(interactionMetrics.focusDurations, 0.95),
+    queuedSendP95Ms: getPercentile(interactionMetrics.queuedSendDurations, 0.95),
     tabSwitchP95Ms: getPercentile(interactionMetrics.tabSwitchDurations, 0.95),
     inputSampleCount: interactionMetrics.inputDurations.length,
     focusSampleCount: interactionMetrics.focusDurations.length,
+    queuedSendSampleCount: interactionMetrics.queuedSendDurations.length,
     tabSwitchSampleCount: interactionMetrics.tabSwitchDurations.length,
     mountedStructuredItemCount: rendererMetrics.mountedStructuredItemCount,
     maxMountedItemsPerGroup: rendererMetrics.maxMountedItemsPerGroup,
+    mountedTabCount: rendererMetrics.mountedTabCount,
+    mountedPanelCount: rendererMetrics.mountedPanelCount,
+    streamingTabCount: rendererMetrics.streamingTabCount,
+    activeStreamingCardCount: rendererMetrics.activeStreamingCardCount,
     interactionError,
     unresponsiveCount: countLogMatches(logBody, 'BrowserWindow became unresponsive.'),
     responsiveCount: countLogMatches(logBody, 'BrowserWindow became responsive again.'),
@@ -551,16 +746,45 @@ test('six simultaneous Electron chat streams stay responsive and persist complet
   assert.equal(metrics.rendererGoneCount, 0, `renderer process exited: ${JSON.stringify(metrics)}`)
   assert.ok(metrics.inputSampleCount >= 2, `too few input samples: ${JSON.stringify(metrics)}`)
   assert.ok(metrics.focusSampleCount >= 2, `too few focus samples: ${JSON.stringify(metrics)}`)
+  assert.equal(
+    metrics.queuedSendSampleCount,
+    chatStreamStressColumnCount,
+    `each visible running agent should accept one deferred message: ${JSON.stringify(metrics)}`,
+  )
   assert.ok(metrics.tabSwitchSampleCount >= 1, `too few tab switch samples: ${JSON.stringify(metrics)}`)
+  assert.equal(
+    metrics.mountedTabCount,
+    chatStreamStressColumnCount * chatStreamStressTabsPerPane,
+    `stress fixture did not keep all heavy-use tabs mounted: ${JSON.stringify(metrics)}`,
+  )
+  assert.equal(
+    metrics.mountedPanelCount,
+    chatStreamStressColumnCount * chatStreamStressTabsPerPane,
+    `stress fixture did not preserve stable pane panels: ${JSON.stringify(metrics)}`,
+  )
+  assert.equal(
+    metrics.streamingTabCount,
+    chatStreamStressConcurrentStreamCount,
+    `not all foreground and background agents remained live: ${JSON.stringify(metrics)}`,
+  )
+  assert.equal(
+    metrics.activeStreamingCardCount,
+    chatStreamStressVisibleStreamColumnCount,
+    `each workspace must keep one running agent visible during interaction: ${JSON.stringify(metrics)}`,
+  )
   assert.ok(metrics.startupMs < 30_000, `startup exceeded 30s: ${JSON.stringify(metrics)}`)
   assert.ok(metrics.heartbeatMaxGapMs < 2_000, `heartbeat stalled for 2s: ${JSON.stringify(metrics)}`)
   assert.ok(metrics.heartbeatMaxGapMs < 500, `heartbeat missed the 500ms target: ${JSON.stringify(metrics)}`)
   // Offscreen validation consumes paint frames at 15 fps. Interaction metrics
   // above wait for the next frame so they cover visible feedback rather than
   // only synchronous DOM mutation.
-  assert.ok(metrics.frameMaxGapMs < 2_000, `rendering stalled for 2s: ${JSON.stringify(metrics)}`)
+  assert.ok(metrics.frameMaxGapMs < 500, `rendering missed the 500ms target: ${JSON.stringify(metrics)}`)
   assert.ok(metrics.inputP95Ms < 100, `input p95 exceeded 100ms: ${JSON.stringify(metrics)}`)
   assert.ok(metrics.focusP95Ms < 150, `focus p95 exceeded 150ms: ${JSON.stringify(metrics)}`)
+  assert.ok(
+    metrics.queuedSendP95Ms < 500,
+    `deferred send feedback p95 exceeded 500ms: ${JSON.stringify(metrics)}`,
+  )
   assert.ok(metrics.tabSwitchP95Ms < 500, `tab switch p95 exceeded 500ms: ${JSON.stringify(metrics)}`)
   assert.ok(
     metrics.maxMountedItemsPerGroup <= 120,

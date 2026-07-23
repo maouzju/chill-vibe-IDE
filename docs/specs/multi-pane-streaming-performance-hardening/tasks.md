@@ -26,7 +26,7 @@
 - [x] 让 Electron 门禁启用离屏绘制并消费 paint 帧，复现软件合成停帧。
 - [x] 为统一调度器编写失败测试，覆盖 delta/activity 合并、交错 item 和按列抽取。
 - [x] 实现单 lane、按列切片调度，不使用 `startTransition`。
-- [x] 多流刷新自适应为 80/200/500ms，列之间让出 50ms。
+- [x] 首版多流刷新自适应为 80/200/500ms，列之间让出 50ms；E 类复发后最终调整为 80/400/800ms。
 - [x] Windows 恢复默认硬件加速，并保留强制软件渲染回退环境变量。
 - [x] 重跑持久化、Electron runtime 与离屏聊天压力门禁。
 
@@ -83,3 +83,18 @@
 - [x] 双主题和窄视口检查通过。
 - [x] 30 分钟隐藏窗口 soak：零 unresponsive、零数据不一致。
 - [x] 打包到新时间戳目录，保留上一可运行包作为即时回滚。
+
+## 2026-07-23 重度多 Agent / 十几个 Tab 补强
+
+- [x] 将聊天 Electron 门禁扩展到 6 个 workspace column、每 pane 14 tab、12 条并发 Agent 流。
+- [x] 红测证明后台普通聊天只有正文变化时不应让 `PaneView` 重绘。
+- [x] 保留标题、Provider、模型、状态、未读、激活卡和 Git 保活卡的刷新语义。
+- [x] 重跑 focused tests、quality、30 秒 Electron 重度聊天门禁：最大 heartbeat gap 180.2ms、最大 frame gap 199.9ms、输入 P95 73.7ms、切 tab P95 110.6ms，零 unresponsive / renderer gone。
+
+## 2026-07-23 20 个运行 Agent 校正
+
+- [x] 将门禁从 12 条并发流提升到 20 条，保持 6 个 workspace、每 pane 14 tab。
+- [x] 让输入、中文文本插入和焦点采样发生在正在 streaming 的 Agent composer 上。
+- [x] 每列至少一次通过真实右键发送交互加入延后发送队列，并验证 20 条现有流继续运行。
+- [x] 反复切换同列的前台/后台运行 tab，验证隐藏期输出和切换反馈。
+- [x] 重跑 focused tests、quality、30 秒 Electron 20 流门禁与 Windows 打包：最大 frame gap 201.1ms，输入/延后发送/切 tab P95 分别为 71.8/71.1/131.1ms，零 unresponsive / renderer gone。

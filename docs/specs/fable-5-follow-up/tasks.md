@@ -6,3 +6,5 @@
 - [x] T4 UI 实现：ChatCard 档位菜单/思考开关模型感知
 - [x] T5 验证：reasoning/models/provider 窄测试 + 157 个相关单测全绿 + `pnpm test:quality` 通过；本机 CLI（2.1.174）smoke：`--settings '{"ultracode":true}'` 成功、`--model claude-sonnet-5` 透传成功（版本门槛只影响 picker，见 AGENTS.md pitfall）
 - [x] T6 合并回 main、复跑窄测试、清理 worktree、按需重启活跃 runtime
+
+- [x] T7 Fix stale Fable column inheritance with reducer red tests: recent pane chats beat column models, and tool-only panes fall back to the global recent chat.

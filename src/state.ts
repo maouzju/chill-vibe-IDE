@@ -1662,9 +1662,11 @@ export const ideReducer = (state: AppState, action: IdeAction): AppState => {
         const activeChatProvider = inheritedChatCard?.provider
         const hasExplicitProvider = action.provider !== undefined
         const hasExplicitModel = action.model !== undefined
+        const rememberedGlobal =
+          !hasExplicitProvider && !hasExplicitModel ? state.settings.lastModel : undefined
         const provider = toolCardModels.has(action.model ?? '')
           ? 'codex'
-          : (action.provider ?? activeChatProvider ?? column.provider)
+          : (action.provider ?? activeChatProvider ?? rememberedGlobal?.provider ?? column.provider)
         const rememberedColumnModel =
           !hasExplicitProvider &&
           !hasExplicitModel &&
@@ -1680,12 +1682,17 @@ export const ideReducer = (state: AppState, action: IdeAction): AppState => {
             ? normalizeStoredModel(provider, inheritedChatCard.model) || undefined
             : undefined
         const rememberedGlobalModel =
-          !hasExplicitProvider && !hasExplicitModel && state.settings.lastModel?.provider === provider
-            ? state.settings.lastModel.model
+          rememberedGlobal?.provider === provider
+            ? rememberedGlobal.model
             : undefined
+        const staleFableColumnModel =
+          provider === 'claude' &&
+          rememberedColumnModel === 'claude-fable-5' &&
+          ((rememberedActiveModel !== undefined && rememberedActiveModel !== rememberedColumnModel) ||
+            (rememberedGlobalModel !== undefined && rememberedGlobalModel !== rememberedColumnModel))
         const model =
           action.model ??
-          rememberedColumnModel ??
+          (staleFableColumnModel ? undefined : rememberedColumnModel) ??
           rememberedActiveModel ??
           rememberedGlobalModel ??
           getConfiguredModel(state.settings, provider)

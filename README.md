@@ -203,7 +203,7 @@ pnpm verify
 - `pnpm test:perf:electron` runs the hidden-window Electron responsiveness smoke for desktop-only performance issues.
 - `pnpm test:electron` runs the hidden-window Electron runtime and release responsiveness suite once.
 - `pnpm test:risk` runs lint, type checks, Node tests, the Playwright smoke suite, and Electron runtime checks.
-- `pnpm test:release` runs resumable exact-tree release verification with per-stage logs.
+- `pnpm test:release` runs resumable exact-tree release verification with per-stage logs, including a bounded 30-second multi-stream Electron chat performance gate after the production build.
 - `pnpm test:full` remains a compatibility alias for `pnpm test:release`.
 - `pnpm verify` runs `pnpm test:release`.
 
@@ -432,7 +432,7 @@ pnpm verify
 - `pnpm test:perf:electron` 运行针对桌面端性能问题的隐藏窗口 Electron 响应性 smoke。
 - `pnpm test:electron` 通过一次隐藏窗口会话运行 Electron 运行时和发布响应性测试。
 - `pnpm test:risk` 运行 lint、类型检查、Node 测试、Playwright smoke 套件和 Electron 运行时检查。
-- `pnpm test:release` 按工作区精确指纹运行可恢复的发布校验，并为每个阶段保存日志。
+- `pnpm test:release` 按工作区精确指纹运行可恢复的发布校验，并为每个阶段保存日志；生产构建后还会运行有界的 30 秒 Electron 多流聊天性能门禁。
 - `pnpm test:full` 保留为 `pnpm test:release` 的兼容别名。
 - `pnpm verify` 运行 `pnpm test:release`。
 

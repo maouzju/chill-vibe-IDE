@@ -83,6 +83,10 @@ Supported controls:
 - `test:full` and `verify` → aliases of `test:release` for compatibility.
 - Individual gates remain unchanged for narrow reruns.
 
+2026-07-23 follow-up: the exact-tree release runner adds a bounded 30-second Electron chat performance
+stage after the production build. It reuses that build instead of compiling twice; the existing 5-minute
+manual gate and 30-minute soak remain available for performance fixes and high-risk release candidates.
+
 ## Branch Convergence and Publish Gate
 
 The default release source is the checked-out local `main`. An isolated worktree remains useful for long verification or for assembling an audited candidate without disturbing unrelated work, but it is no longer a remote publication surface.

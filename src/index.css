@@ -1616,6 +1616,46 @@ body.is-card-dragging .lane-drop-zone-top {
   margin-top: 0.55rem;
 }
 
+.settings-hover-detail {
+  position: relative;
+}
+
+.codex-management-policy-row + .settings-hover-detail,
+.settings-hover-detail + .settings-hover-detail {
+  margin-top: 0.55rem;
+}
+
+.settings-hover-note {
+  position: absolute;
+  left: 0;
+  top: calc(100% + 0.4rem);
+  width: min(36rem, 100%);
+  margin: 0;
+  padding: 0.55rem 0.65rem;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--r-xs);
+  background: color-mix(in srgb, var(--panel-strong) 96%, var(--page));
+  box-shadow: var(--shadow-md);
+  color: var(--ink-2);
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  transform: translateY(-0.2rem);
+  transition:
+    opacity 120ms var(--ease),
+    transform 120ms var(--ease),
+    visibility 0s linear 120ms;
+  z-index: 30;
+}
+
+.settings-hover-detail:hover .settings-hover-note,
+.settings-hover-detail:focus-within .settings-hover-note {
+  opacity: 1;
+  visibility: visible;
+  transform: translateY(0);
+  transition-delay: 0s;
+}
+
 .codex-management-policy-row {
   gap: 0.75rem;
   cursor: default;
@@ -1638,6 +1678,8 @@ body.is-card-dragging .lane-drop-zone-top {
 
 .codex-management-policy-row .control {
   flex: 0 0 auto;
+  width: auto;
+  white-space: nowrap;
 }
 
 .settings-field-label {

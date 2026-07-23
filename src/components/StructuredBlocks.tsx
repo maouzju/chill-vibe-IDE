@@ -25,6 +25,7 @@ import {
   getStructuredToolGroupRenderWindow,
   structuredToolGroupRevealBatchCount,
 } from './structured-tool-group-window'
+import { buildStructuredDiffPreviewLines } from './structured-diff-preview'
 
 const truncateStructuredInlineText = (text: string, maxLength = 180) => {
   const normalized = text.split(/\s+/).join(' ').trim()
@@ -749,82 +750,6 @@ const getStructuredDiffLineClass = (line: string) => {
   return 'structured-diff-line is-context'
 }
 
-type StructuredDiffPreviewLine = {
-  key: string
-  kind: 'added' | 'removed' | 'context'
-  marker: '+' | '-' | ' '
-  content: string
-}
-
-const diffMetadataPrefixes = [
-  'diff --git ',
-  'index ',
-  'new file mode ',
-  'deleted file mode ',
-  'similarity index ',
-  'rename from ',
-  'rename to ',
-  '--- ',
-  '+++ ',
-]
-
-const buildStructuredDiffPreviewLines = (patch: string): StructuredDiffPreviewLine[] => {
-  const rows: StructuredDiffPreviewLine[] = []
-
-  patch.split(/\r?\n/).forEach((line, index) => {
-    if (!line || diffMetadataPrefixes.some((prefix) => line.startsWith(prefix)) || line.startsWith('@@')) {
-      return
-    }
-
-    if (line.startsWith('+') && !line.startsWith('+++')) {
-      rows.push({
-        key: `added:${index}`,
-        kind: 'added',
-        marker: '+',
-        content: line.slice(1),
-      })
-      return
-    }
-
-    if (line.startsWith('-') && !line.startsWith('---')) {
-      rows.push({
-        key: `removed:${index}`,
-        kind: 'removed',
-        marker: '-',
-        content: line.slice(1),
-      })
-      return
-    }
-
-    rows.push({
-      key: `context:${index}`,
-      kind: 'context',
-      marker: ' ',
-      content: line.startsWith(' ') ? line.slice(1) : line,
-    })
-  })
-
-  return rows
-}
-
-const stripDiffMetadata = (patch: string) =>
-  patch
-    .split(/\r?\n/)
-    .filter(
-      (line) =>
-        !line.startsWith('diff --git ') &&
-        !line.startsWith('index ') &&
-        !line.startsWith('new file mode ') &&
-        !line.startsWith('deleted file mode ') &&
-        !line.startsWith('similarity index ') &&
-        !line.startsWith('rename from ') &&
-        !line.startsWith('rename to ') &&
-        !line.startsWith('--- ') &&
-        !line.startsWith('+++ ') &&
-        !line.startsWith('@@'),
-    )
-    .join('\n')
-
 export const StructuredDiffBlock = ({ patch }: { patch: string }) => {
   const lines = patch.split(/\r?\n/)
 
@@ -957,7 +882,7 @@ export const StructuredEditsCard = ({
               ) : (
                 <StructuredPreviewBlock
                   language={language}
-                  previewText={stripDiffMetadata(file.patch)}
+                  previewText={file.patch}
                   dialogTitle={labels.filePatch(file.path)}
                   variant="code"
                   actionPlacement="footer"

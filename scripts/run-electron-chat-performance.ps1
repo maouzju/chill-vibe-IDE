@@ -1,6 +1,7 @@
 param(
   [int]$DurationSeconds = 300,
-  [switch]$Soak
+  [switch]$Soak,
+  [switch]$SkipBuild
 )
 
 Set-StrictMode -Version Latest
@@ -26,9 +27,11 @@ Push-Location $repoRoot
 try {
   $env:CHILL_VIBE_CHAT_STRESS_DURATION_MS = [string]($DurationSeconds * 1000)
 
-  & $pnpm.Source 'build'
-  if ($LASTEXITCODE -ne 0) {
-    exit $LASTEXITCODE
+  if (-not $SkipBuild) {
+    & $pnpm.Source 'build'
+    if ($LASTEXITCODE -ne 0) {
+      exit $LASTEXITCODE
+    }
   }
 
   & node '--import' 'tsx' '--test' 'tests/electron-chat-stream-performance.test.ts'

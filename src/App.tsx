@@ -5917,75 +5917,100 @@ function App() {
 
   const renderCodexSafetySettings = (idPrefix: string) => (
     <div className="codex-safety-settings">
-      <div className="settings-toggle codex-management-policy-row">
-        <span>
-          <strong>{text.codexManagementPolicyTitle}</strong>
-          <small className="settings-note" data-testid="codex-management-policy-status">
-            {codexManagementPolicyPending && !codexManagementPolicy
+      {codexManagementPolicy?.supported ? (
+        <div className="settings-toggle codex-management-policy-row">
+          <span>
+            <strong>{text.codexManagementPolicyTitle}</strong>
+            <small className="settings-note" data-testid="codex-management-policy-status">
+              {text.codexManagementPolicyAllowed(codexManagementPolicy.allowedSandboxModes.join(' / '))}
+            </small>
+          </span>
+          <button
+            type="button"
+            className="control"
+            disabled={codexManagementPolicyPending}
+            onClick={() => void detectCodexManagementPolicy()}
+          >
+            {codexManagementPolicyPending
               ? text.codexManagementPolicyDetecting
-              : codexManagementPolicy?.supported
-                ? text.codexManagementPolicyAllowed(codexManagementPolicy.allowedSandboxModes.join(' / '))
-                : text.codexManagementPolicyUnavailable(codexManagementPolicy?.message ?? 'Codex CLI')}
-          </small>
-        </span>
-        <button
-          type="button"
-          className="control"
-          disabled={codexManagementPolicyPending}
-          onClick={() => void detectCodexManagementPolicy()}
+              : text.codexManagementPolicyRefresh}
+          </button>
+        </div>
+      ) : null}
+      <div className="settings-hover-detail">
+        <label className="settings-toggle" htmlFor={`${idPrefix}-agent-outside-workspace-write`}>
+          <span>{text.agentOutsideWorkspaceWriteLabel}</span>
+          <input
+            id={`${idPrefix}-agent-outside-workspace-write`}
+            type="checkbox"
+            aria-describedby={`${idPrefix}-agent-outside-workspace-write-note`}
+            checked={appState.settings.agentOutsideWorkspaceWriteEnabled}
+            onChange={(event) =>
+              applyAction({
+                type: 'updateSettings',
+                patch: { agentOutsideWorkspaceWriteEnabled: event.target.checked },
+              })
+            }
+          />
+        </label>
+        <p
+          id={`${idPrefix}-agent-outside-workspace-write-note`}
+          className="settings-note settings-hover-note"
+          role="tooltip"
         >
-          {codexManagementPolicyPending
-            ? text.codexManagementPolicyDetecting
-            : text.codexManagementPolicyRefresh}
-        </button>
+          {text.agentOutsideWorkspaceWriteNote}
+        </p>
       </div>
-      <label className="settings-toggle" htmlFor={`${idPrefix}-agent-outside-workspace-write`}>
-        <span>{text.agentOutsideWorkspaceWriteLabel}</span>
-        <input
-          id={`${idPrefix}-agent-outside-workspace-write`}
-          type="checkbox"
-          checked={appState.settings.agentOutsideWorkspaceWriteEnabled}
-          onChange={(event) =>
-            applyAction({
-              type: 'updateSettings',
-              patch: { agentOutsideWorkspaceWriteEnabled: event.target.checked },
-            })
-          }
-        />
-      </label>
-      <p className="settings-note">{text.agentOutsideWorkspaceWriteNote}</p>
 
-      <label className="settings-toggle" htmlFor={`${idPrefix}-codex-destructive-command-protection`}>
-        <span>{text.codexDestructiveCommandProtectionLabel}</span>
-        <input
-          id={`${idPrefix}-codex-destructive-command-protection`}
-          type="checkbox"
-          checked={appState.settings.codexDestructiveCommandProtectionEnabled}
-          onChange={(event) =>
-            applyAction({
-              type: 'updateSettings',
-              patch: { codexDestructiveCommandProtectionEnabled: event.target.checked },
-            })
-          }
-        />
-      </label>
-      <p className="settings-note">{text.codexDestructiveCommandProtectionNote}</p>
+      <div className="settings-hover-detail">
+        <label className="settings-toggle" htmlFor={`${idPrefix}-codex-destructive-command-protection`}>
+          <span>{text.codexDestructiveCommandProtectionLabel}</span>
+          <input
+            id={`${idPrefix}-codex-destructive-command-protection`}
+            type="checkbox"
+            aria-describedby={`${idPrefix}-codex-destructive-command-protection-note`}
+            checked={appState.settings.codexDestructiveCommandProtectionEnabled}
+            onChange={(event) =>
+              applyAction({
+                type: 'updateSettings',
+                patch: { codexDestructiveCommandProtectionEnabled: event.target.checked },
+              })
+            }
+          />
+        </label>
+        <p
+          id={`${idPrefix}-codex-destructive-command-protection-note`}
+          className="settings-note settings-hover-note"
+          role="tooltip"
+        >
+          {text.codexDestructiveCommandProtectionNote}
+        </p>
+      </div>
 
-      <label className="settings-toggle" htmlFor={`${idPrefix}-codex-isolated-home`}>
-        <span>{text.codexIsolatedHomeLabel}</span>
-        <input
-          id={`${idPrefix}-codex-isolated-home`}
-          type="checkbox"
-          checked={appState.settings.codexIsolatedHomeEnabled}
-          onChange={(event) =>
-            applyAction({
-              type: 'updateSettings',
-              patch: { codexIsolatedHomeEnabled: event.target.checked },
-            })
-          }
-        />
-      </label>
-      <p className="settings-note">{text.codexIsolatedHomeNote}</p>
+      <div className="settings-hover-detail">
+        <label className="settings-toggle" htmlFor={`${idPrefix}-codex-isolated-home`}>
+          <span>{text.codexIsolatedHomeLabel}</span>
+          <input
+            id={`${idPrefix}-codex-isolated-home`}
+            type="checkbox"
+            aria-describedby={`${idPrefix}-codex-isolated-home-note`}
+            checked={appState.settings.codexIsolatedHomeEnabled}
+            onChange={(event) =>
+              applyAction({
+                type: 'updateSettings',
+                patch: { codexIsolatedHomeEnabled: event.target.checked },
+              })
+            }
+          />
+        </label>
+        <p
+          id={`${idPrefix}-codex-isolated-home-note`}
+          className="settings-note settings-hover-note"
+          role="tooltip"
+        >
+          {text.codexIsolatedHomeNote}
+        </p>
+      </div>
     </div>
   )
 

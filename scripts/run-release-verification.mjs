@@ -17,6 +17,7 @@ const RELEASE_STAGES = [
   { id: 'playwright', label: 'Full Playwright', command: 'pnpm', args: ['test:playwright:full'] },
   { id: 'electron', label: 'Electron runtime', command: 'pnpm', args: ['test:electron'] },
   { id: 'build', label: 'Production build', command: 'pnpm', args: ['build'] },
+  { id: 'chat-perf', label: 'Electron chat performance', command: 'pnpm', args: ['test:perf:chat:electron:release'] },
 ]
 
 function formatCommand(stage) {

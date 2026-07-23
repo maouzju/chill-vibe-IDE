@@ -2,7 +2,13 @@ const readline = require('node:readline')
 
 const durationMs = Math.max(
   10_000,
-  Number.parseInt(process.env.CHILL_VIBE_CHAT_STRESS_DURATION_MS || '300000', 10) + 15_000,
+  // Twenty isolated local fake Codex app-server runtimes can take noticeably
+  // longer to finish their
+  // safety handshake on Windows. Keep every early stream alive through setup
+  // plus the requested measurement window instead of letting the first ones
+  // complete before the last background agents become ready. This fixture only
+  // speaks JSON-RPC over stdio; it never contacts a model API or spends tokens.
+  Number.parseInt(process.env.CHILL_VIBE_CHAT_STRESS_DURATION_MS || '300000', 10) + 180_000,
 )
 const activityIntervalMs = Math.max(
   50,
@@ -127,6 +133,43 @@ reader.on('line', (line) => {
 
   if (request.method === 'initialize' && request.id) {
     reply({ id: request.id, result: {} })
+    return
+  }
+
+  if (request.method === 'configRequirements/read' && request.id) {
+    // The production runner probes this optional modern Codex method before
+    // starting a thread. Fail fast like an older compatible CLI instead of
+    // leaving every stress stream blocked on the request timeout.
+    reply({
+      id: request.id,
+      error: { code: -32601, message: 'Method not found: configRequirements/read' },
+    })
+    return
+  }
+
+  if (request.method === 'hooks/list' && request.id) {
+    // Agent Safety now verifies the injected PreToolUse hook before turn/start.
+    // The stress double must complete that handshake or it never produces any
+    // live deltas and the performance gate silently measures static DOM only.
+    reply({
+      id: request.id,
+      result: {
+        data: [{
+          cwd: request.params?.cwds?.[0] || process.cwd(),
+          hooks: [{
+            key: '<session-flags>/config.toml:pre_tool_use:0:0',
+            eventName: 'pre_tool_use',
+            command: process.env.CHILL_VIBE_CODEX_SAFETY_HOOK_COMMAND,
+            source: 'sessionFlags',
+            enabled: true,
+            currentHash: 'sha256:chat-stream-stress',
+            trustStatus: 'trusted',
+          }],
+          warnings: [],
+          errors: [],
+        }],
+      },
+    })
     return
   }
 

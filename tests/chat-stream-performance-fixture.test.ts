@@ -10,23 +10,45 @@ import {
   getPercentile,
 } from './chat-stream-performance-fixture.ts'
 
-test('chat stream stress fixture matches the six-stream production incident shape', () => {
+test('chat stream stress fixture matches the heavy multi-agent and fourteen-tab usage shape', () => {
   const state = createChatStreamStressState('D:/stress-workspace')
   const cards = state.columns.flatMap((column) => Object.values(column.cards))
-  const stressCards = cards.filter((card) => /^card-chat-stress-\d+$/.test(card.id))
-  const structuredMessages = stressCards.flatMap((card) => card.messages).filter(
+  const foregroundCards = cards.filter((card) => /^card-chat-stress-\d+$/.test(card.id))
+  const streamingTargetCards = cards.filter((card) =>
+    /^card-chat-stress-(?:\d+|middle-\d+-\d+|background-\d+)$/.test(card.id),
+  )
+  const structuredMessages = foregroundCards.flatMap((card) => card.messages).filter(
     (message) => message.meta?.kind === 'command' || message.meta?.kind === 'tool',
   )
 
-  assert.equal(stressCards.length, chatStreamStressCardCount)
-  assert.equal(structuredMessages.length, chatStreamStressInitialStructuredItemCount)
-  assert.equal(stressCards.reduce((total, card) => total + card.messages.length, 0), 998)
-  assert.deepEqual(
-    stressCards.map((card) => card.status),
-    Array.from({ length: chatStreamStressCardCount }, () => 'idle'),
+  assert.equal(state.columns.length, chatStreamStressCardCount)
+  assert.equal(
+    state.columns.reduce(
+      (total, column) => total + (column.layout.type === 'pane' ? column.layout.tabs.length : 0),
+      0,
+    ),
+    84,
   )
   assert.deepEqual(
-    stressCards.map((card) => card.messages.filter((message) => message.meta?.kind === 'command').length),
+    state.columns.map((column) => column.layout.type === 'pane' ? column.layout.tabs.length : 0),
+    [14, 14, 14, 14, 14, 14],
+  )
+  assert.equal(streamingTargetCards.length, 20)
+  assert.deepEqual(
+    state.columns.map((column) => Object.values(column.cards).filter((card) =>
+      /^card-chat-stress-(?:\d+|middle-\d+-\d+|background-\d+)$/.test(card.id),
+    ).length),
+    [4, 4, 3, 3, 3, 3],
+  )
+  assert.equal(foregroundCards.length, chatStreamStressCardCount)
+  assert.equal(structuredMessages.length, chatStreamStressInitialStructuredItemCount)
+  assert.equal(foregroundCards.reduce((total, card) => total + card.messages.length, 0), 998)
+  assert.deepEqual(
+    streamingTargetCards.map((card) => card.status),
+    Array.from({ length: 20 }, () => 'idle'),
+  )
+  assert.deepEqual(
+    foregroundCards.map((card) => card.messages.filter((message) => message.meta?.kind === 'command').length),
     [320, 320, 70, 70, 70, 70],
   )
 })
@@ -46,4 +68,15 @@ test('package exposes an independent hidden Electron chat performance gate', asy
     packageJson.scripts?.['test:perf:chat:electron'],
     'powershell -ExecutionPolicy Bypass -File scripts/run-electron-chat-performance.ps1',
   )
+})
+
+test('fake Codex stress runtime completes the current safety and managed-policy handshake', async () => {
+  const fakeCodexSource = await readFile(
+    path.join(process.cwd(), 'tests', 'fixtures', 'fake-codex-chat-stress.cjs'),
+    'utf8',
+  )
+
+  assert.match(fakeCodexSource, /request\.method === 'configRequirements\/read'/)
+  assert.match(fakeCodexSource, /request\.method === 'hooks\/list'/)
+  assert.match(fakeCodexSource, /CHILL_VIBE_CODEX_SAFETY_HOOK_COMMAND/)
 })

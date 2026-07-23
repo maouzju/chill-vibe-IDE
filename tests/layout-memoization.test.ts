@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 
 import { createCard, createColumn, createDefaultState, createPane, createSplit } from '../shared/default-state.ts'
+import { GIT_TOOL_MODEL } from '../shared/models.ts'
 import { arePaneViewPropsEqual, areWorkspaceColumnPropsEqual } from '../src/components/layout-memoization.ts'
 
 const createWorkspaceColumnComparatorProps = () => {
@@ -65,8 +66,9 @@ const createWorkspaceColumnComparatorProps = () => {
 
 const createPaneComparatorProps = () => {
   const leftCard = createCard('Left Chat', 420, 'codex', 'gpt-5.5', 'medium', 'en')
+  const backgroundCard = createCard('Background Chat', 420, 'codex', 'gpt-5.5', 'medium', 'en')
   const rightCard = createCard('Right Chat', 420, 'codex', 'gpt-5.5', 'medium', 'en')
-  const leftPane = createPane([leftCard.id], leftCard.id, 'pane-left')
+  const leftPane = createPane([leftCard.id, backgroundCard.id], leftCard.id, 'pane-left')
   const rightPane = createPane([rightCard.id], rightCard.id, 'pane-right')
   const column = createColumn(
     {
@@ -76,6 +78,7 @@ const createPaneComparatorProps = () => {
       model: 'gpt-5.5',
       cards: {
         [leftCard.id]: leftCard,
+        [backgroundCard.id]: backgroundCard,
         [rightCard.id]: rightCard,
       },
       layout: createSplit('horizontal', [leftPane, rightPane], [0.5, 0.5], 'split-root'),
@@ -179,8 +182,9 @@ test('workspace column memoization ignores session history identity churn when e
 
 test('pane memoization ignores card updates that only affect a different pane', () => {
   const previous = createPaneComparatorProps()
-  const leftTabId = previous.pane.tabs[0]!
-  const otherTabId = Object.keys(previous.column.cards).find((cardId) => cardId !== leftTabId)!
+  const otherTabId = Object.keys(previous.column.cards).find(
+    (cardId) => !previous.pane.tabs.includes(cardId),
+  )!
   const next = {
     ...previous,
     column: {
@@ -210,6 +214,133 @@ test('pane memoization rerenders when one of the pane tabs changes', () => {
         [leftTabId]: {
           ...previous.column.cards[leftTabId]!,
           title: 'Updated active pane',
+        },
+      },
+    },
+  }
+
+  assert.equal(arePaneViewPropsEqual(previous, next), false)
+})
+
+test('pane memoization keeps full message updates for the active chat tab', () => {
+  const previous = createPaneComparatorProps()
+  const activeTabId = previous.pane.activeTabId!
+  const activeCard = previous.column.cards[activeTabId]!
+  const next = {
+    ...previous,
+    column: {
+      ...previous.column,
+      cards: {
+        ...previous.column.cards,
+        [activeTabId]: {
+          ...activeCard,
+          messages: [
+            ...activeCard.messages,
+            {
+              id: 'active-stream-delta',
+              role: 'assistant' as const,
+              content: 'new visible output',
+              createdAt: '2026-07-23T00:00:00.000Z',
+            },
+          ],
+        },
+      },
+    },
+  }
+
+  assert.equal(arePaneViewPropsEqual(previous, next), false)
+})
+
+test('pane memoization ignores message-only updates from an inactive background chat tab', () => {
+  const previous = createPaneComparatorProps()
+  const backgroundTabId = previous.pane.tabs[1]!
+  const backgroundCard = previous.column.cards[backgroundTabId]!
+  const next = {
+    ...previous,
+    column: {
+      ...previous.column,
+      cards: {
+        ...previous.column.cards,
+        [backgroundTabId]: {
+          ...backgroundCard,
+          messages: [
+            ...backgroundCard.messages,
+            {
+              id: 'background-stream-delta',
+              role: 'assistant' as const,
+              content: 'new background output',
+              createdAt: '2026-07-23T00:00:00.000Z',
+            },
+          ],
+        },
+      },
+    },
+  }
+
+  assert.equal(arePaneViewPropsEqual(previous, next), true)
+})
+
+test('pane memoization rerenders when inactive tab chrome changes', () => {
+  const previous = createPaneComparatorProps()
+  const backgroundTabId = previous.pane.tabs[1]!
+  const backgroundCard = previous.column.cards[backgroundTabId]!
+  const chromeChanges = [
+    { title: 'Renamed Background Chat' },
+    { provider: 'claude' as const },
+    { model: '__weather_tool__' },
+    { status: 'streaming' as const },
+    { unread: true },
+  ]
+
+  for (const patch of chromeChanges) {
+    const next = {
+      ...previous,
+      column: {
+        ...previous.column,
+        cards: {
+          ...previous.column.cards,
+          [backgroundTabId]: {
+            ...backgroundCard,
+            ...patch,
+          },
+        },
+      },
+    }
+
+    assert.equal(
+      arePaneViewPropsEqual(previous, next),
+      false,
+      `inactive tab chrome patch should rerender: ${JSON.stringify(patch)}`,
+    )
+  }
+})
+
+test('pane memoization keeps full updates for an inactive Git runtime tab', () => {
+  const base = createPaneComparatorProps()
+  const backgroundTabId = base.pane.tabs[1]!
+  const gitCard = {
+    ...base.column.cards[backgroundTabId]!,
+    model: GIT_TOOL_MODEL,
+  }
+  const previous = {
+    ...base,
+    column: {
+      ...base.column,
+      cards: {
+        ...base.column.cards,
+        [backgroundTabId]: gitCard,
+      },
+    },
+  }
+  const next = {
+    ...previous,
+    column: {
+      ...previous.column,
+      cards: {
+        ...previous.column.cards,
+        [backgroundTabId]: {
+          ...gitCard,
+          stickyNote: 'runtime state changed',
         },
       },
     },

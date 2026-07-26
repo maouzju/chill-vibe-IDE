@@ -162,7 +162,12 @@ test('the main window captures the JS call stack when the renderer goes unrespon
   )
   assert.match(
     main,
-    /reloadIgnoringCache/,
-    'persistent native/GPU renderer hangs must reload the renderer without killing the backend',
+    /forcefullyCrashRenderer/,
+    'persistent native/GPU hangs must terminate the stuck renderer process instead of queueing a reload on it',
+  )
+  assert.match(
+    main,
+    /render-process-gone[\s\S]*reloadIgnoringCache/,
+    'the renderer must reload only after the stuck process is confirmed gone',
   )
 })

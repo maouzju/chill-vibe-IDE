@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
 import test from 'node:test'
 
 import {
@@ -9,11 +10,16 @@ import {
   finalizeStructuredActivityMessage,
   finalizeStreamedAssistantMessage,
   getAgentDoneSoundUrl,
+  getAllAgentsDoneSoundUrl,
+  getCompletionSoundPlan,
   getColumnById,
   getResumeSessionIdForModel,
+  isAllAgentWorkComplete,
   resolveChatReplayMode,
+  resolvePaneTabTitle,
   resolveStreamedAssistantMessageTarget,
 } from '../src/app-helpers.ts'
+import { BRAINSTORM_TOOL_MODEL, GIT_TOOL_MODEL } from '../shared/models.ts'
 import type { ChatMessage } from '../shared/schema.ts'
 
 const makeMessage = (role: ChatMessage['role'], content = ''): ChatMessage => ({
@@ -27,6 +33,103 @@ test('agent-done sound URL respects the active base path', () => {
   assert.equal(getAgentDoneSoundUrl('/'), '/agent-done.wav')
   assert.equal(getAgentDoneSoundUrl('./'), './agent-done.wav')
   assert.equal(getAgentDoneSoundUrl('/chill-vibe/'), '/chill-vibe/agent-done.wav')
+})
+
+test('all-agents-done sound URL respects the active base path', () => {
+  assert.equal(getAllAgentsDoneSoundUrl('/'), '/all-agents-done.wav')
+  assert.equal(getAllAgentsDoneSoundUrl('./'), './all-agents-done.wav')
+  assert.equal(getAllAgentsDoneSoundUrl('/chill-vibe/'), '/chill-vibe/all-agents-done.wav')
+})
+
+test('all-agents-done sound asset contains three separated notes', () => {
+  const wav = readFileSync(new URL('../public/all-agents-done.wav', import.meta.url))
+  assert.equal(wav.toString('ascii', 0, 4), 'RIFF')
+  assert.equal(wav.toString('ascii', 8, 12), 'WAVE')
+
+  const sampleRate = wav.readUInt32LE(24)
+  const windowFrames = Math.round(sampleRate * 0.01)
+  const samples = new Int16Array(
+    wav.buffer,
+    wav.byteOffset + 44,
+    Math.floor((wav.byteLength - 44) / 2),
+  )
+  const activeWindows: boolean[] = []
+  for (let start = 0; start < samples.length; start += windowFrames) {
+    let energy = 0
+    const end = Math.min(samples.length, start + windowFrames)
+    for (let index = start; index < end; index += 1) {
+      const sample = samples[index] ?? 0
+      energy += sample * sample
+    }
+    activeWindows.push(Math.sqrt(energy / Math.max(1, end - start)) > 500)
+  }
+
+  let noteCount = 0
+  let wasActive = false
+  for (const active of activeWindows) {
+    if (active && !wasActive) {
+      noteCount += 1
+    }
+    wasActive = active
+  }
+  assert.equal(noteCount, 3)
+})
+
+test('completion sound toggles stay independent when the last agent finishes', () => {
+  assert.deepEqual(
+    getCompletionSoundPlan({
+      stopped: false,
+      agentDoneSoundEnabled: true,
+      allAgentsDoneSoundEnabled: true,
+    }),
+    { playAgentDone: true, checkAllAgentsDone: true },
+  )
+  assert.deepEqual(
+    getCompletionSoundPlan({
+      stopped: false,
+      agentDoneSoundEnabled: false,
+      allAgentsDoneSoundEnabled: true,
+    }),
+    { playAgentDone: false, checkAllAgentsDone: true },
+  )
+  assert.deepEqual(
+    getCompletionSoundPlan({
+      stopped: true,
+      agentDoneSoundEnabled: true,
+      allAgentsDoneSoundEnabled: true,
+    }),
+    { playAgentDone: false, checkAllAgentsDone: false },
+  )
+})
+
+test('all-agents-done waits for streams and both queue types to drain', () => {
+  const idleCard = { status: 'idle' as const, wakeTimerQueuedSends: [] }
+
+  assert.equal(isAllAgentWorkComplete({
+    activeStreamCount: 0,
+    queuedSendCount: 0,
+    cards: [idleCard],
+  }), true)
+  assert.equal(isAllAgentWorkComplete({
+    activeStreamCount: 1,
+    queuedSendCount: 0,
+    cards: [idleCard],
+  }), false)
+  assert.equal(isAllAgentWorkComplete({
+    activeStreamCount: 0,
+    queuedSendCount: 1,
+    cards: [idleCard],
+  }), false)
+  assert.equal(isAllAgentWorkComplete({
+    activeStreamCount: 0,
+    queuedSendCount: 0,
+    cards: [{ status: 'streaming' as const, wakeTimerQueuedSends: [] }],
+  }), false)
+  assert.equal(isAllAgentWorkComplete({
+    activeStreamCount: 0,
+    queuedSendCount: 0,
+    cards: [{ status: 'idle' as const, wakeTimerQueuedSends: [{ id: 'wake-1' }] }],
+  }), false)
 })
 
 test('getColumnById resolves a board column by its id', () => {
@@ -560,5 +663,52 @@ test('canSendEmptyContinuation refuses a card that only holds a system notice', 
       status: 'idle',
     }),
     false,
+  )
+})
+
+const paneTabLabels = { fallbackTitle: '新会话', pendingWakeTitle: '待唤醒' }
+
+test('an untitled chat tab with queued wake-timer sends is labelled as waiting to wake', () => {
+  assert.equal(
+    resolvePaneTabTitle(
+      { title: '', model: 'claude-opus-4-8', wakeTimerQueuedSends: [{ id: 'queued-1' }] },
+      paneTabLabels,
+    ),
+    '待唤醒',
+  )
+})
+
+test('an untitled chat tab without queued wake-timer sends keeps the new-chat label', () => {
+  assert.equal(
+    resolvePaneTabTitle({ title: '', model: 'claude-opus-4-8', wakeTimerQueuedSends: [] }, paneTabLabels),
+    '新会话',
+  )
+  assert.equal(resolvePaneTabTitle({ title: '', model: 'claude-opus-4-8' }, paneTabLabels), '新会话')
+})
+
+test('a named chat tab keeps its own title even while a wake-timer send is queued', () => {
+  assert.equal(
+    resolvePaneTabTitle(
+      { title: '重构状态机', model: 'claude-opus-4-8', wakeTimerQueuedSends: [{ id: 'queued-1' }] },
+      paneTabLabels,
+    ),
+    '重构状态机',
+  )
+})
+
+test('tool tabs keep their fixed labels regardless of queued wake-timer sends', () => {
+  assert.equal(
+    resolvePaneTabTitle(
+      { title: '', model: GIT_TOOL_MODEL, wakeTimerQueuedSends: [{ id: 'queued-1' }] },
+      paneTabLabels,
+    ),
+    'Git',
+  )
+  assert.equal(
+    resolvePaneTabTitle(
+      { title: '', model: BRAINSTORM_TOOL_MODEL, wakeTimerQueuedSends: [{ id: 'queued-1' }] },
+      paneTabLabels,
+    ),
+    'Brainstorm',
   )
 })

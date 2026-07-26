@@ -511,7 +511,10 @@ export const createDefaultSettings = (language: AppLanguage = defaultAppLanguage
   experimentalWeatherEnabled: false,
   agentDoneSoundEnabled: false,
   agentDoneSoundVolume: 0.7,
+  allAgentsDoneSoundEnabled: false,
+  allAgentsDoneSoundVolume: 0.7,
   crossProviderSkillReuseEnabled: true,
+  accessibilitySupportEnabled: false,
   autoUrgeEnabled: false,
   autoUrgeProfiles: [
     createAutoUrgeProfile(language, {}, { index: 0, fallbackId: defaultAutoUrgeProfileId }),
@@ -634,10 +637,24 @@ export const normalizeAppSettings = (settings?: Partial<AppSettings> | null): Ap
         ? settings.agentDoneSoundEnabled
         : defaults.agentDoneSoundEnabled,
     agentDoneSoundVolume: clampScale(settings?.agentDoneSoundVolume, 0, 1, defaults.agentDoneSoundVolume),
+    allAgentsDoneSoundEnabled:
+      typeof settings?.allAgentsDoneSoundEnabled === 'boolean'
+        ? settings.allAgentsDoneSoundEnabled
+        : defaults.allAgentsDoneSoundEnabled,
+    allAgentsDoneSoundVolume: clampScale(
+      settings?.allAgentsDoneSoundVolume,
+      0,
+      1,
+      defaults.allAgentsDoneSoundVolume,
+    ),
     crossProviderSkillReuseEnabled:
       typeof settings?.crossProviderSkillReuseEnabled === 'boolean'
         ? settings.crossProviderSkillReuseEnabled
         : defaults.crossProviderSkillReuseEnabled,
+    accessibilitySupportEnabled:
+      typeof settings?.accessibilitySupportEnabled === 'boolean'
+        ? settings.accessibilitySupportEnabled
+        : defaults.accessibilitySupportEnabled,
     autoUrgeEnabled:
       typeof settings?.autoUrgeEnabled === 'boolean'
         ? settings.autoUrgeEnabled

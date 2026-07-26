@@ -126,6 +126,44 @@ test('codex instructions warn Windows PowerShell not to double-quote patterns wi
   assert.match(instructionsArg, /rg --fixed-strings/)
 })
 
+test('codex instructions tell PowerShell to read files as UTF-8 instead of the ANSI code page', () => {
+  const args = buildCodexArgs(
+    createRequest({
+      provider: 'codex',
+      language: 'en',
+      systemPrompt: 'Base.',
+    }),
+    [],
+  )
+  const instructionsArg = args.find((arg) => arg.startsWith('instructions=')) ?? ''
+
+  assert.match(instructionsArg, /Get-Content/)
+  assert.match(instructionsArg, /-Encoding UTF8/)
+  assert.match(instructionsArg, /UTF8Encoding/)
+})
+
+test('claude runs also receive the Windows PowerShell shell-safety and UTF-8 read instruction', () => {
+  const args = buildClaudeArgs(
+    createRequest({
+      provider: 'claude',
+      model: 'claude-sonnet-4-6',
+      language: 'en',
+      systemPrompt: 'Base.',
+    }),
+    [],
+  )
+  const promptIndex = args.indexOf('--append-system-prompt')
+
+  assert.notEqual(promptIndex, -1)
+  const promptValue = args[promptIndex + 1] ?? ''
+
+  assert.match(promptValue, /PowerShell/)
+  assert.match(promptValue, /TerminatorExpectedAtEndOfString/)
+  assert.match(promptValue, /Get-Content/)
+  assert.match(promptValue, /-Encoding UTF8/)
+  assert.match(promptValue, /UTF8Encoding/)
+})
+
 test('claude runs include the final resolution marker instruction', () => {
   const args = buildClaudeArgs(
     createRequest({
@@ -3948,7 +3986,11 @@ test('claude ask-user tool use keeps prose before the question and then emits th
   )
 
   assert.deepEqual(events, [
-    { kind: 'delta', content: 'I reviewed the previous work and found the risky path.' },
+    {
+      kind: 'delta',
+      content: 'I reviewed the previous work and found the risky path.',
+      itemId: 'msg_ask_user_tool_prose:text',
+    },
     {
       kind: 'activity',
       activity: {

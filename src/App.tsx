@@ -148,6 +148,7 @@ import {
   saveClosedWorkspaceSnapshot,
   stopChat,
   subscribeUnsolicitedStreams,
+  syncAccessibilitySupport,
   syncRuntimeSettings,
   toggleMaximizeWindow,
   type ProxyStatsCounts,
@@ -196,8 +197,11 @@ import {
   finalizeStreamedAssistantMessage,
   canSendEmptyContinuation,
   getAgentDoneSoundUrl,
+  getAllAgentsDoneSoundUrl,
+  getCompletionSoundPlan,
   getColumnById,
   getResumeSessionIdForModel,
+  isAllAgentWorkComplete,
   resolveChatReplayMode,
   getRoutingImportText,
   importErrorMessage,
@@ -792,6 +796,7 @@ function App() {
   ) | null>(null)
   const flushReadyWakeTimersRef = useRef<(() => void) | null>(null)
   const wakeTimerCompletionTimersRef = useRef(new Map<string, number>())
+  const allAgentsDoneSoundTimerRef = useRef<number | null>(null)
   const recoverLiveStreamRef = useRef<(
     (
       columnId: string,
@@ -2741,6 +2746,37 @@ function App() {
     wakeTimerCompletionTimersRef.current.set(completedCardId, timer)
   }, [applyActions, persistAfterActions])
 
+  const scheduleAllAgentsDoneSound = useCallback(() => {
+    if (allAgentsDoneSoundTimerRef.current !== null) {
+      window.clearTimeout(allAgentsDoneSoundTimerRef.current)
+    }
+
+    allAgentsDoneSoundTimerRef.current = window.setTimeout(() => {
+      allAgentsDoneSoundTimerRef.current = null
+      const state = appStateRef.current
+      if (!state.settings.allAgentsDoneSoundEnabled) {
+        return
+      }
+
+      const agentCards = state.columns
+        .flatMap((column) => Object.values(column.cards))
+        .filter((card) => !MODEL_PICKER_HIDDEN_TOOL_MODELS.has(card.model))
+      const queuedSendCount = [...queuedSendRequestsRef.current.values()]
+        .reduce((total, queue) => total + queue.length, 0)
+      if (!isAllAgentWorkComplete({
+        activeStreamCount: activeStreamsRef.current.size,
+        queuedSendCount,
+        cards: agentCards,
+      })) {
+        return
+      }
+
+      const audio = new Audio(getAllAgentsDoneSoundUrl())
+      audio.volume = state.settings.allAgentsDoneSoundVolume
+      audio.play().catch(() => {})
+    }, wakeTimerCompletionStabilityMs + 200)
+  }, [])
+
   const wakeTimerTopologySignature = useMemo(
     () => appState.columns.map((column) => [
       column.id,
@@ -3731,7 +3767,12 @@ function App() {
             stoppedRunReasonRef.current.delete(card.streamId)
           }
 
-          if (!stopped && appStateRef.current.settings.agentDoneSoundEnabled) {
+          const completionSoundPlan = getCompletionSoundPlan({
+            stopped,
+            agentDoneSoundEnabled: appStateRef.current.settings.agentDoneSoundEnabled,
+            allAgentsDoneSoundEnabled: appStateRef.current.settings.allAgentsDoneSoundEnabled,
+          })
+          if (completionSoundPlan.playAgentDone) {
             const audio = new Audio(getAgentDoneSoundUrl())
             audio.volume = appStateRef.current.settings.agentDoneSoundVolume
             audio.play().catch(() => {})
@@ -3837,6 +3878,9 @@ function App() {
             scheduleStableWakeTimerCompletion(card.id)
           }
           dispatchNextQueuedSend(columnId, card.id)
+          if (completionSoundPlan.checkAllAgentsDone) {
+            scheduleAllAgentsDoneSound()
+          }
         },
         onError: ({ message, recoverable, recoveryMode, transientOnly, hint, sessionId }) => {
           flushBufferedAssistantDeltaForCard(card.id)
@@ -4120,6 +4164,7 @@ function App() {
       persistAfterAction,
       persistAfterActions,
       requestStopForCard,
+      scheduleAllAgentsDoneSound,
       scheduleStableWakeTimerCompletion,
     ],
   )
@@ -4138,6 +4183,10 @@ function App() {
     stopCompletionFallbackTimersRef.current.clear()
     wakeTimerCompletionTimersRef.current.forEach((timer) => window.clearTimeout(timer))
     wakeTimerCompletionTimersRef.current.clear()
+    if (allAgentsDoneSoundTimerRef.current !== null) {
+      window.clearTimeout(allAgentsDoneSoundTimerRef.current)
+      allAgentsDoneSoundTimerRef.current = null
+    }
     if (streamRenderFlushHandleRef.current !== null) {
       window.clearTimeout(streamRenderFlushHandleRef.current)
       streamRenderFlushHandleRef.current = null
@@ -4326,6 +4375,19 @@ function App() {
       streamRecoveryTurns.clear()
     }
   }, [])
+
+  // Chromium reads the accessibility switches before the app is ready, so this
+  // only records the choice for the next launch. Gated on a successful load:
+  // the pre-hydration reducer default is always `false`, and writing that would
+  // clear a genuinely enabled sidecar if startup failed before hydration.
+  useEffect(() => {
+    if (loadStatus !== 'ready') {
+      return
+    }
+    void syncAccessibilitySupport(appState.settings.accessibilitySupportEnabled).catch(
+      () => undefined,
+    )
+  }, [appState.settings.accessibilitySupportEnabled, loadStatus])
 
   useEffect(() => {
     setResolvedTheme(getResolvedAppTheme(appState.settings.theme, appState.settings.customThemeBase))
@@ -4806,6 +4868,7 @@ function App() {
       cardActive: card.wakeTimerActive === true,
       origin: sendOrigin,
       answersPendingAskUser,
+      hasContent: prompt.trim().length > 0 || attachments.length > 0,
     })) {
       const queued = enqueueWakeTimerSend(column.id, cardId, {
         id: crypto.randomUUID(),
@@ -5905,6 +5968,10 @@ function App() {
     stopCompletionFallbackTimersRef.current.clear()
     wakeTimerCompletionTimersRef.current.forEach((timer) => window.clearTimeout(timer))
     wakeTimerCompletionTimersRef.current.clear()
+    if (allAgentsDoneSoundTimerRef.current !== null) {
+      window.clearTimeout(allAgentsDoneSoundTimerRef.current)
+      allAgentsDoneSoundTimerRef.current = null
+    }
 
     try {
       const state = await resetState()
@@ -7417,6 +7484,72 @@ function App() {
           </div>
         )}
 
+        <label className="settings-toggle" htmlFor="all-agents-done-sound-toggle">
+          <span>{text.allAgentsDoneSoundLabel}</span>
+          <input
+            id="all-agents-done-sound-toggle"
+            type="checkbox"
+            checked={appState.settings.allAgentsDoneSoundEnabled}
+            onChange={(event) =>
+              applyAction({
+                type: 'updateSettings',
+                patch: { allAgentsDoneSoundEnabled: event.target.checked },
+              })
+            }
+          />
+        </label>
+
+        {appState.settings.allAgentsDoneSoundEnabled && (
+          <div className="settings-row">
+            <div className="settings-row-copy">
+              <label htmlFor="all-agents-done-sound-volume">{text.agentDoneSoundVolumeLabel}</label>
+              <span>{Math.round(appState.settings.allAgentsDoneSoundVolume * 100)}%</span>
+            </div>
+            <input
+              id="all-agents-done-sound-volume"
+              className="settings-range"
+              type="range"
+              min={0}
+              max={1}
+              step={0.05}
+              value={appState.settings.allAgentsDoneSoundVolume}
+              onChange={(event) =>
+                applyAction({
+                  type: 'updateSettings',
+                  patch: { allAgentsDoneSoundVolume: Number(event.target.value) },
+                })
+              }
+              onMouseUp={(event) => {
+                const audio = new Audio(getAllAgentsDoneSoundUrl())
+                audio.volume = Number((event.target as HTMLInputElement).value)
+                audio.play().catch(() => {})
+              }}
+              onTouchEnd={(event) => {
+                const audio = new Audio(getAllAgentsDoneSoundUrl())
+                audio.volume = Number((event.target as HTMLInputElement).value)
+                audio.play().catch(() => {})
+              }}
+            />
+          </div>
+        )}
+
+        <label className="settings-toggle" htmlFor="accessibility-support-toggle">
+          <span>{text.accessibilitySupportLabel}</span>
+          <input
+            id="accessibility-support-toggle"
+            type="checkbox"
+            checked={appState.settings.accessibilitySupportEnabled}
+            onChange={(event) =>
+              applyAction({
+                type: 'updateSettings',
+                patch: { accessibilitySupportEnabled: event.target.checked },
+              })
+            }
+          />
+        </label>
+
+        <p className="settings-note">{text.accessibilitySupportNote}</p>
+
         {renderWakeTimerSettings()}
         {renderAutoUrgeSettings()}
       </div>
@@ -8713,6 +8846,55 @@ function App() {
                       }}
                       onTouchEnd={(event) => {
                         const audio = new Audio(getAgentDoneSoundUrl())
+                        audio.volume = Number((event.target as HTMLInputElement).value)
+                        audio.play().catch(() => {})
+                      }}
+                    />
+                  </div>
+                )}
+
+                <label className="settings-toggle" htmlFor="all-agents-done-sound-toggle">
+                  <span>{text.allAgentsDoneSoundLabel}</span>
+                  <input
+                    id="all-agents-done-sound-toggle"
+                    type="checkbox"
+                    checked={appState.settings.allAgentsDoneSoundEnabled}
+                    onChange={(event) =>
+                      applyAction({
+                        type: 'updateSettings',
+                        patch: { allAgentsDoneSoundEnabled: event.target.checked },
+                      })
+                    }
+                  />
+                </label>
+
+                {appState.settings.allAgentsDoneSoundEnabled && (
+                  <div className="settings-row">
+                    <div className="settings-row-copy">
+                      <label htmlFor="all-agents-done-sound-volume">{text.agentDoneSoundVolumeLabel}</label>
+                      <span>{Math.round(appState.settings.allAgentsDoneSoundVolume * 100)}%</span>
+                    </div>
+                    <input
+                      id="all-agents-done-sound-volume"
+                      className="settings-range"
+                      type="range"
+                      min={0}
+                      max={1}
+                      step={0.05}
+                      value={appState.settings.allAgentsDoneSoundVolume}
+                      onChange={(event) =>
+                        applyAction({
+                          type: 'updateSettings',
+                          patch: { allAgentsDoneSoundVolume: Number(event.target.value) },
+                        })
+                      }
+                      onMouseUp={(event) => {
+                        const audio = new Audio(getAllAgentsDoneSoundUrl())
+                        audio.volume = Number((event.target as HTMLInputElement).value)
+                        audio.play().catch(() => {})
+                      }}
+                      onTouchEnd={(event) => {
+                        const audio = new Audio(getAllAgentsDoneSoundUrl())
                         audio.volume = Number((event.target as HTMLInputElement).value)
                         audio.play().catch(() => {})
                       }}

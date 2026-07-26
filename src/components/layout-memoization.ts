@@ -145,7 +145,10 @@ const haveSameInactivePaneTabChrome = (previous: ChatCard | undefined, next: Cha
     previous.provider === next.provider &&
     previous.model === next.model &&
     previous.status === next.status &&
-    previous.unread === next.unread
+    previous.unread === next.unread &&
+    // An untitled tab renders a "waiting to wake" label while sends are queued,
+    // so the queue depth is part of the inactive tab chrome.
+    (previous.wakeTimerQueuedSends?.length ?? 0) === (next.wakeTimerQueuedSends?.length ?? 0)
   )
 
 const haveSamePaneCardRefs = (previous: PaneViewMemoProps, next: PaneViewMemoProps) => {

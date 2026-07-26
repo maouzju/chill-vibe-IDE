@@ -69,7 +69,7 @@
 
 `App → WorkspaceColumn → LayoutRenderer → PaneView → ChatCard` 传递 `wakeTimerEnabled`。`PaneView` 额外为每张活动卡计算：
 
-- 左邻 Agent 是否有效及显示标题；
+- 左邻 Agent 是否有效（仅用于判定，不回显其标题）；
 - 同工作区其他 Agent 数量。
 
 composer 设置菜单顶部增加一个安静的 `.composer-wake-timer-module`：
@@ -77,10 +77,12 @@ composer 设置菜单顶部增加一个安静的 `.composer-wake-timer-module`�
 - 计时器 checkbox；
 - 触发模式 select；
 - duration 模式的分钟输入；
-- 左邻不可用提示；
+- 左邻不可用时的警告提示（左邻有效时不再显示任何说明行，避免超长会话标题在菜单里占一整行）；
 - 批次存在时禁用配置并说明“当前批次已锁定”。
 
 composer 输入框上方增加待唤醒状态行，与现有延后发送状态并列但视觉层级保持克制：数量、条件/剩余时间、立即唤醒、取消。
+
+Tab 标题由 `resolvePaneTabTitle`（`src/app-helpers.ts`）统一解析：工具卡固定标签优先，其次是会话自己的 `title`；只有既没有标题、又有 `wakeTimerQueuedSends` 的新会话才显示 `wakeTimerPendingStatus`（“待唤醒”），批次释放或取消后自然回落到“新会话”。非活动 Tab 的 memo 比较（`haveSameInactivePaneTabChrome`）把队列深度纳入 tab chrome，否则后台 Tab 的标题不会跟随批次变化刷新。
 
 所有颜色使用 `src/index.css` 现有 token；菜单不增加多余阴影/双重边框。窄屏下状态行允许换行，动作保持可点击。
 

@@ -348,3 +348,30 @@ test('pane memoization keeps full updates for an inactive Git runtime tab', () =
 
   assert.equal(arePaneViewPropsEqual(previous, next), false)
 })
+
+test('pane memoization rerenders an inactive tab when its wake-timer queue changes the tab label', () => {
+  const previous = createPaneComparatorProps()
+  const backgroundTabId = previous.pane.tabs[1]!
+  const backgroundCard = previous.column.cards[backgroundTabId]!
+  const next = {
+    ...previous,
+    column: {
+      ...previous.column,
+      cards: {
+        ...previous.column.cards,
+        [backgroundTabId]: {
+          ...backgroundCard,
+          wakeTimerQueuedSends: [
+            {
+              id: 'queued-wake-1',
+              prompt: 'continue later',
+              attachments: [],
+            },
+          ],
+        },
+      },
+    },
+  }
+
+  assert.equal(arePaneViewPropsEqual(previous, next), false)
+})

@@ -5181,6 +5181,13 @@ for (const theme of ['dark', 'light'] as const) {
       wakeTimerQueuedSends: [],
       wakeTimerPendingTargetIds: [],
     }
+    state.columns[0]!.cards.unshift({
+      ...state.columns[0]!.cards[0]!,
+      id: 'card-left',
+      title: '你就用目前这个游戏里面已有的比较好看的UI素材。进行生图或者裁剪的方式来重新排布界面',
+      status: 'streaming' as const,
+    })
+    state.columns[0]!.layout = createPane(['card-left', 'card-1'], 'card-1', 'pane-wake-left-tab')
 
     await page.setViewportSize({ width: 720, height: 560 })
     await mockAppApis(page, { state })
@@ -5197,6 +5204,13 @@ for (const theme of ['dark', 'light'] as const) {
     await timerToggle.check()
     await expect(timerToggle).toBeChecked()
     await expect(settingsMenu.getByLabel('唤醒条件')).toBeVisible()
+
+    // 唤醒条件下方只保留"左侧没有可等待的 Tab"警告；左邻有效时不回显它的标题
+    // （会话标题就是首条消息全文，回显会在菜单里占一整行且被截断）。
+    await settingsMenu.getByLabel('唤醒条件').selectOption('left-tab')
+    await expect(settingsMenu.getByLabel('唤醒条件')).toHaveValue('left-tab')
+    await expect(settingsMenu.getByText('等待：')).toHaveCount(0)
+    await expect(settingsMenu.locator('.composer-wake-timer-module .composer-settings-note')).toHaveCount(0)
 
     await expect.poll(async () => {
       const [cardBox, menuBox] = await Promise.all([cardShell.boundingBox(), settingsMenu.boundingBox()])
@@ -5573,6 +5587,7 @@ test('changes summary cards keep file hierarchy readable across themes', async (
   await expect(firstFileName).toContainText('index.css')
   await expect(firstDirectory).toContainText('D:\\Git\\chill-vibe\\src')
   expect(await readComputedValue(firstFileName, 'font-family')).not.toBe(await readComputedValue(firstDirectory, 'font-family'))
+  expect((await firstFile.boundingBox())?.height).toBeLessThanOrEqual(32)
 
   await expect(summaryCard).toHaveScreenshot('changes-summary-card-dark.png', {
     animations: 'disabled',

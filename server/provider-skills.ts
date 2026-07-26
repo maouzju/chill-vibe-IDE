@@ -125,6 +125,15 @@ const getUniqueExistingRoots = async (roots: string[]) => {
   return result
 }
 
+// A SKILL.md saved by Windows PowerShell `Set-Content -Encoding utf8` carries a
+// BOM (pitfall #95). Left in place it makes the `^---` frontmatter regex miss,
+// so name/description silently fall back to the directory name.
+const stripUtf8Bom = (contents: string) => contents.replace(/^\uFEFF/, '')
+
+// ~24k chars ≈ 6-8k tokens: fits every SKILL.md we ship while leaving the turn's
+// context budget intact. Anything longer falls back to the path form.
+const maxInlinedSkillCharacters = 24_000
+
 const parseYamlScalar = (value: string) =>
   value
     .trim()
@@ -206,7 +215,7 @@ const readSkill = async (
   fallbackName: string,
 ): Promise<DiscoveredProviderSkill | null> => {
   try {
-    const contents = await readFile(skillPath, 'utf8')
+    const contents = stripUtf8Bom(await readFile(skillPath, 'utf8'))
     const metadata = parseSkillMetadata(contents, fallbackName)
     const name = metadata.name.trim().toLowerCase()
 
@@ -354,9 +363,29 @@ export const resolvePromptSkill = async (
   return skills.find((skill) => skill.name === parsed.name) ?? null
 }
 
+// Windows PowerShell 5.1's Get-Content decodes BOM-less files with the system
+// ANSI code page, so an agent that shell-reads a Chinese SKILL.md gets mojibake
+// (2026-07-26 实测；see the decision comment on getWindowsShellSafetyInstruction
+// in server/providers.ts). We already hold the correctly-decoded bytes here, so
+// hand the body over in the prompt instead of asking the agent to go re-read it.
+const readInlinableSkillDocument = async (skillPath: string) => {
+  try {
+    const contents = stripUtf8Bom(await readFile(skillPath, 'utf8')).trim()
+    return contents && contents.length <= maxInlinedSkillCharacters ? contents : null
+  } catch {
+    return null
+  }
+}
+
+const getSkillUtf8ReadInstruction = (language: ChatRequest['language']) =>
+  language === 'en'
+    ? 'This SKILL.md was too long to inline, so read it yourself — but decode it as UTF-8. Prefer your native file-read tool; through PowerShell use Get-Content -Encoding UTF8 or [System.IO.File]::ReadAllText($path, [System.Text.UTF8Encoding]::new($false)), because a bare Get-Content mojibakes non-ASCII text.'
+    : '这个 SKILL.md 太长没有内联，需要你自己读取，但必须按 UTF-8 解码：优先用原生读文件工具；若走 PowerShell，请用 Get-Content -Encoding UTF8 或 [System.IO.File]::ReadAllText($path, [System.Text.UTF8Encoding]::new($false))，否则中文会变成乱码。'
+
 export const buildSkillSlashPrompt = (
   request: Pick<ChatRequest, 'provider' | 'prompt' | 'language'>,
   skill: DiscoveredProviderSkill,
+  inlinedDocument: string | null = null,
 ) => {
   const parsed = parseSlashCommandInput(request.prompt)
   if (!parsed || parsed.name !== skill.name) {
@@ -365,17 +394,24 @@ export const buildSkillSlashPrompt = (
 
   const description = skill.description ? `\nDescription: ${skill.description}` : ''
   const userPrompt = parsed.args.trim()
+  const body = inlinedDocument
+    ? request.language === 'en'
+      ? `Its full SKILL.md body is inlined below (already decoded as UTF-8 server-side). Follow that workflow directly; do not shell-read the file again.\n\n--- SKILL.md begin ---\n${inlinedDocument}\n--- SKILL.md end ---`
+      : `下面已内联这个 SKILL.md 的完整正文（服务端已按 UTF-8 解码）。直接按其中的工作流执行，不要再用 shell 去读这个文件。\n\n--- SKILL.md 开始 ---\n${inlinedDocument}\n--- SKILL.md 结束 ---`
+    : getSkillUtf8ReadInstruction(request.language)
   const instruction =
     request.language === 'en'
       ? [
           `Use $${skill.name} at ${skill.skillPath} while handling this request.`,
-          `Read that SKILL.md first and follow its workflow. Reusing the skill does not switch provider CLIs; this run stays on ${request.provider}.`,
+          `Reusing the skill does not switch provider CLIs; this run stays on ${request.provider}.`,
           `Skill source: ${skill.skillProvider}.${description}`,
+          body,
         ].join('\n')
       : [
           `使用 $${skill.name}（路径：${skill.skillPath}）来处理这次请求。`,
-          `请先读取这个 SKILL.md，并按照其中的工作流执行。复用 skill 不代表切换 CLI；本次运行仍使用当前 Provider。`,
+          `复用 skill 不代表切换 CLI；本次运行仍使用当前 Provider。`,
           `Skill 来源：${skill.skillProvider}。${description}`,
+          body,
         ].join('\n')
 
   if (!userPrompt) {
@@ -393,7 +429,9 @@ export const expandSkillSlashPrompt = async (
   },
 ) => {
   const skill = await resolvePromptSkill(request)
-  return skill ? buildSkillSlashPrompt(request, skill) : request.prompt
+  return skill
+    ? buildSkillSlashPrompt(request, skill, await readInlinableSkillDocument(skill.skillPath))
+    : request.prompt
 }
 
 const formatCrossProviderSkillInstructions = (
@@ -418,6 +456,7 @@ const formatCrossProviderSkillInstructions = (
       `This run uses ${request.provider}, but it can also reuse these ${provider} skills from local SKILL.md files:`,
       skillList,
       'When the user names one of these skills or the task clearly matches it, read that SKILL.md first and follow its workflow. Reusing a skill does not switch provider CLIs; it only reuses the local instructions.',
+      'Decode SKILL.md as UTF-8. Prefer your native file-read tool; through PowerShell use Get-Content -Encoding UTF8, because a bare Get-Content decodes with the system ANSI code page and mojibakes non-ASCII text.',
     ].join('\n')
   }
 
@@ -426,6 +465,7 @@ const formatCrossProviderSkillInstructions = (
     `本次运行使用 ${request.provider}，但也可以复用这些 ${provider} 的本地 SKILL.md：`,
     skillList,
     '当用户点名某个 skill，或任务明显匹配它时，先读取对应 SKILL.md，再按其中流程执行。复用 skill 不代表切换 CLI，只是复用本地说明文件。',
+    '读取 SKILL.md 必须按 UTF-8 解码：优先用原生读文件工具；若走 PowerShell，请用 Get-Content -Encoding UTF8，因为裸 Get-Content 会按系统 ANSI 代码页解码，把中文读成乱码。',
   ].join('\n')
 }
 
@@ -464,7 +504,13 @@ export const prepareProviderSkillReuse = async (
   const explicitSkill = parsed?.name
     ? skills.find((skill) => skill.name === parsed.name) ?? null
     : null
-  const prompt = explicitSkill ? buildSkillSlashPrompt(request, explicitSkill) : request.prompt
+  const prompt = explicitSkill
+    ? buildSkillSlashPrompt(
+        request,
+        explicitSkill,
+        await readInlinableSkillDocument(explicitSkill.skillPath),
+      )
+    : request.prompt
   const crossProviderSkills =
     request.crossProviderSkillReuseEnabled === false
       ? []

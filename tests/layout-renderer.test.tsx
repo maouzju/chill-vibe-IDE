@@ -84,8 +84,9 @@ const createColumn = (): BoardColumn => {
   }
 }
 
-const renderLayout = () => {
-  const column = createColumn()
+const renderLayout = (customize?: (column: BoardColumn) => BoardColumn) => {
+  const baseColumn = createColumn()
+  const column = customize ? customize(baseColumn) : baseColumn
 
   return renderToStaticMarkup(
     <LayoutRenderer
@@ -139,4 +140,25 @@ test('renders split resize handles between sibling panes', () => {
     markup,
     /class="split-child"[^>]*>[\s\S]*?<\/div><div class="split-resize-handle is-horizontal"[\s\S]*?<\/div><div class="split-child"/,
   )
+})
+
+test('an untitled tab with a queued wake-timer send renders the waiting-to-wake label', () => {
+  const markup = renderLayout((column) => ({
+    ...column,
+    cards: {
+      ...column.cards,
+      'card-1': {
+        ...column.cards['card-1']!,
+        title: '',
+        wakeTimerQueuedSends: [{ id: 'queued-wake-1', prompt: 'continue later', attachments: [] }],
+      },
+      'card-2': {
+        ...column.cards['card-2']!,
+        title: '',
+      },
+    },
+  }))
+
+  assert.match(markup, /<span class="pane-tab-label">Waiting to wake<\/span>/)
+  assert.match(markup, /<span class="pane-tab-label">New chat<\/span>/)
 })

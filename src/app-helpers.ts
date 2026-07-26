@@ -10,6 +10,7 @@ import type {
   StreamAssistantMessage,
 } from '../shared/schema'
 import { getLocaleText } from '../shared/i18n'
+import { BRAINSTORM_TOOL_MODEL, GIT_TOOL_MODEL } from '../shared/models'
 import type { ChatStreamSource } from './api'
 
 export type LoadStatus = 'loading' | 'ready' | 'error'
@@ -56,6 +57,77 @@ export const getAgentDoneSoundUrl = (baseUrl?: string) => {
       : '/')
 
   return `${resolvedBaseUrl.endsWith('/') ? resolvedBaseUrl : `${resolvedBaseUrl}/`}agent-done.wav`
+}
+
+export const getAllAgentsDoneSoundUrl = (baseUrl?: string) => {
+  const resolvedBaseUrl =
+    baseUrl ??
+    (typeof import.meta !== 'undefined' && typeof import.meta.env?.BASE_URL === 'string'
+      ? import.meta.env.BASE_URL
+      : '/')
+
+  return `${resolvedBaseUrl.endsWith('/') ? resolvedBaseUrl : `${resolvedBaseUrl}/`}all-agents-done.wav`
+}
+
+export const getCompletionSoundPlan = ({
+  stopped,
+  agentDoneSoundEnabled,
+  allAgentsDoneSoundEnabled,
+}: {
+  stopped: boolean | undefined
+  agentDoneSoundEnabled: boolean
+  allAgentsDoneSoundEnabled: boolean
+}) => ({
+  playAgentDone: !stopped && agentDoneSoundEnabled,
+  checkAllAgentsDone: !stopped && allAgentsDoneSoundEnabled,
+})
+
+export const isAllAgentWorkComplete = ({
+  activeStreamCount,
+  queuedSendCount,
+  cards,
+}: {
+  activeStreamCount: number
+  queuedSendCount: number
+  cards: ReadonlyArray<{
+    status: ChatCard['status']
+    wakeTimerQueuedSends?: readonly unknown[]
+  }>
+}) =>
+  activeStreamCount === 0 &&
+  queuedSendCount === 0 &&
+  cards.every(
+    (card) => card.status !== 'streaming' && (card.wakeTimerQueuedSends?.length ?? 0) === 0,
+  )
+
+// An untitled chat only gets a real title after its first turn, so a queued
+// wake-timer send would otherwise sit behind an anonymous "新会话" tab. Surface
+// the waiting state on the tab label until the chat earns its own title.
+export const resolvePaneTabTitle = (
+  card: {
+    title: string
+    model: string
+    wakeTimerQueuedSends?: readonly unknown[]
+  },
+  labels: { fallbackTitle: string; pendingWakeTitle: string },
+) => {
+  if (card.model === GIT_TOOL_MODEL) {
+    return 'Git'
+  }
+
+  if (card.model === BRAINSTORM_TOOL_MODEL) {
+    return card.title || 'Brainstorm'
+  }
+
+  if (card.title) {
+    return card.title
+  }
+
+  if ((card.wakeTimerQueuedSends?.length ?? 0) > 0) {
+    return labels.pendingWakeTitle
+  }
+
+  return labels.fallbackTitle
 }
 
 export const readFileAsBase64 = (file: File) =>

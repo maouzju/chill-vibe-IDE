@@ -183,6 +183,8 @@ describe('default-state helpers', () => {
       experimentalWeatherEnabled: false,
       agentDoneSoundEnabled: false,
       agentDoneSoundVolume: 0.7,
+      allAgentsDoneSoundEnabled: false,
+      allAgentsDoneSoundVolume: 0.7,
       crossProviderSkillReuseEnabled: true,
       autoUrgeEnabled: false,
       autoUrgeMessage: '你必须百分百验证通过你要解决的问题，才能结束回答，如果确定解决了，回复YES，否则不准停下来',
@@ -319,6 +321,20 @@ describe('default-state helpers', () => {
     assert.equal(normalizeAppSettings({ crossProviderSkillReuseEnabled: false }).crossProviderSkillReuseEnabled, false)
   })
 
+  it('keeps accessibility support off by default so old profiles upgrade without the extra a11y tree', () => {
+    assert.equal(createDefaultSettings().accessibilitySupportEnabled, false)
+    assert.equal(normalizeAppSettings({}).accessibilitySupportEnabled, false)
+    assert.equal(
+      normalizeAppSettings({ accessibilitySupportEnabled: true }).accessibilitySupportEnabled,
+      true,
+    )
+    assert.equal(
+      normalizeAppSettings({ accessibilitySupportEnabled: 'yes' as unknown as boolean })
+        .accessibilitySupportEnabled,
+      false,
+    )
+  })
+
   it('keeps outside-workspace writes enabled by default and preserves all Agent safety opt-outs', () => {
     const defaults = createDefaultSettings()
 
@@ -337,6 +353,26 @@ describe('default-state helpers', () => {
     assert.equal(disabled.agentOutsideWorkspaceWriteEnabled, false)
     assert.equal(disabled.codexDestructiveCommandProtectionEnabled, false)
     assert.equal(disabled.codexIsolatedHomeEnabled, false)
+  })
+
+  it('keeps the all-agents-done sound opt-in across normalization', () => {
+    assert.equal(normalizeAppSettings({}).allAgentsDoneSoundEnabled, false)
+    assert.equal(
+      normalizeAppSettings({ allAgentsDoneSoundEnabled: true } as never).allAgentsDoneSoundEnabled,
+      true,
+    )
+  })
+
+  it('normalizes the all-agents-done sound volume independently', () => {
+    assert.equal(normalizeAppSettings({}).allAgentsDoneSoundVolume, 0.7)
+    assert.equal(
+      normalizeAppSettings({ allAgentsDoneSoundVolume: 0.35 } as never).allAgentsDoneSoundVolume,
+      0.35,
+    )
+    assert.equal(
+      normalizeAppSettings({ allAgentsDoneSoundVolume: 2 } as never).allAgentsDoneSoundVolume,
+      1,
+    )
   })
 
   it('normalizes the system prompt with the built-in default fallback', () => {

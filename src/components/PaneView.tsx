@@ -26,6 +26,7 @@ import type {
   ProviderStatus,
 } from '../../shared/schema'
 import { clearDragPayload, readDragPayload, releaseDragPayloadIfStale, writeDragPayload } from '../dnd'
+import { resolvePaneTabTitle } from '../app-helpers'
 import { isProviderStatusExplicitlyUnavailable } from '../app-initial-load'
 import type { CardRecoveryStatus } from '../stream-recovery-feedback'
 import {
@@ -267,18 +268,6 @@ const getPaneTabIcon = (card: ChatCardState) => {
   }
 
   return <GptIcon className="pane-tab-icon" aria-hidden="true" />
-}
-
-const getPaneTabTitle = (card: ChatCardState, fallbackTitle: string) => {
-  if (card.model === GIT_TOOL_MODEL) {
-    return 'Git'
-  }
-
-  if (card.model === BRAINSTORM_TOOL_MODEL) {
-    return card.title || 'Brainstorm'
-  }
-
-  return card.title || fallbackTitle
 }
 
 const isTabCloseTarget = (target: EventTarget | null) =>
@@ -528,7 +517,14 @@ const PaneViewView = ({
   // Stable key that only changes when tab titles change, not on every card mutation.
   // Prevents tabSizing from flickering during streaming.
   const tabTitleKey = useMemo(
-    () => pane.tabs.map((id) => column.cards[id]?.title ?? '').join('\0'),
+    () =>
+      pane.tabs
+        .map((id) => {
+          const card = column.cards[id]
+          const pendingWake = (card?.wakeTimerQueuedSends?.length ?? 0) > 0 ? '1' : '0'
+          return `${card?.title ?? ''}${pendingWake}`
+        })
+        .join('\0'),
     [pane.tabs, column.cards],
   )
 
@@ -1145,7 +1141,10 @@ const PaneViewView = ({
               return null
             }
 
-            const tabTitle = getPaneTabTitle(card, text.newChat)
+            const tabTitle = resolvePaneTabTitle(card, {
+              fallbackTitle: text.newChat,
+              pendingWakeTitle: text.wakeTimerPendingStatus,
+            })
 
             const isActive = tabId === pane.activeTabId
             const isStreaming = card.status === 'streaming'

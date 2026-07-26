@@ -1,0 +1,96 @@
+import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
+import path from 'node:path'
+import test from 'node:test'
+
+import { appStateSchema } from '../shared/schema'
+import { createDefaultState } from '../shared/default-state'
+import { shouldQueueWakeTimerSend } from '../src/components/wake-timer'
+
+// Real crash, 2026-07-26 21:10:56 onwards. A wake-timer queue entry with an
+// empty prompt and no attachments reached state.json. Every subsequent save
+// re-validated it, threw a ZodError out of the synchronous
+// `ipcMain.on('desktop:queue-state-save')` listener, and took the whole main
+// process down — the app vanished with no shutdown log at all. It then repeated
+// every ~20s because the bad entry stayed on disk.
+//
+// Three independent defects lined up, so all three are pinned here:
+//   1. an empty send was allowed into the queue,
+//   2. one invalid entry made the entire app state unparseable,
+//   3. a validation error in a fire-and-forget IPC listener killed the process.
+
+const stateWithQueuedSend = (queued: unknown[]) => {
+  const state = createDefaultState()
+  const column = state.columns[0]
+  const cardId = Object.keys(column.cards)[0]
+  return {
+    ...state,
+    columns: [
+      {
+        ...column,
+        cards: {
+          ...column.cards,
+          [cardId]: { ...column.cards[cardId], wakeTimerQueuedSends: queued },
+        },
+      },
+      ...state.columns.slice(1),
+    ],
+  }
+}
+
+const queuedSendsOf = (parsed: ReturnType<typeof appStateSchema.parse>) => {
+  const column = parsed.columns[0]
+  const cardId = Object.keys(column.cards)[0]
+  return column.cards[cardId].wakeTimerQueuedSends ?? []
+}
+
+test('an empty send never enters the wake-timer queue', () => {
+  const base = { featureEnabled: true, cardActive: true, origin: 'user' as const }
+  // The queue exists to replay real sends later; an entry with nothing to send
+  // can only ever corrupt the save.
+  assert.equal(shouldQueueWakeTimerSend({ ...base, hasContent: false }), false)
+  assert.equal(shouldQueueWakeTimerSend({ ...base, hasContent: true }), true)
+  // Whitespace is not content.
+  assert.equal(shouldQueueWakeTimerSend({ ...base, hasContent: false }), false)
+})
+
+test('an already-persisted invalid queue entry is dropped, not fatal', () => {
+  // This is the exact shape found in the user's state.json.
+  const parsed = appStateSchema.parse(
+    stateWithQueuedSend([
+      { id: 'broken', prompt: '   ', attachments: [] },
+      { id: 'good', prompt: 'real message', attachments: [] },
+    ]),
+  )
+  const queued = queuedSendsOf(parsed)
+  assert.equal(queued.length, 1)
+  assert.equal(queued[0].id, 'good')
+})
+
+test('a queue of only invalid entries parses to an empty queue', () => {
+  const parsed = appStateSchema.parse(
+    stateWithQueuedSend([{ id: 'broken', prompt: '', attachments: [] }]),
+  )
+  assert.deepEqual(queuedSendsOf(parsed), [])
+})
+
+test('valid queue entries are still preserved untouched', () => {
+  const parsed = appStateSchema.parse(
+    stateWithQueuedSend([{ id: 'keep', prompt: 'hello', attachments: [] }]),
+  )
+  const queued = queuedSendsOf(parsed)
+  assert.equal(queued.length, 1)
+  assert.equal(queued[0].prompt, 'hello')
+})
+
+test('the fire-and-forget state-save IPC listener cannot kill the main process', () => {
+  const main = readFileSync(path.join(process.cwd(), 'electron/main.ts'), 'utf8')
+  const listener = main.slice(main.indexOf("ipcMain.on('desktop:queue-state-save'"))
+  const body = listener.slice(0, listener.indexOf('\n  })') + 5)
+  assert.match(
+    body,
+    /try\s*\{/,
+    'ipcMain.on has no reply channel, so a throw here becomes an uncaughtException and terminates the app',
+  )
+  assert.match(body, /catch/, 'the save failure must be logged rather than propagated')
+})

@@ -194,12 +194,25 @@ renderer / GPU 在四流状态下各持续消耗约 43% 单核，锚点继续指
 本次现场在运行约 8 小时后再次记录 `BrowserWindow became unresponsive`，JS 调用栈仍为空，系统内存充足，随后用户只能关闭窗口。此前 Windows dump 已把同族故障锚定到 renderer/GPU/DXGI 等待链路，但当前证据仍不足以盲改具体绘制代码。因此增加一个独立、可回滚的恢复层，而不宣称底层根因已经修复。
 
 - `electron/unresponsive-recovery.ts` 提供纯控制器：首次 `unresponsive` 武装一次定时器，`responsive` 或销毁会取消；定时到期且仍无响应才调用恢复回调。
-- 默认在 Electron `unresponsive` 事件后等待 8 秒，再调用 `webContents.reloadIgnoringCache()`。Electron 自身通常已等待数秒才发事件，因此总冻结时间仍能避开普通短帧，同时比人工关应用更早自救。
+- 默认在 Electron `unresponsive` 事件后等待 8 秒，再强制终止卡死 renderer，并在 `render-process-gone` 后重新加载。Electron 自身通常已等待数秒才发事件，因此总冻结时间仍能避开普通短帧，同时比人工关应用更早自救。
 - `CHILL_VIBE_UNRESPONSIVE_RECOVERY_MS=0` 完全关闭；正整数可调整宽限期。
 - renderer reload 不重启主进程、本地 Express、ChatManager 或 Provider CLI。页面恢复后，保存状态中的 `streamId` 会重新订阅 ChatManager；backlog 重放与既有消息 ID 幂等规则负责补齐冻结期间事件。
 - 恢复前记录 renderer PID、无响应起点和最后输入；若底层故障继续复发，日志仍保留客观证据。
 
 回滚点集中在控制器接线和单个环境变量，不改变 reducer、流式调度、硬件加速或 Provider 并发。
+
+### 2026-07-26 现场修正：普通 reload 不会替换卡死进程
+
+新包现场连续四次触发 8 秒恢复，但四次日志中的 renderer PID 始终是 `45156`，且没有任何 `Renderer finished load`。这证明 `reloadIgnoringCache()` 只是把导航请求排进已经无法处理消息的 renderer，自动恢复本身是假恢复。
+
+修正后的恢复顺序：
+
+1. 持续无响应到期后记录旧 renderer PID，并标记本窗口进入强制恢复。
+2. 调用 `webContents.forcefullyCrashRenderer()`，只终止 renderer；Electron main、本地后端、ChatManager backlog 和 Provider CLI 保持运行。
+3. 只在 `render-process-gone` 确认旧 renderer 已退出后调用 `reloadIgnoringCache()`。
+4. `did-finish-load` 记录新 renderer PID；运行时测试必须证明 PID 确实变化且新的 UI root/desktop bridge 已恢复。
+
+这仍是恢复层，不把空 JS 栈的 GPU/native 底层等待误报为已根治；但它把“只能人工关闭整个 IDE”修正为真正的 renderer 进程级自愈。
 
 ## 验证矩阵
 

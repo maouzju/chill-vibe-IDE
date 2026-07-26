@@ -2803,7 +2803,15 @@ body.is-card-dragging .lane-drop-zone-top {
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.86);
 }
 
-/* Streaming: keep the surface stable and let the border breathe */
+/* Streaming: the surface AND the border are static — the border does not
+   breathe any more. It used to run an infinite box-shadow/border animation;
+   with several cards streaming at once the renderer/GPU never left paint/raster
+   work and the window reached Electron's `BrowserWindow unresponsive` threshold
+   with an empty JS stack (2026-07-21 recurrence, pitfall 216). A bounded
+   iteration count is not an option here either: the streaming state lasts as
+   long as the provider run, so every looping variant is long-lived by
+   definition. Signal "streaming" through the static --stream-border token
+   instead; tests/idle-animation-budget.test.ts fails if an animation returns. */
 .card-shell.is-streaming::after {
   opacity: 1;
   border-color: var(--stream-border);
@@ -3408,6 +3416,14 @@ body.is-card-dragging .lane-drop-zone-top {
 .streaming-dots span:nth-child(2) { opacity: 0.68; }
 .streaming-dots span:nth-child(3) { opacity: 1; }
 
+/* Do NOT hoist this onto the bare `.streaming-dots span` selector. Inactive
+   pane tabs stay mounted, so a base-selector rule animates every hidden pane's
+   dots too; after the big box-shadow animations were removed these 4px dots
+   alone still drove a real four-stream window to `BrowserWindow unresponsive`
+   in ~32 minutes with an empty JS stack (2026-07-21, pitfall 218). The
+   `.is-active:not([hidden])` prefix is the load-bearing part: it is the only
+   thing that keeps the animated element count at "one visible panel" instead of
+   "every open tab". Hidden dots keep their static opacity ladder above. */
 .pane-tab-panel.is-active:not([hidden]) .streaming-dots span {
   animation: bounce-dot 1.4s ease-in-out infinite;
 }
@@ -5328,6 +5344,12 @@ body.is-card-dragging .lane-drop-zone-top {
 .structured-command-running-dots span:nth-child(2) { opacity: 0.68; }
 .structured-command-running-dots span:nth-child(3) { opacity: 1; }
 
+/* Same visibility gate as the streaming dots, same reason: a long tool run can
+   leave these dots spinning in every mounted-but-hidden pane at once, which is
+   exactly the compositor accumulation behind pitfall 218 (four-stream window
+   unresponsive after ~32 minutes, empty JS stack, 2026-07-21). Promoting this
+   to `.structured-command-running-dots span` would silently re-arm it — the
+   hidden panes must keep only the static opacity ladder declared above. */
 .pane-tab-panel.is-active:not([hidden]) .structured-command-running-dots span {
   animation: bounce-dot 1.4s ease-in-out infinite;
 }
@@ -12938,6 +12960,14 @@ body.is-pane-resizing .split-resize-handle::before {
   color: var(--ink-1);
 }
 
+/* Background-stream tab chrome is STATIC box-shadow only — never an animation,
+   and never one hoisted to `.pane-tab.is-streaming`. This selector matches once
+   per concurrently streaming background tab, so it is the highest-multiplicity
+   streaming surface in the app: the earlier infinite box-shadow pulse here kept
+   renderer/GPU near half a core per animated outline and helped push the window
+   past Electron's unresponsive threshold with an empty JS stack (2026-07-21,
+   pitfalls 216/218). Bounding the loop would not help either — the state lasts
+   as long as the provider run. Differentiate with static color/shadow tokens. */
 .pane-tab.is-streaming:not(.is-active) {
   color: color-mix(in srgb, var(--ink-2) 88%, var(--warn));
   z-index: 1;

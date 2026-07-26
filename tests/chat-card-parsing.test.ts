@@ -1,4 +1,6 @@
 import assert from 'node:assert/strict'
+import { readFile } from 'node:fs/promises'
+import path from 'node:path'
 import test from 'node:test'
 
 import type { ChatMessage, StreamEditedFile } from '../shared/schema.ts'
@@ -33,6 +35,69 @@ test('renderable entry structure key ignores streaming content-only updates', ()
 
   assert.equal(getRenderableEntryStructureKey(initial), getRenderableEntryStructureKey(updated))
   assert.notEqual(getRenderableEntryStructureKey(initial), getRenderableEntryStructureKey(appended))
+})
+
+// ── Pitfall 214 guard ────────────────────────────────────────────────────────
+// The test above only proves the pure helper is content-insensitive. It says
+// nothing about whether ChatTranscript actually *uses* that key as its effect
+// dependency. Without the two source assertions below, someone can "simplify"
+// the dependency arrays back to `renderableMessages`, every unit test stays
+// green, and the perf regression silently returns: a new array identity on every
+// streaming delta tears down and rebuilds the ResizeObserver / sticky-layout
+// scan / scroll-watch rAF ladder for every visible card, many times per second
+// under multi-pane streaming.
+const chatCardSourcePath = path.join(process.cwd(), 'src', 'components', 'ChatCard.tsx')
+
+const readTranscriptEffectDeps = async (
+  anchor: RegExp,
+  effectLabel: string,
+): Promise<string> => {
+  const source = await readFile(chatCardSourcePath, 'utf8')
+  const match = source.match(anchor)
+  if (!match || typeof match[1] !== 'string') {
+    // Fail loudly instead of degrading to an empty string that would "pass".
+    assert.fail(
+      `could not locate the ${effectLabel} effect in src/components/ChatCard.tsx — ChatCard.tsx 结构已变，请更新此守卫 (anchor: ${anchor.source}). Do not delete this test; re-anchor it, or pitfall 214 loses its only guard.`,
+    )
+  }
+
+  return match[1]
+}
+
+test('scroll-watch effect depends on the stable entry structure key, not renderableMessages (pitfall 214)', async () => {
+  const deps = await readTranscriptEffectDeps(
+    /const watchScrollTop = \(\) => \{[\s\S]*?\n {4}\}, \[([^\]]*)\]\)/,
+    'transcript scroll-watch useLayoutEffect',
+  )
+
+  assert.match(
+    deps,
+    /\brenderableEntryStructureKey\b/,
+    `the scroll-watch effect must depend on renderableEntryStructureKey (pitfall 214) — got [${deps}]`,
+  )
+  assert.doesNotMatch(
+    deps,
+    /\brenderableMessages\b/,
+    `the scroll-watch effect must NOT depend on renderableMessages (pitfall 214): that array gets a fresh identity on every streaming content delta, so the rAF scroll-watch ladder is cancelled and re-armed many times per second per visible card even when no DOM entry changed identity. Keep the stable ID/order signature — got [${deps}]`,
+  )
+})
+
+test('ResizeObserver effect depends on the stable entry structure key, not renderableMessages (pitfall 214)', async () => {
+  const deps = await readTranscriptEffectDeps(
+    /const resizeObserver = new ResizeObserver\([\s\S]*?\n {4}\}, \[([^\]]*)\]\)/,
+    'transcript ResizeObserver useEffect',
+  )
+
+  assert.match(
+    deps,
+    /\brenderableEntryStructureKey\b/,
+    `the ResizeObserver effect must depend on renderableEntryStructureKey (pitfall 214) — got [${deps}]`,
+  )
+  assert.doesNotMatch(
+    deps,
+    /\brenderableMessages\b/,
+    `the ResizeObserver effect must NOT depend on renderableMessages (pitfall 214): that array gets a fresh identity on every streaming content delta, so the observer is disconnected and every transcript entry re-observed on each token even though entry identity is unchanged. Keep the stable ID/order signature — got [${deps}]`,
+  )
 })
 
 const makeMessage = (overrides: Partial<ChatMessage> = {}): ChatMessage => ({

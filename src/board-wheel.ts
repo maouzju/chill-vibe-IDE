@@ -85,10 +85,15 @@ export function isCardVerticalScrollRegion(
 }
 
 // The pane tab strip converts vertical wheel deltas into horizontal tab
-// scrolling (PaneView handles that in the bubble phase). While the strip is
-// horizontally overflowing, the board capture handler must not claim the same
-// wheel event, or vertical page scrolling fights the tab scroll whenever the
-// app shell itself is scrollable (e.g. a very short window).
+// scrolling. PaneView does that from a non-passive `document` capture listener
+// (see src/components/PaneView.tsx) — NOT from a bubble-phase React onWheel,
+// which was the original bug: the handler needed the event target to bubble
+// through the pane, so a stale hit-test sent the wheel to the wrong pane, and
+// React registers its root wheel listeners as passive so preventDefault was a
+// silent no-op. While the strip is horizontally overflowing, this board capture
+// handler must not claim the same wheel event, or vertical page scrolling
+// fights the tab scroll whenever the app shell itself is scrollable (e.g. a
+// very short window). Guarded by tests/board-wheel.ts + tests/pane-tab-wheel.ts.
 function resolveHorizontalWheelStrip(node: BoardWheelElement): BoardWheelElement | null {
   if (node.classList.contains('pane-tab-strip')) {
     return node

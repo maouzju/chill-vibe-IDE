@@ -925,6 +925,14 @@ const ChatTranscript = memo(
     const observedScrollTopRef = useRef<number | null>(null)
     const stickyPreviewRef = useRef<HTMLDivElement | null>(null)
     const [stickyMessageId, setStickyMessageId] = useState<string | null>(null)
+    // Perf guardrail (pitfall 214) — do NOT "simplify" this back to `renderableMessages`.
+    // Symptom: under multi-pane streaming the ResizeObserver / sticky-layout scan /
+    // scroll-watch rAF ladder below were torn down and rebuilt on every token, per visible
+    // card, eating the renderer frame budget. Root cause: `buildRenderableMessages` returns
+    // a fresh array on every content delta, so any effect that lists it re-runs even when
+    // no DOM entry changed identity. This key is a stable entry ID/order signature, and the
+    // latest content stays in `renderableMessagesRef`, so content-only deltas reuse the
+    // existing observers. Guarded by tests/chat-card-parsing.test.ts.
     const renderableEntryStructureKey = getRenderableEntryStructureKey(renderableMessages)
 
     useLayoutEffect(() => {

@@ -10,9 +10,19 @@ const stylesSource = () => readFileSync(new URL('../src/index.css', import.meta.
 const weatherOverlaySource = () =>
   readFileSync(new URL('../src/components/WeatherAmbientOverlay.tsx', import.meta.url), 'utf8')
 
-function extractOptionalKeyframes(css: string, name: string): string | null {
+// Strict on purpose: an "optional" variant silently tolerated a keyframe name
+// that had not existed since 0.15.9 (`weather-snow-sway`, folded into
+// `weather-snow-fall`'s `var(--sway)` translate), so the loop below quietly
+// covered 2 of its 3 named animations. A typo or rename must fail loudly here
+// instead of shrinking coverage for the infinite weather motion that AGENTS.md
+// pitfalls 216/218 make expensive.
+function extractKeyframes(css: string, name: string): string {
   const start = css.indexOf(`@keyframes ${name}`)
-  if (start === -1) return null
+  assert.notEqual(
+    start,
+    -1,
+    `missing @keyframes ${name} in src/index.css — fix the name here or drop the reference; do not let this assertion go quiet`,
+  )
 
   const firstBrace = css.indexOf('{', start)
   assert.notEqual(firstBrace, -1, `missing opening brace for ${name}`)
@@ -41,16 +51,26 @@ test('weather card avoids SVG turbulence filters in the hot render path', () => 
 
 test('weather card continuous animations stay off layout and paint-bound properties', () => {
   const css = stylesSource()
-  const blocks = [
+  // The transform/opacity-only weather keyframes from the infinite allowlist in
+  // tests/idle-animation-budget.test.ts, so none of them can quietly move back
+  // onto a layout- or paint-bound property. `weather-lightning-flash` and
+  // `weather-bolt` are deliberately excluded: they animate `background` and
+  // `height` and would need a separate (stricter) fix, not a green assertion.
+  const names = [
     'weather-rain-fall',
     'weather-snow-fall',
-    'weather-snow-sway',
-  ].flatMap((name) => {
-    const block = extractOptionalKeyframes(css, name)
-    return block ? [{ name, block }] : []
-  })
+    'weather-streak-fall',
+    'weather-rain-splash',
+    'weather-cloud-drift',
+    'weather-sun-rotate',
+    'weather-stars-twinkle',
+    'weather-fog-drift-1',
+    'weather-fog-drift-2',
+    'weather-fog-drift-3',
+  ]
+  const blocks = names.map((name) => ({ name, block: extractKeyframes(css, name) }))
 
-  assert.ok(blocks.length >= 2, 'expected weather motion keyframes to be covered')
+  assert.equal(blocks.length, names.length, 'expected every weather motion keyframe to be covered')
 
   for (const { name, block } of blocks) {
     assert.doesNotMatch(

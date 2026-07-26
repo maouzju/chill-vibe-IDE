@@ -51,6 +51,11 @@ type PoolEntry = {
 
 const DEFAULT_IDLE_TIMEOUT_MS = 30 * 60_000
 
+// Ceiling on idle lines held for a not-yet-woken stream. A long-lived process
+// can emit task bookkeeping for hours; keep the tail rather than growing without
+// bound.
+const MAX_BUFFERED_IDLE_LINES = 2_000
+
 const resolveDefaultIdleTimeoutMs = () => {
   const parsed = Number.parseInt(process.env.CHILL_VIBE_CLAUDE_KEEPALIVE_IDLE_MS ?? '', 10)
   if (Number.isFinite(parsed) && parsed >= 50) {
@@ -66,6 +71,7 @@ export class ClaudeSessionPool {
     entry: ClaudeSessionPoolEntryView,
     attach: (attachment: ClaudeTurnAttachment) => void,
   ) => void
+  private readonly shouldWakeOnLine: (line: string) => boolean
   private readonly idleTimeoutMs: number
   private disposed = false
 
@@ -74,9 +80,14 @@ export class ClaudeSessionPool {
       entry: ClaudeSessionPoolEntryView,
       attach: (attachment: ClaudeTurnAttachment) => void,
     ) => void
+    // Decides whether an idle stdout line actually starts a turn. The pool has
+    // no stream-json knowledge of its own, so the host injects the predicate;
+    // without one every line wakes a stream (the pre-gate behavior).
+    shouldWakeOnLine?: (line: string) => boolean
     idleTimeoutMs?: number
   }) {
     this.onUnsolicited = options.onUnsolicited
+    this.shouldWakeOnLine = options.shouldWakeOnLine ?? (() => true)
     this.idleTimeoutMs = options.idleTimeoutMs ?? resolveDefaultIdleTimeoutMs()
   }
 
@@ -264,7 +275,20 @@ export class ClaudeSessionPool {
     // Idle output: the CLI woke itself (e.g. a background task finished and the
     // agent resumed). Buffer everything until the host attaches a fresh stream.
     entry.bufferedStdout.push(line)
+    if (entry.bufferedStdout.length > MAX_BUFFERED_IDLE_LINES) {
+      entry.bufferedStdout.splice(0, entry.bufferedStdout.length - MAX_BUFFERED_IDLE_LINES)
+    }
     this.armIdleTimer(entry)
+
+    // Background-task bookkeeping (`task_updated`, `background_tasks_changed`,
+    // …) arrives while idle without the agent being re-invoked. Waking a stream
+    // on those would park the card in `streaming` with nothing behind it until
+    // the stall watchdog fires minutes later, so only a line that genuinely
+    // starts a turn opens the stream. The bookkeeping stays buffered and is
+    // replayed on attach.
+    if (!this.shouldWakeOnLine(line)) {
+      return
+    }
 
     if (!entry.pendingUnsolicited) {
       entry.pendingUnsolicited = true

@@ -20,6 +20,7 @@ import {
   cacheTextEditorModel,
   getTextEditorModelCacheKey,
   peekCachedTextEditorModel,
+  syncClaimedTextEditorModelContent,
   takeCachedTextEditorModel,
   type TextEditorModelCacheEntry,
 } from './text-editor-model-cache'
@@ -670,6 +671,10 @@ const TextEditorCardInner = ({ workspacePath, filePath, language }: TextEditorCa
           return
         }
         modelRef.current = model
+
+        if (cachedEntry && model === cachedEntry.model) {
+          syncClaimedTextEditorModelContent(model, contentRef.current)
+        }
 
         const settings = getTextEditorSettings()
         const editor = module.monaco.editor.create(editorContainerRef.current, {

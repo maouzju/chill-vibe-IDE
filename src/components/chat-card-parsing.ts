@@ -44,8 +44,9 @@ export type StructuredAgentEntry = StreamAgentEntry
 export type StructuredAgentsMessage = {
   itemId: string
   status: 'completed'
-  tool: StreamAgentTool
-  callStatus: StreamAgentToolCallStatus
+  view: 'toolCall' | 'status'
+  tool?: StreamAgentTool
+  callStatus?: StreamAgentToolCallStatus
   prompt?: string | null
   model?: string | null
   reasoningEffort?: string | null
@@ -565,15 +566,18 @@ export const parseStructuredAgentsMessage = (message: ChatMessage): StructuredAg
   const status = readStructuredString(payload, 'status')
   const tool = readStructuredString(payload, 'tool')
   const callStatus = readStructuredString(payload, 'callStatus')
+  const view = readStructuredString(payload, 'view') === 'status' ? 'status' : 'toolCall'
   const rawAgents = payload.agents
 
   if (
     !itemId ||
     status !== 'completed' ||
-    !tool ||
-    !structuredAgentTools.has(tool as StreamAgentTool) ||
-    !callStatus ||
-    !structuredAgentCallStatuses.has(callStatus as StreamAgentToolCallStatus) ||
+    (view === 'toolCall' && (
+      !tool ||
+      !structuredAgentTools.has(tool as StreamAgentTool) ||
+      !callStatus ||
+      !structuredAgentCallStatuses.has(callStatus as StreamAgentToolCallStatus)
+    )) ||
     !Array.isArray(rawAgents)
   ) {
     return null
@@ -600,8 +604,14 @@ export const parseStructuredAgentsMessage = (message: ChatMessage): StructuredAg
         ...(readStructuredString(record, 'role')
           ? { role: readStructuredString(record, 'role') }
           : {}),
+        ...(readStructuredString(record, 'path')
+          ? { path: readStructuredString(record, 'path') }
+          : {}),
         status: entryStatus as StructuredAgentEntry['status'],
         message: readStructuredString(record, 'message') ?? null,
+        activity: Array.isArray(record.activity)
+          ? record.activity.filter((entry): entry is string => typeof entry === 'string')
+          : [],
       }
     })
     .filter((entry): entry is StructuredAgentEntry => entry !== null)
@@ -609,8 +619,13 @@ export const parseStructuredAgentsMessage = (message: ChatMessage): StructuredAg
   return {
     itemId,
     status: 'completed',
-    tool: tool as StreamAgentTool,
-    callStatus: callStatus as StreamAgentToolCallStatus,
+    view,
+    ...(tool && structuredAgentTools.has(tool as StreamAgentTool)
+      ? { tool: tool as StreamAgentTool }
+      : {}),
+    ...(callStatus && structuredAgentCallStatuses.has(callStatus as StreamAgentToolCallStatus)
+      ? { callStatus: callStatus as StreamAgentToolCallStatus }
+      : {}),
     prompt: readStructuredString(payload, 'prompt') ?? null,
     model: readStructuredString(payload, 'model') ?? null,
     reasoningEffort: readStructuredString(payload, 'reasoningEffort') ?? null,

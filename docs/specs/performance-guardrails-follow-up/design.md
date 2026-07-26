@@ -50,6 +50,27 @@ patch 作为变化标识，从而避免每次渲染额外执行一次完整 `spl
 所有 Provider 流量由 `tests/fixtures/fake-codex-chat-stress.cjs` 在本机生成。该进程只模拟 Codex app-server JSON-RPC 与流式事件，
 不访问网络、不调用真实模型、不读取线上凭据，因此不会产生模型 Token 费用。测试仍经过应用真实的 Electron、Provider 路由、状态、渲染和持久化路径。
 
+### 新建会话首次输入长尾
+
+已有 20 流循环只操作已经挂载的运行 tab，不能代表重度面板下创建新卡时的 reducer、pane tab、composer mount、焦点重试和草稿持久化成本。
+当前用户打包版 `data/state.json` 约 3MB，而原夹具序列化后仅约 0.46MB。夹具因此用确定性合成历史消息扩到至少 4MB，
+只复刻状态体积与卡片数量，不读取真实消息；这些历史主要放在未激活 tab，专门放大新建/草稿/关闭触发的状态克隆和持久化成本。
+在稳定 20 流交互之后追加 60 次轮转采样：
+
+- 在 6 个 pane 间轮转点击真实 `.pane-add-tab`；
+- 从点击开始计时，等待 tab 数增加、active panel composer 出现且 `document.activeElement` 为新 textarea；
+- 立即通过 Playwright 键盘 `insertText` 输入含中文的唯一草稿，等待受控/非受控输入值和下一绘制帧可见；
+- 记录 ready/input 的 p95、max 和焦点失败次数，而不是只看平均值；ready/input 的 max 都以 `< 500ms` 作为硬门禁；
+- 每次输入后切回该列原运行 tab，再切回新 tab 并核对唯一草稿，证明输入走过真实状态；
+- 核对后清空草稿并关闭新 tab，让下一次仍从 84-tab 基线开始，避免把“累积新增 60 个 tab”混入单次新建响应指标。
+
+若旧实现未触发 500ms 红线，不据此盲改生产代码；先把门禁保留为长期偶现防线，并结合现场 dump/main.log 再决定修复热点。
+
+实际 5 分钟旧实现红测为：ready p95 707.5ms、max 802.3ms，heartbeat max 656.9ms、frame max 900.0ms；60 次焦点和草稿往返均成功，排除了焦点链路与状态丢失。
+长时流把末尾助手正文持续扩到数万字符，而 `MessageBubble` 对每个 delta 都重新执行完整 Markdown 规范化和解析，形成与新建点击竞争的长提交。
+修复不裁剪正文：当且仅当末尾普通助手消息仍在 streaming 且达到 16,000 字符时，改用一个 `white-space: pre-wrap` 的纯文本节点；
+流结束后同一完整正文重新走 Markdown。该单点开关可直接回滚，不触碰 reducer、Provider、持久化和调度参数。
+
 这能同时覆盖“多个 Agent 窗口”和“一排十几个 tab”，而不是用单张超大卡代替真实工作形态。
 
 ## 切片 E：后台聊天更新隔离
@@ -80,6 +101,7 @@ patch 作为变化标识，从而避免每次渲染额外执行一次完整 `spl
 1. 先增加源契约/纯函数测试并确认旧实现失败。
 2. 先用 comparator 单测证明后台正文更新会错误触发 pane 刷新，再实施隔离。
 3. 把 Electron 夹具提升到 84 tab / 20 stream，并先确认旧实现下的契约测试失败。
-4. 实现各个独立小切片后运行 focused tests。
-5. 运行 `pnpm test:quality`、30 秒聊天 Electron 门禁和必要的窄回归。
-6. 最终运行发布级验证；性能修复确认后执行 `pnpm electron:build`。
+4. 增加 60 次真实鼠标新建会话与首次输入长尾门禁；若未复现生产长停顿，不在无证据时修改运行时代码。
+5. 实现各个独立小切片后运行 focused tests。
+6. 运行 `pnpm test:quality`、30 秒聊天 Electron 门禁和必要的窄回归。
+7. 最终运行发布级验证；性能修复确认后执行 `pnpm electron:build`。

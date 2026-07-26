@@ -295,6 +295,19 @@ test('Electron window close keeps renderer alive until persistence flush is sche
   )
 })
 
+test('Electron close diagnostics record the initiating input and IPC source', async () => {
+  const mainBody = await readFile(path.join(process.cwd(), 'electron', 'main.ts'), 'utf8')
+
+  assert.match(mainBody, /let lastWindowInputSnapshot:/)
+  assert.match(mainBody, /inputType:\s*input\.type/)
+  assert.match(mainBody, /inputKey:\s*input\.key/)
+  assert.match(mainBody, /closeSource:\s*pendingWindowCloseSource/)
+  assert.match(
+    mainBody,
+    /ipcMain\.handle\('window:close',[\s\S]+pendingWindowCloseSource = 'renderer-ipc'[\s\S]+win\?\.close\(\)/,
+  )
+})
+
 test('Electron stream cleanup runs before WebContents destruction during window shutdown', async () => {
   const mainBody = await readFile(path.join(process.cwd(), 'electron', 'main.ts'), 'utf8')
 
@@ -323,6 +336,8 @@ test('Electron runtime validation keeps desktop windows hidden by default', asyn
 
   assert.match(runnerBody, /\$env:CHILL_VIBE_HEADLESS_RUNTIME_TESTS\s*=\s*'1'/)
   assert.match(runnerBody, /Remove-Item Env:PWDEBUG -ErrorAction SilentlyContinue/)
+  assert.match(runnerBody, /--test-concurrency=1/)
+  assert.match(runnerBody, /scripts\\run-vite\.mjs/)
   assert.match(mainBody, /CHILL_VIBE_HEADLESS_RUNTIME_TESTS\s*===\s*'1'/)
   assert.match(mainBody, /presentWindow\(win\)/)
   assert.match(mainBody, /backgroundThrottling:\s*false/)
@@ -423,13 +438,13 @@ test('README verification docs match the packaged regression scripts in both lan
   assert.match(readmeBody, /- `pnpm test:perf:electron` runs the hidden-window Electron responsiveness smoke for desktop-only performance issues\./)
   assert.match(readmeBody, /- `pnpm test:electron` runs the hidden-window Electron runtime and release responsiveness suite once\./)
   assert.match(readmeBody, /- `pnpm test:risk` runs lint, type checks, Node tests, the Playwright smoke suite, and Electron runtime checks\./)
-  assert.match(readmeBody, /- `pnpm test:release` runs resumable exact-tree release verification with per-stage logs\./)
+  assert.match(readmeBody, /- `pnpm test:release` runs resumable exact-tree release verification with per-stage logs, including a bounded 30-second multi-stream Electron chat performance gate after the production build\./)
   assert.match(readmeBody, /- `pnpm test:full` remains a compatibility alias for `pnpm test:release`\./)
 
   assert.match(readmeBody, /- `pnpm test:playwright` 运行默认 Playwright smoke 回归测试。/)
   assert.match(readmeBody, /- `pnpm test:playwright:full` 运行完整的 Playwright 浏览器流程回归测试。/)
   assert.match(readmeBody, /- `pnpm test:risk` 运行 lint、类型检查、Node 测试、Playwright smoke 套件和 Electron 运行时检查。/)
-  assert.match(readmeBody, /- `pnpm test:release` 按工作区精确指纹运行可恢复的发布校验，并为每个阶段保存日志。/)
+  assert.match(readmeBody, /- `pnpm test:release` 按工作区精确指纹运行可恢复的发布校验，并为每个阶段保存日志；生产构建后还会运行有界的 30 秒 Electron 多流聊天性能门禁。/)
   assert.match(readmeBody, /- `pnpm test:full` 保留为 `pnpm test:release` 的兼容别名。/)
 })
 

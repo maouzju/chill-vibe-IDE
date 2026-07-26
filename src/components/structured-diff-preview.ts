@@ -65,4 +65,3 @@ export const buildStructuredDiffPreviewLines = (patch: string): StructuredDiffPr
 
   return rows
 }
-

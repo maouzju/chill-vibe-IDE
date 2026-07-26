@@ -7,6 +7,11 @@ type CacheableModel = {
   isDisposed(): boolean
 }
 
+type ContentModel = {
+  getValue(): string
+  setValue(value: string): void
+}
+
 export type TextEditorModelCacheEntry<
   TModel extends CacheableModel = CacheableModel,
   TViewState = unknown,
@@ -47,6 +52,21 @@ export const takeCachedTextEditorModel = (key: string): TextEditorModelCacheEntr
   }
 
   return entry
+}
+
+export const syncClaimedTextEditorModelContent = (
+  model: ContentModel,
+  currentContent: string,
+) => {
+  if (model.getValue() === currentContent) {
+    return false
+  }
+
+  // A disk refresh can finish while Monaco is still lazy-loading. The React
+  // refs then hold the fresh snapshot while the claimed cached model still
+  // holds stale text. Reconcile before content listeners/autosave are attached.
+  model.setValue(currentContent)
+  return true
 }
 
 export const cacheTextEditorModel = (key: string, entry: TextEditorModelCacheEntry) => {

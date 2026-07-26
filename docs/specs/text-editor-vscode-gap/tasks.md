@@ -29,6 +29,9 @@
   - 红：缓存命中复用 model、unmount 不丢 undo 栈的单测先失败（模型层可在 node 侧用 mock 验证缓存语义）
   - LRU 上限 12；`removeCard` 路径驱逐；revision 不一致走刷新/冲突逻辑
   - Playwright：输入 → 切 tab → 切回 → Ctrl+Z 可撤销、光标/滚动保持
+- [x] **P1-1A** 缓存模型重挂载与快速磁盘刷新竞态修复（Tier 1，2026-07-26 回归加固）
+  - 红：缓存 model 仍是旧内容、磁盘刷新已更新当前快照时，认领 model 必须先同步为磁盘新内容
+  - 在 Monaco 内容监听和 autosave 接通前完成同步，防止恢复文件窗口时把旧缓冲回写覆盖 agent 修改
 - [x] **P1-2** 文件 watcher 推送（Tier 1，`electron/` + `server` bridge + `TextEditorCard.tsx`）
   - 按打开文件集合动态 `fs.watch` 单文件；`desktop:file-changed` 事件桥
   - 自写吞掉（revision 比对）+ 200ms debounce；窗口 close 清理 watcher

@@ -6,9 +6,11 @@ import type {
 export type { QueuedSendRequest } from '../../shared/schema'
 
 export type SendMessageMode = 'auto' | 'defer' | 'interrupt'
+export type SendMessageOrigin = 'user' | 'auto-urge' | 'wake-timer-release'
 
 export type SendMessageOptions = {
   mode?: SendMessageMode
+  origin?: SendMessageOrigin
 }
 
 export type QueuedSendSummary = {

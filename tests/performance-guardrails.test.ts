@@ -62,3 +62,25 @@ test('Electron chat stress uses the local fake Codex runtime without model-token
   assert.doesNotMatch(fakeCodexSource, /https?:\/\//)
   assert.doesNotMatch(fakeCodexSource, /\bfetch\s*\(/)
 })
+
+test('Electron chat stress repeats new-tab first-input checks and gates rare multi-second stalls', () => {
+  assert.match(chatPerfTestSource, /chatStreamStressNewTabIterationCount/)
+  assert.match(chatPerfTestSource, /newTabReadyP95Ms/)
+  assert.match(chatPerfTestSource, /newTabReadyMaxMs/)
+  assert.match(chatPerfTestSource, /newTabFirstInputP95Ms/)
+  assert.match(chatPerfTestSource, /newTabFirstInputMaxMs/)
+  assert.match(chatPerfTestSource, /newTabStallOver2sCount/)
+  assert.match(chatPerfTestSource, /newTabFocusFailureCount/)
+  assert.match(chatPerfTestSource, /newTabDraftRoundTripFailureCount/)
+  assert.match(chatPerfTestSource, /keyboard\.insertText/)
+  assert.match(chatPerfTestSource, /closeNewTabProbe/)
+  assert.match(chatPerfTestSource, /metrics\.newTabReadyMaxMs < 500/)
+  assert.match(chatPerfTestSource, /metrics\.newTabFirstInputMaxMs < 500/)
+  assert.match(
+    chatPerfTestSource,
+    /chatStreamStressColumnCount \* chatStreamStressTabsPerPane,/,
+    'new-tab probes should clean up and return to the stable 84-tab baseline',
+  )
+  assert.match(chatPerfFixtureSource, /chatStreamStressNewTabIterationCount = 60/)
+  assert.match(chatPerfFixtureSource, /chatStreamStressSerializedStateMinBytes = 4_000_000/)
+})

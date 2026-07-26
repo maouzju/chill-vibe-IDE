@@ -75,6 +75,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
   fetchState: () => ipcRenderer.invoke('desktop:fetch-state'),
   loadSessionHistoryEntry: (request: unknown) =>
     ipcRenderer.invoke('desktop:load-session-history-entry', request),
+  saveClosedWorkspaceSnapshot: (snapshot: unknown) =>
+    ipcRenderer.invoke('desktop:save-closed-workspace-snapshot', snapshot),
+  loadClosedWorkspaceSnapshot: (request: unknown) =>
+    ipcRenderer.invoke('desktop:load-closed-workspace-snapshot', request),
   listInternalSessionHistory: (request: unknown) =>
     ipcRenderer.invoke('desktop:list-internal-session-history', request),
   hideInternalSessionHistory: (request: unknown) =>

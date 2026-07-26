@@ -1,4 +1,5 @@
-import { copyFile, mkdir, readdir, readFile, rename, stat, unlink, writeFile } from 'node:fs/promises'
+import { createHash } from 'node:crypto'
+import { copyFile, mkdir, readdir, readFile, rename, rm, stat, unlink, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 
 import { getChatMessageAttachments } from '../shared/chat-attachments.js'
@@ -40,6 +41,8 @@ import {
 import { normalizeReasoningEffort } from '../shared/reasoning.js'
 import {
   appStateSchema,
+  closedWorkspaceLoadRequestSchema,
+  closedWorkspaceSnapshotSchema,
   desktopRuntimeKindSchema,
   internalSessionHistoryLoadResponseSchema,
   recentCrashRecoverySchema,
@@ -47,6 +50,9 @@ import {
   type AppStateLoadResponse,
   type BoardColumn,
   type ChatCard,
+  type ClosedWorkspaceLoadRequest,
+  type ClosedWorkspaceLoadResponse,
+  type ClosedWorkspaceSnapshot,
   type ContextTransfer,
   type DesktopRuntimeKind,
   type ImageAttachment,
@@ -90,6 +96,9 @@ const stateSnapshotPrefix = 'state.snapshot-'
 const stateSnapshotSuffix = '.json'
 const sessionHistoryDirName = 'session-history'
 const sessionHistoryFileSuffix = '.json'
+const closedWorkspaceDirName = 'closed-workspaces'
+const closedWorkspaceFileSuffix = '.json'
+const legacyWorkspaceCloseBatchWindowMs = 2_000
 const legacyRecentCrashRecoveryFileName = 'state.crash-recovery.json'
 const rendererSessionHistoryPreviewMessageLimit = 8
 
@@ -308,6 +317,16 @@ const trimStreamingMessages = (messages: ChatCard['messages']) => messages
 
 const getStateFilePathForDir = (dataDir: string) => path.join(dataDir, 'state.json')
 const getSessionHistoryDirPath = (dataDir = getAppDataDir()) => path.join(dataDir, sessionHistoryDirName)
+const getClosedWorkspaceDirPath = (dataDir = getAppDataDir()) => path.join(dataDir, closedWorkspaceDirName)
+
+const normalizeWorkspacePathKey = (workspacePath: string) =>
+  workspacePath.trim().replace(/\\/g, '/').toLowerCase()
+
+const encodeClosedWorkspaceFileName = (workspacePath: string) =>
+  `${createHash('sha256').update(normalizeWorkspacePathKey(workspacePath)).digest('hex')}${closedWorkspaceFileSuffix}`
+
+const getClosedWorkspaceFilePath = (workspacePath: string, dataDir = getAppDataDir()) =>
+  path.join(getClosedWorkspaceDirPath(dataDir), encodeClosedWorkspaceFileName(workspacePath))
 
 const encodeSessionHistoryFileName = (entryId: string) =>
   `${Buffer.from(entryId, 'utf8')
@@ -483,6 +502,28 @@ const normalizePersistedQueuedSends = (value: unknown): ChatCard['queuedSends'] 
     }]
   })
 }
+
+const normalizeWakeTimerMode = (value: unknown): NonNullable<ChatCard['wakeTimerMode']> =>
+  value === 'left-tab' || value === 'duration' ? value : 'workspace-agents'
+
+const normalizeWakeTimerDurationMinutes = (value: unknown) =>
+  typeof value === 'number' && Number.isFinite(value)
+    ? Math.min(Math.max(value, 1), 7 * 24 * 60)
+    : 30
+
+const normalizeWakeTimerDate = (value: unknown) => {
+  if (typeof value !== 'string' || !value.trim()) {
+    return undefined
+  }
+
+  const timestamp = Date.parse(value)
+  return Number.isFinite(timestamp) ? new Date(timestamp).toISOString() : undefined
+}
+
+const normalizeWakeTimerTargetIds = (value: unknown) =>
+  Array.isArray(value)
+    ? [...new Set(value.filter((entry): entry is string => typeof entry === 'string' && Boolean(entry.trim())))]
+    : []
 
 const canContainClaudeProtocolResidue = (message: PersistedChatMessage) => {
   if (message.role !== 'assistant') return false
@@ -694,6 +735,13 @@ const normalizePersistedCard = (
     draft: typeof card.draft === 'string' ? card.draft : fallback.draft,
     draftAttachments: normalizePersistedImageAttachments(card.draftAttachments),
     queuedSends: normalizePersistedQueuedSends(card.queuedSends),
+    wakeTimerActive: typeof card.wakeTimerActive === 'boolean' ? card.wakeTimerActive : false,
+    wakeTimerMode: normalizeWakeTimerMode(card.wakeTimerMode),
+    wakeTimerDurationMinutes: normalizeWakeTimerDurationMinutes(card.wakeTimerDurationMinutes),
+    wakeTimerQueuedSends: normalizePersistedQueuedSends(card.wakeTimerQueuedSends),
+    wakeTimerArmedAt: normalizeWakeTimerDate(card.wakeTimerArmedAt),
+    wakeTimerWakeAt: normalizeWakeTimerDate(card.wakeTimerWakeAt),
+    wakeTimerPendingTargetIds: normalizeWakeTimerTargetIds(card.wakeTimerPendingTargetIds),
     stickyNote: typeof card.stickyNote === 'string' ? card.stickyNote : fallback.stickyNote,
     brainstorm: normalizePersistedBrainstorm(card.brainstorm, fallback.brainstorm),
     pm: normalizePersistedPm(card.pm, fallback.pm),
@@ -778,6 +826,7 @@ const normalizePersistedSessionHistoryEntry = (
     messages,
     messageCount,
     messagesPreview: typeof entry.messagesPreview === 'boolean' ? entry.messagesPreview : undefined,
+    workspaceCloseId: normalizeOptionalString(entry.workspaceCloseId),
     archivedAt: normalizePersistedTimestamp(entry.archivedAt),
   }
 }
@@ -1711,6 +1760,126 @@ const sanitizeStateResult = (raw: unknown): SanitizedStateResult => {
 
 const sanitizeState = (raw: unknown): AppState => sanitizeStateResult(raw).state
 
+const normalizeClosedWorkspaceColumn = (column: BoardColumn) => {
+  const fallbackState = createDefaultState(column.workspacePath)
+  const normalized = sanitizeStateResult({
+    ...fallbackState,
+    columns: [column],
+    sessionHistory: [],
+  }).state.columns[0]
+
+  if (!normalized) {
+    throw new Error('Closed workspace snapshot does not contain a valid column.')
+  }
+
+  return {
+    ...normalized,
+    cards: Object.fromEntries(
+      Object.entries(normalized.cards).map(([cardId, card]) => [
+        cardId,
+        {
+          ...card,
+          status: card.status === 'streaming' ? 'idle' : card.status,
+          streamId: undefined,
+        },
+      ]),
+    ),
+  }
+}
+
+const getLegacyClosedWorkspaceEntryIds = (
+  entries: SessionHistoryEntry[],
+  workspacePath: string,
+) => {
+  const workspaceKey = normalizeWorkspacePathKey(workspacePath)
+  const candidates = entries
+    .filter((entry) => normalizeWorkspacePathKey(entry.workspacePath) === workspaceKey)
+    .slice()
+    .sort((left, right) => right.archivedAt.localeCompare(left.archivedAt))
+
+  const newest = candidates[0]
+  if (!newest) {
+    return []
+  }
+
+  if (newest.workspaceCloseId) {
+    return candidates
+      .filter((entry) => entry.workspaceCloseId === newest.workspaceCloseId)
+      .map((entry) => entry.id)
+  }
+
+  const newestTimestamp = Date.parse(newest.archivedAt)
+  if (!Number.isFinite(newestTimestamp)) {
+    return [newest.id]
+  }
+
+  return candidates
+    .filter((entry) => {
+      const timestamp = Date.parse(entry.archivedAt)
+      return Number.isFinite(timestamp) && newestTimestamp - timestamp <= legacyWorkspaceCloseBatchWindowMs
+    })
+    .map((entry) => entry.id)
+}
+
+export const saveClosedWorkspaceSnapshot = async (
+  snapshot: ClosedWorkspaceSnapshot,
+): Promise<ClosedWorkspaceSnapshot> => {
+  const parsed = closedWorkspaceSnapshotSchema.parse(snapshot)
+  const normalizedSnapshot = closedWorkspaceSnapshotSchema.parse({
+    ...parsed,
+    column: normalizeClosedWorkspaceColumn(parsed.column),
+  })
+  const dataDir = getAppDataDir()
+  const sidecarDir = getClosedWorkspaceDirPath(dataDir)
+  const filePath = getClosedWorkspaceFilePath(normalizedSnapshot.column.workspacePath, dataDir)
+  const tmpFilePath = `${filePath}.tmp`
+
+  await mkdir(sidecarDir, { recursive: true })
+  try {
+    await writeFile(tmpFilePath, `${JSON.stringify(normalizedSnapshot, null, 2)}\n`, 'utf8')
+    await rename(tmpFilePath, filePath)
+  } catch (error) {
+    await unlink(tmpFilePath).catch(() => undefined)
+    throw error
+  }
+
+  return normalizedSnapshot
+}
+
+export const loadClosedWorkspaceSnapshot = async (
+  request: ClosedWorkspaceLoadRequest,
+): Promise<ClosedWorkspaceLoadResponse> => {
+  const parsed = closedWorkspaceLoadRequestSchema.parse(request)
+  const dataDir = getAppDataDir()
+  const filePath = getClosedWorkspaceFilePath(parsed.workspacePath, dataDir)
+
+  try {
+    const content = await readFile(filePath, 'utf8')
+    const snapshot = closedWorkspaceSnapshotSchema.parse(JSON.parse(content))
+    if (
+      normalizeWorkspacePathKey(snapshot.column.workspacePath) ===
+      normalizeWorkspacePathKey(parsed.workspacePath)
+    ) {
+      return {
+        snapshot: {
+          ...snapshot,
+          column: normalizeClosedWorkspaceColumn(snapshot.column),
+        },
+        legacyEntryIds: [],
+      }
+    }
+  } catch {
+    // Older versions have no closed-workspace sidecar. Fall through to the
+    // bounded history-batch inference so those chats can still be reopened.
+  }
+
+  const state = await loadState()
+  return {
+    snapshot: null,
+    legacyEntryIds: getLegacyClosedWorkspaceEntryIds(state.sessionHistory, parsed.workspacePath),
+  }
+}
+
 /** Try to recover from the most recent valid backup file. */
 const recoverFromBackups = async (dataDir = getAppDataDir()): Promise<AppState | null> => {
   try {
@@ -2569,9 +2738,12 @@ export const resetState = async () => {
   await dismissRecentCrashRecoveryForDataDir(getAppDataDir())
   const dataDir = getAppDataDir()
   latestImmediateSaveRevision = ++stateSaveRevision
-  return withWriteLock(() => saveStateToDataDir(
-    createDefaultState(getDefaultWorkspacePath()),
-    dataDir,
-    { allowEmptyOverwrite: true },
-  ))
+  return withWriteLock(async () => {
+    await rm(getClosedWorkspaceDirPath(dataDir), { recursive: true, force: true })
+    return saveStateToDataDir(
+      createDefaultState(getDefaultWorkspacePath()),
+      dataDir,
+      { allowEmptyOverwrite: true },
+    )
+  })
 }

@@ -13,10 +13,12 @@ export const chatStreamStressVisibleStreamColumnCount = chatStreamStressColumnCo
 // workspace-column count before the fixture gained multiple live tabs per pane.
 export const chatStreamStressCardCount = chatStreamStressColumnCount
 export const chatStreamStressInitialStructuredItemCount = 920
-export const chatStreamStressInitialMessageCount = 1_154
+export const chatStreamStressInitialMessageCount = 3_494
 export const chatStreamStressHeavyCommandCount = 320
 export const chatStreamStressLightCommandCount = 70
 export const chatStreamStressInteractionIntervalMs = 2_500
+export const chatStreamStressNewTabIterationCount = 60
+export const chatStreamStressSerializedStateMinBytes = 4_000_000
 export const chatStreamStressActivityIntervalMs = 250
 export const chatStreamStressDeltaIntervalMs = 100
 export const chatStreamStressHeartbeatIntervalMs = 50
@@ -82,22 +84,26 @@ const createStressMessages = (cardIndex: number, commandCount: number): ChatMess
 
 const createDormantMessages = (cardIndex: number, tabIndex: number): ChatMessage[] => {
   const messagePrefix = `chat-stress-${cardIndex}-dormant-${tabIndex}`
-  const baseOffset = cardIndex * 100_000 + 80_000 + tabIndex * 10
+  const baseOffset = cardIndex * 100_000 + 80_000 + tabIndex * 100
 
-  return [
+  // Deterministic synthetic history approximates a long-lived multi-agent
+  // profile without copying any user's real messages. Inactive pane tabs keep
+  // this data out of the DOM while state cloning and persistence still pay the
+  // realistic multi-megabyte cost during add/draft/close interactions.
+  return Array.from({ length: 16 }, (_, pairIndex) => [
     {
-      id: `${messagePrefix}-user`,
-      role: 'user',
-      content: `Saved prompt for column ${cardIndex}, tab ${tabIndex}.`,
-      createdAt: isoAt(baseOffset),
+      id: `${messagePrefix}-user-${pairIndex + 1}`,
+      role: 'user' as const,
+      content: `Saved synthetic prompt ${pairIndex + 1} for column ${cardIndex}, tab ${tabIndex}.`,
+      createdAt: isoAt(baseOffset + pairIndex * 2),
     },
     {
-      id: `${messagePrefix}-assistant`,
-      role: 'assistant',
-      content: `Saved answer for column ${cardIndex}, tab ${tabIndex}.`,
-      createdAt: isoAt(baseOffset + 1),
+      id: `${messagePrefix}-assistant-${pairIndex + 1}`,
+      role: 'assistant' as const,
+      content: `Saved synthetic answer ${pairIndex + 1}. ${'synthetic history context '.repeat(140)}`,
+      createdAt: isoAt(baseOffset + pairIndex * 2 + 1),
     },
-  ]
+  ]).flat()
 }
 
 export const getChatStreamStressForegroundCardId = (cardIndex: number) =>

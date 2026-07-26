@@ -52,6 +52,7 @@ import type {
   ModelPromptRule,
   Provider,
   SlashCommand,
+  WakeTimerMode,
 } from '../../shared/schema'
 import {
   defaultCodexChatSettings,
@@ -388,6 +389,9 @@ type ChatCardProps = {
   autoUrgeSuccessKeyword: string
   globalUrgeActive: boolean
   globalUrgeProfileId: string
+  wakeTimerEnabled?: boolean
+  leftWakeTimerTarget?: { id: string; title: string } | null
+  workspaceWakeTimerAgentCount?: number
   queuedSendSummary?: QueuedSendSummary
   onSetAutoUrgeEnabled: (enabled: boolean) => void
   onRemove: () => void
@@ -399,6 +403,8 @@ type ChatCardProps = {
   onStop: () => Promise<void>
   onCancelQueuedSends?: () => void
   onSendNextQueuedNow?: () => void
+  onCancelWakeTimerBatch?: () => void
+  onWakeTimerBatchNow?: () => void
   onManualRecoverStream?: () => void
   onDraftChange: (draft: string) => void
   onChangeModel: (provider: Provider, model: string) => void
@@ -422,6 +428,9 @@ type ChatCardProps = {
         | 'autoUrgeActive'
         | 'autoUrgeProfileId'
         | 'draftAttachments'
+        | 'wakeTimerActive'
+        | 'wakeTimerMode'
+        | 'wakeTimerDurationMinutes'
       >
     >,
   ) => void
@@ -841,6 +850,10 @@ const areChatCardPropsEqual = (previous: ChatCardProps, next: ChatCardProps) =>
   previous.autoUrgeSuccessKeyword === next.autoUrgeSuccessKeyword &&
   previous.globalUrgeActive === next.globalUrgeActive &&
   previous.globalUrgeProfileId === next.globalUrgeProfileId &&
+  previous.wakeTimerEnabled === next.wakeTimerEnabled &&
+  previous.leftWakeTimerTarget?.id === next.leftWakeTimerTarget?.id &&
+  previous.leftWakeTimerTarget?.title === next.leftWakeTimerTarget?.title &&
+  previous.workspaceWakeTimerAgentCount === next.workspaceWakeTimerAgentCount &&
   previous.queuedSendSummary === next.queuedSendSummary &&
   previous.isRestored === next.isRestored &&
   previous.chromeMode === next.chromeMode &&
@@ -1291,6 +1304,9 @@ const ChatTranscript = memo(
                       ? () => onForkConversation(entry.message.id)
                       : undefined
                   }
+                  isStreamingTail={
+                    cardStatus === 'streaming' && idx === renderableMessages.length - 1
+                  }
                 />
               )
             })}
@@ -1338,6 +1354,9 @@ const ChatCardView = ({
   autoUrgeSuccessKeyword,
   globalUrgeActive,
   globalUrgeProfileId,
+  wakeTimerEnabled = false,
+  leftWakeTimerTarget = null,
+  workspaceWakeTimerAgentCount = 0,
   queuedSendSummary,
   onSetAutoUrgeEnabled,
   onRemove,
@@ -1345,6 +1364,8 @@ const ChatCardView = ({
   onStop,
   onCancelQueuedSends,
   onSendNextQueuedNow,
+  onCancelWakeTimerBatch,
+  onWakeTimerBatchNow,
   onDraftChange,
   onChangeModel,
   onChangeReasoningEffort,
@@ -1517,6 +1538,45 @@ const ChatCardView = ({
   const suspendPaneRuntimeEffects = usesPaneChrome && !isActive
   const deferInactivePaneChatBody = suspendPaneRuntimeEffects && !isToolCard
   const slashCommandsEnabled = !usesPaneChrome || isActive
+  const wakeTimerQueue = card.wakeTimerQueuedSends ?? []
+  const hasWakeTimerBatch = wakeTimerQueue.length > 0
+  const wakeTimerMode = card.wakeTimerMode ?? 'workspace-agents'
+  const wakeTimerLeftUnavailable = wakeTimerMode === 'left-tab' && !leftWakeTimerTarget
+  const [wakeTimerNow, setWakeTimerNow] = useState(() => Date.now())
+  useEffect(() => {
+    if (!isActive || !hasWakeTimerBatch || wakeTimerMode !== 'duration') {
+      return
+    }
+    setWakeTimerNow(Date.now())
+    const timer = window.setInterval(() => setWakeTimerNow(Date.now()), 1000)
+    return () => window.clearInterval(timer)
+  }, [hasWakeTimerBatch, isActive, wakeTimerMode])
+  const wakeTimerConditionText = (() => {
+    if (wakeTimerMode === 'duration') {
+      const wakeAt = card.wakeTimerWakeAt ? Date.parse(card.wakeTimerWakeAt) : Number.NaN
+      const remainingSeconds = Number.isFinite(wakeAt)
+        ? Math.max(0, Math.ceil((wakeAt - wakeTimerNow) / 1000))
+        : 0
+      const hours = Math.floor(remainingSeconds / 3600)
+      const minutes = Math.floor((remainingSeconds % 3600) / 60)
+      const seconds = remainingSeconds % 60
+      const clock = [hours, minutes, seconds]
+        .map((value) => String(value).padStart(2, '0'))
+        .join(':')
+      return language === 'en' ? `Wakes in ${clock}` : `${clock} 后唤醒`
+    }
+    if (wakeTimerMode === 'left-tab') {
+      return (card.wakeTimerPendingTargetIds?.length ?? 0) > 0
+        ? (language === 'en' ? 'Waiting for the left tab' : '等待左侧 Tab 完成')
+        : (language === 'en' ? 'Left tab is complete' : '左侧 Tab 已完成')
+    }
+    const pendingCount = card.wakeTimerPendingTargetIds?.length ?? 0
+    return pendingCount > 0
+      ? (language === 'en'
+          ? `Waiting for ${pendingCount} other agent${pendingCount === 1 ? '' : 's'}`
+          : `等待 ${pendingCount} 个其他 Agent 完成`)
+      : (language === 'en' ? 'Other agents are complete' : '其他 Agent 已完成')
+  })()
   const [musicTitleOverride, setMusicTitleOverride] = useState<string | null>(null)
   const [gitAgentPanelOpen, setGitAgentPanelOpen] = useState(false)
   const [gitInfo, setGitInfo] = useState<GitInfoSummary | null>(null)
@@ -1527,7 +1587,12 @@ const ChatCardView = ({
     maxWidth: number
     maxHeight: number
   } | null>(null)
-  const [settingsMenuStyle, setSettingsMenuStyle] = useState<{ top: number; left: number; maxWidth: number } | null>(null)
+  const [settingsMenuStyle, setSettingsMenuStyle] = useState<{
+    top: number
+    left: number
+    maxWidth: number
+    maxHeight: number
+  } | null>(null)
   const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(() => new Set())
   const [revealedCompactedHistoryCount, setRevealedCompactedHistoryCount] = useState(0)
   const pendingCompactedHistoryRevealRef = useRef<{
@@ -1706,7 +1771,7 @@ const ChatCardView = ({
     [],
   )
   const sendAutoUrge = useCallback((message: string) => {
-    void onSendRef.current(message, [])
+    void onSendRef.current(message, [], { origin: 'auto-urge' })
   }, [])
   const runAutoUrge = useCallback(
     (
@@ -2457,19 +2522,23 @@ const ChatCardView = ({
     const nextLeft = Math.min(Math.max(rawLeft, minLeft), Math.max(minLeft, maxRight - nextWidth))
     const minTop = Math.max(edgeInset, cardRect?.top ?? edgeInset)
     const maxBottom = Math.min(window.innerHeight - edgeInset, cardRect?.bottom ?? window.innerHeight - edgeInset)
-    const rawTop = anchorRect.top - gap - dropdownRect.height
-    const nextTop = Math.min(Math.max(rawTop, minTop), Math.max(minTop, maxBottom - dropdownRect.height))
+    const maxHeight = Math.max(0, maxBottom - minTop)
+    const nextHeight = Math.min(dropdownRect.height, maxHeight)
+    const rawTop = anchorRect.top - gap - nextHeight
+    const nextTop = Math.min(Math.max(rawTop, minTop), Math.max(minTop, maxBottom - nextHeight))
     const nextStyle = {
       top: nextTop,
       left: nextLeft,
       maxWidth,
+      maxHeight,
     }
 
     setSettingsMenuStyle((current) =>
       current &&
       Math.abs(current.top - nextStyle.top) < 0.5 &&
       Math.abs(current.left - nextStyle.left) < 0.5 &&
-      Math.abs(current.maxWidth - nextStyle.maxWidth) < 0.5
+      Math.abs(current.maxWidth - nextStyle.maxWidth) < 0.5 &&
+      Math.abs(current.maxHeight - nextStyle.maxHeight) < 0.5
         ? current
         : nextStyle,
     )
@@ -2481,16 +2550,40 @@ const ChatCardView = ({
     updateSettingsMenuPosition()
     const frame = window.requestAnimationFrame(() => updateSettingsMenuPosition())
     const handleLayout = () => updateSettingsMenuPosition()
+    const resizeObserver = typeof ResizeObserver === 'undefined'
+      ? null
+      : new ResizeObserver(handleLayout)
+
+    if (resizeObserver) {
+      const anchor = settingsMenuRef.current
+      const dropdown = settingsDropdownRef.current
+      if (anchor) resizeObserver.observe(anchor)
+      if (dropdown) resizeObserver.observe(dropdown)
+      const cardShell = anchor?.closest('.card-shell')
+      if (cardShell instanceof HTMLElement) resizeObserver.observe(cardShell)
+    }
 
     window.addEventListener('resize', handleLayout)
     window.addEventListener('scroll', handleLayout, true)
 
     return () => {
       window.cancelAnimationFrame(frame)
+      resizeObserver?.disconnect()
       window.removeEventListener('resize', handleLayout)
       window.removeEventListener('scroll', handleLayout, true)
     }
-  }, [autoUrgeEnabled, card.provider, language, settingsMenuOpen, updateSettingsMenuPosition])
+  }, [
+    autoUrgeEnabled,
+    autoUrgeProfiles.length,
+    card.provider,
+    card.wakeTimerActive,
+    hasWakeTimerBatch,
+    language,
+    settingsMenuOpen,
+    updateSettingsMenuPosition,
+    wakeTimerEnabled,
+    wakeTimerMode,
+  ])
 
   const syncAutoScrollPreference = useCallback(() => {
     if (suspendPaneRuntimeEffects) {
@@ -3046,7 +3139,14 @@ const ChatCardView = ({
   const sendDisabled =
     (!draftHasText && !hasPendingAttachments && !canContinueEmpty) ||
     (hasPendingAttachments && !providerCanSendImages) ||
-    (!localSlashDraft && !workspacePath.trim())
+    (!localSlashDraft && !workspacePath.trim()) ||
+    (
+      !localSlashDraft &&
+      wakeTimerEnabled &&
+      card.wakeTimerActive === true &&
+      !hasWakeTimerBatch &&
+      wakeTimerLeftUnavailable
+    )
 
   // Mirror the uploaded subset of pending attachments into the persisted card
   // draft so pasted images survive a ChatCard unmount (pane tab switch, restart).
@@ -4276,6 +4376,35 @@ const ChatCardView = ({
                 />
               ) : null}
 
+              {hasWakeTimerBatch ? (
+                <div className="composer-wake-timer-status" role="status">
+                  <span className="composer-wake-timer-copy">
+                    <strong>{text.wakeTimerPendingStatus}</strong>
+                    <span>
+                      {language === 'en'
+                        ? `${wakeTimerQueue.length} message${wakeTimerQueue.length === 1 ? '' : 's'} · ${wakeTimerConditionText}`
+                        : `${wakeTimerQueue.length} 条消息 · ${wakeTimerConditionText}`}
+                    </span>
+                  </span>
+                  <button
+                    type="button"
+                    className="composer-queued-send-action"
+                    onClick={onWakeTimerBatchNow}
+                    disabled={!onWakeTimerBatchNow}
+                  >
+                    {text.wakeTimerWakeNow}
+                  </button>
+                  <button
+                    type="button"
+                    className="composer-queued-send-action"
+                    onClick={onCancelWakeTimerBatch}
+                    disabled={!onCancelWakeTimerBatch}
+                  >
+                    {text.wakeTimerCancel}
+                  </button>
+                </div>
+              ) : null}
+
               {queuedSendSummary ? (
                 <div className="composer-queued-send" role="status" title={queuedSendText}>
                   <span className="composer-queued-send-text">{queuedSendText}</span>
@@ -4328,7 +4457,7 @@ const ChatCardView = ({
                   <div className="composer-settings-shell" ref={settingsMenuRef}>
                     <IconButton
                       label={text.composerSettings}
-                      className={`composer-settings-trigger${settingsMenuOpen ? ' is-open' : ''}${autoUrgeEnabled && effectiveUrge.active ? ' has-auto-urge' : ''}`}
+                      className={`composer-settings-trigger${settingsMenuOpen ? ' is-open' : ''}${autoUrgeEnabled && effectiveUrge.active ? ' has-auto-urge' : ''}${wakeTimerEnabled && card.wakeTimerActive === true ? ' has-wake-timer' : ''}`}
                       aria-expanded={settingsMenuOpen}
                       onClick={() => {
                         setSettingsMenuStyle(null)
@@ -4350,6 +4479,7 @@ const ChatCardView = ({
                                   top: `${settingsMenuStyle.top}px`,
                                   left: `${settingsMenuStyle.left}px`,
                                   maxWidth: `${settingsMenuStyle.maxWidth}px`,
+                                  maxHeight: `${settingsMenuStyle.maxHeight}px`,
                                 }
                               : {
                                   position: 'fixed',
@@ -4359,6 +4489,82 @@ const ChatCardView = ({
                                 }
                           }
                         >
+                          {wakeTimerEnabled ? (
+                            <div className="composer-wake-timer-module">
+                              <label className="composer-settings-row">
+                                <span className="composer-settings-label">{text.wakeTimerLabel}</span>
+                                <input
+                                  type="checkbox"
+                                  className="composer-settings-checkbox"
+                                  checked={card.wakeTimerActive === true}
+                                  onChange={(event) => onPatchCard({ wakeTimerActive: event.target.checked })}
+                                />
+                              </label>
+                              {card.wakeTimerActive === true ? (
+                                <>
+                                  <label className="composer-settings-row">
+                                    <span className="composer-settings-label">{text.wakeTimerModeLabel}</span>
+                                    <select
+                                      className="reasoning-select"
+                                      value={wakeTimerMode}
+                                      disabled={hasWakeTimerBatch}
+                                      onChange={(event) =>
+                                        onPatchCard({ wakeTimerMode: event.target.value as WakeTimerMode })
+                                      }
+                                    >
+                                      <option value="workspace-agents">{text.wakeTimerModeWorkspace}</option>
+                                      <option value="left-tab">{text.wakeTimerModeLeftTab}</option>
+                                      <option value="duration">{text.wakeTimerModeDuration}</option>
+                                    </select>
+                                  </label>
+                                  {wakeTimerMode === 'duration' ? (
+                                    <label className="composer-settings-row composer-wake-timer-duration-row">
+                                      <span className="composer-settings-label">{text.wakeTimerDurationLabel}</span>
+                                      <span className="composer-wake-timer-duration-control">
+                                        <input
+                                          type="number"
+                                          className="control composer-wake-timer-duration-input"
+                                          min={1}
+                                          max={10080}
+                                          step={1}
+                                          value={card.wakeTimerDurationMinutes ?? 30}
+                                          disabled={hasWakeTimerBatch}
+                                          onChange={(event) => {
+                                            const next = Number(event.target.value)
+                                            if (Number.isFinite(next)) {
+                                              onPatchCard({
+                                                wakeTimerDurationMinutes: Math.min(Math.max(next, 1), 10080),
+                                              })
+                                            }
+                                          }}
+                                        />
+                                        <span>{text.wakeTimerMinutes}</span>
+                                      </span>
+                                    </label>
+                                  ) : null}
+                                  {wakeTimerMode === 'left-tab' ? (
+                                    <div className={`composer-settings-note${wakeTimerLeftUnavailable ? ' is-warning' : ''}`}>
+                                      {wakeTimerLeftUnavailable
+                                        ? text.wakeTimerLeftUnavailable
+                                        : (language === 'en'
+                                            ? `Target: ${leftWakeTimerTarget?.title || 'Untitled agent'}`
+                                            : `等待：${leftWakeTimerTarget?.title || '未命名 Agent'}`)}
+                                    </div>
+                                  ) : null}
+                                  {wakeTimerMode === 'workspace-agents' ? (
+                                    <div className="composer-settings-note">
+                                      {language === 'en'
+                                        ? `${workspaceWakeTimerAgentCount} other agent${workspaceWakeTimerAgentCount === 1 ? '' : 's'} in this workspace`
+                                        : `本工作区有 ${workspaceWakeTimerAgentCount} 个其他 Agent`}
+                                    </div>
+                                  ) : null}
+                                  {hasWakeTimerBatch ? (
+                                    <div className="composer-settings-note">{text.wakeTimerBatchLocked}</div>
+                                  ) : null}
+                                </>
+                              ) : null}
+                            </div>
+                          ) : null}
                           <label className="composer-settings-row">
                             <span className="composer-settings-label">{text.thinking}</span>
                             <input

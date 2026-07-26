@@ -155,4 +155,14 @@ test('the main window captures the JS call stack when the renderer goes unrespon
     /win\.on\('responsive'/,
     'a responsive-again listener must exist so recovery is not invisible',
   )
+  assert.match(
+    main,
+    /createUnresponsiveRecoveryController/,
+    'persistent unresponsive windows must arm the bounded renderer recovery controller',
+  )
+  assert.match(
+    main,
+    /reloadIgnoringCache/,
+    'persistent native/GPU renderer hangs must reload the renderer without killing the backend',
+  )
 })

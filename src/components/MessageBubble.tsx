@@ -43,7 +43,11 @@ import {
 } from './StructuredBlocks'
 import { useDialogFocus } from './dialog-focus'
 import type { ChangesSummaryFile } from './StructuredBlocks'
-import { areMessageBubblePropsEqual, type MessageBubbleProps } from './message-bubble-memo'
+import {
+  areMessageBubblePropsEqual,
+  shouldUsePlainStreamingAssistantRender,
+  type MessageBubbleProps,
+} from './message-bubble-memo'
 
 const parseChangesSummaryFiles = (raw: string | undefined): ChangesSummaryFile[] => {
   try {
@@ -222,6 +226,7 @@ const MessageContent = ({
   onSelectAskUserOption,
   onOpenFile,
   isStickyPreview = false,
+  isStreamingTail = false,
 }: {
   language: AppLanguage
   message: ChatMessage
@@ -230,6 +235,7 @@ const MessageContent = ({
   onSelectAskUserOption: (answerKey: string, label: string) => void
   onOpenFile?: (relativePath: string) => void
   isStickyPreview?: boolean
+  isStreamingTail?: boolean
 }) => {
   if (message.meta?.kind === 'log') {
     return <pre className="message-log-text">{message.content}</pre>
@@ -352,6 +358,8 @@ const MessageContent = ({
           <div className="message-sticky-preview-text">{previewText}</div>
         ) : message.role === 'user' ? (
           <p className="message-literal-text">{message.content}</p>
+        ) : shouldUsePlainStreamingAssistantRender(message, isStreamingTail) ? (
+          <p className="message-streaming-plain">{message.content}</p>
         ) : (
           renderMarkdown(message.content, workspacePath)
         )
@@ -370,6 +378,7 @@ const MessageBubbleView = ({
   isStickyToTop = false,
   onForkFromHere,
   entryRef,
+  isStreamingTail = false,
 }: MessageBubbleProps) => {
   const runDurationMs = readRunDurationMs(message)
   if (runDurationMs !== null) {
@@ -411,6 +420,7 @@ const MessageBubbleView = ({
         onSelectAskUserOption={onSelectAskUserOption}
         onOpenFile={onOpenFile}
         isStickyPreview={isStickyToTop && message.role === 'user'}
+        isStreamingTail={isStreamingTail}
       />
     </article>
   )

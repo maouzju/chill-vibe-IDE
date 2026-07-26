@@ -7,6 +7,9 @@ import {
   appStateSchema,
   ccSwitchImportRequestSchema,
   ccSwitchImportResponseSchema,
+  closedWorkspaceLoadRequestSchema,
+  closedWorkspaceLoadResponseSchema,
+  closedWorkspaceSnapshotSchema,
   externalHistoryListRequestSchema,
   externalHistoryListResponseSchema,
   externalSessionLoadRequestSchema,
@@ -65,6 +68,9 @@ import {
   type CcSwitchImportResponse,
   type ChatRequest,
   type ChatStartResponse,
+  type ClosedWorkspaceLoadRequest,
+  type ClosedWorkspaceLoadResponse,
+  type ClosedWorkspaceSnapshot,
   type ForkSessionRequest,
   type NativeTurnCompletionRequest,
   type NativeTurnCompletionResponse,
@@ -244,6 +250,22 @@ export const loadSessionHistoryEntry = async (
   const fn = requireDesktopAction(getDesktopApi()?.loadSessionHistoryEntry)
 
   return readDesktop(() => fn(parsed), internalSessionHistoryLoadResponseSchema)
+}
+
+export const saveClosedWorkspaceSnapshot = async (
+  snapshot: ClosedWorkspaceSnapshot,
+): Promise<ClosedWorkspaceSnapshot> => {
+  const parsed = closedWorkspaceSnapshotSchema.parse(snapshot)
+  const fn = requireDesktopAction(getDesktopApi()?.saveClosedWorkspaceSnapshot)
+  return readDesktop(() => fn(parsed), closedWorkspaceSnapshotSchema)
+}
+
+export const loadClosedWorkspaceSnapshot = async (
+  request: ClosedWorkspaceLoadRequest,
+): Promise<ClosedWorkspaceLoadResponse> => {
+  const parsed = closedWorkspaceLoadRequestSchema.parse(request)
+  const fn = requireDesktopAction(getDesktopApi()?.loadClosedWorkspaceSnapshot)
+  return readDesktop(() => fn(parsed), closedWorkspaceLoadResponseSchema)
 }
 
 export const listInternalSessionHistory = async (

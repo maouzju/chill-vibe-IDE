@@ -7,6 +7,7 @@ import {
   FILETREE_TOOL_MODEL,
   GIT_TOOL_MODEL,
   IMAGEEDITOR_TOOL_MODEL,
+  MODEL_PICKER_HIDDEN_TOOL_MODELS,
   MUSIC_TOOL_MODEL,
   STICKYNOTE_TOOL_MODEL,
   TEXTEDITOR_TOOL_MODEL,
@@ -83,6 +84,7 @@ type PaneViewProps = {
   autoUrgeSuccessKeyword: string
   globalUrgeActive: boolean
   globalUrgeProfileId: string
+  wakeTimerEnabled?: boolean
   onSetAutoUrgeEnabled: (enabled: boolean) => void
   onAddTab: (paneId: string) => void
   onSplitPane: (
@@ -134,6 +136,9 @@ type PaneViewProps = {
         | 'brainstorm'
         | 'autoUrgeActive'
         | 'autoUrgeProfileId'
+        | 'wakeTimerActive'
+        | 'wakeTimerMode'
+        | 'wakeTimerDurationMinutes'
       >
     >,
   ) => void
@@ -147,6 +152,8 @@ type PaneViewProps = {
   onStopMessage: (cardId: string) => Promise<void>
   onCancelQueuedSends?: (cardId: string) => void
   onSendNextQueuedNow?: (cardId: string) => void
+  onCancelWakeTimerBatch?: (cardId: string) => void
+  onWakeTimerBatchNow?: (cardId: string) => void
   onManualRecoverStream?: (cardId: string) => Promise<unknown>
   onForkConversation?: (cardId: string, messageId: string) => void
   onOpenFile?: (paneId: string, relativePath: string) => void
@@ -344,6 +351,7 @@ const PaneViewView = ({
   autoUrgeSuccessKeyword,
   globalUrgeActive,
   globalUrgeProfileId,
+  wakeTimerEnabled = false,
   onSetAutoUrgeEnabled,
   onAddTab,
   onSplitPane,
@@ -371,6 +379,8 @@ const PaneViewView = ({
   onStopMessage,
   onCancelQueuedSends,
   onSendNextQueuedNow,
+  onCancelWakeTimerBatch,
+  onWakeTimerBatchNow,
   onManualRecoverStream,
   onForkConversation,
   onOpenFile,
@@ -1281,6 +1291,16 @@ const PaneViewView = ({
           if (!card) return null
           const isActive = tabId === pane.activeTabId
           const keepInactiveRuntime = !isActive && cardKeepsPaneRuntimeWhenInactive(card)
+          const tabIndex = pane.tabs.indexOf(tabId)
+          const leftTabId = tabIndex > 0 ? pane.tabs[tabIndex - 1] : undefined
+          const leftCard = leftTabId ? column.cards[leftTabId] : undefined
+          const leftWakeTimerTarget =
+            leftCard && !MODEL_PICKER_HIDDEN_TOOL_MODELS.has(leftCard.model)
+              ? { id: leftCard.id, title: leftCard.title }
+              : null
+          const workspaceWakeTimerAgentCount = Object.values(column.cards).filter(
+            (entry) => entry.id !== card.id && !MODEL_PICKER_HIDDEN_TOOL_MODELS.has(entry.model),
+          ).length
           return (
             <div
               key={tabId}
@@ -1309,6 +1329,9 @@ const PaneViewView = ({
                   autoUrgeSuccessKeyword={autoUrgeSuccessKeyword}
                   globalUrgeActive={globalUrgeActive}
                   globalUrgeProfileId={globalUrgeProfileId}
+                  wakeTimerEnabled={wakeTimerEnabled}
+                  leftWakeTimerTarget={leftWakeTimerTarget}
+                  workspaceWakeTimerAgentCount={workspaceWakeTimerAgentCount}
                   onSetAutoUrgeEnabled={onSetAutoUrgeEnabled}
                   onRemove={() => onCloseTab(pane.id, card.id)}
                   queuedSendSummary={queuedSendSummaries?.get(card.id)}
@@ -1322,6 +1345,16 @@ const PaneViewView = ({
                   onSendNextQueuedNow={
                     onSendNextQueuedNow
                       ? () => onSendNextQueuedNow(card.id)
+                      : undefined
+                  }
+                  onCancelWakeTimerBatch={
+                    onCancelWakeTimerBatch
+                      ? () => onCancelWakeTimerBatch(card.id)
+                      : undefined
+                  }
+                  onWakeTimerBatchNow={
+                    onWakeTimerBatchNow
+                      ? () => onWakeTimerBatchNow(card.id)
                       : undefined
                   }
                   onManualRecoverStream={

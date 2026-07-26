@@ -28,8 +28,8 @@
 - [x] focused Node tests：20/20 通过。
 - [x] `pnpm test:quality`。
 - [x] 30 秒 `test:perf:chat:electron`：84 tab / 12 stream，最大 heartbeat gap 180.2ms、最大 frame gap 199.9ms、输入 P95 73.7ms、切 tab P95 110.6ms，零 unresponsive / renderer gone。
-- [ ] `pnpm test:risk`。
-- [ ] `pnpm test:release`。
+- [x] `pnpm test:risk` 对应门禁已完成：quality、171 个 Node 文件、Playwright smoke（36/36）和 Electron runtime（12/12）均通过；聚合命令首次受孤儿 Vite 占用 5173 的清理噪声影响，随后按相同组成门禁逐项复核为绿。
+- 最终发布门禁不在功能切片中预先勾选；由 `release-pipeline` 对最终版本化精确树执行 `pnpm test:release`，并以仓库外的 verifier evidence 为准，避免“勾选后改变指纹、再验证旧树”。
 - [x] `pnpm electron:build`：产物位于 `dist/release-20260723-152853/`，ZIP 与解压可执行文件均已核验。
 - [x] 检查当前运行时：未发现开发 Electron 或 5173 监听；按规则未触碰用户正在使用的旧打包版。
 
@@ -41,3 +41,14 @@
 - [x] 断言测试只启动本地 fake Codex CLI，不使用真实 Provider 或模型 Token。
 - [x] 重跑 focused tests（21/21）、`pnpm test:quality`、30 秒 20 流 Electron 门禁：输入 P95 71.8ms、焦点 P95 69.3ms、延后发送反馈 P95 71.1ms、运行 tab 切换 P95 131.1ms、最大 frame gap 201.1ms，零 unresponsive / renderer gone。
 - [x] 重新执行 `pnpm electron:build`；产物位于 `dist/release-20260723-172549/`，ZIP 根目录与解压可执行文件均已核验。
+
+## 2026-07-23 偶发新建会话首次输入卡顿
+
+- [x] 增加契约红测：20 流运行时至少重复 60 次真实鼠标新建 tab、自动聚焦、中文首次输入、切走切回核对草稿和清理 tab。
+- [x] 将合成状态从约 0.46MB 提升到至少 4MB，匹配当前打包版约 3MB 的长期状态量级且不读取真实内容。
+- [x] 记录新建 ready/首次输入的 p95、max 和焦点失败次数；ready/input max 都以 `< 500ms` 判定，旧门禁缺少这些指标时测试必须失败。
+- [x] 每次切回新 tab 核对唯一草稿，随后清空并关闭，让 60 次采样保持相同 84-tab 基线。
+- [x] 先跑旧实现获取真实长尾；旧实现 ready p95/max 707.5/802.3ms、frame max 900.0ms，确认红线后才修改生产代码。
+- [x] 超长流式助手正文在 16,000 字符后临时走完整纯文本渲染，完成后恢复 Markdown；不改状态、Provider 或持久化内容。
+- [x] 重跑 focused tests（19/19）、`pnpm test:quality`、5 分钟 20 流新建会话 Electron 门禁：60/60 次新建均完成，ready p95/max 113.7/179.2ms，首次输入 p95/max 25.4/38.4ms，零焦点失败、零草稿丢失、零 unresponsive / renderer gone。
+- [x] 重新执行 `pnpm electron:build`；产物位于 `dist/release-20260723-201809/`，ZIP 与解压可执行目录均已生成。保留长期门禁，结论限定为已修复本次可稳定复现的超长流式 Markdown 热点，不把所有历史偶发卡死一并宣告根除。

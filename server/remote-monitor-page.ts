@@ -609,13 +609,27 @@ export const renderRemoteMonitorPage = () => `<!DOCTYPE html>
       })
     } else if (act.kind === 'agents') {
       var agentHead = document.createElement('div')
-      agentHead.textContent = '🤖 子智能体' + (act.tool ? ' · ' + act.tool : '')
+      agentHead.textContent = act.view === 'status'
+        ? '🤖 正在运行的子智能体'
+        : '🤖 子智能体' + (act.tool ? ' · ' + act.tool : '')
       box.appendChild(agentHead)
+      if (act.view === 'status' && !(act.agents || []).length) {
+        var emptyAgents = document.createElement('div')
+        emptyAgents.className = 'act-line'
+        emptyAgents.textContent = '没有正在运行的子智能体。'
+        box.appendChild(emptyAgents)
+      }
       ;(act.agents || []).forEach(function (agentEntry) {
         var rowA = document.createElement('div')
         rowA.className = 'act-line'
-        rowA.textContent = (agentEntry.nickname || agentEntry.role || agentEntry.threadId) + ' · ' + (agentEntry.status || '')
+        rowA.textContent = (agentEntry.path || agentEntry.nickname || agentEntry.role || agentEntry.threadId) + ' · ' + (agentEntry.status || '')
         box.appendChild(rowA)
+        ;(agentEntry.activity || []).slice(-3).forEach(function (activityLine) {
+          var activityRow = document.createElement('div')
+          activityRow.className = 'act-line'
+          activityRow.textContent = '  ' + activityLine
+          box.appendChild(activityRow)
+        })
       })
     } else if (act.kind === 'ask-user') {
       box.classList.add('ask')

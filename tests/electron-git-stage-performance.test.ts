@@ -56,6 +56,50 @@ const runGit = async (cwd: string, args: string[]) => {
   })
 }
 
+const readGit = async (cwd: string, args: string[]) =>
+  await new Promise<string>((resolve, reject) => {
+    const child = spawn('git', args, {
+      cwd,
+      stdio: ['ignore', 'pipe', 'pipe'],
+      windowsHide: true,
+    })
+
+    let stdout = ''
+    let stderr = ''
+    child.stdout.on('data', (chunk: Buffer) => {
+      stdout += chunk.toString()
+    })
+    child.stderr.on('data', (chunk: Buffer) => {
+      stderr += chunk.toString()
+    })
+    child.on('error', reject)
+    child.on('close', (code) => {
+      if (code === 0) {
+        resolve(stdout.trim())
+        return
+      }
+
+      reject(new Error(stderr.trim() || `git ${args.join(' ')} failed with code ${code}`))
+    })
+  })
+
+const waitForGitPathStaged = async (repoPath: string, fileName: string, timeoutMs = 20_000) => {
+  const deadline = Date.now() + timeoutMs
+
+  while (Date.now() < deadline) {
+    const stagedPaths = (await readGit(repoPath, ['diff', '--cached', '--name-only']))
+      .split(/\r?\n/u)
+      .filter(Boolean)
+    if (stagedPaths.includes(fileName)) {
+      return
+    }
+
+    await new Promise((resolve) => setTimeout(resolve, 100))
+  }
+
+  throw new Error(`Git did not stage ${fileName} within ${timeoutMs}ms`)
+}
+
 const createLargeChangedRepo = async () => {
   const repoPath = await mkdtemp(path.join(tmpdir(), 'chill-vibe-git-stage-perf-'))
   tempRoots.push(repoPath)
@@ -254,9 +298,8 @@ test('Electron ancient Git checkbox toggles stay responsive while preserving the
     for (const targetFileName of targetNames.slice(1)) {
       assert.ok(targetFileName.length > 0)
 
-      toggleFeedbackDurations.push(
-        await measureCheckboxFeedback(page, targetFileName, true),
-      )
+      toggleFeedbackDurations.push(await measureCheckboxFeedback(page, targetFileName, true))
+      await waitForGitPathStaged(repoPath, targetFileName)
 
       await page.waitForFunction(
         ({ selectedFileName: expectedSelected, selectedDiffToken }) => {
@@ -272,18 +315,45 @@ test('Electron ancient Git checkbox toggles stay responsive while preserving the
       )
     }
 
-    await page.waitForFunction(
-      (expectedFileNames) => expectedFileNames.every((fileName) => {
-        const targetRow = Array.from(document.querySelectorAll('.git-change-row')).find((row) =>
-          row.querySelector('.git-change-path')?.textContent?.trim() === fileName,
-        )
-        const checkbox = targetRow?.querySelector('.git-change-checkbox')
+    const filterInput = dialog.locator('.git-tool-filter-input')
+    for (const expectedFileName of targetNames.slice(1)) {
+      await filterInput.fill(expectedFileName)
+      try {
+        await page.waitForFunction(
+          (fileName) => {
+            const targetRow = Array.from(document.querySelectorAll('.git-change-row')).find((row) =>
+              row.querySelector('.git-change-path')?.textContent?.trim() === fileName,
+            )
+            const checkbox = targetRow?.querySelector('.git-change-checkbox')
 
-        return checkbox instanceof HTMLInputElement && checkbox.checked && !checkbox.disabled
-      }),
-      targetNames.slice(1),
-      { timeout: 60_000 },
-    )
+            return checkbox instanceof HTMLInputElement && checkbox.checked && !checkbox.disabled
+          },
+          expectedFileName,
+          { timeout: 15_000 },
+        )
+      } catch (error) {
+        const uiState = await page.evaluate((fileName) => {
+          const targetRow = Array.from(document.querySelectorAll('.git-change-row')).find((row) =>
+            row.querySelector('.git-change-path')?.textContent?.trim() === fileName,
+          )
+          const checkbox = targetRow?.querySelector('.git-change-checkbox')
+          return {
+            fileName,
+            rowFound: Boolean(targetRow),
+            checked: checkbox instanceof HTMLInputElement ? checkbox.checked : null,
+            disabled: checkbox instanceof HTMLInputElement ? checkbox.disabled : null,
+            notice: document.querySelector('.git-tool-notice')?.textContent?.trim() ?? null,
+            summary: document.querySelector('.git-change-list-header')?.textContent?.trim() ?? null,
+          }
+        }, expectedFileName)
+        const stagedPaths = await readGit(repoPath, ['diff', '--cached', '--name-only'])
+        throw new Error(
+          `Git checkbox did not settle after staging: ${JSON.stringify({ uiState, stagedPaths })}`,
+          { cause: error },
+        )
+      }
+    }
+    await filterInput.fill('')
 
     assert.equal(toggleFeedbackDurations.length, 3)
     t.diagnostic(

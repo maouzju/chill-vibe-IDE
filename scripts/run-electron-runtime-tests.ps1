@@ -50,6 +50,7 @@ Push-Location $repoRoot
 $startedDevServer = $false
 $devServerProcess = $null
 $pnpm = $null
+$node = $null
 $previousHeadlessRuntimeTests = $env:CHILL_VIBE_HEADLESS_RUNTIME_TESTS
 $previousPwDebug = $env:PWDEBUG
 
@@ -61,6 +62,7 @@ try {
   if (-not $pnpm) {
     $pnpm = Get-Command pnpm -ErrorAction Stop
   }
+  $node = Get-Command node -ErrorAction Stop
 
   & $pnpm.Source 'electron:compile'
 
@@ -76,8 +78,9 @@ try {
     $stdoutLog = Join-Path $logDir 'test-electron-dev.stdout.log'
     $stderrLog = Join-Path $logDir 'test-electron-dev.stderr.log'
 
-    $devServerProcess = Start-Process -FilePath $pnpm.Source `
-      -ArgumentList @('exec', 'vite', '--host', '127.0.0.1', '--port', '5173', '--strictPort') `
+    $viteCli = Join-Path $repoRoot 'scripts\run-vite.mjs'
+    $devServerProcess = Start-Process -FilePath $node.Source `
+      -ArgumentList @($viteCli, '--host', '127.0.0.1', '--port', '5173', '--strictPort') `
       -WorkingDirectory $repoRoot `
       -RedirectStandardOutput $stdoutLog `
       -RedirectStandardError $stderrLog `
@@ -95,8 +98,8 @@ try {
     }
   }
 
-  $nodeArgs = @('--import', 'tsx', '--test') + $Tests
-  & node @nodeArgs
+  $nodeArgs = @('--import', 'tsx', '--test', '--test-concurrency=1') + $Tests
+  & $node.Source @nodeArgs
 
   if ($LASTEXITCODE -ne 0) {
     exit $LASTEXITCODE

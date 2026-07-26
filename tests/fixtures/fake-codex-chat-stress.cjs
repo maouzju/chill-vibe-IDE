@@ -8,7 +8,7 @@ const durationMs = Math.max(
   // plus the requested measurement window instead of letting the first ones
   // complete before the last background agents become ready. This fixture only
   // speaks JSON-RPC over stdio; it never contacts a model API or spends tokens.
-  Number.parseInt(process.env.CHILL_VIBE_CHAT_STRESS_DURATION_MS || '300000', 10) + 180_000,
+  Number.parseInt(process.env.CHILL_VIBE_CHAT_STRESS_DURATION_MS || '300000', 10) + 360_000,
 )
 const activityIntervalMs = Math.max(
   50,

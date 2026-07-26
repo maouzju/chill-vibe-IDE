@@ -210,6 +210,9 @@ test('remote monitor page renders every activity kind with real content, not a b
     assert.match(html, /act\.items/, 'todo activity must render its checklist items')
     // agents：渲染子代理状态。
     assert.match(html, /act\.agents/, 'agents activity must render sub-agent entries')
+    assert.match(html, /agentEntry\.path/, 'agent status must prefer the canonical agent path')
+    assert.match(html, /agentEntry\.activity/, 'agent status must render bounded recent activity')
+    assert.match(html, /没有正在运行的子智能体/, 'agent status must render the empty running state')
     // ask-user：把问题展示出来，手机端才知道电脑在等什么输入。
     assert.match(html, /act\.question/, 'ask-user activity must render the question')
     // reasoning：schema 字段是 text，读 content/summary 会永远空白。

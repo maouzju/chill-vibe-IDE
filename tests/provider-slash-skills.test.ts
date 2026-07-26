@@ -244,6 +244,35 @@ test('cross-provider instructions map same-name skills to the current claude ver
   }
 })
 
+test('Codex slash discovery includes the native /agent and /subagents status commands', async () => {
+  const workspacePath = await mkdtemp(path.join(os.tmpdir(), 'chill-vibe-codex-agent-slash-'))
+  const homePath = await mkdtemp(path.join(os.tmpdir(), 'chill-vibe-codex-agent-slash-home-'))
+
+  try {
+    await withTemporarySkillHome(homePath, async () => {
+      const commands = await getProviderSlashCommands({
+        provider: 'codex',
+        workspacePath,
+        language: 'en',
+        crossProviderSkillReuseEnabled: false,
+      })
+
+      assert.deepEqual(
+        commands
+          .filter((command) => command.name === 'agent' || command.name === 'subagents')
+          .map((command) => ({ name: command.name, source: command.source })),
+        [
+          { name: 'agent', source: 'native' },
+          { name: 'subagents', source: 'native' },
+        ],
+      )
+    })
+  } finally {
+    await rm(workspacePath, { recursive: true, force: true })
+    await rm(homePath, { recursive: true, force: true })
+  }
+})
+
 test('codex slash commands do not import opposite-provider skills when reuse is disabled', async () => {
   const workspacePath = await mkdtemp(path.join(os.tmpdir(), 'chill-vibe-skill-isolation-'))
 

@@ -22,7 +22,11 @@ import {
   type ChatStreamTapEvent,
 } from './chat-stream-tap.js'
 import { captureWorkspaceSnapshot, diffWorkspaceSnapshot } from './git-workspace.js'
-import { createClaudeUnsolicitedTurnAttachment, launchProviderRun } from './providers.js'
+import {
+  createClaudeUnsolicitedTurnAttachment,
+  isClaudeTurnStartLine,
+  launchProviderRun,
+} from './providers.js'
 
 type StreamName = keyof StreamEventMap
 
@@ -241,6 +245,7 @@ export class ChatManager {
     this.workspaceDiffer = options?.workspaceDiffer ?? diffWorkspaceSnapshot
     this.claudePool = options?.enableClaudeKeepalive
       ? new ClaudeSessionPool({
+          shouldWakeOnLine: isClaudeTurnStartLine,
           onUnsolicited: (entry, attach) => {
             void this.handleUnsolicitedClaudeTurn(entry, attach).catch(() => {
               // If the unsolicited stream could not be set up, the pool's idle

@@ -8,6 +8,8 @@ import {
   attachmentUploadRequestSchema,
   appStateSchema,
   ccSwitchImportRequestSchema,
+  closedWorkspaceLoadRequestSchema,
+  closedWorkspaceSnapshotSchema,
   externalHistoryListRequestSchema,
   externalSessionLoadRequestSchema,
   internalSessionHistoryHideRequestSchema,
@@ -75,7 +77,16 @@ import { getProviderSlashCommands, getProviderStatuses, validateWorkspacePath } 
 import { resilientProxyPool } from './resilient-proxy.js'
 import { SetupManager } from './setup-manager.js'
 import { OllamaManager } from './ollama-manager.js'
-import { loadSessionHistoryEntry, loadState, loadStateForRenderer, queueSaveState, resetState, saveState } from './state-store.js'
+import {
+  loadClosedWorkspaceSnapshot,
+  loadSessionHistoryEntry,
+  loadState,
+  loadStateForRenderer,
+  queueSaveState,
+  resetState,
+  saveClosedWorkspaceSnapshot,
+  saveState,
+} from './state-store.js'
 import { readNearestTsconfig } from './tsconfig-discovery.js'
 import { initServerCrashLogger, writeServerLog } from './crash-logger.js'
 
@@ -129,6 +140,28 @@ app.get('/api/session-history/:entryId', async (request, response) => {
       message: error instanceof Error ? error.message : 'Session history entry not found.',
     })
   }
+})
+
+app.put('/api/closed-workspace', async (request, response) => {
+  const parsed = closedWorkspaceSnapshotSchema.safeParse(request.body)
+  if (!parsed.success) {
+    response.status(400).json({ message: 'Invalid closed workspace snapshot.' })
+    return
+  }
+
+  response.json(await saveClosedWorkspaceSnapshot(parsed.data))
+})
+
+app.get('/api/closed-workspace', async (request, response) => {
+  const parsed = closedWorkspaceLoadRequestSchema.safeParse({
+    workspacePath: request.query.workspacePath,
+  })
+  if (!parsed.success) {
+    response.status(400).json({ message: 'Invalid closed workspace load request.' })
+    return
+  }
+
+  response.json(await loadClosedWorkspaceSnapshot(parsed.data))
 })
 
 app.get('/api/session-history', async (request, response) => {

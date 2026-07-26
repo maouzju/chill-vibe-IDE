@@ -522,6 +522,7 @@ export const createDefaultSettings = (language: AppLanguage = defaultAppLanguage
   autoUrgeGlobalControlEnabled: false,
   autoUrgeGlobalActive: false,
   autoUrgeGlobalProfileId: defaultAutoUrgeProfileId,
+  wakeTimerEnabled: false,
   weatherCity: '',
   systemPrompt: defaultSystemPrompt,
   modelPromptRules: [],
@@ -654,6 +655,10 @@ export const normalizeAppSettings = (settings?: Partial<AppSettings> | null): Ap
         ? settings.autoUrgeGlobalActive
         : defaults.autoUrgeGlobalActive,
     autoUrgeGlobalProfileId: autoUrgeSettings.autoUrgeGlobalProfileId,
+    wakeTimerEnabled:
+      typeof settings?.wakeTimerEnabled === 'boolean'
+        ? settings.wakeTimerEnabled
+        : defaults.wakeTimerEnabled,
     weatherCity: normalizeText(settings?.weatherCity) || defaults.weatherCity,
     systemPrompt: normalizeSystemPrompt(settings?.systemPrompt),
     modelPromptRules: normalizeModelPromptRules(settings?.modelPromptRules),
@@ -1058,6 +1063,11 @@ export const createCard = (
     draft: '',
     draftAttachments: [],
     queuedSends: [],
+    wakeTimerActive: false,
+    wakeTimerMode: 'workspace-agents',
+    wakeTimerDurationMinutes: 30,
+    wakeTimerQueuedSends: [],
+    wakeTimerPendingTargetIds: [],
     stickyNote: '',
     brainstorm: createDefaultBrainstormState(),
     pm: createDefaultPmState(),
@@ -1281,8 +1291,9 @@ export const archiveCardToHistory = (
   history: SessionHistoryEntry[] | undefined,
   card: ChatCard,
   workspacePath: string,
+  workspaceCloseId?: string,
 ): SessionHistoryEntry[] => {
-  const entry = createSessionHistoryEntry(card, workspacePath)
+  const entry = createSessionHistoryEntry(card, workspacePath, now(), workspaceCloseId)
   if (!entry) {
     return history ?? []
   }
@@ -1322,6 +1333,7 @@ const createSessionHistoryEntry = (
   card: ChatCard,
   workspacePath: string,
   archivedAt = now(),
+  workspaceCloseId?: string,
 ): SessionHistoryEntry | null => {
   if (card.messages.length === 0) {
     return null
@@ -1338,6 +1350,7 @@ const createSessionHistoryEntry = (
     workspacePath,
     messageCount: card.messages.length,
     messages: card.messages,
+    workspaceCloseId,
     archivedAt,
   }
 }

@@ -54,6 +54,14 @@ export const installMockElectronBridge = async (page: Page) => {
       fetchState: async () => jsonRequest('/api/state'),
       loadSessionHistoryEntry: async (request) =>
         jsonRequest(`/api/session-history/${encodeURIComponent(request.entryId)}`),
+      saveClosedWorkspaceSnapshot: async (snapshot) =>
+        jsonRequest('/api/closed-workspace', {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(snapshot),
+        }),
+      loadClosedWorkspaceSnapshot: async (request) =>
+        jsonRequest(`/api/closed-workspace?workspacePath=${encodeURIComponent(request.workspacePath)}`),
       saveState: async (state) =>
         jsonRequest('/api/state', {
           method: 'PUT',

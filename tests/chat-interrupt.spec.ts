@@ -11,6 +11,16 @@ type MockCardState = {
   sessionModel?: string
   provider?: 'codex' | 'claude'
   model?: string
+  wakeTimerActive?: boolean
+  wakeTimerMode?: 'workspace-agents' | 'left-tab' | 'duration'
+  wakeTimerDurationMinutes?: number
+  wakeTimerArmedAt?: string
+  wakeTimerPendingTargetIds?: string[]
+  wakeTimerQueuedSends?: Array<{
+    id: string
+    prompt: string
+    attachments: Array<Record<string, unknown>>
+  }>
   messages: Array<{
     id: string
     role: 'assistant' | 'user' | 'system'
@@ -119,6 +129,8 @@ const installMockApis = async (
     autoEmitDoneOnStop?: boolean
     holdChatMessageResponse?: boolean
     stopResponse?: 'ok' | 'not-found'
+    wakeTimerEnabled?: boolean
+    peerCard?: MockCardState & { id: string; title: string }
   } = {},
 ) => {
   await page.addInitScript(() => {
@@ -403,6 +415,8 @@ const installMockApis = async (
     autoEmitDoneOnStop = true,
     holdChatMessageResponse: initialHoldChatMessageResponse = false,
     stopResponse = 'ok',
+    wakeTimerEnabled = false,
+    peerCard,
   } = options
   const initialProvider = initialCard.provider ?? 'codex'
   const initialModel = initialCard.model ?? (initialProvider === 'claude' ? 'claude-opus-4-7' : 'gpt-5.5')
@@ -434,6 +448,7 @@ const installMockApis = async (
       fontScale: 1,
       lineHeightScale: 1,
       resilientProxyEnabled: true,
+      wakeTimerEnabled,
       requestModels: {
         codex: 'gpt-5.5',
         claude: 'claude-opus-4-7',
@@ -474,8 +489,30 @@ const installMockApis = async (
             streamId: initialCard.streamId,
             sessionId: initialCard.sessionId,
             sessionModel: initialCard.sessionModel ?? (initialCard.sessionId ? initialModel : undefined),
+            wakeTimerActive: initialCard.wakeTimerActive,
+            wakeTimerMode: initialCard.wakeTimerMode,
+            wakeTimerDurationMinutes: initialCard.wakeTimerDurationMinutes,
+            wakeTimerArmedAt: initialCard.wakeTimerArmedAt,
+            wakeTimerPendingTargetIds: initialCard.wakeTimerPendingTargetIds,
+            wakeTimerQueuedSends: initialCard.wakeTimerQueuedSends,
             messages: initialCard.messages,
           },
+          ...(peerCard
+            ? [{
+                id: peerCard.id,
+                title: peerCard.title,
+                status: peerCard.status,
+                size: 560,
+                provider: peerCard.provider ?? 'codex',
+                model: peerCard.model ?? 'gpt-5.5',
+                reasoningEffort: 'medium',
+                draft: '',
+                streamId: peerCard.streamId,
+                sessionId: peerCard.sessionId,
+                sessionModel: peerCard.sessionModel,
+                messages: peerCard.messages,
+              }]
+            : []),
         ],
       },
     ],
@@ -674,6 +711,133 @@ test('a completed agent run appends one persisted duration summary', async ({ pa
         }
       : null
   }).toEqual({ role: 'system', count: 1, hasFiniteDuration: true })
+})
+
+test('wake timer holds multiple messages and releases them as one batch when requested', async ({ page }) => {
+  const mock = await installMockApis(page, {
+    wakeTimerEnabled: true,
+    initialCard: {
+      status: 'idle',
+      provider: 'codex',
+      model: 'gpt-5.5',
+      wakeTimerActive: true,
+      wakeTimerMode: 'duration',
+      wakeTimerDurationMinutes: 60,
+      messages: [],
+    },
+  })
+  await page.goto(appUrl)
+
+  const textarea = getActiveComposerTextarea(page)
+  const sendButton = page.getByRole('button', { name: 'Send message' })
+  await textarea.fill('First scheduled instruction')
+  await sendButton.click()
+  await textarea.fill('Second scheduled instruction')
+  await sendButton.click()
+
+  const timerStatus = page.locator('.composer-wake-timer-status')
+  await expect(timerStatus).toContainText('2 messages')
+  await expect.poll(() => mock.readRequests()).toEqual([])
+  await expect.poll(
+    () => mock.readState().columns[0]?.cards['card-1']?.wakeTimerQueuedSends?.length,
+  ).toBe(2)
+
+  await timerStatus.getByRole('button', { name: 'Wake now' }).click()
+
+  await expect.poll(() => mock.readChatRequests()).toHaveLength(1)
+  await expect.poll(() => mock.readChatRequests()[0]?.prompt).toBe(
+    'First scheduled instruction\n\nSecond scheduled instruction',
+  )
+  await expect(timerStatus).toHaveCount(0)
+})
+
+test('workspace wake timer releases only after a running peer stays normally completed', async ({ page }) => {
+  const mock = await installMockApis(page, {
+    wakeTimerEnabled: true,
+    initialCard: {
+      status: 'idle',
+      provider: 'codex',
+      model: 'gpt-5.5',
+      wakeTimerActive: true,
+      wakeTimerMode: 'workspace-agents',
+      messages: [],
+    },
+    peerCard: {
+      id: 'card-2',
+      title: 'Running peer',
+      status: 'streaming',
+      streamId: 'peer-stream-1',
+      sessionId: 'peer-session-1',
+      sessionModel: 'gpt-5.5',
+      provider: 'codex',
+      model: 'gpt-5.5',
+      messages: [{
+        id: 'peer-assistant-1',
+        role: 'assistant',
+        content: 'Still working',
+        createdAt: new Date().toISOString(),
+      }],
+    },
+  })
+  await page.goto(appUrl)
+
+  const textarea = getActiveComposerTextarea(page)
+  await textarea.fill('Wake after the peer is really done')
+  await page.getByRole('button', { name: 'Send message' }).click()
+
+  await expect(page.locator('.composer-wake-timer-status')).toContainText('Waiting for 1 other agent')
+  await expect.poll(() => mock.readRequests()).toEqual([])
+
+  await emitStreamEvent(page, 'peer-stream-1', 'done', {})
+  await page.waitForTimeout(900)
+  await expect.poll(() => mock.readRequests()).toEqual([])
+  await expect.poll(() => mock.readChatRequests(), { timeout: 3000 }).toHaveLength(1)
+  await expect.poll(() => mock.readChatRequests()[0]?.prompt).toContain('Wake after the peer is really done')
+})
+
+test('workspace wake timer never releases a restored batch while another agent is still running', async ({ page }) => {
+  const mock = await installMockApis(page, {
+    wakeTimerEnabled: true,
+    initialCard: {
+      status: 'idle',
+      provider: 'codex',
+      model: 'gpt-5.5',
+      wakeTimerActive: true,
+      wakeTimerMode: 'workspace-agents',
+      wakeTimerArmedAt: '2026-07-25T00:00:00.000Z',
+      wakeTimerPendingTargetIds: [],
+      wakeTimerQueuedSends: [{
+        id: 'wake-restored-1',
+        prompt: '/commit-pull-merge-push',
+        attachments: [],
+      }],
+      messages: [],
+    },
+    peerCard: {
+      id: 'card-2',
+      title: 'Still running peer',
+      status: 'streaming',
+      streamId: 'peer-stream-restored',
+      sessionId: 'peer-session-restored',
+      sessionModel: 'gpt-5.5',
+      provider: 'codex',
+      model: 'gpt-5.5',
+      messages: [{
+        id: 'peer-assistant-restored',
+        role: 'assistant',
+        content: 'Still working',
+        createdAt: new Date().toISOString(),
+      }],
+    },
+  })
+  await page.goto(appUrl)
+
+  await expect(page.locator('.composer-wake-timer-status')).toContainText('1 message')
+  await page.waitForTimeout(1500)
+  await expect.poll(() => mock.readRequests()).toEqual([])
+  await expect.poll(
+    () => mock.readState().columns[0]?.cards['card-1']?.wakeTimerQueuedSends?.length,
+  ).toBe(1)
 })
 
 test('left-clicking send while a card is running interrupts and sends immediately', async ({ page }) => {

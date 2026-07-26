@@ -251,7 +251,6 @@ for (const theme of ['dark', 'light'] as const) {
       .locator('.pane-view')
       .first()
       .locator('.pane-content > .pane-tab-panel.is-active .composer textarea')
-
     await expect(composer).not.toBeFocused()
 
     await reviewTab.click()
@@ -692,8 +691,22 @@ for (const theme of ['dark', 'light'] as const) {
     //    native focus nor the pointerdown-based rescue fires. The click-capture
     //    fallback is the only thing that can recover focus.
     await page.evaluate(() => {
-      const textarea = document.activeElement as HTMLElement | null
-      textarea?.blur()
+      const textarea = document.querySelector<HTMLTextAreaElement>(
+        '.pane-view .pane-content > .pane-tab-panel.is-active .composer textarea',
+      )
+      if (!textarea) {
+        throw new Error('Expected the active composer textarea to exist')
+      }
+      const originalFocus = textarea.focus.bind(textarea)
+      Object.defineProperty(textarea, 'focus', {
+        configurable: true,
+        value: (...args: Parameters<HTMLTextAreaElement['focus']>) => {
+          if (textarea.dataset.testBlockFocus === 'true') return
+          originalFocus(...args)
+        },
+      })
+      textarea.dataset.testBlockFocus = 'true'
+      textarea.blur()
       const swallowPointerDown = (event: Event) => {
         event.preventDefault()
         window.removeEventListener('pointerdown', swallowPointerDown, true)
@@ -704,6 +717,12 @@ for (const theme of ['dark', 'light'] as const) {
     await expect(composer).not.toBeFocused()
 
     // 3) Click back into the composer. Focus must come back.
+    await page.evaluate(() => {
+      const textarea = document.querySelector<HTMLTextAreaElement>(
+        '.pane-view .pane-content > .pane-tab-panel.is-active .composer textarea',
+      )
+      if (textarea) textarea.dataset.testBlockFocus = 'false'
+    })
     await page.mouse.click(centerX, centerY)
 
     await expect(composer).toBeFocused()

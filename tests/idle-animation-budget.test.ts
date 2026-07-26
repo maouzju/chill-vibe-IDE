@@ -111,3 +111,29 @@ test('streaming pane tabs do not run an infinite box-shadow animation', async ()
     'streaming tab chrome must not keep the compositor repainting forever',
   )
 })
+
+test('hidden streaming dots stay static while the visible active pane keeps motion feedback', async () => {
+  const css = await indexCssPromise
+  const staticSelectors = ['.streaming-dots span', '.structured-command-running-dots span', '.is-busy::before']
+
+  for (const selector of staticSelectors) {
+    const escapedSelector = selector.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+    const block = css.match(new RegExp(`${escapedSelector}\\s*\\{[^}]*\\}`))?.[0] ?? ''
+    assert.ok(block, `missing long-lived status selector: ${selector}`)
+    assert.doesNotMatch(
+      block,
+      /animation\s*:[^;]*\binfinite\b/,
+      `${selector} must remain static so hidden streaming panes do not age the compositor`,
+    )
+  }
+
+  const activeStreamingBlock =
+    css.match(/\.pane-tab-panel\.is-active:not\(\[hidden\]\) \.streaming-dots span\s*\{[^}]*\}/)?.[0] ?? ''
+  const activeCommandBlock =
+    css.match(
+      /\.pane-tab-panel\.is-active:not\(\[hidden\]\) \.structured-command-running-dots span\s*\{[^}]*\}/,
+    )?.[0] ?? ''
+
+  assert.match(activeStreamingBlock, /animation\s*:[^;]*\bbounce-dot\b[^;]*\binfinite\b/)
+  assert.match(activeCommandBlock, /animation\s*:[^;]*\bbounce-dot\b[^;]*\binfinite\b/)
+})

@@ -551,7 +551,7 @@ export const StructuredToolCard = ({
 const formatAgentName = (agent: StructuredAgentsMessage['agents'][number]) => {
   const shortId = agent.threadId.length > 8 ? agent.threadId.slice(0, 8) : agent.threadId
   const name = agent.nickname || shortId || 'agent'
-  return agent.role ? `${name} (${agent.role})` : name
+  return agent.role ? `${name} [${agent.role}]` : name
 }
 
 export const StructuredAgentsCard = ({
@@ -562,10 +562,54 @@ export const StructuredAgentsCard = ({
   data: StructuredAgentsMessage
 }) => {
   const labels = getStructuredLabels(language)
-  const isWaitGroup = data.tool === 'wait'
+  if (data.view === 'status') {
+    return (
+      <section className="structured-agents-card is-status" aria-label={labels.subAgentsRunning}>
+        <div className="structured-agents-header">
+          <span className="structured-agents-icon" aria-hidden="true">•</span>
+          <span className="structured-agents-title">{labels.subAgentsRunning}</span>
+        </div>
+        {data.agents.length === 0 ? (
+          <div className="structured-agents-empty">{labels.noSubAgentsRunning}</div>
+        ) : (
+          <div className="structured-agents-status-list">
+            {data.agents.map((agent) => {
+              const agentLabel = agent.path || formatAgentName(agent)
+              const activity = (agent.activity ?? []).slice(-3)
+              return (
+                <div key={agent.threadId} className="structured-agent-status-entry">
+                  <div className="structured-agent-status-title-row">
+                    <code className="structured-agent-path">{agentLabel}</code>
+                    <span className={`structured-agent-status is-${agent.status}`}>
+                      {labels.agentStatus[agent.status]}
+                    </span>
+                  </div>
+                  {activity.length > 0 ? (
+                    <div className="structured-agent-activity">
+                      {activity.map((entry, index) => (
+                        <div key={`${agent.threadId}:${index}`} className="structured-agent-activity-line">
+                          {entry}
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="structured-agent-no-activity">{labels.noRecentAgentActivity}</div>
+                  )}
+                </div>
+              )
+            })}
+          </div>
+        )}
+      </section>
+    )
+  }
+
+  const tool = data.tool ?? 'wait'
+  const callStatus = data.callStatus ?? 'completed'
+  const isWaitGroup = tool === 'wait'
   const title = isWaitGroup
     ? labels.agentsCount(data.agents.length)
-    : `${labels.agentTool[data.tool]} ${data.agents.length === 1 ? formatAgentName(data.agents[0]!) : labels.agents}`
+    : `${labels.agentTool[tool]} ${data.agents.length === 1 ? formatAgentName(data.agents[0]!) : labels.agents}`
   const promptPreview = data.prompt ? truncateStructuredInlineText(data.prompt) : ''
 
   return (
@@ -575,11 +619,10 @@ export const StructuredAgentsCard = ({
         <div className="structured-agents-heading">
           <div className="structured-agents-title-row">
             <span className="structured-agents-title">{title}</span>
-            <span className={`structured-agents-call-status is-${data.callStatus}`}>
-              {labels.agentCallStatus[data.callStatus]}
+            <span className={`structured-agents-call-status is-${callStatus}`}>
+              {labels.agentCallStatus[callStatus]}
             </span>
           </div>
-          <span className="structured-agents-hint">{labels.mentionAgentsHint}</span>
         </div>
       </div>
 
@@ -603,15 +646,6 @@ export const StructuredAgentsCard = ({
                     <span className="structured-agent-message">{truncateStructuredInlineText(agent.message, 96)}</span>
                   ) : null}
                 </div>
-                <button
-                  type="button"
-                  className="structured-agent-open"
-                  disabled
-                  title={labels.openAgentUnavailable}
-                  aria-label={`${labels.openAgent}: ${agentName}`}
-                >
-                  {labels.openAgent}
-                </button>
               </div>
             )
           })}

@@ -1,0 +1,237 @@
+import assert from 'node:assert/strict'
+import { describe, it } from 'node:test'
+
+import { createCard, createDefaultSettings, normalizeAppSettings } from '../shared/default-state.ts'
+import {
+  armWakeTimerBatch,
+  isWakeTimerConditionReady,
+  mergeWakeTimerRequests,
+  removeCompletedWakeTimerTarget,
+  shouldQueueWakeTimerSend,
+  shouldConfirmWakeTimerCompletion,
+} from '../src/components/wake-timer.ts'
+
+const request = (id: string, prompt: string) => ({
+  id,
+  prompt,
+  attachments: [],
+})
+
+describe('wake timer settings and card defaults', () => {
+  it('keeps the global feature and each new card disabled by default', () => {
+    const settings = createDefaultSettings()
+    const card = createCard('Timer card')
+
+    assert.equal(settings.wakeTimerEnabled, false)
+    assert.equal(card.wakeTimerActive, false)
+    assert.equal(card.wakeTimerMode, 'workspace-agents')
+    assert.equal(card.wakeTimerDurationMinutes, 30)
+    assert.deepEqual(card.wakeTimerQueuedSends, [])
+    assert.deepEqual(card.wakeTimerPendingTargetIds, [])
+  })
+
+  it('normalizes legacy and enabled settings safely', () => {
+    assert.equal(normalizeAppSettings({}).wakeTimerEnabled, false)
+    assert.equal(normalizeAppSettings({ wakeTimerEnabled: true }).wakeTimerEnabled, true)
+  })
+})
+
+describe('wake timer arming', () => {
+  const cards = [
+    { id: 'left-idle', status: 'idle' as const, isAgent: true },
+    { id: 'left-running', status: 'streaming' as const, isAgent: true },
+    { id: 'tool-running', status: 'streaming' as const, isAgent: false },
+    { id: 'owner', status: 'idle' as const, isAgent: true },
+    { id: 'other-running', status: 'streaming' as const, isAgent: true },
+  ]
+
+  it('freezes only currently running peer agents for workspace mode', () => {
+    assert.deepEqual(
+      armWakeTimerBatch({
+        mode: 'workspace-agents',
+        ownerCardId: 'owner',
+        durationMinutes: 30,
+        nowMs: Date.parse('2026-07-25T00:00:00.000Z'),
+        cards,
+        paneTabIds: ['left-idle', 'left-running', 'owner'],
+      }),
+      {
+        ok: true,
+        armedAt: '2026-07-25T00:00:00.000Z',
+        wakeAt: undefined,
+        pendingTargetIds: ['left-running', 'other-running'],
+      },
+    )
+  })
+
+  it('binds left-tab mode to the direct left agent only', () => {
+    assert.deepEqual(
+      armWakeTimerBatch({
+        mode: 'left-tab',
+        ownerCardId: 'owner',
+        durationMinutes: 30,
+        nowMs: Date.parse('2026-07-25T00:00:00.000Z'),
+        cards,
+        paneTabIds: ['left-idle', 'left-running', 'owner'],
+      }),
+      {
+        ok: true,
+        armedAt: '2026-07-25T00:00:00.000Z',
+        wakeAt: undefined,
+        pendingTargetIds: ['left-running'],
+      },
+    )
+  })
+
+  it('rejects left-tab mode when the direct left tab is not an agent', () => {
+    assert.deepEqual(
+      armWakeTimerBatch({
+        mode: 'left-tab',
+        ownerCardId: 'owner',
+        durationMinutes: 30,
+        nowMs: Date.parse('2026-07-25T00:00:00.000Z'),
+        cards,
+        paneTabIds: ['left-running', 'tool-running', 'owner'],
+      }),
+      { ok: false, reason: 'left-target-unavailable' },
+    )
+  })
+
+  it('stores an absolute wake time for duration mode', () => {
+    assert.deepEqual(
+      armWakeTimerBatch({
+        mode: 'duration',
+        ownerCardId: 'owner',
+        durationMinutes: 15,
+        nowMs: Date.parse('2026-07-25T00:00:00.000Z'),
+        cards,
+        paneTabIds: ['owner'],
+      }),
+      {
+        ok: true,
+        armedAt: '2026-07-25T00:00:00.000Z',
+        wakeAt: '2026-07-25T00:15:00.000Z',
+        pendingTargetIds: [],
+      },
+    )
+  })
+})
+
+describe('wake timer release', () => {
+  it('queues only ordinary user sends while the feature and card timer are active', () => {
+    assert.equal(shouldQueueWakeTimerSend({ featureEnabled: true, cardActive: true, origin: 'user' }), true)
+    assert.equal(shouldQueueWakeTimerSend({ featureEnabled: false, cardActive: true, origin: 'user' }), false)
+    assert.equal(shouldQueueWakeTimerSend({ featureEnabled: true, cardActive: false, origin: 'user' }), false)
+    assert.equal(shouldQueueWakeTimerSend({ featureEnabled: true, cardActive: true, origin: 'auto-urge' }), false)
+    assert.equal(shouldQueueWakeTimerSend({ featureEnabled: true, cardActive: true, origin: 'wake-timer-release' }), false)
+    assert.equal(shouldQueueWakeTimerSend({
+      featureEnabled: true,
+      cardActive: true,
+      origin: 'user',
+      answersPendingAskUser: true,
+    }), false)
+  })
+
+  it('waits for every frozen target and for the owner card to be idle', () => {
+    assert.equal(isWakeTimerConditionReady({
+      mode: 'workspace-agents',
+      ownerStatus: 'idle',
+      pendingTargetIds: ['agent-2'],
+      wakeAt: undefined,
+      nowMs: Date.now(),
+    }), false)
+
+    assert.equal(isWakeTimerConditionReady({
+      mode: 'workspace-agents',
+      ownerStatus: 'idle',
+      pendingTargetIds: [],
+      activePeerIds: ['agent-started-after-arming'],
+      wakeAt: undefined,
+      nowMs: Date.now(),
+    }), false)
+
+    assert.equal(isWakeTimerConditionReady({
+      mode: 'workspace-agents',
+      ownerStatus: 'idle',
+      pendingTargetIds: [],
+      activePeerIds: [],
+      wakeAt: undefined,
+      nowMs: Date.now(),
+    }), true)
+
+    assert.equal(isWakeTimerConditionReady({
+      mode: 'workspace-agents',
+      ownerStatus: 'streaming',
+      pendingTargetIds: [],
+      wakeAt: undefined,
+      nowMs: Date.now(),
+    }), false)
+  })
+
+  it('releases duration mode only after its absolute time', () => {
+    const wakeAt = '2026-07-25T00:15:00.000Z'
+    assert.equal(isWakeTimerConditionReady({
+      mode: 'duration',
+      ownerStatus: 'idle',
+      pendingTargetIds: [],
+      wakeAt,
+      nowMs: Date.parse('2026-07-25T00:14:59.999Z'),
+    }), false)
+    assert.equal(isWakeTimerConditionReady({
+      mode: 'duration',
+      ownerStatus: 'idle',
+      pendingTargetIds: [],
+      wakeAt,
+      nowMs: Date.parse('2026-07-25T00:15:00.000Z'),
+    }), true)
+  })
+
+  it('removes a normally completed target without disturbing the rest', () => {
+    assert.deepEqual(
+      removeCompletedWakeTimerTarget(['agent-1', 'agent-2', 'agent-1'], 'agent-1'),
+      ['agent-2'],
+    )
+  })
+
+  it('does not count a stopped/error run or the transient idle before auto urge starts', () => {
+    assert.equal(shouldConfirmWakeTimerCompletion({
+      normalCompletion: false,
+      statusAfterStability: 'idle',
+    }), false)
+    assert.equal(shouldConfirmWakeTimerCompletion({
+      normalCompletion: true,
+      statusAfterStability: 'streaming',
+    }), false)
+    assert.equal(shouldConfirmWakeTimerCompletion({
+      normalCompletion: true,
+      statusAfterStability: 'idle',
+    }), true)
+  })
+
+  it('merges all queued messages into one ordered activation batch', () => {
+    assert.deepEqual(
+      mergeWakeTimerRequests([
+        request('one', '先检查构建'),
+        {
+          id: 'two',
+          prompt: '再运行截图验证',
+          attachments: [{
+            id: 'image-1',
+            fileName: 'evidence.png',
+            mimeType: 'image/png' as const,
+            sizeBytes: 128,
+          }],
+        },
+      ]),
+      {
+        prompt: '先检查构建\n\n再运行截图验证',
+        attachments: [{
+          id: 'image-1',
+          fileName: 'evidence.png',
+          mimeType: 'image/png',
+          sizeBytes: 128,
+        }],
+      },
+    )
+  })
+})

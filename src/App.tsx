@@ -17,6 +17,7 @@ import {
 import {
   createAutoUrgeProfile,
   createDefaultState,
+  createId,
   createMessage,
   appFontFamilyOptions,
   getAvailableQuickToolModels,
@@ -34,6 +35,7 @@ import {
 } from '../shared/default-state'
 import { attachImagesToMessageMeta } from '../shared/chat-attachments'
 import { buildCodexChatRequestOverrides } from '../shared/codex-chat-settings'
+import { createCodexAgentStatusSnapshotActivity } from './codex-agent-status-slash'
 import { formatLocalizedDateTime, getLocaleText, getProviderLabel } from '../shared/i18n'
 import {
   DEFAULT_CLAUDE_MODEL,
@@ -114,6 +116,7 @@ import type {
   StateRecoveryIssue,
   StateRecoveryOption,
   TopTabName,
+  WakeTimerMode,
 } from '../shared/schema'
 import {
   closeWindow,
@@ -126,6 +129,7 @@ import {
   recordProxyStatsEvent,
   fetchSetupStatus,
   hideInternalSessionHistory,
+  loadClosedWorkspaceSnapshot,
   loadSessionHistoryEntry,
   fetchState,
   importCcSwitchRouting,
@@ -141,6 +145,7 @@ import {
   fetchOllamaStatus,
   runOllamaInstall,
   runOllamaPull,
+  saveClosedWorkspaceSnapshot,
   stopChat,
   subscribeUnsolicitedStreams,
   syncRuntimeSettings,
@@ -221,6 +226,15 @@ import {
   type SendMessageOptions,
 } from './components/deferred-send-queue'
 import { shouldExitPlanModeForAskUserAnswer } from './components/ask-user-answer-state'
+import {
+  armWakeTimerBatch,
+  isWakeTimerConditionReady,
+  mergeWakeTimerRequests,
+  removeCompletedWakeTimerTarget,
+  shouldQueueWakeTimerSend,
+  shouldConfirmWakeTimerCompletion,
+  wakeTimerCompletionStabilityMs,
+} from './components/wake-timer'
 import { getAutoReadCardIdsForVisiblePanes, shouldMarkCardUnreadOnStreamDone } from './components/pane-read-state'
 import { clearFileTreeCacheForCard } from './components/tool-card-state'
 import { evictTextEditorModel } from './components/text-editor-model-cache'
@@ -253,6 +267,7 @@ import {
 import { WorkspaceColumn } from './components/WorkspaceColumn'
 import {
   drainStreamRenderBufferActionsForColumn,
+  createQueuedPersistenceStateSnapshot,
   enqueueStreamDeltaBufferEntry,
   getPersistenceVersion,
   getStreamRenderBufferColumnIds,
@@ -270,7 +285,14 @@ import { usePersistence } from './hooks/usePersistence'
 import { getBoardWheelDisposition, getVerticalScrollLimit, overflowScrollablePattern } from './board-wheel'
 import { updateLatestKnownAppState } from './renderer-crash-state'
 import { resolveSessionHistoryEntryForRestore } from './session-history-restore'
-import { findPaneForTab, findPaneInLayout, ideReducer, resolveForkPointMessage, type IdeAction } from './state'
+import {
+  findPaneForTab,
+  findPaneInLayout,
+  ideReducer,
+  isUntouchedWorkspacePlaceholderColumn,
+  resolveForkPointMessage,
+  type IdeAction,
+} from './state'
 
 const emptyProxyStatsCounts: ProxyStatsCounts = {
   requests: 0,
@@ -599,6 +621,8 @@ function App() {
   const [clearUserDataPending, setClearUserDataPending] = useState(false)
   const [closeWorkspaceDialogColumnId, setCloseWorkspaceDialogColumnId] = useState<string | null>(null)
   const [closeWorkspacePending, setCloseWorkspacePending] = useState(false)
+  const [closeWorkspaceError, setCloseWorkspaceError] = useState<string | null>(null)
+  const workspaceOpenRequestRef = useRef(new Map<string, string>())
   const [appVersion, setAppVersion] = useState('')
   const [weatherCityDraft, setWeatherCityDraft] = useState('')
   const [weatherCitySuggestions, setWeatherCitySuggestions] = useState<CitySuggestion[]>([])
@@ -766,6 +790,8 @@ function App() {
       options?: SendMessageOptions,
     ) => Promise<void>
   ) | null>(null)
+  const flushReadyWakeTimersRef = useRef<(() => void) | null>(null)
+  const wakeTimerCompletionTimersRef = useRef(new Map<string, number>())
   const recoverLiveStreamRef = useRef<(
     (
       columnId: string,
@@ -1898,6 +1924,26 @@ function App() {
     </>
   )
 
+  const renderWakeTimerSettings = () => (
+    <>
+      <label className="settings-toggle" htmlFor="wake-timer-feature-toggle">
+        <span>{text.wakeTimerFeatureLabel}</span>
+        <input
+          id="wake-timer-feature-toggle"
+          type="checkbox"
+          checked={appState.settings.wakeTimerEnabled}
+          onChange={(event) =>
+            applyAction({
+              type: 'updateSettings',
+              patch: { wakeTimerEnabled: event.target.checked },
+            })
+          }
+        />
+      </label>
+      <p className="settings-note">{text.wakeTimerFeatureHint}</p>
+    </>
+  )
+
   const setAutoUrgeEnabled = useCallback(
     (enabled: boolean) => {
       if (enabled === appState.settings.autoUrgeEnabled) {
@@ -2447,6 +2493,303 @@ function App() {
     })
   }, [clearQueuedSends, commitQueuedSends, resolveQueuedSendColumnId])
 
+  const clearWakeTimerBatch = useCallback((columnId: string, cardId: string) => {
+    const column = appStateRef.current.columns.find((entry) => entry.id === columnId)
+    if (!column?.cards[cardId]) {
+      return
+    }
+
+    const action: IdeAction = {
+      type: 'updateCard',
+      columnId,
+      cardId,
+      patch: {
+        wakeTimerQueuedSends: [],
+        wakeTimerArmedAt: undefined,
+        wakeTimerWakeAt: undefined,
+        wakeTimerPendingTargetIds: [],
+      },
+    }
+    persistImmediately(applyAction(action))
+  }, [applyAction, persistImmediately])
+
+  const enqueueWakeTimerSend = useCallback((
+    columnId: string,
+    cardId: string,
+    request: QueuedSendRequest,
+  ) => {
+    const state = appStateRef.current
+    const column = state.columns.find((entry) => entry.id === columnId)
+    const card = column?.cards[cardId]
+    if (!column || !card) {
+      return false
+    }
+
+    const currentQueue = card.wakeTimerQueuedSends ?? []
+    let armPatch: Pick<
+      ChatCard,
+      'wakeTimerArmedAt' | 'wakeTimerWakeAt' | 'wakeTimerPendingTargetIds'
+    >
+
+    if (currentQueue.length > 0 && card.wakeTimerArmedAt) {
+      armPatch = {
+        wakeTimerArmedAt: card.wakeTimerArmedAt,
+        wakeTimerWakeAt: card.wakeTimerWakeAt,
+        wakeTimerPendingTargetIds: card.wakeTimerPendingTargetIds ?? [],
+      }
+    } else {
+      const pane = findPaneForTab(column.layout, cardId)
+      const arm = armWakeTimerBatch({
+        mode: card.wakeTimerMode ?? 'workspace-agents',
+        ownerCardId: cardId,
+        durationMinutes: card.wakeTimerDurationMinutes ?? 30,
+        nowMs: Date.now(),
+        cards: Object.values(column.cards).map((entry) => ({
+          id: entry.id,
+          status: entry.status,
+          isAgent: !MODEL_PICKER_HIDDEN_TOOL_MODELS.has(entry.model),
+        })),
+        paneTabIds: pane?.tabs ?? [],
+      })
+      if (!arm.ok) {
+        return false
+      }
+      armPatch = {
+        wakeTimerArmedAt: arm.armedAt,
+        wakeTimerWakeAt: arm.wakeAt,
+        wakeTimerPendingTargetIds: arm.pendingTargetIds,
+      }
+    }
+
+    const action: IdeAction = {
+      type: 'updateCard',
+      columnId,
+      cardId,
+      patch: {
+        wakeTimerQueuedSends: [...currentQueue, request],
+        ...armPatch,
+      },
+    }
+    persistImmediately(applyAction(action))
+    queueMicrotask(() => flushReadyWakeTimersRef.current?.())
+    return true
+  }, [applyAction, persistImmediately])
+
+  const flushReadyWakeTimers = useCallback(() => {
+    const state = appStateRef.current
+    const nowMs = Date.now()
+    const actions: IdeAction[] = []
+    const readyBatches: Array<{
+      columnId: string
+      cardId: string
+      prompt: string
+      attachments: ImageAttachment[]
+    }> = []
+
+    for (const column of state.columns) {
+      const validTargetIds = new Set(
+        Object.values(column.cards)
+          .filter((card) => !MODEL_PICKER_HIDDEN_TOOL_MODELS.has(card.model))
+          .map((card) => card.id),
+      )
+
+      for (const card of Object.values(column.cards)) {
+        const queue = card.wakeTimerQueuedSends ?? []
+        if (queue.length === 0) {
+          continue
+        }
+
+        const currentTargetIds = card.wakeTimerPendingTargetIds ?? []
+        const pendingTargetIds = currentTargetIds.filter(
+          (targetId) => targetId !== card.id && validTargetIds.has(targetId),
+        )
+        const mode: WakeTimerMode = card.wakeTimerMode ?? 'workspace-agents'
+        const activePeerIds = mode === 'workspace-agents'
+          ? Object.values(column.cards)
+              .filter((peer) =>
+                peer.id !== card.id &&
+                peer.status === 'streaming' &&
+                !MODEL_PICKER_HIDDEN_TOOL_MODELS.has(peer.model),
+              )
+              .map((peer) => peer.id)
+          : []
+        const ready = isWakeTimerConditionReady({
+          mode,
+          ownerStatus: card.status,
+          pendingTargetIds,
+          activePeerIds,
+          wakeAt: card.wakeTimerWakeAt,
+          nowMs,
+        })
+
+        if (ready) {
+          readyBatches.push({
+            columnId: column.id,
+            cardId: card.id,
+            ...mergeWakeTimerRequests(queue),
+          })
+          actions.push({
+            type: 'updateCard',
+            columnId: column.id,
+            cardId: card.id,
+            patch: {
+              wakeTimerQueuedSends: [],
+              wakeTimerArmedAt: undefined,
+              wakeTimerWakeAt: undefined,
+              wakeTimerPendingTargetIds: [],
+            },
+          })
+        } else if (
+          pendingTargetIds.length !== currentTargetIds.length ||
+          pendingTargetIds.some((targetId, index) => targetId !== currentTargetIds[index])
+        ) {
+          actions.push({
+            type: 'updateCard',
+            columnId: column.id,
+            cardId: card.id,
+            patch: { wakeTimerPendingTargetIds: pendingTargetIds },
+          })
+        }
+      }
+    }
+
+    if (actions.length > 0) {
+      persistAfterActions(actions, applyActions(actions))
+    }
+
+    if (readyBatches.length > 0) {
+      queueMicrotask(() => {
+        void Promise.all(
+          readyBatches.map((batch) =>
+            sendMessageRef.current?.(
+              batch.columnId,
+              batch.cardId,
+              batch.prompt,
+              batch.attachments,
+              { origin: 'wake-timer-release' },
+            ),
+          ),
+        )
+      })
+    }
+  }, [applyActions, persistAfterActions])
+  flushReadyWakeTimersRef.current = flushReadyWakeTimers
+
+  const sendWakeTimerBatchNow = useCallback((columnId: string, cardId: string) => {
+    const card = appStateRef.current.columns.find((column) => column.id === columnId)?.cards[cardId]
+    const queue = card?.wakeTimerQueuedSends ?? []
+    if (!card || queue.length === 0) {
+      return
+    }
+
+    const batch = mergeWakeTimerRequests(queue)
+    clearWakeTimerBatch(columnId, cardId)
+    queueMicrotask(() => {
+      void sendMessageRef.current?.(columnId, cardId, batch.prompt, batch.attachments, {
+        mode: 'interrupt',
+        origin: 'wake-timer-release',
+      })
+    })
+  }, [clearWakeTimerBatch])
+
+  const scheduleStableWakeTimerCompletion = useCallback((completedCardId: string) => {
+    const previousTimer = wakeTimerCompletionTimersRef.current.get(completedCardId)
+    if (previousTimer !== undefined) {
+      window.clearTimeout(previousTimer)
+    }
+
+    const timer = window.setTimeout(() => {
+      wakeTimerCompletionTimersRef.current.delete(completedCardId)
+      const state = appStateRef.current
+      const completedCard = state.columns
+        .flatMap((column) => Object.values(column.cards))
+        .find((card) => card.id === completedCardId)
+      if (!completedCard || !shouldConfirmWakeTimerCompletion({
+        normalCompletion: true,
+        statusAfterStability: completedCard.status,
+      })) {
+        return
+      }
+
+      const actions: IdeAction[] = []
+      for (const column of state.columns) {
+        for (const card of Object.values(column.cards)) {
+          const currentTargetIds = card.wakeTimerPendingTargetIds ?? []
+          if (!currentTargetIds.includes(completedCardId)) {
+            continue
+          }
+
+          actions.push({
+            type: 'updateCard',
+            columnId: column.id,
+            cardId: card.id,
+            patch: {
+              wakeTimerPendingTargetIds: removeCompletedWakeTimerTarget(
+                currentTargetIds,
+                completedCardId,
+              ),
+            },
+          })
+        }
+      }
+
+      if (actions.length > 0) {
+        persistAfterActions(actions, applyActions(actions))
+      }
+      flushReadyWakeTimersRef.current?.()
+    }, wakeTimerCompletionStabilityMs)
+    wakeTimerCompletionTimersRef.current.set(completedCardId, timer)
+  }, [applyActions, persistAfterActions])
+
+  const wakeTimerTopologySignature = useMemo(
+    () => appState.columns.map((column) => [
+      column.id,
+      Object.keys(column.cards).sort().join(','),
+      ...Object.values(column.cards)
+        .filter((card) => (card.wakeTimerQueuedSends?.length ?? 0) > 0)
+        .map((card) => [
+          card.id,
+          card.wakeTimerMode ?? 'workspace-agents',
+          card.wakeTimerQueuedSends?.length ?? 0,
+          (card.wakeTimerPendingTargetIds ?? []).join(','),
+        ].join(':')),
+    ].join('|')).join('||'),
+    [appState.columns],
+  )
+  useEffect(() => {
+    queueMicrotask(() => flushReadyWakeTimersRef.current?.())
+  }, [wakeTimerTopologySignature])
+
+  const nextWakeTimerTimestamp = useMemo(() => {
+    let nextTimestamp: number | null = null
+    for (const column of appState.columns) {
+      for (const card of Object.values(column.cards)) {
+        if (
+          card.wakeTimerMode !== 'duration' ||
+          (card.wakeTimerQueuedSends?.length ?? 0) === 0 ||
+          !card.wakeTimerWakeAt
+        ) {
+          continue
+        }
+        const timestamp = Date.parse(card.wakeTimerWakeAt)
+        if (Number.isFinite(timestamp) && (nextTimestamp === null || timestamp < nextTimestamp)) {
+          nextTimestamp = timestamp
+        }
+      }
+    }
+    return nextTimestamp
+  }, [appState.columns])
+  useEffect(() => {
+    if (nextWakeTimerTimestamp === null) {
+      return
+    }
+    const timer = window.setTimeout(
+      () => flushReadyWakeTimersRef.current?.(),
+      Math.max(0, nextWakeTimerTimestamp - Date.now()),
+    )
+    return () => window.clearTimeout(timer)
+  }, [nextWakeTimerTimestamp])
+
   const finalizeStoppedAskUserWithoutServerAck = useCallback(async (
     columnId: string,
     cardId: string,
@@ -2483,6 +2826,125 @@ function App() {
     (columnId: string) => appStateRef.current.columns.find((column) => column.id === columnId),
     [],
   )
+
+  const openWorkspacePath = useCallback((columnId: string, workspacePath: string) => {
+    const requestId = createId()
+    workspaceOpenRequestRef.current.set(columnId, requestId)
+
+    void (async () => {
+      const trimmedPath = workspacePath.trim()
+      const initialColumn = getColumn(columnId)
+      const workspaceKey = normalizeWorkspaceHistoryKey(trimmedPath)
+      const canRestore = Boolean(
+        trimmedPath &&
+        isUntouchedWorkspacePlaceholderColumn(initialColumn) &&
+        !appStateRef.current.columns.some(
+          (column) =>
+            column.id !== columnId &&
+            normalizeWorkspaceHistoryKey(column.workspacePath) === workspaceKey,
+        ),
+      )
+
+      const isCurrentRequest = () => workspaceOpenRequestRef.current.get(columnId) === requestId
+      const applyPlainWorkspacePath = () => {
+        if (!isCurrentRequest()) {
+          return
+        }
+        workspaceOpenRequestRef.current.delete(columnId)
+        applyAction({
+          type: 'updateColumn',
+          columnId,
+          patch: { workspacePath },
+        })
+      }
+
+      if (!canRestore) {
+        applyPlainWorkspacePath()
+        return
+      }
+
+      try {
+        const response = await loadClosedWorkspaceSnapshot({ workspacePath: trimmedPath })
+        if (!isCurrentRequest()) {
+          return
+        }
+
+        const latestColumn = getColumn(columnId)
+        const anotherColumnOpenedWorkspace = appStateRef.current.columns.some(
+          (column) =>
+            column.id !== columnId &&
+            normalizeWorkspaceHistoryKey(column.workspacePath) === workspaceKey,
+        )
+        if (!isUntouchedWorkspacePlaceholderColumn(latestColumn) || anotherColumnOpenedWorkspace) {
+          applyPlainWorkspacePath()
+          return
+        }
+
+        if (response.snapshot) {
+          const snapshot = response.snapshot
+          const archivedDuplicates = appStateRef.current.sessionHistory.filter(
+            (entry) => entry.workspaceCloseId === snapshot.closeId,
+          )
+          const action: IdeAction = {
+            type: 'restoreClosedWorkspace',
+            columnId,
+            snapshot,
+          }
+          workspaceOpenRequestRef.current.delete(columnId)
+          const nextState = applyAction(action)
+          persistAfterAction(action.type, nextState)
+          updateLatestKnownAppState(nextState)
+          await Promise.all(
+            archivedDuplicates.map((entry) =>
+              hideInternalSessionHistory({
+                entryId: entry.id,
+                provider: entry.provider,
+                sessionId: entry.sessionId,
+              }).catch(() => undefined),
+            ),
+          )
+          return
+        }
+
+        if (response.legacyEntryIds.length > 0) {
+          const entries = await Promise.all(
+            response.legacyEntryIds.map(async (entryId) =>
+              (await loadSessionHistoryEntry({ entryId })).entry,
+            ),
+          )
+          if (!isCurrentRequest()) {
+            return
+          }
+
+          const action: IdeAction = {
+            type: 'restoreLegacyClosedWorkspace',
+            columnId,
+            workspacePath: trimmedPath,
+            entries,
+          }
+          workspaceOpenRequestRef.current.delete(columnId)
+          const nextState = applyAction(action)
+          persistAfterAction(action.type, nextState)
+          updateLatestKnownAppState(nextState)
+          await Promise.all(
+            entries.map((entry) =>
+              hideInternalSessionHistory({
+                entryId: entry.id,
+                provider: entry.provider,
+                sessionId: entry.sessionId,
+              }).catch(() => undefined),
+            ),
+          )
+          return
+        }
+
+        applyPlainWorkspacePath()
+      } catch (error) {
+        console.error('[workspace] Failed to restore closed workspace tabs.', error)
+        applyPlainWorkspacePath()
+      }
+    })()
+  }, [applyAction, getColumn, persistAfterAction])
 
   const getColumnCard = useCallback(
     (columnId: string, cardId: string) => getColumn(columnId)?.cards[cardId],
@@ -3371,6 +3833,9 @@ function App() {
           }
 
           persistAfterActions(actions, applyActions(actions))
+          if (!stopped) {
+            scheduleStableWakeTimerCompletion(card.id)
+          }
           dispatchNextQueuedSend(columnId, card.id)
         },
         onError: ({ message, recoverable, recoveryMode, transientOnly, hint, sessionId }) => {
@@ -3539,6 +4004,11 @@ function App() {
               : null
             const actions: IdeAction[] = [
               {
+                type: 'settleStreamActivities',
+                columnId,
+                cardId: card.id,
+              },
+              {
                 type: 'updateCard',
                 columnId,
                 cardId: card.id,
@@ -3581,6 +4051,11 @@ function App() {
             ? getPendingCompactBoundaryMessage(liveCard.messages)
             : null
           const actions: IdeAction[] = [
+            {
+              type: 'settleStreamActivities',
+              columnId,
+              cardId: card.id,
+            },
             {
               type: 'appendMessages',
               columnId,
@@ -3645,6 +4120,7 @@ function App() {
       persistAfterAction,
       persistAfterActions,
       requestStopForCard,
+      scheduleStableWakeTimerCompletion,
     ],
   )
 
@@ -3660,6 +4136,8 @@ function App() {
     pendingAskUserDuringStreamRef.current.clear()
     stopCompletionFallbackTimersRef.current.forEach((timer) => window.clearTimeout(timer))
     stopCompletionFallbackTimersRef.current.clear()
+    wakeTimerCompletionTimersRef.current.forEach((timer) => window.clearTimeout(timer))
+    wakeTimerCompletionTimersRef.current.clear()
     if (streamRenderFlushHandleRef.current !== null) {
       window.clearTimeout(streamRenderFlushHandleRef.current)
       streamRenderFlushHandleRef.current = null
@@ -4186,6 +4664,27 @@ function App() {
           appendCardLogs(columnId, card.id, card.provider, lines.join('\n'))
           return true
         }
+        case 'agent':
+        case 'subagents': {
+          if (card.provider !== 'codex' || parsed.args) {
+            return false
+          }
+
+          const snapshotId = `agent-status-snapshot:${crypto.randomUUID()}`
+          const message = createStructuredActivityMessage(
+            'codex',
+            `local-agent-status:${card.id}`,
+            createCodexAgentStatusSnapshotActivity(card.messages, snapshotId),
+          )
+          const action: IdeAction = {
+            type: 'appendMessages',
+            columnId,
+            cardId: card.id,
+            messages: [message],
+          }
+          persistAfterAction(action.type, applyAction(action))
+          return true
+        }
         case 'model': {
           const settings = appStateRef.current.settings
           const availableModelOptions = getModelOptions(card.provider).filter(
@@ -4292,6 +4791,30 @@ function App() {
 
     if (attachments.length === 0 && (await handleLocalSlashCommand(columnId, card, prompt))) {
       return
+    }
+
+    const sendOrigin = options.origin ?? 'user'
+    const answersPendingAskUser =
+      card.status === 'streaming' &&
+      (
+        pendingAskUserDuringStreamRef.current.get(cardId) === true ||
+        hasPendingAskUserMessage(card.messages) ||
+        hasLatestPendingAskUserMessage(card.messages, prompt)
+      )
+    if (shouldQueueWakeTimerSend({
+      featureEnabled: appStateRef.current.settings.wakeTimerEnabled,
+      cardActive: card.wakeTimerActive === true,
+      origin: sendOrigin,
+      answersPendingAskUser,
+    })) {
+      const queued = enqueueWakeTimerSend(column.id, cardId, {
+        id: crypto.randomUUID(),
+        prompt,
+        attachments,
+      })
+      if (queued) {
+        return
+      }
     }
 
     // A brand-new send clears any previous recovery banner (including failed),
@@ -4950,6 +5473,7 @@ function App() {
           })
         }
         persistAfterActions(finalizeActions, applyActions(finalizeActions))
+        scheduleStableWakeTimerCompletion(cardId)
         dispatchNextQueuedSend(columnId, cardId)
         return true
       }
@@ -5133,6 +5657,7 @@ function App() {
     persistAfterAction,
     persistAfterActions,
     providerByName,
+    scheduleStableWakeTimerCompletion,
     text.localCliUnavailable,
     text.unexpectedError,
   ])
@@ -5302,6 +5827,7 @@ function App() {
   }, [resolvePaneTarget, rememberPaneTarget, applyAction])
 
   const openCloseWorkspaceDialog = useCallback((columnId: string) => {
+    setCloseWorkspaceError(null)
     setCloseWorkspaceDialogColumnId(columnId)
   }, [])
 
@@ -5310,6 +5836,7 @@ function App() {
       return
     }
 
+    setCloseWorkspaceError(null)
     setCloseWorkspaceDialogColumnId(null)
   }, [closeWorkspacePending])
 
@@ -5320,9 +5847,22 @@ function App() {
       return
     }
 
+    const workspaceCloseId = createId()
     getOrderedColumnCards(column).forEach((card) => clearQueuedSends(card.id))
     await Promise.all(getOrderedColumnCards(column).map((card) => closeStream(card.id, true)))
-    applyAction({ type: 'removeColumn', columnId })
+    const stoppedColumn = getColumn(columnId)
+    if (stoppedColumn?.workspacePath.trim()) {
+      const compactedColumn = createQueuedPersistenceStateSnapshot({
+        ...appStateRef.current,
+        columns: [stoppedColumn],
+      }).columns[0]!
+      await saveClosedWorkspaceSnapshot({
+        closeId: workspaceCloseId,
+        closedAt: new Date().toISOString(),
+        column: compactedColumn,
+      })
+    }
+    applyAction({ type: 'removeColumn', columnId, workspaceCloseId })
     setCloseWorkspaceDialogColumnId(null)
   }
 
@@ -5332,8 +5872,19 @@ function App() {
     }
 
     setCloseWorkspacePending(true)
+    setCloseWorkspaceError(null)
     try {
       await removeColumn(closeWorkspaceDialogColumnId)
+    } catch (error) {
+      console.error('[workspace] Failed to preserve the closed workspace snapshot.', error)
+      setCloseWorkspaceError(
+        errorMessage(
+          error,
+          appState.settings.language === 'zh-CN'
+            ? '保存工作区标签失败，工作区尚未关闭，请重试。'
+            : 'Failed to save the workspace tabs. The workspace was not closed; please try again.',
+        ),
+      )
     } finally {
       setCloseWorkspacePending(false)
     }
@@ -5352,6 +5903,8 @@ function App() {
     pendingAskUserDuringStreamRef.current.clear()
     stopCompletionFallbackTimersRef.current.forEach((timer) => window.clearTimeout(timer))
     stopCompletionFallbackTimersRef.current.clear()
+    wakeTimerCompletionTimersRef.current.forEach((timer) => window.clearTimeout(timer))
+    wakeTimerCompletionTimersRef.current.clear()
 
     try {
       const state = await resetState()
@@ -6864,6 +7417,7 @@ function App() {
           </div>
         )}
 
+        {renderWakeTimerSettings()}
         {renderAutoUrgeSettings()}
       </div>
     </div>,
@@ -8166,6 +8720,7 @@ function App() {
                   </div>
                 )}
 
+                {renderWakeTimerSettings()}
                 {renderAutoUrgeSettings()}
 
               </div>
@@ -8477,8 +9032,15 @@ function App() {
               appState.settings.autoUrgeGlobalActive
             }
             globalUrgeProfileId={appState.settings.autoUrgeGlobalProfileId}
+            wakeTimerEnabled={appState.settings.wakeTimerEnabled}
             onSetAutoUrgeEnabled={setAutoUrgeEnabled}
-            onChangeColumn={(patch) => applyAction({ type: 'updateColumn', columnId: column.id, patch })}
+            onChangeColumn={(patch) => {
+              if (patch.workspacePath !== undefined) {
+                openWorkspacePath(column.id, patch.workspacePath)
+                return
+              }
+              applyAction({ type: 'updateColumn', columnId: column.id, patch })
+            }}
             onChangeCardModel={(cardId, provider, model) =>
               changeCardModelSelection(column.id, cardId, provider, model)
             }
@@ -8667,6 +9229,8 @@ function App() {
             onStopMessage={(cardId) => stopCard(cardId)}
             onCancelQueuedSends={(cardId) => clearQueuedSends(cardId)}
             onSendNextQueuedNow={(cardId) => sendNextQueuedNow(column.id, cardId)}
+            onCancelWakeTimerBatch={(cardId) => clearWakeTimerBatch(column.id, cardId)}
+            onWakeTimerBatchNow={(cardId) => sendWakeTimerBatchNow(column.id, cardId)}
             onManualRecoverStream={(cardId) => manuallyRecoverStream(column.id, cardId)}
             onForkConversation={(cardId, messageId) => {
               void (async () => {
@@ -9198,6 +9762,10 @@ function App() {
                   <li>{text.closeWorkspaceDialogHistory}</li>
                   <li>{text.closeWorkspaceDialogStreams}</li>
                 </ul>
+
+                {closeWorkspaceError ? (
+                  <p className="settings-note" role="alert">{closeWorkspaceError}</p>
+                ) : null}
 
                 <div className="settings-actions settings-danger-actions">
                   <AppButton

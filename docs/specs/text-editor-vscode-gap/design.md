@@ -39,6 +39,7 @@
 - mount 时：缓存命中且 revision 与磁盘一致 → 复用 model + `restoreViewState`，undo 栈天然保留；revision 不一致 → 走刷新逻辑（dirty 则进 A1 冲突态）。
 - 淘汰策略:LRU 上限 12 个模型；卡片被关闭（`removeCard`）时主动驱逐对应条目。驱逐入口：在 `App.tsx` 关卡路径上调用 `evictTextEditorModel(workspacePath, filePath)`。
 - 注意：现有代码在 `createTextEditorModel` 里"同 URI 旧模型 dispose 重建"，要改为优先取缓存模型。
+- 缓存模型重新挂载时还要处理一个异步竞态：磁盘刷新可能先于 Monaco 懒加载完成。此时 React/ref 已经采用磁盘新内容，但尚未挂载的缓存 model 仍是旧内容。认领缓存 model 后、注册内容变更监听前，必须把 model 与 `contentRef` 对齐；否则旧 model 在恢复视图或失焦时可能被当作新编辑再次自动保存，覆盖 agent 刚写入的内容。该同步只在内容确实不同的时候执行，dirty 冲突态因为 `contentRef` 仍保留本地缓冲，不会丢失用户编辑。
 
 ## B2 — 文件 watcher 替代轮询
 

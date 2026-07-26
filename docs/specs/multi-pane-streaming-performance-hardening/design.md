@@ -105,6 +105,18 @@
 并切换到同列另一条运行流验证隐藏输出，再切回。Provider 仍由本地 fake Codex app-server 产生确定性事件，
 因此覆盖真实应用路径但不联网、不调用模型、不产生 Token 费用。
 
+### 2026-07-23 新建会话首次输入偶现门禁
+
+在 20 条流稳定运行后，测试继续轮转 6 个 pane，重复 60 次真实鼠标点击新增 tab、等待新 composer 自动聚焦、立即插入中文草稿、切回运行 tab、再切回新 tab核对草稿。
+夹具同时用合成历史把序列化状态从约 0.46MB 提升到至少 4MB，覆盖当前打包版约 3MB 状态下的克隆与保存压力，不读取真实内容。
+核对后清空并关闭探针 tab，使每次都从相同 84-tab 基线开始。门禁同时记录 ready/input p95、max 和焦点失败，
+并以 ready/input max `< 500ms` 捕获偶发长尾。该门禁先用于取证；若当前实现未红，不凭猜测修改生产路径。
+
+旧实现的 5 分钟红测抓到真实长尾：新建 ready p95 / max 为 707.5 / 802.3ms，heartbeat / frame 最大间隔为 656.9 / 900.0ms。
+此时 20 条流没有丢失、崩溃或焦点失败，瓶颈来自持续增长的末尾助手正文：每次 delta 都让 `ReactMarkdown` 重新解析整段长文本，
+交互恰好撞上该提交时，新 tab 的 reducer 与 composer mount 只能排在昂贵解析之后。最小修复只作用于“正在流式、无结构化类型、且正文至少 16,000 字符”的末尾助手消息：
+流期间用单个保留换行的纯文本节点显示完整原文，完成/停止后立即恢复完整 Markdown。消息对象、Provider 上下文、持久化与最终展示都不截断。
+
 ## Windows 合成策略（2026-07-18 实证更新）
 
 历史版本从启动起无条件调用 `app.disableHardwareAcceleration()`。真实四流现场中，
@@ -177,6 +189,18 @@ renderer / GPU 在四流状态下各持续消耗约 43% 单核，锚点继续指
 - 当前流中新建或更新的消息仍正常重新压缩，短消息继续完整保存；
 - 缓存只影响发往持久化 IPC 的快照，不改变 React 状态、Provider 上下文或磁盘恢复语义。
 
+## 2026-07-25 E 类持续卡死的 renderer 自动恢复
+
+本次现场在运行约 8 小时后再次记录 `BrowserWindow became unresponsive`，JS 调用栈仍为空，系统内存充足，随后用户只能关闭窗口。此前 Windows dump 已把同族故障锚定到 renderer/GPU/DXGI 等待链路，但当前证据仍不足以盲改具体绘制代码。因此增加一个独立、可回滚的恢复层，而不宣称底层根因已经修复。
+
+- `electron/unresponsive-recovery.ts` 提供纯控制器：首次 `unresponsive` 武装一次定时器，`responsive` 或销毁会取消；定时到期且仍无响应才调用恢复回调。
+- 默认在 Electron `unresponsive` 事件后等待 8 秒，再调用 `webContents.reloadIgnoringCache()`。Electron 自身通常已等待数秒才发事件，因此总冻结时间仍能避开普通短帧，同时比人工关应用更早自救。
+- `CHILL_VIBE_UNRESPONSIVE_RECOVERY_MS=0` 完全关闭；正整数可调整宽限期。
+- renderer reload 不重启主进程、本地 Express、ChatManager 或 Provider CLI。页面恢复后，保存状态中的 `streamId` 会重新订阅 ChatManager；backlog 重放与既有消息 ID 幂等规则负责补齐冻结期间事件。
+- 恢复前记录 renderer PID、无响应起点和最后输入；若底层故障继续复发，日志仍保留客观证据。
+
+回滚点集中在控制器接线和单个环境变量，不改变 reducer、流式调度、硬件加速或 Provider 并发。
+
 ## 验证矩阵
 
 ### 逻辑测试（严格 red → green）
@@ -205,3 +229,16 @@ renderer / GPU 在四流状态下各持续消耗约 43% 单核，锚点继续指
 - 使用新的时间戳目录，与用户正在运行的包并存；不得自动关闭用户实例。
 - 包内保留性能策略开关和诊断计数，出现回归可立即关闭当前切片。
 - 任一数据不一致、焦点丢失、tab panel 异常卸载、恢复失败或 unresponsive 都是停止发布条件。
+
+## 2026-07-23 长时运行状态动画复发
+
+现场包 `release-20260723-223152` 在 4 条 Codex 流持续运行约 32 分钟后两次触发 `BrowserWindow became unresponsive`。
+`collectJavaScriptCallStack()` 均返回 `available=false, frameCount=0`，事件前后系统仍有 12GB 以上可用内存，Electron 工作集约 656MB，
+因此证据继续指向 Chromium 绘制/合成链路，而不是可采样的 JS 热循环或系统 OOM。
+
+上一轮已移除整卡和 pane tab 的无限 `box-shadow` 动画，但所有挂载中的流式卡片、命令块和 busy 状态仍保留小型
+transform/opacity 无限点动画。inactive pane panel 为保留状态持续挂载，使这些看似很小的动画会随多流、多 tab 数量叠加，并在长时间运行中持续消耗合成预算。
+
+本切片最初把 `.streaming-dots span`、`.structured-command-running-dots span` 和 `.is-busy::before` 全部改为静态透明度层级，
+但现场反馈指出前台运行反馈因此过弱。最终策略改为：当前可见的 active pane 保留三点跳动，隐藏 pane 和通用 busy 点保持静态；
+不改变 Provider 并发、消息刷新、状态语义或持久化。测试同时约束后台无无限动画、前台必须有动效；最终以真实 Electron 多流门禁和新 Windows 包验证。

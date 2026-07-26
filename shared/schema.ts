@@ -91,6 +91,13 @@ export const queuedSendRequestSchema = z.object({
 )
 export type QueuedSendRequest = z.infer<typeof queuedSendRequestSchema>
 
+export const wakeTimerModes = ['workspace-agents', 'left-tab', 'duration'] as const
+export const wakeTimerModeSchema = z.enum(wakeTimerModes)
+export type WakeTimerMode = z.infer<typeof wakeTimerModeSchema>
+export const minWakeTimerDurationMinutes = 1
+export const maxWakeTimerDurationMinutes = 7 * 24 * 60
+export const defaultWakeTimerDurationMinutes = 30
+
 export const brainstormAnswerStatusSchema = z.enum(['streaming', 'done', 'error'])
 export type BrainstormAnswerStatus = z.infer<typeof brainstormAnswerStatusSchema>
 
@@ -154,6 +161,13 @@ export const chatCardSchema = z.object({
   draft: z.string().default(''),
   draftAttachments: z.array(imageAttachmentSchema).default([]),
   queuedSends: z.array(queuedSendRequestSchema).default([]),
+  wakeTimerActive: z.boolean().optional(),
+  wakeTimerMode: wakeTimerModeSchema.optional(),
+  wakeTimerDurationMinutes: z.number().finite().min(minWakeTimerDurationMinutes).max(maxWakeTimerDurationMinutes).optional(),
+  wakeTimerQueuedSends: z.array(queuedSendRequestSchema).optional(),
+  wakeTimerArmedAt: z.string().datetime().optional(),
+  wakeTimerWakeAt: z.string().datetime().optional(),
+  wakeTimerPendingTargetIds: z.array(z.string().min(1)).optional(),
   stickyNote: z.string().default(''),
   brainstorm: brainstormStateSchema.default({
     prompt: '',
@@ -299,9 +313,28 @@ export const sessionHistoryEntrySchema = z.object({
   messages: z.array(chatMessageSchema).default([]),
   messageCount: z.number().int().nonnegative().optional(),
   messagesPreview: z.boolean().optional(),
+  workspaceCloseId: z.string().min(1).optional(),
   archivedAt: z.string().datetime(),
 })
 export type SessionHistoryEntry = z.infer<typeof sessionHistoryEntrySchema>
+
+export const closedWorkspaceSnapshotSchema = z.object({
+  closeId: z.string().min(1),
+  closedAt: z.string().datetime(),
+  column: boardColumnSchema,
+})
+export type ClosedWorkspaceSnapshot = z.infer<typeof closedWorkspaceSnapshotSchema>
+
+export const closedWorkspaceLoadRequestSchema = z.object({
+  workspacePath: z.string().trim().min(1),
+})
+export type ClosedWorkspaceLoadRequest = z.infer<typeof closedWorkspaceLoadRequestSchema>
+
+export const closedWorkspaceLoadResponseSchema = z.object({
+  snapshot: closedWorkspaceSnapshotSchema.nullable(),
+  legacyEntryIds: z.array(z.string().min(1)).default([]),
+})
+export type ClosedWorkspaceLoadResponse = z.infer<typeof closedWorkspaceLoadResponseSchema>
 
 export const internalSessionHistoryLoadRequestSchema = z.object({
   entryId: z.string().min(1),
@@ -555,6 +588,7 @@ export const appSettingsSchema = z.object({
   autoUrgeGlobalControlEnabled: z.boolean().default(false),
   autoUrgeGlobalActive: z.boolean().default(false),
   autoUrgeGlobalProfileId: z.string().default(defaultAutoUrgeProfileId),
+  wakeTimerEnabled: z.boolean().default(false),
   weatherCity: z.string().default(''),
   systemPrompt: z.string().default(defaultSystemPrompt),
   modelPromptRules: z.array(modelPromptRuleSchema).default([]),
@@ -650,6 +684,7 @@ export const appStateSchema = z.object({
     autoUrgeGlobalControlEnabled: false,
     autoUrgeGlobalActive: false,
     autoUrgeGlobalProfileId: defaultAutoUrgeProfileId,
+    wakeTimerEnabled: false,
     weatherCity: '',
     systemPrompt: defaultSystemPrompt,
     modelPromptRules: [],
@@ -1275,8 +1310,10 @@ export const streamAgentEntrySchema = z.object({
   threadId: z.string().min(1),
   nickname: z.string().optional(),
   role: z.string().optional(),
+  path: z.string().optional(),
   status: streamAgentStatusSchema.default('pendingInit'),
   message: z.string().nullable().optional(),
+  activity: z.array(z.string()).optional(),
 })
 export type StreamAgentEntry = z.infer<typeof streamAgentEntrySchema>
 
@@ -1284,8 +1321,9 @@ export const streamAgentsActivitySchema = z.object({
   itemId: z.string().min(1),
   kind: z.literal('agents'),
   status: z.literal('completed'),
-  tool: streamAgentToolSchema,
-  callStatus: streamAgentToolCallStatusSchema,
+  view: z.enum(['toolCall', 'status']).optional(),
+  tool: streamAgentToolSchema.optional(),
+  callStatus: streamAgentToolCallStatusSchema.optional(),
   prompt: z.string().nullable().optional(),
   model: z.string().nullable().optional(),
   reasoningEffort: z.string().nullable().optional(),

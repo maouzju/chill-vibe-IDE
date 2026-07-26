@@ -7,6 +7,9 @@ import type {
   CcSwitchImportResponse,
   ChatRequest,
   ChatStartResponse,
+  ClosedWorkspaceLoadRequest,
+  ClosedWorkspaceLoadResponse,
+  ClosedWorkspaceSnapshot,
   ForkSessionRequest,
   ForkSessionResponse,
   NativeTurnCompletionRequest,
@@ -87,6 +90,8 @@ declare global {
       openExternalLink?: (href: string) => Promise<void>
       fetchState?: () => Promise<AppStateLoadResponse | AppState>
       loadSessionHistoryEntry?: (request: InternalSessionHistoryLoadRequest) => Promise<InternalSessionHistoryLoadResponse>
+      saveClosedWorkspaceSnapshot?: (snapshot: ClosedWorkspaceSnapshot) => Promise<ClosedWorkspaceSnapshot>
+      loadClosedWorkspaceSnapshot?: (request: ClosedWorkspaceLoadRequest) => Promise<ClosedWorkspaceLoadResponse>
       listInternalSessionHistory?: (request: InternalSessionHistoryListRequest) => Promise<InternalSessionHistoryListResponse>
       hideInternalSessionHistory?: (request: InternalSessionHistoryHideRequest) => Promise<void>
       saveState?: (state: AppState) => Promise<AppState>

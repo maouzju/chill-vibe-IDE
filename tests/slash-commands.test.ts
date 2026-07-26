@@ -41,6 +41,10 @@ describe('slash command helpers', () => {
       'compact the current session context',
     )
     assert.equal(
+      getSlashCommandDescription('codex', 'agent', 'native', 'en'),
+      'show and inspect sub-agent status',
+    )
+    assert.equal(
       getSlashCommandDescription('codex', 'help', 'app', 'en'),
       'show this help',
     )

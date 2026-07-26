@@ -13,6 +13,7 @@ import {
   fetchState,
   flashWindowOnce,
   isWindowMaximized,
+  loadClosedWorkspaceSnapshot,
   listInternalSessionHistory,
   minimizeWindow,
   moveWorkspaceEntry,
@@ -20,6 +21,7 @@ import {
   openChatStream,
   queueStateSave,
   renameWorkspaceEntry,
+  saveClosedWorkspaceSnapshot,
   toggleMaximizeWindow,
 } from '../src/api.ts'
 
@@ -32,6 +34,8 @@ type ElectronBridgeWindow = Window & typeof globalThis & {
     isWindowMaximized?: () => Promise<boolean>
     onWindowMaximizedChanged?: (listener: (maximized: boolean) => void) => () => void
     fetchState?: () => Promise<ReturnType<typeof createDefaultState>>
+    saveClosedWorkspaceSnapshot?: (snapshot: unknown) => Promise<unknown>
+    loadClosedWorkspaceSnapshot?: (request: { workspacePath: string }) => Promise<unknown>
     listInternalSessionHistory?: (request: { workspacePath: string; query: string }) => Promise<unknown>
     fetchGitStatusPreview?: (workspacePath: string) => Promise<unknown>
     fetchSlashCommands?: (request: {
@@ -176,6 +180,38 @@ test('listInternalSessionHistory uses the bounded Electron maintenance bridge', 
   assert.deepEqual(requests, [{ workspacePath: 'D:/workspace', query: '' }])
   assert.equal(response.entries[0]?.messageCount, 42)
   assert.equal(response.maintenance.phase, 'running')
+})
+
+test('closed workspace snapshots round-trip through the Electron bridge', async () => {
+  const state = createDefaultState('D:/workspace/reopen')
+  const snapshot = {
+    closeId: 'workspace-close-1',
+    closedAt: '2026-07-25T10:00:00.000Z',
+    column: state.columns[0]!,
+  }
+  const savedSnapshots: unknown[] = []
+  const loadRequests: Array<{ workspacePath: string }> = []
+
+  setWindow({
+    electronAPI: {
+      saveClosedWorkspaceSnapshot: async (value) => {
+        savedSnapshots.push(value)
+        return value
+      },
+      loadClosedWorkspaceSnapshot: async (request) => {
+        loadRequests.push(request)
+        return { snapshot, legacyEntryIds: [] }
+      },
+    },
+  } as ElectronBridgeWindow)
+
+  const saved = await saveClosedWorkspaceSnapshot(snapshot)
+  const loaded = await loadClosedWorkspaceSnapshot({ workspacePath: 'D:/workspace/reopen' })
+
+  assert.deepEqual(savedSnapshots, [snapshot])
+  assert.equal(saved.closeId, 'workspace-close-1')
+  assert.deepEqual(loadRequests, [{ workspacePath: 'D:/workspace/reopen' }])
+  assert.equal(loaded.snapshot?.column.workspacePath, 'D:/workspace/reopen')
 })
 
 test('queueStateSave flushes through the Electron bridge when available', () => {

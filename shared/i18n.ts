@@ -58,6 +58,20 @@ type LocaleText = {
   autoUrgeJudgeModeLocalModel: string
   autoUrgeJudgeModelLabel: string
   autoUrgeJudgeModelEmpty: string
+  wakeTimerFeatureLabel: string
+  wakeTimerFeatureHint: string
+  wakeTimerLabel: string
+  wakeTimerModeLabel: string
+  wakeTimerModeWorkspace: string
+  wakeTimerModeLeftTab: string
+  wakeTimerModeDuration: string
+  wakeTimerDurationLabel: string
+  wakeTimerMinutes: string
+  wakeTimerLeftUnavailable: string
+  wakeTimerBatchLocked: string
+  wakeTimerPendingStatus: string
+  wakeTimerWakeNow: string
+  wakeTimerCancel: string
   ollamaSectionTitle: string
   ollamaSectionHint: string
   ollamaStatusNotInstalled: string
@@ -377,6 +391,20 @@ const localeTextByLanguage: Record<AppLanguage, LocaleText> = {
     autoUrgeJudgeModeLocalModel: '由本地大模型判断',
     autoUrgeJudgeModelLabel: '判定模型',
     autoUrgeJudgeModelEmpty: '暂无可用本地模型，请先在下方"本地大模型"区安装',
+    wakeTimerFeatureLabel: '计时器',
+    wakeTimerFeatureHint: '开启后，每个 Agent 会话的输入设置中会出现计时唤醒模块，可先写好消息，等其他 Agent、左侧 Tab 完成或到时后整批激活。',
+    wakeTimerLabel: '计时器',
+    wakeTimerModeLabel: '唤醒条件',
+    wakeTimerModeWorkspace: '其他 Agent 完成',
+    wakeTimerModeLeftTab: '左侧 Tab 完成',
+    wakeTimerModeDuration: '指定时长',
+    wakeTimerDurationLabel: '等待时长',
+    wakeTimerMinutes: '分钟',
+    wakeTimerLeftUnavailable: '左侧没有可等待的 Agent Tab',
+    wakeTimerBatchLocked: '当前批次已锁定；修改会在下一批生效。',
+    wakeTimerPendingStatus: '待唤醒',
+    wakeTimerWakeNow: '立即唤醒',
+    wakeTimerCancel: '取消',
     ollamaSectionTitle: '本地大模型（Ollama）',
     ollamaSectionHint: '用于鞭策判定等本地 AI 能力。安装与模型都在本机运行，不产生 API 费用。',
     ollamaStatusNotInstalled: '未安装',
@@ -722,6 +750,20 @@ const localeTextByLanguage: Record<AppLanguage, LocaleText> = {
     autoUrgeJudgeModeLocalModel: 'Judged by local LLM',
     autoUrgeJudgeModelLabel: 'Judge model',
     autoUrgeJudgeModelEmpty: 'No local models yet — install one in the Local LLM section below.',
+    wakeTimerFeatureLabel: 'Wake Timer',
+    wakeTimerFeatureHint: 'Adds a wake-timer module to each agent composer so messages can wait for peer agents, the tab on the left, or a duration, then activate as one batch.',
+    wakeTimerLabel: 'Wake timer',
+    wakeTimerModeLabel: 'Wake condition',
+    wakeTimerModeWorkspace: 'Other agents finish',
+    wakeTimerModeLeftTab: 'Left tab finishes',
+    wakeTimerModeDuration: 'After a duration',
+    wakeTimerDurationLabel: 'Wait time',
+    wakeTimerMinutes: 'minutes',
+    wakeTimerLeftUnavailable: 'No agent tab is available directly on the left',
+    wakeTimerBatchLocked: 'This batch is locked; changes apply to the next batch.',
+    wakeTimerPendingStatus: 'Waiting to wake',
+    wakeTimerWakeNow: 'Wake now',
+    wakeTimerCancel: 'Cancel',
     ollamaSectionTitle: 'Local LLM (Ollama)',
     ollamaSectionHint:
       'Powers local AI features such as urge verdicts. Everything runs on this machine with no API cost.',

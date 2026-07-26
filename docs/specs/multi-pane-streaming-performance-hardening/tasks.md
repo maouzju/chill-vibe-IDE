@@ -98,3 +98,29 @@
 - [x] 每列至少一次通过真实右键发送交互加入延后发送队列，并验证 20 条现有流继续运行。
 - [x] 反复切换同列的前台/后台运行 tab，验证隐藏期输出和切换反馈。
 - [x] 重跑 focused tests、quality、30 秒 Electron 20 流门禁与 Windows 打包：最大 frame gap 201.1ms，输入/延后发送/切 tab P95 分别为 71.8/71.1/131.1ms，零 unresponsive / renderer gone。
+
+## 2026-07-23 新建会话首次输入长尾
+
+- [x] 20 流运行时重复 60 次真实鼠标新建 tab → composer 聚焦 → 中文首次输入 → 切回运行 tab → 切回新 tab核对草稿 → 清理 tab。
+- [x] 用合成历史把状态扩到至少 4MB，覆盖长期状态下的新建与保存成本。
+- [x] 记录 ready/input p95、max 和焦点失败，ready/input max 均以 `< 500ms` 判定。
+- [x] 核对 60 个新 tab 的唯一草稿在切走切回后完整，并保持每次采样从 84-tab 基线开始。
+- [x] 先运行旧实现取证；旧实现 ready p95/max 707.5/802.3ms、frame max 900.0ms，确认真实失败。
+- [x] 超长流式助手正文超过 16,000 字符后暂用完整纯文本，流结束后恢复 Markdown，避免每个 delta 重解析整段长文本。
+- [x] 修复后 5 分钟 20 流门禁完成 60/60 次新建会话探针：ready p95/max 113.7/179.2ms、首次输入 p95/max 25.4/38.4ms，零焦点失败、零草稿丢失、零 unresponsive / renderer gone；Windows ZIP 位于 `dist/release-20260723-201809/`。
+
+## 2026-07-23 长时运行状态动画复发
+
+- [x] 核对 `release-20260723-223152`：23:32 与 23:36 两次 unresponsive，JS 栈为空且资源数据不支持 OOM。
+- [x] 为长期运行的 streaming、command-running 和 busy 点增加失败测试，禁止无限动画。
+- [x] 将隐藏 pane 与通用 busy 状态点改为静态透明度层级；根据现场反馈恢复当前可见 pane 的流式与命令三点动效，不改 Provider 并发和状态语义。
+- [x] 运行定向测试、quality 与 light/dark 主题验证；相关 streaming tab / Codex 状态面板双主题快照通过，完整主题套件另有 11 个既有脏分支快照差异。
+- [x] 运行真实可绘制 Electron 多流长时门禁，确认零 unresponsive / renderer gone；30 秒复核门禁完成 20 流与 60/60 新建会话探针，frame max 228.7ms，ready/input max 73.3/24.8ms。
+- [x] 构建并交付新的 Windows ZIP 与可直接运行目录：`dist/release-20260724-003914/Chill Vibe-0.18.17-win.zip` 与 `dist/release-20260724-003914/win-unpacked/Chill Vibe.exe`。
+
+## 2026-07-25 持续无响应自动恢复
+
+- [x] 核对现场日志：22:48:38 明确进入 E 类 `BrowserWindow unresponsive`，调用栈为空、内存充足，用户随后人工关闭；现场包为 `release-20260725-014058`，不是旧取证包。
+- [x] 红测覆盖无响应武装、恢复取消、销毁取消、禁用配置和只触发一次恢复。
+- [x] 实现 renderer 自动重新加载兜底，并保留主进程/后端/Provider 进程。
+- [x] 运行 focused tests、quality、Electron runtime/聊天性能门禁，并构建新的 Windows ZIP 与可直接运行目录：`dist/release-20260725-230759/Chill Vibe-0.18.17-win.zip`、`dist/release-20260725-230759/win-unpacked/Chill Vibe.exe`。

@@ -146,6 +146,7 @@ export const GitFullDialog = ({
   const [activeTab, setActiveTab] = useState<ActiveTab>('changes')
   const [scopedPaths, setScopedPaths] = useState<string[] | null>(mode === 'incremental' ? [] : null)
   const [optimisticStageByPath, setOptimisticStageByPath] = useState<Record<string, boolean>>({})
+  const stageMutationQueueRef = useRef<Promise<void>>(Promise.resolve())
   const [changeListMetrics, setChangeListMetrics] = useState<ChangeListMetrics>({
     scrollTop: 0,
     clientHeight: 0,
@@ -569,13 +570,22 @@ export const GitFullDialog = ({
     })
   }, [])
 
+  const enqueueStageMutation = useCallback(<T,>(mutation: () => Promise<T>) => {
+    const queuedMutation = stageMutationQueueRef.current.then(mutation, mutation)
+    stageMutationQueueRef.current = queuedMutation.then(
+      () => undefined,
+      () => undefined,
+    )
+    return queuedMutation
+  }, [])
+
   const handleStageAll = async (staged: boolean) => {
     const paths = renderedChanges.filter((c) => !c.conflicted && c.staged !== staged).map((c) => c.path)
     if (paths.length === 0) return
     setOptimisticStageState(paths, staged)
     markStagePending(['__all__'])
     try {
-      const nextStatus = await setGitStage({ workspacePath, paths, staged })
+      const nextStatus = await enqueueStageMutation(() => setGitStage({ workspacePath, paths, staged }))
       const hydratedStatus = mergeGitStatusPreservingPreviews(gitStatus, nextStatus)
       startTransition(() => {
         clearOptimisticStageState(paths)
@@ -598,11 +608,11 @@ export const GitFullDialog = ({
     setOptimisticStageState([change.path], staged)
     markStagePending([change.path])
     try {
-      const nextStatus = await setGitStage({
+      const nextStatus = await enqueueStageMutation(() => setGitStage({
         workspacePath,
         paths: [change.path],
         staged,
-      })
+      }))
       const hydratedStatus = mergeGitStatusPreservingPreviews(gitStatus, nextStatus)
       startTransition(() => {
         clearOptimisticStageState([change.path])

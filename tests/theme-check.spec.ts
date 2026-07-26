@@ -1361,6 +1361,60 @@ const createStructuredTodoState = (): AppState => {
   return state
 }
 
+const createCodexSubAgentStatusState = (theme: 'dark' | 'light', empty = false): AppState => {
+  const state = createMockState()
+  state.settings.language = 'en'
+  state.settings.theme = theme
+  state.columns[0]!.provider = 'codex'
+  state.columns[0]!.model = 'gpt-5.4'
+  state.columns[0]!.cards[0] = {
+    ...state.columns[0]!.cards[0]!,
+    provider: 'codex',
+    model: 'gpt-5.4',
+    status: 'streaming',
+    messages: [
+      {
+        id: 'codex-agent-status-1',
+        role: 'assistant',
+        content: '',
+        createdAt: '2026-07-23T08:00:00.000Z',
+        meta: {
+          provider: 'codex',
+          kind: 'agents',
+          structuredData: JSON.stringify({
+            itemId: 'agent-status:root',
+            kind: 'agents',
+            status: 'completed',
+            view: 'status',
+            agents: empty
+              ? []
+              : [
+                  {
+                    threadId: 'thread-reviewer',
+                    path: '/root/reviewer_with_a_deliberately_long_canonical_path',
+                    status: 'running',
+                    activity: [
+                      'Inspecting the provider stream and isolating child-thread output.',
+                      '$ pnpm test --filter codex-agent-status',
+                      'Focused verification passed; reviewing the final integration edge cases.',
+                    ],
+                  },
+                  {
+                    threadId: 'thread-tester',
+                    path: '/root/tester',
+                    status: 'running',
+                    activity: ['Running the focused renderer verification.'],
+                  },
+                ],
+          }),
+        },
+      },
+    ],
+  }
+
+  return state
+}
+
 const createChangesSummaryState = (): AppState => {
   const state = createMockState()
   state.settings.language = 'zh-CN'
@@ -5048,6 +5102,109 @@ for (const theme of ['dark', 'light'] as const) {
     })
   })
 
+  test(`wake timer module and pending batch stay readable in ${theme} theme`, async ({ page }) => {
+    const state = createMockState()
+    state.settings.theme = theme
+    state.settings.language = 'en'
+    state.settings.wakeTimerEnabled = true
+    state.columns[0]!.cards[0] = {
+      ...state.columns[0]!.cards[0]!,
+      wakeTimerActive: true,
+      wakeTimerMode: 'workspace-agents',
+      wakeTimerDurationMinutes: 30,
+      wakeTimerArmedAt: '2026-07-25T00:00:00.000Z',
+      wakeTimerPendingTargetIds: ['card-2'],
+      wakeTimerQueuedSends: [
+        { id: 'wake-1', prompt: 'Review the finished agents and continue.', attachments: [] },
+        { id: 'wake-2', prompt: 'Run the final verification.', attachments: [] },
+      ],
+    }
+    state.columns[0]!.cards.push({
+      ...state.columns[0]!.cards[0]!,
+      id: 'card-2',
+      title: 'Running peer agent',
+      status: 'streaming',
+      wakeTimerActive: false,
+      wakeTimerQueuedSends: [],
+      wakeTimerPendingTargetIds: [],
+    })
+
+    await mockAppApis(page, { state })
+    await page.goto(appUrl)
+
+    const timerStatus = page.locator('.composer-wake-timer-status').first()
+    const settingsTrigger = page.locator('.composer-settings-trigger').first()
+    const settingsMenu = page.locator('.composer-settings-menu').first()
+
+    await expect(timerStatus).toContainText('2 messages')
+    await expect(timerStatus.getByRole('button', { name: 'Wake now' })).toBeVisible()
+    await settingsTrigger.click()
+    await expect(settingsMenu).toBeVisible()
+    await expect(settingsMenu.getByLabel('Wake timer')).toBeChecked()
+    await expect(settingsMenu.getByLabel('Wake condition')).toHaveValue('workspace-agents')
+    await expect(settingsMenu.getByLabel('Wake condition')).toBeDisabled()
+
+    await expect(settingsMenu).toHaveScreenshot(`composer-wake-timer-menu-${theme}.png`, {
+      animations: 'disabled',
+      caret: 'hide',
+    })
+    await page.setViewportSize({ width: 520, height: 720 })
+    await expect.poll(async () => (await settingsMenu.boundingBox())?.x ?? -1).toBeGreaterThanOrEqual(0)
+    await expect.poll(async () => {
+      const box = await settingsMenu.boundingBox()
+      return box ? box.x + box.width : Number.POSITIVE_INFINITY
+    }).toBeLessThanOrEqual(520)
+    await expect.poll(async () => (await timerStatus.boundingBox())?.x ?? -1).toBeGreaterThanOrEqual(0)
+    await expect.poll(async () => {
+      const box = await timerStatus.boundingBox()
+      return box ? box.x + box.width : Number.POSITIVE_INFINITY
+    }).toBeLessThanOrEqual(520)
+
+    await page.setViewportSize({ width: 1280, height: 720 })
+    await page.keyboard.press('Escape')
+    await expect(settingsMenu).toBeHidden()
+    await expect(timerStatus).toHaveScreenshot(`composer-wake-timer-status-${theme}.png`, {
+      animations: 'disabled',
+      caret: 'hide',
+    })
+  })
+
+  test(`wake timer settings menu stays inside the card after activation in ${theme} theme`, async ({ page }) => {
+    const state = createMockState()
+    state.settings.theme = theme
+    state.settings.language = 'zh-CN'
+    state.settings.wakeTimerEnabled = true
+    state.columns[0]!.cards[0] = {
+      ...state.columns[0]!.cards[0]!,
+      wakeTimerActive: false,
+      wakeTimerMode: 'workspace-agents',
+      wakeTimerQueuedSends: [],
+      wakeTimerPendingTargetIds: [],
+    }
+
+    await page.setViewportSize({ width: 720, height: 560 })
+    await mockAppApis(page, { state })
+    await page.goto(appUrl)
+
+    const cardShell = page.locator('.card-shell').first()
+    const settingsTrigger = page.locator('.composer-settings-trigger').first()
+    const settingsMenu = page.locator('.composer-settings-menu').first()
+    const timerToggle = settingsMenu.getByLabel('计时器')
+
+    await settingsTrigger.click()
+    await expect(settingsMenu).toBeVisible()
+    await expect(timerToggle).not.toBeChecked()
+    await timerToggle.check()
+    await expect(timerToggle).toBeChecked()
+    await expect(settingsMenu.getByLabel('唤醒条件')).toBeVisible()
+
+    await expect.poll(async () => {
+      const [cardBox, menuBox] = await Promise.all([cardShell.boundingBox(), settingsMenu.boundingBox()])
+      if (!cardBox || !menuBox) return Number.POSITIVE_INFINITY
+      return menuBox.y + menuBox.height - Math.min(cardBox.y + cardBox.height, 552)
+    }).toBeLessThanOrEqual(1)
+  })
+
   test(`pasted image composer stays compact without ready notice in ${theme} theme`, async ({ page }) => {
     const state = createMockState()
     state.settings.theme = theme
@@ -5319,6 +5476,84 @@ test('structured todo cards stay readable across themes', async ({ page }) => {
   })
 
   await expect(completedItem).not.toHaveClass(/is-newly-completed/)
+})
+
+for (const theme of ['dark', 'light'] as const) {
+  test(`Codex sub-agent status panel stays readable in ${theme} theme`, async ({ page }) => {
+    await mockAppApis(page, { state: createCodexSubAgentStatusState(theme) })
+    await page.setViewportSize({ width: 760, height: 720 })
+    await page.goto(appUrl)
+
+    const panel = page.locator('.structured-agents-card.is-status').first()
+    const longPath = panel.locator('.structured-agent-path').first()
+
+    await expect(page.locator('html')).toHaveAttribute('data-theme', theme)
+    await expect(panel).toBeVisible()
+    await expect(panel).toContainText('Sub-agents running')
+    await expect(panel.locator('.structured-agent-status-entry')).toHaveCount(2)
+    await expect(panel.locator('.structured-agent-activity-line')).toHaveCount(4)
+    await expect(longPath).toContainText('/root/reviewer_with_a_deliberately_long_canonical_path')
+    await expectChildToFitWithinParent(panel, longPath, 'Codex sub-agent canonical path')
+
+    await expect(panel).toHaveScreenshot(`codex-sub-agent-status-${theme}.png`, {
+      animations: 'disabled',
+      caret: 'hide',
+    })
+  })
+
+  test(`Codex sub-agent empty status stays quiet in ${theme} theme`, async ({ page }) => {
+    await mockAppApis(page, { state: createCodexSubAgentStatusState(theme, true) })
+    await page.setViewportSize({ width: 760, height: 720 })
+    await page.goto(appUrl)
+
+    const panel = page.locator('.structured-agents-card.is-status').first()
+
+    await expect(panel).toBeVisible()
+    await expect(panel).toContainText('No sub-agents running.')
+    await expect(panel.locator('.structured-agent-status-entry')).toHaveCount(0)
+    await expect(panel).toHaveScreenshot(`codex-sub-agent-status-empty-${theme}.png`, {
+      animations: 'disabled',
+      caret: 'hide',
+    })
+  })
+}
+
+test('Codex sub-agent status preserves its hierarchy without horizontal overflow on a narrow viewport', async ({ page }) => {
+  await mockAppApis(page, { state: createCodexSubAgentStatusState('dark') })
+  await page.setViewportSize({ width: 420, height: 900 })
+  await page.goto(appUrl)
+
+  const activePane = page.locator('.pane-tab-panel.is-active').first()
+  const panel = activePane.locator('.structured-agents-card.is-status').first()
+  const longPath = panel.locator('.structured-agent-path').first()
+
+  await expect(panel).toBeVisible()
+  await expect(panel).toContainText('Sub-agents running')
+  await expect(panel.locator('.structured-agent-status-entry')).toHaveCount(2)
+  await expect(longPath).toContainText('/root/reviewer_with_a_deliberately_long_canonical_path')
+  await expectChildToFitWithinParent(panel, longPath, 'narrow Codex sub-agent canonical path')
+  await expectChildToFitWithinParent(activePane, panel, 'narrow Codex sub-agent status panel')
+})
+
+test('Codex /agent snapshots the live panel locally without launching another model turn', async ({ page }) => {
+  const chatRequests: string[] = []
+  page.on('request', (request) => {
+    if (request.url().includes('/api/chat')) chatRequests.push(request.url())
+  })
+
+  await mockAppApis(page, { state: createCodexSubAgentStatusState('dark') })
+  await page.goto(appUrl)
+
+  const activePane = page.locator('.pane-tab-panel.is-active').first()
+  const textarea = activePane.locator('.composer textarea')
+  await textarea.fill('/agent')
+  await activePane.getByRole('button', { name: 'Send message' }).click()
+
+  await expect(activePane.locator('.structured-agents-card.is-status')).toHaveCount(2)
+  await expect(activePane.locator('.structured-agents-card.is-status').last()).toContainText(
+    '/root/reviewer_with_a_deliberately_long_canonical_path',
+  )
+  expect(chatRequests).toEqual([])
 })
 
 test('changes summary cards keep file hierarchy readable across themes', async ({ page }) => {
@@ -5767,9 +6002,12 @@ for (const theme of ['dark', 'light'] as const) {
 
     const tabBar = page.locator('.pane-tab-bar').first()
     const activeStreamingTab = tabBar.locator('.pane-tab.is-active.is-streaming')
+    const activeStreamingDot = page.locator('.pane-tab-panel.is-active:not([hidden]) .streaming-dots span').first()
 
     await expect(activeStreamingTab).toContainText('Review')
     await expect(activeStreamingTab.locator('.pane-tab-status.is-streaming')).toHaveCount(0)
+    await expect(activeStreamingDot).toBeVisible()
+    expect(await readComputedValue(activeStreamingDot, 'animation-name')).toBe('bounce-dot')
     await expect(tabBar).toHaveScreenshot(`pane-tab-active-streaming-${theme}.png`, {
       animations: 'disabled',
       caret: 'hide',
@@ -6728,6 +6966,16 @@ for (const theme of ['dark', 'light'] as const) {
     await expect
       .poll(async () => await fileList.evaluate((node) => node.scrollTop))
       .toBeGreaterThan(listMetrics.scrollTop)
+
+    const snapshotScrollTop = await fileList.evaluate((node) => {
+      const target = Math.min(320, node.scrollHeight - node.clientHeight)
+      node.scrollTop = target
+      return target
+    })
+    await expect.poll(async () => await fileList.evaluate((node) => node.scrollTop)).toBe(snapshotScrollTop)
+    await page.evaluate(() => new Promise<void>((resolve) => {
+      requestAnimationFrame(() => requestAnimationFrame(() => resolve()))
+    }))
 
     await expect(gitCardShell).toHaveScreenshot(`git-tool-overflow-scroll-${theme}.png`, {
       animations: 'disabled',

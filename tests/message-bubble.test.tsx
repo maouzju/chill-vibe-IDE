@@ -101,6 +101,42 @@ test('MessageBubble surfaces the actual requested assistant model from metadata'
   assert.match(markup, /实际模型：claude-opus-4-8/)
 })
 
+test('MessageBubble keeps very long live assistant output on the cheap plain-text path until completion', () => {
+  const longStreamingContent = `live **markdown** ${'streaming output '.repeat(2_000)}`
+  const baseProps = {
+    language: 'en' as const,
+    message: {
+      id: 'assistant-long-stream-1',
+      role: 'assistant' as const,
+      content: longStreamingContent,
+      createdAt: '2026-07-23T10:00:00.000Z',
+    },
+    workspacePath: 'D:\\Git\\chill-vibe',
+    answeredOption: null,
+    onSelectAskUserOption: () => undefined,
+  }
+
+  const streamingMarkup = renderToStaticMarkup(
+    <MessageBubble {...baseProps} isStreamingTail />,
+  )
+  const completedMarkup = renderToStaticMarkup(<MessageBubble {...baseProps} />)
+  const shortStreamingMarkup = renderToStaticMarkup(
+    <MessageBubble
+      {...baseProps}
+      message={{ ...baseProps.message, content: 'live **markdown**' }}
+      isStreamingTail
+    />,
+  )
+
+  assert.match(streamingMarkup, /class="message-streaming-plain"/)
+  assert.match(streamingMarkup, /live \*\*markdown\*\*/)
+  assert.doesNotMatch(streamingMarkup, /<strong>markdown<\/strong>/)
+  assert.doesNotMatch(completedMarkup, /message-streaming-plain/)
+  assert.match(completedMarkup, /<strong>markdown<\/strong>/)
+  assert.doesNotMatch(shortStreamingMarkup, /message-streaming-plain/)
+  assert.match(shortStreamingMarkup, /<strong>markdown<\/strong>/)
+})
+
 test('MessageBubble hides fork actions on structured assistant messages', () => {
   const markup = renderToStaticMarkup(
     <MessageBubble
@@ -240,6 +276,13 @@ test('MessageBubble memo comparator ignores callback churn for unchanged message
     areMessageBubblePropsEqual(previousProps, {
       ...nextProps,
       isStickyToTop: true,
+    }),
+    false,
+  )
+  assert.equal(
+    areMessageBubblePropsEqual(previousProps, {
+      ...nextProps,
+      isStreamingTail: true,
     }),
     false,
   )

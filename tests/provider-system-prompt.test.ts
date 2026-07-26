@@ -1332,6 +1332,7 @@ const withFakeProviderCommand = async <T>(
   const originalPlaceholderTimeout = process.env.CHILL_VIBE_TRANSIENT_PLACEHOLDER_TIMEOUT_MS
   const originalLocalFirstByteTimeout = process.env.CHILL_VIBE_LOCAL_PROVIDER_FIRST_BYTE_TIMEOUT_MS
   const originalLocalStallTimeout = process.env.CHILL_VIBE_LOCAL_PROVIDER_STALL_TIMEOUT_MS
+  const originalLocalAbsoluteHardCap = process.env.CHILL_VIBE_LOCAL_PROVIDER_ABSOLUTE_HARD_CAP_MS
 
   await mkdir(binDir, { recursive: true })
   await mkdir(dataDir, { recursive: true })
@@ -1378,6 +1379,12 @@ const withFakeProviderCommand = async <T>(
       process.env.CHILL_VIBE_LOCAL_PROVIDER_STALL_TIMEOUT_MS = originalLocalStallTimeout
     } else {
       delete process.env.CHILL_VIBE_LOCAL_PROVIDER_STALL_TIMEOUT_MS
+    }
+
+    if (typeof originalLocalAbsoluteHardCap === 'string') {
+      process.env.CHILL_VIBE_LOCAL_PROVIDER_ABSOLUTE_HARD_CAP_MS = originalLocalAbsoluteHardCap
+    } else {
+      delete process.env.CHILL_VIBE_LOCAL_PROVIDER_ABSOLUTE_HARD_CAP_MS
     }
 
     setProviderRuntimeSettingsOverride(null)
@@ -2071,6 +2078,58 @@ const buildFakeCodexDuplicateCompactionScript = () =>
     "    reply({ method: 'turn/completed', params: {} })",
     '  }',
     '})',
+  ].join('\n')
+
+const buildFakeCodexSubAgentStatusScript = () =>
+  [
+    "const readline = require('node:readline')",
+    "const reply = (message) => process.stdout.write(`${JSON.stringify(message)}\\n`)",
+    "const rl = readline.createInterface({ input: process.stdin, crlfDelay: Infinity })",
+    "rl.on('line', (line) => {",
+    "  if (!line.trim()) return",
+    "  const request = JSON.parse(line)",
+    "  if (request.method === 'initialize' && request.id) { reply({ id: request.id, result: {} }); return }",
+    "  if (request.method === 'thread/start' && request.id) {",
+    "    reply({ id: request.id, result: { thread: { id: 'thread-root', parentThreadId: null, status: { type: 'active' } } } })",
+    "    return",
+    "  }",
+    "  if (request.method === 'turn/start' && request.id) {",
+    "    reply({ id: request.id, result: { turn: { id: 'turn-root', status: 'inProgress', items: [] } } })",
+    "    reply({ method: 'thread/started', params: { thread: { id: 'thread-child', parentThreadId: 'thread-root', agentNickname: 'Robie', agentRole: 'explorer', status: { type: 'active', activeFlags: [] } } } })",
+    "    reply({ method: 'item/completed', params: { threadId: 'thread-root', turnId: 'turn-root', item: { id: 'spawn-child', type: 'subAgentActivity', kind: 'started', agentThreadId: 'thread-child', agentPath: '/root/reviewer' } } })",
+    "    reply({ method: 'item/agentMessage/delta', params: { threadId: 'thread-child', turnId: 'turn-child', itemId: 'child-message', delta: 'CHILD DELTA MUST NOT LEAK' } })",
+    "    reply({ method: 'item/started', params: { threadId: 'thread-child', turnId: 'turn-child', item: { id: 'child-command', type: 'commandExecution', command: 'pnpm test', aggregatedOutput: 'CHILD OUTPUT MUST NOT LEAK' } } })",
+    "    reply({ method: 'item/completed', params: { threadId: 'thread-root', turnId: 'turn-root', item: { id: 'parent-message', type: 'agentMessage', text: 'Parent answer' } } })",
+    "    reply({ method: 'turn/completed', params: { threadId: 'thread-root', turn: { id: 'turn-root', status: 'completed', items: [] } } })",
+    "    setTimeout(() => {",
+    "      reply({ method: 'item/completed', params: { threadId: 'thread-child', turnId: 'turn-child', item: { id: 'child-command', type: 'commandExecution', command: 'pnpm test', aggregatedOutput: 'CHILD OUTPUT MUST NOT LEAK', exitCode: 0 } } })",
+    "      reply({ method: 'turn/completed', params: { threadId: 'thread-child', turn: { id: 'turn-child', status: 'completed', items: [] } } })",
+    "    }, 25)",
+    "  }",
+    "})",
+  ].join('\n')
+
+const buildFakeCodexSilentSubAgentAfterRootCompletionScript = () =>
+  [
+    "const readline = require('node:readline')",
+    "const reply = (message) => process.stdout.write(`${JSON.stringify(message)}\\n`)",
+    "const rl = readline.createInterface({ input: process.stdin, crlfDelay: Infinity })",
+    "rl.on('line', (line) => {",
+    "  if (!line.trim()) return",
+    "  const request = JSON.parse(line)",
+    "  if (request.method === 'initialize' && request.id) { reply({ id: request.id, result: {} }); return }",
+    "  if (request.method === 'thread/start' && request.id) {",
+    "    reply({ id: request.id, result: { thread: { id: 'thread-root', parentThreadId: null, status: { type: 'active' } } } })",
+    "    return",
+    "  }",
+    "  if (request.method === 'turn/start' && request.id) {",
+    "    reply({ id: request.id, result: { turn: { id: 'turn-root', status: 'inProgress', items: [] } } })",
+    "    reply({ method: 'thread/started', params: { thread: { id: 'thread-child', parentThreadId: 'thread-root', status: { type: 'active' } } } })",
+    "    reply({ method: 'item/completed', params: { threadId: 'thread-root', item: { id: 'spawn-child', type: 'subAgentActivity', kind: 'started', agentThreadId: 'thread-child', agentPath: '/root/worker' } } })",
+    "    reply({ method: 'turn/completed', params: { threadId: 'thread-root', turn: { id: 'turn-root', status: 'completed', items: [] } } })",
+    "    setInterval(() => {}, 1000)",
+    "  }",
+    "})",
   ].join('\n')
 
 const buildFakeCodexLegacyAppServerScript = (capturePath: string) =>
@@ -4198,6 +4257,124 @@ test('codex app-server collapses duplicate compaction notifications into one act
     },
     { kind: 'done' },
   ])
+})
+
+test('codex app-server isolates child output and waits for active sub-agents after root completion', async () => {
+  const events = await withFakeProviderCommand(
+    'codex',
+    buildFakeCodexSubAgentStatusScript(),
+    async (workspacePath) =>
+      captureProviderEvents(
+        createRequest({
+          provider: 'codex',
+          language: 'en',
+          workspacePath,
+        }),
+      ),
+  )
+
+  const deltaText = events
+    .filter((event): event is { kind: 'delta'; content: string; itemId?: string } => event.kind === 'delta')
+    .map((event) => event.content)
+    .join('')
+  assert.doesNotMatch(deltaText, /CHILD DELTA MUST NOT LEAK/)
+  assert.doesNotMatch(JSON.stringify(events), /CHILD OUTPUT MUST NOT LEAK/)
+
+  const parentMessage = events.find(
+    (event) => event.kind === 'assistant_message' && event.itemId === 'parent-message',
+  )
+  assert.deepEqual(parentMessage, {
+    kind: 'assistant_message',
+    itemId: 'parent-message',
+    content: 'Parent answer',
+  })
+
+  type CapturedEvent = (typeof events)[number]
+  type AgentStatusEvent = Extract<CapturedEvent, { kind: 'activity' }> & {
+    activity: Extract<StreamActivity, { kind: 'agents' }>
+  }
+  const isAgentStatusEvent = (event: CapturedEvent): event is AgentStatusEvent =>
+      event.kind === 'activity' &&
+      event.activity.kind === 'agents' &&
+      event.activity.view === 'status'
+  const statusActivities = events.filter(isAgentStatusEvent)
+  assert.ok(statusActivities.length >= 2)
+  assert.ok(statusActivities.some(
+    (event) =>
+      event.kind === 'activity' &&
+      event.activity.kind === 'agents' &&
+      event.activity.agents.some(
+        (agent) => agent.path === '/root/reviewer' && agent.activity?.includes('$ pnpm test'),
+      ),
+  ))
+  assert.deepEqual(statusActivities.at(-1)?.activity.agents, [])
+  assert.equal(events.at(-1)?.kind, 'done')
+})
+
+test('codex app-server keeps the stall watchdog armed after root completion with a silent sub-agent', async () => {
+  const originalLocalAbsoluteHardCap = process.env.CHILL_VIBE_LOCAL_PROVIDER_ABSOLUTE_HARD_CAP_MS
+  process.env.CHILL_VIBE_LOCAL_PROVIDER_ABSOLUTE_HARD_CAP_MS = '200'
+
+  try {
+    const outcome = await withFakeProviderCommand(
+      'codex',
+      buildFakeCodexSilentSubAgentAfterRootCompletionScript(),
+      async (workspacePath) =>
+        captureProviderRecoveryFailureWithin(
+          createRequest({ provider: 'codex', language: 'en', workspacePath }),
+          1000,
+        ),
+    )
+
+    assert.deepEqual(outcome, {
+      kind: 'error',
+      message: 'Codex stalled after emitting stream output.',
+      recovery: {
+        recoverable: true,
+        recoveryMode: 'resume-session',
+      },
+    })
+  } finally {
+    if (typeof originalLocalAbsoluteHardCap === 'string') {
+      process.env.CHILL_VIBE_LOCAL_PROVIDER_ABSOLUTE_HARD_CAP_MS = originalLocalAbsoluteHardCap
+    } else {
+      delete process.env.CHILL_VIBE_LOCAL_PROVIDER_ABSOLUTE_HARD_CAP_MS
+    }
+
+    if (typeof originalLocalAbsoluteHardCap === 'string') {
+      process.env.CHILL_VIBE_LOCAL_PROVIDER_ABSOLUTE_HARD_CAP_MS = originalLocalAbsoluteHardCap
+    } else {
+      delete process.env.CHILL_VIBE_LOCAL_PROVIDER_ABSOLUTE_HARD_CAP_MS
+    }
+  }
+})
+
+test('codex app-server never replaces the root session with a child thread id', async () => {
+  const sessions: string[] = []
+
+  await withFakeProviderCommand(
+    'codex',
+    buildFakeCodexSubAgentStatusScript(),
+    async (workspacePath) =>
+      new Promise<void>((resolve, reject) => {
+        void launchProviderRun(
+          createRequest({ provider: 'codex', language: 'en', workspacePath }),
+          {
+            onSession: (sessionId) => sessions.push(sessionId),
+            onDelta: () => undefined,
+            onLog: () => undefined,
+            onAssistantMessage: () => undefined,
+            onActivity: () => undefined,
+            onDone: resolve,
+            onError: (message) => reject(new Error(message)),
+          },
+        ).then((child) => {
+          if (!child) reject(new Error('Expected fake provider command to launch.'))
+        }).catch(reject)
+      }),
+  )
+
+  assert.deepEqual(sessions, ['thread-root'])
 })
 
 test('codex app-server omits unsupported experimental history fields on thread/start', async () => {

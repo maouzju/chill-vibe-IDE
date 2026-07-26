@@ -47,6 +47,77 @@ describe('state-store persistence', () => {
     assert.ok(loaded.columns.length > 0)
   })
 
+  it('round-trips the last closed workspace tab and pane snapshot through a sidecar', async () => {
+    const { saveClosedWorkspaceSnapshot, loadClosedWorkspaceSnapshot } = await import('../server/state-store.ts')
+    const state = createDefaultState('D:/closed-workspace')
+    const column = state.columns[0]!
+    const firstCard = Object.values(column.cards)[0]!
+    const secondCard = createCard('Second restored tab', 420, 'codex', DEFAULT_CODEX_MODEL)
+    secondCard.draft = 'keep this draft'
+    column.cards[secondCard.id] = secondCard
+    const leftPane = createPane([firstCard.id], firstCard.id, 'closed-left-pane')
+    const rightPane = createPane([secondCard.id], secondCard.id, 'closed-right-pane')
+    column.layout = {
+      type: 'split',
+      id: 'closed-root-split',
+      direction: 'horizontal',
+      children: [leftPane, rightPane],
+      ratios: [0.35, 0.65],
+    }
+
+    await saveClosedWorkspaceSnapshot({
+      closeId: 'closed-batch-1',
+      closedAt: '2026-07-25T10:00:00.000Z',
+      column,
+    })
+
+    const loaded = await loadClosedWorkspaceSnapshot({ workspacePath: 'd:/CLOSED-workspace' })
+    assert.equal(loaded.snapshot?.closeId, 'closed-batch-1')
+    assert.equal(loaded.snapshot?.column.workspacePath, 'D:/closed-workspace')
+    assert.equal(loaded.snapshot?.column.cards[secondCard.id]?.draft, 'keep this draft')
+    assert.deepEqual(loaded.snapshot?.column.layout, column.layout)
+    assert.deepEqual(loaded.legacyEntryIds, [])
+  })
+
+  it('falls back to the newest tightly grouped legacy history entries when no closed snapshot exists', async () => {
+    const { saveState, loadClosedWorkspaceSnapshot } = await import('../server/state-store.ts')
+    const state = createDefaultState('D:/legacy-closed-workspace')
+    state.sessionHistory = [
+      {
+        id: 'legacy-close-2',
+        title: 'Second closed tab',
+        provider: 'codex',
+        model: DEFAULT_CODEX_MODEL,
+        workspacePath: 'D:/legacy-closed-workspace',
+        archivedAt: '2026-07-25T10:00:00.100Z',
+        messages: [{ id: 'm2', role: 'assistant', content: 'two', createdAt: '2026-07-25T09:00:00.000Z' }],
+      },
+      {
+        id: 'legacy-close-1',
+        title: 'First closed tab',
+        provider: 'codex',
+        model: DEFAULT_CODEX_MODEL,
+        workspacePath: 'D:/legacy-closed-workspace',
+        archivedAt: '2026-07-25T10:00:00.000Z',
+        messages: [{ id: 'm1', role: 'assistant', content: 'one', createdAt: '2026-07-25T09:00:00.000Z' }],
+      },
+      {
+        id: 'old-manual-history',
+        title: 'Older manual close',
+        provider: 'codex',
+        model: DEFAULT_CODEX_MODEL,
+        workspacePath: 'D:/legacy-closed-workspace',
+        archivedAt: '2026-07-25T08:00:00.000Z',
+        messages: [{ id: 'old', role: 'assistant', content: 'old', createdAt: '2026-07-25T07:00:00.000Z' }],
+      },
+    ]
+    await saveState(state)
+
+    const loaded = await loadClosedWorkspaceSnapshot({ workspacePath: 'D:/legacy-closed-workspace' })
+    assert.equal(loaded.snapshot, null)
+    assert.deepEqual(loaded.legacyEntryIds, ['legacy-close-2', 'legacy-close-1'])
+  })
+
   it('loadState restores deferred sends with attachment metadata after an IDE restart', async () => {
     const state = createDefaultState('D:/queued-send-restart')
     const card = getFirstCard(state)
@@ -114,6 +185,42 @@ describe('state-store persistence', () => {
       attachments: [],
     }])
     assert.deepEqual(loadedCards[legacyCard.id]!.queuedSends, [])
+  })
+
+  it('loadState restores and normalizes persisted wake timer batches', async () => {
+    const state = createDefaultState('D:/wake-timer-normalization')
+    const card = getFirstCard(state)
+    assert.ok(card)
+
+    const rawState = structuredClone(state) as unknown as Record<string, unknown>
+    const rawColumns = rawState.columns as Array<Record<string, unknown>>
+    const rawCards = rawColumns[0]?.cards as Record<string, Record<string, unknown>>
+    const rawCard = rawCards[card.id]!
+    rawCard.wakeTimerActive = true
+    rawCard.wakeTimerMode = 'duration'
+    rawCard.wakeTimerDurationMinutes = 99999
+    rawCard.wakeTimerArmedAt = '2026-07-25T00:00:00.000Z'
+    rawCard.wakeTimerWakeAt = '2026-07-25T00:30:00.000Z'
+    rawCard.wakeTimerPendingTargetIds = ['agent-1', '', 'agent-1', 'agent-2']
+    rawCard.wakeTimerQueuedSends = [
+      { id: '', prompt: 'drop missing id', attachments: [] },
+      { id: 'wake-1', prompt: 'restore me', attachments: [] },
+    ]
+    await writeFile(path.join(tmpDir, 'state.json'), JSON.stringify(rawState, null, 2), 'utf8')
+
+    const { loadState } = await import('../server/state-store.ts')
+    const loaded = await loadState()
+    const restored = loaded.columns[0]?.cards[card.id]
+
+    assert.equal(restored?.wakeTimerActive, true)
+    assert.equal(restored?.wakeTimerMode, 'duration')
+    assert.equal(restored?.wakeTimerDurationMinutes, 10080)
+    assert.equal(restored?.wakeTimerArmedAt, '2026-07-25T00:00:00.000Z')
+    assert.equal(restored?.wakeTimerWakeAt, '2026-07-25T00:30:00.000Z')
+    assert.deepEqual(restored?.wakeTimerPendingTargetIds, ['agent-1', 'agent-2'])
+    assert.deepEqual(restored?.wakeTimerQueuedSends, [
+      { id: 'wake-1', prompt: 'restore me', attachments: [] },
+    ])
   })
 
   it('loadState returns defaults when file is missing', async () => {
@@ -2482,12 +2589,23 @@ describe('state-store persistence', () => {
   })
 
   it('explicit reset persists even when replacing a content-rich state', async () => {
-    const { saveState, resetState, loadState } = await import('../server/state-store.ts')
+    const {
+      saveState,
+      resetState,
+      loadState,
+      saveClosedWorkspaceSnapshot,
+      loadClosedWorkspaceSnapshot,
+    } = await import('../server/state-store.ts')
     const rich = createDefaultState('D:/rich')
     const card = getFirstCard(rich)
     assert.ok(card)
     card.messages = [{ id: 'important', role: 'user', content: 'important content'.repeat(2_000), createdAt: new Date().toISOString() }]
     await saveState(rich)
+    await saveClosedWorkspaceSnapshot({
+      closeId: 'reset-close-id',
+      closedAt: '2026-07-25T10:00:00.000Z',
+      column: rich.columns[0]!,
+    })
 
     await resetState()
     const persisted = JSON.parse(
@@ -2495,6 +2613,10 @@ describe('state-store persistence', () => {
     ) as ReturnType<typeof createDefaultState>
     assert.equal(persisted.columns.flatMap((column) => Object.values(column.cards)).flatMap((card) => card.messages).length, 0)
     assert.equal((await loadState()).columns.flatMap((column) => Object.values(column.cards)).flatMap((item) => item.messages).length, 0)
+    assert.deepEqual(
+      await loadClosedWorkspaceSnapshot({ workspacePath: 'D:/rich' }),
+      { snapshot: null, legacyEntryIds: [] },
+    )
   })
 
   it('keeps the previous sidecar intact when an atomic replacement fails', async () => {

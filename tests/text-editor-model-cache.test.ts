@@ -7,6 +7,7 @@ import {
   evictTextEditorModel,
   getTextEditorModelCacheKey,
   peekCachedTextEditorModel,
+  syncClaimedTextEditorModelContent,
   takeCachedTextEditorModel,
   TEXT_EDITOR_MODEL_CACHE_LIMIT,
 } from '../src/components/text-editor-model-cache.ts'
@@ -51,6 +52,25 @@ test('take removes the entry so a second consumer cannot share the model', () =>
   assert.equal(takeCachedTextEditorModel(key), entry)
   assert.equal(takeCachedTextEditorModel(key), undefined)
   assert.equal(entry.model.isDisposed(), false)
+})
+
+test('claimed cached model adopts a disk refresh that finished while Monaco was loading', () => {
+  let value = 'stale editor buffer'
+  const writes: string[] = []
+  const model = {
+    getValue: () => value,
+    setValue(nextValue: string) {
+      writes.push(nextValue)
+      value = nextValue
+    },
+  }
+
+  assert.equal(syncClaimedTextEditorModelContent(model, 'agent updated disk content'), true)
+  assert.equal(value, 'agent updated disk content')
+  assert.deepEqual(writes, ['agent updated disk content'])
+
+  assert.equal(syncClaimedTextEditorModelContent(model, 'agent updated disk content'), false)
+  assert.deepEqual(writes, ['agent updated disk content'])
 })
 
 test('peek returns the entry without removing it', () => {

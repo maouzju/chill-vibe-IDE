@@ -6,6 +6,7 @@ import test from 'node:test'
 import {
   chatStreamStressCardCount,
   chatStreamStressInitialStructuredItemCount,
+  chatStreamStressSerializedStateMinBytes,
   createChatStreamStressState,
   getPercentile,
 } from './chat-stream-performance-fixture.ts'
@@ -22,6 +23,10 @@ test('chat stream stress fixture matches the heavy multi-agent and fourteen-tab 
   )
 
   assert.equal(state.columns.length, chatStreamStressCardCount)
+  assert.ok(
+    Buffer.byteLength(JSON.stringify(state), 'utf8') >= chatStreamStressSerializedStateMinBytes,
+    'heavy-use fixture should include at least 4MB of synthetic persisted history',
+  )
   assert.equal(
     state.columns.reduce(
       (total, column) => total + (column.layout.type === 'pane' ? column.layout.tabs.length : 0),

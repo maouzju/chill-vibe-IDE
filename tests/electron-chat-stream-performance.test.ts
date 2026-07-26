@@ -13,6 +13,7 @@ import {
   chatStreamStressConcurrentStreamCount,
   chatStreamStressHeartbeatIntervalMs,
   chatStreamStressInteractionIntervalMs,
+  chatStreamStressNewTabIterationCount,
   chatStreamStressStreamsPerColumn,
   chatStreamStressTabsPerPane,
   chatStreamStressVisibleStreamColumnCount,
@@ -35,6 +36,14 @@ const durationMs = Math.max(
   Number.parseInt(process.env.CHILL_VIBE_CHAT_STRESS_DURATION_MS ?? '300000', 10),
 )
 const keepStressArtifacts = process.env.CHILL_VIBE_KEEP_CHAT_STRESS_ARTIFACTS === '1'
+const newTabIterationCount = Math.max(
+  1,
+  Number.parseInt(
+    process.env.CHILL_VIBE_CHAT_STRESS_NEW_TAB_ITERATIONS ??
+      String(chatStreamStressNewTabIterationCount),
+    10,
+  ),
+)
 const tempRoots: string[] = []
 
 type StressMetrics = {
@@ -51,6 +60,14 @@ type StressMetrics = {
   focusSampleCount: number
   queuedSendSampleCount: number
   tabSwitchSampleCount: number
+  newTabReadyP95Ms: number
+  newTabReadyMaxMs: number
+  newTabFirstInputP95Ms: number
+  newTabFirstInputMaxMs: number
+  newTabSampleCount: number
+  newTabStallOver2sCount: number
+  newTabFocusFailureCount: number
+  newTabDraftRoundTripFailureCount: number
   mountedStructuredItemCount: number
   maxMountedItemsPerGroup: number
   mountedTabCount: number
@@ -62,6 +79,16 @@ type StressMetrics = {
   responsiveCount: number
   rendererGoneCount: number
   mainWorkingSetKb: number
+}
+
+type NewTabInteractionSample = {
+  cardId: string
+  draft: string
+  readyMs: number
+  inputMs: number
+  focusFailed: boolean
+  draftRoundTripFailed: boolean
+  focusFailureDiagnostics: string | null
 }
 
 const createFakeCodexBin = async () => {
@@ -214,17 +241,44 @@ const activatePaneTab = async (page: Page, columnIndex: number, title: string) =
   }, { targetColumnIndex: columnIndex, targetTitle: title })
   assert.equal(activated, true, `missing pane tab ${title} in column ${columnIndex + 1}`)
 
-  await page.waitForFunction(
-    ({ targetColumnIndex, targetTitle }) => {
+  try {
+    await page.waitForFunction(
+      ({ targetColumnIndex, targetTitle }) => {
+        const targetColumn = document.querySelectorAll('.workspace-column').item(targetColumnIndex)
+        return (
+          targetColumn?.querySelector('.pane-tab.is-active')?.textContent?.trim() === targetTitle &&
+          targetColumn.querySelector('.pane-tab-panel.is-active textarea.control.textarea') !== null
+        )
+      },
+      { targetColumnIndex: columnIndex, targetTitle: title },
+      { timeout: 10_000 },
+    )
+  } catch (error) {
+    const diagnostics = await page.evaluate((targetColumnIndex) => {
       const targetColumn = document.querySelectorAll('.workspace-column').item(targetColumnIndex)
-      return (
-        targetColumn?.querySelector('.pane-tab.is-active')?.textContent?.trim() === targetTitle &&
-        targetColumn.querySelector('.pane-tab-panel.is-active textarea.control.textarea') !== null
-      )
-    },
-    { targetColumnIndex: columnIndex, targetTitle: title },
-    { timeout: 10_000 },
-  )
+      const probe = (window as typeof window & {
+        __chillVibeChatStressProbe?: { maxGapMs: number; maxFrameGapMs: number }
+      }).__chillVibeChatStressProbe
+      return {
+        activeTitle: targetColumn?.querySelector('.pane-tab.is-active')?.textContent?.trim() ?? null,
+        activeTabId:
+          targetColumn?.querySelector('.pane-tab.is-active')?.getAttribute('data-pane-tab-id') ?? null,
+        activePanelCount: targetColumn?.querySelectorAll('.pane-tab-panel.is-active').length ?? 0,
+        activeTextareaCount:
+          targetColumn?.querySelectorAll(
+            '.pane-tab-panel.is-active textarea.control.textarea',
+          ).length ?? 0,
+        tabCount: targetColumn?.querySelectorAll('.pane-tab').length ?? 0,
+        streamingTabCount: document.querySelectorAll('.pane-tab.is-streaming').length,
+        heartbeatMaxGapMs: probe?.maxGapMs ?? null,
+        frameMaxGapMs: probe?.maxFrameGapMs ?? null,
+      }
+    }, columnIndex).catch(() => null)
+    throw new Error(
+      `pane tab activation timed out for column ${columnIndex + 1}, title ${title}: ${JSON.stringify(diagnostics)}`,
+      { cause: error },
+    )
+  }
 }
 
 const sendActiveStreamPrompt = async (page: Page, columnIndex: number, prompt: string) => {
@@ -234,19 +288,49 @@ const sendActiveStreamPrompt = async (page: Page, columnIndex: number, prompt: s
     .locator('.pane-tab-panel.is-active textarea.control.textarea')
   await textarea.fill(prompt)
   await textarea.press('Enter')
-  await page.waitForFunction(
-    (targetColumnIndex) => {
+  try {
+    await page.waitForFunction(
+      (targetColumnIndex) => {
+        const targetColumn = document.querySelectorAll('.workspace-column').item(targetColumnIndex)
+        return (
+          targetColumn?.querySelector('.pane-tab.is-active')?.classList.contains('is-streaming') === true &&
+          targetColumn.querySelector<HTMLTextAreaElement>(
+            '.pane-tab-panel.is-active textarea.control.textarea',
+          )?.value === ''
+        )
+      },
+      columnIndex,
+      { timeout: 30_000 },
+    )
+  } catch (error) {
+    const diagnostics = await page.evaluate((targetColumnIndex) => {
       const targetColumn = document.querySelectorAll('.workspace-column').item(targetColumnIndex)
-      return (
-        targetColumn?.querySelector('.pane-tab.is-active')?.classList.contains('is-streaming') === true &&
-        targetColumn.querySelector<HTMLTextAreaElement>(
-          '.pane-tab-panel.is-active textarea.control.textarea',
-        )?.value === ''
-      )
-    },
-    columnIndex,
-    { timeout: 10_000 },
-  )
+      const activePanel = targetColumn?.querySelector('.pane-tab-panel.is-active')
+      const probe = (window as typeof window & {
+        __chillVibeChatStressProbe?: { maxGapMs: number; maxFrameGapMs: number }
+      }).__chillVibeChatStressProbe
+      return {
+        activeTitle: targetColumn?.querySelector('.pane-tab.is-active')?.textContent?.trim() ?? null,
+        activeTabId:
+          targetColumn?.querySelector('.pane-tab.is-active')?.getAttribute('data-pane-tab-id') ?? null,
+        activeTabClass: targetColumn?.querySelector('.pane-tab.is-active')?.className ?? null,
+        textareaValue:
+          activePanel?.querySelector<HTMLTextAreaElement>('textarea.control.textarea')?.value ?? null,
+        textareaFocused:
+          document.activeElement ===
+          activePanel?.querySelector<HTMLTextAreaElement>('textarea.control.textarea'),
+        messageCount: activePanel?.querySelectorAll('.message').length ?? 0,
+        composerError: activePanel?.querySelector('.composer-attachment-note')?.textContent?.trim() ?? null,
+        streamingTabCount: document.querySelectorAll('.pane-tab.is-streaming').length,
+        heartbeatMaxGapMs: probe?.maxGapMs ?? null,
+        frameMaxGapMs: probe?.maxFrameGapMs ?? null,
+      }
+    }, columnIndex).catch(() => null)
+    throw new Error(
+      `sending stress prompt timed out for column ${columnIndex + 1}: ${JSON.stringify(diagnostics)}`,
+      { cause: error },
+    )
+  }
 }
 
 const waitForActiveLiveStressOutput = async (page: Page, columnIndex: number) => {
@@ -560,6 +644,220 @@ const runInteractions = async (page: Page) => {
   return { focusDurations, inputDurations, queuedSendDurations, tabSwitchDurations }
 }
 
+const runNewTabFirstInputInteractions = async (page: Page) => {
+  const samples: NewTabInteractionSample[] = []
+
+  for (let iteration = 0; iteration < newTabIterationCount; iteration += 1) {
+    const columnIndex = iteration % chatStreamStressColumnCount
+    const column = page.locator('.workspace-column').nth(columnIndex)
+    const baselineTabCount = await column.locator('.pane-tab').count()
+    assert.equal(
+      baselineTabCount,
+      chatStreamStressTabsPerPane,
+      `new-tab probe ${iteration + 1} did not start from the stable tab baseline`,
+    )
+    const expectedTabCount = baselineTabCount + 1
+
+    await page.evaluate((targetColumnIndex) => {
+      const target = window as typeof window & { __chillVibeNewTabClickAt?: number }
+      target.__chillVibeNewTabClickAt = 0
+      const addButton = document
+        .querySelectorAll('.workspace-column')
+        .item(targetColumnIndex)
+        ?.querySelector<HTMLButtonElement>('.pane-add-tab')
+      addButton?.addEventListener('click', () => {
+        target.__chillVibeNewTabClickAt = performance.now()
+      }, { capture: true, once: true })
+    }, columnIndex)
+
+    await column.locator('.pane-add-tab').click({ timeout: 10_000 })
+
+    let focusFailed = false
+    let focusFailureDiagnostics: string | null = null
+    let readyMs = 5_000
+    try {
+      const readyHandle = await page.waitForFunction(
+        ({ targetColumnIndex, targetTabCount }) => {
+          const target = window as typeof window & { __chillVibeNewTabClickAt?: number }
+          const targetColumn = document.querySelectorAll('.workspace-column').item(targetColumnIndex)
+          const textarea = targetColumn?.querySelector<HTMLTextAreaElement>(
+            '.pane-tab-panel.is-active textarea.control.textarea',
+          )
+          const ready = (
+            targetColumn?.querySelectorAll('.pane-tab').length === targetTabCount &&
+            textarea !== null &&
+            document.activeElement === textarea
+          )
+          return ready && (target.__chillVibeNewTabClickAt ?? 0) > 0
+            ? performance.now() - target.__chillVibeNewTabClickAt!
+            : false
+        },
+        { targetColumnIndex: columnIndex, targetTabCount: expectedTabCount },
+        { timeout: 5_000 },
+      )
+      readyMs = Number(await readyHandle.jsonValue())
+      await readyHandle.dispose()
+    } catch {
+      focusFailed = true
+      focusFailureDiagnostics = await page.evaluate((targetColumnIndex) => {
+        const target = window as typeof window & { __chillVibeNewTabClickAt?: number }
+        const targetColumn = document.querySelectorAll('.workspace-column').item(targetColumnIndex)
+        const textarea = targetColumn?.querySelector<HTMLTextAreaElement>(
+          '.pane-tab-panel.is-active textarea.control.textarea',
+        )
+        const activeElement = document.activeElement
+        return JSON.stringify({
+          clickAt: target.__chillVibeNewTabClickAt ?? null,
+          activeElement:
+            activeElement instanceof HTMLElement
+              ? `${activeElement.tagName.toLowerCase()}.${activeElement.className}`
+              : null,
+          activeTabId:
+            targetColumn?.querySelector('.pane-tab.is-active')?.getAttribute('data-pane-tab-id') ??
+            null,
+          tabCount: targetColumn?.querySelectorAll('.pane-tab').length ?? 0,
+          textareaPresent: textarea !== null,
+          textareaDisabled: textarea?.disabled ?? null,
+          focusExhaustedCount:
+            textarea?.closest<HTMLElement>('.card-shell')?.dataset.composerFocusExhaustedCount ??
+            null,
+        })
+      }, columnIndex)
+    }
+
+    const textarea = column.locator('.pane-tab-panel.is-active textarea.control.textarea')
+    if (focusFailed) {
+      await textarea.click({ timeout: 5_000 })
+    }
+
+    const draft = `新建会话首次输入 ${iteration + 1}：复杂面板保持响应`
+    await page.evaluate((targetColumnIndex) => {
+      const target = window as typeof window & {
+        __chillVibeNewTabInputStartedAt?: number
+        __chillVibeNewTabInputDurationMs?: number
+      }
+      target.__chillVibeNewTabInputStartedAt = performance.now()
+      target.__chillVibeNewTabInputDurationMs = 0
+      const textarea = document
+        .querySelectorAll('.workspace-column')
+        .item(targetColumnIndex)
+        ?.querySelector<HTMLTextAreaElement>('.pane-tab-panel.is-active textarea.control.textarea')
+      textarea?.addEventListener('input', () => {
+        target.__chillVibeNewTabInputDurationMs =
+          performance.now() - target.__chillVibeNewTabInputStartedAt!
+      }, { capture: true, once: true })
+    }, columnIndex)
+    await page.keyboard.insertText(draft)
+    const inputHandle = await page.waitForFunction(
+      ({ targetColumnIndex, expectedDraft }) => {
+        const target = window as typeof window & { __chillVibeNewTabInputDurationMs?: number }
+        const targetColumn = document.querySelectorAll('.workspace-column').item(targetColumnIndex)
+        const valueMatches = targetColumn?.querySelector<HTMLTextAreaElement>(
+          '.pane-tab-panel.is-active textarea.control.textarea',
+        )?.value === expectedDraft
+        return valueMatches && (target.__chillVibeNewTabInputDurationMs ?? 0) > 0
+          ? target.__chillVibeNewTabInputDurationMs!
+          : false
+      },
+      { targetColumnIndex: columnIndex, expectedDraft: draft },
+      { timeout: 5_000 },
+    )
+    const inputMs = Number(await inputHandle.jsonValue())
+    await inputHandle.dispose()
+    const cardId = await column.locator('.pane-tab.is-active').getAttribute('data-pane-tab-id')
+    assert.ok(cardId, `new tab ${iteration + 1} did not expose its card id`)
+
+    await activatePaneTab(
+      page,
+      columnIndex,
+      getChatStreamStressForegroundTitle(columnIndex + 1),
+    )
+    const reactivated = await page.evaluate(({ targetColumnIndex, targetCardId }) => {
+      const targetColumn = document.querySelectorAll('.workspace-column').item(targetColumnIndex)
+      const tab = targetColumn?.querySelector<HTMLButtonElement>(
+        `.pane-tab[data-pane-tab-id="${targetCardId}"]`,
+      )
+      tab?.click()
+      return Boolean(tab)
+    }, { targetColumnIndex: columnIndex, targetCardId: cardId })
+    assert.equal(reactivated, true, `new tab ${cardId} could not be reactivated`)
+
+    let draftRoundTripFailed = false
+    try {
+      await page.waitForFunction(
+        ({ targetColumnIndex, targetCardId, expectedDraft }) => {
+          const targetColumn = document.querySelectorAll('.workspace-column').item(targetColumnIndex)
+          return (
+            targetColumn?.querySelector('.pane-tab.is-active')?.getAttribute('data-pane-tab-id') ===
+              targetCardId &&
+            targetColumn.querySelector<HTMLTextAreaElement>(
+              '.pane-tab-panel.is-active textarea.control.textarea',
+            )?.value === expectedDraft
+          )
+        },
+        { targetColumnIndex: columnIndex, targetCardId: cardId, expectedDraft: draft },
+        { timeout: 5_000 },
+      )
+    } catch {
+      draftRoundTripFailed = true
+    }
+
+    samples.push({
+      cardId,
+      draft,
+      readyMs,
+      inputMs,
+      focusFailed,
+      draftRoundTripFailed,
+      focusFailureDiagnostics,
+    })
+
+    await closeNewTabProbe(page, columnIndex, cardId, baselineTabCount)
+    await activatePaneTab(page, columnIndex, getChatStreamStressForegroundTitle(columnIndex + 1))
+    await page.waitForFunction(
+      (expectedStreamCount) =>
+        document.querySelectorAll('.pane-tab.is-streaming').length === expectedStreamCount,
+      chatStreamStressConcurrentStreamCount,
+      { timeout: 5_000 },
+    )
+  }
+
+  return samples
+}
+
+const closeNewTabProbe = async (
+  page: Page,
+  columnIndex: number,
+  cardId: string,
+  expectedTabCount: number,
+) => {
+  const column = page.locator('.workspace-column').nth(columnIndex)
+  const textarea = column.locator('.pane-tab-panel.is-active textarea.control.textarea')
+  await textarea.fill('')
+  await page.waitForFunction(
+    (targetColumnIndex) =>
+      document.querySelectorAll('.workspace-column').item(targetColumnIndex)
+        ?.querySelector<HTMLTextAreaElement>('.pane-tab-panel.is-active textarea.control.textarea')
+        ?.value === '',
+    columnIndex,
+    { timeout: 5_000 },
+  )
+  await column
+    .locator(`.pane-tab[data-pane-tab-id="${cardId}"] .pane-tab-close`)
+    .click({ timeout: 5_000 })
+  await page.waitForFunction(
+    ({ targetColumnIndex, targetCardId, targetTabCount }) => {
+      const targetColumn = document.querySelectorAll('.workspace-column').item(targetColumnIndex)
+      return (
+        targetColumn?.querySelectorAll('.pane-tab').length === targetTabCount &&
+        targetColumn.querySelector(`.pane-tab[data-pane-tab-id="${targetCardId}"]`) === null
+      )
+    },
+    { targetColumnIndex: columnIndex, targetCardId: cardId, targetTabCount: expectedTabCount },
+    { timeout: 5_000 },
+  )
+}
+
 const assertPersistedMessagesRemainComplete = (
   initialState: AppState,
   persistedState: AppState,
@@ -645,6 +943,7 @@ test('twenty simultaneous Electron agent tabs stay responsive while typing, queu
     queuedSendDurations: [] as number[],
     tabSwitchDurations: [] as number[],
   }
+  let newTabInteractionSamples: NewTabInteractionSample[] = []
   let rendererMetrics = {
     heartbeatMaxGapMs: Number.POSITIVE_INFINITY,
     heartbeatGaps: [] as number[],
@@ -668,6 +967,7 @@ test('twenty simultaneous Electron agent tabs stay responsive while typing, queu
 
     try {
       interactionMetrics = await runInteractions(page)
+      newTabInteractionSamples = await runNewTabFirstInputInteractions(page)
     } catch (error) {
       interactionError = error instanceof Error ? error.stack ?? error.message : String(error)
     }
@@ -725,6 +1025,27 @@ test('twenty simultaneous Electron agent tabs stay responsive while typing, queu
     focusSampleCount: interactionMetrics.focusDurations.length,
     queuedSendSampleCount: interactionMetrics.queuedSendDurations.length,
     tabSwitchSampleCount: interactionMetrics.tabSwitchDurations.length,
+    newTabReadyP95Ms: getPercentile(
+      newTabInteractionSamples.map((sample) => sample.readyMs),
+      0.95,
+    ),
+    newTabReadyMaxMs: Math.max(0, ...newTabInteractionSamples.map((sample) => sample.readyMs)),
+    newTabFirstInputP95Ms: getPercentile(
+      newTabInteractionSamples.map((sample) => sample.inputMs),
+      0.95,
+    ),
+    newTabFirstInputMaxMs: Math.max(
+      0,
+      ...newTabInteractionSamples.map((sample) => sample.inputMs),
+    ),
+    newTabSampleCount: newTabInteractionSamples.length,
+    newTabStallOver2sCount: newTabInteractionSamples.filter(
+      (sample) => sample.readyMs >= 2_000 || sample.inputMs >= 2_000,
+    ).length,
+    newTabFocusFailureCount: newTabInteractionSamples.filter((sample) => sample.focusFailed).length,
+    newTabDraftRoundTripFailureCount: newTabInteractionSamples.filter(
+      (sample) => sample.draftRoundTripFailed,
+    ).length,
     mountedStructuredItemCount: rendererMetrics.mountedStructuredItemCount,
     maxMountedItemsPerGroup: rendererMetrics.maxMountedItemsPerGroup,
     mountedTabCount: rendererMetrics.mountedTabCount,
@@ -753,14 +1074,38 @@ test('twenty simultaneous Electron agent tabs stay responsive while typing, queu
   )
   assert.ok(metrics.tabSwitchSampleCount >= 1, `too few tab switch samples: ${JSON.stringify(metrics)}`)
   assert.equal(
+    metrics.newTabSampleCount,
+    newTabIterationCount,
+    `new-tab stress did not complete every sample: ${JSON.stringify(metrics)}`,
+  )
+  assert.equal(
+    metrics.newTabFocusFailureCount,
+    0,
+    `a newly created composer failed to focus automatically: ${JSON.stringify({
+      ...metrics,
+      firstFocusFailureDiagnostics: newTabInteractionSamples.find((sample) => sample.focusFailed)
+        ?.focusFailureDiagnostics ?? null,
+    })}`,
+  )
+  assert.equal(
+    metrics.newTabDraftRoundTripFailureCount,
+    0,
+    `a new-tab draft was lost after switching away and back: ${JSON.stringify(metrics)}`,
+  )
+  assert.equal(
+    metrics.newTabStallOver2sCount,
+    0,
+    `new-tab creation or first input stalled for at least 2s: ${JSON.stringify(metrics)}`,
+  )
+  assert.equal(
     metrics.mountedTabCount,
     chatStreamStressColumnCount * chatStreamStressTabsPerPane,
-    `stress fixture did not keep all heavy-use tabs mounted: ${JSON.stringify(metrics)}`,
+    `new-tab probes did not return to the stable heavy-use tab baseline: ${JSON.stringify(metrics)}`,
   )
   assert.equal(
     metrics.mountedPanelCount,
     chatStreamStressColumnCount * chatStreamStressTabsPerPane,
-    `stress fixture did not preserve stable pane panels: ${JSON.stringify(metrics)}`,
+    `new-tab probes did not clean up stable pane panels: ${JSON.stringify(metrics)}`,
   )
   assert.equal(
     metrics.streamingTabCount,
@@ -786,6 +1131,22 @@ test('twenty simultaneous Electron agent tabs stay responsive while typing, queu
     `deferred send feedback p95 exceeded 500ms: ${JSON.stringify(metrics)}`,
   )
   assert.ok(metrics.tabSwitchP95Ms < 500, `tab switch p95 exceeded 500ms: ${JSON.stringify(metrics)}`)
+  assert.ok(
+    metrics.newTabReadyP95Ms < 500,
+    `new-tab ready p95 exceeded 500ms: ${JSON.stringify(metrics)}`,
+  )
+  assert.ok(
+    metrics.newTabReadyMaxMs < 500,
+    `new-tab ready max exceeded 500ms: ${JSON.stringify(metrics)}`,
+  )
+  assert.ok(
+    metrics.newTabFirstInputP95Ms < 250,
+    `new-tab first input p95 exceeded 250ms: ${JSON.stringify(metrics)}`,
+  )
+  assert.ok(
+    metrics.newTabFirstInputMaxMs < 500,
+    `new-tab first input max exceeded 500ms: ${JSON.stringify(metrics)}`,
+  )
   assert.ok(
     metrics.maxMountedItemsPerGroup <= 120,
     `a structured group mounted an unbounded activity list: ${JSON.stringify(metrics)}`,

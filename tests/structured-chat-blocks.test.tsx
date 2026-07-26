@@ -962,11 +962,82 @@ test('renders Codex multi-agent activity as a compact agent list', () => {
 
   assert.match(markup, /structured-agents-card/)
   assert.match(markup, /3 background agents/)
-  assert.match(markup, /use @ to mention agents/)
-  assert.match(markup, /Lorentz \(explorer\)/)
-  assert.match(markup, /Bernoulli \(explorer\)/)
-  assert.match(markup, /Maxwell \(explorer\)/)
+  assert.doesNotMatch(markup, /mention agents/)
+  assert.match(markup, /Lorentz \[explorer\]/)
+  assert.match(markup, /Bernoulli \[explorer\]/)
+  assert.match(markup, /Maxwell \[explorer\]/)
   assert.match(markup, /Completed/)
   assert.match(markup, /Running/)
-  assert.match(markup, />Open</)
+  assert.doesNotMatch(markup, />Open</)
+})
+
+test('renders the Codex live sub-agent status panel without unsupported controls', () => {
+  const card = createCard()
+  card.status = 'streaming'
+  card.messages = [
+    {
+      id: 'agents-status',
+      role: 'assistant',
+      content: '',
+      createdAt: '2026-07-23T08:00:00.000Z',
+      meta: {
+        kind: 'agents',
+        provider: 'codex',
+        structuredData: JSON.stringify({
+          itemId: 'agent-status:root',
+          kind: 'agents',
+          status: 'completed',
+          view: 'status',
+          agents: [
+            {
+              threadId: 'thread-reviewer',
+              path: '/root/reviewer',
+              status: 'running',
+              activity: [
+                '$ pnpm test -p codex-tui',
+                'Finished checking the focused TUI tests.',
+              ],
+            },
+          ],
+        }),
+      },
+    },
+  ]
+
+  const markup = renderCard(card)
+
+  assert.match(markup, /Sub-agents running/)
+  assert.match(markup, /\/root\/reviewer/)
+  assert.match(markup, /\$ pnpm test -p codex-tui/)
+  assert.match(markup, /Finished checking the focused TUI tests/)
+  assert.doesNotMatch(markup, />Open</)
+  assert.doesNotMatch(markup, /mention agents/)
+})
+
+test('renders the Codex live sub-agent empty state', () => {
+  const card = createCard()
+  card.messages = [
+    {
+      id: 'agents-status-empty',
+      role: 'assistant',
+      content: '',
+      createdAt: '2026-07-23T08:00:00.000Z',
+      meta: {
+        kind: 'agents',
+        provider: 'codex',
+        structuredData: JSON.stringify({
+          itemId: 'agent-status:root',
+          kind: 'agents',
+          status: 'completed',
+          view: 'status',
+          agents: [],
+        }),
+      },
+    },
+  ]
+
+  const markup = renderCard(card)
+
+  assert.match(markup, /Sub-agents running/)
+  assert.match(markup, /No sub-agents running/)
 })

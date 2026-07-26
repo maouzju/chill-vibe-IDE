@@ -152,6 +152,7 @@ type WorkspaceColumnProps = {
   autoUrgeSuccessKeyword: string
   globalUrgeActive: boolean
   globalUrgeProfileId: string
+  wakeTimerEnabled?: boolean
   onSetAutoUrgeEnabled: (enabled: boolean) => void
   onChangeColumn: (
     patch: Partial<Pick<BoardColumn, 'title' | 'provider' | 'workspacePath' | 'model'>>,
@@ -178,6 +179,9 @@ type WorkspaceColumnProps = {
         | 'brainstorm'
         | 'autoUrgeActive'
         | 'autoUrgeProfileId'
+        | 'wakeTimerActive'
+        | 'wakeTimerMode'
+        | 'wakeTimerDurationMinutes'
       >
     >,
   ) => void
@@ -223,6 +227,8 @@ type WorkspaceColumnProps = {
   onStopMessage: (cardId: string) => Promise<void>
   onCancelQueuedSends?: (cardId: string) => void
   onSendNextQueuedNow?: (cardId: string) => void
+  onCancelWakeTimerBatch?: (cardId: string) => void
+  onWakeTimerBatchNow?: (cardId: string) => void
   onManualRecoverStream?: (cardId: string) => Promise<unknown>
   onForkConversation?: (cardId: string, messageId: string) => void
   onOpenFile?: (paneId: string, relativePath: string) => void
@@ -260,6 +266,7 @@ const WorkspaceColumnView = ({
   autoUrgeSuccessKeyword,
   globalUrgeActive,
   globalUrgeProfileId,
+  wakeTimerEnabled = false,
   onSetAutoUrgeEnabled,
   onChangeColumn,
   onChangeCardModel,
@@ -292,6 +299,8 @@ const WorkspaceColumnView = ({
   onStopMessage,
   onCancelQueuedSends,
   onSendNextQueuedNow,
+  onCancelWakeTimerBatch,
+  onWakeTimerBatchNow,
   onManualRecoverStream,
   onForkConversation,
   onOpenFile,
@@ -460,7 +469,9 @@ const WorkspaceColumnView = ({
     setEditingPath(false)
     setRecentMenuView(false)
     const trimmed = pathValue.trim()
-    onChangeColumn({ workspacePath: pathValue })
+    if (pathValue !== column.workspacePath) {
+      onChangeColumn({ workspacePath: pathValue })
+    }
     if (trimmed) {
       onRecordRecentWorkspace(trimmed)
     }
@@ -780,7 +791,6 @@ const WorkspaceColumnView = ({
                     onChange={(event) => {
                       setPathPickerNotice(null)
                       setPathValue(event.target.value)
-                      onChangeColumn({ workspacePath: event.target.value })
                     }}
                     onKeyDown={(event) => {
                       if (event.key === 'Enter') {
@@ -1076,6 +1086,7 @@ const WorkspaceColumnView = ({
           autoUrgeSuccessKeyword={autoUrgeSuccessKeyword}
           globalUrgeActive={globalUrgeActive}
           globalUrgeProfileId={globalUrgeProfileId}
+          wakeTimerEnabled={wakeTimerEnabled}
           onSetAutoUrgeEnabled={onSetAutoUrgeEnabled}
           onAddTab={onAddTab}
           onSplitPane={onSplitPane}
@@ -1104,6 +1115,8 @@ const WorkspaceColumnView = ({
           onStopMessage={onStopMessage}
           onCancelQueuedSends={onCancelQueuedSends}
           onSendNextQueuedNow={onSendNextQueuedNow}
+          onCancelWakeTimerBatch={onCancelWakeTimerBatch}
+          onWakeTimerBatchNow={onWakeTimerBatchNow}
           onManualRecoverStream={onManualRecoverStream}
           onForkConversation={onForkConversation}
         onOpenFile={onOpenFile}

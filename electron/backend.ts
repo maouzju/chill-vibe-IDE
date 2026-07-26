@@ -61,9 +61,11 @@ import {
   dismissRecentCrashRecovery as dismissRecentCrashRecoveryState,
   loadStateForRenderer,
   loadSessionHistoryEntry as loadInternalSessionHistoryEntry,
+  loadClosedWorkspaceSnapshot as loadClosedWorkspaceSnapshotState,
   queueSaveState,
   resetState,
   resolveStateRecoveryOption as resolveStateRecoverySelection,
+  saveClosedWorkspaceSnapshot as saveClosedWorkspaceSnapshotState,
   saveState,
   waitForPendingStateWrites,
 } from '../server/state-store.ts'
@@ -80,6 +82,8 @@ import {
   appSettingsSchema,
   attachmentUploadRequestSchema,
   appStateSchema,
+  closedWorkspaceLoadRequestSchema,
+  closedWorkspaceSnapshotSchema,
   rendererCrashCaptureRequestSchema,
   ccSwitchImportRequestSchema,
   externalHistoryListRequestSchema,
@@ -114,6 +118,8 @@ import {
   gitFilePathRequestSchema,
   type AppState,
   type AttachmentUploadRequest,
+  type ClosedWorkspaceLoadRequest,
+  type ClosedWorkspaceSnapshot,
   type CcSwitchImportRequest,
   type ExternalHistoryListRequest,
   type ExternalSessionLoadRequest,
@@ -255,6 +261,12 @@ export const createDesktopBackend = (deps: DesktopBackendDependencies = {}) => {
     },
     async loadSessionHistoryEntry(request: InternalSessionHistoryLoadRequest) {
       return loadInternalSessionHistoryEntry(internalSessionHistoryLoadRequestSchema.parse(request))
+    },
+    async saveClosedWorkspaceSnapshot(snapshot: ClosedWorkspaceSnapshot) {
+      return saveClosedWorkspaceSnapshotState(closedWorkspaceSnapshotSchema.parse(snapshot))
+    },
+    async loadClosedWorkspaceSnapshot(request: ClosedWorkspaceLoadRequest) {
+      return loadClosedWorkspaceSnapshotState(closedWorkspaceLoadRequestSchema.parse(request))
     },
     async listInternalSessionHistory(request: InternalSessionHistoryListRequest) {
       const parsed = internalSessionHistoryListRequestSchema.parse(request)

@@ -35,6 +35,7 @@ type LayoutRendererProps = {
   autoUrgeSuccessKeyword: string
   globalUrgeActive: boolean
   globalUrgeProfileId: string
+  wakeTimerEnabled?: boolean
   onSetAutoUrgeEnabled: (enabled: boolean) => void
   onAddTab: (paneId: string) => void
   onSplitPane: (
@@ -87,6 +88,9 @@ type LayoutRendererProps = {
         | 'brainstorm'
         | 'autoUrgeActive'
         | 'autoUrgeProfileId'
+        | 'wakeTimerActive'
+        | 'wakeTimerMode'
+        | 'wakeTimerDurationMinutes'
       >
     >,
   ) => void
@@ -100,6 +104,8 @@ type LayoutRendererProps = {
   onStopMessage: (cardId: string) => Promise<void>
   onCancelQueuedSends?: (cardId: string) => void
   onSendNextQueuedNow?: (cardId: string) => void
+  onCancelWakeTimerBatch?: (cardId: string) => void
+  onWakeTimerBatchNow?: (cardId: string) => void
   onManualRecoverStream?: (cardId: string) => Promise<unknown>
   onForkConversation?: (cardId: string, messageId: string) => void
   onOpenFile?: (paneId: string, relativePath: string) => void

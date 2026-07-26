@@ -23,6 +23,10 @@ import {
 } from './runtime-environment.js'
 import { attachFrameStallWatchdog } from './frame-stall-watchdog.js'
 import { summarizeUnresponsiveCallStack } from './unresponsive-forensics.js'
+import {
+  createUnresponsiveRecoveryController,
+  resolveUnresponsiveRecoveryDelayMs,
+} from './unresponsive-recovery.js'
 import { checkForUpdate, downloadUpdate, installUpdate } from './updater.js'
 import {
   attachmentProtocolScheme,
@@ -335,7 +339,39 @@ function broadcastWindowState(win: BrowserWindow) {
   }
 }
 
+type WindowInputSnapshot = {
+  atIso: string
+  inputType: string
+  inputKey: string
+  code: string
+  modifiers: string[]
+}
+
+let lastWindowInputSnapshot: WindowInputSnapshot | null = null
+let pendingWindowCloseSource: 'renderer-ipc' | 'native-window' = 'native-window'
+
 function attachWindowDiagnostics(win: BrowserWindow) {
+  const unresponsiveRecovery = createUnresponsiveRecoveryController({
+    delayMs: resolveUnresponsiveRecoveryDelayMs(
+      process.env.CHILL_VIBE_UNRESPONSIVE_RECOVERY_MS,
+    ),
+    onRecover: ({ startedAtMs, recoveredAtMs, durationMs }) => {
+      if (win.isDestroyed() || win.webContents.isDestroyed()) {
+        return
+      }
+
+      log.error('[main] BrowserWindow stayed unresponsive; reloading renderer.', {
+        windowId: win.id,
+        rendererProcessId: win.webContents.getOSProcessId(),
+        startedAtIso: new Date(startedAtMs).toISOString(),
+        recoveredAtIso: new Date(recoveredAtMs).toISOString(),
+        durationMs,
+        lastInput: lastWindowInputSnapshot,
+      })
+      win.webContents.reloadIgnoringCache()
+    },
+  })
+
   log.info('[main] BrowserWindow created.', {
     windowId: win.id,
   })
@@ -344,6 +380,13 @@ function attachWindowDiagnostics(win: BrowserWindow) {
   // accelerator with it — leaving zero on-machine inspection paths when the
   // UI misbehaves. Restore F12 explicitly.
   win.webContents.on('before-input-event', (_event, input) => {
+    lastWindowInputSnapshot = {
+      atIso: new Date().toISOString(),
+      inputType: input.type,
+      inputKey: input.key,
+      code: input.code,
+      modifiers: input.modifiers,
+    }
     if (input.type === 'keyDown' && input.key === 'F12') {
       win.webContents.toggleDevTools()
     }
@@ -354,10 +397,14 @@ function attachWindowDiagnostics(win: BrowserWindow) {
       windowId: win.id,
       visible: win.isVisible(),
       focused: win.isFocused(),
+      closeSource: pendingWindowCloseSource,
+      lastInput: lastWindowInputSnapshot,
     })
+    pendingWindowCloseSource = 'native-window'
   })
 
   win.on('closed', () => {
+    unresponsiveRecovery.dispose()
     log.warn('[main] BrowserWindow closed.', {
       windowId: win.id,
     })
@@ -365,6 +412,7 @@ function attachWindowDiagnostics(win: BrowserWindow) {
 
   win.on('unresponsive', () => {
     log.warn('[main] BrowserWindow became unresponsive.', { windowId: win.id })
+    unresponsiveRecovery.markUnresponsive()
     // The plain event never says WHAT is blocking the renderer's main thread.
     // collectJavaScriptCallStack() (Electron 34+) returns the blocked main
     // thread's JS stack without attaching a debugger — turning a dead-end
@@ -394,6 +442,7 @@ function attachWindowDiagnostics(win: BrowserWindow) {
   })
 
   win.on('responsive', () => {
+    unresponsiveRecovery.markResponsive()
     // Previously there was no 'responsive' listener at all, so a recovery was
     // invisible in the logs — every unresponsive read as permanent. Record it so
     // triage can tell a transient hitch from a terminal freeze.
@@ -495,7 +544,9 @@ function registerDesktopHandlers() {
     return true
   })
   ipcMain.handle('window:close', (event) => {
-    getEventWindow(event)?.close()
+    const win = getEventWindow(event)
+    pendingWindowCloseSource = 'renderer-ipc'
+    win?.close()
   })
   ipcMain.handle('window:flash-once', (event) => flashWindowOnce(getEventWindow(event)))
   ipcMain.handle('window:set-zoom-factor', (event, zoomFactor: number) => {
@@ -522,6 +573,12 @@ function registerDesktopHandlers() {
   ipcMain.handle('desktop:fetch-state', () => desktopBackend.fetchState())
   ipcMain.handle('desktop:load-session-history-entry', (_event, request) =>
     desktopBackend.loadSessionHistoryEntry(request),
+  )
+  ipcMain.handle('desktop:save-closed-workspace-snapshot', (_event, snapshot) =>
+    desktopBackend.saveClosedWorkspaceSnapshot(snapshot),
+  )
+  ipcMain.handle('desktop:load-closed-workspace-snapshot', (_event, request) =>
+    desktopBackend.loadClosedWorkspaceSnapshot(request),
   )
   ipcMain.handle('desktop:list-internal-session-history', (_event, request) =>
     desktopBackend.listInternalSessionHistory(request),

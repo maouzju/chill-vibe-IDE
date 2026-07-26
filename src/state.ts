@@ -44,6 +44,7 @@ import type {
   BoardColumn,
   ChatCard,
   ChatMessage,
+  ClosedWorkspaceSnapshot,
   LayoutNode,
   PaneNode,
   Provider,
@@ -67,6 +68,31 @@ const toolCardModels = new Set([
   WEATHER_TOOL_MODEL,
   WHITENOISE_TOOL_MODEL,
 ])
+
+export const isUntouchedWorkspacePlaceholderColumn = (column: BoardColumn | undefined) => {
+  if (!column) {
+    return false
+  }
+
+  const cards = Object.values(column.cards)
+  if (cards.length !== 1) {
+    return false
+  }
+
+  const [card] = cards
+  return Boolean(
+    card &&
+    !toolCardModels.has(card.model) &&
+    card.status === 'idle' &&
+    card.messages.length === 0 &&
+    !card.draft.trim() &&
+    (card.draftAttachments?.length ?? 0) === 0 &&
+    (card.queuedSends?.length ?? 0) === 0 &&
+    !card.sessionId &&
+    !card.streamId &&
+    !card.stickyNote?.trim(),
+  )
+}
 
 const cardHasHistoricalImageAttachments = (card: Pick<ChatCard, 'messages'>) =>
   card.messages.some((message) => getChatMessageAttachments(message).length > 0)
@@ -190,6 +216,7 @@ export type IdeAction =
           | 'autoUrgeGlobalControlEnabled'
           | 'autoUrgeGlobalActive'
           | 'autoUrgeGlobalProfileId'
+          | 'wakeTimerEnabled'
           | 'weatherCity'
           | 'systemPrompt'
           | 'modelPromptRules'
@@ -242,7 +269,18 @@ export type IdeAction =
       targetColumnId: string
       placement: Placement
     }
-  | { type: 'removeColumn'; columnId: string }
+  | { type: 'removeColumn'; columnId: string; workspaceCloseId?: string }
+  | {
+      type: 'restoreClosedWorkspace'
+      columnId: string
+      snapshot: ClosedWorkspaceSnapshot
+    }
+  | {
+      type: 'restoreLegacyClosedWorkspace'
+      columnId: string
+      workspacePath: string
+      entries: SessionHistoryEntry[]
+    }
   | {
       type: 'addTab'
       columnId: string
@@ -342,6 +380,13 @@ export type IdeAction =
           | 'brainstorm'
           | 'draftAttachments'
           | 'queuedSends'
+          | 'wakeTimerActive'
+          | 'wakeTimerMode'
+          | 'wakeTimerDurationMinutes'
+          | 'wakeTimerQueuedSends'
+          | 'wakeTimerArmedAt'
+          | 'wakeTimerWakeAt'
+          | 'wakeTimerPendingTargetIds'
         >
       >
     }
@@ -360,6 +405,7 @@ export type IdeAction =
       stoppedMessage?: ChatMessage
       unread?: boolean
     }
+  | { type: 'settleStreamActivities'; columnId: string; cardId: string }
   | { type: 'recordRecentWorkspace'; path: string }
   | { type: 'removeRecentWorkspaces'; paths: string[] }
   | { type: 'restoreSession'; columnId: string; entryId: string; paneId?: string }
@@ -397,6 +443,11 @@ const duplicateCardForColumn = (card: ChatCard): ChatCard => ({
   pm: card.pm ? { ...card.pm } : createDefaultPmState(),
   pmTaskCardId: '',
   pmOwnerCardId: '',
+  wakeTimerActive: false,
+  wakeTimerQueuedSends: [],
+  wakeTimerArmedAt: undefined,
+  wakeTimerWakeAt: undefined,
+  wakeTimerPendingTargetIds: [],
   messages: card.messages.map(duplicateChatMessage),
 })
 
@@ -772,25 +823,37 @@ const settleStoppedStreamMessages = (messages: ChatMessage[]) => {
   let didChange = false
 
   const nextMessages = messages.map((message) => {
-    if (message.meta?.kind !== 'command' || typeof message.meta.structuredData !== 'string') {
+    if (typeof message.meta?.structuredData !== 'string') {
       return message
     }
 
     try {
       const payload = JSON.parse(message.meta.structuredData) as Record<string, unknown>
-      if (payload.status !== 'in_progress') {
-        return message
+      let nextPayload: Record<string, unknown> | null = null
+      if (message.meta.kind === 'command' && payload.status === 'in_progress') {
+        nextPayload = {
+          ...payload,
+          status: 'declined',
+        }
+      } else if (
+        message.meta.kind === 'agents' &&
+        payload.view === 'status' &&
+        Array.isArray(payload.agents) &&
+        payload.agents.length > 0
+      ) {
+        nextPayload = {
+          ...payload,
+          agents: [],
+        }
       }
 
+      if (!nextPayload) return message
       didChange = true
       return {
         ...message,
         meta: {
           ...message.meta,
-          structuredData: JSON.stringify({
-            ...payload,
-            status: 'declined',
-          }),
+          structuredData: JSON.stringify(nextPayload),
         },
       }
     } catch {
@@ -899,13 +962,14 @@ const redistributeWidthsAfterColumnRemoval = (columns: BoardColumn[], removedCol
 const archiveColumnChatsToHistory = (
   history: SessionHistoryEntry[] | undefined,
   column: BoardColumn | undefined,
+  workspaceCloseId?: string,
 ) => {
   if (!column) {
     return history ?? []
   }
 
   return getOrderedColumnCards(column).reduce(
-    (nextHistory, card) => archiveCardToHistory(nextHistory, card, column.workspacePath),
+    (nextHistory, card) => archiveCardToHistory(nextHistory, card, column.workspacePath, workspaceCloseId),
     history ?? [],
   )
 }
@@ -1223,6 +1287,11 @@ const buildRestoredCard = (state: AppState, entry: SessionHistoryEntry): ChatCar
   draft: '',
   draftAttachments: [],
   queuedSends: [],
+  wakeTimerActive: false,
+  wakeTimerMode: 'workspace-agents',
+  wakeTimerDurationMinutes: 30,
+  wakeTimerQueuedSends: [],
+  wakeTimerPendingTargetIds: [],
   stickyNote: '',
   brainstorm: createDefaultBrainstormState(),
   pm: createDefaultPmState(),
@@ -1240,6 +1309,74 @@ const restoreSessionEntryToColumn = (
   const restoredCard = buildRestoredCard(state, entry)
 
   return insertCardIntoColumn(state, columnId, restoredCard, paneId)
+}
+
+const restoreClosedWorkspaceSnapshotToColumn = (
+  state: AppState,
+  columnId: string,
+  snapshot: ClosedWorkspaceSnapshot,
+) => {
+  const next = updateColumn(state, columnId, (currentColumn) => {
+    const cards = Object.fromEntries(
+      Object.entries(snapshot.column.cards).map(([cardId, card]) => [
+        cardId,
+        {
+          ...card,
+          status: card.status === 'streaming' ? 'idle' : card.status,
+          streamId: undefined,
+        },
+      ]),
+    )
+
+    return {
+      ...snapshot.column,
+      id: currentColumn.id,
+      width: currentColumn.width,
+      cards,
+      layout: normalizeLayoutNode(snapshot.column.layout, cards),
+    }
+  })
+
+  return {
+    ...next,
+    sessionHistory: next.sessionHistory.filter(
+      (entry) => entry.workspaceCloseId !== snapshot.closeId,
+    ),
+  }
+}
+
+const restoreLegacyClosedWorkspaceToColumn = (
+  state: AppState,
+  columnId: string,
+  workspacePath: string,
+  entries: SessionHistoryEntry[],
+) => {
+  if (entries.length === 0) {
+    return state
+  }
+
+  const restoredCards = entries
+    .slice()
+    .reverse()
+    .map((entry) => buildRestoredCard(state, entry))
+  const cards = Object.fromEntries(restoredCards.map((card) => [card.id, card]))
+  const entryIds = new Set(entries.map((entry) => entry.id))
+  const next = updateColumn(state, columnId, (currentColumn) => {
+    const paneId = getFirstPane(currentColumn.layout).id
+    const tabs = restoredCards.map((card) => card.id)
+
+    return {
+      ...currentColumn,
+      workspacePath,
+      cards,
+      layout: createPane(tabs, tabs.at(-1) ?? '', paneId),
+    }
+  })
+
+  return {
+    ...next,
+    sessionHistory: next.sessionHistory.filter((entry) => !entryIds.has(entry.id)),
+  }
 }
 
 const normalizeWorkspacePathKey = (workspacePath: string) => workspacePath.trim().toLowerCase()
@@ -1572,7 +1709,12 @@ export const ideReducer = (state: AppState, action: IdeAction): AppState => {
       })
 
       const sessionHistory =
-        action.patch.workspacePath !== undefined
+        action.patch.workspacePath !== undefined &&
+        !state.columns.some(
+          (column) =>
+            column.id !== action.columnId &&
+            normalizeWorkspacePathKey(column.workspacePath) === normalizeWorkspacePathKey(previousWorkspacePath),
+        )
           ? rebaseSessionHistoryWorkspacePath(
               next.sessionHistory,
               previousWorkspacePath,
@@ -1635,13 +1777,28 @@ export const ideReducer = (state: AppState, action: IdeAction): AppState => {
     }
     case 'removeColumn': {
       const column = state.columns.find((item) => item.id === action.columnId)
-      const sessionHistory = archiveColumnChatsToHistory(state.sessionHistory, column)
+      const sessionHistory = archiveColumnChatsToHistory(
+        state.sessionHistory,
+        column,
+        action.workspaceCloseId,
+      )
       return touchState({
         ...state,
         sessionHistory,
         columns: redistributeWidthsAfterColumnRemoval(state.columns, action.columnId),
       })
     }
+    case 'restoreClosedWorkspace':
+      return touchState(restoreClosedWorkspaceSnapshotToColumn(state, action.columnId, action.snapshot))
+    case 'restoreLegacyClosedWorkspace':
+      return touchState(
+        restoreLegacyClosedWorkspaceToColumn(
+          state,
+          action.columnId,
+          action.workspacePath,
+          action.entries,
+        ),
+      )
     case 'addTab': {
       const next = updateColumn(state, action.columnId, (column) => {
         const pane = findPaneInLayout(column.layout, action.paneId)
@@ -2076,6 +2233,11 @@ export const ideReducer = (state: AppState, action: IdeAction): AppState => {
         unread: false,
         draft: '',
         queuedSends: [],
+        wakeTimerActive: false,
+        wakeTimerQueuedSends: [],
+        wakeTimerArmedAt: undefined,
+        wakeTimerWakeAt: undefined,
+        wakeTimerPendingTargetIds: [],
         messages: [],
       }))
 
@@ -2188,6 +2350,13 @@ export const ideReducer = (state: AppState, action: IdeAction): AppState => {
           }
         }),
       )
+    case 'settleStreamActivities':
+      return touchState(
+        updateCard(state, action.columnId, action.cardId, (card) => ({
+          ...card,
+          messages: settleStoppedStreamMessages(card.messages),
+        })),
+      )
     case 'recordRecentWorkspace': {
       const path = action.path.trim()
       if (!path) {
@@ -2288,6 +2457,11 @@ export const ideReducer = (state: AppState, action: IdeAction): AppState => {
   draft: '',
   draftAttachments: [],
   queuedSends: [],
+  wakeTimerActive: false,
+  wakeTimerMode: 'workspace-agents',
+  wakeTimerDurationMinutes: 30,
+  wakeTimerQueuedSends: [],
+  wakeTimerPendingTargetIds: [],
   stickyNote: '',
         brainstorm: createDefaultBrainstormState(),
         pm: createDefaultPmState(),
@@ -2343,6 +2517,11 @@ export const ideReducer = (state: AppState, action: IdeAction): AppState => {
         draft: forkedDraft,
         draftAttachments: forkedDraftAttachments,
         queuedSends: [],
+        wakeTimerActive: false,
+        wakeTimerMode: sourceCard.wakeTimerMode ?? 'workspace-agents',
+        wakeTimerDurationMinutes: sourceCard.wakeTimerDurationMinutes ?? 30,
+        wakeTimerQueuedSends: [],
+        wakeTimerPendingTargetIds: [],
         stickyNote: '',
         brainstorm: createDefaultBrainstormState(),
         pm: sourceCard.pm ? { ...sourceCard.pm } : createDefaultPmState(),

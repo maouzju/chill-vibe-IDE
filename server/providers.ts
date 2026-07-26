@@ -49,6 +49,7 @@ import {
   isClaudeBackgroundAwaitTool,
 } from './claude-structured-output.js'
 import { createCodexCompactionActivityDeduper } from './codex-compaction-dedupe.js'
+import { createCodexAgentStatusTracker } from './codex-agent-status.js'
 import { resolveClaudeRuntimeEnvironment } from './claude-runtime-environment.js'
 import {
   looksLikeCodexStructuredAgentMessage,
@@ -1247,7 +1248,11 @@ export const getProviderSlashCommands = async ({
   // user skills by name; skills must dedupe first so their metadata wins, matching the
   // send-path priority in expandSkillSlashPrompt.
   if (provider === 'codex') {
-    const native = buildNativeSlashCommands('codex', ['compact', 'init', 'plan'], normalizedLanguage)
+    const native = buildNativeSlashCommands(
+      'codex',
+      ['agent', 'subagents', 'compact', 'init', 'plan'],
+      normalizedLanguage,
+    )
     return dedupeSlashCommands([...local, ...skills, ...native])
   }
 
@@ -1680,12 +1685,17 @@ const launchCodexAppServerRun = async (
   let finished = false
   let stderr = ''
   let emittedSessionId: string | null = request.sessionId?.trim() || null
+  const agentStatusTracker = createCodexAgentStatusTracker({
+    rootThreadId: emittedSessionId,
+  })
   let currentRequest = request
   let transientPlaceholderStallTimer: ReturnType<typeof setTimeout> | undefined
   let transientPlaceholderDisconnectStatsReported = false
   let localStreamStallTimer: ReturnType<typeof setTimeout> | undefined
+  let agentWorkHardCapTimer: ReturnType<typeof setTimeout> | undefined
   let sawVisibleStreamOutput = false
   let hasOpenProviderWork = false
+  let hasOpenAgentWork = false
 
   const clearTransientPlaceholderStallTimer = () => {
     if (transientPlaceholderStallTimer) {
@@ -1702,7 +1712,7 @@ const launchCodexAppServerRun = async (
   }
 
   const scheduleLocalStreamStallTimer = () => {
-    if (finished || hasOpenProviderWork) {
+    if (finished || hasOpenProviderWork || hasOpenAgentWork) {
       return
     }
 
@@ -1712,7 +1722,7 @@ const launchCodexAppServerRun = async (
       : getLocalProviderFirstByteTimeoutMs()
     localStreamStallTimer = setTimeout(() => {
       localStreamStallTimer = undefined
-      if (finished || hasOpenProviderWork) {
+      if (finished || hasOpenProviderWork || hasOpenAgentWork) {
         return
       }
 
@@ -1743,6 +1753,30 @@ const launchCodexAppServerRun = async (
     hasOpenProviderWork = false
     sawVisibleStreamOutput = true
     scheduleLocalStreamStallTimer()
+  }
+
+  const clearAgentWorkHardCapTimer = () => {
+    if (agentWorkHardCapTimer) {
+      clearTimeout(agentWorkHardCapTimer)
+      agentWorkHardCapTimer = undefined
+    }
+  }
+
+  const syncAgentWorkState = () => {
+    hasOpenAgentWork = agentStatusTracker.hasRunningAgents()
+    sawVisibleStreamOutput = true
+    if (hasOpenAgentWork) {
+      clearLocalStreamStallTimer()
+      agentWorkHardCapTimer ??= setTimeout(() => {
+        agentWorkHardCapTimer = undefined
+        if (!finished && agentStatusTracker.hasRunningAgents()) {
+          finishWithError('Codex stalled after emitting stream output.')
+        }
+      }, getLocalProviderAbsoluteHardCapMs())
+    } else {
+      clearAgentWorkHardCapTimer()
+      scheduleLocalStreamStallTimer()
+    }
   }
 
   const reportTransientPlaceholderDisconnectStats = () => {
@@ -1863,6 +1897,7 @@ const launchCodexAppServerRun = async (
 
     clearTransientPlaceholderStallTimer()
     clearLocalStreamStallTimer()
+    clearAgentWorkHardCapTimer()
     finished = true
     rejectPendingRequests('Codex run completed.')
     void cleanupArchiveRecall()
@@ -1885,6 +1920,7 @@ const launchCodexAppServerRun = async (
 
     clearTransientPlaceholderStallTimer()
     clearLocalStreamStallTimer()
+    clearAgentWorkHardCapTimer()
     finished = true
     rejectPendingRequests(visibleMessage)
     void cleanupArchiveRecall()
@@ -2196,11 +2232,30 @@ const launchCodexAppServerRun = async (
 
       const params = readRecord(message, 'params') ?? {}
 
+      const agentUpdate = agentStatusTracker.handleNotification(message)
+      if (agentUpdate.activity) {
+        markDurableProviderProgress()
+        sink.onActivity(agentUpdate.activity)
+        syncAgentWorkState()
+      }
+      if (agentUpdate.releaseDeferredRootCompletion) {
+        finishWithDone()
+        return
+      }
+      if (agentUpdate.handled) {
+        return
+      }
+
       if (method === 'thread/started') {
         const thread = readRecord(params, 'thread')
         const sessionId = thread ? readString(thread, 'id') : undefined
+        const parentThreadId = thread ? readString(thread, 'parentThreadId') : undefined
+        if (parentThreadId) {
+          return
+        }
         if (sessionId && sessionId !== emittedSessionId) {
           emittedSessionId = sessionId
+          agentStatusTracker.setRootThreadId(sessionId)
           sink.onSession(sessionId)
         }
         return
@@ -2246,7 +2301,11 @@ const launchCodexAppServerRun = async (
       }
 
       if (method === 'turn/completed' && !manualCompactRequest) {
-        finishWithDone()
+        if (agentStatusTracker.markRootTurnCompleted() === 'finish') {
+          finishWithDone()
+        } else {
+          syncAgentWorkState()
+        }
         return
       }
 
@@ -2289,6 +2348,7 @@ const launchCodexAppServerRun = async (
 
     clearTransientPlaceholderStallTimer()
     clearLocalStreamStallTimer()
+    clearAgentWorkHardCapTimer()
     finished = true
     rejectPendingRequests(code === 0 ? 'Codex app-server closed before completion.' : formatProviderExit(language, 'codex', code))
 
@@ -2386,6 +2446,7 @@ const launchCodexAppServerRun = async (
 
       if (threadId !== emittedSessionId) {
         emittedSessionId = threadId
+        agentStatusTracker.setRootThreadId(threadId)
         sink.onSession(threadId)
       }
 
@@ -3057,6 +3118,46 @@ const launchClaudeSingleShotRun = async (
 // survive the turn and their completion wakes the agent for an unsolicited
 // follow-up turn. User messages are written to stdin as stream-json lines.
 // ---------------------------------------------------------------------------
+
+// Idle stdout from a pooled CLI is only a real wake-up when it starts a turn.
+// The CLI also emits background-task bookkeeping between turns (a task finishing
+// updates the task list even when the agent is not re-invoked); treating those
+// as a turn would open a stream the CLI never fills. Anything unrecognized wakes
+// the stream — a missed follow-up is far worse than a short-lived empty one that
+// the stall watchdog reaps.
+const CLAUDE_IDLE_BOOKKEEPING_SUBTYPES = new Set([
+  'background_tasks_changed',
+  'task_started',
+  'task_updated',
+  'task_notification',
+  'status',
+  'notification',
+])
+
+export const isClaudeTurnStartLine = (line: string) => {
+  if (!line.trim()) {
+    return false
+  }
+
+  let event: unknown
+  try {
+    event = JSON.parse(line)
+  } catch {
+    // Non-JSON noise on stdout never starts a turn.
+    return false
+  }
+
+  if (!event || typeof event !== 'object') {
+    return false
+  }
+
+  const record = event as { type?: unknown; subtype?: unknown }
+  if (record.type === 'system' && typeof record.subtype === 'string') {
+    return !CLAUDE_IDLE_BOOKKEEPING_SUBTYPES.has(record.subtype)
+  }
+
+  return true
+}
 
 export const buildClaudeKeepaliveSignature = (
   request: ChatRequest,

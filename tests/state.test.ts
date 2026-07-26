@@ -211,6 +211,29 @@ describe('ideReducer pane layout', () => {
     assert.deepEqual(reset.columns[0]!.cards['card-1']!.queuedSends, [])
   })
 
+  it('clears a persisted wake timer batch when resetting a conversation', () => {
+    const state = createState()
+    const card = state.columns[0]!.cards['card-1']!
+    card.wakeTimerActive = true
+    card.wakeTimerQueuedSends = [{ id: 'wake-1', prompt: 'later', attachments: [] }]
+    card.wakeTimerArmedAt = '2026-07-25T00:00:00.000Z'
+    card.wakeTimerWakeAt = '2026-07-25T00:30:00.000Z'
+    card.wakeTimerPendingTargetIds = ['card-2']
+
+    const reset = ideReducer(state, {
+      type: 'resetCardConversation',
+      columnId: 'column-1',
+      cardId: 'card-1',
+    })
+    const resetCard = reset.columns[0]!.cards['card-1']!
+
+    assert.equal(resetCard.wakeTimerActive, false)
+    assert.deepEqual(resetCard.wakeTimerQueuedSends, [])
+    assert.equal(resetCard.wakeTimerArmedAt, undefined)
+    assert.equal(resetCard.wakeTimerWakeAt, undefined)
+    assert.deepEqual(resetCard.wakeTimerPendingTargetIds, [])
+  })
+
   it('stores normalized custom accent colors through the settings action', () => {
     const state = createState()
     const customized = ideReducer(state, {
@@ -572,7 +595,12 @@ describe('ideReducer pane layout', () => {
   })
 
   it('duplicates a column by cloning its cards and pane layout', () => {
-    const next = ideReducer(createState(), {
+    const state = createState()
+    state.columns[0]!.cards['card-1']!.wakeTimerActive = true
+    state.columns[0]!.cards['card-1']!.wakeTimerQueuedSends = [
+      { id: 'wake-copy-guard', prompt: 'must not duplicate', attachments: [] },
+    ]
+    const next = ideReducer(state, {
       type: 'duplicateColumn',
       columnId: 'column-1',
     })
@@ -600,6 +628,8 @@ describe('ideReducer pane layout', () => {
     assert.equal(duplicatedCards[0]?.status, 'idle')
     assert.equal(duplicatedCards[0]?.draft, 'Keep this note')
     assert.equal(duplicatedCards[0]?.messages.length, 1)
+    assert.equal(duplicatedCards[0]?.wakeTimerActive, false)
+    assert.deepEqual(duplicatedCards[0]?.wakeTimerQueuedSends, [])
 
     const duplicatedLayout = duplicated?.layout as PaneNode
     assert.equal(duplicatedLayout.type, 'pane')
@@ -2024,6 +2054,7 @@ describe('ideReducer pane layout', () => {
     const next = ideReducer(state, {
       type: 'removeColumn',
       columnId: 'column-1',
+      workspaceCloseId: 'workspace-close-batch',
     })
 
     assert.deepEqual(
@@ -2033,11 +2064,207 @@ describe('ideReducer pane layout', () => {
     assert.equal(next.sessionHistory.length, 1)
     assert.equal(next.sessionHistory[0]?.title, 'Keep this history')
     assert.equal(next.sessionHistory[0]?.workspacePath, 'D:/repo/one')
+    assert.equal(next.sessionHistory[0]?.workspaceCloseId, 'workspace-close-batch')
     assert.deepEqual(next.sessionHistory[0]?.contextTransfer, {
       sourceProvider: 'claude',
       sourceModel: 'claude-fable-5',
       sourceSessionId: 'fable-history-anchor',
     })
+  })
+
+  it('restores an exact closed workspace snapshot into an untouched placeholder column', () => {
+    const state = createState()
+    state.columns = [
+      createColumn({
+        id: 'placeholder-column',
+        title: 'New workspace',
+        workspacePath: '',
+        width: 640,
+        layout: createPane('placeholder-pane', ['placeholder-card'], 'placeholder-card'),
+        cards: {
+          'placeholder-card': createCard({
+            id: 'placeholder-card',
+            title: '',
+            messages: [],
+            draft: '',
+            sessionId: undefined,
+            streamId: undefined,
+            status: 'idle',
+          }),
+        },
+      }),
+      createColumn({ id: 'other-column', workspacePath: 'D:/repo/other' }),
+    ]
+    state.sessionHistory = [
+      {
+        id: 'closed-history-1',
+        title: 'Archived duplicate',
+        provider: 'codex',
+        model: DEFAULT_CODEX_MODEL,
+        workspacePath: 'D:/repo/reopen',
+        archivedAt: timestamp,
+        workspaceCloseId: 'close-batch-1',
+        messages: [assistantMessage],
+      },
+      {
+        id: 'unrelated-history',
+        title: 'Keep history',
+        provider: 'codex',
+        model: DEFAULT_CODEX_MODEL,
+        workspacePath: 'D:/repo/reopen',
+        archivedAt: '2026-04-03T12:00:00.000Z',
+        messages: [assistantMessage],
+      },
+    ]
+
+    const archivedColumn = createColumn({
+      id: 'closed-column',
+      title: 'Reopened workspace',
+      workspacePath: 'D:/repo/reopen',
+      width: 420,
+      layout: createSplit(
+        'closed-split',
+        'horizontal',
+        [
+          createPane('closed-pane-left', ['closed-card-1'], 'closed-card-1'),
+          createPane('closed-pane-right', ['closed-card-2'], 'closed-card-2'),
+        ],
+        [0.4, 0.6],
+      ),
+      cards: {
+        'closed-card-1': createCard({
+          id: 'closed-card-1',
+          title: 'First restored tab',
+          sessionId: 'native-session-1',
+          messages: [assistantMessage],
+        }),
+        'closed-card-2': createCard({
+          id: 'closed-card-2',
+          title: 'Second restored tab',
+          messages: [],
+          draft: 'unfinished draft',
+        }),
+      },
+    })
+
+    const next = ideReducer(state, {
+      type: 'restoreClosedWorkspace',
+      columnId: 'placeholder-column',
+      snapshot: {
+        closeId: 'close-batch-1',
+        closedAt: timestamp,
+        column: archivedColumn,
+      },
+    })
+
+    const restored = next.columns[0]!
+    assert.equal(restored.id, 'placeholder-column', 'the mounted target column id should stay stable')
+    assert.equal(restored.width, 640, 'the current board width should not jump back to the archived width')
+    assert.equal(restored.workspacePath, 'D:/repo/reopen')
+    assert.deepEqual(Object.keys(restored.cards), ['closed-card-1', 'closed-card-2'])
+    assert.equal(restored.cards['closed-card-1']?.sessionId, 'native-session-1')
+    assert.equal(restored.cards['closed-card-2']?.draft, 'unfinished draft')
+    assert.equal(restored.layout.type, 'split')
+    assert.deepEqual(
+      (restored.layout as SplitNode).children.map((child) => child.type === 'pane' ? child.tabs : []),
+      [['closed-card-1'], ['closed-card-2']],
+    )
+    assert.deepEqual((restored.layout as SplitNode).ratios, [0.4, 0.6])
+    assert.deepEqual(next.sessionHistory.map((entry) => entry.id), ['unrelated-history'])
+  })
+
+  it('restores legacy close-batch history as chat tabs when no exact snapshot exists', () => {
+    const state = createState()
+    state.columns = [
+      createColumn({
+        id: 'placeholder-column',
+        workspacePath: '',
+        layout: createPane('placeholder-pane', ['placeholder-card'], 'placeholder-card'),
+        cards: {
+          'placeholder-card': createCard({
+            id: 'placeholder-card',
+            title: '',
+            messages: [],
+            draft: '',
+            sessionId: undefined,
+            streamId: undefined,
+            status: 'idle',
+          }),
+        },
+      }),
+    ]
+    const firstEntry = {
+      id: 'legacy-history-newest',
+      title: 'Second original tab',
+      provider: 'claude' as const,
+      model: 'claude-opus-4-7',
+      workspacePath: 'D:/repo/legacy-reopen',
+      archivedAt: timestamp,
+      sessionId: 'legacy-session-2',
+      messages: [assistantMessage],
+    }
+    const secondEntry = {
+      ...firstEntry,
+      id: 'legacy-history-older',
+      title: 'First original tab',
+      archivedAt: '2026-04-04T11:59:59.900Z',
+      sessionId: 'legacy-session-1',
+    }
+    state.sessionHistory = [firstEntry, secondEntry]
+
+    const next = ideReducer(state, {
+      type: 'restoreLegacyClosedWorkspace',
+      columnId: 'placeholder-column',
+      workspacePath: 'D:/repo/legacy-reopen',
+      entries: [firstEntry, secondEntry],
+    })
+
+    const restored = next.columns[0]!
+    const restoredPane = restored.layout as PaneNode
+    assert.equal(restored.workspacePath, 'D:/repo/legacy-reopen')
+    assert.equal(restoredPane.tabs.length, 2)
+    assert.deepEqual(
+      restoredPane.tabs.map((tabId) => restored.cards[tabId]?.title),
+      ['First original tab', 'Second original tab'],
+    )
+    assert.deepEqual(next.sessionHistory, [])
+  })
+
+  it('does not rebase another open column history when a shared-path placeholder selects a new workspace', () => {
+    const state = createState()
+    state.columns[1] = createColumn({
+      id: 'column-2',
+      workspacePath: 'D:/repo/one',
+      layout: createPane('pane-placeholder', ['card-placeholder'], 'card-placeholder'),
+      cards: {
+        'card-placeholder': createCard({
+          id: 'card-placeholder',
+          title: '',
+          messages: [],
+          draft: '',
+          sessionId: undefined,
+          streamId: undefined,
+          status: 'idle',
+        }),
+      },
+    })
+    state.sessionHistory = [{
+      id: 'history-open-workspace',
+      title: 'Belongs to the still-open workspace',
+      provider: 'codex',
+      model: DEFAULT_CODEX_MODEL,
+      workspacePath: 'D:/repo/one',
+      archivedAt: timestamp,
+      messages: [assistantMessage],
+    }]
+
+    const next = ideReducer(state, {
+      type: 'updateColumn',
+      columnId: 'column-2',
+      patch: { workspacePath: 'D:/repo/reopened' },
+    })
+
+    assert.equal(next.sessionHistory[0]?.workspacePath, 'D:/repo/one')
   })
 
   it('switches the active tab inside a pane', () => {
@@ -2218,6 +2445,106 @@ describe('ideReducer pane layout', () => {
     }
     assert.equal(commandPayload.status, 'declined')
     assert.equal(card?.messages[1]?.meta?.kind, 'run-stopped')
+  })
+
+  it('clears the live sub-agent running panel when a streaming card is stopped', () => {
+    const state = createState()
+    state.columns[0] = createColumn({
+      id: 'column-1',
+      layout: createPane('pane-1', ['card-1'], 'card-1'),
+      cards: {
+        'card-1': createCard({
+          id: 'card-1',
+          status: 'streaming',
+          streamId: 'stream-1',
+          messages: [
+            {
+              id: 'agents-1',
+              role: 'assistant',
+              content: '',
+              createdAt: timestamp,
+              meta: {
+                provider: 'codex',
+                kind: 'agents',
+                itemId: 'agent-status:root',
+                structuredData: JSON.stringify({
+                  itemId: 'agent-status:root',
+                  kind: 'agents',
+                  status: 'completed',
+                  view: 'status',
+                  agents: [
+                    {
+                      threadId: 'thread-child',
+                      path: '/root/reviewer',
+                      status: 'running',
+                      activity: ['$ pnpm test'],
+                    },
+                  ],
+                }),
+              },
+            },
+          ],
+        }),
+      },
+    })
+
+    const next = ideReducer(state, {
+      type: 'finishStoppedStream',
+      columnId: 'column-1',
+      cardId: 'card-1',
+    })
+
+    const payload = JSON.parse(
+      next.columns[0]?.cards['card-1']?.messages[0]?.meta?.structuredData ?? '{}',
+    ) as { agents?: unknown[] }
+    assert.deepEqual(payload.agents, [])
+  })
+
+  it('settles live stream activities without changing the card status', () => {
+    const state = createState()
+    state.columns[0] = createColumn({
+      id: 'column-1',
+      layout: createPane('pane-1', ['card-1'], 'card-1'),
+      cards: {
+        'card-1': createCard({
+          id: 'card-1',
+          status: 'streaming',
+          streamId: 'stream-1',
+          messages: [
+            {
+              id: 'agents-1',
+              role: 'assistant',
+              content: '',
+              createdAt: timestamp,
+              meta: {
+                provider: 'codex',
+                kind: 'agents',
+                structuredData: JSON.stringify({
+                  itemId: 'agent-status:root',
+                  kind: 'agents',
+                  status: 'completed',
+                  view: 'status',
+                  agents: [{ threadId: 'thread-child', status: 'running' }],
+                }),
+              },
+            },
+          ],
+        }),
+      },
+    })
+
+    const next = ideReducer(state, {
+      type: 'settleStreamActivities',
+      columnId: 'column-1',
+      cardId: 'card-1',
+    })
+
+    const card = next.columns[0]?.cards['card-1']
+    const payload = JSON.parse(card?.messages[0]?.meta?.structuredData ?? '{}') as {
+      agents?: unknown[]
+    }
+    assert.equal(card?.status, 'streaming')
+    assert.deepEqual(payload.agents, [])
   })
 
 });

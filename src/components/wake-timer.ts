@@ -12,12 +12,18 @@ export const shouldQueueWakeTimerSend = ({
   cardActive,
   origin,
   answersPendingAskUser = false,
+  hasContent = true,
 }: {
   featureEnabled: boolean
   cardActive: boolean
   origin: 'user' | 'auto-urge' | 'wake-timer-release'
   answersPendingAskUser?: boolean
-}) => featureEnabled && cardActive && origin === 'user' && !answersPendingAskUser
+  // The queue replays real sends later, so an entry with nothing to send is
+  // useless — and worse, it fails persistence validation and takes the whole
+  // save down with it (crash of 2026-07-26 21:10).
+  hasContent?: boolean
+}) =>
+  featureEnabled && cardActive && origin === 'user' && !answersPendingAskUser && hasContent
 
 export const shouldConfirmWakeTimerCompletion = ({
   normalCompletion,

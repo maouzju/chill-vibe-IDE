@@ -851,8 +851,9 @@ const areChatCardPropsEqual = (previous: ChatCardProps, next: ChatCardProps) =>
   previous.globalUrgeActive === next.globalUrgeActive &&
   previous.globalUrgeProfileId === next.globalUrgeProfileId &&
   previous.wakeTimerEnabled === next.wakeTimerEnabled &&
+  // 唤醒条件下方不再回显左邻标题（只保留"没有可等待的 Tab"警告），
+  // 所以 title 变化对这张卡的渲染无影响，比较它只会让左邻改标题时白白重渲染整卡。
   previous.leftWakeTimerTarget?.id === next.leftWakeTimerTarget?.id &&
-  previous.leftWakeTimerTarget?.title === next.leftWakeTimerTarget?.title &&
   previous.workspaceWakeTimerAgentCount === next.workspaceWakeTimerAgentCount &&
   previous.queuedSendSummary === next.queuedSendSummary &&
   previous.isRestored === next.isRestored &&
@@ -4550,13 +4551,9 @@ const ChatCardView = ({
                                       </span>
                                     </label>
                                   ) : null}
-                                  {wakeTimerMode === 'left-tab' ? (
-                                    <div className={`composer-settings-note${wakeTimerLeftUnavailable ? ' is-warning' : ''}`}>
-                                      {wakeTimerLeftUnavailable
-                                        ? text.wakeTimerLeftUnavailable
-                                        : (language === 'en'
-                                            ? `Target: ${leftWakeTimerTarget?.title || 'Untitled agent'}`
-                                            : `等待：${leftWakeTimerTarget?.title || '未命名 Agent'}`)}
+                                  {wakeTimerLeftUnavailable ? (
+                                    <div className="composer-settings-note is-warning">
+                                      {text.wakeTimerLeftUnavailable}
                                     </div>
                                   ) : null}
                                   {wakeTimerMode === 'workspace-agents' ? (

@@ -1,7 +1,7 @@
 import type { Provider } from './schema.js'
 
 export const DEFAULT_CODEX_MODEL = 'gpt-5.6-sol'
-export const DEFAULT_CLAUDE_MODEL = 'claude-opus-4-8'
+export const DEFAULT_CLAUDE_MODEL = 'claude-opus-5'
 export const DEFAULT_GIT_AGENT_MODEL = 'gpt-5.6-terra medium'
 export const GIT_TOOL_MODEL = '__git_tool__'
 export const MUSIC_TOOL_MODEL = '__music_tool__'
@@ -124,10 +124,18 @@ export const MODEL_OPTIONS: ModelOption[] = [
     aliases: ['fable', 'fable-5', 'claude-fable-5'],
   },
   {
-    label: 'Opus 4.8',
+    // Bare "opus" follows the newest Opus tier, like bare "sonnet" does.
+    label: 'Opus 5',
     provider: 'claude',
     model: DEFAULT_CLAUDE_MODEL,
-    aliases: ['opus', 'opus-4.8', 'claude-opus-4-8'],
+    aliases: ['opus', 'opus-5', 'claude-opus-5'],
+  },
+  {
+    // Still a live model: exact names only, stored values stay pinned.
+    label: 'Opus 4.8',
+    provider: 'claude',
+    model: 'claude-opus-4-8',
+    aliases: ['opus-4.8', 'claude-opus-4-8'],
   },
   {
     // Bare "sonnet" follows the official alias to Sonnet 5 (native 1M window).

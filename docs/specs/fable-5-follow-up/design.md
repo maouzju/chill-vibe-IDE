@@ -7,12 +7,15 @@
 | label | model | aliases |
 |---|---|---|
 | Fable 5 | `claude-fable-5` | `fable`, `fable-5`, `claude-fable-5` |
-| Opus 4.8 | `claude-opus-4-8`（默认，不变） | `opus`, `opus-4.8`, `claude-opus-4-8` |
+| Opus 4.8 | `claude-opus-4-8`（当时的默认） | `opus`, `opus-4.8`, `claude-opus-4-8` |
 | Sonnet 5 | `claude-sonnet-5` | `sonnet`, `sonnet-5`, `claude-sonnet-5` |
 | Sonnet 4.6 | `claude-sonnet-4-6` | `sonnet-4.6`, `claude-sonnet-4-6`（裸 `sonnet` 移交 Sonnet 5） |
 | Haiku 4.5 | `claude-haiku-4-5-20251001`（不变） | 不变 |
 
 无迁移逻辑：`claude-sonnet-4-6` 仍是合法可用模型（Pitfall #119）。
+
+> 该表的 Opus 行已过时：默认模型与裸 `opus` 别名后来移交给了 Opus 5，
+> 见 [`../opus-5-default/design.md`](../opus-5-default/design.md)。
 
 ## 2. `shared/reasoning.ts` — 模型感知层
 

@@ -91,6 +91,20 @@ export const queuedSendRequestSchema = z.object({
 )
 export type QueuedSendRequest = z.infer<typeof queuedSendRequestSchema>
 
+// A queue entry that carries neither prompt nor attachment is meaningless, but
+// on 2026-07-26 one reached state.json anyway and made the whole app state
+// unparseable: every save threw out of a synchronous IPC listener and killed
+// the main process, so the app vanished silently every ~20 seconds. Persistence
+// must therefore be tolerant where the write path is strict — drop the unusable
+// entry and keep the rest of the user's state loadable.
+export const persistedQueuedSendsSchema = z.preprocess(
+  (value) =>
+    Array.isArray(value)
+      ? value.filter((entry) => queuedSendRequestSchema.safeParse(entry).success)
+      : value,
+  z.array(queuedSendRequestSchema),
+)
+
 export const wakeTimerModes = ['workspace-agents', 'left-tab', 'duration'] as const
 export const wakeTimerModeSchema = z.enum(wakeTimerModes)
 export type WakeTimerMode = z.infer<typeof wakeTimerModeSchema>
@@ -164,7 +178,7 @@ export const chatCardSchema = z.object({
   wakeTimerActive: z.boolean().optional(),
   wakeTimerMode: wakeTimerModeSchema.optional(),
   wakeTimerDurationMinutes: z.number().finite().min(minWakeTimerDurationMinutes).max(maxWakeTimerDurationMinutes).optional(),
-  wakeTimerQueuedSends: z.array(queuedSendRequestSchema).optional(),
+  wakeTimerQueuedSends: persistedQueuedSendsSchema.optional(),
   wakeTimerArmedAt: z.string().datetime().optional(),
   wakeTimerWakeAt: z.string().datetime().optional(),
   wakeTimerPendingTargetIds: z.array(z.string().min(1)).optional(),
@@ -570,7 +584,10 @@ export const appSettingsSchema = z.object({
   experimentalWeatherEnabled: z.boolean().default(false),
   agentDoneSoundEnabled: z.boolean().default(false),
   agentDoneSoundVolume: z.number().min(0).max(1).default(0.7),
+  allAgentsDoneSoundEnabled: z.boolean().default(false),
+  allAgentsDoneSoundVolume: z.number().min(0).max(1).default(0.7),
   crossProviderSkillReuseEnabled: z.boolean().default(true),
+  accessibilitySupportEnabled: z.boolean().default(false),
   autoUrgeEnabled: z.boolean().default(false),
   autoUrgeProfiles: z.array(autoUrgeProfileSchema).default([
     {
@@ -666,7 +683,10 @@ export const appStateSchema = z.object({
     experimentalWeatherEnabled: false,
     agentDoneSoundEnabled: false,
     agentDoneSoundVolume: 0.7,
+    allAgentsDoneSoundEnabled: false,
+    allAgentsDoneSoundVolume: 0.7,
     crossProviderSkillReuseEnabled: true,
+    accessibilitySupportEnabled: false,
     autoUrgeEnabled: false,
     autoUrgeProfiles: [
       {

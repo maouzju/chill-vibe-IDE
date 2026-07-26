@@ -124,3 +124,12 @@
 - [x] 红测覆盖无响应武装、恢复取消、销毁取消、禁用配置和只触发一次恢复。
 - [x] 实现 renderer 自动重新加载兜底，并保留主进程/后端/Provider 进程。
 - [x] 运行 focused tests、quality、Electron runtime/聊天性能门禁，并构建新的 Windows ZIP 与可直接运行目录：`dist/release-20260725-230759/Chill Vibe-0.18.17-win.zip`、`dist/release-20260725-230759/win-unpacked/Chill Vibe.exe`。
+
+## 2026-07-26 自动恢复假绿修正
+
+- [x] 现场确认自动恢复连续四次触发，但 renderer PID 始终为 `45156`，普通 reload 没有重新加载页面，用户仍只能关闭应用。
+- [x] 红测要求持续无响应恢复必须调用 `forcefullyCrashRenderer()`，并只在 `render-process-gone` 后 reload。
+- [x] 实现强制替换 renderer 进程，保留 main/backend/ChatManager/Provider CLI。
+- [x] 新增真实 Electron 运行时测试，主动触发 unresponsive，证明 renderer PID 变化且 UI/desktop bridge 恢复。
+- [x] 定向 Electron/Node 测试与 `tsconfig.node` 通过；30 秒 20-stream / 84-tab 聊天压力门禁零 unresponsive、frame max 266.7ms。全量 `test:quality` 仅被并行的 all-agents-done-sound WIP 测试字段名不一致阻断。
+- [x] 构建新的 Windows ZIP 与可直接运行目录：`dist/release-20260726-192017/Chill Vibe-0.18.18-win.zip`、`dist/release-20260726-192017/win-unpacked/Chill Vibe.exe`。

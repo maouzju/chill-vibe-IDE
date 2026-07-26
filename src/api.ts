@@ -296,6 +296,18 @@ export const syncRuntimeSettings = async (settings: AppSettings): Promise<void> 
   return fn(parsed) as Promise<void>
 }
 
+/**
+ * Records the accessibility opt-in for the next launch. Chromium switches are
+ * fixed once the app is ready, so this never changes the running process.
+ */
+export const syncAccessibilitySupport = async (enabled: boolean): Promise<void> => {
+  const fn = getDesktopApi()?.setAccessibilitySupport
+  if (!fn) {
+    return
+  }
+  await fn(enabled)
+}
+
 export const queueStateSave = (state: AppState) => {
   const queue = requireDesktopAction(getDesktopApi()?.queueStateSave)
   queue(state)

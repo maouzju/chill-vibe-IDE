@@ -27,6 +27,10 @@ describe('model helpers', () => {
     assert.equal(DEFAULT_GIT_AGENT_MODEL, 'gpt-5.6-terra medium')
   })
 
+  it('uses Opus 5 as the Claude default', () => {
+    assert.equal(DEFAULT_CLAUDE_MODEL, 'claude-opus-5')
+  })
+
   it('resolves configured defaults and preserves stored default selections', () => {
     assert.equal(normalizeStoredModel('codex', ''), '')
     assert.equal(normalizeModel('codex', ''), DEFAULT_CODEX_MODEL)
@@ -37,7 +41,10 @@ describe('model helpers', () => {
     assert.equal(normalizeStoredModel('claude', ''), '')
     assert.equal(normalizeModel('claude', ''), DEFAULT_CLAUDE_MODEL)
     assert.equal(normalizeModel('claude', ' claude-opus-4-7 '), 'claude-opus-4-7')
-    assert.equal(normalizeModel('claude', ' claude-opus-4-8 '), DEFAULT_CLAUDE_MODEL)
+    // Opus 4.8 is still a live model: an explicitly stored value must not be
+    // migrated onto the newer default (Pitfall #119).
+    assert.equal(normalizeModel('claude', ' claude-opus-4-8 '), 'claude-opus-4-8')
+    assert.equal(normalizeModel('claude', ' claude-opus-5 '), DEFAULT_CLAUDE_MODEL)
   })
 
   it('lists Git tool first among codex model options', () => {
@@ -71,6 +78,7 @@ describe('model helpers', () => {
         '',
         'claude-fable-5',
         DEFAULT_CLAUDE_MODEL,
+        'claude-opus-4-8',
         'claude-sonnet-5',
         'claude-sonnet-4-6',
         'claude-haiku-4-5-20251001',
@@ -120,8 +128,14 @@ describe('model helpers', () => {
     assert.equal(resolveSlashModel('codex', 'whitenoise'), WHITENOISE_TOOL_MODEL)
     assert.equal(resolveSlashModel('codex', 'ambient'), WHITENOISE_TOOL_MODEL)
     assert.equal(resolveSlashModel('claude', 'claude'), '')
+    // Bare "opus" follows the newest Opus tier, the same way bare "sonnet"
+    // moved to Sonnet 5.
     assert.equal(resolveSlashModel('claude', 'opus'), DEFAULT_CLAUDE_MODEL)
-    assert.equal(resolveSlashModel('claude', 'opus 4.8'), DEFAULT_CLAUDE_MODEL)
+    assert.equal(resolveSlashModel('claude', 'opus 5'), DEFAULT_CLAUDE_MODEL)
+    assert.equal(resolveSlashModel('claude', 'claude-opus-5'), DEFAULT_CLAUDE_MODEL)
+    // Opus 4.8 keeps its exact aliases so an explicit pick still resolves.
+    assert.equal(resolveSlashModel('claude', 'opus 4.8'), 'claude-opus-4-8')
+    assert.equal(resolveSlashModel('claude', 'claude-opus-4-8'), 'claude-opus-4-8')
     assert.equal(resolveSlashModel('claude', 'unknown-model'), null)
   })
 })

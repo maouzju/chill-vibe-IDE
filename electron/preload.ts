@@ -86,6 +86,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   saveState: (state: unknown) => ipcRenderer.invoke('desktop:save-state', state),
   syncRuntimeSettings: (settings: unknown) =>
     ipcRenderer.invoke('desktop:sync-runtime-settings', settings),
+  setAccessibilitySupport: (enabled: boolean) =>
+    ipcRenderer.invoke('desktop:set-accessibility-support', enabled),
   queueStateSave: (state: unknown) => {
     ipcRenderer.send('desktop:queue-state-save', state)
   },

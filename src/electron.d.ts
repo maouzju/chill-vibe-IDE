@@ -96,6 +96,9 @@ declare global {
       hideInternalSessionHistory?: (request: InternalSessionHistoryHideRequest) => Promise<void>
       saveState?: (state: AppState) => Promise<AppState>
       syncRuntimeSettings?: (settings: AppSettings) => Promise<void>
+      setAccessibilitySupport?: (
+        enabled: boolean,
+      ) => Promise<{ enabled: boolean; restartRequired: boolean }>
       queueStateSave?: (state: AppState) => void
       resetState?: () => Promise<AppState>
       resolveStateRecoveryOption?: (request: StateRecoverySelection) => Promise<AppStateLoadResponse>

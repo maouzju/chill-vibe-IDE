@@ -34,6 +34,7 @@ type LocaleText = {
   experimentalWeatherLabel: string
   agentDoneSoundLabel: string
   agentDoneSoundVolumeLabel: string
+  allAgentsDoneSoundLabel: string
   autoUrgeLabel: string
   autoUrgeTypesLabel: string
   autoUrgeTypeNameLabel: string
@@ -152,6 +153,8 @@ type LocaleText = {
   systemPromptNote: string
   crossProviderSkillReuseLabel: string
   crossProviderSkillReuseNote: string
+  accessibilitySupportLabel: string
+  accessibilitySupportNote: string
   restoreDefaultSystemPrompt: string
   applyToExistingChats: string
   resetInterfaceDefaults: string
@@ -367,6 +370,7 @@ const localeTextByLanguage: Record<AppLanguage, LocaleText> = {
     experimentalWeatherLabel: '天气',
     agentDoneSoundLabel: 'Agent 完成音效',
     agentDoneSoundVolumeLabel: '音量',
+    allAgentsDoneSoundLabel: '全完成提示音',
     autoUrgeLabel: '自动鞭策',
     autoUrgeTypesLabel: '鞭策类型',
     autoUrgeTypeNameLabel: '类型名称',
@@ -491,6 +495,9 @@ const localeTextByLanguage: Record<AppLanguage, LocaleText> = {
     crossProviderSkillReuseLabel: 'Codex / Claude Skill 互相复用',
     crossProviderSkillReuseNote:
       '启用后，斜杠菜单和实际 AI 运行都可以复用当前工作区或用户目录里的 .codex/skills 和 .claude/skills，不用复制两份。',
+    accessibilitySupportLabel: '无障碍 / 辅助输入支持',
+    accessibilitySupportNote:
+      '开启后微信语音输入、读屏软件、语音听写等辅助工具才能直接把文字写进输入框，否则它们看不见界面元素。会让浏览器内核额外维护一份界面结构树，长会话下略微增加内存与渲染开销，改完需要重启应用生效。',
     restoreDefaultSystemPrompt: '恢复内置提示词',
     applyToExistingChats: '应用到现有会话',
     resetInterfaceDefaults: '重置界面默认值',
@@ -724,6 +731,7 @@ const localeTextByLanguage: Record<AppLanguage, LocaleText> = {
     experimentalWeatherLabel: 'Weather',
     agentDoneSoundLabel: 'Agent Done Sound',
     agentDoneSoundVolumeLabel: 'Volume',
+    allAgentsDoneSoundLabel: 'All Agents Done Sound',
     autoUrgeLabel: 'Auto Urge',
     autoUrgeTypesLabel: 'Urge Types',
     autoUrgeTypeNameLabel: 'Type Name',
@@ -855,6 +863,9 @@ const localeTextByLanguage: Record<AppLanguage, LocaleText> = {
     crossProviderSkillReuseLabel: 'Reuse Codex / Claude skills',
     crossProviderSkillReuseNote:
       'When enabled, slash menus and provider runs can reuse .codex/skills and .claude/skills from the current workspace or user home without copying them twice.',
+    accessibilitySupportLabel: 'Accessibility / assistive input support',
+    accessibilitySupportNote:
+      'Lets screen readers, dictation, and voice-input tools see the composer and type into it directly. Chromium keeps an extra accessibility tree while this is on, which costs some memory and frame time on long transcripts. Restart the app to apply.',
     restoreDefaultSystemPrompt: 'Restore built-in prompt',
     applyToExistingChats: 'Apply to existing chats',
     resetInterfaceDefaults: 'Reset interface defaults',

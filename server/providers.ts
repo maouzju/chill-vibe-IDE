@@ -225,8 +225,18 @@ const getCodexAskUserQuestionInstruction = (language: AppLanguage) =>
     ? 'In this Chill Vibe Codex exec environment, the native request_user_input tool is unavailable. When you must ask the user to choose before you can continue safely, do not call request_user_input and do not ask a plain-text multiple-choice question. Reply with only one complete XML block and no extra text. For one question, use this single-question shape: <ask-user-question>{"header":"Short title","question":"One concise question","multiSelect":false,"options":[{"label":"Option A","description":"Short tradeoff"},{"label":"Option B","description":"Short tradeoff"}]}</ask-user-question>. When multiple questions can be answered together, use this grouped shape: <ask-user-question>{"questions":[{"header":"First title","question":"First concise question","multiSelect":false,"options":[{"label":"Option A","description":"Short tradeoff"},{"label":"Option B","description":"Short tradeoff"}]},{"header":"Second title","question":"Second concise question","multiSelect":false,"options":[{"label":"Option A","description":"Short tradeoff"},{"label":"Option B","description":"Short tradeoff"}]}]}</ask-user-question>. The question group has no count limit. Use 2-3 options per question, keep labels short, omit any Other option, keep multiSelect false, and wait for the next user reply after emitting the block.'
     : '在这个 Chill Vibe 的 Codex exec 运行环境里，原生 request_user_input 工具不可用。当你必须在继续之前让用户做选择时，不要调用 request_user_input，也不要用普通文本写多选题。只输出一个完整的 XML 块，不要添加任何其他文本。只有一个问题时，使用这个单题格式：<ask-user-question>{"header":"简短标题","question":"一句简洁问题","multiSelect":false,"options":[{"label":"选项 A","description":"简短权衡"},{"label":"选项 B","description":"简短权衡"}]}</ask-user-question>。有多个问题可以一起回答时，使用这个题组格式：<ask-user-question>{"questions":[{"header":"第一题标题","question":"第一句简洁问题","multiSelect":false,"options":[{"label":"选项 A","description":"简短权衡"},{"label":"选项 B","description":"简短权衡"}]},{"header":"第二题标题","question":"第二句简洁问题","multiSelect":false,"options":[{"label":"选项 A","description":"简短权衡"},{"label":"选项 B","description":"简短权衡"}]}]}</ask-user-question>。题组数量不设上限；每题保持 2-3 个选项，label 要简短，不要自己添加 Other，multiSelect 保持 false，并在输出这个块后等待用户下一条回复。'
 
-const getCodexWindowsShellSafetyInstruction = () =>
-  'Windows shell safety: shell commands run in PowerShell. If a command argument contains double quotes (for example ripgrep patterns that search JSON such as name": "value), wrap that argument in single quotes or use a here-string/script file. Do not put unescaped embedded double quotes inside a double-quoted PowerShell argument; it causes ParserError: TerminatorExpectedAtEndOfString. Prefer rg --fixed-strings for literal JSON/key searches.'
+// 症状：agent 用 `Get-Content` 读仓库里任何含中文的 UTF-8 文件（AGENTS.md、
+// SKILL.md、docs/），终端输出整片变成生僻汉字，agent 会误判文件损坏。
+// 根因：2026-07-26 实测 Windows PowerShell 5.1（用户机 5.1.26100）的 Get-Content
+// 对无 BOM 文件按 [Encoding]::Default 解码，中文系统上是 gb2312/GBK —— 与
+// `chcp 65001` 无关（实测 chcp 已是 65001 仍乱码），改 [Console]::OutputEncoding
+// 也无效，因为坏在读取端而不是输出端。
+// 被否决的替代方案：(a) 在 spawn 时注入 env —— Get-Content 的默认编码不读任何
+// 环境变量；(b) 改用 pwsh 7（默认 UTF-8）—— 用户机未安装，且 CLI 挑哪个 shell
+// 不归 Chill Vibe 管；(c) 改用户的 PowerShell profile —— 污染用户全局环境。
+// provider CLI 自己 spawn PowerShell，Chill Vibe 只能从系统提示这一侧修。
+const getWindowsShellSafetyInstruction = () =>
+  'Windows shell safety: shell commands run in PowerShell. If a command argument contains double quotes (for example ripgrep patterns that search JSON such as name": "value), wrap that argument in single quotes or use a here-string/script file. Do not put unescaped embedded double quotes inside a double-quoted PowerShell argument; it causes ParserError: TerminatorExpectedAtEndOfString. Prefer rg --fixed-strings for literal JSON/key searches. Windows file reading: this host runs Windows PowerShell 5.1, where Get-Content decodes BOM-less files with the system ANSI code page (GBK on a Chinese Windows), so shell-reading a UTF-8 file silently mojibakes every non-ASCII character. Prefer your native file-read tool over the shell. When you must use the shell, pass -Encoding UTF8 to Get-Content, or use [System.IO.File]::ReadAllText($path, [System.Text.UTF8Encoding]::new($false)). If shell output comes back as dense unfamiliar CJK characters where readable text was expected, that is this decoding bug: re-read the file as UTF-8 instead of reporting the file as corrupted or empty.'
 
 const getClaudeAskUserQuestionInstruction = (language: AppLanguage) =>
   normalizeLanguage(language) === 'en'
@@ -1384,7 +1394,7 @@ const buildCodexAppServerBaseInstructions = (request: ChatRequest) =>
   [
     buildProviderSystemPrompt(request.language, request.systemPrompt),
     getCodexAskUserQuestionInstruction(request.language),
-    getCodexWindowsShellSafetyInstruction(),
+    getWindowsShellSafetyInstruction(),
   ].join(' ')
 
 export const buildCodexAppServerInput = (request: ChatRequest, attachmentPaths: string[]) => {
@@ -2629,6 +2639,19 @@ export const createClaudeTurnParser = (hooks: {
   let sawMeaningfulAssistantText = false
   const askUserDeltaStripper = createClaudeAskUserDeltaStripper()
   const typedToolChatterFilter = createClaudeTypedToolChatterFilter()
+  // Identity of the text content block currently streaming. The renderer keys a
+  // streamed assistant bubble by this id; without one it can only chain deltas
+  // through "the message I was last appending to", which an activity arriving
+  // mid-sentence resets — splitting one sentence across two bubbles. Deltas from
+  // one block share an id, and each new assistant message starts a new one.
+  let claudeStreamMessageId: string | null = null
+  let claudeTextBlockItemId: string | null = null
+  let claudeTextBlockSeq = 0
+  const nextClaudeTextItemId = (blockIndex: number | null) => {
+    claudeTextBlockSeq += 1
+    const messagePart = claudeStreamMessageId ?? `seq${claudeTextBlockSeq}`
+    return `${messagePart}:text:${blockIndex ?? claudeTextBlockSeq}`
+  }
   let stderr = ''
   let emittedSessionId: string | null = request.sessionId?.trim() || null
   // Stall watchdog: the Claude path otherwise has no timeout, so a CLI that
@@ -2746,7 +2769,13 @@ export const createClaudeTurnParser = (hooks: {
             !(hasToolUse && isBareClaudeToolCallMarkerText(visibleTextContent))
           ) {
             sawMeaningfulAssistantText = true
-            sink.onDelta(visibleTextContent)
+            // Non-partial fallback path: one whole assistant message at a time,
+            // so its own id is the bubble identity.
+            const wholeMessageId = readString(event.message, 'id')
+            sink.onDelta(
+              visibleTextContent,
+              wholeMessageId ? `${wholeMessageId}:text` : undefined,
+            )
           }
         }
       }
@@ -2794,6 +2823,24 @@ export const createClaudeTurnParser = (hooks: {
         }
       }
 
+      if (event.type === 'stream_event' && event.event?.type === 'message_start') {
+        const startedMessageId = readString(event.event.message, 'id')
+        claudeStreamMessageId = startedMessageId ?? null
+        // A new assistant message is a genuine bubble boundary: drop the old
+        // block identity so its first text delta opens a fresh bubble.
+        claudeTextBlockItemId = null
+      }
+
+      if (event.type === 'stream_event' && event.event?.type === 'content_block_start') {
+        const blockType = readString(event.event.content_block, 'type')
+        claudeTextBlockItemId =
+          blockType === 'text'
+            ? nextClaudeTextItemId(
+                typeof event.event.index === 'number' ? event.event.index : null,
+              )
+            : null
+      }
+
       if (
         event.type === 'stream_event' &&
         event.event?.type === 'content_block_delta' &&
@@ -2801,13 +2848,20 @@ export const createClaudeTurnParser = (hooks: {
         typeof event.event.delta.text === 'string'
       ) {
         sawClaudeDelta = true
+        // Older CLI builds can stream text deltas without an opening
+        // content_block_start; keep a stable id for that block anyway.
+        if (!claudeTextBlockItemId) {
+          claudeTextBlockItemId = nextClaudeTextItemId(
+            typeof event.event.index === 'number' ? event.event.index : null,
+          )
+        }
         const safeText = askUserDeltaStripper.push(event.event.delta.text)
         const visibleText = typedToolChatterFilter.push(safeText)
         if (visibleText) {
           if (visibleText.trim()) {
             sawMeaningfulAssistantText = true
           }
-          sink.onDelta(visibleText)
+          sink.onDelta(visibleText, claudeTextBlockItemId)
         }
         return
       }
@@ -2836,7 +2890,8 @@ export const createClaudeTurnParser = (hooks: {
           if (visibleResidualDelta.trim()) {
             sawMeaningfulAssistantText = true
           }
-          sink.onDelta(visibleResidualDelta)
+          // Residual text belongs to the last streamed block, not a new bubble.
+          sink.onDelta(visibleResidualDelta, claudeTextBlockItemId ?? undefined)
         }
 
         if (event.is_error) {
@@ -3440,7 +3495,7 @@ export const buildCodexArgs = (request: ChatRequest, attachmentPaths: string[]) 
   const systemPrompt = [
     buildProviderSystemPrompt(request.language, getRequestBaseSystemPrompt(request)),
     getCodexAskUserQuestionInstruction(request.language),
-    getCodexWindowsShellSafetyInstruction(),
+    getWindowsShellSafetyInstruction(),
   ].join(' ')
 
   if (request.model) {
@@ -3731,6 +3786,7 @@ export const buildClaudeArgs = (
   const systemPrompt = [
     buildProviderSystemPrompt(request.language, getRequestBaseSystemPrompt(request)),
     getClaudeAskUserQuestionInstruction(request.language),
+    getWindowsShellSafetyInstruction(),
   ].join(' ')
 
   args.push('--permission-mode', permissionMode)

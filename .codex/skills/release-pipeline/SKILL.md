@@ -14,6 +14,7 @@ Reuse the verification posture from `../chill-vibe-full-regression/SKILL.md`, bu
 ## Workflow
 
 1. Pre-flight — inspect repo state and rule out interference before touching anything:
+   - On Windows PowerShell 5.1, read repo text with `Get-Content -Encoding UTF8` (or a native file-read tool). Bare `Get-Content` decodes BOM-less UTF-8 through the system ANSI code page and can turn Chinese release rules/SPECs into mojibake before the audit even starts.
    - `git status --short --branch`, `git diff --stat`, `git remote -v`, `gh auth status`
    - `git fetch origin main`; record `git rev-parse main` and `git rev-parse origin/main`. The release target is the local `main` branch. If local `main` is behind or diverged, reconcile it before assembling a candidate; do not build a new release on a stale branch graph.
    - read `package.json` version and `git tag --sort=-version:refname` (top few), then check the authoritative remote state with `gh release list --limit 5` or `git ls-remote --tags origin`; local tags can diverge from GitHub and the package version can lag an already-published release, so choose the next version above the highest published remote tag instead of trusting either source alone
@@ -23,6 +24,7 @@ Reuse the verification posture from `../chill-vibe-full-regression/SKILL.md`, bu
    - look for secrets, tokens, auth headers, local absolute paths, debug-only noise, or unrelated files
    - treat obvious test fixtures like `sk-test` as expected only if they stay inside tests
    - explicitly review new docs/spec files so accidental scratch notes do not ship
+   - audit test registration before trusting any green suite: every new ordinary `tests/*.test.ts(x)` file must be imported by `tests/index.test.ts`; dedicated Electron runtime/performance files must instead be listed in `scripts/run-electron-runtime-tests.ps1`. Run the new proving files narrowly after registration; an unregistered red test is invisible to `pnpm test:release`.
    - treat changed SPEC task lists with unchecked implementation/verification boxes as a release blocker until the corresponding slice is completed or explicitly excluded; run any newly added proving test narrowly so an intentional red test cannot hide inside the later full-suite output
    - if the checkout mixes a release-ready slice with unfinished user/agent WIP, preserve the WIP on a named branch/worktree and make local `main` release-ready before publication. A repo-external release worktree may assemble and verify a path-limited candidate, but it does not make remote-only publication safe. Do not stash, revert, discard, or accidentally commit excluded WIP; if local `main` cannot safely become clean and accept the candidate, the release is blocked.
    - if something is suspicious, stop and fix or exclude it before continuing

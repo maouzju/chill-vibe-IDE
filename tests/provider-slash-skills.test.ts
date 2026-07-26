@@ -244,6 +244,132 @@ test('cross-provider instructions map same-name skills to the current claude ver
   }
 })
 
+test('an explicitly named skill inlines its SKILL.md body so the agent never shell-reads it', async () => {
+  const workspacePath = await mkdtemp(path.join(os.tmpdir(), 'chill-vibe-skill-inline-'))
+  const homePath = await mkdtemp(path.join(os.tmpdir(), 'chill-vibe-skill-inline-home-'))
+
+  try {
+    const skillDir = path.join(workspacePath, '.codex', 'skills', 'mechanic-brainstorm')
+    await mkdir(skillDir, { recursive: true })
+    const skillPath = path.join(skillDir, 'SKILL.md')
+    const skillBody = '# 机制头脑风暴\n\n先列出三个可玩性方向，再逐一评估权衡。'
+    await writeFile(
+      skillPath,
+      `---\nname: mechanic-brainstorm\ndescription: 为玩法机制做结构化头脑风暴\n---\n\n${skillBody}\n`,
+      'utf8',
+    )
+
+    await withTemporarySkillHome(homePath, async () => {
+      const prepared = await prepareProviderSkillReuse({
+        provider: 'claude',
+        workspacePath,
+        language: 'zh-CN',
+        prompt: '/mechanic-brainstorm 帮我想想战斗手感',
+        crossProviderSkillReuseEnabled: true,
+      })
+
+      // The whole point: the body travels in the prompt, decoded server-side as
+      // UTF-8, so Windows PowerShell never gets a chance to mojibake it.
+      assert.ok(prepared.prompt.includes('先列出三个可玩性方向，再逐一评估权衡。'))
+      assert.ok(prepared.prompt.includes('# 机制头脑风暴'))
+      assert.ok(prepared.prompt.includes('帮我想想战斗手感'))
+      assert.doesNotMatch(prepared.prompt, /请先读取这个 SKILL\.md/)
+    })
+  } finally {
+    await rm(workspacePath, { recursive: true, force: true })
+    await rm(homePath, { recursive: true, force: true })
+  }
+})
+
+test('an oversized skill falls back to the path plus an explicit UTF-8 read instruction', async () => {
+  const workspacePath = await mkdtemp(path.join(os.tmpdir(), 'chill-vibe-skill-oversize-'))
+  const homePath = await mkdtemp(path.join(os.tmpdir(), 'chill-vibe-skill-oversize-home-'))
+
+  try {
+    const skillDir = path.join(workspacePath, '.codex', 'skills', 'huge-skill')
+    await mkdir(skillDir, { recursive: true })
+    const skillPath = path.join(skillDir, 'SKILL.md')
+    await writeFile(
+      skillPath,
+      `---\nname: huge-skill\ndescription: 超长技能\n---\n\n${'去重复的正文段落。'.repeat(4000)}\n`,
+      'utf8',
+    )
+
+    await withTemporarySkillHome(homePath, async () => {
+      const prepared = await prepareProviderSkillReuse({
+        provider: 'claude',
+        workspacePath,
+        language: 'zh-CN',
+        prompt: '/huge-skill',
+        crossProviderSkillReuseEnabled: true,
+      })
+
+      assert.ok(prepared.prompt.includes(skillPath))
+      assert.match(prepared.prompt, /UTF-8/)
+      assert.match(prepared.prompt, /-Encoding UTF8/)
+    })
+  } finally {
+    await rm(workspacePath, { recursive: true, force: true })
+    await rm(homePath, { recursive: true, force: true })
+  }
+})
+
+test('cross-provider skill listing warns that PowerShell must read SKILL.md as UTF-8', async () => {
+  const workspacePath = await mkdtemp(path.join(os.tmpdir(), 'chill-vibe-skill-listing-utf8-'))
+  const homePath = await mkdtemp(path.join(os.tmpdir(), 'chill-vibe-skill-listing-utf8-home-'))
+
+  try {
+    await writeSkill(workspacePath, 'codex', 'codex-only', 'Codex-only workflow')
+
+    await withTemporarySkillHome(homePath, async () => {
+      const prepared = await prepareProviderSkillReuse({
+        provider: 'claude',
+        workspacePath,
+        language: 'zh-CN',
+        prompt: '随便问点什么。',
+        crossProviderSkillReuseEnabled: true,
+      })
+
+      assert.match(prepared.systemInstructions, /UTF-8/)
+      assert.match(prepared.systemInstructions, /-Encoding UTF8/)
+    })
+  } finally {
+    await rm(workspacePath, { recursive: true, force: true })
+    await rm(homePath, { recursive: true, force: true })
+  }
+})
+
+test('a SKILL.md written with a UTF-8 BOM still yields its frontmatter name and description', async () => {
+  const workspacePath = await mkdtemp(path.join(os.tmpdir(), 'chill-vibe-skill-bom-'))
+  const homePath = await mkdtemp(path.join(os.tmpdir(), 'chill-vibe-skill-bom-home-'))
+
+  try {
+    const skillDir = path.join(workspacePath, '.codex', 'skills', 'bom-skill')
+    await mkdir(skillDir, { recursive: true })
+    await writeFile(
+      path.join(skillDir, 'SKILL.md'),
+      `\uFEFF---\nname: bom-skill\ndescription: 带 BOM 的技能说明\n---\n\n# 标题\n`,
+      'utf8',
+    )
+
+    await withTemporarySkillHome(homePath, async () => {
+      const commands = await getProviderSlashCommands({
+        provider: 'codex',
+        workspacePath,
+        language: 'zh-CN',
+        crossProviderSkillReuseEnabled: true,
+      })
+
+      const bomSkill = commands.find((command) => command.name === 'bom-skill')
+      assert.equal(bomSkill?.source, 'skill')
+      assert.equal(bomSkill?.description, '带 BOM 的技能说明')
+    })
+  } finally {
+    await rm(workspacePath, { recursive: true, force: true })
+    await rm(homePath, { recursive: true, force: true })
+  }
+})
+
 test('Codex slash discovery includes the native /agent and /subagents status commands', async () => {
   const workspacePath = await mkdtemp(path.join(os.tmpdir(), 'chill-vibe-codex-agent-slash-'))
   const homePath = await mkdtemp(path.join(os.tmpdir(), 'chill-vibe-codex-agent-slash-home-'))

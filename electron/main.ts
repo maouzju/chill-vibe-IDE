@@ -1,4 +1,5 @@
-import { app, BrowserWindow, dialog, ipcMain, net, protocol, shell } from 'electron'
+import { app, BrowserWindow, crashReporter, dialog, ipcMain, net, protocol, shell } from 'electron'
+import { readdir } from 'node:fs/promises'
 import { mkdir, rm, stat, writeFile } from 'node:fs/promises'
 import path from 'path'
 import { fileURLToPath, pathToFileURL } from 'url'
@@ -21,8 +22,19 @@ import {
   resolveDesktopWorkingDirectory,
   resolveHardwareAccelerationEnabled,
 } from './runtime-environment.js'
+import {
+  readAccessibilitySupportFlag,
+  resolveAccessibilitySupportEnabled,
+  writeAccessibilitySupportFlag,
+} from './accessibility-support.js'
 import { attachFrameStallWatchdog } from './frame-stall-watchdog.js'
 import { summarizeUnresponsiveCallStack } from './unresponsive-forensics.js'
+import {
+  classifyUnresponsiveBlocking,
+  resolveCrashDumpDirectory,
+  selectNewCrashDumps,
+  summarizeChildProcessMetrics,
+} from './native-hang-forensics.js'
 import {
   createUnresponsiveRecoveryController,
   resolveUnresponsiveRecoveryDelayMs,
@@ -86,6 +98,31 @@ const audioProtocolScheme = 'chill-vibe-audio'
 // 1s heartbeat samples returned the same rAF timestamp until a foreground
 // change revived rendering). Disable the miscalculating feature outright.
 app.commandLine.appendSwitch('disable-features', 'CalculateNativeWinOcclusion')
+
+// Assistive input tools (WeChat voice-to-text, screen readers, dictation) can
+// only reach the composer when Chromium exposes its renderer content to UI
+// Automation. Measured on 2026-07-26: UiaProvider alone surfaces only the
+// browser chrome (15 nodes, no Edit control) and force-renderer-accessibility
+// alone surfaces nothing — both switches together are what produce a
+// ControlType.Edit with ValuePattern. Repeated UIA queries never activated the
+// tree lazily, so this has to be decided before the app is ready, which is why
+// the state lives in a tiny sidecar instead of state.json (pitfalls #45/#55).
+const accessibilitySupportDataDir = resolveDesktopDataDir({
+  isDev,
+  projectRoot,
+  userDataPath: app.getPath('userData'),
+  configuredDataDir: process.env.CHILL_VIBE_DATA_DIR,
+  allowConfiguredOverride: allowSharedDataDirOverride,
+})
+const accessibilitySupportEnabled = resolveAccessibilitySupportEnabled({
+  enableOverride: process.env.CHILL_VIBE_ENABLE_ACCESSIBILITY_SUPPORT,
+  disableOverride: process.env.CHILL_VIBE_DISABLE_ACCESSIBILITY_SUPPORT,
+  persistedFlag: readAccessibilitySupportFlag(accessibilitySupportDataDir),
+})
+if (accessibilitySupportEnabled) {
+  app.commandLine.appendSwitch('enable-features', 'UiaProvider')
+  app.commandLine.appendSwitch('force-renderer-accessibility')
+}
 
 protocol.registerSchemesAsPrivileged([
   { scheme: attachmentProtocolScheme, privileges: { supportFetchAPI: true, secure: true } },
@@ -165,6 +202,59 @@ function configureDesktopEnvironment() {
 
   if (!('CHILL_VIBE_DEFAULT_WORKSPACE' in process.env)) {
     process.env.CHILL_VIBE_DEFAULT_WORKSPACE = isDev ? projectRoot : ''
+  }
+}
+
+let crashDumpDirectory: string | null = null
+
+// Every long-freeze investigation so far has ended at "the JS call stack was
+// empty" — the renderer main thread is blocked outside app JS, and nothing on
+// disk records what it was blocked in. A Crashpad minidump is the only artifact
+// that carries that native stack, and the recovery path already terminates the
+// stuck renderer, which produces one — but only while the crash reporter is
+// running. Without this, every recovery destroyed the sole piece of evidence.
+function configureCrashDumpCollection() {
+  const dataDir = process.env.CHILL_VIBE_DATA_DIR ?? path.join(process.cwd(), '.chill-vibe')
+  const directory = resolveCrashDumpDirectory(dataDir)
+  // setPath must precede start(); afterwards Crashpad owns the location.
+  app.setPath('crashDumps', directory)
+  crashReporter.start({
+    // Dumps stay on this machine. Nothing is sent anywhere.
+    uploadToServer: false,
+    compress: false,
+    ignoreSystemCrashHandler: true,
+  })
+  crashDumpDirectory = directory
+  log.info('[main] Crash dump collection enabled.', { crashDumpDirectory: directory })
+}
+
+// Crashpad finalises a minidump asynchronously after the process dies, so the
+// directory is polled briefly rather than read once and declared empty.
+async function reportFreshCrashDump(before: readonly string[]) {
+  for (let attempt = 0; attempt < 10; attempt += 1) {
+    await new Promise((resolve) => setTimeout(resolve, 500))
+    const fresh = selectNewCrashDumps(before, await listCrashDumpFiles())
+    if (fresh.length > 0) {
+      log.error('[main] Native hang minidump captured for the stuck renderer.', {
+        crashDumpDirectory,
+        dumps: fresh.map((entry) => path.join(crashDumpDirectory ?? '', 'reports', entry)),
+      })
+      return
+    }
+  }
+  log.warn('[main] Forced renderer crash produced no minidump.', { crashDumpDirectory })
+}
+
+async function listCrashDumpFiles(): Promise<string[]> {
+  if (!crashDumpDirectory) {
+    return []
+  }
+  try {
+    // Crashpad nests the finished minidumps under `reports`.
+    const entries = await readdir(path.join(crashDumpDirectory, 'reports'))
+    return entries.filter((entry) => entry.endsWith('.dmp')).sort()
+  } catch {
+    return []
   }
 }
 
@@ -351,6 +441,11 @@ let lastWindowInputSnapshot: WindowInputSnapshot | null = null
 let pendingWindowCloseSource: 'renderer-ipc' | 'native-window' = 'native-window'
 
 function attachWindowDiagnostics(win: BrowserWindow) {
+  let forcedRendererRestartPending: {
+    rendererProcessId: number
+    requestedAtIso: string
+  } | null = null
+  let crashDumpsBeforeForcedCrash: string[] = []
   const unresponsiveRecovery = createUnresponsiveRecoveryController({
     delayMs: resolveUnresponsiveRecoveryDelayMs(
       process.env.CHILL_VIBE_UNRESPONSIVE_RECOVERY_MS,
@@ -360,15 +455,37 @@ function attachWindowDiagnostics(win: BrowserWindow) {
         return
       }
 
-      log.error('[main] BrowserWindow stayed unresponsive; reloading renderer.', {
+      if (forcedRendererRestartPending) {
+        return
+      }
+
+      const rendererProcessId = win.webContents.getOSProcessId()
+      forcedRendererRestartPending = {
+        rendererProcessId,
+        requestedAtIso: new Date().toISOString(),
+      }
+      log.error('[main] BrowserWindow stayed unresponsive; terminating stuck renderer.', {
         windowId: win.id,
-        rendererProcessId: win.webContents.getOSProcessId(),
+        rendererProcessId,
         startedAtIso: new Date(startedAtMs).toISOString(),
         recoveredAtIso: new Date(recoveredAtMs).toISOString(),
         durationMs,
         lastInput: lastWindowInputSnapshot,
       })
-      win.webContents.reloadIgnoringCache()
+      try {
+        // A normal reload is delivered through the already-stuck renderer and
+        // can queue forever (2026-07-26: four reload attempts retained the same
+        // PID 45156). Kill only the renderer process; the Electron main process,
+        // local backend, ChatManager backlog and provider CLIs remain alive.
+        win.webContents.forcefullyCrashRenderer()
+      } catch (error) {
+        forcedRendererRestartPending = null
+        log.error('[main] Failed to terminate stuck renderer.', {
+          windowId: win.id,
+          rendererProcessId,
+          error: error instanceof Error ? error.message : String(error),
+        })
+      }
     },
   })
 
@@ -404,6 +521,7 @@ function attachWindowDiagnostics(win: BrowserWindow) {
   })
 
   win.on('closed', () => {
+    forcedRendererRestartPending = null
     unresponsiveRecovery.dispose()
     log.warn('[main] BrowserWindow closed.', {
       windowId: win.id,
@@ -411,7 +529,14 @@ function attachWindowDiagnostics(win: BrowserWindow) {
   })
 
   win.on('unresponsive', () => {
-    log.warn('[main] BrowserWindow became unresponsive.', { windowId: win.id })
+    // Across 22 recorded freezes the 5 minutes before each one contain nothing
+    // but resource heartbeats, so there is no record of what the app was doing.
+    // lastInput used to appear only on the later reload line; carrying it here
+    // makes the freeze event itself self-contained.
+    log.warn('[main] BrowserWindow became unresponsive.', {
+      windowId: win.id,
+      lastInput: lastWindowInputSnapshot,
+    })
     unresponsiveRecovery.markUnresponsive()
     // The plain event never says WHAT is blocking the renderer's main thread.
     // collectJavaScriptCallStack() (Electron 34+) returns the blocked main
@@ -422,6 +547,20 @@ function attachWindowDiagnostics(win: BrowserWindow) {
     const collect = mainFrame?.collectJavaScriptCallStack?.bind(mainFrame) as
       | (() => Promise<string>)
       | undefined
+    // Snapshot the existing dumps now, so the minidump produced by the upcoming
+    // forced crash can be told apart from stale ones left by earlier freezes.
+    void listCrashDumpFiles().then((entries) => {
+      crashDumpsBeforeForcedCrash = entries
+    })
+
+    // A saturated GPU process means the block sits below the renderer, where no
+    // renderer-side JS explanation could ever account for it. That distinction
+    // was never recorded, so every freeze read identically in the logs.
+    const processMetrics = summarizeChildProcessMetrics({
+      rendererProcessId: win.webContents.getOSProcessId(),
+      metrics: app.getAppMetrics(),
+    })
+
     if (collect) {
       collect()
         .then((rawCallStack: string) => {
@@ -430,7 +569,15 @@ function attachWindowDiagnostics(win: BrowserWindow) {
             capturedAtIso: new Date().toISOString(),
             rawCallStack,
           })
-          log.warn('[main] unresponsive renderer JS call stack captured.', summary)
+          const verdict = classifyUnresponsiveBlocking({
+            jsStackAvailable: summary.available,
+            crashDumpDirectory: crashDumpDirectory ?? '',
+          })
+          log.warn('[main] unresponsive renderer JS call stack captured.', {
+            ...summary,
+            ...verdict,
+            ...processMetrics,
+          })
         })
         .catch((error: unknown) => {
           log.warn('[main] failed to capture unresponsive renderer call stack.', {
@@ -452,16 +599,34 @@ function attachWindowDiagnostics(win: BrowserWindow) {
   win.webContents.on('did-finish-load', () => {
     log.info('[main] Renderer finished load.', {
       windowId: win.id,
+      rendererProcessId: win.webContents.getOSProcessId(),
       url: win.webContents.getURL(),
     })
   })
 
   win.webContents.on('render-process-gone', (_event, details) => {
+    const forcedRestart = forcedRendererRestartPending
     log.error('[main] Renderer process gone.', {
       windowId: win.id,
       reason: details.reason,
       exitCode: details.exitCode,
+      forcedRecovery: Boolean(forcedRestart),
+      rendererProcessId: forcedRestart?.rendererProcessId,
     })
+
+    if (forcedRestart && !win.isDestroyed() && !win.webContents.isDestroyed()) {
+      forcedRendererRestartPending = null
+      log.warn('[main] Restarting renderer after forced unresponsive recovery.', {
+        windowId: win.id,
+        previousRendererProcessId: forcedRestart.rendererProcessId,
+        requestedAtIso: forcedRestart.requestedAtIso,
+      })
+      // Name the exact minidump this freeze produced. It carries the native
+      // stack the empty JS call stack could never provide, and a bug report can
+      // now point at one file instead of "it froze again".
+      void reportFreshCrashDump(crashDumpsBeforeForcedCrash)
+      win.webContents.reloadIgnoringCache()
+    }
   })
 
   win.webContents.on('did-fail-load', (_event, errorCode, errorDescription, validatedUrl, isMainFrame) => {
@@ -588,7 +753,29 @@ function registerDesktopHandlers() {
   )
   ipcMain.handle('desktop:save-state', (_event, state) => desktopBackend.saveState(state))
   ipcMain.on('desktop:queue-state-save', (_event, state) => {
-    desktopBackend.queueStateSave(state)
+    // `ipcMain.on` has no reply channel, so anything thrown here escapes as an
+    // uncaughtException and terminates the app with no shutdown log — exactly
+    // how a single malformed wake-timer queue entry made the window vanish
+    // every ~20 seconds on 2026-07-26. A rejected save must never be fatal.
+    try {
+      desktopBackend.queueStateSave(state)
+    } catch (error) {
+      log.error('[main] Queued state save failed; keeping the app alive.', {
+        error: error instanceof Error ? error.message : String(error),
+      })
+    }
+  })
+  // Chromium switches cannot change at runtime, so this only records the choice
+  // for the next launch. The renderer surfaces the restart requirement.
+  ipcMain.handle('desktop:set-accessibility-support', (_event, enabled: unknown) => {
+    const nextEnabled = enabled === true
+    try {
+      writeAccessibilitySupportFlag(accessibilitySupportDataDir, nextEnabled)
+    } catch (error) {
+      log.warn('[main] Failed to persist accessibility support flag.', error)
+      return { enabled: accessibilitySupportEnabled, restartRequired: false }
+    }
+    return { enabled: nextEnabled, restartRequired: nextEnabled !== accessibilitySupportEnabled }
   })
   ipcMain.handle('desktop:sync-runtime-settings', (_event, settings) =>
     desktopBackend.syncRuntimeSettings(settings),
@@ -1009,8 +1196,15 @@ ipcMain.handle('dialog:openFolder', async (event: IpcMainInvokeEvent) => {
 
 app.whenReady().then(async () => {
   configureDesktopEnvironment()
+  if (accessibilitySupportEnabled) {
+    // Keeps app.isAccessibilitySupportEnabled() truthful and opts macOS in too;
+    // on Windows the command-line switches above are what actually expose the
+    // renderer tree.
+    app.setAccessibilitySupportEnabled(true)
+  }
   await clearUserDataOnLaunchIfNeeded()
   initCrashLogger()
+  configureCrashDumpCollection()
   app.on('child-process-gone', (_event, details) => {
     log.error('[main] Child process gone.', {
       type: details.type,

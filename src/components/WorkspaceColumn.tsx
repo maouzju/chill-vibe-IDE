@@ -167,8 +167,6 @@ type WorkspaceColumnProps = {
   onChangeCardStickyNote: (cardId: string, content: string) => void
   stickyNoteArchivedContent?: string
   stickyNoteArchivedViewState?: import('../../shared/schema').StickyNoteViewState
-  onChangeStickyNoteViewState?: (viewState: import('../../shared/schema').StickyNoteViewState) => void
-  onDiscardStickyNoteArchive?: () => void
   onPatchCard: (
     cardId: string,
     patch: Partial<
@@ -279,8 +277,6 @@ const WorkspaceColumnView = ({
   onChangeCardStickyNote,
   stickyNoteArchivedContent,
   stickyNoteArchivedViewState,
-  onChangeStickyNoteViewState,
-  onDiscardStickyNoteArchive,
   onPatchCard,
   onChangeCardTitle,
   onReorderColumn,
@@ -1107,8 +1103,6 @@ const WorkspaceColumnView = ({
           onChangeCardStickyNote={onChangeCardStickyNote}
           stickyNoteArchivedContent={stickyNoteArchivedContent}
           stickyNoteArchivedViewState={stickyNoteArchivedViewState}
-          onChangeStickyNoteViewState={onChangeStickyNoteViewState}
-          onDiscardStickyNoteArchive={onDiscardStickyNoteArchive}
           onPatchCard={onPatchCard}
           onChangeCardTitle={onChangeCardTitle}
           onSendMessage={onSendMessage}

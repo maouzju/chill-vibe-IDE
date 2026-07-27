@@ -416,8 +416,6 @@ type ChatCardProps = {
   onStickyNoteChange: (content: string) => void
   stickyNoteArchivedContent?: string
   stickyNoteArchivedViewState?: import('../../shared/schema').StickyNoteViewState
-  onChangeStickyNoteViewState?: (viewState: import('../../shared/schema').StickyNoteViewState) => void
-  onDiscardStickyNoteArchive?: () => void
   onPatchCard: (
     patch: Partial<
       Pick<
@@ -431,6 +429,10 @@ type ChatCardProps = {
         | 'wakeTimerActive'
         | 'wakeTimerMode'
         | 'wakeTimerDurationMinutes'
+        | 'stickyNote'
+        | 'stickyNoteId'
+        | 'stickyNoteViewState'
+        | 'title'
       >
     >,
   ) => void
@@ -876,6 +878,12 @@ type ChatTranscriptProps = {
   restoreBottomSpacerPx: number
   compactionBannerCopy: ReturnType<typeof getCompactionBannerCopy> | null
   collapsedGroups: Set<string>
+  showsWakeTimerStatus: boolean
+  wakeTimerQueueLength: number
+  wakeTimerConditionText: string
+  wakeTimerPendingStatusLabel: string
+  wakeTimerWakeNowLabel: string
+  wakeTimerCancelLabel: string
   showsQuickToolGrid: boolean
   quickToolEntries: EmptyStateToolEntry[]
   emptyStateToolsLabel: string
@@ -883,6 +891,8 @@ type ChatTranscriptProps = {
   onScroll: () => void
   onRevealAllCompactedHistory: () => void
   onRevealMoreCompactedHistory: () => void
+  onWakeTimerBatchNow?: () => void
+  onCancelWakeTimerBatch?: () => void
   onActivateQuickTool: (entry: EmptyStateToolEntry) => void
   onToggleToolGroup: (key: string) => void
   onSelectAskUserOption: (answerKey: string, label: string) => void
@@ -890,6 +900,60 @@ type ChatTranscriptProps = {
   onOpenFile?: (relativePath: string) => void
   onForkConversation?: (messageId: string) => void
 }
+
+type WakeTimerStatusProps = {
+  language: AppLanguage
+  queueLength: number
+  conditionText: string
+  pendingStatusLabel: string
+  wakeNowLabel: string
+  cancelLabel: string
+  isEmptyState?: boolean
+  onWakeNow?: () => void
+  onCancel?: () => void
+}
+
+const WakeTimerStatus = ({
+  language,
+  queueLength,
+  conditionText,
+  pendingStatusLabel,
+  wakeNowLabel,
+  cancelLabel,
+  isEmptyState = false,
+  onWakeNow,
+  onCancel,
+}: WakeTimerStatusProps) => (
+  <div
+    className={`composer-wake-timer-status${isEmptyState ? ' is-empty-state' : ''}`}
+    role="status"
+  >
+    <span className="composer-wake-timer-copy">
+      <strong>{pendingStatusLabel}</strong>
+      <span>
+        {language === 'en'
+          ? `${queueLength} message${queueLength === 1 ? '' : 's'} · ${conditionText}`
+          : `${queueLength} 条消息 · ${conditionText}`}
+      </span>
+    </span>
+    <button
+      type="button"
+      className="composer-queued-send-action"
+      onClick={onWakeNow}
+      disabled={!onWakeNow}
+    >
+      {wakeNowLabel}
+    </button>
+    <button
+      type="button"
+      className="composer-queued-send-action"
+      onClick={onCancel}
+      disabled={!onCancel}
+    >
+      {cancelLabel}
+    </button>
+  </div>
+)
 
 const ChatTranscript = memo(
   ({
@@ -905,6 +969,12 @@ const ChatTranscript = memo(
     restoreBottomSpacerPx,
     compactionBannerCopy,
     collapsedGroups,
+    showsWakeTimerStatus,
+    wakeTimerQueueLength,
+    wakeTimerConditionText,
+    wakeTimerPendingStatusLabel,
+    wakeTimerWakeNowLabel,
+    wakeTimerCancelLabel,
     showsQuickToolGrid,
     quickToolEntries,
     emptyStateToolsLabel,
@@ -912,6 +982,8 @@ const ChatTranscript = memo(
     onScroll,
     onRevealAllCompactedHistory,
     onRevealMoreCompactedHistory,
+    onWakeTimerBatchNow,
+    onCancelWakeTimerBatch,
     onActivateQuickTool,
     onToggleToolGroup,
     onSelectAskUserOption,
@@ -1235,7 +1307,7 @@ const ChatTranscript = memo(
           ) : null}
           <div
             ref={messageListRef}
-            className={`message-list${cardStatus === 'streaming' ? ' is-streaming' : ''}${showsQuickToolGrid ? ' is-empty-state' : ''}`}
+            className={`message-list${cardStatus === 'streaming' ? ' is-streaming' : ''}${showsQuickToolGrid || showsWakeTimerStatus ? ' is-empty-state' : ''}`}
             onScroll={isActive ? handleScroll : undefined}
           >
             {compactionBannerCopy ? (
@@ -1251,6 +1323,20 @@ const ChatTranscript = memo(
                   </button>
                 </div>
               </article>
+            ) : null}
+
+            {showsWakeTimerStatus ? (
+              <WakeTimerStatus
+                language={language}
+                queueLength={wakeTimerQueueLength}
+                conditionText={wakeTimerConditionText}
+                pendingStatusLabel={wakeTimerPendingStatusLabel}
+                wakeNowLabel={wakeTimerWakeNowLabel}
+                cancelLabel={wakeTimerCancelLabel}
+                isEmptyState
+                onWakeNow={onWakeTimerBatchNow}
+                onCancel={onCancelWakeTimerBatch}
+              />
             ) : null}
 
             {showsQuickToolGrid ? (
@@ -1385,8 +1471,6 @@ const ChatCardView = ({
   onStickyNoteChange,
   stickyNoteArchivedContent,
   stickyNoteArchivedViewState,
-  onChangeStickyNoteViewState,
-  onDiscardStickyNoteArchive,
   onPatchCard,
   onChangeTitle,
   onForkConversation,
@@ -3360,6 +3444,28 @@ const ChatCardView = ({
     }
   }
 
+  const handleCancelWakeTimerBatch = () => {
+    // Persist the live textarea first so App merges against the user's newest
+    // draft instead of the last debounced snapshot.
+    flushPendingDraftSync()
+
+    const currentAttachmentIds = new Set(
+      collectPersistedDraftAttachments(pendingAttachmentsRef.current).map((attachment) => attachment.id),
+    )
+    const restoredQueuedAttachments = hydrateDraftAttachments(
+      wakeTimerQueue
+        .flatMap((request) => request.attachments)
+        .filter((attachment) => !currentAttachmentIds.has(attachment.id)),
+    )
+    if (restoredQueuedAttachments.length > 0) {
+      applyPendingAttachments([...restoredQueuedAttachments, ...pendingAttachmentsRef.current])
+      setComposerAttachmentPreview(null)
+    }
+
+    onCancelWakeTimerBatch?.()
+    requestAnimationFrame(() => textareaRef.current?.focus())
+  }
+
   const handleSendButtonContextMenu = (event: MouseEvent<HTMLButtonElement>) => {
     event.preventDefault()
     if (sendDisabled) return
@@ -3541,11 +3647,17 @@ const ChatCardView = ({
   const showsQuickToolGrid =
     !deferInactivePaneChatBody &&
     !isToolCard &&
+    !hasWakeTimerBatch &&
     card.status !== 'streaming' &&
     renderableMessages.length === 0 &&
     !draftHasText &&
     pendingAttachments.length === 0 &&
     quickToolEntries.length > 0
+  const showsWakeTimerEmptyState =
+    !deferInactivePaneChatBody &&
+    !isToolCard &&
+    hasWakeTimerBatch &&
+    renderableMessages.length === 0
 
   const toggleToolGroup = useCallback((key: string) => {
     setCollapsedGroups((prev) => {
@@ -4248,16 +4360,20 @@ const ChatCardView = ({
         <div style={isCollapsed ? { display: 'none' } : { display: 'contents' }}>
           <StickyNoteCard
             content={card.stickyNote}
+            workspacePath={workspacePath}
+            noteId={card.stickyNoteId ?? card.id}
+            title={card.title || text.stickyNoteTitle}
             archivedContent={stickyNoteArchivedContent}
-            archivedViewState={stickyNoteArchivedViewState}
+            archivedViewState={card.stickyNoteViewState ?? stickyNoteArchivedViewState}
             language={language}
-            onChange={(content) => {
-              onStickyNoteChange(content)
-              const firstLine = content.split('\n')[0].trim()
-              onChangeTitle(firstLine)
-            }}
-            onViewStateChange={onChangeStickyNoteViewState}
-            onDiscardArchive={onDiscardStickyNoteArchive}
+            onChange={onStickyNoteChange}
+            onViewStateChange={(viewState) => onPatchCard({ stickyNoteViewState: viewState })}
+            onBindNote={(nextNoteId, nextTitle, nextContent) => onPatchCard({
+              stickyNoteId: nextNoteId,
+              title: nextTitle,
+              stickyNote: nextContent,
+            })}
+            onChangeTitle={onChangeTitle}
           />
         </div>
       )}
@@ -4323,6 +4439,12 @@ const ChatCardView = ({
                 restoreBottomSpacerPx={restoredScrollSpacerPx}
                 compactionBannerCopy={compactionBannerCopy}
                 collapsedGroups={collapsedGroups}
+                showsWakeTimerStatus={showsWakeTimerEmptyState}
+                wakeTimerQueueLength={wakeTimerQueue.length}
+                wakeTimerConditionText={wakeTimerConditionText}
+                wakeTimerPendingStatusLabel={text.wakeTimerPendingStatus}
+                wakeTimerWakeNowLabel={text.wakeTimerWakeNow}
+                wakeTimerCancelLabel={text.wakeTimerCancel}
                 showsQuickToolGrid={showsQuickToolGrid}
                 quickToolEntries={quickToolEntries}
                 emptyStateToolsLabel={text.emptyStateToolsLabel}
@@ -4330,6 +4452,8 @@ const ChatCardView = ({
                 onScroll={syncAutoScrollPreference}
                 onRevealAllCompactedHistory={revealAllCompactedHistory}
                 onRevealMoreCompactedHistory={revealNextCompactedHistoryBatch}
+                onWakeTimerBatchNow={onWakeTimerBatchNow}
+                onCancelWakeTimerBatch={handleCancelWakeTimerBatch}
                 onActivateQuickTool={activateQuickTool}
                 onToggleToolGroup={toggleToolGroup}
                 onSelectAskUserOption={handleSelectAskUserOption}
@@ -4385,33 +4509,17 @@ const ChatCardView = ({
                 />
               ) : null}
 
-              {hasWakeTimerBatch ? (
-                <div className="composer-wake-timer-status" role="status">
-                  <span className="composer-wake-timer-copy">
-                    <strong>{text.wakeTimerPendingStatus}</strong>
-                    <span>
-                      {language === 'en'
-                        ? `${wakeTimerQueue.length} message${wakeTimerQueue.length === 1 ? '' : 's'} · ${wakeTimerConditionText}`
-                        : `${wakeTimerQueue.length} 条消息 · ${wakeTimerConditionText}`}
-                    </span>
-                  </span>
-                  <button
-                    type="button"
-                    className="composer-queued-send-action"
-                    onClick={onWakeTimerBatchNow}
-                    disabled={!onWakeTimerBatchNow}
-                  >
-                    {text.wakeTimerWakeNow}
-                  </button>
-                  <button
-                    type="button"
-                    className="composer-queued-send-action"
-                    onClick={onCancelWakeTimerBatch}
-                    disabled={!onCancelWakeTimerBatch}
-                  >
-                    {text.wakeTimerCancel}
-                  </button>
-                </div>
+              {hasWakeTimerBatch && !showsWakeTimerEmptyState ? (
+                <WakeTimerStatus
+                  language={language}
+                  queueLength={wakeTimerQueue.length}
+                  conditionText={wakeTimerConditionText}
+                  pendingStatusLabel={text.wakeTimerPendingStatus}
+                  wakeNowLabel={text.wakeTimerWakeNow}
+                  cancelLabel={text.wakeTimerCancel}
+                  onWakeNow={onWakeTimerBatchNow}
+                  onCancel={handleCancelWakeTimerBatch}
+                />
               ) : null}
 
               {queuedSendSummary ? (

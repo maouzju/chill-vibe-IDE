@@ -38,6 +38,21 @@
 - [x] 批次合并仅发送用户原文，不再把“待唤醒消息 N / Scheduled message N”写进 Agent 请求。
 - [x] 完成聚焦回归、quality、Windows 构建与安全运行时处理。
 
+## 取消后复原消息（2026-07-27）
+
+- [x] 红测证明取消批次会丢失待唤醒文字、附件或覆盖现有草稿。
+- [x] 取消时把整批内容按原顺序放回 composer，并保留用户已开始编辑的新草稿。
+- [x] 完成聚焦测试、quality、Windows 构建与当前开发运行时重启。
+
+验证记录：
+
+- 红测：`node --import tsx --test tests/wake-timer.test.ts` 因缺少取消复原逻辑稳定失败。
+- 绿测：`node --import tsx --test tests/wake-timer.test.ts`：13/13 通过。
+- `powershell -ExecutionPolicy Bypass -File scripts/run-playwright-specs.ps1 -Specs 'tests/chat-interrupt.spec.ts'`：28/28 通过，覆盖取消后实时草稿与持久化草稿同时复原。
+- `pnpm test:quality`：通过。
+- `pnpm electron:build`：通过，产出 `dist/release-20260727-010022/Chill Vibe-0.18.19-win.zip` 与可直接运行目录。
+- `pnpm dev:restart`：通过；开发 Electron 已重启，renderer `http://localhost:5173` 健康检查返回 200。运行中的旧打包版未被关闭或重启。
+
 验证记录：
 
 - 红测：`node --import tsx --test tests/wake-timer.test.ts` 同时复现“运行中 Agent 未阻止释放”和“内部标签被注入请求”两项失败。

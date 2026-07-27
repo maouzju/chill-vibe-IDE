@@ -79,6 +79,14 @@ import {
 import { fetchWeather, searchCities } from '../server/weather/weather-service.ts'
 import { generateScene } from '../server/whitenoise/whitenoise-generator.ts'
 import {
+  listStickyNotes,
+  loadStickyNote,
+  loadStickyNoteVersion,
+  restoreStickyNoteVersion,
+  saveStickyNote,
+  searchStickyNotes,
+} from '../server/sticky-note-store.ts'
+import {
   appSettingsSchema,
   attachmentUploadRequestSchema,
   appStateSchema,
@@ -107,6 +115,11 @@ import {
   ollamaPullRequestSchema,
   stateRecoverySelectionSchema,
   slashCommandRequestSchema,
+  stickyNoteListRequestSchema,
+  stickyNoteRequestSchema,
+  stickyNoteSaveRequestSchema,
+  stickyNoteSearchRequestSchema,
+  stickyNoteVersionRequestSchema,
   fileCreateRequestSchema,
   fileDeleteRequestSchema,
   fileListRequestSchema,
@@ -545,6 +558,24 @@ export const createDesktopBackend = (deps: DesktopBackendDependencies = {}) => {
         }
         throw error
       }
+    },
+    async listStickyNotes(request: unknown) {
+      return listStickyNotes(stickyNoteListRequestSchema.parse(request))
+    },
+    async loadStickyNote(request: unknown) {
+      return loadStickyNote(stickyNoteRequestSchema.parse(request))
+    },
+    async saveStickyNote(request: unknown) {
+      return saveStickyNote(stickyNoteSaveRequestSchema.parse(request))
+    },
+    async searchStickyNotes(request: unknown) {
+      return searchStickyNotes(stickyNoteSearchRequestSchema.parse(request))
+    },
+    async loadStickyNoteVersion(request: unknown) {
+      return loadStickyNoteVersion(stickyNoteVersionRequestSchema.parse(request))
+    },
+    async restoreStickyNoteVersion(request: unknown) {
+      return restoreStickyNoteVersion(stickyNoteVersionRequestSchema.parse(request))
     },
     async readNearestTsconfig(request: unknown) {
       return readNearestTsconfig(fileReadRequestSchema.parse(request))

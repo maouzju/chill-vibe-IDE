@@ -1,90 +1,74 @@
-# 便签按工作区记忆 — 设计
+# 工作区便签库与历史版本 — 设计
 
-## 数据模型（shared/schema.ts）
+## 总体方案
 
-`appStateSchema` 顶层新增：
+保留 `card.stickyNote` 作为渲染器内的即时内容缓存，新增稳定的 `card.stickyNoteId` 和卡片级 `card.stickyNoteViewState`。真正可人工管理的副本写入本地数据目录，由新的 `server/sticky-note-store.ts` 统一负责文件命名、原子写入、历史检查点和旧文件容错。
 
-```ts
-export const stickyNoteArchiveEntrySchema = z.object({
-  content: z.string().default(''),
-  updatedAt: z.string().datetime(),
-  viewState: z.object({
-    scrollTop: z.number().nonnegative().default(0),
-    selectionStart: z.number().int().nonnegative().default(0),
-    selectionEnd: z.number().int().nonnegative().default(0),
-  }).optional(),
-})
-// workspacePath -> entry
-stickyNoteArchive: z.record(z.string(), stickyNoteArchiveEntrySchema).default({})
+## 本地目录
+
+```text
+<appData>/sticky-notes/<workspace-key>/
+  workspace.json
+  <可读标题>--<note-id>.md
+  .history/<note-id>/<version-id>.json
 ```
 
-- Zod `default({})` 保证旧 `state.json`（无此字段）解析后自动获得空档，
-  满足 pitfall #5 的向后兼容要求。
-- `shared/default-state.ts` 的 `createDefaultState()` 同步补 `stickyNoteArchive: {}`。
+- `workspace-key` 由规范化后的绝对工作区路径做 SHA-256 得到，避免路径字符和大小写差异。
+- 当前文件使用可读标题加稳定 ID，重命名只改变可读标题部分。
+- `workspace.json` 保存 `noteId -> title/fileName/createdAt/updatedAt` 索引；若用户在系统中删除 Markdown 文件，列表和加载逻辑把它视为已删除，不在应用内重建，除非仍打开的卡片再次产生保存。
+- 索引和历史 JSON 使用临时文件 + rename 原子替换。
 
-### 体积护栏
+## 数据与 API
 
-- 单条内容截断到 64KB（`STICKY_NOTE_ARCHIVE_MAX_CONTENT_LENGTH`）。
-- 最多保留 50 个工作区条目（`STICKY_NOTE_ARCHIVE_MAX_ENTRIES`），超出时按
-  `updatedAt` 淘汰最旧的。
+`shared/schema.ts` 新增：
 
-## 写入路径（src/state.ts）
+- `chatCardSchema.stickyNoteId?: string`
+- `chatCardSchema.stickyNoteViewState?: StickyNoteViewState`
+- 便签列表、加载、保存、历史加载、历史恢复的请求/响应 schema。
 
-`updateCard` reducer 分支：当 patch 含 `stickyNote`、目标卡是便签卡
-（`card.model === STICKYNOTE_TOOL_MODEL`）且所属列 `workspacePath` 非空时，
-同步把内容写入 `state.stickyNoteArchive[workspacePath]`。
+服务端与 Electron bridge 提供：
 
-- 内容为空串 → 移除该工作区条目（避免出现"恢复空记录"的无意义入口）。
-- 非便签卡（文本/图片编辑器复用 `stickyNote` 存文件路径）不触发存档。
+- `listStickyNotes(workspacePath)`
+- `loadStickyNote(workspacePath, noteId)`
+- `saveStickyNote(workspacePath, noteId, title, content, checkpoint)`
+- `loadStickyNoteVersion(workspacePath, noteId, versionId)`
+- `restoreStickyNoteVersion(workspacePath, noteId, versionId)`
+- `searchStickyNotes(workspacePath, query)`
+- `revealStickyNoteLocation(workspacePath)`（Electron 主进程直接打开系统文件管理器）
 
-新增 action：
+服务端 Web 路径复用同一 store；“打开本地位置”仅在 Electron 可执行，浏览器模式显示不可用提示但不出现删除入口。
 
-```ts
-{ type: 'clearStickyNoteArchive'; workspacePath: string }
-```
+## 历史策略
 
-用于"删除记录"入口，移除对应条目。
+- 普通 500ms 内容保存只更新当前 Markdown 与索引，不生成版本，避免每次按键都污染历史。
+- 5 秒无输入、失焦/卸载时发送 `checkpoint: true`；仅当内容或标题与最新检查点不同才新增版本。
+- 恢复版本前先把当前内容强制写成检查点，再用目标版本覆盖当前文件，因此恢复操作可逆。
+- 每份便签保留最近 50 个版本；内容写入前截断到 64KB。
 
-## 恢复入口（src/components/StickyNoteCard.tsx）
+## 渲染器流程
 
-新增 props：`archivedContent: string`、`onDiscardArchive: () => void`。
+1. 便签卡使用 `card.stickyNoteId || card.id` 作为默认 ID。
+2. 首次挂载加载本地文档：
+   - 文件存在：以磁盘内容和标题为准并回写卡片缓存；
+   - 文件不存在且卡片有旧内容：保存为迁移后的新本地便签；
+   - 文件不存在且卡片为空：暂不创建文件，同时列出该工作区已有便签供打开。
+3. 用户输入后更新本地 textarea 与卡片缓存，并异步保存本地文件。
+4. 标题编辑继续走现有卡片标题入口；便签组件观察标题变化并调用保存，store 负责重命名文件。
+5. 工具栏只包含“历史版本”和“打开本地位置”；没有删除动作。
+6. 选择已有便签时，通过 `onBindNote` 一次性更新 `stickyNoteId/title/stickyNote`，避免跨字段中间态。
+7. 工具栏增加安静的搜索框；输入 200ms 后调用本地搜索 API，按标题命中优先、更新时间次序返回。空查询回到已有便签列表。搜索读取当前 Markdown，不检索历史版本。
 
-- 显示条件：当前便签文本为空 且 `archivedContent` 非空。
-- 恢复条内容：提示文案 + 存档首行预览 + 「恢复」「删除记录」两个按钮。
-- 「恢复」：立即调用 `onChange(archivedContent)`（不经 500ms debounce），
-  外层 wrapper 同步更新卡片标题。
-- 「删除记录」：调用 `onDiscardArchive()`，App 层 dispatch
-  `clearStickyNoteArchive`。
-- 用户直接输入 → 文本非空，恢复条自然消失，新内容照常写档覆盖。
-- textarea 的滚动位置与光标/选区在滚动、选择变化和卸载时回写到工作区存档；便签重新挂载时在布局完成后恢复，并将选区限制在当前文本长度内。
+## 状态迁移
 
-### 顺带修复：卸载丢输入
-
-现有 `StickyNoteCard` 在卸载时 `clearTimeout` 直接丢掉尚未提交的 500ms
-debounce 内容，关 tab 会丢最后半秒输入。改为卸载时 flush 待提交值。
-
-## Prop 链
-
-`App.tsx` 按列计算 `stickyNoteArchive[column.workspacePath]?.content ?? ''`，
-经 `WorkspaceColumn → LayoutRenderer → PaneView → ChatCard → StickyNoteCard`
-传递；`onDiscardStickyNoteArchive` 回调走同一条链。
-
-## 主题 / i18n
-
-- 恢复条使用 `src/index.css` 既有 token（背景、边框、按钮色），双主题检查。
-- 新文案：`stickyNoteRestorePrompt` / `stickyNoteRestoreAction` /
-  `stickyNoteDiscardAction`，zh-CN 与 en 各一份。
+- `createCard()` 新卡无需预创建文件；便签有效 ID 默认回退到卡片 ID。
+- `normalizePersistedCard()` 保留旧内容，并为便签卡补齐缺失 ID（使用卡片 ID）。
+- 新的视图状态写入 `card.stickyNoteViewState`；旧 `stickyNoteArchive[workspacePath].viewState` 只作为首次迁移回退。
+- 工作区级 `stickyNoteArchive` 保留 schema 兼容，但新便签写入不再更新它。
 
 ## 测试
 
-Tier 1（schema + reducer + 持久化）红→绿：
-
-- `tests/sticky-note-workspace-memory.test.ts`（注册进 `tests/index.test.ts`）：
-  1. 便签卡 `updateCard(stickyNote)` 写入对应工作区存档；
-  2. 非便签卡（编辑器卡）`stickyNote` patch 不写档；
-  3. `workspacePath` 为空不写档；
-  4. 清空内容移除条目；
-  5. `clearStickyNoteArchive` 移除条目；
-  6. 旧 state（无 `stickyNoteArchive` 字段）经 `appStateSchema.parse` 得到空档；
-  7. 超过条目上限按 `updatedAt` 淘汰最旧。
-- UI 恢复条与卸载 flush 用组件测试覆盖（若现有 tsx 测试基建可复用）。
+- `tests/sticky-note-store.test.ts`：目录隔离、多便签、重命名、检查点去重/上限、恢复前快照、手工删除文件后的列表行为。
+- store 测试补标题/正文/大小写/中文/工作区隔离搜索。
+- `tests/sticky-note-workspace-memory.test.ts`：ID/视图状态迁移、多个卡片互不覆盖、旧存档回退。
+- 组件测试：无删除按钮、有本地位置与历史入口、已有便签选择、历史恢复回调。
+- UI：扩展 `tests/theme-check.spec.ts` 覆盖明暗主题与窄视口。

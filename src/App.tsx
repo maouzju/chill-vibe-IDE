@@ -232,6 +232,7 @@ import {
 import { shouldExitPlanModeForAskUserAnswer } from './components/ask-user-answer-state'
 import {
   armWakeTimerBatch,
+  buildCanceledWakeTimerDraft,
   isWakeTimerConditionReady,
   mergeWakeTimerRequests,
   removeCompletedWakeTimerTarget,
@@ -2509,6 +2510,36 @@ function App() {
       columnId,
       cardId,
       patch: {
+        wakeTimerQueuedSends: [],
+        wakeTimerArmedAt: undefined,
+        wakeTimerWakeAt: undefined,
+        wakeTimerPendingTargetIds: [],
+      },
+    }
+    persistImmediately(applyAction(action))
+  }, [applyAction, persistImmediately])
+
+  const cancelWakeTimerBatch = useCallback((columnId: string, cardId: string) => {
+    const card = appStateRef.current.columns.find((entry) => entry.id === columnId)?.cards[cardId]
+    const queue = card?.wakeTimerQueuedSends ?? []
+    if (!card || queue.length === 0) {
+      return
+    }
+
+    const restoredDraft = buildCanceledWakeTimerDraft({
+      requests: queue,
+      currentDraft: card.draft,
+      currentDraftAttachments: card.draftAttachments ?? [],
+    })
+    // 症状：2026-07-27 用户取消计时器后，待唤醒消息会直接消失。
+    // 根因：旧路径只清空持久化队列，没有把 payload 转回 composer 草稿。
+    // 被否决：只在 UI 临时回填会在切 Tab/重启后再次丢失；见 wake-timer SPEC。
+    const action: IdeAction = {
+      type: 'updateCard',
+      columnId,
+      cardId,
+      patch: {
+        ...restoredDraft,
         wakeTimerQueuedSends: [],
         wakeTimerArmedAt: undefined,
         wakeTimerWakeAt: undefined,
@@ -9274,26 +9305,6 @@ function App() {
             stickyNoteArchivedViewState={
               appState.stickyNoteArchive[column.workspacePath]?.viewState
             }
-            onChangeStickyNoteViewState={(viewState) =>
-              (() => {
-                const action: IdeAction = {
-                  type: 'updateStickyNoteViewState',
-                  workspacePath: column.workspacePath,
-                  viewState,
-                }
-                const nextState = applyAction(action)
-                persistQueued(nextState)
-              })()
-            }
-            onDiscardStickyNoteArchive={() =>
-              (() => {
-                const action: IdeAction = {
-                  type: 'clearStickyNoteArchive',
-                  workspacePath: column.workspacePath,
-                }
-                persistAfterAction(action.type, applyAction(action))
-              })()
-            }
             onPatchCard={(cardId, patch) =>
               (() => {
                 const action: IdeAction = {
@@ -9411,7 +9422,7 @@ function App() {
             onStopMessage={(cardId) => stopCard(cardId)}
             onCancelQueuedSends={(cardId) => clearQueuedSends(cardId)}
             onSendNextQueuedNow={(cardId) => sendNextQueuedNow(column.id, cardId)}
-            onCancelWakeTimerBatch={(cardId) => clearWakeTimerBatch(column.id, cardId)}
+            onCancelWakeTimerBatch={(cardId) => cancelWakeTimerBatch(column.id, cardId)}
             onWakeTimerBatchNow={(cardId) => sendWakeTimerBatchNow(column.id, cardId)}
             onManualRecoverStream={(cardId) => manuallyRecoverStream(column.id, cardId)}
             onForkConversation={(cardId, messageId) => {

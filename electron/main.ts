@@ -972,6 +972,31 @@ function registerDesktopHandlers() {
   )
 
   // ── File System ─────────────────────────────────────────────────────────
+  ipcMain.handle('desktop:list-sticky-notes', (_event, request) =>
+    desktopBackend.listStickyNotes(request),
+  )
+  ipcMain.handle('desktop:load-sticky-note', (_event, request) =>
+    desktopBackend.loadStickyNote(request),
+  )
+  ipcMain.handle('desktop:save-sticky-note', (_event, request) =>
+    desktopBackend.saveStickyNote(request),
+  )
+  ipcMain.handle('desktop:search-sticky-notes', (_event, request) =>
+    desktopBackend.searchStickyNotes(request),
+  )
+  ipcMain.handle('desktop:load-sticky-note-version', (_event, request) =>
+    desktopBackend.loadStickyNoteVersion(request),
+  )
+  ipcMain.handle('desktop:restore-sticky-note-version', (_event, request) =>
+    desktopBackend.restoreStickyNoteVersion(request),
+  )
+  ipcMain.handle('desktop:reveal-sticky-note-location', async (_event, workspacePath: string) => {
+    const { ensureStickyNoteWorkspaceDirectory } = await import('../server/sticky-note-store.js')
+    const targetPath = await ensureStickyNoteWorkspaceDirectory(workspacePath)
+    const openError = await shell.openPath(targetPath)
+    if (openError) throw new Error(openError)
+  })
+
   ipcMain.handle('desktop:list-files', (_event, request) =>
     desktopBackend.listFiles(request),
   )

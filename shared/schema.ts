@@ -183,6 +183,12 @@ export const chatCardSchema = z.object({
   wakeTimerWakeAt: z.string().datetime().optional(),
   wakeTimerPendingTargetIds: z.array(z.string().min(1)).optional(),
   stickyNote: z.string().default(''),
+  stickyNoteId: z.string().min(1).optional(),
+  stickyNoteViewState: z.object({
+    scrollTop: z.number().nonnegative().default(0),
+    selectionStart: z.number().int().nonnegative().default(0),
+    selectionEnd: z.number().int().nonnegative().default(0),
+  }).optional(),
   brainstorm: brainstormStateSchema.default({
     prompt: '',
     provider: 'codex',
@@ -641,17 +647,85 @@ export const appSettingsSchema = z.object({
 })
 export type AppSettings = z.infer<typeof appSettingsSchema>
 
+export const stickyNoteViewStateSchema = z.object({
+  scrollTop: z.number().nonnegative().default(0),
+  selectionStart: z.number().int().nonnegative().default(0),
+  selectionEnd: z.number().int().nonnegative().default(0),
+})
+export type StickyNoteViewState = z.infer<typeof stickyNoteViewStateSchema>
+
 export const stickyNoteArchiveEntrySchema = z.object({
   content: z.string().default(''),
   updatedAt: z.string().datetime(),
-  viewState: z.object({
-    scrollTop: z.number().nonnegative().default(0),
-    selectionStart: z.number().int().nonnegative().default(0),
-    selectionEnd: z.number().int().nonnegative().default(0),
-  }).optional(),
+  viewState: stickyNoteViewStateSchema.optional(),
 })
 export type StickyNoteArchiveEntry = z.infer<typeof stickyNoteArchiveEntrySchema>
-export type StickyNoteViewState = NonNullable<StickyNoteArchiveEntry['viewState']>
+
+export const stickyNoteRequestSchema = z.object({
+  workspacePath: z.string().min(1),
+  noteId: z.string().min(1),
+})
+export type StickyNoteRequest = z.infer<typeof stickyNoteRequestSchema>
+
+export const stickyNoteListRequestSchema = z.object({
+  workspacePath: z.string().min(1),
+})
+export type StickyNoteListRequest = z.infer<typeof stickyNoteListRequestSchema>
+
+export const stickyNoteSearchRequestSchema = stickyNoteListRequestSchema.extend({
+  query: z.string().max(200).default(''),
+})
+export type StickyNoteSearchRequest = z.infer<typeof stickyNoteSearchRequestSchema>
+
+export const stickyNoteSaveRequestSchema = stickyNoteRequestSchema.extend({
+  title: z.string(),
+  content: z.string().max(64_000),
+  checkpoint: z.boolean().default(false),
+})
+export type StickyNoteSaveRequest = z.infer<typeof stickyNoteSaveRequestSchema>
+
+export const stickyNoteVersionRequestSchema = stickyNoteRequestSchema.extend({
+  versionId: z.string().min(1),
+})
+export type StickyNoteVersionRequest = z.infer<typeof stickyNoteVersionRequestSchema>
+
+export const stickyNoteVersionSummarySchema = z.object({
+  id: z.string().min(1),
+  createdAt: z.string().datetime(),
+  title: z.string(),
+  preview: z.string(),
+})
+export type StickyNoteVersionSummary = z.infer<typeof stickyNoteVersionSummarySchema>
+
+export const stickyNoteSummarySchema = z.object({
+  noteId: z.string().min(1),
+  title: z.string(),
+  fileName: z.string().min(1),
+  createdAt: z.string().datetime(),
+  updatedAt: z.string().datetime(),
+  preview: z.string(),
+})
+export type StickyNoteSummary = z.infer<typeof stickyNoteSummarySchema>
+
+export const stickyNoteListResponseSchema = z.object({
+  notes: z.array(stickyNoteSummarySchema).default([]),
+})
+export type StickyNoteListResponse = z.infer<typeof stickyNoteListResponseSchema>
+
+export const stickyNoteDocumentSchema = stickyNoteSummarySchema.extend({
+  content: z.string(),
+  versions: z.array(stickyNoteVersionSummarySchema).default([]),
+})
+export type StickyNoteDocument = z.infer<typeof stickyNoteDocumentSchema>
+
+export const stickyNoteVersionDocumentSchema = z.object({
+  version: z.literal(1),
+  id: z.string().min(1),
+  createdAt: z.string().datetime(),
+  title: z.string(),
+  content: z.string(),
+})
+export type StickyNoteVersionDocument = z.infer<typeof stickyNoteVersionDocumentSchema>
 
 export const appStateSchema = z.object({
   version: z.literal(1),

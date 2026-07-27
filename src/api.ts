@@ -52,6 +52,14 @@ import {
   rendererCrashCaptureRequestSchema,
   slashCommandRequestSchema,
   slashCommandSchema,
+  stickyNoteDocumentSchema,
+  stickyNoteListRequestSchema,
+  stickyNoteListResponseSchema,
+  stickyNoteRequestSchema,
+  stickyNoteSaveRequestSchema,
+  stickyNoteSearchRequestSchema,
+  stickyNoteVersionDocumentSchema,
+  stickyNoteVersionRequestSchema,
   setupRunRequestSchema,
   setupStatusSchema,
   ollamaJudgeRequestSchema,
@@ -115,6 +123,14 @@ import {
   type SlashCommand,
   type SlashCommandRequest,
   type StateRecoverySelection,
+  type StickyNoteDocument,
+  type StickyNoteListRequest,
+  type StickyNoteListResponse,
+  type StickyNoteRequest,
+  type StickyNoteSaveRequest,
+  type StickyNoteSearchRequest,
+  type StickyNoteVersionDocument,
+  type StickyNoteVersionRequest,
   type StreamEventMap,
 } from '../shared/schema'
 
@@ -1039,6 +1055,108 @@ export const createWorkspaceFile = async (
       payload && typeof payload.message === 'string' ? payload.message : 'Failed to create file',
     )
   }
+}
+
+const postStickyNoteRequest = async <T>(
+  endpoint: string,
+  request: unknown,
+  parse: (value: unknown) => T,
+): Promise<T> => {
+  const response = await fetch(endpoint, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(request),
+  })
+  const payload = await response.json().catch(() => null)
+  if (!response.ok) {
+    throw new Error(
+      payload && typeof payload.message === 'string' ? payload.message : 'Sticky note request failed',
+    )
+  }
+  return parse(payload)
+}
+
+export const listStickyNotes = async (
+  request: StickyNoteListRequest,
+): Promise<StickyNoteListResponse> => {
+  const parsed = stickyNoteListRequestSchema.parse(request)
+  const desktop = getDesktopApi()
+  if (desktop?.listStickyNotes) {
+    return stickyNoteListResponseSchema.parse(await desktop.listStickyNotes(parsed))
+  }
+  return postStickyNoteRequest('/api/sticky-notes/list', parsed, (value) =>
+    stickyNoteListResponseSchema.parse(value),
+  )
+}
+
+export const loadStickyNote = async (request: StickyNoteRequest): Promise<StickyNoteDocument> => {
+  const parsed = stickyNoteRequestSchema.parse(request)
+  const desktop = getDesktopApi()
+  if (desktop?.loadStickyNote) {
+    return stickyNoteDocumentSchema.parse(await desktop.loadStickyNote(parsed))
+  }
+  return postStickyNoteRequest('/api/sticky-notes/load', parsed, (value) =>
+    stickyNoteDocumentSchema.parse(value),
+  )
+}
+
+export const saveStickyNote = async (
+  request: StickyNoteSaveRequest,
+): Promise<StickyNoteDocument> => {
+  const parsed = stickyNoteSaveRequestSchema.parse(request)
+  const desktop = getDesktopApi()
+  if (desktop?.saveStickyNote) {
+    return stickyNoteDocumentSchema.parse(await desktop.saveStickyNote(parsed))
+  }
+  return postStickyNoteRequest('/api/sticky-notes/save', parsed, (value) =>
+    stickyNoteDocumentSchema.parse(value),
+  )
+}
+
+export const searchStickyNotes = async (
+  request: StickyNoteSearchRequest,
+): Promise<StickyNoteListResponse> => {
+  const parsed = stickyNoteSearchRequestSchema.parse(request)
+  const desktop = getDesktopApi()
+  if (desktop?.searchStickyNotes) {
+    return stickyNoteListResponseSchema.parse(await desktop.searchStickyNotes(parsed))
+  }
+  return postStickyNoteRequest('/api/sticky-notes/search', parsed, (value) =>
+    stickyNoteListResponseSchema.parse(value),
+  )
+}
+
+export const loadStickyNoteVersion = async (
+  request: StickyNoteVersionRequest,
+): Promise<StickyNoteVersionDocument> => {
+  const parsed = stickyNoteVersionRequestSchema.parse(request)
+  const desktop = getDesktopApi()
+  if (desktop?.loadStickyNoteVersion) {
+    return stickyNoteVersionDocumentSchema.parse(await desktop.loadStickyNoteVersion(parsed))
+  }
+  return postStickyNoteRequest('/api/sticky-notes/version', parsed, (value) =>
+    stickyNoteVersionDocumentSchema.parse(value),
+  )
+}
+
+export const restoreStickyNoteVersion = async (
+  request: StickyNoteVersionRequest,
+): Promise<StickyNoteDocument> => {
+  const parsed = stickyNoteVersionRequestSchema.parse(request)
+  const desktop = getDesktopApi()
+  if (desktop?.restoreStickyNoteVersion) {
+    return stickyNoteDocumentSchema.parse(await desktop.restoreStickyNoteVersion(parsed))
+  }
+  return postStickyNoteRequest('/api/sticky-notes/restore', parsed, (value) =>
+    stickyNoteDocumentSchema.parse(value),
+  )
+}
+
+export const revealStickyNoteLocation = async (workspacePath: string) => {
+  const normalized = workspacePath.trim()
+  if (!normalized) throw new Error('A workspace path is required.')
+  const fn = requireDesktopAction(getDesktopApi()?.revealStickyNoteLocation)
+  await fn(normalized)
 }
 
 export const createWorkspaceDirectory = async (

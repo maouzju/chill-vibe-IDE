@@ -5132,11 +5132,13 @@ for (const theme of ['dark', 'light'] as const) {
     await mockAppApis(page, { state })
     await page.goto(appUrl)
 
-    const timerStatus = page.locator('.composer-wake-timer-status').first()
+    const timerStatus = page.locator('.message-list .composer-wake-timer-status').first()
     const settingsTrigger = page.locator('.composer-settings-trigger').first()
     const settingsMenu = page.locator('.composer-settings-menu').first()
 
     await expect(timerStatus).toContainText('2 messages')
+    await expect(page.locator('.chat-empty-tool-grid')).toHaveCount(0)
+    await expect(page.locator('.card-footer > .composer-wake-timer-status')).toHaveCount(0)
     await expect(timerStatus.getByRole('button', { name: 'Wake now' })).toBeVisible()
     await settingsTrigger.click()
     await expect(settingsMenu).toBeVisible()
@@ -8013,9 +8015,16 @@ for (const theme of ['dark', 'light'] as const) {
     const minimumCard = page.locator('.card-shell').nth(1)
     const defaultTextarea = page.locator('.sticky-note-textarea').nth(0)
     const minimumTextarea = page.locator('.sticky-note-textarea').nth(1)
+    const searchInput = defaultCard.locator('.sticky-note-search-input')
+    const historyButton = defaultCard.locator('.sticky-note-history-button')
+    const locationButton = defaultCard.locator('.sticky-note-location-button')
 
     await expect(defaultTextarea).toBeVisible()
     await expect(minimumTextarea).toBeVisible()
+    await expect(searchInput).toBeVisible()
+    await expect(historyButton).toBeVisible()
+    await expect(locationButton).toBeVisible()
+    await expect(defaultCard.locator('.sticky-note-discard-button')).toHaveCount(0)
     await expect(page.locator('.composer textarea')).toHaveCount(0)
 
     const [
@@ -8050,6 +8059,28 @@ for (const theme of ['dark', 'light'] as const) {
       animations: 'disabled',
       caret: 'hide',
     })
+
+    await searchInput.fill('Line 4')
+    await expect(defaultCard.locator('.sticky-note-existing-title')).toHaveText('Search results')
+    await expect(defaultCard.locator('.sticky-note-existing-entry')).toHaveCount(1)
+    await expect(defaultCard.locator('.sticky-note-existing-entry')).toContainText('Line 1')
+    await searchInput.fill('')
+    await expect(defaultCard.locator('.sticky-note-existing-panel')).toHaveCount(0)
+
+    await historyButton.click()
+    await expect(defaultCard.locator('.sticky-note-history-panel')).toContainText('Restore this version')
+    await defaultCard.locator('.sticky-note-history-entry strong').evaluateAll((nodes) => {
+      for (const node of nodes) node.textContent = '7/27/2026, 10:00:00 AM'
+    })
+    await expect(defaultCard).toHaveScreenshot(`sticky-note-history-${theme}.png`, {
+      animations: 'disabled',
+      caret: 'hide',
+    })
+
+    await page.setViewportSize({ width: 560, height: 860 })
+    await expect(searchInput).toBeVisible()
+    await expect(historyButton).toBeVisible()
+    await expect(locationButton).toBeVisible()
   })
 }
 

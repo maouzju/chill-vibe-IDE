@@ -82,6 +82,8 @@ composer 设置菜单顶部增加一个安静的 `.composer-wake-timer-module`�
 
 composer 输入框上方增加待唤醒状态行，与现有延后发送状态并列但视觉层级保持克制：数量、条件/剩余时间、立即唤醒、取消。
 
+“取消”通过纯逻辑把 `wakeTimerQueuedSends` 合并回 `draft` / `draftAttachments`，再清空批次 arm 数据。待唤醒内容早于用户取消前正在编辑的新草稿，因此文字和附件都按“待唤醒批次 → 当前草稿”的顺序合并；不能用单纯清空队列实现取消。ChatCard 点击取消前先提交尚未落盘的实时草稿，并把已排队附件立即补回本地 composer 预览，避免 React 状态同步期间出现内容已恢复但界面仍空白。
+
 Tab 标题由 `resolvePaneTabTitle`（`src/app-helpers.ts`）统一解析：工具卡固定标签优先，其次是会话自己的 `title`；只有既没有标题、又有 `wakeTimerQueuedSends` 的新会话才显示 `wakeTimerPendingStatus`（“待唤醒”），批次释放或取消后自然回落到“新会话”。非活动 Tab 的 memo 比较（`haveSameInactivePaneTabChrome`）把队列深度纳入 tab chrome，否则后台 Tab 的标题不会跟随批次变化刷新。
 
 所有颜色使用 `src/index.css` 现有 token；菜单不增加多余阴影/双重边框。窄屏下状态行允许换行，动作保持可点击。

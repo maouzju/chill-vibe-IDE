@@ -76,8 +76,6 @@ type LayoutRendererProps = {
   onChangeCardStickyNote: (cardId: string, content: string) => void
   stickyNoteArchivedContent?: string
   stickyNoteArchivedViewState?: StickyNoteViewState
-  onChangeStickyNoteViewState?: (viewState: StickyNoteViewState) => void
-  onDiscardStickyNoteArchive?: () => void
   onPatchCard: (
     cardId: string,
     patch: Partial<

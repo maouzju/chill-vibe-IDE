@@ -4,6 +4,7 @@ import { describe, it } from 'node:test'
 import { createCard, createDefaultSettings, normalizeAppSettings } from '../shared/default-state.ts'
 import {
   armWakeTimerBatch,
+  buildCanceledWakeTimerDraft,
   isWakeTimerConditionReady,
   mergeWakeTimerRequests,
   removeCompletedWakeTimerTarget,
@@ -231,6 +232,50 @@ describe('wake timer release', () => {
           mimeType: 'image/png',
           sizeBytes: 128,
         }],
+      },
+    )
+  })
+
+  it('restores a canceled batch before the current composer draft without losing attachments', () => {
+    assert.deepEqual(
+      buildCanceledWakeTimerDraft({
+        requests: [
+          request('one', '先检查构建'),
+          {
+            id: 'two',
+            prompt: '再运行截图验证',
+            attachments: [{
+              id: 'queued-image',
+              fileName: 'queued.png',
+              mimeType: 'image/png' as const,
+              sizeBytes: 128,
+            }],
+          },
+        ],
+        currentDraft: '我还在补充验收条件',
+        currentDraftAttachments: [{
+          id: 'draft-image',
+          fileName: 'draft.png',
+          mimeType: 'image/png' as const,
+          sizeBytes: 256,
+        }],
+      }),
+      {
+        draft: '先检查构建\n\n再运行截图验证\n\n我还在补充验收条件',
+        draftAttachments: [
+          {
+            id: 'queued-image',
+            fileName: 'queued.png',
+            mimeType: 'image/png',
+            sizeBytes: 128,
+          },
+          {
+            id: 'draft-image',
+            fileName: 'draft.png',
+            mimeType: 'image/png',
+            sizeBytes: 256,
+          },
+        ],
       },
     )
   })

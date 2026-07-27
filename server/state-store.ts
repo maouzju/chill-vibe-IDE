@@ -743,6 +743,36 @@ const normalizePersistedCard = (
     wakeTimerWakeAt: normalizeWakeTimerDate(card.wakeTimerWakeAt),
     wakeTimerPendingTargetIds: normalizeWakeTimerTargetIds(card.wakeTimerPendingTargetIds),
     stickyNote: typeof card.stickyNote === 'string' ? card.stickyNote : fallback.stickyNote,
+    stickyNoteId:
+      normalizedModel === STICKYNOTE_TOOL_MODEL
+        ? normalizeOptionalString(card.stickyNoteId) ?? id
+        : normalizeOptionalString(card.stickyNoteId),
+    stickyNoteViewState: isRecord(card.stickyNoteViewState)
+      ? {
+          scrollTop: Math.max(
+            0,
+            typeof card.stickyNoteViewState.scrollTop === 'number' && Number.isFinite(card.stickyNoteViewState.scrollTop)
+              ? card.stickyNoteViewState.scrollTop
+              : 0,
+          ),
+          selectionStart: Math.max(
+            0,
+            Math.trunc(
+              typeof card.stickyNoteViewState.selectionStart === 'number' && Number.isFinite(card.stickyNoteViewState.selectionStart)
+                ? card.stickyNoteViewState.selectionStart
+                : 0,
+            ),
+          ),
+          selectionEnd: Math.max(
+            0,
+            Math.trunc(
+              typeof card.stickyNoteViewState.selectionEnd === 'number' && Number.isFinite(card.stickyNoteViewState.selectionEnd)
+                ? card.stickyNoteViewState.selectionEnd
+                : 0,
+            ),
+          ),
+        }
+      : undefined,
     brainstorm: normalizePersistedBrainstorm(card.brainstorm, fallback.brainstorm),
     pm: normalizePersistedPm(card.pm, fallback.pm),
     pmTaskCardId: '',

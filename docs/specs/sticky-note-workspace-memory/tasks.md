@@ -1,16 +1,13 @@
-# 便签按工作区记忆 — 任务
+# 工作区便签库与历史版本 — 任务
 
-1. [x] schema：`stickyNoteArchiveEntrySchema` + `appStateSchema.stickyNoteArchive`；
-   `createDefaultState()` 补默认空档。
-2. [x] 红：`tests/sticky-note-workspace-memory.test.ts` 写失败测试并注册进
-   `tests/index.test.ts`，确认失败。
-3. [x] 绿：`updateCard` 便签分支同步写档（截断/上限/空串删条目）；新增
-   `clearStickyNoteArchive` action；`state-store` sanitize 路径补
-   `normalizePersistedStickyNoteArchive`（加载不走 zod parse，必须手动 normalize）。
-4. [x] UI：`StickyNoteCard` 恢复条（恢复/删除记录）+ 卸载 flush；prop 链
-   App → WorkspaceColumn → LayoutRenderer → PaneView → ChatCard。
-5. [x] i18n 双语文案；恢复条样式用主题 token（`--accent-soft`/`--accent-line`/
-   `--ink-*`/`--danger-soft`），双主题自动适配。
-6. [x] 验证：窄测试绿（10 项新测试 + 130 项受影响既有测试）+ `pnpm test:quality`；
-   `pnpm electron:build` 打包。
-7. [x] 便签按工作区保存并恢复滚动位置与光标/选区。
+1. [x] 更新需求与设计：冻结多便签、本地文件、无应用内删除、重命名和历史恢复方案。
+2. [x] 红：新增 store、schema、reducer 与组件的窄测试并确认失败。
+3. [x] 绿：实现 `server/sticky-note-store.ts` 及 Web/Electron API 链路。
+4. [x] 绿：为卡片补 `stickyNoteId`、独立视图状态与旧数据迁移。
+5. [x] 绿：重做 `StickyNoteCard` 工具栏、已有便签入口与历史版本面板，移除删除操作。
+6. [x] 更新双语文案与主题样式，补明暗主题/窄窗口视觉覆盖。
+7. [x] 运行窄测试、`pnpm test:quality`、相关 Playwright/主题验证。
+8. [x] 重启当前 Electron 开发运行时并执行 `pnpm electron:build`，报告可运行产物路径。
+9. [x] 红：新增工作区便签搜索 store 与组件入口测试并确认失败。
+10. [x] 绿：实现搜索 schema、store、Web/Electron API 与搜索 UI。
+11. [x] 验证搜索交互、双主题、质量检查，重启 Electron 并重新打包。

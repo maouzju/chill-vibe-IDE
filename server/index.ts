@@ -35,6 +35,11 @@ import {
   ollamaJudgeRequestSchema,
   ollamaPullRequestSchema,
   slashCommandRequestSchema,
+  stickyNoteListRequestSchema,
+  stickyNoteRequestSchema,
+  stickyNoteSaveRequestSchema,
+  stickyNoteSearchRequestSchema,
+  stickyNoteVersionRequestSchema,
   workspaceValidationRequestSchema,
 } from '../shared/schema.js'
 import { resolveImageAttachmentPath, storeImageAttachment } from './attachments.js'
@@ -89,6 +94,14 @@ import {
 } from './state-store.js'
 import { readNearestTsconfig } from './tsconfig-discovery.js'
 import { initServerCrashLogger, writeServerLog } from './crash-logger.js'
+import {
+  listStickyNotes,
+  loadStickyNote,
+  loadStickyNoteVersion,
+  restoreStickyNoteVersion,
+  saveStickyNote,
+  searchStickyNotes,
+} from './sticky-note-store.js'
 
 initServerCrashLogger()
 
@@ -596,6 +609,96 @@ app.post('/api/files/copy-to-clipboard', async (request, response) => {
   } catch (error) {
     response.status(400).json({
       message: error instanceof Error ? error.message : 'Unable to copy file to clipboard.',
+    })
+  }
+})
+
+app.post('/api/sticky-notes/list', async (request, response) => {
+  const parsed = stickyNoteListRequestSchema.safeParse(request.body)
+  if (!parsed.success) {
+    response.status(400).json({ message: 'Invalid sticky note list request.' })
+    return
+  }
+  try {
+    response.json(await listStickyNotes(parsed.data))
+  } catch (error) {
+    response.status(500).json({
+      message: error instanceof Error ? error.message : 'Unable to list sticky notes.',
+    })
+  }
+})
+
+app.post('/api/sticky-notes/load', async (request, response) => {
+  const parsed = stickyNoteRequestSchema.safeParse(request.body)
+  if (!parsed.success) {
+    response.status(400).json({ message: 'Invalid sticky note load request.' })
+    return
+  }
+  try {
+    response.json(await loadStickyNote(parsed.data))
+  } catch (error) {
+    response.status(404).json({
+      message: error instanceof Error ? error.message : 'Sticky note not found.',
+    })
+  }
+})
+
+app.post('/api/sticky-notes/save', async (request, response) => {
+  const parsed = stickyNoteSaveRequestSchema.safeParse(request.body)
+  if (!parsed.success) {
+    response.status(400).json({ message: 'Invalid sticky note save request.' })
+    return
+  }
+  try {
+    response.json(await saveStickyNote(parsed.data))
+  } catch (error) {
+    response.status(500).json({
+      message: error instanceof Error ? error.message : 'Unable to save sticky note.',
+    })
+  }
+})
+
+app.post('/api/sticky-notes/search', async (request, response) => {
+  const parsed = stickyNoteSearchRequestSchema.safeParse(request.body)
+  if (!parsed.success) {
+    response.status(400).json({ message: 'Invalid sticky note search request.' })
+    return
+  }
+  try {
+    response.json(await searchStickyNotes(parsed.data))
+  } catch (error) {
+    response.status(500).json({
+      message: error instanceof Error ? error.message : 'Unable to search sticky notes.',
+    })
+  }
+})
+
+app.post('/api/sticky-notes/version', async (request, response) => {
+  const parsed = stickyNoteVersionRequestSchema.safeParse(request.body)
+  if (!parsed.success) {
+    response.status(400).json({ message: 'Invalid sticky note version request.' })
+    return
+  }
+  try {
+    response.json(await loadStickyNoteVersion(parsed.data))
+  } catch (error) {
+    response.status(404).json({
+      message: error instanceof Error ? error.message : 'Sticky note version not found.',
+    })
+  }
+})
+
+app.post('/api/sticky-notes/restore', async (request, response) => {
+  const parsed = stickyNoteVersionRequestSchema.safeParse(request.body)
+  if (!parsed.success) {
+    response.status(400).json({ message: 'Invalid sticky note restore request.' })
+    return
+  }
+  try {
+    response.json(await restoreStickyNoteVersion(parsed.data))
+  } catch (error) {
+    response.status(404).json({
+      message: error instanceof Error ? error.message : 'Sticky note version not found.',
     })
   }
 })

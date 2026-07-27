@@ -735,8 +735,10 @@ test('wake timer holds multiple messages and releases them as one batch when req
   await textarea.fill('Second scheduled instruction')
   await sendButton.click()
 
-  const timerStatus = page.locator('.composer-wake-timer-status')
+  const timerStatus = page.locator('.message-list .composer-wake-timer-status')
   await expect(timerStatus).toContainText('2 messages')
+  await expect(page.locator('.chat-empty-tool-grid')).toHaveCount(0)
+  await expect(page.locator('.card-footer > .composer-wake-timer-status')).toHaveCount(0)
   await expect.poll(() => mock.readRequests()).toEqual([])
   await expect.poll(
     () => mock.readState().columns[0]?.cards['card-1']?.wakeTimerQueuedSends?.length,
@@ -749,6 +751,48 @@ test('wake timer holds multiple messages and releases them as one batch when req
     'First scheduled instruction\n\nSecond scheduled instruction',
   )
   await expect(timerStatus).toHaveCount(0)
+})
+
+test('canceling a wake timer restores the queued messages before the current draft', async ({ page }) => {
+  const mock = await installMockApis(page, {
+    wakeTimerEnabled: true,
+    initialCard: {
+      status: 'idle',
+      provider: 'codex',
+      model: 'gpt-5.5',
+      wakeTimerActive: true,
+      wakeTimerMode: 'duration',
+      wakeTimerDurationMinutes: 60,
+      wakeTimerArmedAt: '2026-07-27T00:00:00.000Z',
+      wakeTimerQueuedSends: [
+        { id: 'queued-one', prompt: 'First scheduled instruction', attachments: [] },
+        { id: 'queued-two', prompt: 'Second scheduled instruction', attachments: [] },
+      ],
+      messages: [],
+    },
+  })
+  await page.goto(appUrl)
+
+  const textarea = getActiveComposerTextarea(page)
+  await textarea.fill('Draft written while waiting')
+  const timerStatus = page.locator('.composer-wake-timer-status')
+  await timerStatus.getByRole('button', { name: 'Cancel' }).click()
+
+  await expect(timerStatus).toHaveCount(0)
+  await expect(textarea).toHaveValue(
+    'First scheduled instruction\n\nSecond scheduled instruction\n\nDraft written while waiting',
+  )
+  await expect.poll(() => {
+    const card = mock.readState().columns[0]?.cards['card-1']
+    return {
+      draft: card?.draft,
+      queuedCount: card?.wakeTimerQueuedSends?.length,
+    }
+  }).toEqual({
+    draft: 'First scheduled instruction\n\nSecond scheduled instruction\n\nDraft written while waiting',
+    queuedCount: 0,
+  })
+  await expect.poll(() => mock.readRequests()).toEqual([])
 })
 
 test('workspace wake timer releases only after a running peer stays normally completed', async ({ page }) => {

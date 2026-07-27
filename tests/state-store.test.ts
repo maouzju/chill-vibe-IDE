@@ -11,6 +11,7 @@ import {
   DEFAULT_CLAUDE_MODEL,
   DEFAULT_CODEX_MODEL,
   PM_TOOL_MODEL,
+  STICKYNOTE_TOOL_MODEL,
 } from '../shared/models.ts'
 import { appStateLoadResponseSchema } from '../shared/schema.ts'
 
@@ -340,6 +341,36 @@ describe('state-store persistence', () => {
       { scrollTop: 96, selectionStart: 2, selectionEnd: 3 },
       'saved sticky note position should survive a save/load round trip',
     )
+  })
+
+  it('normalizes legacy sticky note cards to a stable note id and card-local view state', async () => {
+    const state = createDefaultState('D:/sticky-note-migration')
+    const card = getFirstCard(state)
+    assert.ok(card)
+    const raw = structuredClone(state) as unknown as Record<string, unknown>
+    const columns = raw.columns as Array<Record<string, unknown>>
+    const cards = columns[0]?.cards as Record<string, Record<string, unknown>>
+    const rawCard = cards[card.id]!
+    rawCard.model = STICKYNOTE_TOOL_MODEL
+    rawCard.stickyNote = 'legacy local note'
+    delete rawCard.stickyNoteId
+    rawCard.stickyNoteViewState = {
+      scrollTop: -10,
+      selectionStart: 4.9,
+      selectionEnd: 8.2,
+    }
+    await writeFile(path.join(tmpDir, 'state.json'), JSON.stringify(raw, null, 2), 'utf8')
+
+    const { loadState } = await import('../server/state-store.ts')
+    const loaded = await loadState()
+    const restored = loaded.columns[0]?.cards[card.id]
+
+    assert.equal(restored?.stickyNoteId, card.id)
+    assert.deepEqual(restored?.stickyNoteViewState, {
+      scrollTop: 0,
+      selectionStart: 4,
+      selectionEnd: 8,
+    })
   })
 
   it('loadState strips archived brainstorm cards from persisted panes', async () => {

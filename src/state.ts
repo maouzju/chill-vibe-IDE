@@ -379,6 +379,8 @@ export type IdeAction =
           | 'unread'
           | 'completionGlow'
           | 'stickyNote'
+          | 'stickyNoteId'
+          | 'stickyNoteViewState'
           | 'messages'
           | 'brainstorm'
           | 'draftAttachments'
@@ -1257,6 +1259,10 @@ const selectCardModel = (
           ...currentCard,
           provider,
           model: normalizedModel,
+          stickyNoteId:
+            normalizedModel === STICKYNOTE_TOOL_MODEL
+              ? currentCard.stickyNoteId?.trim() || currentCard.id
+              : currentCard.stickyNoteId,
           pmTaskCardId: '',
           pmOwnerCardId: '',
           reasoningEffort: getPreferredReasoningEffort(nextState.settings, provider, normalizedModel),
@@ -2271,7 +2277,11 @@ export const ideReducer = (state: AppState, action: IdeAction): AppState => {
       // Sticky note edits also refresh the per-workspace archive so the note
       // survives closing the card or the whole workspace column. Editor tool
       // cards reuse `stickyNote` as a file path and must not be archived.
-      if (typeof action.patch.stickyNote === 'string' && current.model === STICKYNOTE_TOOL_MODEL) {
+      if (
+        typeof action.patch.stickyNote === 'string' &&
+        current.model === STICKYNOTE_TOOL_MODEL &&
+        !current.stickyNoteId?.trim()
+      ) {
         const workspacePath =
           state.columns.find((column) => column.id === action.columnId)?.workspacePath ?? ''
         const archive = upsertStickyNoteArchiveEntry(

@@ -66,6 +66,14 @@ import type {
   SlashCommand,
   SlashCommandRequest,
   StateRecoverySelection,
+  StickyNoteDocument,
+  StickyNoteListRequest,
+  StickyNoteListResponse,
+  StickyNoteRequest,
+  StickyNoteSaveRequest,
+  StickyNoteSearchRequest,
+  StickyNoteVersionDocument,
+  StickyNoteVersionRequest,
   StreamEventMap,
 } from '../shared/schema'
 
@@ -179,6 +187,14 @@ declare global {
       deleteWhiteNoiseScene?: (sceneId: string) => Promise<unknown>
       ensureAmbientAudio?: (generator: string, url?: string) => Promise<string>
       readAmbientAudioBuffer?: (generator: string, url?: string) => Promise<ArrayBuffer>
+
+      listStickyNotes?: (request: StickyNoteListRequest) => Promise<StickyNoteListResponse>
+      loadStickyNote?: (request: StickyNoteRequest) => Promise<StickyNoteDocument>
+      saveStickyNote?: (request: StickyNoteSaveRequest) => Promise<StickyNoteDocument>
+      searchStickyNotes?: (request: StickyNoteSearchRequest) => Promise<StickyNoteListResponse>
+      loadStickyNoteVersion?: (request: StickyNoteVersionRequest) => Promise<StickyNoteVersionDocument>
+      restoreStickyNoteVersion?: (request: StickyNoteVersionRequest) => Promise<StickyNoteDocument>
+      revealStickyNoteLocation?: (workspacePath: string) => Promise<void>
 
       // Weather
       fetchWeather?: (city?: string) => Promise<unknown>

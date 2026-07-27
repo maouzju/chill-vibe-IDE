@@ -145,3 +145,27 @@ export const mergeWakeTimerRequests = (
     .join('\n\n'),
   attachments: requests.flatMap((request) => request.attachments.map((attachment) => ({ ...attachment }))),
 })
+
+export const buildCanceledWakeTimerDraft = ({
+  requests,
+  currentDraft,
+  currentDraftAttachments,
+}: {
+  requests: readonly QueuedSendRequest[]
+  currentDraft: string
+  currentDraftAttachments: readonly ImageAttachment[]
+}): { draft: string; draftAttachments: ImageAttachment[] } => {
+  const canceledBatch = mergeWakeTimerRequests(requests)
+  const draftParts = [canceledBatch.prompt]
+  if (currentDraft.trim()) {
+    draftParts.push(currentDraft)
+  }
+
+  return {
+    draft: draftParts.filter(Boolean).join('\n\n'),
+    draftAttachments: [
+      ...canceledBatch.attachments,
+      ...currentDraftAttachments.map((attachment) => ({ ...attachment })),
+    ],
+  }
+}

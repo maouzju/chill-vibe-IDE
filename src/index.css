@@ -4721,6 +4721,13 @@ body.is-card-dragging .lane-drop-zone-top {
   line-height: calc(1.35 * var(--ui-line-height-scale));
 }
 
+.composer-wake-timer-status.is-empty-state {
+  box-sizing: border-box;
+  width: min(100%, 22rem);
+  margin: 0 auto;
+  padding: 0.58rem 0.66rem;
+}
+
 .composer-wake-timer-copy {
   display: flex;
   flex: 1 1 auto;
@@ -12269,6 +12276,7 @@ body,
 
 /* ── Sticky Note Card ── */
 .sticky-note-card {
+  container-type: inline-size;
   display: flex;
   flex-direction: column;
   flex: 1;
@@ -12276,68 +12284,167 @@ body,
   padding: 8px;
 }
 
-.sticky-note-restore-bar {
+.sticky-note-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 4px;
+  margin: 0 0 6px;
+}
+
+.sticky-note-search-input {
+  flex: 1 1 150px;
+  min-width: 90px;
+  max-width: 240px;
+  margin-right: auto;
+  padding: 4px 8px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-xs);
+  outline: none;
+  background: var(--panel-soft);
+  color: var(--ink-1);
+  font: inherit;
+  font-size: 0.76em;
+}
+
+.sticky-note-search-input::placeholder {
+  color: var(--ink-4);
+}
+
+.sticky-note-search-input:hover {
+  border-color: var(--line-strong);
+}
+
+.sticky-note-search-input:focus {
+  border-color: var(--accent-line-strong);
+  background: var(--panel-strong);
+}
+
+.sticky-note-history-button,
+.sticky-note-location-button,
+.sticky-note-history-entry button {
+  border: 0;
+  border-radius: var(--r-xs);
+  background: transparent;
+  color: var(--ink-3);
+  padding: 4px 7px;
+  font: inherit;
+  font-size: 0.76em;
+  cursor: pointer;
+}
+
+.sticky-note-history-button:hover,
+.sticky-note-location-button:hover,
+.sticky-note-history-entry button:hover {
+  background: var(--menu-hover-bg);
+  color: var(--ink-1);
+}
+
+.sticky-note-history-button:focus-visible,
+.sticky-note-location-button:focus-visible,
+.sticky-note-existing-entry:focus-visible,
+.sticky-note-history-entry button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.sticky-note-history-button[aria-expanded='true'] {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.sticky-note-error {
+  margin: 0 2px 6px;
+  padding: 6px 8px;
+  border: 1px solid var(--danger-soft);
+  border-radius: var(--r-xs);
+  background: var(--danger-soft);
+  color: var(--danger);
+  font-size: 0.76em;
+}
+
+.sticky-note-existing-panel,
+.sticky-note-history-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  max-height: min(42%, 240px);
+  margin: 0 0 6px;
+  padding: 5px;
+  overflow-y: auto;
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  background: var(--panel-soft);
+}
+
+.sticky-note-existing-title {
+  padding: 2px 5px 4px;
+  color: var(--ink-3);
+  font-size: 0.74em;
+  font-weight: 600;
+}
+
+.sticky-note-existing-entry,
+.sticky-note-history-entry {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 8px;
-  margin: 0 2px 6px;
-  padding: 6px 10px;
-  border: 1px solid var(--accent-line);
+  gap: 10px;
+  min-width: 0;
+  padding: 7px 8px;
+  border: 0;
   border-radius: var(--r-xs);
-  background: var(--accent-soft);
+  background: transparent;
+  color: var(--ink-2);
+  text-align: left;
 }
 
-.sticky-note-restore-text {
+.sticky-note-existing-entry {
+  cursor: pointer;
+}
+
+.sticky-note-existing-entry:hover {
+  background: var(--menu-hover-bg);
+}
+
+.sticky-note-existing-entry > span:first-child,
+.sticky-note-history-entry > div {
   display: flex;
   flex-direction: column;
   gap: 2px;
   min-width: 0;
 }
 
-.sticky-note-restore-title {
-  font-size: 0.8em;
-  color: var(--ink-2);
-}
-
-.sticky-note-restore-preview {
-  font-size: 0.76em;
-  color: var(--ink-3);
-  white-space: nowrap;
+.sticky-note-existing-entry strong,
+.sticky-note-history-entry strong {
   overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.sticky-note-restore-actions {
-  display: flex;
-  gap: 6px;
-  flex-shrink: 0;
-}
-
-.sticky-note-restore-button,
-.sticky-note-discard-button {
-  border: 1px solid var(--accent-line);
-  border-radius: var(--r-xs);
-  background: transparent;
-  padding: 3px 10px;
+  color: var(--ink-1);
   font-size: 0.78em;
-  cursor: pointer;
-  color: var(--accent);
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-.sticky-note-restore-button:hover {
-  background: var(--accent-glow);
-}
-
-.sticky-note-discard-button {
+.sticky-note-existing-entry small,
+.sticky-note-history-entry small {
+  overflow: hidden;
   color: var(--ink-3);
-  border-color: var(--line);
+  font-size: 0.72em;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-.sticky-note-discard-button:hover {
-  color: var(--danger);
-  border-color: var(--danger-soft);
-  background: var(--danger-soft);
+.sticky-note-existing-entry > span:last-child {
+  flex: none;
+  color: var(--accent);
+  font-size: 0.74em;
+}
+
+.sticky-note-history-empty {
+  padding: 12px 8px;
+  color: var(--ink-3);
+  font-size: 0.76em;
+  text-align: center;
 }
 
 .sticky-note-textarea {
@@ -12354,6 +12461,25 @@ body,
   line-height: 1.6;
   padding: 4px 6px;
   overflow-y: auto;
+}
+
+@container (max-width: 260px) {
+  .sticky-note-toolbar {
+    justify-content: flex-start;
+    flex-wrap: wrap;
+  }
+
+  .sticky-note-search-input {
+    flex-basis: 100%;
+    max-width: none;
+  }
+
+  .sticky-note-existing-entry,
+  .sticky-note-history-entry {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 5px;
+  }
 }
 
 /* -- Brainstorm Card ----------------------------------------*/

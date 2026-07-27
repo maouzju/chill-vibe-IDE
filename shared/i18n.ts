@@ -287,7 +287,17 @@ type LocaleText = {
   stickyNoteTitle: string
   stickyNoteRestorePrompt: string
   stickyNoteRestoreAction: string
-  stickyNoteDiscardAction: string
+  stickyNoteHistoryAction: string
+  stickyNoteLocationAction: string
+  stickyNoteExistingTitle: string
+  stickyNoteOpenAction: string
+  stickyNoteNoHistory: string
+  stickyNoteRestoreVersionAction: string
+  stickyNoteHistoryLoading: string
+  stickyNoteLocalSaveError: string
+  stickyNoteSearchPlaceholder: string
+  stickyNoteSearchResults: string
+  stickyNoteNoSearchResults: string
   brainstormTitle: string
   brainstormPlaceholder: string
   brainstormAnswerCountLabel: string
@@ -650,7 +660,17 @@ const localeTextByLanguage: Record<AppLanguage, LocaleText> = {
     stickyNoteTitle: '便签',
     stickyNoteRestorePrompt: '此工作区有之前的便签记录',
     stickyNoteRestoreAction: '恢复',
-    stickyNoteDiscardAction: '删除记录',
+    stickyNoteHistoryAction: '历史版本',
+    stickyNoteLocationAction: '打开本地位置',
+    stickyNoteExistingTitle: '已有便签',
+    stickyNoteOpenAction: '打开',
+    stickyNoteNoHistory: '还没有历史版本',
+    stickyNoteRestoreVersionAction: '恢复此版本',
+    stickyNoteHistoryLoading: '正在读取历史…',
+    stickyNoteLocalSaveError: '本地便签保存失败',
+    stickyNoteSearchPlaceholder: '搜索便签',
+    stickyNoteSearchResults: '搜索结果',
+    stickyNoteNoSearchResults: '没有匹配的便签',
     brainstormTitle: '头脑风暴',
     brainstormPlaceholder: '输入主题…',
     brainstormAnswerCountLabel: '答案数量',
@@ -1025,7 +1045,17 @@ const localeTextByLanguage: Record<AppLanguage, LocaleText> = {
     stickyNoteTitle: 'Sticky Note',
     stickyNoteRestorePrompt: 'This workspace has a previous note',
     stickyNoteRestoreAction: 'Restore',
-    stickyNoteDiscardAction: 'Delete it',
+    stickyNoteHistoryAction: 'Version history',
+    stickyNoteLocationAction: 'Open local location',
+    stickyNoteExistingTitle: 'Saved notes',
+    stickyNoteOpenAction: 'Open',
+    stickyNoteNoHistory: 'No saved versions yet',
+    stickyNoteRestoreVersionAction: 'Restore this version',
+    stickyNoteHistoryLoading: 'Loading history…',
+    stickyNoteLocalSaveError: 'Could not save the local note',
+    stickyNoteSearchPlaceholder: 'Search notes',
+    stickyNoteSearchResults: 'Search results',
+    stickyNoteNoSearchResults: 'No matching notes',
     brainstormTitle: 'Brainstorm',
     brainstormPlaceholder: 'Enter a topic…',
     brainstormAnswerCountLabel: 'Answer count',

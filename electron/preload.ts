@@ -175,6 +175,21 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.invoke('desktop:whitenoise-read-audio', generator, url) as Promise<ArrayBuffer>,
 
   // ── File System ───────────────────────────────────────────────────────────
+  listStickyNotes: (request: unknown) =>
+    ipcRenderer.invoke('desktop:list-sticky-notes', request),
+  loadStickyNote: (request: unknown) =>
+    ipcRenderer.invoke('desktop:load-sticky-note', request),
+  saveStickyNote: (request: unknown) =>
+    ipcRenderer.invoke('desktop:save-sticky-note', request),
+  searchStickyNotes: (request: unknown) =>
+    ipcRenderer.invoke('desktop:search-sticky-notes', request),
+  loadStickyNoteVersion: (request: unknown) =>
+    ipcRenderer.invoke('desktop:load-sticky-note-version', request),
+  restoreStickyNoteVersion: (request: unknown) =>
+    ipcRenderer.invoke('desktop:restore-sticky-note-version', request),
+  revealStickyNoteLocation: (workspacePath: string) =>
+    ipcRenderer.invoke('desktop:reveal-sticky-note-location', workspacePath) as Promise<void>,
+
   listFiles: (request: unknown) =>
     ipcRenderer.invoke('desktop:list-files', request),
   searchFiles: (request: unknown) =>

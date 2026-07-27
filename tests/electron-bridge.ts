@@ -3,6 +3,7 @@ import type { Page } from '@playwright/test'
 export const installMockElectronBridge = async (page: Page) => {
   await page.addInitScript(() => {
     const streamSources = new Map()
+    const stickyNotes = new Map()
 
     const parseJson = async (response) => {
       const raw = await response.text().catch(() => '')
@@ -51,6 +52,71 @@ export const installMockElectronBridge = async (page: Page) => {
       isWindowMaximized: async () => false,
       onWindowMaximizedChanged: () => () => undefined,
       openFolderDialog: async () => null,
+      listStickyNotes: async ({ workspacePath }) => ({
+        notes: Array.from(stickyNotes.values())
+          .filter((note) => note.workspacePath === workspacePath)
+          .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt)),
+      }),
+      loadStickyNote: async ({ workspacePath, noteId }) => {
+        const note = stickyNotes.get(`${workspacePath}|${noteId}`)
+        if (!note) throw new Error('Sticky note not found')
+        return { ...note }
+      },
+      saveStickyNote: async ({ workspacePath, noteId, title, content, checkpoint = false }) => {
+        const key = `${workspacePath}|${noteId}`
+        const previous = stickyNotes.get(key)
+        const now = new Date().toISOString()
+        const versions = [...(previous?.versions ?? [])]
+        if (checkpoint && versions[0]?.preview !== content.trim().split(/\r?\n/, 1)[0]) {
+          versions.unshift({
+            id: `mock-version-${versions.length + 1}`,
+            createdAt: now,
+            title,
+            preview: content.trim().split(/\r?\n/, 1)[0] ?? '',
+          })
+        }
+        const note = {
+          workspacePath,
+          noteId,
+          title,
+          fileName: `${title}--${noteId}.md`,
+          createdAt: previous?.createdAt ?? now,
+          updatedAt: now,
+          preview: content.trim().split(/\r?\n/, 1)[0] ?? '',
+          content,
+          versions,
+        }
+        stickyNotes.set(key, note)
+        return { ...note }
+      },
+      searchStickyNotes: async ({ workspacePath, query }) => {
+        const normalized = query.trim().toLocaleLowerCase()
+        return {
+          notes: Array.from(stickyNotes.values())
+            .filter((note) => note.workspacePath === workspacePath)
+            .filter((note) =>
+              !normalized ||
+              note.title.toLocaleLowerCase().includes(normalized) ||
+              note.content.toLocaleLowerCase().includes(normalized),
+            )
+            .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt)),
+        }
+      },
+      loadStickyNoteVersion: async ({ workspacePath, noteId, versionId }) => {
+        const note = stickyNotes.get(`${workspacePath}|${noteId}`)
+        const version = note?.versions.find((entry) => entry.id === versionId)
+        if (!note || !version) throw new Error('Sticky note version not found')
+        return { version: 1, ...version, content: version.preview }
+      },
+      restoreStickyNoteVersion: async ({ workspacePath, noteId, versionId }) => {
+        const note = stickyNotes.get(`${workspacePath}|${noteId}`)
+        const version = note?.versions.find((entry) => entry.id === versionId)
+        if (!note || !version) throw new Error('Sticky note version not found')
+        const restored = { ...note, title: version.title, content: version.preview, preview: version.preview }
+        stickyNotes.set(`${workspacePath}|${noteId}`, restored)
+        return restored
+      },
+      revealStickyNoteLocation: async () => undefined,
       fetchState: async () => jsonRequest('/api/state'),
       loadSessionHistoryEntry: async (request) =>
         jsonRequest(`/api/session-history/${encodeURIComponent(request.entryId)}`),

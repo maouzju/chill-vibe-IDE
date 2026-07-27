@@ -4,25 +4,23 @@ import * as React from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 
 import { createDefaultSettings } from '../shared/default-state.ts'
+import { DEFAULT_CODEX_MODEL, STICKYNOTE_TOOL_MODEL } from '../shared/models.ts'
+import { appStateSchema, defaultAutoUrgeProfileId } from '../shared/schema.ts'
+import type { AppState, BoardColumn, ChatCard, PaneNode } from '../shared/schema.ts'
 import { StickyNoteCard } from '../src/components/StickyNoteCard.tsx'
+import { ideReducer } from '../src/state.ts'
 
 ;(globalThis as typeof globalThis & { React: typeof React }).React = React
 
-const { createElement } = React
-import { DEFAULT_CODEX_MODEL, STICKYNOTE_TOOL_MODEL, TEXTEDITOR_TOOL_MODEL } from '../shared/models.ts'
-import { appStateSchema, defaultAutoUrgeProfileId } from '../shared/schema.ts'
-import type { AppState, BoardColumn, ChatCard, PaneNode } from '../shared/schema.ts'
-import { ideReducer } from '../src/state.ts'
-
-const timestamp = '2026-04-04T12:00:00.000Z'
+const timestamp = '2026-07-27T08:00:00.000Z'
 
 const createCard = (overrides: Partial<ChatCard> = {}): ChatCard => ({
   id: overrides.id ?? 'card-1',
-  title: overrides.title ?? 'Note',
+  title: overrides.title ?? '便签 A',
   providerSessions: {},
   status: 'idle',
   provider: 'codex',
-  model: overrides.model ?? STICKYNOTE_TOOL_MODEL,
+  model: STICKYNOTE_TOOL_MODEL,
   reasoningEffort: 'medium',
   thinkingEnabled: true,
   planMode: false,
@@ -32,8 +30,10 @@ const createCard = (overrides: Partial<ChatCard> = {}): ChatCard => ({
   unread: false,
   draft: '',
   stickyNote: overrides.stickyNote ?? '',
+  stickyNoteId: overrides.stickyNoteId ?? overrides.id ?? 'card-1',
+  stickyNoteViewState: overrides.stickyNoteViewState,
   draftAttachments: [],
-  queuedSends: overrides.queuedSends ?? [],
+  queuedSends: [],
   brainstorm: {
     prompt: '',
     provider: 'codex',
@@ -46,232 +46,137 @@ const createCard = (overrides: Partial<ChatCard> = {}): ChatCard => ({
   ...overrides,
 })
 
-const createPane = (id: string, tabs: string[]): PaneNode => ({
+const createPane = (tabs: string[]): PaneNode => ({
   type: 'pane',
-  id,
+  id: 'pane-1',
   tabs,
   activeTabId: tabs[0] ?? '',
 })
 
-const createColumn = (overrides: Partial<BoardColumn> = {}): BoardColumn => {
-  const cards = overrides.cards ?? {
-    'card-1': createCard(),
-  }
+const createColumn = (cards: Record<string, ChatCard>): BoardColumn => ({
+  id: 'column-1',
+  title: 'Workspace 1',
+  provider: 'codex',
+  workspacePath: 'D:/repo/one',
+  model: DEFAULT_CODEX_MODEL,
+  layout: createPane(Object.keys(cards)),
+  cards,
+})
 
-  return {
-    id: overrides.id ?? 'column-1',
-    title: overrides.title ?? 'Workspace 1',
-    provider: overrides.provider ?? 'codex',
-    workspacePath: overrides.workspacePath ?? 'D:/repo/one',
-    model: overrides.model ?? DEFAULT_CODEX_MODEL,
-    layout: overrides.layout ?? createPane('pane-1', Object.keys(cards)),
-    cards,
-  }
-}
-
-const createState = (overrides: Partial<AppState> = {}): AppState => ({
+const createState = (cards: Record<string, ChatCard>): AppState => ({
   version: 1,
   updatedAt: timestamp,
   settings: createDefaultSettings(),
-  columns: overrides.columns ?? [createColumn()],
+  columns: [createColumn(cards)],
   sessionHistory: [],
-  stickyNoteArchive: overrides.stickyNoteArchive ?? {},
+  stickyNoteArchive: {
+    'D:/repo/one': { content: '旧版单份存档', updatedAt: timestamp },
+  },
 })
 
-describe('sticky note workspace memory', () => {
-  it('parses legacy state without stickyNoteArchive into an empty archive', () => {
-    const legacy = {
-      version: 1,
-      updatedAt: timestamp,
-      settings: createDefaultSettings(),
-      columns: [],
-      sessionHistory: [],
-    }
+describe('sticky note identity migration and isolation', () => {
+  it('parses legacy cards without note identity or view state', () => {
+    const card = createCard({ id: 'legacy-card' })
+    const rawCard = structuredClone(card) as unknown as Record<string, unknown>
+    delete rawCard.stickyNoteId
+    delete rawCard.stickyNoteViewState
+    const state = createState({ 'legacy-card': card })
+    const raw = structuredClone(state) as unknown as Record<string, unknown>
+    const columns = raw.columns as Array<Record<string, unknown>>
+    columns[0]!.cards = { 'legacy-card': rawCard }
 
-    const parsed = appStateSchema.parse(legacy)
-    assert.deepEqual(parsed.stickyNoteArchive, {})
+    const parsed = appStateSchema.parse(raw)
+    assert.equal(parsed.columns[0]?.cards['legacy-card']?.stickyNoteId, undefined)
+    assert.equal(parsed.columns[0]?.cards['legacy-card']?.stickyNoteViewState, undefined)
   })
 
-  it('mirrors sticky note edits into the workspace archive', () => {
-    const state = createState()
+  it('keeps identified note edits out of the legacy workspace-wide archive', () => {
+    const card = createCard({ id: 'note-a', stickyNoteId: 'note-a', stickyNote: 'A0' })
+    const state = createState({ 'note-a': card })
 
     const next = ideReducer(state, {
       type: 'updateCard',
       columnId: 'column-1',
-      cardId: 'card-1',
-      patch: { stickyNote: '买牛奶\n回邮件' },
+      cardId: 'note-a',
+      patch: { stickyNote: 'A1' },
     })
 
-    assert.equal(next.stickyNoteArchive['D:/repo/one']?.content, '买牛奶\n回邮件')
+    assert.equal(next.columns[0]?.cards['note-a']?.stickyNote, 'A1')
+    assert.equal(next.stickyNoteArchive['D:/repo/one']?.content, '旧版单份存档')
   })
 
-  it('remembers the sticky note scroll and cursor position for the workspace', () => {
-    const state = createState({
-      stickyNoteArchive: {
-        'D:/repo/one': { content: 'line 1\nline 2\nline 3', updatedAt: timestamp },
-      },
+  it('assigns each card its own note identity when multiple cards switch to sticky notes', () => {
+    const cardA = { ...createCard({ id: 'card-a', model: DEFAULT_CODEX_MODEL }), stickyNoteId: undefined }
+    const cardB = { ...createCard({ id: 'card-b', model: DEFAULT_CODEX_MODEL }), stickyNoteId: undefined }
+    const state = createState({ 'card-a': cardA, 'card-b': cardB })
+
+    const first = ideReducer(state, {
+      type: 'selectCardModel',
+      columnId: 'column-1',
+      cardId: 'card-a',
+      provider: 'codex',
+      model: STICKYNOTE_TOOL_MODEL,
+    })
+    const second = ideReducer(first, {
+      type: 'selectCardModel',
+      columnId: 'column-1',
+      cardId: 'card-b',
+      provider: 'codex',
+      model: STICKYNOTE_TOOL_MODEL,
     })
 
-    const next = ideReducer(state, {
-      type: 'updateStickyNoteViewState',
-      workspacePath: 'D:/repo/one',
-      viewState: { scrollTop: 128, selectionStart: 9, selectionEnd: 15 },
-    })
-
-    assert.deepEqual(next.stickyNoteArchive['D:/repo/one']?.viewState, {
-      scrollTop: 128,
-      selectionStart: 9,
-      selectionEnd: 15,
-    })
-    assert.equal(next.stickyNoteArchive['D:/repo/one']?.content, 'line 1\nline 2\nline 3')
+    assert.equal(second.columns[0]?.cards['card-a']?.stickyNoteId, 'card-a')
+    assert.equal(second.columns[0]?.cards['card-b']?.stickyNoteId, 'card-b')
   })
 
-  it('keeps the remembered view position when note content is updated', () => {
-    const state = createState({
-      stickyNoteArchive: {
-        'D:/repo/one': {
-          content: 'old',
-          updatedAt: timestamp,
-          viewState: { scrollTop: 72, selectionStart: 2, selectionEnd: 2 },
-        },
-      },
-    })
+  it('stores content and reading position independently for multiple notes', () => {
+    const noteA = createCard({ id: 'note-a', stickyNoteId: 'note-a', stickyNote: 'A' })
+    const noteB = createCard({ id: 'note-b', stickyNoteId: 'note-b', stickyNote: 'B' })
+    const state = createState({ 'note-a': noteA, 'note-b': noteB })
 
     const next = ideReducer(state, {
       type: 'updateCard',
       columnId: 'column-1',
-      cardId: 'card-1',
-      patch: { stickyNote: 'new content' },
+      cardId: 'note-a',
+      patch: {
+        stickyNote: 'A changed',
+        stickyNoteViewState: { scrollTop: 120, selectionStart: 2, selectionEnd: 5 },
+      },
     })
 
-    assert.deepEqual(next.stickyNoteArchive['D:/repo/one']?.viewState, {
-      scrollTop: 72,
+    assert.equal(next.columns[0]?.cards['note-a']?.stickyNote, 'A changed')
+    assert.deepEqual(next.columns[0]?.cards['note-a']?.stickyNoteViewState, {
+      scrollTop: 120,
       selectionStart: 2,
-      selectionEnd: 2,
+      selectionEnd: 5,
     })
-  })
-
-  it('does not archive stickyNote patches for non-sticky tool cards', () => {
-    const state = createState({
-      columns: [
-        createColumn({
-          cards: { 'card-1': createCard({ model: TEXTEDITOR_TOOL_MODEL }) },
-        }),
-      ],
-    })
-
-    const next = ideReducer(state, {
-      type: 'updateCard',
-      columnId: 'column-1',
-      cardId: 'card-1',
-      patch: { stickyNote: 'src/App.tsx' },
-    })
-
-    assert.equal(next.stickyNoteArchive['D:/repo/one'], undefined)
-  })
-
-  it('does not archive when the column has no workspace path', () => {
-    const state = createState({
-      columns: [createColumn({ workspacePath: '' })],
-    })
-
-    const next = ideReducer(state, {
-      type: 'updateCard',
-      columnId: 'column-1',
-      cardId: 'card-1',
-      patch: { stickyNote: 'hello' },
-    })
-
-    assert.deepEqual(next.stickyNoteArchive, {})
-  })
-
-  it('removes the archive entry when the sticky note is cleared', () => {
-    const state = createState({
-      columns: [createColumn({ cards: { 'card-1': createCard({ stickyNote: 'old' }) } })],
-      stickyNoteArchive: {
-        'D:/repo/one': { content: 'old', updatedAt: timestamp },
-      },
-    })
-
-    const next = ideReducer(state, {
-      type: 'updateCard',
-      columnId: 'column-1',
-      cardId: 'card-1',
-      patch: { stickyNote: '' },
-    })
-
-    assert.equal(next.stickyNoteArchive['D:/repo/one'], undefined)
-  })
-
-  it('clearStickyNoteArchive removes the entry for the workspace', () => {
-    const state = createState({
-      stickyNoteArchive: {
-        'D:/repo/one': { content: 'old', updatedAt: timestamp },
-        'D:/repo/two': { content: 'keep', updatedAt: timestamp },
-      },
-    })
-
-    const next = ideReducer(state, {
-      type: 'clearStickyNoteArchive',
-      workspacePath: 'D:/repo/one',
-    })
-
-    assert.equal(next.stickyNoteArchive['D:/repo/one'], undefined)
-    assert.equal(next.stickyNoteArchive['D:/repo/two']?.content, 'keep')
-  })
-
-  it('evicts the oldest entries beyond the archive cap', () => {
-    const archive: AppState['stickyNoteArchive'] = {}
-    for (let index = 0; index < 50; index += 1) {
-      archive[`D:/repo/filler-${index}`] = {
-        content: `note ${index}`,
-        // filler-0 is the oldest entry
-        updatedAt: new Date(Date.UTC(2026, 0, 1, 0, index)).toISOString(),
-      }
-    }
-
-    const state = createState({ stickyNoteArchive: archive })
-
-    const next = ideReducer(state, {
-      type: 'updateCard',
-      columnId: 'column-1',
-      cardId: 'card-1',
-      patch: { stickyNote: 'newest note' },
-    })
-
-    assert.equal(next.stickyNoteArchive['D:/repo/one']?.content, 'newest note')
-    assert.equal(next.stickyNoteArchive['D:/repo/filler-0'], undefined)
-    assert.equal(next.stickyNoteArchive['D:/repo/filler-1']?.content, 'note 1')
-    assert.equal(Object.keys(next.stickyNoteArchive).length, 50)
+    assert.equal(next.columns[0]?.cards['note-b']?.stickyNote, 'B')
+    assert.equal(next.columns[0]?.cards['note-b']?.stickyNoteViewState, undefined)
   })
 })
 
-describe('sticky note restore entry', () => {
-  const render = (content: string, archivedContent: string) =>
-    renderToStaticMarkup(
-      createElement(StickyNoteCard, {
-        content,
-        archivedContent,
+describe('sticky note controls', () => {
+  it('shows history and local-location actions without any delete action', () => {
+    const html = renderToStaticMarkup(
+      React.createElement(StickyNoteCard, {
+        content: '独立内容',
+        workspacePath: 'D:/repo/one',
+        noteId: 'note-a',
+        title: '便签 A',
         language: 'zh-CN',
         onChange: () => {},
-        onDiscardArchive: () => {},
+        onBindNote: () => {},
+        onChangeTitle: () => {},
       }),
     )
 
-  it('shows the restore bar when the note is empty and an archive exists', () => {
-    const html = render('', '旧的便签内容\n第二行')
-    assert.ok(html.includes('sticky-note-restore-bar'))
-    assert.ok(html.includes('旧的便签内容'), 'should preview the archived first line')
-    assert.ok(!html.includes('第二行'), 'preview should stay on the first line')
-  })
-
-  it('hides the restore bar when the note already has content', () => {
-    const html = render('正在写', '旧的便签内容')
-    assert.ok(!html.includes('sticky-note-restore-bar'))
-  })
-
-  it('hides the restore bar when there is no archive', () => {
-    const html = render('', '')
-    assert.ok(!html.includes('sticky-note-restore-bar'))
+    assert.match(html, /sticky-note-history-button/)
+    assert.match(html, /sticky-note-location-button/)
+    assert.match(html, /sticky-note-search-input/)
+    assert.match(html, /搜索便签/)
+    assert.match(html, /历史版本/)
+    assert.match(html, /打开本地位置/)
+    assert.doesNotMatch(html, /sticky-note-discard-button/)
+    assert.doesNotMatch(html, /删除记录|删除便签/)
   })
 })

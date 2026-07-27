@@ -125,8 +125,6 @@ type PaneViewProps = {
   onChangeCardStickyNote: (cardId: string, content: string) => void
   stickyNoteArchivedContent?: string
   stickyNoteArchivedViewState?: import('../../shared/schema').StickyNoteViewState
-  onChangeStickyNoteViewState?: (viewState: import('../../shared/schema').StickyNoteViewState) => void
-  onDiscardStickyNoteArchive?: () => void
   onPatchCard: (
     cardId: string,
     patch: Partial<
@@ -360,8 +358,6 @@ const PaneViewView = ({
   onChangeCardStickyNote,
   stickyNoteArchivedContent,
   stickyNoteArchivedViewState,
-  onChangeStickyNoteViewState,
-  onDiscardStickyNoteArchive,
   onPatchCard,
   onChangeCardTitle,
   onSendMessage,
@@ -1370,8 +1366,6 @@ const PaneViewView = ({
                   onStickyNoteChange={(content) => onChangeCardStickyNote(card.id, content)}
                   stickyNoteArchivedContent={stickyNoteArchivedContent}
                   stickyNoteArchivedViewState={stickyNoteArchivedViewState}
-                  onChangeStickyNoteViewState={onChangeStickyNoteViewState}
-                  onDiscardStickyNoteArchive={onDiscardStickyNoteArchive}
                   onPatchCard={(patch) => onPatchCard(card.id, patch)}
                   onChangeTitle={(title) => onChangeCardTitle(card.id, title)}
                   onChangeModel={(provider, model) => onChangeCardModel(card.id, provider, model)}

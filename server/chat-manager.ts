@@ -24,6 +24,7 @@ import {
 import { captureWorkspaceSnapshot, diffWorkspaceSnapshot } from './git-workspace.js'
 import {
   createClaudeUnsolicitedTurnAttachment,
+  isClaudeSidechainLine,
   isClaudeTurnStartLine,
   launchProviderRun,
 } from './providers.js'
@@ -246,6 +247,7 @@ export class ChatManager {
     this.claudePool = options?.enableClaudeKeepalive
       ? new ClaudeSessionPool({
           shouldWakeOnLine: isClaudeTurnStartLine,
+          shouldIgnoreIdleLine: isClaudeSidechainLine,
           onUnsolicited: (entry, attach) => {
             void this.handleUnsolicitedClaudeTurn(entry, attach).catch(() => {
               // If the unsolicited stream could not be set up, the pool's idle

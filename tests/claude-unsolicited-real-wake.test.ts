@@ -18,6 +18,7 @@ const waitFor = async (predicate: () => boolean, timeoutMs = 5_000) => {
 import { ClaudeSessionPool, type ClaudeSessionPoolChild } from '../server/claude-session-pool.ts'
 import {
   createClaudeUnsolicitedTurnAttachment,
+  isClaudeSidechainLine,
   isClaudeTurnStartLine,
 } from '../server/providers.ts'
 
@@ -183,5 +184,71 @@ test('idle task diagnostics alone do not fabricate an unsolicited turn', async (
   )
   assert.equal(record.done, true)
 
+  pool.closeAll()
+})
+
+test('idle child-agent sidechain output does not start a new owner-card turn', () => {
+  const sidechainLine = JSON.stringify({
+    type: 'stream_event',
+    parent_tool_use_id: 'toolu_parent_agent_call',
+    event: {
+      type: 'message_start',
+      message: { role: 'assistant', content: [] },
+    },
+  })
+
+  assert.equal(
+    isClaudeTurnStartLine(sidechainLine),
+    false,
+    'Explore/Agent sidechain progress must not wake the already-finished parent card',
+  )
+  assert.equal(isClaudeSidechainLine(sidechainLine), true)
+})
+
+test('idle child-agent sidechain output is discarded before a later real wake-up', async () => {
+  const receivedLines: string[] = []
+  let wakeUps = 0
+  const pool = new ClaudeSessionPool({
+    idleTimeoutMs: 60_000,
+    shouldWakeOnLine: isClaudeTurnStartLine,
+    shouldIgnoreIdleLine: isClaudeSidechainLine,
+    onUnsolicited: (_entry, attach) => {
+      wakeUps += 1
+      attach({
+        onLine: (line) => receivedLines.push(line),
+        onStderrLine: () => {},
+        onProcessClosed: () => {},
+      })
+    },
+  })
+
+  const { child, stdout } = createStubChild()
+  assert.ok(
+    await pool.acquireForTurn({
+      key: 'card-sidechain',
+      signature: 'sig',
+      sessionId: 'session-sidechain',
+      spawn: async () => child,
+    }),
+  )
+
+  const sidechainLine = JSON.stringify({
+    type: 'assistant',
+    parent_tool_use_id: 'toolu_parent_agent_call',
+    message: { role: 'assistant', content: [{ type: 'tool_use', name: 'Bash' }] },
+  })
+  stdout.write(`${sidechainLine}\n`)
+  await new Promise((resolve) => setTimeout(resolve, 25))
+  assert.equal(wakeUps, 0)
+
+  const topLevelTurnStart = JSON.stringify({
+    type: 'system',
+    subtype: 'init',
+    parent_tool_use_id: null,
+  })
+  stdout.write(`${topLevelTurnStart}\n`)
+  await waitFor(() => wakeUps === 1)
+
+  assert.deepEqual(receivedLines, [topLevelTurnStart])
   pool.closeAll()
 })

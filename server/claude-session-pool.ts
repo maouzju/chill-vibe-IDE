@@ -72,6 +72,7 @@ export class ClaudeSessionPool {
     attach: (attachment: ClaudeTurnAttachment) => void,
   ) => void
   private readonly shouldWakeOnLine: (line: string) => boolean
+  private readonly shouldIgnoreIdleLine: (line: string) => boolean
   private readonly idleTimeoutMs: number
   private disposed = false
 
@@ -84,10 +85,14 @@ export class ClaudeSessionPool {
     // no stream-json knowledge of its own, so the host injects the predicate;
     // without one every line wakes a stream (the pre-gate behavior).
     shouldWakeOnLine?: (line: string) => boolean
+    // Sidechain/progress lines that belong to a child Agent should neither wake
+    // the owner card nor be replayed into a later genuine top-level turn.
+    shouldIgnoreIdleLine?: (line: string) => boolean
     idleTimeoutMs?: number
   }) {
     this.onUnsolicited = options.onUnsolicited
     this.shouldWakeOnLine = options.shouldWakeOnLine ?? (() => true)
+    this.shouldIgnoreIdleLine = options.shouldIgnoreIdleLine ?? (() => false)
     this.idleTimeoutMs = options.idleTimeoutMs ?? resolveDefaultIdleTimeoutMs()
   }
 
@@ -272,14 +277,21 @@ export class ClaudeSessionPool {
       return
     }
 
+    this.armIdleTimer(entry)
+
+    // Child-Agent sidechain output can outlive the parent turn. It proves the
+    // pooled process is active, but it is not owner-card content and must not be
+    // buffered into a later genuine task-notification turn.
+    if (this.shouldIgnoreIdleLine(line)) {
+      return
+    }
+
     // Idle output: the CLI woke itself (e.g. a background task finished and the
-    // agent resumed). Buffer everything until the host attaches a fresh stream.
+    // agent resumed). Buffer eligible lines until the host attaches a stream.
     entry.bufferedStdout.push(line)
     if (entry.bufferedStdout.length > MAX_BUFFERED_IDLE_LINES) {
       entry.bufferedStdout.splice(0, entry.bufferedStdout.length - MAX_BUFFERED_IDLE_LINES)
     }
-    this.armIdleTimer(entry)
-
     // Background-task bookkeeping (`task_updated`, `background_tasks_changed`,
     // …) arrives while idle without the agent being re-invoked. Waking a stream
     // on those would park the card in `streaming` with nothing behind it until

@@ -28,13 +28,15 @@
 
 - [x] 红测复现：父回合结束后，带 `parent_tool_use_id` 的 Explore/Agent sidechain 行会错误创建 unsolicited stream。
 - [x] turn-start gate 忽略所有非顶层 sidechain stdout，同时保留真实 task-notification 主 Agent 回流。
-- [ ] 完成聚焦测试、质量检查、Windows 打包与开发运行时重启。
+- [x] 完成聚焦测试、质量检查、Windows 打包与开发运行时重启。
 
 验证记录：
 
 - 红测：`node --import tsx --test tests/claude-unsolicited-real-wake.test.ts` 新增用例稳定失败，实际值 `true`（sidechain 被误判为 turn start）。
 - 绿测：`node --import tsx --test tests/claude-unsolicited-real-wake.test.ts tests/claude-session-pool.test.ts tests/claude-keepalive-run.test.ts`：20/20 通过。
-- `pnpm test:quality`：通过。
+- 隔离 worktree `pnpm test:quality`：通过；合并后主工作区复跑被并行中的 `server/sticky-note-store.ts` 既有 `no-control-regex` lint 错误阻断，与本修复文件无关。
+- `pnpm electron:build`：通过，产出 `dist/release-20260727-100706/Chill Vibe-0.18.19-win.zip` 与 `win-unpacked/Chill Vibe.exe`。
+- `pnpm dev:restart`：退出码 0；开发 Electron 已重启，renderer `http://localhost:5173` 健康检查返回 200，运行命令指向 `D:\Git\chill-vibe`。
 - [x] 真 claude CLI 协议冒烟：`ALIVE_AFTER_TURN1= true`，同进程第二轮 stdin turn 成功（CLI 2.1.158）
 - [x] `pnpm test:quality` 绿（eslint + 4×tsc）
 - [x] 全量单测按用户工作流移交 release-pipeline 发布验证环节执行（日常交付以窄测试 + quality 为门槛）

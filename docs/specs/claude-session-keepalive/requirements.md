@@ -12,6 +12,7 @@ Chill Vibe 当前为 Claude 卡片的**每一轮对话**启动一个一次性 CL
 
 - Claude 卡片的 CLI 进程在 turn 结束后**保持存活**（`--input-format stream-json` 双向流模式），后续用户消息写 stdin 复用同一进程。
 - agent 后台任务完成时，CLI 原生自动唤醒 agent 产生的**自发输出**（无用户消息触发的新 turn）必须实时出现在对应卡片里，行为与普通回复一致（流式渲染、活动卡片、done 后回 idle）。
+- 父回合已经结束后，仍在运行的 `Agent` / `Task` 子代理可能继续产生带 `parent_tool_use_id` 的 sidechain 输出；这些行属于后台子代理内部进度，**不得**被当成主 Agent 的新 turn，也不得把已经 idle 的卡片重新置为 streaming。只有 CLI 真正重新调用主 Agent、开始顶层 turn 时才允许触发自发流。
 - 同进程连续对话吃到 prompt cache，降低 token 成本。
 
 ## 非目标（本期不做）

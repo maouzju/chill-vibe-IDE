@@ -3206,12 +3206,38 @@ export const isClaudeTurnStartLine = (line: string) => {
     return false
   }
 
-  const record = event as { type?: unknown; subtype?: unknown }
+  const record = event as { type?: unknown; subtype?: unknown; parent_tool_use_id?: unknown }
+  // 症状：2026-07-27 父回合已显示完成，Explore 子代理的后续命令却把主卡片重新拉成运行中。
+  // 根因：sidechain stream-json 同样含 message_start，但非空 parent_tool_use_id 表明它仍属于 Agent 工具内部。
+  // 不能禁用全部 idle 输出；真实 task-notification 顶层回流仍需按 claude-session-keepalive SPEC 展示。
+  if (
+    typeof record.parent_tool_use_id === 'string' &&
+    record.parent_tool_use_id.trim().length > 0
+  ) {
+    return false
+  }
+
   if (record.type === 'system' && typeof record.subtype === 'string') {
     return !CLAUDE_IDLE_BOOKKEEPING_SUBTYPES.has(record.subtype)
   }
 
   return true
+}
+
+export const isClaudeSidechainLine = (line: string) => {
+  if (!line.trim()) {
+    return false
+  }
+
+  try {
+    const event = JSON.parse(line) as { parent_tool_use_id?: unknown }
+    return (
+      typeof event?.parent_tool_use_id === 'string' &&
+      event.parent_tool_use_id.trim().length > 0
+    )
+  } catch {
+    return false
+  }
 }
 
 export const buildClaudeKeepaliveSignature = (

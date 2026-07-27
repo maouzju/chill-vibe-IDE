@@ -23,6 +23,18 @@
 
 ## 切片 4：验证 ✅
 - [x] fake CLI 端到端（`tests/claude-keepalive-run.test.ts`）：真子进程上 turn → 保活 → 自发唤醒 → unsolicited 流 → stdin 复用，一次通过
+
+## 子代理 sidechain 误唤醒修复（2026-07-27）
+
+- [x] 红测复现：父回合结束后，带 `parent_tool_use_id` 的 Explore/Agent sidechain 行会错误创建 unsolicited stream。
+- [x] turn-start gate 忽略所有非顶层 sidechain stdout，同时保留真实 task-notification 主 Agent 回流。
+- [ ] 完成聚焦测试、质量检查、Windows 打包与开发运行时重启。
+
+验证记录：
+
+- 红测：`node --import tsx --test tests/claude-unsolicited-real-wake.test.ts` 新增用例稳定失败，实际值 `true`（sidechain 被误判为 turn start）。
+- 绿测：`node --import tsx --test tests/claude-unsolicited-real-wake.test.ts tests/claude-session-pool.test.ts tests/claude-keepalive-run.test.ts`：20/20 通过。
+- `pnpm test:quality`：通过。
 - [x] 真 claude CLI 协议冒烟：`ALIVE_AFTER_TURN1= true`，同进程第二轮 stdin turn 成功（CLI 2.1.158）
 - [x] `pnpm test:quality` 绿（eslint + 4×tsc）
 - [x] 全量单测按用户工作流移交 release-pipeline 发布验证环节执行（日常交付以窄测试 + quality 为门槛）

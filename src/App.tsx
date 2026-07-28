@@ -4948,11 +4948,20 @@ function App() {
         }
         return
       }
-      if (shouldQueueUntilDone || sendMode === 'defer') {
+      // 症状：旧流卡在 `/compact` 后，队列“立即发送”会取出再入队，永远无法中断。
+      // 根因：2026-07-28 现场 latest user 一直是 compact boundary，覆盖了显式 interrupt 意图。
+      // 普通 follow-up 仍等 compact；只有用户明确点“立即发送”才旁路等待（Known Pitfall #225）。
+      if ((shouldQueueUntilDone && sendMode !== 'interrupt') || sendMode === 'defer') {
         enqueueQueuedSend(cardId, { id: crypto.randomUUID(), prompt, attachments })
       } else {
         enqueueQueuedSend(cardId, { id: crypto.randomUUID(), prompt, attachments })
-        const interruptedStreamId = card.streamId
+        const interruptedStreamId = activeStreamsRef.current.get(cardId)?.streamId ?? card.streamId
+        if (!interruptedStreamId) {
+          // `streaming` without any stream owner is already an impossible stale state.
+          // Waiting for stop/done here would strand every queued send permanently.
+          finalizeStoppedStreamWithoutServerAck(columnId, cardId, 'user-interrupt')
+          return
+        }
         // 症状：旧 stream 的 done 丢失后，左键发送只会排队，卡片永久 streaming。
         // 根因：stop IPC 成功不代表 renderer 仍订阅终态；2026-07-28 现场原生 turn 已完成 4h 仍未收尾。
         // 不能只等服务端 ack；短宽限后仅对同一个旧 stream 做本地幂等收尾（Known Pitfall #224）。
@@ -4966,7 +4975,7 @@ function App() {
             if (
               !liveCard ||
               liveCard.status !== 'streaming' ||
-              liveCard.streamId !== interruptedStreamId
+              (activeStreamsRef.current.get(cardId)?.streamId ?? liveCard.streamId) !== interruptedStreamId
             ) {
               return
             }

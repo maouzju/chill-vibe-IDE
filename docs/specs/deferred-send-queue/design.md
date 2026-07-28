@@ -27,7 +27,7 @@ Add a shared `queuedSendRequestSchema` and a `queuedSends` array on `chatCardSch
 4. Send-button right-click uses `defer` and prevents the browser context menu.
 5. Ask-user follow-up sends keep their existing immediate-stop behavior, including restored ask-user cards whose old stream may not emit a final `done` event after `stop`, or whose stale stream id is already missing from the backend.
 6. Ordinary left-click/Enter interrupts use the same safety principle: after requesting stop, arm a short fallback keyed to the interrupted `streamId`. If `done` is missing and the card still owns that exact stream, finalize it locally and dispatch the queued follow-up. If normal completion or a newer stream already took ownership, the fallback is a no-op.
-7. `/compact` follow-ups continue to wait until compaction finishes.
+7. `/compact` follow-ups submitted through the ordinary send path continue to wait until compaction finishes. The queue's explicit `interrupt` mode is the escape hatch: it bypasses the compact-boundary wait, requests stop, and dispatches the queued prompt. This prevents a stale stream plus a persisted `/compact` boundary from trapping **Send now** in a dequeue/requeue loop.
 8. When a stream reaches `done`, `error`, or `Stream not found`, `dispatchNextQueuedSend()` starts the next queued item.
 9. Startup hydration restores the queue but does not dispatch merely because the restored card is idle. A resumed interrupted stream still reaches the normal completion path and dispatches FIFO; otherwise the restored controls remain available for an explicit user choice.
 10. Conversation reset and card/workspace removal clear the owning queue. Moving a card preserves it because the data travels with the card.
@@ -58,6 +58,7 @@ Use existing theme tokens and subdued composer-note styling so the queue does no
   4. queued message can be sent now
   5. queued FIFO sends after stream completion
   6. left-click send still dispatches when stop receives no `done` event
+  7. a queued follow-up behind `/compact` can still use **Send now** to interrupt and dispatch
 - Add focused unit coverage proving:
   1. a queued prompt and its attachment metadata survive save/load normalization
   2. legacy and malformed persisted queues normalize safely

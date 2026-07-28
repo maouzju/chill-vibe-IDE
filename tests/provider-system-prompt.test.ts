@@ -2170,6 +2170,27 @@ const buildFakeCodexSilentSubAgentAfterRootCompletionScript = () =>
     "})",
   ].join('\n')
 
+const buildFakeCodexSilentOpenCommandScript = () =>
+  [
+    "const readline = require('node:readline')",
+    "const reply = (message) => process.stdout.write(`${JSON.stringify(message)}\\n`)",
+    "const rl = readline.createInterface({ input: process.stdin, crlfDelay: Infinity })",
+    "rl.on('line', (line) => {",
+    "  if (!line.trim()) return",
+    "  const request = JSON.parse(line)",
+    "  if (request.method === 'initialize' && request.id) { reply({ id: request.id, result: {} }); return }",
+    "  if (request.method === 'thread/start' && request.id) {",
+    "    reply({ id: request.id, result: { thread: { id: 'thread-root', parentThreadId: null, status: { type: 'active' } } } })",
+    "    return",
+    "  }",
+    "  if (request.method === 'turn/start' && request.id) {",
+    "    reply({ id: request.id, result: { turn: { id: 'turn-root', status: 'inProgress', items: [] } } })",
+    "    reply({ method: 'item/started', params: { threadId: 'thread-root', turnId: 'turn-root', item: { id: 'command-1', type: 'commandExecution', status: 'inProgress', command: 'long-running command' } } })",
+    "    setInterval(() => {}, 1000)",
+    "  }",
+    "})",
+  ].join('\n')
+
 const buildFakeCodexLegacyAppServerScript = (capturePath: string) =>
   [
     "const fs = require('node:fs')",
@@ -4387,6 +4408,83 @@ test('codex app-server keeps the stall watchdog armed after root completion with
       process.env.CHILL_VIBE_LOCAL_PROVIDER_ABSOLUTE_HARD_CAP_MS = originalLocalAbsoluteHardCap
     } else {
       delete process.env.CHILL_VIBE_LOCAL_PROVIDER_ABSOLUTE_HARD_CAP_MS
+    }
+  }
+})
+
+test('codex app-server bounds an open command that never emits a terminal event', async () => {
+  const originalLocalAbsoluteHardCap = process.env.CHILL_VIBE_LOCAL_PROVIDER_ABSOLUTE_HARD_CAP_MS
+  process.env.CHILL_VIBE_LOCAL_PROVIDER_ABSOLUTE_HARD_CAP_MS = '200'
+
+  try {
+    const outcome = await withFakeProviderCommand(
+      'codex',
+      buildFakeCodexSilentOpenCommandScript(),
+      async (workspacePath) =>
+        captureProviderRecoveryFailureWithin(
+          createRequest({ provider: 'codex', language: 'en', workspacePath }),
+          1000,
+        ),
+    )
+
+    assert.deepEqual(outcome, {
+      kind: 'error',
+      message: 'Codex stalled after emitting stream output.',
+      recovery: {
+        recoverable: true,
+        recoveryMode: 'resume-session',
+      },
+    })
+  } finally {
+    if (typeof originalLocalAbsoluteHardCap === 'string') {
+      process.env.CHILL_VIBE_LOCAL_PROVIDER_ABSOLUTE_HARD_CAP_MS = originalLocalAbsoluteHardCap
+    } else {
+      delete process.env.CHILL_VIBE_LOCAL_PROVIDER_ABSOLUTE_HARD_CAP_MS
+    }
+  }
+})
+
+test('codex stall finalizes done when the native rollout already completed', async () => {
+  const originalLocalAbsoluteHardCap = process.env.CHILL_VIBE_LOCAL_PROVIDER_ABSOLUTE_HARD_CAP_MS
+  const originalExternalHistoryHome = process.env.CHILL_VIBE_EXTERNAL_HISTORY_HOME
+  process.env.CHILL_VIBE_LOCAL_PROVIDER_ABSOLUTE_HARD_CAP_MS = '200'
+
+  try {
+    const outcome = await withFakeProviderCommand(
+      'codex',
+      buildFakeCodexSilentOpenCommandScript(),
+      async (workspacePath) => {
+        const homeDir = path.dirname(workspacePath)
+        const rolloutDir = path.join(homeDir, '.codex', 'sessions', '2026', '07', '28')
+        await mkdir(rolloutDir, { recursive: true })
+        await writeFile(
+          path.join(rolloutDir, 'rollout-test-thread-root.jsonl'),
+          `${JSON.stringify({
+            type: 'event_msg',
+            payload: { type: 'task_complete', turn_id: 'turn-root' },
+          })}\n`,
+          'utf8',
+        )
+        process.env.CHILL_VIBE_EXTERNAL_HISTORY_HOME = homeDir
+
+        return await Promise.race([
+          captureProviderOutcome(createRequest({ provider: 'codex', language: 'en', workspacePath })),
+          new Promise<{ kind: 'timeout' }>((resolve) => setTimeout(() => resolve({ kind: 'timeout' }), 5_000)),
+        ])
+      },
+    )
+
+    assert.deepEqual(outcome, { kind: 'done' })
+  } finally {
+    if (typeof originalLocalAbsoluteHardCap === 'string') {
+      process.env.CHILL_VIBE_LOCAL_PROVIDER_ABSOLUTE_HARD_CAP_MS = originalLocalAbsoluteHardCap
+    } else {
+      delete process.env.CHILL_VIBE_LOCAL_PROVIDER_ABSOLUTE_HARD_CAP_MS
+    }
+    if (typeof originalExternalHistoryHome === 'string') {
+      process.env.CHILL_VIBE_EXTERNAL_HISTORY_HOME = originalExternalHistoryHome
+    } else {
+      delete process.env.CHILL_VIBE_EXTERNAL_HISTORY_HOME
     }
   }
 })

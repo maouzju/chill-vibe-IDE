@@ -394,7 +394,7 @@ export const findClaudeSessionFile = (sessionId: string) => {
   return null
 }
 
-const findCodexRolloutFile = (sessionId: string) => {
+export const findCodexRolloutFile = (sessionId: string) => {
   for (const homeDir of resolveHomeDirs()) {
     const sessionsDir = path.join(homeDir, '.codex', 'sessions')
     for (const yearDir of listSubdirectories(sessionsDir)) {

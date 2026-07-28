@@ -26,10 +26,11 @@ Add a shared `queuedSendRequestSchema` and a `queuedSends` array on `chatCardSch
    A `user-interrupt` completion clears the active provider session before dispatching the queued follow-up. The normal sessionless replay path then seeds the fresh request from the settled visible transcript, including any partial assistant text that survived the interrupt. This avoids racing Codex `thread/resume` against a rollout file that is still empty or being finalized.
 4. Send-button right-click uses `defer` and prevents the browser context menu.
 5. Ask-user follow-up sends keep their existing immediate-stop behavior, including restored ask-user cards whose old stream may not emit a final `done` event after `stop`, or whose stale stream id is already missing from the backend.
-6. `/compact` follow-ups continue to wait until compaction finishes.
-7. When a stream reaches `done`, `error`, or `Stream not found`, `dispatchNextQueuedSend()` starts the next queued item.
-8. Startup hydration restores the queue but does not dispatch merely because the restored card is idle. A resumed interrupted stream still reaches the normal completion path and dispatches FIFO; otherwise the restored controls remain available for an explicit user choice.
-9. Conversation reset and card/workspace removal clear the owning queue. Moving a card preserves it because the data travels with the card.
+6. Ordinary left-click/Enter interrupts use the same safety principle: after requesting stop, arm a short fallback keyed to the interrupted `streamId`. If `done` is missing and the card still owns that exact stream, finalize it locally and dispatch the queued follow-up. If normal completion or a newer stream already took ownership, the fallback is a no-op.
+7. `/compact` follow-ups continue to wait until compaction finishes.
+8. When a stream reaches `done`, `error`, or `Stream not found`, `dispatchNextQueuedSend()` starts the next queued item.
+9. Startup hydration restores the queue but does not dispatch merely because the restored card is idle. A resumed interrupted stream still reaches the normal completion path and dispatches FIFO; otherwise the restored controls remain available for an explicit user choice.
+10. Conversation reset and card/workspace removal clear the owning queue. Moving a card preserves it because the data travels with the card.
 
 ## UI
 
@@ -56,6 +57,7 @@ Use existing theme tokens and subdued composer-note styling so the queue does no
   3. queued message can be cancelled
   4. queued message can be sent now
   5. queued FIFO sends after stream completion
+  6. left-click send still dispatches when stop receives no `done` event
 - Add focused unit coverage proving:
   1. a queued prompt and its attachment metadata survive save/load normalization
   2. legacy and malformed persisted queues normalize safely

@@ -15,3 +15,9 @@
 - [x] Synchronize renderer enqueue/dequeue/cancel state with persisted card state and hydrate the runtime cache on load.
 - [x] Re-run the focused tests and `pnpm test:quality`.
 - [x] Hand packaging and the active-development-runtime restart to the release pipeline, which owns the canonical server-built Windows zip and must not touch packaged instances.
+
+## 2026-07-28 stale-stream follow-up
+
+- [x] Add a red browser test where stop succeeds but the old stream never emits `done`.
+- [x] Finalize only the matching stale `streamId` after a short grace period and dispatch the queued send.
+- [x] Preserve normal completion, `/compact`, ask-user, and newer-stream ownership semantics.

@@ -18,7 +18,10 @@ import { FileWatcherManager } from '../server/file-watcher.ts'
 import { readNearestTsconfig } from '../server/tsconfig-discovery.ts'
 import { listExternalSessions, loadExternalSession } from '../server/external-history.ts'
 import { forkProviderSession } from '../server/session-fork.ts'
-import { getClaudeNativeTurnCompletion } from '../server/native-turn-completion.ts'
+import {
+  getClaudeNativeTurnCompletion,
+  getCodexNativeTurnCompletion,
+} from '../server/native-turn-completion.ts'
 import {
   hideInternalSessionHistoryEntries,
   listInternalSessionHistory,
@@ -409,7 +412,11 @@ export const createDesktopBackend = (deps: DesktopBackendDependencies = {}) => {
       if (parsed.provider !== 'claude') {
         return { completion: 'unknown' as const }
       }
-      return { completion: await getClaudeNativeTurnCompletion(parsed.sessionId) }
+      return {
+        completion: parsed.provider === 'claude'
+          ? await getClaudeNativeTurnCompletion(parsed.sessionId)
+          : await getCodexNativeTurnCompletion(parsed.sessionId),
+      }
     },
     async forkProviderSession(request: unknown) {
       const parsed = forkSessionRequestSchema.parse(request)

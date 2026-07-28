@@ -47,7 +47,10 @@ import { getDefaultWorkspacePath } from './app-paths.js'
 import { importCcSwitchProfiles } from './cc-switch-import.js'
 import { listExternalSessions, loadExternalSession } from './external-history.js'
 import { forkProviderSession } from './session-fork.js'
-import { getClaudeNativeTurnCompletion } from './native-turn-completion.js'
+import {
+  getClaudeNativeTurnCompletion,
+  getCodexNativeTurnCompletion,
+} from './native-turn-completion.js'
 import {
   hideInternalSessionHistoryEntries,
   listInternalSessionHistory,
@@ -886,7 +889,7 @@ app.post('/api/chat/native-turn-completion', async (request, response) => {
   const completion =
     parsed.data.provider === 'claude'
       ? await getClaudeNativeTurnCompletion(parsed.data.sessionId)
-      : ('unknown' as const)
+      : await getCodexNativeTurnCompletion(parsed.data.sessionId)
   response.json({ completion })
 })
 

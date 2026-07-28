@@ -129,6 +129,7 @@ const installMockApis = async (
     autoEmitDoneOnStop?: boolean
     holdChatMessageResponse?: boolean
     stopResponse?: 'ok' | 'not-found'
+    nativeTurnCompletion?: 'completed' | 'incomplete' | 'unknown'
     wakeTimerEnabled?: boolean
     peerCard?: MockCardState & { id: string; title: string }
   } = {},
@@ -415,6 +416,7 @@ const installMockApis = async (
     autoEmitDoneOnStop = true,
     holdChatMessageResponse: initialHoldChatMessageResponse = false,
     stopResponse = 'ok',
+    nativeTurnCompletion = 'unknown',
     wakeTimerEnabled = false,
     peerCard,
   } = options
@@ -572,6 +574,10 @@ const installMockApis = async (
     if (autoEmitDoneOnStop) {
       await emitStreamEvent(page, streamId, 'done', { stopped: true }, { waitForSubscriber: false })
     }
+  })
+
+  await page.route('**/api/chat/native-turn-completion', async (route) => {
+    await route.fulfill({ json: { completion: nativeTurnCompletion } })
   })
 
   await page.route('**/api/chat/message', async (route) => {
@@ -906,6 +912,46 @@ test('left-clicking send while a card is running interrupts and sends immediatel
   await expect.poll(() => mock.readState().columns[0]?.cards['card-1']?.status).toBe('streaming')
   await expect.poll(() => mock.readState().columns[0]?.cards['card-1']?.streamId).toBe('stream-2')
   await expect.poll(() => mock.readState().columns[0]?.cards['card-1']?.messages[1]?.meta?.stopReason).toBe('user-interrupt')
+})
+
+test('left-click send still dispatches when the stale stream never emits done after stop', async ({ page }) => {
+  const mock = await installMockApis(page, {
+    autoEmitDoneOnStop: false,
+  })
+  await page.goto('http://localhost:5173')
+
+  const textarea = getActiveComposerTextarea(page)
+  const sendButton = page.getByRole('button', { name: 'Send message' })
+
+  await textarea.fill('Recover this stale running card')
+  await sendButton.click()
+
+  await expect.poll(() => mock.readRequests()[0]).toBe('stop:stream-1')
+  await expect.poll(() => mock.readRequests()[1]).toContain(
+    'Latest user message:\nRecover this stale running card',
+  )
+  await expect.poll(() => mock.readState().columns[0]?.cards['card-1']?.streamId).toBe('stream-2')
+  await expect.poll(() => mock.readState().columns[0]?.cards['card-1']?.messages[1]?.meta?.stopReason).toBe('user-interrupt')
+})
+
+test('a completed native Codex turn finalizes locally instead of ghost-continuing after stream loss', async ({ page }) => {
+  const mock = await installMockApis(page, {
+    nativeTurnCompletion: 'completed',
+  })
+  await page.goto(appUrl)
+
+  await emitStreamEvent(page, 'stream-1', 'error', {
+    message: 'Stream not found.',
+    recovery: {
+      recoverable: true,
+      recoveryMode: 'resume-session',
+    },
+    sessionId: 'session-1',
+  })
+
+  await expect.poll(() => mock.readState().columns[0]?.cards['card-1']?.status).toBe('idle')
+  await expect.poll(() => mock.readState().columns[0]?.cards['card-1']?.streamId).toBeUndefined()
+  await expect.poll(() => mock.readRequests()).toEqual([])
 })
 
 test('right-clicking send while a card is running queues the composer message', async ({ page }) => {

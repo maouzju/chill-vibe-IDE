@@ -4952,6 +4952,28 @@ function App() {
         enqueueQueuedSend(cardId, { id: crypto.randomUUID(), prompt, attachments })
       } else {
         enqueueQueuedSend(cardId, { id: crypto.randomUUID(), prompt, attachments })
+        const interruptedStreamId = card.streamId
+        // 症状：旧 stream 的 done 丢失后，左键发送只会排队，卡片永久 streaming。
+        // 根因：stop IPC 成功不代表 renderer 仍订阅终态；2026-07-28 现场原生 turn 已完成 4h 仍未收尾。
+        // 不能只等服务端 ack；短宽限后仅对同一个旧 stream 做本地幂等收尾（Known Pitfall #224）。
+        if (
+          interruptedStreamId &&
+          !stopCompletionFallbackTimersRef.current.has(cardId)
+        ) {
+          const timer = window.setTimeout(() => {
+            stopCompletionFallbackTimersRef.current.delete(cardId)
+            const liveCard = getColumn(columnId)?.cards[cardId]
+            if (
+              !liveCard ||
+              liveCard.status !== 'streaming' ||
+              liveCard.streamId !== interruptedStreamId
+            ) {
+              return
+            }
+            finalizeStoppedStreamWithoutServerAck(columnId, cardId, 'user-interrupt')
+          }, 250)
+          stopCompletionFallbackTimersRef.current.set(cardId, timer)
+        }
         await requestStopForCard(cardId, 'user-interrupt')
       }
       return
@@ -5521,7 +5543,7 @@ function App() {
     // ("已解决" replies that revive themselves). 'completed' finalizes the card
     // instead of waking the provider; 'incomplete'/'unknown' fall through to
     // the normal resume so a genuinely interrupted turn is never stranded.
-    if (!shouldClearSessionId && !forkedSessionId && card.provider === 'claude' && card.sessionId) {
+    if (!shouldClearSessionId && !forkedSessionId && card.sessionId) {
       const completion = await getNativeTurnCompletion({
         provider: card.provider,
         sessionId: card.sessionId,

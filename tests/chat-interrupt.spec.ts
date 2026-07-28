@@ -1106,6 +1106,64 @@ test('sending during /compact still waits for the compaction stream to finish', 
   await expect.poll(() => mock.readState().columns[0]?.cards['card-1']?.streamId).toBe('stream-3')
 })
 
+test('Send now escapes a stale compact boundary instead of requeueing forever', async ({ page }) => {
+  const mock = await installMockApis(page, {
+    initialCard: {
+      status: 'idle',
+      messages: [],
+    },
+    autoEmitDoneOnStop: false,
+  })
+  await page.goto(appUrl)
+
+  const textarea = getActiveComposerTextarea(page)
+  const sendButton = page.getByRole('button', { name: 'Send message' })
+
+  await textarea.fill('/compact')
+  await sendButton.click()
+  await expect.poll(() => mock.readRequests()).toEqual(['message:/compact'])
+
+  await textarea.fill('Interrupt the stale compact run')
+  await sendButton.click()
+  await expect(page.locator('.composer-queued-send')).toContainText('Interrupt the stale compact run')
+
+  await page.getByRole('button', { name: 'Send now' }).click()
+
+  await expect.poll(() => mock.readRequests()[1]).toBe('stop:stream-2')
+  await expect.poll(() => mock.readRequests()[2]).toContain(
+    'Latest user message:\nInterrupt the stale compact run',
+  )
+  await expect(page.locator('.composer-queued-send')).toHaveCount(0)
+  await expect.poll(() => mock.readState().columns[0]?.cards['card-1']?.streamId).toBe('stream-3')
+})
+
+test('send now locally settles an impossible streaming card with no stream id', async ({ page }) => {
+  const mock = await installMockApis(page, {
+    initialCard: {
+      status: 'streaming',
+      streamId: undefined,
+      sessionId: 'stale-session-without-stream',
+      messages: [{
+        id: 'assistant-before-stale-state',
+        role: 'assistant',
+        content: 'The old run lost its stream ownership.',
+        createdAt: new Date().toISOString(),
+      }],
+    },
+  })
+  await page.goto(appUrl)
+
+  const textarea = getActiveComposerTextarea(page)
+  await textarea.fill('Recover a card with no stream id')
+  await page.getByRole('button', { name: 'Send message' }).click()
+
+  await expect.poll(() => mock.readRequests()[0]).toContain(
+    'Latest user message:\nRecover a card with no stream id',
+  )
+  await expect.poll(() => mock.readState().columns[0]?.cards['card-1']?.streamId).toBe('stream-2')
+  await expect(page.locator('.composer-queued-send')).toHaveCount(0)
+})
+
 test('answering a live ask-user activity preserves the prior prose and then sends the answer', async ({ page }) => {
   const mock = await installMockApis(page, { autoEmitDoneOnStop: true })
   await page.goto('http://localhost:5173')

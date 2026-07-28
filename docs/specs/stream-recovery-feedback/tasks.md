@@ -68,3 +68,10 @@
 29. Add Codex rollout-tail completion classification and use it before automatic resume.
 30. Bound silent Codex commands and sub-agent waits with the shared absolute hard cap.
 31. Add red→green provider and browser regressions for missing terminal events and stale-stream send-now recovery.
+
+## Slice 9 - 2026-07-28 packaged bridge and compact queue deadlock
+
+32. Add a red desktop-backend test proving packaged Codex `task_complete` is not discarded as `unknown`.
+33. Remove the Claude-only Electron bridge guard and prove the desktop path returns `completed`.
+34. Add a red browser test for `/compact` → deferred follow-up → **Send now** with no old-stream `done`.
+35. Preserve ordinary compact waiting, but let explicit interrupt escape the compact boundary and locally settle impossible streaming-without-streamId states.

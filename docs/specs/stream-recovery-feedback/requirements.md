@@ -31,6 +31,7 @@ When a chat card's stream enters recovery, the user sees a short status line **i
 13. **Active resumed threads continue** - If Codex `thread/resume` returns an already-active thread for a recovered card, still start a follow-up blank turn. A resumed active thread with no follow-up turn must not leave the renderer waiting for a terminal event that can never arrive.
 14. **Codex native completion is authoritative** — Before auto-resuming a recoverable Codex stream, inspect the matching native rollout. If its latest root task already has `task_complete`, settle the card locally instead of injecting `Please continue.` and inventing extra work; incomplete or unreadable rollouts keep the existing fail-open resume behavior.
 15. **Codex open work stays bounded** — In-progress Codex commands and active sub-agents may use the long absolute timeout, but they must never disable all watchdogs. The same hard cap must cover both paths, and a timeout must first check whether the native rollout already completed.
+16. **Packaged completion parity** — The packaged Electron IPC bridge must return the same Claude/Codex native completion result as the web route. It must never discard a valid Codex `task_complete` result as `unknown`, because that re-enables ghost continuation in the shipped app even when browser tests pass.
 
 ## Non-goals
 

@@ -21,3 +21,10 @@
 - [x] Add a red browser test where stop succeeds but the old stream never emits `done`.
 - [x] Finalize only the matching stale `streamId` after a short grace period and dispatch the queued send.
 - [x] Preserve normal completion, `/compact`, ask-user, and newer-stream ownership semantics.
+
+## 2026-07-28 compact-boundary deadlock follow-up
+
+- [x] Add a red browser test proving **Send now** does not requeue behind a stale `/compact` boundary.
+- [x] Let explicit interrupt mode bypass only the compact-boundary wait while preserving ordinary `/compact` queuing.
+- [x] Locally settle impossible `streaming` cards that have no live or persisted stream ID.
+- [x] Re-run focused browser coverage, quality checks, and Windows packaging.

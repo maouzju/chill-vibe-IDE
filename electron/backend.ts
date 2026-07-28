@@ -409,9 +409,9 @@ export const createDesktopBackend = (deps: DesktopBackendDependencies = {}) => {
     },
     async getNativeTurnCompletion(request: unknown) {
       const parsed = nativeTurnCompletionRequestSchema.parse(request)
-      if (parsed.provider !== 'claude') {
-        return { completion: 'unknown' as const }
-      }
+      // 症状：packaged Electron 中 Codex 原生已 task_complete，恢复层仍得到 unknown 并幽灵续跑。
+      // 根因：2026-07-28 实测此 Claude-only 早退让下方 Codex 分支永久不可达。
+      // 不能只靠浏览器路由测试；桌面 bridge 必须对两种 provider 都透传（Known Pitfall #225）。
       return {
         completion: parsed.provider === 'claude'
           ? await getClaudeNativeTurnCompletion(parsed.sessionId)

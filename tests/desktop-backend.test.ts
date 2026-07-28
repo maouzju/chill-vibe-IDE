@@ -1,4 +1,7 @@
 import assert from 'node:assert/strict'
+import fs from 'node:fs'
+import os from 'node:os'
+import path from 'node:path'
 import test from 'node:test'
 
 import { createDesktopBackend } from '../electron/backend.ts'
@@ -139,4 +142,45 @@ test('desktop backend treats stopping an already-settled stream as idempotent', 
 
   await assert.doesNotReject(() => backend.stopChat('stale-stream'))
   assert.deepEqual(stoppedStreamIds, ['stale-stream'])
+})
+
+test('desktop backend reports completed native Codex turns instead of discarding them', async () => {
+  const previousHistoryHome = process.env.CHILL_VIBE_EXTERNAL_HISTORY_HOME
+  const homeDir = fs.mkdtempSync(path.join(os.tmpdir(), 'desktop-backend-codex-completion-'))
+  const sessionId = '019fa53b-a772-7ad1-bffd-bf23fa012a4d'
+  const sessionsDir = path.join(homeDir, '.codex', 'sessions', '2026', '07', '28')
+  fs.mkdirSync(sessionsDir, { recursive: true })
+  fs.writeFileSync(
+    path.join(sessionsDir, `rollout-2026-07-28T04-19-42-${sessionId}.jsonl`),
+    [
+      JSON.stringify({
+        timestamp: '2026-07-27T20:19:49.958Z',
+        type: 'event_msg',
+        payload: { type: 'task_started' },
+      }),
+      JSON.stringify({
+        timestamp: '2026-07-27T20:41:12.602Z',
+        type: 'event_msg',
+        payload: { type: 'task_complete' },
+      }),
+    ].join('\n'),
+    'utf8',
+  )
+
+  process.env.CHILL_VIBE_EXTERNAL_HISTORY_HOME = homeDir
+  try {
+    const backend = createDesktopBackend()
+    assert.deepEqual(
+      await backend.getNativeTurnCompletion({ provider: 'codex', sessionId }),
+      { completion: 'completed' },
+    )
+    await backend.dispose()
+  } finally {
+    if (previousHistoryHome === undefined) {
+      delete process.env.CHILL_VIBE_EXTERNAL_HISTORY_HOME
+    } else {
+      process.env.CHILL_VIBE_EXTERNAL_HISTORY_HOME = previousHistoryHome
+    }
+    fs.rmSync(homeDir, { recursive: true, force: true })
+  }
 })

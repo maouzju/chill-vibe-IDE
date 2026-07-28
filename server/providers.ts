@@ -62,6 +62,7 @@ import {
   structuredActivityCountsAsTurnOutput,
 } from './provider-stream-recovery.js'
 import { readStringPreserveWhitespace } from './provider-stream-text.js'
+import { getCodexNativeTurnCompletion } from './native-turn-completion.js'
 import { resolveProviderCommandLaunch } from './provider-command-launch.js'
 import {
   discoverProviderSkills,
@@ -1702,9 +1703,8 @@ const launchCodexAppServerRun = async (
   let transientPlaceholderStallTimer: ReturnType<typeof setTimeout> | undefined
   let transientPlaceholderDisconnectStatsReported = false
   let localStreamStallTimer: ReturnType<typeof setTimeout> | undefined
-  let agentWorkHardCapTimer: ReturnType<typeof setTimeout> | undefined
   let sawVisibleStreamOutput = false
-  let hasOpenProviderWork = false
+  const openProviderWorkItemIds = new Set<string>()
   let hasOpenAgentWork = false
 
   const clearTransientPlaceholderStallTimer = () => {
@@ -1722,25 +1722,51 @@ const launchCodexAppServerRun = async (
   }
 
   const scheduleLocalStreamStallTimer = () => {
-    if (finished || hasOpenProviderWork || hasOpenAgentWork) {
+    if (finished) {
       return
     }
 
     clearLocalStreamStallTimer()
-    const timeoutMs = sawVisibleStreamOutput
-      ? getLocalProviderStallTimeoutMs()
-      : getLocalProviderFirstByteTimeoutMs()
+    // 症状：Codex 原生 task 已完成，但丢失终态/残留 open-work 后卡片可 streaming 数小时。
+    // 根因：旧 Codex watchdog 在 command/agent 活跃时完全停表，且 command 路径没有统一硬上限。
+    // 与 Claude 共用同一超时决策，让所有“有意放宽”最多只持续 absolute hard cap（Pitfall #224）。
+    const timeoutMs = resolveLocalStreamStallTimeoutMs({
+      sawStreamOutput: sawVisibleStreamOutput,
+      openCommandCount: openProviderWorkItemIds.size,
+      firstByteTimeoutMs: getLocalProviderFirstByteTimeoutMs(),
+      stallTimeoutMs: getLocalProviderStallTimeoutMs(),
+      backgroundAwaitActive: hasOpenAgentWork,
+      backgroundAwaitTimeoutMs: null,
+      absoluteHardCapMs: getLocalProviderAbsoluteHardCapMs(),
+    })
+    if (timeoutMs === null) {
+      return
+    }
     localStreamStallTimer = setTimeout(() => {
       localStreamStallTimer = undefined
-      if (finished || hasOpenProviderWork || hasOpenAgentWork) {
+      if (finished) {
         return
       }
 
-      finishWithError(
-        sawVisibleStreamOutput
-          ? 'Codex stalled after emitting stream output.'
-          : 'Codex stalled without emitting stream output.',
-      )
+      const message = sawVisibleStreamOutput
+        ? 'Codex stalled after emitting stream output.'
+        : 'Codex stalled without emitting stream output.'
+      const sessionId = emittedSessionId?.trim()
+      if (!sessionId) {
+        finishWithError(message)
+        return
+      }
+
+      void getCodexNativeTurnCompletion(sessionId).then((completion) => {
+        if (finished) {
+          return
+        }
+        if (completion === 'completed') {
+          finishWithDone()
+          return
+        }
+        finishWithError(message)
+      })
     }, timeoutMs)
   }
 
@@ -1749,44 +1775,22 @@ const launchCodexAppServerRun = async (
     scheduleLocalStreamStallTimer()
   }
 
-  const markProviderWorkStarted = () => {
-    hasOpenProviderWork = true
-    sawVisibleStreamOutput = true
-    clearLocalStreamStallTimer()
-  }
-
-  const markProviderWorkSettled = () => {
-    if (!hasOpenProviderWork) {
-      return
-    }
-
-    hasOpenProviderWork = false
+  const markProviderWorkStarted = (itemId: string) => {
+    openProviderWorkItemIds.add(itemId)
     sawVisibleStreamOutput = true
     scheduleLocalStreamStallTimer()
   }
 
-  const clearAgentWorkHardCapTimer = () => {
-    if (agentWorkHardCapTimer) {
-      clearTimeout(agentWorkHardCapTimer)
-      agentWorkHardCapTimer = undefined
-    }
+  const markProviderWorkSettled = (itemId: string) => {
+    openProviderWorkItemIds.delete(itemId)
+    sawVisibleStreamOutput = true
+    scheduleLocalStreamStallTimer()
   }
 
   const syncAgentWorkState = () => {
     hasOpenAgentWork = agentStatusTracker.hasRunningAgents()
     sawVisibleStreamOutput = true
-    if (hasOpenAgentWork) {
-      clearLocalStreamStallTimer()
-      agentWorkHardCapTimer ??= setTimeout(() => {
-        agentWorkHardCapTimer = undefined
-        if (!finished && agentStatusTracker.hasRunningAgents()) {
-          finishWithError('Codex stalled after emitting stream output.')
-        }
-      }, getLocalProviderAbsoluteHardCapMs())
-    } else {
-      clearAgentWorkHardCapTimer()
-      scheduleLocalStreamStallTimer()
-    }
+    scheduleLocalStreamStallTimer()
   }
 
   const reportTransientPlaceholderDisconnectStats = () => {
@@ -1907,7 +1911,6 @@ const launchCodexAppServerRun = async (
 
     clearTransientPlaceholderStallTimer()
     clearLocalStreamStallTimer()
-    clearAgentWorkHardCapTimer()
     finished = true
     rejectPendingRequests('Codex run completed.')
     void cleanupArchiveRecall()
@@ -1930,7 +1933,6 @@ const launchCodexAppServerRun = async (
 
     clearTransientPlaceholderStallTimer()
     clearLocalStreamStallTimer()
-    clearAgentWorkHardCapTimer()
     finished = true
     rejectPendingRequests(visibleMessage)
     void cleanupArchiveRecall()
@@ -2159,9 +2161,9 @@ const launchCodexAppServerRun = async (
       delete (activity as { type?: 'activity' }).type
 
       if (activity.kind === 'command' && activity.status === 'in_progress') {
-        markProviderWorkStarted()
+        markProviderWorkStarted(activity.itemId)
       } else if (activity.kind === 'command') {
-        markProviderWorkSettled()
+        markProviderWorkSettled(activity.itemId)
       } else {
         markVisibleStreamProgress()
       }
@@ -2358,7 +2360,6 @@ const launchCodexAppServerRun = async (
 
     clearTransientPlaceholderStallTimer()
     clearLocalStreamStallTimer()
-    clearAgentWorkHardCapTimer()
     finished = true
     rejectPendingRequests(code === 0 ? 'Codex app-server closed before completion.' : formatProviderExit(language, 'codex', code))
 

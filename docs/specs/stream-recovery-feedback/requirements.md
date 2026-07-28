@@ -29,6 +29,8 @@ When a chat card's stream enters recovery, the user sees a short status line **i
 11. **Capacity errors keep resuming** - If a provider reports that the selected model is at capacity after a live session id exists, treat it as recoverable and continue via session resume instead of surfacing a final hard error.
 12. **Silent local-provider stalls recover** - If a Codex app-server turn starts but no user-visible stream output or terminal event arrives within the local provider first-byte timeout, emit a recoverable `resume-session` error so the card shows reconnecting instead of staying on `Thinking` forever.
 13. **Active resumed threads continue** - If Codex `thread/resume` returns an already-active thread for a recovered card, still start a follow-up blank turn. A resumed active thread with no follow-up turn must not leave the renderer waiting for a terminal event that can never arrive.
+14. **Codex native completion is authoritative** — Before auto-resuming a recoverable Codex stream, inspect the matching native rollout. If its latest root task already has `task_complete`, settle the card locally instead of injecting `Please continue.` and inventing extra work; incomplete or unreadable rollouts keep the existing fail-open resume behavior.
+15. **Codex open work stays bounded** — In-progress Codex commands and active sub-agents may use the long absolute timeout, but they must never disable all watchdogs. The same hard cap must cover both paths, and a timeout must first check whether the native rollout already completed.
 
 ## Non-goals
 

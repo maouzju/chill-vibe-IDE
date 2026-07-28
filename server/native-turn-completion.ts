@@ -1,6 +1,6 @@
 import fs from 'fs'
 
-import { findClaudeSessionFile } from './session-fork.js'
+import { findClaudeSessionFile, findCodexRolloutFile } from './session-fork.js'
 
 // Fact-check for stream recovery: before auto-resuming a "recoverable" Claude
 // stream error, ask the CLI's own on-disk session transcript whether the last
@@ -106,6 +106,65 @@ export const getClaudeNativeTurnCompletion = async (
       return 'unknown'
     }
     return classifyClaudeSessionTailCompletion(await fs.promises.readFile(sourcePath, 'utf8'))
+  } catch {
+    return 'unknown'
+  }
+}
+
+// Codex rollout files record one authoritative task lifecycle per root turn.
+// Sub-agent work lives in separate rollout files, so the latest root
+// task_started/task_complete marker tells us whether resuming would continue an
+// interrupted turn or wrongly wake an already-finished one.
+export const classifyCodexSessionTailCompletion = (
+  sourceContent: string,
+): NativeTurnCompletion => {
+  const lines = sourceContent.split('\n')
+
+  for (let index = lines.length - 1; index >= 0; index -= 1) {
+    const line = lines[index]!.trim()
+    if (!line) {
+      continue
+    }
+    const entry = tryParseJson(line)
+    if (!isRecord(entry) || !isRecord(entry.payload)) {
+      continue
+    }
+
+    if (
+      entry.type === 'response_item' &&
+      entry.payload.type === 'message' &&
+      entry.payload.role === 'user'
+    ) {
+      return 'incomplete'
+    }
+    if (entry.type !== 'event_msg') {
+      continue
+    }
+
+    switch (entry.payload.type) {
+      case 'task_complete':
+        return 'completed'
+      case 'task_started':
+      case 'task_interrupted':
+        return 'incomplete'
+      default:
+        continue
+    }
+  }
+
+  return 'unknown'
+}
+
+export const getCodexNativeTurnCompletion = async (
+  sessionId: string,
+  findSessionFile: (sessionId: string) => string | null = findCodexRolloutFile,
+): Promise<NativeTurnCompletion> => {
+  try {
+    const sourcePath = findSessionFile(sessionId)
+    if (!sourcePath) {
+      return 'unknown'
+    }
+    return classifyCodexSessionTailCompletion(await fs.promises.readFile(sourcePath, 'utf8'))
   } catch {
     return 'unknown'
   }

@@ -5,7 +5,9 @@ import path from 'path'
 import os from 'os'
 
 import {
+  classifyCodexSessionTailCompletion,
   classifyClaudeSessionTailCompletion,
+  getCodexNativeTurnCompletion,
   getClaudeNativeTurnCompletion,
 } from '../server/native-turn-completion.ts'
 
@@ -187,5 +189,86 @@ describe('getClaudeNativeTurnCompletion', () => {
 
   it('returns unknown when no session file exists', async () => {
     assert.equal(await getClaudeNativeTurnCompletion(sessionId, () => null), 'unknown')
+  })
+})
+
+const codexEvent = (type: string, turnId: string) =>
+  JSON.stringify({
+    timestamp: '2026-07-28T01:00:00.000Z',
+    type: 'event_msg',
+    payload: { type, turn_id: turnId },
+  })
+
+describe('classifyCodexSessionTailCompletion', () => {
+  it('the latest completed root task means the native Codex turn completed', () => {
+    const content = `${[
+      codexEvent('task_started', 'turn-1'),
+      codexEvent('task_complete', 'turn-1'),
+    ].join('\n')}\n`
+
+    assert.equal(classifyCodexSessionTailCompletion(content), 'completed')
+  })
+
+  it('a later started task means the native Codex turn is still incomplete', () => {
+    const content = `${[
+      codexEvent('task_started', 'turn-1'),
+      codexEvent('task_complete', 'turn-1'),
+      codexEvent('task_started', 'turn-2'),
+    ].join('\n')}\n`
+
+    assert.equal(classifyCodexSessionTailCompletion(content), 'incomplete')
+  })
+
+  it('a newer user turn never inherits the previous task_complete marker', () => {
+    const content = `${[
+      codexEvent('task_started', 'turn-1'),
+      codexEvent('task_complete', 'turn-1'),
+      JSON.stringify({
+        type: 'response_item',
+        payload: { type: 'message', role: 'user', content: [{ type: 'input_text', text: '继续' }] },
+      }),
+    ].join('\n')}\n`
+
+    assert.equal(classifyCodexSessionTailCompletion(content), 'incomplete')
+  })
+
+  it('an interrupted latest task remains resumable instead of being treated as completed', () => {
+    const content = `${[
+      codexEvent('task_started', 'turn-1'),
+      codexEvent('task_interrupted', 'turn-1'),
+    ].join('\n')}\n`
+
+    assert.equal(classifyCodexSessionTailCompletion(content), 'incomplete')
+  })
+
+  it('ignores unrelated rollout bookkeeping and returns unknown without task state', () => {
+    assert.equal(
+      classifyCodexSessionTailCompletion(`${JSON.stringify({ type: 'session_meta', payload: {} })}\n`),
+      'unknown',
+    )
+  })
+})
+
+describe('getCodexNativeTurnCompletion', () => {
+  const writeRolloutFile = (content: string) => {
+    const sourcePath = path.join(tmpDir, `rollout-${sessionId}.jsonl`)
+    fs.writeFileSync(sourcePath, content, 'utf8')
+    return sourcePath
+  }
+
+  it('reads the native rollout file and classifies its latest task', async () => {
+    const sourcePath = writeRolloutFile(`${[
+      codexEvent('task_started', 'turn-1'),
+      codexEvent('task_complete', 'turn-1'),
+    ].join('\n')}\n`)
+
+    assert.equal(
+      await getCodexNativeTurnCompletion(sessionId, () => sourcePath),
+      'completed',
+    )
+  })
+
+  it('returns unknown when no rollout file exists', async () => {
+    assert.equal(await getCodexNativeTurnCompletion(sessionId, () => null), 'unknown')
   })
 })

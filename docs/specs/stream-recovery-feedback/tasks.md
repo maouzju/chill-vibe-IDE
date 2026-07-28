@@ -61,3 +61,10 @@
 25. Run `pnpm test:quality` (narrow scope).
 26. Restart the active runtime (Electron via `pnpm dev:restart`).
 27. Update handoff notes.
+
+## Slice 8 - 2026-07-28 overnight stale Codex stream
+
+28. Reproduce the field chain: native rollout completed, renderer card remained streaming, restart injected `Please continue.`.
+29. Add Codex rollout-tail completion classification and use it before automatic resume.
+30. Bound silent Codex commands and sub-agent waits with the shared absolute hard cap.
+31. Add red→green provider and browser regressions for missing terminal events and stale-stream send-now recovery.

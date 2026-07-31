@@ -89,6 +89,7 @@ import {
   computeRecoveryStatusAfterFinalFailure,
   computeRecoveryStatusAfterRetryScheduled,
   computeRecoveryStatusAfterSuccess,
+  shouldClearRecoveryStatusForNewStream,
   shouldClearRecoveryStatusOnStreamIdle,
   type CardRecoveryStatus,
 } from './stream-recovery-feedback'
@@ -243,6 +244,7 @@ import {
 import { getAutoReadCardIdsForVisiblePanes, shouldMarkCardUnreadOnStreamDone } from './components/pane-read-state'
 import { clearFileTreeCacheForCard } from './components/tool-card-state'
 import { evictTextEditorModel } from './components/text-editor-model-cache'
+import { setPendingEditorReveal } from './components/text-editor-reveal'
 import { publishTextEditorSettings } from './components/text-editor-settings'
 import { buildSeededChatPrompt, collectSeededChatAttachments, hasSeededChatTranscript } from './chat-request-seeding'
 import { buildArchiveRecallSnapshot } from './archive-recall'
@@ -764,11 +766,23 @@ function App() {
     [clearRecoveryResumedTimer, updateRecoveryStatus],
   )
   const markRecoveryFailed = useCallback(
-    (cardId: string) => {
+    (cardId: string, streamId?: string) => {
       clearRecoveryResumedTimer(cardId)
-      updateRecoveryStatus(cardId, () => computeRecoveryStatusAfterFinalFailure())
+      updateRecoveryStatus(cardId, () => computeRecoveryStatusAfterFinalFailure(streamId))
     },
     [clearRecoveryResumedTimer, updateRecoveryStatus],
+  )
+  // Any genuinely new stream on this card retires a sticky `failed` banner from a
+  // previous, dead stream. Without this the card can be visibly working again
+  // (Claude keepalive unsolicited turn, or any future re-stream entrypoint) while
+  // still showing "重连失败" — see shouldClearRecoveryStatusForNewStream.
+  const clearRecoveryStatusForNewStream = useCallback(
+    (cardId: string, streamId: string) => {
+      updateRecoveryStatus(cardId, (previous) =>
+        shouldClearRecoveryStatusForNewStream(previous, streamId) ? undefined : previous,
+      )
+    },
+    [updateRecoveryStatus],
   )
   const clearRecoveryStatusIfAllowed = useCallback(
     (cardId: string) => {
@@ -3073,8 +3087,10 @@ function App() {
   }, [getColumn])
 
   const openTextEditorTab = useCallback(
-    (columnId: string, paneId: string, relativePath: string, title: string) => {
+    (columnId: string, paneId: string, relativePath: string, title: string, line?: number) => {
       rememberPaneTarget(columnId, paneId)
+      const workspacePath = getColumn(columnId)?.workspacePath ?? ''
+      setPendingEditorReveal(workspacePath, relativePath, line)
       applyAction({
         type: 'addTab',
         columnId,
@@ -3084,7 +3100,7 @@ function App() {
         stickyNote: relativePath,
       })
     },
-    [applyAction, rememberPaneTarget],
+    [applyAction, getColumn, rememberPaneTarget],
   )
 
   const openModelPromptRulesDialog = useCallback(() => {
@@ -3479,6 +3495,12 @@ function App() {
       if (existing?.streamId === card.streamId) {
         return
       }
+
+      // Every re-stream entrypoint funnels through here (send, auto-recovery,
+      // manual resume, startup re-attach, Claude keepalive unsolicited wake-up),
+      // so this is the one place that reliably retires a stale "重连失败" banner
+      // left behind by a stream that is now dead.
+      clearRecoveryStatusForNewStream(card.id, card.streamId)
 
       if (existing) {
         flushBufferedAssistantDeltaForCard(card.id)
@@ -4132,7 +4154,9 @@ function App() {
           }
           // Final, unrecoverable failure (or recoverable retries exhausted) —
           // show the failed recovery banner so the user isn't left wondering.
-          markRecoveryFailed(card.id)
+          // Tag it with the dying stream so a later stream on this card can
+          // retire the banner without a late signal from THIS stream reviving it.
+          markRecoveryFailed(card.id, card.streamId)
           const activityFlushedState = flushBufferedActivitiesForCard(card.id)
           const liveCard = getColumnById(activityFlushedState.columns, columnId)?.cards[card.id]
           const pendingCompactBoundary = liveCard
@@ -4191,6 +4215,7 @@ function App() {
     [
       applyAction,
       applyActions,
+      clearRecoveryStatusForNewStream,
       clearRecoveryStatusIfAllowed,
       dispatchNextQueuedSend,
       enqueueAssistantDelta,
@@ -5693,6 +5718,12 @@ function App() {
           : {}),
       },
     }
+    // The card reads as `streaming` from here, but `attachStream` (where the
+    // banner is normally retired) only runs after the awaited requestChat below.
+    // Retire it up front so the window in between can never render "重连失败"
+    // over a card that already shows as working. Same idempotent streamId-scoped
+    // check, so a reconnect-in-progress state is left untouched.
+    clearRecoveryStatusForNewStream(cardId, streamId)
     persistAfterAction(startAction.type, applyAction(startAction))
 
     try {
@@ -5788,6 +5819,7 @@ function App() {
     applyAction,
     applyActions,
     attachStream,
+    clearRecoveryStatusForNewStream,
     dispatchNextQueuedSend,
     flushBufferedActivitiesForCard,
     forceResetRecoveryStatus,
@@ -9500,9 +9532,9 @@ function App() {
                 persistAfterAction(action.type, applyAction(action))
               })()
             }}
-            onOpenFile={(paneId, relativePath) => {
+            onOpenFile={(paneId, relativePath, options) => {
               const fileName = relativePath.split('/').pop() ?? relativePath
-              openTextEditorTab(column.id, paneId, relativePath, fileName)
+              openTextEditorTab(column.id, paneId, relativePath, fileName, options?.line)
             }}
             recentWorkspaces={appState.settings.recentWorkspaces}
             onRecordRecentWorkspace={(path) => applyAction({ type: 'recordRecentWorkspace', path })}

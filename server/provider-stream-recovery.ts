@@ -32,6 +32,15 @@ const recoverableErrorPatterns = [
   // from the broken stream), so it is a transient upstream failure that should
   // auto-resume rather than dead-end the chat with an error bubble.
   'empty or malformed response',
+  // 症状：卡片显示"重连失败"，可它上面的终端/编辑活动仍在滚动。
+  // 根因：中转站在回复中途掐断 socket，Claude CLI 报 "API Error: Connection
+  // closed mid-response. The response above may be incomplete."。这条不在名单里
+  // 就走最终失败分支，但 keepalive 池里的 CLI 进程并没有被 kill（result.is_error
+  // 只 onSettled），后台任务跑完自己醒来又把卡片推回 streaming —— 于是"已宣告失败
+  // 却还在干活"。2026-07-31 实测：03:44:29 判失败，03:47/03:52 又各结算一轮，
+  // 一路输出到 03:59:27。它与上面的 'closed before completion' 是同一类瞬时断连，
+  // 应当续传而不是给用户一个死胡同。
+  'connection closed mid-response',
 ] as const
 
 const zeroExitPattern = /\b(?:codex|claude) exited with status code:\s*0\b/i

@@ -155,7 +155,7 @@ type PaneViewProps = {
   onWakeTimerBatchNow?: (cardId: string) => void
   onManualRecoverStream?: (cardId: string) => Promise<unknown>
   onForkConversation?: (cardId: string, messageId: string) => void
-  onOpenFile?: (paneId: string, relativePath: string) => void
+  onOpenFile?: (paneId: string, relativePath: string, options?: { line?: number }) => void
   cardRecoveryStatuses?: ReadonlyMap<string, CardRecoveryStatus>
   queuedSendSummaries?: ReadonlyMap<string, QueuedSendSummary>
 }
@@ -1376,7 +1376,7 @@ const PaneViewView = ({
                   onToggleThinking={() => onToggleCardThinking(card.id)}
                   onToggleCollapsed={() => onToggleCardCollapsed(card.id)}
                   onMarkRead={() => onMarkCardRead(card.id)}
-                  onOpenFile={(relativePath) => onOpenFile?.(pane.id, relativePath)}
+                  onOpenFile={(relativePath, options) => onOpenFile?.(pane.id, relativePath, options)}
                   isRestored={false}
                   chromeMode="pane"
                   isActive={isActive}

@@ -19,7 +19,7 @@ import {
   resolvePaneTabTitle,
   resolveStreamedAssistantMessageTarget,
 } from '../src/app-helpers.ts'
-import { BRAINSTORM_TOOL_MODEL, GIT_TOOL_MODEL } from '../shared/models.ts'
+import { BRAINSTORM_TOOL_MODEL, GIT_TOOL_MODEL, STICKYNOTE_TOOL_MODEL } from '../shared/models.ts'
 import type { ChatMessage } from '../shared/schema.ts'
 
 const makeMessage = (role: ChatMessage['role'], content = ''): ChatMessage => ({
@@ -728,5 +728,26 @@ test('tool tabs keep their fixed labels regardless of queued wake-timer sends', 
       paneTabLabels,
     ),
     'Brainstorm',
+  )
+})
+
+test('sticky note tabs use the first content line as their title', () => {
+  assert.equal(
+    resolvePaneTabTitle(
+      {
+        title: '便签',
+        model: STICKYNOTE_TOOL_MODEL,
+        stickyNote: '  发布清单  \n第二行内容',
+      },
+      paneTabLabels,
+    ),
+    '发布清单',
+  )
+  assert.equal(
+    resolvePaneTabTitle(
+      { title: '便签', model: STICKYNOTE_TOOL_MODEL, stickyNote: '\n正文第二行' },
+      paneTabLabels,
+    ),
+    '便签',
   )
 })

@@ -233,7 +233,7 @@ const MessageContent = ({
   workspacePath: string
   answeredOption: string | null
   onSelectAskUserOption: (answerKey: string, label: string) => void
-  onOpenFile?: (relativePath: string) => void
+  onOpenFile?: (relativePath: string, options?: { line?: number }) => void
   isStickyPreview?: boolean
   isStreamingTail?: boolean
 }) => {
@@ -332,7 +332,12 @@ const MessageContent = ({
   if (tool) {
     return (
       <div className="message-content">
-        <StructuredToolCard language={language} data={tool} />
+        <StructuredToolCard
+          language={language}
+          data={tool}
+          workspacePath={workspacePath}
+          onOpenFile={onOpenFile}
+        />
       </div>
     )
   }

@@ -1,4 +1,5 @@
 import type { ComponentProps, CSSProperties, ReactNode } from 'react'
+import { createContext, useContext } from 'react'
 import ReactMarkdown, { defaultUrlTransform } from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 
@@ -7,6 +8,13 @@ import { resolveMarkdownImageSrc } from '../../shared/local-image-protocol'
 import { openExternalLink, openMessageLocalLink } from '../api'
 import { stripLeakedClaudeToolXml } from './chat-card-parsing'
 import type { StructuredToolGroupItem } from './chat-card-parsing'
+import { MessageFileOpenContext } from './message-file-open-context'
+import type { MessageFileOpenHandler } from './message-file-open-context'
+import {
+  isLocalMessageLinkHref,
+  resolveMessageFileTarget,
+  resolveMessageLinkAction,
+} from './message-file-reference'
 
 // Module-level constants prevent ReactMarkdown from re-initializing its plugin
 // pipeline on every render (new array identity = new pipeline).
@@ -480,36 +488,13 @@ export const closeUnclosedMarkdownSpans = (content: string): string => {
   return closeDanglingStrongSpan(normalizedContent)
 }
 
-export const isLocalMessageLinkHref = (href: string | null | undefined) => {
-  const value = href?.trim() ?? ''
-
-  if (!value || value.startsWith('#') || value.startsWith('?')) {
-    return false
-  }
-
-  if (/^file:\/\//i.test(value)) {
-    return true
-  }
-
-  if (/^[a-z]:[\\/]/i.test(value)) {
-    return true
-  }
-
-  return !/^[a-z][a-z\d+.-]*:/i.test(value)
-}
-
-const isExternalMessageLinkHref = (href: string | null | undefined) => {
-  const value = href?.trim() ?? ''
-
-  if (!value || value.startsWith('#') || value.startsWith('?')) {
-    return false
-  }
-
-  return !isLocalMessageLinkHref(value) && /^[a-z][a-z\d+.-]*:/i.test(value)
-}
+// Single source of truth moved to message-file-reference.ts so the click router
+// and the href classifier cannot drift apart; the old export name stays for callers.
+export { isLocalMessageLinkHref }
 
 type LinkClickEvent = {
   preventDefault: () => void
+  altKey?: boolean
 }
 
 type SafeInlineNode =
@@ -872,26 +857,34 @@ export const handleMessageLinkClick = async (
   event: LinkClickEvent,
   href: string | undefined,
   workspacePath?: string,
+  openFile?: MessageFileOpenHandler,
 ) => {
-  const linkHref = href?.trim()
+  const action = resolveMessageLinkAction({
+    href,
+    workspacePath,
+    canOpenInEditor: Boolean(openFile),
+    altKey: event.altKey === true,
+  })
 
-  if (!linkHref) {
-    return false
+  if (action.kind === 'open-editor') {
+    event.preventDefault()
+    openFile?.(action.openPath, { line: action.line })
+    return true
   }
 
-  if (isLocalMessageLinkHref(linkHref)) {
+  if (action.kind === 'reveal') {
     event.preventDefault()
-    await openMessageLocalLink(linkHref, workspacePath)
+    await openMessageLocalLink(action.href, workspacePath)
     return true
   }
 
   if (
-    isExternalMessageLinkHref(linkHref)
+    action.kind === 'external'
     && typeof window !== 'undefined'
     && typeof window.electronAPI?.openExternalLink === 'function'
   ) {
     event.preventDefault()
-    await openExternalLink(linkHref)
+    await openExternalLink(action.href)
     return true
   }
 
@@ -915,8 +908,29 @@ const messageMarkdownUrlTransform = (value: string) => {
   return defaultUrlTransform(value)
 }
 
-const createMarkdownComponents = (workspacePath?: string) => ({
-  img: ({ src, ...props }: ComponentProps<'img'>) => {
+// react-markdown 9+ stopped passing `inline` to the code component, and a fenced
+// block is only distinguishable by its <pre> ancestor. Fenced code must never
+// become clickable — a code listing is full of path-shaped tokens and every one
+// of them would turn into a misfire target while the user is reading or copying.
+const InsideCodeBlockContext = createContext(false)
+
+// react-markdown hands every custom component the hast `node`, and spreading it
+// onto the DOM element leaks `node="[object Object]"` into the markup. Strip it
+// in each override instead of forwarding blindly.
+type WithMarkdownNode<T> = T & { node?: unknown }
+
+const omitMarkdownNode = <T extends object>(props: WithMarkdownNode<T>): T => {
+  const rest = { ...props }
+  delete rest.node
+  return rest
+}
+
+const withFileReferenceClass = (className: string | undefined, marker: string) =>
+  className ? `${className} ${marker}` : marker
+
+const createMarkdownComponents = (workspacePath?: string) => {
+  const MarkdownImage = (props: WithMarkdownNode<ComponentProps<'img'>>) => {
+    const { src, ...rest } = omitMarkdownNode(props)
     const resolvedSrc = resolveMarkdownImageSrc(
       typeof src === 'string' ? src : undefined,
       workspacePath,
@@ -926,24 +940,92 @@ const createMarkdownComponents = (workspacePath?: string) => ({
       return null
     }
 
-    return <img {...props} src={resolvedSrc} loading="lazy" />
-  },
-  a: ({ href, ...props }: ComponentProps<'a'>) => {
+    return <img {...rest} src={resolvedSrc} loading="lazy" />
+  }
+
+  const MarkdownAnchor = (props: WithMarkdownNode<ComponentProps<'a'>>) => {
+    const fileOpener = useContext(MessageFileOpenContext)
+    const { href, ...rest } = omitMarkdownNode(props)
     const isLocalLink = isLocalMessageLinkHref(href)
+    const editorAction = resolveMessageLinkAction({
+      href,
+      workspacePath,
+      canOpenInEditor: Boolean(fileOpener),
+    })
+    const editorTarget = editorAction.kind === 'open-editor' ? editorAction : null
 
     return (
       <a
-        {...props}
+        {...rest}
         href={href}
+        className={
+          editorTarget
+            ? withFileReferenceClass(rest.className, 'message-file-reference-link')
+            : rest.className
+        }
+        data-open-file-path={editorTarget?.openPath}
+        data-open-file-line={editorTarget?.line}
         target={isLocalLink ? undefined : '_blank'}
         rel={isLocalLink ? undefined : 'noreferrer'}
         onClick={(event) => {
-          void handleMessageLinkClick(event, href, workspacePath).catch(() => undefined)
+          void handleMessageLinkClick(event, href, workspacePath, fileOpener?.open).catch(
+            () => undefined,
+          )
         }}
       />
     )
-  },
-})
+  }
+
+  const MarkdownPre = (props: WithMarkdownNode<ComponentProps<'pre'>>) => (
+    <InsideCodeBlockContext.Provider value={true}>
+      <pre {...omitMarkdownNode(props)} />
+    </InsideCodeBlockContext.Provider>
+  )
+
+  const MarkdownCode = (props: WithMarkdownNode<ComponentProps<'code'>>) => {
+    const insideCodeBlock = useContext(InsideCodeBlockContext)
+    const fileOpener = useContext(MessageFileOpenContext)
+    const { children, ...rest } = omitMarkdownNode(props)
+    const rawText = typeof children === 'string' ? children : null
+    const target = insideCodeBlock || !fileOpener || !rawText
+      ? null
+      : resolveMessageFileTarget(workspacePath, rawText)
+
+    if (!target || !fileOpener) {
+      return <code {...rest}>{children}</code>
+    }
+
+    const labels = getStructuredLabels(fileOpener.language)
+
+    return (
+      <code {...rest} className={withFileReferenceClass(rest.className, 'message-file-reference')}>
+        <button
+          type="button"
+          data-open-file-path={target.openPath}
+          data-open-file-line={target.line}
+          aria-label={labels.openFile(target.openPath)}
+          onClick={(event) => {
+            if (event.altKey) {
+              void openMessageLocalLink(target.openPath, workspacePath).catch(() => undefined)
+              return
+            }
+
+            fileOpener.open(target.openPath, { line: target.line })
+          }}
+        >
+          {children}
+        </button>
+      </code>
+    )
+  }
+
+  return {
+    img: MarkdownImage,
+    a: MarkdownAnchor,
+    pre: MarkdownPre,
+    code: MarkdownCode,
+  }
+}
 
 const getMarkdownComponents = (workspacePath?: string) => {
   const cacheKey = workspacePath ?? ''

@@ -136,6 +136,8 @@ import { resolveBrainstormRequestTarget } from './brainstorm-card-utils'
 import { getLatestUserAnswerAfterAskUserMessage } from './ask-user-answer-state'
 import { formatAskUserFollowUpPrompt } from './ask-user-follow-up'
 import { HoverTooltip } from './HoverTooltip'
+import { MessageFileOpenContext } from './message-file-open-context'
+import type { MessageFileOpenContextValue } from './message-file-open-context'
 import {
   areSlashCommandListsEqual,
   getSlashCommandsLoadKey,
@@ -438,7 +440,7 @@ type ChatCardProps = {
   ) => void
   onChangeTitle: (title: string) => void
   onForkConversation?: (messageId: string) => void
-  onOpenFile?: (relativePath: string) => void
+  onOpenFile?: (relativePath: string, options?: { line?: number }) => void
   isRestored: boolean
   chromeMode?: 'card' | 'pane'
   isActive?: boolean
@@ -897,7 +899,7 @@ type ChatTranscriptProps = {
   onToggleToolGroup: (key: string) => void
   onSelectAskUserOption: (answerKey: string, label: string) => void
   onJumpToStickyMessageSource: (targetScrollTop: number) => void
-  onOpenFile?: (relativePath: string) => void
+  onOpenFile?: (relativePath: string, options?: { line?: number }) => void
   onForkConversation?: (messageId: string) => void
 }
 
@@ -1693,10 +1695,19 @@ const ChatCardView = ({
     scrollTop: number
   } | null>(null)
   const userExpandedRef = useRef<Set<string>>(new Set())
-  const handleOpenWorkspaceFile = useCallback((relativePath: string) => {
-    openFileHandlerRef.current?.(relativePath)
-  }, [])
+  const handleOpenWorkspaceFile = useCallback(
+    (relativePath: string, options?: { line?: number }) => {
+      openFileHandlerRef.current?.(relativePath, options)
+    },
+    [],
+  )
   const openFileCallback = onOpenFile ? handleOpenWorkspaceFile : undefined
+  // Chat markdown reaches for this through context instead of a prop chain — see
+  // src/components/message-file-open-context.ts for why.
+  const messageFileOpenValue = useMemo<MessageFileOpenContextValue | null>(
+    () => (openFileCallback ? { open: openFileCallback, language } : null),
+    [openFileCallback, language],
+  )
 
   useEffect(() => {
     localSlashCommandsRef.current = localSlashCommands
@@ -4216,6 +4227,7 @@ const ChatCardView = ({
   )
 
   return (
+    <MessageFileOpenContext.Provider value={messageFileOpenValue}>
     <article
       className={`card-shell${isCollapsed ? ' is-collapsed' : ''}${hasFloatingUi ? ' has-floating-ui' : ''}${usesPaneChrome ? ' is-pane-embedded' : ''}${statusClass}`}
       style={isCollapsed ? undefined : { height: '100%' }}
@@ -4810,6 +4822,7 @@ const ChatCardView = ({
         </>
       )}
     </article>
+    </MessageFileOpenContext.Provider>
   )
 }
 

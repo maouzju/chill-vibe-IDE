@@ -2499,6 +2499,31 @@ function App() {
     })
   }, [clearQueuedSends, commitQueuedSends, resolveQueuedSendColumnId])
 
+  const buildWakeTimerTargetReleaseActions = useCallback((finishedCardId: string): IdeAction[] => {
+    const actions: IdeAction[] = []
+    for (const column of appStateRef.current.columns) {
+      for (const card of Object.values(column.cards)) {
+        const currentTargetIds = card.wakeTimerPendingTargetIds ?? []
+        if (!currentTargetIds.includes(finishedCardId)) {
+          continue
+        }
+
+        actions.push({
+          type: 'updateCard',
+          columnId: column.id,
+          cardId: card.id,
+          patch: {
+            wakeTimerPendingTargetIds: removeCompletedWakeTimerTarget(
+              currentTargetIds,
+              finishedCardId,
+            ),
+          },
+        })
+      }
+    }
+    return actions
+  }, [])
+
   const clearWakeTimerBatch = useCallback((columnId: string, cardId: string) => {
     const column = appStateRef.current.columns.find((entry) => entry.id === columnId)
     if (!column?.cards[cardId]) {
@@ -2534,20 +2559,27 @@ function App() {
     // 症状：2026-07-27 用户取消计时器后，待唤醒消息会直接消失。
     // 根因：旧路径只清空持久化队列，没有把 payload 转回 composer 草稿。
     // 被否决：只在 UI 临时回填会在切 Tab/重启后再次丢失；见 wake-timer SPEC。
-    const action: IdeAction = {
-      type: 'updateCard',
-      columnId,
-      cardId,
-      patch: {
-        ...restoredDraft,
-        wakeTimerQueuedSends: [],
-        wakeTimerArmedAt: undefined,
-        wakeTimerWakeAt: undefined,
-        wakeTimerPendingTargetIds: [],
+    const actions: IdeAction[] = [
+      {
+        type: 'updateCard',
+        columnId,
+        cardId,
+        patch: {
+          ...restoredDraft,
+          wakeTimerQueuedSends: [],
+          wakeTimerArmedAt: undefined,
+          wakeTimerWakeAt: undefined,
+          wakeTimerPendingTargetIds: [],
+        },
       },
-    }
-    persistImmediately(applyAction(action))
-  }, [applyAction, persistImmediately])
+      // 取消后这张卡永远不会自己开跑，也就永远不会发出完成广播；下游 left-tab 链
+      // 若继续等它就永久卡死。「立即唤醒」不走这里——那张卡马上 streaming，正常
+      // 完成广播会接手。见 wake-timer SPEC「链式待唤醒」。
+      ...buildWakeTimerTargetReleaseActions(cardId),
+    ]
+    persistAfterActions(actions, applyActions(actions))
+    queueMicrotask(() => flushReadyWakeTimersRef.current?.())
+  }, [applyActions, buildWakeTimerTargetReleaseActions, persistAfterActions])
 
   const enqueueWakeTimerSend = useCallback((
     columnId: string,
@@ -2584,6 +2616,7 @@ function App() {
           id: entry.id,
           status: entry.status,
           isAgent: !MODEL_PICKER_HIDDEN_TOOL_MODELS.has(entry.model),
+          hasPendingWakeBatch: (entry.wakeTimerQueuedSends?.length ?? 0) > 0,
         })),
         paneTabIds: pane?.tabs ?? [],
       })
@@ -2747,27 +2780,7 @@ function App() {
         return
       }
 
-      const actions: IdeAction[] = []
-      for (const column of state.columns) {
-        for (const card of Object.values(column.cards)) {
-          const currentTargetIds = card.wakeTimerPendingTargetIds ?? []
-          if (!currentTargetIds.includes(completedCardId)) {
-            continue
-          }
-
-          actions.push({
-            type: 'updateCard',
-            columnId: column.id,
-            cardId: card.id,
-            patch: {
-              wakeTimerPendingTargetIds: removeCompletedWakeTimerTarget(
-                currentTargetIds,
-                completedCardId,
-              ),
-            },
-          })
-        }
-      }
+      const actions = buildWakeTimerTargetReleaseActions(completedCardId)
 
       if (actions.length > 0) {
         persistAfterActions(actions, applyActions(actions))
@@ -2775,7 +2788,7 @@ function App() {
       flushReadyWakeTimersRef.current?.()
     }, wakeTimerCompletionStabilityMs)
     wakeTimerCompletionTimersRef.current.set(completedCardId, timer)
-  }, [applyActions, persistAfterActions])
+  }, [applyActions, buildWakeTimerTargetReleaseActions, persistAfterActions])
 
   const scheduleAllAgentsDoneSound = useCallback(() => {
     if (allAgentsDoneSoundTimerRef.current !== null) {

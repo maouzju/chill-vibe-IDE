@@ -53,6 +53,22 @@
 - `pnpm electron:build`：通过，产出 `dist/release-20260727-010022/Chill Vibe-0.18.19-win.zip` 与可直接运行目录。
 - `pnpm dev:restart`：通过；开发 Electron 已重启，renderer `http://localhost:5173` 健康检查返回 200。运行中的旧打包版未被关闭或重启。
 
+## 左侧链式待唤醒（2026-07-28）
+
+- [x] 红测证明左邻自己压着待唤醒批次时，right 卡把它当成“已完成”立即发车，链式接力断掉。
+- [x] `left-tab` 模式把「左邻压着未释放批次」也算作未完成，形成 `A ← B ← C` 接力。
+- [x] `workspace-agents` 明确不参与链式（全对全等待会互相死锁），并在代码留下决策注释。
+- [x] 目标卡批次被取消时复用完成广播解锁下游，避免链断处永久卡死。
+
+验证记录：
+
+- 红测：`npx playwright test tests/chat-interrupt.spec.ts --grep 'chains onto a left neighbour'` 在回退实现后稳定失败（等待状态根本不出现，右侧卡立即发车）。
+- 红测：`npx tsx --test tests/wake-timer.test.ts` 新增链式用例失败，防死锁的 workspace 用例同时通过。
+- 绿测：`npx tsx --test tests/wake-timer.test.ts`：15/15 通过。
+- 绿测：`npx tsx --test tests/wake-timer.test.ts tests/state.test.ts tests/state-store.test.ts tests/app-helpers.test.ts`：185/185 通过。
+- 绿测：`npx playwright test tests/chat-interrupt.spec.ts`：33/33 通过，覆盖链式等待与取消后解锁。
+- `pnpm test:quality`：通过。
+
 验证记录：
 
 - 红测：`node --import tsx --test tests/wake-timer.test.ts` 同时复现“运行中 Agent 未阻止释放”和“内部标签被注入请求”两项失败。

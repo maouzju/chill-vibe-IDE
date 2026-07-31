@@ -43,12 +43,20 @@
 3. 若总开关开启、卡片计时器开启、来源为普通用户，则上传完成后的消息进入 `wakeTimerQueuedSends` 并立即持久化；
 4. 首条计时消息冻结模式：
    - workspace：记录同列中当时 `status=streaming` 的其他 Agent 卡 ID；
-   - left-tab：记录同 Pane 直接左邻且当时 `status=streaming` 的 Agent 卡 ID；左邻已 idle 时目标数组为空，可立即释放；无有效左邻时拒绝武断排队并保留 composer 错误提示；
+   - left-tab：记录同 Pane 直接左邻且当时**正忙**的 Agent 卡 ID。「正忙」= `status=streaming` **或**该卡自己还压着未释放的计时批次（`wakeTimerQueuedSends` 非空）。左邻真正空闲（既没在跑也没在等）时目标数组为空，可立即释放；无有效左邻时拒绝武断排队并保留 composer 错误提示；
    - duration：写入 `wakeTimerWakeAt`；
 5. 后续消息只追加队列，不改 arm 数据；
 6. 来源为自动鞭策或计时器释放时绕过该分支。
 
 释放过程先读取就绪批次。工作区模式除检查冻结的 `wakeTimerPendingTargetIds` 外，还要实时扫描同列所有非工具 Agent；只要存在其他 `status=streaming` 的 Agent 就继续等待，避免恢复旧数据、并发状态更新或漏记目标导致提前唤醒。确认就绪后，再通过一组 `updateCard` action 原子清空所有就绪卡的队列与 arm 数据，最后 `Promise.all` 调用 `sendMessage(..., { origin: 'wake-timer-release' })`。这样多卡同一轮检查可同时启动，并且重复 effect/timeout 不会二次发送。
+
+## 链式待唤醒（left-tab 专属）
+
+`CardStatus` 只有 `idle | streaming | error`，没有「待唤醒」态，所以单看 status 无法区分「已经跑完」和「排着队还没开始」。`left-tab` 模式因此额外读取目标卡的 `wakeTimerQueuedSends` 长度，把「压着批次的左邻」也算作未完成，形成 `A ← B ← C` 的接力：C 等 B，B 等 A，A 跑完 → B 释放并开跑 → B 跑完 → C 释放。
+
+链只对 `left-tab` 开放，`workspace-agents` 保持「只等当时 streaming 的 peer」不变：同工作区的等待是全对全的，若把待唤醒 peer 也算作忙，同列两张卡同时排队就会互相等待、永久死锁；而 left-tab 只指向严格更小的 Tab 索引，天然无环。
+
+链断点的解锁：目标卡的批次被用户取消后它永远不会自己开跑，`cancelWakeTimerBatch` 因此复用完成广播，把该卡从所有下游 `wakeTimerPendingTargetIds` 中移除，避免下游永久卡住。「立即唤醒」不走这条路径——那张卡马上就会 streaming，正常完成广播会接手。
 
 ## 完成判定与自动鞭策避让
 

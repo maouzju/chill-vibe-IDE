@@ -84,6 +84,50 @@ describe('wake timer arming', () => {
     )
   })
 
+  it('chains left-tab mode onto a left neighbour that is itself waiting to wake', () => {
+    assert.deepEqual(
+      armWakeTimerBatch({
+        mode: 'left-tab',
+        ownerCardId: 'owner',
+        durationMinutes: 30,
+        nowMs: Date.parse('2026-07-25T00:00:00.000Z'),
+        cards: [
+          { id: 'left-pending', status: 'idle' as const, isAgent: true, hasPendingWakeBatch: true },
+          { id: 'owner', status: 'idle' as const, isAgent: true },
+        ],
+        paneTabIds: ['left-pending', 'owner'],
+      }),
+      {
+        ok: true,
+        armedAt: '2026-07-25T00:00:00.000Z',
+        wakeAt: undefined,
+        pendingTargetIds: ['left-pending'],
+      },
+    )
+  })
+
+  it('keeps workspace mode blind to peers that are only waiting to wake', () => {
+    assert.deepEqual(
+      armWakeTimerBatch({
+        mode: 'workspace-agents',
+        ownerCardId: 'owner',
+        durationMinutes: 30,
+        nowMs: Date.parse('2026-07-25T00:00:00.000Z'),
+        cards: [
+          { id: 'peer-pending', status: 'idle' as const, isAgent: true, hasPendingWakeBatch: true },
+          { id: 'owner', status: 'idle' as const, isAgent: true },
+        ],
+        paneTabIds: ['peer-pending', 'owner'],
+      }),
+      {
+        ok: true,
+        armedAt: '2026-07-25T00:00:00.000Z',
+        wakeAt: undefined,
+        pendingTargetIds: [],
+      },
+    )
+  })
+
   it('rejects left-tab mode when the direct left tab is not an agent', () => {
     assert.deepEqual(
       armWakeTimerBatch({

@@ -15,6 +15,7 @@ type MockCardState = {
   wakeTimerMode?: 'workspace-agents' | 'left-tab' | 'duration'
   wakeTimerDurationMinutes?: number
   wakeTimerArmedAt?: string
+  wakeTimerWakeAt?: string
   wakeTimerPendingTargetIds?: string[]
   wakeTimerQueuedSends?: Array<{
     id: string
@@ -495,6 +496,7 @@ const installMockApis = async (
             wakeTimerMode: initialCard.wakeTimerMode,
             wakeTimerDurationMinutes: initialCard.wakeTimerDurationMinutes,
             wakeTimerArmedAt: initialCard.wakeTimerArmedAt,
+            wakeTimerWakeAt: initialCard.wakeTimerWakeAt,
             wakeTimerPendingTargetIds: initialCard.wakeTimerPendingTargetIds,
             wakeTimerQueuedSends: initialCard.wakeTimerQueuedSends,
             messages: initialCard.messages,
@@ -512,6 +514,13 @@ const installMockApis = async (
                 streamId: peerCard.streamId,
                 sessionId: peerCard.sessionId,
                 sessionModel: peerCard.sessionModel,
+                wakeTimerActive: peerCard.wakeTimerActive,
+                wakeTimerMode: peerCard.wakeTimerMode,
+                wakeTimerDurationMinutes: peerCard.wakeTimerDurationMinutes,
+                wakeTimerArmedAt: peerCard.wakeTimerArmedAt,
+                wakeTimerWakeAt: peerCard.wakeTimerWakeAt,
+                wakeTimerPendingTargetIds: peerCard.wakeTimerPendingTargetIds,
+                wakeTimerQueuedSends: peerCard.wakeTimerQueuedSends,
                 messages: peerCard.messages,
               }]
             : []),
@@ -888,6 +897,66 @@ test('workspace wake timer never releases a restored batch while another agent i
   await expect.poll(
     () => mock.readState().columns[0]?.cards['card-1']?.wakeTimerQueuedSends?.length,
   ).toBe(1)
+})
+
+test('left-tab wake timer chains onto a left neighbour that is itself waiting to wake', async ({ page }) => {
+  const mock = await installMockApis(page, {
+    wakeTimerEnabled: true,
+    initialCard: {
+      status: 'idle',
+      provider: 'codex',
+      model: 'gpt-5.5',
+      wakeTimerActive: true,
+      wakeTimerMode: 'duration',
+      wakeTimerDurationMinutes: 600,
+      wakeTimerArmedAt: '2026-07-28T00:00:00.000Z',
+      wakeTimerWakeAt: '2099-01-01T00:00:00.000Z',
+      wakeTimerPendingTargetIds: [],
+      wakeTimerQueuedSends: [{
+        id: 'wake-left-1',
+        prompt: 'Left tab runs first',
+        attachments: [],
+      }],
+      messages: [],
+    },
+    peerCard: {
+      id: 'card-2',
+      title: 'Chained follow-up',
+      status: 'idle',
+      provider: 'codex',
+      model: 'gpt-5.5',
+      wakeTimerActive: true,
+      wakeTimerMode: 'left-tab',
+      messages: [],
+    },
+  })
+  await page.goto(appUrl)
+
+  await page.locator('.pane-tab', { hasText: 'Chained follow-up' }).click()
+  await expect(page.locator('.pane-tab.is-active .pane-tab-label')).toHaveText('Chained follow-up')
+  const textarea = getActiveComposerTextarea(page)
+  await textarea.fill('Run only after the left tab really finishes')
+  await page.getByRole('button', { name: 'Send message' }).click()
+
+  // 左邻自己还压着批次（idle 但未完成），链式模式必须继续等，不能立刻发车。
+  await expect(page.locator('.pane-tab-panel.is-active .composer-wake-timer-status'))
+    .toContainText('Waiting for the left tab')
+  await page.waitForTimeout(1500)
+  await expect.poll(() => mock.readChatRequests()).toEqual([])
+  await expect.poll(
+    () => mock.readState().columns[0]?.cards['card-2']?.wakeTimerPendingTargetIds,
+  ).toEqual(['card-1'])
+
+  // 左邻的批次被取消后它永远不会自己开跑，下游必须解锁而不是永久卡死。
+  await page.locator('.pane-tab', { hasText: 'Feature Chat' }).click()
+  await expect(page.locator('.pane-tab.is-active .pane-tab-label')).toHaveText('Feature Chat')
+  await page.locator('.pane-tab-panel.is-active .composer-wake-timer-status button', {
+    hasText: 'Cancel',
+  }).click()
+
+  await expect.poll(() => mock.readChatRequests(), { timeout: 5000 }).toHaveLength(1)
+  await expect.poll(() => mock.readChatRequests()[0]?.prompt)
+    .toContain('Run only after the left tab really finishes')
 })
 
 test('left-clicking send while a card is running interrupts and sends immediately', async ({ page }) => {

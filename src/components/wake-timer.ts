@@ -37,7 +37,18 @@ export type WakeTimerCardSnapshot = {
   id: string
   status: CardStatus
   isAgent: boolean
+  // CardStatus has no "待唤醒" member, so a card holding an unreleased batch is
+  // indistinguishable from a finished one by status alone. left-tab chaining
+  // needs that distinction; see isWakeTimerTargetBusy.
+  hasPendingWakeBatch?: boolean
 }
+
+// 症状：2026-07-28 左邻自己也在待唤醒时，右侧卡把它当成"已完成"立刻发车，链式接力断掉。
+// 根因：CardStatus 只有 idle|streaming|error，待唤醒卡就是 idle，条件判定从不查目标的 wakeTimerQueuedSends。
+// 被否决：给 CardStatus 加 'pending-wake' 会污染所有 status 分支（发送门控、音效、恢复），
+//         而这里只需要"忙不忙"这一个布尔；见 wake-timer SPEC「链式待唤醒」。
+const isWakeTimerTargetBusy = (card: WakeTimerCardSnapshot) =>
+  card.status === 'streaming' || card.hasPendingWakeBatch === true
 
 export type WakeTimerArmResult =
   | {
@@ -86,10 +97,12 @@ export const armWakeTimerBatch = ({
       ok: true,
       armedAt,
       wakeAt: undefined,
-      pendingTargetIds: leftCard.status === 'streaming' ? [leftCard.id] : [],
+      pendingTargetIds: isWakeTimerTargetBusy(leftCard) ? [leftCard.id] : [],
     }
   }
 
+  // workspace-agents 刻意只看 streaming：这里的等待是全对全的，把待唤醒 peer 也算作忙，
+  // 同列两张卡同时排队就会互相等待、永久死锁。left-tab 只指向更小的 Tab 索引，天然无环。
   return {
     ok: true,
     armedAt,

@@ -72,6 +72,7 @@ import {
   compactSessionHistoryEntryForTransfer,
   maxPersistedCardMessages,
 } from './session-history-compaction.js'
+import { persistCompactedCardHistories } from './compacted-card-history.js'
 
 type PersistedChatMessage = ChatCard['messages'][number]
 
@@ -2310,6 +2311,12 @@ const saveStateToDataDir = async (
   options: { allowEmptyOverwrite?: boolean } = {},
 ) => {
   await mkdir(dataDir, { recursive: true })
+  // 症状：多轮 /compact 后，最早历史会被活动卡片 500 条上限永久裁掉。
+  // 根因：2026-07-27 实测保存前仍有完整前缀，但 sanitize 先 slice 再落盘。
+  // 不能取消上限，否则巨型隐藏历史会重新进入 state.json/IPC；详见 archive-recall-mcp SPEC。
+  await persistCompactedCardHistories(state, dataDir).catch((error) => {
+    console.warn('[state-store] Failed to persist compacted card history:', error)
+  })
   const sanitizedState = sanitizeStateResult(state).state
   const safeState = await mergePersistedSessionHistory(sanitizedState, dataDir)
   await writeSessionHistorySidecars(safeState.sessionHistory, dataDir)

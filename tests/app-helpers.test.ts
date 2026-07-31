@@ -176,25 +176,43 @@ test('createStructuredMessageId gives assistant snapshots a stable stream item i
   )
 })
 
-test('resolveChatReplayMode uses high-fidelity replay only for pending Codex transfers', () => {
-  const contextTransfer = {
+test('resolveChatReplayMode uses high-fidelity replay for every pending cross-model transfer', () => {
+  const fromClaude = {
     sourceProvider: 'claude' as const,
     sourceModel: 'claude-fable-5',
     sourceSessionId: 'fable-session',
   }
+  const fromCodex = {
+    sourceProvider: 'codex' as const,
+    sourceModel: 'gpt-5-codex',
+    sourceSessionId: 'codex-session',
+  }
 
   assert.equal(
-    resolveChatReplayMode({ provider: 'codex', contextTransfer }, undefined),
+    resolveChatReplayMode({ provider: 'codex', contextTransfer: fromClaude }, undefined),
     'model-transfer',
   )
   assert.equal(
-    resolveChatReplayMode({ provider: 'codex', contextTransfer }, 'codex-session'),
+    resolveChatReplayMode({ provider: 'codex', contextTransfer: fromClaude }, 'codex-session'),
     'fallback',
+  )
+  // Codex/Sol -> Claude/Fable is the same lossy seeded replay in the other
+  // direction: without protection the ~6000-character budget drops the oldest
+  // user turns, so the first request of the conversation silently disappears.
+  assert.equal(
+    resolveChatReplayMode({ provider: 'claude', contextTransfer: fromCodex }, undefined),
+    'model-transfer',
+  )
+  // Switching models inside the same provider also seeds a fresh session.
+  assert.equal(
+    resolveChatReplayMode({ provider: 'claude', contextTransfer: fromClaude }, undefined),
+    'model-transfer',
   )
   assert.equal(
-    resolveChatReplayMode({ provider: 'claude', contextTransfer }, undefined),
+    resolveChatReplayMode({ provider: 'claude', contextTransfer: fromCodex }, 'claude-session'),
     'fallback',
   )
+  assert.equal(resolveChatReplayMode({ provider: 'claude', contextTransfer: undefined }, undefined), 'fallback')
 })
 
 test('Codex deltas reuse one message target when command activity interrupts the same item', () => {

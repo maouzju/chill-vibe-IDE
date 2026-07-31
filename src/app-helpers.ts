@@ -10,7 +10,7 @@ import type {
   StreamAssistantMessage,
 } from '../shared/schema'
 import { getLocaleText } from '../shared/i18n'
-import { BRAINSTORM_TOOL_MODEL, GIT_TOOL_MODEL } from '../shared/models'
+import { BRAINSTORM_TOOL_MODEL, GIT_TOOL_MODEL, STICKYNOTE_TOOL_MODEL } from '../shared/models'
 import type { ChatStreamSource } from './api'
 
 export type LoadStatus = 'loading' | 'ready' | 'error'
@@ -107,6 +107,7 @@ export const resolvePaneTabTitle = (
   card: {
     title: string
     model: string
+    stickyNote?: string
     wakeTimerQueuedSends?: readonly unknown[]
   },
   labels: { fallbackTitle: string; pendingWakeTitle: string },
@@ -117,6 +118,11 @@ export const resolvePaneTabTitle = (
 
   if (card.model === BRAINSTORM_TOOL_MODEL) {
     return card.title || 'Brainstorm'
+  }
+
+  if (card.model === STICKYNOTE_TOOL_MODEL) {
+    const firstLine = card.stickyNote?.split(/\r?\n/, 1)[0]?.trim()
+    return firstLine || card.title || '便签'
   }
 
   if (card.title) {

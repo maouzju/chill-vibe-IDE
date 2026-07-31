@@ -1291,7 +1291,21 @@ export const fetchFileContent = async (workspacePath: string, relativePath: stri
     body: JSON.stringify({ workspacePath, relativePath }),
   })
 
-  if (!response.ok) throw new Error('Failed to read file')
+  if (!response.ok) {
+    // Keep the server's reason (ENOENT, permission, …). Collapsing every failure
+    // into "Failed to read file" hides the one case the chat file links can
+    // actually produce — a path the model named that does not exist.
+    const reason = await response
+      .json()
+      .then((body: unknown) =>
+        typeof body === 'object' && body !== null && typeof (body as { message?: unknown }).message === 'string'
+          ? (body as { message: string }).message
+          : null,
+      )
+      .catch(() => null)
+
+    throw new Error(reason || 'Failed to read file')
+  }
   return response.json() as Promise<FileReadResponse>
 }
 

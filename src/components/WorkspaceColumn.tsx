@@ -229,7 +229,7 @@ type WorkspaceColumnProps = {
   onWakeTimerBatchNow?: (cardId: string) => void
   onManualRecoverStream?: (cardId: string) => Promise<unknown>
   onForkConversation?: (cardId: string, messageId: string) => void
-  onOpenFile?: (paneId: string, relativePath: string) => void
+  onOpenFile?: (paneId: string, relativePath: string, options?: { line?: number }) => void
   recentWorkspaces: RecentWorkspace[]
   onRecordRecentWorkspace: (path: string) => void
   onRemoveRecentWorkspaces: (paths: string[]) => void

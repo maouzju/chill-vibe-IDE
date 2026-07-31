@@ -178,6 +178,33 @@ describe('planClaudeSessionFork', () => {
     assert.equal(plan, null)
   })
 
+  it('refuses a seeded-wrapper containment match from an earlier delivery', () => {
+    // The seeded replay wrapper embeds the literal prompt ("当前用户消息：X"), so
+    // containment also matches a wrapper written for an EARLIER delivery of the
+    // same text. A wrapper is written within seconds of the turn it carries, so
+    // a minutes-old containment hit is a different turn — cutting there would
+    // drop the whole seeded transcript.
+    const content =
+      [
+        claudeUserEntry({ uuid: 'u1', text: '第一个问题', timestamp: '2026-07-01T10:00:01.000Z' }),
+        claudeAssistantEntry({ uuid: 'a1', text: '第一个回答', timestamp: '2026-07-01T10:00:30.000Z' }),
+        claudeUserEntry({
+          uuid: 'u2',
+          text: '请在一个新的会话里继续这段对话。\n当前用户消息：\n赶紧实现',
+          timestamp: '2026-07-01T10:05:00.000Z',
+        }),
+        claudeAssistantEntry({ uuid: 'a2', text: '第二个回答', timestamp: '2026-07-01T10:05:30.000Z' }),
+      ].join('\n') + '\n'
+
+    const plan = planClaudeSessionFork(content, {
+      newSessionId: newClaudeId,
+      // The real turn was sent ~5 minutes later and is not in this file yet.
+      forkPoint: { content: '赶紧实现', createdAtMs: Date.parse('2026-07-01T10:09:50.000Z') },
+    })
+
+    assert.equal(plan, null)
+  })
+
   it('trims turn-boundary companion lines left dangling before the cut', () => {
     // Real Claude CLI turn intake: the resumed turn writes queue-operation
     // lines carrying the prompt text plus isMeta/synthetic filler BEFORE the
@@ -482,6 +509,57 @@ describe('planCodexSessionFork', () => {
     assert.ok(!plan.includes('reasoning-b-residue'), 'failed-turn reasoning residue must be removed')
     assert.ok(!plan.includes('tool-output-b-residue'), 'failed-turn tool residue must be removed')
     assert.ok(!plan.includes('Please continue.'), 'every automatic continuation must be removed')
+  })
+
+  it('refuses a stale seeded-wrapper containment match instead of gutting the transcript', () => {
+    // 07-31 AniBazaar regression: the card was seeded ("请在一个新的会话里继续这段
+    // 对话…当前用户消息：赶紧实现"), the turn dropped, and stream recovery forked
+    // with forkPoint.content = "赶紧实现". Containment matched the wrapper written
+    // 4m44s earlier, the cut landed before it, and the resumed session carried
+    // nothing but AGENTS.md — the model answered "上下文里只有仓库规则".
+    const content =
+      [
+        codexMetaLine,
+        codexUserLine(
+          '# AGENTS.md instructions for D:\\Git\\project\n\n<INSTRUCTIONS>\n仓库规则\n</INSTRUCTIONS>',
+          '2026-07-01T10:00:01.000Z',
+        ),
+        codexUserLine(
+          '请在一个新的会话里继续这段对话。\n把下面的 transcript 当作这次回复的已有上下文。\n\n已有 transcript：\n用户:\n冰冻特效目前太差了\n\n当前用户消息：\n赶紧实现',
+          '2026-07-01T10:00:02.000Z',
+        ),
+        codexAssistantLine('我先把需要的文件读全', '2026-07-01T10:01:00.000Z'),
+      ].join('\n') + '\n'
+
+    const plan = planCodexSessionFork(content, {
+      newSessionId: newCodexId,
+      forkPoint: { content: '赶紧实现', createdAtMs: Date.parse('2026-07-01T10:04:46.000Z') },
+    })
+
+    assert.equal(plan, null)
+  })
+
+  it('refuses a fork whose surviving context is only injected instructions', () => {
+    // AGENTS.md arrives as a user-role response_item, so it can satisfy the
+    // "some earlier user turn survives" guard on its own. A fork that keeps
+    // only repo rules carries no conversation and must fall back to seeding.
+    const content =
+      [
+        codexMetaLine,
+        codexUserLine(
+          '# AGENTS.md instructions for D:\\Git\\project\n\n<INSTRUCTIONS>\n仓库规则\n</INSTRUCTIONS>',
+          '2026-07-01T10:00:01.000Z',
+        ),
+        codexUserLine('第一个真需求', '2026-07-01T10:00:02.000Z'),
+        codexAssistantLine('好的', '2026-07-01T10:00:30.000Z'),
+      ].join('\n') + '\n'
+
+    const plan = planCodexSessionFork(content, {
+      newSessionId: newCodexId,
+      forkPoint: { content: '第一个真需求', createdAtMs: Date.parse('2026-07-01T10:00:02.000Z') },
+    })
+
+    assert.equal(plan, null)
   })
 
   it('returns null when the rollout has no session_meta line', () => {

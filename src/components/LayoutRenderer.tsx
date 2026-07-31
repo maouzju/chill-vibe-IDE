@@ -106,7 +106,7 @@ type LayoutRendererProps = {
   onWakeTimerBatchNow?: (cardId: string) => void
   onManualRecoverStream?: (cardId: string) => Promise<unknown>
   onForkConversation?: (cardId: string, messageId: string) => void
-  onOpenFile?: (paneId: string, relativePath: string) => void
+  onOpenFile?: (paneId: string, relativePath: string, options?: { line?: number }) => void
   cardRecoveryStatuses?: ReadonlyMap<string, CardRecoveryStatus>
   queuedSendSummaries?: ReadonlyMap<string, QueuedSendSummary>
 }

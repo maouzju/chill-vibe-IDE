@@ -24,6 +24,26 @@ test('provider unexpected completion with an existing session becomes resumable'
 })
 
 
+// The Claude CLI surfaces a relay dropping the socket partway through a reply as
+// "API Error: Connection closed mid-response." — same class as "closed before
+// completion", and the pooled CLI process often keeps working afterwards, so
+// dead-ending the card here shows "重连失败" over a card that is still visibly
+// running (2026-07-31 实测).
+test('relay closing the connection mid-response after a live session is resumable', () => {
+  assert.deepEqual(
+    classifyProviderStreamErrorRecovery(
+      {
+        sessionId: 'session-1',
+      },
+      'API Error: Connection closed mid-response. The response above may be incomplete.',
+    ),
+    {
+      recoverable: true,
+      recoveryMode: 'resume-session',
+    },
+  )
+})
+
 test('provider zero status exit after a live session is resumable', () => {
   assert.deepEqual(
     classifyProviderStreamErrorRecovery(

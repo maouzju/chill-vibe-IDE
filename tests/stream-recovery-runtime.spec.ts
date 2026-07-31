@@ -601,3 +601,64 @@ test('transient-only reconnect errors do not exhaust the recovery budget', async
 
   await expect.poll(() => mock.readState().columns[0]?.cards['card-1']?.status).toBe('idle')
 })
+
+// The Claude keepalive pool does not kill the CLI on a failed turn, so the pooled
+// process can finish its background work and push an *unsolicited* turn that puts
+// the card back to work. That path never goes through sendMessage / manual resume,
+// so before this was wired the sticky "重连失败" banner stayed on screen over a
+// card that was visibly running again (2026-07-31 实测：判失败后又跑了 15 分钟).
+test('an unsolicited keepalive wake-up retires the stale failed banner', async ({ page }) => {
+  const mock = await installMockDesktopBridge(page)
+  await page.goto('http://localhost:5173')
+
+  await expect(page.locator('.pane-tab-panel.is-active .composer textarea').first()).toBeVisible()
+  await expect.poll(() => hasDesktopStreamSubscription(page, 'stream-1')).toBe(true)
+
+  await emitDesktopStreamEvent(page, 'stream-1', 'error', {
+    message: 'Fatal upstream failure.',
+    recoverable: false,
+  })
+
+  const failedBanner = page.locator('.pane-tab-panel.is-active .streaming-recovery.is-failed')
+  await expect(failedBanner).toBeVisible()
+  await expect.poll(() => mock.readState().columns[0]?.cards['card-1']?.status).toBe('error')
+
+  // The pooled CLI woke itself up and the server wrapped it in a brand-new stream.
+  await page.evaluate(() => {
+    window.dispatchEvent(
+      new CustomEvent('chill-vibe:unsolicited-stream', {
+        detail: { cardId: 'card-1', streamId: 'unsolicited-stream-1' },
+      }),
+    )
+  })
+
+  await expect.poll(() => hasDesktopStreamSubscription(page, 'unsolicited-stream-1')).toBe(true)
+  await expect.poll(() => mock.readState().columns[0]?.cards['card-1']?.status).toBe('streaming')
+  // The card is working again, so the failure banner must be gone rather than
+  // sitting on top of live output.
+  await expect(failedBanner).toHaveCount(0)
+})
+
+// The other half of the contract: a late event from the stream that actually died
+// must NOT retire the banner, or the original reason `failed` was made sticky
+// (a dead stream's trailing signal erasing a real failure) comes straight back.
+test('a late event from the dead stream does not retire the failed banner', async ({ page }) => {
+  const mock = await installMockDesktopBridge(page)
+  await page.goto('http://localhost:5173')
+
+  await expect(page.locator('.pane-tab-panel.is-active .composer textarea').first()).toBeVisible()
+  await expect.poll(() => hasDesktopStreamSubscription(page, 'stream-1')).toBe(true)
+
+  await emitDesktopStreamEvent(page, 'stream-1', 'error', {
+    message: 'Fatal upstream failure.',
+    recoverable: false,
+  })
+
+  const failedBanner = page.locator('.pane-tab-panel.is-active .streaming-recovery.is-failed')
+  await expect(failedBanner).toBeVisible()
+
+  await emitDesktopStreamEvent(page, 'stream-1', 'delta', { content: 'trailing output' })
+
+  await expect(failedBanner).toBeVisible()
+  await expect.poll(() => mock.readState().columns[0]?.cards['card-1']?.status).toBe('error')
+})

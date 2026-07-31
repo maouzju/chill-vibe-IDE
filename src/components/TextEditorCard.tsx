@@ -24,6 +24,8 @@ import {
   takeCachedTextEditorModel,
   type TextEditorModelCacheEntry,
 } from './text-editor-model-cache'
+import { describeTextEditorLoadFailure } from './text-editor-load-failure'
+import { consumePendingEditorReveal } from './text-editor-reveal'
 import { getTextEditorSettings, subscribeTextEditorSettings } from './text-editor-settings'
 import { mapTsconfigToMonacoCompilerOptions } from './text-editor-tsconfig'
 import { resolveTextEditorMonacoTheme } from './text-editor-monaco-config'
@@ -313,7 +315,7 @@ const TextEditorCardInner = ({ workspacePath, filePath, language }: TextEditorCa
       .catch((err) => {
         // With a cached buffer the editor stays usable even if the refresh fails.
         if (!cancelled && mountedRef.current && !cached) {
-          setError(err instanceof Error ? err.message : 'Failed to load file')
+          setError(describeTextEditorLoadFailure(err, language))
           setLoading(false)
         }
       })
@@ -321,7 +323,7 @@ const TextEditorCardInner = ({ workspacePath, filePath, language }: TextEditorCa
     return () => {
       cancelled = true
     }
-  }, [modelCacheKey, normalizedFilePath, syncFileSnapshot, workspacePath])
+  }, [language, modelCacheKey, normalizedFilePath, syncFileSnapshot, workspacePath])
 
   const refreshFileFromDisk = useCallback(async () => {
     if (!normalizedFilePath) {
@@ -710,6 +712,17 @@ const TextEditorCardInner = ({ workspacePath, filePath, language }: TextEditorCa
           editor.restoreViewState(cachedEntry.viewState)
         }
 
+        // A line number clicked in chat (`src/state.ts:120`) wins over the cached
+        // view state — the click IS the navigation intent. Cursor only, no focus():
+        // stealing focus here would pull it out of the composer mid-typing, which
+        // is exactly the failure class docs/specs/composer-focus-loss covers.
+        const pendingRevealLine = consumePendingEditorReveal(workspacePath, normalizedFilePath)
+        if (pendingRevealLine !== null) {
+          const targetLine = Math.max(1, Math.min(pendingRevealLine, model.getLineCount()))
+          editor.setPosition({ lineNumber: targetLine, column: 1 })
+          editor.revealLineInCenter(targetLine)
+        }
+
         changeSubscription = editor.onDidChangeModelContent(() => {
           handleEditorContentChange(editor.getValue())
           setEol(model.getEOL() === '\n' ? 'LF' : 'CRLF')
@@ -778,7 +791,7 @@ const TextEditorCardInner = ({ workspacePath, filePath, language }: TextEditorCa
       editorRef.current = null
       modelRef.current = null
     }
-  }, [error, fileLanguage, flushPendingSave, guard, handleEditorContentChange, isLargeFile, loading, modelCacheKey, normalizedFilePath])
+  }, [error, fileLanguage, flushPendingSave, guard, handleEditorContentChange, isLargeFile, loading, modelCacheKey, normalizedFilePath, workspacePath])
 
   useEffect(() => {
     const monacoModule = monacoModuleRef.current

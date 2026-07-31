@@ -169,6 +169,9 @@ const extractToolInput = (
     case 'NotebookEdit':
     case 'MultiEdit':
       addString('file_path')
+      // NotebookEdit reports its target as notebook_path, not file_path; without
+      // this the renderer's notebook branch can never resolve a file to open.
+      addString('notebook_path')
       break
     default:
       break

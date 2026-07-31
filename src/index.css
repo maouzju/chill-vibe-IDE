@@ -4918,6 +4918,46 @@ body.is-card-dragging .lane-drop-zone-top {
   color: var(--ink-2);
 }
 
+/* Clickable file references: inline code and markdown links in the prose, plus
+   the CLI-reported file path on a tool card. Deliberately NOT scoped under
+   .message-content — tool cards inside a collapsed tool group render outside it,
+   and a scoped selector left those buttons with the browser's default grey chrome.
+   At rest they must be pixel-identical to the text they replace: an assistant
+   reply mentions files constantly, and colouring every one of them turns the
+   transcript into a wall of link chrome. The affordance appears on hover/focus. */
+code.message-file-reference {
+  padding: 0;
+}
+code.message-file-reference > button {
+  font: inherit;
+  color: inherit;
+  background: none;
+  border: none;
+  padding: 0;
+  margin: 0;
+  cursor: pointer;
+  text-align: inherit;
+  border-radius: 3px;
+  text-underline-offset: 2px;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  vertical-align: bottom;
+}
+code.message-file-reference > button:hover,
+a.message-file-reference-link:hover {
+  color: var(--accent-2);
+  text-decoration: underline;
+  text-decoration-style: dotted;
+}
+code.message-file-reference > button:focus-visible,
+a.message-file-reference-link:focus-visible {
+  outline: 2px solid var(--accent-2);
+  outline-offset: 1px;
+  color: var(--accent-2);
+}
+
 /* Code blocks */
 .message-content pre {
   margin: 0.35em 0;

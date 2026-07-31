@@ -29,6 +29,10 @@ type ForkProviderSessionDependencies = {
 // A containment match this far away from the UI message timestamp is more
 // likely a coincidental repeat than the actual fork-point turn.
 const matchToleranceMs = 10 * 60_000
+
+// Containment-only matches (seeded replay wrappers) must sit far closer in
+// time than direct matches — see findForkCutIndex.
+const containmentToleranceMs = 2 * 60_000
 // Attachment-only fork points have no text to anchor on; allow small clock skew
 // between the renderer timestamp and the CLI transcript timestamp.
 const emptyContentSkewMs = 5_000
@@ -63,6 +67,18 @@ type UserTurnCandidate = {
 // Synthetic user-role entries Codex injects around real prompts.
 const syntheticCodexUserTextPattern =
   /^<(environment_context|user_instructions|permissions|turn_context|collaboration_mode)[\s>]/
+
+// The CLIs inject AGENTS.md/CLAUDE.md as a user-role turn, so it satisfies the
+// "some earlier user turn survives" guard on its own. A fork that keeps only
+// repo rules carries no conversation at all — the caller must seed instead.
+const injectedInstructionsPattern = /^#\s+\S+\.md instructions for /
+
+const carriesConversation = (candidates: UserTurnCandidate[], cutIndex: number) =>
+  candidates.some(
+    (candidate) =>
+      candidate.lineIndex < cutIndex &&
+      !injectedInstructionsPattern.test(candidate.text.trimStart()),
+  )
 
 const collectTextBlocks = (content: unknown, textKey: string): string | null => {
   if (typeof content === 'string') {
@@ -130,6 +146,43 @@ const splitSourceLines = (sourceContent: string) => {
   return lines
 }
 
+const pickTimestampClosest = (
+  matches: UserTurnCandidate[],
+  createdAtMs: number | null,
+  toleranceMs: number,
+): number | null => {
+  if (matches.length === 0) {
+    return null
+  }
+  if (createdAtMs === null) {
+    return matches.length === 1 ? matches[0]!.lineIndex : null
+  }
+
+  let best: UserTurnCandidate | null = null
+  let bestDistance = Number.POSITIVE_INFINITY
+  for (const candidate of matches) {
+    const distance =
+      candidate.timestampMs === null
+        ? Number.POSITIVE_INFINITY
+        : Math.abs(candidate.timestampMs - createdAtMs)
+    if (distance < bestDistance) {
+      best = candidate
+      bestDistance = distance
+    }
+  }
+
+  if (!best) {
+    return null
+  }
+  if (bestDistance !== Number.POSITIVE_INFINITY && bestDistance > toleranceMs) {
+    return null
+  }
+  if (bestDistance === Number.POSITIVE_INFINITY && matches.length > 1) {
+    return null
+  }
+  return best.lineIndex
+}
+
 const findForkCutIndex = (
   candidates: UserTurnCandidate[],
   forkPoint: SessionForkPoint,
@@ -143,33 +196,20 @@ const findForkCutIndex = (
       return null
     }
 
-    if (createdAtMs === null) {
-      return matches.length === 1 ? matches[0]!.lineIndex : null
+    // Symptom (07-31, AniBazaar): a recovery fork resumed a session holding
+    // nothing but AGENTS.md, so the model answered "上下文里只有仓库规则".
+    // Root cause: a seeded replay wrapper embeds the literal prompt ("当前用户
+    // 消息：赶紧实现"), so containment ALSO matches the wrapper of an earlier
+    // delivery — here one written 4m44s before the fork point, well inside the
+    // 10min tolerance, and the cut landed before the whole seeded transcript.
+    // A wrapper is written within seconds of the turn it carries, so a
+    // containment-only hit needs a far tighter window than a direct match;
+    // failing the match is safe because the caller falls back to seeded replay.
+    const direct = matches.filter((candidate) => candidate.text.trimStart().startsWith(wantedText))
+    if (direct.length > 0) {
+      return pickTimestampClosest(direct, createdAtMs, matchToleranceMs)
     }
-
-    let best: UserTurnCandidate | null = null
-    let bestDistance = Number.POSITIVE_INFINITY
-    for (const candidate of matches) {
-      const distance =
-        candidate.timestampMs === null
-          ? Number.POSITIVE_INFINITY
-          : Math.abs(candidate.timestampMs - createdAtMs)
-      if (distance < bestDistance) {
-        best = candidate
-        bestDistance = distance
-      }
-    }
-
-    if (!best) {
-      return null
-    }
-    if (bestDistance !== Number.POSITIVE_INFINITY && bestDistance > matchToleranceMs) {
-      return null
-    }
-    if (bestDistance === Number.POSITIVE_INFINITY && matches.length > 1) {
-      return null
-    }
-    return best.lineIndex
+    return pickTimestampClosest(matches, createdAtMs, containmentToleranceMs)
   }
 
   if (createdAtMs === null) {
@@ -271,7 +311,7 @@ export const planClaudeSessionFork = (
 
   // A fork whose native context holds no earlier user turn carries nothing
   // worth resuming; let the caller fall back to a plain fresh session.
-  if (!candidates.some((candidate) => candidate.lineIndex < cutIndex)) {
+  if (!carriesConversation(candidates, cutIndex)) {
     return null
   }
 
@@ -320,7 +360,7 @@ export const planCodexSessionFork = (
     return null
   }
 
-  if (!candidates.some((candidate) => candidate.lineIndex < cutIndex)) {
+  if (!carriesConversation(candidates, cutIndex)) {
     return null
   }
 

@@ -14,6 +14,8 @@ import type {
 } from './chat-card-parsing'
 import { cleanCommandDisplay, buildToolGroupSummary, getStructuredLabels, summarizeCommandDisplay } from './chat-card-rendering'
 import { resolveOpenableFilePath } from './structured-file-paths'
+import { buildReadLinePresentation, buildToolDetails } from './structured-tool-details'
+import type { ToolDetail } from './structured-tool-details'
 import {
   clearAskUserDraft,
   getAskUserDraft,
@@ -338,68 +340,6 @@ export const StructuredCommandCard = ({
   )
 }
 
-type ToolDetail = { label: string; value: string }
-
-const parseToolInputLineNumber = (value: string | undefined) => {
-  if (!value) {
-    return null
-  }
-
-  const parsed = Number(value)
-
-  if (!Number.isInteger(parsed) || parsed < 1) {
-    return null
-  }
-
-  return parsed
-}
-
-const buildReadLinePresentation = (
-  language: AppLanguage,
-  toolInput?: Record<string, string>,
-): { detail: ToolDetail; summarySuffix: string } | null => {
-  if (!toolInput) {
-    return null
-  }
-
-  const en = language === 'en'
-  const offset = parseToolInputLineNumber(toolInput.offset)
-  const limit = parseToolInputLineNumber(toolInput.limit)
-
-  if (offset !== null && limit !== null) {
-    const end = offset + limit - 1
-    return {
-      detail: {
-        label: en ? 'lines' : '\u884c',
-        value: `${offset}-${end}`,
-      },
-      summarySuffix: en ? ` (lines ${offset}-${end})` : `\uFF08\u7B2C ${offset}-${end} \u884C\uFF09`,
-    }
-  }
-
-  if (offset !== null) {
-    return {
-      detail: {
-        label: en ? 'lines' : '\u884c',
-        value: String(offset),
-      },
-      summarySuffix: en ? ` (from line ${offset})` : `\uFF08\u4ECE\u7B2C ${offset} \u884C\uFF09`,
-    }
-  }
-
-  if (limit !== null) {
-    return {
-      detail: {
-        label: en ? 'lines' : '\u884c',
-        value: `1-${limit}`,
-      },
-      summarySuffix: en ? ` (lines 1-${limit})` : `\uFF08\u7B2C 1-${limit} \u884C\uFF09`,
-    }
-  }
-
-  return null
-}
-
 const buildToolSummary = (
   language: AppLanguage,
   toolName: string,
@@ -437,76 +377,57 @@ const getVisibleToolName = (language: AppLanguage, toolName: string) => {
   return toolName
 }
 
-const buildToolDetails = (
-  language: AppLanguage,
-  toolName: string,
-  toolInput?: Record<string, string>,
-): ToolDetail[] => {
-  if (!toolInput) return []
-  const en = language === 'en'
+export const StructuredToolDetailRow = ({
+  language,
+  detail,
+  onOpenFile,
+}: {
+  language: AppLanguage
+  detail: ToolDetail
+  onOpenFile?: (relativePath: string, options?: { line?: number }) => void
+}) => {
+  const { label, value, openPath, openLine } = detail
+  const labels = getStructuredLabels(language)
 
-  if (toolName === 'Read') {
-    const details: ToolDetail[] = []
-    if (toolInput.file_path) details.push({ label: en ? 'file' : '文件', value: toolInput.file_path })
-    const readLinePresentation = buildReadLinePresentation(language, toolInput)
-    if (readLinePresentation) details.push(readLinePresentation.detail)
-    return details
-  }
-
-  switch (toolName) {
-    case 'Read': {
-      const details: ToolDetail[] = []
-      if (toolInput.file_path) details.push({ label: en ? 'file' : '文件', value: toolInput.file_path })
-      if (toolInput.offset || toolInput.limit) {
-        const from = toolInput.offset ?? '0'
-        const to = toolInput.limit ? String(Number(toolInput.offset ?? 0) + Number(toolInput.limit)) : '...'
-        details.push({ label: en ? 'lines' : '行', value: `${from}-${to}` })
-      }
-      return details
-    }
-    case 'Glob': {
-      const details: ToolDetail[] = []
-      if (toolInput.pattern) details.push({ label: en ? 'pattern' : '模式', value: toolInput.pattern })
-      if (toolInput.path) details.push({ label: en ? 'in' : '目录', value: toolInput.path })
-      return details
-    }
-    case 'Grep': {
-      const details: ToolDetail[] = []
-      if (toolInput.pattern) details.push({ label: en ? 'pattern' : '模式', value: toolInput.pattern })
-      if (toolInput.glob) details.push({ label: en ? 'files' : '文件', value: toolInput.glob })
-      if (toolInput.path) details.push({ label: en ? 'in' : '目录', value: toolInput.path })
-      return details
-    }
-    case 'Bash':
-    case 'PowerShell': {
-      const details: ToolDetail[] = []
-      if (toolInput.command) details.push({ label: en ? 'command' : '命令', value: toolInput.command })
-      if (toolInput.description) details.push({ label: en ? 'description' : '说明', value: toolInput.description })
-      return details
-    }
-    case 'WebFetch': {
-      const details: ToolDetail[] = []
-      if (toolInput.url) details.push({ label: 'URL', value: toolInput.url })
-      return details
-    }
-    case 'WebSearch': {
-      const details: ToolDetail[] = []
-      if (toolInput.query) details.push({ label: en ? 'query' : '搜索', value: toolInput.query })
-      return details
-    }
-    default:
-      return []
-  }
+  return (
+    <div className="structured-tool-detail-row">
+      <span className="structured-tool-detail-label">{label}</span>
+      {openPath && onOpenFile ? (
+        <code className="structured-tool-detail-value message-file-reference" title={value}>
+          <button
+            type="button"
+            data-open-file-path={openPath}
+            data-open-file-line={openLine}
+            aria-label={labels.openFile(openPath)}
+            onClick={(event) => {
+              // The row's ancestor toggles the details panel; opening a file must
+              // not collapse the panel out from under the click.
+              event.stopPropagation()
+              onOpenFile(openPath, { line: openLine })
+            }}
+          >
+            {value}
+          </button>
+        </code>
+      ) : (
+        <code className="structured-tool-detail-value" title={value}>{value}</code>
+      )}
+    </div>
+  )
 }
 
 export const StructuredToolCard = ({
   language,
   data,
+  workspacePath,
+  onOpenFile,
 }: {
   language: AppLanguage
   data: StructuredToolMessage
+  workspacePath?: string
+  onOpenFile?: (relativePath: string, options?: { line?: number }) => void
 }) => {
-  const details = buildToolDetails(language, data.toolName, data.toolInput)
+  const details = buildToolDetails(language, data.toolName, data.toolInput, workspacePath)
   const summary = buildToolSummary(language, data.toolName, data.summary, data.toolInput)
   const visibleToolName = getVisibleToolName(language, data.toolName)
   const [collapsed, setCollapsed] = useState(true)
@@ -536,11 +457,13 @@ export const StructuredToolCard = ({
       </div>
       {!collapsed && details.length > 0 ? (
         <div className="structured-tool-details">
-          {details.map(({ label, value }) => (
-            <div key={label} className="structured-tool-detail-row">
-              <span className="structured-tool-detail-label">{label}</span>
-              <code className="structured-tool-detail-value" title={value}>{value}</code>
-            </div>
+          {details.map((detail) => (
+            <StructuredToolDetailRow
+              key={detail.label}
+              language={language}
+              detail={detail}
+              onOpenFile={onOpenFile}
+            />
           ))}
         </div>
       ) : null}
@@ -672,7 +595,7 @@ const StructuredToolGroupCardView = ({
   entryId?: string
   entryRef?: (node: HTMLElement | null) => void
   workspacePath: string
-  onOpenFile?: (relativePath: string) => void
+  onOpenFile?: (relativePath: string, options?: { line?: number }) => void
 }) => {
   const summary = buildToolGroupSummary(items, language)
   const labels = getStructuredLabels(language)
@@ -760,6 +683,8 @@ const StructuredToolGroupCardView = ({
               key={item.message.id}
               language={language}
               data={item.data}
+              workspacePath={workspacePath}
+              onOpenFile={onOpenFile}
             />
           ),
         )}
@@ -841,7 +766,7 @@ export const StructuredEditsCard = ({
   language: AppLanguage
   data: StructuredEditsMessage
   workspacePath: string
-  onOpenFile?: (relativePath: string) => void
+  onOpenFile?: (relativePath: string, options?: { line?: number }) => void
 }) => {
   const labels = getStructuredLabels(language)
 
@@ -1355,7 +1280,7 @@ export const ChangesSummaryCard = ({
   language: AppLanguage
   files: ChangesSummaryFile[]
   workspacePath: string
-  onOpenFile?: (relativePath: string) => void
+  onOpenFile?: (relativePath: string, options?: { line?: number }) => void
 }) => {
   const labels = getStructuredLabels(language)
   const totalAdded = files.reduce((sum, f) => sum + f.addedLines, 0)

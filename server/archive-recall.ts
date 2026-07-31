@@ -4,6 +4,10 @@ import { fileURLToPath } from 'node:url'
 
 import type { AppLanguage, ChatRequest } from '../shared/schema.js'
 import { getAppDataDir, getAttachmentsDir } from './app-paths.js'
+import {
+  loadCompactedCardHistorySnapshot,
+  mergeArchiveRecallSnapshots,
+} from './compacted-card-history.js'
 
 export const archiveRecallMcpServerName = 'chill_vibe_archive'
 export const archiveRecallContextPathEnvKey = 'CHILL_VIBE_ARCHIVE_RECALL_FILE'
@@ -44,7 +48,14 @@ export const createArchiveRecallRuntimeOverrides = async (
     return null
   }
 
-  const archiveRecall = request.archiveRecall
+  const persistedArchiveRecall = await loadCompactedCardHistorySnapshot(
+    getAppDataDir(),
+    request.cardId,
+  ).catch((error) => {
+    console.warn('[archive-recall] Failed to load compacted card history:', error)
+    return undefined
+  })
+  const archiveRecall = mergeArchiveRecallSnapshots(persistedArchiveRecall, request.archiveRecall)
   if (!archiveRecall || archiveRecall.messages.length === 0) {
     return null
   }

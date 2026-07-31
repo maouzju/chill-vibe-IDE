@@ -3,6 +3,7 @@ import { describe, it } from 'node:test'
 
 import { attachImagesToMessageMeta } from '../shared/chat-attachments.ts'
 import type { ChatMessage, ImageAttachment } from '../shared/schema.ts'
+import { resolveChatReplayMode } from '../src/app-helpers.ts'
 import {
   buildSeededChatPrompt,
   collectSeededChatAttachments,
@@ -539,6 +540,55 @@ describe('chat request seeding', () => {
     assert.match(transferPrompt, /FOUNDATIONAL GOAL/)
     assert.match(transferPrompt, /FOUNDATIONAL DECISION/)
     assert.match(transferPrompt, /Continue from every decision above/)
+  })
+
+  it('keeps the opening request when a Codex conversation is switched to Claude', () => {
+    const messages: ChatMessage[] = [
+      createMessage('opening-user', 'user', 'ORIGINAL TASK: build the offline sync queue with retry backoff.'),
+      ...Array.from({ length: 60 }, (_, index) =>
+        createMessage(`command-${index + 1}`, 'assistant', '', {
+          kind: 'command',
+          structuredData: JSON.stringify({
+            itemId: `command-${index + 1}`,
+            kind: 'command',
+            status: 'completed',
+            command: `inspect-${index + 1}`,
+            output: `noisy command output ${index + 1} ${'x'.repeat(900)}`,
+            exitCode: 0,
+          }),
+        }),
+      ),
+      createMessage('recent-assistant', 'assistant', 'Retry backoff is wired into the queue drain loop.'),
+    ]
+
+    // The card just moved Codex -> Claude, so there is no resumable session and
+    // `contextTransfer` still holds the Codex anchor. The replay mode resolved
+    // here is exactly what App.tsx feeds into the seeded prompt.
+    const mode = resolveChatReplayMode(
+      {
+        provider: 'claude',
+        contextTransfer: {
+          sourceProvider: 'codex',
+          sourceModel: 'gpt-5-codex',
+          sourceSessionId: 'codex-session',
+        },
+      },
+      undefined,
+    )
+
+    const prompt = buildSeededChatPrompt({
+      language: 'en',
+      prompt: 'Keep going.',
+      attachments: [],
+      messages,
+      provider: 'claude',
+      status: 'idle',
+      mode,
+    })
+
+    assert.equal(mode, 'model-transfer')
+    assert.match(prompt, /ORIGINAL TASK: build the offline sync queue with retry backoff\./)
+    assert.match(prompt, /Retry backoff is wired into the queue drain loop\./)
   })
 
 })

@@ -2,26 +2,30 @@
 
 ## Goal
 
-- Let Codex recover **��ǰ�߳����Ѿ��� /compact ���Զ�ѹ������**�ľ���Ϣ����־��ͼƬ����������ѹ����ֱ��ʧ�䡣
-- Keep the implementation **lightweight**: no global knowledge base, no embeddings, no cross-thread search, no always-on replay.
+- 让 Codex 能找回**当前线程中已被一次或多次 `/compact` 隐藏**的旧消息、日志和图片，避免压缩后直接失忆。
+- 最早一轮压缩的内容不能因为后续再次压缩、活动卡片超过持久化消息上限或应用重启而消失。
+- 保持实现轻量：不做全局知识库、向量检索、跨线程搜索或常驻重放。
 
 ## User Stories
 
-- As a user, when I mention ��ǰ������ͼ / �ղ��Ƕ���־ / ��ѹ�������ǲ��֡�, I want Codex to look it up from archived thread history so I do not have to re-upload or re-paste it.
-- As a user, I want this recall path to stay scoped to the current thread��s compacted history so it remains fast and predictable.
-- As a maintainer, I want the archive recall path to be read-only and ephemeral per run so it does not add a heavy persistence or indexing system.
+- 作为用户，当我提到“前面那张图 / 刚才那段日志 / 第一次压缩前的内容”时，我希望 Codex 能从当前线程归档中找回，而不需要重新上传或粘贴。
+- 作为用户，我希望多次压缩形成的是一个累计归档，而不是只能查看最近一次压缩前的有限窗口。
+- 作为维护者，我希望召回路径只读、按卡片隔离，并且不会让完整旧历史重新进入常规 renderer 状态和 IPC 保存路径。
 
 ## Acceptance Criteria
 
-- [ ] Given a Codex chat card has hidden history behind the latest compact boundary, when a new Codex turn starts, then Chill Vibe exposes a read-only MCP server scoped to that hidden history for that run.
-- [ ] Given the compacted history contains an earlier screenshot or log, when Codex uses the archive MCP tools, then it can search the archived messages and read back the matching text and attached images.
-- [ ] Given there is no compacted hidden history, when a Codex turn starts, then Chill Vibe does not inject the archive MCP server.
-- [ ] Given Codex is deciding how to respond to ��ǰ������ͼ/��־��, when archive recall is available, then Chill Vibe��s instructions tell Codex to check archive recall before claiming the old attachment is unavailable.
-- [ ] Given the run ends or fails, when the temporary archive snapshot is no longer needed, then Chill Vibe cleans it up.
+- [x] 当前 Codex 卡片存在压缩边界时，新一轮运行会获得只读的当前线程归档召回工具。
+- [x] 连续发生多次压缩时，归档包含最新压缩边界之前的全部仍可证明原始消息，包括第一轮压缩前的消息。
+- [x] 压缩历史超过活动卡片 500 条持久化上限并重启后，最早已归档消息仍可被搜索和读取。
+- [x] 后续 renderer 保存只携带轻量或已裁剪卡片状态时，不得覆盖、缩短已经落盘的累计压缩归档。
+- [x] 归档中包含旧截图或日志时，Codex 可以搜索消息并读取对应文本与图片附件。
+- [x] 没有真实压缩历史时，不注入归档 MCP。
+- [x] Codex 准备声称旧附件不可用前，会先按指令检查归档召回工具。
+- [x] 单次运行结束或失败后清理临时 MCP 快照；按卡片持久化的累计归档继续保留供后续运行使用。
 
 ## Out of Scope
 
-- Cross-thread or cross-workspace recall.
-- Embedding / vector retrieval or semantic ranking.
-- A user-facing archive browser UI in this first slice.
-- Claude provider support in this first slice.
+- 跨线程或跨工作区召回。
+- Embedding、向量检索或语义排序。
+- 第一阶段的用户可见归档浏览器。
+- Claude provider 支持。

@@ -70,10 +70,12 @@ const buildSyntheticMinidump = () => {
   stack.writeBigUInt64LE(driverBase + 0x900n, 24)
   const stackRva = append(stack)
 
-  // x64 CONTEXT: only RSP (168) and RIP (264) matter here.
+  // Windows x64 CONTEXT: RSP is at 152 and RIP is at 248. A 16-byte
+  // offset error makes every real dump report zero/native noise instead of
+  // the renderer thread that actually froze.
   const context = Buffer.alloc(1232)
-  context.writeBigUInt64LE(stackStart, 168)
-  context.writeBigUInt64LE(driverBase + 0x1234n, 264)
+  context.writeBigUInt64LE(stackStart, 152)
+  context.writeBigUInt64LE(driverBase + 0x1234n, 248)
   const contextRva = append(context)
 
   const threadList = Buffer.alloc(4 + 48)

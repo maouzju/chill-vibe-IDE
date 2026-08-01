@@ -6,7 +6,8 @@
 - 修正 minidump x64 `RSP/RIP` 偏移后，两份 dump 的主线程返回地址一致；Electron 36.9.5 官方 symbols 指向 V8 `NativeRegExpMacroAssembler::Match`、`RegExpGlobalExecRunner::FetchNext` 和 `Runtime_RegExpExecMultiple`，且没有线程停在 graphics-driver 模块。
 - 独立红测用真实生产正则处理未闭合 `[artifact](D:\...`：24 个连续目标字符约 129ms，28 个字符超过 1.5 秒并被子进程超时终止；页面级回归修复前同样超过 1.5 秒。
 - 改为线性扫描后，页面级未闭合长链接用例正常结束；有效 Windows 图片、带平衡括号的路径和 reference destination 仍正确规范化。
-- 定向 Node 测试 27/27 通过；`pnpm test:quality` 通过。Windows 包在本任务末尾重新构建并记录路径。
+- 合并后定向 Node 测试 36/36、`pnpm test:quality` 均通过；100 次 65 字符未闭合链接渲染累计 39.3ms。
+- Windows ZIP 已构建到 `dist/release-20260801-220700/Chill Vibe-0.18.21-win.zip`，SHA-256 为 `2B0F3E0B0E39C409306ECB505E0F344189BFD07018D1AFFB0FA9C5A1D7FE9955`；可直接运行 `dist/release-20260801-220700/win-unpacked/Chill Vibe.exe`。隔离数据目录的真实 packaged smoke 已确认 `.app-shell` 与 desktop bridge 正常加载，未触碰用户正在运行的旧包。
 
 ## 2026-07-21 E 类复发与持续光栅降档
 

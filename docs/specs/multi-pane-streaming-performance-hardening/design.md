@@ -255,3 +255,19 @@ transform/opacity 无限点动画。inactive pane panel 为保留状态持续挂
 本切片最初把 `.streaming-dots span`、`.structured-command-running-dots span` 和 `.is-busy::before` 全部改为静态透明度层级，
 但现场反馈指出前台运行反馈因此过弱。最终策略改为：当前可见的 active pane 保留三点跳动，隐藏 pane 和通用 busy 点保持静态；
 不改变 Provider 并发、消息刷新、状态语义或持久化。测试同时约束后台无无限动画、前台必须有动效；最终以真实 Electron 多流门禁和新 Windows 包验证。
+
+## 2026-08-01 未闭合 Windows Markdown 链接的指数回溯
+
+现场包 `release-20260731-190557` 在 21:27 和 21:43 两次进入持续无响应，8 秒后均由 renderer 进程级恢复自动重置页面。两次 `collectJavaScriptCallStack()` 都为空，但新产生的 native minidump 给出了同一条稳定主线程链。
+
+首先修正取证器的 Windows x64 `CONTEXT` 偏移：`RSP/RIP` 应为 `152/248`，旧值 `168/264` 会把真实线程上下文读成 0 或噪声。修正后，两份 dump 的 renderer main 都停在 JIT 地址，首批稳定返回地址经 Electron 36.9.5 官方 Breakpad symbols 映射为：
+
+- `v8::internal::NativeRegExpMacroAssembler::Match`
+- `v8::internal::RegExpGlobalExecRunner::FetchNext`
+- `v8::internal::Runtime_RegExpExecMultiple`
+- `v8::internal::Runtime_StringReplaceNonGlobalRegExpWithFunction`
+
+对应生产热点是 Windows Markdown 链接预处理正则中的嵌套量词：
+`(?:[^()\s]+|\([^()\n]*\))+`。Provider 流式输出 `[artifact](D:\...` 时，右括号到达前的合法中间态会迫使 V8 枚举同一长字符串的指数级分组方式。独立复现中，未闭合目标串长度 24 已约 129ms，28 已超过 1.5 秒；现场路径更长，因此足以让整个 renderer 失去响应。
+
+修复不再尝试给该正则加更多限定，而是用单次字符扫描识别行内链接、平衡括号、标题后缀和 reference destination。只有找到完整链接时才改写反斜杠；未闭合流式中间态立即原样返回。有效 Windows 图片、平衡括号路径和 reference link 的既有行为由回归测试保留。

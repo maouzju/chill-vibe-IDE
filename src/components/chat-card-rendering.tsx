@@ -116,10 +116,7 @@ const transformMarkdownOutsideCode = (
 // and `![preview](D:\proj\shot.png)` breaks the same way. Rewrite Windows-style
 // destinations to forward slashes before parsing; path.win32 resolution in the
 // main process accepts both separators.
-const MARKDOWN_INLINE_LINK_PATTERN =
-  /(!?\[[^\]\n]*\]\(\s*)(<[^>\n]+>|(?:[^()\s]+|\([^()\n]*\))+)([^)\n]*)(\))/g
-const MARKDOWN_REFERENCE_LINK_PATTERN =
-  /^(\s{0,3}\[[^\]\n]+\]:\s*)(<[^>\n]+>|(?:[^()\s]+|\([^()\n]*\))+)(.*)$/
+const MARKDOWN_REFERENCE_LINK_PREFIX_PATTERN = /^(\s{0,3}\[[^\]\n]+\]:\s*)/
 
 const normalizeWindowsLinkDestination = (destination: string) => {
   const isAngleWrapped = destination.startsWith('<') && destination.endsWith('>')
@@ -143,32 +140,145 @@ const normalizeWindowsLinkDestination = (destination: string) => {
   return isAngleWrapped ? `<${normalizedPath}>` : normalizedPath
 }
 
-const normalizeWindowsLinkPathsInSegment = (segment: string) => {
-  const withInlineLinks = segment.replace(
-    MARKDOWN_INLINE_LINK_PATTERN,
-    (
-      match,
-      open: string,
-      destination: string,
-      suffix: string,
-      close: string,
-    ) => {
-      const normalizedDestination = normalizeWindowsLinkDestination(destination)
-      return normalizedDestination === destination
-        ? match
-        : `${open}${normalizedDestination}${suffix}${close}`
-    },
-  )
+type InlineMarkdownDestination = {
+  destinationEnd: number
+  closingParenIndex: number
+}
 
-  return withInlineLinks.replace(
-    MARKDOWN_REFERENCE_LINK_PATTERN,
-    (match, open: string, destination: string, suffix: string) => {
-      const normalizedDestination = normalizeWindowsLinkDestination(destination)
-      return normalizedDestination === destination
-        ? match
-        : `${open}${normalizedDestination}${suffix}`
-    },
-  )
+const findLineClosingParen = (segment: string, searchFrom: number) => {
+  const closingParenIndex = segment.indexOf(')', searchFrom)
+  const newlineIndex = segment.indexOf('\n', searchFrom)
+  return closingParenIndex >= 0 && (newlineIndex < 0 || closingParenIndex < newlineIndex)
+    ? closingParenIndex
+    : -1
+}
+
+const findInlineMarkdownDestination = (
+  segment: string,
+  destinationStart: number,
+): InlineMarkdownDestination | null => {
+  if (segment[destinationStart] === '<') {
+    const angleEnd = segment.indexOf('>', destinationStart + 1)
+    if (angleEnd < 0 || segment.slice(destinationStart, angleEnd).includes('\n')) {
+      return null
+    }
+    const closingParenIndex = findLineClosingParen(segment, angleEnd + 1)
+    return closingParenIndex < 0
+      ? null
+      : { destinationEnd: angleEnd + 1, closingParenIndex }
+  }
+
+  let nestedParenDepth = 0
+  for (let index = destinationStart; index < segment.length; index += 1) {
+    const char = segment[index]!
+    if (char === '\n') {
+      return null
+    }
+    if (char === '(') {
+      nestedParenDepth += 1
+      continue
+    }
+    if (char === ')') {
+      if (nestedParenDepth === 0) {
+        return { destinationEnd: index, closingParenIndex: index }
+      }
+      nestedParenDepth -= 1
+      continue
+    }
+    if (/\s/u.test(char) && nestedParenDepth === 0) {
+      const closingParenIndex = findLineClosingParen(segment, index)
+      return closingParenIndex < 0
+        ? null
+        : { destinationEnd: index, closingParenIndex }
+    }
+  }
+
+  return null
+}
+
+const findReferenceMarkdownDestinationEnd = (segment: string, destinationStart: number) => {
+  if (segment[destinationStart] === '<') {
+    const angleEnd = segment.indexOf('>', destinationStart + 1)
+    return angleEnd < 0 ? null : angleEnd + 1
+  }
+
+  let nestedParenDepth = 0
+  for (let index = destinationStart; index < segment.length; index += 1) {
+    const char = segment[index]!
+    if (char === '(') {
+      nestedParenDepth += 1
+      continue
+    }
+    if (char === ')') {
+      if (nestedParenDepth === 0) {
+        return index
+      }
+      nestedParenDepth -= 1
+      continue
+    }
+    if (/\s/u.test(char) && nestedParenDepth === 0) {
+      return index
+    }
+  }
+
+  return segment.length
+}
+
+const normalizeWindowsLinkPathsInSegment = (segment: string) => {
+  let normalized = ''
+  let copiedThrough = 0
+  let searchFrom = 0
+
+  // 症状：流式输出一个尚未闭合的长 Windows Markdown 路径时，renderer 会整窗卡死。
+  // 根因（2026-08-01 两份 native dump）：旧嵌套量词正则进入 V8 RegExp 指数回溯。
+  // 不再微调正则；按字符线性找边界，见 Known Pitfall #234。
+  while (searchFrom < segment.length) {
+    const labelEnd = segment.indexOf('](', searchFrom)
+    if (labelEnd < 0) {
+      break
+    }
+    const labelStart = segment.lastIndexOf('[', labelEnd)
+    if (labelStart < 0 || segment.indexOf(']', labelStart) !== labelEnd) {
+      searchFrom = labelEnd + 2
+      continue
+    }
+
+    let destinationStart = labelEnd + 2
+    while (destinationStart < segment.length && /\s/u.test(segment[destinationStart]!)) {
+      destinationStart += 1
+    }
+    const parsed = findInlineMarkdownDestination(segment, destinationStart)
+    if (!parsed) {
+      searchFrom = labelEnd + 2
+      continue
+    }
+
+    const destination = segment.slice(destinationStart, parsed.destinationEnd)
+    const nextDestination = normalizeWindowsLinkDestination(destination)
+    if (nextDestination !== destination) {
+      normalized += segment.slice(copiedThrough, destinationStart)
+      normalized += nextDestination
+      copiedThrough = parsed.destinationEnd
+    }
+    searchFrom = parsed.closingParenIndex + 1
+  }
+
+  normalized += segment.slice(copiedThrough)
+
+  const referenceMatch = normalized.match(MARKDOWN_REFERENCE_LINK_PREFIX_PATTERN)
+  if (!referenceMatch) {
+    return normalized
+  }
+  const destinationStart = referenceMatch[0].length
+  const destinationEnd = findReferenceMarkdownDestinationEnd(normalized, destinationStart)
+  if (destinationEnd === null) {
+    return normalized
+  }
+  const destination = normalized.slice(destinationStart, destinationEnd)
+  const nextDestination = normalizeWindowsLinkDestination(destination)
+  return nextDestination === destination
+    ? normalized
+    : `${normalized.slice(0, destinationStart)}${nextDestination}${normalized.slice(destinationEnd)}`
 }
 
 const normalizeWindowsLinkPaths = (content: string) =>

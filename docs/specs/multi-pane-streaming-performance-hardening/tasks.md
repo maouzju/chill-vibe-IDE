@@ -1,5 +1,13 @@
 # 多窗口流式性能兜底 — 任务
 
+## 2026-08-01 未闭合 Markdown 链接卡死
+
+- [x] 保全两次自动恢复产生的 `main.log` 与 native minidump，确认不是 GPU 饱和或系统 OOM。
+- [x] 红测复现未闭合长 Windows Markdown 链接触发同步超时。
+- [x] 修正 minidump Windows x64 `CONTEXT` 偏移，并用 Electron 36.9.5 symbols 指认 V8 RegExp 链。
+- [x] 用线性链接边界扫描替换嵌套量词正则，保留图片、平衡括号和 reference link 行为。
+- [x] 运行定向测试与 `pnpm test:quality`；构建新的 Windows zip 与可直接运行目录。
+
 ## 计划阶段
 
 - [x] 阅读 `AGENTS.md`、UI 原则、长聊天窗口、焦点丢失、流恢复和排队发送文档。

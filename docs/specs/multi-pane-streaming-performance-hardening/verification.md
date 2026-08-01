@@ -1,5 +1,13 @@
 # 多窗口流式性能兜底 — 验证记录
 
+## 2026-08-01 两次自动重置：V8 RegExp 指数回溯定案
+
+- `main.log` 于 21:27:47、21:43:24 两次记录 `BrowserWindow became unresponsive`；renderer CPU 约 3.7%、GPU CPU 约 0.46%，均在 8 秒后被自动替换，分别生成 `defc36e6-68b4-44a4-be28-87f9e238b05a.dmp` 与 `6d8a4aeb-2db3-405e-b19d-7f6ab28cfd05.dmp`。
+- 修正 minidump x64 `RSP/RIP` 偏移后，两份 dump 的主线程返回地址一致；Electron 36.9.5 官方 symbols 指向 V8 `NativeRegExpMacroAssembler::Match`、`RegExpGlobalExecRunner::FetchNext` 和 `Runtime_RegExpExecMultiple`，且没有线程停在 graphics-driver 模块。
+- 独立红测用真实生产正则处理未闭合 `[artifact](D:\...`：24 个连续目标字符约 129ms，28 个字符超过 1.5 秒并被子进程超时终止；页面级回归修复前同样超过 1.5 秒。
+- 改为线性扫描后，页面级未闭合长链接用例正常结束；有效 Windows 图片、带平衡括号的路径和 reference destination 仍正确规范化。
+- 定向 Node 测试 27/27 通过；`pnpm test:quality` 通过。Windows 包在本任务末尾重新构建并记录路径。
+
 ## 2026-07-21 E 类复发与持续光栅降档
 
 - `release-20260720-165915` 于 13:28:15 记录 `BrowserWindow became unresponsive`；

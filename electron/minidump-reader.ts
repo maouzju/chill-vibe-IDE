@@ -18,8 +18,8 @@ const threadListStreamType = 3
 const moduleEntrySize = 108
 const threadEntrySize = 48
 // Offsets inside the x64 CONTEXT record.
-const contextRspOffset = 168
-const contextRipOffset = 264
+const contextRspOffset = 152
+const contextRipOffset = 248
 const maxStackModules = 24
 
 export type MinidumpModule = {

@@ -127,6 +127,53 @@ describe('planClaudeSessionFork', () => {
     assert.ok(plan.includes('第一个回答'))
   })
 
+  it('prefers a timestamp-close wrapped turn over an earlier prefix match', () => {
+    const content =
+      [
+        claudeUserEntry({ uuid: 'u1', text: '准备工作', timestamp: '2026-07-01T10:00:01.000Z' }),
+        claudeAssistantEntry({ uuid: 'a1', text: '回答一', timestamp: '2026-07-01T10:00:30.000Z' }),
+        claudeUserEntry({ uuid: 'u2', text: '继续处理另一个任务', timestamp: '2026-07-01T10:04:00.000Z' }),
+        claudeAssistantEntry({ uuid: 'a2', text: '回答二', timestamp: '2026-07-01T10:04:30.000Z' }),
+        claudeUserEntry({
+          uuid: 'u3',
+          text: 'Analyze this image:\n继续',
+          timestamp: '2026-07-01T10:05:01.000Z',
+        }),
+      ].join('\n') + '\n'
+
+    const plan = planClaudeSessionFork(content, {
+      newSessionId: newClaudeId,
+      forkPoint: { content: '继续', createdAtMs: Date.parse('2026-07-01T10:05:01.000Z') },
+    })
+
+    assert.ok(plan)
+    assert.ok(plan.includes('继续处理另一个任务'), 'the earlier prefix turn must survive')
+    assert.ok(plan.includes('回答二'), 'the earlier answered context must survive')
+    assert.ok(!plan.includes('Analyze this image'), 'the timestamp-close wrapped turn is the cut')
+  })
+  it('prefers a timestamp-close wrapped turn over an earlier exact short prompt', () => {
+    const content =
+      [
+        claudeUserEntry({ uuid: 'u1', text: '准备工作', timestamp: '2026-07-01T10:00:01.000Z' }),
+        claudeAssistantEntry({ uuid: 'a1', text: '回答一', timestamp: '2026-07-01T10:00:30.000Z' }),
+        claudeUserEntry({ uuid: 'u2', text: '继续', timestamp: '2026-07-01T10:04:00.000Z' }),
+        claudeAssistantEntry({ uuid: 'a2', text: '回答二', timestamp: '2026-07-01T10:04:30.000Z' }),
+        claudeUserEntry({
+          uuid: 'u3',
+          text: 'Analyze this image:\n继续',
+          timestamp: '2026-07-01T10:05:01.000Z',
+        }),
+      ].join('\n') + '\n'
+
+    const plan = planClaudeSessionFork(content, {
+      newSessionId: newClaudeId,
+      forkPoint: { content: '继续', createdAtMs: Date.parse('2026-07-01T10:05:01.000Z') },
+    })
+
+    assert.ok(plan)
+    assert.ok(plan.includes('回答二'), 'the earlier exact turn was answered and must survive')
+    assert.ok(!plan.includes('Analyze this image'), 'the timestamp-close wrapped turn is the cut')
+  })
   it('prefers the timestamp-closest candidate when texts repeat', () => {
     const content =
       [
@@ -537,6 +584,51 @@ describe('planCodexSessionFork', () => {
     })
 
     assert.equal(plan, null)
+  })
+
+  it('keeps a seeded wrapper that produced real answers when the cut lands on the reissued turn', () => {
+    // Counterpart to the stale-wrapper refusal: once the real turn IS in the
+    // file, the cut must land on it (direct match) and the duplicate-delivery
+    // walk must stop at the wrapper's assistant reply instead of eating the
+    // wrapper and everything before it.
+    const turnContextLine = JSON.stringify({
+      timestamp: '2026-07-01T10:05:00.000Z',
+      type: 'turn_context',
+      payload: { cwd: 'D:\\Git\\project' },
+    })
+    const content =
+      [
+        codexMetaLine,
+        codexUserLine(
+          '# AGENTS.md instructions for D:\\Git\\project\n\n<INSTRUCTIONS>\n仓库规则\n</INSTRUCTIONS>',
+          '2026-07-01T10:00:01.000Z',
+        ),
+        codexUserLine('第一个真需求', '2026-07-01T10:00:02.000Z'),
+        codexAssistantLine('回答一', '2026-07-01T10:00:30.000Z'),
+        codexUserLine(
+          '请在一个新的会话里继续这段对话。\n\n当前用户消息：\n赶紧实现',
+          '2026-07-01T10:01:00.000Z',
+        ),
+        codexAssistantLine('回答二', '2026-07-01T10:01:30.000Z'),
+        turnContextLine,
+        codexUserLine('赶紧实现', '2026-07-01T10:05:01.000Z'),
+      ].join('\n') + '\n'
+
+    const plan = planCodexSessionFork(content, {
+      newSessionId: newCodexId,
+      forkPoint: { content: '赶紧实现', createdAtMs: Date.parse('2026-07-01T10:05:01.000Z') },
+    })
+
+    assert.ok(plan)
+    assert.ok(plan.includes('第一个真需求'), 'earliest real request must survive')
+    assert.ok(plan.includes('回答二'), 'the wrapper turn answered, so it is real history')
+    assert.ok(plan.includes('当前用户消息'), 'the answered wrapper itself must survive')
+    assert.ok(!plan.includes('turn_context'), 'boundary residue must still be trimmed')
+    assert.equal(
+      plan.split('赶紧实现').length - 1,
+      1,
+      'only the wrapper copy remains; the reissued turn is cut',
+    )
   })
 
   it('refuses a fork whose surviving context is only injected instructions', () => {

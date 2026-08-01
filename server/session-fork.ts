@@ -202,14 +202,17 @@ const findForkCutIndex = (
     // 消息：赶紧实现"), so containment ALSO matches the wrapper of an earlier
     // delivery — here one written 4m44s before the fork point, well inside the
     // 10min tolerance, and the cut landed before the whole seeded transcript.
-    // A wrapper is written within seconds of the turn it carries, so a
-    // containment-only hit needs a far tighter window than a direct match;
-    // failing the match is safe because the caller falls back to seeded replay.
-    const direct = matches.filter((candidate) => candidate.text.trimStart().startsWith(wantedText))
-    if (direct.length > 0) {
-      return pickTimestampClosest(direct, createdAtMs, matchToleranceMs)
+    // A wrapper is written within seconds of the turn it carries, so first use
+    // the closest match of any shape inside the tight window. This prevents an
+    // older exact/prefix prompt from outranking a current image or seeded
+    // wrapper. Only when there is no nearby match may an exact retry use the
+    // wider tolerance; otherwise failing is safer than deleting real history.
+    const nearbyCut = pickTimestampClosest(matches, createdAtMs, containmentToleranceMs)
+    if (nearbyCut !== null) {
+      return nearbyCut
     }
-    return pickTimestampClosest(matches, createdAtMs, containmentToleranceMs)
+    const exact = matches.filter((candidate) => candidate.text.trim() === wantedText)
+    return pickTimestampClosest(exact, createdAtMs, matchToleranceMs)
   }
 
   if (createdAtMs === null) {
@@ -262,6 +265,14 @@ const collectDuplicateDeliveryIndexes = (
   if (!wantedText) {
     return new Set<number>()
   }
+  // Deliberately still plain containment, unlike findForkCutIndex (pitfall
+  // 232): trimTrailingResidue only walks backwards while every step is residue
+  // or a duplicate, so a seeded wrapper is swallowed only when it sits
+  // IMMEDIATELY before the cut with nothing but boundary lines between — i.e.
+  // it really was an earlier delivery of this same turn that produced no
+  // response. Any wrapper carrying real answered history has assistant entries
+  // after it, which stop the walk. Tightening this to startsWith would instead
+  // strip the retry-duplicate handling that pitfall 178 added.
   return new Set(
     candidates
       .filter((candidate) => candidate.text.includes(wantedText))

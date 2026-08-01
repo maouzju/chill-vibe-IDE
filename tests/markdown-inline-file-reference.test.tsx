@@ -1,5 +1,8 @@
 import assert from 'node:assert/strict'
+import { spawnSync } from 'node:child_process'
+import { resolve } from 'node:path'
 import test from 'node:test'
+import { pathToFileURL } from 'node:url'
 import * as React from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 
@@ -77,4 +80,33 @@ test('external markdown links stay anchors', () => {
 
   assert.deepEqual(openTargets(html), [])
   assert.ok(html.includes('href="https://example.com/docs"'), html)
+})
+
+test('an unfinished long Windows markdown link cannot block the renderer', () => {
+  const moduleUrl = pathToFileURL(
+    resolve('src/components/chat-card-rendering.tsx'),
+  ).href
+  const content = `[artifact](D:\\${'a'.repeat(48)}`
+  const script = `
+    import * as React from 'react'
+    import { renderToStaticMarkup } from 'react-dom/server'
+    const { renderMarkdown } = await import(${JSON.stringify(moduleUrl)})
+    globalThis.React = React
+    renderToStaticMarkup(
+      React.createElement('div', null, renderMarkdown(${JSON.stringify(content)}, ${JSON.stringify(WORKSPACE)})),
+    )
+  `
+  const result = spawnSync(
+    process.execPath,
+    ['--import', 'tsx', '--input-type=module', '--eval', script],
+    { encoding: 'utf8', timeout: 4_000 },
+  )
+  const errorCode = (result.error as NodeJS.ErrnoException | undefined)?.code
+
+  assert.equal(
+    errorCode,
+    undefined,
+    `markdown render exceeded 4s: ${result.error?.message ?? ''}`,
+  )
+  assert.equal(result.status, 0, result.stderr)
 })

@@ -45,6 +45,22 @@ test('renderMarkdown rewrites an absolute Windows image path to the local image 
   assert.equal(new URL(src).searchParams.get('src'), 'D:/proj/shot.png')
 })
 
+test('renderMarkdown keeps balanced parentheses inside a Windows image path', () => {
+  const html = renderMarkdownHtml('![预览](D:\\proj\\shot(1).png)')
+  const src = extractImgSrc(html)
+
+  assert.ok(src, `expected an <img> in: ${html}`)
+  assert.equal(new URL(src).searchParams.get('src'), 'D:/proj/shot(1).png')
+})
+
+test('renderMarkdown normalizes a Windows image reference destination', () => {
+  const html = renderMarkdownHtml('![预览][shot]\n\n[shot]: D:\\proj\\shot.png')
+  const src = extractImgSrc(html)
+
+  assert.ok(src, `expected an <img> in: ${html}`)
+  assert.equal(new URL(src).searchParams.get('src'), 'D:/proj/shot.png')
+})
+
 test('resolveLocalImageRequestTarget resolves a forward-slash Windows image path', () => {
   const requestUrl = getLocalImageProtocolUrl('D:/proj/shot.png')
   assert.equal(resolveLocalImageRequestTarget(requestUrl), 'D:\\proj\\shot.png')

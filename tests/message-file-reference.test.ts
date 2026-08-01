@@ -92,9 +92,9 @@ test('resolves inline references against the workspace', () => {
 })
 
 test('keeps out-of-workspace absolute files openable, server whitelist stays the gate', () => {
-  const target = resolveMessageFileTarget(WORKSPACE, 'C:/Users/yuze/.claude/settings.json')
+  const target = resolveMessageFileTarget(WORKSPACE, 'C:/Users/demo/.claude/settings.json')
   assert.deepEqual(target, {
-    openPath: 'C:/Users/yuze/.claude/settings.json',
+    openPath: 'C:/Users/demo/.claude/settings.json',
     line: undefined,
   })
 })

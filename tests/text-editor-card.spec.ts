@@ -429,7 +429,7 @@ test('tab switches keep unsaved edits, undo history, and cursor state', async ({
   await expect(monacoSurface).toContainText('const extra = 2')
 
   // Switch to the sibling tab — inactive pane tabs unmount the editor body.
-  await page.locator('.pane-tab', { hasText: 'Note' }).click()
+  await page.locator('.pane-tab', { hasText: 'scratch' }).click()
   await expect(monacoSurface).toBeHidden()
 
   await page.locator('.pane-tab', { hasText: 'Editor' }).click()

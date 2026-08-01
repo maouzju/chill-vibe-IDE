@@ -134,7 +134,7 @@ consumePendingEditorReveal(workspacePath, filePath): number | null   // 取出�
 | 测试 | 覆盖 |
 |---|---|
 | `tests/message-file-reference.test.ts`（新增，红先） | 路径判定正/反例、行号后缀三种写法、Windows 盘符不被误判为行号、工作区外绝对路径 |
-| `tests/message-file-link-click.test.tsx`（新增） | `a` 点击分流四象限；Alt 走 reveal |
+| `tests/message-file-link-click.test.ts`（新增） | `a` 点击分流四象限；Alt 走 reveal |
 | `tests/markdown-inline-file-reference.test.tsx`（新增） | 行内代码渲染成 button / 保持普通 code；代码块内不可点 |
 | `tests/text-editor-reveal.test.ts`（新增） | registry 取出即删、TTL、容量上限 |
 | 已有 `tests/message-local-link.test.ts` | 回归：无 Context 时行为不变 |

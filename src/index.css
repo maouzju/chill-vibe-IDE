@@ -9309,6 +9309,16 @@ body,
   opacity: 0.52;
 }
 
+.git-context-menu-confirm {
+  display: grid;
+  gap: 0.55rem;
+  padding: 0.42rem 0.5rem;
+}
+
+.git-context-menu-confirm .git-discard-confirm-actions {
+  justify-content: flex-end;
+}
+
 .git-tool-diff-empty.is-multi-select .git-tool-button {
   margin-top: 0.75rem;
 }

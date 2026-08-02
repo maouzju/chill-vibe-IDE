@@ -7531,6 +7531,15 @@ test('git tool card keeps long zh-CN metadata rows fully visible instead of clip
     maxDiffPixels: 200,
   })
 
+  await page.locator('.git-change-row').first().click({ button: 'right' })
+  await page.getByRole('menuitem', { name: '回退改动', exact: true }).click()
+  const discardConfirmMenu = page.locator('.git-context-menu')
+  await expect(discardConfirmMenu).toHaveScreenshot('git-discard-confirm-dark.png', {
+    animations: 'disabled',
+    caret: 'hide',
+  })
+  await discardConfirmMenu.getByRole('button', { name: '取消', exact: true }).click()
+
   await page.getByRole('button', { name: '关闭', exact: true }).click()
   await page.locator('#app-tab-settings').click()
   await page.locator('#app-panel-settings .theme-toggle').first().locator('.theme-chip').first().click()
@@ -7543,6 +7552,13 @@ test('git tool card keeps long zh-CN metadata rows fully visible instead of clip
     animations: 'disabled',
     caret: 'hide',
     maxDiffPixels: 200,
+  })
+
+  await page.locator('.git-change-row').first().click({ button: 'right' })
+  await page.getByRole('menuitem', { name: '回退改动', exact: true }).click()
+  await expect(discardConfirmMenu).toHaveScreenshot('git-discard-confirm-light.png', {
+    animations: 'disabled',
+    caret: 'hide',
   })
 })
 

@@ -48,12 +48,21 @@ type StreamHandlers = {
   onLog?: (payload: unknown) => void
 }
 
-const createFakeDeps = () => {
+const createFakeDeps = (statusOverrides: Partial<GitStatus> = {}) => {
   const calls: string[] = []
   let streamHandlers: StreamHandlers | null = null
   let streamClosedCount = 0
   const stoppedStreams: string[] = []
   const chatRequests: Record<string, unknown>[] = []
+  const stageRequests: { workspacePath: string; paths: string[]; staged: boolean }[] = []
+  const commitRequests: {
+    workspacePath: string
+    summary: string
+    description: string
+    paths?: string[]
+  }[] = []
+  let remainingChanges = statusOverrides.changes ?? createGitStatus().changes
+  const baseStatus = () => createGitStatus({ ...statusOverrides, changes: remainingChanges })
 
   const deps: GitOperationHubDeps = {
     requestChat: async (request) => {
@@ -75,22 +84,30 @@ const createFakeDeps = () => {
     },
     fetchGitStatus: async () => {
       calls.push('fetchGitStatus')
-      return createGitStatus()
+      return baseStatus()
     },
-    setGitStage: async () => {
+    setGitStage: async (request) => {
       calls.push('setGitStage')
-      return createGitStatus()
+      stageRequests.push({ ...request, paths: [...request.paths] })
+      return baseStatus()
     },
-    commitGitChanges: async () => {
+    commitGitChanges: async (request) => {
       calls.push('commitGitChanges')
+      commitRequests.push({ ...request, paths: request.paths ? [...request.paths] : undefined })
+      const committed = new Set(request.paths ?? remainingChanges.map((change) => change.path))
+      remainingChanges = remainingChanges.filter((change) => !committed.has(change.path))
       return {
-        status: createGitStatus({ clean: true, changes: [] }),
+        status: createGitStatus({
+          ...statusOverrides,
+          changes: remainingChanges,
+          clean: remainingChanges.length === 0,
+        }),
         commit: { hash: 'abc1234def', shortHash: 'abc1234', summary: 'test commit' },
       }
     },
     pullGitChanges: async () => {
       calls.push('pullGitChanges')
-      return { status: createGitStatus() }
+      return { status: baseStatus() }
     },
     pushGitChanges: async () => {
       calls.push('pushGitChanges')
@@ -106,6 +123,8 @@ const createFakeDeps = () => {
     getStreamClosedCount: () => streamClosedCount,
     stoppedStreams,
     chatRequests,
+    stageRequests,
+    commitRequests,
   }
 }
 
@@ -183,8 +202,20 @@ test('agent analysis forwards Codex personality and Fast settings', async () => 
   assert.equal(fake.chatRequests[0]?.codexIsolatedHomeEnabled, true)
 })
 
+const createChange = (path: string): GitStatus['changes'][number] => ({
+  path,
+  kind: 'modified',
+  stagedStatus: ' ',
+  workingTreeStatus: 'M',
+  staged: false,
+  conflicted: false,
+  addedLines: 1,
+  removedLines: 0,
+  patch: '@@ -1 +1 @@\n-a\n+b',
+})
+
 test('executeAgentStrategy runs every commit to completion with no subscribers attached', async () => {
-  const fake = createFakeDeps()
+  const fake = createFakeDeps({ changes: [createChange('src/a.ts'), createChange('src/b.ts')] })
   const hub = createGitOperationHub(fake.deps)
   const ws = 'D:\\repo'
 
@@ -206,6 +237,88 @@ test('executeAgentStrategy runs every commit to completion with no subscribers a
     2,
   )
   assert.ok(snapshot.lastStatus)
+})
+
+test('executeAgentStrategy commits only the strategy paths instead of the whole index', async () => {
+  const fake = createFakeDeps({ changes: [createChange('src/a.ts'), createChange('src/b.ts')] })
+  const hub = createGitOperationHub(fake.deps)
+  const ws = 'D:\\repo'
+
+  await hub.executeAgentStrategy(
+    createContext(ws),
+    {
+      label: '分两批',
+      description: '',
+      commits: [
+        { summary: 'feat: one', paths: ['src/a.ts'] },
+        { summary: 'feat: two', paths: ['src/b.ts'] },
+      ],
+    },
+    0,
+  )
+
+  assert.deepEqual(
+    fake.commitRequests.map((request) => request.paths),
+    [['src/a.ts'], ['src/b.ts']],
+  )
+})
+
+test('executeAgentStrategy never stages or commits paths outside the analysed changes', async () => {
+  const fake = createFakeDeps({ changes: [createChange('src/a.ts')] })
+  const hub = createGitOperationHub(fake.deps)
+  const ws = 'D:\\repo'
+
+  await hub.executeAgentStrategy(
+    createContext(ws),
+    {
+      label: '幻觉路径',
+      description: '',
+      commits: [{ summary: 'feat: everything', paths: ['src/a.ts', 'src/ghost.ts'] }],
+    },
+    0,
+  )
+
+  assert.deepEqual(fake.stageRequests.map((request) => request.paths), [['src/a.ts']])
+  assert.deepEqual(fake.commitRequests.map((request) => request.paths), [['src/a.ts']])
+})
+
+test('executeAgentStrategy expands a wildcard path into the analysed changes only', async () => {
+  const fake = createFakeDeps({ changes: [createChange('src/a.ts'), createChange('src/b.ts')] })
+  const hub = createGitOperationHub(fake.deps)
+  const ws = 'D:\\repo'
+
+  await hub.executeAgentStrategy(
+    createContext(ws),
+    {
+      label: '全部提交',
+      description: '',
+      commits: [{ summary: 'chore: all', paths: ['.'] }],
+    },
+    0,
+  )
+
+  assert.deepEqual(fake.stageRequests.map((request) => request.paths), [['src/a.ts', 'src/b.ts']])
+  assert.deepEqual(fake.commitRequests.map((request) => request.paths), [['src/a.ts', 'src/b.ts']])
+})
+
+test('executeAgentStrategy fails loudly when no strategy path matches a real change', async () => {
+  const fake = createFakeDeps({ changes: [createChange('src/a.ts')] })
+  const hub = createGitOperationHub(fake.deps)
+  const ws = 'D:\\repo'
+
+  await hub.executeAgentStrategy(
+    createContext(ws),
+    {
+      label: '全是幻觉',
+      description: '',
+      commits: [{ summary: 'feat: nothing', paths: ['src/ghost.ts'] }],
+    },
+    0,
+  )
+
+  assert.equal(fake.commitRequests.length, 0)
+  assert.equal(fake.stageRequests.length, 0)
+  assert.equal(hub.getSnapshot(ws).agentPhase.kind, 'error')
 })
 
 test('closing the agent panel mid-analysis stops the stream explicitly', async () => {

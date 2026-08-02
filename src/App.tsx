@@ -212,6 +212,8 @@ import {
   onboardingStorageKey,
   readFileAsBase64,
   resolveStreamedAssistantMessageTarget,
+  resolveTabMoveSideEffects,
+  runWorkspaceClose,
 } from './app-helpers'
 import {
   clearPendingCompactBoundaryMessage,
@@ -314,6 +316,9 @@ const maxResumeSessionLoopAttempts = 2
 const defaultRecoverableStreamRetryLimit = 6
 const maxConcurrentInterruptedSessionResumes = 2
 const interruptedSessionResumeBatchDelayMs = 350
+// 服务端说"终态最长推迟 N 毫秒"之后，本地兜底再多等这一点：覆盖 IPC 往返与
+// 终态事件的渲染排队，免得兜底刚好卡在服务端发 done 的同一毫秒上抢跑。
+const stopSettleFallbackGraceMs = 750
 
 const normalizeWorkspaceHistoryKey = (workspacePath: string) => workspacePath.trim().toLowerCase()
 const findSessionRestoreColumnId = (state: AppState, entry: Pick<SessionHistoryEntry, 'workspacePath'>) =>
@@ -697,8 +702,10 @@ function App() {
   )
   const queueFollowUpDuringStreamRef = useRef(new Map<string, boolean>())
   const pendingAskUserDuringStreamRef = useRef(new Map<string, boolean>())
+  // 存 fire 而不只是 timer id：服务端可能回话说"终态我刻意推迟了，最长 N 毫秒"，
+  // 此时要把这个兜底原地顺延而不是取消，所以必须留着原来的收尾动作重新挂一次。
   const stopCompletionFallbackTimersRef = useRef(
-    new Map<string, number>(),
+    new Map<string, { timer: number; fire: () => void }>(),
   )
   const stoppedRunReasonRef = useRef(new Map<string, StoppedRunReason>())
   const runStartedAtRef = useRef(new Map<string, number>())
@@ -2226,14 +2233,55 @@ function App() {
   )
 
   const clearStopCompletionFallbackTimer = useCallback((cardId: string) => {
-    const fallbackTimer = stopCompletionFallbackTimersRef.current.get(cardId)
-    if (fallbackTimer === undefined) {
+    const fallback = stopCompletionFallbackTimersRef.current.get(cardId)
+    if (fallback === undefined) {
       return
     }
 
-    window.clearTimeout(fallbackTimer)
+    window.clearTimeout(fallback.timer)
     stopCompletionFallbackTimersRef.current.delete(cardId)
   }, [])
+
+  const armStopCompletionFallbackTimer = useCallback(
+    (cardId: string, fire: () => void, delayMs: number) => {
+      const existing = stopCompletionFallbackTimersRef.current.get(cardId)
+      if (existing) {
+        window.clearTimeout(existing.timer)
+      }
+
+      const timer = window.setTimeout(() => {
+        stopCompletionFallbackTimersRef.current.delete(cardId)
+        fire()
+      }, delayMs)
+      stopCompletionFallbackTimersRef.current.set(cardId, { timer, fire })
+    },
+    [],
+  )
+
+  // 症状：服务端为了让 edits 改动卡排在 done 之前，会把终态推迟到收尾 workspace diff
+  //   完成（最长 workspaceDiffHardTimeoutMs）；而这里的本地兜底只等 250ms 就 close 掉
+  //   EventSource 并本地收尾，于是那次推迟白做——改动卡与文件清单照样整个丢失。
+  // 根因：2026-08-02 审计——两端各自持有一个硬编码等待时间，谁也不知道对方存在。
+  //   250ms 是为"服务端永远不回应"设计的（Known Pitfall 224），而"服务端明确说了它
+  //   正在收尾"是一个全新的、合法的第三态，旧代码把它误当成了前者。
+  // 为什么不是简单把 250ms 调大：那会让真正的"服务端失联"场景一律慢下来。让服务端
+  //   在 stop 的返回值里报出它自己的上限，兜底只对这一次顺延，两端不再互相猜。
+  const deferStopCompletionFallbackTimer = useCallback(
+    (cardId: string, settlingWithinMs: number) => {
+      const existing = stopCompletionFallbackTimersRef.current.get(cardId)
+      if (!existing || settlingWithinMs <= 0) {
+        return
+      }
+
+      window.clearTimeout(existing.timer)
+      const timer = window.setTimeout(() => {
+        stopCompletionFallbackTimersRef.current.delete(cardId)
+        existing.fire()
+      }, settlingWithinMs + stopSettleFallbackGraceMs)
+      stopCompletionFallbackTimersRef.current.set(cardId, { timer, fire: existing.fire })
+    },
+    [],
+  )
 
   const closeStream = useCallback(async (cardId: string, stopRemote = false) => {
     const active = activeStreamsRef.current.get(cardId)
@@ -2293,7 +2341,10 @@ function App() {
 
       try {
         stoppedRunReasonRef.current.set(streamId, reason)
-        await stopChat(streamId)
+        const { settlingWithinMs } = await stopChat(streamId)
+        // 服务端刻意推迟了终态（正在等收尾 workspace diff）：把本地兜底顺延到它
+        // 承诺的上限之后，否则兜底会抢在 edits 改动卡之前 close 掉 EventSource。
+        deferStopCompletionFallbackTimer(cardId, settlingWithinMs)
         return true
       } catch (error) {
         stoppedRunReasonRef.current.delete(streamId)
@@ -2343,6 +2394,7 @@ function App() {
     [
       applyActions,
       clearStopCompletionFallbackTimer,
+      deferStopCompletionFallbackTimer,
       flushBufferedActivitiesForCard,
       flushBufferedAssistantDeltaForCard,
       persistAfterActions,
@@ -3826,11 +3878,7 @@ function App() {
           streamEditsActivityCountRef.current.delete(card.id)
           source.close()
           activeStreamsRef.current.delete(card.id)
-          const fallbackTimer = stopCompletionFallbackTimersRef.current.get(card.id)
-          if (fallbackTimer !== undefined) {
-            window.clearTimeout(fallbackTimer)
-            stopCompletionFallbackTimersRef.current.delete(card.id)
-          }
+          clearStopCompletionFallbackTimer(card.id)
           streamRetryCountRef.current.delete(card.id)
           resumeSessionLoopCountRef.current.delete(card.id)
           streamRecoveryTurnRef.current.delete(card.id)
@@ -4009,11 +4057,7 @@ function App() {
           streamEditsActivityCountRef.current.delete(card.id)
           source.close()
           activeStreamsRef.current.delete(card.id)
-          const fallbackTimer = stopCompletionFallbackTimersRef.current.get(card.id)
-          if (fallbackTimer !== undefined) {
-            window.clearTimeout(fallbackTimer)
-            stopCompletionFallbackTimersRef.current.delete(card.id)
-          }
+          clearStopCompletionFallbackTimer(card.id)
           if (card.streamId) {
             stoppedRunReasonRef.current.delete(card.streamId)
           }
@@ -4272,6 +4316,7 @@ function App() {
       applyActions,
       clearRecoveryStatusForNewStream,
       clearRecoveryStatusIfAllowed,
+      clearStopCompletionFallbackTimer,
       dispatchNextQueuedSend,
       enqueueAssistantDelta,
       enqueueActivityMessage,
@@ -4303,7 +4348,7 @@ function App() {
     setQueuedSendSummaries(new Map())
     queueFollowUpDuringStreamRef.current.clear()
     pendingAskUserDuringStreamRef.current.clear()
-    stopCompletionFallbackTimersRef.current.forEach((timer) => window.clearTimeout(timer))
+    stopCompletionFallbackTimersRef.current.forEach(({ timer }) => window.clearTimeout(timer))
     stopCompletionFallbackTimersRef.current.clear()
     wakeTimerCompletionTimersRef.current.forEach((timer) => window.clearTimeout(timer))
     wakeTimerCompletionTimersRef.current.clear()
@@ -5026,18 +5071,20 @@ function App() {
           void requestStopForCard(cardId, 'ask-user-answer')
         })
         if (!stopCompletionFallbackTimersRef.current.has(cardId)) {
-          const timer = window.setTimeout(() => {
-            stopCompletionFallbackTimersRef.current.delete(cardId)
-            const liveCard = getColumn(columnId)?.cards[cardId]
-            if (!liveCard || liveCard.status !== 'streaming') {
-              return
-            }
-            if (pendingAskUserDuringStreamRef.current.get(cardId) === true) {
-              void finalizeStoppedAskUserWithoutServerAck(columnId, cardId)
-              return
-            }
-          }, 250)
-          stopCompletionFallbackTimersRef.current.set(cardId, timer)
+          armStopCompletionFallbackTimer(
+            cardId,
+            () => {
+              const liveCard = getColumn(columnId)?.cards[cardId]
+              if (!liveCard || liveCard.status !== 'streaming') {
+                return
+              }
+              if (pendingAskUserDuringStreamRef.current.get(cardId) === true) {
+                void finalizeStoppedAskUserWithoutServerAck(columnId, cardId)
+                return
+              }
+            },
+            250,
+          )
         }
         return
       }
@@ -5062,19 +5109,21 @@ function App() {
           interruptedStreamId &&
           !stopCompletionFallbackTimersRef.current.has(cardId)
         ) {
-          const timer = window.setTimeout(() => {
-            stopCompletionFallbackTimersRef.current.delete(cardId)
-            const liveCard = getColumn(columnId)?.cards[cardId]
-            if (
-              !liveCard ||
-              liveCard.status !== 'streaming' ||
-              (activeStreamsRef.current.get(cardId)?.streamId ?? liveCard.streamId) !== interruptedStreamId
-            ) {
-              return
-            }
-            finalizeStoppedStreamWithoutServerAck(columnId, cardId, 'user-interrupt')
-          }, 250)
-          stopCompletionFallbackTimersRef.current.set(cardId, timer)
+          armStopCompletionFallbackTimer(
+            cardId,
+            () => {
+              const liveCard = getColumn(columnId)?.cards[cardId]
+              if (
+                !liveCard ||
+                liveCard.status !== 'streaming' ||
+                (activeStreamsRef.current.get(cardId)?.streamId ?? liveCard.streamId) !== interruptedStreamId
+              ) {
+                return
+              }
+              finalizeStoppedStreamWithoutServerAck(columnId, cardId, 'user-interrupt')
+            },
+            250,
+          )
         }
         await requestStopForCard(cardId, 'user-interrupt')
       }
@@ -5924,11 +5973,7 @@ function App() {
       if (liveCard.streamId) {
         activeStreamsRef.current.get(cardId)?.source.close()
         activeStreamsRef.current.delete(cardId)
-        const fallbackTimer = stopCompletionFallbackTimersRef.current.get(cardId)
-        if (fallbackTimer !== undefined) {
-          window.clearTimeout(fallbackTimer)
-          stopCompletionFallbackTimersRef.current.delete(cardId)
-        }
+        clearStopCompletionFallbackTimer(cardId)
         stoppedRunReasonRef.current.set(liveCard.streamId, 'manual')
         await stopChat(liveCard.streamId).catch(() => undefined)
         stoppedRunReasonRef.current.delete(liveCard.streamId)
@@ -5973,7 +6018,13 @@ function App() {
         preferNativeCheckpoint: true,
       }) ?? false
     },
-    [applyAction, forceResetRecoveryStatus, getColumn, persistAfterAction],
+    [
+      applyAction,
+      clearStopCompletionFallbackTimer,
+      forceResetRecoveryStatus,
+      getColumn,
+      persistAfterAction,
+    ],
   )
 
 
@@ -6082,21 +6133,37 @@ function App() {
     }
 
     const workspaceCloseId = createId()
-    getOrderedColumnCards(column).forEach((card) => clearQueuedSends(card.id))
-    await Promise.all(getOrderedColumnCards(column).map((card) => closeStream(card.id, true)))
-    const stoppedColumn = getColumn(columnId)
-    if (stoppedColumn?.workspacePath.trim()) {
-      const compactedColumn = createQueuedPersistenceStateSnapshot({
-        ...appStateRef.current,
-        columns: [stoppedColumn],
-      }).columns[0]!
-      await saveClosedWorkspaceSnapshot({
-        closeId: workspaceCloseId,
-        closedAt: new Date().toISOString(),
-        column: compactedColumn,
-      })
-    }
-    applyAction({ type: 'removeColumn', columnId, workspaceCloseId })
+
+    // 三步顺序（flush → 快照 → 不可逆拆卸）被两条互斥约束夹住，整个编排连同它的决策
+    // 注释都收在 app-helpers 的 runWorkspaceClose 里，由 tests/close-workspace 的顺序
+    // 守卫钉住——这里只负责把副作用接上去。
+    await runWorkspaceClose({
+      cardIds: getOrderedColumnCards(column).map((card) => card.id),
+      flushCardBuffers: (cardId) => {
+        flushBufferedAssistantDeltaForCard(cardId)
+        flushBufferedActivitiesForCard(cardId)
+      },
+      readColumn: () => getColumn(columnId) ?? column,
+      shouldSnapshot: (liveColumn) => Boolean(liveColumn.workspacePath.trim()),
+      saveSnapshot: async (liveColumn) => {
+        // 不在这里做 streaming→idle 的收尾：saveClosedWorkspaceSnapshot 服务端侧已经
+        // 无条件跑 normalizeClosedWorkspaceColumn 做同一件事，客户端再做一遍不仅是重复，
+        // 还会让"streaming 但零消息"的空卡在服务端被误判成未动过的空卡而换掉模型。
+        const compactedColumn = createQueuedPersistenceStateSnapshot({
+          ...appStateRef.current,
+          columns: [liveColumn],
+        }).columns[0]!
+        await saveClosedWorkspaceSnapshot({
+          closeId: workspaceCloseId,
+          closedAt: new Date().toISOString(),
+          column: compactedColumn,
+        })
+      },
+      clearQueuedSends,
+      closeStream: (cardId) => closeStream(cardId, true),
+      removeColumn: () => applyAction({ type: 'removeColumn', columnId, workspaceCloseId }),
+    })
+
     setCloseWorkspaceDialogColumnId(null)
   }
 
@@ -6135,7 +6202,7 @@ function App() {
     setQueuedSendSummaries(new Map())
     queueFollowUpDuringStreamRef.current.clear()
     pendingAskUserDuringStreamRef.current.clear()
-    stopCompletionFallbackTimersRef.current.forEach((timer) => window.clearTimeout(timer))
+    stopCompletionFallbackTimersRef.current.forEach(({ timer }) => window.clearTimeout(timer))
     stopCompletionFallbackTimersRef.current.clear()
     wakeTimerCompletionTimersRef.current.forEach((timer) => window.clearTimeout(timer))
     wakeTimerCompletionTimersRef.current.clear()
@@ -9516,7 +9583,18 @@ function App() {
               })
             }
             onCloseTab={(paneId, tabId) => void closeTab(column.id, paneId, tabId)}
-            onMoveTab={(sourceColumnId, sourcePaneId, tabId, targetColumnId, targetPaneId, index) =>
+            onMoveTab={(sourceColumnId, sourcePaneId, tabId, targetColumnId, targetPaneId, index) => {
+              // 跨工作区搬走的卡片会被 reducer 重绑到新列并清掉 session，旧进程留着只会继续
+              // 改旧工作区、把回复投递到已经不存在的位置，所以这里必须把它停掉，并同时清掉
+              // 它的待发送队列（两者必须成对，见 app-helpers 的决策注释）。
+              const moveSideEffects = resolveTabMoveSideEffects(appStateRef.current, {
+                sourceColumnId,
+                sourcePaneId,
+                tabId,
+                targetColumnId,
+                targetPaneId,
+              })
+
               applyAction({
                 type: 'moveTab',
                 sourceColumnId,
@@ -9526,7 +9604,15 @@ function App() {
                 targetPaneId,
                 index,
               })
-            }
+
+              if (moveSideEffects.clearQueuedSends) {
+                clearQueuedSends(tabId)
+              }
+
+              if (moveSideEffects.stopBackgroundRun) {
+                void closeStream(tabId, true)
+              }
+            }}
             onReorderTab={(paneId, tabId, index) =>
               applyAction({
                 type: 'reorderTab',

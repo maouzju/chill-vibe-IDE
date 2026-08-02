@@ -1,6 +1,6 @@
 ﻿import assert from 'node:assert/strict'
 import { spawn } from 'node:child_process'
-import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises'
+import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { after, test } from 'node:test'
@@ -73,13 +73,13 @@ const createTempRepo = async () => {
   return repoPath
 }
 
-const createTempStateDir = async (workspacePath: string) => {
+const createTempStateDir = async (workspacePath: string, theme: 'light' | 'dark' = 'light') => {
   const dataDir = await mkdtemp(path.join(tmpdir(), 'chill-vibe-electron-state-'))
   tempRoots.push(dataDir)
 
   const state = createDefaultState(workspacePath, 'zh-CN')
   state.settings.language = 'zh-CN'
-  state.settings.theme = 'light'
+  state.settings.theme = theme
   state.settings.fontScale = 1.35
   state.columns = [
     {
@@ -254,6 +254,45 @@ test('Electron runtime honors explicit data dir overrides for a persisted Git to
     assert.match(dialogTitle, new RegExp(expectedRepoName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')))
     assert.deepEqual(changePaths, ['AGENTS.md', 'package.json', 'README.md'])
     assert.ok(commitPanelRect.top >= changeListRect.bottom - 1)
+  } finally {
+    await app.close()
+  }
+})
+
+test('Electron runtime keeps Git discard confirmation beside the right-click action', async () => {
+  await ensureElectronRuntimeBuild()
+
+  const repoPath = await createTempRepo()
+  const dataDir = await createTempStateDir(repoPath, 'dark')
+
+  const app = await electron.launch({
+    args: ['.'],
+    cwd: process.cwd(),
+    env: createElectronRuntimeEnv(dataDir, repoPath),
+  })
+
+  try {
+    const page = await app.firstWindow()
+    await page.waitForSelector('.git-tool-card', { timeout: 20000 })
+    await page.getByRole('button', { name: /\u53e4\u6cd5 Git/ }).click()
+
+    const fullDialog = page.locator('.structured-preview-dialog.is-git-full')
+    await fullDialog.waitFor({ state: 'visible', timeout: 20000 })
+    const targetRow = fullDialog.locator('.git-change-row').filter({ hasText: 'AGENTS.md' })
+    await targetRow.waitFor({ state: 'visible', timeout: 20000 })
+
+    await targetRow.click({ button: 'right' })
+    await page.getByRole('menuitem', { name: '\u56de\u9000\u6539\u52a8', exact: true }).click()
+
+    const contextConfirmation = page.locator('.git-context-menu [role="alertdialog"]')
+    await contextConfirmation.waitFor({ state: 'visible', timeout: 5000 })
+    await contextConfirmation.getByRole('button', { name: /\u786e\u8ba4\u56de\u9000/ }).click()
+
+    await targetRow.waitFor({ state: 'detached', timeout: 10000 })
+    assert.equal(
+      (await readFile(path.join(repoPath, 'AGENTS.md'), 'utf8')).replace(/\r\n/g, '\n'),
+      '# Initial\n',
+    )
   } finally {
     await app.close()
   }

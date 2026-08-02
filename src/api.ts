@@ -750,14 +750,29 @@ export const uploadImageAttachment = async (
   return readDesktop(() => desktopUploadImageAttachment(parsed), imageAttachmentSchema)
 }
 
-export const stopChat = async (streamId: string) => {
+export type StopChatResult = {
+  // > 0 表示服务端刻意推迟了终态（正在等收尾 workspace diff），最长这么久。
+  // 渲染端的"服务端没回应"本地兜底必须据此顺延，否则会抢在终态之前 close 掉
+  // EventSource，把改动卡连同文件清单一起丢掉（Known Pitfall 244）。
+  settlingWithinMs: number
+}
+
+const noDeferredSettle: StopChatResult = { settlingWithinMs: 0 }
+
+export const stopChat = async (streamId: string): Promise<StopChatResult> => {
   const stop = requireDesktopAction(getDesktopApi()?.stopChat)
   try {
-    await stop(streamId)
+    const result = await stop(streamId)
+    // 旧桥（以及被 stub 掉 stopChat 的测试）返回 undefined —— 一律按"没有推迟"处理，
+    // 也就是保持这次改动之前的兜底时序，不会因为缺字段而永远不兜底。
+    const settlingWithinMs = (result as StopChatResult | undefined)?.settlingWithinMs
+    return Number.isFinite(settlingWithinMs) && (settlingWithinMs as number) > 0
+      ? { settlingWithinMs: settlingWithinMs as number }
+      : noDeferredSettle
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
     if (message.includes('Stream not found') || message.includes('already finished')) {
-      return
+      return noDeferredSettle
     }
 
     throw error

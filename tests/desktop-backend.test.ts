@@ -23,7 +23,7 @@ test('desktop backend delays manager construction until the matching feature is 
           throw new Error('not used in this test')
         },
         stop() {
-          return false
+          return { stopped: false, settlingWithinMs: 0 }
         },
         subscribe() {
           return null
@@ -126,7 +126,7 @@ test('desktop backend treats stopping an already-settled stream as idempotent', 
       },
       stop(streamId: string) {
         stoppedStreamIds.push(streamId)
-        return false
+        return { stopped: false, settlingWithinMs: 0 }
       },
       subscribe() {
         return null

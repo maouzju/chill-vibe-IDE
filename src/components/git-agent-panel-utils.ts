@@ -96,12 +96,83 @@ ${changesDescription}${patchSection}`
   return instruction.length > MAX_PROMPT_CHARS ? instruction.slice(0, MAX_PROMPT_CHARS) : instruction
 }
 
-const isCommitStrategy = (item: unknown): item is CommitStrategy =>
-  typeof item === 'object' &&
-  item !== null &&
-  typeof (item as Record<string, unknown>).label === 'string' &&
-  typeof (item as Record<string, unknown>).description === 'string' &&
-  Array.isArray((item as Record<string, unknown>).commits)
+const isCommitEntry = (item: unknown): item is { summary: string; paths: string[] } => {
+  if (typeof item !== 'object' || item === null) return false
+  const entry = item as Record<string, unknown>
+  return (
+    typeof entry.summary === 'string' &&
+    Array.isArray(entry.paths) &&
+    entry.paths.every((path) => typeof path === 'string')
+  )
+}
+
+// 症状：AI 只要有一条 commit 结构不合法（截断成 {"summary":"feat: b"} 缺 paths、或 paths 写成字符串），
+//   整条策略就被丢掉；它若是唯一一条，面板退化成一坨 500 字原始 JSON、零个可执行分组。
+// 根因：2026-08-02 复核发现旧版是 commits.every(isCommitEntry) 的策略级全有全无判定，而这道闸门换不到任何保护 ——
+//   isCommitEntry 根本不看 "." 这类通配 token，真正拦住越权提交的是执行期与真实改动求交的 scopeStrategyCommitPaths。
+// 被否决的替代方案：
+//   1) 保留 every：代价是整条策略连坐，收益为零，已实测截断样本会走到这条路。
+//   2) 保留过滤后 commits 为空的策略、让下游 executedCommits === 0 报错兜底：GitAgentStrategyList 对空 commits
+//      的渲染跟正常策略一模一样，用户点到的是一张必然失败的死卡片，而且那句报错说的是"路径都不在当前改动中"，
+//      对截断场景是错误归因。宁可整条丢掉退回原文，让用户看出这次是模型输出残缺。
+const sanitizeCommitStrategy = (item: unknown): CommitStrategy | null => {
+  if (typeof item !== 'object' || item === null) return null
+  const entry = item as Record<string, unknown>
+  if (typeof entry.label !== 'string' || typeof entry.description !== 'string') return null
+  if (!Array.isArray(entry.commits)) return null
+
+  const commits = entry.commits.filter(isCommitEntry)
+  if (commits.length === 0) return null
+
+  return { label: entry.label, description: entry.description, commits }
+}
+
+const collectCommitStrategies = (items: readonly unknown[]): CommitStrategy[] =>
+  items
+    .map(sanitizeCommitStrategy)
+    .filter((strategy): strategy is CommitStrategy => strategy !== null)
+
+const normalizeComparablePath = (value: string): string =>
+  value.trim().replace(/\\/g, '/').replace(/^\.\//, '').replace(/\/+$/, '')
+
+/** 模型偷懒时会用通配代替逐个列举；这些 token 展开成"本次分析范围内的全部改动"，而不是交给 git 扫整棵树。 */
+const wholeTreePathTokens = new Set(['', '.', '*', '**'])
+
+/**
+ * 把某个策略提交声明的路径收敛到真实改动集合内。
+ * 返回值使用 allowedPaths 里的规范写法，顺序按模型给的顺序去重。
+ */
+export const scopeStrategyCommitPaths = (
+  requestedPaths: readonly unknown[],
+  allowedPaths: readonly string[],
+): string[] => {
+  const allowedByKey = new Map<string, string>()
+  for (const allowed of allowedPaths) {
+    const key = normalizeComparablePath(allowed)
+    if (key && !allowedByKey.has(key)) allowedByKey.set(key, allowed)
+  }
+
+  const picked: string[] = []
+  const seen = new Set<string>()
+  const pick = (canonical: string) => {
+    if (seen.has(canonical)) return
+    seen.add(canonical)
+    picked.push(canonical)
+  }
+
+  for (const requested of requestedPaths) {
+    if (typeof requested !== 'string') continue
+    const key = normalizeComparablePath(requested)
+    if (wholeTreePathTokens.has(key)) {
+      for (const canonical of allowedByKey.values()) pick(canonical)
+      continue
+    }
+    const canonical = allowedByKey.get(key)
+    if (canonical) pick(canonical)
+  }
+
+  return picked
+}
 
 /**
  * Attempt to repair truncated JSON by closing unclosed brackets/braces/strings.
@@ -134,7 +205,7 @@ const repairTruncatedJson = (raw: string): unknown | null => {
 
 const extractStrategies = (parsed: Record<string, unknown>): CommitStrategy[] => {
   if (!Array.isArray(parsed.strategies)) return []
-  return (parsed.strategies as unknown[]).filter(isCommitStrategy)
+  return collectCommitStrategies(parsed.strategies as unknown[])
 }
 
 export const parseAnalysisResult = (content: string): AnalysisResult | null => {
@@ -155,7 +226,7 @@ export const parseAnalysisResult = (content: string): AnalysisResult | null => {
     const arrayMatch = cleaned.match(/\[[\s\S]*\]/)
     if (arrayMatch) {
       const arr = JSON.parse(arrayMatch[0]) as unknown[]
-      const strategies = arr.filter(isCommitStrategy)
+      const strategies = collectCommitStrategies(arr)
       if (strategies.length > 0) return { summary: '', strategies }
     }
 

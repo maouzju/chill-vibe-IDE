@@ -72,6 +72,48 @@ const gitChangeWindowOverscan = 6
 const defaultCommitSummary = (language: AppLanguage) =>
   language === 'zh-CN' ? '提交信息' : 'Commit message'
 
+export type CommitDiffSelectionEffects = {
+  /** 请求代次；用组件的 useRef 传进来，测试里用一个普通 { current } 对象即可。 */
+  requestRef: { current: number }
+  fetchDiff: (hash: string) => Promise<{ patch: string }>
+  setSelectedHash: (hash: string) => void
+  setPatch: (patch: string | null) => void
+  setLoading: (loading: boolean) => void
+}
+
+// 症状：快速点两个提交时，先发出的 A 若后返回，它的 diff 会盖在已经选中的 B 下面，
+// 标题显示 B、正文却是 A；A 的 finally 还会提前关掉 loading，露出上一份内容。
+// 根因：这是普通 async 事件处理器，不是 effect，没有任何代次校验，卸载后也照样 setState。
+// 被否决的替代方案：给整个对话框套 cancelled 闭包（initializeDialog 那种）——
+// 那是"卸载即作废"，解决不了"同一次挂载内两个请求乱序"这个真实场景。
+// 之所以抽成模块级函数而不是留在组件里：本仓库只有 renderToStaticMarkup，没有可驱动
+// 交互的组件测试设施，守卫必须能被 tests/git-utils.test.ts 真正跑乱序才算有回归防线。
+// 本轮只允许改这个文件，所以先就地导出；理想归宿是搬进 src/components/git-utils.ts，
+// 那时这行 disable 要一并删掉。
+// eslint-disable-next-line react-refresh/only-export-components
+export const runCommitDiffSelection = async (hash: string, effects: CommitDiffSelectionEffects) => {
+  const requestId = effects.requestRef.current + 1
+  effects.requestRef.current = requestId
+
+  effects.setSelectedHash(hash)
+  effects.setPatch(null)
+  effects.setLoading(true)
+  try {
+    const result = await effects.fetchDiff(hash)
+    if (effects.requestRef.current !== requestId) return
+    startTransition(() => {
+      effects.setPatch(result.patch)
+    })
+  } catch {
+    if (effects.requestRef.current !== requestId) return
+    effects.setPatch(null)
+  } finally {
+    if (effects.requestRef.current === requestId) {
+      effects.setLoading(false)
+    }
+  }
+}
+
 const splitGitPath = (value: string) => {
   const normalized = value.replace(/\\/g, '/')
   const segments = normalized.split('/').filter(Boolean)
@@ -139,6 +181,7 @@ export const GitFullDialog = ({
   const [commitPending, setCommitPending] = useState(false)
   const [discardTargetPaths, setDiscardTargetPaths] = useState<string[] | null>(null)
   const [discardPending, setDiscardPending] = useState(false)
+  const [contextDiscardConfirm, setContextDiscardConfirm] = useState(false)
   const [selection, setSelection] = useState<GitChangeSelection>(emptyGitSelection)
   const [contextMenuPosition, setContextMenuPosition] = useState<{ x: number; y: number } | null>(null)
   const contextMenuRef = useRef<HTMLDivElement | null>(null)
@@ -354,6 +397,8 @@ export const GitFullDialog = ({
   const handleRowClick = useCallback(
     (path: string, event: React.MouseEvent) => {
       setContextMenuPosition(null)
+      setContextDiscardConfirm(false)
+      setDiscardTargetPaths(null)
       setSelection((current) =>
         applyGitSelectionClick(current, orderedVisiblePaths, path, {
           ctrlKey: event.ctrlKey || event.metaKey,
@@ -366,6 +411,8 @@ export const GitFullDialog = ({
 
   const handleRowContextMenu = useCallback((path: string, event: React.MouseEvent) => {
     event.preventDefault()
+    setDiscardTargetPaths(null)
+    setContextDiscardConfirm(false)
     setSelection((current) => resolveGitContextTarget(current, path))
     setContextMenuPosition({ x: event.clientX, y: event.clientY })
   }, [])
@@ -375,7 +422,13 @@ export const GitFullDialog = ({
       return
     }
 
-    const closeMenu = () => setContextMenuPosition(null)
+    const closeMenu = () => {
+      setContextMenuPosition(null)
+      if (contextDiscardConfirm) {
+        setContextDiscardConfirm(false)
+        setDiscardTargetPaths(null)
+      }
+    }
     const handlePointerDown = (event: PointerEvent) => {
       const menu = contextMenuRef.current
       if (menu && event.target instanceof Node && menu.contains(event.target)) {
@@ -399,7 +452,7 @@ export const GitFullDialog = ({
       window.removeEventListener('keydown', handleKeyDown, true)
       window.removeEventListener('resize', closeMenu)
     }
-  }, [contextMenuPosition])
+  }, [contextDiscardConfirm, contextMenuPosition])
 
   useEffect(() => {
     if (activeTab !== 'changes') {
@@ -469,20 +522,16 @@ export const GitFullDialog = ({
     }
   }
 
+  const commitDiffRequestRef = useRef(0)
+
   const handleSelectCommit = async (commit: GitCommit) => {
-    setSelectedCommitHash(commit.hash)
-    setCommitDiffPatch(null)
-    setCommitDiffLoading(true)
-    try {
-      const result = await fetchCommitDiff({ workspacePath, hash: commit.hash })
-      startTransition(() => {
-        setCommitDiffPatch(result.patch)
-      })
-    } catch {
-      setCommitDiffPatch(null)
-    } finally {
-      setCommitDiffLoading(false)
-    }
+    await runCommitDiffSelection(commit.hash, {
+      requestRef: commitDiffRequestRef,
+      fetchDiff: (hash) => fetchCommitDiff({ workspacePath, hash }),
+      setSelectedHash: setSelectedCommitHash,
+      setPatch: setCommitDiffPatch,
+      setLoading: setCommitDiffLoading,
+    })
   }
 
   const stagedCount = mode === 'incremental' ? scopedStagedPaths.length : gitStatus.summary.staged
@@ -647,6 +696,8 @@ export const GitFullDialog = ({
       const hydratedStatus = mergeGitStatusPreservingPreviews(gitStatus, nextStatus)
       startTransition(() => {
         setDiscardTargetPaths(null)
+        setContextDiscardConfirm(false)
+        setContextMenuPosition(null)
         propagateStatus(hydratedStatus)
         setNotice({
           tone: 'success',
@@ -655,6 +706,8 @@ export const GitFullDialog = ({
       })
     } catch (error) {
       setDiscardTargetPaths(null)
+      setContextDiscardConfirm(false)
+      setContextMenuPosition(null)
       await refreshStatus({
         tone: 'error',
         message: errorMessage(error, text.discardError),
@@ -662,6 +715,23 @@ export const GitFullDialog = ({
     } finally {
       setDiscardPending(false)
     }
+  }
+
+  const cancelDiscardConfirm = () => {
+    setDiscardTargetPaths(null)
+    setContextDiscardConfirm(false)
+    setContextMenuPosition(null)
+  }
+
+  const requestDiscardConfirm = (paths: string[]) => {
+    setContextMenuPosition(null)
+    setContextDiscardConfirm(false)
+    setDiscardTargetPaths(paths)
+  }
+
+  const requestContextDiscardConfirm = () => {
+    setContextDiscardConfirm(true)
+    setDiscardTargetPaths(selectedDiscardablePaths)
   }
 
   const handlePull = async () => {
@@ -849,7 +919,7 @@ export const GitFullDialog = ({
           </div>
 
           {/* ── Discard confirm ─────────────────────────────────────────── */}
-          {discardTargetPaths ? (
+          {discardTargetPaths && !contextDiscardConfirm ? (
             <div
               className="git-discard-confirm"
               role="alertdialog"
@@ -864,7 +934,7 @@ export const GitFullDialog = ({
                   type="button"
                   className="git-tool-button"
                   disabled={discardPending}
-                  onClick={() => setDiscardTargetPaths(null)}
+                  onClick={cancelDiscardConfirm}
                 >
                   {text.discardCancel}
                 </button>
@@ -961,7 +1031,7 @@ export const GitFullDialog = ({
                         type="button"
                         className="git-discard-all-button"
                         disabled={isBusy || discardablePaths.length === 0}
-                        onClick={() => setDiscardTargetPaths(discardablePaths)}
+                        onClick={() => requestDiscardConfirm(discardablePaths)}
                       >
                         {text.discardAll}
                       </button>
@@ -980,6 +1050,10 @@ export const GitFullDialog = ({
                     onScroll={() => {
                       syncChangeListMetrics()
                       setContextMenuPosition((current) => (current === null ? current : null))
+                      if (contextDiscardConfirm) {
+                        setContextDiscardConfirm(false)
+                        setDiscardTargetPaths(null)
+                      }
                     }}
                   >
                     {gitStatus.clean ? (
@@ -1201,7 +1275,7 @@ export const GitFullDialog = ({
                       type="button"
                       className="git-tool-button is-danger"
                       disabled={isBusy || selectedDiscardablePaths.length === 0}
-                      onClick={() => setDiscardTargetPaths(selectedDiscardablePaths)}
+                      onClick={() => requestDiscardConfirm(selectedDiscardablePaths)}
                     >
                       {text.discardSelected(selectedDiscardablePaths.length || selection.paths.length)}
                     </button>
@@ -1227,7 +1301,7 @@ export const GitFullDialog = ({
                           type="button"
                           className="git-tool-button is-danger"
                           disabled={isBusy || selectedChange.conflicted}
-                          onClick={() => setDiscardTargetPaths([selectedChange.path])}
+                          onClick={() => requestDiscardConfirm([selectedChange.path])}
                         >
                           {text.discardChanges}
                         </button>
@@ -1273,34 +1347,65 @@ export const GitFullDialog = ({
             </div>
           </div>
         </div>
-      </div>
 
-      {contextMenuPosition ? (
-        <div
-          ref={contextMenuRef}
-          className="git-context-menu"
-          role="menu"
-          aria-label={text.discardSelected(selection.paths.length)}
-          style={{
-            left: `${Math.max(8, Math.min(contextMenuPosition.x, window.innerWidth - 248))}px`,
-            top: `${Math.max(8, Math.min(contextMenuPosition.y, window.innerHeight - 64))}px`,
-          }}
-          onContextMenu={(event) => event.preventDefault()}
-        >
-          <button
-            type="button"
-            role="menuitem"
-            className="git-context-menu-item is-danger"
-            disabled={isBusy || selectedDiscardablePaths.length === 0}
-            onClick={() => {
-              setContextMenuPosition(null)
-              setDiscardTargetPaths(selectedDiscardablePaths)
+        {contextMenuPosition ? (
+          <div
+            ref={contextMenuRef}
+            className="git-context-menu"
+            role="menu"
+            aria-label={text.discardSelected(selection.paths.length)}
+            style={{
+              left: `${Math.max(8, Math.min(contextMenuPosition.x, window.innerWidth - 248))}px`,
+              top: `${Math.max(8, Math.min(contextMenuPosition.y, window.innerHeight - 64))}px`,
             }}
+            onContextMenu={(event) => event.preventDefault()}
           >
-            {text.discardSelected(selectedDiscardablePaths.length || selection.paths.length)}
-          </button>
-        </div>
-      ) : null}
+            {/* 症状：右键回退看似点了没反应，确认后文件仍留在列表里。
+                根因：2026-08-02 实测确认反馈远离菜单，且菜单若挂在 dialog 兄弟节点上，鼠标确认会丢失。
+                被否决：继续复用顶部确认条或外置 portal；运行时测试守住 dialog 内原位确认与实际回退。 */}
+            {contextDiscardConfirm && discardTargetPaths ? (
+              <div
+                className="git-context-menu-confirm"
+                role="alertdialog"
+                aria-label={text.discardConfirmTitle(discardTargetPaths.length)}
+              >
+                <div className="git-discard-confirm-copy">
+                  <strong>{text.discardConfirmTitle(discardTargetPaths.length)}</strong>
+                  <p>{text.discardConfirmCopy}</p>
+                </div>
+                <div className="git-discard-confirm-actions">
+                  <button
+                    type="button"
+                    className="git-tool-button"
+                    disabled={discardPending}
+                    onClick={cancelDiscardConfirm}
+                  >
+                    {text.discardCancel}
+                  </button>
+                  <button
+                    type="button"
+                    className="git-tool-button is-danger"
+                    disabled={discardPending}
+                    onClick={() => void handleDiscardConfirm()}
+                  >
+                    {text.discardConfirm}
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <button
+                type="button"
+                role="menuitem"
+                className="git-context-menu-item is-danger"
+                disabled={isBusy || selectedDiscardablePaths.length === 0}
+                onClick={requestContextDiscardConfirm}
+              >
+                {text.discardSelected(selectedDiscardablePaths.length || selection.paths.length)}
+              </button>
+            )}
+          </div>
+        ) : null}
+      </div>
     </div>
   )
 

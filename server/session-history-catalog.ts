@@ -26,6 +26,7 @@ const catalogTaskId = 'session-history-catalog'
 const catalogTaskVersion = 3
 const maxResults = 100
 const maxCatalogEntries = 20_000
+const maxSkippedRecheckPerSlice = 64
 
 const defaultLimits = {
   maxFilesPerSlice: 64,
@@ -55,11 +56,37 @@ const catalogSummarySchema = z.object({
   entry: sessionHistoryEntrySchema,
 })
 
+// 症状：一个既超限又被频繁重写的 sidecar 让 catalog 切片在每一次 /api/session-history 前都空转重跑
+//   （2 次 readdir + 最多 128 次 stat + 2 次原子 JSON 重写），phase 永远出不了 degraded。
+// 根因：把可变的 size/mtime 当「已修好」信号，使「文件被重写」与「文件真被修好」不可区分；而
+//   server/state-store.ts 每次保存都无条件重写已存在的 sidecar，legacy archive 又可达几十 MB
+//   （2026-08-02 复现：4 MiB 上限外的 sidecar 每 tick 都重新进 pendingNames 再被 skip）。
+// 为什么不改成「同一 stamp 只重试 N 次」：那还是拿字节指纹当信号，只是把死循环换成慢泄漏；
+//   按跳过原因分流才能让「体积」这种单调条件用体积本身判定，同时保住 parse-error 的重试语义。
+const catalogSkipReasonSchema = z.enum(['oversize', 'unreadable', 'parse-error', 'capacity'])
+
+const catalogSkipStampSchema = z.object({
+  name: z.string().min(1),
+  size: z.number(),
+  mtimeMs: z.number(),
+  // 沿用 skippedFileStamps 自己的向后兼容思路：新增可缺省字段而不是换形状。旧 catalog.json（无
+  // reason、甚至无 skippedFileStamps）照常解析，不触发整表重建；缺省成 parse-error 保留旧的
+  // 「戳变了就重试一次」语义，超限文件最多多跑一轮就会带上 oversize 落定。
+  reason: catalogSkipReasonSchema.default('parse-error'),
+})
+
+// 症状：一个 sidecar 首次索引失败后即使内容被修好也永不重试，phase 永远卡 degraded。
+// 根因：全量指纹只含文件名集合，坏文件又被写进 knownFileNames 排除出待办队列（2026-08-02 实测：修好文件后 shouldRun 恒 false）。
+// 为什么不把 size/mtime 塞进 sourceFingerprint：那条路径每次 GET /api/session-history 都跑，会给全部 N 个 sidecar 新增 N 次 stat；
+// 改为只给「已跳过」这份小集合存字节指纹（stat 在切片里本来就做了，零额外 syscall），下一轮只重新 stat 它。
 const catalogManifestSchema = z.object({
   version: z.literal(3),
   sourceFingerprint: z.string(),
   knownFileNames: z.array(z.string().min(1)),
   skippedFileNames: z.array(z.string().min(1)).default([]),
+  // 新增字段而不是把 skippedFileNames 改成对象数组：旧版 catalog.json 照常解析（不触发整表重建），
+  // 且旧版代码读到新 manifest 时 zod 只会剥掉这个未知键，降级安装同样不会重建。
+  skippedFileStamps: z.array(catalogSkipStampSchema).default([]),
   segments: z.array(z.string().min(1)),
 })
 
@@ -70,12 +97,16 @@ const catalogSegmentSchema = z.object({
 
 type SessionHistoryCatalogManifest = z.infer<typeof catalogManifestSchema>
 type SessionHistoryCatalogSegment = z.infer<typeof catalogSegmentSchema>
+type CatalogSkipStamp = z.infer<typeof catalogSkipStampSchema>
+type CatalogSkipReason = z.infer<typeof catalogSkipReasonSchema>
+type ResolvedCatalogLimits = typeof defaultLimits
 
 const emptyCatalogManifest = (): SessionHistoryCatalogManifest => ({
   version: 3,
   sourceFingerprint: '',
   knownFileNames: [],
   skippedFileNames: [],
+  skippedFileStamps: [],
   segments: [],
 })
 
@@ -110,6 +141,82 @@ const listSidecarNames = async (dataDir: string) => {
 }
 
 const fingerprintNames = (names: string[]) => createHash('sha256').update(names.join('\0')).digest('hex')
+
+// A sidecar that cannot be stat'ed still needs a stable stamp, otherwise it would look "changed"
+// on every slice and turn each history request into a manifest rewrite.
+const unreadableSkipStamp = { size: -1, mtimeMs: -1 }
+
+const readSkipStamp = async (directory: string, name: string) => {
+  try {
+    const stats = await stat(path.join(directory, name))
+    return { size: stats.size, mtimeMs: stats.mtimeMs }
+  } catch {
+    return unreadableSkipStamp
+  }
+}
+
+// 每个 skip 原因用它自己的「消失条件」判定，而不是统一看字节指纹是否变化。
+const isSkipRepaired = (
+  previous: CatalogSkipStamp | undefined,
+  current: { size: number; mtimeMs: number },
+  limits: ResolvedCatalogLimits,
+) => {
+  // A legacy manifest has no stamps at all, so the first new run retries those names once and
+  // records their stamp; a still-broken file then settles back into "unchanged" instead of looping.
+  if (!previous) return true
+  // 体积超限只由体积决定：重写/继续增长都不算修好，只有真的降到预算以内才重试。stat 失败
+  // （size 为 -1）刻意不算修好，否则一个间歇性锁住的文件会在 oversize/unreadable 之间来回抖。
+  if (previous.reason === 'oversize') {
+    return current.size >= 0 && current.size <= limits.maxFileBytes && current.size <= limits.maxBytesPerSlice
+  }
+  // 目录已经装满 maxCatalogEntries，重写单个文件不会腾出位置；knownFileNames 只增不减，所以这
+  // 条只能靠 catalogTaskVersion 提升后的整表重建来解，不该每 tick 重试。
+  if (previous.reason === 'capacity') return false
+  return previous.size !== current.size || previous.mtimeMs !== current.mtimeMs
+}
+
+// 轮转游标刻意只存在内存里：写进 manifest 就意味着每个维护 tick 都要重写 catalog.json，而这一轮
+// 修的就是这种写放大。进程内连续几次 tick 就能扫完整个 skip 集合，重启后从头开始也无损。
+const skippedRecheckCursors = new Map<string, string>()
+
+// Only previously skipped sidecars are re-stat'ed, never the full directory. The window is capped so a
+// pathological catalog (e.g. everything past `maxCatalogEntries`) cannot turn one list request into
+// thousands of syscalls; a skip set larger than the cap is swept in rotating windows across
+// consecutive slices instead of rechecking the same fixed prefix forever.
+const findRepairedSkippedNames = async (
+  dataDir: string,
+  manifest: SessionHistoryCatalogManifest,
+  currentNames: Set<string>,
+  limits: ResolvedCatalogLimits,
+) => {
+  const candidates = manifest.skippedFileNames
+    .filter((name) => currentNames.has(name))
+    .sort((left, right) => left.localeCompare(right))
+  if (candidates.length === 0) return []
+
+  const stamps = new Map(manifest.skippedFileStamps.map((stamp) => [stamp.name, stamp]))
+  const cursorKey = normalizePath(dataDir)
+  const cursor = skippedRecheckCursors.get(cursorKey) ?? ''
+  const startIndex = Math.max(0, candidates.findIndex((name) => name.localeCompare(cursor) > 0))
+  const windowSize = Math.min(candidates.length, maxSkippedRecheckPerSlice)
+  const directory = getHistoryDirectory(dataDir)
+  const repaired: string[] = []
+  let lastChecked = ''
+
+  for (let offset = 0; offset < windowSize; offset += 1) {
+    const name = candidates[(startIndex + offset) % candidates.length]
+    if (!name) continue
+    lastChecked = name
+    if (isSkipRepaired(stamps.get(name), await readSkipStamp(directory, name), limits)) {
+      repaired.push(name)
+    }
+  }
+
+  // A window that already covered every candidate restarts from the beginning, so the common
+  // small-skip-set case keeps a stable, cursor-independent order.
+  skippedRecheckCursors.set(cursorKey, windowSize < candidates.length ? lastChecked : '')
+  return repaired
+}
 
 const readHiddenCatalog = async (directory: string): Promise<HiddenCatalog> => {
   try {
@@ -276,6 +383,25 @@ const createSessionHistoryCatalogTask = ({
   onSlice: (processed: number) => void
 }): DataMaintenanceTask => {
   const safeLimits = resolveLimits(limits)
+  // `shouldRun` 和 `runSlice` 在同一个切片里各读一次 manifest，原来会把同一批文件 stat 两遍
+  // （最多 128 次串行 syscall）。memo 挂在这个任务实例的闭包上，实例只服务一次切片，跨 tick 不会
+  // 复用，所以不存在缓存过期问题；键不匹配就照常重算。
+  let repairedMemo: { key: string; names: string[] } | undefined
+  const repairedSkippedNames = async (
+    manifest: SessionHistoryCatalogManifest,
+    currentNames: Set<string>,
+    sourceFingerprint: string,
+  ) => {
+    const key = [
+      sourceFingerprint,
+      String(manifest.skippedFileStamps.length),
+      ...manifest.skippedFileNames,
+    ].join('\0')
+    if (repairedMemo?.key === key) return repairedMemo.names
+    const names = await findRepairedSkippedNames(dataDir, manifest, currentNames, safeLimits)
+    repairedMemo = { key, names }
+    return names
+  }
 
   return {
     id: catalogTaskId,
@@ -283,19 +409,29 @@ const createSessionHistoryCatalogTask = ({
     async shouldRun({ previous }) {
       const names = await listSidecarNames(dataDir)
       const manifest = await readCatalogManifest(dataDir)
-      const changed = manifest.sourceFingerprint !== fingerprintNames(names)
-      return !previous || previous.phase === 'running' || changed
+      const sourceFingerprint = fingerprintNames(names)
+      const changed = manifest.sourceFingerprint !== sourceFingerprint
+      if (!previous || previous.phase === 'running' || changed) return true
+      // Healthy catalogs have no skipped names, so the common path still ends here without extra IO.
+      return (await repairedSkippedNames(manifest, new Set(names), sourceFingerprint)).length > 0
     },
     async runSlice({ previous }) {
       const names = await listSidecarNames(dataDir)
+      const currentNames = new Set(names)
       const sourceFingerprint = fingerprintNames(names)
       const manifest = await readCatalogManifest(dataDir)
       const knownFileNames = new Set(manifest.knownFileNames)
-      const pendingNames = names.filter((name) => !knownFileNames.has(name))
+      const repairedNames = new Set(await repairedSkippedNames(manifest, currentNames, sourceFingerprint))
+      const pendingNames = names.filter((name) => !knownFileNames.has(name) || repairedNames.has(name))
       const newPass = previous?.phase !== 'running'
       const summaries: Array<z.infer<typeof catalogSummarySchema>> = []
       const processedNames: string[] = []
       const skippedNames: string[] = []
+      const skipStamps = new Map<string, CatalogSkipStamp>()
+      const recordSkip = (name: string, stamp: { size: number; mtimeMs: number }, reason: CatalogSkipReason) => {
+        skippedNames.push(name)
+        skipStamps.set(name, { name, size: stamp.size, mtimeMs: stamp.mtimeMs, reason })
+      }
       let processed = 0
       let skipped = 0
       let bytes = 0
@@ -311,14 +447,17 @@ const createSessionHistoryCatalogTask = ({
         if (!name) continue
         const filePath = path.join(getHistoryDirectory(dataDir), name)
         let size = 0
+        let stamp = unreadableSkipStamp
         try {
-          size = (await stat(filePath)).size
+          const stats = await stat(filePath)
+          size = stats.size
+          stamp = { size: stats.size, mtimeMs: stats.mtimeMs }
         } catch {
           processed += 1
           skipped += 1
           cursor = name
           processedNames.push(name)
-          skippedNames.push(name)
+          recordSkip(name, unreadableSkipStamp, 'unreadable')
           continue
         }
 
@@ -334,7 +473,7 @@ const createSessionHistoryCatalogTask = ({
           skipped += 1
           cursor = name
           processedNames.push(name)
-          skippedNames.push(name)
+          recordSkip(name, stamp, 'oversize')
           continue
         }
 
@@ -342,13 +481,13 @@ const createSessionHistoryCatalogTask = ({
           const summary = parseCatalogSource(await readFile(filePath, 'utf8'), name)
           if (manifest.knownFileNames.length + processed >= maxCatalogEntries) {
             skipped += 1
-            skippedNames.push(name)
+            recordSkip(name, stamp, 'capacity')
           } else {
             summaries.push(summary)
           }
         } catch {
           skipped += 1
-          skippedNames.push(name)
+          recordSkip(name, stamp, 'parse-error')
         }
         bytes += size
         processed += 1
@@ -358,11 +497,19 @@ const createSessionHistoryCatalogTask = ({
 
       onSlice(processed)
       const reachedEnd = index >= pendingNames.length
-      const currentNames = new Set(names)
+      const skippedThisSlice = new Set(skippedNames)
+      // A retried sidecar that finally parses has to leave the skip list, or the catalog would stay
+      // degraded forever even though its entry is already back in the index.
+      const reindexedNames = new Set(processedNames.filter((name) => !skippedThisSlice.has(name)))
       const persistentSkippedNames = [...new Set([
-        ...manifest.skippedFileNames.filter((name) => currentNames.has(name)),
+        ...manifest.skippedFileNames.filter((name) => currentNames.has(name) && !reindexedNames.has(name)),
         ...skippedNames,
       ])]
+      const previousSkipStamps = new Map(manifest.skippedFileStamps.map((entry) => [entry.name, entry]))
+      const persistentSkippedStamps = persistentSkippedNames.flatMap((name) => {
+        const stamp = skipStamps.get(name) ?? previousSkipStamps.get(name)
+        return stamp ? [stamp] : []
+      })
       const phase: DataMaintenancePhase = reachedEnd
         ? persistentSkippedNames.length > 0 ? 'degraded' : 'complete'
         : 'running'
@@ -382,8 +529,10 @@ const createSessionHistoryCatalogTask = ({
       await writeCatalogManifest(dataDir, {
         version: 3,
         sourceFingerprint,
-        knownFileNames: [...manifest.knownFileNames, ...processedNames],
+        // Retried names are already known, so the union keeps the list from growing on every repair.
+        knownFileNames: [...new Set([...manifest.knownFileNames, ...processedNames])],
         skippedFileNames: persistentSkippedNames,
+        skippedFileStamps: persistentSkippedStamps,
         segments: segmentName ? [...manifest.segments, segmentName] : manifest.segments,
       }, fileOps)
 
@@ -400,6 +549,8 @@ const createSessionHistoryCatalogTask = ({
 }
 
 export const resetSessionHistoryCatalogCacheForTests = () => {
+  // 刻意不清 `skippedRecheckCursors`：它按 dataDir 分键，测试各自用独立临时目录不会串味，而清掉
+  // 会让「连续切片轮转扫完整个 skip 集合」这条覆盖在测试里退化成永远重扫同一个前缀。
   catalogCache.clear()
 }
 

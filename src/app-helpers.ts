@@ -5,11 +5,13 @@ import type {
   BoardColumn,
   ChatCard,
   ChatMessage,
+  LayoutNode,
   Provider,
   StreamActivity,
   StreamAssistantMessage,
   StreamCompletion,
 } from '../shared/schema'
+import { findPaneInLayout } from './state'
 import { getLocaleText } from '../shared/i18n'
 import { BRAINSTORM_TOOL_MODEL, GIT_TOOL_MODEL, STICKYNOTE_TOOL_MODEL } from '../shared/models'
 import type { ChatStreamSource } from './api'
@@ -351,6 +353,111 @@ export const createLogMessages = (provider: Provider, message: string) => {
       provider,
     }),
   ]
+}
+
+// 症状：把一张正在跑的卡片拖到另一个工作区后，reducer 会 rebind 卡片（清 session、状态置 idle），
+// 但后台进程仍在旧工作区里改文件，之后的回复也只会投递给旧列，用户在新位置什么都看不到。
+// 根因：onMoveTab 只是一句 applyAction，跨列移动从来没有停止或迁移后台流（closeTab 一直是有停的）。
+// 被否决的替代方案：直接禁止拖动 streaming 标签 —— 那会把 pitfall 176 的 draggable 雷区重新引进来，
+// 而且跨列移动本来就必须换工作区重开会话，停掉旧进程才是自洽语义。
+// 这里必须先复算一遍 reducer 的接受条件：pane id 过期时 moveTab 整体回退（见 state.ts 的双端校验），
+// 那种情况下卡片没搬走，绝不能把用户还在跑的 agent 杀掉。
+export const willMoveTabAcrossColumns = (
+  state: {
+    columns: readonly {
+      id: string
+      layout: LayoutNode
+      cards: Record<string, unknown>
+    }[]
+  },
+  move: {
+    sourceColumnId: string
+    sourcePaneId: string
+    tabId: string
+    targetColumnId: string
+    targetPaneId: string
+  },
+): boolean => {
+  if (move.sourceColumnId === move.targetColumnId) return false
+
+  const sourceColumn = state.columns.find((column) => column.id === move.sourceColumnId)
+  const targetColumn = state.columns.find((column) => column.id === move.targetColumnId)
+  if (!sourceColumn || !targetColumn) return false
+  if (!sourceColumn.cards[move.tabId]) return false
+  if (!findPaneInLayout(sourceColumn.layout, move.sourcePaneId)) return false
+  if (!findPaneInLayout(targetColumn.layout, move.targetPaneId)) return false
+
+  return true
+}
+
+export type TabMoveSideEffects = {
+  stopBackgroundRun: boolean
+  clearQueuedSends: boolean
+}
+
+/**
+ * 症状：跨工作区拖走一张还排着待发送消息的卡片后，那些消息永远发不出去。
+ * 根因：2026-08-02 审计——停流用的 `closeStream` 是个纯"拆流"原语，不碰队列；而
+ *   `dispatchNextQueuedSend` 的每个调用点都挂在 SSE 的 onDone/onError 上，本地 close
+ *   之后再也不会触发。于是"停掉这张卡的运行"实际上是**两个**必须成对出现的动作，
+ *   而 closeTab / removeColumn / moveTab 三处各自手写了这对组合，moveTab 漏了后一半。
+ * 为什么把它做成返回值而不是直接在 App.tsx 里写两行：成对约束写成散落的调用顺序时，
+ *   没有任何东西能阻止下一处新增的停流点再漏一次；做成一个可导入的决策值之后，
+ *   "停流必然同时清队列"这条不变量就有了唯一的落点，并被 tests/app-helpers 钉住。
+ */
+export const resolveTabMoveSideEffects = (
+  state: Parameters<typeof willMoveTabAcrossColumns>[0],
+  move: Parameters<typeof willMoveTabAcrossColumns>[1],
+): TabMoveSideEffects => {
+  // 卡片换了工作区、session 也被 reducer 清掉，把旧工作区语境下写的消息投递给新工作区
+  // 是错的，所以是 clear 而不是 dispatch——对齐 closeTab 的既有选择。
+  const leavesWorkspace = willMoveTabAcrossColumns(state, move)
+
+  return { stopBackgroundRun: leavesWorkspace, clearQueuedSends: leavesWorkspace }
+}
+
+export type WorkspaceCloseEffects<TColumn> = {
+  cardIds: readonly string[]
+  /** 把该卡片还在渲染缓冲区里的助手文本与活动写回 appState（同步、纯数据、可重入）。 */
+  flushCardBuffers: (cardId: string) => void
+  /** flush 之后重新读这一列——闭包里那份引用已经是过期数据了。 */
+  readColumn: () => TColumn | undefined
+  shouldSnapshot: (column: TColumn) => boolean
+  saveSnapshot: (column: TColumn) => Promise<void>
+  clearQueuedSends: (cardId: string) => void
+  closeStream: (cardId: string) => Promise<void>
+  removeColumn: () => void
+}
+
+/**
+ * 关闭工作区的三步编排。**顺序被两条互相拉扯的约束同时夹住，这个函数存在的唯一理由
+ * 就是给那个顺序一个能被测试钉住的落点**——它在 2026-08-02 之前的半年里坏过两次，
+ * 每次都是因为顺序只以"App.tsx 里几行代码的先后"形式存在，一次无害重排就能悄悄打破。
+ *
+ * 症状 ①（快照排在最后）：快照保存失败时 Agent 已被杀、待发送队列已被清空并同步落盘，
+ *   重试也救不回来。
+ * 症状 ②（快照排在 flush 之前）：关闭一个正在流式输出的工作区后重开，助手最后一段回复
+ *   凭空缺失——渲染缓冲区里积压最长可达 800ms，而点击关闭确认这个动作本身还会触发
+ *   120ms 的交互保护去主动推迟 flush，命中概率很高。
+ * 根因：flush（纯数据、可逆）过去和杀进程（不可逆）绑在同一次 closeStream 调用里，
+ *   于是"快照要晚于 flush"和"快照要早于不可逆操作"直接互斥，怎么排都会漏一头。
+ * 为什么不能只调换两行：把 flush 单独拆出来是让两条约束能同时成立的**前提**；顺序本身
+ *   则必须有守卫测试，注释挡不住下一次重排（AGENTS.md：决策注释不能替代守卫测试）。
+ */
+export const runWorkspaceClose = async <TColumn>(
+  effects: WorkspaceCloseEffects<TColumn>,
+): Promise<void> => {
+  effects.cardIds.forEach((cardId) => effects.flushCardBuffers(cardId))
+
+  const column = effects.readColumn()
+  if (column && effects.shouldSnapshot(column)) {
+    // 故意不 catch：快照失败必须整个中止，一步破坏性操作都不做，这样重试才有意义。
+    await effects.saveSnapshot(column)
+  }
+
+  effects.cardIds.forEach((cardId) => effects.clearQueuedSends(cardId))
+  await Promise.all(effects.cardIds.map((cardId) => effects.closeStream(cardId)))
+  effects.removeColumn()
 }
 
 export const createStoppedRunMessage = (

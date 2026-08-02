@@ -354,6 +354,182 @@ describe('internal session history catalog search', () => {
     assert.equal(afterBadArchiveRemoval.skipped, 0)
   })
 
+  it('re-indexes a previously skipped sidecar once its content is repaired under the same file name', async () => {
+    const brokenPath = path.join(sidecarDir, 'repairable.json')
+    await writeFile(brokenPath, '{ broken on the first index', 'utf8')
+
+    const initial = await runSessionHistoryCatalogMaintenanceSlice({ dataDir })
+    assert.equal(initial.phase, 'degraded')
+    assert.equal(initial.skipped, 1)
+
+    const repaired = createHistoryEntry({
+      id: 'repaired-sidecar-entry',
+      title: 'Repaired archive',
+      archivedAt: '2026-06-05T09:00:00.000Z',
+    })
+    await writeFile(brokenPath, `${JSON.stringify(repaired, null, 2)}\n`, 'utf8')
+    resetSessionHistoryCatalogCacheForTests()
+
+    const afterRepair = await runSessionHistoryCatalogMaintenanceSlice({ dataDir })
+
+    assert.equal(afterRepair.phase, 'complete', 'a repaired sidecar must leave the degraded phase without deleting the file')
+    assert.equal(afterRepair.skipped, 0)
+    const listed = await listInternalSessionHistory({
+      dataDir,
+      workspacePath: currentWorkspace,
+      query: '',
+    })
+    assert.deepEqual(listed.entries.map((entry) => entry.id), ['repaired-sidecar-entry'])
+  })
+
+  it('retries a repaired sidecar recorded by a legacy catalog manifest that has no skip stamps', async () => {
+    const brokenPath = path.join(sidecarDir, 'legacy-broken.json')
+    await writeFile(brokenPath, '{ legacy broken sidecar', 'utf8')
+    await writeSidecar(createHistoryEntry({
+      id: 'legacy-valid-entry',
+      title: 'Valid archive indexed before the repair',
+      archivedAt: '2026-06-06T09:00:00.000Z',
+    }))
+
+    const initial = await runSessionHistoryCatalogMaintenanceSlice({ dataDir })
+    assert.equal(initial.phase, 'degraded')
+
+    const catalogPath = path.join(sidecarDir, 'catalog.json')
+    const legacyManifest = JSON.parse(await readFile(catalogPath, 'utf8')) as Record<string, unknown>
+    delete legacyManifest.skippedFileStamps
+    assert.deepEqual(
+      legacyManifest.skippedFileNames,
+      ['legacy-broken.json'],
+      'legacy manifests must keep storing skipped sidecars as plain file names',
+    )
+    await writeFile(catalogPath, `${JSON.stringify(legacyManifest, null, 2)}\n`, 'utf8')
+
+    const repaired = createHistoryEntry({
+      id: 'legacy-repaired-entry',
+      title: 'Repaired legacy archive',
+      archivedAt: '2026-06-07T09:00:00.000Z',
+    })
+    await writeFile(brokenPath, `${JSON.stringify(repaired, null, 2)}\n`, 'utf8')
+    resetSessionHistoryCatalogCacheForTests()
+
+    const afterRepair = await runSessionHistoryCatalogMaintenanceSlice({ dataDir })
+
+    assert.equal(afterRepair.phase, 'complete')
+    assert.equal(
+      afterRepair.total,
+      1,
+      'a legacy manifest must stay readable so already indexed sidecars are not rescanned',
+    )
+    const listed = await listInternalSessionHistory({
+      dataDir,
+      workspacePath: currentWorkspace,
+      query: '',
+    })
+    assert.deepEqual(
+      listed.entries.map((entry) => entry.id).sort(),
+      ['legacy-repaired-entry', 'legacy-valid-entry'],
+    )
+  })
+
+  it('stops re-running the catalog slice when an oversized sidecar is rewritten, and re-indexes it once it shrinks', async () => {
+    await writeSidecar(createHistoryEntry({
+      id: 'oversize-neighbour-entry',
+      title: 'Healthy neighbour archive',
+      archivedAt: '2026-06-08T09:00:00.000Z',
+    }))
+    const oversizedPath = path.join(sidecarDir, 'oversized-rewritten.json')
+    await writeFile(oversizedPath, 'x'.repeat(4096), 'utf8')
+    const limits = { maxFilesPerSlice: 10, maxFileBytes: 1024, maxBytesPerSlice: 8192, maxElapsedMs: 60_000 }
+
+    const initial = await runSessionHistoryCatalogMaintenanceSlice({ dataDir, limits })
+    assert.equal(initial.phase, 'degraded')
+    assert.equal(initial.skipped, 1)
+
+    const catalogPath = path.join(sidecarDir, 'catalog.json')
+    const catalogAfterInitial = await readFile(catalogPath, 'utf8')
+
+    // state-store rewrites every existing sidecar on each save, so both mtimeMs and size move even
+    // though the file is still far too large to index.
+    await writeFile(oversizedPath, 'y'.repeat(5000), 'utf8')
+
+    const afterRewrite = await runSessionHistoryCatalogMaintenanceSlice({ dataDir, limits })
+
+    assert.equal(afterRewrite.phase, 'degraded')
+    assert.equal(
+      afterRewrite.lastSliceProcessed,
+      0,
+      'rewriting an oversized sidecar must not schedule another catalog slice',
+    )
+    assert.equal(
+      await readFile(catalogPath, 'utf8'),
+      catalogAfterInitial,
+      'shouldRun must stay false for an oversized sidecar, so the manifest is never rewritten',
+    )
+
+    const shrunk = createHistoryEntry({
+      id: 'oversize-shrunk-entry',
+      title: 'Archive that finally fits the size budget',
+      archivedAt: '2026-06-09T09:00:00.000Z',
+    })
+    await writeFile(oversizedPath, `${JSON.stringify(shrunk, null, 2)}\n`, 'utf8')
+    resetSessionHistoryCatalogCacheForTests()
+
+    const afterShrink = await runSessionHistoryCatalogMaintenanceSlice({ dataDir, limits })
+
+    assert.equal(afterShrink.phase, 'complete')
+    assert.equal(afterShrink.skipped, 0)
+    const listed = await listInternalSessionHistory({
+      dataDir,
+      workspacePath: currentWorkspace,
+      query: '',
+    })
+    assert.deepEqual(
+      listed.entries.map((entry) => entry.id).sort(),
+      ['oversize-neighbour-entry', 'oversize-shrunk-entry'],
+    )
+  })
+
+  it('rotates the skipped-sidecar recheck window so a repaired file past the first 64 names is retried', async () => {
+    const brokenNames = Array.from({ length: 70 }, (_, index) => `broken-${String(index).padStart(2, '0')}.json`)
+    for (const name of brokenNames) {
+      await writeFile(path.join(sidecarDir, name), `{ broken ${name}`, 'utf8')
+    }
+    const limits = { maxElapsedMs: 60_000 }
+
+    let status = await runSessionHistoryCatalogMaintenanceSlice({ dataDir, limits })
+    for (let index = 0; index < 4 && status.phase === 'running'; index += 1) {
+      status = await runSessionHistoryCatalogMaintenanceSlice({ dataDir, limits })
+    }
+    assert.equal(status.phase, 'degraded')
+    assert.equal(status.skipped, brokenNames.length)
+
+    // The last name sorts past the 64-entry recheck window, so a fixed prefix window would never retry it.
+    const lateName = brokenNames.at(-1) ?? ''
+    const repaired = createHistoryEntry({
+      id: 'late-repaired-entry',
+      title: 'Repaired archive outside the first recheck window',
+      archivedAt: '2026-06-10T09:00:00.000Z',
+    })
+    await writeFile(path.join(sidecarDir, lateName), `${JSON.stringify(repaired, null, 2)}\n`, 'utf8')
+
+    let listedIds: string[] = []
+    for (let index = 0; index < 6 && !listedIds.includes('late-repaired-entry'); index += 1) {
+      await runSessionHistoryCatalogMaintenanceSlice({ dataDir, limits })
+      resetSessionHistoryCatalogCacheForTests()
+      listedIds = (await listInternalSessionHistory({
+        dataDir,
+        workspacePath: currentWorkspace,
+        query: '',
+      })).entries.map((entry) => entry.id)
+    }
+
+    assert.deepEqual(
+      listedIds,
+      ['late-repaired-entry'],
+      'consecutive slices must rotate through the whole skip set instead of rechecking the same prefix',
+    )
+  })
+
   it('keeps the previous validated catalog when atomic replacement fails', async () => {
     const firstEntry = createHistoryEntry({
       id: 'catalog-stable-entry',

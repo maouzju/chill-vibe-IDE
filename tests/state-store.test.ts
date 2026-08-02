@@ -48,6 +48,22 @@ describe('state-store persistence', () => {
     assert.ok(loaded.columns.length > 0)
   })
 
+  it('does not persist runtime-only native background waiting state', async () => {
+    const { saveState, loadState } = await import('../server/state-store.ts')
+    const state = createDefaultState('D:/runtime-background-state')
+    const card = getFirstCard(state)
+    assert.ok(card)
+    card.backgroundWorkPending = true
+
+    await saveState(state)
+
+    const raw = JSON.parse(await readFile(path.join(tmpDir, 'state.json'), 'utf8')) as {
+      columns: Array<{ cards: Record<string, Record<string, unknown>> }>
+    }
+    assert.equal(raw.columns[0]?.cards[card.id]?.backgroundWorkPending, undefined)
+    assert.equal(getFirstCard(await loadState())?.backgroundWorkPending, undefined)
+  })
+
   it('round-trips the last closed workspace tab and pane snapshot through a sidecar', async () => {
     const { saveClosedWorkspaceSnapshot, loadClosedWorkspaceSnapshot } = await import('../server/state-store.ts')
     const state = createDefaultState('D:/closed-workspace')

@@ -200,6 +200,7 @@ import {
   getAgentDoneSoundUrl,
   getAllAgentsDoneSoundUrl,
   getCompletionSoundPlan,
+  getStreamDonePlan,
   getColumnById,
   getResumeSessionIdForModel,
   isAllAgentWorkComplete,
@@ -237,6 +238,7 @@ import {
   isWakeTimerConditionReady,
   mergeWakeTimerRequests,
   removeCompletedWakeTimerTarget,
+  shouldReleaseCompletedWakeTimerTarget,
   shouldQueueWakeTimerSend,
   shouldConfirmWakeTimerCompletion,
   wakeTimerCompletionStabilityMs,
@@ -2323,7 +2325,7 @@ function App() {
             type: 'updateCard',
             columnId: owner.id,
             cardId,
-            patch: { status: 'error', streamId: undefined },
+            patch: { status: 'error', streamId: undefined, backgroundWorkPending: false },
           },
         ]
         if (durationMessage) {
@@ -2513,12 +2515,31 @@ function App() {
     })
   }, [clearQueuedSends, commitQueuedSends, resolveQueuedSendColumnId])
 
-  const buildWakeTimerTargetReleaseActions = useCallback((finishedCardId: string): IdeAction[] => {
+  const buildWakeTimerTargetReleaseActions = useCallback((
+    finishedCardId: string,
+    { forceRelease = false }: { forceRelease?: boolean } = {},
+  ): IdeAction[] => {
     const actions: IdeAction[] = []
+    const finishedCard = appStateRef.current.columns
+      .flatMap((column) => Object.values(column.cards))
+      .find((card) => card.id === finishedCardId)
+    const completedTargetHasPendingWakeBatch =
+      (finishedCard?.wakeTimerQueuedSends?.length ?? 0) > 0
     for (const column of appStateRef.current.columns) {
       for (const card of Object.values(column.cards)) {
         const currentTargetIds = card.wakeTimerPendingTargetIds ?? []
         if (!currentTargetIds.includes(finishedCardId)) {
+          continue
+        }
+
+        // 症状：左邻本轮结束后仍处于待唤醒，右侧链却被完成广播提前放行。
+        // 根因：首次入队虽识别 pending batch，但后续广播只看 idle；workspace 模式又不能跟等批次，否则会死锁。
+        // 被否决：全局压住完成广播；必须只门控 left-tab，取消批次则 forceRelease 显式解锁。
+        if (!shouldReleaseCompletedWakeTimerTarget({
+          waitingMode: card.wakeTimerMode ?? 'workspace-agents',
+          completedTargetHasPendingWakeBatch,
+          forceRelease,
+        })) {
           continue
         }
 
@@ -2589,7 +2610,7 @@ function App() {
       // 取消后这张卡永远不会自己开跑，也就永远不会发出完成广播；下游 left-tab 链
       // 若继续等它就永久卡死。「立即唤醒」不走这里——那张卡马上 streaming，正常
       // 完成广播会接手。见 wake-timer SPEC「链式待唤醒」。
-      ...buildWakeTimerTargetReleaseActions(cardId),
+      ...buildWakeTimerTargetReleaseActions(cardId, { forceRelease: true }),
     ]
     persistAfterActions(actions, applyActions(actions))
     queueMicrotask(() => flushReadyWakeTimersRef.current?.())
@@ -2631,6 +2652,7 @@ function App() {
           status: entry.status,
           isAgent: !MODEL_PICKER_HIDDEN_TOOL_MODELS.has(entry.model),
           hasPendingWakeBatch: (entry.wakeTimerQueuedSends?.length ?? 0) > 0,
+          backgroundWorkPending: entry.backgroundWorkPending === true,
         })),
         paneTabIds: pane?.tabs ?? [],
       })
@@ -2691,7 +2713,7 @@ function App() {
           ? Object.values(column.cards)
               .filter((peer) =>
                 peer.id !== card.id &&
-                peer.status === 'streaming' &&
+                (peer.status === 'streaming' || peer.backgroundWorkPending === true) &&
                 !MODEL_PICKER_HIDDEN_TOOL_MODELS.has(peer.model),
               )
               .map((peer) => peer.id)
@@ -2699,6 +2721,7 @@ function App() {
         const ready = isWakeTimerConditionReady({
           mode,
           ownerStatus: card.status,
+          ownerBackgroundWorkPending: card.backgroundWorkPending === true,
           pendingTargetIds,
           activePeerIds,
           wakeAt: card.wakeTimerWakeAt,
@@ -2790,6 +2813,7 @@ function App() {
       if (!completedCard || !shouldConfirmWakeTimerCompletion({
         normalCompletion: true,
         statusAfterStability: completedCard.status,
+        backgroundWorkPending: completedCard.backgroundWorkPending === true,
       })) {
         return
       }
@@ -3794,7 +3818,8 @@ function App() {
             }).catch(() => undefined)
           }
         },
-        onDone: ({ stopped }) => {
+        onDone: ({ stopped, completion }) => {
+          const donePlan = getStreamDonePlan({ stopped, completion })
           flushBufferedAssistantDeltaForCard(card.id)
           const activityFlushedState = flushBufferedActivitiesForCard(card.id)
           const receivedEditsActivities = streamEditsActivityCountRef.current.get(card.id) ?? 0
@@ -3833,18 +3858,20 @@ function App() {
             stoppedRunReasonRef.current.delete(card.streamId)
           }
 
-          const completionSoundPlan = getCompletionSoundPlan({
-            stopped,
-            agentDoneSoundEnabled: appStateRef.current.settings.agentDoneSoundEnabled,
-            allAgentsDoneSoundEnabled: appStateRef.current.settings.allAgentsDoneSoundEnabled,
-          })
+          const completionSoundPlan = donePlan.runSuccessCallbacks
+            ? getCompletionSoundPlan({
+                stopped: false,
+                agentDoneSoundEnabled: appStateRef.current.settings.agentDoneSoundEnabled,
+                allAgentsDoneSoundEnabled: appStateRef.current.settings.allAgentsDoneSoundEnabled,
+              })
+            : { playAgentDone: false, checkAllAgentsDone: false }
           if (completionSoundPlan.playAgentDone) {
             const audio = new Audio(getAgentDoneSoundUrl())
             audio.volume = appStateRef.current.settings.agentDoneSoundVolume
             audio.play().catch(() => {})
           }
 
-          if (!stopped) {
+          if (donePlan.runSuccessCallbacks) {
             void flashWindowOnce().catch(() => undefined)
           }
 
@@ -3864,7 +3891,7 @@ function App() {
             : null
           const actions: IdeAction[] = []
 
-          if (stopped) {
+          if (donePlan.kind === 'stopped') {
             actions.push({
               type: 'finishStoppedStream',
               columnId,
@@ -3875,16 +3902,39 @@ function App() {
                   ? createStoppedRunMessage(appStateRef.current.settings.language, stoppedRunReason)
                   : undefined,
             })
+          } else if (donePlan.kind === 'background-pending') {
+            // 症状：Claude 等后台 Agent 时先发 result，旧逻辑立刻亮完成光并释放队列/计时唤醒。
+            // 根因：2026-08-01 原生 Stop Hook 仍报告 background_tasks/session_crons 非空。
+            // 被否决：靠回复文本猜“还在等”不可靠；这里只结算 transport，见 native-agent-completion-boundary SPEC。
+            actions.push({
+              type: 'updateCard',
+              columnId,
+              cardId: card.id,
+              patch: {
+                status: 'idle',
+                streamId: undefined,
+                backgroundWorkPending: true,
+                completionGlow: false,
+                sessionModel: card.model,
+              },
+            })
           } else {
             actions.push({
               type: 'updateCard',
               columnId,
               cardId: card.id,
-              patch: { status: 'idle', streamId: undefined, unread, completionGlow: true, sessionModel: card.model },
+              patch: {
+                status: 'idle',
+                streamId: undefined,
+                unread,
+                completionGlow: true,
+                backgroundWorkPending: false,
+                sessionModel: card.model,
+              },
             })
           }
 
-          if (pendingCompactBoundary) {
+          if (pendingCompactBoundary && donePlan.finalizeLogicalRun) {
             actions.unshift({
               type: 'upsertMessages',
               columnId,
@@ -3929,18 +3979,23 @@ function App() {
             }
           }
 
-          const durationMessage = consumeRunDurationMessage(runStartedAtRef.current, card.id)
-          if (durationMessage) {
-            actions.push({
-              type: 'appendMessages',
-              columnId,
-              cardId: card.id,
-              messages: [durationMessage],
-            })
+          if (donePlan.finalizeLogicalRun) {
+            const durationMessage = consumeRunDurationMessage(runStartedAtRef.current, card.id)
+            if (durationMessage) {
+              actions.push({
+                type: 'appendMessages',
+                columnId,
+                cardId: card.id,
+                messages: [durationMessage],
+              })
+            }
           }
 
           persistAfterActions(actions, applyActions(actions))
-          if (!stopped) {
+          if (!donePlan.finalizeLogicalRun) {
+            return
+          }
+          if (donePlan.runSuccessCallbacks) {
             scheduleStableWakeTimerCompletion(card.id)
           }
           dispatchNextQueuedSend(columnId, card.id)
@@ -4122,7 +4177,7 @@ function App() {
                 type: 'updateCard',
                 columnId,
                 cardId: card.id,
-                patch: { status: 'idle', streamId: undefined },
+                patch: { status: 'idle', streamId: undefined, backgroundWorkPending: false },
               },
             ]
             const durationMessage = consumeRunDurationMessage(runStartedAtRef.current, card.id)
@@ -4178,7 +4233,7 @@ function App() {
               type: 'updateCard',
               columnId,
               cardId: card.id,
-              patch: { status: 'error', streamId: undefined },
+              patch: { status: 'error', streamId: undefined, backgroundWorkPending: false },
             },
           ]
           const durationMessage = consumeRunDurationMessage(runStartedAtRef.current, card.id)
@@ -5119,6 +5174,7 @@ function App() {
             reasoningEffort: resolvedReasoningEffort,
             status: 'error',
             streamId: undefined,
+            backgroundWorkPending: false,
             title: nextTitle,
           },
         },
@@ -5188,6 +5244,8 @@ function App() {
           reasoningEffort: resolvedReasoningEffort,
           status: 'streaming',
           streamId,
+          backgroundWorkPending: false,
+          completionGlow: false,
           title: nextTitle,
           ...(approvedPlanExit ? { planMode: false } : {}),
         },
@@ -5253,7 +5311,7 @@ function App() {
           type: 'updateCard',
           columnId,
           cardId,
-          patch: { status: 'error', streamId: undefined },
+          patch: { status: 'error', streamId: undefined, backgroundWorkPending: false },
         },
       ]
       const durationMessage = consumeRunDurationMessage(runStartedAtRef.current, cardId)
@@ -5307,7 +5365,7 @@ function App() {
         type: 'updateCard',
         columnId,
         cardId,
-        patch: { status: 'idle', streamId: undefined },
+        patch: { status: 'idle', streamId: undefined, backgroundWorkPending: false },
       }
       persistAfterAction(action.type, applyAction(action))
       return
@@ -5332,6 +5390,7 @@ function App() {
             reasoningEffort: resolvedReasoningEffort,
             status: 'error',
             streamId: undefined,
+            backgroundWorkPending: false,
           },
         },
       ]
@@ -5373,6 +5432,8 @@ function App() {
         reasoningEffort: resolvedReasoningEffort,
         status: 'streaming',
         streamId,
+        backgroundWorkPending: false,
+        completionGlow: false,
       },
     }
     persistAfterAction(startAction.type, applyAction(startAction))
@@ -5448,7 +5509,7 @@ function App() {
           type: 'updateCard',
           columnId,
           cardId,
-          patch: { status: 'error', streamId: undefined },
+          patch: { status: 'error', streamId: undefined, backgroundWorkPending: false },
         },
       ]
       const durationMessage = consumeRunDurationMessage(runStartedAtRef.current, cardId)
@@ -5519,6 +5580,7 @@ function App() {
             reasoningEffort: resolvedReasoningEffort,
             status: 'error',
             streamId: undefined,
+            backgroundWorkPending: false,
           },
         },
       ]
@@ -5615,7 +5677,7 @@ function App() {
             type: 'updateCard',
             columnId,
             cardId,
-            patch: { status: 'idle', streamId: undefined },
+            patch: { status: 'idle', streamId: undefined, backgroundWorkPending: false },
           },
         ]
         const durationMessage = consumeRunDurationMessage(runStartedAtRef.current, cardId)
@@ -5703,6 +5765,8 @@ function App() {
         reasoningEffort: resolvedReasoningEffort,
         status: 'streaming',
         streamId,
+        backgroundWorkPending: false,
+        completionGlow: false,
         ...(forkedSessionId
           ? {
               sessionId: forkedSessionId,
@@ -5800,7 +5864,7 @@ function App() {
           type: 'updateCard',
           columnId,
           cardId,
-          patch: { status: 'error', streamId: undefined },
+          patch: { status: 'error', streamId: undefined, backgroundWorkPending: false },
         },
       ]
       const durationMessage = consumeRunDurationMessage(runStartedAtRef.current, cardId)

@@ -172,6 +172,7 @@ export const chatCardSchema = z.object({
   collapsed: z.boolean().default(false),
   unread: z.boolean().default(false),
   completionGlow: z.boolean().optional(),
+  backgroundWorkPending: z.boolean().optional(),
   draft: z.string().default(''),
   draftAttachments: z.array(imageAttachmentSchema).default([]),
   queuedSends: z.array(queuedSendRequestSchema).default([]),
@@ -1491,6 +1492,8 @@ export type StreamErrorEvent = {
   sessionId?: string
 }
 
+export type StreamCompletion = 'terminal' | 'background-pending'
+
 export type StreamEventMap = {
   session: { sessionId: string }
   delta: { content: string; itemId?: string }
@@ -1501,7 +1504,7 @@ export type StreamEventMap = {
   assistant_message: StreamAssistantMessage
   activity: StreamActivity
   stats: StreamStatsEvent
-  done: { stopped?: boolean }
+  done: { stopped?: boolean; completion?: StreamCompletion }
   error: StreamErrorEvent
 }
 

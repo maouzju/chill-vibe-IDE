@@ -229,6 +229,7 @@ export class ChatManager {
   private readonly providerLauncher: typeof launchProviderRun
   private readonly workspaceSnapshotter: typeof captureWorkspaceSnapshot
   private readonly workspaceDiffer: typeof diffWorkspaceSnapshot
+  private closed = false
 
   constructor(options?: {
     // Keepalive is host-opt-in: the Electron desktop backend enables it so
@@ -253,6 +254,9 @@ export class ChatManager {
               // If the unsolicited stream could not be set up, the pool's idle
               // timer recycles the process; nothing else to clean up here.
             })
+          },
+          onIdleClose: (entry) => {
+            void this.handleIdleClaudeBackgroundClose(entry)
           },
         })
       : null
@@ -386,6 +390,7 @@ export class ChatManager {
   }
 
   closeAll() {
+    this.closed = true
     this.claudePool?.closeAll()
     for (const stream of this.streams.values()) {
       if (stream.cleanupTimer) {
@@ -455,7 +460,7 @@ export class ChatManager {
           this.emit(record, 'activity', activity)
         },
         onStats: (event) => this.emit(record, 'stats', event),
-        onDone: () => {
+        onDone: (payload) => {
           if (!record.stopRequested) {
             void this.finalizeWithWorkspaceEdits(
               record,
@@ -463,7 +468,7 @@ export class ChatManager {
               workspaceSnapshot,
               touchedPaths,
               'done',
-              {},
+              payload ?? {},
             )
           }
         },
@@ -471,6 +476,12 @@ export class ChatManager {
           if (record.stopRequested) {
             return
           }
+
+          this.claudePool?.updateMeta(
+            entry.key,
+            { backgroundWorkPending: false },
+            entry.child,
+          )
 
           void this.finalizeWithWorkspaceEdits(
             record,
@@ -484,9 +495,72 @@ export class ChatManager {
       },
       killChild: () => this.claudePool?.releaseEntry(entry.key, entry.child),
       onSettled: () => this.claudePool?.endTurn(entry.key, entry.child),
+      onCompletionBoundary: (boundary) => this.claudePool?.updateMeta(
+        entry.key,
+        { backgroundWorkPending: boundary === 'background-pending' },
+        entry.child,
+      ),
     })
 
     attach(attachment)
+    this.onUnsolicitedStream?.({ cardId: entry.key, streamId })
+  }
+
+  private async handleIdleClaudeBackgroundClose(entry: ClaudeSessionPoolEntryView) {
+    const knownCardStreamIds = new Set(
+      [...this.streams.values()]
+        .filter((stream) => stream.cardId === entry.key)
+        .map((stream) => stream.id),
+    )
+    const blockingStreamIds = [...this.streams.values()]
+      .filter((stream) => stream.cardId === entry.key && !stream.terminal)
+      .map((stream) => stream.id)
+    const deadline = Date.now() + 30_000
+
+    while (
+      !this.closed &&
+      Date.now() < deadline &&
+      blockingStreamIds.some((streamId) => this.streams.get(streamId)?.terminal === false)
+    ) {
+      await new Promise((resolve) => setTimeout(resolve, 25))
+    }
+
+    // Let the preceding pending-done envelope reach the renderer before the
+    // separate terminal-loss notification. A genuinely new stream on the same
+    // card means the user already superseded this dead background chain.
+    await new Promise((resolve) => setTimeout(resolve, 100))
+    if (
+      this.closed ||
+      [...this.streams.values()].some(
+        (stream) => stream.cardId === entry.key && !knownCardStreamIds.has(stream.id),
+      )
+    ) {
+      return
+    }
+
+    const language = entry.meta.language === 'en' ? 'en' : 'zh-CN'
+    const streamId = crypto.randomUUID()
+    const record: StreamRecord = {
+      id: streamId,
+      cardId: entry.key,
+      backlog: [],
+      listeners: new Set(),
+      subscribers: new Set(),
+      latestSessionId: normalizeSessionId(entry.sessionId),
+      terminal: false,
+      stopRequested: false,
+    }
+    this.streams.set(streamId, record)
+
+    // 症状：Claude 已进入后台等待后若空闲进程崩溃/超时回收，卡片会永久显示“仍在工作”。
+    // 根因：此时没有活动 transport stream，旧 close 路径没有任何事件可送回 renderer。
+    // 被否决：只靠重启清状态会无限误报；用一次终端 error stream 收尾，见 native completion SPEC。
+    this.finalize(record, 'error', {
+      message: language === 'en'
+        ? 'The Claude background session ended unexpectedly, so its pending background work cannot continue.'
+        : 'Claude 后台会话已意外结束，等待中的后台工作无法继续。',
+      recoverable: false,
+    })
     this.onUnsolicitedStream?.({ cardId: entry.key, streamId })
   }
 
@@ -532,9 +606,16 @@ export class ChatManager {
         this.emit(stream, 'activity', activity)
       },
       onStats: (event) => this.emit(stream, 'stats', event),
-      onDone: () => {
+      onDone: (payload) => {
         if (!stream.stopRequested) {
-          void this.finalizeWithWorkspaceEdits(stream, request.workspacePath, workspaceSnapshot, touchedPaths, 'done', {})
+          void this.finalizeWithWorkspaceEdits(
+            stream,
+            request.workspacePath,
+            workspaceSnapshot,
+            touchedPaths,
+            'done',
+            payload ?? {},
+          )
         }
       },
       onError: (message, hint, recovery) => {

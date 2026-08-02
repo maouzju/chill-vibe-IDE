@@ -12,6 +12,7 @@ import {
   getAgentDoneSoundUrl,
   getAllAgentsDoneSoundUrl,
   getCompletionSoundPlan,
+  getStreamDonePlan,
   getColumnById,
   getResumeSessionIdForModel,
   isAllAgentWorkComplete,
@@ -102,6 +103,33 @@ test('completion sound toggles stay independent when the last agent finishes', (
   )
 })
 
+test('native background completion pauses the transport without finalizing the logical run', () => {
+  assert.deepEqual(
+    getStreamDonePlan({ stopped: false, completion: 'background-pending' }),
+    {
+      kind: 'background-pending',
+      finalizeLogicalRun: false,
+      runSuccessCallbacks: false,
+    },
+  )
+  assert.deepEqual(
+    getStreamDonePlan({ stopped: false }),
+    {
+      kind: 'terminal',
+      finalizeLogicalRun: true,
+      runSuccessCallbacks: true,
+    },
+  )
+  assert.deepEqual(
+    getStreamDonePlan({ stopped: true, completion: 'background-pending' }),
+    {
+      kind: 'stopped',
+      finalizeLogicalRun: true,
+      runSuccessCallbacks: false,
+    },
+  )
+})
+
 test('all-agents-done waits for streams and both queue types to drain', () => {
   const idleCard = { status: 'idle' as const, wakeTimerQueuedSends: [] }
 
@@ -129,6 +157,11 @@ test('all-agents-done waits for streams and both queue types to drain', () => {
     activeStreamCount: 0,
     queuedSendCount: 0,
     cards: [{ status: 'idle' as const, wakeTimerQueuedSends: [{ id: 'wake-1' }] }],
+  }), false)
+  assert.equal(isAllAgentWorkComplete({
+    activeStreamCount: 0,
+    queuedSendCount: 0,
+    cards: [{ status: 'idle' as const, backgroundWorkPending: true, wakeTimerQueuedSends: [] }],
   }), false)
 })
 

@@ -14,6 +14,7 @@ type AutoUrgeState = {
   messages: ChatMessage[]
   canSendEmptyContinuation?: boolean
   judgeMode?: AutoUrgeJudgeMode
+  backgroundWorkPending?: boolean
 }
 
 type StreamFinishedTrigger = {
@@ -163,6 +164,9 @@ export const evaluateAutoUrge = (
 ): AutoUrgeEvaluation => {
   if (trigger.type === 'stream-finished') {
     if (trigger.previousStatus !== 'streaming' || trigger.status !== 'idle') {
+      return { kind: 'skip' }
+    }
+    if (state.backgroundWorkPending) {
       return { kind: 'skip' }
     }
   } else {

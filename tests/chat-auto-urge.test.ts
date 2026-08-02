@@ -143,6 +143,26 @@ test('stream completion still sends the urge when verification is not finished',
   })
 })
 
+test('stream completion does not auto-urge while Claude still has native background work', () => {
+  const result = evaluateAutoUrge(
+    {
+      type: 'stream-finished',
+      previousStatus: 'streaming',
+      status: 'idle',
+    },
+    {
+      active: true,
+      enabled: true,
+      message: 'Keep verifying until the fix is proven.',
+      successKeyword: 'YES',
+      messages: [createAssistantMessage('Waiting for a background agent.')],
+      backgroundWorkPending: true,
+    },
+  )
+
+  assert.deepEqual(result, { kind: 'skip' })
+})
+
 test('stream completion disables auto urge when the latest assistant turn contains the success keyword before a trailing assistant summary card', () => {
   const result = evaluateAutoUrge(
     {

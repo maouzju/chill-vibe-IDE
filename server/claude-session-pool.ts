@@ -71,6 +71,10 @@ export class ClaudeSessionPool {
     entry: ClaudeSessionPoolEntryView,
     attach: (attachment: ClaudeTurnAttachment) => void,
   ) => void
+  private readonly onIdleClose?: (
+    entry: ClaudeSessionPoolEntryView,
+    code: number | null,
+  ) => void
   private readonly shouldWakeOnLine: (line: string) => boolean
   private readonly shouldIgnoreIdleLine: (line: string) => boolean
   private readonly idleTimeoutMs: number
@@ -81,6 +85,7 @@ export class ClaudeSessionPool {
       entry: ClaudeSessionPoolEntryView,
       attach: (attachment: ClaudeTurnAttachment) => void,
     ) => void
+    onIdleClose?: (entry: ClaudeSessionPoolEntryView, code: number | null) => void
     // Decides whether an idle stdout line actually starts a turn. The pool has
     // no stream-json knowledge of its own, so the host injects the predicate;
     // without one every line wakes a stream (the pre-gate behavior).
@@ -91,6 +96,7 @@ export class ClaudeSessionPool {
     idleTimeoutMs?: number
   }) {
     this.onUnsolicited = options.onUnsolicited
+    this.onIdleClose = options.onIdleClose
     this.shouldWakeOnLine = options.shouldWakeOnLine ?? (() => true)
     this.shouldIgnoreIdleLine = options.shouldIgnoreIdleLine ?? (() => false)
     this.idleTimeoutMs = options.idleTimeoutMs ?? resolveDefaultIdleTimeoutMs()
@@ -206,6 +212,17 @@ export class ClaudeSessionPool {
     }
   }
 
+  updateMeta(
+    key: string,
+    patch: Record<string, unknown>,
+    expectedChild?: ClaudeSessionPoolChild,
+  ) {
+    const entry = this.entries.get(key)
+    if (entry && (!expectedChild || entry.child === expectedChild)) {
+      entry.meta = { ...entry.meta, ...patch }
+    }
+  }
+
   writeUserMessage(key: string, jsonLine: string, expectedChild?: ClaudeSessionPoolChild) {
     const entry = this.entries.get(key)
     if (
@@ -273,6 +290,9 @@ export class ClaudeSessionPool {
 
   private handleStdoutLine(entry: PoolEntry, line: string) {
     if (entry.state === 'turn-active' && entry.attachment) {
+      if (this.shouldIgnoreIdleLine(line)) {
+        return
+      }
       entry.attachment.onLine(line)
       return
     }
@@ -304,13 +324,10 @@ export class ClaudeSessionPool {
 
     if (!entry.pendingUnsolicited) {
       entry.pendingUnsolicited = true
-      const view: ClaudeSessionPoolEntryView = {
-        key: entry.key,
-        sessionId: entry.sessionId,
-        meta: entry.meta,
-        child: entry.child,
-      }
-      this.onUnsolicited(view, (attachment) => this.attachUnsolicited(entry, attachment))
+      this.onUnsolicited(
+        this.toEntryView(entry),
+        (attachment) => this.attachUnsolicited(entry, attachment),
+      )
     }
   }
 
@@ -354,7 +371,8 @@ export class ClaudeSessionPool {
     entry.stdoutReader?.close()
     entry.stderrReader?.close()
 
-    if (this.entries.get(entry.key) === entry) {
+    const wasCurrentEntry = this.entries.get(entry.key) === entry
+    if (wasCurrentEntry) {
       this.entries.delete(entry.key)
     }
 
@@ -362,6 +380,14 @@ export class ClaudeSessionPool {
       entry.attachment.onProcessClosed(code)
       entry.attachment = null
       return
+    }
+
+    if (
+      wasCurrentEntry &&
+      !entry.pendingUnsolicited &&
+      entry.meta.backgroundWorkPending === true
+    ) {
+      this.onIdleClose?.(this.toEntryView(entry), code)
     }
 
     // Idle exit with a pending unsolicited wake-up: keep the buffered lines so
@@ -383,7 +409,7 @@ export class ClaudeSessionPool {
       }
       // Quiet for the whole idle window: no background task came back, recycle
       // the process. The next user message simply resumes via `-r <sessionId>`.
-      this.removeEntry(entry, { kill: true })
+      this.removeEntry(entry, { kill: true, notifyPendingIdleClose: true })
     }, this.idleTimeoutMs)
   }
 
@@ -394,8 +420,30 @@ export class ClaudeSessionPool {
     }
   }
 
-  private removeEntry(entry: PoolEntry, options: { kill: boolean }) {
+  private toEntryView(entry: PoolEntry): ClaudeSessionPoolEntryView {
+    return {
+      key: entry.key,
+      sessionId: entry.sessionId,
+      meta: entry.meta,
+      child: entry.child,
+    }
+  }
+
+  private removeEntry(
+    entry: PoolEntry,
+    options: { kill: boolean; notifyPendingIdleClose?: boolean },
+  ) {
     this.clearIdleTimer(entry)
+
+    if (
+      options.notifyPendingIdleClose &&
+      entry.state === 'idle' &&
+      !entry.pendingUnsolicited &&
+      entry.meta.backgroundWorkPending === true
+    ) {
+      this.onIdleClose?.(this.toEntryView(entry), null)
+      entry.meta = { ...entry.meta, backgroundWorkPending: false }
+    }
 
     if (this.entries.get(entry.key) === entry) {
       this.entries.delete(entry.key)

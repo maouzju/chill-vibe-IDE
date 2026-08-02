@@ -28,10 +28,12 @@ export const shouldQueueWakeTimerSend = ({
 export const shouldConfirmWakeTimerCompletion = ({
   normalCompletion,
   statusAfterStability,
+  backgroundWorkPending = false,
 }: {
   normalCompletion: boolean
   statusAfterStability: CardStatus
-}) => normalCompletion && statusAfterStability === 'idle'
+  backgroundWorkPending?: boolean
+}) => normalCompletion && statusAfterStability === 'idle' && !backgroundWorkPending
 
 export type WakeTimerCardSnapshot = {
   id: string
@@ -41,6 +43,7 @@ export type WakeTimerCardSnapshot = {
   // indistinguishable from a finished one by status alone. left-tab chaining
   // needs that distinction; see isWakeTimerTargetBusy.
   hasPendingWakeBatch?: boolean
+  backgroundWorkPending?: boolean
 }
 
 // 症状：2026-07-28 左邻自己也在待唤醒时，右侧卡把它当成"已完成"立刻发车，链式接力断掉。
@@ -48,7 +51,9 @@ export type WakeTimerCardSnapshot = {
 // 被否决：给 CardStatus 加 'pending-wake' 会污染所有 status 分支（发送门控、音效、恢复），
 //         而这里只需要"忙不忙"这一个布尔；见 wake-timer SPEC「链式待唤醒」。
 const isWakeTimerTargetBusy = (card: WakeTimerCardSnapshot) =>
-  card.status === 'streaming' || card.hasPendingWakeBatch === true
+  card.status === 'streaming' ||
+  card.backgroundWorkPending === true ||
+  card.hasPendingWakeBatch === true
 
 export type WakeTimerArmResult =
   | {
@@ -101,14 +106,17 @@ export const armWakeTimerBatch = ({
     }
   }
 
-  // workspace-agents 刻意只看 streaming：这里的等待是全对全的，把待唤醒 peer 也算作忙，
-  // 同列两张卡同时排队就会互相等待、永久死锁。left-tab 只指向更小的 Tab 索引，天然无环。
+  // workspace-agents 看真实执行中（streaming 或原生后台等待），但仍不把 hasPendingWakeBatch 算忙：
+  // 后者是全对全的“等待发车”，两张卡同时排队会互相等待、永久死锁。
+  // left-tab 只指向更小的 Tab 索引，天然无环；见 wake-timer 与 native completion SPEC。
   return {
     ok: true,
     armedAt,
     wakeAt: undefined,
     pendingTargetIds: cards
-      .filter((card) => card.id !== ownerCardId && card.isAgent && card.status === 'streaming')
+      .filter((card) => card.id !== ownerCardId && card.isAgent && (
+        card.status === 'streaming' || card.backgroundWorkPending === true
+      ))
       .map((card) => card.id),
   }
 }
@@ -116,6 +124,7 @@ export const armWakeTimerBatch = ({
 export const isWakeTimerConditionReady = ({
   mode,
   ownerStatus,
+  ownerBackgroundWorkPending = false,
   pendingTargetIds,
   activePeerIds = [],
   wakeAt,
@@ -123,12 +132,13 @@ export const isWakeTimerConditionReady = ({
 }: {
   mode: WakeTimerMode
   ownerStatus: CardStatus
+  ownerBackgroundWorkPending?: boolean
   pendingTargetIds: readonly string[]
   activePeerIds?: readonly string[]
   wakeAt: string | undefined
   nowMs: number
 }) => {
-  if (ownerStatus !== 'idle') {
+  if (ownerStatus !== 'idle' || ownerBackgroundWorkPending) {
     return false
   }
 
@@ -148,6 +158,19 @@ export const removeCompletedWakeTimerTarget = (
   targetIds: readonly string[],
   completedCardId: string,
 ) => [...new Set(targetIds.filter((targetId) => targetId !== completedCardId))]
+
+export const shouldReleaseCompletedWakeTimerTarget = ({
+  waitingMode,
+  completedTargetHasPendingWakeBatch,
+  forceRelease = false,
+}: {
+  waitingMode: WakeTimerMode
+  completedTargetHasPendingWakeBatch: boolean
+  forceRelease?: boolean
+}) =>
+  forceRelease ||
+  waitingMode !== 'left-tab' ||
+  !completedTargetHasPendingWakeBatch
 
 export const mergeWakeTimerRequests = (
   requests: readonly QueuedSendRequest[],

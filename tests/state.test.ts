@@ -48,6 +48,8 @@ const createCard = (overrides: Partial<ChatCard> = {}): ChatCard => ({
   autoUrgeProfileId: overrides.autoUrgeProfileId ?? defaultAutoUrgeProfileId,
   collapsed: overrides.collapsed ?? false,
   unread: overrides.unread ?? false,
+  completionGlow: overrides.completionGlow,
+  backgroundWorkPending: overrides.backgroundWorkPending,
   draft: overrides.draft ?? '',
   stickyNote: overrides.stickyNote ?? '',
   draftAttachments: overrides.draftAttachments ?? [],
@@ -2385,6 +2387,30 @@ describe('ideReducer pane layout', () => {
     assert.equal(card?.sessionId, 'session-safe-to-resume')
     assert.equal(card?.sessionModel, 'gpt-5.4')
     assert.deepEqual(card?.providerSessions, { codex: 'session-safe-to-resume' })
+  })
+
+  it('clears native background waiting state when the user stops the stream', () => {
+    const state = createState()
+    state.columns[0] = createColumn({
+      id: 'column-1',
+      layout: createPane('pane-1', ['card-1'], 'card-1'),
+      cards: {
+        'card-1': createCard({
+          id: 'card-1',
+          status: 'streaming',
+          streamId: 'stream-1',
+          backgroundWorkPending: true,
+        }),
+      },
+    })
+
+    const next = ideReducer(state, {
+      type: 'finishStoppedStream',
+      columnId: 'column-1',
+      cardId: 'card-1',
+    })
+
+    assert.equal(next.columns[0]?.cards['card-1']?.backgroundWorkPending, false)
   })
 
   it('settles in-progress command activity when a streaming card is stopped', () => {

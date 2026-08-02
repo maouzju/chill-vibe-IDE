@@ -8,6 +8,7 @@ import type {
   Provider,
   StreamActivity,
   StreamAssistantMessage,
+  StreamCompletion,
 } from '../shared/schema'
 import { getLocaleText } from '../shared/i18n'
 import { BRAINSTORM_TOOL_MODEL, GIT_TOOL_MODEL, STICKYNOTE_TOOL_MODEL } from '../shared/models'
@@ -82,6 +83,26 @@ export const getCompletionSoundPlan = ({
   checkAllAgentsDone: !stopped && allAgentsDoneSoundEnabled,
 })
 
+export const getStreamDonePlan = ({
+  stopped,
+  completion,
+}: {
+  stopped?: boolean
+  completion?: StreamCompletion
+}) => {
+  const kind = stopped
+    ? 'stopped'
+    : completion === 'background-pending'
+      ? 'background-pending'
+      : 'terminal'
+
+  return {
+    kind,
+    finalizeLogicalRun: kind !== 'background-pending',
+    runSuccessCallbacks: kind === 'terminal',
+  } as const
+}
+
 export const isAllAgentWorkComplete = ({
   activeStreamCount,
   queuedSendCount,
@@ -91,13 +112,17 @@ export const isAllAgentWorkComplete = ({
   queuedSendCount: number
   cards: ReadonlyArray<{
     status: ChatCard['status']
+    backgroundWorkPending?: boolean
     wakeTimerQueuedSends?: readonly unknown[]
   }>
 }) =>
   activeStreamCount === 0 &&
   queuedSendCount === 0 &&
   cards.every(
-    (card) => card.status !== 'streaming' && (card.wakeTimerQueuedSends?.length ?? 0) === 0,
+    (card) =>
+      card.status !== 'streaming' &&
+      card.backgroundWorkPending !== true &&
+      (card.wakeTimerQueuedSends?.length ?? 0) === 0,
   )
 
 // An untitled chat only gets a real title after its first turn, so a queued

@@ -241,14 +241,26 @@ test('idle child-agent sidechain output is discarded before a later real wake-up
   await new Promise((resolve) => setTimeout(resolve, 25))
   assert.equal(wakeUps, 0)
 
-  const topLevelTurnStart = JSON.stringify({
+  const topLevelInit = JSON.stringify({
     type: 'system',
     subtype: 'init',
     parent_tool_use_id: null,
   })
+  stdout.write(`${topLevelInit}\n`)
+  await new Promise((resolve) => setTimeout(resolve, 25))
+  assert.equal(wakeUps, 0, 'system/init is only a preamble and must not open the owner-card stream')
+
+  const topLevelTurnStart = JSON.stringify({
+    type: 'stream_event',
+    parent_tool_use_id: null,
+    event: {
+      type: 'message_start',
+      message: { role: 'assistant', content: [] },
+    },
+  })
   stdout.write(`${topLevelTurnStart}\n`)
   await waitFor(() => wakeUps === 1)
 
-  assert.deepEqual(receivedLines, [topLevelTurnStart])
+  assert.deepEqual(receivedLines, [topLevelInit, topLevelTurnStart])
   pool.closeAll()
 })

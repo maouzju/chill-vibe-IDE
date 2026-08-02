@@ -69,6 +69,20 @@
 - 绿测：`npx playwright test tests/chat-interrupt.spec.ts`：33/33 通过，覆盖链式等待与取消后解锁。
 - `pnpm test:quality`：通过。
 
+## 左邻完成广播门控（2026-08-02）
+
+- [x] 红测复现：左邻原回合结束并回到 `idle`，但它自己仍压着待唤醒批次时，下游会被完成广播错误唤醒。
+- [x] 完成广播只对 `left-tab` 把“仍有待唤醒批次”视为未完成；只有左邻真正发车并完成后才解锁下游，工作区模式保持原语义以免死锁。
+- [x] 保留取消批次的显式解锁语义，避免取消后下游永久等待。
+
+验证记录：
+
+- 红测：`node --import tsx --test tests/wake-timer.test.ts` 新增完成广播用例稳定失败，实际错误返回 `true`。
+- 绿测：`node --import tsx --test tests/wake-timer.test.ts`：17/17 通过。
+- `pnpm test:quality`：通过。
+- `pnpm electron:build`：通过，产出 `dist/release-20260802-110921/Chill Vibe-0.18.21-win.zip` 与 `win-unpacked/Chill Vibe.exe`。
+- `pnpm dev:restart`：通过；开发 Electron 已重启，renderer `http://localhost:5173` 返回 200。运行中的打包版未被关闭或重启。
+
 验证记录：
 
 - 红测：`node --import tsx --test tests/wake-timer.test.ts` 同时复现“运行中 Agent 未阻止释放”和“内部标签被注入请求”两项失败。

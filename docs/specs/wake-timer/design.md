@@ -1,11 +1,11 @@
-# 计时唤醒 — 设计
+# 计划唤醒 — 设计
 
 ## 数据模型
 
 在 `shared/schema.ts` 增加：
 
 - `wakeTimerMode`: `workspace-agents | left-tab | duration`
-- `AppSettings.wakeTimerEnabled: boolean`，默认 `false`
+- `AppSettings.wakeTimerEnabled: boolean`，默认 `true`；仅缺失字段时补默认值，显式 `false` 必须保留
 - `ChatCard.wakeTimerActive: boolean`，默认 `false`
 - `ChatCard.wakeTimerMode`，默认 `workspace-agents`
 - `ChatCard.wakeTimerDurationMinutes: number`，默认 `30`，范围 `1..10080`
@@ -73,16 +73,16 @@
 
 ## UI 与数据流
 
-设置页“实用功能”增加总开关和简短说明。
+设置页“实用功能”以“计划唤醒”展示总开关和简短说明，总开关默认打开。
 
 `App → WorkspaceColumn → LayoutRenderer → PaneView → ChatCard` 传递 `wakeTimerEnabled`。`PaneView` 额外为每张活动卡计算：
 
 - 左邻 Agent 是否有效（仅用于判定，不回显其标题）；
 - 同工作区其他 Agent 数量。
 
-composer 设置菜单顶部增加一个安静的 `.composer-wake-timer-module`：
+composer 设置菜单顶部增加一个安静的 `.composer-wake-timer-module`，用户可见名称同样为“计划唤醒”：
 
-- 计时器 checkbox；
+- 计划唤醒 checkbox；
 - 触发模式 select；
 - duration 模式的分钟输入；
 - 左邻不可用时的警告提示（左邻有效时不再显示任何说明行，避免超长会话标题在菜单里占一整行）；

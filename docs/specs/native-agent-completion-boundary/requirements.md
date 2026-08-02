@@ -45,4 +45,3 @@ Codex 原生采用独立子线程与 `wait_agent`：子线程完成不等于根�
 - 空闲期子 Agent sidechain 与 `system/init` 不会单独打开主卡 stream；真正顶层
   `message_start` 会正常打开并回放必要的原生前导事件。
 - Codex 根/子线程完成隔离测试继续通过。
-

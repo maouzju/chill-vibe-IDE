@@ -92,3 +92,19 @@
 - `pnpm test:quality`：通过。
 - `pnpm electron:build`：通过，产出 `dist/release-20260725-222913/Chill Vibe-0.18.17-win.zip` 与 `win-unpacked/Chill Vibe.exe`。
 - 用户当前运行的是旧的 `dist/release-20260725-014058` 打包版并承载活跃会话，按安全规则未强制关闭；新构建已放入独立时间戳目录，可在用户自行切换后生效。
+
+## 默认启用与产品命名（2026-08-02）
+
+- [x] 红测锁定：新设置与缺失旧字段默认开启，显式关闭值仍保留。
+- [x] 设置页与会话输入设置中的中文名称统一改为“计划唤醒”。
+- [x] 完成聚焦测试、quality、主题检查、Windows 构建与当前开发运行时重启。
+
+验证记录：
+
+- 红测：`node --import tsx --test tests/wake-timer.test.ts` 新增 3 项断言稳定失败，分别证明默认值、旧配置归一化和中文名称尚未更新。
+- 绿测：`node --import tsx --test tests/wake-timer.test.ts tests/default-state.test.ts tests/state.test.ts tests/state-store.test.ts`：198/198 通过；最终聚焦复跑 `tests/wake-timer.test.ts`：18/18 通过。
+- `pnpm test:quality`：通过。
+- 定向主题快照：7/7 通过，已人工检查并仅更新本次默认开启与名称变化涉及的 dark/light 快照。
+- `pnpm test:theme`：159 项中 158 项通过；唯一无关的 Git light 快照出现一次性波动，单项原样复跑 1/1 通过，未更新无关快照。
+- `pnpm electron:build`：通过，产出 `dist/release-20260802-224227/Chill Vibe-0.18.21-win.zip` 与 `win-unpacked/Chill Vibe.exe`。
+- `pnpm dev:restart`：通过；开发 Electron 已重启，renderer `http://localhost:5173` 返回 200。运行中的打包版承载活跃会话，按安全规则未强制关闭或重启。

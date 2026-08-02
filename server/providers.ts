@@ -41,6 +41,7 @@ import type {
   StreamActivity,
   StreamErrorEvent,
   StreamErrorHint,
+  StreamCompletion,
 } from '../shared/schema.js'
 import { resolveImageAttachmentPath } from './attachments.js'
 import {
@@ -85,6 +86,14 @@ import {
   type ClaudeSessionPoolEntryView,
   type ClaudeTurnAttachment,
 } from './claude-session-pool.js'
+import {
+  buildClaudeCompletionBoundaryHookCommand,
+  clearClaudeCompletionBoundarySnapshot,
+  getClaudeCompletionBoundaryPath,
+  readClaudeCompletionBoundary,
+  type ClaudeCompletionBoundary,
+  type ClaudeCompletionBoundaryHook,
+} from './claude-completion-boundary.js'
 
 type StreamSink = {
   onSession: (sessionId: string) => void
@@ -99,7 +108,7 @@ type StreamSink = {
     errorType?: string
     alreadyRecorded?: boolean
   }) => void
-  onDone: () => void
+  onDone: (payload?: { completion?: StreamCompletion }) => void
   onError: (
     message: string,
     hint?: StreamErrorHint,
@@ -2626,6 +2635,8 @@ export const createClaudeTurnParser = (hooks: {
   // pooled process can be returned to idle only after the stream settled.
   onSettled?: () => void
   onSessionId?: (sessionId: string) => void
+  readCompletionBoundary?: () => ClaudeCompletionBoundary
+  onCompletionBoundary?: (boundary: ClaudeCompletionBoundary) => void
 }): ClaudeTurnParser => {
   const { request, sink, language } = hooks
   const parseClaudeStructuredOutput = createClaudeStructuredOutputParser(language, {
@@ -2921,7 +2932,13 @@ export const createClaudeTurnParser = (hooks: {
           return
         }
 
-        sink.onDone()
+        const completionBoundary = hooks.readCompletionBoundary?.() ?? 'unknown'
+        hooks.onCompletionBoundary?.(completionBoundary)
+        sink.onDone({
+          completion: completionBoundary === 'background-pending'
+            ? 'background-pending'
+            : 'terminal',
+        })
         hooks.onSettled?.()
         return
       }
@@ -3175,21 +3192,6 @@ const launchClaudeSingleShotRun = async (
 // follow-up turn. User messages are written to stdin as stream-json lines.
 // ---------------------------------------------------------------------------
 
-// Idle stdout from a pooled CLI is only a real wake-up when it starts a turn.
-// The CLI also emits background-task bookkeeping between turns (a task finishing
-// updates the task list even when the agent is not re-invoked); treating those
-// as a turn would open a stream the CLI never fills. Anything unrecognized wakes
-// the stream — a missed follow-up is far worse than a short-lived empty one that
-// the stall watchdog reaps.
-const CLAUDE_IDLE_BOOKKEEPING_SUBTYPES = new Set([
-  'background_tasks_changed',
-  'task_started',
-  'task_updated',
-  'task_notification',
-  'status',
-  'notification',
-])
-
 export const isClaudeTurnStartLine = (line: string) => {
   if (!line.trim()) {
     return false
@@ -3218,11 +3220,11 @@ export const isClaudeTurnStartLine = (line: string) => {
     return false
   }
 
-  if (record.type === 'system' && typeof record.subtype === 'string') {
-    return !CLAUDE_IDLE_BOOKKEEPING_SUBTYPES.has(record.subtype)
-  }
-
-  return true
+  // 症状：system/init 与后台 bookkeeping 会把空闲主卡提前拉成 streaming，随后只能等 watchdog。
+  // 根因：2026-08-01 实测真实 task-notification 会在前导行后发顶层 stream_event/message_start。
+  // 被否决：未知 JSON fail-open 会继续误附着 sidechain；只认原生顶层开流信号，见对应 SPEC。
+  const streamEvent = event as { type?: unknown; event?: { type?: unknown } }
+  return streamEvent.type === 'stream_event' && streamEvent.event?.type === 'message_start'
 }
 
 export const isClaudeSidechainLine = (line: string) => {
@@ -3247,6 +3249,7 @@ export const buildClaudeKeepaliveSignature = (
   runtime: ProviderRuntime,
   attachmentPaths: string[] = [],
   safetyHookCommand?: string,
+  completionBoundaryHook?: ClaudeCompletionBoundaryHook,
 ) =>
   JSON.stringify({
     workspace: request.workspacePath,
@@ -3272,6 +3275,7 @@ export const buildClaudeKeepaliveSignature = (
     outsideWorkspaceWrite: request.agentOutsideWorkspaceWriteEnabled !== false,
     destructiveCommandProtection: request.codexDestructiveCommandProtectionEnabled === true,
     safetyHookCommand: safetyHookCommand ?? '',
+    completionBoundaryHook: completionBoundaryHook ?? null,
   })
 
 const launchClaudeKeepaliveRun = async (
@@ -3288,14 +3292,21 @@ const launchClaudeKeepaliveRun = async (
   let currentRequest = request
   let fallbackAttempted = false
   let staleSessionFallbackAttempted = false
+  const completionBoundaryPath = getClaudeCompletionBoundaryPath(cardId)
+  const completionBoundaryHook = buildClaudeCompletionBoundaryHookCommand(completionBoundaryPath)
 
   const startAttempt = async (includeEffort: boolean): Promise<boolean> => {
+    // A user-authored turn supersedes the renderer's prior idle-wait marker.
+    // Clear pool metadata before acquire can recycle an incompatible old child;
+    // this prevents that intentional replacement from masquerading as a crash.
+    pool.updateMeta(cardId, { backgroundWorkPending: false })
     const signature = buildClaudeKeepaliveSignature(
       currentRequest,
       includeEffort,
       runtime,
       attachmentPaths,
       safetyHookCommand,
+      completionBoundaryHook,
     )
 
     const acquired = await pool.acquireForTurn({
@@ -3309,6 +3320,7 @@ const launchClaudeKeepaliveRun = async (
             includeEffort,
             streamingInput: true,
             safetyHookCommand,
+            completionBoundaryHook,
           }),
         ]
 
@@ -3335,6 +3347,7 @@ const launchClaudeKeepaliveRun = async (
         language,
         workspacePath: currentRequest.workspacePath,
         model: currentRequest.model ?? '',
+        completionBoundaryPath,
       },
     })
 
@@ -3344,17 +3357,32 @@ const launchClaudeKeepaliveRun = async (
 
     const child = acquired.child as ChildProcess
     managedChild.setActiveChild(child)
+    pool.updateMeta(cardId, { backgroundWorkPending: false }, child)
+    clearClaudeCompletionBoundarySnapshot(completionBoundaryPath)
 
+    let turnCompletionBoundary: ClaudeCompletionBoundary | undefined
     const parser = createClaudeTurnParser({
       request: currentRequest,
       sink,
       language,
       killChild: () => pool.releaseEntry(cardId, child),
       onSettled: () => {
+        if (turnCompletionBoundary !== 'background-pending') {
+          pool.updateMeta(cardId, { backgroundWorkPending: false }, child)
+        }
         managedChild.setActiveChild(null)
         pool.endTurn(cardId, child)
       },
       onSessionId: (sessionId) => pool.updateSessionId(cardId, sessionId, child),
+      readCompletionBoundary: () => readClaudeCompletionBoundary(completionBoundaryPath),
+      onCompletionBoundary: (boundary) => {
+        turnCompletionBoundary = boundary
+        pool.updateMeta(
+          cardId,
+          { backgroundWorkPending: boundary === 'background-pending' },
+          child,
+        )
+      },
     })
 
     pool.beginTurn(cardId, {
@@ -3445,6 +3473,7 @@ export const createClaudeUnsolicitedTurnAttachment = (options: {
   sink: StreamSink
   killChild: () => void
   onSettled: () => void
+  onCompletionBoundary?: (boundary: ClaudeCompletionBoundary) => void
 }): ClaudeTurnAttachment => {
   const language = normalizeLanguage(
     typeof options.entry.meta.language === 'string'
@@ -3470,6 +3499,13 @@ export const createClaudeUnsolicitedTurnAttachment = (options: {
     prompt: '',
     attachments: [],
   }
+  const completionBoundaryPath =
+    typeof options.entry.meta.completionBoundaryPath === 'string'
+      ? options.entry.meta.completionBoundaryPath
+      : undefined
+  if (completionBoundaryPath) {
+    clearClaudeCompletionBoundarySnapshot(completionBoundaryPath)
+  }
 
   const parser = createClaudeTurnParser({
     request: pseudoRequest,
@@ -3477,6 +3513,10 @@ export const createClaudeUnsolicitedTurnAttachment = (options: {
     language,
     killChild: options.killChild,
     onSettled: options.onSettled,
+    onCompletionBoundary: options.onCompletionBoundary,
+    readCompletionBoundary: completionBoundaryPath
+      ? () => readClaudeCompletionBoundary(completionBoundaryPath)
+      : undefined,
   })
 
   parser.armWatchdog()
@@ -3757,6 +3797,7 @@ export const buildClaudeArgs = (
     // prompt, so background tasks survive the turn and can wake the agent.
     streamingInput?: boolean
     safetyHookCommand?: string
+    completionBoundaryHook?: ClaudeCompletionBoundaryHook
     platform?: NodeJS.Platform
   },
 ) => {
@@ -3783,6 +3824,7 @@ export const buildClaudeArgs = (
     ? options?.safetyHookCommand
     : undefined
   const platform = options?.platform ?? process.platform
+  const completionBoundaryHook = options?.completionBoundaryHook
   const additionalDirectories = resolveClaudeAdditionalDirectories({
     ...options,
     attachmentPaths,
@@ -3834,32 +3876,53 @@ export const buildClaudeArgs = (
       // plain xhigh.
       ...(ultracodeActive ? { ultracode: true } : {}),
       ...(sandboxSettings ? { sandbox: sandboxSettings } : {}),
-      ...(safetyHookCommand
+      ...(safetyHookCommand || completionBoundaryHook
         ? {
             hooks: {
-              PreToolUse: [
-                {
-                  matcher: 'Bash|Edit|Write|NotebookEdit',
-                  hooks: [
-                    {
-                      type: 'command',
-                      command: platform === 'win32' ? 'powershell.exe' : '/bin/sh',
-                      args: platform === 'win32'
-                        ? [
-                            '-NoProfile',
-                            '-NonInteractive',
-                            '-ExecutionPolicy',
-                            'Bypass',
-                            '-Command',
-                            safetyHookCommand,
-                          ]
-                        : ['-c', safetyHookCommand],
-                      timeout: 5,
-                      statusMessage: 'Chill Vibe safety check',
-                    },
-                  ],
-                },
-              ],
+              ...(safetyHookCommand
+                ? {
+                    PreToolUse: [
+                      {
+                        matcher: 'Bash|Edit|Write|NotebookEdit',
+                        hooks: [
+                          {
+                            type: 'command',
+                            command: platform === 'win32' ? 'powershell.exe' : '/bin/sh',
+                            args: platform === 'win32'
+                              ? [
+                                  '-NoProfile',
+                                  '-NonInteractive',
+                                  '-ExecutionPolicy',
+                                  'Bypass',
+                                  '-Command',
+                                  safetyHookCommand,
+                                ]
+                              : ['-c', safetyHookCommand],
+                            timeout: 5,
+                            statusMessage: 'Chill Vibe safety check',
+                          },
+                        ],
+                      },
+                    ],
+                  }
+                : {}),
+              ...(completionBoundaryHook
+                ? {
+                    Stop: [
+                      {
+                        hooks: [
+                          {
+                            type: 'command',
+                            command: completionBoundaryHook.command,
+                            args: completionBoundaryHook.args,
+                            timeout: 5,
+                            statusMessage: 'Tracking Claude background work',
+                          },
+                        ],
+                      },
+                    ],
+                  }
+                : {}),
             },
           }
         : {}),

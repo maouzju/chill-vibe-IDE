@@ -92,10 +92,12 @@ const createAttachment = (): { attachment: ClaudeTurnAttachment; log: Attachment
 
 const createPool = (overrides?: {
   onUnsolicited?: ConstructorParameters<typeof ClaudeSessionPool>[0]['onUnsolicited']
+  onIdleClose?: ConstructorParameters<typeof ClaudeSessionPool>[0]['onIdleClose']
   idleTimeoutMs?: number
 }) => {
   return new ClaudeSessionPool({
     onUnsolicited: overrides?.onUnsolicited ?? (() => {}),
+    onIdleClose: overrides?.onIdleClose,
     idleTimeoutMs: overrides?.idleTimeoutMs,
   })
 }
@@ -118,6 +120,40 @@ test('acquireForTurn spawns a new process for an unknown card', async () => {
   assert.ok(acquired)
   assert.equal(acquired.reused, false)
   assert.equal(spawnCount, 1)
+  pool.dispose()
+})
+
+test('active owner-card turns continue discarding child-agent sidechain lines', async () => {
+  const child = createFakeChild()
+  const pool = new ClaudeSessionPool({
+    onUnsolicited: () => {},
+    shouldIgnoreIdleLine: (line) => line.includes('toolu_parent'),
+  })
+  const acquired = await pool.acquireForTurn({
+    key: 'card-active-sidechain',
+    signature: 'sig',
+    sessionId: undefined,
+    spawn: async () => child,
+  })
+  assert.ok(acquired)
+
+  const { attachment, log } = createAttachment()
+  pool.beginTurn('card-active-sidechain', attachment)
+  child.stdoutStream.write(`${JSON.stringify({
+    type: 'assistant',
+    parent_tool_use_id: 'toolu_parent',
+    message: { content: [{ type: 'text', text: 'child-only' }] },
+  })}\n`)
+  child.stdoutStream.write(`${JSON.stringify({
+    type: 'assistant',
+    parent_tool_use_id: null,
+    message: { content: [{ type: 'text', text: 'owner' }] },
+  })}\n`)
+
+  await waitFor(() => log.lines.length > 0)
+  assert.equal(log.lines.length, 1)
+  assert.match(log.lines[0] ?? '', /owner/)
+  assert.doesNotMatch(log.lines[0] ?? '', /child-only/)
   pool.dispose()
 })
 
@@ -334,6 +370,32 @@ test('process exit while idle removes the entry without firing onUnsolicited', a
   pool.dispose()
 })
 
+test('idle process exit reports a terminal loss only while native background work is pending', async () => {
+  const idleClosures: Array<{ key: string; code: number | null }> = []
+  const pool = createPool({
+    onIdleClose: (entry, code) => idleClosures.push({ key: entry.key, code }),
+  })
+  const child = createFakeChild()
+
+  await pool.acquireForTurn({
+    key: 'card-background-pending',
+    signature: 'sig-a',
+    sessionId: undefined,
+    meta: { backgroundWorkPending: false },
+    spawn: async () => child,
+  })
+  const { attachment } = createAttachment()
+  pool.beginTurn('card-background-pending', attachment)
+  pool.updateMeta('card-background-pending', { backgroundWorkPending: true }, child)
+  pool.endTurn('card-background-pending', child)
+
+  child.emitExit(1)
+  await waitFor(() => idleClosures.length === 1)
+
+  assert.deepEqual(idleClosures, [{ key: 'card-background-pending', code: 1 }])
+  pool.dispose()
+})
+
 test('a slower older acquire cannot replace or leak the newer process for the same card', async () => {
   const pool = createPool()
   const olderChild = createFakeChild()
@@ -498,6 +560,27 @@ test('an idle process is recycled after the idle timeout but stdout resets the t
 
   await waitFor(() => child.killed === true, 2_000)
   assert.equal(pool.hasEntry('card-1'), false)
+  pool.dispose()
+})
+
+test('idle timeout reports pending native background work before recycling the process', async () => {
+  const idleClosures: string[] = []
+  const pool = createPool({
+    idleTimeoutMs: 30,
+    onIdleClose: (entry) => idleClosures.push(entry.key),
+  })
+  const child = createFakeChild()
+
+  await pool.acquireForTurn({
+    key: 'card-background-timeout',
+    signature: 'sig-a',
+    sessionId: undefined,
+    meta: { backgroundWorkPending: true },
+    spawn: async () => child,
+  })
+
+  await waitFor(() => child.killed && idleClosures.length === 1, 2_000)
+  assert.deepEqual(idleClosures, ['card-background-timeout'])
   pool.dispose()
 })
 

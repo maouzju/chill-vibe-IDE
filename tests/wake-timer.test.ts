@@ -8,6 +8,7 @@ import {
   isWakeTimerConditionReady,
   mergeWakeTimerRequests,
   removeCompletedWakeTimerTarget,
+  shouldReleaseCompletedWakeTimerTarget,
   shouldQueueWakeTimerSend,
   shouldConfirmWakeTimerCompletion,
 } from '../src/components/wake-timer.ts'
@@ -61,6 +62,28 @@ describe('wake timer arming', () => {
         armedAt: '2026-07-25T00:00:00.000Z',
         wakeAt: undefined,
         pendingTargetIds: ['left-running', 'other-running'],
+      },
+    )
+  })
+
+  it('treats a Claude card waiting on native background work as a busy peer', () => {
+    assert.deepEqual(
+      armWakeTimerBatch({
+        mode: 'workspace-agents',
+        ownerCardId: 'owner',
+        durationMinutes: 30,
+        nowMs: Date.parse('2026-07-25T00:00:00.000Z'),
+        cards: [
+          { id: 'background-peer', status: 'idle' as const, isAgent: true, backgroundWorkPending: true },
+          { id: 'owner', status: 'idle' as const, isAgent: true },
+        ],
+        paneTabIds: ['background-peer', 'owner'],
+      }),
+      {
+        ok: true,
+        armedAt: '2026-07-25T00:00:00.000Z',
+        wakeAt: undefined,
+        pendingTargetIds: ['background-peer'],
       },
     )
   })
@@ -206,6 +229,16 @@ describe('wake timer release', () => {
 
     assert.equal(isWakeTimerConditionReady({
       mode: 'workspace-agents',
+      ownerStatus: 'idle',
+      ownerBackgroundWorkPending: true,
+      pendingTargetIds: [],
+      activePeerIds: [],
+      wakeAt: undefined,
+      nowMs: Date.now(),
+    }), false)
+
+    assert.equal(isWakeTimerConditionReady({
+      mode: 'workspace-agents',
       ownerStatus: 'streaming',
       pendingTargetIds: [],
       wakeAt: undefined,
@@ -250,6 +283,27 @@ describe('wake timer release', () => {
     assert.equal(shouldConfirmWakeTimerCompletion({
       normalCompletion: true,
       statusAfterStability: 'idle',
+    }), true)
+    assert.equal(shouldConfirmWakeTimerCompletion({
+      normalCompletion: true,
+      statusAfterStability: 'idle',
+      backgroundWorkPending: true,
+    }), false)
+  })
+
+  it('keeps only downstream left-tab batches blocked while the completed target is still waiting to wake', () => {
+    assert.equal(shouldReleaseCompletedWakeTimerTarget({
+      waitingMode: 'left-tab',
+      completedTargetHasPendingWakeBatch: true,
+    }), false)
+    assert.equal(shouldReleaseCompletedWakeTimerTarget({
+      waitingMode: 'workspace-agents',
+      completedTargetHasPendingWakeBatch: true,
+    }), true)
+    assert.equal(shouldReleaseCompletedWakeTimerTarget({
+      waitingMode: 'left-tab',
+      completedTargetHasPendingWakeBatch: true,
+      forceRelease: true,
     }), true)
   })
 

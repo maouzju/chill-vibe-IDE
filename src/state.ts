@@ -378,6 +378,7 @@ export type IdeAction =
           | 'collapsed'
           | 'unread'
           | 'completionGlow'
+          | 'backgroundWorkPending'
           | 'stickyNote'
           | 'stickyNoteId'
           | 'stickyNoteViewState'
@@ -1265,6 +1266,7 @@ const selectCardModel = (
               : currentCard.stickyNoteId,
           pmTaskCardId: '',
           pmOwnerCardId: '',
+          backgroundWorkPending: false,
           reasoningEffort: getPreferredReasoningEffort(nextState.settings, provider, normalizedModel),
           ...sessionPatch,
         },
@@ -2238,6 +2240,7 @@ export const ideReducer = (state: AppState, action: IdeAction): AppState => {
         providerSessions: {},
         contextTransfer: undefined,
         streamId: undefined,
+        backgroundWorkPending: false,
         autoUrgeActive: false,
         unread: false,
         draft: '',
@@ -2356,6 +2359,7 @@ export const ideReducer = (state: AppState, action: IdeAction): AppState => {
             providerSessions: nextProviderSessions,
             autoUrgeActive: shouldCancelAutoUrge ? false : card.autoUrgeActive,
             completionGlow: false,
+            backgroundWorkPending: false,
             unread: action.unread ?? card.unread,
             messages: action.stoppedMessage
               ? [...settledMessages, action.stoppedMessage]

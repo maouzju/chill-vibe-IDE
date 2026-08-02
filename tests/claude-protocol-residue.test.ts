@@ -186,6 +186,7 @@ test('turn fold strips trailing card residue from prose sharing an event with a 
   const streamed = record.deltas.join('')
   assert.ok(streamed.includes('让我近距离看招牌区'), 'prose must stay visible')
   assert.ok(!/(^|\n)\s*card\s*(\n|$)/.test(streamed), 'trailing card residue must not stream out')
+  parser.cancel()
 })
 
 test('turn fold keeps a prose reply that merely ends with the word card when no tool runs', () => {
@@ -199,4 +200,5 @@ test('turn fold keeps a prose reply that merely ends with the word card when no 
 
   const streamed = record.deltas.join('')
   assert.ok(streamed.includes('card'), 'a text-only reply must keep its trailing word')
+  parser.cancel()
 })

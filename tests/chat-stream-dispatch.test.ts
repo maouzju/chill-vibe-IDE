@@ -31,11 +31,16 @@ test('real error events still reach the error handler with a recoverable default
 
 test('known events dispatch to their matching handlers', () => {
   const seen: string[] = []
+  const donePayloads: unknown[] = []
   dispatchChatStreamEvent('delta', { content: 'hi' }, {
     onDelta: () => seen.push('delta'),
   })
-  dispatchChatStreamEvent('done', {}, {
-    onDone: () => seen.push('done'),
+  dispatchChatStreamEvent('done', { completion: 'background-pending' }, {
+    onDone: (payload) => {
+      seen.push('done')
+      donePayloads.push(payload)
+    },
   })
   assert.deepEqual(seen, ['delta', 'done'])
+  assert.deepEqual(donePayloads, [{ completion: 'background-pending' }])
 })

@@ -452,6 +452,50 @@ test('Claude safety hook covers direct file writes and is injected into keepaliv
   assert.equal(disabledSettings.hooks, undefined)
 })
 
+test('Claude keepalive injects its native Stop completion hook alongside Agent safety', () => {
+  const request = createRequest({
+    provider: 'claude',
+    model: 'claude-opus-5',
+    language: 'en',
+    codexDestructiveCommandProtectionEnabled: true,
+  })
+  const stopHook = {
+    command: process.platform === 'win32' ? 'powershell.exe' : '/bin/sh',
+    args: process.platform === 'win32'
+      ? ['-NoProfile', '-Command', '$input=[Console]::In.ReadToEnd()']
+      : ['-c', 'cat > /tmp/stop.json'],
+  }
+  const args = buildClaudeArgs(request, [], {
+    safetyHookCommand: 'echo safe',
+    completionBoundaryHook: stopHook,
+  })
+  const settings = JSON.parse(args[args.indexOf('--settings') + 1] ?? '{}') as {
+    hooks?: {
+      PreToolUse?: unknown[]
+      Stop?: Array<{ hooks?: Array<Record<string, unknown>> }>
+    }
+  }
+
+  assert.equal(settings.hooks?.PreToolUse?.length, 1)
+  const hook = settings.hooks?.Stop?.[0]?.hooks?.[0]
+  assert.equal(hook?.type, 'command')
+  assert.equal(hook?.command, stopHook.command)
+  assert.deepEqual(hook?.args, stopHook.args)
+  assert.equal(hook?.timeout, 5)
+  assert.equal(hook?.statusMessage, 'Tracking Claude background work')
+
+  const completionOnlyArgs = buildClaudeArgs(request, [], {
+    completionBoundaryHook: stopHook,
+  })
+  const completionOnlySettings = JSON.parse(
+    completionOnlyArgs[completionOnlyArgs.indexOf('--settings') + 1] ?? '{}',
+  ) as {
+    hooks?: { PreToolUse?: unknown[]; Stop?: unknown[] }
+  }
+  assert.equal(completionOnlySettings.hooks?.PreToolUse, undefined)
+  assert.equal(completionOnlySettings.hooks?.Stop?.length, 1)
+})
+
 test('Claude restricts outside-workspace writes with strict sandbox settings on supported platforms', () => {
   const workspacePath = path.join(os.tmpdir(), 'chill-vibe-claude-workspace')
   const homeDir = path.join(os.tmpdir(), 'chill-vibe-claude-home')
@@ -4505,7 +4549,7 @@ test('codex app-server never replaces the root session with a child thread id', 
             onLog: () => undefined,
             onAssistantMessage: () => undefined,
             onActivity: () => undefined,
-            onDone: resolve,
+            onDone: () => resolve(),
             onError: (message) => reject(new Error(message)),
           },
         ).then((child) => {

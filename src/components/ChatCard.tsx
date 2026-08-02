@@ -1556,6 +1556,7 @@ const ChatCardView = ({
     successKeyword: effectiveAutoUrgeSuccessKeyword,
     canSendEmptyContinuation: false,
     judgeMode: effectiveAutoUrgeJudgeMode,
+    backgroundWorkPending: card.backgroundWorkPending === true,
   })
   const titleInputRef = useRef<HTMLInputElement>(null)
   const modelMenuRef = useRef<HTMLDivElement>(null)
@@ -2032,11 +2033,13 @@ const ChatCardView = ({
           status: card.status,
         }),
       judgeMode: effectiveAutoUrgeJudgeMode,
+      backgroundWorkPending: card.backgroundWorkPending === true,
     }
   }, [
     card.messages,
     card.sessionId,
     card.status,
+    card.backgroundWorkPending,
     effectiveUrge.active,
     autoUrgeEnabled,
     effectiveAutoUrgeMessage,

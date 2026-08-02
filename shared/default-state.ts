@@ -525,7 +525,7 @@ export const createDefaultSettings = (language: AppLanguage = defaultAppLanguage
   autoUrgeGlobalControlEnabled: false,
   autoUrgeGlobalActive: false,
   autoUrgeGlobalProfileId: defaultAutoUrgeProfileId,
-  wakeTimerEnabled: false,
+  wakeTimerEnabled: true,
   weatherCity: '',
   systemPrompt: defaultSystemPrompt,
   modelPromptRules: [],

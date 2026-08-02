@@ -3146,6 +3146,7 @@ test('settings panel flows category cards through two waterfall columns in both 
   await expect(
     settingsPanel.getByLabel(/Codex Fast 加速|Codex Fast mode/).first(),
   ).not.toBeChecked()
+  await expect(settingsPanel.getByLabel('计划唤醒')).toBeChecked()
 
   const settingsGroupRects = await settingsGroups.evaluateAll((nodes) =>
     nodes.map((node) => {
@@ -5198,7 +5199,7 @@ for (const theme of ['dark', 'light'] as const) {
     const cardShell = page.locator('.card-shell').first()
     const settingsTrigger = page.locator('.composer-settings-trigger').first()
     const settingsMenu = page.locator('.composer-settings-menu').first()
-    const timerToggle = settingsMenu.getByLabel('计时器')
+    const timerToggle = settingsMenu.getByLabel('计划唤醒')
 
     await settingsTrigger.click()
     await expect(settingsMenu).toBeVisible()

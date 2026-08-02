@@ -2,6 +2,8 @@ import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
 
 import { createCard, createDefaultSettings, normalizeAppSettings } from '../shared/default-state.ts'
+import { getLocaleText } from '../shared/i18n.ts'
+import { appSettingsSchema, appStateSchema } from '../shared/schema.ts'
 import {
   armWakeTimerBatch,
   buildCanceledWakeTimerDraft,
@@ -20,11 +22,20 @@ const request = (id: string, prompt: string) => ({
 })
 
 describe('wake timer settings and card defaults', () => {
-  it('keeps the global feature and each new card disabled by default', () => {
+  it('enables the global feature by default while each new card stays disabled', () => {
     const settings = createDefaultSettings()
     const card = createCard('Timer card')
 
-    assert.equal(settings.wakeTimerEnabled, false)
+    assert.equal(settings.wakeTimerEnabled, true)
+    assert.equal(appSettingsSchema.parse({}).wakeTimerEnabled, true)
+    assert.equal(
+      appStateSchema.parse({
+        version: 1,
+        columns: [],
+        updatedAt: '2026-08-02T00:00:00.000Z',
+      }).settings.wakeTimerEnabled,
+      true,
+    )
     assert.equal(card.wakeTimerActive, false)
     assert.equal(card.wakeTimerMode, 'workspace-agents')
     assert.equal(card.wakeTimerDurationMinutes, 30)
@@ -32,9 +43,17 @@ describe('wake timer settings and card defaults', () => {
     assert.deepEqual(card.wakeTimerPendingTargetIds, [])
   })
 
-  it('normalizes legacy and enabled settings safely', () => {
-    assert.equal(normalizeAppSettings({}).wakeTimerEnabled, false)
+  it('defaults missing legacy settings to enabled and preserves explicit choices', () => {
+    assert.equal(normalizeAppSettings({}).wakeTimerEnabled, true)
     assert.equal(normalizeAppSettings({ wakeTimerEnabled: true }).wakeTimerEnabled, true)
+    assert.equal(normalizeAppSettings({ wakeTimerEnabled: false }).wakeTimerEnabled, false)
+  })
+
+  it('uses the product name 计划唤醒 in Chinese settings surfaces', () => {
+    const text = getLocaleText('zh-CN')
+
+    assert.equal(text.wakeTimerFeatureLabel, '计划唤醒')
+    assert.equal(text.wakeTimerLabel, '计划唤醒')
   })
 })
 

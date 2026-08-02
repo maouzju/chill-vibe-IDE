@@ -4513,7 +4513,10 @@ test('codex stall finalizes done when the native rollout already completed', asy
 
         return await Promise.race([
           captureProviderOutcome(createRequest({ provider: 'codex', language: 'en', workspacePath })),
-          new Promise<{ kind: 'timeout' }>((resolve) => setTimeout(() => resolve({ kind: 'timeout' }), 5_000)),
+          // 这个 race 只是"别把测试挂死"的护栏，不是被断言的时限。2026-08-02 实测本用例
+          // 空载耗时约 2.5s，旧的 5s 阈值只有不到 2 倍余量，跑全量套件时（磁盘与 CPU 被
+          // 其他用例占着）会窜到 5s 以上假红一次，看上去像原生完成判定回归。给到 6 倍余量。
+          new Promise<{ kind: 'timeout' }>((resolve) => setTimeout(() => resolve({ kind: 'timeout' }), 15_000)),
         ])
       },
     )

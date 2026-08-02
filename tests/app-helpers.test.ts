@@ -18,6 +18,8 @@ import {
   isAllAgentWorkComplete,
   resolveChatReplayMode,
   resolvePaneTabTitle,
+  resolveTabMoveSideEffects,
+  willMoveTabAcrossColumns,
   resolveStreamedAssistantMessageTarget,
 } from '../src/app-helpers.ts'
 import { BRAINSTORM_TOOL_MODEL, GIT_TOOL_MODEL, STICKYNOTE_TOOL_MODEL } from '../shared/models.ts'
@@ -163,6 +165,94 @@ test('all-agents-done waits for streams and both queue types to drain', () => {
     queuedSendCount: 0,
     cards: [{ status: 'idle' as const, backgroundWorkPending: true, wakeTimerQueuedSends: [] }],
   }), false)
+})
+
+test('willMoveTabAcrossColumns only accepts a move the reducer will really perform', () => {
+  const pane = (id: string, tabs: string[]) => ({
+    type: 'pane' as const,
+    id,
+    tabs,
+    activeTabId: tabs[0] ?? '',
+    tabHistory: [],
+  })
+  const state = {
+    columns: [
+      { id: 'column-1', layout: pane('pane-1', ['card-1']), cards: { 'card-1': { id: 'card-1' } } },
+      { id: 'column-2', layout: pane('pane-2', []), cards: {} },
+    ],
+  }
+  const move = {
+    sourceColumnId: 'column-1',
+    sourcePaneId: 'pane-1',
+    tabId: 'card-1',
+    targetColumnId: 'column-2',
+    targetPaneId: 'pane-2',
+  }
+
+  assert.equal(willMoveTabAcrossColumns(state, move), true)
+  assert.equal(
+    willMoveTabAcrossColumns(state, { ...move, targetColumnId: 'column-1', targetPaneId: 'pane-1' }),
+    false,
+    'a same-column move keeps the run in place',
+  )
+  assert.equal(
+    willMoveTabAcrossColumns(state, { ...move, targetPaneId: 'pane-gone' }),
+    false,
+    'a stale target pane aborts the move, so the run must not be stopped',
+  )
+  assert.equal(
+    willMoveTabAcrossColumns(state, { ...move, sourcePaneId: 'pane-gone' }),
+    false,
+    'a stale source pane aborts the move, so the run must not be stopped',
+  )
+  assert.equal(willMoveTabAcrossColumns(state, { ...move, tabId: 'card-gone' }), false)
+})
+
+// 停掉一次运行实际上是**两个**必须成对出现的动作：拆流 + 清队列。closeStream 只做前者，
+// 而 dispatchNextQueuedSend 只挂在 SSE 的终态回调上，本地 close 之后永远不会再触发，
+// 所以漏掉后者就等于让排队消息永久停摆。这条把"成对"钉死在决策函数上。
+// 旧版这里是对 App.tsx 源码做 assert.match 的文本快照：它对等价重构会误红，又证明不了
+// 任何行为，而且恰恰漏掉了 clearQueuedSends 这一半——照样全绿。
+test('a cross-workspace tab move must stop the run and clear its queued sends together', () => {
+  const pane = (id: string, tabs: string[]) => ({
+    type: 'pane' as const,
+    id,
+    tabs,
+    activeTabId: tabs[0] ?? '',
+    tabHistory: [],
+  })
+  const state = {
+    columns: [
+      { id: 'column-1', layout: pane('pane-1', ['card-1']), cards: { 'card-1': { id: 'card-1' } } },
+      { id: 'column-2', layout: pane('pane-2', []), cards: {} },
+    ],
+  }
+  const move = {
+    sourceColumnId: 'column-1',
+    sourcePaneId: 'pane-1',
+    tabId: 'card-1',
+    targetColumnId: 'column-2',
+    targetPaneId: 'pane-2',
+  }
+
+  assert.deepEqual(resolveTabMoveSideEffects(state, move), {
+    stopBackgroundRun: true,
+    clearQueuedSends: true,
+  })
+
+  // 移动被 reducer 拒绝的每一种情形，都绝不能杀掉用户还在跑的 agent、也不能吞掉它的队列。
+  for (const [label, rejected] of [
+    ['same column', { ...move, targetColumnId: 'column-1', targetPaneId: 'pane-1' }],
+    ['stale target pane', { ...move, targetPaneId: 'pane-gone' }],
+    ['stale source pane', { ...move, sourcePaneId: 'pane-gone' }],
+    ['missing card', { ...move, tabId: 'card-gone' }],
+  ] as const) {
+    assert.deepEqual(
+      resolveTabMoveSideEffects(state, rejected),
+      { stopBackgroundRun: false, clearQueuedSends: false },
+      `${label}: a rejected move must have no side effects at all`,
+    )
+  }
 })
 
 test('getColumnById resolves a board column by its id', () => {

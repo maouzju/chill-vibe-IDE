@@ -434,7 +434,10 @@ export const createDesktopBackend = (deps: DesktopBackendDependencies = {}) => {
       // or a restored card can keep a stale stream id. In both cases the UI is
       // trying to leave the running state, so surfacing a hard IPC error only
       // pollutes the transcript without making the provider any more stopped.
-      getChatManager().stop(streamId)
+      // The result is still returned: settlingWithinMs tells the renderer how long
+      // the terminal envelope was deliberately deferred for the settling workspace
+      // diff, so its own no-server-ack fallback can stand down for that long.
+      return getChatManager().stop(streamId)
     },
     subscribeChatStream(streamId: string, listener: StreamListener) {
       return getChatManager().subscribe(streamId, listener)

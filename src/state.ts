@@ -1989,7 +1989,13 @@ export const ideReducer = (state: AppState, action: IdeAction): AppState => {
     case 'closeTab': {
       const column = state.columns.find((entry) => entry.id === action.columnId)
       const card = column?.cards[action.tabId]
-      if (!column || !card) {
+      // 症状：用一个已经被折叠掉的旧 paneId 关闭标签时，会话历史凭空多出一条归档、PM 链接被清空，
+      //   但卡片还开着（重复点还会重复入档，prependSessionHistoryEntry 不按 cardId 去重）。
+      // 根因：2026-08-02 审计——归档与 clearPmLinks 原本在 updateColumn 之外无条件执行，
+      //   而真正删卡的 updateColumn 回调里另有 findPaneInLayout 守卫，守卫不满足时只跳过删除，副作用已经落地。
+      // 为什么不是把归档挪进 updateColumn 回调：sessionHistory 是 state 级字段，回调只能返回 column；
+      //   所以把 pane 校验提到副作用之前，让整个 case 要么全做要么原样返回。
+      if (!column || !card || !findPaneInLayout(column.layout, action.paneId)) {
         return state
       }
 
@@ -2034,6 +2040,17 @@ export const ideReducer = (state: AppState, action: IdeAction): AppState => {
         return state
       }
 
+      // 症状：拖动标签后卡片整张消失（目标 paneId 过期）或同一张卡同时挂在两列（源 paneId 过期）。
+      // 根因：2026-08-02 审计——搬运原本是两次独立的 updateColumn，各自带内部 findPaneInLayout 守卫；
+      //   过期的一端只让其中一步静默跳过，另一步已经提交（删了没写 / 写了没删）。
+      // 为什么不在第二步补救：删除已经发生，回滚要重建整列；照 splitMoveTab 的范式在动手前一次性校验两端更简单可靠。
+      if (
+        !findPaneInLayout(sourceColumn.layout, action.sourcePaneId) ||
+        !findPaneInLayout(targetColumn.layout, action.targetPaneId)
+      ) {
+        return state
+      }
+
       if (
         action.sourceColumnId === action.targetColumnId &&
         action.sourcePaneId === action.targetPaneId
@@ -2058,17 +2075,46 @@ export const ideReducer = (state: AppState, action: IdeAction): AppState => {
         return touchState(next)
       }
 
+      if (action.sourceColumnId === action.targetColumnId) {
+        // 症状：同列跨 pane 拖到刚 split 出来的空 pane，卡片变成不在任何 pane 里的孤儿（Known Pitfall 21）。
+        // 根因：先删源再写目标的两步式里，第一步的 collapseLayout 会顺手删掉此刻仍为空的 targetPane，
+        //   第二步的 findPaneInLayout 守卫必然落空，于是删除已提交、写入被跳过。
+        // 为什么不是"折叠后二次确认再回滚"（splitMoveTab:1955 那种）：这里两个 pane 在同一棵 layout 里，
+        //   先插入再统一折叠即可——目标 pane 此时已非空不会被折叠掉，正是 pitfall 21 要求的原子路径。
+        const next = updateColumn(state, action.sourceColumnId, (column) => {
+          const withTabInserted = updatePaneNode(column.layout, action.targetPaneId, (pane) =>
+            createPane(insertAt(pane.tabs, action.tabId, action.index), action.tabId, pane.id, pane.tabHistory),
+          )
+
+          const layout = collapseLayout(
+            updatePaneNode(withTabInserted, action.sourcePaneId, (pane) =>
+              createPane(
+                pane.tabs.filter((tabId) => tabId !== action.tabId),
+                pane.activeTabId === action.tabId ? '' : pane.activeTabId,
+                pane.id,
+                pane.tabHistory,
+              ),
+            ),
+          )
+
+          return {
+            ...column,
+            layout: normalizeLayoutNode(layout, column.cards),
+          }
+        })
+
+        return touchState(next)
+      }
+
       let nextState = state
 
       nextState = updateColumn(nextState, action.sourceColumnId, (column) => {
-        if (!findPaneInLayout(column.layout, action.sourcePaneId) || !column.cards[action.tabId]) {
+        if (!column.cards[action.tabId]) {
           return column
         }
 
-        const cards = action.sourceColumnId === action.targetColumnId ? column.cards : { ...column.cards }
-        if (action.sourceColumnId !== action.targetColumnId) {
-          delete cards[action.tabId]
-        }
+        const cards = { ...column.cards }
+        delete cards[action.tabId]
 
         const layout = collapseLayout(
           updatePaneNode(column.layout, action.sourcePaneId, (pane) =>
@@ -2093,13 +2139,10 @@ export const ideReducer = (state: AppState, action: IdeAction): AppState => {
           return column
         }
 
-        const cards =
-          action.sourceColumnId === action.targetColumnId
-            ? column.cards
-            : {
-                ...column.cards,
-                [action.tabId]: rebindCardToColumn(state, column, movingCard),
-              }
+        const cards = {
+          ...column.cards,
+          [action.tabId]: rebindCardToColumn(state, column, movingCard),
+        }
 
         return {
           ...column,
@@ -2110,12 +2153,7 @@ export const ideReducer = (state: AppState, action: IdeAction): AppState => {
         }
       })
 
-      const detachedState =
-        action.sourceColumnId !== action.targetColumnId
-          ? detachPmLinksForCardId(nextState, action.tabId)
-          : nextState
-
-      return touchState(detachedState)
+      return touchState(detachPmLinksForCardId(nextState, action.tabId))
     }
     case 'reorderTab': {
       const next = updateColumn(state, action.columnId, (column) => ({

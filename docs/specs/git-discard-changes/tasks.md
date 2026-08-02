@@ -19,3 +19,4 @@
 14. [ ] `GitFullDialog.tsx`：多选状态接线、行级 onContextMenu、右键菜单、diff 面板多选占位。
 15. [ ] `src/index.css`：菜单与多选行样式（两主题 token）。
 16. [ ] 验证：单测绿 + file-scoped lint/类型；合并回用户分支；打包。
+17. [x] 修复右键回退反馈断层：确认步骤留在菜单原位，并用 Electron 运行时测试覆盖确认与实际回退。

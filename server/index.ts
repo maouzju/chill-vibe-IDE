@@ -898,14 +898,16 @@ app.get('/api/chat/stream/:streamId', (request, response) => {
 })
 
 app.post('/api/chat/stop/:streamId', (request, response) => {
-  const stopped = chatManager.stop(request.params.streamId)
+  const result = chatManager.stop(request.params.streamId)
 
-  if (!stopped) {
+  if (!result.stopped) {
     response.status(404).json({ message: 'Stream not found or already finished.' })
     return
   }
 
-  response.json({ ok: true })
+  // settlingWithinMs 必须透传：渲染端要据此放宽本地兜底，否则它会抢在被推迟的
+  // 终态之前 close 掉 EventSource，让这次推迟白做。
+  response.json({ ok: true, settlingWithinMs: result.settlingWithinMs })
 })
 
 app.use(

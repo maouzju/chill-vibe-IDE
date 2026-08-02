@@ -1957,6 +1957,106 @@ describe('ideReducer pane layout', () => {
     assert.equal(pane.activeTabId, 'card-2')
   })
 
+  it('aborts the whole move when the target pane id is stale', () => {
+    const state = createState()
+
+    const next = ideReducer(state, {
+      type: 'moveTab',
+      sourceColumnId: 'column-1',
+      sourcePaneId: 'pane-1',
+      tabId: 'card-1',
+      targetColumnId: 'column-2',
+      targetPaneId: 'pane-does-not-exist',
+      index: 0,
+    })
+
+    assert.equal(next, state, 'a stale target pane must leave state untouched')
+
+    const sourcePane = next.columns[0].layout as PaneNode
+    assert.deepEqual(sourcePane.tabs, ['card-1', 'card-2'], 'the dragged tab must stay in the source pane')
+    assert.ok(next.columns[0].cards['card-1'], 'the dragged card must not be deleted')
+    assert.equal(next.columns[1].cards['card-1'], undefined, 'the card must not appear in the target column')
+  })
+
+  it('aborts the whole move when the source pane id is stale', () => {
+    const state = createState()
+
+    const next = ideReducer(state, {
+      type: 'moveTab',
+      sourceColumnId: 'column-1',
+      sourcePaneId: 'pane-does-not-exist',
+      tabId: 'card-1',
+      targetColumnId: 'column-2',
+      targetPaneId: 'pane-2',
+      index: 0,
+    })
+
+    assert.equal(next, state, 'a stale source pane must leave state untouched')
+    assert.ok(next.columns[0].cards['card-1'], 'the card must stay in the source column')
+    assert.equal(next.columns[1].cards['card-1'], undefined, 'the card must not be duplicated into the target column')
+
+    const targetPane = next.columns[1].layout as PaneNode
+    assert.deepEqual(targetPane.tabs, ['card-3'], 'the target pane must not gain the tab')
+  })
+
+  it('moves a same-column tab into an empty sibling pane without collapsing the drop target', () => {
+    const state = createState()
+    state.columns[0] = createColumn({
+      id: 'column-1',
+      provider: 'codex',
+      workspacePath: 'D:/repo/one',
+      model: DEFAULT_CODEX_MODEL,
+      layout: createSplit('split-root', 'horizontal', [
+        createPane('pane-a', ['card-1'], 'card-1'),
+        createPane('pane-b', [], ''),
+      ]),
+      cards: {
+        'card-1': createCard({ id: 'card-1', provider: 'codex', model: DEFAULT_CODEX_MODEL, messages: [] }),
+      },
+    })
+
+    const next = ideReducer(state, {
+      type: 'moveTab',
+      sourceColumnId: 'column-1',
+      sourcePaneId: 'pane-a',
+      tabId: 'card-1',
+      targetColumnId: 'column-1',
+      targetPaneId: 'pane-b',
+      index: 0,
+    })
+
+    const layout = next.columns[0].layout as PaneNode
+    assert.equal(layout.type, 'pane', 'the emptied source pane should collapse away')
+    assert.equal(layout.id, 'pane-b', 'the drop target pane must survive the collapse')
+    assert.deepEqual(layout.tabs, ['card-1'], 'the dragged tab must land in the drop target')
+    assert.equal(layout.activeTabId, 'card-1')
+    assert.ok(next.columns[0].cards['card-1'], 'the moved card must not become an orphan')
+  })
+
+  it('does not archive a card when closeTab uses a stale pane id', () => {
+    const state = createState()
+
+    const next = ideReducer(state, {
+      type: 'closeTab',
+      columnId: 'column-1',
+      paneId: 'pane-does-not-exist',
+      tabId: 'card-1',
+    })
+
+    assert.equal(next, state, 'a stale pane id must leave state untouched')
+    assert.equal(next.sessionHistory.length, 0, 'no ghost session-history entry may be created')
+    assert.ok(next.columns[0].cards['card-1'], 'the card must stay open')
+
+    const again = ideReducer(next, {
+      type: 'closeTab',
+      columnId: 'column-1',
+      paneId: 'pane-does-not-exist',
+      tabId: 'card-1',
+    })
+
+    assert.equal(again.sessionHistory.length, 0, 'repeated stale closes must not stack archive entries')
+  })
+
   it('updates split ratios when a pane group is resized', () => {
     const state = createState()
     state.columns[0] = createColumn({

@@ -26,6 +26,7 @@ import {
 import {
   buildAnalysisPrompt,
   parseAnalysisResult,
+  scopeStrategyCommitPaths,
   type AnalysisResult,
   type CommitStrategy,
 } from './git-agent-panel-utils'
@@ -403,8 +404,28 @@ export const createGitOperationHub = (deps: GitOperationHubDeps) => {
     let latestStatus = getSession(workspacePath).snapshot.lastStatus
 
     try {
+      // 症状：AI 给的路径（含 "." 这种通配）被原样 git add，且提交时不带路径，第一笔就把整个 index 卷走。
+      // 根因：策略执行完全信任模型输出，既不与真实改动求交，也没走服务端已有的 `commit --only` 子集能力。
+      // 被否决的替代方案：只在服务端拦截 —— 不带 paths 提交整个 index 是 commitAllGitWorkspace 依赖的合法语义，改不得。
+      if (!latestStatus) {
+        latestStatus = await deps.fetchGitStatus(workspacePath)
+      }
+
+      let executedCommits = 0
+      let skippedCommits = 0
+
       for (let i = 0; i < strategy.commits.length; i += 1) {
         const commit = strategy.commits[i]!
+        const allowedPaths = (latestStatus?.changes ?? [])
+          .filter((change) => !change.conflicted)
+          .map((change) => change.path)
+        const scopedPaths = scopeStrategyCommitPaths(commit.paths ?? [], allowedPaths)
+
+        if (scopedPaths.length === 0) {
+          skippedCommits += 1
+          continue
+        }
+
         patch(workspacePath, {
           agentPhase: {
             kind: 'executing',
@@ -415,7 +436,7 @@ export const createGitOperationHub = (deps: GitOperationHubDeps) => {
 
         latestStatus = await deps.setGitStage({
           workspacePath,
-          paths: commit.paths,
+          paths: scopedPaths,
           staged: true,
         })
 
@@ -423,9 +444,26 @@ export const createGitOperationHub = (deps: GitOperationHubDeps) => {
           workspacePath,
           summary: commit.summary,
           description: '',
+          paths: scopedPaths,
         })
         latestStatus = result.status
+        executedCommits += 1
       }
+
+      if (executedCommits === 0) {
+        throw new Error(
+          language === 'zh-CN'
+            ? '策略里的文件路径都不在当前改动中，没有执行任何提交。'
+            : 'None of the strategy paths match the current changes; nothing was committed.',
+        )
+      }
+
+      const skippedNote =
+        skippedCommits > 0
+          ? language === 'zh-CN'
+            ? `（跳过 ${skippedCommits} 个：路径已不在当前改动中）`
+            : ` (skipped ${skippedCommits}: paths no longer changed)`
+          : ''
 
       patch(workspacePath, {
         lastStatus: latestStatus,
@@ -434,8 +472,8 @@ export const createGitOperationHub = (deps: GitOperationHubDeps) => {
           success: true,
           message:
             language === 'zh-CN'
-              ? `已按策略完成 ${strategy.commits.length} 个提交。`
-              : `Completed ${strategy.commits.length} commits per strategy.`,
+              ? `已按策略完成 ${executedCommits} 个提交。${skippedNote}`
+              : `Completed ${executedCommits} commits per strategy.${skippedNote}`,
         },
       })
     } catch (error) {

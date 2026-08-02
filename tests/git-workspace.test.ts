@@ -11,6 +11,8 @@ import {
   diffWorkspaceSnapshot,
   discardGitWorkspaceChanges,
   encodeGitPathspecStdin,
+  fetchCommitDiff,
+  fetchGitLog,
   initGitWorkspace,
   inspectGitWorkspace,
   setGitWorkspaceStage,
@@ -22,14 +24,18 @@ const tempRoots: string[] = []
 const runGit = async (cwd: string, args: string[]) => {
   const { spawn } = await import('node:child_process')
 
-  await new Promise<void>((resolve, reject) => {
+  return await new Promise<string>((resolve, reject) => {
     const child = spawn('git', args, {
       cwd,
       stdio: ['ignore', 'pipe', 'pipe'],
       windowsHide: true,
     })
 
+    let stdout = ''
     let stderr = ''
+    child.stdout.on('data', (chunk: Buffer) => {
+      stdout += chunk.toString()
+    })
     child.stderr.on('data', (chunk: Buffer) => {
       stderr += chunk.toString()
     })
@@ -37,7 +43,7 @@ const runGit = async (cwd: string, args: string[]) => {
     child.on('error', reject)
     child.on('close', (code) => {
       if (code === 0) {
-        resolve()
+        resolve(stdout)
         return
       }
 
@@ -45,6 +51,12 @@ const runGit = async (cwd: string, args: string[]) => {
     })
   })
 }
+
+const listHeadFiles = async (repoPath: string) =>
+  (await runGit(repoPath, ['ls-tree', '-r', 'HEAD', '--name-only']))
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean)
 
 const createTempRepo = async () => {
   const repoPath = await mkdtemp(path.join(tmpdir(), 'chill-vibe-git-tool-'))
@@ -59,6 +71,76 @@ const createTempRepo = async () => {
   await runGit(repoPath, ['commit', '-m', 'Initial commit'])
 
   return repoPath
+}
+
+/**
+ * Reproduces the `C  base.txt -> copy.txt` porcelain entry a user gets when
+ * their gitconfig sets `status.renames=copies`. Copy detection only fires when
+ * the source blob is part of the same staged diff, so `base.txt` keeps its own
+ * staged edit — which is exactly the state that must survive operations on the
+ * copy target.
+ */
+const createStagedCopyRepo = async () => {
+  const repoPath = await createTempRepo()
+  await runGit(repoPath, ['config', 'status.renames', 'copies'])
+
+  const body = Array.from({ length: 30 }, (_, index) => `line ${index}`).join('\n')
+  await writeFile(path.join(repoPath, 'base.txt'), `${body}\n`)
+  await runGit(repoPath, ['add', 'base.txt'])
+  await runGit(repoPath, ['commit', '-m', 'Add the copy source'])
+
+  await writeFile(path.join(repoPath, 'base.txt'), `${body}\nbase edit\n`)
+  await writeFile(path.join(repoPath, 'copy.txt'), `${body}\ncopy edit\n`)
+  await runGit(repoPath, ['add', 'base.txt', 'copy.txt'])
+
+  const status = await inspectGitWorkspace(repoPath, { includeChangePreviews: false })
+  const copyChange = status.changes.find((change) => change.path === 'copy.txt')
+  assert.equal(
+    copyChange?.stagedStatus,
+    'C',
+    `expected git to report a copy, saw ${JSON.stringify(
+      status.changes.map((change) => [`${change.stagedStatus}${change.workingTreeStatus}`, change.path, change.originalPath]),
+    )}`,
+  )
+  assert.equal(copyChange?.originalPath, 'base.txt')
+
+  return repoPath
+}
+
+const describeStatus = (status: { changes: { stagedStatus: string; workingTreeStatus: string; path: string }[] }) =>
+  JSON.stringify(
+    status.changes.map((change) => [`${change.stagedStatus}${change.workingTreeStatus}`, change.path]),
+  )
+
+/**
+ * `GIT_TRACE` makes every spawned git append `trace: built-in: git <args>` to
+ * the given file, which is the only way to count the real subprocesses
+ * `server/git-workspace.ts` launches (its `spawn` import is bound at module
+ * evaluation and cannot be intercepted from a test).
+ */
+const recordGitCommands = async <T>(run: () => Promise<T>) => {
+  const traceRoot = await mkdtemp(path.join(tmpdir(), 'chill-vibe-git-trace-'))
+  tempRoots.push(traceRoot)
+  const tracePath = path.join(traceRoot, 'git-trace.log')
+  const previousTrace = process.env.GIT_TRACE
+  process.env.GIT_TRACE = tracePath
+
+  try {
+    const result = await run()
+    const log = await readFile(tracePath, 'utf8').catch(() => '')
+    const commands = log
+      .split(/\r?\n/)
+      .map((line) => /trace: built-in: git (.+)$/.exec(line)?.[1]?.trim())
+      .filter((entry): entry is string => Boolean(entry))
+
+    return { result, commands }
+  } finally {
+    if (previousTrace === undefined) {
+      delete process.env.GIT_TRACE
+    } else {
+      process.env.GIT_TRACE = previousTrace
+    }
+  }
 }
 
 after(async () => {
@@ -995,6 +1077,204 @@ describe('git workspace helpers', () => {
     const { readFile, stat } = await import('node:fs/promises')
     assert.equal((await readFile(path.join(repoPath, 'tracked.txt'), 'utf8')).replace(/\r\n/g, '\n'), 'base\n')
     await assert.rejects(stat(path.join(repoPath, 'renamed.txt')))
+  })
+
+  it('commits a staged rename as one rename instead of leaving the old path staged', async () => {
+    const repoPath = await createTempRepo()
+    await runGit(repoPath, ['mv', 'tracked.txt', 'renamed.txt'])
+
+    const beforeCommit = await inspectGitWorkspace(repoPath, { includeChangePreviews: false })
+    const renameChange = beforeCommit.changes.find((change) => change.path === 'renamed.txt')
+    assert.equal(renameChange?.stagedStatus, 'R')
+    assert.equal(renameChange?.originalPath, 'tracked.txt')
+
+    const result = await commitGitWorkspace({
+      workspacePath: repoPath,
+      summary: 'Rename tracked file',
+      paths: ['renamed.txt'],
+    })
+
+    assert.deepEqual(await listHeadFiles(repoPath), ['renamed.txt'])
+    assert.equal(
+      result.status.clean,
+      true,
+      `expected a clean tree after committing the rename, saw ${JSON.stringify(
+        result.status.changes.map((change) => [`${change.stagedStatus}${change.workingTreeStatus}`, change.path]),
+      )}`,
+    )
+  })
+
+  it('unstages both sides of a staged rename instead of only the new path', async () => {
+    const repoPath = await createTempRepo()
+    await runGit(repoPath, ['mv', 'tracked.txt', 'renamed.txt'])
+
+    const status = await setGitWorkspaceStage({
+      workspacePath: repoPath,
+      paths: ['renamed.txt'],
+      staged: false,
+    })
+
+    const original = status.changes.find((change) => change.path === 'tracked.txt')
+    assert.equal(original?.stagedStatus, ' ')
+    assert.equal(original?.staged, false)
+    assert.equal(original?.kind, 'deleted')
+
+    const renamed = status.changes.find((change) => change.path === 'renamed.txt')
+    assert.equal(renamed?.kind, 'untracked')
+    assert.equal(
+      status.summary.staged,
+      0,
+      `unstaging a rename must leave nothing in the index, saw ${JSON.stringify(
+        status.changes.map((change) => [`${change.stagedStatus}${change.workingTreeStatus}`, change.path]),
+      )}`,
+    )
+  })
+
+  it('stages a modified rename target without feeding git add the vanished original path', async () => {
+    const repoPath = await createTempRepo()
+    // Keep the two sides similar enough for Git's 50% rename detection, so the
+    // status entry really carries `stagedStatus: 'R'` plus `originalPath`.
+    const body = Array.from({ length: 12 }, (_, index) => `line ${index}`).join('\n')
+    await writeFile(path.join(repoPath, 'tracked.txt'), `${body}\n`)
+    await runGit(repoPath, ['add', 'tracked.txt'])
+    await runGit(repoPath, ['commit', '-m', 'Grow the tracked file'])
+    await runGit(repoPath, ['mv', 'tracked.txt', 'renamed.txt'])
+    await writeFile(path.join(repoPath, 'renamed.txt'), `${body}\nrenamed edit\n`)
+
+    const status = await setGitWorkspaceStage({
+      workspacePath: repoPath,
+      paths: ['renamed.txt'],
+      staged: true,
+    })
+
+    const renamed = status.changes.find((change) => change.path === 'renamed.txt')
+    assert.equal(renamed?.stagedStatus, 'R')
+    assert.equal(renamed?.originalPath, 'tracked.txt')
+    assert.equal(renamed?.workingTreeStatus, ' ')
+    assert.equal(status.summary.unstaged, 0)
+    assert.equal(status.changes.length, 1)
+  })
+
+  it('unstages a staged copy without touching the copy source', async () => {
+    const repoPath = await createStagedCopyRepo()
+
+    const status = await setGitWorkspaceStage({
+      workspacePath: repoPath,
+      paths: ['copy.txt'],
+      staged: false,
+    })
+
+    const base = status.changes.find((change) => change.path === 'base.txt')
+    assert.equal(
+      base?.stagedStatus,
+      'M',
+      `unstaging a copy must leave the source staged, saw ${describeStatus(status)}`,
+    )
+    assert.equal(base?.staged, true)
+    assert.equal(base?.workingTreeStatus, ' ')
+
+    const copy = status.changes.find((change) => change.path === 'copy.txt')
+    assert.equal(copy?.kind, 'untracked', `saw ${describeStatus(status)}`)
+  })
+
+  it('commits a staged copy without dragging the copy source into the commit', async () => {
+    const repoPath = await createStagedCopyRepo()
+
+    const result = await commitGitWorkspace({
+      workspacePath: repoPath,
+      summary: 'Add the copy only',
+      paths: ['copy.txt'],
+    })
+
+    const committedFiles = (
+      await runGit(repoPath, ['show', '--name-only', '--format=', result.commit.hash])
+    )
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .filter(Boolean)
+    assert.deepEqual(committedFiles, ['copy.txt'])
+
+    const base = result.status.changes.find((change) => change.path === 'base.txt')
+    assert.equal(
+      base?.stagedStatus,
+      'M',
+      `the unchecked copy source must stay staged, saw ${describeStatus(result.status)}`,
+    )
+  })
+
+  it('discards a staged copy by dropping only the copy target', async () => {
+    const repoPath = await createStagedCopyRepo()
+
+    const status = await discardGitWorkspaceChanges({
+      workspacePath: repoPath,
+      paths: ['copy.txt'],
+    })
+
+    const { stat } = await import('node:fs/promises')
+    await assert.rejects(stat(path.join(repoPath, 'copy.txt')))
+
+    const base = status.changes.find((change) => change.path === 'base.txt')
+    assert.equal(
+      base?.stagedStatus,
+      'M',
+      `discarding a copy must not roll back the copy source, saw ${describeStatus(status)}`,
+    )
+    assert.match(
+      (await readFile(path.join(repoPath, 'base.txt'), 'utf8')).replace(/\r\n/g, '\n'),
+      /\nbase edit\n$/,
+    )
+  })
+
+  it('unstages without running a second full working-tree status scan', async () => {
+    const repoPath = await createTempRepo()
+    await runGit(repoPath, ['mv', 'tracked.txt', 'renamed.txt'])
+
+    const { result: status, commands } = await recordGitCommands(async () =>
+      await setGitWorkspaceStage({
+        workspacePath: repoPath,
+        paths: ['renamed.txt'],
+        staged: false,
+      }),
+    )
+
+    // The rename must still be unstaged on both sides — the cheaper index-only
+    // lookup may not regress the pairing this call depends on.
+    assert.equal(status.summary.staged, 0, `saw ${describeStatus(status)}`)
+    assert.equal(status.changes.find((change) => change.path === 'renamed.txt')?.kind, 'untracked')
+
+    const statusScans = commands.filter((command) => /(^|\s)status(\s|$)/.test(command))
+    assert.equal(
+      statusScans.length,
+      1,
+      `unstaging should scan the working tree only once (for the returned status), saw ${JSON.stringify(commands)}`,
+    )
+  })
+
+  it('returns a full commit diff but truncates and labels one that exceeds the byte budget', async () => {
+    const repoPath = await createTempRepo()
+    const body = Array.from({ length: 80 }, (_, index) => `line ${index}`).join('\n')
+    await writeFile(path.join(repoPath, 'long.txt'), `${body}\n`)
+    await runGit(repoPath, ['add', 'long.txt'])
+    await runGit(repoPath, ['commit', '-m', 'Add a long file'])
+
+    const log = await fetchGitLog({ workspacePath: repoPath, limit: 1 })
+    const hash = log.commits[0]?.hash ?? ''
+    assert.ok(hash.length > 0)
+
+    const full = await fetchCommitDiff(repoPath, hash)
+    assert.match(full, /diff --git/)
+    assert.match(full, /\+line 79/)
+    assert.doesNotMatch(full, /truncated/i)
+
+    const truncated = await fetchCommitDiff(repoPath, hash, { maxPatchBytes: 256 })
+    assert.match(truncated, /diff --git/)
+    assert.match(truncated, /\+line 0/)
+    assert.doesNotMatch(truncated, /\+line 79/)
+    assert.match(truncated, /truncated/i)
+    assert.ok(
+      Buffer.byteLength(truncated) < Buffer.byteLength(full),
+      `truncated diff (${Buffer.byteLength(truncated)} bytes) must be smaller than the full diff (${Buffer.byteLength(full)} bytes)`,
+    )
   })
 
   it('discards only the requested paths and leaves other changes untouched', async () => {

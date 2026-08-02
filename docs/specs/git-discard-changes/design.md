@@ -86,8 +86,8 @@ type GitChangeSelection = {
 ### 右键菜单（GitFullDialog 内联实现）
 
 - `onContextMenu`（行级）：preventDefault，按 `resolveGitContextTarget` 更新选择，把菜单锚定在 `clientX/clientY`（fixed 定位，viewport 边缘夹紧）。
-- 菜单项：「回退改动 / 回退 N 个文件的改动」（选中中非冲突路径 → `setDiscardTargetPaths`，全冲突则禁用）。
-- 关闭：pointerdown 在菜单外、Escape、列表滚动、窗口 resize、执行菜单项后。
+- 菜单项：「回退改动 / 回退 N 个文件的改动」（选中中非冲突路径，全冲突则禁用）。点击后菜单原位切换成确认态，展示不可撤销提示与「确认回退 / 取消」；菜单保持在 Git dialog DOM 内，不要挂成 dialog 的兄弟 portal，否则鼠标确认可能越过对话框交互边界而不触发。也不要先关闭菜单再把确认条显示到对话框顶部，否则动作与反馈相距过远，用户会误判为点击失效。
+- 关闭：pointerdown 在菜单外、Escape、列表滚动、窗口 resize、取消或执行确认后；关闭确认态必须同时清空待回退路径，不能留下不可见的确认状态。
 - 样式复用弹层 token（`--panel-*` / menu 相关现有变量），`role="menu"` + `role="menuitem"`，两主题验证。
 
 ### diff 面板多选态

@@ -68,6 +68,10 @@ export type WorkspaceSnapshotDiffLimits = {
   maxFiles?: number
 }
 
+export type GitCommitDiffLimits = {
+  maxPatchBytes?: number
+}
+
 const emptyGitSummary = () => ({
   staged: 0,
   unstaged: 0,
@@ -80,6 +84,9 @@ const gitChangePreviewMaxFileBytes = 256 * 1024
 const gitChangePreviewMaxTotalBytes = 512 * 1024
 const gitChangePreviewMaxPatchChars = 128 * 1024
 const gitChangePreviewDiffBatchChars = 12 * 1024
+// A history commit is rendered as one patch, so it needs its own ceiling well
+// above the per-file preview cap yet far below what freezes the renderer.
+const gitCommitDiffMaxPatchBytes = 512 * 1024
 // A chat stream keeps this snapshot alive until the provider turn settles.
 // Keep the retained baseline strictly bounded so several concurrent streams
 // cannot each clone gigabytes of untracked build/test output into Electron's
@@ -406,6 +413,118 @@ const summarizeChanges = (changes: GitChange[]) =>
 
 const isCanceledStagedAddition = (change: GitChange) =>
   change.stagedStatus === 'A' && change.workingTreeStatus === 'D'
+
+/**
+ * 症状 — with `status.renames=copies` in the user's gitconfig, unchecking or
+ *   committing a copied file silently unstaged / committed the *source* file
+ *   too, throwing away staged work the user never selected.
+ * 根因 — `git status --porcelain=v1` renders both halves of `R old -> new` and
+ *   `C old -> new` the same way, so `parseStatusLine` fills `originalPath` for
+ *   both and one shared predicate treated them alike. The semantics diverge:
+ *   a rename's `old` is gone from index and worktree (expanding is mandatory,
+ *   or the deletion half is left behind), while a copy's `old` still exists and
+ *   commonly carries its own staged edits. 2026-08-02 实测 in a temp repo:
+ *   `C base.txt -> copy.txt` + `M base.txt`, then unchecking `copy.txt` ran
+ *   `git restore --staged copy.txt base.txt` and dropped `base.txt` to ` M`.
+ * 被否决 — normalizing copies away in `parseStatusLine` (dropping `originalPath`
+ *   for `C`) would break the Git card's "copied from" label and the snapshot
+ *   diff path at :1551 that follows `originalPath`. `runGit` also cannot pin
+ *   `-c status.renames=renames` to make copies disappear, because the card is
+ *   supposed to show the user the copy relationship their config asked for.
+ */
+const isRenameChange = (change: GitChange) =>
+  change.stagedStatus === 'R' && Boolean(change.originalPath)
+
+const isCopyChange = (change: GitChange) =>
+  change.stagedStatus === 'C' && Boolean(change.originalPath)
+
+/**
+ * A rename is one logical change recorded across two paths, but the Git card
+ * only ever shows (and lets the user select) `change.path`. Every index-side
+ * pathspec built from a selection must therefore re-attach `originalPath`.
+ * A copy must NOT be expanded — see `isRenameChange` above.
+ */
+const renamePathspecsForChange = (change: GitChange) =>
+  isRenameChange(change) ? [change.path, change.originalPath as string] : [change.path]
+
+const expandStagedRenamePathspecs = (
+  selectedPaths: string[],
+  originalPathsByNewPath: Map<string, string>,
+) => {
+  if (originalPathsByNewPath.size === 0) {
+    return selectedPaths
+  }
+
+  const expanded = selectedPaths.flatMap((selectedPath) => {
+    const originalPath = originalPathsByNewPath.get(selectedPath)
+    return originalPath ? [selectedPath, originalPath] : [selectedPath]
+  })
+
+  return expanded.length === selectedPaths.length ? selectedPaths : normalizePathList(expanded)
+}
+
+/**
+ * `--name-status -z` emits one NUL-terminated status token per entry, followed
+ * by one path — or by two paths when the token is a rename/copy score such as
+ * `R100`. Walk the fields instead of splitting on lines so paths containing
+ * newlines or non-ASCII bytes survive verbatim.
+ */
+const parseStagedRenamePairs = (stdout: string) => {
+  const fields = stdout.split('\0').filter((field) => field.length > 0)
+  const originalPathsByNewPath = new Map<string, string>()
+  let index = 0
+
+  while (index < fields.length) {
+    const statusToken = fields[index] ?? ''
+    const originalPath = fields[index + 1]
+    index += 2
+
+    if (!statusToken.startsWith('R') && !statusToken.startsWith('C')) {
+      continue
+    }
+
+    const newPath = fields[index]
+    index += 1
+
+    if (statusToken.startsWith('R') && originalPath && newPath) {
+      originalPathsByNewPath.set(newPath, originalPath)
+    }
+  }
+
+  return originalPathsByNewPath
+}
+
+/**
+ * 症状 — every checkbox toggle in the Git card ran a third git process, and on
+ *   a large repo each one walked the whole working tree.
+ * 根因 — unstaging needs the `new -> old` pairing of staged renames, and the
+ *   only source was another `inspectResolvedGitWorkspace`. Its very first call
+ *   is `git status --branch --porcelain=v1 --untracked-files=all`, which
+ *   `includeChangePreviews:false` / `includeRepositoryDetails:false` do not
+ *   touch — those options only skip preview hydration, `git log`, and the
+ *   package.json read. So rapid-clicking 20 checkboxes cost 20 extra full-tree
+ *   scans plus every unignored untracked file.
+ * 被否决 — passing the renderer's already-loaded `changes` down would change the
+ *   public `setGitWorkspaceStage` signature for every caller and still need a
+ *   server-side fallback; `git diff --cached` compares index against HEAD only,
+ *   never stats the worktree, and normally returns empty. `-M` is passed
+ *   explicitly so a `diff.renames=copies` config cannot fold copies in here
+ *   (verified 2026-08-02: copies come back as `A` and `--diff-filter=R` drops
+ *   them), keeping this query aligned with `isRenameChange`.
+ */
+const readStagedRenamePairs = async (repoRoot: string) => {
+  const result = await runGit(
+    repoRoot,
+    ['diff', '--cached', '--name-status', '-M', '-z', '--diff-filter=R'],
+    { allowFailure: true },
+  )
+
+  if (result.exitCode !== 0) {
+    return new Map<string, string>()
+  }
+
+  return parseStagedRenamePairs(result.stdout)
+}
 
 const readWorkspaceFile = async (repoRoot: string, relativePath: string) => {
   try {
@@ -1553,6 +1672,18 @@ export const setGitWorkspaceStage = async ({
   }
 
   if (staged) {
+    // Staging deliberately does NOT expand a rename to its original path, and
+    // this asymmetry with the unstage branch below is load-bearing:
+    // 症状 — expanding it makes every rename stage fail outright.
+    // 根因 — a staged rename (`R old -> new`) has already recorded the removal
+    //   of `old`, so `old` is in neither the worktree nor the index; 2026-08-02
+    //   实测 `git add old` then dies with `fatal: pathspec 'old' did not match
+    //   any files` and aborts the whole (possibly hundreds-of-paths) batch.
+    //   Adding `new` alone already carries the complete rename.
+    // 被否决 — `git add` has no `--ignore-unmatch` escape hatch, and probing
+    //   each original path for existence would cost an extra Git process on the
+    //   hot staging path for a no-op. Guarded by the "stages a modified rename
+    //   target without feeding git add the vanished original path" test.
     await runGitWithPathspecs(repoRoot, ['add'], normalizedPaths)
     return await inspectResolvedGitWorkspace(
       workspacePath,
@@ -1561,18 +1692,30 @@ export const setGitWorkspaceStage = async ({
     )
   }
 
-  const restoreResult = await runGitWithPathspecs(repoRoot, ['restore', '--staged'], normalizedPaths, {
+  // 症状 — unchecking a renamed file left `D old` still staged plus `?? new`.
+  // 根因 — the caller only knows `change.path`, so unstaging reset just the new
+  //   side of the rename while the index kept the deletion of the original.
+  // 被否决 — resolving the pair in the caller (the Git card) would leave the
+  //   server API silently half-correct for every other caller; read the index
+  //   here instead, through the index-only query in `readStagedRenamePairs`
+  //   (see its comment for why this is not another `git status`).
+  const unstagePaths = expandStagedRenamePathspecs(
+    normalizedPaths,
+    await readStagedRenamePairs(repoRoot),
+  )
+
+  const restoreResult = await runGitWithPathspecs(repoRoot, ['restore', '--staged'], unstagePaths, {
     allowFailure: true,
   })
 
   if (restoreResult.exitCode !== 0) {
     if (await hasHeadCommit(repoRoot)) {
-      await runGitWithPathspecs(repoRoot, ['reset', '--quiet', 'HEAD'], normalizedPaths)
+      await runGitWithPathspecs(repoRoot, ['reset', '--quiet', 'HEAD'], unstagePaths)
     } else {
       await runGitWithPathspecs(
         repoRoot,
         ['rm', '--cached', '--quiet', '--ignore-unmatch'],
-        normalizedPaths,
+        unstagePaths,
         {
           allowFailure: true,
         },
@@ -1620,10 +1763,7 @@ export const discardGitWorkspaceChanges = async ({
   const restorePaths: string[] = []
 
   for (const change of requestedChanges) {
-    const isRenameOrCopy =
-      (change.stagedStatus === 'R' || change.stagedStatus === 'C') && Boolean(change.originalPath)
-
-    if (isRenameOrCopy) {
+    if (isRenameChange(change)) {
       indexRemovePaths.push(change.path)
       deleteWorkingTreePaths.push(change.path)
       restorePaths.push(change.originalPath!)
@@ -1635,7 +1775,11 @@ export const discardGitWorkspaceChanges = async ({
       continue
     }
 
-    if (change.stagedStatus === 'A') {
+    // A copy target is an addition that happens to know where its content came
+    // from; discarding it must drop only the new path. Restoring `originalPath`
+    // the way the rename branch does would roll back the source file's own
+    // staged edits, which the user never selected (see `isRenameChange`).
+    if (change.stagedStatus === 'A' || isCopyChange(change)) {
       indexRemovePaths.push(change.path)
       if (change.workingTreeStatus !== 'D') {
         deleteWorkingTreePaths.push(change.path)
@@ -1728,10 +1872,31 @@ export const commitGitWorkspace = async ({
 
     status = await inspectGitWorkspace(workspacePath, { includeChangePreviews: false })
     const refreshedChangesByPath = new Map(status.changes.map((change) => [change.path, change]))
-    normalizedPaths = normalizedPaths.filter((path) => {
-      const change = refreshedChangesByPath.get(path)
-      return change !== undefined && !change.conflicted && !isCanceledStagedAddition(change)
-    })
+    // 症状 — committing a renamed file produced a tree holding BOTH names and
+    //   left `D old` staged, so the next commit silently carried the leftover.
+    // 根因 — the selection only names the new path, and `git commit --only`
+    //   commits exactly the pathspecs it is given: the rename's deletion half
+    //   was never in the pathspec list. 2026-08-02 实测 `--only -- old new`
+    //   records the single `rename old => new` and leaves the tree clean.
+    // 被否决 — falling back to a full `git commit` would drag in every other
+    //   staged file the user deliberately left unchecked. Copies (`C old ->
+    //   new`) are deliberately not expanded here for the same reason: `old`
+    //   still exists with its own staged edits (see `isRenameChange`).
+    // NOTE — this path reuses the `inspectGitWorkspace` above rather than
+    //   `readStagedRenamePairs`; that status read is already required to drop
+    //   conflicted and canceled-addition paths, so an index-only query would
+    //   add a git process here instead of removing one.
+    normalizedPaths = normalizePathList(
+      normalizedPaths.flatMap((selectedPath) => {
+        const change = refreshedChangesByPath.get(selectedPath)
+
+        if (change === undefined || change.conflicted || isCanceledStagedAddition(change)) {
+          return []
+        }
+
+        return renamePathspecsForChange(change)
+      }),
+    )
 
     if (normalizedPaths.length === 0) {
       throw new Error('Choose at least one file to commit.')
@@ -1907,9 +2072,57 @@ export const fetchGitLog = async ({
   return { commits, hasMore }
 }
 
+const formatGitDiffByteSize = (bytes: number) => {
+  if (bytes >= 1024 * 1024) {
+    return `${(bytes / (1024 * 1024)).toFixed(1)} MiB`
+  }
+
+  if (bytes >= 1024) {
+    return `${Math.round(bytes / 1024)} KiB`
+  }
+
+  return `${bytes} B`
+}
+
+/**
+ * 症状 — opening a large commit in Git history froze the renderer; a probe
+ *   commit shipped 8.5 MiB of patch text straight into one message bubble.
+ * 根因 — `fetchCommitDiff` returned `git show` stdout verbatim with no budget,
+ *   unlike every other patch producer here (`gitChangePreviewMaxPatchChars`,
+ *   `workspaceSnapshotMaxTotalBytes`), so commit size scaled memory linearly.
+ * 被否决 — dropping the patch entirely the way `buildGitChangePreview` does on
+ *   overflow is wrong for this surface (the user opened it to read the diff),
+ *   and capping inside `runGit` would silently corrupt status/log callers. Keep
+ *   the head of the patch and say out loud that the tail was cut, so a
+ *   truncated diff can never be mistaken for a short one.
+ */
+const truncateGitCommitDiff = (patch: string, hash: string, maxPatchBytes: number) => {
+  const totalBytes = Buffer.byteLength(patch)
+
+  if (totalBytes <= maxPatchBytes) {
+    return patch
+  }
+
+  const head = Buffer.from(patch, 'utf8').subarray(0, maxPatchBytes).toString('utf8')
+  const lastLineBreak = head.lastIndexOf('\n')
+  // Cut on a line boundary so the kept part stays a readable patch. That also
+  // drops the U+FFFD a mid-codepoint byte slice leaves behind; strip it
+  // explicitly for the (rare) patch whose head holds no line break at all.
+  let kept = lastLineBreak > 0 ? head.slice(0, lastLineBreak + 1) : head
+  while (kept.length > 0 && kept.charCodeAt(kept.length - 1) === 0xfffd) {
+    kept = kept.slice(0, -1)
+  }
+  const notice =
+    `[Chill Vibe] Diff truncated after ${formatGitDiffByteSize(Buffer.byteLength(kept))} ` +
+    `of ${formatGitDiffByteSize(totalBytes)}. Run \`git show ${hash}\` to read the full patch.`
+
+  return `${kept}\n${notice}\n`
+}
+
 export const fetchCommitDiff = async (
   workspacePath: string,
   hash: string,
+  limits: GitCommitDiffLimits = {},
 ): Promise<string> => {
   const status = await assertRepository(workspacePath)
   const result = await runGit(status.repoRoot, ['show', hash, '--format=', '--patch'], {
@@ -1920,5 +2133,9 @@ export const fetchCommitDiff = async (
     throw new Error(formatGitFailure(['show', hash], result))
   }
 
-  return result.stdout
+  return truncateGitCommitDiff(
+    result.stdout,
+    hash,
+    limits.maxPatchBytes ?? gitCommitDiffMaxPatchBytes,
+  )
 }

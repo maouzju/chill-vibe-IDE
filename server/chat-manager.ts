@@ -62,6 +62,9 @@ type StreamRecord = {
   terminal: boolean
   stopRequested: boolean
   cleanupTimer?: ReturnType<typeof setTimeout>
+  // Set while finalizeWithWorkspaceEdits awaits the git diff. stop() uses it to
+  // hand its terminal `done` to that in-flight settle instead of racing it.
+  workspaceDiffInFlight?: boolean
 }
 
 export type UnsolicitedStreamNotification = {
@@ -69,7 +72,47 @@ export type UnsolicitedStreamNotification = {
   streamId: string
 }
 
+export type ChatStreamStopResult = {
+  stopped: boolean
+  // 0 表示终态已经同步发出；> 0 表示终态被刻意推迟（正在等收尾 workspace diff），
+  // 且最长不超过这么久。渲染进程据此放宽它自己的"服务端没回应"本地兜底。
+  settlingWithinMs: number
+}
+
 const cleanupDelayMs = 5 * 60 * 1000
+// 症状 — 上一版让 stop() 挂一个 3s 宽限定时器等收尾 diff，超时就自己发 done；
+//   于是 diff 慢于 3s 时 edits 改动卡被静默丢弃，结果与完全不修一模一样。
+// 根因 — 宽限定时器与 diff 完成是**两个独立竞速**，中间存在"diff 明明完成了、
+//   结果却被扔掉"的窗口：定时器回调先置 terminal，await 之后的 `!stream.terminal`
+//   守卫随即挡掉 emit。而 3s 这个值本身就选错了 —— tests/chat-manager-stop-race
+//   记着真实 workspace diff 实测 74ms~3.5s（2026-08-02），"兜底"落在正常耗时分布
+//   中间，正常波动就会触发。
+// 为什么不能只是把 3s 调大 — 那只是把窗口挪远，竞速结构还在。改成给 diff 自身设
+//   硬超时后，"拿到结果"与"放弃"成为**同一个决策点**：要么 edits 在 done 之前发出，
+//   要么根本没产生过 edits，不存在"完成了却被丢弃"的中间态。
+const workspaceDiffHardTimeoutMs = 12_000
+
+// Promise.race 的 loser 超时后就没人再 await 了，它若之后 reject 就是一条
+// unhandled rejection（在 Electron 主进程里会被当成崩溃级日志）。先用 catch 把
+// rejection 中和成 null，race 才干净地只剩"拿到结果 / 超时放弃"两个出口——
+// 这也正好保留了原来"diff 出错时照常收尾"的语义。
+const withHardTimeout = async <T>(work: Promise<T>, timeoutMs: number): Promise<T | null> => {
+  const guarded = work.catch(() => null)
+  let timer: ReturnType<typeof setTimeout> | undefined
+
+  try {
+    return await Promise.race([
+      guarded,
+      new Promise<null>((resolve) => {
+        timer = setTimeout(() => resolve(null), timeoutMs)
+      }),
+    ])
+  } finally {
+    if (timer) {
+      clearTimeout(timer)
+    }
+  }
+}
 const maxBacklogSize = 2000
 export const maxBacklogCommandOutputChars = 16 * 1024
 const backlogCommandOutputHeadChars = 8 * 1024
@@ -229,6 +272,7 @@ export class ChatManager {
   private readonly providerLauncher: typeof launchProviderRun
   private readonly workspaceSnapshotter: typeof captureWorkspaceSnapshot
   private readonly workspaceDiffer: typeof diffWorkspaceSnapshot
+  private readonly workspaceDiffTimeoutMs: number
   private closed = false
 
   constructor(options?: {
@@ -240,11 +284,15 @@ export class ChatManager {
     providerLauncher?: typeof launchProviderRun
     workspaceSnapshotter?: typeof captureWorkspaceSnapshot
     workspaceDiffer?: typeof diffWorkspaceSnapshot
+    // Injectable so a test can prove the give-up path without waiting out the
+    // real bound.
+    workspaceDiffTimeoutMs?: number
   }) {
     this.onUnsolicitedStream = options?.onUnsolicitedStream
     this.providerLauncher = options?.providerLauncher ?? launchProviderRun
     this.workspaceSnapshotter = options?.workspaceSnapshotter ?? captureWorkspaceSnapshot
     this.workspaceDiffer = options?.workspaceDiffer ?? diffWorkspaceSnapshot
+    this.workspaceDiffTimeoutMs = options?.workspaceDiffTimeoutMs ?? workspaceDiffHardTimeoutMs
     this.claudePool = options?.enableClaudeKeepalive
       ? new ClaudeSessionPool({
           shouldWakeOnLine: isClaudeTurnStartLine,
@@ -372,11 +420,14 @@ export class ChatManager {
     return buildActiveStreamViews(this.streams.values())
   }
 
-  stop(streamId: string) {
+  // `settlingWithinMs` 是给渲染进程的时序契约：> 0 表示终态被刻意推迟，最长这么久。
+  // 渲染端的"服务端没回应"本地兜底必须据此放宽，否则它会先一步 close 掉 EventSource，
+  // 让这次推迟白做（症状：改动卡照样丢失，见 Known Pitfall 244）。
+  stop(streamId: string): ChatStreamStopResult {
     const stream = this.streams.get(streamId)
 
     if (!stream || stream.terminal) {
-      return false
+      return { stopped: false, settlingWithinMs: 0 }
     }
 
     stream.stopRequested = true
@@ -385,8 +436,21 @@ export class ChatManager {
     } else {
       stream.child?.kill()
     }
+
+    // 症状：turn 已 onDone、收尾 workspace diff 还挂在 await 上时用户点停止，
+    // done 先落地、edits 改动卡后到；renderer onDone 已 close 掉 EventSource，
+    // 改动卡和文件清单整个丢失，backlog 里还留下 activity-after-done 的错序，
+    // 任何重放路径（SSE 重 attach / subscribe / 手机监工 tapAll）都会看到。
+    // 被否决：await 之后直接丢弃 edits——文件确实被改了，丢了用户就无从得知。
+    // 这里让停止把终态 done 交给那次 in-flight settle 顺序发出；kill 仍是同步
+    // 立即的，只有终态信封被推迟。终态一定会来：那次 settle 自己带硬超时
+    // （workspaceDiffHardTimeoutMs），所以这里不需要、也不该再挂第二个竞速定时器。
+    if (stream.workspaceDiffInFlight) {
+      return { stopped: true, settlingWithinMs: workspaceDiffHardTimeoutMs }
+    }
+
     this.finalize(stream, 'done', { stopped: true })
-    return true
+    return { stopped: true, settlingWithinMs: 0 }
   }
 
   closeAll() {
@@ -646,7 +710,21 @@ export class ChatManager {
     stream.child = child
   }
 
-  private emit<T extends StreamName>(stream: StreamRecord, event: T, data: StreamEventMap[T]) {
+  private emit<T extends StreamName>(
+    stream: StreamRecord,
+    event: T,
+    data: StreamEventMap[T],
+    options?: { terminalEnvelope?: boolean },
+  ) {
+    // done/error 之后不再放行任何事件。迟到者主要有两类：收尾 workspace diff，
+    // 以及被 kill 的子进程最后一段 stdout flush 出来的 delta/activity。renderer
+    // 在 onDone 里已经 removeEventListener + close，这些事件谁也收不到，却会在
+    // backlog 里留下 activity-after-done 的错序，污染所有重放路径。
+    // finalize 先置 terminal 再 emit，所以它自己那一次必须显式放行。
+    if (stream.terminal && !options?.terminalEnvelope) {
+      return
+    }
+
     const payload = appendStreamEnvelopeToBacklog(stream.backlog, { event, data } as StreamEnvelope)
 
     for (const listener of stream.listeners) {
@@ -670,7 +748,7 @@ export class ChatManager {
     }
 
     stream.terminal = true
-    this.emit(stream, event, data)
+    this.emit(stream, event, data, { terminalEnvelope: true })
 
     for (const listener of stream.listeners) {
       listener.end()
@@ -692,14 +770,21 @@ export class ChatManager {
       return
     }
 
+    stream.workspaceDiffInFlight = true
+
     try {
-      const diff = await this.workspaceDiffer(
-        snapshot,
-        workspacePath,
-        touchedPaths,
+      // 硬超时必须套在 diff **自己**身上，而不是让等待方另起一个定时器去竞速它。
+      // 前者只有一个决策点（拿到结果 / 放弃），后者会产生"diff 完成了但结果被扔掉"
+      // 的中间态——那正是上一版丢 edits 改动卡的根因。
+      const diff = await withHardTimeout(
+        this.workspaceDiffer(snapshot, workspacePath, touchedPaths),
+        this.workspaceDiffTimeoutMs,
       )
 
-      if (diff.files.length > 0) {
+      // 终态守卫必须在 await **之后**再查一次：函数入口那次检查早已过期。
+      // 只看 terminal（不看 stopRequested）是有意的——被 stop 推迟的流此时仍非
+      // 终态，正是要让它的 edits 先发出去；只有 done 真的落地了才闭嘴。
+      if (diff && diff.files.length > 0 && !stream.terminal) {
         this.emit(stream, 'activity', {
           itemId: `workspace_edits:${stream.id}`,
           kind: 'edits',
@@ -707,8 +792,16 @@ export class ChatManager {
           files: diff.files,
         })
       }
-    } catch {
-      // Ignore workspace diff errors so the chat stream can still settle normally.
+    } finally {
+      stream.workspaceDiffInFlight = false
+    }
+
+    // 停止在 diff 途中到达过：接管终态，用 stop 的语义收尾而不是这一轮的 payload。
+    // 判据用 stopRequested（stop() 入口就置好的既有字段），不再需要一个专门的
+    // 定时器句柄来记"停止来过"——少一个字段、少两处清理点、也少一条竞速。
+    if (stream.stopRequested) {
+      this.finalize(stream, 'done', { stopped: true })
+      return
     }
 
     this.finalize(stream, event, data)

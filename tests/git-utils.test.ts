@@ -2,7 +2,7 @@
 import test from 'node:test'
 
 import type { GitChange } from '../shared/schema.ts'
-import { computeTotalStats } from '../src/components/git-utils.ts'
+import { computeTotalStats, shouldShowGitSyncButton } from '../src/components/git-utils.ts'
 import { runCommitDiffSelection } from '../src/components/GitFullDialog.tsx'
 
 // 模拟 GitFullDialog 里 commit diff 面板的那几个 state slot，外加可控的 fetch。
@@ -155,4 +155,9 @@ test('computeTotalStats sums numeric line stats when full diff data is available
   assert.equal(stats.added, 15)
   assert.equal(stats.removed, 5)
   assert.equal(stats.hasKnownLineStats, true)
+})
+
+test('Git sync stays available for a clean repository that has an upstream', () => {
+  assert.equal(shouldShowGitSyncButton({ upstream: 'origin/main' }), true)
+  assert.equal(shouldShowGitSyncButton({ upstream: undefined }), false)
 })

@@ -1411,6 +1411,38 @@ for (const theme of ['dark', 'light'] as const) {
     await expect(page.getByRole('button', { name: 'Full Git' })).toBeVisible()
   })
 
+  test(`clean Git cards keep the sync action visible in ${theme} theme`, async ({ page }) => {
+    await page.setViewportSize({ width: 520, height: 720 })
+    await installMockApis(page, theme)
+
+    await page.route('**/api/git/status?workspacePath=*', async (route) => {
+      await route.fulfill({
+        json: createBaseGitStatus({
+          clean: true,
+          ahead: 0,
+          behind: 0,
+          summary: {
+            staged: 0,
+            unstaged: 0,
+            untracked: 0,
+            conflicted: 0,
+          },
+          changes: [],
+        }),
+      })
+    })
+
+    await page.goto('http://localhost:5173')
+
+    const modelSelect = page.locator('.model-select').first()
+    await modelSelect.waitFor()
+    await selectModel(page, modelSelect, 'Git')
+
+    await expect(page.getByText('Working tree clean')).toBeVisible()
+    await expect(page.getByRole('button', { name: 'Sync' })).toBeVisible()
+    await expect(page.getByRole('button', { name: 'Full Git' })).toBeVisible()
+  })
+
   test(`switching a card to Editor without a file keeps a visible empty state in ${theme} theme`, async ({ page }) => {
     await installEditorEmptyStateApis(page, theme)
 

@@ -8,4 +8,4 @@
 6. [x] 绿：让 Agent composer 优先识别内部附件剪贴板元数据并直接复用原附件。
 7. [x] 更新中英文文案与主题样式，扩展明暗主题和窄视口覆盖。
 8. [x] 运行目标 Node 测试、`pnpm test:quality` 和相关主题验证，检查快照变更。
-9. [ ] 运行 `pnpm electron:build`，重启当前 Electron 开发运行时并报告可运行产物。
+9. [x] 运行 `pnpm electron:build`，重启当前 Electron 开发运行时并报告可运行产物。

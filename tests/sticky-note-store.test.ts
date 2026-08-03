@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { mkdir, readFile, readdir, rm, unlink } from 'node:fs/promises'
+import { mkdir, readFile, readdir, rm, unlink, writeFile } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import { afterEach, beforeEach, describe, it } from 'node:test'
@@ -14,6 +14,7 @@ import {
   getStickyNoteWorkspaceDirectory,
   listStickyNotes,
   loadStickyNote,
+  loadStickyNoteVersion,
   restoreStickyNoteVersion,
   saveStickyNote,
   searchStickyNotes,
@@ -30,6 +31,20 @@ describe('sticky note local store', () => {
     now: () => new Date(clock),
     createId: () => `version-${++sequence}`,
   })
+
+  const screenshotAttachment = {
+    id: 'sticky-screenshot.png',
+    fileName: '需求截图.png',
+    mimeType: 'image/png' as const,
+    sizeBytes: 4_096,
+  }
+
+  const animationAttachment = {
+    id: 'sticky-animation.gif',
+    fileName: '交互演示.gif',
+    mimeType: 'image/gif' as const,
+    sizeBytes: 8_192,
+  }
 
   beforeEach(async () => {
     dataDir = path.join(
@@ -51,6 +66,7 @@ describe('sticky note local store', () => {
       noteId: 'note-schema',
       title: 'Schema note',
       content: 'safe payload',
+      attachments: [screenshotAttachment],
       checkpoint: true,
     })
     assert.equal(request.noteId, 'note-schema')
@@ -58,7 +74,7 @@ describe('sticky note local store', () => {
       stickyNoteVersionRequestSchema.parse({ ...request, versionId: 'version-1' }).versionId,
       'version-1',
     )
-    assert.equal(
+    assert.deepEqual(
       stickyNoteDocumentSchema.parse({
         noteId: 'note-schema',
         title: 'Schema note',
@@ -67,14 +83,97 @@ describe('sticky note local store', () => {
         updatedAt: '2026-07-27T08:00:00.000Z',
         preview: 'safe payload',
         content: 'safe payload',
+        attachments: [screenshotAttachment],
         versions: [],
-      }).content,
-      'safe payload',
+      }).attachments,
+      [screenshotAttachment],
     )
     assert.equal(
       stickyNoteSearchRequestSchema.parse({ workspacePath: 'D:/repo/schema', query: 'release' }).query,
       'release',
     )
+  })
+
+  it('persists original image attachment metadata with the current note and legacy indexes default to none', async () => {
+    const saved = await saveStickyNote({
+      workspacePath: 'D:/repo/images',
+      noteId: 'note-images',
+      title: '图片便签',
+      content: '原图不要转码',
+      attachments: [screenshotAttachment],
+      checkpoint: true,
+    }, options())
+
+    assert.deepEqual(saved.attachments, [screenshotAttachment])
+    assert.deepEqual(
+      (await loadStickyNote({ workspacePath: 'D:/repo/images', noteId: 'note-images' }, options())).attachments,
+      [screenshotAttachment],
+    )
+
+    const directory = getStickyNoteWorkspaceDirectory('D:/repo/images', dataDir)
+    const indexPath = path.join(directory, 'workspace.json')
+    const legacyIndex = JSON.parse(await readFile(indexPath, 'utf8')) as {
+      notes: Record<string, Record<string, unknown>>
+    }
+    delete legacyIndex.notes['note-images']!.attachments
+    await writeFile(indexPath, `${JSON.stringify(legacyIndex, null, 2)}\n`, 'utf8')
+
+    assert.deepEqual(
+      (await loadStickyNote({ workspacePath: 'D:/repo/images', noteId: 'note-images' }, options())).attachments,
+      [],
+    )
+
+    const versionId = saved.versions[0]!.id
+    const versionPath = path.join(directory, '.history', 'note-images', `${versionId}.json`)
+    const legacyVersion = JSON.parse(await readFile(versionPath, 'utf8')) as Record<string, unknown>
+    delete legacyVersion.attachments
+    await writeFile(versionPath, `${JSON.stringify(legacyVersion, null, 2)}\n`, 'utf8')
+    assert.deepEqual(
+      (await loadStickyNoteVersion({
+        workspacePath: 'D:/repo/images',
+        noteId: 'note-images',
+        versionId,
+      }, options())).attachments,
+      [],
+    )
+  })
+
+  it('checkpoints attachment-only changes and restores image lists together with note text', async () => {
+    const first = await saveStickyNote({
+      workspacePath: 'D:/repo/image-history',
+      noteId: 'note-image-history',
+      title: '图片历史',
+      content: '正文不变',
+      attachments: [screenshotAttachment],
+      checkpoint: true,
+    }, options())
+    clock += 1_000
+
+    const second = await saveStickyNote({
+      workspacePath: 'D:/repo/image-history',
+      noteId: 'note-image-history',
+      title: '图片历史',
+      content: '正文不变',
+      attachments: [animationAttachment],
+      checkpoint: true,
+    }, options())
+
+    assert.equal(second.versions.length, 2)
+
+    const restored = await restoreStickyNoteVersion({
+      workspacePath: 'D:/repo/image-history',
+      noteId: 'note-image-history',
+      versionId: first.versions[0]!.id,
+    }, options())
+
+    assert.deepEqual(restored.attachments, [screenshotAttachment])
+    assert.ok(restored.versions.some((version) => version.preview === '正文不变'))
+    const currentSnapshot = await loadStickyNoteVersion({
+      workspacePath: 'D:/repo/image-history',
+      noteId: 'note-image-history',
+      versionId: restored.versions[0]!.id,
+    }, options())
+    assert.deepEqual(currentSnapshot.attachments, [animationAttachment])
   })
 
   it('falls back to a direct overwrite when Windows blocks replacement rename', async () => {

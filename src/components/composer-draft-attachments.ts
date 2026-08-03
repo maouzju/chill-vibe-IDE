@@ -63,3 +63,24 @@ export const hydrateDraftAttachments = (
     attachment,
     previewUrl: getImageAttachmentUrl(attachment.id),
   }))
+
+export const mergeUploadedDraftAttachments = (
+  pending: readonly PendingComposerAttachment[],
+  attachments: readonly ImageAttachment[],
+): PendingComposerAttachment[] => {
+  const seen = new Set(
+    pending.flatMap((entry) => entry.kind === 'uploaded' ? [entry.attachment.id] : []),
+  )
+  const additions = attachments.flatMap((attachment) => {
+    if (seen.has(attachment.id)) return []
+    seen.add(attachment.id)
+    return [{
+      kind: 'uploaded' as const,
+      id: attachment.id,
+      attachment,
+      previewUrl: getImageAttachmentUrl(attachment.id),
+    }]
+  })
+
+  return additions.length > 0 ? [...pending, ...additions] : pending.slice()
+}

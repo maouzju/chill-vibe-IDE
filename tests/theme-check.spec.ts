@@ -8102,6 +8102,148 @@ for (const theme of ['dark', 'light'] as const) {
 }
 
 for (const theme of ['dark', 'light'] as const) {
+  test(`sticky note images stay lossless and preview cleanly in ${theme} theme`, async ({ page }) => {
+    const state = createMockState()
+    state.settings.language = 'en'
+    state.settings.theme = theme
+    const baseCard = state.columns[0]!.cards[0]!
+    const stickyCard = {
+      ...baseCard,
+      id: `sticky-images-${theme}`,
+      title: 'Visual references',
+      model: STICKYNOTE_TOOL_MODEL,
+      stickyNote: 'Keep the original image available for the agent.',
+      messages: [],
+    }
+    const agentCard = {
+      ...baseCard,
+      id: `sticky-image-agent-${theme}`,
+      title: 'Agent handoff',
+      draft: '',
+      messages: [],
+    }
+    configureColumnCardsAndLayout(
+      state,
+      [stickyCard, agentCard],
+      createSplit(
+        'horizontal',
+        [
+          createPane([stickyCard.id], stickyCard.id, `sticky-image-pane-${theme}`),
+          createPane([agentCard.id], agentCard.id, `sticky-image-agent-pane-${theme}`),
+        ],
+        [0.5, 0.5],
+        `sticky-image-split-${theme}`,
+      ),
+    )
+
+    await mockAppApis(page, { state })
+    let uploadRequests = 0
+    await page.route('**/api/attachments', async (route) => {
+      if (route.request().method() !== 'POST') {
+        await route.fallback()
+        return
+      }
+      uploadRequests += 1
+      await route.fulfill({
+        status: 201,
+        json: {
+          id: 'sticky-note-original.gif',
+          fileName: 'pasted-image.gif',
+          mimeType: 'image/gif',
+          sizeBytes: 43,
+        },
+      })
+    })
+    await page.route('**/api/attachments/*', async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: 'image/svg+xml',
+        body: attachmentPreviewSvg,
+      })
+    })
+    await page.context().grantPermissions(['clipboard-read', 'clipboard-write'], {
+      origin: new URL(appUrl).origin,
+    })
+    await page.setViewportSize({ width: 1280, height: 860 })
+    await page.goto(appUrl)
+
+    const stickyShell = page.locator('.card-shell').filter({ has: page.locator('.sticky-note-card') })
+    const agentShell = page.locator('.card-shell').filter({ has: page.locator('.composer') })
+    const noteTextarea = stickyShell.locator('.sticky-note-textarea')
+    await pasteImageIntoTextarea(noteTextarea)
+
+    const imageItem = stickyShell.locator('.sticky-note-image-item')
+    const thumbnail = imageItem.locator('.sticky-note-image-thumbnail')
+    await expect(imageItem).toHaveCount(1)
+    await expect(thumbnail).toBeVisible()
+    await expect.poll(() => thumbnail.evaluate((node) => (node as HTMLImageElement).complete)).toBeTruthy()
+    const thumbnailRect = await readRect(thumbnail)
+    expect(thumbnailRect.width).toBeLessThanOrEqual(98)
+    expect(thumbnailRect.height).toBeLessThanOrEqual(74)
+    expect(uploadRequests).toBe(1)
+
+    await imageItem.hover()
+    await expect(imageItem.locator('.sticky-note-image-copy')).toBeVisible()
+    await expect(imageItem.locator('.sticky-note-image-remove')).toBeVisible()
+    await expect(stickyShell).toHaveScreenshot(`sticky-note-images-${theme}.png`, {
+      animations: 'disabled',
+      caret: 'hide',
+    })
+    await imageItem.locator('.sticky-note-image-copy').click()
+    await expect(imageItem.locator('.sticky-note-image-copied')).toHaveText('Copied')
+
+    const clipboardPayload = await imageItem.locator('.sticky-note-image-preview-trigger').evaluate((node) => {
+      const dataTransfer = new DataTransfer()
+      const event = new Event('copy', { bubbles: true, cancelable: true })
+      Object.defineProperty(event, 'clipboardData', {
+        configurable: true,
+        value: dataTransfer,
+      })
+      node.dispatchEvent(event)
+      return {
+        html: dataTransfer.getData('text/html'),
+        text: dataTransfer.getData('text/plain'),
+      }
+    })
+    const agentTextarea = agentShell.locator('.composer textarea')
+    await agentTextarea.evaluate((node, payload) => {
+      const dataTransfer = new DataTransfer()
+      dataTransfer.setData('text/html', payload.html)
+      dataTransfer.setData('text/plain', payload.text)
+      const event = new Event('paste', { bubbles: true, cancelable: true })
+      Object.defineProperty(event, 'clipboardData', {
+        configurable: true,
+        value: dataTransfer,
+      })
+      node.dispatchEvent(event)
+    }, clipboardPayload)
+    await expect(agentShell.locator('.composer-attachment-item')).toHaveCount(1)
+    await expect(agentShell.locator('.composer-attachment-image')).toHaveAttribute(
+      'src',
+      '/api/attachments/sticky-note-original.gif',
+    )
+    expect(uploadRequests).toBe(1)
+    await expect(imageItem.locator('.sticky-note-image-copied')).toHaveCount(0, { timeout: 3_000 })
+
+    await imageItem.locator('.sticky-note-image-preview-trigger').click()
+    const dialog = page.locator('.sticky-note-image-preview-dialog')
+    const dialogImage = dialog.locator('.sticky-note-image-preview-image')
+    await expect(dialog).toBeVisible()
+    await expect.poll(() => dialogImage.evaluate((node) => (node as HTMLImageElement).complete)).toBeTruthy()
+    await expect(dialog.locator('.sticky-note-image-preview-card')).toHaveScreenshot(
+      `sticky-note-image-preview-${theme}.png`,
+      { animations: 'disabled', caret: 'hide' },
+    )
+    await page.keyboard.press('Escape')
+    await expect(dialog).toHaveCount(0)
+
+    await page.setViewportSize({ width: 560, height: 860 })
+    await expect(stickyShell.locator('.sticky-note-image-strip')).toBeVisible()
+    await expect(noteTextarea).toBeVisible()
+  })
+}
+
+for (const theme of ['dark', 'light'] as const) {
   test(`brainstorm card keeps answer controls legible in ${theme} theme`, async ({ page }) => {
     const state = createBrainstormToolState(theme)
 

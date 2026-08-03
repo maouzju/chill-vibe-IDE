@@ -62,17 +62,30 @@ export const installMockElectronBridge = async (page: Page) => {
         if (!note) throw new Error('Sticky note not found')
         return { ...note }
       },
-      saveStickyNote: async ({ workspacePath, noteId, title, content, checkpoint = false }) => {
+      saveStickyNote: async ({
+        workspacePath,
+        noteId,
+        title,
+        content,
+        attachments = [],
+        checkpoint = false,
+      }) => {
         const key = `${workspacePath}|${noteId}`
         const previous = stickyNotes.get(key)
         const now = new Date().toISOString()
         const versions = [...(previous?.versions ?? [])]
-        if (checkpoint && versions[0]?.preview !== content.trim().split(/\r?\n/, 1)[0]) {
+        if (
+          checkpoint && (
+            versions[0]?.preview !== content.trim().split(/\r?\n/, 1)[0] ||
+            JSON.stringify(versions[0]?.attachments ?? []) !== JSON.stringify(attachments)
+          )
+        ) {
           versions.unshift({
             id: `mock-version-${versions.length + 1}`,
             createdAt: now,
             title,
             preview: content.trim().split(/\r?\n/, 1)[0] ?? '',
+            attachments,
           })
         }
         const note = {
@@ -84,6 +97,7 @@ export const installMockElectronBridge = async (page: Page) => {
           updatedAt: now,
           preview: content.trim().split(/\r?\n/, 1)[0] ?? '',
           content,
+          attachments,
           versions,
         }
         stickyNotes.set(key, note)
@@ -106,13 +120,24 @@ export const installMockElectronBridge = async (page: Page) => {
         const note = stickyNotes.get(`${workspacePath}|${noteId}`)
         const version = note?.versions.find((entry) => entry.id === versionId)
         if (!note || !version) throw new Error('Sticky note version not found')
-        return { version: 1, ...version, content: version.preview }
+        return {
+          version: 1,
+          ...version,
+          content: version.preview,
+          attachments: version.attachments ?? [],
+        }
       },
       restoreStickyNoteVersion: async ({ workspacePath, noteId, versionId }) => {
         const note = stickyNotes.get(`${workspacePath}|${noteId}`)
         const version = note?.versions.find((entry) => entry.id === versionId)
         if (!note || !version) throw new Error('Sticky note version not found')
-        const restored = { ...note, title: version.title, content: version.preview, preview: version.preview }
+        const restored = {
+          ...note,
+          title: version.title,
+          content: version.preview,
+          preview: version.preview,
+          attachments: version.attachments ?? [],
+        }
         stickyNotes.set(`${workspacePath}|${noteId}`, restored)
         return restored
       },

@@ -156,7 +156,7 @@ describe('sticky note identity migration and isolation', () => {
 })
 
 describe('sticky note controls', () => {
-  it('shows history and local-location actions without any delete action', () => {
+  it('shows image insertion, history, and local-location actions without any delete action', () => {
     const html = renderToStaticMarkup(
       React.createElement(StickyNoteCard, {
         content: '独立内容',
@@ -172,8 +172,11 @@ describe('sticky note controls', () => {
 
     assert.match(html, /sticky-note-history-button/)
     assert.match(html, /sticky-note-location-button/)
+    assert.match(html, /sticky-note-image-insert-button/)
+    assert.match(html, /sticky-note-image-input/)
     assert.match(html, /sticky-note-search-input/)
     assert.match(html, /搜索便签/)
+    assert.match(html, /插入图片/)
     assert.match(html, /历史版本/)
     assert.match(html, /打开本地位置/)
     assert.doesNotMatch(html, /sticky-note-discard-button/)

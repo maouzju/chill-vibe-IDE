@@ -6,6 +6,7 @@ import type { ImageAttachment } from '../shared/schema.ts'
 import {
   collectPersistedDraftAttachments,
   hydrateDraftAttachments,
+  mergeUploadedDraftAttachments,
   promoteDraftAttachment,
   sameImageAttachmentLists,
   type PendingComposerAttachment,
@@ -109,5 +110,32 @@ test('hydrateDraftAttachments rebuilds uploaded pending entries from persisted d
       assert.equal(entry.id, persisted[index].id)
       assert.equal(entry.previewUrl, getImageAttachmentUrl(persisted[index].id))
     }
+  }
+})
+
+test('mergeUploadedDraftAttachments reuses copied originals and deduplicates by real attachment id', () => {
+  const promotedWithLocalId: PendingComposerAttachment = {
+    kind: 'uploaded',
+    id: 'temporary-local-id',
+    attachment: uploadedAttachment('same-original'),
+    previewUrl: 'attachment://same-original',
+  }
+  const pending = [localEntry('uploading'), promotedWithLocalId]
+
+  const merged = mergeUploadedDraftAttachments(pending, [
+    uploadedAttachment('same-original'),
+    uploadedAttachment('new-original'),
+    uploadedAttachment('new-original'),
+  ])
+
+  assert.equal(merged.length, 3)
+  assert.equal(merged[0], pending[0])
+  assert.equal(merged[1], promotedWithLocalId)
+  const added = merged[2]
+  assert.equal(added.kind, 'uploaded')
+  if (added.kind === 'uploaded') {
+    assert.equal(added.attachment.id, 'new-original')
+    assert.equal(added.id, 'new-original')
+    assert.equal(added.previewUrl, getImageAttachmentUrl('new-original'))
   }
 })

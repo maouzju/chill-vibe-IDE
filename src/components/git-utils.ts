@@ -12,6 +12,11 @@ export const shouldShowConflictBanner = ({
   syncPanelOpen: boolean
 }) => hasConflicts && !syncPanelOpen
 
+// 症状：工作区没有本地改动时，Git 卡片会把“同步”连同改动区一起隐藏。
+// 根因：同步能力取决于是否配置 upstream，而不是工作区是否 clean（2026-08-03 用户反馈）。
+// 不用 clean 参与判断，否则纯 pull / 检查远端更新的入口会再次消失。
+export const shouldShowGitSyncButton = ({ upstream }: { upstream?: string }) => Boolean(upstream)
+
 export const statusBadge = (change: GitChange) => {
   if (change.conflicted) {
     return '!'

@@ -17,3 +17,9 @@
 - [x] 复核古法 Git 复选框响应性能：专项门禁改用 renderer click-to-paint 后测得
   5.2ms / 4.2ms / 4.1ms，确认旧的秒级数字来自 Playwright 宿主墙钟；详见
   `docs/specs/git-stage-toggle-responsiveness/`。
+
+## 2026-08-03 干净工作区同步入口修复
+
+- [x] 红测：有 upstream 的仓库必须显示同步入口，不受 `clean` 状态影响。
+- [x] 干净空态与改动状态复用同一个同步按钮判断和渲染。
+- [x] 复跑 Git 窄测、双主题 UI 检查、质量检查、打包与运行时重启。

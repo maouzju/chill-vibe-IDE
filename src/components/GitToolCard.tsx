@@ -21,7 +21,13 @@ import {
 } from '../../shared/codex-chat-settings'
 import type { AppLanguage, GitStatus, ModelPromptRule } from '../../shared/schema'
 import { getGitLocaleText } from '../../shared/i18n'
-import { errorMessage, computeTotalStats, getRepositoryName, shouldShowConflictBanner } from './git-utils'
+import {
+  errorMessage,
+  computeTotalStats,
+  getRepositoryName,
+  shouldShowConflictBanner,
+  shouldShowGitSyncButton,
+} from './git-utils'
 import { GitFullDialog, type GitFullDialogMode } from './GitFullDialog'
 import { GitAgentPanel } from './GitAgentPanel'
 import { GitSyncPanel } from './GitSyncPanel'
@@ -624,6 +630,25 @@ export const GitToolCard = ({
     return renderNotRepositoryState(notice?.message ?? gitStatus.note)
   }
 
+  const syncButton = shouldShowGitSyncButton(gitStatus) ? (
+    <HoverTooltip content={text.syncTooltip}>
+      <button
+        type="button"
+        className="git-tool-button"
+        disabled={isBusy || syncPanelOpen || agentPanelOpen || blockedFiles !== null || commitingBlocked}
+        onClick={() => void gitOperationHub.beginSync(operationContext)}
+      >
+        {text.sync}
+        {(gitStatus.ahead > 0 || gitStatus.behind > 0) ? (
+          <span className="git-sync-counts">
+            {gitStatus.ahead > 0 ? <span className="git-sync-ahead">↑{gitStatus.ahead}</span> : null}
+            {gitStatus.behind > 0 ? <span className="git-sync-behind">↓{gitStatus.behind}</span> : null}
+          </span>
+        ) : null}
+      </button>
+    </HoverTooltip>
+  ) : null
+
   return (
     <div
       ref={cardRef}
@@ -654,15 +679,18 @@ export const GitToolCard = ({
         <div className="git-dashboard-empty">
           <div className="git-dashboard-empty-row">
             <span style={{ fontSize: '0.85em', opacity: 0.7 }}>{text.cleanTitle}</span>
-            <HoverTooltip content={text.openFullGitTooltip}>
-              <button
-                type="button"
-                className="git-tool-button"
-                onClick={() => setFullDialogMode('full')}
-              >
-                {text.openFullGit}
-              </button>
-            </HoverTooltip>
+            <div className="git-dashboard-actions-inline">
+              {syncButton}
+              <HoverTooltip content={text.openFullGitTooltip}>
+                <button
+                  type="button"
+                  className="git-tool-button"
+                  onClick={() => setFullDialogMode('full')}
+                >
+                  {text.openFullGit}
+                </button>
+              </HoverTooltip>
+            </div>
           </div>
         </div>
       ) : (
@@ -699,24 +727,7 @@ export const GitToolCard = ({
                     {analyzeButtonLabel}
                   </button>
                 </HoverTooltip>
-              {gitStatus.upstream ? (
-                <HoverTooltip content={text.syncTooltip}>
-                  <button
-                    type="button"
-                    className="git-tool-button"
-                    disabled={isBusy || syncPanelOpen || agentPanelOpen || blockedFiles !== null || commitingBlocked}
-                    onClick={() => void gitOperationHub.beginSync(operationContext)}
-                  >
-                    {text.sync}
-                    {(gitStatus.ahead > 0 || gitStatus.behind > 0) ? (
-                      <span className="git-sync-counts">
-                        {gitStatus.ahead > 0 ? <span className="git-sync-ahead">↑{gitStatus.ahead}</span> : null}
-                        {gitStatus.behind > 0 ? <span className="git-sync-behind">↓{gitStatus.behind}</span> : null}
-                      </span>
-                    ) : null}
-                  </button>
-                </HoverTooltip>
-              ) : null}
+              {syncButton}
               <HoverTooltip content={text.openFullGitTooltip}>
                 <button
                   type="button"

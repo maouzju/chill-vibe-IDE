@@ -298,6 +298,13 @@ type LocaleText = {
   stickyNoteSearchPlaceholder: string
   stickyNoteSearchResults: string
   stickyNoteNoSearchResults: string
+  stickyNoteImageInsertAction: string
+  stickyNoteImagesLabel: string
+  stickyNoteImageUploading: string
+  stickyNoteImageUploadError: string
+  stickyNoteImageCopyAction: string
+  stickyNoteImageCopied: string
+  stickyNoteImageCopyError: string
   brainstormTitle: string
   brainstormPlaceholder: string
   brainstormAnswerCountLabel: string
@@ -671,6 +678,13 @@ const localeTextByLanguage: Record<AppLanguage, LocaleText> = {
     stickyNoteSearchPlaceholder: '搜索便签',
     stickyNoteSearchResults: '搜索结果',
     stickyNoteNoSearchResults: '没有匹配的便签',
+    stickyNoteImageInsertAction: '插入图片',
+    stickyNoteImagesLabel: '便签图片',
+    stickyNoteImageUploading: '正在插入图片…',
+    stickyNoteImageUploadError: '图片插入失败',
+    stickyNoteImageCopyAction: '复制图片',
+    stickyNoteImageCopied: '已复制',
+    stickyNoteImageCopyError: '图片复制失败',
     brainstormTitle: '头脑风暴',
     brainstormPlaceholder: '输入主题…',
     brainstormAnswerCountLabel: '答案数量',
@@ -1056,6 +1070,13 @@ const localeTextByLanguage: Record<AppLanguage, LocaleText> = {
     stickyNoteSearchPlaceholder: 'Search notes',
     stickyNoteSearchResults: 'Search results',
     stickyNoteNoSearchResults: 'No matching notes',
+    stickyNoteImageInsertAction: 'Insert image',
+    stickyNoteImagesLabel: 'Note images',
+    stickyNoteImageUploading: 'Inserting image…',
+    stickyNoteImageUploadError: 'Could not insert image',
+    stickyNoteImageCopyAction: 'Copy image',
+    stickyNoteImageCopied: 'Copied',
+    stickyNoteImageCopyError: 'Could not copy image',
     brainstormTitle: 'Brainstorm',
     brainstormPlaceholder: 'Enter a topic…',
     brainstormAnswerCountLabel: 'Answer count',

@@ -678,9 +678,13 @@ export const stickyNoteSearchRequestSchema = stickyNoteListRequestSchema.extend(
 })
 export type StickyNoteSearchRequest = z.infer<typeof stickyNoteSearchRequestSchema>
 
+export const stickyNoteAttachmentsSchema = z.array(imageAttachmentSchema).max(50).default([])
+export type StickyNoteAttachments = z.infer<typeof stickyNoteAttachmentsSchema>
+
 export const stickyNoteSaveRequestSchema = stickyNoteRequestSchema.extend({
   title: z.string(),
   content: z.string().max(64_000),
+  attachments: stickyNoteAttachmentsSchema,
   checkpoint: z.boolean().default(false),
 })
 export type StickyNoteSaveRequest = z.infer<typeof stickyNoteSaveRequestSchema>
@@ -715,6 +719,7 @@ export type StickyNoteListResponse = z.infer<typeof stickyNoteListResponseSchema
 
 export const stickyNoteDocumentSchema = stickyNoteSummarySchema.extend({
   content: z.string(),
+  attachments: stickyNoteAttachmentsSchema,
   versions: z.array(stickyNoteVersionSummarySchema).default([]),
 })
 export type StickyNoteDocument = z.infer<typeof stickyNoteDocumentSchema>
@@ -725,6 +730,7 @@ export const stickyNoteVersionDocumentSchema = z.object({
   createdAt: z.string().datetime(),
   title: z.string(),
   content: z.string(),
+  attachments: stickyNoteAttachmentsSchema,
 })
 export type StickyNoteVersionDocument = z.infer<typeof stickyNoteVersionDocumentSchema>
 

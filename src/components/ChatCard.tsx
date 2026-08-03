@@ -15,6 +15,7 @@ import {
   getImageAttachmentUrl,
   providerSupportsImageAttachments,
 } from '../../shared/chat-attachments'
+import { parseImageAttachmentsFromClipboardHtml } from '../../shared/image-attachment-clipboard'
 import {
   getLocaleText,
   getSlashCommandSourceLabel,
@@ -94,6 +95,7 @@ import {
 import {
   collectPersistedDraftAttachments,
   hydrateDraftAttachments,
+  mergeUploadedDraftAttachments,
   promoteDraftAttachment,
   sameImageAttachmentLists,
   type PendingComposerAttachment,
@@ -3364,6 +3366,24 @@ const ChatCardView = ({
   }, [handleMessageListCopy])
 
   const handlePaste = (event: ClipboardEvent<HTMLTextAreaElement>) => {
+    const copiedAttachments = parseImageAttachmentsFromClipboardHtml(
+      event.clipboardData.getData('text/html'),
+    )
+    if (copiedAttachments.length > 0) {
+      event.preventDefault()
+      setComposerError(null)
+      // 症状：便签图片若退回浏览器 File 粘贴，会二次上传甚至把 GIF/JPEG 转成别的字节。
+      // 根因（2026-08-03）：内部 HTML 已携带原附件 ID；按 sticky-note-images SPEC 直接复用它。
+      // 否决“统一读取剪贴板图片再上传”：会失去逐字节无损保证，并可能同时加入两份预览。
+      const next = mergeUploadedDraftAttachments(
+        pendingAttachmentsRef.current,
+        copiedAttachments,
+      )
+      applyPendingAttachments(next)
+      persistDraftAttachments(next)
+      return
+    }
+
     const fileItems = Array.from(event.clipboardData.items).filter((item) => item.kind === 'file')
     const imageFiles = fileItems
       .filter((item) => supportedImageMimeTypes.has(item.type))

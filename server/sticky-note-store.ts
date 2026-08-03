@@ -2,10 +2,12 @@ import { createHash, randomUUID } from 'node:crypto'
 import { mkdir, readFile, readdir, rename, rm, stat, unlink, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 
+import { imageAttachmentSchema, type ImageAttachment } from '../shared/schema.js'
 import { getAppDataDir } from './app-paths.js'
 
 export const stickyNoteVersionLimit = 50
 export const stickyNoteContentLimit = 64_000
+export const stickyNoteAttachmentLimit = 50
 
 type StickyNoteStoreOptions = {
   dataDir?: string
@@ -21,6 +23,7 @@ export type StickyNoteStoreRequest = {
 export type StickyNoteSaveRequest = StickyNoteStoreRequest & {
   title: string
   content: string
+  attachments?: ImageAttachment[]
   checkpoint?: boolean
 }
 
@@ -46,10 +49,13 @@ export type StickyNoteSummary = {
 
 export type StickyNoteDocument = StickyNoteSummary & {
   content: string
+  attachments: ImageAttachment[]
   versions: StickyNoteVersionSummary[]
 }
 
-type StickyNoteIndexEntry = Omit<StickyNoteSummary, 'noteId' | 'preview'>
+type StickyNoteIndexEntry = Omit<StickyNoteSummary, 'noteId' | 'preview'> & {
+  attachments: ImageAttachment[]
+}
 
 type StickyNoteIndex = {
   version: 1
@@ -63,6 +69,7 @@ type StickyNoteVersionFile = {
   createdAt: string
   title: string
   content: string
+  attachments: ImageAttachment[]
 }
 
 const workspaceQueues = new Map<string, Promise<unknown>>()
@@ -124,6 +131,27 @@ const previewContent = (content: string) =>
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   Boolean(value) && typeof value === 'object' && !Array.isArray(value)
 
+const normalizeAttachments = (value: unknown): ImageAttachment[] => {
+  if (!Array.isArray(value)) return []
+
+  return value
+    .flatMap((attachment) => {
+      const parsed = imageAttachmentSchema.safeParse(attachment)
+      return parsed.success ? [parsed.data] : []
+    })
+    .slice(0, stickyNoteAttachmentLimit)
+}
+
+const sameAttachments = (left: ImageAttachment[], right: ImageAttachment[]) =>
+  left.length === right.length && left.every((attachment, index) => {
+    const match = right[index]
+    return Boolean(match) &&
+      attachment.id === match.id &&
+      attachment.fileName === match.fileName &&
+      attachment.mimeType === match.mimeType &&
+      attachment.sizeBytes === match.sizeBytes
+  })
+
 const emptyIndex = (workspacePath: string): StickyNoteIndex => ({
   version: 1,
   workspacePath,
@@ -145,6 +173,7 @@ const normalizeIndexEntry = (value: unknown): StickyNoteIndexEntry | null => {
     fileName: value.fileName,
     createdAt: value.createdAt,
     updatedAt: value.updatedAt,
+    attachments: normalizeAttachments(value.attachments),
   }
 }
 
@@ -224,6 +253,7 @@ const readVersionFile = async (filePath: string): Promise<StickyNoteVersionFile 
       createdAt: parsed.createdAt,
       title: parsed.title,
       content: parsed.content.slice(0, stickyNoteContentLimit),
+      attachments: normalizeAttachments(parsed.attachments),
     }
   } catch {
     return null
@@ -256,11 +286,16 @@ const addCheckpoint = async (
   noteId: string,
   title: string,
   content: string,
+  attachments: ImageAttachment[],
   options: ReturnType<typeof resolveOptions>,
 ) => {
   const versions = await listVersionFiles(directory, noteId)
   const latest = versions[0]
-  if (latest?.title === title && latest.content === content) {
+  if (
+    latest?.title === title &&
+    latest.content === content &&
+    sameAttachments(latest.attachments, attachments)
+  ) {
     return versions
   }
 
@@ -270,6 +305,7 @@ const addCheckpoint = async (
     createdAt: options.now().toISOString(),
     title,
     content: content.slice(0, stickyNoteContentLimit),
+    attachments: normalizeAttachments(attachments),
   }
   const historyDirectory = getHistoryDirectory(directory, noteId)
   await atomicWrite(
@@ -318,8 +354,12 @@ const loadStickyNoteInternal = async (
   const versions = await listVersionFiles(directory, noteId)
   return {
     noteId,
-    ...entry,
+    title: entry.title,
+    fileName: entry.fileName,
+    createdAt: entry.createdAt,
+    updatedAt: entry.updatedAt,
     content,
+    attachments: entry.attachments,
     preview: previewContent(content),
     versions: versions.map(toVersionSummary),
   }
@@ -355,7 +395,10 @@ export const listStickyNotes = async (
         const content = (await readFile(filePath, 'utf8')).slice(0, stickyNoteContentLimit)
         return {
           noteId,
-          ...entry,
+          title: entry.title,
+          fileName: entry.fileName,
+          createdAt: entry.createdAt,
+          updatedAt: entry.updatedAt,
           preview: previewContent(content),
         } satisfies StickyNoteSummary
       }),
@@ -391,7 +434,10 @@ export const searchStickyNotes = async (
         return {
           note: {
             noteId,
-            ...entry,
+            title: entry.title,
+            fileName: entry.fileName,
+            createdAt: entry.createdAt,
+            updatedAt: entry.updatedAt,
             preview: previewContent(content),
           } satisfies StickyNoteSummary,
           score: titleIndex === 0 ? 0 : titleIndex > 0 ? 1 : 2,
@@ -423,6 +469,7 @@ export const saveStickyNote = async (
   const index = await readIndex(directory, request.workspacePath)
   const title = normalizeTitle(request.title)
   const content = request.content.slice(0, stickyNoteContentLimit)
+  const attachments = normalizeAttachments(request.attachments)
   const now = resolved.now().toISOString()
   const existing = index.notes[request.noteId]
   const fileName = buildFileName(title, request.noteId)
@@ -442,11 +489,12 @@ export const saveStickyNote = async (
     fileName,
     createdAt: existing?.createdAt ?? now,
     updatedAt: now,
+    attachments,
   }
   await writeIndex(directory, index)
 
   if (request.checkpoint) {
-    await addCheckpoint(directory, request.noteId, title, content, resolved)
+    await addCheckpoint(directory, request.noteId, title, content, attachments, resolved)
   }
 
   return loadStickyNoteInternal(request.workspacePath, request.noteId, resolved)
@@ -481,7 +529,14 @@ export const restoreStickyNoteVersion = async (
     throw new Error(`Sticky note version not found: ${request.versionId}`)
   }
 
-  await addCheckpoint(directory, request.noteId, current.title, current.content, resolved)
+  await addCheckpoint(
+    directory,
+    request.noteId,
+    current.title,
+    current.content,
+    current.attachments,
+    resolved,
+  )
   const index = await readIndex(directory, request.workspacePath)
   const entry = index.notes[request.noteId]
   if (!entry) {
@@ -500,6 +555,7 @@ export const restoreStickyNoteVersion = async (
     title: nextTitle,
     fileName: nextFileName,
     updatedAt: resolved.now().toISOString(),
+    attachments: target.attachments,
   }
   await writeIndex(directory, index)
   return loadStickyNoteInternal(request.workspacePath, request.noteId, resolved)

@@ -5103,6 +5103,68 @@ for (const theme of ['dark', 'light'] as const) {
     })
   })
 
+  test(`repeat loop status and composer setting stay clear in ${theme} theme`, async ({ page }) => {
+    const state = createMockState()
+    state.settings.theme = theme
+    state.settings.language = 'en'
+    state.settings.repeatLoopEnabled = true
+    state.columns[0]!.cards[0] = {
+      ...state.columns[0]!.cards[0]!,
+      status: 'streaming',
+      streamId: 'repeat-loop-stream',
+      repeatLoopActive: true,
+    }
+
+    await mockAppApis(page, { state })
+    await page.goto(appUrl)
+
+    const repeatStatus = page.locator('.repeat-loop-status').first()
+    const settingsTrigger = page.locator('.composer-settings-trigger').first()
+    const settingsMenu = page.locator('.composer-settings-menu').first()
+
+    await expect(repeatStatus).toBeVisible()
+    await expect(repeatStatus).toContainText('Repeat loop is on')
+    await expect(repeatStatus).toContainText(
+      'A new tab will open and rerun the first user prompt when this run finishes.',
+    )
+    await expect(settingsTrigger).toHaveClass(/has-repeat-loop/)
+    await expect(repeatStatus).toHaveScreenshot(`repeat-loop-status-${theme}.png`, {
+      animations: 'disabled',
+      caret: 'hide',
+    })
+
+    await page.setViewportSize({ width: 420, height: 720 })
+    await expect(repeatStatus).toHaveScreenshot(`repeat-loop-status-${theme}-narrow.png`, {
+      animations: 'disabled',
+      caret: 'hide',
+    })
+
+    await page.setViewportSize({ width: 1280, height: 720 })
+    await settingsTrigger.click()
+    await expect(settingsMenu).toBeVisible()
+    const repeatToggle = settingsMenu.getByLabel('Repeat loop')
+    await expect(repeatToggle).toBeChecked()
+    await expect(repeatToggle).toBeEnabled()
+    await expect(settingsMenu).toContainText(
+      'After this run completes, open a new tab and rerun this chat’s earliest user prompt.',
+    )
+    await expect(settingsMenu).toHaveScreenshot(`repeat-loop-settings-menu-${theme}.png`, {
+      animations: 'disabled',
+      caret: 'hide',
+    })
+    await repeatToggle.uncheck()
+    await expect(repeatStatus).toBeHidden()
+    await expect(settingsTrigger).not.toHaveClass(/has-repeat-loop/)
+    await repeatToggle.check()
+    await expect(repeatStatus).toBeVisible()
+    await expect(settingsTrigger).toHaveClass(/has-repeat-loop/)
+    await page.locator('#app-tab-settings').click()
+    await expect(page.locator('#repeat-loop-feature-toggle')).toBeChecked()
+    await expect(page.locator('#app-panel-settings')).toContainText(
+      'Adds a Repeat loop switch to the settings menu beside the agent composer.',
+    )
+  })
+
   test(`wake timer module and pending batch stay readable in ${theme} theme`, async ({ page }) => {
     const state = createMockState()
     state.settings.theme = theme

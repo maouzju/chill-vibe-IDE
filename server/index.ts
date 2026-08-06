@@ -88,7 +88,6 @@ import { OllamaManager } from './ollama-manager.js'
 import {
   loadClosedWorkspaceSnapshot,
   loadSessionHistoryEntry,
-  loadState,
   loadStateForRenderer,
   queueSaveState,
   resetState,
@@ -952,7 +951,12 @@ const startServer = async () => {
   }
 
   app.listen(port, host, async () => {
-    const state = await loadState().catch(() => createDefaultState(getDefaultWorkspacePath()))
+    // The HTTP server can start against the same large archive as Electron.
+    // Use the bounded renderer preview here too; saveState preserves existing
+    // sidecars without hydrating all of them into the startup process.
+    const state = await loadStateForRenderer()
+      .then((response) => response.state)
+      .catch(() => createDefaultState(getDefaultWorkspacePath()))
     await saveState(state).catch(() => undefined)
     console.log(`Chill Vibe IDE server listening on ${formatHttpUrl(host, port)}`)
   })

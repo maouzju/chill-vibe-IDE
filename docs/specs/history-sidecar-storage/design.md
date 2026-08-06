@@ -23,6 +23,7 @@
 - Renderer startup reads `state.json` and gets only lightweight history entries.
 - Restoring one internal history item calls `loadSessionHistoryEntry({ entryId })`, which reads only that entry's sidecar file; if missing, it falls back to legacy `state.json` for migration compatibility.
 - 非空历史搜索按需走独立轻量目录并读取当前工作区候选 sidecar；不会把全部正文重新水合到 renderer 或普通保存路径。详见 `docs/specs/deep-session-history-search/`。
+- 任何兼容性/启动回退也必须保持轻量：provider runtime 设置读取、无 closed-workspace sidecar 时的旧批次推断、缺失单条历史 sidecar 的恢复，以及独立 web server 启动，均只读 `state.json` 的历史索引（并保留 WAL 晋升），不得调用会枚举整个 `session-history/` 的全量 loader。旧版 `<entryId>.json` 命名只按请求 ID 定点尝试，不再用全目录扫描找回。
 - 跨版本索引修复使用 `session-history/catalog.json` 小清单与
   `maintenance/session-history-catalog/catalog-segment-*.json` 分段摘要。分段文件不放在
   `session-history/` 内，避免旧版本的全文 sidecar 扫描把派生目录当成聊天正文。任务按硬性

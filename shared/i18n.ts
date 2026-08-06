@@ -59,6 +59,12 @@ type LocaleText = {
   autoUrgeJudgeModeLocalModel: string
   autoUrgeJudgeModelLabel: string
   autoUrgeJudgeModelEmpty: string
+  repeatLoopFeatureLabel: string
+  repeatLoopFeatureHint: string
+  repeatLoopLabel: string
+  repeatLoopHint: string
+  repeatLoopStatusLabel: string
+  repeatLoopStatusHint: string
   wakeTimerFeatureLabel: string
   wakeTimerFeatureHint: string
   wakeTimerLabel: string
@@ -412,6 +418,12 @@ const localeTextByLanguage: Record<AppLanguage, LocaleText> = {
     autoUrgeJudgeModeLocalModel: '由本地大模型判断',
     autoUrgeJudgeModelLabel: '判定模型',
     autoUrgeJudgeModelEmpty: '暂无可用本地模型，请先在下方"本地大模型"区安装',
+    repeatLoopFeatureLabel: '循环重复功能',
+    repeatLoopFeatureHint: '开启后，Agent 输入框右侧的设置菜单会出现“循环重复”开关；勾选的任务完成后会新建 Tab，并自动重跑首条用户提示。',
+    repeatLoopLabel: '循环重复',
+    repeatLoopHint: '本轮完成后新建 Tab，并自动重跑本会话最早的用户提示。',
+    repeatLoopStatusLabel: '循环重复已开启',
+    repeatLoopStatusHint: '本轮完成后会自动新建 Tab，并重跑首条用户提示。',
     wakeTimerFeatureLabel: '计划唤醒',
     wakeTimerFeatureHint: '开启后，每个 Agent 会话的输入设置中会出现计划唤醒模块，可先写好消息，等其他 Agent、左侧 Tab 完成或到时后整批激活。',
     wakeTimerLabel: '计划唤醒',
@@ -792,6 +804,12 @@ const localeTextByLanguage: Record<AppLanguage, LocaleText> = {
     autoUrgeJudgeModeLocalModel: 'Judged by local LLM',
     autoUrgeJudgeModelLabel: 'Judge model',
     autoUrgeJudgeModelEmpty: 'No local models yet — install one in the Local LLM section below.',
+    repeatLoopFeatureLabel: 'Repeat loop',
+    repeatLoopFeatureHint: 'Adds a Repeat loop switch to the settings menu beside the agent composer. A checked task opens a new tab and reruns its earliest user prompt after completion.',
+    repeatLoopLabel: 'Repeat loop',
+    repeatLoopHint: 'After this run completes, open a new tab and rerun this chat’s earliest user prompt.',
+    repeatLoopStatusLabel: 'Repeat loop is on',
+    repeatLoopStatusHint: 'A new tab will open and rerun the first user prompt when this run finishes.',
     wakeTimerFeatureLabel: 'Wake Timer',
     wakeTimerFeatureHint: 'Adds a wake-timer module to each agent composer so messages can wait for peer agents, the tab on the left, or a duration, then activate as one batch.',
     wakeTimerLabel: 'Wake timer',

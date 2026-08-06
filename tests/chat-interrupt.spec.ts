@@ -21,6 +21,7 @@ type MockCardState = {
     id: string
     prompt: string
     attachments: Array<Record<string, unknown>>
+    isContinuation?: true
   }>
   messages: Array<{
     id: string
@@ -766,6 +767,55 @@ test('wake timer holds multiple messages and releases them as one batch when req
     'First scheduled instruction\n\nSecond scheduled instruction',
   )
   await expect(timerStatus).toHaveCount(0)
+})
+
+test('wake timer holds an empty continue-session action until wake', async ({ page }) => {
+  const mock = await installMockApis(page, {
+    wakeTimerEnabled: true,
+    initialCard: {
+      status: 'idle',
+      sessionId: 'session-continue-later',
+      sessionModel: 'gpt-5.5',
+      provider: 'codex',
+      model: 'gpt-5.5',
+      wakeTimerActive: true,
+      wakeTimerMode: 'duration',
+      wakeTimerDurationMinutes: 60,
+      messages: [{
+        id: 'assistant-before-continue',
+        role: 'assistant',
+        content: 'I can continue from here.',
+        createdAt: new Date().toISOString(),
+      }],
+    },
+  })
+  await page.goto(appUrl)
+
+  const sendButton = page.getByRole('button', { name: 'Send message' })
+  await expect(getActiveComposerTextarea(page)).toHaveValue('')
+  await expect(sendButton).toBeEnabled()
+  await sendButton.click()
+
+  const timerStatus = page.locator('.pane-tab-panel.is-active .composer-wake-timer-status')
+  await expect(timerStatus).toContainText('1 message')
+  await expect.poll(() => mock.readChatRequests()).toEqual([])
+  await expect.poll(() => {
+    const queued = mock.readState().columns[0]?.cards['card-1']?.wakeTimerQueuedSends
+    return queued?.map((entry) => ({
+      prompt: entry.prompt,
+      attachments: entry.attachments,
+      isContinuation: entry.isContinuation,
+    }))
+  }).toEqual([{ prompt: '', attachments: [], isContinuation: true }])
+
+  await timerStatus.getByRole('button', { name: 'Wake now' }).click()
+
+  await expect.poll(() => mock.readChatRequests()).toHaveLength(1)
+  await expect.poll(() => mock.readChatRequests()[0]).toMatchObject({
+    prompt: '',
+    sessionId: 'session-continue-later',
+  })
+  await expect(page.locator('.message-user')).toHaveCount(0)
 })
 
 test('canceling a wake timer restores the queued messages before the current draft', async ({ page }) => {

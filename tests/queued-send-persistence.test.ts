@@ -44,14 +44,30 @@ const queuedSendsOf = (parsed: ReturnType<typeof appStateSchema.parse>) => {
   return column.cards[cardId].wakeTimerQueuedSends ?? []
 }
 
-test('an empty send never enters the wake-timer queue', () => {
+test('only an explicit empty continuation enters the wake-timer queue', () => {
   const base = { featureEnabled: true, cardActive: true, origin: 'user' as const }
-  // The queue exists to replay real sends later; an entry with nothing to send
-  // can only ever corrupt the save.
+  // A plain empty entry is still invalid. An empty continuation is a real user
+  // action ("continue from here") and must wait when the card timer is active.
   assert.equal(shouldQueueWakeTimerSend({ ...base, hasContent: false }), false)
+  assert.equal(
+    shouldQueueWakeTimerSend({ ...base, hasContent: false, isContinuation: true }),
+    true,
+  )
   assert.equal(shouldQueueWakeTimerSend({ ...base, hasContent: true }), true)
   // Whitespace is not content.
   assert.equal(shouldQueueWakeTimerSend({ ...base, hasContent: false }), false)
+})
+
+test('an explicit empty continuation is valid and survives persistence', () => {
+  const parsed = appStateSchema.parse(
+    stateWithQueuedSend([
+      { id: 'continue-later', prompt: '', attachments: [], isContinuation: true },
+    ]),
+  )
+
+  assert.deepEqual(queuedSendsOf(parsed), [
+    { id: 'continue-later', prompt: '', attachments: [], isContinuation: true },
+  ])
 })
 
 test('an already-persisted invalid queue entry is dropped, not fatal', () => {

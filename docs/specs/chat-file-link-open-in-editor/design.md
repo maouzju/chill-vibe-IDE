@@ -77,6 +77,10 @@ resolveMessageFileTarget(workspacePath, raw): { openPath: string; line?: number 
 | 本地 href 其他情况 | 原 `openMessageLocalLink` |
 | 外链 | 原 `openExternalLink` |
 
+Electron 主窗口同时兜底拦截 renderer 的 `window.open` / `target=_blank`：允许的
+`http`、`https`、`mailto` 链接统一交给系统浏览器，并拒绝创建应用内子窗口，避免部分站点（如微信文章）
+打开一个没有加载内容的白色 Electron 窗口。
+
 顺序很重要：Alt 逃生口在最前，保证 R4 永远可用。
 
 ## M4 — `code` 组件（行内代码可点）
@@ -137,6 +141,7 @@ consumePendingEditorReveal(workspacePath, filePath): number | null   // 取出�
 | `tests/message-file-link-click.test.ts`（新增） | `a` 点击分流四象限；Alt 走 reveal |
 | `tests/markdown-inline-file-reference.test.tsx`（新增） | 行内代码渲染成 button / 保持普通 code；代码块内不可点 |
 | `tests/text-editor-reveal.test.ts`（新增） | registry 取出即删、TTL、容量上限 |
+| `tests/workspace-file-fallback.test.ts`（新增，红先） | 裸文件名改写、尾部段排名、平局确定性、绝对路径不探测、lookup 失败降级 |
 | 已有 `tests/message-local-link.test.ts` | 回归：无 Context 时行为不变 |
 
 全部注册进 `tests/index.test.ts`（pitfall #3）。
@@ -182,12 +187,47 @@ Cline、Roo 同样是纯渲染侧猜测，Cline 也做异步存在性校验。
 要覆盖 codex 的读取类操作，得从 `command_execution` 的命令文本里解析路径，那又回到启发式，本期不做。
 
 **与 Copilot 的实际差距只剩一条：它有 `stat()` 存在性预校验。**
-本期不做，理由是触发面完全不同：Copilot 必须校验，因为它连裸文本都扫（也因此有
+渲染阶段仍然不做预校验，理由是触发面完全不同：Copilot 必须校验，因为它连裸文本都扫（也因此有
 `web` 文件夹被误链接这类 issue）；我们只认反引号 + 扩展名白名单 + 可解析成工作区路径，
-误报面小一个量级，而预校验要引入跨进程 API + 缓存 + 异步渲染一致性。
-折中做法：点开不存在的文件时给「工作区里没有这个文件」的明确提示，
-而不是甩一个原始 `ENOENT`（`src/components/text-editor-load-failure.ts`）。
-真的需要预校验时再作为独立 slice 引入。
+误报面小一个量级，而渲染期预校验要引入跨进程 API + 缓存 + 异步渲染一致性。
+
+## M7 — 点击时的工作区路径兜底（`src/components/workspace-file-fallback.ts`）
+
+**2026-08-05 实测问题**：模型在散文里几乎总是写**裸文件名**（Claude CLI 的 system prompt 就是
+`file_path:line_number`），例如 `PlayerRunSystem.OverflowLoot.cs:195`。
+`resolveOpenableFilePath` 是纯字符串解析，把裸名当成工作区**根目录**下的文件，
+而真实文件在 `Assets/Scripts/Run/` 之类的深层目录里 → 打开必然 `ENOENT`，
+用户只看到「工作区里没有这个文件」，链接等于废的。
+
+修法是把校验从「渲染时」推迟到「点击时」，代价可控：
+
+```
+onOpenFile(relativePath, { line })
+  └→ resolveExistingWorkspaceFilePath(relativePath, lookup)
+        ├─ 绝对路径 / 空路径 → 原样返回（工具卡给的是确定路径，猜工作区同名文件只会开错）
+        ├─ listDirectory(dirname) 里有同名文件 → 原样返回        ← 常规情况，实测 ~1ms
+        └─ 否则 searchFiles(basename) → pickWorkspaceFileFallback 排名  ← 实测 56–163ms
+              └─ 无匹配 → 原样返回，保留「工作区里没有这个文件」提示
+  └→ openTextEditorTab(解析后的真实路径)
+```
+
+`pickWorkspaceFileFallback` 的排名必须是**全序且确定**的，否则同一个链接点两次会落到不同文件：
+
+1. 只看非目录、basename 大小写不敏感相等的条目；
+2. 与引用路径**尾部相同的段数**多者优先（`src/state.ts` 命中 `packages/legacy/src/state.ts`，
+   而不是更浅的 `tools/state.ts`）；
+3. 打平则层级浅者优先；再打平按路径字典序。
+
+**为什么不在 `TextEditorCard` 加载失败后兜底**：那时 tab 的 `stickyNote` 已经写成错路径并进了持久化，
+要再补一条「改写已开 tab 路径」的 action，重启后还会重新走一遍失败→兜底。
+在打开前解析，tab 从第一帧起就是正确路径，行号 reveal 的 registry key 也天然对齐。
+
+存在性探测复用现成的 `fetchFileList` / `searchFiles`（`src/api.ts`），不新增 IPC 通道。
+
+**2s 超时是必须的，不是保险**：`searchWorkspaceFiles` 走全树遍历，而忽略名单只有
+`.git` / `node_modules`（`server/file-system.ts:67`）。Unity 工作区会把 `Library/`、`Temp/`
+一起走一遍，可能耗时数秒——点击卡住比报「找不到文件」更糟。超时后回落到原路径，
+体验退化到修复前的现状，不会更差。
 
 ## 实施顺序
 

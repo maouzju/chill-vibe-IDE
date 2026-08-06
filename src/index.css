@@ -3127,6 +3127,57 @@ body.is-card-dragging .lane-drop-zone-top {
 .card-meta { display: none; }
 
 /* -- Message List — fills remaining space, scrolls ------*/
+.repeat-loop-status {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 0.52rem;
+  min-width: 0;
+  margin: 0.38rem 0.55rem 0;
+  padding: 0.46rem 0.62rem;
+  border: 1px solid color-mix(in srgb, var(--accent) 32%, var(--line));
+  border-left: 3px solid var(--accent);
+  border-radius: var(--r-sm);
+  background: color-mix(in srgb, var(--accent-soft) 68%, var(--panel-strong));
+  color: var(--ink-2);
+}
+
+.repeat-loop-status-icon {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  width: 1.1rem;
+  height: 1.1rem;
+  color: var(--accent);
+}
+
+.repeat-loop-status-icon svg {
+  width: 1.05rem;
+  height: 1.05rem;
+}
+
+.repeat-loop-status-copy {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 0.08rem;
+  line-height: calc(1.35 * var(--ui-line-height-scale));
+}
+
+.repeat-loop-status-copy strong {
+  color: var(--accent-2);
+  font-size: 0.74rem;
+  font-weight: 750;
+}
+
+.repeat-loop-status-copy span {
+  min-width: 0;
+  color: var(--ink-2);
+  font-size: 0.68rem;
+  overflow-wrap: anywhere;
+}
+
 .message-transcript-shell {
   --message-list-pad-top: 0.45rem;
   --message-list-pad-right: 0.55rem;
@@ -7509,10 +7560,25 @@ a.message-file-reference-link:focus-visible {
 }
 
 .composer-settings-trigger.has-auto-urge:not(.is-open),
-.composer-settings-trigger.has-wake-timer:not(.is-open) {
+.composer-settings-trigger.has-wake-timer:not(.is-open),
+.composer-settings-trigger.has-repeat-loop:not(.is-open) {
   border-color: color-mix(in srgb, var(--accent) 24%, var(--line-strong));
   background: color-mix(in srgb, var(--accent-soft) 76%, transparent);
   color: var(--accent);
+}
+
+.repeat-loop-settings-module {
+  margin-bottom: 0.18rem;
+  padding-bottom: 0.18rem;
+  border-bottom: 1px solid var(--line);
+}
+
+.repeat-loop-settings-row {
+  color: var(--accent-2);
+}
+
+.repeat-loop-settings-row .composer-settings-label {
+  color: var(--accent-2);
 }
 
 .composer-wake-timer-module {
@@ -12644,7 +12710,10 @@ body,
   border: 2px solid var(--line-strong);
   border-top-color: var(--accent);
   border-radius: 50%;
-  animation: sticky-note-image-spin 0.8s linear infinite;
+  /* 症状：上传提示留在后台 Pane 时，无限旋转会持续占用 Electron 渲染/GPU。
+     根因：2026-08-04 发布门禁识别到新 spinner 绕过了无限动画预算。
+     不加入永久动画白名单；三圈足够传达“正在处理”，随后静止等待结果。 */
+  animation: sticky-note-image-spin 0.8s linear 3;
 }
 
 @keyframes sticky-note-image-spin {

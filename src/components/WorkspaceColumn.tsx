@@ -152,6 +152,7 @@ type WorkspaceColumnProps = {
   autoUrgeSuccessKeyword: string
   globalUrgeActive: boolean
   globalUrgeProfileId: string
+  repeatLoopEnabled?: boolean
   wakeTimerEnabled?: boolean
   onSetAutoUrgeEnabled: (enabled: boolean) => void
   onChangeColumn: (
@@ -177,6 +178,7 @@ type WorkspaceColumnProps = {
         | 'brainstorm'
         | 'autoUrgeActive'
         | 'autoUrgeProfileId'
+        | 'repeatLoopActive'
         | 'wakeTimerActive'
         | 'wakeTimerMode'
         | 'wakeTimerDurationMinutes'
@@ -264,6 +266,7 @@ const WorkspaceColumnView = ({
   autoUrgeSuccessKeyword,
   globalUrgeActive,
   globalUrgeProfileId,
+  repeatLoopEnabled = false,
   wakeTimerEnabled = false,
   onSetAutoUrgeEnabled,
   onChangeColumn,
@@ -1082,6 +1085,7 @@ const WorkspaceColumnView = ({
           autoUrgeSuccessKeyword={autoUrgeSuccessKeyword}
           globalUrgeActive={globalUrgeActive}
           globalUrgeProfileId={globalUrgeProfileId}
+          repeatLoopEnabled={repeatLoopEnabled}
           wakeTimerEnabled={wakeTimerEnabled}
           onSetAutoUrgeEnabled={onSetAutoUrgeEnabled}
           onAddTab={onAddTab}

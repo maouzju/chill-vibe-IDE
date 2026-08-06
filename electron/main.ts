@@ -186,6 +186,22 @@ const sendChatStreamEventSafely = (
   }
 }
 
+async function openExternalUrl(href: string) {
+  let target: URL
+
+  try {
+    target = new URL(href)
+  } catch {
+    throw new Error(`Invalid external URL: ${href}`)
+  }
+
+  if (!['http:', 'https:', 'mailto:'].includes(target.protocol)) {
+    throw new Error(`Unsupported external link protocol: ${target.protocol}`)
+  }
+
+  await shell.openExternal(target.toString())
+}
+
 function configureDesktopEnvironment() {
   if (desktopWorkingDirectory) {
     process.chdir(desktopWorkingDirectory)
@@ -1043,19 +1059,7 @@ function registerDesktopHandlers() {
     },
   )
   ipcMain.handle('desktop:open-external-link', async (_event, href: string) => {
-    let target: URL
-
-    try {
-      target = new URL(href)
-    } catch {
-      throw new Error(`Invalid external URL: ${href}`)
-    }
-
-    if (!['http:', 'https:', 'mailto:'].includes(target.protocol)) {
-      throw new Error(`Unsupported external link protocol: ${target.protocol}`)
-    }
-
-    await shell.openExternal(target.toString())
+    await openExternalUrl(href)
   })
 
   // ── Proxy Stats ──────────────────────────────────────────────────────────
@@ -1123,6 +1127,16 @@ function createWindow() {
       contextIsolation: true,
       nodeIntegration: false,
     },
+  })
+
+  // 症状：2026-08-04 实测微信文章的 target=_blank 会创建一个只有菜单栏的白色应用窗口。
+  // 根因：Electron 默认把 renderer 的 window.open 当成新的 BrowserWindow；外链本应交给系统浏览器。
+  // 不允许应用内子窗口，避免再次引入空窗口和继承主窗口权限的安全风险。
+  win.webContents.setWindowOpenHandler(({ url }) => {
+    void openExternalUrl(url).catch((error) => {
+      log.warn('[main] Blocked renderer-created window.', { url, error })
+    })
+    return { action: 'deny' }
   })
 
   if (shouldUseOffscreenValidationRendering) {

@@ -177,3 +177,62 @@ test('idle unread chat cards render a completion glow until they are read', () =
   // that is being looked at no longer implies a completion glow.
   assert.doesNotMatch(renderShell({ ...baseCard, unread: true }), /is-complete-unread/)
 })
+
+test('repeat loop control is feature-gated, stays checked while streaming, and suppresses auto urge chrome', () => {
+  const renderRepeatCard = (repeatLoopEnabled: boolean) => renderToStaticMarkup(
+    <ChatCard
+      card={{
+        ...createCard(),
+        status: 'streaming',
+        streamId: 'repeat-stream-1',
+        autoUrgeActive: true,
+        repeatLoopActive: true,
+      }}
+      providerReady={true}
+      workspacePath="D:/workspace"
+      language="en"
+      systemPrompt={defaultSystemPrompt}
+      modelPromptRules={[]}
+      crossProviderSkillReuseEnabled={true}
+      musicAlbumCoverEnabled={false}
+      weatherCity=""
+      gitAgentModel="gpt-5.5 low"
+      brainstormRequestModel="gpt-5.5"
+      availableQuickToolModels={[]}
+      autoUrgeEnabled={true}
+      globalUrgeActive={true}
+      globalUrgeProfileId="auto-urge-default"
+      autoUrgeMessage="keep going"
+      autoUrgeSuccessKeyword="DONE"
+      repeatLoopEnabled={repeatLoopEnabled}
+      onSetAutoUrgeEnabled={() => undefined}
+      onRemove={() => undefined}
+      onSend={async (_prompt: string, _attachments: ImageAttachment[]) => undefined}
+      onStop={async () => undefined}
+      onDraftChange={() => undefined}
+      onChangeModel={() => undefined}
+      onChangeReasoningEffort={() => undefined}
+      onTogglePlanMode={() => undefined}
+      onToggleThinking={() => undefined}
+      onToggleCollapsed={() => undefined}
+      onMarkRead={() => undefined}
+      onStickyNoteChange={() => undefined}
+      onPatchCard={() => undefined}
+      onChangeTitle={() => undefined}
+      isRestored={false}
+    />,
+  )
+
+  const hiddenMarkup = renderRepeatCard(false)
+  assert.doesNotMatch(hiddenMarkup, /repeat-loop-bar|repeat-loop-status/)
+
+  const visibleMarkup = renderRepeatCard(true)
+  assert.match(visibleMarkup, /repeat-loop-status/)
+  assert.match(visibleMarkup, /Repeat loop is on/)
+  assert.match(visibleMarkup, /A new tab will open and rerun the first user prompt when this run finishes\./)
+  // The checkbox now lives in the closed composer settings portal, not in the
+  // transcript body. This keeps the body as a clear status surface while the
+  // input-side controls remain the only place to change the setting.
+  assert.doesNotMatch(visibleMarkup, /repeat-loop-bar/)
+  assert.doesNotMatch(visibleMarkup, /Urging\.\.\./)
+})

@@ -43,10 +43,16 @@
       **工具组内**的工具卡（它渲染在 `.message-content` 之外），那份按钮退回浏览器默认灰底方框。
       改为不依赖祖先的 `code.message-file-reference > button`，并补 `tool-card-file-{rest,hover}-{dark,light}` 快照。
       教训：交互测试点得动、断言全绿，这类问题只有截图能发现（pitfall #231）。
-- [ ] T3.7（backlog，本期不做）路径存在性预校验 + 缓存，对齐 Copilot 的 `statCache`。
-      理由见 design.md；我们的触发条件严格得多，先用 T3.4 的明确提示兜底。
+- [x] T3.7 路径存在性校验 —— 改成**点击时**做，而不是 Copilot 那样在渲染时预校验。
+      新模块 `src/components/workspace-file-fallback.ts`：先列一次父目录确认文件在不在，
+      不在就按 basename 搜全仓并按「尾部段匹配 → 层级浅 → 字典序」确定性排名，
+      把裸文件名 `PlayerRunSystem.OverflowLoot.cs` 改写成真实路径再开 tab。
+      触发原因：2026-08-05 用户实测裸文件名链接 100% 打不开（详见 design.md「M7」）。
+      测试 `tests/workspace-file-fallback.test.ts`（红先），真实仓库实测常规路径 ~1ms、兜底 56–163ms。
 - [ ] T3.8（backlog）裸文本路径 autolink。Copilot 做了并因此吃了多轮误报 issue，
       需要连同 T3.7 一起做才安全。
+
+> **v0.18.23 明确不包含 T3.8。** 该项保留为后续独立切片，不属于本次发布验收范围。
 
 ## 已知覆盖边界（不是 bug，是数据源决定的）
 

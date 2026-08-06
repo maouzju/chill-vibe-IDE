@@ -295,6 +295,16 @@ test('Electron window close keeps renderer alive until persistence flush is sche
   )
 })
 
+test('Electron sends renderer-created external windows to the system browser instead of opening blank app windows', async () => {
+  const mainBody = await readFile(path.join(process.cwd(), 'electron', 'main.ts'), 'utf8')
+
+  assert.match(mainBody, /win\.webContents\.setWindowOpenHandler\(/)
+  assert.match(
+    mainBody,
+    /setWindowOpenHandler[\s\S]+openExternalUrl[\s\S]+return \{ action: 'deny' \}/,
+  )
+})
+
 test('Electron close diagnostics record the initiating input and IPC source', async () => {
   const mainBody = await readFile(path.join(process.cwd(), 'electron', 'main.ts'), 'utf8')
 

@@ -219,6 +219,7 @@ export type IdeAction =
           | 'autoUrgeGlobalControlEnabled'
           | 'autoUrgeGlobalActive'
           | 'autoUrgeGlobalProfileId'
+          | 'repeatLoopEnabled'
           | 'wakeTimerEnabled'
           | 'weatherCity'
           | 'systemPrompt'
@@ -294,6 +295,12 @@ export type IdeAction =
       model?: string
       reasoningEffort?: string
       stickyNote?: string
+    }
+  | {
+      type: 'spawnRepeatLoopTab'
+      columnId: string
+      sourceCardId: string
+      cardId: string
     }
   | {
       type: 'splitPane'
@@ -375,6 +382,7 @@ export type IdeAction =
           | 'planMode'
           | 'autoUrgeActive'
           | 'autoUrgeProfileId'
+          | 'repeatLoopActive'
           | 'collapsed'
           | 'unread'
           | 'completionGlow'
@@ -449,6 +457,7 @@ const duplicateCardForColumn = (card: ChatCard): ChatCard => ({
   pm: card.pm ? { ...card.pm } : createDefaultPmState(),
   pmTaskCardId: '',
   pmOwnerCardId: '',
+  repeatLoopActive: false,
   wakeTimerActive: false,
   wakeTimerQueuedSends: [],
   wakeTimerArmedAt: undefined,
@@ -1293,6 +1302,7 @@ const buildRestoredCard = (state: AppState, entry: SessionHistoryEntry): ChatCar
   planMode: false,
   autoUrgeActive: false,
   autoUrgeProfileId: defaultAutoUrgeProfileId,
+  repeatLoopActive: false,
   collapsed: false,
   unread: false,
   draft: '',
@@ -1894,6 +1904,55 @@ export const ideReducer = (state: AppState, action: IdeAction): AppState => {
 
       return touchState(next)
     }
+    case 'spawnRepeatLoopTab': {
+      const targetColumn = state.columns.find((column) => column.id === action.columnId)
+      const sourceCard = targetColumn?.cards[action.sourceCardId]
+      const pane = targetColumn ? findPaneForTab(targetColumn.layout, action.sourceCardId) : null
+      if (
+        !targetColumn ||
+        !sourceCard ||
+        !pane ||
+        targetColumn.cards[action.cardId] ||
+        toolCardModels.has(sourceCard.model)
+      ) {
+        return state
+      }
+
+      const next = updateColumn(state, action.columnId, (column) => {
+        const repeatedCard: ChatCard = {
+          ...createCard(
+            undefined,
+            undefined,
+            sourceCard.provider,
+            sourceCard.model,
+            sourceCard.reasoningEffort,
+            state.settings.language,
+          ),
+          id: action.cardId,
+          thinkingEnabled: sourceCard.thinkingEnabled,
+          planMode: sourceCard.planMode,
+          repeatLoopActive: true,
+        }
+
+        return {
+          ...column,
+          cards: {
+            ...column.cards,
+            [repeatedCard.id]: repeatedCard,
+          },
+          layout: updatePaneNode(column.layout, pane.id, (currentPane) =>
+            createPane(
+              [...currentPane.tabs, repeatedCard.id],
+              repeatedCard.id,
+              currentPane.id,
+              currentPane.tabHistory,
+            ),
+          ),
+        }
+      })
+
+      return touchState(next)
+    }
     case 'splitPane': {
       const next = updateColumn(state, action.columnId, (column) => {
         const pane = findPaneInLayout(column.layout, action.paneId)
@@ -2280,6 +2339,7 @@ export const ideReducer = (state: AppState, action: IdeAction): AppState => {
         streamId: undefined,
         backgroundWorkPending: false,
         autoUrgeActive: false,
+        repeatLoopActive: false,
         unread: false,
         draft: '',
         queuedSends: [],
@@ -2507,6 +2567,7 @@ export const ideReducer = (state: AppState, action: IdeAction): AppState => {
         planMode: false,
         autoUrgeActive: false,
         autoUrgeProfileId: defaultAutoUrgeProfileId,
+        repeatLoopActive: false,
         collapsed: false,
         unread: false,
   draft: '',
@@ -2567,6 +2628,7 @@ export const ideReducer = (state: AppState, action: IdeAction): AppState => {
         planMode: false,
         autoUrgeActive: false,
         autoUrgeProfileId: sourceCard.autoUrgeProfileId,
+        repeatLoopActive: false,
         collapsed: false,
         unread: false,
         draft: forkedDraft,

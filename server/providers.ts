@@ -71,7 +71,7 @@ import {
   prepareProviderSkillReuse,
 } from './provider-skills.js'
 import { createAsyncTtlCache } from './provider-slash-command-cache.js'
-import { loadState } from './state-store.js'
+import { loadStateForRenderer } from './state-store.js'
 import { proxyStats, type ProxyStatsEvent } from './proxy-stats-store.js'
 import type { ResilientProxyRuntimeConfig } from './resilient-proxy.js'
 import { resilientProxyPool } from './resilient-proxy.js'
@@ -311,7 +311,11 @@ export const resolveProviderRuntime = async (provider: Provider): Promise<Provid
     provider === 'claude' ? await resolveClaudeRuntimeEnvironment({ env: process.env }) : process.env
 
   try {
-    const settings = providerRuntimeSettingsOverride ?? (await loadState()).settings
+    // Provider launch can race the renderer's first runtime-settings sync. Use
+    // the lightweight startup reader in that narrow fallback; the full loader
+    // hydrates every session-history sidecar (974MB / 8,863 files observed on
+    // 2026-08-06) and can turn a harmless status check into a main-process OOM.
+    const settings = providerRuntimeSettingsOverride ?? (await loadStateForRenderer()).state.settings
     if (!settings.cliRoutingEnabled) {
       return {
         args: [],
@@ -3632,7 +3636,7 @@ const dedupeResolvedPaths = (paths: string[]) => {
 }
 
 export const readCodexManagementPolicy = async (): Promise<CodexManagementPolicy> => {
-  const settings = providerRuntimeSettingsOverride ?? (await loadState()).settings
+  const settings = providerRuntimeSettingsOverride ?? (await loadStateForRenderer()).state.settings
   const requestedMode: CodexSandboxMode = settings.agentOutsideWorkspaceWriteEnabled
     ? 'danger-full-access'
     : 'workspace-write'

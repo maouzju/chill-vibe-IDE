@@ -85,6 +85,7 @@ type PaneViewProps = {
   autoUrgeSuccessKeyword: string
   globalUrgeActive: boolean
   globalUrgeProfileId: string
+  repeatLoopEnabled?: boolean
   wakeTimerEnabled?: boolean
   onSetAutoUrgeEnabled: (enabled: boolean) => void
   onAddTab: (paneId: string) => void
@@ -135,6 +136,7 @@ type PaneViewProps = {
         | 'brainstorm'
         | 'autoUrgeActive'
         | 'autoUrgeProfileId'
+        | 'repeatLoopActive'
         | 'wakeTimerActive'
         | 'wakeTimerMode'
         | 'wakeTimerDurationMinutes'
@@ -338,6 +340,7 @@ const PaneViewView = ({
   autoUrgeSuccessKeyword,
   globalUrgeActive,
   globalUrgeProfileId,
+  repeatLoopEnabled = false,
   wakeTimerEnabled = false,
   onSetAutoUrgeEnabled,
   onAddTab,
@@ -1324,6 +1327,7 @@ const PaneViewView = ({
                   autoUrgeSuccessKeyword={autoUrgeSuccessKeyword}
                   globalUrgeActive={globalUrgeActive}
                   globalUrgeProfileId={globalUrgeProfileId}
+                  repeatLoopEnabled={repeatLoopEnabled}
                   wakeTimerEnabled={wakeTimerEnabled}
                   leftWakeTimerTarget={leftWakeTimerTarget}
                   workspaceWakeTimerAgentCount={workspaceWakeTimerAgentCount}

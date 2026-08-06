@@ -393,6 +393,7 @@ type ChatCardProps = {
   autoUrgeSuccessKeyword: string
   globalUrgeActive: boolean
   globalUrgeProfileId: string
+  repeatLoopEnabled?: boolean
   wakeTimerEnabled?: boolean
   leftWakeTimerTarget?: { id: string; title: string } | null
   workspaceWakeTimerAgentCount?: number
@@ -429,6 +430,7 @@ type ChatCardProps = {
         | 'brainstorm'
         | 'autoUrgeActive'
         | 'autoUrgeProfileId'
+        | 'repeatLoopActive'
         | 'draftAttachments'
         | 'wakeTimerActive'
         | 'wakeTimerMode'
@@ -856,6 +858,7 @@ const areChatCardPropsEqual = (previous: ChatCardProps, next: ChatCardProps) =>
   previous.autoUrgeSuccessKeyword === next.autoUrgeSuccessKeyword &&
   previous.globalUrgeActive === next.globalUrgeActive &&
   previous.globalUrgeProfileId === next.globalUrgeProfileId &&
+  previous.repeatLoopEnabled === next.repeatLoopEnabled &&
   previous.wakeTimerEnabled === next.wakeTimerEnabled &&
   // 唤醒条件下方不再回显左邻标题（只保留"没有可等待的 Tab"警告），
   // 所以 title 变化对这张卡的渲染无影响，比较它只会让左邻改标题时白白重渲染整卡。
@@ -1453,6 +1456,7 @@ const ChatCardView = ({
   autoUrgeSuccessKeyword,
   globalUrgeActive,
   globalUrgeProfileId,
+  repeatLoopEnabled = false,
   wakeTimerEnabled = false,
   leftWakeTimerTarget = null,
   workspaceWakeTimerAgentCount = 0,
@@ -1523,10 +1527,11 @@ const ChatCardView = ({
   const [selectedAutoUrgeProfileId, setSelectedAutoUrgeProfileId] = useState(
     () => card.autoUrgeProfileId,
   )
+  const repeatLoopControlsAutomation = repeatLoopEnabled && card.repeatLoopActive === true
   const effectiveUrge = resolveEffectiveAutoUrge({
-    cardAutoUrgeActive: autoUrgeActive,
+    cardAutoUrgeActive: autoUrgeActive && !repeatLoopControlsAutomation,
     cardAutoUrgeProfileId: selectedAutoUrgeProfileId,
-    globalUrgeActive,
+    globalUrgeActive: globalUrgeActive && !repeatLoopControlsAutomation,
     globalUrgeProfileId,
     isToolCard: urgeExcludedToolModels.has(card.model),
   })
@@ -4461,6 +4466,17 @@ const ChatCardView = ({
         <>
           {!isToolCard && !deferInactivePaneChatBody && (
             <>
+              {repeatLoopControlsAutomation ? (
+                <div className="repeat-loop-status" role="status" aria-live="polite">
+                  <span className="repeat-loop-status-icon" aria-hidden="true">
+                    <RefreshIcon />
+                  </span>
+                  <span className="repeat-loop-status-copy">
+                    <strong>{text.repeatLoopStatusLabel}</strong>
+                    <span>{text.repeatLoopStatusHint}</span>
+                  </span>
+                </div>
+              ) : null}
               <ChatTranscript
                 isActive={!suspendPaneRuntimeEffects}
                 language={language}
@@ -4609,7 +4625,7 @@ const ChatCardView = ({
                   <div className="composer-settings-shell" ref={settingsMenuRef}>
                     <IconButton
                       label={text.composerSettings}
-                      className={`composer-settings-trigger${settingsMenuOpen ? ' is-open' : ''}${autoUrgeEnabled && effectiveUrge.active ? ' has-auto-urge' : ''}${wakeTimerEnabled && card.wakeTimerActive === true ? ' has-wake-timer' : ''}`}
+                      className={`composer-settings-trigger${settingsMenuOpen ? ' is-open' : ''}${autoUrgeEnabled && effectiveUrge.active ? ' has-auto-urge' : ''}${wakeTimerEnabled && card.wakeTimerActive === true ? ' has-wake-timer' : ''}${repeatLoopControlsAutomation ? ' has-repeat-loop' : ''}`}
                       aria-expanded={settingsMenuOpen}
                       onClick={() => {
                         setSettingsMenuStyle(null)
@@ -4641,6 +4657,20 @@ const ChatCardView = ({
                                 }
                           }
                         >
+                          {repeatLoopEnabled ? (
+                            <div className="repeat-loop-settings-module">
+                              <label className="composer-settings-row repeat-loop-settings-row" title={text.repeatLoopHint}>
+                                <span className="composer-settings-label">{text.repeatLoopLabel}</span>
+                                <input
+                                  type="checkbox"
+                                  className="composer-settings-checkbox"
+                                  checked={card.repeatLoopActive === true}
+                                  onChange={(event) => onPatchCard({ repeatLoopActive: event.target.checked })}
+                                />
+                              </label>
+                              <div className="composer-settings-note">{text.repeatLoopHint}</div>
+                            </div>
+                          ) : null}
                           {wakeTimerEnabled ? (
                             <div className="composer-wake-timer-module">
                               <label className="composer-settings-row">

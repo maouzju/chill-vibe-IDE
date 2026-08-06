@@ -108,3 +108,19 @@
 - `pnpm test:theme`：159 项中 158 项通过；唯一无关的 Git light 快照出现一次性波动，单项原样复跑 1/1 通过，未更新无关快照。
 - `pnpm electron:build`：通过，产出 `dist/release-20260802-224227/Chill Vibe-0.18.21-win.zip` 与 `win-unpacked/Chill Vibe.exe`。
 - `pnpm dev:restart`：通过；开发 Electron 已重启，renderer `http://localhost:5173` 返回 200。运行中的打包版承载活跃会话，按安全规则未强制关闭或重启。
+
+## 空输入继续会话等待唤醒（2026-08-03）
+
+- [x] 红测复现：逐卡计时器已开启时，空输入“继续会话”因没有文字/附件绕过待唤醒队列并立即运行。
+- [x] 用显式 continuation 标记区分真实继续操作与会损坏存档的普通空队列项。
+- [x] 条件满足后继续原会话且不追加空白用户消息；取消时保留当前草稿。
+- [x] 完成聚焦测试、quality、Windows 构建与当前开发运行时重启。
+
+验证记录：
+
+- 红测：`node --import tsx --test tests/queued-send-persistence.test.ts`：6 项中 2 项按预期失败，分别证明空继续仍未入队、显式空继续仍被持久化 schema 丢弃。
+- 绿测：`node --import tsx --test tests/queued-send-persistence.test.ts tests/wake-timer.test.ts`：24/24 通过。
+- 交互回归：`scripts/run-playwright-specs.ps1 -Specs tests/chat-interrupt.spec.ts`：34/34 通过；空输入继续先显示“Waiting to wake”，立即唤醒后复用原 `sessionId`，且不产生空白用户气泡。
+- `pnpm test:quality`：通过。
+- `pnpm electron:build`：通过，产出 `dist/release-20260803-185146/Chill Vibe-0.18.22-win.zip` 与 `win-unpacked/Chill Vibe.exe`。
+- `pnpm dev:restart`：通过；开发 Electron 已重启，renderer `http://localhost:5173` 返回 200，运行中的打包版未被关闭或重启。

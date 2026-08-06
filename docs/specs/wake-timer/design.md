@@ -14,7 +14,7 @@
 - `ChatCard.wakeTimerWakeAt?: ISO datetime`
 - `ChatCard.wakeTimerPendingTargetIds: string[]`
 
-复用 `QueuedSendRequest` 保存提示词与附件元数据，但与 `queuedSends` 分开持久化，避免把现有 FIFO “延后发送”误当成整批计时唤醒。
+复用 `QueuedSendRequest` 保存提示词与附件元数据，但与 `queuedSends` 分开持久化，避免把现有 FIFO “延后发送”误当成整批计时唤醒。`QueuedSendRequest.isContinuation?: true` 显式表示空输入“继续会话”：只有带该标记的空项才合法，普通空 prompt + 空附件仍由 schema/恢复预处理丢弃，保留 2026-07-26 存档崩溃防线。
 
 `createDefaultSettings()`、`createCard()`、卡片复制/恢复与 `normalizeAppSettings()` / 卡片归一化都补齐默认值。非法模式、时长、时间戳和队列条目安全回退；目标 ID 去空、去重。
 
@@ -40,13 +40,13 @@
 
 1. 先处理本地斜杠命令；
 2. ask-user 回答沿用现有立即停止/回答路径，不进入计时器；
-3. 若总开关开启、卡片计时器开启、来源为普通用户，则上传完成后的消息进入 `wakeTimerQueuedSends` 并立即持久化；
+3. 若总开关开启、卡片计时器开启、来源为普通用户，则上传完成后的消息进入 `wakeTimerQueuedSends` 并立即持久化；已有历史/原生会话上的空输入继续操作写入 `isContinuation: true` 的显式队列项，同样进入等待态；
 4. 首条计时消息冻结模式：
    - workspace：记录同列中当时 `status=streaming` 的其他 Agent 卡 ID；
    - left-tab：记录同 Pane 直接左邻且当时**正忙**的 Agent 卡 ID。「正忙」= `status=streaming` **或**该卡自己还压着未释放的计时批次（`wakeTimerQueuedSends` 非空）。左邻真正空闲（既没在跑也没在等）时目标数组为空，可立即释放；无有效左邻时拒绝武断排队并保留 composer 错误提示；
    - duration：写入 `wakeTimerWakeAt`；
 5. 后续消息只追加队列，不改 arm 数据；
-6. 来源为自动鞭策或计时器释放时绕过该分支。
+6. 来源为自动鞭策或计时器释放时绕过该分支。仅含继续项的批次释放后以空 prompt 走现有 `canSendEmptyContinuation()` 路径，不追加空白用户气泡；若同批后来加入真实文字/附件，则仍按整批合并为一个普通续聊回合。
 
 释放过程先读取就绪批次。工作区模式除检查冻结的 `wakeTimerPendingTargetIds` 外，还要实时扫描同列所有非工具 Agent；只要存在其他 `status=streaming` 的 Agent 就继续等待，避免恢复旧数据、并发状态更新或漏记目标导致提前唤醒。确认就绪后，再通过一组 `updateCard` action 原子清空所有就绪卡的队列与 arm 数据，最后 `Promise.all` 调用 `sendMessage(..., { origin: 'wake-timer-release' })`。这样多卡同一轮检查可同时启动，并且重复 effect/timeout 不会二次发送。
 
@@ -91,6 +91,8 @@ composer 设置菜单顶部增加一个安静的 `.composer-wake-timer-module`�
 composer 输入框上方增加待唤醒状态行，与现有延后发送状态并列但视觉层级保持克制：数量、条件/剩余时间、立即唤醒、取消。
 
 “取消”通过纯逻辑把 `wakeTimerQueuedSends` 合并回 `draft` / `draftAttachments`，再清空批次 arm 数据。待唤醒内容早于用户取消前正在编辑的新草稿，因此文字和附件都按“待唤醒批次 → 当前草稿”的顺序合并；不能用单纯清空队列实现取消。ChatCard 点击取消前先提交尚未落盘的实时草稿，并把已排队附件立即补回本地 composer 预览，避免 React 状态同步期间出现内容已恢复但界面仍空白。
+
+显式空继续项取消时没有文字或附件可回填，只需清空该等待意图并保留当前草稿；它仍按一个待唤醒项参与数量、Tab 标题与配置冻结状态。
 
 Tab 标题由 `resolvePaneTabTitle`（`src/app-helpers.ts`）统一解析：工具卡固定标签优先，其次是会话自己的 `title`；只有既没有标题、又有 `wakeTimerQueuedSends` 的新会话才显示 `wakeTimerPendingStatus`（“待唤醒”），批次释放或取消后自然回落到“新会话”。非活动 Tab 的 memo 比较（`haveSameInactivePaneTabChrome`）把队列深度纳入 tab chrome，否则后台 Tab 的标题不会跟随批次变化刷新。
 

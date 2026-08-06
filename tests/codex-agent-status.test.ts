@@ -52,6 +52,22 @@ const childItem = (item: Record<string, unknown>, method = 'item/completed') => 
   },
 })
 
+test('shows a newly started child before its canonical path activity arrives', () => {
+  const tracker = createCodexAgentStatusTracker({ rootThreadId })
+
+  const update = tracker.handleNotification(childStarted())
+
+  assert.deepEqual(update.activity?.agents, [
+    {
+      threadId: childThreadId,
+      nickname: 'Robie',
+      role: 'explorer',
+      status: 'running',
+      activity: [],
+    },
+  ])
+})
+
 test('tracks v2 child and nested sub-agent activity in stable first-seen order', () => {
   const tracker = createCodexAgentStatusTracker({ rootThreadId })
 

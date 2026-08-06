@@ -29,6 +29,7 @@ try {
       'tests/git-sticky-picker.spec.ts',
       'tests/git-tool-switch.spec.ts',
       'tests/panel-persistence.spec.ts',
+      'tests/repeat-loop.spec.ts',
       'tests/structured-chat-collapse.spec.ts',
       'tests/workspace-folder-picker.spec.ts'
     )

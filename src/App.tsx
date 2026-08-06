@@ -160,7 +160,9 @@ import {
   clearUserData,
   dismissRecentCrashRecovery,
   downloadUpdate,
+  fetchFileList,
   installUpdate,
+  searchFiles,
   onUpdateDownloadProgress,
   resolveStateRecoveryOption,
   searchCities,
@@ -245,10 +247,12 @@ import {
   shouldConfirmWakeTimerCompletion,
   wakeTimerCompletionStabilityMs,
 } from './components/wake-timer'
+import { resolveRepeatLoopCompletion } from './components/repeat-loop'
 import { getAutoReadCardIdsForVisiblePanes, shouldMarkCardUnreadOnStreamDone } from './components/pane-read-state'
 import { clearFileTreeCacheForCard } from './components/tool-card-state'
 import { evictTextEditorModel } from './components/text-editor-model-cache'
 import { setPendingEditorReveal } from './components/text-editor-reveal'
+import { resolveExistingWorkspaceFilePath } from './components/workspace-file-fallback'
 import { publishTextEditorSettings } from './components/text-editor-settings'
 import { buildSeededChatPrompt, collectSeededChatAttachments, hasSeededChatTranscript } from './chat-request-seeding'
 import { buildArchiveRecallSnapshot } from './archive-recall'
@@ -1973,6 +1977,26 @@ function App() {
     </>
   )
 
+  const renderRepeatLoopSettings = () => (
+    <>
+      <label className="settings-toggle" htmlFor="repeat-loop-feature-toggle">
+        <span>{text.repeatLoopFeatureLabel}</span>
+        <input
+          id="repeat-loop-feature-toggle"
+          type="checkbox"
+          checked={appState.settings.repeatLoopEnabled}
+          onChange={(event) =>
+            applyAction({
+              type: 'updateSettings',
+              patch: { repeatLoopEnabled: event.target.checked },
+            })
+          }
+        />
+      </label>
+      <p className="settings-note">{text.repeatLoopFeatureHint}</p>
+    </>
+  )
+
   const setAutoUrgeEnabled = useCallback(
     (enabled: boolean) => {
       if (enabled === appState.settings.autoUrgeEnabled) {
@@ -3179,6 +3203,33 @@ function App() {
     [applyAction, getColumn, rememberPaneTarget],
   )
 
+  // 症状：正文里的 `PlayerRunSystem.OverflowLoot.cs:195` 点开只显示「工作区里没有这个文件」。
+  // 根因：模型在散文里写的是裸文件名，而路径解析是纯字符串的，会当成工作区根下的文件
+  //   （2026-08-05 实测）。真实文件在深层目录里，于是必然 ENOENT。
+  // 被否决的替代方案：在 markdown 渲染阶段预校验每个候选——那会把跨进程 IO 拖进渲染路径。
+  //   这里只在点击时探测一次目录，找不到才走一次全仓搜索。
+  const openTextEditorTabWithLookup = useCallback(
+    (columnId: string, paneId: string, relativePath: string, line?: number) => {
+      const workspacePath = getColumn(columnId)?.workspacePath ?? ''
+      const openTab = (targetPath: string) => {
+        openTextEditorTab(columnId, paneId, targetPath, targetPath.split('/').pop() ?? targetPath, line)
+      }
+
+      if (!workspacePath.trim()) {
+        openTab(relativePath)
+        return
+      }
+
+      void resolveExistingWorkspaceFilePath(relativePath, {
+        listDirectory: (relativeDir) => fetchFileList(workspacePath, relativeDir),
+        searchFiles: (query) => searchFiles(workspacePath, query),
+      })
+        .then(openTab)
+        .catch(() => openTab(relativePath))
+    },
+    [getColumn, openTextEditorTab],
+  )
+
   const openModelPromptRulesDialog = useCallback(() => {
     setModelPromptRulesDraft(
       (appStateRef.current.settings.modelPromptRules ?? []).map((rule) => ({ ...rule })),
@@ -3934,6 +3985,14 @@ function App() {
               : true
 
           const liveCard = liveColumn?.cards[card.id]
+          const repeatLoopPlan = liveCard
+            ? resolveRepeatLoopCompletion({
+                featureEnabled: appStateRef.current.settings.repeatLoopEnabled,
+                completionKind: donePlan.kind,
+                card: liveCard,
+              })
+            : null
+          const repeatedCardId = repeatLoopPlan ? createId() : null
           const pendingCompactBoundary = liveCard
             ? getPendingCompactBoundaryMessage(liveCard.messages)
             : null
@@ -4039,6 +4098,18 @@ function App() {
             }
           }
 
+          if (repeatLoopPlan && repeatedCardId) {
+            // 症状：直接在旧卡重发会复用原生 session，结果并不是用户要的“全新 Tab 重跑”。
+            // 根因：2026-08-06 需求明确要求每轮创建新 Tab，并让新 Tab 继续持有循环开关。
+            // 被否决：先 addTab 再靠 React effect 发送会有渲染时序竞态；Reducer 原子建卡后复用 sendMessage。
+            actions.push({
+              type: 'spawnRepeatLoopTab',
+              columnId,
+              sourceCardId: card.id,
+              cardId: repeatedCardId,
+            })
+          }
+
           persistAfterActions(actions, applyActions(actions))
           if (!donePlan.finalizeLogicalRun) {
             return
@@ -4047,6 +4118,9 @@ function App() {
             scheduleStableWakeTimerCompletion(card.id)
           }
           dispatchNextQueuedSend(columnId, card.id)
+          if (repeatLoopPlan && repeatedCardId) {
+            void sendMessageRef.current?.(columnId, repeatedCardId, repeatLoopPlan.prompt, [])
+          }
           if (completionSoundPlan.checkAllAgentsDone) {
             scheduleAllAgentsDoneSound()
           }
@@ -5032,17 +5106,24 @@ function App() {
         hasPendingAskUserMessage(card.messages) ||
         hasLatestPendingAskUserMessage(card.messages, prompt)
       )
+    const hasSendContent = prompt.trim().length > 0 || attachments.length > 0
+    const isEmptyContinuation =
+      !hasSendContent &&
+      !MODEL_PICKER_HIDDEN_TOOL_MODELS.has(card.model) &&
+      canSendEmptyContinuation(card)
     if (shouldQueueWakeTimerSend({
       featureEnabled: appStateRef.current.settings.wakeTimerEnabled,
       cardActive: card.wakeTimerActive === true,
       origin: sendOrigin,
       answersPendingAskUser,
-      hasContent: prompt.trim().length > 0 || attachments.length > 0,
+      hasContent: hasSendContent,
+      isContinuation: isEmptyContinuation,
     })) {
       const queued = enqueueWakeTimerSend(column.id, cardId, {
         id: crypto.randomUUID(),
         prompt,
         attachments,
+        ...(isEmptyContinuation ? { isContinuation: true as const } : {}),
       })
       if (queued) {
         return
@@ -5165,11 +5246,6 @@ function App() {
     // session means "continue from here". The user typed nothing, so no blank
     // user bubble should be appended, even if the provider later reports that
     // the local CLI is unavailable.
-    const isEmptyContinuation =
-      prompt.trim().length === 0 &&
-      attachments.length === 0 &&
-      !MODEL_PICKER_HIDDEN_TOOL_MODELS.has(card.model) &&
-      canSendEmptyContinuation(card)
     const baseUserMessage = isManualCodexCompactRequest
       ? markCompactBoundaryMessage(
           createMessage('user', '/compact', attachImagesToMessageMeta(attachments)),
@@ -5718,6 +5794,14 @@ function App() {
         forceResetRecoveryStatus(cardId)
         const activityFlushedState = flushBufferedActivitiesForCard(cardId)
         const flushedCard = getColumnById(activityFlushedState.columns, columnId)?.cards[cardId]
+        const repeatLoopPlan = flushedCard
+          ? resolveRepeatLoopCompletion({
+              featureEnabled: appStateRef.current.settings.repeatLoopEnabled,
+              completionKind: 'terminal',
+              card: flushedCard,
+            })
+          : null
+        const repeatedCardId = repeatLoopPlan ? createId() : null
         const pendingCompactBoundary = flushedCard
           ? getPendingCompactBoundaryMessage(flushedCard.messages)
           : null
@@ -5746,9 +5830,20 @@ function App() {
             messages: [clearPendingCompactBoundaryMessage(pendingCompactBoundary)],
           })
         }
+        if (repeatLoopPlan && repeatedCardId) {
+          finalizeActions.push({
+            type: 'spawnRepeatLoopTab',
+            columnId,
+            sourceCardId: cardId,
+            cardId: repeatedCardId,
+          })
+        }
         persistAfterActions(finalizeActions, applyActions(finalizeActions))
         scheduleStableWakeTimerCompletion(cardId)
         dispatchNextQueuedSend(columnId, cardId)
+        if (repeatLoopPlan && repeatedCardId) {
+          void sendMessageRef.current?.(columnId, repeatedCardId, repeatLoopPlan.prompt, [])
+        }
         return true
       }
     }
@@ -7788,6 +7883,7 @@ function App() {
 
         <p className="settings-note">{text.accessibilitySupportNote}</p>
 
+        {renderRepeatLoopSettings()}
         {renderWakeTimerSettings()}
         {renderAutoUrgeSettings()}
       </div>
@@ -9452,6 +9548,7 @@ function App() {
               appState.settings.autoUrgeGlobalActive
             }
             globalUrgeProfileId={appState.settings.autoUrgeGlobalProfileId}
+            repeatLoopEnabled={appState.settings.repeatLoopEnabled}
             wakeTimerEnabled={appState.settings.wakeTimerEnabled}
             onSetAutoUrgeEnabled={setAutoUrgeEnabled}
             onChangeColumn={(patch) => {
@@ -9683,8 +9780,7 @@ function App() {
               })()
             }}
             onOpenFile={(paneId, relativePath, options) => {
-              const fileName = relativePath.split('/').pop() ?? relativePath
-              openTextEditorTab(column.id, paneId, relativePath, fileName, options?.line)
+              openTextEditorTabWithLookup(column.id, paneId, relativePath, options?.line)
             }}
             recentWorkspaces={appState.settings.recentWorkspaces}
             onRecordRecentWorkspace={(path) => applyAction({ type: 'recordRecentWorkspace', path })}

@@ -85,18 +85,20 @@ export const queuedSendRequestSchema = z.object({
   id: z.string().min(1),
   prompt: z.string(),
   attachments: z.array(imageAttachmentSchema).default([]),
+  isContinuation: z.literal(true).optional(),
 }).refine(
-  (request) => request.prompt.trim().length > 0 || request.attachments.length > 0,
-  { message: 'Queued send must include a prompt or attachment.' },
+  (request) =>
+    request.prompt.trim().length > 0 ||
+    request.attachments.length > 0 ||
+    request.isContinuation === true,
+  { message: 'Queued send must include a prompt, attachment, or explicit continuation.' },
 )
 export type QueuedSendRequest = z.infer<typeof queuedSendRequestSchema>
 
-// A queue entry that carries neither prompt nor attachment is meaningless, but
-// on 2026-07-26 one reached state.json anyway and made the whole app state
-// unparseable: every save threw out of a synchronous IPC listener and killed
-// the main process, so the app vanished silently every ~20 seconds. Persistence
-// must therefore be tolerant where the write path is strict — drop the unusable
-// entry and keep the rest of the user's state loadable.
+// A plain queue entry that carries neither prompt nor attachment is meaningless,
+// but on 2026-07-26 one reached state.json and made every later save fatal. The
+// only valid empty entry is an explicit "continue from here" intent, marked by
+// isContinuation; recovery must still drop every unmarked empty entry.
 export const persistedQueuedSendsSchema = z.preprocess(
   (value) =>
     Array.isArray(value)
@@ -169,6 +171,7 @@ export const chatCardSchema = z.object({
   planMode: z.boolean().default(false),
   autoUrgeActive: z.boolean().default(false),
   autoUrgeProfileId: z.string().default('auto-urge-default'),
+  repeatLoopActive: z.boolean().optional(),
   collapsed: z.boolean().default(false),
   unread: z.boolean().default(false),
   completionGlow: z.boolean().optional(),
@@ -612,6 +615,7 @@ export const appSettingsSchema = z.object({
   autoUrgeGlobalControlEnabled: z.boolean().default(false),
   autoUrgeGlobalActive: z.boolean().default(false),
   autoUrgeGlobalProfileId: z.string().default(defaultAutoUrgeProfileId),
+  repeatLoopEnabled: z.boolean().default(false),
   wakeTimerEnabled: z.boolean().default(true),
   weatherCity: z.string().default(''),
   systemPrompt: z.string().default(defaultSystemPrompt),
@@ -785,6 +789,7 @@ export const appStateSchema = z.object({
     autoUrgeGlobalControlEnabled: false,
     autoUrgeGlobalActive: false,
     autoUrgeGlobalProfileId: defaultAutoUrgeProfileId,
+    repeatLoopEnabled: false,
     wakeTimerEnabled: true,
     weatherCity: '',
     systemPrompt: defaultSystemPrompt,

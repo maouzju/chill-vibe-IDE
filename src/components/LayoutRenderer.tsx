@@ -35,6 +35,7 @@ type LayoutRendererProps = {
   autoUrgeSuccessKeyword: string
   globalUrgeActive: boolean
   globalUrgeProfileId: string
+  repeatLoopEnabled?: boolean
   wakeTimerEnabled?: boolean
   onSetAutoUrgeEnabled: (enabled: boolean) => void
   onAddTab: (paneId: string) => void
@@ -86,6 +87,7 @@ type LayoutRendererProps = {
         | 'brainstorm'
         | 'autoUrgeActive'
         | 'autoUrgeProfileId'
+        | 'repeatLoopActive'
         | 'wakeTimerActive'
         | 'wakeTimerMode'
         | 'wakeTimerDurationMinutes'

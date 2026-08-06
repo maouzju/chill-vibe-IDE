@@ -227,8 +227,11 @@ export const createCodexAgentStatusTracker = ({
     view: 'status',
     agents: order
       .map((threadId) => agents.get(threadId))
+      // 症状：长程会话刚调度子 Agent 时，面板会误报“没有正在运行的子智能体”。
+      // 根因：2026-08-04 实测 thread/started 先给昵称/角色，canonical path 要等后续 subAgentActivity；旧过滤提前隐藏了它。
+      // 不等待 path 再展示，渲染器已有 nickname/role/threadId 回退，符合 codex-multi-agent-ui SPEC。
       .filter((agent): agent is TrackedAgent =>
-        agent !== undefined && Boolean(agent.path) && isRunningStatus(agent.status))
+        agent !== undefined && isRunningStatus(agent.status))
       .map(publicAgent),
   })
 

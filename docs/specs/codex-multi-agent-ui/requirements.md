@@ -43,6 +43,7 @@ The source of truth for this SPEC is the installed Codex CLI (`codex-cli 0.144.1
 - A stable structured activity id is reused for the live status panel, so updates replace the same message instead of adding an unbounded sequence of cards.
 - Running agents remain in first-seen spawn order.
 - Each entry exposes `threadId`, canonical `path` when available, status, and bounded activity previews.
+- A newly started child appears immediately from its nickname/role/thread id metadata; the panel must not stay empty while waiting for a later event to provide its canonical path.
 - The panel title and empty state follow Codex CLI semantics: `Sub-agents running` and `No sub-agents running.` (localized in Chill Vibe).
 - Completed, interrupted, failed, idle, or closed agents leave the running list; their historical tool-call/lifecycle activity remains available in the transcript.
 - No disabled `Open` button or unsupported mention hint is shown.

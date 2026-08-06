@@ -237,16 +237,28 @@ const readSessionHistorySidecarEntry = async (
   entryId: string,
   dataDir = getAppDataDir(),
 ): Promise<SessionHistoryEntry | null> => {
-  try {
-    const content = await readFile(getSessionHistoryEntryFilePath(entryId, dataDir), 'utf8')
-    // No Zod parse on the raw sidecar here: legacy archives can be tens of
-    // megabytes and Zod's deep-clone amplification OOMs on large inputs (see
-    // sanitizeStateResult). The normalizer plus the schema check that
-    // loadSessionHistoryEntry runs on the compacted payload cover validation.
-    return normalizePersistedSessionHistoryEntry(JSON.parse(content))
-  } catch {
-    return null
+  // Builds before the base64url sidecar naming scheme used `<entryId>.json`.
+  // Try that exact legacy path directly (only for a single safe basename) so
+  // compatibility does not fall back to reading the whole archive directory.
+  const candidates = [getSessionHistoryEntryFilePath(entryId, dataDir)]
+  if (path.basename(entryId) === entryId) {
+    candidates.push(path.join(getSessionHistoryDirPath(dataDir), `${entryId}.json`))
   }
+
+  for (const filePath of candidates) {
+    try {
+      const content = await readFile(filePath, 'utf8')
+      // No Zod parse on the raw sidecar here: legacy archives can be tens of
+      // megabytes and Zod's deep-clone amplification OOMs on large inputs (see
+      // sanitizeStateResult). The normalizer plus the schema check that
+      // loadSessionHistoryEntry runs on the compacted payload cover validation.
+      return normalizePersistedSessionHistoryEntry(JSON.parse(content))
+    } catch {
+      // Try the next naming convention, if any.
+    }
+  }
+
+  return null
 }
 
 const loadSessionHistorySidecars = async (dataDir = getAppDataDir()) => {
@@ -731,6 +743,7 @@ const normalizePersistedCard = (
     planMode: typeof card.planMode === 'boolean' ? card.planMode : fallback.planMode,
     autoUrgeActive: typeof card.autoUrgeActive === 'boolean' ? card.autoUrgeActive : fallback.autoUrgeActive,
     autoUrgeProfileId: typeof card.autoUrgeProfileId === 'string' ? card.autoUrgeProfileId : fallback.autoUrgeProfileId,
+    repeatLoopActive: typeof card.repeatLoopActive === 'boolean' ? card.repeatLoopActive : false,
     collapsed: typeof card.collapsed === 'boolean' ? card.collapsed : fallback.collapsed,
     unread: typeof card.unread === 'boolean' ? card.unread : fallback.unread,
     draft: typeof card.draft === 'string' ? card.draft : fallback.draft,
@@ -1904,10 +1917,15 @@ export const loadClosedWorkspaceSnapshot = async (
     // bounded history-batch inference so those chats can still be reopened.
   }
 
-  const state = await loadState()
+  // 症状：旧版没有 closed-workspace sidecar 时，普通“关闭/重开工作区”会
+  //   直接走 loadState()，把整个 session-history 目录重新水合进主进程。
+  // 根因：2026-08-06 现场已有 8,863 个 sidecar、约 974MB；一次兼容性回退就足以
+  //   让 Electron 主进程瞬时暴涨并无日志闪退。
+  // 被否决：限制并发或删历史——前者掩盖根因，后者会损害用户数据；这里只读轻量索引。
+  const sessionHistory = await loadPersistedSessionHistoryIndex(dataDir)
   return {
     snapshot: null,
-    legacyEntryIds: getLegacyClosedWorkspaceEntryIds(state.sessionHistory, parsed.workspacePath),
+    legacyEntryIds: getLegacyClosedWorkspaceEntryIds(sessionHistory, parsed.workspacePath),
   }
 }
 
@@ -2165,6 +2183,14 @@ const loadPersistedSessionHistoryIndex = async (dataDir = getAppDataDir()): Prom
   }
 
   try {
+    // Keep the lightweight fallback WAL-aware without hydrating sidecars. A
+    // valid WAL is already a complete state payload; promoting it here keeps
+    // crash recovery semantics while avoiding the all-sidecar scan below.
+    const walRecovered = await recoverFromWal(dataDir)
+    if (walRecovered) {
+      return walRecovered.sessionHistory
+    }
+
     const file = await readFile(getStateFilePathForDir(dataDir), 'utf8')
     const raw = JSON.parse(file) as Record<string, unknown>
     return normalizePersistedSessionHistory(raw.sessionHistory)
@@ -2204,51 +2230,6 @@ const mergeMissingPersistedHistoryEntries = (
   }
 
   return capSessionHistoryPerWorkspace([...incoming, ...missing])
-}
-
-const loadPersistedSessionHistory = async (dataDir = getAppDataDir()) => {
-  const cachedStateEntry = getCachedStateEntry(dataDir)
-  const cachedState = cachedStateEntry?.state
-  const cachedSessionHistory = cachedState?.sessionHistory
-
-  if (
-    Array.isArray(cachedSessionHistory) &&
-    (
-      cachedStateEntry?.diskStamp === null ||
-      cachedStateEntry?.diskStamp === await getStateDiskStamp(dataDir)
-    )
-  ) {
-    if (
-      cachedStateEntry?.sessionHistoryMode === 'full' &&
-      cachedSessionHistory.every(isFullSessionHistoryEntry)
-    ) {
-      return cachedSessionHistory
-    }
-
-    const sidecarSessionHistory = await loadSessionHistorySidecars(dataDir)
-    if (sidecarSessionHistory.length > 0) {
-      return sidecarSessionHistory
-    }
-  }
-
-  try {
-    const walRecovered = await recoverFromWal(dataDir)
-    if (walRecovered) {
-      return walRecovered.sessionHistory
-    }
-
-    const sidecarSessionHistory = await loadSessionHistorySidecars(dataDir)
-    if (sidecarSessionHistory.length > 0) {
-      return sidecarSessionHistory
-    }
-
-    const file = await readFile(getStateFilePathForDir(dataDir), 'utf8')
-    const raw = JSON.parse(file) as Record<string, unknown>
-
-    return normalizePersistedSessionHistory(raw.sessionHistory)
-  } catch {
-    return []
-  }
 }
 
 const mergePersistedSessionHistory = async (state: AppState, dataDir: string): Promise<AppState> => {
@@ -2430,7 +2411,11 @@ export const loadStateForRenderer = async (): Promise<AppStateLoadResponse> => {
 export const loadSessionHistoryEntry = async (request: { entryId: string }) => {
   const dataDir = getAppDataDir()
   const sidecarEntry = await readSessionHistorySidecarEntry(request.entryId, dataDir)
-  const entry = sidecarEntry ?? (await loadPersistedSessionHistory(dataDir)).find((item) => item.id === request.entryId)
+  // A missing sidecar is a legacy/corruption case, not permission to read all
+  // archived transcripts. The state index still carries the entry metadata and
+  // preview; returning that bounded fallback keeps recovery usable without
+  // repeating the 974MB sidecar fan-out described above.
+  const entry = sidecarEntry ?? (await loadPersistedSessionHistoryIndex(dataDir)).find((item) => item.id === request.entryId)
 
   if (!entry) {
     throw new Error(`Session history entry not found: ${request.entryId}`)

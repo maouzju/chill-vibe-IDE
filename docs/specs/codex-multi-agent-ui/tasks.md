@@ -35,3 +35,8 @@
 - [x] Run the justified broader regression gate for provider-stream changes.
 - [x] Build the Windows zip handoff with `pnpm electron:build`.
 - [x] Restart the active development runtime and verify the intended checkout owns it.
+
+## Regression fix - child visible before canonical path (2026-08-04)
+
+- [x] Add a focused tracker regression for `thread/started` arriving before canonical-path activity.
+- [x] Keep the running child visible through nickname/role/thread-id fallback until its path arrives.

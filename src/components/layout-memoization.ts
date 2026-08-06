@@ -33,6 +33,7 @@ type WorkspaceColumnMemoProps = {
   autoUrgeSuccessKeyword: string
   globalUrgeActive: boolean
   globalUrgeProfileId: string
+  repeatLoopEnabled?: boolean
   wakeTimerEnabled?: boolean
   recentWorkspaces: RecentWorkspace[]
   sessionHistory: SessionHistoryEntry[]
@@ -60,6 +61,7 @@ type PaneViewMemoProps = {
   autoUrgeSuccessKeyword: string
   globalUrgeActive: boolean
   globalUrgeProfileId: string
+  repeatLoopEnabled?: boolean
   wakeTimerEnabled?: boolean
   cardRecoveryStatuses?: ReadonlyMap<string, CardRecoveryStatus>
   queuedSendSummaries?: ReadonlyMap<string, QueuedSendSummary>
@@ -126,6 +128,7 @@ export const areWorkspaceColumnPropsEqual = (
   previous.autoUrgeSuccessKeyword === next.autoUrgeSuccessKeyword &&
   previous.globalUrgeActive === next.globalUrgeActive &&
   previous.globalUrgeProfileId === next.globalUrgeProfileId &&
+  previous.repeatLoopEnabled === next.repeatLoopEnabled &&
   previous.wakeTimerEnabled === next.wakeTimerEnabled &&
   previous.recentWorkspaces === next.recentWorkspaces &&
   previous.cardRecoveryStatuses === next.cardRecoveryStatuses &&
@@ -213,5 +216,6 @@ export const arePaneViewPropsEqual = (previous: PaneViewMemoProps, next: PaneVie
   previous.autoUrgeSuccessKeyword === next.autoUrgeSuccessKeyword &&
   previous.globalUrgeActive === next.globalUrgeActive &&
   previous.globalUrgeProfileId === next.globalUrgeProfileId &&
+  previous.repeatLoopEnabled === next.repeatLoopEnabled &&
   previous.wakeTimerEnabled === next.wakeTimerEnabled &&
   haveSamePaneCardRefs(previous, next)

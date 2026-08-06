@@ -13,17 +13,23 @@ export const shouldQueueWakeTimerSend = ({
   origin,
   answersPendingAskUser = false,
   hasContent = true,
+  isContinuation = false,
 }: {
   featureEnabled: boolean
   cardActive: boolean
   origin: 'user' | 'auto-urge' | 'wake-timer-release'
   answersPendingAskUser?: boolean
-  // The queue replays real sends later, so an entry with nothing to send is
-  // useless — and worse, it fails persistence validation and takes the whole
-  // save down with it (crash of 2026-07-26 21:10).
+  // Plain empty queue entries remain invalid after the 2026-07-26 persistence
+  // crash. A user-triggered empty continuation is real work, but it must carry
+  // the explicit schema marker before entering the queue.
   hasContent?: boolean
+  isContinuation?: boolean
 }) =>
-  featureEnabled && cardActive && origin === 'user' && !answersPendingAskUser && hasContent
+  featureEnabled &&
+  cardActive &&
+  origin === 'user' &&
+  !answersPendingAskUser &&
+  (hasContent || isContinuation)
 
 export const shouldConfirmWakeTimerCompletion = ({
   normalCompletion,

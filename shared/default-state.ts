@@ -525,6 +525,7 @@ export const createDefaultSettings = (language: AppLanguage = defaultAppLanguage
   autoUrgeGlobalControlEnabled: false,
   autoUrgeGlobalActive: false,
   autoUrgeGlobalProfileId: defaultAutoUrgeProfileId,
+  repeatLoopEnabled: false,
   wakeTimerEnabled: true,
   weatherCity: '',
   systemPrompt: defaultSystemPrompt,
@@ -672,6 +673,10 @@ export const normalizeAppSettings = (settings?: Partial<AppSettings> | null): Ap
         ? settings.autoUrgeGlobalActive
         : defaults.autoUrgeGlobalActive,
     autoUrgeGlobalProfileId: autoUrgeSettings.autoUrgeGlobalProfileId,
+    repeatLoopEnabled:
+      typeof settings?.repeatLoopEnabled === 'boolean'
+        ? settings.repeatLoopEnabled
+        : defaults.repeatLoopEnabled,
     wakeTimerEnabled:
       typeof settings?.wakeTimerEnabled === 'boolean'
         ? settings.wakeTimerEnabled
@@ -1075,6 +1080,7 @@ export const createCard = (
     planMode: false,
     autoUrgeActive: false,
     autoUrgeProfileId: defaultAutoUrgeProfileId,
+    repeatLoopActive: false,
     collapsed: false,
     unread: false,
     draft: '',

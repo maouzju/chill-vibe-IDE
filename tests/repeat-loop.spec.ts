@@ -152,6 +152,12 @@ test('a checked repeat loop opens a fresh tab, reruns the earliest prompt, and s
   ])
   await expect(page.locator('.pane-tab')).toHaveCount(2)
   await expect(activePanel.locator('.repeat-loop-status')).toBeVisible()
+
+  // The loop intentionally creates its next run in a background tab so the
+  // current composer is never stolen. Stop the chain from the running child,
+  // which is the card whose completion would otherwise schedule another run.
+  await page.locator('.pane-tab').nth(1).click()
+  await expect(activePanel.locator('.repeat-loop-status')).toBeVisible()
   await settingsTrigger.click()
   await expect(settingsMenu).toBeVisible()
   await expect(activeRepeatToggle).toBeChecked()

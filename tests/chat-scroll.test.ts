@@ -12,6 +12,7 @@ import {
   getRestoredMessageListScrollPlan,
   getScrollTopToRevealChild,
   getScrollTopToRevealChildWithTopClearance,
+  getScrollTopAfterCompactedHistoryReveal,
   getProgrammaticBottomScrollTarget,
   shouldIgnoreHiddenLayoutScrollReset,
   shouldAutoRevealCompactedHistoryImmediately,
@@ -281,6 +282,28 @@ describe('chat scroll helpers', () => {
 
     assert.equal(mode, 'near-top')
     assert.equal(shouldAutoRevealCompactedHistoryImmediately(mode), true)
+  })
+
+  it('keeps the previously visible message anchored when older compacted history is inserted', () => {
+    assert.equal(
+      getScrollTopAfterCompactedHistoryReveal({
+        previousScrollTop: 420,
+        previousScrollHeight: 1800,
+        nextScrollHeight: 2360,
+      }),
+      980,
+    )
+  })
+
+  it('never produces a negative scroll position when the list shrinks during reveal', () => {
+    assert.equal(
+      getScrollTopAfterCompactedHistoryReveal({
+        previousScrollTop: 12,
+        previousScrollHeight: 900,
+        nextScrollHeight: 600,
+      }),
+      0,
+    )
   })
 
   it('prefers the previous user prompt anchor when the latest reply is still close to the bottom', () => {

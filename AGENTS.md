@@ -554,6 +554,7 @@ A living list of traps that have wasted time before. **When you hit a new pitfal
 | 252 | Windows 的 Playwright `chromium_headless_shell-*` 缓存目录可能“看似已安装”却缺少 ICU 数据，所有 spec 会在浏览器启动前报 `Invalid file descriptor to ICU data received`；本机 `playwright install` 还可能无输出挂在 downloader 子进程 | 先检查浏览器缓存而不是把失败归因于 UI；定向截图可用临时 config 的 `use.launchOptions.executablePath` 指向系统 `msedge.exe`，完成后删除 config，并清理自己遗留的 installer/browser 子进程。 |
 | 253 | `session-history/` 可能远大于 `state.json`：2026-08-06 现场 8,863 个 sidecar 约 974MB；任何 provider 配置、web 启动或旧版兼容回退若调用全量 loader，都会把整库并发读入主进程，表现为无退出日志的闪退 | 这些路径只能读轻量 `state.json` 索引/preview，并保留 WAL 晋升；单条旧 sidecar 按确定路径尝试，绝不能用全目录扫描代替索引。 |
 | 254 | Composer 设置菜单通过 React portal 挂到 pane 外部；把 `.composer-settings-menu` 继续限定在 `.pane-tab-panel.is-active` 下会得到“元素不存在”，即使可见触发按钮工作正常 | 触发按钮可以按活动 pane 限定，portal 菜单应从页面级定位并等待可见；多 pane 测试还要避免用隐藏旧菜单的宽泛 `first()`。 |
+| 255 | 子进程性能守卫的超时阈值贴着空载耗时设置，会在全量 Node 门禁里与耗时 Git fixtures 争 CPU/磁盘后假红；`markdown-inline-file-reference` 曾空载约 1.7s、4s 阈值在 release manifest 中被调度抖动打成 `ETIMEDOUT` | 这类超时是防“无限卡死”，不是产品 SLA；先单文件复跑确认真实耗时，再给冷启动与全量并发留 5 倍左右余量，同时保留有界超时。只在全量红、单测明显快的情况不要直接归因到候选代码。 |
 
 ### Self-maintenance rule
 

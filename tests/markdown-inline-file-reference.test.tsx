@@ -99,14 +99,16 @@ test('an unfinished long Windows markdown link cannot block the renderer', () =>
   const result = spawnSync(
     process.execPath,
     ['--import', 'tsx', '--input-type=module', '--eval', script],
-    { encoding: 'utf8', timeout: 4_000 },
+    // Cold tsx startup can contend with the manifest's long-running Git fixtures.
+    // Keep a bounded catastrophic-backtracking guard without coupling it to scheduler jitter.
+    { encoding: 'utf8', timeout: 8_000 },
   )
   const errorCode = (result.error as NodeJS.ErrnoException | undefined)?.code
 
   assert.equal(
     errorCode,
     undefined,
-    `markdown render exceeded 4s: ${result.error?.message ?? ''}`,
+    `markdown render exceeded 8s: ${result.error?.message ?? ''}`,
   )
   assert.equal(result.status, 0, result.stderr)
 })

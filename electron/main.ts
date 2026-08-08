@@ -755,6 +755,9 @@ function registerDesktopHandlers() {
   ipcMain.handle('desktop:load-session-history-entry', (_event, request) =>
     desktopBackend.loadSessionHistoryEntry(request),
   )
+  ipcMain.handle('desktop:load-compacted-card-history', (_event, request) =>
+    desktopBackend.loadCompactedCardHistory(request),
+  )
   ipcMain.handle('desktop:save-closed-workspace-snapshot', (_event, snapshot) =>
     desktopBackend.saveClosedWorkspaceSnapshot(snapshot),
   )

@@ -13,6 +13,7 @@ import {
   fetchState,
   flashWindowOnce,
   isWindowMaximized,
+  loadCompactedCardHistory,
   loadClosedWorkspaceSnapshot,
   listInternalSessionHistory,
   minimizeWindow,
@@ -34,6 +35,7 @@ type ElectronBridgeWindow = Window & typeof globalThis & {
     isWindowMaximized?: () => Promise<boolean>
     onWindowMaximizedChanged?: (listener: (maximized: boolean) => void) => () => void
     fetchState?: () => Promise<ReturnType<typeof createDefaultState>>
+    loadCompactedCardHistory?: (request: { cardId: string }) => Promise<unknown>
     saveClosedWorkspaceSnapshot?: (snapshot: unknown) => Promise<unknown>
     loadClosedWorkspaceSnapshot?: (request: { workspacePath: string }) => Promise<unknown>
     listInternalSessionHistory?: (request: { workspacePath: string; query: string }) => Promise<unknown>
@@ -140,6 +142,34 @@ test('fetchState requires the Electron bridge and does not fall back to HTTP', a
     /Electron desktop bridge is unavailable/,
   )
   assert.equal(fetchCalls, 0)
+})
+
+test('loadCompactedCardHistory uses the Electron bridge and validates the archived snapshot', async () => {
+  const requests: Array<{ cardId: string }> = []
+  setWindow({
+    electronAPI: {
+      loadCompactedCardHistory: async (request) => {
+        requests.push(request)
+        return {
+          snapshot: {
+            hiddenReason: 'compact',
+            hiddenMessageCount: 1,
+            messages: [{
+              id: 'archived-message',
+              role: 'user',
+              content: 'earlier compacted question',
+              createdAt: '2026-08-06T00:00:00.000Z',
+            }],
+          },
+        }
+      },
+    },
+  } as ElectronBridgeWindow)
+
+  const response = await loadCompactedCardHistory({ cardId: 'card-1' })
+
+  assert.deepEqual(requests, [{ cardId: 'card-1' }])
+  assert.equal(response.snapshot?.messages[0]?.id, 'archived-message')
 })
 
 test('listInternalSessionHistory uses the bounded Electron maintenance bridge', async () => {

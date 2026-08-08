@@ -63,6 +63,8 @@ type LocaleText = {
   repeatLoopFeatureHint: string
   repeatLoopLabel: string
   repeatLoopHint: string
+  repeatLoopCountLabel: string
+  repeatLoopCountUnlimited: string
   repeatLoopStatusLabel: string
   repeatLoopStatusHint: string
   wakeTimerFeatureLabel: string
@@ -422,6 +424,8 @@ const localeTextByLanguage: Record<AppLanguage, LocaleText> = {
     repeatLoopFeatureHint: '开启后，Agent 输入框右侧的设置菜单会出现“循环重复”开关；勾选的任务完成后会新建 Tab，并自动重跑首条用户提示。',
     repeatLoopLabel: '循环重复',
     repeatLoopHint: '本轮完成后新建 Tab，并自动重跑本会话最早的用户提示。',
+    repeatLoopCountLabel: '重复次数',
+    repeatLoopCountUnlimited: '不限',
     repeatLoopStatusLabel: '循环重复已开启',
     repeatLoopStatusHint: '本轮完成后会自动新建 Tab，并重跑首条用户提示。',
     wakeTimerFeatureLabel: '计划唤醒',
@@ -808,6 +812,8 @@ const localeTextByLanguage: Record<AppLanguage, LocaleText> = {
     repeatLoopFeatureHint: 'Adds a Repeat loop switch to the settings menu beside the agent composer. A checked task opens a new tab and reruns its earliest user prompt after completion.',
     repeatLoopLabel: 'Repeat loop',
     repeatLoopHint: 'After this run completes, open a new tab and rerun this chat’s earliest user prompt.',
+    repeatLoopCountLabel: 'Repeat count',
+    repeatLoopCountUnlimited: 'Unlimited',
     repeatLoopStatusLabel: 'Repeat loop is on',
     repeatLoopStatusHint: 'A new tab will open and rerun the first user prompt when this run finishes.',
     wakeTimerFeatureLabel: 'Wake Timer',

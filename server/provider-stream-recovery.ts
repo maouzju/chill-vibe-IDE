@@ -41,6 +41,11 @@ const recoverableErrorPatterns = [
   // 一路输出到 03:59:27。它与上面的 'closed before completion' 是同一类瞬时断连，
   // 应当续传而不是给用户一个死胡同。
   'connection closed mid-response',
+  // 症状：`invalid_encrypted_content` 会把已有 live session 的卡片直接终止成永久错误。
+  // 根因：2026-08-06 现场 relay 重连与密钥/会话轮换竞态，session 本身仍可继续。
+  // 不能硬失败或新建会话，否则会丢失未完成 turn；按 stream-recovery-feedback SPEC 走 resume。
+  'invalid_encrypted_content',
+  'encrypted content could not be decrypted or parsed',
 ] as const
 
 const zeroExitPattern = /\b(?:codex|claude) exited with status code:\s*0\b/i

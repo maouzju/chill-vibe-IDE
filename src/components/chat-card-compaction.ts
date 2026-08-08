@@ -15,6 +15,11 @@ export type CompactMessageWindow = {
 type CompactMessageWindowOptions = {
   revealedHiddenMessageCount?: number
   allowPerformanceWindowing?: boolean
+  archivedHiddenMessageCount?: number
+}
+
+type MergeCompactedHistoryOptions = {
+  allowUnanchoredArchive?: boolean
 }
 
 const compactBoundaryMetaKey = 'compactBoundary'
@@ -279,6 +284,52 @@ const getPerformanceHiddenMessageCount = (messages: ChatMessage[]) => {
   return preserveLatestUserTurn(messages, Math.max(countHiddenMessageCount, contentHiddenMessageCount))
 }
 
+export const mergeCompactedHistoryForDisplay = (
+  archivedMessages: ChatMessage[],
+  liveMessages: ChatMessage[],
+  options?: MergeCompactedHistoryOptions,
+) => {
+  if (archivedMessages.length === 0) {
+    return {
+      messages: liveMessages,
+      prependedMessageCount: 0,
+    }
+  }
+
+  const uniqueArchivedMessages: ChatMessage[] = []
+  const archivedIds = new Set<string>()
+  for (const message of archivedMessages) {
+    if (archivedIds.has(message.id)) {
+      continue
+    }
+    archivedIds.add(message.id)
+    uniqueArchivedMessages.push(message)
+  }
+
+  const liveMessageIds = new Set(liveMessages.map((message) => message.id))
+  const firstSharedArchiveIndex = uniqueArchivedMessages.findIndex((archivedMessage) =>
+    liveMessageIds.has(archivedMessage.id),
+  )
+  if (
+    liveMessages.length === 0 ||
+    (firstSharedArchiveIndex < 0 && options?.allowUnanchoredArchive !== true)
+  ) {
+    return {
+      messages: liveMessages,
+      prependedMessageCount: 0,
+    }
+  }
+
+  const archivedPrefix = uniqueArchivedMessages
+    .slice(0, firstSharedArchiveIndex < 0 ? undefined : firstSharedArchiveIndex)
+    .filter((message) => !liveMessageIds.has(message.id))
+
+  return {
+    messages: archivedPrefix.length > 0 ? [...archivedPrefix, ...liveMessages] : liveMessages,
+    prependedMessageCount: archivedPrefix.length,
+  }
+}
+
 export const shouldAutoCompactCodexConversation = ({
   provider,
   sessionId,
@@ -331,6 +382,21 @@ export const getCompactMessageWindow = (
   const allowPerformanceWindowing = options?.allowPerformanceWindowing ?? true
   const revealedHiddenMessageCount = options?.revealedHiddenMessageCount ?? 0
   const compactBoundary = findLatestCompactBoundary(messages, provider, status)
+  const pendingCompactBoundary = getPendingCompactBoundaryMessage(messages)
+  const archivedHiddenMessageCount = Math.min(
+    Math.max(Math.trunc(options?.archivedHiddenMessageCount ?? 0), 0),
+    Math.max(messages.length - 1, 0),
+  )
+
+  if (compactBoundary === null && archivedHiddenMessageCount > 0 && pendingCompactBoundary === null) {
+    return buildCompactMessageWindow({
+      messages,
+      hiddenMessageCount: archivedHiddenMessageCount,
+      hiddenReason: 'compact',
+      compactTrigger: 'auto',
+      revealedHiddenMessageCount,
+    })
+  }
 
   if (compactBoundary === null || compactBoundary <= 0) {
     const performanceHiddenMessageCount = allowPerformanceWindowing

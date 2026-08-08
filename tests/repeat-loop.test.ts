@@ -68,13 +68,14 @@ describe('agent repeat loop state', () => {
     assert.equal((restoredCard as ChatCard & { repeatLoopActive?: boolean }).repeatLoopActive, true)
   })
 
-  it('spawns a fresh active tab in the source pane with inherited agent execution settings', () => {
+  it('spawns a fresh background tab without interrupting the tab where the user is typing', () => {
     const state = createDefaultState('D:/repeat-loop')
     const column = state.columns[0]!
     const pane = getFirstPane(column.layout)
     const sourceCard = column.cards[pane.activeTabId]!
     Object.assign(sourceCard, {
       repeatLoopActive: true,
+      repeatLoopRemaining: 2,
       sessionId: 'source-session',
       sessionModel: sourceCard.model,
       thinkingEnabled: false,
@@ -101,13 +102,14 @@ describe('agent repeat loop state', () => {
 
     assert.ok(repeatedCard)
     assert.deepEqual(nextPane.tabs, [...pane.tabs, 'repeat-card-2'])
-    assert.equal(nextPane.activeTabId, 'repeat-card-2')
+    assert.equal(nextPane.activeTabId, pane.activeTabId)
     assert.equal(repeatedCard.provider, sourceCard.provider)
     assert.equal(repeatedCard.model, sourceCard.model)
     assert.equal(repeatedCard.reasoningEffort, sourceCard.reasoningEffort)
     assert.equal(repeatedCard.thinkingEnabled, false)
     assert.equal(repeatedCard.planMode, true)
     assert.equal(repeatedCard.repeatLoopActive, true)
+    assert.equal(repeatedCard.repeatLoopRemaining, 1)
     assert.equal(repeatedCard.sessionId, undefined)
     assert.equal(repeatedCard.streamId, undefined)
     assert.deepEqual(repeatedCard.messages, [])
@@ -139,6 +141,17 @@ describe('agent repeat loop state', () => {
       resolveRepeatLoopCompletion({ featureEnabled: true, completionKind: 'terminal', card }),
       { prompt: 'repeat this task' },
     )
+    card.repeatLoopRemaining = 2
+    assert.deepEqual(
+      resolveRepeatLoopCompletion({ featureEnabled: true, completionKind: 'terminal', card }),
+      { prompt: 'repeat this task', remainingRepeats: 2 },
+    )
+    card.repeatLoopRemaining = 0
+    assert.equal(
+      resolveRepeatLoopCompletion({ featureEnabled: true, completionKind: 'terminal', card }),
+      null,
+    )
+    card.repeatLoopRemaining = undefined
     assert.equal(
       resolveRepeatLoopCompletion({ featureEnabled: false, completionKind: 'terminal', card }),
       null,

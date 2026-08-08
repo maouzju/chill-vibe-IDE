@@ -10,6 +10,8 @@ import type {
   ClosedWorkspaceLoadRequest,
   ClosedWorkspaceLoadResponse,
   ClosedWorkspaceSnapshot,
+  CompactedCardHistoryLoadRequest,
+  CompactedCardHistoryLoadResponse,
   ForkSessionRequest,
   ForkSessionResponse,
   NativeTurnCompletionRequest,
@@ -98,6 +100,7 @@ declare global {
       openExternalLink?: (href: string) => Promise<void>
       fetchState?: () => Promise<AppStateLoadResponse | AppState>
       loadSessionHistoryEntry?: (request: InternalSessionHistoryLoadRequest) => Promise<InternalSessionHistoryLoadResponse>
+      loadCompactedCardHistory?: (request: CompactedCardHistoryLoadRequest) => Promise<CompactedCardHistoryLoadResponse>
       saveClosedWorkspaceSnapshot?: (snapshot: ClosedWorkspaceSnapshot) => Promise<ClosedWorkspaceSnapshot>
       loadClosedWorkspaceSnapshot?: (request: ClosedWorkspaceLoadRequest) => Promise<ClosedWorkspaceLoadResponse>
       listInternalSessionHistory?: (request: InternalSessionHistoryListRequest) => Promise<InternalSessionHistoryListResponse>

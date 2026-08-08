@@ -22,6 +22,7 @@
 - [x] 没有真实压缩历史时，不注入归档 MCP。
 - [x] Codex 准备声称旧附件不可用前，会先按指令检查归档召回工具。
 - [x] 单次运行结束或失败后清理临时 MCP 快照；按卡片持久化的累计归档继续保留供后续运行使用。
+- [x] renderer 在用户向上滚动时可按需读取同卡片 sidecar，查看被活动卡片消息上限裁掉的早期记录（详见 `compacted-history-scroll-recovery`）。
 
 ## Out of Scope
 

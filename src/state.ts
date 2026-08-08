@@ -383,6 +383,7 @@ export type IdeAction =
           | 'autoUrgeActive'
           | 'autoUrgeProfileId'
           | 'repeatLoopActive'
+          | 'repeatLoopRemaining'
           | 'collapsed'
           | 'unread'
           | 'completionGlow'
@@ -458,6 +459,7 @@ const duplicateCardForColumn = (card: ChatCard): ChatCard => ({
   pmTaskCardId: '',
   pmOwnerCardId: '',
   repeatLoopActive: false,
+  repeatLoopRemaining: undefined,
   wakeTimerActive: false,
   wakeTimerQueuedSends: [],
   wakeTimerArmedAt: undefined,
@@ -1303,6 +1305,7 @@ const buildRestoredCard = (state: AppState, entry: SessionHistoryEntry): ChatCar
   autoUrgeActive: false,
   autoUrgeProfileId: defaultAutoUrgeProfileId,
   repeatLoopActive: false,
+  repeatLoopRemaining: undefined,
   collapsed: false,
   unread: false,
   draft: '',
@@ -1932,6 +1935,10 @@ export const ideReducer = (state: AppState, action: IdeAction): AppState => {
           thinkingEnabled: sourceCard.thinkingEnabled,
           planMode: sourceCard.planMode,
           repeatLoopActive: true,
+          repeatLoopRemaining:
+            typeof sourceCard.repeatLoopRemaining === 'number'
+              ? Math.max(0, sourceCard.repeatLoopRemaining - 1)
+              : undefined,
         }
 
         return {
@@ -1941,9 +1948,12 @@ export const ideReducer = (state: AppState, action: IdeAction): AppState => {
             [repeatedCard.id]: repeatedCard,
           },
           layout: updatePaneNode(column.layout, pane.id, (currentPane) =>
+            // 症状：后台任务完成并进入下一轮时，新 Tab 会抢走用户正在编辑的输入框。
+            // 根因：2026-08-07 实测为循环 reducer 无条件改写 activeTabId；见 agent-repeat-loop SPEC。
+            // 被否决：按“当前焦点是否在 textarea”临时判断有竞态；自动化 Tab 一律后台创建更可预测。
             createPane(
               [...currentPane.tabs, repeatedCard.id],
-              repeatedCard.id,
+              currentPane.activeTabId,
               currentPane.id,
               currentPane.tabHistory,
             ),
@@ -2340,6 +2350,7 @@ export const ideReducer = (state: AppState, action: IdeAction): AppState => {
         backgroundWorkPending: false,
         autoUrgeActive: false,
         repeatLoopActive: false,
+        repeatLoopRemaining: undefined,
         unread: false,
         draft: '',
         queuedSends: [],
@@ -2349,6 +2360,7 @@ export const ideReducer = (state: AppState, action: IdeAction): AppState => {
         wakeTimerWakeAt: undefined,
         wakeTimerPendingTargetIds: [],
         messages: [],
+        messageCount: 0,
       }))
 
       return touchState(next)
@@ -2568,6 +2580,7 @@ export const ideReducer = (state: AppState, action: IdeAction): AppState => {
         autoUrgeActive: false,
         autoUrgeProfileId: defaultAutoUrgeProfileId,
         repeatLoopActive: false,
+        repeatLoopRemaining: undefined,
         collapsed: false,
         unread: false,
   draft: '',

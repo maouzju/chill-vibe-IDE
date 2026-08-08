@@ -17,6 +17,8 @@ import {
 import { FileWatcherManager } from '../server/file-watcher.ts'
 import { readNearestTsconfig } from '../server/tsconfig-discovery.ts'
 import { listExternalSessions, loadExternalSession } from '../server/external-history.ts'
+import { loadCompactedCardHistoryForDisplay } from '../server/compacted-card-history.ts'
+import { getAppDataDir } from '../server/app-paths.ts'
 import { forkProviderSession } from '../server/session-fork.ts'
 import {
   getClaudeNativeTurnCompletion,
@@ -93,6 +95,7 @@ import {
   appSettingsSchema,
   attachmentUploadRequestSchema,
   appStateSchema,
+  compactedCardHistoryLoadRequestSchema,
   closedWorkspaceLoadRequestSchema,
   closedWorkspaceSnapshotSchema,
   rendererCrashCaptureRequestSchema,
@@ -137,6 +140,7 @@ import {
   type ClosedWorkspaceLoadRequest,
   type ClosedWorkspaceSnapshot,
   type CcSwitchImportRequest,
+  type CompactedCardHistoryLoadRequest,
   type ExternalHistoryListRequest,
   type ExternalSessionLoadRequest,
   type InternalSessionHistoryHideRequest,
@@ -277,6 +281,10 @@ export const createDesktopBackend = (deps: DesktopBackendDependencies = {}) => {
     },
     async loadSessionHistoryEntry(request: InternalSessionHistoryLoadRequest) {
       return loadInternalSessionHistoryEntry(internalSessionHistoryLoadRequestSchema.parse(request))
+    },
+    async loadCompactedCardHistory(request: CompactedCardHistoryLoadRequest) {
+      const parsed = compactedCardHistoryLoadRequestSchema.parse(request)
+      return loadCompactedCardHistoryForDisplay(getAppDataDir(), parsed.cardId)
     },
     async saveClosedWorkspaceSnapshot(snapshot: ClosedWorkspaceSnapshot) {
       return saveClosedWorkspaceSnapshotState(closedWorkspaceSnapshotSchema.parse(snapshot))

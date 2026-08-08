@@ -1081,6 +1081,7 @@ export const createCard = (
     autoUrgeActive: false,
     autoUrgeProfileId: defaultAutoUrgeProfileId,
     repeatLoopActive: false,
+    repeatLoopRemaining: undefined,
     collapsed: false,
     unread: false,
     draft: '',

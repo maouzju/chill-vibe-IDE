@@ -145,6 +145,8 @@ export const installMockElectronBridge = async (page: Page) => {
       fetchState: async () => jsonRequest('/api/state'),
       loadSessionHistoryEntry: async (request) =>
         jsonRequest(`/api/session-history/${encodeURIComponent(request.entryId)}`),
+      loadCompactedCardHistory: async (request) =>
+        jsonRequest(`/api/compacted-card-history/${encodeURIComponent(request.cardId)}`),
       saveClosedWorkspaceSnapshot: async (snapshot) =>
         jsonRequest('/api/closed-workspace', {
           method: 'PUT',

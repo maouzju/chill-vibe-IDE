@@ -16,6 +16,7 @@
 - 合并规则：以消息 id 去重；已有消息保持原顺序，新发现消息按当前转录顺序追加。
 - 写入：`tmp -> rename` 原子替换。
 - 只有真实 Codex 压缩边界之前的消息进入 sidecar；性能窗口隐藏不归档。
+- 显式重置成空会话后，在主状态安全落盘之后删除同 cardId sidecar，避免新会话再次压缩时混入旧归档。
 
 ## Request Flow
 
@@ -38,6 +39,7 @@
 - 不把性能折叠窗口误当成真实压缩归档。
 - 不取消活动卡片 500 条持久化上限；完整早期压缩历史由 sidecar 承担。
 - 已经被旧版本永久裁掉且从未写入 sidecar 的消息无法追溯恢复；修复保证升级后的新保存不再继续丢失。
+- 用户可见的历史回填走只读定点读取，不把 sidecar 内容重新写入活动卡片或 provider seed；具体滚动锚定见 `docs/specs/compacted-history-scroll-recovery/`。
 
 ## Verification
 

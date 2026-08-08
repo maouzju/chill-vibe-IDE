@@ -5,7 +5,9 @@ import { createMessage } from '../shared/default-state.ts'
 import type { CardStatus, ChatMessage, Provider } from '../shared/schema.ts'
 import {
   getCompactMessageWindow,
+  getPendingCompactBoundaryMessage,
   markCompactBoundaryMessage,
+  mergeCompactedHistoryForDisplay,
   shouldAutoCompactCodexConversation,
 } from '../src/components/chat-card-compaction.ts'
 
@@ -33,6 +35,139 @@ const getWindow = (
   })
 
 describe('chat card compaction window', () => {
+  it('prepends archived compacted history that the persisted live-card window no longer carries', () => {
+    const archivedOnly = makeMessage('archived-only', 'user', 'earliest preserved question')
+    const sharedMessage = makeMessage('shared', 'assistant', 'still present in both sources')
+    const compactBoundary = makeMessage('compact', 'user', '/compact', {
+      compactBoundary: 'true',
+      compactTrigger: 'auto',
+      compactHidden: 'true',
+    })
+    const liveMessages = [sharedMessage, compactBoundary, makeMessage('latest', 'assistant', 'latest reply')]
+
+    assert.deepEqual(
+      mergeCompactedHistoryForDisplay([archivedOnly, sharedMessage], liveMessages),
+      {
+        messages: [archivedOnly, ...liveMessages],
+        prependedMessageCount: 1,
+      },
+    )
+  })
+
+  it('ignores stale archived duplicates that no longer form a prefix before live-card messages', () => {
+    const liveMessages = [
+      makeMessage('live-1', 'user', 'current question'),
+      makeMessage('live-2', 'assistant', 'current answer'),
+    ]
+
+    assert.deepEqual(
+      mergeCompactedHistoryForDisplay([
+        makeMessage('live-2', 'assistant', 'stale archived copy'),
+        makeMessage('archive-late', 'assistant', 'must not be appended after live history'),
+      ], liveMessages),
+      {
+        messages: liveMessages,
+        prependedMessageCount: 0,
+      },
+    )
+  })
+
+  it('reconstructs a compact boundary when persistence trimmed the boundary out of the live-card window', () => {
+    const archivedMessages = [
+      makeMessage('archived-only', 'user', 'earliest preserved question'),
+      makeMessage('shared', 'assistant', 'last archived message still present live'),
+    ]
+    const liveMessages = [
+      makeMessage('shared', 'assistant', 'last archived message still present live'),
+      makeMessage('latest-user', 'user', 'current question'),
+      makeMessage('latest-assistant', 'assistant', 'current reply'),
+    ]
+    const merged = mergeCompactedHistoryForDisplay(archivedMessages, liveMessages)
+    const window = getCompactMessageWindow(merged.messages, 'codex', 'idle', {
+      archivedHiddenMessageCount: merged.prependedMessageCount,
+    })
+
+    assert.equal(window.hiddenReason, 'compact')
+    assert.equal(window.hiddenMessageCount, 1)
+    assert.equal(window.compactMessageId, 'shared')
+    assert.deepEqual(window.visibleMessages.map((message) => message.id), [
+      'shared',
+      'latest-user',
+      'latest-assistant',
+    ])
+  })
+
+  it('does not hide live messages when an archived snapshot has no overlap with the current card', () => {
+    const liveMessages = [
+      makeMessage('live-user', 'user', 'new conversation'),
+      makeMessage('live-assistant', 'assistant', 'new answer'),
+    ]
+    const merged = mergeCompactedHistoryForDisplay([
+      makeMessage('stale-user', 'user', 'old conversation'),
+    ], liveMessages)
+    const window = getCompactMessageWindow(merged.messages, 'codex', 'idle', {
+      archivedHiddenMessageCount: merged.prependedMessageCount,
+    })
+
+    assert.equal(window.hiddenMessageCount, 0)
+    assert.deepEqual(window.visibleMessages, liveMessages)
+  })
+
+  it('restores an unanchored archive when the persisted message count proves the compact boundary was trimmed', () => {
+    const archivedMessages = [
+      makeMessage('archived-user', 'user', 'question before compact'),
+      makeMessage('archived-assistant', 'assistant', 'answer before compact'),
+    ]
+    const liveMessages = [
+      makeMessage('live-user', 'user', 'question after the trimmed compact boundary'),
+      makeMessage('live-assistant', 'assistant', 'current answer'),
+    ]
+    const merged = mergeCompactedHistoryForDisplay(archivedMessages, liveMessages, {
+      allowUnanchoredArchive: true,
+    })
+    const window = getCompactMessageWindow(merged.messages, 'codex', 'idle', {
+      archivedHiddenMessageCount: merged.prependedMessageCount,
+    })
+
+    assert.deepEqual(merged.messages, [...archivedMessages, ...liveMessages])
+    assert.equal(merged.prependedMessageCount, archivedMessages.length)
+    assert.equal(window.hiddenReason, 'compact')
+    assert.equal(window.hiddenMessageCount, archivedMessages.length)
+    assert.deepEqual(window.visibleMessages, liveMessages)
+  })
+
+  it('does not synthesize an archived compact window while a compact request is pending', () => {
+    const pendingBoundary = makeMessage('pending', 'user', '/compact', {
+      compactBoundary: 'true',
+      compactPending: 'true',
+    })
+    const messages = [
+      makeMessage('shared', 'assistant', 'still visible'),
+      pendingBoundary,
+    ]
+
+    assert.equal(getPendingCompactBoundaryMessage(messages)?.id, 'pending')
+    const window = getCompactMessageWindow(messages, 'codex', 'streaming', {
+      archivedHiddenMessageCount: 1,
+    })
+
+    assert.equal(window.hiddenReason, null)
+    assert.deepEqual(window.visibleMessages, messages)
+  })
+
+  it('deduplicates repeated IDs inside an archived snapshot before display merge', () => {
+    const duplicate = makeMessage('duplicate', 'user', 'same old prompt')
+    const shared = makeMessage('shared', 'assistant', 'shared tail')
+
+    assert.deepEqual(
+      mergeCompactedHistoryForDisplay([duplicate, duplicate, shared], [shared]),
+      {
+        messages: [duplicate, shared],
+        prependedMessageCount: 1,
+      },
+    )
+  })
+
   it('keeps the full history when no compact command exists', () => {
     const messages = [
       makeMessage('m1', 'user', 'hello'),

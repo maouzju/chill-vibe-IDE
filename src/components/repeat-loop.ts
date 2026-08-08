@@ -21,7 +21,7 @@ export const resolveRepeatLoopCompletion = ({
   featureEnabled: boolean
   completionKind: RepeatLoopCompletionKind
   card: ChatCard
-}): { prompt: string } | null => {
+}): { prompt: string; remainingRepeats?: number } | null => {
   if (
     !featureEnabled ||
     completionKind !== 'terminal' ||
@@ -33,6 +33,17 @@ export const resolveRepeatLoopCompletion = ({
     return null
   }
 
+  if (typeof card.repeatLoopRemaining === 'number' && card.repeatLoopRemaining <= 0) {
+    return null
+  }
+
   const prompt = getEarliestRepeatLoopPrompt(card.messages)
-  return prompt ? { prompt } : null
+  return prompt
+    ? {
+        prompt,
+        ...(typeof card.repeatLoopRemaining === 'number'
+          ? { remainingRepeats: card.repeatLoopRemaining }
+          : {}),
+      }
+    : null
 }

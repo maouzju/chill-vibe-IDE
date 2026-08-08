@@ -274,4 +274,33 @@ describe('archive recall runtime overrides', () => {
     await runtime?.cleanup()
     delete process.env.CHILL_VIBE_DATA_DIR
   })
+
+  it('removes a compacted-history sidecar when the owning card is reset', async () => {
+    process.env.CHILL_VIBE_DATA_DIR = tempDataDir
+    const { saveState } = await import('../server/state-store.ts')
+    const { loadCompactedCardHistorySnapshot } = await import('../server/compacted-card-history.ts')
+    const state = createDefaultState('D:\\Git\\chill-vibe')
+    const column = state.columns[0]!
+    const cardId = getFirstPane(column.layout).tabs[0]!
+    const card = column.cards[cardId]!
+    card.messages = [
+      createMessage('reset-archived', 'user', 'This belongs to the old conversation.'),
+      createMessage('reset-boundary', 'user', '/compact', {
+        provider: 'codex',
+        compactBoundary: 'true',
+      }),
+      createMessage('reset-summary', 'assistant', 'Old compact summary.'),
+    ]
+
+    await saveState(state)
+    assert.ok(await loadCompactedCardHistorySnapshot(tempDataDir, cardId))
+
+    card.messages = []
+    card.messageCount = 0
+    card.sessionId = undefined
+    await saveState(state)
+
+    assert.equal(await loadCompactedCardHistorySnapshot(tempDataDir, cardId), undefined)
+    delete process.env.CHILL_VIBE_DATA_DIR
+  })
 })

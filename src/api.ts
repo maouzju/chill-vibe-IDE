@@ -10,6 +10,8 @@ import {
   closedWorkspaceLoadRequestSchema,
   closedWorkspaceLoadResponseSchema,
   closedWorkspaceSnapshotSchema,
+  compactedCardHistoryLoadRequestSchema,
+  compactedCardHistoryLoadResponseSchema,
   externalHistoryListRequestSchema,
   externalHistoryListResponseSchema,
   externalSessionLoadRequestSchema,
@@ -79,6 +81,8 @@ import {
   type ClosedWorkspaceLoadRequest,
   type ClosedWorkspaceLoadResponse,
   type ClosedWorkspaceSnapshot,
+  type CompactedCardHistoryLoadRequest,
+  type CompactedCardHistoryLoadResponse,
   type ForkSessionRequest,
   type NativeTurnCompletionRequest,
   type NativeTurnCompletionResponse,
@@ -266,6 +270,27 @@ export const loadSessionHistoryEntry = async (
   const fn = requireDesktopAction(getDesktopApi()?.loadSessionHistoryEntry)
 
   return readDesktop(() => fn(parsed), internalSessionHistoryLoadResponseSchema)
+}
+
+export const loadCompactedCardHistory = async (
+  request: CompactedCardHistoryLoadRequest,
+): Promise<CompactedCardHistoryLoadResponse> => {
+  const parsed = compactedCardHistoryLoadRequestSchema.parse(request)
+  const desktop = getDesktopApi()
+
+  if (desktop?.loadCompactedCardHistory) {
+    return readDesktop(
+      () => desktop.loadCompactedCardHistory!(parsed),
+      compactedCardHistoryLoadResponseSchema,
+    )
+  }
+
+  const response = await fetch(`/api/compacted-card-history/${encodeURIComponent(parsed.cardId)}`)
+  if (!response.ok) {
+    throw new Error(`Failed to load compacted card history (${response.status}).`)
+  }
+
+  return compactedCardHistoryLoadResponseSchema.parse(await response.json())
 }
 
 export const saveClosedWorkspaceSnapshot = async (

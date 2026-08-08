@@ -48,6 +48,32 @@ describe('state-store persistence', () => {
     assert.ok(loaded.columns.length > 0)
   })
 
+  it('keeps the full live-card message count when state.json trims the transcript tail', async () => {
+    const { saveState, loadState } = await import('../server/state-store.ts')
+    const state = createDefaultState('D:/trimmed-live-card-count')
+    const card = getFirstCard(state)
+    assert.ok(card)
+    card.messages = Array.from({ length: 620 }, (_, index) => ({
+      id: `live-count-${index}`,
+      role: index % 2 === 0 ? 'user' as const : 'assistant' as const,
+      content: `Message ${index}`,
+      createdAt: new Date(Date.UTC(2026, 7, 6, 0, 0, index)).toISOString(),
+    }))
+
+    await saveState(state)
+
+    const raw = JSON.parse(await readFile(path.join(tmpDir, 'state.json'), 'utf8')) as {
+      columns: Array<{ cards: Record<string, { messages: unknown[]; messageCount?: number }> }>
+    }
+    const persistedCard = raw.columns[0]?.cards[card.id]
+    assert.equal(persistedCard?.messages.length, 500)
+    assert.equal(persistedCard?.messageCount, 620)
+
+    const loadedCard = getFirstCard(await loadState())
+    assert.equal(loadedCard?.messages.length, 500)
+    assert.equal(loadedCard?.messageCount, 620)
+  })
+
   it('does not persist runtime-only native background waiting state', async () => {
     const { saveState, loadState } = await import('../server/state-store.ts')
     const state = createDefaultState('D:/runtime-background-state')

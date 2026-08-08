@@ -213,6 +213,19 @@ describe('ideReducer pane layout', () => {
     assert.deepEqual(reset.columns[0]!.cards['card-1']!.queuedSends, [])
   })
 
+  it('clears the persisted transcript count when resetting a conversation', () => {
+    const state = createState()
+    state.columns[0]!.cards['card-1']!.messageCount = 640
+
+    const reset = ideReducer(state, {
+      type: 'resetCardConversation',
+      columnId: 'column-1',
+      cardId: 'card-1',
+    })
+
+    assert.equal(reset.columns[0]!.cards['card-1']!.messageCount, 0)
+  })
+
   it('clears a persisted wake timer batch when resetting a conversation', () => {
     const state = createState()
     const card = state.columns[0]!.cards['card-1']!

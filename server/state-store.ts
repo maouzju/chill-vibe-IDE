@@ -72,7 +72,10 @@ import {
   compactSessionHistoryEntryForTransfer,
   maxPersistedCardMessages,
 } from './session-history-compaction.js'
-import { persistCompactedCardHistories } from './compacted-card-history.js'
+import {
+  persistCompactedCardHistories,
+  pruneResetCompactedCardHistories,
+} from './compacted-card-history.js'
 
 type PersistedChatMessage = ChatCard['messages'][number]
 
@@ -744,6 +747,10 @@ const normalizePersistedCard = (
     autoUrgeActive: typeof card.autoUrgeActive === 'boolean' ? card.autoUrgeActive : fallback.autoUrgeActive,
     autoUrgeProfileId: typeof card.autoUrgeProfileId === 'string' ? card.autoUrgeProfileId : fallback.autoUrgeProfileId,
     repeatLoopActive: typeof card.repeatLoopActive === 'boolean' ? card.repeatLoopActive : false,
+    repeatLoopRemaining:
+      typeof card.repeatLoopRemaining === 'number' && Number.isInteger(card.repeatLoopRemaining) && card.repeatLoopRemaining >= 0
+        ? card.repeatLoopRemaining
+        : undefined,
     collapsed: typeof card.collapsed === 'boolean' ? card.collapsed : fallback.collapsed,
     unread: typeof card.unread === 'boolean' ? card.unread : fallback.unread,
     draft: typeof card.draft === 'string' ? card.draft : fallback.draft,
@@ -2327,6 +2334,12 @@ const saveStateToDataDir = async (
   }
 
   await atomicWriteFile(getStateFilePathForDir(dataDir), content, dataDir)
+  // 症状：重置同一卡片后再次 /compact，会把旧会话 sidecar 拼进新会话。
+  // 根因：cardId 会复用，而累计归档此前从不随显式空会话落盘清理。
+  // 不能在空状态保护前删除，否则一次损坏的空保存会先删归档；详见 compacted-history-scroll-recovery SPEC。
+  await pruneResetCompactedCardHistories(state, dataDir).catch((error) => {
+    console.warn('[state-store] Failed to prune reset compacted card history:', error)
+  })
   if (!shouldSkipRoutineStateSnapshot()) {
     await writeStateSnapshot(content, dataDir)
   }

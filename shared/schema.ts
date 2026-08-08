@@ -172,6 +172,7 @@ export const chatCardSchema = z.object({
   autoUrgeActive: z.boolean().default(false),
   autoUrgeProfileId: z.string().default('auto-urge-default'),
   repeatLoopActive: z.boolean().optional(),
+  repeatLoopRemaining: z.number().int().min(0).optional(),
   collapsed: z.boolean().default(false),
   unread: z.boolean().default(false),
   completionGlow: z.boolean().optional(),
@@ -411,6 +412,16 @@ export const archiveRecallSnapshotSchema = z.object({
   messages: z.array(chatMessageSchema).default([]),
 })
 export type ArchiveRecallSnapshot = z.infer<typeof archiveRecallSnapshotSchema>
+
+export const compactedCardHistoryLoadRequestSchema = z.object({
+  cardId: z.string().min(1),
+})
+export type CompactedCardHistoryLoadRequest = z.infer<typeof compactedCardHistoryLoadRequestSchema>
+
+export const compactedCardHistoryLoadResponseSchema = z.object({
+  snapshot: archiveRecallSnapshotSchema.nullable(),
+})
+export type CompactedCardHistoryLoadResponse = z.infer<typeof compactedCardHistoryLoadResponseSchema>
 
 // ── External history import ──────────────────────────────────────────────────
 

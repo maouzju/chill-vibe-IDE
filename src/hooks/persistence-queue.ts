@@ -24,8 +24,13 @@ export const streamingQueuedStateSaveDelayMs = 5_000
 // combined card render rate cannot scale linearly with every open agent pane.
 export const streamRenderFlushIntervalMs = 80
 export const streamRenderColumnYieldMs = 50
-export const streamRenderInteractionProtectionMs = 120
-export const streamRenderMaxInteractionDeferralMs = 300
+// Keep reducer commits out of active typing bursts. A 120/300ms window still
+// allowed a heavy multi-agent board to commit every ~300ms while the user was
+// continuously composing, which made keystrokes feel sticky. Extend the
+// protection window; the next flush still happens immediately after input
+// quiets, so this only trades stream visual cadence for input responsiveness.
+export const streamRenderInteractionProtectionMs = 250
+export const streamRenderMaxInteractionDeferralMs = 1_000
 const moderateMultiStreamRenderFlushIntervalMs = 400
 const busyMultiStreamRenderFlushIntervalMs = 800
 const busyStreamingQueuedStateSaveDelayMs = 15_000

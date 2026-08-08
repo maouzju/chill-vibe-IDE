@@ -6,6 +6,7 @@
 
 - `AppSettings.repeatLoopEnabled`：功能总开关，默认 `false`；`normalizeAppSettings()` 对旧数据补 `false`。
 - `ChatCard.repeatLoopActive`：当前聊天是否参与循环，默认 `false`；服务端持久化恢复显式归一化。
+- `ChatCard.repeatLoopRemaining`：当前循环链剩余自动重跑次数；省略表示不限次数，设置为 `0` 时停止。每次完成生成下一 Tab 时递减 1。
 
 `updateSettings` 与 `updateCard` action 的可更新字段同步加入这两个值。复制工作区、导入会话、普通 fork 等创建“另一份任务”的路径不继承活动循环；只有循环专用的新 Tab 明确继承为 `true`。
 
@@ -25,8 +26,8 @@
 1. 以 `createCard()` 创建空白新会话；
 2. 复制来源卡的 provider、model、reasoningEffort、thinkingEnabled、planMode；
 3. 保持 session、消息、草稿、附件、延后队列和计时队列为空；
-4. 写入 `repeatLoopActive: true`；
-5. 把新卡追加到同 Pane 并设为 active tab。
+4. 写入 `repeatLoopActive: true`，并将有限的 `repeatLoopRemaining` 递减 1；
+5. 把新卡追加到同 Pane，但保留当前 active tab，让循环在后台开始，避免抢走用户正在使用的输入框。
 
 显式 `cardId` 让重复 done/重入保护可保持幂等；Reducer 若找不到来源卡、Pane 或发现目标 id 已存在则不修改状态。
 
@@ -57,6 +58,7 @@ terminal done
 - 设置页“实用”增加总开关与一句说明。
 - 普通 Agent 聊天的输入框右侧设置按钮打开的 `composer-settings-menu` 中增加 `repeat-loop` 设置行，包含 checkbox、标签和现有提示文案；工具卡不渲染该行。
 - 当总开关和当前卡的 `repeatLoopActive` 同时为真时，在聊天正文顶部、消息列表之前显示 `repeat-loop-status`：使用强调色、循环图标和“循环重复已开启”文案，并补充“本轮完成后会自动新建 Tab / 重跑首条提示”的说明。状态提示不是操作控件，取消操作仍从输入框设置菜单完成。
+- 勾选循环后在设置菜单显示“重复次数”数字输入框；留空表示不限，输入正整数后按剩余次数递减并在耗尽时自动停止。
 - 控件在 streaming 时仍可操作，保证用户能停止下一轮。
 - 使用现有 surface / seam / muted / focus token，不增加阴影或装饰；状态提示可以比普通辅助条更醒目，但不覆盖消息内容；窄屏允许说明换行。
 - 中英文文案都由 `shared/i18n.ts` 提供。
@@ -65,6 +67,6 @@ terminal done
 
 1. 红测：设置默认值与旧数据归一化；卡片默认与持久化恢复。
 2. 红测：纯判定仅接受 terminal、找到最早非空用户文本，并受队列/工具卡/总开关保护。
-3. 红测：`spawnRepeatLoopTab` 在同 Pane 新建、激活并正确继承 Agent 配置，同时保持会话与历史为空。
+3. 红测：`spawnRepeatLoopTab` 在同 Pane 后台新建、不改变当前 active tab，并正确继承 Agent 配置，同时保持会话与历史为空。
 4. UI 定向测试/主题快照覆盖总开关开启后的设置菜单 checkbox 与正文状态提示；检查 light、dark、桌面、窄屏。
 5. 运行定向 Node 测试、`pnpm test:quality`、`pnpm test:theme`；随后执行 `pnpm electron:build` 并重启当前开发运行时。

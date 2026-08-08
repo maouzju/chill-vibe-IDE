@@ -94,6 +94,19 @@ export const shouldAutoRevealCompactedHistoryImmediately = (
   mode: CompactedHistoryAutoRevealMode,
 ) => mode !== 'none'
 
+export const getScrollTopAfterCompactedHistoryReveal = ({
+  previousScrollTop,
+  previousScrollHeight,
+  nextScrollHeight,
+}: {
+  previousScrollTop: number
+  previousScrollHeight: number
+  nextScrollHeight: number
+}) => Math.max(
+  previousScrollTop + (nextScrollHeight - previousScrollHeight),
+  0,
+)
+
 export const getScrollTopToRevealChild = (
   { scrollTop, clientHeight }: ScrollViewportMetrics,
   { offsetTop, offsetHeight }: ScrollChildMetrics,

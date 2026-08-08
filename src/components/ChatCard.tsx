@@ -49,6 +49,7 @@ import type {
   AppLanguage,
   AutoUrgeProfile,
   ChatCard as ChatCardModel,
+  ChatMessage,
   ImageAttachment,
   ModelPromptRule,
   Provider,
@@ -69,7 +70,13 @@ import {
   getToolGroupKey,
   type RenderableMessage,
 } from './chat-card-parsing'
-import { getCompactMessageWindow, type CompactMessageWindow } from './chat-card-compaction'
+import {
+  getCompactMessageWindow,
+  getPendingCompactBoundaryMessage,
+  isCompactBoundaryMessage,
+  mergeCompactedHistoryForDisplay,
+  type CompactMessageWindow,
+} from './chat-card-compaction'
 import {
   getAutoScrollStateAfterCardUpdate,
   getAutoScrollStateAfterObservedScroll,
@@ -80,6 +87,7 @@ import {
   getRestoredMessageListScrollPlan,
   getScrollTopToRevealChild,
   getScrollTopToRevealChildWithTopClearance,
+  getScrollTopAfterCompactedHistoryReveal,
   getProgrammaticBottomScrollTarget,
   programmaticScrollInterruptTolerancePx,
   shouldAutoRevealCompactedHistoryImmediately,
@@ -123,7 +131,12 @@ import {
   getNextAutoUrgeToggleState,
   resolveEffectiveAutoUrge,
 } from './chat-auto-urge'
-import { fetchSlashCommands, judgeUrgeWithOllama, uploadImageAttachment } from '../api'
+import {
+  fetchSlashCommands,
+  judgeUrgeWithOllama,
+  loadCompactedCardHistory,
+  uploadImageAttachment,
+} from '../api'
 import { canSendEmptyContinuation } from '../app-helpers'
 import { GitToolCard, type GitInfoSummary } from './GitToolCard'
 import { MusicCard } from './MusicCard'
@@ -431,6 +444,7 @@ type ChatCardProps = {
         | 'autoUrgeActive'
         | 'autoUrgeProfileId'
         | 'repeatLoopActive'
+        | 'repeatLoopRemaining'
         | 'draftAttachments'
         | 'wakeTimerActive'
         | 'wakeTimerMode'
@@ -1698,6 +1712,9 @@ const ChatCardView = ({
   } | null>(null)
   const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(() => new Set())
   const [revealedCompactedHistoryCount, setRevealedCompactedHistoryCount] = useState(0)
+  const [archivedCompactedMessages, setArchivedCompactedMessages] = useState<ChatMessage[]>([])
+  const compactedHistoryLoadCardIdRef = useRef<string | null>(null)
+  const compactedHistoryLoadGenerationRef = useRef(0)
   const pendingCompactedHistoryRevealRef = useRef<{
     scrollHeight: number
     scrollTop: number
@@ -3599,14 +3616,33 @@ const ChatCardView = ({
     () => getReasoningOptionsForModel(effectiveProvider, reasoningModel, language),
     [effectiveProvider, language, reasoningModel],
   )
+  const mergedDisplayHistory = useMemo(
+    () => mergeCompactedHistoryForDisplay(archivedCompactedMessages, card.messages, {
+      // 症状：500 条上限把 compact boundary 一并裁掉后，sidecar 与 live tail 可能零重叠。
+      // 根因：sidecar 只存 boundary 之前的前缀；messageCount 是仍有缺失前缀的持久化证据。
+      // 不能默认盲拼无重叠归档，否则同 cardId 重置后的旧 sidecar 会串进新会话；见对应 SPEC。
+      allowUnanchoredArchive:
+        (card.messageCount ?? card.messages.length) > card.messages.length,
+    }),
+    [archivedCompactedMessages, card.messageCount, card.messages],
+  )
+  const displayMessages = mergedDisplayHistory.messages
   const compactMessageWindow = useMemo(
     () =>
       deferInactivePaneChatBody
         ? emptyCompactMessageWindow
-        : getCompactMessageWindow(card.messages, card.provider, card.status, {
+        : getCompactMessageWindow(displayMessages, card.provider, card.status, {
             revealedHiddenMessageCount: revealedCompactedHistoryCount,
+            archivedHiddenMessageCount: mergedDisplayHistory.prependedMessageCount,
           }),
-    [card.messages, card.provider, card.status, deferInactivePaneChatBody, revealedCompactedHistoryCount],
+    [
+      card.provider,
+      card.status,
+      deferInactivePaneChatBody,
+      displayMessages,
+      mergedDisplayHistory.prependedMessageCount,
+      revealedCompactedHistoryCount,
+    ],
   )
   const renderableMessages = useMemo(
     () => (deferInactivePaneChatBody ? [] : buildRenderableMessages(compactMessageWindow.visibleMessages)),
@@ -3619,6 +3655,86 @@ const ChatCardView = ({
     () => [...card.messages].reverse().find((message) => message.role === 'assistant')?.content ?? '',
     [card.messages],
   )
+
+  const hasCompactBoundary = useMemo(
+    () => card.messages.some(
+      (message) =>
+        isCompactBoundaryMessage(message, card.provider) &&
+        getPendingCompactBoundaryMessage(card.messages)?.id !== message.id,
+    ),
+    [card.messages, card.provider],
+  )
+  const shouldLoadArchivedHistory =
+    card.provider === 'codex' &&
+    (hasCompactBoundary || (card.messageCount ?? card.messages.length) > card.messages.length)
+  const compactedHistoryLoadKey = `${card.id}:${card.provider}`
+
+  useEffect(() => {
+    if (deferInactivePaneChatBody || !shouldLoadArchivedHistory) {
+      compactedHistoryLoadCardIdRef.current = null
+      compactedHistoryLoadGenerationRef.current += 1
+      setArchivedCompactedMessages((current) => (current.length === 0 ? current : []))
+      return
+    }
+
+    if (compactedHistoryLoadCardIdRef.current === compactedHistoryLoadKey) {
+      return
+    }
+
+    compactedHistoryLoadCardIdRef.current = compactedHistoryLoadKey
+    const generation = compactedHistoryLoadGenerationRef.current + 1
+    compactedHistoryLoadGenerationRef.current = generation
+    void loadCompactedCardHistory({ cardId: card.id })
+      .then((response) => {
+        if (
+          generation !== compactedHistoryLoadGenerationRef.current ||
+          compactedHistoryLoadCardIdRef.current !== compactedHistoryLoadKey
+        ) {
+          return
+        }
+
+        const messages = response.snapshot?.messages ?? []
+        const node = messageListRef.current
+        if (
+          node &&
+          !shouldAutoScrollRef.current &&
+          pendingCompactedHistoryRevealRef.current === null &&
+          messages.length > 0
+        ) {
+          pendingCompactedHistoryRevealRef.current = {
+            scrollHeight: node.scrollHeight,
+            scrollTop: node.scrollTop,
+          }
+        }
+        setArchivedCompactedMessages((current) =>
+          current.length === messages.length && current.every((message, index) => message.id === messages[index]?.id)
+            ? current
+            : messages,
+        )
+      })
+      .catch(() => {
+        if (
+          generation === compactedHistoryLoadGenerationRef.current &&
+          compactedHistoryLoadCardIdRef.current === compactedHistoryLoadKey
+        ) {
+          setArchivedCompactedMessages([])
+        }
+      })
+    return () => {
+      compactedHistoryLoadGenerationRef.current += 1
+      if (compactedHistoryLoadCardIdRef.current === compactedHistoryLoadKey) {
+        compactedHistoryLoadCardIdRef.current = null
+      }
+    }
+  }, [
+    card.id,
+    card.provider,
+    compactedHistoryLoadKey,
+    deferInactivePaneChatBody,
+    messageListRef,
+    shouldLoadArchivedHistory,
+  ])
+
   const showManualStreamRecovery =
     typeof onManualRecoverStream === 'function' &&
     shouldShowManualStreamRecoveryControl({
@@ -3647,10 +3763,11 @@ const ChatCardView = ({
     }
 
     pendingCompactedHistoryRevealRef.current = null
-    const nextScrollTop = Math.max(
-      pendingReveal.scrollTop + (node.scrollHeight - pendingReveal.scrollHeight),
-      0,
-    )
+    const nextScrollTop = getScrollTopAfterCompactedHistoryReveal({
+      previousScrollTop: pendingReveal.scrollTop,
+      previousScrollHeight: pendingReveal.scrollHeight,
+      nextScrollHeight: node.scrollHeight,
+    })
     shouldAutoScrollRef.current = false
     lastScrollTopRef.current = nextScrollTop
     node.scrollTop = nextScrollTop
@@ -4665,10 +4782,35 @@ const ChatCardView = ({
                                   type="checkbox"
                                   className="composer-settings-checkbox"
                                   checked={card.repeatLoopActive === true}
-                                  onChange={(event) => onPatchCard({ repeatLoopActive: event.target.checked })}
+                                  onChange={(event) =>
+                                    onPatchCard({
+                                      repeatLoopActive: event.target.checked,
+                                      ...(event.target.checked && card.repeatLoopRemaining === 0
+                                        ? { repeatLoopRemaining: undefined }
+                                        : {}),
+                                    })
+                                  }
                                 />
                               </label>
                               <div className="composer-settings-note">{text.repeatLoopHint}</div>
+                              {card.repeatLoopActive === true ? (
+                                <label className="composer-settings-row repeat-loop-count-row">
+                                  <span className="composer-settings-label">{text.repeatLoopCountLabel}</span>
+                                  <input
+                                    type="number"
+                                    min={1}
+                                    step={1}
+                                    placeholder={text.repeatLoopCountUnlimited}
+                                    value={card.repeatLoopRemaining ?? ''}
+                                    onChange={(event) => {
+                                      const value = Number.parseInt(event.target.value, 10)
+                                      onPatchCard({
+                                        repeatLoopRemaining: Number.isFinite(value) && value > 0 ? value : undefined,
+                                      })
+                                    }}
+                                  />
+                                </label>
+                              ) : null}
                             </div>
                           ) : null}
                           {wakeTimerEnabled ? (

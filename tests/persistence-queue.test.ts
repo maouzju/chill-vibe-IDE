@@ -98,29 +98,34 @@ describe('persistence queue', () => {
   })
 
   it('keeps ordinary stream commits out of the immediate user-interaction frame without starving output', () => {
-    assert.equal(streamRenderInteractionProtectionMs, 120)
-    assert.equal(streamRenderMaxInteractionDeferralMs, 300)
+    assert.equal(streamRenderInteractionProtectionMs, 250)
+    assert.equal(streamRenderMaxInteractionDeferralMs, 1_000)
 
     assert.equal(getStreamRenderInteractionDelayMs({
       nowMs: 1_000,
       lastInteractionAtMs: 940,
       firstAttemptAtMs: 1_000,
-    }), 60)
+    }), 190)
     assert.equal(getStreamRenderInteractionDelayMs({
       nowMs: 1_290,
       lastInteractionAtMs: 1_280,
       firstAttemptAtMs: 1_000,
-    }), 10)
+    }), 240)
     assert.equal(getStreamRenderInteractionDelayMs({
       nowMs: 1_300,
       lastInteractionAtMs: 1_295,
+      firstAttemptAtMs: 1_000,
+    }), 245)
+    assert.equal(getStreamRenderInteractionDelayMs({
+      nowMs: 2_100,
+      lastInteractionAtMs: 2_095,
       firstAttemptAtMs: 1_000,
     }), 0)
     assert.equal(getStreamRenderInteractionDelayMs({
       nowMs: 1_000,
       lastInteractionAtMs: 800,
       firstAttemptAtMs: 1_000,
-    }), 0)
+    }), 50)
   })
 
   it('keeps interleaved agent-message deltas in separate lossless buffer slots', () => {

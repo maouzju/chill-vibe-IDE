@@ -10,6 +10,7 @@ import {
   ccSwitchImportRequestSchema,
   closedWorkspaceLoadRequestSchema,
   closedWorkspaceSnapshotSchema,
+  compactedCardHistoryLoadRequestSchema,
   externalHistoryListRequestSchema,
   externalSessionLoadRequestSchema,
   internalSessionHistoryHideRequestSchema,
@@ -43,7 +44,7 @@ import {
   workspaceValidationRequestSchema,
 } from '../shared/schema.js'
 import { resolveImageAttachmentPath, storeImageAttachment } from './attachments.js'
-import { getDefaultWorkspacePath } from './app-paths.js'
+import { getAppDataDir, getDefaultWorkspacePath } from './app-paths.js'
 import { importCcSwitchProfiles } from './cc-switch-import.js'
 import { listExternalSessions, loadExternalSession } from './external-history.js'
 import { forkProviderSession } from './session-fork.js'
@@ -94,6 +95,7 @@ import {
   saveClosedWorkspaceSnapshot,
   saveState,
 } from './state-store.js'
+import { loadCompactedCardHistoryForDisplay } from './compacted-card-history.js'
 import { readNearestTsconfig } from './tsconfig-discovery.js'
 import { initServerCrashLogger, writeServerLog } from './crash-logger.js'
 import {
@@ -155,6 +157,19 @@ app.get('/api/session-history/:entryId', async (request, response) => {
       message: error instanceof Error ? error.message : 'Session history entry not found.',
     })
   }
+})
+
+app.get('/api/compacted-card-history/:cardId', async (request, response) => {
+  const parsed = compactedCardHistoryLoadRequestSchema.safeParse({
+    cardId: request.params.cardId,
+  })
+
+  if (!parsed.success) {
+    response.status(400).json({ message: 'Invalid compacted card history request.' })
+    return
+  }
+
+  response.json(await loadCompactedCardHistoryForDisplay(getAppDataDir(), parsed.data.cardId))
 })
 
 app.put('/api/closed-workspace', async (request, response) => {

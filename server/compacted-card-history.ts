@@ -157,6 +157,55 @@ export const persistCompactedCardHistories = async (rawState: unknown, dataDir: 
   }
 }
 
+export const pruneResetCompactedCardHistories = async (rawState: unknown, dataDir: string) => {
+  if (!rawState || typeof rawState !== 'object' || Array.isArray(rawState)) {
+    return
+  }
+
+  const columns = (rawState as { columns?: unknown }).columns
+  if (!Array.isArray(columns)) {
+    return
+  }
+
+  for (const column of columns) {
+    if (!column || typeof column !== 'object' || Array.isArray(column)) {
+      continue
+    }
+
+    const cards = (column as { cards?: unknown }).cards
+    if (!cards || typeof cards !== 'object' || Array.isArray(cards)) {
+      continue
+    }
+
+    for (const [cardId, card] of Object.entries(cards)) {
+      if (!cardId || !card || typeof card !== 'object' || Array.isArray(card)) {
+        continue
+      }
+
+      const candidate = card as {
+        provider?: unknown
+        messages?: unknown
+        messageCount?: unknown
+        sessionId?: unknown
+      }
+      const messageCount = typeof candidate.messageCount === 'number'
+        ? Math.max(Math.trunc(candidate.messageCount), 0)
+        : 0
+      if (
+        candidate.provider !== 'codex' ||
+        !Array.isArray(candidate.messages) ||
+        candidate.messages.length > 0 ||
+        messageCount > 0 ||
+        (typeof candidate.sessionId === 'string' && candidate.sessionId.trim().length > 0)
+      ) {
+        continue
+      }
+
+      await rm(getHistoryPath(dataDir, cardId), { force: true })
+    }
+  }
+}
+
 export const loadCompactedCardHistorySnapshot = async (
   dataDir: string,
   cardId: string | undefined,
@@ -176,6 +225,13 @@ export const loadCompactedCardHistorySnapshot = async (
     messages: history.messages,
   }
 }
+
+export const loadCompactedCardHistoryForDisplay = async (
+  dataDir: string,
+  cardId: string,
+) => ({
+  snapshot: (await loadCompactedCardHistorySnapshot(dataDir, cardId)) ?? null,
+})
 
 export const mergeArchiveRecallSnapshots = (
   persisted: ArchiveRecallSnapshot | undefined,

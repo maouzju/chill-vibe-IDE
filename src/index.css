@@ -7581,6 +7581,17 @@ a.message-file-reference-link:focus-visible {
   color: var(--accent-2);
 }
 
+.repeat-loop-count-row input[type='number'] {
+  width: 6rem;
+  min-height: 1.7rem;
+  padding: 0.2rem 0.35rem;
+  border: 1px solid var(--line-strong);
+  border-radius: 0.35rem;
+  background: var(--surface-2);
+  color: var(--ink);
+  font: inherit;
+}
+
 .composer-wake-timer-module {
   margin-bottom: 0.18rem;
   padding-bottom: 0.18rem;

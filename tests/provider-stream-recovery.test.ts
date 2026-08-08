@@ -75,6 +75,19 @@ test('capacity errors after a live session are resumable', () => {
   )
 })
 
+test('encrypted content verification failures after a live session are resumable', () => {
+  assert.deepEqual(
+    classifyProviderStreamErrorRecovery(
+      { sessionId: 'session-1' },
+      '{"error":{"message":"The encrypted content gAAA...ng== could not be verified. Reason: Encrypted content could not be decrypted or parsed.","type":"new_api_error","code":"invalid_encrypted_content"}}',
+    ),
+    {
+      recoverable: true,
+      recoveryMode: 'resume-session',
+    },
+  )
+})
+
 test('third-party extra-usage 403 after a live session is resumable because credits can be claimed externally', () => {
   assert.deepEqual(
     classifyProviderStreamErrorRecovery(

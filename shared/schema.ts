@@ -609,6 +609,7 @@ export const appSettingsSchema = z.object({
   allAgentsDoneSoundVolume: z.number().min(0).max(1).default(0.7),
   crossProviderSkillReuseEnabled: z.boolean().default(true),
   accessibilitySupportEnabled: z.boolean().default(false),
+  minimizeToTaskbarOnCloseEnabled: z.boolean().default(false),
   autoUrgeEnabled: z.boolean().default(false),
   autoUrgeProfiles: z.array(autoUrgeProfileSchema).default([
     {
@@ -783,6 +784,7 @@ export const appStateSchema = z.object({
     allAgentsDoneSoundVolume: 0.7,
     crossProviderSkillReuseEnabled: true,
     accessibilitySupportEnabled: false,
+    minimizeToTaskbarOnCloseEnabled: false,
     autoUrgeEnabled: false,
     autoUrgeProfiles: [
       {

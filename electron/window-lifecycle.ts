@@ -15,6 +15,28 @@ type AttentionWindow = PresentableWindow & {
 
 const attentionTimers = new WeakMap<AttentionWindow, ReturnType<typeof setTimeout>>()
 
+export type WindowCloseAction = 'allow-close' | 'minimize' | 'quit-after-flush'
+
+export const resolveWindowCloseAction = ({
+  platform,
+  minimizeToTaskbarOnCloseEnabled,
+  quitAfterFlushPending,
+}: {
+  platform: NodeJS.Platform
+  minimizeToTaskbarOnCloseEnabled: boolean
+  quitAfterFlushPending: boolean
+}): WindowCloseAction => {
+  if (quitAfterFlushPending) {
+    return 'allow-close'
+  }
+
+  if (minimizeToTaskbarOnCloseEnabled) {
+    return 'minimize'
+  }
+
+  return platform === 'darwin' ? 'allow-close' : 'quit-after-flush'
+}
+
 export const presentWindow = (win: PresentableWindow | null | undefined) => {
   if (!win || win.isDestroyed()) {
     return false

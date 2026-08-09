@@ -553,6 +553,13 @@ describe('persistence queue', () => {
     assert.equal(shouldSyncRuntimeSettings({ type: 'updateSettings', patch: { resilientProxyMaxRetries: -1 } }), true)
     assert.equal(
       shouldSyncRuntimeSettings({
+        type: 'updateSettings',
+        patch: { minimizeToTaskbarOnCloseEnabled: true } as never,
+      }),
+      true,
+    )
+    assert.equal(
+      shouldSyncRuntimeSettings({
         type: 'updateRequestModels',
         patch: { claude: 'claude-opus-4-8' },
       }),

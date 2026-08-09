@@ -10,12 +10,13 @@ Chill Vibe 的 Claude 模型表此前把 `claude-opus-4-8` 作为 `DEFAULT_CLAUD
 
 ### R1 模型表更新
 
-- Claude 模型选择器新增 **Opus 5**（`claude-opus-5`），排在 Fable 5 之后、Opus 4.8 之前。
+- Claude 模型选择器提供 **Opus 5**（`claude-opus-5`），排在 Fable 5 之后。
 - `DEFAULT_CLAUDE_MODEL` 改为 `claude-opus-5`：新会话、未配置的 `requestModels.claude`、
   brainstorm 卡片回退模型等所有默认路径一并跟随。
 - 裸别名 `opus` 改指 `claude-opus-5`，与裸 `sonnet` 移交 Sonnet 5 的处理一致。
-- **Opus 4.8 条目保留**，仅保留精确别名（`opus-4.8`、`claude-opus-4-8`）：
-  它仍是可用模型，显式选择或已存值不得被静默迁移（Pitfall #119）。
+- **Opus 4.8 不再作为模型选项或斜杠命令别名提供**，避免继续把已被 Opus 5
+  取代的模型展示为可选项；历史卡片中已保存的 `claude-opus-4-8` 仍原样保留，
+  不做静默迁移（Pitfall #119）。
 
 ### R2 思考档位不变
 

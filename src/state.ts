@@ -211,6 +211,7 @@ export type IdeAction =
           | 'allAgentsDoneSoundVolume'
           | 'crossProviderSkillReuseEnabled'
           | 'accessibilitySupportEnabled'
+          | 'minimizeToTaskbarOnCloseEnabled'
           | 'autoUrgeEnabled'
           | 'autoUrgeProfiles'
           | 'autoUrgeActiveProfileId'

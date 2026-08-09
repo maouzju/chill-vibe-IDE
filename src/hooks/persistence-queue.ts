@@ -252,6 +252,7 @@ const runtimeSyncSettingsKeys = [
   'resilientProxyFirstByteTimeoutSec',
   'resilientProxyMaxRetries',
   'providerProfiles',
+  'minimizeToTaskbarOnCloseEnabled',
 ] as const
 
 export const shouldSyncRuntimeSettings = (action: IdeAction) => {

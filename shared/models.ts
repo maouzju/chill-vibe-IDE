@@ -131,13 +131,6 @@ export const MODEL_OPTIONS: ModelOption[] = [
     aliases: ['opus', 'opus-5', 'claude-opus-5'],
   },
   {
-    // Still a live model: exact names only, stored values stay pinned.
-    label: 'Opus 4.8',
-    provider: 'claude',
-    model: 'claude-opus-4-8',
-    aliases: ['opus-4.8', 'claude-opus-4-8'],
-  },
-  {
     // Bare "sonnet" follows the official alias to Sonnet 5 (native 1M window).
     label: 'Sonnet 5',
     provider: 'claude',

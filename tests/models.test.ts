@@ -78,7 +78,6 @@ describe('model helpers', () => {
         '',
         'claude-fable-5',
         DEFAULT_CLAUDE_MODEL,
-        'claude-opus-4-8',
         'claude-sonnet-5',
         'claude-sonnet-4-6',
         'claude-haiku-4-5-20251001',
@@ -133,9 +132,8 @@ describe('model helpers', () => {
     assert.equal(resolveSlashModel('claude', 'opus'), DEFAULT_CLAUDE_MODEL)
     assert.equal(resolveSlashModel('claude', 'opus 5'), DEFAULT_CLAUDE_MODEL)
     assert.equal(resolveSlashModel('claude', 'claude-opus-5'), DEFAULT_CLAUDE_MODEL)
-    // Opus 4.8 keeps its exact aliases so an explicit pick still resolves.
-    assert.equal(resolveSlashModel('claude', 'opus 4.8'), 'claude-opus-4-8')
-    assert.equal(resolveSlashModel('claude', 'claude-opus-4-8'), 'claude-opus-4-8')
+    assert.equal(resolveSlashModel('claude', 'opus 4.8'), null)
+    assert.equal(resolveSlashModel('claude', 'claude-opus-4-8'), null)
     assert.equal(resolveSlashModel('claude', 'unknown-model'), null)
   })
 })

@@ -1977,6 +1977,26 @@ function App() {
     </>
   )
 
+  const renderMinimizeOnCloseSettings = () => (
+    <>
+      <label className="settings-toggle" htmlFor="minimize-on-close-toggle">
+        <span>{text.minimizeToTaskbarOnCloseLabel}</span>
+        <input
+          id="minimize-on-close-toggle"
+          type="checkbox"
+          checked={appState.settings.minimizeToTaskbarOnCloseEnabled}
+          onChange={(event) =>
+            applyAction({
+              type: 'updateSettings',
+              patch: { minimizeToTaskbarOnCloseEnabled: event.target.checked },
+            })
+          }
+        />
+      </label>
+      <p className="settings-note">{text.minimizeToTaskbarOnCloseNote}</p>
+    </>
+  )
+
   const renderRepeatLoopSettings = () => (
     <>
       <label className="settings-toggle" htmlFor="repeat-loop-feature-toggle">
@@ -7768,6 +7788,8 @@ function App() {
       <h3 className="settings-group-title">{text.settingsGroupUtility}</h3>
 
       <div className="settings-section">
+        {renderMinimizeOnCloseSettings()}
+
         <label className="settings-toggle" htmlFor="agent-done-sound-toggle">
           <span>{text.agentDoneSoundLabel}</span>
           <input
@@ -9138,6 +9160,8 @@ function App() {
               <h3 className="settings-group-title">{text.settingsGroupUtility}</h3>
 
               <div className="settings-section">
+                {renderMinimizeOnCloseSettings()}
+
                 <label className="settings-toggle" htmlFor="agent-done-sound-toggle">
                   <span>{text.agentDoneSoundLabel}</span>
                   <input

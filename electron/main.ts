@@ -6,6 +6,7 @@ import { fileURLToPath, pathToFileURL } from 'url'
 import type { IpcMainInvokeEvent } from 'electron'
 
 import { maxUiScale, minUiScale } from '../shared/default-state.js'
+import { appSettingsSchema } from '../shared/schema.js'
 import { getAppDataDir } from '../server/app-paths.js'
 import { initCrashLogger, log } from './crash-logger.js'
 import { createDesktopBackend } from './backend.js'
@@ -50,7 +51,12 @@ import {
   shouldUseCustomWindowFrameForPlatform,
   shouldRemoveMenuForPlatform,
 } from './window-options.js'
-import { flashWindowOnce, focusPrimaryWindow, presentWindow } from './window-lifecycle.js'
+import {
+  flashWindowOnce,
+  focusPrimaryWindow,
+  presentWindow,
+  resolveWindowCloseAction,
+} from './window-lifecycle.js'
 
 const moduleDir = path.dirname(fileURLToPath(import.meta.url))
 const isDev = !app.isPackaged
@@ -164,6 +170,7 @@ const hasSingleInstanceLock = bypassSingleInstanceLock ? true : app.requestSingl
 
 let quitTimer: NodeJS.Timeout | null = null
 let quitAfterFlushPending = false
+let minimizeToTaskbarOnCloseEnabled = false
 
 const sendChatStreamEventSafely = (
   sender: Electron.WebContents,
@@ -796,9 +803,11 @@ function registerDesktopHandlers() {
     }
     return { enabled: nextEnabled, restartRequired: nextEnabled !== accessibilitySupportEnabled }
   })
-  ipcMain.handle('desktop:sync-runtime-settings', (_event, settings) =>
-    desktopBackend.syncRuntimeSettings(settings),
-  )
+  ipcMain.handle('desktop:sync-runtime-settings', (_event, settings) => {
+    const parsed = appSettingsSchema.parse(settings)
+    minimizeToTaskbarOnCloseEnabled = parsed.minimizeToTaskbarOnCloseEnabled
+    desktopBackend.syncRuntimeSettings(parsed)
+  })
   ipcMain.handle('desktop:reset-state', () => desktopBackend.resetState())
   ipcMain.handle('desktop:resolve-state-recovery-option', (_event, request) =>
     desktopBackend.resolveStateRecoveryOption(request),
@@ -1167,11 +1176,26 @@ function createWindow() {
   attachFrameStallWatchdog(win, (message, meta) => log.warn(message, meta))
 
   win.on('close', (event) => {
-    if (process.platform === 'darwin' || quitAfterFlushPending) {
+    const closeAction = resolveWindowCloseAction({
+      platform: process.platform,
+      minimizeToTaskbarOnCloseEnabled,
+      quitAfterFlushPending,
+    })
+
+    if (closeAction === 'allow-close') {
       return
     }
 
     event.preventDefault()
+
+    // 症状：开启“关闭后最小化”后，关闭窗口仍会杀掉正在运行的 Agent。
+    // 根因：旧关闭监听无条件进入刷盘退出；2026-08-09 新设置改为主进程即时决策。
+    // 不用 hide/托盘，用户明确要求保留任务栏入口，且正式退出流程必须继续放行。
+    if (closeAction === 'minimize') {
+      win.minimize()
+      return
+    }
+
     scheduleQuitAfterFlush()
   })
 

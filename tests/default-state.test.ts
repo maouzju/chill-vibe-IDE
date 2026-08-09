@@ -335,6 +335,31 @@ describe('default-state helpers', () => {
     )
   })
 
+  it('keeps minimize-to-taskbar-on-close opt-in and migrates old settings safely', () => {
+    assert.equal(
+      (createDefaultSettings() as { minimizeToTaskbarOnCloseEnabled?: boolean })
+        .minimizeToTaskbarOnCloseEnabled,
+      false,
+    )
+    assert.equal(
+      (normalizeAppSettings({}) as { minimizeToTaskbarOnCloseEnabled?: boolean })
+        .minimizeToTaskbarOnCloseEnabled,
+      false,
+    )
+    assert.equal(
+      (normalizeAppSettings({ minimizeToTaskbarOnCloseEnabled: true } as never) as {
+        minimizeToTaskbarOnCloseEnabled?: boolean
+      }).minimizeToTaskbarOnCloseEnabled,
+      true,
+    )
+    assert.equal(
+      (normalizeAppSettings({ minimizeToTaskbarOnCloseEnabled: 'yes' } as never) as {
+        minimizeToTaskbarOnCloseEnabled?: boolean
+      }).minimizeToTaskbarOnCloseEnabled,
+      false,
+    )
+  })
+
   it('keeps outside-workspace writes enabled by default and preserves all Agent safety opt-outs', () => {
     const defaults = createDefaultSettings()
 

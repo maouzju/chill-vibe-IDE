@@ -1,7 +1,12 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
-import { flashWindowOnce, focusPrimaryWindow, presentWindow } from '../electron/window-lifecycle.ts'
+import {
+  flashWindowOnce,
+  focusPrimaryWindow,
+  presentWindow,
+  resolveWindowCloseAction,
+} from '../electron/window-lifecycle.ts'
 
 const createWindow = ({
   destroyed = false,
@@ -81,4 +86,45 @@ test('flashWindowOnce skips already focused windows', () => {
 
   assert.equal(flashWindowOnce(target.win, 10), false)
   assert.deepEqual(target.calls, [])
+})
+
+test('window close minimizes when the runtime setting is enabled', () => {
+  assert.equal(
+    resolveWindowCloseAction({
+      platform: 'win32',
+      minimizeToTaskbarOnCloseEnabled: true,
+      quitAfterFlushPending: false,
+    }),
+    'minimize',
+  )
+})
+
+test('window close never blocks an explicit quit already in progress', () => {
+  assert.equal(
+    resolveWindowCloseAction({
+      platform: 'win32',
+      minimizeToTaskbarOnCloseEnabled: true,
+      quitAfterFlushPending: true,
+    }),
+    'allow-close',
+  )
+})
+
+test('window close preserves the existing platform behavior when disabled', () => {
+  assert.equal(
+    resolveWindowCloseAction({
+      platform: 'win32',
+      minimizeToTaskbarOnCloseEnabled: false,
+      quitAfterFlushPending: false,
+    }),
+    'quit-after-flush',
+  )
+  assert.equal(
+    resolveWindowCloseAction({
+      platform: 'darwin',
+      minimizeToTaskbarOnCloseEnabled: false,
+      quitAfterFlushPending: false,
+    }),
+    'allow-close',
+  )
 })

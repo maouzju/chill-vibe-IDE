@@ -163,6 +163,8 @@ type LocaleText = {
   crossProviderSkillReuseNote: string
   accessibilitySupportLabel: string
   accessibilitySupportNote: string
+  minimizeToTaskbarOnCloseLabel: string
+  minimizeToTaskbarOnCloseNote: string
   restoreDefaultSystemPrompt: string
   applyToExistingChats: string
   resetInterfaceDefaults: string
@@ -531,6 +533,9 @@ const localeTextByLanguage: Record<AppLanguage, LocaleText> = {
     accessibilitySupportLabel: '无障碍 / 辅助输入支持',
     accessibilitySupportNote:
       '开启后微信语音输入、读屏软件、语音听写等辅助工具才能直接把文字写进输入框，否则它们看不见界面元素。会让浏览器内核额外维护一份界面结构树，长会话下略微增加内存与渲染开销，改完需要重启应用生效。',
+    minimizeToTaskbarOnCloseLabel: '关闭后最小化到任务栏',
+    minimizeToTaskbarOnCloseNote:
+      '仅桌面版生效。开启后点击关闭不会退出 Chill Vibe，也不会中断后台 Agent，而是最小化到系统任务栏。',
     restoreDefaultSystemPrompt: '恢复内置提示词',
     applyToExistingChats: '应用到现有会话',
     resetInterfaceDefaults: '重置界面默认值',
@@ -924,6 +929,9 @@ const localeTextByLanguage: Record<AppLanguage, LocaleText> = {
     accessibilitySupportLabel: 'Accessibility / assistive input support',
     accessibilitySupportNote:
       'Lets screen readers, dictation, and voice-input tools see the composer and type into it directly. Chromium keeps an extra accessibility tree while this is on, which costs some memory and frame time on long transcripts. Restart the app to apply.',
+    minimizeToTaskbarOnCloseLabel: 'Minimize to the taskbar on close',
+    minimizeToTaskbarOnCloseNote:
+      'Desktop only. Closing the window keeps Chill Vibe and background Agents running, and minimizes the window to the system taskbar.',
     restoreDefaultSystemPrompt: 'Restore built-in prompt',
     applyToExistingChats: 'Apply to existing chats',
     resetInterfaceDefaults: 'Reset interface defaults',

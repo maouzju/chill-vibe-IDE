@@ -515,6 +515,7 @@ export const createDefaultSettings = (language: AppLanguage = defaultAppLanguage
   allAgentsDoneSoundVolume: 0.7,
   crossProviderSkillReuseEnabled: true,
   accessibilitySupportEnabled: false,
+  minimizeToTaskbarOnCloseEnabled: false,
   autoUrgeEnabled: false,
   autoUrgeProfiles: [
     createAutoUrgeProfile(language, {}, { index: 0, fallbackId: defaultAutoUrgeProfileId }),
@@ -656,6 +657,10 @@ export const normalizeAppSettings = (settings?: Partial<AppSettings> | null): Ap
       typeof settings?.accessibilitySupportEnabled === 'boolean'
         ? settings.accessibilitySupportEnabled
         : defaults.accessibilitySupportEnabled,
+    minimizeToTaskbarOnCloseEnabled:
+      typeof settings?.minimizeToTaskbarOnCloseEnabled === 'boolean'
+        ? settings.minimizeToTaskbarOnCloseEnabled
+        : defaults.minimizeToTaskbarOnCloseEnabled,
     autoUrgeEnabled:
       typeof settings?.autoUrgeEnabled === 'boolean'
         ? settings.autoUrgeEnabled

@@ -51,6 +51,7 @@ import {
 } from './claude-structured-output.js'
 import { createCodexCompactionActivityDeduper } from './codex-compaction-dedupe.js'
 import { createCodexAgentStatusTracker } from './codex-agent-status.js'
+import { createClaudeAgentStatusTracker } from './claude-agent-status.js'
 import { resolveClaudeRuntimeEnvironment } from './claude-runtime-environment.js'
 import {
   looksLikeCodexStructuredAgentMessage,
@@ -2655,6 +2656,12 @@ export const createClaudeTurnParser = (hooks: {
   let sawMeaningfulAssistantText = false
   const askUserDeltaStripper = createClaudeAskUserDeltaStripper()
   const typedToolChatterFilter = createClaudeTypedToolChatterFilter()
+  // Per-turn sub-agent progress. See the system/task_* branch in handleLine.
+  const claudeAgentTracker = createClaudeAgentStatusTracker({ language })
+  // 15s：CLI 在子代理执行长命令期间静默上百秒（2026-08-09 实测 39.6s→195.1s 无事件），
+  // 面板只能靠周期重发让本地推算的已运行时长走动，证明子代理还活着。
+  const claudeAgentTickMs = 15_000
+  let claudeAgentTicker: ReturnType<typeof setInterval> | undefined
   // Identity of the text content block currently streaming. The renderer keys a
   // streamed assistant bubble by this id; without one it can only chain deltas
   // through "the message I was last appending to", which an activity arriving
@@ -2677,10 +2684,10 @@ export const createClaudeTurnParser = (hooks: {
   // per-tool timeout), so it never false-kills a legitimately long command.
   let openClaudeCommandCount = 0
   // Latched once the turn dispatches a synchronously-awaited background tool
-  // (Workflow/subagent). The CLI then runs it silently and waits (up to its own
-  // 10-min cap); the watchdog must stay patient for the rest of the turn instead
-  // of false-killing the CLI during that silent wait. Resets per turn (the parser
-  // is created fresh each turn).
+  // (Workflow/subagent). The CLI keeps emitting system:task_* progress but no
+  // assistant deltas while it waits (up to its own 10-min cap), so the watchdog
+  // must stay patient for the rest of the turn instead of false-killing the CLI.
+  // Resets per turn (the parser is created fresh each turn).
   let sawBackgroundAwaitTool = false
   let claudeStallTimer: ReturnType<typeof setTimeout> | undefined
   let finished = false
@@ -2692,9 +2699,38 @@ export const createClaudeTurnParser = (hooks: {
     }
   }
 
+  const clearClaudeAgentTicker = () => {
+    if (claudeAgentTicker) {
+      clearInterval(claudeAgentTicker)
+      claudeAgentTicker = undefined
+    }
+  }
+
+  // Arm only while a sub-agent is actually running, and disarm the moment the
+  // last one settles — an interval that outlives the turn keeps a settled card
+  // repainting forever.
+  const syncClaudeAgentTicker = () => {
+    if (finished || !claudeAgentTracker.hasRunningAgents()) {
+      clearClaudeAgentTicker()
+      return
+    }
+    if (claudeAgentTicker) {
+      return
+    }
+    claudeAgentTicker = setInterval(() => {
+      if (finished || !claudeAgentTracker.hasRunningAgents()) {
+        clearClaudeAgentTicker()
+        return
+      }
+      sink.onActivity(claudeAgentTracker.snapshot())
+    }, claudeAgentTickMs)
+    claudeAgentTicker.unref?.()
+  }
+
   const markFinished = () => {
     finished = true
     clearClaudeStallTimer()
+    clearClaudeAgentTicker()
   }
 
   const scheduleClaudeStallTimer = () => {
@@ -2758,6 +2794,20 @@ export const createClaudeTurnParser = (hooks: {
         return
       }
 
+      // 症状：派发子代理后卡片只剩通用计时器，用户无法判断跑了几个/跑到哪步/是否卡住。
+      // 根因：2026-08-09 实测 claude 2.1.206 的 stdout 顶层就带 system:task_started /
+      //       task_progress / task_updated / task_notification（含 subagent_type、当前动作、
+      //       last_tool_name、usage），但此处的 system 分支此前只认 init，其余全部丢弃。
+      // 必须在通用结构化解析之前 return：这些事件不属于主代理的活动流，落进去会污染主卡片。
+      const claudeAgentUpdate = claudeAgentTracker.handleEvent(event)
+      if (claudeAgentUpdate.handled) {
+        if (claudeAgentUpdate.activity) {
+          sink.onActivity(claudeAgentUpdate.activity)
+        }
+        syncClaudeAgentTicker()
+        return
+      }
+
       const claudeStructuredEvents = parseClaudeStructuredOutput(event)
 
       if (event.type === 'assistant' && !sawClaudeDelta) {
@@ -2812,8 +2862,9 @@ export const createClaudeTurnParser = (hooks: {
           typeof parsed.toolName === 'string' &&
           isClaudeBackgroundAwaitTool(parsed.toolName)
         ) {
-          // A Workflow/subagent was dispatched: the CLI now runs it silently and
-          // waits for it. Keep the watchdog patient for the rest of this turn.
+          // A Workflow/subagent was dispatched. 2026-08-09 实测：CLI 并非静默——它持续
+          // 播报 system:task_* 进度（已由 claudeAgentTracker 渲染成子代理面板），但主消息
+          // 流没有 assistant 增量，看门狗仍需在本轮剩余时间保持耐心。
           sawBackgroundAwaitTool = true
         }
         const activity = { ...parsed }
@@ -2995,7 +3046,12 @@ export const createClaudeTurnParser = (hooks: {
     // Arm the first-byte watchdog: if the CLI never produces output (or a
     // terminal event) it would otherwise hang the card indefinitely.
     armWatchdog: scheduleClaudeStallTimer,
-    cancel: clearClaudeStallTimer,
+    // 重启 attempt 时同样要停子代理心跳，否则被丢弃的 parser 会留着 interval 继续
+    // 往已经换掉的 sink 上重画面板。
+    cancel: () => {
+      clearClaudeStallTimer()
+      clearClaudeAgentTicker()
+    },
     settled: () => finished,
     sawStreamOutput: () => sawClaudeStreamOutput,
     stderrText: () => stderr,

@@ -295,6 +295,19 @@ test('Electron window close keeps renderer alive until persistence flush is sche
   )
 })
 
+test('Electron window close minimizes instead of quitting when the runtime setting is enabled', async () => {
+  const mainBody = await readFile(path.join(process.cwd(), 'electron', 'main.ts'), 'utf8')
+
+  assert.match(
+    mainBody,
+    /desktop:sync-runtime-settings[\s\S]+minimizeToTaskbarOnCloseEnabled = parsed\.minimizeToTaskbarOnCloseEnabled/,
+  )
+  assert.match(
+    mainBody,
+    /resolveWindowCloseAction\([\s\S]+if \(closeAction === 'minimize'\) \{[\s\S]+win\.minimize\(\)[\s\S]+return/,
+  )
+})
+
 test('Electron sends renderer-created external windows to the system browser instead of opening blank app windows', async () => {
   const mainBody = await readFile(path.join(process.cwd(), 'electron', 'main.ts'), 'utf8')
 

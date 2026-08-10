@@ -339,9 +339,12 @@ DOM 骨架：
 
 | 文件 | 职责 |
 |---|---|
-| `server/automation-board-bridge.ts` | loopback HTTP 服务 + deps 接口；`startAutomationBoardBridge(deps)` → `{ url, token, close }` |
+| `server/automation-board-bridge.ts` | loopback HTTP 服务 + deps 接口；`createAutomationBoardBridge(deps)` → `{ start(), stop(), status() }`（照 `createRemoteMonitorManager` 的形状，不是一次性的 start 函数） |
 | `server/automation-board-mcp.js` | stdio JSON-RPC MCP 服务器（协议帧照抄 `archive-recall-mcp.js` 的 `Content-Length` 实现），所有工具经 `fetch` 打到 bridge |
-| `server/automation-board-runtime.ts` | 为监工回合生成 provider runtime overrides（codex `-c mcp_servers.*` / claude `--mcp-config`）+ 系统提示补充 |
+| `server/automation-board-runtime.ts` | 为监工回合生成 provider runtime overrides 的**纯函数**（codex `-c mcp_servers.*` / claude `--mcp-config`）+ 系统提示补充；`execPath` / `isElectron` 由调用方传入，函数内不读 `process` |
+| `server/automation-board-session.ts` | 进程内状态：镜像表 + 懒启动的 bridge + 命令 dispatcher 登记；`createAutomationBoardSupervisorRuntime(request)` 是 providers.ts 唯一的入口 |
+
+鉴权细节（实现时确定）：token 只走 `Authorization: Bearer`，查询串里带 token 会被拒；socket 对端与 `Host` 头都必须是 loopback，否则 403（在校验 token 之前）。
 
 `AutomationBoardBridgeDeps`：
 
@@ -381,7 +384,9 @@ export type AutomationBoardMirrorItem = {
 }
 ```
 
-推送时机：看板 items 变化、任一项 status 变化，节流 500ms。载荷是几 KB 级，不触碰 pitfall 1B/183 的"全量转录跨 IPC"红线。
+推送时机：定时轮询 + **签名闸门**（`getAutomationBoardMirrorSignature`），间隔 2000ms。签名只覆盖 lane / status / backgroundWorkPending / messageCount / lastActivityAt —— 单条消息的流式增长**不**刷新签名，否则每个 delta 都会跨一次 IPC，节流等于白做。
+
+镜像还随身带每项最近 12 条转录（`recentEntries`），这样 `read_board_item` 不需要另开一条请求/应答通道。载荷预算在两处执行：`buildAutomationBoardMirror`（渲染端）与 `publishAutomationBoardMirror`（server session）各跑一遍同一套上限（requirement 2000 / preview 400 / 单条 600 / 条数 12），任何绕过前者的调用方也无法把整段转录送给模型（pitfall 183）。
 
 ### MCP 工具集
 
@@ -401,7 +406,9 @@ export type AutomationBoardMirrorItem = {
 
 - **Codex**：照 `server/archive-recall.ts:69-88`，`-c mcp_servers.chill_vibe_board.command=…` + `.args=…` + `.env.*=…`（env 里带 `CHILL_VIBE_BOARD_MCP_URL` / `_TOKEN` / `_BOARD_ID`；Electron 下同样要带 `ELECTRON_RUN_AS_NODE=1`）。
 - **Claude**：`buildClaudeArgs`（`server/providers.ts:3880`）追加 `--mcp-config <json>` + `--strict-mcp-config`。`permissionMode` 已是 `bypassPermissions`，MCP 工具无需额外 allowlist。
-- 仅当 `request` 标记为"这是看板监工回合"时注入。新增请求字段 `automationBoardSupervisor?: { boardCardId: string }`（`chatRequestSchema`），由渲染端在监工发送时带上。
+- 仅当 `request` 标记为"这是看板监工回合"时注入。新增请求字段 `automationBoardSupervisor?: { boardCardId: string; columnId: string }`（`chatRequestSchema`，两个字段都必填），由渲染端在监工发送时带上。
+- Claude 侧同时发 `--strict-mcp-config`：本次启动只认这里给的 server，不继承用户 `~/.claude` 里配置的其它 MCP。
+- 桥接准备失败时降级为"没有工具的普通回合"，绝不因此让整个回合失败。
 - 系统提示追加一段说明（照 `getCodexArchiveRecallInstruction` 的形状），告诉模型这些工具存在、以及"鞭策"的含义。
 
 ## 测试策略

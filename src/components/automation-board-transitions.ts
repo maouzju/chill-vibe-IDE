@@ -144,6 +144,39 @@ export const automationBoardHasActiveRun = (
 }
 
 /**
+ * 一张卡在计划唤醒里的"顺序邻居序列"。
+ *
+ * 普通 tab 用 `pane.tabs`；看板项不在任何 pane 里，用它所在泳道的有序 id 列表。
+ * `armWakeTimerBatch` 按 `indexOf(owner) - 1` 取"左邻"，所以同一个函数在看板
+ * 语境下自然表达"上方需求"——判定逻辑一个字符都不用改，变的只有传参和文案。
+ *
+ * 返回 null 表示这张卡既不是任何 pane 的 tab，也不是任何看板的项（例如监工
+ * 卡）；调用方应退回空序列，让 `left-tab` 模式判定为"上方没有可等待的对象"。
+ */
+export const resolveWakeTimerNeighbourIds = ({
+  cardId,
+  paneTabIds,
+  cards,
+}: {
+  cardId: string
+  paneTabIds: readonly string[] | undefined
+  cards: Record<string, ChatCard>
+}): string[] => {
+  if (paneTabIds?.includes(cardId)) {
+    return [...paneTabIds]
+  }
+
+  for (const card of Object.values(cards)) {
+    const item = card.automationBoard?.items.find((entry) => entry.cardId === cardId)
+    if (item) {
+      return getAutomationBoardLaneCardIds(card.automationBoard, item.lane)
+    }
+  }
+
+  return []
+}
+
+/**
  * 紧凑项卡片只渲染最近若干条。裁剪必须发生在 markdown 解析**之前**，
  * 否则 10+ 并发项会把渲染线程压死（AGENTS.md NFR/pitfall 187）。
  */

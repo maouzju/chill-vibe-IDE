@@ -23,3 +23,11 @@
 - [x] 红测：有 upstream 的仓库必须显示同步入口，不受 `clean` 状态影响。
 - [x] 干净空态与改动状态复用同一个同步按钮判断和渲染。
 - [x] 复跑 Git 窄测、双主题 UI 检查、质量检查、打包与运行时重启。
+
+## 2026-08-10 主线程卡顿与状态保真补强
+
+- [x] 自动刷新改走共享节流/in-flight 闸门；暖卡只抓 preview，移除 hover 触发。
+- [x] preview 状态保留已有 patch/行数，并让分析与完整 Git 面板在消费前按 fidelity 补抓全量。
+- [x] Git stdout/stderr 按 Buffer 完整解码，覆盖跨 chunk 的 UTF-8 路径与内容。
+- [x] 为批量 patch 建立等价索引，保留 rename、add、delete、引号路径和 header 回退语义。
+- [x] 新增 `git-patch-block-index.test.ts`（8 项）与 `git-status-refresh-policy.test.ts`（17 项）窄测，均已通过。

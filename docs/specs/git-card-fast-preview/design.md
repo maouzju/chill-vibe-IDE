@@ -55,3 +55,20 @@
 不新增重样式组件。preview 状态复用当前 Git 卡牌紧凑布局；当轻量状态还没有 diff 行数时，增删行统计显示为 `+? / -?`，避免把“尚未加载”的行数误导成真实的 0 行改动。按钮位置和视觉层级不变，符合 `docs/ui-principles.md` 的“内容优先、少 chrome”原则。
 
 「同步」按钮的显隐只由 upstream 决定，不由 `clean` 决定。干净状态继续使用紧凑空态行，但在「古法 Git」旁保留同步入口，让用户可以拉取尚未体现在本地 ahead/behind 数据里的远端变化。
+
+## 自动刷新与 patch 保真（2026-08-10）
+
+Git 卡片常驻在布局中，即使 tab 不可见也不会卸载。因此刷新分成两条明确路径：
+
+1. 聚焦、tab 激活等自动触发共享 3 秒节流时钟，并以真实的 in-flight 标记去重；暖卡只请求
+   `fetchGitStatusPreview()`，冷卡在 preview 到达后再补一次完整状态。卡片不再绑定
+   `onMouseEnter`，避免鼠标掠过就把完整 Git 管线压到 Electron 主进程。
+2. preview 不带 patch 时，按路径合并上一轮仍对应的 patch/行数，让文件列表和统计保持稳定；
+   这份合并结果会标记为 preview fidelity。分析变更、完整 Git 对话框等 patch 消费方在开工前
+   通过 `needsFullGitStatusFetch()` 检查 workspace 与 fidelity，不满足条件就重新抓取全量，
+   不把上一轮可能过期的 diff 交给 AI。
+
+服务端的 Git 输出先缓存 Buffer，再统一按 UTF-8 解码，避免 chunk 边界切断中文或 emoji。
+批量 patch 读取后用 `createGitPatchBlockIndex()` 一次扫描每个 block，分别索引 marker/header
+匹配并保留旧实现的“最早命中”规则；这样查找从 N×N 降为一次建索引加 O(1) 查询，异常时仍沿用
+现有单文件回退路径。

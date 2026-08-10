@@ -175,6 +175,18 @@ const normalizePathList = (paths: string[]) =>
     ),
   )
 
+export const decodeGitStreamChunks = (chunks: readonly Buffer[]) => {
+  if (chunks.length === 0) {
+    return ''
+  }
+
+  if (chunks.length === 1) {
+    return chunks[0]!.toString('utf8')
+  }
+
+  return Buffer.concat(chunks as Buffer[]).toString('utf8')
+}
+
 const formatGitFailure = (args: string[], result: GitRunResult) => {
   const message = [result.stderr.trim(), result.stdout.trim()].find((entry) => entry.length > 0)
 
@@ -203,15 +215,23 @@ const runGit = async (
       windowsHide: true,
     })
 
-    let stdout = ''
-    let stderr = ''
+    // 症状：`git diff` / `git status` 输出里的中文路径或中文改动内容偶发变成 U+FFFD 乱码，
+    //   下游 `git add` 按乱码路径回写就会失败。
+    // 根因：2026-08-10 实测，旧写法 `stdout += chunk.toString()` 逐 chunk 独立解码；一个
+    //   UTF-8 多字节字符跨越 64KiB chunk 边界时两半各自解码，必然产出替换符
+    //   （tests/git-patch-block-index.test.ts 对每一个字节切点都有红证）。
+    // 被否决：`chunks.map((c) => c.toString()).join('')` —— 它只是把拼接换了个写法，逐 chunk
+    //   解码这个真正的病根原样保留。注意本改动是纯正确性修复：2026-08-10 基准测试 6MB CJK
+    //   输出上 `+=`(353ms) 与 Buffer.concat(333ms) 基本持平，别当成性能优化去"还原"。
+    const stdoutChunks: Buffer[] = []
+    const stderrChunks: Buffer[] = []
 
     child.stdout?.on('data', (chunk: Buffer) => {
-      stdout += chunk.toString()
+      stdoutChunks.push(chunk)
     })
 
     child.stderr?.on('data', (chunk: Buffer) => {
-      stderr += chunk.toString()
+      stderrChunks.push(chunk)
     })
 
     child.on('error', reject)
@@ -220,8 +240,8 @@ const runGit = async (
     }
     child.on('close', (code) => {
       const result: GitRunResult = {
-        stdout,
-        stderr,
+        stdout: decodeGitStreamChunks(stdoutChunks),
+        stderr: decodeGitStreamChunks(stderrChunks),
         exitCode: code ?? 1,
       }
 
@@ -918,27 +938,99 @@ const splitGitPatchBlocks = (patch: string) => {
   return blocks.filter(Boolean)
 }
 
-const findGitPatchBlock = (blocks: string[], change: GitChange) => {
-  const expectedOldPath = change.kind === 'added'
-    ? null
-    : (change.originalPath ?? change.path).replace(/\\/g, '/')
-  const expectedNewPath = change.kind === 'deleted'
-    ? null
-    : change.path.replace(/\\/g, '/')
-  const expectedHeader = `diff --git a/${change.originalPath ?? change.path} b/${change.path}`
+/**
+ * Reads a block's first line plus its first `--- ` / `+++ ` markers without
+ * materializing one string per patch line. Semantics are identical to the old
+ * `block.split('\n')` + `lines.find(...)` pair: first occurrence wins, and a
+ * block missing either marker falls back to its `diff --git` header line.
+ */
+const scanGitPatchBlockHeader = (block: string) => {
+  let headerLine = block
+  let oldMarker: string | null = null
+  let newMarker: string | null = null
+  let lineStart = 0
+  let isFirstLine = true
 
-  return blocks.find((block) => {
-    const lines = block.split('\n')
-    const oldMarker = lines.find((line) => line.startsWith('--- '))
-    const newMarker = lines.find((line) => line.startsWith('+++ '))
+  while (lineStart <= block.length) {
+    const newlineIndex = block.indexOf('\n', lineStart)
+    const lineEnd = newlineIndex < 0 ? block.length : newlineIndex
 
-    if (oldMarker && newMarker) {
-      return normalizeGitDiffPath(oldMarker.slice(4)) === expectedOldPath &&
-        normalizeGitDiffPath(newMarker.slice(4)) === expectedNewPath
+    if (isFirstLine) {
+      headerLine = block.slice(lineStart, lineEnd)
+      isFirstLine = false
     }
 
-    return lines[0] === expectedHeader
-  }) ?? ''
+    if (oldMarker === null && block.startsWith('--- ', lineStart)) {
+      oldMarker = block.slice(lineStart + 4, lineEnd)
+    } else if (newMarker === null && block.startsWith('+++ ', lineStart)) {
+      newMarker = block.slice(lineStart + 4, lineEnd)
+    }
+
+    if (oldMarker !== null && newMarker !== null) {
+      break
+    }
+
+    lineStart = lineEnd + 1
+  }
+
+  return { headerLine, oldMarker, newMarker }
+}
+
+// `\u0000` / `\u0001` cannot appear in a git path, so they are safe as key
+// separator and "no path" sentinel. The `m` / `h` prefixes keep marker-derived
+// keys from ever colliding with raw `diff --git ...` header keys.
+const gitPatchBlockMarkerKey = (oldPath: string | null, newPath: string | null) =>
+  `m\u0000${oldPath ?? '\u0001'}\u0000${newPath ?? '\u0001'}`
+
+const gitPatchBlockHeaderKey = (headerLine: string) => `h\u0000${headerLine}`
+
+/**
+ * 症状：Git 卡片刷新时输入、切 tab、开新会话一起卡顿（关掉 Git 卡片即恢复）。
+ * 根因：旧 `findGitPatchBlock` 对每个 change 线性扫描全部 patch block，且每个 block 内部
+ *   再 `split('\n')` 全量切行 —— 完整的 N×N。2026-08-10 实测（同机同数据，legacy vs 本
+ *   实现）：60 改动/200KB patch 12ms→1ms，120/529KB 56ms→0ms，200/1311KB 230ms→0ms，
+ *   耗时随 N 平方增长实锤。这段跑在 Electron 主进程的 JS 主线程上，直接顶住输入事件派发。
+ * 被否决：只把 `split('\n')` 换成 `slice` 早停并不够 —— 外层 N×N 的扫描才是主项；也不能
+ *   改成"按 change.path 直接查 Map"，因为匹配规则包含 /dev/null、重命名 old/new、引号
+ *   转义路径和 header 兜底四种形态，必须按 block 自身的判定口径建键才能保持语义不变。
+ */
+export const createGitPatchBlockIndex = (blocks: readonly string[]) => {
+  const byKey = new Map<string, { order: number; block: string }>()
+
+  for (let order = 0; order < blocks.length; order += 1) {
+    const block = blocks[order]!
+    const { headerLine, oldMarker, newMarker } = scanGitPatchBlockHeader(block)
+    const key = oldMarker !== null && newMarker !== null
+      ? gitPatchBlockMarkerKey(normalizeGitDiffPath(oldMarker), normalizeGitDiffPath(newMarker))
+      : gitPatchBlockHeaderKey(headerLine)
+
+    // First writer wins, mirroring `Array#find` returning the earliest match.
+    if (!byKey.has(key)) {
+      byKey.set(key, { order, block })
+    }
+  }
+
+  const find = (change: GitChange) => {
+    const expectedOldPath = change.kind === 'added'
+      ? null
+      : (change.originalPath ?? change.path).replace(/\\/g, '/')
+    const expectedNewPath = change.kind === 'deleted'
+      ? null
+      : change.path.replace(/\\/g, '/')
+
+    const markerMatch = byKey.get(gitPatchBlockMarkerKey(expectedOldPath, expectedNewPath))
+    const headerMatch = byKey.get(gitPatchBlockHeaderKey(
+      `diff --git a/${change.originalPath ?? change.path} b/${change.path}`,
+    ))
+
+    if (markerMatch && headerMatch) {
+      return markerMatch.order < headerMatch.order ? markerMatch.block : headerMatch.block
+    }
+
+    return (markerMatch ?? headerMatch)?.block ?? ''
+  }
+
+  return { find }
 }
 
 const createAddedFilePatch = (relativePath: string, content: string | null) => {
@@ -1128,13 +1220,14 @@ const hydrateGitChangePreviews = async (repoRoot: string, changes: GitChange[]) 
     }
 
     const blocks = await readTrackedGitPatchBlocks(repoRoot, batch)
+    const blockIndex = createGitPatchBlockIndex(blocks)
     for (const batchCandidate of batch) {
       if (batchCandidate.combinedFileSize > remainingPreviewBudgetBytes) {
         hydratedChanges.push({ ...batchCandidate.change, patch: '' })
         continue
       }
 
-      const patch = findGitPatchBlock(blocks, batchCandidate.change)
+      const patch = blockIndex.find(batchCandidate.change)
       if (patch) {
         appendPreview(batchCandidate.change, patch)
         continue

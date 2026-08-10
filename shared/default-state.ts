@@ -4,6 +4,9 @@ import type {
   AppSettings,
   AppState,
   AutoUrgeProfile,
+  AutomationBoardLane,
+  AutomationBoardTemplate,
+  AutomationBoardWorkspaceState,
   BoardColumn,
   ChatCard,
   ChatMessage,
@@ -20,6 +23,7 @@ import type {
 } from './schema.js'
 import { createDefaultBrainstormState } from './brainstorm.js'
 import {
+  createDefaultAutomationBoardAutoTrigger,
   defaultAutoUrgeMessage,
   defaultAutoUrgeProfileId,
   defaultAutoUrgeSuccessKeyword,
@@ -31,6 +35,7 @@ import {
   normalizeLanguage,
 } from './i18n.js'
 import {
+  AUTOMATIONBOARD_TOOL_MODEL,
   BRAINSTORM_TOOL_MODEL,
   DEFAULT_CLAUDE_MODEL,
   DEFAULT_CODEX_MODEL,
@@ -66,6 +71,10 @@ export const stickyNoteArchiveMaxContentLength = 64_000
 export const defaultWhiteNoiseCardSize = 286
 export const minWhiteNoiseCardSize = 208
 export const minWeatherCardSize = 160
+// The board needs three lanes side by side plus a template strip, so it wants
+// noticeably more vertical room than an ordinary chat card.
+export const defaultAutomationBoardCardSize = 620
+export const minAutomationBoardCardSize = 380
 export const minColumnWidth = 130
 export const minUiScale = 0.8
 export const maxUiScale = 1.35
@@ -845,7 +854,9 @@ export const getCardMinimumSize = (model?: string | null) =>
         ? minWhiteNoiseCardSize
         : model === WEATHER_TOOL_MODEL
           ? minWeatherCardSize
-          : minCardSize
+          : model === AUTOMATIONBOARD_TOOL_MODEL
+            ? minAutomationBoardCardSize
+            : minCardSize
 
 export const getCardDefaultSize = (model?: string | null) =>
   model === GIT_TOOL_MODEL
@@ -854,7 +865,9 @@ export const getCardDefaultSize = (model?: string | null) =>
       ? defaultStickyNoteCardSize
       : model === WHITENOISE_TOOL_MODEL
         ? defaultWhiteNoiseCardSize
-        : defaultCardSize
+        : model === AUTOMATIONBOARD_TOOL_MODEL
+          ? defaultAutomationBoardCardSize
+          : defaultCardSize
 
 export const normalizeCardSize = (size?: number, minimumSize = minCardSize, defaultSize = defaultCardSize) => {
   if (!size || Number.isNaN(size)) {
@@ -1107,6 +1120,208 @@ export const createCard = (
   }
 }
 
+export const createDefaultAutomationBoardWorkspaceState = (): AutomationBoardWorkspaceState => ({
+  templates: [],
+  autoTrigger: createDefaultAutomationBoardAutoTrigger(),
+})
+
+export const createAutomationBoardCard = (
+  title: string | undefined = undefined,
+  language: AppLanguage = defaultAppLanguage,
+): ChatCard => {
+  const text = getLocaleText(normalizeLanguage(language))
+
+  return {
+    ...createCard(
+      title ?? text.automationBoardTitle,
+      defaultAutomationBoardCardSize,
+      'codex',
+      AUTOMATIONBOARD_TOOL_MODEL,
+      undefined,
+      language,
+    ),
+    automationBoard: {
+      items: [],
+      supervisorCardId: '',
+      supervisorExpanded: false,
+    },
+  }
+}
+
+/**
+ * A board item is an ordinary chat card that simply never enters `pane.tabs`.
+ * The requirement text lands in `draft` rather than being sent, so moving the
+ * item into the running lane reuses the exact same send path a user typing in
+ * a composer would take.
+ */
+export const createAutomationBoardItemCard = ({
+  requirement,
+  provider,
+  model,
+  reasoningEffort,
+  thinkingEnabled = true,
+  planMode = false,
+  language = defaultAppLanguage,
+}: {
+  requirement: string
+  provider: Provider
+  model: string
+  reasoningEffort?: string | null
+  thinkingEnabled?: boolean
+  planMode?: boolean
+  language?: AppLanguage
+}): ChatCard => ({
+  ...createCard(
+    titleFromPrompt(requirement),
+    defaultCardSize,
+    provider,
+    model,
+    reasoningEffort,
+    language,
+  ),
+  thinkingEnabled,
+  planMode,
+  draft: requirement,
+})
+
+export const createAutomationBoardSupervisorCard = ({
+  provider,
+  model,
+  reasoningEffort,
+  language = defaultAppLanguage,
+}: {
+  provider: Provider
+  model: string
+  reasoningEffort?: string | null
+  language?: AppLanguage
+}): ChatCard => {
+  const text = getLocaleText(normalizeLanguage(language))
+
+  return createCard(
+    text.automationBoardSupervisorTitle,
+    defaultCardSize,
+    provider,
+    model,
+    reasoningEffort,
+    language,
+  )
+}
+
+export const createAutomationBoardTemplateFromCard = ({
+  card,
+  requirement,
+  name,
+  id,
+  createdAt,
+}: {
+  card: ChatCard
+  requirement: string
+  name?: string
+  id: string
+  createdAt?: string
+}): AutomationBoardTemplate => ({
+  id,
+  name: (name ?? titleFromPrompt(requirement)).trim(),
+  requirement,
+  provider: card.provider,
+  model: card.model,
+  reasoningEffort: card.reasoningEffort,
+  thinkingEnabled: card.thinkingEnabled,
+  planMode: card.planMode,
+  wakeTimerActive: card.wakeTimerActive === true,
+  ...(card.wakeTimerMode ? { wakeTimerMode: card.wakeTimerMode } : {}),
+  ...(typeof card.wakeTimerDurationMinutes === 'number'
+    ? { wakeTimerDurationMinutes: card.wakeTimerDurationMinutes }
+    : {}),
+  repeatLoopActive: card.repeatLoopActive === true,
+  ...(typeof card.repeatLoopRemaining === 'number'
+    ? { repeatLoopRemaining: card.repeatLoopRemaining }
+    : {}),
+  createdAt: createdAt ?? now(),
+})
+
+export const createAutomationBoardCardFromTemplate = ({
+  template,
+  language = defaultAppLanguage,
+}: {
+  template: AutomationBoardTemplate
+  language?: AppLanguage
+}): ChatCard => ({
+  ...createAutomationBoardItemCard({
+    requirement: template.requirement,
+    provider: template.provider,
+    model: template.model,
+    reasoningEffort: template.reasoningEffort,
+    thinkingEnabled: template.thinkingEnabled,
+    planMode: template.planMode,
+    language,
+  }),
+  wakeTimerActive: template.wakeTimerActive,
+  ...(template.wakeTimerMode ? { wakeTimerMode: template.wakeTimerMode } : {}),
+  ...(typeof template.wakeTimerDurationMinutes === 'number'
+    ? { wakeTimerDurationMinutes: template.wakeTimerDurationMinutes }
+    : {}),
+  repeatLoopActive: template.repeatLoopActive,
+  ...(typeof template.repeatLoopRemaining === 'number'
+    ? { repeatLoopRemaining: template.repeatLoopRemaining }
+    : {}),
+})
+
+export const automationBoardLaneOrder: readonly AutomationBoardLane[] = [
+  'standby',
+  'running',
+  'done',
+]
+
+/**
+ * Every card id that an automation board in this column claims — board items
+ * plus the supervisor. These cards live in `column.cards` on purpose but must
+ * never be treated as pane tabs.
+ */
+export const collectAutomationBoardOwnedCardIds = (
+  cards: Record<string, ChatCard>,
+): Set<string> => {
+  const owned = new Set<string>()
+
+  for (const card of Object.values(cards)) {
+    const board = card.automationBoard
+    if (!board) {
+      continue
+    }
+
+    for (const item of board.items) {
+      owned.add(item.cardId)
+    }
+
+    if (board.supervisorCardId) {
+      owned.add(board.supervisorCardId)
+    }
+  }
+
+  return owned
+}
+
+/**
+ * 症状：一列的 layout 归一化后变成空 pane 时，兜底会把 `Object.keys(cards)`
+ *   整个塞进一个 pane —— 自动化看板的需求卡与监工卡会因此全部曝光成 tab。
+ * 根因：那条兜底写在"卡片一定都是 tab"的假设上，而看板项刻意不是。
+ * 被否决：不要卡片就不救。空 layout + 有卡片说明 layout 真的坏了，
+ *   仍然必须救回来，只是救的范围要排除看板自己拥有的卡片。
+ */
+export const resolveRecoveredColumnLayout = (
+  layout: LayoutNode,
+  cards: Record<string, ChatCard>,
+  boardOwnedCardIds: ReadonlySet<string> = collectAutomationBoardOwnedCardIds(cards),
+): LayoutNode => {
+  if (layout.type !== 'pane' || layout.tabs.length > 0) {
+    return layout
+  }
+
+  const recoverable = Object.keys(cards).filter((cardId) => !boardOwnedCardIds.has(cardId))
+
+  return recoverable.length > 0 ? createPane(recoverable) : layout
+}
+
 const createCardRecord = (...cards: ChatCard[]): Record<string, ChatCard> =>
   Object.fromEntries(cards.map((card) => [card.id, card]))
 
@@ -1156,6 +1371,7 @@ export const createDefaultState = (
     updatedAt: now(),
     sessionHistory: [],
     stickyNoteArchive: {},
+    automationBoards: {},
     columns: [
       createColumn(
         {

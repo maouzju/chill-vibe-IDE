@@ -1,5 +1,5 @@
 import { memo, useCallback, useMemo, useRef, useState } from 'react'
-import type { DragEvent, KeyboardEvent } from 'react'
+import type { ButtonHTMLAttributes, DragEvent, KeyboardEvent } from 'react'
 
 import { getLocaleText } from '../../shared/i18n'
 import { MODEL_OPTIONS, isModelPickerOptionVisible } from '../../shared/models'
@@ -14,7 +14,6 @@ import type {
   Provider,
 } from '../../shared/schema'
 import { clearDragPayload, readDragPayload, writeDragPayload } from '../dnd'
-import { AppButton } from './AppButton'
 import {
   CloseIcon,
   IconButton,
@@ -82,6 +81,30 @@ export type AutomationBoardCardProps = {
   onRunSupervisorNow: () => void
   onSetSupervisorExpanded: (expanded: boolean) => void
 }
+
+/**
+ * 症状：新增本组件后，所有走 `renderToStaticMarkup` 的 `.tsx` 测试一起红在
+ *   `ERR_UNKNOWN_FILE_EXTENSION ... @primer/react/dist/BaseStyles-*.css`。
+ * 根因：`AppButton` 封的是 `@primer/react` 的 Button，而那个包有 CSS 副作用
+ *   import；本组件被 ChatCard 引用后，Primer 第一次进入 ChatCard 的依赖图，
+ *   Node 的测试运行器没有 CSS loader，于是在渲染之前就崩了。
+ * 被否决：给测试加 CSS loader —— 那是为了一个按钮样式给整条测试链加装配。
+ *   这里本来就只需要一个带既有 `btn` 类的普通按钮。
+ */
+const BoardButton = ({
+  tone = 'ghost',
+  className,
+  children,
+  ...props
+}: ButtonHTMLAttributes<HTMLButtonElement> & { tone?: 'primary' | 'ghost' }) => (
+  <button
+    type="button"
+    className={`btn ${tone === 'primary' ? 'btn-primary' : 'btn-ghost'}${className ? ` ${className}` : ''}`}
+    {...props}
+  >
+    {children}
+  </button>
+)
 
 const messageLimit = defaultAutomationBoardItemMessageLimit
 
@@ -282,21 +305,21 @@ const AutomationBoardItemCard = ({
           </IconButton>
         ) : null}
 
-        <AppButton
+        <BoardButton
           tone="ghost"
           className="automation-board-item-action"
           onClick={() => onPopOutItem(card.id)}
         >
           {text.automationBoardPopOutAction}
-        </AppButton>
+        </BoardButton>
 
-        <AppButton
+        <BoardButton
           tone="ghost"
           className="automation-board-item-action"
           onClick={() => onSaveTemplate(card.id)}
         >
           {text.automationBoardSaveTemplateAction}
-        </AppButton>
+        </BoardButton>
 
         {showsWakeControls ? (
           <label className="automation-board-item-toggle">
@@ -550,9 +573,9 @@ const AutomationBoardCardView = (props: AutomationBoardCardProps) => {
                     }
                   }}
                 />
-                <AppButton tone="primary" onClick={submitDraft} disabled={!draft.trim()}>
+                <BoardButton tone="primary" onClick={submitDraft} disabled={!draft.trim()}>
                   {text.automationBoardAddRequirement}
-                </AppButton>
+                </BoardButton>
               </div>
             ) : (
               <p className="automation-board-lane-hint">{laneView.hint}</p>
@@ -570,27 +593,27 @@ const AutomationBoardCardView = (props: AutomationBoardCardProps) => {
           <span className="automation-board-supervisor-state">
             {supervisorBusy ? text.automationBoardTitle : text.automationBoardSupervisorIdle}
           </span>
-          <AppButton
+          <BoardButton
             tone="ghost"
             onClick={onRunSupervisorNow}
             disabled={supervisorBusy}
           >
             {text.automationBoardSupervisorRunNowAction}
-          </AppButton>
-          <AppButton tone="ghost" onClick={() => setConfigOpen((open) => !open)}>
+          </BoardButton>
+          <BoardButton tone="ghost" onClick={() => setConfigOpen((open) => !open)}>
             {configOpen
               ? text.automationBoardAutoTriggerCloseAction
               : text.automationBoardAutoTriggerConfigureAction}
-          </AppButton>
+          </BoardButton>
           {supervisorCard ? (
-            <AppButton
+            <BoardButton
               tone="ghost"
               onClick={() => onSetSupervisorExpanded(!board.supervisorExpanded)}
             >
               {board.supervisorExpanded
                 ? text.automationBoardSupervisorCollapse
                 : text.automationBoardSupervisorExpand}
-            </AppButton>
+            </BoardButton>
           ) : null}
         </header>
 
@@ -656,14 +679,14 @@ const AutomationBoardCardView = (props: AutomationBoardCardProps) => {
               />
             </label>
 
-            <AppButton
+            <BoardButton
               tone="ghost"
               onClick={() =>
                 onUpdateAutoTrigger({ requirement: defaultAutomationBoardSupervisorRequirement })
               }
             >
               {text.automationBoardAutoTriggerResetAction}
-            </AppButton>
+            </BoardButton>
           </div>
         ) : null}
 
@@ -674,9 +697,9 @@ const AutomationBoardCardView = (props: AutomationBoardCardProps) => {
               language={language}
               workspacePath={workspacePath}
             />
-            <AppButton tone="ghost" onClick={() => props.onPopOutItem(supervisorCard.id)}>
+            <BoardButton tone="ghost" onClick={() => props.onPopOutItem(supervisorCard.id)}>
               {text.automationBoardPopOutAction}
-            </AppButton>
+            </BoardButton>
           </div>
         ) : null}
       </section>

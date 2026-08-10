@@ -556,6 +556,12 @@ A living list of traps that have wasted time before. **When you hit a new pitfal
 | 254 | Composer 设置菜单通过 React portal 挂到 pane 外部；把 `.composer-settings-menu` 继续限定在 `.pane-tab-panel.is-active` 下会得到“元素不存在”，即使可见触发按钮工作正常 | 触发按钮可以按活动 pane 限定，portal 菜单应从页面级定位并等待可见；多 pane 测试还要避免用隐藏旧菜单的宽泛 `first()`。 |
 | 255 | 子进程性能守卫的超时阈值贴着空载耗时设置，会在全量 Node 门禁里与耗时 Git fixtures 争 CPU/磁盘后假红；`markdown-inline-file-reference` 曾空载约 1.7s、4s 阈值在 release manifest 中被调度抖动打成 `ETIMEDOUT` | 这类超时是防“无限卡死”，不是产品 SLA；先单文件复跑确认真实耗时，再给冷启动与全量并发留 5 倍左右余量，同时保留有界超时。只在全量红、单测明显快的情况不要直接归因到候选代码。 |
 
+| 256 | 卡片只要不在任何 `pane.tabs` 里，就对 `arePaneViewPropsEqual` **完全不可见**：它只比较 tabs 里的卡片引用加 `column.id`。自动化看板刻意让需求项与监工"存在于 `column.cards` 但不进 tabs"（这正是拖出/拖入无缝的前提），于是项在流式输出时看板界面纹丝不动、不活跃的看板 tab 也永远不变橙 | 让容器卡片显式声明它拥有哪些 cardId，记忆化只跟那几张卡建立依赖（`haveSameAutomationBoardCardRefs`）。**绝不能**图省事退化成 `previous.column === next.column`——同列里任何一张无关卡片的 delta 都会重渲染每个 pane，那正是 pitfall 187 的放大路径；回归里必须同时钉正向（项变了要重渲染）与反向（无关卡片变了要保持记忆化）两条断言。同理，`server/state-store.ts` 里"空 layout 就把 `Object.keys(cards)` 全塞进一个 pane"的兜底也会把这类离层卡片曝光成 tab，需要按拥有关系排除（`resolveRecoveredColumnLayout`）。 |
+| 257 | 断言"两个快照不相等"的记忆化测试极易**因为错误的原因通过**：如果测试的构造函数每次都新建 `pane` / `providers` 这些对象，比较器在读到你想测的字段之前就已经返回 false 了，于是一个根本看不见新数据的比较器照样全绿 | 这类测试必须让除被测字段之外的每一个 prop 都是**同一个对象身份**（抽一个 `makeSnapshotPair` 之类的工厂共享它们）。判定是否有效仍然只有 pitfall 248 那一条办法：把实现改回坏的形态，确认它真的红。本次就是先写出 4 条"全绿"的假测试，改成共享身份后立刻变成真红。 |
+| 258 | 给渲染进程加"把状态镜像推给主进程"这类通道时，按每次状态变化推送等于给每个流式 delta 加一次跨进程克隆 | 推送必须同时有**节流**和**签名闸门**，而签名要刻意排除"单条消息正文增长"（`getAutomationBoardMirrorSignature` 只覆盖 lane/status/messageCount/lastActivityAt）。只有节流没有签名，2 秒一次仍然会推一份没变化的几十 KB；只有签名没有节流，正文之外的字段一变就立刻推。载荷预算要在**发送端和接收端各执行一遍**，否则新增一个调用方就能绕过上限把整段转录送出程序边界（pitfall 183）。 |
+
+| 259 | 给一个已被 `ChatCard` 引用的组件加 `import { AppButton } from './AppButton'`，会把 `@primer/react`（带 CSS 副作用 import）第一次拉进 ChatCard 的依赖图，于是**每个**走 `renderToStaticMarkup` 的 `.tsx` 测试一起红在 `ERR_UNKNOWN_FILE_EXTENSION ... BaseStyles-*.css` —— 报错点离你改的文件很远，看起来像测试环境坏了 | 卡片子树里要按钮就写普通 `<button className="btn btn-ghost">`（`AppButton` 只是给它加了这两个类），不要为一个按钮把 Primer 引进 SSR 测试链；也不要反过来给测试装 CSS loader。判断方法：`git show main:src/components/ChatCard.tsx | grep @primer` 为空就说明这条依赖是你新引入的。顺带一提，`.tsx` 测试单独跑与走 `scripts/run-node-tests.mjs` 跑的失败表现一致，**可以**用单文件复跑定位，不必跑全量。 |
+
 ### Self-maintenance rule
 
 - When you encounter a new non-obvious failure mode — a test that fails for environmental reasons, a build step with hidden prerequisites, a runtime behavior that contradicts the docs — append a row to this table before you finish the task.

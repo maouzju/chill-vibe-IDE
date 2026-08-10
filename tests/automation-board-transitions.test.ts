@@ -8,6 +8,7 @@ import {
   getAutomationBoardLaneCardIds,
   hasAutomationBoardHistory,
   resolveAutomationBoardTransition,
+  resolveWakeTimerNeighbourIds,
   type AutomationBoardLocation,
 } from '../src/components/automation-board-transitions.ts'
 
@@ -191,6 +192,70 @@ describe('getAutomationBoardLaneCardIds', () => {
 
   it('returns an empty list for a missing board', () => {
     assert.deepEqual(getAutomationBoardLaneCardIds(undefined, 'running'), [])
+  })
+})
+
+describe('resolveWakeTimerNeighbourIds', () => {
+  const board = (items: Array<{ cardId: string; lane: AutomationBoardLane }>): ChatCard => ({
+    ...createCard('Board'),
+    id: 'board-1',
+    automationBoard: {
+      items: items.map((item) => ({ ...item, requirement: '' })),
+      supervisorCardId: 'sup-1',
+      supervisorExpanded: false,
+    },
+  })
+
+  const cards = (): Record<string, ChatCard> => ({
+    'board-1': board([
+      { cardId: 'item-a', lane: 'running' },
+      { cardId: 'item-b', lane: 'standby' },
+      { cardId: 'item-c', lane: 'running' },
+    ]),
+  })
+
+  it('uses the pane tab order for an ordinary tab', () => {
+    assert.deepEqual(
+      resolveWakeTimerNeighbourIds({
+        cardId: 'chat-1',
+        paneTabIds: ['chat-0', 'chat-1', 'chat-2'],
+        cards: cards(),
+      }),
+      ['chat-0', 'chat-1', 'chat-2'],
+    )
+  })
+
+  // "左侧 tab" 在看板语境下就是"上方需求"：同泳道内它上面那一项。
+  it('uses the lane order for a board item', () => {
+    assert.deepEqual(
+      resolveWakeTimerNeighbourIds({ cardId: 'item-c', paneTabIds: ['board-1'], cards: cards() }),
+      ['item-a', 'item-c'],
+    )
+  })
+
+  it('does not leak items from another lane into the sequence', () => {
+    assert.deepEqual(
+      resolveWakeTimerNeighbourIds({ cardId: 'item-b', paneTabIds: undefined, cards: cards() }),
+      ['item-b'],
+    )
+  })
+
+  it('returns an empty sequence for a card that is neither a tab nor an item', () => {
+    assert.deepEqual(
+      resolveWakeTimerNeighbourIds({ cardId: 'sup-1', paneTabIds: ['board-1'], cards: cards() }),
+      [],
+    )
+  })
+
+  it('prefers the pane order when a card somehow appears in both', () => {
+    assert.deepEqual(
+      resolveWakeTimerNeighbourIds({
+        cardId: 'item-a',
+        paneTabIds: ['board-1', 'item-a'],
+        cards: cards(),
+      }),
+      ['board-1', 'item-a'],
+    )
   })
 })
 

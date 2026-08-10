@@ -254,6 +254,7 @@ import {
 import {
   hasAutomationBoardHistory,
   resolveAutomationBoardTransition,
+  resolveWakeTimerNeighbourIds,
   type AutomationBoardLocation,
 } from './components/automation-board-transitions'
 import {
@@ -2786,7 +2787,13 @@ function App() {
           hasPendingWakeBatch: (entry.wakeTimerQueuedSends?.length ?? 0) > 0,
           backgroundWorkPending: entry.backgroundWorkPending === true,
         })),
-        paneTabIds: pane?.tabs ?? [],
+        // 看板项不在任何 pane.tabs 里，所以 left-tab 模式的"左邻"要换成它
+        // 所在泳道的上一项 —— 需求里的"左侧变为上方"。
+        paneTabIds: resolveWakeTimerNeighbourIds({
+          cardId,
+          paneTabIds: pane?.tabs,
+          cards: column.cards,
+        }),
       })
       if (!arm.ok) {
         return false

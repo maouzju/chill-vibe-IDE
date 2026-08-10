@@ -12,12 +12,22 @@ let resourceHeartbeatTimer: ReturnType<typeof setInterval> | null = null
 
 const writeResourceHeartbeat = () => {
   try {
-    log.info('[main] Resource heartbeat.', buildResourceHeartbeatSnapshot({
+    const snapshot = buildResourceHeartbeatSnapshot({
       processMemory: process.memoryUsage(),
       systemFreeBytes: os.freemem(),
       systemTotalBytes: os.totalmem(),
       appMetrics: app.getAppMetrics(),
-    }))
+      platform: process.platform,
+      systemMemoryInfo: process.getSystemMemoryInfo(),
+    })
+
+    // 提交内存顶满会让主进程被系统直接终止，且连 minidump 都写不出来（08-06/08-09 三次闪退即此）。
+    // 唯一能留下的线索就是崩溃前这条心跳，所以压力升高时必须提到 warn，别埋在 info 流里。
+    if (snapshot.commitPressure === 'critical' || snapshot.commitPressure === 'high') {
+      log.warn('[main] Resource heartbeat. System commit charge is high.', snapshot)
+    } else {
+      log.info('[main] Resource heartbeat.', snapshot)
+    }
   } catch (error) {
     log.warn('[main] Resource heartbeat failed.', error)
   }

@@ -38,6 +38,15 @@ import {
   getGitDashboardFileListWindow,
   getGitDashboardVisibleChanges,
 } from './git-dashboard-windowing'
+import {
+  mergeGitStatusPreservingPreviews,
+  needsFullGitStatusFetch,
+  resolveGitStatusFidelity,
+  resolveGitStatusRefreshPlan,
+  shouldRefreshGitStatus,
+  type GitStatusFidelity,
+  type GitStatusRefreshTrigger,
+} from './git-status-previews'
 
 type NoticeTone = 'info' | 'success' | 'error'
 
@@ -158,18 +167,34 @@ export const GitToolCard = ({
   const refreshingWorkspacePathRef = useRef('')
   const autoCompactedRef = useRef(false)
   const activeRefreshIdRef = useRef(0)
+  // 自动刷新的节流时钟；聚焦和 tab 激活共用同一个，否则来回切 tab 就能绕过节流。
+  const lastRefreshRef = useRef(0)
+  // 当前这份 gitStatus 里的 patch 是服务端刚算的，还是自动刷新时从上一轮 merge 回来的旧内容。
+  const statusFidelityRef = useRef<GitStatusFidelity>('preview')
 
   useEffect(() => {
     gitStatusRef.current = gitStatus
   }, [gitStatus])
 
-  const refreshStatus = useCallback(async (nextNotice?: NoticeState | null) => {
+  // 每次落地新 status 都同步更新 ref：refreshStatus 内部会在同一个 tick 里连着读它做 merge，
+  // 靠上面那个 effect（渲染后才跑）会读到上一轮的旧值。
+  const applyStatus = useCallback((nextStatus: GitStatus, fidelity: GitStatusFidelity) => {
+    gitStatusRef.current = nextStatus
+    statusFidelityRef.current = fidelity
+  }, [])
+
+  const refreshStatus = useCallback(async (
+    nextNotice?: NoticeState | null,
+    options?: { trigger?: GitStatusRefreshTrigger },
+  ) => {
     const nextWorkspacePath = workspacePath.trim()
 
     if (!nextWorkspacePath) {
       activeRefreshIdRef.current += 1
       refreshingRef.current = false
       refreshingWorkspacePathRef.current = ''
+      gitStatusRef.current = null
+      statusFidelityRef.current = 'preview'
       startTransition(() => {
         setGitStatus(null)
         setLoadState('idle')
@@ -196,25 +221,45 @@ export const GitToolCard = ({
     )
 
     const hasCurrentWorkspaceStatus = gitStatusRef.current?.workspacePath === nextWorkspacePath
+    const plan = resolveGitStatusRefreshPlan({
+      trigger: options?.trigger ?? 'manual',
+      hasStatusForWorkspace: hasCurrentWorkspaceStatus,
+    })
 
     let previewResolved = false
 
     try {
-      if (!hasCurrentWorkspaceStatus) {
+      if (plan.preview) {
         try {
           const previewStatus = await fetchGitStatusPreview(nextWorkspacePath)
 
           if (activeRefreshIdRef.current === refreshId) {
             previewResolved = true
+            const previousStatus = gitStatusRef.current
+            // 轻量刷新不带 diff，把上一轮的 patch / 行数合并回来，
+            // 否则紧凑卡片的 +/- 统计会闪成 "+? / -?"，下游消费方也会突然拿到空 patch。
+            const mergedStatus =
+              previousStatus?.workspacePath === previewStatus.workspacePath
+                ? mergeGitStatusPreservingPreviews(previousStatus, previewStatus)
+                : previewStatus
+
+            applyStatus(mergedStatus, 'preview')
             startTransition(() => {
-              setGitStatus(previewStatus)
+              setGitStatus(mergedStatus)
               setLoadState('preview')
               setNotice(nextNotice ?? null)
             })
           }
-        } catch {
+        } catch (error) {
+          if (!plan.full) {
+            throw error
+          }
           // The full status request below still owns the final error message.
         }
+      }
+
+      if (!plan.full) {
+        return
       }
 
       const nextStatus = await fetchGitStatus(nextWorkspacePath)
@@ -223,6 +268,7 @@ export const GitToolCard = ({
         return
       }
 
+      applyStatus(nextStatus, resolveGitStatusFidelity(nextStatus))
       gitOperationHub.reportStatus(nextWorkspacePath, nextStatus)
       startTransition(() => {
         setGitStatus(nextStatus)
@@ -247,15 +293,41 @@ export const GitToolCard = ({
         refreshingWorkspacePathRef.current = ''
       }
     }
-  }, [text.refreshError, workspacePath])
+  }, [applyStatus, text.refreshError, workspacePath])
+
+  // 自动刷新（聚焦、tab 激活）的唯一入口：一个节流时钟 + 真正的 in-flight 去重。
+  // 之所以不复用 isBusy：setLoadState 只在 workspacePath 变化时才置 'loading'，
+  // 请求在途期间 isBusy 仍然是 false，拿它当去重等于没有去重。
+  const requestAutoRefresh = useCallback((clearHubNotice: boolean) => {
+    const nextWorkspacePath = workspacePath.trim()
+    const now = Date.now()
+    const decision = shouldRefreshGitStatus({
+      now,
+      lastRefreshAt: lastRefreshRef.current,
+      inFlight: refreshingRef.current || createRepoPending || commitNewPending,
+      hasWorkspace: nextWorkspacePath.length > 0,
+    })
+
+    if (!decision.shouldRefresh) {
+      return
+    }
+
+    lastRefreshRef.current = now
+
+    if (clearHubNotice) {
+      gitOperationHub.clearNotice(workspacePath)
+    }
+
+    void refreshStatus(undefined, { trigger: 'auto' })
+  }, [commitNewPending, createRepoPending, refreshStatus, workspacePath])
 
   useEffect(() => {
     if (!isActive) {
       return
     }
 
-    void refreshStatus()
-  }, [isActive, refreshStatus])
+    requestAutoRefresh(false)
+  }, [isActive, requestAutoRefresh])
 
   // 后台操作（同步、提交、策略执行）在 hub 里完成后回写的最新仓库状态
   useEffect(() => {
@@ -267,11 +339,12 @@ export const GitToolCard = ({
     activeRefreshIdRef.current += 1
     refreshingRef.current = false
     refreshingWorkspacePathRef.current = ''
+    applyStatus(nextStatus, resolveGitStatusFidelity(nextStatus))
     startTransition(() => {
       setGitStatus(nextStatus)
       setLoadState('ready')
     })
-  }, [operationState.lastStatus])
+  }, [applyStatus, operationState.lastStatus])
 
   useEffect(() => {
     onAgentPanelToggle?.(agentPanelOpen)
@@ -341,15 +414,12 @@ export const GitToolCard = ({
   // 后台操作产生的通知优先展示，其次才是本卡片本地的刷新错误等提示
   const displayNotice = operationState.notice ?? notice
 
-  // Auto-refresh when the card gains focus (throttled to once per 3s)
-  const lastRefreshRef = useRef(0)
+  // 真实聚焦意图才刷新（节流 3s、in-flight 去重都在 requestAutoRefresh 里）。
+  // 这里刻意没有 onMouseEnter：鼠标划过卡片就打一发主进程全量 git 管线，
+  // 是本次卡顿事故里最离谱的过度触发。
   const handleCardFocus = useCallback(() => {
-    const now = Date.now()
-    if (now - lastRefreshRef.current < 3000 || isBusy) return
-    lastRefreshRef.current = now
-    gitOperationHub.clearNotice(workspacePath)
-    void refreshStatus()
-  }, [isBusy, refreshStatus, workspacePath])
+    requestAutoRefresh(true)
+  }, [requestAutoRefresh])
   const syncFileListMetrics = useCallback(() => {
     const node = fileListRef.current
     if (!node) {
@@ -459,12 +529,61 @@ export const GitToolCard = ({
     refreshingRef.current = false
     refreshingWorkspacePathRef.current = ''
 
+    applyStatus(nextStatus, resolveGitStatusFidelity(nextStatus))
     gitOperationHub.reportStatus(workspacePath.trim(), nextStatus)
     startTransition(() => {
       setGitStatus(nextStatus)
       setLoadState('ready')
     })
-  }, [workspacePath])
+  }, [applyStatus, workspacePath])
+
+  // 常规自动刷新只带轻量状态，所以真正吃 patch 的入口（分析变更、重试分析）
+  // 必须在开工前自己补一次全量 —— 这是本次改动唯一的真实回归风险点。
+  // 拿不到全量就返回 null，宁可不跑，也不拿上一轮的旧 diff 去喂 AI。
+  const ensureFullGitStatus = useCallback(async (): Promise<GitStatus | null> => {
+    const nextWorkspacePath = workspacePath.trim()
+
+    if (!nextWorkspacePath) {
+      return null
+    }
+
+    if (
+      !needsFullGitStatusFetch({
+        status: gitStatusRef.current,
+        workspacePath: nextWorkspacePath,
+        trackedFidelity: statusFidelityRef.current,
+      })
+    ) {
+      return gitStatusRef.current
+    }
+
+    try {
+      const nextStatus = await fetchGitStatus(nextWorkspacePath)
+
+      activeRefreshIdRef.current += 1
+      refreshingRef.current = false
+      refreshingWorkspacePathRef.current = ''
+      lastRefreshRef.current = Date.now()
+
+      applyStatus(nextStatus, resolveGitStatusFidelity(nextStatus))
+      gitOperationHub.reportStatus(nextWorkspacePath, nextStatus)
+      startTransition(() => {
+        setGitStatus(nextStatus)
+        setLoadState('ready')
+      })
+
+      return nextStatus
+    } catch (error) {
+      startTransition(() => {
+        setNotice({
+          tone: 'error',
+          message: errorMessage(error, text.refreshError),
+        })
+      })
+
+      return null
+    }
+  }, [applyStatus, text.refreshError, workspacePath])
 
   const handleCommitNew = useCallback(() => {
     void gitOperationHub.runCommitNew(operationContext)
@@ -516,35 +635,14 @@ export const GitToolCard = ({
       return
     }
 
-    let statusForAnalysis = gitStatusRef.current
-
-    if (loadState === 'preview') {
-      try {
-        const nextStatus = await fetchGitStatus(workspacePath.trim())
-        activeRefreshIdRef.current += 1
-        refreshingRef.current = false
-        refreshingWorkspacePathRef.current = ''
-        gitOperationHub.reportStatus(workspacePath.trim(), nextStatus)
-        setGitStatus(nextStatus)
-        setLoadState('ready')
-        statusForAnalysis = nextStatus
-      } catch (error) {
-        startTransition(() => {
-          setNotice({
-            tone: 'error',
-            message: errorMessage(error, text.refreshError),
-          })
-        })
-        return
-      }
-    }
+    const statusForAnalysis = await ensureFullGitStatus()
 
     if (!statusForAnalysis) {
       return
     }
 
     void gitOperationHub.openAgentAnalysis(operationContext, statusForAnalysis)
-  }, [agentPanelOpen, loadState, operationContext, text.refreshError, workspacePath])
+  }, [agentPanelOpen, ensureFullGitStatus, operationContext, workspacePath])
 
   const handleCloseAgentPanel = useCallback(() => {
     gitOperationHub.closeAgentPanel(workspacePath)
@@ -654,7 +752,6 @@ export const GitToolCard = ({
       ref={cardRef}
       className={`git-tool-card${hasFloatingPanelOpen ? ' is-agent-panel-open' : ''}`}
       onFocus={handleCardFocus}
-      onMouseEnter={handleCardFocus}
     >
       {/* ── Notice ─────────────────────────────────────────────────────────── */}
       {displayNotice ? (
@@ -794,10 +891,12 @@ export const GitToolCard = ({
               void gitOperationHub.executeAgentStrategy(operationContext, strategy, index)
             }}
             onRetry={() => {
-              const statusForRetry = gitStatusRef.current
-              if (statusForRetry) {
-                void gitOperationHub.openAgentAnalysis(operationContext, statusForRetry)
-              }
+              void (async () => {
+                const statusForRetry = await ensureFullGitStatus()
+                if (statusForRetry) {
+                  void gitOperationHub.openAgentAnalysis(operationContext, statusForRetry)
+                }
+              })()
             }}
             onClose={handleCloseAgentPanel}
           />
@@ -853,6 +952,9 @@ export const GitToolCard = ({
       ) : null}
 
       {/* ── Full dialog overlay ────────────────────────────────────────────── */}
+      {/* patch 消费方之二：对话框自己在挂载 effect 里 fetchGitStatus 拉全量
+          （GitFullDialog.tsx:303），并通过 onStatusChange 把全量结果回灌给本卡片，
+          所以这里不再额外补一发全量 —— 补了就是同一份 diff 在主进程上算两遍。 */}
       {fullDialogMode ? (
         <GitFullDialog
           gitStatus={gitStatus}

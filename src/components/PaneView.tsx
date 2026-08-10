@@ -3,6 +3,7 @@ import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useStat
 import { getLocaleText } from '../../shared/i18n'
 import type { CodexChatSettings } from '../../shared/codex-chat-settings'
 import {
+  AUTOMATIONBOARD_TOOL_MODEL,
   BRAINSTORM_TOOL_MODEL,
   FILETREE_TOOL_MODEL,
   GIT_TOOL_MODEL,
@@ -34,6 +35,12 @@ import {
   decideComposerFocusRequest,
   type ComposerFocusRequestDetail,
 } from './composer-focus'
+import { automationBoardHasActiveRun } from './automation-board-transitions'
+import type { AutomationBoardCardProps } from './AutomationBoardCard'
+import type {
+  AutomationBoardActions,
+  AutomationBoardWorkspaceView,
+} from './automation-board-host'
 import { decideMisroutedTabPointerRescue, isPointerWithinRect } from './pane-tab-rescue'
 import { decideTabStripWheelScroll } from './pane-tab-wheel'
 import {
@@ -55,6 +62,7 @@ import {
   GptIcon,
   HeadphonesIcon,
   ImageIcon,
+  KanbanIcon,
   NeteaseCloudMusicIcon,
   PlusIcon,
   SparklesIcon,
@@ -126,6 +134,8 @@ type PaneViewProps = {
   onChangeCardStickyNote: (cardId: string, content: string) => void
   stickyNoteArchivedContent?: string
   stickyNoteArchivedViewState?: import('../../shared/schema').StickyNoteViewState
+  automationBoardActions?: AutomationBoardActions
+  automationBoardWorkspace?: AutomationBoardWorkspaceView
   onPatchCard: (
     cardId: string,
     patch: Partial<
@@ -263,6 +273,10 @@ const getPaneTabIcon = (card: ChatCardState) => {
     return <ImageIcon className="pane-tab-icon" aria-hidden="true" />
   }
 
+  if (card.model === AUTOMATIONBOARD_TOOL_MODEL) {
+    return <KanbanIcon className="pane-tab-icon" aria-hidden="true" />
+  }
+
   if (card.provider === 'claude') {
     return <ClaudeIcon className="pane-tab-icon" aria-hidden="true" />
   }
@@ -279,6 +293,7 @@ const isTabChromeActionTarget = (target: EventTarget | null) =>
 
 const cardUsesComposer = (card: ChatCardState) =>
   ![
+    AUTOMATIONBOARD_TOOL_MODEL,
     FILETREE_TOOL_MODEL,
     BRAINSTORM_TOOL_MODEL,
     GIT_TOOL_MODEL,
@@ -361,6 +376,8 @@ const PaneViewView = ({
   onChangeCardStickyNote,
   stickyNoteArchivedContent,
   stickyNoteArchivedViewState,
+  automationBoardActions,
+  automationBoardWorkspace,
   onPatchCard,
   onChangeCardTitle,
   onSendMessage,
@@ -751,7 +768,10 @@ const PaneViewView = ({
 
   const handleTabDrop = (targetTabId: string) => (event: DragEvent<HTMLElement>) => {
     const payload = readDragPayload(event)
-    if (payload?.type !== 'tab') {
+    if (
+      payload?.type !== 'tab' &&
+      !(payload?.type === 'automation-board-item' && payload.columnId === column.id)
+    ) {
       return
     }
 
@@ -760,7 +780,13 @@ const PaneViewView = ({
     const targetIndex = pane.tabs.findIndex((tabId) => tabId === targetTabId)
     const placement = getHorizontalPlacement(event)
     const index = placement === 'before' ? targetIndex : targetIndex + 1
-    moveIntoPane(payload.columnId, payload.paneId, payload.tabId, index)
+
+    if (payload.type === 'automation-board-item') {
+      automationBoardActions?.popOutItem(column.id, payload.boardCardId, payload.cardId, pane.id, index)
+    } else {
+      moveIntoPane(payload.columnId, payload.paneId, payload.tabId, index)
+    }
+
     clearDragPayload()
     clearHints()
   }
@@ -986,6 +1012,36 @@ const PaneViewView = ({
 
   const handleContentDrop = (event: DragEvent<HTMLDivElement>) => {
     const payload = readDragPayload(event)
+    if (payload?.type === 'automation-board-item') {
+      if (payload.columnId !== column.id) {
+        return
+      }
+
+      event.preventDefault()
+      const boardDropEdge = getPaneEdge(event) ?? contentDropEdge
+
+      // Split first, then pop the item into the brand-new pane. The pane is
+      // created with no tabs, so `onSplitPane` must be called without a tabId
+      // and the item lands in it by id afterwards.
+      if (boardDropEdge) {
+        const newPaneId = crypto.randomUUID()
+        const { direction, placement } = edgeToSplit(boardDropEdge)
+        onSplitPane(pane.id, direction, placement, undefined, newPaneId)
+        automationBoardActions?.popOutItem(
+          column.id,
+          payload.boardCardId,
+          payload.cardId,
+          newPaneId,
+        )
+      } else {
+        automationBoardActions?.popOutItem(column.id, payload.boardCardId, payload.cardId, pane.id)
+      }
+
+      clearDragPayload()
+      clearHints()
+      return
+    }
+
     if (payload?.type !== 'tab') {
       return
     }
@@ -1089,6 +1145,15 @@ const PaneViewView = ({
         onDoubleClick={handleTabBarDoubleClick}
         onDragOver={(event) => {
           const payload = readDragPayload(event)
+          if (payload?.type === 'automation-board-item') {
+            if (payload.columnId !== column.id) {
+              return
+            }
+            event.preventDefault()
+            setContentDropEdge(null)
+            return
+          }
+
           if (payload?.type !== 'tab') {
             return
           }
@@ -1098,6 +1163,17 @@ const PaneViewView = ({
         }}
         onDrop={(event) => {
           const payload = readDragPayload(event)
+          if (payload?.type === 'automation-board-item') {
+            if (payload.columnId !== column.id) {
+              return
+            }
+            event.preventDefault()
+            automationBoardActions?.popOutItem(column.id, payload.boardCardId, payload.cardId, pane.id)
+            clearDragPayload()
+            clearHints()
+            return
+          }
+
           if (payload?.type !== 'tab') {
             return
           }
@@ -1146,7 +1222,13 @@ const PaneViewView = ({
             })
 
             const isActive = tabId === pane.activeTabId
-            const isStreaming = card.status === 'streaming'
+            // 看板 tab 的橙色是**派生**的：任何 running 道项或监工在跑就点亮。
+            // 绝不能靠把看板卡片的 status 写成 'streaming' 来实现 —— 那会在磁盘上
+            // 留一张没有 streamId 的假 streaming 卡，重启恢复会把它当中断会话
+            // （AGENTS.md pitfall 113）。
+            const isStreaming =
+              card.status === 'streaming' ||
+              automationBoardHasActiveRun(card.automationBoard, column.cards)
             const isBeforeActive = pane.tabs[index + 1] === pane.activeTabId
             const tabClassName = [
               'pane-tab',
@@ -1180,6 +1262,18 @@ const PaneViewView = ({
                 }}
                 onDragOver={(event) => {
                   const payload = readDragPayload(event)
+                  if (payload?.type === 'automation-board-item') {
+                    if (payload.columnId !== column.id) {
+                      return
+                    }
+                    event.preventDefault()
+                    event.stopPropagation()
+                    setContentDropEdge(null)
+                    setTabDropHint({ tabId, placement: getHorizontalPlacement(event) })
+                    scheduleDragHintExpiry()
+                    return
+                  }
+
                   if (payload?.type !== 'tab') {
                     return
                   }
@@ -1262,6 +1356,15 @@ const PaneViewView = ({
           className={`pane-content${contentDropEdge ? ` is-drop-${contentDropEdge}` : ''}`}
           onDragOver={(event) => {
             const payload = readDragPayload(event)
+            if (payload?.type === 'automation-board-item') {
+              if (payload.columnId !== column.id) {
+                return
+              }
+              event.preventDefault()
+              setContentDropEdge(getPaneEdge(event))
+              scheduleDragHintExpiry()
+              return
+            }
           if (payload?.type !== 'tab') {
             return
           }
@@ -1299,6 +1402,65 @@ const PaneViewView = ({
           const workspaceWakeTimerAgentCount = Object.values(column.cards).filter(
             (entry) => entry.id !== card.id && !MODEL_PICKER_HIDDEN_TOOL_MODELS.has(entry.model),
           ).length
+          // The board's props are bound here rather than inside ChatCard because
+          // only this component holds the column (and therefore the card record,
+          // workspacePath, and the pane a popped-out item should land in).
+          const automationBoardProps: AutomationBoardCardProps | undefined =
+            card.model === AUTOMATIONBOARD_TOOL_MODEL &&
+            card.automationBoard &&
+            automationBoardActions &&
+            automationBoardWorkspace
+              ? {
+                  boardCardId: card.id,
+                  columnId: column.id,
+                  workspacePath: column.workspacePath,
+                  language,
+                  board: card.automationBoard,
+                  cards: column.cards,
+                  templates: automationBoardWorkspace.templates,
+                  autoTrigger: automationBoardWorkspace.autoTrigger,
+                  supervisorCard: card.automationBoard.supervisorCardId
+                    ? column.cards[card.automationBoard.supervisorCardId]
+                    : undefined,
+                  wakeTimerEnabled: wakeTimerEnabled === true,
+                  repeatLoopEnabled: repeatLoopEnabled === true,
+                  onCreateItem: (lane, requirement, index) =>
+                    automationBoardActions.createItem(column.id, card.id, lane, requirement, index),
+                  onMoveItem: (cardId, lane, index) =>
+                    automationBoardActions.moveItem(column.id, card.id, cardId, lane, index),
+                  onPopOutItem: (cardId) =>
+                    automationBoardActions.popOutItem(column.id, card.id, cardId, pane.id),
+                  onAbsorbTab: (source, lane, index) =>
+                    automationBoardActions.absorbTab(column.id, card.id, source, lane, index),
+                  onInstantiateTemplate: (templateId, lane, index) =>
+                    automationBoardActions.instantiateTemplate(
+                      column.id,
+                      card.id,
+                      templateId,
+                      lane,
+                      index,
+                    ),
+                  onDeleteItem: (cardId) =>
+                    automationBoardActions.deleteItem(column.id, card.id, cardId),
+                  onSaveTemplate: (cardId) =>
+                    automationBoardActions.saveTemplate(column.id, card.id, cardId),
+                  onRenameTemplate: (templateId, name) =>
+                    automationBoardActions.renameTemplate(column.workspacePath, templateId, name),
+                  onDeleteTemplate: (templateId) =>
+                    automationBoardActions.deleteTemplate(column.workspacePath, templateId),
+                  onStopItem: (cardId) => automationBoardActions.stopItem(cardId),
+                  onSendToItem: (cardId, message) =>
+                    automationBoardActions.sendToItem(column.id, cardId, message),
+                  onPatchItemCard: (cardId, patch) =>
+                    automationBoardActions.patchItemCard(column.id, cardId, patch),
+                  onUpdateAutoTrigger: (patch) =>
+                    automationBoardActions.updateAutoTrigger(column.workspacePath, patch),
+                  onRunSupervisorNow: () =>
+                    automationBoardActions.runSupervisorNow(column.id, card.id),
+                  onSetSupervisorExpanded: (expanded) =>
+                    automationBoardActions.setSupervisorExpanded(column.id, card.id, expanded),
+                }
+              : undefined
           return (
             <div
               key={tabId}
@@ -1331,6 +1493,7 @@ const PaneViewView = ({
                   wakeTimerEnabled={wakeTimerEnabled}
                   leftWakeTimerTarget={leftWakeTimerTarget}
                   workspaceWakeTimerAgentCount={workspaceWakeTimerAgentCount}
+                  automationBoardProps={automationBoardProps}
                   onSetAutoUrgeEnabled={onSetAutoUrgeEnabled}
                   onRemove={() => onCloseTab(pane.id, card.id)}
                   queuedSendSummary={queuedSendSummaries?.get(card.id)}

@@ -421,3 +421,12 @@ export const ImageIcon = (props: SVGProps<SVGSVGElement>) => (
     <path d="m7 17 4-4 2.5 2.5L15 14l3 3" strokeLinecap="round" strokeLinejoin="round" />
   </BaseIcon>
 )
+
+/** Automation board: three lanes holding a different number of cards each. */
+export const KanbanIcon = (props: SVGProps<SVGSVGElement>) => (
+  <BaseIcon {...props}>
+    <rect x="3" y="4" width="5" height="12" rx="1" />
+    <rect x="9.5" y="4" width="5" height="16" rx="1" />
+    <rect x="16" y="4" width="5" height="8" rx="1" />
+  </BaseIcon>
+)

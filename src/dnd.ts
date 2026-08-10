@@ -1,5 +1,7 @@
 import type { DragEvent } from 'react'
 
+import type { AutomationBoardLane } from '../shared/schema'
+
 export type Placement = 'before' | 'after'
 
 export type DragPayload =
@@ -19,6 +21,25 @@ export type DragPayload =
       paneId: string
       tabId: string
     }
+  | {
+      // 看板需求项。columnId 参与落点校验：项卡片的 cwd 由所在列的
+      // workspacePath 决定，所以跨列拖拽一律拒绝。
+      type: 'automation-board-item'
+      columnId: string
+      boardCardId: string
+      cardId: string
+      lane: AutomationBoardLane
+    }
+  | {
+      type: 'automation-board-template'
+      workspacePath: string
+      templateId: string
+    }
+
+const automationBoardLaneValues: readonly AutomationBoardLane[] = ['standby', 'running', 'done']
+
+const isAutomationBoardLane = (value: unknown): value is AutomationBoardLane =>
+  typeof value === 'string' && (automationBoardLaneValues as readonly string[]).includes(value)
 
 const dragMime = 'application/x-chill-vibe'
 let activeDragPayload: DragPayload | null = null
@@ -142,6 +163,34 @@ export const readDragPayload = <T extends HTMLElement>(event: DragEvent<T>) => {
         columnId: parsed.columnId,
         paneId: parsed.paneId,
         tabId: parsed.tabId,
+      } satisfies DragPayload
+    }
+
+    if (
+      parsed.type === 'automation-board-item' &&
+      typeof parsed.columnId === 'string' &&
+      typeof parsed.boardCardId === 'string' &&
+      typeof parsed.cardId === 'string' &&
+      isAutomationBoardLane(parsed.lane)
+    ) {
+      return {
+        type: 'automation-board-item',
+        columnId: parsed.columnId,
+        boardCardId: parsed.boardCardId,
+        cardId: parsed.cardId,
+        lane: parsed.lane,
+      } satisfies DragPayload
+    }
+
+    if (
+      parsed.type === 'automation-board-template' &&
+      typeof parsed.workspacePath === 'string' &&
+      typeof parsed.templateId === 'string'
+    ) {
+      return {
+        type: 'automation-board-template',
+        workspacePath: parsed.workspacePath,
+        templateId: parsed.templateId,
       } satisfies DragPayload
     }
   } catch {

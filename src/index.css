@@ -14368,3 +14368,498 @@ body.is-pane-resizing .split-resize-handle::before {
     flex-wrap: wrap;
   }
 }
+
+/* =========================================================
+   Automation Board
+   ---------------------------------------------------------
+   看板项卡片的三态边框刻意复用 .card-shell 的 token
+   (--stream-border / --danger / --line-strong)，这样看板上的状态
+   语言与聊天窗口完全一致。
+
+   全部状态指示都是**静态**的：这里可能同时挂十几个 streaming 项，
+   任何无界 paint 动画都会把 renderer/GPU 压到 Electron 的
+   unresponsive 阈值（AGENTS.md pitfall 216/218）。
+   tests/idle-animation-budget.test.ts 会因为新增 infinite 动画而
+   变红 —— 不要往这一节加动画。
+   ========================================================= */
+
+.automation-board {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  flex: 1;
+  gap: 8px;
+  padding: 10px;
+  overflow: hidden;
+}
+
+.automation-board-reject {
+  margin: 0;
+  padding: 6px 10px;
+  border: 1px solid var(--danger-soft);
+  background: var(--danger-soft);
+  color: var(--danger);
+  font-size: 12px;
+}
+
+.automation-board-lanes {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  flex: 1;
+  min-height: 0;
+}
+
+.automation-board-lane {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  min-width: 0;
+  border: 1px solid var(--line);
+  background: var(--panel);
+}
+
+.automation-board-lane.is-drop-target {
+  border-color: var(--drop-target-border);
+  background: var(--drop-target-bg);
+  box-shadow: var(--drop-target-shadow);
+}
+
+.automation-board-lane-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--line);
+}
+
+.automation-board-lane-head h3 {
+  margin: 0;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--ink-2);
+  letter-spacing: 0.02em;
+}
+
+.automation-board-lane-count {
+  font-size: 11px;
+  color: var(--ink-4);
+  font-variant-numeric: tabular-nums;
+}
+
+.automation-board-lane-body {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 6px;
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+
+.automation-board-lane-empty,
+.automation-board-lane-hint {
+  margin: 0;
+  padding: 8px;
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--ink-4);
+}
+
+.automation-board-lane-empty {
+  border: 1px dashed var(--empty-state-border);
+  text-align: center;
+}
+
+.automation-board-lane-hint {
+  border-top: 1px solid var(--line);
+}
+
+.automation-board-lane-compose {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 6px;
+  border-top: 1px solid var(--line);
+}
+
+.automation-board-lane-compose textarea,
+.automation-board-item-nudge textarea,
+.automation-board-trigger-config textarea {
+  width: 100%;
+  box-sizing: border-box;
+  resize: vertical;
+  border: 1px solid var(--line-strong);
+  background: var(--input-strong-bg);
+  color: var(--ink-1);
+  font: inherit;
+  font-size: 12px;
+  line-height: 1.5;
+  padding: 5px 7px;
+}
+
+.automation-board-lane-compose textarea:focus,
+.automation-board-item-nudge textarea:focus,
+.automation-board-trigger-config textarea:focus {
+  outline: none;
+  background: var(--input-strong-bg-focus);
+  border-color: var(--accent-line-strong);
+}
+
+/* ---- item card: same visual language as .card-shell ---- */
+
+.automation-board-item {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  padding: 7px 8px;
+  max-height: 220px;
+  overflow: hidden;
+  border: 1px solid var(--line-strong);
+  background: var(--panel);
+  cursor: grab;
+}
+
+.automation-board-item:active {
+  cursor: grabbing;
+}
+
+.automation-board-item.is-streaming {
+  border-color: var(--stream-border);
+}
+
+.automation-board-item.is-background-pending {
+  border-color: var(--stream-border);
+  border-style: dashed;
+}
+
+.automation-board-item.is-error {
+  border-color: var(--danger);
+  background: var(--danger-soft);
+}
+
+.automation-board-item-wake {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 5px;
+  border: 1px solid var(--accent-line);
+  background: var(--accent-soft);
+  color: var(--accent-2);
+  font-size: 11px;
+}
+
+.automation-board-item-wake-icon svg {
+  width: 11px;
+  height: 11px;
+  display: block;
+}
+
+.automation-board-item-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.automation-board-item-title {
+  margin: 0;
+  flex: 1;
+  min-width: 0;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--ink-1);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.automation-board-item-model {
+  font-size: 10px;
+  color: var(--ink-4);
+  padding: 1px 5px;
+  border: 1px solid var(--line);
+  white-space: nowrap;
+}
+
+.automation-board-item-dot {
+  width: 6px;
+  height: 6px;
+  flex: none;
+  border-radius: 50%;
+  background: var(--ink-4);
+}
+
+.automation-board-item-dot.is-active {
+  background: var(--warn);
+}
+
+.automation-board-item-requirement {
+  margin: 0;
+  font-size: 11px;
+  line-height: 1.45;
+  color: var(--ink-3);
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.automation-board-item-transcript {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-height: 0;
+  overflow-y: auto;
+  font-size: 11px;
+  line-height: 1.5;
+  border-top: 1px solid var(--line);
+  padding-top: 5px;
+}
+
+.automation-board-item-truncated {
+  margin: 0;
+  font-size: 10px;
+  color: var(--ink-4);
+}
+
+.automation-board-item-line {
+  margin: 0;
+  color: var(--ink-2);
+  overflow-wrap: anywhere;
+}
+
+.automation-board-item-line.is-user {
+  color: var(--ink-3);
+  padding-left: 6px;
+  border-left: 2px solid var(--accent-line);
+}
+
+.automation-board-item-line.is-tool {
+  color: var(--ink-4);
+  font-variant-numeric: tabular-nums;
+}
+
+.automation-board-item-line :is(p, ul, ol, pre) {
+  margin: 0 0 4px;
+}
+
+.automation-board-item-line :is(p, ul, ol, pre):last-child {
+  margin-bottom: 0;
+}
+
+.automation-board-item-line pre {
+  max-height: 6rem;
+  overflow: auto;
+  font-size: 10px;
+}
+
+.automation-board-item-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.automation-board-item-action {
+  font-size: 10px;
+  padding: 1px 6px;
+}
+
+.automation-board-item-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 10px;
+  color: var(--ink-3);
+  cursor: pointer;
+}
+
+.automation-board-item-delete {
+  margin-left: auto;
+}
+
+/* ---- supervisor ---- */
+
+.automation-board-supervisor {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  border: 1px solid var(--accent-line);
+  background: var(--accent-soft);
+  padding: 7px 8px;
+  flex: none;
+  max-height: 45%;
+  overflow-y: auto;
+}
+
+.automation-board-supervisor-head {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.automation-board-supervisor-head h3 {
+  margin: 0;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--ink-1);
+}
+
+.automation-board-supervisor-icon svg {
+  width: 13px;
+  height: 13px;
+  display: block;
+  color: var(--accent);
+}
+
+.automation-board-supervisor-state {
+  flex: 1;
+  min-width: 0;
+  font-size: 11px;
+  color: var(--ink-3);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.automation-board-supervisor-body {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  border-top: 1px solid var(--accent-line);
+  padding-top: 6px;
+}
+
+.automation-board-trigger-config {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  border-top: 1px solid var(--accent-line);
+  padding-top: 6px;
+}
+
+.automation-board-trigger-hint,
+.automation-board-trigger-kind {
+  margin: 0;
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--ink-3);
+}
+
+.automation-board-trigger-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  color: var(--ink-2);
+}
+
+.automation-board-trigger-row.is-stacked {
+  flex-direction: column;
+  align-items: stretch;
+}
+
+.automation-board-trigger-row select,
+.automation-board-trigger-row input[type="number"] {
+  border: 1px solid var(--line-strong);
+  background: var(--input-strong-bg);
+  color: var(--ink-1);
+  font: inherit;
+  font-size: 11px;
+  padding: 2px 5px;
+}
+
+/* ---- template strip ---- */
+
+.automation-board-templates {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  border-top: 1px solid var(--line);
+  padding-top: 6px;
+  flex: none;
+}
+
+.automation-board-templates-head {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.automation-board-templates-head h3 {
+  margin: 0;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--ink-3);
+  letter-spacing: 0.02em;
+}
+
+.automation-board-templates-icon svg {
+  width: 12px;
+  height: 12px;
+  display: block;
+  color: var(--ink-4);
+}
+
+.automation-board-templates-empty {
+  margin: 0;
+  font-size: 11px;
+  color: var(--ink-4);
+}
+
+.automation-board-templates-list {
+  display: flex;
+  gap: 5px;
+  margin: 0;
+  padding: 0 0 2px;
+  list-style: none;
+  overflow-x: auto;
+}
+
+.automation-board-template {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  flex: none;
+  max-width: 15rem;
+  padding: 3px 6px;
+  border: 1px solid var(--line-strong);
+  background: var(--panel);
+  font-size: 11px;
+  cursor: grab;
+}
+
+.automation-board-template:active {
+  cursor: grabbing;
+}
+
+.automation-board-template-name {
+  min-width: 0;
+  color: var(--ink-2);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.automation-board-template-model {
+  color: var(--ink-4);
+  font-size: 10px;
+  white-space: nowrap;
+}
+
+/* Narrow panes: stack the three lanes instead of squeezing them. */
+@media (max-width: 900px) {
+  .automation-board-lanes {
+    grid-template-columns: minmax(0, 1fr);
+    overflow-y: auto;
+  }
+
+  .automation-board-lane {
+    min-height: 9rem;
+  }
+}

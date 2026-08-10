@@ -201,3 +201,4 @@ import './archive-recall-mcp.test.ts'
 
 import './automation-board-transitions.test.ts'
 import './automation-board-state.test.ts'
+import './automation-board-auto-trigger.test.ts'

@@ -9,7 +9,7 @@ import type {
   RecentWorkspace,
   SessionHistoryEntry,
 } from '../../shared/schema'
-import { GIT_TOOL_MODEL } from '../../shared/models'
+import { AUTOMATIONBOARD_TOOL_MODEL, GIT_TOOL_MODEL } from '../../shared/models'
 import type { CardRecoveryStatus } from '../stream-recovery-feedback'
 import type { CodexChatSettings } from '../../shared/codex-chat-settings'
 import type { QueuedSendSummary } from './deferred-send-queue'
@@ -44,6 +44,8 @@ type WorkspaceColumnMemoProps = {
 type PaneViewMemoProps = {
   column: BoardColumn
   pane: PaneNode
+  automationBoardActions?: unknown
+  automationBoardWorkspace?: unknown
   providers: Record<string, ProviderStatus>
   language: AppLanguage
   systemPrompt: string
@@ -154,6 +156,49 @@ const haveSameInactivePaneTabChrome = (previous: ChatCard | undefined, next: Cha
     (previous.wakeTimerQueuedSends?.length ?? 0) === (next.wakeTimerQueuedSends?.length ?? 0)
   )
 
+/**
+ * 症状：看板项在流式输出时看板界面纹丝不动，不活跃的看板 tab 也不变橙。
+ * 根因：项卡片与监工卡刻意"存在于 column.cards 但不在任何 pane.tabs 里"
+ *   （见 docs/specs/automation-board/design.md），而 pane 的记忆化只比较
+ *   tabs 里的卡片引用加 column.id —— 项卡片的变化对它完全不可见。
+ * 被否决：退化成整列比较（previous.column === next.column）。同列里任何一张
+ *   无关卡片的 delta 都会重渲染每个 pane，那正是 pitfall 187 的放大路径。
+ *   所以只跟看板**自己声明拥有**的那几张卡建立依赖，逐个比引用。
+ *
+ * 这条检查对活跃与不活跃的看板 tab 都要跑：橙色运行态是从项卡片派生的，
+ * 不活跃的 tab 同样需要在项开跑时重渲染。
+ */
+const haveSameAutomationBoardCardRefs = (
+  previous: BoardColumn,
+  next: BoardColumn,
+  boardCardId: string,
+) => {
+  const owned = new Set<string>()
+
+  for (const source of [previous.cards[boardCardId], next.cards[boardCardId]]) {
+    const board = source?.automationBoard
+    if (!board) {
+      continue
+    }
+
+    for (const item of board.items) {
+      owned.add(item.cardId)
+    }
+
+    if (board.supervisorCardId) {
+      owned.add(board.supervisorCardId)
+    }
+  }
+
+  for (const cardId of owned) {
+    if (previous.cards[cardId] !== next.cards[cardId]) {
+      return false
+    }
+  }
+
+  return true
+}
+
 const haveSamePaneCardRefs = (previous: PaneViewMemoProps, next: PaneViewMemoProps) => {
   if (previous.pane.tabs.length !== next.pane.tabs.length) {
     return false
@@ -171,6 +216,14 @@ const haveSamePaneCardRefs = (previous: PaneViewMemoProps, next: PaneViewMemoPro
       needsFullCard
         ? previousCard !== nextCard
         : !haveSameInactivePaneTabChrome(previousCard, nextCard)
+    ) {
+      return false
+    }
+
+    if (
+      (previousCard?.model === AUTOMATIONBOARD_TOOL_MODEL ||
+        nextCard?.model === AUTOMATIONBOARD_TOOL_MODEL) &&
+      !haveSameAutomationBoardCardRefs(previous.column, next.column, tabId)
     ) {
       return false
     }
@@ -196,6 +249,8 @@ const haveSamePaneCardRefs = (previous: PaneViewMemoProps, next: PaneViewMemoPro
 }
 
 export const arePaneViewPropsEqual = (previous: PaneViewMemoProps, next: PaneViewMemoProps) =>
+  previous.automationBoardWorkspace === next.automationBoardWorkspace &&
+  previous.automationBoardActions === next.automationBoardActions &&
   previous.pane === next.pane &&
   previous.column.id === next.column.id &&
   previous.column.workspacePath === next.column.workspacePath &&

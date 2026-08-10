@@ -12,6 +12,10 @@ import type { AppLanguage } from '../../shared/schema'
 import type { CodexChatSettings } from '../../shared/codex-chat-settings'
 import type { CardRecoveryStatus } from '../stream-recovery-feedback'
 import type { QueuedSendSummary, SendMessageOptions } from './deferred-send-queue'
+import type {
+  AutomationBoardActions,
+  AutomationBoardWorkspaceView,
+} from './automation-board-host'
 import { PaneView } from './PaneView'
 import { SplitResizeHandle } from './SplitResizeHandle'
 
@@ -77,6 +81,8 @@ type LayoutRendererProps = {
   onChangeCardStickyNote: (cardId: string, content: string) => void
   stickyNoteArchivedContent?: string
   stickyNoteArchivedViewState?: StickyNoteViewState
+  automationBoardActions?: AutomationBoardActions
+  automationBoardWorkspace?: AutomationBoardWorkspaceView
   onPatchCard: (
     cardId: string,
     patch: Partial<

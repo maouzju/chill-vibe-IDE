@@ -49,6 +49,7 @@ import {
 } from '../diagnostics/stuck-pane-forensics'
 import type { QueuedSendSummary, SendMessageOptions } from './deferred-send-queue'
 import { arePaneViewPropsEqual, cardKeepsPaneRuntimeWhenInactive } from './layout-memoization'
+import { getAutomationBoard } from '../../shared/default-state'
 import { getAutoReadCardId } from './pane-read-state'
 import { syncMessageListElementToBottom } from './pane-scroll'
 import { ChatCard } from './ChatCard'
@@ -1228,7 +1229,7 @@ const PaneViewView = ({
             // （AGENTS.md pitfall 113）。
             const isStreaming =
               card.status === 'streaming' ||
-              automationBoardHasActiveRun(card.automationBoard, column.cards)
+              automationBoardHasActiveRun(getAutomationBoard(card), column.cards)
             const isBeforeActive = pane.tabs[index + 1] === pane.activeTabId
             const tabClassName = [
               'pane-tab',
@@ -1406,8 +1407,7 @@ const PaneViewView = ({
           // only this component holds the column (and therefore the card record,
           // workspacePath, and the pane a popped-out item should land in).
           const automationBoardProps: AutomationBoardCardProps | undefined =
-            card.model === AUTOMATIONBOARD_TOOL_MODEL &&
-            card.automationBoard &&
+            getAutomationBoard(card) &&
             automationBoardActions &&
             automationBoardWorkspace
               ? {
@@ -1415,12 +1415,12 @@ const PaneViewView = ({
                   columnId: column.id,
                   workspacePath: column.workspacePath,
                   language,
-                  board: card.automationBoard,
+                  board: getAutomationBoard(card)!,
                   cards: column.cards,
                   templates: automationBoardWorkspace.templates,
                   autoTrigger: automationBoardWorkspace.autoTrigger,
-                  supervisorCard: card.automationBoard.supervisorCardId
-                    ? column.cards[card.automationBoard.supervisorCardId]
+                  supervisorCard: getAutomationBoard(card)!.supervisorCardId
+                    ? column.cards[getAutomationBoard(card)!.supervisorCardId]
                     : undefined,
                   wakeTimerEnabled: wakeTimerEnabled === true,
                   repeatLoopEnabled: repeatLoopEnabled === true,

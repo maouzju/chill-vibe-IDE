@@ -6,6 +6,7 @@ import {
   createCard,
   createDefaultSettings,
   collectAutomationBoardOwnedCardIds,
+  getAutomationBoard,
   resolveRecoveredColumnLayout,
 } from '../shared/default-state.ts'
 import { AUTOMATIONBOARD_TOOL_MODEL, DEFAULT_CODEX_MODEL } from '../shared/models.ts'
@@ -695,6 +696,114 @@ describe('automation board workspace state', () => {
     assert.equal(next.automationBoards['D:/repo/one'], undefined)
     assert.deepEqual(Object.keys(next.automationBoards), ['D:/repo/two'])
     assert.equal(next.automationBoards['D:/repo/two']?.autoTrigger.enabled, true)
+  })
+})
+
+describe('turning an existing card into a board', () => {
+  // 空态工具栅格与模型选择器都只是"改这张卡的 model"，不会新建卡片。若切换
+  // 到看板模型时不顺手建出 automationBoard，卡片会变成一张什么都不渲染的空壳。
+  it('seeds the board blob when a chat card switches to the board model', () => {
+    const state = buildState({
+      cards: { 'chat-1': itemCard('chat-1') },
+      layout: pane('pane-1', ['chat-1']),
+    })
+
+    const next = ideReducer(state, {
+      type: 'selectCardModel',
+      columnId: 'column-1',
+      cardId: 'chat-1',
+      provider: 'codex',
+      model: AUTOMATIONBOARD_TOOL_MODEL,
+    })
+
+    assert.deepEqual(next.columns[0]!.cards['chat-1']?.automationBoard, {
+      items: [],
+      supervisorCardId: '',
+      supervisorExpanded: false,
+    })
+  })
+
+  it('keeps an existing board intact when the model is re-selected', () => {
+    const state = buildState()
+    const before = getBoard(state)
+
+    const next = ideReducer(state, {
+      type: 'selectCardModel',
+      columnId: 'column-1',
+      cardId: 'board-1',
+      provider: 'codex',
+      model: AUTOMATIONBOARD_TOOL_MODEL,
+    })
+
+    assert.deepEqual(next.columns[0]!.cards['board-1']?.automationBoard?.items, before.items)
+  })
+
+  // 切走时保留 blob 是刻意的：一次误点必须可逆。真正的把关在读取侧 ——
+  // `getAutomationBoard` 只在卡片确实是看板时才认这个 blob。
+  it('keeps the blob when switching away so switching back restores the board', () => {
+    const state = buildState()
+
+    const away = ideReducer(state, {
+      type: 'selectCardModel',
+      columnId: 'column-1',
+      cardId: 'board-1',
+      provider: 'codex',
+      model: DEFAULT_CODEX_MODEL,
+    })
+
+    assert.ok(away.columns[0]!.cards['board-1']?.automationBoard)
+    // 但此刻它不再作数。
+    assert.equal(getAutomationBoard(away.columns[0]!.cards['board-1']), undefined)
+    assert.deepEqual([...collectAutomationBoardOwnedCardIds(away.columns[0]!.cards)], [])
+
+    const back = ideReducer(away, {
+      type: 'selectCardModel',
+      columnId: 'column-1',
+      cardId: 'board-1',
+      provider: 'codex',
+      model: AUTOMATIONBOARD_TOOL_MODEL,
+    })
+
+    assert.deepEqual(
+      getAutomationBoard(back.columns[0]!.cards['board-1'])?.items.map((item) => item.cardId),
+      ['item-a', 'item-b'],
+    )
+  })
+
+  // 切走之后那些项卡片成为真正的孤儿；下次加载必须把它们恢复成 tab，
+  // 否则用户既看不见也删不掉。
+  it('lets orphaned items be recovered as tabs once the board is no longer a board', () => {
+    const away = ideReducer(buildState(), {
+      type: 'selectCardModel',
+      columnId: 'column-1',
+      cardId: 'board-1',
+      provider: 'codex',
+      model: DEFAULT_CODEX_MODEL,
+    })
+
+    const recovered = resolveRecoveredColumnLayout(
+      pane('pane-1', []),
+      away.columns[0]!.cards,
+    ) as PaneNode
+
+    assert.deepEqual(recovered.tabs.sort(), ['board-1', 'chat-1', 'item-a', 'item-b'])
+  })
+
+  it('does not put a board blob on an ordinary chat card', () => {
+    const state = buildState({
+      cards: { 'chat-1': itemCard('chat-1') },
+      layout: pane('pane-1', ['chat-1']),
+    })
+
+    const next = ideReducer(state, {
+      type: 'selectCardModel',
+      columnId: 'column-1',
+      cardId: 'chat-1',
+      provider: 'claude',
+      model: 'claude-opus-5',
+    })
+
+    assert.equal(next.columns[0]!.cards['chat-1']?.automationBoard, undefined)
   })
 })
 

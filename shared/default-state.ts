@@ -1282,6 +1282,19 @@ export const automationBoardLaneOrder: readonly AutomationBoardLane[] = [
 ]
 
 /**
+ * 一个 `automationBoard` blob **只在卡片确实是看板时才作数**。
+ *
+ * 症状（要防的）：把看板卡切成普通聊天模型后，它的项卡片继续被"拥有"，于是
+ *   既不出现在看板里（卡片已经不是看板了）也永远不会被恢复成 tab —— 变成
+ *   看不见也删不掉的孤儿。
+ * 被否决：切走时直接删掉 blob。那样切回来就什么都没了，一次误点不可逆。
+ * 现在的做法：blob 保留（可逆），但读取一律经这个出口；切走之后那些卡片成为
+ *   真正的孤儿，下次加载由 `resolveRecoveredColumnLayout` 恢复成 tab。
+ */
+export const getAutomationBoard = (card: ChatCard | undefined) =>
+  card?.model === AUTOMATIONBOARD_TOOL_MODEL ? card.automationBoard : undefined
+
+/**
  * Every card id that an automation board in this column claims — board items
  * plus the supervisor. These cards live in `column.cards` on purpose but must
  * never be treated as pane tabs.
@@ -1292,7 +1305,7 @@ export const collectAutomationBoardOwnedCardIds = (
   const owned = new Set<string>()
 
   for (const card of Object.values(cards)) {
-    const board = card.automationBoard
+    const board = getAutomationBoard(card)
     if (!board) {
       continue
     }

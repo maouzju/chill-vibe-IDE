@@ -10,6 +10,7 @@ import type {
   SessionHistoryEntry,
 } from '../../shared/schema'
 import { AUTOMATIONBOARD_TOOL_MODEL, GIT_TOOL_MODEL } from '../../shared/models'
+import { getAutomationBoard } from '../../shared/default-state'
 import type { CardRecoveryStatus } from '../stream-recovery-feedback'
 import type { CodexChatSettings } from '../../shared/codex-chat-settings'
 import type { QueuedSendSummary } from './deferred-send-queue'
@@ -176,7 +177,7 @@ const haveSameAutomationBoardCardRefs = (
   const owned = new Set<string>()
 
   for (const source of [previous.cards[boardCardId], next.cards[boardCardId]]) {
-    const board = source?.automationBoard
+    const board = getAutomationBoard(source)
     if (!board) {
       continue
     }

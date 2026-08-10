@@ -1,0 +1,431 @@
+# 自动化看板 — Design
+
+## 核心洞察：看板项就是一张普通 ChatCard，只是没进 pane.tabs
+
+本仓库的数据模型已经天然支持这件事，不需要为看板另造一套会话运行时：
+
+- `BoardColumn.cards` 是 `Record<cardId, ChatCard>` —— 卡片的**唯一注册表**。
+- `BoardColumn.layout` 是 pane 树，pane 只持有 `tabs: string[]`，即**卡片 id 的引用**。
+
+也就是说，"这张卡是不是一个 tab"完全由 layout 里有没有它的 id 决定，与卡片本身无关。已实证的三条支撑：
+
+| 事实 | 位置 | 意义 |
+|---|---|---|
+| `normalizePaneNode` 只剔除"tabs 里指向不存在卡片"的项，**从不因为卡片不在 tabs 里而删卡片** | `shared/default-state.ts:985` | 离层卡片能安全持久化 |
+| `getOrderedColumnCards` 只被 `tests/playwright-state.ts` 使用 | 全仓搜索 | 它那句"把不在 layout 里的卡片也算进 tab 序"不会污染真实 UI |
+| `attachStreamsForState` 遍历 `getOrderedColumnCards(column)` 重连流 | `src/App.tsx:4468` | **重启后看板项的流自动重连**，一行不用改 |
+
+于是"拖出成 tab / 拖入成看板项"退化为**只改 `pane.tabs` 数组与看板的 lane 列表**，卡片对象一个字节都不动 —— 会话、`sessionId`、`streamId`、正在飞的流、消息全部原样保留。这就是 FR4 要求的"无缝"，不是靠迁移实现的，是靠不迁移实现的。
+
+> 已知边界（必须防）：`server/state-store.ts:1606-1609` 在"归一化后 layout 是空 pane 但 cards 非空"时会强行 `createPane(Object.keys(cards))`，把**所有**卡片塞进一个 pane。看板项会因此在极端情况下泄漏成 tab。设计上要求：看板卡片自身永远在 layout 里，因此该分支不可达；但仍在 `normalizePersistedColumn` 处补一道"排除被任一看板 items 引用的 cardId"的过滤，作为兜底。
+
+## 数据模型
+
+### 卡片类型标识
+
+`shared/models.ts` 新增，与现有 9 个工具卡完全同构：
+
+```ts
+export const AUTOMATIONBOARD_TOOL_MODEL = '__automationboard_tool__'
+```
+
+加入 `MODEL_OPTIONS`（label `Automation`, provider `codex`, aliases `board/kanban/automation/自动化`）与 `MODEL_PICKER_HIDDEN_TOOL_MODELS`。
+
+### 看板卡片自身携带的 blob（`shared/schema.ts`）
+
+```ts
+export const automationBoardLanes = ['standby', 'running', 'done'] as const
+export const automationBoardLaneSchema = z.enum(automationBoardLanes)
+
+export const automationBoardItemSchema = z.object({
+  cardId: z.string().min(1),
+  lane: automationBoardLaneSchema,
+  // 原始需求原文。冗余存一份是刻意的：监工要"检查每个原始需求"，
+  // 而 card.messages[0] 会被 /compact、消息裁剪、sidecar 归档拿走。
+  requirement: z.string().default(''),
+  createdAt: z.string().datetime().optional(),
+  // 进入 running 道的时刻，供监工判断"超过半小时没下文"。
+  startedAt: z.string().datetime().optional(),
+  completedAt: z.string().datetime().optional(),
+})
+
+export const automationBoardSchema = z.object({
+  // 泳道内顺序 = 本数组内的相对顺序（按 lane 过滤后保序）。
+  items: z.array(automationBoardItemSchema).default([]),
+  supervisorCardId: z.string().default(''),
+  supervisorExpanded: z.boolean().default(false),
+})
+```
+
+`chatCardSchema` 增加 `automationBoard: automationBoardSchema.optional()`（optional 而非 default：绝大多数卡片不是看板，避免给每张卡都加一个空对象膨胀存档）。
+
+### 按工作区持久化的模板与自动触发（`AppState` 级）
+
+模板与自动触发配置的生命周期必须**长于看板卡片**（FR6/FR7 明确要求删掉 tab 不丢）。因此放 `AppState`，键为 `workspacePath`，与既有 `stickyNoteArchive: z.record(z.string(), …)` 同构：
+
+```ts
+export const automationBoardTemplateSchema = z.object({
+  id: z.string().min(1),
+  name: z.string().default(''),
+  requirement: z.string().default(''),
+  provider: providerSchema.default('codex'),
+  model: z.string().default(''),
+  reasoningEffort: z.string().default('max'),
+  thinkingEnabled: z.boolean().default(true),
+  planMode: z.boolean().default(false),
+  wakeTimerActive: z.boolean().default(false),
+  wakeTimerMode: wakeTimerModeSchema.optional(),
+  wakeTimerDurationMinutes: z.number().finite().optional(),
+  repeatLoopActive: z.boolean().default(false),
+  repeatLoopRemaining: z.number().int().min(0).optional(),
+  createdAt: z.string().datetime().optional(),
+})
+
+export const automationBoardTriggerKinds = ['last-item-settled'] as const
+export const automationBoardTriggerKindSchema = z.enum(automationBoardTriggerKinds)
+
+export const automationBoardAutoTriggerSchema = z.object({
+  enabled: z.boolean().default(false),
+  kind: automationBoardTriggerKindSchema.default('last-item-settled'),
+  provider: providerSchema.default('claude'),
+  model: z.string().default(''),
+  reasoningEffort: z.string().default('max'),
+  requirement: z.string().default(defaultAutomationBoardSupervisorRequirement),
+  // 两次触发之间的最小间隔，防抖。
+  minIntervalMinutes: z.number().finite().min(0).max(24 * 60).default(1),
+})
+
+export const automationBoardWorkspaceStateSchema = z.object({
+  templates: z.array(automationBoardTemplateSchema).default([]),
+  autoTrigger: automationBoardAutoTriggerSchema.default({ /* … */ }),
+})
+```
+
+`appStateSchema` 增加 `automationBoards: z.record(z.string(), automationBoardWorkspaceStateSchema).default({})`。
+
+默认监工需求文本常量放 `shared/schema.ts`（server 与 client 共用）：
+
+```ts
+export const defaultAutomationBoardSupervisorRequirement =
+  '检查当前看板每个原始需求，以及 agent 结尾交付情况，自行决定是否进行鞭策还是将其移动到已完成列。' +
+  '如果是 agent 正在等子任务，就过段时间再看看情况，如果他超过半小时没下文，就训斥一下他让他接着做。'
+```
+
+### 归一化（pitfall 5 / 6 必答项）
+
+| 位置 | 要做的事 |
+|---|---|
+| `shared/default-state.ts` `createDefaultState` | `automationBoards: {}` |
+| `shared/default-state.ts` `createCard` | **不**默认写 `automationBoard`（保持 undefined） |
+| 新增 `createAutomationBoardCard(...)` | 建看板卡：`model = AUTOMATIONBOARD_TOOL_MODEL`，`automationBoard = { items: [], supervisorCardId: '', supervisorExpanded: false }` |
+| 新增 `createDefaultAutomationBoardWorkspaceState()` | 模板空数组 + 默认 autoTrigger |
+| `server/state-store.ts` `normalizePersistedCard` | 保留/修补 `automationBoard`；剔除 items 里 `cardId` 已不在 `column.cards` 的孤儿项 |
+| `server/state-store.ts` `normalizePersistedColumn` | 计算本列所有看板引用的 cardId 集合，传给 layout 兜底分支排除（见上文边界） |
+| `server/state-store.ts` state 顶层归一化 | `automationBoards` 缺失→`{}`；每个 entry 走 schema 的 default |
+
+## 状态迁移的唯一决策出口（纯函数）
+
+pitfall 246 的教训：停流与队列处置必须成对且集中；pitfall 248 的教训：编排必须是可断言返回值的纯函数，不是源码文本。因此所有"搬运一张卡"的副作用由**一个**纯函数决定，新文件 `src/components/automation-board-transitions.ts`：
+
+```ts
+export type AutomationBoardLocation =
+  | { kind: 'lane'; lane: AutomationBoardLane }
+  | { kind: 'tab' }
+
+export type AutomationBoardTransitionEffects = {
+  /** 请求中断当前运行（等价用户点停止）。 */
+  interrupt: boolean
+  /** 中断后如何处置排队消息。 */
+  queue: 'keep' | 'clear'
+  /** 搬运后要不要发起一次发送，以及发什么。 */
+  send: 'none' | 'requirement' | 'continue'
+  /** 是否记录 startedAt / completedAt。 */
+  stamp: 'none' | 'started' | 'completed'
+}
+
+export const resolveAutomationBoardTransition = ({
+  from,
+  to,
+  isStreaming,
+  hasHistory,
+}: {
+  from: AutomationBoardLocation
+  to: AutomationBoardLocation
+  isStreaming: boolean
+  hasHistory: boolean
+}): AutomationBoardTransitionEffects => { … }
+```
+
+判定表（这就是被测的契约）：
+
+| from | to | interrupt | queue | send | stamp |
+|---|---|---|---|---|---|
+| 任意 | `tab` | false | keep | none | none |
+| `tab` / 其他道 | `standby` | `isStreaming` | keep | none | none |
+| `tab` / 其他道 | `running` | false | keep | `isStreaming ? 'none' : hasHistory ? 'continue' : 'requirement'` | started |
+| `tab` / 其他道 | `done` | `isStreaming` | keep | none | completed |
+| `lane X` | `lane X`（重排） | false | keep | none | none |
+
+要点：
+
+- **出到 tab 永远是零副作用** —— 这正是"无缝"的定义。
+- 已在跑的卡拖进 `running` 不重发（幂等），只是换个位置。
+- `queue` 恒为 `keep`：看板搬运不跨工作区，排队消息的语境仍然有效（对比 `moveTab` 跨列时必须 `clear`）。留这个字段是为了让"以后真要清"时有唯一落点，而不是散在调用点。
+
+## Reducer 变更（`src/state.ts`）
+
+所有搬运遵循 pitfall 237 的范式：**前置一次性校验两端，任一端失效就原样返回**；同列跨容器"先插入目标、再摘除源、最后统一 `normalizeLayoutNode`"。
+
+新增 `IdeAction` 变体：
+
+```
+createAutomationBoardItem   { columnId, boardCardId, lane, requirement, provider, model, reasoningEffort, thinkingEnabled, planMode, wake/repeat?, cardId? }
+setAutomationBoardItemLane  { columnId, boardCardId, cardId, lane, index }
+removeAutomationBoardItem   { columnId, boardCardId, cardId, deleteCard }
+stampAutomationBoardItem    { columnId, boardCardId, cardId, patch: { startedAt?, completedAt? } }
+moveAutomationBoardItemToPane { columnId, boardCardId, cardId, paneId, index? }
+moveTabToAutomationBoard      { columnId, paneId, tabId, boardCardId, lane, index? }
+ensureAutomationBoardSupervisor { columnId, boardCardId, provider, model, reasoningEffort }
+saveAutomationBoardTemplate     { workspacePath, template }
+removeAutomationBoardTemplate   { workspacePath, templateId }
+renameAutomationBoardTemplate   { workspacePath, templateId, name }
+updateAutomationBoardAutoTrigger { workspacePath, patch }
+```
+
+`moveAutomationBoardItemToPane` 与 `moveTabToAutomationBoard` 是两个**原子**动作：
+
+- 前者：校验 `board.items` 含该 cardId **且** 目标 paneId 在本列 layout 中存在；然后一次 `updateColumn` 内同时写 `cards[boardCardId].automationBoard.items`（移除项）与 `layout`（插入 tab）。
+- 后者：校验源 pane 含该 tabId **且** 目标看板卡片存在且是看板类型；然后一次 `updateColumn` 内同时写 layout（摘除 tab，随后 `normalizeLayoutNode` 统一折叠）与 items（追加项，`requirement` 取卡片首条 user 消息或 draft）。
+
+两者都**不产生 `sessionHistory` 归档**（对比 `closeTab`）—— 卡片没有被关闭，只是换了展现容器。
+
+## 运行编排（`src/App.tsx`）
+
+新增一个薄编排层，所有实际动作都走既有 handler，不另开捷径：
+
+```ts
+const applyAutomationBoardTransition = async (
+  columnId: string,
+  boardCardId: string,
+  cardId: string,
+  from: AutomationBoardLocation,
+  to: AutomationBoardLocation,
+  laneIndex?: number,
+) => {
+  const card = getColumn(columnId)?.cards[cardId]
+  const effects = resolveAutomationBoardTransition({
+    from, to,
+    isStreaming: card?.status === 'streaming',
+    hasHistory: hasAutomationBoardHistory(card),
+  })
+  // 1) 结构先落地（原子 reducer 动作）
+  // 2) effects.interrupt → requestStopForCard(cardId, 'automation-board')
+  // 3) effects.send === 'requirement' → sendMessageRef.current?.(columnId, cardId, requirement, [])
+  //    effects.send === 'continue'    → sendMessageRef.current?.(columnId, cardId, '', [])
+  // 4) effects.stamp → stampAutomationBoardItem
+}
+```
+
+`send` 走 `sendMessageRef.current`（`src/App.tsx:5484` 赋值），与手机监工写命令、唤醒发车、循环重复用的是**同一个入口**。空续传由既有 `canSendEmptyContinuation` 门控（`src/app-helpers.ts`），已被 pitfall 169 钉住三道门都放行。
+
+### 看板 tab 的橙色运行态（FR8）
+
+纯派生，不写 `status`：
+
+```ts
+// src/components/automation-board-state.ts
+export const automationBoardHasActiveRun = (
+  board: AutomationBoard | undefined,
+  cards: Record<string, ChatCard>,
+) => …  // 任一 running 道项或监工卡 status === 'streaming' 或 backgroundWorkPending
+```
+
+`PaneView` 的 `const isStreaming = card.status === 'streaming'`（`src/components/PaneView.tsx:1149`）改为
+`card.status === 'streaming' || automationBoardHasActiveRun(card.automationBoard, column.cards)`。
+
+这样 `is-streaming` class 复用现有橙色样式，且完全避开 pitfall 113（磁盘上不会留假 streaming 卡）。
+
+### 自动触发判定（纯函数）
+
+```ts
+// src/components/automation-board-auto-trigger.ts
+export const resolveAutomationBoardAutoTriggerDecision = ({
+  config, settledCardId, board, cardStatuses, lastFiredAtMs, nowMs,
+}): { fire: boolean; reason: 'disabled' | 'not-board-item' | 'still-running'
+      | 'supervisor-busy' | 'throttled' | 'ready' } => …
+```
+
+规则：
+
+1. `config.enabled === false` → `disabled`
+2. `settledCardId` 不是本看板 `running` 道的项 → `not-board-item`（**监工自己结束不算**，因为监工不在 items 里）
+3. 还有别的 running 道项在跑或 `backgroundWorkPending` → `still-running`
+4. 监工卡 `status === 'streaming'` → `supervisor-busy`（防递归）
+5. `nowMs - lastFiredAtMs < minIntervalMinutes * 60_000` → `throttled`
+6. 否则 `ready`
+
+挂载点：复用既有"卡片稳定完成"广播（wake timer 已用的同一处，`src/App.tsx:2898` 附近的 `wakeTimerCompletionTimersRef` 稳定窗口）。这样"AI 真的结束了"这个判断与唤醒链共用同一个已经调好的判据（`shouldConfirmWakeTimerCompletion`，含 `backgroundWorkPending`），不重造。
+
+触发动作：`ensureAutomationBoardSupervisor` → 若监工卡不存在则建（provider/model 取 config），然后 `sendMessageRef.current?.(columnId, supervisorCardId, config.requirement, [])`。`lastFiredAt` 存进程内 ref（不入盘：重启后允许再触发一次是可接受且更安全的行为）。
+
+## 计划唤醒 / 循环重复（FR5）
+
+**零逻辑改动。** `wake-timer.ts` 的 `armWakeTimerBatch` 已经接受一个抽象的有序 id 列表参数 `paneTabIds` 并用 `indexOf(ownerCardId) - 1` 取"左邻"。看板语境只是换传参：
+
+- 普通 tab：`paneTabIds = pane.tabs`
+- 看板项：`paneTabIds = 该项所在泳道的有序 cardId 列表`
+
+于是"左侧 tab" 自动变成"上方需求"，判定函数一个字符不改。变的只有两处**表现**：
+
+1. i18n 文案：新增 `wakeTimerModeAboveItemLabel`（"上方需求"）等，看板语境下渲染这一套而不是"左侧 tab"那一套。
+2. CSS：普通卡把唤醒状态条放在 composer 左侧（`.composer-wake-timer-status`，`src/components/ChatCard.tsx:949`）；看板项卡用 `.automation-board-item-wake`，`flex-direction: column` 放在项卡片顶部。
+
+`repeatLoopActive` / `repeatLoopRemaining` 同理为零改动 —— `resolveRepeatLoopCompletion` 只看卡片字段，且它的 `MODEL_PICKER_HIDDEN_TOOL_MODELS.has(card.model)` 守卫对看板**项**卡片（真实模型）放行、对看板**容器**卡片（工具模型）拦住，语义刚好正确。
+
+## 拖放（FR4）
+
+`src/dnd.ts` 的 `DragPayload` 联合新增两个成员，并在 `readDragPayload` 加对应的运行时校验分支（与现有三个成员同构）：
+
+```ts
+| { type: 'automation-board-item'; columnId: string; boardCardId: string; cardId: string; lane: AutomationBoardLane }
+| { type: 'automation-board-template'; workspacePath: string; templateId: string }
+```
+
+落点矩阵（沿用既有 `is-drop-*` 提示类与 `scheduleDragHintExpiry` 看门狗，watchdog 超时**只清视觉提示**，payload 交给 `releaseDragPayloadIfStale` —— pitfall 196）：
+
+| 目标元素 | 接受的 payload | 动作 |
+|---|---|---|
+| `.pane-tab-bar` / `.pane-tab` | 追加 `automation-board-item`（同列） | `moveAutomationBoardItemToPane` |
+| `.pane-content`（边缘） | 追加 `automation-board-item`（同列） | 先 split 再 `moveAutomationBoardItemToPane` |
+| `.automation-board-lane` | `tab`（同列）/ `automation-board-item` / `automation-board-template` | 按 `resolveAutomationBoardTransition` |
+
+跨列一律拒绝（不 `preventDefault`，因此不出落点提示也不能 drop），理由见 requirements FR4。
+
+拖拽源：项卡片头部整体 `draggable`。**禁止**在其 mousedown 上 `preventDefault`（pitfall 176/454：那会让 `dragstart` 永不触发）；需要防抢焦点时走显式焦点转移。
+
+## 紧凑渲染（FR3 / NFR1）
+
+新文件 `src/components/AutomationBoardCard.tsx` + `src/components/automation-board-item-window.ts`。
+
+- 每个项卡片只渲染 `renderableMessages` 的**末 N 条**（默认 6）。裁剪发生在 `buildRenderableMessages` 之后、markdown 渲染之前，因此不会对全量 messages 跑解析。
+- 复用现有渲染件：`MessageBubble`（`src/components/MessageBubble.tsx`）与 `chat-card-rendering.tsx` 的 markdown 链（含 `closeUnclosedMarkdownSpans`、`stripLeakedClaudeToolXml`、本地图片链 —— pitfall 138/139/177/178 全部随之生效，不能绕过自己写渲染)。
+- 状态指示只用**静态边框**。任何呼吸动画若要加，必须限定在 `.pane-tab-panel.is-active:not([hidden])` 前缀下并登记进 `tests/idle-animation-budget.test.ts` 的 allowlist（pitfall 218）。v1 直接不加动画。
+
+DOM 骨架：
+
+```
+.automation-board                      (card body, flex column)
+  .automation-board-lanes              (flex row, 3 列, 各自可纵向滚动)
+    .automation-board-lane[data-lane]
+      .automation-board-lane-head      (标题 + 计数)
+      .automation-board-lane-body      (drop target)
+        .automation-board-item         (状态边框在这里, 复用 chat card 三态 token)
+      .automation-board-lane-compose   (仅 standby 道: 输入新需求)
+  .automation-board-supervisor         (可折叠的监工紧凑聊天 + 配置入口)
+  .automation-board-templates          (底部模板条, 每项 draggable)
+```
+
+## 看板 MCP（FR7）
+
+### 为什么不能照抄 archive-recall
+
+`server/archive-recall.ts` 把快照**写成一个静态 JSON 文件**，路径经 env 传给 MCP 子进程（`server/archive-recall-mcp.js:303` `loadSnapshotFromEnv`）。监工需要的是**实时读 + 写回**，静态文件两头都不满足。
+
+### 采用的桥接：loopback HTTP + 命令转发
+
+完全照 `server/remote-monitor.ts` 已验证的形状：一个只绑 `127.0.0.1` 的 `http.Server`（端口 0 随机 + bearer token），**自身不改任何 state**，写操作一律 `dispatchCommand` 转发给渲染进程复用电脑端 handler（remote-monitor 文件头注释里明确定下的规矩）。
+
+新文件：
+
+| 文件 | 职责 |
+|---|---|
+| `server/automation-board-bridge.ts` | loopback HTTP 服务 + deps 接口；`startAutomationBoardBridge(deps)` → `{ url, token, close }` |
+| `server/automation-board-mcp.js` | stdio JSON-RPC MCP 服务器（协议帧照抄 `archive-recall-mcp.js` 的 `Content-Length` 实现），所有工具经 `fetch` 打到 bridge |
+| `server/automation-board-runtime.ts` | 为监工回合生成 provider runtime overrides（codex `-c mcp_servers.*` / claude `--mcp-config`）+ 系统提示补充 |
+
+`AutomationBoardBridgeDeps`：
+
+```ts
+export type AutomationBoardBridgeDeps = {
+  /** 实时看板镜像（由渲染进程推送，见下）。 */
+  readBoardMirror: (boardCardId: string) => AutomationBoardMirror | null
+  /** 单个项的最近转录，走 transfer 压缩后返回有界条数。 */
+  readItemTranscript: (cardId: string, limit: number) => Promise<AutomationBoardTranscriptEntry[] | null>
+  /** 转发写命令给渲染进程；false = 当前没有可接收的窗口（HTTP 503）。 */
+  dispatchCommand: (command: AutomationBoardCommand) => boolean
+}
+```
+
+### 实时镜像：渲染进程推，主进程存
+
+`loadStateForRenderer()` 读盘的快照在流式期间会被节流（pitfall 54/114），对监工来说太旧。因此渲染进程主动推一份**极小、有界**的镜像到主进程：
+
+```ts
+export type AutomationBoardMirrorItem = {
+  cardId: string
+  lane: AutomationBoardLane
+  requirement: string        // 截断至 2000 字符
+  title: string
+  provider: string
+  model: string
+  status: string
+  backgroundWorkPending: boolean
+  wakeTimerActive: boolean
+  wakeTimerWakeAt?: string
+  repeatLoopActive: boolean
+  startedAt?: string
+  completedAt?: string
+  lastActivityAt?: string    // 最后一条消息的 createdAt —— "超过半小时没下文"的判据
+  lastMessagePreview: string // 截断至 400 字符
+  messageCount: number
+}
+```
+
+推送时机：看板 items 变化、任一项 status 变化，节流 500ms。载荷是几 KB 级，不触碰 pitfall 1B/183 的"全量转录跨 IPC"红线。
+
+### MCP 工具集
+
+只暴露看板域，不给任意文件/命令权限（NFR5）：
+
+| 工具 | 读/写 | 说明 |
+|---|---|---|
+| `list_board_items` | 读 | 全部项：lane、原始需求、状态、`startedAt`、`lastActivityAt`、最后消息预览 |
+| `read_board_item` | 读 | 单项最近 N 条转录（默认 20，上限 60），经 transfer 压缩 |
+| `move_board_item` | 写 | `{ cardId, lane }` → `setAutomationBoardItemLane`（走 App 编排，因此中断/执行语义自动正确） |
+| `send_board_item_message` | 写 | `{ cardId, message }` → `sendMessage`（这就是"鞭策"） |
+| `set_board_item_wake_timer` | 写 | `{ cardId, mode, durationMinutes }` → 复用卡片唤醒 handler（"过段时间再看看情况"） |
+
+写工具返回的是"命令已投递"，不是"已生效"——与 remote-monitor 同语义。监工要确认结果就再 `list_board_items` 一次。
+
+### 接入 provider 启动
+
+- **Codex**：照 `server/archive-recall.ts:69-88`，`-c mcp_servers.chill_vibe_board.command=…` + `.args=…` + `.env.*=…`（env 里带 `CHILL_VIBE_BOARD_MCP_URL` / `_TOKEN` / `_BOARD_ID`；Electron 下同样要带 `ELECTRON_RUN_AS_NODE=1`）。
+- **Claude**：`buildClaudeArgs`（`server/providers.ts:3880`）追加 `--mcp-config <json>` + `--strict-mcp-config`。`permissionMode` 已是 `bypassPermissions`，MCP 工具无需额外 allowlist。
+- 仅当 `request` 标记为"这是看板监工回合"时注入。新增请求字段 `automationBoardSupervisor?: { boardCardId: string }`（`chatRequestSchema`），由渲染端在监工发送时带上。
+- 系统提示追加一段说明（照 `getCodexArchiveRecallInstruction` 的形状），告诉模型这些工具存在、以及"鞭策"的含义。
+
+## 测试策略
+
+按 AGENTS.md Tier 1 与 pitfall 248：**测纯函数与 reducer 的真实返回值，不测源码文本**。
+
+| 新测试文件 | 覆盖 |
+|---|---|
+| `tests/automation-board-transitions.test.ts` | 上面那张判定表逐格；重点钉死"出到 tab 零副作用"与"已在跑拖进 running 不重发" |
+| `tests/automation-board-state.test.ts` | reducer：原子搬运（两端任一失效则整体不变）、lane 重排保序、孤儿项剔除、`automationBoardHasActiveRun` 派生 |
+| `tests/automation-board-auto-trigger.test.ts` | 六条判定规则，特别是"监工自己结束不触发"与防递归 |
+| `tests/automation-board-mcp.test.ts` | MCP 工具的纯逻辑（参数校验、快照→文本渲染、写工具生成的 command 形状） |
+
+全部注册进 `tests/index.test.ts`（pitfall 3）。
+
+Playwright 在本机当前不可靠（pitfall 25/34/252），因此 UI 验证走真实 Electron 手动驱动 + Node 单测覆盖判定逻辑；`tests/theme-check.spec.ts` 的快照在 Playwright 恢复后补。
+
+## 风险与对策
+
+| 风险 | 对策 |
+|---|---|
+| 看板项卡片泄漏成 tab（state-store 空 layout 兜底分支） | `normalizePersistedColumn` 排除被 items 引用的 cardId |
+| 拖出后流断 | 结构变更不触碰卡片对象；`resolveAutomationBoardTransition` 对 `to.kind === 'tab'` 恒返回零副作用，并被测试钉死 |
+| 10+ 并发项把渲染压死 | 项卡片零无界动画、有界消息条数、状态派生用 memo；复用既有 delta flush 自适应退让（pitfall 189） |
+| 监工递归自触发 | 判定规则 2 与 4；`lastFiredAt` 节流 |
+| MCP 子进程拿到过宽权限 | 只暴露看板域工具；bridge 只绑 loopback + token；写操作转发给渲染进程 |
+| 旧存档加载失败 | 所有新字段 optional/default，`automationBoards` 顶层 default `{}`；normalizePersistedCard 修补而非拒绝 |

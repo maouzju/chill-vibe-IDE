@@ -27,6 +27,7 @@ import {
   isClaudeSidechainLine,
   isClaudeTurnStartLine,
   launchProviderRun,
+  tryInterruptProviderTurn,
 } from './providers.js'
 
 type StreamName = keyof StreamEventMap
@@ -431,10 +432,20 @@ export class ChatManager {
     }
 
     stream.stopRequested = true
-    if (stream.stopHook) {
-      stream.stopHook()
-    } else {
-      stream.child?.kill()
+    // 症状：点停止会连整个 Claude CLI 进程一起杀掉，会话作废、进程内正在跑的
+    //   Workflow 子 agent 全部陪葬，下一轮只能冷启动（Known Pitfall 118 的
+    //   「打断后清 sessionId」正是为绕开被 kill 弄脏的原生会话）。
+    // 根因：停止一直只有 OS 信号一条路，CLI 的 stream-json 控制通道从未接过。
+    //   2026-08-09 实测：发 control_request/interrupt 后 1-2ms 回 success，
+    //   进程存活、session_id 不变、上下文完整，可以立刻接下一轮。
+    // 为什么不能只软中断：控制通道依赖 keepalive 的常驻 stdin，写不进去时必须
+    //   如实退回硬 kill —— 停止按钮失灵比退化回 kill 严重得多。
+    if (!tryInterruptProviderTurn(stream.child)) {
+      if (stream.stopHook) {
+        stream.stopHook()
+      } else {
+        stream.child?.kill()
+      }
     }
 
     // 症状：turn 已 onDone、收尾 workspace diff 还挂在 await 上时用户点停止，
@@ -483,7 +494,14 @@ export class ChatManager {
       backlog: [],
       listeners: new Set(),
       subscribers: new Set(),
-      stopHook: () => this.claudePool?.releaseEntry(entry.key, entry.child),
+      // CLI 自己醒来的这一轮同样先试软中断：这里手里就有正确的 key + child，
+      // 中断只会落在这一轮上。软中断不成立才回落到 kill 掉池内进程。
+      stopHook: () => {
+        if (this.claudePool?.interruptTurn(entry.key, entry.child)) {
+          return
+        }
+        this.claudePool?.releaseEntry(entry.key, entry.child)
+      },
       latestSessionId: normalizeSessionId(entry.sessionId),
       terminal: false,
       stopRequested: false,

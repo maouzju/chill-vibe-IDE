@@ -565,17 +565,42 @@ const formatCodexStaleSessionRecoveryNotice = (language: AppLanguage) =>
     ? 'The resumed Codex session could not be loaded from its rollout file. Chill Vibe started a new session automatically so your latest prompt and attachments are not lost.'
     : '恢复的 Codex 会话文件无法加载，Chill Vibe 已自动开启一个新会话，保留你本次发送的内容和附件。'
 
+// 支持软中断的子进程句柄。只有 Claude keepalive 路径会挂上 `interruptTurn`：
+// 它背后是 CLI 的 stream-json 控制通道，能只 abort 当前 turn 而保住进程与会话。
+// 其余 provider（含 Claude 的非 keepalive 回退路径）没有这个能力，停止仍走 kill。
+export type InterruptibleChild = ChildProcess & { interruptTurn?: () => boolean }
+
+// 停止一个 turn 时的路径选择：能软中断就软中断，否则如实返回 false 让调用方硬 kill。
+// 抽成纯函数是为了让"绝不静默失败"这条约束可被单测钉住——软中断一旦悄悄吞掉
+// 而又没真的停下来，表现就是停止按钮失灵，比退化回 kill 严重得多。
+export const tryInterruptProviderTurn = (child: InterruptibleChild | null | undefined) => {
+  if (typeof child?.interruptTurn !== 'function') {
+    return false
+  }
+  try {
+    return child.interruptTurn() === true
+  } catch {
+    return false
+  }
+}
+
 const createManagedChildHandle = () => {
   let activeChild: ChildProcess | null = null
+  let interruptHandler: (() => boolean) | null = null
   const handle = new EventEmitter() as ChildProcess
 
   ;(handle as ChildProcess & { kill: ChildProcess['kill'] }).kill = ((signal?: NodeJS.Signals | number) =>
     activeChild?.kill(signal) ?? false) as ChildProcess['kill']
 
+  ;(handle as InterruptibleChild).interruptTurn = () => interruptHandler?.() === true
+
   return {
     handle,
     setActiveChild: (child: ChildProcess | null) => {
       activeChild = child
+    },
+    setInterruptHandler: (fn: (() => boolean) | null) => {
+      interruptHandler = fn
     },
   }
 }
@@ -3417,6 +3442,10 @@ const launchClaudeKeepaliveRun = async (
 
     const child = acquired.child as ChildProcess
     managedChild.setActiveChild(child)
+    // 软中断只在这条 keepalive 路径成立：stdin 常驻可写才有控制通道。
+    // 绑定时带上 cardId + child，中断永远只作用于这一轮自己的进程，
+    // 不会误伤同一张卡上后开的新 turn。
+    managedChild.setInterruptHandler(() => pool.interruptTurn(cardId, child))
     pool.updateMeta(cardId, { backgroundWorkPending: false }, child)
     clearClaudeCompletionBoundarySnapshot(completionBoundaryPath)
 
@@ -3431,6 +3460,9 @@ const launchClaudeKeepaliveRun = async (
           pool.updateMeta(cardId, { backgroundWorkPending: false }, child)
         }
         managedChild.setActiveChild(null)
+        // 这一轮已收口，中断入口必须随之失效：留着它，后续对同一个 handle 的
+        // stop 会把中断发到进程的下一轮活儿上。
+        managedChild.setInterruptHandler(null)
         pool.endTurn(cardId, child)
       },
       onSessionId: (sessionId) => pool.updateSessionId(cardId, sessionId, child),

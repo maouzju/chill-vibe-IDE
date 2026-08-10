@@ -25,6 +25,7 @@ import {
   titleFromPrompt,
 } from '../shared/default-state.ts'
 import {
+  AUTOMATIONBOARD_TOOL_MODEL,
   DEFAULT_CLAUDE_MODEL,
   DEFAULT_CODEX_MODEL,
   FILETREE_TOOL_MODEL,
@@ -445,6 +446,7 @@ describe('default-state helpers', () => {
       GIT_TOOL_MODEL,
       FILETREE_TOOL_MODEL,
       STICKYNOTE_TOOL_MODEL,
+      AUTOMATIONBOARD_TOOL_MODEL,
     ])
     assert.deepEqual(
       getAvailableQuickToolModels(
@@ -458,6 +460,7 @@ describe('default-state helpers', () => {
       [
         FILETREE_TOOL_MODEL,
         STICKYNOTE_TOOL_MODEL,
+        AUTOMATIONBOARD_TOOL_MODEL,
         WEATHER_TOOL_MODEL,
         MUSIC_TOOL_MODEL,
       ],
@@ -489,6 +492,7 @@ describe('default-state helpers', () => {
       GIT_TOOL_MODEL,
       FILETREE_TOOL_MODEL,
       STICKYNOTE_TOOL_MODEL,
+      AUTOMATIONBOARD_TOOL_MODEL,
     ])
   })
 

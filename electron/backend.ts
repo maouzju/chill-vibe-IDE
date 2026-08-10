@@ -58,6 +58,7 @@ import {
   createRemoteMonitorManager,
   type RemoteMonitorManager,
 } from '../server/remote-monitor.ts'
+import { setAutomationBoardCommandDispatcher } from '../server/automation-board-session.ts'
 import { resilientProxyPool } from '../server/resilient-proxy.ts'
 import { SetupManager } from '../server/setup-manager.ts'
 import { OllamaManager } from '../server/ollama-manager.ts'
@@ -147,6 +148,7 @@ import {
   type InternalSessionHistoryListRequest,
   type InternalSessionHistoryLoadRequest,
   type ChatRequest,
+  type AutomationBoardCommand,
   type RemoteMonitorCommand,
   type GitCommitAllRequest,
   type GitCommitDiffRequest,
@@ -192,6 +194,7 @@ type DesktopBackendDependencies = {
   // 手机监工的写命令出口：宿主（electron/main.ts）把命令广播给渲染窗口，
   // 渲染进程复用电脑端 handler 执行。返回 false = 当前无窗口可执行。
   dispatchRemoteCommand?: (command: RemoteMonitorCommand) => boolean
+  dispatchAutomationBoardCommand?: (command: AutomationBoardCommand) => boolean
 }
 
 export const createDesktopBackend = (deps: DesktopBackendDependencies = {}) => {
@@ -201,6 +204,13 @@ export const createDesktopBackend = (deps: DesktopBackendDependencies = {}) => {
   let musicManager: MusicManagerLike | null = null
   let fileWatcherManager: FileWatcherManager | null = null
   let remoteMonitorManager: RemoteMonitorManager | null = null
+
+  // 只是登记一个回调，没有任何 IO 或路径解析，所以在这里做是安全的
+  // （pitfall 79：真正的服务必须保持懒构造）。看板桥接自身仍然是懒启动的：
+  // 它只在第一次有监工回合时才创建 HTTP 监听。
+  setAutomationBoardCommandDispatcher(
+    (command) => deps.dispatchAutomationBoardCommand?.(command) ?? false,
+  )
 
   const getFileWatcherManager = () => {
     if (!fileWatcherManager) {

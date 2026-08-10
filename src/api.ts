@@ -47,7 +47,10 @@ import {
   fileSearchResponseSchema,
   imageAttachmentSchema,
   onboardingStatusSchema,
+  automationBoardCommandSchema,
   remoteMonitorCommandSchema,
+  type AutomationBoardCommand,
+  type AutomationBoardMirror,
   type RemoteMonitorCommand,
   providerStatusSchema,
   recentCrashRecoverySchema,
@@ -764,6 +767,49 @@ export const subscribeRemoteCommands = (handler: (command: RemoteMonitorCommand)
   return () => {
     window.removeEventListener('chill-vibe:remote-command', listener)
   }
+}
+
+// 看板监工 MCP 的写命令：主进程广播 → preload CustomEvent → 这里 schema
+// 校验后交给 App 的执行器（复用电脑端 handler，与手机监工同一条规矩）。
+export const subscribeAutomationBoardCommands = (
+  handler: (command: AutomationBoardCommand) => void,
+) => {
+  const listener = (event: Event) => {
+    const parsed = automationBoardCommandSchema.safeParse((event as CustomEvent<unknown>).detail)
+    if (parsed.success) {
+      handler(parsed.data)
+    }
+  }
+
+  window.addEventListener('chill-vibe:automation-board-command', listener)
+
+  return () => {
+    window.removeEventListener('chill-vibe:automation-board-command', listener)
+  }
+}
+
+/**
+ * 把实时看板镜像推给主进程，供看板 MCP 读取。
+ *
+ * Web 端没有桥（也没有 MCP 子进程），静默 no-op 即可 —— 这条路径绝不能因为
+ * 缺少 desktop bridge 就抛错，否则一次推送失败会打断渲染。
+ */
+export const publishAutomationBoardMirror = (mirror: AutomationBoardMirror) => {
+  const publish = getDesktopApi()?.publishAutomationBoardMirror
+  if (typeof publish !== 'function') {
+    return
+  }
+
+  void publish(mirror).catch(() => undefined)
+}
+
+export const forgetAutomationBoardMirror = (boardCardId: string) => {
+  const forget = getDesktopApi()?.forgetAutomationBoardMirror
+  if (typeof forget !== 'function') {
+    return
+  }
+
+  void forget(boardCardId).catch(() => undefined)
 }
 
 export const uploadImageAttachment = async (

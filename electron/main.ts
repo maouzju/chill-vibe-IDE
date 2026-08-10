@@ -6,7 +6,11 @@ import { fileURLToPath, pathToFileURL } from 'url'
 import type { IpcMainInvokeEvent } from 'electron'
 
 import { maxUiScale, minUiScale } from '../shared/default-state.js'
-import { appSettingsSchema } from '../shared/schema.js'
+import { appSettingsSchema, automationBoardMirrorSchema } from '../shared/schema.js'
+import {
+  forgetAutomationBoardMirror,
+  publishAutomationBoardMirror,
+} from '../server/automation-board-session.js'
 import { getAppDataDir } from '../server/app-paths.js'
 import { initCrashLogger, log } from './crash-logger.js'
 import { createDesktopBackend } from './backend.js'
@@ -151,6 +155,18 @@ const desktopBackend = createDesktopBackend({
         win.webContents.send('chat:unsolicited-stream', notification)
       }
     }
+  },
+  dispatchAutomationBoardCommand: (command) => {
+    // 与手机监工同一条规矩：桥接服务自己绝不改 state，写命令广播给渲染进程
+    // 复用电脑端 handler。返回 false（无可用窗口）时 HTTP 层回 503。
+    let delivered = false
+    for (const win of BrowserWindow.getAllWindows()) {
+      if (!win.isDestroyed() && !win.webContents.isCrashed()) {
+        win.webContents.send('automation-board:command', command)
+        delivered = true
+      }
+    }
+    return delivered
   },
   dispatchRemoteCommand: (command) => {
     // 手机监工的写命令：广播给渲染窗口，由渲染进程复用电脑端 handler 执行。
@@ -739,6 +755,21 @@ function registerLocalImageProtocol() {
 }
 
 function registerDesktopHandlers() {
+  // 自动化看板的实时镜像：渲染进程是 board state 的唯一主人，所以镜像只能由它
+  // 推上来（读盘快照在流式期间被刻意节流，对监工太旧）。截断在 session 模块里
+  // 统一执行，这里只做 schema 校验。
+  ipcMain.handle('automation-board:publish-mirror', (_event, payload: unknown) => {
+    const parsed = automationBoardMirrorSchema.safeParse(payload)
+    if (parsed.success) {
+      publishAutomationBoardMirror(parsed.data)
+    }
+    return parsed.success
+  })
+  ipcMain.handle('automation-board:forget-mirror', (_event, boardCardId: unknown) => {
+    if (typeof boardCardId === 'string' && boardCardId.trim()) {
+      forgetAutomationBoardMirror(boardCardId)
+    }
+  })
   ipcMain.handle('window:minimize', (event) => {
     const win = getEventWindow(event)
     win?.minimize()

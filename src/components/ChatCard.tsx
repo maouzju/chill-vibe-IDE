@@ -189,6 +189,7 @@ import {
   GptIcon,
   HeadphonesIcon,
   IconButton,
+  KanbanIcon,
   MusicIcon,
   NeteaseCloudMusicIcon,
   RefreshIcon,
@@ -567,6 +568,15 @@ const getEmptyStateToolEntry = (
     }
   }
 
+
+  if (model === AUTOMATIONBOARD_TOOL_MODEL) {
+    return {
+      model,
+      title: text.emptyStateAutomationBoardTitle,
+      description: text.emptyStateAutomationBoardDescription,
+      icon: <KanbanIcon aria-hidden="true" />,
+    }
+  }
 
   if (model === BRAINSTORM_TOOL_MODEL) {
     return {

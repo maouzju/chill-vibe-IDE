@@ -77,6 +77,8 @@ import { proxyStats, type ProxyStatsEvent } from './proxy-stats-store.js'
 import type { ResilientProxyRuntimeConfig } from './resilient-proxy.js'
 import { resilientProxyPool } from './resilient-proxy.js'
 import { createArchiveRecallRuntimeOverrides, getCodexArchiveRecallInstruction } from './archive-recall.js'
+import { createAutomationBoardSupervisorRuntime } from './automation-board-session.js'
+import type { AutomationBoardClaudeMcpConfig } from './automation-board-runtime.js'
 import {
   ensureCodexSafetyHookTrusted,
   prepareCodexSafetyRuntime,
@@ -2591,6 +2593,21 @@ export const launchProviderRun = async (
   }
   const runtime = await resolveProviderRuntime(currentRequest.provider)
 
+  // 看板监工回合：把看板 MCP 接进本次 provider 启动。只有带
+  // `automationBoardSupervisor` 标记的回合才走这里 —— 普通聊天卡永远拿不到看板
+  // 工具，这是权限边界而不是优化。桥接不可用时降级为"没有工具的普通回合"，
+  // 绝不因此让整个回合失败。
+  let boardRuntime: Awaited<ReturnType<typeof createAutomationBoardSupervisorRuntime>> = null
+
+  try {
+    boardRuntime = await createAutomationBoardSupervisorRuntime(currentRequest)
+  } catch (error) {
+    console.warn(
+      `[automation-board] Unable to prepare supervisor MCP runtime: ${error instanceof Error ? error.message : String(error)}`,
+    )
+    boardRuntime = null
+  }
+
   if (currentRequest.provider === 'codex') {
     let archiveRecallRuntime: Awaited<ReturnType<typeof createArchiveRecallRuntimeOverrides>> | null = null
 
@@ -2601,16 +2618,24 @@ export const launchProviderRun = async (
       archiveRecallRuntime = null
     }
 
-    const codexRuntime = archiveRecallRuntime
+    const extraCodexArgs = [
+      ...(archiveRecallRuntime?.runtimeArgs ?? []),
+      ...(boardRuntime?.codexRuntimeArgs ?? []),
+    ]
+    const extraSystemPrompt = [
+      ...(archiveRecallRuntime ? [getCodexArchiveRecallInstruction(language)] : []),
+      ...(boardRuntime ? [boardRuntime.instruction] : []),
+    ]
+    const codexRuntime = extraCodexArgs.length > 0
       ? {
           ...runtime,
-          args: [...runtime.args, ...archiveRecallRuntime.runtimeArgs],
+          args: [...runtime.args, ...extraCodexArgs],
         }
       : runtime
-    const codexRequest = archiveRecallRuntime
+    const codexRequest = extraSystemPrompt.length > 0
       ? {
           ...currentRequest,
-          systemPrompt: [currentRequest.systemPrompt, getCodexArchiveRecallInstruction(language)]
+          systemPrompt: [currentRequest.systemPrompt, ...extraSystemPrompt]
             .filter((part) => part.trim().length > 0)
             .join('\n\n'),
         }
@@ -2626,7 +2651,24 @@ export const launchProviderRun = async (
     )
   }
 
-  return launchClaudeRun(currentRequest, sink, language, runtime, attachmentPaths, options?.claudeSessionPool ?? null)
+  const claudeRequest = boardRuntime
+    ? {
+        ...currentRequest,
+        systemPrompt: [currentRequest.systemPrompt, boardRuntime.instruction]
+          .filter((part) => part.trim().length > 0)
+          .join('\n\n'),
+      }
+    : currentRequest
+
+  return launchClaudeRun(
+    claudeRequest,
+    sink,
+    language,
+    runtime,
+    attachmentPaths,
+    options?.claudeSessionPool ?? null,
+    boardRuntime?.claudeMcpConfig,
+  )
 }
 
 // ---------------------------------------------------------------------------
@@ -3092,6 +3134,7 @@ const launchClaudeRun = async (
   runtime: ProviderRuntime,
   attachmentPaths: string[],
   pool: ClaudeSessionPool | null,
+  automationBoardMcpConfig?: AutomationBoardClaudeMcpConfig,
 ) => {
   const cardId = request.cardId?.trim()
 
@@ -3121,6 +3164,7 @@ const launchClaudeRun = async (
       pool,
       cardId,
       safetyRuntime.hookCommand,
+      automationBoardMcpConfig,
     )
   }
 
@@ -3131,6 +3175,7 @@ const launchClaudeRun = async (
     preparedRuntime,
     attachmentPaths,
     safetyRuntime.hookCommand,
+    automationBoardMcpConfig,
   )
 }
 
@@ -3141,6 +3186,7 @@ const launchClaudeSingleShotRun = async (
   runtime: ProviderRuntime,
   attachmentPaths: string[],
   safetyHookCommand?: string,
+  automationBoardMcpConfig?: AutomationBoardClaudeMcpConfig,
 ) => {
   const managedChild = createManagedChildHandle()
   let currentRequest = request
@@ -3153,6 +3199,7 @@ const launchClaudeSingleShotRun = async (
       ...buildClaudeArgs(currentRequest, attachmentPaths, {
         includeEffort,
         safetyHookCommand,
+        automationBoardMcpConfig,
       }),
     ]
 
@@ -3372,6 +3419,7 @@ const launchClaudeKeepaliveRun = async (
   pool: ClaudeSessionPool,
   cardId: string,
   safetyHookCommand?: string,
+  automationBoardMcpConfig?: AutomationBoardClaudeMcpConfig,
 ) => {
   const managedChild = createManagedChildHandle()
   let currentRequest = request
@@ -3406,6 +3454,7 @@ const launchClaudeKeepaliveRun = async (
             streamingInput: true,
             safetyHookCommand,
             completionBoundaryHook,
+            automationBoardMcpConfig,
           }),
         ]
 
@@ -3891,6 +3940,9 @@ export const buildClaudeArgs = (
     safetyHookCommand?: string
     completionBoundaryHook?: ClaudeCompletionBoundaryHook
     platform?: NodeJS.Platform
+    // 看板监工回合专属。--strict-mcp-config 让本次启动只认这里给的 MCP，
+    // 不继承用户 ~/.claude 里配置的其它 server。
+    automationBoardMcpConfig?: AutomationBoardClaudeMcpConfig
   },
 ) => {
   const args = ['-p', '--verbose', '--output-format', 'stream-json', '--include-partial-messages']
@@ -3951,6 +4003,13 @@ export const buildClaudeArgs = (
   ].join(' ')
 
   args.push('--permission-mode', permissionMode)
+  if (options?.automationBoardMcpConfig) {
+    args.push(
+      '--mcp-config',
+      JSON.stringify(options.automationBoardMcpConfig),
+      '--strict-mcp-config',
+    )
+  }
   if (additionalDirectories.length > 0) {
     args.push('--add-dir', ...additionalDirectories)
   }

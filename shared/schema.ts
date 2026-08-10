@@ -629,6 +629,7 @@ export const appSettingsSchema = z.object({
   gitCardEnabled: z.boolean().default(true),
   fileTreeCardEnabled: z.boolean().default(true),
   stickyNoteCardEnabled: z.boolean().default(true),
+  automationBoardCardEnabled: z.boolean().default(true),
   pmCardEnabled: z.boolean().default(true),
   brainstormCardEnabled: z.boolean().default(false),
   experimentalMusicEnabled: z.boolean().default(false),
@@ -867,6 +868,7 @@ export const appStateSchema = z.object({
     gitCardEnabled: true,
     fileTreeCardEnabled: true,
     stickyNoteCardEnabled: true,
+    automationBoardCardEnabled: true,
     pmCardEnabled: true,
     brainstormCardEnabled: false,
     experimentalMusicEnabled: false,
@@ -1227,8 +1229,28 @@ export const automationBoardMirrorItemSchema = z.object({
   lastActivityAt: z.string().optional(),
   lastMessagePreview: z.string().default(''),
   messageCount: z.number().int().nonnegative().default(0),
+  // 最近若干条转录，供 read_board_item 直接读。刻意随镜像一起推而不是另开一条
+  // 请求/应答通道：载荷有界（条数 × 单条字符都封顶），2 秒级的陈旧对监工无影响。
+  recentEntries: z
+    .array(
+      z.object({
+        id: z.string().min(1),
+        role: z.string().default(''),
+        content: z.string().default(''),
+        kind: z.string().optional(),
+        createdAt: z.string().optional(),
+      }),
+    )
+    .default([]),
 })
 export type AutomationBoardMirrorItem = z.infer<typeof automationBoardMirrorItemSchema>
+
+// 镜像的硬预算。截断只在一处执行（server/automation-board-session.ts 的
+// publish），这样任何调用方都无法绕过它把整段转录推给模型。
+export const automationBoardMirrorRequirementMaxChars = 2000
+export const automationBoardMirrorPreviewMaxChars = 400
+export const automationBoardMirrorEntryMaxChars = 600
+export const automationBoardMirrorEntryLimit = 12
 
 export const automationBoardMirrorSchema = z.object({
   boardCardId: z.string().min(1),

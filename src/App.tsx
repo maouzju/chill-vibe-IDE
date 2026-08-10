@@ -173,6 +173,9 @@ import {
   isRemoteMonitorSupported,
   startRemoteMonitor,
   stopRemoteMonitor,
+  forgetAutomationBoardMirror,
+  publishAutomationBoardMirror,
+  subscribeAutomationBoardCommands,
   subscribeRemoteCommands,
   type RemoteMonitorStartResponse,
 } from './api'
@@ -261,6 +264,11 @@ import type {
   AutomationBoardActions,
   AutomationBoardWorkspaceView,
 } from './components/automation-board-host'
+import {
+  automationBoardMirrorPublishIntervalMs,
+  buildAutomationBoardMirror,
+  getAutomationBoardMirrorSignature,
+} from './components/automation-board-mirror'
 import { createDefaultAutomationBoardAutoTrigger } from '../shared/schema'
 
 // 稳定的模块级默认值：如果每次渲染都新建一个空对象，PaneView 的记忆化会
@@ -4956,6 +4964,92 @@ function App() {
     })
   }, [applyAction, attachStream, getColumn, persistAfterAction])
 
+  // 看板监工 MCP 的写命令执行器。与手机监工同一条规矩：绝不自己另写一条捷径，
+  // "移到某道"必须经 automationBoardActions.moveItem，这样中断/执行语义仍然由
+  // resolveAutomationBoardTransition 决定，模型无法绕过它。
+  useEffect(() => {
+    return subscribeAutomationBoardCommands((command) => {
+      const owner = appStateRef.current.columns.find((column) =>
+        Boolean(column.cards[command.boardCardId]),
+      )
+      if (!owner) {
+        return
+      }
+
+      switch (command.type) {
+        case 'board-move-item':
+          automationBoardActions.moveItem(
+            owner.id,
+            command.boardCardId,
+            command.cardId,
+            command.lane,
+          )
+          return
+        case 'board-send-item-message':
+          automationBoardActions.sendToItem(owner.id, command.cardId, command.message)
+          return
+        case 'board-set-item-wake-timer':
+          automationBoardActions.patchItemCard(owner.id, command.cardId, {
+            wakeTimerActive: true,
+            wakeTimerMode: command.mode,
+            ...(typeof command.durationMinutes === 'number'
+              ? { wakeTimerDurationMinutes: command.durationMinutes }
+              : {}),
+          })
+          return
+        default:
+          return
+      }
+    })
+  }, [automationBoardActions])
+
+  // 实时看板镜像：节流推给主进程供看板 MCP 读取。签名比对确保只有对监工有意义
+  // 的变化才跨 IPC —— 单条消息的流式增长不刷新签名，否则每个 delta 都会推一次。
+  const automationBoardMirrorSignaturesRef = useRef(new Map<string, string>())
+  useEffect(() => {
+    const publishAll = () => {
+      const state = appStateRef.current
+      const liveBoardIds = new Set<string>()
+
+      for (const column of state.columns) {
+        for (const card of Object.values(column.cards)) {
+          if (!card.automationBoard) {
+            continue
+          }
+
+          liveBoardIds.add(card.id)
+          const mirror = buildAutomationBoardMirror({
+            column,
+            boardCardId: card.id,
+            generatedAt: new Date().toISOString(),
+          })
+          if (!mirror) {
+            continue
+          }
+
+          const signature = getAutomationBoardMirrorSignature(mirror)
+          if (automationBoardMirrorSignaturesRef.current.get(card.id) === signature) {
+            continue
+          }
+
+          automationBoardMirrorSignaturesRef.current.set(card.id, signature)
+          publishAutomationBoardMirror(mirror)
+        }
+      }
+
+      for (const boardCardId of [...automationBoardMirrorSignaturesRef.current.keys()]) {
+        if (!liveBoardIds.has(boardCardId)) {
+          automationBoardMirrorSignaturesRef.current.delete(boardCardId)
+          forgetAutomationBoardMirror(boardCardId)
+        }
+      }
+    }
+
+    publishAll()
+    const timer = window.setInterval(publishAll, automationBoardMirrorPublishIntervalMs)
+    return () => window.clearInterval(timer)
+  }, [])
+
   // 手机监工的写命令执行器：与电脑端共用同一批 handler，保证行为一致
   //（模型切换的 session 作废在 selectCardModel reducer，发送的 session
   // 续传在 sendMessage 内部 —— 这里绝不自己另写一条捷径）。
@@ -8401,6 +8495,21 @@ function App() {
               applyAction({
                 type: 'updateSettings',
                 patch: { stickyNoteCardEnabled: event.target.checked },
+              })
+            }
+          />
+        </label>
+
+        <label className="settings-toggle" htmlFor="automation-board-card-toggle">
+          <span>{text.automationBoardTitle}</span>
+          <input
+            id="automation-board-card-toggle"
+            type="checkbox"
+            checked={appState.settings.automationBoardCardEnabled}
+            onChange={(event) =>
+              applyAction({
+                type: 'updateSettings',
+                patch: { automationBoardCardEnabled: event.target.checked },
               })
             }
           />

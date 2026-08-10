@@ -107,6 +107,7 @@ const createState = (): AppState => ({
   version: 1,
   updatedAt: timestamp,
   stickyNoteArchive: {},
+  automationBoards: {},
   settings: {
     ...createDefaultSettings(),
     requestModels: {

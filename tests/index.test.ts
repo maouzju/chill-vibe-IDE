@@ -198,3 +198,6 @@ import './release-verification-runner.test.ts'
 
 import './archive-recall.test.ts'
 import './archive-recall-mcp.test.ts'
+
+import './automation-board-transitions.test.ts'
+import './automation-board-state.test.ts'

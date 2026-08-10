@@ -72,6 +72,7 @@ const createState = (cards: Record<string, ChatCard>): AppState => ({
   stickyNoteArchive: {
     'D:/repo/one': { content: '旧版单份存档', updatedAt: timestamp },
   },
+  automationBoards: {},
 })
 
 describe('sticky note identity migration and isolation', () => {

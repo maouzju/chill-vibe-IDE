@@ -154,6 +154,33 @@ export const contextTransferSchema = z.object({
 })
 export type ContextTransfer = z.infer<typeof contextTransferSchema>
 
+export const automationBoardLanes = ['standby', 'running', 'done'] as const
+export const automationBoardLaneSchema = z.enum(automationBoardLanes)
+export type AutomationBoardLane = z.infer<typeof automationBoardLaneSchema>
+
+export const automationBoardRequirementMaxChars = 4000
+
+export const automationBoardItemSchema = z.object({
+  cardId: z.string().min(1),
+  lane: automationBoardLaneSchema,
+  // 冗余存一份原始需求是刻意的：监工要"检查每个原始需求"，而
+  // card.messages[0] 会被 /compact、消息裁剪和 sidecar 归档拿走。
+  requirement: z.string().default(''),
+  createdAt: z.string().datetime().optional(),
+  // 进入 running 道的时刻，供监工判断"超过半小时没下文"。
+  startedAt: z.string().datetime().optional(),
+  completedAt: z.string().datetime().optional(),
+})
+export type AutomationBoardItem = z.infer<typeof automationBoardItemSchema>
+
+export const automationBoardSchema = z.object({
+  // 泳道内顺序 = 本数组内的相对顺序（按 lane 过滤后保序）。
+  items: z.array(automationBoardItemSchema).default([]),
+  supervisorCardId: z.string().default(''),
+  supervisorExpanded: z.boolean().default(false),
+})
+export type AutomationBoard = z.infer<typeof automationBoardSchema>
+
 export const chatCardSchema = z.object({
   id: z.string().min(1),
   title: z.string(),
@@ -205,6 +232,10 @@ export const chatCardSchema = z.object({
   pm: pmStateSchema.optional(),
   pmTaskCardId: z.string().default('').optional(),
   pmOwnerCardId: z.string().default('').optional(),
+  // Only present on `__automationboard_tool__` cards. Deliberately optional
+  // rather than defaulted: every ordinary card would otherwise carry an empty
+  // object into state.json for no benefit.
+  automationBoard: automationBoardSchema.optional(),
   messages: z.array(chatMessageSchema).default([]),
   messageCount: z.number().int().nonnegative().optional(),
 })
@@ -678,6 +709,69 @@ export const stickyNoteArchiveEntrySchema = z.object({
 })
 export type StickyNoteArchiveEntry = z.infer<typeof stickyNoteArchiveEntrySchema>
 
+// 监工的默认需求文本。server 与 client 共用，所以放 schema 而不是 i18n：
+// 它是一段会被持久化进用户配置的可编辑数据，不是界面文案。
+export const defaultAutomationBoardSupervisorRequirement =
+  '检查当前看板每个原始需求，以及 agent 结尾交付情况，自行决定是否进行鞭策还是将其移动到已完成列。'
+  + '如果是 agent 正在等子任务，就过段时间再看看情况，如果他超过半小时没下文，就训斥一下他让他接着做。'
+
+export const automationBoardTemplateSchema = z.object({
+  id: z.string().min(1),
+  name: z.string().default(''),
+  requirement: z.string().default(''),
+  provider: providerSchema.default('codex'),
+  model: z.string().default(''),
+  reasoningEffort: z.string().default('max'),
+  thinkingEnabled: z.boolean().default(true),
+  planMode: z.boolean().default(false),
+  wakeTimerActive: z.boolean().default(false),
+  wakeTimerMode: wakeTimerModeSchema.optional(),
+  wakeTimerDurationMinutes: z
+    .number()
+    .finite()
+    .min(minWakeTimerDurationMinutes)
+    .max(maxWakeTimerDurationMinutes)
+    .optional(),
+  repeatLoopActive: z.boolean().default(false),
+  repeatLoopRemaining: z.number().int().min(0).optional(),
+  createdAt: z.string().datetime().optional(),
+})
+export type AutomationBoardTemplate = z.infer<typeof automationBoardTemplateSchema>
+
+export const automationBoardTriggerKinds = ['last-item-settled'] as const
+export const automationBoardTriggerKindSchema = z.enum(automationBoardTriggerKinds)
+export type AutomationBoardTriggerKind = z.infer<typeof automationBoardTriggerKindSchema>
+
+export const automationBoardAutoTriggerSchema = z.object({
+  enabled: z.boolean().default(false),
+  kind: automationBoardTriggerKindSchema.default('last-item-settled'),
+  provider: providerSchema.default('claude'),
+  model: z.string().default(''),
+  reasoningEffort: z.string().default('max'),
+  requirement: z.string().default(defaultAutomationBoardSupervisorRequirement),
+  // 两次触发之间的最小间隔，防抖。
+  minIntervalMinutes: z.number().finite().min(0).max(24 * 60).default(1),
+})
+export type AutomationBoardAutoTrigger = z.infer<typeof automationBoardAutoTriggerSchema>
+
+export const createDefaultAutomationBoardAutoTrigger = (): AutomationBoardAutoTrigger => ({
+  enabled: false,
+  kind: 'last-item-settled',
+  provider: 'claude',
+  model: '',
+  reasoningEffort: 'max',
+  requirement: defaultAutomationBoardSupervisorRequirement,
+  minIntervalMinutes: 1,
+})
+
+// 模板与自动触发配置的生命周期必须长于看板卡片本身（删掉看板 tab 不能丢），
+// 所以按 workspacePath 挂在 AppState 上，与既有 stickyNoteArchive 同构。
+export const automationBoardWorkspaceStateSchema = z.object({
+  templates: z.array(automationBoardTemplateSchema).default([]),
+  autoTrigger: automationBoardAutoTriggerSchema.default(createDefaultAutomationBoardAutoTrigger()),
+})
+export type AutomationBoardWorkspaceState = z.infer<typeof automationBoardWorkspaceStateSchema>
+
 export const stickyNoteRequestSchema = z.object({
   workspacePath: z.string().min(1),
   noteId: z.string().min(1),
@@ -836,6 +930,8 @@ export const appStateSchema = z.object({
   columns: z.array(boardColumnSchema),
   sessionHistory: z.array(sessionHistoryEntrySchema).default([]),
   stickyNoteArchive: z.record(z.string(), stickyNoteArchiveEntrySchema).default({}),
+  // Keyed by workspacePath, like stickyNoteArchive above.
+  automationBoards: z.record(z.string(), automationBoardWorkspaceStateSchema).default({}),
   updatedAt: z.string().datetime(),
 })
 export type AppState = z.infer<typeof appStateSchema>
@@ -1020,6 +1116,11 @@ export const chatRequestSchema = z.object({
   codexIsolatedHomeEnabled: z.boolean().default(true),
   personality: codexPersonalitySchema.optional(),
   serviceTier: z.literal('priority').optional(),
+  // Marks this turn as an automation-board supervisor run, which is the only
+  // turn that gets the board MCP wired into the provider launch.
+  automationBoardSupervisor: z
+    .object({ boardCardId: z.string().min(1), columnId: z.string().min(1) })
+    .optional(),
 }).refine((value) => {
   const hasPrompt = value.prompt.trim().length > 0
   const hasAttachments = value.attachments.length > 0
@@ -1074,6 +1175,71 @@ export const remoteMonitorCommandSchema = z.discriminatedUnion('type', [
   }),
 ])
 export type RemoteMonitorCommand = z.infer<typeof remoteMonitorCommandSchema>
+
+// 看板监工 MCP 的写命令。与手机监工同一条规矩：桥接服务自身绝不改 state，
+// 命令一律转发进渲染进程复用电脑端 handler（"移到某道"因此自动带上正确的
+// 中断/执行语义，而不是绕过 resolveAutomationBoardTransition 自己实现一遍）。
+export const automationBoardCommandSchema = z.discriminatedUnion('type', [
+  z.object({
+    type: z.literal('board-move-item'),
+    boardCardId: z.string().min(1),
+    cardId: z.string().min(1),
+    lane: automationBoardLaneSchema,
+  }),
+  z.object({
+    type: z.literal('board-send-item-message'),
+    boardCardId: z.string().min(1),
+    cardId: z.string().min(1),
+    message: z.string().min(1),
+  }),
+  z.object({
+    type: z.literal('board-set-item-wake-timer'),
+    boardCardId: z.string().min(1),
+    cardId: z.string().min(1),
+    mode: wakeTimerModeSchema,
+    durationMinutes: z
+      .number()
+      .finite()
+      .min(minWakeTimerDurationMinutes)
+      .max(maxWakeTimerDurationMinutes)
+      .optional(),
+  }),
+])
+export type AutomationBoardCommand = z.infer<typeof automationBoardCommandSchema>
+
+// 渲染进程主动推给主进程的实时看板镜像。读盘快照在流式期间被刻意节流
+// （pitfall 54/114），对监工太旧；这份镜像极小且有界，几 KB 级。
+export const automationBoardMirrorItemSchema = z.object({
+  cardId: z.string().min(1),
+  lane: automationBoardLaneSchema,
+  requirement: z.string().default(''),
+  title: z.string().default(''),
+  provider: z.string().default(''),
+  model: z.string().default(''),
+  status: z.string().default('idle'),
+  backgroundWorkPending: z.boolean().default(false),
+  wakeTimerActive: z.boolean().default(false),
+  wakeTimerWakeAt: z.string().optional(),
+  repeatLoopActive: z.boolean().default(false),
+  startedAt: z.string().optional(),
+  completedAt: z.string().optional(),
+  // 最后一条消息的 createdAt —— 监工判断"超过半小时没下文"的依据。
+  lastActivityAt: z.string().optional(),
+  lastMessagePreview: z.string().default(''),
+  messageCount: z.number().int().nonnegative().default(0),
+})
+export type AutomationBoardMirrorItem = z.infer<typeof automationBoardMirrorItemSchema>
+
+export const automationBoardMirrorSchema = z.object({
+  boardCardId: z.string().min(1),
+  columnId: z.string().min(1),
+  workspacePath: z.string().default(''),
+  generatedAt: z.string().datetime(),
+  items: z.array(automationBoardMirrorItemSchema).default([]),
+  supervisorCardId: z.string().default(''),
+  supervisorStatus: z.string().default('idle'),
+})
+export type AutomationBoardMirror = z.infer<typeof automationBoardMirrorSchema>
 
 // Lossless conversation fork: ask the backend to copy the provider's native
 // session file truncated before the fork-point user message. A null sessionId

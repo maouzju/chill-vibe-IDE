@@ -5,9 +5,11 @@ import path from 'node:path'
 import { getChatMessageAttachments } from '../shared/chat-attachments.js'
 import {
   archiveOpenChatsForCrashRecovery,
+  collectAutomationBoardOwnedCardIds,
   createCard,
   createPane,
   createDefaultState,
+  resolveRecoveredColumnLayout,
   getConfiguredModel,
   getCardDefaultSize,
   getCardMinimumSize,
@@ -26,6 +28,7 @@ import { getWorkspaceTitle } from '../shared/i18n.js'
 import { isInterruptedSessionRecoverable } from '../shared/interrupted-session-recovery.js'
 import { revealInternalSessionHistorySession } from './session-history-catalog.js'
 import {
+  AUTOMATIONBOARD_TOOL_MODEL,
   BRAINSTORM_TOOL_MODEL,
   FILETREE_TOOL_MODEL,
   GIT_TOOL_MODEL,
@@ -41,6 +44,8 @@ import {
 import { normalizeReasoningEffort } from '../shared/reasoning.js'
 import {
   appStateSchema,
+  automationBoardRequirementMaxChars,
+  automationBoardWorkspaceStateSchema,
   closedWorkspaceLoadRequestSchema,
   closedWorkspaceSnapshotSchema,
   desktopRuntimeKindSchema,
@@ -48,6 +53,8 @@ import {
   recentCrashRecoverySchema,
   type AppState,
   type AppStateLoadResponse,
+  type AutomationBoardItem,
+  type AutomationBoardLane,
   type BoardColumn,
   type ChatCard,
   type ClosedWorkspaceLoadRequest,
@@ -671,6 +678,69 @@ const normalizePersistedPm = (value: unknown, fallback: ChatCard['pm']): ChatCar
   }
 }
 
+const normalizePersistedAutomationBoardLane = (value: unknown): AutomationBoardLane =>
+  value === 'running' || value === 'done' ? value : 'standby'
+
+const normalizePersistedAutomationBoard = (value: unknown): ChatCard['automationBoard'] => {
+  const record = isRecord(value) ? value : {}
+  const rawItems = Array.isArray(record.items) ? record.items : []
+  const seen = new Set<string>()
+  const items: AutomationBoardItem[] = []
+
+  for (const entry of rawItems) {
+    if (!isRecord(entry)) {
+      continue
+    }
+
+    const cardId = typeof entry.cardId === 'string' ? entry.cardId.trim() : ''
+    if (!cardId || seen.has(cardId)) {
+      continue
+    }
+
+    seen.add(cardId)
+    items.push({
+      cardId,
+      lane: normalizePersistedAutomationBoardLane(entry.lane),
+      requirement:
+        typeof entry.requirement === 'string'
+          ? entry.requirement.slice(0, automationBoardRequirementMaxChars)
+          : '',
+      createdAt: normalizeWakeTimerDate(entry.createdAt),
+      startedAt: normalizeWakeTimerDate(entry.startedAt),
+      completedAt: normalizeWakeTimerDate(entry.completedAt),
+    })
+  }
+
+  return {
+    items,
+    supervisorCardId: typeof record.supervisorCardId === 'string' ? record.supervisorCardId : '',
+    supervisorExpanded: record.supervisorExpanded === true,
+  }
+}
+
+const normalizePersistedAutomationBoardWorkspaces = (
+  raw: unknown,
+): AppState['automationBoards'] => {
+  if (!isRecord(raw)) {
+    return {}
+  }
+
+  const result: AppState['automationBoards'] = {}
+
+  for (const [workspacePath, value] of Object.entries(raw)) {
+    if (!workspacePath.trim()) {
+      continue
+    }
+
+    const parsed = automationBoardWorkspaceStateSchema.safeParse(value)
+    if (parsed.success) {
+      result[workspacePath] = parsed.data
+    }
+  }
+
+  return result
+}
+
 const normalizePersistedCard = (
   card: unknown,
   options: {
@@ -798,6 +868,13 @@ const normalizePersistedCard = (
     pm: normalizePersistedPm(card.pm, fallback.pm),
     pmTaskCardId: '',
     pmOwnerCardId: '',
+    // A board blob only means anything on a board card. Repairing it here (as
+    // opposed to letting Zod reject the card) keeps a partially-written board
+    // from taking the whole workspace column down on load.
+    automationBoard:
+      normalizedModel === AUTOMATIONBOARD_TOOL_MODEL
+        ? normalizePersistedAutomationBoard(card.automationBoard)
+        : undefined,
     messages: rawMessages,
     messageCount: normalizePositiveInteger(card.messageCount, rawMessages.length),
   }
@@ -1591,6 +1668,13 @@ const normalizePersistedColumn = (
   )
   const normalizedLayoutInput = normalizePersistedLayoutNode(column.layout)
   const layout = normalizeLayoutNode(normalizedLayoutInput, cards)
+  // 症状：自动化看板的需求卡会突然全部变成 tab。
+  // 根因：一张看板项卡片是刻意"存在于 column.cards 但不在任何 pane.tabs 里"的
+  //   （见 docs/specs/automation-board/design.md）。下面那条空 layout 兜底会把
+  //   Object.keys(cards) 整个塞进一个 pane，把它们全部曝光成 tab。
+  // 被否决：让看板项存在 cards 之外的容器里——那会让它们错过消息裁剪、
+  //   structuredData 压缩、sidecar 归档和 attachStreamsForState 重连这一整套。
+  const boardOwnedCardIds = collectAutomationBoardOwnedCardIds(cards)
 
   return {
     id: typeof column.id === 'string' && column.id.trim()
@@ -1603,10 +1687,7 @@ const normalizePersistedColumn = (
     workspacePath: typeof column.workspacePath === 'string' ? column.workspacePath : options.fallbackColumn.workspacePath,
     model: normalizedColumnModel,
     width: normalizeColumnWidth(column.width as number | undefined),
-    layout:
-      layout.type === 'pane' && layout.tabs.length === 0 && Object.keys(cards).length > 0
-        ? createPane(Object.keys(cards))
-        : layout,
+    layout: resolveRecoveredColumnLayout(layout, cards, boardOwnedCardIds),
     cards,
   }
 }
@@ -1686,6 +1767,7 @@ const sanitizeStateResult = (raw: unknown): SanitizedStateResult => {
     version: 1,
     settings: safeSettings,
     stickyNoteArchive: normalizePersistedStickyNoteArchive(data.stickyNoteArchive),
+    automationBoards: normalizePersistedAutomationBoardWorkspaces(data.automationBoards),
     updatedAt: new Date().toISOString(),
     columns: safeColumns.map((column: BoardColumn, columnIndex: number) => ({
       ...(() => {

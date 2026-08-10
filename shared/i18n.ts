@@ -336,6 +336,57 @@ type LocaleText = {
   emptyStateWeatherDescription: string
   emptyStateMusicDescription: string
   emptyStateWhiteNoiseDescription: string
+  emptyStateAutomationBoardTitle: string
+  emptyStateAutomationBoardDescription: string
+
+  // Automation Board
+  automationBoardTitle: string
+  automationBoardLaneStandby: string
+  automationBoardLaneRunning: string
+  automationBoardLaneDone: string
+  automationBoardLaneStandbyHint: string
+  automationBoardLaneRunningHint: string
+  automationBoardLaneDoneHint: string
+  automationBoardNewRequirementPlaceholder: string
+  automationBoardAddRequirement: string
+  automationBoardEmptyLane: string
+  automationBoardItemCount: (count: number) => string
+  automationBoardPopOutAction: string
+  automationBoardStopAction: string
+  automationBoardStartAction: string
+  automationBoardDeleteAction: string
+  automationBoardSaveTemplateAction: string
+  automationBoardMoveToStandby: string
+  automationBoardMoveToRunning: string
+  automationBoardMoveToDone: string
+  automationBoardTemplatesLabel: string
+  automationBoardTemplatesEmpty: string
+  automationBoardTemplateRenameAction: string
+  automationBoardTemplateDeleteAction: string
+  automationBoardTemplateNamePrompt: string
+  automationBoardTemplateSaved: string
+  automationBoardSupervisorTitle: string
+  automationBoardSupervisorSectionLabel: string
+  automationBoardSupervisorIdle: string
+  automationBoardSupervisorExpand: string
+  automationBoardSupervisorCollapse: string
+  automationBoardSupervisorRunNowAction: string
+  automationBoardAutoTriggerLabel: string
+  automationBoardAutoTriggerHint: string
+  automationBoardAutoTriggerEnableLabel: string
+  automationBoardAutoTriggerKindLastItemSettled: string
+  automationBoardAutoTriggerModelLabel: string
+  automationBoardAutoTriggerRequirementLabel: string
+  automationBoardAutoTriggerIntervalLabel: string
+  automationBoardAutoTriggerConfigureAction: string
+  automationBoardAutoTriggerCloseAction: string
+  automationBoardAutoTriggerResetAction: string
+  // 计划唤醒在看板语境下的方位文案：普通 tab 是"左侧"，看板项是"上方"。
+  automationBoardWakeAboveLabel: string
+  automationBoardWakeAboveTargetHint: (title: string) => string
+  automationBoardWakeAboveUnavailable: string
+  automationBoardCrossWorkspaceRejected: string
+  automationBoardMessagesTruncated: (hidden: number) => string
 
   // App Update
   settingsGroupUpdate: string
@@ -727,6 +778,55 @@ const localeTextByLanguage: Record<AppLanguage, LocaleText> = {
     emptyStateWeatherDescription: '让当前环境更有感觉。',
     emptyStateMusicDescription: '在工作时挂一条背景声轨。',
     emptyStateWhiteNoiseDescription: '生成一组专注白噪音，铺一层工作氛围。',
+    emptyStateAutomationBoardTitle: '自动化看板',
+    emptyStateAutomationBoardDescription: '把一批需求排成看板，执行中的自动开跑，跑完让监工接手。',
+
+    automationBoardTitle: '自动化看板',
+    automationBoardLaneStandby: '待命',
+    automationBoardLaneRunning: '执行中',
+    automationBoardLaneDone: '已完成',
+    automationBoardLaneStandbyHint: '拖进来会立即中断，保留会话与上下文。',
+    automationBoardLaneRunningHint: '拖进来会立即开始执行。',
+    automationBoardLaneDoneHint: '拖进来会中断并停止所有自动化。',
+    automationBoardNewRequirementPlaceholder: '写一个需求，回车加入待命…',
+    automationBoardAddRequirement: '加入待命',
+    automationBoardEmptyLane: '把需求或 tab 拖到这里',
+    automationBoardItemCount: (count) => `${count} 项`,
+    automationBoardPopOutAction: '拖出为独立 tab',
+    automationBoardStopAction: '中断',
+    automationBoardStartAction: '开始执行',
+    automationBoardDeleteAction: '删除需求',
+    automationBoardSaveTemplateAction: '保存为模板',
+    automationBoardMoveToStandby: '移到待命',
+    automationBoardMoveToRunning: '移到执行中',
+    automationBoardMoveToDone: '移到已完成',
+    automationBoardTemplatesLabel: '模板',
+    automationBoardTemplatesEmpty: '还没有模板。在需求卡上选「保存为模板」。',
+    automationBoardTemplateRenameAction: '重命名',
+    automationBoardTemplateDeleteAction: '删除模板',
+    automationBoardTemplateNamePrompt: '模板名称',
+    automationBoardTemplateSaved: '已保存为模板',
+    automationBoardSupervisorTitle: '看板监工',
+    automationBoardSupervisorSectionLabel: '监工',
+    automationBoardSupervisorIdle: '待触发。最后一个执行中的需求结束时自动接手。',
+    automationBoardSupervisorExpand: '展开监工会话',
+    automationBoardSupervisorCollapse: '收起监工会话',
+    automationBoardSupervisorRunNowAction: '立即让监工检查',
+    automationBoardAutoTriggerLabel: '自动触发',
+    automationBoardAutoTriggerHint: '按工作区保存。监工能读看板、移动需求、向需求发消息。',
+    automationBoardAutoTriggerEnableLabel: '启用自动触发',
+    automationBoardAutoTriggerKindLastItemSettled: '最后一个执行中的需求结束时',
+    automationBoardAutoTriggerModelLabel: '监工模型',
+    automationBoardAutoTriggerRequirementLabel: '监工需求',
+    automationBoardAutoTriggerIntervalLabel: '最小触发间隔（分钟）',
+    automationBoardAutoTriggerConfigureAction: '配置自动触发',
+    automationBoardAutoTriggerCloseAction: '收起配置',
+    automationBoardAutoTriggerResetAction: '恢复默认需求',
+    automationBoardWakeAboveLabel: '上方需求',
+    automationBoardWakeAboveTargetHint: (title) => `等「${title}」结束后发车`,
+    automationBoardWakeAboveUnavailable: '上方没有可等待的需求',
+    automationBoardCrossWorkspaceRejected: '看板只能接收同一个工作区的需求。',
+    automationBoardMessagesTruncated: (hidden) => `上方还有 ${hidden} 条，拖出为 tab 可查看全部`,
 
     settingsGroupUpdate: '应用更新',
     updateChecking: '正在检查更新...',
@@ -1132,6 +1232,57 @@ const localeTextByLanguage: Record<AppLanguage, LocaleText> = {
     emptyStateWeatherDescription: 'Bring in the weather ambience card for the current mood.',
     emptyStateMusicDescription: 'Open NetEase Music and keep a soundtrack running nearby.',
     emptyStateWhiteNoiseDescription: 'Generate a layered focus scene with ambient white noise.',
+    emptyStateAutomationBoardTitle: 'Automation Board',
+    emptyStateAutomationBoardDescription:
+      'Queue a batch of requirements. Running ones start immediately; a supervisor takes over when they finish.',
+
+    automationBoardTitle: 'Automation Board',
+    automationBoardLaneStandby: 'Standby',
+    automationBoardLaneRunning: 'Running',
+    automationBoardLaneDone: 'Done',
+    automationBoardLaneStandbyHint: 'Dropping here interrupts immediately and keeps the session.',
+    automationBoardLaneRunningHint: 'Dropping here starts execution immediately.',
+    automationBoardLaneDoneHint: 'Dropping here interrupts and stops all automation.',
+    automationBoardNewRequirementPlaceholder: 'Write a requirement, press Enter to add…',
+    automationBoardAddRequirement: 'Add to standby',
+    automationBoardEmptyLane: 'Drop a requirement or a tab here',
+    automationBoardItemCount: (count) => `${count} item${count === 1 ? '' : 's'}`,
+    automationBoardPopOutAction: 'Pop out as a tab',
+    automationBoardStopAction: 'Interrupt',
+    automationBoardStartAction: 'Start',
+    automationBoardDeleteAction: 'Delete requirement',
+    automationBoardSaveTemplateAction: 'Save as template',
+    automationBoardMoveToStandby: 'Move to standby',
+    automationBoardMoveToRunning: 'Move to running',
+    automationBoardMoveToDone: 'Move to done',
+    automationBoardTemplatesLabel: 'Templates',
+    automationBoardTemplatesEmpty: 'No templates yet. Use "Save as template" on a requirement.',
+    automationBoardTemplateRenameAction: 'Rename',
+    automationBoardTemplateDeleteAction: 'Delete template',
+    automationBoardTemplateNamePrompt: 'Template name',
+    automationBoardTemplateSaved: 'Saved as template',
+    automationBoardSupervisorTitle: 'Board supervisor',
+    automationBoardSupervisorSectionLabel: 'Supervisor',
+    automationBoardSupervisorIdle: 'Idle. Runs when the last running requirement settles.',
+    automationBoardSupervisorExpand: 'Expand supervisor chat',
+    automationBoardSupervisorCollapse: 'Collapse supervisor chat',
+    automationBoardSupervisorRunNowAction: 'Run supervisor now',
+    automationBoardAutoTriggerLabel: 'Auto trigger',
+    automationBoardAutoTriggerHint:
+      'Saved per workspace. The supervisor can read the board, move requirements, and message them.',
+    automationBoardAutoTriggerEnableLabel: 'Enable auto trigger',
+    automationBoardAutoTriggerKindLastItemSettled: 'When the last running requirement settles',
+    automationBoardAutoTriggerModelLabel: 'Supervisor model',
+    automationBoardAutoTriggerRequirementLabel: 'Supervisor requirement',
+    automationBoardAutoTriggerIntervalLabel: 'Minimum trigger interval (minutes)',
+    automationBoardAutoTriggerConfigureAction: 'Configure auto trigger',
+    automationBoardAutoTriggerCloseAction: 'Close configuration',
+    automationBoardAutoTriggerResetAction: 'Restore default requirement',
+    automationBoardWakeAboveLabel: 'Requirement above',
+    automationBoardWakeAboveTargetHint: (title) => `Waits for "${title}" to finish`,
+    automationBoardWakeAboveUnavailable: 'No requirement above to wait for',
+    automationBoardCrossWorkspaceRejected: 'A board only accepts requirements from its own workspace.',
+    automationBoardMessagesTruncated: (hidden) => `${hidden} earlier message(s) hidden — pop out as a tab to see all`,
 
     settingsGroupUpdate: 'App Update',
     updateChecking: 'Checking for updates...',

@@ -59,6 +59,7 @@ const createState = (): AppState => ({
   columns: [],
   sessionHistory: [],
   stickyNoteArchive: {},
+  automationBoards: {},
   updatedAt: '2026-04-06T00:00:00.000Z',
 })
 

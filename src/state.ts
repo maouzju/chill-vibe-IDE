@@ -1,8 +1,11 @@
 import {
   archiveCardToHistory,
+  createAutomationBoardItemCard,
+  createAutomationBoardSupervisorCard,
   createCard,
   createId,
   createColumn,
+  createDefaultAutomationBoardWorkspaceState,
   createDefaultPmState,
   createPane,
   createSplit,
@@ -27,11 +30,13 @@ import { createDefaultBrainstormState } from '../shared/brainstorm'
 import { getChatMessageAttachments } from '../shared/chat-attachments'
 import { getDuplicateColumnTitle, getForkConversationTitle, getWorkspaceTitle } from '../shared/i18n'
 import {
+  AUTOMATIONBOARD_TOOL_MODEL,
   BRAINSTORM_TOOL_MODEL,
   FILETREE_TOOL_MODEL,
   GIT_TOOL_MODEL,
   IMAGEEDITOR_TOOL_MODEL,
   MUSIC_TOOL_MODEL,
+  getDefaultModel,
   normalizeStoredModel,
   STICKYNOTE_TOOL_MODEL,
   TEXTEDITOR_TOOL_MODEL,
@@ -41,6 +46,12 @@ import {
 import type {
   AppSettings,
   AppState,
+  AutomationBoard,
+  AutomationBoardAutoTrigger,
+  AutomationBoardItem,
+  AutomationBoardLane,
+  AutomationBoardTemplate,
+  AutomationBoardWorkspaceState,
   BoardColumn,
   ChatCard,
   ChatMessage,
@@ -52,8 +63,9 @@ import type {
   RequestModelSettings,
   SessionHistoryEntry,
   SplitNode,
+  WakeTimerMode,
 } from '../shared/schema'
-import { defaultAutoUrgeProfileId } from '../shared/schema'
+import { automationBoardRequirementMaxChars, defaultAutoUrgeProfileId } from '../shared/schema'
 
 type Placement = 'before' | 'after'
 
@@ -428,6 +440,87 @@ export type IdeAction =
   | { type: 'restoreSessionEntries'; entryIds: string[] }
   | { type: 'removeSessionHistory'; entryIds: string[] }
   | { type: 'importExternalSession'; columnId: string; paneId?: string; entry: SessionHistoryEntry }
+  | {
+      type: 'createAutomationBoardItem'
+      columnId: string
+      boardCardId: string
+      lane: AutomationBoardLane
+      requirement: string
+      index?: number
+      provider?: Provider
+      model?: string
+      reasoningEffort?: string
+      thinkingEnabled?: boolean
+      planMode?: boolean
+      wakeTimerActive?: boolean
+      wakeTimerMode?: WakeTimerMode
+      wakeTimerDurationMinutes?: number
+      repeatLoopActive?: boolean
+      repeatLoopRemaining?: number
+      cardId?: string
+    }
+  | {
+      type: 'setAutomationBoardItemLane'
+      columnId: string
+      boardCardId: string
+      cardId: string
+      lane: AutomationBoardLane
+      index?: number
+    }
+  | {
+      type: 'removeAutomationBoardItem'
+      columnId: string
+      boardCardId: string
+      cardId: string
+      deleteCard: boolean
+    }
+  | {
+      type: 'stampAutomationBoardItem'
+      columnId: string
+      boardCardId: string
+      cardId: string
+      patch: { requirement?: string; startedAt?: string; completedAt?: string }
+    }
+  | {
+      type: 'moveAutomationBoardItemToPane'
+      columnId: string
+      boardCardId: string
+      cardId: string
+      paneId: string
+      index?: number
+    }
+  | {
+      type: 'moveTabToAutomationBoard'
+      columnId: string
+      paneId: string
+      tabId: string
+      boardCardId: string
+      lane: AutomationBoardLane
+      index?: number
+    }
+  | {
+      type: 'setAutomationBoardSupervisorExpanded'
+      columnId: string
+      boardCardId: string
+      expanded: boolean
+    }
+  | {
+      type: 'ensureAutomationBoardSupervisor'
+      columnId: string
+      boardCardId: string
+      provider: Provider
+      model: string
+      reasoningEffort: string
+      cardId?: string
+    }
+  | { type: 'saveAutomationBoardTemplate'; workspacePath: string; template: AutomationBoardTemplate }
+  | { type: 'removeAutomationBoardTemplate'; workspacePath: string; templateId: string }
+  | { type: 'renameAutomationBoardTemplate'; workspacePath: string; templateId: string; name: string }
+  | {
+      type: 'updateAutomationBoardAutoTrigger'
+      workspacePath: string
+      patch: Partial<AutomationBoardAutoTrigger>
+    }
 
 const clampInsertIndex = (index: number | undefined, length: number) => {
   if (typeof index !== 'number' || Number.isNaN(index)) {
@@ -441,6 +534,103 @@ const insertAt = (tabs: string[], tabId: string, index?: number) => {
   const nextTabs = tabs.filter((currentTabId) => currentTabId !== tabId)
   nextTabs.splice(clampInsertIndex(index, nextTabs.length), 0, tabId)
   return nextTabs
+}
+
+const getAutomationBoardCard = (column: BoardColumn | undefined, boardCardId: string) => {
+  const card = column?.cards[boardCardId]
+  return card?.model === AUTOMATIONBOARD_TOOL_MODEL && card.automationBoard ? card : undefined
+}
+
+/**
+ * 把一个项放到目标泳道的指定位置。
+ *
+ * items 是**一个**扁平数组，泳道顺序 = 按 lane 过滤后的相对顺序。所以插入
+ * 位置要先算出目标泳道内的绝对下标，再插进扁平数组，否则跨道拖拽的落点会
+ * 相对错位。
+ */
+const placeAutomationBoardItem = (
+  items: readonly AutomationBoardItem[],
+  entry: AutomationBoardItem,
+  index?: number,
+): AutomationBoardItem[] => {
+  const rest = items.filter((item) => item.cardId !== entry.cardId)
+  const laneOffsets = rest.flatMap((item, position) => (item.lane === entry.lane ? [position] : []))
+  const laneIndex = clampInsertIndex(index, laneOffsets.length)
+  const insertPosition =
+    laneIndex < laneOffsets.length
+      ? laneOffsets[laneIndex]!
+      : laneOffsets.length > 0
+        ? laneOffsets[laneOffsets.length - 1]! + 1
+        : rest.length
+
+  const next = [...rest]
+  next.splice(insertPosition, 0, entry)
+  return next
+}
+
+const updateAutomationBoard = (
+  state: AppState,
+  columnId: string,
+  boardCardId: string,
+  patch: (board: AutomationBoard, column: BoardColumn) => AutomationBoard | null,
+): AppState => {
+  const column = state.columns.find((entry) => entry.id === columnId)
+  const boardCard = getAutomationBoardCard(column, boardCardId)
+
+  if (!column || !boardCard) {
+    return state
+  }
+
+  const nextBoard = patch(boardCard.automationBoard!, column)
+  if (!nextBoard) {
+    return state
+  }
+
+  return touchState(
+    updateColumn(state, columnId, (current) => ({
+      ...current,
+      cards: {
+        ...current.cards,
+        [boardCardId]: { ...current.cards[boardCardId]!, automationBoard: nextBoard },
+      },
+    })),
+  )
+}
+
+const getAutomationBoardWorkspaceState = (
+  state: AppState,
+  workspacePath: string,
+): AutomationBoardWorkspaceState =>
+  state.automationBoards[workspacePath] ?? createDefaultAutomationBoardWorkspaceState()
+
+const withAutomationBoardWorkspaceState = (
+  state: AppState,
+  workspacePath: string,
+  patch: (current: AutomationBoardWorkspaceState) => AutomationBoardWorkspaceState,
+): AppState => {
+  if (!workspacePath.trim()) {
+    return state
+  }
+
+  return touchState({
+    ...state,
+    automationBoards: {
+      ...state.automationBoards,
+      [workspacePath]: patch(getAutomationBoardWorkspaceState(state, workspacePath)),
+    },
+  })
+}
+
+/**
+ * 一张卡被看板吸收时的"原始需求"。首条用户消息优先于草稿：跑过的会话里
+ * 草稿可能是后来随手写的半句话，而监工要拿它跟交付情况比对。
+ */
+export const resolveAutomationBoardRequirementFromCard = (card: ChatCard): string => {
+  const firstUserMessage = card.messages.find(
+    (message) => message.role === 'user' && message.content.trim().length > 0,
+  )
+
+  return (firstUserMessage?.content ?? card.draft ?? '').slice(0, automationBoardRequirementMaxChars)
 }
 
 const duplicateChatMessage = (message: ChatMessage): ChatMessage => ({
@@ -2673,6 +2863,339 @@ export const ideReducer = (state: AppState, action: IdeAction): AppState => {
           ),
         })),
       )
+    }
+    case 'createAutomationBoardItem': {
+      const column = state.columns.find((entry) => entry.id === action.columnId)
+      const boardCard = getAutomationBoardCard(column, action.boardCardId)
+
+      if (!column || !boardCard) {
+        return state
+      }
+
+      const requirement = action.requirement.slice(0, automationBoardRequirementMaxChars)
+      const provider = action.provider ?? column.provider
+      const itemCard: ChatCard = {
+        ...createAutomationBoardItemCard({
+          requirement,
+          provider,
+          model: normalizeStoredModel(provider, action.model ?? column.model) || getDefaultModel(provider),
+          reasoningEffort: action.reasoningEffort,
+          thinkingEnabled: action.thinkingEnabled,
+          planMode: action.planMode,
+          language: state.settings.language,
+        }),
+        ...(action.cardId ? { id: action.cardId } : {}),
+        ...(action.wakeTimerActive !== undefined ? { wakeTimerActive: action.wakeTimerActive } : {}),
+        ...(action.wakeTimerMode ? { wakeTimerMode: action.wakeTimerMode } : {}),
+        ...(typeof action.wakeTimerDurationMinutes === 'number'
+          ? { wakeTimerDurationMinutes: action.wakeTimerDurationMinutes }
+          : {}),
+        ...(action.repeatLoopActive !== undefined ? { repeatLoopActive: action.repeatLoopActive } : {}),
+        ...(typeof action.repeatLoopRemaining === 'number'
+          ? { repeatLoopRemaining: action.repeatLoopRemaining }
+          : {}),
+      }
+
+      // 卡片进 column.cards 但绝不进 pane.tabs —— 那正是"看板项"的定义。
+      return touchState(
+        updateColumn(state, action.columnId, (current) => ({
+          ...current,
+          cards: {
+            ...current.cards,
+            [itemCard.id]: itemCard,
+            [action.boardCardId]: {
+              ...current.cards[action.boardCardId]!,
+              automationBoard: {
+                ...boardCard.automationBoard!,
+                items: placeAutomationBoardItem(
+                  boardCard.automationBoard!.items,
+                  {
+                    cardId: itemCard.id,
+                    lane: action.lane,
+                    requirement,
+                    createdAt: new Date().toISOString(),
+                  },
+                  action.index,
+                ),
+              },
+            },
+          },
+        })),
+      )
+    }
+    case 'setAutomationBoardItemLane': {
+      return updateAutomationBoard(state, action.columnId, action.boardCardId, (board) => {
+        const existing = board.items.find((item) => item.cardId === action.cardId)
+        if (!existing) {
+          return null
+        }
+
+        return {
+          ...board,
+          items: placeAutomationBoardItem(
+            board.items,
+            { ...existing, lane: action.lane },
+            action.index,
+          ),
+        }
+      })
+    }
+    case 'stampAutomationBoardItem': {
+      return updateAutomationBoard(state, action.columnId, action.boardCardId, (board) => {
+        if (!board.items.some((item) => item.cardId === action.cardId)) {
+          return null
+        }
+
+        return {
+          ...board,
+          items: board.items.map((item) =>
+            item.cardId === action.cardId
+              ? {
+                  ...item,
+                  ...(action.patch.requirement !== undefined
+                    ? { requirement: action.patch.requirement.slice(0, automationBoardRequirementMaxChars) }
+                    : {}),
+                  ...(action.patch.startedAt !== undefined ? { startedAt: action.patch.startedAt } : {}),
+                  ...(action.patch.completedAt !== undefined
+                    ? { completedAt: action.patch.completedAt }
+                    : {}),
+                }
+              : item,
+          ),
+        }
+      })
+    }
+    case 'setAutomationBoardSupervisorExpanded': {
+      return updateAutomationBoard(state, action.columnId, action.boardCardId, (board) =>
+        board.supervisorExpanded === action.expanded
+          ? null
+          : { ...board, supervisorExpanded: action.expanded },
+      )
+    }
+    case 'removeAutomationBoardItem': {
+      const column = state.columns.find((entry) => entry.id === action.columnId)
+      const boardCard = getAutomationBoardCard(column, action.boardCardId)
+
+      if (!column || !boardCard || !boardCard.automationBoard!.items.some((item) => item.cardId === action.cardId)) {
+        return state
+      }
+
+      return touchState(
+        updateColumn(state, action.columnId, (current) => {
+          const cards = { ...current.cards }
+          if (action.deleteCard) {
+            delete cards[action.cardId]
+          }
+
+          cards[action.boardCardId] = {
+            ...current.cards[action.boardCardId]!,
+            automationBoard: {
+              ...boardCard.automationBoard!,
+              items: boardCard.automationBoard!.items.filter((item) => item.cardId !== action.cardId),
+            },
+          }
+
+          return { ...current, cards }
+        }),
+      )
+    }
+    case 'moveAutomationBoardItemToPane': {
+      const column = state.columns.find((entry) => entry.id === action.columnId)
+      const boardCard = getAutomationBoardCard(column, action.boardCardId)
+      const board = boardCard?.automationBoard
+
+      // pitfall 237：多步搬运必须在动手前一次性校验两端，否则过期的一端会让
+      // "摘除已提交 / 插入被跳过"落地，卡片变成不在任何容器里的孤儿。
+      if (
+        !column ||
+        !board ||
+        !column.cards[action.cardId] ||
+        !board.items.some((item) => item.cardId === action.cardId) ||
+        !findPaneInLayout(column.layout, action.paneId)
+      ) {
+        return state
+      }
+
+      // 刻意不归档进 sessionHistory：卡片没有被关闭，只是换了展现容器。
+      return touchState(
+        updateColumn(state, action.columnId, (current) => ({
+          ...current,
+          cards: {
+            ...current.cards,
+            [action.boardCardId]: {
+              ...current.cards[action.boardCardId]!,
+              automationBoard: {
+                ...board,
+                items: board.items.filter((item) => item.cardId !== action.cardId),
+              },
+            },
+          },
+          layout: updatePaneNode(current.layout, action.paneId, (pane) =>
+            createPane(
+              insertAt(pane.tabs, action.cardId, action.index),
+              action.cardId,
+              pane.id,
+              pane.tabHistory,
+            ),
+          ),
+        })),
+      )
+    }
+    case 'moveTabToAutomationBoard': {
+      const column = state.columns.find((entry) => entry.id === action.columnId)
+      const boardCard = getAutomationBoardCard(column, action.boardCardId)
+      const board = boardCard?.automationBoard
+      const movingCard = column?.cards[action.tabId]
+      const sourcePane = column ? findPaneInLayout(column.layout, action.paneId) : undefined
+
+      if (
+        !column ||
+        !board ||
+        !movingCard ||
+        !sourcePane ||
+        !sourcePane.tabs.includes(action.tabId) ||
+        // 看板不能吞掉自己，也不能吞掉另一张看板卡（会造成拥有关系成环）。
+        action.tabId === action.boardCardId ||
+        movingCard.model === AUTOMATIONBOARD_TOOL_MODEL
+      ) {
+        return state
+      }
+
+      const requirement = resolveAutomationBoardRequirementFromCard(movingCard)
+
+      return touchState(
+        updateColumn(state, action.columnId, (current) => {
+          const layout = collapseLayout(
+            updatePaneNode(current.layout, action.paneId, (pane) =>
+              createPane(
+                pane.tabs.filter((tabId) => tabId !== action.tabId),
+                pane.activeTabId === action.tabId ? '' : pane.activeTabId,
+                pane.id,
+                pane.tabHistory,
+              ),
+            ),
+          )
+
+          const cards = {
+            ...current.cards,
+            [action.boardCardId]: {
+              ...current.cards[action.boardCardId]!,
+              automationBoard: {
+                ...board,
+                items: placeAutomationBoardItem(
+                  board.items,
+                  {
+                    cardId: action.tabId,
+                    lane: action.lane,
+                    requirement,
+                    createdAt: new Date().toISOString(),
+                  },
+                  action.index,
+                ),
+              },
+            },
+          }
+
+          return { ...current, cards, layout: normalizeLayoutNode(layout, cards) }
+        }),
+      )
+    }
+    case 'ensureAutomationBoardSupervisor': {
+      const column = state.columns.find((entry) => entry.id === action.columnId)
+      const boardCard = getAutomationBoardCard(column, action.boardCardId)
+      const board = boardCard?.automationBoard
+
+      if (!column || !board) {
+        return state
+      }
+
+      const existing = board.supervisorCardId ? column.cards[board.supervisorCardId] : undefined
+      const model = normalizeStoredModel(action.provider, action.model) || getDefaultModel(action.provider)
+
+      if (existing) {
+        // 监工已经存在：只把它重新指向当前配置的模型，绝不换卡（换卡就丢上下文）。
+        if (existing.provider === action.provider && existing.model === model) {
+          return state
+        }
+
+        return touchState(
+          updateColumn(state, action.columnId, (current) => ({
+            ...current,
+            cards: {
+              ...current.cards,
+              [existing.id]: {
+                ...current.cards[existing.id]!,
+                provider: action.provider,
+                model,
+                reasoningEffort: action.reasoningEffort,
+                // 换模型作废原生会话：与 selectCardModel 同一条规矩。
+                sessionId: undefined,
+                sessionModel: undefined,
+              },
+            },
+          })),
+        )
+      }
+
+      const supervisorCard: ChatCard = {
+        ...createAutomationBoardSupervisorCard({
+          provider: action.provider,
+          model,
+          reasoningEffort: action.reasoningEffort,
+          language: state.settings.language,
+        }),
+        ...(action.cardId ? { id: action.cardId } : {}),
+      }
+
+      return touchState(
+        updateColumn(state, action.columnId, (current) => ({
+          ...current,
+          cards: {
+            ...current.cards,
+            [supervisorCard.id]: supervisorCard,
+            [action.boardCardId]: {
+              ...current.cards[action.boardCardId]!,
+              automationBoard: { ...board, supervisorCardId: supervisorCard.id },
+            },
+          },
+        })),
+      )
+    }
+    case 'saveAutomationBoardTemplate': {
+      return withAutomationBoardWorkspaceState(state, action.workspacePath, (current) => {
+        const rest = current.templates.filter((template) => template.id !== action.template.id)
+        const existingIndex = current.templates.findIndex(
+          (template) => template.id === action.template.id,
+        )
+
+        if (existingIndex < 0) {
+          return { ...current, templates: [...rest, action.template] }
+        }
+
+        const templates = [...rest]
+        templates.splice(existingIndex, 0, action.template)
+        return { ...current, templates }
+      })
+    }
+    case 'removeAutomationBoardTemplate': {
+      return withAutomationBoardWorkspaceState(state, action.workspacePath, (current) => ({
+        ...current,
+        templates: current.templates.filter((template) => template.id !== action.templateId),
+      }))
+    }
+    case 'renameAutomationBoardTemplate': {
+      return withAutomationBoardWorkspaceState(state, action.workspacePath, (current) => ({
+        ...current,
+        templates: current.templates.map((template) =>
+          template.id === action.templateId ? { ...template, name: action.name.trim() } : template,
+        ),
+      }))
+    }
+    case 'updateAutomationBoardAutoTrigger': {
+      return withAutomationBoardWorkspaceState(state, action.workspacePath, (current) => ({
+        ...current,
+        autoTrigger: { ...current.autoTrigger, ...action.patch },
+      }))
     }
     default:
       return state

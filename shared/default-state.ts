@@ -513,6 +513,7 @@ export const createDefaultSettings = (language: AppLanguage = defaultAppLanguage
   gitCardEnabled: true,
   fileTreeCardEnabled: true,
   stickyNoteCardEnabled: true,
+  automationBoardCardEnabled: true,
   pmCardEnabled: true,
   brainstormCardEnabled: false,
   experimentalMusicEnabled: false,
@@ -623,6 +624,10 @@ export const normalizeAppSettings = (settings?: Partial<AppSettings> | null): Ap
       typeof settings?.stickyNoteCardEnabled === 'boolean'
         ? settings.stickyNoteCardEnabled
         : defaults.stickyNoteCardEnabled,
+    automationBoardCardEnabled:
+      typeof settings?.automationBoardCardEnabled === 'boolean'
+        ? settings.automationBoardCardEnabled
+        : defaults.automationBoardCardEnabled,
     pmCardEnabled:
       typeof settings?.pmCardEnabled === 'boolean'
         ? settings.pmCardEnabled
@@ -737,6 +742,8 @@ export const isQuickToolModelEnabled = (settings: AppSettings, model: string) =>
       return settings.fileTreeCardEnabled
     case STICKYNOTE_TOOL_MODEL:
       return settings.stickyNoteCardEnabled
+    case AUTOMATIONBOARD_TOOL_MODEL:
+      return settings.automationBoardCardEnabled
     case BRAINSTORM_TOOL_MODEL:
       return false
     case WEATHER_TOOL_MODEL:
@@ -759,6 +766,7 @@ const quickToolModelsInOrder = [
   GIT_TOOL_MODEL,
   FILETREE_TOOL_MODEL,
   STICKYNOTE_TOOL_MODEL,
+  AUTOMATIONBOARD_TOOL_MODEL,
   WEATHER_TOOL_MODEL,
   MUSIC_TOOL_MODEL,
   WHITENOISE_TOOL_MODEL,

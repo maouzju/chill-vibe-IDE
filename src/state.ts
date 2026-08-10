@@ -212,6 +212,7 @@ export type IdeAction =
           | 'gitCardEnabled'
           | 'fileTreeCardEnabled'
           | 'stickyNoteCardEnabled'
+          | 'automationBoardCardEnabled'
           | 'pmCardEnabled'
           | 'brainstormCardEnabled'
           | 'experimentalMusicEnabled'

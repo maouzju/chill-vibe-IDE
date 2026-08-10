@@ -504,6 +504,93 @@ test('fetchSlashCommands refreshes shortly so newly-created skills can appear wi
   }
 })
 
+// 症状：并发多路流式输出时整个窗口卡死 1~19 秒，主进程 CPU 为 0 却在 IPC 管道上读写 3.8/5.9MB。
+// 根因：2026-08-10 实测，每次 openChatStream 都往 window 上挂一条自己的桥接监听器，
+//       preload 把每条 chat:stream-event 广播给全部 N 条监听器，再由各自按 subscriptionId
+//       丢弃；5 路 streaming 时每条事件被分发处理 5 次（卡顿瞬间 renderer 侧 3.5-5.1MB / 500+ ops）。
+// 被否决：在回调体内提前 return —— 那正是现状。浪费发生在事件分发本身而不在回调体里，
+//       必须让 window 分发只发生一次，再按订阅 ID 精确路由到目标 handler。
+test('openChatStream routes concurrent streams through a single shared bridge listener', () => {
+  const eventTarget = new EventTarget() as ElectronBridgeWindow
+  let listenerAdds = 0
+  let listenerRemoves = 0
+  const nativeAdd = EventTarget.prototype.addEventListener.bind(eventTarget)
+  const nativeRemove = EventTarget.prototype.removeEventListener.bind(eventTarget)
+
+  eventTarget.addEventListener = ((
+    type: string,
+    listener: EventListenerOrEventListenerObject | null,
+    options?: unknown,
+  ) => {
+    if (type === 'chill-vibe:chat-stream') {
+      listenerAdds += 1
+    }
+    nativeAdd(type, listener, options as never)
+  }) as EventTarget['addEventListener']
+
+  eventTarget.removeEventListener = ((
+    type: string,
+    listener: EventListenerOrEventListenerObject | null,
+    options?: unknown,
+  ) => {
+    if (type === 'chill-vibe:chat-stream') {
+      listenerRemoves += 1
+    }
+    nativeRemove(type, listener, options as never)
+  }) as EventTarget['removeEventListener']
+
+  const subscriptionIds: string[] = []
+  eventTarget.electronAPI = {
+    subscribeChatStream: async (_streamId, subscriptionId) => {
+      subscriptionIds.push(subscriptionId)
+    },
+    unsubscribeChatStream: async () => undefined,
+  }
+
+  setWindow(eventTarget)
+
+  const errorCounts = [0, 0, 0, 0, 0]
+  const sources = errorCounts.map((_unused, index) =>
+    openChatStream(`stream-${index}`, {
+      onError: () => {
+        errorCounts[index] += 1
+      },
+    }),
+  )
+
+  assert.equal(subscriptionIds.length, 5)
+  assert.equal(listenerAdds, 1, '并发订阅只应共用一条桥接监听器，而不是每路各挂一条')
+
+  eventTarget.dispatchEvent(
+    new CustomEvent('chill-vibe:chat-stream', {
+      detail: {
+        subscriptionId: subscriptionIds[2],
+        event: 'error',
+        data: { message: 'Targeted delivery.', recoverable: false },
+      },
+    }),
+  )
+
+  assert.deepEqual(errorCounts, [0, 0, 1, 0, 0], '事件只应投递给目标订阅的 handler')
+
+  sources.slice(0, 4).forEach((source) => source.close())
+  assert.equal(listenerRemoves, 0, '仍有订阅存活时不能摘掉共享监听器')
+
+  eventTarget.dispatchEvent(
+    new CustomEvent('chill-vibe:chat-stream', {
+      detail: {
+        subscriptionId: subscriptionIds[4],
+        event: 'error',
+        data: { message: 'Still alive.', recoverable: false },
+      },
+    }),
+  )
+  assert.deepEqual(errorCounts, [0, 0, 1, 0, 1], '关闭其它订阅不应影响存活订阅的投递')
+
+  sources[4].close()
+  assert.equal(listenerRemoves, 1, '最后一个订阅关闭后应摘掉共享监听器，避免泄漏')
+})
+
 test('openChatStream requires the Electron bridge and does not fall back to EventSource', () => {
   let eventSourceCalls = 0
 

@@ -4,15 +4,21 @@ import type { IpcRendererEvent } from 'electron'
 import { getAttachmentProtocolUrl } from '../shared/attachment-protocol.js'
 
 ipcRenderer.on('chat:stream-event', (_event, payload) => {
-  window.dispatchEvent(
-    new CustomEvent('chill-vibe:chat-stream', {
-      detail: payload as {
-        subscriptionId: string
-        event: string
-        data: unknown
-      },
-    }),
-  )
+  // 主进程按 16ms 窗口把流式事件合并成数组投递（见 electron/chat-stream-batcher.ts）。
+  // 仍接受单条对象：任何未经批处理的直发路径都不能被静默丢掉。
+  const items = Array.isArray(payload) ? payload : [payload]
+
+  for (const item of items) {
+    window.dispatchEvent(
+      new CustomEvent('chill-vibe:chat-stream', {
+        detail: item as {
+          subscriptionId: string
+          event: string
+          data: unknown
+        },
+      }),
+    )
+  }
 })
 
 ipcRenderer.on('file:changed', (_event, payload) => {

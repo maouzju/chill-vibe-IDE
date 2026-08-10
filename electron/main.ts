@@ -29,6 +29,7 @@ import {
   writeAccessibilitySupportFlag,
 } from './accessibility-support.js'
 import { attachFrameStallWatchdog } from './frame-stall-watchdog.js'
+import { createChatStreamBatcher } from './chat-stream-batcher.js'
 import { summarizeUnresponsiveCallStack } from './unresponsive-forensics.js'
 import {
   classifyUnresponsiveBlocking,
@@ -172,6 +173,34 @@ let quitTimer: NodeJS.Timeout | null = null
 let quitAfterFlushPending = false
 let minimizeToTaskbarOnCloseEnabled = false
 
+// 16ms 对齐一帧：渲染进程本来就画不出比这更密的更新，所以合并窗口取到帧率上限，
+// 既把跨进程往返压到最少，又不产生用户可感知的延迟。
+const chatStreamFlushWindowMs = 16
+const chatStreamSenders = new Map<number, Electron.WebContents>()
+
+// 症状：并发多路流式输出时整窗口卡死 1~19 秒，主进程 CPU 为 0 却挂在 IPC 上。
+// 根因：2026-08-10 实测，卡顿的 890ms 内主进程做了 426 次 IPC / 6MB，平均每次仅 14KB ——
+//       瓶颈是每个 delta 各走一次跨进程往返（≈480 次/秒，随并发路数线性叠加）。
+// 被否决：截断大输出 —— 平均 14KB 证明没有「巨型单条」，截断伤可读性且治不了频率。
+const chatStreamBatcher = createChatStreamBatcher({
+  schedule: (callback) => {
+    setTimeout(callback, chatStreamFlushWindowMs)
+  },
+  deliver: (senderKey, items) => {
+    const sender = chatStreamSenders.get(senderKey)
+    if (!sender || sender.isDestroyed() || sender.isCrashed()) {
+      chatStreamSenders.delete(senderKey)
+      return
+    }
+
+    try {
+      sender.send('chat:stream-event', items)
+    } catch (error) {
+      log.warn('[main] Failed to forward chat stream events to renderer.', error)
+    }
+  },
+})
+
 const sendChatStreamEventSafely = (
   sender: Electron.WebContents,
   payload: {
@@ -181,16 +210,14 @@ const sendChatStreamEventSafely = (
   },
 ) => {
   if (sender.isDestroyed() || sender.isCrashed()) {
+    chatStreamSenders.delete(sender.id)
+    chatStreamBatcher.dropSender(sender.id)
     return false
   }
 
-  try {
-    sender.send('chat:stream-event', payload)
-    return true
-  } catch (error) {
-    log.warn('[main] Failed to forward chat stream event to renderer.', error)
-    return false
-  }
+  chatStreamSenders.set(sender.id, sender)
+  chatStreamBatcher.enqueue(sender.id, payload)
+  return true
 }
 
 async function openExternalUrl(href: string) {

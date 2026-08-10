@@ -1531,6 +1531,44 @@ export const onUpdateDownloadProgress = (listener: (progress: number) => void): 
   return fn(listener) as () => void
 }
 
+// 症状：并发多路流式输出时整个窗口卡死 1~19 秒，主进程 CPU 为 0 却在 IPC 管道上读写 3.8/5.9MB。
+// 根因：2026-08-10 实测，每路 openChatStream 各自往 window 挂一条桥接监听器，preload 把每条
+//       chat:stream-event 广播给全部 N 条，再由各自比对 subscriptionId 丢弃；5 路 streaming
+//       时每条事件被分发处理 5 次，卡顿瞬间 renderer 侧实测 3.5-5.1MB / 500+ ops。
+// 被否决：在回调体内提前 return —— 那正是现状，浪费发生在 window 的事件分发本身而非回调体内。
+//       改为「一条共享监听器 + 按订阅 ID 精确路由」，分发次数从 O(并发路数) 降回 O(1)。
+const chatStreamHandlers = new Map<string, StreamHandlers>()
+let chatStreamBridgeTarget: Window | null = null
+
+const onChatStreamBridgeEvent = (event: WindowEventMap['chill-vibe:chat-stream']) => {
+  const handlers = chatStreamHandlers.get(event.detail.subscriptionId)
+  if (!handlers) {
+    return
+  }
+
+  dispatchChatStreamEvent(event.detail.event, event.detail.data, handlers)
+}
+
+const attachChatStreamBridge = () => {
+  if (chatStreamBridgeTarget === window) {
+    return
+  }
+
+  chatStreamBridgeTarget?.removeEventListener('chill-vibe:chat-stream', onChatStreamBridgeEvent)
+  window.addEventListener('chill-vibe:chat-stream', onChatStreamBridgeEvent)
+  chatStreamBridgeTarget = window
+}
+
+// 只有最后一路订阅关闭后才摘监听器，否则仍存活的订阅会静默收不到事件。
+const detachChatStreamBridgeIfIdle = () => {
+  if (chatStreamHandlers.size > 0 || !chatStreamBridgeTarget) {
+    return
+  }
+
+  chatStreamBridgeTarget.removeEventListener('chill-vibe:chat-stream', onChatStreamBridgeEvent)
+  chatStreamBridgeTarget = null
+}
+
 export const openChatStream = (streamId: string, handlers: StreamHandlers): ChatStreamSource => {
   const desktopApi = getDesktopApi()
   const subscribeChatStream = requireDesktopAction(desktopApi?.subscribeChatStream)
@@ -1542,18 +1580,12 @@ export const openChatStream = (streamId: string, handlers: StreamHandlers): Chat
 
   const subscriptionId = crypto.randomUUID()
 
-  const onDesktopEvent = (event: WindowEventMap['chill-vibe:chat-stream']) => {
-    if (event.detail.subscriptionId !== subscriptionId) {
-      return
-    }
-
-    dispatchChatStreamEvent(event.detail.event, event.detail.data, handlers)
-  }
-
-  window.addEventListener('chill-vibe:chat-stream', onDesktopEvent)
+  chatStreamHandlers.set(subscriptionId, handlers)
+  attachChatStreamBridge()
 
   void subscribeChatStream(streamId, subscriptionId).catch((error) => {
-    window.removeEventListener('chill-vibe:chat-stream', onDesktopEvent)
+    chatStreamHandlers.delete(subscriptionId)
+    detachChatStreamBridgeIfIdle()
     handlers.onError?.({
       message: error instanceof Error ? error.message : 'The desktop stream could not be opened.',
       recoverable: false,
@@ -1562,7 +1594,8 @@ export const openChatStream = (streamId: string, handlers: StreamHandlers): Chat
 
   return {
     close() {
-      window.removeEventListener('chill-vibe:chat-stream', onDesktopEvent)
+      chatStreamHandlers.delete(subscriptionId)
+      detachChatStreamBridgeIfIdle()
       void unsubscribeChatStream(subscriptionId)
     },
   }

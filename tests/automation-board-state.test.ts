@@ -693,7 +693,7 @@ describe('automation board workspace state', () => {
     })
 
     assert.equal(next.automationBoards['D:/repo/one'], undefined)
-    assert.equal(next.automationBoards['D:/repo/two']?.enabled, undefined)
+    assert.deepEqual(Object.keys(next.automationBoards), ['D:/repo/two'])
     assert.equal(next.automationBoards['D:/repo/two']?.autoTrigger.enabled, true)
   })
 })

@@ -21,6 +21,7 @@ import {
   getSlashCommandSourceLabel,
 } from '../../shared/i18n'
 import {
+  AUTOMATIONBOARD_TOOL_MODEL,
   BRAINSTORM_TOOL_MODEL,
   FILETREE_TOOL_MODEL,
   GIT_TOOL_MODEL,
@@ -146,6 +147,10 @@ import { StickyNoteCard } from './StickyNoteCard'
 import { FileTreeCard } from './FileTreeCard'
 import { TextEditorCard } from './TextEditorCard'
 import { ImageEditorCard } from './ImageEditorCard'
+import {
+  AutomationBoardCard,
+  type AutomationBoardCardProps,
+} from './AutomationBoardCard'
 import { BrainstormCard } from './BrainstormCard'
 import { resolveBrainstormRequestTarget } from './brainstorm-card-utils'
 import { getLatestUserAnswerAfterAskUserMessage } from './ask-user-answer-state'
@@ -410,6 +415,9 @@ type ChatCardProps = {
   wakeTimerEnabled?: boolean
   leftWakeTimerTarget?: { id: string; title: string } | null
   workspaceWakeTimerAgentCount?: number
+  // Fully bound by PaneView (it owns the column and the App callbacks) so this
+  // component stays a pure pass-through for the board — no board logic here.
+  automationBoardProps?: AutomationBoardCardProps
   queuedSendSummary?: QueuedSendSummary
   onSetAutoUrgeEnabled: (enabled: boolean) => void
   onRemove: () => void
@@ -878,6 +886,7 @@ const areChatCardPropsEqual = (previous: ChatCardProps, next: ChatCardProps) =>
   // 所以 title 变化对这张卡的渲染无影响，比较它只会让左邻改标题时白白重渲染整卡。
   previous.leftWakeTimerTarget?.id === next.leftWakeTimerTarget?.id &&
   previous.workspaceWakeTimerAgentCount === next.workspaceWakeTimerAgentCount &&
+  previous.automationBoardProps === next.automationBoardProps &&
   previous.queuedSendSummary === next.queuedSendSummary &&
   previous.isRestored === next.isRestored &&
   previous.chromeMode === next.chromeMode &&
@@ -1474,6 +1483,7 @@ const ChatCardView = ({
   wakeTimerEnabled = false,
   leftWakeTimerTarget = null,
   workspaceWakeTimerAgentCount = 0,
+  automationBoardProps,
   queuedSendSummary,
   onSetAutoUrgeEnabled,
   onRemove,
@@ -1640,6 +1650,7 @@ const ChatCardView = ({
   const isBrainstormCard = card.model === BRAINSTORM_TOOL_MODEL
   const isTextEditorCard = card.model === TEXTEDITOR_TOOL_MODEL
   const isImageEditorCard = card.model === IMAGEEDITOR_TOOL_MODEL
+  const isAutomationBoardCard = card.model === AUTOMATIONBOARD_TOOL_MODEL
   const isTopbarToolCard = isMusicToolCard || isWhiteNoiseCard || isWeatherCard
   const isToolCard =
     isGitToolCard ||
@@ -1650,7 +1661,8 @@ const ChatCardView = ({
     isFileTreeCard ||
     isBrainstormCard ||
     isTextEditorCard ||
-    isImageEditorCard
+    isImageEditorCard ||
+    isAutomationBoardCard
   const usesPaneChrome = chromeMode === 'pane'
   const suspendPaneRuntimeEffects = usesPaneChrome && !isActive
   const deferInactivePaneChatBody = suspendPaneRuntimeEffects && !isToolCard
@@ -4576,6 +4588,14 @@ const ChatCardView = ({
           filePath={card.stickyNote}
           language={language}
         />
+      )}
+
+      {/* Board items keep running while this tab is hidden: their cards belong
+          to the column, not to this subtree, so unmounting the board body never
+          touches a running stream and no hidden-body opt-in is needed
+          (contrast pitfall 135, where the tool runtime lived inside the body). */}
+      {isAutomationBoardCard && !isCollapsed && automationBoardProps && (
+        <AutomationBoardCard {...automationBoardProps} />
       )}
 
 

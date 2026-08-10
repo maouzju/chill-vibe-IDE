@@ -6,6 +6,7 @@ import { fileURLToPath } from 'node:url'
 
 import type { AppLanguage, ChatRequest } from '../shared/schema.js'
 import { getAppDataDir } from './app-paths.js'
+import { pruneStaleCodexAgentHomes } from './codex-agent-home-prune.js'
 
 const safetyHookMatcher = 'Bash|apply_patch|Edit|Write|NotebookEdit'
 const safetyHookTimeoutSec = 5
@@ -166,6 +167,26 @@ export const prepareDestructiveCommandGuardRuntime = async (
   return { env, hookCommand }
 }
 
+// 节流：实测该根目录已有 1469 个子目录，每次启动 Codex 都全量 stat 一遍纯属浪费 IO
+// （本次排查正是在追查主进程被 IO/IPC 拖住的窗口卡顿）。每小时一次足以阻止无界增长。
+const agentHomePruneIntervalMs = 60 * 60 * 1000
+let lastAgentHomePruneAtMs = 0
+
+const scheduleCodexAgentHomePrune = (rootDir: string, activeRuntimeKey: string) => {
+  const nowMs = Date.now()
+  if (nowMs - lastAgentHomePruneAtMs < agentHomePruneIntervalMs) {
+    return
+  }
+
+  lastAgentHomePruneAtMs = nowMs
+  // 后台回收：本轮启动绝不等待清理，清理失败也不影响这次运行。
+  void pruneStaleCodexAgentHomes({
+    rootDir,
+    nowMs,
+    protectedKeys: [activeRuntimeKey],
+  }).catch(() => undefined)
+}
+
 export const prepareCodexSafetyRuntime = async (
   request: ChatRequest,
   baseArgs: string[],
@@ -178,8 +199,10 @@ export const prepareCodexSafetyRuntime = async (
   const runtimeKey = buildRuntimeKey(request)
 
   if (request.codexIsolatedHomeEnabled === true) {
-    const isolatedHome = path.join(appDataDir, 'codex-agent-homes', runtimeKey)
+    const agentHomesRoot = path.join(appDataDir, 'codex-agent-homes')
+    const isolatedHome = path.join(agentHomesRoot, runtimeKey)
     await mkdir(isolatedHome, { recursive: true })
+    scheduleCodexAgentHomePrune(agentHomesRoot, runtimeKey)
     env.USERPROFILE = isolatedHome
     env.CODEX_HOME = originalCodexHome
 

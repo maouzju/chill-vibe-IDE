@@ -1467,6 +1467,20 @@ const selectCardModel = (
             normalizedModel === STICKYNOTE_TOOL_MODEL
               ? currentCard.stickyNoteId?.trim() || currentCard.id
               : currentCard.stickyNoteId,
+          // 症状：从空态工具栅格或模型选择器建看板，卡片一片空白。
+          // 根因：这两条路径都只是"改这张卡的 model"，不会新建卡片，而看板的
+          //   渲染完全依赖 `automationBoard` 这个 blob —— 不在这里种下去，
+          //   卡片就是一张什么都不渲染的空壳。
+          // 切走时**保留** blob（切回来就还在），因为读取一律经
+          // `getAutomationBoard` 按 model 把关，留着不会让非看板卡冒充看板。
+          automationBoard:
+            normalizedModel === AUTOMATIONBOARD_TOOL_MODEL
+              ? currentCard.automationBoard ?? {
+                  items: [],
+                  supervisorCardId: '',
+                  supervisorExpanded: false,
+                }
+              : currentCard.automationBoard,
           pmTaskCardId: '',
           pmOwnerCardId: '',
           backgroundWorkPending: false,

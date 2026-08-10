@@ -32,6 +32,7 @@ import {
   minUiScale,
   resolveAppFontFamilyCss,
   createAutomationBoardTemplateFromCard,
+  getAutomationBoard,
   titleFromPrompt,
 } from '../shared/default-state'
 import { attachImagesToMessageMeta } from '../shared/chat-attachments'
@@ -3833,7 +3834,7 @@ function App() {
         }
 
         for (const boardCard of Object.values(column.cards)) {
-          const board = boardCard.automationBoard
+          const board = getAutomationBoard(boardCard)
           if (!board) {
             continue
           }
@@ -5020,7 +5021,7 @@ function App() {
 
       for (const column of state.columns) {
         for (const card of Object.values(column.cards)) {
-          if (!card.automationBoard) {
+          if (!getAutomationBoard(card)) {
             continue
           }
 

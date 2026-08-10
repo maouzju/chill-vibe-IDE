@@ -9,6 +9,7 @@ import {
   type BoardColumn,
   type ChatCard,
 } from '../../shared/schema'
+import { getAutomationBoard } from '../../shared/default-state'
 
 const truncate = (value: string, limit: number) =>
   value.length <= limit ? value : `${value.slice(0, limit - 1)}…`
@@ -89,8 +90,7 @@ export const buildAutomationBoardMirror = ({
   boardCardId: string
   generatedAt: string
 }): AutomationBoardMirror | null => {
-  const boardCard = column.cards[boardCardId]
-  const board = boardCard?.automationBoard
+  const board = getAutomationBoard(column.cards[boardCardId])
   if (!board) {
     return null
   }

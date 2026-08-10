@@ -31,6 +31,7 @@ import {
   minLineHeightScale,
   minUiScale,
   resolveAppFontFamilyCss,
+  createAutomationBoardTemplateFromCard,
   titleFromPrompt,
 } from '../shared/default-state'
 import { attachImagesToMessageMeta } from '../shared/chat-attachments'
@@ -247,6 +248,27 @@ import {
   shouldConfirmWakeTimerCompletion,
   wakeTimerCompletionStabilityMs,
 } from './components/wake-timer'
+import {
+  hasAutomationBoardHistory,
+  resolveAutomationBoardTransition,
+  type AutomationBoardLocation,
+} from './components/automation-board-transitions'
+import {
+  resolveAutomationBoardAutoTriggerDecision,
+  type AutomationBoardCardActivity,
+} from './components/automation-board-auto-trigger'
+import type {
+  AutomationBoardActions,
+  AutomationBoardWorkspaceView,
+} from './components/automation-board-host'
+import { createDefaultAutomationBoardAutoTrigger } from '../shared/schema'
+
+// 稳定的模块级默认值：如果每次渲染都新建一个空对象，PaneView 的记忆化会
+// 因为 automationBoardWorkspace 身份变化而每帧重渲染每个 pane。
+const defaultAutomationBoardWorkspace: AutomationBoardWorkspaceView = {
+  templates: [],
+  autoTrigger: createDefaultAutomationBoardAutoTrigger(),
+}
 import { resolveRepeatLoopCompletion } from './components/repeat-loop'
 import { getAutoReadCardIdsForVisiblePanes, shouldMarkCardUnreadOnStreamDone } from './components/pane-read-state'
 import { clearFileTreeCacheForCard } from './components/tool-card-state'
@@ -823,6 +845,12 @@ function App() {
     ) => Promise<void>
   ) | null>(null)
   const flushReadyWakeTimersRef = useRef<(() => void) | null>(null)
+  const runAutomationBoardSupervisorRef = useRef<
+    ((columnId: string, boardCardId: string) => void) | null
+  >(null)
+  const evaluateAutomationBoardAutoTriggerRef = useRef<((settledCardId: string) => void) | null>(
+    null,
+  )
   const wakeTimerCompletionTimersRef = useRef(new Map<string, number>())
   const allAgentsDoneSoundTimerRef = useRef<number | null>(null)
   const recoverLiveStreamRef = useRef<(
@@ -2920,6 +2948,9 @@ function App() {
         persistAfterActions(actions, applyActions(actions))
       }
       flushReadyWakeTimersRef.current?.()
+      // 自动化看板的自动触发挂在同一个稳定窗口上：这样"AI 真的结束了"这个
+      // 判断与唤醒链共用同一套已经调好的判据（含原生后台等待），不另造一套。
+      evaluateAutomationBoardAutoTriggerRef.current?.(completedCardId)
     }, wakeTimerCompletionStabilityMs)
     wakeTimerCompletionTimersRef.current.set(completedCardId, timer)
   }, [applyActions, buildWakeTimerTargetReleaseActions, persistAfterActions])
@@ -3413,6 +3444,417 @@ function App() {
       </div>
     )
   }
+
+  // ---------------------------------------------------------------------------
+  // 自动化看板编排层
+  //
+  // 这一层刻意很薄：结构变更走 reducer 的原子动作，副作用只经既有 handler
+  // （sendMessage / requestStopForCard）。所有"要不要中断、要不要发送、发什么"
+  // 的判断集中在 resolveAutomationBoardTransition 一个纯函数里，绝不散落到
+  // 各个拖放落点（AGENTS.md pitfall 246）。
+  // ---------------------------------------------------------------------------
+  const automationBoardLastFiredAtRef = useRef(new Map<string, number>())
+
+  const applyAutomationBoardTransition = useCallback(
+    (
+      columnId: string,
+      boardCardId: string,
+      cardId: string,
+      from: AutomationBoardLocation,
+      to: AutomationBoardLocation,
+      commitStructure: () => AppState | undefined,
+    ) => {
+      const card = getColumnCard(columnId, cardId)
+      const effects = resolveAutomationBoardTransition({
+        from,
+        to,
+        isStreaming: card?.status === 'streaming',
+        hasHistory: hasAutomationBoardHistory(card),
+      })
+      const requirement =
+        getColumnCard(columnId, boardCardId)?.automationBoard?.items.find(
+          (item) => item.cardId === cardId,
+        )?.requirement ?? card?.draft ?? ''
+
+      const nextState = commitStructure()
+      if (!nextState) {
+        return
+      }
+
+      if (effects.stamp !== 'none') {
+        const stamp: IdeAction = {
+          type: 'stampAutomationBoardItem',
+          columnId,
+          boardCardId,
+          cardId,
+          patch:
+            effects.stamp === 'started'
+              ? { startedAt: new Date().toISOString() }
+              : { completedAt: new Date().toISOString() },
+        }
+        persistAfterAction(stamp.type, applyAction(stamp))
+      }
+
+      if (effects.interrupt) {
+        void requestStopForCard(cardId, 'manual')
+      }
+
+      if (effects.send === 'requirement') {
+        void sendMessageRef.current?.(columnId, cardId, requirement, [])
+      } else if (effects.send === 'continue') {
+        // 空续传：语义是"接着干"，而不是把原需求再投一遍。
+        void sendMessageRef.current?.(columnId, cardId, '', [])
+      }
+    },
+    [applyAction, getColumnCard, persistAfterAction, requestStopForCard],
+  )
+
+  const automationBoardActions = useMemo<AutomationBoardActions>(
+    () => ({
+      createItem: (columnId, boardCardId, lane, requirement, index) => {
+        const cardId = crypto.randomUUID()
+        const column = getColumn(columnId)
+        const action: IdeAction = {
+          type: 'createAutomationBoardItem',
+          columnId,
+          boardCardId,
+          lane,
+          requirement,
+          index,
+          cardId,
+          provider: column?.provider,
+          model: column?.model,
+        }
+        const nextState = applyAction(action)
+        persistAfterAction(action.type, nextState)
+
+        // 新建即落在执行中道时立刻开跑；落在待命道只是排着。
+        if (lane === 'running') {
+          void sendMessageRef.current?.(columnId, cardId, requirement, [])
+          const stamp: IdeAction = {
+            type: 'stampAutomationBoardItem',
+            columnId,
+            boardCardId,
+            cardId,
+            patch: { startedAt: new Date().toISOString() },
+          }
+          persistAfterAction(stamp.type, applyAction(stamp))
+        }
+      },
+      moveItem: (columnId, boardCardId, cardId, lane, index) => {
+        const fromLane = getColumnCard(columnId, boardCardId)?.automationBoard?.items.find(
+          (item) => item.cardId === cardId,
+        )?.lane
+        if (!fromLane) {
+          return
+        }
+
+        applyAutomationBoardTransition(
+          columnId,
+          boardCardId,
+          cardId,
+          { kind: 'lane', lane: fromLane },
+          { kind: 'lane', lane },
+          () => {
+            const action: IdeAction = {
+              type: 'setAutomationBoardItemLane',
+              columnId,
+              boardCardId,
+              cardId,
+              lane,
+              index,
+            }
+            const nextState = applyAction(action)
+            persistAfterAction(action.type, nextState)
+            return nextState
+          },
+        )
+      },
+      popOutItem: (columnId, boardCardId, cardId, paneId, index) => {
+        const fromLane = getColumnCard(columnId, boardCardId)?.automationBoard?.items.find(
+          (item) => item.cardId === cardId,
+        )?.lane
+        if (!fromLane) {
+          return
+        }
+
+        // 出到 tab 是零副作用的（transition 表钉死），所以正在飞的流原样继续。
+        applyAutomationBoardTransition(
+          columnId,
+          boardCardId,
+          cardId,
+          { kind: 'lane', lane: fromLane },
+          { kind: 'tab' },
+          () => {
+            const action: IdeAction = {
+              type: 'moveAutomationBoardItemToPane',
+              columnId,
+              boardCardId,
+              cardId,
+              paneId,
+              index,
+            }
+            const nextState = applyAction(action)
+            persistAfterAction(action.type, nextState)
+            return nextState
+          },
+        )
+      },
+      absorbTab: (columnId, boardCardId, source, lane, index) => {
+        applyAutomationBoardTransition(
+          columnId,
+          boardCardId,
+          source.tabId,
+          { kind: 'tab' },
+          { kind: 'lane', lane },
+          () => {
+            const action: IdeAction = {
+              type: 'moveTabToAutomationBoard',
+              columnId,
+              paneId: source.paneId,
+              tabId: source.tabId,
+              boardCardId,
+              lane,
+              index,
+            }
+            const nextState = applyAction(action)
+            persistAfterAction(action.type, nextState)
+            return nextState
+          },
+        )
+      },
+      instantiateTemplate: (columnId, boardCardId, templateId, lane, index) => {
+        const column = getColumn(columnId)
+        const template = appStateRef.current.automationBoards[
+          column?.workspacePath ?? ''
+        ]?.templates.find((entry) => entry.id === templateId)
+        if (!column || !template) {
+          return
+        }
+
+        const cardId = crypto.randomUUID()
+        const action: IdeAction = {
+          type: 'createAutomationBoardItem',
+          columnId,
+          boardCardId,
+          lane,
+          requirement: template.requirement,
+          index,
+          cardId,
+          provider: template.provider,
+          model: template.model,
+          reasoningEffort: template.reasoningEffort,
+          thinkingEnabled: template.thinkingEnabled,
+          planMode: template.planMode,
+          wakeTimerActive: template.wakeTimerActive,
+          wakeTimerMode: template.wakeTimerMode,
+          wakeTimerDurationMinutes: template.wakeTimerDurationMinutes,
+          repeatLoopActive: template.repeatLoopActive,
+          repeatLoopRemaining: template.repeatLoopRemaining,
+        }
+        persistAfterAction(action.type, applyAction(action))
+
+        if (lane === 'running') {
+          void sendMessageRef.current?.(columnId, cardId, template.requirement, [])
+          const stamp: IdeAction = {
+            type: 'stampAutomationBoardItem',
+            columnId,
+            boardCardId,
+            cardId,
+            patch: { startedAt: new Date().toISOString() },
+          }
+          persistAfterAction(stamp.type, applyAction(stamp))
+        }
+      },
+      deleteItem: (columnId, boardCardId, cardId) => {
+        // 删除前先停流，否则后端会留下一个没有卡片可投递的孤儿流。
+        void requestStopForCard(cardId, 'manual')
+        const action: IdeAction = {
+          type: 'removeAutomationBoardItem',
+          columnId,
+          boardCardId,
+          cardId,
+          deleteCard: true,
+        }
+        persistAfterAction(action.type, applyAction(action))
+      },
+      saveTemplate: (columnId, boardCardId, cardId) => {
+        const column = getColumn(columnId)
+        const card = column?.cards[cardId]
+        const requirement =
+          column?.cards[boardCardId]?.automationBoard?.items.find(
+            (item) => item.cardId === cardId,
+          )?.requirement ?? ''
+        if (!column || !card || !column.workspacePath.trim()) {
+          return
+        }
+
+        const action: IdeAction = {
+          type: 'saveAutomationBoardTemplate',
+          workspacePath: column.workspacePath,
+          template: createAutomationBoardTemplateFromCard({
+            card,
+            requirement: requirement || card.draft,
+            id: crypto.randomUUID(),
+          }),
+        }
+        persistAfterAction(action.type, applyAction(action))
+      },
+      renameTemplate: (workspacePath, templateId, name) => {
+        const action: IdeAction = {
+          type: 'renameAutomationBoardTemplate',
+          workspacePath,
+          templateId,
+          name,
+        }
+        persistAfterAction(action.type, applyAction(action))
+      },
+      deleteTemplate: (workspacePath, templateId) => {
+        const action: IdeAction = {
+          type: 'removeAutomationBoardTemplate',
+          workspacePath,
+          templateId,
+        }
+        persistAfterAction(action.type, applyAction(action))
+      },
+      stopItem: (cardId) => {
+        void requestStopForCard(cardId, 'manual')
+      },
+      sendToItem: (columnId, cardId, message) => {
+        void sendMessageRef.current?.(columnId, cardId, message, [])
+      },
+      patchItemCard: (columnId, cardId, patch) => {
+        const action: IdeAction = { type: 'updateCard', columnId, cardId, patch }
+        persistAfterAction(action.type, applyAction(action))
+      },
+      updateAutoTrigger: (workspacePath, patch) => {
+        const action: IdeAction = {
+          type: 'updateAutomationBoardAutoTrigger',
+          workspacePath,
+          patch,
+        }
+        persistAfterAction(action.type, applyAction(action))
+      },
+      runSupervisorNow: (columnId, boardCardId) => {
+        runAutomationBoardSupervisorRef.current?.(columnId, boardCardId)
+      },
+      setSupervisorExpanded: (columnId, boardCardId, expanded) => {
+        const action: IdeAction = {
+          type: 'setAutomationBoardSupervisorExpanded',
+          columnId,
+          boardCardId,
+          expanded,
+        }
+        persistAfterAction(action.type, applyAction(action))
+      },
+    }),
+    [
+      applyAction,
+      applyAutomationBoardTransition,
+      getColumn,
+      getColumnCard,
+      persistAfterAction,
+      requestStopForCard,
+    ],
+  )
+
+  /**
+   * 启动一次监工回合。监工本身就是一张普通 ChatCard（在 column.cards 里、不在
+   * pane.tabs 里），所以它跑起来与任何聊天窗口完全同源；唯一的特殊之处是请求
+   * 上带 automationBoardSupervisor 标记，服务端据此把看板 MCP 接进本次启动。
+   */
+  const runAutomationBoardSupervisor = useCallback(
+    (columnId: string, boardCardId: string) => {
+      const column = getColumn(columnId)
+      const boardCard = column?.cards[boardCardId]
+      const board = boardCard?.automationBoard
+      if (!column || !board || !column.workspacePath.trim()) {
+        return
+      }
+
+      const config =
+        appStateRef.current.automationBoards[column.workspacePath]?.autoTrigger ??
+        createDefaultAutomationBoardAutoTrigger()
+      const supervisorCardId = board.supervisorCardId || crypto.randomUUID()
+
+      const ensure: IdeAction = {
+        type: 'ensureAutomationBoardSupervisor',
+        columnId,
+        boardCardId,
+        provider: config.provider,
+        model: config.model,
+        reasoningEffort: config.reasoningEffort,
+        cardId: supervisorCardId,
+      }
+      persistAfterAction(ensure.type, applyAction(ensure))
+
+      const liveBoard = getColumnCard(columnId, boardCardId)?.automationBoard
+      const targetCardId = liveBoard?.supervisorCardId
+      if (!targetCardId) {
+        return
+      }
+
+      automationBoardLastFiredAtRef.current.set(boardCardId, Date.now())
+      void sendMessageRef.current?.(columnId, targetCardId, config.requirement, [], {
+        automationBoardSupervisor: { boardCardId, columnId },
+      })
+    },
+    [applyAction, getColumn, getColumnCard, persistAfterAction],
+  )
+  runAutomationBoardSupervisorRef.current = runAutomationBoardSupervisor
+
+  const evaluateAutomationBoardAutoTrigger = useCallback(
+    (settledCardId: string) => {
+      const state = appStateRef.current
+
+      for (const column of state.columns) {
+        if (!column.workspacePath.trim()) {
+          continue
+        }
+
+        const config = state.automationBoards[column.workspacePath]?.autoTrigger
+        if (!config) {
+          continue
+        }
+
+        for (const boardCard of Object.values(column.cards)) {
+          const board = boardCard.automationBoard
+          if (!board) {
+            continue
+          }
+
+          const cardActivity: Record<string, AutomationBoardCardActivity> = {}
+          for (const cardId of [
+            ...board.items.map((item) => item.cardId),
+            board.supervisorCardId,
+          ]) {
+            const card = cardId ? column.cards[cardId] : undefined
+            if (card) {
+              cardActivity[card.id] = {
+                status: card.status,
+                backgroundWorkPending: card.backgroundWorkPending === true,
+              }
+            }
+          }
+
+          const decision = resolveAutomationBoardAutoTriggerDecision({
+            config,
+            board,
+            settledCardId,
+            cardActivity,
+            lastFiredAtMs: automationBoardLastFiredAtRef.current.get(boardCard.id) ?? null,
+            nowMs: Date.now(),
+          })
+
+          if (decision.fire) {
+            runAutomationBoardSupervisor(column.id, boardCard.id)
+          }
+        }
+      }
+    },
+    [runAutomationBoardSupervisor],
+  )
+  evaluateAutomationBoardAutoTriggerRef.current = evaluateAutomationBoardAutoTrigger
 
   const changeCardModelSelection = useCallback(
     (columnId: string, cardId: string, provider: Provider, model: string) => {
@@ -5423,6 +5865,10 @@ function App() {
         prompt: requestPrompt,
         attachments: requestAttachments,
         archiveRecall,
+        // 只有监工回合会带这个标记，服务端据此把看板 MCP 接进本次 provider 启动。
+        ...(options.automationBoardSupervisor
+          ? { automationBoardSupervisor: options.automationBoardSupervisor }
+          : {}),
       })
 
       if (response.streamId !== streamId) {
@@ -9626,6 +10072,10 @@ function App() {
                 }
                 persistAfterAction(action.type, applyAction(action))
               })()
+            }
+            automationBoardActions={automationBoardActions}
+            automationBoardWorkspace={
+              appState.automationBoards[column.workspacePath] ?? defaultAutomationBoardWorkspace
             }
             stickyNoteArchivedContent={
               appState.stickyNoteArchive[column.workspacePath]?.content ?? ''

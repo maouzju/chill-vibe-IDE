@@ -45,6 +45,10 @@ import {
   mergeSessionHistorySearchResults,
 } from './workspace-column-history'
 import { CloseIcon, FolderIcon, HistoryIcon, IconButton } from './Icons'
+import type {
+  AutomationBoardActions,
+  AutomationBoardWorkspaceView,
+} from './automation-board-host'
 import { LayoutRenderer } from './LayoutRenderer'
 
 const openFolderNative = async (): Promise<FolderDialogResult> => {
@@ -167,6 +171,8 @@ type WorkspaceColumnProps = {
   onChangeCardDraft: (cardId: string, draft: string) => void
   onChangeCardStickyNote: (cardId: string, content: string) => void
   stickyNoteArchivedContent?: string
+  automationBoardActions?: AutomationBoardActions
+  automationBoardWorkspace?: AutomationBoardWorkspaceView
   stickyNoteArchivedViewState?: import('../../shared/schema').StickyNoteViewState
   onPatchCard: (
     cardId: string,
@@ -279,6 +285,8 @@ const WorkspaceColumnView = ({
   onChangeCardDraft,
   onChangeCardStickyNote,
   stickyNoteArchivedContent,
+  automationBoardActions,
+  automationBoardWorkspace,
   stickyNoteArchivedViewState,
   onPatchCard,
   onChangeCardTitle,
@@ -1106,6 +1114,8 @@ const WorkspaceColumnView = ({
           onChangeCardDraft={onChangeCardDraft}
           onChangeCardStickyNote={onChangeCardStickyNote}
           stickyNoteArchivedContent={stickyNoteArchivedContent}
+          automationBoardActions={automationBoardActions}
+          automationBoardWorkspace={automationBoardWorkspace}
           stickyNoteArchivedViewState={stickyNoteArchivedViewState}
           onPatchCard={onPatchCard}
           onChangeCardTitle={onChangeCardTitle}

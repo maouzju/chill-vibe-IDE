@@ -293,6 +293,7 @@ import { AppButton } from './components/AppButton'
 import { dispatchComposerFocusRequest } from './components/composer-focus'
 import {
   installStuckPaneForensics,
+  measureTabSwitchForForensics,
   recordAppliedActionsForForensics,
   registerForensicsAppStateTruth,
 } from './diagnostics/stuck-pane-forensics'
@@ -6727,6 +6728,16 @@ function App() {
       const paneNode = findPaneInLayout(column.layout, target.paneId)
       if (!paneNode) return
 
+      // 键盘的新建/切换都绕开 PaneView 的探针（那条挂在 activateTab 上），
+      // 所以这里各自留证，否则用户用快捷键复现时 dump 里一片空白。
+      const readTabSwitchCost = () => ({
+        fromTabId: paneNode.activeTabId,
+        fromDraftLength: (column.cards[paneNode.activeTabId ?? '']?.draft ?? '').length,
+        streamingCardCount: Object.values(column.cards).filter(
+          (card) => card.status === 'streaming',
+        ).length,
+      })
+
       if (event.key === 'w' || event.key === 'W') {
         event.preventDefault()
         if (paneNode.activeTabId) {
@@ -6738,6 +6749,14 @@ function App() {
       if (event.key === 't' || event.key === 'T') {
         event.preventDefault()
         rememberPaneTarget(target.columnId, target.paneId)
+        // Ctrl+T 记成 create 而不是 keyboard：决定开销的是 reducer 路径
+        // （addTab 换掉 column.cards 引用），不是输入设备。
+        measureTabSwitchForForensics({
+          source: 'create',
+          // 新卡 id 由 reducer 现场生成，此刻还不存在。
+          toTabId: null,
+          ...readTabSwitchCost(),
+        })
         applyAction({ type: 'addTab', columnId: target.columnId, paneId: target.paneId })
         // Keyboard tab creation must focus the new composer just like the
         // pointer path does; the pane-local counter is bumped via this event.
@@ -6753,6 +6772,11 @@ function App() {
         const nextIndex = event.shiftKey
           ? (currentIndex - 1 + tabs.length) % tabs.length
           : (currentIndex + 1) % tabs.length
+        measureTabSwitchForForensics({
+          source: 'keyboard',
+          toTabId: tabs[nextIndex]!,
+          ...readTabSwitchCost(),
+        })
         applyAction({ type: 'setActiveTab', columnId: target.columnId, paneId: target.paneId, tabId: tabs[nextIndex]! })
         dispatchComposerFocusRequest(target.paneId)
         return

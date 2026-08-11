@@ -562,6 +562,8 @@ A living list of traps that have wasted time before. **When you hit a new pitfal
 
 | 259 | 给一个已被 `ChatCard` 引用的组件加 `import { AppButton } from './AppButton'`，会把 `@primer/react`（带 CSS 副作用 import）第一次拉进 ChatCard 的依赖图，于是**每个**走 `renderToStaticMarkup` 的 `.tsx` 测试一起红在 `ERR_UNKNOWN_FILE_EXTENSION ... BaseStyles-*.css` —— 报错点离你改的文件很远，看起来像测试环境坏了 | 卡片子树里要按钮就写普通 `<button className="btn btn-ghost">`（`AppButton` 只是给它加了这两个类），不要为一个按钮把 Primer 引进 SSR 测试链；也不要反过来给测试装 CSS loader。判断方法：`git show main:src/components/ChatCard.tsx | grep @primer` 为空就说明这条依赖是你新引入的。顺带一提，`.tsx` 测试单独跑与走 `scripts/run-node-tests.mjs` 跑的失败表现一致，**可以**用单文件复跑定位，不必跑全量。 |
 
+| 260 | 「探针挂在唯一收口上」这类断言极易写成**假绿**：`tab-switch-forensics` 的守卫只 `assert.match(PaneView.tsx, /measureTabSwitchForForensics\(/)`，注释还写死"activateTab 是所有切换路径的唯一收口"。实际新建 tab 走 `onAddTab` → reducer `addTab`、Ctrl+Tab 走 `App.tsx` 直接 `applyAction({type:'setActiveTab'})`，两条都绕开 `activateTab` —— 用户报的恰恰是第一条，于是"有探针"的路径一条记录都不留 | 埋点前先把**所有**改到同一份状态的入口列全（按 reducer action 找调用方，别按组件找），并给每条记录打上来源标签（`TabSwitchSource`）；守卫要按来源逐条断言存在，而不是断言函数名在文件里出现过。顺带：`measureTabSwitchForForensics` 这类"量 dispatch→重绘"的探针必须在 dispatch **之前**起跳，新建 tab 的新卡是空的、贵的是旧卡 unmount + 全局 memo 失效。 |
+
 ### Self-maintenance rule
 
 - When you encounter a new non-obvious failure mode — a test that fails for environmental reasons, a build step with hidden prerequisites, a runtime behavior that contradicts the docs — append a row to this table before you finish the task.

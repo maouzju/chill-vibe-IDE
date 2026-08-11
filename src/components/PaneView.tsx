@@ -815,8 +815,11 @@ const PaneViewView = ({
     cancelPendingTabSwitch()
 
     // 自动化复现不出用户报的数秒卡顿（真实档案 + 真实窗口实测只有 120ms），
-    // 所以在唯一的切换收口处留证：慢到可感就自动 dump，下次带着数字定位。
+    // 所以每条切换路径各自留证：慢到可感就自动 dump，下次带着数字定位。
+    // 注意 activateTab **不是**唯一收口 —— 新建 tab 和 Ctrl+Tab 各走各的，
+    // 见 TabSwitchSource 的说明；它们的探针分别在 createTab 和 App.tsx 里。
     measureTabSwitchForForensics({
+      source: 'activate',
       fromTabId: pane.activeTabId,
       toTabId: tabId,
       fromDraftLength: (column.cards[pane.activeTabId ?? '']?.draft ?? '').length,
@@ -874,9 +877,30 @@ const PaneViewView = ({
     }
   })
 
-  const handleAddTab = () => {
+  // 症状：用户报"在新开的会话里输入点东西再切走，窗口卡好几秒"。
+  // 根因：2026-08-11 尚未定位，但探针有盲区 —— 新建 tab 走 onAddTab → reducer
+  //   addTab，**完全不经过 activateTab**，所以此前这条路径一条记录都不会留；
+  //   而 addTab 会换掉 column.cards 引用（setActiveTab 不会），是开销完全不同的一条路。
+  // 为什么测量必须在 onAddTab 之前起跳：新卡是空的、挂载几乎零成本，贵的是旧卡
+  //   unmount + 全局 memo 失效，只包住 onAddTab 这个调用本身量到的是 0。
+  const createTab = () => {
+    measureTabSwitchForForensics({
+      source: 'create',
+      fromTabId: pane.activeTabId,
+      // 新卡 id 由 reducer 现场生成，此刻还不存在。
+      toTabId: null,
+      fromDraftLength: (column.cards[pane.activeTabId ?? '']?.draft ?? '').length,
+      streamingCardCount: Object.values(column.cards).filter(
+        (card) => card.status === 'streaming',
+      ).length,
+    })
+
     onAddTab(pane.id)
     setComposerFocusRequest((current) => current + 1)
+  }
+
+  const handleAddTab = () => {
+    createTab()
   }
 
   const handleTabBarDoubleClick = (event: MouseEvent<HTMLDivElement>) => {
@@ -885,8 +909,7 @@ const PaneViewView = ({
     }
 
     event.preventDefault()
-    onAddTab(pane.id)
-    setComposerFocusRequest((current) => current + 1)
+    createTab()
   }
 
   const handleTabPointerDown = (tabId: string) => (event: PointerEvent<HTMLButtonElement>) => {

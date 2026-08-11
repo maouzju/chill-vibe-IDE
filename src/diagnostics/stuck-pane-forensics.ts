@@ -260,10 +260,23 @@ export const pushPanelUnmountEntry = (
 //   长时间运行后的内存压力、200% DPI 的真实绘制 —— 这些自动化复现不出来。
 // 于是把每次切换的真实耗时留证下来：慢到可感就自动 dump，
 //   下次复现直接拿数字定位，不必再靠猜。
+// 切换不是只有一条路径，三条的开销profile 完全不同，dump 里必须能分开：
+//   activate —— 点已有 tab，走 PaneView.activateTab → reducer setActiveTab，
+//               只换 pane.activeTabId，不动 column.cards 引用。
+//   create   —— 新建 tab（点 +、双击 tab 栏、Ctrl+T），走 reducer addTab，
+//               会造出新的 column.cards 对象，让所有以 cards 为依赖的 memo 全线失效。
+//               这正是用户报的那条路径，2026-08-11 之前它一条记录都不会留。
+//   keyboard —— Ctrl+Tab / Ctrl+Shift+Tab，App.tsx 直接 applyAction setActiveTab，
+//               完全绕开 PaneView。
+// Ctrl+T 记成 create 而不是 keyboard：决定开销的是 reducer 路径，不是输入设备。
+export type TabSwitchSource = 'activate' | 'create' | 'keyboard'
+
 export type TabSwitchEntry = {
   atMs: number
+  source: TabSwitchSource
   fromTabId: string | null
-  toTabId: string
+  // 新建 tab 时卡片 id 由 reducer 现场生成，测量开始那一刻还不存在 → null。
+  toTabId: string | null
   // 从点击到切换后连续两帧绘制完成 —— 近似"用户盯着屏幕等了多久"
   elapsedMs: number
   // 紧接其后同样两帧的耗时，作为同一时刻的帧率基线。
@@ -645,9 +658,12 @@ export const drainTabSwitchLedgerForTest = (): TabSwitchEntry[] => {
 // 量到"切换后连续两帧都画完"为止：一帧只代表 React 提交了，第二帧回来才
 // 说明合成器真的把新内容推上了屏。期间的 long task 一并收走，
 // 这样慢在 JS 还是慢在绘制能直接分辨。
+// 调用点必须在 dispatch **之前**：新建 tab 时新卡是空的、挂载几乎零成本，
+// 贵的是旧卡 unmount + 全局 memo 失效，只包住 onAddTab 这个调用本身量到的是 0。
 export const measureTabSwitchForForensics = (input: {
+  source: TabSwitchSource
   fromTabId: string | null
-  toTabId: string
+  toTabId: string | null
   fromDraftLength: number
   streamingCardCount: number
 }) => {
@@ -681,6 +697,7 @@ export const measureTabSwitchForForensics = (input: {
         window.requestAnimationFrame(() => {
           const entry: TabSwitchEntry = {
             atMs: startedAt,
+            source: input.source,
             fromTabId: input.fromTabId,
             toTabId: input.toTabId,
             elapsedMs,

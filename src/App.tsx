@@ -3587,10 +3587,10 @@ function App() {
         )
       },
       popOutItem: (columnId, boardCardId, cardId, paneId, index) => {
-        const fromLane = getColumnCard(columnId, boardCardId)?.automationBoard?.items.find(
-          (item) => item.cardId === cardId,
-        )?.lane
-        if (!fromLane) {
+        const board = getAutomationBoard(getColumnCard(columnId, boardCardId))
+        const fromLane = board?.items.find((item) => item.cardId === cardId)?.lane
+        // 监工不在任何泳道里，但它同样可以被拖出来接管。
+        if (!fromLane && board?.supervisorCardId !== cardId) {
           return
         }
 
@@ -3599,7 +3599,7 @@ function App() {
           columnId,
           boardCardId,
           cardId,
-          { kind: 'lane', lane: fromLane },
+          fromLane ? { kind: 'lane', lane: fromLane } : { kind: 'tab' },
           { kind: 'tab' },
           () => {
             const action: IdeAction = {

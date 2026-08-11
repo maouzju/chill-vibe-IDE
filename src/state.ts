@@ -3019,13 +3019,17 @@ export const ideReducer = (state: AppState, action: IdeAction): AppState => {
       const boardCard = getAutomationBoardCard(column, action.boardCardId)
       const board = boardCard?.automationBoard
 
+      // 监工不在 items 里，但同样要能被拖出来接管，所以两种归属都接受。
+      const ownsAsItem = board?.items.some((item) => item.cardId === action.cardId) ?? false
+      const ownsAsSupervisor = board?.supervisorCardId === action.cardId && action.cardId.length > 0
+
       // pitfall 237：多步搬运必须在动手前一次性校验两端，否则过期的一端会让
       // "摘除已提交 / 插入被跳过"落地，卡片变成不在任何容器里的孤儿。
       if (
         !column ||
         !board ||
         !column.cards[action.cardId] ||
-        !board.items.some((item) => item.cardId === action.cardId) ||
+        !(ownsAsItem || ownsAsSupervisor) ||
         !findPaneInLayout(column.layout, action.paneId)
       ) {
         return state
@@ -3042,6 +3046,7 @@ export const ideReducer = (state: AppState, action: IdeAction): AppState => {
               automationBoard: {
                 ...board,
                 items: board.items.filter((item) => item.cardId !== action.cardId),
+                ...(ownsAsSupervisor ? { supervisorCardId: '' } : {}),
               },
             },
           },

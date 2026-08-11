@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
 
-import { createCard } from '../shared/default-state.ts'
+import { createAutomationBoardCard, createCard } from '../shared/default-state.ts'
 import type { AutomationBoardLane, ChatCard } from '../shared/schema.ts'
 import {
   automationBoardItemMessageWindow,
@@ -196,8 +196,9 @@ describe('getAutomationBoardLaneCardIds', () => {
 })
 
 describe('resolveWakeTimerNeighbourIds', () => {
+  // 必须是真正的看板卡：`resolveWakeTimerNeighbourIds` 只认 model 对得上的 blob。
   const board = (items: Array<{ cardId: string; lane: AutomationBoardLane }>): ChatCard => ({
-    ...createCard('Board'),
+    ...createAutomationBoardCard('Board'),
     id: 'board-1',
     automationBoard: {
       items: items.map((item) => ({ ...item, requirement: '' })),
@@ -237,6 +238,27 @@ describe('resolveWakeTimerNeighbourIds', () => {
     assert.deepEqual(
       resolveWakeTimerNeighbourIds({ cardId: 'item-b', paneTabIds: undefined, cards: cards() }),
       ['item-b'],
+    )
+  })
+
+  // 切走模型的旧卡还留着 blob（刻意保留以便切回），但它不该再决定唤醒目标。
+  it('ignores a stale blob on a card that is no longer a board', () => {
+    const stale: ChatCard = {
+      ...createCard('Was a board'),
+      id: 'board-1',
+      automationBoard: {
+        items: [
+          { cardId: 'item-a', lane: 'running', requirement: '' },
+          { cardId: 'item-c', lane: 'running', requirement: '' },
+        ],
+        supervisorCardId: '',
+        supervisorExpanded: false,
+      },
+    }
+
+    assert.deepEqual(
+      resolveWakeTimerNeighbourIds({ cardId: 'item-c', paneTabIds: undefined, cards: { 'board-1': stale } }),
+      [],
     )
   })
 

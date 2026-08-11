@@ -1,3 +1,4 @@
+import { getAutomationBoard } from '../../shared/default-state'
 import type { AutomationBoard, AutomationBoardLane, ChatCard } from '../../shared/schema'
 
 /**
@@ -167,9 +168,12 @@ export const resolveWakeTimerNeighbourIds = ({
   }
 
   for (const card of Object.values(cards)) {
-    const item = card.automationBoard?.items.find((entry) => entry.cardId === cardId)
+    // 只认真正是看板的卡片：切走模型的旧卡可能还留着 blob（刻意保留以便切回），
+    // 但它此刻不该再决定任何人的唤醒目标。
+    const board = getAutomationBoard(card)
+    const item = board?.items.find((entry) => entry.cardId === cardId)
     if (item) {
-      return getAutomationBoardLaneCardIds(card.automationBoard, item.lane)
+      return getAutomationBoardLaneCardIds(board, item.lane)
     }
   }
 

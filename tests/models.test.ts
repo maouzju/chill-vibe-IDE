@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
 
 import {
+  AUTOMATIONBOARD_TOOL_MODEL,
   BRAINSTORM_TOOL_MODEL,
   DEFAULT_CLAUDE_MODEL,
   DEFAULT_CODEX_MODEL,
@@ -65,6 +66,7 @@ describe('model helpers', () => {
         BRAINSTORM_TOOL_MODEL,
         TEXTEDITOR_TOOL_MODEL,
         IMAGEEDITOR_TOOL_MODEL,
+        AUTOMATIONBOARD_TOOL_MODEL,
         '',
         DEFAULT_CODEX_MODEL,
         'gpt-5.6-terra',

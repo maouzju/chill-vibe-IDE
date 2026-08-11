@@ -251,6 +251,53 @@ export const pushPanelUnmountEntry = (
   return next.length > capacity ? next.slice(next.length - capacity) : next
 }
 
+// 症状：用户报「新 tab 里输入点东西，再切 tab 或把焦点移到别的输入框，
+//   会卡好几秒」。
+// 根因：2026-08-11 尚未定位。用用户的真实档案（1.24MB / 8 卡 / 913 条消息）
+//   在真实窗口（非离屏）里自动化实测，切 tab 只要 120ms、最长阻塞 108ms，
+//   且「打字过」和「没打字过」两组无差别（69ms vs 63ms，各 10 次）。
+//   也就是说放大到秒级的因素只存在于用户的运行时环境里 —— 流式输出负载、
+//   长时间运行后的内存压力、200% DPI 的真实绘制 —— 这些自动化复现不出来。
+// 于是把每次切换的真实耗时留证下来：慢到可感就自动 dump，
+//   下次复现直接拿数字定位，不必再靠猜。
+export type TabSwitchEntry = {
+  atMs: number
+  fromTabId: string | null
+  toTabId: string
+  // 从点击到切换后连续两帧绘制完成 —— 近似"用户盯着屏幕等了多久"
+  elapsedMs: number
+  // 紧接其后同样两帧的耗时，作为同一时刻的帧率基线。
+  // 必须自带基线：这个应用空闲时 rAF 中位间隔实测就有 1007ms
+  // （窗口不在前台时被降到 1fps），不减掉基线的话每次切换都像卡了 1.8 秒。
+  idleFrameMs: number
+  longestBlockMs: number
+  // 用户强调"必须先输入点什么"才复现，所以把切走那一刻的草稿长度带上
+  fromDraftLength: number
+  streamingCardCount: number
+}
+
+export const tabSwitchCapacity = 20
+
+export const pushTabSwitchEntry = (
+  ledger: TabSwitchEntry[],
+  entry: TabSwitchEntry,
+  capacity = tabSwitchCapacity,
+): TabSwitchEntry[] => {
+  const next = [...ledger, entry]
+  return next.length > capacity ? next.slice(next.length - capacity) : next
+}
+
+// 界面"冻结"靠的是主线程被占住，所以阻塞单独判：真实档案实测最长阻塞
+// 108ms，300ms 已经是明显可感的一下。
+export const slowTabSwitchBlockThresholdMs = 300
+
+// 帧在正常跑的前提下，比同一时刻的空闲帧还多等这么久才算真卡。
+export const slowTabSwitchExcessThresholdMs = 600
+
+export const isSlowTabSwitch = (entry: TabSwitchEntry) =>
+  entry.longestBlockMs >= slowTabSwitchBlockThresholdMs ||
+  entry.elapsedMs - entry.idleFrameMs >= slowTabSwitchExcessThresholdMs
+
 // Minimal structural view of AppState so the walk stays node:test-able and
 // this module does not depend on the full schema types.
 type ForensicsLayoutNodeLike =
@@ -571,6 +618,7 @@ export type ForensicsSnapshot = {
   composerAttrMutations?: ComposerAttributeMutationEntry[]
   panelUnmounts?: PanelUnmountEntry[]
   appliedActions?: AppliedActionsEntry[]
+  tabSwitches?: TabSwitchEntry[]
 }
 
 export type ForensicsSnapshotInput = Omit<ForensicsSnapshot, 'schema'>
@@ -583,6 +631,73 @@ export const assembleForensicsSnapshot = (input: ForensicsSnapshotInput): Forens
 // ── runtime (thin DOM layer over the pure core) ─────────────────────────────
 
 export const forensicsRescueEventName = 'chill-vibe:forensics-rescue-event'
+
+let tabSwitchLedger: TabSwitchEntry[] = []
+
+export const readTabSwitchLedger = (): TabSwitchEntry[] => tabSwitchLedger
+
+export const drainTabSwitchLedgerForTest = (): TabSwitchEntry[] => {
+  const drained = tabSwitchLedger
+  tabSwitchLedger = []
+  return drained
+}
+
+// 量到"切换后连续两帧都画完"为止：一帧只代表 React 提交了，第二帧回来才
+// 说明合成器真的把新内容推上了屏。期间的 long task 一并收走，
+// 这样慢在 JS 还是慢在绘制能直接分辨。
+export const measureTabSwitchForForensics = (input: {
+  fromTabId: string | null
+  toTabId: string
+  fromDraftLength: number
+  streamingCardCount: number
+}) => {
+  if (typeof window === 'undefined' || typeof performance === 'undefined') {
+    return
+  }
+
+  const startedAt = performance.now()
+  const blocks: number[] = []
+  let observer: PerformanceObserver | null = null
+  try {
+    observer = new PerformanceObserver((list) => {
+      for (const entry of list.getEntries()) {
+        blocks.push(entry.duration)
+      }
+    })
+    observer.observe({ entryTypes: ['longtask'] })
+  } catch {
+    observer = null
+  }
+
+  window.requestAnimationFrame(() => {
+    window.requestAnimationFrame(() => {
+      observer?.disconnect()
+      const settledAt = performance.now()
+      const elapsedMs = settledAt - startedAt
+      const longestBlockMs = blocks.length > 0 ? Math.max(...blocks) : 0
+
+      // 紧接着再放两帧过去，量出同一时刻空闲时的帧耗时当基线。
+      window.requestAnimationFrame(() => {
+        window.requestAnimationFrame(() => {
+          const entry: TabSwitchEntry = {
+            atMs: startedAt,
+            fromTabId: input.fromTabId,
+            toTabId: input.toTabId,
+            elapsedMs,
+            idleFrameMs: performance.now() - settledAt,
+            longestBlockMs,
+            fromDraftLength: input.fromDraftLength,
+            streamingCardCount: input.streamingCardCount,
+          }
+          tabSwitchLedger = pushTabSwitchEntry(tabSwitchLedger, entry)
+          if (isSlowTabSwitch(entry)) {
+            notifyForensicsRescueEvent('slow-tab-switch')
+          }
+        })
+      })
+    })
+  })
+}
 
 export const notifyForensicsRescueEvent = (kind: string) => {
   window.dispatchEvent(new CustomEvent(forensicsRescueEventName, { detail: { kind } }))
@@ -883,6 +998,7 @@ export const installStuckPaneForensics = () => {
       composerAttrMutations,
       panelUnmounts: readPanelUnmountLedger(),
       appliedActions: readAppliedActionsLedger(),
+      tabSwitches: readTabSwitchLedger(),
     })
     void persistSnapshot(snapshot)
   }

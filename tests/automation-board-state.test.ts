@@ -507,6 +507,60 @@ describe('moveTabToAutomationBoard — atomic absorb', () => {
   })
 })
 
+describe('moveAutomationBoardItemToPane — the supervisor', () => {
+  const withSupervisor = () => {
+    const board = boardCard([{ cardId: 'item-a', lane: 'running' }])
+    return buildState({
+      cards: {
+        'board-1': {
+          ...board,
+          automationBoard: { ...board.automationBoard!, supervisorCardId: 'sup-1' },
+        },
+        'item-a': itemCard('item-a'),
+        'sup-1': itemCard('sup-1', { status: 'streaming', streamId: 'sup-stream' }),
+      },
+      layout: pane('pane-1', ['board-1']),
+    })
+  }
+
+  // 监工不在 items 里，但用户同样要能把它拖出来接管；不支持就等于按钮点了没反应。
+  it('pops the supervisor out as a tab and clears the board reference', () => {
+    const state = withSupervisor()
+    const before = state.columns[0]!.cards['sup-1']!
+
+    const next = ideReducer(state, {
+      type: 'moveAutomationBoardItemToPane',
+      columnId: 'column-1',
+      boardCardId: 'board-1',
+      cardId: 'sup-1',
+      paneId: 'pane-1',
+    })
+
+    const column = next.columns[0]!
+    assert.deepEqual(findPaneInLayout(column.layout, 'pane-1')?.tabs, ['board-1', 'sup-1'])
+    assert.equal(getBoard(next).supervisorCardId, '')
+    // 与需求项一样：搬运不碰卡片对象，正在飞的流继续。
+    assert.equal(column.cards['sup-1'], before)
+    assert.equal(column.cards['sup-1']?.streamId, 'sup-stream')
+    // 需求项不受影响。
+    assert.deepEqual(getBoard(next).items.map((item) => item.cardId), ['item-a'])
+  })
+
+  it('is inert for a card that is neither an item nor the supervisor', () => {
+    const state = withSupervisor()
+    assert.equal(
+      ideReducer(state, {
+        type: 'moveAutomationBoardItemToPane',
+        columnId: 'column-1',
+        boardCardId: 'board-1',
+        cardId: 'not-mine',
+        paneId: 'pane-1',
+      }),
+      state,
+    )
+  })
+})
+
 describe('removeAutomationBoardItem', () => {
   it('drops the item and deletes the card', () => {
     const next = ideReducer(buildState(), {

@@ -88,6 +88,15 @@
 1. **离层卡片对记忆化不可见** —— 项卡片不在 `pane.tabs` 里，`arePaneViewPropsEqual` 因此看不到它们变化，流式的项在界面上是静止的。
 2. **计划唤醒的"上方需求"从未接线** —— `armWakeTimerBatch` 拿的仍是 `pane.tabs`，看板项在里面找不到自己，`left-tab` 模式永远判定"上方没有可等待的对象"。已抽 `resolveWakeTimerNeighbourIds` 统一两种语境。
 
+MCP 端到端实测（一次性探针，非注册测试）：起真实桥接 → 用 `process.execPath` spawn 真实的
+`automation-board-mcp.js` → 走 Content-Length JSON-RPC 对话，实测结果：
+
+- `initialize` 返回 `chill-vibe-automation-board`，`tools/list` 返回全部 5 个工具。
+- `list_board_items` 输出泳道计数、**原始需求原文**、`Started at`、`silent for N minutes`。
+- `read_board_item` 返回该项的最近转录。
+- `send_board_item_message` / `move_board_item` 投递出的命令形状与 `automationBoardCommandSchema` 完全一致；非法 lane 被拒。
+- **不带 `automationBoardSupervisor` 标记的普通回合拿到 `null`** —— 权限边界成立。
+
 未覆盖（明确留给后续）：
 
 - Playwright 视觉回归快照。本机 Playwright 当前不可靠（pitfall 25/34/252），新表面的双主题快照等 harness 修好后再补。

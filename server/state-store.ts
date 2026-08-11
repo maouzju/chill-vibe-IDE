@@ -1101,6 +1101,73 @@ const pruneStateSnapshots = async (dataDir = getAppDataDir()) => {
   )
 }
 
+// 症状：数据目录 2026-08-11 实测积压 100 个临时文件共 556.8 MB，最早可追到 2026-04-13，
+// 体积全部卡在 512KB 的整数倍上——写到一半被强杀留下的孤儿。
+// 根因：atomicWriteFile 只在 catch 分支 unlink，进程被外部强杀时根本执行不到，
+// 而全仓库此前没有任何一处回收它们。
+// 24 小时的下限不能调小：一次正常保存以毫秒计，任何还"年轻"的 .tmp 都可能是
+// 另一个进程正在写的中间态，删掉它等于打断一次真实保存。
+const orphanedTempFileMaxAgeMs = 24 * 60 * 60 * 1000
+
+const isOrphanedTempFileName = (fileName: string) =>
+  fileName.startsWith('state.tmp.') || fileName.endsWith('.tmp')
+
+export const pruneOrphanedTempFiles = async (
+  dataDir = getAppDataDir(),
+  maxAgeMs = orphanedTempFileMaxAgeMs,
+) => {
+  const cutoffMs = Date.now() - maxAgeMs
+  let removed = 0
+
+  for (const dir of [dataDir, getSessionHistoryDirPath(dataDir), getClosedWorkspaceDirPath(dataDir)]) {
+    const fileNames = await readdir(dir).catch(() => [] as string[])
+
+    for (const fileName of fileNames) {
+      if (!isOrphanedTempFileName(fileName)) {
+        continue
+      }
+
+      const filePath = path.join(dir, fileName)
+      const info = await stat(filePath).catch(() => null)
+      if (!info?.isFile() || info.mtimeMs > cutoffMs) {
+        continue
+      }
+
+      try {
+        await unlink(filePath)
+        removed += 1
+      } catch {
+        // Best-effort reclamation: a locked orphan is retried next launch.
+      }
+    }
+  }
+
+  return removed
+}
+
+// 按 dataDir 记而不是用一个全局开关：测试各自建临时目录，全局开关会让第二个用例
+// 静默跳过回收，从而把一个真实回归伪装成通过。
+const startedOrphanedTempCleanupDirs = new Set<string>()
+
+const startOrphanedTempCleanupOnce = (dataDir: string) => {
+  if (startedOrphanedTempCleanupDirs.has(dataDir)) {
+    return
+  }
+
+  startedOrphanedTempCleanupDirs.add(dataDir)
+  // 不 await：回收要扫 session-history（真实档案 9,203 个文件），
+  // 挂在启动路径上会白白拖慢冷启动，而这些孤儿多留一会儿没有任何害处。
+  void pruneOrphanedTempFiles(dataDir)
+    .then((removed) => {
+      if (removed > 0) {
+        console.info(`[state-store] Reclaimed ${removed} orphaned temp file(s).`)
+      }
+    })
+    .catch(() => {
+      // Best-effort reclamation: retried on the next launch.
+    })
+}
+
 const writeStateSnapshot = async (content: string, dataDir = getAppDataDir()) => {
   try {
     await writeFile(getStateSnapshotFilePath(dataDir), content, 'utf8')
@@ -2081,6 +2148,7 @@ const preTrimOversizedMessages = (raw: unknown) => {
 
 export const loadState = async () => {
   const dataDir = getAppDataDir()
+  startOrphanedTempCleanupOnce(dataDir)
   const cachedStateEntry = getCachedStateEntry(dataDir)
   if (cachedStateEntry) {
     if (cachedStateEntry.diskStamp === null) {

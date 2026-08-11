@@ -44,6 +44,7 @@ import type {
 import { decideMisroutedTabPointerRescue, isPointerWithinRect } from './pane-tab-rescue'
 import { decideTabStripWheelScroll } from './pane-tab-wheel'
 import {
+  measureTabSwitchForForensics,
   notifyForensicsRescueEvent,
   recordPanelUnmountForForensics,
 } from '../diagnostics/stuck-pane-forensics'
@@ -812,6 +813,17 @@ const PaneViewView = ({
     }
 
     cancelPendingTabSwitch()
+
+    // 自动化复现不出用户报的数秒卡顿（真实档案 + 真实窗口实测只有 120ms），
+    // 所以在唯一的切换收口处留证：慢到可感就自动 dump，下次带着数字定位。
+    measureTabSwitchForForensics({
+      fromTabId: pane.activeTabId,
+      toTabId: tabId,
+      fromDraftLength: (column.cards[pane.activeTabId ?? '']?.draft ?? '').length,
+      streamingCardCount: Object.values(column.cards).filter(
+        (card) => card.status === 'streaming',
+      ).length,
+    })
 
     const autoReadCardId = getAutoReadCardId(column.cards[tabId], true)
     onSetActiveTab(pane.id, tabId)

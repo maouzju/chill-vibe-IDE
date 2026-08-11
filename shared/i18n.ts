@@ -1656,19 +1656,46 @@ export const getForkConversationTitle = (language: AppLanguage, title: string) =
 export const getIndexedChatTitle = (language: AppLanguage, index: number) =>
   language === 'en' ? `Question ${index}` : `问题${index}`
 
+// 症状：CPU 吃紧时在流式输出中切 tab，主线程一次阻塞 1374ms（空闲同操作 659ms）。
+// 根因：2026-08-11 的 CDP profile 栈顶实测 formatMessageHoverTimestamp 186ms +
+//   formatLocalizedTime 100ms —— 这两个函数原先每次调用都 `new Intl.DateTimeFormat`，
+//   而 MessageBubble.tsx 每个气泡要调三次（hover 内部又调一次 time），切一次 tab
+//   挂 271 个气泡就是 813 次构造。Intl 构造要现加载 locale 数据，比 format() 贵几十倍。
+// 为什么不能换写法：格式化结果必须逐字符不变（tests/i18n-datetime-format-caching.test.ts
+//   拿未缓存的实现做逐样本比对守着），所以只能缓存实例，不能手写字符串拼接绕过 Intl。
+const dateTimeFormatCache = new Map<string, Intl.DateTimeFormat>()
+
+const getDateTimeFormat = (locale: string, options: Intl.DateTimeFormatOptions) => {
+  // locale 只有 zh-CN / en 两种，options 是模块内写死的字面量，键的基数是常数级，
+  // 不会无界增长，所以不需要 LRU。
+  const key = `${locale}|${JSON.stringify(options)}`
+  const cached = dateTimeFormatCache.get(key)
+  if (cached) {
+    return cached
+  }
+
+  const created = new Intl.DateTimeFormat(locale, options)
+  dateTimeFormatCache.set(key, created)
+  return created
+}
+
+const localizedTimeOptions: Intl.DateTimeFormatOptions = {
+  hour: '2-digit',
+  minute: '2-digit',
+}
+
+const localizedDateTimeOptions: Intl.DateTimeFormatOptions = {
+  month: 'short',
+  day: 'numeric',
+  hour: '2-digit',
+  minute: '2-digit',
+}
+
 export const formatLocalizedTime = (language: AppLanguage, value: string) =>
-  new Intl.DateTimeFormat(normalizeLanguage(language), {
-    hour: '2-digit',
-    minute: '2-digit',
-  }).format(new Date(value))
+  getDateTimeFormat(normalizeLanguage(language), localizedTimeOptions).format(new Date(value))
 
 export const formatLocalizedDateTime = (language: AppLanguage, value: string) =>
-  new Intl.DateTimeFormat(normalizeLanguage(language), {
-    month: 'short',
-    day: 'numeric',
-    hour: '2-digit',
-    minute: '2-digit',
-  }).format(new Date(value))
+  getDateTimeFormat(normalizeLanguage(language), localizedDateTimeOptions).format(new Date(value))
 
 export const formatMessageHoverTimestamp = (
   language: AppLanguage,

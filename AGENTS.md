@@ -564,6 +564,8 @@ A living list of traps that have wasted time before. **When you hit a new pitfal
 
 | 260 | 「探针挂在唯一收口上」这类断言极易写成**假绿**：`tab-switch-forensics` 的守卫只 `assert.match(PaneView.tsx, /measureTabSwitchForForensics\(/)`，注释还写死"activateTab 是所有切换路径的唯一收口"。实际新建 tab 走 `onAddTab` → reducer `addTab`、Ctrl+Tab 走 `App.tsx` 直接 `applyAction({type:'setActiveTab'})`，两条都绕开 `activateTab` —— 用户报的恰恰是第一条，于是"有探针"的路径一条记录都不留 | 埋点前先把**所有**改到同一份状态的入口列全（按 reducer action 找调用方，别按组件找），并给每条记录打上来源标签（`TabSwitchSource`）；守卫要按来源逐条断言存在，而不是断言函数名在文件里出现过。顺带：`measureTabSwitchForForensics` 这类"量 dispatch→重绘"的探针必须在 dispatch **之前**起跳，新建 tab 的新卡是空的、贵的是旧卡 unmount + 全局 memo 失效。 |
 
+| 261 | `new Intl.DateTimeFormat(...)` 写在每次调用的路径上 —— 构造要现加载 locale 数据，实测比 `format()` 贵 **48.9x**。`MessageBubble.tsx:418` 一行里每个气泡触发三次（hover 那个内部又调一次 time），切一次 tab 挂 271 个气泡就是 813 次构造。空闲时被 60fps 的余量吃掉看不出来；CPU 一紧张（有 agent 在跑/编译）就浮出水面：2026-08-11 的 CDP profile 里这段 self time 286ms，占那次 1374ms 阻塞的两成 | 任何 `Intl.*Format` 都按 (locale, options) 缓存实例后复用，别在渲染路径上现造。改完必须拿**未缓存的旧写法**逐样本比对输出（`tests/i18n-datetime-format-caching.test.ts`），因为 locale 字符串一处写 `'zh-CN'` 一处走 `normalizeLanguage`，合并时极易悄悄换掉格式。顺带：性能坑要在**限速**下量，1x CPU 下流式与空闲切 tab 的差别是 0，4x 下才暴露成 2 倍。 |
+
 ### Self-maintenance rule
 
 - When you encounter a new non-obvious failure mode — a test that fails for environmental reasons, a build step with hidden prerequisites, a runtime behavior that contradicts the docs — append a row to this table before you finish the task.

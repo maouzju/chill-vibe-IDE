@@ -7,11 +7,14 @@
 # killed with TerminateProcess from outside, so the only way to learn who did it
 # is to be watching at the moment it happens.
 #
-# Leading hypothesis: PID reuse. This box creates 2.5-5 processes/second, so
-# Windows recycles PIDs fast. A tool that recorded a PID earlier and runs
-# `taskkill /PID <pid> /T /F` later can hit whatever now owns that number.
-# The decisive evidence is therefore a taskkill whose target PID is, at that
-# instant, one of Chill Vibe's own processes -- so we diff against a live set.
+# Status 2026-08-12: this watcher sat armed for 1h47m across a real death and
+# reported nothing, which is one of the three refutations that killed the
+# original "a tool hits a recycled PID" hypothesis (Windows only frees a PID
+# once the last handle to it closes, so a spawned child's PID is pinned).
+# It is kept because a taskkill whose target PID is, at that instant, one of
+# Chill Vibe's own processes would still be decisive evidence -- and because a
+# silent run is itself a result. Read logs/app-exit-code.log first: the exit
+# code names the weapon (1 = taskkill, -1 = Stop-Process/.NET Kill, 0 = self).
 #
 # stdout events:
 #   [KILL-HIT]       *** taskkill targeted a live Chill Vibe pid -- smoking gun
@@ -28,11 +31,49 @@ $query = "SELECT * FROM __InstanceCreationEvent WITHIN 1 WHERE TargetInstance IS
 Register-CimIndicationEvent -Query $query -SourceIdentifier AppKillWatch -ErrorAction Stop
 
 # Live map of every Chill Vibe pid -> its parent, refreshed each tick.
+#
+# Symptom: 2026-08-11 23:26 this watcher fired [KILL-ANCESTOR] on pid 87960,
+# which read as a smoking gun. It was not: the app was untouched (heartbeat
+# unbroken), 87960 was already dead when the kill landed, and the app's real
+# ancestor chain is explorer -> svchost -> services -> wininit, which never
+# contained 87960.
+# Root cause: taking every "Chill Vibe.exe" as an app process swept in Codex's
+# PreToolUse guard, which runs the app binary as a node host
+# (server/codex-safety.ts:159). The guard's parent is a short-lived shell, so
+# that shell got promoted into the ancestor set, and any taskkill aimed at it
+# looked like a strike on the app's lineage.
+# Why not just filter by command line: an exclude-list would still admit any
+# future helper spawned the same way. Anchoring on the real main process and
+# walking down to its descendants is closed by construction -- a process only
+# counts as ours if it is the bare-exe main or descends from it.
 function Get-AppMap {
+    $all = @(Get-CimInstance Win32_Process -Filter "Name='$appName.exe'" -ErrorAction SilentlyContinue)
+
     $map = @{}
-    foreach ($p in (Get-CimInstance Win32_Process -Filter "Name='$appName.exe'" -ErrorAction SilentlyContinue)) {
-        $map[[int]$p.ProcessId] = [int]$p.ParentProcessId
+    foreach ($p in $all) {
+        $c = [string]$p.CommandLine
+        if ($c -match '^\s*"[^"]*\.exe"\s*$' -or $c -match '^\s*[^"\s]*\.exe\s*$') {
+            $map[[int]$p.ProcessId] = [int]$p.ParentProcessId
+        }
     }
+
+    # Electron's own children (--type=renderer/gpu-process/utility/crashpad-handler)
+    # hang off main; pull them in transitively. The guard never enters, because
+    # its parent is a shell that is not in the map.
+    $changed = $true
+    while ($changed) {
+        $changed = $false
+        foreach ($p in $all) {
+            $id = [int]$p.ProcessId
+            if ($map.ContainsKey($id)) { continue }
+            $parentId = [int]$p.ParentProcessId
+            if ($map.ContainsKey($parentId)) {
+                $map[$id] = $parentId
+                $changed = $true
+            }
+        }
+    }
+
     return $map
 }
 
@@ -71,7 +112,26 @@ while ($true) {
         if ($p.Name -eq "$appName.exe") {
             # Only a parentless-within-the-app process is a real restart; Electron
             # spawns same-named children constantly and those are just noise.
-            if (-not $appMap.ContainsKey([int]$p.ParentProcessId)) {
+            #
+            # Symptom: on 2026-08-11 this printed 11 [APP-MAIN-NEW] lines in 40
+            # minutes while main.log's heartbeat ran unbroken with not a single
+            # "Crash logger initialized" -- every one was a false alarm, and the
+            # noise buried the signals that matter (KILL-HIT / APP-VANISHED).
+            # Root cause: Codex's PreToolUse guard (server/codex-safety.ts:159)
+            # launches with ELECTRON_RUN_AS_NODE + process.execPath, and in a
+            # packaged build execPath IS "Chill Vibe.exe". So the guard process
+            # shares the app's image name, and its parent is the shell -- which
+            # is exactly the "parent not inside the app" condition above.
+            # Measured: 5 such processes caught in 100 seconds, every parent
+            # already exited by the time we looked.
+            # Why not match on the parent instead: requiring the parent to be
+            # explorer.exe would drop real restarts, because the app is also
+            # launched from a terminal or a debugger during development. The
+            # only stable discriminator is the command line -- a genuine main
+            # process is a bare exe invocation with no second argument, whereas
+            # every helper (--type=renderer, a .js path run as node) carries one.
+            $isBareLaunch = $cmd -match '^\s*"[^"]*\.exe"\s*$' -or $cmd -match '^\s*[^"\s]*\.exe\s*$'
+            if ($isBareLaunch -and -not $appMap.ContainsKey([int]$p.ParentProcessId)) {
                 "[APP-MAIN-NEW] $ts pid=$($p.ProcessId) -- app (re)started"
             }
             continue

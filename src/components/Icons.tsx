@@ -430,3 +430,17 @@ export const KanbanIcon = (props: SVGProps<SVGSVGElement>) => (
     <rect x="16" y="4" width="5" height="8" rx="1" />
   </BaseIcon>
 )
+
+/** 折叠开关用的下箭头。展开时由 CSS 旋转 180°，不需要再画一个上箭头。 */
+export const ChevronDownIcon = (props: SVGProps<SVGSVGElement>) => (
+  <BaseIcon {...props}>
+    <path d="m6 9 6 6 6-6" />
+  </BaseIcon>
+)
+
+/** 盾牌 — 超管权限（这个会话能读写本工作区的其他会话）。 */
+export const ShieldIcon = (props: SVGProps<SVGSVGElement>) => (
+  <BaseIcon {...props}>
+    <path d="M12 3 5 6v5.5c0 4.2 2.9 7.7 7 9.5 4.1-1.8 7-5.3 7-9.5V6Z" strokeLinejoin="round" />
+  </BaseIcon>
+)

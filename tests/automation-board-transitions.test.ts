@@ -173,13 +173,11 @@ describe('hasAutomationBoardHistory', () => {
 describe('getAutomationBoardLaneCardIds', () => {
   const board = {
     items: [
-      { cardId: 'a', lane: 'running' as const, requirement: 'A' },
-      { cardId: 'b', lane: 'standby' as const, requirement: 'B' },
-      { cardId: 'c', lane: 'running' as const, requirement: 'C' },
-      { cardId: 'd', lane: 'done' as const, requirement: 'D' },
+      { cardId: 'a', lane: 'running' as const, requirement: 'A', templateId: '' },
+      { cardId: 'b', lane: 'standby' as const, requirement: 'B', templateId: '' },
+      { cardId: 'c', lane: 'running' as const, requirement: 'C', templateId: '' },
+      { cardId: 'd', lane: 'done' as const, requirement: 'D', templateId: '' },
     ],
-    supervisorCardId: '',
-    supervisorExpanded: false,
   }
 
   // 这个有序列表直接喂给 armWakeTimerBatch 的 paneTabIds 参数：
@@ -201,9 +199,7 @@ describe('resolveWakeTimerNeighbourIds', () => {
     ...createAutomationBoardCard('Board'),
     id: 'board-1',
     automationBoard: {
-      items: items.map((item) => ({ ...item, requirement: '' })),
-      supervisorCardId: 'sup-1',
-      supervisorExpanded: false,
+      items: items.map((item) => ({ ...item, requirement: '', templateId: '' })),
     },
   })
 
@@ -248,11 +244,9 @@ describe('resolveWakeTimerNeighbourIds', () => {
       id: 'board-1',
       automationBoard: {
         items: [
-          { cardId: 'item-a', lane: 'running', requirement: '' },
-          { cardId: 'item-c', lane: 'running', requirement: '' },
+          { cardId: 'item-a', lane: 'running', requirement: '', templateId: '' },
+          { cardId: 'item-c', lane: 'running', requirement: '', templateId: '' },
         ],
-        supervisorCardId: '',
-        supervisorExpanded: false,
       },
     }
 

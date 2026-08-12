@@ -11,8 +11,6 @@ export type SendMessageOrigin = 'user' | 'auto-urge' | 'wake-timer-release'
 export type SendMessageOptions = {
   mode?: SendMessageMode
   origin?: SendMessageOrigin
-  // 自动化看板的监工回合：唯一会把看板 MCP 接进 provider 启动的回合。
-  automationBoardSupervisor?: { boardCardId: string; columnId: string }
 }
 
 export type QueuedSendSummary = {

@@ -48,9 +48,9 @@ ipcRenderer.on('remote:command', (_event, payload) => {
   )
 })
 
-ipcRenderer.on('automation-board:command', (_event, payload) => {
+ipcRenderer.on('workspace-admin:command', (_event, payload) => {
   window.dispatchEvent(
-    new CustomEvent('chill-vibe:automation-board-command', {
+    new CustomEvent('chill-vibe:workspace-admin-command', {
       detail: payload as unknown,
     }),
   )
@@ -61,10 +61,10 @@ ipcRenderer.on('app:flush-state-before-quit', () => {
 })
 
 contextBridge.exposeInMainWorld('electronAPI', {
-  publishAutomationBoardMirror: (mirror: unknown) =>
-    ipcRenderer.invoke('automation-board:publish-mirror', mirror),
-  forgetAutomationBoardMirror: (boardCardId: string) =>
-    ipcRenderer.invoke('automation-board:forget-mirror', boardCardId),
+  publishWorkspaceSessionMirror: (mirror: unknown) =>
+    ipcRenderer.invoke('workspace-admin:publish-mirror', mirror),
+  forgetWorkspaceSessionMirror: (columnId: string) =>
+    ipcRenderer.invoke('workspace-admin:forget-mirror', columnId),
   minimizeWindow: () => ipcRenderer.invoke('window:minimize'),
   toggleMaximizeWindow: () => ipcRenderer.invoke('window:toggle-maximize') as Promise<boolean>,
   closeWindow: () => ipcRenderer.invoke('window:close'),

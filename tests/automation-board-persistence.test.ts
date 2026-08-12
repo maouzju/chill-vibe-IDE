@@ -5,6 +5,7 @@ import path from 'node:path'
 import os from 'node:os'
 
 import {
+  automationBoardSupervisorTemplateId,
   createAutomationBoardCard,
   createCard,
   createDefaultSettings,
@@ -48,20 +49,31 @@ describe('automation board persistence', () => {
 
     board.automationBoard = {
       items: [
-        { cardId: 'item-a', lane: 'standby', requirement: '把登录页改成暗色', createdAt: timestamp },
-        { cardId: 'item-b', lane: 'done', requirement: '升级依赖', completedAt: timestamp },
+        {
+          cardId: 'item-a',
+          lane: 'standby',
+          requirement: '把登录页改成暗色',
+          templateId: '',
+          createdAt: timestamp,
+        },
+        {
+          cardId: 'item-b',
+          lane: 'done',
+          requirement: '升级依赖',
+          templateId: automationBoardSupervisorTemplateId,
+          completedAt: timestamp,
+        },
       ],
-      supervisorCardId: 'sup-1',
-      supervisorExpanded: true,
     }
 
-    const supervisor: ChatCard = {
+    const admin: ChatCard = {
       ...createCard('监工', undefined, 'claude', 'claude-opus-5'),
       id: 'sup-1',
+      adminAccess: true,
     }
 
     column.workspacePath = 'D:/board-workspace'
-    column.cards = { 'board-1': board, 'item-a': itemA, 'item-b': itemB, 'sup-1': supervisor }
+    column.cards = { 'board-1': board, 'item-a': itemA, 'item-b': itemB, 'sup-1': admin }
     // 关键：只有看板卡进 tabs，三张被拥有的卡刻意不在 layout 里。
     column.layout = createPane(['board-1'], 'board-1', 'pane-1')
 
@@ -77,19 +89,19 @@ describe('automation board persistence', () => {
             reasoningEffort: 'max',
             thinkingEnabled: true,
             planMode: false,
+            adminAccess: false,
+            builtIn: false,
+            trigger: {
+              enabled: true,
+              kind: 'last-item-settled',
+              lane: 'running',
+              minIntervalMinutes: 3,
+            },
+            instanceCardId: 'item-b',
             wakeTimerActive: false,
             repeatLoopActive: false,
           },
         ],
-        autoTrigger: {
-          enabled: true,
-          kind: 'last-item-settled',
-          provider: 'claude',
-          model: 'claude-opus-5',
-          reasoningEffort: 'max',
-          requirement: '检查每个原始需求',
-          minIntervalMinutes: 3,
-        },
       },
     }
 
@@ -115,14 +127,20 @@ describe('automation board persistence', () => {
       ['item-a', 'standby', '把登录页改成暗色'],
       ['item-b', 'done', '升级依赖'],
     ])
-    assert.equal(board?.supervisorCardId, 'sup-1')
-    assert.equal(board?.supervisorExpanded, true)
+    // v2：看板项记住自己是哪个模板生出来的，这是防自触发的唯一依据。
+    assert.equal(board?.items[0]?.templateId, '')
+    assert.equal(board?.items[1]?.templateId, automationBoardSupervisorTemplateId)
     assert.equal(board?.items[1]?.completedAt, timestamp)
+    // 超管权限是卡片字段，不再是看板上的一个 supervisorCardId 指针。
+    assert.equal(column.cards['sup-1']?.adminAccess, true)
 
     const workspace = loaded.automationBoards['D:/board-workspace']
     assert.equal(workspace?.templates[0]?.name, '发布前检查')
-    assert.equal(workspace?.autoTrigger.enabled, true)
-    assert.equal(workspace?.autoTrigger.minIntervalMinutes, 3)
+    assert.equal(workspace?.templates[0]?.trigger.enabled, true)
+    assert.equal(workspace?.templates[0]?.trigger.minIntervalMinutes, 3)
+    assert.equal(workspace?.templates[0]?.instanceCardId, 'item-b')
+    // 已经有 templates 数组且没有待迁移的 autoTrigger：不再补种内置模板。
+    assert.equal(workspace?.templates.length, 1)
   })
 
   // pitfall 5：新增持久化字段后，旧存档必须照常加载并补上默认值。
@@ -286,6 +304,50 @@ describe('automation board persistence', () => {
     assert.equal(loaded.columns[0]?.cards['chat-1']?.automationBoard, undefined)
   })
 
+  // 症状：打开看板后新建的每张卡都是看板空壳，重启也治不好。
+  // 根因：看板模型漏出了工具模型白名单，被当成真模型写进 settings.requestModels /
+  //   lastModel / column.model（见 shared/models.ts TOOL_CARD_MODELS）。修了写入侧
+  //   还不够 —— 已经写脏的存档必须在读档时洗掉，否则用户装了新版依旧坏。
+  it('heals a save whose remembered models were poisoned by the board model', async () => {
+    const { loadState } = await import('../server/state-store.ts')
+    const persisted = {
+      settings: {
+        ...createDefaultSettings(),
+        requestModels: { codex: AUTOMATIONBOARD_TOOL_MODEL, claude: AUTOMATIONBOARD_TOOL_MODEL },
+        lastModel: { provider: 'codex', model: AUTOMATIONBOARD_TOOL_MODEL },
+      },
+      version: 1,
+      updatedAt: timestamp,
+      sessionHistory: [],
+      stickyNoteArchive: {},
+      automationBoards: {},
+      columns: [
+        {
+          id: 'column-1',
+          title: 'Workspace',
+          provider: 'codex',
+          workspacePath: 'D:/poisoned',
+          model: AUTOMATIONBOARD_TOOL_MODEL,
+          layout: { type: 'pane', id: 'pane-1', tabs: ['chat-1'], activeTabId: 'chat-1' },
+          cards: {
+            // model 字段缺失的卡会拿 column.model 兜底 —— 列被污染时它也会
+            // 变成一张看板空壳，所以这张卡就是本用例的探针。
+            'chat-1': { id: 'chat-1', title: 'Chat', status: 'idle', provider: 'codex', messages: [] },
+          },
+        },
+      ],
+    }
+
+    await writeFile(path.join(tmpDir, 'state.json'), JSON.stringify(persisted), 'utf8')
+
+    const loaded = await loadState()
+    assert.equal(loaded.settings.requestModels.codex, DEFAULT_CODEX_MODEL)
+    assert.notEqual(loaded.settings.requestModels.claude, AUTOMATIONBOARD_TOOL_MODEL)
+    assert.notEqual(loaded.settings.lastModel?.model, AUTOMATIONBOARD_TOOL_MODEL)
+    assert.equal(loaded.columns[0]?.model, DEFAULT_CODEX_MODEL)
+    assert.notEqual(loaded.columns[0]?.cards['chat-1']?.model, AUTOMATIONBOARD_TOOL_MODEL)
+  })
+
   it('ignores a malformed per-workspace automation board entry instead of failing the load', async () => {
     const { loadState } = await import('../server/state-store.ts')
     const persisted = {
@@ -295,7 +357,7 @@ describe('automation board persistence', () => {
       sessionHistory: [],
       stickyNoteArchive: {},
       automationBoards: {
-        'D:/good': { templates: [], autoTrigger: { enabled: true } },
+        'D:/good': { templates: [] },
         'D:/bad': { templates: 'not an array' },
       },
       columns: [
@@ -323,9 +385,137 @@ describe('automation board persistence', () => {
     await writeFile(path.join(tmpDir, 'state.json'), JSON.stringify(persisted), 'utf8')
 
     const loaded = await loadState()
-    assert.equal(loaded.automationBoards['D:/good']?.autoTrigger.enabled, true)
-    // 缺省字段被 schema 补齐。
-    assert.equal(loaded.automationBoards['D:/good']?.autoTrigger.kind, 'last-item-settled')
+    // 用户可能自己删掉了内置模板：已有 templates 数组（哪怕为空）且没有待迁移的
+    // autoTrigger 时不再补种，否则每次加载都种回来。
+    assert.deepEqual(loaded.automationBoards['D:/good']?.templates, [])
     assert.equal(loaded.automationBoards['D:/bad'], undefined)
+  })
+
+  // v2 迁移：v1 的工作区级 autoTrigger 折进内置监工模板，supervisor 指针丢弃。
+  it('migrates a legacy autoTrigger into the built-in supervisor template', async () => {
+    const { loadState } = await import('../server/state-store.ts')
+    const persisted = {
+      settings: createDefaultSettings(),
+      version: 1,
+      updatedAt: timestamp,
+      sessionHistory: [],
+      stickyNoteArchive: {},
+      automationBoards: {
+        'D:/legacy-trigger': {
+          templates: [
+            {
+              id: 'tpl-user',
+              name: '用户模板',
+              requirement: '跑一遍回归',
+              provider: 'codex',
+              model: DEFAULT_CODEX_MODEL,
+              reasoningEffort: 'max',
+              thinkingEnabled: true,
+              planMode: false,
+              wakeTimerActive: false,
+              repeatLoopActive: false,
+            },
+          ],
+          autoTrigger: {
+            enabled: true,
+            kind: 'last-item-settled',
+            provider: 'claude',
+            model: 'claude-opus-5',
+            reasoningEffort: 'high',
+            requirement: 'X',
+            minIntervalMinutes: 7,
+          },
+        },
+        // 从没见过模板的工作区：补种一份内置监工模板。
+        'D:/fresh': {},
+      },
+      columns: [
+        {
+          id: 'column-1',
+          title: 'Workspace',
+          provider: 'codex',
+          workspacePath: 'D:/legacy-trigger',
+          model: DEFAULT_CODEX_MODEL,
+          layout: { type: 'pane', id: 'pane-1', tabs: ['board-1'], activeTabId: 'board-1' },
+          cards: {
+            'board-1': {
+              id: 'board-1',
+              title: 'Board',
+              status: 'idle',
+              provider: 'codex',
+              model: AUTOMATIONBOARD_TOOL_MODEL,
+              messages: [],
+              automationBoard: {
+                items: [{ cardId: 'item-a', lane: 'running', requirement: 'still here' }],
+                supervisorCardId: 'sup-1',
+                supervisorExpanded: true,
+              },
+            },
+            'item-a': {
+              id: 'item-a',
+              title: 'Item A',
+              status: 'idle',
+              provider: 'codex',
+              model: DEFAULT_CODEX_MODEL,
+              messages: [],
+            },
+          },
+        },
+      ],
+    }
+
+    await writeFile(path.join(tmpDir, 'state.json'), JSON.stringify(persisted), 'utf8')
+
+    const loaded = await loadState()
+
+    const board = getAutomationBoard(loaded.columns[0]?.cards['board-1'])
+    assert.ok(board)
+    // supervisor 指针整个消失，item 拿到默认 templateId。
+    assert.deepEqual(Object.keys(board), ['items'])
+    assert.equal(board.items[0]?.templateId, '')
+
+    const migrated = loaded.automationBoards['D:/legacy-trigger']
+    assert.ok(migrated)
+    assert.equal('autoTrigger' in migrated, false, 'autoTrigger 绝不再写回')
+
+    // 补种的内置模板放数组开头，用户自己的模板保序跟在后面。
+    assert.deepEqual(migrated.templates.map((template) => template.id), [
+      automationBoardSupervisorTemplateId,
+      'tpl-user',
+    ])
+
+    const supervisor = migrated.templates[0]!
+    assert.equal(supervisor.builtIn, true)
+    assert.equal(supervisor.adminAccess, true)
+    assert.equal(supervisor.trigger.enabled, true)
+    assert.equal(supervisor.trigger.minIntervalMinutes, 7)
+    assert.equal(supervisor.requirement, 'X')
+    assert.equal(supervisor.provider, 'claude')
+    assert.equal(supervisor.model, 'claude-opus-5')
+    assert.equal(supervisor.reasoningEffort, 'high')
+
+    // 没有 templates 字段的工作区 entry = 首次出现，补种默认模板（触发器关着）。
+    const fresh = loaded.automationBoards['D:/fresh']
+    assert.equal(fresh?.templates.length, 1)
+    assert.equal(fresh?.templates[0]?.id, automationBoardSupervisorTemplateId)
+    assert.equal(fresh?.templates[0]?.trigger.enabled, false)
+  })
+
+  // 迁移只发生一次：把迁移过的结果再存回去、再读出来，不能又种一份内置模板，
+  // 也不能把已被用户改过的 trigger 重置回去。
+  it('does not re-seed or re-migrate on the next load', async () => {
+    const { loadState, saveState } = await import('../server/state-store.ts')
+    const state = createDefaultState('D:/idempotent')
+    state.automationBoards = {
+      'D:/idempotent': { templates: [] },
+    }
+
+    await saveState(state)
+    const once = await loadState()
+    assert.deepEqual(once.automationBoards['D:/idempotent']?.templates, [])
+
+    await saveState(once)
+    const twice = await loadState()
+    assert.deepEqual(twice.automationBoards['D:/idempotent']?.templates, [])
   })
 })

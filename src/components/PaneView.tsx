@@ -41,6 +41,7 @@ import type {
   AutomationBoardActions,
   AutomationBoardWorkspaceView,
 } from './automation-board-host'
+import { decideDragStartActiveTabRestore } from './pane-tab-drag-view'
 import { decideMisroutedTabPointerRescue, isPointerWithinRect } from './pane-tab-rescue'
 import { decideTabStripWheelScroll } from './pane-tab-wheel'
 import {
@@ -764,6 +765,30 @@ const PaneViewView = ({
     }
 
     cancelPendingTabSwitch()
+
+    // 拖动期间 pane 必须还显示手势开始前的东西，否则「把 chat tab 拖进本 pane 的
+    // 自动化看板泳道」永远做不到：落点已经被自己这一拖切没了。判据见
+    // decideDragStartActiveTabRestore。
+    const gesture = tabPointerDownRef.current
+    const restoreTabId = decideDragStartActiveTabRestore({
+      draggedTabId: tabId,
+      gesture: gesture
+        ? { tabId: gesture.tabId, activeTabIdAtPointerDown: gesture.activeTabIdAtPointerDown }
+        : null,
+      currentActiveTabId: pane.activeTabId,
+      paneTabIds: pane.tabs,
+    })
+    if (restoreTabId) {
+      onSetActiveTab(pane.id, restoreTabId)
+    }
+
+    if (gesture && gesture.tabId === tabId) {
+      // dragstart 的原生阈值（~5px）比这里的 12px 判定更早，标记 dragging 以免
+      // 拖完之后 pointerup/click 兜底再把视图切走一次。
+      tabPointerDownRef.current = { ...gesture, dragging: true }
+      suppressNextTabClickRef.current = tabId
+    }
+
     writeDragPayload(event, { type: 'tab', columnId: column.id, paneId: pane.id, tabId })
   }
 
@@ -799,6 +824,7 @@ const PaneViewView = ({
     x: number
     y: number
     dragging: boolean
+    activeTabIdAtPointerDown: string | null
   } | null>(null)
   const suppressNextTabClickRef = useRef<string | null>(null)
 
@@ -905,6 +931,7 @@ const PaneViewView = ({
       x: event.clientX,
       y: event.clientY,
       dragging: false,
+      activeTabIdAtPointerDown: pane.activeTabId,
     }
     schedulePointerDownTabActivation(tabId)
   }
@@ -1418,10 +1445,6 @@ const PaneViewView = ({
                   board: getAutomationBoard(card)!,
                   cards: column.cards,
                   templates: automationBoardWorkspace.templates,
-                  autoTrigger: automationBoardWorkspace.autoTrigger,
-                  supervisorCard: getAutomationBoard(card)!.supervisorCardId
-                    ? column.cards[getAutomationBoard(card)!.supervisorCardId]
-                    : undefined,
                   wakeTimerEnabled: wakeTimerEnabled === true,
                   repeatLoopEnabled: repeatLoopEnabled === true,
                   onCreateItem: (lane, requirement, index) =>
@@ -1453,12 +1476,10 @@ const PaneViewView = ({
                     automationBoardActions.sendToItem(column.id, cardId, message),
                   onPatchItemCard: (cardId, patch) =>
                     automationBoardActions.patchItemCard(column.id, cardId, patch),
-                  onUpdateAutoTrigger: (patch) =>
-                    automationBoardActions.updateAutoTrigger(column.workspacePath, patch),
-                  onRunSupervisorNow: () =>
-                    automationBoardActions.runSupervisorNow(column.id, card.id),
-                  onSetSupervisorExpanded: (expanded) =>
-                    automationBoardActions.setSupervisorExpanded(column.id, card.id, expanded),
+                  onUpdateTemplate: (templateId, patch) =>
+                    automationBoardActions.updateTemplate(column.workspacePath, templateId, patch),
+                  onRunTemplateNow: (templateId) =>
+                    automationBoardActions.runTemplateNow(column.id, card.id, templateId),
                 }
               : undefined
           return (

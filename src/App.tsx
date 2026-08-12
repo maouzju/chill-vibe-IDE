@@ -32,6 +32,7 @@ import {
   minUiScale,
   resolveAppFontFamilyCss,
   createAutomationBoardTemplateFromCard,
+  createDefaultAutomationBoardWorkspaceState,
   getAutomationBoard,
   titleFromPrompt,
 } from '../shared/default-state'
@@ -100,7 +101,9 @@ import {
   recordRunStart,
 } from './run-duration-summary'
 import type {
+  AppLanguage,
   AppState,
+  AutomationBoardLane,
   AutoUrgeProfile,
   CcSwitchImportProfile,
   ChatCard,
@@ -174,9 +177,9 @@ import {
   isRemoteMonitorSupported,
   startRemoteMonitor,
   stopRemoteMonitor,
-  forgetAutomationBoardMirror,
-  publishAutomationBoardMirror,
-  subscribeAutomationBoardCommands,
+  forgetWorkspaceSessionMirror,
+  publishWorkspaceSessionMirror,
+  subscribeWorkspaceAdminCommands,
   subscribeRemoteCommands,
   type RemoteMonitorStartResponse,
 } from './api'
@@ -259,7 +262,8 @@ import {
   type AutomationBoardLocation,
 } from './components/automation-board-transitions'
 import {
-  resolveAutomationBoardAutoTriggerDecision,
+  resolveAutomationBoardTemplateInstanceCardId,
+  resolveAutomationBoardTemplateTriggerDecisions,
   type AutomationBoardCardActivity,
 } from './components/automation-board-auto-trigger'
 import type {
@@ -267,18 +271,48 @@ import type {
   AutomationBoardWorkspaceView,
 } from './components/automation-board-host'
 import {
-  automationBoardMirrorPublishIntervalMs,
-  buildAutomationBoardMirror,
-  getAutomationBoardMirrorSignature,
+  buildWorkspaceSessionMirror,
+  getWorkspaceSessionMirrorSignature,
+  workspaceSessionMirrorPublishIntervalMs,
 } from './components/automation-board-mirror'
-import { createDefaultAutomationBoardAutoTrigger } from '../shared/schema'
 
-// 稳定的模块级默认值：如果每次渲染都新建一个空对象，PaneView 的记忆化会
-// 因为 automationBoardWorkspace 身份变化而每帧重渲染每个 pane。
-const defaultAutomationBoardWorkspace: AutomationBoardWorkspaceView = {
-  templates: [],
-  autoTrigger: createDefaultAutomationBoardAutoTrigger(),
+/**
+ * 一个工作区还没有任何模板状态时该看到什么。
+ *
+ * 症状（要防的）：全新工作区第一次打开看板，模板条是空的 —— 内置的"看板监工"
+ *   模板根本不出现，用户以为 FR6 没实现（2026-08-11 真实 Electron 实测到）。
+ * 根因：`automationBoards` 是按 workspacePath 惰性建 entry 的，reducer 侧的
+ *   `getAutomationBoardWorkspaceState` 读不到就造带内置模板的默认值，但渲染层
+ *   这里当初写死了 `{ templates: [] }`，两边对"默认"的定义不一致。
+ * 被否决：在建工作区时就写 entry —— 那会让"用户删光模板"和"还没初始化"变得
+ *   不可区分，删掉的内置模板每次加载又被种回来。
+ *
+ * 必须按语言缓存而不是每次调用新建：模板名是本地化的，而每帧新对象会让
+ * PaneView 的记忆化因 automationBoardWorkspace 身份变化而重渲染每个 pane。
+ */
+const defaultAutomationBoardWorkspaceByLanguage = new Map<
+  AppLanguage,
+  AutomationBoardWorkspaceView
+>()
+
+const getDefaultAutomationBoardWorkspace = (
+  language: AppLanguage,
+): AutomationBoardWorkspaceView => {
+  const cached = defaultAutomationBoardWorkspaceByLanguage.get(language)
+  if (cached) {
+    return cached
+  }
+
+  const created = createDefaultAutomationBoardWorkspaceState(language)
+  defaultAutomationBoardWorkspaceByLanguage.set(language, created)
+  return created
 }
+
+const resolveAutomationBoardWorkspace = (
+  state: AppState,
+  workspacePath: string,
+): AutomationBoardWorkspaceView =>
+  state.automationBoards[workspacePath] ?? getDefaultAutomationBoardWorkspace(state.settings.language)
 import { resolveRepeatLoopCompletion } from './components/repeat-loop'
 import { getAutoReadCardIdsForVisiblePanes, shouldMarkCardUnreadOnStreamDone } from './components/pane-read-state'
 import { clearFileTreeCacheForCard } from './components/tool-card-state'
@@ -855,10 +889,10 @@ function App() {
     ) => Promise<void>
   ) | null>(null)
   const flushReadyWakeTimersRef = useRef<(() => void) | null>(null)
-  const runAutomationBoardSupervisorRef = useRef<
-    ((columnId: string, boardCardId: string) => void) | null
+  const fireAutomationBoardTemplateTriggerRef = useRef<
+    ((columnId: string, boardCardId: string, templateId: string) => void) | null
   >(null)
-  const evaluateAutomationBoardAutoTriggerRef = useRef<((settledCardId: string) => void) | null>(
+  const evaluateAutomationBoardTemplateTriggersRef = useRef<((settledCardId: string) => void) | null>(
     null,
   )
   const wakeTimerCompletionTimersRef = useRef(new Map<string, number>())
@@ -2966,7 +3000,7 @@ function App() {
       flushReadyWakeTimersRef.current?.()
       // 自动化看板的自动触发挂在同一个稳定窗口上：这样"AI 真的结束了"这个
       // 判断与唤醒链共用同一套已经调好的判据（含原生后台等待），不另造一套。
-      evaluateAutomationBoardAutoTriggerRef.current?.(completedCardId)
+      evaluateAutomationBoardTemplateTriggersRef.current?.(completedCardId)
     }, wakeTimerCompletionStabilityMs)
     wakeTimerCompletionTimersRef.current.set(completedCardId, timer)
   }, [applyActions, buildWakeTimerTargetReleaseActions, persistAfterActions])
@@ -3469,6 +3503,9 @@ function App() {
   // 的判断集中在 resolveAutomationBoardTransition 一个纯函数里，绝不散落到
   // 各个拖放落点（AGENTS.md pitfall 246）。
   // ---------------------------------------------------------------------------
+  // 触发节流按 `${boardCardId}:${templateId}` 记：同一个模板在不同看板上是
+  // 两条独立的自动化，一个刚跑过不该把另一个也挡住。不入盘 —— 重启后允许再
+  // 触发一次是可接受且更安全的行为。
   const automationBoardLastFiredAtRef = useRef(new Map<string, number>())
 
   const applyAutomationBoardTransition = useCallback(
@@ -3523,6 +3560,74 @@ function App() {
       }
     },
     [applyAction, getColumnCard, persistAfterAction, requestStopForCard],
+  )
+
+  /**
+   * 由模板实例化出一张看板项卡，返回新卡的 id。
+   *
+   * 手动拖模板与触发器到点走的是**同一个**函数 —— 这就是 v2 一致化的落点：
+   * 触发不引入任何新的执行语义，它只是替用户拖了一次。
+   *
+   * `adminAccess` 与 `templateId` 是这里唯二会写进产物的"监工性"字段：前者
+   * 决定这张卡的回合能不能拿到工作区 MCP，后者是触发器防自触发的依据。
+   */
+  const instantiateAutomationBoardTemplate = useCallback(
+    (
+      columnId: string,
+      boardCardId: string,
+      templateId: string,
+      lane: AutomationBoardLane,
+      index?: number,
+    ): string => {
+      const column = getColumn(columnId)
+      const template = column
+        ? resolveAutomationBoardWorkspace(appStateRef.current, column.workspacePath).templates.find(
+            (entry) => entry.id === templateId,
+          )
+        : undefined
+      if (!column || !template) {
+        return ''
+      }
+
+      const cardId = crypto.randomUUID()
+      const action: IdeAction = {
+        type: 'createAutomationBoardItem',
+        columnId,
+        boardCardId,
+        lane,
+        requirement: template.requirement,
+        index,
+        cardId,
+        templateId: template.id,
+        adminAccess: template.adminAccess,
+        provider: template.provider,
+        model: template.model,
+        reasoningEffort: template.reasoningEffort,
+        thinkingEnabled: template.thinkingEnabled,
+        planMode: template.planMode,
+        wakeTimerActive: template.wakeTimerActive,
+        wakeTimerMode: template.wakeTimerMode,
+        wakeTimerDurationMinutes: template.wakeTimerDurationMinutes,
+        repeatLoopActive: template.repeatLoopActive,
+        repeatLoopRemaining: template.repeatLoopRemaining,
+      }
+      persistAfterAction(action.type, applyAction(action))
+
+      if (lane === 'running') {
+        void sendMessageRef.current?.(columnId, cardId, template.requirement, [])
+        const stamp: IdeAction = {
+          type: 'stampAutomationBoardItem',
+          columnId,
+          boardCardId,
+          cardId,
+          patch: { startedAt: new Date().toISOString() },
+        }
+        persistAfterAction(stamp.type, applyAction(stamp))
+      }
+
+      return cardId
+    },
+    [applyAction, getColumn, persistAfterAction],
   )
 
   const automationBoardActions = useMemo<AutomationBoardActions>(
@@ -3589,8 +3694,7 @@ function App() {
       popOutItem: (columnId, boardCardId, cardId, paneId, index) => {
         const board = getAutomationBoard(getColumnCard(columnId, boardCardId))
         const fromLane = board?.items.find((item) => item.cardId === cardId)?.lane
-        // 监工不在任何泳道里，但它同样可以被拖出来接管。
-        if (!fromLane && board?.supervisorCardId !== cardId) {
+        if (!fromLane) {
           return
         }
 
@@ -3599,7 +3703,7 @@ function App() {
           columnId,
           boardCardId,
           cardId,
-          fromLane ? { kind: 'lane', lane: fromLane } : { kind: 'tab' },
+          { kind: 'lane', lane: fromLane },
           { kind: 'tab' },
           () => {
             const action: IdeAction = {
@@ -3640,47 +3744,7 @@ function App() {
         )
       },
       instantiateTemplate: (columnId, boardCardId, templateId, lane, index) => {
-        const column = getColumn(columnId)
-        const template = appStateRef.current.automationBoards[
-          column?.workspacePath ?? ''
-        ]?.templates.find((entry) => entry.id === templateId)
-        if (!column || !template) {
-          return
-        }
-
-        const cardId = crypto.randomUUID()
-        const action: IdeAction = {
-          type: 'createAutomationBoardItem',
-          columnId,
-          boardCardId,
-          lane,
-          requirement: template.requirement,
-          index,
-          cardId,
-          provider: template.provider,
-          model: template.model,
-          reasoningEffort: template.reasoningEffort,
-          thinkingEnabled: template.thinkingEnabled,
-          planMode: template.planMode,
-          wakeTimerActive: template.wakeTimerActive,
-          wakeTimerMode: template.wakeTimerMode,
-          wakeTimerDurationMinutes: template.wakeTimerDurationMinutes,
-          repeatLoopActive: template.repeatLoopActive,
-          repeatLoopRemaining: template.repeatLoopRemaining,
-        }
-        persistAfterAction(action.type, applyAction(action))
-
-        if (lane === 'running') {
-          void sendMessageRef.current?.(columnId, cardId, template.requirement, [])
-          const stamp: IdeAction = {
-            type: 'stampAutomationBoardItem',
-            columnId,
-            boardCardId,
-            cardId,
-            patch: { startedAt: new Date().toISOString() },
-          }
-          persistAfterAction(stamp.type, applyAction(stamp))
-        }
+        instantiateAutomationBoardTemplate(columnId, boardCardId, templateId, lane, index)
       },
       deleteItem: (columnId, boardCardId, cardId) => {
         // 删除前先停流，否则后端会留下一个没有卡片可投递的孤儿流。
@@ -3743,25 +3807,17 @@ function App() {
         const action: IdeAction = { type: 'updateCard', columnId, cardId, patch }
         persistAfterAction(action.type, applyAction(action))
       },
-      updateAutoTrigger: (workspacePath, patch) => {
+      updateTemplate: (workspacePath, templateId, patch) => {
         const action: IdeAction = {
-          type: 'updateAutomationBoardAutoTrigger',
+          type: 'updateAutomationBoardTemplate',
           workspacePath,
+          templateId,
           patch,
         }
         persistAfterAction(action.type, applyAction(action))
       },
-      runSupervisorNow: (columnId, boardCardId) => {
-        runAutomationBoardSupervisorRef.current?.(columnId, boardCardId)
-      },
-      setSupervisorExpanded: (columnId, boardCardId, expanded) => {
-        const action: IdeAction = {
-          type: 'setAutomationBoardSupervisorExpanded',
-          columnId,
-          boardCardId,
-          expanded,
-        }
-        persistAfterAction(action.type, applyAction(action))
+      runTemplateNow: (columnId, boardCardId, templateId) => {
+        fireAutomationBoardTemplateTriggerRef.current?.(columnId, boardCardId, templateId)
       },
     }),
     [
@@ -3769,57 +3825,107 @@ function App() {
       applyAutomationBoardTransition,
       getColumn,
       getColumnCard,
+      instantiateAutomationBoardTemplate,
       persistAfterAction,
       requestStopForCard,
     ],
   )
 
   /**
-   * 启动一次监工回合。监工本身就是一张普通 ChatCard（在 column.cards 里、不在
-   * pane.tabs 里），所以它跑起来与任何聊天窗口完全同源；唯一的特殊之处是请求
-   * 上带 automationBoardSupervisor 标记，服务端据此把看板 MCP 接进本次启动。
+   * 触发一次模板。这是 v2 里"监工"仅存的运行入口，而它不包含任何监工专属逻辑
+   * —— 触发 = 替用户把这个模板拖进目标泳道，走的是手动拖拽同一个函数。
+   *
+   * 复用实例而不是每次新建：否则 running 道很快堆满一排监工，且每一张都从零
+   * 开始看板、跨轮上下文全丢（判定见 resolveAutomationBoardTemplateInstanceCardId）。
+   * 复用路径不能只发消息就完事 —— 实例上一轮可能已经被移进 done，必须先经
+   * applyAutomationBoardTransition 挪回目标道，中断/发送语义才与拖拽一致。
    */
-  const runAutomationBoardSupervisor = useCallback(
-    (columnId: string, boardCardId: string) => {
+  const fireAutomationBoardTemplateTrigger = useCallback(
+    (columnId: string, boardCardId: string, templateId: string) => {
       const column = getColumn(columnId)
-      const boardCard = column?.cards[boardCardId]
-      const board = boardCard?.automationBoard
+      const board = getAutomationBoard(column?.cards[boardCardId])
       if (!column || !board || !column.workspacePath.trim()) {
         return
       }
 
-      const config =
-        appStateRef.current.automationBoards[column.workspacePath]?.autoTrigger ??
-        createDefaultAutomationBoardAutoTrigger()
-      const supervisorCardId = board.supervisorCardId || crypto.randomUUID()
-
-      const ensure: IdeAction = {
-        type: 'ensureAutomationBoardSupervisor',
-        columnId,
-        boardCardId,
-        provider: config.provider,
-        model: config.model,
-        reasoningEffort: config.reasoningEffort,
-        cardId: supervisorCardId,
-      }
-      persistAfterAction(ensure.type, applyAction(ensure))
-
-      const liveBoard = getColumnCard(columnId, boardCardId)?.automationBoard
-      const targetCardId = liveBoard?.supervisorCardId
-      if (!targetCardId) {
+      const template = resolveAutomationBoardWorkspace(
+        appStateRef.current,
+        column.workspacePath,
+      ).templates.find((entry) => entry.id === templateId)
+      if (!template) {
         return
       }
 
-      automationBoardLastFiredAtRef.current.set(boardCardId, Date.now())
-      void sendMessageRef.current?.(columnId, targetCardId, config.requirement, [], {
-        automationBoardSupervisor: { boardCardId, columnId },
-      })
-    },
-    [applyAction, getColumn, getColumnCard, persistAfterAction],
-  )
-  runAutomationBoardSupervisorRef.current = runAutomationBoardSupervisor
+      const lane = template.trigger.lane
+      automationBoardLastFiredAtRef.current.set(`${boardCardId}:${templateId}`, Date.now())
 
-  const evaluateAutomationBoardAutoTrigger = useCallback(
+      const reuseCardId = resolveAutomationBoardTemplateInstanceCardId({
+        board,
+        templateId,
+        instanceCardId: template.instanceCardId,
+      })
+
+      if (!reuseCardId) {
+        const cardId = instantiateAutomationBoardTemplate(columnId, boardCardId, templateId, lane)
+        if (cardId) {
+          const remember: IdeAction = {
+            type: 'setAutomationBoardTemplateInstance',
+            workspacePath: column.workspacePath,
+            templateId,
+            cardId,
+          }
+          persistAfterAction(remember.type, applyAction(remember))
+        }
+        return
+      }
+
+      // 复用路径刻意**不走** applyAutomationBoardTransition 的发送分支。
+      //
+      // 症状（要防的）：第二次触发时监工收到的是一次空续传（语义"接着干"），
+      //   而它上一轮已经答完"本轮检查结束"，于是原地不动或随便续几句。
+      // 根因：transition 表对"移进 running 且有历史"判 continue —— 那对用户
+      //   手动拖回一个被暂停的需求是对的，但触发的语义是"用这段需求文本再跑
+      //   一轮"，两者不同。
+      // 被否决：先 moveItem 再补发 requirement —— 同一轮里两次投递。
+      const fromLane = board.items.find((item) => item.cardId === reuseCardId)?.lane
+      if (fromLane && fromLane !== lane) {
+        const relane: IdeAction = {
+          type: 'setAutomationBoardItemLane',
+          columnId,
+          boardCardId,
+          cardId: reuseCardId,
+          lane,
+        }
+        persistAfterAction(relane.type, applyAction(relane))
+      }
+
+      if (lane === 'running') {
+        const stamp: IdeAction = {
+          type: 'stampAutomationBoardItem',
+          columnId,
+          boardCardId,
+          cardId: reuseCardId,
+          patch: { startedAt: new Date().toISOString() },
+        }
+        persistAfterAction(stamp.type, applyAction(stamp))
+        void sendMessageRef.current?.(columnId, reuseCardId, template.requirement, [])
+      }
+
+      if (template.instanceCardId !== reuseCardId) {
+        const remember: IdeAction = {
+          type: 'setAutomationBoardTemplateInstance',
+          workspacePath: column.workspacePath,
+          templateId,
+          cardId: reuseCardId,
+        }
+        persistAfterAction(remember.type, applyAction(remember))
+      }
+    },
+    [applyAction, getColumn, instantiateAutomationBoardTemplate, persistAfterAction],
+  )
+  fireAutomationBoardTemplateTriggerRef.current = fireAutomationBoardTemplateTrigger
+
+  const evaluateAutomationBoardTemplateTriggers = useCallback(
     (settledCardId: string) => {
       const state = appStateRef.current
 
@@ -3828,8 +3934,8 @@ function App() {
           continue
         }
 
-        const config = state.automationBoards[column.workspacePath]?.autoTrigger
-        if (!config) {
+        const { templates } = resolveAutomationBoardWorkspace(state, column.workspacePath)
+        if (!templates.length) {
           continue
         }
 
@@ -3840,11 +3946,8 @@ function App() {
           }
 
           const cardActivity: Record<string, AutomationBoardCardActivity> = {}
-          for (const cardId of [
-            ...board.items.map((item) => item.cardId),
-            board.supervisorCardId,
-          ]) {
-            const card = cardId ? column.cards[cardId] : undefined
+          for (const item of board.items) {
+            const card = column.cards[item.cardId]
             if (card) {
               cardActivity[card.id] = {
                 status: card.status,
@@ -3853,24 +3956,36 @@ function App() {
             }
           }
 
-          const decision = resolveAutomationBoardAutoTriggerDecision({
-            config,
+          const lastFiredAtMs: Record<string, number> = {}
+          for (const template of templates) {
+            const fired = automationBoardLastFiredAtRef.current.get(
+              `${boardCard.id}:${template.id}`,
+            )
+            if (typeof fired === 'number') {
+              lastFiredAtMs[template.id] = fired
+            }
+          }
+
+          const decisions = resolveAutomationBoardTemplateTriggerDecisions({
+            templates,
             board,
             settledCardId,
             cardActivity,
-            lastFiredAtMs: automationBoardLastFiredAtRef.current.get(boardCard.id) ?? null,
+            lastFiredAtMs,
             nowMs: Date.now(),
           })
 
-          if (decision.fire) {
-            runAutomationBoardSupervisor(column.id, boardCard.id)
+          for (const decision of decisions) {
+            if (decision.fire) {
+              fireAutomationBoardTemplateTrigger(column.id, boardCard.id, decision.templateId)
+            }
           }
         }
       }
     },
-    [runAutomationBoardSupervisor],
+    [fireAutomationBoardTemplateTrigger],
   )
-  evaluateAutomationBoardAutoTriggerRef.current = evaluateAutomationBoardAutoTrigger
+  evaluateAutomationBoardTemplateTriggersRef.current = evaluateAutomationBoardTemplateTriggers
 
   const changeCardModelSelection = useCallback(
     (columnId: string, cardId: string, provider: Provider, model: string) => {
@@ -4972,31 +5087,53 @@ function App() {
     })
   }, [applyAction, attachStream, getColumn, persistAfterAction])
 
-  // 看板监工 MCP 的写命令执行器。与手机监工同一条规矩：绝不自己另写一条捷径，
+  // 超管权限 MCP 的写命令执行器。与手机监工同一条规矩：绝不自己另写一条捷径，
   // "移到某道"必须经 automationBoardActions.moveItem，这样中断/执行语义仍然由
   // resolveAutomationBoardTransition 决定，模型无法绕过它。
+  //
+  // 命令只带 columnId 不带 boardCardId：目标看板是 state 的事实，模型既不该
+  // 也无法知道 —— 这里按"该卡已在哪张看板里"解析，没有就落到本列第一张看板。
   useEffect(() => {
-    return subscribeAutomationBoardCommands((command) => {
-      const owner = appStateRef.current.columns.find((column) =>
-        Boolean(column.cards[command.boardCardId]),
-      )
+    return subscribeWorkspaceAdminCommands((command) => {
+      const owner = appStateRef.current.columns.find((column) => column.id === command.columnId)
       if (!owner) {
         return
       }
 
       switch (command.type) {
-        case 'board-move-item':
-          automationBoardActions.moveItem(
-            owner.id,
-            command.boardCardId,
-            command.cardId,
-            command.lane,
+        case 'admin-move-session-to-lane': {
+          const boardCards = Object.values(owner.cards).filter((card) =>
+            Boolean(getAutomationBoard(card)),
           )
+          const owning = boardCards.find((card) =>
+            getAutomationBoard(card)?.items.some((item) => item.cardId === command.cardId),
+          )
+          const board = owning ?? boardCards[0]
+          if (!board) {
+            return
+          }
+
+          if (owning) {
+            automationBoardActions.moveItem(owner.id, board.id, command.cardId, command.lane)
+            return
+          }
+
+          // 目标还是个普通 tab：把它吸收进看板，语义与用户把 tab 拖进泳道相同。
+          const pane = findPaneForTab(owner.layout, command.cardId)
+          if (pane) {
+            automationBoardActions.absorbTab(
+              owner.id,
+              board.id,
+              { columnId: owner.id, paneId: pane.id, tabId: command.cardId },
+              command.lane,
+            )
+          }
           return
-        case 'board-send-item-message':
+        }
+        case 'admin-send-session-message':
           automationBoardActions.sendToItem(owner.id, command.cardId, command.message)
           return
-        case 'board-set-item-wake-timer':
+        case 'admin-set-session-wake-timer':
           automationBoardActions.patchItemCard(owner.id, command.cardId, {
             wakeTimerActive: true,
             wakeTimerMode: command.mode,
@@ -5011,50 +5148,44 @@ function App() {
     })
   }, [automationBoardActions])
 
-  // 实时看板镜像：节流推给主进程供看板 MCP 读取。签名比对确保只有对监工有意义
-  // 的变化才跨 IPC —— 单条消息的流式增长不刷新签名，否则每个 delta 都会推一次。
-  const automationBoardMirrorSignaturesRef = useRef(new Map<string, string>())
+  // 实时工作区镜像：节流推给主进程供超管 MCP 读取。签名比对确保只有对模型有
+  // 意义的变化才跨 IPC —— 单条消息的流式增长不刷新签名，否则每个 delta 都会
+  // 推一次几十 KB 的载荷（AGENTS.md pitfall 258）。
+  const workspaceMirrorSignaturesRef = useRef(new Map<string, string>())
   useEffect(() => {
     const publishAll = () => {
       const state = appStateRef.current
-      const liveBoardIds = new Set<string>()
+      const liveColumnIds = new Set<string>()
 
       for (const column of state.columns) {
-        for (const card of Object.values(column.cards)) {
-          if (!getAutomationBoard(card)) {
-            continue
-          }
-
-          liveBoardIds.add(card.id)
-          const mirror = buildAutomationBoardMirror({
-            column,
-            boardCardId: card.id,
-            generatedAt: new Date().toISOString(),
-          })
-          if (!mirror) {
-            continue
-          }
-
-          const signature = getAutomationBoardMirrorSignature(mirror)
-          if (automationBoardMirrorSignaturesRef.current.get(card.id) === signature) {
-            continue
-          }
-
-          automationBoardMirrorSignaturesRef.current.set(card.id, signature)
-          publishAutomationBoardMirror(mirror)
+        const mirror = buildWorkspaceSessionMirror({
+          column,
+          generatedAt: new Date().toISOString(),
+        })
+        if (!mirror) {
+          continue
         }
+
+        liveColumnIds.add(column.id)
+        const signature = getWorkspaceSessionMirrorSignature(mirror)
+        if (workspaceMirrorSignaturesRef.current.get(column.id) === signature) {
+          continue
+        }
+
+        workspaceMirrorSignaturesRef.current.set(column.id, signature)
+        publishWorkspaceSessionMirror(mirror)
       }
 
-      for (const boardCardId of [...automationBoardMirrorSignaturesRef.current.keys()]) {
-        if (!liveBoardIds.has(boardCardId)) {
-          automationBoardMirrorSignaturesRef.current.delete(boardCardId)
-          forgetAutomationBoardMirror(boardCardId)
+      for (const columnId of [...workspaceMirrorSignaturesRef.current.keys()]) {
+        if (!liveColumnIds.has(columnId)) {
+          workspaceMirrorSignaturesRef.current.delete(columnId)
+          forgetWorkspaceSessionMirror(columnId)
         }
       }
     }
 
     publishAll()
-    const timer = window.setInterval(publishAll, automationBoardMirrorPublishIntervalMs)
+    const timer = window.setInterval(publishAll, workspaceSessionMirrorPublishIntervalMs)
     return () => window.clearInterval(timer)
   }, [])
 
@@ -5967,9 +6098,16 @@ function App() {
         prompt: requestPrompt,
         attachments: requestAttachments,
         archiveRecall,
-        // 只有监工回合会带这个标记，服务端据此把看板 MCP 接进本次 provider 启动。
-        ...(options.automationBoardSupervisor
-          ? { automationBoardSupervisor: options.automationBoardSupervisor }
+        // 超管权限判定放在这里，而不是让调用方带标记。
+        //
+        // 症状（要防的）：开了超管的会话在"唤醒发车 / 循环重复 / 队列 dispatch /
+        //   MCP 转发的鞭策"这些入口发出的回合拿不到工具，表现为工具时有时无。
+        // 根因：发送入口有五六个，任何"由调用方决定要不要带"的写法都会漏掉其中
+        //   几个，而漏掉的那几个恰恰是自动化路径 —— 最不容易被人工发现。
+        // 被否决：给 SendMessageOptions 加一个 adminAccess 标记让调用方传 —— 那
+        //   正是上面这个形态。判定只放在这个唯一必经的请求构建处。
+        ...(card.adminAccess === true
+          ? { adminAccess: { columnId, selfCardId: cardId } }
           : {}),
       })
 
@@ -10191,9 +10329,10 @@ function App() {
               })()
             }
             automationBoardActions={automationBoardActions}
-            automationBoardWorkspace={
-              appState.automationBoards[column.workspacePath] ?? defaultAutomationBoardWorkspace
-            }
+            automationBoardWorkspace={resolveAutomationBoardWorkspace(
+              appState,
+              column.workspacePath,
+            )}
             stickyNoteArchivedContent={
               appState.stickyNoteArchive[column.workspacePath]?.content ?? ''
             }

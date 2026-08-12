@@ -4,15 +4,16 @@ import { fileURLToPath } from 'node:url'
 
 const protocolVersion = '2025-03-26'
 
-const boardMcpUrlEnvKey = 'CHILL_VIBE_BOARD_MCP_URL'
-const boardMcpTokenEnvKey = 'CHILL_VIBE_BOARD_MCP_TOKEN'
-const boardMcpBoardIdEnvKey = 'CHILL_VIBE_BOARD_MCP_BOARD_ID'
+const adminMcpUrlEnvKey = 'CHILL_VIBE_ADMIN_MCP_URL'
+const adminMcpTokenEnvKey = 'CHILL_VIBE_ADMIN_MCP_TOKEN'
+const adminMcpColumnIdEnvKey = 'CHILL_VIBE_ADMIN_MCP_COLUMN_ID'
+const adminMcpSelfCardIdEnvKey = 'CHILL_VIBE_ADMIN_MCP_SELF_CARD_ID'
 
-const listToolName = 'list_board_items'
-const readToolName = 'read_board_item'
-const moveToolName = 'move_board_item'
-const sendToolName = 'send_board_item_message'
-const wakeToolName = 'set_board_item_wake_timer'
+const listToolName = 'list_sessions'
+const readToolName = 'read_session'
+const moveToolName = 'move_session_to_lane'
+const sendToolName = 'send_session_message'
+const wakeToolName = 'set_session_wake_timer'
 
 const defaultTranscriptLimit = 20
 const maxTranscriptLimit = 60
@@ -23,15 +24,15 @@ const defaultWakeDurationMinutes = 30
 // 这个文件由 process.execPath 直接当普通 Node 脚本 spawn（不经 tsx），所以
 // 不能 import shared/schema.ts —— lane / wake mode 的字面量只能在这里重复一份。
 // 唯一的防线是 tests/automation-board-mcp.test.ts 把生成的 command 拿去过
-// automationBoardCommandSchema：字面量一旦漂移，那条断言立刻红。
+// workspaceAdminCommandSchema：字面量一旦漂移，那条断言立刻红。
 const boardLanes = ['standby', 'running', 'done']
 const wakeTimerModes = ['duration', 'workspace-agents', 'left-tab']
 
-export const boardMcpToolDefinitions = [
+export const workspaceAdminMcpToolDefinitions = [
   {
     name: listToolName,
     description:
-      'List every requirement on the automation board you supervise: its cardId, lane (standby/running/done), the ORIGINAL requirement text, run status, when it started, when it last produced output, how many minutes it has been silent, and a preview of its last message. Call this first, and call it again after any write tool to confirm the result.',
+      'List every session in this workspace: its cardId, title, provider/model, run status, whether it sits on an automation board (and in which lane) or is a standalone tab session, the ORIGINAL requirement for board items, when it started, when it last produced output, how many minutes it has been silent, and a preview of its last message. Your own session is excluded. Call this first, and call it again after any write tool to confirm the result.',
     inputSchema: {
       type: 'object',
       properties: {},
@@ -41,13 +42,13 @@ export const boardMcpToolDefinitions = [
   {
     name: readToolName,
     description:
-      "Read the most recent transcript entries for one board requirement so you can judge whether the agent actually delivered it or is stuck. Use this before nudging or before moving an item to done.",
+      'Read the most recent transcript entries for one session so you can judge whether that agent actually delivered or is stuck. Use this before nudging it or before moving it to done.',
     inputSchema: {
       type: 'object',
       properties: {
         cardId: {
           type: 'string',
-          description: 'The board item cardId returned by list_board_items.',
+          description: 'The session cardId returned by list_sessions.',
         },
         limit: {
           type: 'integer',
@@ -64,13 +65,13 @@ export const boardMcpToolDefinitions = [
   {
     name: moveToolName,
     description:
-      'Move one board requirement to another lane. Moving to "running" starts execution (a fresh requirement is sent, an item with history is continued). Moving to "standby" or "done" interrupts execution if it is still running. Move a requirement to "done" only when it has genuinely been delivered.',
+      'Move one session into an automation board lane. Moving to "running" starts execution (a fresh requirement is sent, a session with history is continued). Moving to "standby" or "done" interrupts execution if it is still running. Move a session to "done" only when its requirement has genuinely been delivered. The target board is decided by the app: if the session is already on a board that board is used, otherwise the first board card in this workspace is used; if this workspace has no board card at all the move fails.',
     inputSchema: {
       type: 'object',
       properties: {
         cardId: {
           type: 'string',
-          description: 'The board item cardId returned by list_board_items.',
+          description: 'The session cardId returned by list_sessions.',
         },
         lane: {
           type: 'string',
@@ -85,17 +86,17 @@ export const boardMcpToolDefinitions = [
   {
     name: sendToolName,
     description:
-      'Send a message into one board requirement\'s own chat. This is how you 鞭策 (nudge / push) that agent: the message appears in that requirement\'s conversation exactly as if the user had typed it, so write it as an instruction addressed to that agent. Use it to demand progress from an agent that has gone silent, or to correct a wrong direction.',
+      'Send a message into one session\'s own chat. This is how you 鞭策 (nudge / push) that agent: the message appears in that session\'s conversation exactly as if the user had typed it, so write it as an instruction addressed to that agent. Use it to demand progress from an agent that has gone silent, or to correct a wrong direction.',
     inputSchema: {
       type: 'object',
       properties: {
         cardId: {
           type: 'string',
-          description: 'The board item cardId returned by list_board_items.',
+          description: 'The session cardId returned by list_sessions.',
         },
         message: {
           type: 'string',
-          description: 'The instruction to deliver into that requirement\'s chat.',
+          description: 'The instruction to deliver into that session\'s chat.',
         },
       },
       required: ['cardId', 'message'],
@@ -105,13 +106,13 @@ export const boardMcpToolDefinitions = [
   {
     name: wakeToolName,
     description:
-      'Arm a wake timer on one board requirement so it resumes later instead of being nagged now. mode "duration" means "check back after N minutes" (durationMinutes, default 30). mode "workspace-agents" waits until every other agent in this workspace has finished. mode "left-tab" waits until the requirement above it in the same lane has finished. Prefer this over repeated nudging when an agent is legitimately waiting on sub-tasks.',
+      'Arm a wake timer on one session so it resumes later instead of being nagged now. mode "duration" means "check back after N minutes" (durationMinutes, default 30). mode "workspace-agents" waits until every other agent in this workspace has finished. mode "left-tab" waits until the session before it has finished. Prefer this over repeated nudging when an agent is legitimately waiting on sub-tasks.',
     inputSchema: {
       type: 'object',
       properties: {
         cardId: {
           type: 'string',
-          description: 'The board item cardId returned by list_board_items.',
+          description: 'The session cardId returned by list_sessions.',
         },
         mode: {
           type: 'string',
@@ -144,7 +145,7 @@ const clampTranscriptLimit = (raw) => {
   return Math.max(1, Math.min(Math.trunc(parsed), maxTranscriptLimit))
 }
 
-// 静默时长按注入的 nowMs 计算，绝不在这里读 Date.now() —— 监工要根据
+// 静默时长按注入的 nowMs 计算，绝不在这里读 Date.now() —— 超管要根据
 // "超过半小时没下文"决定是否鞭策，这个判据必须可被单测钉死。
 const describeSilence = (lastActivityAt, nowMs) => {
   const parsed = lastActivityAt ? Date.parse(lastActivityAt) : Number.NaN
@@ -156,72 +157,97 @@ const describeSilence = (lastActivityAt, nowMs) => {
   return { text: `silent for ${minutes} minutes`, minutes }
 }
 
-const countByLane = (items) => {
-  const counts = { standby: 0, running: 0, done: 0 }
-  for (const item of items) {
-    if (typeof counts[item?.lane] === 'number') {
-      counts[item.lane] += 1
+const countByLane = (sessions) => {
+  const counts = { standby: 0, running: 0, done: 0, tab: 0 }
+  for (const session of sessions) {
+    const lane = session?.board?.lane
+    if (typeof counts[lane] === 'number') {
+      counts[lane] += 1
+    } else {
+      counts.tab += 1
     }
   }
   return counts
 }
 
-export const buildBoardItemsText = (mirror, nowMs) => {
-  const boardCardId = normalizeText(mirror?.boardCardId) || '(unknown board)'
-  const items = Array.isArray(mirror?.items) ? mirror.items : []
+// 请求方自己绝不出现在清单里：否则模型会把自己列出来，再给自己发一条鞭策。
+const selectVisibleSessions = (mirror, selfCardId) => {
+  const sessions = Array.isArray(mirror?.sessions) ? mirror.sessions : []
+  const self = normalizeText(selfCardId)
+  return self ? sessions.filter((session) => normalizeText(session?.cardId) !== self) : sessions
+}
 
-  if (items.length === 0) {
-    return `Automation board ${boardCardId} has no requirements yet. Nothing to supervise.`
+export const buildWorkspaceSessionsText = (mirror, nowMs, selfCardId) => {
+  const columnId = normalizeText(mirror?.columnId) || '(unknown workspace)'
+  const sessions = selectVisibleSessions(mirror, selfCardId)
+
+  if (sessions.length === 0) {
+    return `Workspace ${columnId} has no other sessions right now. Nothing to supervise.`
   }
 
-  const counts = countByLane(items)
+  const counts = countByLane(sessions)
   const workspace = normalizeText(mirror?.workspacePath)
+  const boardCardIds = Array.isArray(mirror?.boardCardIds) ? mirror.boardCardIds : []
   const lines = [
-    `Automation board ${boardCardId}${workspace ? ` (workspace: ${workspace})` : ''} — ${items.length} requirement(s): standby ${counts.standby}, running ${counts.running}, done ${counts.done}.`,
-    `Board snapshot taken at ${normalizeText(mirror?.generatedAt) || 'unknown time'}.`,
+    `Workspace ${columnId}${workspace ? ` (${workspace})` : ''} — ${sessions.length} session(s): board standby ${counts.standby}, board running ${counts.running}, board done ${counts.done}, standalone tabs ${counts.tab}.`,
+    boardCardIds.length > 0
+      ? `Automation board card(s) in this workspace: ${boardCardIds.join(', ')}.`
+      : 'This workspace has no automation board card, so move_session_to_lane will fail here.',
+    `Snapshot taken at ${normalizeText(mirror?.generatedAt) || 'unknown time'}.`,
   ]
 
-  for (const [index, item] of items.entries()) {
-    const silence = describeSilence(item?.lastActivityAt, nowMs)
+  for (const [index, session] of sessions.entries()) {
+    const silence = describeSilence(session?.lastActivityAt, nowMs)
+    const board = session?.board
     lines.push('')
-    lines.push(`${index + 1}. cardId: ${normalizeText(item?.cardId)}`)
-    lines.push(`   Lane: ${normalizeText(item?.lane) || 'unknown'}`)
+    lines.push(`${index + 1}. cardId: ${normalizeText(session?.cardId)}`)
+    lines.push(`   Title: ${normalizeText(session?.title) || '(untitled)'}`)
     lines.push(
-      `   Status: ${normalizeText(item?.status) || 'unknown'}${item?.backgroundWorkPending ? ' (background work pending)' : ''}`,
+      `   Model: ${normalizeText(session?.provider) || 'unknown'}${normalizeText(session?.model) ? ` / ${normalizeText(session.model)}` : ''}`,
     )
-    lines.push(`   Requirement: ${normalizeText(item?.requirement) || '(empty requirement)'}`)
-    if (normalizeText(item?.startedAt)) {
-      lines.push(`   Started at: ${normalizeText(item.startedAt)}`)
-    }
-    if (normalizeText(item?.completedAt)) {
-      lines.push(`   Completed at: ${normalizeText(item.completedAt)}`)
-    }
-    lines.push(
-      `   Last activity: ${normalizeText(item?.lastActivityAt) || 'none'} — ${silence.text}`,
-    )
-    if (item?.wakeTimerActive) {
+    if (board) {
       lines.push(
-        `   Wake timer: armed${normalizeText(item?.wakeTimerWakeAt) ? `, wakes at ${normalizeText(item.wakeTimerWakeAt)}` : ''}`,
+        `   Board: ${normalizeText(board.boardCardId) || 'unknown board'}, lane ${normalizeText(board.lane) || 'unknown'}`,
+      )
+      lines.push(`   Requirement: ${normalizeText(board.requirement) || '(empty requirement)'}`)
+      if (normalizeText(board.startedAt)) {
+        lines.push(`   Started at: ${normalizeText(board.startedAt)}`)
+      }
+      if (normalizeText(board.completedAt)) {
+        lines.push(`   Completed at: ${normalizeText(board.completedAt)}`)
+      }
+    } else {
+      lines.push('   Board: none — this is a standalone tab session.')
+    }
+    lines.push(
+      `   Status: ${normalizeText(session?.status) || 'unknown'}${session?.backgroundWorkPending ? ' (background work pending)' : ''}`,
+    )
+    lines.push(
+      `   Last activity: ${normalizeText(session?.lastActivityAt) || 'none'} — ${silence.text}`,
+    )
+    if (session?.wakeTimerActive) {
+      lines.push(
+        `   Wake timer: armed${normalizeText(session?.wakeTimerWakeAt) ? `, wakes at ${normalizeText(session.wakeTimerWakeAt)}` : ''}`,
       )
     }
-    if (item?.repeatLoopActive) {
+    if (session?.repeatLoopActive) {
       lines.push('   Repeat loop: active')
     }
-    if (normalizeText(item?.lastMessagePreview)) {
-      lines.push(`   Last message: ${normalizeText(item.lastMessagePreview)}`)
+    if (normalizeText(session?.lastMessagePreview)) {
+      lines.push(`   Last message: ${normalizeText(session.lastMessagePreview)}`)
     }
   }
 
   return lines.join('\n')
 }
 
-export const buildBoardItemTranscriptText = (cardId, entries) => {
+export const buildSessionTranscriptText = (cardId, entries) => {
   const list = Array.isArray(entries) ? entries : []
   if (list.length === 0) {
-    return `Board item ${cardId} has no transcript entries yet.`
+    return `Session ${cardId} has no transcript entries yet.`
   }
 
-  const lines = [`Recent transcript for board item ${cardId} (${list.length} entry/entries, oldest first):`]
+  const lines = [`Recent transcript for session ${cardId} (${list.length} entry/entries, oldest first):`]
   for (const [index, entry] of list.entries()) {
     const kind = normalizeText(entry?.kind)
     const createdAt = normalizeText(entry?.createdAt)
@@ -239,15 +265,15 @@ export const buildBoardItemTranscriptText = (cardId, entries) => {
   return lines.join('\n')
 }
 
-export const resolveBoardCommandFromToolCall = (name, args, boardCardId) => {
-  const normalizedBoardCardId = normalizeText(boardCardId)
-  if (!normalizedBoardCardId) {
-    return { error: 'This session is not attached to an automation board, so write tools are unavailable.' }
+export const resolveWorkspaceAdminCommandFromToolCall = (name, args, columnId) => {
+  const normalizedColumnId = normalizeText(columnId)
+  if (!normalizedColumnId) {
+    return { error: 'This session has no workspace admin access, so the write tools are unavailable.' }
   }
 
   const cardId = readStringArg(args, 'cardId')
   if (!cardId) {
-    return { error: 'cardId is required. Call list_board_items to get the cardId of each requirement.' }
+    return { error: `cardId is required. Call ${listToolName} to get the cardId of each session.` }
   }
 
   if (name === moveToolName) {
@@ -256,7 +282,9 @@ export const resolveBoardCommandFromToolCall = (name, args, boardCardId) => {
       return { error: `lane must be one of ${boardLanes.join(', ')}. Received: ${lane || '(missing)'}.` }
     }
 
-    return { command: { type: 'board-move-item', boardCardId: normalizedBoardCardId, cardId, lane } }
+    return {
+      command: { type: 'admin-move-session-to-lane', columnId: normalizedColumnId, cardId, lane },
+    }
   }
 
   if (name === sendToolName) {
@@ -266,7 +294,12 @@ export const resolveBoardCommandFromToolCall = (name, args, boardCardId) => {
     }
 
     return {
-      command: { type: 'board-send-item-message', boardCardId: normalizedBoardCardId, cardId, message },
+      command: {
+        type: 'admin-send-session-message',
+        columnId: normalizedColumnId,
+        cardId,
+        message,
+      },
     }
   }
 
@@ -277,7 +310,14 @@ export const resolveBoardCommandFromToolCall = (name, args, boardCardId) => {
     }
 
     if (mode !== 'duration') {
-      return { command: { type: 'board-set-item-wake-timer', boardCardId: normalizedBoardCardId, cardId, mode } }
+      return {
+        command: {
+          type: 'admin-set-session-wake-timer',
+          columnId: normalizedColumnId,
+          cardId,
+          mode,
+        },
+      }
     }
 
     const rawDuration = args?.durationMinutes
@@ -297,8 +337,8 @@ export const resolveBoardCommandFromToolCall = (name, args, boardCardId) => {
 
     return {
       command: {
-        type: 'board-set-item-wake-timer',
-        boardCardId: normalizedBoardCardId,
+        type: 'admin-set-session-wake-timer',
+        columnId: normalizedColumnId,
         cardId,
         mode,
         durationMinutes,
@@ -306,7 +346,7 @@ export const resolveBoardCommandFromToolCall = (name, args, boardCardId) => {
     }
   }
 
-  return { error: `Unknown automation board write tool: ${name}` }
+  return { error: `Unknown workspace admin write tool: ${name}` }
 }
 
 const textResult = (text, isError = false) => ({
@@ -317,19 +357,21 @@ const textResult = (text, isError = false) => ({
 // 写工具返回的是"命令已投递"，不是"已生效"——与手机监工同语义：真正执行
 // 的是渲染进程里的电脑端 handler，本进程无从得知结果，只能让模型再查一次。
 const deliveredText = (action, cardId) =>
-  `${action} for board item ${cardId} was delivered to the desktop app. Delivery is not confirmation that it took effect — call ${listToolName} again to verify the board state.`
+  `${action} for session ${cardId} was delivered to the desktop app. Delivery is not confirmation that it took effect — call ${listToolName} again to verify the workspace state.`
 
-export const callAutomationBoardTool = async (name, args, context) => {
+export const callWorkspaceAdminTool = async (name, args, context) => {
   if (name === listToolName) {
-    const mirror = await context.fetchBoard()
+    const mirror = await context.fetchWorkspace()
     if (!mirror) {
       return textResult(
-        'The automation board is not available right now (the desktop app may have closed it). Try again shortly.',
+        'This workspace is not available right now (the desktop app may have closed it). Try again shortly.',
         true,
       )
     }
 
-    return textResult(buildBoardItemsText(mirror, context.nowMs ?? Date.now()))
+    return textResult(
+      buildWorkspaceSessionsText(mirror, context.nowMs ?? Date.now(), context.selfCardId),
+    )
   }
 
   if (name === readToolName) {
@@ -338,19 +380,19 @@ export const callAutomationBoardTool = async (name, args, context) => {
       return textResult(`cardId is required. Call ${listToolName} first.`, true)
     }
 
-    const entries = await context.fetchItem(cardId, clampTranscriptLimit(args?.limit))
+    const entries = await context.fetchSession(cardId, clampTranscriptLimit(args?.limit))
     if (!entries) {
       return textResult(
-        `No board item exists for cardId ${cardId}. Call ${listToolName} to get the current cardIds.`,
+        `No session exists for cardId ${cardId}. Call ${listToolName} to get the current cardIds.`,
         true,
       )
     }
 
-    return textResult(buildBoardItemTranscriptText(cardId, entries))
+    return textResult(buildSessionTranscriptText(cardId, entries))
   }
 
   if (name === moveToolName || name === sendToolName || name === wakeToolName) {
-    const resolved = resolveBoardCommandFromToolCall(name, args, context.boardCardId)
+    const resolved = resolveWorkspaceAdminCommandFromToolCall(name, args, context.columnId)
     if (resolved.error) {
       return textResult(resolved.error, true)
     }
@@ -358,7 +400,7 @@ export const callAutomationBoardTool = async (name, args, context) => {
     const outcome = await context.postCommand(resolved.command)
     if (!outcome?.accepted) {
       return textResult(
-        `${name} for board item ${resolved.command.cardId} could NOT be delivered: ${outcome?.reason || 'the desktop app did not accept the command'}. The board is unchanged; try again shortly.`,
+        `${name} for session ${resolved.command.cardId} could NOT be delivered: ${outcome?.reason || 'the desktop app did not accept the command'}. Nothing changed; try again shortly.`,
         true,
       )
     }
@@ -366,25 +408,27 @@ export const callAutomationBoardTool = async (name, args, context) => {
     return textResult(deliveredText(name, resolved.command.cardId))
   }
 
-  return textResult(`Unknown automation board tool: ${name}`, true)
+  return textResult(`Unknown workspace admin tool: ${name}`, true)
 }
 
-const createHttpBoardContext = () => {
-  const baseUrl = process.env[boardMcpUrlEnvKey] ?? ''
-  const token = process.env[boardMcpTokenEnvKey] ?? ''
-  const boardCardId = process.env[boardMcpBoardIdEnvKey] ?? ''
+const createHttpWorkspaceContext = () => {
+  const baseUrl = process.env[adminMcpUrlEnvKey] ?? ''
+  const token = process.env[adminMcpTokenEnvKey] ?? ''
+  const columnId = process.env[adminMcpColumnIdEnvKey] ?? ''
+  const selfCardId = process.env[adminMcpSelfCardIdEnvKey] ?? ''
   const authHeaders = { Authorization: `Bearer ${token}` }
 
   return {
-    boardCardId,
-    fetchBoard: async () => {
+    columnId,
+    selfCardId,
+    fetchWorkspace: async () => {
       if (!baseUrl) {
         return null
       }
 
       try {
         const response = await fetch(
-          `${baseUrl}/board?boardCardId=${encodeURIComponent(boardCardId)}`,
+          `${baseUrl}/workspace?columnId=${encodeURIComponent(columnId)}`,
           { headers: authHeaders },
         )
         if (!response.ok) {
@@ -396,14 +440,14 @@ const createHttpBoardContext = () => {
         return null
       }
     },
-    fetchItem: async (cardId, limit) => {
+    fetchSession: async (cardId, limit) => {
       if (!baseUrl) {
         return null
       }
 
       try {
         const response = await fetch(
-          `${baseUrl}/item?cardId=${encodeURIComponent(cardId)}&limit=${limit}`,
+          `${baseUrl}/session?cardId=${encodeURIComponent(cardId)}&limit=${limit}`,
           { headers: authHeaders },
         )
         if (!response.ok) {
@@ -417,7 +461,7 @@ const createHttpBoardContext = () => {
     },
     postCommand: async (command) => {
       if (!baseUrl) {
-        return { accepted: false, reason: 'the board bridge URL is not configured' }
+        return { accepted: false, reason: 'the workspace admin bridge URL is not configured' }
       }
 
       try {
@@ -427,14 +471,14 @@ const createHttpBoardContext = () => {
           body: JSON.stringify(command),
         })
         if (response.status === 503) {
-          return { accepted: false, reason: 'no desktop window is available to execute board commands' }
+          return { accepted: false, reason: 'no desktop window is available to execute workspace admin commands' }
         }
         if (!response.ok) {
-          return { accepted: false, reason: `the board bridge rejected the command (HTTP ${response.status})` }
+          return { accepted: false, reason: `the workspace admin bridge rejected the command (HTTP ${response.status})` }
         }
         return { accepted: true }
       } catch (error) {
-        return { accepted: false, reason: error instanceof Error ? error.message : 'the board bridge is unreachable' }
+        return { accepted: false, reason: error instanceof Error ? error.message : 'the workspace admin bridge is unreachable' }
       }
     },
   }
@@ -462,7 +506,7 @@ const handleRequest = async (request, context) => {
       result: {
         protocolVersion: request?.params?.protocolVersion || protocolVersion,
         capabilities: { tools: {} },
-        serverInfo: { name: 'chill-vibe-automation-board', version: '0.1.0' },
+        serverInfo: { name: 'chill-vibe-workspace-admin', version: '0.1.0' },
       },
     })
     return
@@ -476,7 +520,7 @@ const handleRequest = async (request, context) => {
     sendMessage({
       jsonrpc: '2.0',
       id: request.id,
-      result: { tools: boardMcpToolDefinitions },
+      result: { tools: workspaceAdminMcpToolDefinitions },
     })
     return
   }
@@ -484,7 +528,7 @@ const handleRequest = async (request, context) => {
   if (request.method === 'tools/call') {
     const name = request?.params?.name
     const args = request?.params?.arguments
-    const result = await callAutomationBoardTool(name, args, context)
+    const result = await callWorkspaceAdminTool(name, args, context)
     sendMessage({
       jsonrpc: '2.0',
       id: request.id,
@@ -499,7 +543,7 @@ const handleRequest = async (request, context) => {
 }
 
 const startStdioServer = () => {
-  const context = createHttpBoardContext()
+  const context = createHttpWorkspaceContext()
   let buffer = Buffer.alloc(0)
 
   process.stdin.on('data', (chunk) => {

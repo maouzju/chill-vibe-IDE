@@ -1,5 +1,4 @@
 import type {
-  AutomationBoardAutoTrigger,
   AutomationBoardLane,
   AutomationBoardTemplate,
   ChatCard,
@@ -54,15 +53,22 @@ export type AutomationBoardActions = {
   saveTemplate: (columnId: string, boardCardId: string, cardId: string) => void
   renameTemplate: (workspacePath: string, templateId: string, name: string) => void
   deleteTemplate: (workspacePath: string, templateId: string) => void
+  /**
+   * 改模板的任意字段（含 `trigger` 的子字段，由调用方给一个完整的 trigger 对象）。
+   * 触发器不再是工作区的全局配置，所以没有单独的 updateAutoTrigger 出口。
+   */
+  updateTemplate: (
+    workspacePath: string,
+    templateId: string,
+    patch: Partial<AutomationBoardTemplate>,
+  ) => void
+  /** 手动触发一次模板 —— 与触发器到点时走的是同一条路径。 */
+  runTemplateNow: (columnId: string, boardCardId: string, templateId: string) => void
   stopItem: (cardId: string) => void
   sendToItem: (columnId: string, cardId: string, message: string) => void
   patchItemCard: (columnId: string, cardId: string, patch: Partial<ChatCard>) => void
-  updateAutoTrigger: (workspacePath: string, patch: Partial<AutomationBoardAutoTrigger>) => void
-  runSupervisorNow: (columnId: string, boardCardId: string) => void
-  setSupervisorExpanded: (columnId: string, boardCardId: string, expanded: boolean) => void
 }
 
 export type AutomationBoardWorkspaceView = {
   templates: AutomationBoardTemplate[]
-  autoTrigger: AutomationBoardAutoTrigger
 }

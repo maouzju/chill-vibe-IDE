@@ -1579,6 +1579,19 @@ const captureProviderActivities = async (request: ChatRequest) =>
   })
 
 
+/**
+ * 这些 Windows 下限只是"别把测试挂死"的护栏，不是被断言的时限。
+ *
+ * 症状（要防的）：只在 `pnpm test` 全量里红、单跑必绿，且失败是 `kind: 'timeout'`
+ *   而不是断言到错误的值 —— 很容易被读成"原生完成判定回归"，把人引去查完全
+ *   无辜的模块（AGENTS.md pitfall 249/255 各栽过一次）。
+ * 根因：原来的 10s 下限贴着空载耗时（2026-08-11 实测本机单跑 4.4s / 8.1s），
+ *   全量并发下磁盘和 CPU 被其它用例占着就窜过去了（同一批实测 18.4s / 33s）。
+ * 被否决：把断言改成容忍 timeout —— 那等于把护栏变成"永远绿"，真挂死也发现不了。
+ *   按 pitfall 255 给 5 倍余量，真正的挂死仍会在 45s 被兜住。
+ */
+const providerCaptureWindowsFloorMs = 45_000
+
 const captureProviderStatsWithin = async (request: ChatRequest, timeoutMs = 500) =>
   new Promise<
     | { kind: 'stats'; event: string; endpoint?: string; errorType?: string; alreadyRecorded?: boolean }
@@ -1586,7 +1599,8 @@ const captureProviderStatsWithin = async (request: ChatRequest, timeoutMs = 500)
   >((resolve, reject) => {
     let settled = false
     let child: Awaited<ReturnType<typeof launchProviderRun>> | null = null
-    const effectiveTimeoutMs = process.platform === 'win32' ? Math.max(timeoutMs, 10_000) : timeoutMs
+    const effectiveTimeoutMs =
+      process.platform === 'win32' ? Math.max(timeoutMs, providerCaptureWindowsFloorMs) : timeoutMs
     let timer: ReturnType<typeof setTimeout> | undefined
     const armTimer = () => {
       timer = setTimeout(() => {
@@ -1653,7 +1667,8 @@ const captureProviderRecoveryFailureWithin = async (request: ChatRequest, timeou
   >((resolve, reject) => {
     let settled = false
     let child: Awaited<ReturnType<typeof launchProviderRun>> | null = null
-    const effectiveTimeoutMs = process.platform === 'win32' ? Math.max(timeoutMs, 10_000) : timeoutMs
+    const effectiveTimeoutMs =
+      process.platform === 'win32' ? Math.max(timeoutMs, providerCaptureWindowsFloorMs) : timeoutMs
     let timer: ReturnType<typeof setTimeout> | undefined
     const armTimer = () => {
       timer = setTimeout(() => {

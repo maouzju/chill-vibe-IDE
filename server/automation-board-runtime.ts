@@ -2,16 +2,20 @@ import { fileURLToPath } from 'node:url'
 
 import type { AppLanguage } from '../shared/schema.js'
 
-export const automationBoardMcpServerName = 'chill_vibe_board'
-export const automationBoardMcpUrlEnvKey = 'CHILL_VIBE_BOARD_MCP_URL'
-export const automationBoardMcpTokenEnvKey = 'CHILL_VIBE_BOARD_MCP_TOKEN'
-export const automationBoardMcpBoardIdEnvKey = 'CHILL_VIBE_BOARD_MCP_BOARD_ID'
+export const workspaceAdminMcpServerName = 'chill_vibe_workspace'
+export const workspaceAdminMcpUrlEnvKey = 'CHILL_VIBE_ADMIN_MCP_URL'
+export const workspaceAdminMcpTokenEnvKey = 'CHILL_VIBE_ADMIN_MCP_TOKEN'
+export const workspaceAdminMcpColumnIdEnvKey = 'CHILL_VIBE_ADMIN_MCP_COLUMN_ID'
+export const workspaceAdminMcpSelfCardIdEnvKey = 'CHILL_VIBE_ADMIN_MCP_SELF_CARD_ID'
 
-export type AutomationBoardMcpLaunchInput = {
+export type WorkspaceAdminMcpLaunchInput = {
   /** Loopback bridge base URL, e.g. http://127.0.0.1:54321 */
   url: string
   token: string
-  boardCardId: string
+  /** The workspace column this session is allowed to operate on. */
+  columnId: string
+  /** The requesting card itself, filtered out of the session listing. */
+  selfCardId: string
   /** Absolute path to automation-board-mcp.js. */
   scriptPath: string
   /** Node/Electron executable that will run the script. */
@@ -28,19 +32,24 @@ const formatTomlString = (value: string) => `"${value.replace(/\\/g, '\\\\').rep
 const formatTomlStringArray = (values: string[]) =>
   `[${values.map((value) => formatTomlString(value)).join(', ')}]`
 
-export const getAutomationBoardMcpScriptPath = () =>
+export const getWorkspaceAdminMcpScriptPath = () =>
   fileURLToPath(new URL('./automation-board-mcp.js', import.meta.url))
 
-const buildAutomationBoardMcpEnv = ({
+const buildWorkspaceAdminMcpEnv = ({
   url,
   token,
-  boardCardId,
+  columnId,
+  selfCardId,
   isElectron,
-}: Pick<AutomationBoardMcpLaunchInput, 'url' | 'token' | 'boardCardId' | 'isElectron'>) => {
+}: Pick<
+  WorkspaceAdminMcpLaunchInput,
+  'url' | 'token' | 'columnId' | 'selfCardId' | 'isElectron'
+>) => {
   const envEntries: Record<string, string> = {
-    [automationBoardMcpUrlEnvKey]: url,
-    [automationBoardMcpTokenEnvKey]: token,
-    [automationBoardMcpBoardIdEnvKey]: boardCardId,
+    [workspaceAdminMcpUrlEnvKey]: url,
+    [workspaceAdminMcpTokenEnvKey]: token,
+    [workspaceAdminMcpColumnIdEnvKey]: columnId,
+    [workspaceAdminMcpSelfCardIdEnvKey]: selfCardId,
   }
 
   if (isElectron) {
@@ -50,86 +59,81 @@ const buildAutomationBoardMcpEnv = ({
   return envEntries
 }
 
-export const buildAutomationBoardCodexRuntimeArgs = ({
+export const buildWorkspaceAdminCodexRuntimeArgs = ({
   url,
   token,
-  boardCardId,
+  columnId,
+  selfCardId,
   scriptPath,
   execPath,
   isElectron,
-}: AutomationBoardMcpLaunchInput): string[] => {
+}: WorkspaceAdminMcpLaunchInput): string[] => {
   const runtimeArgs = [
     '-c',
-    `mcp_servers.${automationBoardMcpServerName}.command=${formatTomlString(execPath)}`,
+    `mcp_servers.${workspaceAdminMcpServerName}.command=${formatTomlString(execPath)}`,
     '-c',
-    `mcp_servers.${automationBoardMcpServerName}.args=${formatTomlStringArray([scriptPath])}`,
+    `mcp_servers.${workspaceAdminMcpServerName}.args=${formatTomlStringArray([scriptPath])}`,
   ]
 
-  const envEntries = buildAutomationBoardMcpEnv({ url, token, boardCardId, isElectron })
+  const envEntries = buildWorkspaceAdminMcpEnv({ url, token, columnId, selfCardId, isElectron })
   for (const [key, value] of Object.entries(envEntries)) {
     runtimeArgs.push(
       '-c',
-      `mcp_servers.${automationBoardMcpServerName}.env.${key}=${formatTomlString(value)}`,
+      `mcp_servers.${workspaceAdminMcpServerName}.env.${key}=${formatTomlString(value)}`,
     )
   }
 
   return runtimeArgs
 }
 
-export type AutomationBoardClaudeMcpConfig = {
+export type WorkspaceAdminClaudeMcpConfig = {
   mcpServers: Record<string, { command: string; args: string[]; env: Record<string, string> }>
 }
 
-export const buildAutomationBoardClaudeMcpConfig = ({
+export const buildWorkspaceAdminClaudeMcpConfig = ({
   url,
   token,
-  boardCardId,
+  columnId,
+  selfCardId,
   scriptPath,
   execPath,
   isElectron,
-}: AutomationBoardMcpLaunchInput): AutomationBoardClaudeMcpConfig => ({
+}: WorkspaceAdminMcpLaunchInput): WorkspaceAdminClaudeMcpConfig => ({
   mcpServers: {
-    [automationBoardMcpServerName]: {
+    [workspaceAdminMcpServerName]: {
       command: execPath,
       args: [scriptPath],
-      env: buildAutomationBoardMcpEnv({ url, token, boardCardId, isElectron }),
+      env: buildWorkspaceAdminMcpEnv({ url, token, columnId, selfCardId, isElectron }),
     },
   },
 })
 
-const supervisorInstructionZh =
-  '你是这个工作区自动化看板的监工。看板有三条泳道：standby（待办）、running（正在执行）、done（已完成），'
-  + '每一项都是一个独立的需求，由它自己的 agent 在自己的会话里执行。'
-  + `你有 5 个 ${automationBoardMcpServerName} MCP 工具：`
-  + 'list_board_items 列出全部需求（含原始需求原文、所在泳道、运行状态、已静默多少分钟）；'
-  + 'read_board_item 读某一项最近的转录，用来判断它到底交付了没有；'
-  + 'move_board_item 把某项换道（移到 running 会开始执行，移到 standby/done 会中断执行）；'
-  + 'send_board_item_message 把一句话发进那个需求自己的聊天里 —— 这就是"鞭策"，'
-  + '消息会像用户亲自输入一样出现在那张卡的对话里；'
-  + 'set_board_item_wake_timer 给某项挂计划唤醒（mode=duration 就是"过 N 分钟再回来看"）。'
-  + '工作方式：先 list_board_items 看全局，需要细看再 read_board_item。'
-  + '如果一个 agent 正在等子任务或等别人先完成，优先用 set_board_item_wake_timer 过一会儿再看，不要现在就催；'
-  + '只有确实长时间没下文（例如超过半小时）才用 send_board_item_message 鞭策它继续做。'
-  + '确认某个需求真的交付完了，就用 move_board_item 把它移到 done。'
-  + '写工具返回的只是"命令已投递"，不代表已生效 —— 要确认结果就再调一次 list_board_items。'
-  + '不要替这些 agent 自己动手改代码，你的职责是检查、鞭策和调度。'
+// 这段只讲"你有什么权限、5 个工具各是什么、写工具的语义边界"。
+// **刻意不讲"该怎么当监工"** —— 那属于模板的需求文本（见 v2 设计的"系统提示"
+// 一节）：开这个开关的可能是任何会话，不一定是监工。
+const workspaceAdminInstructionZh =
+  '你被授予了这个工作区的超管权限：可以查看并操作同一个工作区列里的其它会话（既包括自动化看板上的项，也包括普通 tab 里的会话）。'
+  + `你有 5 个 ${workspaceAdminMcpServerName} MCP 工具：`
+  + 'list_sessions 列出本工作区全部会话（cardId、标题、provider/模型、运行状态、是否在某张看板的哪条泳道、原始需求、已静默多少分钟、最后一条消息预览）；'
+  + 'read_session 读某个会话最近的转录，用来判断它到底交付了没有；'
+  + 'send_session_message 把一句话发进那个会话自己的聊天里 —— 这就是"鞭策"，消息会像用户亲自输入一样出现在那张卡的对话里；'
+  + 'move_session_to_lane 把某个会话移进看板的某条泳道（standby 待办 / running 正在执行 / done 已完成；移到 running 会开始执行，移到 standby/done 会中断执行）；'
+  + 'set_session_wake_timer 给某个会话挂计划唤醒（mode=duration 就是"过 N 分钟再回来看"）。'
+  + '你自己不在 list_sessions 的结果里，不用找自己。'
+  + '写工具（send_session_message / move_session_to_lane / set_session_wake_timer）返回的只是"命令已投递"，不代表已生效 —— 要确认结果就再调一次 list_sessions。'
+  + '不要替这些 agent 自己动手改代码：你操作的是会话，不是它们的仓库。'
 
-const supervisorInstructionEn =
-  'You are the supervisor of this workspace\'s automation board. The board has three lanes: standby, running, and done. '
-  + 'Each board item is a separate requirement executed by its own agent in its own chat session. '
-  + `You have 5 ${automationBoardMcpServerName} MCP tools: `
-  + 'list_board_items lists every requirement (original requirement text, lane, run status, how many minutes it has been silent); '
-  + 'read_board_item reads one item\'s recent transcript so you can judge whether it actually delivered; '
-  + 'move_board_item changes an item\'s lane (moving to running starts execution, moving to standby/done interrupts it); '
-  + 'send_board_item_message posts a message into that requirement\'s own chat — this is what "鞭策" (nudging) means here, '
-  + 'and the message appears in that card\'s conversation exactly as if the user had typed it; '
-  + 'set_board_item_wake_timer arms a wake timer on an item (mode=duration means "check back after N minutes"). '
-  + 'How to work: start with list_board_items, then read_board_item when you need detail. '
-  + 'If an agent is legitimately waiting on sub-tasks or on another agent, prefer set_board_item_wake_timer to check back later instead of nagging it now; '
-  + 'only use send_board_item_message when an item has genuinely gone quiet for a long time (for example more than half an hour). '
-  + 'When a requirement has genuinely been delivered, move it to done with move_board_item. '
-  + 'Write tools only report that the command was delivered, not that it took effect — call list_board_items again to confirm. '
-  + 'Do not do these agents\' coding work yourself; your job is to inspect, nudge, and schedule.'
+const workspaceAdminInstructionEn =
+  'You have been granted admin access to this workspace: you can inspect and operate the other sessions in the same workspace column (both automation-board items and ordinary tab sessions). '
+  + `You have 5 ${workspaceAdminMcpServerName} MCP tools: `
+  + 'list_sessions lists every session in this workspace (cardId, title, provider/model, run status, which board lane it sits in if any, its original requirement, how many minutes it has been silent, and a preview of its last message); '
+  + 'read_session reads one session\'s recent transcript so you can judge whether it actually delivered; '
+  + 'send_session_message posts a message into that session\'s own chat — this is what "鞭策" (nudging) means here, and the message appears in that card\'s conversation exactly as if the user had typed it; '
+  + 'move_session_to_lane moves a session into a board lane (standby / running / done; moving to running starts execution, moving to standby or done interrupts it); '
+  + 'set_session_wake_timer arms a wake timer on a session (mode=duration means "check back after N minutes"). '
+  + 'You are not included in the list_sessions output, so do not look for yourself. '
+  + 'The write tools (send_session_message / move_session_to_lane / set_session_wake_timer) only report that the command was delivered, not that it took effect — call list_sessions again to confirm. '
+  + 'Do not do these agents\' coding work yourself: what you operate on is sessions, not their repositories.'
 
-export const getAutomationBoardSupervisorInstruction = (language: AppLanguage) =>
-  language === 'en' ? supervisorInstructionEn : supervisorInstructionZh
+export const getWorkspaceAdminInstruction = (language: AppLanguage) =>
+  language === 'en' ? workspaceAdminInstructionEn : workspaceAdminInstructionZh

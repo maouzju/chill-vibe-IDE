@@ -40,6 +40,8 @@ type WorkspaceColumnMemoProps = {
   sessionHistory: SessionHistoryEntry[]
   cardRecoveryStatuses?: ReadonlyMap<string, CardRecoveryStatus>
   queuedSendSummaries?: ReadonlyMap<string, QueuedSendSummary>
+  automationBoardWorkspace?: unknown
+  automationBoardActions?: unknown
 }
 
 type PaneViewMemoProps = {
@@ -136,6 +138,15 @@ export const areWorkspaceColumnPropsEqual = (
   previous.recentWorkspaces === next.recentWorkspaces &&
   previous.cardRecoveryStatuses === next.cardRecoveryStatuses &&
   previous.queuedSendSummaries === next.queuedSendSummaries &&
+  // 症状（要防的）：模板配置面板里改需求、勾触发器、勾超管权限**全部无效** ——
+  //   输入框的值当场被还原，看起来像受控组件写错了（2026-08-11 真实 Electron 实测）。
+  // 根因：模板与触发器住在 `state.automationBoards[workspacePath]`，改它**不动**
+  //   `column`；这里每一项都相等，于是整棵列子树被挡住，`arePaneViewPropsEqual`
+  //   里那条同名比较根本没机会跑 —— 下游测得再对也白搭。
+  // 被否决：只在 PaneView 那层比较。链路上任何一层 memo 漏掉这个 prop，下游的
+  //   比较就是死代码；凡是"不住在 column 里但要渲染进列"的状态，每一层都得比。
+  previous.automationBoardWorkspace === next.automationBoardWorkspace &&
+  previous.automationBoardActions === next.automationBoardActions &&
   haveSameSessionHistoryEntries(previous.sessionHistory, next.sessionHistory)
 
 export const cardKeepsPaneRuntimeWhenInactive = (card: Pick<ChatCard, 'model'>) =>
@@ -159,7 +170,7 @@ const haveSameInactivePaneTabChrome = (previous: ChatCard | undefined, next: Cha
 
 /**
  * 症状：看板项在流式输出时看板界面纹丝不动，不活跃的看板 tab 也不变橙。
- * 根因：项卡片与监工卡刻意"存在于 column.cards 但不在任何 pane.tabs 里"
+ * 根因：项卡片刻意"存在于 column.cards 但不在任何 pane.tabs 里"
  *   （见 docs/specs/automation-board/design.md），而 pane 的记忆化只比较
  *   tabs 里的卡片引用加 column.id —— 项卡片的变化对它完全不可见。
  * 被否决：退化成整列比较（previous.column === next.column）。同列里任何一张
@@ -184,10 +195,6 @@ const haveSameAutomationBoardCardRefs = (
 
     for (const item of board.items) {
       owned.add(item.cardId)
-    }
-
-    if (board.supervisorCardId) {
-      owned.add(board.supervisorCardId)
     }
   }
 

@@ -47,10 +47,10 @@ import {
   fileSearchResponseSchema,
   imageAttachmentSchema,
   onboardingStatusSchema,
-  automationBoardCommandSchema,
+  workspaceAdminCommandSchema,
   remoteMonitorCommandSchema,
-  type AutomationBoardCommand,
-  type AutomationBoardMirror,
+  type WorkspaceAdminCommand,
+  type WorkspaceSessionMirror,
   type RemoteMonitorCommand,
   providerStatusSchema,
   recentCrashRecoverySchema,
@@ -769,33 +769,33 @@ export const subscribeRemoteCommands = (handler: (command: RemoteMonitorCommand)
   }
 }
 
-// 看板监工 MCP 的写命令：主进程广播 → preload CustomEvent → 这里 schema
+// 超管权限 MCP 的写命令：主进程广播 → preload CustomEvent → 这里 schema
 // 校验后交给 App 的执行器（复用电脑端 handler，与手机监工同一条规矩）。
-export const subscribeAutomationBoardCommands = (
-  handler: (command: AutomationBoardCommand) => void,
+export const subscribeWorkspaceAdminCommands = (
+  handler: (command: WorkspaceAdminCommand) => void,
 ) => {
   const listener = (event: Event) => {
-    const parsed = automationBoardCommandSchema.safeParse((event as CustomEvent<unknown>).detail)
+    const parsed = workspaceAdminCommandSchema.safeParse((event as CustomEvent<unknown>).detail)
     if (parsed.success) {
       handler(parsed.data)
     }
   }
 
-  window.addEventListener('chill-vibe:automation-board-command', listener)
+  window.addEventListener('chill-vibe:workspace-admin-command', listener)
 
   return () => {
-    window.removeEventListener('chill-vibe:automation-board-command', listener)
+    window.removeEventListener('chill-vibe:workspace-admin-command', listener)
   }
 }
 
 /**
- * 把实时看板镜像推给主进程，供看板 MCP 读取。
+ * 把整个工作区列的实时会话镜像推给主进程，供工作区 MCP 读取。
  *
  * Web 端没有桥（也没有 MCP 子进程），静默 no-op 即可 —— 这条路径绝不能因为
  * 缺少 desktop bridge 就抛错，否则一次推送失败会打断渲染。
  */
-export const publishAutomationBoardMirror = (mirror: AutomationBoardMirror) => {
-  const publish = getDesktopApi()?.publishAutomationBoardMirror
+export const publishWorkspaceSessionMirror = (mirror: WorkspaceSessionMirror) => {
+  const publish = getDesktopApi()?.publishWorkspaceSessionMirror
   if (typeof publish !== 'function') {
     return
   }
@@ -803,13 +803,13 @@ export const publishAutomationBoardMirror = (mirror: AutomationBoardMirror) => {
   void publish(mirror).catch(() => undefined)
 }
 
-export const forgetAutomationBoardMirror = (boardCardId: string) => {
-  const forget = getDesktopApi()?.forgetAutomationBoardMirror
+export const forgetWorkspaceSessionMirror = (columnId: string) => {
+  const forget = getDesktopApi()?.forgetWorkspaceSessionMirror
   if (typeof forget !== 'function') {
     return
   }
 
-  void forget(boardCardId).catch(() => undefined)
+  void forget(columnId).catch(() => undefined)
 }
 
 export const uploadImageAttachment = async (

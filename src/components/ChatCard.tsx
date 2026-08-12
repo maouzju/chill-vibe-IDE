@@ -1170,24 +1170,29 @@ const ChatTranscript = memo(
     }, [handleScroll])
 
     const scrollDriftWatcherRef = useRef<ScrollDriftWatcher | null>(null)
-    if (scrollDriftWatcherRef.current === null) {
-      scrollDriftWatcherRef.current = createScrollDriftWatcher({
-        readScrollTop: () => messageListRef.current?.scrollTop ?? null,
-        onDrift: () => {
-          handleScrollRef.current()
-        },
-        requestFrame: (callback) => window.requestAnimationFrame(callback),
-        cancelFrame: (handle) => {
-          window.cancelAnimationFrame(handle)
-        },
-      })
-    }
+    // 惰性创建放在这个 callback 里而不是渲染体里：直接在渲染期调
+    // createScrollDriftWatcher 会把 messageListRef 交给一个渲染期执行的函数，
+    // react-hooks/refs 会红（ref 在渲染期可能被读）。只有 effect 会调它，
+    // 而 effect 跑在提交之后，那时读 ref 是合法的。
+    const ensureScrollDriftWatcher = useCallback(() => {
+      if (scrollDriftWatcherRef.current === null) {
+        scrollDriftWatcherRef.current = createScrollDriftWatcher({
+          readScrollTop: () => messageListRef.current?.scrollTop ?? null,
+          onDrift: () => {
+            handleScrollRef.current()
+          },
+          requestFrame: (callback) => window.requestAnimationFrame(callback),
+          cancelFrame: (handle) => {
+            window.cancelAnimationFrame(handle)
+          },
+        })
+      }
+
+      return scrollDriftWatcherRef.current
+    }, [messageListRef])
 
     useLayoutEffect(() => {
-      const watcher = scrollDriftWatcherRef.current
-      if (!watcher) {
-        return
-      }
+      const watcher = ensureScrollDriftWatcher()
 
       if (!isActive || typeof window === 'undefined') {
         watcher.cancel()
@@ -1206,7 +1211,7 @@ const ChatTranscript = memo(
       return () => {
         watcher.cancel()
       }
-    }, [isActive, messageListRef])
+    }, [ensureScrollDriftWatcher, isActive, messageListRef])
 
     useLayoutEffect(() => {
       if (!isActive) {

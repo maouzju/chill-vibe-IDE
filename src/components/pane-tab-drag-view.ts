@@ -8,6 +8,8 @@ export type DragStartActiveTabRestoreInput = {
   gesture: PaneTabDragGesture | null
   currentActiveTabId: string
   paneTabIds: readonly string[]
+  /** 本 pane 里哪些 tab 是自动化看板卡（顺序同 paneTabIds）。 */
+  boardTabIds?: readonly string[]
 }
 
 /**
@@ -19,7 +21,12 @@ export type DragStartActiveTabRestoreInput = {
  * tab 的 mousedown 上 preventDefault（那会杀掉 dragstart，pitfall 176/454）。所以只能在
  * dragstart 里把「这次手势自己造成的那一次切换」撤回，别的来源的切换一律不碰。
  */
-export const decideDragStartActiveTabRestore = ({
+export const decideDragStartActiveTabRestore = (
+  input: DragStartActiveTabRestoreInput,
+): string | null =>
+  decideDragStartGestureUndo(input) ?? decideDragStartBoardReveal(input)
+
+const decideDragStartGestureUndo = ({
   draggedTabId,
   gesture,
   currentActiveTabId,
@@ -45,4 +52,33 @@ export const decideDragStartActiveTabRestore = ({
   }
 
   return previous
+}
+
+/**
+ * 症状：把看板项「拖出为独立 tab」之后再想拖回看板，全程 no-drop 光标。
+ * 根因：拖出那一刻弹出的卡就成了 pane 的活动 tab（state.ts 的
+ *   `moveAutomationBoardItemToPane` 刻意如此，用户要立刻看到它），于是看板面板
+ *   `hidden` 且组件根本不挂载 —— 泳道落点不在 DOM 里。上面那条撤回逻辑只管
+ *   「这次手势自己造成的切换」，而这里手势什么都没切，所以一次也没起作用。
+ * 为什么不能换写法：不能让看板 tab 在非活动时保持挂载（`cardKeepsPaneRuntimeWhenInactive`
+ *   只给 git 工具卡开了这个口子，看板挂着十几张项卡的转录，代价是主线程）；
+ *   也不能靠 dragover 时才切换（拖拽已经开始，Chromium 会继续把事件派发给旧的
+ *   命中目标，见 dnd.ts 里那条陈旧命中测试的注释）。所以只能在 dragstart 里
+ *   先把落点亮出来，再由 dragend 还原。
+ */
+const decideDragStartBoardReveal = ({
+  draggedTabId,
+  currentActiveTabId,
+  paneTabIds,
+  boardTabIds = [],
+}: DragStartActiveTabRestoreInput): string | null => {
+  // 只在「拖的正是 pane 当前显示的东西」时才让位：其他情况下视图里已经有别的
+  // 内容（可能就是看板本身），替用户换掉它属于越权。
+  if (currentActiveTabId !== draggedTabId) {
+    return null
+  }
+
+  return (
+    boardTabIds.find((tabId) => tabId !== draggedTabId && paneTabIds.includes(tabId)) ?? null
+  )
 }

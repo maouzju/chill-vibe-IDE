@@ -1,4 +1,4 @@
-# Capture the EXIT CODE of every Chill Vibe process the instant it dies.
+﻿# Capture the EXIT CODE of every Chill Vibe process the instant it dies.
 #
 # Why: every other forensic channel came back empty -- no minidump, no Windows
 # event, and none of the 6 shutdown log lines. The exit code is the one piece of
@@ -106,6 +106,18 @@ while ($true) {
                 '0xC000012D' { '*** COMMIT LIMIT EXCEEDED ***' }
                 '0xC0000409' { '*** STACK BUFFER OVERRUN / __fastfail ***' }
                 '0xE0000008' { '*** V8 fatal / OOM abort ***' }
+                # 症状：2026-08-12 10:40:53 主进程带着这个码消失，日志、事件、dump 三缺，
+                #       现场与被脚本 taskkill 完全一致，于是又一次被读成"外部误杀"。
+                # 根因：0xCFFFFFFF 由 **WerFault.exe** 打上 —— Windows 错误报告判定进程
+                #       hang（窗口 5 秒不取消息）后走「生成 hang 报告 → TerminateProcess」。
+                #       同日实测排除了任务管理器 EndTask 这条路径：真把窗口挂死再 EndTask，
+                #       退出码是 0（见 scripts/forensics-hang-kill-signature.ps1）。WER 常常
+                #       报告生成失败却照样终止，这正是"有退出码、没 dump、没 Event 1002"的由来。
+                #       它不是崩溃，也不是外部 kill —— 它证明窗口先卡住了。实测那天
+                #       主进程连续冻结 10~19 秒（logs/app-unresponsive.log），远超 5s 阈值。
+                # 为什么不能换写法：这个码必须留在映射表里而不是靠事后查，因为"三缺"现场
+                #       本身不带任何指向性，退出码是唯一能把闪退和卡死接上的一条线。
+                '0xCFFFFFFF' { '*** WINDOW HANG -> killed as unresponsive (NOT a crash, NOT an external kill) ***' }
                 default      { 'unmapped - look up this NTSTATUS' }
             }
             Write-Line "[EXIT] pid=$processId role=$($entry.Role) code=$code hex=$hex :: $meaning stillAlive=$survivorText"

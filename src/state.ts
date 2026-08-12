@@ -3007,12 +3007,23 @@ export const ideReducer = (state: AppState, action: IdeAction): AppState => {
         return state
       }
 
+      // 项一旦被摘掉，`templateId` 这条血缘就只剩卡片能承载了——不落一次，拖回来
+      // 的实例会变成"不属于任何模板"，防自触发随之失效（见 schema 里的注释）。
+      // 只在真有血缘时才写，否则会破坏"卡片对象身份不变"这条无缝性保证。
+      const poppedTemplateId = board.items.find((item) => item.cardId === action.cardId)?.templateId
+      const poppedCard = column.cards[action.cardId]!
+      const stampedCard =
+        poppedTemplateId && poppedCard.automationBoardTemplateId !== poppedTemplateId
+          ? { ...poppedCard, automationBoardTemplateId: poppedTemplateId }
+          : poppedCard
+
       // 刻意不归档进 sessionHistory：卡片没有被关闭，只是换了展现容器。
       return touchState(
         updateColumn(state, action.columnId, (current) => ({
           ...current,
           cards: {
             ...current.cards,
+            [action.cardId]: stampedCard,
             [action.boardCardId]: {
               ...current.cards[action.boardCardId]!,
               automationBoard: {
@@ -3079,8 +3090,10 @@ export const ideReducer = (state: AppState, action: IdeAction): AppState => {
                     cardId: action.tabId,
                     lane: action.lane,
                     requirement,
-                    // 吸收进来的会话不属于任何模板，否则触发器会把它误判成自触发。
-                    templateId: '',
+                    // 平常吸收进来的会话不属于任何模板，否则触发器会把它误判成
+                    // 自触发。但一张**曾经被拖出去的模板实例**必须认回自己的血缘，
+                    // 不然监工拖出再拖回就会开始无限自触发（见 schema 注释）。
+                    templateId: movingCard.automationBoardTemplateId ?? '',
                     createdAt: new Date().toISOString(),
                   },
                   action.index,

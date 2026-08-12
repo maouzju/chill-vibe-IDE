@@ -621,7 +621,10 @@ type BridgeHarness = {
   transcriptRequests: Array<{ cardId: string; limit: number }>
 }
 
-const createBridgeHarness = (options?: { dispatchResult?: boolean }): BridgeHarness => {
+const createBridgeHarness = (options?: {
+  dispatchResult?: boolean
+  dispatch?: (command: WorkspaceAdminCommand) => boolean | Promise<boolean>
+}): BridgeHarness => {
   const dispatched: WorkspaceAdminCommand[] = []
   const transcriptRequests: Array<{ cardId: string; limit: number }> = []
 
@@ -635,6 +638,9 @@ const createBridgeHarness = (options?: { dispatchResult?: boolean }): BridgeHarn
     },
     dispatchCommand: (command) => {
       dispatched.push(command)
+      if (options?.dispatch) {
+        return options.dispatch(command)
+      }
       return options?.dispatchResult ?? true
     },
   })
@@ -793,6 +799,81 @@ test('workspace admin bridge validates and forwards write commands', async () =>
     assert.equal(postRead.status, 405)
 
     assert.equal(harness.dispatched.length, 1, 'only the valid command may reach the renderer')
+  } finally {
+    await harness.bridge.stop()
+  }
+})
+
+// 同 remote-monitor：后端一旦搬进 utilityProcess，"哪个窗口收下了" 只有主进程
+// 知道，dispatchCommand 必然是跨进程的异步调用。202/503 语义必须原样保住，
+// 且 dispatcher 抛错时超管的 MCP 子进程要拿到明确响应而不是挂在那儿。
+test('workspace admin bridge awaits an async dispatcher before answering', async () => {
+  const harness = createBridgeHarness({
+    dispatch: async (command) => {
+      await new Promise((resolve) => setTimeout(resolve, 5))
+      return command.type !== 'admin-move-session-to-lane'
+    },
+  })
+  const info = await harness.bridge.start()
+  const headers = { Authorization: `Bearer ${info.token}`, 'Content-Type': 'application/json' }
+
+  try {
+    const delivered = await fetch(`${info.url}/command`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        type: 'admin-send-session-message',
+        columnId: 'col-1',
+        cardId: 'item-running',
+        message: '继续',
+      }),
+      signal: AbortSignal.timeout(5000),
+    })
+    assert.equal(delivered.status, 200, 'a promise that resolves true must still be accepted')
+    assert.deepEqual(await delivered.json(), { accepted: true })
+
+    const undelivered = await fetch(`${info.url}/command`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        type: 'admin-move-session-to-lane',
+        columnId: 'col-1',
+        cardId: 'item-running',
+        lane: 'done',
+      }),
+      signal: AbortSignal.timeout(5000),
+    })
+    assert.equal(undelivered.status, 503, 'a promise that resolves false must still mean 503')
+  } finally {
+    await harness.bridge.stop()
+  }
+})
+
+test('workspace admin bridge answers when the dispatcher rejects', async () => {
+  const harness = createBridgeHarness({
+    dispatch: async () => {
+      throw new Error('the desktop bridge is gone')
+    },
+  })
+  const info = await harness.bridge.start()
+
+  try {
+    const response = await fetch(`${info.url}/command`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${info.token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        type: 'admin-move-session-to-lane',
+        columnId: 'col-1',
+        cardId: 'item-running',
+        lane: 'done',
+      }),
+      signal: AbortSignal.timeout(5000),
+    })
+
+    assert.equal(response.status, 503, 'a failed dispatch is an undelivered command, not accepted')
+    const payload = (await response.json()) as { message?: string; accepted?: boolean }
+    assert.notEqual(payload.accepted, true)
+    assert.equal(typeof payload.message, 'string')
   } finally {
     await harness.bridge.stop()
   }

@@ -26,8 +26,12 @@ export type WorkspaceAdminBridgeDeps = {
     cardId: string,
     limit: number,
   ) => Promise<WorkspaceAdminTranscriptEntry[] | null>
-  /** 转发写命令给渲染进程；false = 当前没有可接收的窗口（HTTP 503）。 */
-  dispatchCommand: (command: WorkspaceAdminCommand) => boolean
+  /**
+   * 转发写命令给渲染进程；false = 当前没有可接收的窗口（HTTP 503）。
+   * 允许返回 Promise：宿主把后端搬进 utilityProcess 后，"哪个窗口收下了" 只有
+   * 主进程知道，投递结果只能异步回来（同步实现继续原样可用）。
+   */
+  dispatchCommand: (command: WorkspaceAdminCommand) => boolean | Promise<boolean>
 }
 
 export type WorkspaceAdminBridgeRuntimeInfo = {
@@ -141,35 +145,53 @@ export const createWorkspaceAdminBridge = (deps: WorkspaceAdminBridgeDeps) => {
   let server: http.Server | null = null
   let runtimeInfo: WorkspaceAdminBridgeRuntimeInfo | null = null
 
-  const handleCommand = (request: http.IncomingMessage, response: http.ServerResponse) => {
-    void readRequestBody(request)
-      .then((body) => {
-        let parsedBody: unknown
-        try {
-          parsedBody = JSON.parse(body)
-        } catch {
-          sendJson(response, 400, { message: 'Invalid JSON body.' })
-          return
-        }
+  // 症状：写命令送不到时超管的 MCP 子进程仍收到 accepted:true，它以为改动生效了。
+  // 根因：2026-08-12 —— 后端要整体搬进 utilityProcess（同一批 git 操作跑主进程时
+  //       窗口单次停摆 6827ms / 11 次超 1s / 2 次超 5s，搬进 utilityProcess 只剩 58ms），
+  //       跨进程后 dispatchCommand 只能返回 Promise，而 `!promise` 恒为 false → 恒 200。
+  // 被否决：让主进程预推"当前有没有窗口"的缓存标志、保住同步签名 —— 那是猜测不是
+  //         投递事实，窗口刚崩的一瞬会把 503 静默说成 200，正是要根除的静默错分支。
+  const handleCommand = async (request: http.IncomingMessage, response: http.ServerResponse) => {
+    let body: string
+    try {
+      body = await readRequestBody(request)
+    } catch {
+      sendJson(response, 400, { message: 'Unreadable request body.' })
+      return
+    }
 
-        const command = workspaceAdminCommandSchema.safeParse(parsedBody)
-        if (!command.success) {
-          sendJson(response, 400, { message: 'Invalid workspace admin command payload.' })
-          return
-        }
+    let parsedBody: unknown
+    try {
+      parsedBody = JSON.parse(body)
+    } catch {
+      sendJson(response, 400, { message: 'Invalid JSON body.' })
+      return
+    }
 
-        if (!deps.dispatchCommand(command.data)) {
-          sendJson(response, 503, {
-            message: 'No desktop window can execute workspace admin commands right now.',
-          })
-          return
-        }
+    const command = workspaceAdminCommandSchema.safeParse(parsedBody)
+    if (!command.success) {
+      sendJson(response, 400, { message: 'Invalid workspace admin command payload.' })
+      return
+    }
 
-        sendJson(response, 200, { accepted: true })
+    let dispatched = false
+    try {
+      dispatched = await deps.dispatchCommand(command.data)
+    } catch {
+      // 投递本身失败＝命令没送到，与"没有窗口"同一类，仍回 503；关键是必须有
+      // 响应——跨进程调用 reject 时绝不能让 MCP 子进程挂在这个请求上。
+      sendJson(response, 503, { message: 'Workspace admin command dispatch failed.' })
+      return
+    }
+
+    if (!dispatched) {
+      sendJson(response, 503, {
+        message: 'No desktop window can execute workspace admin commands right now.',
       })
-      .catch(() => {
-        sendJson(response, 400, { message: 'Unreadable request body.' })
-      })
+      return
+    }
+
+    sendJson(response, 200, { accepted: true })
   }
 
   const handleRequest = (
@@ -198,7 +220,14 @@ export const createWorkspaceAdminBridge = (deps: WorkspaceAdminBridgeDeps) => {
         return
       }
 
-      handleCommand(request, response)
+      void handleCommand(request, response).catch(() => {
+        // 最后一道兜底：无论如何都要把这个请求结掉，不留悬挂连接。
+        if (!response.headersSent) {
+          sendJson(response, 500, { message: 'Command handling failed.' })
+          return
+        }
+        response.end()
+      })
       return
     }
 

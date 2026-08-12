@@ -333,6 +333,8 @@ export const hideInternalSessionHistory = async (
 // 但这里仍对主进程回传的完整 state 跑一次 appStateSchema.parse，1.17MB 的真实档案
 // 实测约 5ms 阻塞 + 一份等量深克隆垃圾，每次保存白付一遍。
 // 不能改用瘦身快照来省：立即保存必须保全量数据，裁剪只允许发生在排队路径上。
+// 2026-08-12 补齐另一半：主进程 handler 也不再返回 state（electron/backend.ts），
+// 否则 ipcMain.handle 仍会把那 1MB 结构化克隆一路送回来，只是没人 parse 而已。
 export const saveState = async (state: AppState): Promise<void> => {
   const desktopSaveState = requireDesktopAction(getDesktopApi()?.saveState)
 

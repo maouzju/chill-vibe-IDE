@@ -85,10 +85,20 @@ async function copyRuntimeAssetsInto(rootDir, currentDir, targetRoot) {
   }
 }
 
+// 症状：`dist/electron/utility-host.js` 根本不存在，打包版启动后端进程直接失败。
+// 根因：tsc 只编译显式传入的入口 + 它们的 import 图。utility host 是被
+//   `utilityProcess.fork` 按路径加载的，main.ts 永远不会 import 它，所以不列成
+//   第二个入口就一个字节都不会产出 —— 现成反例：`server/index.ts` 至今没有产物。
+// 为什么不能靠 copyRuntimeAssets 兜底：那一步只复制 .js/.mjs/.cjs/.json，
+//   TypeScript 源文件不在其列。
 function compileElectronMain() {
   runNodeScript([
     tscCliPath,
     'electron/main.ts',
+    'electron/utility-host.ts',
+    // 主进程侧的代理。接线完成后 main.ts 会 import 它、import 图自然带出，
+    // 但显式列出来的成本是零，而漏产物的表现是"打包版后端静默不可用"。
+    'electron/backend-rpc-client.ts',
     '--outDir',
     'dist',
     '--rootDir',

@@ -19,7 +19,10 @@ const waitFor = async (predicate: () => boolean, timeoutMs = 3000) => {
 
 test('file watcher notifies subscribers when the watched file changes', async (t) => {
   const workspace = await mkdtemp(path.join(os.tmpdir(), 'chill-vibe-watch-basic-'))
-  const manager = new FileWatcherManager()
+  let notified = 0
+  const manager = new FileWatcherManager(() => {
+    notified += 1
+  })
   t.after(async () => {
     manager.dispose()
     await rm(workspace, { recursive: true, force: true })
@@ -27,11 +30,7 @@ test('file watcher notifies subscribers when the watched file changes', async (t
 
   await writeFile(path.join(workspace, 'a.txt'), 'one\n', 'utf8')
 
-  let notified = 0
-  const ok = manager.subscribe(workspace, 'a.txt', 'sub-1', () => {
-    notified += 1
-  })
-  assert.equal(ok, true)
+  assert.deepEqual(manager.subscribe(workspace, 'a.txt', 'sub-1'), { subscribed: true })
 
   // fs.watch needs a beat to arm on Windows before the first mutation.
   await new Promise((resolve) => setTimeout(resolve, 100))
@@ -42,7 +41,10 @@ test('file watcher notifies subscribers when the watched file changes', async (t
 
 test('file watcher stops notifying after unsubscribe', async (t) => {
   const workspace = await mkdtemp(path.join(os.tmpdir(), 'chill-vibe-watch-unsub-'))
-  const manager = new FileWatcherManager()
+  let notified = 0
+  const manager = new FileWatcherManager(() => {
+    notified += 1
+  })
   t.after(async () => {
     manager.dispose()
     await rm(workspace, { recursive: true, force: true })
@@ -50,10 +52,7 @@ test('file watcher stops notifying after unsubscribe', async (t) => {
 
   await writeFile(path.join(workspace, 'a.txt'), 'one\n', 'utf8')
 
-  let notified = 0
-  manager.subscribe(workspace, 'a.txt', 'sub-1', () => {
-    notified += 1
-  })
+  manager.subscribe(workspace, 'a.txt', 'sub-1')
   manager.unsubscribe('sub-1')
 
   await new Promise((resolve) => setTimeout(resolve, 100))
@@ -65,7 +64,16 @@ test('file watcher stops notifying after unsubscribe', async (t) => {
 
 test('file watcher keeps sibling-file subscriptions independent in a shared directory', async (t) => {
   const workspace = await mkdtemp(path.join(os.tmpdir(), 'chill-vibe-watch-sibling-'))
-  const manager = new FileWatcherManager()
+  let aNotified = 0
+  let bNotified = 0
+  const manager = new FileWatcherManager(({ subscriptionId }) => {
+    if (subscriptionId === 'sub-a') {
+      aNotified += 1
+    }
+    if (subscriptionId === 'sub-b') {
+      bNotified += 1
+    }
+  })
   t.after(async () => {
     manager.dispose()
     await rm(workspace, { recursive: true, force: true })
@@ -74,14 +82,8 @@ test('file watcher keeps sibling-file subscriptions independent in a shared dire
   await writeFile(path.join(workspace, 'a.txt'), 'a\n', 'utf8')
   await writeFile(path.join(workspace, 'b.txt'), 'b\n', 'utf8')
 
-  let aNotified = 0
-  let bNotified = 0
-  manager.subscribe(workspace, 'a.txt', 'sub-a', () => {
-    aNotified += 1
-  })
-  manager.subscribe(workspace, 'b.txt', 'sub-b', () => {
-    bNotified += 1
-  })
+  manager.subscribe(workspace, 'a.txt', 'sub-a')
+  manager.subscribe(workspace, 'b.txt', 'sub-b')
 
   await new Promise((resolve) => setTimeout(resolve, 100))
   await writeFile(path.join(workspace, 'b.txt'), 'b2\n', 'utf8')
@@ -100,42 +102,45 @@ test('file watcher keeps sibling-file subscriptions independent in a shared dire
 
 test('file watcher rejects paths outside the workspace', async (t) => {
   const workspace = await mkdtemp(path.join(os.tmpdir(), 'chill-vibe-watch-escape-'))
-  const manager = new FileWatcherManager()
+  const manager = new FileWatcherManager(() => {})
   t.after(async () => {
     manager.dispose()
     await rm(workspace, { recursive: true, force: true })
   })
 
-  assert.equal(manager.subscribe(workspace, '../escape.txt', 'sub-1', () => {}), false)
+  assert.deepEqual(manager.subscribe(workspace, '../escape.txt', 'sub-1'), {
+    subscribed: false,
+    reason: 'outside-workspace',
+  })
 })
 
 test('file watcher survives watching a missing directory by reporting failure', async (t) => {
   const workspace = await mkdtemp(path.join(os.tmpdir(), 'chill-vibe-watch-missing-'))
-  const manager = new FileWatcherManager()
+  const manager = new FileWatcherManager(() => {})
   t.after(async () => {
     manager.dispose()
     await rm(workspace, { recursive: true, force: true })
   })
 
-  assert.equal(
-    manager.subscribe(workspace, 'no-such-dir/never.txt', 'sub-1', () => {}),
-    false,
-  )
+  assert.deepEqual(manager.subscribe(workspace, 'no-such-dir/never.txt', 'sub-1'), {
+    subscribed: false,
+    reason: 'watch-failed',
+  })
 })
 
 test('dispose closes every watcher and clears subscriptions', async (t) => {
   const workspace = await mkdtemp(path.join(os.tmpdir(), 'chill-vibe-watch-dispose-'))
-  const manager = new FileWatcherManager()
+  let notified = 0
+  const manager = new FileWatcherManager(() => {
+    notified += 1
+  })
   t.after(async () => {
     await rm(workspace, { recursive: true, force: true })
   })
 
   await writeFile(path.join(workspace, 'a.txt'), 'a\n', 'utf8')
 
-  let notified = 0
-  manager.subscribe(workspace, 'a.txt', 'sub-1', () => {
-    notified += 1
-  })
+  manager.subscribe(workspace, 'a.txt', 'sub-1')
   manager.dispose()
 
   await new Promise((resolve) => setTimeout(resolve, 100))

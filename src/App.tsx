@@ -3554,7 +3554,21 @@ function App() {
       }
 
       if (effects.send === 'requirement') {
-        void sendMessageRef.current?.(columnId, cardId, requirement, [])
+        // 「加入待命」时粘的图片一直存在草稿附件里，这一刻才随需求发出去。
+        // 发完就清：不清的话这张卡每次被拖回待命再拖出来都会重复投递同一批图。
+        const attachments = card?.draftAttachments ?? []
+
+        if (attachments.length > 0) {
+          const clear: IdeAction = {
+            type: 'updateCard',
+            columnId,
+            cardId,
+            patch: { draftAttachments: [] },
+          }
+          persistAfterAction(clear.type, applyAction(clear))
+        }
+
+        void sendMessageRef.current?.(columnId, cardId, requirement, attachments)
       } else if (effects.send === 'continue') {
         // 空续传：语义是"接着干"，而不是把原需求再投一遍。
         void sendMessageRef.current?.(columnId, cardId, '', [])
@@ -3633,7 +3647,7 @@ function App() {
 
   const automationBoardActions = useMemo<AutomationBoardActions>(
     () => ({
-      createItem: (columnId, boardCardId, lane, requirement, index) => {
+      createItem: (columnId, boardCardId, lane, requirement, index, options) => {
         const cardId = crypto.randomUUID()
         const column = getColumn(columnId)
         const action: IdeAction = {
@@ -3644,15 +3658,30 @@ function App() {
           requirement,
           index,
           cardId,
-          provider: column?.provider,
-          model: column?.model,
+          provider: options?.provider ?? column?.provider,
+          model: options?.model ?? column?.model,
         }
         const nextState = applyAction(action)
         persistAfterAction(action.type, nextState)
 
+        const attachments = options?.attachments ?? []
+
+        // 待命项还没开跑，图片先挂在卡片的草稿附件上 —— 等它被拖进执行中道时
+        // 再跟需求一起发出去。落在执行中道的直接随首轮发送，就不必再存一份
+        // （存了不清会在下一次发送时重复投递同一张图）。
+        if (attachments.length > 0 && lane !== 'running') {
+          const patch: IdeAction = {
+            type: 'updateCard',
+            columnId,
+            cardId,
+            patch: { draftAttachments: attachments },
+          }
+          persistAfterAction(patch.type, applyAction(patch))
+        }
+
         // 新建即落在执行中道时立刻开跑；落在待命道只是排着。
         if (lane === 'running') {
-          void sendMessageRef.current?.(columnId, cardId, requirement, [])
+          void sendMessageRef.current?.(columnId, cardId, requirement, attachments)
           const stamp: IdeAction = {
             type: 'stampAutomationBoardItem',
             columnId,

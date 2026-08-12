@@ -710,6 +710,38 @@ const normalizePersistedAutomationBoard = (value: unknown): ChatCard['automation
 }
 
 /**
+ * 同 id 的模板只留一条。
+ *
+ * 上面的补种判据修好之后新存档不会再产生重复，但已经被写进磁盘的那些重复
+ * 不会自己消失 —— 而模板的每一个写操作（删除/改名/改配置）都按 id 匹配，
+ * 重复 id 意味着用户点一次删除会一次删掉两条。所以加载时就地收敛。
+ *
+ * 保留**后出现**的那条：重复只可能由"补种 unshift 到开头"造成，排在后面的
+ * 才是用户自己调过的原件；位置则保持第一次出现处，免得模板栏顺序无故跳动。
+ */
+const dedupeTemplatesById = (templates: unknown[]): unknown[] => {
+  const slotById = new Map<string, number>()
+  const result: unknown[] = []
+
+  for (const template of templates) {
+    const id = isRecord(template) && typeof template.id === 'string' ? template.id : ''
+    const slot = id ? slotById.get(id) : undefined
+
+    if (slot === undefined) {
+      if (id) {
+        slotById.set(id, result.length)
+      }
+      result.push(template)
+      continue
+    }
+
+    result[slot] = template
+  }
+
+  return result
+}
+
+/**
  * v1 的工作区级 `autoTrigger` 一次性折进内置监工模板。
  *
  * 症状：v1 存档里"自动触发监工"的配置挂在工作区上，v2 读不到就等于用户悄悄
@@ -741,7 +773,19 @@ const migratePersistedAutomationBoardWorkspace = (
   const hasTemplatesField = Array.isArray(record.templates)
   const templates = hasTemplatesField ? [...(record.templates as unknown[])] : []
 
-  const hasBuiltIn = templates.some((template) => isRecord(template) && template.builtIn === true)
+  // 症状：模板栏里出现两条同名「看板监工」，删掉一条另一条也跟着消失（08-12）。
+  // 根因：判据只认 `builtIn === true`，而旧存档写下的那条监工**没有** builtIn
+  // 字段（schema 的 `.default(false)` 在 parse 时才补，这次迁移跑在 parse
+  // **之前**），于是又 unshift 了一条 **id 完全相同**的默认监工；删除按 id
+  // filter，一次自然删两条。
+  // 为什么不能换写法：内置监工的身份是那个硬编码 id，不是 `builtIn` 标志位 ——
+  // 只要 id 已经在，就绝不能再种一条。builtIn 仍参与判断，是为了兜住"用户把
+  // 内置模板改名换 id"这种理论上的旧数据。
+  const hasBuiltIn = templates.some(
+    (template) =>
+      isRecord(template) &&
+      (template.builtIn === true || template.id === automationBoardSupervisorTemplateId),
+  )
   const shouldSeed = !hasBuiltIn && (!hasTemplatesField || hasLegacyAutoTrigger)
 
   if (shouldSeed) {
@@ -776,7 +820,7 @@ const migratePersistedAutomationBoardWorkspace = (
     }
   }
 
-  return { ...rest, templates }
+  return { ...rest, templates: dedupeTemplatesById(templates) }
 }
 
 const normalizePersistedAutomationBoardWorkspaces = (

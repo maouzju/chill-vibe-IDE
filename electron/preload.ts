@@ -237,7 +237,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
   readGitFileLineDiff: (request: unknown) =>
     ipcRenderer.invoke('desktop:read-git-file-line-diff', request),
   watchFile: (request: unknown) =>
-    ipcRenderer.invoke('desktop:watch-file', request) as Promise<boolean>,
+    ipcRenderer.invoke('desktop:watch-file', request) as Promise<{
+      subscribed: boolean
+      reason?: string
+    }>,
   unwatchFile: (subscriptionId: string) =>
     ipcRenderer.invoke('desktop:unwatch-file', subscriptionId) as Promise<void>,
 

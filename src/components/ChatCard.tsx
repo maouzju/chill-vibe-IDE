@@ -112,6 +112,10 @@ import {
   type PendingComposerAttachment,
 } from './composer-draft-attachments'
 import {
+  supportedImageMimeTypes,
+  uploadPendingImage,
+} from './composer-image-paste'
+import {
   composerBlurOutsidePressWindowMs,
   composerBlurFollowUpDelayMs,
   composerFocusGuardDelaysMs,
@@ -138,7 +142,6 @@ import {
   fetchSlashCommands,
   judgeUrgeWithOllama,
   loadCompactedCardHistory,
-  uploadImageAttachment,
 } from '../api'
 import { canSendEmptyContinuation } from '../app-helpers'
 import { GitToolCard, type GitInfoSummary } from './GitToolCard'
@@ -208,7 +211,6 @@ import {
 // 名单只在 shared/models.ts 维护一份。
 const urgeExcludedToolModels = TOOL_CARD_MODELS
 
-const supportedImageMimeTypes = new Set(['image/png', 'image/jpeg', 'image/webp', 'image/gif'])
 const emptyCompactMessageWindow: CompactMessageWindow = {
   hiddenMessageCount: 0,
   compactMessageId: null,
@@ -602,40 +604,6 @@ const getEmptyStateToolEntry = (
   }
 
   return null
-}
-
-const readFileAsDataUrl = (file: File) =>
-  new Promise<string>((resolve, reject) => {
-    const reader = new FileReader()
-    reader.onload = () => {
-      if (typeof reader.result === 'string') {
-        resolve(reader.result)
-        return
-      }
-
-      reject(new Error('Unable to read the pasted image.'))
-    }
-    reader.onerror = () => reject(reader.error ?? new Error('Unable to read the pasted image.'))
-    reader.readAsDataURL(file)
-  })
-
-const uploadPendingImage = async (attachment: PendingAttachment): Promise<ImageAttachment> => {
-  if (attachment.kind === 'uploaded') {
-    return attachment.attachment
-  }
-
-  const dataUrl = await readFileAsDataUrl(attachment.file)
-  const base64Index = dataUrl.indexOf(',')
-
-  if (base64Index < 0) {
-    throw new Error('Unable to read the pasted image.')
-  }
-
-  return uploadImageAttachment({
-    fileName: attachment.file.name,
-    mimeType: attachment.file.type as ImageAttachment['mimeType'],
-    dataBase64: dataUrl.slice(base64Index + 1),
-  })
 }
 
 

@@ -21,7 +21,11 @@ import {
   type ActiveStreamView,
   type ChatStreamTapEvent,
 } from './chat-stream-tap.js'
-import { captureWorkspaceSnapshot, diffWorkspaceSnapshot } from './git-workspace.js'
+import {
+  captureWorkspaceSnapshot,
+  captureWorkspaceSnapshotTimeoutMs,
+  diffWorkspaceSnapshot,
+} from './git-workspace.js'
 import {
   createClaudeUnsolicitedTurnAttachment,
   isClaudeSidechainLine,
@@ -92,20 +96,39 @@ const cleanupDelayMs = 5 * 60 * 1000
 //   硬超时后，"拿到结果"与"放弃"成为**同一个决策点**：要么 edits 在 done 之前发出，
 //   要么根本没产生过 edits，不存在"完成了却被丢弃"的中间态。
 const workspaceDiffHardTimeoutMs = 12_000
+// 发消息前的工作区基线也必须有上界：它跑在主进程主线程上，2026-08-12 实测这台机器
+// 单次 git spawn 最坏 6910ms，足以单独触发 Windows 的"窗口无响应"判定。取值与
+// git-workspace 的 captureWorkspaceSnapshotTimeoutMs 同源：要的是"有上界"（此前是
+// 无穷），阈值必须远离正常耗时分布，否则代价是这一轮丢掉兜底改动卡。
+const workspaceSnapshotHardTimeoutMs = captureWorkspaceSnapshotTimeoutMs
 
+// 症状 — 上一轮的收尾 diff 超时后，那一串 git 仍在跑，和下一轮的 diff 叠加成 spawn 风暴。
+// 根因 — 2026-08-12：旧写法只是 Promise.race，超时只是**放弃等待**，既不 abort 也不 kill；
+//   一次 workspace diff 最多派生 3×256 个 git 子进程，而在这台机器上 spawn() 本身就是
+//   主线程同步阻塞（p90=1831ms、最坏单次 6910ms）。
+// 为什么不能只把 12s 调小 — 那只改变放弃的时刻，不改变"放弃之后还在跑"这个结构。改成
+//   传 AbortSignal 给 work 之后，超时既停止等待也真正取消底层工作（runGit 到点 kill 子
+//   进程、取消后不再派生新的），这是同一个决策点。
 // Promise.race 的 loser 超时后就没人再 await 了，它若之后 reject 就是一条
 // unhandled rejection（在 Electron 主进程里会被当成崩溃级日志）。先用 catch 把
 // rejection 中和成 null，race 才干净地只剩"拿到结果 / 超时放弃"两个出口——
 // 这也正好保留了原来"diff 出错时照常收尾"的语义。
-const withHardTimeout = async <T>(work: Promise<T>, timeoutMs: number): Promise<T | null> => {
-  const guarded = work.catch(() => null)
+const withHardTimeout = async <T>(
+  start: (signal: AbortSignal) => Promise<T>,
+  timeoutMs: number,
+): Promise<T | null> => {
+  const controller = new AbortController()
+  const guarded = start(controller.signal).catch(() => null)
   let timer: ReturnType<typeof setTimeout> | undefined
 
   try {
     return await Promise.race([
       guarded,
       new Promise<null>((resolve) => {
-        timer = setTimeout(() => resolve(null), timeoutMs)
+        timer = setTimeout(() => {
+          controller.abort()
+          resolve(null)
+        }, timeoutMs)
       }),
     ])
   } finally {
@@ -274,6 +297,7 @@ export class ChatManager {
   private readonly workspaceSnapshotter: typeof captureWorkspaceSnapshot
   private readonly workspaceDiffer: typeof diffWorkspaceSnapshot
   private readonly workspaceDiffTimeoutMs: number
+  private readonly workspaceSnapshotTimeoutMs: number
   private closed = false
 
   constructor(options?: {
@@ -288,12 +312,15 @@ export class ChatManager {
     // Injectable so a test can prove the give-up path without waiting out the
     // real bound.
     workspaceDiffTimeoutMs?: number
+    workspaceSnapshotTimeoutMs?: number
   }) {
     this.onUnsolicitedStream = options?.onUnsolicitedStream
     this.providerLauncher = options?.providerLauncher ?? launchProviderRun
     this.workspaceSnapshotter = options?.workspaceSnapshotter ?? captureWorkspaceSnapshot
     this.workspaceDiffer = options?.workspaceDiffer ?? diffWorkspaceSnapshot
     this.workspaceDiffTimeoutMs = options?.workspaceDiffTimeoutMs ?? workspaceDiffHardTimeoutMs
+    this.workspaceSnapshotTimeoutMs =
+      options?.workspaceSnapshotTimeoutMs ?? workspaceSnapshotHardTimeoutMs
     this.claudePool = options?.enableClaudeKeepalive
       ? new ClaudeSessionPool({
           shouldWakeOnLine: isClaudeTurnStartLine,
@@ -661,7 +688,11 @@ export class ChatManager {
     let workspaceSnapshot = null
 
     try {
-      workspaceSnapshot = await this.workspaceSnapshotter(request.workspacePath)
+      // 这条跑在**每次发消息之前**。超时必须是安静降级（没有基线 = 这轮少一张兜底
+      // 改动卡），绝不能让一个慢 git status 把发送整个卡住。
+      workspaceSnapshot = await this.workspaceSnapshotter(request.workspacePath, {
+        timeoutMs: this.workspaceSnapshotTimeoutMs,
+      })
     } catch {
       workspaceSnapshot = null
     }
@@ -795,7 +826,7 @@ export class ChatManager {
       // 前者只有一个决策点（拿到结果 / 放弃），后者会产生"diff 完成了但结果被扔掉"
       // 的中间态——那正是上一版丢 edits 改动卡的根因。
       const diff = await withHardTimeout(
-        this.workspaceDiffer(snapshot, workspacePath, touchedPaths),
+        (signal) => this.workspaceDiffer(snapshot, workspacePath, touchedPaths, { signal }),
         this.workspaceDiffTimeoutMs,
       )
 

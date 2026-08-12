@@ -14,7 +14,11 @@ import {
 } from '../src/hooks/persistence-queue'
 import type { AppState } from '../shared/schema'
 
-const STATE_PATH = 'C:/Users/yuze/AppData/Roaming/chill-vibe-ide/data/state.json'
+// 指向打包版的真实 state.json（体量才有代表性）。默认按当前用户的 APPDATA 推导，
+// 第一个命令行参数可覆盖 —— 不要写死某台机器的绝对路径，这个仓库是公开的。
+const STATE_PATH =
+  process.argv[2] ??
+  `${(process.env.APPDATA ?? '').replace(/\\/g, '/')}/chill-vibe-ide/data/state.json`
 const real = JSON.parse(readFileSync(STATE_PATH, 'utf8')) as AppState
 
 // ---- helpers -------------------------------------------------------------

@@ -902,7 +902,8 @@ for (const theme of ['dark', 'light'] as const) {
     await expect(composerModelSelect).toBeVisible()
     await expect(headerModelSelect).toHaveCount(0)
     await expect(page.locator('.app-topbar-tool-button')).toHaveCount(0)
-    await expect(emptyToolButtons).toHaveCount(6)
+    // 7 = Git / Files / Sticky Note / Automation Board / Weather / Music / White Noise
+    await expect(emptyToolButtons).toHaveCount(7)
 
     const [rowBox, selectBox, textareaBox] = await Promise.all([
       composerRow.boundingBox(),
@@ -923,6 +924,9 @@ for (const theme of ['dark', 'light'] as const) {
     await expect(dropdown).not.toContainText('Git')
     await expect(dropdown).not.toContainText('Files')
     await expect(dropdown).not.toContainText('Sticky Note')
+    // 工具卡的伪模型泄进模型列表是有前科的（看板曾把 __automationboard_tool__ 写进
+    // settings.requestModels/lastModel/column.model，之后新建的卡全是空壳且跨重启）。
+    await expect(dropdown).not.toContainText('Automation Board')
     await expect(dropdown).not.toContainText('SPEC')
     await expect(dropdown).not.toContainText('PM')
     await expect(dropdown).not.toContainText('Weather')
@@ -942,7 +946,7 @@ for (const theme of ['dark', 'light'] as const) {
     await page.goto('http://localhost:5173')
 
     const toolButtons = page.locator('.pane-view').first().locator('.chat-empty-tool-button')
-    await expect(toolButtons).toHaveCount(6)
+    await expect(toolButtons).toHaveCount(7)
 
     const [firstBox, secondBox] = await Promise.all([
       toolButtons.nth(0).boundingBox(),

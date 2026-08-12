@@ -103,10 +103,20 @@ test('the fire-and-forget state-save IPC listener cannot kill the main process',
   const main = readFileSync(path.join(process.cwd(), 'electron/main.ts'), 'utf8')
   const listener = main.slice(main.indexOf("ipcMain.on('desktop:queue-state-save'"))
   const body = listener.slice(0, listener.indexOf('\n  })') + 5)
+  // 这条守卫原本查的是一圈同步 `try/catch`。后端搬进 utilityProcess 之后
+  // `queueStateSave` 从**同步抛**变成 **rejected Promise**，那圈 try/catch 一行都
+  // 命中不到 —— 守卫会继续变绿，而 2026-07-26 的崩溃形态原样复发。所以断言必须跟着
+  // 实现走：现在唯一正确的形状是 `runBackendSideEffect`，它把同步抛和 rejected
+  // Promise 收进同一个出口（行为级覆盖在 tests/backend-call-guards.test.ts，
+  // 本条只钉"调用点确实走了那个出口"）。
   assert.match(
     body,
-    /try\s*\{/,
-    'ipcMain.on has no reply channel, so a throw here becomes an uncaughtException and terminates the app',
+    /runBackendSideEffect\(/,
+    'ipcMain.on has no reply channel, so an escaping throw OR an unhandled rejection here terminates the app',
   )
-  assert.match(body, /catch/, 'the save failure must be logged rather than propagated')
+  assert.doesNotMatch(
+    body,
+    /try\s*\{/,
+    'a bare synchronous try/catch is dead code against a cross-process rejection — it must not come back',
+  )
 })

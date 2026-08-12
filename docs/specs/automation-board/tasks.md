@@ -70,8 +70,14 @@
 
 - [x] `pnpm test`（全量，绿）
 - [x] `pnpm test:quality`（ESLint + 四个 tsconfig 全绿）
-- [ ] 真实 Electron 手动驱动走一遍 requirements 的 11 条验收
-- [ ] `pnpm electron:build`
+- [~] 真实 Electron 手动驱动走一遍 requirements 的 11 条验收 —— 自动化已覆盖大部分：
+      `tests/electron-automation-board-admin-runtime.test.ts`（真实 Electron 里的超管权限边界）、
+      `tests/automation-board-absorb-back.spec.ts` / `automation-board-compose-paste.spec.ts`
+      （拖出/拖回、组合器粘贴图片的端到端）、`tests/automation-board-mcp.test.ts`（5 个 MCP 工具）。
+      剩下**纯手动**的是"监工真的叫起一轮并被防自触发挡住第二轮"这条长时行为，只能实机观察。
+- [x] `pnpm electron:build` —— v0.19.0 前已出过打包产物并实机跑起来（asar 内
+      `dist/electron/backend-host.js` 出现在 main.log 的栈帧里，0 条 `Backend process exited.`）。
+      发版本身走服务端 `release-zip.yml` 构建，那次构建就是这条的最终证据。
 - [x] `AGENTS.md` 补 pitfall 行
 
 ## 实施记录（2026-08-11）

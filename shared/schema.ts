@@ -241,6 +241,13 @@ export const chatCardSchema = z.object({
   // 挂唤醒）。任何卡片都能开，默认关。optional 而非 default 的理由同上。
   // 关闭时 provider 启动里完全没有这组 MCP —— 这是权限边界，不只是优化。
   adminAccess: z.boolean().optional(),
+  // 症状（要防的）：监工被「拖出为独立 tab」再拖回泳道之后，每答完一轮就把自己
+  //   再叫起来一轮，无限自触发烧钱。
+  // 根因：防自触发认的是 `board.items[].templateId`，而拖出会把整条项删掉；拖回
+  //   时只能补一个空 templateId，血缘就断在中间那段"它只是一张普通 tab"里。
+  // 为什么不能换写法：血缘必须活在**卡片**上才能跨越那段没有项的时期。搬运两端
+  //   都不改卡（对象身份不变是无缝性的硬要求），所以只在拖出那一刻写一次。
+  automationBoardTemplateId: z.string().optional(),
   messages: z.array(chatMessageSchema).default([]),
   messageCount: z.number().int().nonnegative().optional(),
 })

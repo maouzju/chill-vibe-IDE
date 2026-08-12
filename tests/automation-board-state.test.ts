@@ -409,6 +409,45 @@ describe('moveAutomationBoardItemToPane — atomic pop-out', () => {
 
     assert.deepEqual(next.sessionHistory, [])
   })
+
+  // 症状（要防的）：监工被拖出成 tab 再拖回泳道之后，每答完一轮就把自己再叫
+  //   起来一轮，无限自触发烧钱。
+  // 根因：防自触发认的是**项**上的 templateId，而项在拖出时被整条删掉；拖回来
+  //   时 moveTabToAutomationBoard 只会补一个空 templateId，血缘就断了。
+  it('leaves the template lineage on the card so absorbing it back can restore it', () => {
+    const state = buildState({
+      cards: {
+        'board-1': {
+          ...boardCard([]),
+          automationBoard: {
+            items: [
+              {
+                cardId: 'item-a',
+                lane: 'running',
+                requirement: 'req item-a',
+                templateId: automationBoardSupervisorTemplateId,
+              },
+            ],
+          },
+        },
+        'item-a': itemCard('item-a'),
+      },
+      layout: pane('pane-1', ['board-1'], 'board-1'),
+    })
+
+    const next = ideReducer(state, {
+      type: 'moveAutomationBoardItemToPane',
+      columnId: 'column-1',
+      boardCardId: 'board-1',
+      cardId: 'item-a',
+      paneId: 'pane-1',
+    })
+
+    assert.equal(
+      next.columns[0]!.cards['item-a']?.automationBoardTemplateId,
+      automationBoardSupervisorTemplateId,
+    )
+  })
 })
 
 describe('moveTabToAutomationBoard — atomic absorb', () => {
@@ -431,6 +470,36 @@ describe('moveTabToAutomationBoard — atomic absorb', () => {
     assert.equal(column.cards['chat-1'], cardBefore)
     // 吸收进来的会话不属于任何模板，否则触发器会把它误判成自触发。
     assert.equal(getBoard(next).items.find((item) => item.cardId === 'chat-1')?.templateId, '')
+  })
+
+  // 见 moveAutomationBoardItemToPane 那条同名症状：拖出去再拖回来必须还是同一个
+  // 模板的实例，否则防自触发失效。
+  it('restores the template lineage a popped-out instance kept on its card', () => {
+    const state = buildState({
+      cards: {
+        'board-1': boardCard([]),
+        'item-a': itemCard('item-a', {
+          automationBoardTemplateId: automationBoardSupervisorTemplateId,
+        }),
+      },
+      layout: pane('pane-1', ['board-1', 'item-a'], 'item-a'),
+    })
+
+    const next = ideReducer(state, {
+      type: 'moveTabToAutomationBoard',
+      columnId: 'column-1',
+      paneId: 'pane-1',
+      tabId: 'item-a',
+      boardCardId: 'board-1',
+      lane: 'running',
+    })
+
+    assert.equal(
+      getBoard(next).items.find((item) => item.cardId === 'item-a')?.templateId,
+      automationBoardSupervisorTemplateId,
+    )
+    // 卡片本体不许被改动：这条搬运的无缝性靠对象身份不变来保证。
+    assert.equal(next.columns[0]!.cards['item-a'], state.columns[0]!.cards['item-a'])
   })
 
   it('captures the requirement from the draft when there is no history', () => {

@@ -10,7 +10,10 @@
 # the PID this script itself launched. The user's running app is never touched.
 
 param(
-    [string]$AppExe = 'D:\Git\chill-vibe\.claude\worktrees\stutter-fix\dist\release-20260811-221955\win-unpacked\Chill Vibe.exe',
+    # 默认留空、由下面自动挑 dist 下最新产物。原来写死的是某个 worktree 里的一次性
+    # 构建，而 `.claude/worktrees/` 在 .gitignore 里 —— 那个默认值对任何人（包括本机
+    # 以后）都必然不存在。姊妹脚本 forensics-hang-kill-signature.ps1 用的就是这个形状。
+    [string]$AppExe = '',
     [string]$DataDir = 'D:\Temp\cv-killtest',
     [ValidateSet('taskkill-tree', 'clean-quit')]
     [string]$Mode = 'taskkill-tree'
@@ -18,6 +21,16 @@ param(
 
 $ErrorActionPreference = 'Continue'
 . (Join-Path $PSScriptRoot 'lib\kill-guard.ps1')
+
+if (-not $AppExe) {
+    $candidate = Get-ChildItem -Path (Join-Path $PSScriptRoot '..\dist') -Directory -Filter 'release-*' -ErrorAction SilentlyContinue |
+                 Sort-Object Name -Descending |
+                 ForEach-Object { Join-Path $_.FullName 'win-unpacked\Chill Vibe.exe' } |
+                 Where-Object { Test-Path $_ } |
+                 Select-Object -First 1
+    if (-not $candidate) { throw 'no packaged build found under dist/release-*; pass -AppExe explicitly' }
+    $AppExe = $candidate
+}
 
 if (-not (Test-Path $AppExe)) { throw "App not found: $AppExe" }
 

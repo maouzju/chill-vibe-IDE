@@ -14,7 +14,11 @@ import {
   searchWorkspaceFiles,
   writeWorkspaceFile,
 } from '../server/file-system.ts'
-import { FileWatcherManager } from '../server/file-watcher.ts'
+import {
+  FileWatcherManager,
+  type FileWatchEvent,
+  type FileWatchSubscribeResult,
+} from '../server/file-watcher.ts'
 import { readNearestTsconfig } from '../server/tsconfig-discovery.ts'
 import { listExternalSessions, loadExternalSession } from '../server/external-history.ts'
 import { loadCompactedCardHistoryForDisplay } from '../server/compacted-card-history.ts'
@@ -52,13 +56,18 @@ import {
   setProviderRuntimeSettingsOverride,
   validateWorkspacePath,
 } from '../server/providers.ts'
+import { proxyStats } from '../server/proxy-stats-store.ts'
 import {
   buildRemoteMonitorCardHistory,
   buildRemoteMonitorSnapshot,
   createRemoteMonitorManager,
   type RemoteMonitorManager,
 } from '../server/remote-monitor.ts'
-import { setWorkspaceAdminCommandDispatcher } from '../server/automation-board-session.ts'
+import {
+  forgetWorkspaceSessionMirror as forgetWorkspaceSessionMirrorState,
+  publishWorkspaceSessionMirror as publishWorkspaceSessionMirrorState,
+  setWorkspaceAdminCommandDispatcher,
+} from '../server/automation-board-session.ts'
 import { resilientProxyPool } from '../server/resilient-proxy.ts'
 import { SetupManager } from '../server/setup-manager.ts'
 import { OllamaManager } from '../server/ollama-manager.ts'
@@ -85,6 +94,7 @@ import {
 import { fetchWeather, searchCities } from '../server/weather/weather-service.ts'
 import { generateScene } from '../server/whitenoise/whitenoise-generator.ts'
 import {
+  ensureStickyNoteWorkspaceDirectory as ensureStickyNoteWorkspaceDirectoryOnDisk,
   listStickyNotes,
   loadStickyNote,
   loadStickyNoteVersion,
@@ -127,6 +137,7 @@ import {
   stickyNoteSaveRequestSchema,
   stickyNoteSearchRequestSchema,
   stickyNoteVersionRequestSchema,
+  workspaceSessionMirrorSchema,
   fileCreateRequestSchema,
   fileDeleteRequestSchema,
   fileListRequestSchema,
@@ -161,7 +172,16 @@ import {
   type SlashCommandRequest,
 } from '../shared/schema.ts'
 
-type StreamListener = (payload: StreamEnvelope) => void
+// 聊天流的事件通道载荷：只有 subscriptionId + 事件名 + 纯数据，没有任何函数。
+// 后端搬进 utilityProcess 后，这个 sink 直接换成向主进程 postMessage，
+// subscribeChatStream 本身不再持有任何回调。
+export type ChatStreamSubscriptionEvent = StreamEnvelope & {
+  subscriptionId: string
+}
+
+export type ChatStreamSubscribeResult = {
+  subscribed: boolean
+}
 
 type ChatManagerLike = Pick<
   ChatManager,
@@ -191,10 +211,19 @@ type DesktopBackendDependencies = {
   // itself between turns (background task finished), the new stream is
   // announced here so the renderer can attach the owning card to it.
   onUnsolicitedStream?: (notification: { cardId: string; streamId: string }) => void
+  // 聊天流的唯一事件通道：所有已登记订阅的流事件都从这里出去，只带
+  // subscriptionId（纯数据）。宿主按 subscriptionId 路由到对应的 webContents。
+  onChatStreamEvent?: (event: ChatStreamSubscriptionEvent) => void
+  // 文件监听的唯一事件通道：所有已登记订阅的变化都从这里出去，只带
+  // subscriptionId（纯数据）。后端搬进 utilityProcess 后，这个 sink 直接换成
+  // 向主进程 postMessage，watchFile 本身不再持有任何回调。
+  onFileWatchEvent?: (event: FileWatchEvent) => void
   // 手机监工的写命令出口：宿主（electron/main.ts）把命令广播给渲染窗口，
   // 渲染进程复用电脑端 handler 执行。返回 false = 当前无窗口可执行。
-  dispatchRemoteCommand?: (command: RemoteMonitorCommand) => boolean
-  dispatchWorkspaceAdminCommand?: (command: WorkspaceAdminCommand) => boolean
+  // 可返回 Promise：后端搬进 utilityProcess 后只有主进程知道"哪个窗口收下了"，
+  // 投递结果必须跨进程异步回来；当前同进程的同步实现继续原样可用。
+  dispatchRemoteCommand?: (command: RemoteMonitorCommand) => boolean | Promise<boolean>
+  dispatchWorkspaceAdminCommand?: (command: WorkspaceAdminCommand) => boolean | Promise<boolean>
 }
 
 export const createDesktopBackend = (deps: DesktopBackendDependencies = {}) => {
@@ -204,6 +233,9 @@ export const createDesktopBackend = (deps: DesktopBackendDependencies = {}) => {
   let musicManager: MusicManagerLike | null = null
   let fileWatcherManager: FileWatcherManager | null = null
   let remoteMonitorManager: RemoteMonitorManager | null = null
+  // subscriptionId -> ChatManager 的退订句柄。句柄留在后端内部，绝不越过接口，
+  // 所以 backend 对象整体保持"纯可克隆"。
+  const chatStreamSubscriptions = new Map<string, () => void>()
 
   // 只是登记一个回调，没有任何 IO 或路径解析，所以在这里做是安全的
   // （pitfall 79：真正的服务必须保持懒构造）。超管桥接自身仍然是懒启动的：
@@ -214,7 +246,9 @@ export const createDesktopBackend = (deps: DesktopBackendDependencies = {}) => {
 
   const getFileWatcherManager = () => {
     if (!fileWatcherManager) {
-      fileWatcherManager = new FileWatcherManager()
+      fileWatcherManager = new FileWatcherManager((event) => {
+        deps.onFileWatchEvent?.(event)
+      })
     }
 
     return fileWatcherManager
@@ -310,8 +344,14 @@ export const createDesktopBackend = (deps: DesktopBackendDependencies = {}) => {
     async hideInternalSessionHistory(request: InternalSessionHistoryHideRequest) {
       await hideInternalSessionHistoryEntries(internalSessionHistoryHideRequestSchema.parse(request))
     },
-    async saveState(state: AppState) {
-      return saveState(appStateSchema.parse(state))
+    // 症状：发消息/切模型/关 tab/改设置都会整窗卡顿，长期使用后窗口无响应被系统杀掉。
+    // 根因：2026-08-12 实测 `saveState()` 返回完整 state，而 `ipcMain.handle` 会把 handler
+    // 的返回值结构化克隆送回渲染进程；用户机 state.json 实测 1,083,925 字节，UTF-16 下
+    // 一趟回程约 2.1MB，但 usePersistence.ts:39 只 `await` 从不取值，纯白付。
+    // 不能改在 state-store 里不返回：web 路由 server/index.ts:229 仍要用它回 HTTP 响应；
+    // 也不能只在 api.ts 丢弃返回值——克隆发生在 IPC 层，只有 handler 不返回才省得下来。
+    async saveState(state: AppState): Promise<void> {
+      await saveState(appStateSchema.parse(state))
     },
     queueStateSave(state: AppState) {
       void queueSaveState(appStateSchema.parse(state))
@@ -457,8 +497,49 @@ export const createDesktopBackend = (deps: DesktopBackendDependencies = {}) => {
       // diff, so its own no-server-ack fallback can stand down for that long.
       return getChatManager().stop(streamId)
     },
-    subscribeChatStream(streamId: string, listener: StreamListener) {
-      return getChatManager().subscribe(streamId, listener)
+    // 显式订阅协议：调用方生成 subscriptionId，这里只收纯数据、只回纯数据，
+    // 流事件走 deps.onChatStreamEvent 这条独立通道。
+    //
+    // 症状 — 旧形状是 subscribeChatStream(streamId, listener)，返回 unsubscribe
+    //   函数或 null；main.ts 用 `if (!unsubscribe)` 判"流不存在"并给渲染进程发
+    //   error，同时把函数存进 streamSubscriptions 供三处清理。
+    // 根因 — 2026-08-12：后端要搬进 utilityProcess（同一批 git 操作在主进程单次
+    //   最长停摆 6827ms / 11 次超 1s / 2 次超 5s，在 utilityProcess 只有 58ms /
+    //   0 次），而函数不可结构化克隆。跨进程后返回值会变成恒真的 Promise：
+    //   "Stream not found" 分支永久不可达，并且每次订阅都登记一条永不清理的
+    //   幽灵条目——静默走错分支，不报错。
+    // 为什么不能保留回调形状 — 那要求端口层为函数句柄做反向代理与生命周期管理，
+    //   等于自建一套分布式 GC。改成 { subscribed } 之后，同进程与跨进程形状一致。
+    subscribeChatStream(streamId: string, subscriptionId: string): ChatStreamSubscribeResult {
+      // 同一个 subscriptionId 重复订阅先退掉旧的，避免两条监听叠在一张卡上。
+      chatStreamSubscriptions.get(subscriptionId)?.()
+      chatStreamSubscriptions.delete(subscriptionId)
+
+      const unsubscribe = getChatManager().subscribe(streamId, (payload) => {
+        deps.onChatStreamEvent?.({
+          subscriptionId,
+          event: payload.event,
+          data: payload.data,
+        } as ChatStreamSubscriptionEvent)
+      })
+
+      if (!unsubscribe) {
+        return { subscribed: false }
+      }
+
+      chatStreamSubscriptions.set(subscriptionId, unsubscribe)
+      return { subscribed: true }
+    },
+    // 幂等：重复退订、退订一个从未登记过的 id 都必须安静返回。宿主侧有三条清理
+    // 路径（webContents 销毁、渲染端显式退订、will-quit），它们互相重叠。
+    unsubscribeChatStream(subscriptionId: string) {
+      const unsubscribe = chatStreamSubscriptions.get(subscriptionId)
+      if (!unsubscribe) {
+        return
+      }
+
+      chatStreamSubscriptions.delete(subscriptionId)
+      unsubscribe()
     },
     async resolveAttachmentPath(attachmentId: string) {
       return resolveImageAttachmentPath(attachmentId)
@@ -488,12 +569,42 @@ export const createDesktopBackend = (deps: DesktopBackendDependencies = {}) => {
       )
     },
 
+    // ── Workspace Admin 镜像（超管权限）──────────────────────────────────────
+    // 症状（跨进程后）：超管会话的 list_sessions / read_session 恒返回空，MCP
+    // tools/call 全无数据，但**不报任何错**。
+    // 根因：2026-08-12 核实，镜像存在 server/automation-board-session.ts:42 的
+    // 模块级 `mirrors` Map。写它的是主进程（main.ts:927-938 直接 import），读它
+    // 的是跑在 backend 那一侧的超管桥接；后端搬进 utilityProcess 后两侧各持一份
+    // 模块副本 = 两个 Map，主进程写自己那份，桥接读另一份。
+    // 为什么不能换写法：不能把 Map 提到共享层——它必须和读它的桥接在同一进程；
+    // 也不能让主进程转发裸函数（跨进程只传可结构化克隆的数据）。所以写入口必须
+    // 经 backend 对象，主进程只留 IPC 收发。
+    // 校验也一并搬进来：截断在 publish 里跑（pitfall 183/258），schema 校验紧贴
+    // 存储侧才不会被将来新增的调用方绕过。
+    publishWorkspaceSessionMirror(payload: unknown): boolean {
+      const parsed = workspaceSessionMirrorSchema.safeParse(payload)
+      if (parsed.success) {
+        publishWorkspaceSessionMirrorState(parsed.data)
+      }
+      return parsed.success
+    },
+    forgetWorkspaceSessionMirror(columnId: unknown): void {
+      if (typeof columnId === 'string' && columnId.trim()) {
+        forgetWorkspaceSessionMirrorState(columnId)
+      }
+    },
+
     async dispose() {
       await remoteMonitorManager?.stop()
+      chatStreamSubscriptions.clear()
       chatManager?.closeAll()
       setupManager?.dispose()
       ollamaManager?.dispose()
       await resilientProxyPool.dispose()
+      // Proxy stats now buffer in memory and write on a throttle, so an ordinary
+      // quit has to drain them explicitly. The process-exit hook inside the store
+      // is the backstop for paths that never reach dispose().
+      await proxyStats.flush()
     },
 
     // ── Music ────────────────────────────────────────────────────────────────
@@ -605,6 +716,18 @@ export const createDesktopBackend = (deps: DesktopBackendDependencies = {}) => {
     async restoreStickyNoteVersion(request: unknown) {
       return restoreStickyNoteVersion(stickyNoteVersionRequestSchema.parse(request))
     },
+    // 症状（跨进程后）：`desktop:reveal-sticky-note-location` 打开的目录与后端
+    // 实际写便签的目录可能不是同一次序列化下的同一份状态。
+    // 根因：2026-08-12 核实，这条 handler 原本在 main.ts 里 `await import(
+    // '../server/sticky-note-store.js')`，即在主进程里第二次加载该模块——它有
+    // 模块级 `workspaceQueues` 写序列化 Map（sticky-note-store.ts:75），而
+    // ensureStickyNoteWorkspaceDirectory 会真的 mkdir + 写 workspace.json，
+    // 那次写不经过后端那份队列。
+    // 为什么不能换写法：主进程仍需 `shell.openPath`（Electron-only），所以只能
+    // 拆两半——路径解析/落盘留后端，打开文件夹留主进程。
+    async ensureStickyNoteWorkspaceDirectory(workspacePath: string) {
+      return ensureStickyNoteWorkspaceDirectoryOnDisk(workspacePath)
+    },
     async readNearestTsconfig(request: unknown) {
       return readNearestTsconfig(fileReadRequestSchema.parse(request))
     },
@@ -614,8 +737,10 @@ export const createDesktopBackend = (deps: DesktopBackendDependencies = {}) => {
     async readGitFileLineDiff(request: unknown) {
       return readGitFileLineDiff(gitFilePathRequestSchema.parse(request))
     },
-    watchFile(workspacePath: string, relativePath: string, subscriptionId: string, listener: () => void) {
-      return getFileWatcherManager().subscribe(workspacePath, relativePath, subscriptionId, listener)
+    // 显式订阅协议（与 subscribeChatStream 同形）：调用方生成 subscriptionId，
+    // 这里只收纯数据、只回纯数据，变化事件走 deps.onFileWatchEvent 这条独立通道。
+    watchFile(workspacePath: string, relativePath: string, subscriptionId: string): FileWatchSubscribeResult {
+      return getFileWatcherManager().subscribe(workspacePath, relativePath, subscriptionId)
     },
     unwatchFile(subscriptionId: string) {
       fileWatcherManager?.unsubscribe(subscriptionId)

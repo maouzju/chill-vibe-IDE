@@ -1,4 +1,14 @@
-import { app, BrowserWindow, crashReporter, dialog, ipcMain, net, protocol, shell } from 'electron'
+import {
+  app,
+  BrowserWindow,
+  crashReporter,
+  dialog,
+  ipcMain,
+  net,
+  protocol,
+  shell,
+  utilityProcess,
+} from 'electron'
 import { spawn } from 'node:child_process'
 import { createServer as createPipeServer } from 'node:net'
 import { readFileSync, writeFileSync } from 'node:fs'
@@ -9,14 +19,21 @@ import { fileURLToPath, pathToFileURL } from 'url'
 import type { IpcMainInvokeEvent } from 'electron'
 
 import { maxUiScale, minUiScale } from '../shared/default-state.js'
-import { appSettingsSchema, workspaceSessionMirrorSchema } from '../shared/schema.js'
-import {
-  forgetWorkspaceSessionMirror,
-  publishWorkspaceSessionMirror,
-} from '../server/automation-board-session.js'
+import { appSettingsSchema } from '../shared/schema.js'
 import { getAppDataDir } from '../server/app-paths.js'
+import { isFileWatchArmed } from '../server/file-watcher.js'
 import { initCrashLogger, log } from './crash-logger.js'
-import { createDesktopBackend } from './backend.js'
+// 类型-only：`backend.js` 一旦被真的 import，整棵 server/ 树（60 文件 / 28385 行）
+// 又会回到主进程，这次改造就白做了。verbatimModuleSyntax 保证它不产生任何 require。
+import type { DesktopBackend } from './backend.js'
+import {
+  createBackendHost,
+  type AsyncifiedBackend,
+  type BackendHostChild,
+} from './backend-host.js'
+import { backendRpcChannels } from './backend-rpc-protocol.js'
+import { runBackendSideEffect, toAmbientAudioBuffer } from './backend-call-guards.js'
+import { routeFileWatchEvent } from './file-watch-routing.js'
 import {
   resolveMessageLocalLinkTarget,
   revealMessageLocalLinkTarget,
@@ -48,6 +65,7 @@ import {
   guardSentinelPath,
 } from './crash-relaunch-guard.js'
 import { createChatStreamBatcher } from './chat-stream-batcher.js'
+import { createChatStreamSubscriptionRegistry } from './chat-stream-subscriptions.js'
 import { summarizeUnresponsiveCallStack } from './unresponsive-forensics.js'
 import {
   classifyUnresponsiveBlocking,
@@ -160,43 +178,149 @@ if (desktopRuntimeProfilePaths) {
   app.setPath('sessionData', desktopRuntimeProfilePaths.sessionData)
 }
 
-const desktopBackend = createDesktopBackend({
-  onUnsolicitedStream: (notification) => {
-    // A pooled Claude process woke itself (background task finished). Tell
-    // every renderer so the owning card can subscribe to the new stream.
-    for (const win of BrowserWindow.getAllWindows()) {
-      if (!win.isDestroyed()) {
-        win.webContents.send('chat:unsolicited-stream', notification)
-      }
-    }
+// Declared before the backend because the file-watch event channel below is the
+// only consumer that resolves a subscriptionId back to its renderer.
+const fileWatchSubscriptions = new Map<
+  string,
+  { webContentsId: number; sender: Electron.WebContents }
+>()
+
+// 同理：聊天流的路由表（subscriptionId -> 渲染进程）留在主进程，后端那边只认
+// subscriptionId。deps 里的 desktopBackend / sendChatStreamEventSafely 都只在
+// 订阅真正发生时才被读取，所以声明顺序不构成 TDZ 问题。
+const chatStreamSubscriptions = createChatStreamSubscriptionRegistry<Electron.WebContents>({
+  subscribe: (streamId, subscriptionId) =>
+    desktopBackend.subscribeChatStream(streamId, subscriptionId),
+  unsubscribe: (subscriptionId) => {
+    runBackendSideEffect(
+      () => desktopBackend.unsubscribeChatStream(subscriptionId),
+      (error) => log.warn('[main] Failed to unsubscribe a chat stream.', error),
+    )
   },
-  dispatchWorkspaceAdminCommand: (command) => {
-    // 与手机监工同一条规矩：桥接服务自己绝不改 state，写命令广播给渲染进程
-    // 复用电脑端 handler。返回 false（无可用窗口）时 HTTP 层回 503。
-    let delivered = false
-    for (const win of BrowserWindow.getAllWindows()) {
-      if (!win.isDestroyed() && !win.webContents.isCrashed()) {
-        win.webContents.send('workspace-admin:command', command)
-        delivered = true
-      }
-    }
-    return delivered
-  },
-  dispatchRemoteCommand: (command) => {
-    // 手机监工的写命令：广播给渲染窗口，由渲染进程复用电脑端 handler 执行。
-    // 返回 false（无可用窗口）时 HTTP 层回 503。
-    let delivered = false
-    for (const win of BrowserWindow.getAllWindows()) {
-      if (!win.isDestroyed() && !win.webContents.isCrashed()) {
-        win.webContents.send('remote:command', command)
-        delivered = true
-      }
-    }
-    return delivered
+  deliver: (sender, payload) => {
+    sendChatStreamEventSafely(sender, payload)
   },
 })
-const streamSubscriptions = new Map<string, { webContentsId: number; unsubscribe: () => void }>()
-const fileWatchSubscriptions = new Map<string, { webContentsId: number }>()
+
+// 广播给每个还活着的渲染窗口，返回是否至少送到一个。返回值直接决定 HTTP 503/202，
+// 所以这两条通道是**请求**（要回复），不是事件。
+function broadcastToLiveRenderers(channel: string, payload: unknown) {
+  let delivered = false
+  for (const win of BrowserWindow.getAllWindows()) {
+    if (!win.isDestroyed() && !win.webContents.isCrashed()) {
+      win.webContents.send(channel, payload)
+      delivered = true
+    }
+  }
+  return delivered
+}
+
+const backendEntryPath = path.join(moduleDir, 'utility-host.js')
+
+const backendHost = createBackendHost<AsyncifiedBackend<DesktopBackend>>({
+  fork: (): BackendHostChild => {
+    // env 不显式传：默认继承主进程当前的 env 快照，而 fork 被排在
+    // configureDesktopEnvironment() 之后，CHILL_VIBE_DATA_DIR 等正好都已就位。
+    const child = utilityProcess.fork(backendEntryPath, [], {
+      serviceName: 'chill-vibe-backend',
+      stdio: 'inherit',
+    })
+
+    return {
+      postMessage: (message) => child.postMessage(message),
+      onMessage: (listener) => {
+        child.on('message', (message) => listener(message))
+      },
+      onExit: (listener) => {
+        child.on('exit', (code) => listener(code))
+      },
+      kill: () => {
+        child.kill()
+      },
+    }
+  },
+  // 打包版这里是 null —— host 会跳过 chdir 并继承 fork 时的 cwd。绝不能退化成
+  // 空字符串（那是把"不要 chdir"表达成了一个路径）。
+  resolveInit: () => ({ workingDirectory: desktopWorkingDirectory }),
+  onLog: (level, message, meta) => {
+    log[level](message, meta)
+  },
+  onBackendLost: ({ exitCode, attempt, willRestart }) => {
+    // 症状 — 后端独立退出而窗口还活着：每张卡永久停在 streaming、composer 锁死，
+    //   而且没有任何报错，比今天的闪退更难查。
+    // 根因 — 2026-08-12：ChatManager 的 backlog、全部 streamId、Claude 进程池都住
+    //   在后端进程里，随它一起消失；重启后的新进程对这些 id 一无所知。
+    // 为什么不新开一条渲染端通道 — "Stream not found." 是渲染进程已经会处理的信号
+    //   （收到后把卡落回 idle），复用它零改动且与真实失效流走同一条路径。
+    chatStreamSubscriptions.invalidateAll()
+
+    // 文件监听同理：新进程没有这些 watcher，留着只会让退订打到不存在的 id 上。
+    // 代价是重启后已打开的文件窗口不再收到外部改动通知，直到它重新挂载。
+    fileWatchSubscriptions.clear()
+
+    log.error('[main] Backend process lost; every stream id is now invalid.', {
+      exitCode,
+      attempt,
+      willRestart,
+    })
+  },
+})
+
+// 同形状代理：108 个 handler 一行不用改。方法身份跨重启保持稳定，所以启动时闭包
+// 捕获过它的地方在重启之后仍然指向活着的后端。
+const desktopBackend = backendHost.proxy
+
+// 后端只知道 subscriptionId，"哪个 webContents 收"这张路由表留在主进程（只有它
+// 认识 WebContents）。registry 与三处清理逻辑跨进程后一行不用改。
+backendHost.onEvent(backendRpcChannels.chatStreamEvent, (event) => {
+  chatStreamSubscriptions.handleEvent(event)
+})
+
+// One process-level channel instead of a callback per subscription: the watcher
+// only reports which subscription changed, and the renderer routing stays here
+// in main. 决策本身收在 routeFileWatchEvent（含"退订必须早于删条目"这条约束）。
+backendHost.onEvent(backendRpcChannels.fileWatchEvent, ({ subscriptionId }) => {
+  routeFileWatchEvent(
+    {
+      lookup: (id) => fileWatchSubscriptions.get(id),
+      isSenderDead: ({ sender }) => sender.isDestroyed() || sender.isCrashed(),
+      unwatch: (id) => {
+        runBackendSideEffect(
+          () => desktopBackend.unwatchFile(id),
+          (error) => log.warn('[main] Failed to unwatch a dead renderer file watch.', error),
+        )
+      },
+      forget: (id) => {
+        fileWatchSubscriptions.delete(id)
+      },
+      deliver: ({ sender }, id) => {
+        sender.send('file:changed', { subscriptionId: id })
+      },
+      onDeliveryFailed: (_id, error) => {
+        log.warn('[main] Failed to forward file change event to renderer.', error)
+      },
+    },
+    subscriptionId,
+  )
+})
+
+backendHost.onEvent(backendRpcChannels.unsolicitedStream, (notification) => {
+  // A pooled Claude process woke itself (background task finished). Tell
+  // every renderer so the owning card can subscribe to the new stream.
+  broadcastToLiveRenderers('chat:unsolicited-stream', notification)
+})
+
+// 这两条是 host→main 的**请求**：布尔返回值直接决定 HTTP 503/202。忘了注册的话
+// 手机远程监工与超管看板会静默全部报"无窗口"，而日志里一个字都没有。
+backendHost.onRequest(backendRpcChannels.remoteCommand, (command) =>
+  // 手机监工的写命令：广播给渲染窗口，由渲染进程复用电脑端 handler 执行。
+  broadcastToLiveRenderers('remote:command', command),
+)
+backendHost.onRequest(backendRpcChannels.workspaceAdminCommand, (command) =>
+  // 与手机监工同一条规矩：桥接服务自己绝不改 state，写命令广播给渲染进程复用
+  // 电脑端 handler。
+  broadcastToLiveRenderers('workspace-admin:command', command),
+)
 const hasSingleInstanceLock = bypassSingleInstanceLock ? true : app.requestSingleInstanceLock()
 
 let quitTimer: NodeJS.Timeout | null = null
@@ -561,6 +685,11 @@ function scheduleQuitAfterFlush() {
 
       await new Promise((resolve) => setTimeout(resolve, quitFlushDelayMs))
       await desktopBackend.flushStateWrites()
+      // 退出握手：flush 与 dispose 都是跨进程 RPC，必须**在**杀掉子进程之前 settle。
+      // proxy-stats-store 的 `process.on('exit')` flushSync 只有在子进程自己走完
+      // 退出路径时才跑得到，所以顺序是 flush → dispose → shutdown，全程受 will-quit
+      // 之前这段 5s 预算保护。
+      await desktopBackend.dispose()
     } catch (error) {
       log.warn('[main] Failed to flush pending state before quit.', error)
     } finally {
@@ -568,6 +697,7 @@ function scheduleQuitAfterFlush() {
         clearTimeout(quitTimer)
         quitTimer = null
       }
+      backendHost.shutdown()
     }
 
     app.quit()
@@ -625,21 +755,17 @@ async function clearUserDataOnLaunchIfNeeded() {
 }
 
 function cleanupSubscriptionsForContentsId(webContentsId: number) {
-  for (const [subscriptionId, entry] of streamSubscriptions.entries()) {
-    if (entry.webContentsId !== webContentsId) {
-      continue
-    }
-
-    entry.unsubscribe()
-    streamSubscriptions.delete(subscriptionId)
-  }
+  chatStreamSubscriptions.unsubscribeOwner(webContentsId)
 
   for (const [subscriptionId, entry] of fileWatchSubscriptions.entries()) {
     if (entry.webContentsId !== webContentsId) {
       continue
     }
 
-    desktopBackend.unwatchFile(subscriptionId)
+    runBackendSideEffect(
+      () => desktopBackend.unwatchFile(subscriptionId),
+      (error) => log.warn('[main] Failed to unwatch a file for a closed renderer.', error),
+    )
     fileWatchSubscriptions.delete(subscriptionId)
   }
 }
@@ -922,20 +1048,21 @@ function registerLocalImageProtocol() {
 
 function registerDesktopHandlers() {
   // 工作区列的实时会话镜像：渲染进程是 state 的唯一主人，所以镜像只能由它
-  // 推上来（读盘快照在流式期间被刻意节流，对超管会话太旧）。截断在 session
-  // 模块里统一执行，这里只做 schema 校验。
-  ipcMain.handle('workspace-admin:publish-mirror', (_event, payload: unknown) => {
-    const parsed = workspaceSessionMirrorSchema.safeParse(payload)
-    if (parsed.success) {
-      publishWorkspaceSessionMirror(parsed.data)
-    }
-    return parsed.success
-  })
-  ipcMain.handle('workspace-admin:forget-mirror', (_event, columnId: unknown) => {
-    if (typeof columnId === 'string' && columnId.trim()) {
-      forgetWorkspaceSessionMirror(columnId)
-    }
-  })
+  // 推上来（读盘快照在流式期间被刻意节流，对超管会话太旧）。
+  // 症状（跨进程后）：超管会话的 MCP 工具恒返回空数据，且完全不报错。
+  // 根因：2026-08-12 核实，镜像是 server/automation-board-session.ts:42 的模块级
+  // Map；主进程曾直接 import 写它，而读它的超管桥接跑在 backend 那一侧 ——
+  // 后端搬进 utilityProcess 后就是两份模块副本、两个 Map，写一份读另一份。
+  // 为什么不能换写法：主进程这里只能留 IPC 收发，schema 校验与截断都必须紧贴
+  // 存储侧（backend），否则新增调用方就能绕过（pitfall 183/258）。
+  ipcMain.handle('workspace-admin:publish-mirror', (_event, payload: unknown) =>
+    desktopBackend.publishWorkspaceSessionMirror(payload),
+  )
+  ipcMain.handle('workspace-admin:forget-mirror', (_event, columnId: unknown) =>
+    // 返回而不是丢弃：跨进程后这是一个 Promise，丢掉它就等于把后端的失败变成一条
+    // 无人处理的 rejection，而渲染端会以为镜像已经清掉了。
+    desktopBackend.forgetWorkspaceSessionMirror(columnId),
+  )
   ipcMain.handle('window:minimize', (event) => {
     const win = getEventWindow(event)
     win?.minimize()
@@ -1007,13 +1134,18 @@ function registerDesktopHandlers() {
     // uncaughtException and terminates the app with no shutdown log — exactly
     // how a single malformed wake-timer queue entry made the window vanish
     // every ~20 seconds on 2026-07-26. A rejected save must never be fatal.
-    try {
-      desktopBackend.queueStateSave(state)
-    } catch (error) {
-      log.error('[main] Queued state save failed; keeping the app alive.', {
-        error: error instanceof Error ? error.message : String(error),
-      })
-    }
+    //
+    // 后端搬进 utilityProcess 之后这里必须走 runBackendSideEffect：同步 try/catch
+    // 对 rejected Promise 一行都命中不到（会成为死代码），而代理层自己仍可能同步
+    // 抛（端口已关 / 载荷不可克隆）。两种形态由同一个出口兜住。
+    runBackendSideEffect(
+      () => desktopBackend.queueStateSave(state),
+      (error) => {
+        log.error('[main] Queued state save failed; keeping the app alive.', {
+          error: error.message,
+        })
+      },
+    )
   })
   // Chromium switches cannot change at runtime, so this only records the choice
   // for the next launch. The renderer surfaces the restart requirement.
@@ -1027,10 +1159,13 @@ function registerDesktopHandlers() {
     }
     return { enabled: nextEnabled, restartRequired: nextEnabled !== accessibilitySupportEnabled }
   })
-  ipcMain.handle('desktop:sync-runtime-settings', (_event, settings) => {
+  // 混合 handler，刻意拆两半：窗口关闭行为是主进程状态（Electron-only），
+  // schema 校验紧贴调用点，剩下的转发给后端。必须 await —— 渲染端要靠这次 invoke
+  // 的 settle 确认新模型已经生效，否则下一次发送仍走旧运行时设置（pitfall 137）。
+  ipcMain.handle('desktop:sync-runtime-settings', async (_event, settings) => {
     const parsed = appSettingsSchema.parse(settings)
     minimizeToTaskbarOnCloseEnabled = parsed.minimizeToTaskbarOnCloseEnabled
-    desktopBackend.syncRuntimeSettings(parsed)
+    await desktopBackend.syncRuntimeSettings(parsed)
   })
   ipcMain.handle('desktop:reset-state', () => desktopBackend.resetState())
   ipcMain.handle('desktop:resolve-state-recovery-option', (_event, request) =>
@@ -1114,32 +1249,21 @@ function registerDesktopHandlers() {
     desktopBackend.loadExternalSession(request),
   )
   ipcMain.handle('desktop:subscribe-chat-stream', (event, streamId: string, subscriptionId: string) => {
-    const sender = event.sender
-    const unsubscribe = desktopBackend.subscribeChatStream(streamId, (payload) => {
-      sendChatStreamEventSafely(sender, {
-        subscriptionId,
-        event: payload.event,
-        data: payload.data,
-      })
-    })
-
-    if (!unsubscribe) {
-      sendChatStreamEventSafely(sender, {
-        subscriptionId,
-        event: 'error',
-        data: { message: 'Stream not found.' },
-      })
-      return
-    }
-
-    streamSubscriptions.set(subscriptionId, {
-      webContentsId: event.sender.id,
-      unsubscribe,
-    })
+    // 登记发生在 registry 内部、且严格早于后端 subscribe：ChatManager.subscribe
+    // 同步重放 backlog，事件在 subscribe 返回之前就打到事件通道上了。
+    // "流不存在" 现在由可序列化的 { subscribed: false } 决定，registry 负责回发
+    // 那条 error 并且不留下任何幽灵条目。
+    // 返回而不是丢弃：跨进程后 subscribe 是异步的，丢掉它渲染端就拿不到 onError，
+    // 而且端口断开 / RPC 超时会变成一条无人处理的 rejection。
+    return chatStreamSubscriptions.subscribe(
+      streamId,
+      subscriptionId,
+      event.sender.id,
+      event.sender,
+    )
   })
   ipcMain.handle('desktop:unsubscribe-chat-stream', (_event, subscriptionId: string) => {
-    streamSubscriptions.get(subscriptionId)?.unsubscribe()
-    streamSubscriptions.delete(subscriptionId)
+    chatStreamSubscriptions.unsubscribe(subscriptionId)
   })
   ipcMain.handle('desktop:read-nearest-tsconfig', (_event, request) =>
     desktopBackend.readNearestTsconfig(request),
@@ -1152,32 +1276,25 @@ function registerDesktopHandlers() {
   )
   ipcMain.handle(
     'desktop:watch-file',
-    (event, request: { workspacePath: string; relativePath: string; subscriptionId: string }) => {
+    async (event, request: { workspacePath: string; relativePath: string; subscriptionId: string }) => {
       const sender = event.sender
       const { workspacePath, relativePath, subscriptionId } = request
 
-      const subscribed = desktopBackend.watchFile(workspacePath, relativePath, subscriptionId, () => {
-        if (sender.isDestroyed() || sender.isCrashed()) {
-          return
-        }
+      const result = await desktopBackend.watchFile(workspacePath, relativePath, subscriptionId)
 
-        try {
-          sender.send('file:changed', { subscriptionId })
-        } catch (error) {
-          log.warn('[main] Failed to forward file change event to renderer.', error)
-        }
-      })
-
-      if (subscribed) {
-        fileWatchSubscriptions.set(subscriptionId, { webContentsId: sender.id })
+      // 必须走 isFileWatchArmed 而不是 `if (result)`：后端搬进 utilityProcess 后
+      // 这里拿到的是 Promise/解包后的对象，任何"看真值"的判断都恒真，登记一个
+      // 从未武装的订阅 = 渲染进程以为在监听、实际永远收不到变化（静默错误）。
+      if (isFileWatchArmed(result)) {
+        fileWatchSubscriptions.set(subscriptionId, { webContentsId: sender.id, sender })
       }
 
-      return subscribed
+      return result
     },
   )
-  ipcMain.handle('desktop:unwatch-file', (_event, subscriptionId: string) => {
-    desktopBackend.unwatchFile(subscriptionId)
+  ipcMain.handle('desktop:unwatch-file', async (_event, subscriptionId: string) => {
     fileWatchSubscriptions.delete(subscriptionId)
+    await desktopBackend.unwatchFile(subscriptionId)
   })
 
   // ── Remote Monitor IPC（手机远程监工）──────────────────────────────────────
@@ -1219,8 +1336,10 @@ function registerDesktopHandlers() {
   ipcMain.handle('desktop:whitenoise-ensure-audio', (_event, generator: string, url?: string) =>
     desktopBackend.ensureAmbientAudio(generator, url),
   )
-  ipcMain.handle('desktop:whitenoise-read-audio', (_event, generator: string, url?: string) =>
-    desktopBackend.readAmbientAudioBuffer(generator, url),
+  // 唯一的二进制返回值：结构化克隆只搬字节、不保原型，跨进程后到手的是普通
+  // Uint8Array。在这里显式还原成 Buffer，下游（IPC 序列化、渲染端）语义不变。
+  ipcMain.handle('desktop:whitenoise-read-audio', async (_event, generator: string, url?: string) =>
+    toAmbientAudioBuffer(await desktopBackend.readAmbientAudioBuffer(generator, url)),
   )
 
   // ── File System ─────────────────────────────────────────────────────────
@@ -1242,9 +1361,11 @@ function registerDesktopHandlers() {
   ipcMain.handle('desktop:restore-sticky-note-version', (_event, request) =>
     desktopBackend.restoreStickyNoteVersion(request),
   )
+  // 混合 handler，刻意拆两半：目录解析 + mkdir/写 workspace.json 属于后端
+  // （sticky-note-store 有模块级 workspaceQueues 写序列化 Map，主进程再 import
+  // 一次就是第二份），`shell.openPath` 是 Electron-only 只能留在主进程。
   ipcMain.handle('desktop:reveal-sticky-note-location', async (_event, workspacePath: string) => {
-    const { ensureStickyNoteWorkspaceDirectory } = await import('../server/sticky-note-store.js')
-    const targetPath = await ensureStickyNoteWorkspaceDirectory(workspacePath)
+    const targetPath = await desktopBackend.ensureStickyNoteWorkspaceDirectory(workspacePath)
     const openError = await shell.openPath(targetPath)
     if (openError) throw new Error(openError)
   })
@@ -1499,6 +1620,11 @@ app.whenReady().then(async () => {
       serviceName: details.serviceName,
     })
   })
+  // fork 必须排在 configureDesktopEnvironment() **之后**：子进程只拿 fork 时刻的
+  // env 快照，而 CHILL_VIBE_DATA_DIR / CHILL_VIBE_RUNTIME_KIND 都是在那里才写进
+  // process.env 的。早一步 fork = 后端另开一份 profile，用户视角是"历史全没了"。
+  // 也必须排在 clearUserDataOnLaunchIfNeeded() 之后，否则后端刚建的文件会被删掉。
+  await backendHost.ensureBackend()
   registerDesktopHandlers()
   await registerAttachmentProtocol()
   registerAudioProtocol()
@@ -1542,11 +1668,10 @@ app.on('will-quit', () => {
     quitTimer = null
   }
 
-  for (const entry of streamSubscriptions.values()) {
-    entry.unsubscribe()
-  }
-  streamSubscriptions.clear()
-  void desktopBackend.dispose()
+  chatStreamSubscriptions.unsubscribeAll()
+  // 兜底：正常退出走 scheduleQuitAfterFlush 的 flush → dispose → shutdown。
+  // will-quit 无法 await，所以这里只做幂等的进程收尾，不再发新的 RPC。
+  backendHost.shutdown()
 })
 
 app.on('window-all-closed', () => {

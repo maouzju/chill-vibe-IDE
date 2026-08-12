@@ -15,10 +15,35 @@ import type {
   StreamEditedFile,
 } from '../shared/schema.js'
 
-type GitRunResult = {
+export type GitRunResult = {
   stdout: string
   stderr: string
   exitCode: number
+  timedOut?: boolean
+  aborted?: boolean
+}
+
+export type GitRunOptions = {
+  allowFailure?: boolean
+  stdin?: string | Buffer
+  timeoutMs?: number
+  killGraceMs?: number
+  signal?: AbortSignal
+}
+
+/**
+ * The subset of `ChildProcess` this module supervises. Narrow on purpose so a
+ * test can drive the real supervision logic with a process that never closes.
+ */
+export type SupervisedGitChild = {
+  stdout: { on: (event: 'data', listener: (chunk: Buffer) => void) => unknown } | null
+  stderr: { on: (event: 'data', listener: (chunk: Buffer) => void) => unknown } | null
+  stdin: { end: (data: string | Buffer) => void } | null
+  on: {
+    (event: 'error', listener: (error: Error) => void): unknown
+    (event: 'close', listener: (code: number | null) => void): unknown
+  }
+  kill: (signal?: NodeJS.Signals) => boolean
 }
 
 type GitCommitOptions = {
@@ -42,6 +67,7 @@ type GitDiscardOptions = {
 type InspectGitWorkspaceOptions = {
   includeChangePreviews?: boolean
   includeRepositoryDetails?: boolean
+  signal?: AbortSignal
 }
 
 export type WorkspaceSnapshot = {
@@ -66,6 +92,12 @@ export type WorkspaceSnapshotDiffLimits = {
   maxFileBytes?: number
   maxTotalBytes?: number
   maxFiles?: number
+  signal?: AbortSignal
+}
+
+export type CaptureWorkspaceSnapshotOptions = {
+  timeoutMs?: number
+  signal?: AbortSignal
 }
 
 export type GitCommitDiffLimits = {
@@ -197,24 +229,58 @@ const formatGitFailure = (args: string[], result: GitRunResult) => {
   return `git ${args.join(' ')} failed with exit code ${result.exitCode}.`
 }
 
-const runGit = async (
-  workspacePath: string,
+// 症状 — 应用"闪退"，实测退出码 0xCFFFFFFF（Windows 结束"窗口无响应"进程写的码）；
+//   外部监控实测冻结期间主进程 CPU=0%、主线程处于内核 Wait，也就是卡死的后果。
+// 根因 — 2026-08-12 实测这台机器上 spawn() 本身是主线程同步阻塞（libuv 在 Windows 上
+//   同步执行 CreateProcessW）：40 次 git spawn p50=102ms、p90=1831ms、最坏单次 6910ms、
+//   25 次合计 21s。而 runGit 既没有超时也没有 kill，一个静默的 git 子进程能让 await
+//   永不返回，上一轮的残余还会和下一轮叠加成 spawn 风暴。
+// 为什么不能只加超时不 kill — 那正是 chat-manager 的 withHardTimeout 旧写法：Promise.race
+//   只是放弃等待，那一串 git 照样在跑、照样占着句柄和 CPU，叠加只会更快。到点必须真杀。
+// 这个默认值的职责是"卡死的 git 不能永远挂住调用方"，**不是**快速失败：真正约束热
+// 路径的是上层的取消预算（收尾 diff 12s、发消息前快照 60s，两者现在都会真的 kill）。
+// 所以它必须给到远超正常耗时：2026-08-12 有负载的本机上，tests/git-workspace.test.ts
+// 里单条真实 git 用例实测跑到 90s，取小值只会把用户正常的 Git 操作杀掉。
+export const gitRunDefaultTimeoutMs = 120_000
+export const gitRunKillGraceMs = 2_000
+// 网络子命令的耗时分布和本地命令完全不是一回事：一次 `git pull` 在慢网络上跑几分钟
+// 是正常的。给它们套本地默认值等于把用户的正常操作杀掉。
+const gitNetworkRunTimeoutMs = 10 * 60 * 1000
+const gitNetworkSubcommands = new Set([
+  'clone',
+  'fetch',
+  'ls-remote',
+  'pull',
+  'push',
+  'remote',
+  'submodule',
+])
+
+/**
+ * 超时策略必须集中在一处：40+ 个 runGit 调用点里只要有一个忘了给网络命令放宽预算，
+ * 用户的 `git pull` 就会在 20s 上被 kill。按子命令判定，调用点无从遗漏。
+ */
+export const resolveGitRunTimeoutMs = (
+  args: readonly string[],
+  explicitTimeoutMs?: number,
+) => {
+  if (explicitTimeoutMs !== undefined) {
+    return explicitTimeoutMs
+  }
+
+  const subcommand = args.find((arg) => !arg.startsWith('-'))
+
+  return subcommand && gitNetworkSubcommands.has(subcommand)
+    ? gitNetworkRunTimeoutMs
+    : gitRunDefaultTimeoutMs
+}
+
+export const superviseGitChild = async (
+  child: SupervisedGitChild,
   args: string[],
-  options?: {
-    allowFailure?: boolean
-    stdin?: string | Buffer
-  },
+  options?: GitRunOptions,
 ): Promise<GitRunResult> =>
   await new Promise((resolve, reject) => {
-    // `-c core.quotepath=false` keeps non-ASCII paths (e.g. Chinese file names)
-    // as raw UTF-8 in porcelain/diff output instead of being backslash-escaped,
-    // so paths we read from `git status` round-trip cleanly back into `git add`.
-    const child = spawn('git', ['-c', 'core.quotepath=false', ...args], {
-      cwd: workspacePath,
-      stdio: [options?.stdin === undefined ? 'ignore' : 'pipe', 'pipe', 'pipe'],
-      windowsHide: true,
-    })
-
     // 症状：`git diff` / `git status` 输出里的中文路径或中文改动内容偶发变成 U+FFFD 乱码，
     //   下游 `git add` 按乱码路径回写就会失败。
     // 根因：2026-08-10 实测，旧写法 `stdout += chunk.toString()` 逐 chunk 独立解码；一个
@@ -234,25 +300,145 @@ const runGit = async (
       stderrChunks.push(chunk)
     })
 
-    child.on('error', reject)
+    const timeoutMs = options?.timeoutMs ?? gitRunDefaultTimeoutMs
+    const signal = options?.signal
+    let settled = false
+    let timeoutTimer: ReturnType<typeof setTimeout> | undefined
+    let killTimer: ReturnType<typeof setTimeout> | undefined
+
+    const settle = (finish: () => void) => {
+      if (settled) {
+        return
+      }
+      settled = true
+      if (timeoutTimer) {
+        clearTimeout(timeoutTimer)
+      }
+      signal?.removeEventListener('abort', onAbort)
+      finish()
+    }
+
+    // kill 可能因为进程刚好已退出而抛（ESRCH / EPERM），绝不能让它掀掉 settle。
+    // SIGTERM 之后仍不 close 的进程用 SIGKILL 兜底；两个定时器都不 unref —— 唯一
+    // 在等这个 promise 的调用方可能没有别的活儿，unref 会让 Node 提前退出。
+    const killChild = () => {
+      try {
+        child.kill('SIGTERM')
+      } catch {
+        // Already gone; nothing else to reap.
+      }
+
+      killTimer = setTimeout(() => {
+        try {
+          child.kill('SIGKILL')
+        } catch {
+          // Already gone; nothing else to reap.
+        }
+      }, options?.killGraceMs ?? gitRunKillGraceMs)
+    }
+
+    const giveUp = (reason: 'timeout' | 'abort') => {
+      if (settled) {
+        return
+      }
+
+      killChild()
+      settle(() => {
+        const result: GitRunResult = {
+          stdout: decodeGitStreamChunks(stdoutChunks),
+          stderr: decodeGitStreamChunks(stderrChunks),
+          exitCode: -1,
+          ...(reason === 'timeout' ? { timedOut: true } : { aborted: true }),
+        }
+
+        if (options?.allowFailure) {
+          resolve(result)
+          return
+        }
+
+        reject(new Error(
+          reason === 'timeout'
+            ? `git ${args.join(' ')} timed out after ${timeoutMs}ms and was killed.`
+            : `git ${args.join(' ')} was cancelled and killed.`,
+        ))
+      })
+    }
+
+    function onAbort() {
+      giveUp('abort')
+    }
+
+    child.on('error', (error) => {
+      settle(() => reject(error))
+    })
     if (options?.stdin !== undefined && child.stdin) {
       child.stdin.end(options.stdin)
     }
     child.on('close', (code) => {
-      const result: GitRunResult = {
-        stdout: decodeGitStreamChunks(stdoutChunks),
-        stderr: decodeGitStreamChunks(stderrChunks),
-        exitCode: code ?? 1,
+      if (killTimer) {
+        clearTimeout(killTimer)
       }
 
-      if ((code ?? 1) !== 0 && !options?.allowFailure) {
-        reject(new Error(formatGitFailure(args, result)))
+      settle(() => {
+        const result: GitRunResult = {
+          stdout: decodeGitStreamChunks(stdoutChunks),
+          stderr: decodeGitStreamChunks(stderrChunks),
+          exitCode: code ?? 1,
+        }
+
+        if ((code ?? 1) !== 0 && !options?.allowFailure) {
+          reject(new Error(formatGitFailure(args, result)))
+          return
+        }
+
+        resolve(result)
+      })
+    })
+
+    if (signal) {
+      if (signal.aborted) {
+        giveUp('abort')
         return
       }
 
-      resolve(result)
-    })
+      signal.addEventListener('abort', onAbort, { once: true })
+    }
+
+    if (Number.isFinite(timeoutMs) && timeoutMs > 0) {
+      timeoutTimer = setTimeout(() => giveUp('timeout'), timeoutMs)
+    }
   })
+
+const runGit = async (
+  workspacePath: string,
+  args: string[],
+  options?: GitRunOptions,
+): Promise<GitRunResult> => {
+  // 取消之后就绝不能再派生进程 —— 这才是"砍掉 spawn 风暴"真正省下的部分：一次
+  // workspace diff 最多派生 3 × 256 个 git 子进程，超时点之后剩下的几百次 spawn
+  // 每次都是主线程同步阻塞（2026-08-12 实测最坏单次 6910ms）。
+  if (options?.signal?.aborted) {
+    if (options.allowFailure) {
+      return { stdout: '', stderr: '', exitCode: -1, aborted: true }
+    }
+
+    throw new Error(`git ${args.join(' ')} was cancelled before it started.`)
+  }
+
+  // `-c core.quotepath=false` keeps non-ASCII paths (e.g. Chinese file names)
+  // as raw UTF-8 in porcelain/diff output instead of being backslash-escaped,
+  // so paths we read from `git status` round-trip cleanly back into `git add`.
+  const child = spawn('git', ['-c', 'core.quotepath=false', ...args], {
+    cwd: workspacePath,
+    stdio: [options?.stdin === undefined ? 'ignore' : 'pipe', 'pipe', 'pipe'],
+    windowsHide: true,
+  })
+
+  return await superviseGitChild(child, args, {
+    ...options,
+    timeoutMs: resolveGitRunTimeoutMs(args, options?.timeoutMs),
+  })
+}
 
 export const encodeGitPathspecStdin = (paths: string[]) =>
   Buffer.from(`${paths.join('\0')}\0`, 'utf8')
@@ -583,10 +769,11 @@ const workspaceFileExists = async (repoRoot: string, relativePath: string) => {
   }
 }
 
-const readHeadFile = async (repoRoot: string, relativePath: string) => {
+const readHeadFile = async (repoRoot: string, relativePath: string, signal?: AbortSignal) => {
   const normalizedPath = relativePath.replace(/\\/g, '/')
   const result = await runGit(repoRoot, ['show', `HEAD:${normalizedPath}`], {
     allowFailure: true,
+    signal,
   })
 
   if (result.exitCode !== 0) {
@@ -712,10 +899,11 @@ export const readGitFileLineDiff = async (request: {
   return { isRepository: true, tracked: true, ...parseGitUnifiedZeroHunks(diffResult.stdout) }
 }
 
-const readHeadFileSize = async (repoRoot: string, relativePath: string) => {
+const readHeadFileSize = async (repoRoot: string, relativePath: string, signal?: AbortSignal) => {
   const normalizedPath = relativePath.replace(/\\/g, '/')
   const result = await runGit(repoRoot, ['cat-file', '-s', `HEAD:${normalizedPath}`], {
     allowFailure: true,
+    signal,
   })
 
   if (result.exitCode !== 0) {
@@ -726,9 +914,10 @@ const readHeadFileSize = async (repoRoot: string, relativePath: string) => {
   return Number.isFinite(parsedSize) && parsedSize > 0 ? parsedSize : 0
 }
 
-const readHeadFileSizes = async (repoRoot: string) => {
+const readHeadFileSizes = async (repoRoot: string, signal?: AbortSignal) => {
   const result = await runGit(repoRoot, ['ls-tree', '-r', '-l', '-z', 'HEAD'], {
     allowFailure: true,
+    signal,
   })
 
   if (result.exitCode !== 0) {
@@ -777,6 +966,7 @@ const createPatch = async (
   oldContent: string | null,
   newLabel: string,
   newContent: string | null,
+  signal?: AbortSignal,
 ) => {
   if ((oldContent ?? null) === (newContent ?? null)) {
     return ''
@@ -793,8 +983,12 @@ const createPatch = async (
     const result = await runGit(
       tempRoot,
       ['diff', '--no-index', '--unified=3', '--no-prefix', '--', beforePath, afterPath],
-      { allowFailure: true },
+      { allowFailure: true, signal },
     )
+
+    if (result.aborted || result.timedOut) {
+      return ''
+    }
 
     if (result.exitCode !== 0 && result.exitCode !== 1) {
       throw new Error(formatGitFailure(['diff', '--no-index'], result))
@@ -1278,9 +1472,10 @@ const readLastCommit = async (workspacePath: string): Promise<GitCommit | null> 
   }
 }
 
-const getRepositoryRoot = async (workspacePath: string) => {
+const getRepositoryRoot = async (workspacePath: string, signal?: AbortSignal) => {
   const result = await runGit(workspacePath, ['rev-parse', '--show-toplevel'], {
     allowFailure: true,
+    signal,
   })
 
   if (result.exitCode !== 0) {
@@ -1335,7 +1530,11 @@ const inspectResolvedGitWorkspace = async (
   repoRoot: string,
   options?: InspectGitWorkspaceOptions,
 ): Promise<GitStatus> => {
-  const statusResult = await runGit(repoRoot, ['status', '--branch', '--porcelain=v1', '--untracked-files=all'])
+  const statusResult = await runGit(
+    repoRoot,
+    ['status', '--branch', '--porcelain=v1', '--untracked-files=all'],
+    { signal: options?.signal },
+  )
   const lines = statusResult.stdout
     .split(/\r?\n/)
     .map((line) => line.trimEnd())
@@ -1373,7 +1572,7 @@ export const inspectGitWorkspace = async (
   workspacePath: string,
   options?: InspectGitWorkspaceOptions,
 ): Promise<GitStatus> => {
-  const repoRoot = await getRepositoryRoot(workspacePath)
+  const repoRoot = await getRepositoryRoot(workspacePath, options?.signal)
 
   if (!repoRoot) {
     return {
@@ -1430,10 +1629,59 @@ export const initGitWorkspace = async (workspacePath: string): Promise<GitOperat
   }
 }
 
+// 症状 — 发消息像卡住：点了发送之后窗口整片不响应，最终被 Windows 当无响应进程杀掉。
+// 根因 — 这条路径在**每次发消息前**都跑，里面的 `git status --untracked-files=all` 无上界，
+//   而整条路径此前完全没有超时保护；2026-08-12 实测单次 git spawn 最坏 6910ms，足以单独
+//   触发 Windows 的无响应判定。
+// 为什么是安静返回 null 而不是抛错 — 这份基线只用于回合结束的兜底改动卡。少显示一点
+//   diff 远好过让用户发不出消息，所以超时必须降级成"这轮没有基线"，绝不能变成弹窗或
+//   阻塞发送；诊断信息只留在返回值形状里（null）而不是错误路径。
+// 为什么不取更小的值（先后试过 8s / 15s，都被实测打回） — 降级的代价是这一轮丢掉兜底
+//   改动卡，所以阈值必须**远离正常耗时分布**（同 pitfall 243 的教训：兜底值落在正常耗时
+//   中间 = 正常波动就触发）。2026-08-12 在有负载的本机上实测：一个只有 1~2 个文件的临时
+//   仓库，这条路径跑到 19s，git-workspace.test.ts 里单条真实 git 用例甚至跑到 90s。
+//   这里要的是"有上界"（此前是无穷，一个卡住的 git 能让回合永远等下去），不是调紧。
+export const captureWorkspaceSnapshotTimeoutMs = 60_000
+
+const createGitDeadlineSignal = (timeoutMs?: number, external?: AbortSignal) => {
+  const bounded = timeoutMs !== undefined && Number.isFinite(timeoutMs) && timeoutMs > 0
+    ? AbortSignal.timeout(timeoutMs)
+    : undefined
+
+  if (bounded && external) {
+    return AbortSignal.any([bounded, external])
+  }
+
+  return bounded ?? external
+}
+
 export const captureWorkspaceSnapshot = async (
   workspacePath: string,
+  options?: CaptureWorkspaceSnapshotOptions,
 ): Promise<WorkspaceSnapshot | null> => {
-  const status = await inspectGitWorkspace(workspacePath, { includeChangePreviews: false })
+  const signal = createGitDeadlineSignal(
+    options?.timeoutMs ?? captureWorkspaceSnapshotTimeoutMs,
+    options?.signal,
+  )
+
+  try {
+    return await captureWorkspaceSnapshotWithin(workspacePath, signal)
+  } catch {
+    return null
+  }
+}
+
+const captureWorkspaceSnapshotWithin = async (
+  workspacePath: string,
+  signal?: AbortSignal,
+): Promise<WorkspaceSnapshot | null> => {
+  const status = await inspectGitWorkspace(workspacePath, {
+    includeChangePreviews: false,
+    // 这份快照只读 isRepository / repoRoot / changes，`git log -1` 拿的 lastCommit
+    // 从未被用到——每次发消息白白多一次主线程同步 spawn。
+    includeRepositoryDetails: false,
+    signal,
+  })
 
   if (!status.isRepository) {
     return null
@@ -1449,7 +1697,7 @@ export const captureWorkspaceSnapshot = async (
   )
 
   for (const change of prioritizedChanges) {
-    if (retainedFiles >= workspaceSnapshotMaxFiles) {
+    if (retainedFiles >= workspaceSnapshotMaxFiles || signal?.aborted) {
       break
     }
 
@@ -1537,7 +1785,29 @@ export const diffWorkspaceSnapshot = async (
     return { files: [] }
   }
 
-  const currentStatus = await inspectGitWorkspace(workspacePath, { includeChangePreviews: false })
+  // 症状 — 上一轮的收尾 diff 超时后那一串 git 还在跑，和下一轮的 diff 叠加。
+  // 根因 — chat-manager 的硬超时曾只是 Promise.race，既不 abort 也不 kill；现在它传
+  //   AbortSignal 进来，取消必须在每个 await 边界生效，否则最多还会再派生 3×256 个
+  //   子进程（每次 spawn 都是主线程同步阻塞，2026-08-12 实测最坏单次 6910ms）。
+  // 为什么是"返回已攒到的结果"而不是抛错 — 取消是我们自己发起的，调用方要的是安静
+  //   降级（少几个改动文件），抛错会让收尾路径把整轮 edits 都丢掉。
+  const signal = limits.signal
+
+  if (signal?.aborted) {
+    return { files: [] }
+  }
+
+  let currentStatus: GitStatus
+  try {
+    currentStatus = await inspectGitWorkspace(workspacePath, {
+      includeChangePreviews: false,
+      // 与快照同理：这条路径只用 repoRoot / changes，`git log -1` 是白跑的一次 spawn。
+      includeRepositoryDetails: false,
+      signal,
+    })
+  } catch {
+    return { files: [] }
+  }
 
   if (!currentStatus.isRepository || currentStatus.repoRoot !== snapshot.repoRoot) {
     return { files: [] }
@@ -1563,8 +1833,27 @@ export const diffWorkspaceSnapshot = async (
   )
   let retainedPatchBytes = 0
   let retainedDetailFiles = 0
+  // HEAD 里每个文件的大小此前是逐文件一次 `git cat-file -s`，256 个变更文件就是
+  // 最多 256 次主线程同步 spawn。`ls-tree -r -l -z HEAD` 一次拿全（预览路径早就
+  // 这么做了），语义完全一致：两者都返回 HEAD 里该 blob 的字节数。惰性求值，
+  // 只有真需要 HEAD 基线的那一轮才付这一次 spawn 的钱。
+  let headFileSizes: Map<string, number> | null | undefined
+  const getHeadFileSize = async (relativePath: string) => {
+    const normalizedPath = relativePath.replace(/\\/g, '/')
+
+    if (headFileSizes === undefined) {
+      headFileSizes = await readHeadFileSizes(snapshot.repoRoot, signal)
+    }
+
+    return headFileSizes?.get(normalizedPath)
+      ?? (headFileSizes ? 0 : await readHeadFileSize(snapshot.repoRoot, normalizedPath, signal))
+  }
 
   for (const change of currentStatus.changes) {
+    if (signal?.aborted) {
+      break
+    }
+
     if (!isChangeTouched(change)) {
       continue
     }
@@ -1604,7 +1893,7 @@ export const diffWorkspaceSnapshot = async (
     const needsHeadBaseline =
       !snapshotFile && change.kind !== 'untracked' && change.kind !== 'added'
     const headFileSize = needsHeadBaseline
-      ? await readHeadFileSize(snapshot.repoRoot, change.originalPath ?? change.path)
+      ? await getHeadFileSize(change.originalPath ?? change.path)
       : 0
     if (headFileSize > maxFileBytes) {
       editedFiles.push(createOmittedEditedFile(change, 'file-too-large'))
@@ -1616,13 +1905,14 @@ export const diffWorkspaceSnapshot = async (
       ? snapshotFile.content
       : change.kind === 'untracked' || change.kind === 'added'
         ? null
-        : await readHeadFile(snapshot.repoRoot, change.originalPath ?? change.path)
+        : await readHeadFile(snapshot.repoRoot, change.originalPath ?? change.path, signal)
 
     const patch = await createPatch(
       snapshotFile?.originalPath ?? change.originalPath ?? change.path,
       baselineContent,
       change.path,
       currentContent,
+      signal,
     )
 
     if (!patch) {
@@ -1649,6 +1939,10 @@ export const diffWorkspaceSnapshot = async (
   }
 
   for (const snapshotFile of Object.values(snapshot.files)) {
+    if (signal?.aborted) {
+      break
+    }
+
     if (handledSnapshotPaths.has(snapshotFile.path)) {
       continue
     }
@@ -1687,6 +1981,7 @@ export const diffWorkspaceSnapshot = async (
       snapshotFile.content,
       snapshotFile.path,
       currentContent,
+      signal,
     )
 
     if (!patch) {

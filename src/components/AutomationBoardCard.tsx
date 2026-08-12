@@ -1,5 +1,10 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import type { ButtonHTMLAttributes, DragEvent, KeyboardEvent } from 'react'
+import type {
+  ButtonHTMLAttributes,
+  ClipboardEvent,
+  DragEvent,
+  KeyboardEvent,
+} from 'react'
 
 import { getLocaleText } from '../../shared/i18n'
 import { MODEL_OPTIONS, isModelPickerOptionVisible } from '../../shared/models'
@@ -10,8 +15,14 @@ import type {
   AutomationBoardLane,
   AutomationBoardTemplate,
   ChatCard,
+  ImageAttachment,
   Provider,
 } from '../../shared/schema'
+import {
+  promoteDraftAttachment,
+  type PendingComposerAttachment,
+} from './composer-draft-attachments'
+import { collectPastedImageFiles, uploadPendingImage } from './composer-image-paste'
 import { clearDragPayload, readDragPayload, writeDragPayload } from '../dnd'
 import {
   ChevronDownIcon,
@@ -54,9 +65,17 @@ export type AutomationBoardCardProps = {
   board: AutomationBoard
   cards: Record<string, ChatCard>
   templates: AutomationBoardTemplate[]
+  /** 这一列的 provider/model，只作为「加入待命」那个选择器的初值。 */
+  defaultProvider: Provider
+  defaultModel: string
   wakeTimerEnabled: boolean
   repeatLoopEnabled: boolean
-  onCreateItem: (lane: AutomationBoardLane, requirement: string, index?: number) => void
+  onCreateItem: (
+    lane: AutomationBoardLane,
+    requirement: string,
+    index?: number,
+    options?: { provider: Provider; model: string; attachments?: ImageAttachment[] },
+  ) => void
   onMoveItem: (cardId: string, lane: AutomationBoardLane, index?: number) => void
   onPopOutItem: (cardId: string) => void
   onAbsorbTab: (
@@ -609,6 +628,14 @@ const AutomationBoardCardView = (props: AutomationBoardCardProps) => {
   } = props
   const text = getLocaleText(language)
   const [draft, setDraft] = useState('')
+  // 选择只活在这张看板卡的生命周期里：它是"我接下来要加的几项用什么模型"的
+  // 临时意图，落盘反而会让用户下次打开时被上次的一次性选择绑住。
+  const [draftModelValue, setDraftModelValue] = useState(
+    () => `${props.defaultProvider}::${props.defaultModel}`,
+  )
+  // 待命草稿的粘贴图片。需求经常本身就是一张截图，只能打字等于逼用户先建卡
+  // 再去卡里粘一遍。
+  const [draftImages, setDraftImages] = useState<PendingComposerAttachment[]>([])
   const [dropLane, setDropLane] = useState<AutomationBoardLane | null>(null)
   const [rejectedDrop, setRejectedDrop] = useState(false)
   // 同时只展开一个模板的配置面板：模板条是横向滚动的一行，两个面板同时展开
@@ -707,14 +734,105 @@ const AutomationBoardCardView = (props: AutomationBoardCardProps) => {
     clearHints()
   }
 
+  // 存档里的模型可能已经从选单里下架（或是用户手写的自定义型号），那种 value
+  // 交给原生 select 会静默回落到**第一个** option —— 显示的和实际用的对不上。
+  // 回落到同 provider 的"用默认模型"那一项，至少 CLI 是对的。
+  const composeModelValue = modelPickerOptions.some(
+    (option) => `${option.provider}::${option.model}` === draftModelValue,
+  )
+    ? draftModelValue
+    : `${props.defaultProvider}::`
+
+  /**
+   * 粘贴即后台上传，和聊天 composer 同一套语义：本组件随时可能被切走卸载，
+   * 只留一个 `File` 在 state 里等到提交的话，切一下 tab 图片就没了。
+   */
+  const handleDraftPaste = (event: ClipboardEvent<HTMLTextAreaElement>) => {
+    const files = collectPastedImageFiles(event.clipboardData?.items ?? null)
+    if (files.length === 0) {
+      return
+    }
+
+    event.preventDefault()
+
+    const entries: PendingComposerAttachment[] = files.map((file) => ({
+      kind: 'local',
+      id: crypto.randomUUID(),
+      file,
+      previewUrl: URL.createObjectURL(file),
+    }))
+
+    setDraftImages((current) => [...current, ...entries])
+
+    for (const entry of entries) {
+      void uploadPendingImage(entry)
+        .then((uploaded) => {
+          setDraftImages(
+            (current) =>
+              promoteDraftAttachment(
+                current,
+                entry.id,
+                uploaded,
+                // 继续用本地 objectURL 当预览：换成 attachment:// 会让缩略图
+                // 在上传完成的那一帧闪一下白。
+                entry.previewUrl,
+              ).next as PendingComposerAttachment[],
+          )
+        })
+        // 上传失败不该吃掉这张图：条目留在 local 态，提交时还会再传一次。
+        .catch(() => undefined)
+    }
+  }
+
+  const removeDraftImage = (attachmentId: string) => {
+    setDraftImages((current) => {
+      const target = current.find((entry) => entry.id === attachmentId)
+      if (target?.kind === 'local') {
+        URL.revokeObjectURL(target.previewUrl)
+      }
+      return current.filter((entry) => entry.id !== attachmentId)
+    })
+  }
+
   const submitDraft = () => {
     const trimmed = draft.trim()
     if (!trimmed) {
       return
     }
 
+    const [provider, model] = composeModelValue.split('::')
+    const options = {
+      provider: (provider as Provider) ?? props.defaultProvider,
+      model: model ?? '',
+    }
+    const images = draftImages
+
     setDraft('')
-    onCreateItem('standby', trimmed)
+    setDraftImages([])
+
+    if (images.length === 0) {
+      onCreateItem('standby', trimmed, undefined, options)
+      return
+    }
+
+    void (async () => {
+      // 后台上传大概率已经跑完（uploadPendingImage 对 uploaded 条目是直通），
+      // 这里只是把还没传完 / 传失败的补上。
+      const uploaded = await Promise.all(
+        images.map((entry) => uploadPendingImage(entry).catch(() => null)),
+      )
+
+      for (const entry of images) {
+        if (entry.kind === 'local') {
+          URL.revokeObjectURL(entry.previewUrl)
+        }
+      }
+
+      onCreateItem('standby', trimmed, undefined, {
+        ...options,
+        attachments: uploaded.filter((entry): entry is ImageAttachment => entry !== null),
+      })
+    })()
   }
 
   return (
@@ -784,6 +902,7 @@ const AutomationBoardCardView = (props: AutomationBoardCardProps) => {
                   rows={2}
                   placeholder={text.automationBoardNewRequirementPlaceholder}
                   onChange={(event) => setDraft(event.target.value)}
+                  onPaste={handleDraftPaste}
                   onKeyDown={(event) => {
                     if (event.key === 'Enter' && !event.shiftKey) {
                       event.preventDefault()
@@ -791,9 +910,41 @@ const AutomationBoardCardView = (props: AutomationBoardCardProps) => {
                     }
                   }}
                 />
-                <BoardButton tone="primary" onClick={submitDraft} disabled={!draft.trim()}>
-                  {text.automationBoardAddRequirement}
-                </BoardButton>
+                {draftImages.length > 0 ? (
+                  <ul className="automation-board-compose-attachments">
+                    {draftImages.map((entry) => (
+                      <li key={entry.id}>
+                        <img src={entry.previewUrl} alt="" />
+                        <IconButton
+                          label={text.removeAttachment}
+                          onClick={() => removeDraftImage(entry.id)}
+                        >
+                          <CloseIcon />
+                        </IconButton>
+                      </li>
+                    ))}
+                  </ul>
+                ) : null}
+                <div className="automation-board-lane-compose-actions">
+                  <select
+                    className="automation-board-compose-model"
+                    aria-label={text.automationBoardTemplateModelLabel}
+                    value={composeModelValue}
+                    onChange={(event) => setDraftModelValue(event.target.value)}
+                  >
+                    {modelPickerOptions.map((option) => (
+                      <option
+                        key={`${option.provider}::${option.model}`}
+                        value={`${option.provider}::${option.model}`}
+                      >
+                        {option.label}
+                      </option>
+                    ))}
+                  </select>
+                  <BoardButton tone="primary" onClick={submitDraft} disabled={!draft.trim()}>
+                    {text.automationBoardAddRequirement}
+                  </BoardButton>
+                </div>
               </div>
             ) : (
               <p className="automation-board-lane-hint">{laneView.hint}</p>

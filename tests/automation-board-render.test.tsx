@@ -98,6 +98,8 @@ const renderBoard = (overrides: Partial<AutomationBoardCardProps> = {}) => {
     board,
     cards,
     templates: [supervisorTemplate, template],
+    defaultProvider: 'codex',
+    defaultModel: DEFAULT_CODEX_MODEL,
     wakeTimerEnabled: true,
     repeatLoopEnabled: true,
     onCreateItem: noop,
@@ -307,6 +309,24 @@ describe('AutomationBoardCard renders', () => {
     assert.notEqual(
       text.automationBoardItemNudgePlaceholder,
       text.automationBoardNewRequirementPlaceholder,
+    )
+  })
+
+  // 加入待命时就得能定这一项用哪个 CLI/模型 —— 否则只能等它建出来再逐张改，
+  // 而看板的整个意义就是不用逐张管。
+  it('lets the standby composer pick the model up front', () => {
+    const html = renderBoard({ defaultProvider: 'claude', defaultModel: '' })
+
+    assert.match(html, /automation-board-compose-model/)
+    assert.match(html, /<option[^>]*value="claude::"[^>]*selected/)
+  })
+
+  it('defaults the standby composer to the column model', () => {
+    const html = renderBoard()
+
+    assert.match(
+      html,
+      new RegExp(`<option[^>]*value="codex::${DEFAULT_CODEX_MODEL}"[^>]*selected`),
     )
   })
 

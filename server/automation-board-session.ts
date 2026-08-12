@@ -43,10 +43,11 @@ const mirrors = new Map<string, WorkspaceSessionMirror>()
 
 let bridge: WorkspaceAdminBridge | null = null
 let bridgeStartup: Promise<WorkspaceAdminBridgeRuntimeInfo> | null = null
-let commandDispatcher: ((command: WorkspaceAdminCommand) => boolean) | null = null
+// 允许 Promise：后端搬进 utilityProcess 后投递结果只能异步回来（同步实现照旧可用）。
+let commandDispatcher: ((command: WorkspaceAdminCommand) => boolean | Promise<boolean>) | null = null
 
 export const setWorkspaceAdminCommandDispatcher = (
-  dispatcher: ((command: WorkspaceAdminCommand) => boolean) | null,
+  dispatcher: ((command: WorkspaceAdminCommand) => boolean | Promise<boolean>) | null,
 ) => {
   commandDispatcher = dispatcher
 }

@@ -1,3 +1,4 @@
+import { formatLocalizedDateTime } from '../../shared/i18n'
 import type { AppLanguage, GitChange } from '../../shared/schema'
 
 export const errorMessage = (error: unknown, fallback: string) =>
@@ -29,13 +30,12 @@ export const statusBadge = (change: GitChange) => {
   return change.stagedStatus !== ' ' ? change.stagedStatus : change.workingTreeStatus
 }
 
+// 和 formatLocalizedDateTime 的 locale 与 options 逐字段相同，只是各自
+// `new Intl.DateTimeFormat` 了一遍 —— 而 Intl 构造要现加载 locale 数据，
+// 比 format() 贵几十倍（2026-08-11 实测 48.9x）。合并到同一个带缓存的实现。
+// 等价性由 tests/i18n-datetime-format-caching.test.ts 拿旧写法逐样本比对守着。
 export const commitTimestamp = (language: AppLanguage, value: string) =>
-  new Intl.DateTimeFormat(language === 'en' ? 'en' : 'zh-CN', {
-    month: 'short',
-    day: 'numeric',
-    hour: '2-digit',
-    minute: '2-digit',
-  }).format(new Date(value))
+  formatLocalizedDateTime(language, value)
 
 export const changeMatchesFilter = (change: GitChange, filterValue: string) => {
   const query = filterValue.trim().toLowerCase()

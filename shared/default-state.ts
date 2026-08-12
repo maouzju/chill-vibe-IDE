@@ -1166,7 +1166,9 @@ export const createDefaultAutomationBoardSupervisorTemplate = (
     id: automationBoardSupervisorTemplateId,
     name: text.automationBoardSupervisorTemplateName,
     requirement: defaultAutomationBoardSupervisorRequirement,
-    provider: 'claude',
+    // 看板卡本身就是 codex 侧的工具卡，默认监工跟着走 codex；`model: ''` 表示
+    // "用用户配好的默认模型"，别在这里钉死某个具体型号。
+    provider: 'codex',
     model: '',
     reasoningEffort: 'max',
     thinkingEnabled: true,

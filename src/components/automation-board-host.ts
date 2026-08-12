@@ -2,6 +2,8 @@ import type {
   AutomationBoardLane,
   AutomationBoardTemplate,
   ChatCard,
+  ImageAttachment,
+  Provider,
 } from '../../shared/schema'
 import type { AutomationBoardTabDropSource } from './AutomationBoardCard'
 
@@ -20,6 +22,11 @@ export type AutomationBoardActions = {
     lane: AutomationBoardLane,
     requirement: string,
     index?: number,
+    /**
+     * 「加入待命」时当场选定的 CLI/模型（不给就沿用这一列的默认），以及粘在
+     * 需求上的图片。待命项还没开跑，图片先存进卡片的 draftAttachments。
+     */
+    options?: { provider: Provider; model: string; attachments?: ImageAttachment[] },
   ) => void
   moveItem: (
     columnId: string,

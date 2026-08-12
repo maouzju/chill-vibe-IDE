@@ -57,7 +57,9 @@ export type RemoteMonitorDeps = {
   listActiveStreams: () => ActiveStreamView[]
   // 把手机写命令递给渲染进程执行；返回 false 表示当前没有任何渲染窗口
   // 能接收（HTTP 层回 503 让手机端稍后重试）。
-  dispatchCommand: (command: RemoteMonitorCommand) => boolean
+  // 允许返回 Promise：宿主把后端搬进 utilityProcess 后，"哪个窗口收下了"
+  // 只有主进程知道，投递结果只能异步回来（同步实现继续原样可用）。
+  dispatchCommand: (command: RemoteMonitorCommand) => boolean | Promise<boolean>
 }
 
 export type RemoteMonitorRuntimeInfo = {
@@ -319,6 +321,62 @@ export const createRemoteMonitorManager = (deps: RemoteMonitorDeps) => {
     sseClients.delete(response)
   }
 
+  // 症状：写命令送不到时手机端仍收到 202「已接受」，用户以为发出去了其实没有。
+  // 根因：2026-08-12 —— 后端要整体搬进 utilityProcess（同一批 git 操作跑主进程时
+  //       窗口单次停摆 6827ms / 11 次超 1s / 2 次超 5s，搬进 utilityProcess 只剩 58ms），
+  //       跨进程后 dispatchCommand 只能返回 Promise，而 `!promise` 恒为 false → 恒 202。
+  // 被否决：让主进程预推"当前有没有窗口"的缓存标志、保住同步签名 —— 那是猜测不是
+  //         投递事实，窗口刚崩的一瞬会把 503 静默说成 202，正是要根除的静默错分支。
+  const handleActionCommand = async (
+    request: http.IncomingMessage,
+    response: http.ServerResponse,
+  ) => {
+    let body: string
+    try {
+      body = await readRequestBody(request)
+    } catch {
+      response.writeHead(400, { 'Content-Type': 'application/json; charset=utf-8' })
+      response.end(JSON.stringify({ message: 'Unreadable request body.' }))
+      return
+    }
+
+    let parsedBody: unknown
+    try {
+      parsedBody = JSON.parse(body)
+    } catch {
+      response.writeHead(400, { 'Content-Type': 'application/json; charset=utf-8' })
+      response.end(JSON.stringify({ message: 'Invalid JSON body.' }))
+      return
+    }
+
+    const command = remoteMonitorCommandSchema.safeParse(parsedBody)
+    if (!command.success) {
+      response.writeHead(400, { 'Content-Type': 'application/json; charset=utf-8' })
+      response.end(JSON.stringify({ message: 'Invalid command payload.' }))
+      return
+    }
+
+    let dispatched = false
+    try {
+      dispatched = await deps.dispatchCommand(command.data)
+    } catch {
+      // 投递本身失败＝命令没送到，与"没有窗口"同一类，仍回 503 让手机端重试；
+      // 关键是必须有响应——跨进程调用 reject 时绝不能让这个请求挂死。
+      response.writeHead(503, { 'Content-Type': 'application/json; charset=utf-8' })
+      response.end(JSON.stringify({ message: 'Command dispatch failed.' }))
+      return
+    }
+
+    if (!dispatched) {
+      response.writeHead(503, { 'Content-Type': 'application/json; charset=utf-8' })
+      response.end(JSON.stringify({ message: 'No desktop window can execute commands right now.' }))
+      return
+    }
+
+    response.writeHead(202, { 'Content-Type': 'application/json; charset=utf-8' })
+    response.end(JSON.stringify({ accepted: true }))
+  }
+
   const handleRequest = (request: http.IncomingMessage, response: http.ServerResponse, token: string) => {
     const url = new URL(request.url ?? '/', 'http://localhost')
 
@@ -336,38 +394,15 @@ export const createRemoteMonitorManager = (deps: RemoteMonitorDeps) => {
         return
       }
 
-      void readRequestBody(request)
-        .then((body) => {
-          let parsedBody: unknown
-          try {
-            parsedBody = JSON.parse(body)
-          } catch {
-            response.writeHead(400, { 'Content-Type': 'application/json; charset=utf-8' })
-            response.end(JSON.stringify({ message: 'Invalid JSON body.' }))
-            return
-          }
-
-          const command = remoteMonitorCommandSchema.safeParse(parsedBody)
-          if (!command.success) {
-            response.writeHead(400, { 'Content-Type': 'application/json; charset=utf-8' })
-            response.end(JSON.stringify({ message: 'Invalid command payload.' }))
-            return
-          }
-
-          const dispatched = deps.dispatchCommand(command.data)
-          if (!dispatched) {
-            response.writeHead(503, { 'Content-Type': 'application/json; charset=utf-8' })
-            response.end(JSON.stringify({ message: 'No desktop window can execute commands right now.' }))
-            return
-          }
-
-          response.writeHead(202, { 'Content-Type': 'application/json; charset=utf-8' })
-          response.end(JSON.stringify({ accepted: true }))
-        })
-        .catch(() => {
-          response.writeHead(400, { 'Content-Type': 'application/json; charset=utf-8' })
-          response.end(JSON.stringify({ message: 'Unreadable request body.' }))
-        })
+      void handleActionCommand(request, response).catch(() => {
+        // 最后一道兜底：无论如何都要把这个请求结掉，不留悬挂连接。
+        if (!response.headersSent) {
+          response.writeHead(500, { 'Content-Type': 'application/json; charset=utf-8' })
+          response.end(JSON.stringify({ message: 'Command handling failed.' }))
+          return
+        }
+        response.end()
+      })
       return
     }
 

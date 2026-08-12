@@ -41,6 +41,7 @@ import type {
   AutomationBoardActions,
   AutomationBoardWorkspaceView,
 } from './automation-board-host'
+import { resolveTabAbsorbTarget } from './pane-tab-board-absorb'
 import { decideDragStartActiveTabRestore } from './pane-tab-drag-view'
 import { decideMisroutedTabPointerRescue, isPointerWithinRect } from './pane-tab-rescue'
 import { decideTabStripWheelScroll } from './pane-tab-wheel'
@@ -51,7 +52,7 @@ import {
 } from '../diagnostics/stuck-pane-forensics'
 import type { QueuedSendSummary, SendMessageOptions } from './deferred-send-queue'
 import { arePaneViewPropsEqual, cardKeepsPaneRuntimeWhenInactive } from './layout-memoization'
-import { getAutomationBoard } from '../../shared/default-state'
+import { getAutomationBoard, getLayoutTabIds } from '../../shared/default-state'
 import { getAutoReadCardId } from './pane-read-state'
 import { syncMessageListElementToBottom } from './pane-scroll'
 import { ChatCard } from './ChatCard'
@@ -758,6 +759,29 @@ const PaneViewView = ({
     pendingTabSwitchRef.current = null
   }
 
+  /**
+   * 把为了亮出看板泳道而让位的那个 tab 切回来。
+   *
+   * 晚一帧再判断是刻意的：`drop` 先于 `dragend` 派发，而 drop 里的 dispatch 要等
+   * React 提交完这次渲染，本函数闭包里的 `pane` 可能还是吸收发生之前那份。用
+   * `paneStateRef` 读提交后的真实 tabs，才能区分「拖拽半途取消，该切回去」和
+   * 「已经被看板吸收，切回去就是切到一个不存在的 tab」。
+   */
+  const restoreViewAfterBoardReveal = () => {
+    const restoreTabId = boardRevealRestoreRef.current
+    boardRevealRestoreRef.current = null
+    if (!restoreTabId) {
+      return
+    }
+
+    window.requestAnimationFrame(() => {
+      const current = paneStateRef.current
+      if (current.tabs.includes(restoreTabId) && current.activeTabId !== restoreTabId) {
+        onSetActiveTab(current.id, restoreTabId)
+      }
+    })
+  }
+
   const handleTabDragStart = (tabId: string) => (event: DragEvent<HTMLButtonElement>) => {
     const card = column.cards[tabId]
     if (!card) {
@@ -767,9 +791,9 @@ const PaneViewView = ({
 
     cancelPendingTabSwitch()
 
-    // 拖动期间 pane 必须还显示手势开始前的东西，否则「把 chat tab 拖进本 pane 的
-    // 自动化看板泳道」永远做不到：落点已经被自己这一拖切没了。判据见
-    // decideDragStartActiveTabRestore。
+    // 拖动期间 pane 必须显示得出落点，否则「把 chat tab 拖进本 pane 的自动化看板
+    // 泳道」永远做不到：落点要么被自己这一拖切没了，要么（拖的就是当前视图时）
+    // 从一开始就没露出来。两种判据都在 decideDragStartActiveTabRestore 里。
     const gesture = tabPointerDownRef.current
     const restoreTabId = decideDragStartActiveTabRestore({
       draggedTabId: tabId,
@@ -778,8 +802,15 @@ const PaneViewView = ({
         : null,
       currentActiveTabId: pane.activeTabId,
       paneTabIds: pane.tabs,
+      boardTabIds: pane.tabs.filter((paneTabId) =>
+        Boolean(getAutomationBoard(column.cards[paneTabId])),
+      ),
     })
     if (restoreTabId) {
+      // 只有「为了亮出看板而让位」需要还原：撤回手势自己造成的切换本来就是回到
+      // 用户原本在看的东西，再还原一次等于把它又切走。
+      boardRevealRestoreRef.current =
+        pane.activeTabId === tabId && restoreTabId !== tabId ? tabId : null
       onSetActiveTab(pane.id, restoreTabId)
     }
 
@@ -828,6 +859,16 @@ const PaneViewView = ({
     activeTabIdAtPointerDown: string | null
   } | null>(null)
   const suppressNextTabClickRef = useRef<string | null>(null)
+  // 为了亮出看板泳道而临时切走的那个 tab。松手时如果它还在本 pane 里（没被看板
+  // 吸收掉），必须切回去 —— 否则每一次半途取消的拖拽都会偷换用户的视图。
+  const boardRevealRestoreRef = useRef<string | null>(null)
+  // 提交后的 pane 快照，供 dragend 的还原判断使用（详见 restoreViewAfterBoardReveal）。
+  // 必须走 layout effect 而不是渲染期赋值：渲染期改 ref 会被 react-hooks/refs 拦下，
+  // 而 rAF 回调总在 layout effect 之后跑，拿到的仍是最新那一份。
+  const paneStateRef = useRef(pane)
+  useLayoutEffect(() => {
+    paneStateRef.current = pane
+  }, [pane])
 
   const activateTab = (tabId: string) => {
     if (pane.activeTabId === tabId) {
@@ -1168,7 +1209,28 @@ const PaneViewView = ({
         const tabIndex = pane.tabs.indexOf(contextMenu.tabId)
         const tabsAfter = pane.tabs.slice(tabIndex + 1)
         const otherTabs = pane.tabs.filter((id) => id !== contextMenu.tabId)
+        // 「收进看板」：拖回去的那条路要求泳道落点当场可见，这条不要求。判据与
+        // 泳道选择见 resolveTabAbsorbTarget。
+        const absorbTarget = automationBoardActions
+          ? resolveTabAbsorbTarget({
+              tabId: contextMenu.tabId,
+              paneTabIds: pane.tabs,
+              columnTabIds: getLayoutTabIds(column.layout),
+              cards: column.cards,
+            })
+          : null
         return {
+          absorbIntoBoard: absorbTarget
+            ? () => {
+                automationBoardActions?.absorbTab(
+                  column.id,
+                  absorbTarget.boardCardId,
+                  { columnId: column.id, paneId: pane.id, tabId: contextMenu.tabId },
+                  absorbTarget.lane,
+                )
+                setContextMenu(null)
+              }
+            : null,
           close: () => {
             onCloseTab(pane.id, contextMenu.tabId)
             setContextMenu(null)
@@ -1320,6 +1382,7 @@ const PaneViewView = ({
                 onDragStart={handleTabDragStart(tabId)}
                 onDragEnd={() => {
                   suppressNextTabClickRef.current = null
+                  restoreViewAfterBoardReveal()
                   clearDragPayload()
                   clearHints()
                 }}
@@ -1480,10 +1543,19 @@ const PaneViewView = ({
                   board: getAutomationBoard(card)!,
                   cards: column.cards,
                   templates: automationBoardWorkspace.templates,
+                  defaultProvider: column.provider,
+                  defaultModel: column.model,
                   wakeTimerEnabled: wakeTimerEnabled === true,
                   repeatLoopEnabled: repeatLoopEnabled === true,
-                  onCreateItem: (lane, requirement, index) =>
-                    automationBoardActions.createItem(column.id, card.id, lane, requirement, index),
+                  onCreateItem: (lane, requirement, index, options) =>
+                    automationBoardActions.createItem(
+                      column.id,
+                      card.id,
+                      lane,
+                      requirement,
+                      index,
+                      options,
+                    ),
                   onMoveItem: (cardId, lane, index) =>
                     automationBoardActions.moveItem(column.id, card.id, cardId, lane, index),
                   onPopOutItem: (cardId) =>
@@ -1642,6 +1714,14 @@ const PaneViewView = ({
           </button>
           <button type="button" onClick={contextMenuActions.splitDown}>
             {language === 'zh-CN' ? '\u62c6\u5206\u5230\u4e0b\u65b9' : 'Split Down'}
+          </button>
+          <hr className="pane-tab-context-divider" />
+          <button
+            type="button"
+            disabled={!contextMenuActions.absorbIntoBoard}
+            onClick={contextMenuActions.absorbIntoBoard ?? undefined}
+          >
+            {text.automationBoardAbsorbTabAction}
           </button>
         </div>
       ) : null}

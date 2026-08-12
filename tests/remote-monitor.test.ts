@@ -42,6 +42,7 @@ type Harness = {
 const createHarness = (options?: {
   activeStreams?: Array<{ streamId: string; cardId?: string; backlog: Array<{ event: string; data: unknown }> }>
   dispatchResult?: boolean
+  dispatch?: (command: RemoteMonitorCommand) => boolean | Promise<boolean>
   cardHistory?: Record<string, ReturnType<typeof buildRemoteMonitorCardHistory>>
 }): Harness => {
   const listeners = new Set<(event: ChatStreamTapEvent) => void>()
@@ -62,6 +63,9 @@ const createHarness = (options?: {
       })),
     dispatchCommand: (command) => {
       dispatchedCommands.push(command)
+      if (options?.dispatch) {
+        return options.dispatch(command)
+      }
       return options?.dispatchResult ?? true
     },
   })
@@ -547,6 +551,66 @@ test('remote monitor actions endpoint validates, dispatches, and stays token-gua
     assert.equal(postElsewhere.status, 405)
 
     assert.equal(harness.dispatchedCommands.length, 1)
+  } finally {
+    await harness.manager.stop()
+  }
+})
+
+// 后端搬进 utilityProcess 后，"有没有窗口收下这条命令" 只有主进程知道，
+// 所以 dispatchCommand 必然变成跨进程的异步调用。下面三条钉住 async 语义：
+// 送不到仍是 503、送到了仍是 202、dispatcher 抛错必须有明确响应而不是挂死。
+test('remote monitor actions endpoint awaits an async dispatcher before answering', async () => {
+  const harness = createHarness({
+    dispatch: async (command) => {
+      await new Promise((resolve) => setTimeout(resolve, 5))
+      return command.type !== 'stop-stream'
+    },
+  })
+  const info = await startOnLoopback(harness)
+  const base = `http://127.0.0.1:${info.port}/api/actions?token=${info.token}`
+
+  try {
+    const delivered = await fetch(base, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ type: 'send-message', cardId: 'card-1', prompt: '继续' }),
+      signal: AbortSignal.timeout(5000),
+    })
+    assert.equal(delivered.status, 202, 'a promise that resolves true must still mean accepted')
+    assert.deepEqual(await delivered.json(), { accepted: true })
+
+    const undelivered = await fetch(base, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ type: 'stop-stream', cardId: 'card-1' }),
+      signal: AbortSignal.timeout(5000),
+    })
+    assert.equal(undelivered.status, 503, 'a promise that resolves false must still mean 503')
+  } finally {
+    await harness.manager.stop()
+  }
+})
+
+test('remote monitor actions endpoint answers when the dispatcher rejects', async () => {
+  const harness = createHarness({
+    dispatch: async () => {
+      throw new Error('the desktop bridge is gone')
+    },
+  })
+  const info = await startOnLoopback(harness)
+
+  try {
+    const response = await fetch(`http://127.0.0.1:${info.port}/api/actions?token=${info.token}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ type: 'stop-stream', cardId: 'card-1' }),
+      signal: AbortSignal.timeout(5000),
+    })
+
+    assert.equal(response.status, 503, 'a failed dispatch is an undelivered command, not a 202')
+    const payload = (await response.json()) as { message?: string; accepted?: boolean }
+    assert.notEqual(payload.accepted, true)
+    assert.equal(typeof payload.message, 'string')
   } finally {
     await harness.manager.stop()
   }

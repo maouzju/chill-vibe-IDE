@@ -360,6 +360,8 @@ type LocaleText = {
   automationBoardEmptyLane: string
   automationBoardItemCount: (count: number) => string
   automationBoardPopOutAction: string
+  // 拖出去的反向操作，挂在 tab 右键菜单上：拖回去要求泳道落点当场可见，这条不要求。
+  automationBoardAbsorbTabAction: string
   automationBoardStopAction: string
   automationBoardStartAction: string
   automationBoardDeleteAction: string
@@ -809,6 +811,7 @@ const localeTextByLanguage: Record<AppLanguage, LocaleText> = {
     automationBoardEmptyLane: '把需求或 tab 拖到这里',
     automationBoardItemCount: (count) => `${count} 项`,
     automationBoardPopOutAction: '拖出为独立 tab',
+    automationBoardAbsorbTabAction: '收进自动化看板',
     automationBoardStopAction: '中断',
     automationBoardStartAction: '开始执行',
     automationBoardDeleteAction: '删除需求',
@@ -1272,6 +1275,7 @@ const localeTextByLanguage: Record<AppLanguage, LocaleText> = {
     automationBoardEmptyLane: 'Drop a requirement or a tab here',
     automationBoardItemCount: (count) => `${count} item${count === 1 ? '' : 's'}`,
     automationBoardPopOutAction: 'Pop out as a tab',
+    automationBoardAbsorbTabAction: 'Move into automation board',
     automationBoardStopAction: 'Interrupt',
     automationBoardStartAction: 'Start',
     automationBoardDeleteAction: 'Delete requirement',

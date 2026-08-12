@@ -14515,6 +14515,69 @@ body.is-pane-resizing .split-resize-handle::before {
   border-top: 1px solid var(--line);
 }
 
+/* 模型选择器与「加入待命」同一行：待命道底部这块本来就窄，选择器单独占一行
+   会把泳道再矮一截。按钮是主操作，所以让它吃掉剩余宽度，选择器固定窄。 */
+.automation-board-lane-compose-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.automation-board-lane-compose-actions .btn {
+  flex: 1;
+  min-width: 0;
+}
+
+.automation-board-compose-model {
+  flex: none;
+  max-width: 7.6rem;
+  border: 1px solid var(--line-strong);
+  background: var(--input-strong-bg);
+  color: var(--ink-2);
+  font: inherit;
+  font-size: 11px;
+  padding: 4px 6px;
+}
+
+.automation-board-compose-model:focus {
+  outline: none;
+  border-color: var(--accent-line-strong);
+}
+
+.automation-board-compose-attachments {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.automation-board-compose-attachments li {
+  position: relative;
+  width: 44px;
+  height: 44px;
+}
+
+.automation-board-compose-attachments img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  border: 1px solid var(--line-strong);
+}
+
+/* 删除键压在缩略图右上角：这块区域每多一行就吃掉一行待命项，撑不起独立行。 */
+.automation-board-compose-attachments .icon-btn {
+  position: absolute;
+  top: -4px;
+  right: -4px;
+  width: 16px;
+  height: 16px;
+  padding: 0;
+  background: var(--surface-2);
+  border: 1px solid var(--line-strong);
+}
+
 .automation-board-lane-compose textarea,
 .automation-board-item-nudge textarea,
 .automation-board-template-config textarea {
@@ -14872,8 +14935,12 @@ body.is-pane-resizing .split-resize-handle::before {
   cursor: grabbing;
 }
 
+/* 胶囊总宽是封顶的，名字与模型名在抢这点宽度。默认 flex 规则下先被压扁的
+   是名字（「看板监工」→「看板...」），而模型名反倒完整显示 —— 用户是靠名字
+   认模板的，型号只是佐证。所以名字优先吃宽度，型号先让位。 */
 .automation-board-template-name {
-  min-width: 0;
+  flex: 1 1 auto;
+  min-width: 3.5rem;
   color: var(--ink-2);
   white-space: nowrap;
   overflow: hidden;
@@ -14881,9 +14948,13 @@ body.is-pane-resizing .split-resize-handle::before {
 }
 
 .automation-board-template-model {
+  flex: 0 1 auto;
+  min-width: 0;
   color: var(--ink-4);
   font-size: 10px;
   white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 /* 展开中的胶囊要能被一眼认出来：面板挂在 strip 下方，胶囊与面板之间

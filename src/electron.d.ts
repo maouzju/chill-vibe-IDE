@@ -107,7 +107,10 @@ declare global {
       loadClosedWorkspaceSnapshot?: (request: ClosedWorkspaceLoadRequest) => Promise<ClosedWorkspaceLoadResponse>
       listInternalSessionHistory?: (request: InternalSessionHistoryListRequest) => Promise<InternalSessionHistoryListResponse>
       hideInternalSessionHistory?: (request: InternalSessionHistoryHideRequest) => Promise<void>
-      saveState?: (state: AppState) => Promise<AppState>
+      // Resolves with nothing on purpose: the desktop handler used to return the
+      // whole state, and `ipcMain.handle` cloned that ~1MB payload back to the
+      // renderer on every save even though no caller ever read it (2026-08-12).
+      saveState?: (state: AppState) => Promise<void>
       syncRuntimeSettings?: (settings: AppSettings) => Promise<void>
       setAccessibilitySupport?: (
         enabled: boolean,
@@ -224,11 +227,13 @@ declare global {
       }>
       readGitHeadFile?: (request: GitFilePathRequest) => Promise<GitFileHeadStateResponse>
       readGitFileLineDiff?: (request: GitFilePathRequest) => Promise<GitFileLineDiffResponse>
+      // Explicit subscribe protocol: a serializable result, never a bare
+      // boolean, so a failed arm stays distinguishable across the bridge.
       watchFile?: (request: {
         workspacePath: string
         relativePath: string
         subscriptionId: string
-      }) => Promise<boolean>
+      }) => Promise<{ subscribed: boolean; reason?: string }>
       unwatchFile?: (subscriptionId: string) => Promise<void>
 
       // App Update

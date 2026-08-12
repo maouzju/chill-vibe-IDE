@@ -166,6 +166,9 @@ export const automationBoardItemSchema = z.object({
   // 冗余存一份原始需求是刻意的：监工要"检查每个原始需求"，而
   // card.messages[0] 会被 /compact、消息裁剪和 sidecar 归档拿走。
   requirement: z.string().default(''),
+  // 由哪个模板实例化而来（手动新建的项为空串）。这是模板触发器**防自触发**
+  // 的唯一依据：一个模板触发出来的项跑完时不能再把同一个模板叫起来。
+  templateId: z.string().default(''),
   createdAt: z.string().datetime().optional(),
   // 进入 running 道的时刻，供监工判断"超过半小时没下文"。
   startedAt: z.string().datetime().optional(),
@@ -176,8 +179,6 @@ export type AutomationBoardItem = z.infer<typeof automationBoardItemSchema>
 export const automationBoardSchema = z.object({
   // 泳道内顺序 = 本数组内的相对顺序（按 lane 过滤后保序）。
   items: z.array(automationBoardItemSchema).default([]),
-  supervisorCardId: z.string().default(''),
-  supervisorExpanded: z.boolean().default(false),
 })
 export type AutomationBoard = z.infer<typeof automationBoardSchema>
 
@@ -236,6 +237,10 @@ export const chatCardSchema = z.object({
   // rather than defaulted: every ordinary card would otherwise carry an empty
   // object into state.json for no benefit.
   automationBoard: automationBoardSchema.optional(),
+  // 超管权限：这个会话可以读写**同一工作区列里的其他会话**（列出/鞭策/换道/
+  // 挂唤醒）。任何卡片都能开，默认关。optional 而非 default 的理由同上。
+  // 关闭时 provider 启动里完全没有这组 MCP —— 这是权限边界，不只是优化。
+  adminAccess: z.boolean().optional(),
   messages: z.array(chatMessageSchema).default([]),
   messageCount: z.number().int().nonnegative().optional(),
 })
@@ -716,6 +721,30 @@ export const defaultAutomationBoardSupervisorRequirement =
   '检查当前看板每个原始需求，以及 agent 结尾交付情况，自行决定是否进行鞭策还是将其移动到已完成列。'
   + '如果是 agent 正在等子任务，就过段时间再看看情况，如果他超过半小时没下文，就训斥一下他让他接着做。'
 
+export const automationBoardTriggerKinds = ['last-item-settled'] as const
+export const automationBoardTriggerKindSchema = z.enum(automationBoardTriggerKinds)
+export type AutomationBoardTriggerKind = z.infer<typeof automationBoardTriggerKindSchema>
+
+// 触发器是**模板的一个字段**，不是工作区的全局配置（v1 曾经是）。
+// 触发一次 = 自动执行一次"把这个模板拖进目标泳道"，不引入任何新的执行语义。
+export const automationBoardTemplateTriggerSchema = z.object({
+  enabled: z.boolean().default(false),
+  kind: automationBoardTriggerKindSchema.default('last-item-settled'),
+  // 触发时实例落到哪条道。默认 running = 立即执行。
+  lane: automationBoardLaneSchema.default('running'),
+  // 同一个模板两次触发之间的最小间隔，防抖。
+  minIntervalMinutes: z.number().finite().min(0).max(24 * 60).default(1),
+})
+export type AutomationBoardTemplateTrigger = z.infer<typeof automationBoardTemplateTriggerSchema>
+
+export const createDefaultAutomationBoardTemplateTrigger =
+  (): AutomationBoardTemplateTrigger => ({
+    enabled: false,
+    kind: 'last-item-settled',
+    lane: 'running',
+    minIntervalMinutes: 1,
+  })
+
 export const automationBoardTemplateSchema = z.object({
   id: z.string().min(1),
   name: z.string().default(''),
@@ -725,6 +754,17 @@ export const automationBoardTemplateSchema = z.object({
   reasoningEffort: z.string().default('max'),
   thinkingEnabled: z.boolean().default(true),
   planMode: z.boolean().default(false),
+  // 由本模板实例化出来的卡片是否带超管权限（= 能读写本工作区其他会话）。
+  // 内置的"看板监工"模板默认为 true，这就是它全部的"监工性"。
+  adminAccess: z.boolean().default(false),
+  // 随工作区自动种入的默认模板。用户仍可编辑与删除，只是多一个"恢复默认文案"。
+  builtIn: z.boolean().default(false),
+  trigger: automationBoardTemplateTriggerSchema.default(
+    createDefaultAutomationBoardTemplateTrigger(),
+  ),
+  // 上一次由本模板触发生成、仍活在看板上的实例卡。复用它是为了让监工保有
+  // 跨轮上下文；那张卡被删或被拖出看板后这里就作废，下次触发新建一张。
+  instanceCardId: z.string().default(''),
   wakeTimerActive: z.boolean().default(false),
   wakeTimerMode: wakeTimerModeSchema.optional(),
   wakeTimerDurationMinutes: z
@@ -739,39 +779,28 @@ export const automationBoardTemplateSchema = z.object({
 })
 export type AutomationBoardTemplate = z.infer<typeof automationBoardTemplateSchema>
 
-export const automationBoardTriggerKinds = ['last-item-settled'] as const
-export const automationBoardTriggerKindSchema = z.enum(automationBoardTriggerKinds)
-export type AutomationBoardTriggerKind = z.infer<typeof automationBoardTriggerKindSchema>
-
-export const automationBoardAutoTriggerSchema = z.object({
-  enabled: z.boolean().default(false),
-  kind: automationBoardTriggerKindSchema.default('last-item-settled'),
-  provider: providerSchema.default('claude'),
-  model: z.string().default(''),
-  reasoningEffort: z.string().default('max'),
-  requirement: z.string().default(defaultAutomationBoardSupervisorRequirement),
-  // 两次触发之间的最小间隔，防抖。
-  minIntervalMinutes: z.number().finite().min(0).max(24 * 60).default(1),
-})
-export type AutomationBoardAutoTrigger = z.infer<typeof automationBoardAutoTriggerSchema>
-
-export const createDefaultAutomationBoardAutoTrigger = (): AutomationBoardAutoTrigger => ({
-  enabled: false,
-  kind: 'last-item-settled',
-  provider: 'claude',
-  model: '',
-  reasoningEffort: 'max',
-  requirement: defaultAutomationBoardSupervisorRequirement,
-  minIntervalMinutes: 1,
-})
-
-// 模板与自动触发配置的生命周期必须长于看板卡片本身（删掉看板 tab 不能丢），
-// 所以按 workspacePath 挂在 AppState 上，与既有 stickyNoteArchive 同构。
+// 模板的生命周期必须长于看板卡片本身（删掉看板 tab 不能丢），所以按
+// workspacePath 挂在 AppState 上，与既有 stickyNoteArchive 同构。
 export const automationBoardWorkspaceStateSchema = z.object({
   templates: z.array(automationBoardTemplateSchema).default([]),
-  autoTrigger: automationBoardAutoTriggerSchema.default(createDefaultAutomationBoardAutoTrigger()),
 })
 export type AutomationBoardWorkspaceState = z.infer<typeof automationBoardWorkspaceStateSchema>
+
+// v1 的工作区级自动触发配置。已被 template.trigger 取代，这里只保留一个
+// **宽松的**解析形状供 state-store 的一次性迁移读取旧存档，绝不再写入。
+export const legacyAutomationBoardAutoTriggerSchema = z
+  .object({
+    enabled: z.boolean().optional(),
+    provider: providerSchema.optional(),
+    model: z.string().optional(),
+    reasoningEffort: z.string().optional(),
+    requirement: z.string().optional(),
+    minIntervalMinutes: z.number().finite().optional(),
+  })
+  .passthrough()
+export type LegacyAutomationBoardAutoTrigger = z.infer<
+  typeof legacyAutomationBoardAutoTriggerSchema
+>
 
 export const stickyNoteRequestSchema = z.object({
   workspacePath: z.string().min(1),
@@ -1118,10 +1147,14 @@ export const chatRequestSchema = z.object({
   codexIsolatedHomeEnabled: z.boolean().default(true),
   personality: codexPersonalitySchema.optional(),
   serviceTier: z.literal('priority').optional(),
-  // Marks this turn as an automation-board supervisor run, which is the only
-  // turn that gets the board MCP wired into the provider launch.
-  automationBoardSupervisor: z
-    .object({ boardCardId: z.string().min(1), columnId: z.string().min(1) })
+  // 这一回合带超管权限（card.adminAccess === true），是唯一会把工作区 MCP
+  // 接进 provider 启动的回合。`selfCardId` 让 MCP 侧把请求方自己从会话清单里
+  // 滤掉 —— 否则模型会把自己列出来再给自己发消息。
+  adminAccess: z
+    .object({
+      columnId: z.string().min(1),
+      selfCardId: z.string().min(1),
+    })
     .optional(),
 }).refine((value) => {
   const hasPrompt = value.prompt.trim().length > 0
@@ -1178,25 +1211,29 @@ export const remoteMonitorCommandSchema = z.discriminatedUnion('type', [
 ])
 export type RemoteMonitorCommand = z.infer<typeof remoteMonitorCommandSchema>
 
-// 看板监工 MCP 的写命令。与手机监工同一条规矩：桥接服务自身绝不改 state，
+// 超管权限 MCP 的写命令。与手机监工同一条规矩：桥接服务自身绝不改 state，
 // 命令一律转发进渲染进程复用电脑端 handler（"移到某道"因此自动带上正确的
 // 中断/执行语义，而不是绕过 resolveAutomationBoardTransition 自己实现一遍）。
-export const automationBoardCommandSchema = z.discriminatedUnion('type', [
+//
+// 命令只带 `columnId` 而不带 `boardCardId`：目标看板由渲染端解析（该卡已在
+// 某个看板里就用那个，否则用本列第一张看板卡），因为"哪张看板"是 state 的
+// 事实，模型不该也无法知道。
+export const workspaceAdminCommandSchema = z.discriminatedUnion('type', [
   z.object({
-    type: z.literal('board-move-item'),
-    boardCardId: z.string().min(1),
+    type: z.literal('admin-move-session-to-lane'),
+    columnId: z.string().min(1),
     cardId: z.string().min(1),
     lane: automationBoardLaneSchema,
   }),
   z.object({
-    type: z.literal('board-send-item-message'),
-    boardCardId: z.string().min(1),
+    type: z.literal('admin-send-session-message'),
+    columnId: z.string().min(1),
     cardId: z.string().min(1),
     message: z.string().min(1),
   }),
   z.object({
-    type: z.literal('board-set-item-wake-timer'),
-    boardCardId: z.string().min(1),
+    type: z.literal('admin-set-session-wake-timer'),
+    columnId: z.string().min(1),
     cardId: z.string().min(1),
     mode: wakeTimerModeSchema,
     durationMinutes: z
@@ -1207,30 +1244,41 @@ export const automationBoardCommandSchema = z.discriminatedUnion('type', [
       .optional(),
   }),
 ])
-export type AutomationBoardCommand = z.infer<typeof automationBoardCommandSchema>
+export type WorkspaceAdminCommand = z.infer<typeof workspaceAdminCommandSchema>
 
-// 渲染进程主动推给主进程的实时看板镜像。读盘快照在流式期间被刻意节流
-// （pitfall 54/114），对监工太旧；这份镜像极小且有界，几 KB 级。
-export const automationBoardMirrorItemSchema = z.object({
+// 渲染进程主动推给主进程的实时工作区镜像。读盘快照在流式期间被刻意节流
+// （pitfall 54/114），对超管会话太旧；这份镜像极小且有界，几 KB 级。
+//
+// 作用域是**一整个工作区列**，不只是某张看板：超管权限的语义是"操作其他
+// 会话"，普通 tab 里的会话同样在内。
+export const workspaceSessionMirrorItemSchema = z.object({
   cardId: z.string().min(1),
-  lane: automationBoardLaneSchema,
-  requirement: z.string().default(''),
   title: z.string().default(''),
   provider: z.string().default(''),
   model: z.string().default(''),
   status: z.string().default('idle'),
   backgroundWorkPending: z.boolean().default(false),
+  // 这张卡在某张看板里的位置。普通 tab 会话没有这一段。
+  board: z
+    .object({
+      boardCardId: z.string().min(1),
+      lane: automationBoardLaneSchema,
+      requirement: z.string().default(''),
+      startedAt: z.string().optional(),
+      completedAt: z.string().optional(),
+    })
+    .optional(),
+  // 是否作为一个真正的 pane tab 展现。与 board 互斥（一张卡只可能是其中之一）。
+  isTab: z.boolean().default(false),
   wakeTimerActive: z.boolean().default(false),
   wakeTimerWakeAt: z.string().optional(),
   repeatLoopActive: z.boolean().default(false),
-  startedAt: z.string().optional(),
-  completedAt: z.string().optional(),
-  // 最后一条消息的 createdAt —— 监工判断"超过半小时没下文"的依据。
+  // 最后一条消息的 createdAt —— 判断"超过半小时没下文"的依据。
   lastActivityAt: z.string().optional(),
   lastMessagePreview: z.string().default(''),
   messageCount: z.number().int().nonnegative().default(0),
-  // 最近若干条转录，供 read_board_item 直接读。刻意随镜像一起推而不是另开一条
-  // 请求/应答通道：载荷有界（条数 × 单条字符都封顶），2 秒级的陈旧对监工无影响。
+  // 最近若干条转录，供 read_session 直接读。刻意随镜像一起推而不是另开一条
+  // 请求/应答通道：载荷有界（条数 × 单条字符都封顶），2 秒级的陈旧无影响。
   recentEntries: z
     .array(
       z.object({
@@ -1243,25 +1291,24 @@ export const automationBoardMirrorItemSchema = z.object({
     )
     .default([]),
 })
-export type AutomationBoardMirrorItem = z.infer<typeof automationBoardMirrorItemSchema>
+export type WorkspaceSessionMirrorItem = z.infer<typeof workspaceSessionMirrorItemSchema>
 
-// 镜像的硬预算。截断只在一处执行（server/automation-board-session.ts 的
-// publish），这样任何调用方都无法绕过它把整段转录推给模型。
-export const automationBoardMirrorRequirementMaxChars = 2000
-export const automationBoardMirrorPreviewMaxChars = 400
-export const automationBoardMirrorEntryMaxChars = 600
-export const automationBoardMirrorEntryLimit = 12
+// 镜像的硬预算。发送端（渲染进程）与接收端（server session 的 publish）**各跑
+// 一遍**，这样新增一个调用方也无法绕过上限把整段转录送出程序边界（pitfall 183）。
+export const workspaceMirrorRequirementMaxChars = 2000
+export const workspaceMirrorPreviewMaxChars = 400
+export const workspaceMirrorEntryMaxChars = 600
+export const workspaceMirrorEntryLimit = 12
 
-export const automationBoardMirrorSchema = z.object({
-  boardCardId: z.string().min(1),
+export const workspaceSessionMirrorSchema = z.object({
   columnId: z.string().min(1),
   workspacePath: z.string().default(''),
   generatedAt: z.string().datetime(),
-  items: z.array(automationBoardMirrorItemSchema).default([]),
-  supervisorCardId: z.string().default(''),
-  supervisorStatus: z.string().default('idle'),
+  // 本列所有看板容器卡的 id，供 MCP 侧解释"换道会落到哪张看板"。
+  boardCardIds: z.array(z.string().min(1)).default([]),
+  sessions: z.array(workspaceSessionMirrorItemSchema).default([]),
 })
-export type AutomationBoardMirror = z.infer<typeof automationBoardMirrorSchema>
+export type WorkspaceSessionMirror = z.infer<typeof workspaceSessionMirrorSchema>
 
 // Lossless conversation fork: ask the backend to copy the provider's native
 // session file truncated before the fork-point user message. A null sessionId

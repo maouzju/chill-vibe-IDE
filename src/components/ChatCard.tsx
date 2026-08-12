@@ -32,6 +32,7 @@ import {
   WEATHER_TOOL_MODEL,
   WHITENOISE_TOOL_MODEL,
   MODEL_OPTIONS,
+  TOOL_CARD_MODELS,
   isModelPickerOptionVisible,
   normalizeStoredModel,
   type ModelOption,
@@ -194,6 +195,7 @@ import {
   NeteaseCloudMusicIcon,
   RefreshIcon,
   SendIcon,
+  ShieldIcon,
   SlidersIcon,
   SparklesIcon,
   StickyNoteIcon,
@@ -201,17 +203,9 @@ import {
 } from './Icons'
 
 
-const urgeExcludedToolModels = new Set([
-  BRAINSTORM_TOOL_MODEL,
-  FILETREE_TOOL_MODEL,
-  GIT_TOOL_MODEL,
-  IMAGEEDITOR_TOOL_MODEL,
-  MUSIC_TOOL_MODEL,
-  STICKYNOTE_TOOL_MODEL,
-  TEXTEDITOR_TOOL_MODEL,
-  WEATHER_TOOL_MODEL,
-  WHITENOISE_TOOL_MODEL,
-])
+// 曾经手抄一份，漏了自动化看板，于是看板卡被自动鞭策当成普通聊天卡。
+// 名单只在 shared/models.ts 维护一份。
+const urgeExcludedToolModels = TOOL_CARD_MODELS
 
 const supportedImageMimeTypes = new Set(['image/png', 'image/jpeg', 'image/webp', 'image/gif'])
 const emptyCompactMessageWindow: CompactMessageWindow = {
@@ -462,6 +456,7 @@ type ChatCardProps = {
         | 'stickyNoteId'
         | 'stickyNoteViewState'
         | 'title'
+        | 'adminAccess'
       >
     >,
   ) => void
@@ -527,16 +522,7 @@ const getModelOptionIcon = (option: ModelOption): ReactNode => {
   return <GptIcon className="model-option-icon" aria-hidden="true" />
 }
 
-const hiddenBrainstormRequestModels = new Set([
-  GIT_TOOL_MODEL,
-  STICKYNOTE_TOOL_MODEL,
-  FILETREE_TOOL_MODEL,
-  MUSIC_TOOL_MODEL,
-  WHITENOISE_TOOL_MODEL,
-  WEATHER_TOOL_MODEL,
-  BRAINSTORM_TOOL_MODEL,
-  TEXTEDITOR_TOOL_MODEL,
-])
+const hiddenBrainstormRequestModels = TOOL_CARD_MODELS
 const getEmptyStateToolEntry = (
   model: string,
   text: ReturnType<typeof getLocaleText>,
@@ -1779,7 +1765,16 @@ const ChatCardView = ({
     !isFileTreeCard &&
     !isTextEditorCard &&
     !isImageEditorCard
-  const showsCardHeader = showsHeaderModelSelect || showsCardTitle || (isGitToolCard && gitInfo)
+  /**
+   * 症状：给 header 加了盾牌角标，但在实际使用的 pane 模式下永远看不见。
+   * 根因：pane chrome 下 `showsCardTitle` 恒为 false，普通会话的
+   *   `showsHeaderModelSelect` 也是 false —— header 整块根本不渲染。
+   * 被否决：把角标塞进转录区顶部当横幅。超管权限是常驻属性不是事件，
+   *   横幅会跟着消息一起滚走，做不到"一眼可见"。
+   */
+  const showsAdminAccessBadge = !isToolCard && card.adminAccess === true
+  const showsCardHeader =
+    showsHeaderModelSelect || showsCardTitle || showsAdminAccessBadge || (isGitToolCard && gitInfo)
   const isCollapsed = usesPaneChrome ? false : card.collapsed
   const displayTitle =
     (isMusicToolCard && musicTitleOverride ? musicTitleOverride : card.title) ||
@@ -4483,6 +4478,16 @@ const ChatCardView = ({
                 </div>
               ) : null}
 
+              {showsAdminAccessBadge ? (
+                <span
+                  className="card-admin-access-badge"
+                  title={text.adminAccessBadgeTitle}
+                  aria-label={text.adminAccessBadgeTitle}
+                >
+                  <ShieldIcon />
+                </span>
+              ) : null}
+
             </div>
           </div>
         </header>
@@ -4951,6 +4956,21 @@ const ChatCardView = ({
                               />
                             </label>
                           ) : null}
+                          {/* 超管权限没有 provider / 工具卡的门槛：任何会话都能开。
+                              整个 composer 只在 !isToolCard 时渲染，所以工具卡拿不到
+                              这一行，不需要再加条件。 */}
+                          <label
+                            className={`composer-settings-row composer-admin-access-row${card.adminAccess === true ? ' is-admin' : ''}`}
+                          >
+                            <span className="composer-settings-label">{text.adminAccessLabel}</span>
+                            <input
+                              type="checkbox"
+                              className="composer-settings-checkbox"
+                              checked={card.adminAccess === true}
+                              onChange={() => onPatchCard({ adminAccess: !card.adminAccess })}
+                            />
+                          </label>
+                          <div className="composer-settings-note">{text.adminAccessHint}</div>
                           <>
                             <label className="composer-settings-row">
                               <span className="composer-settings-label">{text.autoUrgeLabel}</span>

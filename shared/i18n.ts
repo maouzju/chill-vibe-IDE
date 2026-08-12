@@ -190,6 +190,10 @@ type LocaleText = {
   resizeColumn: string
   deleteCard: string
   planMode: string
+  // 超管权限：这个会话能读写同一工作区里的其他会话。任何卡片都能开。
+  adminAccessLabel: string
+  adminAccessHint: string
+  adminAccessBadgeTitle: string
   placeholderSetWorkspace: string
   placeholderInputTask: string
   placeholderCliUnavailable: string
@@ -348,6 +352,10 @@ type LocaleText = {
   automationBoardLaneRunningHint: string
   automationBoardLaneDoneHint: string
   automationBoardNewRequirementPlaceholder: string
+  // 项卡片底部的输入框发给的是这一项自己，不是"加入待命"，必须和上面那条分开。
+  automationBoardItemNudgePlaceholder: string
+  automationBoardItemMoreAction: string
+  automationBoardItemLessAction: string
   automationBoardAddRequirement: string
   automationBoardEmptyLane: string
   automationBoardItemCount: (count: number) => string
@@ -365,22 +373,24 @@ type LocaleText = {
   automationBoardTemplateDeleteAction: string
   automationBoardTemplateNamePrompt: string
   automationBoardTemplateSaved: string
-  automationBoardSupervisorTitle: string
-  automationBoardSupervisorSectionLabel: string
-  automationBoardSupervisorIdle: string
-  automationBoardSupervisorExpand: string
-  automationBoardSupervisorCollapse: string
-  automationBoardSupervisorRunNowAction: string
-  automationBoardAutoTriggerLabel: string
-  automationBoardAutoTriggerHint: string
-  automationBoardAutoTriggerEnableLabel: string
-  automationBoardAutoTriggerKindLastItemSettled: string
-  automationBoardAutoTriggerModelLabel: string
-  automationBoardAutoTriggerRequirementLabel: string
-  automationBoardAutoTriggerIntervalLabel: string
-  automationBoardAutoTriggerConfigureAction: string
-  automationBoardAutoTriggerCloseAction: string
-  automationBoardAutoTriggerResetAction: string
+  // 内置模板名。v2 起监工就是这个模板，没有独立的监工实体。
+  automationBoardSupervisorTemplateName: string
+  automationBoardTemplateConfigureAction: string
+  automationBoardTemplateCloseAction: string
+  automationBoardTemplateNameLabel: string
+  automationBoardTemplateRequirementLabel: string
+  automationBoardTemplateModelLabel: string
+  automationBoardTemplateAdminAccessLabel: string
+  automationBoardTemplateAdminAccessHint: string
+  automationBoardTemplateRunNowAction: string
+  automationBoardTemplateResetRequirementAction: string
+  automationBoardTriggerLabel: string
+  automationBoardTriggerHint: string
+  automationBoardTriggerEnableLabel: string
+  automationBoardTriggerKindLastItemSettled: string
+  automationBoardTriggerLaneLabel: string
+  automationBoardTriggerIntervalLabel: string
+  automationBoardTriggerBadgeTitle: string
   // 计划唤醒在看板语境下的方位文案：普通 tab 是"左侧"，看板项是"上方"。
   automationBoardWakeAboveLabel: string
   automationBoardWakeAboveTargetHint: (title: string) => string
@@ -613,6 +623,9 @@ const localeTextByLanguage: Record<AppLanguage, LocaleText> = {
     resizeColumn: '拖拽调整列宽',
     deleteCard: '删除卡片',
     planMode: '计划模式',
+    adminAccessLabel: '超管权限',
+    adminAccessHint: '开启后，这个会话可以查看并操作本工作区的其他会话（发消息、换泳道、挂唤醒）。',
+    adminAccessBadgeTitle: '这个会话有超管权限',
     forkConversation: '从此处分叉',
     thinking: '思考',
     composerSettings: '对话设置',
@@ -789,6 +802,9 @@ const localeTextByLanguage: Record<AppLanguage, LocaleText> = {
     automationBoardLaneRunningHint: '拖进来会立即开始执行。',
     automationBoardLaneDoneHint: '拖进来会中断并停止所有自动化。',
     automationBoardNewRequirementPlaceholder: '写一个需求，回车加入待命…',
+    automationBoardItemNudgePlaceholder: '给这条需求补一句，回车发送…',
+    automationBoardItemMoreAction: '更多操作',
+    automationBoardItemLessAction: '收起操作',
     automationBoardAddRequirement: '加入待命',
     automationBoardEmptyLane: '把需求或 tab 拖到这里',
     automationBoardItemCount: (count) => `${count} 项`,
@@ -806,22 +822,23 @@ const localeTextByLanguage: Record<AppLanguage, LocaleText> = {
     automationBoardTemplateDeleteAction: '删除模板',
     automationBoardTemplateNamePrompt: '模板名称',
     automationBoardTemplateSaved: '已保存为模板',
-    automationBoardSupervisorTitle: '看板监工',
-    automationBoardSupervisorSectionLabel: '监工',
-    automationBoardSupervisorIdle: '待触发。最后一个执行中的需求结束时自动接手。',
-    automationBoardSupervisorExpand: '展开监工会话',
-    automationBoardSupervisorCollapse: '收起监工会话',
-    automationBoardSupervisorRunNowAction: '立即让监工检查',
-    automationBoardAutoTriggerLabel: '自动触发',
-    automationBoardAutoTriggerHint: '按工作区保存。监工能读看板、移动需求、向需求发消息。',
-    automationBoardAutoTriggerEnableLabel: '启用自动触发',
-    automationBoardAutoTriggerKindLastItemSettled: '最后一个执行中的需求结束时',
-    automationBoardAutoTriggerModelLabel: '监工模型',
-    automationBoardAutoTriggerRequirementLabel: '监工需求',
-    automationBoardAutoTriggerIntervalLabel: '最小触发间隔（分钟）',
-    automationBoardAutoTriggerConfigureAction: '配置自动触发',
-    automationBoardAutoTriggerCloseAction: '收起配置',
-    automationBoardAutoTriggerResetAction: '恢复默认需求',
+    automationBoardSupervisorTemplateName: '看板监工',
+    automationBoardTemplateConfigureAction: '配置模板',
+    automationBoardTemplateCloseAction: '收起配置',
+    automationBoardTemplateNameLabel: '名称',
+    automationBoardTemplateRequirementLabel: '需求',
+    automationBoardTemplateModelLabel: '模型',
+    automationBoardTemplateAdminAccessLabel: '超管权限',
+    automationBoardTemplateAdminAccessHint: '由这个模板起的会话可以查看并操作本工作区的其他会话。',
+    automationBoardTemplateRunNowAction: '立即执行一次',
+    automationBoardTemplateResetRequirementAction: '恢复默认需求',
+    automationBoardTriggerLabel: '触发器',
+    automationBoardTriggerHint: '到点了自动把这个模板放进泳道，等于替你拖一次。',
+    automationBoardTriggerEnableLabel: '启用触发器',
+    automationBoardTriggerKindLastItemSettled: '最后一个执行中的需求结束时',
+    automationBoardTriggerLaneLabel: '放进哪条道',
+    automationBoardTriggerIntervalLabel: '最小触发间隔（分钟）',
+    automationBoardTriggerBadgeTitle: '触发器已启用',
     automationBoardWakeAboveLabel: '上方需求',
     automationBoardWakeAboveTargetHint: (title) => `等「${title}」结束后发车`,
     automationBoardWakeAboveUnavailable: '上方没有可等待的需求',
@@ -1059,6 +1076,10 @@ const localeTextByLanguage: Record<AppLanguage, LocaleText> = {
     resizeColumn: 'Drag to resize column width',
     deleteCard: 'Delete card',
     planMode: 'Plan mode',
+    adminAccessLabel: 'Admin access',
+    adminAccessHint:
+      'Lets this session inspect and act on the other sessions in this workspace — message them, move them between lanes, arm wake timers.',
+    adminAccessBadgeTitle: 'This session has admin access',
     forkConversation: 'Fork from here',
     thinking: 'Thinking',
     composerSettings: 'Chat settings',
@@ -1244,6 +1265,9 @@ const localeTextByLanguage: Record<AppLanguage, LocaleText> = {
     automationBoardLaneRunningHint: 'Dropping here starts execution immediately.',
     automationBoardLaneDoneHint: 'Dropping here interrupts and stops all automation.',
     automationBoardNewRequirementPlaceholder: 'Write a requirement, press Enter to add…',
+    automationBoardItemNudgePlaceholder: 'Message this requirement, press Enter to send…',
+    automationBoardItemMoreAction: 'More actions',
+    automationBoardItemLessAction: 'Hide actions',
     automationBoardAddRequirement: 'Add to standby',
     automationBoardEmptyLane: 'Drop a requirement or a tab here',
     automationBoardItemCount: (count) => `${count} item${count === 1 ? '' : 's'}`,
@@ -1261,23 +1285,25 @@ const localeTextByLanguage: Record<AppLanguage, LocaleText> = {
     automationBoardTemplateDeleteAction: 'Delete template',
     automationBoardTemplateNamePrompt: 'Template name',
     automationBoardTemplateSaved: 'Saved as template',
-    automationBoardSupervisorTitle: 'Board supervisor',
-    automationBoardSupervisorSectionLabel: 'Supervisor',
-    automationBoardSupervisorIdle: 'Idle. Runs when the last running requirement settles.',
-    automationBoardSupervisorExpand: 'Expand supervisor chat',
-    automationBoardSupervisorCollapse: 'Collapse supervisor chat',
-    automationBoardSupervisorRunNowAction: 'Run supervisor now',
-    automationBoardAutoTriggerLabel: 'Auto trigger',
-    automationBoardAutoTriggerHint:
-      'Saved per workspace. The supervisor can read the board, move requirements, and message them.',
-    automationBoardAutoTriggerEnableLabel: 'Enable auto trigger',
-    automationBoardAutoTriggerKindLastItemSettled: 'When the last running requirement settles',
-    automationBoardAutoTriggerModelLabel: 'Supervisor model',
-    automationBoardAutoTriggerRequirementLabel: 'Supervisor requirement',
-    automationBoardAutoTriggerIntervalLabel: 'Minimum trigger interval (minutes)',
-    automationBoardAutoTriggerConfigureAction: 'Configure auto trigger',
-    automationBoardAutoTriggerCloseAction: 'Close configuration',
-    automationBoardAutoTriggerResetAction: 'Restore default requirement',
+    automationBoardSupervisorTemplateName: 'Board supervisor',
+    automationBoardTemplateConfigureAction: 'Configure template',
+    automationBoardTemplateCloseAction: 'Close configuration',
+    automationBoardTemplateNameLabel: 'Name',
+    automationBoardTemplateRequirementLabel: 'Requirement',
+    automationBoardTemplateModelLabel: 'Model',
+    automationBoardTemplateAdminAccessLabel: 'Admin access',
+    automationBoardTemplateAdminAccessHint:
+      'Sessions started from this template can inspect and act on the other sessions in this workspace.',
+    automationBoardTemplateRunNowAction: 'Run once now',
+    automationBoardTemplateResetRequirementAction: 'Restore default requirement',
+    automationBoardTriggerLabel: 'Trigger',
+    automationBoardTriggerHint:
+      'Drops this template into a lane on its own — exactly as if you had dragged it there.',
+    automationBoardTriggerEnableLabel: 'Enable trigger',
+    automationBoardTriggerKindLastItemSettled: 'When the last running requirement settles',
+    automationBoardTriggerLaneLabel: 'Target lane',
+    automationBoardTriggerIntervalLabel: 'Minimum trigger interval (minutes)',
+    automationBoardTriggerBadgeTitle: 'Trigger enabled',
     automationBoardWakeAboveLabel: 'Requirement above',
     automationBoardWakeAboveTargetHint: (title) => `Waits for "${title}" to finish`,
     automationBoardWakeAboveUnavailable: 'No requirement above to wait for',

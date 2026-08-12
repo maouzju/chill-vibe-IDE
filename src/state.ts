@@ -1,7 +1,6 @@
 import {
   archiveCardToHistory,
   createAutomationBoardItemCard,
-  createAutomationBoardSupervisorCard,
   createCard,
   createId,
   createColumn,
@@ -31,23 +30,15 @@ import { getChatMessageAttachments } from '../shared/chat-attachments'
 import { getDuplicateColumnTitle, getForkConversationTitle, getWorkspaceTitle } from '../shared/i18n'
 import {
   AUTOMATIONBOARD_TOOL_MODEL,
-  BRAINSTORM_TOOL_MODEL,
-  FILETREE_TOOL_MODEL,
-  GIT_TOOL_MODEL,
-  IMAGEEDITOR_TOOL_MODEL,
-  MUSIC_TOOL_MODEL,
   getDefaultModel,
   normalizeStoredModel,
   STICKYNOTE_TOOL_MODEL,
-  TEXTEDITOR_TOOL_MODEL,
-  WEATHER_TOOL_MODEL,
-  WHITENOISE_TOOL_MODEL,
+  TOOL_CARD_MODELS,
 } from '../shared/models'
 import type {
   AppSettings,
   AppState,
   AutomationBoard,
-  AutomationBoardAutoTrigger,
   AutomationBoardItem,
   AutomationBoardLane,
   AutomationBoardTemplate,
@@ -69,17 +60,10 @@ import { automationBoardRequirementMaxChars, defaultAutoUrgeProfileId } from '..
 
 type Placement = 'before' | 'after'
 
-const toolCardModels = new Set([
-  BRAINSTORM_TOOL_MODEL,
-  FILETREE_TOOL_MODEL,
-  GIT_TOOL_MODEL,
-  IMAGEEDITOR_TOOL_MODEL,
-  MUSIC_TOOL_MODEL,
-  STICKYNOTE_TOOL_MODEL,
-  TEXTEDITOR_TOOL_MODEL,
-  WEATHER_TOOL_MODEL,
-  WHITENOISE_TOOL_MODEL,
-])
+// 这里以前是一份手抄的第二名单，漏了自动化看板就把看板模型当成真模型记进
+// settings/column（症状与实证见 shared/models.ts 的 TOOL_CARD_MODELS 注释）。
+// 只引用，不重抄 —— 重抄就是下一次同样的 bug。
+const toolCardModels = TOOL_CARD_MODELS
 
 export const isUntouchedWorkspacePlaceholderColumn = (column: BoardColumn | undefined) => {
   if (!column) {
@@ -459,6 +443,10 @@ export type IdeAction =
       repeatLoopActive?: boolean
       repeatLoopRemaining?: number
       cardId?: string
+      /** 由哪个模板实例化而来。手动新建的项留空，这是触发器防自触发的唯一依据。 */
+      templateId?: string
+      /** 实例化自带超管权限的模板时为 true —— "监工性"的全部就是这两个字段。 */
+      adminAccess?: boolean
     }
   | {
       type: 'setAutomationBoardItemLane'
@@ -499,28 +487,20 @@ export type IdeAction =
       lane: AutomationBoardLane
       index?: number
     }
-  | {
-      type: 'setAutomationBoardSupervisorExpanded'
-      columnId: string
-      boardCardId: string
-      expanded: boolean
-    }
-  | {
-      type: 'ensureAutomationBoardSupervisor'
-      columnId: string
-      boardCardId: string
-      provider: Provider
-      model: string
-      reasoningEffort: string
-      cardId?: string
-    }
   | { type: 'saveAutomationBoardTemplate'; workspacePath: string; template: AutomationBoardTemplate }
   | { type: 'removeAutomationBoardTemplate'; workspacePath: string; templateId: string }
   | { type: 'renameAutomationBoardTemplate'; workspacePath: string; templateId: string; name: string }
   | {
-      type: 'updateAutomationBoardAutoTrigger'
+      type: 'updateAutomationBoardTemplate'
       workspacePath: string
-      patch: Partial<AutomationBoardAutoTrigger>
+      templateId: string
+      patch: Partial<AutomationBoardTemplate>
+    }
+  | {
+      type: 'setAutomationBoardTemplateInstance'
+      workspacePath: string
+      templateId: string
+      cardId: string
     }
 
 const clampInsertIndex = (index: number | undefined, length: number) => {
@@ -598,6 +578,11 @@ const updateAutomationBoard = (
   )
 }
 
+/**
+ * 默认值里带着内置的监工模板，但这**不会**把用户删掉的模板种回来：兜底只在
+ * 这个工作区**根本没有状态条目**时走，而删模板的那一刻条目已经存在了（哪怕
+ * templates 变成空数组）。"读不到"与"读到了一个空的"是两件事。
+ */
 const getAutomationBoardWorkspaceState = (
   state: AppState,
   workspacePath: string,
@@ -1475,11 +1460,7 @@ const selectCardModel = (
           // `getAutomationBoard` 按 model 把关，留着不会让非看板卡冒充看板。
           automationBoard:
             normalizedModel === AUTOMATIONBOARD_TOOL_MODEL
-              ? currentCard.automationBoard ?? {
-                  items: [],
-                  supervisorCardId: '',
-                  supervisorExpanded: false,
-                }
+              ? currentCard.automationBoard ?? { items: [] }
               : currentCard.automationBoard,
           pmTaskCardId: '',
           pmOwnerCardId: '',
@@ -2897,6 +2878,7 @@ export const ideReducer = (state: AppState, action: IdeAction): AppState => {
           reasoningEffort: action.reasoningEffort,
           thinkingEnabled: action.thinkingEnabled,
           planMode: action.planMode,
+          adminAccess: action.adminAccess,
           language: state.settings.language,
         }),
         ...(action.cardId ? { id: action.cardId } : {}),
@@ -2928,6 +2910,7 @@ export const ideReducer = (state: AppState, action: IdeAction): AppState => {
                     cardId: itemCard.id,
                     lane: action.lane,
                     requirement,
+                    templateId: action.templateId ?? '',
                     createdAt: new Date().toISOString(),
                   },
                   action.index,
@@ -2980,13 +2963,6 @@ export const ideReducer = (state: AppState, action: IdeAction): AppState => {
         }
       })
     }
-    case 'setAutomationBoardSupervisorExpanded': {
-      return updateAutomationBoard(state, action.columnId, action.boardCardId, (board) =>
-        board.supervisorExpanded === action.expanded
-          ? null
-          : { ...board, supervisorExpanded: action.expanded },
-      )
-    }
     case 'removeAutomationBoardItem': {
       const column = state.columns.find((entry) => entry.id === action.columnId)
       const boardCard = getAutomationBoardCard(column, action.boardCardId)
@@ -3019,17 +2995,13 @@ export const ideReducer = (state: AppState, action: IdeAction): AppState => {
       const boardCard = getAutomationBoardCard(column, action.boardCardId)
       const board = boardCard?.automationBoard
 
-      // 监工不在 items 里，但同样要能被拖出来接管，所以两种归属都接受。
-      const ownsAsItem = board?.items.some((item) => item.cardId === action.cardId) ?? false
-      const ownsAsSupervisor = board?.supervisorCardId === action.cardId && action.cardId.length > 0
-
       // pitfall 237：多步搬运必须在动手前一次性校验两端，否则过期的一端会让
       // "摘除已提交 / 插入被跳过"落地，卡片变成不在任何容器里的孤儿。
       if (
         !column ||
         !board ||
         !column.cards[action.cardId] ||
-        !(ownsAsItem || ownsAsSupervisor) ||
+        !board.items.some((item) => item.cardId === action.cardId) ||
         !findPaneInLayout(column.layout, action.paneId)
       ) {
         return state
@@ -3046,7 +3018,6 @@ export const ideReducer = (state: AppState, action: IdeAction): AppState => {
               automationBoard: {
                 ...board,
                 items: board.items.filter((item) => item.cardId !== action.cardId),
-                ...(ownsAsSupervisor ? { supervisorCardId: '' } : {}),
               },
             },
           },
@@ -3108,6 +3079,8 @@ export const ideReducer = (state: AppState, action: IdeAction): AppState => {
                     cardId: action.tabId,
                     lane: action.lane,
                     requirement,
+                    // 吸收进来的会话不属于任何模板，否则触发器会把它误判成自触发。
+                    templateId: '',
                     createdAt: new Date().toISOString(),
                   },
                   action.index,
@@ -3118,67 +3091,6 @@ export const ideReducer = (state: AppState, action: IdeAction): AppState => {
 
           return { ...current, cards, layout: normalizeLayoutNode(layout, cards) }
         }),
-      )
-    }
-    case 'ensureAutomationBoardSupervisor': {
-      const column = state.columns.find((entry) => entry.id === action.columnId)
-      const boardCard = getAutomationBoardCard(column, action.boardCardId)
-      const board = boardCard?.automationBoard
-
-      if (!column || !board) {
-        return state
-      }
-
-      const existing = board.supervisorCardId ? column.cards[board.supervisorCardId] : undefined
-      const model = normalizeStoredModel(action.provider, action.model) || getDefaultModel(action.provider)
-
-      if (existing) {
-        // 监工已经存在：只把它重新指向当前配置的模型，绝不换卡（换卡就丢上下文）。
-        if (existing.provider === action.provider && existing.model === model) {
-          return state
-        }
-
-        return touchState(
-          updateColumn(state, action.columnId, (current) => ({
-            ...current,
-            cards: {
-              ...current.cards,
-              [existing.id]: {
-                ...current.cards[existing.id]!,
-                provider: action.provider,
-                model,
-                reasoningEffort: action.reasoningEffort,
-                // 换模型作废原生会话：与 selectCardModel 同一条规矩。
-                sessionId: undefined,
-                sessionModel: undefined,
-              },
-            },
-          })),
-        )
-      }
-
-      const supervisorCard: ChatCard = {
-        ...createAutomationBoardSupervisorCard({
-          provider: action.provider,
-          model,
-          reasoningEffort: action.reasoningEffort,
-          language: state.settings.language,
-        }),
-        ...(action.cardId ? { id: action.cardId } : {}),
-      }
-
-      return touchState(
-        updateColumn(state, action.columnId, (current) => ({
-          ...current,
-          cards: {
-            ...current.cards,
-            [supervisorCard.id]: supervisorCard,
-            [action.boardCardId]: {
-              ...current.cards[action.boardCardId]!,
-              automationBoard: { ...board, supervisorCardId: supervisorCard.id },
-            },
-          },
-        })),
       )
     }
     case 'saveAutomationBoardTemplate': {
@@ -3211,10 +3123,26 @@ export const ideReducer = (state: AppState, action: IdeAction): AppState => {
         ),
       }))
     }
-    case 'updateAutomationBoardAutoTrigger': {
+    /**
+     * 刻意是**浅**合并。trigger 是个对象，调用方一律传完整的 trigger；深合并
+     * 会让"把某个子字段关掉"变得不可表达（undefined 与"没传"分不开）。
+     */
+    case 'updateAutomationBoardTemplate': {
       return withAutomationBoardWorkspaceState(state, action.workspacePath, (current) => ({
         ...current,
-        autoTrigger: { ...current.autoTrigger, ...action.patch },
+        templates: current.templates.map((template) =>
+          template.id === action.templateId ? { ...template, ...action.patch } : template,
+        ),
+      }))
+    }
+    case 'setAutomationBoardTemplateInstance': {
+      return withAutomationBoardWorkspaceState(state, action.workspacePath, (current) => ({
+        ...current,
+        templates: current.templates.map((template) =>
+          template.id === action.templateId
+            ? { ...template, instanceCardId: action.cardId }
+            : template,
+        ),
       }))
     }
     default:

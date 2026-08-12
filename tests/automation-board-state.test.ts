@@ -2,15 +2,24 @@ import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
 
 import {
+  automationBoardSupervisorTemplateId,
   createAutomationBoardCard,
   createCard,
   createDefaultSettings,
   collectAutomationBoardOwnedCardIds,
   getAutomationBoard,
+  normalizeAppSettings,
   resolveRecoveredColumnLayout,
 } from '../shared/default-state.ts'
 import { AUTOMATIONBOARD_TOOL_MODEL, DEFAULT_CODEX_MODEL } from '../shared/models.ts'
-import type { AppState, BoardColumn, ChatCard, PaneNode } from '../shared/schema.ts'
+import { createDefaultAutomationBoardTemplateTrigger } from '../shared/schema.ts'
+import type {
+  AppState,
+  AutomationBoardTemplate,
+  BoardColumn,
+  ChatCard,
+  PaneNode,
+} from '../shared/schema.ts'
 import { findPaneInLayout, ideReducer } from '../src/state.ts'
 import { automationBoardHasActiveRun } from '../src/components/automation-board-transitions.ts'
 
@@ -28,9 +37,7 @@ const boardCard = (items: Array<{ cardId: string; lane: 'standby' | 'running' | 
   ...createAutomationBoardCard('Board'),
   id: 'board-1',
   automationBoard: {
-    items: items.map((item) => ({ ...item, requirement: `req ${item.cardId}` })),
-    supervisorCardId: '',
-    supervisorExpanded: false,
+    items: items.map((item) => ({ ...item, requirement: `req ${item.cardId}`, templateId: '' })),
   },
 })
 
@@ -79,31 +86,20 @@ const buildState = (
 const getBoard = (state: AppState) => state.columns[0]!.cards['board-1']!.automationBoard!
 
 describe('automation board card ownership', () => {
-  it('claims every item card plus the supervisor', () => {
+  it('claims every item card and nothing else', () => {
     const cards = {
-      'board-1': {
-        ...boardCard([
-          { cardId: 'item-a', lane: 'standby' },
-          { cardId: 'item-b', lane: 'running' },
-        ]),
-        automationBoard: {
-          items: [
-            { cardId: 'item-a', lane: 'standby' as const, requirement: '' },
-            { cardId: 'item-b', lane: 'running' as const, requirement: '' },
-          ],
-          supervisorCardId: 'sup-1',
-          supervisorExpanded: false,
-        },
-      },
+      'board-1': boardCard([
+        { cardId: 'item-a', lane: 'standby' },
+        { cardId: 'item-b', lane: 'running' },
+      ]),
       'item-a': itemCard('item-a'),
       'item-b': itemCard('item-b'),
-      'sup-1': itemCard('sup-1'),
       'chat-1': itemCard('chat-1'),
     }
 
     assert.deepEqual(
       [...collectAutomationBoardOwnedCardIds(cards)].sort(),
-      ['item-a', 'item-b', 'sup-1'],
+      ['item-a', 'item-b'],
     )
   })
 })
@@ -182,19 +178,6 @@ describe('automationBoardHasActiveRun', () => {
     assert.equal(automationBoardHasActiveRun(getBoard(state), state.columns[0]!.cards), true)
   })
 
-  it('counts the supervisor while it streams', () => {
-    const board = boardCard([{ cardId: 'item-a', lane: 'done' }])
-    const state = buildState({
-      cards: {
-        'board-1': { ...board, automationBoard: { ...board.automationBoard!, supervisorCardId: 'sup-1' } },
-        'item-a': itemCard('item-a'),
-        'sup-1': itemCard('sup-1', { status: 'streaming', streamId: 's' }),
-      },
-    })
-
-    assert.equal(automationBoardHasActiveRun(getBoard(state), state.columns[0]!.cards), true)
-  })
-
   it('is false for a card with no board', () => {
     assert.equal(automationBoardHasActiveRun(undefined, {}), false)
   })
@@ -222,8 +205,56 @@ describe('createAutomationBoardItem', () => {
     // 关键：新卡片进 cards 但绝不进 pane.tabs。
     assert.deepEqual(findPaneInLayout(column.layout, 'pane-1')?.tabs, ['board-1'])
     assert.deepEqual(getBoard(next).items, [
-      { cardId: 'new-item', lane: 'standby', requirement: '把登录页改成暗色', createdAt: getBoard(next).items[0]!.createdAt },
+      {
+        cardId: 'new-item',
+        lane: 'standby',
+        requirement: '把登录页改成暗色',
+        templateId: '',
+        createdAt: getBoard(next).items[0]!.createdAt,
+      },
     ])
+  })
+
+  // templateId + adminAccess 就是 v2 的全部"监工性"：前者是触发器防自触发的
+  // 唯一依据，后者是这张卡能不能拿到工作区 MCP 的唯一依据。
+  it('records the source template and grants admin access when instantiated from one', () => {
+    const state = buildState({
+      cards: { 'board-1': boardCard([]) },
+      layout: pane('pane-1', ['board-1']),
+    })
+
+    const next = ideReducer(state, {
+      type: 'createAutomationBoardItem',
+      columnId: 'column-1',
+      boardCardId: 'board-1',
+      lane: 'running',
+      requirement: '巡检所有需求',
+      cardId: 'new-item',
+      templateId: 'automation-board-supervisor',
+      adminAccess: true,
+    })
+
+    assert.equal(getBoard(next).items[0]?.templateId, 'automation-board-supervisor')
+    assert.equal(next.columns[0]!.cards['new-item']?.adminAccess, true)
+  })
+
+  it('leaves templateId empty and grants no admin access for a hand-made item', () => {
+    const state = buildState({
+      cards: { 'board-1': boardCard([]) },
+      layout: pane('pane-1', ['board-1']),
+    })
+
+    const next = ideReducer(state, {
+      type: 'createAutomationBoardItem',
+      columnId: 'column-1',
+      boardCardId: 'board-1',
+      lane: 'standby',
+      requirement: '随手写的需求',
+      cardId: 'new-item',
+    })
+
+    assert.equal(getBoard(next).items[0]?.templateId, '')
+    assert.equal(next.columns[0]!.cards['new-item']?.adminAccess, undefined)
   })
 
   it('is inert when the board card does not exist', () => {
@@ -398,6 +429,8 @@ describe('moveTabToAutomationBoard — atomic absorb', () => {
     assert.deepEqual(findPaneInLayout(column.layout, 'pane-1')?.tabs, ['board-1'])
     assert.equal(getBoard(next).items.find((item) => item.cardId === 'chat-1')?.lane, 'running')
     assert.equal(column.cards['chat-1'], cardBefore)
+    // 吸收进来的会话不属于任何模板，否则触发器会把它误判成自触发。
+    assert.equal(getBoard(next).items.find((item) => item.cardId === 'chat-1')?.templateId, '')
   })
 
   it('captures the requirement from the draft when there is no history', () => {
@@ -507,60 +540,6 @@ describe('moveTabToAutomationBoard — atomic absorb', () => {
   })
 })
 
-describe('moveAutomationBoardItemToPane — the supervisor', () => {
-  const withSupervisor = () => {
-    const board = boardCard([{ cardId: 'item-a', lane: 'running' }])
-    return buildState({
-      cards: {
-        'board-1': {
-          ...board,
-          automationBoard: { ...board.automationBoard!, supervisorCardId: 'sup-1' },
-        },
-        'item-a': itemCard('item-a'),
-        'sup-1': itemCard('sup-1', { status: 'streaming', streamId: 'sup-stream' }),
-      },
-      layout: pane('pane-1', ['board-1']),
-    })
-  }
-
-  // 监工不在 items 里，但用户同样要能把它拖出来接管；不支持就等于按钮点了没反应。
-  it('pops the supervisor out as a tab and clears the board reference', () => {
-    const state = withSupervisor()
-    const before = state.columns[0]!.cards['sup-1']!
-
-    const next = ideReducer(state, {
-      type: 'moveAutomationBoardItemToPane',
-      columnId: 'column-1',
-      boardCardId: 'board-1',
-      cardId: 'sup-1',
-      paneId: 'pane-1',
-    })
-
-    const column = next.columns[0]!
-    assert.deepEqual(findPaneInLayout(column.layout, 'pane-1')?.tabs, ['board-1', 'sup-1'])
-    assert.equal(getBoard(next).supervisorCardId, '')
-    // 与需求项一样：搬运不碰卡片对象，正在飞的流继续。
-    assert.equal(column.cards['sup-1'], before)
-    assert.equal(column.cards['sup-1']?.streamId, 'sup-stream')
-    // 需求项不受影响。
-    assert.deepEqual(getBoard(next).items.map((item) => item.cardId), ['item-a'])
-  })
-
-  it('is inert for a card that is neither an item nor the supervisor', () => {
-    const state = withSupervisor()
-    assert.equal(
-      ideReducer(state, {
-        type: 'moveAutomationBoardItemToPane',
-        columnId: 'column-1',
-        boardCardId: 'board-1',
-        cardId: 'not-mine',
-        paneId: 'pane-1',
-      }),
-      state,
-    )
-  })
-})
-
 describe('removeAutomationBoardItem', () => {
   it('drops the item and deletes the card', () => {
     const next = ideReducer(buildState(), {
@@ -603,82 +582,41 @@ describe('stampAutomationBoardItem', () => {
   })
 })
 
-describe('ensureAutomationBoardSupervisor', () => {
-  it('creates an off-layout supervisor card once', () => {
-    const first = ideReducer(buildState(), {
-      type: 'ensureAutomationBoardSupervisor',
-      columnId: 'column-1',
-      boardCardId: 'board-1',
-      provider: 'claude',
-      model: 'claude-opus-5',
-      reasoningEffort: 'max',
-      cardId: 'sup-1',
-    })
-
-    assert.equal(getBoard(first).supervisorCardId, 'sup-1')
-    assert.equal(first.columns[0]!.cards['sup-1']?.provider, 'claude')
-    assert.deepEqual(findPaneInLayout(first.columns[0]!.layout, 'pane-1')?.tabs, ['board-1', 'chat-1'])
-
-    const second = ideReducer(first, {
-      type: 'ensureAutomationBoardSupervisor',
-      columnId: 'column-1',
-      boardCardId: 'board-1',
-      provider: 'claude',
-      model: 'claude-opus-5',
-      reasoningEffort: 'max',
-      cardId: 'sup-2',
-    })
-
-    assert.equal(getBoard(second).supervisorCardId, 'sup-1')
-    assert.equal(second.columns[0]!.cards['sup-2'], undefined)
-  })
-
-  it('retargets the supervisor model on an existing supervisor', () => {
-    const first = ideReducer(buildState(), {
-      type: 'ensureAutomationBoardSupervisor',
-      columnId: 'column-1',
-      boardCardId: 'board-1',
-      provider: 'claude',
-      model: 'claude-opus-5',
-      reasoningEffort: 'max',
-      cardId: 'sup-1',
-    })
-
-    const retargeted = ideReducer(first, {
-      type: 'ensureAutomationBoardSupervisor',
-      columnId: 'column-1',
-      boardCardId: 'board-1',
-      provider: 'codex',
-      model: 'gpt-5.6-terra',
-      reasoningEffort: 'high',
-      cardId: 'sup-2',
-    })
-
-    assert.equal(retargeted.columns[0]!.cards['sup-1']?.provider, 'codex')
-    assert.equal(retargeted.columns[0]!.cards['sup-1']?.model, 'gpt-5.6-terra')
-  })
-})
-
 describe('automation board workspace state', () => {
+  const template = (overrides: Partial<AutomationBoardTemplate> = {}): AutomationBoardTemplate => ({
+    id: 'tpl-1',
+    name: '发布检查',
+    requirement: '检查发布前的改动',
+    provider: 'codex',
+    model: DEFAULT_CODEX_MODEL,
+    reasoningEffort: 'max',
+    thinkingEnabled: true,
+    planMode: false,
+    adminAccess: false,
+    builtIn: false,
+    trigger: createDefaultAutomationBoardTemplateTrigger(),
+    instanceCardId: '',
+    wakeTimerActive: false,
+    repeatLoopActive: false,
+    ...overrides,
+  })
+
+  const templatesOf = (state: AppState, workspacePath = 'D:/repo/one') =>
+    state.automationBoards[workspacePath]?.templates ?? []
+
+  const templateById = (state: AppState, id: string, workspacePath = 'D:/repo/one') =>
+    templatesOf(state, workspacePath).find((entry) => entry.id === id)
+
   it('saves, renames, and removes templates per workspace', () => {
     const saved = ideReducer(buildState(), {
       type: 'saveAutomationBoardTemplate',
       workspacePath: 'D:/repo/one',
-      template: {
-        id: 'tpl-1',
-        name: '发布检查',
-        requirement: '检查发布前的改动',
-        provider: 'codex',
-        model: DEFAULT_CODEX_MODEL,
-        reasoningEffort: 'max',
-        thinkingEnabled: true,
-        planMode: false,
-        wakeTimerActive: false,
-        repeatLoopActive: false,
-      },
+      template: template(),
     })
 
-    assert.equal(saved.automationBoards['D:/repo/one']?.templates.length, 1)
+    // 新工作区读不到状态时会种下默认的内置监工模板，用户存的这个排在它后面。
+    assert.ok(templateById(saved, automationBoardSupervisorTemplateId))
+    assert.ok(templateById(saved, 'tpl-1'))
 
     const renamed = ideReducer(saved, {
       type: 'renameAutomationBoardTemplate',
@@ -686,70 +624,137 @@ describe('automation board workspace state', () => {
       templateId: 'tpl-1',
       name: '发布前检查',
     })
-    assert.equal(renamed.automationBoards['D:/repo/one']?.templates[0]?.name, '发布前检查')
+    assert.equal(templateById(renamed, 'tpl-1')?.name, '发布前检查')
 
     const removed = ideReducer(renamed, {
       type: 'removeAutomationBoardTemplate',
       workspacePath: 'D:/repo/one',
       templateId: 'tpl-1',
     })
-    assert.deepEqual(removed.automationBoards['D:/repo/one']?.templates, [])
+    assert.equal(templateById(removed, 'tpl-1'), undefined)
+  })
+
+  // 内置模板不是不可删的：删掉之后这个工作区已经有状态条目了，默认值不会
+  // 再被种回来（种默认值的分支只在"读不到任何状态"时走）。
+  it('does not resurrect the built-in template after it was deleted', () => {
+    const seeded = ideReducer(buildState(), {
+      type: 'saveAutomationBoardTemplate',
+      workspacePath: 'D:/repo/one',
+      template: template(),
+    })
+
+    const removed = ideReducer(seeded, {
+      type: 'removeAutomationBoardTemplate',
+      workspacePath: 'D:/repo/one',
+      templateId: automationBoardSupervisorTemplateId,
+    })
+    const later = ideReducer(removed, {
+      type: 'renameAutomationBoardTemplate',
+      workspacePath: 'D:/repo/one',
+      templateId: 'tpl-1',
+      name: 'B',
+    })
+
+    assert.deepEqual(templatesOf(later).map((entry) => entry.id), ['tpl-1'])
   })
 
   it('replaces a template saved under an existing id instead of duplicating it', () => {
-    const template = {
-      id: 'tpl-1',
-      name: 'A',
-      requirement: 'x',
-      provider: 'codex' as const,
-      model: DEFAULT_CODEX_MODEL,
-      reasoningEffort: 'max',
-      thinkingEnabled: true,
-      planMode: false,
-      wakeTimerActive: false,
-      repeatLoopActive: false,
-    }
-
     const once = ideReducer(buildState(), {
       type: 'saveAutomationBoardTemplate',
       workspacePath: 'D:/repo/one',
-      template,
+      template: template({ name: 'A' }),
     })
     const twice = ideReducer(once, {
       type: 'saveAutomationBoardTemplate',
       workspacePath: 'D:/repo/one',
-      template: { ...template, name: 'B' },
+      template: template({ name: 'B' }),
     })
 
-    assert.equal(twice.automationBoards['D:/repo/one']?.templates.length, 1)
-    assert.equal(twice.automationBoards['D:/repo/one']?.templates[0]?.name, 'B')
+    assert.equal(templatesOf(twice).filter((entry) => entry.id === 'tpl-1').length, 1)
+    assert.equal(templateById(twice, 'tpl-1')?.name, 'B')
   })
 
-  it('patches the auto trigger config and seeds defaults for a new workspace', () => {
-    const next = ideReducer(buildState(), {
-      type: 'updateAutomationBoardAutoTrigger',
+  it('patches one template and leaves its siblings alone', () => {
+    const seeded = [
+      { id: 'tpl-1', name: 'A' },
+      { id: 'tpl-2', name: 'B' },
+    ].reduce<AppState>(
+      (state, entry) =>
+        ideReducer(state, {
+          type: 'saveAutomationBoardTemplate',
+          workspacePath: 'D:/repo/one',
+          template: template(entry),
+        }),
+      buildState(),
+    )
+
+    const next = ideReducer(seeded, {
+      type: 'updateAutomationBoardTemplate',
       workspacePath: 'D:/repo/one',
-      patch: { enabled: true, model: 'claude-opus-5' },
+      templateId: 'tpl-1',
+      patch: {
+        trigger: { ...createDefaultAutomationBoardTemplateTrigger(), enabled: true, lane: 'standby' },
+      },
     })
 
-    const config = next.automationBoards['D:/repo/one']?.autoTrigger
-    assert.equal(config?.enabled, true)
-    assert.equal(config?.model, 'claude-opus-5')
-    // 未指定的字段必须落在 schema 默认值上，而不是变成 undefined。
-    assert.equal(config?.kind, 'last-item-settled')
-    assert.ok((config?.requirement ?? '').includes('鞭策'))
+    assert.equal(templateById(next, 'tpl-1')?.trigger.enabled, true)
+    assert.equal(templateById(next, 'tpl-1')?.trigger.lane, 'standby')
+    assert.equal(templateById(next, 'tpl-2')?.trigger.enabled, false)
+    // 浅合并：没被 patch 的字段原样保留。
+    assert.equal(templateById(next, 'tpl-1')?.name, 'A')
+  })
+
+  it('is inert for an unknown template id', () => {
+    const seeded = ideReducer(buildState(), {
+      type: 'saveAutomationBoardTemplate',
+      workspacePath: 'D:/repo/one',
+      template: template(),
+    })
+
+    const next = ideReducer(seeded, {
+      type: 'updateAutomationBoardTemplate',
+      workspacePath: 'D:/repo/one',
+      templateId: 'nope',
+      patch: { name: 'X' },
+    })
+
+    assert.deepEqual(templatesOf(next), templatesOf(seeded))
+  })
+
+  it('records the live instance card without touching anything else', () => {
+    const seeded = ideReducer(buildState(), {
+      type: 'saveAutomationBoardTemplate',
+      workspacePath: 'D:/repo/one',
+      template: template({ trigger: { ...createDefaultAutomationBoardTemplateTrigger(), enabled: true } }),
+    })
+
+    const next = ideReducer(seeded, {
+      type: 'setAutomationBoardTemplateInstance',
+      workspacePath: 'D:/repo/one',
+      templateId: 'tpl-1',
+      cardId: 'card-9',
+    })
+
+    assert.deepEqual(templateById(next, 'tpl-1'), {
+      ...templateById(seeded, 'tpl-1')!,
+      instanceCardId: 'card-9',
+    })
   })
 
   it('keeps other workspaces untouched', () => {
     const next = ideReducer(buildState(), {
-      type: 'updateAutomationBoardAutoTrigger',
+      type: 'updateAutomationBoardTemplate',
       workspacePath: 'D:/repo/two',
-      patch: { enabled: true },
+      templateId: automationBoardSupervisorTemplateId,
+      patch: { adminAccess: false },
     })
 
     assert.equal(next.automationBoards['D:/repo/one'], undefined)
     assert.deepEqual(Object.keys(next.automationBoards), ['D:/repo/two'])
-    assert.equal(next.automationBoards['D:/repo/two']?.autoTrigger.enabled, true)
+    assert.equal(
+      templateById(next, automationBoardSupervisorTemplateId, 'D:/repo/two')?.adminAccess,
+      false,
+    )
   })
 })
 
@@ -770,11 +775,7 @@ describe('turning an existing card into a board', () => {
       model: AUTOMATIONBOARD_TOOL_MODEL,
     })
 
-    assert.deepEqual(next.columns[0]!.cards['chat-1']?.automationBoard, {
-      items: [],
-      supervisorCardId: '',
-      supervisorExpanded: false,
-    })
+    assert.deepEqual(next.columns[0]!.cards['chat-1']?.automationBoard, { items: [] })
   })
 
   it('keeps an existing board intact when the model is re-selected', () => {
@@ -866,10 +867,64 @@ describe('board card model identity', () => {
     const card = createAutomationBoardCard()
 
     assert.equal(card.model, AUTOMATIONBOARD_TOOL_MODEL)
-    assert.deepEqual(card.automationBoard, {
-      items: [],
-      supervisorCardId: '',
-      supervisorExpanded: false,
+    assert.deepEqual(card.automationBoard, { items: [] })
+  })
+})
+
+describe('the board tool model never leaks into model memory', () => {
+  // 症状：打开自动化看板之后，之后新建的每一张卡都变成看板样式且一片空白。
+  // 根因：src/state.ts 的 toolCardModels 白名单漏了 AUTOMATIONBOARD_TOOL_MODEL，
+  //   所以切到看板被当成"用户选了一个真模型"，写进 settings.requestModels /
+  //   lastModel / column.model，之后 addTab 又原样继承回来 —— 而 createCard
+  //   不会种 automationBoard blob，于是新卡是一张什么都不渲染的空壳。
+  // 被否决的替代：只在 addTab 里特判看板模型。污染源在 selectCardModel，
+  //   特判下游只会让 state.json 继续存着一个非法的 requestModel。
+  it('picking the board model does not overwrite the remembered request model', () => {
+    const state = buildState({
+      cards: { 'chat-1': itemCard('chat-1') },
+      layout: pane('pane-1', ['chat-1']),
     })
+
+    const next = ideReducer(state, {
+      type: 'selectCardModel',
+      columnId: 'column-1',
+      cardId: 'chat-1',
+      provider: 'codex',
+      model: AUTOMATIONBOARD_TOOL_MODEL,
+    })
+
+    assert.equal(next.settings.requestModels.codex, DEFAULT_CODEX_MODEL)
+    assert.notEqual(next.settings.lastModel?.model, AUTOMATIONBOARD_TOOL_MODEL)
+    assert.equal(next.columns[0]!.model, DEFAULT_CODEX_MODEL)
+  })
+
+  it('a tab opened next to a board card is an ordinary chat card', () => {
+    // 用户看到的那一刻：column.model 已经被上一次"打开看板"污染了。
+    const poisoned = buildState()
+    poisoned.columns[0]!.model = AUTOMATIONBOARD_TOOL_MODEL
+    poisoned.settings.lastModel = { provider: 'codex', model: AUTOMATIONBOARD_TOOL_MODEL }
+
+    const next = ideReducer(poisoned, {
+      type: 'addTab',
+      columnId: 'column-1',
+      paneId: 'pane-1',
+      cardId: 'fresh-1',
+    })
+
+    const fresh = next.columns[0]!.cards['fresh-1']!
+    assert.notEqual(fresh.model, AUTOMATIONBOARD_TOOL_MODEL)
+    assert.equal(getAutomationBoard(fresh), undefined)
+  })
+
+  it('heals a save whose remembered models were already poisoned by the board', () => {
+    const settings = normalizeAppSettings({
+      ...createDefaultSettings(),
+      requestModels: { codex: AUTOMATIONBOARD_TOOL_MODEL, claude: AUTOMATIONBOARD_TOOL_MODEL },
+      lastModel: { provider: 'codex', model: AUTOMATIONBOARD_TOOL_MODEL },
+    })
+
+    assert.equal(settings.requestModels.codex, DEFAULT_CODEX_MODEL)
+    assert.notEqual(settings.requestModels.claude, AUTOMATIONBOARD_TOOL_MODEL)
+    assert.notEqual(settings.lastModel?.model, AUTOMATIONBOARD_TOOL_MODEL)
   })
 })

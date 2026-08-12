@@ -88,8 +88,8 @@ type DesktopStreamEventDetail = {
 declare global {
   interface Window {
     electronAPI?: {
-      publishAutomationBoardMirror?: (mirror: unknown) => Promise<boolean>
-      forgetAutomationBoardMirror?: (boardCardId: string) => Promise<void>
+      publishWorkspaceSessionMirror?: (mirror: unknown) => Promise<boolean>
+      forgetWorkspaceSessionMirror?: (columnId: string) => Promise<void>
       minimizeWindow?: () => Promise<void>
       toggleMaximizeWindow?: () => Promise<boolean>
       closeWindow?: () => Promise<void>

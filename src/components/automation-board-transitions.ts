@@ -127,7 +127,8 @@ const isCardActive = (card: ChatCard | undefined) =>
  *   恢复、唤醒判定），而这里只需要"亮不亮"这一个布尔。所以纯派生。
  *
  * 只算 running 道：待命/已完成道里的卡如果还在收尾（拖进去那一刻刚请求中断），
- * 不该让整个看板看起来在干活。
+ * 不该让整个看板看起来在干活。v2 起监工实例本身就是 running 道的一个项，
+ * 所以这里不再需要单独判监工。
  */
 export const automationBoardHasActiveRun = (
   board: AutomationBoard | undefined,
@@ -135,10 +136,6 @@ export const automationBoardHasActiveRun = (
 ): boolean => {
   if (!board) {
     return false
-  }
-
-  if (board.supervisorCardId && isCardActive(cards[board.supervisorCardId])) {
-    return true
   }
 
   return board.items.some((item) => item.lane === 'running' && isCardActive(cards[item.cardId]))

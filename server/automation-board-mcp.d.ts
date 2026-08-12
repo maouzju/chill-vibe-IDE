@@ -1,7 +1,7 @@
-import type { AutomationBoardCommand, AutomationBoardMirror } from '../shared/schema.js'
-import type { AutomationBoardTranscriptEntry } from './automation-board-bridge.js'
+import type { WorkspaceAdminCommand, WorkspaceSessionMirror } from '../shared/schema.js'
+import type { WorkspaceAdminTranscriptEntry } from './automation-board-bridge.js'
 
-type BoardMcpToolDefinition = {
+type WorkspaceAdminMcpToolDefinition = {
   name: string
   description: string
   inputSchema: {
@@ -12,55 +12,59 @@ type BoardMcpToolDefinition = {
   }
 }
 
-type BoardMcpToolContent = { type: 'text'; text: string }
+type WorkspaceAdminMcpToolContent = { type: 'text'; text: string }
 
-type BoardMcpToolResult = {
-  content: BoardMcpToolContent[]
+type WorkspaceAdminMcpToolResult = {
+  content: WorkspaceAdminMcpToolContent[]
   isError: boolean
 }
 
-type BoardCommandResolution =
-  | { command: AutomationBoardCommand; error?: undefined }
+type WorkspaceAdminCommandResolution =
+  | { command: WorkspaceAdminCommand; error?: undefined }
   | { command?: undefined; error: string }
 
-type BoardCommandDeliveryOutcome = {
+type WorkspaceAdminCommandDeliveryOutcome = {
   accepted: boolean
   reason?: string
 }
 
 /** Injected IO so tools can be unit-tested without a live bridge or child process. */
-type AutomationBoardToolContext = {
-  boardCardId: string
+type WorkspaceAdminToolContext = {
+  /** Empty string = this session has no admin access; the write tools refuse. */
+  columnId: string
+  /** The requesting card, filtered out of the session listing. */
+  selfCardId?: string
   /** Frozen clock for silence math; falls back to Date.now() when omitted. */
   nowMs?: number
-  fetchBoard: () => Promise<AutomationBoardMirror | null>
-  fetchItem: (
+  fetchWorkspace: () => Promise<WorkspaceSessionMirror | null>
+  fetchSession: (
     cardId: string,
     limit: number,
-  ) => Promise<AutomationBoardTranscriptEntry[] | null>
-  postCommand: (command: AutomationBoardCommand) => Promise<BoardCommandDeliveryOutcome>
+  ) => Promise<WorkspaceAdminTranscriptEntry[] | null>
+  postCommand: (command: WorkspaceAdminCommand) => Promise<WorkspaceAdminCommandDeliveryOutcome>
 }
 
-export const boardMcpToolDefinitions: BoardMcpToolDefinition[]
+export const workspaceAdminMcpToolDefinitions: WorkspaceAdminMcpToolDefinition[]
 
-export function buildBoardItemsText(
-  mirror: AutomationBoardMirror | null | undefined,
+export function buildWorkspaceSessionsText(
+  mirror: WorkspaceSessionMirror | null | undefined,
   nowMs: number,
+  selfCardId?: string,
 ): string
 
-export function buildBoardItemTranscriptText(
+export function buildSessionTranscriptText(
   cardId: string,
-  entries: AutomationBoardTranscriptEntry[] | null | undefined,
+  entries: WorkspaceAdminTranscriptEntry[] | null | undefined,
 ): string
 
-export function resolveBoardCommandFromToolCall(
+export function resolveWorkspaceAdminCommandFromToolCall(
   name: string,
   args: Record<string, unknown> | undefined,
-  boardCardId: string,
-): BoardCommandResolution
+  columnId: string,
+): WorkspaceAdminCommandResolution
 
-export function callAutomationBoardTool(
+export function callWorkspaceAdminTool(
   name: string,
   args: Record<string, unknown> | undefined,
-  context: AutomationBoardToolContext,
-): Promise<BoardMcpToolResult>
+  context: WorkspaceAdminToolContext,
+): Promise<WorkspaceAdminMcpToolResult>

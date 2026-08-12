@@ -7623,6 +7623,36 @@ a.message-file-reference-link:focus-visible {
   color: var(--accent-text);
 }
 
+/* 超管权限是设置菜单里唯一有跨会话副作用的开关，所以是唯一走 danger 色的一行。
+   两套主题都有 --danger / --danger-soft，不需要再补 dark 覆盖。 */
+.composer-admin-access-row.is-admin,
+.composer-admin-access-row.is-admin .composer-settings-label {
+  color: var(--danger);
+  font-weight: 600;
+}
+
+.composer-admin-access-row.is-admin {
+  border-radius: var(--r-sm);
+  background: var(--danger-soft);
+}
+
+.card-admin-access-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  padding: 0.1rem;
+  border-radius: var(--r-sm);
+  background: var(--danger-soft);
+  color: var(--danger);
+}
+
+.card-admin-access-badge svg {
+  width: 0.8rem;
+  height: 0.8rem;
+  display: block;
+}
+
 .composer-settings-menu {
   position: fixed;
   top: 0;
@@ -14487,7 +14517,7 @@ body.is-pane-resizing .split-resize-handle::before {
 
 .automation-board-lane-compose textarea,
 .automation-board-item-nudge textarea,
-.automation-board-trigger-config textarea {
+.automation-board-template-config textarea {
   width: 100%;
   box-sizing: border-box;
   resize: vertical;
@@ -14502,7 +14532,7 @@ body.is-pane-resizing .split-resize-handle::before {
 
 .automation-board-lane-compose textarea:focus,
 .automation-board-item-nudge textarea:focus,
-.automation-board-trigger-config textarea:focus {
+.automation-board-template-config textarea:focus {
   outline: none;
   background: var(--input-strong-bg-focus);
   border-color: var(--accent-line-strong);
@@ -14515,6 +14545,10 @@ body.is-pane-resizing .split-resize-handle::before {
   flex-direction: column;
   gap: 5px;
   padding: 7px 8px;
+  /* 泳道本身就是 overflow-y: auto 的滚动容器；不写 flex: none 的话项卡片会
+     被 flex 压扁去凑泳道高度，窄屏下展开抽屉会把转录区整段挤没。压扁比滚动
+     更糟：内容是无声消失的。 */
+  flex: none;
   max-height: 220px;
   overflow: hidden;
   border: 1px solid var(--line-strong);
@@ -14524,6 +14558,12 @@ body.is-pane-resizing .split-resize-handle::before {
 
 .automation-board-item:active {
   cursor: grabbing;
+}
+
+/* 抽屉展开要额外的高度，否则会被 max-height 直接裁掉。转录区是唯一会
+   收缩的部分（min-height: 0 + overflow-y: auto），所以抽屉永远完整可见。 */
+.automation-board-item.is-drawer-open {
+  max-height: 380px;
 }
 
 .automation-board-item.is-streaming {
@@ -14559,7 +14599,7 @@ body.is-pane-resizing .split-resize-handle::before {
 
 .automation-board-item-head {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   gap: 6px;
   min-width: 0;
 }
@@ -14569,11 +14609,21 @@ body.is-pane-resizing .split-resize-handle::before {
   flex: 1;
   min-width: 0;
   font-size: 12px;
+  line-height: 1.45;
   font-weight: 600;
   color: var(--ink-1);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+/* 标题等于需求原文时它是唯一一处原文，按原来的需求段落夹两行。 */
+.automation-board-item-title.is-sole-copy {
+  white-space: normal;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  -webkit-box-orient: vertical;
 }
 
 .automation-board-item-model {
@@ -14657,16 +14707,96 @@ body.is-pane-resizing .split-resize-handle::before {
   font-size: 10px;
 }
 
+/* 一级行：主操作 + 折叠开关在左，删除靠右。一行装得下，永不换行 ——
+   换行过的版本正是"控件比工作内容还响"的那一版。 */
 .automation-board-item-actions {
   display: flex;
   align-items: center;
-  flex-wrap: wrap;
-  gap: 4px;
+  gap: 2px;
+  flex: none;
 }
 
-.automation-board-item-action {
+/* 项卡片只有 220px 高，全局 icon-button 的边框+底色+投影在这里过重。
+   静息态收成一枚纯图标，边框和底色只在 hover / focus 时才出现。
+   选择器必须带上 `.automation-board-item` —— 只写
+   `.automation-board-item-actions .icon-button`（两段）会被
+   `:root[data-theme='dark'] .icon-button`（三段）压过；实测那一版暗色下按钮
+   仍然带框、亮色下却是平的，两个主题长得不一样。 */
+.automation-board-item .automation-board-item-actions .icon-button {
+  width: 20px;
+  height: 20px;
+  border-radius: 6px;
+  border-color: transparent;
+  background: transparent;
+  box-shadow: none;
+  color: var(--ink-3);
+}
+
+.automation-board-item .automation-board-item-actions .icon-button svg {
+  width: 13px;
+  height: 13px;
+}
+
+.automation-board-item .automation-board-item-actions .icon-button:hover:enabled,
+.automation-board-item .automation-board-item-actions .icon-button:focus-visible {
+  transform: none;
+  border-color: var(--line-strong);
+  background: var(--panel-strong);
+  color: var(--ink-1);
+  box-shadow: none;
+}
+
+.automation-board-item-more svg {
+  transition: transform 120ms ease;
+}
+
+.automation-board-item.is-drawer-open .automation-board-item-more svg {
+  transform: rotate(180deg);
+}
+
+.automation-board-item-delete {
+  margin-left: auto;
+}
+
+/* ---- item card: 二级抽屉 ---- */
+
+.automation-board-item-drawer {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  flex: none;
+  padding-top: 5px;
+  border-top: 1px solid var(--line);
+  cursor: auto;
+}
+
+.automation-board-item-drawer-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+/* 全局 .btn 是 700 字重 + 药丸 + 投影，在 10px 的抽屉里读起来比正文还响。
+   三段选择器是为了压过 `:root[data-theme='dark'] .btn`（同样三段，本条更靠后）。 */
+.automation-board-item .automation-board-item-drawer .automation-board-item-action {
   font-size: 10px;
-  padding: 1px 6px;
+  font-weight: 500;
+  padding: 2px 8px;
+  border-radius: 6px;
+  border-color: var(--line);
+  background: transparent;
+  color: var(--ink-2);
+  box-shadow: none;
+}
+
+.automation-board-item .automation-board-item-drawer .automation-board-item-action:hover,
+.automation-board-item .automation-board-item-drawer .automation-board-item-action:focus-visible {
+  transform: none;
+  box-shadow: none;
+  background: var(--panel-strong);
+  border-color: var(--line-strong);
+  color: var(--ink-1);
 }
 
 .automation-board-item-toggle {
@@ -14676,102 +14806,6 @@ body.is-pane-resizing .split-resize-handle::before {
   font-size: 10px;
   color: var(--ink-3);
   cursor: pointer;
-}
-
-.automation-board-item-delete {
-  margin-left: auto;
-}
-
-/* ---- supervisor ---- */
-
-.automation-board-supervisor {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  border: 1px solid var(--accent-line);
-  background: var(--accent-soft);
-  padding: 7px 8px;
-  flex: none;
-  max-height: 45%;
-  overflow-y: auto;
-}
-
-.automation-board-supervisor-head {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 6px;
-}
-
-.automation-board-supervisor-head h3 {
-  margin: 0;
-  font-size: 12px;
-  font-weight: 600;
-  color: var(--ink-1);
-}
-
-.automation-board-supervisor-icon svg {
-  width: 13px;
-  height: 13px;
-  display: block;
-  color: var(--accent);
-}
-
-.automation-board-supervisor-state {
-  flex: 1;
-  min-width: 0;
-  font-size: 11px;
-  color: var(--ink-3);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.automation-board-supervisor-body {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  border-top: 1px solid var(--accent-line);
-  padding-top: 6px;
-}
-
-.automation-board-trigger-config {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  border-top: 1px solid var(--accent-line);
-  padding-top: 6px;
-}
-
-.automation-board-trigger-hint,
-.automation-board-trigger-kind {
-  margin: 0;
-  font-size: 11px;
-  line-height: 1.5;
-  color: var(--ink-3);
-}
-
-.automation-board-trigger-row {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  font-size: 11px;
-  color: var(--ink-2);
-}
-
-.automation-board-trigger-row.is-stacked {
-  flex-direction: column;
-  align-items: stretch;
-}
-
-.automation-board-trigger-row select,
-.automation-board-trigger-row input[type="number"] {
-  border: 1px solid var(--line-strong);
-  background: var(--input-strong-bg);
-  color: var(--ink-1);
-  font: inherit;
-  font-size: 11px;
-  padding: 2px 5px;
 }
 
 /* ---- template strip ---- */
@@ -14850,6 +14884,123 @@ body.is-pane-resizing .split-resize-handle::before {
   color: var(--ink-4);
   font-size: 10px;
   white-space: nowrap;
+}
+
+/* 展开中的胶囊要能被一眼认出来：面板挂在 strip 下方，胶囊与面板之间
+   没有视觉连线，只能靠这一层高亮把两者绑在一起。 */
+.automation-board-template.is-expanded {
+  border-color: var(--accent-line-strong);
+  background: color-mix(in srgb, var(--accent-soft) 60%, var(--panel));
+}
+
+.automation-board-template-configure svg {
+  transition: transform 120ms ease;
+}
+
+.automation-board-template.is-expanded .automation-board-template-configure svg {
+  transform: rotate(180deg);
+}
+
+/* ---- 模板胶囊上的角标：闪电=会自己跑，盾牌=能改别的会话 ---- */
+
+.automation-board-template-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+}
+
+.automation-board-template-badge svg {
+  width: 11px;
+  height: 11px;
+  display: block;
+}
+
+.automation-board-template-badge.is-trigger svg {
+  color: var(--accent);
+}
+
+.automation-board-template-badge.is-admin svg {
+  color: var(--danger);
+}
+
+/* ---- 模板配置面板 ---- */
+
+.automation-board-template-config {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 2px;
+  padding: 7px 8px;
+  border: 1px solid var(--accent-line);
+  background: var(--accent-soft);
+  /* 泳道是 flex:1 + min-height:0，会一路被压到 0。面板必须自己封顶并内部滚动，
+     否则在矮 pane 里展开配置等于把整个看板顶没。 */
+  max-height: min(16rem, 34vh);
+  overflow-y: auto;
+}
+
+.automation-board-template-hint,
+.automation-board-template-trigger-kind {
+  margin: 0;
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--ink-3);
+}
+
+.automation-board-template-field {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  color: var(--ink-2);
+}
+
+.automation-board-template-field.is-stacked {
+  flex-direction: column;
+  align-items: stretch;
+}
+
+.automation-board-template-field.is-admin {
+  color: var(--danger);
+  font-weight: 600;
+}
+
+.automation-board-template-field select,
+.automation-board-template-field input[type='text'],
+.automation-board-template-field input[type='number'] {
+  border: 1px solid var(--line-strong);
+  background: var(--input-strong-bg);
+  color: var(--ink-1);
+  font: inherit;
+  font-size: 11px;
+  padding: 2px 5px;
+}
+
+.automation-board-template-field input[type='text'] {
+  flex: 1;
+  min-width: 0;
+}
+
+.automation-board-template-trigger {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  border-top: 1px solid var(--accent-line);
+  padding-top: 6px;
+}
+
+.automation-board-template-trigger-title {
+  margin: 0;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--ink-1);
+}
+
+.automation-board-template-config-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
 }
 
 /* Narrow panes: stack the three lanes instead of squeezing them. */

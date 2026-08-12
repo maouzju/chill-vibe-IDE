@@ -1,4 +1,7 @@
 import { app, BrowserWindow, crashReporter, dialog, ipcMain, net, protocol, shell } from 'electron'
+import { spawn } from 'node:child_process'
+import { createServer as createPipeServer } from 'node:net'
+import { readFileSync, writeFileSync } from 'node:fs'
 import { readdir } from 'node:fs/promises'
 import { mkdir, rm, stat, writeFile } from 'node:fs/promises'
 import path from 'path'
@@ -6,10 +9,10 @@ import { fileURLToPath, pathToFileURL } from 'url'
 import type { IpcMainInvokeEvent } from 'electron'
 
 import { maxUiScale, minUiScale } from '../shared/default-state.js'
-import { appSettingsSchema, automationBoardMirrorSchema } from '../shared/schema.js'
+import { appSettingsSchema, workspaceSessionMirrorSchema } from '../shared/schema.js'
 import {
-  forgetAutomationBoardMirror,
-  publishAutomationBoardMirror,
+  forgetWorkspaceSessionMirror,
+  publishWorkspaceSessionMirror,
 } from '../server/automation-board-session.js'
 import { getAppDataDir } from '../server/app-paths.js'
 import { initCrashLogger, log } from './crash-logger.js'
@@ -33,6 +36,17 @@ import {
   writeAccessibilitySupportFlag,
 } from './accessibility-support.js'
 import { attachFrameStallWatchdog } from './frame-stall-watchdog.js'
+import { loadRendererWithRetry } from './renderer-load-retry.js'
+import {
+  classifyPreviousRun,
+  parseRunSentinel,
+  serializeRunSentinel,
+} from './crash-relaunch-policy.js'
+import {
+  guardHistoryPath,
+  guardPipePath,
+  guardSentinelPath,
+} from './crash-relaunch-guard.js'
 import { createChatStreamBatcher } from './chat-stream-batcher.js'
 import { summarizeUnresponsiveCallStack } from './unresponsive-forensics.js'
 import {
@@ -156,13 +170,13 @@ const desktopBackend = createDesktopBackend({
       }
     }
   },
-  dispatchAutomationBoardCommand: (command) => {
+  dispatchWorkspaceAdminCommand: (command) => {
     // 与手机监工同一条规矩：桥接服务自己绝不改 state，写命令广播给渲染进程
     // 复用电脑端 handler。返回 false（无可用窗口）时 HTTP 层回 503。
     let delivered = false
     for (const win of BrowserWindow.getAllWindows()) {
       if (!win.isDestroyed() && !win.webContents.isCrashed()) {
-        win.webContents.send('automation-board:command', command)
+        win.webContents.send('workspace-admin:command', command)
         delivered = true
       }
     }
@@ -279,6 +293,135 @@ let crashDumpDirectory: string | null = null
 // that carries that native stack, and the recovery path already terminates the
 // stuck renderer, which produces one — but only while the crash reporter is
 // running. Without this, every recovery destroyed the sole piece of evidence.
+// A hard kill leaves no trace inside the app: no exit hook runs, no minidump is
+// written, and main.log simply stops. The only way to tell "killed" from "the
+// user closed it" after the fact is to leave a marker on disk while running and
+// clear it on the way out -- if the marker is still there next launch, nobody
+// ran our shutdown path. See electron/crash-relaunch-policy.ts for the
+// 2026-08-11 measurements behind this.
+const runSentinelPath = () => path.join(getAppDataDir(), 'run-sentinel.json')
+
+// process.uptime() is the only start time available without a WMI round-trip.
+// It is captured relative to now, so it must be read early rather than lazily.
+const currentRunStartedAtIso = new Date(
+  Date.now() - Math.round(process.uptime() * 1000),
+).toISOString()
+
+function writeRunSentinel(cleanExit: boolean) {
+  try {
+    writeFileSync(
+      runSentinelPath(),
+      serializeRunSentinel({ pid: process.pid, startedAtIso: currentRunStartedAtIso, cleanExit }),
+      'utf8',
+    )
+  } catch (error) {
+    log.warn('[main] Failed to write the run sentinel.', error)
+  }
+}
+
+function recordRunStartAndClassifyPreviousRun() {
+  let previous: ReturnType<typeof parseRunSentinel> = null
+  try {
+    previous = parseRunSentinel(readFileSync(runSentinelPath(), 'utf8'))
+  } catch {
+    previous = null
+  }
+
+  // Reaching this point means we hold the single-instance lock, so whatever the
+  // sentinel names is definitively not running any more.
+  const verdict = classifyPreviousRun(previous, { alive: false })
+  if (verdict === 'hard-kill') {
+    log.error('[main] Previous run never reached its shutdown path -- it was killed from outside.', {
+      previousPid: previous?.pid,
+      previousStartedAtIso: previous?.startedAtIso,
+    })
+  } else {
+    log.info('[main] Previous run classified.', { verdict })
+  }
+
+  writeRunSentinel(false)
+}
+
+// Nothing in user space can refuse TerminateProcess, so the app cannot survive
+// being killed -- it can only come back. A separate process holds one end of a
+// named pipe; the pipe closes the instant this process dies by any means, and
+// the sentinel written above tells that process whether the death was ours.
+// See electron/crash-relaunch-guard.ts for the controlled-kill measurements.
+function startCrashRelaunchGuard() {
+  // Dev restarts constantly and on purpose; resurrecting it would fight the
+  // developer rather than help the user.
+  if (isDev || process.platform !== 'win32') {
+    return
+  }
+
+  if (process.env.CHILL_VIBE_DISABLE_CRASH_RECOVERY === '1') {
+    log.info('[main] Crash relaunch guard disabled by environment.')
+    return
+  }
+
+  try {
+    const dataDir = getAppDataDir()
+    const pipePath = guardPipePath(process.pid)
+    const server = createPipeServer(() => {
+      // The pipe carries no data. Only the fact that it is open matters.
+    })
+    server.on('error', (error) => {
+      log.warn('[main] Relaunch guard pipe failed.', error)
+    })
+    server.listen(pipePath, () => {
+      void spawnCrashRelaunchGuard(dataDir, pipePath)
+    })
+    // Keeping the server unreferenced means it never holds the event loop open
+    // and so can never delay a legitimate shutdown.
+    server.unref()
+  } catch (error) {
+    log.warn('[main] Failed to start the relaunch guard.', error)
+  }
+}
+
+async function spawnCrashRelaunchGuard(dataDir: string, pipePath: string) {
+  try {
+    const guardScript = path.join(moduleDir, 'crash-relaunch-guard-main.mjs')
+    const launcherPath = path.join(dataDir, 'relaunch-guard.cmd')
+    const quote = (value: string) => `"${value.replace(/"/g, '')}"`
+
+    // `start "" /b` is the whole point: taskkill /T walks the target's children,
+    // so a guard spawned directly from here would be killed alongside the app it
+    // exists to resurrect. Routing through a cmd that exits immediately leaves
+    // the guard parented to a dead PID, outside any tree that names this process.
+    const launcher = [
+      '@echo off',
+      'set ELECTRON_RUN_AS_NODE=1',
+      [
+        'start "" /b',
+        quote(process.execPath),
+        quote(guardScript),
+        '--pipe',
+        quote(pipePath),
+        '--sentinel',
+        quote(guardSentinelPath(dataDir)),
+        '--history',
+        quote(guardHistoryPath(dataDir)),
+        '--exec',
+        quote(process.execPath),
+      ].join(' '),
+      '',
+    ].join('\r\n')
+
+    await writeFile(launcherPath, launcher, 'utf8')
+
+    const child = spawn(process.env.COMSPEC ?? 'cmd.exe', ['/c', launcherPath], {
+      detached: true,
+      stdio: 'ignore',
+      windowsHide: true,
+    })
+    child.unref()
+    log.info('[main] Crash relaunch guard started.', { pipePath })
+  } catch (error) {
+    log.warn('[main] Failed to spawn the relaunch guard.', error)
+  }
+}
+
 function configureCrashDumpCollection() {
   const dataDir = process.env.CHILL_VIBE_DATA_DIR ?? path.join(process.cwd(), '.chill-vibe')
   const directory = resolveCrashDumpDirectory(dataDir)
@@ -324,51 +467,74 @@ async function listCrashDumpFiles(): Promise<string[]> {
   }
 }
 
-function loadWindowUrl(win: BrowserWindow, url: string, attempts = 0) {
-  void win.loadURL(url)
-    .then(async () => {
-      if (isDev) {
-        try {
-          const didBootstrap = await win.webContents.executeJavaScript(
-            `
-              new Promise((resolve) => {
-                window.setTimeout(async () => {
-                  try {
-                    const root = document.getElementById('root')
-                    if (!root || root.childElementCount > 0) {
-                      resolve(false)
-                      return
-                    }
+// The dev URL and the packaged file path both load through here on purpose.
+// They used to be separate: dev retried on failure, packaged was a bare
+// `.then()` with no catch, and that asymmetry is what turned a single-instance
+// handoff into a silent flash-quit. See electron/renderer-load-retry.ts.
+async function loadRendererIntoWindow(
+  win: BrowserWindow,
+  target: { kind: 'url' | 'file'; value: string },
+) {
+  const result = await loadRendererWithRetry({
+    load: () => (target.kind === 'url' ? win.loadURL(target.value) : win.loadFile(target.value)),
+    isAbandoned: () => win.isDestroyed(),
+    onAttemptFailed: (attempt, error) => {
+      log.warn('[main] Failed to load renderer, attempt', attempt, error)
+    },
+  })
 
-                    await import(${JSON.stringify(`/src/main.tsx?cv-dev-boot=${Date.now()}`)})
-                    resolve(true)
-                  } catch (error) {
-                    console.error('[chill-vibe] Dev bootstrap import failed.', error)
-                    resolve(false)
-                  }
-                }, ${devRendererBootstrapDelayMs})
-              })
-            `,
-          )
+  if (!result.loaded) {
+    // An abandoned window is the normal single-instance handoff, not a fault.
+    if (!result.abandoned) {
+      log.error('[main] Renderer never loaded.', {
+        target: target.value,
+        attempts: result.attempts,
+      })
+    }
+    return
+  }
 
-          if (didBootstrap) {
-            log.warn('[main] Re-ran dev renderer bootstrap after detecting an empty root shell.')
-          }
-        } catch (error) {
-          log.warn('[main] Failed to verify dev renderer bootstrap state.', error)
-        }
-      }
+  if (isDev) {
+    try {
+      const didBootstrap = await win.webContents.executeJavaScript(
+        `
+          new Promise((resolve) => {
+            window.setTimeout(async () => {
+              try {
+                const root = document.getElementById('root')
+                if (!root || root.childElementCount > 0) {
+                  resolve(false)
+                  return
+                }
 
-      if (!shouldKeepValidationWindowHidden) {
-        presentWindow(win)
+                await import(${JSON.stringify(`/src/main.tsx?cv-dev-boot=${Date.now()}`)})
+                resolve(true)
+              } catch (error) {
+                console.error('[chill-vibe] Dev bootstrap import failed.', error)
+                resolve(false)
+              }
+            }, ${devRendererBootstrapDelayMs})
+          })
+        `,
+      )
+
+      if (didBootstrap) {
+        log.warn('[main] Re-ran dev renderer bootstrap after detecting an empty root shell.')
       }
-    })
-    .catch((err: unknown) => {
-      log.warn('[main] Failed to load window URL, attempt', attempts, err)
-      if (attempts < 40) {
-        setTimeout(() => loadWindowUrl(win, url, attempts + 1), 500)
-      }
-    })
+    } catch (error) {
+      log.warn('[main] Failed to verify dev renderer bootstrap state.', error)
+    }
+  }
+
+  // The dev bootstrap probe above awaits, so the window may have gone away in
+  // the meantime; presenting a destroyed window throws.
+  if (win.isDestroyed()) {
+    return
+  }
+
+  if (!shouldKeepValidationWindowHidden) {
+    presentWindow(win)
+  }
 }
 
 function scheduleQuitAfterFlush() {
@@ -755,19 +921,19 @@ function registerLocalImageProtocol() {
 }
 
 function registerDesktopHandlers() {
-  // 自动化看板的实时镜像：渲染进程是 board state 的唯一主人，所以镜像只能由它
-  // 推上来（读盘快照在流式期间被刻意节流，对监工太旧）。截断在 session 模块里
-  // 统一执行，这里只做 schema 校验。
-  ipcMain.handle('automation-board:publish-mirror', (_event, payload: unknown) => {
-    const parsed = automationBoardMirrorSchema.safeParse(payload)
+  // 工作区列的实时会话镜像：渲染进程是 state 的唯一主人，所以镜像只能由它
+  // 推上来（读盘快照在流式期间被刻意节流，对超管会话太旧）。截断在 session
+  // 模块里统一执行，这里只做 schema 校验。
+  ipcMain.handle('workspace-admin:publish-mirror', (_event, payload: unknown) => {
+    const parsed = workspaceSessionMirrorSchema.safeParse(payload)
     if (parsed.success) {
-      publishAutomationBoardMirror(parsed.data)
+      publishWorkspaceSessionMirror(parsed.data)
     }
     return parsed.success
   })
-  ipcMain.handle('automation-board:forget-mirror', (_event, boardCardId: unknown) => {
-    if (typeof boardCardId === 'string' && boardCardId.trim()) {
-      forgetAutomationBoardMirror(boardCardId)
+  ipcMain.handle('workspace-admin:forget-mirror', (_event, columnId: unknown) => {
+    if (typeof columnId === 'string' && columnId.trim()) {
+      forgetWorkspaceSessionMirror(columnId)
     }
   })
   ipcMain.handle('window:minimize', (event) => {
@@ -1283,15 +1449,8 @@ function createWindow() {
     devServerUrl: devClientUrl,
   })
 
-  if (target.kind === 'url') {
-    loadWindowUrl(win, target.value)
-    return
-  }
-
-  void win.loadFile(target.value).then(() => {
-    if (!shouldKeepValidationWindowHidden) {
-      presentWindow(win)
-    }
+  void loadRendererIntoWindow(win, target).catch((error: unknown) => {
+    log.error('[main] Unexpected renderer load failure.', error)
   })
 }
 
@@ -1328,6 +1487,8 @@ app.whenReady().then(async () => {
   }
   await clearUserDataOnLaunchIfNeeded()
   initCrashLogger()
+  recordRunStartAndClassifyPreviousRun()
+  startCrashRelaunchGuard()
   configureCrashDumpCollection()
   app.on('child-process-gone', (_event, details) => {
     log.error('[main] Child process gone.', {
@@ -1369,6 +1530,12 @@ app.on('will-quit', () => {
   log.warn('[main] will-quit.', {
     windowCount: BrowserWindow.getAllWindows().length,
   })
+
+  // Written here rather than in 'quit': this is the last point that is
+  // guaranteed to run on every ordinary shutdown, and marking it late keeps the
+  // window in which a genuine kill would be misread as a clean exit as small as
+  // possible.
+  writeRunSentinel(true)
 
   if (quitTimer) {
     clearTimeout(quitTimer)

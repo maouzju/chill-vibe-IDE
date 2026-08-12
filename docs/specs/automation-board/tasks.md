@@ -101,3 +101,69 @@ MCP 端到端实测（一次性探针，非注册测试）：起真实桥接 →
 
 - Playwright 视觉回归快照。本机 Playwright 当前不可靠（pitfall 25/34/252），新表面的双主题快照等 harness 修好后再补。
 - Web（非 Electron）模式没有看板 MCP —— 桥接与 remote-monitor 一样是桌面端专属；`publishAutomationBoardMirror` 在 Web 下静默 no-op。
+
+---
+
+# v2 — 监工模板化 + 超管权限
+
+目标见 requirements FR6/FR7/FR10 与 design 的「v2 一致化」章。切片顺序按依赖：契约先落地，UI 与 server 并行叠。
+
+## Slice V1 — shared 契约
+
+- [x] `shared/schema.ts`：删 `automationBoardSchema.supervisorCardId/supervisorExpanded`、删 `automationBoardAutoTriggerSchema` 与 `workspaceState.autoTrigger`；加 `item.templateId`、`template.{adminAccess,builtIn,trigger,instanceCardId}`、`chatCardSchema.adminAccess?`、`chatRequestSchema.adminAccess?`；镜像/命令 schema 换工作区语义
+- [x] `shared/default-state.ts`：`createDefaultAutomationBoardSupervisorTemplate()`；`createDefaultAutomationBoardWorkspaceState()` 默认带它
+- [x] `server/state-store.ts`：旧存档迁移（`autoTrigger` → 内置模板 `trigger`；丢弃 supervisor 指针；补种内置模板）
+- [x] `shared/i18n.ts`：删监工区文案，加模板配置面板 / 触发器 / 超管权限文案
+- [x] 测试：`tests/automation-board-persistence.test.ts` 迁移用例（红先）
+
+## Slice V2 — 纯函数与 reducer
+
+- [x] `automation-board-auto-trigger.ts` → `resolveAutomationBoardTemplateTriggerDecisions`（五条规则，含 `self-triggered`）
+- [x] `automation-board-transitions.ts`：`automationBoardHasActiveRun` 去 supervisor 分支
+- [x] `src/state.ts`：删 `ensureAutomationBoardSupervisor` / `setAutomationBoardSupervisorExpanded` / `updateAutomationBoardAutoTrigger`；加 `updateAutomationBoardTemplate`（含 trigger patch）/ `setAutomationBoardTemplateInstance`；`createAutomationBoardItem` 接 `templateId` 与 `adminAccess`
+- [x] 测试：`automation-board-auto-trigger.test.ts` 改写（自触发防护必须红先）、`automation-board-state.test.ts` 增补
+
+## Slice V3 — server MCP 工作区化
+
+- [x] 镜像键 `boardCardId` → `columnId`；镜像内容含 tab 卡与看板项，排除工具卡
+- [x] 工具改名与语义：`list_sessions` / `read_session` / `send_session_message` / `move_session_to_lane` / `set_session_wake_timer`
+- [x] `automation-board-runtime.ts`：env 加 `SELF_CARD_ID`；系统提示改 `getWorkspaceAdminInstruction`
+- [x] `server/providers.ts`：判定改 `request.adminAccess`
+- [x] 测试：`automation-board-mcp.test.ts` / `automation-board-mirror.test.ts` 改写
+
+## Slice V4 — UI
+
+- [x] `AutomationBoardCard.tsx`：删监工区；模板条加可展开配置面板（名称/需求/模型/超管权限/触发器/恢复默认）；触发器开启显示闪电角标
+- [x] `ChatCard.tsx`：composer 设置菜单加「超管权限」开关 + 卡片头部盾牌角标
+- [x] `src/index.css`：删 supervisor 样式，加模板配置面板与超管标识（双主题）
+
+## Slice V5 — App 编排
+
+- [x] 删 `runAutomationBoardSupervisor`，加 `fireAutomationBoardTemplateTrigger`（复用实例 / 否则走 `instantiateTemplate`）
+- [x] `lastFiredAt` ref 改为按 templateId
+- [x] 请求构建处按 `card.adminAccess` 带 `adminAccess: { columnId }`（唯一必经点，不散到调用方）
+- [x] 镜像推送改列级；命令执行器改工作区语义
+
+## Slice V6 — 收口
+
+- [x] 相关 Node 测试全绿 + `pnpm test:quality`
+- [x] AGENTS.md 补 pitfall（260 隐式免疫消失 / 261 触发语义 ≠ 搬运语义 / 262 拖拽前的兜底激活 / 263 工具卡名单手抄四份）
+- [x] `pnpm electron:build`
+
+## v2 实施记录（2026-08-11）
+
+设计与实现的偏差，已回写 design.md：
+
+- 命令只带 `columnId` 不带 `boardCardId`，目标看板由渲染端解析。补充了设计里没写的一条：目标若还是个**普通 tab**，就走 `absorbTab` 把它吸收进看板，语义与用户手动把 tab 拖进泳道相同。
+- 实例复用判定抽成了 `resolveAutomationBoardTemplateInstanceCardId`：`instanceCardId` 失效时回退认项自带的 `templateId`（取最后一张），而不是直接新建。
+- 触发的复用路径**刻意绕开** `resolveAutomationBoardTransition` 的发送分支（见 pitfall 261）。
+- 旧存档迁移的补种条件收窄成"entry 没有 `templates` 键"或"仍带待迁移的 `autoTrigger`"，这样用户删掉内置监工模板后不会每次加载又被种回来。
+
+端到端实测（一次性探针，非注册测试）：起真实桥接 → `process.execPath` spawn 真实 `automation-board-mcp.js` → Content-Length JSON-RPC 对话。实测结果：
+
+- `serverInfo` 为 `chill-vibe-workspace-admin`，`tools/list` 返回全部 5 个工具。
+- `list_sessions` 同时列出**看板项**（带泳道 + 原始需求 + `silent for 42 minutes`）与**普通 tab 会话**（标注 standalone tab）—— 这正是"操作其他会话"的核心。
+- **请求方自己被过滤掉**（`SELF_CARD_ID`），模型不会把自己列出来再给自己发消息。
+- 三个写工具投递出的命令形状与 `workspaceAdminCommandSchema` 完全一致；非法 lane 被拒。
+
+未覆盖（明确留给后续）：Playwright 视觉回归快照（本机 harness 不可靠，pitfall 25/34/252）；Web 模式没有工作区 MCP（桥接是桌面端专属，Web 下 publish 静默 no-op）。

@@ -2,15 +2,15 @@ import crypto from 'node:crypto'
 import http from 'node:http'
 import type { AddressInfo } from 'node:net'
 
-import { automationBoardCommandSchema } from '../shared/schema.js'
-import type { AutomationBoardCommand, AutomationBoardMirror } from '../shared/schema.js'
+import { workspaceAdminCommandSchema } from '../shared/schema.js'
+import type { WorkspaceAdminCommand, WorkspaceSessionMirror } from '../shared/schema.js'
 
-// 自动化看板监工 MCP 的桥接服务：只绑 127.0.0.1 的随机端口 + bearer token，
-// 供监工回合启动的 MCP 子进程读实时看板、写三条命令。与 remote-monitor.ts
-// 同一条规矩：本服务自身绝不改任何 state —— 写命令一律经 dispatchCommand
-// 转发给渲染进程复用电脑端 handler，因此"移到某道"自动带上正确的中断/执行
-// 语义，而不是在这里再实现一遍 resolveAutomationBoardTransition。
-export type AutomationBoardTranscriptEntry = {
+// 超管权限 MCP 的桥接服务：只绑 127.0.0.1 的随机端口 + bearer token，
+// 供带 `card.adminAccess` 的回合启动的 MCP 子进程读实时工作区、写三条命令。
+// 与 remote-monitor.ts 同一条规矩：本服务自身绝不改任何 state —— 写命令一律
+// 经 dispatchCommand 转发给渲染进程复用电脑端 handler，因此"移到某道"自动带上
+// 正确的中断/执行语义，而不是在这里再实现一遍 resolveAutomationBoardTransition。
+export type WorkspaceAdminTranscriptEntry = {
   id: string
   role: string
   content: string
@@ -18,41 +18,41 @@ export type AutomationBoardTranscriptEntry = {
   createdAt?: string
 }
 
-export type AutomationBoardBridgeDeps = {
-  /** 实时看板镜像（由渲染进程推送）。null = 这个 boardCardId 不存在（HTTP 404）。 */
-  readBoardMirror: (boardCardId: string) => AutomationBoardMirror | null
-  /** 单个项的最近转录，走 transfer 压缩后返回有界条数。null = 卡不存在（404）。 */
-  readItemTranscript: (
+export type WorkspaceAdminBridgeDeps = {
+  /** 实时工作区镜像（由渲染进程推送）。null = 这个 columnId 不存在（HTTP 404）。 */
+  readWorkspaceMirror: (columnId: string) => WorkspaceSessionMirror | null
+  /** 单个会话的最近转录，走 transfer 压缩后返回有界条数。null = 卡不存在（404）。 */
+  readSessionTranscript: (
     cardId: string,
     limit: number,
-  ) => Promise<AutomationBoardTranscriptEntry[] | null>
+  ) => Promise<WorkspaceAdminTranscriptEntry[] | null>
   /** 转发写命令给渲染进程；false = 当前没有可接收的窗口（HTTP 503）。 */
-  dispatchCommand: (command: AutomationBoardCommand) => boolean
+  dispatchCommand: (command: WorkspaceAdminCommand) => boolean
 }
 
-export type AutomationBoardBridgeRuntimeInfo = {
+export type WorkspaceAdminBridgeRuntimeInfo = {
   url: string
   port: number
   token: string
 }
 
-export type AutomationBoardBridgeStatus = {
+export type WorkspaceAdminBridgeStatus = {
   running: boolean
   url?: string
   port?: number
 }
 
-export const automationBoardTranscriptDefaultLimit = 20
-export const automationBoardTranscriptMaxLimit = 60
+export const workspaceAdminTranscriptDefaultLimit = 20
+export const workspaceAdminTranscriptMaxLimit = 60
 
-/** 监工可以要任意 limit；越界一律夹回去，绝不让它拉出无界转录（pitfall 183）。 */
-export const clampAutomationBoardTranscriptLimit = (raw: string | number | null | undefined) => {
+/** 超管可以要任意 limit；越界一律夹回去，绝不让它拉出无界转录（pitfall 183）。 */
+export const clampWorkspaceAdminTranscriptLimit = (raw: string | number | null | undefined) => {
   const parsed = typeof raw === 'number' ? raw : Number.parseInt(raw ?? '', 10)
   if (!Number.isFinite(parsed)) {
-    return automationBoardTranscriptDefaultLimit
+    return workspaceAdminTranscriptDefaultLimit
   }
 
-  return Math.max(1, Math.min(Math.trunc(parsed), automationBoardTranscriptMaxLimit))
+  return Math.max(1, Math.min(Math.trunc(parsed), workspaceAdminTranscriptMaxLimit))
 }
 
 const maxCommandBodyBytes = 64 * 1024
@@ -137,9 +137,9 @@ const listenOnce = (server: http.Server, port: number, host: string) =>
     server.listen(port, host)
   })
 
-export const createAutomationBoardBridge = (deps: AutomationBoardBridgeDeps) => {
+export const createWorkspaceAdminBridge = (deps: WorkspaceAdminBridgeDeps) => {
   let server: http.Server | null = null
-  let runtimeInfo: AutomationBoardBridgeRuntimeInfo | null = null
+  let runtimeInfo: WorkspaceAdminBridgeRuntimeInfo | null = null
 
   const handleCommand = (request: http.IncomingMessage, response: http.ServerResponse) => {
     void readRequestBody(request)
@@ -152,15 +152,15 @@ export const createAutomationBoardBridge = (deps: AutomationBoardBridgeDeps) => 
           return
         }
 
-        const command = automationBoardCommandSchema.safeParse(parsedBody)
+        const command = workspaceAdminCommandSchema.safeParse(parsedBody)
         if (!command.success) {
-          sendJson(response, 400, { message: 'Invalid board command payload.' })
+          sendJson(response, 400, { message: 'Invalid workspace admin command payload.' })
           return
         }
 
         if (!deps.dispatchCommand(command.data)) {
           sendJson(response, 503, {
-            message: 'No desktop window can execute board commands right now.',
+            message: 'No desktop window can execute workspace admin commands right now.',
           })
           return
         }
@@ -208,16 +208,16 @@ export const createAutomationBoardBridge = (deps: AutomationBoardBridgeDeps) => 
       return
     }
 
-    if (url.pathname === '/board') {
-      const boardCardId = url.searchParams.get('boardCardId')
-      if (!boardCardId) {
-        sendJson(response, 400, { message: 'boardCardId is required.' })
+    if (url.pathname === '/workspace') {
+      const columnId = url.searchParams.get('columnId')
+      if (!columnId) {
+        sendJson(response, 400, { message: 'columnId is required.' })
         return
       }
 
-      const mirror = deps.readBoardMirror(boardCardId)
+      const mirror = deps.readWorkspaceMirror(columnId)
       if (!mirror) {
-        sendJson(response, 404, { message: 'Board not found.' })
+        sendJson(response, 404, { message: 'Workspace not found.' })
         return
       }
 
@@ -225,25 +225,25 @@ export const createAutomationBoardBridge = (deps: AutomationBoardBridgeDeps) => 
       return
     }
 
-    if (url.pathname === '/item') {
+    if (url.pathname === '/session') {
       const cardId = url.searchParams.get('cardId')
       if (!cardId) {
         sendJson(response, 400, { message: 'cardId is required.' })
         return
       }
 
-      const limit = clampAutomationBoardTranscriptLimit(url.searchParams.get('limit'))
+      const limit = clampWorkspaceAdminTranscriptLimit(url.searchParams.get('limit'))
       void deps
-        .readItemTranscript(cardId, limit)
+        .readSessionTranscript(cardId, limit)
         .then((entries) => {
           if (!entries) {
-            sendJson(response, 404, { message: 'Board item not found.' })
+            sendJson(response, 404, { message: 'Session not found.' })
             return
           }
           sendJson(response, 200, { entries })
         })
         .catch(() => {
-          sendJson(response, 500, { message: 'Board item transcript unavailable.' })
+          sendJson(response, 500, { message: 'Session transcript unavailable.' })
         })
       return
     }
@@ -252,7 +252,7 @@ export const createAutomationBoardBridge = (deps: AutomationBoardBridgeDeps) => 
   }
 
   return {
-    async start(): Promise<AutomationBoardBridgeRuntimeInfo> {
+    async start(): Promise<WorkspaceAdminBridgeRuntimeInfo> {
       if (server && runtimeInfo) {
         return runtimeInfo
       }
@@ -286,7 +286,7 @@ export const createAutomationBoardBridge = (deps: AutomationBoardBridgeDeps) => 
       }
     },
 
-    status(): AutomationBoardBridgeStatus {
+    status(): WorkspaceAdminBridgeStatus {
       return {
         running: server !== null,
         url: runtimeInfo?.url,
@@ -296,4 +296,4 @@ export const createAutomationBoardBridge = (deps: AutomationBoardBridgeDeps) => 
   }
 }
 
-export type AutomationBoardBridge = ReturnType<typeof createAutomationBoardBridge>
+export type WorkspaceAdminBridge = ReturnType<typeof createWorkspaceAdminBridge>

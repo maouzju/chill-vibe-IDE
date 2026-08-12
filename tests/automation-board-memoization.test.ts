@@ -3,9 +3,11 @@ import { describe, it } from 'node:test'
 
 import { createAutomationBoardCard, createCard, createDefaultSettings } from '../shared/default-state.ts'
 import { DEFAULT_CODEX_MODEL } from '../shared/models.ts'
-import { createDefaultAutomationBoardAutoTrigger } from '../shared/schema.ts'
 import type { BoardColumn, ChatCard, PaneNode } from '../shared/schema.ts'
-import { arePaneViewPropsEqual } from '../src/components/layout-memoization.ts'
+import {
+  arePaneViewPropsEqual,
+  areWorkspaceColumnPropsEqual,
+} from '../src/components/layout-memoization.ts'
 
 const settings = createDefaultSettings()
 
@@ -17,14 +19,11 @@ const itemCard = (id: string, overrides: Partial<ChatCard> = {}): ChatCard => ({
 
 const boardCard = (
   items: Array<{ cardId: string; lane: 'standby' | 'running' | 'done' }>,
-  supervisorCardId = '',
 ): ChatCard => ({
   ...createAutomationBoardCard('Board'),
   id: 'board-1',
   automationBoard: {
-    items: items.map((item) => ({ ...item, requirement: `req ${item.cardId}` })),
-    supervisorCardId,
-    supervisorExpanded: false,
+    items: items.map((item) => ({ ...item, requirement: `req ${item.cardId}`, templateId: '' })),
   },
 })
 
@@ -137,22 +136,6 @@ describe('PaneView memoization sees automation board item cards', () => {
     assert.equal(arePaneViewPropsEqual(before, after), false)
   })
 
-  it('re-renders when the supervisor card changes', () => {
-    const board = boardCard([{ cardId: 'item-a', lane: 'done' }], 'sup-1')
-    const item = itemCard('item-a')
-    const { before, after } = makeSnapshotPair(
-      {},
-      { 'board-1': board, 'item-a': item, 'sup-1': itemCard('sup-1') },
-      {
-        'board-1': board,
-        'item-a': item,
-        'sup-1': itemCard('sup-1', { status: 'streaming', streamId: 's1' }),
-      },
-    )
-
-    assert.equal(arePaneViewPropsEqual(before, after), false)
-  })
-
   it('stays memoized when nothing the board depends on changed', () => {
     const board = boardCard([{ cardId: 'item-a', lane: 'running' }])
     const item = itemCard('item-a')
@@ -184,12 +167,12 @@ describe('PaneView memoization sees automation board item cards', () => {
     const item = itemCard('item-a')
     const cards = { 'board-1': board, 'item-a': item }
     const { before } = makeSnapshotPair({}, cards, cards)
-    const workspace = { templates: [], autoTrigger: createDefaultAutomationBoardAutoTrigger() }
+    const workspace = { templates: [] }
 
     const withWorkspace = { ...before, automationBoardWorkspace: workspace }
 
-    // A new object identity is how App signals "templates or the trigger config
-    // changed"; the same identity must stay memoized.
+    // A new object identity is how App signals "a template (its requirement,
+    // admin access, or trigger) changed"; the same identity must stay memoized.
     assert.equal(
       arePaneViewPropsEqual(withWorkspace, { ...before, automationBoardWorkspace: { ...workspace } }),
       false,
@@ -197,6 +180,93 @@ describe('PaneView memoization sees automation board item cards', () => {
     assert.equal(
       arePaneViewPropsEqual(withWorkspace, { ...before, automationBoardWorkspace: workspace }),
       true,
+    )
+  })
+})
+
+/**
+ * 症状（要防的）：模板配置面板里改需求、勾触发器、勾超管权限**全部无效** ——
+ *   输入框的值当场被还原，看起来像受控组件写错了（2026-08-11 真实 Electron 实测）。
+ * 根因：模板住在 `state.automationBoards[workspacePath]`，改它不动 `column`；
+ *   WorkspaceColumn 的比较器当初没比这个 prop，整棵列子树被挡在这一层，
+ *   下游 `arePaneViewPropsEqual` 里那条同名比较根本没机会跑。
+ *
+ * 上面那个 describe 只覆盖 PaneView 那层 —— 它当时全绿，而功能是死的。凡是
+ * "不住在 column 里但要渲染进列"的状态，链路上每一层 memo 都必须比。
+ */
+describe('WorkspaceColumn memoization sees the automation board workspace', () => {
+  const sharedColumn: BoardColumn = {
+    id: 'column-1',
+    title: 'Workspace',
+    provider: 'codex',
+    workspacePath: 'D:/repo/one',
+    model: DEFAULT_CODEX_MODEL,
+    width: undefined,
+    layout: {
+      type: 'pane',
+      id: 'pane-1',
+      tabs: ['board-1'],
+      activeTabId: 'board-1',
+      tabHistory: ['board-1'],
+    },
+    cards: { 'board-1': boardCard([]) },
+  }
+
+  // 除被测字段外每个 prop 都是同一个对象身份，否则比较器读到被测字段之前就
+  // 已经返回 false，一个看不见新数据的比较器照样全绿（pitfall 257）。
+  const shared = {
+    column: sharedColumn,
+    providers: {},
+    language: settings.language,
+    systemPrompt: settings.systemPrompt,
+    crossProviderSkillReuseEnabled: true,
+    musicAlbumCoverEnabled: false,
+    weatherCity: '',
+    gitAgentModel: '',
+    brainstormRequestModel: '',
+    availableQuickToolModels: [] as string[],
+    autoUrgeEnabled: false,
+    autoUrgeMessage: '',
+    autoUrgeSuccessKeyword: '',
+    globalUrgeActive: false,
+    globalUrgeProfileId: '',
+    recentWorkspaces: [],
+    sessionHistory: [],
+  }
+
+  it('re-renders the column when a template changes', () => {
+    const workspace = { templates: [] }
+
+    assert.equal(
+      areWorkspaceColumnPropsEqual(
+        { ...shared, automationBoardWorkspace: workspace },
+        { ...shared, automationBoardWorkspace: { ...workspace } },
+      ),
+      false,
+    )
+  })
+
+  it('stays memoized while the workspace identity is unchanged', () => {
+    const workspace = { templates: [] }
+
+    assert.equal(
+      areWorkspaceColumnPropsEqual(
+        { ...shared, automationBoardWorkspace: workspace },
+        { ...shared, automationBoardWorkspace: workspace },
+      ),
+      true,
+    )
+  })
+
+  it('re-renders the column when the board action handlers change', () => {
+    const actions = {}
+
+    assert.equal(
+      areWorkspaceColumnPropsEqual(
+        { ...shared, automationBoardActions: actions },
+        { ...shared, automationBoardActions: {} },
+      ),
+      false,
     )
   })
 })

@@ -159,7 +159,15 @@ export const MODEL_OPTIONS: ModelOption[] = [
   },
 ]
 
-export const MODEL_PICKER_HIDDEN_TOOL_MODELS = new Set([
+/**
+ * 症状：打开自动化看板后，之后新建的每一张卡都变成看板样式且一片空白。
+ * 根因：`src/state.ts` 曾经维护一份**第二份**工具模型名单，新增看板时漏加，
+ *   于是"切到看板"被当成用户选了一个真模型，写进 settings.requestModels /
+ *   lastModel / column.model，新建 tab 再原样继承回来（2026-08-11 实证）。
+ * 被否决的替代：在下游各处特判看板模型 —— 那只是给同一个漏名单再补一处，
+ *   下一个工具卡还会再犯。工具模型名单在此单点定义，其他地方一律引用。
+ */
+export const TOOL_CARD_MODELS = new Set([
   GIT_TOOL_MODEL,
   MUSIC_TOOL_MODEL,
   WHITENOISE_TOOL_MODEL,
@@ -172,8 +180,13 @@ export const MODEL_PICKER_HIDDEN_TOOL_MODELS = new Set([
   AUTOMATIONBOARD_TOOL_MODEL,
 ])
 
+export const isToolCardModel = (model?: string | null) =>
+  TOOL_CARD_MODELS.has((model ?? '').trim())
+
+export const MODEL_PICKER_HIDDEN_TOOL_MODELS = TOOL_CARD_MODELS
+
 export const isModelPickerOptionVisible = (option: Pick<ModelOption, 'model'>) =>
-  !MODEL_PICKER_HIDDEN_TOOL_MODELS.has(option.model)
+  !TOOL_CARD_MODELS.has(option.model)
 
 const legacyCodexModels = new Set(['gpt-4.5', '__dream_tool__', '__spec_tool__'])
 

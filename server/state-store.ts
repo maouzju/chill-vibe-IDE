@@ -5,8 +5,10 @@ import path from 'node:path'
 import { getChatMessageAttachments } from '../shared/chat-attachments.js'
 import {
   archiveOpenChatsForCrashRecovery,
+  automationBoardSupervisorTemplateId,
   collectAutomationBoardOwnedCardIds,
   createCard,
+  createDefaultAutomationBoardSupervisorTemplate,
   createPane,
   createDefaultState,
   resolveRecoveredColumnLayout,
@@ -30,13 +32,8 @@ import { revealInternalSessionHistorySession } from './session-history-catalog.j
 import {
   AUTOMATIONBOARD_TOOL_MODEL,
   BRAINSTORM_TOOL_MODEL,
-  FILETREE_TOOL_MODEL,
-  GIT_TOOL_MODEL,
-  MUSIC_TOOL_MODEL,
   STICKYNOTE_TOOL_MODEL,
-  TEXTEDITOR_TOOL_MODEL,
-  WEATHER_TOOL_MODEL,
-  WHITENOISE_TOOL_MODEL,
+  TOOL_CARD_MODELS,
   getDefaultModel,
   normalizeStoredModel,
   PM_TOOL_MODEL,
@@ -50,6 +47,7 @@ import {
   closedWorkspaceSnapshotSchema,
   desktopRuntimeKindSchema,
   internalSessionHistoryLoadResponseSchema,
+  legacyAutomationBoardAutoTriggerSchema,
   recentCrashRecoverySchema,
   type AppState,
   type AppStateLoadResponse,
@@ -374,15 +372,9 @@ const isRecord = (value: unknown): value is Record<string, unknown> =>
 const isProvider = (value: unknown): value is Provider =>
   value === 'codex' || value === 'claude'
 
-const persistedToolCardModels = new Set([
-  FILETREE_TOOL_MODEL,
-  GIT_TOOL_MODEL,
-  MUSIC_TOOL_MODEL,
-  STICKYNOTE_TOOL_MODEL,
-  TEXTEDITOR_TOOL_MODEL,
-  WEATHER_TOOL_MODEL,
-  WHITENOISE_TOOL_MODEL,
-])
+// 曾经手抄一份，漏了自动化看板，读档时看板卡就不被当成工具卡。
+// 名单只在 shared/models.ts 维护一份。
+const persistedToolCardModels = TOOL_CARD_MODELS
 
 const fallbackTimestamp = '1970-01-01T00:00:00.000Z'
 const fallbackMessageCreatedAt = '1970-01-01T00:00:00.000Z'
@@ -705,21 +697,91 @@ const normalizePersistedAutomationBoard = (value: unknown): ChatCard['automation
         typeof entry.requirement === 'string'
           ? entry.requirement.slice(0, automationBoardRequirementMaxChars)
           : '',
+      templateId: typeof entry.templateId === 'string' ? entry.templateId : '',
       createdAt: normalizeWakeTimerDate(entry.createdAt),
       startedAt: normalizeWakeTimerDate(entry.startedAt),
       completedAt: normalizeWakeTimerDate(entry.completedAt),
     })
   }
 
-  return {
-    items,
-    supervisorCardId: typeof record.supervisorCardId === 'string' ? record.supervisorCardId : '',
-    supervisorExpanded: record.supervisorExpanded === true,
+  // v2 起看板 blob 只剩 items：v1 的 supervisorCardId / supervisorExpanded 在这里
+  // 被静默丢弃（"监工"已经是一个普通模板 + 普通看板项，没有专属指针）。
+  return { items }
+}
+
+/**
+ * v1 的工作区级 `autoTrigger` 一次性折进内置监工模板。
+ *
+ * 症状：v1 存档里"自动触发监工"的配置挂在工作区上，v2 读不到就等于用户悄悄
+ * 丢了一份已经开着的自动化。
+ * 根因：v2 把触发器搬成了模板的字段（每个模板各自一套），两边形状不兼容。
+ * 被否决的替代：给 state 加一个 `automationBoardsMigratedV2` 持久标记来精确
+ * 判断"用户是不是自己删了内置模板"。一个只用一次的全局标记要污染 schema、
+ * 要在每条写路径上维护，不划算；这里改用"结构性证据"做同等判断 ——
+ * **只有**该工作区 entry 没有 `templates` 字段（= 首次出现的旧存档）或还带着
+ * 待迁移的 `autoTrigger` 时才补种内置模板。已经有 `templates` 数组（哪怕是空
+ * 数组，意味着用户把内置模板删干净了）且没有 autoTrigger 的，一律不种。
+ */
+const migratePersistedAutomationBoardWorkspace = (
+  record: Record<string, unknown>,
+  language: AppState['settings']['language'],
+): unknown => {
+  // `autoTrigger` 绝不再写回：从这里起它就不在返回值里了。
+  const rest = { ...record }
+  delete rest.autoTrigger
+
+  if ('templates' in record && !Array.isArray(record.templates)) {
+    // 写坏了的条目照旧交给 safeParse 拒掉（调用方跳过它），补种默认模板等于
+    // 把一条损坏记录洗成一条看着正常的记录，反而掩盖问题。
+    return rest
   }
+
+  const legacyAutoTrigger = legacyAutomationBoardAutoTriggerSchema.safeParse(record.autoTrigger)
+  const hasLegacyAutoTrigger = isRecord(record.autoTrigger) && legacyAutoTrigger.success
+  const hasTemplatesField = Array.isArray(record.templates)
+  const templates = hasTemplatesField ? [...(record.templates as unknown[])] : []
+
+  const hasBuiltIn = templates.some((template) => isRecord(template) && template.builtIn === true)
+  const shouldSeed = !hasBuiltIn && (!hasTemplatesField || hasLegacyAutoTrigger)
+
+  if (shouldSeed) {
+    // 补种放数组开头：内置监工是这一列的"总管"，用户自己的模板保序跟在后面。
+    templates.unshift(createDefaultAutomationBoardSupervisorTemplate(language))
+  }
+
+  if (hasLegacyAutoTrigger) {
+    const legacy = legacyAutoTrigger.data
+    const index = templates.findIndex(
+      (template) => isRecord(template) && template.id === automationBoardSupervisorTemplateId,
+    )
+
+    if (index >= 0) {
+      const target = templates[index] as Record<string, unknown>
+      const trigger = isRecord(target.trigger) ? target.trigger : {}
+
+      templates[index] = {
+        ...target,
+        ...(legacy.requirement !== undefined ? { requirement: legacy.requirement } : {}),
+        ...(legacy.provider !== undefined ? { provider: legacy.provider } : {}),
+        ...(legacy.model !== undefined ? { model: legacy.model } : {}),
+        ...(legacy.reasoningEffort !== undefined ? { reasoningEffort: legacy.reasoningEffort } : {}),
+        trigger: {
+          ...trigger,
+          ...(legacy.enabled !== undefined ? { enabled: legacy.enabled } : {}),
+          ...(legacy.minIntervalMinutes !== undefined
+            ? { minIntervalMinutes: legacy.minIntervalMinutes }
+            : {}),
+        },
+      }
+    }
+  }
+
+  return { ...rest, templates }
 }
 
 const normalizePersistedAutomationBoardWorkspaces = (
   raw: unknown,
+  language: AppState['settings']['language'],
 ): AppState['automationBoards'] => {
   if (!isRecord(raw)) {
     return {}
@@ -732,7 +794,11 @@ const normalizePersistedAutomationBoardWorkspaces = (
       continue
     }
 
-    const parsed = automationBoardWorkspaceStateSchema.safeParse(value)
+    // 坏条目跳过而不是让整次加载失败（pitfall 5）：一个工作区的模板写坏了
+    // 不该拖垮其它工作区。
+    const parsed = automationBoardWorkspaceStateSchema.safeParse(
+      isRecord(value) ? migratePersistedAutomationBoardWorkspace(value, language) : value,
+    )
     if (parsed.success) {
       result[workspacePath] = parsed.data
     }
@@ -875,6 +941,9 @@ const normalizePersistedCard = (
       normalizedModel === AUTOMATIONBOARD_TOOL_MODEL
         ? normalizePersistedAutomationBoard(card.automationBoard)
         : undefined,
+    // 卡片级超管权限（v2 取代了看板上的 supervisorCardId 指针）。optional 而非
+    // default：绝大多数卡片没有它，不给每张卡在 state.json 里加一个 false。
+    adminAccess: card.adminAccess === true ? true : undefined,
     messages: rawMessages,
     messageCount: normalizePositiveInteger(card.messageCount, rawMessages.length),
   }
@@ -1647,7 +1716,13 @@ const normalizePersistedColumn = (
       : 'codex'
   const configuredModel = getConfiguredModel(options.settings, provider)
   const rawColumnModel = typeof column.model === 'string' ? column.model : configuredModel
-  const normalizedColumnModel = normalizeStoredModel(provider, rawColumnModel) || configuredModel
+  // `column.model` 是"这一列下一张新卡用哪个模型"的种子，工具卡模型放进去非法。
+  // 已有存档被写脏过（看板漏出白名单，见 shared/models.ts TOOL_CARD_MODELS），
+  // 而 normalizeStoredModel 会原样保留它 —— 不在这里拦，读档就把脏值带回来，
+  // 还会经 columnModel 兜底传给缺 model 字段的卡，把它们也变成看板空壳。
+  const normalizedColumnModel = TOOL_CARD_MODELS.has(rawColumnModel.trim())
+    ? configuredModel
+    : normalizeStoredModel(provider, rawColumnModel) || configuredModel
   const rawCards = isRecord(column.cards) ? column.cards : {}
   const cards = Object.fromEntries(
     Object.entries(rawCards).flatMap(([cardId, card]) => {
@@ -1767,7 +1842,10 @@ const sanitizeStateResult = (raw: unknown): SanitizedStateResult => {
     version: 1,
     settings: safeSettings,
     stickyNoteArchive: normalizePersistedStickyNoteArchive(data.stickyNoteArchive),
-    automationBoards: normalizePersistedAutomationBoardWorkspaces(data.automationBoards),
+    automationBoards: normalizePersistedAutomationBoardWorkspaces(
+      data.automationBoards,
+      safeSettings.language,
+    ),
     updatedAt: new Date().toISOString(),
     columns: safeColumns.map((column: BoardColumn, columnIndex: number) => ({
       ...(() => {

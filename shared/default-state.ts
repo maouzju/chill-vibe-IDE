@@ -23,7 +23,8 @@ import type {
 } from './schema.js'
 import { createDefaultBrainstormState } from './brainstorm.js'
 import {
-  createDefaultAutomationBoardAutoTrigger,
+  createDefaultAutomationBoardTemplateTrigger,
+  defaultAutomationBoardSupervisorRequirement,
   defaultAutoUrgeMessage,
   defaultAutoUrgeProfileId,
   defaultAutoUrgeSuccessKeyword,
@@ -47,6 +48,7 @@ import {
   WEATHER_TOOL_MODEL,
   WHITENOISE_TOOL_MODEL,
   getDefaultModel,
+  isToolCardModel,
   normalizeModel,
   normalizeStoredModel,
 } from './models.js'
@@ -254,6 +256,13 @@ const clampScale = (value: unknown, min: number, max: number, fallback: number) 
 }
 
 const normalizeText = (value: unknown) => (typeof value === 'string' ? value.trim() : '')
+/**
+ * 只用于「下一次发请求用哪个模型」这类设置（`requestModels` / `lastModel`）。
+ * 工具卡模型（Git、便签、自动化看板……）不是可发请求的模型，落进这里就会被
+ * 新建 tab 继承成一张空壳工具卡，所以一律退回该 provider 的默认模型。
+ */
+const normalizeRequestModel = (provider: Provider, model?: string | null) =>
+  isToolCardModel(model) ? getDefaultModel(provider) : normalizeModel(provider, model)
 const normalizeCodexPersonality = (value: unknown): AppSettings['codexPersonality'] =>
   value === 'none' || value === 'friendly' || value === 'pragmatic' ? value : 'default'
 const normalizeGitAgentModel = (value: unknown, fallback: string) => {
@@ -718,15 +727,18 @@ export const normalizeAppSettings = (settings?: Partial<AppSettings> | null): Ap
         ? settings.codexIsolatedHomeEnabled
         : defaults.codexIsolatedHomeEnabled,
     gitAgentModel: normalizeGitAgentModel(settings?.gitAgentModel, defaults.gitAgentModel),
+    // `lastModel` / `requestModels` 语义上只能是"下一次发请求用哪个模型"，
+    // 工具卡模型放进去是非法的。已有存档被写脏过（看板漏出白名单，见
+    // shared/models.ts TOOL_CARD_MODELS），所以这里同时承担迁移修复。
     lastModel: settings?.lastModel
       ? {
           provider: settings.lastModel.provider,
-          model: normalizeModel(settings.lastModel.provider, settings.lastModel.model),
+          model: normalizeRequestModel(settings.lastModel.provider, settings.lastModel.model),
         }
       : undefined,
     requestModels: {
-      codex: normalizeModel('codex', settings?.requestModels?.codex ?? defaults.requestModels.codex),
-      claude: normalizeModel('claude', settings?.requestModels?.claude ?? defaults.requestModels.claude),
+      codex: normalizeRequestModel('codex', settings?.requestModels?.codex ?? defaults.requestModels.codex),
+      claude: normalizeRequestModel('claude', settings?.requestModels?.claude ?? defaults.requestModels.claude),
     },
     modelReasoningEfforts: normalizeModelReasoningEfforts(settings?.modelReasoningEfforts),
     providerProfiles: normalizeProviderProfiles(settings?.providerProfiles),
@@ -1128,9 +1140,50 @@ export const createCard = (
   }
 }
 
-export const createDefaultAutomationBoardWorkspaceState = (): AutomationBoardWorkspaceState => ({
-  templates: [],
-  autoTrigger: createDefaultAutomationBoardAutoTrigger(),
+/**
+ * 内置"看板监工"模板的固定 id。
+ *
+ * 固定而不是随机是刻意的：旧存档迁移（把 v1 的工作区级 autoTrigger 折进模板）
+ * 与"这个工作区已经种过内置模板了吗"都要靠它定位，随机 id 会让迁移每次都
+ * 再种一份出来。
+ */
+export const automationBoardSupervisorTemplateId = 'automation-board-supervisor'
+
+/**
+ * 监工在 v2 里没有任何专属代码路径 —— 它就是这个模板，加上它实例化出来的
+ * 一张普通看板项卡。它的全部"监工性"只有两个字段：`adminAccess: true`
+ * （拿到工作区 MCP）与 `trigger`（到点自动把自己拖进泳道）。
+ *
+ * 触发器默认**关闭**：自动起 agent 是有真实成本的行为，不该因为新建了一个
+ * 工作区就默默开始跑。
+ */
+export const createDefaultAutomationBoardSupervisorTemplate = (
+  language: AppLanguage = defaultAppLanguage,
+): AutomationBoardTemplate => {
+  const text = getLocaleText(normalizeLanguage(language))
+
+  return {
+    id: automationBoardSupervisorTemplateId,
+    name: text.automationBoardSupervisorTemplateName,
+    requirement: defaultAutomationBoardSupervisorRequirement,
+    provider: 'claude',
+    model: '',
+    reasoningEffort: 'max',
+    thinkingEnabled: true,
+    planMode: false,
+    adminAccess: true,
+    builtIn: true,
+    trigger: createDefaultAutomationBoardTemplateTrigger(),
+    instanceCardId: '',
+    wakeTimerActive: false,
+    repeatLoopActive: false,
+  }
+}
+
+export const createDefaultAutomationBoardWorkspaceState = (
+  language: AppLanguage = defaultAppLanguage,
+): AutomationBoardWorkspaceState => ({
+  templates: [createDefaultAutomationBoardSupervisorTemplate(language)],
 })
 
 export const createAutomationBoardCard = (
@@ -1150,8 +1203,6 @@ export const createAutomationBoardCard = (
     ),
     automationBoard: {
       items: [],
-      supervisorCardId: '',
-      supervisorExpanded: false,
     },
   }
 }
@@ -1169,6 +1220,7 @@ export const createAutomationBoardItemCard = ({
   reasoningEffort,
   thinkingEnabled = true,
   planMode = false,
+  adminAccess = false,
   language = defaultAppLanguage,
 }: {
   requirement: string
@@ -1177,6 +1229,7 @@ export const createAutomationBoardItemCard = ({
   reasoningEffort?: string | null
   thinkingEnabled?: boolean
   planMode?: boolean
+  adminAccess?: boolean
   language?: AppLanguage
 }): ChatCard => ({
   ...createCard(
@@ -1189,31 +1242,9 @@ export const createAutomationBoardItemCard = ({
   ),
   thinkingEnabled,
   planMode,
+  ...(adminAccess ? { adminAccess: true } : {}),
   draft: requirement,
 })
-
-export const createAutomationBoardSupervisorCard = ({
-  provider,
-  model,
-  reasoningEffort,
-  language = defaultAppLanguage,
-}: {
-  provider: Provider
-  model: string
-  reasoningEffort?: string | null
-  language?: AppLanguage
-}): ChatCard => {
-  const text = getLocaleText(normalizeLanguage(language))
-
-  return createCard(
-    text.automationBoardSupervisorTitle,
-    defaultCardSize,
-    provider,
-    model,
-    reasoningEffort,
-    language,
-  )
-}
 
 export const createAutomationBoardTemplateFromCard = ({
   card,
@@ -1236,6 +1267,13 @@ export const createAutomationBoardTemplateFromCard = ({
   reasoningEffort: card.reasoningEffort,
   thinkingEnabled: card.thinkingEnabled,
   planMode: card.planMode,
+  // 超管权限跟着卡片走：从一张监工卡存出来的模板理应还是监工模板。
+  adminAccess: card.adminAccess === true,
+  builtIn: false,
+  // 触发器不从卡片快照 —— 它是模板自己的属性，用户存模板时并没有表达
+  // "我要它自动跑"。默认关闭，让用户显式去开。
+  trigger: createDefaultAutomationBoardTemplateTrigger(),
+  instanceCardId: '',
   wakeTimerActive: card.wakeTimerActive === true,
   ...(card.wakeTimerMode ? { wakeTimerMode: card.wakeTimerMode } : {}),
   ...(typeof card.wakeTimerDurationMinutes === 'number'
@@ -1262,6 +1300,9 @@ export const createAutomationBoardCardFromTemplate = ({
     reasoningEffort: template.reasoningEffort,
     thinkingEnabled: template.thinkingEnabled,
     planMode: template.planMode,
+    // 这一行就是"监工"的全部：模板勾了超管权限，实例化出来的卡才拿得到
+    // 工作区 MCP。没有任何监工专属的建卡路径。
+    adminAccess: template.adminAccess,
     language,
   }),
   wakeTimerActive: template.wakeTimerActive,
@@ -1295,9 +1336,8 @@ export const getAutomationBoard = (card: ChatCard | undefined) =>
   card?.model === AUTOMATIONBOARD_TOOL_MODEL ? card.automationBoard : undefined
 
 /**
- * Every card id that an automation board in this column claims — board items
- * plus the supervisor. These cards live in `column.cards` on purpose but must
- * never be treated as pane tabs.
+ * Every card id that an automation board in this column claims. These cards
+ * live in `column.cards` on purpose but must never be treated as pane tabs.
  */
 export const collectAutomationBoardOwnedCardIds = (
   cards: Record<string, ChatCard>,
@@ -1312,10 +1352,6 @@ export const collectAutomationBoardOwnedCardIds = (
 
     for (const item of board.items) {
       owned.add(item.cardId)
-    }
-
-    if (board.supervisorCardId) {
-      owned.add(board.supervisorCardId)
     }
   }
 

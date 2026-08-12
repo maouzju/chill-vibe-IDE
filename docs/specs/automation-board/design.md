@@ -52,10 +52,12 @@ export const automationBoardItemSchema = z.object({
 export const automationBoardSchema = z.object({
   // 泳道内顺序 = 本数组内的相对顺序（按 lane 过滤后保序）。
   items: z.array(automationBoardItemSchema).default([]),
-  supervisorCardId: z.string().default(''),
-  supervisorExpanded: z.boolean().default(false),
 })
 ```
+
+> **v2（2026-08-11）**：`supervisorCardId` / `supervisorExpanded` 已删除，`automationBoardItemSchema`
+> 增加 `templateId: z.string().default('')`。监工不再是看板 blob 里的一个特殊指针，
+> 而是"某个开了超管权限的模板实例化出来的普通项"。详见下文 **v2 一致化**。
 
 `chatCardSchema` 增加 `automationBoard: automationBoardSchema.optional()`（optional 而非 default：绝大多数卡片不是看板，避免给每张卡都加一个空对象膨胀存档）。
 
@@ -425,6 +427,214 @@ export type AutomationBoardMirrorItem = {
 全部注册进 `tests/index.test.ts`（pitfall 3）。
 
 Playwright 在本机当前不可靠（pitfall 25/34/252），因此 UI 验证走真实 Electron 手动驱动 + Node 单测覆盖判定逻辑；`tests/theme-check.spec.ts` 的快照在 Playwright 恢复后补。
+
+---
+
+# v2 一致化：监工模板化 + 超管权限（2026-08-11）
+
+v1 里"监工"是一个横切所有层的特殊实体：schema 里一个 `supervisorCardId` 指针、reducer 里一个
+`ensureAutomationBoardSupervisor`、App 里一个 `runAutomationBoardSupervisor`、UI 里一整个
+`.automation-board-supervisor` 区、请求上一个 `automationBoardSupervisor` 标记、MCP 镜像里两个
+`supervisor*` 字段。而"模板"是另一套完全平行的概念，两者做的事高度重合（都是"用一段预设需求文本
++ 预设模型起一个 agent 回合"）。
+
+v2 把两套合成一套，代价是一次性的重构，收益是**监工不再有任何专属代码路径**。
+
+## 三条替换
+
+| v1 | v2 |
+|---|---|
+| `board.supervisorCardId` 指向的特殊卡片 | 一个 `builtIn: true` 的模板 + 它实例化出来的普通看板项 |
+| `automationBoardWorkspaceState.autoTrigger`（工作区唯一一套） | `template.trigger`（每个模板各自一套） |
+| 请求标记 `automationBoardSupervisor: { boardCardId, columnId }` | 卡片字段 `card.adminAccess: boolean` → 请求标记 `adminAccess: { columnId }` |
+
+## 数据模型（v2）
+
+```ts
+// 看板项：记住自己是哪个模板生出来的，这是防自触发的唯一依据。
+automationBoardItemSchema.templateId: z.string().default('')
+
+// 模板：多了权限、触发器、实例指针，以及内置标记。
+automationBoardTemplateTriggerSchema = z.object({
+  enabled: z.boolean().default(false),
+  kind: automationBoardTriggerKindSchema.default('last-item-settled'),
+  // 触发时实例落到哪条道。默认 running = 立即执行。
+  lane: automationBoardLaneSchema.default('running'),
+  minIntervalMinutes: z.number().finite().min(0).max(24 * 60).default(1),
+})
+
+automationBoardTemplateSchema = z.object({
+  …v1 全部字段,
+  adminAccess: z.boolean().default(false),
+  builtIn: z.boolean().default(false),
+  trigger: automationBoardTemplateTriggerSchema.default(…),
+  // 上一次由本模板触发生成、仍活着的实例卡。空串 = 下次触发要新建。
+  instanceCardId: z.string().default(''),
+})
+
+// 工作区级容器：autoTrigger 整个删掉。
+automationBoardWorkspaceStateSchema = z.object({
+  templates: z.array(automationBoardTemplateSchema).default([]),
+})
+
+// 卡片级权限。optional 而非 default：绝大多数卡片没有它，
+// 不给每张卡在 state.json 里加一个 false。
+chatCardSchema.adminAccess: z.boolean().optional()
+```
+
+`createDefaultAutomationBoardWorkspaceState()` 返回的 `templates` 里**默认带一个**内置监工模板
+（`createDefaultAutomationBoardSupervisorTemplate()`）：`builtIn: true`、`adminAccess: true`、
+`provider: 'claude'`、`requirement: defaultAutomationBoardSupervisorRequirement`、
+`trigger.enabled: false`（用户自己去开）。
+
+归一化（pitfall 5/6）：
+
+| 位置 | 要做的事 |
+|---|---|
+| `normalizePersistedCard` | 剔除 `automationBoard.items` 里 `cardId` 已不在 `column.cards` 的孤儿项（不变）；不再修补 `supervisorCardId` |
+| state 顶层 | 旧存档的 `automationBoards[ws].autoTrigger` 若存在且 `enabled`，**迁移**成内置监工模板的 `trigger`（保 requirement / provider / model / minIntervalMinutes），然后丢弃该字段 |
+| `automationBoards[ws].templates` 为空 | 补种内置监工模板；已有 `builtIn: true` 的就不重复种 |
+
+## 触发判定（纯函数，取代 `resolveAutomationBoardAutoTriggerDecision`）
+
+`src/components/automation-board-auto-trigger.ts`：
+
+```ts
+export type AutomationBoardTriggerReason =
+  | 'disabled' | 'not-board-item' | 'self-triggered'
+  | 'still-running' | 'throttled' | 'ready'
+
+export const resolveAutomationBoardTemplateTriggerDecisions = ({
+  templates, board, settledCardId, cardActivity, lastFiredAtMs, nowMs,
+}: {
+  templates: readonly AutomationBoardTemplate[]
+  board: AutomationBoard | undefined
+  settledCardId: string
+  cardActivity: Record<string, AutomationBoardCardActivity>
+  lastFiredAtMs: Record<string, number>   // templateId → ms
+  nowMs: number
+}): Array<{ templateId: string; fire: boolean; reason: AutomationBoardTriggerReason }>
+```
+
+逐模板判定，规则顺序即 requirements FR7 的五条。两处与 v1 的关键差异：
+
+- v1 靠"监工不在 items 里"防自触发（规则 `not-board-item`）。v2 监工实例**就在** items 里，
+  所以改用 `settledItem.templateId === template.id` → `self-triggered`。**这是本次重构最容易
+  写错的一处**：漏了它，监工每答完一轮就把自己再叫起来，无限自触发。
+- v1 的 `supervisor-busy` 被 `still-running` 吸收：监工实例是 running 道的普通项，它在跑时
+  规则 4 天然拦住。
+
+## 触发动作 = 复用"拖模板进泳道"
+
+`src/App.tsx`：
+
+```ts
+const fireAutomationBoardTemplateTrigger = (columnId, boardCardId, templateId) => {
+  const template = …
+  const reuse = template.instanceCardId &&
+    board.items.some((item) => item.cardId === template.instanceCardId)
+
+  if (reuse) {
+    // 已有实例：确保它在目标道（走既有 applyAutomationBoardTransition，
+    // 于是"移进 running 要不要发送"的语义完全复用），再发一次需求文本。
+    applyAutomationBoardTransition(…, { kind: 'lane', lane: template.trigger.lane })
+    void sendMessageRef.current?.(columnId, template.instanceCardId, template.requirement, [])
+  } else {
+    // 没有实例：与用户手动把模板拖进泳道**同一个 handler**。
+    const cardId = instantiateTemplate(columnId, boardCardId, templateId, template.trigger.lane)
+    applyAction({ type: 'setAutomationBoardTemplateInstance', workspacePath, templateId, cardId })
+  }
+}
+```
+
+`instantiateTemplate` 建卡时把 `adminAccess: template.adminAccess` 写进卡片，把
+`templateId: template.id` 写进看板项 —— 这两个字段就是 v2 的全部"监工性"。
+
+## 超管权限的接线
+
+1. **卡片字段** `card.adminAccess`。UI 开关在 composer 设置菜单（`src/components/ChatCard.tsx`
+   的 `.composer-settings-menu`），与 planMode 同级；开启时卡片头部出现盾牌角标。
+2. **发送时** `src/App.tsx` 的 `buildChatRequest` 分支：`card.adminAccess === true` 时带
+   `adminAccess: { columnId }`。**不是**由调用方决定 —— 调用方决定就会漏（唤醒发车、循环重复、
+   队列 dispatch、MCP 转发都是发送入口）。判定放在唯一必经的请求构建处。
+3. **服务端** `server/providers.ts` 把 `request.automationBoardSupervisor` 的判定换成
+   `request.adminAccess`；`createAutomationBoardSupervisorRuntime` 改名
+   `createWorkspaceAdminRuntime`，按 `columnId` 而非 `boardCardId` 取镜像。
+
+## MCP 作用域：从"看板"扩到"工作区列"
+
+requirements FR10 要求"操作其他会话"，不限于看板项。因此镜像的键从 `boardCardId` 换成
+`columnId`，内容从"看板的项"换成"这一列的全部会话卡"：
+
+```ts
+export type WorkspaceSessionMirrorItem = {
+  cardId: string
+  title: string
+  provider: string
+  model: string
+  status: string
+  backgroundWorkPending: boolean
+  // 这张卡在看板里的位置。不在任何看板里就是 undefined（普通 tab）。
+  board?: { boardCardId: string; lane: AutomationBoardLane; requirement: string
+            startedAt?: string; completedAt?: string }
+  // 在 pane.tabs 里就是 true。看板项与 tab 不互斥地看：一张卡只可能是其中之一。
+  isTab: boolean
+  wakeTimerActive: boolean
+  wakeTimerWakeAt?: string
+  repeatLoopActive: boolean
+  lastActivityAt?: string
+  lastMessagePreview: string
+  messageCount: number
+  recentEntries: […]
+}
+```
+
+排除项：工具卡（`MODEL_PICKER_HIDDEN_TOOL_MODELS`，包括看板容器卡自己）不进镜像 ——
+模型对它们没有可操作语义。**请求方自己也不进镜像**由 MCP 侧按 env 里的 `SELF_CARD_ID` 过滤，
+避免监工把自己列出来又给自己发消息。
+
+镜像签名 `getWorkspaceSessionMirrorSignature` 仍然刻意**排除**单条消息正文增长
+（pitfall 258），只覆盖 cardId / lane / status / backgroundWorkPending / messageCount /
+lastActivityAt。推送节流仍是 2000ms。
+
+### 工具集（v2 命名）
+
+| 工具 | 读/写 | 说明 |
+|---|---|---|
+| `list_sessions` | 读 | 本工作区全部会话：标题、provider/model、状态、看板归属与泳道、静默分钟数、最后消息预览 |
+| `read_session` | 读 | 单个会话最近 N 条转录（默认 20，上限 60） |
+| `send_session_message` | 写 | `{ cardId, message }` → `sendMessage`（"鞭策"） |
+| `move_session_to_lane` | 写 | `{ cardId, lane }` → 移进看板某道。目标看板：该卡已在某看板则用那个，否则用本列第一张看板卡；本列没有看板则报错 |
+| `set_session_wake_timer` | 写 | `{ cardId, mode, durationMinutes }` |
+
+命令 schema `automationBoardCommandSchema` 的成员随之改名并把 `boardCardId` 改成可选
+（`move-session-to-lane` 由 App 侧解析目标看板）。
+
+### 系统提示
+
+`getAutomationBoardSupervisorInstruction` → `getWorkspaceAdminInstruction(language)`。措辞从
+"你是看板监工"改成"你被授予了这个工作区的超管权限"，因为开这个开关的可能是任何会话，不一定
+是监工。监工的"该怎么当监工"那部分语义留在**模板的需求文本**里 —— 那才是它该待的地方。
+
+## UI 变更
+
+- 删除整个 `.automation-board-supervisor` 区块与它的 i18n / CSS。
+- 模板条的每个模板加一个展开箭头，展开出 `.automation-board-template-config`：名称、需求文本、
+  provider/model、超管权限开关、触发器（开关 / 泳道 / 最小间隔）、"恢复默认文案"（仅 `builtIn`）。
+- 模板触发器开启时，模板胶囊上显示一个闪电角标，一眼可见"这个模板会自己跑"。
+- `ChatCard` composer 设置菜单加一行"超管权限"，开启时该行高亮为警示色（`--danger-*` 系列 token），
+  并在卡片头部渲染盾牌角标。双主题都要过。
+
+## 测试策略（v2 增量）
+
+| 文件 | 覆盖 |
+|---|---|
+| `tests/automation-board-auto-trigger.test.ts` | 改写为模板级：五条规则逐条；**自触发防护**（settled item 的 templateId 命中本模板必须 `self-triggered`）；多模板各自独立节流 |
+| `tests/automation-board-state.test.ts` | 模板 CRUD 带 trigger/adminAccess；`setAutomationBoardTemplateInstance`；item.templateId 落地；删掉 supervisor 相关用例 |
+| `tests/automation-board-persistence.test.ts` | 旧存档（含 `autoTrigger` + `supervisorCardId`）加载后：autoTrigger 迁移进内置模板的 trigger、supervisor 指针被丢弃、内置模板被补种 |
+| `tests/automation-board-mirror.test.ts` | 列级镜像：tab 卡与看板项都在里面、工具卡被排除、签名排除正文增长 |
+| `tests/automation-board-mcp.test.ts` | 新工具名与参数校验；`move_session_to_lane` 的目标看板解析；请求方自过滤 |
+| `tests/chat-request-admin-access.test.ts`（新） | `card.adminAccess` → 请求带 `adminAccess`；关掉就不带 |
 
 ## 风险与对策
 

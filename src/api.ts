@@ -328,10 +328,15 @@ export const hideInternalSessionHistory = async (
   await fn(parsed)
 }
 
-export const saveState = async (state: AppState): Promise<AppState> => {
+// 症状：打字/切 tab 时整窗卡顿，长时间使用后无退出日志地闪退。
+// 根因：2026-08-11 实测保存的返回值从未被使用（usePersistence 只 await 不取值），
+// 但这里仍对主进程回传的完整 state 跑一次 appStateSchema.parse，1.17MB 的真实档案
+// 实测约 5ms 阻塞 + 一份等量深克隆垃圾，每次保存白付一遍。
+// 不能改用瘦身快照来省：立即保存必须保全量数据，裁剪只允许发生在排队路径上。
+export const saveState = async (state: AppState): Promise<void> => {
   const desktopSaveState = requireDesktopAction(getDesktopApi()?.saveState)
 
-  return readDesktop(() => desktopSaveState(state), appStateSchema)
+  await desktopSaveState(state)
 }
 
 export const syncRuntimeSettings = async (settings: AppSettings): Promise<void> => {

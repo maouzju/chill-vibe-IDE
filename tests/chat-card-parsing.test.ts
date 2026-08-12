@@ -64,21 +64,47 @@ const readTranscriptEffectDeps = async (
   return match[1]
 }
 
-test('scroll-watch effect depends on the stable entry structure key, not renderableMessages (pitfall 214)', async () => {
+// Re-anchored 2026-08-12: the inline `watchScrollTop` rAF ladder this used to
+// point at now lives in chat-scroll-drift-watcher.ts, and the one effect became
+// two — a lifecycle effect that arms/cancels the watcher, and a renewal effect
+// that extends its window when the entry structure changes. Pitfall 214 belongs
+// to the renewal effect; the lifecycle effect gets its own guard below, because
+// the split created a *second* way to reintroduce the regression.
+test('scroll-drift renewal depends on the stable entry structure key, not renderableMessages (pitfall 214)', async () => {
   const deps = await readTranscriptEffectDeps(
-    /const watchScrollTop = \(\) => \{[\s\S]*?\n {4}\}, \[([^\]]*)\]\)/,
-    'transcript scroll-watch useLayoutEffect',
+    // \r? because ChatCard.tsx is checked out with CRLF endings on Windows.
+    /scrollDriftWatcherRef\.current\?\.extend\(\)\r?\n {4}\}, \[([^\]]*)\]\)/,
+    'transcript scroll-drift renewal useLayoutEffect',
   )
 
   assert.match(
     deps,
     /\brenderableEntryStructureKey\b/,
-    `the scroll-watch effect must depend on renderableEntryStructureKey (pitfall 214) — got [${deps}]`,
+    `the scroll-drift renewal effect must depend on renderableEntryStructureKey (pitfall 214) — got [${deps}]`,
   )
   assert.doesNotMatch(
     deps,
     /\brenderableMessages\b/,
-    `the scroll-watch effect must NOT depend on renderableMessages (pitfall 214): that array gets a fresh identity on every streaming content delta, so the rAF scroll-watch ladder is cancelled and re-armed many times per second per visible card even when no DOM entry changed identity. Keep the stable ID/order signature — got [${deps}]`,
+    `the scroll-drift renewal effect must NOT depend on renderableMessages (pitfall 214): that array gets a fresh identity on every streaming content delta, so the watcher window is renewed many times per second per visible card even when no DOM entry changed identity. Keep the stable ID/order signature — got [${deps}]`,
+  )
+})
+
+// The lifecycle effect is the one that reads scrollTop, and reading scrollTop
+// against a DOM the stream keeps dirtying forces a full relayout (~29ms per
+// read at 271 bubbles, measured 2026-08-11). If it ever depends on the entry
+// structure key it re-runs on every new bubble and pays that cost per bubble —
+// which is exactly the 617ms the extraction was done to remove. Renewal must
+// stay in the other effect.
+test('scroll-drift lifecycle effect re-reads scrollTop only on activation, never per entry change', async () => {
+  const deps = await readTranscriptEffectDeps(
+    /watcher\.start\(node\.scrollTop\)[\s\S]*?\n {4}\}, \[([^\]]*)\]\)/,
+    'transcript scroll-drift lifecycle useLayoutEffect',
+  )
+
+  assert.doesNotMatch(
+    deps,
+    /\brenderableEntryStructureKey\b|\brenderableMessages\b/,
+    `the scroll-drift lifecycle effect must NOT depend on the transcript contents — every re-run calls watcher.start(node.scrollTop), and that read forces a relayout while streaming. Renew the window via watcher.extend() in the renewal effect instead — got [${deps}]`,
   )
 })
 

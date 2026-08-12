@@ -72,6 +72,7 @@ import {
   getToolGroupKey,
   type RenderableMessage,
 } from './chat-card-parsing'
+import { createScrollDriftWatcher, type ScrollDriftWatcher } from './chat-scroll-drift-watcher'
 import {
   getCompactMessageWindow,
   getPendingCompactBoundaryMessage,
@@ -1020,8 +1021,6 @@ const ChatTranscript = memo(
     const renderableEntryRefs = useRef(new Map<string, HTMLElement>())
     const renderableMessagesRef = useRef(renderableMessages)
     const stickySyncFrameRef = useRef<number | null>(null)
-    const scrollWatchFrameRef = useRef<number | null>(null)
-    const observedScrollTopRef = useRef<number | null>(null)
     const stickyPreviewRef = useRef<HTMLDivElement | null>(null)
     const [stickyMessageId, setStickyMessageId] = useState<string | null>(null)
     // Perf guardrail (pitfall 214) — do NOT "simplify" this back to `renderableMessages`.
@@ -1163,13 +1162,35 @@ const ChatTranscript = memo(
       }
     }, [isActive, syncStickyMessageId])
 
+    // 只在这里持有 watcher，读 scrollTop 的节奏由它决定 —— 见
+    // chat-scroll-drift-watcher.ts 顶部那段：每帧读会在流式下变成每帧强制重排。
+    const handleScrollRef = useRef(handleScroll)
     useLayoutEffect(() => {
-      if (!isActive) {
-        observedScrollTopRef.current = null
+      handleScrollRef.current = handleScroll
+    }, [handleScroll])
+
+    const scrollDriftWatcherRef = useRef<ScrollDriftWatcher | null>(null)
+    if (scrollDriftWatcherRef.current === null) {
+      scrollDriftWatcherRef.current = createScrollDriftWatcher({
+        readScrollTop: () => messageListRef.current?.scrollTop ?? null,
+        onDrift: () => {
+          handleScrollRef.current()
+        },
+        requestFrame: (callback) => window.requestAnimationFrame(callback),
+        cancelFrame: (handle) => {
+          window.cancelAnimationFrame(handle)
+        },
+      })
+    }
+
+    useLayoutEffect(() => {
+      const watcher = scrollDriftWatcherRef.current
+      if (!watcher) {
         return
       }
 
-      if (typeof window === 'undefined') {
+      if (!isActive || typeof window === 'undefined') {
+        watcher.cancel()
         return
       }
 
@@ -1178,45 +1199,24 @@ const ChatTranscript = memo(
         return
       }
 
-      observedScrollTopRef.current = node.scrollTop
-
-      if (scrollWatchFrameRef.current !== null) {
-        window.cancelAnimationFrame(scrollWatchFrameRef.current)
-      }
-
-      let remainingFrames = 18
-      const watchScrollTop = () => {
-        const currentNode = messageListRef.current
-        if (!currentNode) {
-          return
-        }
-
-        const currentScrollTop = currentNode.scrollTop
-        if (
-          observedScrollTopRef.current !== null &&
-          Math.abs(currentScrollTop - observedScrollTopRef.current) > 0.5
-        ) {
-          observedScrollTopRef.current = currentScrollTop
-          handleScroll()
-        }
-
-        remainingFrames -= 1
-        if (remainingFrames > 0) {
-          scrollWatchFrameRef.current = window.requestAnimationFrame(watchScrollTop)
-        } else {
-          scrollWatchFrameRef.current = null
-        }
-      }
-
-      scrollWatchFrameRef.current = window.requestAnimationFrame(watchScrollTop)
+      // 基线只在切到这张卡时读一次。结构变化走下面的 extend，不重读 —— 重读一次
+      // 就是一次强制重排，而流式下结构变化比帧还密，重读会把省下的开销又赔回去。
+      watcher.start(node.scrollTop)
 
       return () => {
-        if (scrollWatchFrameRef.current !== null) {
-          window.cancelAnimationFrame(scrollWatchFrameRef.current)
-          scrollWatchFrameRef.current = null
-        }
+        watcher.cancel()
       }
-    }, [handleScroll, isActive, messageListRef, renderableEntryStructureKey])
+    }, [isActive, messageListRef])
+
+    useLayoutEffect(() => {
+      if (!isActive) {
+        return
+      }
+
+      // 结构变了，把观察窗口续上；循环已经在跑就不动它。基线交给 onDrift 自然推进，
+      // 这比原来"每次结构变化都把基线拉到当前位置"更敏感，不会漏掉累积漂移。
+      scrollDriftWatcherRef.current?.extend()
+    }, [isActive, renderableEntryStructureKey])
 
     useEffect(() => {
       if (!isActive) {

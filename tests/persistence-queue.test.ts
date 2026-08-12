@@ -543,6 +543,29 @@ describe('persistence queue', () => {
     assert.equal(shouldUseQueuedPersistenceForAction('replace'), false)
   })
 
+  // 症状：切 tab / 打字 / 拖列宽时整窗卡顿，长时间使用后无退出日志地闪退。
+  // 根因：2026-08-11 实测这些纯 UI 高频动作走 persistImmediately，每次把完整
+  // 1.17MB state 过 IPC，主进程 Zod 全量校验后回传，渲染进程再 Zod 校验一次；
+  // 拖列宽/resizePane 逐帧触发，打字逐键触发，单次往返产生 ~5MB 深克隆垃圾。
+  // 不能改成"只在拖拽结束保存"：这些动作分散在多个组件里，白名单是唯一的收口点。
+  it('routes high-frequency UI-only mutations through queued persistence', () => {
+    assert.equal(shouldUseQueuedPersistenceForAction('setCardDraft'), true)
+    assert.equal(shouldUseQueuedPersistenceForAction('setActiveTab'), true)
+    assert.equal(shouldUseQueuedPersistenceForAction('setColumnWidth'), true)
+    assert.equal(shouldUseQueuedPersistenceForAction('setColumnWidths'), true)
+    assert.equal(shouldUseQueuedPersistenceForAction('resizePane'), true)
+    assert.equal(shouldUseQueuedPersistenceForAction('reorderTab'), true)
+  })
+
+  // 结构性动作必须保持立即落盘：崩溃时丢一次防抖窗口的差异会留下悬空引用。
+  it('keeps structural mutations on the immediate persistence path', () => {
+    assert.equal(shouldUseQueuedPersistenceForAction('addColumn'), false)
+    assert.equal(shouldUseQueuedPersistenceForAction('removeColumn'), false)
+    assert.equal(shouldUseQueuedPersistenceForAction('closeTab'), false)
+    assert.equal(shouldUseQueuedPersistenceForAction('duplicateColumn'), false)
+    assert.equal(shouldUseQueuedPersistenceForAction('restoreSession'), false)
+  })
+
   it('flags runtime-routing changes for immediate backend sync', () => {
     const state = createDefaultState('')
 

@@ -230,13 +230,26 @@ export const shouldPauseQueuedStateSave = (state: Pick<AppState, 'columns'>) => 
   return false
 }
 
+// 症状：切 tab / 打字 / 拖列宽时整窗卡顿，长时间使用后无退出日志地闪退。
+// 根因：2026-08-11 实测未列入此白名单的动作走 persistImmediately，单次要把完整
+// 1.17MB state 过 IPC、主进程 Zod 全量校验、回传后渲染进程再 Zod 校验一次，
+// 一个往返约 20ms CPU + ~5MB 深克隆垃圾；而 setCardDraft 逐键触发、
+// setColumnWidth/resizePane 拖拽期逐帧触发，直接把主线程和 GC 打满。
+// 不能靠"拖拽结束才保存"绕开：这些动作分散在多个组件的 dispatch 点上，
+// 这张白名单是唯一的收口处；退出前有 flushPendingState 兜底，不会丢草稿。
 export const shouldUseQueuedPersistenceForAction = (actionType: IdeAction['type']) =>
   actionType === 'appendAssistantDelta' ||
   actionType === 'appendMessages' ||
   actionType === 'upsertMessages' ||
   actionType === 'updateCard' ||
   actionType === 'importExternalSession' ||
-  actionType === 'removeSessionHistory'
+  actionType === 'removeSessionHistory' ||
+  actionType === 'setCardDraft' ||
+  actionType === 'setActiveTab' ||
+  actionType === 'setColumnWidth' ||
+  actionType === 'setColumnWidths' ||
+  actionType === 'resizePane' ||
+  actionType === 'reorderTab'
 
 export const shouldPersistActionImmediately = (
   actionType: IdeAction['type'],

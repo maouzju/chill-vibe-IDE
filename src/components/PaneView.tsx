@@ -42,6 +42,7 @@ import type {
   AutomationBoardWorkspaceView,
 } from './automation-board-host'
 import { resolveTabAbsorbTarget } from './pane-tab-board-absorb'
+import { resolvePaneTabCloseTargets } from './pane-tab-close-targets'
 import { decideDragStartActiveTabRestore } from './pane-tab-drag-view'
 import { decideMisroutedTabPointerRescue, isPointerWithinRect } from './pane-tab-rescue'
 import { decideTabStripWheelScroll } from './pane-tab-wheel'
@@ -1206,9 +1207,11 @@ const PaneViewView = ({
 
   const contextMenuActions = contextMenu
     ? (() => {
-        const tabIndex = pane.tabs.indexOf(contextMenu.tabId)
-        const tabsAfter = pane.tabs.slice(tabIndex + 1)
-        const otherTabs = pane.tabs.filter((id) => id !== contextMenu.tabId)
+        const {
+          others: otherTabs,
+          toTheLeft: tabsBefore,
+          toTheRight: tabsAfter,
+        } = resolvePaneTabCloseTargets(pane.tabs, contextMenu.tabId)
         // 「收进看板」：拖回去的那条路要求泳道落点当场可见，这条不要求。判据与
         // 泳道选择见 resolveTabAbsorbTarget。
         const absorbTarget = automationBoardActions
@@ -1238,6 +1241,12 @@ const PaneViewView = ({
           closeOthers: otherTabs.length > 0
             ? () => {
                 for (const id of otherTabs) onCloseTab(pane.id, id)
+                setContextMenu(null)
+              }
+            : null,
+          closeLeft: tabsBefore.length > 0
+            ? () => {
+                for (const id of tabsBefore) onCloseTab(pane.id, id)
                 setContextMenu(null)
               }
             : null,
@@ -1703,6 +1712,13 @@ const PaneViewView = ({
           </button>
           <button
             type="button"
+            disabled={!contextMenuActions.closeLeft}
+            onClick={contextMenuActions.closeLeft ?? undefined}
+          >
+            {language === 'zh-CN' ? '\u5173\u95ed\u5de6\u4fa7' : 'Close to the Left'}
+          </button>
+          <button
+            type="button"
             disabled={!contextMenuActions.closeRight}
             onClick={contextMenuActions.closeRight ?? undefined}
           >
@@ -1725,40 +1741,6 @@ const PaneViewView = ({
           </button>
         </div>
       ) : null}
-      {/*
-      {contextMenu && contextMenuActions ? (
-        <div
-          ref={contextMenuRef}
-          className="pane-tab-context-menu"
-          style={{ left: contextMenu.x, top: contextMenu.y }}
-        >
-          <button type="button" onClick={contextMenuActions.close}>
-            {language === 'zh-CN' ? '关闭' : 'Close'}
-          </button>
-          <button
-            type="button"
-            disabled={!contextMenuActions.closeOthers}
-            onClick={contextMenuActions.closeOthers ?? undefined}
-          >
-            {language === 'zh-CN' ? '关闭其他' : 'Close Others'}
-          </button>
-          <button
-            type="button"
-            disabled={!contextMenuActions.closeRight}
-            onClick={contextMenuActions.closeRight ?? undefined}
-          >
-            {language === 'zh-CN' ? '关闭右侧' : 'Close to the Right'}
-          </button>
-          <hr className="pane-tab-context-divider" />
-          <button type="button" onClick={contextMenuActions.splitRight}>
-            {language === 'zh-CN' ? '拆分到右侧' : 'Split Right'}
-          </button>
-          <button type="button" onClick={contextMenuActions.splitDown}>
-            {language === 'zh-CN' ? '拆分到下方' : 'Split Down'}
-          </button>
-        </div>
-      ) : null}
-      */}
     </section>
   )
 }

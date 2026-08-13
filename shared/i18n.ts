@@ -36,7 +36,9 @@ type LocaleText = {
   agentDoneSoundVolumeLabel: string
   allAgentsDoneSoundLabel: string
   autoUrgeLabel: string
+  autoUrgeHint: string
   autoUrgeTypesLabel: string
+  autoUrgeTypesHint: string
   autoUrgeTypeNameLabel: string
   autoUrgeTypeNamePlaceholder: string
   autoUrgeAddType: string
@@ -64,17 +66,21 @@ type LocaleText = {
   repeatLoopLabel: string
   repeatLoopHint: string
   repeatLoopCountLabel: string
+  repeatLoopCountHint: string
   repeatLoopCountUnlimited: string
   repeatLoopStatusLabel: string
   repeatLoopStatusHint: string
   wakeTimerFeatureLabel: string
   wakeTimerFeatureHint: string
   wakeTimerLabel: string
+  wakeTimerHint: string
   wakeTimerModeLabel: string
+  wakeTimerModeHint: string
   wakeTimerModeWorkspace: string
   wakeTimerModeLeftTab: string
   wakeTimerModeDuration: string
   wakeTimerDurationLabel: string
+  wakeTimerDurationHint: string
   wakeTimerMinutes: string
   wakeTimerLeftUnavailable: string
   wakeTimerBatchLocked: string
@@ -190,6 +196,7 @@ type LocaleText = {
   resizeColumn: string
   deleteCard: string
   planMode: string
+  planModeHint: string
   // 超管权限：这个会话能读写同一工作区里的其他会话。任何卡片都能开。
   adminAccessLabel: string
   adminAccessHint: string
@@ -296,6 +303,9 @@ type LocaleText = {
   weatherConditions: Record<string, string>
   forkConversation: string
   thinking: string
+  thinkingHint: string
+  thinkingDepthLabel: string
+  thinkingDepthHint: string
   composerSettings: string
   stickyNotePlaceholder: string
   stickyNoteTitle: string
@@ -462,7 +472,9 @@ const localeTextByLanguage: Record<AppLanguage, LocaleText> = {
     agentDoneSoundVolumeLabel: '音量',
     allAgentsDoneSoundLabel: '全完成提示音',
     autoUrgeLabel: '自动鞭策',
+    autoUrgeHint: '这个会话每答完一轮就自动追发一条催办消息，直到回复里出现成功触发词。适合让 Agent 自己把活干完，不用你守着按回车。',
     autoUrgeTypesLabel: '鞭策类型',
+    autoUrgeTypesHint: '选这次用哪套催办话术：不同类型有各自的消息内容和成功触发词，可在设置 → 自动鞭策里增删。',
     autoUrgeTypeNameLabel: '类型名称',
     autoUrgeTypeNamePlaceholder: '例如：严格验收',
     autoUrgeAddType: '新增鞭策类型',
@@ -490,17 +502,21 @@ const localeTextByLanguage: Record<AppLanguage, LocaleText> = {
     repeatLoopLabel: '循环重复',
     repeatLoopHint: '本轮完成后新建 Tab，并自动重跑本会话最早的用户提示。',
     repeatLoopCountLabel: '重复次数',
+    repeatLoopCountHint: '还要再跑几轮；留空就是一直循环下去，直到你手动取消勾选。',
     repeatLoopCountUnlimited: '不限',
     repeatLoopStatusLabel: '循环重复已开启',
     repeatLoopStatusHint: '本轮完成后会自动新建 Tab，并重跑首条用户提示。',
     wakeTimerFeatureLabel: '计划唤醒',
     wakeTimerFeatureHint: '开启后，每个 Agent 会话的输入设置中会出现计划唤醒模块，可先写好消息，等其他 Agent、左侧 Tab 完成或到时后整批激活。',
     wakeTimerLabel: '计划唤醒',
+    wakeTimerHint: '先把消息写好放着不发，等下面的条件满足了再自动发出去。适合排队等前一批 Agent 干完再接着干。',
     wakeTimerModeLabel: '唤醒条件',
+    wakeTimerModeHint: '决定什么时候把攒下的消息发出去：等本工作区其他 Agent 都空闲、等左边那个 Tab 跑完、或者干脆等一段固定时间。',
     wakeTimerModeWorkspace: '其他 Agent 完成',
     wakeTimerModeLeftTab: '左侧 Tab 完成',
     wakeTimerModeDuration: '指定时长',
     wakeTimerDurationLabel: '等待时长',
+    wakeTimerDurationHint: '从挂起那一刻算起要等多少分钟，最长 7 天（10080 分钟）。',
     wakeTimerMinutes: '分钟',
     wakeTimerLeftUnavailable: '左侧没有可等待的 Agent Tab',
     wakeTimerBatchLocked: '当前批次已锁定；修改会在下一批生效。',
@@ -625,11 +641,15 @@ const localeTextByLanguage: Record<AppLanguage, LocaleText> = {
     resizeColumn: '拖拽调整列宽',
     deleteCard: '删除卡片',
     planMode: '计划模式',
+    planModeHint: 'Claude 专用：先只读地调研并给出方案，等你点头再动代码。适合大改动前先看清楚它想干什么。',
     adminAccessLabel: '超管权限',
     adminAccessHint: '开启后，这个会话可以查看并操作本工作区的其他会话（发消息、换泳道、挂唤醒）。',
     adminAccessBadgeTitle: '这个会话有超管权限',
     forkConversation: '从此处分叉',
     thinking: '思考',
+    thinkingHint: '让模型先想再答。答得更稳，但更慢也更费额度；部分模型强制开启，关不掉。',
+    thinkingDepthLabel: '思考深度',
+    thinkingDepthHint: '思考多久：低=快而省，高/最高=遇到难题更靠谱但明显更慢。简单活儿用低就够。',
     composerSettings: '对话设置',
     placeholderSetWorkspace: '请先设置工作区路径',
     placeholderInputTask: '输入任务，回车发送',
@@ -908,7 +928,9 @@ const localeTextByLanguage: Record<AppLanguage, LocaleText> = {
     agentDoneSoundVolumeLabel: 'Volume',
     allAgentsDoneSoundLabel: 'All Agents Done Sound',
     autoUrgeLabel: 'Auto Urge',
+    autoUrgeHint: 'After every reply this chat automatically sends a follow-up nudge, until the answer contains the success keyword. Lets an agent finish on its own instead of waiting on your Enter key.',
     autoUrgeTypesLabel: 'Urge Types',
+    autoUrgeTypesHint: 'Which nudge script to use — each type carries its own message and success keyword, editable in Settings → Auto Urge.',
     autoUrgeTypeNameLabel: 'Type Name',
     autoUrgeTypeNamePlaceholder: 'e.g. Release Guard',
     autoUrgeAddType: 'Add Auto Urge Type',
@@ -938,17 +960,21 @@ const localeTextByLanguage: Record<AppLanguage, LocaleText> = {
     repeatLoopLabel: 'Repeat loop',
     repeatLoopHint: 'After this run completes, open a new tab and rerun this chat’s earliest user prompt.',
     repeatLoopCountLabel: 'Repeat count',
+    repeatLoopCountHint: 'How many more runs to go. Leave it empty to keep looping until you uncheck the switch.',
     repeatLoopCountUnlimited: 'Unlimited',
     repeatLoopStatusLabel: 'Repeat loop is on',
     repeatLoopStatusHint: 'A new tab will open and rerun the first user prompt when this run finishes.',
     wakeTimerFeatureLabel: 'Wake Timer',
     wakeTimerFeatureHint: 'Adds a wake-timer module to each agent composer so messages can wait for peer agents, the tab on the left, or a duration, then activate as one batch.',
     wakeTimerLabel: 'Wake timer',
+    wakeTimerHint: 'Write the message now but hold it back: it is sent automatically once the condition below is met. Handy for queueing work behind another batch of agents.',
     wakeTimerModeLabel: 'Wake condition',
+    wakeTimerModeHint: 'What releases the held message: every other agent in this workspace going idle, the tab on the left finishing, or a fixed wait.',
     wakeTimerModeWorkspace: 'Other agents finish',
     wakeTimerModeLeftTab: 'Left tab finishes',
     wakeTimerModeDuration: 'After a duration',
     wakeTimerDurationLabel: 'Wait time',
+    wakeTimerDurationHint: 'Minutes to wait from the moment the message is armed, up to 7 days (10080 minutes).',
     wakeTimerMinutes: 'minutes',
     wakeTimerLeftUnavailable: 'No agent tab is available directly on the left',
     wakeTimerBatchLocked: 'This batch is locked; changes apply to the next batch.',
@@ -1079,12 +1105,16 @@ const localeTextByLanguage: Record<AppLanguage, LocaleText> = {
     resizeColumn: 'Drag to resize column width',
     deleteCard: 'Delete card',
     planMode: 'Plan mode',
+    planModeHint: 'Claude only: research read-only and propose a plan first, then wait for your approval before touching code. Useful before a large change.',
     adminAccessLabel: 'Admin access',
     adminAccessHint:
       'Lets this session inspect and act on the other sessions in this workspace — message them, move them between lanes, arm wake timers.',
     adminAccessBadgeTitle: 'This session has admin access',
     forkConversation: 'Fork from here',
     thinking: 'Thinking',
+    thinkingHint: 'Let the model reason before answering. Steadier results, but slower and more expensive; some models always think and cannot turn it off.',
+    thinkingDepthLabel: 'Thinking depth',
+    thinkingDepthHint: 'How long it reasons: low is fast and cheap, high/max holds up better on hard problems but is noticeably slower.',
     composerSettings: 'Chat settings',
     placeholderSetWorkspace: 'Set a workspace path first',
     placeholderInputTask: 'Type a task and press Enter',

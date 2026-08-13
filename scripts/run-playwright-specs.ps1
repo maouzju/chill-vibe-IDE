@@ -26,6 +26,7 @@ try {
     smoke = @(
       'tests/add-card-order.spec.ts',
       'tests/chat-draft-persistence.spec.ts',
+      'tests/composer-settings-hints.spec.ts',
       'tests/git-sticky-picker.spec.ts',
       'tests/git-tool-switch.spec.ts',
       'tests/panel-persistence.spec.ts',
@@ -35,7 +36,8 @@ try {
     )
     theme = @(
       'tests/theme-check.spec.ts',
-      'tests/board-layout.spec.ts'
+      'tests/board-layout.spec.ts',
+      'tests/automation-board-layout.spec.ts'
     )
   }
 

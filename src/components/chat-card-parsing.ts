@@ -1301,6 +1301,18 @@ export const buildRenderableMessages = (messages: ChatMessage[]): RenderableMess
       const tl = parseStructuredToolMessage(msg)
       const ed = parseStructuredEditsMessage(msg)
 
+      // 症状：Claude 派发子代理后「正在运行的子智能体」面板整个不出现。
+      // 根因：派发必然先产生一张 Task/Agent 工具卡，紧随其后的 agents 状态卡落进本分组
+      //       循环；循环只认 command/tool/edits，其余全交给 isEmptySkippableMessage —— 而
+      //       所有结构化卡片的 content 恒为空（app-helpers.ts createStructuredActivityMessage），
+      //       于是能正常解析的 agents/todo 卡被当成「解析失败的坏卡」静默丢弃。
+      // 被否决：把 'agents' 从 isEmptySkippableMessage 的 kind 名单里删掉——那会让真正
+      //       structuredData 缺失的坏 agents 卡渲染成空气泡。这里 break 让外层的
+      //       `if (todo || agents)` 分支照常把它渲染成独立卡片。
+      if (!cmd && !tl && !ed && (parseStructuredTodoMessage(msg) || parseStructuredAgentsMessage(msg))) {
+        break
+      }
+
       if (cmd) {
         groupItems.push({ kind: 'command', message: msg, data: cmd })
       } else if (tl) {

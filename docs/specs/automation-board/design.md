@@ -625,6 +625,47 @@ lastActivityAt。推送节流仍是 2000ms。
 - `ChatCard` composer 设置菜单加一行"超管权限"，开启时该行高亮为警示色（`--danger-*` 系列 token），
   并在卡片头部渲染盾牌角标。双主题都要过。
 
+## 布局与宽度适配（v2.1）
+
+看板卡活在**可调宽的列 / 可拆分的 pane**里，它的宽度与视口宽度没有任何关系：三列铺开的 1440
+视口下，一列只有 ~460px。v2 的断点写成 `@media (max-width: 900px)`，量的是视口，所以在真实使用
+中几乎永不触发 —— 三条泳道被压到每条 ~140px，标题截成两个字、"加入待命"竖成一列。
+
+v2.1 全部改成**容器查询**，并且分两层量：
+
+| 容器 | `container-name` | 量什么 | 用来决定 |
+|---|---|---|---|
+| `.automation-board` | `automation-board` | 整块看板的 inline-size | 泳道的栅格轨数、模板配置面板是单栏还是双栏 |
+| `.automation-board-lane` | `automation-board-lane` | 单条泳道的 inline-size | 待命道 composer 是否折行、项卡片是否让出型号标签 |
+
+分两层是必须的：宽屏三轨时一条泳道 ~460px，窄屏单轨时反而有 ~450px —— 只看看板宽会把两种
+完全不同的处境判成同一档。
+
+泳道栅格三档：
+
+| 看板宽 | 布局 |
+|---|---|
+| ≥ 760px | 三轨并排（默认） |
+| 520–759px | 待命 + 执行中并排，已完成 `grid-column: 1 / -1` 铺满下面一行，行高 1.5fr / 1fr |
+| < 520px | 三条竖排，`grid-auto-rows: minmax(10.5rem, auto)`，整块看板纵向滚动 |
+
+中间那档刻意**不是**"三轨挤一挤"：一条泳道低于 ~240px 就装不下「标题 + 型号标签 + 状态点」
+这一行。竖排档必须把 `grid-template-rows` 显式交回 `none`，否则上一档那条两行的定义会把第三条
+泳道挤成 0 高。
+
+> `.automation-board` 自身的 `padding` / `gap` **不能**写进 `@container automation-board`：元素不
+> 匹配以自己为容器的查询。它们保持定值，只有后代跟着宽度变。
+
+排版上同时统一了圆角与层级：泳道 / 项卡片 / 模板配置面板 / 输入框全部走 `--r-xs`，型号标签与
+模板胶囊走 `--r-pill`，泳道头部换成 `--panel-soft` 色带（滚动时标题不再和内容糊在一起），泳道
+计数变成小胶囊。模板胶囊上那三个 icon-button 与项卡片一级操作行同处理 —— 静息只剩图标，框和
+底色留给 hover / focus（ui-principles「Idle Chrome Must Recede」）。这些覆盖选择器都必须凑到
+三段（0,3,0）才压得过 `:root[data-theme='dark'] .icon-button`。
+
+宽看板（≥ 900px）下模板配置面板改双栏：名称 | 模型 配一行，需求 textarea / 说明文字 / 触发器分组 /
+操作行整行跨栏。为此把 JSX 里的"模型"字段提到"需求"之前 —— 两个单行字段相邻，双栏时才不会
+出现"名称旁边空着半个面板"，同时 tab 顺序仍与视觉顺序一致。
+
 ## 测试策略（v2 增量）
 
 | 文件 | 覆盖 |
@@ -635,6 +676,7 @@ lastActivityAt。推送节流仍是 2000ms。
 | `tests/automation-board-mirror.test.ts` | 列级镜像：tab 卡与看板项都在里面、工具卡被排除、签名排除正文增长 |
 | `tests/automation-board-mcp.test.ts` | 新工具名与参数校验；`move_session_to_lane` 的目标看板解析；请求方自过滤 |
 | `tests/chat-request-admin-access.test.ts`（新） | `card.adminAccess` → 请求带 `adminAccess`；关掉就不带 |
+| `tests/automation-board-layout.spec.ts`（v2.1，已入 `pnpm test:theme`） | **固定视口 1440**、只改同时开几列（1/2/3 列 → 看板 ~1409/704/468px）：栅格轨数 3/2/1、窄档每条泳道仍 > 240px、composer 一行、宽档配置面板双栏且跨栏项跨栏、竖排下展开抽屉不出卡；双主题各三档视觉快照 + 配置面板展开态 + 抽屉展开态 |
 
 ## 风险与对策
 

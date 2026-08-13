@@ -493,15 +493,9 @@ export const AutomationBoardTemplateConfig = ({
         />
       </label>
 
-      <label className="automation-board-template-field is-stacked">
-        <span>{text.automationBoardTemplateRequirementLabel}</span>
-        <textarea
-          value={template.requirement}
-          rows={5}
-          onChange={(event) => onUpdateTemplate(template.id, { requirement: event.target.value })}
-        />
-      </label>
-
+      {/* 名称与模型都是单行的"这是哪个模板"信息，紧挨着放；需求是正文，跟在
+          它们后面。宽看板下配置面板走双栏，这个顺序让两个单行字段自然配成
+          一行，而不是名称旁边空着半个面板。 */}
       <label className="automation-board-template-field">
         <span>{text.automationBoardTemplateModelLabel}</span>
         <select
@@ -523,6 +517,15 @@ export const AutomationBoardTemplateConfig = ({
             </option>
           ))}
         </select>
+      </label>
+
+      <label className="automation-board-template-field is-stacked">
+        <span>{text.automationBoardTemplateRequirementLabel}</span>
+        <textarea
+          value={template.requirement}
+          rows={5}
+          onChange={(event) => onUpdateTemplate(template.id, { requirement: event.target.value })}
+        />
       </label>
 
       <label

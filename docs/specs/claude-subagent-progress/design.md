@@ -91,3 +91,15 @@ CLI 用同一套 `system:task_*` 上报后台 shell 命令：
 ## 风险
 
 - CLI 未来调整 `system:task_*` 字段名会导致面板静默失效。缓解：解析器对缺字段静默降级（NFR3），并由回归测试锁住实测样本的字段形状。
+
+## 渲染层回归：面板被工具分组循环吞掉（2026-08-12 修复）
+
+后端链路全通、`state.json` 里能搜到 `agent-status:claude` 的 agents 消息，但用户完全看不到面板。
+
+根因在 `src/components/chat-card-parsing.ts` 的 `buildRenderableMessages`：派发子代理**必然**先产生一张 `Task`/`Agent` 工具卡，紧随其后的 agents 状态卡因而落进工具分组循环；该循环只认 `command` / `tool` / `edits`，其余一律交给 `isEmptySkippableMessage` 判定——而所有结构化卡片的 `content` 恒为空（`app-helpers.ts` 的 `createStructuredActivityMessage` 写死 `content: ''`），于是能正常解析的 agents 卡被当成「解析失败的坏卡」静默丢弃。`todo` 卡同病。
+
+修复：分组循环里先用各自的 parse 函数判定，遇到可解析的 agents / todo 卡就 `break`，交回外层已有的 `if (todo || agents)` 分支渲染成独立卡片。
+
+被否决：把 `'agents'` 从 `isEmptySkippableMessage` 的 kind 名单里删掉——那会让真正 `structuredData` 缺失的坏卡渲染成空气泡。
+
+守卫：`tests/chat-card-parsing.test.ts` 三条——工具卡后、两张工具卡之间、以及「无 structuredData 的坏 agents 卡仍应丢弃」。

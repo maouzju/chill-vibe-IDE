@@ -34,7 +34,7 @@ Reuse the verification posture from `../chill-vibe-full-regression/SKILL.md`, bu
    - if the checkout mixes a release-ready slice with unfinished user/agent WIP, preserve the WIP on a named branch/worktree and make local `main` release-ready before publication. A repo-external release worktree may assemble and verify a path-limited candidate, but it does not make remote-only publication safe. Do not stash, revert, discard, or accidentally commit excluded WIP; if local `main` cannot safely become clean and accept the candidate, the release is blocked.
    - if something is suspicious, stop and fix or exclude it before continuing
 3. Set the final release version after the audit and before the final verification:
-   - default to the next patch version unless the diff clearly justifies a bigger bump
+   - **default to the next patch version. "This release has a lot of features" is NOT a reason to bump the minor.** The owner reserves the minor position for two things only: a major *stability* milestone (v0.19.0 moving the whole backend into a utilityProcess is the reference case), or a batch of accumulated patch releases that deserves a marker. v0.20.0 was bumped on feature volume — new board UI plus a never-working MCP surface finally connecting — and the owner corrected it on the spot. When in doubt, ship a patch: an extra patch costs nothing, a premature minor spends a milestone slot.
    - update `package.json` and any other repo-owned version references that must stay in sync
    - stage the version bump together with the already-audited product changes
    - the final release verifier fingerprints the complete tree, so changing the version after verification would invalidate every cached gate and force another full pass
@@ -105,7 +105,7 @@ Reuse the verification posture from `../chill-vibe-full-regression/SKILL.md`, bu
 
 ## Versioning Rules
 
-- Default bump: patch.
+- Default bump: patch. Minor is reserved for a major stability milestone or a marker over many accumulated patches — never for feature volume (see Workflow step 3).
 - Tag format: `v<package.json version>`.
 - Keep the release title equal to the tag unless the user asked for a different naming scheme.
 - Release notes can be concise and derived from the audited diff summary; do not paste huge raw diffs.

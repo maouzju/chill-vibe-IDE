@@ -3660,6 +3660,12 @@ function App() {
           cardId,
           provider: options?.provider ?? column?.provider,
           model: options?.model ?? column?.model,
+          // reducer 一直就收这几个字段（模板实例化那条路在用），v2.3 之前只是没人
+          // 从 composer 递过来 —— 这就是"模板存了思考深度却配不了"的另一半。
+          reasoningEffort: options?.reasoningEffort,
+          thinkingEnabled: options?.thinkingEnabled,
+          planMode: options?.planMode,
+          adminAccess: options?.adminAccess,
         }
         const nextState = applyAction(action)
         persistAfterAction(action.type, nextState)
@@ -3848,6 +3854,24 @@ function App() {
       },
       runTemplateNow: (columnId, boardCardId, templateId) => {
         fireAutomationBoardTemplateTriggerRef.current?.(columnId, boardCardId, templateId)
+      },
+      setLaneWidths: (columnId, boardCardId, widths) => {
+        const action: IdeAction = {
+          type: 'setAutomationBoardLaneWidths',
+          columnId,
+          boardCardId,
+          widths,
+        }
+        persistAfterAction(action.type, applyAction(action))
+      },
+      setComposeDefaults: (columnId, boardCardId, patch) => {
+        const action: IdeAction = {
+          type: 'setAutomationBoardComposeDefaults',
+          columnId,
+          boardCardId,
+          patch,
+        }
+        persistAfterAction(action.type, applyAction(action))
       },
     }),
     [

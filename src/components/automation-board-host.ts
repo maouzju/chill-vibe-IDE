@@ -1,9 +1,10 @@
 import type {
+  AutomationBoardComposeDefaults,
   AutomationBoardLane,
+  AutomationBoardLaneWidths,
   AutomationBoardTemplate,
   ChatCard,
   ImageAttachment,
-  Provider,
 } from '../../shared/schema'
 import type { AutomationBoardTabDropSource } from './AutomationBoardCard'
 
@@ -23,10 +24,11 @@ export type AutomationBoardActions = {
     requirement: string,
     index?: number,
     /**
-     * 「加入待命」时当场选定的 CLI/模型（不给就沿用这一列的默认），以及粘在
-     * 需求上的图片。待命项还没开跑，图片先存进卡片的 draftAttachments。
+     * 「加入待命」时当场选定的整组执行参数（CLI/模型 + 思考 + 深度 + 计划模式 +
+     * 超管权限；不给就沿用这一列的默认），以及粘在需求上的图片。待命项还没开跑，
+     * 图片先存进卡片的 draftAttachments。
      */
-    options?: { provider: Provider; model: string; attachments?: ImageAttachment[] },
+    options?: Partial<AutomationBoardComposeDefaults> & { attachments?: ImageAttachment[] },
   ) => void
   moveItem: (
     columnId: string,
@@ -71,6 +73,18 @@ export type AutomationBoardActions = {
   ) => void
   /** 手动触发一次模板 —— 与触发器到点时走的是同一条路径。 */
   runTemplateNow: (columnId: string, boardCardId: string, templateId: string) => void
+  /** 泳道宽度拖拽落定（`null` = 双击恢复均分）。拖拽过程中不经这里。 */
+  setLaneWidths: (
+    columnId: string,
+    boardCardId: string,
+    widths: AutomationBoardLaneWidths | null,
+  ) => void
+  /** 「加入待命」那组执行参数的落盘出口。一次一个字段，reducer 那层浅合并。 */
+  setComposeDefaults: (
+    columnId: string,
+    boardCardId: string,
+    patch: Partial<AutomationBoardComposeDefaults>,
+  ) => void
   stopItem: (cardId: string) => void
   sendToItem: (columnId: string, cardId: string, message: string) => void
   patchItemCard: (columnId: string, cardId: string, patch: Partial<ChatCard>) => void

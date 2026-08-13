@@ -257,6 +257,38 @@ describe('createAutomationBoardItem', () => {
     assert.equal(next.columns[0]!.cards['new-item']?.adminAccess, undefined)
   })
 
+  // FR12：composer 选的执行参数必须在**创建那一刻**就落到卡片上。事后改等于
+  // 逐张管，而看板存在的意义就是不用逐张管。
+  it('carries the composer execution settings onto the new item card', () => {
+    const state = buildState({
+      cards: { 'board-1': boardCard([]) },
+      layout: pane('pane-1', ['board-1']),
+    })
+
+    const next = ideReducer(state, {
+      type: 'createAutomationBoardItem',
+      columnId: 'column-1',
+      boardCardId: 'board-1',
+      lane: 'standby',
+      requirement: '带参数的需求',
+      cardId: 'new-item',
+      provider: 'claude',
+      model: 'claude-opus-4-8',
+      reasoningEffort: 'high',
+      thinkingEnabled: false,
+      planMode: true,
+      adminAccess: true,
+    })
+
+    const card = next.columns[0]!.cards['new-item']
+    assert.equal(card?.provider, 'claude')
+    assert.equal(card?.model, 'claude-opus-4-8')
+    assert.equal(card?.reasoningEffort, 'high')
+    assert.equal(card?.thinkingEnabled, false)
+    assert.equal(card?.planMode, true)
+    assert.equal(card?.adminAccess, true)
+  })
+
   it('is inert when the board card does not exist', () => {
     const state = buildState()
     const next = ideReducer(state, {
@@ -269,6 +301,161 @@ describe('createAutomationBoardItem', () => {
     })
 
     assert.equal(next, state)
+  })
+})
+
+describe('setAutomationBoardComposeDefaults', () => {
+  it('remembers the composer choice on the board card', () => {
+    const state = buildState()
+
+    const next = ideReducer(state, {
+      type: 'setAutomationBoardComposeDefaults',
+      columnId: 'column-1',
+      boardCardId: 'board-1',
+      patch: { provider: 'claude', model: 'claude-opus-4-8', reasoningEffort: 'high' },
+    })
+
+    assert.deepEqual(getBoard(next).composeDefaults, {
+      provider: 'claude',
+      model: 'claude-opus-4-8',
+      reasoningEffort: 'high',
+      thinkingEnabled: true,
+      planMode: false,
+      adminAccess: false,
+    })
+  })
+
+  // 面板一次只改一个字段。基底必须是"当前值 ?? 列默认"，否则第一次拨思考深度
+  // 就会把 provider/model 抹成 schema 默认的 codex/空。
+  it('merges a single field onto the column defaults instead of resetting the rest', () => {
+    const withModel = ideReducer(buildState(), {
+      type: 'setAutomationBoardComposeDefaults',
+      columnId: 'column-1',
+      boardCardId: 'board-1',
+      patch: { provider: 'claude', model: 'claude-opus-4-8' },
+    })
+
+    const next = ideReducer(withModel, {
+      type: 'setAutomationBoardComposeDefaults',
+      columnId: 'column-1',
+      boardCardId: 'board-1',
+      patch: { planMode: true },
+    })
+
+    assert.equal(getBoard(next).composeDefaults?.provider, 'claude')
+    assert.equal(getBoard(next).composeDefaults?.model, 'claude-opus-4-8')
+    assert.equal(getBoard(next).composeDefaults?.planMode, true)
+  })
+
+  it('seeds the untouched fields from the column, not from the schema defaults', () => {
+    const state = buildState()
+    state.columns[0]!.provider = 'claude'
+    state.columns[0]!.model = 'claude-opus-4-8'
+
+    const next = ideReducer(state, {
+      type: 'setAutomationBoardComposeDefaults',
+      columnId: 'column-1',
+      boardCardId: 'board-1',
+      patch: { reasoningEffort: 'low' },
+    })
+
+    assert.equal(getBoard(next).composeDefaults?.provider, 'claude')
+    assert.equal(getBoard(next).composeDefaults?.model, 'claude-opus-4-8')
+    assert.equal(getBoard(next).composeDefaults?.reasoningEffort, 'low')
+  })
+
+  it('leaves the items untouched so no lane re-renders on a settings change', () => {
+    const state = buildState()
+    const itemsBefore = getBoard(state).items
+
+    const next = ideReducer(state, {
+      type: 'setAutomationBoardComposeDefaults',
+      columnId: 'column-1',
+      boardCardId: 'board-1',
+      patch: { planMode: true },
+    })
+
+    assert.equal(getBoard(next).items, itemsBefore)
+  })
+
+  it('is inert when the board card does not exist', () => {
+    const state = buildState()
+
+    assert.equal(
+      ideReducer(state, {
+        type: 'setAutomationBoardComposeDefaults',
+        columnId: 'column-1',
+        boardCardId: 'missing',
+        patch: { planMode: true },
+      }),
+      state,
+    )
+  })
+})
+
+describe('setAutomationBoardLaneWidths', () => {
+  it('stores the dragged widths on the board card', () => {
+    const state = buildState()
+
+    const next = ideReducer(state, {
+      type: 'setAutomationBoardLaneWidths',
+      columnId: 'column-1',
+      boardCardId: 'board-1',
+      widths: { standby: 500, running: 350, done: 350 },
+    })
+
+    assert.deepEqual(getBoard(next).laneWidths, { standby: 500, running: 350, done: 350 })
+  })
+
+  it('deletes the field on reset instead of writing an even split', () => {
+    // "从没调过"和"调回均分"在磁盘上必须是同一种状态：写一份 {1,1,1} 会给
+    // 每个存档凭空长出一个字段，也让"是否自定义过"这个判断永远为真。
+    const state = ideReducer(buildState(), {
+      type: 'setAutomationBoardLaneWidths',
+      columnId: 'column-1',
+      boardCardId: 'board-1',
+      widths: { standby: 500, running: 350, done: 350 },
+    })
+
+    const next = ideReducer(state, {
+      type: 'setAutomationBoardLaneWidths',
+      columnId: 'column-1',
+      boardCardId: 'board-1',
+      widths: null,
+    })
+
+    const board = getBoard(next)
+    assert.equal(board.laneWidths, undefined)
+    assert.equal(Object.hasOwn(board, 'laneWidths'), false)
+  })
+
+  it('leaves the items untouched so no lane re-renders on a resize', () => {
+    const state = buildState()
+    const itemsBefore = getBoard(state).items
+
+    const next = ideReducer(state, {
+      type: 'setAutomationBoardLaneWidths',
+      columnId: 'column-1',
+      boardCardId: 'board-1',
+      widths: { standby: 500, running: 350, done: 350 },
+    })
+
+    assert.equal(getBoard(next).items, itemsBefore)
+    assert.equal(next.columns[0]!.cards['item-a'], state.columns[0]!.cards['item-a'])
+  })
+
+  it('is inert when the board card does not exist', () => {
+    const state = buildState()
+
+    assert.equal(
+      ideReducer(state, {
+        type: 'setAutomationBoardLaneWidths',
+        columnId: 'column-1',
+        boardCardId: 'missing',
+        widths: { standby: 1, running: 1, done: 1 },
+      }),
+      state,
+    )
   })
 })
 

@@ -1596,6 +1596,10 @@ const PaneViewView = ({
                     automationBoardActions.updateTemplate(column.workspacePath, templateId, patch),
                   onRunTemplateNow: (templateId) =>
                     automationBoardActions.runTemplateNow(column.id, card.id, templateId),
+                  onSetLaneWidths: (widths) =>
+                    automationBoardActions.setLaneWidths(column.id, card.id, widths),
+                  onSetComposeDefaults: (patch) =>
+                    automationBoardActions.setComposeDefaults(column.id, card.id, patch),
                 }
               : undefined
           return (

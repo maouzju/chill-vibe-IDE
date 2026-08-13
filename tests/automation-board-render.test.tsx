@@ -10,6 +10,7 @@ import { createDefaultAutomationBoardTemplateTrigger } from '../shared/schema.ts
 import type { AutomationBoardTemplate, ChatCard, ChatMessage } from '../shared/schema.ts'
 import {
   AutomationBoardCard,
+  AutomationBoardItemDrawer,
   AutomationBoardTemplateConfig,
   type AutomationBoardCardProps,
 } from '../src/components/AutomationBoardCard.tsx'
@@ -116,6 +117,8 @@ const renderBoard = (overrides: Partial<AutomationBoardCardProps> = {}) => {
     onPatchItemCard: noop,
     onUpdateTemplate: noop,
     onRunTemplateNow: noop,
+    onSetLaneWidths: noop,
+    onSetComposeDefaults: noop,
     ...overrides,
   }
 
@@ -330,11 +333,185 @@ describe('AutomationBoardCard renders', () => {
     )
   })
 
+  // FR12：模板 schema 一直存着 reasoningEffort / thinkingEnabled / planMode，
+  // 配置面板却没有入口 —— 存了却配不了，等于存了个死值。
+  it('lets the template config panel set thinking, depth and plan mode', () => {
+    const html = renderToStaticMarkup(
+      React.createElement(AutomationBoardTemplateConfig, {
+        template: makeTemplate({ provider: 'claude', model: 'claude-opus-4-8' }),
+        language: settings.language,
+        onUpdateTemplate: noop,
+        onRunTemplateNow: noop,
+      }),
+    )
+
+    assert.ok(html.includes(text.thinking))
+    assert.ok(html.includes(text.thinkingDepthLabel))
+    assert.ok(html.includes(text.planMode))
+    assert.match(html, /class="reasoning-select"/)
+  })
+
+  // 计划模式是 Claude 专用开关，Codex 下不该出现（与聊天 composer 同一条规则）。
+  it('hides plan mode for a codex template', () => {
+    const html = renderToStaticMarkup(
+      React.createElement(AutomationBoardTemplateConfig, {
+        template: makeTemplate({ provider: 'codex' }),
+        language: settings.language,
+        onUpdateTemplate: noop,
+        onRunTemplateNow: noop,
+      }),
+    )
+
+    assert.ok(!html.includes(text.planMode))
+    assert.ok(html.includes(text.thinkingDepthLabel))
+  })
+
+  // 强制思考的模型（Fable 5）关不掉思考：开关必须置灰，而不是给一个无效选择。
+  it('locks the thinking toggle on an always-thinking model', () => {
+    const html = renderToStaticMarkup(
+      React.createElement(AutomationBoardTemplateConfig, {
+        template: makeTemplate({ provider: 'claude', model: 'claude-fable-5' }),
+        language: settings.language,
+        onUpdateTemplate: noop,
+        onRunTemplateNow: noop,
+      }),
+    )
+
+    // 属性顺序不是契约，所以先切出"思考"那一行再看它自己带了什么。
+    const thinkingRow = html.split(`<span>${text.thinking}</span>`)[0]?.split('<label').pop() ?? ''
+    assert.ok(thinkingRow.includes('disabled=""'))
+    assert.ok(thinkingRow.includes('checked=""'))
+  })
+
+  // 加入待命的输入区必须能定同一组参数，否则只能等项建出来再逐张改。
+  it('offers the execution settings in the standby composer', () => {
+    const html = renderBoard()
+
+    assert.ok(html.includes('automation-board-compose-settings-toggle'))
+    assert.ok(html.includes(text.automationBoardComposeSettingsLabel))
+  })
+
+  // 上次选的模型/参数随看板存盘：连着加十个需求项时不该重选十次。
+  it('restores the composer choice from the board instead of the column default', () => {
+    const html = renderBoard({
+      board: {
+        items: [],
+        composeDefaults: {
+          provider: 'claude',
+          model: '',
+          reasoningEffort: 'high',
+          thinkingEnabled: true,
+          planMode: false,
+          adminAccess: false,
+        },
+      },
+    })
+
+    assert.match(html, /<option[^>]*value="claude::"[^>]*selected/)
+    assert.ok(
+      !new RegExp(`<option[^>]*value="codex::${DEFAULT_CODEX_MODEL}"[^>]*selected`).test(html),
+    )
+  })
+
   it('renders in English too', () => {
     const html = renderBoard({ language: 'en' })
     const en = getLocaleText('en')
 
     assert.ok(html.includes(en.automationBoardLaneRunning))
     assert.ok(html.includes(en.automationBoardTemplatesLabel))
+  })
+})
+
+// 抽屉单独导出是为了让 SSR 单测能看到展开态 —— `renderToStaticMarkup` 点不了
+// 折叠开关，和 `AutomationBoardTemplateConfig` 同一个理由。
+describe('AutomationBoardItemDrawer', () => {
+  const renderDrawer = (
+    cardOverrides: Partial<ChatCard> = {},
+    props: Partial<React.ComponentProps<typeof AutomationBoardItemDrawer>> = {},
+  ) => {
+    const card = itemCard('item-b', { status: 'streaming', ...cardOverrides })
+    return renderToStaticMarkup(
+      React.createElement(AutomationBoardItemDrawer, {
+        view: {
+          item: { cardId: card.id, lane: 'running', requirement: '补齐结算流程的测试', templateId: '' },
+          card,
+          laneIndex: 1,
+          aboveCardId: 'item-a',
+          aboveTitle: '把登录页改成暗色',
+        },
+        lane: 'running',
+        language: settings.language,
+        wakeTimerEnabled: true,
+        repeatLoopEnabled: true,
+        workspaceAgentCount: 2,
+        nudge: '',
+        onNudgeChange: noop,
+        onNudgeSubmit: noop,
+        onPopOutItem: noop,
+        onSaveTemplate: noop,
+        onPatchItemCard: noop,
+        ...props,
+      }),
+    )
+  }
+
+  // 需求：看板项的计划唤醒必须是外面那一整块面板，不是一个"上方需求"复选框 ——
+  // 否则看板里永远选不到"其他 Agent 完成"和"指定时长"这两个模式。
+  it('reuses the full wake timer panel instead of a lone checkbox', () => {
+    const html = renderDrawer({ wakeTimerActive: true, wakeTimerMode: 'left-tab' })
+
+    assert.ok(html.includes('composer-wake-timer-module'))
+    assert.ok(html.includes(text.wakeTimerModeLabel))
+    assert.ok(html.includes(text.wakeTimerModeWorkspace))
+    assert.ok(html.includes(text.automationBoardWakeAboveLabel))
+    assert.ok(html.includes(text.wakeTimerModeDuration))
+  })
+
+  it('keeps the board wording for the neighbour it waits on', () => {
+    const html = renderDrawer(
+      { wakeTimerActive: true, wakeTimerMode: 'left-tab' },
+      {
+        view: {
+          item: { cardId: 'item-b', lane: 'running', requirement: '补齐结算流程的测试', templateId: '' },
+          card: itemCard('item-b', {
+            status: 'streaming',
+            wakeTimerActive: true,
+            wakeTimerMode: 'left-tab',
+          }),
+          laneIndex: 0,
+          aboveCardId: '',
+          aboveTitle: '',
+        },
+      },
+    )
+
+    assert.ok(html.includes(text.automationBoardWakeAboveUnavailable))
+    assert.ok(!html.includes(text.wakeTimerLeftUnavailable))
+  })
+
+  it('offers the duration input inside the drawer too', () => {
+    const html = renderDrawer({
+      wakeTimerActive: true,
+      wakeTimerMode: 'duration',
+      wakeTimerDurationMinutes: 90,
+    })
+
+    assert.ok(html.includes(text.wakeTimerDurationLabel))
+    assert.match(html, /value="90"/)
+  })
+
+  // 唤醒只对"执行中"的项有意义；待命项还没跑，done 项已经结束。
+  it('hides the wake panel outside the running lane', () => {
+    const html = renderDrawer({ wakeTimerActive: true }, { lane: 'standby' })
+
+    assert.ok(!html.includes('composer-wake-timer-module'))
+    assert.ok(html.includes(text.automationBoardPopOutAction))
+  })
+
+  it('still carries the repeat toggle and the nudge box', () => {
+    const html = renderDrawer()
+
+    assert.ok(html.includes(text.repeatLoopStatusLabel))
+    assert.ok(html.includes(text.automationBoardItemNudgePlaceholder))
   })
 })

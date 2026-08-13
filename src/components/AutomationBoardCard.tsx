@@ -2,22 +2,42 @@ import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type {
   ButtonHTMLAttributes,
   ClipboardEvent,
+  CSSProperties,
   DragEvent,
   KeyboardEvent,
+  PointerEvent,
 } from 'react'
 
 import { getLocaleText } from '../../shared/i18n'
-import { MODEL_OPTIONS, isModelPickerOptionVisible } from '../../shared/models'
+import {
+  MODEL_OPTIONS,
+  MODEL_PICKER_HIDDEN_TOOL_MODELS,
+  isModelPickerOptionVisible,
+} from '../../shared/models'
+import {
+  getReasoningOptionsForModel,
+  isClaudeAlwaysThinkingModel,
+  normalizeReasoningEffortForModel,
+} from '../../shared/reasoning'
 import { defaultAutomationBoardSupervisorRequirement } from '../../shared/schema'
 import type {
   AppLanguage,
   AutomationBoard,
+  AutomationBoardComposeDefaults,
   AutomationBoardLane,
+  AutomationBoardLaneWidths,
   AutomationBoardTemplate,
   ChatCard,
   ImageAttachment,
   Provider,
 } from '../../shared/schema'
+import { resizeColumnGroups } from '../column-resize'
+import {
+  AUTOMATION_BOARD_LANE_MIN_WIDTH,
+  getAutomationBoardLaneTracks,
+  resolveAutomationBoardLaneWidths,
+  toAutomationBoardLaneWidths,
+} from './automation-board-lane-resize'
 import {
   promoteDraftAttachment,
   type PendingComposerAttachment,
@@ -50,6 +70,7 @@ import {
   resolveAutomationBoardItemStatusClass,
   type AutomationBoardItemView,
 } from './automation-board-view'
+import { WakeTimerSettingsPanel } from './WakeTimerSettingsPanel'
 
 export type AutomationBoardTabDropSource = {
   columnId: string
@@ -65,7 +86,7 @@ export type AutomationBoardCardProps = {
   board: AutomationBoard
   cards: Record<string, ChatCard>
   templates: AutomationBoardTemplate[]
-  /** 这一列的 provider/model，只作为「加入待命」那个选择器的初值。 */
+  /** 这一列的 provider/model，只在这张看板还没存过 `composeDefaults` 时兜底。 */
   defaultProvider: Provider
   defaultModel: string
   wakeTimerEnabled: boolean
@@ -74,7 +95,7 @@ export type AutomationBoardCardProps = {
     lane: AutomationBoardLane,
     requirement: string,
     index?: number,
-    options?: { provider: Provider; model: string; attachments?: ImageAttachment[] },
+    options?: Partial<AutomationBoardComposeDefaults> & { attachments?: ImageAttachment[] },
   ) => void
   onMoveItem: (cardId: string, lane: AutomationBoardLane, index?: number) => void
   onPopOutItem: (cardId: string) => void
@@ -101,6 +122,10 @@ export type AutomationBoardCardProps = {
    */
   onUpdateTemplate: (templateId: string, patch: Partial<AutomationBoardTemplate>) => void
   onRunTemplateNow: (templateId: string) => void
+  /** 泳道宽度落定（`null` = 双击恢复均分）。拖拽过程中不调它，见下面的注释。 */
+  onSetLaneWidths: (widths: AutomationBoardLaneWidths | null) => void
+  /** 「加入待命」那组执行参数的落盘出口（一次一个字段，reducer 那层浅合并）。 */
+  onSetComposeDefaults: (patch: Partial<AutomationBoardComposeDefaults>) => void
 }
 
 /**
@@ -130,6 +155,138 @@ const BoardButton = ({
 const messageLimit = defaultAutomationBoardItemMessageLimit
 
 const modelPickerOptions = MODEL_OPTIONS.filter((option) => isModelPickerOptionVisible(option))
+
+/**
+ * 存档里的模型可能已经从选单里下架（或是用户手写的自定义型号），那种 value 交给
+ * 原生 select 会静默回落到**第一个** option —— 显示的和实际用的对不上。回落到同
+ * provider 的"用默认模型"那一项，至少 CLI 是对的。
+ */
+const resolveModelPickerValue = (provider: Provider, model: string) => {
+  const value = `${provider}::${model}`
+  return modelPickerOptions.some((option) => `${option.provider}::${option.model}` === value)
+    ? value
+    : `${provider}::`
+}
+
+/**
+ * 一次执行的参数（模型 + 思考 + 思考深度 + 计划模式 + 超管权限）。
+ *
+ * 模板配置面板与待命 composer 需要的是**同一组语义**，而这组语义带着一串
+ * provider/model 相关的规则（Fable 5 强制思考、Codex 老模型没有 max/ultra 档、
+ * planMode 只对 Claude 有意义）。两处各写一遍 select 的代价不是重复代码，是规则
+ * 漂移：以后加一个模型档位只改了一处，另一处静默给出非法组合。
+ *
+ * 导出是为了让 SSR 单测能直接渲染 —— 与 `AutomationBoardTemplateConfig` 同一个
+ * 理由（`renderToStaticMarkup` 点不开折叠面板）。
+ */
+export const AutomationBoardModelSettings = ({
+  value,
+  language,
+  onChange,
+  showModel = true,
+}: {
+  value: AutomationBoardComposeDefaults
+  language: AppLanguage
+  onChange: (patch: Partial<AutomationBoardComposeDefaults>) => void
+  /** 待命 composer 把模型留在一级操作行，面板里就不再重复渲染一遍。 */
+  showModel?: boolean
+}) => {
+  const text = getLocaleText(language)
+  const alwaysThinking = value.provider === 'claude' && isClaudeAlwaysThinkingModel(value.model)
+  const thinkingOn = alwaysThinking || value.thinkingEnabled
+  const reasoningOptions = getReasoningOptionsForModel(value.provider, value.model, language)
+  const reasoningValue = normalizeReasoningEffortForModel(
+    value.provider,
+    value.model,
+    value.reasoningEffort,
+  )
+
+  return (
+    <>
+      {showModel ? (
+      <label className="automation-board-template-field">
+        <span>{text.automationBoardTemplateModelLabel}</span>
+        <select
+          value={resolveModelPickerValue(value.provider, value.model)}
+          onChange={(event) => {
+            const [provider, model] = event.target.value.split('::')
+            const nextProvider = (provider as Provider) ?? 'codex'
+            // 换 provider/model 时把深度一起交还给"跟着默认走"：Codex 老模型上留着
+            // 一个 max/ultra、或 Claude 上留着 ultra，都是启动就被 CLI 拒绝的档位。
+            onChange({
+              provider: nextProvider,
+              model: model ?? '',
+              reasoningEffort: normalizeReasoningEffortForModel(
+                nextProvider,
+                model ?? '',
+                value.reasoningEffort,
+              ),
+            })
+          }}
+        >
+          {modelPickerOptions.map((option) => (
+            <option
+              key={`${option.provider}::${option.model}`}
+              value={`${option.provider}::${option.model}`}
+            >
+              {option.label}
+            </option>
+          ))}
+        </select>
+      </label>
+      ) : null}
+
+      <label className="automation-board-template-field">
+        <input
+          type="checkbox"
+          checked={thinkingOn}
+          disabled={alwaysThinking}
+          onChange={(event) => onChange({ thinkingEnabled: event.target.checked })}
+        />
+        <span>{text.thinking}</span>
+      </label>
+
+      <label className="automation-board-template-field">
+        <span>{text.thinkingDepthLabel}</span>
+        <select
+          className="reasoning-select"
+          value={reasoningValue}
+          disabled={!thinkingOn}
+          onChange={(event) => onChange({ reasoningEffort: event.target.value })}
+        >
+          {reasoningOptions.map((option) => (
+            <option key={option.value} value={option.value}>
+              {option.label}
+            </option>
+          ))}
+        </select>
+      </label>
+
+      {/* 计划模式是 Claude 专用，与聊天 composer 同一条规则。 */}
+      {value.provider === 'claude' ? (
+        <label className="automation-board-template-field">
+          <input
+            type="checkbox"
+            checked={value.planMode}
+            onChange={(event) => onChange({ planMode: event.target.checked })}
+          />
+          <span>{text.planMode}</span>
+        </label>
+      ) : null}
+
+      <label
+        className={`automation-board-template-field${value.adminAccess ? ' is-admin' : ''}`}
+      >
+        <input
+          type="checkbox"
+          checked={value.adminAccess}
+          onChange={(event) => onChange({ adminAccess: event.target.checked })}
+        />
+        <span>{text.automationBoardTemplateAdminAccessLabel}</span>
+      </label>
+    </>
+  )
+}
 
 const entryKey = (entry: RenderableMessage, index: number) =>
   entry.type === 'message' ? entry.message.id : `${entry.items[0]?.message.id ?? 'group'}-${index}`
@@ -203,6 +360,7 @@ const AutomationBoardItemCard = ({
   workspacePath,
   wakeTimerEnabled,
   repeatLoopEnabled,
+  workspaceAgentCount,
   onPopOutItem,
   onDeleteItem,
   onSaveTemplate,
@@ -213,6 +371,8 @@ const AutomationBoardItemCard = ({
 }: {
   view: AutomationBoardItemView
   lane: AutomationBoardLane
+  /** 本工作区里除这一项以外的 Agent 数量，`workspace-agents` 模式的提示用。 */
+  workspaceAgentCount: number
 } & Pick<
   AutomationBoardCardProps,
   | 'boardCardId'
@@ -259,16 +419,8 @@ const AutomationBoardItemCard = ({
     onSendToItem(card.id, trimmed)
   }
 
-  const handleNudgeKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
-    if (event.key === 'Enter' && !event.shiftKey) {
-      event.preventDefault()
-      submitNudge()
-    }
-  }
-
   const wakeMode = card.wakeTimerMode ?? 'workspace-agents'
   const showsWakeControls = wakeTimerEnabled && lane === 'running'
-  const showsRepeatToggle = repeatLoopEnabled && lane === 'running'
 
   /**
    * 标题几乎总是由需求原文生成，两行显示同一句话是图上最刺眼的重复。
@@ -381,74 +533,135 @@ const AutomationBoardItemCard = ({
       {/* 抽屉里有 textarea：不拦住 dragstart 的话，在输入框里选文字会被外层
           article 的 draggable 抢成"拖卡片"。 */}
       {drawerOpen ? (
-        <div
-          ref={drawerRef}
-          className="automation-board-item-drawer"
-          onDragStart={(event) => event.stopPropagation()}
-        >
-          <div className="automation-board-item-drawer-row">
-            <BoardButton
-              tone="ghost"
-              className="automation-board-item-action"
-              onClick={() => onPopOutItem(card.id)}
-            >
-              {text.automationBoardPopOutAction}
-            </BoardButton>
-
-            <BoardButton
-              tone="ghost"
-              className="automation-board-item-action"
-              onClick={() => onSaveTemplate(card.id)}
-            >
-              {text.automationBoardSaveTemplateAction}
-            </BoardButton>
-          </div>
-
-          {showsWakeControls || showsRepeatToggle ? (
-            <div className="automation-board-item-drawer-row">
-              {showsWakeControls ? (
-                <label className="automation-board-item-toggle">
-                  <input
-                    type="checkbox"
-                    checked={card.wakeTimerActive === true}
-                    onChange={(event) =>
-                      onPatchItemCard(card.id, {
-                        wakeTimerActive: event.target.checked,
-                        wakeTimerMode: card.wakeTimerMode ?? 'left-tab',
-                      })
-                    }
-                  />
-                  <span>{text.automationBoardWakeAboveLabel}</span>
-                </label>
-              ) : null}
-
-              {showsRepeatToggle ? (
-                <label className="automation-board-item-toggle">
-                  <input
-                    type="checkbox"
-                    checked={card.repeatLoopActive === true}
-                    onChange={(event) =>
-                      onPatchItemCard(card.id, { repeatLoopActive: event.target.checked })
-                    }
-                  />
-                  <span>{text.repeatLoopStatusLabel}</span>
-                </label>
-              ) : null}
-            </div>
-          ) : null}
-
-          <div className="automation-board-item-nudge">
-            <textarea
-              value={nudge}
-              rows={2}
-              placeholder={text.automationBoardItemNudgePlaceholder}
-              onChange={(event) => setNudge(event.target.value)}
-              onKeyDown={handleNudgeKeyDown}
-            />
-          </div>
+        <div ref={drawerRef} onDragStart={(event) => event.stopPropagation()}>
+          <AutomationBoardItemDrawer
+            view={view}
+            lane={lane}
+            language={language}
+            wakeTimerEnabled={wakeTimerEnabled}
+            repeatLoopEnabled={repeatLoopEnabled}
+            workspaceAgentCount={workspaceAgentCount}
+            nudge={nudge}
+            onNudgeChange={setNudge}
+            onNudgeSubmit={submitNudge}
+            onPopOutItem={onPopOutItem}
+            onSaveTemplate={onSaveTemplate}
+            onPatchItemCard={onPatchItemCard}
+          />
         </div>
       ) : null}
     </article>
+  )
+}
+
+/**
+ * 项卡片的二级抽屉。
+ *
+ * 导出是为了让 SSR 单测能直接渲染展开态 —— `renderToStaticMarkup` 点不了折叠
+ * 开关，和 `AutomationBoardTemplateConfig` 同一个理由。
+ */
+export const AutomationBoardItemDrawer = ({
+  view,
+  lane,
+  language,
+  wakeTimerEnabled,
+  repeatLoopEnabled,
+  workspaceAgentCount,
+  nudge,
+  onNudgeChange,
+  onNudgeSubmit,
+  onPopOutItem,
+  onSaveTemplate,
+  onPatchItemCard,
+}: {
+  view: AutomationBoardItemView
+  lane: AutomationBoardLane
+  workspaceAgentCount: number
+  nudge: string
+  onNudgeChange: (next: string) => void
+  onNudgeSubmit: () => void
+} & Pick<
+  AutomationBoardCardProps,
+  | 'language'
+  | 'wakeTimerEnabled'
+  | 'repeatLoopEnabled'
+  | 'onPopOutItem'
+  | 'onSaveTemplate'
+  | 'onPatchItemCard'
+>) => {
+  const text = getLocaleText(language)
+  const { card, aboveCardId, aboveTitle } = view
+  const showsWakeControls = wakeTimerEnabled && lane === 'running'
+  const showsRepeatToggle = repeatLoopEnabled && lane === 'running'
+
+  const handleNudgeKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
+    if (event.key === 'Enter' && !event.shiftKey) {
+      event.preventDefault()
+      onNudgeSubmit()
+    }
+  }
+
+  return (
+    <div className="automation-board-item-drawer">
+      <div className="automation-board-item-drawer-row">
+        <BoardButton
+          tone="ghost"
+          className="automation-board-item-action"
+          onClick={() => onPopOutItem(card.id)}
+        >
+          {text.automationBoardPopOutAction}
+        </BoardButton>
+
+        <BoardButton
+          tone="ghost"
+          className="automation-board-item-action"
+          onClick={() => onSaveTemplate(card.id)}
+        >
+          {text.automationBoardSaveTemplateAction}
+        </BoardButton>
+      </div>
+
+      {/* 计划唤醒复用 composer 那一整块面板，而不是本地再写一个"上方需求"复选框：
+          唤醒模式是三选一，看板少一个入口就等于那两个模式在看板里永远够不到。
+          语境差异只允许落在文案上（`context="board"`：左侧 Tab → 上方需求）。 */}
+      {showsWakeControls ? (
+        <WakeTimerSettingsPanel
+          language={language}
+          context="board"
+          card={card}
+          neighbourTarget={aboveCardId ? { id: aboveCardId, title: aboveTitle ?? '' } : null}
+          workspaceAgentCount={workspaceAgentCount}
+          locked={(card.wakeTimerQueuedSends?.length ?? 0) > 0}
+          onPatch={(patch) => onPatchItemCard(card.id, patch)}
+          className="automation-board-item-wake-panel"
+        />
+      ) : null}
+
+      {showsRepeatToggle ? (
+        <div className="automation-board-item-drawer-row">
+          <label className="automation-board-item-toggle">
+            <input
+              type="checkbox"
+              checked={card.repeatLoopActive === true}
+              onChange={(event) =>
+                onPatchItemCard(card.id, { repeatLoopActive: event.target.checked })
+              }
+            />
+            <span>{text.repeatLoopStatusLabel}</span>
+          </label>
+        </div>
+      ) : null}
+
+      <div className="automation-board-item-nudge">
+        <textarea
+          value={nudge}
+          rows={2}
+          placeholder={text.automationBoardItemNudgePlaceholder}
+          onChange={(event) => onNudgeChange(event.target.value)}
+          onKeyDown={handleNudgeKeyDown}
+        />
+      </div>
+    </div>
   )
 }
 
@@ -495,29 +708,24 @@ export const AutomationBoardTemplateConfig = ({
 
       {/* 名称与模型都是单行的"这是哪个模板"信息，紧挨着放；需求是正文，跟在
           它们后面。宽看板下配置面板走双栏，这个顺序让两个单行字段自然配成
-          一行，而不是名称旁边空着半个面板。 */}
-      <label className="automation-board-template-field">
-        <span>{text.automationBoardTemplateModelLabel}</span>
-        <select
-          value={`${template.provider}::${template.model}`}
-          onChange={(event) => {
-            const [provider, model] = event.target.value.split('::')
-            onUpdateTemplate(template.id, {
-              provider: (provider as Provider) ?? 'codex',
-              model: model ?? '',
-            })
-          }}
-        >
-          {modelPickerOptions.map((option) => (
-            <option
-              key={`${option.provider}::${option.model}`}
-              value={`${option.provider}::${option.model}`}
-            >
-              {option.label}
-            </option>
-          ))}
-        </select>
-      </label>
+          一行，而不是名称旁边空着半个面板。
+          模板 schema 一直存着 reasoningEffort / thinkingEnabled / planMode，v2.3
+          之前只有模型和超管两行有入口 —— 存了却配不了等于存了个死值。 */}
+      <AutomationBoardModelSettings
+        value={{
+          provider: template.provider,
+          model: template.model,
+          reasoningEffort: template.reasoningEffort,
+          thinkingEnabled: template.thinkingEnabled,
+          planMode: template.planMode,
+          adminAccess: template.adminAccess,
+        }}
+        language={language}
+        onChange={(patch) => onUpdateTemplate(template.id, patch)}
+      />
+      <p className="automation-board-template-hint">
+        {text.automationBoardTemplateAdminAccessHint}
+      </p>
 
       <label className="automation-board-template-field is-stacked">
         <span>{text.automationBoardTemplateRequirementLabel}</span>
@@ -527,20 +735,6 @@ export const AutomationBoardTemplateConfig = ({
           onChange={(event) => onUpdateTemplate(template.id, { requirement: event.target.value })}
         />
       </label>
-
-      <label
-        className={`automation-board-template-field${template.adminAccess ? ' is-admin' : ''}`}
-      >
-        <input
-          type="checkbox"
-          checked={template.adminAccess}
-          onChange={(event) => onUpdateTemplate(template.id, { adminAccess: event.target.checked })}
-        />
-        <span>{text.automationBoardTemplateAdminAccessLabel}</span>
-      </label>
-      <p className="automation-board-template-hint">
-        {text.automationBoardTemplateAdminAccessHint}
-      </p>
 
       <div className="automation-board-template-trigger">
         <h5 className="automation-board-template-trigger-title">
@@ -628,14 +822,24 @@ const AutomationBoardCardView = (props: AutomationBoardCardProps) => {
     onDeleteTemplate,
     onUpdateTemplate,
     onRunTemplateNow,
+    onSetComposeDefaults,
+    onSetLaneWidths,
   } = props
   const text = getLocaleText(language)
   const [draft, setDraft] = useState('')
-  // 选择只活在这张看板卡的生命周期里：它是"我接下来要加的几项用什么模型"的
-  // 临时意图，落盘反而会让用户下次打开时被上次的一次性选择绑住。
-  const [draftModelValue, setDraftModelValue] = useState(
-    () => `${props.defaultProvider}::${props.defaultModel}`,
-  )
+  // 症状：这组选择原本只活在组件 useState 里（理由写的是"落盘会让用户被上次的
+  //   一次性选择绑住"），实际是连着加十个需求项要重选十次，切走再回来还回到列默认。
+  // 根因：把它当成一次性意图，而用户的真实用法是"这张看板就用这套参数"。
+  // 为什么不能只加个默认值：默认值仍然每次挂载重置；必须随看板落盘（FR12）。
+  const composeDefaults: AutomationBoardComposeDefaults = board.composeDefaults ?? {
+    provider: props.defaultProvider,
+    model: props.defaultModel,
+    reasoningEffort: '',
+    thinkingEnabled: true,
+    planMode: false,
+    adminAccess: false,
+  }
+  const [composeSettingsOpen, setComposeSettingsOpen] = useState(false)
   // 待命草稿的粘贴图片。需求经常本身就是一张截图，只能打字等于逼用户先建卡
   // 再去卡里粘一遍。
   const [draftImages, setDraftImages] = useState<PendingComposerAttachment[]>([])
@@ -652,6 +856,107 @@ const AutomationBoardCardView = (props: AutomationBoardCardProps) => {
     () => buildAutomationBoardLaneViews(board, cards, language),
     [board, cards, language],
   )
+
+  // `workspace-agents` 模式等的是"这一列里其他 Agent 卡"，和 composer 那侧同一个
+  // 口径（`PaneView` 也是这么数的）：工具卡不算 Agent。看板项自己要从里面刨掉，
+  // 所以这里先数总数，逐项再减自己。
+  const workspaceAgentCardCount = useMemo(
+    () =>
+      Object.values(cards).filter((entry) => !MODEL_PICKER_HIDDEN_TOOL_MODELS.has(entry.model))
+        .length,
+    [cards],
+  )
+
+  const lanesRef = useRef<HTMLDivElement | null>(null)
+  const laneTracks = getAutomationBoardLaneTracks(
+    resolveAutomationBoardLaneWidths(board.laneWidths),
+  )
+
+  /**
+   * 泳道分隔条拖拽。数学直接复用工作区列那套 `resizeColumnGroups`：两者是同一个
+   * 问题（分隔条两侧的组按比例整体让位、每个成员钉一个最小宽度），手感一致还能
+   * 让用户把列分隔条的肌肉记忆直接搬过来。
+   *
+   * 拖拽过程中只写 DOM 上的 CSS 变量、不 dispatch：每帧派发 reducer 会把整列子树
+   * 的 memo 全部打穿（pitfall 187），松手才提交一次。
+   *
+   * 那个变量必须是**另一个** `--automation-board-lane-drag-tracks`，不能直接脏写
+   * React 内联管着的 `--automation-board-lane-tracks`：React 的 style diff 比的是上
+   * 一次渲染的值、不是 DOM 现值，一旦命令式写过同一个属性，"新旧计算值相同"就会
+   * 让它跳过写入，脏值永久留在 DOM 上。2026-08-13 实测的表现是拖完再双击恢复均分
+   * 完全无效——事件、reducer、持久化全都对，只有那一行 CSS 变量还是拖拽时的残留。
+   */
+  const handleLaneResizeStart =
+    (dividerIndex: number) => (event: PointerEvent<HTMLDivElement>) => {
+      if (event.button !== 0) {
+        return
+      }
+
+      const container = lanesRef.current
+      if (!container) {
+        return
+      }
+
+      const laneElements = Array.from(
+        container.querySelectorAll<HTMLElement>('.automation-board-lane'),
+      )
+
+      if (dividerIndex < 0 || dividerIndex >= laneElements.length - 1) {
+        return
+      }
+
+      // 这里**不能** `event.preventDefault()`（列分隔条 `WorkspaceColumn` 就是那么写
+      // 的）：pointerdown 上的 preventDefault 会连带压掉后续的兼容鼠标事件，于是
+      // `onDoubleClick` 永远收不到，双击恢复均分静默失效（2026-08-13 实测：拖完双击
+      // 三条泳道纹丝不动）。拖拽期间的文字选中改由手柄自己的 `user-select: none` 挡。
+      const startWidths = laneElements.map((element) =>
+        Math.max(
+          AUTOMATION_BOARD_LANE_MIN_WIDTH,
+          Math.round(element.getBoundingClientRect().width),
+        ),
+      )
+      const startX = event.clientX
+      let nextWidths = startWidths
+
+      document.body.classList.add('is-col-resizing')
+
+      const handleMove = (moveEvent: globalThis.PointerEvent) => {
+        nextWidths = resizeColumnGroups(
+          startWidths,
+          dividerIndex,
+          moveEvent.clientX - startX,
+          AUTOMATION_BOARD_LANE_MIN_WIDTH,
+        )
+        container.style.setProperty(
+          '--automation-board-lane-drag-tracks',
+          getAutomationBoardLaneTracks(nextWidths),
+        )
+      }
+
+      const handleStop = () => {
+        document.body.classList.remove('is-col-resizing')
+        window.removeEventListener('pointermove', handleMove)
+        window.removeEventListener('pointerup', handleStop)
+        window.removeEventListener('pointercancel', handleStop)
+        window.removeEventListener('blur', handleStop)
+
+        // 手指没动过就什么都不提交，连带免掉"点一下也写一次盘"。
+        if (nextWidths === startWidths) {
+          container.style.removeProperty('--automation-board-lane-drag-tracks')
+          return
+        }
+
+        // 先提交再撤掉拖拽覆盖：pointerup 是离散事件，React 在这里同步提交，撤掉时
+        // 底下那份 React 管的值已经是新的了，不会闪一帧旧比例。
+        onSetLaneWidths(toAutomationBoardLaneWidths(nextWidths))
+        container.style.removeProperty('--automation-board-lane-drag-tracks')
+      }
+
+      window.addEventListener('pointermove', handleMove)
+      window.addEventListener('pointerup', handleStop)
+      window.addEventListener('pointercancel', handleStop)
+      window.addEventListener('blur', handleStop)
+    }
 
   const flashRejection = useCallback(() => {
     setRejectedDrop(true)
@@ -737,15 +1042,6 @@ const AutomationBoardCardView = (props: AutomationBoardCardProps) => {
     clearHints()
   }
 
-  // 存档里的模型可能已经从选单里下架（或是用户手写的自定义型号），那种 value
-  // 交给原生 select 会静默回落到**第一个** option —— 显示的和实际用的对不上。
-  // 回落到同 provider 的"用默认模型"那一项，至少 CLI 是对的。
-  const composeModelValue = modelPickerOptions.some(
-    (option) => `${option.provider}::${option.model}` === draftModelValue,
-  )
-    ? draftModelValue
-    : `${props.defaultProvider}::`
-
   /**
    * 粘贴即后台上传，和聊天 composer 同一套语义：本组件随时可能被切走卸载，
    * 只留一个 `File` 在 state 里等到提交的话，切一下 tab 图片就没了。
@@ -803,10 +1099,23 @@ const AutomationBoardCardView = (props: AutomationBoardCardProps) => {
       return
     }
 
-    const [provider, model] = composeModelValue.split('::')
+    // 下架的模型在这里也要走一次回落，否则 select 显示的是"用默认模型"、发出去的
+    // 却是那个已经不存在的型号。
+    const [provider, model] = resolveModelPickerValue(
+      composeDefaults.provider,
+      composeDefaults.model,
+    ).split('::')
     const options = {
       provider: (provider as Provider) ?? props.defaultProvider,
       model: model ?? '',
+      reasoningEffort: normalizeReasoningEffortForModel(
+        composeDefaults.provider,
+        composeDefaults.model,
+        composeDefaults.reasoningEffort,
+      ),
+      thinkingEnabled: composeDefaults.thinkingEnabled,
+      planMode: composeDefaults.planMode,
+      adminAccess: composeDefaults.adminAccess,
     }
     const images = draftImages
 
@@ -846,7 +1155,28 @@ const AutomationBoardCardView = (props: AutomationBoardCardProps) => {
         </p>
       ) : null}
 
-      <div className="automation-board-lanes">
+      {/* 内联只设自定义属性，**绝不**设 grid-template-columns：内联样式压得过
+          @container 里的窄档覆盖，两轨 / 竖排档会被永久钉死成三轨。 */}
+      <div
+        className="automation-board-lanes"
+        ref={lanesRef}
+        style={{ '--automation-board-lane-tracks': laneTracks } as CSSProperties}
+      >
+        {/* 分隔条与左侧那条泳道同格（负 margin 落进 8px 的 gap），不占独立轨道：
+            布局回归数的就是 gridTemplateColumns 的 token 数，多两条轨会把 3/2/1
+            三档断言全打红。 */}
+        {laneViews.slice(0, -1).map((laneView, index) => (
+          <div
+            key={`resize-${laneView.lane}`}
+            className="automation-board-lane-resize-handle"
+            style={{ gridRow: 1, gridColumn: index + 1 }}
+            role="separator"
+            aria-orientation="vertical"
+            title={text.automationBoardResizeLane}
+            onPointerDown={handleLaneResizeStart(index)}
+            onDoubleClick={() => onSetLaneWidths(null)}
+          />
+        ))}
         {laneViews.map((laneView) => (
           <section
             key={laneView.lane}
@@ -886,6 +1216,11 @@ const AutomationBoardCardView = (props: AutomationBoardCardProps) => {
                     workspacePath={workspacePath}
                     wakeTimerEnabled={props.wakeTimerEnabled}
                     repeatLoopEnabled={props.repeatLoopEnabled}
+                    workspaceAgentCount={Math.max(
+                      0,
+                      workspaceAgentCardCount -
+                        (MODEL_PICKER_HIDDEN_TOOL_MODELS.has(view.card.model) ? 0 : 1),
+                    )}
                     onPopOutItem={props.onPopOutItem}
                     onDeleteItem={props.onDeleteItem}
                     onSaveTemplate={props.onSaveTemplate}
@@ -929,11 +1264,25 @@ const AutomationBoardCardView = (props: AutomationBoardCardProps) => {
                   </ul>
                 ) : null}
                 <div className="automation-board-lane-compose-actions">
+                  {/* 模型留在一级：它是这里最高频的一次选择。其余参数收进折叠区，
+                      否则待命道底部会被五行控件吃掉半条泳道。 */}
                   <select
                     className="automation-board-compose-model"
                     aria-label={text.automationBoardTemplateModelLabel}
-                    value={composeModelValue}
-                    onChange={(event) => setDraftModelValue(event.target.value)}
+                    value={resolveModelPickerValue(composeDefaults.provider, composeDefaults.model)}
+                    onChange={(event) => {
+                      const [provider, model] = event.target.value.split('::')
+                      const nextProvider = (provider as Provider) ?? props.defaultProvider
+                      onSetComposeDefaults({
+                        provider: nextProvider,
+                        model: model ?? '',
+                        reasoningEffort: normalizeReasoningEffortForModel(
+                          nextProvider,
+                          model ?? '',
+                          composeDefaults.reasoningEffort,
+                        ),
+                      })
+                    }}
                   >
                     {modelPickerOptions.map((option) => (
                       <option
@@ -944,10 +1293,30 @@ const AutomationBoardCardView = (props: AutomationBoardCardProps) => {
                       </option>
                     ))}
                   </select>
+                  <button
+                    type="button"
+                    className={`automation-board-compose-settings-toggle${composeSettingsOpen ? ' is-open' : ''}${composeDefaults.adminAccess ? ' is-admin' : ''}`}
+                    aria-expanded={composeSettingsOpen}
+                    title={text.automationBoardComposeSettingsHint}
+                    onClick={() => setComposeSettingsOpen((current) => !current)}
+                  >
+                    {text.automationBoardComposeSettingsLabel}
+                    <ChevronDownIcon />
+                  </button>
                   <BoardButton tone="primary" onClick={submitDraft} disabled={!draft.trim()}>
                     {text.automationBoardAddRequirement}
                   </BoardButton>
                 </div>
+                {composeSettingsOpen ? (
+                  <div className="automation-board-compose-settings">
+                    <AutomationBoardModelSettings
+                      value={composeDefaults}
+                      language={language}
+                      showModel={false}
+                      onChange={onSetComposeDefaults}
+                    />
+                  </div>
+                ) : null}
               </div>
             ) : (
               <p className="automation-board-lane-hint">{laneView.hint}</p>

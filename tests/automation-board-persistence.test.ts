@@ -143,6 +143,74 @@ describe('automation board persistence', () => {
     assert.equal(workspace?.templates.length, 1)
   })
 
+  // `normalizePersistedAutomationBoard` 手抄字段（`return { items }`），任何新增的
+  // 看板 blob 字段都会被它静默剥掉 —— 症状是"拖完宽度，重启又变回均分"。
+  it('round-trips the lane widths the user dragged', async () => {
+    const { saveState, loadState } = await import('../server/state-store.ts')
+    const state = buildStateWithBoard()
+    const board = state.columns[0]!.cards['board-1']!
+    board.automationBoard = {
+      ...board.automationBoard!,
+      laneWidths: { standby: 500, running: 350, done: 350 },
+    }
+
+    await saveState(state)
+    const loaded = await loadState()
+
+    assert.deepEqual(getAutomationBoard(loaded.columns[0]!.cards['board-1'])?.laneWidths, {
+      standby: 500,
+      running: 350,
+      done: 350,
+    })
+  })
+
+  // 同一个手抄坑：症状是"待命输入区选的模型和思考深度，重启又变回列默认"。
+  it('round-trips the composer defaults the user picked', async () => {
+    const { saveState, loadState } = await import('../server/state-store.ts')
+    const state = buildStateWithBoard()
+    const board = state.columns[0]!.cards['board-1']!
+    board.automationBoard = {
+      ...board.automationBoard!,
+      composeDefaults: {
+        provider: 'claude',
+        model: 'claude-opus-4-8',
+        reasoningEffort: 'high',
+        thinkingEnabled: false,
+        planMode: true,
+        adminAccess: true,
+      },
+    }
+
+    await saveState(state)
+    const loaded = await loadState()
+
+    assert.deepEqual(getAutomationBoard(loaded.columns[0]!.cards['board-1'])?.composeDefaults, {
+      provider: 'claude',
+      model: 'claude-opus-4-8',
+      reasoningEffort: 'high',
+      thinkingEnabled: false,
+      planMode: true,
+      adminAccess: true,
+    })
+  })
+
+  it('drops lane widths that would render a lane invisible', async () => {
+    const { saveState, loadState } = await import('../server/state-store.ts')
+    const state = buildStateWithBoard()
+    const board = state.columns[0]!.cards['board-1']!
+    board.automationBoard = {
+      ...board.automationBoard!,
+      // 手改过的存档 / 旧版本写坏的值：0 会让那条泳道彻底消失且没有任何 UI
+      // 能把它拖回来，只能整组丢弃回默认。
+      laneWidths: { standby: 0, running: 350, done: 350 },
+    } as never
+
+    await saveState(state)
+    const loaded = await loadState()
+
+    assert.equal(getAutomationBoard(loaded.columns[0]!.cards['board-1'])?.laneWidths, undefined)
+  })
+
   // pitfall 5：新增持久化字段后，旧存档必须照常加载并补上默认值。
   it('loads a legacy save that predates every automation-board field', async () => {
     const { loadState } = await import('../server/state-store.ts')

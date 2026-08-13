@@ -32,6 +32,11 @@ It exists to reduce subjective back-and-forth. If a UI change violates these rul
 - Drag handles, resize guides, and helper rails should be invisible at rest.
 - Interaction affordances may appear on hover, focus, drag, or resize, but should not linger as decoration.
 - Persistent utility chrome is a bug unless it carries primary meaning.
+- Explanatory copy is idle chrome too. In dense control surfaces (the composer settings menu, tool
+  popovers), "what does this switch do" belongs behind hover — every control carries one, and none of
+  them is printed inline. Live state (a warning, a count, a locked batch) is not an explanation and
+  may stay visible. See [`ComposerSettingsRow`](../src/components/ComposerSettingsRow.tsx) and
+  [`tests/composer-settings-hints.spec.ts`](../tests/composer-settings-hints.spec.ts).
 
 ### 4. Visual Hierarchy Must Be Obvious
 
@@ -50,7 +55,19 @@ It exists to reduce subjective back-and-forth. If a UI change violates these rul
 - Drag/drop state should be obvious but temporary.
 - Disabled state should reduce affordance without destroying legibility.
 
-### 6. Tokens Before Tweaks
+### 6. Card Surfaces Reflow On Their Own Width, Not The Viewport's
+
+- Anything rendered inside a workspace column or a split pane must use **container queries**
+  (`container-type: inline-size` + `@container`), not `@media (max-width: …)`.
+- A column can be dragged down to `130px` while the window stays at `2560px`. A viewport breakpoint
+  measures the wrong box and, in practice, never fires — the surface just gets silently squeezed.
+- Query the box that actually owns the constraint. When a card holds sub-columns (lanes, grids),
+  make those sub-columns containers too: a lane in a wide 3-up board can be narrower than the same
+  lane in a stacked narrow board, so one breakpoint cannot describe both.
+- Reflow instead of shrink: below the width where a row's content still reads, drop to fewer
+  columns. Never keep N columns and let the labels truncate to two characters.
+
+### 7. Tokens Before Tweaks
 
 - Use shared tokens in [`src/index.css`](../src/index.css) for spacing, seams, surfaces, and emphasis.
 - Do not fix a local layout problem with one-off padding unless the component truly owns that spacing.
@@ -63,13 +80,15 @@ It exists to reduce subjective back-and-forth. If a UI change violates these rul
 - Multiple nested borders trying to describe the same container.
 - Controls that are louder than the work content.
 - Mobile layouts that introduce extra seams or offsets not present on desktop.
+- `@media (max-width: …)` used to make a card, pane, or column-hosted surface responsive.
 - Asking for pixel feedback before checking the documented invariants.
 
 ## Review Checklist
 
 Before asking for design feedback on any frontend change:
 
-- Check desktop and narrow viewport.
+- Check desktop and narrow viewport, **and** a narrow column inside a wide window (they are not the
+  same test — see rule 6).
 - Check both `light` and `dark`.
 - Check default, hover, focus, selected, drag/drop, empty, and disabled states where relevant.
 - Confirm seams are token-driven and not duplicated.
@@ -84,5 +103,10 @@ These are important enough to automate:
 - Board column seams stay minimal and consistent across themes.
 - Column header and body content align on the same grid.
 - Resize affordances do not remain visible while idle.
+- Every row of the composer settings menu documents itself through a hover hint, and no hint is
+  rendered inline — pinned by [`tests/composer-settings-hints.spec.ts`](../tests/composer-settings-hints.spec.ts).
+- Column-hosted surfaces reflow on their own inline-size: the automation board's lane grid is pinned
+  at 3 / 2 / 1 tracks by [`tests/automation-board-layout.spec.ts`](../tests/automation-board-layout.spec.ts),
+  which holds the viewport at 1440px and only changes how many columns are open.
 
 If a future redesign intentionally changes one of these invariants, update this document and the tests in the same change.

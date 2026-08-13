@@ -5103,6 +5103,28 @@ for (const theme of ['dark', 'light'] as const) {
     })
   })
 
+  test(`composer setting hints stay readable on hover in ${theme} theme`, async ({ page }) => {
+    const state = createMockState()
+    state.settings.theme = theme
+
+    await mockAppApis(page, { state })
+    await page.goto(appUrl)
+
+    const settingsTrigger = page.locator('.composer-settings-trigger').first()
+    const settingsMenu = page.locator('.composer-settings-menu').first()
+    const hint = page.locator('.composer-settings-hint')
+
+    await settingsTrigger.click()
+    await expect(settingsMenu).toBeVisible()
+    await settingsMenu.locator('.composer-admin-access-row').hover()
+    await expect(hint).toBeVisible()
+
+    await expect(hint).toHaveScreenshot(`composer-settings-hint-${theme}.png`, {
+      animations: 'disabled',
+      caret: 'hide',
+    })
+  })
+
   test(`repeat loop status and composer setting stay clear in ${theme} theme`, async ({ page }) => {
     const state = createMockState()
     state.settings.theme = theme
@@ -5145,7 +5167,9 @@ for (const theme of ['dark', 'light'] as const) {
     const repeatToggle = settingsMenu.getByLabel('Repeat loop')
     await expect(repeatToggle).toBeChecked()
     await expect(repeatToggle).toBeEnabled()
-    await expect(settingsMenu).toContainText(
+    // 说明不再常驻在菜单里，改挂在行上等悬停（见 .composer-settings-hint）。
+    await expect(settingsMenu.locator('.repeat-loop-settings-row')).toHaveAttribute(
+      'data-hint',
       'After this run completes, open a new tab and rerun this chat’s earliest user prompt.',
     )
     await expect(settingsMenu).toHaveScreenshot(`repeat-loop-settings-menu-${theme}.png`, {

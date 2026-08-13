@@ -98,6 +98,7 @@ import {
   type ProgrammaticScrollIntent,
 } from './chat-scroll'
 import { syncComposerTextareaHeight } from './chat-composer-textarea'
+import { ComposerSettingsRow } from './ComposerSettingsRow'
 import {
   collectPastedFilePaths,
   formatPastedFilePathInsertion,
@@ -1483,10 +1484,7 @@ const ChatCardView = ({
   composerFocusRequest = 0,
   recoveryStatus,
 }: ChatCardProps) => {
-  const text = useMemo(() => getLocaleText(language), [language])/*
-  const thinkingDepthLabel = language === 'en' ? 'Thinking depth' : '鎬濊€冩繁搴?
-*/
-  const thinkingDepthLabel = language === 'en' ? 'Thinking depth' : '\u601d\u8003\u6df1\u5ea6'
+  const text = useMemo(() => getLocaleText(language), [language])
   const localSlashCommands = useMemo(() => getLocalSlashCommands(language), [language])
   const localSlashCommandsRef = useRef(localSlashCommands)
   const draftValueRef = useRef(card.draft ?? '')
@@ -4784,8 +4782,11 @@ const ChatCardView = ({
                         >
                           {repeatLoopEnabled ? (
                             <div className="repeat-loop-settings-module">
-                              <label className="composer-settings-row repeat-loop-settings-row" title={text.repeatLoopHint}>
-                                <span className="composer-settings-label">{text.repeatLoopLabel}</span>
+                              <ComposerSettingsRow
+                                className="repeat-loop-settings-row"
+                                label={text.repeatLoopLabel}
+                                hint={text.repeatLoopHint}
+                              >
                                 <input
                                   type="checkbox"
                                   className="composer-settings-checkbox"
@@ -4799,11 +4800,13 @@ const ChatCardView = ({
                                     })
                                   }
                                 />
-                              </label>
-                              <div className="composer-settings-note">{text.repeatLoopHint}</div>
+                              </ComposerSettingsRow>
                               {card.repeatLoopActive === true ? (
-                                <label className="composer-settings-row repeat-loop-count-row">
-                                  <span className="composer-settings-label">{text.repeatLoopCountLabel}</span>
+                                <ComposerSettingsRow
+                                  className="repeat-loop-count-row"
+                                  label={text.repeatLoopCountLabel}
+                                  hint={text.repeatLoopCountHint}
+                                >
                                   <input
                                     type="number"
                                     min={1}
@@ -4817,25 +4820,26 @@ const ChatCardView = ({
                                       })
                                     }}
                                   />
-                                </label>
+                                </ComposerSettingsRow>
                               ) : null}
                             </div>
                           ) : null}
                           {wakeTimerEnabled ? (
                             <div className="composer-wake-timer-module">
-                              <label className="composer-settings-row">
-                                <span className="composer-settings-label">{text.wakeTimerLabel}</span>
+                              <ComposerSettingsRow label={text.wakeTimerLabel} hint={text.wakeTimerHint}>
                                 <input
                                   type="checkbox"
                                   className="composer-settings-checkbox"
                                   checked={card.wakeTimerActive === true}
                                   onChange={(event) => onPatchCard({ wakeTimerActive: event.target.checked })}
                                 />
-                              </label>
+                              </ComposerSettingsRow>
                               {card.wakeTimerActive === true ? (
                                 <>
-                                  <label className="composer-settings-row">
-                                    <span className="composer-settings-label">{text.wakeTimerModeLabel}</span>
+                                  <ComposerSettingsRow
+                                    label={text.wakeTimerModeLabel}
+                                    hint={text.wakeTimerModeHint}
+                                  >
                                     <select
                                       className="reasoning-select"
                                       value={wakeTimerMode}
@@ -4848,10 +4852,13 @@ const ChatCardView = ({
                                       <option value="left-tab">{text.wakeTimerModeLeftTab}</option>
                                       <option value="duration">{text.wakeTimerModeDuration}</option>
                                     </select>
-                                  </label>
+                                  </ComposerSettingsRow>
                                   {wakeTimerMode === 'duration' ? (
-                                    <label className="composer-settings-row composer-wake-timer-duration-row">
-                                      <span className="composer-settings-label">{text.wakeTimerDurationLabel}</span>
+                                    <ComposerSettingsRow
+                                      className="composer-wake-timer-duration-row"
+                                      label={text.wakeTimerDurationLabel}
+                                      hint={text.wakeTimerDurationHint}
+                                    >
                                       <span className="composer-wake-timer-duration-control">
                                         <input
                                           type="number"
@@ -4872,7 +4879,7 @@ const ChatCardView = ({
                                         />
                                         <span>{text.wakeTimerMinutes}</span>
                                       </span>
-                                    </label>
+                                    </ComposerSettingsRow>
                                   ) : null}
                                   {wakeTimerLeftUnavailable ? (
                                     <div className="composer-settings-note is-warning">
@@ -4893,8 +4900,7 @@ const ChatCardView = ({
                               ) : null}
                             </div>
                           ) : null}
-                          <label className="composer-settings-row">
-                            <span className="composer-settings-label">{text.thinking}</span>
+                          <ComposerSettingsRow label={text.thinking} hint={text.thinkingHint}>
                             <input
                               type="checkbox"
                               className="composer-settings-checkbox"
@@ -4902,9 +4908,12 @@ const ChatCardView = ({
                               disabled={alwaysThinkingModel}
                               onChange={() => onToggleThinking()}
                             />
-                          </label>
-                          <div className="composer-settings-row">
-                            <span className="composer-settings-label">{thinkingDepthLabel}</span>
+                          </ComposerSettingsRow>
+                          <ComposerSettingsRow
+                            as="div"
+                            label={text.thinkingDepthLabel}
+                            hint={text.thinkingDepthHint}
+                          >
                             <select
                               className="reasoning-select"
                               value={reasoningValue}
@@ -4917,36 +4926,41 @@ const ChatCardView = ({
                                 </option>
                               ))}
                             </select>
-                          </div>
+                          </ComposerSettingsRow>
                           {card.provider === 'claude' ? (
-                            <label className="composer-settings-row">
-                              <span className="composer-settings-label">{text.planMode}</span>
+                            <ComposerSettingsRow label={text.planMode} hint={text.planModeHint}>
                               <input
                                 type="checkbox"
                                 className="composer-settings-checkbox"
                                 checked={card.planMode}
                                 onChange={() => onTogglePlanMode()}
                               />
-                            </label>
+                            </ComposerSettingsRow>
                           ) : null}
                           {/* 超管权限没有 provider / 工具卡的门槛：任何会话都能开。
                               整个 composer 只在 !isToolCard 时渲染，所以工具卡拿不到
                               这一行，不需要再加条件。 */}
-                          <label
-                            className={`composer-settings-row composer-admin-access-row${card.adminAccess === true ? ' is-admin' : ''}`}
+                          <ComposerSettingsRow
+                            className={`composer-admin-access-row${card.adminAccess === true ? ' is-admin' : ''}`}
+                            label={text.adminAccessLabel}
+                            hint={text.adminAccessHint}
                           >
-                            <span className="composer-settings-label">{text.adminAccessLabel}</span>
                             <input
                               type="checkbox"
                               className="composer-settings-checkbox"
                               checked={card.adminAccess === true}
                               onChange={() => onPatchCard({ adminAccess: !card.adminAccess })}
                             />
-                          </label>
-                          <div className="composer-settings-note">{text.adminAccessHint}</div>
+                          </ComposerSettingsRow>
                           <>
-                            <label className="composer-settings-row">
-                              <span className="composer-settings-label">{text.autoUrgeLabel}</span>
+                            <ComposerSettingsRow
+                              label={text.autoUrgeLabel}
+                              hint={
+                                autoUrgeEnabled
+                                  ? text.autoUrgeHint
+                                  : `${text.autoUrgeHint}\n${text.autoUrgeReenableHint}`
+                              }
+                            >
                               <input
                                 type="checkbox"
                                 className="composer-settings-checkbox"
@@ -4965,12 +4979,12 @@ const ChatCardView = ({
                                   onPatchCard({ autoUrgeActive: nextToggle.chatActive })
                                 }}
                               />
-                            </label>
-                            {!autoUrgeEnabled ? (
-                              <div className="composer-settings-note">{text.autoUrgeReenableHint}</div>
-                            ) : null}
-                            <label className="composer-settings-row">
-                              <span className="composer-settings-label">{text.autoUrgeTypesLabel}</span>
+                            </ComposerSettingsRow>
+                            <ComposerSettingsRow
+                              as="div"
+                              label={text.autoUrgeTypesLabel}
+                              hint={text.autoUrgeTypesHint}
+                            >
                               <select
                                 className="reasoning-select composer-auto-urge-profile-select"
                                 value={effectiveAutoUrgeProfileId}
@@ -4987,7 +5001,7 @@ const ChatCardView = ({
                                   </option>
                                 ))}
                               </select>
-                            </label>
+                            </ComposerSettingsRow>
                           </>
                         </div>,
                         document.body,

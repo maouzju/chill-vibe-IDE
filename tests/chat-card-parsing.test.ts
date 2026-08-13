@@ -183,6 +183,77 @@ const makeEditsMessage = (
     },
   })
 
+const makeAgentsStatusMessage = (
+  agents: Array<{ threadId: string; nickname?: string; role?: string; activity?: string[] }>,
+): ChatMessage =>
+  makeMessage({
+    content: '',
+    meta: {
+      provider: 'claude',
+      kind: 'agents',
+      itemId: 'agent-status:claude',
+      structuredData: JSON.stringify({
+        itemId: 'agent-status:claude',
+        kind: 'agents',
+        status: 'completed',
+        view: 'status',
+        agents: agents.map((agent) => ({
+          threadId: agent.threadId,
+          ...(agent.nickname ? { nickname: agent.nickname } : {}),
+          ...(agent.role ? { role: agent.role } : {}),
+          status: 'running',
+          activity: agent.activity ?? [],
+        })),
+      }),
+    },
+  })
+
+// 症状：Claude 派发子代理时「正在运行的子智能体」面板整个不显示。
+// 根因：派发必然先产生一张 Task/Agent 工具卡，之后的 agents 状态卡紧跟其后，落进
+//       buildRenderableMessages 的工具分组循环；循环里只认 command/tool/edits，
+//       其余一律走 isEmptySkippableMessage —— 而 agents 卡的 content 恒为空，
+//       于是被当成「解析失败的坏卡」静默丢弃。
+test('buildRenderableMessages keeps an agents status card that follows a tool card', () => {
+  const dispatch = makeToolMessage('Task', 'Explore the repo')
+  const agentsCard = makeAgentsStatusMessage([
+    { threadId: 'task-1', nickname: 'Explore the repo', role: 'Explore', activity: ['Read · 2 tools · 3.3s'] },
+  ])
+
+  const result = buildRenderableMessages([dispatch, agentsCard])
+
+  const types = result.map((entry) => entry.type)
+  assert.deepEqual(types, ['tool-group', 'message'])
+  assert.equal(
+    result[1]!.type === 'message' ? result[1]!.message.meta?.kind : undefined,
+    'agents',
+  )
+})
+
+test('buildRenderableMessages keeps an agents status card between two tool cards', () => {
+  const dispatch = makeToolMessage('Task', 'Explore the repo')
+  const agentsCard = makeAgentsStatusMessage([{ threadId: 'task-1', role: 'Explore' }])
+  const afterTool = makeToolMessage('Read', 'Read file.ts')
+
+  const result = buildRenderableMessages([dispatch, agentsCard, afterTool])
+
+  const agentsEntries = result.filter(
+    (entry) => entry.type === 'message' && entry.message.meta?.kind === 'agents',
+  )
+  assert.equal(agentsEntries.length, 1)
+})
+
+test('buildRenderableMessages still drops an agents card with no structuredData', () => {
+  const dispatch = makeToolMessage('Task', 'Explore the repo')
+  const broken = makeMessage({
+    content: '',
+    meta: { provider: 'claude', kind: 'agents', itemId: 'agent-status:broken' },
+  })
+
+  const result = buildRenderableMessages([dispatch, broken])
+
+  assert.deepEqual(result.map((entry) => entry.type), ['tool-group'])
+})
+
 test('buildRenderableMessages groups consecutive tool messages', () => {
   const messages = [
     makeToolMessage('Read', 'Read file.ts'),

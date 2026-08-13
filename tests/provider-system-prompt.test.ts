@@ -211,16 +211,48 @@ test('claude ultracode tier activates via --settings instead of prompt keyword i
   assert.notEqual(sysIndex, -1)
   assert.doesNotMatch(ultracodeArgs[sysIndex + 1] ?? '', /ultracode/i)
 
-  // A non-ultracode tier must carry neither the settings key nor the keyword.
+  // A non-ultracode tier must never carry the keyword in the system prompt.
   const maxArgs = buildClaudeArgs(
     createRequest({ provider: 'claude', model: 'claude-opus-4-8', reasoningEffort: 'max' }),
     [],
   )
-  const maxSettings = JSON.parse(maxArgs[maxArgs.indexOf('--settings') + 1] ?? '{}')
-  assert.equal('ultracode' in maxSettings, false)
   const maxSysIndex = maxArgs.indexOf('--append-system-prompt')
   assert.equal(maxArgs[maxArgs.indexOf('--effort') + 1], 'max')
   assert.doesNotMatch(maxArgs[maxSysIndex + 1] ?? '', /ultracode/)
+})
+
+// 症状：用户 `~/.claude/settings.json` 里常驻 `"ultracode": true` 时，在 Chill Vibe
+// 里选「超高（xhigh）」跑出来的却是 ultracode —— 模型收到「每个实质任务都去编排
+// workflow」的常驻 system-reminder，「超高」和「Ultracode」两个档位行为合流。
+// 根因（2026-08-13 扒 CLI 2.1.206 二进制实测）：`--settings` 是 lodash `mergeWith`
+// 深合并的 flagSettings 层，只覆盖它**显式写出**的键，省略的键一律从 userSettings
+// 继承；而 CLI 判定 ultracode 是否真的生效的 `Eie()` 要求
+// `settings.ultracode===true && workflows 开着 && 当前 effort 解析结果==="xhigh"`
+// 三条同时成立。xhigh 档位恰好凑齐第三条，低档位则因为凑不齐而侥幸无恙——所以这个
+// 泄漏只在 xhigh 档位显形，低档位测不出来。
+// 为什么不能换写法：只有显式写 `false` 才能在合并层压掉用户级的 `true`。省略这个键
+// 等于放弃覆盖，不是「保持中立」。
+test('claude non-ultracode tiers explicitly send ultracode:false so a user-level settings.json cannot leak it in', () => {
+  for (const effort of ['xhigh', 'max', 'high', 'medium', 'low', 'auto'] as const) {
+    const args = buildClaudeArgs(
+      createRequest({ provider: 'claude', model: 'claude-opus-4-8', reasoningEffort: effort }),
+      [],
+    )
+    const settings = JSON.parse(args[args.indexOf('--settings') + 1] ?? '{}')
+    assert.equal(
+      settings.ultracode,
+      false,
+      `tier ${effort} must explicitly disable ultracode, otherwise the user-level settings.json value survives the merge`,
+    )
+  }
+
+  // The ultracode tier itself still opts in through the same key.
+  const ultracodeArgs = buildClaudeArgs(
+    createRequest({ provider: 'claude', model: 'claude-opus-4-8', reasoningEffort: 'ultracode' }),
+    [],
+  )
+  const ultracodeSettings = JSON.parse(ultracodeArgs[ultracodeArgs.indexOf('--settings') + 1] ?? '{}')
+  assert.equal(ultracodeSettings.ultracode, true)
 })
 
 test('claude fable 5 never sends --effort none because thinking cannot be turned off', () => {

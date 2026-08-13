@@ -9476,6 +9476,12 @@ body,
 .git-tool-notice {
   color: var(--ink-2);
   background: var(--git-tool-muted-bg);
+  /* git 失败时的报错是多行的：第一行是命令与结论，后面是 git 自己吐的原因（如
+     `gpg: signing failed`）和残留 index.lock 的处置说明。HTML 默认把换行折成空格，
+     那几行会挤成一坨，等于后端白带了。单行消息在 pre-wrap 下渲染完全不变。
+     长路径（index.lock 的绝对路径）不含空格，只有 anywhere 能让它断行不撑破横幅。 */
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 
 .git-tool-notice.is-info,

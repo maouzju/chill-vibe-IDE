@@ -215,7 +215,13 @@ test('an item card keeps its secondary controls behind a collapsed disclosure', 
   )
   await expect(drawer.getByRole('button', { name: 'Pop out as a tab' })).toBeVisible()
   await expect(drawer.getByRole('button', { name: 'Save as template' })).toBeVisible()
-  await expect(drawer.locator('.automation-board-item-toggle')).toHaveCount(2)
+  // 这里曾经硬编码 `toHaveCount(2)`：抽屉里原本是「上方需求」与「循环」两个裸复选框。
+  // 「上方需求」已被 `WakeTimerSettingsPanel` 取代（唤醒是三选一，复选框只够得着其中
+  // 一种），所以裸开关只剩循环那一个。计数改成 1 并不等价于放宽——真正要钉住的是「次要
+  // 控件都在抽屉里」，所以顺带把接替者也断言进来；只改数字会让唤醒入口整块消失也照样绿。
+  // 唤醒面板自身的行为由 tests/automation-board-item-drawer.spec.ts 覆盖。
+  await expect(drawer.locator('.automation-board-item-toggle')).toHaveCount(1)
+  await expect(drawer.locator('.composer-wake-timer-module')).toHaveCount(1)
 
   // The card has a `max-height` plus `overflow: hidden`; an expanded drawer
   // must land inside the card, not be cut off below its bottom edge.

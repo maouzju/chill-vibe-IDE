@@ -11,6 +11,7 @@ import test from 'node:test'
 import { ChatManager } from '../server/chat-manager.ts'
 import {
   captureWorkspaceSnapshot,
+  describeStaleGitIndexLock,
   diffWorkspaceSnapshot,
   gitRunDefaultTimeoutMs,
   resolveGitRunTimeoutMs,
@@ -77,6 +78,17 @@ const createTempRepo = async () => {
   await runGitCli(repoPath, ['add', 'tracked.txt'])
   await runGitCli(repoPath, ['commit', '-m', 'Initial commit'])
   return repoPath
+}
+
+// 症状 — 2026-08-13 全清单并发跑时，本文件唯一一条红是 t.after 里的
+//   `EBUSY: resource busy or locked, rmdir 'C:\...\chill-vibe-git-timeout-XXXX'`；
+//   同一文件单跑 12/12 全绿。断言本身从来没红过，红的是清理。
+// 根因 — Windows 上进程退出与它对 cwd 的句柄释放不是同一时刻，被 kill 的 git 尤其如此
+//   （TerminateProcess 没有收尾）。并发跑满时调度更挤，rmdir 正好撞在那道缝里。
+// 为什么不是加 sleep — 缝的宽度取决于当时的机器负载，固定等待要么不够要么白等；
+//   rm 自带的 maxRetries 是线性退避重试，正好只在真撞上时才付出代价。
+const removeTempTree = async (targetPath: string) => {
+  await rm(targetPath, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 })
 }
 
 // 症状 — 应用"闪退"，实测退出码 0xCFFFFFFF（Windows 杀窗口无响应进程写的码）。
@@ -152,6 +164,118 @@ test('network git subcommands get a far larger budget than local ones', guardedT
   )
 })
 
+// 症状 — 2026-08-13 用户报 `git commit -m ... --only --pathspec-from-file=- timed out
+//   after 120000ms and was killed.`，除了"超时了"之外零线索，无从判断是 GPG 签名等
+//   pinentry、pre-commit hook 卡住、还是 LFS 在刷大文件。
+// 根因 — giveUp() 明明已经把 stdout/stderr 收在手里，却只在 allowFailure 分支把它们
+//   resolve 出去；抛错分支只拼了一句 `timed out`，把唯一的现场证据丢了。正常失败走
+//   formatGitFailure 是带 stderr 的，超时路径与它不一致。
+test('a timed-out run surfaces the output git already produced', guardedTest, async () => {
+  const child = createSilentGitChild()
+
+  const runPromise = assert.rejects(
+    superviseGitChild(child, ['commit', '-m', 'x'], { timeoutMs: 120, killGraceMs: 20 }),
+    (error: Error) => {
+      assert.match(error.message, /timed out/i, 'the timeout itself must stay in the message')
+      assert.match(
+        error.message,
+        /error: gpg failed to sign the data/,
+        'the stderr git already wrote is the only clue to why it hung — it must not be dropped',
+      )
+      return true
+    },
+  )
+
+  child.stderr.write('error: gpg failed to sign the data\n')
+
+  await runPromise
+})
+
+// 杀一个读命令（status/diff）没有后果；杀一个正在写 index 与 objects 的 commit 会把
+// `.git/index.lock` 留在原地，用户随后的每一次 git 操作都会失败——比原来的慢更糟。
+// Windows 上 kill 就是 TerminateProcess，git 连清理的机会都没有。所以本地写命令必须
+// 拿到远超"正常但慢"的预算，而不是和 status 共用 120s。
+test('local write subcommands get a larger budget than local reads', guardedTest, () => {
+  for (const args of [
+    ['commit', '-m', 'x', '--only', '--pathspec-from-file=-', '--pathspec-file-nul'],
+    ['merge', 'origin/main'],
+    ['rebase', '--continue'],
+    ['cherry-pick', 'abc123'],
+    ['revert', 'abc123'],
+    ['stash', 'push'],
+    ['-c', 'core.quotepath=false', 'commit', '-m', 'x'],
+  ]) {
+    const budgetMs = resolveGitRunTimeoutMs(args)
+    assert.ok(
+      budgetMs > gitRunDefaultTimeoutMs,
+      `${args.join(' ')} must not be killed mid-write on the read budget (got ${budgetMs}ms)`,
+    )
+  }
+
+  assert.equal(
+    resolveGitRunTimeoutMs(['status', '--porcelain=v1']),
+    gitRunDefaultTimeoutMs,
+    'read commands keep the local default',
+  )
+  assert.equal(
+    resolveGitRunTimeoutMs(['commit', '-m', 'x'], 1_234),
+    1_234,
+    'an explicit budget always wins',
+  )
+})
+
+// 2026-08-13 实测：一个只有 1 个文件的仓库，commit 的 stderr 里已经有 2 行
+// `warning: ... LF will be replaced by CRLF`；截图里那次提交是 58 个文件。这类换行符
+// 提醒与卡死无关，却会把唯一有用的那行挤出摘录窗口——带上输出就等于没带。
+test('the timeout excerpt drops CRLF noise so the real cause survives', guardedTest, async () => {
+  const child = createSilentGitChild()
+
+  const runPromise = assert.rejects(
+    superviseGitChild(child, ['commit', '-m', 'x'], { timeoutMs: 120, killGraceMs: 20 }),
+    (error: Error) => {
+      assert.doesNotMatch(
+        error.message,
+        /LF will be replaced by CRLF/,
+        'line-ending chatter must never crowd out the real cause',
+      )
+      assert.match(error.message, /gpg failed to sign/, 'the real cause must survive')
+      return true
+    },
+  )
+
+  for (let index = 0; index < 200; index += 1) {
+    child.stderr.write(
+      `warning: in the working copy of 'src/file-${index}.ts', LF will be replaced by CRLF the next time Git touches it\n`,
+    )
+  }
+  child.stderr.write('error: gpg failed to sign the data\n')
+
+  await runPromise
+})
+
+// 2026-08-13 实测（D:\Temp\git-hook-hang）：给仓库挂一个卡住的 pre-commit hook，让
+// commit 在超时上被 kill，`.git/index.lock` 与 `next-index-*.lock` 就留在原地，紧接着
+// 的 `git add` 直接 `fatal: Unable to create ... index.lock: File exists.`。用户看到的
+// 第二个症状比第一个更吓人，而它完全是我们自己杀出来的——所以必须由我们说明。
+test('a killed write leaves an index.lock the error has to own up to', guardedRepoTest, async (t) => {
+  const repoPath = await createTempRepo()
+  t.after(async () => {
+    await removeTempTree(repoPath)
+  })
+
+  assert.equal(
+    describeStaleGitIndexLock(repoPath),
+    null,
+    'a healthy repo must not be accused of holding a stale lock',
+  )
+
+  await writeFile(path.join(repoPath, '.git', 'index.lock'), '')
+
+  const hint = describeStaleGitIndexLock(repoPath)
+  assert.ok(hint, 'a leftover index.lock must be reported')
+  assert.match(hint, /index\.lock/, 'the hint must name the file blocking every later git command')
+})
+
 // 症状 — 上一轮的 workspace diff 超时后只是 Promise.race 放弃等待，那一串 git 还在
 //   跑，和下一轮的 diff 叠加成 spawn 风暴。
 // 根因 — withHardTimeout 不 abort 也不 kill。这条钉住"取消信号能真正打断在跑的 git"。
@@ -178,7 +302,7 @@ test('aborting the signal kills the in-flight git child', guardedTest, async () 
 test('captureWorkspaceSnapshot degrades to null instead of blocking the send', guardedRepoTest, async (t) => {
   const repoPath = await createTempRepo()
   t.after(async () => {
-    await rm(repoPath, { recursive: true, force: true })
+    await removeTempTree(repoPath)
   })
 
   // 刻意给一个远超生产默认值的预算：这条断言要证明的是"预算够用时照常出快照"，
@@ -201,7 +325,7 @@ test('captureWorkspaceSnapshot degrades to null instead of blocking the send', g
 test('diffWorkspaceSnapshot stops quietly when its signal is already aborted', guardedRepoTest, async (t) => {
   const repoPath = await createTempRepo()
   t.after(async () => {
-    await rm(repoPath, { recursive: true, force: true })
+    await removeTempTree(repoPath)
   })
 
   const snapshot = await captureWorkspaceSnapshot(repoPath)
@@ -227,7 +351,7 @@ test('diffWorkspaceSnapshot stops quietly when its signal is already aborted', g
 test('the workspace diff hard timeout aborts the underlying git work', guardedTest, async (t) => {
   const workspacePath = await mkdtemp(path.join(os.tmpdir(), 'chill-vibe-diff-abort-'))
   t.after(async () => {
-    await rm(workspacePath, { recursive: true, force: true })
+    await removeTempTree(workspacePath)
   })
 
   let observedSignal: AbortSignal | undefined

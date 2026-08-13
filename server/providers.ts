@@ -4025,7 +4025,18 @@ export const buildClaudeArgs = (
       // settings key that sends xhigh plus dynamic-workflow orchestration.
       // Older CLIs treat unknown settings keys as a warning, degrading to
       // plain xhigh.
-      ...(ultracodeActive ? { ultracode: true } : {}),
+      //
+      // 症状：用户 `~/.claude/settings.json` 里常驻 `"ultracode": true` 时，在
+      // Chill Vibe 里选「超高（xhigh）」实际跑出 ultracode——模型收到「每个实质
+      // 任务都去编排 workflow」的常驻 system-reminder，两个档位行为合流。
+      // 根因（2026-08-13 扒 CLI 2.1.206 二进制实测）：`--settings` 是 lodash
+      // `mergeWith` 深合并的 flagSettings 层，只覆盖**显式写出**的键，省略的键
+      // 一律从 userSettings 继承；CLI 的 `Eie()` 判定 ultracode 是否生效要求
+      // `settings.ultracode===true && workflows 开着 && effort 解析结果==="xhigh"`
+      // 三条同时成立，xhigh 档位恰好凑齐第三条（低档位凑不齐才侥幸无恙）。
+      // 为什么不能写回条件展开：省略这个键不是「保持中立」而是放弃覆盖，只有显式
+      // 送 false 才能在合并层压掉用户级的 true。
+      ultracode: ultracodeActive,
       ...(sandboxSettings ? { sandbox: sandboxSettings } : {}),
       ...(safetyHookCommand || completionBoundaryHook
         ? {

@@ -119,6 +119,7 @@ const renderBoard = (overrides: Partial<AutomationBoardCardProps> = {}) => {
     onRunTemplateNow: noop,
     onSetLaneWidths: noop,
     onSetComposeDefaults: noop,
+    onSetComposerDraft: noop,
     ...overrides,
   }
 

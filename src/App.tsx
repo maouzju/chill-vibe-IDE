@@ -3873,6 +3873,15 @@ function App() {
         }
         persistAfterAction(action.type, applyAction(action))
       },
+      setComposerDraft: (columnId, boardCardId, draft) => {
+        const action: IdeAction = {
+          type: 'setAutomationBoardDraft',
+          columnId,
+          boardCardId,
+          draft,
+        }
+        persistAfterAction(action.type, applyAction(action))
+      },
     }),
     [
       applyAction,

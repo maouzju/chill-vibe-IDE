@@ -586,4 +586,52 @@ describe('automation board persistence', () => {
     const twice = await loadState()
     assert.deepEqual(twice.automationBoards['D:/idempotent']?.templates, [])
   })
+  // FR13：工作区级的看板存档也是手抄字段的重灾区 —— 它不落盘的话，关掉看板 tab
+  // 就等于把整块编排扔了，而这正是本需求要修的东西。
+  it('round-trips the workspace-level board arrangement', async () => {
+    const { saveState, loadState } = await import('../server/state-store.ts')
+
+    const state = buildStateWithBoard()
+    state.automationBoards['D:/board-workspace']!.board = {
+      items: [
+        {
+          cardId: 'item-a',
+          lane: 'running',
+          requirement: '把登录页改成暗色',
+          templateId: '',
+          startedAt: timestamp,
+        },
+      ],
+      laneWidths: { standby: 1.4, running: 0.8, done: 0.8 },
+    }
+
+    await saveState(state)
+    const workspace = (await loadState()).automationBoards['D:/board-workspace']
+
+    assert.deepEqual(
+      workspace?.board?.items.map((item) => [item.cardId, item.lane]),
+      [['item-a', 'running']],
+    )
+    assert.equal(workspace?.board?.items[0]?.startedAt, timestamp)
+    assert.deepEqual(workspace?.board?.laneWidths, { standby: 1.4, running: 0.8, done: 0.8 })
+  })
+
+  // 把一个模板实例拖出看板时，血缘盖章在卡片的 `automationBoardTemplateId` 上；
+  // `normalizePersistedCard` 是手抄白名单，漏掉它就等于每存一次盘剥一次血缘，
+  // 重启后拖回看板的项 templateId 变空串，触发器的防自触发守卫随之失效。
+  it('round-trips the template lineage stamped onto a popped-out card', async () => {
+    const { saveState, loadState } = await import('../server/state-store.ts')
+
+    const state = buildStateWithBoard()
+    const column = state.columns[0]!
+    column.cards['item-b'] = {
+      ...column.cards['item-b']!,
+      automationBoardTemplateId: 'tpl-1',
+    }
+
+    await saveState(state)
+    const loaded = await loadState()
+
+    assert.equal(loaded.columns[0]!.cards['item-b']?.automationBoardTemplateId, 'tpl-1')
+  })
 })

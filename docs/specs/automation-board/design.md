@@ -867,3 +867,70 @@ setAutomationBoardComposeDefaults { columnId, boardCardId, patch: Partial<Automa
 | 监工递归自触发 | 判定规则 2 与 4；`lastFiredAt` 节流 |
 | MCP 子进程拿到过宽权限 | 只暴露看板域工具；bridge 只绑 loopback + token；写操作转发给渲染进程 |
 | 旧存档加载失败 | 所有新字段 optional/default，`automationBoards` 顶层 default `{}`；normalizePersistedCard 修补而非拒绝 |
+
+## v2.5 — 看板内容提到工作区级（FR13）
+
+### 症状与根因
+
+2026-08-13 在用户机器上取到的现场：`automationBoards` 里留着他亲手改过的监工模板，AniBazaar 那一列
+17 张卡里 **10 张不在任何 `pane.tabs` 里**（含监工实例卡与一张标题「123」的待命项），而整个 `state.json`
+里**一张看板卡都没有**。
+
+FR6 早就写了"模板的生命周期必须长于看板卡片（删掉 tab 不丢）"，但只有模板兑现了。items 仍然只挂在
+`card.automationBoard` 上，于是 `closeTab` 一句 `delete cards[action.tabId]`（`src/state.ts`）就带走整块编排；
+项卡因为刻意不做 tab（本文开头那条核心洞察），当场变成看不见也删不掉的孤儿。看板卡没有消息，
+`archiveCardToHistory` 直接返回 `null` —— 连一条会话归档都不留，整个过程零痕迹。
+入口还不止"我要关掉看板"：右键菜单的「关闭其他标签页 / 关闭左侧 / 关闭右侧」、中键点 tab、Ctrl+W
+都走同一条 reducer，用户主观上根本没关过看板。
+
+### 数据模型
+
+`automationBoardWorkspaceStateSchema` 加 `board?: automationBoardSchema` —— 项、泳道宽度、composer
+执行参数、待命草稿一起，与 `templates` 同级。卡片上的 `card.automationBoard` 仍是**渲染入口**（渲染层
+契约一个字没改），工作区那份是它的**持久层真相**。
+
+### 同步：reducer 出口单点镜像
+
+`ideReducer` 拆成 `ideReducerCore` + 一层薄 wrapper，wrapper 里做 `mirrorAutomationBoardsToWorkspaces`。
+三个刻意的选择：
+
+- **只对白名单 action 跑**（看板写操作 + `closeTab` / `moveTab` / `splitMoveTab` / `selectCardModel`）。
+  镜像要遍历每一列找看板卡，而 reducer 在流式输出期间每秒跑几十次；挂到全部 action 上等于给每一帧
+  加一次全列扫描。名单写死而不是"名字里带 AutomationBoard 就算"—— 恰恰是那三条带走看板卡的路径
+  名字里一个字都不沾。
+- **`next === state` 直接返回**。core 原样返回意味着这次 action 什么都没干，那一族守卫测试断言的是
+  引用相等，镜像哪怕只写一次也会把它们全打红，而且确实不该有副作用。
+- **看板卡消失的那一次也要同步，同步的是它消失前的样子**。所以 mirror 收 `previous`，next 里找不到
+  看板卡时回落到上一版。少了这一步，关 tab 这条最常见的丢失路径恰恰是唯一同步不到的。
+  一列从来没有过看板卡时两边都找不到，工作区那份原样保留，不会被无关操作抹平。
+
+### 交回：`selectCardModel` 切成看板时
+
+`restoreAutomationBoardForColumn` 做两件事：
+
+1. 交回工作区存着的项，**逐项校验 `cardId` 仍在本列** —— 真正被删掉的卡片不能复活成一条指向空气的项。
+2. **收编孤儿**：本列里在 `cards` 里却不在任何 `pane.tabs` 里的卡片，全部进待命道。这类卡片在本产品里
+   只可能由看板产生，收编是它们唯一能重新可见的路径，也顺带修好存量数据（用户那 10 张孤儿卡，
+   在这个工作区再开一张看板就全回来了）。
+
+看板卡只能由 `selectCardModel` 产生（`createAutomationBoardCard` 在 `src/` 里没有任何调用点，
+空态工具砖与模型选择器两条入口都是"改这张卡的 model"），所以这一个交回口就够了。
+
+### 顺带修掉的两个手抄白名单漏字段
+
+- `normalizePersistedCard` 从不带 `automationBoardTemplateId`：项被拖出看板时血缘盖在卡片上，
+  但每存一次盘剥一次；重启后拖回看板的监工实例 `templateId` 变空串，
+  `automation-board-auto-trigger.ts` 里 `settledItem.templateId === template.id` 这条唯一的防自触发
+  守卫随之短路。
+- 待命 composer 的草稿（`board.draft`）过去只活在组件 `useState` 里。看板不在
+  `cardKeepsPaneRuntimeWhenInactive` 白名单里（只有 Git 卡在），切一下同 pane 的别的 tab 整棵子树就卸载，
+  写了半页的需求静默消失。落盘点刻意只有**失焦**与**卸载**两处：每次按键推一次 reducer 等于给打字加
+  一次全看板重渲染。粘贴的图片仍是本地 state（`draftImages`），留作后续 slice。
+
+### 测试
+
+| 文件 | 覆盖 |
+|---|---|
+| `tests/automation-board-state.test.ts` | 关 tab 后编排留在工作区；交回给下一张看板卡；丢弃卡片已不存在的项；孤儿收编；每次看板写操作都镜像；草稿随看板并活过关 tab |
+| `tests/automation-board-persistence.test.ts` | 工作区级 `board` 往返（含 items / laneWidths）；卡片上的 `automationBoardTemplateId` 往返 |
+| `tests/electron-automation-board-restart-runtime.test.ts`（新，已入 `run-electron-runtime-tests.ps1`） | **真实 Electron 全动线**：空态工具砖建看板 → 加需求 → 关进程 → 重启仍在 → 写半句需求切 tab 再回来还在 → 关掉看板 tab（磁盘上卡没了、工作区编排在）→ 再开一张看板，编排原样回来 |

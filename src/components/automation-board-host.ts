@@ -85,6 +85,13 @@ export type AutomationBoardActions = {
     boardCardId: string,
     patch: Partial<AutomationBoardComposeDefaults>,
   ) => void
+  /**
+   * 「加入待命」输入框里还没提交的文本。
+   *
+   * 刻意**不是**每次按键都调：调用点在失焦与卸载两处。看板一次渲染要过一遍所有
+   * 项，每个字符都推一次 reducer 等于给打字加一次全看板重渲染（pitfall 187 同族）。
+   */
+  setComposerDraft: (columnId: string, boardCardId: string, draft: string) => void
   stopItem: (cardId: string) => void
   sendToItem: (columnId: string, cardId: string, message: string) => void
   patchItemCard: (columnId: string, cardId: string, patch: Partial<ChatCard>) => void

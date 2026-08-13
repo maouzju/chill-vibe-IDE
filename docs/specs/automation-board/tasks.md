@@ -218,3 +218,31 @@ MCP 端到端实测（一次性探针，非注册测试）：起真实桥接 →
 - [x] `src/index.css`：`.automation-board-item-wake-panel` 把面板压到抽屉的 10px 字号档，只改尺寸不动颜色 token
 - [x] `tests/wake-timer-settings-panel.test.tsx`（9 条）+ `tests/automation-board-render.test.tsx` 的 `AutomationBoardItemDrawer`（5 条）
 - [x] `pnpm test:quality` + `pnpm electron:build`
+
+## Slice V10 — 看板内容的生命周期长于承载它的那张卡（v2.5 / FR13）
+
+- [x] `shared/schema.ts`：`automationBoardWorkspaceStateSchema.board?`、`automationBoardSchema.draft?`
+- [x] `server/state-store.ts`：`normalizePersistedAutomationBoard` 带上 `draft`；`normalizePersistedCard` 补 `automationBoardTemplateId`（两处手抄白名单）
+- [x] `src/state.ts`：`ideReducer` 拆薄 wrapper + `mirrorAutomationBoardsToWorkspaces`（白名单 action、no-op 短路、消失时回落 previous）
+- [x] `src/state.ts`：`restoreAutomationBoardForColumn`（交回 + 逐项校验 + 孤儿收编），接在 `selectCardModel`
+- [x] `src/state.ts`：`setAutomationBoardDraft` reducer；host / PaneView / App.tsx 接出 `setComposerDraft`
+- [x] `AutomationBoardCard`：草稿初值取自 `board.draft`，失焦与卸载两处落盘，提交后清空
+- [x] `tests/automation-board-state.test.ts` 六条 + `tests/automation-board-persistence.test.ts` 两条（全部红先）
+- [x] `tests/electron-automation-board-restart-runtime.test.ts`（新）+ 注册进 `scripts/run-electron-runtime-tests.ps1`
+- [x] `pnpm test:quality`
+
+### v2.5 实施记录（2026-08-13）
+
+定位过程本身值得记：Node 层往返测试是绿的，拿用户手上的 v0.19.1 打包版跑完整 UI 动线也是绿的 ——
+**存储层从来没坏过**。真正说明问题的是磁盘现场的形状：项卡活着、看板卡一张没有。能造出这个形状的
+只有 `closeTab`（`moveTab` 是搬走，别的列就该有；`removeAutomationBoardItem` 删的是项卡）。
+
+两个一次性取证脚本留在 `scripts/`：`repro-automation-board-persistence.ts`（Node 层往返）、
+`probe-packaged-board-ui-restart.mjs` + `repro-packaged-board-restart.ps1`（拿打包版跑真实动线）、
+`inspect-board-state.mjs`（把任意 state.json 的列 / tab / 孤儿卡打出来）。下次再报"看板没了"，
+先跑最后一个看形状。
+
+### 留给后续
+
+- [ ] 待命 composer 粘贴的图片仍是本地 state（`draftImages`），切 tab 即失。要落盘得复用 ChatCard 那套
+      "粘贴即后台上传 → 存 `draftAttachments`"，涉及异步上传时序，单独一条 slice 配红先测试。

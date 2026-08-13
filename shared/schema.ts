@@ -210,6 +210,20 @@ export const automationBoardSchema = z.object({
   laneWidths: automationBoardLaneWidthsSchema.optional(),
   // 同样 optional 同样的理由：没动过设置的看板不该凭空长出这个字段。
   composeDefaults: automationBoardComposeDefaultsSchema.optional(),
+  /**
+   * 「加入待命」输入框里还没提交的文本。
+   *
+   * 症状：写了半页需求，切一下同 pane 的别的 tab 回来就空了，重启更空。
+   * 根因：它只活在组件 useState 里，而看板不在 `cardKeepsPaneRuntimeWhenInactive`
+   *   的白名单里（只有 Git 卡在），tab 一切走整棵子树就卸载 —— 普通聊天卡靠
+   *   `card.draft` 扛住的那件事，这里一点都没有。
+   * 为什么不用看板卡自己闲着的 `card.draft`：那份随卡片一起消失，而看板的编排
+   *   现在是工作区级的（FR13），草稿跟着编排走才不会"关掉 tab 再开，项都回来了
+   *   只有正在写的那句没了"。
+   */
+  // optional 而非 default('')：和上面两个字段同一条规矩 —— 没写过草稿的看板不该
+  // 在 state.json 里多一个空串。
+  draft: z.string().optional(),
 })
 export type AutomationBoard = z.infer<typeof automationBoardSchema>
 
@@ -821,6 +835,22 @@ export type AutomationBoardTemplate = z.infer<typeof automationBoardTemplateSche
 // workspacePath 挂在 AppState 上，与既有 stickyNoteArchive 同构。
 export const automationBoardWorkspaceStateSchema = z.object({
   templates: z.array(automationBoardTemplateSchema).default([]),
+  /**
+   * 看板本身的编排（项 / 泳道宽度 / composer 参数），与模板同级存活。
+   *
+   * 症状：关掉看板 tab（含右键「关闭其他标签页」这种顺手误伤），整块看板零痕迹
+   *   消失 —— 看板卡没有消息，`archiveCardToHistory` 直接返回 null，连一条会话
+   *   归档都不留；而项对应的 agent 卡片因为刻意不在 `pane.tabs` 里，就地变成
+   *   看不见也删不掉的孤儿（2026-08-13 用户机器现场：10 张孤儿卡 + 0 张看板卡）。
+   * 根因：v2 只把**模板**提到了工作区级，items 仍然只挂在卡片上，FR6 立的规矩
+   *   "生命周期长于看板卡片"只兑现了一半。
+   * 被否决：在 closeTab 里给看板卡加确认弹窗。那既拦不住 moveTab / 换模型 /
+   *   崩溃恢复这些同样会带走卡片的路径，也没解决存量孤儿。
+   *
+   * 卡片上的 `card.automationBoard` 仍是渲染入口，这里是它的持久层真相，
+   * 由 reducer 出口的 `mirrorAutomationBoardsToWorkspaces` 单点同步。
+   */
+  board: automationBoardSchema.optional(),
 })
 export type AutomationBoardWorkspaceState = z.infer<typeof automationBoardWorkspaceStateSchema>
 

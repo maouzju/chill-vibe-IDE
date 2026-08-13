@@ -1600,6 +1600,8 @@ const PaneViewView = ({
                     automationBoardActions.setLaneWidths(column.id, card.id, widths),
                   onSetComposeDefaults: (patch) =>
                     automationBoardActions.setComposeDefaults(column.id, card.id, patch),
+                  onSetComposerDraft: (draft) =>
+                    automationBoardActions.setComposerDraft(column.id, card.id, draft),
                 }
               : undefined
           return (

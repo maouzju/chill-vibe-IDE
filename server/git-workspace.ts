@@ -1,5 +1,6 @@
 import { spawn } from 'node:child_process'
 import { createHash } from 'node:crypto'
+import { existsSync } from 'node:fs'
 import { mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
@@ -229,6 +230,54 @@ const formatGitFailure = (args: string[], result: GitRunResult) => {
   return `git ${args.join(' ')} failed with exit code ${result.exitCode}.`
 }
 
+// 症状 — 2026-08-13 用户提交失败，全部信息就是 `... timed out after 120000ms and was
+//   killed.`；GPG 等 pinentry、pre-commit hook 卡住、LFS 刷大文件在这条消息里长得一模
+//   一样，无从下手。
+// 根因 — giveUp() 明明已经把 stdout/stderr 收在手里，却只在 allowFailure 分支交出去；
+//   抛错分支把唯一的现场证据丢了。正常失败走 formatGitFailure 是带 stderr 的，超时/
+//   取消路径与它不一致，纯属遗漏。
+// 只取尾部 — 卡死前 git 可能已经吐了几 MB（如 LFS 进度），整段拼进 Error.message 会
+//   随异常一路传到渲染层的气泡里。
+const gitRunOutputExcerptLimit = 2_000
+// 2026-08-13 实测：一个只有 1 个文件的仓库，commit 的 stderr 里已经躺着 2 行换行符
+// 提醒；截图里那次提交是 58 个文件。它和卡死毫无关系，却会把唯一有用的那行挤出摘录
+// 窗口——留着它等于没带输出。这里只滤这一种：它的措辞由 git 固定生成，判定无歧义。
+const gitLineEndingNoisePattern = /^warning: (in the working copy of|CRLF will be replaced by|LF will be replaced by)/
+
+const withGitRunOutput = (message: string, result: GitRunResult) => {
+  const excerpt = [result.stderr.trim(), result.stdout.trim()]
+    .filter((entry) => entry.length > 0)
+    .join('\n')
+    .split('\n')
+    .filter((line) => !gitLineEndingNoisePattern.test(line.trim()))
+    .join('\n')
+    .trim()
+    .slice(-gitRunOutputExcerptLimit)
+
+  return excerpt.length > 0 ? `${message}\n${excerpt}` : message
+}
+
+// 2026-08-13 实测：给仓库挂一个卡住的 pre-commit hook，让 commit 在超时上被 kill，
+// `.git/index.lock` 就留在原地，紧接着的 `git add` 直接 `fatal: Unable to create ...
+// index.lock: File exists.`。Windows 上 kill 就是 TerminateProcess，git 没有机会清理。
+// 用户看到的第二个症状比第一个更吓人，而它完全是我们自己杀出来的，必须由我们说明。
+// 不自动删 — 这一刻可能真有另一个 git 在跑（用户的终端、别的 agent），删掉它才是
+// 真正的破坏。只在**我们自己刚杀过一个 git** 的那条路径上提示。
+// 只认常规 `.git` 目录：linked worktree 的 `.git` 是一个指向真 gitdir 的文件，那里读
+// 不到 lock，此时返回 null（少一句提示）而不是猜一个路径出来。
+export const describeStaleGitIndexLock = (workspacePath: string) => {
+  const lockPath = path.join(workspacePath, '.git', 'index.lock')
+
+  return existsSync(lockPath)
+    ? `The killed git process left ${lockPath} behind — every later git command will fail with "Unable to create index.lock" until it is removed. Delete it once you have confirmed no other git process is running.`
+    : null
+}
+
+const markKilledGitRunError = (error: Error) => Object.assign(error, { gitRunKilled: true })
+
+const isKilledGitRunError = (error: unknown): error is Error =>
+  error instanceof Error && (error as { gitRunKilled?: boolean }).gitRunKilled === true
+
 // 症状 — 应用"闪退"，实测退出码 0xCFFFFFFF（Windows 结束"窗口无响应"进程写的码）；
 //   外部监控实测冻结期间主进程 CPU=0%、主线程处于内核 Wait，也就是卡死的后果。
 // 根因 — 2026-08-12 实测这台机器上 spawn() 本身是主线程同步阻塞（libuv 在 Windows 上
@@ -255,6 +304,27 @@ const gitNetworkSubcommands = new Set([
   'remote',
   'submodule',
 ])
+// 症状 — 2026-08-13 用户在一个大仓库上点提交，拿到 `git commit -m ... --only
+//   --pathspec-from-file=- timed out after 120000ms and was killed.`。
+// 根因 — 写命令和读命令共用了 120s。但两者被 kill 的代价完全不对称：杀掉 status/diff
+//   只是少一次刷新，杀掉正在写 index 与 objects 的 commit 会把 `.git/index.lock` 留在
+//   原地（Windows 上 kill 就是 TerminateProcess，git 没有清理的机会），用户随后的每
+//   一次 git 操作都会失败——比"慢"糟得多。而写命令跑过 2 分钟并不罕见：GPG 签名、
+//   pre-commit hook、Git LFS、实时杀毒扫描任意一项都够。
+// 为什么不干脆取消超时 — 兜底的职责没变（静默的 git 不能永远挂住调用方，见上面那段
+//   spawn 风暴的注释），只是把写命令的门槛抬到"正常但慢"之上。
+const gitLocalWriteRunTimeoutMs = 10 * 60 * 1000
+const gitLocalWriteSubcommands = new Set([
+  'am',
+  'apply',
+  'cherry-pick',
+  'commit',
+  'gc',
+  'merge',
+  'rebase',
+  'revert',
+  'stash',
+])
 
 /**
  * 超时策略必须集中在一处：40+ 个 runGit 调用点里只要有一个忘了给网络命令放宽预算，
@@ -268,11 +338,39 @@ export const resolveGitRunTimeoutMs = (
     return explicitTimeoutMs
   }
 
-  const subcommand = args.find((arg) => !arg.startsWith('-'))
+  const subcommand = findGitSubcommand(args)
 
-  return subcommand && gitNetworkSubcommands.has(subcommand)
-    ? gitNetworkRunTimeoutMs
+  if (subcommand === undefined) {
+    return gitRunDefaultTimeoutMs
+  }
+
+  if (gitNetworkSubcommands.has(subcommand)) {
+    return gitNetworkRunTimeoutMs
+  }
+
+  return gitLocalWriteSubcommands.has(subcommand)
+    ? gitLocalWriteRunTimeoutMs
     : gitRunDefaultTimeoutMs
+}
+
+// `-c key=value` 的值本身不以 `-` 开头，朴素的"第一个非 flag"会把它当成子命令，于是
+// `-c core.quotepath=false commit` 会退回读命令的预算。runGit 目前在 spawn 时才拼 `-c`，
+// 所以现在还够不着；但预算判定错的代价是杀掉一次写操作，不值得赌调用点永远不变。
+const findGitSubcommand = (args: readonly string[]) => {
+  for (let index = 0; index < args.length; index += 1) {
+    const arg = args[index]!
+
+    if (arg === '-c' || arg === '--config-env') {
+      index += 1
+      continue
+    }
+
+    if (!arg.startsWith('-')) {
+      return arg
+    }
+  }
+
+  return undefined
 }
 
 export const superviseGitChild = async (
@@ -356,11 +454,12 @@ export const superviseGitChild = async (
           return
         }
 
-        reject(new Error(
+        reject(markKilledGitRunError(new Error(withGitRunOutput(
           reason === 'timeout'
             ? `git ${args.join(' ')} timed out after ${timeoutMs}ms and was killed.`
             : `git ${args.join(' ')} was cancelled and killed.`,
-        ))
+          result,
+        ))))
       })
     }
 
@@ -434,10 +533,23 @@ const runGit = async (
     windowsHide: true,
   })
 
-  return await superviseGitChild(child, args, {
-    ...options,
-    timeoutMs: resolveGitRunTimeoutMs(args, options?.timeoutMs),
-  })
+  try {
+    return await superviseGitChild(child, args, {
+      ...options,
+      timeoutMs: resolveGitRunTimeoutMs(args, options?.timeoutMs),
+    })
+  } catch (error) {
+    // 只有我们亲手杀掉的那次才配得上这句提示：是我们造成的残留，因果明确。
+    if (isKilledGitRunError(error)) {
+      const remnant = describeStaleGitIndexLock(workspacePath)
+
+      if (remnant) {
+        error.message = `${error.message}\n${remnant}`
+      }
+    }
+
+    throw error
+  }
 }
 
 export const encodeGitPathspecStdin = (paths: string[]) =>

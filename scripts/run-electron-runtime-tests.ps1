@@ -10,6 +10,7 @@ param(
     'tests/electron-session-history-restore-runtime.test.ts',
     'tests/electron-session-history-catalog-runtime.test.ts',
     'tests/electron-automation-board-admin-runtime.test.ts',
+    'tests/electron-automation-board-restart-runtime.test.ts',
     'tests/electron-git-stage-performance.test.ts'
   )
 )

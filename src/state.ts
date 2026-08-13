@@ -12,6 +12,8 @@ import {
   getEffectiveCardModel,
   getConfiguredModel,
   getFirstPane,
+  getAutomationBoard,
+  getLayoutTabIds,
   getOrderedColumnCards,
   getPreferredReasoningEffort,
   maxRecentWorkspaces,
@@ -471,6 +473,12 @@ export type IdeAction =
       boardCardId: string
       /** 面板一次只改一个字段，所以这里是 patch 不是整个对象。 */
       patch: Partial<AutomationBoardComposeDefaults>
+    }
+  | {
+      type: 'setAutomationBoardDraft'
+      columnId: string
+      boardCardId: string
+      draft: string
     }
   | {
       type: 'removeAutomationBoardItem'
@@ -1474,9 +1482,12 @@ const selectCardModel = (
           //   卡片就是一张什么都不渲染的空壳。
           // 切走时**保留** blob（切回来就还在），因为读取一律经
           // `getAutomationBoard` 按 model 把关，留着不会让非看板卡冒充看板。
+          // 自己没有 blob 时找工作区要上一块（FR13）：这张卡可能是用户关掉
+          // 旧看板后新建的，编排该原样接回来，孤儿卡也在这一步被收编。
           automationBoard:
             normalizedModel === AUTOMATIONBOARD_TOOL_MODEL
-              ? currentCard.automationBoard ?? { items: [] }
+              ? currentCard.automationBoard ??
+                restoreAutomationBoardForColumn(nextState, currentColumn, cardId)
               : currentCard.automationBoard,
           pmTaskCardId: '',
           pmOwnerCardId: '',
@@ -1790,7 +1801,135 @@ export const resolveForkPointMessage = (
   return { messageIndex, message: messages[messageIndex]! }
 }
 
+/**
+ * 会改动"某一列有没有看板卡 / 看板卡里装着什么"的 action。
+ *
+ * 只对这些 action 跑镜像，是因为镜像要遍历每一列找看板卡，而 reducer 在流式
+ * 输出期间每秒要跑几十次（pitfall 187/49）；把它挂到全部 action 上等于给每一帧
+ * 加一次全列扫描。名单写死在这里而不是"名字里带 AutomationBoard 就算"，因为
+ * closeTab / moveTab / selectCardModel 这三条恰恰是带走看板卡的主力，名字里
+ * 一个字都不沾。
+ */
+const automationBoardMirroringActions = new Set<IdeAction['type']>([
+  'closeTab',
+  'moveTab',
+  'splitMoveTab',
+  'selectCardModel',
+  'createAutomationBoardItem',
+  'setAutomationBoardItemLane',
+  'setAutomationBoardLaneWidths',
+  'setAutomationBoardComposeDefaults',
+  'setAutomationBoardDraft',
+  'stampAutomationBoardItem',
+  'removeAutomationBoardItem',
+  'moveAutomationBoardItemToPane',
+  'moveTabToAutomationBoard',
+])
+
+const findColumnAutomationBoard = (column: BoardColumn | undefined) =>
+  column
+    ? Object.values(column.cards)
+        .map((card) => getAutomationBoard(card))
+        .find((entry): entry is AutomationBoard => Boolean(entry))
+    : undefined
+
+/**
+ * 把每一列的看板 blob 同步进 `automationBoards[workspacePath].board`（FR13）。
+ *
+ * 关键在于**看板卡消失的那一次也要同步**，而且同步的是它消失前的样子：所以这里
+ * 收下 `previous`，next 里找不到看板卡时回落到上一版。少了这一步，关 tab 这条
+ * 最常见的丢失路径恰恰是唯一同步不到的 —— 而它正是本需求要修的东西。
+ * 反过来，一列**从来没有过**看板卡时两边都找不到，工作区那份原样保留，不会被
+ * 无关操作抹平。
+ */
+const mirrorAutomationBoardsToWorkspaces = (state: AppState, previous: AppState): AppState => {
+  let nextWorkspaces: AppState['automationBoards'] | null = null
+
+  for (const column of state.columns) {
+    const workspacePath = column.workspacePath.trim()
+    if (!workspacePath) {
+      continue
+    }
+
+    const board =
+      findColumnAutomationBoard(column) ??
+      findColumnAutomationBoard(previous.columns.find((entry) => entry.id === column.id))
+
+    if (!board) {
+      continue
+    }
+
+    const current: AutomationBoardWorkspaceState | undefined = (nextWorkspaces ??
+      state.automationBoards)[workspacePath]
+    if (current?.board === board) {
+      continue
+    }
+
+    nextWorkspaces = {
+      ...(nextWorkspaces ?? state.automationBoards),
+      [workspacePath]: {
+        ...(current ?? createDefaultAutomationBoardWorkspaceState()),
+        board,
+      },
+    }
+  }
+
+  return nextWorkspaces ? { ...state, automationBoards: nextWorkspaces } : state
+}
+
+/**
+ * 一张卡刚变成看板时，把这个工作区上次的编排交回给它（FR13）。
+ *
+ * 两件事一起做：
+ * - 交回工作区存着的项，逐项校验卡片是否仍在本列 —— 真正被删掉的卡片不能
+ *   复活成一条指向空气的项。
+ * - **收编孤儿**：本列里"在 cards 里却不在任何 pane.tabs 里"的卡片，在本产品
+ *   里只可能由看板产生（design.md 里项卡刻意不做 tab）。看板一没，它们就再也
+ *   没有入口；收进待命道是唯一能让它们重新可见的路径，也顺带修好存量数据。
+ */
+const restoreAutomationBoardForColumn = (
+  state: AppState,
+  column: BoardColumn,
+  boardCardId: string,
+): AutomationBoard => {
+  const stored = state.automationBoards[column.workspacePath.trim()]?.board
+  const items = (stored?.items ?? []).filter(
+    (item) => item.cardId !== boardCardId && Boolean(column.cards[item.cardId]),
+  )
+
+  const claimed = new Set(items.map((item) => item.cardId))
+  const reachable = new Set(getLayoutTabIds(column.layout))
+  const orphans = Object.keys(column.cards).filter(
+    (cardId) => cardId !== boardCardId && !reachable.has(cardId) && !claimed.has(cardId),
+  )
+
+  return {
+    ...stored,
+    items: [
+      ...items,
+      ...orphans.map((cardId) => ({
+        cardId,
+        lane: 'standby' as const,
+        requirement: resolveAutomationBoardRequirementFromCard(column.cards[cardId]!),
+        templateId: column.cards[cardId]!.automationBoardTemplateId ?? '',
+      })),
+    ],
+  }
+}
+
 export const ideReducer = (state: AppState, action: IdeAction): AppState => {
+  const next = ideReducerCore(state, action)
+  // core 原样返回 = 这次 action 什么都没干（stale paneId、找不到卡、非法 lane…）。
+  // 这类分支的守卫测试断言的是**引用相等**，镜像哪怕只写一次工作区也会把它们
+  // 全部打红，而且确实不该有副作用：没变的东西没什么可镜像的。
+  if (next === state || !automationBoardMirroringActions.has(action.type)) {
+    return next
+  }
+
+  return mirrorAutomationBoardsToWorkspaces(next, state)
+}
+
+const ideReducerCore = (state: AppState, action: IdeAction): AppState => {
   switch (action.type) {
     case 'replace':
       return action.state
@@ -2988,6 +3127,23 @@ export const ideReducer = (state: AppState, action: IdeAction): AppState => {
           ...action.patch,
         },
       }))
+    }
+    case 'setAutomationBoardDraft': {
+      return updateAutomationBoard(state, action.columnId, action.boardCardId, (board) => {
+        const draft = action.draft.slice(0, automationBoardRequirementMaxChars)
+        if ((board.draft ?? '') === draft) {
+          return null
+        }
+
+        if (!draft) {
+          // 清空就删字段，别在每个存档里留一个空串（同 laneWidths 那条规矩）。
+          const next = { ...board }
+          delete next.draft
+          return next
+        }
+
+        return { ...board, draft }
+      })
     }
     case 'stampAutomationBoardItem': {
       return updateAutomationBoard(state, action.columnId, action.boardCardId, (board) => {

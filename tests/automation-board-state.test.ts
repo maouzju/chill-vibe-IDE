@@ -1184,3 +1184,146 @@ describe('the board tool model never leaks into model memory', () => {
     assert.notEqual(settings.lastModel?.model, AUTOMATIONBOARD_TOOL_MODEL)
   })
 })
+
+/**
+ * FR13：看板内容的生命周期必须长于承载它的那张卡。
+ *
+ * 症状（2026-08-13 用户现场）：`automationBoards` 里留着用户亲手改过的模板，
+ *   那一列 10 张卡是不在任何 pane.tabs 里的孤儿（含监工实例卡），而整个
+ *   state.json 里一张看板卡都没有 —— 关掉看板 tab 零痕迹地带走了整块编排。
+ * 根因：items 只挂在 `card.automationBoard` 上，closeTab 一句 `delete cards[id]`
+ *   就没了；而项卡因为刻意不在 tabs 里，删不掉也看不见。
+ */
+describe('automation board workspace-level survival', () => {
+  const closeBoardTab = (state: AppState) =>
+    ideReducer(state, {
+      type: 'closeTab',
+      columnId: 'column-1',
+      paneId: 'pane-1',
+      tabId: 'board-1',
+    })
+
+  it('keeps the board arrangement on the workspace when its tab is closed', () => {
+    const closed = closeBoardTab(buildState())
+
+    assert.equal(closed.columns[0]!.cards['board-1'], undefined)
+    assert.deepEqual(
+      closed.automationBoards['D:/repo/one']?.board?.items.map((item) => item.cardId),
+      ['item-a', 'item-b'],
+    )
+  })
+
+  it('hands the arrangement back to the next board card in that workspace', () => {
+    const closed = closeBoardTab(buildState())
+    const reopened = ideReducer(closed, {
+      type: 'selectCardModel',
+      columnId: 'column-1',
+      cardId: 'chat-1',
+      provider: 'codex',
+      model: AUTOMATIONBOARD_TOOL_MODEL,
+    })
+
+    const board = getAutomationBoard(reopened.columns[0]!.cards['chat-1'])
+    assert.deepEqual(
+      board?.items.map((item) => ({ cardId: item.cardId, lane: item.lane })),
+      [
+        { cardId: 'item-a', lane: 'standby' },
+        { cardId: 'item-b', lane: 'running' },
+      ],
+    )
+  })
+
+  // 已经被真正删掉的卡片不能复活成一条指向空气的项。
+  it('drops handed-back items whose card no longer exists', () => {
+    const closed = closeBoardTab(buildState())
+    const withoutItemB: AppState = {
+      ...closed,
+      columns: closed.columns.map((column) => {
+        const cards = { ...column.cards }
+        delete cards['item-b']
+        return { ...column, cards }
+      }),
+    }
+
+    const reopened = ideReducer(withoutItemB, {
+      type: 'selectCardModel',
+      columnId: 'column-1',
+      cardId: 'chat-1',
+      provider: 'codex',
+      model: AUTOMATIONBOARD_TOOL_MODEL,
+    })
+
+    assert.deepEqual(
+      getAutomationBoard(reopened.columns[0]!.cards['chat-1'])?.items.map((item) => item.cardId),
+      ['item-a'],
+    )
+  })
+
+  // 存量数据修复：孤儿卡在本产品里只可能由看板产生，收编是它们唯一的出路。
+  it('adopts orphan cards that no pane tab can reach', () => {
+    const state = buildState({
+      cards: {
+        'chat-1': itemCard('chat-1'),
+        'orphan-1': itemCard('orphan-1'),
+      },
+      layout: pane('pane-1', ['chat-1'], 'chat-1'),
+    })
+
+    const opened = ideReducer(state, {
+      type: 'selectCardModel',
+      columnId: 'column-1',
+      cardId: 'chat-1',
+      provider: 'codex',
+      model: AUTOMATIONBOARD_TOOL_MODEL,
+    })
+
+    assert.deepEqual(
+      getAutomationBoard(opened.columns[0]!.cards['chat-1'])?.items.map((item) => ({
+        cardId: item.cardId,
+        lane: item.lane,
+      })),
+      [{ cardId: 'orphan-1', lane: 'standby' }],
+    )
+  })
+
+  // 看板还开着的时候，工作区那份必须跟着走，否则关 tab 交回去的是旧编排。
+  it('mirrors every board write to the workspace copy', () => {
+    const moved = ideReducer(buildState(), {
+      type: 'setAutomationBoardItemLane',
+      columnId: 'column-1',
+      boardCardId: 'board-1',
+      cardId: 'item-a',
+      lane: 'done',
+    })
+
+    assert.equal(
+      moved.automationBoards['D:/repo/one']?.board?.items.find((item) => item.cardId === 'item-a')
+        ?.lane,
+      'done',
+    )
+  })
+  // 待命 composer 的草稿过去只活在组件 useState 里：切一下 tab（看板不在
+  // `cardKeepsPaneRuntimeWhenInactive` 白名单里，整棵子树卸载）就没了，重启更没。
+  // 上限 4000 字的输入框本来就鼓励长文，丢起来是整段整段地丢。
+  it('keeps the standby composer draft with the board', () => {
+    const typed = ideReducer(buildState(), {
+      type: 'setAutomationBoardDraft',
+      columnId: 'column-1',
+      boardCardId: 'board-1',
+      draft: '把登录页改成暗色，顺便把空态也做了',
+    })
+
+    assert.equal(getBoard(typed).draft, '把登录页改成暗色，顺便把空态也做了')
+    // 关掉 tab 也要跟着工作区活下来，否则"再开一张看板"接回的是空草稿。
+    const closed = ideReducer(typed, {
+      type: 'closeTab',
+      columnId: 'column-1',
+      paneId: 'pane-1',
+      tabId: 'board-1',
+    })
+    assert.equal(
+      closed.automationBoards['D:/repo/one']?.board?.draft,
+      '把登录页改成暗色，顺便把空态也做了',
+    )
+  })
+})

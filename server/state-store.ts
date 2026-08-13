@@ -763,11 +763,15 @@ const normalizePersistedAutomationBoard = (value: unknown): ChatCard['automation
   // 否则存一次盘就被剥掉 —— 症状是"拖完宽度，重启又变回均分"（pitfall 5）。
   const laneWidths = normalizePersistedAutomationBoardLaneWidths(record.laneWidths)
   const composeDefaults = normalizePersistedAutomationBoardComposeDefaults(record.composeDefaults)
+  // 与需求项同一个上限：这里存的就是还没变成项的那段文本。
+  const draft =
+    typeof record.draft === 'string' ? record.draft.slice(0, automationBoardRequirementMaxChars) : ''
 
   return {
     items,
     ...(laneWidths ? { laneWidths } : {}),
     ...(composeDefaults ? { composeDefaults } : {}),
+    ...(draft ? { draft } : {}),
   }
 }
 
@@ -1050,6 +1054,12 @@ const normalizePersistedCard = (
     // 卡片级超管权限（v2 取代了看板上的 supervisorCardId 指针）。optional 而非
     // default：绝大多数卡片没有它，不给每张卡在 state.json 里加一个 false。
     adminAccess: card.adminAccess === true ? true : undefined,
+    // 模板血缘：项被拖出看板时盖在卡片上，拖回来时读回去还原 item.templateId。
+    // 这个 return 是**手抄白名单**，漏掉它就等于每存一次盘剥一次血缘 —— 症状是
+    // 重启后拖回看板的监工实例 templateId 变空串，触发器的防自触发守卫
+    // （automation-board-auto-trigger.ts 里 `settledItem.templateId === template.id`）
+    // 随之短路，监工每次结算都自己触发自己（2026-08-13 审计发现）。
+    automationBoardTemplateId: normalizeOptionalString(card.automationBoardTemplateId),
     messages: rawMessages,
     messageCount: normalizePositiveInteger(card.messageCount, rawMessages.length),
   }

@@ -126,6 +126,8 @@ export type AutomationBoardCardProps = {
   onSetLaneWidths: (widths: AutomationBoardLaneWidths | null) => void
   /** 「加入待命」那组执行参数的落盘出口（一次一个字段，reducer 那层浅合并）。 */
   onSetComposeDefaults: (patch: Partial<AutomationBoardComposeDefaults>) => void
+  /** 待命草稿落盘。只在失焦与卸载时调，理由见 automation-board-host.ts。 */
+  onSetComposerDraft: (draft: string) => void
 }
 
 /**
@@ -826,7 +828,25 @@ const AutomationBoardCardView = (props: AutomationBoardCardProps) => {
     onSetLaneWidths,
   } = props
   const text = getLocaleText(language)
-  const [draft, setDraft] = useState('')
+  // 本地 state 承担每次按键，落盘只在失焦 / 卸载时发生（见 onSetComposerDraft）。
+  // 初值取自看板，所以切走再回来、乃至关掉 tab 再开一张看板，写到一半的需求都在。
+  const [draft, setDraft] = useState(board.draft ?? '')
+  const draftRef = useRef(draft)
+  const commitDraftRef = useRef(props.onSetComposerDraft)
+  // 只能在 effect 里写 ref（react-hooks/refs 禁止 render 期赋值）。这个 effect
+  // 刻意不带依赖数组：每次渲染后都把最新值推进去，卸载 cleanup 读到的才是最新的。
+  useEffect(() => {
+    draftRef.current = draft
+    commitDraftRef.current = props.onSetComposerDraft
+  })
+  const commitDraft = () => {
+    commitDraftRef.current(draftRef.current)
+  }
+
+  // 卸载即落盘：看板不在 `cardKeepsPaneRuntimeWhenInactive` 白名单里，切 tab 会
+  // 把整棵子树卸载掉，textarea 根本没机会 blur。ref 转发是为了让这个 effect 保持
+  // 空依赖 —— 挂上 draft 依赖的话每敲一个字符都要拆装一次订阅。
+  useEffect(() => commitDraft, [])
   // 症状：这组选择原本只活在组件 useState 里（理由写的是"落盘会让用户被上次的
   //   一次性选择绑住"），实际是连着加十个需求项要重选十次，切走再回来还回到列默认。
   // 根因：把它当成一次性意图，而用户的真实用法是"这张看板就用这套参数"。
@@ -1120,6 +1140,9 @@ const AutomationBoardCardView = (props: AutomationBoardCardProps) => {
     const images = draftImages
 
     setDraft('')
+    // 提交出去的文本必须同步从存档里抹掉，否则下次打开这张看板，已经变成项的
+    // 那段需求还会原样躺在输入框里。
+    commitDraftRef.current('')
     setDraftImages([])
 
     if (images.length === 0) {
@@ -1240,6 +1263,7 @@ const AutomationBoardCardView = (props: AutomationBoardCardProps) => {
                   rows={2}
                   placeholder={text.automationBoardNewRequirementPlaceholder}
                   onChange={(event) => setDraft(event.target.value)}
+                  onBlur={commitDraft}
                   onPaste={handleDraftPaste}
                   onKeyDown={(event) => {
                     if (event.key === 'Enter' && !event.shiftKey) {

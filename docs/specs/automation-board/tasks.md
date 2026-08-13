@@ -173,3 +173,48 @@ MCP 端到端实测（一次性探针，非注册测试）：起真实桥接 →
 - 三个写工具投递出的命令形状与 `workspaceAdminCommandSchema` 完全一致；非法 lane 被拒。
 
 未覆盖（明确留给后续）：Playwright 视觉回归快照（本机 harness 不可靠，pitfall 25/34/252）；Web 模式没有工作区 MCP（桥接是桌面端专属，Web 下 publish 静默 no-op）。
+
+## Slice V7 — 泳道宽度可调（v2.2 / FR11）
+
+- [x] `shared/schema.ts` 加 `automationBoardLaneWidthsSchema` + `automationBoard.laneWidths?`
+- [x] `server/state-store.ts` `normalizePersistedAutomationBoard` 显式带上 `laneWidths`（手抄字段，红先）
+- [x] 新 `src/components/automation-board-lane-resize.ts`（resolve / tracks / toWidths，拖拽数学复用 `resizeColumnGroups`）
+- [x] reducer `setAutomationBoardLaneWidths`（`null` = 删字段回均分）
+- [x] `AutomationBoardCard` 渲染分隔条 + 指针拖拽（拖拽中只写 CSS 变量，松手才 dispatch）+ 双击重置
+- [x] `src/index.css`：三层变量回落、三条泳道显式占格、分隔条样式、窄档 `display: none`
+- [x] `tests/automation-board-lane-resize.test.ts` / `-state` / `-persistence` 三处单测
+- [x] `tests/automation-board-layout.spec.ts` 加两条：拖完一条变宽另两条让位 + 双击回均分 + 轨数仍是 3；预置比例在宽档生效、窄档让位且分隔条隐藏
+- [x] `pnpm test:quality` + `pnpm electron:build`
+
+### v2.2 实施记录（2026-08-13）
+
+三个只有真浏览器能抓到的坑，已回写 design.md 与 AGENTS.md：
+
+- 分隔条作为显式定位的 grid item 会把自动放置的三条泳道整体挤位（→ pitfall 284，泳道也改成显式占格）。
+- 改用 `position: absolute` + grid-area 的方案在 Chromium 里两条分隔条双双贴到容器最右边，点第一条实际拖第二条。
+- 命令式写 React 内联管着的 CSS 变量会让 React 从此写不进该属性，双击恢复均分永久失效（→ pitfall 285，拆成拖拽层 / React 层两个变量）。
+
+顺带两处与列分隔条刻意不同的取舍：pointerdown 不 `preventDefault`（否则 `dblclick` 收不到），以及"没动过就不提交"。
+
+## Slice V8 — 执行参数在源头可设且记得住（v2.3 / FR12）
+
+- [x] `shared/schema.ts` 加 `automationBoardComposeDefaultsSchema` + `automationBoard.composeDefaults?`
+- [x] `server/state-store.ts` `normalizePersistedAutomationBoard` 显式带上 `composeDefaults`（手抄字段，红先）
+- [x] reducer `setAutomationBoardComposeDefaults`（对 composeDefaults 浅合并，基底 = 当前值 ?? 列默认）
+- [x] 抽 `AutomationBoardModelSettings` 受控组件（模型 / 思考 / 思考深度 / 计划模式 / 超管），导出供 SSR 单测
+- [x] `AutomationBoardTemplateConfig` 换用该组件（模板 schema 早有这些字段，只缺入口）
+- [x] 待命 composer：设置折叠区 + 值改为读写 `board.composeDefaults`，删掉「不落盘」那条已被推翻的注释
+- [x] `App.tsx` `createItem` 转发 reasoningEffort / thinkingEnabled / planMode / adminAccess（之前在半路掉了）
+- [x] `src/index.css`：composer 设置区样式，双主题
+- [x] `tests/automation-board-render.test.tsx` / `-state` / `-persistence` 三处单测
+- [x] `pnpm test:quality` + `pnpm electron:build`
+
+## Slice V9 — 项的计划唤醒复用 composer 那块完整面板（v2.4 / FR5）
+
+- [x] 抽 `src/components/WakeTimerSettingsPanel.tsx`（受控组件，`context: 'tab' | 'board'` 只切文案）
+- [x] `ChatCard` 换用它（行为、DOM 结构与文案保持不变，只是搬家）
+- [x] `shared/i18n.ts`：`automationBoardWakeAboveLabel` 改成"上方需求完成"（下拉选项语气）、新增 `automationBoardWakeModeHint`，把 composer 里硬编码的中英"本工作区有 N 个其他 Agent"提成 `wakeTimerWorkspaceAgentCount`
+- [x] 导出 `AutomationBoardItemDrawer`，抽屉里的"上方需求"复选框换成整块面板；`workspaceAgentCount` 从 `cards` 现算（工具卡不算，与 `PaneView` 同口径）
+- [x] `src/index.css`：`.automation-board-item-wake-panel` 把面板压到抽屉的 10px 字号档，只改尺寸不动颜色 token
+- [x] `tests/wake-timer-settings-panel.test.tsx`（9 条）+ `tests/automation-board-render.test.tsx` 的 `AutomationBoardItemDrawer`（5 条）
+- [x] `pnpm test:quality` + `pnpm electron:build`

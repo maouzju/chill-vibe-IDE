@@ -8653,6 +8653,21 @@ body.is-col-resizing .column-resize-handle::after {
   box-shadow: none;
 }
 
+/* 症状：模板胶囊上那枚 20px 的展开圆钮拿到键盘焦点后，外面糊着一圈刺眼的
+   白色双环，比按钮本身还显眼（2026-08-13 用户截图 + 无头复现）。
+   根因：`.icon-button` / `.btn` 全局从来没有定义过 `:focus-visible`，于是
+   Chromium 的 UA 默认 `outline: auto` 直接生效；深色配色下它画成「白环 + 黑
+   描边」的双环，且宽度不随按钮尺寸缩放，糊在小圆钮上就格外突兀。窗口失焦
+   再切回（比如用截图工具的那一下）会让浏览器重新判定「该显示焦点环」，所以
+   用户看到它时鼠标并不在按钮上。
+   为什么不能直接 `outline: none`：那样键盘用户就彻底失去焦点指示。必须换成
+   应用自己的强调色环，而不是删掉它。 */
+.icon-button:focus-visible,
+.btn:focus-visible {
+  outline: 2px solid var(--accent-line-strong);
+  outline-offset: 2px;
+}
+
 .card-close-button,
 .card-close-button:hover:enabled,
 :root[data-theme='dark'] .card-close-button,
@@ -14477,10 +14492,79 @@ body.is-pane-resizing .split-resize-handle::before {
 
 .automation-board-lanes {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  /* 用户拖出来的轨宽由 JSX 内联成自定义属性喂进来，**不是**内联 grid-template-
+     columns：内联样式压得过下面 @container 里的窄档覆盖，两轨 / 竖排档会被永久
+     钉死成三轨。变量走这条 fallback，窄档整条覆盖本属性即可，用户的比例留在变量
+     里不丢，拖回宽档原样回来。 */
+  grid-template-columns: var(
+    --automation-board-lane-drag-tracks,
+    var(--automation-board-lane-tracks, repeat(3, minmax(0, 1fr)))
+  );
   gap: 8px;
   flex: 1;
   min-height: 0;
+}
+
+/* 三条泳道显式占格，不靠栅格自动放置。
+   起因：分隔条也得落在格子里，而自动放置的第一步会先安置所有"行列都确定"的
+   item、之后的自动放置**跳过被占的格子** —— 分隔条一旦显式占住 (1,1)/(1,2)，三条
+   泳道就被挤到 (1,3)/(2,1)/(2,2)，看板当场散架（2026-08-13 实测：待命道从 458px
+   掉到 359px 并换到第三轨）。
+   被否决的写法：分隔条改 `position: absolute` + 用 grid-area 当包含块。规范上成立，
+   实测在 Chromium 里两条分隔条**双双贴到容器最右边**（left 都是 1414px），于是点第
+   一条实际拖的是第二条，而且没有任何报错。 */
+.automation-board-lane[data-lane='standby'] {
+  grid-row: 1;
+  grid-column: 1;
+}
+
+.automation-board-lane[data-lane='running'] {
+  grid-row: 1;
+  grid-column: 2;
+}
+
+.automation-board-lane[data-lane='done'] {
+  grid-row: 1;
+  grid-column: 3;
+}
+
+/* 分隔条与左边那条泳道同格（行列由 JSX 指定），靠负 margin 落进 8px 的 gap 中央。
+   刻意**不**做成独立栅格轨：布局回归数的就是 gridTemplateColumns 的 token 数，多
+   两条轨会把 3/2/1 三档断言全打红。 */
+.automation-board-lane-resize-handle {
+  position: relative;
+  justify-self: end;
+  align-self: stretch;
+  width: 9px;
+  margin-right: -9px;
+  z-index: 2;
+  cursor: ew-resize;
+  /* 拖拽时压住文字选中。不能靠 pointerdown 的 preventDefault —— 那会连带压掉
+     兼容鼠标事件，双击恢复均分就再也收不到了。 */
+  user-select: none;
+  touch-action: none;
+}
+
+.automation-board-lane-resize-handle::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 1px;
+  height: 2.5rem;
+  border-radius: var(--r-pill);
+  background: var(--accent-glow);
+  opacity: 0;
+  transform: translate(-50%, -50%);
+  transition:
+    height 140ms var(--ease),
+    opacity 140ms var(--ease);
+}
+
+.automation-board-lane-resize-handle:hover::after,
+body.is-col-resizing .automation-board-lane-resize-handle::after {
+  height: 4rem;
+  opacity: 1;
 }
 
 /* 泳道自己也是查询容器：项卡片内部真正在抢的是**泳道**宽度，宽屏三轨时
@@ -14617,6 +14701,63 @@ body.is-pane-resizing .split-resize-handle::before {
 .automation-board-compose-model:focus {
   outline: none;
   border-color: var(--accent-line-strong);
+}
+
+/* 「参数」折叠开关：静息只是一段与模型选择器同色的文字，展开后才描边。待命道
+   底部的常驻控件已经有两个，第三个不能再抢视线（ui-principles「Idle Chrome Must
+   Recede」）。 */
+.automation-board-compose-settings-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  flex: none;
+  border: 1px solid transparent;
+  border-radius: var(--automation-board-radius);
+  background: transparent;
+  color: var(--ink-3);
+  font: inherit;
+  font-size: 11px;
+  padding: 4px 4px 4px 6px;
+  cursor: pointer;
+}
+
+.automation-board-compose-settings-toggle svg {
+  width: 12px;
+  height: 12px;
+  transition: transform 120ms ease;
+}
+
+.automation-board-compose-settings-toggle:hover {
+  color: var(--ink-2);
+  border-color: var(--line-strong);
+}
+
+.automation-board-compose-settings-toggle.is-open {
+  color: var(--ink-2);
+  border-color: var(--line-strong);
+  background: var(--input-strong-bg);
+}
+
+.automation-board-compose-settings-toggle.is-open svg {
+  transform: rotate(180deg);
+}
+
+/* 开了超管权限的那一组参数必须一眼可见 —— 与卡片头部的盾牌角标同一条规矩：
+   这组设置会让新建的会话能改别的会话。 */
+.automation-board-compose-settings-toggle.is-admin {
+  color: var(--danger);
+  border-color: var(--danger);
+}
+
+/* 与模板配置面板同一套底色：两处是同一组语义，长得不一样只会让人以为它们不同。 */
+.automation-board-compose-settings {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 7px 8px;
+  border: 1px solid var(--accent-line);
+  border-radius: var(--automation-board-radius);
+  background: var(--accent-soft);
 }
 
 .automation-board-compose-attachments {
@@ -14957,6 +15098,53 @@ body.is-pane-resizing .split-resize-handle::before {
   cursor: pointer;
 }
 
+/* 计划唤醒面板是从 composer 设置菜单原样复用过来的（见 WakeTimerSettingsPanel）。
+   那边的行高/字号是给 0.7rem 的菜单调的，抽屉里的正文只有 10px，不压一档它会比
+   项标题还响。只改尺寸，颜色仍走同一套 token，所以两套主题不需要各自覆盖。 */
+.automation-board-item-wake-panel {
+  margin-bottom: 0;
+  padding-bottom: 0;
+  border-bottom: none;
+}
+
+.automation-board-item-wake-panel .composer-settings-row {
+  padding: 2px 4px;
+  border-radius: 5px;
+}
+
+.automation-board-item-wake-panel .composer-settings-label {
+  font-size: 10px;
+  font-weight: 500;
+  color: var(--ink-3);
+}
+
+.automation-board-item-wake-panel .composer-settings-note {
+  padding: 0 4px 2px;
+  font-size: 10px;
+}
+
+.automation-board-item-wake-panel .composer-settings-checkbox {
+  width: 0.8rem;
+  height: 0.8rem;
+}
+
+.automation-board-item-wake-panel .reasoning-select {
+  height: 1.5rem;
+  padding: 0 1.1rem 0 0.3rem;
+  font-size: 10px;
+  max-width: 7.5rem;
+}
+
+.automation-board-item-wake-panel .composer-wake-timer-duration-control {
+  font-size: 10px;
+}
+
+.automation-board-item-wake-panel .composer-wake-timer-duration-input {
+  width: 3.4rem;
+  height: 1.5rem;
+  font-size: 10px;
+}
+
 /* ---- template strip ---- */
 
 .automation-board-templates {
@@ -15009,7 +15197,7 @@ body.is-pane-resizing .split-resize-handle::before {
   align-items: center;
   gap: 4px;
   flex: none;
-  max-width: 15rem;
+  max-width: 16.5rem;
   padding: 2px 4px 2px 9px;
   border: 1px solid var(--line-strong);
   border-radius: var(--r-pill);
@@ -15051,9 +15239,15 @@ body.is-pane-resizing .split-resize-handle::before {
   color: var(--ink-1);
 }
 
+/* 全局焦点环用的 offset 2px 是按 1.75rem 的常规圆钮定的；胶囊里的钮只有 20px
+   且挤在一条 26px 高的 pill 里，2px 外扩会顶穿 pill 边框。贴着钮画即可。 */
+.automation-board-templates .automation-board-template .icon-button:focus-visible {
+  outline-offset: 0;
+}
+
 /* 胶囊总宽是封顶的，名字与模型名在抢这点宽度。默认 flex 规则下先被压扁的
    是名字（「看板监工」→「看板...」），而模型名反倒完整显示 —— 用户是靠名字
-   认模板的，型号只是佐证。所以名字优先吃宽度，型号先让位。 */
+   认模板的，型号只是佐证。所以名字优先吃宽度。 */
 .automation-board-template-name {
   flex: 1 1 auto;
   min-width: 3.5rem;
@@ -15063,9 +15257,15 @@ body.is-pane-resizing .split-resize-handle::before {
   text-overflow: ellipsis;
 }
 
+/* 症状：`claude-opus-5` 这种稍长的型号在窄列里被压成 `clau…`（2026-08-13 实测
+   27px 可用宽），既读不出型号又白占一块地方。
+   根因：型号原本是 `flex: 0 1 auto`，也就是"名字不够就让型号先缩"，但让位一路
+   让到了 4 个字符 —— 让位应该意味着**消失**，不是变成残字。
+   现在改成不可压缩，让名字独自承担截断（名字截断仍可读，且胶囊 title 里有需求
+   原文兜底）。max-width 是给病态长 model id 的最后一道闸，防止它顶穿 pill。 */
 .automation-board-template-model {
-  flex: 0 1 auto;
-  min-width: 0;
+  flex: none;
+  max-width: 7rem;
   color: var(--ink-4);
   font-size: 10px;
   white-space: nowrap;
@@ -15123,8 +15323,12 @@ body.is-pane-resizing .split-resize-handle::before {
   border-radius: var(--automation-board-radius);
   background: var(--accent-soft);
   /* 泳道是 flex:1 + min-height:0，会一路被压到 0。面板必须自己封顶并内部滚动，
-     否则在矮 pane 里展开配置等于把整个看板顶没。 */
-  max-height: min(16rem, 34vh);
+     否则在矮 pane 里展开配置等于把整个看板顶没。
+     症状：16rem/34vh 这一档太紧 —— 2026-08-13 实测面板内容 412px、可视只有
+     254px，整个「触发器」分组和「立即运行」按钮都在视口外，而全局滚动条只有
+     6px 且几乎无对比度，用户读起来就是"这个面板被切了一刀 / 没有这些功能"。
+     放宽到 22rem/46vh 让常规高度下能一次读完，封顶的初衷仍然保留。 */
+  max-height: min(22rem, 46vh);
   overflow-y: auto;
 }
 
@@ -15171,6 +15375,15 @@ body.is-pane-resizing .split-resize-handle::before {
   min-width: 0;
 }
 
+/* 配置面板里的输入 / 下拉 / 勾选框同样从未接管 `:focus-visible`，键盘走位时
+   一路挂着 UA 默认白环。与上面的圆钮同一个根因，同一套处理。
+   （textarea 不在这里：它已有自己的 `:focus` 规则，用边框变色代替外环。） */
+.automation-board-template-config input:focus-visible,
+.automation-board-template-config select:focus-visible {
+  outline: 2px solid var(--accent-line-strong);
+  outline-offset: 1px;
+}
+
 .automation-board-template-trigger {
   display: flex;
   flex-direction: column;
@@ -15186,10 +15399,23 @@ body.is-pane-resizing .split-resize-handle::before {
   color: var(--ink-1);
 }
 
+/* 矮 pane 下面板仍会滚动，此时「立即运行」是唯一的出口动作，不能跟着内容
+   滚出视口。粘在面板底边即可，同时它自己就是"下面还有内容"的可视提示。
+   背景不能直接写死颜色：面板底色是半透明的 --accent-soft，叠在 pane 背景上，
+   照抄一个不透明值会在两套主题里都对不上。用 backdrop-filter 让滚到下面的
+   内容自己糊掉，就不需要知道底下究竟是什么颜色。 */
 .automation-board-template-config-actions {
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
+  position: sticky;
+  bottom: -8px;
+  z-index: 1;
+  margin: 0 -9px -8px;
+  padding: 6px 9px 8px;
+  border-top: 1px solid var(--accent-line);
+  background: var(--accent-soft);
+  backdrop-filter: blur(6px);
 }
 
 /* ---- 按看板自身宽度换布局（不是视口宽） ---------------------------------
@@ -15201,6 +15427,11 @@ body.is-pane-resizing .split-resize-handle::before {
    「标题 + 型号 + 状态点」这一行，标题会被截成两个字。 */
 
 @container automation-board (max-width: 759px) {
+  /* 两轨 / 竖排档下三条泳道已经不是并排关系，分隔条既无处可落也无意义。 */
+  .automation-board-lane-resize-handle {
+    display: none;
+  }
+
   .automation-board-lanes {
     grid-template-columns: repeat(2, minmax(0, 1fr));
     /* 已完成道只是归档，给它比在跑的两道矮一档。 */
@@ -15208,6 +15439,7 @@ body.is-pane-resizing .split-resize-handle::before {
   }
 
   .automation-board-lane[data-lane='done'] {
+    grid-row: 2;
     grid-column: 1 / -1;
   }
 }
@@ -15223,7 +15455,10 @@ body.is-pane-resizing .split-resize-handle::before {
     overflow-y: auto;
   }
 
-  .automation-board-lane[data-lane='done'] {
+  /* 上面两档写死的行列在竖排下必须整组交回自动放置，否则三条泳道会全挤在
+     第一行的三个格子里（而这一档只有一条轨）。 */
+  .automation-board-lane[data-lane] {
+    grid-row: auto;
     grid-column: auto;
   }
 

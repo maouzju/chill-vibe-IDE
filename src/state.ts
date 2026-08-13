@@ -41,6 +41,8 @@ import type {
   AutomationBoard,
   AutomationBoardItem,
   AutomationBoardLane,
+  AutomationBoardComposeDefaults,
+  AutomationBoardLaneWidths,
   AutomationBoardTemplate,
   AutomationBoardWorkspaceState,
   BoardColumn,
@@ -455,6 +457,20 @@ export type IdeAction =
       cardId: string
       lane: AutomationBoardLane
       index?: number
+    }
+  | {
+      type: 'setAutomationBoardLaneWidths'
+      columnId: string
+      boardCardId: string
+      /** `null` = 恢复均分，做法是删掉字段而不是写一份 {1,1,1}。 */
+      widths: AutomationBoardLaneWidths | null
+    }
+  | {
+      type: 'setAutomationBoardComposeDefaults'
+      columnId: string
+      boardCardId: string
+      /** 面板一次只改一个字段，所以这里是 patch 不是整个对象。 */
+      patch: Partial<AutomationBoardComposeDefaults>
     }
   | {
       type: 'removeAutomationBoardItem'
@@ -2937,6 +2953,41 @@ export const ideReducer = (state: AppState, action: IdeAction): AppState => {
           ),
         }
       })
+    }
+    case 'setAutomationBoardLaneWidths': {
+      return updateAutomationBoard(state, action.columnId, action.boardCardId, (board) => {
+        if (!action.widths) {
+          if (!board.laneWidths) {
+            return null
+          }
+
+          // 刻意 delete 而不是写回 {1,1,1}："从没调过"与"调回均分"在磁盘上必须
+          // 是同一种状态，否则每个存档都会凭空长出一个等于默认值的字段。
+          const next = { ...board }
+          delete next.laneWidths
+          return next
+        }
+
+        return { ...board, laneWidths: action.widths }
+      })
+    }
+    case 'setAutomationBoardComposeDefaults': {
+      return updateAutomationBoard(state, action.columnId, action.boardCardId, (board, column) => ({
+        ...board,
+        // 基底是"当前值 ?? 列默认"而不是 schema 默认：面板一次只发一个字段，用
+        // schema 默认兜底会让第一次拨思考深度顺手把 provider/model 抹成 codex/空。
+        composeDefaults: {
+          ...(board.composeDefaults ?? {
+            provider: column.provider,
+            model: column.model,
+            reasoningEffort: '',
+            thinkingEnabled: true,
+            planMode: false,
+            adminAccess: false,
+          }),
+          ...action.patch,
+        },
+      }))
     }
     case 'stampAutomationBoardItem': {
       return updateAutomationBoard(state, action.columnId, action.boardCardId, (board) => {

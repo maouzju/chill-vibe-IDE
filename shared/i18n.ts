@@ -82,6 +82,7 @@ type LocaleText = {
   wakeTimerDurationLabel: string
   wakeTimerDurationHint: string
   wakeTimerMinutes: string
+  wakeTimerWorkspaceAgentCount: (count: number) => string
   wakeTimerLeftUnavailable: string
   wakeTimerBatchLocked: string
   wakeTimerPendingStatus: string
@@ -367,7 +368,11 @@ type LocaleText = {
   automationBoardItemMoreAction: string
   automationBoardItemLessAction: string
   automationBoardAddRequirement: string
+  // 待命输入区的执行参数折叠开关。这组参数在创建那一刻就写进新项，不是事后改。
+  automationBoardComposeSettingsLabel: string
+  automationBoardComposeSettingsHint: string
   automationBoardEmptyLane: string
+  automationBoardResizeLane: string
   automationBoardItemCount: (count: number) => string
   automationBoardPopOutAction: string
   // 拖出去的反向操作，挂在 tab 右键菜单上：拖回去要求泳道落点当场可见，这条不要求。
@@ -405,6 +410,7 @@ type LocaleText = {
   automationBoardTriggerBadgeTitle: string
   // 计划唤醒在看板语境下的方位文案：普通 tab 是"左侧"，看板项是"上方"。
   automationBoardWakeAboveLabel: string
+  automationBoardWakeModeHint: string
   automationBoardWakeAboveTargetHint: (title: string) => string
   automationBoardWakeAboveUnavailable: string
   automationBoardCrossWorkspaceRejected: string
@@ -518,6 +524,7 @@ const localeTextByLanguage: Record<AppLanguage, LocaleText> = {
     wakeTimerDurationLabel: '等待时长',
     wakeTimerDurationHint: '从挂起那一刻算起要等多少分钟，最长 7 天（10080 分钟）。',
     wakeTimerMinutes: '分钟',
+    wakeTimerWorkspaceAgentCount: (count) => `本工作区有 ${count} 个其他 Agent`,
     wakeTimerLeftUnavailable: '左侧没有可等待的 Agent Tab',
     wakeTimerBatchLocked: '当前批次已锁定；修改会在下一批生效。',
     wakeTimerPendingStatus: '待唤醒',
@@ -828,7 +835,11 @@ const localeTextByLanguage: Record<AppLanguage, LocaleText> = {
     automationBoardItemMoreAction: '更多操作',
     automationBoardItemLessAction: '收起操作',
     automationBoardAddRequirement: '加入待命',
+    automationBoardComposeSettingsLabel: '参数',
+    automationBoardComposeSettingsHint:
+      '这一组会在需求加入待命的那一刻写进新卡片，并被这张看板记住 —— 连着加十条不用重选十次。',
     automationBoardEmptyLane: '把需求或 tab 拖到这里',
+    automationBoardResizeLane: '拖拽调整泳道宽度，双击恢复均分',
     automationBoardItemCount: (count) => `${count} 项`,
     automationBoardPopOutAction: '拖出为独立 tab',
     automationBoardAbsorbTabAction: '收进自动化看板',
@@ -862,7 +873,9 @@ const localeTextByLanguage: Record<AppLanguage, LocaleText> = {
     automationBoardTriggerLaneLabel: '放进哪条道',
     automationBoardTriggerIntervalLabel: '最小触发间隔（分钟）',
     automationBoardTriggerBadgeTitle: '触发器已启用',
-    automationBoardWakeAboveLabel: '上方需求',
+    automationBoardWakeAboveLabel: '上方需求完成',
+    automationBoardWakeModeHint:
+      '决定什么时候把这一项发车：等本工作区其他 Agent 都空闲、等同一条泳道里它上面那条需求跑完、或者干脆等一段固定时间。',
     automationBoardWakeAboveTargetHint: (title) => `等「${title}」结束后发车`,
     automationBoardWakeAboveUnavailable: '上方没有可等待的需求',
     automationBoardCrossWorkspaceRejected: '看板只能接收同一个工作区的需求。',
@@ -976,6 +989,8 @@ const localeTextByLanguage: Record<AppLanguage, LocaleText> = {
     wakeTimerDurationLabel: 'Wait time',
     wakeTimerDurationHint: 'Minutes to wait from the moment the message is armed, up to 7 days (10080 minutes).',
     wakeTimerMinutes: 'minutes',
+    wakeTimerWorkspaceAgentCount: (count) =>
+      `${count} other agent${count === 1 ? '' : 's'} in this workspace`,
     wakeTimerLeftUnavailable: 'No agent tab is available directly on the left',
     wakeTimerBatchLocked: 'This batch is locked; changes apply to the next batch.',
     wakeTimerPendingStatus: 'Waiting to wake',
@@ -1302,7 +1317,11 @@ const localeTextByLanguage: Record<AppLanguage, LocaleText> = {
     automationBoardItemMoreAction: 'More actions',
     automationBoardItemLessAction: 'Hide actions',
     automationBoardAddRequirement: 'Add to standby',
+    automationBoardComposeSettingsLabel: 'Settings',
+    automationBoardComposeSettingsHint:
+      'Applied the moment a requirement joins standby, and remembered by this board — no need to re-pick for every item.',
     automationBoardEmptyLane: 'Drop a requirement or a tab here',
+    automationBoardResizeLane: 'Drag to resize lanes, double-click to reset',
     automationBoardItemCount: (count) => `${count} item${count === 1 ? '' : 's'}`,
     automationBoardPopOutAction: 'Pop out as a tab',
     automationBoardAbsorbTabAction: 'Move into automation board',
@@ -1338,7 +1357,9 @@ const localeTextByLanguage: Record<AppLanguage, LocaleText> = {
     automationBoardTriggerLaneLabel: 'Target lane',
     automationBoardTriggerIntervalLabel: 'Minimum trigger interval (minutes)',
     automationBoardTriggerBadgeTitle: 'Trigger enabled',
-    automationBoardWakeAboveLabel: 'Requirement above',
+    automationBoardWakeAboveLabel: 'Requirement above finishes',
+    automationBoardWakeModeHint:
+      'What releases this requirement: every other agent in this workspace going idle, the requirement above it in the same lane finishing, or a fixed wait.',
     automationBoardWakeAboveTargetHint: (title) => `Waits for "${title}" to finish`,
     automationBoardWakeAboveUnavailable: 'No requirement above to wait for',
     automationBoardCrossWorkspaceRejected: 'A board only accepts requirements from its own workspace.',

@@ -37,7 +37,9 @@ try {
     theme = @(
       'tests/theme-check.spec.ts',
       'tests/board-layout.spec.ts',
-      'tests/automation-board-layout.spec.ts'
+      'tests/automation-board-layout.spec.ts',
+      'tests/automation-board-item-drawer.spec.ts',
+      'tests/automation-template-chrome.spec.ts'
     )
   }
 

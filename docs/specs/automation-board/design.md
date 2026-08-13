@@ -279,8 +279,19 @@ export const resolveAutomationBoardAutoTriggerDecision = ({
 
 于是"左侧 tab" 自动变成"上方需求"，判定函数一个字符不改。变的只有两处**表现**：
 
-1. i18n 文案：新增 `wakeTimerModeAboveItemLabel`（"上方需求"）等，看板语境下渲染这一套而不是"左侧 tab"那一套。
+1. i18n 文案：`automationBoardWakeAboveLabel`（"上方需求完成"）等，看板语境下渲染这一套而不是"左侧 tab"那一套。
 2. CSS：普通卡把唤醒状态条放在 composer 左侧（`.composer-wake-timer-status`，`src/components/ChatCard.tsx:949`）；看板项卡用 `.automation-board-item-wake`，`flex-direction: column` 放在项卡片顶部。
+
+**设置面板是同一个组件（v2.4）。** `src/components/WakeTimerSettingsPanel.tsx` 从 `ChatCard` 的设置菜单里抽出来，`ChatCard`（`context="tab"`）与看板项抽屉（`context="board"`）共用它；两侧的差异只允许落在文案上：
+
+| | `context="tab"` | `context="board"` |
+|---|---|---|
+| `left-tab` 选项 | `wakeTimerModeLeftTab`（"左侧 Tab 完成"） | `automationBoardWakeAboveLabel`（"上方需求完成"） |
+| 没有可等对象 | `wakeTimerLeftUnavailable` | `automationBoardWakeAboveUnavailable` |
+| 条件说明 | `wakeTimerModeHint` | `automationBoardWakeModeHint` |
+| 邻居来源 | `pane.tabs` 的左邻（`PaneView`） | `view.aboveCardId`（`automation-board-view.ts`） |
+
+之所以必须共用而不是各写各的：`wakeTimerMode` 是三选一，任何一侧漏一个分支，用户在那个入口就永久够不到那个模式 —— 抽出面板前的看板就是这个状态。抽屉本身（`AutomationBoardItemDrawer`）随之独立导出，理由与 `AutomationBoardTemplateConfig` 相同：`renderToStaticMarkup` 点不了折叠开关，展开态否则没有单测能覆盖。
 
 `repeatLoopActive` / `repeatLoopRemaining` 同理为零改动 —— `resolveRepeatLoopCompletion` 只看卡片字段，且它的 `MODEL_PICKER_HIDDEN_TOOL_MODELS.has(card.model)` 守卫对看板**项**卡片（真实模型）放行、对看板**容器**卡片（工具模型）拦住，语义刚好正确。
 
@@ -665,6 +676,174 @@ v2.1 全部改成**容器查询**，并且分两层量：
 宽看板（≥ 900px）下模板配置面板改双栏：名称 | 模型 配一行，需求 textarea / 说明文字 / 触发器分组 /
 操作行整行跨栏。为此把 JSX 里的"模型"字段提到"需求"之前 —— 两个单行字段相邻，双栏时才不会
 出现"名称旁边空着半个面板"，同时 tab 顺序仍与视觉顺序一致。
+
+## 泳道宽度可调（v2.2，FR11）
+
+v2.1 让泳道**自动**适应容器宽，v2.2 补上"用户说了算"那一半：三轨档下泳道之间可拖。
+
+### 数据
+
+`automationBoardSchema` 增加：
+
+```ts
+export const automationBoardLaneWidthsSchema = z.object({
+  standby: z.number().finite().positive(),
+  running: z.number().finite().positive(),
+  done: z.number().finite().positive(),
+})
+// automationBoardSchema
+laneWidths: automationBoardLaneWidthsSchema.optional()
+```
+
+**存比例不存像素**：看板宽度由外层列宽 / pane 分屏决定，随时在变，像素值第二天就对不上。三个数只有相对
+大小有意义（`{2,1,1}` 与 `{200,100,100}` 等价），渲染时转成 `fr`。`optional` 而非 default 的理由同
+`automationBoard` 本身：没调过的看板不该往 `state.json` 里塞一份等于默认值的对象。
+
+`server/state-store.ts` 的 `normalizePersistedAutomationBoard` 是**手抄字段**的（`return { items }`），
+新字段必须在那里显式带上，否则存一次盘就被剥掉 —— 这正是 pitfall 5 的形状，回归钉在
+`tests/automation-board-persistence.test.ts`。
+
+### 纯函数（`src/components/automation-board-lane-resize.ts`）
+
+拖拽数学**直接复用** `src/column-resize.ts` 的 `resizeColumnGroups`：泳道与工作区列是同一个问题——
+分隔条两侧的组按比例整体让位、每个成员钉一个最小宽度。手感一致是额外收益，用户对列分隔条的肌肉
+记忆直接迁移过来。本模块只负责三件事：
+
+| 函数 | 职责 |
+|---|---|
+| `resolveAutomationBoardLaneWidths(value)` | 读出三个权重，任一非有限/非正 → 整组退回均分 `[1,1,1]`（局部修补会让比例失真，不如整组回默认） |
+| `getAutomationBoardLaneTracks(values)` | 转成 `minmax(0, Xfr) …` 字符串 |
+| `toAutomationBoardLaneWidths(values)` | 数组 → 按 lane 命名的对象（存盘形状） |
+
+`AUTOMATION_BOARD_LANE_MIN_WIDTH = 150`：低于这个宽度泳道头部的「标题 + 计数胶囊」就开始截断
+（v2.1 那条 240px 的断言量的是**自动**布局下的可读下限，手动拖窄是用户的明确意图，闸门可以更低，
+但不能到 0）。
+
+### 渲染：内联只设变量，绝不设 `grid-template-columns`
+
+```css
+.automation-board-lanes {
+  grid-template-columns: var(
+    --automation-board-lane-drag-tracks,
+    var(--automation-board-lane-tracks, repeat(3, minmax(0, 1fr)))
+  );
+}
+```
+
+三层回落，各有各的拥有者：
+
+| 层 | 谁写 | 什么时候 |
+|---|---|---|
+| `--automation-board-lane-drag-tracks` | 拖拽 handler（命令式） | 只在按住不放的那几百毫秒 |
+| `--automation-board-lane-tracks` | React 内联 style | 每次渲染，值来自 `board.laneWidths` |
+| `repeat(3, minmax(0, 1fr))` | CSS | 从没调过宽度 |
+
+内联 style 的优先级压过任何 CSS 规则，**包括 `@container` 里的窄档覆盖**。所以内联只写自定义属性、
+绝不写 `style.gridTemplateColumns`：后者会把两轨/竖排档永久钉死成三轨，FR11 最后一条当场作废。窄档
+规则整条覆盖 `grid-template-columns`（源码顺序在后，同特异性即胜），变量留在原地不参与——"窄档不
+生效也不丢"就是这么来的。
+
+拖拽层必须是**另一个变量**：React 的 style diff 比的是上一次渲染的值而不是 DOM 现值，一旦命令式脏写
+过 React 管的那个属性，"新旧计算值相同"就会让它跳过写入，脏值永久留在 DOM 上（pitfall 285，实测症状
+是双击恢复均分完全无效而事件/reducer/持久化全对）。
+
+### 分隔条：与泳道同格的 grid item，不占轨
+
+分隔条是 `.automation-board-lanes` 的子元素，`grid-row: 1; grid-column: N`（与左侧那条泳道同格），
+`justify-self: end` + 负 margin 落进 8px 的 gap 中央。**不能**做成独立轨道：
+`tests/automation-board-layout.spec.ts` 的 `countLaneTracks` 数的就是 `gridTemplateColumns` 的 token
+数，多两条轨会把 3/2/1 三档断言全打红，窄档还得再处理分隔条自己的轨宽。
+
+代价是**三条泳道也必须显式占格**（`.automation-board-lane[data-lane='…']`），窄档 `@container` 里再
+整组交回 `auto`：栅格自动放置会跳过被显式占用的格子，分隔条一占 (1,1)/(1,2)，三条泳道就被挤到
+(1,3)/(2,1)/(2,2)（pitfall 284）。**被否决**：分隔条改 `position: absolute` + grid-area 当包含块——
+规范上成立，Chromium 实测两条分隔条双双贴到容器最右边，点第一条实际拖的是第二条。
+
+静息隐形、hover/拖拽时才显出一条强调色线（ui-principles「Idle Chrome Must Recede」，与
+`.column-resize-handle` 同款）。窄档 `display: none`。
+
+### 拖拽
+
+`onPointerDown` → 量三条 `.automation-board-lane` 的实际像素宽 → 每次 `pointermove` 走
+`resizeColumnGroups(startWidths, dividerIndex, deltaX, 150)`，结果写进拖拽层 CSS 变量，不经 React；
+`pointerup` 才 dispatch 一次 `setAutomationBoardLaneWidths`，然后撤掉拖拽层。与
+`WorkspaceColumn.handleColumnResizeStart` 同构——拖拽中每帧派发 reducer 会把整列子树的 memo 全部打穿
+（pitfall 187）。
+
+两处与列分隔条**刻意不同**：
+
+- **不 `preventDefault()`**：pointerdown 上的 preventDefault 会连带压掉后续兼容鼠标事件，`dblclick`
+  就永远收不到。压文字选中改由手柄自己的 `user-select: none`。
+- **没动过就不提交**：`nextWidths === startWidths` 直接返回，免掉"点一下也写一次盘"。
+
+`dblclick` → dispatch `widths: null`，删掉字段回到均分。
+
+### Reducer
+
+```
+setAutomationBoardLaneWidths { columnId, boardCardId, widths: AutomationBoardLaneWidths | null }
+```
+
+走既有的 `updateAutomationBoard` helper。`null` 时从 blob 里 `delete laneWidths`（而不是写一份
+`{1,1,1}`），这样"没调过"和"调回均分"在磁盘上是同一种状态，也不会给旧存档凭空长字段。
+
+## 执行参数：一个组件，两个宿主（v2.3，FR12）
+
+### 为什么不是"再写两个 select"
+
+模板配置面板和待命 composer 需要的是**同一组语义**：provider/model + 思考开关 + 思考深度 + 计划模式 +
+超管权限。而这组语义带着一串 provider/model 相关的规则（Fable 5 强制思考、Codex 老模型没有 max/ultra
+档、planMode 只对 Claude 有意义），这些规则在 `shared/reasoning.ts` 里已经是纯函数。两处各写一遍 select
+的代价不是重复代码，是**规则漂移**：以后加一个模型档位，只改了一处，另一处静默给出非法组合。
+
+所以抽 `AutomationBoardModelSettings`（受控组件，`value` + `onChange(patch)`），模板面板与 composer 各自
+只负责把 patch 落到自己的存储里。导出它是为了让 SSR 单测能直接渲染 —— 与 `AutomationBoardTemplateConfig`
+同一个理由（`renderToStaticMarkup` 点不开折叠面板）。
+
+### 数据：composeDefaults 挂在看板卡片上
+
+```ts
+export const automationBoardComposeDefaultsSchema = z.object({
+  provider: providerSchema.default('codex'),
+  model: z.string().default(''),
+  reasoningEffort: z.string().default(''),
+  thinkingEnabled: z.boolean().default(true),
+  planMode: z.boolean().default(false),
+  adminAccess: z.boolean().default(false),
+})
+// automationBoardSchema
+composeDefaults: automationBoardComposeDefaultsSchema.optional()
+```
+
+**推翻 v2.0 的一个决策。** 原实现把这个选择放在 `useState` 里，注释写的是"落盘反而会让用户下次打开时被
+上次的一次性选择绑住"。实际使用推翻了它：用户连着加需求项时每次都要重选，切走再回来又回到列默认——
+"绑住"是想象出来的成本，"每次重选"是真实成本。改为随看板持久化，那条注释在同一次改动里删掉（AGENTS.md
+「注释即 ADR」：反转决策必须同时反转注释）。
+
+挂在**看板卡片**而不是工作区：一个列里可以有多张看板，"这张看板惯用 Claude 深思、那张跑批量小活"是合理
+诉求；粒度与 `laneWidths` 一致。`optional` 同理——没设置过的看板不写盘。
+
+`reasoningEffort` 的默认值是**空串**而不是 `'max'`：空串的语义是"跟着 provider/model 的默认走"，
+渲染时经 `normalizeReasoningEffortForModel` 解析。写死 `'max'` 会让 Codex 老模型一开箱就是个非法档位。
+
+`server/state-store.ts` 的 `normalizePersistedAutomationBoard` 手抄字段，新字段必须显式带上，否则存一次
+盘就被剥掉（pitfall 5，与 `laneWidths` 同一个坑，回归钉在 `automation-board-persistence.test.ts`）。
+
+### Reducer
+
+```
+setAutomationBoardComposeDefaults { columnId, boardCardId, patch: Partial<AutomationBoardComposeDefaults> }
+```
+
+走既有 `updateAutomationBoard` helper，对 `composeDefaults` 做**浅合并**（面板一次只改一个字段）。合并的
+基底是"当前值 ?? 列默认"，所以第一次改思考深度不会把 provider/model 抹成 schema 默认的 `codex::''`。
+
+### 创建路径
+
+`createAutomationBoardItem` reducer 早就接受 `reasoningEffort / thinkingEnabled / planMode / adminAccess`
+（模板实例化那条路一直在用），v2.3 只是把 composer 的这几个值接到同一个入口 —— `App.tsx` 的
+`createItem` 之前只转发了 provider/model，其余字段在半路掉了。这也是为什么模板早就存着这些字段却"配不了"：
+缺的自始至终是入口，不是能力。
 
 ## 测试策略（v2 增量）
 

@@ -56,7 +56,6 @@ import type {
   ModelPromptRule,
   Provider,
   SlashCommand,
-  WakeTimerMode,
 } from '../../shared/schema'
 import {
   defaultCodexChatSettings,
@@ -99,6 +98,7 @@ import {
 } from './chat-scroll'
 import { syncComposerTextareaHeight } from './chat-composer-textarea'
 import { ComposerSettingsRow } from './ComposerSettingsRow'
+import { WakeTimerSettingsPanel } from './WakeTimerSettingsPanel'
 import {
   collectPastedFilePaths,
   formatPastedFilePathInsertion,
@@ -4825,80 +4825,15 @@ const ChatCardView = ({
                             </div>
                           ) : null}
                           {wakeTimerEnabled ? (
-                            <div className="composer-wake-timer-module">
-                              <ComposerSettingsRow label={text.wakeTimerLabel} hint={text.wakeTimerHint}>
-                                <input
-                                  type="checkbox"
-                                  className="composer-settings-checkbox"
-                                  checked={card.wakeTimerActive === true}
-                                  onChange={(event) => onPatchCard({ wakeTimerActive: event.target.checked })}
-                                />
-                              </ComposerSettingsRow>
-                              {card.wakeTimerActive === true ? (
-                                <>
-                                  <ComposerSettingsRow
-                                    label={text.wakeTimerModeLabel}
-                                    hint={text.wakeTimerModeHint}
-                                  >
-                                    <select
-                                      className="reasoning-select"
-                                      value={wakeTimerMode}
-                                      disabled={hasWakeTimerBatch}
-                                      onChange={(event) =>
-                                        onPatchCard({ wakeTimerMode: event.target.value as WakeTimerMode })
-                                      }
-                                    >
-                                      <option value="workspace-agents">{text.wakeTimerModeWorkspace}</option>
-                                      <option value="left-tab">{text.wakeTimerModeLeftTab}</option>
-                                      <option value="duration">{text.wakeTimerModeDuration}</option>
-                                    </select>
-                                  </ComposerSettingsRow>
-                                  {wakeTimerMode === 'duration' ? (
-                                    <ComposerSettingsRow
-                                      className="composer-wake-timer-duration-row"
-                                      label={text.wakeTimerDurationLabel}
-                                      hint={text.wakeTimerDurationHint}
-                                    >
-                                      <span className="composer-wake-timer-duration-control">
-                                        <input
-                                          type="number"
-                                          className="control composer-wake-timer-duration-input"
-                                          min={1}
-                                          max={10080}
-                                          step={1}
-                                          value={card.wakeTimerDurationMinutes ?? 30}
-                                          disabled={hasWakeTimerBatch}
-                                          onChange={(event) => {
-                                            const next = Number(event.target.value)
-                                            if (Number.isFinite(next)) {
-                                              onPatchCard({
-                                                wakeTimerDurationMinutes: Math.min(Math.max(next, 1), 10080),
-                                              })
-                                            }
-                                          }}
-                                        />
-                                        <span>{text.wakeTimerMinutes}</span>
-                                      </span>
-                                    </ComposerSettingsRow>
-                                  ) : null}
-                                  {wakeTimerLeftUnavailable ? (
-                                    <div className="composer-settings-note is-warning">
-                                      {text.wakeTimerLeftUnavailable}
-                                    </div>
-                                  ) : null}
-                                  {wakeTimerMode === 'workspace-agents' ? (
-                                    <div className="composer-settings-note">
-                                      {language === 'en'
-                                        ? `${workspaceWakeTimerAgentCount} other agent${workspaceWakeTimerAgentCount === 1 ? '' : 's'} in this workspace`
-                                        : `本工作区有 ${workspaceWakeTimerAgentCount} 个其他 Agent`}
-                                    </div>
-                                  ) : null}
-                                  {hasWakeTimerBatch ? (
-                                    <div className="composer-settings-note">{text.wakeTimerBatchLocked}</div>
-                                  ) : null}
-                                </>
-                              ) : null}
-                            </div>
+                            <WakeTimerSettingsPanel
+                              language={language}
+                              context="tab"
+                              card={card}
+                              neighbourTarget={leftWakeTimerTarget ?? null}
+                              workspaceAgentCount={workspaceWakeTimerAgentCount}
+                              locked={hasWakeTimerBatch}
+                              onPatch={onPatchCard}
+                            />
                           ) : null}
                           <ComposerSettingsRow label={text.thinking} hint={text.thinkingHint}>
                             <input

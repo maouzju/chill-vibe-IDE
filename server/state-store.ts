@@ -41,6 +41,7 @@ import {
 import { normalizeReasoningEffort } from '../shared/reasoning.js'
 import {
   appStateSchema,
+  automationBoardLanes,
   automationBoardRequirementMaxChars,
   automationBoardWorkspaceStateSchema,
   closedWorkspaceLoadRequestSchema,
@@ -53,6 +54,8 @@ import {
   type AppStateLoadResponse,
   type AutomationBoardItem,
   type AutomationBoardLane,
+  type AutomationBoardComposeDefaults,
+  type AutomationBoardLaneWidths,
   type BoardColumn,
   type ChatCard,
   type ClosedWorkspaceLoadRequest,
@@ -673,6 +676,54 @@ const normalizePersistedPm = (value: unknown, fallback: ChatCard['pm']): ChatCar
 const normalizePersistedAutomationBoardLane = (value: unknown): AutomationBoardLane =>
   value === 'running' || value === 'done' ? value : 'standby'
 
+/**
+ * 泳道宽度是三个权重，只有相对大小有意义。任何一条不可用（0 / 负 / NaN / 手改坏
+ * 的存档）就整组丢弃回默认均分：一条 0 宽的泳道彻底不可见，而且没有任何 UI 能把
+ * 它拖回来。判定与渲染侧 `resolveAutomationBoardLaneWidths` 必须一致。
+ */
+const normalizePersistedAutomationBoardLaneWidths = (
+  value: unknown,
+): AutomationBoardLaneWidths | undefined => {
+  if (!isRecord(value)) {
+    return undefined
+  }
+
+  const widths = automationBoardLanes.map((lane) => value[lane])
+
+  if (widths.some((width) => typeof width !== 'number' || !Number.isFinite(width) || width <= 0)) {
+    return undefined
+  }
+
+  return {
+    standby: widths[0] as number,
+    running: widths[1] as number,
+    done: widths[2] as number,
+  }
+}
+
+/**
+ * 「加入待命」输入区记住的执行参数。这里刻意**不**校验 model / reasoningEffort
+ * 的具体取值：档位随 provider 与 model 变（见 shared/reasoning.ts），渲染侧本来
+ * 就要做一次 model 感知归一化，在存储层再判一次只会两处规则漂移。存不下来的只有
+ * 类型不对的值。
+ */
+const normalizePersistedAutomationBoardComposeDefaults = (
+  value: unknown,
+): AutomationBoardComposeDefaults | undefined => {
+  if (!isRecord(value)) {
+    return undefined
+  }
+
+  return {
+    provider: value.provider === 'claude' ? 'claude' : 'codex',
+    model: typeof value.model === 'string' ? value.model : '',
+    reasoningEffort: typeof value.reasoningEffort === 'string' ? value.reasoningEffort : '',
+    thinkingEnabled: value.thinkingEnabled !== false,
+    planMode: value.planMode === true,
+    adminAccess: value.adminAccess === true,
+  }
+}
+
 const normalizePersistedAutomationBoard = (value: unknown): ChatCard['automationBoard'] => {
   const record = isRecord(value) ? value : {}
   const rawItems = Array.isArray(record.items) ? record.items : []
@@ -704,9 +755,20 @@ const normalizePersistedAutomationBoard = (value: unknown): ChatCard['automation
     })
   }
 
-  // v2 起看板 blob 只剩 items：v1 的 supervisorCardId / supervisorExpanded 在这里
-  // 被静默丢弃（"监工"已经是一个普通模板 + 普通看板项，没有专属指针）。
-  return { items }
+  // v2 起看板 blob 只剩 items 与 laneWidths：v1 的 supervisorCardId /
+  // supervisorExpanded 在这里被静默丢弃（"监工"已经是一个普通模板 + 普通看板项，
+  // 没有专属指针）。
+  //
+  // 这个函数是**手抄字段**的，所以每加一个看板 blob 字段都必须在这里显式带上，
+  // 否则存一次盘就被剥掉 —— 症状是"拖完宽度，重启又变回均分"（pitfall 5）。
+  const laneWidths = normalizePersistedAutomationBoardLaneWidths(record.laneWidths)
+  const composeDefaults = normalizePersistedAutomationBoardComposeDefaults(record.composeDefaults)
+
+  return {
+    items,
+    ...(laneWidths ? { laneWidths } : {}),
+    ...(composeDefaults ? { composeDefaults } : {}),
+  }
 }
 
 /**

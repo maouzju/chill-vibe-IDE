@@ -484,10 +484,16 @@ const createHttpWorkspaceContext = () => {
   }
 }
 
+// 症状：Claude / Codex 两端都报 `Failed to connect: chill_vibe_workspace`，超管
+// 权限从上线起就是死的（2026-08-13 实测：换行帧发 initialize，服务端一个字节
+// 都不回）。根因：这里原来写的是 LSP 的 `Content-Length` 分帧，而 MCP 的 stdio
+// 绑定是**换行分隔**的 JSON-RPC —— 规范原文 "the stdio binding is just
+// newline-delimited JSON-RPC over a byte stream"。为什么不能"两种都收"：出站
+// 只有一种格式，多写一个 Content-Length 头就把换行帧客户端的流污染成垃圾，
+// 而 LSP 客户端在这里一个都不存在。JSON.stringify 会把内容里的换行转义掉，
+// 所以一条消息永远落在一行里。
 const sendMessage = (message) => {
-  const payload = Buffer.from(JSON.stringify(message), 'utf8')
-  process.stdout.write(`Content-Length: ${payload.length}\r\n\r\n`)
-  process.stdout.write(payload)
+  process.stdout.write(`${JSON.stringify(message)}\n`)
 }
 
 const sendError = (id, code, message) => {
@@ -544,32 +550,21 @@ const handleRequest = async (request, context) => {
 
 const startStdioServer = () => {
   const context = createHttpWorkspaceContext()
-  let buffer = Buffer.alloc(0)
+  let pending = ''
 
+  process.stdin.setEncoding('utf8')
   process.stdin.on('data', (chunk) => {
-    buffer = Buffer.concat([buffer, Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)])
+    pending += chunk
 
-    while (true) {
-      const headerEnd = buffer.indexOf('\r\n\r\n')
-      if (headerEnd === -1) {
-        return
+    // 一行 = 一条消息。最后一段可能是半条，留在 pending 里等下一个 chunk。
+    const lines = pending.split('\n')
+    pending = lines.pop() ?? ''
+
+    for (const line of lines) {
+      const payload = line.trim()
+      if (!payload) {
+        continue
       }
-
-      const headerText = buffer.subarray(0, headerEnd).toString('utf8')
-      const lengthMatch = headerText.match(/Content-Length: (\d+)/i)
-      if (!lengthMatch) {
-        buffer = Buffer.alloc(0)
-        return
-      }
-
-      const contentLength = Number(lengthMatch[1])
-      const messageEnd = headerEnd + 4 + contentLength
-      if (buffer.length < messageEnd) {
-        return
-      }
-
-      const payload = buffer.subarray(headerEnd + 4, messageEnd).toString('utf8')
-      buffer = buffer.subarray(messageEnd)
 
       let request
       try {

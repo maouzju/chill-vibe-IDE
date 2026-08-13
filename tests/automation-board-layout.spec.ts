@@ -93,7 +93,11 @@ const fillerColumn = (index: number) => ({
   ],
 })
 
-const createState = (columnCount: number, theme: 'dark' | 'light') =>
+const createState = (
+  columnCount: number,
+  theme: 'dark' | 'light',
+  laneWidths?: { standby: number; running: number; done: number },
+) =>
   createPlaywrightState({
     version: 1 as const,
     settings: {
@@ -151,6 +155,7 @@ const createState = (columnCount: number, theme: 'dark' | 'light') =>
             draft: '',
             messages: [],
             automationBoard: {
+              ...(laneWidths ? { laneWidths } : {}),
               items: [
                 {
                   cardId: 'item-standby-a',
@@ -185,10 +190,15 @@ const createState = (columnCount: number, theme: 'dark' | 'light') =>
     ],
   })
 
-const installMockApis = async (page: Page, columnCount: number, theme: 'dark' | 'light') => {
+const installMockApis = async (
+  page: Page,
+  columnCount: number,
+  theme: 'dark' | 'light',
+  laneWidths?: { standby: number; running: number; done: number },
+) => {
   await installMockElectronBridge(page)
 
-  let state = createState(columnCount, theme)
+  let state = createState(columnCount, theme, laneWidths)
 
   await page.route('**/api/state', async (route) => {
     const request = route.request()
@@ -285,6 +295,69 @@ test('a squeezed board keeps every lane readable instead of shrinking three of t
   for (const laneWidth of laneWidths) {
     expect(laneWidth).toBeGreaterThan(240)
   }
+})
+
+const laneWidths = (page: Page) =>
+  page
+    .locator('.automation-board-lane')
+    .evaluateAll((nodes) => nodes.map((node) => node.getBoundingClientRect().width))
+
+test('dragging a lane divider widens one lane and makes the other two give way', async ({
+  page,
+}) => {
+  await installMockApis(page, 1, 'dark')
+  await page.setViewportSize({ width: 1440, height: 1000 })
+  await page.goto(appUrl)
+  await expect(page.locator('.automation-board')).toBeVisible()
+
+  const before = await laneWidths(page)
+
+  const handle = page.locator('.automation-board-lane-resize-handle').first()
+  const box = (await handle.boundingBox())!
+  const centerY = box.y + box.height / 2
+  await page.mouse.move(box.x + box.width / 2, centerY)
+  await page.mouse.down()
+  await page.mouse.move(box.x + box.width / 2 + 200, centerY, { steps: 8 })
+  await page.mouse.up()
+
+  const after = await laneWidths(page)
+
+  expect(after[0]!).toBeGreaterThan(before[0]! + 150)
+  expect(after[1]!).toBeLessThan(before[1]!)
+  expect(after[2]!).toBeLessThan(before[2]!)
+  // 分隔条与左侧泳道同格、不占独立轨道，所以拖完轨数还是 3。
+  expect(await countLaneTracks(page)).toBe(3)
+
+  // 双击回到均分。
+  await handle.dblclick()
+  const reset = await laneWidths(page)
+  expect(Math.abs(reset[0]! - reset[1]!)).toBeLessThan(2)
+  expect(Math.abs(reset[1]! - reset[2]!)).toBeLessThan(2)
+})
+
+test('a saved lane ratio applies on a wide board and steps aside on a narrow one', async ({
+  page,
+}) => {
+  await installMockApis(page, 1, 'dark', { standby: 600, running: 300, done: 300 })
+  await page.setViewportSize({ width: 1440, height: 1000 })
+  await page.goto(appUrl)
+  await expect(page.locator('.automation-board')).toBeVisible()
+
+  const wide = await laneWidths(page)
+  expect(wide[0]!).toBeGreaterThan(wide[1]! * 1.6)
+
+  await page.close()
+
+  // 同一份自定义宽度，换到窄档：内联样式若写的是 grid-template-columns 而不是
+  // 一个自定义属性，这里会被永久钉死成三轨。
+  const narrow = await page.context().newPage()
+  await installMockApis(narrow, 3, 'dark', { standby: 600, running: 300, done: 300 })
+  await narrow.setViewportSize({ width: 1440, height: 1000 })
+  await narrow.goto(appUrl)
+  await expect(narrow.locator('.automation-board')).toBeVisible()
+
+  expect(await countLaneTracks(narrow)).toBe(1)
+  await expect(narrow.locator('.automation-board-lane-resize-handle').first()).toBeHidden()
 })
 
 test('the compose row keeps the model picker and the primary action on one line', async ({

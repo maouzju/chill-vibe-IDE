@@ -176,9 +176,40 @@ export const automationBoardItemSchema = z.object({
 })
 export type AutomationBoardItem = z.infer<typeof automationBoardItemSchema>
 
+// 用户拖出来的泳道宽度。存的是**比例**不是像素：看板宽度由外层列宽与 pane 分屏
+// 决定、随时在变，像素值第二天就对不上。三个数只有相对大小有意义，渲染时转成 fr。
+export const automationBoardLaneWidthsSchema = z.object({
+  standby: z.number().finite().positive(),
+  running: z.number().finite().positive(),
+  done: z.number().finite().positive(),
+})
+export type AutomationBoardLaneWidths = z.infer<typeof automationBoardLaneWidthsSchema>
+
+// 「加入待命」输入区上次选的执行参数。v2.0 把它放在组件 useState 里，理由是
+// "落盘会让用户被上次的一次性选择绑住"；实际使用推翻了这条 —— 连着加十个需求项
+// 要重选十次，切走再回来又回到列默认。绑住是想象的成本，重选是真实的成本。
+//
+// reasoningEffort 默认空串而不是 'max'：空串的语义是"跟着 provider/model 的默认
+// 走"，渲染时经 normalizeReasoningEffortForModel 解析。写死 'max' 会让不支持该
+// 档位的 Codex 老模型一开箱就带一个非法档。
+export const automationBoardComposeDefaultsSchema = z.object({
+  provider: providerSchema.default('codex'),
+  model: z.string().default(''),
+  reasoningEffort: z.string().default(''),
+  thinkingEnabled: z.boolean().default(true),
+  planMode: z.boolean().default(false),
+  adminAccess: z.boolean().default(false),
+})
+export type AutomationBoardComposeDefaults = z.infer<typeof automationBoardComposeDefaultsSchema>
+
 export const automationBoardSchema = z.object({
   // 泳道内顺序 = 本数组内的相对顺序（按 lane 过滤后保序）。
   items: z.array(automationBoardItemSchema).default([]),
+  // optional 而非 default：没调过宽度的看板不该往 state.json 里塞一份等于默认值
+  // 的对象，"从没调过"与"调回均分"在磁盘上也该是同一种状态。
+  laneWidths: automationBoardLaneWidthsSchema.optional(),
+  // 同样 optional 同样的理由：没动过设置的看板不该凭空长出这个字段。
+  composeDefaults: automationBoardComposeDefaultsSchema.optional(),
 })
 export type AutomationBoard = z.infer<typeof automationBoardSchema>
 

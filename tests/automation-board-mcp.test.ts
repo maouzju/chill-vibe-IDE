@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict'
+import { spawn } from 'node:child_process'
 import http from 'node:http'
 import test from 'node:test'
+import { fileURLToPath } from 'node:url'
 
 import {
   buildSessionTranscriptText,
@@ -951,3 +953,96 @@ test('workspace admin bridge start is idempotent and stop releases the port', as
     fetch(`${first.url}/workspace?columnId=col-1`, { headers: { Authorization: `Bearer ${first.token}` } }),
   )
 })
+
+// MCP 的 stdio 绑定是**换行分隔**的 JSON-RPC（规范原文："the stdio binding is
+// just newline-delimited JSON-RPC over a byte stream"），不是 LSP 的
+// Content-Length 分帧。这条用例走真子进程握手，因为帧格式错的表现是"服务端
+// 一个字节都不回"—— 任何只 import 纯函数的单测都看不见它。
+test(
+  'the stdio server speaks newline-delimited JSON-RPC so real MCP clients can connect',
+  { timeout: 20_000 },
+  async () => {
+    const scriptPath = fileURLToPath(new URL('../server/automation-board-mcp.js', import.meta.url))
+    const child = spawn(process.execPath, [scriptPath], {
+      stdio: ['pipe', 'pipe', 'pipe'],
+      env: {
+        ...process.env,
+        [workspaceAdminMcpUrlEnvKey]: 'http://127.0.0.1:1',
+        [workspaceAdminMcpTokenEnvKey]: 'token',
+        [workspaceAdminMcpColumnIdEnvKey]: 'col-1',
+        [workspaceAdminMcpSelfCardIdEnvKey]: 'self-card',
+      },
+    })
+
+    try {
+      const lines: string[] = []
+      let pending = ''
+      let resolveTwoLines = () => {}
+      const twoLines = new Promise<void>((resolve) => {
+        resolveTwoLines = resolve
+      })
+
+      child.stdout.setEncoding('utf8')
+      child.stdout.on('data', (chunk: string) => {
+        pending += chunk
+        const parts = pending.split('\n')
+        pending = parts.pop() ?? ''
+        for (const part of parts) {
+          if (part.trim()) {
+            lines.push(part)
+          }
+        }
+        if (lines.length >= 2) {
+          resolveTwoLines()
+        }
+      })
+
+      child.stdin.write(
+        `${JSON.stringify({
+          jsonrpc: '2.0',
+          id: 1,
+          method: 'initialize',
+          params: {
+            protocolVersion: '2025-03-26',
+            capabilities: {},
+            clientInfo: { name: 'chill-vibe-test', version: '1.0.0' },
+          },
+        })}\n`,
+      )
+      child.stdin.write(`${JSON.stringify({ jsonrpc: '2.0', id: 2, method: 'tools/list', params: {} })}\n`)
+
+      // 缺陷形态是"永不响应"，所以红阶段必须自己超时报错而不是挂死（pitfall 271/273）。
+      await Promise.race([
+        twoLines,
+        new Promise<never>((_, reject) => {
+          setTimeout(
+            () => reject(new Error(`stdio server never answered; raw stdout so far: ${JSON.stringify(pending)}`)),
+            8_000,
+          ).unref()
+        }),
+      ])
+
+      const initialize = JSON.parse(lines[0]) as {
+        id: number
+        result?: { serverInfo?: { name?: string } }
+      }
+      assert.equal(initialize.id, 1)
+      assert.equal(initialize.result?.serverInfo?.name, 'chill-vibe-workspace-admin')
+
+      const toolsList = JSON.parse(lines[1]) as { id: number; result?: { tools?: { name: string }[] } }
+      assert.equal(toolsList.id, 2)
+      assert.deepEqual(
+        (toolsList.result?.tools ?? []).map((tool) => tool.name).sort(),
+        workspaceAdminMcpToolDefinitions.map((tool) => tool.name).sort(),
+      )
+
+      // 一个 Content-Length 头就足以让换行帧的客户端把整条流当垃圾丢掉。
+      assert.ok(
+        !lines.some((line) => line.includes('Content-Length')),
+        'stdio frames must not carry LSP headers',
+      )
+    } finally {
+      child.kill()
+    }
+  },
+)

@@ -76,9 +76,11 @@ const defaultReasoningEffortByProvider: Record<Provider, ReasoningEffort> = {
 export const getDefaultReasoningEffort = (provider: Provider) =>
   defaultReasoningEffortByProvider[provider]
 
-// Fable 5 cannot turn thinking off: the session toggle and `--effort none`
-// have no effect there, and the model decides per step how much to think based
-// on the effort level. Claude Code's own detection rule is "the model ID
+// Fable 5 cannot turn thinking off: the session toggle has no effect there, and
+// the model decides per step how much to think based on the effort level.
+// (Nothing turns thinking off on any model — the CLI has no such switch at all;
+// see pitfall #289. Fable is special only in that it also ignores the lowest
+// tier as a stand-in.) Claude Code's own detection rule is "the model ID
 // contains claude-fable-5"; the bare-alias forms cover hand-typed custom
 // model values.
 export const isClaudeAlwaysThinkingModel = (model?: string | null): boolean => {
@@ -127,8 +129,9 @@ const getCodexReasoningOptionValuesForModel = (model?: string | null): CodexReas
   return base
 }
 
-// Model-aware tier menu: Fable 5 hides `auto` because auto rides the
-// thinking-disabled path, which does not exist on an always-thinking model.
+// Model-aware tier menu: Fable 5 hides `auto` because auto means "omit --effort
+// and let the CLI pick", and Fable always needs an explicit tier (it degrades to
+// its own high default instead).
 export const getReasoningOptionsForModel = (
   provider: Provider,
   model?: string | null,
@@ -163,15 +166,14 @@ export const normalizeReasoningEffort = (
 // The Claude CLI `--effort` flag rejects the literal "ultracode" (it only
 // accepts low/medium/high/xhigh/max). The ultracode tier is realized by sending
 // xhigh on the flag plus the official `"ultracode": true` session settings key
-// (Claude Code v2.1.157+). `auto` likewise isn't a flag value, so callers pass
-// it through their own thinking-disabled handling.
+// (Claude Code v2.1.157+).
+//
+// 这里曾经还有一个 `toClaudeEffortFlag`（少一个 Value）：零调用、但导出，且喂它
+// `auto` 会原样吐出 `'auto'` —— 与 pitfall #289 里的 `none` 完全同一类 CLI 不认
+// 的值。它的名字是真正出口 `toClaudeEffortFlagValue` 的严格前缀，自动补全和 grep
+// 都会先撞上它，第一个接线的人就会静默重演那个 bug。已删除：档位出口只留一个。
 export const isUltracodeEffort = (effort?: string | null): boolean =>
   normalizeReasoningEffort('claude', effort) === 'ultracode'
-
-export const toClaudeEffortFlag = (effort?: string | null): ReasoningEffort => {
-  const normalized = normalizeReasoningEffort('claude', effort)
-  return normalized === 'ultracode' ? 'xhigh' : normalized
-}
 
 // Model-aware normalization for persisted card tiers: on Fable 5 the auto
 // (thinking-off) tier and empty/unknown values land on the model default high
@@ -209,22 +211,40 @@ export const normalizeReasoningEffortForModel = (
   return matched
 }
 
-// Single exit point for the `--effort` flag value. Fable 5 never receives
-// `none` — thinking-off and the auto tier degrade to its high default there;
-// every other model keeps the legacy thinking-off → none contract, and auto
-// consistently rides that path instead of leaking the invalid literal "auto"
-// onto the flag.
+// Single exit point for the `--effort` flag value. `null` means "omit the flag
+// entirely" — callers must not stringify it onto the command line.
+//
+// 症状：选「自动」或关掉思考的会话，CLI 每轮都打
+//   Warning: Unknown --effort value 'none' — ignoring it and using the default effort.
+// 两个档位因此双双失效，用户的选择被静默丢弃。
+// 根因：`none` 从来不是 CLI 认的值。2026-08-13 实测 `claude --effort none` 与
+// `claude --effort bogus` 输出完全相同的警告、同样回落默认档；`claude --help`
+// 只列 low/medium/high/xhigh/max，且 CLI 没有任何关闭思考的开关。
+// 为什么不能继续传 none：它与拼错的值完全等价。auto 省略 flag 才是真正的
+// 「跟随 CLI 默认」；关思考落在 low —— 合法值里唯一忠实于「别想太多」意图的
+// 档，省略 flag 反而会让默认档比用户要的更深。
+// Fable 5 例外：思考关不掉，auto 与关思考都退回它的 high 默认。
 export const toClaudeEffortFlagValue = (
   model: string | null | undefined,
   effort: string | null | undefined,
   thinkingDisabled: boolean,
-): string => {
+): string | null => {
   const normalized = normalizeReasoningEffort('claude', effort)
 
-  if (thinkingDisabled || normalized === 'auto') {
-    return isClaudeAlwaysThinkingModel(model)
+  if (isClaudeAlwaysThinkingModel(model)) {
+    return thinkingDisabled || normalized === 'auto'
       ? getDefaultReasoningEffortForModel('claude', model)
-      : 'none'
+      : normalized === 'ultracode'
+        ? 'xhigh'
+        : normalized
+  }
+
+  if (thinkingDisabled) {
+    return 'low'
+  }
+
+  if (normalized === 'auto') {
+    return null
   }
 
   return normalized === 'ultracode' ? 'xhigh' : normalized

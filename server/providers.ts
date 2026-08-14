@@ -3386,12 +3386,21 @@ export const buildClaudeKeepaliveSignature = (
   JSON.stringify({
     workspace: request.workspacePath,
     model: request.model ?? '',
-    // Use the normalized tier (not the --effort flag value) so ultracode keeps a
-    // distinct keepalive process from xhigh/max: ultracode launches with an
-    // extra `"ultracode": true` --settings key, so it must not share a pooled CLI.
+    // 签的是真正上命令行的那个 `--effort`（null = 省略，即 auto 档），外加一个
+    // ultracode 布尔 —— 两者缺一不可：
+    // · 只签 flag 会让 ultracode 和普通 xhigh 共用进程（两者 flag 都是 xhigh，
+    //   只差 `"ultracode": true` 这个 --settings 键），那是真正的串档。
+    // · 反过来签原始档位则会过度分区：关思考+low 与开思考+low 生成不同签名，
+    //   spawn 出的 argv 却逐字节相同，于是 acquireForTurn 判定签名不符，把一个
+    //   还热着、可能正跑着后台任务的池化子进程 kill 掉，只为用同样的参数重启。
     effort: includeEffort
-      ? `${request.thinkingEnabled === false ? 'none' : normalizeReasoningEffort('claude', request.reasoningEffort)}`
+      ? toClaudeEffortFlagValue(
+          request.model,
+          request.reasoningEffort,
+          request.thinkingEnabled === false,
+        ) ?? 'omitted'
       : 'omitted',
+    ultracode: request.thinkingEnabled !== false && isUltracodeEffort(request.reasoningEffort),
     plan: Boolean(request.planMode),
     language: normalizeLanguage(request.language),
     systemPrompt: request.systemPrompt,
@@ -3950,9 +3959,10 @@ export const buildClaudeArgs = (
     args.push('--input-format', 'stream-json')
   }
   const thinkingDisabled = request.thinkingEnabled === false
-  // `--effort` only accepts low/medium/high/xhigh/max (plus none to disable
-  // thinking). The model-aware exit point keeps Fable 5 clear of `none` —
-  // thinking cannot be turned off there — and maps ultracode to xhigh.
+  // `--effort` only accepts low/medium/high/xhigh/max — there is no `none`, and
+  // the CLI has no thinking-off switch at all. The model-aware exit point
+  // returns null when the flag must be omitted (the auto tier), maps
+  // thinking-off to low, keeps Fable 5 on its high default, ultracode to xhigh.
   const effortFlagValue = toClaudeEffortFlagValue(
     request.model,
     request.reasoningEffort,
@@ -4108,7 +4118,9 @@ export const buildClaudeArgs = (
     args.push('--model', request.model)
   }
 
-  if (options?.includeEffort !== false) {
+  // effortFlagValue === null 是「自动」档：省略 flag 让 CLI 用自己的默认，
+  // 而不是把 null 拼成字符串送上命令行。
+  if (options?.includeEffort !== false && effortFlagValue !== null) {
     args.push('--effort', effortFlagValue)
   }
   args.push('--append-system-prompt', systemPrompt)

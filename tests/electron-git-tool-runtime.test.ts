@@ -198,7 +198,7 @@ const createHeavyPaneStateDir = async (workspacePath: string) => {
 }
 
 after(async () => {
-  await Promise.all(tempRoots.map((root) => rm(root, { recursive: true, force: true })))
+  await Promise.all(tempRoots.map((root) => rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 })))
 })
 
 const createElectronRuntimeEnv = (dataDir: string, repoPath: string) => {

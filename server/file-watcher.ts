@@ -1,7 +1,7 @@
 import { watch, type FSWatcher } from 'node:fs'
 import path from 'node:path'
 
-import { ensureWithinWorkspace } from './file-system.js'
+import { ensureWithinWorkspace, type WorkspacePathGuardOptions } from './file-system.js'
 
 /** Why an arm attempt did not produce a live watcher. */
 export type FileWatchFailureReason =
@@ -71,10 +71,11 @@ export class FileWatcherManager {
     workspacePath: string,
     relativePath: string,
     subscriptionId: string,
+    options?: WorkspacePathGuardOptions,
   ): FileWatchSubscribeResult {
     let targetPath: string
     try {
-      targetPath = ensureWithinWorkspace(workspacePath, relativePath)
+      targetPath = ensureWithinWorkspace(workspacePath, relativePath, options)
     } catch {
       return { subscribed: false, reason: 'outside-workspace' }
     }

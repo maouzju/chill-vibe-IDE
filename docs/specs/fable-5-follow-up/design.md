@@ -36,13 +36,16 @@ normalizeReasoningEffortForModel(provider, model, effort): ReasoningEffort
   // 先 normalizeReasoningEffort；claude + fable 且结果为 'auto' → 'high'
   // 空/未知值在 fable 上落到模型默认 'high' 而非 provider 默认 'max'
 
-toClaudeEffortFlagValue(model, effort, thinkingDisabled): string
-  // 统一出口，替代 buildClaudeArgs 内联三元：
+toClaudeEffortFlagValue(model, effort, thinkingDisabled): string | null
+  // 统一出口，替代 buildClaudeArgs 内联三元（null = 整个 --effort flag 省略）：
   //   fable：thinkingDisabled 或 auto → 'high'；ultracode → 'xhigh'；其余原样
-  //   非 fable：thinkingDisabled 或 auto → 'none'；ultracode → 'xhigh'；其余原样
+  //   非 fable：auto → null（省略 flag）；thinkingDisabled → 'low'；
+  //             ultracode → 'xhigh'；其余原样
 ```
 
-`auto → none` 的归一化收敛了一个既有边缘：旧代码只在 `thinkingDisabled` 时发 `none`，若卡片带 `auto` 但 `thinkingEnabled !== false` 会把非法值 `auto` 发给 `--effort`。
+这里收敛了一个既有边缘：旧代码只在 `thinkingDisabled` 时特判，若卡片带 `auto` 但 `thinkingEnabled !== false`，非法值 `auto` 会直接发给 `--effort`。
+
+> **2026-08-13 修订：本节原先写的 `auto → 'none'` 已被推翻。** `none` 从来不是 Claude CLI 接受的值——实测它与随手拼错的值待遇完全相同，只换来一行 `Warning: Unknown --effort value 'X' — ignoring it and using the default effort.`，于是「自动」档与「关闭思考」开关**双双失效**。现在 auto 省略整个 flag（这才是真正的「跟随 CLI 默认」），关思考落 `low`（CLI 没有关闭思考的开关，low 是合法值里最贴近的一档）。详见 `AGENTS.md` pitfall #289。
 
 ## 3. `server/providers.ts` — `buildClaudeArgs`
 

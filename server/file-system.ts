@@ -137,10 +137,37 @@ const scoreSearchEntry = (entry: FileSearchEntry, normalizedQuery: string) => {
 const toPathComparisonKey = (value: string) =>
   process.platform === 'win32' ? value.toLowerCase() : value
 
-export const ensureWithinWorkspace = (workspacePath: string, relativePath: string): string => {
+export type WorkspacePathGuardOptions = {
+  /**
+   * Only the Electron desktop IPC channel sets this (see electron/backend.ts).
+   * HTTP routes must never forward it — see the decision comment below.
+   */
+  allowOutsideWorkspace?: boolean
+}
+
+// 症状 (2026-08-14): agent 改了工作区外的文件后，改动卡里点它开出的编辑器是空的 —— 用户看到的
+//   其实是本函数抛出的裸英文 "Path traversal is not allowed."。
+// 根因: 渲染侧 resolveOpenableFilePath (src/components/structured-file-paths.ts:162) 故意放行
+//   工作区外的绝对路径，注释写明「服务端白名单是最终闸门」；而这里的白名单只有 workspace、
+//   ~/.claude、~/.codex 三个根，这个场景的闸门从来没开过。
+// 为什么不能直接无条件放开: 主 Express 的 127.0.0.1 只是默认值，HOST 环境变量能改成 0.0.0.0
+//   (server/index.ts:115)，那样任意局域网设备就能读整盘。放行因此挂在**通道**上而不是路径上：
+//   桌面 IPC (仅本机渲染进程可达) 显式 opt-in，HTTP 路由不传，请求体里也没有对应字段可被构造。
+// 为什么只放绝对路径: 绝对路径是用户在 UI 上真的看见并点击的那个文件；相对路径是「在工作区里
+//   寻址」的语义，`../../etc/passwd` 与逃逸链接在任何通道下都没有正当用途。
+export const ensureWithinWorkspace = (
+  workspacePath: string,
+  relativePath: string,
+  options?: WorkspacePathGuardOptions,
+): string => {
   const resolved = path.resolve(workspacePath, relativePath)
   const normalizedWorkspace = path.resolve(workspacePath)
   const resolvedKey = toPathComparisonKey(resolved)
+
+  if (options?.allowOutsideWorkspace && path.isAbsolute(relativePath)) {
+    return resolved
+  }
+
   if (
     resolvedKey.startsWith(toPathComparisonKey(normalizedWorkspace + path.sep)) ||
     resolvedKey === toPathComparisonKey(normalizedWorkspace)
@@ -192,8 +219,20 @@ const resolveCanonicalPath = async (targetPath: string): Promise<string> => {
   }
 }
 
-const ensureWithinWorkspaceCanonical = async (workspacePath: string, relativePath: string) => {
-  const lexicalTarget = ensureWithinWorkspace(workspacePath, relativePath)
+const ensureWithinWorkspaceCanonical = async (
+  workspacePath: string,
+  relativePath: string,
+  options?: WorkspacePathGuardOptions,
+) => {
+  const lexicalTarget = ensureWithinWorkspace(workspacePath, relativePath, options)
+
+  // An opted-in absolute path is already the exact file the user clicked, so there
+  // is no workspace boundary left for realpath to defend. Relative paths still go
+  // through the link check below, which is what keeps escaping junctions rejected.
+  if (options?.allowOutsideWorkspace && path.isAbsolute(relativePath)) {
+    return lexicalTarget
+  }
+
   const canonicalTarget = await resolveCanonicalPath(lexicalTarget)
   const allowedRoots = [
     workspacePath,
@@ -402,7 +441,7 @@ export type ClipboardCopyInvocation = { command: string; args: string[] }
 
 type ClipboardCopyRunner = (command: string, args: string[]) => Promise<{ exitCode: number; stderr: string }>
 
-type ClipboardCopyOptions = {
+type ClipboardCopyOptions = WorkspacePathGuardOptions & {
   platform?: NodeJS.Platform
   run?: ClipboardCopyRunner
 }
@@ -451,7 +490,11 @@ export const copyWorkspaceFileToClipboard = async (
   request: FileReadRequest,
   options: ClipboardCopyOptions = {},
 ): Promise<void> => {
-  const filePath = await ensureWithinWorkspaceCanonical(request.workspacePath, request.relativePath)
+  const filePath = await ensureWithinWorkspaceCanonical(
+    request.workspacePath,
+    request.relativePath,
+    options,
+  )
   const stats = await stat(filePath)
 
   if (!stats.isFile()) {
@@ -495,8 +538,15 @@ export class FileRevisionConflictError extends Error {
   }
 }
 
-export const readWorkspaceFile = async (request: FileReadRequest): Promise<FileReadResponse> => {
-  const targetPath = await ensureWithinWorkspaceCanonical(request.workspacePath, request.relativePath)
+export const readWorkspaceFile = async (
+  request: FileReadRequest,
+  options?: WorkspacePathGuardOptions,
+): Promise<FileReadResponse> => {
+  const targetPath = await ensureWithinWorkspaceCanonical(
+    request.workspacePath,
+    request.relativePath,
+    options,
+  )
   const language = getLanguageFromPath(request.relativePath)
   const stats = await stat(targetPath)
 
@@ -534,8 +584,15 @@ export const readWorkspaceFile = async (request: FileReadRequest): Promise<FileR
   return response
 }
 
-export const writeWorkspaceFile = async (request: FileWriteRequest): Promise<FileWriteResponse> => {
-  const targetPath = await ensureWithinWorkspaceCanonical(request.workspacePath, request.relativePath)
+export const writeWorkspaceFile = async (
+  request: FileWriteRequest,
+  options?: WorkspacePathGuardOptions,
+): Promise<FileWriteResponse> => {
+  const targetPath = await ensureWithinWorkspaceCanonical(
+    request.workspacePath,
+    request.relativePath,
+    options,
+  )
 
   if (request.expectedRevision) {
     const currentBuffer = await readFile(targetPath).catch((error: NodeJS.ErrnoException) => {

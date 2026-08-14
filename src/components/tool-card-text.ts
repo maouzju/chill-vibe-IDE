@@ -27,6 +27,10 @@ export const getTextEditorCardText = (language: AppLanguage) => ({
     language === 'en'
       ? 'This file does not exist in the workspace.'
       : '\u5de5\u4f5c\u533a\u91cc\u6ca1\u6709\u8fd9\u4e2a\u6587\u4ef6\u3002',
+  restrictedFile:
+    language === 'en'
+      ? 'This file is outside the folders this app is allowed to open.'
+      : '\u8fd9\u4e2a\u6587\u4ef6\u4e0d\u5728\u5e94\u7528\u53ef\u4ee5\u6253\u5f00\u7684\u8303\u56f4\u5185\u3002',
   tooLargeTitle: language === 'en' ? 'File too large' : '\u6587\u4ef6\u8fc7\u5927',
   tooLargeDescription:
     language === 'en'

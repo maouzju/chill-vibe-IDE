@@ -1,11 +1,76 @@
-import type {
-  CardStatus,
-  ImageAttachment,
-  QueuedSendRequest,
-  WakeTimerMode,
+import {
+  maxWakeTimerDurationMinutes,
+  minWakeTimerDurationMinutes,
+  wakeTimerModes,
+  type CardStatus,
+  type ChatCard,
+  type ImageAttachment,
+  type QueuedSendRequest,
+  type WakeTimerMode,
 } from '../../shared/schema'
+import type { SendMessageMode, SendMessageOrigin } from './deferred-send-queue'
 
 export const wakeTimerCompletionStabilityMs = 1200
+
+/**
+ * 空闲卡上的右键发送 = 计划唤醒。
+ *
+ * 症状：新会话写好第一条指令后右键发送，消息立刻发了出去 —— 用户表达的"先别发"
+ *   被丢掉，因为 `mode: 'defer'` 只有 `status === 'streaming'` 那一条分支读它。
+ * 根因：延后发送队列是为"打断正在跑的回合"设计的，空闲卡上右键与左键完全等价。
+ * 被否决：把空闲态右键也塞进 FIFO `queuedSends` —— 那个队列的释放条件是"当前回合
+ *   结束"，空闲卡没有回合可等，消息会永远躺在队列里。等待条件必须是计划唤醒的
+ *   三选一；见 wake-timer SPEC「右键发送 → 计划唤醒」。
+ */
+export const shouldArmWakeTimerForDeferSend = ({
+  featureEnabled,
+  mode,
+  origin,
+  cardStatus,
+  isToolCard = false,
+}: {
+  featureEnabled: boolean
+  mode: SendMessageMode | undefined
+  origin: SendMessageOrigin
+  cardStatus: CardStatus
+  isToolCard?: boolean
+}) =>
+  featureEnabled &&
+  mode === 'defer' &&
+  origin === 'user' &&
+  cardStatus !== 'streaming' &&
+  !isToolCard
+
+/**
+ * 从一次卡片 patch 里取出"用户刚选的唤醒方式"，用来更新新会话的默认值。
+ *
+ * 只认用户交互入口传下来的 patch。看板超管 MCP 的 `admin-set-session-wake-timer`
+ * 走的是另一条 `patchItemCard` 路径，不能让 Agent 自己设的模式变成用户偏好。
+ */
+export const collectWakeTimerDefaultPreference = (
+  patch: Partial<ChatCard>,
+): { wakeTimerDefaultMode?: WakeTimerMode; wakeTimerDefaultDurationMinutes?: number } | null => {
+  const preference: {
+    wakeTimerDefaultMode?: WakeTimerMode
+    wakeTimerDefaultDurationMinutes?: number
+  } = {}
+
+  if (patch.wakeTimerMode && (wakeTimerModes as readonly string[]).includes(patch.wakeTimerMode)) {
+    preference.wakeTimerDefaultMode = patch.wakeTimerMode
+  }
+
+  const duration = patch.wakeTimerDurationMinutes
+  if (
+    typeof duration === 'number' &&
+    Number.isFinite(duration) &&
+    duration >= minWakeTimerDurationMinutes &&
+    duration <= maxWakeTimerDurationMinutes
+  ) {
+    preference.wakeTimerDefaultDurationMinutes = duration
+  }
+
+  return Object.keys(preference).length > 0 ? preference : null
+}
 
 export const shouldQueueWakeTimerSend = ({
   featureEnabled,

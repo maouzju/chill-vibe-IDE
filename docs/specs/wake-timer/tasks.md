@@ -124,3 +124,22 @@
 - `pnpm test:quality`：通过。
 - `pnpm electron:build`：通过，产出 `dist/release-20260803-185146/Chill Vibe-0.18.22-win.zip` 与 `win-unpacked/Chill Vibe.exe`。
 - `pnpm dev:restart`：通过；开发 Electron 已重启，renderer `http://localhost:5173` 返回 200，运行中的打包版未被关闭或重启。
+
+## 右键即计划唤醒 + 记住唤醒方式（2026-08-14）
+
+- [x] 红测复现：空闲卡右键发送被当成普通立即发送；新建 Tab 的唤醒方式总是回到 `workspace-agents`/30 分钟。
+- [x] `shouldArmWakeTimerForDeferSend` 与 `collectWakeTimerDefaultPreference` 两个纯函数。
+- [x] `enqueueWakeTimerSend` 支持原子激活逐卡开关。
+- [x] settings 两个默认字段 + 归一化 + patch 白名单 + `addTab` 种子。
+- [x] 发送按钮 tooltip 说明空闲态右键的新语义。
+- [x] 聚焦测试、quality、Windows 构建。
+
+验证记录：
+
+- 红测：`node --import tsx --test tests/wake-timer.test.ts` 因缺少两个纯函数导出直接失败；补上函数后 settings 默认值断言继续红（`undefined` vs `workspace-agents`）。
+- 红测：`node --import tsx --test --test-name-pattern='wake condition' tests/state.test.ts` 2/2 失败，分别证明新 Tab 不继承记住的条件、`updateSettings` 不认新字段。
+- 红测：把 `armsWakeTimerFromDeferSend` 临时短路为 `false` 后，`tests/chat-interrupt.spec.ts` 的「右键空闲卡排入待唤醒」用例稳定失败（1 failed / 34 passed），恢复实现后 35 passed —— 证明该交互回归确实咬得住。
+- 绿测：`node --import tsx --test tests/wake-timer.test.ts tests/state.test.ts tests/default-state.test.ts tests/deferred-send-queue.test.ts tests/wake-timer-settings-panel.test.tsx tests/queued-send-persistence.test.ts tests/state-store.test.ts`：231/231 通过。
+- 绿测：`scripts/run-playwright-specs.ps1 -Specs tests/chat-interrupt.spec.ts`：36/36 通过，含右键空闲卡排队 + 选完条件写回全局默认两条新用例。
+- `pnpm test:quality`：通过。
+- 计划唤醒本身只改了发送按钮的 tooltip 文案，没有可见布局变化；但同一次发布里的自动化看板实验性开关改了「卡片类型」设置组，视觉快照随 v0.20.2 一起重新基线，见 `docs/specs/automation-board/tasks.md`。

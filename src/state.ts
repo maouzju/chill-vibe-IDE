@@ -223,6 +223,8 @@ export type IdeAction =
           | 'autoUrgeGlobalProfileId'
           | 'repeatLoopEnabled'
           | 'wakeTimerEnabled'
+          | 'wakeTimerDefaultMode'
+          | 'wakeTimerDefaultDurationMinutes'
           | 'weatherCity'
           | 'systemPrompt'
           | 'modelPromptRules'
@@ -2229,6 +2231,11 @@ const ideReducerCore = (state: AppState, action: IdeAction): AppState => {
             state.settings.language,
           ),
           id: action.cardId ?? createId(),
+          // 唤醒方式跟模型默认同一个语义：只喂新 Tab，不回溯改写已开的卡
+          // （AGENTS.md pitfall #40）。开关本身仍默认关闭 —— 记住的是"怎么等"，
+          // 不是"要不要等"。
+          wakeTimerMode: state.settings.wakeTimerDefaultMode,
+          wakeTimerDurationMinutes: state.settings.wakeTimerDefaultDurationMinutes,
         }
 
         if (action.stickyNote) {

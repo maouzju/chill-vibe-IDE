@@ -41,6 +41,10 @@ const createTempStateDir = async () => {
   const state = createDefaultState(workspacePath, 'zh-CN')
   state.settings.language = 'zh-CN'
   state.settings.theme = 'light'
+  // 看板自 v0.20.2 起是实验性卡牌、默认关闭，空态工具栅格里那块砖要用户先开开关才出现。
+  // 这条用例盯的是"建好的看板能不能扛住重启"，不是开关本身，所以在种子状态里就把它打开；
+  // 不这么做的话下面按中文名找砖会直接超时，看上去像持久化坏了。
+  state.settings.automationBoardCardEnabled = true
   state.columns = [{ ...state.columns[0]!, workspacePath }]
   state.updatedAt = new Date().toISOString()
 

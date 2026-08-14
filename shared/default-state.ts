@@ -20,6 +20,7 @@ import type {
   SplitNode,
   StickyNoteArchiveEntry,
   StickyNoteViewState,
+  WakeTimerMode,
 } from './schema.js'
 import { createDefaultBrainstormState } from './brainstorm.js'
 import {
@@ -28,6 +29,10 @@ import {
   defaultAutoUrgeMessage,
   defaultAutoUrgeProfileId,
   defaultAutoUrgeSuccessKeyword,
+  defaultWakeTimerDurationMinutes,
+  maxWakeTimerDurationMinutes,
+  minWakeTimerDurationMinutes,
+  wakeTimerModes,
   autoUrgeJudgeModes,
 } from './schema.js'
 import {
@@ -522,7 +527,7 @@ export const createDefaultSettings = (language: AppLanguage = defaultAppLanguage
   gitCardEnabled: true,
   fileTreeCardEnabled: true,
   stickyNoteCardEnabled: true,
-  automationBoardCardEnabled: true,
+  automationBoardCardEnabled: false,
   pmCardEnabled: true,
   brainstormCardEnabled: false,
   experimentalMusicEnabled: false,
@@ -547,6 +552,8 @@ export const createDefaultSettings = (language: AppLanguage = defaultAppLanguage
   autoUrgeGlobalProfileId: defaultAutoUrgeProfileId,
   repeatLoopEnabled: false,
   wakeTimerEnabled: true,
+  wakeTimerDefaultMode: 'workspace-agents',
+  wakeTimerDefaultDurationMinutes: defaultWakeTimerDurationMinutes,
   weatherCity: '',
   systemPrompt: defaultSystemPrompt,
   modelPromptRules: [],
@@ -709,6 +716,18 @@ export const normalizeAppSettings = (settings?: Partial<AppSettings> | null): Ap
       typeof settings?.wakeTimerEnabled === 'boolean'
         ? settings.wakeTimerEnabled
         : defaults.wakeTimerEnabled,
+    wakeTimerDefaultMode: (wakeTimerModes as readonly string[]).includes(
+      settings?.wakeTimerDefaultMode as string,
+    )
+      ? (settings!.wakeTimerDefaultMode as WakeTimerMode)
+      : defaults.wakeTimerDefaultMode,
+    wakeTimerDefaultDurationMinutes:
+      typeof settings?.wakeTimerDefaultDurationMinutes === 'number' &&
+      Number.isFinite(settings.wakeTimerDefaultDurationMinutes) &&
+      settings.wakeTimerDefaultDurationMinutes >= minWakeTimerDurationMinutes &&
+      settings.wakeTimerDefaultDurationMinutes <= maxWakeTimerDurationMinutes
+        ? settings.wakeTimerDefaultDurationMinutes
+        : defaults.wakeTimerDefaultDurationMinutes,
     weatherCity: normalizeText(settings?.weatherCity) || defaults.weatherCity,
     systemPrompt: normalizeSystemPrompt(settings?.systemPrompt),
     modelPromptRules: normalizeModelPromptRules(settings?.modelPromptRules),

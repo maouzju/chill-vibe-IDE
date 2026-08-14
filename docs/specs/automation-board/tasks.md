@@ -1,5 +1,21 @@
 # 自动化看板 — Tasks
 
+## 实验性开关收口（2026-08-14）
+
+- [x] 默认设置与 schema 改为关闭自动化看板卡牌
+- [x] 设置入口标注“实验性”，保留用户手动开启能力（走 i18n，中英各一份文案，不硬编码中文）
+- [x] 默认状态回归测试
+- [x] 快捷工具与设置组的 Playwright 断言/快照跟着默认值一起改
+
+验证记录：
+
+- `tests/default-state.test.ts` 新增「实验性看板默认关闭」用例：`createDefaultSettings` / `normalizeAppSettings({})` / `appSettingsSchema.parse({})` 三条入口都断言 `false`，并断言快捷工具列表里没有看板。
+- `tests/tool-card-settings.spec.ts`：默认快捷工具由 4 个改为 3 个，且补了「勾上实验性开关后看板重新出现」这一步——只把 `toHaveCount(4)` 改成 `(3)` 的话，看板永远渲染不出来也会绿。
+- 视觉：「卡片类型」设置组的 6 张快照（`card-type-settings-experimental-*`、`experimental-settings-group-*`）因勾选态与“（实验性）”后缀重新基线，属本次有意变更。
+- 发布审计补漏（2026-08-14）：`tests/card-title-editing.spec.ts` 的 `createToolLauncherState` 也吃这个默认值——它经 `createPlaywrightState` → `appStateSchema.parse` 继承 settings，却从不提到该字段名，所以按字段名搜会漏掉它那两条 `toHaveCount(7)`。改法是在这个「工具入口全开」helper 里显式打开看板，而不是把 7 改成 6：这条用例盯的是最坏折行排版，少一个入口就测不到，且保持 7 也让它的快照不用重新基线。
+- 回归证据：`theme-check.spec.ts` + `card-title-editing.spec.ts` + `tool-card-settings.spec.ts` 三个 spec 合跑 207 passed（4.2 分钟），含设置面板 grid/stack 两张整面板快照确认未受影响。
+- 全量门禁又补出两处（2026-08-14）：`model-menu-short-pane-{dark,light}.png` 的背景里就有那块看板砖（差 2536 像素 / 4%），属默认值变更的有意重新基线，已单独 `--update-snapshots` 并确认只动这两张；`tests/electron-automation-board-restart-runtime.test.ts` 的种子状态走 `createDefaultState`，砖不出现导致按中文名点击超时 32s，已在种子里显式打开开关——这条用例盯的是"看板扛不扛得住重启"，不是开关本身。
+
 切片原则：每一片都能单独跑测试、单独回滚。结构层先落地并被测试钉住，再往上叠 UI，最后接 MCP。
 
 ## Slice 1 — 数据模型与归一化

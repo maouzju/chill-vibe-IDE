@@ -686,7 +686,7 @@ export const appSettingsSchema = z.object({
   gitCardEnabled: z.boolean().default(true),
   fileTreeCardEnabled: z.boolean().default(true),
   stickyNoteCardEnabled: z.boolean().default(true),
-  automationBoardCardEnabled: z.boolean().default(true),
+  automationBoardCardEnabled: z.boolean().default(false),
   pmCardEnabled: z.boolean().default(true),
   brainstormCardEnabled: z.boolean().default(false),
   experimentalMusicEnabled: z.boolean().default(false),
@@ -718,6 +718,15 @@ export const appSettingsSchema = z.object({
   autoUrgeGlobalProfileId: z.string().default(defaultAutoUrgeProfileId),
   repeatLoopEnabled: z.boolean().default(false),
   wakeTimerEnabled: z.boolean().default(true),
+  // 新会话的唤醒方式种子：用户上次选的条件/时长。只喂新 Tab，不回溯改写已开的卡，
+  // 与默认模型的 per-card 语义一致（AGENTS.md pitfall #40）。
+  wakeTimerDefaultMode: wakeTimerModeSchema.default('workspace-agents'),
+  wakeTimerDefaultDurationMinutes: z
+    .number()
+    .finite()
+    .min(minWakeTimerDurationMinutes)
+    .max(maxWakeTimerDurationMinutes)
+    .default(defaultWakeTimerDurationMinutes),
   weatherCity: z.string().default(''),
   systemPrompt: z.string().default(defaultSystemPrompt),
   modelPromptRules: z.array(modelPromptRuleSchema).default([]),
@@ -965,7 +974,7 @@ export const appStateSchema = z.object({
     gitCardEnabled: true,
     fileTreeCardEnabled: true,
     stickyNoteCardEnabled: true,
-    automationBoardCardEnabled: true,
+    automationBoardCardEnabled: false,
     pmCardEnabled: true,
     brainstormCardEnabled: false,
     experimentalMusicEnabled: false,
@@ -997,6 +1006,8 @@ export const appStateSchema = z.object({
     autoUrgeGlobalProfileId: defaultAutoUrgeProfileId,
     repeatLoopEnabled: false,
     wakeTimerEnabled: true,
+    wakeTimerDefaultMode: 'workspace-agents' as const,
+    wakeTimerDefaultDurationMinutes: defaultWakeTimerDurationMinutes,
     weatherCity: '',
     systemPrompt: defaultSystemPrompt,
     modelPromptRules: [],

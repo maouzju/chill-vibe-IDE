@@ -599,6 +599,9 @@ const createTopbarToolLauncherState = (
   state.settings.experimentalMusicEnabled = true
   state.settings.experimentalWhiteNoiseEnabled = true
   state.settings.experimentalWeatherEnabled = true
+  // 看板自 v0.20.2 起默认关闭（实验性）。这些用例盯的是"工具入口全开时的排版"，
+  // 所以显式打开它，而不是把断言数字调小 —— 少一个入口就测不到原来的最坏排版。
+  state.settings.automationBoardCardEnabled = true
 
   if (openAmbienceModel) {
     const chatCard = state.columns[0]!.cards[0]!
@@ -8612,6 +8615,8 @@ for (const theme of ['dark', 'light'] as const) {
   test(`empty chat quick tool entries show full zh-CN descriptions in ${theme} theme`, async ({ page }) => {
     const state = createMockState()
     state.settings.theme = theme
+    // 看板默认关闭后仍显式打开：它那条中文描述是本用例盯的最长文本。
+    state.settings.automationBoardCardEnabled = true
 
     await mockAppApis(page, { state })
     await page.setViewportSize({ width: 1280, height: 800 })
@@ -8650,6 +8655,8 @@ for (const theme of ['dark', 'light'] as const) {
   }) => {
     const state = createMockState()
     state.settings.theme = theme
+    // 同上：窄屏折行的最坏情况就是看板那条最长描述。
+    state.settings.automationBoardCardEnabled = true
 
     await mockAppApis(page, { state })
     await page.setViewportSize({ width: 390, height: 800 })

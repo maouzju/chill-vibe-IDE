@@ -52,6 +52,7 @@ import {
 import { createCodexCompactionActivityDeduper } from './codex-compaction-dedupe.js'
 import { createCodexAgentStatusTracker } from './codex-agent-status.js'
 import { createClaudeAgentStatusTracker } from './claude-agent-status.js'
+import { writeServerLog } from './crash-logger.js'
 import { resolveClaudeRuntimeEnvironment } from './claude-runtime-environment.js'
 import {
   looksLikeCodexStructuredAgentMessage,
@@ -666,6 +667,61 @@ const formatProviderExit = (language: AppLanguage, provider: Provider, code: num
 
 const formatClaudeRunFailed = (language: AppLanguage) =>
   language === 'en' ? 'Claude run failed.' : 'Claude 运行失败。'
+
+// CLI 眼里的良性中止：官方 CLI 对这两个 terminal_reason 既不按 error 级别记日志，也不
+// 渲染错误 UI（`hat(e) = e==="aborted_streaming" || e==="aborted_tools"`，claude 2.1.206）。
+// 其余 terminal_reason（api_error / model_error / prompt_too_long / blocking_limit /
+// budget_exhausted / turn_setup_failed 等）才是真失败。
+const CLAUDE_BENIGN_ABORT_TERMINAL_REASONS = new Set(['aborted_streaming', 'aborted_tools'])
+
+const formatClaudeTurnAborted = (language: AppLanguage, terminalReason: string) =>
+  language === 'en'
+    ? `Claude's turn was aborted (${terminalReason}).`
+    : `Claude 这一轮被中止了（${terminalReason}）。`
+
+// 症状：2026-08-14 五个会话在四分钟内接连红出「Claude 运行失败。」，主进程日志和原生
+//       转录里都查不到任何原因，事后无法归因。
+// 根因：claude 2.1.206 的 result 事件分两套字段——只有 subtype==='success' 时错误文本在
+//       `result`，error_during_execution / error_max_turns **根本不带 result 字段**，真实
+//       原因只在 `errors` 数组里（官方 CLI 自己就是 `subtype==='success' ? result :
+//       errors.join('; ')`）。此处旧实现只读 `result`，把唯一线索整个丢进兜底文案。
+// 为什么不能只读 `errors`：subtype==='success' 且 is_error 的分支（余额不足等）没有
+//       `errors`，文本仍在 `result`，两套字段必须都读。
+export const describeClaudeResultFailure = (
+  event: Record<string, unknown>,
+  language: AppLanguage,
+): { message: string; terminalReason: string | null; benignAbort: boolean } => {
+  const subtype = typeof event.subtype === 'string' ? event.subtype : null
+  const terminalReason = typeof event.terminal_reason === 'string' ? event.terminal_reason : null
+  const benignAbort = terminalReason !== null && CLAUDE_BENIGN_ABORT_TERMINAL_REASONS.has(terminalReason)
+
+  if (benignAbort) {
+    return { message: formatClaudeTurnAborted(language, terminalReason), terminalReason, benignAbort }
+  }
+
+  const nativeErrors = Array.isArray(event.errors)
+    ? event.errors
+        .map((entry) => (typeof entry === 'string' ? entry.trim() : ''))
+        .filter((entry) => entry.length > 0)
+    : []
+  if (nativeErrors.length > 0) {
+    return { message: nativeErrors.join('; '), terminalReason, benignAbort }
+  }
+
+  const resultText = typeof event.result === 'string' ? event.result.trim() : ''
+  if (resultText) {
+    return { message: resultText, terminalReason, benignAbort }
+  }
+
+  // 连 CLI 都没给出原因时，至少把 subtype/terminal_reason 带上，别再退回一句无信息量的话。
+  const label = [subtype, terminalReason].filter(Boolean).join(' / ')
+  const fallback = formatClaudeRunFailed(language)
+  return {
+    message: label ? `${fallback.replace(/[。.]$/u, '')}（${label}）。` : fallback,
+    terminalReason,
+    benignAbort,
+  }
+}
 
 // Shown when a turn produced only a tool call typed as text (which never
 // executed) and nothing else, so it would otherwise dead-end silently. The
@@ -3029,8 +3085,27 @@ export const createClaudeTurnParser = (hooks: {
         }
 
         if (event.is_error) {
-          const message =
-            typeof event.result === 'string' ? event.result : formatClaudeRunFailed(language)
+          const failure = describeClaudeResultFailure(event, language)
+          const { message } = failure
+          // 事后归因全靠这一行：转录里只留一句渲染文案，日志此前对 result 失败完全沉默
+          // （2026-08-14 五连挂，main.log 里一个字都没有）。
+          // 为什么不能只 console.warn —— 后端整树跑在 utilityProcess 里，主进程用
+          // `stdio: 'inherit'` fork 它，而打包版是无控制台的 GUI 进程：所有 console
+          // 输出直接进虚空（同日实测 server/ 那 21 处诊断一条都没落过盘）。必须显式写
+          // 文件。落 logs/server.log 而不是改 fork 的 stdio 为 pipe：后者要主进程持续
+          // 消费管道，漏消费就是后端背压卡死，代价远大于收益。
+          const diagnostics = {
+            subtype: typeof event.subtype === 'string' ? event.subtype : null,
+            terminalReason: failure.terminalReason,
+            benignAbort: failure.benignAbort,
+            apiErrorStatus: event.api_error_status ?? null,
+            stopReason: event.stop_reason ?? null,
+            numTurns: event.num_turns ?? null,
+            sessionId: emittedSessionId ?? request.sessionId ?? null,
+            message: truncate(message),
+          }
+          console.warn(`[claude-result] turn failed. ${JSON.stringify(diagnostics)}`)
+          void writeServerLog('ERROR', '[claude-result] turn failed.', diagnostics)
           const hint = classifyLaunchErrorHint(message)
           sink.onError(message, hint, classifyLiveProviderStreamRecovery(request, message, hint, emittedSessionId))
           hooks.onSettled?.()

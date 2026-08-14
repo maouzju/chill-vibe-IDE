@@ -116,6 +116,10 @@ const createToolLauncherState = (theme: ThemeName) => {
   state.settings.experimentalMusicEnabled = true
   state.settings.experimentalWhiteNoiseEnabled = true
   state.settings.experimentalWeatherEnabled = true
+  // 看板自 v0.20.2 起默认关闭（实验性）。这个 helper 的意图是"所有工具入口全开时的
+  // 最坏排版"，所以显式打开它，而不是把断言从 7 改成 6 —— 少一个入口就测不到原来
+  // 的换行/溢出边界。
+  state.settings.automationBoardCardEnabled = true
   return state
 }
 

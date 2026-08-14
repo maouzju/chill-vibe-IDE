@@ -138,19 +138,49 @@ describe('reasoning helpers', () => {
     assert.equal(normalizeReasoningEffortForModel('claude', 'claude-opus-4-8', ''), 'max')
   })
 
-  it('never yields --effort none for Fable 5', () => {
-    // Fable 5: thinking cannot be turned off; degrade to its high default.
-    assert.equal(toClaudeEffortFlagValue('claude-fable-5', 'max', true), 'high')
+  it('never emits an --effort value the CLI rejects', () => {
+    // 症状：选「自动」或关掉思考后，Claude CLI 每轮都打
+    //   Warning: Unknown --effort value 'none' — ignoring it and using the default effort.
+    // 两档因此双双失效，用户的档位选择被静默丢弃。
+    // 根因：`none` 是本仓库自造的值。2026-08-13 实测 `claude --effort none` 与
+    // `claude --effort bogus` 输出完全相同的警告并同样回落默认档；`claude --help`
+    // 只承认 low/medium/high/xhigh/max，且 CLI 没有任何关闭思考的开关。
+    // 为什么不能继续传 none：它与拼错的值完全等价，等于没传。auto 改为省略 flag
+    // （null）才是真正的「跟随 CLI 默认」；关思考改为 low —— 合法值里唯一忠实于
+    // 「别想太多」意图的档，省略 flag 会让默认档反而更深，背离用户的选择。
+    const CLI_ACCEPTED = new Set(['low', 'medium', 'high', 'xhigh', 'max'])
+
+    // auto = 跟随 CLI 默认 → 必须省略 flag，而不是传一个 CLI 不认的假值
+    assert.equal(toClaudeEffortFlagValue('claude-opus-5', 'auto', false), null)
+    // 关闭思考 → 合法值里的最低档
+    assert.equal(toClaudeEffortFlagValue('claude-opus-5', 'max', true), 'low')
+    // 明确选择的档位原样透传；ultracode 仍走 xhigh + settings 开关
+    assert.equal(toClaudeEffortFlagValue('claude-opus-5', 'max', false), 'max')
+    assert.equal(toClaudeEffortFlagValue('claude-opus-5', 'ultracode', false), 'xhigh')
+    assert.equal(toClaudeEffortFlagValue('claude-opus-4-8', 'auto', false), null)
+    assert.equal(toClaudeEffortFlagValue('claude-opus-4-8', 'max', true), 'low')
+
+    // Fable 5 关不掉思考：auto 与关思考都退回它的 high 默认（本次改动不影响）
     assert.equal(toClaudeEffortFlagValue('claude-fable-5', 'auto', false), 'high')
+    assert.equal(toClaudeEffortFlagValue('claude-fable-5', 'max', true), 'high')
     assert.equal(toClaudeEffortFlagValue('claude-fable-5', 'ultracode', false), 'xhigh')
     assert.equal(toClaudeEffortFlagValue('claude-fable-5', 'xhigh', false), 'xhigh')
-    // Other models keep the legacy thinking-off contract, and auto now
-    // consistently rides the thinking-disabled path instead of leaking the
-    // invalid literal "auto" to the flag.
-    assert.equal(toClaudeEffortFlagValue('claude-opus-4-8', 'max', true), 'none')
-    assert.equal(toClaudeEffortFlagValue('claude-opus-4-8', 'auto', false), 'none')
-    assert.equal(toClaudeEffortFlagValue('claude-opus-4-8', 'max', false), 'max')
-    assert.equal(toClaudeEffortFlagValue('claude-opus-4-8', 'ultracode', false), 'xhigh')
+
+    // 守卫：穷举档位 × 思考开关 × 模型，产出要么省略、要么是 CLI 真正接受的值。
+    // 这条断言的全部意义就是让任何新的自造值（none / auto / ultracode …）当场变红。
+    for (const model of ['claude-opus-5', 'claude-opus-4-8', 'claude-fable-5']) {
+      for (const option of getReasoningOptions('claude')) {
+        for (const thinkingDisabled of [true, false]) {
+          const flag = toClaudeEffortFlagValue(model, option.value, thinkingDisabled)
+          if (flag !== null) {
+            assert.ok(
+              CLI_ACCEPTED.has(flag),
+              `${model} / ${option.value} / thinkingDisabled=${thinkingDisabled} produced --effort ${flag}, which the CLI rejects`,
+            )
+          }
+        }
+      }
+    }
   })
 
   it('prefers the Fable 5 high default when no tier was remembered for it', () => {

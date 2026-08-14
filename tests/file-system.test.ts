@@ -111,6 +111,100 @@ test(
   },
 )
 
+test('ensureWithinWorkspace opts in to absolute paths outside the workspace', () => {
+  const workspace = path.resolve('/projects/my-app')
+  const outsideFile = path.resolve('/other-repo/src/main.rs')
+  const result = ensureWithinWorkspace(workspace, outsideFile, { allowOutsideWorkspace: true })
+  assert.equal(result, outsideFile)
+})
+
+test('ensureWithinWorkspace still rejects relative traversal even when opted in', () => {
+  const workspace = path.resolve('/projects/my-app')
+  assert.throws(
+    () => ensureWithinWorkspace(workspace, '../../etc/passwd', { allowOutsideWorkspace: true }),
+    /Path traversal is not allowed/,
+  )
+})
+
+test('readWorkspaceFile reads an agent-edited file outside the workspace when opted in', async (t) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'chill-vibe-outside-read-'))
+  const workspace = path.join(root, 'workspace')
+  const outside = path.join(root, 'other-project')
+  await mkdir(workspace)
+  await mkdir(outside)
+  const outsideFile = path.join(outside, 'notes.md')
+  await writeFile(outsideFile, '# edited by the agent\n', 'utf8')
+
+  t.after(async () => {
+    await rm(root, { recursive: true, force: true })
+  })
+
+  await assert.rejects(
+    readWorkspaceFile({ workspacePath: workspace, relativePath: outsideFile }),
+    /Path traversal is not allowed/,
+  )
+
+  const result = await readWorkspaceFile(
+    { workspacePath: workspace, relativePath: outsideFile },
+    { allowOutsideWorkspace: true },
+  )
+  assert.equal(result.content, '# edited by the agent\n')
+})
+
+test('writeWorkspaceFile saves a file outside the workspace when opted in', async (t) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'chill-vibe-outside-write-'))
+  const workspace = path.join(root, 'workspace')
+  const outside = path.join(root, 'other-project')
+  await mkdir(workspace)
+  await mkdir(outside)
+  const outsideFile = path.join(outside, 'notes.md')
+  await writeFile(outsideFile, 'before\n', 'utf8')
+
+  t.after(async () => {
+    await rm(root, { recursive: true, force: true })
+  })
+
+  await writeWorkspaceFile(
+    {
+      workspacePath: workspace,
+      relativePath: outsideFile,
+      content: 'after\n',
+      encoding: 'utf8',
+    },
+    { allowOutsideWorkspace: true },
+  )
+
+  const saved = await readWorkspaceFile(
+    { workspacePath: workspace, relativePath: outsideFile },
+    { allowOutsideWorkspace: true },
+  )
+  assert.equal(saved.content, 'after\n')
+})
+
+test('opting in does not unlock workspace links that escape the workspace', async (t) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'chill-vibe-outside-link-'))
+  const workspace = path.join(root, 'workspace')
+  const outside = path.join(root, 'outside')
+  await mkdir(workspace)
+  await mkdir(outside)
+  await writeFile(path.join(outside, 'secret.txt'), 'outside-secret', 'utf8')
+  await symlink(outside, path.join(workspace, 'linked-outside'), process.platform === 'win32' ? 'junction' : 'dir')
+
+  t.after(async () => {
+    await rm(root, { recursive: true, force: true })
+  })
+
+  // The opt-in is for absolute paths the user actually clicked, not for relative
+  // addressing that silently leaves the workspace through a link.
+  await assert.rejects(
+    readWorkspaceFile(
+      { workspacePath: workspace, relativePath: 'linked-outside/secret.txt' },
+      { allowOutsideWorkspace: true },
+    ),
+    /Path traversal is not allowed/,
+  )
+})
+
 test('listFiles includes dotfiles and dot directories while still skipping heavy internal folders', async (t) => {
   const workspace = await mkdtemp(path.join(os.tmpdir(), 'chill-vibe-file-list-hidden-'))
   t.after(async () => {

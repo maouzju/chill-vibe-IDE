@@ -195,6 +195,42 @@ test('claude ultracode tier sends --effort xhigh (the CLI rejects "ultracode")',
   assert.notEqual(args[effortIndex + 1], 'ultracode')
 })
 
+test('claude auto tier omits --effort entirely so the CLI applies its own default', () => {
+  // 症状：auto 曾被映射成 `--effort none`，CLI 每轮回一条
+  //   Warning: Unknown --effort value 'none' — ignoring it and using the default effort.
+  // 2026-08-13 实测 `--effort none` 与拼错的 `--effort bogus` 待遇完全相同，
+  // 证明这一档从未生效。真正的「跟随 CLI 默认」就是根本不传这个 flag。
+  const args = buildClaudeArgs(
+    createRequest({ provider: 'claude', model: 'claude-opus-4-8', reasoningEffort: 'auto' }),
+    [],
+  )
+
+  assert.equal(args.indexOf('--effort'), -1)
+  // 尤其不能把省略信号本身拼成字符串送上命令行。
+  assert.equal(args.includes('none'), false)
+  assert.equal(args.includes('null'), false)
+  assert.equal(args.includes('undefined'), false)
+  assert.equal(args.includes('auto'), false)
+})
+
+test('claude thinking-off sends the lowest legal tier instead of the ignored "none"', () => {
+  const args = buildClaudeArgs(
+    createRequest({
+      provider: 'claude',
+      model: 'claude-opus-4-8',
+      reasoningEffort: 'max',
+      thinkingEnabled: false,
+    }),
+    [],
+  )
+  const effortIndex = args.indexOf('--effort')
+
+  assert.notEqual(effortIndex, -1)
+  // CLI 没有任何关闭思考的开关，low 是合法值里最贴近「别想太多」的一档。
+  assert.equal(args[effortIndex + 1], 'low')
+  assert.notEqual(args[effortIndex + 1], 'none')
+})
+
 test('claude ultracode tier activates via --settings instead of prompt keyword injection', () => {
   const ultracodeArgs = buildClaudeArgs(
     createRequest({ provider: 'claude', model: 'claude-opus-4-8', reasoningEffort: 'ultracode' }),
@@ -282,7 +318,9 @@ test('claude fable 5 never sends --effort none because thinking cannot be turned
   )
   assert.equal(fableXhighArgs[fableXhighArgs.indexOf('--effort') + 1], 'xhigh')
 
-  // Other Claude models keep the legacy thinking-off contract.
+  // Other Claude models map thinking-off to the lowest legal tier. `none` was
+  // never a value the CLI accepted (2026-08-13 实测它与拼错的值同样被忽略),
+  // so the old "legacy thinking-off contract" assertion here was pinning a bug.
   const opusArgs = buildClaudeArgs(
     createRequest({
       provider: 'claude',
@@ -292,7 +330,7 @@ test('claude fable 5 never sends --effort none because thinking cannot be turned
     }),
     [],
   )
-  assert.equal(opusArgs[opusArgs.indexOf('--effort') + 1], 'none')
+  assert.equal(opusArgs[opusArgs.indexOf('--effort') + 1], 'low')
 })
 
 test('claude ask-user instruction avoids raw XML examples that prime text tool calls', () => {

@@ -172,6 +172,15 @@ import {
   type SlashCommandRequest,
 } from '../shared/schema.ts'
 
+// 症状 (2026-08-14): agent 改了工作区外的文件，用户在改动卡里点它，编辑器是空的。
+// 根因: 服务端路径白名单只有 workspace/~/.claude/~/.codex，项目外绝对路径被当成越权拒绝
+//   (server/file-system.ts 的决策注释里有完整链路)。
+// 为什么放行挂在这里而不是放宽白名单本身: 这个常量只被 desktop:* 这条 Electron IPC 通道用到，
+//   而 IPC 只有本机渲染进程可达。HTTP 路由 (server/index.ts) 拿不到它，请求体里也没有对应字段，
+//   所以 `HOST=0.0.0.0` 或手机远程监工都不会因此获得读盘能力 —— 边界是结构性的，不靠校验守。
+// 目录遍历 (listFiles / searchFiles) 有意不传: 那是翻全盘的能力，本需求不需要。
+const DESKTOP_FILE_ACCESS = { allowOutsideWorkspace: true } as const
+
 // 聊天流的事件通道载荷：只有 subscriptionId + 事件名 + 纯数据，没有任何函数。
 // 后端搬进 utilityProcess 后，这个 sink 直接换成向主进程 postMessage，
 // subscribeChatStream 本身不再持有任何回调。
@@ -681,14 +690,14 @@ export const createDesktopBackend = (deps: DesktopBackendDependencies = {}) => {
       await deleteWorkspaceEntry(fileDeleteRequestSchema.parse(request))
     },
     async readFile(request: unknown) {
-      return readWorkspaceFile(fileReadRequestSchema.parse(request))
+      return readWorkspaceFile(fileReadRequestSchema.parse(request), DESKTOP_FILE_ACCESS)
     },
     async copyFileToClipboard(request: unknown) {
-      await copyWorkspaceFileToClipboard(fileReadRequestSchema.parse(request))
+      await copyWorkspaceFileToClipboard(fileReadRequestSchema.parse(request), DESKTOP_FILE_ACCESS)
     },
     async writeFile(request: unknown) {
       try {
-        return await writeWorkspaceFile(fileWriteRequestSchema.parse(request))
+        return await writeWorkspaceFile(fileWriteRequestSchema.parse(request), DESKTOP_FILE_ACCESS)
       } catch (error) {
         // Conflicts cross the IPC bridge as structured data — Error subclasses lose
         // their custom fields during serialization, so they cannot be detected there.
@@ -740,7 +749,12 @@ export const createDesktopBackend = (deps: DesktopBackendDependencies = {}) => {
     // 显式订阅协议（与 subscribeChatStream 同形）：调用方生成 subscriptionId，
     // 这里只收纯数据、只回纯数据，变化事件走 deps.onFileWatchEvent 这条独立通道。
     watchFile(workspacePath: string, relativePath: string, subscriptionId: string): FileWatchSubscribeResult {
-      return getFileWatcherManager().subscribe(workspacePath, relativePath, subscriptionId)
+      return getFileWatcherManager().subscribe(
+        workspacePath,
+        relativePath,
+        subscriptionId,
+        DESKTOP_FILE_ACCESS,
+      )
     },
     unwatchFile(subscriptionId: string) {
       fileWatcherManager?.unsubscribe(subscriptionId)

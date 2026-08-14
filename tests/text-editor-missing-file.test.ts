@@ -18,6 +18,14 @@ test('the server-side "Path not found." wording maps to the same message', () =>
   assert.equal(describeTextEditorLoadFailure(new Error('Path not found.'), 'zh-CN'), zh.missingFile)
 })
 
+test('a blocked path explains the restriction instead of leaking the guard wording', () => {
+  const raw = 'Path traversal is not allowed.'
+
+  assert.equal(describeTextEditorLoadFailure(new Error(raw), 'zh-CN'), zh.restrictedFile)
+  assert.equal(describeTextEditorLoadFailure(new Error(raw), 'en'), en.restrictedFile)
+  assert.notEqual(zh.restrictedFile, zh.missingFile)
+})
+
 test('other failures keep their original message so real problems stay visible', () => {
   assert.equal(
     describeTextEditorLoadFailure(new Error('EACCES: permission denied'), 'en'),

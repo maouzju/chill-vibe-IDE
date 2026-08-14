@@ -127,11 +127,12 @@ test('settings keep archived brainstorm tooling hidden while auto urge stays und
   const cardTypeGroup = settingsPanel.locator('.settings-group').filter({ hasText: 'Card Type' }).first()
   const quickToolButtons = page.locator('.pane-view').first().locator('.chat-empty-tool-button')
 
-  await expect(quickToolButtons).toHaveCount(4)
+  // 自动化看板自 v0.20.2 起是实验性卡牌，默认关闭，所以快捷工具只剩三个。
+  await expect(quickToolButtons).toHaveCount(3)
   await expect(quickToolButtons.nth(0)).toContainText('Git')
   await expect(quickToolButtons.nth(1)).toContainText('Files')
   await expect(quickToolButtons.nth(2)).toContainText('Sticky Note')
-  await expect(quickToolButtons.nth(3)).toContainText('Automation Board')
+  await expect(page.getByRole('button', { name: 'Automation Board' })).toHaveCount(0)
 
   await page.locator('#app-tab-settings').click()
   await expect(settingsPanel).toBeVisible()
@@ -151,7 +152,7 @@ test('settings keep archived brainstorm tooling hidden while auto urge stays und
   await expect(gitToggle).toBeChecked()
   await expect(filesToggle).toBeChecked()
   await expect(stickyToggle).toBeChecked()
-  await expect(automationBoardToggle).toBeChecked()
+  await expect(automationBoardToggle).not.toBeChecked()
   await expect(brainstormToggle).toHaveCount(0)
   await expect(weatherToggle).not.toBeChecked()
   await expect(musicToggle).not.toBeChecked()
@@ -159,9 +160,12 @@ test('settings keep archived brainstorm tooling hidden while auto urge stays und
 
   await gitToggle.uncheck()
   await weatherToggle.check()
+  // 实验性开关仍然把看板放回快捷工具——只改数字不补这一步，
+  // 「看板永远渲染不出来」也会让上面的 toHaveCount(3) 变绿。
+  await automationBoardToggle.check()
 
   await page.locator('#app-tab-ambience').click()
-  // Git 关掉、天气打开：Files / Sticky Note / Automation Board / Weather
+  // Git 关掉、天气与看板打开：Files / Sticky Note / Automation Board / Weather
   await expect(quickToolButtons).toHaveCount(4)
   await expect(page.getByRole('button', { name: 'Git' })).toHaveCount(0)
   await expect(page.getByRole('button', { name: 'Files' })).toHaveCount(1)

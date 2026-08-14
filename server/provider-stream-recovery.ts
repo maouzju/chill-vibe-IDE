@@ -46,6 +46,15 @@ const recoverableErrorPatterns = [
   // 不能硬失败或新建会话，否则会丢失未完成 turn；按 stream-recovery-feedback SPEC 走 resume。
   'invalid_encrypted_content',
   'encrypted content could not be decrypted or parsed',
+  // 症状：卡片跑了二十几秒就红出 `[ede_diagnostic] result_type=assistant
+  //   last_content_type=none stop_reason=null`，停在「重连失败」等用户手点续传。
+  // 根因：2026-08-14 现场。claude CLI 的终结判据 `buo()` 要求最后一条 assistant 的
+  //   末个 content block 是 text/thinking，而这里**一个 block 都没有**、stop_reason
+  //   也是 null —— 中转返回了 HTTP 200 空回复。与上面的 'empty or malformed
+  //   response' 是同一类瞬时上游故障，重发一轮通常就好。
+  // 为什么不匹配整个 `[ede_diagnostic]` 前缀：CLI 把该诊断串放在 errors[0]，其后还会
+  //   拼接真实异常（余额不足这类不该重试的也走同一条），只有"末块为空"确定是瞬时的。
+  'last_content_type=none',
 ] as const
 
 const zeroExitPattern = /\b(?:codex|claude) exited with status code:\s*0\b/i

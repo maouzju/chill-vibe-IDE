@@ -50,6 +50,23 @@
 
 释放过程先读取就绪批次。工作区模式除检查冻结的 `wakeTimerPendingTargetIds` 外，还要实时扫描同列所有非工具 Agent；只要存在其他 `status=streaming` 的 Agent 就继续等待，避免恢复旧数据、并发状态更新或漏记目标导致提前唤醒。确认就绪后，再通过一组 `updateCard` action 原子清空所有就绪卡的队列与 arm 数据，最后 `Promise.all` 调用 `sendMessage(..., { origin: 'wake-timer-release' })`。这样多卡同一轮检查可同时启动，并且重复 effect/timeout 不会二次发送。
 
+## 右键发送 → 计划唤醒（空闲卡）
+
+`SendMessageMode = 'defer'` 原本只有 `card.status === 'streaming'` 这一条分支有意义；空闲卡上右键与左键完全等价，等于把一个用户已经表达出的"先别发"意图丢掉了。
+
+新增纯函数 `shouldArmWakeTimerForDeferSend({ featureEnabled, mode, origin, cardStatus, isToolCard })`：总开关开、`mode === 'defer'`、`origin === 'user'`、卡片非 `streaming`、非工具卡时返回 `true`。`sendMessage()` 把它并进 `shouldQueueWakeTimerSend` 的 `cardActive` 入参，因此右键空闲卡等价于"这张卡此刻开着计划唤醒"。
+
+`enqueueWakeTimerSend()` 增加 `activateCard` 参数：arm 成功后把 `wakeTimerActive: true` 写进**同一个** `updateCard` patch。不能先 patch 开关再入队——`armWakeTimerBatch` 可能返回 `left-target-unavailable`，那时入队会失败并回落到立即发送，先写的开关就会留下一个"开着但没有批次"的假状态。
+
+`streaming` 卡不受影响：`shouldArmWakeTimerForDeferSend` 直接返回 `false`，右键继续走既有 FIFO `queuedSends`。
+
+## 记住上次的唤醒方式
+
+`AppSettings` 增加 `wakeTimerDefaultMode`（默认 `workspace-agents`）与 `wakeTimerDefaultDurationMinutes`（默认 30），并进入 `patchSettings` 白名单。
+
+- **写**：`collectWakeTimerDefaultPreference(patch)` 从一次卡片 patch 中提取模式/时长，`App` 里 `WorkspaceColumn.onPatchCard` 这一个入口在派发 `updateCard` 的同时派发 `patchSettings`。选这个入口而不是 reducer 里的 `updateCard`，是因为看板超管 MCP 的 `admin-set-session-wake-timer` 走的是 `automationBoardActions.patchItemCard`：在 reducer 拦截会把 Agent 自己设的模式记成"用户偏好"。
+- **读**：`addCard` reducer 用 `state.settings` 覆盖 `createCard()` 写死的两个字段。只影响新 Tab，已存在的卡不动——与 `applyRequestModelPatch` 的模型默认语义一致（Known Pitfall #40）。
+
 ## 链式待唤醒（left-tab 专属）
 
 `CardStatus` 只有 `idle | streaming | error`，没有「待唤醒」态，所以单看 status 无法区分「已经跑完」和「排着队还没开始」。`left-tab` 模式因此额外读取目标卡的 `wakeTimerQueuedSends` 长度，把「压着批次的左邻」也算作未完成，形成 `A ← B ← C` 的接力：C 等 B，B 等 A，A 跑完 → B 释放并开跑 → B 跑完 → C 释放。

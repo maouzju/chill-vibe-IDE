@@ -769,6 +769,73 @@ test('wake timer holds multiple messages and releases them as one batch when req
   await expect(timerStatus).toHaveCount(0)
 })
 
+test('right-clicking send on an idle chat schedules the message instead of sending it now', async ({ page }) => {
+  const mock = await installMockApis(page, {
+    wakeTimerEnabled: true,
+    initialCard: {
+      status: 'idle',
+      provider: 'codex',
+      model: 'gpt-5.5',
+      // The per-card timer is still off; the remembered condition is the one the
+      // user picked last time.
+      wakeTimerActive: false,
+      wakeTimerMode: 'duration',
+      wakeTimerDurationMinutes: 60,
+      messages: [],
+    },
+  })
+  await page.goto(appUrl)
+
+  const textarea = getActiveComposerTextarea(page)
+  const sendButton = page.getByRole('button', { name: 'Send message' })
+  await textarea.fill('Schedule this first instruction')
+  await sendButton.click({ button: 'right' })
+
+  const timerStatus = page.locator('.message-list .composer-wake-timer-status')
+  await expect(timerStatus).toContainText('1 message')
+  await expect.poll(() => mock.readChatRequests()).toEqual([])
+  await expect.poll(
+    () => mock.readState().columns[0]?.cards['card-1']?.wakeTimerActive,
+  ).toBe(true)
+  await expect.poll(
+    () => mock.readState().columns[0]?.cards['card-1']?.wakeTimerQueuedSends?.length,
+  ).toBe(1)
+
+  await timerStatus.getByRole('button', { name: 'Wake now' }).click()
+
+  await expect.poll(() => mock.readChatRequests()).toHaveLength(1)
+  await expect.poll(() => mock.readChatRequests()[0]?.prompt).toBe('Schedule this first instruction')
+})
+
+test('picking a wake condition remembers it as the default for later chats', async ({ page }) => {
+  const mock = await installMockApis(page, {
+    wakeTimerEnabled: true,
+    initialCard: {
+      status: 'idle',
+      provider: 'codex',
+      model: 'gpt-5.5',
+      wakeTimerActive: true,
+      wakeTimerMode: 'workspace-agents',
+      messages: [],
+    },
+  })
+  await page.goto(appUrl)
+
+  const settingsTrigger = page.locator('.pane-tab-panel.is-active .composer-settings-trigger').first()
+  await settingsTrigger.click()
+
+  const modeSelect = page.locator('.composer-wake-timer-module select').first()
+  await expect(modeSelect).toBeVisible()
+  await modeSelect.selectOption('duration')
+
+  await expect.poll(() => mock.readState().settings?.wakeTimerDefaultMode).toBe('duration')
+
+  const durationInput = page.locator('.composer-wake-timer-duration-input')
+  await durationInput.fill('90')
+
+  await expect.poll(() => mock.readState().settings?.wakeTimerDefaultDurationMinutes).toBe(90)
+})
+
 test('wake timer holds an empty continue-session action until wake', async ({ page }) => {
   const mock = await installMockApis(page, {
     wakeTimerEnabled: true,

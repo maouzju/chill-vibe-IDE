@@ -40,6 +40,16 @@ import { defaultSystemPrompt } from '../shared/system-prompt.ts'
 import { resolveAppTheme } from '../shared/theme.ts'
 
 describe('default-state helpers', () => {
+  it('keeps the experimental automation board disabled until the user enables it', () => {
+    assert.equal(createDefaultSettings().automationBoardCardEnabled, false)
+    assert.equal(normalizeAppSettings({}).automationBoardCardEnabled, false)
+    assert.equal(appSettingsSchema.parse({}).automationBoardCardEnabled, false)
+    assert.equal(
+      getAvailableQuickToolModels(createDefaultSettings()).includes(AUTOMATIONBOARD_TOOL_MODEL),
+      false,
+    )
+  })
+
   it('fills missing editor settings with defaults and clamps invalid values', () => {
     const missing = normalizeAppSettings({})
     assert.deepEqual(missing.editor, { fontSize: 13, wordWrap: false, minimap: false, tabSize: 2 })
@@ -446,12 +456,12 @@ describe('default-state helpers', () => {
       GIT_TOOL_MODEL,
       FILETREE_TOOL_MODEL,
       STICKYNOTE_TOOL_MODEL,
-      AUTOMATIONBOARD_TOOL_MODEL,
     ])
     assert.deepEqual(
       getAvailableQuickToolModels(
         normalizeAppSettings({
           gitCardEnabled: false,
+          automationBoardCardEnabled: true,
           brainstormCardEnabled: true,
           experimentalWeatherEnabled: true,
           experimentalMusicEnabled: true,
@@ -492,7 +502,6 @@ describe('default-state helpers', () => {
       GIT_TOOL_MODEL,
       FILETREE_TOOL_MODEL,
       STICKYNOTE_TOOL_MODEL,
-      AUTOMATIONBOARD_TOOL_MODEL,
     ])
   })
 

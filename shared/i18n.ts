@@ -356,6 +356,7 @@ type LocaleText = {
 
   // Automation Board
   automationBoardTitle: string
+  automationBoardExperimentalSuffix: string
   automationBoardLaneStandby: string
   automationBoardLaneRunning: string
   automationBoardLaneDone: string
@@ -824,6 +825,7 @@ const localeTextByLanguage: Record<AppLanguage, LocaleText> = {
     emptyStateAutomationBoardDescription: '把一批需求排成看板，执行中的自动开跑，跑完让监工接手。',
 
     automationBoardTitle: '自动化看板',
+    automationBoardExperimentalSuffix: '（实验性）',
     automationBoardLaneStandby: '待命',
     automationBoardLaneRunning: '执行中',
     automationBoardLaneDone: '已完成',
@@ -1306,6 +1308,7 @@ const localeTextByLanguage: Record<AppLanguage, LocaleText> = {
       'Queue a batch of requirements. Running ones start immediately; a supervisor takes over when they finish.',
 
     automationBoardTitle: 'Automation Board',
+    automationBoardExperimentalSuffix: ' (Experimental)',
     automationBoardLaneStandby: 'Standby',
     automationBoardLaneRunning: 'Running',
     automationBoardLaneDone: 'Done',

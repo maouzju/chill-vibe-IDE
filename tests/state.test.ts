@@ -690,6 +690,38 @@ describe('ideReducer pane layout', () => {
     assert.equal(newCard.autoUrgeProfileId, defaultAutoUrgeProfileId)
   })
 
+  it('seeds a new tab with the remembered wake condition instead of the built-in default', () => {
+    const state = createState()
+    state.settings.wakeTimerDefaultMode = 'duration'
+    state.settings.wakeTimerDefaultDurationMinutes = 90
+
+    const next = ideReducer(state, {
+      type: 'addTab',
+      columnId: 'column-1',
+      paneId: 'pane-1',
+    })
+
+    const pane = next.columns[0].layout as PaneNode
+    const newCard = next.columns[0].cards[pane.activeTabId] as ChatCard
+
+    assert.equal(newCard.wakeTimerMode, 'duration')
+    assert.equal(newCard.wakeTimerDurationMinutes, 90)
+    // The remembered condition is a seed for new tabs only; it must not switch
+    // the timer on by itself.
+    assert.equal(newCard.wakeTimerActive, false)
+    assert.notEqual((next.columns[0].cards['card-1'] as ChatCard).wakeTimerMode, 'duration')
+  })
+
+  it('remembers a wake condition picked in the composer as the default for later tabs', () => {
+    const next = ideReducer(createState(), {
+      type: 'updateSettings',
+      patch: { wakeTimerDefaultMode: 'left-tab', wakeTimerDefaultDurationMinutes: 15 },
+    })
+
+    assert.equal(next.settings.wakeTimerDefaultMode, 'left-tab')
+    assert.equal(next.settings.wakeTimerDefaultDurationMinutes, 15)
+  })
+
   it('remembers the last selected chat model for future tabs in the same provider column', () => {
     const selected = ideReducer(createState(), {
       type: 'selectCardModel',

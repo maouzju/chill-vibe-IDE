@@ -473,3 +473,48 @@ test('a turn that only emitted thinking plus a phantom tool call still recovers'
     },
   )
 })
+
+// 症状：卡片 22 秒后红出 `[ede_diagnostic] result_type=assistant
+//   last_content_type=none stop_reason=null`，并停在「重连失败 / 手动续传」——
+//   要用户手点才能继续。
+// 根因：2026-08-14 现场。这是 claude CLI 的 `buo()` 终结判据没通过——最后一条
+//   assistant 消息的 content 里**一个 block 都没有**（last_content_type=none）、
+//   stop_reason 也是 null，即中转返回了 HTTP 200 的空回复。它与名单里
+//   'empty or malformed response' 是同一类瞬时上游故障，重发一轮通常就好。
+// 为什么判据取 `last_content_type=none` 而不是整个 `[ede_diagnostic]` 前缀：
+//   同一个 errors[0] 还会拼上后续真实异常，只有"空内容"这一种才确定是瞬时的。
+test('an empty assistant reply from the relay is resumable instead of dead-ending', () => {
+  assert.deepEqual(
+    classifyProviderStreamErrorRecovery(
+      { sessionId: 'session-1' },
+      '[ede_diagnostic] result_type=assistant last_content_type=none stop_reason=null',
+    ),
+    {
+      recoverable: true,
+      recoveryMode: 'resume-session',
+    },
+  )
+})
+
+// 没有 session 就无从 resume —— 保持既有护栏。
+test('an empty assistant reply without a session is not resumable', () => {
+  assert.deepEqual(
+    classifyProviderStreamErrorRecovery(
+      { sessionId: '' },
+      '[ede_diagnostic] result_type=assistant last_content_type=none stop_reason=null',
+    ),
+    {},
+  )
+})
+
+// 内容真的产出过（last_content_type=text）却仍以 error_during_execution 收尾时，
+// 不是空响应那一类，不能盲目续传。
+test('a diagnostic that reports real content is not treated as an empty relay reply', () => {
+  assert.deepEqual(
+    classifyProviderStreamErrorRecovery(
+      { sessionId: 'session-1' },
+      '[ede_diagnostic] result_type=assistant last_content_type=text stop_reason=null',
+    ),
+    {},
+  )
+})

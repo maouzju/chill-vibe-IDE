@@ -7,9 +7,11 @@ import { appSettingsSchema, appStateSchema } from '../shared/schema.ts'
 import {
   armWakeTimerBatch,
   buildCanceledWakeTimerDraft,
+  collectWakeTimerDefaultPreference,
   isWakeTimerConditionReady,
   mergeWakeTimerRequests,
   removeCompletedWakeTimerTarget,
+  shouldArmWakeTimerForDeferSend,
   shouldReleaseCompletedWakeTimerTarget,
   shouldQueueWakeTimerSend,
   shouldConfirmWakeTimerCompletion,
@@ -54,6 +56,94 @@ describe('wake timer settings and card defaults', () => {
 
     assert.equal(text.wakeTimerFeatureLabel, '计划唤醒')
     assert.equal(text.wakeTimerLabel, '计划唤醒')
+  })
+
+  it('remembers the last picked wake condition as the default for new chats', () => {
+    const settings = createDefaultSettings()
+
+    assert.equal(settings.wakeTimerDefaultMode, 'workspace-agents')
+    assert.equal(settings.wakeTimerDefaultDurationMinutes, 30)
+    assert.equal(appSettingsSchema.parse({}).wakeTimerDefaultMode, 'workspace-agents')
+    assert.equal(appSettingsSchema.parse({}).wakeTimerDefaultDurationMinutes, 30)
+    assert.equal(
+      appStateSchema.parse({
+        version: 1,
+        columns: [],
+        updatedAt: '2026-08-14T00:00:00.000Z',
+      }).settings.wakeTimerDefaultMode,
+      'workspace-agents',
+    )
+    assert.equal(normalizeAppSettings({}).wakeTimerDefaultMode, 'workspace-agents')
+    assert.equal(normalizeAppSettings({}).wakeTimerDefaultDurationMinutes, 30)
+    assert.equal(
+      normalizeAppSettings({ wakeTimerDefaultMode: 'duration', wakeTimerDefaultDurationMinutes: 120 })
+        .wakeTimerDefaultMode,
+      'duration',
+    )
+    assert.equal(
+      normalizeAppSettings({ wakeTimerDefaultMode: 'duration', wakeTimerDefaultDurationMinutes: 120 })
+        .wakeTimerDefaultDurationMinutes,
+      120,
+    )
+  })
+})
+
+describe('remembering the picked wake condition', () => {
+  it('extracts the user-picked mode and duration from a card patch', () => {
+    assert.deepEqual(collectWakeTimerDefaultPreference({ wakeTimerMode: 'left-tab' }), {
+      wakeTimerDefaultMode: 'left-tab',
+    })
+    assert.deepEqual(collectWakeTimerDefaultPreference({ wakeTimerDurationMinutes: 90 }), {
+      wakeTimerDefaultDurationMinutes: 90,
+    })
+    assert.deepEqual(
+      collectWakeTimerDefaultPreference({ wakeTimerMode: 'duration', wakeTimerDurationMinutes: 45 }),
+      { wakeTimerDefaultMode: 'duration', wakeTimerDefaultDurationMinutes: 45 },
+    )
+  })
+
+  it('ignores patches that carry no wake condition choice', () => {
+    assert.equal(collectWakeTimerDefaultPreference({ wakeTimerActive: true }), null)
+    assert.equal(collectWakeTimerDefaultPreference({ draft: 'hello' }), null)
+    assert.equal(collectWakeTimerDefaultPreference({}), null)
+  })
+
+  it('drops out-of-range durations instead of persisting them as the default', () => {
+    assert.equal(collectWakeTimerDefaultPreference({ wakeTimerDurationMinutes: 0 }), null)
+    assert.equal(collectWakeTimerDefaultPreference({ wakeTimerDurationMinutes: 999_999 }), null)
+    assert.equal(collectWakeTimerDefaultPreference({ wakeTimerDurationMinutes: Number.NaN }), null)
+  })
+})
+
+describe('right-click send on an idle card', () => {
+  const base = {
+    featureEnabled: true,
+    mode: 'defer' as const,
+    origin: 'user' as const,
+    cardStatus: 'idle' as const,
+    isToolCard: false,
+  }
+
+  it('turns a right-click send into a wake timer batch when nothing is running', () => {
+    assert.equal(shouldArmWakeTimerForDeferSend(base), true)
+    assert.equal(shouldArmWakeTimerForDeferSend({ ...base, cardStatus: 'error' }), true)
+  })
+
+  it('keeps the FIFO defer queue while the card is answering', () => {
+    assert.equal(shouldArmWakeTimerForDeferSend({ ...base, cardStatus: 'streaming' }), false)
+  })
+
+  it('leaves ordinary left-click sends untouched', () => {
+    assert.equal(shouldArmWakeTimerForDeferSend({ ...base, mode: undefined }), false)
+    assert.equal(shouldArmWakeTimerForDeferSend({ ...base, mode: 'auto' }), false)
+    assert.equal(shouldArmWakeTimerForDeferSend({ ...base, mode: 'interrupt' }), false)
+  })
+
+  it('never arms from automated senders, tool cards, or a disabled feature', () => {
+    assert.equal(shouldArmWakeTimerForDeferSend({ ...base, featureEnabled: false }), false)
+    assert.equal(shouldArmWakeTimerForDeferSend({ ...base, origin: 'auto-urge' }), false)
+    assert.equal(shouldArmWakeTimerForDeferSend({ ...base, origin: 'wake-timer-release' }), false)
+    assert.equal(shouldArmWakeTimerForDeferSend({ ...base, isToolCard: true }), false)
   })
 })
 

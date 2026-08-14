@@ -4111,7 +4111,9 @@ const ChatCardView = ({
   const sendButtonTooltip =
     card.status === 'streaming'
       ? `${text.sendMessage} \u00b7 ${language === 'en' ? 'Left-click sends now and stops the current answer. Right-click sends later.' : '\u5de6\u952e\u7acb\u5373\u53d1\u9001\u5e76\u505c\u6b62\u5f53\u524d\u56de\u7b54\uff1b\u53f3\u952e\u5ef6\u540e\u53d1\u9001\u3002'}`
-      : `${text.sendMessage} \u00b7 ${language === 'en' ? 'Right-click sends later if an answer is running.' : '\u5982\u679c\u6b63\u5728\u56de\u7b54\uff0c\u53f3\u952e\u4f1a\u5ef6\u540e\u53d1\u9001\u3002'}`
+      : wakeTimerEnabled
+        ? `${text.sendMessage} \u00b7 ${language === 'en' ? 'Right-click holds the message for a scheduled wake instead of sending now.' : '\u53f3\u952e\u6539\u4e3a\u8ba1\u5212\u5524\u9192\uff1a\u5148\u6512\u7740\uff0c\u6ee1\u8db3\u5524\u9192\u6761\u4ef6\u518d\u53d1\u3002'}`
+        : `${text.sendMessage} \u00b7 ${language === 'en' ? 'Right-click sends later if an answer is running.' : '\u5982\u679c\u6b63\u5728\u56de\u7b54\uff0c\u53f3\u952e\u4f1a\u5ef6\u540e\u53d1\u9001\u3002'}`
   const queuedSendText = queuedSendSummary
     ? text.queuedSendSummary(
         queuedSendSummary.count,

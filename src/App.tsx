@@ -247,9 +247,11 @@ import { shouldExitPlanModeForAskUserAnswer } from './components/ask-user-answer
 import {
   armWakeTimerBatch,
   buildCanceledWakeTimerDraft,
+  collectWakeTimerDefaultPreference,
   isWakeTimerConditionReady,
   mergeWakeTimerRequests,
   removeCompletedWakeTimerTarget,
+  shouldArmWakeTimerForDeferSend,
   shouldReleaseCompletedWakeTimerTarget,
   shouldQueueWakeTimerSend,
   shouldConfirmWakeTimerCompletion,
@@ -2789,6 +2791,10 @@ function App() {
     columnId: string,
     cardId: string,
     request: QueuedSendRequest,
+    // 空闲卡右键发送时逐卡开关可能还没开。它必须和批次写进同一个 patch：
+    // arm 可能返回 left-target-unavailable 并回落到立即发送，先写开关会留下
+    // 一个"开着但没有批次"的假状态。见 wake-timer SPEC「右键发送 → 计划唤醒」。
+    { activateCard = false }: { activateCard?: boolean } = {},
   ) => {
     const state = appStateRef.current
     const column = state.columns.find((entry) => entry.id === columnId)
@@ -2847,6 +2853,7 @@ function App() {
       cardId,
       patch: {
         wakeTimerQueuedSends: [...currentQueue, request],
+        ...(activateCard ? { wakeTimerActive: true } : {}),
         ...armPatch,
       },
     }
@@ -5869,20 +5876,34 @@ function App() {
       !hasSendContent &&
       !MODEL_PICKER_HIDDEN_TOOL_MODELS.has(card.model) &&
       canSendEmptyContinuation(card)
+    // 空闲卡上的右键发送 = 计划唤醒：用户已经表达了"先别发"，而 FIFO 延后队列
+    // 只在有正在跑的回合时才有释放条件。见 wake-timer SPEC「右键发送 → 计划唤醒」。
+    const armsWakeTimerFromDeferSend = shouldArmWakeTimerForDeferSend({
+      featureEnabled: appStateRef.current.settings.wakeTimerEnabled,
+      mode: options.mode,
+      origin: sendOrigin,
+      cardStatus: card.status,
+      isToolCard: MODEL_PICKER_HIDDEN_TOOL_MODELS.has(card.model),
+    })
     if (shouldQueueWakeTimerSend({
       featureEnabled: appStateRef.current.settings.wakeTimerEnabled,
-      cardActive: card.wakeTimerActive === true,
+      cardActive: card.wakeTimerActive === true || armsWakeTimerFromDeferSend,
       origin: sendOrigin,
       answersPendingAskUser,
       hasContent: hasSendContent,
       isContinuation: isEmptyContinuation,
     })) {
-      const queued = enqueueWakeTimerSend(column.id, cardId, {
-        id: crypto.randomUUID(),
-        prompt,
-        attachments,
-        ...(isEmptyContinuation ? { isContinuation: true as const } : {}),
-      })
+      const queued = enqueueWakeTimerSend(
+        column.id,
+        cardId,
+        {
+          id: crypto.randomUUID(),
+          prompt,
+          attachments,
+          ...(isEmptyContinuation ? { isContinuation: true as const } : {}),
+        },
+        { activateCard: armsWakeTimerFromDeferSend && card.wakeTimerActive !== true },
+      )
       if (queued) {
         return
       }
@@ -8733,7 +8754,10 @@ function App() {
         </label>
 
         <label className="settings-toggle" htmlFor="automation-board-card-toggle">
-          <span>{text.automationBoardTitle}</span>
+          <span>
+            {text.automationBoardTitle}
+            {text.automationBoardExperimentalSuffix}
+          </span>
           <input
             id="automation-board-card-toggle"
             type="checkbox"
@@ -10432,6 +10456,18 @@ function App() {
                   columnId: column.id,
                   cardId,
                   patch,
+                }
+                // 用户在 composer 设置菜单里选的唤醒条件同时成为新会话的默认。
+                // 只拦这一个交互入口：看板超管 MCP 走 patchItemCard，Agent 自己
+                // 设的模式不能变成用户偏好。见 wake-timer SPEC「记住上次的唤醒方式」。
+                const wakeTimerPreference = collectWakeTimerDefaultPreference(patch)
+                if (wakeTimerPreference) {
+                  const actions: IdeAction[] = [
+                    action,
+                    { type: 'updateSettings', patch: wakeTimerPreference },
+                  ]
+                  persistAfterActions(actions, applyActions(actions))
+                  return
                 }
                 persistAfterAction(action.type, applyAction(action))
               })()

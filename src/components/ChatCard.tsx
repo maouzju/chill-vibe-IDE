@@ -56,6 +56,7 @@ import type {
   ModelPromptRule,
   Provider,
   SlashCommand,
+  WakeTimerMode,
 } from '../../shared/schema'
 import {
   defaultCodexChatSettings,
@@ -99,6 +100,8 @@ import {
 import { syncComposerTextareaHeight } from './chat-composer-textarea'
 import { ComposerSettingsRow } from './ComposerSettingsRow'
 import { WakeTimerSettingsPanel } from './WakeTimerSettingsPanel'
+import { WakeTimerStatus } from './WakeTimerStatus'
+import { summarizeWakeTimerBatch } from './wake-timer'
 import {
   collectPastedFilePaths,
   formatPastedFilePathInsertion,
@@ -151,6 +154,7 @@ import { WhiteNoiseCard } from './WhiteNoiseCard'
 import { WeatherCard } from './WeatherCard'
 import { StickyNoteCard } from './StickyNoteCard'
 import { FileTreeCard } from './FileTreeCard'
+import { useFilePathContextMenu } from './use-file-path-context-menu'
 import { TextEditorCard } from './TextEditorCard'
 import { ImageEditorCard } from './ImageEditorCard'
 import {
@@ -878,6 +882,10 @@ type ChatTranscriptProps = {
   wakeTimerQueueLength: number
   wakeTimerConditionText: string
   wakeTimerPendingStatusLabel: string
+  wakeTimerQueuePreviewText: string
+  wakeTimerMode: WakeTimerMode
+  wakeTimerDurationMinutes: number
+  wakeTimerNeighbourAvailable: boolean
   wakeTimerWakeNowLabel: string
   wakeTimerCancelLabel: string
   showsQuickToolGrid: boolean
@@ -889,6 +897,8 @@ type ChatTranscriptProps = {
   onRevealMoreCompactedHistory: () => void
   onWakeTimerBatchNow?: () => void
   onCancelWakeTimerBatch?: () => void
+  onChangeWakeTimerMode?: (mode: WakeTimerMode) => void
+  onChangeWakeTimerDurationMinutes?: (minutes: number) => void
   onActivateQuickTool: (entry: EmptyStateToolEntry) => void
   onToggleToolGroup: (key: string) => void
   onSelectAskUserOption: (answerKey: string, label: string) => void
@@ -896,60 +906,6 @@ type ChatTranscriptProps = {
   onOpenFile?: (relativePath: string, options?: { line?: number }) => void
   onForkConversation?: (messageId: string) => void
 }
-
-type WakeTimerStatusProps = {
-  language: AppLanguage
-  queueLength: number
-  conditionText: string
-  pendingStatusLabel: string
-  wakeNowLabel: string
-  cancelLabel: string
-  isEmptyState?: boolean
-  onWakeNow?: () => void
-  onCancel?: () => void
-}
-
-const WakeTimerStatus = ({
-  language,
-  queueLength,
-  conditionText,
-  pendingStatusLabel,
-  wakeNowLabel,
-  cancelLabel,
-  isEmptyState = false,
-  onWakeNow,
-  onCancel,
-}: WakeTimerStatusProps) => (
-  <div
-    className={`composer-wake-timer-status${isEmptyState ? ' is-empty-state' : ''}`}
-    role="status"
-  >
-    <span className="composer-wake-timer-copy">
-      <strong>{pendingStatusLabel}</strong>
-      <span>
-        {language === 'en'
-          ? `${queueLength} message${queueLength === 1 ? '' : 's'} · ${conditionText}`
-          : `${queueLength} 条消息 · ${conditionText}`}
-      </span>
-    </span>
-    <button
-      type="button"
-      className="composer-queued-send-action"
-      onClick={onWakeNow}
-      disabled={!onWakeNow}
-    >
-      {wakeNowLabel}
-    </button>
-    <button
-      type="button"
-      className="composer-queued-send-action"
-      onClick={onCancel}
-      disabled={!onCancel}
-    >
-      {cancelLabel}
-    </button>
-  </div>
-)
 
 const ChatTranscript = memo(
   ({
@@ -969,6 +925,10 @@ const ChatTranscript = memo(
     wakeTimerQueueLength,
     wakeTimerConditionText,
     wakeTimerPendingStatusLabel,
+    wakeTimerQueuePreviewText,
+    wakeTimerMode,
+    wakeTimerDurationMinutes,
+    wakeTimerNeighbourAvailable,
     wakeTimerWakeNowLabel,
     wakeTimerCancelLabel,
     showsQuickToolGrid,
@@ -980,6 +940,8 @@ const ChatTranscript = memo(
     onRevealMoreCompactedHistory,
     onWakeTimerBatchNow,
     onCancelWakeTimerBatch,
+    onChangeWakeTimerMode,
+    onChangeWakeTimerDurationMinutes,
     onActivateQuickTool,
     onToggleToolGroup,
     onSelectAskUserOption,
@@ -987,6 +949,12 @@ const ChatTranscript = memo(
     onOpenFile,
     onForkConversation,
   }: ChatTranscriptProps) => {
+    // 右键任意可打开的文件行（改动汇总 / 编辑列表 / 工具详情 / 正文里的文件引用）都能
+    // 直接跳到资源管理器。走 message-list 上的一次事件委托而不是给每个卡片单独接一份
+    // 菜单状态：那些行早就统一打了 data-open-file-path，重复接线只会让每张气泡多背一份
+    // portal 和监听器，在多路流式时白烧帧预算。
+    const { handleContextMenu: handleFilePathContextMenu, menu: filePathContextMenu } =
+      useFilePathContextMenu({ language, workspacePath, onOpenFile })
     const renderableEntryRefs = useRef(new Map<string, HTMLElement>())
     const renderableMessagesRef = useRef(renderableMessages)
     const stickySyncFrameRef = useRef<number | null>(null)
@@ -1309,6 +1277,7 @@ const ChatTranscript = memo(
             ref={messageListRef}
             className={`message-list${cardStatus === 'streaming' ? ' is-streaming' : ''}${showsQuickToolGrid || showsWakeTimerStatus ? ' is-empty-state' : ''}`}
             onScroll={isActive ? handleScroll : undefined}
+            onContextMenu={handleFilePathContextMenu}
           >
             {compactionBannerCopy ? (
               <article className="message message-system">
@@ -1331,9 +1300,15 @@ const ChatTranscript = memo(
                 queueLength={wakeTimerQueueLength}
                 conditionText={wakeTimerConditionText}
                 pendingStatusLabel={wakeTimerPendingStatusLabel}
+                queuePreviewText={wakeTimerQueuePreviewText}
+                wakeTimerMode={wakeTimerMode}
+                wakeTimerDurationMinutes={wakeTimerDurationMinutes}
+                neighbourAvailable={wakeTimerNeighbourAvailable}
                 wakeNowLabel={wakeTimerWakeNowLabel}
                 cancelLabel={wakeTimerCancelLabel}
                 isEmptyState
+                onChangeMode={onChangeWakeTimerMode}
+                onChangeDurationMinutes={onChangeWakeTimerDurationMinutes}
                 onWakeNow={onWakeTimerBatchNow}
                 onCancel={onCancelWakeTimerBatch}
               />
@@ -1423,6 +1398,7 @@ const ChatTranscript = memo(
             onManualRecoverStream={onManualRecoverStream}
           />
         ) : null}
+        {filePathContextMenu}
       </>
     )
   },
@@ -1673,6 +1649,14 @@ const ChatCardView = ({
           : `等待 ${pendingCount} 个其他 Agent 完成`)
       : (language === 'en' ? 'Other agents are complete' : '其他 Agent 已完成')
   })()
+  const wakeTimerQueuedSends = card.wakeTimerQueuedSends
+  const wakeTimerQueuePreviewText = useMemo(() => {
+    if (!wakeTimerQueuedSends || wakeTimerQueuedSends.length === 0) {
+      return ''
+    }
+    const summary = summarizeWakeTimerBatch(wakeTimerQueuedSends)
+    return text.wakeTimerQueuePreview(summary.preview, summary.attachmentCount)
+  }, [text, wakeTimerQueuedSends])
   const [musicTitleOverride, setMusicTitleOverride] = useState<string | null>(null)
   const [gitAgentPanelOpen, setGitAgentPanelOpen] = useState(false)
   const [gitInfo, setGitInfo] = useState<GitInfoSummary | null>(null)
@@ -3510,6 +3494,16 @@ const ChatCardView = ({
     requestAnimationFrame(() => textareaRef.current?.focus())
   }
 
+  // 待唤醒状态行上的两个控件走同一条卡片 patch 通道；重新计时由 App 侧的
+  // rearmWakeTimerBatchForPatch 统一处理，UI 这层不自己算 arm 数据。
+  const handleChangeWakeTimerMode = (mode: WakeTimerMode) => {
+    onPatchCard({ wakeTimerMode: mode })
+  }
+
+  const handleChangeWakeTimerDurationMinutes = (minutes: number) => {
+    onPatchCard({ wakeTimerDurationMinutes: minutes })
+  }
+
   const handleSendButtonContextMenu = (event: MouseEvent<HTMLButtonElement>) => {
     event.preventDefault()
     if (sendDisabled) return
@@ -4619,6 +4613,10 @@ const ChatCardView = ({
                 wakeTimerQueueLength={wakeTimerQueue.length}
                 wakeTimerConditionText={wakeTimerConditionText}
                 wakeTimerPendingStatusLabel={text.wakeTimerPendingStatus}
+                wakeTimerQueuePreviewText={wakeTimerQueuePreviewText}
+                wakeTimerMode={wakeTimerMode}
+                wakeTimerDurationMinutes={card.wakeTimerDurationMinutes ?? 30}
+                wakeTimerNeighbourAvailable={Boolean(leftWakeTimerTarget)}
                 wakeTimerWakeNowLabel={text.wakeTimerWakeNow}
                 wakeTimerCancelLabel={text.wakeTimerCancel}
                 showsQuickToolGrid={showsQuickToolGrid}
@@ -4630,6 +4628,8 @@ const ChatCardView = ({
                 onRevealMoreCompactedHistory={revealNextCompactedHistoryBatch}
                 onWakeTimerBatchNow={onWakeTimerBatchNow}
                 onCancelWakeTimerBatch={handleCancelWakeTimerBatch}
+                onChangeWakeTimerMode={handleChangeWakeTimerMode}
+                onChangeWakeTimerDurationMinutes={handleChangeWakeTimerDurationMinutes}
                 onActivateQuickTool={activateQuickTool}
                 onToggleToolGroup={toggleToolGroup}
                 onSelectAskUserOption={handleSelectAskUserOption}
@@ -4691,8 +4691,14 @@ const ChatCardView = ({
                   queueLength={wakeTimerQueue.length}
                   conditionText={wakeTimerConditionText}
                   pendingStatusLabel={text.wakeTimerPendingStatus}
+                  queuePreviewText={wakeTimerQueuePreviewText}
+                  wakeTimerMode={wakeTimerMode}
+                  wakeTimerDurationMinutes={card.wakeTimerDurationMinutes ?? 30}
+                  neighbourAvailable={Boolean(leftWakeTimerTarget)}
                   wakeNowLabel={text.wakeTimerWakeNow}
                   cancelLabel={text.wakeTimerCancel}
+                  onChangeMode={handleChangeWakeTimerMode}
+                  onChangeDurationMinutes={handleChangeWakeTimerDurationMinutes}
                   onWakeNow={onWakeTimerBatchNow}
                   onCancel={handleCancelWakeTimerBatch}
                 />

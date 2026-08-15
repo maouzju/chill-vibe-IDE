@@ -310,6 +310,127 @@ const classifyLaunchErrorHint = (message: string): StreamErrorHint | undefined =
   return undefined
 }
 
+// 症状：2026-08-14 用户与两名同事都卡在「codex 用不了」，卡片里只有一行原样 JSON
+//       `{"error":{"message":"unknown provider for model gpt-5.6-sol",...}}`，无引导、不可恢复。
+// 根因：这类错误来自中转站/API 服务商（new-api 前端 + CLIProxyAPI 上游），意思是「这个模型名
+//       在我这找不到能承接的渠道」。我们既没解析 JSON，classifyLaunchErrorHint 也匹配不到
+//       （里面没有 api key / 401 / unauthorized 任一关键词），于是 hint=undefined，纯死胡同。
+// 为什么不能只做 JSON 解析：解出来的 `unknown provider for model X` 对用户依然是天书，
+//       真正缺的是「去哪改」——所以指引必须点名模型名和设置路径。
+const upstreamModelUnavailablePatterns = [
+  /unknown provider for model/i,
+  /model[_\s]not[_\s]found/i,
+  /no available channel/i,
+  /无可用渠道/,
+  /does not exist or you do not have access/i,
+]
+
+const parseUpstreamErrorBody = (raw: string): unknown => {
+  const trimmed = raw.trim()
+  const start = trimmed.indexOf('{')
+  const end = trimmed.lastIndexOf('}')
+  if (start === -1 || end <= start) {
+    return null
+  }
+
+  try {
+    return JSON.parse(trimmed.slice(start, end + 1))
+  } catch {
+    return null
+  }
+}
+
+// 上游 JSON 错误体的形状不统一：OpenAI 兼容站是 { error: { message } }，有些直接 { message }，
+// 少数把 error 本身写成字符串。三种都认，认不出就返回 null 让原文照旧透传。
+const extractUpstreamErrorMessage = (raw: string): string | null => {
+  const parsed = parseUpstreamErrorBody(raw)
+  if (!isRecord(parsed)) {
+    return null
+  }
+
+  const errorField = parsed.error
+  if (typeof errorField === 'string' && errorField.trim()) {
+    return errorField.trim()
+  }
+
+  if (isRecord(errorField)) {
+    const nested = readString(errorField, 'message')
+    if (nested?.trim()) {
+      return nested.trim()
+    }
+  }
+
+  const topLevel = readString(parsed, 'message')
+  return topLevel?.trim() || null
+}
+
+// 只在能明确指认时才点名模型，猜错一个名字比不猜更误导。
+const extractUnavailableModelName = (message: string): string | null => {
+  const forModel = /(?:unknown provider for model|for model|模型)\s+["'`]?([\w.:\-/]+)["'`]?/i.exec(message)
+  if (forModel?.[1]) {
+    return forModel[1]
+  }
+
+  const quoted = /["'`]([\w.:\-/]{3,})["'`]/.exec(message)
+  return quoted?.[1] ?? null
+}
+
+const formatUpstreamModelUnavailable = (
+  language: AppLanguage,
+  modelName: string | null,
+  rawMessage: string,
+) => {
+  if (language === 'en') {
+    const subject = modelName ? `the model "${modelName}"` : 'the requested model'
+    return `Your API provider has no channel for ${subject}. This comes from the provider, not the local CLI: open Settings and set the Codex model to a name your provider actually serves, or switch providers in the API configuration. Original error: ${rawMessage}`
+  }
+
+  const subject = modelName ? `「${modelName}」` : '当前请求的模型'
+  return `服务商没有${subject}的可用渠道。这条错误来自 API 服务商，不是本机 CLI 的问题：请到 设置 → 模型 把 Codex 模型改成服务商实际提供的名称，或在接口配置里换一个服务商。原始错误：${rawMessage}`
+}
+
+// 症状：模型名在上游没有渠道时，用户看到的错误是一句「Reconnecting... 1/5」，回合当场判死。
+// 根因：codex app-server 对 5xx 会自动重连 5 次，每次发一条 `error` 通知，其中
+//       `willRetry: true`、`message` 只是重连计数、**真正的原因只在 `additionalDetails`**；
+//       重试耗尽后才发 `willRetry: false` 的终态（那条的 message 才是真因）。旧实现既没看
+//       willRetry 就 finishWithError，也从没读过 additionalDetails——「判死得太早」和
+//       「唯一有用的文本被丢掉」同时发生。2026-08-14 用 scripts/probe-codex-app-server.mjs
+//       对着真实上游抓到全过程：5 次重连横跨 61 秒，之后才是真错误。
+// 为什么不能把重试通知也当错误显示：它每十几秒来一条，且回合仍然活着，显示成错误既刷屏又骗人。
+export const readCodexErrorNotification = (
+  params: unknown,
+): { message: string; willRetry: boolean } | null => {
+  if (!isRecord(params)) {
+    return null
+  }
+
+  const errorRecord = readRecord(params, 'error')
+  const detail = errorRecord ? readString(errorRecord, 'additionalDetails')?.trim() : undefined
+  const message =
+    detail ||
+    (errorRecord ? readString(errorRecord, 'message')?.trim() : undefined) ||
+    readString(params, 'message')?.trim() ||
+    'Codex run failed.'
+
+  return { message, willRetry: params.willRetry === true }
+}
+
+export const describeCodexUpstreamFailure = (
+  raw: string,
+  language: AppLanguage,
+): { message: string; hint: StreamErrorHint | undefined } => {
+  const unwrapped = extractUpstreamErrorMessage(raw) ?? raw
+
+  if (upstreamModelUnavailablePatterns.some((pattern) => pattern.test(unwrapped))) {
+    return {
+      message: formatUpstreamModelUnavailable(language, extractUnavailableModelName(unwrapped), unwrapped),
+      hint: 'switch-config',
+    }
+  }
+
+  return { message: unwrapped, hint: classifyLaunchErrorHint(unwrapped) }
+}
+
 export const resolveProviderRuntime = async (provider: Provider): Promise<ProviderRuntime> => {
   const baseEnv =
     provider === 'claude' ? await resolveClaudeRuntimeEnvironment({ env: process.env }) : process.env
@@ -450,7 +571,16 @@ const readLines = (stream: Readable, onLine: (line: string) => void) => {
   return reader
 }
 
-const summarizeDiagnostics = (stderr: string) => {
+const providerDiagnosticsMaxLineLength = 240
+
+// 上游把整个错误体压成一行 JSON 是常态，而它经常超过 240 字符。旧实现对超长行一律整行丢弃，
+// 于是「唯一说明了原因的那一行」被静默吞掉，用户只剩一句「Codex 退出，状态码：1」
+// （2026-08-14 实测的 `unknown provider for model` 就是这么消失的）。
+// 为什么不干脆放宽长度上限：长度过滤挡的是堆栈与超长路径这类真噪声，放宽等于全放进来。
+// 折中是只对"看起来是错误体"的行截断保留。
+const looksLikeUpstreamErrorBody = (line: string) => line.startsWith('{') || line.includes('"error"')
+
+export const summarizeProviderDiagnostics = (stderr: string) => {
   const lines = stderr
     .split(/\r?\n/)
     .map((line) => line.trim())
@@ -461,9 +591,17 @@ const summarizeDiagnostics = (stderr: string) => {
         !line.includes('plugins::manager') &&
         !line.includes('shell_snapshot') &&
         !line.startsWith('<') &&
-        !line.startsWith('at ') &&
-        line.length < 240,
+        !line.startsWith('at '),
     )
+    .flatMap((line) => {
+      if (line.length < providerDiagnosticsMaxLineLength) {
+        return [line]
+      }
+
+      return looksLikeUpstreamErrorBody(line)
+        ? [`${line.slice(0, providerDiagnosticsMaxLineLength)}…`]
+        : []
+    })
 
   return lines.slice(0, 8).join('\n')
 }
@@ -2322,7 +2460,8 @@ const launchCodexAppServerRun = async (
           return
         }
 
-        finishWithError(errorMessage, classifyLaunchErrorHint(errorMessage))
+        const described = describeCodexUpstreamFailure(errorMessage, language)
+        finishWithError(described.message, described.hint)
         return
       }
 
@@ -2419,12 +2558,20 @@ const launchCodexAppServerRun = async (
       }
 
       if (method === 'error') {
-        const errorRecord = readRecord(params, 'error')
-        const messageText =
-          (errorRecord ? readString(errorRecord, 'message') : undefined) ??
-          readString(params, 'message') ??
-          'Codex run failed.'
-        finishWithError(messageText, classifyLaunchErrorHint(messageText))
+        const notification = readCodexErrorNotification(params) ?? {
+          message: 'Codex run failed.',
+          willRetry: false,
+        }
+
+        // 还在自动重连的回合没有死，别替它宣判——真正的终态会带 willRetry:false 再来一次。
+        if (notification.willRetry) {
+          scheduleLocalStreamStallTimer()
+          sink.onLog(notification.message)
+          return
+        }
+
+        const described = describeCodexUpstreamFailure(notification.message, language)
+        finishWithError(described.message, described.hint)
         return
       }
 
@@ -2461,7 +2608,7 @@ const launchCodexAppServerRun = async (
     rejectPendingRequests(code === 0 ? 'Codex app-server closed before completion.' : formatProviderExit(language, 'codex', code))
 
     if (code === 0) {
-      const diagnostics = summarizeDiagnostics(stderr)
+      const diagnostics = summarizeProviderDiagnostics(stderr)
       const message = hasOnlyTransientRecoveryPlaceholderDiagnostics(diagnostics || stderr)
         ? transientOnlyCompletionMessage
         : diagnostics || formatProviderUnexpectedCompletion(language, 'codex')
@@ -2477,7 +2624,7 @@ const launchCodexAppServerRun = async (
       return
     }
 
-    const diagnostics = summarizeDiagnostics(stderr)
+    const diagnostics = summarizeProviderDiagnostics(stderr)
     const message = hasOnlyTransientRecoveryPlaceholderDiagnostics(diagnostics || stderr)
       ? transientOnlyCompletionMessage
       : diagnostics || formatProviderExit(language, 'codex', code)
@@ -3158,7 +3305,7 @@ export const createClaudeTurnParser = (hooks: {
     }
 
     markFinished()
-    const diagnostics = summarizeDiagnostics(stderr)
+    const diagnostics = summarizeProviderDiagnostics(stderr)
     const message =
       code === 0
         ? diagnostics || formatProviderUnexpectedCompletion(language, request.provider)
@@ -3331,7 +3478,7 @@ const launchClaudeSingleShotRun = async (
       }
 
       const stderrText = parser.stderrText()
-      const diagnostics = summarizeDiagnostics(stderrText)
+      const diagnostics = summarizeProviderDiagnostics(stderrText)
       const message =
         code === 0
           ? diagnostics || formatProviderUnexpectedCompletion(language, currentRequest.provider)
@@ -3620,7 +3767,7 @@ const launchClaudeKeepaliveRun = async (
         }
 
         const stderrText = parser.stderrText()
-        const diagnostics = summarizeDiagnostics(stderrText)
+        const diagnostics = summarizeProviderDiagnostics(stderrText)
         const message =
           code === 0
             ? diagnostics || formatProviderUnexpectedCompletion(language, currentRequest.provider)
@@ -3798,7 +3945,12 @@ export const buildCodexArgs = (request: ChatRequest, attachmentPaths: string[]) 
     args.push('--image', attachmentPath)
   }
 
-  args.push('--ask-for-approval', 'never')
+  // 症状：codex-cli 0.144.1 收到 `--ask-for-approval` 直接退出，stderr 只有一行
+  //       `error: unexpected argument '--ask-for-approval' found`（2026-08-14 实测）。
+  // 根因：exec 是非交互模式，这个开关自诞生起就是空操作，0.144 把它从 exec 的 argv 里删了。
+  // 为什么不能干脆不传：approval_policy 仍是真配置项，用户 config.toml 可能写着别的值，
+  //       必须继续显式钉死 never；`-c` 覆盖在新旧 CLI 上都受支持，是唯一向后兼容的写法。
+  args.push('-c', 'approval_policy="never"')
   args.push('--sandbox', getCodexSandboxMode(request))
   args.push('-c', `model_reasoning_effort="${request.thinkingEnabled === false ? 'none' : reasoningEffort}"`)
   args.push('-c', `instructions=${formatTomlString(systemPrompt)}`)

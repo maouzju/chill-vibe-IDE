@@ -16,7 +16,10 @@ export type WakeTimerSettingsPanelProps = {
   neighbourTarget: WakeTimerNeighbourTarget
   /** 本工作区里除自己以外的 Agent 数量，`workspace-agents` 模式的提示用。 */
   workspaceAgentCount: number
-  /** 批次已挂起：模式和时长这一刻改了也不生效，所以锁住并明说。 */
+  /**
+   * 批次已挂起。2026-08-15 起这不再是"锁住"，而是"改了立刻给这批改期"：
+   * 控件保持可用，只补一句说明。见 wake-timer SPEC「随时改条件」。
+   */
   locked: boolean
   onPatch: (patch: Partial<ChatCard>) => void
   className?: string
@@ -70,11 +73,11 @@ export const WakeTimerSettingsPanel = ({
             <select
               className="reasoning-select"
               value={mode}
-              disabled={locked}
               onChange={(event) => onPatch({ wakeTimerMode: event.target.value as WakeTimerMode })}
             >
               <option value="workspace-agents">{text.wakeTimerModeWorkspace}</option>
-              <option value="left-tab">{neighbourLabel}</option>
+              {/* 没有邻居可等时切进去就是把批次埋掉，直接不让选。 */}
+              <option value="left-tab" disabled={!neighbourTarget}>{neighbourLabel}</option>
               <option value="duration">{text.wakeTimerModeDuration}</option>
             </select>
           </ComposerSettingsRow>
@@ -92,7 +95,6 @@ export const WakeTimerSettingsPanel = ({
                   max={10080}
                   step={1}
                   value={card.wakeTimerDurationMinutes ?? 30}
-                  disabled={locked}
                   onChange={(event) => {
                     const next = Number(event.target.value)
                     if (Number.isFinite(next)) {
@@ -112,7 +114,7 @@ export const WakeTimerSettingsPanel = ({
               {text.wakeTimerWorkspaceAgentCount(workspaceAgentCount)}
             </div>
           ) : null}
-          {locked ? <div className="composer-settings-note">{text.wakeTimerBatchLocked}</div> : null}
+          {locked ? <div className="composer-settings-note">{text.wakeTimerBatchRearms}</div> : null}
         </>
       ) : null}
     </div>

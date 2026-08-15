@@ -75,6 +75,28 @@ test('explicit markdown links keep anchor semantics but carry the editor target'
   assert.ok(!html.includes('<button'), html)
 })
 
+test('local links that cannot open in the editor still carry a right-click target', () => {
+  const directory = renderWithEditorHost('产物在 [导出目录](trash/feishu-card-export)')
+
+  assert.deepEqual(openTargets(directory), ['trash/feishu-card-export'])
+  assert.ok(directory.includes('data-open-file-reveal-only="true"'), directory)
+})
+
+test('local links stay right-clickable even without an editor host', () => {
+  const html = renderToStaticMarkup(
+    <div>{renderMarkdown('见 [查阅器](trash/card-viewer.html)', WORKSPACE)}</div>,
+  )
+
+  assert.deepEqual(openTargets(html), ['trash/card-viewer.html'])
+  assert.ok(html.includes('data-open-file-reveal-only="true"'), html)
+})
+
+test('editor-openable links are not marked reveal-only', () => {
+  const html = renderWithEditorHost('详见 [清理脚本](scripts/clean-stale-dist.mjs)')
+
+  assert.ok(!html.includes('data-open-file-reveal-only'), html)
+})
+
 test('external markdown links stay anchors', () => {
   const html = renderWithEditorHost('见 [文档](https://example.com/docs)')
 

@@ -15,6 +15,8 @@ import {
   shouldReleaseCompletedWakeTimerTarget,
   shouldQueueWakeTimerSend,
   shouldConfirmWakeTimerCompletion,
+  rearmWakeTimerBatchForPatch,
+  summarizeWakeTimerBatch,
 } from '../src/components/wake-timer.ts'
 
 const request = (id: string, prompt: string) => ({
@@ -294,6 +296,102 @@ describe('wake timer arming', () => {
   })
 })
 
+describe('changing the wake condition while a batch is pending', () => {
+  const cards = [
+    { id: 'left-running', status: 'streaming' as const, isAgent: true },
+    { id: 'owner', status: 'idle' as const, isAgent: true },
+    { id: 'peer-running', status: 'streaming' as const, isAgent: true },
+  ]
+  const pendingOwner = {
+    id: 'owner',
+    wakeTimerMode: 'workspace-agents' as const,
+    wakeTimerDurationMinutes: 30,
+    wakeTimerQueuedSends: [request('one', '先检查构建')],
+  }
+  const context = {
+    cards,
+    paneTabIds: ['left-running', 'owner'],
+    nowMs: Date.parse('2026-08-15T00:00:00.000Z'),
+  }
+
+  it('re-arms the pending batch onto the newly picked condition', () => {
+    assert.deepEqual(
+      rearmWakeTimerBatchForPatch({
+        patch: { wakeTimerMode: 'duration', wakeTimerDurationMinutes: 45 },
+        card: pendingOwner,
+        ...context,
+      }),
+      {
+        ok: true,
+        patch: {
+          wakeTimerArmedAt: '2026-08-15T00:00:00.000Z',
+          wakeTimerWakeAt: '2026-08-15T00:45:00.000Z',
+          wakeTimerPendingTargetIds: [],
+        },
+      },
+    )
+  })
+
+  it('restarts the duration countdown from the moment the user changed it', () => {
+    const result = rearmWakeTimerBatchForPatch({
+      patch: { wakeTimerDurationMinutes: 10 },
+      card: {
+        ...pendingOwner,
+        // 旧的 armedAt/wakeAt 故意不传：重算只看"改的这一刻"，
+        // 沿用首条入队时间会让改期后立刻到点。
+        wakeTimerMode: 'duration' as const,
+      },
+      ...context,
+    })
+
+    assert.equal(result?.ok, true)
+    assert.equal(result?.ok === true ? result.patch.wakeTimerWakeAt : '', '2026-08-15T00:10:00.000Z')
+  })
+
+  it('recomputes the waiting targets when switching to a target-based condition', () => {
+    const result = rearmWakeTimerBatchForPatch({
+      patch: { wakeTimerMode: 'left-tab' },
+      card: { ...pendingOwner, wakeTimerMode: 'duration' as const },
+      ...context,
+    })
+
+    assert.equal(result?.ok, true)
+    assert.deepEqual(
+      result?.ok === true ? result.patch.wakeTimerPendingTargetIds : [],
+      ['left-running'],
+    )
+    assert.equal(result?.ok === true ? result.patch.wakeTimerWakeAt : 'x', undefined)
+  })
+
+  it('refuses a switch that would wait on a left tab that does not exist', () => {
+    assert.deepEqual(
+      rearmWakeTimerBatchForPatch({
+        patch: { wakeTimerMode: 'left-tab' },
+        card: pendingOwner,
+        cards,
+        paneTabIds: ['owner'],
+        nowMs: context.nowMs,
+      }),
+      { ok: false, reason: 'left-target-unavailable' },
+    )
+  })
+
+  it('leaves ordinary patches and cards without a pending batch untouched', () => {
+    assert.equal(
+      rearmWakeTimerBatchForPatch({ patch: { title: 'renamed' }, card: pendingOwner, ...context }),
+      null,
+    )
+    assert.equal(
+      rearmWakeTimerBatchForPatch({
+        patch: { wakeTimerMode: 'duration' },
+        card: { ...pendingOwner, wakeTimerQueuedSends: [] },
+        ...context,
+      }),
+      null,
+    )
+  })
+})
+
 describe('wake timer release', () => {
   it('queues only ordinary user sends while the feature and card timer are active', () => {
     assert.equal(shouldQueueWakeTimerSend({ featureEnabled: true, cardActive: true, origin: 'user' }), true)
@@ -441,6 +539,43 @@ describe('wake timer release', () => {
         }],
       },
     )
+  })
+
+  it('previews the merged batch text so the pending card shows what will be sent', () => {
+    assert.deepEqual(
+      summarizeWakeTimerBatch([
+        request('one', '  先检查构建\n  然后跑测试  '),
+        {
+          id: 'two',
+          prompt: '再运行截图验证',
+          attachments: [{
+            id: 'image-1',
+            fileName: 'evidence.png',
+            mimeType: 'image/png' as const,
+            sizeBytes: 128,
+          }],
+        },
+      ]),
+      {
+        count: 2,
+        preview: '先检查构建 然后跑测试 再运行截图验证',
+        attachmentCount: 1,
+      },
+    )
+  })
+
+  it('keeps the preview single-line and bounded for a very long queued prompt', () => {
+    const summary = summarizeWakeTimerBatch([request('one', `${'长'.repeat(400)}\n收尾`)])
+
+    assert.equal(summary.preview.length, 120)
+    assert.equal(summary.preview.includes('\n'), false)
+  })
+
+  it('renders an image-only batch preview in both languages', () => {
+    assert.equal(getLocaleText('zh-CN').wakeTimerQueuePreview('', 2), '图片消息，含 2 张图片')
+    assert.equal(getLocaleText('zh-CN').wakeTimerQueuePreview('先检查构建', 0), '先检查构建')
+    assert.equal(getLocaleText('en').wakeTimerQueuePreview('', 1), 'image message, 1 image')
+    assert.equal(getLocaleText('en').wakeTimerQueuePreview('run the build', 2), 'run the build, 2 images')
   })
 
   it('restores a canceled batch before the current composer draft without losing attachments', () => {

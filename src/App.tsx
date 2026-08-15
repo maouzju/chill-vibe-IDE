@@ -50,7 +50,7 @@ import {
   getModelOptions,
   isModelPickerOptionVisible,
   normalizeModel,
-  resolveSlashModel,
+  resolveSlashModelInput,
 } from '../shared/models'
 import { isImageFilePath } from './components/image-file-routing'
 import {
@@ -246,6 +246,7 @@ import {
 import { shouldExitPlanModeForAskUserAnswer } from './components/ask-user-answer-state'
 import {
   armWakeTimerBatch,
+  rearmWakeTimerBatchForPatch,
   buildCanceledWakeTimerDraft,
   collectWakeTimerDefaultPreference,
   isWakeTimerConditionReady,
@@ -2787,6 +2788,73 @@ function App() {
     queueMicrotask(() => flushReadyWakeTimersRef.current?.())
   }, [applyActions, buildWakeTimerTargetReleaseActions, persistAfterActions])
 
+  /**
+   * 卡片 patch 的统一入口，顺带处理「挂起批次改唤醒条件」。
+   *
+   * 症状：待唤醒卡上换唤醒方式，下拉变了但等待条件还是老的。
+   * 根因：arm 数据只在首条消息入队时算，patch 不回流。
+   * 被否决：在 UI 侧各自调 armWakeTimerBatch —— composer 状态行、设置菜单、
+   *   看板抽屉三个入口都能改条件，任何一处漏掉就是同一个 bug；
+   *   见 wake-timer SPEC「随时改条件」。
+   */
+  const patchCardWithWakeTimerRearm = useCallback((
+    columnId: string,
+    cardId: string,
+    patch: Partial<ChatCard>,
+    // 只有用户自己在 composer 设置菜单里选的条件才成为新会话默认；看板抽屉和
+    // 超管 MCP 共用这条通道，Agent 设的模式不能变成用户偏好（pitfall #40 同源）。
+    { rememberPreference = false }: { rememberPreference?: boolean } = {},
+  ) => {
+    const state = appStateRef.current
+    const column = state.columns.find((entry) => entry.id === columnId)
+    const card = column?.cards[cardId]
+    const rearm = column && card
+      ? rearmWakeTimerBatchForPatch({
+          patch,
+          card,
+          cards: Object.values(column.cards).map((entry) => ({
+            id: entry.id,
+            status: entry.status,
+            isAgent: !MODEL_PICKER_HIDDEN_TOOL_MODELS.has(entry.model),
+            hasPendingWakeBatch: (entry.wakeTimerQueuedSends?.length ?? 0) > 0,
+            backgroundWorkPending: entry.backgroundWorkPending === true,
+          })),
+          paneTabIds: resolveWakeTimerNeighbourIds({
+            cardId,
+            paneTabIds: findPaneForTab(column.layout, cardId)?.tabs,
+            cards: column.cards,
+          }),
+          nowMs: Date.now(),
+        })
+      : null
+
+    // 切进一个永远不会满足的条件（left-tab 没有左邻）等于把批次埋掉，保持原条件。
+    if (rearm && !rearm.ok) {
+      return
+    }
+
+    const action: IdeAction = {
+      type: 'updateCard',
+      columnId,
+      cardId,
+      patch: rearm ? { ...patch, ...rearm.patch } : patch,
+    }
+    // 见 wake-timer SPEC「记住上次的唤醒方式」。
+    const wakeTimerPreference = rememberPreference
+      ? collectWakeTimerDefaultPreference(patch)
+      : null
+    if (wakeTimerPreference) {
+      const actions: IdeAction[] = [action, { type: 'updateSettings', patch: wakeTimerPreference }]
+      persistAfterActions(actions, applyActions(actions))
+    } else {
+      persistAfterAction(action.type, applyAction(action))
+    }
+
+    if (rearm) {
+      queueMicrotask(() => flushReadyWakeTimersRef.current?.())
+    }
+  }, [applyAction, applyActions, persistAfterAction, persistAfterActions])
+
   const enqueueWakeTimerSend = useCallback((
     columnId: string,
     cardId: string,
@@ -3847,8 +3915,7 @@ function App() {
         void sendMessageRef.current?.(columnId, cardId, message, [])
       },
       patchItemCard: (columnId, cardId, patch) => {
-        const action: IdeAction = { type: 'updateCard', columnId, cardId, patch }
-        persistAfterAction(action.type, applyAction(action))
+        patchCardWithWakeTimerRearm(columnId, cardId, patch)
       },
       updateTemplate: (workspacePath, templateId, patch) => {
         const action: IdeAction = {
@@ -3896,6 +3963,7 @@ function App() {
       getColumn,
       getColumnCard,
       instantiateAutomationBoardTemplate,
+      patchCardWithWakeTimerRearm,
       persistAfterAction,
       requestStopForCard,
     ],
@@ -5783,8 +5851,15 @@ function App() {
             return true
           }
 
-          const nextModel = resolveSlashModel(card.provider, parsed.args)
-          if (nextModel === null || !isQuickToolModelEnabled(settings, nextModel)) {
+          // 内置列表只有我们维护的几个官方模型，而多数用户接的是中转站，模型名由服务商决定。
+          // 白名单没命中就拒绝，会让服务商不上架这几个模型的用户彻底无路可走（2026-08-14
+          // 用户的两名同事正是卡在硬编码默认的 gpt-5.6-sol 上）。形状合法就放行，是否存在
+          // 交给服务商回答——现在那条错误也会被翻译成人话。
+          const resolvedModelInput = resolveSlashModelInput(card.provider, parsed.args)
+          if (
+            resolvedModelInput === null ||
+            (!resolvedModelInput.custom && !isQuickToolModelEnabled(settings, resolvedModelInput.model))
+          ) {
             appendCardLogs(
               columnId,
               card.id,
@@ -5792,6 +5867,11 @@ function App() {
               languageText.unknownModel(parsed.args),
             )
             return true
+          }
+
+          const nextModel = resolvedModelInput.model
+          if (resolvedModelInput.custom) {
+            appendCardLogs(columnId, card.id, card.provider, languageText.customModelApplied(nextModel))
           }
 
           const nextModelLabel =
@@ -10450,27 +10530,9 @@ function App() {
               appState.stickyNoteArchive[column.workspacePath]?.viewState
             }
             onPatchCard={(cardId, patch) =>
-              (() => {
-                const action: IdeAction = {
-                  type: 'updateCard',
-                  columnId: column.id,
-                  cardId,
-                  patch,
-                }
-                // 用户在 composer 设置菜单里选的唤醒条件同时成为新会话的默认。
-                // 只拦这一个交互入口：看板超管 MCP 走 patchItemCard，Agent 自己
-                // 设的模式不能变成用户偏好。见 wake-timer SPEC「记住上次的唤醒方式」。
-                const wakeTimerPreference = collectWakeTimerDefaultPreference(patch)
-                if (wakeTimerPreference) {
-                  const actions: IdeAction[] = [
-                    action,
-                    { type: 'updateSettings', patch: wakeTimerPreference },
-                  ]
-                  persistAfterActions(actions, applyActions(actions))
-                  return
-                }
-                persistAfterAction(action.type, applyAction(action))
-              })()
+              patchCardWithWakeTimerRearm(column.id, cardId, patch, {
+                rememberPreference: true,
+              })
             }
             onChangeCardTitle={(cardId, title) =>
               (() => {

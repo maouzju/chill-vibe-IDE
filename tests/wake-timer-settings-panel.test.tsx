@@ -103,14 +103,24 @@ describe('WakeTimerSettingsPanel', () => {
     assert.ok(html.includes(text.wakeTimerWorkspaceAgentCount(3)))
   })
 
-  it('locks the mode and duration inputs while a batch is armed', () => {
+  // 2026-08-15 起批次不再冻结条件：改模式/时长就是给手上这批改期。
+  it('keeps the mode and duration editable while a batch is armed', () => {
     const html = render({
       card: card({ wakeTimerActive: true, wakeTimerMode: 'duration' }),
       locked: true,
     })
 
-    assert.ok(html.includes(text.wakeTimerBatchLocked))
-    assert.equal(html.match(/disabled=""/g)?.length, 2)
+    assert.ok(html.includes(text.wakeTimerBatchRearms))
+    assert.equal(html.includes('disabled=""'), false)
+  })
+
+  it('disables the neighbour option when there is nothing to wait for', () => {
+    const html = render({
+      card: card({ wakeTimerActive: true, wakeTimerMode: 'duration' }),
+      neighbourTarget: null,
+    })
+
+    assert.match(html, /<option value="left-tab" disabled=""/)
   })
 
   it('renders in English too', () => {

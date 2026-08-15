@@ -84,7 +84,7 @@ type LocaleText = {
   wakeTimerMinutes: string
   wakeTimerWorkspaceAgentCount: (count: number) => string
   wakeTimerLeftUnavailable: string
-  wakeTimerBatchLocked: string
+  wakeTimerBatchRearms: string
   wakeTimerPendingStatus: string
   wakeTimerWakeNow: string
   wakeTimerCancel: string
@@ -213,6 +213,7 @@ type LocaleText = {
   sendMessage: string
   deferSendMessage: string
   queuedSendSummary: (count: number, preview: string, attachmentCount: number) => string
+  wakeTimerQueuePreview: (preview: string, attachmentCount: number) => string
   queuedSendNow: string
   queuedSendCancel: string
   slashCommands: string
@@ -250,6 +251,7 @@ type LocaleText = {
   currentModel: string
   modelCommandUsage: string
   unknownModel: (value: string) => string
+  customModelApplied: (value: string) => string
   switchedModel: (model: string) => string
   newChat: string
   doubleClickToRename: string
@@ -527,7 +529,7 @@ const localeTextByLanguage: Record<AppLanguage, LocaleText> = {
     wakeTimerMinutes: '分钟',
     wakeTimerWorkspaceAgentCount: (count) => `本工作区有 ${count} 个其他 Agent`,
     wakeTimerLeftUnavailable: '左侧没有可等待的 Agent Tab',
-    wakeTimerBatchLocked: '当前批次已锁定；修改会在下一批生效。',
+    wakeTimerBatchRearms: '改条件会立刻给当前这批消息改期。',
     wakeTimerPendingStatus: '待唤醒',
     wakeTimerWakeNow: '立即唤醒',
     wakeTimerCancel: '取消',
@@ -673,6 +675,10 @@ const localeTextByLanguage: Record<AppLanguage, LocaleText> = {
       const suffix = attachmentCount > 0 ? `，含 ${attachmentCount} 张图片` : ''
       return `已延后 ${count} 条：${preview || '图片消息'}${suffix}`
     },
+    wakeTimerQueuePreview: (preview, attachmentCount) => {
+      const suffix = attachmentCount > 0 ? `，含 ${attachmentCount} 张图片` : ''
+      return `${preview || '图片消息'}${suffix}`
+    },
     queuedSendNow: '立即发送',
     queuedSendCancel: '取消',
     slashCommands: '斜杠命令',
@@ -683,8 +689,12 @@ const localeTextByLanguage: Record<AppLanguage, LocaleText> = {
     appBadge: '应用',
     nativeBadge: '原生',
     skillBadge: 'Skill',
-    codexDefaultModelLabel: 'Codex',
-    claudeDefaultModelLabel: 'Claude',
+    // 这两项在下拉里与「GPT-5.6 Sol」等具体模型并列，光写 Codex/Claude 看不出它们的含义是
+    // 「跟随设置里配置的默认模型」——而设置里那个自由文本框是填自定义模型名的唯一入口，
+    // 用户找不到它就等于被锁死在硬编码的几个模型上（2026-08-14 用户同事的实际卡点）。
+    // 英文侧本来就是 Codex default / Claude CLI default，中文这边此前漏了限定词。
+    codexDefaultModelLabel: 'Codex 默认',
+    claudeDefaultModelLabel: 'Claude 默认',
     you: '你',
     assistant: '助手',
     system: '系统',
@@ -712,6 +722,8 @@ const localeTextByLanguage: Record<AppLanguage, LocaleText> = {
     modelCommandUsage: '用法：/model <name>',
     unknownModel: (value) =>
       `未知模型“${value}”。使用 /model 查看这个卡片支持的模型别名。`,
+    customModelApplied: (value) =>
+      `已切换到自定义模型“${value}”。它不在内置列表里——能不能用取决于你的服务商是否提供这个模型名。`,
     switchedModel: (model) => `已切换到模型 ${model}。`,
     newChat: '新会话',
     doubleClickToRename: '双击重命名',
@@ -994,7 +1006,7 @@ const localeTextByLanguage: Record<AppLanguage, LocaleText> = {
     wakeTimerWorkspaceAgentCount: (count) =>
       `${count} other agent${count === 1 ? '' : 's'} in this workspace`,
     wakeTimerLeftUnavailable: 'No agent tab is available directly on the left',
-    wakeTimerBatchLocked: 'This batch is locked; changes apply to the next batch.',
+    wakeTimerBatchRearms: 'Changing the condition re-schedules the pending batch right away.',
     wakeTimerPendingStatus: 'Waiting to wake',
     wakeTimerWakeNow: 'Wake now',
     wakeTimerCancel: 'Cancel',
@@ -1151,6 +1163,12 @@ const localeTextByLanguage: Record<AppLanguage, LocaleText> = {
         : ''
       return `${count} queued: ${preview || 'image message'}${suffix}`
     },
+    wakeTimerQueuePreview: (preview, attachmentCount) => {
+      const suffix = attachmentCount > 0
+        ? `, ${attachmentCount} image${attachmentCount === 1 ? '' : 's'}`
+        : ''
+      return `${preview || 'image message'}${suffix}`
+    },
     queuedSendNow: 'Send now',
     queuedSendCancel: 'Cancel',
     slashCommands: 'Slash commands',
@@ -1191,6 +1209,8 @@ const localeTextByLanguage: Record<AppLanguage, LocaleText> = {
     modelCommandUsage: 'Usage: /model <name>',
     unknownModel: (value) =>
       `Unknown model "${value}". Use /model to list the supported model aliases for this card.`,
+    customModelApplied: (value) =>
+      `Switched to the custom model "${value}". It is not in the built-in list, so whether it works depends on your provider serving that name.`,
     switchedModel: (model) => `Switched model to ${model}.`,
     newChat: 'New chat',
     doubleClickToRename: 'Double-click to rename',

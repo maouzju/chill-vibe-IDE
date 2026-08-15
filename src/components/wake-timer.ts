@@ -8,6 +8,7 @@ import {
   type QueuedSendRequest,
   type WakeTimerMode,
 } from '../../shared/schema'
+import { getQueuedSendPreview } from './deferred-send-queue'
 import type { SendMessageMode, SendMessageOrigin } from './deferred-send-queue'
 
 export const wakeTimerCompletionStabilityMs = 1200
@@ -192,6 +193,70 @@ export const armWakeTimerBatch = ({
   }
 }
 
+/**
+ * 挂起中的批次改唤醒方式 = 按新条件重新 arm，而不是"下一批才生效"。
+ *
+ * 症状：2026-08-15 用户在待唤醒卡上改条件，UI 上模式变了，实际仍按老条件等待。
+ * 根因：arm 数据（等待目标 / 到点时间）只在首条消息入队时算一次，之后任何
+ *   `wakeTimerMode` / `wakeTimerDurationMinutes` 改动都不回流到 arm 数据。
+ * 被否决：继续沿用"配置冻结"（改动只影响下一批）—— 用户改条件的唯一动机就是
+ *   给手上这批改期，冻结等于这个交互永远不生效；见 wake-timer SPEC「随时改条件」。
+ *   duration 也刻意从"改的这一刻"重新计时，沿用旧 armedAt 会让改期后立刻到点。
+ */
+export const rearmWakeTimerBatchForPatch = ({
+  patch,
+  card,
+  cards,
+  paneTabIds,
+  nowMs,
+}: {
+  patch: Partial<ChatCard>
+  card: Pick<
+    ChatCard,
+    'id' | 'wakeTimerMode' | 'wakeTimerDurationMinutes' | 'wakeTimerQueuedSends'
+  >
+  cards: readonly WakeTimerCardSnapshot[]
+  paneTabIds: readonly string[]
+  nowMs: number
+}):
+  | {
+      ok: true
+      patch: Pick<
+        ChatCard,
+        'wakeTimerArmedAt' | 'wakeTimerWakeAt' | 'wakeTimerPendingTargetIds'
+      >
+    }
+  | { ok: false; reason: 'left-target-unavailable' }
+  | null => {
+  const changesCondition =
+    patch.wakeTimerMode !== undefined || patch.wakeTimerDurationMinutes !== undefined
+  if (!changesCondition || (card.wakeTimerQueuedSends?.length ?? 0) === 0) {
+    return null
+  }
+
+  const arm = armWakeTimerBatch({
+    mode: patch.wakeTimerMode ?? card.wakeTimerMode ?? 'workspace-agents',
+    ownerCardId: card.id,
+    durationMinutes: patch.wakeTimerDurationMinutes ?? card.wakeTimerDurationMinutes ?? 30,
+    nowMs,
+    cards,
+    paneTabIds,
+  })
+
+  if (!arm.ok) {
+    return arm
+  }
+
+  return {
+    ok: true,
+    patch: {
+      wakeTimerArmedAt: arm.armedAt,
+      wakeTimerWakeAt: arm.wakeAt,
+      wakeTimerPendingTargetIds: arm.pendingTargetIds,
+    },
+  }
+}
+
 export const isWakeTimerConditionReady = ({
   mode,
   ownerStatus,
@@ -252,6 +317,23 @@ export const mergeWakeTimerRequests = (
     .join('\n\n'),
   attachments: requests.flatMap((request) => request.attachments.map((attachment) => ({ ...attachment }))),
 })
+
+/**
+ * 待唤醒卡只报"N 条消息 · 条件"，用户回头看不出攒的是哪件事。
+ * 摘要走 mergeWakeTimerRequests 而不是 summarizeQueuedSends 的"下一条"：
+ * 唤醒是整批合并一次发出，只预览首条会漏掉后面追加的内容。
+ */
+export const summarizeWakeTimerBatch = (
+  requests: readonly QueuedSendRequest[],
+): { count: number; preview: string; attachmentCount: number } => {
+  const merged = mergeWakeTimerRequests(requests)
+
+  return {
+    count: requests.length,
+    preview: getQueuedSendPreview({ prompt: merged.prompt }),
+    attachmentCount: merged.attachments.length,
+  }
+}
 
 export const buildCanceledWakeTimerDraft = ({
   requests,

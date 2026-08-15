@@ -1438,7 +1438,7 @@ test('codex exec args default to danger-full-access sandbox for normal chats', (
   )
 
   assert.ok(!args.includes('--dangerously-bypass-approvals-and-sandbox'))
-  assert.match(args.join(' '), /--ask-for-approval never --sandbox danger-full-access/)
+  assert.match(args.join(' '), /-c approval_policy="never" --sandbox danger-full-access/)
 })
 
 test('codex exec args use workspace-write when outside-workspace writes are disabled', () => {
@@ -1451,7 +1451,7 @@ test('codex exec args use workspace-write when outside-workspace writes are disa
     [],
   )
 
-  assert.match(args.join(' '), /--ask-for-approval never --sandbox workspace-write/)
+  assert.match(args.join(' '), /-c approval_policy="never" --sandbox workspace-write/)
 })
 
 test('normalizes Windows unsigned exit codes back to signed values', () => {
@@ -2070,6 +2070,45 @@ const buildFakeCodexEmptyRolloutResumeScript = (
     '})',
   ].join('\n')
 
+
+// 回放 2026-08-14 用 scripts/probe-codex-app-server.mjs 对真实上游抓到的事件序列：
+// codex 对 5xx 自动重连 5 次，每次一条 willRetry:true 的 error（message 只是「Reconnecting
+// N/5」，真因藏在 additionalDetails），耗尽后才发 willRetry:false 的终态。
+const upstreamNoChannelDetail =
+  'unexpected status 503 Service Unavailable: No available channel for model gpt-9.9-nonexistent under group CodeX-Sale (distributor), url: https://api.duckcoding.ai/v1/responses'
+
+const buildFakeCodexRetryingUpstreamErrorScript = (capturePath: string) =>
+  [
+    "const fs = require('node:fs')",
+    "const readline = require('node:readline')",
+    `const capturePath = ${JSON.stringify(capturePath)}`,
+    'const appendMessage = (message) => fs.appendFileSync(capturePath, `${JSON.stringify(message)}\\n`, "utf8")',
+    "const reply = (message) => process.stdout.write(`${JSON.stringify(message)}\\n`)",
+    `const detail = ${JSON.stringify(upstreamNoChannelDetail)}`,
+    "const rl = readline.createInterface({ input: process.stdin, crlfDelay: Infinity })",
+    "rl.on('line', (line) => {",
+    '  if (!line.trim()) {',
+    '    return',
+    '  }',
+    '  const request = JSON.parse(line)',
+    '  appendMessage(request)',
+    "  if (request.method === 'initialize' && request.id) {",
+    '    reply({ id: request.id, result: {} })',
+    '    return',
+    '  }',
+    "  if (request.method === 'thread/start' && request.id) {",
+    "    reply({ id: request.id, result: { thread: { id: 'thread-1', status: { type: 'active' } } } })",
+    '    return',
+    '  }',
+    "  if (request.method === 'turn/start' && request.id) {",
+    '    reply({ id: request.id, result: { turn: { id: "turn-1", status: "inProgress", items: [], error: null } } })',
+    '    for (let attempt = 1; attempt <= 5; attempt += 1) {',
+    "      reply({ method: 'error', params: { error: { message: `Reconnecting... ${attempt}/5`, codexErrorInfo: { responseStreamDisconnected: { httpStatusCode: 503 } }, additionalDetails: detail }, willRetry: true, threadId: 'thread-1', turnId: 'turn-1' } })",
+    '    }',
+    "    reply({ method: 'error', params: { error: { message: detail, codexErrorInfo: 'other', additionalDetails: null }, willRetry: false, threadId: 'thread-1', turnId: 'turn-1' } })",
+    '  }',
+    '})',
+  ].join('\n')
 
 const buildFakeCodexMissingSessionPathResumeScript = (capturePath: string) =>
   [
@@ -5320,6 +5359,53 @@ test('codex app-server continues an active resumed thread with a neutral continu
         text_elements: [],
       },
     ])
+  } finally {
+    await rm(capturePath, { force: true }).catch(() => {})
+  }
+})
+
+test('codex app-server survives upstream reconnects and reports the real reason once', async () => {
+  const capturePath = path.join(
+    os.tmpdir(),
+    `chill-vibe-codex-app-server-upstream-retry-${Date.now()}-${Math.random().toString(36).slice(2)}.jsonl`,
+  )
+
+  try {
+    const events = await withFakeProviderCommand(
+      'codex',
+      buildFakeCodexRetryingUpstreamErrorScript(capturePath),
+      async (workspacePath) =>
+        captureProviderLogs(
+          createRequest({
+            provider: 'codex',
+            language: 'en',
+            workspacePath,
+            model: 'gpt-9.9-nonexistent',
+            prompt: 'Say ok.',
+          }),
+        ),
+    )
+
+    // 旧实现在第一条「Reconnecting... 1/5」上就 finishWithError，用户看到的错误正文
+    // 就是那句重连计数，且回合被判死。现在重连只进日志。
+    const errors = events.filter((event) => event.kind === 'error')
+    assert.equal(errors.length, 1, 'a retrying turn must fail exactly once, at the terminal error')
+    assert.ok(
+      !errors[0].message.includes('Reconnecting'),
+      'the reconnect counter must never be the reported failure',
+    )
+    assert.ok(
+      errors[0].message.includes('gpt-9.9-nonexistent'),
+      'the unusable model name must reach the user',
+    )
+    assert.match(errors[0].message, /settings/i, 'the failure must say where to fix it')
+
+    const logs = events.filter((event) => event.kind === 'log')
+    assert.equal(logs.length, 5, 'each reconnect attempt should surface as a log line')
+    assert.ok(
+      logs.every((entry) => entry.message.includes('No available channel')),
+      'reconnect logs must carry additionalDetails, not the bare counter',
+    )
   } finally {
     await rm(capturePath, { force: true }).catch(() => {})
   }

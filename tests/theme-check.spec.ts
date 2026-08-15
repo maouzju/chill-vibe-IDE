@@ -5234,7 +5234,7 @@ for (const theme of ['dark', 'light'] as const) {
     await expect(settingsMenu).toBeVisible()
     await expect(settingsMenu.getByLabel('Wake timer')).toBeChecked()
     await expect(settingsMenu.getByLabel('Wake condition')).toHaveValue('workspace-agents')
-    await expect(settingsMenu.getByLabel('Wake condition')).toBeDisabled()
+    await expect(settingsMenu.getByLabel('Wake condition')).toBeEnabled()
 
     await expect(settingsMenu).toHaveScreenshot(`composer-wake-timer-menu-${theme}.png`, {
       animations: 'disabled',

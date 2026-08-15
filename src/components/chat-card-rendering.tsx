@@ -1063,6 +1063,11 @@ const createMarkdownComponents = (workspacePath?: string) => {
       canOpenInEditor: Boolean(fileOpener),
     })
     const editorTarget = editorAction.kind === 'open-editor' ? editorAction : null
+    // A local link that has no editor route (directory, extension-less file, no
+    // file-open host) still gets tagged so the transcript's right-click menu can
+    // find it — otherwise "show file location" is unreachable for exactly the
+    // links whose only useful action is showing the file location.
+    const revealTarget = !editorTarget && isLocalLink ? href?.trim() : undefined
 
     return (
       <a
@@ -1073,8 +1078,9 @@ const createMarkdownComponents = (workspacePath?: string) => {
             ? withFileReferenceClass(rest.className, 'message-file-reference-link')
             : rest.className
         }
-        data-open-file-path={editorTarget?.openPath}
+        data-open-file-path={editorTarget?.openPath ?? revealTarget}
         data-open-file-line={editorTarget?.line}
+        data-open-file-reveal-only={revealTarget ? 'true' : undefined}
         target={isLocalLink ? undefined : '_blank'}
         rel={isLocalLink ? undefined : 'noreferrer'}
         onClick={(event) => {

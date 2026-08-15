@@ -70,6 +70,13 @@ const installChatWithFileReference = async (
                 content: '真正的耗时在 `src/sample.ts:12` 里，另见 `writeFileSync` 的调用。',
                 createdAt: new Date().toISOString(),
               },
+              {
+                id: 'assistant-2',
+                role: 'assistant',
+                content:
+                  '网页查阅器已生成：[trash/card-viewer.html](trash/card-viewer.html)，产物都在 [导出目录](trash/feishu-card-export) 下。',
+                createdAt: new Date().toISOString(),
+              },
             ],
             draft: '',
             size: 440,
@@ -165,7 +172,11 @@ test('clicking a file path in an assistant reply opens the built-in editor at th
 
   const editorCard = page.locator('.text-editor-card').first()
   await expect(editorCard).toBeVisible()
-  await expect(editorCard.locator('.text-editor-statusbar-item').first()).toHaveText('12:1')
+  // Full-suite browser pressure can leave Monaco visible before its cursor position arrives.
+  // Wait for the real line signal instead of treating the transient empty status item as failure.
+  await expect(editorCard.locator('.text-editor-statusbar-item').first()).toHaveText('12:1', {
+    timeout: 15_000,
+  })
 })
 
 // Tool activities are folded into a collapsed StructuredToolGroupCard, so the
@@ -202,6 +213,36 @@ test('alt-click keeps the reveal-in-explorer escape hatch instead of opening the
   // The reveal call goes through the desktop bridge, which the mock does not
   // implement — the point of the assertion is that the editor tab is NOT opened.
   await expect(page.locator('.text-editor-card')).toHaveCount(0)
+})
+
+test('right-clicking a markdown file link offers showing its location', async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 820 })
+  await installChatWithFileReference(page)
+  await page.goto(appUrl)
+
+  const link = page.locator('.message-content a', { hasText: 'trash/card-viewer.html' })
+  await expect(link).toHaveAttribute('data-open-file-path', 'trash/card-viewer.html')
+  await link.click({ button: 'right' })
+
+  const menu = page.locator('.file-path-context-menu')
+  await expect(menu).toBeVisible()
+  await expect(menu.locator('button')).toHaveText(['Open File', 'Show File Location', 'Copy Path'])
+})
+
+// A link pointing at a directory has no editor route, and it used to fall out of
+// the menu entirely — which removed the only action it could ever support.
+test('right-clicking a directory link still offers showing its location', async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 820 })
+  await installChatWithFileReference(page)
+  await page.goto(appUrl)
+
+  const link = page.locator('.message-content a', { hasText: '导出目录' })
+  await expect(link).toHaveAttribute('data-open-file-reveal-only', 'true')
+  await link.click({ button: 'right' })
+
+  const menu = page.locator('.file-path-context-menu')
+  await expect(menu).toBeVisible()
+  await expect(menu.locator('button')).toHaveText(['Show File Location', 'Copy Path'])
 })
 
 test('a path the model invented says so instead of dumping a raw ENOENT', async ({ page }) => {

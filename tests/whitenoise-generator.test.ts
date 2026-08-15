@@ -96,9 +96,10 @@ test('white-noise codex argv never bypasses the sandbox', () => {
   assert.deepEqual(args.slice(0, 2), ['--runtime-flag', 'exec'])
   assert.ok(args.includes('--skip-git-repo-check'))
 
-  const approvalIndex = args.indexOf('--ask-for-approval')
-  assert.ok(approvalIndex >= 0, 'codex argv must pin an approval policy')
-  assert.equal(args[approvalIndex + 1], 'never')
+  // 审批策略从 `--ask-for-approval never` 换成 `-c approval_policy="never"`：
+  // codex-cli 0.144 删了前者，详见 buildWhitenoiseCliArgs 的注释。
+  assert.ok(args.includes('approval_policy="never"'), 'codex argv must pin an approval policy')
+  assert.ok(!args.includes('--ask-for-approval'), 'codex-cli 0.144 rejects --ask-for-approval')
 
   const sandboxIndex = args.indexOf('--sandbox')
   assert.ok(sandboxIndex >= 0, 'codex argv must pin a sandbox mode')

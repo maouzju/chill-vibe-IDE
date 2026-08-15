@@ -103,9 +103,13 @@ composer 设置菜单顶部增加一个安静的 `.composer-wake-timer-module`�
 - 触发模式 select；
 - duration 模式的分钟输入；
 - 左邻不可用时的警告提示（左邻有效时不再显示任何说明行，避免超长会话标题在菜单里占一整行）；
-- 批次存在时禁用配置并说明“当前批次已锁定”。
+- 批次存在时配置仍可改：改模式/时长会按新条件重新 arm 当前批次（见下）。
 
-composer 输入框上方增加待唤醒状态行，与现有延后发送状态并列但视觉层级保持克制：数量、条件/剩余时间、立即唤醒、取消。
+composer 输入框上方增加待唤醒状态行，与现有延后发送状态并列但视觉层级保持克制：数量、条件/剩余时间、批次摘要、立即唤醒、取消。
+
+状态行右侧的唤醒方式下拉直接改当前批次的条件。任何一次带 `wakeTimerMode` / `wakeTimerDurationMinutes` 的卡片 patch 都经过 `rearmWakeTimerBatchForPatch`（`src/components/wake-timer.ts`）：卡上没有挂起批次时返回 `null`（原样 patch，只影响下一批），有批次时用新条件跑一遍 `armWakeTimerBatch`，把新的 `wakeTimerArmedAt` / `wakeTimerWakeAt` / `wakeTimerPendingTargetIds` 合进同一次原子更新。切到 duration 时以「改的那一刻」为起点重新计时，而不是沿用首条消息入队时间——用户改期的意图就是「从现在起再等 N 分钟」。`left-tab` 无有效左邻时 arm 失败，此时保持原条件不变，UI 侧也把该选项禁用避免走到这个分支。
+
+批次摘要由 `summarizeWakeTimerBatch`（`src/components/wake-timer.ts`）从 `mergeWakeTimerRequests` 的合并结果取前 120 字并折叠空白，而不是复用延后发送队列的“下一条”预览：唤醒是整批合并成一次发送，只预览首条会漏掉后面追加的内容。摘要以次要行渲染（`.composer-wake-timer-preview`），单行省略号收口，全文放 `title` 悬停查看，纯附件批次退化为“图片消息”。状态行组件是独立的 `src/components/WakeTimerStatus.tsx`，便于 SSR 渲染测试直接覆盖这一行文案。
 
 “取消”通过纯逻辑把 `wakeTimerQueuedSends` 合并回 `draft` / `draftAttachments`，再清空批次 arm 数据。待唤醒内容早于用户取消前正在编辑的新草稿，因此文字和附件都按“待唤醒批次 → 当前草稿”的顺序合并；不能用单纯清空队列实现取消。ChatCard 点击取消前先提交尚未落盘的实时草稿，并把已排队附件立即补回本地 composer 预览，避免 React 状态同步期间出现内容已恢复但界面仍空白。
 

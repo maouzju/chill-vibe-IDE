@@ -229,3 +229,34 @@ export const resolveSlashModel = (provider: Provider, input: string) => {
 
   return option?.model ?? null
 }
+
+// 症状：2026-08-14 用户的两名同事「很久都用不了 codex」，报错是服务商回的
+//   `unknown provider for model gpt-5.6-sol`——那正是 DEFAULT_CODEX_MODEL。
+// 根因：MODEL_OPTIONS 是我们维护的几个官方模型，而绝大多数用户接的是中转站，模型名由
+//   服务商决定。旧实现下 `/model gpt-5.4` 被 resolveSlashModel 判 null 后直接拒掉
+//   （App.tsx 的 'model' 分支），下拉里也只有 5.6 三兄弟 + 5.5，于是服务商不上架这几个
+//   的用户开箱即死，唯一活路是自己找到 设置→模型 里那个自由文本框。
+// 为什么不因为"怕用户拼错"继续拒：拼错的代价是发出去后服务商回一句错（现在还会被
+//   describeCodexUpstreamFailure 翻译成人话），拒绝的代价是这个人永远用不了。不对称。
+// 形状约束的意义不是校验模型是否存在（那只有服务商知道），而是挡住明显不是模型名的输入，
+//   避免把一整句话或工具卡令牌写进 card.model。
+const customModelNamePattern = /^[A-Za-z0-9][\w.:+\-/]{1,63}$/
+
+export const resolveSlashModelInput = (
+  provider: Provider,
+  input: string,
+): { model: string; custom: boolean } | null => {
+  const alias = resolveSlashModel(provider, input)
+  if (alias !== null) {
+    return { model: alias, custom: false }
+  }
+
+  const trimmed = input.trim()
+  // 工具卡令牌当成模型名会造出空壳卡（见 TOOL_CARD_MODELS 上方注释）。首字符限制其实已经
+  // 挡掉了 `__git_tool__`，这里保留显式判断，免得将来令牌换个写法就漏进来。
+  if (!customModelNamePattern.test(trimmed) || isToolCardModel(trimmed)) {
+    return null
+  }
+
+  return { model: trimmed, custom: true }
+}

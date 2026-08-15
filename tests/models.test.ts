@@ -20,6 +20,7 @@ import {
   normalizeModel,
   normalizeStoredModel,
   resolveSlashModel,
+  resolveSlashModelInput,
 } from '../shared/models.ts'
 
 describe('model helpers', () => {
@@ -137,5 +138,54 @@ describe('model helpers', () => {
     assert.equal(resolveSlashModel('claude', 'opus 4.8'), null)
     assert.equal(resolveSlashModel('claude', 'claude-opus-4-8'), null)
     assert.equal(resolveSlashModel('claude', 'unknown-model'), null)
+  })
+
+  // 症状：2026-08-14 用户的两名同事「很久都用不了 codex」，报错是服务商回的
+  //   `unknown provider for model gpt-5.6-sol`——那正是本应用硬编码的默认模型。
+  // 根因：内置模型列表是我们维护的几个官方模型，而绝大多数用户接的是中转站，模型名由
+  //   服务商决定。旧实现下 `/model gpt-5.4` 被判「未知模型」直接拒掉，下拉里也只有
+  //   5.6 三兄弟 + 5.5，于是服务商不上架这几个的用户开箱即死、且无路可走。
+  // 为什么不能因为"怕拼错"继续拒：拼错的代价是发出去后服务商报一句错，而拒绝的代价是
+  //   这个人永远用不了。两者不对称。
+  it('accepts a provider-specific model name that is not in the built-in list', () => {
+    assert.deepEqual(resolveSlashModelInput('codex', 'gpt-5.4'), { model: 'gpt-5.4', custom: true })
+    assert.deepEqual(resolveSlashModelInput('codex', ' gpt-5-codex '), {
+      model: 'gpt-5-codex',
+      custom: true,
+    })
+    assert.deepEqual(resolveSlashModelInput('claude', 'claude-opus-4-8'), {
+      model: 'claude-opus-4-8',
+      custom: true,
+    })
+  })
+
+  // 工具卡令牌走的是白名单命中（`/model git` 一直合法，切到 Git 工具卡），自定义那条路
+  // 则绝不能产出工具卡模型——否则会造出空壳卡，见 TOOL_CARD_MODELS 上方的注释。
+  it('never invents a tool-card model through the custom path', () => {
+    assert.deepEqual(resolveSlashModelInput('codex', GIT_TOOL_MODEL), {
+      model: GIT_TOOL_MODEL,
+      custom: false,
+    })
+  })
+
+  it('still resolves built-in aliases without flagging them as custom', () => {
+    assert.deepEqual(resolveSlashModelInput('codex', 'sol'), {
+      model: DEFAULT_CODEX_MODEL,
+      custom: false,
+    })
+    assert.deepEqual(resolveSlashModelInput('codex', 'codex'), { model: '', custom: false })
+    assert.deepEqual(resolveSlashModelInput('claude', 'opus'), {
+      model: DEFAULT_CLAUDE_MODEL,
+      custom: false,
+    })
+  })
+
+  // 空输入命中的是 `model: ''` 的「跟随配置默认」项，这是既有行为；App.tsx 的 'model'
+  // 分支也先用 `!parsed.args` 拦掉了空参数走列表提示，所以这里只钉"形状明显不是模型名"。
+  it('refuses input that cannot be a model name', () => {
+    assert.equal(resolveSlashModelInput('codex', 'a'), null)
+    assert.equal(resolveSlashModelInput('codex', 'model name with spaces'), null)
+    assert.equal(resolveSlashModelInput('codex', 'rm -rf /'), null)
+    assert.equal(resolveSlashModelInput('codex', 'x'.repeat(200)), null)
   })
 })

@@ -143,3 +143,36 @@
 - 绿测：`scripts/run-playwright-specs.ps1 -Specs tests/chat-interrupt.spec.ts`：36/36 通过，含右键空闲卡排队 + 选完条件写回全局默认两条新用例。
 - `pnpm test:quality`：通过。
 - 计划唤醒本身只改了发送按钮的 tooltip 文案，没有可见布局变化；但同一次发布里的自动化看板实验性开关改了「卡片类型」设置组，视觉快照随 v0.20.2 一起重新基线，见 `docs/specs/automation-board/tasks.md`。
+
+## 待唤醒卡回显批次摘要（2026-08-15）
+
+- [x] 红测复现：`summarizeWakeTimerBatch` / `text.wakeTimerQueuePreview` 不存在，待唤醒状态行只有「N 条消息 · 条件」。
+- [x] `summarizeWakeTimerBatch` 复用 `mergeWakeTimerRequests` + `getQueuedSendPreview`（整批合并预览，不是「下一条」）。
+- [x] i18n 新增 `wakeTimerQueuePreview`（中英，纯附件批次退化为「图片消息」并带张数）。
+- [x] 状态行拆成独立组件 `src/components/WakeTimerStatus.tsx`，空状态卡与 composer 两处共用。
+- [x] `.composer-wake-timer-preview` 次要色 + 两行 line-clamp + `title` 全文。
+
+验证记录：
+
+- 红测：`node --import tsx --test tests/wake-timer.test.ts` 因缺少 `summarizeWakeTimerBatch` 导出直接失败；实现后 29/29 通过。
+- 绿测：`node --import tsx --test tests/wake-timer-status.test.tsx` 2/2 通过（SSR 断言摘要行与 `title`，无摘要时不渲染空行）。
+- 绿测：`scripts/run-playwright-specs.ps1 -Specs tests/chat-interrupt.spec.ts` 36/36 通过，含新增的真实浏览器断言「待唤醒状态行显示合并后的正文」。
+- `pnpm test:quality`：通过。
+- 视觉：dark 空状态卡实截确认摘要为次要色两行、超出省略；颜色只用 `--ink-3` token，两套主题共用。CSS 特异性坑已记在注释里（`.composer-wake-timer-copy span` 的 nowrap 会压掉未加父类的 line-clamp）。
+
+## 待唤醒卡上直接换唤醒方式（2026-08-15）
+
+- [x] 红测复现：`rearmWakeTimerBatchForPatch` 不存在，挂起批次改条件不会重算等待目标/到点时间。
+- [x] 纯函数 `rearmWakeTimerBatchForPatch`：无批次或 patch 不含条件时返回 `null`，`left-tab` 无左邻时返回 `ok:false` 并保持原条件。
+- [x] App 侧统一入口 `patchCardWithWakeTimerRearm`：composer 设置菜单、待唤醒状态行、看板抽屉、超管 MCP 四条 patch 路径共用；只有 composer 那条会顺带写「新会话默认」偏好。
+- [x] 状态行内嵌唤醒方式下拉 + duration 分钟输入（`WakeTimerStatus`），设置面板不再禁用控件，改文案为「改条件会立刻给当前这批消息改期」（`wakeTimerBatchRearms`）。
+- [x] 无有效左邻时 `left-tab` 选项在两个入口都 disabled。
+
+验证记录：
+
+- 红测：`node --import tsx --test tests/wake-timer.test.ts` 因缺少 `rearmWakeTimerBatchForPatch` 导出失败；实现后 34/34 通过（含改期重算、duration 从改动时刻重新计时、拒绝无左邻切换三条）。
+- 红测：`tests/wake-timer-settings-panel.test.tsx` 的锁定用例改成「保持可编辑」后先红（仍渲染 `disabled`），解锁后 10/10 通过。
+- 红测：`tests/wake-timer-status.test.tsx` 新增三条下拉用例先红，组件补上后 5/5 通过。
+- 绿测：`scripts/run-playwright-specs.ps1 -Specs tests/chat-interrupt.spec.ts,tests/automation-board-layout.spec.ts` 49/49 通过，含新增用例「待唤醒卡上把 duration 换成 workspace-agents 后重新绑定到正在跑的同事，且消息不发车」。
+- `pnpm test:quality`：通过。
+- 视觉：空状态卡 22rem 横排放不下下拉，实截发现标题折行、条件被截断；改为文案独占一行 + 控件另起一行（`is-empty-state` 内 `flex-wrap`），宽度放到 24rem 后复测正常。CSS 特异性坑记进 AGENTS 第 90 条。

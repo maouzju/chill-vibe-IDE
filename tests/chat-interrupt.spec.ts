@@ -753,6 +753,10 @@ test('wake timer holds multiple messages and releases them as one batch when req
 
   const timerStatus = page.locator('.message-list .composer-wake-timer-status')
   await expect(timerStatus).toContainText('2 messages')
+  // 待唤醒卡必须回显攒着的正文，否则用户只看到"2 条消息"想不起排的是哪件事。
+  await expect(timerStatus.locator('.composer-wake-timer-preview')).toHaveText(
+    'First scheduled instruction Second scheduled instruction',
+  )
   await expect(page.locator('.chat-empty-tool-grid')).toHaveCount(0)
   await expect(page.locator('.card-footer > .composer-wake-timer-status')).toHaveCount(0)
   await expect.poll(() => mock.readRequests()).toEqual([])
@@ -834,6 +838,52 @@ test('picking a wake condition remembers it as the default for later chats', asy
   await durationInput.fill('90')
 
   await expect.poll(() => mock.readState().settings?.wakeTimerDefaultDurationMinutes).toBe(90)
+})
+
+test('switching the wake condition on a pending card re-schedules that batch', async ({ page }) => {
+  const mock = await installMockApis(page, {
+    wakeTimerEnabled: true,
+    initialCard: {
+      status: 'idle',
+      provider: 'codex',
+      model: 'gpt-5.5',
+      wakeTimerActive: true,
+      wakeTimerMode: 'duration',
+      wakeTimerDurationMinutes: 60,
+      messages: [],
+    },
+    peerCard: {
+      id: 'card-peer',
+      title: 'Busy peer',
+      status: 'streaming',
+      provider: 'codex',
+      model: 'gpt-5.5',
+      messages: [],
+    },
+  })
+  await page.goto(appUrl)
+
+  const textarea = getActiveComposerTextarea(page)
+  await textarea.fill('Hold this until the peer finishes')
+  await page.getByRole('button', { name: 'Send message' }).click()
+
+  const timerStatus = page.locator('.message-list .composer-wake-timer-status')
+  await expect(timerStatus).toContainText('Wakes in')
+
+  // 待唤醒卡上直接换条件：批次不动，等待目标按新条件重算。
+  await timerStatus.locator('.composer-wake-timer-mode-select').selectOption('workspace-agents')
+
+  await expect(timerStatus).toContainText('Waiting for 1 other agent')
+  await expect.poll(
+    () => mock.readState().columns[0]?.cards['card-1']?.wakeTimerMode,
+  ).toBe('workspace-agents')
+  await expect.poll(
+    () => mock.readState().columns[0]?.cards['card-1']?.wakeTimerPendingTargetIds,
+  ).toEqual(['card-peer'])
+  await expect.poll(
+    () => mock.readState().columns[0]?.cards['card-1']?.wakeTimerQueuedSends?.length,
+  ).toBe(1)
+  await expect.poll(() => mock.readChatRequests()).toEqual([])
 })
 
 test('wake timer holds an empty continue-session action until wake', async ({ page }) => {

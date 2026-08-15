@@ -131,10 +131,15 @@ export const buildWhitenoiseCliArgs = (
     return [...runtimeArgs, '-p', '--output-format', 'text', '--max-turns', '1', prompt]
   }
 
+  // 症状：codex-cli 0.144.1 下这条 argv 起不来，stderr 只有一行 unexpected argument
+  //       （2026-08-14 实测 `--ask-for-approval` 与 `-q` 双双报废），白噪音 codex 分支 100% 挂。
+  // 根因：exec 本就非交互，这两个开关一直是空操作，0.144 把它们从 exec 删了。
+  // 为什么审批策略改走 `-c` 而不是直接不传：用户 config.toml 的 approval_policy 可能是别的值，
+  //       这条"只要一段 JSON"的调用必须继续钉死 never；`-c` 覆盖新旧 CLI 都认。
   const args = [...runtimeArgs, 'exec', '--json', '--skip-git-repo-check']
-  args.push('--ask-for-approval', 'never')
+  args.push('-c', 'approval_policy="never"')
   args.push('--sandbox', 'read-only')
-  args.push('-q', prompt)
+  args.push(prompt)
   return args
 }
 

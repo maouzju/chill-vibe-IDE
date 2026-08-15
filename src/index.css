@@ -4772,11 +4772,24 @@ body.is-card-dragging .lane-drop-zone-top {
   line-height: calc(1.35 * var(--ui-line-height-scale));
 }
 
+/* 空会话卡上的待唤醒条只有 22rem 宽，横排放不下「文案 + 方式下拉 + 两个按钮」：
+   2026-08-15 实测标题会折成两行、条件文字被截成 "1 message · "。所以这里改成
+   文案独占一行、控件另起一行，而不是把下拉塞进同一行。 */
 .composer-wake-timer-status.is-empty-state {
   box-sizing: border-box;
-  width: min(100%, 22rem);
+  width: min(100%, 24rem);
   margin: 0 auto;
   padding: 0.58rem 0.66rem;
+  flex-wrap: wrap;
+  row-gap: 0.3rem;
+}
+
+.composer-wake-timer-status.is-empty-state .composer-wake-timer-copy {
+  flex-basis: 100%;
+}
+
+.composer-wake-timer-status.is-empty-state .composer-wake-timer-mode-select {
+  margin-right: auto;
 }
 
 .composer-wake-timer-copy {
@@ -4795,6 +4808,41 @@ body.is-card-dragging .lane-drop-zone-top {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/* 攒着的正文只做次要行：条件那行仍是主信息。最多两行、超出省略，
+   全文放 title 悬停看，避免长指令把 composer 顶掉一大块。
+   选择器必须带上父类：`.composer-wake-timer-copy span` 特异性更高，
+   直接写 `.composer-wake-timer-preview` 会被它的 nowrap 压回一行。 */
+.composer-wake-timer-copy .composer-wake-timer-preview {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  color: var(--ink-3);
+  font-size: 0.68rem;
+}
+
+/* 状态行里的唤醒方式切换：控件本身不抢戏，宽度跟着文案走但有上限，
+   空状态卡只有 22rem 宽，摘要那一列必须还能收缩（min-width: 0 在 copy 上）。 */
+.composer-wake-timer-status .composer-wake-timer-mode-select {
+  flex: 0 1 auto;
+  max-width: 8rem;
+  height: 1.6rem;
+  padding: 0 1.1rem 0 0.34rem;
+  font-size: 0.68rem;
+}
+
+.composer-wake-timer-status .composer-wake-timer-duration-input {
+  width: 3.4rem;
+  height: 1.6rem;
+  font-size: 0.68rem;
+}
+
+.composer-wake-timer-status .composer-wake-timer-duration-control {
+  flex: 0 0 auto;
+  font-size: 0.66rem;
 }
 
 @media (max-width: 600px) {

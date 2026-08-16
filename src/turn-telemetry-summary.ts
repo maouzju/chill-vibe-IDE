@@ -13,9 +13,30 @@ import type { ChatMessage, ProviderTurnStopReason, ProviderTurnUsage } from '../
 export type TurnTelemetry = {
   turnStopReason?: ProviderTurnStopReason
   usage?: ProviderTurnUsage
+  // 这一轮**实际生效**的模型与档位。切模型/档位在本仓库只是"下次请求带不同值"，
+  // 没有任何协议事件，所以转录里此前无从追溯某一轮到底跑在什么配置下——
+  // 排查「同样的问题为什么这次答得差」时缺的正是这个。
+  model?: string
+  reasoningEffort?: string
+  thinkingEnabled?: boolean
+  planMode?: boolean
 }
 
 const stopReasonKey = 'turnStopReason'
+const modelKey = 'turnModel'
+const reasoningEffortKey = 'turnReasoningEffort'
+// 布尔存 '1'/'0' 而不是省略：false 与"这条老消息没记过"必须分得开，
+// 否则一条 2026-08 以前的转录会被读成"用户关了思考"。
+const thinkingEnabledKey = 'turnThinkingEnabled'
+const planModeKey = 'turnPlanMode'
+
+const readBooleanMeta = (meta: Record<string, string>, key: string): boolean | undefined => {
+  const raw = meta[key]
+  if (raw === undefined) {
+    return undefined
+  }
+  return raw === '1'
+}
 
 // meta 是 Record<string, string>，所以每个数值字段各占一个键并显式还原类型。
 // 刻意不 JSON.stringify 成一个键：那样会和 structuredData 走同一条截断逻辑
@@ -68,6 +89,19 @@ export const attachTurnTelemetry = (
     }
   }
 
+  if (telemetry.model?.trim()) {
+    additions[modelKey] = telemetry.model.trim()
+  }
+  if (telemetry.reasoningEffort?.trim()) {
+    additions[reasoningEffortKey] = telemetry.reasoningEffort.trim()
+  }
+  if (typeof telemetry.thinkingEnabled === 'boolean') {
+    additions[thinkingEnabledKey] = telemetry.thinkingEnabled ? '1' : '0'
+  }
+  if (typeof telemetry.planMode === 'boolean') {
+    additions[planModeKey] = telemetry.planMode ? '1' : '0'
+  }
+
   if (Object.keys(additions).length === 0) {
     return message
   }
@@ -89,14 +123,37 @@ export const readTurnTelemetry = (message: ChatMessage): TurnTelemetry | null =>
 
   const turnStopReason = meta[stopReasonKey] as ProviderTurnStopReason | undefined
   const used = readNumericMeta(meta, usageKeys.used)
+  const model = meta[modelKey]
+  const reasoningEffort = meta[reasoningEffortKey]
+  const thinkingEnabled = readBooleanMeta(meta, thinkingEnabledKey)
+  const planMode = readBooleanMeta(meta, planModeKey)
 
-  if (!turnStopReason && used === undefined) {
+  if (
+    !turnStopReason &&
+    used === undefined &&
+    model === undefined &&
+    reasoningEffort === undefined &&
+    thinkingEnabled === undefined &&
+    planMode === undefined
+  ) {
     return null
   }
 
   const telemetry: TurnTelemetry = {}
   if (turnStopReason) {
     telemetry.turnStopReason = turnStopReason
+  }
+  if (model !== undefined) {
+    telemetry.model = model
+  }
+  if (reasoningEffort !== undefined) {
+    telemetry.reasoningEffort = reasoningEffort
+  }
+  if (thinkingEnabled !== undefined) {
+    telemetry.thinkingEnabled = thinkingEnabled
+  }
+  if (planMode !== undefined) {
+    telemetry.planMode = planMode
   }
   if (used !== undefined) {
     telemetry.usage = {

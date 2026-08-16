@@ -4843,7 +4843,19 @@ function App() {
                 // 读它的地方只认 kind + durationMs，多挂几个 meta 键对它们透明。
                 // 另发一条新 kind 的 system 消息会新增一条渲染路径（未知 kind 会渲染
                 // 成空气泡），代价远大于收益。
-                messages: [attachTurnTelemetry(durationMessage, { turnStopReason, usage })],
+                messages: [
+                  attachTurnTelemetry(durationMessage, {
+                    turnStopReason,
+                    usage,
+                    // card 是订阅这条流时捕获的，所以这里拿到的是**这一轮开始时**
+                    // 生效的配置，而不是用户此刻可能已经改过的当前值。切模型/档位
+                    // 在本仓库没有任何协议事件，不落在这里就永远追溯不到。
+                    model: card.model,
+                    reasoningEffort: card.reasoningEffort,
+                    thinkingEnabled: card.thinkingEnabled,
+                    planMode: card.planMode,
+                  }),
+                ],
               })
             }
           }

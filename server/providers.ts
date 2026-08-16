@@ -56,6 +56,10 @@ import {
   readClaudeTurnUsage,
 } from './provider-turn-telemetry.js'
 import { buildCodexInboundRequestRejection } from './codex-inbound-request.js'
+import {
+  findUnsupportedClaudeFlags,
+  getClaudeSupportedFlags,
+} from './claude-capabilities.js'
 import { createCodexCompactionActivityDeduper } from './codex-compaction-dedupe.js'
 import { createCodexAgentStatusTracker } from './codex-agent-status.js'
 import { createClaudeAgentStatusTracker } from './claude-agent-status.js'
@@ -105,6 +109,40 @@ import {
   type ClaudeCompletionBoundary,
   type ClaudeCompletionBoundaryHook,
 } from './claude-completion-boundary.js'
+
+// Claude 路的"能力协商"补丁：Codex 有 initialize + configRequirements/read 可以
+// 逐级降级，Claude 侧我们从来没问过它认识什么参数，于是拼错或对面删掉的 flag 会被
+// **静默忽略**——用户改了设置没有任何效果，界面上一个字都看不到（pitfall #289）。
+//
+// 刻意只诊断不改行为：解析 --help 是启发式的，误判会丢掉合法参数，代价大于收益。
+// 全程 fire-and-forget：spawn 在这台机器上最坏单次阻塞 6.9s（pitfall #271），
+// 探测结果与命令解析都做进程级缓存，绝不能让真实回合等它。
+let claudeCapabilityCommand: Promise<string | null | undefined> | null = null
+
+const reportUnsupportedClaudeFlags = (args: readonly string[], env: NodeJS.ProcessEnv) => {
+  void (async () => {
+    try {
+      claudeCapabilityCommand ??= resolveCommand('claude')
+      const command = await claudeCapabilityCommand
+      if (!command) {
+        return
+      }
+
+      const supported = await getClaudeSupportedFlags(command, env)
+      const unsupported = findUnsupportedClaudeFlags(args, supported)
+      if (unsupported.length === 0) {
+        return
+      }
+
+      void writeServerLog('WARN', '[claude-capabilities] local CLI does not recognize these flags.', {
+        unsupported,
+        command,
+      })
+    } catch {
+      // fail-open：探测本身出问题绝不能影响回合。
+    }
+  })()
+}
 
 type StreamSink = {
   onSession: (sessionId: string) => void
@@ -3492,6 +3530,8 @@ const launchClaudeSingleShotRun = async (
         workspaceAdminMcpConfig,
       }),
     ]
+
+    reportUnsupportedClaudeFlags(args, runtime.env)
 
     const child = await spawnProvider(
       currentRequest.provider,

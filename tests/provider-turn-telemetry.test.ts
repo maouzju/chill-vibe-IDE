@@ -198,6 +198,38 @@ test('a turn with no telemetry leaves the message untouched', () => {
   assert.equal(readTurnTelemetry(original), null)
 })
 
+// ---------------------------------------------------------------------------
+// 每轮实际用的模型 / 档位 —— 切换只是"下次请求带不同值"，转录里此前无从追溯
+// ---------------------------------------------------------------------------
+
+test('the effective model and reasoning tier of a turn are recoverable afterwards', () => {
+  const attached = attachTurnTelemetry(runDurationMessage(), {
+    model: 'claude-opus-5',
+    reasoningEffort: 'xhigh',
+    thinkingEnabled: true,
+    planMode: false,
+  })
+
+  const read = readTurnTelemetry(attached)
+  assert.equal(read?.model, 'claude-opus-5')
+  assert.equal(read?.reasoningEffort, 'xhigh')
+  assert.equal(read?.thinkingEnabled, true)
+  assert.equal(read?.planMode, false)
+})
+
+test('thinking-off and plan-mode are distinguishable from "not recorded"', () => {
+  // false 与 undefined 必须分得开：一条老消息没有这个字段，不等于用户关了思考。
+  const off = readTurnTelemetry(
+    attachTurnTelemetry(runDurationMessage(), { thinkingEnabled: false, planMode: true }),
+  )
+  assert.equal(off?.thinkingEnabled, false)
+  assert.equal(off?.planMode, true)
+
+  const legacy = readTurnTelemetry(attachTurnTelemetry(runDurationMessage(), { model: 'x' }))
+  assert.equal(legacy?.thinkingEnabled, undefined)
+  assert.equal(legacy?.planMode, undefined)
+})
+
 test('a partially reported turn only persists the fields it actually has', () => {
   const attached = attachTurnTelemetry(runDurationMessage(), {
     usage: { used: 15 },

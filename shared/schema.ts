@@ -1676,7 +1676,10 @@ export type StreamCommandActivity = z.infer<typeof streamCommandActivitySchema>
 export const streamReasoningActivitySchema = z.object({
   itemId: z.string().min(1),
   kind: z.literal('reasoning'),
-  status: z.literal('completed'),
+  // in_progress 是 2026-08-16 放宽的：Claude 的 thinking 此前累积到
+  // content_block_stop 才一次性发出，长思考期间界面全程静默。这是**放宽**不是
+  // 改写——旧存档里的 reasoning 一律是 completed，仍然合法。
+  status: z.enum(['in_progress', 'completed']),
   text: z.string(),
 })
 export type StreamReasoningActivity = z.infer<typeof streamReasoningActivitySchema>

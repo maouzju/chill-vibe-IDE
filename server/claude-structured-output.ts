@@ -10,6 +10,11 @@ import type {
 import { buildSyntheticPatch, finalizeStructuredEditedFile } from './structured-edits.js'
 import { parseClaudeToolResults } from './claude-tool-result.js'
 
+// thinking 增量推送的节流阈值：累积文本每多出这么多字符才推一次。
+// 取 200 是因为它既让一段几十秒的长思考有十来次可见进展，又把 activity 数量
+// 压在两位数——每个 thinking_delta 推一条会让渲染端为一次思考重渲染上百次。
+const thinkingStreamChunkChars = 200
+
 type ClaudeStructuredStreamEvent = ({ type: 'activity' } & StreamActivity)[]
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
@@ -805,6 +810,14 @@ export const createClaudeStructuredOutputParser = (
   // reasoning card. Empty thinking blocks (omitted display) emit nothing.
   let currentMessageId: string | null = null
   const thinkingBlocks = new Map<number, string>()
+  // 已经推给渲染端的长度，按 block index 记。用它做**增量节流**：每个
+  // thinking_delta 都发一条 activity 会把渲染主线程压垮（pitfall #187/#189 是
+  // 同一族代价），所以只在累积文本比上次推送多出 thinkingStreamChunkChars 时
+  // 才推一次。这里刻意用"字符增量"而不是时间窗：parser 是纯同步的，字符阈值
+  // 可被测试确定性地钉住。
+  const thinkingEmittedLength = new Map<number, number>()
+  const resolveThinkingItemId = (index: number) =>
+    `${currentMessageId ?? 'claude'}:thinking:${index}`
 
   const parseClaudeThinkingStreamEvent = (inner: unknown): ClaudeStructuredStreamEvent => {
     if (!isRecord(inner)) {
@@ -838,7 +851,28 @@ export const createClaudeStructuredOutputParser = (
         thinkingBlocks.has(inner.index)
       ) {
         const chunk = typeof delta.thinking === 'string' ? delta.thinking : ''
-        thinkingBlocks.set(inner.index, (thinkingBlocks.get(inner.index) ?? '') + chunk)
+        const nextText = (thinkingBlocks.get(inner.index) ?? '') + chunk
+        thinkingBlocks.set(inner.index, nextText)
+
+        const alreadyEmitted = thinkingEmittedLength.get(inner.index) ?? 0
+        if (nextText.length - alreadyEmitted >= thinkingStreamChunkChars) {
+          const text = nextText.trim()
+          if (text) {
+            thinkingEmittedLength.set(inner.index, nextText.length)
+            // 发**累积全文**而不是这一小片：渲染层按 itemId 整条覆盖
+            // （finalizeStructuredActivityMessage），推增量片段会让用户
+            // 只看到思考的最后一段。
+            return [
+              {
+                type: 'activity',
+                itemId: resolveThinkingItemId(inner.index),
+                kind: 'reasoning',
+                status: 'in_progress',
+                text,
+              },
+            ]
+          }
+        }
       }
       return []
     }
@@ -851,6 +885,7 @@ export const createClaudeStructuredOutputParser = (
 
       const text = (thinkingBlocks.get(index) ?? '').trim()
       thinkingBlocks.delete(index)
+      thinkingEmittedLength.delete(index)
 
       if (!text) {
         return []
@@ -859,7 +894,7 @@ export const createClaudeStructuredOutputParser = (
       return [
         {
           type: 'activity',
-          itemId: `${currentMessageId ?? 'claude'}:thinking:${index}`,
+          itemId: resolveThinkingItemId(index),
           kind: 'reasoning',
           status: 'completed',
           text,

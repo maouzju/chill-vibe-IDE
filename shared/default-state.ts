@@ -1145,6 +1145,7 @@ export const createCard = (
     draftAttachments: [],
     queuedSends: [],
     wakeTimerActive: false,
+    wakeTimerAutoActivated: false,
     wakeTimerMode: 'workspace-agents',
     wakeTimerDurationMinutes: 30,
     wakeTimerQueuedSends: [],

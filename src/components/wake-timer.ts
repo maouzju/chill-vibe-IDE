@@ -73,6 +73,24 @@ export const collectWakeTimerDefaultPreference = (
   return Object.keys(preference).length > 0 ? preference : null
 }
 
+/**
+ * 批次结束后要不要把逐卡开关关回去。
+ *
+ * 症状：2026-08-16 用户报"会话 streaming 久了之后再输入消息，居然自动变成延后消息"。
+ * 根因：右键发送会替用户打开 `wakeTimerActive`，但释放/取消/清空批次的三条路径
+ *   都只清队列不碰开关，于是这张卡从此每一次普通回车都被 `shouldQueueWakeTimerSend`
+ *   静默吞进待唤醒批次（它只看 cardActive，不看 mode）；卡自己在 streaming 时
+ *   释放条件又要求 ownerStatus === 'idle'，消息就一直挂着。
+ * 被否决：批次结束一律关开关 —— 用户自己在设置里开的逐卡计时器就该持续攒消息
+ *   （wake-timer SPEC 需求 5/9），所以必须靠 `wakeTimerAutoActivated` 区分来源。
+ */
+export const buildWakeTimerBatchEndPatch = ({
+  autoActivated,
+}: {
+  autoActivated: boolean
+}): Pick<ChatCard, 'wakeTimerActive' | 'wakeTimerAutoActivated'> | null =>
+  autoActivated ? { wakeTimerActive: false, wakeTimerAutoActivated: false } : null
+
 export const shouldQueueWakeTimerSend = ({
   featureEnabled,
   cardActive,

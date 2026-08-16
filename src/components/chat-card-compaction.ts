@@ -181,6 +181,26 @@ export const isCompactBoundaryMessage = (
   return getCompactBoundaryTrigger(message, provider) !== null
 }
 
+/**
+ * 正在回答的卡上收到普通 follow-up 时，要不要先等这次压缩结束再发。
+ *
+ * 症状：2026-08-16 用户报"一个会话 streaming 久了之后再给他输入消息，居然自动
+ *   变成延后消息"。
+ * 根因：自动压缩会往消息流里塞一条隐藏的 `/compact` user 消息
+ *   （createAutoCompactionBoundaryMessage）。它此后一直是 latest user message，
+ *   而旧判据用的是 `isCompactBoundaryMessage`——不分手动/自动，于是整轮 streaming
+ *   里每一次普通左键发送都被判成"要等压缩"，只入 FIFO 队列、不打断，一直挂到
+ *   本轮结束。会话越长越容易触发自动压缩，也就越像"streaming 久了就发不出去"。
+ * 被否决：改看 `compactPending` 标记 —— 只有 Codex 的手动 `/compact` 会打这个标，
+ *   Claude 的手动 `/compact` 靠消息内容识别、从来没有 pending，换过去会把
+ *   "用户自己发了 /compact 紧接着追加一句"这个原始需求（deferred-send-queue
+ *   需求 8）一起弄丢。
+ */
+export const shouldWaitForCompactionBeforeSending = (
+  latestUserMessage: ChatMessage | undefined,
+  provider: Provider,
+) => getCompactBoundaryTrigger(latestUserMessage, provider) === 'manual'
+
 const findLatestCompactBoundary = (
   messages: ChatMessage[],
   provider: Provider,

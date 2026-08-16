@@ -9,6 +9,7 @@ import {
   markCompactBoundaryMessage,
   mergeCompactedHistoryForDisplay,
   shouldAutoCompactCodexConversation,
+  shouldWaitForCompactionBeforeSending,
 } from '../src/components/chat-card-compaction.ts'
 
 const makeMessage = (
@@ -731,5 +732,35 @@ describe('chat card compaction window', () => {
         compactHidden: 'true',
       },
     })
+  })
+})
+
+describe('waiting for compaction before an ordinary follow-up', () => {
+  const manualClaudeCompact = makeMessage('m1', 'user', '/compact')
+  const manualCodexCompact = markCompactBoundaryMessage(
+    makeMessage('m2', 'user', '/compact'),
+    { pending: true },
+  )
+  const autoCompactBoundary = markCompactBoundaryMessage(
+    makeMessage('m3', 'user', '/compact'),
+    { trigger: 'auto', hidden: true },
+  )
+
+  it('waits while the user asked for compaction themselves', () => {
+    assert.equal(shouldWaitForCompactionBeforeSending(manualClaudeCompact, 'claude'), true)
+    assert.equal(shouldWaitForCompactionBeforeSending(manualCodexCompact, 'codex'), true)
+  })
+
+  it('never waits on an auto-compaction boundary the app injected mid-stream', () => {
+    // 症状：长会话 streaming 久了以后，用户输入的消息全部自动变成「已延后」。
+    // 根因：自动压缩往消息流里塞了一条隐藏的 `/compact` user 消息，它此后一直是
+    // latest user message，于是整轮 streaming 里每一次普通发送都被判成"要等压缩"。
+    assert.equal(shouldWaitForCompactionBeforeSending(autoCompactBoundary, 'claude'), false)
+    assert.equal(shouldWaitForCompactionBeforeSending(autoCompactBoundary, 'codex'), false)
+  })
+
+  it('never waits on ordinary messages or an empty transcript', () => {
+    assert.equal(shouldWaitForCompactionBeforeSending(makeMessage('m4', 'user', '继续'), 'claude'), false)
+    assert.equal(shouldWaitForCompactionBeforeSending(undefined, 'claude'), false)
   })
 })

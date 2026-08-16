@@ -94,12 +94,13 @@ const buildMirror = (overrides?: Partial<WorkspaceSessionMirror>): WorkspaceSess
 // Tool definitions
 // ---------------------------------------------------------------------------
 
-test('workspace admin MCP exposes exactly the five session tools with closed input schemas', () => {
+test('workspace admin MCP exposes exactly the six session tools with closed input schemas', () => {
   assert.deepEqual(
     workspaceAdminMcpToolDefinitions.map((tool) => tool.name),
     [
       'list_sessions',
       'read_session',
+      'create_session',
       'move_session_to_lane',
       'send_session_message',
       'set_session_wake_timer',
@@ -129,6 +130,25 @@ test('workspace admin MCP exposes exactly the five session tools with closed inp
   assert.match(moveTool?.description ?? '', /already on a board/i)
   assert.match(moveTool?.description ?? '', /first board card/i)
   assert.match(moveTool?.description ?? '', /fails/i)
+
+  // create_session 是唯一一个目标卡还不存在的工具：requirement 必填，cardId 不该出现。
+  const createTool = workspaceAdminMcpToolDefinitions.find((tool) => tool.name === 'create_session')
+  assert.deepEqual(createTool?.inputSchema.required, ['requirement'])
+  assert.deepEqual(
+    Object.keys(createTool?.inputSchema.properties ?? {}).sort(),
+    ['lane', 'model', 'provider', 'requirement'],
+  )
+  const createProps = (createTool?.inputSchema.properties ?? {}) as Record<
+    string,
+    { enum?: string[] } | undefined
+  >
+  // 新建即完成没有语义，done 不能出现在可选泳道里（AC4）。
+  assert.deepEqual(createProps.lane?.enum, ['standby', 'running'])
+  // 超管权限不可自我传染：这个工具绝不能让模型给新卡开 adminAccess（AC13）。
+  assert.equal(createProps.adminAccess, undefined)
+  // 空工作区正是它存在的理由，模型必须被告知没有看板时会落成普通 tab（AC10/AC14）。
+  assert.match(createTool?.description ?? '', /tab/i)
+  assert.match(createTool?.description ?? '', /running/)
 })
 
 // ---------------------------------------------------------------------------
@@ -259,6 +279,96 @@ test('resolveWorkspaceAdminCommandFromToolCall rejects bad arguments instead of 
   const noColumn = resolveWorkspaceAdminCommandFromToolCall(
     'move_session_to_lane',
     { cardId: 'item-running', lane: 'done' },
+    '',
+  )
+  assert.equal(noColumn.command, undefined)
+  assert.match(noColumn.error ?? '', /no workspace admin access/)
+})
+
+test('resolveWorkspaceAdminCommandFromToolCall builds a schema-valid create command without a cardId', () => {
+  const full = resolveWorkspaceAdminCommandFromToolCall(
+    'create_session',
+    {
+      requirement: '把首页的加载动画换成骨架屏',
+      lane: 'standby',
+      provider: 'claude',
+      model: 'claude-sonnet-5',
+    },
+    'col-1',
+  )
+  assert.deepEqual(full.command, {
+    type: 'admin-create-session',
+    columnId: 'col-1',
+    requirement: '把首页的加载动画换成骨架屏',
+    lane: 'standby',
+    provider: 'claude',
+    model: 'claude-sonnet-5',
+  })
+
+  // 省略 lane 就是"建了就开跑"：超管建卡的意图默认是派活，不是排队。
+  const defaulted = resolveWorkspaceAdminCommandFromToolCall(
+    'create_session',
+    { requirement: '跑一遍回归' },
+    'col-1',
+  )
+  assert.deepEqual(defaulted.command, {
+    type: 'admin-create-session',
+    columnId: 'col-1',
+    requirement: '跑一遍回归',
+    lane: 'running',
+  })
+
+  for (const resolution of [full, defaulted]) {
+    const parsed = workspaceAdminCommandSchema.safeParse(resolution.command)
+    assert.equal(
+      parsed.success,
+      true,
+      `create command must satisfy the shared schema: ${JSON.stringify(resolution)}`,
+    )
+  }
+})
+
+test('resolveWorkspaceAdminCommandFromToolCall rejects bad create arguments', () => {
+  // 这条是本次改动最容易踩空的一处：create 是唯一没有 cardId 的写工具，
+  // 统一的 "cardId is required" 前置校验必须给它让路，否则它永远建不成卡。
+  const missingRequirement = resolveWorkspaceAdminCommandFromToolCall(
+    'create_session',
+    { lane: 'running' },
+    'col-1',
+  )
+  assert.equal(missingRequirement.command, undefined)
+  assert.match(missingRequirement.error ?? '', /requirement/)
+  assert.doesNotMatch(missingRequirement.error ?? '', /cardId/)
+
+  const blankRequirement = resolveWorkspaceAdminCommandFromToolCall(
+    'create_session',
+    { requirement: '   ' },
+    'col-1',
+  )
+  assert.equal(blankRequirement.command, undefined)
+  assert.match(blankRequirement.error ?? '', /requirement/)
+
+  // done 必须报错而不是被静默降级：模型看不到 UI，静默纠正会让它带着错误的
+  // 世界模型继续决策。
+  const doneLane = resolveWorkspaceAdminCommandFromToolCall(
+    'create_session',
+    { requirement: '随便做点什么', lane: 'done' },
+    'col-1',
+  )
+  assert.equal(doneLane.command, undefined)
+  assert.match(doneLane.error ?? '', /standby, running/)
+
+  const badProvider = resolveWorkspaceAdminCommandFromToolCall(
+    'create_session',
+    { requirement: '随便做点什么', provider: 'gemini' },
+    'col-1',
+  )
+  assert.equal(badProvider.command, undefined)
+  assert.match(badProvider.error ?? '', /provider/)
+
+  const noColumn = resolveWorkspaceAdminCommandFromToolCall(
+    'create_session',
+    { requirement: '随便做点什么' },
     '',
   )
   assert.equal(noColumn.command, undefined)
@@ -450,6 +560,42 @@ test('callWorkspaceAdminTool posts the resolved command and reports delivery, no
       durationMinutes: 45,
     },
   ])
+})
+
+test('callWorkspaceAdminTool posts a create command and still reports delivery, not effect', async () => {
+  const harness = createToolHarness()
+
+  const created = await callWorkspaceAdminTool(
+    'create_session',
+    { requirement: '接着把设置页做完', provider: 'claude', model: 'claude-sonnet-5' },
+    harness.context,
+  )
+
+  assert.equal(created.isError, false)
+  assert.match(created.content[0]?.text ?? '', /delivered/i)
+  assert.match(
+    created.content[0]?.text ?? '',
+    /list_sessions/,
+    'the new session only shows up in the mirror, so the model must re-check',
+  )
+  assert.deepEqual(harness.posted, [
+    {
+      type: 'admin-create-session',
+      columnId: 'col-1',
+      requirement: '接着把设置页做完',
+      lane: 'running',
+      provider: 'claude',
+      model: 'claude-sonnet-5',
+    },
+  ])
+})
+
+test('callWorkspaceAdminTool rejects a bad create argument before touching the bridge', async () => {
+  const harness = createToolHarness()
+  const result = await callWorkspaceAdminTool('create_session', { requirement: '  ' }, harness.context)
+
+  assert.equal(result.isError, true)
+  assert.equal(harness.posted.length, 0)
 })
 
 test('callWorkspaceAdminTool surfaces a rejected dispatch as an actionable error', async () => {
@@ -1043,6 +1189,105 @@ test(
       )
     } finally {
       child.kill()
+    }
+  },
+)
+
+// create_session 的 lane 白名单在 automation-board-mcp.js 里是**抄写**的字面量
+// （那个文件被当普通 Node 脚本 spawn，不能 import TS schema）。抄写漂移的表现是
+// 命令在 bridge 的 zod 校验处被 400 掉，而只 import 纯函数的单测发现不了 ——
+// 它断言的两边是同一份抄写。这条用例让真子进程生成的命令真的过一次共享 schema。
+test(
+  'create_session travels from a real stdio client through the bridge into a schema-valid command',
+  { timeout: 20_000 },
+  async () => {
+    const harness = createBridgeHarness()
+    const info = await harness.bridge.start()
+    const scriptPath = fileURLToPath(new URL('../server/automation-board-mcp.js', import.meta.url))
+    const child = spawn(process.execPath, [scriptPath], {
+      stdio: ['pipe', 'pipe', 'pipe'],
+      env: {
+        ...process.env,
+        [workspaceAdminMcpUrlEnvKey]: info.url,
+        [workspaceAdminMcpTokenEnvKey]: info.token,
+        [workspaceAdminMcpColumnIdEnvKey]: 'col-1',
+        [workspaceAdminMcpSelfCardIdEnvKey]: 'self-card',
+      },
+    })
+
+    try {
+      const lines: string[] = []
+      let pending = ''
+      let resolveAnswer = () => {}
+      const answered = new Promise<void>((resolve) => {
+        resolveAnswer = resolve
+      })
+
+      child.stdout.setEncoding('utf8')
+      child.stdout.on('data', (chunk: string) => {
+        pending += chunk
+        const parts = pending.split('\n')
+        pending = parts.pop() ?? ''
+        for (const part of parts) {
+          if (part.trim()) {
+            lines.push(part)
+          }
+        }
+        if (lines.length >= 1) {
+          resolveAnswer()
+        }
+      })
+
+      child.stdin.write(
+        `${JSON.stringify({
+          jsonrpc: '2.0',
+          id: 7,
+          method: 'tools/call',
+          params: {
+            name: 'create_session',
+            arguments: {
+              requirement: '把设置页的保存按钮接上',
+              lane: 'standby',
+              provider: 'claude',
+              model: 'claude-sonnet-5',
+            },
+          },
+        })}\n`,
+      )
+
+      await Promise.race([
+        answered,
+        new Promise<never>((_, reject) => {
+          setTimeout(
+            () => reject(new Error(`stdio server never answered; raw stdout so far: ${JSON.stringify(pending)}`)),
+            8_000,
+          ).unref()
+        }),
+      ])
+
+      const call = JSON.parse(lines[0]) as {
+        id: number
+        result?: { isError?: boolean; content?: { text?: string }[] }
+      }
+      assert.equal(call.id, 7)
+      assert.equal(call.result?.isError, false, `create_session must not error: ${lines[0]}`)
+      assert.match(call.result?.content?.[0]?.text ?? '', /delivered/i)
+      // cardId 还不存在，文案不能渲染成 "for session undefined"。
+      assert.doesNotMatch(call.result?.content?.[0]?.text ?? '', /undefined/)
+
+      assert.deepEqual(harness.dispatched, [
+        {
+          type: 'admin-create-session',
+          columnId: 'col-1',
+          requirement: '把设置页的保存按钮接上',
+          lane: 'standby',
+          provider: 'claude',
+          model: 'claude-sonnet-5',
+        },
+      ])
+    } finally {
+      child.kill()
+      await harness.bridge.stop()
     }
   },
 )

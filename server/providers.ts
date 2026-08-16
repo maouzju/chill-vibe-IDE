@@ -55,6 +55,7 @@ import {
   mapClaudeTurnStopReason,
   readClaudeTurnUsage,
 } from './provider-turn-telemetry.js'
+import { buildCodexInboundRequestRejection } from './codex-inbound-request.js'
 import { createCodexCompactionActivityDeduper } from './codex-compaction-dedupe.js'
 import { createCodexAgentStatusTracker } from './codex-agent-status.js'
 import { createClaudeAgentStatusTracker } from './claude-agent-status.js'
@@ -2514,10 +2515,19 @@ const launchCodexAppServerRun = async (
       }
 
       if ('id' in message) {
-        finishWithError(
-          formatCodexAppServerUnexpectedRequest(language, method),
-          classifyLaunchErrorHint(method),
-        )
+        // 症状 — 旧实现在这里 finishWithError，于是 Codex 任何一次反向请求（审批、
+        //   elicitation、将来新增的调用）都会把**整条流判死**，回合当场失败；
+        //   `approvalPolicy: 'on-request'` 因此从来不可用。
+        // 根因 — 把"我们没实现这个方法"误当成"这个回合完了"。JSON-RPC 对未识别
+        //   方法的约定是回 -32601，由调用方决定降级还是放弃，与回合存活无关。
+        // 为什么不按方法名实现语义 — 手上没有任何真实入站请求的实证，照猜实现
+        //   等于重犯 pitfall #289/#291。先按规范拒绝 + 把方法名落进日志，等日志
+        //   里真的出现它，再拿实证补对应分支。
+        void writeCodexJsonRpcMessage(
+          child.stdin!,
+          buildCodexInboundRequestRejection(message.id, method),
+        ).catch(() => undefined)
+        sink.onLog(formatCodexAppServerUnexpectedRequest(language, method))
         return
       }
 

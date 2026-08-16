@@ -4808,6 +4808,84 @@ test('codex app-server confines normal chats to workspace-write when outside wri
   }
 })
 
+// 症状 — Codex 发来任何带 `id` 的反向请求（审批、elicitation、将来新增的调用），
+//   旧实现 finishWithError 把整条流判死，回合当场失败；`approvalPolicy: 'on-request'`
+//   因此从来不可用。
+// 这里用假 app-server 在 turn/start 之后主动发一条入站 request，钉住两件事：
+//   ①回合照常跑到 done；②我们按 JSON-RPC 规范回了 -32601 而不是装死。
+const buildFakeCodexInboundRequestScript = (capturePath: string) =>
+  [
+    "const fs = require('node:fs')",
+    "const readline = require('node:readline')",
+    `const capturePath = ${JSON.stringify(capturePath)}`,
+    'const appendMessage = (message) => fs.appendFileSync(capturePath, `${JSON.stringify(message)}\\n`, "utf8")',
+    "const reply = (message) => process.stdout.write(`${JSON.stringify(message)}\\n`)",
+    "const rl = readline.createInterface({ input: process.stdin, crlfDelay: Infinity })",
+    "rl.on('line', (line) => {",
+    '  if (!line.trim()) return',
+    '  const request = JSON.parse(line)',
+    '  appendMessage(request)',
+    "  if (request.method === 'initialize' && request.id) { reply({ id: request.id, result: {} }); return }",
+    "  if (request.method === 'thread/start' && request.id) {",
+    "    reply({ id: request.id, result: { thread: { id: 'thread-inbound', status: { type: 'active' } } } })",
+    '    return',
+    '  }',
+    "  if (request.method === 'turn/start' && request.id) {",
+    '    reply({ id: request.id, result: {} })',
+    '    // 反向请求：对面主动发起、期待我们响应。',
+    "    reply({ id: 'codex-inbound-1', method: 'execCommandApproval', params: { command: 'rm -rf /' } })",
+    "    setTimeout(() => reply({ method: 'turn/completed', params: {} }), 50)",
+    '  }',
+    '})',
+  ].join('\n')
+
+test('codex app-server inbound requests are rejected without killing the turn', async () => {
+  const capturePath = path.join(
+    os.tmpdir(),
+    `chill-vibe-codex-inbound-${Date.now()}-${Math.random().toString(36).slice(2)}.jsonl`,
+  )
+
+  try {
+    const events = await withFakeProviderCommand(
+      'codex',
+      buildFakeCodexInboundRequestScript(capturePath),
+      async (workspacePath) =>
+        captureProviderLogs(
+          createRequest({
+            provider: 'codex',
+            language: 'en',
+            workspacePath,
+          }),
+        ),
+    )
+
+    // ① 回合活下来了。旧实现这里是 ['error']。
+    assert.equal(
+      events.some((event) => event.kind === 'done'),
+      true,
+      `expected the turn to survive an inbound request, got ${JSON.stringify(events.map((event) => event.kind))}`,
+    )
+    assert.equal(events.some((event) => event.kind === 'error'), false)
+
+    // ② 方法名进了日志，这是下次真要实现它时唯一的线索来源。
+    assert.equal(
+      events.some((event) => event.kind === 'log' && /execCommandApproval/.test(event.message)),
+      true,
+    )
+
+    // ③ 我们确实按规范回了响应，而不是让对面干等。
+    const sent = (await readFile(capturePath, 'utf8'))
+      .trim()
+      .split(/\r?\n/)
+      .map((line) => JSON.parse(line) as Record<string, unknown>)
+    const rejection = sent.find((message) => message.id === 'codex-inbound-1' && 'error' in message)
+    assert.ok(rejection, 'expected a JSON-RPC error response for the inbound request')
+    assert.equal((rejection?.error as { code?: number })?.code, -32601)
+  } finally {
+    await rm(capturePath, { force: true }).catch(() => {})
+  }
+})
+
 test('codex app-server applies managed sandbox requirements before starting the thread', async () => {
   const capturePath = path.join(
     os.tmpdir(),

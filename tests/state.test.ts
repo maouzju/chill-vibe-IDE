@@ -722,6 +722,30 @@ describe('ideReducer pane layout', () => {
     assert.equal(next.settings.wakeTimerDefaultDurationMinutes, 15)
   })
 
+  // 2026-08-16 发布前审计：看板模板的触发器会在**后台、无人操作**时替实例卡换
+  // 模型。走同一个 selectCardModel 就意味着它顺手把用户「设置→模型」里的全局
+  // 默认和列种子也改掉：用户明明选的是 sonnet，某个监工模板配了 opus，触发一次
+  // 之后所有新开的 tab 都变成 opus，设置面板显示一个他从没点过的模型。
+  // 这是 pitfall 40 的反向（实例 → 全局），所以程序化调用必须能关掉"记住偏好"。
+  it('leaves the global model preference alone when the switch is programmatic', () => {
+    const before = createState()
+    const selected = ideReducer(before, {
+      type: 'selectCardModel',
+      columnId: 'column-2',
+      cardId: 'card-3',
+      provider: 'claude',
+      model: 'claude-sonnet-4-6',
+      rememberGlobalPreference: false,
+    })
+
+    // 卡自己必须真的换过去。
+    assert.equal(selected.columns[1]?.cards['card-3']?.model, 'claude-sonnet-4-6')
+    // 而全局默认、lastModel、列种子一个都不许动。
+    assert.equal(selected.settings.requestModels.claude, before.settings.requestModels.claude)
+    assert.equal(selected.settings.lastModel?.model, before.settings.lastModel?.model)
+    assert.equal(selected.columns[1]?.model, before.columns[1]?.model)
+  })
+
   it('remembers the last selected chat model for future tabs in the same provider column', () => {
     const selected = ideReducer(createState(), {
       type: 'selectCardModel',

@@ -10,6 +10,7 @@ import {
   encodePowerShellScriptUtf8Bom,
   parseReleaseResponse,
   resolveDownloadedAssetStrategy,
+  writeVerifiedDownload,
   type UpdateCheckResult,
   type GitHubRelease,
 } from './updater-core.js'
@@ -100,10 +101,12 @@ export async function checkForUpdate(): Promise<UpdateCheckResult> {
   }
 }
 
-export async function downloadUpdate(
-  assetUrl: string,
-  onProgress: (percent: number) => void,
-): Promise<string> {
+// One in-flight download per asset URL. Re-checking for updates while a download is
+// still running used to start a second stream writing the same temp path, which could
+// interleave two payloads into one corrupt archive.
+const inFlightDownloads = new Map<string, Promise<string>>()
+
+const runDownload = async (assetUrl: string, onProgress: (percent: number) => void) => {
   const fileName = path.basename(new URL(assetUrl).pathname)
   const destPath = path.join(app.getPath('temp'), fileName)
 
@@ -122,33 +125,43 @@ export async function downloadUpdate(
     throw new Error('Download failed: no response body')
   }
 
-  const writeStream = fs.createWriteStream(destPath)
-  let received = 0
-
-  try {
+  const source = async function* () {
     for (;;) {
       const { done, value } = await reader.read()
 
       if (done) {
-        break
+        return
       }
 
-      writeStream.write(Buffer.from(value))
-      received += value.byteLength
-
-      if (contentLength > 0) {
-        onProgress(Math.round((received / contentLength) * 100))
-      }
+      yield value
     }
-  } finally {
-    writeStream.end()
-    await new Promise<void>((resolve, reject) => {
-      writeStream.on('finish', resolve)
-      writeStream.on('error', reject)
-    })
   }
 
-  return destPath
+  return writeVerifiedDownload({
+    source: source(),
+    destPath,
+    expectedBytes: contentLength,
+    onProgress,
+  })
+}
+
+export async function downloadUpdate(
+  assetUrl: string,
+  onProgress: (percent: number) => void,
+): Promise<string> {
+  const existing = inFlightDownloads.get(assetUrl)
+
+  if (existing) {
+    return existing
+  }
+
+  const pending = runDownload(assetUrl, onProgress).finally(() => {
+    inFlightDownloads.delete(assetUrl)
+  })
+
+  inFlightDownloads.set(assetUrl, pending)
+
+  return pending
 }
 
 // Force-shutdown helper that bypasses the `before-quit` preventDefault guard in
@@ -183,6 +196,14 @@ const forceExitForUpdate = () => {
 }
 
 export async function installUpdate(assetPath: string): Promise<void> {
+  // Fail while the app is still alive and can show the error, rather than exiting
+  // and letting the detached job discover the missing package with nobody watching.
+  const stats = await fs.promises.stat(assetPath).catch(() => null)
+
+  if (!stats || stats.size <= 0) {
+    throw new Error(`Update package is missing or empty: ${assetPath}`)
+  }
+
   const strategy = resolveDownloadedAssetStrategy(process.platform, assetPath)
 
   if (strategy === 'replace-app-folder') {

@@ -309,6 +309,7 @@ type LocaleText = {
   thinkingHint: string
   thinkingDepthLabel: string
   thinkingDepthHint: string
+  thinkingDepthInactiveHint: string
   composerSettings: string
   stickyNotePlaceholder: string
   stickyNoteTitle: string
@@ -400,6 +401,7 @@ type LocaleText = {
   automationBoardTemplateNameLabel: string
   automationBoardTemplateRequirementLabel: string
   automationBoardTemplateModelLabel: string
+  automationBoardTemplateExecutionLabel: string
   automationBoardTemplateAdminAccessLabel: string
   automationBoardTemplateAdminAccessHint: string
   automationBoardTemplateRunNowAction: string
@@ -660,6 +662,7 @@ const localeTextByLanguage: Record<AppLanguage, LocaleText> = {
     thinkingHint: '让模型先想再答。答得更稳，但更慢也更费额度；部分模型强制开启，关不掉。',
     thinkingDepthLabel: '思考深度',
     thinkingDepthHint: '思考多久：低=快而省，高/最高=遇到难题更靠谱但明显更慢。简单活儿用低就够。',
+    thinkingDepthInactiveHint: '思考已关，这一档暂时不生效；直接选一个深度就会自动开启思考。',
     composerSettings: '对话设置',
     placeholderSetWorkspace: '请先设置工作区路径',
     placeholderInputTask: '输入任务，回车发送',
@@ -876,6 +879,7 @@ const localeTextByLanguage: Record<AppLanguage, LocaleText> = {
     automationBoardTemplateNameLabel: '名称',
     automationBoardTemplateRequirementLabel: '需求',
     automationBoardTemplateModelLabel: '模型',
+    automationBoardTemplateExecutionLabel: '执行方式',
     automationBoardTemplateAdminAccessLabel: '超管权限',
     automationBoardTemplateAdminAccessHint: '由这个模板起的会话可以查看并操作本工作区的其他会话。',
     automationBoardTemplateRunNowAction: '立即执行一次',
@@ -1144,6 +1148,7 @@ const localeTextByLanguage: Record<AppLanguage, LocaleText> = {
     thinkingHint: 'Let the model reason before answering. Steadier results, but slower and more expensive; some models always think and cannot turn it off.',
     thinkingDepthLabel: 'Thinking depth',
     thinkingDepthHint: 'How long it reasons: low is fast and cheap, high/max holds up better on hard problems but is noticeably slower.',
+    thinkingDepthInactiveHint: 'Thinking is off, so this tier is not in effect yet — picking a depth turns thinking back on.',
     composerSettings: 'Chat settings',
     placeholderSetWorkspace: 'Set a workspace path first',
     placeholderInputTask: 'Type a task and press Enter',
@@ -1367,6 +1372,7 @@ const localeTextByLanguage: Record<AppLanguage, LocaleText> = {
     automationBoardTemplateNameLabel: 'Name',
     automationBoardTemplateRequirementLabel: 'Requirement',
     automationBoardTemplateModelLabel: 'Model',
+    automationBoardTemplateExecutionLabel: 'Execution',
     automationBoardTemplateAdminAccessLabel: 'Admin access',
     automationBoardTemplateAdminAccessHint:
       'Sessions started from this template can inspect and act on the other sessions in this workspace.',

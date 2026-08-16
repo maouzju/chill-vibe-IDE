@@ -241,7 +241,7 @@ describe('AutomationBoardCard renders', () => {
     )
 
     assert.ok(html.includes('class="automation-board-template-config"'))
-    assert.match(html, /<textarea[^>]*rows="5"/)
+    assert.match(html, /<textarea[^>]*rows="4"/)
     assert.ok(html.includes('盯着看板'))
     assert.ok(html.includes(text.automationBoardTemplateRequirementLabel))
     assert.ok(html.includes(text.automationBoardTemplateAdminAccessLabel))
@@ -254,6 +254,30 @@ describe('AutomationBoardCard renders', () => {
     assert.ok(html.includes(text.automationBoardTemplateRunNowAction))
     // builtIn 才有"恢复默认需求"。
     assert.ok(html.includes(text.automationBoardTemplateResetRequirementAction))
+  })
+
+  // 超管说明是解释性文案，按 ui-principles 它在开关关着时属于 idle chrome，
+  // 只有在权限真的开着时才是一条必须常驻的越权警告。
+  it('prints the admin-access warning only while admin access is on', () => {
+    const render = (adminAccess: boolean) =>
+      renderToStaticMarkup(
+        React.createElement(AutomationBoardTemplateConfig, {
+          template: { ...supervisorTemplate, adminAccess },
+          language: settings.language,
+          onUpdateTemplate: noop,
+          onRunTemplateNow: noop,
+        }),
+      )
+
+    const off = render(false)
+    assert.ok(!off.includes(text.automationBoardTemplateAdminAccessHint))
+    assert.ok(!off.includes('is-admin-warning'))
+    // 开关本身在两种状态下都必须在。
+    assert.ok(off.includes(text.automationBoardTemplateAdminAccessLabel))
+
+    const on = render(true)
+    assert.ok(on.includes(text.automationBoardTemplateAdminAccessHint))
+    assert.ok(on.includes('is-admin-warning'))
   })
 
   it('hides the restore-default action for a user-saved template', () => {
@@ -382,6 +406,51 @@ describe('AutomationBoardCard renders', () => {
     const thinkingRow = html.split(`<span>${text.thinking}</span>`)[0]?.split('<label').pop() ?? ''
     assert.ok(thinkingRow.includes('disabled=""'))
     assert.ok(thinkingRow.includes('checked=""'))
+  })
+
+  // 症状：用户截图报"这什么垃圾UI啊，怎么还没法设置" —— 面板里"思考深度"显示着
+  //   一个灰掉的"超高"，点不开也没有任何提示说为什么。
+  // 根因：深度下拉被"思考"复选框 disable，而这两行在视觉上毫无从属关系。
+  // 为什么不是加个说明文字了事：说明只是让用户知道要多点一次；选一个深度本身
+  //   就已经表达了"我要思考"，多出来的那一步没有信息量。
+  it('keeps the thinking depth select usable when thinking is off', () => {
+    const html = renderToStaticMarkup(
+      React.createElement(AutomationBoardTemplateConfig, {
+        template: makeTemplate({ thinkingEnabled: false }),
+        language: settings.language,
+        onUpdateTemplate: noop,
+        onRunTemplateNow: noop,
+      }),
+    )
+
+    // 属性顺序不是契约，所以先切出"思考深度"那一行再看它自己带了什么。
+    const depthRow = html.split(`<span>${text.thinkingDepthLabel}</span>`)[1]?.split('</label>')[0] ?? ''
+    assert.ok(depthRow.includes('reasoning-select'))
+    assert.ok(!depthRow.includes('disabled'))
+  })
+
+  // 关思考时深度确实不生效（Codex 落 none / Claude 落 low，见 pitfall #289），
+  // 所以下拉可点不等于可以假装它当前算数 —— 要留一个看得见的"未生效"标记。
+  it('marks the thinking depth select as inactive while thinking is off', () => {
+    const off = renderToStaticMarkup(
+      React.createElement(AutomationBoardTemplateConfig, {
+        template: makeTemplate({ thinkingEnabled: false }),
+        language: settings.language,
+        onUpdateTemplate: noop,
+        onRunTemplateNow: noop,
+      }),
+    )
+    const on = renderToStaticMarkup(
+      React.createElement(AutomationBoardTemplateConfig, {
+        template: makeTemplate({ thinkingEnabled: true }),
+        language: settings.language,
+        onUpdateTemplate: noop,
+        onRunTemplateNow: noop,
+      }),
+    )
+
+    assert.ok(off.includes('is-thinking-off'))
+    assert.ok(!on.includes('is-thinking-off'))
   })
 
   // 加入待命的输入区必须能定同一组参数，否则只能等项建出来再逐张改。

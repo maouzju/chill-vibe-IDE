@@ -377,8 +377,11 @@ test('the compose row keeps the model picker and the primary action on one line'
   expect(Math.abs(selectBox.y - buttonBox.y)).toBeLessThan(4)
 })
 
-test('an expanded template panel uses two field columns on a wide board', async ({ page }) => {
-  await installMockApis(page, 1, 'dark')
+// 两套主题都要拍：面板底色、分组标题、chevron、超管警告红都是分主题的 token，
+// 只钉一张 dark 的话，亮色下的对比度回归不会被任何用例接住。
+for (const theme of ['dark', 'light'] as const) {
+test(`an expanded template panel uses two field columns on a wide board (${theme})`, async ({ page }) => {
+  await installMockApis(page, 1, theme)
   await page.setViewportSize({ width: 1440, height: 1000 })
   await page.goto(appUrl)
 
@@ -392,21 +395,55 @@ test('an expanded template panel uses two field columns on a wide board', async 
   )
   expect(tracks).toBe(2)
 
-  // 需求 textarea / 触发器分组 / 操作行必须整行跨栏，否则它们会被塞进半个面板。
-  const spans = await config.evaluate((node) =>
-    ['.automation-board-template-field.is-stacked', '.automation-board-template-trigger'].map(
-      (selector) => getComputedStyle(node.querySelector(selector)!).gridColumnStart,
-    ),
-  )
-  for (const span of spans) {
-    expect(span).toBe('1')
+  // 旧版这里断言的是"需求和触发器都整行跨栏" —— 那时面板没有分组结构，8 个控件
+  // 按文档序自己往格子里掉，只能靠强制跨栏来阻止相关控件被劈到左右两栏。
+  // 现在按语义分组显式落位：名称与操作行跨栏，需求独占左栏并跨两行，执行方式与
+  // 触发器叠在右栏。断言跟着改成"每一组都落在它该在的位置"。
+  const areas = await config.evaluate((node) => {
+    const at = (selector: string) => {
+      const style = getComputedStyle(node.querySelector(selector)!)
+      return `${style.gridColumnStart}/${style.gridRowStart}`
+    }
+    return {
+      name: at('.automation-board-template-field.is-name'),
+      requirement: at('.automation-board-template-group.is-requirement'),
+      execution: at('.automation-board-template-group.is-execution'),
+      trigger: at('.automation-board-template-group.is-trigger'),
+      actions: at('.automation-board-template-config-actions'),
+    }
+  })
+  expect(areas).toEqual({
+    name: 'name/name',
+    requirement: 'req/req',
+    execution: 'exec/exec',
+    trigger: 'trigger/trigger',
+    actions: 'actions/actions',
+  })
+
+  // 需求组在双栏里跨两行，所以它必须比右栏任意一组都高；同时任何一组都不能被
+  // 压得装不下自己的内容（窄栏下曾经把整组压成 0 高，标题和 textarea 全溢出）。
+  const heights = await config.evaluate((node) => {
+    const box = (selector: string) => {
+      const el = node.querySelector<HTMLElement>(selector)!
+      return { h: Math.round(el.getBoundingClientRect().height), need: el.scrollHeight }
+    }
+    return {
+      requirement: box('.automation-board-template-group.is-requirement'),
+      execution: box('.automation-board-template-group.is-execution'),
+      trigger: box('.automation-board-template-group.is-trigger'),
+    }
+  })
+  for (const [name, entry] of Object.entries(heights)) {
+    expect(entry.h, `${name} collapsed below its content`).toBeGreaterThanOrEqual(entry.need - 1)
   }
+  expect(heights.requirement.h).toBeGreaterThan(heights.execution.h)
 
   await expect(page.locator('.automation-board')).toHaveScreenshot(
-    'automation-board-template-config-wide-dark.png',
+    `automation-board-template-config-wide-${theme}.png`,
     { animations: 'disabled', maxDiffPixelRatio: 0.004 },
   )
 })
+}
 
 test('an open item drawer stays inside its card on a stacked board', async ({ page }) => {
   await installMockApis(page, 3, 'dark')

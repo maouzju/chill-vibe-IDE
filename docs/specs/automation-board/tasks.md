@@ -258,6 +258,22 @@ MCP 端到端实测（一次性探针，非注册测试）：起真实桥接 →
 `inspect-board-state.mjs`（把任意 state.json 的列 / tab / 孤儿卡打出来）。下次再报"看板没了"，
 先跑最后一个看形状。
 
+## Slice V11 — 模板配置真的作用到它跑的那张卡（v2.6 / FR14）
+
+- [x] `src/components/automation-board-template-sync.ts`（新）：`resolveAutomationBoardTemplateInstanceSync`
+      —— 模型走 `selectCardModel`、其余走一次浅 patch、全没变返回 `null`；深度按将要生效的模型归一化
+- [x] `src/App.tsx`：`fireAutomationBoardTemplateTrigger` 复用分支在换道与投递之前跑一次同步
+- [x] 模板配置面板补齐执行参数入口（执行方式分组：思考 / 思考深度 / 计划模式），`shared/i18n.ts`
+      新增 `automationBoardTemplateExecutionLabel`（zh + en）
+- [x] 面板按语义分三组，双栏用 `grid-template-areas` 整组落位；超管说明只在开着时常驻
+- [x] 模板胶囊改名从 `window.prompt` 换成就地输入框（改名时停掉拖拽，空名不提交）
+- [x] 思考深度不再被"思考"复选框 disable：`shared/reasoning.ts` 的
+      `shouldEnableThinkingForDepthChange`，看板面板与 chat composer 两处共用
+- [x] `tests/automation-board-template-sync.test.ts`（红先）+ `tests/automation-board-render.test.tsx` 扩充
+- [x] `tests/thinking-depth-selectable.spec.ts` + `tests/automation-template-config-persistence.spec.ts`（新，均已进
+      `scripts/run-playwright-specs.ps1` 的 smoke 桶）
+- [x] `pnpm test:release` 全量闸门
+
 ### 留给后续
 
 - [ ] 待命 composer 粘贴的图片仍是本地 state（`draftImages`），切 tab 即失。要落盘得复用 ChatCard 那套

@@ -1,5 +1,10 @@
 // Pure updater logic — no Electron dependencies so this module is importable from tests.
 
+import { createWriteStream } from 'node:fs'
+import { rename, rm } from 'node:fs/promises'
+import { Readable } from 'node:stream'
+import { pipeline } from 'node:stream/promises'
+
 export type UpdateCheckResult = {
   hasUpdate: boolean
   currentVersion: string
@@ -73,6 +78,60 @@ export function resolveDownloadedAssetStrategy(
   return 'shell-open'
 }
 
+export type VerifiedDownloadParams = {
+  source: AsyncIterable<Uint8Array>
+  destPath: string
+  expectedBytes: number
+  onProgress?: (percent: number) => void
+}
+
+// 症状: 更新后应用被替换成一个打不开的版本。
+// 根因: 旧实现把每个 chunk 直接 write() 进最终文件名，既不检查收到的字节数是否等于
+//       Content-Length，也不理会背压 —— 一次中断的下载会留下一个截断的 zip，而调用方
+//       把它当成"下载成功"交给破坏性的安装脚本。
+// 被否决的替代: 只在安装脚本里检查归档 —— 那时应用已经退出，用户只能看到它没再起来。
+export async function writeVerifiedDownload({
+  source,
+  destPath,
+  expectedBytes,
+  onProgress,
+}: VerifiedDownloadParams): Promise<string> {
+  const partPath = `${destPath}.part`
+  let received = 0
+
+  const counting = async function* () {
+    for await (const chunk of source) {
+      received += chunk.byteLength
+      if (expectedBytes > 0) {
+        onProgress?.(Math.min(100, Math.round((received / expectedBytes) * 100)))
+      }
+      yield chunk
+    }
+  }
+
+  try {
+    // pipeline() applies backpressure, so a fast network cannot queue the whole
+    // archive in main-process memory while the disk catches up.
+    await pipeline(Readable.from(counting()), createWriteStream(partPath))
+  } catch (error) {
+    await rm(partPath, { force: true })
+    throw error
+  }
+
+  if (expectedBytes > 0 && received !== expectedBytes) {
+    await rm(partPath, { force: true })
+    throw new Error(
+      `Update download is incomplete: received ${received} of ${expectedBytes} bytes.`,
+    )
+  }
+
+  // Publish under the real name only after the payload is proven whole.
+  await rm(destPath, { force: true })
+  await rename(partPath, destPath)
+
+  return destPath
+}
+
 export type WindowsZipReplaceScriptParams = {
   processId: number
   assetPath: string
@@ -90,6 +149,23 @@ export function encodePowerShellScriptUtf8Bom(script: string): Buffer {
   return Buffer.concat([utf8Bom, Buffer.from(script, 'utf8')])
 }
 
+// 症状: ①更新失败后安装目录只剩一半文件、应用彻底打不开，日志里没有任何回滚记录；
+//       ②一次更新失败后，之后每一次更新都在动到安装目录之前就报错，用户只看到一句关于
+//       备份目录的报错，不知道要删什么；③回滚自身失败时日志只有 "Rollback failed"。
+// 根因 (2026-08-16 实测, tests/updater.test.ts 三条端到端 PowerShell 用例):
+//   ① `$backupCreated = $true` 曾写在 Move-Item 管道之后。管道跑在
+//      $ErrorActionPreference='Stop' 下，中途一个被占用的文件就终止整条管道 —— 实测
+//      backupCreated=False / targetRemaining=1 / backupHolds=3，catch 里的回滚分支被整个跳过。
+//   ② 成功路径用 -ErrorAction SilentlyContinue 删备份目录，被占用时会永久留下
+//      <install>.chill-vibe-backup；下一次更新开头无保护的 Remove-Item 把后续更新全部锁死。
+//   ③ 回滚失败时应用已经退出，日志是唯一信号，没有路径就没法指导用户手工恢复。
+// 被否决的替代:
+//   - 「把 Move-Item 加 -ErrorAction SilentlyContinue 让它别中断」: 那会让部分文件留在
+//     安装目录里被新版本覆盖，损坏比中止更隐蔽。
+//   - 「陈旧备份目录删不掉就直接 throw」: 这正是 ② 的当前行为 —— 用户永远卡在旧版本。
+//     换用带时间戳的新备份目录名，把「清不掉的垃圾」降级成一条日志。
+// 注意: 若阻塞交换的句柄在回滚时仍未释放，回滚的清空步骤同样会失败 —— 那条路径只保证
+//       日志里留下备份目录绝对路径（见 ③），不保证自动恢复。
 export function buildWindowsZipReplaceScript(params: WindowsZipReplaceScriptParams): string {
   const pidLiteral = `${params.processId}`
   const waitTimeoutLiteral = `${params.waitTimeoutSeconds}`
@@ -175,30 +251,75 @@ function Wait-ForProcessExit {
   }
 }
 
+function Test-AppPayloadComplete {
+  param([string]$Root, [string]$ExeName)
+
+  $required = @(
+    (Join-Path $Root $ExeName),
+    (Join-Path $Root 'resources'),
+    (Join-Path $Root 'resources\\app.asar')
+  )
+
+  foreach ($requiredPath in $required) {
+    if (-not (Test-Path -LiteralPath $requiredPath)) {
+      return $false
+    }
+  }
+
+  return $true
+}
+
+function Get-MissingPayloadPaths {
+  param([string]$Root, [string]$ExeName)
+
+  $required = @($ExeName, 'resources', 'resources\\app.asar')
+  $missing = @()
+
+  foreach ($relativePath in $required) {
+    if (-not (Test-Path -LiteralPath (Join-Path $Root $relativePath))) {
+      $missing += $relativePath
+    }
+  }
+
+  return @($missing)
+}
+
 function Find-AppRoot {
   param(
     [string]$Root,
     [string]$ExeName
   )
 
-  $match = Get-ChildItem -LiteralPath $Root -Recurse -File -Filter $ExeName |
-    Where-Object { Test-Path -LiteralPath (Join-Path $_.DirectoryName 'resources') } |
-    Select-Object -First 1
-
-  if ($match) {
-    return $match.DirectoryName
-  }
-
-  $fallback = Get-ChildItem -LiteralPath $Root -Recurse -File -Filter $ExeName | Select-Object -First 1
-  if ($fallback) {
-    return $fallback.DirectoryName
+  # 症状: 更新后应用打不开 / 版本没变，日志却写着 'Update job done.'。
+  # 根因: 旧的 fallback 分支接受任何含有 exe 的目录当作 app 根。当解压未完成或
+  #       归档损坏时，一个只有 exe、没有 resources\\app.asar 的残缺目录就会被采纳，
+  #       随后清空用户安装目录并启动一个打不开的应用（2026-08-16 实测可复现）。
+  # 被否决的替代: 只在复制后检查 —— 那时安装目录已经被清空，损坏已经发生。
+  foreach ($candidate in @(Get-ChildItem -LiteralPath $Root -Recurse -File -Filter $ExeName)) {
+    if (Test-AppPayloadComplete -Root $candidate.DirectoryName -ExeName $ExeName) {
+      return $candidate.DirectoryName
+    }
   }
 
   return $null
 }
 
+$exeName = [System.IO.Path]::GetFileName($executablePath)
+$backupDir = "$targetDir.chill-vibe-backup"
+$backupCreated = $false
+
 try {
   Write-Log "Update job started. pid=$pidToWait target=$targetDir asset=$assetPath"
+
+  if (-not (Test-Path -LiteralPath $assetPath)) {
+    throw "Downloaded update package is missing: $assetPath"
+  }
+
+  $assetBytes = (Get-Item -LiteralPath $assetPath).Length
+  if ($assetBytes -le 0) {
+    throw "Downloaded update package is empty: $assetPath"
+  }
+  Write-Log "Asset verified: $assetBytes bytes."
 
   Wait-ForProcessExit -ProcessId $pidToWait -ExecutablePath $executablePath -TimeoutSeconds $waitTimeoutSeconds
   Write-Log 'App processes exited (or were force-killed); proceeding.'
@@ -212,20 +333,64 @@ try {
   Expand-Archive -LiteralPath $assetPath -DestinationPath $stagingDir -Force
   Write-Log 'Expand archive finished.'
 
-  $sourceRoot = Find-AppRoot -Root $stagingDir -ExeName ([System.IO.Path]::GetFileName($executablePath))
+  # Integrity gate: nothing below this line may run against a half-extracted payload,
+  # because the next phase is destructive to the user's installed app.
+  $sourceRoot = Find-AppRoot -Root $stagingDir -ExeName $exeName
   if (-not $sourceRoot) {
-    throw "Unable to find the extracted app root in $stagingDir."
+    $strandedExe = @(Get-ChildItem -LiteralPath $stagingDir -Recurse -File -Filter $exeName | Select-Object -First 1)
+    if ($strandedExe.Count -gt 0) {
+      $missing = (Get-MissingPayloadPaths -Root $strandedExe[0].DirectoryName -ExeName $exeName) -join ', '
+      throw "Extracted payload is incomplete (missing: $missing). Keeping the current install untouched."
+    }
+    throw "Extracted payload is incomplete: no '$exeName' found under $stagingDir. Keeping the current install untouched."
   }
-  Write-Log "Resolved source root: $sourceRoot"
+
+  $sourceFileCount = @(Get-ChildItem -LiteralPath $sourceRoot -Recurse -File).Count
+  Write-Log "Resolved source root: $sourceRoot ($sourceFileCount files)"
 
   New-Item -ItemType Directory -Path $targetDir -Force | Out-Null
-  Write-Log "Begin copy: clearing $targetDir"
-  Get-ChildItem -LiteralPath $targetDir -Force | Remove-Item -Recurse -Force
-  Write-Log 'Target directory cleared. Copying new files...'
+
+  # Move the old install aside instead of deleting it, so a failed copy can roll back
+  # rather than leaving the user with no app at all.
+  if (Test-Path -LiteralPath $backupDir) {
+    try {
+      Remove-Item -LiteralPath $backupDir -Recurse -Force
+    } catch {
+      $staleBackupDir = $backupDir
+      $backupDir = "$targetDir.chill-vibe-backup-" + (Get-Date -Format 'yyyyMMdd-HHmmss-fff')
+      Write-Log "Stale backup folder could not be deleted: $staleBackupDir ($($_.Exception.Message))."
+      Write-Log "Using $backupDir for this run. Delete $staleBackupDir manually once nothing is using it."
+    }
+  }
+  New-Item -ItemType Directory -Path $backupDir -Force | Out-Null
+
+  # $backupCreated must be armed BEFORE the move, not after: the pipeline below runs under
+  # $ErrorActionPreference = 'Stop', so one locked file aborts it with part of the install
+  # already parked in $backupDir. Arming afterwards left the flag $false in exactly that
+  # case and skipped the rollback below, stranding a half-empty install directory.
+  $backupCreated = $true
+  Write-Log "Begin swap: moving current install aside -> $backupDir"
+  Get-ChildItem -LiteralPath $targetDir -Force | Move-Item -Destination $backupDir -Force
+  Write-Log 'Previous install parked. Copying new files...'
+
   Get-ChildItem -LiteralPath $sourceRoot -Force | ForEach-Object {
     Copy-Item -LiteralPath $_.FullName -Destination $targetDir -Recurse -Force
   }
   Write-Log 'Copy finished.'
+
+  $missingAfterCopy = (Get-MissingPayloadPaths -Root $targetDir -ExeName $exeName) -join ', '
+  if ($missingAfterCopy) {
+    throw "Copied install is incomplete (missing: $missingAfterCopy)."
+  }
+
+  $targetFileCount = @(Get-ChildItem -LiteralPath $targetDir -Recurse -File).Count
+  if ($targetFileCount -lt $sourceFileCount) {
+    throw "Copied install is incomplete: $targetFileCount of $sourceFileCount files landed in $targetDir."
+  }
+  Write-Log "Copy verified: $targetFileCount files."
+
+  Remove-Item -LiteralPath $backupDir -Recurse -Force -ErrorAction SilentlyContinue
+  $backupCreated = $false
 
   Start-Sleep -Milliseconds 250
   Write-Log "Launch new app: $executablePath"
@@ -234,6 +399,25 @@ try {
 } catch {
   Write-Log "Update job failed: $($_.Exception.Message)"
   Write-Log $_.ScriptStackTrace
+
+  if ($backupCreated -and (Test-Path -LiteralPath $backupDir)) {
+    try {
+      Write-Log 'Rolling back to the previous install...'
+      if (Test-Path -LiteralPath $targetDir) {
+        Get-ChildItem -LiteralPath $targetDir -Force | Remove-Item -Recurse -Force
+      } else {
+        New-Item -ItemType Directory -Path $targetDir -Force | Out-Null
+      }
+      Get-ChildItem -LiteralPath $backupDir -Force | Move-Item -Destination $targetDir -Force
+      Remove-Item -LiteralPath $backupDir -Recurse -Force -ErrorAction SilentlyContinue
+      Write-Log 'Rollback finished; relaunching the previous install.'
+      Start-Process -FilePath $executablePath -WorkingDirectory $targetDir | Out-Null
+    } catch {
+      Write-Log "Rollback failed: $($_.Exception.Message)"
+      Write-Log "Manual recovery: restore files from $backupDir into $targetDir, then relaunch $executablePath"
+    }
+  }
+
   throw
 }
 `

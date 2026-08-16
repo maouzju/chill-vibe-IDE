@@ -96,6 +96,25 @@ export const isClaudeAlwaysThinkingModel = (model?: string | null): boolean => {
   )
 }
 
+/**
+ * 用户在思考关闭的状态下选了一个思考深度 —— 该不该顺手把思考打开？
+ *
+ * 症状：2026-08-16 用户截图报「这什么垃圾UI啊，怎么还没法设置」。当时深度下拉被
+ *   思考开关 disable，界面上只剩一个灰掉的「超高」，既点不动也没写为什么。
+ * 根因：把「关思考」实现成了深度的**前置条件**，但它其实只是深度谱系的最低一档
+ *   （Codex 落 none / Claude 落 low，见 pitfall #289），两者是同一维度的东西。
+ * 为什么不是加一行说明文字：说明只能让用户知道要多点一次开关，那一次点击没有
+ *   任何信息量 —— 选「超高」本身就已经完整表达了意图。
+ *
+ * 独立成一个共享出口而不是各写各的：这条语义有两个渲染点（聊天 composer 的设置
+ * 菜单、看板模板/待命面板），且两侧的调用形态不同（前者是 toggle 回调、后者是
+ * patch 对象），只在其中一处内联判断就是等着下次改一半。
+ */
+export const shouldEnableThinkingForDepthChange = (
+  thinkingEnabled: boolean | undefined,
+  alwaysThinking: boolean,
+): boolean => !alwaysThinking && thinkingEnabled === false
+
 // Fable 5's official default effort is high — max is documented as prone to
 // overthinking there, and Fable output tokens cost 2x Opus.
 export const getDefaultReasoningEffortForModel = (

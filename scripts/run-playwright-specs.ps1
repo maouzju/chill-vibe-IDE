@@ -25,6 +25,7 @@ try {
   $suiteSpecs = @{
     smoke = @(
       'tests/add-card-order.spec.ts',
+      'tests/automation-template-config-persistence.spec.ts',
       'tests/chat-draft-persistence.spec.ts',
       'tests/composer-settings-hints.spec.ts',
       'tests/git-sticky-picker.spec.ts',
@@ -32,6 +33,7 @@ try {
       'tests/panel-persistence.spec.ts',
       'tests/repeat-loop.spec.ts',
       'tests/structured-chat-collapse.spec.ts',
+      'tests/thinking-depth-selectable.spec.ts',
       'tests/workspace-folder-picker.spec.ts'
     )
     theme = @(

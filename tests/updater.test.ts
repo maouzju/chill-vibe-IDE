@@ -1,9 +1,10 @@
 import assert from 'node:assert/strict'
 import { EventEmitter } from 'node:events'
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { existsSync } from 'node:fs'
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
-import { spawnSync } from 'node:child_process'
+import { spawn, spawnSync } from 'node:child_process'
 import { describe, test } from 'node:test'
 
 import {
@@ -15,6 +16,7 @@ import {
   selectPlatformAsset,
   parseReleaseResponse,
   resolveDownloadedAssetStrategy,
+  writeVerifiedDownload,
 } from '../electron/updater-core.ts'
 import {
   launchDetachedPowerShellScriptFile,
@@ -309,6 +311,534 @@ describe('encodePowerShellScriptUtf8Bom', () => {
       assert.equal(captured, 'D:\\下载\\Chill Vibe IDE\r\n')
     } finally {
       await rm(tempDir, { recursive: true, force: true })
+    }
+  })
+})
+
+describe('writeVerifiedDownload', () => {
+  const chunks = (...values: string[]) =>
+    (async function* () {
+      for (const value of values) {
+        yield Buffer.from(value, 'utf8')
+      }
+    })()
+
+  const withTempDir = async (run: (dir: string) => Promise<void>) => {
+    const dir = await mkdtemp(path.join(os.tmpdir(), 'chill-vibe-download-'))
+    try {
+      await run(dir)
+    } finally {
+      await rm(dir, { recursive: true, force: true })
+    }
+  }
+
+  test('writes the payload and reports progress when the byte count matches', async () => {
+    await withTempDir(async (dir) => {
+      const destPath = path.join(dir, 'update.zip')
+      const progress: number[] = []
+
+      const result = await writeVerifiedDownload({
+        source: chunks('hello ', 'world'),
+        destPath,
+        expectedBytes: 11,
+        onProgress: (percent) => progress.push(percent),
+      })
+
+      assert.equal(result, destPath)
+      assert.equal(await readFile(destPath, 'utf8'), 'hello world')
+      assert.equal(existsSync(`${destPath}.part`), false)
+      assert.deepEqual(progress, [55, 100])
+    })
+  })
+
+  test('rejects a truncated download instead of handing back a half-written archive', async () => {
+    await withTempDir(async (dir) => {
+      const destPath = path.join(dir, 'update.zip')
+
+      await assert.rejects(
+        writeVerifiedDownload({
+          source: chunks('hello '),
+          destPath,
+          expectedBytes: 11,
+        }),
+        /incomplete/i,
+      )
+
+      // A partial archive must never be left where install can pick it up.
+      assert.equal(existsSync(destPath), false)
+      assert.equal(existsSync(`${destPath}.part`), false)
+    })
+  })
+
+  test('leaves no partial file behind when the stream errors mid-flight', async () => {
+    await withTempDir(async (dir) => {
+      const destPath = path.join(dir, 'update.zip')
+      const failing = (async function* () {
+        yield Buffer.from('hello ', 'utf8')
+        throw new Error('socket hang up')
+      })()
+
+      await assert.rejects(
+        writeVerifiedDownload({ source: failing, destPath, expectedBytes: 11 }),
+        /socket hang up/,
+      )
+
+      assert.equal(existsSync(destPath), false)
+      assert.equal(existsSync(`${destPath}.part`), false)
+    })
+  })
+
+  test('never overwrites a previously verified archive with a failed retry', async () => {
+    await withTempDir(async (dir) => {
+      const destPath = path.join(dir, 'update.zip')
+      await writeFile(destPath, 'previously-verified')
+
+      await assert.rejects(
+        writeVerifiedDownload({ source: chunks('bad'), destPath, expectedBytes: 11 }),
+        /incomplete/i,
+      )
+
+      assert.equal(await readFile(destPath, 'utf8'), 'previously-verified')
+    })
+  })
+
+  test('accepts payloads when the server does not advertise a length', async () => {
+    await withTempDir(async (dir) => {
+      const destPath = path.join(dir, 'update.zip')
+
+      await writeVerifiedDownload({
+        source: chunks('unknown-length'),
+        destPath,
+        expectedBytes: 0,
+      })
+
+      assert.equal(await readFile(destPath, 'utf8'), 'unknown-length')
+    })
+  })
+})
+
+describe('windows zip update job — end-to-end PowerShell run', () => {
+  // 症状: 用户报告更新后应用打不开/版本没变 —— "在没有解压完全的情况下重启应用"。
+  // 根因: 脚本先清空安装目录再复制，中间没有任何完整性闸门，Find-AppRoot 的
+  //       fallback 分支还会接受一个没有 resources/ 的残缺目录当作 app 根。
+  // 这两个测试直接跑真实 PowerShell，因为纯字符串断言无法证明脚本的实际破坏行为。
+  const FAKE_EXE_NAME = 'fake-app.cmd'
+  const psQuote = (value: string) => value.replace(/'/g, "''")
+
+  const runPowerShellCommand = (command: string) =>
+    spawnSync('powershell', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command', command], {
+      encoding: 'utf8',
+      timeout: 120_000,
+    })
+
+  const runPowerShellScriptFile = (scriptPath: string) =>
+    spawnSync('powershell', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', scriptPath], {
+      encoding: 'utf8',
+      timeout: 120_000,
+    })
+
+  const waitForFile = async (filePath: string, timeoutMs: number) => {
+    const deadline = Date.now() + timeoutMs
+    while (Date.now() < deadline) {
+      if (existsSync(filePath)) {
+        return true
+      }
+      await new Promise((resolve) => setTimeout(resolve, 100))
+    }
+    return existsSync(filePath)
+  }
+
+  // Windows-only fault injection helpers.
+  //
+  // `fs.open()` is NOT usable to make Move-Item fail: libuv opens files with
+  // FILE_SHARE_READ|WRITE|DELETE, so a Node handle blocks nothing (2026-08-16 probe:
+  // "DELETE OK" while the handle was open). A process whose *current directory* is the
+  // item does block both rename and delete, which is what `holdDirectoryOpen` uses.
+  const holdDirectoryOpen = async (dir: string) => {
+    await mkdir(dir, { recursive: true })
+    // The cwd lock is taken by CreateProcess itself, so it exists the moment spawn returns.
+    const child = spawn(process.execPath, ['-e', 'setTimeout(() => {}, 180000)'], {
+      cwd: dir,
+      stdio: 'ignore',
+    })
+    await new Promise((resolve) => setTimeout(resolve, 250))
+
+    return async () => {
+      child.kill()
+      await new Promise((resolve) => setTimeout(resolve, 400))
+    }
+  }
+
+  // A real AV/indexer handle is transient: it blocks the swap and is gone again by the
+  // time the rollback runs. That timing cannot be reproduced with a real lock (releasing
+  // it is a race against the script), so the transient case is injected by shadowing
+  // Move-Item with a proxy function — the script's own control flow (the `$backupCreated`
+  // flag, the catch branch, the rollback) still runs for real.
+  const writeMoveFaultWrapper = async (
+    lab: { root: string; scriptPath: string },
+    options: { failSwapOnLeaf: string; failRestore?: boolean },
+  ) => {
+    const wrapperPath = path.join(lab.root, 'move-fault-wrapper.ps1')
+    const wrapper = [
+      `$ErrorActionPreference = 'Continue'`,
+      `$global:cvSwapFailed = $false`,
+      `$global:cvRestoreFailed = $false`,
+      `function Move-Item {`,
+      `  [CmdletBinding()]`,
+      `  param(`,
+      `    [Parameter(Mandatory = $true, ValueFromPipelineByPropertyName = $true)]`,
+      `    [Alias('PSPath')]`,
+      `    [string]$LiteralPath,`,
+      `    [Parameter(Position = 0)]`,
+      `    [string]$Destination,`,
+      `    [switch]$Force`,
+      `  )`,
+      `  process {`,
+      `    $isSwap = $Destination -like '*chill-vibe-backup*'`,
+      `    if ($isSwap -and (-not $global:cvSwapFailed) -and ($LiteralPath -like '*${options.failSwapOnLeaf}')) {`,
+      `      $global:cvSwapFailed = $true`,
+      `      throw "The process cannot access the file '$LiteralPath' because it is being used by another process."`,
+      `    }`,
+      `    if ((-not $isSwap) -and ${options.failRestore ? '$true' : '$false'} -and (-not $global:cvRestoreFailed)) {`,
+      `      $global:cvRestoreFailed = $true`,
+      `      throw "Access to the path '$LiteralPath' is denied."`,
+      `    }`,
+      `    Microsoft.PowerShell.Management\\Move-Item -LiteralPath $LiteralPath -Destination $Destination -Force:$Force`,
+      `  }`,
+      `}`,
+      `& '${psQuote(lab.scriptPath)}'`,
+    ].join('\r\n')
+
+    await writeFile(wrapperPath, encodePowerShellScriptUtf8Bom(wrapper))
+    return wrapperPath
+  }
+
+  // Write-Log goes through Out-File, which wraps long lines at the host width, so
+  // path assertions have to ignore the injected line breaks.
+  const flattenLog = (value: string) => value.replace(/\s+/g, '')
+
+  // 每条用例都得走这个，别在收尾里直接写裸 `rm`。
+  //
+  // 症状：2026-08-16 发布闸门里 "replaces the install and launches the app when the
+  //   payload is complete" 红在收尾的 `EBUSY: resource busy or locked, rmdir ...\installed`
+  //   —— 断言全过了，炸的是清理。单跑绿、满清单跑红。
+  // 根因：这些用例真的起了子进程又杀掉，而 Windows 上"进程退出"与"它对 cwd 的句柄
+  //   被释放"不是同一时刻；满清单并发下这个窗口被拉长到足以撞上 rmdir。
+  // 为什么不是固定 sleep：等多久都是猜，而重试是等到真的能删为止。
+  const removeLabRoot = (root: string) =>
+    rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 })
+
+  const createUpdateJobLab = async ({
+    completePayload,
+    stuckFileName,
+    stuckDirName,
+  }: {
+    completePayload: boolean
+    stuckFileName?: string
+    stuckDirName?: string
+  }) => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'chill-vibe-update-job-'))
+    const payloadRoot = path.join(root, 'payload', 'Chill Vibe IDE')
+    const targetDir = path.join(root, 'installed')
+    const launchLogPath = path.join(root, 'launched.log')
+    const relaunchLogPath = path.join(root, 'relaunched.log')
+    const executablePath = path.join(targetDir, FAKE_EXE_NAME)
+
+    await mkdir(payloadRoot, { recursive: true })
+    await writeFile(
+      path.join(payloadRoot, FAKE_EXE_NAME),
+      `@echo off\r\n>>"${launchLogPath}" echo launched\r\n`,
+    )
+
+    if (completePayload) {
+      await mkdir(path.join(payloadRoot, 'resources'), { recursive: true })
+      await writeFile(path.join(payloadRoot, 'resources', 'app.asar'), 'new-app-asar-payload')
+      await mkdir(path.join(payloadRoot, 'locales'), { recursive: true })
+      await writeFile(path.join(payloadRoot, 'locales', 'en-US.pak'), 'pak')
+    }
+
+    const assetPath = path.join(root, 'update.zip')
+    const compressed = runPowerShellCommand(
+      `$ErrorActionPreference='Stop'; Compress-Archive -LiteralPath '${psQuote(payloadRoot)}' -DestinationPath '${psQuote(assetPath)}' -Force`,
+    )
+    assert.equal(compressed.status, 0, compressed.stderr || compressed.stdout)
+
+    // A real install that must not be destroyed unless the payload is trustworthy.
+    await mkdir(path.join(targetDir, 'resources'), { recursive: true })
+    // Writes to a *different* log than the payload copy, so a rollback relaunch can be
+    // told apart from a successful update launch.
+    await writeFile(
+      path.join(targetDir, FAKE_EXE_NAME),
+      `@echo off\r\n>>"${relaunchLogPath}" echo relaunched\r\n`,
+    )
+    await writeFile(path.join(targetDir, 'resources', 'app.asar'), 'old-app-asar-payload')
+    await writeFile(path.join(targetDir, 'sentinel.txt'), 'previous-install')
+
+    if (stuckFileName) {
+      await writeFile(path.join(targetDir, stuckFileName), 'stuck-decoy')
+    }
+
+    if (stuckDirName) {
+      await mkdir(path.join(targetDir, stuckDirName), { recursive: true })
+    }
+
+    const stagingDir = path.join(root, 'extract')
+    const logPath = path.join(root, 'apply-update.log')
+    const scriptPath = path.join(root, 'apply-update.ps1')
+
+    await writeFile(logPath, '')
+    await writeFile(
+      scriptPath,
+      encodePowerShellScriptUtf8Bom(
+        buildWindowsZipReplaceScript({
+          // A PID that cannot exist, so the wait loop exits immediately instead of
+          // force-killing the test runner.
+          processId: 0x7ffffffe,
+          assetPath,
+          targetDir,
+          executablePath,
+          stagingDir,
+          logPath,
+          waitTimeoutSeconds: 2,
+        }),
+      ),
+    )
+
+    return {
+      root,
+      targetDir,
+      backupDir: `${targetDir}.chill-vibe-backup`,
+      launchLogPath,
+      relaunchLogPath,
+      logPath,
+      scriptPath,
+    }
+  }
+
+  test('refuses to wipe the installed app when the extracted payload is incomplete', async (t) => {
+    if (process.platform !== 'win32') {
+      t.skip('The Windows zip update job only runs on win32.')
+      return
+    }
+
+    const lab = await createUpdateJobLab({ completePayload: false })
+
+    try {
+      const result = runPowerShellScriptFile(lab.scriptPath)
+      const jobLog = await readFile(lab.logPath, 'utf8')
+      const launched = await waitForFile(lab.launchLogPath, 3_000)
+
+      assert.equal(
+        existsSync(path.join(lab.targetDir, 'sentinel.txt')),
+        true,
+        `The previous install was destroyed by an incomplete payload.\n${jobLog}`,
+      )
+      assert.equal(
+        await readFile(path.join(lab.targetDir, 'resources', 'app.asar'), 'utf8'),
+        'old-app-asar-payload',
+        `The previous app.asar was replaced from an incomplete payload.\n${jobLog}`,
+      )
+      assert.equal(launched, false, `A broken install was launched.\n${jobLog}`)
+      assert.notEqual(result.status, 0, `Job reported success for an incomplete payload.\n${jobLog}`)
+      assert.match(jobLog, /incomplete|missing/i)
+    } finally {
+      await removeLabRoot(lab.root)
+    }
+  })
+
+  test('replaces the install and launches the app when the payload is complete', async (t) => {
+    if (process.platform !== 'win32') {
+      t.skip('The Windows zip update job only runs on win32.')
+      return
+    }
+
+    const lab = await createUpdateJobLab({ completePayload: true })
+
+    try {
+      const result = runPowerShellScriptFile(lab.scriptPath)
+      const jobLog = await readFile(lab.logPath, 'utf8')
+
+      assert.equal(result.status, 0, `${jobLog}\n${result.stderr}`)
+      assert.equal(
+        existsSync(path.join(lab.targetDir, 'sentinel.txt')),
+        false,
+        `Stale files from the old install survived the replace.\n${jobLog}`,
+      )
+      assert.equal(
+        await readFile(path.join(lab.targetDir, 'resources', 'app.asar'), 'utf8'),
+        'new-app-asar-payload',
+        `The new payload did not land in the install directory.\n${jobLog}`,
+      )
+      assert.equal(
+        await waitForFile(lab.launchLogPath, 20_000),
+        true,
+        `The updated app was never launched.\n${jobLog}`,
+      )
+    } finally {
+      await removeLabRoot(lab.root)
+    }
+  })
+
+  // 症状: 更新失败后安装目录只剩一半文件，应用彻底打不开，日志里没有任何回滚记录。
+  // 根因: `$backupCreated = $true` 写在 Move-Item 管道之后。管道跑在
+  //       $ErrorActionPreference='Stop' 下，中途一个被占用的文件就会终止整条管道 ——
+  //       此时一部分文件已在备份目录、一部分还在安装目录，而标志位仍是 $false，
+  //       catch 里的回滚分支被整个跳过。
+  test('restores the previous install when the swap fails midway through Move-Item', async (t) => {
+    if (process.platform !== 'win32') {
+      t.skip('The Windows zip update job only runs on win32.')
+      return
+    }
+
+    const lab = await createUpdateJobLab({
+      completePayload: true,
+      // Sorts last, so `resources`, the exe, and `sentinel.txt` are already parked in the
+      // backup folder when the pipeline dies — a genuinely half-swapped install.
+      stuckFileName: 'zz-stuck.bin',
+    })
+
+    try {
+      const wrapperPath = await writeMoveFaultWrapper(lab, { failSwapOnLeaf: 'zz-stuck.bin' })
+      const result = runPowerShellScriptFile(wrapperPath)
+      const jobLog = await readFile(lab.logPath, 'utf8')
+
+      assert.notEqual(result.status, 0, `A failed swap must not report success.\n${jobLog}`)
+      assert.match(jobLog, /Rolling back/i)
+
+      assert.equal(
+        existsSync(path.join(lab.targetDir, 'sentinel.txt')),
+        true,
+        `The half-swapped install was never rolled back.\n${jobLog}`,
+      )
+      assert.equal(
+        await readFile(path.join(lab.targetDir, 'sentinel.txt'), 'utf8'),
+        'previous-install',
+        `Rollback restored the wrong sentinel content.\n${jobLog}`,
+      )
+      assert.equal(
+        await readFile(path.join(lab.targetDir, 'resources', 'app.asar'), 'utf8'),
+        'old-app-asar-payload',
+        `The previous app.asar was not restored.\n${jobLog}`,
+      )
+      assert.equal(
+        existsSync(path.join(lab.targetDir, FAKE_EXE_NAME)),
+        true,
+        `The previous executable was not restored.\n${jobLog}`,
+      )
+      assert.equal(
+        existsSync(lab.backupDir),
+        false,
+        `A completed rollback must not leave the backup folder behind.\n${jobLog}`,
+      )
+      assert.equal(
+        await waitForFile(lab.relaunchLogPath, 20_000),
+        true,
+        `The rolled-back install was never relaunched.\n${jobLog}`,
+      )
+      assert.equal(
+        existsSync(lab.launchLogPath),
+        false,
+        `The half-installed new build must never be launched.\n${jobLog}`,
+      )
+    } finally {
+      await removeLabRoot(lab.root)
+    }
+  })
+
+  // 症状: 一次更新失败后，之后每一次更新都在动到安装目录之前就报错，用户只看到一句
+  //       关于备份目录的报错，完全不知道要删什么。
+  // 根因: 成功路径用 -ErrorAction SilentlyContinue 删备份目录，被占用时会永久留下
+  //       <install>.chill-vibe-backup；下一次更新开头的 Remove-Item 没有任何保护、
+  //       跑在 Stop 下，于是陈旧备份把后续更新全部锁死。
+  test('keeps updating when a stale backup folder from an earlier run cannot be deleted', async (t) => {
+    if (process.platform !== 'win32') {
+      t.skip('The Windows zip update job only runs on win32.')
+      return
+    }
+
+    const lab = await createUpdateJobLab({ completePayload: true })
+    const releaseLock = await holdDirectoryOpen(path.join(lab.backupDir, 'locked-leftover'))
+
+    try {
+      const result = runPowerShellScriptFile(lab.scriptPath)
+      const jobLog = await readFile(lab.logPath, 'utf8')
+
+      assert.equal(
+        result.status,
+        0,
+        `A stale backup folder must not block every future update.\n${jobLog}\n${result.stderr}`,
+      )
+      assert.equal(
+        await readFile(path.join(lab.targetDir, 'resources', 'app.asar'), 'utf8'),
+        'new-app-asar-payload',
+        `The update never reached the install directory.\n${jobLog}`,
+      )
+      assert.equal(
+        existsSync(path.join(lab.targetDir, 'sentinel.txt')),
+        false,
+        `Stale files from the old install survived the replace.\n${jobLog}`,
+      )
+      // The stale folder is still there — the log has to name it so support can tell the
+      // user exactly what to delete.
+      assert.ok(
+        flattenLog(jobLog).includes(flattenLog(lab.backupDir)),
+        `The log never names the stale backup folder.\n${jobLog}`,
+      )
+      assert.equal(
+        await waitForFile(lab.launchLogPath, 20_000),
+        true,
+        `The updated app was never launched.\n${jobLog}`,
+      )
+    } finally {
+      await releaseLock()
+      await removeLabRoot(lab.root)
+    }
+  })
+
+  // 症状: 回滚自己也失败时应用已经退出，日志里只有一句 "Rollback failed"，
+  //       没人知道文件去了哪里，支持人员也没法指导用户手工恢复。
+  // 根因: 内层 catch 只写了异常消息，没有写出备份目录的绝对路径。
+  test('logs the backup folder path for manual recovery when the rollback itself fails', async (t) => {
+    if (process.platform !== 'win32') {
+      t.skip('The Windows zip update job only runs on win32.')
+      return
+    }
+
+    const lab = await createUpdateJobLab({
+      completePayload: true,
+      stuckFileName: 'zz-stuck.bin',
+    })
+
+    try {
+      const wrapperPath = await writeMoveFaultWrapper(lab, {
+        failSwapOnLeaf: 'zz-stuck.bin',
+        failRestore: true,
+      })
+      const result = runPowerShellScriptFile(wrapperPath)
+      const jobLog = await readFile(lab.logPath, 'utf8')
+
+      assert.notEqual(result.status, 0, `A failed rollback must not report success.\n${jobLog}`)
+      assert.match(jobLog, /Rollback failed/i)
+      assert.match(
+        jobLog,
+        /Manual recovery/i,
+        `A failed rollback must leave a manual recovery hint.\n${jobLog}`,
+      )
+      assert.ok(
+        flattenLog(jobLog).includes(flattenLog(lab.backupDir)),
+        `A failed rollback must log the absolute backup folder path.\n${jobLog}`,
+      )
+      assert.ok(
+        flattenLog(jobLog).includes(flattenLog(lab.targetDir)),
+        `A failed rollback must log where the files have to be restored to.\n${jobLog}`,
+      )
+      assert.equal(
+        existsSync(lab.backupDir),
+        true,
+        `The files the user has to recover must still be on disk.\n${jobLog}`,
+      )
+    } finally {
+      await removeLabRoot(lab.root)
     }
   })
 })

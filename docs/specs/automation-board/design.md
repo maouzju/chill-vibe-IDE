@@ -545,21 +545,43 @@ const fireAutomationBoardTemplateTrigger = (columnId, boardCardId, templateId) =
   const reuse = template.instanceCardId &&
     board.items.some((item) => item.cardId === template.instanceCardId)
 
-  if (reuse) {
-    // 已有实例：确保它在目标道（走既有 applyAutomationBoardTransition，
-    // 于是"移进 running 要不要发送"的语义完全复用），再发一次需求文本。
-    applyAutomationBoardTransition(…, { kind: 'lane', lane: template.trigger.lane })
-    void sendMessageRef.current?.(columnId, template.instanceCardId, template.requirement, [])
-  } else {
+  if (!reuse) {
     // 没有实例：与用户手动把模板拖进泳道**同一个 handler**。
     const cardId = instantiateTemplate(columnId, boardCardId, templateId, template.trigger.lane)
     applyAction({ type: 'setAutomationBoardTemplateInstance', workspacePath, templateId, cardId })
+    return
+  }
+
+  // 已有实例：先追平模板配置（下一节），再换道 + 投递需求。
+  const sync = resolveAutomationBoardTemplateInstanceSync(template, reuseCard)
+  if (sync?.model) changeCardModelSelectionRef.current?.(columnId, reuseCardId, …sync.model)
+  if (sync?.patch) applyAction({ type: 'updateCard', columnId, cardId: reuseCardId, patch: sync.patch })
+
+  applyAction({ type: 'setAutomationBoardItemLane', …, lane: template.trigger.lane })
+  if (lane === 'running') {
+    applyAction({ type: 'stampAutomationBoardItem', …, patch: { startedAt: … } })
+    void sendMessageRef.current?.(columnId, reuseCardId, template.requirement, [])
   }
 }
 ```
 
+复用分支刻意**不走** `applyAutomationBoardTransition`（源码 `src/App.tsx` 该分支上方有完整决策注释）：transition 表对"移进 running 且有历史"判 `continue`，那对用户手动拖回一个被暂停的需求是对的，但触发的语义是"用这段需求文本再跑一轮"，两者不同 —— 走 transition 会让监工收到一次空续传，而它上一轮已经答完，于是原地不动。
+
 `instantiateTemplate` 建卡时把 `adminAccess: template.adminAccess` 写进卡片，把
 `templateId: template.id` 写进看板项 —— 这两个字段就是 v2 的全部"监工性"。
+
+### 复用实例前先追平模板配置（v2.6）
+
+触发器复用上一轮的实例卡（`template.instanceCardId`）是为了保住跨轮上下文，但模板的执行参数在那之后可能已被用户改过。换道与投递**之前**先跑
+`resolveAutomationBoardTemplateInstanceSync(template, card)`（`src/components/automation-board-template-sync.ts`）：
+
+- provider/model 有变 → 走 `selectCardModel`（换模型要连带作废旧 session，普通 patch 不做这件事）
+- 思考 / 深度 / 计划模式 / 超管有变 → 一次 `updateCard` 浅 patch
+- 全都没变 → 返回 `null`，一个 action 都不发
+
+深度不是直接比模板里存的原值：它按**将要生效的**模型重新归一化（`normalizeReasoningEffortForModel`），所以"只换了模型、深度没动"也可能产出一条 depth patch —— 否则会把一个启动即被 CLI 拒绝的档位（Codex 老模型上的 `max`/`ultra`）钉到卡上。
+
+模板的 `model: ''` 表示"用默认模型"，落到卡上必须归一成具体型号，走的是与建卡同一个 `normalizeModel`。这条与 pitfall 40 不冲突：那条禁止的是**全局默认模型**去改用户手开的卡，而实例卡是模板自己的产物，模板就是它唯一的配置源。
 
 ## 超管权限的接线
 

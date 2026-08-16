@@ -1490,7 +1490,18 @@ const withFakeProviderCommand = async <T>(
   await mkdir(dataDir, { recursive: true })
   await mkdir(workspacePath, { recursive: true })
   await writeTestState(dataDir, workspacePath)
-  await writeFile(entrypointPath, scriptSource, 'utf8')
+  // 能力探测（server/claude-capabilities.ts）会额外跑一次 `<cli> --help`，
+  // 每个后端进程一次。若假 CLI 把它也当成一次真实回合记进 capture，"启动了
+  // 几次"的断言就会莫名其妙多一次——而被污染的是**哪条**测试取决于执行顺序，
+  // 因为探测结果是进程级缓存的。所以在 shim 层统一短路，让所有假 CLI 免疫。
+  const helpGuardedSource = [
+    "if (process.argv.slice(2).includes('--help')) {",
+    "  process.stdout.write('Usage: fake-cli [options]\\nOptions:\\n  -p, --print   Print response and exit\\n')",
+    '  process.exit(0)',
+    '}',
+    scriptSource,
+  ].join('\n')
+  await writeFile(entrypointPath, helpGuardedSource, 'utf8')
   await writeNodeEntrypointShim({
     dir: binDir,
     name: provider,

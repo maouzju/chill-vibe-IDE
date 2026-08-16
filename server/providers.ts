@@ -36,6 +36,8 @@ import type {
   ImageAttachment,
   Provider,
   ProviderStatus,
+  ProviderTurnStopReason,
+  ProviderTurnUsage,
   SlashCommand,
   SlashCommandRequest,
   StreamActivity,
@@ -49,6 +51,10 @@ import {
   createClaudeStructuredOutputParser,
   isClaudeBackgroundAwaitTool,
 } from './claude-structured-output.js'
+import {
+  mapClaudeTurnStopReason,
+  readClaudeTurnUsage,
+} from './provider-turn-telemetry.js'
 import { createCodexCompactionActivityDeduper } from './codex-compaction-dedupe.js'
 import { createCodexAgentStatusTracker } from './codex-agent-status.js'
 import { createClaudeAgentStatusTracker } from './claude-agent-status.js'
@@ -112,7 +118,11 @@ type StreamSink = {
     errorType?: string
     alreadyRecorded?: boolean
   }) => void
-  onDone: (payload?: { completion?: StreamCompletion }) => void
+  onDone: (payload?: {
+    completion?: StreamCompletion
+    turnStopReason?: ProviderTurnStopReason
+    usage?: ProviderTurnUsage
+  }) => void
   onError: (
     message: string,
     hint?: StreamErrorHint,
@@ -3311,10 +3321,25 @@ export const createClaudeTurnParser = (hooks: {
 
         const completionBoundary = hooks.readCompletionBoundary?.() ?? 'unknown'
         hooks.onCompletionBoundary?.(completionBoundary)
+        // 症状 — 「输出被截断」「模型拒答」「上下文快满了」三件事在 UI 和转录里
+        //   都查不到，只能事后翻 server.log 猜（2026-08-16 对照 ACP 时定位）。
+        // 根因 — stop_reason 只被读进 is_error 分支的诊断对象；usage / contextWindow
+        //   则全项目零采集，而 CLI 每个 result 都在报。
+        // 为什么不塞进 completion — 那是既有的二值契约（terminal /
+        //   background-pending），复用它会把两个正交维度挤成一个枚举。
+        // 为什么条件展开而不是直接赋 undefined — 无遥测时 payload 的**形状**必须与
+        //   改动前逐字节一致：写死 `turnStopReason: undefined` 会真的建出这个键，
+        //   deepEqual 断言和结构化克隆都看得见（2026-08-16 实测，
+        //   tests/claude-completion-boundary 当场变红）。可选字段只是类型上可省，
+        //   运行时得真的不存在才算纯增量。
+        const turnStopReason = mapClaudeTurnStopReason(event)
+        const turnUsage = readClaudeTurnUsage(event)
         sink.onDone({
           completion: completionBoundary === 'background-pending'
             ? 'background-pending'
             : 'terminal',
+          ...(turnStopReason ? { turnStopReason } : {}),
+          ...(turnUsage ? { usage: turnUsage } : {}),
         })
         hooks.onSettled?.()
         return

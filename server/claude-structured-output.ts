@@ -8,6 +8,7 @@ import type {
   StreamTodoStatus,
 } from '../shared/schema.js'
 import { buildSyntheticPatch, finalizeStructuredEditedFile } from './structured-edits.js'
+import { parseClaudeToolResults } from './claude-tool-result.js'
 
 type ClaudeStructuredStreamEvent = ({ type: 'activity' } & StreamActivity)[]
 
@@ -1054,16 +1055,36 @@ export const createClaudeStructuredOutputParser = (
         return []
       }
 
+      // 症状 — 命令卡永远显示"成功"、退出码徽标永不出现、并行 Bash 输出互相顶掉。
+      // 根因 — tool_result 住在 user 事件 content **数组**里，上面那行
+      //   `typeof content === 'string'` 直接判假，于是 is_error / tool_use_id
+      //   从上线起一次都没被读过（2026-08-16 实测原文见 claude-tool-result.ts）。
+      // 为什么不顺手把 lastCommand 单槽也重构掉 — 那要改动 settle 的四个调用点，
+      //   风险远大于收益；这里先用 tool_use_id 做**精确配对**，配不上时原样退回
+      //   旧的标签解析，行为不变。
+      const pendingItemId = lastCommand.itemId
+      const matchedResult = parseClaudeToolResults(message).find(
+        (result) => result.toolUseId === pendingItemId,
+      )
+
       const completedCommand = settleLastCommand()
-      return completedCommand
-        ? [
-            {
-              type: 'activity' as const,
-              ...completedCommand,
-              output: output ?? '',
-            },
-          ]
-        : []
+      if (!completedCommand) {
+        return []
+      }
+
+      return [
+        {
+          type: 'activity' as const,
+          ...completedCommand,
+          ...(matchedResult
+            ? {
+                status: matchedResult.isError ? ('failed' as const) : ('completed' as const),
+                output: matchedResult.text,
+                exitCode: matchedResult.exitCode,
+              }
+            : { output: output ?? '' }),
+        },
+      ]
     }
 
     if (event.type === 'result') {

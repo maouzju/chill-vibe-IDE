@@ -100,6 +100,7 @@ import {
   consumeRunDurationMessage,
   recordRunStart,
 } from './run-duration-summary'
+import { attachTurnTelemetry } from './turn-telemetry-summary'
 import type {
   AppLanguage,
   AppState,
@@ -4666,7 +4667,7 @@ function App() {
             }).catch(() => undefined)
           }
         },
-        onDone: ({ stopped, completion }) => {
+        onDone: ({ stopped, completion, turnStopReason, usage }) => {
           const donePlan = getStreamDonePlan({ stopped, completion })
           flushBufferedAssistantDeltaForCard(card.id)
           const activityFlushedState = flushBufferedActivitiesForCard(card.id)
@@ -4838,7 +4839,11 @@ function App() {
                 type: 'appendMessages',
                 columnId,
                 cardId: card.id,
-                messages: [durationMessage],
+                // 遥测搭在 run-duration 这条既有消息上：它每个逻辑回合结束都产生一条，
+                // 读它的地方只认 kind + durationMs，多挂几个 meta 键对它们透明。
+                // 另发一条新 kind 的 system 消息会新增一条渲染路径（未知 kind 会渲染
+                // 成空气泡），代价远大于收益。
+                messages: [attachTurnTelemetry(durationMessage, { turnStopReason, usage })],
               })
             }
           }

@@ -1856,6 +1856,35 @@ export type StreamErrorEvent = {
 
 export type StreamCompletion = 'terminal' | 'background-pending'
 
+// 回合"为什么结束"，取值对齐 ACP v1 的 StopReason（schema v1.20.0）。
+// 症状 — 分不清「模型自然收尾」「输出被 max_tokens 截断」「模型拒答」「轮次上限」，
+//   一族诊断（空 200、幽灵续跑、输出残缺）全靠事后翻日志猜。
+// 根因 — Claude 的 result 事件一直带 stop_reason，但它只被读进 providers.ts 的
+//   诊断对象写 server.log，从不进事件流、不落盘（2026-08-16 对照 ACP 时发现）。
+// 为什么不叫 stopReason — `message.meta.stopReason` 已被 StoppedRunReason
+//   （manual / user-interrupt / ask-user-answer，即"用户为什么停"）占用，同名会
+//   让两个不同语义在持久化层撞车。
+export type ProviderTurnStopReason =
+  | 'end_turn'
+  | 'max_tokens'
+  | 'max_turn_requests'
+  | 'refusal'
+  | 'cancelled'
+
+// 上下文占用，字段语义对齐 ACP v1 的 UsageUpdate（used / size）。
+// used = 本回合真正占用的上下文 token；size = 该模型的上下文窗口。
+// 二者都由 CLI 自己报（Claude result 的 usage + modelUsage[*].contextWindow），
+// 不依赖我们维护任何模型窗口表——那种表迟早和上游漂移（见 pitfall #293）。
+export type ProviderTurnUsage = {
+  used: number
+  size?: number
+  inputTokens?: number
+  outputTokens?: number
+  cacheReadTokens?: number
+  cacheCreationTokens?: number
+  costUsd?: number
+}
+
 export type StreamEventMap = {
   session: { sessionId: string }
   delta: { content: string; itemId?: string }
@@ -1866,7 +1895,14 @@ export type StreamEventMap = {
   assistant_message: StreamAssistantMessage
   activity: StreamActivity
   stats: StreamStatsEvent
-  done: { stopped?: boolean; completion?: StreamCompletion }
+  // turnStopReason / usage 是纯增量遥测：老渲染端读不到就是 undefined，
+  // 既有的 stopped / completion 语义一个字节都没动。
+  done: {
+    stopped?: boolean
+    completion?: StreamCompletion
+    turnStopReason?: ProviderTurnStopReason
+    usage?: ProviderTurnUsage
+  }
   error: StreamErrorEvent
 }
 

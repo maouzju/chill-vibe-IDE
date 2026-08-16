@@ -365,6 +365,13 @@ export type IdeAction =
       cardId: string
       provider: Provider
       model: string
+      /**
+       * 默认 true：用户在 UI 上亲手换模型，顺手记成全局默认与列种子。
+       *
+       * 程序化调用（看板模板触发器）必须显式传 false —— 它在后台无人操作时替
+       * 实例卡换模型，记住偏好就等于替用户改掉「设置→模型」（pitfall 40 的反向）。
+       */
+      rememberGlobalPreference?: boolean
     }
   | {
       type: 'updateCard'
@@ -1347,6 +1354,9 @@ const selectCardModel = (
   cardId: string,
   provider: Provider,
   model: string,
+  // 换模型其实是个复合动作：改这张卡 + 作废旧 session + 记全局默认 + 挪列种子。
+  // 只有最后两件是"用户亲手点的"才成立，所以程序化调用点用它把后半段关掉。
+  rememberGlobalPreference = true,
 ) => {
   const column = state.columns.find((entry) => entry.id === columnId)
   const card = column?.cards[cardId]
@@ -1356,7 +1366,8 @@ const selectCardModel = (
   }
 
   const normalizedModel = normalizeStoredModel(provider, model)
-  const shouldRememberRequestModel = normalizedModel.length > 0 && !toolCardModels.has(normalizedModel)
+  const shouldRememberRequestModel =
+    rememberGlobalPreference && normalizedModel.length > 0 && !toolCardModels.has(normalizedModel)
   let nextState =
     shouldRememberRequestModel && state.settings.requestModels[provider] !== normalizedModel
       ? applyRequestModelPatch(state, { [provider]: normalizedModel })
@@ -1463,7 +1474,9 @@ const selectCardModel = (
     }
 
     const shouldRememberColumnModel =
-      provider === currentColumn.provider && !toolCardModels.has(normalizedModel)
+      rememberGlobalPreference &&
+      provider === currentColumn.provider &&
+      !toolCardModels.has(normalizedModel)
 
     return {
       ...currentColumn,
@@ -2717,7 +2730,16 @@ const ideReducerCore = (state: AppState, action: IdeAction): AppState => {
       return touchState(next)
     }
     case 'selectCardModel':
-      return touchState(selectCardModel(state, action.columnId, action.cardId, action.provider, action.model))
+      return touchState(
+        selectCardModel(
+          state,
+          action.columnId,
+          action.cardId,
+          action.provider,
+          action.model,
+          action.rememberGlobalPreference,
+        ),
+      )
     case 'updateCard': {
       const current = state.columns.find((column) => column.id === action.columnId)?.cards[action.cardId]
       if (!current) {

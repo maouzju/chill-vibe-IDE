@@ -41,6 +41,13 @@ export const CloseIcon = (props: SVGProps<SVGSVGElement>) => (
   </BaseIcon>
 )
 
+export const PencilIcon = (props: SVGProps<SVGSVGElement>) => (
+  <BaseIcon {...props}>
+    <path d="M4 20.5h4L19 9.5a2.5 2.5 0 0 0-3.5-3.5L4.5 16.5z" strokeLinejoin="round" />
+    <path d="m14.5 7 2.5 2.5" strokeLinecap="round" />
+  </BaseIcon>
+)
+
 export const MinimizeWindowIcon = (props: SVGProps<SVGSVGElement>) => (
   <BaseIcon {...props}>
     <path d="M6 12.5h12" strokeLinecap="round" />

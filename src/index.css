@@ -7483,6 +7483,15 @@ a.message-file-reference-link:focus-visible {
   cursor: not-allowed;
 }
 
+/* 思考关着时这一档还没生效，但控件是可点的（点了就自动开思考）。
+   症状：先按"降对比"做过一版 `opacity: .72`，暗色下截图一看，连 chevron 都跟着
+     变淡，读起来和 :disabled 毫无区别 —— 那正是把用户挡在外面的那个观感本身。
+   所以"未生效"只走边框：虚线说明这一档还没算数，而亮度、箭头、指针全部保持
+   可用态。剩下的解释交给 title（`thinkingDepthInactiveHint`）。 */
+.reasoning-select.is-thinking-off {
+  border-style: dashed;
+}
+
 /* -- Model dropdown menu --------------------------------*/
 .model-dropdown-menu {
   position: absolute;
@@ -15293,10 +15302,81 @@ body.is-col-resizing .automation-board-lane-resize-handle::after {
   color: var(--ink-1);
 }
 
+/* 名字是改名的入口（双击），指针得说明这一点 —— 但胶囊本身是可拖的，所以
+   只有名字这一段改成文本光标。 */
+.automation-board-template:not(.is-renaming) .automation-board-template-name {
+  cursor: text;
+}
+
 /* 全局焦点环用的 offset 2px 是按 1.75rem 的常规圆钮定的；胶囊里的钮只有 20px
    且挤在一条 26px 高的 pill 里，2px 外扩会顶穿 pill 边框。贴着钮画即可。 */
 .automation-board-templates .automation-board-template .icon-button:focus-visible {
   outline-offset: 0;
+}
+
+/* 症状：每枚胶囊右端并排挂着三个图标钮，一条模板条扫过去全是控件，模板名反而
+   是配角 —— 而三个里只有「展开配置」是高频的，改名和删除都是偶发操作。
+   按 ui-principles「Idle Chrome Must Recede」把后两个收到 hover / 键盘焦点后面。
+   用 opacity 而不是 display:none / max-width:0：钮仍占位，胶囊宽度恒定。
+   2026-08-16 发布前审计：这一段一度写了两遍，另一份用 `max-width: 0` 收起 ——
+   两份咬合的结果是胶囊静息态真的变窄了，六张整板快照全部产生像素漂移，其中
+   五张只是压在 `maxDiffPixelRatio` 容差以下没被判红。改布局的那份已删；收起
+   低频钮**不允许**动几何尺寸，否则每次 hover 都在推动整排胶囊，快照也永远在
+   容差边缘晃。改名态也保持展开：正在改名时那两个钮必须可点。 */
+@media (hover: hover) {
+  .automation-board-template .automation-board-template-rename,
+  .automation-board-template .automation-board-template-delete {
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 120ms var(--ease);
+  }
+
+  .automation-board-template:hover .automation-board-template-rename,
+  .automation-board-template:hover .automation-board-template-delete,
+  .automation-board-template:focus-within .automation-board-template-rename,
+  .automation-board-template:focus-within .automation-board-template-delete,
+  .automation-board-template.is-renaming .automation-board-template-rename,
+  .automation-board-template.is-renaming .automation-board-template-delete {
+    opacity: 1;
+    pointer-events: auto;
+  }
+}
+
+/* 删除是这条胶囊上唯一不可撤销的操作，hover 时给它红色。静息态仍走上面那条
+   统一的 `--ink-4`，否则一排胶囊上会常驻一串红点。 */
+.automation-board-templates .automation-board-template .icon-button.automation-board-template-delete:hover:enabled,
+.automation-board-templates .automation-board-template .icon-button.automation-board-template-delete:focus-visible {
+  border-color: var(--danger);
+  background: color-mix(in srgb, var(--danger) 12%, transparent);
+  color: var(--danger);
+}
+
+/* 就地改名：输入框要接管名字那一格，尺寸/字号都跟 `.automation-board-template-name`
+   对齐，否则回车提交的瞬间胶囊会明显抖一下。 */
+.automation-board-template-name-input {
+  flex: 1 1 auto;
+  min-width: 3.5rem;
+  width: 100%;
+  padding: 0 2px;
+  border: none;
+  border-bottom: 1px solid var(--accent-line-strong);
+  border-radius: 0;
+  background: transparent;
+  color: var(--ink-1);
+  font: inherit;
+  font-size: 11px;
+}
+
+.automation-board-template-name-input:focus {
+  outline: none;
+  border-bottom-color: var(--accent);
+}
+
+/* 改名中的胶囊不再是拖源（JSX 里已撤掉 draggable），光标也得跟着改回文本态，
+   否则手型抓取光标会让人以为这里还能拖。 */
+.automation-board-template.is-renaming {
+  cursor: default;
+  border-color: var(--accent-line-strong);
 }
 
 /* 胶囊总宽是封顶的，名字与模型名在抢这点宽度。默认 flex 规则下先被压扁的
@@ -15394,12 +15474,77 @@ body.is-col-resizing .automation-board-lane-resize-handle::after {
   color: var(--ink-3);
 }
 
+/* 超管说明现在只在权限开着时出现，也就是它每次现身都是一条越权警告。
+   症状：这条本来叫 `.is-warning`，结果在面板里渲染成一条横贯整栏、无内边距也
+     无圆角的棕色横条 —— 看着像渲染坏了。
+   根因：`.is-warning` 是个**全局裸类**（本文件 2607 行），带 `background` 和
+     `border-color`，是给 status-pill 那类有内边距的块用的。任何组件只要复用这个
+     修饰名就会白捡一个背景。改用组件自己的名字，不参与那场全局竞争。 */
+.automation-board-template-hint.is-admin-warning {
+  color: var(--danger);
+}
+
+/* ---- 分组 ----------------------------------------------------------------
+   症状：面板里 8 个控件全是平铺的同号 11px 行，读不出「名称 / 需求 / 执行 /
+   触发」四件事之间的界限，双栏下 grid 还按文档序把相关控件劈到左右两栏。
+   根因：容器只有一层 flex，没有任何结构表达"哪几行属于同一件事"。
+   分组容器把语义显式化，双栏靠 grid-template-areas 整组落位（见文件末尾）。 */
+.automation-board-template-group {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  min-width: 0;
+  /* 症状（2026-08-16 窄看板实测）：三列时「需求」整组被压成 0 高，标题和 textarea
+     溢出去压在「执行方式」上，读起来就是两组字叠印在一起。
+     根因：面板是 `max-height` + flex column，内容超高时 flex 默认让各 item
+     `flex-shrink: 1`；`.is-requirement` 又被显式给了 `min-height: 0`（那是为双栏
+     grid 里跨行收缩准备的），两者一叠加就允许它被压到零高。
+     面板本来就有 `overflow-y: auto` —— 超高的正解是滚动，不是把分组压扁。 */
+  flex: none;
+}
+
+.automation-board-template-group-title {
+  margin: 0;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--ink-4);
+}
+
+/* 单栏下需求 textarea 就用 rows 给的自然高度。「填满剩余高度」只有在双栏里
+   才有意义（那时它跨两行，要长到和右栏的执行 + 触发一样高），所以那条规则
+   放在下面的 @container 里，不在这里当默认。 */
+.automation-board-template-group.is-requirement textarea {
+  min-height: 4.5rem;
+}
+
+/* ---- 字段行 --------------------------------------------------------------
+   症状：标签紧贴控件、每行控件的左边缘各在各的位置，一列扫下来像散装的。
+   现在统一成「标签靠左、控件靠右」。勾选框在 DOM 里是排在文字前面的（label
+   包着 input + span 是无障碍上的正确写法），所以靠 order 把它视觉上挪到右端，
+   而不是去改 JSX —— 那个组件同时给待命 composer 用，改 DOM 顺序会波及两处。 */
 .automation-board-template-field {
   display: flex;
   align-items: center;
+  justify-content: space-between;
   gap: 6px;
   font-size: 11px;
   color: var(--ink-2);
+  /* 右对齐让一组控件的右边缘落在同一条线上，但行本身必须封顶：宽看板下一栏有
+     690px，「思考」这种两字标签 + 一个勾选框会被拉到两端，中间隔着 600px 空白，
+     标签和它管的控件反而读不到一起去。封顶后右边缘仍然对齐，距离却是可读的。 */
+  max-width: 20rem;
+}
+
+/* 名称行整行跨栏，里面装的是这个面板最宽的那个输入框。 */
+.automation-board-template-field.is-name {
+  max-width: 30rem;
+}
+
+.automation-board-template-field > input[type='checkbox'] {
+  order: 2;
+  flex: none;
 }
 
 .automation-board-template-field.is-stacked {
@@ -15412,21 +15557,78 @@ body.is-col-resizing .automation-board-lane-resize-handle::after {
   font-weight: 600;
 }
 
+/* 症状：面板里的下拉一直渲染成一块没有箭头的静态文字，用户据此判定它压根不是
+     控件（2026-08-16 原话「这什么垃圾UI啊，怎么还没法设置」）。下一条规则的注释
+     甚至写着「自带 chevron」—— 那个箭头从来就没画出来过。
+   根因：`background` 是简写，会把 `.reasoning-select` 在后面设的 `background-image`
+     一并重置成 none，而这条规则的特异性 (0,1,1) 压过它的 (0,1,0)。
+   为什么改这里而不是在下面把图补回去：简写重置才是根，补图只是把同一张 data URL
+     抄第二份，下一个复用这组字段样式的控件照样中招。改成 `background-color` 对
+     文本框与数字框完全等价（它们本来就没有背景图）。 */
 .automation-board-template-field select,
 .automation-board-template-field input[type='text'],
 .automation-board-template-field input[type='number'] {
   border: 1px solid var(--line-strong);
   border-radius: var(--automation-board-radius);
-  background: var(--input-strong-bg);
+  background-color: var(--input-strong-bg);
   color: var(--ink-1);
   font: inherit;
   font-size: 11px;
   padding: 2px 5px;
 }
 
+/* 症状：面板里三个下拉，两个是应用自己的扁平样式 + 细 chevron，「模型」那个却是
+     Windows 原生的灰色 3D 下拉 —— 同一个面板里两套控件外观。
+   根因：另外两个挂了 `.reasoning-select`，模型那个没有。补类要动
+     `AutomationBoardModelSettings`，而那个组件同时服务待命 composer；在这里按元素
+     统一更稳，也顺带覆盖以后新加的下拉。
+   chevron 分亮暗两套是因为它是 data URL，描边颜色写死在图里，没法用 currentColor。 */
+.automation-board-template-field select {
+  appearance: none;
+  -webkit-appearance: none;
+  padding-right: 1.15rem;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='10' viewBox='0 0 24 24' fill='none' stroke='%23788079' stroke-width='2'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 0.3rem center;
+  background-size: 0.6rem;
+  cursor: pointer;
+}
+
+:root[data-theme='dark'] .automation-board-template-field select {
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='10' viewBox='0 0 24 24' fill='none' stroke='%2399a6c3' stroke-width='2'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E");
+}
+
+/* 数字输入不该和「名称」一样贪宽：分钟数最多 4 位。 */
+.automation-board-template-field input[type='number'] {
+  width: 4.5rem;
+  flex: none;
+}
+
 .automation-board-template-field input[type='text'] {
-  flex: 1;
+  flex: 1 1 auto;
   min-width: 0;
+  /* 症状：名称框在宽看板下被拉到 660px，一个五六个字的模板名躺在里面，右边
+     全是空白。名称行整行跨栏是对的（它是这张模板的身份），但输入框本身没有
+     理由跟着面板一起变宽。 */
+  max-width: 22rem;
+}
+
+/* 面板里的下拉沿用聊天区那套 `.reasoning-select`（自带 chevron），只把尺寸收到
+   看板的 11px 档；否则这里是浏览器默认的灰色 3D 下拉，和应用其它地方对不上。
+
+   症状：2026-08-16 截图取证，「思考深度」显示成一块没有箭头的静态文字，用户据此
+     判定它不可点（原话「这什么垃圾UI啊，怎么还没法设置」）。选项越长压得越死：
+     「高」还能露出箭头，「超高」正好把它盖满。
+   根因：上面 `.automation-board-template-field select` 的 `padding: 2px 5px` 特异性
+     (0,1,1) 高过 `.reasoning-select` 自己的 (0,1,0)，把给 chevron 留的
+     `padding-right: 1.4rem` 压成了 5px，箭头照画但落在文字底下。
+   为什么不改那条通用规则：它同时管着文本框与数字框，那两个没有 chevron，
+     凭空给右边留一截空白反而是回归。 */
+.automation-board-template-config .reasoning-select {
+  flex: 0 1 auto;
+  max-width: 9rem;
+  font-size: 11px;
+  padding-right: 1.15rem;
 }
 
 /* 配置面板里的输入 / 下拉 / 勾选框同样从未接管 `:focus-visible`，键盘走位时
@@ -15438,19 +15640,11 @@ body.is-col-resizing .automation-board-lane-resize-handle::after {
   outline-offset: 1px;
 }
 
+/* 触发器是四个分组里唯一"会自己动"的一组，单栏时用一条分隔线把它与上面的
+   静态配置隔开。双栏时它自己就在右栏独立成块，分隔线反而多余（见下方 grid）。 */
 .automation-board-template-trigger {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
   border-top: 1px solid var(--accent-line);
-  padding-top: 6px;
-}
-
-.automation-board-template-trigger-title {
-  margin: 0;
-  font-size: 11px;
-  font-weight: 600;
-  color: var(--ink-1);
+  padding-top: 7px;
 }
 
 /* 矮 pane 下面板仍会滚动，此时「立即运行」是唯一的出口动作，不能跟着内容
@@ -15458,6 +15652,14 @@ body.is-col-resizing .automation-board-lane-resize-handle::after {
    背景不能直接写死颜色：面板底色是半透明的 --accent-soft，叠在 pane 背景上，
    照抄一个不透明值会在两套主题里都对不上。用 backdrop-filter 让滚到下面的
    内容自己糊掉，就不需要知道底下究竟是什么颜色。 */
+/* 症状（2026-08-16 截图实证）：面板滚动时这条按钮行悬在「启用触发器」那一行
+   上，露出半个勾选框和被切掉下半截的文字 —— 读起来像渲染坏了。
+   根因：底色 `--accent-soft` 是半透明的。sticky 行悬浮时盖住下方内容是它应有的
+   行为，但半透明 + blur 只是把被盖的那半行糊掉，没有把它藏干净。
+   混一个跟着主题走的不透明底即可（手法与 `.is-expanded` 胶囊一致，两套主题下
+   都不用写死颜色）。blur 保留，用来软化恰好卡在边界上的那一像素。
+   被否决的替代：去掉 sticky —— 那样「立即执行一次」会滚出视口，正是
+   `automation-template-chrome.spec.ts` 已经钉住的另一条回归。 */
 .automation-board-template-config-actions {
   display: flex;
   flex-wrap: wrap;
@@ -15465,10 +15667,10 @@ body.is-col-resizing .automation-board-lane-resize-handle::after {
   position: sticky;
   bottom: -8px;
   z-index: 1;
-  margin: 0 -9px -8px;
+  margin: 6px -9px -8px;
   padding: 6px 9px 8px;
   border-top: 1px solid var(--accent-line);
-  background: var(--accent-soft);
+  background: color-mix(in srgb, var(--accent-soft) 55%, var(--panel));
   backdrop-filter: blur(6px);
 }
 
@@ -15556,21 +15758,57 @@ body.is-col-resizing .automation-board-lane-resize-handle::after {
 
 /* ---- 宽看板：模板配置面板改双栏 ----------------------------------------
    面板铺在模板条下方、宽度等于整块看板。单栏时一个"模板名"输入框会被拉到
-   1300px，右边全是空白，而面板自己又因为 max-height 在纵向滚动。 */
+   1300px，右边全是空白，而面板自己又因为 max-height 在纵向滚动。
+
+   旧版只写了 `grid-template-columns: repeat(2, 1fr)`，让 8 个平铺的控件按文档序
+   自己往格子里掉 —— 结果「思考」落左栏、「思考深度」落右栏，中间隔着半个面板
+   宽；右栏下半截整片空白，而需求 textarea 反倒在左栏被挤矮。
+   现在按分组显式落位：需求（正文，最吃宽度也最吃高度）独占左栏并跨两行，右栏
+   自上而下是执行方式与触发器 —— 两组都是短控件列表，正好配成一列。 */
 @container automation-board (min-width: 900px) {
   .automation-board-template-config {
     display: grid;
     grid-template-columns: repeat(2, minmax(0, 1fr));
+    grid-template-areas:
+      'name    name'
+      'req     exec'
+      'req     trigger'
+      'actions actions';
+    /* 右栏两组按内容取高，多出来的高度全给需求那一行 —— 否则 exec / trigger
+       会被平均拉开，控件之间浮着大段空隙。 */
+    grid-template-rows: auto auto 1fr auto;
     align-content: start;
     column-gap: 14px;
   }
 
-  /* 说明文字必须整行跨栏：它是紧跟在左栏那个勾选框下面的注解，被推到右栏会
-     和自己解释的控件隔开半个面板宽。 */
-  .automation-board-template-field.is-stacked,
-  .automation-board-template-config > .automation-board-template-hint,
-  .automation-board-template-trigger,
+  .automation-board-template-field.is-name {
+    grid-area: name;
+  }
+
+  .automation-board-template-group.is-requirement {
+    grid-area: req;
+    /* 双栏下这一组跨两行，textarea 要长到和右栏的执行 + 触发一样高。这里的
+       `min-height: 0` 是 grid item 收缩所必需的，**只能**留在这个 @container
+       里：单栏 flex 下它会让整组被压成 0 高（见上面那条注释）。 */
+    min-height: 0;
+  }
+
+  .automation-board-template-group.is-requirement textarea {
+    flex: 1;
+  }
+
+  .automation-board-template-group.is-execution {
+    grid-area: exec;
+  }
+
+  .automation-board-template-group.is-trigger {
+    grid-area: trigger;
+    /* 双栏下触发器已经靠自己的位置与执行方式分开了，横线是第二条冗余的缝。 */
+    border-top: none;
+    padding-top: 4px;
+  }
+
   .automation-board-template-config-actions {
-    grid-column: 1 / -1;
+    grid-area: actions;
   }
 }

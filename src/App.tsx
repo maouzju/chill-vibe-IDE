@@ -281,6 +281,7 @@ import {
   getWorkspaceSessionMirrorSignature,
   workspaceSessionMirrorPublishIntervalMs,
 } from './components/automation-board-mirror'
+import { resolveAutomationBoardTemplateInstanceSync } from './components/automation-board-template-sync'
 
 /**
  * 一个工作区还没有任何模板状态时该看到什么。
@@ -902,6 +903,19 @@ function App() {
   const evaluateAutomationBoardTemplateTriggersRef = useRef<((settledCardId: string) => void) | null>(
     null,
   )
+  // 触发器要在复用实例前把模板的模型追平，而换模型的回调定义在它后面（换模型
+  // 依赖 getColumnCard/persistAfterAction 这一串）。ref 转发是这个文件里既有的
+  // 破环写法，与 sendMessageRef 同一套。
+  const changeCardModelSelectionRef = useRef<
+    | ((
+        columnId: string,
+        cardId: string,
+        provider: Provider,
+        model: string,
+        rememberGlobalPreference?: boolean,
+      ) => void)
+    | null
+  >(null)
   const wakeTimerCompletionTimersRef = useRef(new Map<string, number>())
   const allAgentsDoneSoundTimerRef = useRef<number | null>(null)
   const recoverLiveStreamRef = useRef<(
@@ -4040,6 +4054,32 @@ function App() {
       //   手动拖回一个被暂停的需求是对的，但触发的语义是"用这段需求文本再跑
       //   一轮"，两者不同。
       // 被否决：先 moveItem 再补发 requirement —— 同一轮里两次投递。
+      // 复用的是上一轮那张卡，而模板的执行参数可能已经被用户改过了。不在这里
+      // 追平，改模板就等于白改（见 automation-board-template-sync.ts 顶部）。
+      const reuseCard = column.cards[reuseCardId]
+      const sync = reuseCard
+        ? resolveAutomationBoardTemplateInstanceSync(template, reuseCard)
+        : null
+      if (sync?.model) {
+        changeCardModelSelectionRef.current?.(
+          columnId,
+          reuseCardId,
+          sync.model.provider,
+          sync.model.model,
+          // 后台触发：不许把模板的模型记成用户的全局默认（pitfall 40 的反向）。
+          false,
+        )
+      }
+      if (sync?.patch) {
+        const patch: IdeAction = {
+          type: 'updateCard',
+          columnId,
+          cardId: reuseCardId,
+          patch: sync.patch,
+        }
+        persistAfterAction(patch.type, applyAction(patch))
+      }
+
       const fromLane = board.items.find((item) => item.cardId === reuseCardId)?.lane
       if (fromLane && fromLane !== lane) {
         const relane: IdeAction = {
@@ -4141,7 +4181,15 @@ function App() {
   evaluateAutomationBoardTemplateTriggersRef.current = evaluateAutomationBoardTemplateTriggers
 
   const changeCardModelSelection = useCallback(
-    (columnId: string, cardId: string, provider: Provider, model: string) => {
+    (
+      columnId: string,
+      cardId: string,
+      provider: Provider,
+      model: string,
+      // 只有用户亲手在选单里点过，才配改「设置→模型」的全局默认与列种子。
+      // 看板模板的触发器走的是同一个出口但没人在场，见 state.ts 的 action 定义。
+      rememberGlobalPreference = true,
+    ) => {
       const card = getColumnCard(columnId, cardId)
 
       if (!card) {
@@ -4154,6 +4202,7 @@ function App() {
         cardId,
         provider,
         model,
+        rememberGlobalPreference,
       }
       const nextState = applyAction(action)
 
@@ -4163,6 +4212,7 @@ function App() {
     },
     [applyAction, getColumnCard, persistAfterAction],
   )
+  changeCardModelSelectionRef.current = changeCardModelSelection
 
   const changeCardReasoningEffort = useCallback(
     (columnId: string, cardId: string, reasoningEffort: string) => {

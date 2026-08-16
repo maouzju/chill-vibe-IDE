@@ -18,6 +18,7 @@ import {
   getReasoningOptionsForModel,
   isClaudeAlwaysThinkingModel,
   normalizeReasoningEffortForModel,
+  shouldEnableThinkingForDepthChange,
 } from '../../shared/reasoning'
 import { defaultAutomationBoardSupervisorRequirement } from '../../shared/schema'
 import type {
@@ -48,11 +49,13 @@ import {
   ChevronDownIcon,
   CloseIcon,
   IconButton,
+  PencilIcon,
   PlayIcon,
   RefreshIcon,
   ShieldIcon,
   StickyNoteIcon,
   StopIcon,
+  TrashIcon,
   ZapIcon,
 } from './Icons'
 import {
@@ -248,13 +251,39 @@ export const AutomationBoardModelSettings = ({
         <span>{text.thinking}</span>
       </label>
 
+      {/* 深度不再被思考开关 disable —— 理由与"碰深度即开思考"的判据都在
+          `shouldEnableThinkingForDepthChange` 上方。关着思考时仍要标出来，
+          因为那一档确实还没生效。
+          pointerdown/keydown 也挂一份，是因为 `onChange` 只在值真的变了时才发：
+          用户想选的恰好是屏幕上灰着的那一档时，一个事件都不会有（与 ChatCard
+          同一处修复）。这边 onChange 走的是幂等 patch，两条路都留着不会互相抵消。 */}
       <label className="automation-board-template-field">
         <span>{text.thinkingDepthLabel}</span>
         <select
-          className="reasoning-select"
+          className={`reasoning-select${thinkingOn ? '' : ' is-thinking-off'}`}
           value={reasoningValue}
-          disabled={!thinkingOn}
-          onChange={(event) => onChange({ reasoningEffort: event.target.value })}
+          title={thinkingOn ? undefined : text.thinkingDepthInactiveHint}
+          onPointerDown={() => {
+            if (shouldEnableThinkingForDepthChange(value.thinkingEnabled, alwaysThinking)) {
+              onChange({ thinkingEnabled: true })
+            }
+          }}
+          onKeyDown={(event) => {
+            if (event.key === 'Tab' || event.key === 'Escape') {
+              return
+            }
+            if (shouldEnableThinkingForDepthChange(value.thinkingEnabled, alwaysThinking)) {
+              onChange({ thinkingEnabled: true })
+            }
+          }}
+          onChange={(event) =>
+            onChange({
+              reasoningEffort: event.target.value,
+              ...(shouldEnableThinkingForDepthChange(value.thinkingEnabled, alwaysThinking)
+                ? { thinkingEnabled: true }
+                : {}),
+            })
+          }
         >
           {reasoningOptions.map((option) => (
             <option key={option.value} value={option.value}>
@@ -699,7 +728,7 @@ export const AutomationBoardTemplateConfig = ({
 
   return (
     <div className="automation-board-template-config">
-      <label className="automation-board-template-field">
+      <label className="automation-board-template-field is-name">
         <span>{text.automationBoardTemplateNameLabel}</span>
         <input
           type="text"
@@ -708,45 +737,84 @@ export const AutomationBoardTemplateConfig = ({
         />
       </label>
 
-      {/* 名称与模型都是单行的"这是哪个模板"信息，紧挨着放；需求是正文，跟在
-          它们后面。宽看板下配置面板走双栏，这个顺序让两个单行字段自然配成
-          一行，而不是名称旁边空着半个面板。
-          模板 schema 一直存着 reasoningEffort / thinkingEnabled / planMode，v2.3
-          之前只有模型和超管两行有入口 —— 存了却配不了等于存了个死值。 */}
-      <AutomationBoardModelSettings
-        value={{
-          provider: template.provider,
-          model: template.model,
-          reasoningEffort: template.reasoningEffort,
-          thinkingEnabled: template.thinkingEnabled,
-          planMode: template.planMode,
-          adminAccess: template.adminAccess,
-        }}
-        language={language}
-        onChange={(patch) => onUpdateTemplate(template.id, patch)}
-      />
-      <p className="automation-board-template-hint">
-        {text.automationBoardTemplateAdminAccessHint}
-      </p>
-
-      <label className="automation-board-template-field is-stacked">
-        <span>{text.automationBoardTemplateRequirementLabel}</span>
+      {/* 症状：面板里 8 个控件全是平铺的同号 11px 行，双栏下还被 grid 按文档序
+          随手劈开（「思考」落左栏、「思考深度」落右栏，中间隔着 600px 空白）。
+          根因：容器只有一层 flex/grid，没有任何"哪几行属于同一件事"的结构，
+          所以布局引擎无从知道该把谁和谁绑在一起。
+          现在按语义分成三组，双栏时用 grid-template-areas 让整组落位 —— 被否决的
+          方案是继续单栏（宽看板下需求 textarea 会被拉到 1300px，右边全空）。 */}
+      <div className="automation-board-template-group is-requirement">
+        {/* 分组前这里是 `<label><span>需求</span><textarea/></label>`，包裹关系自带
+            无障碍名。拆成 h5 + textarea 之后那层关系没了，屏幕阅读器读到的是一个
+            匿名多行框 —— 显式接回来，别指望后来人只用 `locator('textarea')` 兜着。 */}
+        <h5
+          className="automation-board-template-group-title"
+          id={`automation-board-template-requirement-${template.id}`}
+        >
+          {text.automationBoardTemplateRequirementLabel}
+        </h5>
         <textarea
+          aria-labelledby={`automation-board-template-requirement-${template.id}`}
           value={template.requirement}
-          rows={5}
+          rows={4}
           onChange={(event) => onUpdateTemplate(template.id, { requirement: event.target.value })}
         />
-      </label>
+      </div>
 
-      <div className="automation-board-template-trigger">
-        <h5 className="automation-board-template-trigger-title">
+      {/* 模板 schema 一直存着 reasoningEffort / thinkingEnabled / planMode，v2.3
+          之前只有模型和超管两行有入口 —— 存了却配不了等于存了个死值。 */}
+      {/* 分组是给人看的语义边界，也得让辅助技术知道 —— 这两组里的控件自己都带
+          label，缺的只是"我属于哪一组"。 */}
+      <div
+        className="automation-board-template-group is-execution"
+        role="group"
+        aria-labelledby={`automation-board-template-execution-${template.id}`}
+      >
+        <h5
+          className="automation-board-template-group-title"
+          id={`automation-board-template-execution-${template.id}`}
+        >
+          {text.automationBoardTemplateExecutionLabel}
+        </h5>
+        <AutomationBoardModelSettings
+          value={{
+            provider: template.provider,
+            model: template.model,
+            reasoningEffort: template.reasoningEffort,
+            thinkingEnabled: template.thinkingEnabled,
+            planMode: template.planMode,
+            adminAccess: template.adminAccess,
+          }}
+          language={language}
+          onChange={(patch) => onUpdateTemplate(template.id, patch)}
+        />
+        {/* 超管说明只在开着时留在版面上。关着时它是"这个开关是干嘛的"的解释，
+            按 ui-principles「Explanatory copy is idle chrome」应该退到 hover；
+            开着时它描述的是一个已生效的越权范围，属于 live state，必须常驻。 */}
+        {template.adminAccess ? (
+          <p className="automation-board-template-hint is-admin-warning">
+            {text.automationBoardTemplateAdminAccessHint}
+          </p>
+        ) : null}
+      </div>
+
+      <div
+        className="automation-board-template-group is-trigger automation-board-template-trigger"
+        role="group"
+        aria-labelledby={`automation-board-template-trigger-${template.id}`}
+      >
+        <h5
+          className="automation-board-template-group-title"
+          id={`automation-board-template-trigger-${template.id}`}
+          title={text.automationBoardTriggerHint}
+        >
           {text.automationBoardTriggerLabel}
         </h5>
-        <p className="automation-board-template-hint">{text.automationBoardTriggerHint}</p>
 
         <label className="automation-board-template-field">
           <input
             type="checkbox"
+            className="composer-settings-checkbox"
             checked={template.trigger.enabled}
             onChange={(event) => patchTrigger({ enabled: event.target.checked })}
           />
@@ -760,6 +828,7 @@ export const AutomationBoardTemplateConfig = ({
         <label className="automation-board-template-field">
           <span>{text.automationBoardTriggerLaneLabel}</span>
           <select
+            className="reasoning-select"
             value={template.trigger.lane}
             onChange={(event) => patchTrigger({ lane: event.target.value as AutomationBoardLane })}
           >
@@ -868,9 +937,27 @@ const AutomationBoardCardView = (props: AutomationBoardCardProps) => {
   // 同时只展开一个模板的配置面板：模板条是横向滚动的一行，两个面板同时展开
   // 会把看板下半截全吃掉。
   const [expandedTemplateId, setExpandedTemplateId] = useState<string | null>(null)
+  // 改名原本走 `window.prompt`。在 Electron 里那是一个系统模态弹窗：它会抢走整个
+  // 窗口的焦点、阻塞渲染进程，外观也完全不受主题控制（暗色下依然是白底灰边）。
+  // 就地把胶囊上的名字换成输入框，与 ChatCard 的标题改名同一套交互。
+  const [renamingTemplateId, setRenamingTemplateId] = useState<string | null>(null)
+  const [renamingValue, setRenamingValue] = useState('')
   const rejectionTimerRef = useRef<number | null>(null)
 
   const expandedTemplate = templates.find((entry) => entry.id === expandedTemplateId)
+
+  const startRename = (template: AutomationBoardTemplate) => {
+    setRenamingValue(template.name)
+    setRenamingTemplateId(template.id)
+  }
+
+  // 空名字不提交：模板条在名字为空时回退到显示需求原文，一个"看起来还在、
+  // 但改名钮再也定位不到它"的胶囊比拒绝提交更难解释。
+  const commitRename = (templateId: string) => {
+    const next = renamingValue.trim()
+    if (next) onRenameTemplate(templateId, next)
+    setRenamingTemplateId(null)
+  }
 
   const laneViews = useMemo(
     () => buildAutomationBoardLaneViews(board, cards, language),
@@ -1366,8 +1453,10 @@ const AutomationBoardCardView = (props: AutomationBoardCardProps) => {
             {templates.map((template) => (
               <li
                 key={template.id}
-                className={`automation-board-template${expandedTemplateId === template.id ? ' is-expanded' : ''}`}
-                draggable
+                className={`automation-board-template${expandedTemplateId === template.id ? ' is-expanded' : ''}${renamingTemplateId === template.id ? ' is-renaming' : ''}`}
+                // 改名时必须停掉拖拽：胶囊本身是拖到泳道用的拖源，`draggable` 的
+                // 祖先会吃掉输入框里的选词与光标拖动，用户看到的是"框里选不中字"。
+                draggable={renamingTemplateId !== template.id}
                 onDragStart={(event) => {
                   writeDragPayload(event, {
                     type: 'automation-board-template',
@@ -1376,11 +1465,34 @@ const AutomationBoardCardView = (props: AutomationBoardCardProps) => {
                   })
                 }}
                 onDragEnd={() => clearDragPayload()}
-                title={template.requirement}
+                title={renamingTemplateId === template.id ? undefined : template.requirement}
               >
-                <span className="automation-board-template-name">
-                  {template.name || template.requirement}
-                </span>
+                {renamingTemplateId === template.id ? (
+                  <input
+                    className="automation-board-template-name-input"
+                    value={renamingValue}
+                    autoFocus
+                    aria-label={text.automationBoardTemplateNamePrompt}
+                    onChange={(event) => setRenamingValue(event.target.value)}
+                    onBlur={() => commitRename(template.id)}
+                    onKeyDown={(event) => {
+                      if (event.key === 'Enter') {
+                        event.preventDefault()
+                        commitRename(template.id)
+                      } else if (event.key === 'Escape') {
+                        event.preventDefault()
+                        setRenamingTemplateId(null)
+                      }
+                    }}
+                  />
+                ) : (
+                  <span
+                    className="automation-board-template-name"
+                    onDoubleClick={() => startRename(template)}
+                  >
+                    {template.name || template.requirement}
+                  </span>
+                )}
                 {template.trigger.enabled ? (
                   <span
                     className="automation-board-template-badge is-trigger"
@@ -1418,26 +1530,24 @@ const AutomationBoardCardView = (props: AutomationBoardCardProps) => {
                 >
                   <ChevronDownIcon />
                 </IconButton>
+                {/* 改名与删除是低频操作，静息时收起来（CSS 控制），只留展开钮。
+                    RefreshIcon 曾经当改名图标用 —— 一个循环箭头读起来是"重来 /
+                    重置"，与"改个名字"完全不搭；删除同理，✕ 在这个应用里到处
+                    都是"关闭"。 */}
                 <IconButton
                   label={text.automationBoardTemplateRenameAction}
                   className="automation-board-template-rename"
-                  onClick={() => {
-                    const next = window.prompt(
-                      text.automationBoardTemplateNamePrompt,
-                      template.name,
-                    )
-                    if (next !== null && next.trim()) {
-                      onRenameTemplate(template.id, next)
-                    }
-                  }}
+                  onClick={() => startRename(template)}
                 >
-                  <RefreshIcon />
+                  <PencilIcon />
                 </IconButton>
                 <IconButton
                   label={text.automationBoardTemplateDeleteAction}
+                  className="automation-board-template-delete"
+                  tone="danger"
                   onClick={() => onDeleteTemplate(template.id)}
                 >
-                  <CloseIcon />
+                  <TrashIcon />
                 </IconButton>
               </li>
             ))}

@@ -10,6 +10,7 @@ import {
   isClaudeAlwaysThinkingModel,
   normalizeReasoningEffort,
   normalizeReasoningEffortForModel,
+  shouldEnableThinkingForDepthChange,
   toClaudeEffortFlagValue,
 } from '../shared/reasoning.ts'
 
@@ -208,5 +209,17 @@ describe('reasoning helpers', () => {
     assert.notEqual(labelOf(en, 'xhigh'), labelOf(en, 'ultracode'))
     assert.notEqual(labelOf(zh, 'xhigh'), labelOf(zh, 'max'))
     assert.notEqual(labelOf(zh, 'max'), labelOf(zh, 'ultracode'))
+  })
+
+  // 选一个思考深度就是在说"我要思考"。这条语义有两个渲染点（聊天 composer 与
+  // 看板模板面板），必须共用一个出口，否则以后只改一处就是静默漂移。
+  it('turns thinking back on when a depth is picked while thinking is off', () => {
+    assert.equal(shouldEnableThinkingForDepthChange(false, false), true)
+    // 已经开着就不该再翻一次开关（ChatCard 侧是 toggle 语义，多调一次等于关掉）。
+    assert.equal(shouldEnableThinkingForDepthChange(true, false), false)
+    assert.equal(shouldEnableThinkingForDepthChange(undefined, false), false)
+    // 强制思考的模型本来就没有关着的状态，不需要也不该去动它的开关。
+    assert.equal(shouldEnableThinkingForDepthChange(false, true), false)
+    assert.equal(shouldEnableThinkingForDepthChange(true, true), false)
   })
 })

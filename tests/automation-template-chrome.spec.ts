@@ -275,3 +275,57 @@ test('a chip never degrades the model label into a meaningless stub', async ({ p
     expect(label.width).toBeGreaterThanOrEqual(label.full - 1)
   }
 })
+
+/**
+ * 症状（2026-08-16 用户截图）：待命 composer 的「参数」区里，思考深度那个下拉
+ * 渲染成 `中 ⌄⌄⌄⌄⌄⌄⌄` —— 一排七个箭头平铺满整个框。
+ *
+ * 根因是三件事叠在一起，单看哪一件都不像 bug：
+ *   1. `.automation-board-template-field select`（特异性 0-1-1）当时用 `background`
+ *      **简写** 设底色，把 `background-repeat/size/position` 一并重置成初始值
+ *      （repeat / auto / 0% 0%）。
+ *   2. `:root[data-theme='dark'] .reasoning-select`（0-2-0）**压过**它，把 chevron
+ *      的 `background-image` 又画了回来 —— 但只画回 image，那三个被重置的属性没人管。
+ *   3. 窄列下 `.model-select, .reasoning-select { max-width: none }` 把框拉宽，
+ *      于是一张 10px 的箭头图从左上角平铺出七个。
+ * 亮色主题下第 2 步不成立（`.reasoning-select` 只有 0-1-0，压不过），所以那边
+ * 表现为「一个箭头都没有」—— 同一个根因的两种面孔，都不像"背景简写"。
+ *
+ * 这条用例不盯任何一条具体规则，只盯最终状态：只要一个下拉画了背景图，它就
+ * 必须是不平铺的。
+ */
+for (const theme of ['dark', 'light'] as const) {
+  test(`a dropdown chevron never tiles across the control (${theme})`, async ({ page }) => {
+    // 三列 = 窄列档，正是把 `max-width: none` 打开、让平铺显形的那一档。
+    await boot(page, theme, 3)
+
+    await page.locator('.automation-board-template-configure').first().click()
+    await expect(page.locator('.automation-board-template-config')).toBeVisible()
+
+    // 待命 composer 的参数折叠区与模板面板共用同一组字段样式，一起纳入扫描。
+    await page.locator('.automation-board-compose-settings-toggle').first().click()
+    await expect(page.locator('.automation-board-compose-settings')).toBeVisible()
+
+    const selects = await page.locator('.automation-board select').evaluateAll((nodes) =>
+      nodes.map((node) => {
+        const style = getComputedStyle(node)
+        return {
+          cls: node.className || '(no class)',
+          width: Math.round(node.getBoundingClientRect().width),
+          backgroundImage: style.backgroundImage === 'none' ? 'none' : 'image',
+          backgroundRepeat: style.backgroundRepeat,
+          backgroundSize: style.backgroundSize,
+        }
+      }),
+    )
+
+    expect(selects.length).toBeGreaterThan(1)
+    for (const entry of selects) {
+      if (entry.backgroundImage === 'none') continue
+      expect(entry.backgroundRepeat, `${entry.cls} tiles its chevron`).toBe('no-repeat')
+      // `auto` 意味着 background-size 也被简写重置了；一张 10px 的图会按原尺寸
+      // 从左上角开始铺，而不是缩到箭头该在的角落。
+      expect(entry.backgroundSize, `${entry.cls} lost its chevron sizing`).not.toBe('auto')
+    }
+  })
+}

@@ -41,6 +41,7 @@ import {
   getReasoningOptionsForModel,
   isClaudeAlwaysThinkingModel,
   normalizeReasoningEffortForModel,
+  shouldEnableThinkingForDepthChange,
 } from '../../shared/reasoning'
 import {
   getLocalSlashCommands,
@@ -4857,11 +4858,64 @@ const ChatCardView = ({
                             label={text.thinkingDepthLabel}
                             hint={text.thinkingDepthHint}
                           >
+                            {/* 与看板模板面板同一条语义：碰这个控件即开思考，判据出口在
+                                `shouldEnableThinkingForDepthChange`。
+                                判据是"碰过"而不是"值变了"：`onChange` 只在值真的变了时才发，
+                                而用户报障那张截图里卡上存的**就是**屏幕上灰着的那一档，
+                                再选一次它浏览器一个事件都不发，思考仍然是关的（2026-08-16
+                                发布前审计补的洞，`tests/thinking-depth-selectable.spec.ts`）。
+                                三条路（pointerdown / keydown / change）都要挂：真实鼠标走
+                                前者，键盘方向键走中间，而程序化 `selectOption` 只发 change。
+                                这是 toggle 回调不是 patch，多调一次就会又关回去 —— 靠
+                                `shouldEnableThinkingForDepthChange` 读**已更新**的 card 挡住：
+                                pointerdown 开启后 React 先重渲染，随后的 change 判出 false。 */}
                             <select
-                              className="reasoning-select"
+                              className={`reasoning-select${
+                                alwaysThinkingModel || card.thinkingEnabled !== false
+                                  ? ''
+                                  : ' is-thinking-off'
+                              }`}
                               value={reasoningValue}
-                              disabled={!alwaysThinkingModel && card.thinkingEnabled === false}
-                              onChange={(event) => onChangeReasoningEffort(event.target.value)}
+                              title={
+                                alwaysThinkingModel || card.thinkingEnabled !== false
+                                  ? undefined
+                                  : text.thinkingDepthInactiveHint
+                              }
+                              onPointerDown={() => {
+                                if (
+                                  shouldEnableThinkingForDepthChange(
+                                    card.thinkingEnabled,
+                                    alwaysThinkingModel,
+                                  )
+                                ) {
+                                  onToggleThinking()
+                                }
+                              }}
+                              onKeyDown={(event) => {
+                                // Tab / Esc 是路过和取消，不表达"我要调思考"。
+                                if (event.key === 'Tab' || event.key === 'Escape') {
+                                  return
+                                }
+                                if (
+                                  shouldEnableThinkingForDepthChange(
+                                    card.thinkingEnabled,
+                                    alwaysThinkingModel,
+                                  )
+                                ) {
+                                  onToggleThinking()
+                                }
+                              }}
+                              onChange={(event) => {
+                                onChangeReasoningEffort(event.target.value)
+                                if (
+                                  shouldEnableThinkingForDepthChange(
+                                    card.thinkingEnabled,
+                                    alwaysThinkingModel,
+                                  )
+                                ) {
+                                  onToggleThinking()
+                                }
+                              }}
                             >
                               {reasoningOptions.map((option) => (
                                 <option key={option.value} value={option.value}>

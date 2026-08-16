@@ -11,6 +11,7 @@ const adminMcpSelfCardIdEnvKey = 'CHILL_VIBE_ADMIN_MCP_SELF_CARD_ID'
 
 const listToolName = 'list_sessions'
 const readToolName = 'read_session'
+const createToolName = 'create_session'
 const moveToolName = 'move_session_to_lane'
 const sendToolName = 'send_session_message'
 const wakeToolName = 'set_session_wake_timer'
@@ -26,7 +27,10 @@ const defaultWakeDurationMinutes = 30
 // 唯一的防线是 tests/automation-board-mcp.test.ts 把生成的 command 拿去过
 // workspaceAdminCommandSchema：字面量一旦漂移，那条断言立刻红。
 const boardLanes = ['standby', 'running', 'done']
+const creatableLanes = ['standby', 'running']
+const providers = ['codex', 'claude']
 const wakeTimerModes = ['duration', 'workspace-agents', 'left-tab']
+const defaultCreateLane = 'running'
 
 export const workspaceAdminMcpToolDefinitions = [
   {
@@ -59,6 +63,37 @@ export const workspaceAdminMcpToolDefinitions = [
         },
       },
       required: ['cardId'],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: createToolName,
+    description:
+      'Create a NEW session in this workspace and hand it a requirement. Use this when the work needs another agent — including when this workspace has no sessions at all yet, in which case the other tools have nothing to operate on. lane "running" (the default) creates the session and immediately sends the requirement as its first message; lane "standby" creates it with the requirement parked in its draft so you can start it later with move_session_to_lane. Where it lands is decided by the app: if this workspace has an automation board the session becomes a board item in that lane, otherwise it becomes an ordinary tab session. The new session does NOT inherit your admin access.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        requirement: {
+          type: 'string',
+          description:
+            'The requirement for the new session, written as an instruction addressed to that agent.',
+        },
+        lane: {
+          type: 'string',
+          enum: creatableLanes,
+          description: 'running = start it now (default), standby = park it with the requirement drafted.',
+        },
+        provider: {
+          type: 'string',
+          enum: providers,
+          description: 'Which CLI runs the new session. Defaults to this workspace column\'s provider.',
+        },
+        model: {
+          type: 'string',
+          description: 'Model id for the new session. Defaults to this workspace column\'s model.',
+        },
+      },
+      required: ['requirement'],
       additionalProperties: false,
     },
   },
@@ -271,6 +306,41 @@ export const resolveWorkspaceAdminCommandFromToolCall = (name, args, columnId) =
     return { error: 'This session has no workspace admin access, so the write tools are unavailable.' }
   }
 
+  // create 必须在 cardId 校验之前分流：它是唯一一个目标卡还不存在的写工具，
+  // 落到下面那道统一检查里就会永远返回 "cardId is required" 而根本建不成卡。
+  if (name === createToolName) {
+    const requirement = readStringArg(args, 'requirement')
+    if (!requirement) {
+      return { error: 'requirement is required and must not be empty.' }
+    }
+
+    const rawLane = readStringArg(args, 'lane')
+    const lane = rawLane || defaultCreateLane
+    if (!creatableLanes.includes(lane)) {
+      return {
+        error: `lane must be one of ${creatableLanes.join(', ')} when creating a session. Received: ${rawLane || '(missing)'}. A brand new session cannot start out done.`,
+      }
+    }
+
+    const provider = readStringArg(args, 'provider')
+    if (provider && !providers.includes(provider)) {
+      return { error: `provider must be one of ${providers.join(', ')}. Received: ${provider}.` }
+    }
+
+    const model = readStringArg(args, 'model')
+
+    return {
+      command: {
+        type: 'admin-create-session',
+        columnId: normalizedColumnId,
+        requirement,
+        lane,
+        ...(provider ? { provider } : {}),
+        ...(model ? { model } : {}),
+      },
+    }
+  }
+
   const cardId = readStringArg(args, 'cardId')
   if (!cardId) {
     return { error: `cardId is required. Call ${listToolName} to get the cardId of each session.` }
@@ -354,10 +424,15 @@ const textResult = (text, isError = false) => ({
   isError,
 })
 
+// create 没有 cardId（卡还不存在），所以目标只能按命令类型描述，否则这两条
+// 文案会渲染出 "for session undefined"。
+const describeCommandTarget = (command) =>
+  command?.type === 'admin-create-session' ? 'a new session' : `session ${command?.cardId}`
+
 // 写工具返回的是"命令已投递"，不是"已生效"——与手机监工同语义：真正执行
 // 的是渲染进程里的电脑端 handler，本进程无从得知结果，只能让模型再查一次。
-const deliveredText = (action, cardId) =>
-  `${action} for session ${cardId} was delivered to the desktop app. Delivery is not confirmation that it took effect — call ${listToolName} again to verify the workspace state.`
+const deliveredText = (action, command) =>
+  `${action} for ${describeCommandTarget(command)} was delivered to the desktop app. Delivery is not confirmation that it took effect — call ${listToolName} again to verify the workspace state.`
 
 export const callWorkspaceAdminTool = async (name, args, context) => {
   if (name === listToolName) {
@@ -391,7 +466,12 @@ export const callWorkspaceAdminTool = async (name, args, context) => {
     return textResult(buildSessionTranscriptText(cardId, entries))
   }
 
-  if (name === moveToolName || name === sendToolName || name === wakeToolName) {
+  if (
+    name === createToolName
+    || name === moveToolName
+    || name === sendToolName
+    || name === wakeToolName
+  ) {
     const resolved = resolveWorkspaceAdminCommandFromToolCall(name, args, context.columnId)
     if (resolved.error) {
       return textResult(resolved.error, true)
@@ -400,12 +480,12 @@ export const callWorkspaceAdminTool = async (name, args, context) => {
     const outcome = await context.postCommand(resolved.command)
     if (!outcome?.accepted) {
       return textResult(
-        `${name} for session ${resolved.command.cardId} could NOT be delivered: ${outcome?.reason || 'the desktop app did not accept the command'}. Nothing changed; try again shortly.`,
+        `${name} for ${describeCommandTarget(resolved.command)} could NOT be delivered: ${outcome?.reason || 'the desktop app did not accept the command'}. Nothing changed; try again shortly.`,
         true,
       )
     }
 
-    return textResult(deliveredText(name, resolved.command.cardId))
+    return textResult(deliveredText(name, resolved.command))
   }
 
   return textResult(`Unknown workspace admin tool: ${name}`, true)

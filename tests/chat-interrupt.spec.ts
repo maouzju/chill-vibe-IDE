@@ -1342,6 +1342,58 @@ test('sending during /compact still waits for the compaction stream to finish', 
   await expect.poll(() => mock.readState().columns[0]?.cards['card-1']?.streamId).toBe('stream-3')
 })
 
+test('an auto-compaction boundary mid-stream does not turn later sends into queued ones', async ({ page }) => {
+  // 症状：长会话 streaming 久了以后，用户输入的消息全部自动变成「已延后」。
+  // 根因：自动压缩往流里塞了一条隐藏的 `/compact` user 消息，它此后一直是 latest
+  // user message，旧判据不分手动/自动，于是整轮 streaming 的普通发送都只排队不打断。
+  // 直接预置自动压缩留下的隐藏边界消息 —— 它就是 App 在流中途 upsert 的那一条，
+  // 也是此后整轮 streaming 里的 latest user message。
+  const mock = await installMockApis(page, {
+    autoEmitDoneOnStop: true,
+    initialCard: {
+      status: 'streaming',
+      streamId: 'stream-1',
+      messages: [
+        {
+          id: 'assistant-1',
+          role: 'assistant',
+          content: 'Still answering',
+          createdAt: '2026-08-16T00:00:00.000Z',
+        },
+        {
+          id: 'codex:stream-1:compact-boundary:compaction-item-1',
+          role: 'user',
+          content: '/compact',
+          createdAt: '2026-08-16T00:00:01.000Z',
+          meta: {
+            compactBoundary: 'true',
+            compactTrigger: 'auto',
+            compactHidden: 'true',
+          },
+        },
+      ],
+    },
+  })
+  await page.goto('http://localhost:5173')
+
+  const textarea = getActiveComposerTextarea(page)
+  await expect(textarea).toBeVisible()
+
+  await textarea.fill('Keep going after the auto compaction')
+  await page.getByRole('button', { name: 'Send message' }).click()
+
+  // 左键 = 立即发送：必须打断当前流并把消息发出去，而不是静静躺进 FIFO 队列。
+  await expect
+    .poll(() => {
+      const requests = mock.readRequests()
+      return (
+        requests[0] === 'stop:stream-1' &&
+        requests[1]?.includes('Keep going after the auto compaction')
+      )
+    })
+    .toBe(true)
+})
+
 test('Send now escapes a stale compact boundary instead of requeueing forever', async ({ page }) => {
   const mock = await installMockApis(page, {
     initialCard: {

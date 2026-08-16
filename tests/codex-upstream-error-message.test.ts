@@ -31,6 +31,22 @@ test('surfaces an actionable hint when the upstream does not serve the requested
   assert.equal(zh.hint, 'switch-config')
 })
 
+// 实测同一中转站、同一模型名，一个 key 通、另一个 key 对所有模型都报 no available channel：
+// 决定可用性的是 key 的分组。只说"换模型名"会让用户把时间全花在错误的方向上。
+test('the guidance also covers the case where every model name fails', () => {
+  const zh = describeCodexUpstreamFailure(
+    '{"error":{"code":"model_not_found","message":"No available channel for model gpt-5.6-sol under group OpenAI-key (distributor) (request id: 20260816035915311)"}}',
+    'zh-CN',
+  )
+
+  assert.ok(zh.message.includes('分组'), 'must name the API key group as the second suspect')
+  assert.ok(zh.message.includes('request id'), 'the request id is what the provider needs')
+  assert.ok(
+    zh.message.includes('20260816035915311'),
+    'the actual request id must survive into the message',
+  )
+})
+
 test('the model-unavailable guidance is localized', () => {
   const en = describeCodexUpstreamFailure(unknownProviderBody, 'en')
 
@@ -65,6 +81,42 @@ test('leaves plain-text errors untouched', () => {
 
   assert.equal(described.message, 'stream disconnected before completion')
   assert.equal(described.hint, undefined)
+})
+
+// 症状：2026-08-16 排查「两个人同一个服务商、同一个 key、同一个模型，一个能用一个不能用」，
+//   花了三轮才想到去比对 base_url——因为报错里**从来不说这次请求发往哪里**。
+// 根因：生效的 base_url 有两个互不可见的来源：应用内「接口配置」（cliRoutingEnabled 打开时
+//   注入 OPENAI_BASE_URL 覆盖一切）和 `~/.codex/config.toml`。用户看不到自己走的是哪条，
+//   两台机器对比时更是完全瞎猜。
+// 为什么不打日志了事：这个信息只在失败那一刻有用，且必须和错误正文在一起——它就是判断
+//   「同样的配置为什么结果不同」的第一个分叉点。
+test('the failure says which endpoint the request actually went to', () => {
+  const fromAppConfig = describeCodexUpstreamFailure(unknownProviderBody, 'zh-CN', {
+    OPENAI_BASE_URL: 'https://jp.example.com/v1',
+  })
+
+  assert.ok(
+    fromAppConfig.message.includes('https://jp.example.com/v1'),
+    'the endpoint in use must be visible in the failure',
+  )
+  assert.ok(fromAppConfig.message.includes('接口配置'), 'and where that endpoint came from')
+
+  const fromCodexConfig = describeCodexUpstreamFailure(unknownProviderBody, 'zh-CN', {})
+  assert.ok(
+    fromCodexConfig.message.includes('config.toml'),
+    'with no override the endpoint comes from the codex config, and we should say so',
+  )
+})
+
+test('the endpoint note is optional and localized', () => {
+  const withoutEnv = describeCodexUpstreamFailure(unknownProviderBody, 'zh-CN')
+  assert.ok(!withoutEnv.message.includes('config.toml'), 'no env means no endpoint claim')
+
+  const en = describeCodexUpstreamFailure(unknownProviderBody, 'en', {
+    OPENAI_BASE_URL: 'https://jp.example.com/v1',
+  })
+  assert.ok(en.message.includes('https://jp.example.com/v1'))
+  assert.ok(!/[一-龥]/.test(en.message), 'English guidance must not leak Chinese text')
 })
 
 // 长行过滤原本会把压成一行的 JSON 错误体整条丢掉，用户只剩「Codex 退出，状态码：1」。

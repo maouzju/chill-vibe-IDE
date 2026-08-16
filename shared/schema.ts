@@ -254,6 +254,10 @@ export const chatCardSchema = z.object({
   draftAttachments: z.array(imageAttachmentSchema).default([]),
   queuedSends: z.array(queuedSendRequestSchema).default([]),
   wakeTimerActive: z.boolean().optional(),
+  // 这次的开关是右键发送替用户打开的，不是用户自己在设置里开的。
+  // 刻意跟 wakeTimerActive 一样保持 optional：旧存档缺这个字段时读成 undefined，
+  // 判定按 `=== true` 走，也就是当作用户显式开启，绝不自动关。
+  wakeTimerAutoActivated: z.boolean().optional(),
   wakeTimerMode: wakeTimerModeSchema.optional(),
   wakeTimerDurationMinutes: z.number().finite().min(minWakeTimerDurationMinutes).max(maxWakeTimerDurationMinutes).optional(),
   wakeTimerQueuedSends: persistedQueuedSendsSchema.optional(),
@@ -1297,6 +1301,12 @@ export type RemoteMonitorCommand = z.infer<typeof remoteMonitorCommandSchema>
 // 命令只带 `columnId` 而不带 `boardCardId`：目标看板由渲染端解析（该卡已在
 // 某个看板里就用那个，否则用本列第一张看板卡），因为"哪张看板"是 state 的
 // 事实，模型不该也无法知道。
+// 新建会话只能落在这两道里。`done` 被刻意排除：一张刚建出来、一句话没说的卡
+// 不可能"已交付"，而超管看不到 UI，只能靠返回文本理解发生了什么 —— 静默把
+// `done` 降级成 `standby` 会让它带着错误的世界模型继续决策，所以宁可报错。
+export const workspaceAdminCreatableLanes = ['standby', 'running'] as const
+export const workspaceAdminCreatableLaneSchema = z.enum(workspaceAdminCreatableLanes)
+
 export const workspaceAdminCommandSchema = z.discriminatedUnion('type', [
   z.object({
     type: z.literal('admin-move-session-to-lane'),
@@ -1321,6 +1331,20 @@ export const workspaceAdminCommandSchema = z.discriminatedUnion('type', [
       .min(minWakeTimerDurationMinutes)
       .max(maxWakeTimerDurationMinutes)
       .optional(),
+  }),
+  // 唯一一条目标卡还不存在的命令，因此没有 `cardId`。落位同样由渲染端解析：
+  // 本列有看板就建成看板项，没有就建成普通 tab 会话 —— 空工作区（一张卡都没有，
+  // 因此也没有看板卡）正是这个工具存在的理由，那种情况下失败就等于没做。
+  //
+  // 刻意不带 `adminAccess`：超管权限一旦能由超管自己授予就会自我复制，
+  // 而用户在界面上只授权过一次。授予点必须留在用户手里。
+  z.object({
+    type: z.literal('admin-create-session'),
+    columnId: z.string().min(1),
+    requirement: z.string().min(1),
+    lane: workspaceAdminCreatableLaneSchema,
+    provider: providerSchema.optional(),
+    model: z.string().min(1).optional(),
   }),
 ])
 export type WorkspaceAdminCommand = z.infer<typeof workspaceAdminCommandSchema>

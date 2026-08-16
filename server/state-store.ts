@@ -1003,6 +1003,10 @@ const normalizePersistedCard = (
     draftAttachments: normalizePersistedImageAttachments(card.draftAttachments),
     queuedSends: normalizePersistedQueuedSends(card.queuedSends),
     wakeTimerActive: typeof card.wakeTimerActive === 'boolean' ? card.wakeTimerActive : false,
+    // 旧存档缺这个字段 → false → 当作用户显式开启，绝不自动关（宁可少关一次也不能
+    // 把用户手动开的计时器悄悄关掉）。
+    wakeTimerAutoActivated:
+      typeof card.wakeTimerAutoActivated === 'boolean' ? card.wakeTimerAutoActivated : false,
     wakeTimerMode: normalizeWakeTimerMode(card.wakeTimerMode),
     wakeTimerDurationMinutes: normalizeWakeTimerDurationMinutes(card.wakeTimerDurationMinutes),
     wakeTimerQueuedSends: normalizePersistedQueuedSends(card.wakeTimerQueuedSends),

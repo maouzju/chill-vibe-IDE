@@ -231,6 +231,7 @@ import {
   getPendingCompactBoundaryMessage,
   isCompactBoundaryMessage,
   markCompactBoundaryMessage,
+  shouldWaitForCompactionBeforeSending,
 } from './components/chat-card-compaction'
 import { collectChangesSummaryFilesForStream } from './components/chat-card-parsing'
 import {
@@ -248,6 +249,7 @@ import {
   armWakeTimerBatch,
   rearmWakeTimerBatchForPatch,
   buildCanceledWakeTimerDraft,
+  buildWakeTimerBatchEndPatch,
   collectWakeTimerDefaultPreference,
   isWakeTimerConditionReady,
   mergeWakeTimerRequests,
@@ -2733,7 +2735,8 @@ function App() {
 
   const clearWakeTimerBatch = useCallback((columnId: string, cardId: string) => {
     const column = appStateRef.current.columns.find((entry) => entry.id === columnId)
-    if (!column?.cards[cardId]) {
+    const card = column?.cards[cardId]
+    if (!card) {
       return
     }
 
@@ -2746,6 +2749,9 @@ function App() {
         wakeTimerArmedAt: undefined,
         wakeTimerWakeAt: undefined,
         wakeTimerPendingTargetIds: [],
+        ...buildWakeTimerBatchEndPatch({
+          autoActivated: card.wakeTimerAutoActivated === true,
+        }),
       },
     }
     persistImmediately(applyAction(action))
@@ -2777,6 +2783,9 @@ function App() {
           wakeTimerArmedAt: undefined,
           wakeTimerWakeAt: undefined,
           wakeTimerPendingTargetIds: [],
+          ...buildWakeTimerBatchEndPatch({
+            autoActivated: card.wakeTimerAutoActivated === true,
+          }),
         },
       },
       // 取消后这张卡永远不会自己开跑，也就永远不会发出完成广播；下游 left-tab 链
@@ -2921,7 +2930,9 @@ function App() {
       cardId,
       patch: {
         wakeTimerQueuedSends: [...currentQueue, request],
-        ...(activateCard ? { wakeTimerActive: true } : {}),
+        // 右键替用户开的开关必须留下来源标记，否则批次结束后无法判断该不该关回去，
+        // 这张卡会永久吞掉之后每一次普通回车。见 wake-timer.ts buildWakeTimerBatchEndPatch。
+        ...(activateCard ? { wakeTimerActive: true, wakeTimerAutoActivated: true } : {}),
         ...armPatch,
       },
     }
@@ -2993,6 +3004,9 @@ function App() {
               wakeTimerArmedAt: undefined,
               wakeTimerWakeAt: undefined,
               wakeTimerPendingTargetIds: [],
+              ...buildWakeTimerBatchEndPatch({
+                autoActivated: card.wakeTimerAutoActivated === true,
+              }),
             },
           })
         } else if (
@@ -5268,6 +5282,50 @@ function App() {
           }
           return
         }
+        case 'admin-create-session': {
+          const board = Object.values(owner.cards).find((card) => Boolean(getAutomationBoard(card)))
+          if (board) {
+            automationBoardActions.createItem(
+              owner.id,
+              board.id,
+              command.lane,
+              command.requirement,
+              undefined,
+              { provider: command.provider, model: command.model },
+            )
+            return
+          }
+
+          // 本列还没有看板卡就落成普通 tab 会话，走用户点「＋」新建 tab 的同一条路径。
+          // 这条降级不是可选项：超管报"我没有新建会话的工具"的现场恰恰是空工作区
+          // （一张卡都没有，因此也没有看板卡），在那里失败等于这个工具白加。
+          const cardId = crypto.randomUUID()
+          const addTab: IdeAction = {
+            type: 'addTab',
+            columnId: owner.id,
+            paneId: getFirstPane(owner.layout).id,
+            cardId,
+            provider: command.provider,
+            model: command.model,
+          }
+          persistAfterAction(addTab.type, applyAction(addTab))
+
+          // lane 在这条路径上表达的是"要不要立刻开跑"：running 直接把需求当第一条
+          // 消息发出去，standby 只把它存进草稿等用户/超管之后再启动。
+          if (command.lane === 'running') {
+            void sendMessageRef.current?.(owner.id, cardId, command.requirement, [])
+            return
+          }
+
+          const draft: IdeAction = {
+            type: 'setCardDraft',
+            columnId: owner.id,
+            cardId,
+            draft: command.requirement,
+          }
+          persistAfterAction(draft.type, applyAction(draft))
+          return
+        }
         case 'admin-send-session-message':
           automationBoardActions.sendToItem(owner.id, command.cardId, command.message)
           return
@@ -5284,7 +5342,7 @@ function App() {
           return
       }
     })
-  }, [automationBoardActions])
+  }, [applyAction, automationBoardActions, persistAfterAction])
 
   // 实时工作区镜像：节流推给主进程供超管 MCP 读取。签名比对确保只有对模型有
   // 意义的变化才跨 IPC —— 单条消息的流式增长不刷新签名，否则每个 delta 都会
@@ -6003,7 +6061,7 @@ function App() {
         hasLatestPendingAskUserMessage(card.messages, prompt)
       const shouldQueueUntilDone =
         shouldAnswerAskUser ||
-        isCompactBoundaryMessage(latestUserMessage, card.provider)
+        shouldWaitForCompactionBeforeSending(latestUserMessage, card.provider)
       if (shouldAnswerAskUser) {
         pendingAskUserDuringStreamRef.current.set(cardId, true)
         enqueueQueuedSend(cardId, { id: crypto.randomUUID(), prompt, attachments })

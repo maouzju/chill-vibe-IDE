@@ -380,13 +380,18 @@ const formatUpstreamModelUnavailable = (
   modelName: string | null,
   rawMessage: string,
 ) => {
+  // 「换个模型名」只解决一半。2026-08-14 实测：同一个中转站、同一个模型名，一个 key 通、
+  // 另一个 key 对 gpt-5.6/5.5/5.4 **全部**报 `No available channel ... under group X`——
+  // 决定可用性的是 key 所在的分组，不是服务商也不是模型名。所以指引必须给出第二步，
+  // 否则用户会把时间全花在换模型上。原始错误一定要原样附上：里面的 group 名和 request id
+  // 是找站方时唯一能用的凭据。
   if (language === 'en') {
     const subject = modelName ? `the model "${modelName}"` : 'the requested model'
-    return `Your API provider has no channel for ${subject}. This comes from the provider, not the local CLI: open Settings and set the Codex model to a name your provider actually serves, or switch providers in the API configuration. Original error: ${rawMessage}`
+    return `Your API provider has no channel for ${subject}. This comes from the provider, not the local CLI. First, open Settings and set the Codex model to a name your provider actually serves. If every model name fails the same way, the problem is the API key's group rather than the model — ask your provider, quoting the request id below. Original error: ${rawMessage}`
   }
 
   const subject = modelName ? `「${modelName}」` : '当前请求的模型'
-  return `服务商没有${subject}的可用渠道。这条错误来自 API 服务商，不是本机 CLI 的问题：请到 设置 → 模型 把 Codex 模型改成服务商实际提供的名称，或在接口配置里换一个服务商。原始错误：${rawMessage}`
+  return `服务商没有${subject}的可用渠道。这条错误来自 API 服务商，不是本机 CLI 的问题。先到 设置 → 模型 把 Codex 模型改成服务商实际提供的名称；如果换任何模型名都是同样报错，那说明问题在这个 API key 所属的分组上，不在模型名——把下面这条原始错误里的 request id 发给服务商处理。原始错误：${rawMessage}`
 }
 
 // 症状：模型名在上游没有渠道时，用户看到的错误是一句「Reconnecting... 1/5」，回合当场判死。
@@ -415,15 +420,43 @@ export const readCodexErrorNotification = (
   return { message, willRetry: params.willRetry === true }
 }
 
+// 症状：2026-08-16 排查「两个人同一个服务商、同一个 key、同一个模型，一个能用一个不能用」，
+//   绕了三轮才想到去比对 base_url——因为报错里从来不说这次请求发往哪里。
+// 根因：生效的 base_url 有两个互不可见的来源——应用内「接口配置」（cliRoutingEnabled 打开时
+//   注入 OPENAI_BASE_URL，覆盖一切）与 `~/.codex/config.toml`。用户看不出自己走的是哪条，
+//   两台机器对比时只能靠猜。
+// 为什么不只打日志：这条信息只在失败那一刻有用，且必须和错误正文在一起——它是判断
+//   「同样的配置为什么结果不同」的第一个分叉点。
+const formatCodexRequestEndpoint = (language: AppLanguage, env: NodeJS.ProcessEnv) => {
+  const overridden = env.OPENAI_BASE_URL?.trim()
+
+  if (overridden) {
+    return language === 'en'
+      ? `Request endpoint: ${overridden} (from the app's API configuration).`
+      : `本次请求发往：${overridden}（来自应用内「接口配置」）。`
+  }
+
+  return language === 'en'
+    ? "Request endpoint: whatever ~/.codex/config.toml resolves to (the app's API configuration is off)."
+    : '本次请求发往 ~/.codex/config.toml 里配置的地址（应用内「接口配置」未启用）。'
+}
+
 export const describeCodexUpstreamFailure = (
   raw: string,
   language: AppLanguage,
+  env?: NodeJS.ProcessEnv,
 ): { message: string; hint: StreamErrorHint | undefined } => {
   const unwrapped = extractUpstreamErrorMessage(raw) ?? raw
 
   if (upstreamModelUnavailablePatterns.some((pattern) => pattern.test(unwrapped))) {
+    const guidance = formatUpstreamModelUnavailable(
+      language,
+      extractUnavailableModelName(unwrapped),
+      unwrapped,
+    )
+
     return {
-      message: formatUpstreamModelUnavailable(language, extractUnavailableModelName(unwrapped), unwrapped),
+      message: env ? `${guidance}\n${formatCodexRequestEndpoint(language, env)}` : guidance,
       hint: 'switch-config',
     }
   }
@@ -2460,7 +2493,7 @@ const launchCodexAppServerRun = async (
           return
         }
 
-        const described = describeCodexUpstreamFailure(errorMessage, language)
+        const described = describeCodexUpstreamFailure(errorMessage, language, safetyRuntime.env)
         finishWithError(described.message, described.hint)
         return
       }
@@ -2570,7 +2603,7 @@ const launchCodexAppServerRun = async (
           return
         }
 
-        const described = describeCodexUpstreamFailure(notification.message, language)
+        const described = describeCodexUpstreamFailure(notification.message, language, safetyRuntime.env)
         finishWithError(described.message, described.hint)
         return
       }

@@ -61,7 +61,10 @@ export const WakeTimerSettingsPanel = ({
           type="checkbox"
           className="composer-settings-checkbox"
           checked={card.wakeTimerActive === true}
-          onChange={(event) => onPatch({ wakeTimerActive: event.target.checked })}
+          // 用户自己拨的开关是显式意图：清掉"右键替你开的"标记，批次结束后不再自动关。
+          onChange={(event) =>
+            onPatch({ wakeTimerActive: event.target.checked, wakeTimerAutoActivated: false })
+          }
         />
       </ComposerSettingsRow>
       {card.wakeTimerActive === true ? (

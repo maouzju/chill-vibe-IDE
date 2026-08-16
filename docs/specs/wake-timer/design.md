@@ -60,6 +60,14 @@
 
 `streaming` 卡不受影响：`shouldArmWakeTimerForDeferSend` 直接返回 `false`，右键继续走既有 FIFO `queuedSends`。
 
+### 替用户开的开关用完就关
+
+同一个 patch 里再写一个 `wakeTimerAutoActivated: true`，记下"这个开关是右键替用户开的"。三条批次结束路径——`flushReadyWakeTimers()` 的释放、`clearWakeTimerBatch()`（含"立即唤醒"）、`cancelWakeTimerBatch()`——统一叠加 `buildWakeTimerBatchEndPatch({ autoActivated })` 的结果：自动开的关回去（`wakeTimerActive: false` + 清标记），用户手动开的返回 `null`、原样保留。
+
+必须区分来源而不能"批次结束一律关"：用户自己在设置面板拨开的开关就该按需求 5/9 持续攒消息。反过来，`WakeTimerSettingsPanel` 的复选框在 patch 里同时写 `wakeTimerAutoActivated: false`——用户亲手拨过就是显式意图。
+
+字段与 `wakeTimerActive` 一样是 `optional`：旧存档读成 `undefined`，判定按 `=== true` 走，也就是当作用户显式开启。这个方向是刻意选的——少关一次只是多攒一批消息，关错则会让用户手动设的计时器静默失效。
+
 ## 记住上次的唤醒方式
 
 `AppSettings` 增加 `wakeTimerDefaultMode`（默认 `workspace-agents`）与 `wakeTimerDefaultDurationMinutes`（默认 30），并进入 `patchSettings` 白名单。

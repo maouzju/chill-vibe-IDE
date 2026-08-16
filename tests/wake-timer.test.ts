@@ -3,10 +3,11 @@ import { describe, it } from 'node:test'
 
 import { createCard, createDefaultSettings, normalizeAppSettings } from '../shared/default-state.ts'
 import { getLocaleText } from '../shared/i18n.ts'
-import { appSettingsSchema, appStateSchema } from '../shared/schema.ts'
+import { appSettingsSchema, appStateSchema, chatCardSchema, type ChatCard } from '../shared/schema.ts'
 import {
   armWakeTimerBatch,
   buildCanceledWakeTimerDraft,
+  buildWakeTimerBatchEndPatch,
   collectWakeTimerDefaultPreference,
   isWakeTimerConditionReady,
   mergeWakeTimerRequests,
@@ -619,6 +620,86 @@ describe('wake timer release', () => {
           },
         ],
       },
+    )
+  })
+})
+
+describe('auto-activated per-card wake timer turns itself off', () => {
+  it('keeps the batch-end patch only for the auto-activated switch', () => {
+    assert.deepEqual(buildWakeTimerBatchEndPatch({ autoActivated: true }), {
+      wakeTimerActive: false,
+      wakeTimerAutoActivated: false,
+    })
+    assert.equal(buildWakeTimerBatchEndPatch({ autoActivated: false }), null)
+  })
+
+  it('stops swallowing ordinary sends once the auto-armed batch is released', () => {
+    // 空闲卡右键发送 → 自动打开逐卡开关
+    assert.equal(
+      shouldArmWakeTimerForDeferSend({
+        featureEnabled: true,
+        mode: 'defer',
+        origin: 'user',
+        cardStatus: 'idle',
+      }),
+      true,
+    )
+
+    const armed: Partial<ChatCard> = { wakeTimerActive: true, wakeTimerAutoActivated: true }
+
+    // 批次释放后开关必须归零，否则此后每一次普通回车都被静默塞进待唤醒批次
+    const card: Partial<ChatCard> = {
+      ...armed,
+      ...buildWakeTimerBatchEndPatch({ autoActivated: armed.wakeTimerAutoActivated === true }),
+    }
+
+    const stillActive = card.wakeTimerActive === true
+    assert.equal(stillActive, false)
+    assert.equal(
+      shouldQueueWakeTimerSend({
+        featureEnabled: true,
+        cardActive: stillActive,
+        origin: 'user',
+      }),
+      false,
+    )
+  })
+
+  it('leaves a user-opened per-card switch on after the batch is released', () => {
+    const card: Partial<ChatCard> = { wakeTimerActive: true, wakeTimerAutoActivated: false }
+    assert.equal(
+      buildWakeTimerBatchEndPatch({ autoActivated: card.wakeTimerAutoActivated === true }),
+      null,
+    )
+    assert.equal(
+      shouldQueueWakeTimerSend({
+        featureEnabled: true,
+        cardActive: card.wakeTimerActive === true,
+        origin: 'user',
+      }),
+      true,
+    )
+  })
+
+  it('persists and normalizes the auto-activated marker', () => {
+    assert.equal(createCard('Timer card').wakeTimerAutoActivated, false)
+
+    const parsed = chatCardSchema.parse({
+      ...createCard('存档卡'),
+      wakeTimerActive: true,
+      wakeTimerAutoActivated: true,
+    })
+    assert.equal(parsed.wakeTimerAutoActivated, true)
+
+    // 旧存档没有这个字段：读成 undefined，按 `=== true` 判定即视为用户显式开启，
+    // 批次结束后不会被自动关掉。
+    const legacyCard: Record<string, unknown> = { ...createCard('旧卡'), wakeTimerActive: true }
+    delete legacyCard.wakeTimerAutoActivated
+    const legacy = chatCardSchema.parse(legacyCard)
+    assert.equal(legacy.wakeTimerAutoActivated, undefined)
+    assert.equal(
+      buildWakeTimerBatchEndPatch({ autoActivated: legacy.wakeTimerAutoActivated === true }),
+      null,
     )
   })
 })

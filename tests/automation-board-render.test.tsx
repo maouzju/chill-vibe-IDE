@@ -109,6 +109,7 @@ const renderBoard = (overrides: Partial<AutomationBoardCardProps> = {}) => {
     onAbsorbTab: noop,
     onInstantiateTemplate: noop,
     onDeleteItem: noop,
+    onClearLane: noop,
     onSaveTemplate: noop,
     onRenameTemplate: noop,
     onDeleteTemplate: noop,
@@ -137,6 +138,39 @@ describe('AutomationBoardCard renders', () => {
     assert.ok(html.includes(text.automationBoardLaneRunning))
     assert.ok(html.includes(text.automationBoardLaneDone))
     assert.ok(html.includes(text.automationBoardItemCount(1)))
+  })
+
+  // 清空只属于已完成道，且空着的时候不该出现一个点了没反应的按钮。
+  it('offers a clear action on the done lane only while it has items', () => {
+    const html = renderBoard()
+
+    assert.equal(html.split('automation-board-lane-clear').length - 1, 1)
+    assert.ok(html.includes(text.automationBoardClearLaneAction))
+
+    const doneLane = html.slice(html.indexOf('data-lane="done"'))
+    assert.match(doneLane, /automation-board-lane-clear/)
+  })
+
+  it('hides the clear action when the done lane is empty', () => {
+    const board = {
+      items: [
+        {
+          cardId: 'item-a',
+          lane: 'standby' as const,
+          requirement: '把登录页改成暗色',
+          templateId: '',
+        },
+      ],
+    }
+    const html = renderBoard({
+      board,
+      cards: {
+        'board-1': { ...createAutomationBoardCard('Board'), id: 'board-1', automationBoard: board },
+        'item-a': itemCard('item-a'),
+      },
+    })
+
+    assert.ok(!html.includes('automation-board-lane-clear'))
   })
 
   it('renders each item with its original requirement', () => {

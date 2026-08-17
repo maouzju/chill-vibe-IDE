@@ -32,6 +32,7 @@ type LocaleText = {
   experimentalMusicLabel: string
   experimentalWhiteNoiseLabel: string
   experimentalWeatherLabel: string
+  experimentalStatsLabel: string
   agentDoneSoundLabel: string
   agentDoneSoundVolumeLabel: string
   allAgentsDoneSoundLabel: string
@@ -170,8 +171,11 @@ type LocaleText = {
   crossProviderSkillReuseNote: string
   accessibilitySupportLabel: string
   accessibilitySupportNote: string
-  minimizeToTaskbarOnCloseLabel: string
-  minimizeToTaskbarOnCloseNote: string
+  closeBehaviorLabel: string
+  closeBehaviorNote: string
+  closeBehaviorQuit: string
+  closeBehaviorMinimize: string
+  closeBehaviorTray: string
   restoreDefaultSystemPrompt: string
   applyToExistingChats: string
   resetInterfaceDefaults: string
@@ -356,10 +360,46 @@ type LocaleText = {
   emptyStateWhiteNoiseDescription: string
   emptyStateAutomationBoardTitle: string
   emptyStateAutomationBoardDescription: string
+  emptyStateStatsTitle: string
+  emptyStateStatsDescription: string
+
+  // Stats card
+  statsCardTitle: string
+  statsRange90: string
+  statsRange180: string
+  statsRange365: string
+  statsSessionsLabel: string
+  statsMessagesLabel: string
+  statsStreakLabel: string
+  statsActiveDaysLabel: string
+  statsDaysUnit: string
+  statsSessionsBreakdown: (live: number, archived: number) => string
+  /**
+   * 「消息」「活跃天数」两块的副标题统计的是**会话数**，与上方的主值不是同一个维度，
+   * 所以单位词不能省：写成「最近 7 天 · 3」会被读成"最近 7 天只有 3 条消息"。
+   */
+  statsRecentSessions: (window: string, sessions: number) => string
+  statsRecent7: string
+  statsRecent30: string
+  statsProviderLabel: string
+  statsHeatmapLess: string
+  statsHeatmapMore: string
+  statsHeatmapTooltip: (date: string, messages: number, sessions: number) => string
+  statsTokensTitle: string
+  statsTokensScopeHint: (sessionsMissingUsage: number, archivedPerWorkspaceCap: number) => string
+  statsTokensEmpty: string
+  statsTokensInput: string
+  statsTokensOutput: string
+  statsTokensCacheRead: string
+  statsTokensCacheWrite: string
+  statsTokensTurns: string
+  statsTokensPeak: string
+  statsTokensCost: string
+  statsWeekdayLabels: readonly string[]
+  statsMonthLabels: readonly string[]
 
   // Automation Board
   automationBoardTitle: string
-  automationBoardExperimentalSuffix: string
   automationBoardLaneStandby: string
   automationBoardLaneRunning: string
   automationBoardLaneDone: string
@@ -384,6 +424,8 @@ type LocaleText = {
   automationBoardStopAction: string
   automationBoardStartAction: string
   automationBoardDeleteAction: string
+  automationBoardClearLaneAction: string
+  automationBoardClearLaneConfirm: (count: number) => string
   automationBoardSaveTemplateAction: string
   automationBoardMoveToStandby: string
   automationBoardMoveToRunning: string
@@ -479,6 +521,7 @@ const localeTextByLanguage: Record<AppLanguage, LocaleText> = {
     experimentalMusicLabel: '网易云音乐',
     experimentalWhiteNoiseLabel: '白噪音',
     experimentalWeatherLabel: '天气',
+    experimentalStatsLabel: '统计',
     agentDoneSoundLabel: 'Agent 完成音效',
     agentDoneSoundVolumeLabel: '音量',
     allAgentsDoneSoundLabel: '全完成提示音',
@@ -624,9 +667,12 @@ const localeTextByLanguage: Record<AppLanguage, LocaleText> = {
     accessibilitySupportLabel: '无障碍 / 辅助输入支持',
     accessibilitySupportNote:
       '开启后微信语音输入、读屏软件、语音听写等辅助工具才能直接把文字写进输入框，否则它们看不见界面元素。会让浏览器内核额外维护一份界面结构树，长会话下略微增加内存与渲染开销，改完需要重启应用生效。',
-    minimizeToTaskbarOnCloseLabel: '关闭后最小化到任务栏',
-    minimizeToTaskbarOnCloseNote:
-      '仅桌面版生效。开启后点击关闭不会退出 Chill Vibe，也不会中断后台 Agent，而是最小化到系统任务栏。',
+    closeBehaviorLabel: '点击关闭按钮时',
+    closeBehaviorNote:
+      '仅桌面版生效。选“最小化”或“缩到托盘”时，Chill Vibe 不会退出，后台 Agent 也不会中断；缩到托盘还会让出任务栏格位，只在右下角通知区留一个图标，单击即可叫回窗口。',
+    closeBehaviorQuit: '退出应用',
+    closeBehaviorMinimize: '最小化到任务栏',
+    closeBehaviorTray: '缩到系统托盘',
     restoreDefaultSystemPrompt: '恢复内置提示词',
     applyToExistingChats: '应用到现有会话',
     resetInterfaceDefaults: '重置界面默认值',
@@ -838,9 +884,49 @@ const localeTextByLanguage: Record<AppLanguage, LocaleText> = {
     emptyStateWhiteNoiseDescription: '生成一组专注白噪音，铺一层工作氛围。',
     emptyStateAutomationBoardTitle: '自动化看板',
     emptyStateAutomationBoardDescription: '把一批需求排成看板，执行中的自动开跑，跑完让监工接手。',
+    emptyStateStatsTitle: '统计',
+    emptyStateStatsDescription: '会话与消息的每日热力图，外加上下文用量概览。',
+
+    statsCardTitle: '统计',
+    statsRange90: '近 3 个月',
+    statsRange180: '近半年',
+    statsRange365: '近一年',
+    statsSessionsLabel: '会话',
+    statsMessagesLabel: '消息',
+    statsStreakLabel: '连续活跃',
+    statsActiveDaysLabel: '活跃天数',
+    statsDaysUnit: '天',
+    statsSessionsBreakdown: (live, archived) => `进行中 ${live} · 已归档 ${archived}`,
+    statsRecentSessions: (window, sessions) => `最近 ${window} · ${sessions} 段会话`,
+    statsRecent7: '7 天',
+    statsRecent30: '30 天',
+    statsProviderLabel: '服务商',
+    statsHeatmapLess: '少',
+    statsHeatmapMore: '多',
+    statsHeatmapTooltip: (date, messages, sessions) =>
+      sessions > 0
+        ? `${date}：${messages} 条消息 · ${sessions} 个会话`
+        : `${date}：${messages} 条消息`,
+    statsTokensTitle: '上下文用量',
+    statsTokensScopeHint: (sessionsMissingUsage, archivedPerWorkspaceCap) =>
+      sessionsMissingUsage > 0
+        ? `含已归档会话（每个工作区最近 ${archivedPerWorkspaceCap} 段）· 其中 ${sessionsMissingUsage} 段无用量记录`
+        : `含已归档会话（每个工作区最近 ${archivedPerWorkspaceCap} 段）`,
+    statsTokensEmpty: '还没有回合上报过用量',
+    statsTokensInput: '输入',
+    statsTokensOutput: '输出',
+    statsTokensCacheRead: '缓存命中',
+    statsTokensCacheWrite: '缓存写入',
+    statsTokensTurns: '回合',
+    statsTokensPeak: '单轮峰值',
+    statsTokensCost: '费用',
+    statsWeekdayLabels: ['日', '一', '二', '三', '四', '五', '六'],
+    statsMonthLabels: [
+      '1月', '2月', '3月', '4月', '5月', '6月',
+      '7月', '8月', '9月', '10月', '11月', '12月',
+    ],
 
     automationBoardTitle: '自动化看板',
-    automationBoardExperimentalSuffix: '（实验性）',
     automationBoardLaneStandby: '待命',
     automationBoardLaneRunning: '执行中',
     automationBoardLaneDone: '已完成',
@@ -863,6 +949,9 @@ const localeTextByLanguage: Record<AppLanguage, LocaleText> = {
     automationBoardStopAction: '中断',
     automationBoardStartAction: '开始执行',
     automationBoardDeleteAction: '删除需求',
+    automationBoardClearLaneAction: '清空已完成',
+    automationBoardClearLaneConfirm: (count) =>
+      `清空「已完成」里的 ${count} 项？它们的会话会归档进历史，之后能从历史里找回。`,
     automationBoardSaveTemplateAction: '保存为模板',
     automationBoardMoveToStandby: '移到待命',
     automationBoardMoveToRunning: '移到执行中',
@@ -955,6 +1044,7 @@ const localeTextByLanguage: Record<AppLanguage, LocaleText> = {
     experimentalMusicLabel: 'NetEase Music',
     experimentalWhiteNoiseLabel: 'White Noise',
     experimentalWeatherLabel: 'Weather',
+    experimentalStatsLabel: 'Stats',
     agentDoneSoundLabel: 'Agent Done Sound',
     agentDoneSoundVolumeLabel: 'Volume',
     allAgentsDoneSoundLabel: 'All Agents Done Sound',
@@ -1108,9 +1198,12 @@ const localeTextByLanguage: Record<AppLanguage, LocaleText> = {
     accessibilitySupportLabel: 'Accessibility / assistive input support',
     accessibilitySupportNote:
       'Lets screen readers, dictation, and voice-input tools see the composer and type into it directly. Chromium keeps an extra accessibility tree while this is on, which costs some memory and frame time on long transcripts. Restart the app to apply.',
-    minimizeToTaskbarOnCloseLabel: 'Minimize to the taskbar on close',
-    minimizeToTaskbarOnCloseNote:
-      'Desktop only. Closing the window keeps Chill Vibe and background Agents running, and minimizes the window to the system taskbar.',
+    closeBehaviorLabel: 'When the close button is clicked',
+    closeBehaviorNote:
+      'Desktop only. "Minimize" and "Hide to tray" both keep Chill Vibe and background Agents running. Hiding to the tray also gives up the taskbar slot and leaves only a notification-area icon — click it to bring the window back.',
+    closeBehaviorQuit: 'Quit the app',
+    closeBehaviorMinimize: 'Minimize to the taskbar',
+    closeBehaviorTray: 'Hide to the system tray',
     restoreDefaultSystemPrompt: 'Restore built-in prompt',
     applyToExistingChats: 'Apply to existing chats',
     resetInterfaceDefaults: 'Reset interface defaults',
@@ -1331,9 +1424,52 @@ const localeTextByLanguage: Record<AppLanguage, LocaleText> = {
     emptyStateAutomationBoardTitle: 'Automation Board',
     emptyStateAutomationBoardDescription:
       'Queue a batch of requirements. Running ones start immediately; a supervisor takes over when they finish.',
+    emptyStateStatsTitle: 'Stats',
+    emptyStateStatsDescription: 'A daily heatmap of sessions and messages, plus context usage at a glance.',
+
+    statsCardTitle: 'Stats',
+    statsRange90: 'Last 3 months',
+    statsRange180: 'Last 6 months',
+    statsRange365: 'Last year',
+    statsSessionsLabel: 'Sessions',
+    statsMessagesLabel: 'Messages',
+    statsStreakLabel: 'Current streak',
+    statsActiveDaysLabel: 'Active days',
+    statsDaysUnit: 'd',
+    statsSessionsBreakdown: (live, archived) => `${live} live · ${archived} archived`,
+    statsRecentSessions: (window, sessions) =>
+      `Recent ${window} · ${sessions} ${sessions === 1 ? 'session' : 'sessions'}`,
+    statsRecent7: '7 days',
+    statsRecent30: '30 days',
+    statsProviderLabel: 'Providers',
+    statsHeatmapLess: 'Less',
+    statsHeatmapMore: 'More',
+    statsHeatmapTooltip: (date, messages, sessions) =>
+      sessions > 0
+        ? `${date}: ${messages} messages · ${sessions} sessions`
+        : `${date}: ${messages} messages`,
+    statsTokensTitle: 'Context usage',
+    statsTokensScopeHint: (sessionsMissingUsage, archivedPerWorkspaceCap) =>
+      sessionsMissingUsage > 0
+        ? `Includes archived sessions (latest ${archivedPerWorkspaceCap} per workspace) · ${sessionsMissingUsage} of them ${
+            sessionsMissingUsage === 1 ? 'has' : 'have'
+          } no usage record`
+        : `Includes archived sessions (latest ${archivedPerWorkspaceCap} per workspace)`,
+    statsTokensEmpty: 'No turn has reported usage yet',
+    statsTokensInput: 'Input',
+    statsTokensOutput: 'Output',
+    statsTokensCacheRead: 'Cache read',
+    statsTokensCacheWrite: 'Cache write',
+    statsTokensTurns: 'Turns',
+    statsTokensPeak: 'Peak turn',
+    statsTokensCost: 'Cost',
+    statsWeekdayLabels: ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'],
+    statsMonthLabels: [
+      'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+      'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec',
+    ],
 
     automationBoardTitle: 'Automation Board',
-    automationBoardExperimentalSuffix: ' (Experimental)',
     automationBoardLaneStandby: 'Standby',
     automationBoardLaneRunning: 'Running',
     automationBoardLaneDone: 'Done',
@@ -1356,6 +1492,9 @@ const localeTextByLanguage: Record<AppLanguage, LocaleText> = {
     automationBoardStopAction: 'Interrupt',
     automationBoardStartAction: 'Start',
     automationBoardDeleteAction: 'Delete requirement',
+    automationBoardClearLaneAction: 'Clear done',
+    automationBoardClearLaneConfirm: (count) =>
+      `Clear ${count} item${count === 1 ? '' : 's'} from Done? Their sessions are archived to history, so you can find them again there.`,
     automationBoardSaveTemplateAction: 'Save as template',
     automationBoardMoveToStandby: 'Move to standby',
     automationBoardMoveToRunning: 'Move to running',

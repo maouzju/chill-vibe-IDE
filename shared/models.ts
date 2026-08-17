@@ -13,6 +13,7 @@ export const BRAINSTORM_TOOL_MODEL = '__brainstorm_tool__'
 export const TEXTEDITOR_TOOL_MODEL = '__texteditor_tool__'
 export const IMAGEEDITOR_TOOL_MODEL = '__imageeditor_tool__'
 export const AUTOMATIONBOARD_TOOL_MODEL = '__automationboard_tool__'
+export const STATS_TOOL_MODEL = '__stats_tool__'
 // Legacy-only token kept so persisted PM cards can be demoted safely during load.
 export const PM_TOOL_MODEL = '__pm_tool__'
 
@@ -84,6 +85,12 @@ export const MODEL_OPTIONS: ModelOption[] = [
     provider: 'codex',
     model: AUTOMATIONBOARD_TOOL_MODEL,
     aliases: ['board', 'kanban', 'automation', 'automation-board', 'auto'],
+  },
+  {
+    label: 'Stats',
+    provider: 'codex',
+    model: STATS_TOOL_MODEL,
+    aliases: ['stats', 'statistics', 'insights', 'activity'],
   },
   {
     label: 'Codex',
@@ -178,6 +185,7 @@ export const TOOL_CARD_MODELS = new Set([
   TEXTEDITOR_TOOL_MODEL,
   IMAGEEDITOR_TOOL_MODEL,
   AUTOMATIONBOARD_TOOL_MODEL,
+  STATS_TOOL_MODEL,
 ])
 
 export const isToolCardModel = (model?: string | null) =>

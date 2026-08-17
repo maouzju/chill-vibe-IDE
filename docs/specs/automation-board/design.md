@@ -956,3 +956,59 @@ FR6 早就写了"模板的生命周期必须长于看板卡片（删掉 tab 不�
 | `tests/automation-board-state.test.ts` | 关 tab 后编排留在工作区；交回给下一张看板卡；丢弃卡片已不存在的项；孤儿收编；每次看板写操作都镜像；草稿随看板并活过关 tab |
 | `tests/automation-board-persistence.test.ts` | 工作区级 `board` 往返（含 items / laneWidths）；卡片上的 `automationBoardTemplateId` 往返 |
 | `tests/electron-automation-board-restart-runtime.test.ts`（新，已入 `run-electron-runtime-tests.ps1`） | **真实 Electron 全动线**：空态工具砖建看板 → 加需求 → 关进程 → 重启仍在 → 写半句需求切 tab 再回来还在 → 关掉看板 tab（磁盘上卡没了、工作区编排在）→ 再开一张看板，编排原样回来 |
+
+## v2.7 — 清空已完成道（FR15）
+
+### 一个批量 action，不是循环 N 次单项删除
+
+```
+clearAutomationBoardLane { columnId, boardCardId, lane }
+```
+
+语义等价于对该道每一项发一次 `removeAutomationBoardItem { deleteCard: true }`，但**不能**那样写：
+reducer 每次返回新 state 都要走 `touchState` + 全列镜像（`mirrorAutomationBoardsToWorkspaces`）+ 一次
+落盘，已完成道攒到几十项时点一下能吃掉一整帧（pitfall 49/187 同族）。所以是一个原子 action：一次
+`updateColumn` 里删掉全部目标卡片并重写 items。
+
+它进 `automationBoardMirroringActions` 白名单 —— 工作区级那份才是持久层真相（FR13），漏了这一步，
+关掉看板 tab 再开回来，被清掉的项会整批复活。
+
+**空泳道原样返回 `state`**（引用相等）：白写一次盘会打穿整列的 memo，而且那次操作确实什么都没做。
+
+### 停流在 App 层，与单项删除同一条规矩
+
+`AutomationBoardActions.clearLane` 先对该道每一项发 `requestStopForCard`，再 dispatch。已完成道的项
+按 FR2 进道时就被中断了，但那次中断是异步的，这里不赌 —— 后端留下一个没有卡片可投递的孤儿流的代价
+比多发一次停止请求高。
+
+### 删卡前先归档，与 `closeTab` 同语义
+
+`removeAutomationBoardItem`（`deleteCard: true`）和 `clearAutomationBoardLane` 在 `delete cards[...]`
+之前逐张 `archiveCardToHistory(state.sessionHistory, card, column.workspacePath)`。归档写的是 state 级字段，
+所以得在 `updateColumn` 之前算好再一起传进去（同 `case 'closeTab'` 的写法）。
+
+为什么不是"保留卡片不删"：看板项的卡片不在任何 pane 里，留着就是既看不见也删不掉的孤儿（FR13）。
+归档才是这条路径唯一能让用户找回的出口。`deleteCard: false`（摘出看板但卡片还活着，例如搬进 pane）
+不归档 —— 卡片没被关闭，入档只会制造重复条目，与 `moveAutomationBoardItemToPane` 那条注释同理。
+空卡（`messages` 为空）由 `createSessionHistoryEntry` 自己返回 `null` 过滤掉，无工作区路径的列同样跳过。
+
+### 确认框在组件里，不在 App 层
+
+单项删除没有二次确认，但清空一次带走几十张卡，所以照 `FileTreeCard` 删文件那条路走
+`window.confirm`，文案带项数。放在 `AutomationBoardCard` 而不是 App：确认属于这次交互的表现层，
+App 层的 handler 保持"说了就做"，MCP / 远程监工将来要复用它时不该被一个弹窗卡住。
+
+### 按钮只属于已完成道
+
+`laneView.lane === 'done' && laneView.items.length > 0` 才渲染。泳道头部因此有三个子元素，
+`justify-content: space-between` 会把计数胶囊挤到正中间 —— 给 `h3` 补 `flex: 1`，标题吃掉多余空间，
+计数与按钮贴右成一组。按钮样式照项卡片操作行：静息只剩图标，框和底色留给 hover / focus，hover 时
+才亮成 `--danger`（破坏性操作静息态不喊）。选择器凑到三段才压得过 `:root[data-theme='dark'] .icon-button`。
+
+### 测试
+
+| 文件 | 覆盖 |
+|---|---|
+| `tests/automation-board-state.test.ts` | 清掉整道并删卡、其余道不动、空道 no-op（引用相等）、非看板卡忽略、镜像到工作区 |
+| `tests/automation-board-render.test.tsx` | 按钮只在已完成道且有项时渲染 |
+| `tests/automation-board-layout.spec.ts` | 真实浏览器：取消什么都不做 → 确认后该道清空、其余道原样、按钮随之消失；已完成道头部双主题快照 |

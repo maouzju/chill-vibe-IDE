@@ -85,6 +85,29 @@ const buildState = (
 
 const getBoard = (state: AppState) => state.columns[0]!.cards['board-1']!.automationBoard!
 
+// 归档只收有消息的卡片（createSessionHistoryEntry 对空卡返回 null），所以验证
+// 归档行为的用例必须用带转录的项卡，不能用 buildState 的默认空卡。
+const transcriptCard = (id: string, overrides: Partial<ChatCard> = {}): ChatCard =>
+  itemCard(id, {
+    sessionId: `session-${id}`,
+    messages: [{ id: `${id}-m1`, role: 'user', content: `需求 ${id}`, createdAt: timestamp }],
+    ...overrides,
+  })
+
+const cardsWithTranscripts = (): Record<string, ChatCard> => ({
+  'board-1': boardCard([
+    { cardId: 'item-a', lane: 'standby' },
+    { cardId: 'item-b', lane: 'running' },
+    { cardId: 'item-c', lane: 'done' },
+    { cardId: 'item-d', lane: 'done' },
+  ]),
+  'item-a': transcriptCard('item-a'),
+  'item-b': transcriptCard('item-b', { status: 'streaming', streamId: 'stream-b' }),
+  'item-c': transcriptCard('item-c'),
+  'item-d': transcriptCard('item-d'),
+  'chat-1': itemCard('chat-1'),
+})
+
 describe('automation board card ownership', () => {
   it('claims every item card and nothing else', () => {
     const cards = {
@@ -821,6 +844,144 @@ describe('removeAutomationBoardItem', () => {
 
     assert.equal(getBoard(next).items.length, 1)
     assert.ok(next.columns[0]!.cards['item-a'])
+  })
+
+  // 看板删项与关标签是同一种"我不看它了"，不该是两种后果：关标签归档进历史，
+  // 看板删项却让会话人间蒸发。归档是这条路径唯一的找回入口。
+  it('archives the deleted card into session history', () => {
+    const next = ideReducer(buildState({ cards: cardsWithTranscripts() }), {
+      type: 'removeAutomationBoardItem',
+      columnId: 'column-1',
+      boardCardId: 'board-1',
+      cardId: 'item-a',
+      deleteCard: true,
+    })
+
+    assert.deepEqual(
+      next.sessionHistory.map((entry) => entry.sessionId),
+      ['session-item-a'],
+    )
+    assert.equal(next.sessionHistory[0]!.messages.length, 1)
+    assert.equal(next.sessionHistory[0]!.workspacePath, 'D:/repo/one')
+  })
+
+  // 只是把项摘出看板（deleteCard:false）时卡片还活着，再入一次档就成了重复条目。
+  it('does not archive when the card survives', () => {
+    const next = ideReducer(buildState({ cards: cardsWithTranscripts() }), {
+      type: 'removeAutomationBoardItem',
+      columnId: 'column-1',
+      boardCardId: 'board-1',
+      cardId: 'item-a',
+      deleteCard: false,
+    })
+
+    assert.deepEqual(next.sessionHistory, [])
+  })
+})
+
+describe('clearAutomationBoardLane', () => {
+  const stateWithDone = () =>
+    buildState({
+      cards: {
+        'board-1': boardCard([
+          { cardId: 'item-a', lane: 'standby' },
+          { cardId: 'item-b', lane: 'running' },
+          { cardId: 'item-c', lane: 'done' },
+          { cardId: 'item-d', lane: 'done' },
+        ]),
+        'item-a': itemCard('item-a'),
+        'item-b': itemCard('item-b', { status: 'streaming', streamId: 'stream-b' }),
+        'item-c': itemCard('item-c'),
+        'item-d': itemCard('item-d'),
+        'chat-1': itemCard('chat-1'),
+      },
+    })
+
+  it('drops every item in that lane and deletes their cards', () => {
+    const next = ideReducer(stateWithDone(), {
+      type: 'clearAutomationBoardLane',
+      columnId: 'column-1',
+      boardCardId: 'board-1',
+      lane: 'done',
+    })
+
+    assert.deepEqual(getBoard(next).items.map((item) => item.cardId), ['item-a', 'item-b'])
+    assert.equal(next.columns[0]!.cards['item-c'], undefined)
+    assert.equal(next.columns[0]!.cards['item-d'], undefined)
+  })
+
+  // "清空已完成"过去是真删：39 张卡连同会话一起消失，用户没有任何找回路径。
+  // 它和关标签一样只是"我不看它了"，所以走同一条归档。
+  it('archives every cleared card into session history', () => {
+    const next = ideReducer(buildState({ cards: cardsWithTranscripts() }), {
+      type: 'clearAutomationBoardLane',
+      columnId: 'column-1',
+      boardCardId: 'board-1',
+      lane: 'done',
+    })
+
+    assert.deepEqual(
+      next.sessionHistory.map((entry) => entry.sessionId).sort(),
+      ['session-item-c', 'session-item-d'],
+    )
+    assert.ok(next.sessionHistory.every((entry) => entry.workspacePath === 'D:/repo/one'))
+  })
+
+  it('leaves the other lanes and their cards untouched', () => {
+    const next = ideReducer(stateWithDone(), {
+      type: 'clearAutomationBoardLane',
+      columnId: 'column-1',
+      boardCardId: 'board-1',
+      lane: 'done',
+    })
+
+    assert.ok(next.columns[0]!.cards['item-a'])
+    assert.ok(next.columns[0]!.cards['item-b'])
+    assert.ok(next.columns[0]!.cards['chat-1'])
+    assert.ok(next.columns[0]!.cards['board-1'])
+  })
+
+  // 空泳道点清空不该产生新 state：那会白写一次盘并打穿整列的 memo。
+  it('is a no-op when the lane is already empty', () => {
+    const state = buildState()
+    assert.equal(
+      ideReducer(state, {
+        type: 'clearAutomationBoardLane',
+        columnId: 'column-1',
+        boardCardId: 'board-1',
+        lane: 'done',
+      }),
+      state,
+    )
+  })
+
+  it('ignores a board card that is not a board', () => {
+    const state = buildState()
+    assert.equal(
+      ideReducer(state, {
+        type: 'clearAutomationBoardLane',
+        columnId: 'column-1',
+        boardCardId: 'chat-1',
+        lane: 'done',
+      }),
+      state,
+    )
+  })
+
+  // FR13：看板的持久层真相是工作区那份，清空必须同步过去，否则关掉看板
+  // tab 再打开，被清掉的项会整批复活。
+  it('mirrors the cleared lane to the workspace board', () => {
+    const next = ideReducer(stateWithDone(), {
+      type: 'clearAutomationBoardLane',
+      columnId: 'column-1',
+      boardCardId: 'board-1',
+      lane: 'done',
+    })
+
+    assert.deepEqual(
+      next.automationBoards['D:/repo/one']?.board?.items.map((item) => item.cardId),
+      ['item-a', 'item-b'],
+    )
   })
 })
 

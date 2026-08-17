@@ -206,13 +206,14 @@ export type IdeAction =
           | 'experimentalMusicEnabled'
           | 'experimentalWhiteNoiseEnabled'
           | 'experimentalWeatherEnabled'
+          | 'experimentalStatsEnabled'
           | 'agentDoneSoundEnabled'
           | 'agentDoneSoundVolume'
           | 'allAgentsDoneSoundEnabled'
           | 'allAgentsDoneSoundVolume'
           | 'crossProviderSkillReuseEnabled'
           | 'accessibilitySupportEnabled'
-          | 'minimizeToTaskbarOnCloseEnabled'
+          | 'closeBehavior'
           | 'autoUrgeEnabled'
           | 'autoUrgeProfiles'
           | 'autoUrgeActiveProfileId'
@@ -413,6 +414,7 @@ export type IdeAction =
           | 'wakeTimerArmedAt'
           | 'wakeTimerWakeAt'
           | 'wakeTimerPendingTargetIds'
+          | 'wakeTimerExplicitTargets'
         >
       >
     }
@@ -495,6 +497,18 @@ export type IdeAction =
       boardCardId: string
       cardId: string
       deleteCard: boolean
+    }
+  | {
+      /**
+       * 清空一条泳道：项与它们的卡片一起删掉。
+       *
+       * 不是"循环发 N 次 removeAutomationBoardItem"：那样会产生 N 次 touchState、
+       * N 次全列镜像与 N 次落盘，已完成道攒到几十项时点一下能卡住一整帧。
+       */
+      type: 'clearAutomationBoardLane'
+      columnId: string
+      boardCardId: string
+      lane: AutomationBoardLane
     }
   | {
       type: 'stampAutomationBoardItem'
@@ -1068,9 +1082,23 @@ const settleStoppedStreamMessages = (messages: ChatMessage[]) => {
         Array.isArray(payload.agents) &&
         payload.agents.length > 0
       ) {
-        nextPayload = {
-          ...payload,
-          agents: [],
+        // 症状：打断 Claude/Codex 会话后，这一轮派发过的子代理面板整个变成"暂无正在运行的子代理"，
+        //   连已跑完的子代理和它们的活动记录都一起消失（2026-08-16 用户报"打断后子 agent 会丢失"）。
+        // 根因：收尾时把 agents 数组清空成 []，而不是只收敛未完成项的状态。结构化卡片是这份名单的
+        //   唯一载体，清空即等于永久删掉这一轮的子代理历史。
+        // 被否决的替代：保持清空、让渲染层记住旧值——渲染层缓存重启即失效，且与同函数里 command 卡
+        //   "in_progress → declined" 的收敛写法不一致。
+        const priorAgents = payload.agents as Record<string, unknown>[]
+        const settledAgents = priorAgents.map((agent) =>
+          agent && (agent.status === 'running' || agent.status === 'pendingInit')
+            ? { ...agent, status: 'interrupted' }
+            : agent,
+        )
+        if (settledAgents.some((agent, index) => agent !== priorAgents[index])) {
+          nextPayload = {
+            ...payload,
+            agents: settledAgents,
+          }
         }
       }
 
@@ -1838,6 +1866,7 @@ const automationBoardMirroringActions = new Set<IdeAction['type']>([
   'setAutomationBoardDraft',
   'stampAutomationBoardItem',
   'removeAutomationBoardItem',
+  'clearAutomationBoardLane',
   'moveAutomationBoardItemToPane',
   'moveTabToAutomationBoard',
 ])
@@ -3211,8 +3240,20 @@ const ideReducerCore = (state: AppState, action: IdeAction): AppState => {
         return state
       }
 
+      // 症状：从看板删掉一项，那张卡的整段会话人间蒸发，历史里也找不回；
+      //   而同样"我不看它了"的关标签（case 'closeTab'）是归档，可恢复。
+      // 根因：2026-08-16——看板删除分支从上线起就没碰过 sessionHistory，
+      //   与 moveAutomationBoardItemToPane 那条"刻意不归档"不同，这里是漏了。
+      // 为什么不是加个"保留卡片"选项：卡片不在任何 pane 里，留着就是孤儿；
+      //   归档才是这条路径唯一能让用户找回的出口。
+      const removedCard = action.deleteCard ? column.cards[action.cardId] : undefined
+      const sessionHistory =
+        removedCard && column.workspacePath.trim() !== ''
+          ? archiveCardToHistory(state.sessionHistory, removedCard, column.workspacePath)
+          : state.sessionHistory
+
       return touchState(
-        updateColumn(state, action.columnId, (current) => {
+        updateColumn({ ...state, sessionHistory }, action.columnId, (current) => {
           const cards = { ...current.cards }
           if (action.deleteCard) {
             delete cards[action.cardId]
@@ -3223,6 +3264,51 @@ const ideReducerCore = (state: AppState, action: IdeAction): AppState => {
             automationBoard: {
               ...boardCard.automationBoard!,
               items: boardCard.automationBoard!.items.filter((item) => item.cardId !== action.cardId),
+            },
+          }
+
+          return { ...current, cards }
+        }),
+      )
+    }
+    case 'clearAutomationBoardLane': {
+      const column = state.columns.find((entry) => entry.id === action.columnId)
+      const boardCard = getAutomationBoardCard(column, action.boardCardId)
+      const board = boardCard?.automationBoard
+      const doomed = board?.items.filter((item) => item.lane === action.lane) ?? []
+
+      // 空泳道原样返回：白写一次盘会打穿整列的 memo（pitfall 49 同族）。
+      if (!column || !boardCard || !board || doomed.length === 0) {
+        return state
+      }
+
+      const doomedIds = new Set(doomed.map((item) => item.cardId))
+
+      // 与单项删除同一条规矩：清空前逐张入档，否则一次点击带走几十段会话且无从找回。
+      // 顺序按泳道原顺序遍历，prependSessionHistoryEntry 会把它们倒序压栈，
+      // 结果与逐个关标签一致（最后处理的排在历史最前）。
+      let sessionHistory = state.sessionHistory
+      if (column.workspacePath.trim() !== '') {
+        for (const item of doomed) {
+          const card = column.cards[item.cardId]
+          if (card) {
+            sessionHistory = archiveCardToHistory(sessionHistory, card, column.workspacePath)
+          }
+        }
+      }
+
+      return touchState(
+        updateColumn({ ...state, sessionHistory }, action.columnId, (current) => {
+          const cards = { ...current.cards }
+          for (const cardId of doomedIds) {
+            delete cards[cardId]
+          }
+
+          cards[action.boardCardId] = {
+            ...current.cards[action.boardCardId]!,
+            automationBoard: {
+              ...board,
+              items: board.items.filter((item) => !doomedIds.has(item.cardId)),
             },
           }
 

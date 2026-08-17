@@ -2109,6 +2109,124 @@ describe('state-store persistence', () => {
     assert.match(restored.entry.messages[11]?.meta?.structuredData ?? '', /"command":"pnpm test"/)
   })
 
+  it('folds archived turn usage into usageTotals before stripping message meta for the renderer', async () => {
+    const { saveState, loadStateForRenderer } = await import('../server/state-store.ts')
+    const state = createDefaultState('D:/history-usage-backfill')
+
+    state.sessionHistory = [
+      {
+        id: 'history-usage-1',
+        title: 'Archived before usage totals existed',
+        provider: 'codex',
+        model: 'gpt-5.5',
+        workspacePath: 'D:/history-usage-backfill',
+        messageCount: 3,
+        messages: [
+          {
+            id: 'history-usage-message-1',
+            role: 'user' as const,
+            content: 'question',
+            createdAt: new Date(Date.UTC(2026, 3, 11, 6, 0, 0)).toISOString(),
+          },
+          {
+            id: 'history-usage-message-2',
+            role: 'assistant' as const,
+            content: 'answer',
+            createdAt: new Date(Date.UTC(2026, 3, 11, 6, 0, 1)).toISOString(),
+            meta: {
+              turnUsageUsed: '12000',
+              turnUsageSize: '200000',
+              turnUsageInput: '9000',
+              turnUsageOutput: '3000',
+              turnUsageCostUsd: '0.2',
+            },
+          },
+          {
+            id: 'history-usage-message-3',
+            role: 'assistant' as const,
+            content: 'answer 2',
+            createdAt: new Date(Date.UTC(2026, 3, 11, 6, 0, 2)).toISOString(),
+            meta: {
+              turnUsageUsed: '30000',
+              turnUsageSize: '200000',
+              turnUsageInput: '25000',
+              turnUsageOutput: '4000',
+            },
+          },
+        ],
+        archivedAt: new Date('2026-04-11T06:20:00.000Z').toISOString(),
+      },
+    ]
+
+    await saveState(state)
+
+    const loaded = await loadStateForRenderer()
+    const totals = loaded.state.sessionHistory[0]?.usageTotals
+
+    assert.ok(totals, 'legacy archived entries should get usage totals backfilled from their full transcript')
+    assert.equal(totals?.turns, 2)
+    assert.equal(totals?.input, 34000)
+    assert.equal(totals?.output, 7000)
+    assert.equal(totals?.peakUsed, 30000)
+    assert.equal(totals?.peakSize, 200000)
+    assert.ok(Math.abs((totals?.costUsd ?? 0) - 0.2) < 1e-9)
+  })
+
+  // 症状：归档会话的 token / 花费只在归档发生的那次运行里看得到，重启后从统计卡上消失，
+  //   并被计进「其中 N 段无用量记录」——正是 usageTotals 这个字段要根除的状态。
+  // 根因：normalizePersistedSessionHistoryEntry 是逐字段重建的，漏掉 usageTotals 就等于删掉。
+  //   它在读盘路径上会跑两次，而此时消息已被裁成预览、meta 已剥离，补算路径救不回来。
+  // 为什么上面那条测试挡不住：它喂的是「没有 usageTotals 但转录完整」的老条目，走的是补算分支。
+  it('keeps usageTotals across a save/load round trip even after the transcript is trimmed to a preview', async () => {
+    const { saveState, loadStateForRenderer } = await import('../server/state-store.ts')
+    const state = createDefaultState('D:/history-usage-roundtrip')
+
+    state.sessionHistory = [
+      {
+        id: 'history-usage-roundtrip-1',
+        title: 'Archived with usage already folded in',
+        provider: 'claude',
+        model: 'claude-sonnet-5',
+        workspacePath: 'D:/history-usage-roundtrip',
+        messageCount: 30,
+        // 30 条足以触发 sidecar 裁剪：state.json 里只留预览，meta 被剥掉，
+        // 于是 renderSessionHistoryForRenderer 的补算分支不成立，只能靠字段本身活下来。
+        messages: Array.from({ length: 30 }, (_, index) => ({
+          id: `history-usage-roundtrip-message-${index + 1}`,
+          role: index % 2 === 0 ? ('user' as const) : ('assistant' as const),
+          content: `Archived roundtrip message ${index + 1}`,
+          createdAt: new Date(Date.UTC(2026, 3, 13, 9, 0, index)).toISOString(),
+        })),
+        usageTotals: {
+          input: 10,
+          output: 20,
+          cacheRead: 44970,
+          cacheCreation: 0,
+          turns: 1,
+          peakUsed: 45000,
+          peakSize: 200000,
+          costUsd: 1.25,
+        },
+        archivedAt: new Date('2026-04-13T09:20:00.000Z').toISOString(),
+      },
+    ]
+
+    await saveState(state)
+
+    const loaded = await loadStateForRenderer()
+    const entry = loaded.state.sessionHistory[0]
+
+    assert.equal(entry?.messagesPreview, true, 'expected the transcript to be trimmed to a preview')
+    assert.ok(entry?.usageTotals, 'usageTotals must survive persistence once the transcript is gone')
+    assert.equal(entry?.usageTotals?.input, 10)
+    assert.equal(entry?.usageTotals?.output, 20)
+    assert.equal(entry?.usageTotals?.cacheRead, 44970)
+    assert.equal(entry?.usageTotals?.turns, 1)
+    assert.equal(entry?.usageTotals?.peakUsed, 45000)
+    assert.equal(entry?.usageTotals?.peakSize, 200000)
+    assert.ok(Math.abs((entry?.usageTotals?.costUsd ?? 0) - 1.25) < 1e-9)
+  })
+
   it('saveState writes archived session bodies to sidecar files and keeps state.json lightweight', async () => {
     const { saveState, loadStateForRenderer, loadSessionHistoryEntry } = await import('../server/state-store.ts')
     const state = createDefaultState('D:/history-sidecar')

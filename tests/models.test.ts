@@ -11,12 +11,14 @@ import {
   GIT_TOOL_MODEL,
   IMAGEEDITOR_TOOL_MODEL,
   MUSIC_TOOL_MODEL,
+  STATS_TOOL_MODEL,
   STICKYNOTE_TOOL_MODEL,
   TEXTEDITOR_TOOL_MODEL,
   WEATHER_TOOL_MODEL,
   WHITENOISE_TOOL_MODEL,
   getModelOptions,
   isModelPickerOptionVisible,
+  isToolCardModel,
   normalizeModel,
   normalizeStoredModel,
   resolveSlashModel,
@@ -68,6 +70,7 @@ describe('model helpers', () => {
         TEXTEDITOR_TOOL_MODEL,
         IMAGEEDITOR_TOOL_MODEL,
         AUTOMATIONBOARD_TOOL_MODEL,
+        STATS_TOOL_MODEL,
         '',
         DEFAULT_CODEX_MODEL,
         'gpt-5.6-terra',
@@ -109,6 +112,36 @@ describe('model helpers', () => {
         .map((option) => option.model),
       ['', DEFAULT_CODEX_MODEL, 'gpt-5.6-terra', 'gpt-5.6-luna', 'gpt-5.5'],
     )
+  })
+
+  // 症状（要防的）：打开某张工具卡后，之后新建的每一张卡都变成那张工具卡且一片空白。
+  // 根因：新工具模型漏进 TOOL_CARD_MODELS 时，"切到该卡"会被当成用户选了一个真模型，
+  //   写进 settings.requestModels / column.model，新建 tab 再原样继承回来（pitfall 263）。
+  // 所以每个工具模型都必须同时满足这三条，加一个工具卡就在这里加一行。
+  it('treats every tool model as a tool card, not as a real model', () => {
+    for (const model of [
+      GIT_TOOL_MODEL,
+      MUSIC_TOOL_MODEL,
+      WHITENOISE_TOOL_MODEL,
+      WEATHER_TOOL_MODEL,
+      STICKYNOTE_TOOL_MODEL,
+      FILETREE_TOOL_MODEL,
+      BRAINSTORM_TOOL_MODEL,
+      TEXTEDITOR_TOOL_MODEL,
+      IMAGEEDITOR_TOOL_MODEL,
+      AUTOMATIONBOARD_TOOL_MODEL,
+      STATS_TOOL_MODEL,
+    ]) {
+      assert.equal(isToolCardModel(model), true, `${model} must be in TOOL_CARD_MODELS`)
+      assert.equal(isModelPickerOptionVisible({ model }), false, `${model} must stay out of the picker`)
+      // 白名单命中是合法的（`/model git` 就该切到 Git 卡）；要防的是它被当成
+      // 用户自定义的真模型名，那条路才会把令牌写进 settings/column 造出空壳卡。
+      assert.notEqual(
+        resolveSlashModelInput('codex', model)?.custom,
+        true,
+        `/model ${model} must never resolve through the custom path`,
+      )
+    }
   })
 
   it('resolves slash-command aliases to canonical model names', () => {

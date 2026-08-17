@@ -397,6 +397,8 @@ for (const theme of ['dark', 'light'] as const) {
     expect(menuMetrics.overflowY).toBe('auto')
     expect(menuMetrics.scrollHeight).toBeGreaterThan(menuMetrics.clientHeight + 1)
 
+    // 这里刻意不断言空态工具栅格：触发 slash 菜单要先往输入框打一个 `/`，草稿一非空
+    // 空态栅格就不渲染了（实测计数为 0），所以这张截图不受"默认开启哪些卡片类型"影响。
     await expect(bottomPane).toHaveScreenshot(`slash-menu-short-pane-${theme}.png`, {
       animations: 'disabled',
       caret: 'hide',

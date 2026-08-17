@@ -15,12 +15,14 @@ const createToolName = 'create_session'
 const moveToolName = 'move_session_to_lane'
 const sendToolName = 'send_session_message'
 const wakeToolName = 'set_session_wake_timer'
+const awaitToolName = 'wake_me_when_sessions_finish'
 
 const defaultTranscriptLimit = 20
 const maxTranscriptLimit = 60
 const minWakeDurationMinutes = 1
 const maxWakeDurationMinutes = 7 * 24 * 60
 const defaultWakeDurationMinutes = 30
+const defaultAwaitTimeoutMinutes = 60
 
 // 这个文件由 process.execPath 直接当普通 Node 脚本 spawn（不经 tsx），所以
 // 不能 import shared/schema.ts —— lane / wake mode 的字面量只能在这里重复一份。
@@ -165,6 +167,35 @@ export const workspaceAdminMcpToolDefinitions = [
       additionalProperties: false,
     },
   },
+  {
+    name: awaitToolName,
+    description:
+      'Register the sessions you are waiting on and END YOUR TURN — you will be woken up automatically once they finish, and your note is delivered back to you as your next message. This is how supervising works: dispatch the work, register the wait, stop talking. Do NOT poll list_sessions in a loop instead; that burns your whole context and you still cannot outlast the agents you are supervising. cardIds defaults to every other session in this workspace. timeoutMinutes is a hard upper bound (default 60): a target that gets interrupted, errors out, or never starts will never report completion, so the wait always ends by then. Waking up does not end your supervision — register another wait whenever there is still work in flight.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        note: {
+          type: 'string',
+          description:
+            'What future-you should do on waking, written as an instruction addressed to yourself (e.g. "read_session on card A and B, move whichever delivered to done"). It arrives as your next message, so it is the only thing you will know about why you woke up.',
+        },
+        cardIds: {
+          type: 'array',
+          items: { type: 'string' },
+          description:
+            'The session cardIds to wait for, from list_sessions. Omit to wait for every other session in this workspace.',
+        },
+        timeoutMinutes: {
+          type: 'number',
+          minimum: minWakeDurationMinutes,
+          maximum: maxWakeDurationMinutes,
+          description: 'Wake up no later than this many minutes from now (default 60).',
+        },
+      },
+      required: ['note'],
+      additionalProperties: false,
+    },
+  },
 ]
 
 const normalizeText = (value) => (typeof value === 'string' ? value.trim() : '')
@@ -300,10 +331,73 @@ export const buildSessionTranscriptText = (cardId, entries) => {
   return lines.join('\n')
 }
 
-export const resolveWorkspaceAdminCommandFromToolCall = (name, args, columnId) => {
+export const resolveWorkspaceAdminCommandFromToolCall = (name, args, columnId, selfCardId) => {
   const normalizedColumnId = normalizeText(columnId)
   if (!normalizedColumnId) {
     return { error: 'This session has no workspace admin access, so the write tools are unavailable.' }
+  }
+
+  // create 之外的第二个「目标卡不是入参」的写工具，同样必须走在下面那道统一的
+  // cardId 必填检查之前（pitfall 294）：它等待的是别人，唤醒的是**调用者自己**，
+  // 而 self cardId 只能来自进程环境，模型手里根本没有这个值。
+  if (name === awaitToolName) {
+    const note = readStringArg(args, 'note')
+    if (!note) {
+      return {
+        error:
+          'note is required and must not be empty. It comes back to you as your next message, so it is the only thing you will know about why you woke up.',
+      }
+    }
+
+    const self = normalizeText(selfCardId)
+    if (!self) {
+      return {
+        error: 'This session cannot tell which session to wake, so it cannot register a wait.',
+      }
+    }
+
+    const rawCardIds = args?.cardIds
+    let targetCardIds = []
+    if (rawCardIds !== undefined && rawCardIds !== null) {
+      if (!Array.isArray(rawCardIds)) {
+        return { error: `cardIds must be an array of session cardIds from ${listToolName}.` }
+      }
+
+      const normalized = rawCardIds.map((entry) => normalizeText(entry))
+      if (normalized.some((entry) => !entry)) {
+        return { error: `cardIds must not contain empty entries. Call ${listToolName} to get the current cardIds.` }
+      }
+
+      // 自己永远不在等待名单里：等自己结束就是等一个永远不会到达的事件 ——
+      // 这条批次恰恰要在自己空闲之后才发车。
+      targetCardIds = [...new Set(normalized.filter((entry) => entry !== self))]
+    }
+
+    const rawTimeout = args?.timeoutMinutes
+    const timeoutMinutes = rawTimeout === undefined || rawTimeout === null
+      ? defaultAwaitTimeoutMinutes
+      : Number(rawTimeout)
+
+    if (
+      !Number.isFinite(timeoutMinutes)
+      || timeoutMinutes < minWakeDurationMinutes
+      || timeoutMinutes > maxWakeDurationMinutes
+    ) {
+      return {
+        error: `timeoutMinutes must be a number between ${minWakeDurationMinutes} and ${maxWakeDurationMinutes}.`,
+      }
+    }
+
+    return {
+      command: {
+        type: 'admin-await-sessions',
+        columnId: normalizedColumnId,
+        cardId: self,
+        targetCardIds,
+        note,
+        timeoutMinutes,
+      },
+    }
   }
 
   // create 必须在 cardId 校验之前分流：它是唯一一个目标卡还不存在的写工具，
@@ -424,15 +518,70 @@ const textResult = (text, isError = false) => ({
   isError,
 })
 
-// create 没有 cardId（卡还不存在），所以目标只能按命令类型描述，否则这两条
-// 文案会渲染出 "for session undefined"。
-const describeCommandTarget = (command) =>
-  command?.type === 'admin-create-session' ? 'a new session' : `session ${command?.cardId}`
+// create 没有 cardId（卡还不存在），await 的 cardId 是调用者自己，所以目标只能
+// 按命令类型描述，否则这两条文案会渲染出 "for session undefined"。
+const describeCommandTarget = (command) => {
+  if (command?.type === 'admin-create-session') {
+    return 'a new session'
+  }
+  if (command?.type === 'admin-await-sessions') {
+    return 'yourself'
+  }
+  return `session ${command?.cardId}`
+}
+
+/**
+ * 等一张不存在的卡 = 一直空等到超时，而模型完全不知道自己在空等（命令是单向
+ * 投递的，渲染端没法把"这个 cardId 没有对应会话"回传）。镜像就在手边，所以这道
+ * 校验放在投递之前，让模型当场看到自己写错了哪个 id。
+ */
+const validateAwaitTargets = async (command, context) => {
+  const mirror = await context.fetchWorkspace()
+  if (!mirror) {
+    return textResult(
+      'This workspace is not available right now (the desktop app may have closed it), so the wait was NOT registered. Try again shortly.',
+      true,
+    )
+  }
+
+  const knownIds = new Set(
+    selectVisibleSessions(mirror, context.selfCardId)
+      .map((session) => normalizeText(session?.cardId))
+      .filter(Boolean),
+  )
+
+  const unknown = command.targetCardIds.filter((cardId) => !knownIds.has(cardId))
+  if (unknown.length > 0) {
+    return textResult(
+      `No session exists in this workspace for cardId ${unknown.join(', ')}, so nothing was registered. Call ${listToolName} to get the current cardIds.`,
+      true,
+    )
+  }
+
+  if (command.targetCardIds.length === 0 && knownIds.size === 0) {
+    return textResult(
+      `This workspace has no other session to wait for, so nothing would ever wake you up and nothing was registered. Use ${createToolName} to dispatch work first.`,
+      true,
+    )
+  }
+
+  return null
+}
 
 // 写工具返回的是"命令已投递"，不是"已生效"——与手机监工同语义：真正执行
 // 的是渲染进程里的电脑端 handler，本进程无从得知结果，只能让模型再查一次。
-const deliveredText = (action, command) =>
-  `${action} for ${describeCommandTarget(command)} was delivered to the desktop app. Delivery is not confirmation that it took effect — call ${listToolName} again to verify the workspace state.`
+const deliveredText = (action, command) => {
+  // 等待是唯一一条"投递成功之后该闭嘴"的命令：再多说一句都会推进本回合，
+  // 而模型必须结束回合才能被重新唤起。所以这条文案不引导它再查一次。
+  if (command?.type === 'admin-await-sessions') {
+    const scope = command.targetCardIds.length > 0
+      ? `${command.targetCardIds.length} session(s)`
+      : 'every other session in this workspace'
+    return `${action} was delivered to the desktop app: you will be woken with your note once ${scope} finish, and in any case no later than ${command.timeoutMinutes} minutes from now. END YOUR TURN NOW — say what you are waiting for and stop. Do not keep calling tools; you cannot observe the finish from inside this turn, and staying awake only burns the context you will need when you wake up. On waking, call ${listToolName} first to see what actually happened.`
+  }
+
+  return `${action} for ${describeCommandTarget(command)} was delivered to the desktop app. Delivery is not confirmation that it took effect — call ${listToolName} again to verify the workspace state.`
+}
 
 export const callWorkspaceAdminTool = async (name, args, context) => {
   if (name === listToolName) {
@@ -471,10 +620,23 @@ export const callWorkspaceAdminTool = async (name, args, context) => {
     || name === moveToolName
     || name === sendToolName
     || name === wakeToolName
+    || name === awaitToolName
   ) {
-    const resolved = resolveWorkspaceAdminCommandFromToolCall(name, args, context.columnId)
+    const resolved = resolveWorkspaceAdminCommandFromToolCall(
+      name,
+      args,
+      context.columnId,
+      context.selfCardId,
+    )
     if (resolved.error) {
       return textResult(resolved.error, true)
+    }
+
+    if (resolved.command.type === 'admin-await-sessions') {
+      const rejection = await validateAwaitTargets(resolved.command, context)
+      if (rejection) {
+        return rejection
+      }
     }
 
     const outcome = await context.postCommand(resolved.command)

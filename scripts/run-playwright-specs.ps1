@@ -32,6 +32,7 @@ try {
       'tests/git-tool-switch.spec.ts',
       'tests/panel-persistence.spec.ts',
       'tests/repeat-loop.spec.ts',
+      'tests/settings-hover-hints.spec.ts',
       'tests/structured-chat-collapse.spec.ts',
       'tests/thinking-depth-selectable.spec.ts',
       'tests/workspace-folder-picker.spec.ts'
@@ -41,7 +42,8 @@ try {
       'tests/board-layout.spec.ts',
       'tests/automation-board-layout.spec.ts',
       'tests/automation-board-item-drawer.spec.ts',
-      'tests/automation-template-chrome.spec.ts'
+      'tests/automation-template-chrome.spec.ts',
+      'tests/stats-card-theme.spec.ts'
     )
   }
 

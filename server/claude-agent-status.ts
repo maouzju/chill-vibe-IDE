@@ -70,6 +70,12 @@ const readFiniteNumber = (record: JsonRecord | null | undefined, key: string) =>
 }
 
 // CLI 只给终态字符串，未来新增的终态不能让子代理永远挂在"运行中"，因此未知终态收敛为 completed。
+// 症状：打断整轮后，那几个被掐死的子代理在数据层被记成"已完成"，观感是它们干完了活。
+// 根因：2026-08-16 拿 claude 2.1.206 实测打断（见本文件顶部的实测说明）——CLI 发的是
+//   task_updated {"status":"killed"} 与 task_notification {"status":"stopped"}，
+//   两个值都没有分支，落进 default 的"未知终态收敛为 completed"。它们不是未来的未知值，
+//   是当前版本每次打断都会发的值；同一实验里正常跑完发的是明确的 "completed"，
+//   所以 default 那条兜底继续保留是安全的，缺的只是把这两个已知值显式接住。
 const mapTerminalStatus = (status: string | undefined): StreamAgentStatus => {
   switch (status) {
     case 'failed':
@@ -79,6 +85,9 @@ const mapTerminalStatus = (status: string | undefined): StreamAgentStatus => {
     case 'cancelled':
     case 'canceled':
     case 'interrupted':
+    case 'killed':
+    case 'stopped':
+    case 'aborted':
       return 'interrupted'
     case 'in_progress':
     case 'running':

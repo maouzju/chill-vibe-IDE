@@ -153,6 +153,23 @@ test('dragging a chat tab keeps the automation board on screen so it can be the 
   await expect(board).toBeVisible()
   await expect(standbyLane).toBeVisible()
 
+  // Crossing the pane edge on the way into the board briefly activates the
+  // blue split preview. The lane drop stops propagation and absorbs/removes
+  // the source tab, so there may be no source dragend to clean that preview.
+  const paneContent = page.locator('.pane-content').first()
+  const paneBox = await paneContent.boundingBox()
+  if (!paneBox) {
+    throw new Error('Expected the pane content to be visible during the drag')
+  }
+  await paneContent.dispatchEvent('dragover', {
+    dataTransfer,
+    clientX: paneBox.x + paneBox.width / 2,
+    clientY: paneBox.y + 8,
+    bubbles: true,
+    cancelable: true,
+  })
+  await expect(paneContent).toHaveClass(/is-drop-top/)
+
   const laneBox = await standbyLane.boundingBox()
   if (!laneBox) {
     throw new Error('Expected the standby lane to be visible during the drag')
@@ -167,11 +184,13 @@ test('dragging a chat tab keeps the automation board on screen so it can be the 
 
   await standbyLane.dispatchEvent('dragenter', lanePointer)
   await standbyLane.dispatchEvent('dragover', lanePointer)
+  await expect(paneContent).not.toHaveClass(/is-drop-/)
   await standbyLane.dispatchEvent('drop', lanePointer)
   await page.mouse.up()
 
   await expect(page.locator('.automation-board-item')).toHaveCount(1)
   await expect(chatTab).toHaveCount(0)
+  await expect(page.locator('.pane-content[class*="is-drop-"]')).toHaveCount(0)
   await expect
     .poll(() => mock.readState().columns[0]?.cards?.['board-1']?.automationBoard?.items?.length ?? 0)
     .toBe(1)

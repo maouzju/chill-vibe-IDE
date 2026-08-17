@@ -11,7 +11,8 @@ import {
 import {
   attachTurnTelemetry,
   readTurnTelemetry,
-} from '../src/turn-telemetry-summary.ts'
+  summarizeTurnUsage,
+} from '../shared/turn-telemetry-summary.ts'
 
 // 2026-08-16 实测夹具：claude 2.1.206 `-p --output-format stream-json --verbose`
 // 的真实 result 行（`claude -p "say ok" --model claude-haiku-4-5-20251001`）。
@@ -239,4 +240,51 @@ test('a partially reported turn only persists the fields it actually has', () =>
   assert.equal(readTurnTelemetry(attached)?.usage?.size, undefined)
   assert.equal(readTurnTelemetry(attached)?.turnStopReason, undefined)
   assert.equal(attached.meta?.turnUsageSize, undefined)
+})
+
+test('summarizeTurnUsage takes the running cost total instead of adding it up again', () => {
+  // 2026-08-16 实测用户归档：同一会话三轮的 turnUsageCostUsd 是
+  // 120.592 → 120.857 → 121.433 —— CLI 报的是**会话累计**花费，不是单轮增量。
+  // 求和会把这段会话算成 362.88 美元，真实值是 121.43。
+  const message = (id: string, cost: string, used: string) => ({
+    id,
+    role: 'assistant' as const,
+    content: 'reply',
+    createdAt: new Date(2026, 7, 16, 11, 40, 0).toISOString(),
+    meta: {
+      turnUsageUsed: used,
+      turnUsageSize: '200000',
+      turnUsageInput: '1000',
+      turnUsageOutput: '100',
+      turnUsageCostUsd: cost,
+    },
+  })
+
+  const totals = summarizeTurnUsage([
+    message('m-1', '120.592246', '202524283'),
+    message('m-2', '120.857241', '489832'),
+    message('m-3', '121.432833', '992969'),
+  ])
+
+  assert.ok(totals)
+  assert.equal(totals?.turns, 3)
+  // token 计数是每轮各自的量，求和仍然正确。
+  assert.equal(totals?.input, 3000)
+  assert.equal(totals?.output, 300)
+  assert.ok(Math.abs((totals?.costUsd ?? 0) - 121.432833) < 1e-9)
+})
+
+test('summarizeTurnUsage adds completed cost segments when a session restarts its counter', () => {
+  // compact / 换 session 会把累计清零重来。旧段已经发生的费用不能丢失。
+  const message = (id: string, cost: string) => ({
+    id,
+    role: 'assistant' as const,
+    content: 'reply',
+    createdAt: new Date(2026, 7, 16, 11, 40, 0).toISOString(),
+    meta: { turnUsageUsed: '1000', turnUsageCostUsd: cost },
+  })
+
+  const totals = summarizeTurnUsage([message('m-1', '15.83'), message('m-2', '7.87')])
+
+  assert.ok(Math.abs((totals?.costUsd ?? 0) - 23.7) < 1e-9)
 })

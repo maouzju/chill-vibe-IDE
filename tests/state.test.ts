@@ -2643,7 +2643,7 @@ describe('ideReducer pane layout', () => {
     assert.equal(card?.messages[1]?.meta?.kind, 'run-stopped')
   })
 
-  it('clears the live sub-agent running panel when a streaming card is stopped', () => {
+  it('marks live sub-agents interrupted when a streaming card is stopped', () => {
     const state = createState()
     state.columns[0] = createColumn({
       id: 'column-1',
@@ -2692,8 +2692,91 @@ describe('ideReducer pane layout', () => {
 
     const payload = JSON.parse(
       next.columns[0]?.cards['card-1']?.messages[0]?.meta?.structuredData ?? '{}',
-    ) as { agents?: unknown[] }
-    assert.deepEqual(payload.agents, [])
+    ) as { agents?: { threadId: string; path?: string; status: string; activity?: string[] }[] }
+    assert.deepEqual(payload.agents, [
+      {
+        threadId: 'thread-child',
+        path: '/root/reviewer',
+        status: 'interrupted',
+        activity: ['$ pnpm test'],
+      },
+    ])
+  })
+
+  it('keeps dispatched sub-agents on the panel after an interrupt instead of wiping the roster', () => {
+    const state = createState()
+    state.columns[0] = createColumn({
+      id: 'column-1',
+      layout: createPane('pane-1', ['card-1'], 'card-1'),
+      cards: {
+        'card-1': createCard({
+          id: 'card-1',
+          status: 'streaming',
+          streamId: 'stream-1',
+          messages: [
+            {
+              id: 'agents-1',
+              role: 'assistant',
+              content: '',
+              createdAt: timestamp,
+              meta: {
+                provider: 'claude',
+                kind: 'agents',
+                itemId: 'agent-status:claude',
+                structuredData: JSON.stringify({
+                  itemId: 'agent-status:claude',
+                  kind: 'agents',
+                  status: 'completed',
+                  view: 'status',
+                  agents: [
+                    {
+                      threadId: 'thread-done',
+                      nickname: 'reviewer',
+                      status: 'completed',
+                      activity: ['reviewed 12 files'],
+                    },
+                    { threadId: 'thread-live', nickname: 'explorer', status: 'running' },
+                    { threadId: 'thread-queued', nickname: 'planner', status: 'pendingInit' },
+                    { threadId: 'thread-bad', nickname: 'builder', status: 'errored' },
+                  ],
+                }),
+              },
+            },
+          ],
+        }),
+      },
+    })
+
+    const next = ideReducer(state, {
+      type: 'finishStoppedStream',
+      columnId: 'column-1',
+      cardId: 'card-1',
+      stoppedMessage: {
+        id: 'stopped-1',
+        role: 'system',
+        content: 'User interrupted',
+        createdAt: timestamp,
+        meta: {
+          kind: 'run-stopped',
+          stopReason: 'user-interrupt',
+        },
+      },
+    })
+
+    const payload = JSON.parse(
+      next.columns[0]?.cards['card-1']?.messages[0]?.meta?.structuredData ?? '{}',
+    ) as { agents?: { threadId: string; status: string; activity?: string[] }[] }
+
+    assert.deepEqual(
+      payload.agents?.map((agent) => [agent.threadId, agent.status]),
+      [
+        ['thread-done', 'completed'],
+        ['thread-live', 'interrupted'],
+        ['thread-queued', 'interrupted'],
+        ['thread-bad', 'errored'],
+      ],
+    )
+    assert.deepEqual(payload.agents?.[0]?.activity, ['reviewed 12 files'])
   })
 
   it('settles live stream activities without changing the card status', () => {
@@ -2737,10 +2820,10 @@ describe('ideReducer pane layout', () => {
 
     const card = next.columns[0]?.cards['card-1']
     const payload = JSON.parse(card?.messages[0]?.meta?.structuredData ?? '{}') as {
-      agents?: unknown[]
+      agents?: { threadId: string; status: string }[]
     }
     assert.equal(card?.status, 'streaming')
-    assert.deepEqual(payload.agents, [])
+    assert.deepEqual(payload.agents, [{ threadId: 'thread-child', status: 'interrupted' }])
   })
 
 });

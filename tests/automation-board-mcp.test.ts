@@ -94,7 +94,7 @@ const buildMirror = (overrides?: Partial<WorkspaceSessionMirror>): WorkspaceSess
 // Tool definitions
 // ---------------------------------------------------------------------------
 
-test('workspace admin MCP exposes exactly the six session tools with closed input schemas', () => {
+test('workspace admin MCP exposes exactly the seven session tools with closed input schemas', () => {
   assert.deepEqual(
     workspaceAdminMcpToolDefinitions.map((tool) => tool.name),
     [
@@ -104,6 +104,7 @@ test('workspace admin MCP exposes exactly the six session tools with closed inpu
       'move_session_to_lane',
       'send_session_message',
       'set_session_wake_timer',
+      'wake_me_when_sessions_finish',
     ],
   )
 
@@ -149,6 +150,21 @@ test('workspace admin MCP exposes exactly the six session tools with closed inpu
   // 空工作区正是它存在的理由，模型必须被告知没有看板时会落成普通 tab（AC10/AC14）。
   assert.match(createTool?.description ?? '', /tab/i)
   assert.match(createTool?.description ?? '', /running/)
+
+  // 等待工具作用于**调用者自己**：唤醒时发给自己的 note 必填，cardId 绝不能出现在参数里
+  // （谁被唤醒由 SELF_CARD_ID 决定，不给模型冒充别人的机会，AC8）。
+  const awaitTool = workspaceAdminMcpToolDefinitions.find(
+    (tool) => tool.name === 'wake_me_when_sessions_finish',
+  )
+  assert.deepEqual(awaitTool?.inputSchema.required, ['note'])
+  assert.deepEqual(
+    Object.keys(awaitTool?.inputSchema.properties ?? {}).sort(),
+    ['cardIds', 'note', 'timeoutMinutes'],
+  )
+  // 兜底超时不是可选的设计冗余：被打断 / 报错 / 从没开跑的目标永远不发完成广播（AC4）。
+  assert.match(awaitTool?.description ?? '', /timeoutMinutes/)
+  // 模型必须被告知"注册完就结束本回合"，否则它仍会原地轮询 list_sessions。
+  assert.match(awaitTool?.description ?? '', /end your turn|finish your turn/i)
 })
 
 // ---------------------------------------------------------------------------
@@ -375,6 +391,106 @@ test('resolveWorkspaceAdminCommandFromToolCall rejects bad create arguments', ()
   assert.match(noColumn.error ?? '', /no workspace admin access/)
 })
 
+test('resolveWorkspaceAdminCommandFromToolCall points the await command at the caller itself', () => {
+  const full = resolveWorkspaceAdminCommandFromToolCall(
+    'wake_me_when_sessions_finish',
+    {
+      cardIds: ['item-running', 'item-standby'],
+      note: '三张卡都跑完了，逐个 read_session 验收，通过就 move 到 done',
+      timeoutMinutes: 90,
+    },
+    'col-1',
+    'self-card',
+  )
+  assert.deepEqual(full.command, {
+    type: 'admin-await-sessions',
+    columnId: 'col-1',
+    cardId: 'self-card',
+    targetCardIds: ['item-running', 'item-standby'],
+    note: '三张卡都跑完了，逐个 read_session 验收，通过就 move 到 done',
+    timeoutMinutes: 90,
+  })
+
+  // 省略 cardIds = 等本工作区当前所有其它 agent 会话。空数组交给渲染端解析：
+  // 哪些卡算"其它 agent"是 state 的事实，模型手里的镜像随时可能过期。
+  const defaulted = resolveWorkspaceAdminCommandFromToolCall(
+    'wake_me_when_sessions_finish',
+    { note: '回来收活' },
+    'col-1',
+    'self-card',
+  )
+  assert.deepEqual(defaulted.command, {
+    type: 'admin-await-sessions',
+    columnId: 'col-1',
+    cardId: 'self-card',
+    targetCardIds: [],
+    note: '回来收活',
+    timeoutMinutes: 60,
+  })
+
+  for (const resolution of [full, defaulted]) {
+    const parsed = workspaceAdminCommandSchema.safeParse(resolution.command)
+    assert.equal(
+      parsed.success,
+      true,
+      `await command must satisfy the shared schema: ${JSON.stringify(resolution)}`,
+    )
+  }
+})
+
+test('resolveWorkspaceAdminCommandFromToolCall rejects bad await arguments', () => {
+  // 与 create 同一个坑（pitfall 294）：这条命令的目标是调用者自己，参数里没有
+  // cardId，所以公共的 "cardId is required" 前置校验必须给它让路。只断言"报错了"
+  // 挡不住这个 bug —— 它确实会报错，只是报错的理由是错的。
+  const missingNote = resolveWorkspaceAdminCommandFromToolCall(
+    'wake_me_when_sessions_finish',
+    { cardIds: ['item-running'] },
+    'col-1',
+    'self-card',
+  )
+  assert.equal(missingNote.command, undefined)
+  assert.match(missingNote.error ?? '', /note/)
+  assert.doesNotMatch(missingNote.error ?? '', /cardId is required/)
+
+  const blankNote = resolveWorkspaceAdminCommandFromToolCall(
+    'wake_me_when_sessions_finish',
+    { note: '   ' },
+    'col-1',
+    'self-card',
+  )
+  assert.equal(blankNote.command, undefined)
+  assert.match(blankNote.error ?? '', /note/)
+
+  const badTimeout = resolveWorkspaceAdminCommandFromToolCall(
+    'wake_me_when_sessions_finish',
+    { note: '回来收活', timeoutMinutes: 0 },
+    'col-1',
+    'self-card',
+  )
+  assert.equal(badTimeout.command, undefined)
+  assert.match(badTimeout.error ?? '', /timeoutMinutes/)
+
+  const blankTarget = resolveWorkspaceAdminCommandFromToolCall(
+    'wake_me_when_sessions_finish',
+    { note: '回来收活', cardIds: ['item-running', '  '] },
+    'col-1',
+    'self-card',
+  )
+  assert.equal(blankTarget.command, undefined)
+  assert.match(blankTarget.error ?? '', /cardIds/)
+
+  // 拿不到自己的 cardId 就无从知道该叫醒谁。静默换成"叫醒别人"是最坏的降级，
+  // 所以这里必须失败而不是回退。
+  const noSelf = resolveWorkspaceAdminCommandFromToolCall(
+    'wake_me_when_sessions_finish',
+    { note: '回来收活' },
+    'col-1',
+    '',
+  )
+  assert.equal(noSelf.command, undefined)
+  assert.match(noSelf.error ?? '', /which session to wake/i)
+})
+
 // ---------------------------------------------------------------------------
 // Snapshot → text rendering
 // ---------------------------------------------------------------------------
@@ -588,6 +704,60 @@ test('callWorkspaceAdminTool posts a create command and still reports delivery, 
       model: 'claude-sonnet-5',
     },
   ])
+})
+
+test('callWorkspaceAdminTool posts an await command aimed at the caller itself', async () => {
+  const harness = createToolHarness()
+
+  const armed = await callWorkspaceAdminTool(
+    'wake_me_when_sessions_finish',
+    { cardIds: ['item-running'], note: '醒来先 read_session 验收 item-running' },
+    harness.context,
+  )
+
+  assert.equal(armed.isError, false)
+  assert.match(armed.content[0]?.text ?? '', /delivered/i)
+  assert.deepEqual(harness.posted, [
+    {
+      type: 'admin-await-sessions',
+      columnId: 'col-1',
+      cardId: 'self-card',
+      targetCardIds: ['item-running'],
+      note: '醒来先 read_session 验收 item-running',
+      timeoutMinutes: 60,
+    },
+  ])
+})
+
+test('callWorkspaceAdminTool refuses to wait on a cardId that is not in this workspace', async () => {
+  const harness = createToolHarness()
+
+  const result = await callWorkspaceAdminTool(
+    'wake_me_when_sessions_finish',
+    { cardIds: ['item-running', 'ghost-card'], note: '回来收活' },
+    harness.context,
+  )
+
+  // 等一张不存在的卡 = 等到超时为止，而模型完全不知道自己在空等。镜像就在手边，
+  // 这个错误必须当场报出来。
+  assert.equal(result.isError, true)
+  assert.match(result.content[0]?.text ?? '', /ghost-card/)
+  assert.deepEqual(harness.posted, [])
+})
+
+test('callWorkspaceAdminTool refuses to wait when the workspace has no other session', async () => {
+  const harness = createToolHarness({ mirror: buildMirror({ sessions: [] }) })
+
+  const result = await callWorkspaceAdminTool(
+    'wake_me_when_sessions_finish',
+    { note: '回来收活' },
+    harness.context,
+  )
+
+  // 没有可等的会话时注册等待只会等到超时，同样必须当场报错而不是静默投递。
+  assert.equal(result.isError, true)
+  assert.match(result.content[0]?.text ?? '', /no other session/i)
+  assert.deepEqual(harness.posted, [])
 })
 
 test('callWorkspaceAdminTool rejects a bad create argument before touching the bridge', async () => {
@@ -1283,6 +1453,105 @@ test(
           lane: 'standby',
           provider: 'claude',
           model: 'claude-sonnet-5',
+        },
+      ])
+    } finally {
+      child.kill()
+      await harness.bridge.stop()
+    }
+  },
+)
+
+// 与上面那条同理：`wake_me_when_sessions_finish` 的默认超时、参数名、命令 tag 在
+// `automation-board-mcp.js` 里都是**抄写**的字面量（那个文件被当普通 Node 脚本
+// spawn，不能 import TS schema），而只 import 纯函数的单测断言的两边是同一份抄写。
+// 这条让真子进程生成的命令真的过一次共享 zod schema —— 漂移的表现是 bridge 400，
+// 在业务上就是"超管说它登记了等待，其实一次都没登记"。
+test(
+  'wake_me_when_sessions_finish travels from a real stdio client through the bridge into a schema-valid command',
+  { timeout: 20_000 },
+  async () => {
+    const harness = createBridgeHarness()
+    const info = await harness.bridge.start()
+    const scriptPath = fileURLToPath(new URL('../server/automation-board-mcp.js', import.meta.url))
+    const child = spawn(process.execPath, [scriptPath], {
+      stdio: ['pipe', 'pipe', 'pipe'],
+      env: {
+        ...process.env,
+        [workspaceAdminMcpUrlEnvKey]: info.url,
+        [workspaceAdminMcpTokenEnvKey]: info.token,
+        [workspaceAdminMcpColumnIdEnvKey]: 'col-1',
+        [workspaceAdminMcpSelfCardIdEnvKey]: 'self-card',
+      },
+    })
+
+    try {
+      const lines: string[] = []
+      let pending = ''
+      let resolveAnswer = () => {}
+      const answered = new Promise<void>((resolve) => {
+        resolveAnswer = resolve
+      })
+
+      child.stdout.setEncoding('utf8')
+      child.stdout.on('data', (chunk: string) => {
+        pending += chunk
+        const parts = pending.split('\n')
+        pending = parts.pop() ?? ''
+        for (const part of parts) {
+          if (part.trim()) {
+            lines.push(part)
+          }
+        }
+        if (lines.length >= 1) {
+          resolveAnswer()
+        }
+      })
+
+      child.stdin.write(
+        `${JSON.stringify({
+          jsonrpc: '2.0',
+          id: 9,
+          method: 'tools/call',
+          params: {
+            name: 'wake_me_when_sessions_finish',
+            arguments: {
+              cardIds: ['item-running'],
+              note: '醒来先 read_session 验收 item-running',
+            },
+          },
+        })}\n`,
+      )
+
+      await Promise.race([
+        answered,
+        new Promise<never>((_, reject) => {
+          setTimeout(
+            () => reject(new Error(`stdio server never answered; raw stdout so far: ${JSON.stringify(pending)}`)),
+            8_000,
+          ).unref()
+        }),
+      ])
+
+      const call = JSON.parse(lines[0]) as {
+        id: number
+        result?: { isError?: boolean; content?: { text?: string }[] }
+      }
+      assert.equal(call.id, 9)
+      assert.equal(call.result?.isError, false, `await tool must not error: ${lines[0]}`)
+      // 唤醒的是自己，文案不能渲染成 "for session undefined"。
+      assert.doesNotMatch(call.result?.content?.[0]?.text ?? '', /undefined/)
+      // 投递成功之后该闭嘴：模型必须结束回合才可能被重新唤起。
+      assert.match(call.result?.content?.[0]?.text ?? '', /END YOUR TURN/i)
+
+      assert.deepEqual(harness.dispatched, [
+        {
+          type: 'admin-await-sessions',
+          columnId: 'col-1',
+          cardId: 'self-card',
+          targetCardIds: ['item-running'],
+          note: '醒来先 read_session 验收 item-running',
+          timeoutMinutes: 60,
         },
       ])
     } finally {

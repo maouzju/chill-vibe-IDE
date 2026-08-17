@@ -88,33 +88,51 @@ test('flashWindowOnce skips already focused windows', () => {
   assert.deepEqual(target.calls, [])
 })
 
-test('window close minimizes when the runtime setting is enabled', () => {
+test('window close minimizes when the close behavior asks for the taskbar', () => {
   assert.equal(
     resolveWindowCloseAction({
       platform: 'win32',
-      minimizeToTaskbarOnCloseEnabled: true,
+      closeBehavior: 'minimize',
       quitAfterFlushPending: false,
     }),
     'minimize',
   )
 })
 
-test('window close never blocks an explicit quit already in progress', () => {
+// 症状：用户开了“关闭后最小化到任务栏”，点 X 只是把窗口缩起来，应用仍占着任务栏，
+//   与“—”按钮没有区别，用户判定该设置“根本没实现”。
+// 根因：只有 minimize 一档，从来没有真正把窗口藏起来的路径。
+// 被否决的替代：把 minimize 直接改成 hide —— 那会删掉一部分用户依赖的任务栏入口，
+//   所以改为三态，让两种期望各自可选。
+test('window close hides to the tray when the close behavior asks for it', () => {
   assert.equal(
     resolveWindowCloseAction({
       platform: 'win32',
-      minimizeToTaskbarOnCloseEnabled: true,
-      quitAfterFlushPending: true,
+      closeBehavior: 'tray',
+      quitAfterFlushPending: false,
     }),
-    'allow-close',
+    'hide-to-tray',
   )
 })
 
-test('window close preserves the existing platform behavior when disabled', () => {
+test('window close never blocks an explicit quit already in progress', () => {
+  for (const closeBehavior of ['minimize', 'tray'] as const) {
+    assert.equal(
+      resolveWindowCloseAction({
+        platform: 'win32',
+        closeBehavior,
+        quitAfterFlushPending: true,
+      }),
+      'allow-close',
+    )
+  }
+})
+
+test('window close preserves the existing platform behavior when set to quit', () => {
   assert.equal(
     resolveWindowCloseAction({
       platform: 'win32',
-      minimizeToTaskbarOnCloseEnabled: false,
+      closeBehavior: 'quit',
       quitAfterFlushPending: false,
     }),
     'quit-after-flush',
@@ -122,9 +140,22 @@ test('window close preserves the existing platform behavior when disabled', () =
   assert.equal(
     resolveWindowCloseAction({
       platform: 'darwin',
-      minimizeToTaskbarOnCloseEnabled: false,
+      closeBehavior: 'quit',
       quitAfterFlushPending: false,
     }),
     'allow-close',
+  )
+})
+
+// macOS 没有 Windows 那种任务栏/托盘二分，托盘档在那里等价于隐藏窗口留 Dock 图标，
+// 但绝不能变成退出，否则勾了“不退出”的用户反而丢掉正在跑的 Agent。
+test('tray behavior still keeps macOS windows alive', () => {
+  assert.equal(
+    resolveWindowCloseAction({
+      platform: 'darwin',
+      closeBehavior: 'tray',
+      quitAfterFlushPending: false,
+    }),
+    'hide-to-tray',
   )
 })

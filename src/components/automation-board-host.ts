@@ -59,6 +59,8 @@ export type AutomationBoardActions = {
     index?: number,
   ) => void
   deleteItem: (columnId: string, boardCardId: string, cardId: string) => void
+  /** 一次清空整条泳道（项与会话卡一起删）。二次确认由调用方负责。 */
+  clearLane: (columnId: string, boardCardId: string, lane: AutomationBoardLane) => void
   saveTemplate: (columnId: string, boardCardId: string, cardId: string) => void
   renameTemplate: (workspacePath: string, templateId: string, name: string) => void
   deleteTemplate: (workspacePath: string, templateId: string) => void

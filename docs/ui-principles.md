@@ -32,11 +32,14 @@ It exists to reduce subjective back-and-forth. If a UI change violates these rul
 - Drag handles, resize guides, and helper rails should be invisible at rest.
 - Interaction affordances may appear on hover, focus, drag, or resize, but should not linger as decoration.
 - Persistent utility chrome is a bug unless it carries primary meaning.
-- Explanatory copy is idle chrome too. In dense control surfaces (the composer settings menu, tool
-  popovers), "what does this switch do" belongs behind hover — every control carries one, and none of
-  them is printed inline. Live state (a warning, a count, a locked batch) is not an explanation and
-  may stay visible. See [`ComposerSettingsRow`](../src/components/ComposerSettingsRow.tsx) and
-  [`tests/composer-settings-hints.spec.ts`](../tests/composer-settings-hints.spec.ts).
+- Explanatory copy is idle chrome too. In dense control surfaces (the composer settings menu, the
+  Settings panel, tool popovers), "what does this switch do" belongs behind hover — every control
+  carries one, and none of them is printed inline. Live state (a warning, a count, a version, an
+  install status) is not an explanation and may stay visible. So may the one-line intro that
+  introduces a whole group. See [`ComposerSettingsRow`](../src/components/ComposerSettingsRow.tsx),
+  the `.settings-hover-detail` / `.settings-hover-note` pair in [`src/index.css`](../src/index.css),
+  [`tests/composer-settings-hints.spec.ts`](../tests/composer-settings-hints.spec.ts) and
+  [`tests/settings-hover-hints.spec.ts`](../tests/settings-hover-hints.spec.ts).
 
 ### 4. Visual Hierarchy Must Be Obvious
 
@@ -105,6 +108,9 @@ These are important enough to automate:
 - Resize affordances do not remain visible while idle.
 - Every row of the composer settings menu documents itself through a hover hint, and no hint is
   rendered inline — pinned by [`tests/composer-settings-hints.spec.ts`](../tests/composer-settings-hints.spec.ts).
+- Settings panel toggles document themselves the same way: each one points at its hint through
+  `aria-describedby`, and the hint sits in a `.settings-hover-note` that is hidden at rest — pinned
+  by [`tests/settings-hover-hints.spec.ts`](../tests/settings-hover-hints.spec.ts).
 - Column-hosted surfaces reflow on their own inline-size: the automation board's lane grid is pinned
   at 3 / 2 / 1 tracks by [`tests/automation-board-layout.spec.ts`](../tests/automation-board-layout.spec.ts),
   which holds the viewport at 1440px and only changes how many columns are open.

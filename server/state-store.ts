@@ -39,6 +39,7 @@ import {
   PM_TOOL_MODEL,
 } from '../shared/models.js'
 import { normalizeReasoningEffort } from '../shared/reasoning.js'
+import { summarizeTurnUsage } from '../shared/turn-telemetry-summary.js'
 import {
   appStateSchema,
   automationBoardLanes,
@@ -50,6 +51,8 @@ import {
   internalSessionHistoryLoadResponseSchema,
   legacyAutomationBoardAutoTriggerSchema,
   recentCrashRecoverySchema,
+  sessionUsageTotalsSchema,
+  wakeTimerModes,
   type AppState,
   type AppStateLoadResponse,
   type AutomationBoardItem,
@@ -199,6 +202,12 @@ const renderSessionHistoryForRenderer = (entries: SessionHistoryEntry[]): Sessio
       ...entry,
       messageCount,
       messagesPreview: true,
+      // 存量归档条目是在 usageTotals 存在之前落盘的，它们的用量只剩在这里的完整
+      // 转录里。这是剥掉 meta 前的最后一站，顺手补一次，统计卡才看得到老会话的
+      // token。刻意只在转录完整时补：预览态算出来的是残值，给个错数字比没数字更糟。
+      usageTotals:
+        entry.usageTotals ??
+        (hasCompleteMessages ? (summarizeTurnUsage(entry.messages) ?? undefined) : undefined),
       messages: hasCompleteMessages
         ? createRendererSessionHistoryMessages(entry.messages)
         : entry.messages.map(toRendererSessionHistoryMessage),
@@ -521,8 +530,18 @@ const normalizePersistedQueuedSends = (value: unknown): ChatCard['queuedSends'] 
   })
 }
 
+// 症状：2026-08-17 加 `sessions` 模式时发现这里原本是硬编码的
+// `'left-tab' | 'duration'` 白名单 —— 任何新模式一读盘就被静默改写成
+// `workspace-agents`，超管卡恢复后带着一串显式目标和一个再也不会被读取的 wakeAt，
+// 兜底超时凭空消失，而且全程零日志。
+// 根因：`wakeTimerModes` 这个联合在仓库里被手抄了多份，`unknown` 归一化这份
+// TypeScript 一个字都管不到。
+// 为什么不能继续列字面量：只要枚举再长一个值，这里就必然漏改，而症状是
+// "配置写进去了但产物不同步"这一类最难查的 bug。
 const normalizeWakeTimerMode = (value: unknown): NonNullable<ChatCard['wakeTimerMode']> =>
-  value === 'left-tab' || value === 'duration' ? value : 'workspace-agents'
+  typeof value === 'string' && (wakeTimerModes as readonly string[]).includes(value)
+    ? (value as NonNullable<ChatCard['wakeTimerMode']>)
+    : 'workspace-agents'
 
 const normalizeWakeTimerDurationMinutes = (value: unknown) =>
   typeof value === 'number' && Number.isFinite(value)
@@ -1013,6 +1032,11 @@ const normalizePersistedCard = (
     wakeTimerArmedAt: normalizeWakeTimerDate(card.wakeTimerArmedAt),
     wakeTimerWakeAt: normalizeWakeTimerDate(card.wakeTimerWakeAt),
     wakeTimerPendingTargetIds: normalizeWakeTimerTargetIds(card.wakeTimerPendingTargetIds),
+    // 这份归一化是**白名单**：它按字段重建整张卡，没列到的一律落盘即丢。
+    // 2026-08-17 真实 Electron 跑一次就抓到了 —— 超管注册的等待写进内存、UI 也
+    // 显示了，重启后 `wakeTimerExplicitTargets` 消失，那批显式名单退化成"等全列
+    // 没人在跑"、兜底上界也不再被读取。加持久化字段必须同时加这里。
+    wakeTimerExplicitTargets: card.wakeTimerExplicitTargets === true ? true : undefined,
     stickyNote: typeof card.stickyNote === 'string' ? card.stickyNote : fallback.stickyNote,
     stickyNoteId:
       normalizedModel === STICKYNOTE_TOOL_MODEL
@@ -1143,6 +1167,12 @@ const normalizePersistedSessionHistoryEntry = (
     messages,
     messageCount,
     messagesPreview: typeof entry.messagesPreview === 'boolean' ? entry.messagesPreview : undefined,
+    // 症状：归档会话的 token / 花费重启后从统计卡上消失，被计进「其中 N 段无用量记录」。
+    // 根因：这个 normalizer 是逐字段重建的，漏一个 optional 字段就等于把它删掉，而它在读盘
+    //   路径上会跑两次（loadRendererStartupState → sanitizeStateResult）；跑到第二次时消息
+    //   已被裁成预览、meta 已剥离，renderSessionHistoryForRenderer 的补算分支再也救不回来。
+    // 为什么不能省掉校验直接透传：这份数据来自磁盘，坏值会一路流进统计卡的除法。
+    usageTotals: sessionUsageTotalsSchema.safeParse(entry.usageTotals).data,
     workspaceCloseId: normalizeOptionalString(entry.workspaceCloseId),
     archivedAt: normalizePersistedTimestamp(entry.archivedAt),
   }

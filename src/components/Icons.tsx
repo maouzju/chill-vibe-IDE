@@ -237,6 +237,13 @@ export const CloudIcon = (props: SVGProps<SVGSVGElement>) => (
   </BaseIcon>
 )
 
+/** Bar chart — activity statistics */
+export const ChartIcon = (props: SVGProps<SVGSVGElement>) => (
+  <BaseIcon {...props}>
+    <path d="M4 20V11M10 20V4M16 20v-6M2 20h20" strokeLinecap="round" />
+  </BaseIcon>
+)
+
 export const EyeIcon = (props: SVGProps<SVGSVGElement>) => (
   <BaseIcon {...props}>
     <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />

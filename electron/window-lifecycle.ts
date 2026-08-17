@@ -15,23 +15,36 @@ type AttentionWindow = PresentableWindow & {
 
 const attentionTimers = new WeakMap<AttentionWindow, ReturnType<typeof setTimeout>>()
 
-export type WindowCloseAction = 'allow-close' | 'minimize' | 'quit-after-flush'
+export type WindowCloseAction =
+  | 'allow-close'
+  | 'minimize'
+  | 'hide-to-tray'
+  | 'quit-after-flush'
+
+export type WindowCloseBehavior = 'quit' | 'minimize' | 'tray'
 
 export const resolveWindowCloseAction = ({
   platform,
-  minimizeToTaskbarOnCloseEnabled,
+  closeBehavior,
   quitAfterFlushPending,
 }: {
   platform: NodeJS.Platform
-  minimizeToTaskbarOnCloseEnabled: boolean
+  closeBehavior: WindowCloseBehavior
   quitAfterFlushPending: boolean
 }): WindowCloseAction => {
   if (quitAfterFlushPending) {
     return 'allow-close'
   }
 
-  if (minimizeToTaskbarOnCloseEnabled) {
+  if (closeBehavior === 'minimize') {
     return 'minimize'
+  }
+
+  // 症状：用户开了“关闭后最小化到任务栏”，点 X 的效果和点“—”完全一样，应用还占着任务栏。
+  // 根因：2026-08-09 首版只做了 minimize 一档，没有真正隐藏窗口的路径。
+  // 被否决的替代：把 minimize 改成 hide —— 依赖任务栏入口的用户会失去它，所以拆成两档。
+  if (closeBehavior === 'tray') {
+    return 'hide-to-tray'
   }
 
   return platform === 'darwin' ? 'allow-close' : 'quit-after-flush'

@@ -134,6 +134,8 @@ export type WakeTimerCardSnapshot = {
   // needs that distinction; see isWakeTimerTargetBusy.
   hasPendingWakeBatch?: boolean
   backgroundWorkPending?: boolean
+  /** 这张卡自己在等谁。只有一处用它：显式名单的一层环检测，见 resolveSupervisorWakeTargets。 */
+  pendingWakeTargetIds?: readonly string[]
 }
 
 // 症状：2026-07-28 左邻自己也在待唤醒时，右侧卡把它当成"已完成"立刻发车，链式接力断掉。
@@ -211,6 +213,52 @@ export const armWakeTimerBatch = ({
   }
 }
 
+export type SupervisorWakeTargetResult =
+  | { ok: true; targetIds: string[] }
+  | { ok: false; reason: 'no-live-target' }
+
+/**
+ * 超管点名的等待名单 → 真正能等的那几张卡。
+ *
+ * 与另外三种条件的根本差别：名单是命令给的，不是从拓扑推出来的，所以这里
+ * **刻意不按忙闲过滤** —— 刚被 `create_session` 建出来的卡还没进 streaming，
+ * 按忙闲筛会让名单当场为空，本轮一结束就自唤醒，这个工具就废了。
+ *
+ * 只剔三类：自己（等自己结束就是等一个永远不会到达的事件，这条批次恰恰要在
+ * 自己空闲之后才发车）、工具卡（看板 / 统计 / 便签不是会话）、以及已经不存在
+ * 的 id（卡被关掉了）。
+ *
+ * 第四类是环：`workspace-agents` 靠"不把待唤醒算作忙"规避成环，`left-tab` 靠
+ * 严格更小的 Tab 索引天然无环，而显式名单是任意集合，两条护栏都没有。A 等 B、
+ * B 等 A 时两边都不再产生回合、也就都不会广播完成，只有兜底超时能拆开 —— 与其
+ * 让两个超管互相钉住一小时，不如在这里把对方摘掉。
+ */
+export const resolveSupervisorWakeTargets = ({
+  ownerCardId,
+  requestedTargetIds,
+  cards,
+}: {
+  ownerCardId: string
+  requestedTargetIds: readonly string[]
+  cards: readonly WakeTimerCardSnapshot[]
+}): SupervisorWakeTargetResult => {
+  const requested = new Set(requestedTargetIds)
+  const waitsOnOwner = (card: WakeTimerCardSnapshot) =>
+    (card.pendingWakeTargetIds ?? []).includes(ownerCardId)
+
+  const targetIds = cards
+    .filter((card) =>
+      card.id !== ownerCardId &&
+      card.isAgent &&
+      (requested.size === 0 || requested.has(card.id)) &&
+      !waitsOnOwner(card),
+    )
+    .map((card) => card.id)
+
+  // 空名单 = 本轮一结束立刻自唤醒。宁可注册失败，也不要一个 0 秒的等待。
+  return targetIds.length > 0 ? { ok: true, targetIds } : { ok: false, reason: 'no-live-target' }
+}
+
 /**
  * 挂起中的批次改唤醒方式 = 按新条件重新 arm，而不是"下一批才生效"。
  *
@@ -231,7 +279,11 @@ export const rearmWakeTimerBatchForPatch = ({
   patch: Partial<ChatCard>
   card: Pick<
     ChatCard,
-    'id' | 'wakeTimerMode' | 'wakeTimerDurationMinutes' | 'wakeTimerQueuedSends'
+    | 'id'
+    | 'wakeTimerMode'
+    | 'wakeTimerDurationMinutes'
+    | 'wakeTimerQueuedSends'
+    | 'wakeTimerExplicitTargets'
   >
   cards: readonly WakeTimerCardSnapshot[]
   paneTabIds: readonly string[]
@@ -249,6 +301,13 @@ export const rearmWakeTimerBatchForPatch = ({
   const changesCondition =
     patch.wakeTimerMode !== undefined || patch.wakeTimerDurationMinutes !== undefined
   if (!changesCondition || (card.wakeTimerQueuedSends?.length ?? 0) === 0) {
+    return null
+  }
+
+  // 显式名单**算不出来**：armWakeTimerBatch 只认 streaming 快照和左邻拓扑，重算
+  // 会把超管点名的那几张换成"此刻在跑的所有 agent"、并把兜底超时一起置空。
+  // 用户在这张卡上碰一下条件下拉或时长框就会走到这里，所以必须在重算之前退出。
+  if (card.wakeTimerExplicitTargets === true) {
     return null
   }
 
@@ -281,6 +340,7 @@ export const isWakeTimerConditionReady = ({
   ownerBackgroundWorkPending = false,
   pendingTargetIds,
   activePeerIds = [],
+  explicitTargets = false,
   wakeAt,
   nowMs,
 }: {
@@ -289,19 +349,37 @@ export const isWakeTimerConditionReady = ({
   ownerBackgroundWorkPending?: boolean
   pendingTargetIds: readonly string[]
   activePeerIds?: readonly string[]
+  /** 等待名单是超管点名的显式集合（见 resolveSupervisorWakeTargets）。 */
+  explicitTargets?: boolean
   wakeAt: string | undefined
   nowMs: number
 }) => {
-  if (ownerStatus !== 'idle' || ownerBackgroundWorkPending) {
+  if (ownerBackgroundWorkPending || ownerStatus === 'streaming') {
     return false
   }
 
-  if (mode === 'duration') {
-    const wakeTimestamp = wakeAt ? Date.parse(wakeAt) : Number.NaN
-    return Number.isFinite(wakeTimestamp) && nowMs >= wakeTimestamp
+  // 显式名单的 owner 允许停在 error：那一轮在 provider 侧失败（中转空 200、重试
+  // 耗尽）不调完成广播、也不进拓扑签名，一刀切要求 idle 会让这张卡连兜底超时都
+  // 等不到，等于永久挂起。用户自己挂的三种条件行为一个字不改。
+  if (!explicitTargets && ownerStatus !== 'idle') {
+    return false
   }
 
-  if (mode === 'workspace-agents' && activePeerIds.length > 0) {
+  // wakeAt 是**所有**模式的硬上界，不再是 duration 独占：被打断 / 报错 / 从没
+  // 开跑的目标永远不会广播完成，没有上界就是一次永久挂起。另外三种条件的
+  // wakeAt 恒为 undefined，所以这一步对它们是空操作。
+  const wakeTimestamp = wakeAt ? Date.parse(wakeAt) : Number.NaN
+  if (Number.isFinite(wakeTimestamp) && nowMs >= wakeTimestamp) {
+    return true
+  }
+
+  if (mode === 'duration') {
+    return false
+  }
+
+  // 全对全的"等这一列没人在跑"只对用户自己挂的条件成立。超管点了名，就不该被
+  // 一个无关的长跑 tab 永久压住 —— 那等于把它点的名当没看见。
+  if (mode === 'workspace-agents' && !explicitTargets && activePeerIds.length > 0) {
     return false
   }
 

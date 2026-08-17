@@ -61,6 +61,8 @@ export function resolveWorkspaceAdminCommandFromToolCall(
   name: string,
   args: Record<string, unknown> | undefined,
   columnId: string,
+  /** 只有 `wake_me_when_sessions_finish` 用得到：它唤醒的是调用者自己。 */
+  selfCardId?: string,
 ): WorkspaceAdminCommandResolution
 
 export function callWorkspaceAdminTool(

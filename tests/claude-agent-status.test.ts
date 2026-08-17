@@ -216,6 +216,28 @@ test('task_notification settles the sub-agent when no task_updated arrives', () 
   assert.equal(update.activity?.agents.length, 0)
 })
 
+// 2026-08-16 实测 claude 2.1.206：打断整轮时，CLI 在 9ms 内对每个在跑的子代理发
+// task_updated {"status":"killed"} + task_notification {"status":"stopped"}，
+// 并真的掐死它派生的进程（marker 进程数 4 → 0）。正常跑完时发的则是明确的 "completed"。
+// 这两个值当时都没有分支，落进 default 被当成"已完成"——等于把被杀的子代理报成干完了活。
+test('a killed sub-agent is reported as interrupted rather than completed', () => {
+  const tracker = createClaudeAgentStatusTracker()
+  tracker.handleEvent(taskStarted())
+  tracker.handleEvent(taskUpdated('killed'))
+
+  assert.equal(tracker.getAgent(taskId)?.status, 'interrupted')
+  assert.equal(tracker.hasRunningAgents(), false)
+})
+
+test('a stopped sub-agent notification is reported as interrupted rather than completed', () => {
+  const tracker = createClaudeAgentStatusTracker()
+  tracker.handleEvent(taskStarted())
+  tracker.handleEvent(taskNotification('stopped'))
+
+  assert.equal(tracker.getAgent(taskId)?.status, 'interrupted')
+  assert.equal(tracker.hasRunningAgents(), false)
+})
+
 test('a failed sub-agent is reported as errored rather than silently completed', () => {
   const tracker = createClaudeAgentStatusTracker()
   tracker.handleEvent(taskStarted())

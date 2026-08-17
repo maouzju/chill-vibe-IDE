@@ -300,11 +300,56 @@ test('Electron window close minimizes instead of quitting when the runtime setti
 
   assert.match(
     mainBody,
-    /desktop:sync-runtime-settings[\s\S]+minimizeToTaskbarOnCloseEnabled = parsed\.minimizeToTaskbarOnCloseEnabled/,
+    /desktop:sync-runtime-settings[\s\S]+closeBehavior = parsed\.closeBehavior/,
   )
   assert.match(
     mainBody,
     /resolveWindowCloseAction\([\s\S]+if \(closeAction === 'minimize'\) \{[\s\S]+win\.minimize\(\)[\s\S]+return/,
+  )
+})
+
+// 症状：勾了“关闭后最小化”，点 X 只是缩小窗口，任务栏图标还在，用户判定功能没做。
+// 根因：主进程只有 minimize 一条隐藏路径。托盘档必须真的 hide 并让出任务栏格位，
+//   同时留一个能把窗口叫回来的入口，否则窗口就永久失联了。
+test('Electron close-to-tray hides the window, frees the taskbar slot, and keeps a way back', async () => {
+  const mainBody = await readFile(path.join(process.cwd(), 'electron', 'main.ts'), 'utf8')
+
+  assert.match(
+    mainBody,
+    /if \(closeAction === 'hide-to-tray'\) \{[\s\S]+win\.hide\(\)[\s\S]+setSkipTaskbar\(true\)[\s\S]+return/,
+  )
+  // 托盘图标本身就是唯一的返回入口，隐藏前必须先确保它建起来了。
+  assert.match(mainBody, /ensureTray\(win\)/)
+  assert.match(mainBody, /new Tray\(/)
+  // 托盘菜单里的退出必须走刷盘退出，不能 app.exit 把未保存状态丢掉。
+  assert.match(
+    mainBody,
+    /Menu\.buildFromTemplate\(\[[\s\S]+?scheduleQuitAfterFlush\(\)[\s\S]+?\],?\s*\)/,
+  )
+  // 托盘图标是 GDI 资源，退出前不销毁会在通知区留下点不动的幽灵图标。
+  assert.match(mainBody, /will-quit[\s\S]+?destroyTray\(\)/)
+})
+
+// 症状（要防的）：窗口已藏进托盘（任务栏无格位），点托盘图标还原时若 presentWindow 失败，
+//   托盘图标却已经先被销毁 —— 窗口不可见、任务栏没有入口、托盘也没了，应用变成一个
+//   用户再也叫不回来的后台进程。
+// 根因：restoreFromTray 把 destroyTray() 写在了函数第一句，与 close 分支「先建托盘、
+//   建不出来就不隐藏」的顺序刚好相反。销毁唯一的返回入口必须发生在还原成功之后。
+test('Electron tray restore drops the tray icon only after the window is actually back', async () => {
+  const mainBody = await readFile(path.join(process.cwd(), 'electron', 'main.ts'), 'utf8')
+
+  const start = mainBody.indexOf('function restoreFromTray(')
+  assert.ok(start >= 0, 'expected a restoreFromTray helper in electron/main.ts')
+
+  const body = mainBody.slice(start, mainBody.indexOf('\n}', start))
+  const presentAt = body.indexOf('presentWindow(win)')
+  const destroyAt = body.lastIndexOf('destroyTray()')
+
+  assert.ok(presentAt >= 0, 'restoreFromTray should present the window')
+  assert.ok(destroyAt >= 0, 'restoreFromTray should eventually drop the tray icon')
+  assert.ok(
+    destroyAt > presentAt,
+    'the tray icon is the only way back while the window is hidden, so it must be destroyed after presentWindow succeeds, not before',
   )
 })
 

@@ -27,6 +27,7 @@ import {
   GIT_TOOL_MODEL,
   IMAGEEDITOR_TOOL_MODEL,
   MUSIC_TOOL_MODEL,
+  STATS_TOOL_MODEL,
   STICKYNOTE_TOOL_MODEL,
   TEXTEDITOR_TOOL_MODEL,
   WEATHER_TOOL_MODEL,
@@ -162,6 +163,7 @@ import {
   AutomationBoardCard,
   type AutomationBoardCardProps,
 } from './AutomationBoardCard'
+import { StatsCard } from './StatsCard'
 import { BrainstormCard } from './BrainstormCard'
 import { resolveBrainstormRequestTarget } from './brainstorm-card-utils'
 import { getLatestUserAnswerAfterAskUserMessage } from './ask-user-answer-state'
@@ -191,6 +193,7 @@ import {
   StructuredToolGroupCard,
 } from './StructuredBlocks'
 import {
+  ChartIcon,
   ClaudeIcon,
   CloudIcon,
   CloseIcon,
@@ -525,6 +528,9 @@ const getModelOptionIcon = (option: ModelOption): ReactNode => {
   if (option.model === TEXTEDITOR_TOOL_MODEL) {
     return <FileTextIcon className="model-option-icon" aria-hidden="true" />
   }
+  if (option.model === STATS_TOOL_MODEL) {
+    return <ChartIcon className="model-option-icon" aria-hidden="true" />
+  }
   if (option.provider === 'claude') {
     return <ClaudeIcon className="model-option-icon" aria-hidden="true" />
   }
@@ -606,6 +612,15 @@ const getEmptyStateToolEntry = (
       title: text.experimentalWhiteNoiseLabel,
       description: text.emptyStateWhiteNoiseDescription,
       icon: <HeadphonesIcon aria-hidden="true" />,
+    }
+  }
+
+  if (model === STATS_TOOL_MODEL) {
+    return {
+      model,
+      title: text.emptyStateStatsTitle,
+      description: text.emptyStateStatsDescription,
+      icon: <ChartIcon aria-hidden="true" />,
     }
   }
 
@@ -1595,6 +1610,7 @@ const ChatCardView = ({
   const isTextEditorCard = card.model === TEXTEDITOR_TOOL_MODEL
   const isImageEditorCard = card.model === IMAGEEDITOR_TOOL_MODEL
   const isAutomationBoardCard = card.model === AUTOMATIONBOARD_TOOL_MODEL
+  const isStatsCard = card.model === STATS_TOOL_MODEL
   const isTopbarToolCard = isMusicToolCard || isWhiteNoiseCard || isWeatherCard
   const isToolCard =
     isGitToolCard ||
@@ -1606,7 +1622,8 @@ const ChatCardView = ({
     isBrainstormCard ||
     isTextEditorCard ||
     isImageEditorCard ||
-    isAutomationBoardCard
+    isAutomationBoardCard ||
+    isStatsCard
   const usesPaneChrome = chromeMode === 'pane'
   const suspendPaneRuntimeEffects = usesPaneChrome && !isActive
   const deferInactivePaneChatBody = suspendPaneRuntimeEffects && !isToolCard
@@ -1637,6 +1654,16 @@ const ChatCardView = ({
         .map((value) => String(value).padStart(2, '0'))
         .join(':')
       return language === 'en' ? `Wakes in ${clock}` : `${clock} 后唤醒`
+    }
+    // 超管点名的等待名单：数量就是它点的那几张卡，说"其他 Agent"会让用户以为
+    // 它在等整列。这条要排在 mode 分支之前 —— 名单批次的 mode 只是个载体。
+    if (card.wakeTimerExplicitTargets === true) {
+      const pendingCount = card.wakeTimerPendingTargetIds?.length ?? 0
+      return pendingCount > 0
+        ? (language === 'en'
+            ? `Waiting for ${pendingCount} session${pendingCount === 1 ? '' : 's'}`
+            : `等待 ${pendingCount} 个会话完成`)
+        : (language === 'en' ? 'Watched sessions are complete' : '等待的会话已完成')
     }
     if (wakeTimerMode === 'left-tab') {
       return (card.wakeTimerPendingTargetIds?.length ?? 0) > 0
@@ -1720,7 +1747,8 @@ const ChatCardView = ({
     !isStickyNoteCard &&
     !isFileTreeCard &&
     !isTextEditorCard &&
-    !isImageEditorCard
+    !isImageEditorCard &&
+    !isStatsCard
   /**
    * 症状：给 header 加了盾牌角标，但在实际使用的 pane 模式下永远看不见。
    * 根因：pane chrome 下 `showsCardTitle` 恒为 false，普通会话的
@@ -1738,7 +1766,9 @@ const ChatCardView = ({
       ? text.stickyNoteTitle
       : isBrainstormCard
         ? text.brainstormTitle
-        : text.newChat)
+        : isStatsCard
+          ? text.statsCardTitle
+          : text.newChat)
 
   // Draft persistence is decoupled from the live textarea. Fast typing updates
   // the DOM and refs immediately; React state only tracks lightweight derived
@@ -4530,6 +4560,8 @@ const ChatCardView = ({
         </div>
       )}
 
+
+      {isStatsCard && !isCollapsed && <StatsCard language={language} />}
 
       {isFileTreeCard && !isCollapsed && (
         <FileTreeCard

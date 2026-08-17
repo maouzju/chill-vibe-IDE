@@ -1,6 +1,7 @@
 param(
   [string[]]$Tests = @(
     'tests/electron-bridge-runtime.test.ts',
+    'tests/electron-close-to-tray-runtime.test.ts',
     'tests/electron-unresponsive-recovery-runtime.test.ts',
     'tests/electron-git-tool-runtime.test.ts',
     'tests/electron-slash-menu-runtime.test.ts',

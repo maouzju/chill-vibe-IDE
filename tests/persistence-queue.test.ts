@@ -577,7 +577,7 @@ describe('persistence queue', () => {
     assert.equal(
       shouldSyncRuntimeSettings({
         type: 'updateSettings',
-        patch: { minimizeToTaskbarOnCloseEnabled: true } as never,
+        patch: { closeBehavior: 'tray' } as never,
       }),
       true,
     )

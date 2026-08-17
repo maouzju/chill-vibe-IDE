@@ -4,6 +4,7 @@ import { fileURLToPath } from 'node:url'
 import { describe, it } from 'node:test'
 
 import {
+  archiveCardToHistory,
   createCard,
   createColumn,
   appFontFamilyOptions,
@@ -40,14 +41,30 @@ import { defaultSystemPrompt } from '../shared/system-prompt.ts'
 import { resolveAppTheme } from '../shared/theme.ts'
 
 describe('default-state helpers', () => {
-  it('keeps the experimental automation board disabled until the user enables it', () => {
-    assert.equal(createDefaultSettings().automationBoardCardEnabled, false)
-    assert.equal(normalizeAppSettings({}).automationBoardCardEnabled, false)
-    assert.equal(appSettingsSchema.parse({}).automationBoardCardEnabled, false)
+  it('ships the automation board enabled by default', () => {
+    assert.equal(createDefaultSettings().automationBoardCardEnabled, true)
+    assert.equal(normalizeAppSettings({}).automationBoardCardEnabled, true)
+    assert.equal(appSettingsSchema.parse({}).automationBoardCardEnabled, true)
     assert.equal(
       getAvailableQuickToolModels(createDefaultSettings()).includes(AUTOMATIONBOARD_TOOL_MODEL),
-      false,
+      true,
     )
+  })
+
+  it('turns the automation board on once for profiles saved under the old default-off rule', () => {
+    // 症状：把 default 从 false 改成 true 对已安装用户无效——normalizeAppSettings 每次保存都会把
+    // 旧默认值 false 写回 state.json，之后就再也分不清"用户关的"和"旧默认"。
+    // 方案：一次性迁移标记 automationBoardCardDefaultApplied，只在缺标记的老存档上强制开一次。
+    const migrated = normalizeAppSettings({ automationBoardCardEnabled: false } as never)
+    assert.equal(migrated.automationBoardCardEnabled, true)
+    assert.equal(migrated.automationBoardCardDefaultApplied, true)
+
+    // 迁移跑过之后，用户手动关闭必须被尊重，不能每次启动都被翻回来。
+    const userDisabled = normalizeAppSettings({
+      automationBoardCardEnabled: false,
+      automationBoardCardDefaultApplied: true,
+    } as never)
+    assert.equal(userDisabled.automationBoardCardEnabled, false)
   })
 
   it('fills missing editor settings with defaults and clamps invalid values', () => {
@@ -346,28 +363,39 @@ describe('default-state helpers', () => {
     )
   })
 
-  it('keeps minimize-to-taskbar-on-close opt-in and migrates old settings safely', () => {
+  it('keeps close-behavior opt-in and rejects unknown values', () => {
+    assert.equal(createDefaultSettings().closeBehavior, 'quit')
+    assert.equal(normalizeAppSettings({}).closeBehavior, 'quit')
+    assert.equal(normalizeAppSettings({ closeBehavior: 'minimize' }).closeBehavior, 'minimize')
+    assert.equal(normalizeAppSettings({ closeBehavior: 'tray' }).closeBehavior, 'tray')
     assert.equal(
-      (createDefaultSettings() as { minimizeToTaskbarOnCloseEnabled?: boolean })
-        .minimizeToTaskbarOnCloseEnabled,
-      false,
+      normalizeAppSettings({ closeBehavior: 'hide' as never }).closeBehavior,
+      'quit',
+    )
+  })
+
+  // 存档里可能还带着 v0.20.5 之前的布尔开关。丢掉它等于把用户设过的“别退出”
+  // 静默翻回“点 X 就退出”，正在跑的 Agent 会跟着一起没。
+  it('migrates the legacy minimize-to-taskbar boolean into closeBehavior', () => {
+    assert.equal(
+      normalizeAppSettings({ minimizeToTaskbarOnCloseEnabled: true } as never).closeBehavior,
+      'minimize',
     )
     assert.equal(
-      (normalizeAppSettings({}) as { minimizeToTaskbarOnCloseEnabled?: boolean })
-        .minimizeToTaskbarOnCloseEnabled,
-      false,
+      normalizeAppSettings({ minimizeToTaskbarOnCloseEnabled: false } as never).closeBehavior,
+      'quit',
     )
     assert.equal(
-      (normalizeAppSettings({ minimizeToTaskbarOnCloseEnabled: true } as never) as {
-        minimizeToTaskbarOnCloseEnabled?: boolean
-      }).minimizeToTaskbarOnCloseEnabled,
-      true,
+      normalizeAppSettings({ minimizeToTaskbarOnCloseEnabled: 'yes' } as never).closeBehavior,
+      'quit',
     )
+    // 新字段一旦存在就说明用户在新 UI 里选过，旧布尔不得再覆盖它。
     assert.equal(
-      (normalizeAppSettings({ minimizeToTaskbarOnCloseEnabled: 'yes' } as never) as {
-        minimizeToTaskbarOnCloseEnabled?: boolean
-      }).minimizeToTaskbarOnCloseEnabled,
-      false,
+      normalizeAppSettings({
+        closeBehavior: 'tray',
+        minimizeToTaskbarOnCloseEnabled: true,
+      } as never).closeBehavior,
+      'tray',
     )
   })
 
@@ -456,6 +484,7 @@ describe('default-state helpers', () => {
       GIT_TOOL_MODEL,
       FILETREE_TOOL_MODEL,
       STICKYNOTE_TOOL_MODEL,
+      AUTOMATIONBOARD_TOOL_MODEL,
     ])
     assert.deepEqual(
       getAvailableQuickToolModels(
@@ -502,6 +531,7 @@ describe('default-state helpers', () => {
       GIT_TOOL_MODEL,
       FILETREE_TOOL_MODEL,
       STICKYNOTE_TOOL_MODEL,
+      AUTOMATIONBOARD_TOOL_MODEL,
     ])
   })
 
@@ -626,5 +656,69 @@ describe('default-state helpers', () => {
         Object.keys(column.cards).map(() => true),
       )
     }
+  })
+})
+
+describe('archiveCardToHistory usage totals', () => {
+  const usageMessage = (id: string, meta: Record<string, string>) => ({
+    id,
+    role: 'assistant' as const,
+    content: 'answer',
+    createdAt: new Date(2026, 7, 16, 12, 0, 0, 0).toISOString(),
+    meta,
+  })
+
+  const archivableCard = (messages: ReturnType<typeof usageMessage>[]) => ({
+    ...createCard('Archived Chat', undefined, 'codex', DEFAULT_CODEX_MODEL),
+    title: 'Archived Chat',
+    messages,
+  })
+
+  it('folds every turn usage into the entry so archiving does not lose the numbers', () => {
+    const entries = archiveCardToHistory(
+      [],
+      archivableCard([
+        usageMessage('m-1', {
+          turnUsageUsed: '12000',
+          turnUsageSize: '200000',
+          turnUsageInput: '9000',
+          turnUsageOutput: '3000',
+          turnUsageCacheRead: '500',
+          turnUsageCacheCreation: '250',
+          turnUsageCostUsd: '0.12',
+        }),
+        usageMessage('m-2', {
+          turnUsageUsed: '45000',
+          turnUsageSize: '200000',
+          turnUsageInput: '40000',
+          turnUsageOutput: '5000',
+        }),
+        usageMessage('m-3', {}),
+      ]),
+      'D:/repo/one',
+    )
+
+    assert.equal(entries.length, 1)
+    const totals = entries[0]?.usageTotals
+    assert.ok(totals, 'archived entry should carry usage totals')
+    assert.equal(totals?.turns, 2)
+    assert.equal(totals?.input, 49000)
+    assert.equal(totals?.output, 8000)
+    assert.equal(totals?.cacheRead, 500)
+    assert.equal(totals?.cacheCreation, 250)
+    assert.equal(totals?.peakUsed, 45000)
+    assert.equal(totals?.peakSize, 200000)
+    assert.ok(Math.abs((totals?.costUsd ?? 0) - 0.12) < 1e-9)
+  })
+
+  it('leaves usage totals unset when no turn ever reported usage', () => {
+    const entries = archiveCardToHistory(
+      [],
+      archivableCard([usageMessage('m-1', { turnStopReason: 'end_turn' })]),
+      'D:/repo/one',
+    )
+
+    assert.equal(entries.length, 1)
+    assert.equal(entries[0]?.usageTotals, undefined)
   })
 })

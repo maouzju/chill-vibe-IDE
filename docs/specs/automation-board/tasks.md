@@ -1,6 +1,20 @@
 # 自动化看板 — Tasks
 
-## 实验性开关收口（2026-08-14）
+## 转正为默认开启（2026-08-17）
+
+- [x] `shared/schema.ts` / `shared/default-state.ts` 默认值改为开启
+- [x] 新增一次性迁移标记 `automationBoardCardDefaultApplied`，让已安装用户也拿到默认开
+- [x] 去掉设置入口的"（实验性）"后缀，删掉 `automationBoardExperimentalSuffix` 文案（中英两份 + 类型）
+- [x] 默认状态与迁移的红→绿回归测试
+- [x] 快捷工具 Playwright 断言与设置组快照跟着默认值一起翻
+
+验证记录：
+
+- `tests/default-state.test.ts`：`ships the automation board enabled by default` 三条入口断言 `true` 且快捷工具列表含看板；`turns the automation board on once for profiles saved under the old default-off rule` 钉住迁移语义——缺标记的老存档强制开一次，标记已落盘时用户的 `false` 必须被尊重。两条先红后绿。
+- 顺带翻了同文件里两条快捷工具清单用例（默认列表由 3 项变 4 项），这是默认值变更的直接后果，不是断言放松。
+- `tests/tool-card-settings.spec.ts`：默认 4 个快捷工具，并把原来的"勾上才出现"反转成"取消勾选就消失"——只断言默认 4 个的话，开关点了没反应也会绿。
+
+## 实验性开关收口（2026-08-14，已被上一节取代）
 
 - [x] 默认设置与 schema 改为关闭自动化看板卡牌
 - [x] 设置入口标注“实验性”，保留用户手动开启能力（走 i18n，中英各一份文案，不硬编码中文）
@@ -278,3 +292,17 @@ MCP 端到端实测（一次性探针，非注册测试）：起真实桥接 →
 
 - [ ] 待命 composer 粘贴的图片仍是本地 state（`draftImages`），切 tab 即失。要落盘得复用 ChatCard 那套
       "粘贴即后台上传 → 存 `draftAttachments`"，涉及异步上传时序，单独一条 slice 配红先测试。
+
+## Slice V12 — 清空已完成道（v2.7 / FR15）
+
+- [x] `src/state.ts`：`clearAutomationBoardLane` action + reducer（原子批量、空道 no-op）、进
+      `automationBoardMirroringActions` 白名单
+- [x] `src/components/automation-board-host.ts` / `src/App.tsx` / `src/components/PaneView.tsx`：
+      `clearLane` 接线，dispatch 前先对该道每一项 `requestStopForCard`
+- [x] `AutomationBoardCard`：已完成道头部的清空按钮 + `window.confirm` 二次确认；`shared/i18n.ts`
+      新增 `automationBoardClearLaneAction` / `automationBoardClearLaneConfirm`（zh + en）
+- [x] `src/index.css`：泳道标题 `flex: 1`（否则计数胶囊被挤到正中）+ 头部 icon-button 静息隐形、
+      hover 亮 `--danger`
+- [x] `tests/automation-board-state.test.ts` 五条（红先）+ `tests/automation-board-render.test.tsx` 两条
+- [x] `tests/automation-board-layout.spec.ts`：确认/取消端到端 + 已完成道头部双主题快照
+- [x] `pnpm test:quality`

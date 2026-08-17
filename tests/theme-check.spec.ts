@@ -3142,7 +3142,8 @@ test('settings panel flows category cards through two waterfall columns in both 
 
   await settingsTab.click()
   await expect(settingsPanel).toBeVisible()
-  await expect(settingsGroups).toHaveCount(9)
+  // 编辑器自 2026-08-16 起是外观分组内的子模块，不再是独立分组，所以顶层分组是 8 个。
+  await expect(settingsGroups).toHaveCount(8)
   await expect(
     settingsPanel.getByLabel(/Codex Agent 人格|Codex Agent personality/).first(),
   ).toHaveValue('default')
@@ -3204,7 +3205,7 @@ test('settings panel stacks category cards cleanly on a narrow viewport', async 
 
   await settingsTab.click()
   await expect(settingsPanel).toBeVisible()
-  await expect(settingsGroups).toHaveCount(9)
+  await expect(settingsGroups).toHaveCount(8)
 
   const [firstGroupRect, secondGroupRect] = await Promise.all([
     readRect(settingsGroups.nth(0)),

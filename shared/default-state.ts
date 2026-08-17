@@ -11,6 +11,7 @@ import type {
   ChatCard,
   ChatMessage,
   ChatRole,
+  CloseBehavior,
   LayoutNode,
   PaneNode,
   Provider,
@@ -24,6 +25,7 @@ import type {
 } from './schema.js'
 import { createDefaultBrainstormState } from './brainstorm.js'
 import {
+  closeBehaviorSchema,
   createDefaultAutomationBoardTemplateTrigger,
   defaultAutomationBoardSupervisorRequirement,
   defaultAutoUrgeMessage,
@@ -35,6 +37,7 @@ import {
   wakeTimerModes,
   autoUrgeJudgeModes,
 } from './schema.js'
+import { summarizeTurnUsage } from './turn-telemetry-summary.js'
 import {
   defaultAppLanguage,
   getLocaleText,
@@ -49,6 +52,7 @@ import {
   FILETREE_TOOL_MODEL,
   GIT_TOOL_MODEL,
   MUSIC_TOOL_MODEL,
+  STATS_TOOL_MODEL,
   STICKYNOTE_TOOL_MODEL,
   WEATHER_TOOL_MODEL,
   WHITENOISE_TOOL_MODEL,
@@ -82,6 +86,10 @@ export const minWeatherCardSize = 160
 // noticeably more vertical room than an ordinary chat card.
 export const defaultAutomationBoardCardSize = 620
 export const minAutomationBoardCardSize = 380
+// A GitHub-style calendar needs roughly a year of week columns plus the summary
+// tiles above it, so the stats card asks for more height than an ordinary card.
+export const defaultStatsCardSize = 520
+export const minStatsCardSize = 300
 export const minColumnWidth = 130
 export const minUiScale = 0.8
 export const maxUiScale = 1.35
@@ -527,19 +535,21 @@ export const createDefaultSettings = (language: AppLanguage = defaultAppLanguage
   gitCardEnabled: true,
   fileTreeCardEnabled: true,
   stickyNoteCardEnabled: true,
-  automationBoardCardEnabled: false,
+  automationBoardCardEnabled: true,
+  automationBoardCardDefaultApplied: true,
   pmCardEnabled: true,
   brainstormCardEnabled: false,
   experimentalMusicEnabled: false,
   experimentalWhiteNoiseEnabled: false,
   experimentalWeatherEnabled: false,
+  experimentalStatsEnabled: false,
   agentDoneSoundEnabled: false,
   agentDoneSoundVolume: 0.7,
   allAgentsDoneSoundEnabled: false,
   allAgentsDoneSoundVolume: 0.7,
   crossProviderSkillReuseEnabled: true,
   accessibilitySupportEnabled: false,
-  minimizeToTaskbarOnCloseEnabled: false,
+  closeBehavior: 'quit',
   autoUrgeEnabled: false,
   autoUrgeProfiles: [
     createAutoUrgeProfile(language, {}, { index: 0, fallbackId: defaultAutoUrgeProfileId }),
@@ -572,10 +582,55 @@ export const createDefaultSettings = (language: AppLanguage = defaultAppLanguage
   recentWorkspaces: [],
 })
 
+/**
+ * 自动化看板 2026-08-17 从「实验性，默认关」转正为「默认开」。
+ * 缺 `automationBoardCardDefaultApplied` 的存档一律视为转正前写下的，补发一次默认开；
+ * 标记落盘之后，`automationBoardCardEnabled` 完全按用户的选择走。
+ */
+const normalizeAutomationBoardCardSettings = (
+  settings: Partial<AppSettings> | null | undefined,
+  defaults: AppSettings,
+): Pick<AppSettings, 'automationBoardCardEnabled' | 'automationBoardCardDefaultApplied'> => {
+  if (settings?.automationBoardCardDefaultApplied !== true) {
+    return {
+      automationBoardCardEnabled: true,
+      automationBoardCardDefaultApplied: true,
+    }
+  }
+  return {
+    automationBoardCardEnabled:
+      typeof settings.automationBoardCardEnabled === 'boolean'
+        ? settings.automationBoardCardEnabled
+        : defaults.automationBoardCardEnabled,
+    automationBoardCardDefaultApplied: true,
+  }
+}
+
+// 症状：v0.20.5 之前只有一个「关闭后最小化到任务栏」布尔开关，用户抱怨点 X 与点“—”无异。
+// 根因：单一布尔无法表达“藏进托盘”这第三种期望，2026-08-17 改为三态枚举。
+// 被否决的替代：直接删掉旧布尔 —— 老存档里勾过的用户会被静默改回“点 X 就退出”，
+//   连带杀掉正在跑的 Agent，所以这里保留一次性回落读取。
+const resolveCloseBehavior = (
+  settings: Partial<AppSettings> | null | undefined,
+  fallback: CloseBehavior,
+): CloseBehavior => {
+  const parsed = closeBehaviorSchema.safeParse(settings?.closeBehavior)
+  if (parsed.success) {
+    return parsed.data
+  }
+
+  if (settings?.minimizeToTaskbarOnCloseEnabled === true) {
+    return 'minimize'
+  }
+
+  return fallback
+}
+
 export const normalizeAppSettings = (settings?: Partial<AppSettings> | null): AppSettings => {
   const language = normalizeLanguage(settings?.language)
   const defaults = createDefaultSettings(language)
   const autoUrgeSettings = normalizeAutoUrgeSettings(settings, language)
+  const automationBoardSettings = normalizeAutomationBoardCardSettings(settings, defaults)
 
   return {
     language,
@@ -640,10 +695,12 @@ export const normalizeAppSettings = (settings?: Partial<AppSettings> | null): Ap
       typeof settings?.stickyNoteCardEnabled === 'boolean'
         ? settings.stickyNoteCardEnabled
         : defaults.stickyNoteCardEnabled,
-    automationBoardCardEnabled:
-      typeof settings?.automationBoardCardEnabled === 'boolean'
-        ? settings.automationBoardCardEnabled
-        : defaults.automationBoardCardEnabled,
+    // 症状：把看板默认值从 false 翻成 true 对已安装用户没有任何效果。
+    // 根因：normalizeAppSettings 每次保存都把当时的默认值写回 state.json，所以老存档里的
+    //   `automationBoardCardEnabled: false` 既可能是用户关的、也可能只是旧默认，事后无法区分。
+    // 被否决的替代：无条件强制 true —— 那样用户永远关不掉。改用一次性迁移标记补发一次默认值。
+    automationBoardCardEnabled: automationBoardSettings.automationBoardCardEnabled,
+    automationBoardCardDefaultApplied: automationBoardSettings.automationBoardCardDefaultApplied,
     pmCardEnabled:
       typeof settings?.pmCardEnabled === 'boolean'
         ? settings.pmCardEnabled
@@ -664,6 +721,10 @@ export const normalizeAppSettings = (settings?: Partial<AppSettings> | null): Ap
       typeof settings?.experimentalWeatherEnabled === 'boolean'
         ? settings.experimentalWeatherEnabled
         : defaults.experimentalWeatherEnabled,
+    experimentalStatsEnabled:
+      typeof settings?.experimentalStatsEnabled === 'boolean'
+        ? settings.experimentalStatsEnabled
+        : defaults.experimentalStatsEnabled,
     agentDoneSoundEnabled:
       typeof settings?.agentDoneSoundEnabled === 'boolean'
         ? settings.agentDoneSoundEnabled
@@ -687,10 +748,7 @@ export const normalizeAppSettings = (settings?: Partial<AppSettings> | null): Ap
       typeof settings?.accessibilitySupportEnabled === 'boolean'
         ? settings.accessibilitySupportEnabled
         : defaults.accessibilitySupportEnabled,
-    minimizeToTaskbarOnCloseEnabled:
-      typeof settings?.minimizeToTaskbarOnCloseEnabled === 'boolean'
-        ? settings.minimizeToTaskbarOnCloseEnabled
-        : defaults.minimizeToTaskbarOnCloseEnabled,
+    closeBehavior: resolveCloseBehavior(settings, defaults.closeBehavior),
     autoUrgeEnabled:
       typeof settings?.autoUrgeEnabled === 'boolean'
         ? settings.autoUrgeEnabled
@@ -779,6 +837,8 @@ export const isQuickToolModelEnabled = (settings: AppSettings, model: string) =>
       return false
     case WEATHER_TOOL_MODEL:
       return settings.experimentalWeatherEnabled
+    case STATS_TOOL_MODEL:
+      return settings.experimentalStatsEnabled
     case MUSIC_TOOL_MODEL:
       return settings.experimentalMusicEnabled
     case WHITENOISE_TOOL_MODEL:
@@ -798,6 +858,7 @@ const quickToolModelsInOrder = [
   FILETREE_TOOL_MODEL,
   STICKYNOTE_TOOL_MODEL,
   AUTOMATIONBOARD_TOOL_MODEL,
+  STATS_TOOL_MODEL,
   WEATHER_TOOL_MODEL,
   MUSIC_TOOL_MODEL,
   WHITENOISE_TOOL_MODEL,
@@ -895,7 +956,9 @@ export const getCardMinimumSize = (model?: string | null) =>
           ? minWeatherCardSize
           : model === AUTOMATIONBOARD_TOOL_MODEL
             ? minAutomationBoardCardSize
-            : minCardSize
+            : model === STATS_TOOL_MODEL
+              ? minStatsCardSize
+              : minCardSize
 
 export const getCardDefaultSize = (model?: string | null) =>
   model === GIT_TOOL_MODEL
@@ -906,7 +969,9 @@ export const getCardDefaultSize = (model?: string | null) =>
         ? defaultWhiteNoiseCardSize
         : model === AUTOMATIONBOARD_TOOL_MODEL
           ? defaultAutomationBoardCardSize
-          : defaultCardSize
+          : model === STATS_TOOL_MODEL
+            ? defaultStatsCardSize
+            : defaultCardSize
 
 export const normalizeCardSize = (size?: number, minimumSize = minCardSize, defaultSize = defaultCardSize) => {
   if (!size || Number.isNaN(size)) {
@@ -1674,6 +1739,10 @@ const createSessionHistoryEntry = (
     workspacePath,
     messageCount: card.messages.length,
     messages: card.messages,
+    // 归档这一刻是最后一次能看到每条消息的 `meta`：送进渲染进程的历史条目会被裁成
+    // 预览并剥掉 meta（server/state-store.ts 的 renderSessionHistoryForRenderer），
+    // 不在这里汇总，这段会话的 token 与花费就再也回不到统计卡上。
+    usageTotals: summarizeTurnUsage(card.messages) ?? undefined,
     workspaceCloseId,
     archivedAt,
   }

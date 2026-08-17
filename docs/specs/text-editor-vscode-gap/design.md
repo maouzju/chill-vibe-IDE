@@ -75,6 +75,7 @@
 - `shared/schema.ts` 增加 `editorSettingsSchema`：`{ fontSize: number(10–24, 默认13), wordWrap: boolean(默认false), minimap: boolean(默认false), tabSize: 2|4(默认2) }`，挂到 `appSettingsSchema`。
 - `createDefaultSettings` + `normalizeAppSettings` 同步补默认值（pitfall #5/#6）。
 - 设置页新增"编辑器"小节；变更通过 `editor.updateOptions()` 即时生效，不重建编辑器。
+- 2026-08-16 起该小节不再是独立设置分组，而是"外观"分组内的一个子模块（`settings-section` + `settings-section-title`），组底的"重置界面默认值"同时把编辑器设置恢复默认（`createInterfaceDefaultsPatch`）。
 
 ## E2 + E3 — 状态栏与 EOL
 

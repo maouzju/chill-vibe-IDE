@@ -4,9 +4,12 @@ import {
   crashReporter,
   dialog,
   ipcMain,
+  Menu,
+  nativeImage,
   net,
   protocol,
   shell,
+  Tray,
   utilityProcess,
 } from 'electron'
 import { spawn } from 'node:child_process'
@@ -93,6 +96,7 @@ import {
   focusPrimaryWindow,
   presentWindow,
   resolveWindowCloseAction,
+  type WindowCloseBehavior,
 } from './window-lifecycle.js'
 
 const moduleDir = path.dirname(fileURLToPath(import.meta.url))
@@ -325,7 +329,9 @@ const hasSingleInstanceLock = bypassSingleInstanceLock ? true : app.requestSingl
 
 let quitTimer: NodeJS.Timeout | null = null
 let quitAfterFlushPending = false
-let minimizeToTaskbarOnCloseEnabled = false
+let closeBehavior: WindowCloseBehavior = 'quit'
+let trayMenuLanguage = 'zh-CN'
+let tray: Tray | null = null
 
 // 16ms 对齐一帧：渲染进程本来就画不出比这更密的更新，所以合并窗口取到帧率上限，
 // 既把跨进程往返压到最少，又不产生用户可感知的延迟。
@@ -658,6 +664,113 @@ async function loadRendererIntoWindow(
 
   if (!shouldKeepValidationWindowHidden) {
     presentWindow(win)
+  }
+}
+
+// 症状：勾了“关闭后最小化到任务栏”，点 X 只是把窗口缩起来，任务栏图标照旧，
+//   用户认为设置根本没生效（2026-08-17 反馈）。
+// 根因：只有 minimize 一档。托盘档要真正 hide 并让出任务栏格位，此时窗口在系统里
+//   已经没有任何可见入口，托盘图标就是唯一的返回路径 —— 建不出来就必须放弃隐藏。
+// 被否决的替代：常驻托盘图标 —— 没隐藏时白占一格通知区，且设置切换后还要同步销毁。
+function resolveTrayIcon() {
+  const iconPath = path.join(projectRoot, 'build', isDev ? 'icon-dev.png' : 'icon.png')
+  const image = nativeImage.createFromPath(iconPath)
+
+  if (image.isEmpty()) {
+    return null
+  }
+
+  // 托盘格位是 16-24px，直接塞 256px 原图在部分 Windows 主题下会被裁成一角。
+  return image.resize({ width: 16, height: 16 })
+}
+
+function restoreFromTray(win: BrowserWindow | null | undefined) {
+  if (!win || win.isDestroyed()) {
+    // 窗口都没了，留着图标只会指向一个不存在的目标。
+    destroyTray()
+    return false
+  }
+
+  win.setSkipTaskbar(false)
+
+  // 顺序与 close 分支的“先建托盘再隐藏”对称：窗口隐藏期间托盘图标是唯一的返回入口，
+  // 所以只有真的还原出来之后才能销毁它。反过来写的话，presentWindow 一旦失败，就是
+  // 窗口不可见 + 任务栏无格位 + 托盘已销毁，应用成了用户再也叫不回来的后台进程。
+  const presented = presentWindow(win)
+
+  if (presented) {
+    destroyTray()
+  }
+
+  return presented
+}
+
+function destroyTray() {
+  if (!tray) {
+    return
+  }
+
+  // isDestroyed 检查不是多余的：restoreFromTray、设置同步、will-quit 都会调到这里，
+  // 对已销毁的 Tray 再 destroy() 会抛，而其中两个调用点就在 close 监听链路上。
+  if (!tray.isDestroyed()) {
+    tray.destroy()
+  }
+
+  tray = null
+}
+
+function ensureTray(win: BrowserWindow) {
+  if (tray && !tray.isDestroyed()) {
+    return true
+  }
+
+  // 整个构建过程都包在 try 里，不只是 new Tray()：菜单构建、图标解析、事件绑定
+  // 任何一步抛出都会从 win.on('close') 里冒出去，而那时 preventDefault() 已经执行，
+  // 结果就是窗口既没隐藏也没最小化，点 X 看起来毫无反应（2026-08-17 实测踩到）。
+  try {
+    const icon = resolveTrayIcon()
+
+    if (!icon) {
+      log.warn('[main] Tray icon asset missing; refusing to hide the window with no way back.')
+      return false
+    }
+
+    const isEnglish = trayMenuLanguage.startsWith('en')
+    const nextTray = new Tray(icon)
+
+    nextTray.setToolTip('Chill Vibe')
+    nextTray.setContextMenu(
+      Menu.buildFromTemplate([
+        {
+          label: isEnglish ? 'Show Chill Vibe' : '显示 Chill Vibe',
+          click: () => {
+            restoreFromTray(win)
+          },
+        },
+        { type: 'separator' },
+        {
+          label: isEnglish ? 'Quit' : '退出',
+          click: () => {
+            // 走刷盘退出而不是 app.exit：托盘里点退出同样不该丢掉未保存的会话状态。
+            destroyTray()
+            scheduleQuitAfterFlush()
+          },
+        },
+      ]),
+    )
+    nextTray.on('click', () => {
+      restoreFromTray(win)
+    })
+    nextTray.on('double-click', () => {
+      restoreFromTray(win)
+    })
+
+    tray = nextTray
+    return true
+  } catch (error) {
+    log.warn('[main] Failed to create the tray icon.', error)
+    destroyTray()
+    return false
   }
 }
 
@@ -1164,7 +1277,15 @@ function registerDesktopHandlers() {
   // 的 settle 确认新模型已经生效，否则下一次发送仍走旧运行时设置（pitfall 137）。
   ipcMain.handle('desktop:sync-runtime-settings', async (_event, settings) => {
     const parsed = appSettingsSchema.parse(settings)
-    minimizeToTaskbarOnCloseEnabled = parsed.minimizeToTaskbarOnCloseEnabled
+    closeBehavior = parsed.closeBehavior
+    trayMenuLanguage = parsed.language
+
+    // 用户把托盘档改回其他行为时，窗口此刻一定是可见的（不然改不了设置），
+    // 留着图标只会白占一格通知区。
+    if (closeBehavior !== 'tray') {
+      destroyTray()
+    }
+
     await desktopBackend.syncRuntimeSettings(parsed)
   })
   ipcMain.handle('desktop:reset-state', () => desktopBackend.resetState())
@@ -1523,7 +1644,7 @@ function createWindow() {
   win.on('close', (event) => {
     const closeAction = resolveWindowCloseAction({
       platform: process.platform,
-      minimizeToTaskbarOnCloseEnabled,
+      closeBehavior,
       quitAfterFlushPending,
     })
 
@@ -1535,9 +1656,22 @@ function createWindow() {
 
     // 症状：开启“关闭后最小化”后，关闭窗口仍会杀掉正在运行的 Agent。
     // 根因：旧关闭监听无条件进入刷盘退出；2026-08-09 新设置改为主进程即时决策。
-    // 不用 hide/托盘，用户明确要求保留任务栏入口，且正式退出流程必须继续放行。
+    // minimize 档刻意保留任务栏入口，托盘档才让出格位，正式退出流程始终放行。
     if (closeAction === 'minimize') {
       win.minimize()
+      return
+    }
+
+    if (closeAction === 'hide-to-tray') {
+      // 顺序不能反：托盘图标是隐藏后唯一的返回入口，建不出来就退回最小化，
+      // 否则窗口会变成一个用户再也叫不出来的后台进程。
+      if (!ensureTray(win)) {
+        win.minimize()
+        return
+      }
+
+      win.hide()
+      win.setSkipTaskbar(true)
       return
     }
 
@@ -1579,6 +1713,15 @@ if (!hasSingleInstanceLock) {
   app.quit()
 } else {
   app.on('second-instance', () => {
+    // 藏进托盘后再点桌面快捷方式走的就是这条路：窗口还活着但既不可见也不在任务栏，
+    // 单纯 focus 是叫不回来的，必须把任务栏格位和可见性一起还原。
+    const existing = BrowserWindow.getAllWindows().find((win) => !win.isDestroyed())
+
+    if (existing) {
+      restoreFromTray(existing)
+      return
+    }
+
     if (!focusPrimaryWindow(BrowserWindow.getAllWindows())) {
       createWindow()
     }
@@ -1668,6 +1811,8 @@ app.on('will-quit', () => {
     quitTimer = null
   }
 
+  // 托盘图标是 GDI 资源，进程退出前不销毁会在通知区留下一个点不动的幽灵图标。
+  destroyTray()
   chatStreamSubscriptions.unsubscribeAll()
   // 兜底：正常退出走 scheduleQuitAfterFlush 的 flush → dispose → shutdown。
   // will-quit 无法 await，所以这里只做幂等的进程收尾，不再发新的 RPC。

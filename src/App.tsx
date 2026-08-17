@@ -88,6 +88,7 @@ import {
   settleLocalRecoveryStatsRun,
   type LocalRecoveryStatsState,
 } from './stream-recovery-stats'
+import { publishStatsSource } from './stats-card-source'
 import {
   computeRecoveryStatusAfterFinalFailure,
   computeRecoveryStatusAfterRetryScheduled,
@@ -248,6 +249,7 @@ import {
 import { shouldExitPlanModeForAskUserAnswer } from './components/ask-user-answer-state'
 import {
   armWakeTimerBatch,
+  resolveSupervisorWakeTargets,
   rearmWakeTimerBatchForPatch,
   buildCanceledWakeTimerDraft,
   buildWakeTimerBatchEndPatch,
@@ -339,6 +341,7 @@ import {
   registerForensicsAppStateTruth,
 } from './diagnostics/stuck-pane-forensics'
 import {
+  createInterfaceDefaultsPatch,
   getStableSettingsPanelColumnCount,
   splitSettingsGroupsIntoStableColumns,
 } from './settings-layout'
@@ -741,6 +744,10 @@ function App() {
     () => getAvailableQuickToolModels(appState.settings, appState.columns),
     [appState.settings, appState.columns],
   )
+
+  // 统计卡走模块级快照而不是 props，理由见 src/stats-card-source.ts 顶部注释。
+  // 这里只是一次 O(1) 赋值，故意不做条件判断——漏一次就等于统计卡看到旧数据。
+  publishStatsSource(appState.columns, appState.sessionHistory)
   const autoUrgeProfileTemplate =
     appState.settings.autoUrgeProfiles[appState.settings.autoUrgeProfiles.length - 1] ?? null
   const activeAutoUrgeProfile =
@@ -1749,39 +1756,53 @@ function App() {
 
   const renderAutoUrgeSettings = () => (
     <>
-      <label className="settings-toggle" htmlFor="auto-urge-toggle">
-        <span>{text.autoUrgeLabel}</span>
-        <input
-          id="auto-urge-toggle"
-          type="checkbox"
-          checked={appState.settings.autoUrgeEnabled}
-          onChange={(event) =>
-            applyAction({
-              type: 'updateSettings',
-              patch: { autoUrgeEnabled: event.target.checked },
-            })
-          }
-        />
-      </label>
-      <p className="settings-note">{autoUrgeDescription}</p>
+      <div className="settings-hover-detail">
+        <label className="settings-toggle" htmlFor="auto-urge-toggle">
+          <span>{text.autoUrgeLabel}</span>
+          <input
+            id="auto-urge-toggle"
+            type="checkbox"
+            aria-describedby="auto-urge-note"
+            checked={appState.settings.autoUrgeEnabled}
+            onChange={(event) =>
+              applyAction({
+                type: 'updateSettings',
+                patch: { autoUrgeEnabled: event.target.checked },
+              })
+            }
+          />
+        </label>
+        <p id="auto-urge-note" className="settings-note settings-hover-note" role="tooltip">
+          {autoUrgeDescription}
+        </p>
+      </div>
 
       {appState.settings.autoUrgeEnabled && (
         <div className="settings-sub-field auto-urge-settings">
-          <label className="settings-toggle" htmlFor="global-urge-control-toggle">
-            <span>{text.autoUrgeGlobalControlLabel}</span>
-            <input
-              id="global-urge-control-toggle"
-              type="checkbox"
-              checked={appState.settings.autoUrgeGlobalControlEnabled}
-              onChange={(event) =>
-                applyAction({
-                  type: 'updateSettings',
-                  patch: { autoUrgeGlobalControlEnabled: event.target.checked },
-                })
-              }
-            />
-          </label>
-          <p className="settings-note">{text.autoUrgeGlobalControlHint}</p>
+          <div className="settings-hover-detail">
+            <label className="settings-toggle" htmlFor="global-urge-control-toggle">
+              <span>{text.autoUrgeGlobalControlLabel}</span>
+              <input
+                id="global-urge-control-toggle"
+                type="checkbox"
+                aria-describedby="global-urge-control-note"
+                checked={appState.settings.autoUrgeGlobalControlEnabled}
+                onChange={(event) =>
+                  applyAction({
+                    type: 'updateSettings',
+                    patch: { autoUrgeGlobalControlEnabled: event.target.checked },
+                  })
+                }
+              />
+            </label>
+            <p
+              id="global-urge-control-note"
+              className="settings-note settings-hover-note"
+              role="tooltip"
+            >
+              {text.autoUrgeGlobalControlHint}
+            </p>
+          </div>
 
           <div className="auto-urge-settings-header">
             <div className="settings-row-copy auto-urge-types-header">
@@ -1974,21 +1995,25 @@ function App() {
           </div>
 
           <div className="ollama-settings">
-            <div className="auto-urge-settings-header">
-              <div className="settings-row-copy">
-                <label>{text.ollamaSectionTitle}</label>
+            <div className="settings-hover-detail">
+              <div className="auto-urge-settings-header">
+                <div className="settings-row-copy">
+                  <label aria-describedby="ollama-section-note">{text.ollamaSectionTitle}</label>
+                </div>
+                <div className="settings-actions">
+                  <AppButton
+                    type="button"
+                    disabled={ollamaActionPending}
+                    onClick={() => void refreshOllamaStatus()}
+                  >
+                    {text.ollamaRefreshButton}
+                  </AppButton>
+                </div>
               </div>
-              <div className="settings-actions">
-                <AppButton
-                  type="button"
-                  disabled={ollamaActionPending}
-                  onClick={() => void refreshOllamaStatus()}
-                >
-                  {text.ollamaRefreshButton}
-                </AppButton>
-              </div>
+              <p id="ollama-section-note" className="settings-note settings-hover-note" role="tooltip">
+                {text.ollamaSectionHint}
+              </p>
             </div>
-            <p className="settings-note">{text.ollamaSectionHint}</p>
             <p className="settings-note ollama-status-line">
               {ollamaStatus === null
                 ? text.ollamaStatusNotInstalled
@@ -2051,12 +2076,13 @@ function App() {
   )
 
   const renderWakeTimerSettings = () => (
-    <>
+    <div className="settings-hover-detail">
       <label className="settings-toggle" htmlFor="wake-timer-feature-toggle">
         <span>{text.wakeTimerFeatureLabel}</span>
         <input
           id="wake-timer-feature-toggle"
           type="checkbox"
+          aria-describedby="wake-timer-feature-note"
           checked={appState.settings.wakeTimerEnabled}
           onChange={(event) =>
             applyAction({
@@ -2066,37 +2092,51 @@ function App() {
           }
         />
       </label>
-      <p className="settings-note">{text.wakeTimerFeatureHint}</p>
-    </>
+      <p id="wake-timer-feature-note" className="settings-note settings-hover-note" role="tooltip">
+        {text.wakeTimerFeatureHint}
+      </p>
+    </div>
   )
 
-  const renderMinimizeOnCloseSettings = () => (
-    <>
-      <label className="settings-toggle" htmlFor="minimize-on-close-toggle">
-        <span>{text.minimizeToTaskbarOnCloseLabel}</span>
-        <input
-          id="minimize-on-close-toggle"
-          type="checkbox"
-          checked={appState.settings.minimizeToTaskbarOnCloseEnabled}
+  const renderCloseBehaviorSettings = () => (
+    <div className="settings-hover-detail is-field">
+      <label className="settings-field" htmlFor="close-behavior-select">
+        <span className="settings-field-label">
+          <span className="settings-field-label-text">{text.closeBehaviorLabel}</span>
+        </span>
+        <select
+          id="close-behavior-select"
+          className="control settings-input"
+          aria-describedby="close-behavior-note"
+          value={appState.settings.closeBehavior}
           onChange={(event) =>
             applyAction({
               type: 'updateSettings',
-              patch: { minimizeToTaskbarOnCloseEnabled: event.target.checked },
+              patch: {
+                closeBehavior: event.target.value as AppState['settings']['closeBehavior'],
+              },
             })
           }
-        />
+        >
+          <option value="quit">{text.closeBehaviorQuit}</option>
+          <option value="minimize">{text.closeBehaviorMinimize}</option>
+          <option value="tray">{text.closeBehaviorTray}</option>
+        </select>
       </label>
-      <p className="settings-note">{text.minimizeToTaskbarOnCloseNote}</p>
-    </>
+      <p id="close-behavior-note" className="settings-note settings-hover-note" role="tooltip">
+        {text.closeBehaviorNote}
+      </p>
+    </div>
   )
 
   const renderRepeatLoopSettings = () => (
-    <>
+    <div className="settings-hover-detail">
       <label className="settings-toggle" htmlFor="repeat-loop-feature-toggle">
         <span>{text.repeatLoopFeatureLabel}</span>
         <input
           id="repeat-loop-feature-toggle"
           type="checkbox"
+          aria-describedby="repeat-loop-feature-note"
           checked={appState.settings.repeatLoopEnabled}
           onChange={(event) =>
             applyAction({
@@ -2106,8 +2146,10 @@ function App() {
           }
         />
       </label>
-      <p className="settings-note">{text.repeatLoopFeatureHint}</p>
-    </>
+      <p id="repeat-loop-feature-note" className="settings-note settings-hover-note" role="tooltip">
+        {text.repeatLoopFeatureHint}
+      </p>
+    </div>
   )
 
   const setAutoUrgeEnabled = useCallback(
@@ -2764,6 +2806,7 @@ function App() {
         wakeTimerArmedAt: undefined,
         wakeTimerWakeAt: undefined,
         wakeTimerPendingTargetIds: [],
+        wakeTimerExplicitTargets: undefined,
         ...buildWakeTimerBatchEndPatch({
           autoActivated: card.wakeTimerAutoActivated === true,
         }),
@@ -2798,6 +2841,7 @@ function App() {
           wakeTimerArmedAt: undefined,
           wakeTimerWakeAt: undefined,
           wakeTimerPendingTargetIds: [],
+          wakeTimerExplicitTargets: undefined,
           ...buildWakeTimerBatchEndPatch({
             autoActivated: card.wakeTimerAutoActivated === true,
           }),
@@ -2886,7 +2930,18 @@ function App() {
     // 空闲卡右键发送时逐卡开关可能还没开。它必须和批次写进同一个 patch：
     // arm 可能返回 left-target-unavailable 并回落到立即发送，先写开关会留下
     // 一个"开着但没有批次"的假状态。见 wake-timer SPEC「右键发送 → 计划唤醒」。
-    { activateCard = false }: { activateCard?: boolean } = {},
+    {
+      activateCard = false,
+      explicitTargets,
+    }: {
+      activateCard?: boolean
+      /**
+       * 超管点名的等待名单 + 兜底上限，直接 seed 进 arm 数据，**不经过**
+       * `armWakeTimerBatch`：那个函数只认 streaming 快照与左邻拓扑，算不出
+       * "刚被建出来、还没开跑的那张卡"。
+       */
+      explicitTargets?: { targetIds: readonly string[]; timeoutMinutes: number }
+    } = {},
   ) => {
     const state = appStateRef.current
     const column = state.columns.find((entry) => entry.id === columnId)
@@ -2896,12 +2951,32 @@ function App() {
     }
 
     const currentQueue = card.wakeTimerQueuedSends ?? []
+    // 用户自己攒着的批次不能被超管劫持：改掉它的条件会让用户排在三小时后的那
+    // 几条消息跟着 note 一起提前发出去。这种情况下只把 note 追加进去，条件沿用
+    // 用户的。反过来，覆盖超管自己上一次注册的等待是正常的"刷新等待对象"。
+    const seedExplicitTargets = explicitTargets !== undefined
+      && (currentQueue.length === 0 || card.wakeTimerExplicitTargets === true)
     let armPatch: Pick<
       ChatCard,
-      'wakeTimerArmedAt' | 'wakeTimerWakeAt' | 'wakeTimerPendingTargetIds'
+      | 'wakeTimerArmedAt'
+      | 'wakeTimerWakeAt'
+      | 'wakeTimerPendingTargetIds'
+      | 'wakeTimerExplicitTargets'
+      | 'wakeTimerMode'
     >
 
-    if (currentQueue.length > 0 && card.wakeTimerArmedAt) {
+    if (seedExplicitTargets && explicitTargets) {
+      const nowMs = Date.now()
+      armPatch = {
+        wakeTimerArmedAt: new Date(nowMs).toISOString(),
+        wakeTimerWakeAt: new Date(nowMs + explicitTargets.timeoutMinutes * 60_000).toISOString(),
+        wakeTimerPendingTargetIds: [...explicitTargets.targetIds],
+        wakeTimerExplicitTargets: true,
+        // 条件判定按 mode 分流，而 `duration` 那条**完全忽略** pendingTargetIds ——
+        // 卡上残留的旧模式会把"等这几张卡"悄悄变成"干等 N 分钟"。
+        wakeTimerMode: 'workspace-agents',
+      }
+    } else if (currentQueue.length > 0 && card.wakeTimerArmedAt) {
       armPatch = {
         wakeTimerArmedAt: card.wakeTimerArmedAt,
         wakeTimerWakeAt: card.wakeTimerWakeAt,
@@ -2967,13 +3042,17 @@ function App() {
       attachments: ImageAttachment[]
     }> = []
 
-    for (const column of state.columns) {
-      const validTargetIds = new Set(
-        Object.values(column.cards)
-          .filter((card) => !MODEL_PICKER_HIDDEN_TOOL_MODELS.has(card.model))
-          .map((card) => card.id),
-      )
+    // 目标存不存在按**整个 state** 算，不按本列算：卡可以被拖到另一列（moveTab
+    // 支持跨列），而"不在这一列"不等于"已经完成"。按列算会让一次拖拽被当成
+    // 目标交付，等待方立刻误醒。
+    const validTargetIds = new Set(
+      state.columns
+        .flatMap((column) => Object.values(column.cards))
+        .filter((card) => !MODEL_PICKER_HIDDEN_TOOL_MODELS.has(card.model))
+        .map((card) => card.id),
+    )
 
+    for (const column of state.columns) {
       for (const card of Object.values(column.cards)) {
         const queue = card.wakeTimerQueuedSends ?? []
         if (queue.length === 0) {
@@ -3000,6 +3079,7 @@ function App() {
           ownerBackgroundWorkPending: card.backgroundWorkPending === true,
           pendingTargetIds,
           activePeerIds,
+          explicitTargets: card.wakeTimerExplicitTargets === true,
           wakeAt: card.wakeTimerWakeAt,
           nowMs,
         })
@@ -3019,6 +3099,7 @@ function App() {
               wakeTimerArmedAt: undefined,
               wakeTimerWakeAt: undefined,
               wakeTimerPendingTargetIds: [],
+              wakeTimerExplicitTargets: undefined,
               ...buildWakeTimerBatchEndPatch({
                 autoActivated: card.wakeTimerAutoActivated === true,
               }),
@@ -3152,6 +3233,10 @@ function App() {
           card.wakeTimerMode ?? 'workspace-agents',
           card.wakeTimerQueuedSends?.length ?? 0,
           (card.wakeTimerPendingTargetIds ?? []).join(','),
+          // 持批次卡自己的状态也进签名：owner 从 streaming / error 回到 idle 是
+          // 释放条件的一部分，而 error 那条终态既不调完成广播也不 flush ——
+          // 签名不含 status 的话，那张卡不会再被重扫一次。
+          card.status,
         ].join(':')),
     ].join('|')).join('||'),
     [appState.columns],
@@ -3160,19 +3245,26 @@ function App() {
     queueMicrotask(() => flushReadyWakeTimersRef.current?.())
   }, [wakeTimerTopologySignature])
 
+  // 不再只给 duration 排定时器：wakeAt 现在是所有批次的硬上界（超管注册的等待
+  // 靠它兜底），漏排就等于那条上界不存在。
+  //
+  // 只收**未来**的时间戳：一个已经过期却仍不满足释放条件的批次（例如 owner 还在
+  // streaming）会把这个 memo 永久钉在同一个过去的值上，effect 依赖不变 → 此后
+  // 再也不排任何定时器，别人的兜底超时被它一起拖死。
   const nextWakeTimerTimestamp = useMemo(() => {
+    const nowMs = Date.now()
     let nextTimestamp: number | null = null
     for (const column of appState.columns) {
       for (const card of Object.values(column.cards)) {
-        if (
-          card.wakeTimerMode !== 'duration' ||
-          (card.wakeTimerQueuedSends?.length ?? 0) === 0 ||
-          !card.wakeTimerWakeAt
-        ) {
+        if ((card.wakeTimerQueuedSends?.length ?? 0) === 0 || !card.wakeTimerWakeAt) {
           continue
         }
         const timestamp = Date.parse(card.wakeTimerWakeAt)
-        if (Number.isFinite(timestamp) && (nextTimestamp === null || timestamp < nextTimestamp)) {
+        if (
+          Number.isFinite(timestamp) &&
+          timestamp > nowMs &&
+          (nextTimestamp === null || timestamp < nextTimestamp)
+        ) {
           nextTimestamp = timestamp
         }
       }
@@ -3895,6 +3987,28 @@ function App() {
           boardCardId,
           cardId,
           deleteCard: true,
+        }
+        persistAfterAction(action.type, applyAction(action))
+      },
+      clearLane: (columnId, boardCardId, lane) => {
+        const board = getColumn(columnId)?.cards[boardCardId]?.automationBoard
+        if (!board) {
+          return
+        }
+
+        // 与单项删除同一条规矩：先停流，否则后端会留下没有卡片可投递的孤儿流。
+        // 已完成道的项理论上都已中断，但拖进来那一刻的中断是异步的，这里不赌。
+        for (const item of board.items) {
+          if (item.lane === lane) {
+            void requestStopForCard(item.cardId, 'manual')
+          }
+        }
+
+        const action: IdeAction = {
+          type: 'clearAutomationBoardLane',
+          columnId,
+          boardCardId,
+          lane,
         }
         persistAfterAction(action.type, applyAction(action))
       },
@@ -4805,6 +4919,10 @@ function App() {
                   ? createStoppedRunMessage(appStateRef.current.settings.language, stoppedRunReason)
                   : undefined,
             })
+            // 被打断的卡不会走稳定完成广播（那条只挂在正常终态上），可它这一轮
+            // 确确实实结束了。不在这里放行，等它的人就只能干等到兜底超时 ——
+            // 最讽刺的组合是超管在等 B、用户看不下去把 B 停了，超管从此醒不过来。
+            actions.push(...buildWakeTimerTargetReleaseActions(card.id, { forceRelease: true }))
           } else if (donePlan.kind === 'background-pending') {
             // 症状：Claude 等后台 Agent 时先发 result，旧逻辑立刻亮完成光并释放队列/计时唤醒。
             // 根因：2026-08-01 原生 Stop Hook 仍报告 background_tasks/session_crons 非空。
@@ -5129,8 +5247,11 @@ function App() {
               })
             }
 
+            // 同 stopped：这一轮以"流没了"收场，等它的人必须被放行。
+            actions.push(...buildWakeTimerTargetReleaseActions(card.id, { forceRelease: true }))
             persistAfterActions(actions, applyActions(actions))
             dispatchNextQueuedSend(columnId, card.id)
+            flushReadyWakeTimersRef.current?.()
             return
           }
 
@@ -5185,8 +5306,12 @@ function App() {
             })
           }
 
+          // 报错的卡同样再也不会自己广播完成。等它的人靠兜底超时能醒，但那要白
+          // 等最多一小时，而"这一轮已经结束"此刻就是既成事实。
+          actions.push(...buildWakeTimerTargetReleaseActions(card.id, { forceRelease: true }))
           persistAfterActions(actions, applyActions(actions))
           dispatchNextQueuedSend(columnId, card.id)
+          flushReadyWakeTimersRef.current?.()
         },
       })
 
@@ -5200,6 +5325,7 @@ function App() {
     [
       applyAction,
       applyActions,
+      buildWakeTimerTargetReleaseActions,
       clearRecoveryStatusForNewStream,
       clearRecoveryStatusIfAllowed,
       clearStopCompletionFallbackTimer,
@@ -5399,17 +5525,58 @@ function App() {
         case 'admin-set-session-wake-timer':
           automationBoardActions.patchItemCard(owner.id, command.cardId, {
             wakeTimerActive: true,
+            // 这个开关是 Agent 替用户拧的，必须留下来源标记，否则批次释放后它永远
+            // 不会关回去，那张卡从此把每一条普通消息都吞进待唤醒队列 —— 包括超管
+            // 自己随后发过去的"鞭策"（sendToItem 走的是 origin: 'user'）。
+            ...(owner.cards[command.cardId]?.wakeTimerActive === true
+              ? {}
+              : { wakeTimerAutoActivated: true }),
             wakeTimerMode: command.mode,
             ...(typeof command.durationMinutes === 'number'
               ? { wakeTimerDurationMinutes: command.durationMinutes }
               : {}),
           })
           return
+        case 'admin-await-sessions': {
+          const resolved = resolveSupervisorWakeTargets({
+            ownerCardId: command.cardId,
+            requestedTargetIds: command.targetCardIds,
+            cards: Object.values(owner.cards).map((entry) => ({
+              id: entry.id,
+              status: entry.status,
+              isAgent: !MODEL_PICKER_HIDDEN_TOOL_MODELS.has(entry.model),
+              hasPendingWakeBatch: (entry.wakeTimerQueuedSends?.length ?? 0) > 0,
+              backgroundWorkPending: entry.backgroundWorkPending === true,
+              pendingWakeTargetIds: entry.wakeTimerPendingTargetIds,
+            })),
+          })
+
+          if (!resolved.ok) {
+            // 没有可等的会话时挂一个空名单批次，等于本轮一结束就自唤醒。与其留下
+            // 那个 0 秒等待，不如当场把 note 送回去：超管醒来调一次 list_sessions
+            // 就会看到工作区是空的，自己知道该派活。
+            void sendMessageRef.current?.(owner.id, command.cardId, command.note, [])
+            return
+          }
+
+          enqueueWakeTimerSend(
+            owner.id,
+            command.cardId,
+            { id: crypto.randomUUID(), prompt: command.note, attachments: [] },
+            {
+              explicitTargets: {
+                targetIds: resolved.targetIds,
+                timeoutMinutes: command.timeoutMinutes,
+              },
+            },
+          )
+          return
+        }
         default:
           return
       }
     })
-  }, [applyAction, automationBoardActions, persistAfterAction])
+  }, [applyAction, automationBoardActions, enqueueWakeTimerSend, persistAfterAction])
 
   // 实时工作区镜像：节流推给主进程供超管 MCP 读取。签名比对确保只有对模型有
   // 意义的变化才跨 IPC —— 单条消息的流式增长不刷新签名，否则每个 delta 都会
@@ -8483,34 +8650,9 @@ function App() {
         </div>
       </div>
 
-      <div className="settings-actions">
-        <AppButton
-          type="button"
-          onClick={() =>
-            applyAction({
-              type: 'updateSettings',
-              patch: {
-                uiScale: 1,
-                fontFamily: 'default',
-                fontScale: 1,
-                lineHeightScale: 1,
-                theme: 'light',
-                customThemeBase: 'dark',
-                customBaseColor: null,
-                accentColor: null,
-              },
-            })
-          }
-        >
-          {text.resetInterfaceDefaults}
-        </AppButton>
-      </div>
-    </div>,
-
-    <div key="editor" className="settings-group">
-      <h3 className="settings-group-title">{text.settingsGroupEditor}</h3>
-
       <div className="settings-section">
+        <div className="settings-section-title">{text.settingsGroupEditor}</div>
+
         <div className="settings-row">
           <div className="settings-row-copy">
             <label htmlFor="editor-font-size-range">{text.editorFontSizeLabel}</label>
@@ -8536,8 +8678,10 @@ function App() {
         </div>
 
         <div className="settings-row">
-          <label className="settings-toggle">
+          <label className="settings-toggle" htmlFor="editor-word-wrap-toggle">
+            <span>{text.editorWordWrapLabel}</span>
             <input
+              id="editor-word-wrap-toggle"
               type="checkbox"
               checked={appState.settings.editor.wordWrap}
               onChange={(event) =>
@@ -8549,13 +8693,14 @@ function App() {
                 })
               }
             />
-            <span>{text.editorWordWrapLabel}</span>
           </label>
         </div>
 
         <div className="settings-row">
-          <label className="settings-toggle">
+          <label className="settings-toggle" htmlFor="editor-minimap-toggle">
+            <span>{text.editorMinimapLabel}</span>
             <input
+              id="editor-minimap-toggle"
               type="checkbox"
               checked={appState.settings.editor.minimap}
               onChange={(event) =>
@@ -8567,7 +8712,6 @@ function App() {
                 })
               }
             />
-            <span>{text.editorMinimapLabel}</span>
           </label>
         </div>
 
@@ -8596,6 +8740,20 @@ function App() {
           </select>
         </div>
       </div>
+
+      <div className="settings-actions">
+        <AppButton
+          type="button"
+          onClick={() =>
+            applyAction({
+              type: 'updateSettings',
+              patch: createInterfaceDefaultsPatch(),
+            })
+          }
+        >
+          {text.resetInterfaceDefaults}
+        </AppButton>
+      </div>
     </div>,
 
     <div key="models" className="settings-group">
@@ -8623,40 +8781,50 @@ function App() {
           />
         </label>
 
-        <label className="settings-field">
-          <span className="settings-field-label">
-            <ModelIcon className="settings-field-icon" aria-hidden="true" />
-            <span className="settings-field-label-text">{text.codexPersonalityLabel}</span>
-          </span>
-          <select
-            className="control settings-input"
-            value={appState.settings.codexPersonality}
-            onChange={(event) =>
-              applyAction({
-                type: 'updateSettings',
-                patch: {
-                  codexPersonality: event.target.value as AppState['settings']['codexPersonality'],
-                },
-              })
-            }
-          >
-            <option value="default">{text.codexPersonalityDefault}</option>
-            <option value="none">{text.codexPersonalityNone}</option>
-            <option value="friendly">{text.codexPersonalityFriendly}</option>
-            <option value="pragmatic">{text.codexPersonalityPragmatic}</option>
-          </select>
-        </label>
-        <p className="settings-note">{text.codexPersonalityNote}</p>
+        <div className="settings-hover-detail is-field">
+          <label className="settings-field">
+            <span className="settings-field-label">
+              <ModelIcon className="settings-field-icon" aria-hidden="true" />
+              <span className="settings-field-label-text">{text.codexPersonalityLabel}</span>
+            </span>
+            <select
+              className="control settings-input"
+              aria-describedby="codex-personality-note"
+              value={appState.settings.codexPersonality}
+              onChange={(event) =>
+                applyAction({
+                  type: 'updateSettings',
+                  patch: {
+                    codexPersonality: event.target.value as AppState['settings']['codexPersonality'],
+                  },
+                })
+              }
+            >
+              <option value="default">{text.codexPersonalityDefault}</option>
+              <option value="none">{text.codexPersonalityNone}</option>
+              <option value="friendly">{text.codexPersonalityFriendly}</option>
+              <option value="pragmatic">{text.codexPersonalityPragmatic}</option>
+            </select>
+          </label>
+          <p id="codex-personality-note" className="settings-note settings-hover-note" role="tooltip">
+            {text.codexPersonalityNote}
+          </p>
+        </div>
 
-        <label className="settings-toggle">
-          <span>{text.codexFastModeLabel}</span>
-          <input
-            type="checkbox"
-            checked={appState.settings.codexFastMode}
-            onChange={(event) => handleCodexFastModeToggle(event.target.checked)}
-          />
-        </label>
-        <p className="settings-note">{text.codexFastModeNote}</p>
+        <div className="settings-hover-detail">
+          <label className="settings-toggle">
+            <span>{text.codexFastModeLabel}</span>
+            <input
+              type="checkbox"
+              aria-describedby="codex-fast-mode-note"
+              checked={appState.settings.codexFastMode}
+              onChange={(event) => handleCodexFastModeToggle(event.target.checked)}
+            />
+          </label>
+          <p id="codex-fast-mode-note" className="settings-note settings-hover-note" role="tooltip">
+            {text.codexFastModeNote}
+          </p>
+        </div>
 
         <label className="settings-field" htmlFor="claude-model-input">
           <span className="settings-field-label">
@@ -8677,63 +8845,82 @@ function App() {
           />
         </label>
 
-        <label className="settings-field" htmlFor="git-agent-model-input">
-          <span className="settings-field-label">
-            <ModelIcon className="settings-field-icon" aria-hidden="true" />
-            <span className="settings-field-label-text">{text.gitAgentModel}</span>
-          </span>
-          <input
-            id="git-agent-model-input"
-            className="control settings-input"
-            value={appState.settings.gitAgentModel}
-            onChange={(event) =>
-              applyAction({
-                type: 'updateSettings',
-                patch: { gitAgentModel: event.target.value },
-              })
-            }
-            placeholder="gpt-5.6-terra medium"
-          />
-        </label>
-
-        <p className="settings-note">{text.gitAgentModelNote}</p>
-
-        <label className="settings-field" htmlFor="system-prompt-input">
-          <span className="settings-field-label">
-            <ModelIcon className="settings-field-icon" aria-hidden="true" />
-            <span className="settings-field-label-text">{text.systemPromptLabel}</span>
-          </span>
-          <textarea
-            id="system-prompt-input"
-            className="control settings-input"
-            rows={4}
-            value={appState.settings.systemPrompt}
-            onChange={(event) =>
-              applyAction({
-                type: 'updateSettings',
-                patch: { systemPrompt: event.target.value },
-              })
-            }
-          />
-        </label>
-
-        <p className="settings-note">{text.systemPromptNote}</p>
-
-        <div className="settings-field model-prompt-rules-summary-row">
-          <span className="settings-field-label">
-            <ModelIcon className="settings-field-icon" aria-hidden="true" />
-            <span className="settings-field-label-text">
-              {appState.settings.language === 'zh-CN' ? '基于模型的提示词' : 'Model prompt rules'}
+        <div className="settings-hover-detail is-field">
+          <label className="settings-field" htmlFor="git-agent-model-input">
+            <span className="settings-field-label">
+              <ModelIcon className="settings-field-icon" aria-hidden="true" />
+              <span className="settings-field-label-text">{text.gitAgentModel}</span>
             </span>
-          </span>
-          <div className="model-prompt-rules-summary">
-            <strong>{modelPromptRulesSummary}</strong>
-            <span className="settings-note">
-              {appState.settings.language === 'zh-CN'
-                ? '按模型关键字做包含匹配。命中后，会把规则提示词追加到系统提示词后面。'
-                : 'Rules match by model keyword substring. Matching prompts are appended after the base system prompt.'}
+            <input
+              id="git-agent-model-input"
+              className="control settings-input"
+              aria-describedby="git-agent-model-note"
+              value={appState.settings.gitAgentModel}
+              onChange={(event) =>
+                applyAction({
+                  type: 'updateSettings',
+                  patch: { gitAgentModel: event.target.value },
+                })
+              }
+              placeholder="gpt-5.6-terra medium"
+            />
+          </label>
+          <p id="git-agent-model-note" className="settings-note settings-hover-note" role="tooltip">
+            {text.gitAgentModelNote}
+          </p>
+        </div>
+
+        <div className="settings-hover-detail is-field">
+          <label className="settings-field" htmlFor="system-prompt-input">
+            <span className="settings-field-label">
+              <ModelIcon className="settings-field-icon" aria-hidden="true" />
+              <span className="settings-field-label-text">{text.systemPromptLabel}</span>
             </span>
+            <textarea
+              id="system-prompt-input"
+              className="control settings-input"
+              rows={4}
+              aria-describedby="system-prompt-note"
+              value={appState.settings.systemPrompt}
+              onChange={(event) =>
+                applyAction({
+                  type: 'updateSettings',
+                  patch: { systemPrompt: event.target.value },
+                })
+              }
+            />
+          </label>
+          <p id="system-prompt-note" className="settings-note settings-hover-note" role="tooltip">
+            {text.systemPromptNote}
+          </p>
+        </div>
+
+        <div className="settings-hover-detail is-field">
+          <div
+            className="settings-field model-prompt-rules-summary-row"
+            aria-describedby="model-prompt-rules-note"
+          >
+            <span className="settings-field-label">
+              <ModelIcon className="settings-field-icon" aria-hidden="true" />
+              <span className="settings-field-label-text">
+                {appState.settings.language === 'zh-CN' ? '基于模型的提示词' : 'Model prompt rules'}
+              </span>
+            </span>
+            <div className="model-prompt-rules-summary">
+              {/* 规则条数是实时状态，按 ui-principles 第 3 条留在面板上；
+                  「怎么匹配」是解释，收进悬停气泡。 */}
+              <strong>{modelPromptRulesSummary}</strong>
+            </div>
           </div>
+          <p
+            id="model-prompt-rules-note"
+            className="settings-note settings-hover-note"
+            role="tooltip"
+          >
+            {appState.settings.language === 'zh-CN'
+              ? '按模型关键字做包含匹配。命中后，会把规则提示词追加到系统提示词后面。'
+              : 'Rules match by model keyword substring. Matching prompts are appended after the base system prompt.'}
+          </p>
         </div>
 
         <div className="settings-actions">
@@ -8742,22 +8929,30 @@ function App() {
           </AppButton>
         </div>
 
-        <label className="settings-toggle" htmlFor="cross-provider-skill-reuse-toggle">
-          <span>{text.crossProviderSkillReuseLabel}</span>
-          <input
-            id="cross-provider-skill-reuse-toggle"
-            type="checkbox"
-            checked={appState.settings.crossProviderSkillReuseEnabled}
-            onChange={(event) =>
-              applyAction({
-                type: 'updateSettings',
-                patch: { crossProviderSkillReuseEnabled: event.target.checked },
-              })
-            }
-          />
-        </label>
-
-        <p className="settings-note">{text.crossProviderSkillReuseNote}</p>
+        <div className="settings-hover-detail">
+          <label className="settings-toggle" htmlFor="cross-provider-skill-reuse-toggle">
+            <span>{text.crossProviderSkillReuseLabel}</span>
+            <input
+              id="cross-provider-skill-reuse-toggle"
+              type="checkbox"
+              aria-describedby="cross-provider-skill-reuse-note"
+              checked={appState.settings.crossProviderSkillReuseEnabled}
+              onChange={(event) =>
+                applyAction({
+                  type: 'updateSettings',
+                  patch: { crossProviderSkillReuseEnabled: event.target.checked },
+                })
+              }
+            />
+          </label>
+          <p
+            id="cross-provider-skill-reuse-note"
+            className="settings-note settings-hover-note"
+            role="tooltip"
+          >
+            {text.crossProviderSkillReuseNote}
+          </p>
+        </div>
 
         <div className="settings-actions">
           <AppButton
@@ -8786,7 +8981,7 @@ function App() {
       <h3 className="settings-group-title">{text.settingsGroupUtility}</h3>
 
       <div className="settings-section">
-        {renderMinimizeOnCloseSettings()}
+        {renderCloseBehaviorSettings()}
 
         <label className="settings-toggle" htmlFor="agent-done-sound-toggle">
           <span>{text.agentDoneSoundLabel}</span>
@@ -8886,22 +9081,30 @@ function App() {
           </div>
         )}
 
-        <label className="settings-toggle" htmlFor="accessibility-support-toggle">
-          <span>{text.accessibilitySupportLabel}</span>
-          <input
-            id="accessibility-support-toggle"
-            type="checkbox"
-            checked={appState.settings.accessibilitySupportEnabled}
-            onChange={(event) =>
-              applyAction({
-                type: 'updateSettings',
-                patch: { accessibilitySupportEnabled: event.target.checked },
-              })
-            }
-          />
-        </label>
-
-        <p className="settings-note">{text.accessibilitySupportNote}</p>
+        <div className="settings-hover-detail">
+          <label className="settings-toggle" htmlFor="accessibility-support-toggle">
+            <span>{text.accessibilitySupportLabel}</span>
+            <input
+              id="accessibility-support-toggle"
+              type="checkbox"
+              aria-describedby="accessibility-support-note"
+              checked={appState.settings.accessibilitySupportEnabled}
+              onChange={(event) =>
+                applyAction({
+                  type: 'updateSettings',
+                  patch: { accessibilitySupportEnabled: event.target.checked },
+                })
+              }
+            />
+          </label>
+          <p
+            id="accessibility-support-note"
+            className="settings-note settings-hover-note"
+            role="tooltip"
+          >
+            {text.accessibilitySupportNote}
+          </p>
+        </div>
 
         {renderRepeatLoopSettings()}
         {renderWakeTimerSettings()}
@@ -8959,10 +9162,7 @@ function App() {
         </label>
 
         <label className="settings-toggle" htmlFor="automation-board-card-toggle">
-          <span>
-            {text.automationBoardTitle}
-            {text.automationBoardExperimentalSuffix}
-          </span>
+          <span>{text.automationBoardTitle}</span>
           <input
             id="automation-board-card-toggle"
             type="checkbox"
@@ -8971,6 +9171,21 @@ function App() {
               applyAction({
                 type: 'updateSettings',
                 patch: { automationBoardCardEnabled: event.target.checked },
+              })
+            }
+          />
+        </label>
+
+        <label className="settings-toggle" htmlFor="experimental-stats-toggle">
+          <span>{text.experimentalStatsLabel}</span>
+          <input
+            id="experimental-stats-toggle"
+            type="checkbox"
+            checked={appState.settings.experimentalStatsEnabled}
+            onChange={(event) =>
+              applyAction({
+                type: 'updateSettings',
+                patch: { experimentalStatsEnabled: event.target.checked },
               })
             }
           />
@@ -9116,8 +9331,14 @@ function App() {
           </div>
 
           <div className="cli-update-shell">
-            <div className="settings-section-title">{panelText.cliUpdateTitle}</div>
-            <p className="settings-note">{panelText.cliUpdateDescription}</p>
+            <div className="settings-hover-detail">
+              <div className="settings-section-title" aria-describedby="cli-update-note">
+                {panelText.cliUpdateTitle}
+              </div>
+              <p id="cli-update-note" className="settings-note settings-hover-note" role="tooltip">
+                {panelText.cliUpdateDescription}
+              </p>
+            </div>
             <div className="cli-update-grid">
               <label className="settings-field" htmlFor="cli-update-target">
                 <span>{panelText.cliUpdateTarget}</span>
@@ -9135,18 +9356,27 @@ function App() {
                 </select>
               </label>
 
-              <label className="settings-field" htmlFor="cli-update-version">
-                <span>{panelText.cliUpdateVersion}</span>
-                <input
-                  id="cli-update-version"
-                  className="control settings-input"
-                  value={cliUpdateVersion}
-                  placeholder={panelText.cliUpdateVersionPlaceholder}
-                  onChange={(event) => setCliUpdateVersion(event.target.value)}
-                />
-              </label>
+              <div className="settings-hover-detail">
+                <label className="settings-field" htmlFor="cli-update-version">
+                  <span>{panelText.cliUpdateVersion}</span>
+                  <input
+                    id="cli-update-version"
+                    className="control settings-input"
+                    aria-describedby="cli-update-version-note"
+                    value={cliUpdateVersion}
+                    placeholder={panelText.cliUpdateVersionPlaceholder}
+                    onChange={(event) => setCliUpdateVersion(event.target.value)}
+                  />
+                </label>
+                <p
+                  id="cli-update-version-note"
+                  className="settings-note settings-hover-note"
+                  role="tooltip"
+                >
+                  {panelText.cliUpdateVersionNote}
+                </p>
+              </div>
             </div>
-            <p className="settings-note">{panelText.cliUpdateVersionNote}</p>
             <div className="settings-actions cli-update-actions">
               <AppButton
                 type="button"
@@ -10176,7 +10406,7 @@ function App() {
               <h3 className="settings-group-title">{text.settingsGroupUtility}</h3>
 
               <div className="settings-section">
-                {renderMinimizeOnCloseSettings()}
+                {renderCloseBehaviorSettings()}
 
                 <label className="settings-toggle" htmlFor="agent-done-sound-toggle">
                   <span>{text.agentDoneSoundLabel}</span>
@@ -10326,6 +10556,21 @@ function App() {
                       applyAction({
                         type: 'updateSettings',
                         patch: { stickyNoteCardEnabled: event.target.checked },
+                      })
+                    }
+                  />
+                </label>
+
+                <label className="settings-toggle" htmlFor="experimental-stats-toggle">
+                  <span>{text.experimentalStatsLabel}</span>
+                  <input
+                    id="experimental-stats-toggle"
+                    type="checkbox"
+                    checked={appState.settings.experimentalStatsEnabled}
+                    onChange={(event) =>
+                      applyAction({
+                        type: 'updateSettings',
+                        patch: { experimentalStatsEnabled: event.target.checked },
                       })
                     }
                   />

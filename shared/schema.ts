@@ -264,6 +264,15 @@ export const chatCardSchema = z.object({
   wakeTimerArmedAt: z.string().datetime().optional(),
   wakeTimerWakeAt: z.string().datetime().optional(),
   wakeTimerPendingTargetIds: z.array(z.string().min(1)).optional(),
+  // 这批等待目标是被**显式点名**的（超管 MCP 的 `wake_me_when_sessions_finish`），
+  // 不是从当前拓扑推出来的。
+  //
+  // 为什么是一个布尔而不是第四种 `wakeTimerMode`：新增枚举成员会顺着
+  // `wakeTimerDefaultMode`（每张新卡都盖这个章）和看板模板的 `wakeTimerMode`
+  // 一路泄漏出去，让普通卡拿到一个自己永远算不出等待名单的模式；而两个模式
+  // 下拉是硬编码三项的 `<select>`，值对不上会渲染成空白选中项，用户随手一点
+  // 就把名单擦了。布尔是纯附加的：旧包读到只是忽略它，退回原有的拓扑判据。
+  wakeTimerExplicitTargets: z.boolean().optional(),
   stickyNote: z.string().default(''),
   stickyNoteId: z.string().min(1).optional(),
   stickyNoteViewState: z.object({
@@ -418,6 +427,33 @@ export const recentWorkspaceSchema = z.object({
 })
 export type RecentWorkspace = z.infer<typeof recentWorkspaceSchema>
 
+/**
+ * 一整段会话的 token 用量汇总。
+ *
+ * 症状：统计卡的 token / 花费只算得出「当前打开着的会话」，关掉标签页那段用量就从
+ *   统计里消失，卡片上因此挂着一句「归档会话不保留用量数据」的免责声明。
+ * 根因：用量存在每条消息的 `meta` 上，而 `renderSessionHistoryForRenderer` 为了不让
+ *   渲染进程扛下全部历史转录，把归档条目的消息裁成预览并剥掉了 `meta`。
+ * 被否决的替代：让统计卡去磁盘扫 sidecar 或 `~/.claude` / `~/.codex` 的 jsonl —— 那正是
+ *   长期 bug「用久了卡死」的形状（AGENTS.md pitfall 48 / 54 / 55），见 stats-card SPEC FR-3。
+ * 现在的做法：归档发生在 reducer 里，那一刻 `meta` 还完整，直接汇总成这 8 个标量存进
+ *   索引条目。体积与消息条数无关，裁消息也带不走它。
+ */
+export const sessionUsageTotalsSchema = z.object({
+  input: z.number().finite().nonnegative().default(0),
+  output: z.number().finite().nonnegative().default(0),
+  cacheRead: z.number().finite().nonnegative().default(0),
+  cacheCreation: z.number().finite().nonnegative().default(0),
+  /** 带 usage 的回合数。 */
+  turns: z.number().int().nonnegative().default(0),
+  /** 单轮上下文占用的峰值。 */
+  peakUsed: z.number().finite().nonnegative().default(0),
+  /** 峰值那一轮对应的上下文窗口大小；未知为 0。 */
+  peakSize: z.number().finite().nonnegative().default(0),
+  costUsd: z.number().finite().nonnegative().default(0),
+})
+export type SessionUsageTotals = z.infer<typeof sessionUsageTotalsSchema>
+
 export const sessionHistoryEntrySchema = z.object({
   id: z.string().min(1),
   title: z.string().min(1),
@@ -430,6 +466,7 @@ export const sessionHistoryEntrySchema = z.object({
   messages: z.array(chatMessageSchema).default([]),
   messageCount: z.number().int().nonnegative().optional(),
   messagesPreview: z.boolean().optional(),
+  usageTotals: sessionUsageTotalsSchema.optional(),
   workspaceCloseId: z.string().min(1).optional(),
   archivedAt: z.string().datetime(),
 })
@@ -669,6 +706,15 @@ export type CodexPersonalitySetting = z.infer<typeof codexPersonalitySettingSche
 export const codexPersonalitySchema = z.enum(['none', 'friendly', 'pragmatic'])
 export type CodexPersonality = z.infer<typeof codexPersonalitySchema>
 
+/**
+ * 点窗口关闭按钮时做什么。
+ * - `quit`：走刷盘退出流程（历史默认）。
+ * - `minimize`：最小化，任务栏仍保留入口。
+ * - `tray`：隐藏窗口并从任务栏移除，只留系统托盘图标。
+ */
+export const closeBehaviorSchema = z.enum(['quit', 'minimize', 'tray'])
+export type CloseBehavior = z.infer<typeof closeBehaviorSchema>
+
 export const appSettingsSchema = z.object({
   language: appLanguageSchema.default('zh-CN'),
   theme: themeSchema.default('dark'),
@@ -690,19 +736,31 @@ export const appSettingsSchema = z.object({
   gitCardEnabled: z.boolean().default(true),
   fileTreeCardEnabled: z.boolean().default(true),
   stickyNoteCardEnabled: z.boolean().default(true),
-  automationBoardCardEnabled: z.boolean().default(false),
+  automationBoardCardEnabled: z.boolean().default(true),
+  /**
+   * 自动化看板从实验性(默认关)转正为默认开时的一次性迁移标记。
+   * 老存档里 `automationBoardCardEnabled: false` 既可能是用户关的、也可能只是旧默认值被写回，
+   * 事后无法区分，所以用这个标记把"默认开"补发一次，之后完全尊重用户选择。
+   */
+  automationBoardCardDefaultApplied: z.boolean().default(true),
   pmCardEnabled: z.boolean().default(true),
   brainstormCardEnabled: z.boolean().default(false),
   experimentalMusicEnabled: z.boolean().default(false),
   experimentalWhiteNoiseEnabled: z.boolean().default(false),
   experimentalWeatherEnabled: z.boolean().default(false),
+  experimentalStatsEnabled: z.boolean().default(false),
   agentDoneSoundEnabled: z.boolean().default(false),
   agentDoneSoundVolume: z.number().min(0).max(1).default(0.7),
   allAgentsDoneSoundEnabled: z.boolean().default(false),
   allAgentsDoneSoundVolume: z.number().min(0).max(1).default(0.7),
   crossProviderSkillReuseEnabled: z.boolean().default(true),
   accessibilitySupportEnabled: z.boolean().default(false),
-  minimizeToTaskbarOnCloseEnabled: z.boolean().default(false),
+  closeBehavior: closeBehaviorSchema.default('quit'),
+  /**
+   * @deprecated v0.20.6 起由 `closeBehavior` 取代，只保留读取能力，供旧存档迁移用。
+   * 详见 `normalizeAppSettings`：新字段缺失时才回落到这个布尔值。
+   */
+  minimizeToTaskbarOnCloseEnabled: z.boolean().optional(),
   autoUrgeEnabled: z.boolean().default(false),
   autoUrgeProfiles: z.array(autoUrgeProfileSchema).default([
     {
@@ -978,19 +1036,21 @@ export const appStateSchema = z.object({
     gitCardEnabled: true,
     fileTreeCardEnabled: true,
     stickyNoteCardEnabled: true,
-    automationBoardCardEnabled: false,
+    automationBoardCardEnabled: true,
+    automationBoardCardDefaultApplied: true,
     pmCardEnabled: true,
     brainstormCardEnabled: false,
     experimentalMusicEnabled: false,
     experimentalWhiteNoiseEnabled: false,
     experimentalWeatherEnabled: false,
+    experimentalStatsEnabled: false,
     agentDoneSoundEnabled: false,
     agentDoneSoundVolume: 0.7,
     allAgentsDoneSoundEnabled: false,
     allAgentsDoneSoundVolume: 0.7,
     crossProviderSkillReuseEnabled: true,
     accessibilitySupportEnabled: false,
-    minimizeToTaskbarOnCloseEnabled: false,
+    closeBehavior: 'quit',
     autoUrgeEnabled: false,
     autoUrgeProfiles: [
       {
@@ -1346,8 +1406,34 @@ export const workspaceAdminCommandSchema = z.discriminatedUnion('type', [
     provider: providerSchema.optional(),
     model: z.string().min(1).optional(),
   }),
+  // 唯一一条把**调用者自己**当目标的命令：超管注册「等这些会话跑完再叫醒我」。
+  //
+  // `cardId` 是超管自己，取自 MCP 子进程的 SELF_CARD_ID 环境变量而**不是模型入参** ——
+  // 允许模型指定"叫醒谁"就等于给了它替别的会话安排唤醒的能力，而那是
+  // `set_session_wake_timer` 的地盘，两者混在一起会让"谁被唤醒"不可预测。
+  //
+  // `targetCardIds` 为空数组 = "本工作区当前所有其它 agent 会话"，由渲染端解析：
+  // 哪些卡算 agent 是 state 的事实，模型手里的镜像随时可能已经过期。
+  //
+  // `timeoutMinutes` 不是可有可无的保险：被打断、报错、或从没开跑的目标卡
+  // **永远不会发出完成广播**（`scheduleStableWakeTimerCompletion` 只在正常
+  // terminal 完成时被调用），没有上界就是一次永久挂起。
+  z.object({
+    type: z.literal('admin-await-sessions'),
+    columnId: z.string().min(1),
+    cardId: z.string().min(1),
+    targetCardIds: z.array(z.string().min(1)),
+    note: z.string().min(1),
+    timeoutMinutes: z
+      .number()
+      .finite()
+      .min(minWakeTimerDurationMinutes)
+      .max(maxWakeTimerDurationMinutes),
+  }),
 ])
 export type WorkspaceAdminCommand = z.infer<typeof workspaceAdminCommandSchema>
+
+export const workspaceAdminAwaitDefaultTimeoutMinutes = 60
 
 // 渲染进程主动推给主进程的实时工作区镜像。读盘快照在流式期间被刻意节流
 // （pitfall 54/114），对超管会话太旧；这份镜像极小且有界，几 KB 级。

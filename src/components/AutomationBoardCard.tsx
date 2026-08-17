@@ -113,6 +113,8 @@ export type AutomationBoardCardProps = {
     index?: number,
   ) => void
   onDeleteItem: (cardId: string) => void
+  /** 清空整条泳道（项与会话卡一起删）。确认弹窗在本组件里，不在 App 层。 */
+  onClearLane: (lane: AutomationBoardLane) => void
   onSaveTemplate: (cardId: string) => void
   onRenameTemplate: (templateId: string, name: string) => void
   onDeleteTemplate: (templateId: string) => void
@@ -1298,6 +1300,25 @@ const AutomationBoardCardView = (props: AutomationBoardCardProps) => {
               <span className="automation-board-lane-count">
                 {text.automationBoardItemCount(laneView.items.length)}
               </span>
+              {/* 只有已完成道能清空：待命/执行中的项还在编排里，批量删它们
+                  没有对应的用户意图，而已完成道是纯粹的堆积区。 */}
+              {laneView.lane === 'done' && laneView.items.length > 0 ? (
+                <IconButton
+                  label={text.automationBoardClearLaneAction}
+                  className="automation-board-lane-clear"
+                  onClick={() => {
+                    // 单项删除没有确认，但这一下会一次带走几十张卡（会话归档进历史，
+                    // 不是真删），与 FileTreeCard 删文件同一条规矩：先问一次。
+                    if (
+                      window.confirm(text.automationBoardClearLaneConfirm(laneView.items.length))
+                    ) {
+                      props.onClearLane(laneView.lane)
+                    }
+                  }}
+                >
+                  <TrashIcon />
+                </IconButton>
+              ) : null}
             </header>
 
             <div

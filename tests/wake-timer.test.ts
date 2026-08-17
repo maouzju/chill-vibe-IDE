@@ -12,6 +12,7 @@ import {
   isWakeTimerConditionReady,
   mergeWakeTimerRequests,
   removeCompletedWakeTimerTarget,
+  resolveSupervisorWakeTargets,
   shouldArmWakeTimerForDeferSend,
   shouldReleaseCompletedWakeTimerTarget,
   shouldQueueWakeTimerSend,
@@ -700,6 +701,204 @@ describe('auto-activated per-card wake timer turns itself off', () => {
     assert.equal(
       buildWakeTimerBatchEndPatch({ autoActivated: legacy.wakeTimerAutoActivated === true }),
       null,
+    )
+  })
+})
+
+// 超管注册的「等这些会话跑完再叫醒我」批次。与用户自己挂的三种条件的根本差别：
+// 等待名单是超管 MCP 命令点名的**显式集合**，不是从当前拓扑推出来的 —— 所以
+// 任何按忙闲重算的路径都必须对它绕行，否则一次无关的 patch 就会把名单换成
+// "此刻在跑的所有 agent"。
+describe('supervisor wake timer batches (explicit targets)', () => {
+  const cards = [
+    { id: 'admin', status: 'idle' as const, isAgent: true },
+    { id: 'fresh', status: 'idle' as const, isAgent: true },
+    { id: 'busy', status: 'streaming' as const, isAgent: true },
+    { id: 'board', status: 'idle' as const, isAgent: false },
+  ]
+
+  it('keeps every named target even when it has not started streaming yet', () => {
+    // 刚被 create_session 建出来的卡还没进 streaming。按忙闲过滤会让等待名单当场
+    // 为空 → 本轮一结束就自唤醒，这个工具就废了。
+    assert.deepEqual(
+      resolveSupervisorWakeTargets({
+        ownerCardId: 'admin',
+        requestedTargetIds: ['fresh', 'busy'],
+        cards,
+      }),
+      { ok: true, targetIds: ['fresh', 'busy'] },
+    )
+  })
+
+  it('waits for every other agent when the caller named no target', () => {
+    assert.deepEqual(
+      resolveSupervisorWakeTargets({
+        ownerCardId: 'admin',
+        requestedTargetIds: [],
+        cards,
+      }),
+      // 工具卡（看板 / 统计 / 便签）和自己都不是会话。
+      { ok: true, targetIds: ['fresh', 'busy'] },
+    )
+  })
+
+  it('drops itself, tool cards and ids that no longer exist', () => {
+    assert.deepEqual(
+      resolveSupervisorWakeTargets({
+        ownerCardId: 'admin',
+        requestedTargetIds: ['admin', 'board', 'ghost', 'busy'],
+        cards,
+      }),
+      { ok: true, targetIds: ['busy'] },
+    )
+  })
+
+  it('drops a target that is already waiting on the owner instead of deadlocking', () => {
+    // A 等 B、B 等 A 时两边都不再产生回合，也就都不会广播完成 —— 只有兜底超时能
+    // 拆开。workspace-agents 靠"不把待唤醒算作忙"规避成环，left-tab 靠严格更小的
+    // Tab 索引天然无环；显式名单是任意集合，两条护栏都没有，只能在这里查一层。
+    assert.deepEqual(
+      resolveSupervisorWakeTargets({
+        ownerCardId: 'admin',
+        requestedTargetIds: ['peer-admin', 'busy'],
+        cards: [
+          { id: 'admin', status: 'idle' as const, isAgent: true },
+          {
+            id: 'peer-admin',
+            status: 'idle' as const,
+            isAgent: true,
+            hasPendingWakeBatch: true,
+            pendingWakeTargetIds: ['admin'],
+          },
+          { id: 'busy', status: 'streaming' as const, isAgent: true },
+        ],
+      }),
+      { ok: true, targetIds: ['busy'] },
+    )
+  })
+
+  it('refuses to register a wait that has nothing left to wait for', () => {
+    // 空等待名单 = 本轮一结束立刻自唤醒。宁可注册失败，也不要一个 0 秒的等待。
+    assert.deepEqual(
+      resolveSupervisorWakeTargets({
+        ownerCardId: 'admin',
+        requestedTargetIds: [],
+        cards: [
+          { id: 'admin', status: 'idle' as const, isAgent: true },
+          { id: 'board', status: 'idle' as const, isAgent: false },
+        ],
+      }),
+      { ok: false, reason: 'no-live-target' },
+    )
+  })
+
+  it('never recomputes an explicit target list from the current topology', () => {
+    // 症状预演：用户在超管卡上碰一下唤醒条件下拉或时长框，就会走 rearm。它按拓扑
+    // 重算，会把点名的三张卡换成"此刻在跑的所有 agent"、并把兜底超时置空。
+    assert.equal(
+      rearmWakeTimerBatchForPatch({
+        patch: { wakeTimerDurationMinutes: 15 },
+        card: {
+          id: 'admin',
+          wakeTimerMode: 'workspace-agents',
+          wakeTimerDurationMinutes: 60,
+          wakeTimerQueuedSends: [request('q-1', '回来验收')],
+          wakeTimerExplicitTargets: true,
+        },
+        cards,
+        paneTabIds: [],
+        nowMs: Date.parse('2026-08-17T00:00:00.000Z'),
+      }),
+      null,
+    )
+  })
+
+  it('ignores unrelated busy peers that are not on the explicit list', () => {
+    // workspace-agents 的实时判据是"这一列此刻没有任何 agent 在跑"。超管点名了三
+    // 张卡，却被一个无关的长跑 tab 永久压住，就是把它点的名当没看见。
+    assert.equal(
+      isWakeTimerConditionReady({
+        mode: 'workspace-agents',
+        ownerStatus: 'idle',
+        pendingTargetIds: [],
+        activePeerIds: ['unrelated-long-runner'],
+        explicitTargets: true,
+        wakeAt: '2026-08-17T01:00:00.000Z',
+        nowMs: Date.parse('2026-08-17T00:00:00.000Z'),
+      }),
+      true,
+    )
+    // 没有显式名单时行为一个字不变。
+    assert.equal(
+      isWakeTimerConditionReady({
+        mode: 'workspace-agents',
+        ownerStatus: 'idle',
+        pendingTargetIds: [],
+        activePeerIds: ['unrelated-long-runner'],
+        wakeAt: undefined,
+        nowMs: Date.parse('2026-08-17T00:00:00.000Z'),
+      }),
+      false,
+    )
+  })
+
+  it('treats wakeAt as a hard upper bound for every mode, not just duration', () => {
+    // 被打断 / 报错 / 从没开跑的目标永远不会广播完成（完成广播只挂在正常终态上），
+    // 所以兜底超时是这类批次唯一的出口。
+    const base = {
+      mode: 'workspace-agents' as const,
+      ownerStatus: 'idle' as const,
+      pendingTargetIds: ['busy'],
+      explicitTargets: true,
+      wakeAt: '2026-08-17T01:00:00.000Z',
+    }
+
+    assert.equal(
+      isWakeTimerConditionReady({ ...base, nowMs: Date.parse('2026-08-17T00:59:59.000Z') }),
+      false,
+    )
+    assert.equal(
+      isWakeTimerConditionReady({ ...base, nowMs: Date.parse('2026-08-17T01:00:00.000Z') }),
+      true,
+    )
+  })
+
+  it('still times out when the supervisor turn itself ended in error', () => {
+    // 超管本轮在 provider 侧失败就停在 error，而 error 不调完成广播、也不进拓扑
+    // 签名。owner 门控若一刀切要求 idle，这张卡连兜底超时都等不到。
+    assert.equal(
+      isWakeTimerConditionReady({
+        mode: 'workspace-agents',
+        ownerStatus: 'error',
+        pendingTargetIds: [],
+        explicitTargets: true,
+        wakeAt: '2026-08-17T01:00:00.000Z',
+        nowMs: Date.parse('2026-08-17T00:00:00.000Z'),
+      }),
+      true,
+    )
+    // 但正在输出时绝不发车：那会打断它自己这一轮。
+    assert.equal(
+      isWakeTimerConditionReady({
+        mode: 'workspace-agents',
+        ownerStatus: 'streaming',
+        pendingTargetIds: [],
+        explicitTargets: true,
+        wakeAt: '2026-08-17T01:00:00.000Z',
+        nowMs: Date.parse('2026-08-17T00:00:00.000Z'),
+      }),
+      false,
+    )
+    // 显式名单之外的 error 卡行为不变：仍然不放行（既有三种条件一个字没改）。
+    assert.equal(
+      isWakeTimerConditionReady({
+        mode: 'duration',
+        ownerStatus: 'error',
+        pendingTargetIds: [],
+        wakeAt: '2026-08-17T01:00:00.000Z',
+        nowMs: Date.parse('2026-08-17T02:00:00.000Z'),
+      }),
+      false,
     )
   })
 })

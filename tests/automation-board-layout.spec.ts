@@ -465,3 +465,55 @@ test('an open item drawer stays inside its card on a stacked board', async ({ pa
     { animations: 'disabled', maxDiffPixelRatio: 0.004 },
   )
 })
+
+// 「清空已完成」一次带走几十张卡（会话归档进历史，不是真删），所以它必须先问一次，
+// 也必须只出现在已完成道 —— 待命/执行中的项还在编排里，批量删它们没有对应的用户意图。
+test('clearing the done lane drops its items after a confirm', async ({ page }) => {
+  await installMockApis(page, 1, 'dark')
+  await page.setViewportSize({ width: 1440, height: 1000 })
+  await page.goto(appUrl)
+
+  const doneLane = page.locator('.automation-board-lane[data-lane="done"]')
+  await expect(doneLane.locator('.automation-board-item')).toHaveCount(1)
+  await expect(
+    page.locator('.automation-board-lane:not([data-lane="done"]) .automation-board-lane-clear'),
+  ).toHaveCount(0)
+
+  // 先拒一次：确认框不是装饰，取消必须什么都不做。
+  page.once('dialog', (dialog) => void dialog.dismiss())
+  await doneLane.locator('.automation-board-lane-clear').click()
+  await expect(doneLane.locator('.automation-board-item')).toHaveCount(1)
+
+  page.once('dialog', (dialog) => void dialog.accept())
+  await doneLane.locator('.automation-board-lane-clear').click()
+
+  await expect(doneLane.locator('.automation-board-item')).toHaveCount(0)
+  // 其余泳道原样：清空只吃已完成道。
+  await expect(page.locator('.automation-board-item')).toHaveCount(3)
+  // 空泳道不留一个点了没反应的按钮。
+  await expect(doneLane.locator('.automation-board-lane-clear')).toHaveCount(0)
+})
+
+for (const theme of ['dark', 'light'] as const) {
+  test(`the done lane head keeps the clear action legible (${theme})`, async ({ page }) => {
+    await installMockApis(page, 1, theme)
+    await page.setViewportSize({ width: 1440, height: 1000 })
+    await page.goto(appUrl)
+
+    const head = page.locator('.automation-board-lane[data-lane="done"] .automation-board-lane-head')
+    await expect(head.locator('.automation-board-lane-clear')).toBeVisible()
+
+    // 标题吃掉多余空间，计数胶囊与按钮贴在右侧成一组 —— 计数跑到正中间就是
+    // 那条 flex: 1 掉了。
+    const gap = await head.evaluate((node) => {
+      const count = node.querySelector<HTMLElement>('.automation-board-lane-count')!
+      const clear = node.querySelector<HTMLElement>('.automation-board-lane-clear')!
+      return Math.round(clear.getBoundingClientRect().left - count.getBoundingClientRect().right)
+    })
+    expect(gap).toBeLessThanOrEqual(12)
+
+    await expect(head).toHaveScreenshot(`automation-board-done-lane-head-${theme}.png`, {
+      animations: 'disabled',
+    })
+  })
+}

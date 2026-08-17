@@ -10,6 +10,7 @@ import {
   IMAGEEDITOR_TOOL_MODEL,
   MODEL_PICKER_HIDDEN_TOOL_MODELS,
   MUSIC_TOOL_MODEL,
+  STATS_TOOL_MODEL,
   STICKYNOTE_TOOL_MODEL,
   TEXTEDITOR_TOOL_MODEL,
   WEATHER_TOOL_MODEL,
@@ -58,6 +59,7 @@ import { getAutoReadCardId } from './pane-read-state'
 import { syncMessageListElementToBottom } from './pane-scroll'
 import { ChatCard } from './ChatCard'
 import {
+  ChartIcon,
   ClaudeIcon,
   CloudIcon,
   CloseIcon,
@@ -282,6 +284,10 @@ const getPaneTabIcon = (card: ChatCardState) => {
     return <KanbanIcon className="pane-tab-icon" aria-hidden="true" />
   }
 
+  if (card.model === STATS_TOOL_MODEL) {
+    return <ChartIcon className="pane-tab-icon" aria-hidden="true" />
+  }
+
   if (card.provider === 'claude') {
     return <ClaudeIcon className="pane-tab-icon" aria-hidden="true" />
   }
@@ -303,6 +309,7 @@ const cardUsesComposer = (card: ChatCardState) =>
     BRAINSTORM_TOOL_MODEL,
     GIT_TOOL_MODEL,
     MUSIC_TOOL_MODEL,
+    STATS_TOOL_MODEL,
     STICKYNOTE_TOOL_MODEL,
     TEXTEDITOR_TOOL_MODEL,
     IMAGEEDITOR_TOOL_MODEL,
@@ -1489,6 +1496,18 @@ const PaneViewView = ({
         <div
           ref={paneContentRef}
           className={`pane-content${contentDropEdge ? ` is-drop-${contentDropEdge}` : ''}`}
+          onDragOverCapture={(event) => {
+            const target = event.target
+            if (!(target instanceof Element) || !target.closest('.automation-board-lane-body')) {
+              return
+            }
+
+            // 症状：tab 穿过 pane 上沿进入自动化看板泳道后，蓝色分栏预览仍盖在上方。
+            // 根因：泳道会 stopPropagation，pane 的冒泡 dragover 收不到“已进入内层落点”的信号。
+            // 不能只等 dragend/超时：被看板吸收的源 tab 会立即卸载，原生 dragend 可能根本不到达。
+            setTabDropHint(null)
+            setContentDropEdge(null)
+          }}
           onDragOver={(event) => {
             const payload = readDragPayload(event)
             if (payload?.type === 'automation-board-item') {
@@ -1581,6 +1600,8 @@ const PaneViewView = ({
                     ),
                   onDeleteItem: (cardId) =>
                     automationBoardActions.deleteItem(column.id, card.id, cardId),
+                  onClearLane: (lane) =>
+                    automationBoardActions.clearLane(column.id, card.id, lane),
                   onSaveTemplate: (cardId) =>
                     automationBoardActions.saveTemplate(column.id, card.id, cardId),
                   onRenameTemplate: (templateId, name) =>

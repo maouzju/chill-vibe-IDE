@@ -1320,7 +1320,9 @@ export const createAutomationBoardItemCard = ({
   language?: AppLanguage
 }): ChatCard => ({
   ...createCard(
-    titleFromPrompt(requirement),
+    // 纯图片需求的文本是空的，标题必然走兜底；不显式传语言的话英文界面会冒出
+    // 一句中文 —— `titleFromPrompt` 的默认兜底锁死在 `defaultAppLanguage`。
+    titleFromPrompt(requirement, getLocaleText(language).newChat),
     defaultCardSize,
     provider,
     model,

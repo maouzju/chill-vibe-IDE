@@ -97,6 +97,38 @@ export const resolveAutomationBoardItemStatusClass = (card: ChatCard): string =>
 }
 
 /**
+ * 泳道里"此刻真的在跑"的项，顺序与泳道显示顺序一致。
+ *
+ * 口径与 `resolveAutomationBoardItemStatusClass` 的 `is-streaming` 完全一致：
+ * 只有 `status === 'streaming'` 算在跑。`backgroundWorkPending`（等唤醒）看着
+ * 也"没结束"，但它没有占着一个 CLI 进程，把它算进来会让"还剩几个在跑"这个
+ * 数字失去它唯一的用处——判断现在能不能走开。
+ */
+export const collectAutomationBoardRunningCardIds = (
+  items: readonly AutomationBoardItemView[],
+): string[] =>
+  items.filter((view) => view.card.status === 'streaming').map((view) => view.card.id)
+
+/**
+ * 逐个定位的下一站。
+ *
+ * 游标记的是**上一次跳到的 cardId** 而不是下标：正在跑的项随时会跑完并离开这个
+ * 列表，记下标会让点击在剩余项之间乱跳。记 id 的话，上一站消失就退回第一个，
+ * 走到末尾就绕回开头，点击永远有反应。
+ */
+export const resolveNextAutomationBoardRunningCardId = (
+  runningCardIds: readonly string[],
+  lastCardId: string | null | undefined,
+): string | null => {
+  if (runningCardIds.length === 0) {
+    return null
+  }
+
+  const lastIndex = lastCardId ? runningCardIds.indexOf(lastCardId) : -1
+  return runningCardIds[(lastIndex + 1) % runningCardIds.length] ?? null
+}
+
+/**
  * 分组前先砍掉过老的原始消息。
  *
  * 症状（要防的）：10+ 个并发项各自对全量 messages 跑 `buildRenderableMessages`
@@ -111,6 +143,36 @@ export const budgetAutomationBoardItemMessages = <T,>(messages: readonly T[]): T
   messages.length <= automationBoardItemRawMessageBudget
     ? [...messages]
     : messages.slice(messages.length - automationBoardItemRawMessageBudget)
+
+/**
+ * 「加入待命」能不能按下去。
+ *
+ * 症状（要防的）：粘了一张截图但一个字没打，发送按钮是灰的，需求发不出去。
+ * 根因：判据曾经只看 `draft.trim()`，把附件当成文本的附属品而不是内容本身。
+ * 被否决：在 composer 里自动补一句占位文本 —— 那会被当成真需求发给模型。
+ * 与聊天 composer 的 `sendDisabled` 同一条规矩：文本或附件有其一即可提交。
+ */
+export const canSubmitAutomationBoardDraft = (draft: string, attachmentCount: number): boolean =>
+  draft.trim().length > 0 || attachmentCount > 0
+
+/**
+ * 在光标处插入一个换行，返回新文本和新光标位置。
+ *
+ * 症状：看板需求框里按 Ctrl+回车什么也不发生 —— 既不提交也不换行。
+ * 根因：keydown 只是"不拦截 ctrlKey"，指望 textarea 的默认行为换行；但浏览器
+ *   里只有 Shift+回车有插入换行的原生行为，Ctrl+回车没有（历史上它是"提交表单"）。
+ * 被否决：改用 Shift+回车换行 —— 聊天 composer（ChatCard）早就是 Ctrl+回车换行，
+ *   同一个 App 里两种输入框肌肉记忆不能打架。
+ */
+export const insertNewlineIntoDraft = (
+  value: string,
+  selectionStart: number,
+  selectionEnd: number,
+): { value: string; caret: number } => {
+  const start = Math.max(0, Math.min(selectionStart, value.length))
+  const end = Math.max(start, Math.min(selectionEnd, value.length))
+  return { value: `${value.slice(0, start)}\n${value.slice(end)}`, caret: start + 1 }
+}
 
 /**
  * 静默时长（分钟），供"超过半小时没下文"这类判断使用。返回 null 表示没有

@@ -102,6 +102,11 @@ import {
   recordRunStart,
 } from './run-duration-summary'
 import { attachTurnTelemetry } from './turn-telemetry-summary'
+import {
+  runAutomationBoardStandbyBatch,
+  type AutomationBoardActions,
+  type AutomationBoardWorkspaceView,
+} from './components/automation-board-host'
 import type {
   AppLanguage,
   AppState,
@@ -274,10 +279,6 @@ import {
   resolveAutomationBoardTemplateTriggerDecisions,
   type AutomationBoardCardActivity,
 } from './components/automation-board-auto-trigger'
-import type {
-  AutomationBoardActions,
-  AutomationBoardWorkspaceView,
-} from './components/automation-board-host'
 import {
   buildWorkspaceSessionMirror,
   getWorkspaceSessionMirrorSignature,
@@ -4011,6 +4012,14 @@ function App() {
           lane,
         }
         persistAfterAction(action.type, applyAction(action))
+      },
+      runAllStandby: (columnId, boardCardId, cardIds) => {
+        // 症状：批量开跑若另造发送路径，会与单项拖入的续传/附件规则漂移。
+        // 根因：这些副作用统一封装在 moveItem 的 transition 判定里。
+        // 方案：固定点击瞬间的 id 批次，逐项回到唯一入口；见 automation-board v2.8。
+        runAutomationBoardStandbyBatch(cardIds, (cardId) =>
+          automationBoardActions.moveItem(columnId, boardCardId, cardId, 'running'),
+        )
       },
       saveTemplate: (columnId, boardCardId, cardId) => {
         const column = getColumn(columnId)

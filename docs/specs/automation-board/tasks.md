@@ -1,5 +1,26 @@
 # 自动化看板 — Tasks
 
+## v2.10 — 纯图片需求可提交（FR17）
+
+- [x] 先写 `canSubmitAutomationBoardDraft` 的纯函数测试并确认红灯（符号不存在）
+- [x] 抽出判据，按钮 `disabled` 与 `submitDraft` 早退共用同一个函数
+- [x] 补 `tests/automation-board-compose-paste.spec.ts` 的"只粘图不打字"E2E，并把按钮判据临时回退验证它确实变红
+- [x] 顺带修 `createAutomationBoardItemCard` 的标题兜底忽略界面语言（纯图片项必然命中）
+
+验证记录：
+
+- `tests/automation-board-composer.test.ts`：5 条全绿。其中标题兜底那条先红（英文界面拿到"新会话"）后绿。
+- `tests/automation-board-compose-paste.spec.ts`：2 条全绿。把 `disabled` 判据回退成 `!draft.trim()` 后，
+  新增的 "an image-only draft can still be added to standby" 在 `toBeEnabled` 上失败 —— 红灯是实测的，不是推断的。
+- `pnpm test:quality` 通过。
+
+## v2.9 — 需求输入斜杠补全
+
+- [x] 先补自动化看板专用的候选过滤/补全文本纯函数测试，并确认红灯
+- [x] 待命泳道 composer 接入本地 + provider/skill 命令加载
+- [x] 接入键盘、鼠标、Escape 与焦点保持，沿用现有斜杠菜单样式
+- [x] 聚焦测试与 `pnpm test:quality` 通过；`pnpm test:theme` 在本机启动后 120 秒无结果，被超时终止，未盲目更新快照
+
 ## 转正为默认开启（2026-08-17）
 
 - [x] `shared/schema.ts` / `shared/default-state.ts` 默认值改为开启
@@ -305,4 +326,30 @@ MCP 端到端实测（一次性探针，非注册测试）：起真实桥接 →
       hover 亮 `--danger`
 - [x] `tests/automation-board-state.test.ts` 五条（红先）+ `tests/automation-board-render.test.tsx` 两条
 - [x] `tests/automation-board-layout.spec.ts`：确认/取消端到端 + 已完成道头部双主题快照
+- [x] `pnpm test:quality`
+
+## Slice V13 — 待命项全部执行（v2.8 / FR2）
+
+- [x] 待命道非空时显示“全部执行”，空道隐藏
+- [x] 点击时按当前顺序对全部待命项复用单项 `moveItem(..., 'running')` 路径
+- [x] 补 SSR 接线测试、批次顺序测试与定向验证；现有自动化看板主题快照覆盖该头部
+
+## Slice V14 — "N 在跑" 计数即定位器（v2.9 / FR16）
+
+- [x] `src/components/automation-board-view.ts`：`collectAutomationBoardRunningCardIds` +
+      `resolveNextAutomationBoardRunningCardId`（红先，`tests/automation-board-running-locator.test.ts`）
+- [x] `AutomationBoardCard`：泳道头的"N 在跑"按钮 + `locateNextRunningItem`（命令式高亮，卸载清 timer）；
+      `shared/i18n.ts` 新增 `automationBoardRunningCount` / `automationBoardLocateRunningHint`（zh + en）
+- [x] `src/index.css`：强调色胶囊 + 呼吸圆点（`prefers-reduced-motion` 停动画）、`.automation-board-item.is-locating`
+- [x] `tests/automation-board-render.test.tsx` 两条 + `tests/automation-board-running-locator.spec.ts`（新）
+- [x] `tests/automation-board-layout.spec.ts`：执行中道头部双主题快照
+- [x] `pnpm test:quality`
+
+## Slice V15 — Ctrl+回车换行（v2.11 / FR18）
+
+- [x] `src/components/automation-board-view.ts`：`insertNewlineIntoDraft`（纯函数，越界选区夹回边界），
+      红先 `tests/automation-board-composer.test.ts` 三条
+- [x] `AutomationBoardCard`：模块级 `applyCtrlEnterNewline`（先同步写回 DOM 再提交 state），接到
+      新建需求框（排在斜杠菜单分支之前）、项抽屉鞭策框、模板配置需求框三处
+- [x] `tests/automation-board-compose-paste.spec.ts`：端到端证明换行不误提交、光标不错位、普通回车照旧提交
 - [x] `pnpm test:quality`

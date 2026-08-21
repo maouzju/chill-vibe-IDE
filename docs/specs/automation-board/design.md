@@ -1,5 +1,40 @@
 # 自动化看板 — Design
 
+## v2.11：Ctrl+回车换行（FR18）
+
+换行本身是一个纯函数 `insertNewlineIntoDraft(value, selectionStart, selectionEnd)`
+（`src/components/automation-board-view.ts`），返回新文本和新光标位置，越界选区一律夹回边界 ——
+受控 textarea 的 selection 在值刚被外部改写时可能落在范围外，越界切片会算出错位的光标。
+
+三个需求框（新建需求 / 项抽屉的鞭策框 / 模板配置的需求框）共用组件内的
+`applyCtrlEnterNewline(textarea, commit)`：**先同步写回 DOM 的 value 与 selection，再提交 state**。
+顺序不能反 —— 先 `setState` 再用 `requestAnimationFrame` 补光标，中间那一帧里打进来的字符会落在
+被弹到末尾的旧光标处（实测打出 `第一行\n二行第`）。先写 DOM 之后 React commit 发现 `props.value`
+与 DOM 相同就跳过赋值，光标全程没被动过。
+
+新建需求框里这条分支排在斜杠菜单处理之前：用户按住 Ctrl 打回车是明确要换行，这时候把菜单
+高亮项补全进去是抢答。
+
+## v2.10：纯图片需求（FR17）
+
+「能不能提交」从散在两处的 `!draft.trim()` 收敛成一个纯函数
+`canSubmitAutomationBoardDraft(draft, attachmentCount)`（`src/components/automation-board-view.ts`），
+按钮的 `disabled` 与 `submitDraft` 的早退共用它 —— 这两处判据一旦分叉，就会出现"按钮亮着但回车没反应"。
+判据本身与聊天 composer 的 `sendDisabled` 同源：文本或附件有其一即可。图片能力不用再判，
+`providerSupportsImageAttachments` 对 codex / claude 都为真，而看板 composer 只能选这两家。
+
+下游一行没改：`sendMessage` 早就按 `prompt.trim() || attachments.length > 0` 算 `hasSendContent`，
+空文本 + 附件本来就是合法发送；`createAutomationBoardItem` 收空 `requirement` 也一直是合法的。
+唯一的连带修正在标题兜底 —— `createAutomationBoardItemCard` 过去调 `titleFromPrompt(requirement)`
+不传语言，兜底文案锁死在 `defaultAppLanguage`，纯图片项（需求为空、必然走兜底）会让英文界面冒出中文
+"新会话"。现在显式传 `getLocaleText(language).newChat`。
+
+## v2.9：需求输入的斜杠补全
+
+待命泳道 composer 复用普通聊天的命令数据源：`getLocalSlashCommands()` 提供无网络兜底，`fetchSlashCommands()` 按 workspace/provider 拉取原生命令与 skill。菜单沿用 `.slash-command-*` 视觉契约，并通过 portal 定位在 textarea 上方，避免被泳道滚动容器裁剪。
+
+交互状态只留在 `AutomationBoardCard`：当前查询、选中项、菜单关闭状态和定位信息都不入盘；真正写入的仍只有需求草稿。键盘处理优先消费菜单导航/补全，再回落到原有“Enter 创建待命项”行为，因此补全不会误提交。
+
 ## 核心洞察：看板项就是一张普通 ChatCard，只是没进 pane.tabs
 
 本仓库的数据模型已经天然支持这件事，不需要为看板另造一套会话运行时：
@@ -637,8 +672,23 @@ lastActivityAt。推送节流仍是 2000ms。
 | `list_sessions` | 读 | 本工作区全部会话：标题、provider/model、状态、看板归属与泳道、静默分钟数、最后消息预览 |
 | `read_session` | 读 | 单个会话最近 N 条转录（默认 20，上限 60） |
 | `send_session_message` | 写 | `{ cardId, message }` → `sendMessage`（"鞭策"） |
-| `move_session_to_lane` | 写 | `{ cardId, lane }` → 移进看板某道。目标看板：该卡已在某看板则用那个，否则用本列第一张看板卡；本列没有看板则报错 |
+| `move_session_to_lane` | 写 | `{ cardId?, lane }` → 移进看板某道。目标看板：该卡已在某看板则用那个，否则用本列第一张看板卡；本列没有看板则报错。**省略 `cardId` = 归档我自己**（见下） |
 | `set_session_wake_timer` | 写 | `{ cardId, mode, durationMinutes }` |
+
+#### 自我归档：`move_session_to_lane` 省略 `cardId`（2026-08-17）
+
+请求方自己被 `SELF_CARD_ID` 滤出 `list_sessions`，代价是**模型手里永远没有自己的 cardId**，
+于是超管干完活只能回头请用户手动把自己那张卡拖进「已完成」。所以 `cardId` 改为可选：省略时
+目标取自 `SELF_CARD_ID`（与 `wake_me_when_sessions_finish` 同一条规矩 —— 自指目标只来自进程
+环境，不接受模型入参，否则它就能冒充别人）。
+
+只放开 `lane: 'done'`：自移 `running` 会给自己重发需求形成自我重入循环，自移 `standby` 是把
+自己停在一条没人会来启动的道上，两者都不是"归档"，所以宁可报错也不静默降级。
+
+自移会中断的正是调用者本人（`resolveAutomationBoardTransition` 里 `interrupt: isStreaming`），
+所以返回文案不能像别的写工具那样引导"再调一次 `list_sessions` 确认" —— 那次调用等不到结果。
+文案与 `wake_me_when_sessions_finish` 同型：投递成功 → 立刻结束回合。这个"该闭嘴"的标记走
+解析结果上的 `selfArchive`，不进命令体（命令体是共享 schema 的地盘）。
 
 命令 schema `automationBoardCommandSchema` 的成员随之改名并把 `boardCardId` 改成可选
 （`move-session-to-lane` 由 App 侧解析目标看板）。
@@ -700,6 +750,14 @@ v2.1 全部改成**容器查询**，并且分两层量：
 出现"名称旁边空着半个面板"，同时 tab 顺序仍与视觉顺序一致。
 
 ## 泳道宽度可调（v2.2，FR11）
+
+## 待命项批量开跑（v2.8，FR2）
+
+待命道头部在非空时渲染一个安静的文字按钮“全部执行”。组件在点击瞬间按当前待命道顺序复制
+`cardId` 列表，再逐个调用既有 `onMoveItem(cardId, 'running')`。批量入口不另造 reducer action 或发送
+路径：每一项继续经过 `applyAutomationBoardTransition`，因此首次需求、历史续传、附件与 `startedAt`
+规则都和单项拖入执行中完全一致。复制 id 列表是为了避免每次移动引发重渲染后改变本次批次边界；
+点击后新加入待命道的项不属于本批次。
 
 v2.1 让泳道**自动**适应容器宽，v2.2 补上"用户说了算"那一半：三轨档下泳道之间可拖。
 
@@ -1012,3 +1070,49 @@ App 层的 handler 保持"说了就做"，MCP / 远程监工将来要复用它�
 | `tests/automation-board-state.test.ts` | 清掉整道并删卡、其余道不动、空道 no-op（引用相等）、非看板卡忽略、镜像到工作区 |
 | `tests/automation-board-render.test.tsx` | 按钮只在已完成道且有项时渲染 |
 | `tests/automation-board-layout.spec.ts` | 真实浏览器：取消什么都不做 → 确认后该道清空、其余道原样、按钮随之消失；已完成道头部双主题快照 |
+
+## v2.9 — "N 在跑" 计数即定位器（FR16）
+
+### 两个纯函数，组件里只剩 DOM 动作
+
+```ts
+collectAutomationBoardRunningCardIds(items)            // 泳道顺序，只留 status === 'streaming'
+resolveNextAutomationBoardRunningCardId(ids, lastId)   // 下一站；lastId 不在列表就回第一个，末尾绕回开头
+```
+
+都在 `src/components/automation-board-view.ts`，和泳道视图构造、状态 class 同一个模块 —— "在跑"的口径
+只有一处定义，`is-streaming` 与"N 在跑"永远说同一件事。
+
+游标记 **cardId 而不是下标**：正在跑的项随时会跑完并离开这个列表，记下标会让下一次点击在剩余项之间
+乱跳（第 2 个跑完后，"下标 2"指向的已经是另一张卡）。记 id 的话，上一站消失就退回第一个，语义是
+"从头再走一遍"，永远有反应。
+
+### 高亮走命令式 classList，不走 React state
+
+`locateNextRunningItem` 拿 `lanesRef` 上的 `[data-automation-board-item-id]`（这个属性早就在，为拖拽/
+测试留的），`scrollIntoView({ block: 'nearest' })` 之后 `classList.add('is-locating')`，1.4s 后由一个
+`setTimeout` 摘掉（组件卸载时清 timer）。
+
+**为什么不是 state**：那会让整条泳道重渲染，二十几张项卡片每张都要重跑一次紧凑消息渲染 —— NFR1 /
+pitfall 187 就是这么被拖死的。React 只在 `className` 字符串本身变了才写 DOM，所以它不会来抢这个
+class；真被抢走也只发生在那张卡状态刚好变了的时候，那时高亮消失本来就是对的。这与 pitfall 里
+"命令式脏写 React 管着的 CSS 变量" 不同 —— 那里是**同一个**属性的两个写入者，这里 React 从不写
+`is-locating`。
+
+### 视觉：存量 vs 此刻
+
+头部因此有两个胶囊。左边"N 项"保持中性（`--line` / `--ink-3`），右边"N 在跑"用 `--accent-soft` /
+`--accent` 加一颗 1.6s 呼吸的圆点，`prefers-reduced-motion` 下停动画只留定色。呼吸只在**一个 5px 的
+圆点**上，不是卡片边框 —— NFR1 禁的是无界 paint 动画面积，不是所有动效。
+
+被定位到的项加一圈 `--accent-line-strong` 边框 + `--accent-soft` 外圈：滚到位之后还需要一个"就是这张"
+的落点，否则二十几张同构卡片里看不出跳到哪了。
+
+### 测试
+
+| 文件 | 覆盖 |
+|---|---|
+| `tests/automation-board-running-locator.test.ts`（新） | 两个纯函数：只数 streaming（error / backgroundWorkPending 不算）、保泳道序、游标推进 / 绕回 / 上一站消失后重来 / 空列表 |
+| `tests/automation-board-render.test.tsx` | 胶囊只在真有 streaming 项的那条道渲染；一个都不跑时整块消失 |
+| `tests/automation-board-running-locator.spec.ts`（新，已进 smoke 桶） | 真实浏览器：6 项里 3 个在跑 → "6 项"与"3 在跑"是两个数字；连点四下依次高亮 run-a/b/c 并绕回，高亮同时只有一张 |
+| `tests/automation-board-layout.spec.ts` | 执行中道头部双主题快照；不在跑的道不长出胶囊 |

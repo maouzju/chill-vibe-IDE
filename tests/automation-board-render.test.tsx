@@ -110,6 +110,7 @@ const renderBoard = (overrides: Partial<AutomationBoardCardProps> = {}) => {
     onInstantiateTemplate: noop,
     onDeleteItem: noop,
     onClearLane: noop,
+    onRunAllStandby: noop,
     onSaveTemplate: noop,
     onRenameTemplate: noop,
     onDeleteTemplate: noop,
@@ -140,6 +141,38 @@ describe('AutomationBoardCard renders', () => {
     assert.ok(html.includes(text.automationBoardItemCount(1)))
   })
 
+  // 泳道头要能一眼看出"这里面还有几个真的在跑"，并且那个数字本身可点（逐个定位）。
+  it('shows a clickable running counter on the lane that actually has a streaming item', () => {
+    const html = renderBoard()
+
+    assert.equal(html.split('automation-board-lane-running"').length - 1, 1)
+    assert.ok(html.includes(text.automationBoardRunningCount(1)))
+    assert.match(html, /data-automation-board-running-locator="running"/)
+
+    const standbyLane = html.slice(
+      html.indexOf('data-lane="standby"'),
+      html.indexOf('data-lane="running"'),
+    )
+    assert.ok(!standbyLane.includes('automation-board-lane-running"'))
+  })
+
+  it('hides the running counter when no item is streaming', () => {
+    const board = {
+      items: [
+        { cardId: 'item-a', lane: 'running' as const, requirement: '把登录页改成暗色', templateId: '' },
+      ],
+    }
+    const html = renderBoard({
+      board,
+      cards: {
+        'board-1': { ...createAutomationBoardCard('Board'), id: 'board-1', automationBoard: board },
+        'item-a': itemCard('item-a'),
+      },
+    })
+
+    assert.ok(!html.includes('automation-board-running-locator'))
+  })
+
   // 清空只属于已完成道，且空着的时候不该出现一个点了没反应的按钮。
   it('offers a clear action on the done lane only while it has items', () => {
     const html = renderBoard()
@@ -149,6 +182,19 @@ describe('AutomationBoardCard renders', () => {
 
     const doneLane = html.slice(html.indexOf('data-lane="done"'))
     assert.match(doneLane, /automation-board-lane-clear/)
+  })
+
+  it('offers a run-all action on the standby lane only while it has items', () => {
+    const html = renderBoard()
+
+    assert.equal(html.split('automation-board-lane-run-all').length - 1, 1)
+    assert.ok(html.includes(text.automationBoardRunAllStandbyAction))
+
+    const standbyLane = html.slice(
+      html.indexOf('data-lane="standby"'),
+      html.indexOf('data-lane="running"'),
+    )
+    assert.match(standbyLane, /automation-board-lane-run-all/)
   })
 
   it('hides the clear action when the done lane is empty', () => {
@@ -171,6 +217,7 @@ describe('AutomationBoardCard renders', () => {
     })
 
     assert.ok(!html.includes('automation-board-lane-clear'))
+    assert.ok(html.includes('automation-board-lane-run-all'))
   })
 
   it('renders each item with its original requirement', () => {

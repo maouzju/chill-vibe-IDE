@@ -7,8 +7,10 @@ import type {
   KeyboardEvent,
   PointerEvent,
 } from 'react'
+import { createPortal } from 'react-dom'
 
-import { getLocaleText } from '../../shared/i18n'
+import { getLocaleText, getSlashCommandSourceLabel } from '../../shared/i18n'
+import { getLocalSlashCommands, getSlashCompletionQuery } from '../../shared/slash-commands'
 import {
   MODEL_OPTIONS,
   MODEL_PICKER_HIDDEN_TOOL_MODELS,
@@ -31,7 +33,9 @@ import type {
   ChatCard,
   ImageAttachment,
   Provider,
+  SlashCommand,
 } from '../../shared/schema'
+import { fetchSlashCommands } from '../api'
 import { resizeColumnGroups } from '../column-resize'
 import {
   AUTOMATION_BOARD_LANE_MIN_WIDTH,
@@ -70,10 +74,43 @@ import {
 import {
   buildAutomationBoardLaneViews,
   budgetAutomationBoardItemMessages,
+  canSubmitAutomationBoardDraft,
+  collectAutomationBoardRunningCardIds,
+  insertNewlineIntoDraft,
   resolveAutomationBoardItemStatusClass,
+  resolveNextAutomationBoardRunningCardId,
   type AutomationBoardItemView,
 } from './automation-board-view'
 import { WakeTimerSettingsPanel } from './WakeTimerSettingsPanel'
+import {
+  applyAutomationBoardSlashCompletion,
+  filterAutomationBoardSlashCommands,
+} from './automation-board-slash-commands'
+
+/**
+ * Ctrl+回车在需求框里插一个换行。
+ *
+ * 症状（要防的）：先同步 setState 再用 rAF 把光标挪回去，Playwright 里下一个
+ *   字符（真人快速连打同理）会落在被弹到末尾的旧光标处，打出「第一行\n二行第」。
+ * 根因：受控 textarea 被 React 重设 value 后光标归零/到末尾，rAF 的修正晚了一帧。
+ * 被否决：只留 rAF —— 换行本身是对的，错的是那一帧的空窗，掩盖不掉。
+ * 现在先同步写回 DOM 再提交 state：React commit 时发现 value 与 DOM 相同就不重设，
+ * 光标全程没被动过。
+ */
+const applyCtrlEnterNewline = (
+  textarea: HTMLTextAreaElement,
+  commit: (value: string) => void,
+) => {
+  const next = insertNewlineIntoDraft(
+    textarea.value,
+    textarea.selectionStart,
+    textarea.selectionEnd,
+  )
+  textarea.value = next.value
+  textarea.selectionStart = next.caret
+  textarea.selectionEnd = next.caret
+  commit(next.value)
+}
 
 export type AutomationBoardTabDropSource = {
   columnId: string
@@ -94,6 +131,7 @@ export type AutomationBoardCardProps = {
   defaultModel: string
   wakeTimerEnabled: boolean
   repeatLoopEnabled: boolean
+  crossProviderSkillReuseEnabled?: boolean
   onCreateItem: (
     lane: AutomationBoardLane,
     requirement: string,
@@ -115,6 +153,8 @@ export type AutomationBoardCardProps = {
   onDeleteItem: (cardId: string) => void
   /** 清空整条泳道（项与会话卡一起删）。确认弹窗在本组件里，不在 App 层。 */
   onClearLane: (lane: AutomationBoardLane) => void
+  /** 将点击瞬间的全部待命项逐个交给既有单项开跑路径。 */
+  onRunAllStandby: (cardIds: string[]) => void
   onSaveTemplate: (cardId: string) => void
   onRenameTemplate: (templateId: string, name: string) => void
   onDeleteTemplate: (templateId: string) => void
@@ -628,10 +668,20 @@ export const AutomationBoardItemDrawer = ({
   const showsRepeatToggle = repeatLoopEnabled && lane === 'running'
 
   const handleNudgeKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
-    if (event.key === 'Enter' && !event.shiftKey) {
-      event.preventDefault()
-      onNudgeSubmit()
+    if (event.key !== 'Enter') {
+      return
     }
+    // Ctrl+回车换行：这里也是"写需求"的地方，与新建需求框和聊天 composer 同一套手感。
+    if (event.ctrlKey) {
+      event.preventDefault()
+      applyCtrlEnterNewline(event.currentTarget, onNudgeChange)
+      return
+    }
+    if (event.shiftKey) {
+      return
+    }
+    event.preventDefault()
+    onNudgeSubmit()
   }
 
   return (
@@ -760,6 +810,17 @@ export const AutomationBoardTemplateConfig = ({
           value={template.requirement}
           rows={4}
           onChange={(event) => onUpdateTemplate(template.id, { requirement: event.target.value })}
+          onKeyDown={(event) => {
+            // 这个框普通回车本来就换行，但从聊天 composer 养成的手是 Ctrl+回车 ——
+            // 按下去一点反应都没有，用户只会以为输入框坏了。
+            if (event.key !== 'Enter' || !event.ctrlKey) {
+              return
+            }
+            event.preventDefault()
+            applyCtrlEnterNewline(event.currentTarget, (requirement) =>
+              onUpdateTemplate(template.id, { requirement }),
+            )
+          }}
         />
       </div>
 
@@ -931,6 +992,13 @@ const AutomationBoardCardView = (props: AutomationBoardCardProps) => {
     adminAccess: false,
   }
   const [composeSettingsOpen, setComposeSettingsOpen] = useState(false)
+  const textareaRef = useRef<HTMLTextAreaElement | null>(null)
+  const localSlashCommands = useMemo(() => getLocalSlashCommands(language), [language])
+  const [slashCommands, setSlashCommands] = useState<SlashCommand[]>(localSlashCommands)
+  const [slashCommandsLoading, setSlashCommandsLoading] = useState(true)
+  const [selectedSlashIndex, setSelectedSlashIndex] = useState(0)
+  const [slashMenuDismissed, setSlashMenuDismissed] = useState(false)
+  const [slashMenuStyle, setSlashMenuStyle] = useState<CSSProperties>({ display: 'none' })
   // 待命草稿的粘贴图片。需求经常本身就是一张截图，只能打字等于逼用户先建卡
   // 再去卡里粘一遍。
   const [draftImages, setDraftImages] = useState<PendingComposerAttachment[]>([])
@@ -945,6 +1013,64 @@ const AutomationBoardCardView = (props: AutomationBoardCardProps) => {
   const [renamingTemplateId, setRenamingTemplateId] = useState<string | null>(null)
   const [renamingValue, setRenamingValue] = useState('')
   const rejectionTimerRef = useRef<number | null>(null)
+
+  useEffect(() => {
+    if (!workspacePath.trim()) return
+    let cancelled = false
+    void fetchSlashCommands({
+      provider: composeDefaults.provider,
+      workspacePath,
+      language,
+      crossProviderSkillReuseEnabled: props.crossProviderSkillReuseEnabled === true,
+    }).then((commands) => {
+      if (!cancelled) setSlashCommands(commands.length > 0 ? commands : localSlashCommands)
+    }).catch(() => {
+      if (!cancelled) setSlashCommands(localSlashCommands)
+    }).finally(() => {
+      if (!cancelled) setSlashCommandsLoading(false)
+    })
+    return () => { cancelled = true }
+  }, [composeDefaults.provider, language, localSlashCommands, props.crossProviderSkillReuseEnabled, workspacePath])
+
+  const slashQuery = getSlashCompletionQuery(draft)
+  const filteredSlashCommands = useMemo(
+    () => filterAutomationBoardSlashCommands(draft, slashCommands),
+    [draft, slashCommands],
+  )
+  const activeSlashIndex = filteredSlashCommands.length === 0
+    ? 0
+    : Math.min(selectedSlashIndex, filteredSlashCommands.length - 1)
+  const slashMenuOpen = draftImages.length === 0 && slashQuery !== null && !slashMenuDismissed
+  const highlightedSlashCommand = filteredSlashCommands[activeSlashIndex] ?? null
+
+  useEffect(() => {
+    if (!slashMenuOpen) return
+    const updatePosition = () => {
+      const rect = textareaRef.current?.getBoundingClientRect()
+      if (!rect) return
+      setSlashMenuStyle({
+        position: 'fixed',
+        left: `${rect.left}px`,
+        top: `${Math.max(8, rect.top - 320)}px`,
+        width: `${rect.width}px`,
+        maxHeight: `${Math.max(120, Math.min(300, rect.top - 16))}px`,
+      })
+    }
+    updatePosition()
+    window.addEventListener('resize', updatePosition)
+    window.addEventListener('scroll', updatePosition, true)
+    return () => {
+      window.removeEventListener('resize', updatePosition)
+      window.removeEventListener('scroll', updatePosition, true)
+    }
+  }, [slashMenuOpen])
+
+  const applySlashCommand = (command: SlashCommand) => {
+    const nextDraft = applyAutomationBoardSlashCompletion(command)
+    setDraft(nextDraft)
+    setSelectedSlashIndex(0)
+    requestAnimationFrame(() => textareaRef.current?.focus())
+  }
 
   const expandedTemplate = templates.find((entry) => entry.id === expandedTemplateId)
 
@@ -976,7 +1102,69 @@ const AutomationBoardCardView = (props: AutomationBoardCardProps) => {
     [cards],
   )
 
+  // 每条泳道此刻真的在跑的项。口径见 collectAutomationBoardRunningCardIds。
+  const runningCardIdsByLane = useMemo(() => {
+    const entries: Record<AutomationBoardLane, string[]> = { standby: [], running: [], done: [] }
+    for (const laneView of laneViews) {
+      entries[laneView.lane] = collectAutomationBoardRunningCardIds(laneView.items)
+    }
+    return entries
+  }, [laneViews])
+
   const lanesRef = useRef<HTMLDivElement | null>(null)
+  /** 逐个定位的游标：记 cardId 而不是下标，理由见 resolveNextAutomationBoardRunningCardId。 */
+  const runningLocatorCursorRef = useRef<string | null>(null)
+  const runningLocatorTimerRef = useRef<number | null>(null)
+
+  /**
+   * 点一下泳道头的"N 在跑"，跳到下一个正在跑的项并短暂高亮。
+   *
+   * 高亮走命令式 classList 而不是 React state：state 会让整条泳道重渲染，
+   * 而这里最多的时候有二十几张项卡片，每张都要重跑 markdown 解析
+   * （AGENTS.md pitfall 187 就是这么被拖死的）。React 只有在 className
+   * 字符串本身变了才会写 DOM，所以它不会来抢这个 class；真被抢走也只发生在
+   * 那张卡状态刚好变了的时候——那时高亮消失本来就是对的。
+   */
+  const locateNextRunningItem = (runningCardIds: readonly string[]) => {
+    const nextCardId = resolveNextAutomationBoardRunningCardId(
+      runningCardIds,
+      runningLocatorCursorRef.current,
+    )
+    if (!nextCardId) {
+      return
+    }
+
+    runningLocatorCursorRef.current = nextCardId
+    const target = lanesRef.current?.querySelector<HTMLElement>(
+      `[data-automation-board-item-id="${nextCardId}"]`,
+    )
+    if (!target) {
+      return
+    }
+
+    target.scrollIntoView({ block: 'nearest', behavior: 'smooth' })
+    if (runningLocatorTimerRef.current !== null) {
+      window.clearTimeout(runningLocatorTimerRef.current)
+    }
+    lanesRef.current
+      ?.querySelectorAll('.automation-board-item.is-locating')
+      .forEach((element) => element.classList.remove('is-locating'))
+    target.classList.add('is-locating')
+    runningLocatorTimerRef.current = window.setTimeout(() => {
+      target.classList.remove('is-locating')
+      runningLocatorTimerRef.current = null
+    }, 1400)
+  }
+
+  useEffect(
+    () => () => {
+      if (runningLocatorTimerRef.current !== null) {
+        window.clearTimeout(runningLocatorTimerRef.current)
+      }
+    },
+    [],
+  )
+
   const laneTracks = getAutomationBoardLaneTracks(
     resolveAutomationBoardLaneWidths(board.laneWidths),
   )
@@ -1204,7 +1392,7 @@ const AutomationBoardCardView = (props: AutomationBoardCardProps) => {
 
   const submitDraft = () => {
     const trimmed = draft.trim()
-    if (!trimmed) {
+    if (!canSubmitAutomationBoardDraft(draft, draftImages.length)) {
       return
     }
 
@@ -1300,6 +1488,29 @@ const AutomationBoardCardView = (props: AutomationBoardCardProps) => {
               <span className="automation-board-lane-count">
                 {text.automationBoardItemCount(laneView.items.length)}
               </span>
+              {/* "23 项"里有几个还真的在跑，是走开前唯一想知道的数字；总数天天在那儿
+                  堆着，看不出来。计数本身就是定位器，点一下往下一个跑着的项跳。 */}
+              {runningCardIdsByLane[laneView.lane].length > 0 ? (
+                <button
+                  type="button"
+                  className="automation-board-lane-running"
+                  data-automation-board-running-locator={laneView.lane}
+                  title={text.automationBoardLocateRunningHint}
+                  onClick={() => locateNextRunningItem(runningCardIdsByLane[laneView.lane])}
+                >
+                  <span className="automation-board-lane-running-dot" aria-hidden="true" />
+                  {text.automationBoardRunningCount(runningCardIdsByLane[laneView.lane].length)}
+                </button>
+              ) : null}
+              {laneView.lane === 'standby' && laneView.items.length > 0 ? (
+                <button
+                  type="button"
+                  className="automation-board-lane-run-all"
+                  onClick={() => props.onRunAllStandby(laneView.items.map((view) => view.card.id))}
+                >
+                  {text.automationBoardRunAllStandbyAction}
+                </button>
+              ) : null}
               {/* 只有已完成道能清空：待命/执行中的项还在编排里，批量删它们
                   没有对应的用户意图，而已完成道是纯粹的堆积区。 */}
               {laneView.lane === 'done' && laneView.items.length > 0 ? (
@@ -1367,19 +1578,97 @@ const AutomationBoardCardView = (props: AutomationBoardCardProps) => {
             {laneView.lane === 'standby' ? (
               <div className="automation-board-lane-compose">
                 <textarea
+                  ref={textareaRef}
                   value={draft}
                   rows={2}
                   placeholder={text.automationBoardNewRequirementPlaceholder}
-                  onChange={(event) => setDraft(event.target.value)}
+                  onChange={(event) => {
+                    const nextDraft = event.target.value
+                    if (getSlashCompletionQuery(nextDraft) !== slashQuery) {
+                      setSlashMenuDismissed(false)
+                      setSelectedSlashIndex(0)
+                    }
+                    setDraft(nextDraft)
+                  }}
                   onBlur={commitDraft}
                   onPaste={handleDraftPaste}
                   onKeyDown={(event) => {
-                    if (event.key === 'Enter' && !event.shiftKey) {
+                    // 排在 slash 菜单之前：用户按住 Ctrl 打回车是明确要换行，
+                    // 这时候把菜单高亮项补全进去是抢答。
+                    if (event.key === 'Enter' && event.ctrlKey) {
+                      event.preventDefault()
+                      applyCtrlEnterNewline(event.currentTarget, setDraft)
+                      return
+                    }
+                    if (slashMenuOpen) {
+                      if (event.key === 'Escape') {
+                        event.preventDefault()
+                        setSlashMenuDismissed(true)
+                        return
+                      }
+                      if (event.key === 'ArrowDown' && filteredSlashCommands.length > 0) {
+                        event.preventDefault()
+                        setSelectedSlashIndex((current) => (current + 1) % filteredSlashCommands.length)
+                        return
+                      }
+                      if (event.key === 'ArrowUp' && filteredSlashCommands.length > 0) {
+                        event.preventDefault()
+                        setSelectedSlashIndex((current) => current === 0 ? filteredSlashCommands.length - 1 : current - 1)
+                        return
+                      }
+                      if ((event.key === 'Tab' || event.key === 'Enter') && highlightedSlashCommand) {
+                        event.preventDefault()
+                        applySlashCommand(highlightedSlashCommand)
+                        return
+                      }
+                    }
+                    // 普通回车提交；Shift+回车走 textarea 自带的换行，Ctrl+回车在上面。
+                    if (event.key === 'Enter' && !event.shiftKey && !event.ctrlKey) {
                       event.preventDefault()
                       submitDraft()
                     }
                   }}
                 />
+                {slashMenuOpen && typeof document !== 'undefined' ? createPortal(
+                  <div
+                    className="slash-command-menu automation-board-slash-command-menu"
+                    role="listbox"
+                    aria-label={text.slashCommands}
+                    style={slashMenuStyle}
+                  >
+                    {filteredSlashCommands.length > 0 ? filteredSlashCommands.map((command, index) => (
+                      <button
+                        key={`${command.source}:${command.name}`}
+                        type="button"
+                        className={`slash-command-item${index === activeSlashIndex ? ' is-selected' : ''}`}
+                        onMouseDown={(event) => {
+                          event.preventDefault()
+                          applySlashCommand(command)
+                        }}
+                      >
+                        <span className="slash-command-header">
+                          <span className="slash-command-name">/{command.name}</span>
+                          <span className="slash-command-badges">
+                            <span className={`slash-command-badge is-${command.source}`}>
+                              {getSlashCommandSourceLabel(language, command.source)}
+                            </span>
+                            {command.source === 'skill' && command.skillProvider ? (
+                              <span className={`slash-command-badge is-provider-${command.skillProvider}`}>
+                                {command.skillProvider === 'codex' ? 'Codex' : 'Claude'}
+                              </span>
+                            ) : null}
+                          </span>
+                        </span>
+                        <span className="slash-command-description">{command.description ?? `/${command.name}`}</span>
+                      </button>
+                    )) : (
+                      <div className="slash-command-empty">
+                        {slashCommandsLoading ? text.loadingSlashCommands : text.noMatchingSlashCommands}
+                      </div>
+                    )}
+                  </div>,
+                  document.body,
+                ) : null}
                 {draftImages.length > 0 ? (
                   <ul className="automation-board-compose-attachments">
                     {draftImages.map((entry) => (
@@ -1435,7 +1724,11 @@ const AutomationBoardCardView = (props: AutomationBoardCardProps) => {
                     {text.automationBoardComposeSettingsLabel}
                     <ChevronDownIcon />
                   </button>
-                  <BoardButton tone="primary" onClick={submitDraft} disabled={!draft.trim()}>
+                  <BoardButton
+                    tone="primary"
+                    onClick={submitDraft}
+                    disabled={!canSubmitAutomationBoardDraft(draft, draftImages.length)}
+                  >
                     {text.automationBoardAddRequirement}
                   </BoardButton>
                 </div>
@@ -1532,9 +1825,6 @@ const AutomationBoardCardView = (props: AutomationBoardCardProps) => {
                     <ShieldIcon />
                   </span>
                 ) : null}
-                <span className="automation-board-template-model">
-                  {template.model || template.provider}
-                </span>
                 <IconButton
                   label={
                     expandedTemplateId === template.id

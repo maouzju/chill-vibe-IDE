@@ -418,6 +418,9 @@ type LocaleText = {
   automationBoardEmptyLane: string
   automationBoardResizeLane: string
   automationBoardItemCount: (count: number) => string
+  // 泳道头上"此刻真的在跑几个"，点一下逐个定位过去。
+  automationBoardRunningCount: (count: number) => string
+  automationBoardLocateRunningHint: string
   automationBoardPopOutAction: string
   // 拖出去的反向操作，挂在 tab 右键菜单上：拖回去要求泳道落点当场可见，这条不要求。
   automationBoardAbsorbTabAction: string
@@ -426,6 +429,7 @@ type LocaleText = {
   automationBoardDeleteAction: string
   automationBoardClearLaneAction: string
   automationBoardClearLaneConfirm: (count: number) => string
+  automationBoardRunAllStandbyAction: string
   automationBoardSaveTemplateAction: string
   automationBoardMoveToStandby: string
   automationBoardMoveToRunning: string
@@ -944,6 +948,8 @@ const localeTextByLanguage: Record<AppLanguage, LocaleText> = {
     automationBoardEmptyLane: '把需求或 tab 拖到这里',
     automationBoardResizeLane: '拖拽调整泳道宽度，双击恢复均分',
     automationBoardItemCount: (count) => `${count} 项`,
+    automationBoardRunningCount: (count) => `${count} 在跑`,
+    automationBoardLocateRunningHint: '点一下逐个定位正在运行的需求',
     automationBoardPopOutAction: '拖出为独立 tab',
     automationBoardAbsorbTabAction: '收进自动化看板',
     automationBoardStopAction: '中断',
@@ -952,6 +958,7 @@ const localeTextByLanguage: Record<AppLanguage, LocaleText> = {
     automationBoardClearLaneAction: '清空已完成',
     automationBoardClearLaneConfirm: (count) =>
       `清空「已完成」里的 ${count} 项？它们的会话会归档进历史，之后能从历史里找回。`,
+    automationBoardRunAllStandbyAction: '全部执行',
     automationBoardSaveTemplateAction: '保存为模板',
     automationBoardMoveToStandby: '移到待命',
     automationBoardMoveToRunning: '移到执行中',
@@ -1487,6 +1494,8 @@ const localeTextByLanguage: Record<AppLanguage, LocaleText> = {
     automationBoardEmptyLane: 'Drop a requirement or a tab here',
     automationBoardResizeLane: 'Drag to resize lanes, double-click to reset',
     automationBoardItemCount: (count) => `${count} item${count === 1 ? '' : 's'}`,
+    automationBoardRunningCount: (count) => `${count} running`,
+    automationBoardLocateRunningHint: 'Click to jump through the running items',
     automationBoardPopOutAction: 'Pop out as a tab',
     automationBoardAbsorbTabAction: 'Move into automation board',
     automationBoardStopAction: 'Interrupt',
@@ -1495,6 +1504,7 @@ const localeTextByLanguage: Record<AppLanguage, LocaleText> = {
     automationBoardClearLaneAction: 'Clear done',
     automationBoardClearLaneConfirm: (count) =>
       `Clear ${count} item${count === 1 ? '' : 's'} from Done? Their sessions are archived to history, so you can find them again there.`,
+    automationBoardRunAllStandbyAction: 'Run all',
     automationBoardSaveTemplateAction: 'Save as template',
     automationBoardMoveToStandby: 'Move to standby',
     automationBoardMoveToRunning: 'Move to running',

@@ -517,3 +517,28 @@ for (const theme of ['dark', 'light'] as const) {
     })
   })
 }
+
+// "N 在跑"是强调色 + 呼吸圆点，两个主题都要能从旁边那颗中性计数胶囊里分出来。
+for (const theme of ['dark', 'light'] as const) {
+  test(`the running lane head separates live work from the item count (${theme})`, async ({
+    page,
+  }) => {
+    await installMockApis(page, 1, theme)
+    await page.setViewportSize({ width: 1440, height: 1000 })
+    await page.goto(appUrl)
+
+    const head = page.locator(
+      '.automation-board-lane[data-lane="running"] .automation-board-lane-head',
+    )
+    await expect(head.locator('.automation-board-lane-running')).toBeVisible()
+    await expect(head.locator('.automation-board-lane-running')).toHaveText(/1/)
+    // 不在跑的泳道不长出这个按钮。
+    await expect(
+      page.locator('.automation-board-lane[data-lane="done"] .automation-board-lane-running'),
+    ).toHaveCount(0)
+
+    await expect(head).toHaveScreenshot(`automation-board-running-lane-head-${theme}.png`, {
+      animations: 'disabled',
+    })
+  })
+}

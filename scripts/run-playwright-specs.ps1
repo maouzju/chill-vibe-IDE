@@ -25,6 +25,7 @@ try {
   $suiteSpecs = @{
     smoke = @(
       'tests/add-card-order.spec.ts',
+      'tests/automation-board-running-locator.spec.ts',
       'tests/automation-template-config-persistence.spec.ts',
       'tests/chat-draft-persistence.spec.ts',
       'tests/composer-settings-hints.spec.ts',

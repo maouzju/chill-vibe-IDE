@@ -8,7 +8,9 @@ import {
   buildStatsHeatColumns,
   buildStatsMonthLabels,
   computeStatsMetrics,
+  statsHeatMetrics,
   statsRangeDayCounts,
+  type StatsHeatMetric,
   type StatsMetrics,
   type StatsRangeDays,
 } from '../stats-card-metrics'
@@ -77,6 +79,12 @@ type StatsCardProps = {
 export function StatsCard({ language }: StatsCardProps) {
   // 一年是 GitHub 贡献图的默认视野，也是这张卡最有信息量的默认值。
   const [rangeDays, setRangeDays] = useState<StatsRangeDays>(365)
+  /**
+   * 日历口径同样只是卡片内的视图状态：不落盘，也**不触发重算**——两套等级在
+   * `computeStatsMetrics` 里已经一次算好，切换只换读哪个字段。点一下按钮就重扫全板
+   * 消息会把 30s + 空闲帧那套节流白白绕过去（SPEC FR-4）。
+   */
+  const [heatMetric, setHeatMetric] = useState<StatsHeatMetric>('messages')
   const [metrics, setMetrics] = useState<StatsMetrics | null>(null)
 
   useEffect(() => {
@@ -127,6 +135,8 @@ export function StatsCard({ language }: StatsCardProps) {
       metrics={metrics}
       rangeDays={rangeDays}
       onRangeChange={setRangeDays}
+      heatMetric={heatMetric}
+      onHeatMetricChange={setHeatMetric}
     />
   )
 }
@@ -136,13 +146,22 @@ type StatsCardViewProps = {
   metrics: StatsMetrics | null
   rangeDays: StatsRangeDays
   onRangeChange: (rangeDays: StatsRangeDays) => void
+  heatMetric: StatsHeatMetric
+  onHeatMetricChange: (metric: StatsHeatMetric) => void
 }
 
 /**
  * 纯展示层：不算数、不起定时器。拆出来是为了能对**真实的** metrics 做渲染断言——
  * 合在一起时首帧永远是 loading 占位，测试只能证明组件没崩，证不了它画对了。
  */
-export function StatsCardView({ language, metrics, rangeDays, onRangeChange }: StatsCardViewProps) {
+export function StatsCardView({
+  language,
+  metrics,
+  rangeDays,
+  onRangeChange,
+  heatMetric,
+  onHeatMetricChange,
+}: StatsCardViewProps) {
   const text = getLocaleText(language)
 
   const heatColumns = useMemo(() => buildStatsHeatColumns(metrics?.days ?? []), [metrics])
@@ -155,6 +174,11 @@ export function StatsCardView({ language, metrics, rangeDays, onRangeChange }: S
     90: text.statsRange90,
     180: text.statsRange180,
     365: text.statsRange365,
+  }
+
+  const heatMetricLabels: Record<StatsHeatMetric, string> = {
+    messages: text.statsHeatMetricMessages,
+    sessions: text.statsHeatMetricSessions,
   }
 
   if (!metrics) {
@@ -261,7 +285,7 @@ export function StatsCardView({ language, metrics, rangeDays, onRangeChange }: S
                         <span
                           key={cell.date}
                           className="stats-heatmap-cell"
-                          data-level={cell.level}
+                          data-level={heatMetric === 'sessions' ? cell.sessionLevel : cell.level}
                           tabIndex={0}
                           aria-label={text.statsHeatmapTooltip(cell.date, cell.count, cell.sessions)}
                           title={text.statsHeatmapTooltip(cell.date, cell.count, cell.sessions)}
@@ -281,18 +305,38 @@ export function StatsCardView({ language, metrics, rangeDays, onRangeChange }: S
           </div>
         </div>
         <div className="stats-heatmap-footer">
-          <div className="stats-range-picker" role="group">
-            {statsRangeDayCounts.map((days) => (
-              <button
-                key={days}
-                type="button"
-                className={`stats-range-button${days === rangeDays ? ' is-active' : ''}`}
-                aria-pressed={days === rangeDays}
-                onClick={() => onRangeChange(days)}
-              >
-                {rangeLabels[days]}
-              </button>
-            ))}
+          <div className="stats-heatmap-controls">
+            <div
+              className="stats-range-picker"
+              role="group"
+              data-picker="metric"
+              aria-label={text.statsHeatMetricLabel}
+            >
+              {statsHeatMetrics.map((metric) => (
+                <button
+                  key={metric}
+                  type="button"
+                  className={`stats-range-button${metric === heatMetric ? ' is-active' : ''}`}
+                  aria-pressed={metric === heatMetric}
+                  onClick={() => onHeatMetricChange(metric)}
+                >
+                  {heatMetricLabels[metric]}
+                </button>
+              ))}
+            </div>
+            <div className="stats-range-picker" role="group" data-picker="range">
+              {statsRangeDayCounts.map((days) => (
+                <button
+                  key={days}
+                  type="button"
+                  className={`stats-range-button${days === rangeDays ? ' is-active' : ''}`}
+                  aria-pressed={days === rangeDays}
+                  onClick={() => onRangeChange(days)}
+                >
+                  {rangeLabels[days]}
+                </button>
+              ))}
+            </div>
           </div>
           <div className="stats-heatmap-legend">
             <span>{text.statsHeatmapLess}</span>

@@ -7,7 +7,7 @@ import { maxSessionHistoryPerWorkspace } from '../shared/default-state.ts'
 import { DEFAULT_CODEX_MODEL } from '../shared/models.ts'
 import { getLocaleText } from '../shared/i18n.ts'
 import type { BoardColumn, ChatCard, ChatMessage, SessionHistoryEntry } from '../shared/schema.ts'
-import { computeStatsMetrics } from '../src/stats-card-metrics.ts'
+import { computeStatsMetrics, type StatsHeatMetric } from '../src/stats-card-metrics.ts'
 import { StatsCardView } from '../src/components/StatsCard.tsx'
 
 ;(globalThis as typeof globalThis & { React: typeof React }).React = React
@@ -97,11 +97,26 @@ const archivedUsage = (overrides: Partial<NonNullable<SessionHistoryEntry['usage
   ...overrides,
 })
 
+/** 切出某一组切换器的 markup。组里只有 button，所以第一个 `</div>` 就是组的收尾。 */
+const pickerGroup = (markup: string, picker: 'metric' | 'range') => {
+  const match = markup.match(new RegExp(`data-picker="${picker}"[^>]*>([\\s\\S]*?)</div>`))
+  assert.ok(match, `no ${picker} picker found`)
+  return match[1]
+}
+
+/** 从 markup 里挖出某一天那一格的等级。属性顺序跟着 JSX 走：data-level 在 aria-label 之前。 */
+const levelForDay = (markup: string, dayKey: string) => {
+  const match = markup.match(new RegExp(`data-level="(\\d)"[^>]*aria-label="${dayKey}[^"]*"`))
+  assert.ok(match, `no calendar cell found for ${dayKey}`)
+  return Number(match[1])
+}
+
 const renderWith = (
   options: {
     columns?: BoardColumn[]
     sessionHistory?: SessionHistoryEntry[]
     language?: 'zh-CN' | 'en'
+    heatMetric?: StatsHeatMetric
   } = {},
 ) => {
   const metrics = computeStatsMetrics({
@@ -117,6 +132,8 @@ const renderWith = (
       metrics,
       rangeDays: 90 as const,
       onRangeChange: () => undefined,
+      heatMetric: options.heatMetric ?? 'messages',
+      onHeatMetricChange: () => undefined,
     }),
   )
 }
@@ -129,6 +146,8 @@ describe('stats card view', () => {
         metrics: null,
         rangeDays: 90 as const,
         onRangeChange: () => undefined,
+        heatMetric: 'messages' as const,
+        onHeatMetricChange: () => undefined,
       }),
     )
 
@@ -184,6 +203,54 @@ describe('stats card view', () => {
     assert.ok(markup.includes('tabindex="0"'), 'real day cells must be keyboard reachable')
     assert.ok(markup.includes('aria-label='), 'screen readers need the same per-day detail')
     assert.ok(markup.includes('aria-hidden="true"'), 'padding cells must stay out of the accessibility tree')
+  })
+
+  it('always reports the session count in the tooltip, including days with none', () => {
+    // 会话记在开始日 08-14，所以 08-16 那格是"有消息、0 段会话"。
+    const markup = renderWith({
+      columns: [column([message(localIso('2026-08-14')), message(localIso('2026-08-16'))])],
+    })
+
+    // 只在 sessions > 0 时才带出会话数会让人以为功能坏了 —— 「0 段」和「没数据」是两件事。
+    assert.ok(markup.includes('2026-08-16：0 段会话 · 1 条消息'))
+    assert.ok(markup.includes('2026-08-14：1 段会话 · 1 条消息'))
+  })
+
+  it('repaints the calendar by session count when the sessions metric is picked', () => {
+    const options = {
+      sessionHistory: [
+        history(localIso('2026-08-16'), 100, 'one-big'),
+        history(localIso('2026-08-15'), 1, 'small-a'),
+        history(localIso('2026-08-15', 13), 1, 'small-b'),
+        history(localIso('2026-08-15', 14), 1, 'small-c'),
+      ],
+    }
+
+    const byMessages = renderWith(options)
+    const bySessions = renderWith({ ...options, heatMetric: 'sessions' })
+
+    // 消息口径：100 条那天最深，3 条那天几乎看不见。
+    assert.equal(levelForDay(byMessages, '2026-08-16'), 4)
+    assert.equal(levelForDay(byMessages, '2026-08-15'), 1)
+    // 会话口径反过来：3 段那天最深，1 段那天退到中间档 —— 分档基准换成了 maxSessions。
+    assert.equal(levelForDay(bySessions, '2026-08-15'), 4)
+    assert.equal(levelForDay(bySessions, '2026-08-16'), 2)
+  })
+
+  it('marks the picked calendar metric as pressed', () => {
+    const text = getLocaleText('zh-CN')
+    const markup = renderWith({ heatMetric: 'sessions' })
+
+    assert.ok(markup.includes(text.statsHeatMetricMessages))
+    assert.ok(markup.includes(text.statsHeatMetricSessions))
+    assert.ok(
+      markup.includes(`aria-pressed="true">${text.statsHeatMetricSessions}<`),
+      'the picked metric must be the pressed one',
+    )
+    assert.ok(
+      markup.includes(`aria-pressed="false">${text.statsHeatMetricMessages}<`),
+      'the other metric must not read as pressed',
+    )
   })
 
   it('falls back to an explicit empty state instead of showing zero tokens', () => {
@@ -284,7 +351,8 @@ describe('stats card view', () => {
     assert.ok(markup.includes(text.statsRange90))
     assert.ok(markup.includes(text.statsRange180))
     assert.ok(markup.includes(text.statsRange365))
-    assert.equal((markup.match(/stats-range-button is-active/g) ?? []).length, 1)
+    // 只数范围那一组：口径切换器复用同一套按钮皮肤，全局计数会把它也算进来。
+    assert.equal((pickerGroup(markup, 'range').match(/stats-range-button is-active/g) ?? []).length, 1)
     assert.ok(markup.includes('aria-pressed="true"'))
   })
 

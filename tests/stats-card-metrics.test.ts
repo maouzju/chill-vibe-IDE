@@ -559,3 +559,113 @@ test('cost is the running total per session, summed across sessions', () => {
   assert.equal(metrics.tokens?.input, 4000)
   assert.equal(metrics.tokens?.turns, 6)
 })
+
+test('a live session lands on the day it started, not on today', () => {
+  const metrics = compute({
+    columns: [
+      column([
+        card({
+          id: 'card-1',
+          messages: [
+            message({ createdAt: localIso('2026-08-14', 9) }),
+            message({ createdAt: localIso('2026-08-16', 10) }),
+          ],
+        }),
+      ]),
+    ],
+  })
+
+  const byDay = new Map(metrics.days.map((day) => [day.date, day.sessions]))
+  // 会话记在开始那天，消息各自记各自那天 —— 打开中的卡不再对日历的会话数贡献 0。
+  assert.equal(byDay.get('2026-08-14'), 1)
+  assert.equal(byDay.get('2026-08-16'), 0)
+  assert.equal(metrics.maxSessions, 1)
+})
+
+test('a card without any message does not land on any day', () => {
+  const metrics = compute({
+    columns: [column([card({ id: 'blank', messages: [] })])],
+  })
+
+  assert.equal(metrics.activeSessions, 1)
+  assert.ok(metrics.days.every((day) => day.sessions === 0))
+  assert.equal(metrics.maxSessions, 0)
+})
+
+test('an archived session lands on the day it started, not on the day it was archived', () => {
+  const metrics = compute({
+    sessionHistory: [
+      historyEntry({
+        archivedAt: localIso('2026-08-16', 18),
+        messageCount: 12,
+        // 送进渲染进程的预览是 head 4 + tail 4，所以 messages[0] 仍是全场最早那条。
+        messages: [
+          message({ createdAt: localIso('2026-08-13', 8) }),
+          message({ createdAt: localIso('2026-08-16', 17) }),
+        ],
+      }),
+    ],
+  })
+
+  const byDay = new Map(metrics.days.map((day) => [day.date, day]))
+  assert.equal(byDay.get('2026-08-13')?.sessions, 1)
+  assert.equal(byDay.get('2026-08-13')?.count, 12)
+  assert.equal(byDay.get('2026-08-16')?.sessions, 0)
+  assert.equal(byDay.get('2026-08-16')?.count, 0)
+})
+
+test('an archived session with no usable start time falls back to its archived day', () => {
+  const metrics = compute({
+    sessionHistory: [
+      historyEntry({ archivedAt: localIso('2026-08-11'), messageCount: 5 }),
+      historyEntry({
+        id: 'h-bad-start',
+        archivedAt: localIso('2026-08-11', 20),
+        messageCount: 2,
+        messages: [message({ createdAt: 'not-a-date' })],
+      }),
+    ],
+  })
+
+  const day = metrics.days.find((entry) => entry.date === '2026-08-11')
+  // 宁可落在偏晚的一天，也不让这一段从日历上消失。
+  assert.equal(day?.sessions, 2)
+  assert.equal(day?.count, 7)
+})
+
+test('session levels use their own maximum so they are not flattened by message volume', () => {
+  const busyDay = Array.from({ length: 40 }, () => message({ createdAt: localIso('2026-08-16', 10) }))
+  const metrics = compute({
+    columns: [
+      column([
+        card({ id: 'busy', messages: busyDay }),
+        card({ id: 'quiet-a', messages: [message({ createdAt: localIso('2026-08-10', 9) })] }),
+        card({ id: 'quiet-b', messages: [message({ createdAt: localIso('2026-08-10', 10) })] }),
+        card({ id: 'quiet-c', messages: [message({ createdAt: localIso('2026-08-10', 11) })] }),
+        card({ id: 'quiet-d', messages: [message({ createdAt: localIso('2026-08-10', 12) })] }),
+      ]),
+    ],
+  })
+
+  const quiet = metrics.days.find((day) => day.date === '2026-08-10')
+  const busy = metrics.days.find((day) => day.date === '2026-08-16')
+
+  assert.equal(quiet?.sessions, 4)
+  assert.equal(metrics.maxSessions, 4)
+  // 4 段会话那天在会话口径下是最深一档，尽管它只有 4 条消息、在消息口径下几乎看不见。
+  assert.equal(quiet?.sessionLevel, 4)
+  assert.equal(quiet?.level, 1)
+  // 反过来，最忙那天只有 1 段会话。
+  assert.equal(busy?.level, 4)
+  assert.equal(busy?.sessionLevel, 1)
+})
+
+test('a day with no session at all stays at session level zero', () => {
+  const metrics = compute({
+    columns: [column([card({ id: 'card-1', messages: [message({ createdAt: localIso('2026-08-16') })] })])],
+  })
+
+  const idle = metrics.days.find((day) => day.date === '2026-08-15')
+  assert.equal(idle?.sessions, 0)
+  assert.equal(idle?.sessionLevel, 0)
+})

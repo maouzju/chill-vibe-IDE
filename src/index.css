@@ -16177,6 +16177,15 @@ body.is-col-resizing .automation-board-lane-resize-handle::after {
   justify-content: space-between;
 }
 
+/* 两个切换器（口径 / 范围）成组靠左，图例靠右 —— 让三个直接子元素自己去
+   space-between 会把范围切换孤零零地推到中间，读起来像三件不相干的东西。 */
+.stats-heatmap-controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+}
+
 .stats-range-picker {
   display: inline-flex;
   gap: 2px;

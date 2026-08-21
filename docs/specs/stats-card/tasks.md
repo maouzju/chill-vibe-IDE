@@ -79,6 +79,26 @@
       `tests/stats-card-metrics.test.ts`（跨会话求和）、`tests/stats-card-render.test.tsx`
       （超窗口不画条）。
 
+## Slice 6 — 日历看得见每天开了几段会话（2026-08-21）
+
+用户："统计项目需要能看日历里面每天的会话数量"。查下来不是"没做"而是"做了但看不见
+也不对"：`day.sessions` 只统计归档会话、且归在 `archivedAt` 那天，于是今天新开的会话
+在日历上恒为 0；而 tooltip 只在 `sessions > 0` 时才带出会话数，用户 hover 今天永远
+只看得到消息数。
+
+- [x] 红：`tests/stats-card-metrics.test.ts` —— 打开中的会话按首条消息计入
+      `day.sessions`；归档会话落在开始日而不是归档日；空卡不落到任何一天；
+      `sessionLevel` 用 `maxSessions` 分档（会话数被消息数压平的回归）。
+- [x] 红：`tests/stats-card-render.test.tsx` —— tooltip 恒带会话数（含 0）；
+      切到「会话」口径后格子读 `sessionLevel`。
+- [x] 绿：`src/stats-card-metrics.ts` —— 抽 `resolveSessionDayKey`，两条来源共用；
+      `StatsDay` 增 `sessionLevel`，`StatsMetrics` 增 `maxSessions`。
+- [x] `shared/i18n.ts` —— `statsHeatmapTooltip` 去掉 `sessions > 0` 分支；新增
+      `statsHeatMetricLabel` / `statsHeatMetricMessages` / `statsHeatMetricSessions`。
+- [x] `src/components/StatsCard.tsx` + `src/index.css` —— 脚注加口径切换，复用
+      `.stats-range-button` 的皮肤，窄卡下能换行。
+- [x] `pnpm test:quality`、`tests/stats-card-theme.spec.ts` 快照。
+
 ## 后续可做（未做，非阻塞）
 - 真·全局历史：`~/.claude/projects` 与 `~/.codex` 里的会话是更完整的数据源，但需要一个
   全局扫描端点，风险见 requirements.md 的 FR-3。

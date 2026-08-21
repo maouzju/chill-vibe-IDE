@@ -384,7 +384,12 @@ type LocaleText = {
   statsProviderLabel: string
   statsHeatmapLess: string
   statsHeatmapMore: string
+  // 两个数字都要报，包括 0 ——「这天 0 段会话」和「这天没数据」是两件事。
   statsHeatmapTooltip: (date: string, messages: number, sessions: number) => string
+  // 日历按哪个口径着色：消息条数 / 会话段数。
+  statsHeatMetricLabel: string
+  statsHeatMetricMessages: string
+  statsHeatMetricSessions: string
   statsTokensTitle: string
   statsTokensScopeHint: (sessionsMissingUsage: number, archivedPerWorkspaceCap: number) => string
   statsTokensEmpty: string
@@ -908,9 +913,10 @@ const localeTextByLanguage: Record<AppLanguage, LocaleText> = {
     statsHeatmapLess: '少',
     statsHeatmapMore: '多',
     statsHeatmapTooltip: (date, messages, sessions) =>
-      sessions > 0
-        ? `${date}：${messages} 条消息 · ${sessions} 个会话`
-        : `${date}：${messages} 条消息`,
+      `${date}：${sessions} 段会话 · ${messages} 条消息`,
+    statsHeatMetricLabel: '日历口径',
+    statsHeatMetricMessages: '消息',
+    statsHeatMetricSessions: '会话',
     statsTokensTitle: '上下文用量',
     statsTokensScopeHint: (sessionsMissingUsage, archivedPerWorkspaceCap) =>
       sessionsMissingUsage > 0
@@ -1452,9 +1458,12 @@ const localeTextByLanguage: Record<AppLanguage, LocaleText> = {
     statsHeatmapLess: 'Less',
     statsHeatmapMore: 'More',
     statsHeatmapTooltip: (date, messages, sessions) =>
-      sessions > 0
-        ? `${date}: ${messages} messages · ${sessions} sessions`
-        : `${date}: ${messages} messages`,
+      `${date}: ${sessions} session${sessions === 1 ? '' : 's'} · ${messages} message${
+        messages === 1 ? '' : 's'
+      }`,
+    statsHeatMetricLabel: 'Calendar metric',
+    statsHeatMetricMessages: 'Messages',
+    statsHeatMetricSessions: 'Sessions',
     statsTokensTitle: 'Context usage',
     statsTokensScopeHint: (sessionsMissingUsage, archivedPerWorkspaceCap) =>
       sessionsMissingUsage > 0

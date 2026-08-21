@@ -256,25 +256,95 @@ test('the expanded template panel keeps its action row reachable when it scrolls
   expect(reachable.visibleHeight).toBeGreaterThanOrEqual(reachable.rowHeight - 1)
 })
 
-test('a chip never degrades the model label into a meaningless stub', async ({ page }) => {
-  await boot(page, 'dark', 3)
+/**
+ * 症状（2026-08-17 用户截图）：模板胶囊右端那排图标钮，一旦画出底色（删除钮的
+ * 红圆、展开钮 hover / focus 的圆），图标明显不在圆心里 —— 内容和边框对不齐。
+ *
+ * 根因不在任何一条应用样式里：`.icon-button` 从来没有重置过 Chromium 给
+ * `<button>` 的 UA 默认 `padding: 1px 6px`。按钮是 `display: grid` + 居中，居中
+ * 的是**内容框**而不是边框盒，于是左右各 6px 的内边距把图标整体推向右侧。
+ * 偏移量随按钮变小而变大：28px 钮内容框还有 14px（放得下 13px 图标，几乎看不
+ * 出来），缩到 20px 只剩 6px、缩到 18.4px 只剩 4.4px，12~15px 的图标彻底放不下，
+ * grid 退化成靠左，实测偏心 +3px / +5.4px。所以现象是「有些按钮不对齐」——
+ * 越小的钮越明显。
+ *
+ * 这条用例不盯 padding，只盯最终几何：纯图标按钮的图标必须落在边框盒正中。
+ */
+for (const theme of ['dark', 'light'] as const) {
+  test(`an icon-only button centers its glyph in the button box (${theme})`, async ({ page }) => {
+    await boot(page, theme)
+    await page.locator('.automation-board-template').first().hover()
+    await page.locator('.automation-board-template-configure').first().click()
+    await expect(page.locator('.automation-board-template-config')).toBeVisible()
 
-  const labels = await page
-    .locator('.automation-board-template-model')
-    .evaluateAll((nodes) =>
-      nodes.map((node) => ({
-        text: node.textContent ?? '',
-        width: node.getBoundingClientRect().width,
-        full: node.scrollWidth,
-      })),
-    )
+    const offenders = await page.evaluate(() => {
+      const rows: { cls: string; box: string; glyph: string; dx: number; dy: number }[] = []
+      document.querySelectorAll('button').forEach((el) => {
+        // 只看纯图标钮：带文字的按钮里图标本来就该偏，不在此列。
+        if ((el.textContent ?? '').trim().length > 0) return
+        const svg = el.querySelector(':scope > svg')
+        if (!svg) return
+        const box = el.getBoundingClientRect()
+        const glyph = svg.getBoundingClientRect()
+        if (box.width === 0 || glyph.width === 0) return
+        const dx = glyph.x + glyph.width / 2 - (box.x + box.width / 2)
+        const dy = glyph.y + glyph.height / 2 - (box.y + box.height / 2)
+        if (Math.abs(dx) <= 0.5 && Math.abs(dy) <= 0.5) return
+        rows.push({
+          cls: (el.className || '(no class)').toString(),
+          box: `${box.width.toFixed(1)}x${box.height.toFixed(1)}`,
+          glyph: `${glyph.width.toFixed(1)}x${glyph.height.toFixed(1)}`,
+          dx: +dx.toFixed(2),
+          dy: +dy.toFixed(2),
+        })
+      })
+      return rows
+    })
 
-  expect(labels.length).toBeGreaterThan(0)
-  for (const label of labels) {
-    // 型号是用来佐证「这枚模板跑在哪个模型上」的，截成 `clau…` 等于没有信息。
-    expect(label.width).toBeGreaterThanOrEqual(label.full - 1)
-  }
-})
+    expect(offenders).toEqual([])
+  })
+}
+
+/**
+ * 同一张截图里的第二条：暗色下删除钮**静息态**就顶着红底红框的实心圆，而同排的
+ * 展开 / 改名钮是透明无框的。15349 那段注释里写明的意图是"静息只剩图标，框和
+ * 底色留给 hover / focus"，但它只验了 default tone。
+ *
+ * `:root[data-theme='dark'] .icon-button.is-danger` 是 (0,4,0)，压得过胶囊那条
+ * (0,3,0) 的覆盖，于是暗色下 danger 的底色又被画了回来 —— 亮色因为
+ * `.icon-button.is-danger` 只有 (0,2,0) 所以看不到这个问题，又是一处"同一根因
+ * 的两种面孔"。
+ *
+ * 用例只断言最终状态：一排钮静息时长得必须一样，不能单独一个常驻红点。
+ */
+for (const theme of ['dark', 'light'] as const) {
+  test(`the delete chip button rests in the same skin as its siblings (${theme})`, async ({
+    page,
+  }) => {
+    await boot(page, theme)
+    await page.locator('.automation-board-template').first().hover()
+
+    const skins = await page.evaluate(() => {
+      const read = (sel: string) => {
+        const el = document.querySelector(sel)
+        if (!el) return null
+        const s = getComputedStyle(el)
+        return { sel, background: s.backgroundColor, border: s.borderColor, shadow: s.boxShadow }
+      }
+      return [
+        read('.automation-board-template-configure'),
+        read('.automation-board-template-rename'),
+        read('.automation-board-template-delete'),
+      ]
+    })
+
+    expect(skins.filter(Boolean)).toHaveLength(3)
+    const [configure, , remove] = skins
+    expect(remove!.background).toBe(configure!.background)
+    expect(remove!.border).toBe(configure!.border)
+    expect(remove!.shadow).toBe(configure!.shadow)
+  })
+}
 
 /**
  * 症状（2026-08-16 用户截图）：待命 composer 的「参数」区里，思考深度那个下拉

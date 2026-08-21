@@ -114,16 +114,7 @@ const installMockApis = async (page: Page, saves: unknown[]) => {
   })
 }
 
-// 需求经常本身就是一张截图。粘贴要能直接落在「加入待命」上，而不是逼用户
-// 先把卡建出来再进卡里粘一遍。
-test('pasting an image into the standby composer rides along with the new item', async ({
-  page,
-}) => {
-  const saves: unknown[] = []
-  await installMockApis(page, saves)
-  await page.setViewportSize({ width: 1280, height: 900 })
-  await page.goto(appUrl)
-
+const pasteImage = async (page: Page) => {
   const composer = page.locator('.automation-board-lane-compose textarea')
   await expect(composer).toBeVisible()
 
@@ -136,12 +127,82 @@ test('pasting an image into the standby composer rides along with the new item',
   })
 
   await expect(page.locator('.automation-board-compose-attachments img')).toHaveCount(1)
+  return composer
+}
+
+// 需求经常本身就是一张截图。粘贴要能直接落在「加入待命」上，而不是逼用户
+// 先把卡建出来再进卡里粘一遍。
+test('pasting an image into the standby composer rides along with the new item', async ({
+  page,
+}) => {
+  const saves: unknown[] = []
+  await installMockApis(page, saves)
+  await page.setViewportSize({ width: 1280, height: 900 })
+  await page.goto(appUrl)
+
+  const composer = await pasteImage(page)
 
   await composer.fill('看这张图，把这块改掉')
   await page.getByRole('button', { name: '加入待命' }).click()
 
   await expect(page.locator('.automation-board-item')).toHaveCount(1)
   // 图片跟着新建的待命项落进它自己的草稿附件里，等被拖进执行中道时才发出去。
+  await expect
+    .poll(() =>
+      saves.some((save) => {
+        const columns = (save as { columns?: { cards?: Record<string, unknown> }[] }).columns ?? []
+        return columns.some((column) =>
+          Object.values(column.cards ?? {}).some((card) => {
+            const attachments = (card as { draftAttachments?: { id: string }[] }).draftAttachments
+            return attachments?.some((entry) => entry.id === attachment.id) === true
+          }),
+        )
+      }),
+    )
+    .toBe(true)
+})
+
+// 多行需求是常态。Ctrl+回车在 textarea 里没有原生换行行为，不自己插就是"按了没反应"。
+test('ctrl+enter breaks the requirement into a new line instead of submitting', async ({
+  page,
+}) => {
+  const saves: unknown[] = []
+  await installMockApis(page, saves)
+  await page.setViewportSize({ width: 1280, height: 900 })
+  await page.goto(appUrl)
+
+  const composer = page.locator('.automation-board-lane-compose textarea')
+  await expect(composer).toBeVisible()
+  await composer.fill('第一行')
+  await composer.press('Control+Enter')
+  await composer.pressSequentially('第二行')
+
+  await expect(composer).toHaveValue('第一行\n第二行')
+  // 换行不能顺手把需求提交掉。
+  await expect(page.locator('.automation-board-item')).toHaveCount(0)
+
+  // 普通回车仍然是提交，多行需求整段落到新项上。
+  await composer.press('Enter')
+  await expect(page.locator('.automation-board-item')).toHaveCount(1)
+})
+
+// 需求整个就是一张截图、一个字都不打时，「加入待命」不能是灰的。
+test('an image-only draft can still be added to standby', async ({ page }) => {
+  const saves: unknown[] = []
+  await installMockApis(page, saves)
+  await page.setViewportSize({ width: 1280, height: 900 })
+  await page.goto(appUrl)
+
+  const submit = page.getByRole('button', { name: '加入待命' })
+  await expect(submit).toBeDisabled()
+
+  await pasteImage(page)
+
+  await expect(submit).toBeEnabled()
+  await submit.click()
+
+  await expect(page.locator('.automation-board-item')).toHaveCount(1)
+  // 附件仍然要落在新项的草稿附件上，否则这张图永远发不出去。
   await expect
     .poll(() =>
       saves.some((save) => {

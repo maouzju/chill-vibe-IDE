@@ -65,6 +65,14 @@
   --danger:      #bb4130;
   --danger-soft: rgba(187, 65, 48, 0.1);
 
+  /* 危险色圆钮的皮肤走 token 而不是主题选择器：`.icon-button.is-danger` 因此
+     停在 (0,2,0)，任何局部 chrome（模板胶囊、列头等）用 (0,3,0) 就能整体接管
+     它，不必再为暗色单独打一遍补丁。详见 `.icon-button.is-danger`。 */
+  --icon-btn-danger-line: rgba(187, 65, 48, 0.14);
+  --icon-btn-danger-bg: rgba(255, 247, 245, 0.88);
+  --icon-btn-danger-line-hover: rgba(187, 65, 48, 0.24);
+  --icon-btn-danger-bg-hover: rgba(255, 236, 232, 0.95);
+
   --empty-state-border: rgba(80, 90, 82, 0.2);
   --empty-state-bg: rgba(255, 255, 255, 0.82);
   --empty-state-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.52);
@@ -256,6 +264,11 @@
 
   --danger:      #ff826b;
   --danger-soft: rgba(255, 130, 107, 0.14);
+
+  --icon-btn-danger-line: rgba(255, 130, 107, 0.2);
+  --icon-btn-danger-bg: rgba(73, 36, 31, 0.72);
+  --icon-btn-danger-line-hover: rgba(255, 130, 107, 0.28);
+  --icon-btn-danger-bg-hover: rgba(90, 42, 36, 0.92);
 
   --empty-state-border: rgba(226, 234, 255, 0.16);
   --empty-state-bg: rgba(18, 22, 32, 0.92);
@@ -4099,11 +4112,23 @@ body.is-card-dragging .lane-drop-zone-top {
 }
 
 /* -- Buttons: Icon ---------------------------------------*/
+/* 症状（2026-08-17 用户截图）：模板胶囊上那排图标钮一旦画出底色，图标肉眼可
+   见地偏在圆的右半边 —— 内容和边框对不齐。
+   根因：Chromium 给 `<button>` 的 UA 默认值是 `padding: 1px 6px`，这里从来没
+   重置过它。`place-items: center` 居中的是**内容框**而不是边框盒，左右各 6px
+   的内边距于是把图标整体右推。偏移随钮变小而变大：28px 钮的内容框还有 14px，
+   13px 图标勉强放得下、几乎看不出来；缩到 20px 只剩 6px、18.4px 只剩 4.4px，
+   图标彻底放不下，grid 退化成靠左，实测偏心 +3px / +5.4px。所以现象才是
+   "有些按钮不对齐"—— 越小的钮越明显。
+   为什么不是靠 `justify-items: safe center` 之类：那只改溢出时的回退方向，
+   内容框仍然是错的；这类钮尺寸完全由 width/height 决定，padding 没有任何用途。
+   回归钉在 tests/automation-template-chrome.spec.ts 的居中扫描用例。 */
 .icon-button {
   width: 1.75rem;
   height: 1.75rem;
   display: grid;
   place-items: center;
+  padding: 0;
   border: 1px solid var(--line-strong);
   border-radius: 10px;
   background: rgba(255, 255, 255, 0.82);
@@ -4146,14 +4171,19 @@ body.is-card-dragging .lane-drop-zone-top {
   opacity: 0.45;
 }
 
+/* 皮肤走 token 而不是 `:root[data-theme='dark'] .icon-button.is-danger`：那种写
+   法有 (0,4,0)，比任何局部 chrome 的 (0,3,0) 覆盖都高，结果是 2026-08-17 用户
+   截图里的模板胶囊 —— 展开 / 改名钮已经按设计变成透明无框，唯独删除钮在暗色下
+   静息态就顶着一枚红底红框的实心圆（亮色版只有 (0,2,0)，压得住，所以同一个根因
+   在两个主题下长着两张脸）。用变量后这里停在 (0,2,0)，局部覆盖自然接管。 */
 .icon-button.is-danger {
-  border-color: rgba(187, 65, 48, 0.14);
-  background: rgba(255, 247, 245, 0.88);
+  border-color: var(--icon-btn-danger-line);
+  background: var(--icon-btn-danger-bg);
   color: var(--danger);
 }
 .icon-button.is-danger:hover:enabled {
-  background: rgba(255, 236, 232, 0.95);
-  border-color: rgba(187, 65, 48, 0.24);
+  background: var(--icon-btn-danger-bg-hover);
+  border-color: var(--icon-btn-danger-line-hover);
 }
 
 .lane-handle { margin-top: 0.1rem; }
@@ -8190,15 +8220,8 @@ body.is-col-resizing .column-resize-handle::after {
   background: rgba(34, 41, 54, 0.98);
 }
 
-:root[data-theme='dark'] .icon-button.is-danger {
-  border-color: rgba(255, 130, 107, 0.2);
-  background: rgba(73, 36, 31, 0.72);
-}
-
-:root[data-theme='dark'] .icon-button.is-danger:hover:enabled {
-  background: rgba(90, 42, 36, 0.92);
-  border-color: rgba(255, 130, 107, 0.28);
-}
+/* danger 皮肤已搬到 `--icon-btn-danger-*` token（见 `.icon-button.is-danger`）：
+   在这里用主题选择器重写会把特异性抬到 (0,4,0)，局部 chrome 再也覆盖不掉。 */
 
 :root[data-theme='dark'] .btn {
   border-color: rgba(226, 234, 255, 0.12);
@@ -14735,6 +14758,77 @@ body.is-col-resizing .automation-board-lane-resize-handle::after {
   white-space: nowrap;
 }
 
+/* "N 在跑" —— 和左边那颗静态计数胶囊同尺寸，但它是可点的定位器，所以用强调色
+   和一颗呼吸圆点把两者区分开：一个是存量，一个是此刻。 */
+.automation-board-lane-running {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex: none;
+  padding: 0 6px;
+  border: 1px solid transparent;
+  border-radius: var(--r-pill);
+  background: var(--accent-soft);
+  color: var(--accent);
+  font: inherit;
+  font-size: 10px;
+  line-height: 1.6;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.automation-board-lane-running:hover,
+.automation-board-lane-running:focus-visible {
+  border-color: var(--accent-line-strong);
+}
+
+.automation-board-lane-running-dot {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: currentColor;
+  animation: automation-board-running-pulse 1.6s ease-in-out infinite;
+}
+
+@keyframes automation-board-running-pulse {
+  0%,
+  100% {
+    opacity: 0.35;
+  }
+
+  50% {
+    opacity: 1;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .automation-board-lane-running-dot {
+    animation: none;
+    opacity: 0.85;
+  }
+}
+
+.automation-board-lane-run-all {
+  flex: none;
+  padding: 2px 6px;
+  border: 0;
+  border-radius: var(--r-xs);
+  background: transparent;
+  color: var(--accent);
+  font: inherit;
+  font-size: 11px;
+  font-weight: 600;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.automation-board-lane-run-all:hover,
+.automation-board-lane-run-all:focus-visible {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
 /* 与项卡片操作行同一条规矩（ui-principles「Idle Chrome Must Recede」）：静息只剩
    图标，框和底色留给 hover / focus。选择器必须凑到三段才压得过
    `:root[data-theme='dark'] .icon-button`，否则两个主题长得不一样。 */
@@ -14986,6 +15080,13 @@ body.is-col-resizing .automation-board-lane-resize-handle::after {
 
 .automation-board-item.is-streaming {
   border-color: var(--stream-border);
+}
+
+/* 被"N 在跑"定位到的那一张，亮一下就退回去（1.4s 后由 JS 摘掉 class）：
+   滚动到位之后还需要一个"就是这张"的落点，否则二十几张同构卡片里看不出跳到哪了。 */
+.automation-board-item.is-locating {
+  border-color: var(--accent-line-strong);
+  box-shadow: 0 0 0 2px var(--accent-soft);
 }
 
 .automation-board-item.is-background-pending {
@@ -15350,7 +15451,11 @@ body.is-col-resizing .automation-board-lane-resize-handle::after {
    底色 + 投影，三个并排后胶囊读起来全是控件、模板名反而是配角。与项卡片的
    一级操作行同一套处理：静息只剩图标，框和底色留给 hover / focus。
    选择器必须凑到三段（0,3,0）才压得过 `:root[data-theme='dark'] .icon-button`，
-   两段版本实测只在亮色生效、暗色仍然带框。 */
+   两段版本实测只在亮色生效、暗色仍然带框。
+   2026-08-17 补：这条覆盖曾对**删除钮**整体失效 —— danger 皮肤当时还写在
+   `:root[data-theme='dark'] .icon-button.is-danger` 上，(0,4,0) 压过这里，于是
+   暗色下一排胶囊右端常驻红点。现在 danger 走 `--icon-btn-danger-*` token、停在
+   (0,2,0)，这条覆盖才真正管住了三个 tone。 */
 .automation-board-templates .automation-board-template .icon-button {
   width: 20px;
   height: 20px;

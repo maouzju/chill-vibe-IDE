@@ -61,6 +61,8 @@ export type AutomationBoardActions = {
   deleteItem: (columnId: string, boardCardId: string, cardId: string) => void
   /** 一次清空整条泳道（项与会话卡一起删）。二次确认由调用方负责。 */
   clearLane: (columnId: string, boardCardId: string, lane: AutomationBoardLane) => void
+  /** 批量入口仍逐项复用 moveItem，保证发送与续传语义只有一份。 */
+  runAllStandby: (columnId: string, boardCardId: string, cardIds: string[]) => void
   saveTemplate: (columnId: string, boardCardId: string, cardId: string) => void
   renameTemplate: (workspacePath: string, templateId: string, name: string) => void
   deleteTemplate: (workspacePath: string, templateId: string) => void
@@ -101,4 +103,14 @@ export type AutomationBoardActions = {
 
 export type AutomationBoardWorkspaceView = {
   templates: AutomationBoardTemplate[]
+}
+
+/** 固定本次批次并保持泳道顺序；单项的执行副作用仍由调用方的 moveItem 负责。 */
+export const runAutomationBoardStandbyBatch = (
+  cardIds: readonly string[],
+  moveItem: (cardId: string) => void,
+) => {
+  for (const cardId of [...cardIds]) {
+    moveItem(cardId)
+  }
 }

@@ -1575,6 +1575,7 @@ const PaneViewView = ({
                   defaultModel: column.model,
                   wakeTimerEnabled: wakeTimerEnabled === true,
                   repeatLoopEnabled: repeatLoopEnabled === true,
+                  crossProviderSkillReuseEnabled,
                   onCreateItem: (lane, requirement, index, options) =>
                     automationBoardActions.createItem(
                       column.id,
@@ -1602,6 +1603,8 @@ const PaneViewView = ({
                     automationBoardActions.deleteItem(column.id, card.id, cardId),
                   onClearLane: (lane) =>
                     automationBoardActions.clearLane(column.id, card.id, lane),
+                  onRunAllStandby: (cardIds) =>
+                    automationBoardActions.runAllStandby(column.id, card.id, cardIds),
                   onSaveTemplate: (cardId) =>
                     automationBoardActions.saveTemplate(column.id, card.id, cardId),
                   onRenameTemplate: (templateId, name) =>

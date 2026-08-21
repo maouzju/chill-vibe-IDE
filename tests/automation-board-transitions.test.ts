@@ -11,6 +11,7 @@ import {
   resolveWakeTimerNeighbourIds,
   type AutomationBoardLocation,
 } from '../src/components/automation-board-transitions.ts'
+import { runAutomationBoardStandbyBatch } from '../src/components/automation-board-host.ts'
 
 const lane = (value: AutomationBoardLane): AutomationBoardLocation => ({ kind: 'lane', lane: value })
 const tab: AutomationBoardLocation = { kind: 'tab' }
@@ -26,6 +27,17 @@ const decide = (
     isStreaming: overrides.isStreaming ?? false,
     hasHistory: overrides.hasHistory ?? false,
   })
+
+describe('automation board standby batch', () => {
+  it('runs every captured standby item once and preserves lane order', () => {
+    const moved: string[] = []
+    const captured = ['item-a', 'item-b', 'item-c']
+
+    runAutomationBoardStandbyBatch(captured, (cardId) => moved.push(cardId))
+
+    assert.deepEqual(moved, captured)
+  })
+})
 
 describe('automation board transitions — popping out to a tab', () => {
   // 这是"无缝"的定义：把需求拖成独立 tab 只是换个展现容器，

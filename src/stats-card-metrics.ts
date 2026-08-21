@@ -20,6 +20,15 @@ export const statsRangeDayCounts = [90, 180, 365] as const
 
 export type StatsRangeDays = (typeof statsRangeDayCounts)[number]
 
+/**
+ * 日历按哪个口径着色。跟 `statsRangeDayCounts` 一样只是卡片内的视图状态，不落盘。
+ * 放在这里而不是组件文件里：组件文件多一个值导出就会被 `react-refresh/only-export-components`
+ * 拦下，而这两套等级本来就是这个模块算的。
+ */
+export const statsHeatMetrics = ['messages', 'sessions'] as const
+
+export type StatsHeatMetric = (typeof statsHeatMetrics)[number]
+
 export type StatsHeatLevel = 0 | 1 | 2 | 3 | 4
 
 export type StatsDay = {
@@ -27,9 +36,12 @@ export type StatsDay = {
   date: string
   /** 这一天的消息条数。 */
   count: number
-  /** 这一天归档的会话数。 */
+  /** 这一天**开始**的会话段数（打开中的卡 + 已归档的会话）。 */
   sessions: number
+  /** 按 `count` 相对 `maxCount` 的分档。 */
   level: StatsHeatLevel
+  /** 按 `sessions` 相对 `maxSessions` 的分档 —— 基准与消息维度分开，见 `toHeatLevel` 上方。 */
+  sessionLevel: StatsHeatLevel
 }
 
 export type StatsTokens = {
@@ -49,6 +61,13 @@ export type StatsTokens = {
 export type StatsMetrics = {
   days: StatsDay[]
   maxCount: number
+  /**
+   * 会话维度的分档基准，与 `maxCount` 分开。
+   * 症状：共用 `maxCount` 时，整张会话图除了最忙那天全塌成最浅一档。
+   * 根因：一天的消息数是几十上百、会话段数是个位数，同一个分母下会话永远落在
+   *   `ratio <= 0.25` 那一档。
+   */
+  maxSessions: number
   totalSessions: number
   activeSessions: number
   archivedSessions: number
@@ -117,6 +136,24 @@ const toHeatLevel = (count: number, maxCount: number): StatsHeatLevel => {
 }
 
 type DayBucket = { count: number; sessions: number }
+
+/**
+ * 一段会话落在哪一天 = 它**开始**那天，两条来源（打开中的卡 / 已归档条目）共用这一条。
+ *
+ * 症状（2026-08-21 用户报"日历看不到每天的会话数量"）：今天新开的会话在日历上恒为
+ *   0 段——它还没归档；而一段昨天开、今天才关的会话整段记在今天。
+ * 根因：`sessions` 此前只由 `sessionHistory` 贡献，且归在 `archivedAt` 那天。
+ * 为什么拿得到开始日：归档条目送进渲染进程时消息被裁成 8 条预览，但裁法是
+ *   `head 4 + tail 4`（`server/state-store.ts` 的 `createRendererSessionHistoryMessages`），
+ *   `messages[0]` 仍是全场最早那条。所以零新字段、零新 IPC。
+ * 被否决的替代：没有可用开始时间时用 `now` 兜底——日历会因此每天亮一格，而那格背后
+ *   没有任何真实活动。这里对打开中的空卡返回 null（不落到任何一天），归档条目则退回
+ *   `archivedAt`（偏晚好过消失）。
+ */
+const resolveSessionDayKey = (
+  messages: readonly ChatMessage[] | undefined,
+  fallback?: string,
+): string | null => parseDayKey(messages?.[0]?.createdAt) ?? parseDayKey(fallback)
 
 const bumpDay = (buckets: Map<string, DayBucket>, dayKey: string, count: number, sessions: number) => {
   const bucket = buckets.get(dayKey)
@@ -274,6 +311,11 @@ export const computeStatsMetrics = ({
       totalMessages += messages.length
       collectTokens(messages, tokens)
 
+      const startDayKey = resolveSessionDayKey(messages)
+      if (startDayKey) {
+        bumpDay(dayBuckets, startDayKey, 0, 1)
+      }
+
       for (const message of messages) {
         const dayKey = parseDayKey(message.createdAt)
         if (!dayKey) {
@@ -331,13 +373,15 @@ export const computeStatsMetrics = ({
       archivedSessionsWithoutUsage += 1
     }
 
-    const dayKey = parseDayKey(entry.archivedAt)
+    const dayKey = resolveSessionDayKey(entry.messages, entry.archivedAt)
     if (!dayKey) {
       // 坏时间戳只失去日历上的位置，会话本身仍然算数。老存档里确实出现过非法
       // archivedAt，统计卡绝不能因此炸掉整张板。
       continue
     }
 
+    // 消息数跟着会话落到同一天。被否决的替代：会话记开始日、消息记归档日——同一格里
+    // 两个数字来自不同的日子，tooltip 会读成「0 条消息 · 1 段会话」这种自相矛盾的组合。
     bumpDay(dayBuckets, dayKey, messageCount, 1)
     if (messageCount > 0) {
       activeDayKeys.add(dayKey)
@@ -355,21 +399,27 @@ export const computeStatsMetrics = ({
 
   const rawDays: Array<{ date: string; count: number; sessions: number }> = []
   let maxCount = 0
+  let maxSessions = 0
 
   for (let index = 0; index < safeRangeDays; index += 1) {
     const date = addDays(rangeStart, index)
     const dayKey = toLocalDayKey(date)
     const bucket = dayBuckets.get(dayKey)
     const count = bucket?.count ?? 0
+    const sessions = bucket?.sessions ?? 0
     if (count > maxCount) {
       maxCount = count
     }
-    rawDays.push({ date: dayKey, count, sessions: bucket?.sessions ?? 0 })
+    if (sessions > maxSessions) {
+      maxSessions = sessions
+    }
+    rawDays.push({ date: dayKey, count, sessions })
   }
 
   const days: StatsDay[] = rawDays.map((day) => ({
     ...day,
     level: toHeatLevel(day.count, maxCount),
+    sessionLevel: toHeatLevel(day.sessions, maxSessions),
   }))
 
   // streak 走全量活跃日集合，不受所选日历范围影响——切到"近 3 个月"不该让
@@ -410,6 +460,7 @@ export const computeStatsMetrics = ({
   return {
     days,
     maxCount,
+    maxSessions,
     totalSessions: activeSessions + archivedSessions,
     activeSessions,
     archivedSessions,

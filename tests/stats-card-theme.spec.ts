@@ -1,4 +1,4 @@
-import { expect, test, type Page } from '@playwright/test'
+import { expect, test, type Locator, type Page } from '@playwright/test'
 
 import { installMockElectronBridge } from './electron-bridge.ts'
 import { createPlaywrightState } from './playwright-state.ts'
@@ -183,6 +183,14 @@ const installMockApis = async (page: Page, theme: 'dark' | 'light') => {
   })
 }
 
+/**
+ * 数**真实的日子**而不是周列数。列数取决于范围首日是周几，会随"今天"漂移：90 天既可能
+ * 排成 13 列也可能排成 14 列，钉死一个值的断言过几天就自己红了（2026-08-21 实测：写死
+ * 的 14 变成了 13）。非空格子数恒等于所选天数。
+ */
+// 只有真实的日子带 title（tooltip）：补位格是 aria-hidden 的空格，图例格也没有 title。
+const realDayCells = (card: Locator) => card.locator('.stats-heatmap-cell[title]')
+
 const openStatsCard = async (page: Page) => {
   const card = page.locator('[data-stats-card]').first()
   await expect(card).toBeVisible()
@@ -202,7 +210,7 @@ for (const theme of ['light', 'dark'] as const) {
     const card = await openStatsCard(page)
 
     // The card opens on the one-year range: 365 days padded to whole weeks.
-    await expect(card.locator('.stats-heatmap-column')).toHaveCount(53)
+    await expect(realDayCells(card)).toHaveCount(365)
     await expect(card.locator('.stats-heatmap-cell[data-level="4"]').first()).toBeVisible()
     await expect(card.locator('.stats-tile')).toHaveCount(4)
     await expect(card.locator('.stats-peak-fill')).toBeVisible()
@@ -224,12 +232,34 @@ test('switching the range redraws the calendar without losing the card', async (
   await page.goto(appUrl)
 
   const card = await openStatsCard(page)
-  await expect(card.locator('.stats-heatmap-column')).toHaveCount(53)
+  await expect(realDayCells(card)).toHaveCount(365)
 
   await card.locator('.stats-range-button', { hasText: 'Last 3 months' }).click()
 
-  await expect(card.locator('.stats-heatmap-column')).toHaveCount(14)
-  await expect(card.locator('.stats-range-button.is-active')).toHaveText('Last 3 months')
+  await expect(realDayCells(card)).toHaveCount(90)
+  // 范围组里才有"当前选中"这个概念；口径切换器复用同一套按钮皮肤，不限定组会命中两个。
+  await expect(card.locator('[data-picker="range"] .stats-range-button.is-active')).toHaveText(
+    'Last 3 months',
+  )
+  await expect(card).not.toHaveClass(/is-loading/)
+})
+
+test('the calendar can be repainted by session count', async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 900 })
+  await installMockApis(page, 'dark')
+  await page.goto(appUrl)
+
+  const card = await openStatsCard(page)
+  const metricPicker = card.locator('[data-picker="metric"]')
+
+  await expect(metricPicker.locator('.stats-range-button.is-active')).toHaveText('Messages')
+
+  await metricPicker.locator('.stats-range-button', { hasText: 'Sessions' }).click()
+
+  await expect(metricPicker.locator('.stats-range-button.is-active')).toHaveText('Sessions')
+  // 切口径不重算，只换读哪个等级字段 —— 日历必须原地还在，且仍有着色的格子。
+  await expect(realDayCells(card)).toHaveCount(365)
+  await expect(card.locator('.stats-heatmap-cell[data-level="4"]').first()).toBeVisible()
   await expect(card).not.toHaveClass(/is-loading/)
 })
 

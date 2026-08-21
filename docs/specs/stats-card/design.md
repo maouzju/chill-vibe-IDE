@@ -46,7 +46,8 @@ type StatsMetricsInput = {
 ```ts
 type StatsMetrics = {
   days: StatsDay[]          // 连续的每一天，长度 = rangeDays（含今天）
-  maxCount: number          // 用于热力图分级
+  maxCount: number          // 消息维度的分级基准
+  maxSessions: number       // 会话维度的分级基准（两套各算各的，见「热力图分级」）
   totalSessions: number
   activeSessions: number    // 打开中的聊天卡
   archivedSessions: number
@@ -61,7 +62,13 @@ type StatsMetrics = {
   archivedSessionsWithoutUsage: number   // 归档过早、没留下 usageTotals 的条目数
 }
 
-type StatsDay = { date: string; count: number; sessions: number; level: 0|1|2|3|4 }
+type StatsDay = {
+  date: string
+  count: number         // 那一天的消息条数
+  sessions: number      // 那一天**开始**的会话段数（打开中 + 已归档）
+  level: 0|1|2|3|4        // 按 count 相对 maxCount 分档
+  sessionLevel: 0|1|2|3|4 // 按 sessions 相对 maxSessions 分档
+}
 type StatsTokens = {
   input: number
   output: number
@@ -89,11 +96,36 @@ type StatsTokens = {
 - 归档：`sessionHistory` 条目全部计入。
 - `byProvider` 两边都统计。
 
+### 会话落在哪一天（2026-08-21 修订）
+
+一段会话按它的**开始日**落进 `day.sessions`，两条来源同一套规则：
+
+```
+sessionDayKey(entry) = parseDayKey(messages[0]?.createdAt) ?? parseDayKey(archivedAt)
+```
+
+- 归档条目的消息被裁成 8 条预览，但裁法是 `head 4 + tail 4`
+  （`server/state-store.ts` 的 `createRendererSessionHistoryMessages`），`messages[0]`
+  仍是全场最早那条，所以开始日拿得到，不需要任何新字段、新 IPC。
+- 打开中的卡没有 `createdAt`（`chatCardSchema` 里就没有这个字段），同样取首条消息；
+  一条消息都没有的空卡不落到任何一天。**被否决的替代**：用 `now` 把空卡塞进今天——
+  日历会因此每天都亮一格，而那格背后没有任何真实活动。
+- 归档段的 `messageCount` 跟着落到同一天。**被否决的替代**：会话数记开始日、消息数记
+  归档日——同一格里两个数字来自不同的日子，tooltip 上会读成「3 条消息 · 0 段会话」这种
+  自相矛盾的组合。
+
+改这条之前的行为是「只有归档会话计入 `sessions`，且归在 `archivedAt`」，后果是今天新开
+的会话在日历上恒为 0 段（它还没归档），跨天的长会话整段记在关掉的那天。
+
 ### 热力图分级
 
 `level` 用相对分位而不是绝对阈值：`0` 表示 `count === 0`，其余按
 `count / maxCount` 落在 `(0, .25] .25-.5 .5-.75 .75-1` 四档。绝对阈值在轻用户那里会
 永远全是 level 1。
+
+`sessionLevel` 用同一个函数，但基准是 `maxSessions` 而不是 `maxCount`。**两套基准不能
+合并**：一天的消息数是几十上百、会话段数是个位数，共用 `maxCount` 会让整张会话图除了
+最忙那天全部塌到 level 1，切过去等于看一张全灰的图。
 
 ### token 汇总
 
@@ -165,7 +197,7 @@ useEffect: 计算一次（挂载时立即），随后 setInterval 每 RECOMPUTE_
       .stats-heatmap-weekdays  周几标签（隔行显示）
       .stats-heatmap-grid      N 列 × 7 行，列 = 周
         .stats-heatmap-cell[data-level=0..4]  title=tooltip
-    .stats-heatmap-footer    范围切换 3M / 6M / 1Y + Less ▢▢▢▢▢ More
+    .stats-heatmap-footer    口径切换 消息/会话 + 范围切换 3M / 6M / 1Y + Less ▢▢▢▢▢ More
   .stats-card-footer
     .stats-provider-row      provider 分布
     .stats-tokens            token 块（无数据时显示占位文案）
@@ -174,6 +206,22 @@ useEffect: 计算一次（挂载时立即），随后 setInterval 每 RECOMPUTE_
 热力图按 GitHub 布局：每列一周，周日在最上。首列不满 7 天用 `null` 占位（不是把日期
 往前补——补出来的日子不属于所选范围，鼠标停上去会显示假数据）。默认范围是**一年**，
 和 GitHub 贡献图一致。
+
+### 口径切换（消息 / 会话）
+
+`StatsHeatMetric = 'messages' | 'sessions'`，`useState` 存在 `StatsCard` 里，默认
+`'messages'`。`StatsCardView` 收 `heatMetric` / `onHeatMetricChange` 两个 prop，跟范围
+切换一模一样的形状——纯展示层仍然不持有业务状态，测试可以直接喂一个受控值。
+
+常量和类型放在 `src/stats-card-metrics.ts` 而不是组件文件里：组件文件多一个**值**导出就会
+被 `react-refresh/only-export-components` 拦下（`statsRangeDayCounts` 当初也是这么放的）。
+
+两组按钮共用 `.stats-range-button` 皮肤，所以各带一个 `data-picker="metric" | "range"`
+——否则「当前选中的那一个」这类断言会同时命中两组（真实踩到，见 pitfall 336 邻居）。
+
+格子只换读哪个字段：`data-level={metric === 'sessions' ? cell.sessionLevel : cell.level}`。
+**两套等级都在 `computeStatsMetrics` 里一次算完**，切换不触发重算——重算走的是 30s 定时
++ 空闲帧那条路（见「性能」），点一下按钮就重扫全板消息会把这套节流白白绕过去。
 
 ### 格子尺寸自适应
 

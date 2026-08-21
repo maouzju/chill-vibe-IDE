@@ -102,13 +102,14 @@ export const workspaceAdminMcpToolDefinitions = [
   {
     name: moveToolName,
     description:
-      'Move one session into an automation board lane. Moving to "running" starts execution (a fresh requirement is sent, a session with history is continued). Moving to "standby" or "done" interrupts execution if it is still running. Move a session to "done" only when its requirement has genuinely been delivered. The target board is decided by the app: if the session is already on a board that board is used, otherwise the first board card in this workspace is used; if this workspace has no board card at all the move fails.',
+      'Move one session into an automation board lane. Moving to "running" starts execution (a fresh requirement is sent, a session with history is continued). Moving to "standby" or "done" interrupts execution if it is still running. Move a session to "done" only when its requirement has genuinely been delivered. The target board is decided by the app: if the session is already on a board that board is used, otherwise the first board card in this workspace is used; if this workspace has no board card at all the move fails. To archive YOURSELF once your own work is delivered, omit cardId and pass lane "done" — you are not in list_sessions so you have no cardId of your own. That move interrupts you, so END YOUR TURN right after it; omitting cardId is only allowed with lane "done".',
     inputSchema: {
       type: 'object',
       properties: {
         cardId: {
           type: 'string',
-          description: 'The session cardId returned by list_sessions.',
+          description:
+            'The session cardId returned by list_sessions. Omit it to target yourself, which is only allowed with lane "done".',
         },
         lane: {
           type: 'string',
@@ -116,7 +117,7 @@ export const workspaceAdminMcpToolDefinitions = [
           description: 'standby = parked, running = executing, done = delivered.',
         },
       },
-      required: ['cardId', 'lane'],
+      required: ['lane'],
       additionalProperties: false,
     },
   },
@@ -435,20 +436,51 @@ export const resolveWorkspaceAdminCommandFromToolCall = (name, args, columnId, s
     }
   }
 
-  const cardId = readStringArg(args, 'cardId')
-  if (!cardId) {
-    return { error: `cardId is required. Call ${listToolName} to get the cardId of each session.` }
-  }
-
+  // 症状：超管干完活后报「拿不到自己的 cardId，没法把我自己这张卡移到已完成」，
+  // 只能求用户手动拖（2026-08-17 用户实测）。根因：selectVisibleSessions 按
+  // SELF_CARD_ID 把请求方自己滤出 list_sessions（防它给自己发鞭策），于是模型手里
+  // 永远没有自己的 id，而这里的统一 cardId 必填检查又把它挡在门外。所以自移必须
+  // 和 create / await 一样在这道检查之前分流，cardId 取自环境而不是模型入参。
+  // 为什么只放开 done：自移 running 会给自己重发需求形成自我重入循环，自移
+  // standby 是把自己停在一条没人会来启动的道上 —— 两者都不是"归档"。
+  const explicitCardId = readStringArg(args, 'cardId')
   if (name === moveToolName) {
     const lane = readStringArg(args, 'lane')
     if (!boardLanes.includes(lane)) {
       return { error: `lane must be one of ${boardLanes.join(', ')}. Received: ${lane || '(missing)'}.` }
     }
 
-    return {
-      command: { type: 'admin-move-session-to-lane', columnId: normalizedColumnId, cardId, lane },
+    if (explicitCardId) {
+      return {
+        command: {
+          type: 'admin-move-session-to-lane',
+          columnId: normalizedColumnId,
+          cardId: explicitCardId,
+          lane,
+        },
+      }
     }
+
+    if (lane !== 'done') {
+      return {
+        error: `cardId is required to move another session. Omitting it targets yourself, which is only allowed with lane "done". Call ${listToolName} to get the cardId of each session.`,
+      }
+    }
+
+    const self = normalizeText(selfCardId)
+    if (!self) {
+      return { error: `cardId is required. Call ${listToolName} to get the cardId of each session.` }
+    }
+
+    return {
+      command: { type: 'admin-move-session-to-lane', columnId: normalizedColumnId, cardId: self, lane },
+      selfArchive: true,
+    }
+  }
+
+  const cardId = explicitCardId
+  if (!cardId) {
+    return { error: `cardId is required. Call ${listToolName} to get the cardId of each session.` }
   }
 
   if (name === sendToolName) {
@@ -570,7 +602,13 @@ const validateAwaitTargets = async (command, context) => {
 
 // 写工具返回的是"命令已投递"，不是"已生效"——与手机监工同语义：真正执行
 // 的是渲染进程里的电脑端 handler，本进程无从得知结果，只能让模型再查一次。
-const deliveredText = (action, command) => {
+const deliveredText = (action, command, selfArchive = false) => {
+  // 自我归档是第二条"投递成功之后该闭嘴"的命令：移到 done 会中断的正是调用者
+  // 自己这一回合，那次"再查一遍确认"根本等不到结果。
+  if (selfArchive) {
+    return `${action} was delivered to the desktop app: your own card is being moved to done, which interrupts this turn. END YOUR TURN NOW — say what you delivered and stop. Do not call any more tools; you cannot observe your own archival from inside the turn it ends.`
+  }
+
   // 等待是唯一一条"投递成功之后该闭嘴"的命令：再多说一句都会推进本回合，
   // 而模型必须结束回合才能被重新唤起。所以这条文案不引导它再查一次。
   if (command?.type === 'admin-await-sessions') {
@@ -641,13 +679,14 @@ export const callWorkspaceAdminTool = async (name, args, context) => {
 
     const outcome = await context.postCommand(resolved.command)
     if (!outcome?.accepted) {
+      const target = resolved.selfArchive ? 'yourself' : describeCommandTarget(resolved.command)
       return textResult(
-        `${name} for ${describeCommandTarget(resolved.command)} could NOT be delivered: ${outcome?.reason || 'the desktop app did not accept the command'}. Nothing changed; try again shortly.`,
+        `${name} for ${target} could NOT be delivered: ${outcome?.reason || 'the desktop app did not accept the command'}. Nothing changed; try again shortly.`,
         true,
       )
     }
 
-    return textResult(deliveredText(name, resolved.command))
+    return textResult(deliveredText(name, resolved.command, resolved.selfArchive === true))
   }
 
   return textResult(`Unknown workspace admin tool: ${name}`, true)

@@ -20,8 +20,13 @@ type WorkspaceAdminMcpToolResult = {
 }
 
 type WorkspaceAdminCommandResolution =
-  | { command: WorkspaceAdminCommand; error?: undefined }
-  | { command?: undefined; error: string }
+  /**
+   * `selfArchive` = 这条命令的目标是调用者自己（`move_session_to_lane` 省略
+   * cardId 的自我归档）。它不进命令体：命令体是共享 schema 的地盘，而这个标记
+   * 只影响返回给模型的文案（自移会中断本回合，不能引导它再查一次）。
+   */
+  | { command: WorkspaceAdminCommand; selfArchive?: boolean; error?: undefined }
+  | { command?: undefined; selfArchive?: undefined; error: string }
 
 type WorkspaceAdminCommandDeliveryOutcome = {
   accepted: boolean
@@ -61,7 +66,10 @@ export function resolveWorkspaceAdminCommandFromToolCall(
   name: string,
   args: Record<string, unknown> | undefined,
   columnId: string,
-  /** 只有 `wake_me_when_sessions_finish` 用得到：它唤醒的是调用者自己。 */
+  /**
+   * 目标是调用者自己的两条路径要用：`wake_me_when_sessions_finish` 唤醒自己，
+   * `move_session_to_lane` 省略 cardId 时把自己归档到 done。
+   */
   selfCardId?: string,
 ): WorkspaceAdminCommandResolution
 

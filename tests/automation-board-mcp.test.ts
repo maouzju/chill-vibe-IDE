@@ -131,6 +131,11 @@ test('workspace admin MCP exposes exactly the seven session tools with closed in
   assert.match(moveTool?.description ?? '', /already on a board/i)
   assert.match(moveTool?.description ?? '', /first board card/i)
   assert.match(moveTool?.description ?? '', /fails/i)
+  // 自己的 cardId 永远不在 list_sessions 里，所以"归档我自己"只能靠省略 cardId，
+  // 而模型只会从工具描述里知道这条路存在。
+  assert.deepEqual(moveTool?.inputSchema.required, ['lane'])
+  assert.match(moveTool?.description ?? '', /omit cardId/i)
+  assert.match(moveTool?.description ?? '', /yourself/i)
 
   // create_session 是唯一一个目标卡还不存在的工具：requirement 必填，cardId 不该出现。
   const createTool = workspaceAdminMcpToolDefinitions.find((tool) => tool.name === 'create_session')
@@ -299,6 +304,66 @@ test('resolveWorkspaceAdminCommandFromToolCall rejects bad arguments instead of 
   )
   assert.equal(noColumn.command, undefined)
   assert.match(noColumn.error ?? '', /no workspace admin access/)
+})
+
+test('resolveWorkspaceAdminCommandFromToolCall lets the caller archive itself by omitting cardId', () => {
+  // 超管自己被 SELF_CARD_ID 过滤出 list_sessions，所以它手里永远没有自己的
+  // cardId —— 不给一条免 cardId 的自移路径，它就永远无法把自己归档。
+  const self = resolveWorkspaceAdminCommandFromToolCall(
+    'move_session_to_lane',
+    { lane: 'done' },
+    'col-1',
+    'self-card',
+  )
+  assert.deepEqual(self.command, {
+    type: 'admin-move-session-to-lane',
+    columnId: 'col-1',
+    cardId: 'self-card',
+    lane: 'done',
+  })
+  assert.equal(workspaceAdminCommandSchema.safeParse(self.command).success, true)
+
+  // 自移只开放 done：自移 running 会给自己重发需求形成自我重入，自移 standby
+  // 则是把自己停在一条没人会来启动的道上。两者都不是"归档"，宁可报错。
+  for (const lane of ['running', 'standby']) {
+    const rejected = resolveWorkspaceAdminCommandFromToolCall(
+      'move_session_to_lane',
+      { lane },
+      'col-1',
+      'self-card',
+    )
+    assert.equal(rejected.command, undefined, `self-move to ${lane} must not be forwarded`)
+    assert.match(rejected.error ?? '', /done/)
+  }
+
+  // 拿不到自己是谁时不能猜：没有 SELF_CARD_ID 仍旧退回"cardId 必填"。
+  const unknownSelf = resolveWorkspaceAdminCommandFromToolCall(
+    'move_session_to_lane',
+    { lane: 'done' },
+    'col-1',
+    '',
+  )
+  assert.equal(unknownSelf.command, undefined)
+  assert.match(unknownSelf.error ?? '', /cardId/)
+})
+
+test('callWorkspaceAdminTool archives the caller and tells it to stop talking', async () => {
+  const harness = createToolHarness()
+  const result = await callWorkspaceAdminTool('move_session_to_lane', { lane: 'done' }, harness.context)
+
+  assert.equal(result.isError, false)
+  assert.deepEqual(harness.posted, [
+    {
+      type: 'admin-move-session-to-lane',
+      columnId: 'col-1',
+      cardId: 'self-card',
+      lane: 'done',
+    },
+  ])
+  // 把自己移到 done 会中断自己这一回合，所以这条文案绝不能像别的写工具那样
+  // 引导模型"再调一次 list_sessions 确认" —— 那次调用根本等不到结果。
+  assert.match(result.content[0]?.text ?? '', /END YOUR TURN|end your turn/i)
+  assert.doesNotMatch(result.content[0]?.text ?? '', /call list_sessions again to verify/i)
 })
 
 test('resolveWorkspaceAdminCommandFromToolCall builds a schema-valid create command without a cardId', () => {
@@ -905,6 +970,13 @@ test('getWorkspaceAdminInstruction names every tool in both languages', () => {
   assert.match(en, /鞭策/, 'the English text still has to define what 鞭策 maps to')
   assert.match(zh, /set_session_wake_timer/)
   assert.notEqual(zh, en)
+
+  // 「你不在 list_sessions 里」这句话必须紧跟着自我归档的出口，否则模型只学到
+  // 「我找不到自己」，然后回头找用户手动把自己那张卡拖进已完成。
+  assert.match(zh, /不填 cardId/)
+  assert.match(zh, /归档/)
+  assert.match(en, /no cardId/i)
+  assert.match(en, /archive your own card/i)
 })
 
 // ---------------------------------------------------------------------------
@@ -1552,6 +1624,94 @@ test(
           targetCardIds: ['item-running'],
           note: '醒来先 read_session 验收 item-running',
           timeoutMinutes: 60,
+        },
+      ])
+    } finally {
+      child.kill()
+      await harness.bridge.stop()
+    }
+  },
+)
+
+// 自我归档整条链只有在**真子进程**里才是完整的：目标 cardId 来自 SELF_CARD_ID 这个
+// 环境变量，而只 import 纯函数的单测是自己把 selfCardId 当参数传进去的 —— 那种断言
+// 证明不了 env 真的被读到。业务上的失败形态就是用户报的那句"拿不到自己的 cardId"。
+test(
+  'move_session_to_lane with no cardId archives the caller through a real stdio client',
+  { timeout: 20_000 },
+  async () => {
+    const harness = createBridgeHarness()
+    const info = await harness.bridge.start()
+    const scriptPath = fileURLToPath(new URL('../server/automation-board-mcp.js', import.meta.url))
+    const child = spawn(process.execPath, [scriptPath], {
+      stdio: ['pipe', 'pipe', 'pipe'],
+      env: {
+        ...process.env,
+        [workspaceAdminMcpUrlEnvKey]: info.url,
+        [workspaceAdminMcpTokenEnvKey]: info.token,
+        [workspaceAdminMcpColumnIdEnvKey]: 'col-1',
+        [workspaceAdminMcpSelfCardIdEnvKey]: 'self-card',
+      },
+    })
+
+    try {
+      const lines: string[] = []
+      let pending = ''
+      let resolveAnswer = () => {}
+      const answered = new Promise<void>((resolve) => {
+        resolveAnswer = resolve
+      })
+
+      child.stdout.setEncoding('utf8')
+      child.stdout.on('data', (chunk: string) => {
+        pending += chunk
+        const parts = pending.split('\n')
+        pending = parts.pop() ?? ''
+        for (const part of parts) {
+          if (part.trim()) {
+            lines.push(part)
+          }
+        }
+        if (lines.length >= 1) {
+          resolveAnswer()
+        }
+      })
+
+      child.stdin.write(
+        `${JSON.stringify({
+          jsonrpc: '2.0',
+          id: 11,
+          method: 'tools/call',
+          params: { name: 'move_session_to_lane', arguments: { lane: 'done' } },
+        })}\n`,
+      )
+
+      await Promise.race([
+        answered,
+        new Promise<never>((_, reject) => {
+          setTimeout(
+            () => reject(new Error(`stdio server never answered; raw stdout so far: ${JSON.stringify(pending)}`)),
+            8_000,
+          ).unref()
+        }),
+      ])
+
+      const call = JSON.parse(lines[0]) as {
+        id: number
+        result?: { isError?: boolean; content?: { text?: string }[] }
+      }
+      assert.equal(call.id, 11)
+      assert.equal(call.result?.isError, false, `self archive must not error: ${lines[0]}`)
+      // 目标是自己，文案不能渲染成 "for session undefined"。
+      assert.doesNotMatch(call.result?.content?.[0]?.text ?? '', /undefined/)
+      assert.match(call.result?.content?.[0]?.text ?? '', /END YOUR TURN/i)
+
+      assert.deepEqual(harness.dispatched, [
+        {
+          type: 'admin-move-session-to-lane',
+          columnId: 'col-1',
+          cardId: 'self-card',
+          lane: 'done',
         },
       ])
     } finally {

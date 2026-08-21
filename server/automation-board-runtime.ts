@@ -128,6 +128,8 @@ const workspaceAdminInstructionZh =
   + '**不要**改成反复调 list_sessions 干等：你熬不过被你监工的 agent，只会把上下文烧光；'
   + '被唤醒之后监工也没有结束，只要还有活在跑，就再登记一次。'
   + '你自己不在 list_sessions 的结果里，不用找自己。'
+  + '正因如此你手里没有自己的 cardId：等你自己的活也交付完了，就调 move_session_to_lane 但**不填 cardId**、lane 填 done，'
+  + '这就是把你自己这张卡归档到「已完成」（省略 cardId 只允许配 done）。这一步会中断你这一回合，所以调完就说完最后一句话结束，别再调工具。'
   + '写工具（create_session / send_session_message / move_session_to_lane / set_session_wake_timer / wake_me_when_sessions_finish）返回的只是"命令已投递"，不代表已生效 —— 要确认结果就再调一次 list_sessions。'
   + '不要替这些 agent 自己动手改代码：你操作的是会话，不是它们的仓库。'
 
@@ -148,6 +150,8 @@ const workspaceAdminInstructionEn =
   + 'Do **not** poll list_sessions in a loop instead — you cannot outlast the agents you supervise and you will only burn the context you need later; '
   + 'and waking up does not end your supervision: register another wait whenever work is still in flight. '
   + 'You are not included in the list_sessions output, so do not look for yourself. '
+  + 'That also means you have no cardId of your own: once your own work is delivered, call move_session_to_lane with **no cardId** and lane done to archive your own card into "done" (omitting cardId is only allowed with done). '
+  + 'That move interrupts this turn, so say your closing line and stop — do not call any more tools after it. '
   + 'The write tools (create_session / send_session_message / move_session_to_lane / set_session_wake_timer / wake_me_when_sessions_finish) only report that the command was delivered, not that it took effect — call list_sessions again to confirm. '
   + 'Do not do these agents\' coding work yourself: what you operate on is sessions, not their repositories.'
 

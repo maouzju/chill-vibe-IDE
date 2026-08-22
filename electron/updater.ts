@@ -8,9 +8,9 @@ import {
   CHECK_TIMEOUT_MS,
   buildWindowsZipReplaceScript,
   encodePowerShellScriptUtf8Bom,
+  downloadWithResume,
   parseReleaseResponse,
   resolveDownloadedAssetStrategy,
-  writeVerifiedDownload,
   type UpdateCheckResult,
   type GitHubRelease,
 } from './updater-core.js'
@@ -104,28 +104,24 @@ export async function checkForUpdate(): Promise<UpdateCheckResult> {
 // One in-flight download per asset URL. Re-checking for updates while a download is
 // still running used to start a second stream writing the same temp path, which could
 // interleave two payloads into one corrupt archive.
-const inFlightDownloads = new Map<string, Promise<string>>()
+//
+// 症状: 更新卡住后，重开设置页、再点「检查更新」都毫无反应 —— 进度条停在同一个数字。
+// 根因: 去重表存的是裸 promise，而下载当时没有超时，所以一个挂死的 promise 会被无限期
+//       复用；后来的调用者拿到的是同一个永不 settle 的对象，连自己的 onProgress 都没接上。
+// 被否决的替代: 「点检查更新就丢弃旧下载」—— 那会让每次点击都从 0 重下 160MB。
+//       正确做法是让下载本身一定会 settle（见 downloadWithResume 的停滞检测），
+//       去重表只负责把进度广播给所有订阅者。
+type InFlightDownload = {
+  promise: Promise<string>
+  listeners: Set<(percent: number) => void>
+}
 
-const runDownload = async (assetUrl: string, onProgress: (percent: number) => void) => {
-  const fileName = path.basename(new URL(assetUrl).pathname)
-  const destPath = path.join(app.getPath('temp'), fileName)
+const inFlightDownloads = new Map<string, InFlightDownload>()
 
-  const response = await net.fetch(assetUrl, {
-    headers: { 'User-Agent': 'chill-vibe-ide' },
-  })
+const iterateResponseBody = (body: ReadableStream<Uint8Array>) => {
+  const reader = body.getReader()
 
-  if (!response.ok) {
-    throw new Error(`Download failed: HTTP ${response.status}`)
-  }
-
-  const contentLength = Number(response.headers.get('content-length') ?? 0)
-  const reader = response.body?.getReader()
-
-  if (!reader) {
-    throw new Error('Download failed: no response body')
-  }
-
-  const source = async function* () {
+  return (async function* () {
     for (;;) {
       const { done, value } = await reader.read()
 
@@ -133,15 +129,36 @@ const runDownload = async (assetUrl: string, onProgress: (percent: number) => vo
         return
       }
 
-      yield value
+      if (value) {
+        yield value
+      }
     }
-  }
+  })()
+}
 
-  return writeVerifiedDownload({
-    source: source(),
+const runDownload = async (assetUrl: string, onProgress: (percent: number) => void) => {
+  const fileName = path.basename(new URL(assetUrl).pathname)
+  const destPath = path.join(app.getPath('temp'), fileName)
+
+  return downloadWithResume({
     destPath,
-    expectedBytes: contentLength,
     onProgress,
+    fetchRange: async (rangeStart, signal) => {
+      const headers: Record<string, string> = { 'User-Agent': 'chill-vibe-ide' }
+
+      if (rangeStart > 0) {
+        headers.Range = `bytes=${rangeStart}-`
+      }
+
+      const response = await net.fetch(assetUrl, { headers, signal })
+
+      return {
+        ok: response.ok,
+        status: response.status,
+        headers: response.headers,
+        body: response.body ? iterateResponseBody(response.body) : null,
+      }
+    },
   })
 }
 
@@ -152,16 +169,30 @@ export async function downloadUpdate(
   const existing = inFlightDownloads.get(assetUrl)
 
   if (existing) {
-    return existing
+    existing.listeners.add(onProgress)
+
+    try {
+      return await existing.promise
+    } finally {
+      existing.listeners.delete(onProgress)
+    }
   }
 
-  const pending = runDownload(assetUrl, onProgress).finally(() => {
-    inFlightDownloads.delete(assetUrl)
-  })
+  const listeners = new Set<(percent: number) => void>([onProgress])
+  const entry: InFlightDownload = {
+    listeners,
+    promise: runDownload(assetUrl, (percent) => {
+      for (const listener of listeners) {
+        listener(percent)
+      }
+    }).finally(() => {
+      inFlightDownloads.delete(assetUrl)
+    }),
+  }
 
-  inFlightDownloads.set(assetUrl, pending)
+  inFlightDownloads.set(assetUrl, entry)
 
-  return pending
+  return entry.promise
 }
 
 // Force-shutdown helper that bypasses the `before-quit` preventDefault guard in

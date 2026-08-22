@@ -997,8 +997,19 @@ const AutomationBoardCardView = (props: AutomationBoardCardProps) => {
   const [slashCommands, setSlashCommands] = useState<SlashCommand[]>(localSlashCommands)
   const [slashCommandsLoading, setSlashCommandsLoading] = useState(true)
   const [selectedSlashIndex, setSelectedSlashIndex] = useState(0)
-  const [slashMenuDismissed, setSlashMenuDismissed] = useState(false)
+  // 症状：上次打了一半的 `/re` 随 board.draft 落了盘，重启应用、或切走再切回这张
+  //   看板卡，用户什么都没做，一个补全面板就凭空浮在界面上（2026-08-22 实测）。
+  // 根因：slashMenuOpen 只看 draft 的文本形状，而 draft 初值就取自持久化草稿 ——
+  //   组件一挂载 slashQuery 就非 null，dismissed 还是 false，于是直接开着。
+  // 为什么不能改成挂载时清掉 draft：草稿持久化是刻意设计（见上面 965 行那段），
+  //   要压的是"自动弹菜单"这件事，不是那段没写完的需求。补全菜单只应该由用户
+  //   这一次的输入触发，恢复草稿不算输入（onChange 里 query 一变就会解除）。
+  const [slashMenuDismissed, setSlashMenuDismissed] = useState(
+    () => getSlashCompletionQuery(board.draft ?? '') !== null,
+  )
   const [slashMenuStyle, setSlashMenuStyle] = useState<CSSProperties>({ display: 'none' })
+  const composeRef = useRef<HTMLDivElement | null>(null)
+  const slashMenuElRef = useRef<HTMLDivElement | null>(null)
   // 待命草稿的粘贴图片。需求经常本身就是一张截图，只能打字等于逼用户先建卡
   // 再去卡里粘一遍。
   const [draftImages, setDraftImages] = useState<PendingComposerAttachment[]>([])
@@ -1062,6 +1073,39 @@ const AutomationBoardCardView = (props: AutomationBoardCardProps) => {
     return () => {
       window.removeEventListener('resize', updatePosition)
       window.removeEventListener('scroll', updatePosition, true)
+    }
+  }, [slashMenuOpen])
+
+  // 症状：打出 `/re` 弹出菜单后点旁边任意一张卡，菜单不关，继续以 position:fixed
+  //   浮在窗口上挡内容、还自己吃掉 onMouseDown；只有把焦点弄回 textarea 再按
+  //   Escape 才关得掉（2026-08-22 实测）。
+  // 根因：唯一能置 slashMenuDismissed 的入口是 textarea 自己 keydown 里的 Escape，
+  //   而菜单 createPortal 到 document.body —— 焦点一离开 textarea 就再也按不到它。
+  //   这一整套是从 ChatCard 抄过来的，恰好漏掉了它那段全局 mousedown/Escape。
+  // 为什么不能改用 textarea 的 onBlur 关：菜单项本身就是按钮，点它必然先 blur，
+  //   blur 关菜单等于任何一条补全都点不中。
+  useEffect(() => {
+    if (!slashMenuOpen) return
+    const handleClickOutside = (event: Event) => {
+      const target = event.target as Node
+      if (
+        slashMenuElRef.current
+        && !slashMenuElRef.current.contains(target)
+        && !composeRef.current?.contains(target)
+      ) {
+        setSlashMenuDismissed(true)
+      }
+    }
+    const handleEscape = (event: Event) => {
+      if ((event as globalThis.KeyboardEvent).key === 'Escape') {
+        setSlashMenuDismissed(true)
+      }
+    }
+    document.addEventListener('mousedown', handleClickOutside)
+    document.addEventListener('keydown', handleEscape)
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside)
+      document.removeEventListener('keydown', handleEscape)
     }
   }, [slashMenuOpen])
 
@@ -1576,7 +1620,7 @@ const AutomationBoardCardView = (props: AutomationBoardCardProps) => {
             </div>
 
             {laneView.lane === 'standby' ? (
-              <div className="automation-board-lane-compose">
+              <div className="automation-board-lane-compose" ref={composeRef}>
                 <textarea
                   ref={textareaRef}
                   value={draft}
@@ -1631,6 +1675,7 @@ const AutomationBoardCardView = (props: AutomationBoardCardProps) => {
                 />
                 {slashMenuOpen && typeof document !== 'undefined' ? createPortal(
                   <div
+                    ref={slashMenuElRef}
                     className="slash-command-menu automation-board-slash-command-menu"
                     role="listbox"
                     aria-label={text.slashCommands}

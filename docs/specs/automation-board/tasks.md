@@ -353,3 +353,13 @@ MCP 端到端实测（一次性探针，非注册测试）：起真实桥接 →
       新建需求框（排在斜杠菜单分支之前）、项抽屉鞭策框、模板配置需求框三处
 - [x] `tests/automation-board-compose-paste.spec.ts`：端到端证明换行不误提交、光标不错位、普通回车照旧提交
 - [x] `pnpm test:quality`
+
+## Slice V16 — 超管干完活自行归档（v2.10）
+
+- [x] `server/automation-board-mcp.js`：`move_session_to_lane` 的 `cardId` 改为可选，省略即指自己；
+      仅允许自归档到 `done`，返回文案明确要求模型立即结束这一轮
+- [x] `server/automation-board-runtime.ts`：把 `selfCardId` 注入 MCP 进程环境
+- [x] `src/App.tsx`：`admin-move-session-to-lane` 执行器（owning / absorbTab 两条路径）
+- [x] `tests/automation-board-mcp.test.ts`：自归档成功、非 done 泳道被拒，以及**显式传空 `cardId`
+      仍报错而不是静默把自己归档**（最后一条是 2026-08-22 发布审计抓出的回归）
+- [x] `pnpm test:quality`

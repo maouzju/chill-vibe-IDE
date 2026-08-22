@@ -203,6 +203,13 @@ const normalizeText = (value) => (typeof value === 'string' ? value.trim() : '')
 
 const readStringArg = (args, key) => normalizeText(args?.[key])
 
+// "省略了这个参数" 和 "传了这个参数但值是空的" 必须分得开：readStringArg 把
+// undefined / "" / "   " / null 一律压成 ''，凡是拿它的真假做分流的地方都会把
+// 后者当成前者。undefined 仍算缺省（JSON-RPC 传不出 undefined，只有 JS 侧显式
+// 写出来才有，而那与省略是同一个意思）。
+const hasExplicitArg = (args, key) =>
+  typeof args === 'object' && args !== null && key in args && args[key] !== undefined
+
 const clampTranscriptLimit = (raw) => {
   const parsed = typeof raw === 'number' ? raw : Number.parseInt(raw ?? '', 10)
   if (!Number.isFinite(parsed)) {
@@ -458,6 +465,19 @@ export const resolveWorkspaceAdminCommandFromToolCall = (name, args, columnId, s
           cardId: explicitCardId,
           lane,
         },
+      }
+    }
+
+    // 症状：模型调 move_session_to_lane({ cardId: "", lane: "done" })（比如它想填的
+    //   那个 id 取值失败成了空白）时，超管把自己中断并归档了，返回文案还是
+    //   "END YOUR TURN NOW"，它意识不到搞错了目标。
+    // 根因：cardId 从 required 里放宽后，自移分支只看 readStringArg 的真假，而空串
+    //   与"没传"在它眼里完全一样，于是空值直接掉进了下面的 self 分支。
+    // 为什么不能靠 lane 再拦一道：lane 本来就必须是 done 才走到这里，拦不住这一例；
+    //   唯一能分开"没传"和"传了个空的"的信息就是键在不在 args 上。
+    if (hasExplicitArg(args, 'cardId')) {
+      return {
+        error: `cardId was provided but empty. Pass a real cardId from ${listToolName}, or omit the cardId argument entirely if you really meant to archive yourself.`,
       }
     }
 

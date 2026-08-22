@@ -98,6 +98,7 @@ export const DEFAULT_DOWNLOAD_STALL_TIMEOUT_MS = 45_000
 const HTTP_PARTIAL_CONTENT = 206
 const HTTP_RANGE_NOT_SATISFIABLE = 416
 const CONSUMER_UNWIND_TIMEOUT_MS = 2_000
+const MAX_RESUME_RESETS = 2
 
 class NonRetryableDownloadError extends Error {}
 
@@ -145,6 +146,15 @@ export async function downloadWithResume({
 }: ResumableDownloadParams): Promise<string> {
   const partPath = `${destPath}.part`
   let lastError: unknown = new Error('Update download did not run.')
+  let resumeResets = 0
+
+  // Discarding a stale/unusable .part is bookkeeping, not a failed download, so it
+  // refunds the attempt it happened on. Bounded, because a server that rejects every
+  // offset we send would otherwise spin here forever.
+  const consumeResumeReset = (attempt: number) => {
+    resumeResets += 1
+    return resumeResets <= MAX_RESUME_RESETS ? attempt - 1 : attempt
+  }
 
   for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
     const alreadyOnDisk = await statSizeOrZero(partPath)
@@ -186,6 +196,8 @@ export async function downloadWithResume({
 
       if (response.status === HTTP_RANGE_NOT_SATISFIABLE) {
         // Our leftover .part no longer lines up with the asset on the server.
+        // Clearing it is bookkeeping, not a failed download — don't spend an attempt.
+        attempt = consumeResumeReset(attempt)
         await rm(partPath, { force: true })
         lastError = new Error('Resume offset rejected by the server; restarting from zero.')
         continue
@@ -202,16 +214,31 @@ export async function downloadWithResume({
         throw new Error('Download failed: no response body')
       }
 
-      const contentRange =
-        response.status === HTTP_PARTIAL_CONTENT
-          ? parseContentRange(response.headers.get('content-range'))
-          : null
+      const isPartial = response.status === HTTP_PARTIAL_CONTENT
+      const contentRange = isPartial ? parseContentRange(response.headers.get('content-range')) : null
+      const resumeAligned = contentRange !== null && contentRange.start === alreadyOnDisk
+
+      // 症状: 更新后应用打不开，而下载这一侧报告「校验通过」。
+      // 根因: 206 说「这是文件的一部分」，Content-Length 只描述这一段。若 Content-Range
+      //       缺失或对不上我们的偏移（代理改写/丢头），旧代码会退化成「当 200 处理」:
+      //       截断重写 .part，却拿这一段的长度当整包长度 —— received === totalBytes
+      //       恰好成立，一个只含尾段的档案就被 rename 成正式包交给安装脚本。
+      // 被否决的替代: 「按 200 处理但保留 .part」—— 那是把两份不同偏移的字节拼在一起，
+      //       比截断更隐蔽。对不齐时唯一安全的动作是丢掉本地残片重新开始。
+      if (isPartial && !resumeAligned) {
+        attempt = consumeResumeReset(attempt)
+        await rm(partPath, { force: true })
+        lastError = new Error(
+          'Server returned a partial body that does not line up with the local resume offset; restarting from zero.',
+        )
+        continue
+      }
+
       // Only append when the server actually honoured our offset. A proxy that
       // ignores Range replies 200 with the whole file, and appending that would
       // splice two copies together into a corrupt archive.
-      const appending =
-        contentRange !== null && alreadyOnDisk > 0 && contentRange.start === alreadyOnDisk
-      const totalBytes = appending
+      const appending = resumeAligned && alreadyOnDisk > 0
+      const totalBytes = resumeAligned
         ? contentRange.total
         : Number(response.headers.get('content-length') ?? 0)
 
@@ -247,6 +274,18 @@ export async function downloadWithResume({
       if (totalBytes > 0 && received !== totalBytes) {
         throw new Error(
           `Update download is incomplete: received ${received} of ${totalBytes} bytes.`,
+        )
+      }
+
+      // 根因: `received` 是内存计数器，看不见磁盘。停滞时我们最多只等 2s 让上一轮的
+      //       reader 收尾 —— 而这整套修复的前提就是「reader 可能不理会 abort」。一个
+      //       事后苏醒的 reader 会继续以 'a' 模式往同一个 .part 追加，与新一轮的句柄
+      //       交错，磁盘上多出来的字节内存计数器永远看不见。落盘字节数才是最终判据。
+      const bytesOnDisk = await statSizeOrZero(partPath)
+
+      if (totalBytes > 0 && bytesOnDisk !== totalBytes) {
+        throw new Error(
+          `Update download is incomplete on disk: ${bytesOnDisk} of ${totalBytes} bytes in ${partPath}.`,
         )
       }
 

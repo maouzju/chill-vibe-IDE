@@ -152,8 +152,22 @@ const runDownload = async (assetUrl: string, onProgress: (percent: number) => vo
 
       const response = await net.fetch(assetUrl, { headers, signal })
 
+      // 416 and other non-2xx replies are never read by the caller. Handing back a
+      // reader-locked stream nobody drains leaks one connection per attempt, so
+      // release it here instead — `getReader()` below locks the body for good.
+      if (!response.ok) {
+        await response.body?.cancel().catch(() => undefined)
+
+        return {
+          ok: false,
+          status: response.status,
+          headers: response.headers,
+          body: null,
+        }
+      }
+
       return {
-        ok: response.ok,
+        ok: true,
         status: response.status,
         headers: response.headers,
         body: response.body ? iterateResponseBody(response.body) : null,

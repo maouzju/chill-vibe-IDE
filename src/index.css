@@ -14788,6 +14788,22 @@ body.is-col-resizing .automation-board-lane-resize-handle::after {
   height: 5px;
   border-radius: 50%;
   background: currentColor;
+  /* Static resting state. This deliberately matches the *initial* state of the
+     cancelled animation (opacity 1), not the 0% keyframe: Playwright cancels
+     infinite animations back to the pre-animation computed style, so writing
+     0.35 here would silently darken every existing lane-head snapshot by 9px
+     while changing nothing a user actually sees. */
+  opacity: 1;
+}
+
+/* 症状: 挂了一晚的自动化看板会把整个窗口拖到 `BrowserWindow unresponsive`。
+   根因: 这个「正在跑 N 个」的脉冲点原先直接挂在基础选择器上，而看板卡片在未激活的
+         pane 里依然保持挂载 —— 每条泳道 × 每个后台 pane 都在给合成器持续记账，
+         正是 AGENTS.md pitfall 216/218 那一族（空 JS 栈，profiler 里查不到）。
+   被否决的替代: 「加进 allowlist，说它只有 5px」—— 代价不在单个元素的面积，而在
+         数量 × 时长；`.streaming-dots` 当年就是这么清理掉的，这里照抄它的门控写法。 */
+.pane-tab-panel.is-active:not([hidden]) .automation-board-lane-running-dot,
+.pane-content > .card-shell .automation-board-lane-running-dot {
   animation: automation-board-running-pulse 1.6s ease-in-out infinite;
 }
 
@@ -14803,7 +14819,9 @@ body.is-col-resizing .automation-board-lane-resize-handle::after {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .automation-board-lane-running-dot {
+  .automation-board-lane-running-dot,
+  .pane-tab-panel.is-active:not([hidden]) .automation-board-lane-running-dot,
+  .pane-content > .card-shell .automation-board-lane-running-dot {
     animation: none;
     opacity: 0.85;
   }

@@ -57,6 +57,22 @@ const INFINITE_ANIMATION_ALLOWLIST: readonly InfiniteAnimationException[] = [
       'Untabbed pane layout counterpart for the structured-command running indicator.',
   },
 
+  // ── Automation board lane header ──
+  // Same treatment as the bounce dots above: the base
+  // `.automation-board-lane-running-dot` is static, and the pulse is re-attached
+  // only through a visibility-gated ancestor. A board left running overnight in a
+  // background pane must contribute zero animated elements.
+  {
+    selector: '.pane-tab-panel.is-active:not([hidden]) .automation-board-lane-running-dot',
+    reason:
+      'Gated to the visible active tab panel, so mounted-but-hidden boards do not accumulate compositor work while their lanes run.',
+  },
+  {
+    selector: '.pane-content > .card-shell .automation-board-lane-running-dot',
+    reason:
+      'Untabbed pane layout counterpart: a direct `.pane-content` child card is the pane, so it is always on screen.',
+  },
+
   // ── Weather card ambience ──
   // Legacy decorative motion, kept because it only mounts while the weather card
   // itself is rendered (one opt-in card, not per-pane chrome) and because the

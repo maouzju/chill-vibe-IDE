@@ -91,8 +91,10 @@
       `sessionLevel` 用 `maxSessions` 分档（会话数被消息数压平的回归）。
 - [x] 红：`tests/stats-card-render.test.tsx` —— tooltip 恒带会话数（含 0）；
       切到「会话」口径后格子读 `sessionLevel`。
-- [x] 绿：`src/stats-card-metrics.ts` —— 抽 `resolveSessionDayKey`，两条来源共用；
+- [x] 绿：`src/stats-card-metrics.ts` —— 抽 `resolveSessionCalendarDayKey`（日历归属日）
+      与 `resolveSessionRecencyDayKey`（活跃/最近 N 天），两条来源各自共用；
       `StatsDay` 增 `sessionLevel`，`StatsMetrics` 增 `maxSessions`。
+      注：归日规则只作用于日历格；连击与「最近 7/30 天」仍按会话收尾时刻计。
 - [x] `shared/i18n.ts` —— `statsHeatmapTooltip` 去掉 `sessions > 0` 分支；新增
       `statsHeatMetricLabel` / `statsHeatMetricMessages` / `statsHeatMetricSessions`。
 - [x] `src/components/StatsCard.tsx` + `src/index.css` —— 脚注加口径切换，复用

@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { EventEmitter } from 'node:events'
 import { existsSync } from 'node:fs'
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { appendFile, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import { spawn, spawnSync } from 'node:child_process'
@@ -553,6 +553,99 @@ describe('downloadWithResume', () => {
           }),
       })
 
+      assert.equal(await readFile(destPath, 'utf8'), 'hello world')
+    })
+  })
+
+  // 症状: 更新后应用打不开 —— 安装脚本收到的是一个只含尾段的 zip，而下载这一侧
+  //       报告「校验通过」。
+  // 根因: 完整性判据用的是内存里的 `received` 计数器。当服务器回 206 但 Content-Range
+  //       无法解析（代理改写/丢头）时，续传对不上 → 截断重写，可 totalBytes 取的却是
+  //       206 响应的 Content-Length（只有剩余那一段的长度），于是 received === totalBytes
+  //       恰好成立，一个残缺档案就被 rename 成了正式包。
+  test('never publishes a partial body as a whole archive when the resume offset cannot be lined up', async () => {
+    await withTempDir(async (dir) => {
+      const destPath = path.join(dir, 'update.zip')
+      await writeFile(`${destPath}.part`, 'hello ')
+
+      await assert.rejects(
+        downloadWithResume({
+          destPath,
+          maxAttempts: 1,
+          retryDelayMs: () => 0,
+          fetchRange: async () =>
+            response({
+              status: 206,
+              // A proxy dropped Content-Range; the body is only the tail.
+              headers: { 'content-length': '5' },
+              body: streamOf('world'),
+            }),
+        }),
+      )
+
+      assert.equal(existsSync(destPath), false)
+    })
+  })
+
+  // 根因: 停滞时我们最多只等 2s 让上一轮的 reader 收尾，而这次修复的前提正是
+  //       「reader 可能不理会 abort」。一个事后苏醒的 reader 会继续往同一个 .part
+  //       追加，与新一轮的句柄交错 —— 磁盘上多出来的字节，内存计数器永远看不见。
+  test('refuses to publish when the bytes on disk disagree with the counted bytes', async () => {
+    await withTempDir(async (dir) => {
+      const destPath = path.join(dir, 'update.zip')
+      const partPath = `${destPath}.part`
+
+      await assert.rejects(
+        downloadWithResume({
+          destPath,
+          maxAttempts: 1,
+          retryDelayMs: () => 0,
+          fetchRange: async () =>
+            response({
+              status: 200,
+              headers: { 'content-length': '11' },
+              body: (async function* () {
+                yield Buffer.from('hello world', 'utf8')
+                // A zombie reader from a previous attempt lands three extra bytes.
+                await appendFile(partPath, 'XXX')
+              })(),
+            }),
+        }),
+        /disk|incomplete/i,
+      )
+
+      assert.equal(existsSync(destPath), false)
+    })
+  })
+
+  test('a rejected resume offset does not burn a retry attempt', async () => {
+    await withTempDir(async (dir) => {
+      const destPath = path.join(dir, 'update.zip')
+      await writeFile(`${destPath}.part`, 'stale-leftover-from-another-asset')
+      let calls = 0
+
+      await downloadWithResume({
+        destPath,
+        maxAttempts: 1,
+        retryDelayMs: () => 0,
+        fetchRange: async () => {
+          calls += 1
+
+          if (calls === 1) {
+            return response({ status: 416, body: null })
+          }
+
+          return response({
+            status: 200,
+            headers: { 'content-length': '11' },
+            body: streamOf('hello world'),
+          })
+        },
+      })
+
+      // maxAttempts is 1, yet the 416 reset must not consume it: clearing a stale
+      // .part is bookkeeping, not a failed download attempt.
+      assert.equal(calls, 2)
       assert.equal(await readFile(destPath, 'utf8'), 'hello world')
     })
   })

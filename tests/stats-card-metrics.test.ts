@@ -633,6 +633,50 @@ test('an archived session with no usable start time falls back to its archived d
   assert.equal(day?.count, 7)
 })
 
+test('an archived session stays recent by when it ended, not by when it started', () => {
+  // 归档条目的日历归属日（开始日）不得回流到「最近 N 天」/ streak：一段 08-05 开工、
+  // 今天才归档的会话，用户今天明明干了活。
+  const metrics = compute({
+    sessionHistory: [
+      historyEntry({
+        archivedAt: localIso('2026-08-16', 18),
+        messageCount: 12,
+        messages: [message({ createdAt: localIso('2026-08-05', 9) })],
+      }),
+    ],
+  })
+
+  // 日历仍按开始日着色（FR-3 的会话归日口径不受影响）。
+  const byDay = new Map(metrics.days.map((day) => [day.date, day]))
+  assert.equal(byDay.get('2026-08-05')?.sessions, 1)
+  assert.equal(byDay.get('2026-08-05')?.count, 12)
+
+  // 活跃/近期口径按会话收尾那天算。
+  assert.equal(metrics.sessionsLast7, 1)
+  assert.equal(metrics.sessionsLast30, 1)
+  assert.equal(metrics.currentStreak, 1)
+  assert.equal(metrics.activeDays, 1)
+})
+
+test('live and archived sessions enter the recent window from the same end of the session', () => {
+  // 同一个计数器的两半不能一半读开始、一半读结束。
+  const spanning = [message({ createdAt: localIso('2026-08-05', 9) }), message({ createdAt: localIso('2026-08-16', 9) })]
+  const metrics = compute({
+    columns: [column([card({ id: 'live', messages: spanning })])],
+    sessionHistory: [
+      historyEntry({
+        id: 'h-spanning',
+        archivedAt: localIso('2026-08-16', 18),
+        messageCount: 2,
+        messages: spanning,
+      }),
+    ],
+  })
+
+  assert.equal(metrics.sessionsLast7, 2)
+  assert.equal(metrics.sessionsLast30, 2)
+})
+
 test('session levels use their own maximum so they are not flattened by message volume', () => {
   const busyDay = Array.from({ length: 40 }, () => message({ createdAt: localIso('2026-08-16', 10) }))
   const metrics = compute({

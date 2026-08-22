@@ -347,6 +347,65 @@ test('resolveWorkspaceAdminCommandFromToolCall lets the caller archive itself by
   assert.match(unknownSelf.error ?? '', /cardId/)
 })
 
+// 症状：模型调 move_session_to_lane({ cardId: "", lane: "done" })（取值失败取成了
+//   空白）时，超管把**自己**中断并归档了，返回文案还是 "END YOUR TURN NOW"，
+//   它根本意识不到搞错了目标。
+// 根因：自移分支靠 `readStringArg(args, 'cardId')` 的真假分流，而 readStringArg =
+//   normalizeText，对 ""/"   "/null 一律返回 ''，与"压根没传这个参数"不可区分；
+//   放宽 required 之后，空值就直接掉进了 self 分支。
+// 为什么不能只在 done 上再加一道拦截：lane 本来就必须是 done 才走自移，拦不住
+//   这一例；唯一能分开两者的信息是「键在不在 args 上」。
+test('resolveWorkspaceAdminCommandFromToolCall refuses an explicitly blank cardId instead of targeting self', () => {
+  for (const blank of ['', '   ', null]) {
+    const result = resolveWorkspaceAdminCommandFromToolCall(
+      'move_session_to_lane',
+      { cardId: blank, lane: 'done' },
+      'col-1',
+      'self-card',
+    )
+
+    assert.equal(
+      result.command,
+      undefined,
+      `cardId ${JSON.stringify(blank)} must not be forwarded as a command`,
+    )
+    assert.notEqual(
+      result.selfArchive,
+      true,
+      `cardId ${JSON.stringify(blank)} must never be read as "archive myself"`,
+    )
+    assert.match(result.error ?? '', /cardId/)
+  }
+
+  // 省略参数仍旧是合法的自归档，这条修复不能把它一起堵死。
+  const omitted = resolveWorkspaceAdminCommandFromToolCall(
+    'move_session_to_lane',
+    { lane: 'done' },
+    'col-1',
+    'self-card',
+  )
+  assert.equal(omitted.selfArchive, true)
+  assert.deepEqual(omitted.command, {
+    type: 'admin-move-session-to-lane',
+    columnId: 'col-1',
+    cardId: 'self-card',
+    lane: 'done',
+  })
+})
+
+test('callWorkspaceAdminTool never archives the caller because of a blank cardId', async () => {
+  const harness = createToolHarness()
+  const result = await callWorkspaceAdminTool(
+    'move_session_to_lane',
+    { cardId: '', lane: 'done' },
+    harness.context,
+  )
+
+  assert.equal(result.isError, true)
+  assert.deepEqual(harness.posted, [], 'a blank cardId must not dispatch any board transition')
+  assert.doesNotMatch(result.content[0]?.text ?? '', /END YOUR TURN|end your turn/i)
+})
+
 test('callWorkspaceAdminTool archives the caller and tells it to stop talking', async () => {
   const harness = createToolHarness()
   const result = await callWorkspaceAdminTool('move_session_to_lane', { lane: 'done' }, harness.context)

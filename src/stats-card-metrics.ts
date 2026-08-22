@@ -150,10 +150,31 @@ type DayBucket = { count: number; sessions: number }
  *   没有任何真实活动。这里对打开中的空卡返回 null（不落到任何一天），归档条目则退回
  *   `archivedAt`（偏晚好过消失）。
  */
-const resolveSessionDayKey = (
+const resolveSessionCalendarDayKey = (
   messages: readonly ChatMessage[] | undefined,
   fallback?: string,
 ): string | null => parseDayKey(messages?.[0]?.createdAt) ?? parseDayKey(fallback)
+
+/**
+ * 一段会话「最近一次活动」落在哪一天 —— 只服务 streak / 最近 7·30 天，与日历归属日无关。
+ *
+ * 症状（2026-08-22）：工作区只有 1 段 08-15 开工、当天归档的会话时，卡面报「当前连击 0 天 /
+ *   最近 7 天 0 段」，可用户今天明明干了活。
+ * 根因：上面那次「日历改按开始日归日」把归档条目的 `dayKey` 换成了 `messages[0]`，而那一个
+ *   变量同时喂着 4 个语义不同的消费者（bumpDay / activeDayKeys / sessionsLast7 / sessionsLast30）。
+ *   规格（docs/specs/stats-card/requirements.md FR-3）只授权改日历那一个，后三个是「活跃/近期」
+ *   语义，被顺带按开始日算，于是一段长会话越早开工越显得「不活跃」。
+ * 被否决的替代：继续共用一个 `dayKey` 再在消费点各自修正——正是这种共用造成了本次回归，
+ *   下次再动归日规则依旧会静默波及。拆成两个显式命名的取值函数，改哪一边编译期就看得见。
+ * 为什么归档条目优先读 `archivedAt`：它是这段会话真正的收尾时刻，实际数据里恒 ≥ 最后一条
+ *   消息；打开中的卡还没有收尾时刻，就读最后一条消息。两条来源这才都取会话的**同一端**，
+ *   `sessionsLast7/30` 不再一半按开始、一半按最近活动。
+ */
+const resolveSessionRecencyDayKey = (
+  messages: readonly ChatMessage[] | undefined,
+  archivedAt?: string,
+): string | null =>
+  parseDayKey(archivedAt) ?? parseDayKey(messages?.[messages.length - 1]?.createdAt)
 
 const bumpDay = (buckets: Map<string, DayBucket>, dayKey: string, count: number, sessions: number) => {
   const bucket = buckets.get(dayKey)
@@ -311,9 +332,9 @@ export const computeStatsMetrics = ({
       totalMessages += messages.length
       collectTokens(messages, tokens)
 
-      const startDayKey = resolveSessionDayKey(messages)
-      if (startDayKey) {
-        bumpDay(dayBuckets, startDayKey, 0, 1)
+      const calendarDayKey = resolveSessionCalendarDayKey(messages)
+      if (calendarDayKey) {
+        bumpDay(dayBuckets, calendarDayKey, 0, 1)
       }
 
       for (const message of messages) {
@@ -342,12 +363,13 @@ export const computeStatsMetrics = ({
       if (isToolCardModel(card.model)) {
         continue
       }
-      const latest = card.messages?.[card.messages.length - 1]
-      const dayKey = parseDayKey(latest?.createdAt) ?? todayKey
-      if (dayKey >= last7Cutoff) {
+      // 打开中的卡没有归档时刻，最后一条消息就是它的「最近活动」；一条消息都还没有的
+      // 空卡按今天算——它是刚刚被打开的。
+      const recencyDayKey = resolveSessionRecencyDayKey(card.messages) ?? todayKey
+      if (recencyDayKey >= last7Cutoff) {
         sessionsLast7 += 1
       }
-      if (dayKey >= last30Cutoff) {
+      if (recencyDayKey >= last30Cutoff) {
         sessionsLast30 += 1
       }
     }
@@ -373,8 +395,23 @@ export const computeStatsMetrics = ({
       archivedSessionsWithoutUsage += 1
     }
 
-    const dayKey = resolveSessionDayKey(entry.messages, entry.archivedAt)
-    if (!dayKey) {
+    // 两个口径分开取值，别再合并回一个 `dayKey`（理由见 resolveSessionRecencyDayKey 上方）。
+    const calendarDayKey = resolveSessionCalendarDayKey(entry.messages, entry.archivedAt)
+    const recencyDayKey = resolveSessionRecencyDayKey(entry.messages, entry.archivedAt)
+
+    if (recencyDayKey) {
+      if (messageCount > 0) {
+        activeDayKeys.add(recencyDayKey)
+      }
+      if (recencyDayKey >= last7Cutoff) {
+        sessionsLast7 += 1
+      }
+      if (recencyDayKey >= last30Cutoff) {
+        sessionsLast30 += 1
+      }
+    }
+
+    if (!calendarDayKey) {
       // 坏时间戳只失去日历上的位置，会话本身仍然算数。老存档里确实出现过非法
       // archivedAt，统计卡绝不能因此炸掉整张板。
       continue
@@ -382,16 +419,7 @@ export const computeStatsMetrics = ({
 
     // 消息数跟着会话落到同一天。被否决的替代：会话记开始日、消息记归档日——同一格里
     // 两个数字来自不同的日子，tooltip 会读成「0 条消息 · 1 段会话」这种自相矛盾的组合。
-    bumpDay(dayBuckets, dayKey, messageCount, 1)
-    if (messageCount > 0) {
-      activeDayKeys.add(dayKey)
-    }
-    if (dayKey >= last7Cutoff) {
-      sessionsLast7 += 1
-    }
-    if (dayKey >= last30Cutoff) {
-      sessionsLast30 += 1
-    }
+    bumpDay(dayBuckets, calendarDayKey, messageCount, 1)
   }
 
   const safeRangeDays = Math.max(1, Math.round(rangeDays))

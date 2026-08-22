@@ -408,6 +408,16 @@ const findSessionRestoreColumnId = (state: AppState, entry: Pick<SessionHistoryE
     (column) => normalizeWorkspaceHistoryKey(column.workspacePath) === normalizeWorkspaceHistoryKey(entry.workspacePath),
   )?.id ?? state.columns[0]?.id
 
+// The update banner used to show one generic sentence for every failure, so a stalled
+// download and a missing release asset looked identical and there was nothing to act on.
+// IPC wraps the real message in "Error invoking remote method '…': Error: …" — strip that
+// scaffolding so the user sees the actual reason.
+const describeUpdateDownloadError = (error: unknown) => {
+  const raw = error instanceof Error ? error.message : String(error)
+  const unwrapped = raw.replace(/^Error invoking remote method '[^']*':\s*/, '')
+  return unwrapped.replace(/^(?:Error|Uncaught \w*Error):\s*/, '').trim() || raw
+}
+
 const getStateRecoveryOptionLabel = (
   language: AppState['settings']['language'],
   option: StateRecoveryOption,
@@ -707,6 +717,7 @@ function App() {
   const [updateResult, setUpdateResult] = useState<UpdateCheckResult | null>(null)
   const [downloadProgress, setDownloadProgress] = useState(0)
   const [downloadedUpdatePath, setDownloadedUpdatePath] = useState<string | null>(null)
+  const [updateDownloadError, setUpdateDownloadError] = useState<string | null>(null)
   const [codexFastModeDialogOpen, setCodexFastModeDialogOpen] = useState(false)
   const [remoteMonitorDialogOpen, setRemoteMonitorDialogOpen] = useState(false)
   const [remoteMonitorInfo, setRemoteMonitorInfo] = useState<RemoteMonitorStartResponse | null>(null)
@@ -1113,12 +1124,15 @@ function App() {
         if (result.hasUpdate && result.assetUrl) {
           setUpdateStatus('downloading')
           setDownloadProgress(0)
+          setUpdateDownloadError(null)
           void downloadUpdate(result.assetUrl).then((path) => {
             if (cancelled) return
             setDownloadedUpdatePath(path)
             setUpdateStatus('ready')
-          }).catch(() => {
-            if (!cancelled) setUpdateStatus('error')
+          }).catch((error: unknown) => {
+            if (cancelled) return
+            setUpdateDownloadError(describeUpdateDownloadError(error))
+            setUpdateStatus('error')
         })
       } else {
         setUpdateStatus('no-update')
@@ -1186,6 +1200,7 @@ function App() {
     setUpdateStatus('checking')
     setDownloadProgress(0)
     setDownloadedUpdatePath(null)
+    setUpdateDownloadError(null)
 
     void checkForUpdate().then((result) => {
       setUpdateResult(result)
@@ -1197,10 +1212,15 @@ function App() {
 
       if (result.hasUpdate && result.assetUrl) {
         setUpdateStatus('downloading')
+        // A retry resumes from the .part file the failed attempt left in temp, so the
+        // bar legitimately starts somewhere above zero — do not reset it here.
         void downloadUpdate(result.assetUrl).then((path) => {
           setDownloadedUpdatePath(path)
           setUpdateStatus('ready')
-        }).catch(() => setUpdateStatus('error'))
+        }).catch((error: unknown) => {
+          setUpdateDownloadError(describeUpdateDownloadError(error))
+          setUpdateStatus('error')
+        })
       } else {
         setUpdateStatus('no-update')
       }
@@ -8535,7 +8555,7 @@ function App() {
 
         {updateStatus === 'error' ? (
           <div className="update-banner is-error" role="alert">
-            <span>{updateResult?.error ?? text.updateError}</span>
+            <span>{updateDownloadError ?? updateResult?.error ?? text.updateError}</span>
           </div>
         ) : null}
 

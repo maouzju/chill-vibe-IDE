@@ -10,13 +10,13 @@ import { describe, test } from 'node:test'
 import {
   buildWindowsZipReplaceScript,
   classifyDownloadedAsset,
+  downloadWithResume,
   encodePowerShellScriptUtf8Bom,
   isNewerVersion,
   parseVersionTag,
   selectPlatformAsset,
   parseReleaseResponse,
   resolveDownloadedAssetStrategy,
-  writeVerifiedDownload,
 } from '../electron/updater-core.ts'
 import {
   launchDetachedPowerShellScriptFile,
@@ -315,16 +315,9 @@ describe('encodePowerShellScriptUtf8Bom', () => {
   })
 })
 
-describe('writeVerifiedDownload', () => {
-  const chunks = (...values: string[]) =>
-    (async function* () {
-      for (const value of values) {
-        yield Buffer.from(value, 'utf8')
-      }
-    })()
-
+describe('downloadWithResume', () => {
   const withTempDir = async (run: (dir: string) => Promise<void>) => {
-    const dir = await mkdtemp(path.join(os.tmpdir(), 'chill-vibe-download-'))
+    const dir = await mkdtemp(path.join(os.tmpdir(), 'chill-vibe-resume-'))
     try {
       await run(dir)
     } finally {
@@ -332,87 +325,257 @@ describe('writeVerifiedDownload', () => {
     }
   }
 
-  test('writes the payload and reports progress when the byte count matches', async () => {
+  const response = (options: {
+    status: number
+    headers?: Record<string, string>
+    body: AsyncIterable<Uint8Array> | null
+  }) => ({
+    ok: options.status >= 200 && options.status < 300,
+    status: options.status,
+    headers: {
+      get: (name: string) => options.headers?.[name.toLowerCase()] ?? null,
+    },
+    body: options.body,
+  })
+
+  const streamOf = (...values: string[]) =>
+    (async function* () {
+      for (const value of values) {
+        yield Buffer.from(value, 'utf8')
+      }
+    })()
+
+  const streamThatDies = (...values: string[]) =>
+    (async function* () {
+      for (const value of values) {
+        yield Buffer.from(value, 'utf8')
+      }
+      throw new Error('socket hang up')
+    })()
+
+  // 症状: 进度条停在某个百分比再也不动，没有报错、没有重试，重开设置页也一样。
+  // 根因: net.fetch 没有超时，一个静默断掉的 TCP 连接会让 reader.read() 永远挂起。
+  test('gives up on a stalled connection instead of hanging forever', async () => {
     await withTempDir(async (dir) => {
       const destPath = path.join(dir, 'update.zip')
-      const progress: number[] = []
 
-      const result = await writeVerifiedDownload({
-        source: chunks('hello ', 'world'),
+      await assert.rejects(
+        downloadWithResume({
+          destPath,
+          maxAttempts: 1,
+          stallTimeoutMs: 60,
+          fetchRange: async (_rangeStart, signal) =>
+            response({
+              status: 200,
+              headers: { 'content-length': '11' },
+              body: (async function* () {
+                yield Buffer.from('hel', 'utf8')
+                await new Promise((_resolve, reject) => {
+                  signal.addEventListener('abort', () => reject(new Error('aborted')))
+                })
+              })(),
+            }),
+        }),
+        /stall/i,
+      )
+    })
+  })
+
+  // 症状: 同上，进度条一动不动 —— 但这一次连一个字节都没到过。
+  // 根因: 停滞看门狗原先只包住响应体。在被墙/代理挂死的链路上 fetch() 本身永远不 settle，
+  //       看门狗根本没机会启动 (2026-08-22 实测: 直连 github.com 会 ECONNRESET 或
+  //       建连超时，走代理时则可能静默挂起)。
+  test('gives up when the connection never produces response headers', async () => {
+    await withTempDir(async (dir) => {
+      const destPath = path.join(dir, 'update.zip')
+
+      await assert.rejects(
+        downloadWithResume({
+          destPath,
+          maxAttempts: 1,
+          stallTimeoutMs: 60,
+          fetchRange: (_rangeStart, signal) =>
+            new Promise((_resolve, reject) => {
+              signal.addEventListener('abort', () => reject(new Error('aborted')))
+            }),
+        }),
+        /stall/i,
+      )
+    })
+  })
+
+  test('resumes from the bytes already on disk after a dropped connection', async () => {
+    await withTempDir(async (dir) => {
+      const destPath = path.join(dir, 'update.zip')
+      const requestedRanges: number[] = []
+      let attempt = 0
+
+      const result = await downloadWithResume({
         destPath,
-        expectedBytes: 11,
-        onProgress: (percent) => progress.push(percent),
+        maxAttempts: 3,
+        retryDelayMs: () => 0,
+        fetchRange: async (rangeStart) => {
+          requestedRanges.push(rangeStart)
+          attempt += 1
+
+          if (attempt === 1) {
+            return response({
+              status: 200,
+              headers: { 'content-length': '11' },
+              body: streamThatDies('hello '),
+            })
+          }
+
+          return response({
+            status: 206,
+            headers: { 'content-range': 'bytes 6-10/11', 'content-length': '5' },
+            body: streamOf('world'),
+          })
+        },
       })
 
       assert.equal(result, destPath)
+      assert.deepEqual(requestedRanges, [0, 6])
       assert.equal(await readFile(destPath, 'utf8'), 'hello world')
       assert.equal(existsSync(`${destPath}.part`), false)
-      assert.deepEqual(progress, [55, 100])
     })
   })
 
-  test('rejects a truncated download instead of handing back a half-written archive', async () => {
+  test('restarts from zero when the server ignores the Range request', async () => {
+    await withTempDir(async (dir) => {
+      const destPath = path.join(dir, 'update.zip')
+      let attempt = 0
+
+      await downloadWithResume({
+        destPath,
+        maxAttempts: 3,
+        retryDelayMs: () => 0,
+        fetchRange: async () => {
+          attempt += 1
+
+          if (attempt === 1) {
+            return response({
+              status: 200,
+              headers: { 'content-length': '11' },
+              body: streamThatDies('hel'),
+            })
+          }
+
+          // No 206 — a proxy that does not honour Range hands back the whole file.
+          return response({
+            status: 200,
+            headers: { 'content-length': '11' },
+            body: streamOf('hello world'),
+          })
+        },
+      })
+
+      assert.equal(await readFile(destPath, 'utf8'), 'hello world')
+    })
+  })
+
+  test('reports progress against the full payload while resuming', async () => {
+    await withTempDir(async (dir) => {
+      const destPath = path.join(dir, 'update.zip')
+      const progress: number[] = []
+      let attempt = 0
+
+      await downloadWithResume({
+        destPath,
+        maxAttempts: 3,
+        retryDelayMs: () => 0,
+        onProgress: (percent) => progress.push(percent),
+        fetchRange: async () => {
+          attempt += 1
+
+          if (attempt === 1) {
+            return response({
+              status: 200,
+              headers: { 'content-length': '10' },
+              body: streamThatDies('12345'),
+            })
+          }
+
+          return response({
+            status: 206,
+            headers: { 'content-range': 'bytes 5-9/10', 'content-length': '5' },
+            body: streamOf('67890'),
+          })
+        },
+      })
+
+      // The resumed half must continue at 50%, not restart the bar at 0%.
+      assert.deepEqual(progress, [50, 100])
+    })
+  })
+
+  test('keeps the partial file after exhausting retries so the next run can continue', async () => {
     await withTempDir(async (dir) => {
       const destPath = path.join(dir, 'update.zip')
 
       await assert.rejects(
-        writeVerifiedDownload({
-          source: chunks('hello '),
+        downloadWithResume({
           destPath,
-          expectedBytes: 11,
+          maxAttempts: 2,
+          retryDelayMs: () => 0,
+          fetchRange: async (rangeStart) =>
+            response({
+              status: rangeStart > 0 ? 206 : 200,
+              headers:
+                rangeStart > 0
+                  ? { 'content-range': `bytes ${rangeStart}-10/11` }
+                  : { 'content-length': '11' },
+              body: streamThatDies('ab'),
+            }),
         }),
-        /incomplete/i,
-      )
-
-      // A partial archive must never be left where install can pick it up.
-      assert.equal(existsSync(destPath), false)
-      assert.equal(existsSync(`${destPath}.part`), false)
-    })
-  })
-
-  test('leaves no partial file behind when the stream errors mid-flight', async () => {
-    await withTempDir(async (dir) => {
-      const destPath = path.join(dir, 'update.zip')
-      const failing = (async function* () {
-        yield Buffer.from('hello ', 'utf8')
-        throw new Error('socket hang up')
-      })()
-
-      await assert.rejects(
-        writeVerifiedDownload({ source: failing, destPath, expectedBytes: 11 }),
         /socket hang up/,
       )
 
       assert.equal(existsSync(destPath), false)
-      assert.equal(existsSync(`${destPath}.part`), false)
+      assert.equal(await readFile(`${destPath}.part`, 'utf8'), 'abab')
     })
   })
 
-  test('never overwrites a previously verified archive with a failed retry', async () => {
+  test('discards a partial file that is bigger than the advertised payload', async () => {
     await withTempDir(async (dir) => {
       const destPath = path.join(dir, 'update.zip')
-      await writeFile(destPath, 'previously-verified')
+      await writeFile(`${destPath}.part`, 'this-leftover-is-way-too-long')
 
-      await assert.rejects(
-        writeVerifiedDownload({ source: chunks('bad'), destPath, expectedBytes: 11 }),
-        /incomplete/i,
-      )
-
-      assert.equal(await readFile(destPath, 'utf8'), 'previously-verified')
-    })
-  })
-
-  test('accepts payloads when the server does not advertise a length', async () => {
-    await withTempDir(async (dir) => {
-      const destPath = path.join(dir, 'update.zip')
-
-      await writeVerifiedDownload({
-        source: chunks('unknown-length'),
+      await downloadWithResume({
         destPath,
-        expectedBytes: 0,
+        maxAttempts: 2,
+        retryDelayMs: () => 0,
+        fetchRange: async () =>
+          response({
+            status: 200,
+            headers: { 'content-length': '11' },
+            body: streamOf('hello world'),
+          }),
       })
 
-      assert.equal(await readFile(destPath, 'utf8'), 'unknown-length')
+      assert.equal(await readFile(destPath, 'utf8'), 'hello world')
+    })
+  })
+
+  test('does not retry a hard HTTP error', async () => {
+    await withTempDir(async (dir) => {
+      const destPath = path.join(dir, 'update.zip')
+      let calls = 0
+
+      await assert.rejects(
+        downloadWithResume({
+          destPath,
+          maxAttempts: 4,
+          retryDelayMs: () => 0,
+          fetchRange: async () => {
+            calls += 1
+            return response({ status: 404, body: null })
+          },
+        }),
+        /404/,
+      )
+
+      assert.equal(calls, 1)
     })
   })
 })

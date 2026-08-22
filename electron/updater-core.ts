@@ -1,9 +1,6 @@
 // Pure updater logic — no Electron dependencies so this module is importable from tests.
 
-import { createWriteStream } from 'node:fs'
-import { rename, rm } from 'node:fs/promises'
-import { Readable } from 'node:stream'
-import { pipeline } from 'node:stream/promises'
+import { open, rename, rm, stat } from 'node:fs/promises'
 
 export type UpdateCheckResult = {
   hasUpdate: boolean
@@ -78,58 +75,220 @@ export function resolveDownloadedAssetStrategy(
   return 'shell-open'
 }
 
-export type VerifiedDownloadParams = {
-  source: AsyncIterable<Uint8Array>
-  destPath: string
-  expectedBytes: number
-  onProgress?: (percent: number) => void
+export type DownloadResponseLike = {
+  ok: boolean
+  status: number
+  headers: { get(name: string): string | null }
+  body: AsyncIterable<Uint8Array> | null
 }
 
-// 症状: 更新后应用被替换成一个打不开的版本。
-// 根因: 旧实现把每个 chunk 直接 write() 进最终文件名，既不检查收到的字节数是否等于
-//       Content-Length，也不理会背压 —— 一次中断的下载会留下一个截断的 zip，而调用方
-//       把它当成"下载成功"交给破坏性的安装脚本。
-// 被否决的替代: 只在安装脚本里检查归档 —— 那时应用已经退出，用户只能看到它没再起来。
-export async function writeVerifiedDownload({
-  source,
-  destPath,
-  expectedBytes,
-  onProgress,
-}: VerifiedDownloadParams): Promise<string> {
-  const partPath = `${destPath}.part`
-  let received = 0
+export type ResumableDownloadParams = {
+  destPath: string
+  fetchRange: (rangeStart: number, signal: AbortSignal) => Promise<DownloadResponseLike>
+  onProgress?: (percent: number) => void
+  maxAttempts?: number
+  stallTimeoutMs?: number
+  retryDelayMs?: (attempt: number) => number
+  sleep?: (ms: number) => Promise<void>
+}
 
-  const counting = async function* () {
-    for await (const chunk of source) {
-      received += chunk.byteLength
-      if (expectedBytes > 0) {
-        onProgress?.(Math.min(100, Math.round((received / expectedBytes) * 100)))
+export const DEFAULT_DOWNLOAD_MAX_ATTEMPTS = 6
+export const DEFAULT_DOWNLOAD_STALL_TIMEOUT_MS = 45_000
+
+const HTTP_PARTIAL_CONTENT = 206
+const HTTP_RANGE_NOT_SATISFIABLE = 416
+const CONSUMER_UNWIND_TIMEOUT_MS = 2_000
+
+class NonRetryableDownloadError extends Error {}
+
+const defaultRetryDelayMs = (attempt: number) => Math.min(20_000, 1_000 * 2 ** (attempt - 1))
+const defaultSleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms))
+
+const statSizeOrZero = async (filePath: string) => {
+  const stats = await stat(filePath).catch(() => null)
+  return stats?.isFile() ? stats.size : 0
+}
+
+// `bytes 6-10/11` -> { start: 6, total: 11 }
+const parseContentRange = (value: string | null) => {
+  const match = /^bytes\s+(\d+)-(\d+)\/(\d+|\*)$/i.exec((value ?? '').trim())
+
+  if (!match) {
+    return null
+  }
+
+  return {
+    start: Number(match[1]),
+    total: match[3] === '*' ? 0 : Number(match[3]),
+  }
+}
+
+// 症状: 「更新完全更不了」—— 进度条停在 14% 再也不动，不报错、不重试，重开设置页
+//       仍是同一个死进度；用户连着多个版本都更不上去。
+// 根因 (2026-08-22): 下载走 net.fetch 且没有任何超时。GitHub 的资产实际托管在
+//       objects.githubusercontent.com，弱网下 TCP 会静默断掉而不发 FIN —— 此时
+//       reader.read() 永远不 resolve，整条 promise 挂死，UI 的 downloading 状态没有
+//       任何出口。160MB 的包在这种链路上几乎必然中途断，一次全量重下也救不回来。
+// 被否决的替代:
+//   - 「只加一个总超时」: 大包在慢网下本来就要几分钟，总超时不是把慢网误杀就是形同虚设；
+//     真正的判据是「多久没有新字节进来」。
+//   - 「失败就整包重下」: 每次都从 0 开始，弱网下永远追不完 —— 必须用 Range 续传，
+//     并把 .part 留到下一次运行继续啃。
+export async function downloadWithResume({
+  destPath,
+  fetchRange,
+  onProgress,
+  maxAttempts = DEFAULT_DOWNLOAD_MAX_ATTEMPTS,
+  stallTimeoutMs = DEFAULT_DOWNLOAD_STALL_TIMEOUT_MS,
+  retryDelayMs = defaultRetryDelayMs,
+  sleep = defaultSleep,
+}: ResumableDownloadParams): Promise<string> {
+  const partPath = `${destPath}.part`
+  let lastError: unknown = new Error('Update download did not run.')
+
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    const alreadyOnDisk = await statSizeOrZero(partPath)
+    const controller = new AbortController()
+    let stallTimer: ReturnType<typeof setTimeout> | undefined
+    let rejectStalled: ((error: Error) => void) | undefined
+    const stalled = new Promise<never>((_resolve, reject) => {
+      rejectStalled = reject
+    })
+    let consumePromise: Promise<void> | null = null
+
+    const armStallTimer = () => {
+      if (stallTimer) {
+        clearTimeout(stallTimer)
       }
-      yield chunk
+
+      stallTimer = setTimeout(() => {
+        // Reject before aborting so the stall diagnosis wins the race against the
+        // generic "aborted" error the abort itself raises inside the body stream.
+        rejectStalled?.(
+          new Error(`Update download stalled: no data received for ${stallTimeoutMs}ms.`),
+        )
+        try {
+          controller.abort()
+        } catch {
+          // The socket is already gone; nothing left to cancel.
+        }
+      }, stallTimeoutMs)
+      stallTimer.unref?.()
+    }
+
+    try {
+      // The watchdog has to cover the connect/response-header phase too, not just the
+      // body: on a blocked route the fetch() itself never settles, and a timer that
+      // only starts once the body arrives would never fire at all.
+      armStallTimer()
+
+      const response = await Promise.race([fetchRange(alreadyOnDisk, controller.signal), stalled])
+
+      if (response.status === HTTP_RANGE_NOT_SATISFIABLE) {
+        // Our leftover .part no longer lines up with the asset on the server.
+        await rm(partPath, { force: true })
+        lastError = new Error('Resume offset rejected by the server; restarting from zero.')
+        continue
+      }
+
+      if (!response.ok) {
+        // 4xx/5xx here means the release asset itself is wrong or gone — retrying
+        // the exact same URL cannot fix it, and burning six attempts only delays
+        // the error the user needs to see.
+        throw new NonRetryableDownloadError(`Download failed: HTTP ${response.status}`)
+      }
+
+      if (!response.body) {
+        throw new Error('Download failed: no response body')
+      }
+
+      const contentRange =
+        response.status === HTTP_PARTIAL_CONTENT
+          ? parseContentRange(response.headers.get('content-range'))
+          : null
+      // Only append when the server actually honoured our offset. A proxy that
+      // ignores Range replies 200 with the whole file, and appending that would
+      // splice two copies together into a corrupt archive.
+      const appending =
+        contentRange !== null && alreadyOnDisk > 0 && contentRange.start === alreadyOnDisk
+      const totalBytes = appending
+        ? contentRange.total
+        : Number(response.headers.get('content-length') ?? 0)
+
+      let received = appending ? alreadyOnDisk : 0
+
+      // Every chunk is awaited straight into the file handle instead of going through
+      // a write stream. A stream buffers, and pipeline() *destroys* that buffer on
+      // error — which silently threw away everything downloaded so far and left a
+      // 0-byte .part, so the next attempt always restarted from offset 0.
+      const consume = async () => {
+        const handle = await open(partPath, appending ? 'a' : 'w')
+
+        try {
+          armStallTimer()
+
+          for await (const chunk of response.body as AsyncIterable<Uint8Array>) {
+            armStallTimer()
+            await handle.write(chunk)
+            received += chunk.byteLength
+
+            if (totalBytes > 0) {
+              onProgress?.(Math.min(100, Math.round((received / totalBytes) * 100)))
+            }
+          }
+        } finally {
+          await handle.close()
+        }
+      }
+
+      consumePromise = consume()
+      await Promise.race([consumePromise, stalled])
+
+      if (totalBytes > 0 && received !== totalBytes) {
+        throw new Error(
+          `Update download is incomplete: received ${received} of ${totalBytes} bytes.`,
+        )
+      }
+
+      // Publish under the real name only after the payload is proven whole.
+      await rm(destPath, { force: true })
+      await rename(partPath, destPath)
+
+      return destPath
+    } catch (error) {
+      if (error instanceof NonRetryableDownloadError) {
+        throw error
+      }
+
+      lastError = error
+
+      if (attempt < maxAttempts) {
+        await sleep(retryDelayMs(attempt))
+      }
+    } finally {
+      if (stallTimer) {
+        clearTimeout(stallTimer)
+      }
+
+      // On a stall we won the race against a reader that is still running. Give it a
+      // moment to unwind and close its file handle so the next attempt sees the real
+      // byte count on disk — but never block the retry loop on a reader that ignores
+      // the abort, which is the exact failure mode we are here to escape.
+      if (consumePromise) {
+        await Promise.race([
+          consumePromise.catch(() => {}),
+          new Promise<void>((resolve) => {
+            const timer = setTimeout(resolve, CONSUMER_UNWIND_TIMEOUT_MS)
+            timer.unref?.()
+          }),
+        ])
+      }
     }
   }
 
-  try {
-    // pipeline() applies backpressure, so a fast network cannot queue the whole
-    // archive in main-process memory while the disk catches up.
-    await pipeline(Readable.from(counting()), createWriteStream(partPath))
-  } catch (error) {
-    await rm(partPath, { force: true })
-    throw error
-  }
-
-  if (expectedBytes > 0 && received !== expectedBytes) {
-    await rm(partPath, { force: true })
-    throw new Error(
-      `Update download is incomplete: received ${received} of ${expectedBytes} bytes.`,
-    )
-  }
-
-  // Publish under the real name only after the payload is proven whole.
-  await rm(destPath, { force: true })
-  await rename(partPath, destPath)
-
-  return destPath
+  // The .part file is deliberately left behind: the next check-for-update resumes
+  // from it instead of re-downloading 160MB over the same flaky link.
+  throw lastError
 }
 
 export type WindowsZipReplaceScriptParams = {

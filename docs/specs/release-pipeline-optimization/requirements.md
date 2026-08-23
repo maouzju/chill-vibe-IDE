@@ -82,6 +82,7 @@ The v0.18.12 and v0.18.13 releases also exposed a branch-integrity gap: an isola
 - Commit author/committer metadata, including personal email addresses, is intentionally excluded from the scan and from history rewriting.
 - Explicit synthetic test fixtures may be allowlisted narrowly, while a concrete personal path or external-project path in any controllable ref blocks the release.
 - Third-party fork/PR refs that cannot be rewritten must be reported as an external permissions boundary rather than counted as cleaned.
+- After a rewrite, the pipeline must verify the controllable GitHub refs and record a server-side purge request when an old commit/blob is still retrievable by SHA; the cleanup remains unresolved until GitHub's unreachable-object/cache purge is confirmed.
 
 ## Non-Goals
 

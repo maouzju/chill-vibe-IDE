@@ -62,6 +62,12 @@ test('release pipeline runs the sensitive-content audit before versioning and ag
   assert.doesNotMatch(skillText, /gh release create[^\n]* --notes <concise notes>/)
 })
 
+test('release pipeline records server-side purge limits after a history rewrite', () => {
+  assert.match(skillText, /GitHub Support/i)
+  assert.match(skillText, /unreachable (?:commit|object|blob)/i)
+  assert.match(skillText, /third-party|closed.*PR|permissions boundary/i)
+})
+
 test('release zip workflow validates the tag and audits before dependency install', () => {
   const workflow = readFileSync('.github/workflows/release-zip.yml', 'utf8')
   const historyAuditIndex = workflow.indexOf('node scripts/audit-git-history.mjs')

@@ -61,6 +61,8 @@
 - [x] Add a focused temporary-repository test proving secrets and personal paths are found while commit emails are ignored.
 - [x] Run the history audit in local release verification and the GitHub tag workflow before the candidate audit.
 - [x] Back up refs, rewrite the confirmed sensitive blobs in an external mirror, and verify author/committer emails remain byte-for-byte unchanged.
+- [x] Verify the controllable GitHub heads/tags after the force-update and record the external PR-ref permission boundary.
+- [ ] Obtain GitHub Support confirmation that unreachable historical objects and cached views have been purged.
 
 ## Evidence
 

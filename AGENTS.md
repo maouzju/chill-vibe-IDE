@@ -661,6 +661,8 @@ A living list of traps that have wasted time before. **When you hit a new pitfal
 | 341 | **给带无限动画的元素补一个基础态 `opacity`，会静默改掉每一张框到它的快照 —— 因为 Playwright 冻结无限动画走的是 `animation.cancel()`，回退到「动画前的基础样式」，不是 0% 关键帧。** 2026-08-22 把 `.automation-board-lane-running-dot` 的脉冲迁到可见门控选择器下时，按测试提示写了「静态值 = 0% 关键帧」的 `opacity: 0.35`；原基础规则**根本没有 opacity 声明**（即 1），于是那颗 5px 圆点在快照里从不透明变成 35%，`automation-board-running-lane-head-{dark,light}.png` 直接红 —— 而这两张恰好是**零容差**（只传了 `animations: 'disabled'`，没有 `maxDiffPixels`） | 做这类门控迁移时，基础态要写**当前生效的计算值**（无声明就是 `opacity: 1`），而不是 0% 关键帧 —— 目标是「用户看到的东西不变，只是不再让隐藏面板空转」。证据在 `playwright-core/lib/server/screenshotter.js` 的 `animation.cancel()`，不要凭 `animations: 'disabled'` 的字面意思推断。同类迁移（`.streaming-dots` / `.structured-command-running-dots`）当年没炸，只是因为它们的快照都带 `maxDiffPixelRatio`。 |
 | 342 | **计时器到点时只重扫排队卡的队列/模式，不重扫所有卡的运行态，会把批次永远留在「待唤醒」。** `wakeAt` 过期而 Claude 仍在后台等待时，随后只发生 `backgroundWorkPending: true → false`；旧签名不变、没有未来定时器可再触发，用户看到倒计时归零却永远不发车 | 唤醒重扫签名必须纳入所有卡的 `status` 与 `backgroundWorkPending`，让每个完成边界重新调用 `flushReadyWakeTimers`；纯函数回归钉在 `tests/wake-timer.test.ts`。 |
 
+| 343 | Force-updating GitHub refs does not immediately purge unreachable commits/blobs or cached views | After a history rewrite, verify the public refs, record old object ids that remain addressable, and open a GitHub Support purge request; do not report the cleanup as complete until server-side purge is confirmed. Closed/third-party PR refs are a permissions boundary. |
+
 ### Self-maintenance rule
 
 - When you encounter a new non-obvious failure mode — a test that fails for environmental reasons, a build step with hidden prerequisites, a runtime behavior that contradicts the docs — append a row to this table before you finish the task.

@@ -46,3 +46,25 @@ test('release worktree direct pushes to main only appear as explicit prohibition
     `every direct worktree push mention must prohibit it:\n${directPushLines.join('\n')}`,
   )
 })
+
+test('release pipeline runs the sensitive-content audit before versioning and again on the candidate', () => {
+  const auditIndex = skillText.indexOf('pnpm release:audit -- --base origin/main --json')
+  const versionIndex = skillText.indexOf('3. Set the final release version')
+  const rerunIndex = skillText.indexOf('rerun `pnpm release:audit', versionIndex)
+  assert.ok(auditIndex >= 0, 'skill must invoke the release safety audit')
+  assert.ok(auditIndex < versionIndex, 'safety audit must precede version bump')
+  assert.ok(rerunIndex > versionIndex, 'skill must audit again after version edit')
+  assert.match(skillText, /does not inspect commit author\/committer emails/)
+  assert.match(skillText, /--notes-file <notes-file>/)
+  assert.doesNotMatch(skillText, /gh release create[^\n]* --notes <concise notes>/)
+})
+
+test('release zip workflow validates the tag and audits before dependency install', () => {
+  const workflow = readFileSync('.github/workflows/release-zip.yml', 'utf8')
+  const auditIndex = workflow.indexOf('node scripts/audit-release-safety.mjs')
+  const installIndex = workflow.indexOf('pnpm install --frozen-lockfile')
+  assert.ok(auditIndex >= 0)
+  assert.ok(auditIndex < installIndex)
+  assert.match(workflow, /\^v\\d\+\\\.\\d\+\\\.\\d\+\$/)
+  assert.match(workflow, /RELEASE_TAG\^/)
+})

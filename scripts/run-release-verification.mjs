@@ -5,12 +5,14 @@ import { lstat, mkdir, readFile, readlink, rename, rm, writeFile } from 'node:fs
 import os from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { createReleaseLogRedactor, redactReleaseLogText } from './audit-release-safety.mjs'
 
 const scriptDir = path.dirname(fileURLToPath(import.meta.url))
 const defaultProjectRoot = path.resolve(scriptDir, '..')
 const STATE_VERSION = 1
 
 const RELEASE_STAGES = [
+  { id: 'safety', label: 'Sensitive-content audit', command: 'pnpm', args: ['release:audit', '--', '--base', 'origin/main', '--json'] },
   { id: 'legal', label: 'Legal inventory', command: 'pnpm', args: ['legal:check'] },
   { id: 'quality', label: 'Lint and type checks', command: 'pnpm', args: ['test:quality'] },
   { id: 'node', label: 'Node tests', command: 'pnpm', args: ['test'] },
@@ -309,10 +311,11 @@ async function runStage(stage, repoRoot, logPath) {
     `[release-verify] started=${startedAt.toISOString()}`,
     '',
   ].join('\n')
-  log.write(header)
+  const logOptions = { repoRoot, env: process.env }
+  log.write(redactReleaseLogText(header, logOptions))
 
-  console.log(`\n[release-verify] START ${stage.id}: ${stage.label}`)
-  console.log(`[release-verify] ${stage.commandText}`)
+  process.stdout.write(redactReleaseLogText(`\n[release-verify] START ${stage.id}: ${stage.label}\n`, logOptions))
+  process.stdout.write(redactReleaseLogText(`[release-verify] ${stage.commandText}\n`, logOptions))
 
   const invocation = createStageInvocation(stage)
   const exitCode = await new Promise((resolve) => {
@@ -323,36 +326,53 @@ async function runStage(stage, repoRoot, logPath) {
       stdio: ['ignore', 'pipe', 'pipe'],
     })
 
-    child.stdout.on('data', (chunk) => {
-      process.stdout.write(chunk)
-      log.write(chunk)
-    })
-    child.stderr.on('data', (chunk) => {
-      process.stderr.write(chunk)
-      log.write(chunk)
-    })
+    const stdoutRedactor = createReleaseLogRedactor(logOptions)
+    const stderrRedactor = createReleaseLogRedactor(logOptions)
+    const forward = (chunk, redactor, stream) => {
+      const safe = redactor.push(chunk)
+      if (safe) {
+        stream.write(safe)
+        log.write(safe)
+      }
+    }
+    child.stdout.on('data', (chunk) => forward(chunk, stdoutRedactor, process.stdout))
+    child.stderr.on('data', (chunk) => forward(chunk, stderrRedactor, process.stderr))
     child.on('error', (error) => {
-      const message = `\n[release-verify] spawn error: ${error.message}\n`
+      const message = redactReleaseLogText(`\n[release-verify] spawn error: ${error.message}\n`, logOptions)
       process.stderr.write(message)
       log.write(message)
       resolve(1)
     })
-    child.on('close', (code) => resolve(code ?? 1))
+    child.on('close', (code) => {
+      const stdoutTail = stdoutRedactor.flush()
+      const stderrTail = stderrRedactor.flush()
+      if (stdoutTail) {
+        process.stdout.write(stdoutTail)
+        log.write(stdoutTail)
+      }
+      if (stderrTail) {
+        process.stderr.write(stderrTail)
+        log.write(stderrTail)
+      }
+      resolve(code ?? 1)
+    })
   })
 
   const completedAt = new Date()
   const durationMs = Date.now() - startedMs
   const status = exitCode === 0 ? 'passed' : 'failed'
-  log.write(
+  log.write(redactReleaseLogText(
     `\n[release-verify] completed=${completedAt.toISOString()}\n` +
       `[release-verify] duration_ms=${durationMs}\n` +
       `[release-verify] exit_code=${exitCode}\n`,
-  )
+    logOptions,
+  ))
   await new Promise((resolve) => log.end(resolve))
 
-  console.log(
-    `[release-verify] ${status === 'passed' ? 'PASS' : 'FAIL'} ${stage.id} (${formatDuration(durationMs)})`,
-  )
+  process.stdout.write(redactReleaseLogText(
+    `[release-verify] ${status === 'passed' ? 'PASS' : 'FAIL'} ${stage.id} (${formatDuration(durationMs)})\n`,
+    logOptions,
+  ))
 
   return {
     status,
@@ -423,12 +443,15 @@ async function main() {
         }
   const state = resetInvalidatedVerificationState(loadedState)
 
-  console.log(`[release-verify] fingerprint: ${initialTree.fingerprint}`)
-  console.log(`[release-verify] HEAD: ${initialTree.head}`)
-  console.log(
+  const safeConsole = (value, stream = process.stdout) => {
+    stream.write(redactReleaseLogText(`${value}\n`, { repoRoot: initialTree.repoRoot, env: process.env }))
+  }
+  safeConsole(`[release-verify] fingerprint: ${initialTree.fingerprint}`)
+  safeConsole(`[release-verify] HEAD: ${initialTree.head}`)
+  safeConsole(
     `[release-verify] tracked diff: ${initialTree.trackedDiffBytes} bytes; untracked files: ${initialTree.untrackedFileCount}`,
   )
-  console.log(`[release-verify] evidence: ${fingerprintDir}`)
+  safeConsole(`[release-verify] evidence: ${fingerprintDir}`)
 
   const plan = resolveReleaseStagePlan({
     stages: RELEASE_STAGES,
@@ -469,7 +492,7 @@ async function main() {
     state.invalidatedAt = new Date().toISOString()
     state.invalidatedByFingerprint = finalTree.fingerprint
     await writeState(statePath, state)
-    console.error('\n[release-verify] working tree changed during verification; all evidence was invalidated.')
+    safeConsole('\n[release-verify] working tree changed during verification; all evidence was invalidated.', process.stderr)
   }
 
   printSummary(RELEASE_STAGES, state)
@@ -482,14 +505,14 @@ async function main() {
     })
 
   if (!allGreen) {
-    console.error('\n[release-verify] RELEASE GATES NOT GREEN')
+    safeConsole('\n[release-verify] RELEASE GATES NOT GREEN', process.stderr)
     process.exitCode = 1
     return
   }
 
   state.completedAt = new Date().toISOString()
   await writeState(statePath, state)
-  console.log('\n[release-verify] ALL RELEASE GATES GREEN')
+  safeConsole('\n[release-verify] ALL RELEASE GATES GREEN')
 }
 
 const directEntry = process.argv[1] ? path.resolve(process.argv[1]) : ''
@@ -504,7 +527,11 @@ if (
   try {
     await main()
   } catch (error) {
-    console.error(`[release-verify] ${error instanceof Error ? error.stack ?? error.message : String(error)}`)
+    const root = path.resolve(scriptDir, '..')
+    console.error(redactReleaseLogText(
+      `[release-verify] ${error instanceof Error ? error.message : String(error)}\n`,
+      { repoRoot: root, env: process.env },
+    ))
     process.exitCode = 1
   }
 }

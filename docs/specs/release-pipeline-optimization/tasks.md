@@ -47,6 +47,14 @@
 - [x] Build a real Windows ZIP and inspect its top-level folder.
 - [x] Update this task list with final evidence.
 
+## Sensitive-content guard
+
+- [x] Add the importable release safety scanner and the `release:audit` package script.
+- [x] Add credential/path/debug-artifact categories with safe JSON diagnostics and an explicit synthetic-fixture allowlist.
+- [x] Redact secrets, home usernames, and absolute workspace paths from release-verification and packaging output.
+- [x] Run the audit in `.github/workflows/release-zip.yml` before install/build.
+- [x] Add focused tests for detection, allowlisting, fail-closed base resolution, and log redaction.
+
 ## Evidence
 
 - Branch-convergence skill contract: 2 tests passed; it verifies local fast-forward → `git push origin main` → fetch/divergence proof → tag → GitHub Release ordering and rejects instructional worktree `HEAD:main` pushes.
@@ -59,3 +67,4 @@
 - Exact-tree resume proof: the first `legal` stage took 0.9 seconds; the immediate unchanged-tree rerun selected `reuse` and did not execute the command again. Partial `--stage` runs correctly remained non-green because the other mandatory gates were missing.
 - Real single-pass ZIP build: 78 seconds, down from the previous local sample of about 123 seconds. Artifact: `D:\Git\chill-vibe\dist\release-20260718-234606\Chill Vibe-0.18.8-win.zip` (161,548,785 bytes).
 - ZIP inspection found 78 entries, exactly one top-level `Chill Vibe IDE` directory, and `Chill Vibe IDE/Chill Vibe.exe`.
+- Release safety guard: focused scanner/skill/verifier/performance contracts passed (26 tests), including a real temporary-Git staged-content proof; `pnpm test:quality` passed; `node scripts/audit-release-safety.mjs --base origin/main --json` returned an empty finding list. The audit intentionally ignores commit author/committer email addresses.

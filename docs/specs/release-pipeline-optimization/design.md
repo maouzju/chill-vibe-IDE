@@ -136,3 +136,27 @@ If another agent is actively changing the primary checkout, verification may con
 - Existing full Playwright, Electron, legal, quality, and build gates remain mandatory.
 - Release isolation must not leave the primary local branch behind the branch it publishes.
 - Force-push, hard reset, automatic stash, and direct worktree-to-`main` refspecs are not convergence mechanisms.
+
+## Sensitive-content guard and log redaction
+
+The release path has two separate trust boundaries: the candidate tree entering GitHub, and the text emitted while verification/build commands run. Both are guarded explicitly instead of relying on a reviewer remembering a grep command.
+
+### Candidate audit
+
+`scripts/audit-release-safety.mjs` is a pure-enumeration CLI with an importable scanner. It accepts `--base <ref>` (default `origin/main`) and reads the candidate through Git's NUL-delimited path/diff interfaces. The scanner combines:
+
+1. a diff scan for newly introduced bytes (the normal release case);
+2. a candidate-tree scan for untracked files and files whose contents are newly reachable from the candidate; and
+3. a path scan for blocked debug/session artifacts.
+
+High-confidence secret regular expressions are classified without returning the matched value. Local-path checks compare against the base tree so existing synthetic fixtures do not create noise. The allowlist is small, named, and checked into the script: zero-value bearer fixtures and the repository's own `D:/Git/chill-vibe` examples are permitted, while user-home paths and known external project names are not. Commit metadata, including author/committer emails, is intentionally outside the scanner's input.
+
+The command exits non-zero on any finding or on an enumeration/base-ref error. Its machine-readable `--json` output contains only categories, relative paths, and line numbers; it never includes source excerpts or matched values. The release skill runs it before the version bump and again on the exact candidate tree immediately before the commit.
+
+### Output redaction
+
+`scripts/audit-release-safety.mjs` exposes `redactReleaseLogText()` and a small streaming redactor, shared by the release verifier and packaging script. It masks credential-shaped substrings, home-directory usernames, and the current repository root (including slash/backslash and `file://` variants) while preserving command status and useful relative artifact names. `run-release-verification.mjs` applies it to child stdout/stderr and its own headers; packaging applies it to command/path messages. The child environment is not indiscriminately stripped because provider-specific tests and builds may need it; only the observable output is sanitized. The module stays plain `.mjs` because CI runs the audit before dependencies are installed.
+
+### CI placement
+
+The GitHub release workflow runs the audit after checkout and before dependency installation/build. The local skill runs the same command before any release mutation. This makes a tag-triggered build fail closed even if a local reviewer skipped the skill or a release note was edited after the local audit.

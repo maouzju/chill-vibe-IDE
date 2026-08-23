@@ -62,6 +62,18 @@ The v0.18.12 and v0.18.13 releases also exposed a branch-integrity gap: an isola
 - Temporary release worktrees may be removed only after the convergence checks pass.
 - A focused repository test must enforce the ordering of local integration, `main` push, convergence proof, tag creation, and GitHub Release creation, and must reject any instructional use of `git push origin HEAD:main`.
 
+### R7 — Sensitive-content release guard
+
+- The release pipeline must run an automated safety audit before version bumping, committing, tagging, or publishing.
+- The audit must inspect the complete candidate surface: staged and unstaged tracked changes, non-ignored untracked files, and the candidate tree relative to the chosen base ref. It must not inspect commit author/committer email addresses as a leak signal.
+- The audit must reject high-confidence credentials and authentication material (private-key blocks, provider/API tokens, GitHub/Slack/AWS tokens, JWTs, and non-placeholder bearer values) even when they occur in documentation, fixtures, generated files, or release notes.
+- The audit must reject newly introduced personal-machine paths and external-project paths by comparing them with the base ref, while allowing the repository's documented synthetic fixtures and the public repository path explicitly approved by the project owner.
+- The audit must reject debug/session artifacts such as `.codex-artifacts`, release scratch files, raw session captures, and untracked logs or screenshots unless an explicit, auditable allowlist entry covers the path.
+- Findings must include only a safe path and pattern category; matched credential values and full sensitive lines must never be printed.
+- Release-verification and packaging logs must redact credential-like values, home-directory usernames, and absolute workspace paths before writing to stdout or persistent log files. Child processes may retain required runtime environment variables, but their output must be treated as untrusted.
+- The audit must be runnable in CI without GitHub credentials and must fail closed when the base ref cannot be resolved or the candidate cannot be enumerated deterministically.
+- A focused test must prove the audit catches representative secrets, new local/external paths, and debug artifacts, allows zero-value test placeholders and approved synthetic paths, and redacts matched values from diagnostics.
+
 ## Non-Goals
 
 - Skipping full release verification based only on changed file paths.

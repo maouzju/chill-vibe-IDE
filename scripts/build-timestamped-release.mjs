@@ -1,4 +1,4 @@
-import { spawnSync } from 'node:child_process'
+import { spawn } from 'node:child_process'
 import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -8,6 +8,7 @@ import {
   writeZipFromDirectory,
 } from './manual-win-zip-packager.mjs'
 import { patchWindowsExecutableIcon } from './windows-exe-icon.mjs'
+import { createReleaseLogRedactor, redactReleaseLogText } from './audit-release-safety.mjs'
 
 const scriptDir = path.dirname(fileURLToPath(import.meta.url))
 const projectRoot = path.resolve(scriptDir, '..')
@@ -171,26 +172,50 @@ function formatCommandForLog(command, args = []) {
     .join(' ')
 }
 
-function runCommand(command, args = [], { dryRun = false } = {}) {
-  console.log(`\n[packaging] ${formatCommandForLog(command, args)}`)
+function writePackagingLog(text, options = {}) {
+  const redacted = redactReleaseLogText(text, { repoRoot: projectRoot, env: process.env, ...options })
+  process.stdout.write(redacted)
+}
+
+function logPackaging(message) {
+  writePackagingLog(`${message}\n`)
+}
+
+function warnPackaging(message) {
+  process.stderr.write(redactReleaseLogText(`${message}\n`, { repoRoot: projectRoot, env: process.env }))
+}
+
+async function runCommand(command, args = [], { dryRun = false } = {}) {
+  writePackagingLog(`\n[packaging] ${formatCommandForLog(command, args)}\n`)
   if (dryRun) {
     return
   }
 
-  const result = spawnSync(command, args, {
+  const child = spawn(command, args, {
     cwd: projectRoot,
-    stdio: 'inherit',
     env: process.env,
+    windowsHide: true,
+    stdio: ['ignore', 'pipe', 'pipe'],
   })
-
-  if (result.error) {
-    throw result.error
+  const stdoutRedactor = createReleaseLogRedactor({ repoRoot: projectRoot, env: process.env })
+  const stderrRedactor = createReleaseLogRedactor({ repoRoot: projectRoot, env: process.env })
+  const forward = (chunk, stream) => {
+    const redactor = stream === process.stderr ? stderrRedactor : stdoutRedactor
+    const value = redactor.push(chunk)
+    if (value) stream.write(value)
   }
-
-  if (typeof result.status === 'number' && result.status !== 0) {
-    throw new Error(
-      `Command failed with exit code ${result.status}: ${formatCommandForLog(command, args)}`,
-    )
+  child.stdout.on('data', (chunk) => forward(chunk, process.stdout))
+  child.stderr.on('data', (chunk) => forward(chunk, process.stderr))
+  const result = await new Promise((resolve, reject) => {
+    child.on('error', reject)
+    child.on('close', (status, signal) => resolve({ status, signal }))
+  })
+  const stdoutTail = stdoutRedactor.flush()
+  const stderrTail = stderrRedactor.flush()
+  if (stdoutTail) process.stdout.write(stdoutTail)
+  if (stderrTail) process.stderr.write(stderrTail)
+  if (result.status !== 0) {
+    throw new Error(`Command failed with exit code ${result.status ?? 1}: ${formatCommandForLog(command, args)}`)
   }
 }
 
@@ -198,7 +223,7 @@ async function main() {
   const options = parseArgs(process.argv.slice(2))
 
   if (options.help) {
-    console.log(HELP_TEXT)
+    logPackaging(HELP_TEXT)
     return
   }
 
@@ -221,11 +246,11 @@ async function main() {
     [process.execPath, createElectronBuilderArgs(options.target, outputDirRelative)],
   ]
 
-  console.log(`[packaging] target: ${options.target}`)
-  console.log(`[packaging] output: ${outputDirAbsolute}`)
+  writePackagingLog(`[packaging] target: ${options.target}\n`)
+  writePackagingLog(`[packaging] output: ${outputDirAbsolute}\n`)
 
   try {
-    runCommand(legalCommand[0], legalCommand[1], { dryRun: options.dryRun })
+    await runCommand(legalCommand[0], legalCommand[1], { dryRun: options.dryRun })
   } catch (error) {
     const canReuseExistingLicenses =
       options.dryRun || fs.existsSync(path.join(projectRoot, 'THIRD_PARTY_LICENSES.md'))
@@ -234,14 +259,14 @@ async function main() {
       throw error
     }
 
-    console.warn(
+    warnPackaging(
       `[packaging] warning: legal inventory refresh failed, reusing existing THIRD_PARTY_LICENSES.md`,
     )
   }
 
   for (const [command, args] of commands) {
     try {
-      runCommand(command, args, { dryRun: options.dryRun })
+      await runCommand(command, args, { dryRun: options.dryRun })
     } catch (error) {
       const isFinalPackagingStep =
         command === process.execPath && args[0] === 'node_modules/electron-builder/cli.js'
@@ -250,7 +275,7 @@ async function main() {
         throw error
       }
 
-      console.warn(
+      warnPackaging(
         `[packaging] warning: electron-builder failed for zip packaging, falling back to manual zip assembly`,
       )
 
@@ -260,15 +285,15 @@ async function main() {
         version: rootPackageJson.version,
       })
 
-      console.log(`[packaging] manual zip: ${manualResult.zipPath}`)
-      console.log(`[packaging] manual unpacked dir: ${manualResult.winUnpackedDir}`)
+      logPackaging(`[packaging] manual zip: ${manualResult.zipPath}`)
+      logPackaging(`[packaging] manual unpacked dir: ${manualResult.winUnpackedDir}`)
       break
     }
   }
 
   if (!options.dryRun && fs.existsSync(exePath)) {
     await patchWindowsExecutableIcon({ executablePath: exePath })
-    console.log(`[packaging] patched Windows app icon: ${exePath}`)
+    logPackaging(`[packaging] patched Windows app icon: ${exePath}`)
   }
 
   if (options.target === 'zip' && !options.dryRun) {
@@ -277,18 +302,18 @@ async function main() {
     }
 
     writeZipFromDirectory(winUnpackedDir, zipPath, WINDOWS_ZIP_ROOT_FOLDER_NAME)
-    console.log(`[packaging] zip artifact: ${zipPath}`)
-    console.log(`[packaging] zip root folder: ${WINDOWS_ZIP_ROOT_FOLDER_NAME}`)
+    logPackaging(`[packaging] zip artifact: ${zipPath}`)
+    logPackaging(`[packaging] zip root folder: ${WINDOWS_ZIP_ROOT_FOLDER_NAME}`)
   }
 
   const targetLabel =
     options.target === 'nsis' ? 'installer' : options.target === 'portable' ? 'portable' : 'zip'
 
-  console.log(`\n[packaging] done`)
-  console.log(`[packaging] target kind: ${targetLabel}`)
-  console.log(`[packaging] release dir: ${outputDirAbsolute}`)
-  console.log(`[packaging] unpacked exe: ${exePath}`)
-  console.log(`[packaging] note: each build uses its own timestamped release-* directory`)
+  logPackaging(`\n[packaging] done`)
+  logPackaging(`[packaging] target kind: ${targetLabel}`)
+  logPackaging(`[packaging] release dir: ${outputDirAbsolute}`)
+  logPackaging(`[packaging] unpacked exe: ${exePath}`)
+  logPackaging(`[packaging] note: each build uses its own timestamped release-* directory`)
 
   // Prune old builds so dist/ does not grow unbounded (~636MB each). Only after
   // a successful build, never in --dry-run. The just-built dir is protected even
@@ -306,15 +331,15 @@ async function main() {
       const fullPath = path.join(distDir, name)
       try {
         fs.rmSync(fullPath, { recursive: true, force: true })
-        console.log(`[packaging] pruned old release: ${name}`)
+        logPackaging(`[packaging] pruned old release: ${name}`)
       } catch (error) {
-        console.warn(
+        warnPackaging(
           `[packaging] warning: could not prune ${name}: ${error instanceof Error ? error.message : String(error)}`,
         )
       }
     }
     if (toPrune.length > 0) {
-      console.log(`[packaging] pruned ${toPrune.length} old release dir(s), kept newest ${keep}`)
+      logPackaging(`[packaging] pruned ${toPrune.length} old release dir(s), kept newest ${keep}`)
     }
   }
 }
@@ -323,7 +348,10 @@ if (isDirectExecution(import.meta.url, process.argv[1])) {
   try {
     await main()
   } catch (error) {
-    console.error(`[packaging] ${error instanceof Error ? error.message : String(error)}`)
+    process.stderr.write(redactReleaseLogText(
+      `[packaging] ${error instanceof Error ? error.message : String(error)}\n`,
+      { repoRoot: projectRoot, env: process.env },
+    ))
     process.exitCode = 1
   }
 }

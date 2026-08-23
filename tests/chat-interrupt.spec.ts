@@ -773,6 +773,65 @@ test('wake timer holds multiple messages and releases them as one batch when req
   await expect(timerStatus).toHaveCount(0)
 })
 
+test('duration wake timer automatically releases a queued batch at its scheduled time', async ({ page }) => {
+  const wakeAt = new Date(Date.now() + 800).toISOString()
+  const mock = await installMockApis(page, {
+    wakeTimerEnabled: true,
+    initialCard: {
+      status: 'idle',
+      provider: 'codex',
+      model: 'gpt-5.5',
+      wakeTimerActive: true,
+      wakeTimerMode: 'duration',
+      wakeTimerDurationMinutes: 1,
+      wakeTimerArmedAt: new Date(Date.now() - 200).toISOString(),
+      wakeTimerWakeAt: wakeAt,
+      wakeTimerPendingTargetIds: [],
+      wakeTimerQueuedSends: [{
+        id: 'queued-duration-1',
+        prompt: 'Automatically wake this scheduled batch',
+        attachments: [],
+      }],
+      messages: [],
+    },
+  })
+  await page.goto(appUrl)
+
+  await expect.poll(() => mock.readChatRequests(), { timeout: 5000 }).toHaveLength(1)
+  await expect.poll(() => mock.readChatRequests()[0]?.prompt).toBe(
+    'Automatically wake this scheduled batch',
+  )
+})
+
+test('duration wake timer restored after a renderer reload still releases automatically', async ({ page }) => {
+  const wakeAt = new Date(Date.now() + 1200).toISOString()
+  const mock = await installMockApis(page, {
+    wakeTimerEnabled: true,
+    initialCard: {
+      status: 'idle',
+      provider: 'codex',
+      model: 'gpt-5.5',
+      wakeTimerActive: true,
+      wakeTimerMode: 'duration',
+      wakeTimerDurationMinutes: 1,
+      wakeTimerArmedAt: new Date(Date.now() - 100).toISOString(),
+      wakeTimerWakeAt: wakeAt,
+      wakeTimerPendingTargetIds: [],
+      wakeTimerQueuedSends: [{
+        id: 'queued-duration-reload-1',
+        prompt: 'Wake after reload',
+        attachments: [],
+      }],
+      messages: [],
+    },
+  })
+  await page.goto(appUrl)
+  await page.reload()
+
+  await expect.poll(() => mock.readChatRequests(), { timeout: 5000 }).toHaveLength(1)
+  await expect.poll(() => mock.readChatRequests()[0]?.prompt).toBe('Wake after reload')
+})
+
 test('right-clicking send on an idle chat schedules the message instead of sending it now', async ({ page }) => {
   const mock = await installMockApis(page, {
     wakeTimerEnabled: true,

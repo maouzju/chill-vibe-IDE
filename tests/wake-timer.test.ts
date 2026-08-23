@@ -6,6 +6,7 @@ import { getLocaleText } from '../shared/i18n.ts'
 import { appSettingsSchema, appStateSchema, chatCardSchema, type ChatCard } from '../shared/schema.ts'
 import {
   armWakeTimerBatch,
+  buildWakeTimerTopologySignature,
   buildCanceledWakeTimerDraft,
   buildWakeTimerBatchEndPatch,
   collectWakeTimerDefaultPreference,
@@ -395,6 +396,29 @@ describe('changing the wake condition while a batch is pending', () => {
 })
 
 describe('wake timer release', () => {
+  it('changes its rescan signature when background work on a queued card settles', () => {
+    const base = [{
+      id: 'column-1',
+      cards: [{
+        id: 'owner',
+        status: 'idle' as const,
+        wakeTimerMode: 'duration' as const,
+        wakeTimerQueuedSendCount: 1,
+        backgroundWorkPending: true,
+      }],
+    }]
+
+    const settled = [{
+      ...base[0],
+      cards: [{ ...base[0].cards[0], backgroundWorkPending: false }],
+    }]
+
+    assert.notEqual(
+      buildWakeTimerTopologySignature(base),
+      buildWakeTimerTopologySignature(settled),
+    )
+  })
+
   it('queues only ordinary user sends while the feature and card timer are active', () => {
     assert.equal(shouldQueueWakeTimerSend({ featureEnabled: true, cardActive: true, origin: 'user' }), true)
     assert.equal(shouldQueueWakeTimerSend({ featureEnabled: false, cardActive: true, origin: 'user' }), false)

@@ -176,3 +176,18 @@
 - 绿测：`scripts/run-playwright-specs.ps1 -Specs tests/chat-interrupt.spec.ts,tests/automation-board-layout.spec.ts` 49/49 通过，含新增用例「待唤醒卡上把 duration 换成 workspace-agents 后重新绑定到正在跑的同事，且消息不发车」。
 - `pnpm test:quality`：通过。
 - 视觉：空状态卡 22rem 横排放不下下拉，实截发现标题折行、条件被截断；改为文案独占一行 + 控件另起一行（`is-empty-state` 内 `flex-wrap`），宽度放到 24rem 后复测正常。CSS 特异性坑记进 AGENTS 第 90 条。
+
+## 计时到点后的运行态重扫（2026-08-23）
+
+- [x] 红测锁定：重扫签名必须区分计时器到点后 `backgroundWorkPending: true → false`；
+      否则后续完成边界不会再次检查批次。
+- [x] 把所有卡片的 `status` 与 `backgroundWorkPending` 纳入重扫签名；到点后任何运行态完成边界都会再次检查并释放批次。
+- [x] 增加指定时长自动释放与 renderer reload 后自动释放的浏览器回归。
+
+验证记录：
+
+- 红测：`node --import tsx --test tests/wake-timer.test.ts` 因缺少
+  `buildWakeTimerTopologySignature` 导出稳定失败。
+- 绿测：`node --import tsx --test tests/wake-timer.test.ts`：48/48 通过。
+- 绿测：`pnpm exec playwright test --config playwright.config.ts tests/chat-interrupt.spec.ts --grep 'duration wake timer'`：2/2 通过。
+- `pnpm test:quality`：通过。

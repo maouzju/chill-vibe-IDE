@@ -14,6 +14,53 @@ import type { SendMessageMode, SendMessageOrigin } from './deferred-send-queue'
 export const wakeTimerCompletionStabilityMs = 1200
 
 /**
+ * App 级唤醒重扫所依赖的最小状态快照。
+ *
+ * 症状：2026-08-23 复现倒计时归零后仍显示「待唤醒」，Claude 后台任务随后已结束但消息不发车。
+ * 根因：`wakeAt` 到点时只重扫排队卡的队列/模式，`backgroundWorkPending` 的变化没有让 effect 重新执行。
+ * 被否决：给每个过期批次另挂一个常驻轮询；把所有卡的运行态纳入签名即可在真实完成边界精准重扫。
+ */
+export type WakeTimerTopologyCardSnapshot = {
+  id: string
+  status: CardStatus
+  backgroundWorkPending?: boolean
+  wakeTimerMode?: WakeTimerMode
+  wakeTimerQueuedSendCount?: number
+  wakeTimerPendingTargetIds?: readonly string[]
+  wakeTimerWakeAt?: string
+  wakeTimerExplicitTargets?: boolean
+}
+
+export type WakeTimerTopologyColumnSnapshot = {
+  id: string
+  cards: readonly WakeTimerTopologyCardSnapshot[]
+}
+
+export const buildWakeTimerTopologySignature = (
+  columns: readonly WakeTimerTopologyColumnSnapshot[],
+) => columns.map((column) => {
+  const cardIds = column.cards.map((card) => card.id).sort().join(',')
+  const runtime = column.cards
+    .map((card) => `${card.id}:${card.status}:${card.backgroundWorkPending === true ? '1' : '0'}`)
+    .sort()
+    .join(',')
+  const queued = column.cards
+    .filter((card) => (card.wakeTimerQueuedSendCount ?? 0) > 0)
+    .map((card) => [
+      card.id,
+      card.wakeTimerMode ?? 'workspace-agents',
+      card.wakeTimerQueuedSendCount ?? 0,
+      (card.wakeTimerPendingTargetIds ?? []).join(','),
+      card.wakeTimerWakeAt ?? '',
+      card.wakeTimerExplicitTargets === true ? '1' : '0',
+    ].join(':'))
+    .sort()
+    .join('|')
+
+  return [column.id, cardIds, runtime, queued].join('|')
+}).join('||')
+
+/**
  * 空闲卡上的右键发送 = 计划唤醒。
  *
  * 症状：新会话写好第一条指令后右键发送，消息立刻发了出去 —— 用户表达的"先别发"

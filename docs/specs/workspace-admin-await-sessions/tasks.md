@@ -45,7 +45,7 @@ UI / i18n / 快照基线一处都不用动。
       会把"等这几张卡"悄悄变成"干等 N 分钟"）；用户自己攒着的批次不被劫持。
 - [x] T3.3 三处批次结束一并清掉 `wakeTimerExplicitTargets`。
 - [x] T3.4 `validTargetIds` 改为按整个 state 算（跨列拖拽不等于目标完成）。
-- [x] T3.5 拓扑签名加入持批次卡自身的 `status`；`nextWakeTimerTimestamp` 覆盖所有批次且只收未来时间戳。
+- [x] T3.5 拓扑签名加入所有卡的 `status` / `backgroundWorkPending`；`nextWakeTimerTimestamp` 覆盖所有批次且只收未来时间戳，避免兜底时间已过后后台完成边界不再触发重扫。
 - [x] T3.6 三条终态路径（stopped / `Stream not found.` / 不可恢复错误）补发 forceRelease 放行。
 - [x] T3.7 `set_session_wake_timer` 执行器补 `wakeTimerAutoActivated`。
 - [x] T3.8 `ChatCard` 待唤醒状态行加显式名单文案。

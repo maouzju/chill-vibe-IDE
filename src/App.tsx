@@ -254,6 +254,7 @@ import {
 import { shouldExitPlanModeForAskUserAnswer } from './components/ask-user-answer-state'
 import {
   armWakeTimerBatch,
+  buildWakeTimerTopologySignature,
   resolveSupervisorWakeTargets,
   rearmWakeTimerBatchForPatch,
   buildCanceledWakeTimerDraft,
@@ -3244,22 +3245,21 @@ function App() {
   }, [])
 
   const wakeTimerTopologySignature = useMemo(
-    () => appState.columns.map((column) => [
-      column.id,
-      Object.keys(column.cards).sort().join(','),
-      ...Object.values(column.cards)
-        .filter((card) => (card.wakeTimerQueuedSends?.length ?? 0) > 0)
-        .map((card) => [
-          card.id,
-          card.wakeTimerMode ?? 'workspace-agents',
-          card.wakeTimerQueuedSends?.length ?? 0,
-          (card.wakeTimerPendingTargetIds ?? []).join(','),
-          // 持批次卡自己的状态也进签名：owner 从 streaming / error 回到 idle 是
-          // 释放条件的一部分，而 error 那条终态既不调完成广播也不 flush ——
-          // 签名不含 status 的话，那张卡不会再被重扫一次。
-          card.status,
-        ].join(':')),
-    ].join('|')).join('||'),
+    () => buildWakeTimerTopologySignature(
+      appState.columns.map((column) => ({
+        id: column.id,
+        cards: Object.values(column.cards).map((card) => ({
+          id: card.id,
+          status: card.status,
+          backgroundWorkPending: card.backgroundWorkPending === true,
+          wakeTimerMode: card.wakeTimerMode,
+          wakeTimerQueuedSendCount: card.wakeTimerQueuedSends?.length ?? 0,
+          wakeTimerPendingTargetIds: card.wakeTimerPendingTargetIds,
+          wakeTimerWakeAt: card.wakeTimerWakeAt,
+          wakeTimerExplicitTargets: card.wakeTimerExplicitTargets === true,
+        })),
+      })),
+    ),
     [appState.columns],
   )
   useEffect(() => {

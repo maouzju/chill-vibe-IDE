@@ -15,7 +15,14 @@ import { fileURLToPath } from 'node:url'
 const scriptRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const MAX_SCAN_BYTES = 16 * 1024 * 1024
 const SYNTHETIC_USERS = new Set(['demo', 'tester', 'u'])
-const SYNTHETIC_PROJECTS = new Set(['chill-vibe', 'other-repo', 'docs-site'])
+const SYNTHETIC_PROJECTS = new Set([
+  'chill-vibe',
+  'other-repo',
+  'docs-site',
+  'example-wiki',
+  'notes',
+  'notes.md',
+])
 // Keep the denylist itself out of the scanner's candidate matches.  The
 // runtime joins are intentional: this source file is audited like every other
 // changed file, while callers still get exact-name detection.
@@ -126,7 +133,7 @@ function findMatches(text, regex) {
   regex.lastIndex = 0
   for (const match of String(text).matchAll(regex)) {
     if (match.index == null) continue
-    matches.push({ value: match[0], index: match.index })
+    matches.push({ value: match[0], index: match.index, captures: match.slice(1) })
   }
   return matches
 }
@@ -162,9 +169,11 @@ function scanCredentialPatterns(pathName, text, findings, seen) {
     }
   }
 
-  for (const match of findMatches(text, /\bBearer\s+([^\s"'<>]+)|\b(?:api[_-]?key|access[_-]?token|secret[_-]?key)\s*[:=]\s*["']?([A-Za-z0-9._~+/=-]{20,})/gimu)) {
+  for (const match of findMatches(text, /\bBearer\s+([^\s"'<>]{20,})|\b(?:api[_-]?key|access[_-]?token|secret[_-]?key)\s*[:=]\s*["']?([A-Za-z0-9._~+/=-]{20,})/gimu)) {
     const value = match.value
-    const token = match[1] ?? match[2] ?? ''
+    const token = match.captures?.[0] ?? match.captures?.[1] ?? ''
+    const isAssignmentExpression = match.captures?.[1] != null
+    if (isAssignmentExpression && /^[A-Za-z_$][A-Za-z0-9_$]*(?:\.[A-Za-z_$][A-Za-z0-9_$]*)+$/u.test(token)) continue
     const tokenIndex = match.index + Math.max(0, value.indexOf(token))
     const overlapsSpecific = specificTokenSpans.some(
       ([start, end]) => tokenIndex < end && tokenIndex + token.length > start,
@@ -188,7 +197,17 @@ function scanPathPatterns(pathName, text, baselineText, findings, seen) {
     // A source regex/template such as `C:/Users/${name}` is a detector
     // implementation, not a leaked machine path.  Only inspect concrete path
     // segments; this also keeps this file from reporting its own patterns.
-    if (/[\[\]{}$*?+|]/u.test(value) || /[\\/]$/u.test(value) || /\.join\($/u.test(value)) continue
+    // Documentation often uses `C:\Users\...` / `D:\Git\...` as a
+    // deliberately non-concrete shape. Treat those ellipsis-only examples
+    // like the existing `${name}` templates; a real username/project still
+    // goes through the fail-closed path checks below.
+    if (
+      /[\[\]{}$*?+|]/u.test(value) ||
+      /(?:^|[\\/])\.\.\.(?:$|[\\/])/u.test(value) ||
+      /<[^>]+>/u.test(value) ||
+      /[\\/]$/u.test(value) ||
+      /\.join\($/u.test(value)
+    ) continue
     if (isAllowedSyntheticPath(pathName, value) || valueIsInBaseline(value, baselineText)) continue
     const normalized = normalizeForCompare(value)
     if (/^[a-z]:[\\/]users[\\/]/u.test(normalized) || /\/(?:home|users)\//u.test(normalized)) {

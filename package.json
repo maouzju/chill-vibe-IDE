@@ -42,6 +42,7 @@
     "legal:generate": "node scripts/generate-third-party-licenses.mjs",
     "legal:check": "node scripts/generate-third-party-licenses.mjs --check",
     "release:audit": "node scripts/audit-release-safety.mjs",
+    "release:history-audit": "node scripts/audit-git-history.mjs",
     "check": "tsc -p tsconfig.app.json --noEmit && tsc -p tsconfig.server.json --noEmit && tsc -p tsconfig.node.json --noEmit && tsc -p tsconfig.test.json --noEmit",
     "lint": "eslint .",
     "start": "node scripts/start-electron-prod.mjs",

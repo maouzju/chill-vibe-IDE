@@ -12,6 +12,7 @@ const defaultProjectRoot = path.resolve(scriptDir, '..')
 const STATE_VERSION = 1
 
 const RELEASE_STAGES = [
+  { id: 'history-safety', label: 'Git history sensitive-content audit', command: 'pnpm', args: ['release:history-audit', '--', '--json'] },
   { id: 'safety', label: 'Sensitive-content audit', command: 'pnpm', args: ['release:audit', '--', '--base', 'origin/main', '--json'] },
   { id: 'legal', label: 'Legal inventory', command: 'pnpm', args: ['legal:check'] },
   { id: 'quality', label: 'Lint and type checks', command: 'pnpm', args: ['test:quality'] },

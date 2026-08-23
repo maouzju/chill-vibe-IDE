@@ -48,9 +48,12 @@ test('release worktree direct pushes to main only appear as explicit prohibition
 })
 
 test('release pipeline runs the sensitive-content audit before versioning and again on the candidate', () => {
+  const historyAuditIndex = skillText.indexOf('pnpm release:history-audit -- --json')
   const auditIndex = skillText.indexOf('pnpm release:audit -- --base origin/main --json')
   const versionIndex = skillText.indexOf('3. Set the final release version')
   const rerunIndex = skillText.indexOf('rerun `pnpm release:audit', versionIndex)
+  assert.ok(historyAuditIndex >= 0, 'skill must invoke the reachable-history audit')
+  assert.ok(auditIndex > historyAuditIndex, 'history audit must run before the candidate audit')
   assert.ok(auditIndex >= 0, 'skill must invoke the release safety audit')
   assert.ok(auditIndex < versionIndex, 'safety audit must precede version bump')
   assert.ok(rerunIndex > versionIndex, 'skill must audit again after version edit')
@@ -61,9 +64,11 @@ test('release pipeline runs the sensitive-content audit before versioning and ag
 
 test('release zip workflow validates the tag and audits before dependency install', () => {
   const workflow = readFileSync('.github/workflows/release-zip.yml', 'utf8')
+  const historyAuditIndex = workflow.indexOf('node scripts/audit-git-history.mjs')
   const auditIndex = workflow.indexOf('node scripts/audit-release-safety.mjs')
   const installIndex = workflow.indexOf('pnpm install --frozen-lockfile')
-  assert.ok(auditIndex >= 0)
+  assert.ok(historyAuditIndex >= 0)
+  assert.ok(auditIndex > historyAuditIndex)
   assert.ok(auditIndex < installIndex)
   assert.match(workflow, /\^v\\d\+\\\.\\d\+\\\.\\d\+\$/)
   assert.match(workflow, /RELEASE_TAG\^/)

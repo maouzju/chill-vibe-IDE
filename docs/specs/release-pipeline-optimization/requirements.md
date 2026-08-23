@@ -74,6 +74,15 @@ The v0.18.12 and v0.18.13 releases also exposed a branch-integrity gap: an isola
 - The audit must be runnable in CI without GitHub credentials and must fail closed when the base ref cannot be resolved or the candidate cannot be enumerated deterministically.
 - A focused test must prove the audit catches representative secrets, new local/external paths, and debug artifacts, allows zero-value test placeholders and approved synthetic paths, and redacts matched values from diagnostics.
 
+### R8 ? Reachable Git history audit
+
+- The release pipeline must scan every blob reachable from local heads, remote-tracking refs, tags, stash, and other refs before versioning or publishing.
+- The scanner must use bounded, streaming Git object reads so a large history cannot hang the release indefinitely.
+- Findings may expose only category, repository-relative path, line, object id, commit id, and ref names; matched values and source excerpts remain secret.
+- Commit author/committer metadata, including personal email addresses, is intentionally excluded from the scan and from history rewriting.
+- Explicit synthetic test fixtures may be allowlisted narrowly, while a concrete personal path or external-project path in any controllable ref blocks the release.
+- Third-party fork/PR refs that cannot be rewritten must be reported as an external permissions boundary rather than counted as cleaned.
+
 ## Non-Goals
 
 - Skipping full release verification based only on changed file paths.

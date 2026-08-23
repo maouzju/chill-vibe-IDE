@@ -35,6 +35,12 @@ test('release safety audit catches provider and JWT token shapes', () => {
   assert.deepEqual(findings.map(({ category }) => category), ['anthropic-token', 'jwt'])
 })
 
+test('release safety audit catches generic bearer values', () => {
+  const bearer = ['abcdefghijklmnop', 'qrstuvwx123456'].join('')
+  const findings = auditReleaseText('docs/release.md', `Authorization: Bearer ${bearer}`)
+  assert.deepEqual(findings.map(({ category }) => category), ['bearer-token'])
+})
+
 test('release safety audit allows zero-value test bearer placeholders', () => {
   assert.deepEqual(
     auditReleaseText(
@@ -58,6 +64,17 @@ test('release safety audit flags newly introduced personal and external paths', 
     'personal-path',
     'external-project-path',
   ])
+})
+
+test('release safety audit ignores non-concrete path examples', () => {
+  assert.deepEqual(
+    auditReleaseText(
+      'docs/release.md',
+      'C:\\Users\\...\\AppData\\Local\\Temp\\x.log\nD:\\Git\\...\\src\\index.ts\nD:\\Git\\<project>\\src\\index.ts',
+      { baselineText: '' },
+    ),
+    [],
+  )
 })
 
 test('release safety audit ignores personal email addresses', () => {

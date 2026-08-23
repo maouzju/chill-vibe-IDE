@@ -55,6 +55,13 @@
 - [x] Run the audit in `.github/workflows/release-zip.yml` before install/build.
 - [x] Add focused tests for detection, allowlisting, fail-closed base resolution, and log redaction.
 
+## Reachable history audit
+
+- [x] Add a streaming, timeout-bounded all-ref blob scanner with safe ref/commit diagnostics.
+- [x] Add a focused temporary-repository test proving secrets and personal paths are found while commit emails are ignored.
+- [x] Run the history audit in local release verification and the GitHub tag workflow before the candidate audit.
+- [x] Back up refs, rewrite the confirmed sensitive blobs in an external mirror, and verify author/committer emails remain byte-for-byte unchanged.
+
 ## Evidence
 
 - Branch-convergence skill contract: 2 tests passed; it verifies local fast-forward → `git push origin main` → fetch/divergence proof → tag → GitHub Release ordering and rejects instructional worktree `HEAD:main` pushes.

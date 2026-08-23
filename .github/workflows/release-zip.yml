@@ -36,6 +36,7 @@ jobs:
           git rev-parse --verify "$env:RELEASE_TAG^{commit}" | Out-Null
           $base = "$env:RELEASE_TAG^"
           git rev-parse --verify $base | Out-Null
+          node scripts/audit-git-history.mjs --json
           node scripts/audit-release-safety.mjs --base $base --json
 
       - name: Set up pnpm

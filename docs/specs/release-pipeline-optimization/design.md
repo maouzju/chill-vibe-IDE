@@ -160,3 +160,9 @@ The command exits non-zero on any finding or on an enumeration/base-ref error. I
 ### CI placement
 
 The GitHub release workflow runs the audit after checkout and before dependency installation/build. The local skill runs the same command before any release mutation. This makes a tag-triggered build fail closed even if a local reviewer skipped the skill or a release note was edited after the local audit.
+
+## Reachable history audit
+
+`scripts/audit-git-history.mjs` enumerates `git rev-list --objects --all`, then streams the resulting object ids through one `git cat-file --batch` process. It reuses the release safety content/path rules, keeps only history-relevant categories, and resolves each finding back to introducing/removing commits plus containing refs. Every Git child has a bounded timeout. Diagnostics contain no matched value or source line, and commit metadata is never passed to the content scanner, so author/committer email addresses remain untouched.
+
+The local release verifier and tag workflow run this history audit before the candidate-diff audit. The history scrub itself is performed in an external mirror with a verified bundle backup; rewritten commits/tags preserve author, committer, tagger, messages, and timestamps unless the sensitive blob content forces a new object id.

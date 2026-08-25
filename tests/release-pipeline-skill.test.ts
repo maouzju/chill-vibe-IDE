@@ -48,8 +48,10 @@ test('release worktree direct pushes to main only appear as explicit prohibition
 })
 
 test('release pipeline runs the sensitive-content audit before versioning and again on the candidate', () => {
-  const historyAuditIndex = skillText.indexOf('pnpm release:history-audit -- --json')
-  const auditIndex = skillText.indexOf('pnpm release:audit -- --base origin/main --json')
+  // 命令里不能有 `--`：本仓库的 pnpm 会把它一起转发给脚本，审计脚本收到字面量 `--`
+  // 直接 `Unknown argument: --` exit 2，一次都没扫就退出（v0.20.8 实测）。
+  const historyAuditIndex = skillText.indexOf('pnpm release:history-audit --json')
+  const auditIndex = skillText.indexOf('pnpm release:audit --base origin/main --json')
   const versionIndex = skillText.indexOf('3. Set the final release version')
   const rerunIndex = skillText.indexOf('rerun `pnpm release:audit', versionIndex)
   assert.ok(historyAuditIndex >= 0, 'skill must invoke the reachable-history audit')

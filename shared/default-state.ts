@@ -13,6 +13,7 @@ import type {
   ChatRole,
   CloseBehavior,
   LayoutNode,
+  LocalModelEntry,
   PaneNode,
   Provider,
   RecentCrashRecovery,
@@ -473,6 +474,42 @@ const normalizeProviderProfiles = (
   }
 }
 
+export const createLocalModelEntry = (
+  overrides: Partial<LocalModelEntry> = {},
+  options: { fallbackId?: string } = {},
+): LocalModelEntry => ({
+  id: normalizeText(overrides.id) || options.fallbackId || createId(),
+  label: normalizeText(overrides.label),
+  harness: overrides.harness === 'codex' ? 'codex' : 'claude',
+  baseUrl: normalizeBaseUrl(overrides.baseUrl),
+  apiKey: normalizeText(overrides.apiKey),
+  model: normalizeText(overrides.model),
+})
+
+export const normalizeLocalModelEntries = (
+  entries?: LocalModelEntry[] | null,
+): LocalModelEntry[] => {
+  if (!Array.isArray(entries)) {
+    return []
+  }
+
+  const seenIds = new Set<string>()
+  return entries.flatMap((entry, index) => {
+    if (!entry || typeof entry !== 'object') {
+      return []
+    }
+
+    const normalized = createLocalModelEntry(entry, { fallbackId: `local-model-${index + 1}` })
+    // 没有真实模型名的条目跑不起来，留着只会在选择器里多一个选不动的选项。
+    if (!normalized.model || seenIds.has(normalized.id)) {
+      return []
+    }
+
+    seenIds.add(normalized.id)
+    return [normalized]
+  })
+}
+
 export const maxRecentWorkspaces = 20
 export const maxSessionHistoryPerWorkspace = 50
 
@@ -579,6 +616,7 @@ export const createDefaultSettings = (language: AppLanguage = defaultAppLanguage
   },
   modelReasoningEfforts: createDefaultModelReasoningEfforts(),
   providerProfiles: createDefaultProviderProfiles(),
+  localModelEntries: [],
   recentWorkspaces: [],
 })
 
@@ -819,6 +857,7 @@ export const normalizeAppSettings = (settings?: Partial<AppSettings> | null): Ap
     },
     modelReasoningEfforts: normalizeModelReasoningEfforts(settings?.modelReasoningEfforts),
     providerProfiles: normalizeProviderProfiles(settings?.providerProfiles),
+    localModelEntries: normalizeLocalModelEntries(settings?.localModelEntries),
     recentWorkspaces: normalizeRecentWorkspaces(settings?.recentWorkspaces),
   }
 }

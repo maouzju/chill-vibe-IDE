@@ -13563,6 +13563,17 @@ body.is-pane-resizing .split-resize-handle::before {
   cursor: default;
 }
 
+/* 走 --danger / --danger-soft token 而不是写死红色：两套主题共用同一对 token，
+   删除类菜单项在暗色下才不会变成亮色底上的高饱和色块。 */
+.pane-tab-context-menu button.is-danger {
+  color: var(--danger);
+}
+
+.pane-tab-context-menu button.is-danger:hover:not(:disabled) {
+  background: var(--danger-soft);
+  color: var(--danger);
+}
+
 .pane-tab-context-divider {
   margin: 0.2rem 0;
   border: none;

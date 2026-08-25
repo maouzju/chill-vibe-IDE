@@ -73,6 +73,7 @@ import { SetupManager } from '../server/setup-manager.ts'
 import { OllamaManager } from '../server/ollama-manager.ts'
 import {
   captureRendererCrash as captureRendererCrashState,
+  deleteSessionHistoryEntry,
   dismissRecentCrashRecovery as dismissRecentCrashRecoveryState,
   loadStateForRenderer,
   loadSessionHistoryEntry as loadInternalSessionHistoryEntry,
@@ -113,6 +114,7 @@ import {
   ccSwitchImportRequestSchema,
   externalHistoryListRequestSchema,
   externalSessionLoadRequestSchema,
+  internalSessionHistoryDeleteRequestSchema,
   internalSessionHistoryHideRequestSchema,
   internalSessionHistoryListRequestSchema,
   internalSessionHistoryLoadRequestSchema,
@@ -155,6 +157,7 @@ import {
   type CompactedCardHistoryLoadRequest,
   type ExternalHistoryListRequest,
   type ExternalSessionLoadRequest,
+  type InternalSessionHistoryDeleteRequest,
   type InternalSessionHistoryHideRequest,
   type InternalSessionHistoryListRequest,
   type InternalSessionHistoryLoadRequest,
@@ -352,6 +355,9 @@ export const createDesktopBackend = (deps: DesktopBackendDependencies = {}) => {
     },
     async hideInternalSessionHistory(request: InternalSessionHistoryHideRequest) {
       await hideInternalSessionHistoryEntries(internalSessionHistoryHideRequestSchema.parse(request))
+    },
+    async deleteInternalSessionHistory(request: InternalSessionHistoryDeleteRequest) {
+      await deleteSessionHistoryEntry(internalSessionHistoryDeleteRequestSchema.parse(request))
     },
     // 症状：发消息/切模型/关 tab/改设置都会整窗卡顿，长期使用后窗口无响应被系统杀掉。
     // 根因：2026-08-12 实测 `saveState()` 返回完整 state，而 `ipcMain.handle` 会把 handler

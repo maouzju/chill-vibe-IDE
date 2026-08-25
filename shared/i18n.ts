@@ -287,6 +287,8 @@ type LocaleText = {
   searchSessionHistoryPlaceholder: string
   noSessionHistory: string
   noMatchingSessionHistory: string
+  deleteSessionHistoryEntry: string
+  deleteSessionHistoryEntryConfirm: (title: string) => string
   externalHistory: string
   importSession: string
   loadingExternalHistory: string
@@ -815,6 +817,9 @@ const localeTextByLanguage: Record<AppLanguage, LocaleText> = {
     searchSessionHistoryPlaceholder: '\u6309\u6807\u9898\u3001\u6a21\u578b\u3001\u8def\u5f84\u6216\u6d88\u606f\u5185\u5bb9\u641c\u7d22',
     noSessionHistory: '没有历史会话',
     noMatchingSessionHistory: '\u6ca1\u6709\u5339\u914d\u7684\u5386\u53f2\u4f1a\u8bdd',
+    deleteSessionHistoryEntry: '\u5220\u9664\u8fd9\u6761\u5386\u53f2\u4f1a\u8bdd',
+    deleteSessionHistoryEntryConfirm: (title: string) =>
+      `\u5220\u9664\u5386\u53f2\u4f1a\u8bdd\u300c${title}\u300d\uff1f\u5f52\u6863\u6b63\u6587\u4f1a\u4ece\u78c1\u76d8\u79fb\u9664\uff0c\u65e0\u6cd5\u6062\u590d\u3002`,
     externalHistory: '外部历史',
     importSession: '导入',
     loadingExternalHistory: '正在扫描外部历史...',
@@ -1356,6 +1361,9 @@ const localeTextByLanguage: Record<AppLanguage, LocaleText> = {
     searchSessionHistoryPlaceholder: 'Search by title, model, path, or message text',
     noSessionHistory: 'No session history',
     noMatchingSessionHistory: 'No matching session history',
+    deleteSessionHistoryEntry: 'Delete this archived session',
+    deleteSessionHistoryEntryConfirm: (title: string) =>
+      `Delete the archived session "${title}"? Its transcript is removed from disk and cannot be restored.`,
     externalHistory: 'External history',
     importSession: 'Import',
     loadingExternalHistory: 'Scanning external history...',

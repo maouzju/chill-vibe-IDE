@@ -1241,6 +1241,9 @@ function registerDesktopHandlers() {
   ipcMain.handle('desktop:hide-internal-session-history', (_event, request) =>
     desktopBackend.hideInternalSessionHistory(request),
   )
+  ipcMain.handle('desktop:delete-internal-session-history', (_event, request) =>
+    desktopBackend.deleteInternalSessionHistory(request),
+  )
   ipcMain.handle('desktop:save-state', (_event, state) => desktopBackend.saveState(state))
   ipcMain.on('desktop:queue-state-save', (_event, state) => {
     // `ipcMain.on` has no reply channel, so anything thrown here escapes as an

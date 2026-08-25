@@ -107,6 +107,21 @@ function isAllowedSyntheticPath(pathName, value) {
       return true
     }
   }
+  // Symptom: v0.20.8's new crash-recovery tests reported 9 `machine-path`
+  // findings for invented workspace roots (`D:/<made-up-name>`), while the
+  // identical long-standing fixture root in 8 baseline test files reported
+  // clean.  Root cause: those older files were only spared by the
+  // unchanged-baseline check, so the fixture convention was legal in existing
+  // files and illegal in new ones — which pressures authors to rewrite correct
+  // tests rather than the detector.  A single ASCII segment under a drive root
+  // cannot name a real user directory: `C:/Users/...` and `D:/Git/<project>/...`
+  // are both multi-segment and already classified above, and real Windows
+  // folders here (`D:/<中文目录>`) are non-ASCII or nested.  Rejected "add each
+  // new fixture root to SYNTHETIC_PROJECTS": that makes every new test edit this
+  // scanner, and a scanner people routinely edit to pass stops being a gate.
+  if (/^[a-z]:\/[a-z0-9][a-z0-9-]*$/u.test(normalizedValue)) {
+    return true
+  }
   return false
 }
 

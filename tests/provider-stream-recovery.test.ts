@@ -153,6 +153,49 @@ test('a mid-stream socket disconnect after a live session is resumable', () => {
   )
 })
 
+// Claude/Codex can surface a brief upstream outage as the literal
+// "API Error: Unable to connect to API (ConnectionRefused)" instead of a socket
+// close. It is still safe to resume the unfinished turn once a native session
+// exists; without this guard the card jumps straight to a permanent error bubble.
+test('an explicit API connection refusal after a live session is resumable', () => {
+  assert.deepEqual(
+    classifyProviderStreamErrorRecovery(
+      { sessionId: 'session-1' },
+      'API Error: Unable to connect to API (ConnectionRefused)',
+    ),
+    {
+      recoverable: true,
+      recoveryMode: 'resume-session',
+    },
+  )
+})
+
+test('common connection-refused spellings stay resumable', () => {
+  for (const message of [
+    'API Error: Unable to connect to API (connection refused)',
+    'API Error: connect ECONNREFUSED 127.0.0.1:443',
+  ]) {
+    assert.deepEqual(
+      classifyProviderStreamErrorRecovery({ sessionId: 'session-1' }, message),
+      {
+        recoverable: true,
+        recoveryMode: 'resume-session',
+      },
+      message,
+    )
+  }
+})
+
+test('an API connection refusal without a native session is not resumable', () => {
+  assert.deepEqual(
+    classifyProviderStreamErrorRecovery(
+      { sessionId: undefined },
+      'API Error: Unable to connect to API (ConnectionRefused)',
+    ),
+    {},
+  )
+})
+
 test('an empty or malformed HTTP 200 upstream response after a live session is resumable', () => {
   // A proxy/gateway in front of Claude can intermittently return HTTP 200 with an
   // empty or malformed body, and the CLI surfaces it verbatim as

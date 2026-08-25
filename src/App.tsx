@@ -118,6 +118,7 @@ import type {
   ImageAttachment,
   InterruptedSessionEntry,
   InterruptedSessionRecovery,
+  LocalModelEntry,
   OnboardingStatus,
   Provider,
   ProviderStatus,
@@ -141,6 +142,7 @@ import {
   fetchProxyStats,
   recordProxyStatsEvent,
   fetchSetupStatus,
+  deleteInternalSessionHistory,
   hideInternalSessionHistory,
   loadClosedWorkspaceSnapshot,
   loadSessionHistoryEntry,
@@ -214,6 +216,7 @@ import {
   finalizeStructuredActivityMessage,
   finalizeStreamedAssistantMessage,
   canSendEmptyContinuation,
+  shouldSyncOllamaStatus,
   getAgentDoneSoundUrl,
   getAllAgentsDoneSoundUrl,
   getCompletionSoundPlan,
@@ -681,6 +684,13 @@ function App() {
   const [profileDrafts, setProfileDrafts] = useState<Record<Provider, ProfileDraft>>({
     codex: emptyProfileDraft(),
     claude: emptyProfileDraft(),
+  })
+  const [localModelDraft, setLocalModelDraft] = useState<Omit<LocalModelEntry, 'id'>>({
+    label: '',
+    harness: 'claude',
+    baseUrl: '',
+    apiKey: '',
+    model: '',
   })
   const text = useMemo(() => getLocaleText(appState.settings.language), [appState.settings.language])
   const codexChatSettings = useMemo(
@@ -1663,8 +1673,14 @@ function App() {
   }, [ollamaStatus?.recommendedModel.name, refreshOllamaStatus])
 
   const ollamaTaskState = ollamaStatus?.task.state
+  // 只取判定真正读的两个字段，别把整个 settings 塞进依赖 —— 那会让任何一处设置改动都
+  // 重启这个轮询。
+  const ollamaSyncEnabled = shouldSyncOllamaStatus({
+    activeTopTab: appState.settings.activeTopTab,
+    autoUrgeEnabled: appState.settings.autoUrgeEnabled,
+  })
   useEffect(() => {
-    if (!appState.settings.autoUrgeEnabled || appState.settings.activeTopTab !== 'settings') {
+    if (!ollamaSyncEnabled) {
       return
     }
 
@@ -1692,7 +1708,7 @@ function App() {
         window.clearInterval(timer)
       }
     }
-  }, [appState.settings.autoUrgeEnabled, appState.settings.activeTopTab, ollamaTaskState])
+  }, [ollamaSyncEnabled, ollamaTaskState])
 
   const updateAutoUrgeProfile = useCallback(
     (
@@ -2333,6 +2349,44 @@ function App() {
         },
       })
       setSwitchNotice(null)
+    },
+    [applyAction],
+  )
+
+  // 只有模型名是必填。地址与密钥留空是**正常路径**，由 resolveProviderRuntime 补成本机
+  // Ollama 地址与占位密钥（并按 harness 决定要不要 /v1）。
+  const addLocalModelEntry = useCallback(() => {
+    const model = localModelDraft.model.trim()
+
+    if (!model) {
+      return
+    }
+
+    applyAction({
+      type: 'upsertLocalModelEntry',
+      entry: {
+        id: crypto.randomUUID(),
+        label: localModelDraft.label.trim(),
+        harness: localModelDraft.harness,
+        baseUrl: localModelDraft.baseUrl.trim(),
+        apiKey: localModelDraft.apiKey.trim(),
+        model,
+      },
+    })
+    setLocalModelDraft({ label: '', harness: 'claude', baseUrl: '', apiKey: '', model: '' })
+  }, [applyAction, localModelDraft])
+
+  const updateLocalModelEntry = useCallback(
+    (entryId: string, patch: Partial<Omit<LocalModelEntry, 'id'>>) => {
+      const existing = appStateRef.current.settings.localModelEntries.find(
+        (entry) => entry.id === entryId,
+      )
+
+      if (!existing) {
+        return
+      }
+
+      applyAction({ type: 'upsertLocalModelEntry', entry: { ...existing, ...patch } })
     },
     [applyAction],
   )
@@ -7675,6 +7729,29 @@ function App() {
     })()
   }, [applyActions, getColumn, persistAfterActions, resolveColumnPaneTarget])
 
+  // 删除必须两边都做：reducer 只清 renderer 索引，磁盘上的 sidecar 正文与 catalog
+  // 索引要由后端回收，否则条目会在下一次深搜或重启后原样回到列表（见
+  // docs/specs/session-history-delete/）。后端失败时不回滚 UI：用户要的是"从我眼前
+  // 消失"，一条读不到正文的残留索引比留着它更糟。
+  const handleDeleteSessionHistoryEntry = useCallback(
+    (entry: SessionHistoryEntry) => {
+      const actions: IdeAction[] = [{ type: 'removeSessionHistory', entryIds: [entry.id] }]
+      const nextState = applyActions(actions)
+
+      persistAfterActions(actions, nextState)
+      updateLatestKnownAppState(nextState)
+
+      void deleteInternalSessionHistory({
+        entryId: entry.id,
+        provider: entry.provider,
+        sessionId: entry.sessionId,
+      }).catch((error) => {
+        console.error('[history] Failed to delete archived session.', error)
+      })
+    },
+    [applyActions, persistAfterActions],
+  )
+
   const handleDismissInterruptedSessions = useCallback(() => {
     if (!interruptedSessionRecovery) {
       return
@@ -8785,6 +8862,221 @@ function App() {
       </div>
     </div>,
 
+    <div key="local-models" className="settings-group">
+      <h3 className="settings-group-title">{panelText.localModelsTitle}</h3>
+
+      <div className="settings-section">
+        <p className="settings-note">{panelText.localModelsDescription}</p>
+      </div>
+
+      <div className="settings-section provider-profile-list">
+        {appState.settings.localModelEntries.length === 0 ? (
+          <div className="settings-empty">
+            <strong>{panelText.noLocalModels}</strong>
+            <span>{panelText.noLocalModelsDescription}</span>
+          </div>
+        ) : null}
+
+        {appState.settings.localModelEntries.map((entry) => (
+          <div className="provider-profile-card" key={entry.id}>
+            <label className="settings-field">
+              <span>{panelText.localModelLabelField}</span>
+              <input
+                className="control settings-input"
+                value={entry.label}
+                onChange={(event) =>
+                  updateLocalModelEntry(entry.id, { label: event.target.value })
+                }
+              />
+            </label>
+
+            <label className="settings-field">
+              <span>{panelText.localModelHarnessField}</span>
+              <select
+                className="control settings-input"
+                value={entry.harness}
+                onChange={(event) =>
+                  updateLocalModelEntry(entry.id, {
+                    harness: event.target.value === 'codex' ? 'codex' : 'claude',
+                  })
+                }
+              >
+                <option value="claude">Claude CLI</option>
+                <option value="codex">Codex CLI</option>
+              </select>
+            </label>
+
+            <label className="settings-field">
+              <span>{panelText.localModelNameField}</span>
+              <input
+                className="control settings-input"
+                list="local-model-installed-list"
+                value={entry.model}
+                placeholder={panelText.localModelNamePlaceholder}
+                onChange={(event) =>
+                  updateLocalModelEntry(entry.id, { model: event.target.value })
+                }
+              />
+            </label>
+
+            <details className="settings-section">
+              <summary>{panelText.localModelAdvanced}</summary>
+
+              <label className="settings-field">
+                <span>{panelText.baseUrl}</span>
+                <input
+                  className="control settings-input"
+                  value={entry.baseUrl}
+                  placeholder={
+                    entry.harness === 'codex'
+                      ? 'http://127.0.0.1:11434/v1'
+                      : panelText.localModelBaseUrlPlaceholder
+                  }
+                  onChange={(event) =>
+                    updateLocalModelEntry(entry.id, { baseUrl: event.target.value })
+                  }
+                />
+              </label>
+
+              <label className="settings-field">
+                <span>{panelText.apiKey}</span>
+                <input
+                  className="control settings-input"
+                  value={entry.apiKey}
+                  placeholder={panelText.localModelApiKeyPlaceholder}
+                  onChange={(event) =>
+                    updateLocalModelEntry(entry.id, { apiKey: event.target.value })
+                  }
+                />
+              </label>
+            </details>
+
+            <div className="settings-actions provider-profile-actions">
+              <AppButton
+                type="button"
+                onClick={() =>
+                  applyAction({ type: 'removeLocalModelEntry', entryId: entry.id })
+                }
+              >
+                {panelText.removeProfile}
+              </AppButton>
+            </div>
+          </div>
+        ))}
+
+        {/* 新建只要求两项：驱动方式 + 模型名。地址与密钥留空由后端补齐
+            （resolveLocalModelDefaultBaseUrl / 占位密钥），要连非默认端口或远程
+            机器再展开"高级"。 */}
+        <div className="provider-profile-card is-draft">
+          <label className="settings-field">
+            <span>{panelText.localModelHarnessField}</span>
+            <select
+              className="control settings-input"
+              value={localModelDraft.harness}
+              onChange={(event) =>
+                setLocalModelDraft((prev) => ({
+                  ...prev,
+                  harness: event.target.value === 'codex' ? 'codex' : 'claude',
+                }))
+              }
+            >
+              <option value="claude">Claude CLI</option>
+              <option value="codex">Codex CLI</option>
+            </select>
+          </label>
+
+          <label className="settings-field">
+            <span>{panelText.localModelNameField}</span>
+            <input
+              className="control settings-input"
+              list="local-model-installed-list"
+              value={localModelDraft.model}
+              placeholder={panelText.localModelNamePlaceholder}
+              onChange={(event) =>
+                setLocalModelDraft((prev) => ({ ...prev, model: event.target.value }))
+              }
+            />
+          </label>
+          {/* 本机已装的 Ollama 模型直接可选，但保留手输：LM Studio / vLLM 这些
+              不在 Ollama 列表里的服务同样要能用。 */}
+          <datalist id="local-model-installed-list">
+            {(ollamaStatus?.models ?? []).map((model) => (
+              <option key={model.name} value={model.name} />
+            ))}
+          </datalist>
+
+          {/* 判据用「列表是否为空」而不是「Ollama 是否在跑」：没装、没启动、装了
+              但一个模型都没拉、探测本身失败，对用户都是同一件事——选不到东西。
+              用 `running === false` 会漏掉状态为 null 的那两种，提示反而不出现。 */}
+          {(ollamaStatus?.models.length ?? 0) === 0 ? (
+            <p className="settings-note">{panelText.localModelOllamaOffline}</p>
+          ) : null}
+
+          <details className="settings-section">
+            <summary>{panelText.localModelAdvanced}</summary>
+
+            <label className="settings-field">
+              <span>{panelText.localModelLabelField}</span>
+              <input
+                className="control settings-input"
+                value={localModelDraft.label}
+                placeholder={localModelDraft.model || panelText.localModelNamePlaceholder}
+                onChange={(event) =>
+                  setLocalModelDraft((prev) => ({ ...prev, label: event.target.value }))
+                }
+              />
+            </label>
+
+            <label className="settings-field">
+              <span>{panelText.baseUrl}</span>
+              <input
+                className="control settings-input"
+                value={localModelDraft.baseUrl}
+                placeholder={
+                  localModelDraft.harness === 'codex'
+                    ? 'http://127.0.0.1:11434/v1'
+                    : panelText.localModelBaseUrlPlaceholder
+                }
+                onChange={(event) =>
+                  setLocalModelDraft((prev) => ({ ...prev, baseUrl: event.target.value }))
+                }
+              />
+            </label>
+
+            <p className="settings-note">
+              {localModelDraft.harness === 'codex'
+                ? panelText.localModelCodexBaseUrlNote
+                : panelText.localModelClaudeBaseUrlNote}
+            </p>
+
+            <label className="settings-field">
+              <span>{panelText.apiKey}</span>
+              <input
+                className="control settings-input"
+                value={localModelDraft.apiKey}
+                placeholder={panelText.localModelApiKeyPlaceholder}
+                onChange={(event) =>
+                  setLocalModelDraft((prev) => ({ ...prev, apiKey: event.target.value }))
+                }
+              />
+            </label>
+
+            <p className="settings-note">{panelText.localModelApiKeyNote}</p>
+          </details>
+
+          <div className="settings-actions provider-profile-actions">
+            <AppButton
+              tone="primary"
+              type="button"
+              disabled={!localModelDraft.model.trim()}
+              onClick={addLocalModelEntry}
+            >
+              {panelText.addLocalModel}
+            </AppButton>
+          </div>
+        </div>
+      </div>
+    </div>,
     <div key="models" className="settings-group">
       <h3 className="settings-group-title">{text.settingsGroupModels}</h3>
 
@@ -9895,6 +10187,7 @@ function App() {
                     </div>
                   )
                 })}
+
               </div>
             ) : (
               <div className="routing-panel-columns">
@@ -10431,6 +10724,7 @@ function App() {
               </div>
             </div>
 
+
             <div className="settings-group">
               <h3 className="settings-group-title">{text.settingsGroupUtility}</h3>
 
@@ -10852,6 +11146,7 @@ function App() {
             gitAgentModel={appState.settings.gitAgentModel}
             brainstormRequestModel={appState.settings.requestModels.codex}
             availableQuickToolModels={availableQuickToolModels}
+            localModelEntries={appState.settings.localModelEntries}
             autoUrgeEnabled={appState.settings.autoUrgeEnabled}
             autoUrgeProfiles={appState.settings.autoUrgeProfiles}
             autoUrgeMessage={appState.settings.autoUrgeMessage}
@@ -11102,6 +11397,7 @@ function App() {
             cardRecoveryStatuses={cardRecoveryStatuses}
             queuedSendSummaries={queuedSendSummaries}
             onRestoreSession={(entryId) => handleRestoreSession(column.id, entryId)}
+            onDeleteSessionHistoryEntry={handleDeleteSessionHistoryEntry}
             onImportExternalSession={(entry) =>
               applyAction({
                 type: 'importExternalSession',

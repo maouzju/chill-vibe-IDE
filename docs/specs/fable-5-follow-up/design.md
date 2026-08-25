@@ -9,10 +9,10 @@
 | Fable 5 | `claude-fable-5` | `fable`, `fable-5`, `claude-fable-5` |
 | Opus 4.8 | `claude-opus-4-8`（当时的默认） | `opus`, `opus-4.8`, `claude-opus-4-8` |
 | Sonnet 5 | `claude-sonnet-5` | `sonnet`, `sonnet-5`, `claude-sonnet-5` |
-| Sonnet 4.6 | `claude-sonnet-4-6` | `sonnet-4.6`, `claude-sonnet-4-6`（裸 `sonnet` 移交 Sonnet 5） |
+| Sonnet 4.6（选择器隐藏） | `claude-sonnet-4-6` | `sonnet-4.6`, `claude-sonnet-4-6`（仅兼容旧卡片与精确输入；裸 `sonnet` 移交 Sonnet 5） |
 | Haiku 4.5 | `claude-haiku-4-5-20251001`（不变） | 不变 |
 
-无迁移逻辑：`claude-sonnet-4-6` 仍是合法可用模型（Pitfall #119）。
+2026-08-24 起，Sonnet 4.6 通过 `hiddenFromPicker` 从普通选择器与 `/model` 可选列表隐藏；无迁移逻辑，`claude-sonnet-4-6` 仍保留为合法旧值，避免恢复历史卡片时静默换模型（Pitfall #119）。隐藏项若正是当前卡片模型，只用于按钮显示当前真实模型，不重新出现在下拉选项中。
 
 > 该表的 Opus 行已过时：默认模型与裸 `opus` 别名后来移交给了 Opus 5，
 > 见 [`../opus-5-default/design.md`](../opus-5-default/design.md)。
@@ -69,7 +69,7 @@ toClaudeEffortFlagValue(model, effort, thinkingDisabled): string | null
 
 | 面 | 文件 | 断言 |
 |---|---|---|
-| 模型表 | `tests/models.test.ts` | claude 选项列表含 fable/sonnet-5 新顺序；`fable`/`sonnet`/`sonnet-4.6` 别名解析；`claude-sonnet-4-6` 直传不迁移 |
+| 模型表 | `tests/models.test.ts` | claude 选项列表含 fable/sonnet-5 新顺序；普通选择器不含 Sonnet 4.6；`fable`/`sonnet`/`sonnet-4.6` 别名解析；`claude-sonnet-4-6` 直传不迁移 |
 | 档位 | `tests/reasoning.test.ts` | fable 默认 high、菜单无 auto、auto 归一 high、opus 行为不变、`toClaudeEffortFlagValue` 行为表 |
 | CLI 参数 | `tests/provider-system-prompt.test.ts` | fable + 思考关闭 → `--effort high` 非 `none`；opus + 思考关闭 → `none` 不变；ultracode → settings JSON 含 `"ultracode":true` 且系统提示无注入、`--effort xhigh` |
 | createCard | `tests/reasoning.test.ts` | `createCard(..., 'claude', 'claude-fable-5')` 默认 `high`，默认模型卡仍 `max` |

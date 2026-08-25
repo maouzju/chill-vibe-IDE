@@ -276,7 +276,11 @@ export const shouldSyncRuntimeSettings = (action: IdeAction) => {
   return action.type === 'updateRequestModels' ||
     action.type === 'upsertProviderProfile' ||
     action.type === 'removeProviderProfile' ||
-    action.type === 'setActiveProviderProfile'
+    action.type === 'setActiveProviderProfile' ||
+    // 本地模型条目同样决定 provider 启动时注入的 baseUrl/apiKey，必须同步到后端 runtime
+    // override，否则新加的条目要等下一次全量保存才生效。
+    action.type === 'upsertLocalModelEntry' ||
+    action.type === 'removeLocalModelEntry'
 }
 
 const trimQueuedPersistenceText = (value: string) =>

@@ -91,15 +91,15 @@ describe('model helpers', () => {
     )
   })
 
-  it('resolves Fable 5 and Sonnet 5 aliases while keeping Sonnet 4.6 pinned', () => {
+  it('resolves Fable 5 and Sonnet 5 aliases while keeping stored Sonnet 4.6 usable', () => {
     assert.equal(resolveSlashModel('claude', 'fable'), 'claude-fable-5')
     assert.equal(resolveSlashModel('claude', 'fable-5'), 'claude-fable-5')
     assert.equal(resolveSlashModel('claude', 'claude-fable-5'), 'claude-fable-5')
     // Bare "sonnet" follows the official Claude Code alias to Sonnet 5.
     assert.equal(resolveSlashModel('claude', 'sonnet'), 'claude-sonnet-5')
     assert.equal(resolveSlashModel('claude', 'sonnet-5'), 'claude-sonnet-5')
-    // Sonnet 4.6 is still a live model: exact names keep working, and stored
-    // values must not be migrated (Pitfall #119).
+    // Retiring the picker entry must not rewrite historical sessions or make
+    // an explicit legacy model id impossible to recover.
     assert.equal(resolveSlashModel('claude', 'sonnet-4.6'), 'claude-sonnet-4-6')
     assert.equal(resolveSlashModel('claude', 'claude-sonnet-4-6'), 'claude-sonnet-4-6')
     assert.equal(normalizeModel('claude', 'claude-sonnet-4-6'), 'claude-sonnet-4-6')
@@ -111,6 +111,15 @@ describe('model helpers', () => {
         .filter(isModelPickerOptionVisible)
         .map((option) => option.model),
       ['', DEFAULT_CODEX_MODEL, 'gpt-5.6-terra', 'gpt-5.6-luna', 'gpt-5.5'],
+    )
+  })
+
+  it('keeps retired Sonnet 4.6 out of the ordinary model picker', () => {
+    assert.deepEqual(
+      getModelOptions('claude')
+        .filter(isModelPickerOptionVisible)
+        .map((option) => option.model),
+      ['', 'claude-fable-5', DEFAULT_CLAUDE_MODEL, 'claude-sonnet-5', 'claude-haiku-4-5-20251001'],
     )
   })
 

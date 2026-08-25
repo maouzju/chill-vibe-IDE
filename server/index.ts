@@ -13,6 +13,7 @@ import {
   compactedCardHistoryLoadRequestSchema,
   externalHistoryListRequestSchema,
   externalSessionLoadRequestSchema,
+  internalSessionHistoryDeleteRequestSchema,
   internalSessionHistoryHideRequestSchema,
   internalSessionHistoryListRequestSchema,
   internalSessionHistoryLoadRequestSchema,
@@ -87,6 +88,7 @@ import { resilientProxyPool } from './resilient-proxy.js'
 import { SetupManager } from './setup-manager.js'
 import { OllamaManager } from './ollama-manager.js'
 import {
+  deleteSessionHistoryEntry,
   loadClosedWorkspaceSnapshot,
   loadSessionHistoryEntry,
   loadStateForRenderer,
@@ -215,6 +217,16 @@ app.post('/api/session-history/hide', async (request, response) => {
     return
   }
   await hideInternalSessionHistoryEntries(parsed.data)
+  response.status(204).end()
+})
+
+app.post('/api/session-history/delete', async (request, response) => {
+  const parsed = internalSessionHistoryDeleteRequestSchema.safeParse(request.body)
+  if (!parsed.success) {
+    response.status(400).json({ message: 'Invalid internal session history delete request.' })
+    return
+  }
+  await deleteSessionHistoryEntry(parsed.data)
   response.status(204).end()
 })
 

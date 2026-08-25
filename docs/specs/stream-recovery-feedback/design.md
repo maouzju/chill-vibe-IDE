@@ -98,6 +98,10 @@ export const shouldClearRecoveryStatusOnStreamIdle = (
    - If the watchdog fires before visible output or a terminal event, emit `Codex stalled without emitting stream output.` and classify it as recoverable `resume-session`.
    - If visible output happened and the stream later goes quiet outside an in-progress command, emit `Codex stalled after emitting stream output.` through the same recoverable path.
 
+8A. **Short network outage classification**:
+   - Keep the transport fix in the shared provider error classifier rather than adding provider-specific retry code. Match the CLI's explicit connection-refused wording (`unable to connect to api`, `connectionrefused`, and the spaced/`ECONNREFUSED` variants) as a transient stream failure.
+   - Preserve the existing session-id guard and renderer retry budget. A connection error without a native session cannot be resumed safely and remains a normal start failure; a live session uses the same `resume-session` / native-checkpoint escape hatch as other recoverable stream failures.
+
 9. **Renderer/window lifetime cleanup**:
    - Electron main owns stream subscription cleanup by `BrowserWindow` / `WebContents` lifetime.
    - Cleanup runs on `close`, `closed`, `webContents.destroyed`, and `render-process-gone`, so provider stream events stop before they can keep sending into a destroyed renderer.

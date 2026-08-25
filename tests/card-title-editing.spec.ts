@@ -936,6 +936,7 @@ for (const theme of ['dark', 'light'] as const) {
     await expect(dropdown).not.toContainText('Weather')
     await expect(dropdown).not.toContainText('Music')
     await expect(dropdown).not.toContainText('White Noise')
+    await expect(dropdown).not.toContainText('Sonnet 4.6')
 
     await page.getByRole('button', { name: /Weather|天气/ }).click()
     await expect(page.locator('[data-weather-card]')).toBeVisible()

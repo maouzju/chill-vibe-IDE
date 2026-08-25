@@ -84,6 +84,13 @@ export const hasSessionHistorySearch = (query: string) => normalizeHistorySearch
 export const getSessionHistoryDisplayMessageCount = (entry: SessionHistoryEntry) =>
   entry.messageCount ?? entry.messages.length
 
+export const removeSessionHistoryEntryById = <T extends { id: string }>(
+  entries: T[],
+  entryId: string,
+): T[] => (entries.some((entry) => entry.id === entryId)
+  ? entries.filter((entry) => entry.id !== entryId)
+  : entries)
+
 export const mergeSessionHistorySearchResults = (
   localEntries: SessionHistoryEntry[],
   deepEntries: SessionHistoryEntry[],

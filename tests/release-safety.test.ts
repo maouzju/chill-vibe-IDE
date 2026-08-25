@@ -77,6 +77,45 @@ test('release safety audit ignores non-concrete path examples', () => {
   )
 })
 
+test('release safety audit treats single-segment drive paths in tests as synthetic fixtures', () => {
+  // `D:/workspace` is this repo's long-standing synthetic workspace root (68
+  // uses across 8 baseline test files).  Before this rule only *existing*
+  // files got a pass, via the unchanged-baseline check — so the identical
+  // fixture reported clean in an old file and `machine-path` in a new one,
+  // which pushes authors to rewrite correct tests instead of the detector.
+  assert.deepEqual(
+    auditReleaseText(
+      'tests/state-store-crash-recovery.test.ts',
+      "createDefaultState('D:/workspace')\nwithMessages('D:/newer-snapshot')\nwithMessages('D:/quarantine')",
+      { baselineText: '' },
+    ),
+    [],
+  )
+})
+
+test('release safety audit keeps flagging real drive paths outside tests or with extra segments', () => {
+  // Guard the rule above against over-reach: it must stay scoped to tests/,
+  // stay single-segment, and never swallow a real user directory.
+  const productionFile = auditReleaseText('scripts/bench.mjs', "open('D:/workspace')", {
+    baselineText: '',
+  })
+  assert.deepEqual(productionFile.map(({ category }) => category), ['machine-path'])
+
+  const nestedRealPath = auditReleaseText(
+    'tests/example.test.ts',
+    ['D:/', '下载/Chill Vibe IDE/resources/app.asar'].join(''),
+    { baselineText: '' },
+  )
+  assert.deepEqual(nestedRealPath.map(({ category }) => category), ['machine-path'])
+
+  const rescueDir = auditReleaseText(
+    'tests/example.test.ts',
+    ['D:/', 'chill-vibe-rescue-20260825/restore-watcher.ps1'].join(''),
+    { baselineText: '' },
+  )
+  assert.deepEqual(rescueDir.map(({ category }) => category), ['machine-path'])
+})
+
 test('release safety audit ignores personal email addresses', () => {
   assert.deepEqual(auditReleaseText('release.txt', 'author@example.com <author@example.com>'), [])
 })

@@ -3,6 +3,7 @@ import {
   useCallback,
   useDeferredValue,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -11,6 +12,7 @@ import {
   type MouseEvent,
   type PointerEvent,
 } from 'react'
+import { createPortal } from 'react-dom'
 
 import { minColumnWidth } from '../../shared/default-state'
 import { formatLocalizedDateTime, getLocaleText } from '../../shared/i18n'
@@ -21,6 +23,7 @@ import type {
   DataMaintenanceStatus,
   ExternalSessionSummary,
   ImageAttachment,
+  LocalModelEntry,
   ModelPromptRule,
   Provider,
   ProviderStatus,
@@ -43,7 +46,9 @@ import {
   getSessionHistoryLifecycleLabel,
   hasSessionHistorySearch,
   mergeSessionHistorySearchResults,
+  removeSessionHistoryEntryById,
 } from './workspace-column-history'
+import { clampFilePathContextMenuPosition } from './file-path-context-menu'
 import { CloseIcon, FolderIcon, HistoryIcon, IconButton } from './Icons'
 import type {
   AutomationBoardActions,
@@ -150,6 +155,7 @@ type WorkspaceColumnProps = {
   gitAgentModel: string
   brainstormRequestModel: string
   availableQuickToolModels: string[]
+  localModelEntries?: LocalModelEntry[]
   autoUrgeEnabled: boolean
   autoUrgeProfiles?: AutoUrgeProfile[]
   autoUrgeMessage: string
@@ -243,6 +249,7 @@ type WorkspaceColumnProps = {
   onRemoveRecentWorkspaces: (paths: string[]) => void
   sessionHistory: SessionHistoryEntry[]
   onRestoreSession: (entryId: string) => void
+  onDeleteSessionHistoryEntry?: (entry: SessionHistoryEntry) => void
   onImportExternalSession: (entry: SessionHistoryEntry) => void
   cardRecoveryStatuses?: ReadonlyMap<string, CardRecoveryStatus>
   queuedSendSummaries?: ReadonlyMap<string, QueuedSendSummary>
@@ -266,6 +273,7 @@ const WorkspaceColumnView = ({
   gitAgentModel,
   brainstormRequestModel,
   availableQuickToolModels,
+  localModelEntries,
   autoUrgeEnabled,
   autoUrgeProfiles = [],
   autoUrgeMessage,
@@ -316,6 +324,7 @@ const WorkspaceColumnView = ({
   onRemoveRecentWorkspaces,
   sessionHistory,
   onRestoreSession,
+  onDeleteSessionHistoryEntry,
   onImportExternalSession,
   cardRecoveryStatuses,
   queuedSendSummaries,
@@ -349,7 +358,17 @@ const WorkspaceColumnView = ({
   })
   const [internalLoading, setInternalLoading] = useState(false)
   const [importingSessionId, setImportingSessionId] = useState<string | null>(null)
+  const [historyEntryMenu, setHistoryEntryMenu] = useState<{
+    entry: SessionHistoryEntry
+    x: number
+    y: number
+  } | null>(null)
+  const [historyEntryMenuPosition, setHistoryEntryMenuPosition] = useState<{
+    left: number
+    top: number
+  } | null>(null)
   const historyMenuRef = useRef<HTMLDivElement>(null)
+  const historyEntryMenuRef = useRef<HTMLDivElement | null>(null)
   const deferredHistorySearch = useDeferredValue(historySearch)
   const filteredSessionHistory = useMemo(() => mergeSessionHistorySearchResults(
     filterSessionHistoryEntries(sessionHistory, deferredHistorySearch),
@@ -364,7 +383,98 @@ const WorkspaceColumnView = ({
   const closeHistoryMenu = useCallback(() => {
     setHistoryMenuOpen(false)
     setHistorySearch('')
+    setHistoryEntryMenu(null)
+    setHistoryEntryMenuPosition(null)
   }, [])
+
+  const closeHistoryEntryMenu = useCallback(() => {
+    setHistoryEntryMenu(null)
+    setHistoryEntryMenuPosition(null)
+  }, [])
+
+  const handleHistoryEntryContextMenu = useCallback(
+    (event: MouseEvent<HTMLButtonElement>, entry: SessionHistoryEntry) => {
+      if (!onDeleteSessionHistoryEntry) {
+        return
+      }
+
+      event.preventDefault()
+      event.stopPropagation()
+      setHistoryEntryMenu({ entry, x: event.clientX, y: event.clientY })
+      setHistoryEntryMenuPosition({ left: event.clientX, top: event.clientY })
+    },
+    [onDeleteSessionHistoryEntry],
+  )
+
+  const confirmDeleteHistoryEntry = useCallback(() => {
+    const entry = historyEntryMenu?.entry
+    closeHistoryEntryMenu()
+
+    if (!entry || !onDeleteSessionHistoryEntry) {
+      return
+    }
+
+    if (!window.confirm(text.deleteSessionHistoryEntryConfirm(entry.title))) {
+      return
+    }
+
+    // Deep-search results live in this component's own state, so the reducer
+    // update alone cannot remove them from the open menu.
+    setCatalogSessions((current) => removeSessionHistoryEntryById(current, entry.id))
+    onDeleteSessionHistoryEntry(entry)
+  }, [closeHistoryEntryMenu, historyEntryMenu, onDeleteSessionHistoryEntry, text])
+
+  useEffect(() => {
+    if (!historyEntryMenu) {
+      return
+    }
+
+    const handlePointerDown = (event: globalThis.MouseEvent) => {
+      if (historyEntryMenuRef.current && !historyEntryMenuRef.current.contains(event.target as Node)) {
+        closeHistoryEntryMenu()
+      }
+    }
+    const handleEscape = (event: globalThis.KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        closeHistoryEntryMenu()
+      }
+    }
+
+    window.addEventListener('mousedown', handlePointerDown)
+    window.addEventListener('keydown', handleEscape)
+    window.addEventListener('blur', closeHistoryEntryMenu)
+
+    return () => {
+      window.removeEventListener('mousedown', handlePointerDown)
+      window.removeEventListener('keydown', handleEscape)
+      window.removeEventListener('blur', closeHistoryEntryMenu)
+    }
+  }, [closeHistoryEntryMenu, historyEntryMenu])
+
+  useLayoutEffect(() => {
+    if (!historyEntryMenu) {
+      return
+    }
+
+    const node = historyEntryMenuRef.current
+    if (!node) {
+      return
+    }
+
+    const rect = node.getBoundingClientRect()
+    const next = clampFilePathContextMenuPosition({
+      x: historyEntryMenu.x,
+      y: historyEntryMenu.y,
+      width: rect.width,
+      height: rect.height,
+      viewportWidth: window.innerWidth,
+      viewportHeight: window.innerHeight,
+    })
+
+    setHistoryEntryMenuPosition((current) =>
+      current && current.left === next.left && current.top === next.top ? current : next,
+    )
+  }, [historyEntryMenu])
 
   useEffect(() => {
     setPathValue(column.workspacePath)
@@ -391,6 +501,14 @@ const WorkspaceColumnView = ({
     }
 
     const handleOutsideClick = (event: globalThis.MouseEvent) => {
+      // 症状：右键历史条目弹出的菜单点不动，一按就整个历史下拉先关掉。
+      // 根因：该菜单 portal 到 document.body，它的 mousedown 落在 historyMenuRef 之外，
+      //   于是先被判成"点了外面"并关掉下拉，菜单项还没收到 click 就随之卸载。
+      // 不能改成把菜单渲染进下拉里：下拉是 overflow-y:auto 的滚动容器，菜单会跟着裁切/滚走。
+      if (historyEntryMenuRef.current?.contains(event.target as Node)) {
+        return
+      }
+
       if (historyMenuRef.current && !historyMenuRef.current.contains(event.target as Node)) {
         closeHistoryMenu()
       }
@@ -1021,6 +1139,7 @@ const WorkspaceColumnView = ({
                       title={entry.title}
                       onMouseDown={(event) => handleRestoreSessionHistoryPress(event, entry.id)}
                       onClick={() => handleRestoreSessionHistoryClick(entry.id)}
+                      onContextMenu={(event) => handleHistoryEntryContextMenu(event, entry)}
                     >
                       <span className="session-history-title-row">
                         <span className="session-history-title">{entry.title}</span>
@@ -1070,6 +1189,27 @@ const WorkspaceColumnView = ({
             )}
           </div>
         )}
+
+        {historyEntryMenu && historyEntryMenuPosition && typeof document !== 'undefined'
+          ? createPortal(
+              <div
+                ref={historyEntryMenuRef}
+                role="menu"
+                className="pane-tab-context-menu session-history-context-menu"
+                style={{ left: historyEntryMenuPosition.left, top: historyEntryMenuPosition.top }}
+              >
+                <button
+                  type="button"
+                  role="menuitem"
+                  className="is-danger"
+                  onClick={confirmDeleteHistoryEntry}
+                >
+                  {text.deleteSessionHistoryEntry}
+                </button>
+              </div>,
+              document.body,
+            )
+          : null}
       </header>
 
       <div className="column-body">
@@ -1087,6 +1227,7 @@ const WorkspaceColumnView = ({
           gitAgentModel={gitAgentModel}
           brainstormRequestModel={brainstormRequestModel}
           availableQuickToolModels={availableQuickToolModels}
+          localModelEntries={localModelEntries}
           autoUrgeEnabled={autoUrgeEnabled}
           autoUrgeProfiles={autoUrgeProfiles}
           autoUrgeMessage={autoUrgeMessage}

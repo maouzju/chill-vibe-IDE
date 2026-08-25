@@ -21,6 +21,8 @@ import {
   normalizeLanguage,
 } from '../shared/i18n.js'
 import { getActiveProviderProfile } from '../shared/default-state.js'
+import { parseLocalModelToken } from '../shared/models.js'
+import { resolveOllamaBaseUrl } from './ollama-manager.js'
 import { buildSystemPromptForModel, normalizeSystemPrompt } from '../shared/system-prompt.js'
 import {
   getSlashCommandDescription,
@@ -34,6 +36,7 @@ import type {
   AppSettings,
   ChatRequest,
   ImageAttachment,
+  LocalModelEntry,
   Provider,
   ProviderStatus,
   ProviderTurnStopReason,
@@ -513,7 +516,10 @@ export const describeCodexUpstreamFailure = (
   return { message: unwrapped, hint: classifyLaunchErrorHint(unwrapped) }
 }
 
-export const resolveProviderRuntime = async (provider: Provider): Promise<ProviderRuntime> => {
+export const resolveProviderRuntime = async (
+  provider: Provider,
+  options: { localModelId?: string } = {},
+): Promise<ProviderRuntime> => {
   const baseEnv =
     provider === 'claude' ? await resolveClaudeRuntimeEnvironment({ env: process.env }) : process.env
 
@@ -523,14 +529,50 @@ export const resolveProviderRuntime = async (provider: Provider): Promise<Provid
     // hydrates every session-history sidecar (974MB / 8,863 files observed on
     // 2026-08-06) and can turn a harmless status check into a main-process OOM.
     const settings = providerRuntimeSettingsOverride ?? (await loadStateForRenderer()).state.settings
-    if (!settings.cliRoutingEnabled) {
+
+    // 本地模型条目走自己的端点，绕开全局 active profile —— 这是「这张卡用本地、那张卡用
+    // 云端」能成立的唯一原因（SPEC local-model-entries 需求 #4）。条目查不到时**不能**
+    // 回落到 active profile：那等于拿用户的云端 key 去跑他以为在本地跑的东西。
+    const localEntry = options.localModelId
+      ? settings.localModelEntries.find((entry) => entry.id === options.localModelId)
+      : undefined
+
+    if (options.localModelId && !localEntry) {
       return {
         args: [],
         env: baseEnv,
       }
     }
 
-    const activeProfile = getActiveProviderProfile(settings, provider)
+    // 症状：加好本地模型后弹一条「CLI 路由当前是关闭的，本地模型同样不会生效」，用户被迫
+    //   为了跑本机模型去开一个跟它无关的全局开关。
+    // 根因：这个早退原本排在本地条目解析**之前**，顺手把本地模型一起短路了。但两者管的不是
+    //   一回事——cliRoutingEnabled 决定"要不要拿应用内接口配置去覆盖 CLI 自带的全局配置"，
+    //   而选中一个本地模型条目本身就是逐卡的显式指定，意图已经表达完了。
+    // 为什么不能干脆把早退删掉：非本地模型必须保持"路由关了就完全不注入"，否则会拿应用内的
+    //   云端 key 覆盖用户 ~/.codex/config.toml、~/.claude 里自己配的东西。所以是加 localEntry
+    //   例外，不是移除判断。
+    if (!localEntry && !settings.cliRoutingEnabled) {
+      return {
+        args: [],
+        env: baseEnv,
+      }
+    }
+
+    // 归一成同一形状，下游 name/apiKey/baseUrl 三个字段就不必再关心来源是条目还是 profile。
+    // 本地条目只要求用户填「驱动方式」和「模型名」，地址与密钥留空时在这里补齐：
+    // · 地址回落到本机 Ollama（resolveOllamaBaseUrl 认 CHILL_VIBE_OLLAMA_URL 覆盖），且
+    //   codex 必须带 /v1 而 claude 填到主机根 —— 这个差异不该由用户去记，填错的表现是
+    //   `404 page not found, url: .../responses`，光看报错根本看不出是少了 /v1。
+    // · 密钥回落到占位串：本地服务不校验它，但下面 `if (!apiKey)` 会把整段注入短路掉，
+    //   于是"留空"会变成"地址静默失效"，是本功能最容易踩的坑。
+    const activeProfile = localEntry
+      ? {
+          name: localEntry.label || localEntry.model,
+          apiKey: localEntry.apiKey.trim() || localModelFallbackApiKey,
+          baseUrl: localEntry.baseUrl.trim() || resolveLocalModelDefaultBaseUrl(localEntry.harness),
+        }
+      : getActiveProviderProfile(settings, provider)
     const apiKey = activeProfile?.apiKey.trim()
 
     if (!apiKey) {
@@ -564,6 +606,11 @@ export const resolveProviderRuntime = async (provider: Provider): Promise<Provid
       }
     }
 
+    // 不要在这里加 `wire_api = "chat"` 来迁就只支持 chat/completions 的本地推理服务。
+    // 2026-08-23 实测（codex CLI 当日版本）：该值已被移除，启动直接死在配置解析上——
+    // "`wire_api = \"chat\"` is no longer supported. How to fix: set `wire_api = \"responses\"`"。
+    // 结论：Codex harness 只能连实现了 Responses API 的端点，Ollama 那类纯 chat/completions
+    // 服务请改用 Claude harness（它们多半也提供 Anthropic 兼容的 /v1/messages）。
     return {
       args: [
         '-c',
@@ -584,6 +631,35 @@ export const resolveProviderRuntime = async (provider: Provider): Promise<Provid
       args: [],
       env: baseEnv,
     }
+  }
+}
+
+// 本地服务通常不校验密钥，但空 apiKey 会让 resolveProviderRuntime 整段短路（baseUrl 静默
+// 失效），所以留空时补一个占位串而不是真的传空。
+const localModelFallbackApiKey = 'local'
+
+// Codex CLI 的默认 base_url 就带 /v1（https://api.openai.com/v1），它在此之后直接拼
+// `/responses`；Claude CLI 则自己补 `/v1/messages`，只需要主机根。
+export const resolveLocalModelDefaultBaseUrl = (harness: Provider) => {
+  const base = resolveOllamaBaseUrl()
+  return harness === 'codex' ? `${base}/v1` : base
+}
+
+// 令牌 → 条目。翻译只在 launchProviderRun 入口做一次，之后 request.model 就是真实模型名，
+// buildClaudeArgs / buildCodexArgs / 流解析器全都不需要知道本地条目的存在。
+export const resolveLocalModelEntry = async (
+  model?: string | null,
+): Promise<LocalModelEntry | null> => {
+  const localModelId = parseLocalModelToken(model)
+  if (!localModelId) {
+    return null
+  }
+
+  try {
+    const settings = providerRuntimeSettingsOverride ?? (await loadStateForRenderer()).state.settings
+    return settings.localModelEntries.find((entry) => entry.id === localModelId) ?? null
+  } catch {
+    return null
   }
 }
 
@@ -2885,7 +2961,21 @@ export const launchProviderRun = async (
       return null
     }
   }
-  const runtime = await resolveProviderRuntime(currentRequest.provider)
+  // 本地模型条目：在这里把令牌翻成真实模型名，并让端点跟着条目走而不是全局 active
+  // profile。翻译只做这一次 —— 下游 argv 构造与流解析器看到的就是一个普通模型名。
+  // 条目查不到（被删了）时把 model 清空，让 CLI 回落到它自己的默认模型，而不是把
+  // `__local__:xxx` 当模型名发出去。
+  const localModelEntry = await resolveLocalModelEntry(currentRequest.model)
+  const requestedLocalModelId = parseLocalModelToken(currentRequest.model)
+  if (requestedLocalModelId) {
+    currentRequest = {
+      ...currentRequest,
+      model: localModelEntry?.model ?? '',
+    }
+  }
+  const runtime = await resolveProviderRuntime(currentRequest.provider, {
+    localModelId: requestedLocalModelId ?? undefined,
+  })
 
   // 超管回合：把工作区 MCP 接进本次 provider 启动。只有 `card.adminAccess`
   // 开着的回合才走这里（请求上表现为 `request.adminAccess`）—— 普通聊天卡永远

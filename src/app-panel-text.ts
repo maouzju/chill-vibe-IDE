@@ -18,6 +18,28 @@ export const getPanelText = (language: AppState['settings']['language']) =>
         removeProfile: 'Remove',
         noProfiles: 'No profiles yet.',
         noProfilesDescription: 'Add a profile to switch this provider to another API endpoint.',
+        localModelsTitle: 'Local models',
+        localModelsDescription:
+          'Point a local inference server (Ollama, LM Studio, llama.cpp, vLLM) at one of the bundled CLIs. Saved entries show up in every card’s model picker and apply per card.',
+        localModelLabelField: 'Display name',
+        localModelHarnessField: 'Driven by',
+        localModelNameField: 'Model name',
+        localModelNamePlaceholder: 'qwen3-coder:30b',
+        localModelBaseUrlPlaceholder: 'http://127.0.0.1:11434',
+        localModelApiKeyNote:
+          'Local servers usually ignore the key, but it must not be empty — a blank key silently disables the base URL.',
+        localModelAdvanced: 'Advanced (endpoint & key)',
+        localModelApiKeyPlaceholder: 'local (filled in automatically)',
+        localModelOllamaOffline:
+          'No installed models detected on this machine — that list only covers Ollama. Just type the model name instead; LM Studio, llama.cpp and vLLM work the same way.',
+        localModelClaudeBaseUrlNote:
+          'Claude CLI appends /v1/messages itself, so point this at the host root. The server must expose an Anthropic-compatible Messages API.',
+        localModelCodexBaseUrlNote:
+          'Codex CLI needs the /v1 suffix and only speaks the Responses API — servers that offer just chat/completions (Ollama, LM Studio) will answer 404. Use the Claude harness for those.',
+        addLocalModel: 'Add local model',
+        noLocalModels: 'No local models yet.',
+        noLocalModelsDescription:
+          'Add one to run a card against a model on this machine instead of a cloud endpoint.',
         importTitle: 'Import from cc-switch',
         importDescription:
           'Bring Claude and Codex routing profiles over from a cc-switch database or SQL export.',
@@ -123,6 +145,26 @@ export const getPanelText = (language: AppState['settings']['language']) =>
         removeProfile: '移除',
         noProfiles: '暂无配置。',
         noProfilesDescription: '添加一个配置即可将此服务商切换到其他 API 地址。',
+        localModelsTitle: '本地模型',
+        localModelsDescription:
+          '把本机的推理服务（Ollama、LM Studio、llama.cpp、vLLM）接到内置的某个 CLI 上。保存后会出现在每张卡的模型选择器里，逐卡生效。',
+        localModelLabelField: '显示名',
+        localModelHarnessField: '驱动方式',
+        localModelNameField: '模型名',
+        localModelNamePlaceholder: 'qwen3-coder:30b',
+        localModelBaseUrlPlaceholder: 'http://127.0.0.1:11434',
+        localModelApiKeyNote: '本地服务通常不校验密钥，但这里不能留空——留空会让地址静默失效。',
+        localModelAdvanced: '高级（地址与密钥）',
+        localModelApiKeyPlaceholder: 'local（留空自动填）',
+        localModelOllamaOffline:
+          '没有检测到本机已装模型——那个列表只覆盖 Ollama。直接手输模型名即可，接 LM Studio、llama.cpp、vLLM 也是一样的填法。',
+        localModelClaudeBaseUrlNote:
+          'Claude CLI 会自己补 /v1/messages，这里填到主机根即可。对方需要提供 Anthropic 兼容接口。',
+        localModelCodexBaseUrlNote:
+          'Codex CLI 需要带 /v1 后缀，且只认 Responses API——只提供 chat/completions 的服务（Ollama、LM Studio）会返回 404，这类请改用 Claude 驱动。',
+        addLocalModel: '添加本地模型',
+        noLocalModels: '暂无本地模型。',
+        noLocalModelsDescription: '添加一个，就能让某张卡改用本机跑的模型而不是云端。',
         importTitle: '从 cc-switch 导入',
         importDescription:
           '从 cc-switch 数据库或 SQL 导出文件中导入 Claude 和 Codex 的配置。',

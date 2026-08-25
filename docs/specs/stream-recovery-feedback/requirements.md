@@ -33,6 +33,7 @@ When a chat card's stream enters recovery, the user sees a short status line **i
 15. **Codex native completion is authoritative** — Before auto-resuming a recoverable Codex stream, inspect the matching native rollout. If its latest root task already has `task_complete`, settle the card locally instead of injecting `Please continue.` and inventing extra work; incomplete or unreadable rollouts keep the existing fail-open resume behavior.
 16. **Codex open work stays bounded** — In-progress Codex commands and active sub-agents may use the long absolute timeout, but they must never disable all watchdogs. The same hard cap must cover both paths, and a timeout must first check whether the native rollout already completed.
 17. **Packaged completion parity** — The packaged Electron IPC bridge must return the same Claude/Codex native completion result as the web route. It must never discard a valid Codex `task_complete` result as `unknown`, because that re-enables ghost continuation in the shipped app even when browser tests pass.
+18. **Transient connection-refused recovery** — Provider errors that explicitly report a short-lived API connection failure (for example `API Error: Unable to connect to API (ConnectionRefused)`) must enter the existing bounded `resume-session` loop when a live provider session is available. They must not be surfaced as an immediate permanent error bubble.
 
 ## Non-goals
 

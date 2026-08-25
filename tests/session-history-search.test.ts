@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, it } from 'node:test'
 
 import { createDefaultState } from '../shared/default-state.ts'
 import type { SessionHistoryEntry } from '../shared/schema.ts'
+import { deleteSessionHistoryEntry } from '../server/state-store.ts'
 import {
   hideInternalSessionHistoryEntries,
   listInternalSessionHistory,
@@ -206,6 +207,88 @@ describe('internal session history catalog search', () => {
       query: 'durable-history-needle',
     })
     assert.deepEqual(afterNewArchive.entries.map((entry) => entry.id), ['duplicate-session-rearchived'])
+  })
+
+  it('deletes one archived session sidecar and keeps it out of catalog search without touching its neighbours', async () => {
+    const doomed = createHistoryEntry({
+      id: 'doomed-entry',
+      title: 'Archive the user deleted',
+      sessionId: 'doomed-session',
+      archivedAt: '2026-05-01T09:00:00.000Z',
+      messages: [
+        {
+          id: 'doomed-message',
+          role: 'user',
+          content: 'Contains the delete-me-needle phrase.',
+          createdAt: '2026-05-01T08:59:00.000Z',
+        },
+      ],
+    })
+    const survivor = createHistoryEntry({
+      id: 'survivor-entry',
+      title: 'Archive that must survive',
+      sessionId: 'survivor-session',
+      archivedAt: '2026-05-02T09:00:00.000Z',
+      messages: [
+        {
+          id: 'survivor-message',
+          role: 'assistant',
+          content: 'Also contains the delete-me-needle phrase.',
+          createdAt: '2026-05-02T08:59:00.000Z',
+        },
+      ],
+    })
+    await Promise.all([writeSidecar(doomed), writeSidecar(survivor)])
+
+    const before = await searchInternalSessionHistory({
+      workspacePath: currentWorkspace,
+      query: 'delete-me-needle',
+    })
+    assert.deepEqual(
+      before.entries.map((entry) => entry.id).sort(),
+      ['doomed-entry', 'survivor-entry'],
+    )
+
+    await deleteSessionHistoryEntry({
+      entryId: doomed.id,
+      provider: doomed.provider,
+      sessionId: doomed.sessionId,
+    })
+
+    const doomedPath = path.join(
+      sidecarDir,
+      `${Buffer.from(doomed.id, 'utf8').toString('base64url')}.json`,
+    )
+    const survivorPath = path.join(
+      sidecarDir,
+      `${Buffer.from(survivor.id, 'utf8').toString('base64url')}.json`,
+    )
+    assert.equal(
+      await stat(doomedPath).then(() => true).catch(() => false),
+      false,
+      'deleting an archived session must reclaim its sidecar file, not only hide it',
+    )
+    assert.equal(
+      await stat(survivorPath).then(() => true).catch(() => false),
+      true,
+      'deleting one archive must not touch the neighbouring sidecar',
+    )
+
+    // No cache reset here on purpose: deletion must invalidate the in-process
+    // catalog cache itself, otherwise the same session keeps listing the entry
+    // until the app restarts.
+    const after = await searchInternalSessionHistory({
+      workspacePath: currentWorkspace,
+      query: 'delete-me-needle',
+    })
+    assert.deepEqual(after.entries.map((entry) => entry.id), ['survivor-entry'])
+
+    const hiddenRaw = await readFile(path.join(sidecarDir, 'catalog-hidden.json'), 'utf8')
+    assert.match(
+      hiddenRaw,
+      /doomed-entry/,
+      'a deleted entry must stay on the hidden list so catalog rebuilds cannot resurrect it',
+    )
   })
 
   it('rebuilds orphaned sidecars through resumable one-file slices and lists the newest logical sessions without state.json entries', async () => {

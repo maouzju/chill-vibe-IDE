@@ -22,6 +22,7 @@ import type {
   ExternalSessionLoadResponse,
   InternalSessionHistoryLoadRequest,
   InternalSessionHistoryLoadResponse,
+  InternalSessionHistoryDeleteRequest,
   InternalSessionHistoryHideRequest,
   InternalSessionHistoryListRequest,
   InternalSessionHistoryListResponse,
@@ -107,6 +108,7 @@ declare global {
       loadClosedWorkspaceSnapshot?: (request: ClosedWorkspaceLoadRequest) => Promise<ClosedWorkspaceLoadResponse>
       listInternalSessionHistory?: (request: InternalSessionHistoryListRequest) => Promise<InternalSessionHistoryListResponse>
       hideInternalSessionHistory?: (request: InternalSessionHistoryHideRequest) => Promise<void>
+      deleteInternalSessionHistory?: (request: InternalSessionHistoryDeleteRequest) => Promise<void>
       // Resolves with nothing on purpose: the desktop handler used to return the
       // whole state, and `ipcMain.handle` cloned that ~1MB payload back to the
       // renderer on every save even though no caller ever read it (2026-08-12).

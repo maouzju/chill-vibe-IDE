@@ -36,6 +36,34 @@ function Get-CommandSafe {
     return Get-Command $Name -ErrorAction SilentlyContinue
 }
 
+function Resolve-NpmExecutablePath {
+    # Symptom: on a clean Windows box the one-click setup died with
+    # 'Unknown command: "pm"' and npm exit code 1 (reported 2026-08-25, v0.20.7).
+    # Root cause: PowerShell resolves a bare `npm` to npm.ps1 BEFORE npm.cmd, and
+    # the npm.ps1 shim bundled with Node 20/22 rebuilds its argument list by
+    # re-parsing the caller's source line instead of forwarding $args. Called as
+    # `& npm install -g <pkg>` it loses the leading character of the first
+    # argument, so npm receives the command `pm` (npm/cli#8528). `npm i -g npm`
+    # does NOT regenerate that shim, so telling users to update npm never fixes it.
+    # Why not just drop the `&`: bare `npm install ...` still resolves to the same
+    # npm.ps1 and stays hostage to the shim; only a full path to a real executable
+    # shim is version-proof. Extension order matters too - `Get-Command npm -All`
+    # also returns the extensionless git-bash `npm` sh script, which PowerShell
+    # cannot execute.
+    $candidates = @(Get-Command 'npm' -All -ErrorAction SilentlyContinue)
+
+    foreach ($extension in @('.cmd', '.exe', '.bat')) {
+        foreach ($candidate in $candidates) {
+            $source = $candidate.Source
+            if ($source -and $source.ToLowerInvariant().EndsWith($extension)) {
+                return $source
+            }
+        }
+    }
+
+    return $null
+}
+
 function Get-CommandVersion {
     param(
         [string]$CommandName,
@@ -130,7 +158,8 @@ function Install-NpmGlobal {
         return
     }
 
-    if (-not (Get-CommandSafe 'npm')) {
+    $npmPath = Resolve-NpmExecutablePath
+    if (-not $npmPath) {
         throw "npm is not available. Install Node.js first."
     }
 
@@ -146,7 +175,7 @@ function Install-NpmGlobal {
     $previousErrorActionPreference = $ErrorActionPreference
     $ErrorActionPreference = 'Continue'
     try {
-        & npm install -g $packageSpec 2>&1 | ForEach-Object {
+        & $npmPath install -g $packageSpec 2>&1 | ForEach-Object {
             $line = $_.ToString().Trim()
             if ($line) {
                 Write-Step "  $line"
@@ -177,7 +206,7 @@ function Update-SelectedCli {
     )
 
     Refresh-Path
-    if (-not (Get-CommandSafe 'npm')) {
+    if (-not (Resolve-NpmExecutablePath)) {
         throw 'npm is not available. Install Node.js first.'
     }
 
@@ -206,12 +235,15 @@ Install-WingetPackage -Id 'Git.Git' -DisplayName 'Git' -CommandName 'git'
 Configure-GitBashPath
 
 Refresh-Path
-if (-not (Get-CommandSafe 'node') -or -not (Get-CommandSafe 'npm')) {
+$npmExecutablePath = Resolve-NpmExecutablePath
+if (-not (Get-CommandSafe 'node') -or -not $npmExecutablePath) {
     Install-WingetPackage -Id 'OpenJS.NodeJS.LTS' -DisplayName 'Node.js LTS' -CommandName 'node'
 }
 else {
     Write-Step "Node.js already available: $(Get-CommandVersion -CommandName 'node')"
-    Write-Step "npm already available: $(Get-CommandVersion -CommandName 'npm')"
+    # Probe through the resolved .cmd shim for the same npm.ps1 reason as above:
+    # the broken shim turns `--version` into `-version` and reports a bogus value.
+    Write-Step "npm already available: $(Get-CommandVersion -CommandName $npmExecutablePath)"
 }
 
 Install-NpmGlobal -PackageName '@anthropic-ai/claude-code' -CommandName 'claude' -DisplayName 'Claude CLI'

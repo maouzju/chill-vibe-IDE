@@ -4,6 +4,7 @@ import test from 'node:test'
 
 import {
   canSendEmptyContinuation,
+  shouldSyncOllamaStatus,
   createStoppedRunMessage,
   createStructuredActivityMessage,
   createStructuredMessageId,
@@ -872,5 +873,28 @@ test('sticky note tabs use the first content line as their title', () => {
       paneTabLabels,
     ),
     '便签',
+  )
+})
+
+// 本地模型的模型名下拉要读 Ollama 已装列表，而那个 UI 在「路由」页；原先的探测条件却是
+// 「设置页 + 开了自动鞭策」，于是打开路由页时 ollamaStatus 多半还是 null——装了 Ollama 也
+// 选不到任何模型，离线提示还因为 `undefined === false` 为假而不显示，用户只看到一个空框。
+test('ollama status syncs on the routing tab regardless of the urge judge setting', () => {
+  assert.equal(
+    shouldSyncOllamaStatus({ activeTopTab: 'routing', autoUrgeEnabled: false }),
+    true,
+  )
+  assert.equal(
+    shouldSyncOllamaStatus({ activeTopTab: 'settings', autoUrgeEnabled: true }),
+    true,
+  )
+  // 设置页但没开自动鞭策：判官用不上它，路由页也没打开，不必去探
+  assert.equal(
+    shouldSyncOllamaStatus({ activeTopTab: 'settings', autoUrgeEnabled: false }),
+    false,
+  )
+  assert.equal(
+    shouldSyncOllamaStatus({ activeTopTab: 'ambience', autoUrgeEnabled: true }),
+    false,
   )
 })

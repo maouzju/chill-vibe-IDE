@@ -16,6 +16,18 @@ import { getLocaleText } from '../shared/i18n'
 import { BRAINSTORM_TOOL_MODEL, GIT_TOOL_MODEL, STICKYNOTE_TOOL_MODEL } from '../shared/models'
 import type { ChatStreamSource } from './api'
 
+// 什么时候值得去探一次本机 Ollama 状态。两个消费方互不相干：
+// · 「路由」页的本地模型条目 —— 模型名下拉要列出已装模型，与自动鞭策没有任何关系；
+// · 「设置」页的鞭策判官 —— 只有开了自动鞭策才用得上。
+// 漏掉路由页这一支的后果是：打开路由页时状态仍是 null，装了 Ollama 也列不出模型，
+// 而离线提示又因为 `undefined === false` 为假而不显示，用户只看到一个空的输入框。
+export const shouldSyncOllamaStatus = (settings: {
+  activeTopTab: string
+  autoUrgeEnabled: boolean
+}) =>
+  settings.activeTopTab === 'routing' ||
+  (settings.activeTopTab === 'settings' && settings.autoUrgeEnabled)
+
 export type LoadStatus = 'loading' | 'ready' | 'error'
 export type SaveStatus = 'idle' | 'saving' | 'saved' | 'error'
 

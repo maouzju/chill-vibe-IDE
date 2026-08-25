@@ -1,4 +1,6 @@
 import assert from 'node:assert/strict'
+import { readFile } from 'node:fs/promises'
+import path from 'node:path'
 import { afterEach, describe, it } from 'node:test'
 import * as React from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
@@ -14,6 +16,7 @@ import {
   getSessionHistoryLifecycle,
   getSessionHistoryLifecycleLabel,
   mergeSessionHistorySearchResults,
+  removeSessionHistoryEntryById,
 } from '../src/components/workspace-column-history.ts'
 
 ;(globalThis as typeof globalThis & { React: typeof React }).React = React
@@ -478,6 +481,53 @@ describe('WorkspaceColumn session history search', () => {
       filterExternalSessionHistory(sessions, 'claude-opus').map((entry) => entry.id),
       ['external-2'],
       'model matches should stay visible',
+    )
+  })
+})
+
+describe('session history deletion', () => {
+  const createEntry = (id: string): SessionHistoryEntry => ({
+    id,
+    title: `Archive ${id}`,
+    provider: 'codex',
+    model: 'gpt-5.5',
+    workspacePath: 'D:\\Git\\chill-vibe',
+    archivedAt: '2026-05-01T09:00:00.000Z',
+    messages: [],
+  })
+
+  it('drops only the deleted entry from a rendered history list', () => {
+    const entries = [createEntry('keep-a'), createEntry('doomed'), createEntry('keep-b')]
+
+    assert.deepEqual(
+      removeSessionHistoryEntryById(entries, 'doomed').map((entry) => entry.id),
+      ['keep-a', 'keep-b'],
+    )
+  })
+
+  it('returns the same array reference when nothing matches so React can skip the re-render', () => {
+    const entries = [createEntry('keep-a')]
+
+    assert.equal(removeSessionHistoryEntryById(entries, 'missing'), entries)
+  })
+})
+
+describe('session history entry context menu wiring', () => {
+  it('keeps the right-click delete entry point and lets its portal menu survive the dropdown outside-click guard', async () => {
+    const source = await readFile(
+      path.join(process.cwd(), 'src', 'components', 'WorkspaceColumn.tsx'),
+      'utf8',
+    )
+
+    assert.match(
+      source,
+      /className=\{`session-history-item is-\$\{getSessionHistoryLifecycle\(entry\)\}`\}[\s\S]*onContextMenu=\{\(event\) => handleHistoryEntryContextMenu\(event, entry\)\}/,
+      'internal history rows should open the delete context menu on right click',
+    )
+    assert.match(
+      source,
+      /historyEntryMenuRef\.current\?\.contains\(event\.target as Node\)\s*\)\s*\{\s*return/,
+      'the history dropdown outside-click guard must let the portalled context menu through, or its buttons unmount before the click lands',
     )
   })
 })

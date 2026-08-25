@@ -3,6 +3,7 @@ import type {
   BoardColumn,
   ImageAttachment,
   LayoutNode,
+  LocalModelEntry,
   ModelPromptRule,
   Provider,
   ProviderStatus,
@@ -33,6 +34,7 @@ type LayoutRendererProps = {
   gitAgentModel: string
   brainstormRequestModel: string
   availableQuickToolModels: string[]
+  localModelEntries?: LocalModelEntry[]
   autoUrgeEnabled: boolean
   autoUrgeProfiles?: AutoUrgeProfile[]
   autoUrgeMessage: string

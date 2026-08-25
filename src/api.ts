@@ -18,6 +18,7 @@ import {
   externalSessionLoadResponseSchema,
   internalSessionHistoryLoadRequestSchema,
   internalSessionHistoryLoadResponseSchema,
+  internalSessionHistoryDeleteRequestSchema,
   internalSessionHistoryHideRequestSchema,
   internalSessionHistoryListRequestSchema,
   internalSessionHistoryListResponseSchema,
@@ -95,6 +96,7 @@ import {
   type ExternalSessionLoadResponse,
   type InternalSessionHistoryLoadRequest,
   type InternalSessionHistoryLoadResponse,
+  type InternalSessionHistoryDeleteRequest,
   type InternalSessionHistoryHideRequest,
   type InternalSessionHistoryListRequest,
   type InternalSessionHistoryListResponse,
@@ -325,6 +327,14 @@ export const hideInternalSessionHistory = async (
 ): Promise<void> => {
   const parsed = internalSessionHistoryHideRequestSchema.parse(request)
   const fn = requireDesktopAction(getDesktopApi()?.hideInternalSessionHistory)
+  await fn(parsed)
+}
+
+export const deleteInternalSessionHistory = async (
+  request: InternalSessionHistoryDeleteRequest,
+): Promise<void> => {
+  const parsed = internalSessionHistoryDeleteRequestSchema.parse(request)
+  const fn = requireDesktopAction(getDesktopApi()?.deleteInternalSessionHistory)
   await fn(parsed)
 }
 

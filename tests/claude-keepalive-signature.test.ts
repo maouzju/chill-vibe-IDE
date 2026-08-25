@@ -83,3 +83,28 @@ test('keepalive signature tracks the real --effort argv, not the raw tier', () =
     sign({ model: 'claude-fable-5', reasoningEffort: 'high', thinkingEnabled: true }),
   )
 })
+
+// 本地模型条目换端点时，keepalive 池必须重启进程：ANTHROPIC_BASE_URL 是 spawn 时定死在
+// env 里的，复用旧进程就等于「换了模型但请求还发去上一个端点」。签名已经签了整个
+// runtime.env，这条测试守住那个隐式依赖 —— 有人把 runtimeEnv 从签名里摘掉就会红。
+test('Claude keepalive signature separates local model entries pointing at different endpoints', () => {
+  const localA = {
+    args: [],
+    env: { ANTHROPIC_BASE_URL: 'http://127.0.0.1:11434', ANTHROPIC_AUTH_TOKEN: 'local' },
+  }
+  const localB = {
+    args: [],
+    env: { ANTHROPIC_BASE_URL: 'http://127.0.0.1:1234', ANTHROPIC_AUTH_TOKEN: 'local' },
+  }
+
+  assert.notEqual(
+    buildClaudeKeepaliveSignature({ ...request, model: 'qwen3-coder:30b' }, true, localA),
+    buildClaudeKeepaliveSignature({ ...request, model: 'qwen3-coder:30b' }, true, localB),
+  )
+
+  // 同一个条目内换模型名同样要重启：--model 是启动参数。
+  assert.notEqual(
+    buildClaudeKeepaliveSignature({ ...request, model: 'qwen3-coder:30b' }, true, localA),
+    buildClaudeKeepaliveSignature({ ...request, model: 'qwen3:8b' }, true, localA),
+  )
+})

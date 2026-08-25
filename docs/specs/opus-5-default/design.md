@@ -9,7 +9,7 @@
 | Fable 5 | `claude-fable-5`（不变） | `fable`, `fable-5`, `claude-fable-5` |
 | **Opus 5** | **`claude-opus-5`（新默认）** | **`opus`, `opus-5`, `claude-opus-5`** |
 | Sonnet 5 | `claude-sonnet-5`（不变） | 不变 |
-| Sonnet 4.6 | `claude-sonnet-4-6`（不变） | 不变 |
+| Sonnet 4.6 | `claude-sonnet-4-6`（旧值保留，选择器隐藏） | 不变 |
 | Haiku 4.5 | `claude-haiku-4-5-20251001`（不变） | 不变 |
 
 `DEFAULT_CLAUDE_MODEL = 'claude-opus-5'`。

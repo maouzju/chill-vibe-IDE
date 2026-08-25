@@ -1,4 +1,4 @@
-import type { Provider } from './schema.js'
+import type { LocalModelEntry, Provider } from './schema.js'
 
 export const DEFAULT_CODEX_MODEL = 'gpt-5.6-sol'
 export const DEFAULT_CLAUDE_MODEL = 'claude-opus-5'
@@ -23,6 +23,7 @@ export type ModelOption = {
   model: string
   aliases?: string[]
   usesConfiguredDefault?: boolean
+  hiddenFromPicker?: boolean
 }
 
 export const MODEL_OPTIONS: ModelOption[] = [
@@ -152,11 +153,12 @@ export const MODEL_OPTIONS: ModelOption[] = [
     aliases: ['sonnet', 'sonnet-5', 'claude-sonnet-5'],
   },
   {
-    // Still a live model: exact names only, stored values stay pinned.
+    // Retired from the picker, but kept for exact legacy commands and saved cards.
     label: 'Sonnet 4.6',
     provider: 'claude',
     model: 'claude-sonnet-4-6',
     aliases: ['sonnet-4.6', 'claude-sonnet-4-6'],
+    hiddenFromPicker: true,
   },
   {
     label: 'Haiku 4.5',
@@ -193,8 +195,9 @@ export const isToolCardModel = (model?: string | null) =>
 
 export const MODEL_PICKER_HIDDEN_TOOL_MODELS = TOOL_CARD_MODELS
 
-export const isModelPickerOptionVisible = (option: Pick<ModelOption, 'model'>) =>
-  !TOOL_CARD_MODELS.has(option.model)
+export const isModelPickerOptionVisible = (
+  option: Pick<ModelOption, 'model' | 'hiddenFromPicker'>,
+) => !TOOL_CARD_MODELS.has(option.model) && !option.hiddenFromPicker
 
 const legacyCodexModels = new Set(['gpt-4.5', '__dream_tool__', '__spec_tool__'])
 
@@ -249,6 +252,32 @@ export const resolveSlashModel = (provider: Provider, input: string) => {
 // 形状约束的意义不是校验模型是否存在（那只有服务商知道），而是挡住明显不是模型名的输入，
 //   避免把一整句话或工具卡令牌写进 card.model。
 const customModelNamePattern = /^[A-Za-z0-9][\w.:+\-/]{1,63}$/
+
+// 本地模型条目在选择器里用令牌代表，真实模型名与端点留在 settings.localModelEntries，
+// 由后端最上游翻译一次（server/providers.ts 的 launchProviderRun），下游 argv 与流解析器无感。
+// 前缀刻意用 `__` 开头：上面的 customModelNamePattern 要求首字符是字母数字，于是用户无法
+// 通过 `/model __local__:xxx` 手打出指向不存在条目的令牌 —— 与 TOOL_CARD_MODELS 同款护栏。
+export const LOCAL_MODEL_TOKEN_PREFIX = '__local__:'
+
+export const buildLocalModelToken = (id: string) => `${LOCAL_MODEL_TOKEN_PREFIX}${id}`
+
+export const parseLocalModelToken = (model?: string | null): string | null => {
+  const trimmed = (model ?? '').trim()
+  if (!trimmed.startsWith(LOCAL_MODEL_TOKEN_PREFIX)) {
+    return null
+  }
+
+  return trimmed.slice(LOCAL_MODEL_TOKEN_PREFIX.length) || null
+}
+
+export const isLocalModelToken = (model?: string | null) => parseLocalModelToken(model) !== null
+
+export const buildLocalModelOptions = (entries: LocalModelEntry[]): ModelOption[] =>
+  entries.map((entry) => ({
+    label: entry.label || entry.model,
+    provider: entry.harness,
+    model: buildLocalModelToken(entry.id),
+  }))
 
 export const resolveSlashModelInput = (
   provider: Provider,

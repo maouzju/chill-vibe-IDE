@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto'
-import { copyFile, mkdir, readdir, readFile, rename, rm, stat, unlink, writeFile } from 'node:fs/promises'
+import { copyFile, mkdir, open, readdir, readFile, rename, rm, stat, unlink, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 
 import { getChatMessageAttachments } from '../shared/chat-attachments.js'
@@ -28,7 +28,11 @@ import {
 import { normalizeBrainstormAnswerCount } from '../shared/brainstorm.js'
 import { getWorkspaceTitle } from '../shared/i18n.js'
 import { isInterruptedSessionRecoverable } from '../shared/interrupted-session-recovery.js'
-import { revealInternalSessionHistorySession } from './session-history-catalog.js'
+import {
+  hideInternalSessionHistoryEntries,
+  invalidateSessionHistoryCatalogCache,
+  revealInternalSessionHistorySession,
+} from './session-history-catalog.js'
 import {
   AUTOMATIONBOARD_TOOL_MODEL,
   BRAINSTORM_TOOL_MODEL,
@@ -48,6 +52,7 @@ import {
   closedWorkspaceLoadRequestSchema,
   closedWorkspaceSnapshotSchema,
   desktopRuntimeKindSchema,
+  internalSessionHistoryDeleteRequestSchema,
   internalSessionHistoryLoadResponseSchema,
   legacyAutomationBoardAutoTriggerSchema,
   recentCrashRecoverySchema,
@@ -71,6 +76,7 @@ import {
   type LayoutNode,
   type Provider,
   type RecentCrashRecovery,
+  type InternalSessionHistoryDeleteRequest,
   type RendererCrashCaptureRequest,
   type SessionHistoryEntry,
   type StartupStateRecovery,
@@ -1243,14 +1249,51 @@ function sanitizeRecoveredWalState(raw: unknown): AppState | null {
   return sanitizeStateResult(raw).state
 }
 
-/** Back up the current state file before overwriting it with defaults. */
+// 症状：2026-08-25 掉电后，应用把 4,704,124 字节全 NUL 的 state.json 备份成 7 份
+// state.backup-*，每一份都是同一堆零，没有一份能用来恢复。
+// 根因：备份前从不校验内容，坏文件因此冒充成「可恢复备份」进入 recoverFromBackups 的
+// 候选池，还因为文件名更新而排在真正可用的 snapshot 前面。
+// 否决「只判空文件」：全 NUL 文件长度 4.7 MB，非空，NUL 也不是 JS 的空白字符，任何基于
+// 大小或 trim 的判空都判不出来——必须真的 JSON.parse 一次。
+const looksParseable = (content: string) => {
+  const trimmed = content.trim()
+  if (trimmed.length === 0 || !trimmed.startsWith('{')) {
+    return false
+  }
+
+  try {
+    JSON.parse(trimmed)
+    return true
+  } catch {
+    return false
+  }
+}
+
+/**
+ * Preserve the current state file before it is replaced.
+ *
+ * Parseable content is filed as `state.backup-*` and stays eligible for
+ * recovery; anything unparseable is quarantined as `state.corrupt-*` so it is
+ * kept for forensics without ever being offered as a recovery candidate.
+ */
 const backupStateFile = async (dataDir = getAppDataDir()) => {
   try {
     const stateFile = getStateFilePathForDir(dataDir)
     const timestamp = new Date().toISOString().replace(/[:.]/g, '-')
-    const backupFile = path.join(dataDir, `state.backup-${timestamp}.json`)
-    await copyFile(stateFile, backupFile)
-    console.warn(`[state-store] State parse failed — backed up to ${backupFile}`)
+    const content = await readFile(stateFile, 'utf8').catch(() => null)
+    const salvageable = content !== null && looksParseable(content)
+    const targetFile = path.join(
+      dataDir,
+      `state.${salvageable ? 'backup' : 'corrupt'}-${timestamp}.json`,
+    )
+
+    await copyFile(stateFile, targetFile)
+
+    if (salvageable) {
+      console.warn(`[state-store] State replaced — backed up to ${targetFile}`)
+    } else {
+      console.warn(`[state-store] State file is unparseable — quarantined to ${targetFile}`)
+    }
   } catch {
     // Backup is best-effort; the original file may not exist.
   }
@@ -1305,7 +1348,28 @@ const listStateSnapshotFiles = async (dataDir = getAppDataDir()) => {
     .reverse()
 }
 
+// 症状：2026-08-25 事故中，重启后落回空看板的实例在约 2 分钟内写了 8 份空快照，把崩溃前
+// 仅存的、装着完整 4,704,124 字节数据的快照全部挤掉——本仓库测试实测「降级启动后一次保存
+// 即删 5 份」。一次本可完整恢复的事故就此变成永久损失。
+// 根因：快照轮转不区分「这次启动到底有没有读到有效状态」，降级运行照常按 8 份上限裁剪。
+// 否决「直接调大 retainedStateSnapshotCount」：治标。保存频率一高再大的窗口也会被挤穿，
+// 而且它丝毫不改变「拿空数据覆盖好数据」这个方向性错误。
+const degradedStartupDirs = new Set<string>()
+
+const markDegradedStartup = (dataDir: string) => {
+  degradedStartupDirs.add(dataDir)
+}
+
+const clearDegradedStartup = (dataDir: string) => {
+  degradedStartupDirs.delete(dataDir)
+}
+
 const pruneStateSnapshots = async (dataDir = getAppDataDir()) => {
+  // 降级期间只写不删：短暂超出 8 份上限的代价，远小于丢掉唯一一份可恢复数据。
+  if (degradedStartupDirs.has(dataDir)) {
+    return
+  }
+
   const snapshots = await listStateSnapshotFiles(dataDir)
   const staleSnapshots = snapshots.slice(retainedStateSnapshotCount)
 
@@ -1843,22 +1907,63 @@ const retryDelayMs = 100
 
 const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms))
 
-/** Write content to file atomically: write to .tmp, then rename over target. */
-const atomicWriteFile = async (filePath: string, content: string, dataDir = getAppDataDir()) => {
+export type StateWriteFsDeps = { open: typeof open }
+
+const defaultStateWriteFsDeps: StateWriteFsDeps = { open }
+
+/** Write a file and flush it to the platter before returning. */
+const writeFileSynced = async (target: string, content: string, deps: StateWriteFsDeps) => {
+  const handle = await deps.open(target, 'w')
+  try {
+    await handle.writeFile(content, 'utf8')
+    await handle.sync()
+  } finally {
+    await handle.close()
+  }
+}
+
+/** Flush an already-written file (used after rename) to the platter. */
+const syncExistingFile = async (target: string, deps: StateWriteFsDeps) => {
+  const handle = await deps.open(target, 'r+')
+  try {
+    await handle.sync()
+  } finally {
+    await handle.close()
+  }
+}
+
+// 症状：2026-08-25 掉电后 state.json 变成 4,704,124 字节全 NUL——长度对得上，内容全是零。
+// 根因：这里此前从头到尾没有一次 fsync。writeFile 只把数据交给 page cache 就返回，而
+// removeWal 是元数据操作、会先落盘。掉电瞬间的状态是「WAL 已删除 + 数据页还没写下去」，
+// 于是既没有完整的 state.json，也没有可回滚的 WAL，两头落空。
+// 否决「只在最后 fsync 一次目标文件」：那样仍然盖不住「WAL 已删、tmp 数据未落盘」这个窗口，
+// 而本次事故正是死在这个窗口里。WAL 的生命周期必须严格长于数据落盘。
+// Windows 上不能 fsync 目录（open 目录会失败），因此第 4 步同步的是目标文件本身；
+// NTFS 的元数据日志负责目录项的持久化。
+/** Write content to file atomically and durably: WAL → tmp → rename → sync → drop WAL. */
+export const atomicWriteFile = async (
+  filePath: string,
+  content: string,
+  dataDir = getAppDataDir(),
+  deps: StateWriteFsDeps = defaultStateWriteFsDeps,
+) => {
   const tmpFile = getTmpFilePath(dataDir)
 
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
     try {
-      // Step 1: Write WAL (intent log)
-      await writeFile(getWalFilePath(dataDir), content, 'utf8')
+      // Step 1: Write WAL (intent log) and flush it
+      await writeFileSynced(getWalFilePath(dataDir), content, deps)
 
-      // Step 2: Write to temp file
-      await writeFile(tmpFile, content, 'utf8')
+      // Step 2: Write to temp file and flush it
+      await writeFileSynced(tmpFile, content, deps)
 
       // Step 3: Atomic rename (replaces target)
       await rename(tmpFile, filePath)
 
-      // Step 4: Remove WAL (save succeeded)
+      // Step 4: Flush the renamed target before the WAL is allowed to disappear
+      await syncExistingFile(filePath, deps)
+
+      // Step 5: Remove WAL (save is now durable)
       await removeWal(dataDir)
       return
     } catch (error) {
@@ -2314,25 +2419,52 @@ export const loadClosedWorkspaceSnapshot = async (
 }
 
 /** Try to recover from the most recent valid backup file. */
+/** `state.backup-<ts>.json` / `state.snapshot-<ts>.json` → epoch ms (0 when unparseable). */
+const stateRecoveryCandidateTimestamp = (fileName: string) => {
+  const match = /-(\d{4}-\d{2}-\d{2})T(\d{2})-(\d{2})-(\d{2})-(\d{3})Z\.json$/.exec(fileName)
+  if (!match) {
+    return 0
+  }
+
+  const [, date, hours, minutes, seconds, millis] = match
+  return Date.parse(`${date}T${hours}:${minutes}:${seconds}.${millis}Z`) || 0
+}
+
+// 症状：2026-08-25 掉电把 state.json 写成 4,704,124 字节全 NUL，重启后落回空看板，
+// 用户 21 个工作区的看板布局全部消失。
+// 根因：恢复候选此前只匹配 state.backup-*，而事故当时唯一完好的数据是同目录下 8 份
+// state.snapshot-*（每次保存都写、保留 8 份），它们从未被读取一眼；机器历史上从没
+// 触发过 parse 失败，因此 state.backup-* 一份都不存在。
+// 不能只把 snapshot 追加进原来的 files.sort().reverse()：两种前缀的字典序会先按前缀
+// 分堆，本仓库测试实测会让 2026-08-24 的 backup 胜过 2026-08-25 的 snapshot，
+// 恢复出更旧的数据。必须解析文件名里的时间戳后统一排序。
 const recoverFromBackups = async (dataDir = getAppDataDir()): Promise<AppState | null> => {
   try {
     const files = await readdir(dataDir)
-    const backups = files
-      .filter((f) => f.startsWith('state.backup-') && f.endsWith('.json'))
-      .sort()
-      .reverse() // newest first
+    const candidates = files
+      .filter(
+        (fileName) =>
+          (fileName.startsWith('state.backup-') || fileName.startsWith(stateSnapshotPrefix)) &&
+          fileName.endsWith(stateSnapshotSuffix),
+      )
+      .map((fileName) => ({ fileName, at: stateRecoveryCandidateTimestamp(fileName) }))
+      // 时间戳解析失败的排到末尾，但仍然参与尝试——聊胜于无。
+      .sort((a, b) => b.at - a.at || b.fileName.localeCompare(a.fileName))
 
-    for (const backup of backups) {
+    for (const { fileName } of candidates) {
       try {
-        const content = await readFile(path.join(dataDir, backup), 'utf8')
+        const content = await readFile(path.join(dataDir, fileName), 'utf8')
         const raw = JSON.parse(content) as Record<string, unknown>
         const parsed = appStateSchema.safeParse(raw)
         if (parsed.success) {
-          console.warn(`[state-store] Recovered state from backup: ${backup}`)
+          console.warn(`[state-store] Recovered state from ${fileName}`)
+          markDegradedStartup(dataDir)
           return setCachedState(sanitizeState(raw), dataDir, await getStateDiskStamp(dataDir))
         }
+
+        console.warn(`[state-store] Recovery candidate rejected by schema: ${fileName}`)
       } catch {
-        // This backup is unreadable — try the next one
+        console.warn(`[state-store] Recovery candidate unreadable: ${fileName}`)
       }
     }
   } catch {
@@ -2466,10 +2598,11 @@ export const loadState = async () => {
       return cachedStateEntry.state
     }
 
-    console.warn('[state-store] No valid backups found, using defaults.')
+    console.warn('[state-store] No valid recovery candidate found, using defaults.')
+    markDegradedStartup(dataDir)
     return setCachedState(sanitizeState(raw), dataDir, await getStateDiskStamp(dataDir))
   } catch {
-    // Main file unreadable — try backups before falling back to defaults
+    // Main file unreadable — try backups and snapshots before falling back to defaults
     const backupRecovered = await recoverFromBackups(dataDir)
     if (backupRecovered) {
       return backupRecovered
@@ -2479,6 +2612,10 @@ export const loadState = async () => {
       return cachedStateEntry.state
     }
 
+    // 到这一步说明 state.json 读不出来、所有 backup/snapshot 候选也全废。既有快照必须
+    // 冻结：它们是仅剩的历史，绝不能被接下来的空看板保存挤掉。
+    console.warn('[state-store] State file unreadable and no candidate recovered — using defaults.')
+    markDegradedStartup(dataDir)
     return setCachedState(createDefaultState(getDefaultWorkspacePath()), dataDir, await getStateDiskStamp(dataDir))
   }
 }
@@ -2721,6 +2858,11 @@ const saveStateToDataDir = async (
   if (!shouldSkipRoutineStateSnapshot()) {
     await writeStateSnapshot(content, dataDir)
   }
+  // 解除必须排在本次快照写完之后：降级启动后的第一次有效保存要先把新快照落盘，才轮到
+  // 裁剪恢复正常，否则这一次保存立刻就会删掉崩溃前仅存的旧快照——正是要防的那件事。
+  if (hasRealContent) {
+    clearDegradedStartup(dataDir)
+  }
   return setCachedState(lightweightState, dataDir, await getStateDiskStamp(dataDir))
 }
 
@@ -2818,6 +2960,50 @@ export const loadSessionHistoryEntry = async (request: { entryId: string }) => {
   return internalSessionHistoryLoadResponseSchema.parse({
     entry: compactSessionHistoryEntryForTransfer(entry),
   })
+}
+
+// 症状：用户删掉一条历史会话后磁盘不释放，重启后它还可能从 catalog 索引里回到列表。
+// 根因：一条归档的可见性由三份数据共同决定——state.json 轻量索引、session-history sidecar 正文、
+//   catalog 索引与分段摘要（2026-08-06 现场 8,863 个 sidecar 约 974MB）。只改 renderer 索引等于只藏不删。
+// 为什么不重写 catalog.json：隐藏名单是既有的幂等机制（恢复会话时已在用），重写整表要么全量扫描
+//   974MB 目录，要么和维护切片抢同一份文件；维护切片本来就会在后续轮次收敛掉失效条目。
+export const deleteSessionHistoryEntry = async (
+  request: InternalSessionHistoryDeleteRequest,
+  dataDir = getAppDataDir(),
+) => {
+  const parsed = internalSessionHistoryDeleteRequestSchema.parse(request)
+  const candidates = [getSessionHistoryEntryFilePath(parsed.entryId, dataDir)]
+  if (path.basename(parsed.entryId) === parsed.entryId) {
+    // Builds before the base64url naming scheme wrote `<entryId>.json`. Only a
+    // single safe basename is tried, never a directory scan (pitfall 253).
+    candidates.push(path.join(getSessionHistoryDirPath(dataDir), `${parsed.entryId}.json`))
+  }
+
+  for (const filePath of candidates) {
+    await rm(filePath, { force: true })
+  }
+
+  await hideInternalSessionHistoryEntries({
+    entryId: parsed.entryId,
+    provider: parsed.provider,
+    sessionId: parsed.sessionId,
+    dataDir,
+  })
+  invalidateSessionHistoryCatalogCache(dataDir)
+
+  // 缓存里留着已删条目，会让崩溃保存路径 (mergeMissingPersistedHistoryEntries) 把它
+  // 并回 state.json 索引，变成一条打得开菜单却读不到正文的坏历史。
+  const cached = getCachedStateEntry(dataDir)
+  if (cached?.state.sessionHistory.some((entry) => entry.id === parsed.entryId)) {
+    setCachedState(
+      {
+        ...cached.state,
+        sessionHistory: cached.state.sessionHistory.filter((entry) => entry.id !== parsed.entryId),
+      },
+      dataDir,
+      cached.diskStamp,
+    )
+  }
 }
 
 export const resolveStateRecoveryOption = async (optionId: string): Promise<AppStateLoadResponse> => {

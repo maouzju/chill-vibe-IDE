@@ -75,3 +75,9 @@
 33. Remove the Claude-only Electron bridge guard and prove the desktop path returns `completed`.
 34. Add a red browser test for `/compact` → deferred follow-up → **Send now** with no old-stream `done`.
 35. Preserve ordinary compact waiting, but let explicit interrupt escape the compact boundary and locally settle impossible streaming-without-streamId states.
+
+## Slice 10 - transient API connection refusal
+
+36. Add a red-first provider recovery test for `API Error: Unable to connect to API (ConnectionRefused)` (plus the common spaced/`ECONNREFUSED` spellings) with a live session.
+37. Classify those explicit short-lived connection failures as bounded `resume-session` errors while keeping the no-session guard.
+38. Run the focused provider recovery tests and `pnpm test:quality`; package the verified bug fix and restart the active runtime.

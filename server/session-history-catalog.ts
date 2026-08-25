@@ -548,6 +548,13 @@ const createSessionHistoryCatalogTask = ({
   }
 }
 
+// 删除一条归档必须同时丢掉这份进程内派生缓存，否则同一次运行里紧接着的历史搜索
+// 仍会从旧 segment 里把它读回来，用户看到「删了又出现」。按 dataDir 定点清，避免
+// 打包版多数据目录场景互相清空对方的缓存。
+export const invalidateSessionHistoryCatalogCache = (dataDir = getAppDataDir()) => {
+  catalogCache.delete(path.resolve(dataDir).toLocaleLowerCase())
+}
+
 export const resetSessionHistoryCatalogCacheForTests = () => {
   // 刻意不清 `skippedRecheckCursors`：它按 dataDir 分键，测试各自用独立临时目录不会串味，而清掉
   // 会让「连续切片轮转扫完整个 skip 集合」这条覆盖在测试里退化成永远重扫同一个前缀。
@@ -739,8 +746,9 @@ export const hideInternalSessionHistoryEntries = async (options: {
   entryId: string
   provider: Provider
   sessionId?: string
+  dataDir?: string
 }) => {
-  const directory = getHistoryDirectory()
+  const directory = getHistoryDirectory(options.dataDir)
   const hidden = await readHiddenCatalog(directory)
   hidden.entryIds = [...new Set([...hidden.entryIds, options.entryId])]
   const key = sessionKey(options.provider, options.sessionId)

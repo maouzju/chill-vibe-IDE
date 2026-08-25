@@ -421,6 +421,20 @@ export const providerProfilesSchema = z.object({
 })
 export type ProviderProfiles = z.infer<typeof providerProfilesSchema>
 
+// 本地模型条目：把「本机推理服务 + 用哪个 CLI 当 harness」打包成一个可在模型选择器里
+// 直接选中的选项。刻意复用 providerSchema 当 harness 而不是新增第三个 provider —— 本仓库
+// 的 provider 差异散落在 30+ 文件的分支与 Record<Provider,X> 表里，新增枚举值的成本远高于
+// 复用现有 CLI（2026-08-23 实测：Ollama 提供标准 Anthropic /v1/messages，claude CLI 直接可用）。
+export const localModelEntrySchema = z.object({
+  id: z.string().min(1),
+  label: z.string().default(''),
+  harness: providerSchema.default('claude'),
+  baseUrl: z.string().default(''),
+  apiKey: z.string().default(''),
+  model: z.string().default(''),
+})
+export type LocalModelEntry = z.infer<typeof localModelEntrySchema>
+
 export const recentWorkspaceSchema = z.object({
   path: z.string().min(1),
   openedAt: z.string().datetime(),
@@ -531,6 +545,16 @@ export const internalSessionHistoryHideRequestSchema = z.object({
   sessionId: z.string().optional(),
 })
 export type InternalSessionHistoryHideRequest = z.infer<typeof internalSessionHistoryHideRequestSchema>
+
+// 与 hide 同形状但刻意不复用同一个 schema：hide 是「从列表里藏起来」的可逆动作，
+// delete 会真的删掉 sidecar 正文。两者共用一个类型时，任何一方将来加字段都会
+// 悄悄放宽另一方的入参校验，而这一侧的误放宽等于误删用户归档。
+export const internalSessionHistoryDeleteRequestSchema = z.object({
+  entryId: z.string().min(1),
+  provider: providerSchema,
+  sessionId: z.string().optional(),
+})
+export type InternalSessionHistoryDeleteRequest = z.infer<typeof internalSessionHistoryDeleteRequestSchema>
 
 export const archiveRecallHiddenReasonSchema = z.enum(['compact'])
 export type ArchiveRecallHiddenReason = z.infer<typeof archiveRecallHiddenReasonSchema>
@@ -815,6 +839,7 @@ export const appSettingsSchema = z.object({
       profiles: [],
     },
   }),
+  localModelEntries: z.array(localModelEntrySchema).default([]),
   gitAgentModel: z.string().default(DEFAULT_GIT_AGENT_MODEL),
   lastModel: z.object({
     provider: providerSchema,
@@ -1098,6 +1123,7 @@ export const appStateSchema = z.object({
         profiles: [],
       },
     },
+    localModelEntries: [],
     gitAgentModel: DEFAULT_GIT_AGENT_MODEL,
     recentWorkspaces: [],
   }),

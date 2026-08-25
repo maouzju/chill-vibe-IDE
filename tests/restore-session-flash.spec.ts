@@ -784,3 +784,58 @@ test('session history search filters external entries by summary metadata and sh
   await expect(historyItems).toHaveCount(0)
   await expect(page.locator('.session-history-empty')).toContainText('没有匹配的外部会话')
 })
+
+test('right-clicking an archived session deletes it after confirmation', async ({ page }) => {
+  await mockMultiTabHistoryApis(page)
+  await page.addInitScript(() => {
+    const deleted: unknown[] = []
+    ;(window as unknown as { __deletedHistory: unknown[] }).__deletedHistory = deleted
+    const api = window.electronAPI as (Window['electronAPI'] & {
+      deleteInternalSessionHistory?: (request: unknown) => Promise<void>
+    }) | undefined
+    if (api) {
+      api.deleteInternalSessionHistory = async (request: unknown) => {
+        deleted.push(request)
+      }
+    }
+  })
+  await page.goto('http://localhost:5173')
+
+  await openSessionHistoryMenu(page)
+
+  const doomed = page.locator('.session-history-item', { hasText: 'History Should Open New Tab' })
+  await expect(doomed).toHaveCount(1)
+
+  await doomed.click({ button: 'right' })
+
+  // The right-click must not fall through to the restore handler.
+  await expect(page.locator('.session-history-menu')).toBeVisible()
+  const contextMenu = page.locator('.session-history-context-menu')
+  await expect(contextMenu).toBeVisible()
+
+  page.once('dialog', (dialog) => {
+    void dialog.accept()
+  })
+  await contextMenu.getByRole('menuitem').click()
+
+  await expect(doomed).toHaveCount(0)
+  await expect(contextMenu).toHaveCount(0)
+  expect(await page.evaluate(() => (window as unknown as { __deletedHistory: unknown[] }).__deletedHistory)).toHaveLength(1)
+})
+
+test('cancelling the delete confirmation keeps the archived session', async ({ page }) => {
+  await mockMultiTabHistoryApis(page)
+  await page.goto('http://localhost:5173')
+
+  await openSessionHistoryMenu(page)
+
+  const entry = page.locator('.session-history-item', { hasText: 'History Should Open New Tab' })
+  await entry.click({ button: 'right' })
+
+  page.once('dialog', (dialog) => {
+    void dialog.dismiss()
+  })
+  await page.locator('.session-history-context-menu').getByRole('menuitem').click()
+
+  await expect(entry).toHaveCount(1)
+})

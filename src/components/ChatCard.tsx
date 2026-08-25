@@ -34,6 +34,8 @@ import {
   WHITENOISE_TOOL_MODEL,
   MODEL_OPTIONS,
   TOOL_CARD_MODELS,
+  buildLocalModelOptions,
+  isLocalModelToken,
   isModelPickerOptionVisible,
   normalizeStoredModel,
   type ModelOption,
@@ -55,6 +57,7 @@ import type {
   ChatCard as ChatCardModel,
   ChatMessage,
   ImageAttachment,
+  LocalModelEntry,
   ModelPromptRule,
   Provider,
   SlashCommand,
@@ -412,6 +415,7 @@ type ChatCardProps = {
   gitAgentModel: string
   brainstormRequestModel: string
   availableQuickToolModels: string[]
+  localModelEntries?: LocalModelEntry[]
   autoUrgeEnabled: boolean
   autoUrgeProfiles?: AutoUrgeProfile[]
   autoUrgeMessage: string
@@ -489,6 +493,13 @@ const getCustomModelOption = (provider: Provider, model: string): ModelOption | 
   const normalized = normalizeStoredModel(provider, model)
 
   if (!normalized) {
+    return null
+  }
+
+  // 本地模型令牌由 buildLocalModelOptions 单独产出（带用户起的显示名）。落到这里只可能是
+  // 条目已被删除，这时造一条 label 为 `__local__:xxx` 的选项只会把令牌暴露给用户，
+  // 不如不显示 —— 选择器会回落到第一项，后端也会把无效条目回落成默认模型。
+  if (isLocalModelToken(normalized)) {
     return null
   }
 
@@ -860,6 +871,7 @@ const areChatCardPropsEqual = (previous: ChatCardProps, next: ChatCardProps) =>
   previous.gitAgentModel === next.gitAgentModel &&
   previous.brainstormRequestModel === next.brainstormRequestModel &&
   previous.availableQuickToolModels === next.availableQuickToolModels &&
+  previous.localModelEntries === next.localModelEntries &&
   previous.autoUrgeEnabled === next.autoUrgeEnabled &&
   previous.autoUrgeProfiles === next.autoUrgeProfiles &&
   previous.autoUrgeMessage === next.autoUrgeMessage &&
@@ -1435,6 +1447,7 @@ const ChatCardView = ({
   gitAgentModel,
   brainstormRequestModel,
   availableQuickToolModels = [],
+  localModelEntries = [],
   autoUrgeEnabled,
   autoUrgeProfiles = [],
   autoUrgeMessage,
@@ -3600,7 +3613,12 @@ const ChatCardView = ({
     }
 
     const custom = getCustomModelOption(effectiveProvider, card.model ?? '')
-    const base = custom ? [custom, ...MODEL_OPTIONS] : MODEL_OPTIONS
+    // 本地条目排在最前：它们是用户自己配的，找起来该比内置模型更快。
+    const base = [
+      ...buildLocalModelOptions(localModelEntries),
+      ...(custom ? [custom] : []),
+      ...MODEL_OPTIONS,
+    ]
     return base.filter(isModelPickerOptionVisible)
   }, [
     brainstormRequestTarget.model,
@@ -3608,9 +3626,12 @@ const ChatCardView = ({
     card.model,
     effectiveProvider,
     isBrainstormCard,
+    localModelEntries,
   ])
   const currentModelOption =
-    selectOptions.find((option) => `${option.provider}:${option.model}` === selectValue) ?? selectOptions[0]
+    selectOptions.find((option) => `${option.provider}:${option.model}` === selectValue) ??
+    MODEL_OPTIONS.find((option) => `${option.provider}:${option.model}` === selectValue) ??
+    selectOptions[0]
   // Fable 5 always thinks: the thinking toggle is disabled there and the auto
   // tier is hidden from its menu.
   const alwaysThinkingModel =

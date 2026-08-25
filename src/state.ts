@@ -32,7 +32,9 @@ import { getChatMessageAttachments } from '../shared/chat-attachments'
 import { getDuplicateColumnTitle, getForkConversationTitle, getWorkspaceTitle } from '../shared/i18n'
 import {
   AUTOMATIONBOARD_TOOL_MODEL,
+  buildLocalModelToken,
   getDefaultModel,
+  isLocalModelToken,
   normalizeStoredModel,
   STICKYNOTE_TOOL_MODEL,
   TOOL_CARD_MODELS,
@@ -52,6 +54,7 @@ import type {
   ChatMessage,
   ClosedWorkspaceSnapshot,
   LayoutNode,
+  LocalModelEntry,
   PaneNode,
   Provider,
   ProviderProfile,
@@ -158,6 +161,54 @@ const clearProviderNativeSessions = (state: AppState, provider: Provider): AppSt
   ),
 })
 
+// 本地模型条目换了端点/密钥/模型，指向它的卡必须丢掉原生 session —— 否则会把上一个端点
+// 的 session id 发给下一个端点（provider profile 切换早就踩过这个坑，见上面的 routing
+// signature）。这里刻意只清**指向该条目**的卡，而不是像 profile 那样整个 provider 清光：
+// 条目是逐卡生效的，误清同 provider 的云端卡等于白丢一份上下文。
+const clearLocalModelEntrySessions = (state: AppState, entryId: string): AppState => {
+  const token = buildLocalModelToken(entryId)
+
+  return {
+    ...state,
+    columns: state.columns.map((column) => ({
+      ...column,
+      cards: Object.fromEntries(
+        Object.entries(column.cards).map(([cardId, card]) =>
+          card.model === token
+            ? [
+                cardId,
+                {
+                  ...card,
+                  sessionId: undefined,
+                  sessionModel: undefined,
+                  providerSessions: {},
+                  contextTransfer: undefined,
+                },
+              ]
+            : [cardId, card],
+        ),
+      ),
+    })),
+  }
+}
+
+const localModelEntryRoutingChanged = (
+  previous: AppSettings['localModelEntries'],
+  entry: AppSettings['localModelEntries'][number],
+) => {
+  const existing = previous.find((candidate) => candidate.id === entry.id)
+  if (!existing) {
+    return false
+  }
+
+  return (
+    existing.baseUrl !== entry.baseUrl ||
+    existing.apiKey !== entry.apiKey ||
+    existing.model !== entry.model ||
+    existing.harness !== entry.harness
+  )
+}
+
 const clearSessionsForRoutingChanges = (
   previous: AppState,
   next: AppState,
@@ -263,6 +314,14 @@ export type IdeAction =
       type: 'setActiveProviderProfile'
       provider: Provider
       profileId: string
+    }
+  | {
+      type: 'upsertLocalModelEntry'
+      entry: LocalModelEntry
+    }
+  | {
+      type: 'removeLocalModelEntry'
+      entryId: string
     }
   | { type: 'applyConfiguredModels' }
   | {
@@ -1394,8 +1453,14 @@ const selectCardModel = (
   }
 
   const normalizedModel = normalizeStoredModel(provider, model)
+  // 本地模型令牌不能写进全局默认（requestModels / lastModel / column.model）：条目一旦被删，
+  // 之后新建的每张卡都会默认落到一个不存在的条目上 —— 和工具卡令牌进全局默认时造出空壳卡
+  // 是同一类问题。本地条目本来就是逐卡生效的（SPEC local-model-entries 需求 #4）。
   const shouldRememberRequestModel =
-    rememberGlobalPreference && normalizedModel.length > 0 && !toolCardModels.has(normalizedModel)
+    rememberGlobalPreference &&
+    normalizedModel.length > 0 &&
+    !toolCardModels.has(normalizedModel) &&
+    !isLocalModelToken(normalizedModel)
   let nextState =
     shouldRememberRequestModel && state.settings.requestModels[provider] !== normalizedModel
       ? applyRequestModelPatch(state, { [provider]: normalizedModel })
@@ -1504,7 +1569,8 @@ const selectCardModel = (
     const shouldRememberColumnModel =
       rememberGlobalPreference &&
       provider === currentColumn.provider &&
-      !toolCardModels.has(normalizedModel)
+      !toolCardModels.has(normalizedModel) &&
+      !isLocalModelToken(normalizedModel)
 
     return {
       ...currentColumn,
@@ -2078,6 +2144,38 @@ const ideReducerCore = (state: AppState, action: IdeAction): AppState => {
         }))
 
       return touchState(clearSessionsForRoutingChanges(state, next, [action.provider]))
+    }
+    case 'upsertLocalModelEntry': {
+      const entries = state.settings.localModelEntries
+      const exists = entries.some((entry) => entry.id === action.entry.id)
+      const nextEntries = exists
+        ? entries.map((entry) => (entry.id === action.entry.id ? action.entry : entry))
+        : [...entries, action.entry]
+      const next: AppState = {
+        ...state,
+        settings: { ...state.settings, localModelEntries: nextEntries },
+      }
+
+      return touchState(
+        localModelEntryRoutingChanged(entries, action.entry)
+          ? clearLocalModelEntrySessions(next, action.entry.id)
+          : next,
+      )
+    }
+    case 'removeLocalModelEntry': {
+      const nextEntries = state.settings.localModelEntries.filter(
+        (entry) => entry.id !== action.entryId,
+      )
+      if (nextEntries.length === state.settings.localModelEntries.length) {
+        return state
+      }
+
+      const next: AppState = {
+        ...state,
+        settings: { ...state.settings, localModelEntries: nextEntries },
+      }
+
+      return touchState(clearLocalModelEntrySessions(next, action.entryId))
     }
     case 'applyConfiguredModels':
       return touchState(applyConfiguredModels(state))

@@ -142,6 +142,91 @@ function Configure-GitBashPath {
     Write-Step 'Git Bash was not found after Git installation. Skipping CLAUDE_CODE_GIT_BASH_PATH.'
 }
 
+function Invoke-NpmInstallOnce {
+    # Results come back through [ref] instead of `return` on purpose: Write-Step
+    # uses Write-Output, so anything this function prints would be merged into its
+    # return value and the caller would receive the whole npm log instead of an
+    # exit code.
+    param(
+        [string]$NpmPath,
+        [string]$PackageSpec,
+        [ref]$OutputLines,
+        [ref]$ExitCode
+    )
+
+    # npm writes harmless warnings (e.g. "npm warn cleanup") to stderr. With 2>&1
+    # those lines surface as NativeCommandError records, which the script-wide
+    # 'Stop' preference would treat as terminating and abort even a successful
+    # install. Relax the preference around the npm call and decide success from the
+    # real process exit code instead.
+    $previousErrorActionPreference = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    $lines = New-Object 'System.Collections.Generic.List[string]'
+    try {
+        & $NpmPath install -g $PackageSpec 2>&1 | ForEach-Object {
+            $line = $_.ToString().Trim()
+            if ($line) {
+                $lines.Add($line)
+                Write-Step "  $line"
+            }
+        }
+        $ExitCode.Value = $LASTEXITCODE
+    }
+    finally {
+        $ErrorActionPreference = $previousErrorActionPreference
+    }
+
+    $OutputLines.Value = $lines.ToArray()
+}
+
+function Get-StaleNpmShimPath {
+    # Symptom: one-click setup died with `EEXIST: file already exists ... codex.ps1`
+    # and npm exit code 1, on a box where the Claude install right above it had just
+    # succeeded (reported 2026-08-25, v0.20.8).
+    # Root cause: npm deletes the old global package before writing the new one. That
+    # delete can fail on Windows (the report shows EPERM on a locked
+    # `codex-win32-x64\vendor`, enough for an antivirus scan or a running codex.exe),
+    # and npm then refuses to overwrite its own leftover shim. The install is wedged
+    # permanently: every later run hits the same leftover and fails identically, so
+    # the user can never recover without deleting the file by hand.
+    # Why parse npm's reported path instead of just deleting <command>.ps1: only the
+    # file npm actually tripped over should go. Why the two guards below anyway: the
+    # path comes from child-process output, so it is untrusted input — a deletion is
+    # allowed only inside npm's own global bin directory AND only for a filename that
+    # is exactly this CLI's shim. Anything else is ignored rather than deleted.
+    # This is a pure function (no Write-Step) so its return value stays clean.
+    param(
+        [string]$NpmPath,
+        [string]$CommandName,
+        [string[]]$NpmOutput
+    )
+
+    if (-not $NpmOutput) { return @() }
+    if (-not ($NpmOutput -match 'EEXIST')) { return @() }
+
+    $npmBinDir = [System.IO.Path]::GetFullPath((Split-Path -Path $NpmPath -Parent)).TrimEnd('\')
+    $allowedNames = @($CommandName, "$CommandName.ps1", "$CommandName.cmd", "$CommandName.bat")
+    $results = New-Object 'System.Collections.Generic.List[string]'
+
+    foreach ($line in $NpmOutput) {
+        $candidate = $null
+        if ($line -match '^npm error path\s+(.+)$') { $candidate = $Matches[1].Trim() }
+        elseif ($line -match 'File exists:\s*(.+)$') { $candidate = $Matches[1].Trim() }
+        if ([string]::IsNullOrWhiteSpace($candidate)) { continue }
+
+        try { $full = [System.IO.Path]::GetFullPath($candidate) } catch { continue }
+        if (-not (Test-Path -LiteralPath $full -PathType Leaf)) { continue }
+
+        $parent = [System.IO.Path]::GetFullPath((Split-Path -Path $full -Parent)).TrimEnd('\')
+        if ($parent -ine $npmBinDir) { continue }
+        if ($allowedNames -notcontains (Split-Path -Path $full -Leaf)) { continue }
+
+        if (-not $results.Contains($full)) { $results.Add($full) }
+    }
+
+    return $results.ToArray()
+}
+
 function Install-NpmGlobal {
     param(
         [string]$PackageName,
@@ -167,24 +252,27 @@ function Install-NpmGlobal {
     $packageSpec = "${PackageName}@${normalizedVersion}"
     $actionLabel = if ($Force) { 'Updating' } else { 'Installing' }
     Write-Step "$actionLabel $DisplayName with npm ($normalizedVersion)..."
-    # npm writes harmless warnings (e.g. "npm warn cleanup") to stderr. With 2>&1
-    # those lines surface as NativeCommandError records, which the script-wide
-    # 'Stop' preference would treat as terminating and abort even a successful
-    # install. Relax the preference around the npm call and decide success from the
-    # real process exit code instead.
-    $previousErrorActionPreference = $ErrorActionPreference
-    $ErrorActionPreference = 'Continue'
-    try {
-        & $npmPath install -g $packageSpec 2>&1 | ForEach-Object {
-            $line = $_.ToString().Trim()
-            if ($line) {
-                Write-Step "  $line"
+
+    $npmLines = @()
+    $npmExitCode = 0
+    Invoke-NpmInstallOnce -NpmPath $npmPath -PackageSpec $packageSpec -OutputLines ([ref]$npmLines) -ExitCode ([ref]$npmExitCode)
+
+    if ($npmExitCode -ne 0) {
+        $staleShims = @(Get-StaleNpmShimPath -NpmPath $npmPath -CommandName $CommandName -NpmOutput $npmLines)
+        if ($staleShims.Count -gt 0) {
+            foreach ($shim in $staleShims) {
+                Write-Step "Removing leftover npm shim from a failed cleanup: $shim"
+                Remove-Item -LiteralPath $shim -Force -ErrorAction SilentlyContinue
+                if (Test-Path -LiteralPath $shim) {
+                    # Still locked: retrying npm would fail identically, so stop with
+                    # the one instruction that actually unblocks the user.
+                    throw "$DisplayName installation is blocked by '$shim', which is locked and could not be removed. Close any running $CommandName process or open terminal, then run the setup again."
+                }
             }
+
+            Write-Step "Retrying $DisplayName installation after clearing the leftover shim..."
+            Invoke-NpmInstallOnce -NpmPath $npmPath -PackageSpec $packageSpec -OutputLines ([ref]$npmLines) -ExitCode ([ref]$npmExitCode)
         }
-        $npmExitCode = $LASTEXITCODE
-    }
-    finally {
-        $ErrorActionPreference = $previousErrorActionPreference
     }
 
     if ($npmExitCode -ne 0) {

@@ -86,12 +86,19 @@ const createFakeEnv = (options?: {
   onExhausted?: () => void
   guardDelaysMs?: number[]
   onGuardReclaim?: () => void
+  // The card is active but its textarea is not in the DOM at all, so
+  // focusTextarea has nothing to call focus() on. Distinct from
+  // focusSucceeds:false, which models a focus() that was issued and did not
+  // land. Only this one makes focusTextarea report "no textarea".
+  textareaMissing?: boolean
+  onMissingTextarea?: () => void
 }): FakeEnv => {
   let focusCount = 0
   let cancelledFrameCount = 0
   let cancelledTimerCount = 0
   let activeState: 'settled' | 'vacant' | 'elsewhere' = 'vacant'
   const focusSucceeds = options?.focusSucceeds ?? true
+  const textareaMissing = options?.textareaMissing ?? false
 
   let frameCallback: (() => void) | null = null
   const timers = new Map<number, { callback: () => void; delayMs: number }>()
@@ -99,11 +106,18 @@ const createFakeEnv = (options?: {
 
   const deps: ComposerFocusAttemptDeps = {
     focusTextarea: () => {
+      if (textareaMissing) {
+        // Mirrors ChatCard: a null textareaRef returns false WITHOUT calling
+        // focus() on anything.
+        return false
+      }
       focusCount += 1
       if (focusSucceeds) {
         activeState = 'settled'
       }
-      return focusSucceeds
+      // focusSucceeds only controls whether focus LANDED; the textarea existed
+      // either way, so the "textarea present" return value stays true.
+      return true
     },
     isFocusSettled: () => activeState === 'settled',
     isFocusVacant: () => activeState === 'vacant',
@@ -128,6 +142,7 @@ const createFakeEnv = (options?: {
     onExhausted: options?.onExhausted,
     guardDelaysMs: options?.guardDelaysMs,
     onGuardReclaim: options?.onGuardReclaim,
+    onMissingTextarea: options?.onMissingTextarea,
   }
 
   return {
@@ -307,6 +322,99 @@ test('a cancelled composer focus attempt never reports exhaustion', () => {
   }
 
   assert.equal(exhausted, 0)
+})
+
+// ── Forensic blind spot: the ladder dies silently when the textarea is gone ──
+// Dump-reading 2026-08-25: every existing dead-end signal (focusExhaustedCount,
+// the "textarea is unmounted" debug line) is produced from INSIDE onExhausted,
+// and onExhausted can only fire when the ladder walks to its last rung with
+// focus still vacant. When the card is active but its textarea is not in the
+// DOM, neither holds: focusTextarea returns false without calling focus(), and
+// isFocusVacant is false too because ChatCard derives the pane from
+// textareaRef.current — a null ref makes isReclaimableOwnPaneChrome return
+// false for the tab button that actually holds focus. So the very first retry
+// hits shouldStop(), the ladder self-terminates, and the dump records nothing
+// at all. This shape must report itself directly, not via exhaustion.
+
+test('composer focus attempt reports a missing textarea instead of dying silently', () => {
+  let missing = 0
+  const env = createFakeEnv({
+    textareaMissing: true,
+    onMissingTextarea: () => (missing += 1),
+  })
+  // Focus sits on the pane's tab button, which a null textareaRef cannot
+  // recognise as reclaimable own-pane chrome — the real dump's state.
+  env.setActiveElement('elsewhere')
+  startComposerFocusAttempt(env.deps)
+
+  env.runFrame()
+  let guard = 0
+  while (env.runNextTimer() !== null && guard < 20) {
+    guard += 1
+  }
+
+  assert.equal(
+    missing,
+    1,
+    'an active card whose textarea is absent is the severest focus dead end and must leave a forensic trace',
+  )
+})
+
+test('the missing-textarea dead end is invisible to the exhaustion signal', () => {
+  // Guards the reason the probe above has to exist at all: if this ever starts
+  // reporting exhaustion, the extra channel can be reconsidered.
+  let exhausted = 0
+  let missing = 0
+  const env = createFakeEnv({
+    textareaMissing: true,
+    onExhausted: () => (exhausted += 1),
+    onMissingTextarea: () => (missing += 1),
+  })
+  env.setActiveElement('elsewhere')
+  startComposerFocusAttempt(env.deps)
+
+  env.runFrame()
+  let guard = 0
+  while (env.runNextTimer() !== null && guard < 20) {
+    guard += 1
+  }
+
+  assert.equal(exhausted, 0, 'the ladder stops before its last rung, so exhaustion never fires here')
+  assert.equal(missing, 1, 'only the dedicated missing-textarea channel can see this shape')
+})
+
+test('a present textarea never reports the missing-textarea dead end', () => {
+  let missing = 0
+  const env = createFakeEnv({ focusSucceeds: false, onMissingTextarea: () => (missing += 1) })
+  startComposerFocusAttempt(env.deps)
+
+  env.runFrame()
+  let guard = 0
+  while (env.runNextTimer() !== null && guard < 20) {
+    guard += 1
+  }
+
+  assert.equal(
+    missing,
+    0,
+    'a focus() that was issued but did not land is the exhaustion case, not a missing textarea',
+  )
+})
+
+test('the missing-textarea dead end is reported once per attempt, not once per rung', () => {
+  // Focus stays vacant here, so the ladder walks every rung. A per-rung report
+  // would flood the bounded forensic ledger and hide older evidence.
+  let missing = 0
+  const env = createFakeEnv({ textareaMissing: true, onMissingTextarea: () => (missing += 1) })
+  startComposerFocusAttempt(env.deps)
+
+  env.runFrame()
+  let guard = 0
+  while (env.runNextTimer() !== null && guard < 20) {
+    guard += 1
+  }
+
+  assert.equal(missing, 1, 'one attempt must produce exactly one missing-textarea entry')
 })
 
 // ── F9: hit-test repair scope escalation ───────────────────────────────────

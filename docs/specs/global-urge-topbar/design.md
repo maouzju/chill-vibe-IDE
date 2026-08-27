@@ -45,6 +45,10 @@ globalUrgeProfileId = settings.autoUrgeGlobalProfileId
 - `evaluateAutoUrge` 返回 `disable` 时，仅当 `source==='card'` 才 `patchCard({ autoUrgeActive: false })`；`global` 源的 disable 表示"本轮已见成功关键词"，不写卡（本来就是 false）。
 - 新 effect：`globalUrgeApplies`（source==='global'）从 false→true 且卡 idle 时触发一次 `manual-activation`（与逐卡开关打开即发一致）。用 ref 存前值，mount 首帧不触发。
 
+流结束后的自动续催由 App 层稳定完成广播驱动，不再依赖 ChatCard 的
+`streaming → idle` effect；因此未挂载的后台 tab 也能处理。App 调用
+`planAutoUrgeForCompletedCard`，必要时经 Ollama 判官确认后发送，并在发送前再次确认卡片仍为 idle。
+
 ## 顶部 UI（src/App.tsx + src/index.css）
 
 `app-topbar-frame` 内、`app-tab-list` 之后、窗口控制之前，当 `autoUrgeEnabled && autoUrgeGlobalControlEnabled` 时渲染 `.app-topbar-urge`：

@@ -190,8 +190,13 @@ import {
   publishWorkspaceSessionMirror,
   subscribeWorkspaceAdminCommands,
   subscribeRemoteCommands,
+  judgeUrgeWithOllama,
   type RemoteMonitorStartResponse,
 } from './api'
+import {
+  getLatestAssistantTurnText,
+  planAutoUrgeForCompletedCard,
+} from './components/chat-auto-urge'
 import { resolveAppLoadError } from './app-load-error'
 import {
   isProviderStatusExplicitlyUnavailable,
@@ -3234,6 +3239,103 @@ function App() {
     })
   }, [clearWakeTimerBatch])
 
+  // 症状：开着鞭策的卡在**非活动 tab** 上跑完就再也不被鞭策（2026-08-27 用户 state.json
+  //   实证：那张 armed 卡 status 已 idle、末尾写着「尚未解决：…」，却停着不动）。
+  // 根因：判定原先只挂在 ChatCard 的 streaming→idle effect 上，而非活动 tab 的 ChatCard
+  //   整棵子树会被卸载，那次状态跳变没有观察者；切回去也不补发。
+  // 被否决：把聊天卡加进 `cardKeepsPaneRuntimeWhenInactive` 常驻白名单 —— 会让所有非活动
+  //   卡常驻渲染，重开 streaming textarea 抢焦点那一族老坑。
+  // 因此改挂在这条 App 层的稳定完成广播上：它读 appStateRef，与组件挂不挂载无关。
+  const runAutoUrgeForSettledCard = useCallback(
+    (columnId: string, settledCard: ChatCard) => {
+      const settings = appStateRef.current.settings
+      const plan = planAutoUrgeForCompletedCard(
+        {
+          messages: settledCard.messages,
+          sessionId: settledCard.sessionId,
+          status: settledCard.status,
+          model: settledCard.model,
+          autoUrgeActive: settledCard.autoUrgeActive === true,
+          autoUrgeProfileId: settledCard.autoUrgeProfileId,
+          backgroundWorkPending: settledCard.backgroundWorkPending === true,
+          repeatLoopActive: settledCard.repeatLoopActive === true,
+        },
+        {
+          autoUrgeEnabled: settings.autoUrgeEnabled,
+          autoUrgeProfiles: settings.autoUrgeProfiles,
+          autoUrgeMessage: settings.autoUrgeMessage,
+          autoUrgeSuccessKeyword: settings.autoUrgeSuccessKeyword,
+          autoUrgeGlobalControlEnabled: settings.autoUrgeGlobalControlEnabled,
+          autoUrgeGlobalActive: settings.autoUrgeGlobalActive,
+          autoUrgeGlobalProfileId: settings.autoUrgeGlobalProfileId,
+          repeatLoopEnabled: settings.repeatLoopEnabled,
+        },
+      )
+
+      if (plan.kind === 'skip') {
+        return
+      }
+
+      const disableCardUrge = () => {
+        // 全局鞭策不写卡：关掉的应该是那个全局开关，而不是替用户把某张卡的开关按掉。
+        if (plan.source !== 'card') {
+          return
+        }
+        const action: IdeAction = {
+          type: 'updateCard',
+          columnId,
+          cardId: settledCard.id,
+          patch: { autoUrgeActive: false },
+        }
+        persistAfterAction(action.type, applyAction(action))
+      }
+
+      if (plan.kind === 'disable') {
+        disableCardUrge()
+        return
+      }
+
+      const sendUrge = (message: string) => {
+        // 判定期间用户可能已经手动发了消息；只鞭策仍然闲着的卡。
+        const stillIdle = appStateRef.current.columns
+          .find((column) => column.id === columnId)
+          ?.cards[settledCard.id]
+        if (!stillIdle || stillIdle.status !== 'idle') {
+          return
+        }
+        void sendMessageRef.current?.(columnId, settledCard.id, message, [], {
+          origin: 'auto-urge',
+        })
+      }
+
+      if (plan.kind === 'judge') {
+        const judgeModel = plan.judgeModel.trim()
+        const judgeText = getLatestAssistantTurnText(settledCard.messages)
+        if (!judgeModel || !judgeText) {
+          return
+        }
+
+        void judgeUrgeWithOllama({ model: judgeModel, text: judgeText })
+          .then((verdict) => {
+            // 判官不可用或答案读不懂就闭嘴，不要盲目鞭策。
+            if (!verdict.ok || typeof verdict.shouldContinue !== 'boolean') {
+              return
+            }
+            if (!verdict.shouldContinue) {
+              disableCardUrge()
+              return
+            }
+            sendUrge(plan.message)
+          })
+          .catch(() => undefined)
+        return
+      }
+
+      sendUrge(plan.message)
+    },
+    [applyAction, persistAfterAction],
+  )
+
   const scheduleStableWakeTimerCompletion = useCallback((completedCardId: string) => {
     const previousTimer = wakeTimerCompletionTimersRef.current.get(completedCardId)
     if (previousTimer !== undefined) {
@@ -3243,9 +3345,13 @@ function App() {
     const timer = window.setTimeout(() => {
       wakeTimerCompletionTimersRef.current.delete(completedCardId)
       const state = appStateRef.current
-      const completedCard = state.columns
-        .flatMap((column) => Object.values(column.cards))
-        .find((card) => card.id === completedCardId)
+      const completedColumn = state.columns.find((column) =>
+        Object.prototype.hasOwnProperty.call(column.cards, completedCardId),
+      )
+      const completedCard = completedColumn?.cards[completedCardId]
+      if (completedColumn && completedCard) {
+        runAutoUrgeForSettledCard(completedColumn.id, completedCard)
+      }
       if (!completedCard || !shouldConfirmWakeTimerCompletion({
         normalCompletion: true,
         statusAfterStability: completedCard.status,
@@ -3265,7 +3371,12 @@ function App() {
       evaluateAutomationBoardTemplateTriggersRef.current?.(completedCardId)
     }, wakeTimerCompletionStabilityMs)
     wakeTimerCompletionTimersRef.current.set(completedCardId, timer)
-  }, [applyActions, buildWakeTimerTargetReleaseActions, persistAfterActions])
+  }, [
+    applyActions,
+    buildWakeTimerTargetReleaseActions,
+    persistAfterActions,
+    runAutoUrgeForSettledCard,
+  ])
 
   const scheduleAllAgentsDoneSound = useCallback(() => {
     if (allAgentsDoneSoundTimerRef.current !== null) {
@@ -5333,6 +5444,7 @@ function App() {
             // 同 stopped：这一轮以"流没了"收场，等它的人必须被放行。
             actions.push(...buildWakeTimerTargetReleaseActions(card.id, { forceRelease: true }))
             persistAfterActions(actions, applyActions(actions))
+            scheduleStableWakeTimerCompletion(card.id)
             dispatchNextQueuedSend(columnId, card.id)
             flushReadyWakeTimersRef.current?.()
             return

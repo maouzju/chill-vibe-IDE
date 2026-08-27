@@ -139,7 +139,10 @@ import {
   startComposerFocusAttempt,
   type ComposerFocusAttemptDeps,
 } from './composer-focus'
-import { notifyForensicsRescueEvent } from '../diagnostics/stuck-pane-forensics'
+import {
+  notifyForensicsRescueEvent,
+  recordMissingComposerForForensics,
+} from '../diagnostics/stuck-pane-forensics'
 import { createDraftSyncScheduler, draftSyncIdleMs } from './chat-draft-sync'
 import {
   evaluateAutoUrge,
@@ -1517,7 +1520,6 @@ const ChatCardView = ({
   const [settingsMenuOpen, setSettingsMenuOpen] = useState(false)
   const [editingTitle, setEditingTitle] = useState(false)
   const [editingTitleValue, setEditingTitleValue] = useState('')
-  const prevCardStatusRef = useRef(card.status)
   const pendingImmediateAutoUrgeRef = useRef(false)
   const [autoUrgeActive, setAutoUrgeActive] = useState(() => card.autoUrgeActive === true)
   const [selectedAutoUrgeProfileId, setSelectedAutoUrgeProfileId] = useState(
@@ -2129,6 +2131,17 @@ const ChatCardView = ({
       cancelFrame: (handle) => window.cancelAnimationFrame(handle),
       schedule: (callback, delayMs) => window.setTimeout(callback, delayMs),
       cancel: (handle) => window.clearTimeout(handle),
+      // 焦点请求扑了个空：卡还 active，textarea 却不在 DOM 里。这条路径连
+      // onExhausted 都到不了（推导见 composer-focus.ts 的 onMissingTextarea
+      // 注释），而下面那些 dataset 计数器又都得从 textarea 往上找 .card-shell
+      // 才写得进去 —— 没有 textarea 就没有落点。所以只能记进模块级取证账本，
+      // 否则 dump 里一点痕迹都不会留。
+      onMissingTextarea: () => {
+        recordMissingComposerForForensics({ cardId: card.id })
+        console.debug(
+          '[composer-focus] focus requested but this active card has no textarea in the DOM',
+        )
+      },
       onExhausted: withEscalation
         ? () => {
             // Every focus() in the ladder was issued and none landed while
@@ -2369,6 +2382,14 @@ const ChatCardView = ({
       cancelFrame: (handle) => window.cancelAnimationFrame(handle),
       schedule: (callback, delayMs) => window.setTimeout(callback, delayMs),
       cancel: (handle) => window.clearTimeout(handle),
+      // 同一个盲区的第二条入口：按下时 textarea 还在（不然这条梯子不会武装），
+      // 但验证期内 panel 被删掉就同样扑空。两条梯子共用一个探针。
+      onMissingTextarea: () => {
+        recordMissingComposerForForensics({ cardId: card.id })
+        console.debug(
+          '[composer-focus] press verification found no textarea on this active card',
+        )
+      },
       onExhausted: withEscalation
         ? () => {
             // Every focus() was issued on a press that named the textarea
@@ -4090,24 +4111,10 @@ const ChatCardView = ({
     }
   }, [slashMenuOpen])
 
-  // Auto-Urge: when card transitions from streaming 鈫?idle, check if the last
-  // assistant message contains the success keyword. If not, auto-send the urge message.
-  useEffect(() => {
-    const previousStatus = prevCardStatusRef.current
-    prevCardStatusRef.current = card.status
-
-    if (previousStatus !== 'streaming' || card.status !== 'idle') return
-
-    const timer = window.setTimeout(() => {
-      runAutoUrge({
-        type: 'stream-finished',
-        previousStatus,
-        status: card.status,
-      })
-    }, 800)
-    return () => window.clearTimeout(timer)
-  }, [card.status, card.id, runAutoUrge])
-
+  // Auto-Urge 的「一轮跑完了要不要接着催」已经搬到 App 层的稳定完成广播
+  // （`runAutoUrgeForSettledCard`）。这里刻意不再监听 streaming→idle：非活动 tab 的
+  // ChatCard 整棵子树会被卸载，挂在组件上的那次判定根本没有观察者，卡就此停摆
+  // （2026-08-27 用户 state.json 实证）。组件只保留「用户手动打开开关」这一路。
   useEffect(() => {
     if (!pendingImmediateAutoUrgeRef.current || card.status !== 'idle') {
       return

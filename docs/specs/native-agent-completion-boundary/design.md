@@ -76,7 +76,7 @@ renderer `onDone` 先区分：
 - `dispatchNextQueuedSend`
 - `scheduleAllAgentsDoneSound`
 
-ChatCard 的 Auto-Urge effect 在 `backgroundWorkPending` 时跳过。全完成检测与 wake-timer 的
+App 层稳定完成广播的 Auto-Urge 计划在 `backgroundWorkPending` 时跳过，不再依赖 ChatCard effect。全完成检测与 wake-timer 的
 目标忙闲快照把该字段纳入判断，避免其他卡片的完成定时器从侧面误判。
 
 ## unsolicited 与 sidechain

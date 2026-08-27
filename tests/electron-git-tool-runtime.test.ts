@@ -198,7 +198,12 @@ const createHeavyPaneStateDir = async (workspacePath: string) => {
 }
 
 after(async () => {
-  await Promise.all(tempRoots.map((root) => rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 })))
+  // Windows can release the Electron cwd/git handles later than app.close();
+  // clean sequentially with a wider bounded retry window instead of failing
+  // the product assertion on a transient parallel rmdir race.
+  for (const root of tempRoots) {
+    await rm(root, { recursive: true, force: true, maxRetries: 30, retryDelay: 200 })
+  }
 })
 
 const createElectronRuntimeEnv = (dataDir: string, repoPath: string) => {

@@ -144,5 +144,12 @@ tab 按钮 `draggable`，Chromium ~4px 即触发原生 dragstart（吞掉后续 
 - 跟踪 Electron/Chromium 升级对合成器 bug 的修复。
 
 ## 7. 本次调查的元数据
+
+### 3.9 新增缺失 textarea 取证
+
+2026-08-27 起，聚焦梯子在活动卡的 textarea 不存在时触发 `onMissingTextarea`，写入模块级
+`missingComposers[]` 账本。每条记录包含卡片 ID、时间和 `activeElementPath`，弥补无法通过
+`.card-shell` dataset 计数器或 `onExhausted` 观察到的静默失败。
+
 - Workflow run: `wf_d6135504-89b`（19 subagents，545 tool uses）。
 - 对抗验证：14 个根因候选全部核实为至少部分成立（0 个被完全反驳），其中「1.5s 节流导致连点全无效」「'unrelated' 死路径是根因」两条被显著收窄/降级，本文采用收窄后的表述。

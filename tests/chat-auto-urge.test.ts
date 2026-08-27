@@ -1,11 +1,14 @@
 import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
 import test from 'node:test'
 
 import type { ChatMessage } from '../shared/schema.ts'
+import { GIT_TOOL_MODEL } from '../shared/models.ts'
 import {
   evaluateAutoUrge,
   getLatestAssistantTurnText,
   getNextAutoUrgeToggleState,
+  planAutoUrgeForCompletedCard,
   resolveEffectiveAutoUrge,
 } from '../src/components/chat-auto-urge.ts'
 
@@ -587,4 +590,128 @@ test('getLatestAssistantTurnText returns the last assistant prose of the latest 
 
 test('getLatestAssistantTurnText returns an empty string when the latest turn has no assistant prose', () => {
   assert.equal(getLatestAssistantTurnText([createUserMessage('任务')]), '')
+})
+
+const urgeSettings = (
+  patch: Partial<Parameters<typeof planAutoUrgeForCompletedCard>[1]> = {},
+): Parameters<typeof planAutoUrgeForCompletedCard>[1] => ({
+  autoUrgeEnabled: true,
+  autoUrgeProfiles: [
+    {
+      id: 'profile-done',
+      name: '全部做完',
+      message: '继续，直到全部做完',
+      successKeyword: '全部做完了',
+      judgeMode: 'keyword',
+      judgeModel: '',
+    },
+  ],
+  autoUrgeMessage: '继续',
+  autoUrgeSuccessKeyword: 'YES',
+  autoUrgeGlobalControlEnabled: false,
+  autoUrgeGlobalActive: false,
+  autoUrgeGlobalProfileId: 'profile-done',
+  repeatLoopEnabled: false,
+  ...patch,
+})
+
+const urgeCard = (
+  patch: Partial<Parameters<typeof planAutoUrgeForCompletedCard>[0]> = {},
+): Parameters<typeof planAutoUrgeForCompletedCard>[0] => ({
+  messages: [createUserMessage('帮我做完'), createAssistantMessage('尚未解决：还差一步。')],
+  sessionId: 'session-1',
+  status: 'idle',
+  model: 'claude-opus-4-8',
+  autoUrgeActive: true,
+  autoUrgeProfileId: 'profile-done',
+  ...patch,
+})
+
+test('completed card still urges when the success keyword is missing, even if its tab is not mounted', () => {
+  // 症状：开着鞭策的卡在非活动 tab 上跑完，永远不再被鞭策（2026-08-27 用户 state.json
+  //   实证：工作区 3 的 pane 有 5 个 tab，armed 卡不是 activeTabId，status 已 idle，
+  //   末尾是「尚未解决：…」却停着不动）。
+  // 根因：判定原先只挂在 ChatCard 的 streaming→idle effect 上，而非活动 tab 的
+  //   ChatCard 整棵子树被卸载（只有 Git 卡在 cardKeepsPaneRuntimeWhenInactive 白名单里）。
+  // 被否决：把聊天卡加进常驻白名单 —— 会让所有非活动卡常驻渲染，重开 streaming
+  //   textarea 抢焦点那一族老坑。
+  const plan = planAutoUrgeForCompletedCard(urgeCard(), urgeSettings())
+
+  assert.deepEqual(plan, {
+    kind: 'send',
+    message: '继续，直到全部做完',
+    source: 'card',
+    judgeModel: '',
+  })
+})
+
+test('completed card disables card-level auto urge once the success keyword lands', () => {
+  const plan = planAutoUrgeForCompletedCard(
+    urgeCard({
+      messages: [createUserMessage('帮我做完'), createAssistantMessage('全部做完了')],
+    }),
+    urgeSettings(),
+  )
+
+  assert.deepEqual(plan, { kind: 'disable', source: 'card', judgeModel: '' })
+})
+
+test('completed card skips auto urge while native background work is still pending', () => {
+  const plan = planAutoUrgeForCompletedCard(
+    urgeCard({ backgroundWorkPending: true }),
+    urgeSettings(),
+  )
+
+  assert.deepEqual(plan, { kind: 'skip' })
+})
+
+test('completed card skips auto urge when the card is no longer idle', () => {
+  const plan = planAutoUrgeForCompletedCard(urgeCard({ status: 'streaming' }), urgeSettings())
+
+  assert.deepEqual(plan, { kind: 'skip' })
+})
+
+test('completed tool card is never swept by the global urge', () => {
+  const plan = planAutoUrgeForCompletedCard(
+    urgeCard({ model: GIT_TOOL_MODEL, autoUrgeActive: false }),
+    urgeSettings({ autoUrgeGlobalControlEnabled: true, autoUrgeGlobalActive: true }),
+  )
+
+  assert.deepEqual(plan, { kind: 'skip' })
+})
+
+test('completed card follows the global urge profile when the card switch is off', () => {
+  const plan = planAutoUrgeForCompletedCard(
+    urgeCard({ autoUrgeActive: false }),
+    urgeSettings({ autoUrgeGlobalControlEnabled: true, autoUrgeGlobalActive: true }),
+  )
+
+  assert.deepEqual(plan, {
+    kind: 'send',
+    message: '继续，直到全部做完',
+    source: 'global',
+    judgeModel: '',
+  })
+})
+
+test('completed card defers to the repeat loop instead of urging on top of it', () => {
+  const plan = planAutoUrgeForCompletedCard(
+    urgeCard({ repeatLoopActive: true }),
+    urgeSettings({ repeatLoopEnabled: true }),
+  )
+
+  assert.deepEqual(plan, { kind: 'skip' })
+})
+
+test('stream-not-found graceful completion still enters the stable auto-urge broadcast', () => {
+  const appSource = readFileSync(new URL('../src/App.tsx', import.meta.url), 'utf8')
+  const branchStart = appSource.indexOf("if (message === 'Stream not found.')")
+  const branchEnd = appSource.indexOf("if (hint === 'switch-config'", branchStart)
+
+  assert.notEqual(branchStart, -1)
+  assert.notEqual(branchEnd, -1)
+  assert.match(
+    appSource.slice(branchStart, branchEnd),
+    /scheduleStableWakeTimerCompletion\(card\.id\)/,
+  )
 })

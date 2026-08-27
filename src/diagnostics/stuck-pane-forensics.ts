@@ -361,10 +361,40 @@ export const pushAppliedActionsEntry = (
   return next.length > capacity ? next.slice(next.length - capacity) : next
 }
 
+// 症状：切到某张会话 tab 后输入框没有光标、打不了字，而 dump 里
+//   hitTestRepair/rescueUnhandled/focusExhausted/focusGuardReclaim 四个计数器
+//   全 0，rescue 也全空 —— 现场看起来"什么都没发生"。
+// 根因：那四个计数器都写在 .card-shell 的 dataset 上，而写它们的路径一律是
+//   textarea.closest('.card-shell')；当 active 卡的 textarea 压根不在 DOM 里
+//   （React 把 panel 删了、或 body 尚未渲染），既没有 textarea 可 focus，也没有
+//   节点可挂计数器，于是整条失败静默蒸发（见 composer-focus.ts 的
+//   onMissingTextarea 决策注释）。
+// 为什么不做成 panel 级字段：collectPanes 是 dump 时刻的快照，只能看到"现在
+//   有没有 textarea"，看不到"当时焦点请求扑空过"。这是个事件，必须当场记。
+export type MissingComposerEntry = {
+  atMs: number
+  cardId: string
+  // 扑空那一刻焦点真正落在哪 —— 分流靠它：落 tab 按钮 = 切换后没接上，
+  // 落 body = 焦点先掉了再扑空。
+  activeElementPath: string
+}
+
+export const missingComposerCapacity = 20
+
+export const pushMissingComposerEntry = (
+  ledger: MissingComposerEntry[],
+  entry: MissingComposerEntry,
+  capacity = missingComposerCapacity,
+): MissingComposerEntry[] => {
+  const next = [...ledger, entry]
+  return next.length > capacity ? next.slice(next.length - capacity) : next
+}
+
 // Module-level channels: the probe reports from React components and App's
 // reducer wiring, both outside installStuckPaneForensics' closure.
 let panelUnmountLedger: PanelUnmountEntry[] = []
 let appliedActionsLedger: AppliedActionsEntry[] = []
+let missingComposerLedger: MissingComposerEntry[] = []
 let appStateTruthGetter: (() => ForensicsAppStateLike) | null = null
 
 export const registerForensicsAppStateTruth = (
@@ -407,6 +437,33 @@ export const recordAppliedActionsForForensics = (types: string[]) => {
     atMs: Math.round(globalThis.performance?.now() ?? 0),
     types,
   })
+}
+
+export const recordMissingComposerForForensics = (input: { cardId: string }) => {
+  let activeElementPath = '(null)'
+  try {
+    // Runs from ChatCard, but the module is also imported by node:test where
+    // there is no document. Forensics must never be the thing that throws in
+    // the focus path.
+    const activeElement = globalThis.document?.activeElement ?? null
+    activeElementPath = describeElementPath(activeElement as ForensicsElementLike | null)
+  } catch {
+    // Keep the entry: knowing the composer went missing matters more than
+    // knowing where focus sat.
+  }
+  missingComposerLedger = pushMissingComposerEntry(missingComposerLedger, {
+    atMs: Math.round(globalThis.performance?.now() ?? 0),
+    cardId: input.cardId,
+    activeElementPath,
+  })
+}
+
+export const readMissingComposerLedger = (): MissingComposerEntry[] => missingComposerLedger
+
+export const drainMissingComposerLedgerForTest = (): MissingComposerEntry[] => {
+  const drained = missingComposerLedger
+  missingComposerLedger = []
+  return drained
 }
 
 export const readPanelUnmountLedger = (): PanelUnmountEntry[] => panelUnmountLedger
@@ -632,6 +689,7 @@ export type ForensicsSnapshot = {
   panelUnmounts?: PanelUnmountEntry[]
   appliedActions?: AppliedActionsEntry[]
   tabSwitches?: TabSwitchEntry[]
+  missingComposers?: MissingComposerEntry[]
 }
 
 export type ForensicsSnapshotInput = Omit<ForensicsSnapshot, 'schema'>
@@ -1016,6 +1074,7 @@ export const installStuckPaneForensics = () => {
       panelUnmounts: readPanelUnmountLedger(),
       appliedActions: readAppliedActionsLedger(),
       tabSwitches: readTabSwitchLedger(),
+      missingComposers: readMissingComposerLedger(),
     })
     void persistSnapshot(snapshot)
   }

@@ -40,6 +40,7 @@ const installMockApis = async (
     autoUrgeMessage?: string
     autoUrgeSuccessKeyword?: string
     cardMessages?: Array<Record<string, unknown>>
+    extraCards?: Array<Record<string, unknown>>
   },
 ) => {
   await installMockElectronBridge(page)
@@ -103,6 +104,7 @@ const installMockApis = async (
             draft: '',
             messages: options?.cardMessages ?? [],
           },
+          ...(options?.extraCards ?? []),
         ],
       },
     ],
@@ -148,8 +150,8 @@ const installMockApis = async (
   })
 }
 
-const installMockChatBridge = async (page: Page) => {
-  await page.evaluate(() => {
+const installMockChatBridge = async (page: Page, options?: { doneDelayMs?: number }) => {
+  await page.evaluate((doneDelayMs) => {
     const win = window as Window & {
       electronAPI: NonNullable<typeof window.electronAPI>
       __autoUrgePrompts?: string[]
@@ -193,10 +195,10 @@ const installMockChatBridge = async (page: Page) => {
           content: 'Still validating. YES',
         })
         dispatchStreamEvent(subscriptionId, 'done', {})
-      }, 30)
+      }, doneDelayMs)
     }
     win.electronAPI.unsubscribeChatStream = async () => undefined
-  })
+  }, options?.doneDelayMs ?? 30)
 }
 
 test('composer settings hosts the auto urge toggle for an existing chat', async ({ page }) => {
@@ -300,6 +302,57 @@ test('composer settings can turn auto urge back on after an older success reply'
   await expect(autoUrgeToggle).toBeChecked()
   await expect(autoUrgeStatus).toContainText('Urging...')
   await expectRecordedPromptsToContain(page, [defaultAutoUrgeMessage])
+})
+
+test('a chat that finishes while its tab sits in the background is still urged', async ({ page }) => {
+  // 症状：开着鞭策的卡在非活动 tab 上跑完，就再也不被鞭策（2026-08-27 用户 state.json 实证）。
+  // 根因：判定曾经只挂在 ChatCard 的 streaming→idle effect 上，而非活动 tab 的 ChatCard
+  //   整棵子树会被卸载，那次跳变没有观察者。判定已搬到 App 层的稳定完成广播。
+  await installMockApis(page, {
+    cardMessages: [
+      {
+        id: 'msg-1',
+        role: 'assistant',
+        content: 'I have not finished verifying yet.',
+        createdAt: new Date().toISOString(),
+      },
+    ],
+    extraCards: [
+      {
+        id: 'card-2',
+        title: 'Sibling tab',
+        status: 'idle' as const,
+        size: 560,
+        provider: 'codex' as const,
+        model: 'gpt-5.5',
+        reasoningEffort: 'medium',
+        draft: '',
+        messages: [],
+      },
+    ],
+  })
+  await page.goto(appUrl)
+  // 流要慢到足够让 tab 先切走，这一轮才真的是"在后台跑完的"。
+  await installMockChatBridge(page, { doneDelayMs: 900 })
+
+  const settingsTrigger = page.locator('.composer-settings-trigger').first()
+  const settingsMenu = page.locator('.composer-settings-menu').first()
+
+  await settingsTrigger.click()
+  await expect(settingsMenu).toBeVisible()
+  await settingsMenu.getByLabel('Auto Urge').check()
+
+  // 开开关时卡是 idle，先立刻催一次；这一轮的回复不含成功词，所以还该继续催。
+  await expectRecordedPromptsToContain(page, [defaultAutoUrgeMessage])
+  const promptsBeforeSwitch = (await readPrompts(page)).length
+
+  await page.locator('.pane-tab[data-pane-tab-id="card-2"]').click()
+  await expect(page.locator('.pane-tab-panel.is-active .composer textarea').first()).toBeVisible()
+  await expect(page.locator('.pane-tab-panel.is-active .composer-settings-trigger')).toHaveCount(1)
+
+  await expect
+    .poll(async () => (await readPrompts(page)).length, { timeout: 20_000 })
+    .toBeGreaterThan(promptsBeforeSwitch)
 })
 
 test('fresh chats stay manual even when auto urge is enabled in settings', async ({ page }) => {

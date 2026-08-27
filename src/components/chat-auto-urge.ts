@@ -1,4 +1,11 @@
-import type { AutoUrgeJudgeMode, CardStatus, ChatMessage } from '../../shared/schema'
+import { isToolCardModel } from '../../shared/models'
+import type {
+  AutoUrgeJudgeMode,
+  AutoUrgeProfile,
+  CardStatus,
+  ChatMessage,
+} from '../../shared/schema'
+import { canSendEmptyContinuation } from '../app-helpers'
 
 export type AutoUrgeEvaluation =
   | { kind: 'skip' }
@@ -155,6 +162,99 @@ export const getNextAutoUrgeToggleState = ({
     featureEnabled: nextFeatureEnabled,
     chatActive: nextChatActive,
     shouldSendImmediately: nextChatActive && status === 'idle',
+  }
+}
+
+export type AutoUrgeCardInput = {
+  messages: ChatMessage[]
+  sessionId?: string
+  status: CardStatus
+  model: string
+  autoUrgeActive?: boolean
+  autoUrgeProfileId: string
+  backgroundWorkPending?: boolean
+  repeatLoopActive?: boolean
+}
+
+export type AutoUrgeSettingsInput = {
+  autoUrgeEnabled: boolean
+  autoUrgeProfiles: AutoUrgeProfile[]
+  autoUrgeMessage: string
+  autoUrgeSuccessKeyword: string
+  autoUrgeGlobalControlEnabled: boolean
+  autoUrgeGlobalActive: boolean
+  autoUrgeGlobalProfileId: string
+  repeatLoopEnabled: boolean
+}
+
+export type AutoUrgeCardPlan =
+  | { kind: 'skip' }
+  | { kind: 'disable'; source: EffectiveAutoUrgeSource; judgeModel: string }
+  | { kind: 'send'; message: string; source: EffectiveAutoUrgeSource; judgeModel: string }
+  | { kind: 'judge'; message: string; source: EffectiveAutoUrgeSource; judgeModel: string }
+
+/**
+ * 症状：开着鞭策的卡在**非活动 tab** 上跑完，就再也不会被鞭策 —— 没命中成功词也停着不动
+ *   （2026-08-27 用户 state.json 实证：工作区 3 的 pane 有 5 个 tab，armed 卡不是
+ *   activeTabId，status 已 idle，末尾写着「尚未解决：…」）。
+ * 根因：判定原先只挂在 ChatCard 的 streaming→idle effect 上，而非活动 tab 的 ChatCard
+ *   整棵子树会被卸载（只有 Git 卡在 `cardKeepsPaneRuntimeWhenInactive` 白名单里），
+ *   于是那次状态跳变根本没有观察者；切回去也不补发（`prevCardStatusRef` 重挂载即为 idle）。
+ * 被否决：把聊天卡加进常驻白名单 —— 所有非活动卡都常驻渲染，会重开 streaming textarea
+ *   抢焦点那一族老坑（见 `docs/specs/composer-focus-loss/`）。
+ * 因此判定必须是一个不依赖组件挂载的纯函数，由 App 层的稳定完成广播驱动。
+ */
+export const planAutoUrgeForCompletedCard = (
+  card: AutoUrgeCardInput,
+  settings: AutoUrgeSettingsInput,
+): AutoUrgeCardPlan => {
+  const repeatLoopControlsAutomation =
+    settings.repeatLoopEnabled && card.repeatLoopActive === true
+  const isToolCard = isToolCardModel(card.model)
+  const effectiveUrge = resolveEffectiveAutoUrge({
+    cardAutoUrgeActive: card.autoUrgeActive === true && !repeatLoopControlsAutomation,
+    cardAutoUrgeProfileId: card.autoUrgeProfileId,
+    globalUrgeActive:
+      settings.autoUrgeGlobalControlEnabled &&
+      settings.autoUrgeGlobalActive &&
+      !repeatLoopControlsAutomation,
+    globalUrgeProfileId: settings.autoUrgeGlobalProfileId,
+    isToolCard,
+  })
+
+  const profile =
+    settings.autoUrgeProfiles.find((entry) => entry.id === effectiveUrge.profileId) ??
+    settings.autoUrgeProfiles[0] ??
+    null
+
+  const evaluation = evaluateAutoUrge(
+    { type: 'stream-finished', previousStatus: 'streaming', status: card.status },
+    {
+      active: effectiveUrge.active,
+      enabled: settings.autoUrgeEnabled,
+      message: profile?.message ?? settings.autoUrgeMessage,
+      successKeyword: profile?.successKeyword ?? settings.autoUrgeSuccessKeyword,
+      messages: card.messages,
+      canSendEmptyContinuation:
+        !isToolCard &&
+        canSendEmptyContinuation({
+          messages: card.messages,
+          sessionId: card.sessionId,
+          status: card.status,
+        }),
+      judgeMode: profile?.judgeMode ?? 'keyword',
+      backgroundWorkPending: card.backgroundWorkPending === true,
+    },
+  )
+
+  if (evaluation.kind === 'skip') {
+    return { kind: 'skip' }
+  }
+
+  return {
+    ...evaluation,
+    source: effectiveUrge.source,
+    judgeModel: profile?.judgeModel ?? '',
   }
 }
 

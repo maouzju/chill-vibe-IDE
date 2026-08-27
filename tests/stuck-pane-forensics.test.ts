@@ -816,3 +816,83 @@ test('applied-action ledger keeps the newest batches within capacity', async () 
   assert.equal(ledger.length, appliedActionsCapacity)
   assert.equal(ledger[0]?.atMs, 3)
 })
+
+// ── missing-composer probe (2026-08-25) ─────────────────────────────────────
+// The focus ladder self-terminates without touching ANY existing counter when
+// an active card has no textarea in the DOM (see composer-focus.test.ts). The
+// panel-level counters cannot cover it either: they are written onto the
+// .card-shell dataset via textarea.closest(), and there is no textarea to walk
+// up from. So this shape needs its own module-level channel, like the panel
+// unmount probe.
+
+test('missing-composer ledger keeps the newest entries within capacity', async () => {
+  const { pushMissingComposerEntry, missingComposerCapacity } = await import(
+    '../src/diagnostics/stuck-pane-forensics'
+  )
+  let ledger: import('../src/diagnostics/stuck-pane-forensics').MissingComposerEntry[] = []
+  for (let index = 0; index < missingComposerCapacity + 4; index += 1) {
+    ledger = pushMissingComposerEntry(ledger, {
+      atMs: index,
+      cardId: `card-${index}`,
+      activeElementPath: 'button.pane-tab.is-active',
+    })
+  }
+  assert.equal(ledger.length, missingComposerCapacity)
+  assert.equal(ledger[0]?.cardId, 'card-4')
+  assert.equal(ledger.at(-1)?.cardId, `card-${missingComposerCapacity + 3}`)
+})
+
+test('recordMissingComposerForForensics captures which card lost its composer', async () => {
+  const { recordMissingComposerForForensics, drainMissingComposerLedgerForTest } = await import(
+    '../src/diagnostics/stuck-pane-forensics'
+  )
+  drainMissingComposerLedgerForTest()
+  recordMissingComposerForForensics({ cardId: 'card-a' })
+  recordMissingComposerForForensics({ cardId: 'card-b' })
+  const ledger = drainMissingComposerLedgerForTest()
+  assert.equal(ledger.length, 2)
+  assert.equal(ledger[0]?.cardId, 'card-a')
+  assert.equal(ledger[1]?.cardId, 'card-b')
+  assert.equal(
+    typeof ledger[0]?.activeElementPath,
+    'string',
+    'the element that actually holds focus is the whole point — it names the thief',
+  )
+})
+
+test('the forensics snapshot carries the missing-composer ledger', async () => {
+  const source = await readFile(
+    path.join(process.cwd(), 'src', 'diagnostics', 'stuck-pane-forensics.ts'),
+    'utf8',
+  )
+  assert.match(
+    source,
+    /missingComposers\?: MissingComposerEntry\[\]/,
+    'the snapshot type must expose the ledger or the dump stays silent about this shape',
+  )
+  assert.match(
+    source,
+    /missingComposers: readMissingComposerLedger\(\)/,
+    'capture() must actually read the ledger into the dump',
+  )
+})
+
+test('ChatCard reports the missing-textarea dead end into forensics', async () => {
+  const source = await readFile(path.join(process.cwd(), 'src', 'components', 'ChatCard.tsx'), 'utf8')
+  const effectBlock =
+    source.match(
+      /if \(!usesPaneChrome \|\| isToolCard[^\n]*composerFocusRequest === 0\) \{[\s\S]*?\n {2}\}, \[card\.id, composerFocusRequest[^\]]*\]/,
+    )?.[0] ?? ''
+
+  assert.ok(effectBlock, 'expected the composerFocusRequest focus effect to exist')
+  assert.match(
+    effectBlock,
+    /onMissingTextarea/,
+    'the ladder must be wired to the probe, otherwise this dead end leaves no trace at all',
+  )
+  assert.match(
+    effectBlock,
+    /recordMissingComposerForForensics/,
+    'the probe must write into the forensic ledger, not just a console line',
+  )
+})

@@ -8,6 +8,10 @@ import {
   resolveReleaseStagePlan,
 } from '../scripts/run-release-verification.mjs'
 
+const releaseVerifierSource = await import('node:fs').then(({ readFileSync }) =>
+  readFileSync(new URL('../scripts/run-release-verification.mjs', import.meta.url), 'utf8'),
+)
+
 const stages = [
   { id: 'quality', command: 'pnpm', args: ['test:quality'] },
   { id: 'node', command: 'pnpm', args: ['test'] },
@@ -120,6 +124,10 @@ test('release stages use cmd directly on Windows instead of Node shell concatena
     command: 'pnpm',
     args: ['test:quality'],
   })
+})
+
+test('release audit stages do not forward a literal standalone separator through pnpm', () => {
+  assert.doesNotMatch(releaseVerifierSource, /'release:(?:history-)?audit',\s*'--',/)
 })
 
 test('invalidated mixed-tree evidence is discarded before any focused rerun', () => {

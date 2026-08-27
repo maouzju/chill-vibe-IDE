@@ -162,6 +162,8 @@ Guardrails:
 
 ## Release Pitfalls / Fast Recovery
 
+- `scripts/run-release-verification.mjs` must not include a standalone `--` in the pnpm audit-stage argument arrays: pnpm forwards it literally and both audit scripts exit with `Unknown argument: --` before scanning. Keep the direct forms `pnpm release:history-audit --json` and `pnpm release:audit --base origin/main --json` in sync with the workflow and guard test.
+
 - **Four ways argument passing silently breaks before a single test runs. All of them look like the tool is broken.**
   - `powershell -File script.ps1 -Specs a,b,c` cannot pass an array — with `-File` every argument arrives as a literal string, so the comma form becomes ONE spec name (`No tests found`) and the space form spills into the next positional parameter (`-Mode` fails its `ValidateSet`). Write a two-line repo-external wrapper that calls it in-process — `Set-Location <repo>; & '.\scripts\run-playwright-specs.ps1' -Specs @('tests/a.spec.ts','tests/b.spec.ts')` — and launch **that** with `-File`.
   - `Start-Process -ArgumentList @('-File','x.ps1','-RedirectStandardOutput')` passes the redirect flag **to the script**, which then dies on an unknown parameter. Redirection is a `Start-Process` parameter, never an ArgumentList member.

@@ -45,6 +45,9 @@ export const composerFocusGuardDelaysMs = [300, 800, 1600]
 export const composerFocusGuardMaxReclaims = 5
 
 export type ComposerFocusAttemptDeps = {
+  // Returns whether a textarea existed to focus — NOT whether focus landed.
+  // False is the "active card with no composer in the DOM" shape, which
+  // onMissingTextarea reports.
   focusTextarea: () => boolean
   isFocusSettled: () => boolean
   isFocusVacant: () => boolean
@@ -61,6 +64,19 @@ export type ComposerFocusAttemptDeps = {
   guardDelaysMs?: number[]
   // Fired on every guard reclaim — the count proves focus was silently stolen.
   onGuardReclaim?: () => void
+  // 症状：切到某张会话 tab 后输入框始终没有光标，打不了字，而 dump 里三个
+  //   计数器全 0、rescue 全空，看起来"什么都没发生"。
+  // 根因：卡还 active 但 textarea 不在 DOM 时，focusTextarea 直接返回 false
+  //   （没调用过 focus()），同时 ChatCard 的 isFocusVacant 要靠
+  //   textareaRef.current 反查 .pane-view —— ref 为 null 时 pane 也为 null，
+  //   isReclaimableOwnPaneChrome 第一行就 return false，于是持有焦点的 tab
+  //   按钮不算 vacant。两者叠加让第一次重试就命中 shouldStop()，梯子自杀，
+  //   onExhausted 这条唯一的死路信号永远不触发（tests/composer-focus.test.ts
+  //   "invisible to the exhaustion signal" 钉住了这个事实）。
+  // 为什么不能复用 onExhausted：它的语义是"每一级都试过且焦点仍空置"，而这里
+  //   一级都没真正试过；把它当死路信号会让 ChatCard 的面板级重建对着一个不存在
+  //   的 textarea 空转。
+  onMissingTextarea?: () => void
 }
 
 // A composer focus request must survive a dropped requestAnimationFrame
@@ -78,8 +94,21 @@ export const startComposerFocusAttempt = (deps: ComposerFocusAttemptDeps): (() =
   let guardTimerHandle: number | null = null
   let guardEntered = false
   let guardReclaims = 0
+  let missingTextareaReported = false
 
   const guardDelays = deps.guardDelaysMs ?? []
+
+  // One report per attempt: the ladder and the guard can both find the
+  // textarea gone, but the forensic ledger is bounded and a per-rung report
+  // would flush older evidence out of it.
+  const attemptFocus = () => {
+    const textareaPresent = deps.focusTextarea()
+    if (!textareaPresent && !missingTextareaReported) {
+      missingTextareaReported = true
+      deps.onMissingTextarea?.()
+    }
+    return textareaPresent
+  }
 
   const armGuard = (index: number) => {
     if (cancelled || index >= guardDelays.length) {
@@ -100,7 +129,7 @@ export const startComposerFocusAttempt = (deps: ComposerFocusAttemptDeps): (() =
           return
         }
         guardReclaims += 1
-        deps.focusTextarea()
+        attemptFocus()
         deps.onGuardReclaim?.()
         // Restart the guard window: focus was just stolen once, so it is the
         // most likely moment for it to be stolen again.
@@ -134,7 +163,7 @@ export const startComposerFocusAttempt = (deps: ComposerFocusAttemptDeps): (() =
     if (shouldStop()) {
       return
     }
-    deps.focusTextarea()
+    attemptFocus()
     attempted = true
   }
 
@@ -155,7 +184,7 @@ export const startComposerFocusAttempt = (deps: ComposerFocusAttemptDeps): (() =
       if (shouldStop()) {
         return
       }
-      deps.focusTextarea()
+      attemptFocus()
       attempted = true
       armRetry(index + 1)
     }, composerFocusRetryDelaysMs[index]!)

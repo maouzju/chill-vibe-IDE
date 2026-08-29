@@ -3,6 +3,7 @@ import type {
   AutoUrgeProfile,
   BoardColumn,
   ChatCard,
+  LocalModelEntry,
   ModelPromptRule,
   PaneNode,
   ProviderStatus,
@@ -28,6 +29,7 @@ type WorkspaceColumnMemoProps = {
   gitAgentModel: string
   brainstormRequestModel: string
   availableQuickToolModels: string[]
+  localModelEntries?: LocalModelEntry[]
   autoUrgeEnabled: boolean
   autoUrgeProfiles?: AutoUrgeProfile[]
   autoUrgeMessage: string
@@ -60,6 +62,7 @@ type PaneViewMemoProps = {
   gitAgentModel: string
   brainstormRequestModel: string
   availableQuickToolModels: string[]
+  localModelEntries?: LocalModelEntry[]
   autoUrgeEnabled: boolean
   autoUrgeProfiles?: AutoUrgeProfile[]
   autoUrgeMessage: string
@@ -127,6 +130,7 @@ export const areWorkspaceColumnPropsEqual = (
   previous.gitAgentModel === next.gitAgentModel &&
   previous.brainstormRequestModel === next.brainstormRequestModel &&
   previous.availableQuickToolModels === next.availableQuickToolModels &&
+  previous.localModelEntries === next.localModelEntries &&
   previous.autoUrgeEnabled === next.autoUrgeEnabled &&
   previous.autoUrgeProfiles === next.autoUrgeProfiles &&
   previous.autoUrgeMessage === next.autoUrgeMessage &&
@@ -273,6 +277,7 @@ export const arePaneViewPropsEqual = (previous: PaneViewMemoProps, next: PaneVie
   previous.gitAgentModel === next.gitAgentModel &&
   previous.brainstormRequestModel === next.brainstormRequestModel &&
   previous.availableQuickToolModels === next.availableQuickToolModels &&
+  previous.localModelEntries === next.localModelEntries &&
   previous.autoUrgeEnabled === next.autoUrgeEnabled &&
   previous.autoUrgeProfiles === next.autoUrgeProfiles &&
   previous.autoUrgeMessage === next.autoUrgeMessage &&

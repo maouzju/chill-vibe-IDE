@@ -22,6 +22,7 @@ import type {
   BoardColumn,
   ChatCard as ChatCardState,
   ImageAttachment,
+  LocalModelEntry,
   ModelPromptRule,
   PaneNode,
   Provider,
@@ -94,6 +95,14 @@ type PaneViewProps = {
   gitAgentModel: string
   brainstormRequestModel: string
   availableQuickToolModels: string[]
+  // 症状：设置页里本地模型条目存得好好的，卡片的模型选择器里却永远看不到它。
+  // 根因：这条 prop 从 App 一路传到 LayoutRenderer 都在，唯独漏在 PaneView 这一层
+  //   （2026-08-29）。ChatCard 那边它是可选 prop 且带 `= []` 默认值，于是漏传既不报
+  //   类型错也不报运行时错，只是选择器静默少一项 —— 症状看着像"没保存成功"。
+  // 为什么不把 ChatCard 的默认值去掉：可选 + 默认是给工具卡等不关心本地模型的调用点
+  //   留的，去掉会波及一堆无关渲染点；改由 tests/local-model-panel.spec.ts 端到端钉住
+  //   这条转发链，比靠类型系统更贴近用户实际看到的东西。
+  localModelEntries?: LocalModelEntry[]
   autoUrgeEnabled: boolean
   autoUrgeProfiles?: AutoUrgeProfile[]
   autoUrgeMessage: string
@@ -361,6 +370,7 @@ const PaneViewView = ({
   gitAgentModel,
   brainstormRequestModel,
   availableQuickToolModels,
+  localModelEntries,
   autoUrgeEnabled,
   autoUrgeProfiles = [],
   autoUrgeMessage,
@@ -1650,6 +1660,7 @@ const PaneViewView = ({
                   gitAgentModel={gitAgentModel}
                   brainstormRequestModel={brainstormRequestModel}
                   availableQuickToolModels={availableQuickToolModels}
+                  localModelEntries={localModelEntries}
                   autoUrgeEnabled={autoUrgeEnabled}
                   autoUrgeProfiles={autoUrgeProfiles}
                   autoUrgeMessage={autoUrgeMessage}

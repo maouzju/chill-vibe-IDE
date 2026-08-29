@@ -11,6 +11,7 @@ import {
   downloadWithResume,
   parseReleaseResponse,
   resolveDownloadedAssetStrategy,
+  runUpdateExitSequence,
   type UpdateCheckResult,
   type GitHubRelease,
 } from './updater-core.js'
@@ -214,33 +215,45 @@ export async function downloadUpdate(
 // update the PowerShell job is actively polling our PID and must see us exit.
 // We briefly notify the renderer to flush state, then call `app.exit(0)`
 // (which does NOT fire `before-quit`/`will-quit`) as a hard fallback.
-const FORCE_EXIT_DELAY_MS = 1500
-
-const forceExitForUpdate = () => {
-  // Best-effort: let renderers flush before we hard-exit. We intentionally do
-  // not await an ACK — the PowerShell job is waiting on our PID and we cannot
-  // risk blocking on a renderer that never replies.
-  try {
-    for (const win of BrowserWindow.getAllWindows()) {
-      if (!win.isDestroyed()) {
-        win.webContents.send('app:flush-state-before-quit')
-      }
-    }
-  } catch {
-    // swallow — we are shutting down anyway
-  }
-
-  setTimeout(() => {
-    try {
-      app.exit(0)
-    } catch {
+//
+// Because `will-quit` never runs, the run sentinel would stay at cleanExit=false and
+// the crash guard would resurrect the *old* build mid-update — see the decision
+// comment on `runUpdateExitSequence` in updater-core.ts. `markCleanExit` is what
+// closes that hole, and the sequencing (mark strictly before exit) is pinned by
+// tests/updater.test.ts.
+const forceExitForUpdate = (markCleanExit: () => void) => {
+  runUpdateExitSequence(
+    {
+      // Best-effort: let renderers flush before we hard-exit. We intentionally do
+      // not await an ACK — the PowerShell job is waiting on our PID and we cannot
+      // risk blocking on a renderer that never replies.
+      flushRenderers: () => {
+        for (const win of BrowserWindow.getAllWindows()) {
+          if (!win.isDestroyed()) {
+            win.webContents.send('app:flush-state-before-quit')
+          }
+        }
+      },
+      markCleanExit,
+      exit: () => app.exit(0),
       // If exit somehow throws, fall back to process.exit so the PID releases.
-      process.exit(0)
-    }
-  }, FORCE_EXIT_DELAY_MS)
+      hardExit: () => process.exit(0),
+    },
+    (callback, delayMs) => {
+      setTimeout(callback, delayMs)
+    },
+  )
 }
 
-export async function installUpdate(assetPath: string): Promise<void> {
+export type InstallUpdateHooks = {
+  /** Records this shutdown as intentional so the crash relaunch guard stands down. */
+  markCleanExit?: () => void
+}
+
+export async function installUpdate(
+  assetPath: string,
+  { markCleanExit = () => {} }: InstallUpdateHooks = {},
+): Promise<void> {
   // Fail while the app is still alive and can show the error, rather than exiting
   // and letting the detached job discover the missing package with nobody watching.
   const stats = await fs.promises.stat(assetPath).catch(() => null)
@@ -253,10 +266,10 @@ export async function installUpdate(assetPath: string): Promise<void> {
 
   if (strategy === 'replace-app-folder') {
     await launchWindowsZipUpdateJob(assetPath)
-    forceExitForUpdate()
+    forceExitForUpdate(markCleanExit)
     return
   }
 
   await openDownloadedAsset(assetPath)
-  forceExitForUpdate()
+  forceExitForUpdate(markCleanExit)
 }

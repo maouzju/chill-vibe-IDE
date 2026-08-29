@@ -330,6 +330,58 @@ export async function downloadWithResume({
   throw lastError
 }
 
+export const UPDATE_EXIT_FLUSH_DELAY_MS = 1_500
+
+export type UpdateExitSteps = {
+  /** Best-effort nudge so renderers can flush state; never awaited. */
+  flushRenderers: () => void
+  /** Writes the run sentinel as a clean exit so the crash guard stands down. */
+  markCleanExit: () => void
+  /** `app.exit(0)` — deliberately skips before-quit/will-quit. */
+  exit: () => void
+  /** `process.exit(0)` fallback, so the PID always releases for the update job. */
+  hardExit: () => void
+}
+
+const callIgnoringErrors = (step: () => void) => {
+  try {
+    step()
+  } catch {
+    // On the way out there is no second chance: one failing step must not stop the rest.
+  }
+}
+
+// 症状: 更新装完、应用自动重启，起来的还是旧版本；再手动重启一次才变成新版 (2026-08-29 用户实证)。
+// 根因: 更新退出走 `app.exit(0)`，它按设计跳过 `before-quit`/`will-quit`，而
+//       `run-sentinel.json` 的 cleanExit 只在 `will-quit` 里被写成 true。崩溃守卫
+//       (electron/crash-relaunch-guard.ts) 于是把这次退出读成「被外部杀掉」，在
+//       PowerShell 作业还没替换安装目录时就把**旧版**拉了起来；它抢到 single-instance
+//       lock 之后，作业末尾 Start-Process 起的新版进程会立刻自杀并把旧窗口拉到前台。
+// 被否决的替代:
+//   - 「更新时改走正常 quit」: main.ts 的 before-quit 守卫会把退出拖到 flush 完成之后，
+//     而作业正盯着我们的 PID 轮询，拖不起。
+//   - 「更新前把守卫进程杀掉」: 守卫刻意脱离了进程树，按 exe 路径搜杀会误伤同机其它实例，
+//     而且真崩在退出路上时就没人兜底了。标记 clean exit 才是守卫设计里的正解。
+export function runUpdateExitSequence(
+  steps: UpdateExitSteps,
+  schedule: (callback: () => void, delayMs: number) => void,
+  delayMs: number = UPDATE_EXIT_FLUSH_DELAY_MS,
+): void {
+  callIgnoringErrors(steps.flushRenderers)
+
+  schedule(() => {
+    // Must land before exit: once the process is gone there is no way to write the
+    // sentinel, and the guard reads its absence as a kill.
+    callIgnoringErrors(steps.markCleanExit)
+
+    try {
+      steps.exit()
+    } catch {
+      steps.hardExit()
+    }
+  }, delayMs)
+}
+
 export type WindowsZipReplaceScriptParams = {
   processId: number
   assetPath: string
@@ -392,15 +444,23 @@ function Write-Log {
   "[$stamp] $Message" | Out-File -FilePath $logPath -Append -Encoding utf8
 }
 
-function Get-MatchingAppProcessIds {
-  param([int]$ProcessId, [string]$ExecutablePath)
+function Get-InstanceIdsUnderPaths {
+  param([string[]]$CandidatePaths)
 
-  $normalizedExecutablePath = [System.IO.Path]::GetFullPath($ExecutablePath)
-  $processIds = New-Object 'System.Collections.Generic.HashSet[int]'
+  $normalizedPaths = @()
+  foreach ($candidate in $CandidatePaths) {
+    if (-not $candidate) {
+      continue
+    }
 
-  if (Get-Process -Id $ProcessId -ErrorAction SilentlyContinue) {
-    [void]$processIds.Add($ProcessId)
+    try {
+      $normalizedPaths += [System.IO.Path]::GetFullPath($candidate)
+    } catch {
+      continue
+    }
   }
+
+  $processIds = New-Object 'System.Collections.Generic.HashSet[int]'
 
   foreach ($proc in @(Get-CimInstance Win32_Process -ErrorAction SilentlyContinue)) {
     if (-not $proc.ExecutablePath) {
@@ -413,9 +473,28 @@ function Get-MatchingAppProcessIds {
       continue
     }
 
-    if ([System.StringComparer]::OrdinalIgnoreCase.Equals($candidatePath, $normalizedExecutablePath)) {
-      [void]$processIds.Add([int]$proc.ProcessId)
+    foreach ($normalizedPath in $normalizedPaths) {
+      if ([System.StringComparer]::OrdinalIgnoreCase.Equals($candidatePath, $normalizedPath)) {
+        [void]$processIds.Add([int]$proc.ProcessId)
+        break
+      }
     }
+  }
+
+  return @($processIds)
+}
+
+function Get-MatchingAppProcessIds {
+  param([int]$ProcessId, [string]$ExecutablePath)
+
+  $processIds = New-Object 'System.Collections.Generic.HashSet[int]'
+
+  if (Get-Process -Id $ProcessId -ErrorAction SilentlyContinue) {
+    [void]$processIds.Add($ProcessId)
+  }
+
+  foreach ($matchedId in @(Get-InstanceIdsUnderPaths -CandidatePaths @($ExecutablePath))) {
+    [void]$processIds.Add([int]$matchedId)
   }
 
   return @($processIds)
@@ -504,6 +583,10 @@ function Find-AppRoot {
 
 $exeName = [System.IO.Path]::GetFileName($executablePath)
 $backupDir = "$targetDir.chill-vibe-backup"
+# 上一轮更新留下的、当时删不掉的备份目录。删不掉的最常见原因就是里面还跑着旧映像，
+# 所以 Start-Process 前的清场必须把它也算进候选路径，否则那个进程会抢走
+# single-instance lock，用户第一次重启看到的还是旧版本。
+$staleBackupDir = $null
 $backupCreated = $false
 
 try {
@@ -586,6 +669,34 @@ try {
     throw "Copied install is incomplete: $targetFileCount of $sourceFileCount files landed in $targetDir."
   }
   Write-Log "Copy verified: $targetFileCount files."
+
+  # 症状: 更新装完、应用自动重启，起来的还是旧版本；再手动重启一次才是新版。
+  # 根因: 等待窗口关闭之后仍可能有实例从这个安装目录被拉起来 —— 崩溃守卫把更新退出误读成
+  #       崩溃（那一侧由 runUpdateExitSequence 根治），或者用户在替换期间自己点了图标。
+  #       它抢到 single-instance lock 之后，下面那句 Start-Process 起的新版进程会立刻自杀、
+  #       只把旧窗口拉到前台。顺带它还锁着备份目录里的旧映像，让备份永远删不掉。
+  # 被否决的替代: 「把 Wait-ForProcessExit 再跑一遍」—— 换出去之后旧映像已经躺在备份目录里，
+  #       它的 ExecutablePath 不再等于安装路径，那个循环根本匹配不到它。
+  # $staleBackupDir 是上一轮没能删掉的备份目录：它删不掉，往往正是因为里面这个进程还活着。
+  # 只列脚本自己造出来的这两个备份路径，不用通配扫 $targetDir 的兄弟目录 —— 那会误杀
+  # 用户自己手动留的副本。
+  $sweepPaths = @($executablePath, (Join-Path $backupDir $exeName))
+  if ($staleBackupDir) {
+    $sweepPaths += (Join-Path $staleBackupDir $exeName)
+  }
+
+  $strayIds = @(Get-InstanceIdsUnderPaths -CandidatePaths $sweepPaths)
+  if ($strayIds.Count -gt 0) {
+    Write-Log "Instances of this install reappeared during the swap: $($strayIds -join ', '). Stopping them before launch."
+    foreach ($strayId in $strayIds) {
+      try {
+        Stop-Process -Id $strayId -Force -ErrorAction Stop
+      } catch {
+        Write-Log "Stop-Process $strayId failed: $($_.Exception.Message)"
+      }
+    }
+    Start-Sleep -Milliseconds 500
+  }
 
   Remove-Item -LiteralPath $backupDir -Recurse -Force -ErrorAction SilentlyContinue
   $backupCreated = $false

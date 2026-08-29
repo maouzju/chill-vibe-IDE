@@ -175,6 +175,15 @@ type StreamSink = {
 export type ProviderRuntime = {
   args: string[]
   env: NodeJS.ProcessEnv
+  // 症状：配好本地模型/自定义端点后 CLI 起得来、init 也发了，却从不向该端点发请求
+  //   （本地模型 120s 超时；云端中转拿着 A 站 key 打 B 站 → 401 authentication_failed）。
+  // 根因（2026-08-29 透明代理实测）：`~/.claude/settings.json` 的 `env` 优先级高于
+  //   进程环境变量，spawn 时注入的 ANTHROPIC_* 被用户级配置整个盖掉；代理侧观测到
+  //   注入 baseUrl 的那次收到 0 个请求。
+  // 为什么单靠上面的 `env` 字段不够：它只作用于进程环境这一层，赢不了 settings.json。
+  //   必须把同一份注入再送进 `--settings`（flagSettings 深合并层，优先级最高）才压得住。
+  //   未注入时此字段保持 undefined —— 写空对象会在合并层把用户自己配的端点擦掉。
+  claudeSettingsEnv?: Record<string, string>
 }
 
 let providerRuntimeSettingsOverride: AppSettings | null = null
@@ -595,14 +604,21 @@ export const resolveProviderRuntime = async (
     )
 
     if (provider === 'claude') {
+      // 三个键必须整组覆盖：用户 settings.json 里常驻的通常是 ANTHROPIC_AUTH_TOKEN，
+      // 只压 API_KEY 会让 CLI 拿着用户的云端 token 去打我们指定的端点。
+      const claudeSettingsEnv = {
+        ANTHROPIC_API_KEY: apiKey,
+        ANTHROPIC_AUTH_TOKEN: apiKey,
+        ANTHROPIC_BASE_URL: runtimeBaseUrl,
+      }
+
       return {
         args: [],
         env: {
           ...baseEnv,
-          ANTHROPIC_API_KEY: apiKey,
-          ANTHROPIC_AUTH_TOKEN: apiKey,
-          ANTHROPIC_BASE_URL: runtimeBaseUrl,
+          ...claudeSettingsEnv,
         },
+        claudeSettingsEnv,
       }
     }
 
@@ -3618,6 +3634,7 @@ const launchClaudeSingleShotRun = async (
         includeEffort,
         safetyHookCommand,
         workspaceAdminMcpConfig,
+        settingsEnvOverride: runtime.claudeSettingsEnv,
       }),
     ]
 
@@ -3884,6 +3901,7 @@ const launchClaudeKeepaliveRun = async (
             safetyHookCommand,
             completionBoundaryHook,
             workspaceAdminMcpConfig,
+            settingsEnvOverride: runtime.claudeSettingsEnv,
           }),
         ]
 
@@ -4377,6 +4395,10 @@ export const buildClaudeArgs = (
     // 看板监工回合专属。--strict-mcp-config 让本次启动只认这里给的 MCP，
     // 不继承用户 ~/.claude 里配置的其它 server。
     workspaceAdminMcpConfig?: WorkspaceAdminClaudeMcpConfig
+    // resolveProviderRuntime 注入的 ANTHROPIC_* 原样透传到 `--settings`，用来压住
+    // 用户 `~/.claude/settings.json` 里的同名 env（后者优先级高于进程环境变量）。
+    // 见 ProviderRuntime.claudeSettingsEnv 上的根因说明。
+    settingsEnvOverride?: Record<string, string>
   },
 ) => {
   const args = ['-p', '--verbose', '--output-format', 'stream-json', '--include-partial-messages']
@@ -4456,6 +4478,10 @@ export const buildClaudeArgs = (
             skipDangerousModePermissionPrompt: true,
           }
         : {}),
+      // 只在真的注入了端点时写这个键。省略 ≠ 中立地继承用户配置吗？对 env 恰恰相反：
+      // 这里省略才是继承，写了才是覆盖 —— 而未注入的场景（路由关闭 / 无 profile）
+      // 正需要继承，所以不能无条件展开成空对象。
+      ...(options?.settingsEnvOverride ? { env: options.settingsEnvOverride } : {}),
       // Official ultracode channel (Claude Code v2.1.157+): a session-level
       // settings key that sends xhigh plus dynamic-workflow orchestration.
       // Older CLIs treat unknown settings keys as a warning, degrading to

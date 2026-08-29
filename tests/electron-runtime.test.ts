@@ -276,9 +276,13 @@ test('Electron update install flushes renderer and queued main-process state bef
     mainBody,
     /flushStateBeforeUpdate[\s\S]+webContents\.send\('app:flush-state-before-quit'\)[\s\S]+desktopBackend\.flushStateWrites\(\)/,
   )
+  // 断言里带上 markCleanExit 不是为了跟实现签名，而是因为它本身就是一条独立的
+  // 正确性要求：更新退出走 app.exit(0)，will-quit 不跑，sentinel 必须在这条路上
+  // 自己写成 clean exit，否则崩溃守卫会在安装目录被替换前拉起旧版（AGENTS.md #352）。
+  // 只放宽成 installUpdate\(assetPath 的话，把这个钩子整个删掉测试依然会绿。
   assert.match(
     mainBody,
-    /ipcMain\.handle\('desktop:install-update',[\s\S]+await flushStateBeforeUpdate\(\)[\s\S]+await installUpdate\(assetPath\)/,
+    /ipcMain\.handle\('desktop:install-update',[\s\S]+await flushStateBeforeUpdate\(\)[\s\S]+await installUpdate\(assetPath, \{ markCleanExit: \(\) => writeRunSentinel\(true\) \}\)/,
   )
 })
 

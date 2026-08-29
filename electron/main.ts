@@ -1576,7 +1576,10 @@ function registerDesktopHandlers() {
   })
   ipcMain.handle('desktop:install-update', async (_event, assetPath: string) => {
     await flushStateBeforeUpdate()
-    await installUpdate(assetPath)
+    // 更新退出走 app.exit(0)，will-quit 不会跑，所以 sentinel 必须在这条路上自己写成
+    // clean exit —— 否则崩溃守卫会在安装目录被替换前把旧版拉起来，抢走 single-instance
+    // lock，用户第一次重启看到的还是旧版本。见 updater-core.ts 的 runUpdateExitSequence。
+    await installUpdate(assetPath, { markCleanExit: () => writeRunSentinel(true) })
   })
   ipcMain.handle('desktop:clear-user-data', async () => {
     relaunchToClearUserData()

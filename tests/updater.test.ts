@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { EventEmitter } from 'node:events'
 import { existsSync } from 'node:fs'
-import { appendFile, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { appendFile, copyFile, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import { spawn, spawnSync } from 'node:child_process'
@@ -14,9 +14,11 @@ import {
   encodePowerShellScriptUtf8Bom,
   isNewerVersion,
   parseVersionTag,
+  runUpdateExitSequence,
   selectPlatformAsset,
   parseReleaseResponse,
   resolveDownloadedAssetStrategy,
+  UPDATE_EXIT_FLUSH_DELAY_MS,
 } from '../electron/updater-core.ts'
 import {
   launchDetachedPowerShellScriptFile,
@@ -200,6 +202,97 @@ describe('update asset install strategy', () => {
     assert.equal(
       resolveDownloadedAssetStrategy('darwin', '/tmp/Chill-Vibe-0.2.0.dmg'),
       'shell-open',
+    )
+  })
+})
+
+// 症状: 更新装完、应用自动重启，起来的还是旧版本；再手动重启一次才变成新版。
+// 根因 (2026-08-29): 更新退出走 `app.exit(0)`，它按设计跳过 `before-quit`/`will-quit`，
+//       而 `run-sentinel.json` 的 cleanExit 只在 `will-quit` 里被写成 true —— 于是崩溃
+//       守卫把这次退出读成"被外部杀掉"，在安装目录还没被替换时就把**旧版**拉了起来。
+//       它抢到 single-instance lock 之后，替换脚本末尾 Start-Process 起的新版进程会立刻
+//       自杀并把旧窗口拉到前台，用户看到的就是"更新没生效"。
+// 被否决的替代:
+//   - 「更新时不用 app.exit，改走正常 quit」: before-quit 里的 preventDefault 守卫会把
+//     退出拖到 flush 完成之后，而 PowerShell 作业正盯着我们的 PID，拖不起。
+//   - 「更新前把守卫进程杀掉」: 守卫是脱离进程树的，杀它要按 exe 路径搜，会误伤同机
+//     其它实例；而且真崩在退出路上时就没人兜底了。标记 clean exit 才是它设计里的正解。
+describe('runUpdateExitSequence', () => {
+  test('marks the run as a clean exit before the process goes away', () => {
+    const calls: string[] = []
+    let scheduledDelayMs = -1
+
+    runUpdateExitSequence(
+      {
+        flushRenderers: () => calls.push('flush'),
+        markCleanExit: () => calls.push('mark'),
+        exit: () => calls.push('exit'),
+        hardExit: () => calls.push('hard-exit'),
+      },
+      (callback, delayMs) => {
+        scheduledDelayMs = delayMs
+        callback()
+      },
+    )
+
+    assert.deepEqual(calls, ['flush', 'mark', 'exit'])
+    assert.equal(scheduledDelayMs, UPDATE_EXIT_FLUSH_DELAY_MS)
+  })
+
+  test('still exits when marking the clean exit throws', () => {
+    const calls: string[] = []
+
+    runUpdateExitSequence(
+      {
+        flushRenderers: () => {
+          throw new Error('renderer already gone')
+        },
+        markCleanExit: () => {
+          throw new Error('sentinel is read-only')
+        },
+        exit: () => calls.push('exit'),
+        hardExit: () => calls.push('hard-exit'),
+      },
+      (callback) => callback(),
+    )
+
+    assert.deepEqual(calls, ['exit'])
+  })
+
+  test('falls back to a hard exit when app.exit throws', () => {
+    const calls: string[] = []
+
+    runUpdateExitSequence(
+      {
+        flushRenderers: () => {},
+        markCleanExit: () => calls.push('mark'),
+        exit: () => {
+          throw new Error('exit failed')
+        },
+        hardExit: () => calls.push('hard-exit'),
+      },
+      (callback) => callback(),
+    )
+
+    assert.deepEqual(calls, ['mark', 'hard-exit'])
+  })
+
+  // The sequence above is only worth anything if the Electron side actually hands the
+  // sentinel writer in. That wiring lives in main.ts, which cannot be imported outside
+  // Electron, so it is pinned by reading the source — same approach as the workspace
+  // column menu guards.
+  test('the desktop:install-update handler hands the sentinel writer to installUpdate', async () => {
+    const source = await readFile(new URL('../electron/main.ts', import.meta.url), 'utf8')
+    const handlerStart = source.indexOf("ipcMain.handle('desktop:install-update'")
+
+    assert.notEqual(handlerStart, -1, 'The desktop:install-update handler moved or was renamed.')
+
+    const handlerBody = source.slice(handlerStart, handlerStart + 800)
+
+    assert.match(
+      handlerBody,
+      /installUpdate\([^)]*markCleanExit:\s*\(\)\s*=>\s*writeRunSentinel\(true\)/s,
+      'installUpdate must mark the run sentinel clean, or the crash guard resurrects the old build mid-update.',
     )
   })
 })
@@ -1095,6 +1188,285 @@ describe('windows zip update job — end-to-end PowerShell run', () => {
       )
     } finally {
       await removeLabRoot(lab.root)
+    }
+  })
+
+  // 症状: 更新装完、应用自动重启，起来的还是旧版本；必须再手动重启一次才是新版。
+  // 根因 (2026-08-29): 等待窗口关闭之后，仍可能有实例从这个安装目录被拉起来 —— 崩溃守卫
+  //       把更新退出误读成崩溃（那一侧由 runUpdateExitSequence 根治），或者用户在替换期间
+  //       自己点了图标。它抢到 single-instance lock 后，脚本末尾 Start-Process 起的新版
+  //       进程会立刻自杀、只把旧窗口拉到前台，于是"更新看起来没生效"。
+  // 被否决的替代: 「Start-Process 前把 Wait-ForProcessExit 再跑一遍」—— 换出去之后旧映像
+  //       已经躺在备份目录里，它的 ExecutablePath 不再等于安装路径，那个循环匹配不到它。
+  test('stops instances of this install that appeared after the wait window', async (t) => {
+    if (process.platform !== 'win32') {
+      t.skip('The Windows zip update job only runs on win32.')
+      return
+    }
+
+    const systemRoot = process.env.SystemRoot ?? 'C:\\Windows'
+    // 新版 exe 用 whoami.exe 的副本：脚本最后一步 Start-Process 把它拉起来之后它立刻自己
+    // 退出，不会给测试留下一个挂着的进程。
+    const shortLivedExe = path.join(systemRoot, 'System32', 'whoami.exe')
+
+    if (!existsSync(shortLivedExe)) {
+      t.skip('whoami.exe is required to stand in for the updated executable.')
+      return
+    }
+
+    const exeName = 'fake-app.exe'
+    const root = await mkdtemp(path.join(os.tmpdir(), 'chill-vibe-update-stale-'))
+    const payloadRoot = path.join(root, 'payload', 'Chill Vibe IDE')
+    const targetDir = path.join(root, 'installed')
+    const backupDir = `${targetDir}.chill-vibe-backup`
+    const installedExe = path.join(targetDir, exeName)
+    const stalePidPath = path.join(root, 'stale-pid.txt')
+    const logPath = path.join(root, 'apply-update.log')
+    const scriptPath = path.join(root, 'apply-update.ps1')
+    const wrapperPath = path.join(root, 'stale-instance-wrapper.ps1')
+    const assetPath = path.join(root, 'update.zip')
+
+    const readStalePid = async () => {
+      const raw = await readFile(stalePidPath, 'utf8').catch(() => '')
+      // Out-File -Encoding utf8 writes a BOM on Windows PowerShell 5.1.
+      const parsed = Number.parseInt(raw.replace(/[^0-9]/g, ''), 10)
+      return Number.isInteger(parsed) && parsed > 0 ? parsed : null
+    }
+
+    const isAlive = (processId: number) => {
+      try {
+        process.kill(processId, 0)
+        return true
+      } catch {
+        return false
+      }
+    }
+
+    await mkdir(path.join(payloadRoot, 'resources'), { recursive: true })
+    await copyFile(shortLivedExe, path.join(payloadRoot, exeName))
+    await writeFile(path.join(payloadRoot, 'resources', 'app.asar'), 'new-app-asar-payload')
+
+    const compressed = runPowerShellCommand(
+      `$ErrorActionPreference='Stop'; Compress-Archive -LiteralPath '${psQuote(payloadRoot)}' -DestinationPath '${psQuote(assetPath)}' -Force`,
+    )
+    assert.equal(compressed.status, 0, compressed.stderr || compressed.stdout)
+
+    // 安装目录里的 exe 是 node.exe 的副本，这样"残留实例"可以带参数长期活着，而它的
+    // Win32_Process.ExecutablePath 就是安装目录下的这个路径 —— 和真实场景一致。
+    await mkdir(path.join(targetDir, 'resources'), { recursive: true })
+    await copyFile(process.execPath, installedExe)
+    await writeFile(path.join(targetDir, 'resources', 'app.asar'), 'old-app-asar-payload')
+
+    await writeFile(logPath, '')
+    await writeFile(
+      scriptPath,
+      encodePowerShellScriptUtf8Bom(
+        buildWindowsZipReplaceScript({
+          processId: 0x7ffffffe,
+          assetPath,
+          targetDir,
+          executablePath: installedExe,
+          stagingDir: path.join(root, 'extract'),
+          logPath,
+          waitTimeoutSeconds: 2,
+        }),
+      ),
+    )
+
+    // Shadowing Expand-Archive is the only deterministic injection point: it runs after the
+    // wait window has already closed and before the swap, which is exactly when the guard
+    // used to resurrect the old app.
+    await writeFile(
+      wrapperPath,
+      encodePowerShellScriptUtf8Bom(
+        [
+          `$ErrorActionPreference = 'Continue'`,
+          `function Expand-Archive {`,
+          `  [CmdletBinding()]`,
+          `  param(`,
+          `    [string]$LiteralPath,`,
+          `    [string]$DestinationPath,`,
+          `    [switch]$Force`,
+          `  )`,
+          `  $stale = Start-Process -FilePath '${psQuote(installedExe)}' -ArgumentList @('-e','setTimeout(function(){},180000)') -PassThru -WindowStyle Hidden`,
+          `  $stale.Id | Out-File -FilePath '${psQuote(stalePidPath)}' -Encoding utf8`,
+          `  Start-Sleep -Milliseconds 600`,
+          `  Microsoft.PowerShell.Archive\\Expand-Archive -LiteralPath $LiteralPath -DestinationPath $DestinationPath -Force:$Force`,
+          `}`,
+          `& '${psQuote(scriptPath)}'`,
+        ].join('\r\n'),
+      ),
+    )
+
+    let stalePid: number | null = null
+
+    try {
+      const result = runPowerShellScriptFile(wrapperPath)
+      const jobLog = await readFile(logPath, 'utf8')
+      stalePid = await readStalePid()
+
+      assert.notEqual(stalePid, null, `The stale instance was never started.\n${jobLog}`)
+
+      const deadline = Date.now() + 10_000
+      while (Date.now() < deadline && isAlive(stalePid as number)) {
+        await new Promise((resolve) => setTimeout(resolve, 100))
+      }
+
+      assert.equal(
+        isAlive(stalePid as number),
+        false,
+        `A stale instance from this install survived the update and will hold the single-instance lock.\n${jobLog}`,
+      )
+      assert.equal(result.status, 0, `${jobLog}\n${result.stderr}`)
+      assert.equal(
+        await readFile(path.join(targetDir, 'resources', 'app.asar'), 'utf8'),
+        'new-app-asar-payload',
+        `The update never reached the install directory.\n${jobLog}`,
+      )
+      assert.equal(
+        existsSync(backupDir),
+        false,
+        `The backup folder could not be removed, which means the old image was still running.\n${jobLog}`,
+      )
+    } finally {
+      const leftover = stalePid ?? (await readStalePid())
+
+      if (leftover && isAlive(leftover)) {
+        try {
+          process.kill(leftover)
+        } catch {
+          // Already gone between the check and the kill.
+        }
+        await new Promise((resolve) => setTimeout(resolve, 400))
+      }
+
+      await removeLabRoot(root)
+    }
+  })
+
+  // 症状: 与上一条同样是"更新后第一次起来还是旧版"，但走的是另一条进入路径 —— 上一条的
+  //       残留实例来自安装目录，这一条来自**上次更新留下的、删不掉的备份目录**。
+  // 根因: 备份删不掉的最常见原因恰恰就是里面还跑着旧映像（本次修复自己的注释也这么写）。
+  //       脚本此时把 $backupDir 改名成带时间戳的新目录、把老路径记进 $staleBackupDir，
+  //       而 Start-Process 前的清场只扫 $executablePath 和**新** $backupDir，
+  //       于是那个真正持有 single-instance lock 的进程一次都没被看到。
+  // 被否决的替代: 「扫描 $targetDir 的所有兄弟目录」—— 会把用户手动留的副本一起杀掉。
+  //       候选路径必须是脚本自己造出来的那两个备份目录，不能靠通配。
+  test('stops instances living in a stale backup folder that could not be deleted', async (t) => {
+    if (process.platform !== 'win32') {
+      t.skip('The Windows zip update job only runs on win32.')
+      return
+    }
+
+    const systemRoot = process.env.SystemRoot ?? 'C:\\Windows'
+    // 新版 exe 用 whoami.exe：被 Start-Process 拉起来后立刻自退，不给测试留挂着的进程，
+    // 也让 payload 压缩保持在毫秒级（node.exe 副本有 80MB，压它要两分钟）。
+    const shortLivedExe = path.join(systemRoot, 'System32', 'whoami.exe')
+
+    if (!existsSync(shortLivedExe)) {
+      t.skip('whoami.exe is required to stand in for the updated executable.')
+      return
+    }
+
+    const exeName = 'fake-app.exe'
+    const root = await mkdtemp(path.join(os.tmpdir(), 'chill-vibe-update-stale-backup-'))
+    const payloadRoot = path.join(root, 'payload', 'Chill Vibe IDE')
+    const targetDir = path.join(root, 'installed')
+    const staleBackupDir = `${targetDir}.chill-vibe-backup`
+    const installedExe = path.join(targetDir, exeName)
+    const staleBackupExe = path.join(staleBackupDir, exeName)
+    const logPath = path.join(root, 'apply-update.log')
+    const scriptPath = path.join(root, 'apply-update.ps1')
+    const assetPath = path.join(root, 'update.zip')
+
+    const isAlive = (processId: number) => {
+      try {
+        process.kill(processId, 0)
+        return true
+      } catch {
+        return false
+      }
+    }
+
+    await mkdir(path.join(payloadRoot, 'resources'), { recursive: true })
+    await copyFile(shortLivedExe, path.join(payloadRoot, exeName))
+    await writeFile(path.join(payloadRoot, 'resources', 'app.asar'), 'new-app-asar-payload')
+
+    const compressed = runPowerShellCommand(
+      `$ErrorActionPreference='Stop'; Compress-Archive -LiteralPath '${psQuote(payloadRoot)}' -DestinationPath '${psQuote(assetPath)}' -Force`,
+    )
+    assert.equal(compressed.status, 0, compressed.stderr || compressed.stdout)
+
+    await mkdir(path.join(targetDir, 'resources'), { recursive: true })
+    await copyFile(shortLivedExe, installedExe)
+    await writeFile(path.join(targetDir, 'resources', 'app.asar'), 'old-app-asar-payload')
+
+    // 上一次更新遗留的备份目录，里面躺着旧映像。只有它需要长期活着，所以只有它是
+    // node.exe 的副本 —— 它的 Win32_Process.ExecutablePath 就是备份目录下的这个路径。
+    await mkdir(staleBackupDir, { recursive: true })
+    await copyFile(process.execPath, staleBackupExe)
+
+    await writeFile(logPath, '')
+    await writeFile(
+      scriptPath,
+      encodePowerShellScriptUtf8Bom(
+        buildWindowsZipReplaceScript({
+          processId: 0x7ffffffe,
+          assetPath,
+          targetDir,
+          executablePath: installedExe,
+          stagingDir: path.join(root, 'extract'),
+          logPath,
+          waitTimeoutSeconds: 2,
+        }),
+      ),
+    )
+
+    // 让备份目录删不掉的，就是这个还活着的旧实例本身 —— 不需要额外制造锁。
+    const survivor = spawn(staleBackupExe, ['-e', 'setTimeout(function(){},180000)'], {
+      detached: true,
+      stdio: 'ignore',
+    })
+    survivor.unref()
+    const survivorPid = survivor.pid as number
+
+    try {
+      // 等它真的把自己的映像加载起来，否则 Win32_Process 里还查不到 ExecutablePath。
+      await new Promise((resolve) => setTimeout(resolve, 800))
+      assert.equal(isAlive(survivorPid), true, 'The stale-backup instance never started.')
+
+      const result = runPowerShellScriptFile(scriptPath)
+      const jobLog = await readFile(logPath, 'utf8')
+
+      assert.match(
+        jobLog,
+        /Stale backup folder could not be deleted/,
+        `This test only proves anything when the rename branch is taken.\n${jobLog}`,
+      )
+
+      const deadline = Date.now() + 10_000
+      while (Date.now() < deadline && isAlive(survivorPid)) {
+        await new Promise((resolve) => setTimeout(resolve, 100))
+      }
+
+      assert.equal(
+        isAlive(survivorPid),
+        false,
+        `An old instance parked in the stale backup folder survived the update; it will hold the single-instance lock and the user's first restart shows the old version.\n${jobLog}`,
+      )
+      assert.equal(result.status, 0, `${jobLog}\n${result.stderr}`)
+    } finally {
+      if (isAlive(survivorPid)) {
+        try {
+          process.kill(survivorPid)
+        } catch {
+          // Already gone between the check and the kill.
+        }
+        await new Promise((resolve) => setTimeout(resolve, 400))
+      }
+
+      await removeLabRoot(root)
+      await rm(staleBackupDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 })
     }
   })
 })

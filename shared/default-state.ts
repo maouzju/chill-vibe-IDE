@@ -480,7 +480,9 @@ export const createLocalModelEntry = (
 ): LocalModelEntry => ({
   id: normalizeText(overrides.id) || options.fallbackId || createId(),
   label: normalizeText(overrides.label),
-  harness: overrides.harness === 'codex' ? 'codex' : 'claude',
+  // 默认 codex：claude harness 连本机模型时开销大一个数量级，且关不掉思考。
+  // 详见 localModelEntrySchema 的注释与 docs/specs/local-model-entries/design.md 的实测表。
+  harness: overrides.harness === 'claude' ? 'claude' : 'codex',
   baseUrl: normalizeBaseUrl(overrides.baseUrl),
   apiKey: normalizeText(overrides.apiKey),
   model: normalizeText(overrides.model),

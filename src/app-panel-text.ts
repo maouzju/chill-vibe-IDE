@@ -33,9 +33,9 @@ export const getPanelText = (language: AppState['settings']['language']) =>
         localModelOllamaOffline:
           'No installed models detected on this machine — that list only covers Ollama. Just type the model name instead; LM Studio, llama.cpp and vLLM work the same way.',
         localModelClaudeBaseUrlNote:
-          'Claude CLI appends /v1/messages itself, so point this at the host root. The server must expose an Anthropic-compatible Messages API.',
+          'Claude CLI appends /v1/messages itself, so point this at the host root — the server must expose an Anthropic-compatible Messages API. Heads-up: on a local model it costs about 3x the tokens per turn, and its thinking cannot be switched off (the CLI has no such flag), so the thinking toggle will look inert. Prefer Codex unless your server only speaks the Messages API.',
         localModelCodexBaseUrlNote:
-          'Codex CLI needs the /v1 suffix and only speaks the Responses API — servers that offer just chat/completions (Ollama, LM Studio) will answer 404. Use the Claude harness for those.',
+          'Codex CLI speaks the Responses API and needs a /v1 suffix — leave it off and it gets added for you. Ollama 0.32.15 and newer serve this endpoint; on older builds it answers 404, in which case switch to the Claude harness.',
         addLocalModel: 'Add local model',
         noLocalModels: 'No local models yet.',
         noLocalModelsDescription:
@@ -159,9 +159,9 @@ export const getPanelText = (language: AppState['settings']['language']) =>
         localModelOllamaOffline:
           '没有检测到本机已装模型——那个列表只覆盖 Ollama。直接手输模型名即可，接 LM Studio、llama.cpp、vLLM 也是一样的填法。',
         localModelClaudeBaseUrlNote:
-          'Claude CLI 会自己补 /v1/messages，这里填到主机根即可。对方需要提供 Anthropic 兼容接口。',
+          'Claude CLI 会自己补 /v1/messages，这里填到主机根即可，对方需要提供 Anthropic 兼容接口。注意：接本地模型时它每轮要多花约 3 倍 token，且思考关不掉（CLI 根本没有这个开关），界面上的「关闭思考」会像失灵一样。除非你的服务只提供 Messages API，否则建议用 Codex 驱动。',
         localModelCodexBaseUrlNote:
-          'Codex CLI 需要带 /v1 后缀，且只认 Responses API——只提供 chat/completions 的服务（Ollama、LM Studio）会返回 404，这类请改用 Claude 驱动。',
+          'Codex CLI 走 Responses API，地址需要带 /v1 后缀——留空不填会自动补上。Ollama 0.32.15 起提供该端点；更老的版本会返回 404，那种情况请改用 Claude 驱动。',
         addLocalModel: '添加本地模型',
         noLocalModels: '暂无本地模型。',
         noLocalModelsDescription: '添加一个，就能让某张卡改用本机跑的模型而不是云端。',

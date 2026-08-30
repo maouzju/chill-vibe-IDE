@@ -4,7 +4,7 @@
 
 **不新增 provider，把本地模型伪装成一个"模型选项"。**
 
-`ChatCard` 的模型选择器已经有「自定义模型注入」的机制（`src/components/ChatCard.tsx:3602-3604`：`custom ? [custom, ...MODEL_OPTIONS] : MODEL_OPTIONS`），且选项值格式就是 `` `${provider}:${model}` ``（`getSelectValue`）。本地条目只要变成一个 `ModelOption`，就能天然融入选择器、天然带上 provider 切换，UI 侧改动极小。
+`ChatCard` 的模型选择器已经有「自定义模型注入」的机制（`src/components/ChatCard.tsx（模型选项构造处）`：`custom ? [custom, ...MODEL_OPTIONS] : MODEL_OPTIONS`），且选项值格式就是 `` `${provider}:${model}` ``（`getSelectValue`）。本地条目只要变成一个 `ModelOption`，就能天然融入选择器、天然带上 provider 切换，UI 侧改动极小。
 
 真实模型名与端点信息不进 `card.model`，而是用一个**令牌**指向条目，在后端最上游翻译一次。
 
@@ -14,7 +14,7 @@
 export const localModelEntrySchema = z.object({
   id: z.string().min(1),
   label: z.string().default(''),
-  harness: providerSchema.default('claude'),   // 复用 'codex' | 'claude'，不新增 provider
+  harness: providerSchema.default('codex'),    // 复用 'codex' | 'claude'，不新增 provider
   baseUrl: z.string().default(''),
   apiKey: z.string().default(''),
   model: z.string().default(''),
@@ -27,7 +27,7 @@ export type LocalModelEntry = z.infer<typeof localModelEntrySchema>
 
 归一化 `createLocalModelEntry(overrides, options)`（仿 `createAutoUrgeProfile`，default-state.ts:344）：
 - `id` 空 → `options.fallbackId` → `createId()`
-- `harness` 非法 → `'claude'`
+- `harness` 非法 → `'codex'`（默认值的理由见下文「默认 harness 为什么是 codex」）
 - 各字符串 `normalizeText`（trim）
 - `normalizeLocalModelEntries(list)`：非数组 → `[]`；逐项过滤非对象；**`model` 为空的条目直接丢弃**（无真实模型名的条目无法工作）；id 去重。
 
@@ -51,30 +51,30 @@ export const buildLocalModelOptions = (entries: LocalModelEntry[]): ModelOption[
 
 **关键：在最上游翻译一次，下游零改动。**
 
-`launchProviderRun`（:2827）拿到 `request` 后、调 `resolveProviderRuntime`（:2888）之前：
+`launchProviderRun`（provider launch 入口）拿到 `request` 后、调 `resolveProviderRuntime`（:2888）之前：
 
 1. `parseLocalModelToken(request.model)` → 命中则从 settings 取出对应 entry；
-2. `resolveProviderRuntime(provider, entry)` —— 给它加**可选第二参数**：传了 entry 就用 `entry.baseUrl` / `entry.apiKey`，不传则走原来的 `getActiveProviderProfile` 全局逻辑（另外两个调用点 :1413 / :4136 不传，行为不变）；
+2. `resolveProviderRuntime(provider, entry)` —— 给它加**可选第二参数**：传了 entry 就用 `entry.baseUrl` / `entry.apiKey`，不传则走原来的 `getActiveProviderProfile` 全局逻辑（其它不带条目的调用点保持原行为）；
 3. 把 `request.model` 替换成 `entry.model`（真实模型名）后再往下走 —— `buildClaudeArgs` / `buildCodexArgs` / 流解析器**完全不需要改**，它们看到的就是一个普通模型名。
 
 条目查不到（被删了）时：不注入端点，`request.model` 回落到 `getDefaultModel(provider)`，并 `onLog` 一句提示，避免卡片卡死在无效模型上（requirements #5）。
 
-⚠️ `resolveProviderRuntime` 里 `if (!apiKey) return baseEnv`（:536）这条短路必须保留 —— 但 entry 分支要用 `entry.apiKey`，所以 UI 侧必须保证 apiKey 非空（见下）。
+⚠️ `resolveProviderRuntime` 里 `if (!apiKey) return baseEnv` 这条短路必须保留；本地条目在后端先用占位串 `local`，因此 UI 可让 apiKey 留空。
 
 ## 渲染层
 
-- `src/components/ChatCard.tsx:3602-3604`：`base` 前面并入 `buildLocalModelOptions(settings.localModelEntries)`。本地条目排在最前，便于识别。
-- `src/components/ChatCard.tsx:495`（`MODEL_OPTIONS.some(...)` 判断模型是否属于该 provider）需要把本地令牌也算作合法，否则切换时会被判为非法模型。
-- 条目被删除后，仍指向它的卡片：`selectOptions.find(...) ?? selectOptions[0]`（:3612）已有兜底，配合后端回落即可，无需额外状态迁移。
-- `AutomationBoardCard.tsx:204` 也消费 `MODEL_OPTIONS`；本次**不改**（看板模板另有语义，超出需求范围），在 tasks 里记为已知不覆盖面。
+- `src/components/ChatCard.tsx（模型选项构造处）`：`base` 前面并入 `buildLocalModelOptions(settings.localModelEntries)`。本地条目排在最前，便于识别。
+- `src/components/ChatCard.tsx（模型合法性判断处）`（`MODEL_OPTIONS.some(...)` 判断模型是否属于该 provider）需要把本地令牌也算作合法，否则切换时会被判为非法模型。
+- 条目被删除后，仍指向它的卡片：`selectOptions.find(...) ?? selectOptions[0]`（模型选择兜底处）已有兜底，配合后端回落即可，无需额外状态迁移。
+- `AutomationBoardCard.tsx（模型选项消费处）` 也消费 `MODEL_OPTIONS`；本次**不改**（看板模板另有语义，超出需求范围），在 tasks 里记为已知不覆盖面。
 
 ## 设置 UI（src/App.tsx）
 
-在「路由」面板（`id="app-panel-routing"`，:9617）内、provider profile 区之后，新增「本地模型」小节，照抄 profile 的列表 + 草稿模式（:9761-9870 / `updateDraft`:2263 / `updateProviderProfile`:2317）：
+在「路由」面板（`id="app-panel-routing"`）内、provider profile 区之后，新增「本地模型」小节，照抄 profile 的列表 + 草稿模式（沿用现有 profile 草稿/保存模式）：
 
 - 每行：显示名、harness 下拉（Claude CLI / Codex CLI）、Base URL、API Key、模型名、删除按钮
 - 新建草稿区 + 「添加」按钮
-- **apiKey 输入框默认填 `local`**，并在为空时阻止保存 —— 直接对应「apiKey 为空会让 baseUrl 静默失效」这个坑
+- **apiKey 可留空**，后端统一补为 `local` —— 避免把本地服务不需要的密钥变成保存门槛
 - `cliRoutingEnabled` 关闭时，本小节顶部显示一条警告（本地条目同样不会生效）
 
 i18n 文案加进 `src/app-panel-text.ts`（中英两套，:1-30 的 `getPanelText` 结构）。
@@ -108,11 +108,11 @@ i18n 文案加进 `src/app-panel-text.ts`（中英两套，:1-30 的 `getPanelTe
    为假，于是「探测失败」和「从未探测」这两种情况反而不提示，用户只看到一个空输入框。
    改为判 `models.length === 0` —— 没装、没启动、装了但没拉模型、探测失败，对用户都是同一件事。
 
-## 三个必须处理的连带点（漏掉就是线上 bug）
+## 四个必须处理的连带点（漏掉就是线上 bug）
 
 ### 1. Claude keepalive 池的 key 必须含 baseUrl
 
-`server/providers.ts:1413` 的 keepalive 池跨 turn 复用 CLI 进程，而 `ANTHROPIC_BASE_URL` 是**进程启动时定死在 env 里的**。同一张卡从条目 A 换到条目 B（不同 baseUrl），若池 key 不变就会**继续用旧进程 = 旧端点**，表现为"换了模型但没生效"。
+`server/providers.ts（keepalive 池构造处）` 的 keepalive 池跨 turn 复用 CLI 进程，而 `ANTHROPIC_BASE_URL` 是**进程启动时定死在 env 里的**。同一张卡从条目 A 换到条目 B（不同 baseUrl），若池 key 不变就会**继续用旧进程 = 旧端点**，表现为"换了模型但没生效"。
 
 池签名必须把生效的 baseUrl 算进去。相关既有测试：`tests/claude-keepalive-signature.test.ts`、`tests/claude-session-pool.test.ts`。
 
@@ -128,13 +128,82 @@ i18n 文案加进 `src/app-panel-text.ts`（中英两套，:1-30 的 `getPanelTe
 
 处理方式与既有工具卡令牌一致——`rememberGlobalPreference` 的判定本就排除 `isToolCardModel`，本地令牌照此办理：**不写全局偏好，只作用于当前卡**。这也符合需求 #4「逐卡生效」。
 
+### 4. 本地推理必须绕开断线续传代理
+
+`resilientProxyEnabled` 默认开启（首字节 90s / 停顿 60s / 最多重试 6 次）。这套参数是为云端中转
+设计的，套到本地推理上会直接引发雪崩：
+
+- 本机 27B 模型啃 4 万 token 的 prompt 远超 90 秒 → 首字节超时
+- 代理换一条连接重试，但 **Ollama 收不到取消信号**，仍在算那个已经没人要的结果
+- 6 次重试堆出 6 个算不完的僵尸任务，全挤在 Ollama 的单个推理槽位上
+
+2026-08-29 实测（本机 Ollama + `huihui_ai/Qwen3.8-abliterated:27b`）：27 条并发连接、单个请求
+恒定 `5m5s` 后 500、GPU 400W 满载空转两小时。**堆积发生在推理侧，关掉界面也停不下来。**
+
+因此 `resolveProviderRuntime` 对本地推理端点一律跳过代理，判定取两个条件的或：
+
+- `localEntry` 存在 —— 覆盖局域网上的本地推理（192.168 段的 LM Studio 不是 loopback，但同样
+  慢、同样收不到取消信号）
+- `isLoopbackBaseUrl(baseUrl)` —— 覆盖用户不建条目、直接在「接口配置」里手填本机端点那条路径
+
+只判其一都会漏。守卫测试见 `tests/provider-routing-runtime.test.ts` 的
+`never routes a local model entry through the resilient proxy` 及相邻三条（含反向守卫：
+云端 profile 必须保留代理）。
+
+**不要用"把首字节超时调到上限 600s"代替。** 那是治标，且重试对本地推理本就无意义 —— 云端超时
+多半是网络抖动，重发有用；本地超时只是"还没算完"，重发只会让同一个模型从头再算一遍。
+
+注意这与 `src/App.tsx` 的**流恢复**重试（`getRecoverableStreamRetryLimit`）不是一回事：那一层
+在流真的断开后带着 sessionId 续传，对本地模型仍然有效，不在本条的关闭范围内。
+
 ## 其他连带面
 
-- `App.tsx` 有 **4 个** 发送入口计算 `resolvedModel`（:6090 / :6253 / :6666 / :6873），令牌翻译若放前端就要改 4 处 —— 这正是选择**在后端最上游翻译**的理由，前端 4 处一行都不用动。
-- `src/hooks/persistence-queue.ts:277-279` 有 action 持久化白名单，新增的本地条目 action **必须登记**，否则设置改了不落盘。
-- 设置面板"默认模型"输入框有两处重复渲染（:8794 / :10279），本次不涉及，但新增 UI 若放同一区域需留意别只改一处。
+- `App.tsx 有多个发送入口计算 `resolvedModel`，令牌翻译若放前端就要改多处 —— 这正是选择**在后端最上游翻译**的理由，前端 4 处一行都不用动。
+- `src/hooks/persistence-queue.ts` 的 action 持久化白名单，新增的本地条目 action **必须登记**，否则设置改了不落盘。
+- 设置面板"默认模型"输入框有两处重复渲染（两处默认模型输入框），本次不涉及，但新增 UI 若放同一区域需留意别只改一处。
+
+## 默认 harness 为什么是 codex（2026-08-30 改）
+
+**结论先行：新建条目默认 `codex`。** 下面这张表是同机、同模型、同一句「OK」的实测：
+
+| harness | 一句「OK」的 token 开销 | 占 32K 上下文 | 耗时 |
+|---|---|---|---|
+| Codex CLI | 9,164 | 28% | 数秒 |
+| Claude CLI | **27,387** | **84%** | **299 秒** |
+
+差的不是常数而是数量级，且 Claude 那一列直接把 32K 上下文吃掉八成 —— 留给真正工作的空间所剩
+无几。24GB 显存放一个 27B Q4 模型时，65K 上下文已经占到 22453/24564 MiB（91%），没有余量再
+往上抬。**这不是调参能解决的，是 harness 自带的系统提示与工具定义摊在每一轮上。**
+
+第二个理由是「关闭思考」开关。用户报「IDE 的思考关闭之后似乎没效果」，根因是三层叠加：
+
+1. Claude CLI **根本没有关思考的开关**，`--effort` 只收 low/medium/high/xhigh/max，
+   于是 IDE 的开关只能翻成 `--effort low`（`shared/reasoning.ts` 的 `toClaudeEffortFlagValue`，
+   同一处注释里记着 pitfall #289）。
+2. 本地条目当时默认就是 claude harness。
+3. Ollama 的 `/v1/messages` 只认 `thinking:{"type":"disabled"}`、**无视 budget 大小**，
+   所以 low 和 max 在它那儿行为完全一致 —— 而 Claude CLI 永远不会发出 `disabled`。
+
+Codex 侧没有这个问题：关思考落 `model_reasoning_effort="none"`（`server/providers.ts` 的 Codex 参数构造处），
+实测能让 Responses 的输出块从 `['reasoning','message']` 变成 `['message']`，思考是真的关掉了。
+
+被否决的替代方案：
+
+- **保留 claude 默认、只在 UI 加一句提示。** 用户得先读懂提示、再理解两个 CLI 的协议差异才能
+  自救；默认值本就该指向当下能用的那一个。
+- **绕开两个 CLI、直接打 Ollama 的 HTTP 接口。** 被 `AGENTS.md` 的硬约束挡住（所有 AI 请求
+  必须走 `claude`/`codex` 路由路径），且本仓库的 provider 差异散落在 30+ 文件的分支与
+  `Record<Provider,X>` 表里。codex 的 9K 开销已经可接受，问题原本就特指 claude 的 27K。
+- **在模型层关思考**（`ollama create` 加 `PARAMETER think false`）。实测 `Error: unknown
+  parameter 'think'` —— 这是 API 字段，不是模型参数，模型层关不掉。
+
+已选 claude 的老条目不受影响：默认值只作用于新建与非法值回落，显式存下的 `'claude'` 原样保留。
 
 ## 实测：两个 harness 各自能连什么（2026-08-23，接本机 Ollama 0.32.9 端到端验证）
+
+> ⚠️ **下表已过时，仅作历史记录。** 当日「Codex CLI → 404」是因为 Ollama 0.32.9 没有
+> `/v1/responses`；0.32.15 已补上该端点，codex harness 实测可用。当初选 claude 当默认正是
+> 因为 codex 打不通，这个前提已不成立 —— 见上一节。
 
 路由层本身已验证正确：令牌被翻成真实模型名、端点与密钥都跟着条目走、故意放的云端 profile
 没有泄漏进来。但**CLI 侧的兼容性是另一回事**，这里记下当天的实测结论，避免有人重走一遍：
@@ -142,7 +211,7 @@ i18n 文案加进 `src/app-panel-text.ts`（中英两套，:1-30 的 `getPanelTe
 | harness | 打的端点 | 对 Ollama 的结果 |
 |---|---|---|
 | Codex CLI | `<baseUrl>/responses`（Responses API） | ❌ 404 —— Ollama 只有 `/v1/chat/completions` |
-| Claude CLI | `<baseUrl>/v1/messages` | ⚠️ 进程起得来、`system/init` 也发了，但**始终没向 Ollama 发出请求**，120s 超时且 stderr 全空 |
+| Claude CLI | `<baseUrl>/v1/messages` | ⚠️ 当日：进程起得来、`system/init` 也发了，但**始终没向 Ollama 发出请求**，120s 超时且 stderr 全空 |
 
 两条重要的负面结论：
 
@@ -150,13 +219,38 @@ i18n 文案加进 `src/app-panel-text.ts`（中英两套，:1-30 的 `getPanelTe
    移除该值，注入后 CLI 直接死在配置解析上（"`wire_api = \"chat\"` is no longer supported"），
    连启动都做不到 —— 比 404 更糟。守卫测试见 `tests/provider-routing-runtime.test.ts` 的
    "never injects a wire api override"。
-2. **Codex harness 的 baseUrl 要自己带 `/v1`。** 默认值是 `https://api.openai.com/v1`，
-   用户若只填 `http://127.0.0.1:11434`，CLI 会去打 `http://127.0.0.1:11434/responses`。
-   Claude harness 则相反，填到主机根即可（`ANTHROPIC_BASE_URL` 后面由 CLI 补 `/v1/messages`）。
+2. **Codex harness 的 baseUrl 必须带 `/v1`，但现在不用用户自己记了。** Codex CLI 的默认值是
+   `https://api.openai.com/v1`，它在此之后直接拼 `/responses`；用户若只填
+   `http://127.0.0.1:11434`（Ollama 官方文档里到处都是这个不带 `/v1` 的地址），CLI 会去打
+   `http://127.0.0.1:11434/responses` 并返回 `404 page not found, url: /responses` ——
+   光看这条报错根本看不出是少了 `/v1`。
+   Claude harness 则相反，填到主机根即可（`ANTHROPIC_BASE_URL` 后面由 CLI 补 `/v1/messages`），
+   替它加 `/v1` 会打成 `/v1/v1/messages`。
 
-Claude CLI 卡住的根因**尚未查清**，需要单独一轮排查（怀疑是它在发首个请求前还有一步握手或
-校验）。在那之前，本功能对 Ollama 属于"配得上、跑不通"；对已经实现 Responses API 或
-Anthropic Messages API 的其它本地服务（如较新的 vLLM、LM Studio）则未验证，可能可用。
+   2026-08-30 补丁：`normalizeLocalModelBaseUrl(harness, baseUrl)`（`server/providers.ts`）在拼
+   env 的地方按 harness 分岔兜住这个差异，去掉尾部斜杠后只给 codex 补 `/v1`，且幂等（已带
+   `/v1` 的地址不会变成 `/v1/v1`）。
+   原先的补丁只在 baseUrl **留空**时生效，于是「先按 claude 填好主机根、之后再改 harness」
+   和「照 Ollama 文档手填主机根」这两条路径都会掉进夹缝。
+   被否决的替代方案：在 UI 切 harness 时顺手改写用户填的地址 —— 那是在用户眼皮底下动他的
+   输入框，且绕不开手填这条路径。守卫测试见 `tests/provider-routing-runtime.test.ts` 的
+   `adds the /v1 suffix when a codex local entry supplies a host root` 与反向守卫
+   `never appends /v1 for a claude local entry`。
+
+### 后续（2026-08-29）：上表 Claude CLI 那一行的根因已查清，且已修
+
+当日"始终没向 Ollama 发出请求"的根因是 **`~/.claude/settings.json` 的 `env` 优先级高于进程
+环境变量** —— `resolveProviderRuntime` 只把 `ANTHROPIC_*` 注入到 spawn 的 env 里，被用户级
+配置整个盖掉，CLI 拿着用户原本的云端端点在跑。修复是改走 `--settings` 深合并层精确压住 `env`
+这一个键（不能换 `CLAUDE_CONFIG_DIR` 隔离，那会连用户的 `CLAUDE.md`、skills、MCP 一起丢）。
+根因与守卫见 `tests/claude-settings-env-override.test.ts`。
+
+同日实测已观测到 Claude CLI **确实向本机 Ollama 发出了 `POST /v1/messages` 并拿到 200**，
+上表那一行的现象不再复现。当天真正卡住的是另一件事 —— 断线续传代理的超时重试雪崩，见前文
+「四个必须处理的连带点」的第 4 条。
+
+对已实现 Responses API 或 Anthropic Messages API 的其它本地服务（如较新的 vLLM、LM Studio）
+仍未逐一验证。
 
 ## 非目标 / 已知不覆盖
 

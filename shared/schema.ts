@@ -424,11 +424,15 @@ export type ProviderProfiles = z.infer<typeof providerProfilesSchema>
 // 本地模型条目：把「本机推理服务 + 用哪个 CLI 当 harness」打包成一个可在模型选择器里
 // 直接选中的选项。刻意复用 providerSchema 当 harness 而不是新增第三个 provider —— 本仓库
 // 的 provider 差异散落在 30+ 文件的分支与 Record<Provider,X> 表里，新增枚举值的成本远高于
-// 复用现有 CLI（2026-08-23 实测：Ollama 提供标准 Anthropic /v1/messages，claude CLI 直接可用）。
+// 复用现有 CLI（两个 harness 都能连本机 Ollama，差别只在协议：codex 走 /v1/responses，
+// claude 走 /v1/messages）。
+// 默认值是 codex 而不是 claude：同机同模型实测一句「OK」，claude harness 吃 27k token / 299s，
+// codex 只要 9k；且 Claude CLI 没有关思考的开关，IDE 的「关闭思考」对本地模型形同虚设。
+// 完整实测数据与被否决的替代方案见 docs/specs/local-model-entries/design.md。
 export const localModelEntrySchema = z.object({
   id: z.string().min(1),
   label: z.string().default(''),
-  harness: providerSchema.default('claude'),
+  harness: providerSchema.default('codex'),
   baseUrl: z.string().default(''),
   apiKey: z.string().default(''),
   model: z.string().default(''),

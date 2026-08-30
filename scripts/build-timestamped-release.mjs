@@ -1,5 +1,6 @@
 import { spawn } from 'node:child_process'
 import fs from 'node:fs'
+import os from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import {
@@ -87,7 +88,7 @@ export function isDirectExecution(moduleUrl, argvEntry) {
   }
 }
 
-export function createElectronBuilderArgs(target, outputDirRelative) {
+export function createElectronBuilderArgs(target, outputDirRelative, electronVersion) {
   const targetArgs = target === 'zip' ? ['--dir'] : [target]
 
   return [
@@ -96,7 +97,17 @@ export function createElectronBuilderArgs(target, outputDirRelative) {
     ...targetArgs,
     '--config.win.signAndEditExecutable=false',
     `--config.directories.output=${outputDirRelative}`,
+    ...(electronVersion ? [`--config.electronVersion=${electronVersion}`] : []),
   ]
+}
+
+// ZIP builds are the only path that needs the temporary hoisted production
+// tree: the custom ZIP step patches the unpacked executable after
+// electron-builder returns.  NSIS/portable targets must keep the normal
+// afterPack hook in the root project, because their final artifact is sealed
+// during electron-builder's finishBuild phase before our post-build patch.
+export function shouldUseProductionDependencyStaging(target, dryRun = false) {
+  return !dryRun && target === 'zip'
 }
 
 function parseArgs(argv) {
@@ -185,16 +196,17 @@ function warnPackaging(message) {
   process.stderr.write(redactReleaseLogText(`${message}\n`, { repoRoot: projectRoot, env: process.env }))
 }
 
-async function runCommand(command, args = [], { dryRun = false } = {}) {
+async function runCommand(command, args = [], { dryRun = false, cwd = projectRoot, env = process.env } = {}) {
   writePackagingLog(`\n[packaging] ${formatCommandForLog(command, args)}\n`)
   if (dryRun) {
     return
   }
 
   const child = spawn(command, args, {
-    cwd: projectRoot,
-    env: process.env,
+    cwd,
+    env,
     windowsHide: true,
+    shell: process.platform === 'win32' && /\.(?:cmd|bat)$/iu.test(String(command)),
     stdio: ['ignore', 'pipe', 'pipe'],
   })
   const stdoutRedactor = createReleaseLogRedactor({ repoRoot: projectRoot, env: process.env })
@@ -219,6 +231,195 @@ async function runCommand(command, args = [], { dryRun = false } = {}) {
   }
 }
 
+function resolvePnpmInvocation() {
+  const candidates = [
+    process.env.npm_execpath,
+    process.env.PNPM_CLI_PATH,
+    process.env.APPDATA
+      ? path.join(process.env.APPDATA, 'npm', 'node_modules', 'pnpm', 'bin', 'pnpm.cjs')
+      : null,
+    process.env.LOCALAPPDATA
+      ? path.join(process.env.LOCALAPPDATA, 'npm', 'node_modules', 'pnpm', 'bin', 'pnpm.cjs')
+      : null,
+  ].filter(Boolean)
+
+  for (const candidate of candidates) {
+    if (!candidate || !fs.existsSync(candidate)) {
+      continue
+    }
+
+    // npm_execpath is not guaranteed to point at pnpm when this script is
+    // launched through another package manager.  Do not accidentally run an
+    // npm CLI with pnpm arguments.
+    if (!/pnpm(?:\.cjs|\.js)?$/iu.test(path.basename(candidate))) {
+      continue
+    }
+
+    return { command: process.execPath, args: [candidate] }
+  }
+
+  // Linux/macOS shells can resolve pnpm directly. On Windows the .cmd fallback
+  // is handled by runCommand's shell=true branch above. Keep the command and
+  // its prefix separate: passing pnpm.cmd as the first argument to node.exe
+  // makes Node parse the batch file as JavaScript instead of executing pnpm.
+  return process.platform === 'win32'
+    ? { command: 'pnpm.cmd', args: [] }
+    : { command: 'pnpm', args: [] }
+}
+
+function createNpmBuilderEnvironment() {
+  // electron-builder chooses its dependency collector from the npm/pnpm
+  // environment inherited by the caller.  `pnpm electron:build` exports a
+  // pnpm user-agent even when --projectDir points at our temporary staging
+  // root, which reintroduces pnpm's dedupe graph bug.  The staging tree is
+  // deliberately hoisted, so force the collector down its npm path.
+  const env = { ...process.env }
+  env.npm_config_user_agent = `npm/10 node/${process.versions.node} ${process.platform} ${process.arch}`
+  delete env.npm_execpath
+  delete env.npm_command
+  return env
+}
+
+export function createProductionStagingPackageJson(rootPackageJson, electronVersion) {
+  const { devDependencies: _devDependencies, scripts: _scripts, build, ...runtimePackage } = rootPackageJson
+  const runtimeBuild = { ...(build ?? {}) }
+
+  // The normal afterPack hook imports build-time PE tooling which is intentionally
+  // not installed in the production staging tree. The caller patches the icon
+  // after electron-builder completes, so omitting the hook is equivalent and keeps
+  // the staging install strictly production-only.
+  delete runtimeBuild.afterPack
+  if (electronVersion) {
+    runtimeBuild.electronVersion = electronVersion
+  }
+
+  return {
+    ...runtimePackage,
+    packageManager: 'npm@10',
+    build: runtimeBuild,
+  }
+}
+
+function readInstalledElectronVersion(rootPackageJson) {
+  const installedPackagePath = path.join(projectRoot, 'node_modules', 'electron', 'package.json')
+
+  try {
+    const installedPackage = JSON.parse(fs.readFileSync(installedPackagePath, 'utf8'))
+    if (typeof installedPackage.version === 'string' && installedPackage.version.length > 0) {
+      return installedPackage.version
+    }
+  } catch {
+    // Fall through to an explicitly configured version below.
+  }
+
+  const configuredVersion = rootPackageJson.build?.electronVersion
+  if (typeof configuredVersion === 'string' && configuredVersion.length > 0) {
+    return configuredVersion
+  }
+
+  throw new Error(
+    'Unable to determine the installed Electron version for the production staging package.',
+  )
+}
+
+function copyIfPresent(sourcePath, targetPath) {
+  if (!fs.existsSync(sourcePath)) {
+    return
+  }
+
+  fs.mkdirSync(path.dirname(targetPath), { recursive: true })
+  fs.cpSync(sourcePath, targetPath, { recursive: true, force: true, dereference: true })
+}
+
+async function prepareProductionStaging(rootPackageJson) {
+  const stagingRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'chill-vibe-packaging-'))
+
+  try {
+    // Keep the complete package metadata while pnpm resolves the lockfile. A
+    // production-only package.json would no longer match the root importer and
+    // `--frozen-lockfile` would fail before creating node_modules.
+    fs.writeFileSync(
+      path.join(stagingRoot, 'package.json'),
+      `${JSON.stringify(rootPackageJson, null, 2)}\n`,
+      'utf8',
+    )
+    copyIfPresent(path.join(projectRoot, 'pnpm-lock.yaml'), path.join(stagingRoot, 'pnpm-lock.yaml'))
+
+    for (const segment of ['client', 'electron', 'server', 'shared']) {
+      copyIfPresent(
+        path.join(projectRoot, 'dist', segment),
+        path.join(stagingRoot, 'dist', segment),
+      )
+    }
+    copyIfPresent(path.join(projectRoot, 'build'), path.join(stagingRoot, 'build'))
+
+    for (const fileName of [
+      'LICENSE',
+      'PRIVACY.md',
+      'SECURITY.md',
+      'THIRD_PARTY.md',
+      'THIRD_PARTY_LICENSES.md',
+    ]) {
+      copyIfPresent(path.join(projectRoot, fileName), path.join(stagingRoot, fileName))
+    }
+    copyIfPresent(
+      path.join(projectRoot, 'scripts', 'setup-ai-cli.ps1'),
+      path.join(stagingRoot, 'scripts', 'setup-ai-cli.ps1'),
+    )
+
+    const pnpm = resolvePnpmInvocation()
+    await runCommand(
+      pnpm.command,
+      [
+        ...pnpm.args,
+        'install',
+        '--prod',
+        '--ignore-scripts',
+        '--frozen-lockfile',
+        '--node-linker=hoisted',
+      ],
+      { cwd: stagingRoot },
+    )
+
+    const nodeModulesDir = path.join(stagingRoot, 'node_modules')
+    if (!fs.existsSync(nodeModulesDir)) {
+      throw new Error('Production dependency staging completed without node_modules.')
+    }
+
+    // From this point onward electron-builder must use its npm collector. The
+    // hoisted tree contains the complete transitive graph, while the pnpm
+    // collector can skip a later deduped node (e.g. strtok3 -> peek-readable).
+    // Remove pnpm's lock marker only after the frozen install has succeeded.
+    const stagedPackagePath = path.join(stagingRoot, 'package.json')
+    fs.writeFileSync(
+      stagedPackagePath,
+      `${JSON.stringify(
+        createProductionStagingPackageJson(
+          rootPackageJson,
+          readInstalledElectronVersion(rootPackageJson),
+        ),
+        null,
+        2,
+      )}\n`,
+      'utf8',
+    )
+    fs.rmSync(path.join(stagingRoot, 'pnpm-lock.yaml'), { force: true })
+
+    return { root: stagingRoot, nodeModulesDir }
+  } catch (error) {
+    fs.rmSync(stagingRoot, { recursive: true, force: true })
+    throw error
+  }
+}
+
+function cleanupProductionStaging(staging) {
+  if (!staging?.root) {
+    return
+  }
+
+  fs.rmSync(staging.root, { recursive: true, force: true })
+}
+
 async function main() {
   const options = parseArgs(process.argv.slice(2))
 
@@ -234,17 +435,15 @@ async function main() {
   const outputDirRelative = path.posix.join('dist', outputDirName)
   const outputDirAbsolute = path.join(projectRoot, 'dist', outputDirName)
   const rootPackageJson = JSON.parse(fs.readFileSync(path.join(projectRoot, 'package.json'), 'utf8'))
+  const electronVersion = options.dryRun
+    ? rootPackageJson.build?.electronVersion
+    : readInstalledElectronVersion(rootPackageJson)
   const winUnpackedDir = path.join(outputDirAbsolute, 'win-unpacked')
   const exePath = path.join(winUnpackedDir, 'Chill Vibe.exe')
   const zipPath = path.join(outputDirAbsolute, `Chill Vibe-${rootPackageJson.version}-win.zip`)
 
   const nodeCommand = process.execPath
   const legalCommand = [nodeCommand, ['scripts/generate-third-party-licenses.mjs']]
-  const commands = [
-    [nodeCommand, ['scripts/run-vite.mjs', 'build']],
-    [nodeCommand, ['scripts/build-electron.mjs']],
-    [process.execPath, createElectronBuilderArgs(options.target, outputDirRelative)],
-  ]
 
   writePackagingLog(`[packaging] target: ${options.target}\n`)
   writePackagingLog(`[packaging] output: ${outputDirAbsolute}\n`)
@@ -264,14 +463,42 @@ async function main() {
     )
   }
 
-  for (const [command, args] of commands) {
-    try {
-      await runCommand(command, args, { dryRun: options.dryRun })
-    } catch (error) {
-      const isFinalPackagingStep =
-        command === process.execPath && args[0] === 'node_modules/electron-builder/cli.js'
+  // Build the renderer/main process in the normal checkout first. The final
+  // electron-builder invocation uses a temporary production-only staging root;
+  // this avoids pnpm's isolated symlink graph and its incomplete transitive
+  // dependency collection (notably strtok3 -> peek-readable).
+  let productionStaging = null
 
-      if (!isFinalPackagingStep || options.target !== 'zip' || options.dryRun) {
+  try {
+    for (const [command, args] of [
+      [nodeCommand, ['scripts/run-vite.mjs', 'build']],
+      [nodeCommand, ['scripts/build-electron.mjs']],
+    ]) {
+      await runCommand(command, args, { dryRun: options.dryRun })
+    }
+
+    if (shouldUseProductionDependencyStaging(options.target, options.dryRun)) {
+      productionStaging = await prepareProductionStaging(rootPackageJson)
+    }
+
+    const builderArgs = createElectronBuilderArgs(options.target, outputDirRelative, electronVersion)
+    if (productionStaging) {
+      const outputArgIndex = builderArgs.findIndex((arg) =>
+        arg.startsWith('--config.directories.output='),
+      )
+      if (outputArgIndex >= 0) {
+        builderArgs[outputArgIndex] = `--config.directories.output=${outputDirAbsolute}`
+      }
+      builderArgs.push('--projectDir', productionStaging.root)
+    }
+
+    try {
+      await runCommand(process.execPath, builderArgs, {
+        dryRun: options.dryRun,
+        env: productionStaging ? createNpmBuilderEnvironment() : process.env,
+      })
+    } catch (error) {
+      if (options.target !== 'zip' || options.dryRun) {
         throw error
       }
 
@@ -283,12 +510,14 @@ async function main() {
         projectRoot,
         outputDirAbsolute,
         version: rootPackageJson.version,
+        runtimeNodeModulesDir: productionStaging?.nodeModulesDir,
       })
 
       logPackaging(`[packaging] manual zip: ${manualResult.zipPath}`)
       logPackaging(`[packaging] manual unpacked dir: ${manualResult.winUnpackedDir}`)
-      break
     }
+  } finally {
+    cleanupProductionStaging(productionStaging)
   }
 
   if (!options.dryRun && fs.existsSync(exePath)) {

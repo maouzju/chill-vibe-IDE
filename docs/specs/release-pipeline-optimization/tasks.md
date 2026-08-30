@@ -10,6 +10,7 @@
 - [x] Guard `build-timestamped-release.mjs` against execution when imported.
 - [x] Add focused coverage for direct execution and target argument selection.
 - [x] Change ZIP mode to electron-builder directory output plus one custom ZIP pass.
+- [x] Stage a frozen, hoisted production dependency tree and force electron-builder's npm collector so deep pnpm-transitive modules are retained.
 
 ## Node Tests
 
@@ -62,7 +63,7 @@
 - [x] Run the history audit in local release verification and the GitHub tag workflow before the candidate audit.
 - [x] Back up refs, rewrite the confirmed sensitive blobs in an external mirror, and verify author/committer emails remain byte-for-byte unchanged.
 - [x] Verify the controllable GitHub heads/tags after the force-update and record the external PR-ref permission boundary.
-- [ ] Obtain GitHub Support confirmation that unreachable historical objects and cached views have been purged.
+- [ ] Obtain GitHub Support confirmation that unreachable historical objects and cached views have been purged. **本次发布明确不包含历史对象重写/清理；该项是外部权限边界，仍未解决，不阻塞本候选未进行历史改写的发布。**
 
 ## Evidence
 

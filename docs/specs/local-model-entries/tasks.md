@@ -16,10 +16,34 @@
 Claude CLI 起得来却始终不发请求（原因未查清）。功能本身完整，可用性取决于本地推理服务
 提供哪套协议。
 
+> ⚠️ 上面这段已过时，保留作历史记录。两条都已解决：Claude 那条的根因是 `~/.claude/settings.json`
+> 的 `env` 压过进程环境变量（见 design.md 的后续小节）；Codex 那条是 Ollama 0.32.9 没有
+> `/v1/responses`，0.32.15 已补上。
+
+## 第二轮（2026-08-30）：默认 harness 改为 codex + 补 /v1 的夹缝
+
+8. [x] 红：`tests/local-model-entries.test.ts` 加「默认 codex」三条路径（schema / 工厂 / 新建草稿初值）+
+   反向守卫（显式 claude 不被改写）；`tests/provider-routing-runtime.test.ts` 加
+   `adds the /v1 suffix when a codex local entry supplies a host root`（主机根 / 尾随斜杠 / 幂等三例）
+   与 `never appends /v1 for a claude local entry`。确认全红。
+9. [x] 绿-默认值：`shared/schema.ts` `localModelEntrySchema.harness` → `'codex'`；
+   `shared/default-state.ts` `createLocalModelEntry` 的回落方向反过来；
+   新增 `src/app-helpers.ts` 的 `emptyLocalModelDraft()` 并让 `App.tsx` 的两处草稿初值都用它
+   （原先两处各写一份字面量，改默认值极易只改一处）。
+10. [x] 绿-端点：`server/providers.ts` 新增 `normalizeLocalModelBaseUrl(harness, baseUrl)`，
+    去尾斜杠后只给 codex 补 `/v1` 且幂等；`resolveProviderRuntime` 的本地条目分支改为无论
+    baseUrl 是否留空都过这道归一。
+11. [x] 文案：`src/app-panel-text.ts` 中英两套的 `localModelClaudeBaseUrlNote` /
+    `localModelCodexBaseUrlNote` 重写——codex 那条不再说「Ollama 会 404、请改用 Claude」，
+    claude 那条补上「多花约 3 倍 token、思考关不掉」的告知。
+12. [x] 验证：本轮预检 Node 单测 2720 通过、30 项因既有异步句柄在 force-exit 下取消（详见发布审计日志；最终以 release gate 数字为准）（`external-history` 需 `--max-old-space-size=8192`，
+    否则在超长 transcript 那条 OOM，与本次改动无关）+ `pnpm test:quality` 干净 +
+    `pnpm test:theme` 的基线差异需在最终 gate 中复核；本候选未改 JSX/CSS，若仍为既有 settings 面板快照红则按基线证据记录（那 12 条全部
+    落在 `#app-panel-settings`，本次没碰）+ `pnpm electron:build` 出包。
+
 ## 后续
 
-- [ ] 排查 Claude CLI 指向本地 Anthropic 兼容端点时不发请求的原因（当前唯一阻塞真实可用的问题）
-- [ ] 用实现了 Responses API 的本地服务（较新 vLLM 等）验证 Codex harness
+- [ ] 用实现了 Responses API 的其它本地服务（较新 vLLM、LM Studio）验证 codex harness
 
 ## 已知不覆盖
 

@@ -22,6 +22,7 @@ import {
 } from '../shared/i18n.js'
 import { getActiveProviderProfile } from '../shared/default-state.js'
 import { parseLocalModelToken } from '../shared/models.js'
+import { isLoopbackHostname } from './automation-board-bridge.js'
 import { resolveOllamaBaseUrl } from './ollama-manager.js'
 import { buildSystemPromptForModel, normalizeSystemPrompt } from '../shared/system-prompt.js'
 import {
@@ -318,6 +319,19 @@ const getClaudeAskUserQuestionInstruction = (language: AppLanguage) =>
     ? 'In this Chill Vibe Claude runtime, ask-user-question is only a renderer convention for asking the user to choose. Do not use it for normal replies unless you truly need a user decision before continuing. Every real action (running commands, reading files, editing files, searching, etc.) must go through native tool calls. Do not write tool calls as text, XML, JSON, markdown, or the word call.'
     : '在这个 Chill Vibe 的 Claude 运行环境里，ask-user-question 只是一种向用户提问并让用户选择的渲染约定。除非继续前确实需要用户做决定，否则不要在普通回复里使用它。所有实际操作（运行命令、读取文件、编辑文件、搜索等）都必须走原生工具调用。不要把工具调用写成文本、XML、JSON、Markdown，也不要输出单独的 call。'
 
+// 手填的本机端点（用户不建本地模型条目，直接在「接口配置」里填 127.0.0.1）同样是本地推理。
+// URL 解析失败时返回 false —— 认不出来就按远端处理，保留代理，不去猜。
+const isLoopbackBaseUrl = (baseUrl: string) => {
+  try {
+    // URL.hostname keeps brackets around IPv6 literals (e.g. "[::1]").
+    // Normalize them before the shared loopback check so local IPv6 endpoints
+    // do not get routed through the resilient proxy.
+    return isLoopbackHostname(new URL(baseUrl).hostname.replace(/^\[|\]$/g, ''))
+  } catch {
+    return false
+  }
+}
+
 const maybeResolveProxyBaseUrl = async (
   provider: Provider,
   baseUrl: string,
@@ -579,7 +593,10 @@ export const resolveProviderRuntime = async (
       ? {
           name: localEntry.label || localEntry.model,
           apiKey: localEntry.apiKey.trim() || localModelFallbackApiKey,
-          baseUrl: localEntry.baseUrl.trim() || resolveLocalModelDefaultBaseUrl(localEntry.harness),
+          baseUrl: normalizeLocalModelBaseUrl(
+            localEntry.harness,
+            localEntry.baseUrl.trim() || resolveLocalModelDefaultBaseUrl(localEntry.harness),
+          ),
         }
       : getActiveProviderProfile(settings, provider)
     const apiKey = activeProfile?.apiKey.trim()
@@ -592,10 +609,24 @@ export const resolveProviderRuntime = async (
     }
 
     const baseUrl = activeProfile?.baseUrl.trim() || defaultProviderBaseUrls[provider]
+
+    // 症状：本地模型卡片发一条消息后机箱满载轰鸣几十分钟，界面早已关闭仍在烧 GPU。
+    // 根因（2026-08-29 实测坐实）：断线续传代理默认开启（首字节 90s / 最多重试 6 次），
+    //   而本机 27B 模型啃 4 万 token 的 prompt 远超 90 秒。首字节超时后代理换条连接重试，
+    //   Ollama 收不到取消信号仍在算 —— 6 次重试堆出 6 个算不完的僵尸任务，实测 27 条并发
+    //   连接、单请求恒定 5m5s 后 500、GPU 400W 空转两小时。堆积在推理侧，关界面停不掉。
+    // 被否决的替代方案：把首字节超时调到上限 600s —— 治标，且重试对本地推理本就无意义：
+    //   云端超时多半是网络抖动，重发有用；本地超时只是"还没算完"，重发只会让同一个模型
+    //   从头再算一遍，越重试越慢。云端 profile 必须保留代理，那才是它存在的理由。
+    // 为什么两个条件都要：localEntry 覆盖局域网上的本地推理（192.168 的 LM Studio 不是
+    //   loopback 但同样是本地模型）；isLoopbackBaseUrl 覆盖用户不建条目、直接手填本机
+    //   端点的那条路径。只判其一都会漏。
+    const useResilientProxy =
+      Boolean(settings.resilientProxyEnabled) && !localEntry && !isLoopbackBaseUrl(baseUrl)
     const runtimeBaseUrl = await maybeResolveProxyBaseUrl(
       provider,
       baseUrl,
-      Boolean(settings.resilientProxyEnabled),
+      useResilientProxy,
       {
         firstByteTimeoutMs: settings.resilientProxyFirstByteTimeoutSec * 1000,
         stallTimeoutMs: settings.resilientProxyStallTimeoutSec * 1000,
@@ -659,6 +690,22 @@ const localModelFallbackApiKey = 'local'
 export const resolveLocalModelDefaultBaseUrl = (harness: Provider) => {
   const base = resolveOllamaBaseUrl()
   return harness === 'codex' ? `${base}/v1` : base
+}
+
+// 症状：把条目的 harness 切到 codex 后，卡片一发消息就 `404 page not found, url: /responses`。
+// 根因：上面那个补 /v1 的回落只在 baseUrl **留空**时才走到。用户手填 `http://127.0.0.1:11434`
+//   （Ollama 官方文档里到处都是这个不带 /v1 的地址），或者先按 claude 填好主机根、之后再改
+//   harness，都会掉进「填了、但缺 /v1」这道夹缝。端点形状是 CLI 协议的硬要求，不是用户该记的事。
+// 被否决的替代方案：在 UI 切 harness 时顺手改写用户填的地址 —— 那是在用户眼皮底下动他的输入框，
+//   而且绕不开手填这条路径。兜在拼 env 的地方才是唯一的收口。
+// 必须幂等：已经带 /v1 的地址不能被补成 /v1/v1。claude 则相反 —— CLI 自己补 `/v1/messages`，
+//   替它加 /v1 会打成 `/v1/v1/messages`，所以这个规则严格按 harness 分岔。
+export const normalizeLocalModelBaseUrl = (harness: Provider, baseUrl: string) => {
+  const trimmed = baseUrl.trim().replace(/\/+$/g, '')
+  if (harness !== 'codex' || !trimmed) {
+    return trimmed
+  }
+  return /\/v1$/i.test(trimmed) ? trimmed : `${trimmed}/v1`
 }
 
 // 令牌 → 条目。翻译只在 launchProviderRun 入口做一次，之后 request.model 就是真实模型名，

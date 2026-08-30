@@ -6,6 +6,7 @@ import type {
   ChatCard,
   ChatMessage,
   LayoutNode,
+  LocalModelEntry,
   Provider,
   StreamActivity,
   StreamAssistantMessage,
@@ -56,6 +57,17 @@ export const emptyProfileDraft = (): ProfileDraft => ({
   name: '',
   baseUrl: '',
   apiKey: '',
+})
+
+// 「新增本地模型」草稿的初始值。抽成函数是因为 App.tsx 有两处要用（初始化与保存后重置），
+// 之前两处各写一份字面量，改默认 harness 时极易只改一处、留下一半旧默认。
+// harness 默认与 createLocalModelEntry / localModelEntrySchema 保持一致（codex）。
+export const emptyLocalModelDraft = (): Omit<LocalModelEntry, 'id'> => ({
+  label: '',
+  harness: 'codex',
+  baseUrl: '',
+  apiKey: '',
+  model: '',
 })
 
 export const onboardingStorageKey = 'chill-vibe:onboarding:v1'

@@ -187,7 +187,20 @@ function stageLegalFiles(projectRoot, winUnpackedDir) {
   }
 }
 
-function stageRuntimeNodeModules(projectRoot, appDir, rootPackageJson) {
+function stageRuntimeNodeModules(projectRoot, appDir, rootPackageJson, runtimeNodeModulesDir) {
+  // Prefer the dependency tree prepared for this build.  electron-builder's pnpm
+  // collector can collapse a deduped package before visiting its own transitive
+  // dependencies (for example strtok3 -> peek-readable), so reusing an old app
+  // snapshot here would silently recreate the same broken package.
+  if (runtimeNodeModulesDir) {
+    if (!fs.existsSync(runtimeNodeModulesDir)) {
+      throw new Error(`Packaging dependency staging directory does not exist: ${runtimeNodeModulesDir}`)
+    }
+
+    copyDirectory(runtimeNodeModulesDir, path.join(appDir, 'node_modules'))
+    return
+  }
+
   const runtimeSnapshot = findRuntimeSnapshot(projectRoot, rootPackageJson.dependencies)
 
   if (!runtimeSnapshot) {
@@ -199,7 +212,7 @@ function stageRuntimeNodeModules(projectRoot, appDir, rootPackageJson) {
   copyDirectory(runtimeSnapshot.nodeModulesDir, path.join(appDir, 'node_modules'))
 }
 
-function stageAppPayload(projectRoot, appDir, rootPackageJson) {
+function stageAppPayload(projectRoot, appDir, rootPackageJson, runtimeNodeModulesDir) {
   writeJson(path.join(appDir, 'package.json'), createRuntimePackageJson(rootPackageJson))
 
   const buildSourceDir = path.join(projectRoot, 'build')
@@ -212,7 +225,7 @@ function stageAppPayload(projectRoot, appDir, rootPackageJson) {
     copyDirectory(path.join(projectRoot, 'dist', segment), path.join(appDir, 'dist', segment))
   }
 
-  stageRuntimeNodeModules(projectRoot, appDir, rootPackageJson)
+  stageRuntimeNodeModules(projectRoot, appDir, rootPackageJson, runtimeNodeModulesDir)
 }
 
 async function stageElectronShell(winUnpackedDir) {
@@ -344,6 +357,7 @@ export async function packageManualWindowsZip({
   projectRoot,
   outputDirAbsolute,
   version,
+  runtimeNodeModulesDir,
 }) {
   const rootPackageJson = readJson(path.join(projectRoot, 'package.json'))
   const winUnpackedDir = path.join(outputDirAbsolute, 'win-unpacked')
@@ -353,7 +367,7 @@ export async function packageManualWindowsZip({
 
   ensureCleanDirectory(outputDirAbsolute)
   await stageElectronShell(winUnpackedDir)
-  stageAppPayload(projectRoot, appDir, rootPackageJson)
+  stageAppPayload(projectRoot, appDir, rootPackageJson, runtimeNodeModulesDir)
   stageLegalFiles(projectRoot, winUnpackedDir)
   writeZipFromDirectory(winUnpackedDir, zipPath, WINDOWS_ZIP_ROOT_FOLDER_NAME)
 

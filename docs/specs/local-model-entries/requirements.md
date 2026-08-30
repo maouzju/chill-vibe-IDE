@@ -4,7 +4,7 @@
 
 Chill Vibe 目前只能用 `codex` / `claude` 两个 CLI 连各自的官方端点或中转站。想用本机跑的模型（Ollama / LM Studio / llama.cpp / vLLM）时，只能去「路由 → provider profile」里改 `baseUrl`，而那是**全局单选**的：一个 provider 同时只有一个 active profile，改了之后所有用该 provider 的卡片一起被切走，无法「这张卡用本地模型、那张卡用云端」。
 
-2026-08-23 实测确认：本地推理服务已能直接说 CLI 听得懂的话（Ollama 0.32.9 提供标准 Anthropic `/v1/messages`，含 SSE 与 `thinking_delta`；OpenAI 兼容端点则对应 Codex CLI），所以**不需要新增 provider，复用现有两个 CLI 当 harness 即可**。缺的只是一层「让用户把本地端点存成可选条目」的配置与选择能力。
+2026-08-30 实测确认：本地推理服务已能直接说 CLI 听得懂的话（Ollama 新版提供 Anthropic `/v1/messages` 与 OpenAI `/v1/responses` 兼容端点），所以**不需要新增 provider，复用现有两个 CLI 当 harness 即可**。缺的只是一层「让用户把本地端点存成可选条目」的配置与选择能力。
 
 ## 需求
 
@@ -26,7 +26,7 @@ Chill Vibe 目前只能用 `codex` / `claude` 两个 CLI 连各自的官方端�
 3. **出现在模型选择器**：配置好的条目作为选项出现在模型卡片/模型选择菜单中，与内置模型并列但可区分（分组或标记）。
 4. **选中即生效（逐卡）**：某张聊天卡选中某个本地条目后，**只有该卡**改用该条目的 harness CLI + `baseUrl` + `apiKey` + 真实模型名；其他卡不受影响，全局 provider profile 不被改写。
 5. **归一化与容错**：
-   - `harness` 非法值回退到 `claude`；
+   - `harness` 非法值回退到 `codex`；
    - 字段做 trim；`label` 为空时回退显示 `model`；
    - 条目被删除后，仍指向它的卡片回退到该 provider 的默认模型，不得让卡片卡在无效模型上；
    - 老版本 `state.json`（无此字段）加载后必须得到空列表而不是报错。
@@ -41,5 +41,5 @@ Chill Vibe 目前只能用 `codex` / `claude` 两个 CLI 连各自的官方端�
 
 ## 已知约束（实测）
 
-- `server/providers.ts` 中 `if (!apiKey) return baseEnv`：**apiKey 为空会让 baseUrl 静默失效**。本地条目在到达这行之前就把空值换成占位串，所以用户可以留空。
+- `server/providers.ts` 中 `if (!apiKey) return baseEnv`：**apiKey 为空会让 baseUrl 静默失效，后端会先补占位串 `local`**。本地条目在到达这行之前就把空值换成占位串，所以用户可以留空。
 - `settings.cliRoutingEnabled` 关闭时整段 env 注入被跳过，本地条目同样不生效——需要在 UI 上提示，而不是让用户困惑。

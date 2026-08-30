@@ -16,6 +16,7 @@ export function packageManualWindowsZip(input: {
   projectRoot: string
   outputDirAbsolute: string
   version: string
+  runtimeNodeModulesDir?: string
 }): {
   zipPath: string
   winUnpackedDir: string

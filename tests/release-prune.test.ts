@@ -4,7 +4,9 @@ import test from 'node:test'
 
 import {
   createElectronBuilderArgs,
+  createProductionStagingPackageJson,
   isDirectExecution,
+  shouldUseProductionDependencyStaging,
   selectReleaseDirsToPrune,
 } from '../scripts/build-timestamped-release.mjs'
 
@@ -80,7 +82,7 @@ test('packaging module only executes its CLI for the direct entrypoint', () => {
 
 test('zip packaging asks electron-builder for an unpacked directory only', () => {
   const zipArgs = createElectronBuilderArgs('zip', 'dist/release-example')
-  const installerArgs = createElectronBuilderArgs('nsis', 'dist/release-example')
+  const installerArgs = createElectronBuilderArgs('nsis', 'dist/release-example', '36.9.5')
 
   assert.deepEqual(zipArgs.slice(0, 3), [
     'node_modules/electron-builder/cli.js',
@@ -93,4 +95,40 @@ test('zip packaging asks electron-builder for an unpacked directory only', () =>
     '--win',
     'nsis',
   ])
+  assert.equal(installerArgs.includes('--config.electronVersion=36.9.5'), true)
+})
+
+test('production staging metadata forces npm collection after the frozen pnpm install', () => {
+  const rootPackageJson = {
+    name: 'fixture',
+    version: '1.0.0',
+    scripts: { build: 'ignored in staging' },
+    devDependencies: { electron: '^36.0.0' },
+    dependencies: { strtok3: '^7.0.0' },
+    build: {
+      afterPack: 'scripts/electron-builder-after-pack.cjs',
+      files: ['dist/**/*'],
+    },
+  }
+
+  const staged = createProductionStagingPackageJson(rootPackageJson, '36.9.5')
+  const stagedBuild = staged.build as Record<string, unknown>
+
+  assert.equal(staged.packageManager, 'npm@10')
+  assert.equal('scripts' in staged, false)
+  assert.equal('devDependencies' in staged, false)
+  assert.deepEqual(staged.dependencies, rootPackageJson.dependencies)
+  assert.equal(stagedBuild.afterPack, undefined)
+  assert.equal(stagedBuild.electronVersion, '36.9.5')
+  // The helper must not mutate the full package metadata used by pnpm's
+  // frozen-lockfile install.
+  assert.equal(rootPackageJson.build.afterPack, 'scripts/electron-builder-after-pack.cjs')
+  assert.equal(rootPackageJson.devDependencies.electron, '^36.0.0')
+})
+
+test('production dependency staging is limited to zip builds so installer hooks run before packaging', () => {
+  assert.equal(shouldUseProductionDependencyStaging('zip', false), true)
+  assert.equal(shouldUseProductionDependencyStaging('nsis', false), false)
+  assert.equal(shouldUseProductionDependencyStaging('portable', false), false)
+  assert.equal(shouldUseProductionDependencyStaging('zip', true), false)
 })

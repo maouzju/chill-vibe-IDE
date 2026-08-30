@@ -386,6 +386,60 @@ describe('cc-switch provider profile import merge', () => {
     }
   })
 
+  // 症状：把条目的 harness 从 claude 切到 codex 后，卡片一发消息就
+  //   `404 page not found, url: /responses`。
+  // 根因：补 /v1 只在 baseUrl **留空**时生效（上一条 blank 测试覆盖的那条路径）。用户手填
+  //   `http://127.0.0.1:11434`（Ollama 官方文档里到处都是这个不带 /v1 的地址），或者先按
+  //   claude 填好主机根、之后再改 harness，都会掉进「填了、但缺 /v1」这道夹缝。
+  // 被否决的替代方案：在 UI 切 harness 时顺手改写用户填的地址 —— 那是在用户眼皮底下动他的
+  //   输入框，且绕不开手填这条路径。端点形状是 CLI 协议的硬要求，就该在拼 env 的地方兜住。
+  it('adds the /v1 suffix when a codex local entry supplies a host root', async () => {
+    const { resolveProviderRuntime, setProviderRuntimeSettingsOverride } = await import(
+      '../server/providers.ts'
+    )
+    setProviderRuntimeSettingsOverride(
+      stageSettings([
+        { ...localEntry, id: 'codex-root', harness: 'codex', baseUrl: 'http://127.0.0.1:11434' },
+        { ...localEntry, id: 'codex-slash', harness: 'codex', baseUrl: 'http://127.0.0.1:11434/' },
+        { ...localEntry, id: 'codex-v1', harness: 'codex', baseUrl: 'http://127.0.0.1:11434/v1' },
+      ]),
+    )
+
+    try {
+      const root = await resolveProviderRuntime('codex', { localModelId: 'codex-root' })
+      assert.equal(root.env.OPENAI_BASE_URL, 'http://127.0.0.1:11434/v1')
+
+      const slash = await resolveProviderRuntime('codex', { localModelId: 'codex-slash' })
+      assert.equal(slash.env.OPENAI_BASE_URL, 'http://127.0.0.1:11434/v1')
+
+      // 幂等：已经带 /v1 的地址不能被补成 /v1/v1。
+      const already = await resolveProviderRuntime('codex', { localModelId: 'codex-v1' })
+      assert.equal(already.env.OPENAI_BASE_URL, 'http://127.0.0.1:11434/v1')
+    } finally {
+      setProviderRuntimeSettingsOverride(null)
+    }
+  })
+
+  // 反向守卫：claude harness 填到主机根才是对的（CLI 自己补 /v1/messages）。
+  // 若上面那条补丁写成不分 harness 一律加 /v1，这里会立刻红。
+  it('never appends /v1 for a claude local entry', async () => {
+    const { resolveProviderRuntime, setProviderRuntimeSettingsOverride } = await import(
+      '../server/providers.ts'
+    )
+    setProviderRuntimeSettingsOverride(
+      stageSettings([
+        { ...localEntry, id: 'claude-root', harness: 'claude', baseUrl: 'http://127.0.0.1:11434' },
+      ]),
+    )
+
+    try {
+      const runtime = await resolveProviderRuntime('claude', { localModelId: 'claude-root' })
+      assert.equal(runtime.env.ANTHROPIC_BASE_URL, 'http://127.0.0.1:11434')
+    } finally {
+      setProviderRuntimeSettingsOverride(null)
+    }
+  })
+
   it('still honours an explicitly configured base url', async () => {
     const { resolveProviderRuntime, setProviderRuntimeSettingsOverride } = await import(
       '../server/providers.ts'
@@ -535,6 +589,162 @@ describe('cc-switch provider profile import merge', () => {
       restoreEnvVar('ANTHROPIC_BASE_URL', originalBaseUrl)
       restoreEnvVar('ANTHROPIC_AUTH_TOKEN', originalAuthToken)
       restoreEnvVar('ANTHROPIC_API_KEY', originalApiKey)
+    }
+  })
+
+  // 捕获断线续传代理是否被调用；返回一个显眼的哨兵地址，漏网时断言能一眼看出来。
+  const stageProxySpy = async () => {
+    const { resilientProxyPool } = await import('../server/resilient-proxy.ts')
+    const original = resilientProxyPool.resolveBaseUrl.bind(resilientProxyPool)
+    const captured: string[] = []
+
+    resilientProxyPool.resolveBaseUrl = (async (_provider, baseUrl) => {
+      captured.push(baseUrl)
+      return 'http://127.0.0.1:43210'
+    }) as typeof resilientProxyPool.resolveBaseUrl
+
+    return {
+      captured,
+      restore: () => {
+        resilientProxyPool.resolveBaseUrl = original
+      },
+    }
+  }
+
+  // 症状：本地模型卡片发一条消息后，机箱满载轰鸣几十分钟停不下来，界面早已关闭仍在烧 GPU。
+  // 根因（2026-08-29 实测坐实）：断线续传代理默认开启（首字节 90s / 最多重试 6 次），而本机
+  //   27B 模型啃 4 万 token 的 prompt 远超 90 秒。每次首字节超时代理就换一条连接重试，
+  //   Ollama 侧收不到取消信号仍在算 —— 6 次重试堆出 6 个算不完的僵尸任务，实测 27 条并发
+  //   连接、单请求恒定 5m5s 后 500、GPU 400W 空转两小时。堆积在推理侧，关界面停不掉。
+  // 被否决的替代方案：把首字节超时调到上限 600s —— 治标，且重试对本地推理本就无意义：
+  //   云端超时多半是网络抖动，重发有用；本地超时只是"还没算完"，重发只会让同一个模型
+  //   从头再算一遍，越重试越慢，雪崩照旧。
+  it('never routes a local model entry through the resilient proxy', async () => {
+    const { resolveProviderRuntime, setProviderRuntimeSettingsOverride } = await import(
+      '../server/providers.ts'
+    )
+    const spy = await stageProxySpy()
+    const settings = stageSettings([localEntry])
+    settings.resilientProxyEnabled = true
+    setProviderRuntimeSettingsOverride(settings)
+
+    try {
+      const runtime = await resolveProviderRuntime('claude', { localModelId: 'local-1' })
+
+      assert.deepEqual(spy.captured, [], '本地模型条目不该经过断线续传代理')
+      assert.equal(runtime.env.ANTHROPIC_BASE_URL, 'http://127.0.0.1:11434')
+    } finally {
+      spy.restore()
+      setProviderRuntimeSettingsOverride(null)
+    }
+  })
+
+  // 本地推理不等于 loopback：局域网另一台机器上的 LM Studio 同样是本地模型条目，
+  // 同样慢、同样收不到取消信号，重试同样只会雪上加霜。判定必须认"是不是本地条目"，
+  // 不能只认地址是不是 127.0.0.1。
+  it('skips the resilient proxy for a LAN-hosted local model entry too', async () => {
+    const { resolveProviderRuntime, setProviderRuntimeSettingsOverride } = await import(
+      '../server/providers.ts'
+    )
+    const spy = await stageProxySpy()
+    const settings = stageSettings([{ ...localEntry, baseUrl: 'http://192.168.1.9:1234' }])
+    settings.resilientProxyEnabled = true
+    setProviderRuntimeSettingsOverride(settings)
+
+    try {
+      const runtime = await resolveProviderRuntime('claude', { localModelId: 'local-1' })
+
+      assert.deepEqual(spy.captured, [], '局域网本地模型条目同样不该经过代理')
+      assert.equal(runtime.env.ANTHROPIC_BASE_URL, 'http://192.168.1.9:1234')
+    } finally {
+      spy.restore()
+      setProviderRuntimeSettingsOverride(null)
+    }
+  })
+
+  // 另一条进入本地推理的路径：用户不建本地模型条目，直接在「接口配置」里手填一个
+  // 指向本机的 profile。端点是本机推理服务这个事实不变，同样必须绕开代理。
+  it('skips the resilient proxy for a hand-configured loopback profile', async () => {
+    const { resolveProviderRuntime, setProviderRuntimeSettingsOverride } = await import(
+      '../server/providers.ts'
+    )
+    const spy = await stageProxySpy()
+    const settings = stageSettings([])
+    settings.resilientProxyEnabled = true
+    settings.providerProfiles.claude = {
+      activeProfileId: 'claude-local',
+      profiles: [
+        {
+          id: 'claude-local',
+          name: 'Local Ollama',
+          apiKey: 'local',
+          baseUrl: 'http://localhost:11434',
+        },
+      ],
+    }
+    setProviderRuntimeSettingsOverride(settings)
+
+    try {
+      const runtime = await resolveProviderRuntime('claude')
+
+      assert.deepEqual(spy.captured, [], '手填的本机端点同样不该经过代理')
+      assert.equal(runtime.env.ANTHROPIC_BASE_URL, 'http://localhost:11434')
+    } finally {
+      spy.restore()
+      setProviderRuntimeSettingsOverride(null)
+    }
+  })
+
+  it('skips the resilient proxy for an IPv6 loopback profile', async () => {
+    const { resolveProviderRuntime, setProviderRuntimeSettingsOverride } = await import(
+      '../server/providers.ts'
+    )
+    const spy = await stageProxySpy()
+    const settings = stageSettings([])
+    settings.resilientProxyEnabled = true
+    settings.providerProfiles.claude = {
+      activeProfileId: 'claude-ipv6-local',
+      profiles: [
+        {
+          id: 'claude-ipv6-local',
+          name: 'IPv6 Local Ollama',
+          apiKey: 'local',
+          baseUrl: 'http://[::1]:11434',
+        },
+      ],
+    }
+    setProviderRuntimeSettingsOverride(settings)
+
+    try {
+      const runtime = await resolveProviderRuntime('claude')
+
+      assert.deepEqual(spy.captured, [], 'IPv6 回环本机端点不应经过代理')
+      assert.equal(runtime.env.ANTHROPIC_BASE_URL, 'http://[::1]:11434')
+    } finally {
+      spy.restore()
+      setProviderRuntimeSettingsOverride(null)
+    }
+  })
+
+  // 反向守卫：绕开代理只针对本地推理。云端中转仍然要保留断线续传 —— 那里的超时
+  // 确实多半是网络抖动，重试正是它存在的理由。
+  it('still routes cloud profiles through the resilient proxy', async () => {
+    const { resolveProviderRuntime, setProviderRuntimeSettingsOverride } = await import(
+      '../server/providers.ts'
+    )
+    const spy = await stageProxySpy()
+    const settings = stageSettings([localEntry])
+    settings.resilientProxyEnabled = true
+    setProviderRuntimeSettingsOverride(settings)
+
+    try {
+      const runtime = await resolveProviderRuntime('claude')
+
+      assert.deepEqual(spy.captured, ['https://cloud.example'], '云端 profile 必须保留代理')
+      assert.equal(runtime.env.ANTHROPIC_BASE_URL, 'http://127.0.0.1:43210')
+    } finally {
+      spy.restore()
+      setProviderRuntimeSettingsOverride(null)
     }
   })
 })

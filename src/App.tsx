@@ -216,6 +216,7 @@ import {
   createLogMessages,
   createStructuredActivityMessage,
   createStructuredMessageId,
+  emptyLocalModelDraft,
   emptyProfileDraft,
   errorMessage,
   finalizeStructuredActivityMessage,
@@ -690,13 +691,8 @@ function App() {
     codex: emptyProfileDraft(),
     claude: emptyProfileDraft(),
   })
-  const [localModelDraft, setLocalModelDraft] = useState<Omit<LocalModelEntry, 'id'>>({
-    label: '',
-    harness: 'claude',
-    baseUrl: '',
-    apiKey: '',
-    model: '',
-  })
+  const [localModelDraft, setLocalModelDraft] =
+    useState<Omit<LocalModelEntry, 'id'>>(emptyLocalModelDraft)
   const text = useMemo(() => getLocaleText(appState.settings.language), [appState.settings.language])
   const codexChatSettings = useMemo(
     () => ({
@@ -2378,7 +2374,7 @@ function App() {
         model,
       },
     })
-    setLocalModelDraft({ label: '', harness: 'claude', baseUrl: '', apiKey: '', model: '' })
+    setLocalModelDraft(emptyLocalModelDraft())
   }, [applyAction, localModelDraft])
 
   const updateLocalModelEntry = useCallback(

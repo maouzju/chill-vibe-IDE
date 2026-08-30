@@ -24,6 +24,21 @@ Create a pure `createElectronBuilderArgs(target, outputDir)` helper:
 
 All modes keep `signAndEditExecutable=false` and the timestamped output directory. ZIP mode then patches the executable and invokes `writeZipFromDirectory` exactly once.
 
+### Production dependency staging
+
+The repository remains a pnpm project, but the package-manager graph used by
+electron-builder is staged outside the checkout before packaging. The staging
+root first receives the complete `package.json` and `pnpm-lock.yaml`, then runs
+`pnpm install --prod --node-linker=hoisted --ignore-scripts --frozen-lockfile`.
+Only after that install succeeds is its package metadata rewritten to remove
+development scripts/dependencies, remove the pnpm lock marker, and add
+`packageManager: "npm@10"` plus the resolved Electron version. The explicit npm
+marker makes electron-builder use its npm collector against the hoisted tree;
+this avoids the pnpm collector's deduped-node traversal bug that omitted deep
+runtime modules such as `strtok3` → `peek-readable`. The staging directory is
+temporary and is removed after electron-builder (or the manual ZIP fallback)
+has copied the payload.
+
 ## Node Test Runner
 
 Add `scripts/run-node-tests.mjs`.

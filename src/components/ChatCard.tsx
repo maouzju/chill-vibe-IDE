@@ -35,6 +35,7 @@ import {
   MODEL_OPTIONS,
   TOOL_CARD_MODELS,
   buildLocalModelOptions,
+  isBrainstormRequestModelVisible,
   isLocalModelToken,
   isModelPickerOptionVisible,
   normalizeStoredModel,
@@ -551,7 +552,6 @@ const getModelOptionIcon = (option: ModelOption): ReactNode => {
   return <GptIcon className="model-option-icon" aria-hidden="true" />
 }
 
-const hiddenBrainstormRequestModels = TOOL_CARD_MODELS
 const getEmptyStateToolEntry = (
   model: string,
   text: ReturnType<typeof getLocaleText>,
@@ -3627,10 +3627,7 @@ const ChatCardView = ({
         brainstormRequestTarget.model,
       )
       const base = custom ? [custom, ...MODEL_OPTIONS] : MODEL_OPTIONS
-      return base.filter(
-        (option) =>
-          !option.usesConfiguredDefault && !hiddenBrainstormRequestModels.has(option.model),
-      )
+      return base.filter(isBrainstormRequestModelVisible)
     }
 
     const custom = getCustomModelOption(effectiveProvider, card.model ?? '')

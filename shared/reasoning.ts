@@ -1,3 +1,4 @@
+import { isFableModel } from './models.js'
 import type { AppLanguage, Provider } from './schema.js'
 
 type CodexReasoningEffort = 'low' | 'medium' | 'high' | 'xhigh' | 'max' | 'ultra'
@@ -76,25 +77,14 @@ const defaultReasoningEffortByProvider: Record<Provider, ReasoningEffort> = {
 export const getDefaultReasoningEffort = (provider: Provider) =>
   defaultReasoningEffortByProvider[provider]
 
-// Fable 5 cannot turn thinking off: the session toggle has no effect there, and
+// Fable cannot turn thinking off: the session toggle has no effect there, and
 // the model decides per step how much to think based on the effort level.
 // (Nothing turns thinking off on any model — the CLI has no such switch at all;
 // see pitfall #289. Fable is special only in that it also ignores the lowest
-// tier as a stand-in.) Claude Code's own detection rule is "the model ID
-// contains claude-fable-5"; the bare-alias forms cover hand-typed custom
-// model values.
-export const isClaudeAlwaysThinkingModel = (model?: string | null): boolean => {
-  const normalized = model?.trim().toLowerCase() ?? ''
-  if (!normalized) {
-    return false
-  }
-
-  return (
-    normalized.includes('claude-fable-5') ||
-    normalized === 'fable' ||
-    normalized.startsWith('fable-')
-  )
-}
+// tier as a stand-in.) The Fable-family test itself lives in shared/models.ts so
+// every "is this Fable" caller changes together across generations.
+export const isClaudeAlwaysThinkingModel = (model?: string | null): boolean =>
+  isFableModel(model)
 
 /**
  * 用户在思考关闭的状态下选了一个思考深度 —— 该不该顺手把思考打开？
@@ -115,7 +105,7 @@ export const shouldEnableThinkingForDepthChange = (
   alwaysThinking: boolean,
 ): boolean => !alwaysThinking && thinkingEnabled === false
 
-// Fable 5's official default effort is high — max is documented as prone to
+// Fable's official default effort is high — max is documented as prone to
 // overthinking there, and Fable output tokens cost 2x Opus.
 export const getDefaultReasoningEffortForModel = (
   provider: Provider,
@@ -148,7 +138,7 @@ const getCodexReasoningOptionValuesForModel = (model?: string | null): CodexReas
   return base
 }
 
-// Model-aware tier menu: Fable 5 hides `auto` because auto means "omit --effort
+// Model-aware tier menu: Fable hides `auto` because auto means "omit --effort
 // and let the CLI pick", and Fable always needs an explicit tier (it degrades to
 // its own high default instead).
 export const getReasoningOptionsForModel = (
@@ -194,7 +184,7 @@ export const normalizeReasoningEffort = (
 export const isUltracodeEffort = (effort?: string | null): boolean =>
   normalizeReasoningEffort('claude', effort) === 'ultracode'
 
-// Model-aware normalization for persisted card tiers: on Fable 5 the auto
+// Model-aware normalization for persisted card tiers: on Fable the auto
 // (thinking-off) tier and empty/unknown values land on the model default high
 // instead of the provider-wide max; every other model keeps the plain
 // provider normalization.
@@ -242,7 +232,7 @@ export const normalizeReasoningEffortForModel = (
 // 为什么不能继续传 none：它与拼错的值完全等价。auto 省略 flag 才是真正的
 // 「跟随 CLI 默认」；关思考落在 low —— 合法值里唯一忠实于「别想太多」意图的
 // 档，省略 flag 反而会让默认档比用户要的更深。
-// Fable 5 例外：思考关不掉，auto 与关思考都退回它的 high 默认。
+// Fable 例外：思考关不掉，auto 与关思考都退回它的 high 默认。
 export const toClaudeEffortFlagValue = (
   model: string | null | undefined,
   effort: string | null | undefined,

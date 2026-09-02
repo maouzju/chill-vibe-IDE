@@ -77,19 +77,21 @@ describe('reasoning helpers', () => {
     assert.equal(claudeEn.find((o) => o.value === 'auto')?.label, 'Auto')
   })
 
-  it('identifies Fable 5 ids and aliases as always-thinking models', () => {
-    // Official rule: the model id contains "claude-fable-5"; loose alias forms
-    // cover hand-typed custom model values.
+  it('identifies Fable ids and aliases as always-thinking models across generations', () => {
+    // 判定不带代际号：新一代 Fable 上线时不能靠改这里才生效（见 shared/models.ts）。
+    assert.equal(isClaudeAlwaysThinkingModel('claude-fable-5-1'), true)
     assert.equal(isClaudeAlwaysThinkingModel('claude-fable-5'), true)
     assert.equal(isClaudeAlwaysThinkingModel('fable'), true)
+    assert.equal(isClaudeAlwaysThinkingModel('fable-5.1'), true)
     assert.equal(isClaudeAlwaysThinkingModel('fable-5'), true)
     assert.equal(isClaudeAlwaysThinkingModel('claude-opus-4-8'), false)
     assert.equal(isClaudeAlwaysThinkingModel(''), false)
     assert.equal(isClaudeAlwaysThinkingModel(undefined), false)
   })
 
-  it('defaults Fable 5 to high while other models keep their provider default', () => {
-    // Fable 5's official default is high; max is prone to overthinking there.
+  it('defaults Fable to high while other models keep their provider default', () => {
+    // Fable's official default is high; max is prone to overthinking there.
+    assert.equal(getDefaultReasoningEffortForModel('claude', 'claude-fable-5-1'), 'high')
     assert.equal(getDefaultReasoningEffortForModel('claude', 'claude-fable-5'), 'high')
     assert.equal(getDefaultReasoningEffortForModel('claude', 'claude-opus-4-8'), 'max')
     assert.equal(getDefaultReasoningEffortForModel('claude', ''), 'max')
@@ -97,7 +99,11 @@ describe('reasoning helpers', () => {
     assert.equal(getDefaultReasoningEffortForModel('codex', 'gpt-5.5'), 'medium')
   })
 
-  it('hides auto from the Fable 5 tier menu because thinking cannot be turned off', () => {
+  it('hides auto from the Fable tier menu because thinking cannot be turned off', () => {
+    assert.deepEqual(
+      getReasoningOptionsForModel('claude', 'claude-fable-5-1').map((option) => option.value),
+      ['low', 'medium', 'high', 'xhigh', 'max', 'ultracode'],
+    )
     assert.deepEqual(
       getReasoningOptionsForModel('claude', 'claude-fable-5').map((option) => option.value),
       ['low', 'medium', 'high', 'xhigh', 'max', 'ultracode'],
@@ -131,7 +137,9 @@ describe('reasoning helpers', () => {
     assert.equal(normalizeReasoningEffortForModel('codex', 'gpt-5.5', 'max'), 'xhigh')
   })
 
-  it('normalizes persisted auto and empty tiers to high on Fable 5', () => {
+  it('normalizes persisted auto and empty tiers to high on Fable', () => {
+    assert.equal(normalizeReasoningEffortForModel('claude', 'claude-fable-5-1', 'auto'), 'high')
+    assert.equal(normalizeReasoningEffortForModel('claude', 'claude-fable-5-1', ''), 'high')
     assert.equal(normalizeReasoningEffortForModel('claude', 'claude-fable-5', 'auto'), 'high')
     assert.equal(normalizeReasoningEffortForModel('claude', 'claude-fable-5', ''), 'high')
     assert.equal(normalizeReasoningEffortForModel('claude', 'claude-fable-5', 'max'), 'max')

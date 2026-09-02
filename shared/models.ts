@@ -132,11 +132,20 @@ export const MODEL_OPTIONS: ModelOption[] = [
     aliases: ['gpt-5.5', '5.5', 'gpt55'],
   },
   {
-    // Mythos-class tier above Opus (Claude Code v2.1.170+); never the default.
+    // Mythos-class tier above Opus; never the default. Bare "fable" follows the
+    // newest Fable generation, like bare "opus"/"sonnet" do.
+    label: 'Fable 5.1',
+    provider: 'claude',
+    model: 'claude-fable-5-1',
+    aliases: ['fable', 'fable-5.1', 'claude-fable-5-1'],
+  },
+  {
+    // Retired from the picker, but kept for exact legacy commands and saved cards.
     label: 'Fable 5',
     provider: 'claude',
     model: 'claude-fable-5',
-    aliases: ['fable', 'fable-5', 'claude-fable-5'],
+    aliases: ['fable-5', 'claude-fable-5'],
+    hiddenFromPicker: true,
   },
   {
     // Bare "opus" follows the newest Opus tier, like bare "sonnet" does.
@@ -199,6 +208,20 @@ export const isModelPickerOptionVisible = (
   option: Pick<ModelOption, 'model' | 'hiddenFromPicker'>,
 ) => !TOOL_CARD_MODELS.has(option.model) && !option.hiddenFromPicker
 
+/**
+ * 头脑风暴的「请求模型」选单与普通模型选择器同源，差别只有一条：它不提供
+ * 「用默认模型」那一项，因为一条头脑风暴请求必须指名具体模型。
+ *
+ * 症状：已从选择器下架的型号（Sonnet 4.6、Fable 5）在头脑风暴的模型下拉里仍然可选。
+ * 根因：那处 filter 另抄了一份「排掉工具卡」的条件，与 isModelPickerOptionVisible
+ *   并列演化，于是后加的 hiddenFromPicker 只在其中一处生效。
+ * 被否决的替代：在 ChatCard 里补一个 `&& !option.hiddenFromPicker` —— 两份等价过滤
+ *   继续并存，下一个可见性维度还会再漏一处。
+ */
+export const isBrainstormRequestModelVisible = (
+  option: Pick<ModelOption, 'model' | 'hiddenFromPicker' | 'usesConfiguredDefault'>,
+) => !option.usesConfiguredDefault && isModelPickerOptionVisible(option)
+
 const legacyCodexModels = new Set(['gpt-4.5', '__dream_tool__', '__spec_tool__'])
 
 const canonicalizeModelAlias = (value: string) => value.trim().toLowerCase().replace(/\s+/g, '-')
@@ -225,6 +248,29 @@ export const normalizeStoredModel = (provider: Provider, model?: string | null) 
 
 export const normalizeModel = (provider: Provider, model?: string | null) =>
   normalizeStoredModel(provider, model) || getDefaultModel(provider)
+
+/**
+ * 症状：2026-09-02 Fable 升到 5.1（`claude-fable-5-1`）后，一批「这是不是 Fable」
+ *   的判断会静默失效 —— 强制思考的档位约束回落到普通 Claude 规则，陈旧列继承也
+ *   不再把残留的 Fable 列判为陈旧，于是在 Sonnet 上聊过的 pane 新建 tab 又被拉回
+ *   2 倍价的 Fable。
+ * 根因：同一个问题在 `shared/reasoning.ts` 与 `src/state.ts` 各写各的字面量比较，
+ *   一处是 `includes('claude-fable-5')`（侥幸兼容 5.1），一处是 `=== 'claude-fable-5'`
+ *   （直接失效）。判定分叉 ⇒ 换代时必然漏改一半。
+ * 被否决的替代：在每处补一个 `|| === 'claude-fable-5-1'` —— 那只是给同一份漏名单
+ *   再补一处，下一代 Fable 还会重演（与 TOOL_CARD_MODELS 那次同型，见上方注释）。
+ * 前缀取 `claude-fable-` 而非官方原文的 `claude-fable-5`：代际号不该进判定条件。
+ * 裸别名形态覆盖用户在「设置→模型」里手打的自定义模型名。
+ */
+export const isFableModel = (model?: string | null): boolean => {
+  const normalized = model?.trim().toLowerCase() ?? ''
+
+  return (
+    normalized.includes('claude-fable-') ||
+    normalized === 'fable' ||
+    normalized.startsWith('fable-')
+  )
+}
 
 export const resolveSlashModel = (provider: Provider, input: string) => {
   const candidate = canonicalizeModelAlias(input)

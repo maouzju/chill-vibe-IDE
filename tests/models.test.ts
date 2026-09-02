@@ -10,6 +10,7 @@ import {
   FILETREE_TOOL_MODEL,
   GIT_TOOL_MODEL,
   IMAGEEDITOR_TOOL_MODEL,
+  MODEL_OPTIONS,
   MUSIC_TOOL_MODEL,
   STATS_TOOL_MODEL,
   STICKYNOTE_TOOL_MODEL,
@@ -17,6 +18,7 @@ import {
   WEATHER_TOOL_MODEL,
   WHITENOISE_TOOL_MODEL,
   getModelOptions,
+  isBrainstormRequestModelVisible,
   isModelPickerOptionVisible,
   isToolCardModel,
   normalizeModel,
@@ -82,6 +84,7 @@ describe('model helpers', () => {
       getModelOptions('claude').map((option) => option.model),
       [
         '',
+        'claude-fable-5-1',
         'claude-fable-5',
         DEFAULT_CLAUDE_MODEL,
         'claude-sonnet-5',
@@ -91,10 +94,15 @@ describe('model helpers', () => {
     )
   })
 
-  it('resolves Fable 5 and Sonnet 5 aliases while keeping stored Sonnet 4.6 usable', () => {
-    assert.equal(resolveSlashModel('claude', 'fable'), 'claude-fable-5')
+  it('resolves Fable 5.1 and Sonnet 5 aliases while keeping stored legacy ids usable', () => {
+    // 裸别名跟随最新一代（与官方 `sonnet` 别名语义一致）。
+    assert.equal(resolveSlashModel('claude', 'fable'), 'claude-fable-5-1')
+    assert.equal(resolveSlashModel('claude', 'fable-5.1'), 'claude-fable-5-1')
+    assert.equal(resolveSlashModel('claude', 'claude-fable-5-1'), 'claude-fable-5-1')
+    // 精确的旧别名仍解析到旧 id，已保存的卡片不被静默改写（Pitfall #119）。
     assert.equal(resolveSlashModel('claude', 'fable-5'), 'claude-fable-5')
     assert.equal(resolveSlashModel('claude', 'claude-fable-5'), 'claude-fable-5')
+    assert.equal(normalizeModel('claude', 'claude-fable-5'), 'claude-fable-5')
     // Bare "sonnet" follows the official Claude Code alias to Sonnet 5.
     assert.equal(resolveSlashModel('claude', 'sonnet'), 'claude-sonnet-5')
     assert.equal(resolveSlashModel('claude', 'sonnet-5'), 'claude-sonnet-5')
@@ -114,12 +122,25 @@ describe('model helpers', () => {
     )
   })
 
-  it('keeps retired Sonnet 4.6 out of the ordinary model picker', () => {
+  // 头脑风暴的请求模型选单曾另抄一份「排掉工具卡」的过滤，漏掉 hiddenFromPicker，
+  // 于是已下架的型号只在普通选择器里消失，在这里仍然可选。
+  it('keeps retired models out of the brainstorm request model picker too', () => {
+    const visible = MODEL_OPTIONS.filter(isBrainstormRequestModelVisible).map((option) => option.model)
+
+    assert.equal(visible.includes('claude-fable-5'), false)
+    assert.equal(visible.includes('claude-sonnet-4-6'), false)
+    assert.equal(visible.includes('claude-fable-5-1'), true)
+    // 与普通选择器的唯一差别：头脑风暴请求必须指名具体模型，没有「用默认模型」项。
+    assert.equal(visible.includes(''), false)
+    assert.equal(visible.includes(GIT_TOOL_MODEL), false)
+  })
+
+  it('keeps retired Sonnet 4.6 and Fable 5 out of the ordinary model picker', () => {
     assert.deepEqual(
       getModelOptions('claude')
         .filter(isModelPickerOptionVisible)
         .map((option) => option.model),
-      ['', 'claude-fable-5', DEFAULT_CLAUDE_MODEL, 'claude-sonnet-5', 'claude-haiku-4-5-20251001'],
+      ['', 'claude-fable-5-1', DEFAULT_CLAUDE_MODEL, 'claude-sonnet-5', 'claude-haiku-4-5-20251001'],
     )
   })
 

@@ -34,6 +34,7 @@ import {
   AUTOMATIONBOARD_TOOL_MODEL,
   buildLocalModelToken,
   getDefaultModel,
+  isFableModel,
   isLocalModelToken,
   normalizeStoredModel,
   STICKYNOTE_TOOL_MODEL,
@@ -2351,9 +2352,11 @@ const ideReducerCore = (state: AppState, action: IdeAction): AppState => {
           rememberedGlobal?.provider === provider
             ? rememberedGlobal.model
             : undefined
+        // 判定走 isFableModel 而不是某一代的字面量：Fable 5.1 起 id 变成
+        // `claude-fable-5-1`，等值比较会让这条陈旧列保护静默失效（见 shared/models.ts）。
         const staleFableColumnModel =
           provider === 'claude' &&
-          rememberedColumnModel === 'claude-fable-5' &&
+          isFableModel(rememberedColumnModel) &&
           ((rememberedActiveModel !== undefined && rememberedActiveModel !== rememberedColumnModel) ||
             (rememberedGlobalModel !== undefined && rememberedGlobalModel !== rememberedColumnModel))
         const model =

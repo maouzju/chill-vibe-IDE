@@ -953,6 +953,52 @@ describe('ideReducer pane layout', () => {
     assert.equal(newCard?.model, DEFAULT_CODEX_MODEL)
   })
 
+  // 陈旧 Fable 列的判定必须跟着模型 id 走，不能钉死在某一代的字面量上：
+  // Fable 5.1 上线后列里残留的是 `claude-fable-5-1`，精确等值判定认不出它，
+  // 于是那张按 Sonnet 聊过的 pane 新建 tab 又会被拉回昂贵的 Fable。
+  it('prefers the recent pane chat over a stale Fable 5.1 column model', () => {
+    const state = createState()
+    state.columns[1] = {
+      ...state.columns[1]!,
+      provider: 'claude',
+      model: 'claude-fable-5-1',
+      cards: {
+        'card-chat': createCard({
+          id: 'card-chat',
+          title: 'Current Sonnet chat',
+          provider: 'claude',
+          model: 'claude-sonnet-5',
+          messages: [],
+        }),
+        'card-tool': createCard({
+          id: 'card-tool',
+          title: 'Weather',
+          provider: 'codex',
+          model: WEATHER_TOOL_MODEL,
+          messages: [],
+        }),
+      },
+      layout: {
+        ...createPane('pane-2', ['card-chat', 'card-tool'], 'card-tool'),
+        tabHistory: ['card-chat', 'card-tool'],
+      },
+    }
+    state.settings.requestModels.claude = 'claude-fable-5-1'
+    state.settings.lastModel = { provider: 'claude', model: 'claude-sonnet-5' }
+
+    const next = ideReducer(state, {
+      type: 'addTab',
+      columnId: 'column-2',
+      paneId: 'pane-2',
+    })
+
+    const pane = next.columns[1]?.layout as PaneNode
+    const newCard = next.columns[1]?.cards[pane.activeTabId]
+
+    assert.equal(newCard?.provider, 'claude')
+    assert.equal(newCard?.model, 'claude-sonnet-5')
+  })
+
   it('uses the updated provider default for future chats after settings change', () => {
     const state = createState()
     state.columns[1] = {

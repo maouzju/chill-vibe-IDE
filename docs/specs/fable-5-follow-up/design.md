@@ -16,6 +16,13 @@
 
 > 该表的 Opus 行已过时：默认模型与裸 `opus` 别名后来移交给了 Opus 5，
 > 见 [`../opus-5-default/design.md`](../opus-5-default/design.md)。
+>
+> 该表的 Fable 行也已过时：2026-09-02 换代到 Fable 5.1（`claude-fable-5-1`），
+> 裸 `fable` 别名移交 5.1，`claude-fable-5` 转为选择器隐藏的 legacy 条目；
+> 同时「这是不是 Fable」的判定收敛到 `shared/models.ts` 的 `isFableModel`，
+> 见 [`../fable-5-1-upgrade/design.md`](../fable-5-1-upgrade/design.md)。
+> 下方 §2 里 `isClaudeAlwaysThinkingModel` 的内联实现描述随之作废 —— 它现在只是
+> `isFableModel` 的转发。
 
 ## 2. `shared/reasoning.ts` — 模型感知层
 

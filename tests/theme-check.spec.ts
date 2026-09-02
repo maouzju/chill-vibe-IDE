@@ -2747,12 +2747,21 @@ test('custom theme unlocks accent color with its own base appearance', async ({ 
     .poll(() => page.locator('html').evaluate((node) => node.style.getPropertyValue('--page-bg')))
     .toBe('#1a2b1e')
   await expect(customSettings.locator('.theme-base-color-value')).toContainText('#1a2b1e')
+  await expect
+    .poll(() => page.locator('#app-tab-settings').evaluate((node) => getComputedStyle(node).backgroundColor))
+    .toBe('rgb(26, 43, 30)')
+  await expect
+    .poll(() => page.locator('html').evaluate((node) => node.style.getPropertyValue('--git-desktop-panel-bg')))
+    .toBe('var(--panel-strong)')
 
   await basePicker.fill('#f0e8d8')
   await expect(page.locator('html')).toHaveAttribute('data-theme', 'light')
   await expect
     .poll(() => page.locator('html').evaluate((node) => node.style.getPropertyValue('--page-bg')))
     .toBe('#f0e8d8')
+  await expect
+    .poll(() => page.locator('#app-tab-settings').evaluate((node) => getComputedStyle(node).backgroundColor))
+    .toBe('rgb(240, 232, 216)')
 
   await darkBaseButton.click()
   await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark')

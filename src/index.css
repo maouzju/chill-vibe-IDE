@@ -218,6 +218,27 @@
   --structured-diff-hunk-ink: #0550ae;
 
   --page-bg:     #e2ddd5;
+
+  /* Compatibility aliases used by older cards. Keep these indirections tied to
+     the canonical palette so custom theme overrides reach every surface. */
+  --ink: var(--ink-1);
+  --text: var(--ink-1);
+  --text-secondary: var(--ink-2);
+  --line-soft: color-mix(in srgb, var(--line) 72%, transparent);
+  --border: var(--line);
+  --border-strong: var(--line-strong);
+  --panel-hover: color-mix(in srgb, var(--panel-strong) 88%, var(--page-bg));
+  --surface-1: var(--panel);
+  --surface-2: var(--panel-soft);
+  --accent-fg: var(--accent);
+  --accent-text: var(--accent-2);
+  --ink-on-accent: var(--accent-contrast);
+  --font-mono: 'IBM Plex Mono', 'Cascadia Mono', Consolas, monospace;
+  --radius-sm: var(--r-sm);
+  --shadow-color: #000000;
+  --git-added: var(--structured-diff-added-ink);
+  --git-removed: var(--structured-diff-removed-ink);
+  --git-tool-border-surface: var(--line);
 }
 
 :root[data-theme='dark'] {
@@ -811,8 +832,8 @@ body.is-card-dragging .lane-drop-zone-top {
 
 .window-control-button.is-close:hover,
 .window-control-button.is-close:focus-visible {
-  background: rgba(187, 65, 48, 0.94);
-  color: #fff7f6;
+  background: color-mix(in srgb, var(--danger) 94%, transparent);
+  color: var(--accent-contrast);
   box-shadow: none;
 }
 
@@ -7278,7 +7299,7 @@ a.message-file-reference-link:focus-visible {
   border-radius: var(--r-xs);
   cursor: pointer;
 }
-.recent-clear-actions button:hover { background: var(--accent); color: #fff; }
+.recent-clear-actions button:hover { background: var(--accent); color: var(--accent-contrast); }
 .recent-clear-actions button:disabled { opacity: 0.5; cursor: default; }
 
 /* -- Session history dropdown --------------------------*/
@@ -7636,7 +7657,7 @@ a.message-file-reference-link:focus-visible {
   -webkit-appearance: none;
   border: 1px solid var(--line-strong);
   border-radius: var(--r-xs);
-  background: rgba(255, 255, 255, 0.72);
+  background: color-mix(in srgb, var(--panel-strong) 82%, var(--page-bg));
   padding: 0.12rem 0.5rem;
   font-size: 0.68rem;
   font-weight: 600;
@@ -7649,8 +7670,8 @@ a.message-file-reference-link:focus-visible {
 }
 
 .plan-mode-toggle:hover:not(:disabled) {
-  border-color: rgba(40, 52, 44, 0.26);
-  background-color: rgba(255, 255, 255, 0.92);
+  border-color: var(--line-strong);
+  background-color: var(--panel-strong);
 }
 
 .plan-mode-toggle:focus {
@@ -8522,7 +8543,7 @@ body.is-col-resizing .column-resize-handle::after {
   border-radius: 0;
   border-bottom-width: 2px;
   border-bottom-style: solid;
-  background: #f6f8fa !important;
+  background: var(--page-bg) !important;
   color: var(--ink-2);
   padding: 0.58rem 0;
   font-size: 0.875rem;
@@ -8569,7 +8590,7 @@ body.is-col-resizing .column-resize-handle::after {
 .app-tab:hover,
 .app-tab:focus-visible,
 .app-tab.is-active {
-  background: #f6f8fa !important;
+  background: var(--page-bg) !important;
   box-shadow: none;
 }
 
@@ -8581,7 +8602,7 @@ body.is-col-resizing .column-resize-handle::after {
 :root[data-theme='dark'] .app-tab:hover,
 :root[data-theme='dark'] .app-tab:focus-visible,
 :root[data-theme='dark'] .app-tab.is-active {
-  background: #0d1117 !important;
+  background: var(--page-bg) !important;
 }
 
 .settings-panel {
@@ -9275,7 +9296,7 @@ body,
 .git-tool-notice,
 .git-tool-conflict-banner,
 .git-tool-empty-state {
-  border: 1px solid var(--git-tool-border);
+  border: 1px solid var(--git-tool-border, var(--git-tool-border-surface));
   border-radius: var(--r-sm);
   overflow: hidden;
 }
@@ -9458,20 +9479,20 @@ body,
 .git-desktop-toolbar .git-tool-button:hover:enabled,
 .git-desktop-toolbar .git-tool-button:focus-visible {
   background: var(--git-desktop-topbar-button-hover);
-  border-color: rgba(255, 255, 255, 0.2);
+  border-color: var(--accent-line-strong);
   box-shadow: none;
 }
 
 .git-desktop-toolbar .git-tool-button.is-primary {
-  border-color: #2f81f7;
-  background: #2f81f7;
-  color: #ffffff;
+  border-color: var(--accent);
+  background: var(--accent);
+  color: var(--accent-contrast);
 }
 
 .git-desktop-toolbar .git-tool-button.is-primary:hover:enabled,
 .git-desktop-toolbar .git-tool-button.is-primary:focus-visible {
-  border-color: #1f6feb;
-  background: #1f6feb;
+  border-color: var(--accent-2);
+  background: var(--accent-2);
 }
 
 .git-tool-notice,
@@ -9688,7 +9709,7 @@ body,
 }
 
 .git-tool-tab.is-active {
-  border-bottom-color: #2f81f7;
+  border-bottom-color: var(--accent);
   color: var(--ink-1);
 }
 
@@ -9814,7 +9835,7 @@ body,
 
 .git-change-row.is-selected {
   background: var(--git-desktop-selection);
-  box-shadow: inset 2px 0 0 #2f81f7;
+  box-shadow: inset 2px 0 0 var(--accent);
 }
 
 .git-change-row.is-staged {
@@ -11985,9 +12006,9 @@ body,
 .whitenoise-error {
   padding: 0.4rem 0.6rem;
   font-size: 0.78rem;
-  color: #bb4130;
-  background: rgba(187, 65, 48, 0.08);
-  border-bottom: 1px solid rgba(187, 65, 48, 0.12);
+  color: var(--danger);
+  background: var(--danger-soft);
+  border-bottom: 1px solid var(--icon-btn-danger-line);
 }
 
 /* Scene list */
@@ -12037,8 +12058,8 @@ body,
 }
 
 .whitenoise-scene-delete:hover {
-  background: rgba(187, 65, 48, 0.1);
-  color: #bb4130;
+  background: var(--danger-soft);
+  color: var(--danger);
 }
 
 .whitenoise-scene-item.is-active .whitenoise-scene-play {

@@ -28,3 +28,9 @@
 - [x] shared/theme.ts：surface token 派生 + `getDefaultThemeSurfaceColor`；App.tsx surface effect（`theme === 'custom'` 闸门）；底色行取色器 UI（预设 chip 清色、取色自动定明暗）；取色器圆点 `--ink-4` 中性边框防隐身。
 - [x] Playwright：用例追加底色取色流程（任意深色底 → 自动 dark ink；浅色底 → 自动翻转 light；预设 chip 清除覆盖）；快照因近色容差吞差异，删除后强制重生成并人工核对（坑记入 AGENTS.md #149）。
 - [x] 定向 Node 测试 95/95、目标 Playwright 用例通过、`pnpm test:quality` 通过。
+
+## 四期：补齐自定义主题覆盖
+
+- [x] 盘点并补齐旧主题变量别名，避免控件出现透明/继承色。
+- [x] 让自定义底色派生 Git 工具与标题栏所需的表面 token，并移除代表性控件中的硬编码主题色。
+- [x] 增加自定义浅/深底色下标题栏、Git 工具和代理统计的回归断言与既有自定义主题截图覆盖。

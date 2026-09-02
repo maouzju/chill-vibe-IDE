@@ -132,6 +132,7 @@ export const getSurfaceBaseAppearance = (value: unknown): ResolvedAppTheme | nul
 }
 
 const white: RgbColor = { red: 255, green: 255, blue: 255 }
+const black: RgbColor = { red: 0, green: 0, blue: 0 }
 
 export const createThemeSurfaceTokens = (value: unknown): ThemeSurfaceTokens | null => {
   const normalized = normalizeAccentColor(value)
@@ -146,6 +147,9 @@ export const createThemeSurfaceTokens = (value: unknown): ThemeSurfaceTokens | n
   // built-in palettes use: a whisper on dark bases, near-white on light ones.
   const lift = (amount: number, alpha: number) => toAlphaColor(mixRgb(base, white, amount), alpha)
 
+  const topbar = rgbToHex(mixRgb(base, isDark ? black : white, isDark ? 0.18 : 0.08))
+  const ink = hexToRgb(isDark ? lightForeground : darkForeground)
+
   return isDark
     ? {
         '--page-bg': normalized,
@@ -157,6 +161,26 @@ export const createThemeSurfaceTokens = (value: unknown): ThemeSurfaceTokens | n
         '--input-strong-bg-focus': lift(0.13, 0.98),
         '--menu-bg': lift(0.06, 0.96),
         '--empty-state-bg': lift(0.02, 0.92),
+        '--git-tool-bg': 'var(--panel)',
+        '--git-tool-muted-bg': 'var(--panel-soft)',
+        '--git-tool-border-surface': 'var(--line)',
+        '--git-desktop-shell-bg': 'var(--page-bg)',
+        '--git-desktop-panel-bg': 'var(--panel-strong)',
+        '--git-desktop-panel-muted': 'var(--panel)',
+        '--git-desktop-panel-border': 'var(--line)',
+        '--git-desktop-panel-inset': 'var(--line)',
+        '--git-desktop-topbar-bg': topbar,
+        '--git-desktop-topbar-border': 'var(--line-strong)',
+        '--git-desktop-topbar-ink': lightForeground,
+        '--git-desktop-topbar-muted': toAlphaColor(ink, 0.74),
+        '--git-desktop-topbar-button-bg': toAlphaColor(white, 0.08),
+        '--git-desktop-topbar-button-hover': toAlphaColor(white, 0.14),
+        '--structured-group-bg': 'var(--panel-soft)',
+        '--structured-group-border': 'var(--line)',
+        '--structured-card-bg': 'var(--panel-strong)',
+        '--structured-card-border': 'var(--line)',
+        '--structured-output-bg': 'var(--panel-soft)',
+        '--structured-output-border': 'var(--line)',
       }
     : {
         '--page-bg': normalized,
@@ -168,6 +192,26 @@ export const createThemeSurfaceTokens = (value: unknown): ThemeSurfaceTokens | n
         '--input-strong-bg-focus': lift(0.85, 0.95),
         '--menu-bg': lift(0.8, 0.94),
         '--empty-state-bg': lift(0.75, 0.85),
+        '--git-tool-bg': 'var(--panel)',
+        '--git-tool-muted-bg': 'var(--panel-soft)',
+        '--git-tool-border-surface': 'var(--line)',
+        '--git-desktop-shell-bg': 'var(--page-bg)',
+        '--git-desktop-panel-bg': 'var(--panel-strong)',
+        '--git-desktop-panel-muted': 'var(--panel)',
+        '--git-desktop-panel-border': 'var(--line)',
+        '--git-desktop-panel-inset': 'var(--line)',
+        '--git-desktop-topbar-bg': topbar,
+        '--git-desktop-topbar-border': 'var(--line-strong)',
+        '--git-desktop-topbar-ink': darkForeground,
+        '--git-desktop-topbar-muted': toAlphaColor(ink, 0.68),
+        '--git-desktop-topbar-button-bg': toAlphaColor(black, 0.06),
+        '--git-desktop-topbar-button-hover': toAlphaColor(black, 0.1),
+        '--structured-group-bg': 'var(--panel-soft)',
+        '--structured-group-border': 'var(--line)',
+        '--structured-card-bg': 'var(--panel-strong)',
+        '--structured-card-border': 'var(--line)',
+        '--structured-output-bg': 'var(--panel-soft)',
+        '--structured-output-border': 'var(--line)',
       }
 }
 

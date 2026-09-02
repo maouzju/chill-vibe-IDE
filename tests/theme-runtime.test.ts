@@ -110,6 +110,19 @@ describe('theme runtime helpers', () => {
       '--input-strong-bg-focus',
       '--menu-bg',
       '--empty-state-bg',
+      '--git-tool-bg',
+      '--git-tool-muted-bg',
+      '--git-tool-border-surface',
+      '--git-desktop-shell-bg',
+      '--git-desktop-panel-bg',
+      '--git-desktop-panel-muted',
+      '--git-desktop-panel-border',
+      '--git-desktop-panel-inset',
+      '--git-desktop-topbar-bg',
+      '--git-desktop-topbar-ink',
+      '--structured-group-bg',
+      '--structured-card-bg',
+      '--structured-output-bg',
     ]) {
       assert.ok(darkTokens[key as keyof typeof darkTokens], `missing ${key}`)
     }

@@ -59,6 +59,15 @@ Schema 先用 `catch` 吞掉脏值，真正的收口放在 `normalizeAppSettings
 
 纯函数放在 shared 层，便于对持久化格式、极亮/极暗颜色和对比色进行 Node 单测，不把配色算法藏在 React effect 里。
 
+## 覆盖补齐（四期）
+
+早期样式仍有一组旧别名（`--surface-1`、`--surface-2`、`--text-secondary`、`--accent-text`、`--accent-fg`）和少量直接写死的 Git/标题栏颜色。它们会绕过自定义底色或主题色，造成“同一页面两套皮肤”。补齐规则：
+
+- 在全局 token 层把旧别名映射到现有 `panel` / `panel-soft` / `ink` / `accent` token，别名随动态覆盖自动更新。
+- `createThemeSurfaceTokens()` 同步派生 Git 工具 shell、panel、muted、border、inset 与顶栏表面 token；自定义底色改变时 Git 工具与普通面板使用同一套明暗关系。
+- 标题栏标签、Git 工具主按钮、活动标签下划线、选中行指示条等直接颜色改用 `var(--page-bg)`、`var(--accent)` 与 `var(--accent-contrast)`，不改变内置主题的默认回退值。
+- 主题回归至少断言标题栏、Git 工具和旧别名控件在自定义浅/深底色下读取到动态 token，并在离开自定义主题后清除内联覆盖。
+
 ## 前端接入
 
 `src/App.tsx`：

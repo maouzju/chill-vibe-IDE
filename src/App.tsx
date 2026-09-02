@@ -5979,28 +5979,6 @@ function App() {
 
   useEffect(() => {
     const root = document.documentElement
-    const accentTokens =
-      appState.settings.theme === 'custom'
-        ? createThemeAccentTokens(appState.settings.accentColor, resolvedTheme)
-        : null
-
-    if (!accentTokens) {
-      return
-    }
-
-    for (const [property, value] of Object.entries(accentTokens)) {
-      root.style.setProperty(property, value)
-    }
-
-    return () => {
-      for (const property of Object.keys(accentTokens)) {
-        root.style.removeProperty(property)
-      }
-    }
-  }, [appState.settings.accentColor, appState.settings.theme, resolvedTheme])
-
-  useEffect(() => {
-    const root = document.documentElement
     const surfaceTokens =
       appState.settings.theme === 'custom'
         ? createThemeSurfaceTokens(appState.settings.customBaseColor)
@@ -6020,6 +5998,30 @@ function App() {
       }
     }
   }, [appState.settings.customBaseColor, appState.settings.theme])
+
+  // Surface tokens run before accent tokens so the accent-specific border and
+  // highlight values remain authoritative when both custom controls are set.
+  useEffect(() => {
+    const root = document.documentElement
+    const accentTokens =
+      appState.settings.theme === 'custom'
+        ? createThemeAccentTokens(appState.settings.accentColor, resolvedTheme)
+        : null
+
+    if (!accentTokens) {
+      return
+    }
+
+    for (const [property, value] of Object.entries(accentTokens)) {
+      root.style.setProperty(property, value)
+    }
+
+    return () => {
+      for (const property of Object.keys(accentTokens)) {
+        root.style.removeProperty(property)
+      }
+    }
+  }, [appState.settings.accentColor, appState.settings.theme, resolvedTheme])
 
   useEffect(() => {
     const root = document.documentElement

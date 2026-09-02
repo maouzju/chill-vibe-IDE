@@ -86,6 +86,7 @@ import {
   applyAutomationBoardSlashCompletion,
   filterAutomationBoardSlashCommands,
 } from './automation-board-slash-commands'
+import { updateAutomationBoardDraft } from './automation-board-draft'
 
 /**
  * Ctrl+回车在需求框里插一个换行。
@@ -965,8 +966,9 @@ const AutomationBoardCardView = (props: AutomationBoardCardProps) => {
   const [draft, setDraft] = useState(board.draft ?? '')
   const draftRef = useRef(draft)
   const commitDraftRef = useRef(props.onSetComposerDraft)
-  // 只能在 effect 里写 ref（react-hooks/refs 禁止 render 期赋值）。这个 effect
-  // 刻意不带依赖数组：每次渲染后都把最新值推进去，卸载 cleanup 读到的才是最新的。
+  // callback ref 只能在 effect 里更新（react-hooks/refs 禁止 render 期赋值）。这个
+  // effect 刻意不带依赖数组：每次渲染后都把最新值推进去；draftRef 则在输入事件
+  // 里同步写入，避免用户快速切 tab 时卸载发生在 passive effect 之前。
   useEffect(() => {
     draftRef.current = draft
     commitDraftRef.current = props.onSetComposerDraft
@@ -1111,7 +1113,7 @@ const AutomationBoardCardView = (props: AutomationBoardCardProps) => {
 
   const applySlashCommand = (command: SlashCommand) => {
     const nextDraft = applyAutomationBoardSlashCompletion(command)
-    setDraft(nextDraft)
+    updateAutomationBoardDraft(draftRef, setDraft, nextDraft)
     setSelectedSlashIndex(0)
     requestAnimationFrame(() => textareaRef.current?.focus())
   }
@@ -1460,7 +1462,7 @@ const AutomationBoardCardView = (props: AutomationBoardCardProps) => {
     }
     const images = draftImages
 
-    setDraft('')
+    updateAutomationBoardDraft(draftRef, setDraft, '')
     // 提交出去的文本必须同步从存档里抹掉，否则下次打开这张看板，已经变成项的
     // 那段需求还会原样躺在输入框里。
     commitDraftRef.current('')
@@ -1632,7 +1634,7 @@ const AutomationBoardCardView = (props: AutomationBoardCardProps) => {
                       setSlashMenuDismissed(false)
                       setSelectedSlashIndex(0)
                     }
-                    setDraft(nextDraft)
+                    updateAutomationBoardDraft(draftRef, setDraft, nextDraft)
                   }}
                   onBlur={commitDraft}
                   onPaste={handleDraftPaste}
@@ -1641,7 +1643,9 @@ const AutomationBoardCardView = (props: AutomationBoardCardProps) => {
                     // 这时候把菜单高亮项补全进去是抢答。
                     if (event.key === 'Enter' && event.ctrlKey) {
                       event.preventDefault()
-                      applyCtrlEnterNewline(event.currentTarget, setDraft)
+                      applyCtrlEnterNewline(event.currentTarget, (nextDraft) =>
+                        updateAutomationBoardDraft(draftRef, setDraft, nextDraft),
+                      )
                       return
                     }
                     if (slashMenuOpen) {

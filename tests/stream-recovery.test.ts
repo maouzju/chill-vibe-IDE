@@ -86,6 +86,16 @@ test('transport reconnect placeholders do not reset the recovery retry budget', 
   assert.equal(shouldResetStreamRecoveryAttemptsForText('Reconnecting... 1/5Reconnecting... 2/5'), false)
 })
 
+test('provider API error lines echoed as assistant text do not reset the recovery retry budget', () => {
+  assert.equal(
+    shouldResetStreamRecoveryAttemptsForText(
+      'API Error: API returned an empty or malformed response (HTTP 200) — check for a proxy or gateway intercepting the request',
+    ),
+    false,
+  )
+  assert.equal(shouldResetStreamRecoveryAttemptsForText('API Error: 500 Internal Server Error'), false)
+})
+
 test('real assistant output still resets the recovery retry budget', () => {
   assert.equal(shouldResetStreamRecoveryAttemptsForText('我已经恢复并继续处理了。'), true)
   assert.equal(shouldResetStreamRecoveryAttemptsForText(''), false)

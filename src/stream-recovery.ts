@@ -10,6 +10,11 @@ import type {
 const transientRecoveryPlaceholderPattern = /^reconnecting(?:\s*(?:\.{3}|\u2026))?(?:\s+\d+\s*\/\s*\d+)?$/i
 const transientRecoveryPlaceholderSequencePattern =
   /^(?:reconnecting(?:\s*(?:\.{3}|\u2026))?(?:\s+\d+\s*\/\s*\d+)?\s*)+$/i
+// 症状：中转连续吐空 200，CLI 每次都把 `API Error: …` 当 assistant 文本打出来；
+// 2026-09-03 实测一张卡攒了 45 条，既让重试预算每次归零，又在 fresh-session
+// 续传时把 6000 字符的重放预算吃光、原始需求整条被省略，模型只拿到"请继续"
+// 就去翻工作目录捡别的会话的活干。错误回显不是进展，按占位符同等对待。
+const providerErrorEchoPattern = /^API Error:/i
 
 export const resolveStreamRecoveryMode = (
   error: Pick<StreamErrorEvent, 'recoverable' | 'recoveryMode'>,
@@ -65,7 +70,8 @@ export const shouldResetStreamRecoveryAttemptsForText = (content: string) => {
 
   return !(
     transientRecoveryPlaceholderPattern.test(normalized) ||
-    transientRecoveryPlaceholderSequencePattern.test(normalized)
+    transientRecoveryPlaceholderSequencePattern.test(normalized) ||
+    providerErrorEchoPattern.test(normalized)
   )
 }
 

@@ -370,6 +370,64 @@ describe('chat request seeding', () => {
     assert.doesNotMatch(prompt, /Reconnecting/i)
   })
 
+  it('drops provider API error lines from the replay so they cannot crowd out the original request', () => {
+    const apiError =
+      'API Error: API returned an empty or malformed response (HTTP 200) — check for a proxy or gateway intercepting the request'
+    const prompt = buildSeededChatPrompt({
+      language: 'zh-CN',
+      provider: 'claude',
+      status: 'streaming',
+      prompt: '请继续。',
+      attachments: [],
+      messages: [
+        createMessage('user-1', 'user', '为当下节点的确切的真实的中国环境进行政治分析'),
+        createMessage('assistant-1', 'assistant', '我先通过网络检索最新动态，再给出分析。'),
+        ...Array.from({ length: 45 }, (_, index) =>
+          createMessage(`api-error-${index}`, 'assistant', apiError),
+        ),
+      ],
+    })
+
+    assert.match(prompt, /为当下节点的确切的真实的中国环境进行政治分析/)
+    assert.match(prompt, /我先通过网络检索最新动态/)
+    assert.doesNotMatch(prompt, /API Error/)
+  })
+
+  it('still replays a user message that happens to start with API Error', () => {
+    const prompt = buildSeededChatPrompt({
+      language: 'zh-CN',
+      provider: 'claude',
+      status: 'streaming',
+      prompt: '请继续。',
+      attachments: [],
+      messages: [
+        createMessage('user-1', 'user', 'API Error: 429 rate limited 这个报错怎么解决？USER_QUESTION_SENTINEL'),
+        createMessage('assistant-1', 'assistant', '这是限流，稍后重试即可。'),
+      ],
+    })
+
+    assert.match(prompt, /USER_QUESTION_SENTINEL/)
+  })
+
+  it('always keeps the opening user request when later assistant output exhausts the budget', () => {
+    const prompt = buildSeededChatPrompt({
+      language: 'en',
+      provider: 'claude',
+      status: 'streaming',
+      prompt: 'Please continue.',
+      attachments: [],
+      messages: [
+        createMessage('user-1', 'user', 'Write a political analysis of the current situation. OPENING_REQUEST_SENTINEL'),
+        ...Array.from({ length: 12 }, (_, index) =>
+          createMessage(`assistant-${index}`, 'assistant', `Progress note ${index}: ${'z'.repeat(900)}`),
+        ),
+      ],
+    })
+
+    assert.match(prompt, /OPENING_REQUEST_SENTINEL/)
+    assert.match(prompt, /Progress note 11/)
+  })
+
   it('keeps post-compact history available for seeded requests when the UI adds a performance window', () => {
     const prompt = buildSeededChatPrompt({
       language: 'en',

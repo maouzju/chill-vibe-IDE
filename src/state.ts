@@ -427,10 +427,12 @@ export type IdeAction =
       provider: Provider
       model: string
       /**
-       * 默认 true：用户在 UI 上亲手换模型，顺手记成全局默认与列种子。
+       * 默认 true：用户在 UI 上亲手换模型，顺手记成新 tab 的继承链 —— lastModel
+       * 与当前列种子。「设置→模型」里的全局默认不在这条链上，只由设置面板改
+       * （pitfall #356）。
        *
        * 程序化调用（看板模板触发器）必须显式传 false —— 它在后台无人操作时替
-       * 实例卡换模型，记住偏好就等于替用户改掉「设置→模型」（pitfall 40 的反向）。
+       * 实例卡换模型，记住偏好就等于替用户改掉之后每个新 tab 的模型（pitfall 40 的反向）。
        */
       rememberGlobalPreference?: boolean
     }
@@ -1442,7 +1444,7 @@ const selectCardModel = (
   cardId: string,
   provider: Provider,
   model: string,
-  // 换模型其实是个复合动作：改这张卡 + 作废旧 session + 记全局默认 + 挪列种子。
+  // 换模型其实是个复合动作：改这张卡 + 作废旧 session + 记 lastModel + 挪列种子。
   // 只有最后两件是"用户亲手点的"才成立，所以程序化调用点用它把后半段关掉。
   rememberGlobalPreference = true,
 ) => {
@@ -1454,21 +1456,24 @@ const selectCardModel = (
   }
 
   const normalizedModel = normalizeStoredModel(provider, model)
-  // 本地模型令牌不能写进全局默认（requestModels / lastModel / column.model）：条目一旦被删，
-  // 之后新建的每张卡都会默认落到一个不存在的条目上 —— 和工具卡令牌进全局默认时造出空壳卡
+  // 本地模型令牌不能写进新 tab 的继承链（lastModel / column.model）：条目一旦被删，
+  // 之后新建的每张卡都会默认落到一个不存在的条目上 —— 和工具卡令牌进继承链时造出空壳卡
   // 是同一类问题。本地条目本来就是逐卡生效的（SPEC local-model-entries 需求 #4）。
-  const shouldRememberRequestModel =
+  const shouldRememberLastModel =
     rememberGlobalPreference &&
     normalizedModel.length > 0 &&
     !toolCardModels.has(normalizedModel) &&
     !isLocalModelToken(normalizedModel)
-  let nextState =
-    shouldRememberRequestModel && state.settings.requestModels[provider] !== normalizedModel
-      ? applyRequestModelPatch(state, { [provider]: normalizedModel })
-      : state
-  if (shouldRememberRequestModel) {
-    nextState = mergeSettings(nextState, { lastModel: { provider, model: normalizedModel } })
-  }
+  // 症状：2026-09-02 用户实证「每次打新包之后设置里的 Claude 默认模型都被重置为 opus5」。
+  // 根因：这里曾顺手 applyRequestModelPatch 把「设置→模型」的全局默认改成卡上刚选的模型；
+  //   发版会话恰好总跑在 Opus 5 上，于是每次新包启动后进设置一看都是 opus5，被当成新包干的。
+  //   落盘结果与设置面板亲手改完全一样（requestModels 与 lastModel 永远同步），事后无从分辨。
+  // 被否决的替代：保留回写、只在设置面板提示"最近一次卡上选的模型也会成为默认" —— 用户
+  //   认知里那个框只由设置面板改；而新 tab 的继承链（addTab / addColumn）本就只看 lastModel
+  //   与列种子，不需要全局默认跟着走。见 AGENTS.md pitfall #356。
+  const nextState = shouldRememberLastModel
+    ? mergeSettings(state, { lastModel: { provider, model: normalizedModel } })
+    : state
   const providerChanged = card.provider !== provider
   const previousEffectiveModel = getEffectiveCardModel(nextState.settings, card.provider, card.model)
   const nextEffectiveModel = getEffectiveCardModel(nextState.settings, provider, normalizedModel)

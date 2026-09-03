@@ -56,6 +56,7 @@ Add a small pure tracker module owned by the Codex app-server adapter.
 2. A `thread/started` notification with `parentThreadId` registers a child only when its parent is the root or an already tracked child.
 3. Any `subAgentActivity` item registers or updates its target child and canonical path. This also covers nested descendants.
    The live panel includes a running child as soon as `thread/started` provides its nickname/role/thread id; canonical path is enrichment, not a visibility prerequisite.
+   Exception: when the target is the root thread (`agentThreadId === rootThreadId` or `agentPath === '/root'`) — which is how codex 0.144.1 reports a child sending a message back to its parent, from the child's point of view — the root is never registered as a child. The interaction is attributed to the sending child's preview instead (`Contacted /root`). Registering the root would make every later root notification look like tracked-child traffic and swallow the parent's commands, deltas, and `turn/completed` (AGENTS.md pitfall #355).
 4. Once the root id is known, notifications carrying a different tracked `threadId` are consumed by the child tracker and are not passed to the normal parent parser.
 5. Child deltas are not forwarded as parent assistant deltas. Completed child items provide the bounded preview instead.
 6. Root `turn/completed` completes the normal run only when no child is active. Otherwise it records deferred completion and the process stays attached.

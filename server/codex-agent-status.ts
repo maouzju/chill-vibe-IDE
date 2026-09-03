@@ -328,6 +328,21 @@ export const createCodexAgentStatusTracker = ({
         return { handled: true }
       }
 
+      // 症状：Codex 派了子 agent 的回合，卡片在子 agent 回报后再也不显示任何命令/最终回复，
+      //   转满 30 分钟硬上限才静默结束；用户追问"怎么说"模型答"我的意思是已经修好了"。
+      // 根因：2026-09-02 实测 codex 0.144.1，子线程给父线程发消息时 app-server 从子线程视角推
+      //   subAgentActivity{agentThreadId: <root>, agentPath: "/root", kind: "interacted"}；旧代码
+      //   无条件 ensureAgent 把根线程登记成 running 子 agent，之后 agents.get(root) 命中，根线程
+      //   的 item/*、agentMessage/delta、turn/completed 全部 handled:true 被吞（pitfall #355）。
+      // 为什么不改成"只信 sourceThreadId === root 的 subAgentActivity"：嵌套子 agent 的
+      //   started/interacted 只从子线程视角发，那样会丢掉整棵嵌套树。这里只把"目标是根线程"
+      //   的交互归到发送方子 agent 的预览里，根线程本身永远不入表。
+      const targetsRoot = agentThreadId === rootThreadId || path === '/root'
+      if (targetsRoot) {
+        const sender = sourceThreadId ? agents.get(sourceThreadId) : undefined
+        return settleUpdate(sourceThreadId !== rootThreadId, sender ? updatePreview(sender, item) : false)
+      }
+
       const agent = ensureAgent(agentThreadId, {
         path,
         status: kind === 'interrupted' ? 'interrupted' : 'running',

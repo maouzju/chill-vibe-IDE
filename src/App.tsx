@@ -4490,7 +4490,8 @@ function App() {
       cardId: string,
       provider: Provider,
       model: string,
-      // 只有用户亲手在选单里点过，才配改「设置→模型」的全局默认与列种子。
+      // 只有用户亲手在选单里点过，才配改新 tab 的继承链（lastModel 与列种子）；
+      // 「设置→模型」的全局默认只由设置面板改（pitfall #356）。
       // 看板模板的触发器走的是同一个出口但没人在场，见 state.ts 的 action 定义。
       rememberGlobalPreference = true,
     ) => {

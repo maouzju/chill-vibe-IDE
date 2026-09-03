@@ -129,6 +129,57 @@ test('suppresses unknown non-root notifications without creating a phantom runni
   assert.equal(tracker.markRootTurnCompleted(), 'finish')
 })
 
+test('a child reporting back to /root never turns the root thread into a tracked agent', () => {
+  const tracker = createCodexAgentStatusTracker({ rootThreadId })
+  tracker.handleNotification(childStarted())
+  tracker.handleNotification(subAgentActivity(childThreadId, '/root/pairings_a'))
+
+  const rootCommand = (id: string) => ({
+    method: 'item/completed',
+    params: {
+      threadId: rootThreadId,
+      turnId: 'turn-root',
+      item: { id, type: 'commandExecution', command: `npm test ${id}` },
+    },
+  })
+  assert.equal(tracker.handleNotification(rootCommand('before')).handled, false)
+
+  // 2026-09-02 实测 codex 0.144.1：子线程给父线程发消息时，app-server 从子线程视角推
+  // subAgentActivity{agentThreadId: <root>, agentPath: "/root", kind: "interacted"}。
+  const reportBack = tracker.handleNotification(
+    subAgentActivity(rootThreadId, '/root', 'interacted', childThreadId),
+  )
+  assert.equal(reportBack.handled, true, 'child-side notification stays out of the parent parser')
+  assert.equal(tracker.getAgent(rootThreadId), undefined, 'root must never be registered as a sub-agent')
+  assert.deepEqual(
+    reportBack.activity?.agents.map((agent) => ({ threadId: agent.threadId, activity: agent.activity })),
+    [{ threadId: childThreadId, activity: ['Started /root/pairings_a', 'Contacted /root'] }],
+    'the interaction is attributed to the child that sent it',
+  )
+
+  assert.equal(
+    tracker.handleNotification(rootCommand('after')).handled,
+    false,
+    'root items after the report-back must still reach the normal renderer path',
+  )
+  assert.equal(
+    tracker.handleNotification({
+      method: 'item/agentMessage/delta',
+      params: { threadId: rootThreadId, turnId: 'turn-root', itemId: 'final', delta: '已修复' },
+    }).handled,
+    false,
+    'root assistant deltas after the report-back must not be swallowed',
+  )
+  assert.equal(
+    tracker.handleNotification({
+      method: 'turn/completed',
+      params: { threadId: rootThreadId, turn: { id: 'turn-root', status: 'completed', items: [] } },
+    }).handled,
+    false,
+    'root turn/completed must fall through so the run can finish',
+  )
+})
+
 test('deduplicates item lifecycle updates and retains only the latest six previews', () => {
   const tracker = createCodexAgentStatusTracker({ rootThreadId })
   tracker.handleNotification(childStarted())

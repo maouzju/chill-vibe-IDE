@@ -723,10 +723,11 @@ describe('ideReducer pane layout', () => {
   })
 
   // 2026-08-16 发布前审计：看板模板的触发器会在**后台、无人操作**时替实例卡换
-  // 模型。走同一个 selectCardModel 就意味着它顺手把用户「设置→模型」里的全局
-  // 默认和列种子也改掉：用户明明选的是 sonnet，某个监工模板配了 opus，触发一次
-  // 之后所有新开的 tab 都变成 opus，设置面板显示一个他从没点过的模型。
-  // 这是 pitfall 40 的反向（实例 → 全局），所以程序化调用必须能关掉"记住偏好"。
+  // 模型。走同一个 selectCardModel 就意味着它顺手把新 tab 的继承链（lastModel、
+  // 列种子）也改掉：用户明明选的是 sonnet，某个监工模板配了 opus，触发一次
+  // 之后所有新开的 tab 都变成 opus。这是 pitfall 40 的反向（实例 → 全局），
+  // 所以程序化调用必须能关掉"记住偏好"。（2026-09-02 起用户亲手换模型也不再
+  // 回写 settings.requestModels，见 pitfall #356；这里连带守住它。）
   it('leaves the global model preference alone when the switch is programmatic', () => {
     const before = createState()
     const selected = ideReducer(before, {
@@ -747,7 +748,9 @@ describe('ideReducer pane layout', () => {
   })
 
   it('remembers the last selected chat model for future tabs in the same provider column', () => {
-    const selected = ideReducer(createState(), {
+    const before = createState()
+    before.settings.requestModels.claude = 'claude-fable-5-1'
+    const selected = ideReducer(before, {
       type: 'selectCardModel',
       columnId: 'column-2',
       cardId: 'card-3',
@@ -755,7 +758,9 @@ describe('ideReducer pane layout', () => {
       model: 'claude-sonnet-4-6',
     })
 
-    assert.equal(selected.settings.requestModels.claude, 'claude-sonnet-4-6')
+    // 新 tab 的继承链走 lastModel 与列种子，设置面板的默认不参与。
+    assert.equal(selected.settings.requestModels.claude, 'claude-fable-5-1')
+    assert.deepEqual(selected.settings.lastModel, { provider: 'claude', model: 'claude-sonnet-4-6' })
     assert.equal(selected.columns[1]?.model, 'claude-sonnet-4-6')
 
     const next = ideReducer(selected, {
@@ -1246,10 +1251,74 @@ describe('ideReducer pane layout', () => {
       model: 'claude-sonnet-4-6',
     })
 
-    assert.equal(next.settings.requestModels.claude, 'claude-sonnet-4-6')
+    assert.equal(next.settings.requestModels.claude, 'claude-opus-4-7')
     assert.equal(next.columns[1]?.cards['card-3']?.model, 'claude-sonnet-4-6')
     assert.equal(next.columns[1]?.cards['card-4']?.model, 'claude-opus-4-7')
     assert.equal(next.columns[1]?.cards['card-5']?.model, 'claude-opus-4-7')
+  })
+
+  // 2026-09-02 用户实证：「每次打新包之后，设置里的 Claude 默认模型都被重置为
+  // opus5」。排查后没有任何启动 / 打包 / 自动更新 / 规范化路径会写
+  // settings.requestModels —— 真凶是卡上换模型（下拉、/model、手机远程）顺手把
+  // 「设置→模型」的全局默认改成那张卡刚选的模型，而发版会话恰好总跑在 Opus 5 上，
+  // 于是每次新包启动后进设置一看都是 opus5。用户认知里那个框只由设置面板改。
+  // 卡上的选择只喂新 tab 的继承链（lastModel + 当前列种子），不再回写全局默认；
+  // 其它列的种子也不再被"顺手对齐"。
+  it('keeps the settings-panel default untouched when a card switches to another model', () => {
+    const state = createState()
+    state.settings.requestModels.claude = 'claude-fable-5-1'
+    state.settings.lastModel = { provider: 'claude', model: 'claude-fable-5-1' }
+    state.columns[1]!.model = 'claude-fable-5-1'
+    state.columns.push(
+      createColumn({
+        id: 'column-3',
+        title: 'Workspace 3',
+        provider: 'claude',
+        workspacePath: 'D:/repo/three',
+        model: 'claude-fable-5-1',
+        layout: createPane('pane-3', ['card-6'], 'card-6'),
+        cards: {
+          'card-6': createCard({
+            id: 'card-6',
+            title: 'Other Claude column',
+            provider: 'claude',
+            model: 'claude-fable-5-1',
+            messages: [],
+          }),
+        },
+      }),
+    )
+
+    const selected = ideReducer(state, {
+      type: 'selectCardModel',
+      columnId: 'column-2',
+      cardId: 'card-3',
+      provider: 'claude',
+      model: 'claude-opus-5',
+    })
+
+    // 这张卡真的换过去了，新 tab 的继承链也跟着记住。
+    assert.equal(selected.columns[1]?.cards['card-3']?.model, 'claude-opus-5')
+    assert.deepEqual(selected.settings.lastModel, { provider: 'claude', model: 'claude-opus-5' })
+    assert.equal(selected.columns[1]?.model, 'claude-opus-5')
+    // 但「设置→模型」里的默认值纹丝不动，别的 Claude 列的种子也不动。
+    assert.equal(selected.settings.requestModels.claude, 'claude-fable-5-1')
+    assert.equal(selected.columns[2]?.model, 'claude-fable-5-1')
+  })
+
+  it('still lets the settings panel change the default and refresh columns that follow it', () => {
+    const state = createState()
+    state.settings.requestModels.claude = 'claude-fable-5-1'
+    state.columns[1]!.model = 'claude-fable-5-1'
+
+    const next = ideReducer(state, {
+      type: 'updateRequestModels',
+      patch: { claude: 'claude-opus-5' },
+    })
+
+    assert.equal(next.settings.requestModels.claude, 'claude-opus-5')
+    assert.equal(next.columns[1]?.model, 'claude-opus-5')
+    assert.equal(next.columns[1]?.cards['card-3']?.model, 'claude-opus-4-7')
   })
 
   it('does not replace future chat defaults when switching the current card to a tool model', () => {

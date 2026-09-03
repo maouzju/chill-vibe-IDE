@@ -245,6 +245,12 @@ const formatStructuredSections = (message: ChatMessage) => {
   return []
 }
 
+// 只有 assistant 侧的 `API Error:` / Reconnecting 是 CLI 回显；用户自己粘贴报错求助是真实需求
+const hasMeaningfulReplayText = (message: Pick<ChatMessage, 'role'>, content: string) =>
+  message.role === 'assistant'
+    ? shouldResetStreamRecoveryAttemptsForText(content)
+    : content.trim().length > 0
+
 const isReplayableMessage = (message: ChatMessage) => {
   if (message.role !== 'user' && message.role !== 'assistant') {
     return false
@@ -259,7 +265,7 @@ const isReplayableMessage = (message: ChatMessage) => {
   }
 
   return (
-    message.content.trim().length > 0 ||
+    hasMeaningfulReplayText(message, message.content) ||
     getChatMessageAttachments(message).length > 0 ||
     formatStructuredSections(message).length > 0
   )
@@ -292,6 +298,7 @@ const formatReplayMessage = (
   language: AppLanguage,
   message: ChatMessage,
   mode: ChatReplayMode,
+  forceProtected = false,
 ): ReplayEntry | null => {
   if (!isReplayableMessage(message)) {
     return null
@@ -323,7 +330,7 @@ const formatReplayMessage = (
   sections.push(...structuredSections)
 
   const content = message.content.trim()
-  const includesMeaningfulContent = Boolean(content && shouldResetStreamRecoveryAttemptsForText(content))
+  const includesMeaningfulContent = hasMeaningfulReplayText(message, content)
   if (includesMeaningfulContent) {
     sections.push(sections.length === 0 ? content : `Content:\n${indentBlock(content)}`)
   }
@@ -333,6 +340,7 @@ const formatReplayMessage = (
   return {
     text,
     protected:
+      (forceProtected && includesMeaningfulContent) ||
       (mode === 'model-transfer' && includesMeaningfulContent) ||
       (message.role === 'user' && content.length > MAX_STRUCTURED_REPLAY_ENTRY_CHARS),
   }
@@ -515,8 +523,15 @@ export const buildSeededChatPrompt = ({
   mode?: ChatReplayMode
 }) => {
   const replayWindow = getSeedingWindow({ messages, provider, status })
+  // 预算从最新一条往前挑，开头那句需求最短也最容易被挤掉；没有它模型只剩
+  // "请继续"，会自己去工作目录里猜任务（2026-09-03 实证捡了别的会话的活）。
+  const openingRequestIndex = replayWindow.findIndex(
+    (message) => message.role === 'user' && isReplayableMessage(message),
+  )
   const transcriptEntries = replayWindow
-    .map((message) => formatReplayMessage(language, message, mode))
+    .map((message, index) =>
+      formatReplayMessage(language, message, mode, index === openingRequestIndex),
+    )
     .filter((entry): entry is ReplayEntry => entry !== null && entry.text.length > 0)
 
   if (transcriptEntries.length === 0) {

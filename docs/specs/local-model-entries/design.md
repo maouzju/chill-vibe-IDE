@@ -124,7 +124,7 @@ i18n 文案加进 `src/app-panel-text.ts`（中英两套，:1-30 的 `getPanelTe
 
 ### 3. `selectCardModel` 的全局偏好写入要挡住令牌
 
-`src/state.ts:1396-1405`：换模型时会把模型名写进 `settings.requestModels[provider]` 与 `column.model` 作为"下次新建卡的默认"。若把 `__local__:<id>` 写进去，之后条目被删，新建的卡就会**默认落到一个不存在的条目**上。
+`src/state.ts` 的 `selectCardModel`：换模型时会把模型名写进 `settings.lastModel` 与 `column.model` 作为"下次新建卡的默认"（2026-09-02 起不再回写 `settings.requestModels`，见 AGENTS.md pitfall #356）。若把 `__local__:<id>` 写进去，之后条目被删，新建的卡就会**默认落到一个不存在的条目**上。
 
 处理方式与既有工具卡令牌一致——`rememberGlobalPreference` 的判定本就排除 `isToolCardModel`，本地令牌照此办理：**不写全局偏好，只作用于当前卡**。这也符合需求 #4「逐卡生效」。
 

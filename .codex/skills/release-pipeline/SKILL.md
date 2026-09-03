@@ -162,7 +162,7 @@ Guardrails:
 
 ## Release Pitfalls / Fast Recovery
 
-- **2026-09-02 v0.20.13：固定端口可能被其他 checkout 占用且监听命令行不属于本仓库。** 本次 `test:release` 的 Playwright 阶段在 5173 被 `D:\Git\Roadbound` 的 Vite 占用时快速失败；随后把候选 Vite 启到临时端口做定向验证，但部分规格仍因固定 `localhost:5173` 或初始化状态假设而失败。发布前应在预检阶段识别并记录端口归属，必要时将 Playwright 结果标为环境阻塞，并以 Node/Electron/构建及候选相关窄测作为替代证据；不得把错误 checkout 的页面失败归因于候选代码。
+- **2026-09-02 v0.20.13：固定端口可能被其他 checkout 占用且监听命令行不属于本仓库。** 本次 `test:release` 的 Playwright 阶段在 5173 被另一个无关仓库 checkout 的 Vite 占用时快速失败；随后把候选 Vite 启到临时端口做定向验证，但部分规格仍因固定 `localhost:5173` 或初始化状态假设而失败。发布前应在预检阶段识别并记录端口归属，必要时将 Playwright 结果标为环境阻塞，并以 Node/Electron/构建及候选相关窄测作为替代证据；不得把错误 checkout 的页面失败归因于候选代码。
 
 - `scripts/run-release-verification.mjs` must not include a standalone `--` in the pnpm audit-stage argument arrays: pnpm forwards it literally and both audit scripts exit with `Unknown argument: --` before scanning. Keep the direct forms `pnpm release:history-audit --json` and `pnpm release:audit --base origin/main --json` in sync with the workflow and guard test.
 

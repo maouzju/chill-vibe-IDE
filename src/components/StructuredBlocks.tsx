@@ -531,7 +531,7 @@ export const StructuredAgentsCard = ({
   const callStatus = data.callStatus ?? 'completed'
   const isWaitGroup = tool === 'wait'
   const title = isWaitGroup
-    ? labels.agentsCount(data.agents.length)
+    ? (data.agents.length > 0 ? labels.agentsCount(data.agents.length) : labels.agents)
     : `${labels.agentTool[tool]} ${data.agents.length === 1 ? formatAgentName(data.agents[0]!) : labels.agents}`
   const promptPreview = data.prompt ? truncateStructuredInlineText(data.prompt) : ''
 

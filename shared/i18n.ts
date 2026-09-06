@@ -496,6 +496,7 @@ type LocaleText = {
   clearUserDataConfirm: string
   clearUserDataPending: string
   streamRecoveryReconnecting: (attempt: number, max: number | 'unlimited') => string
+  streamRecoveryNativeReconnecting: string
   streamRecoveryResumed: string
   streamRecoveryFailed: string
   streamRecoveryManualResume: string
@@ -1029,6 +1030,7 @@ const localeTextByLanguage: Record<AppLanguage, LocaleText> = {
     streamRecoveryReconnecting: (attempt, max) =>
       `正在重连… ${attempt}/${max === 'unlimited' ? '无限' : max}`,
     streamRecoveryResumed: '已恢复',
+    streamRecoveryNativeReconnecting: '正在重连…',
     streamRecoveryFailed: '重连失败',
     streamRecoveryManualResume: '手动续传',
   },
@@ -1583,6 +1585,7 @@ const localeTextByLanguage: Record<AppLanguage, LocaleText> = {
     clearUserDataPending: 'Clearing and restarting...',
     streamRecoveryReconnecting: (attempt, max) => `Reconnecting… ${attempt}/${max === 'unlimited' ? '∞' : max}`,
     streamRecoveryResumed: 'Resumed',
+    streamRecoveryNativeReconnecting: 'Reconnecting…',
     streamRecoveryFailed: 'Reconnect failed',
     streamRecoveryManualResume: 'Resume manually',
   },

@@ -70,6 +70,9 @@ The source of truth for this SPEC is the installed Codex CLI (`codex-cli 0.144.1
 
 - Existing `collabAgentToolCall` parsing remains backward compatible for `spawnAgent`, `sendInput`, `resumeAgent`, `wait`, and `closeAgent`.
 - Existing persisted `agents` structured messages continue to parse.
+- A successful historical `wait` with no valid target agents, prompt, model, or reasoning metadata is omitted from the rendered transcript, including already-saved messages. It must not claim that zero agents completed.
+- Empty failed or in-progress calls, useful wait metadata, and real target-agent results remain visible. The live status panel's explicit empty state is unchanged.
+- The provider must still deliver empty wait completion updates so an earlier in-progress item is settled rather than left running.
 - The live panel is persisted through `message.meta.structuredData`; no new persisted card field is required.
 - Older Codex versions that do not emit v2 child-thread events continue to use the legacy collaboration card.
 

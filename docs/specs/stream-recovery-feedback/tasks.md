@@ -89,3 +89,17 @@
 - [x] Verify current-turn boundaries, light/dark command-group rendering, and package alongside the child-completion repair.
 
 Verification: `tests/message-local-link.test.ts` passed 25/25 after red-first coverage; the file-scoped `streaming structured command groups` Playwright case passed in both themes with unchanged snapshots. Default `pnpm test:theme` was blocked by another project's 5173 listener, so verification used a temporary derived repo config on port 5196. Quality passed; Windows handoff shares `dist/release-20260906-224336/` with the child-completion fix. This scoped repair extends the existing SPEC rather than creating a new feature SPEC.
+
+## Slice 12 - Codex native retry noise (2026-09-06)
+
+- [x] Red-first provider regressions: five retry notifications append no logs, emit one backend-recorded disconnect, and retain the final diagnostic; recovery may continue output and complete normally.
+- [x] Red-first fixed-phrase classification with live-session and permanent-error guards.
+- [x] Red-first renderer regression: backend-recorded stats show reconnecting without starting another request or duplicating stats, then real output resumes.
+- [x] Replace intermediate raw log emission with the existing stats signal and wire that signal to existing recovery feedback.
+- [x] Separate native reconnect feedback from the IDE retry denominator and re-arm feedback after real output without duplicating the per-run disconnect count.
+- [x] Preserve an existing IDE resume counter across native retry notifications; red-first `scheduled -> native -> scheduled` coverage proves unlimited placeholder-only attempts advance from 1 to 2.
+- [x] Verify focused provider, classifier, and renderer coverage, then share integrated quality/package evidence in the parent handoff.
+
+Integrated verification (2026-09-06): 126 focused classifier/parser/renderer/helper Node tests plus 25 Codex provider cases passed. All 21 targeted browser recovery/theme cases passed on isolated port 5198; `pnpm test:quality` passed. Six new snapshots were reviewed, preserving actual failures and valid agent results. `pnpm test:theme` could not own 5173 because another project uses it; no user process was stopped. `pnpm electron:build` produced `dist/release-20260906-232949/Chill Vibe-0.20.15-win.zip` plus `win-unpacked/Chill Vibe.exe`. The existing packaged user instance remains running, so the fix takes effect when switching to the new build. This is a focused extension of the existing SPEC, not a new feature or a claim to fix remote service capacity.
+
+Node verification: the initial five-case proving run failed four cases (5 raw retry logs instead of 0, and both screenshot phrases classified as non-recoverable), then passed 5/5. The additional native-label/second-disconnect red tests failed before their implementation, then passed. Final focused checks passed 77/77 helper/classifier/MessageBubble tests and 19/19 Codex reconnect/provider tests, including backend record-count verification and final finite-budget recovery. Renderer red was confirmed on the isolated port 5198 because the reconnect element was missing; integrated green/theme/quality/package verification is tracked by the parent handoff.

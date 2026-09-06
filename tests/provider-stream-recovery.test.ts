@@ -153,6 +153,28 @@ test('a mid-stream socket disconnect after a live session is resumable', () => {
   )
 })
 
+for (const reason of [
+  'Our servers are currently overloaded. Please try again later.',
+  'Upstream stream ended without a terminal event',
+]) {
+  test(`Codex native retry exhaustion resumes the fixed upstream error: ${reason}`, () => {
+    const message = `stream disconnected before completion: ${reason}`
+    assert.deepEqual(classifyProviderStreamErrorRecovery({ sessionId: 'session-1' }, message), {
+      recoverable: true,
+      recoveryMode: 'resume-session',
+    })
+    assert.deepEqual(classifyProviderStreamErrorRecovery({}, message), {})
+    assert.deepEqual(classifyProviderStreamErrorRecovery({ sessionId: 'session-1' }, message, 'env-setup'), {})
+    assert.deepEqual(classifyProviderStreamErrorRecovery({ sessionId: 'session-1' }, message, 'switch-config'), {})
+  })
+}
+
+test('Codex native retry classification does not retry generic or authentication errors', () => {
+  for (const message of ['server error', 'overloaded', 'terminal event', '401 Unauthorized', 'Invalid API key']) {
+    assert.deepEqual(classifyProviderStreamErrorRecovery({ sessionId: 'session-1' }, message), {})
+  }
+})
+
 // Claude/Codex can surface a brief upstream outage as the literal
 // "API Error: Unable to connect to API (ConnectionRefused)" instead of a socket
 // close. It is still safe to resume the unfinished turn once a native session

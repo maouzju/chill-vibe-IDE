@@ -13,6 +13,7 @@ import {
   summarizeCommandDisplay,
 } from '../src/components/chat-card-rendering.tsx'
 import { getStructuredToolGroupRenderWindow } from '../src/components/structured-tool-group-window.ts'
+import { buildRenderableMessages, parseStructuredAgentsMessage } from '../src/components/chat-card-parsing.ts'
 
 ;(globalThis as typeof globalThis & { React: typeof React }).React = React
 
@@ -969,6 +970,75 @@ test('renders Codex multi-agent activity as a compact agent list', () => {
   assert.match(markup, /Completed/)
   assert.match(markup, /Running/)
   assert.doesNotMatch(markup, />Open</)
+})
+
+const createEmptyAgentWaitCard = (overrides: Record<string, unknown> = {}) => {
+  const card = createCard()
+  card.status = 'idle'
+  card.messages = [{
+    id: 'agents-empty-wait',
+    role: 'assistant',
+    content: '',
+    createdAt: '2026-09-06T12:00:00.000Z',
+    meta: {
+      kind: 'agents',
+      provider: 'codex',
+      structuredData: JSON.stringify({
+        itemId: 'call-empty-wait',
+        kind: 'agents',
+        status: 'completed',
+        tool: 'wait',
+        callStatus: 'completed',
+        agents: [],
+        ...overrides,
+      }),
+    },
+  }]
+  return card
+}
+
+test('omits saved empty completed agent waits without leaving empty transcript rows', () => {
+  for (const overrides of [
+    {},
+    { view: 'toolCall' },
+    { prompt: '  \n ', model: '', reasoningEffort: null },
+    { agents: [null, { threadId: '', status: 'completed' }] },
+  ]) {
+    const card = createEmptyAgentWaitCard(overrides)
+    assert.equal(parseStructuredAgentsMessage(card.messages[0]!), null)
+    assert.deepEqual(buildRenderableMessages(card.messages), [])
+    assert.doesNotMatch(renderCard(card), /structured-agents-card|0 background agents/)
+  }
+})
+
+test('keeps empty failed and running waits visible without claiming a zero-agent result', () => {
+  for (const callStatus of ['failed', 'inProgress']) {
+    const card = createEmptyAgentWaitCard({ callStatus })
+    const markup = renderCard(card)
+    assert.equal(buildRenderableMessages(card.messages).length, 1)
+    assert.match(markup, /structured-agents-card/)
+    assert.match(markup, new RegExp(`structured-agents-call-status is-${callStatus}`))
+    assert.doesNotMatch(markup, /0 background agents/)
+  }
+})
+
+test('keeps meaningful empty agent waits and non-wait calls visible', () => {
+  for (const overrides of [
+    { prompt: 'The review timed out before an agent responded.' },
+    { model: 'gpt-6-astra' },
+    { reasoningEffort: 'high' },
+    { tool: 'spawnAgent' },
+    { tool: 'sendInput' },
+    { tool: 'resumeAgent' },
+    { tool: 'closeAgent' },
+  ]) {
+    const card = createEmptyAgentWaitCard(overrides)
+    const markup = renderCard(card)
+    assert.notEqual(parseStructuredAgentsMessage(card.messages[0]!), null)
+    assert.match(markup, /structured-agents-card/)
+    assert.doesNotMatch(markup, /0 background agents/)
+    if (overrides.prompt) assert.match(markup, /The review timed out/)
+  }
 })
 
 test('renders the Codex live sub-agent status panel without unsupported controls', () => {

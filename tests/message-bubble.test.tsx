@@ -3,10 +3,21 @@ import test from 'node:test'
 import * as React from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 
-import { MessageBubble } from '../src/components/MessageBubble.tsx'
+import { MessageBubble, StreamingIndicator } from '../src/components/MessageBubble.tsx'
 import { areMessageBubblePropsEqual } from '../src/components/message-bubble-memo.ts'
 
 ;(globalThis as typeof globalThis & { React: typeof React }).React = React
+
+test('native reconnect labels do not borrow the IDE retry count in either language', () => {
+  for (const language of ['en', 'zh-CN'] as const) {
+    const markup = renderToStaticMarkup(
+      <StreamingIndicator messages={[]} language={language} recoveryStatus={{ kind: 'native-reconnecting' }} />,
+    )
+    assert.match(markup, /streaming-recovery is-reconnecting/)
+    assert.ok(markup.includes(language === 'en' ? 'Reconnecting\u2026' : '正在重连\u2026'))
+    assert.doesNotMatch(markup, /\d+\//)
+  }
+})
 
 test('MessageBubble wraps sticky user prompts in a top-anchor shell', () => {
   const markup = renderToStaticMarkup(

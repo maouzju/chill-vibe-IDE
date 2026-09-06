@@ -39,6 +39,14 @@ When a chat card's stream enters recovery, the user sees a short status line **i
 
 The streaming indicator must not describe completed, failed, or declined commands as still running. Explicitly active commands retain their label even if a later assistant progress note arrives. Legacy activities without status may provide a fallback only until newer assistant text supersedes them. Interpret snapshot activities (agents and questions) using their own lifecycle semantics, not their top-level serialization status. No layout, theme, or persistence change is needed.
 
+### 2026-09-06 Codex native retry feedback
+
+- Codex `error` notifications with `willRetry: true` are intermediate recovery signals, not transcript log entries or terminal failures. Show the existing in-bubble reconnect status without appending raw upstream errors for every attempt.
+- Native CLI reconnect status has no attempt denominator: its retry budget is not the IDE resume budget. A later disconnect after real output must show reconnecting again even though the per-run statistical disconnect remains deduplicated.
+- Count one local disconnect per provider run even when both native retry errors and reconnect placeholders describe it. Backend-recorded events must not be recorded again by the renderer.
+- Real output after a native retry must continue in the same stream and transition the indicator to resumed; only the actual terminal event completes or fails the turn. Preserve the final diagnostic and existing recovery budget.
+- The explicit upstream phrases `Our servers are currently overloaded` and `Upstream stream ended without a terminal event` may resume only with a live session and the existing bounded recovery path. Authentication, routing configuration, and generic error strings remain outside this extension.
+
 ## Non-goals
 
 - General recovery retry transport logic (already exists in `resilient-proxy.ts` and `App.tsx:onError`), except for the dead resumed-session escape hatch above.

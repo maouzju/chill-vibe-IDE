@@ -2158,6 +2158,7 @@ const launchCodexAppServerRun = async (
   let currentRequest = request
   let transientPlaceholderStallTimer: ReturnType<typeof setTimeout> | undefined
   let transientPlaceholderDisconnectStatsReported = false
+  let nativeReconnectFeedbackActive = false
   let localStreamStallTimer: ReturnType<typeof setTimeout> | undefined
   let sawVisibleStreamOutput = false
   const openProviderWorkItemIds = new Set<string>()
@@ -2250,20 +2251,26 @@ const launchCodexAppServerRun = async (
   }
 
   const reportTransientPlaceholderDisconnectStats = () => {
-    if (transientPlaceholderDisconnectStatsReported) {
+    // 症状：同一轮恢复输出后再次断流，气泡没有重连提示。
+    // 根因：2026-09-06 回放证明每轮 stats 去重同时吞掉了后续控制信号。
+    // 统计仍每轮一次，真实输出后允许重发反馈，避免重复记账。见 stream-recovery-feedback。
+    if (nativeReconnectFeedbackActive) {
       return
     }
 
-    transientPlaceholderDisconnectStatsReported = true
+    nativeReconnectFeedbackActive = true
     const event = {
       event: 'disconnect' as const,
       endpoint: '/cli/local-stream',
       errorType: 'native-reconnect-placeholder',
       alreadyRecorded: true,
     }
-    proxyStats.record(request.provider, event.event, event.endpoint, {
-      errorType: event.errorType,
-    })
+    if (!transientPlaceholderDisconnectStatsReported) {
+      transientPlaceholderDisconnectStatsReported = true
+      proxyStats.record(request.provider, event.event, event.endpoint, {
+        errorType: event.errorType,
+      })
+    }
     sink.onStats?.(event)
   }
 
@@ -2283,6 +2290,7 @@ const launchCodexAppServerRun = async (
   }
 
   const markDurableAssistantContentProgress = () => {
+    nativeReconnectFeedbackActive = false
     emittedAssistantContent.durable = true
     emittedAssistantContent.transientOnly = false
     transientPlaceholderCandidateContentByItemId.clear()
@@ -2615,6 +2623,9 @@ const launchCodexAppServerRun = async (
 
       const activity = { ...parsed }
       delete (activity as { type?: 'activity' }).type
+      if (structuredActivityCountsAsTurnOutput(activity.kind)) {
+        nativeReconnectFeedbackActive = false
+      }
 
       if (activity.kind === 'command' && activity.status === 'in_progress') {
         markProviderWorkStarted(activity.itemId)
@@ -2712,6 +2723,7 @@ const launchCodexAppServerRun = async (
 
       const agentUpdate = agentStatusTracker.handleNotification(message)
       if (agentUpdate.activity) {
+        nativeReconnectFeedbackActive = false
         markDurableProviderProgress()
         sink.onActivity(agentUpdate.activity)
         syncAgentWorkState()
@@ -2793,10 +2805,12 @@ const launchCodexAppServerRun = async (
           willRetry: false,
         }
 
-        // 还在自动重连的回合没有死，别替它宣判——真正的终态会带 willRetry:false 再来一次。
+        // 症状：原生重试把同一断流错误刷成多条聊天日志。
+        // 根因：2026-09-06 回放的 willRetry:true 仍属于活跃回合，不能当作聊天输出。
+        // 只复用 stats 控制信号；不标 placeholder-only，避免绕过有限重试预算。见 stream-recovery-feedback。
         if (notification.willRetry) {
           scheduleLocalStreamStallTimer()
-          sink.onLog(notification.message)
+          reportTransientPlaceholderDisconnectStats()
           return
         }
 

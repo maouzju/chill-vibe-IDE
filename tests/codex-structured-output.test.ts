@@ -556,3 +556,34 @@ test('keeps Codex collab agents visible when metadata only arrives in agent stat
     ],
   )
 })
+
+test('delivers empty wait completion updates so an earlier in-progress activity can settle', () => {
+  const item = {
+    id: 'call-empty-wait',
+    type: 'collabAgentToolCall',
+    tool: 'wait',
+    senderThreadId: 'thread-main',
+    receiverThreadIds: [],
+    agentsStates: {},
+    prompt: null,
+    model: null,
+    reasoningEffort: null,
+  }
+
+  for (const [method, status] of [['item/started', 'inProgress'], ['item/completed', 'completed']]) {
+    const activities = parseCodexResponseEvent({ method, params: { item: { ...item, status } } })
+    assert.equal(activities.length, 1)
+    assert.deepEqual(activities[0], {
+      type: 'activity',
+      itemId: item.id,
+      kind: 'agents',
+      status: 'completed',
+      tool: 'wait',
+      callStatus: status,
+      prompt: null,
+      model: null,
+      reasoningEffort: null,
+      agents: [],
+    })
+  }
+})

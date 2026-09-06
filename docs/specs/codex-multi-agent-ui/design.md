@@ -103,6 +103,12 @@ The renderer joins the summaries as separate quiet lines and visually clamps the
 - Keep prompt, model/effort, call status, result message, and error states.
 - Remove the unsupported disabled `Open` control and mention hint.
 
+### 2026-09-06 empty wait history correction
+
+The installed 0.153.4 experimental `ThreadItem` protocol describes `collabAgentToolCall.status` as the status of the tool call, not the target agents. `receiverThreadIds` and `agentsStates` can both be empty, so successful polling must not become a `0 background agents / Completed` result card.
+
+Keep the provider's started/completed activity stream intact: suppressing the terminal update would strand its earlier in-progress item in saved state. In the existing frontend structured-message parser, omit only successful tool-call waits whose normalized agent list and prompt/model/reasoning metadata are all empty. This same read-time path covers saved messages and causes the transcript grouping code to skip empty shells. Do not migrate or rewrite user history. Preserve failed/in-progress waits and all meaningful metadata; those targetless calls use an uncounted title. Preserve the separate `view: 'status'` empty panel unchanged.
+
 ### Live status (`view: 'status'`)
 
 - Header: `Sub-agents running` / `正在运行的子智能体`.

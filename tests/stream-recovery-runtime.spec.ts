@@ -2,6 +2,8 @@ import { expect, test, type Page } from '@playwright/test'
 
 import { createPlaywrightState } from './playwright-state.ts'
 
+const appUrl = process.env.PLAYWRIGHT_APP_URL ?? 'http://localhost:5173'
+
 const emitDesktopStreamEvent = async (page: Page, streamId: string, eventName: string, data: unknown) => {
   await page.evaluate(
     ({ targetStreamId, targetEventName, payload }) => {
@@ -127,6 +129,13 @@ const installMockDesktopBridge = async (
       importCcSwitchRouting: async () => ({ source: 'cc-switch', importedProfiles: [] }),
       fetchSetupStatus: async () => ({ state: 'idle', logs: [] }),
       runEnvironmentSetup: async () => ({ state: 'idle', logs: [] }),
+      recordProxyStatsEvent: async (request) => {
+        await jsonRequest('/api/test/proxy-stats-record', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(request),
+        })
+      },
       fetchOnboardingStatus: async () => ({ complete: true }),
       fetchGitStatus: async () => ({ files: [], branch: null }),
       setGitStage: async () => ({ files: [], branch: null }),
@@ -355,6 +364,14 @@ const installMockDesktopBridge = async (
     await route.fulfill({ status: 204 })
   })
 
+  await page.route('**/api/test/proxy-stats-record', async (route) => {
+    await route.fulfill({ json: {} })
+  })
+
+  await page.route('**/api/chat/native-turn-completion', async (route) => {
+    await route.fulfill({ json: { completion: 'unknown' } })
+  })
+
   return {
     readRequests: () => requests.slice(),
     readForkRequests: () => forkRequests.slice(),
@@ -370,7 +387,7 @@ const installMockDesktopBridge = async (
 
 test('recoverable streaming errors resume the session instead of stopping immediately', async ({ page }) => {
   const mock = await installMockDesktopBridge(page)
-  await page.goto('http://localhost:5173')
+  await page.goto(appUrl)
 
   await expect(page.locator('.pane-tab-panel.is-active .composer textarea').first()).toBeVisible()
   await expect.poll(() => hasDesktopStreamSubscription(page, 'stream-1')).toBe(true)
@@ -399,9 +416,47 @@ test('recoverable streaming errors resume the session instead of stopping immedi
   await expect.poll(() => mock.readState().columns[0]?.cards['card-1']?.status).toBe('idle')
 })
 
+test('native retry stats show recovery feedback without extra requests or duplicate recording', async ({ page }) => {
+  const mock = await installMockDesktopBridge(page)
+  const recordedStats: Array<{ event: string }> = []
+  await page.route('**/api/test/proxy-stats-record', async (route) => {
+    recordedStats.push(route.request().postDataJSON())
+    await route.fulfill({ json: {} })
+  })
+  await page.goto(appUrl)
+  await expect.poll(() => hasDesktopStreamSubscription(page, 'stream-1')).toBe(true)
+
+  const statsEvent = {
+    event: 'disconnect',
+    endpoint: '/cli/local-stream',
+    errorType: 'native-reconnect-placeholder',
+    alreadyRecorded: true,
+  }
+  const recoveryStatus = page.locator('.pane-tab-panel.is-active .streaming-recovery .streaming-label')
+  await emitDesktopStreamEvent(page, 'stream-1', 'stats', statsEvent)
+  await expect(recoveryStatus).toHaveText('Reconnecting\u2026')
+  await emitDesktopStreamEvent(page, 'stream-1', 'stats', statsEvent)
+  await expect(recoveryStatus).toHaveText('Reconnecting\u2026')
+  expect(recordedStats.filter((event) => event.event === 'disconnect')).toHaveLength(0)
+  expect(mock.readRequests()).toHaveLength(0)
+  expect(mock.readState().columns[0]?.cards['card-1']?.status).toBe('streaming')
+
+  await emitDesktopStreamEvent(page, 'stream-1', 'delta', { itemId: 'answer-1', content: 'Recovered answer.' })
+  await expect(recoveryStatus).toHaveText('Resumed')
+  await expect(page.getByText('Recovered answer.', { exact: true })).toBeVisible()
+  await emitDesktopStreamEvent(page, 'stream-1', 'stats', statsEvent)
+  await expect(recoveryStatus).toHaveText('Reconnecting\u2026')
+  await emitDesktopStreamEvent(page, 'stream-1', 'delta', { itemId: 'answer-2', content: 'Recovered again.' })
+  await expect(recoveryStatus).toHaveText('Resumed')
+  await emitDesktopStreamEvent(page, 'stream-1', 'done', {})
+  await expect.poll(() => mock.readState().columns[0]?.cards['card-1']?.status).toBe('idle')
+  await expect.poll(() => recordedStats.filter((event) => event.event === 'recovery_success').length).toBe(1)
+  expect(mock.readRequests()).toHaveLength(0)
+})
+
 test('ordinary stalled resume loops roll back to a native checkpoint after reasoning-only progress', async ({ page }) => {
   const mock = await installMockDesktopBridge(page)
-  await page.goto('http://localhost:5173')
+  await page.goto(appUrl)
 
   await expect(page.locator('.pane-tab-panel.is-active .composer textarea').first()).toBeVisible()
   await expect.poll(() => hasDesktopStreamSubscription(page, 'stream-1')).toBe(true)
@@ -450,7 +505,7 @@ test('ordinary stalled resume loops roll back to a native checkpoint after reaso
 
 test('native checkpoint failure degrades to the seeded fresh-session recovery', async ({ page }) => {
   const mock = await installMockDesktopBridge(page, { nativeFork: false })
-  await page.goto('http://localhost:5173')
+  await page.goto(appUrl)
 
   await expect.poll(() => hasDesktopStreamSubscription(page, 'stream-1')).toBe(true)
   for (const streamId of ['stream-1', 'stream-2']) {
@@ -472,7 +527,7 @@ test('native checkpoint failure degrades to the seeded fresh-session recovery', 
 
 test('manual stream recovery also prefers the native checkpoint path', async ({ page }) => {
   const mock = await installMockDesktopBridge(page)
-  await page.goto('http://localhost:5173')
+  await page.goto(appUrl)
 
   const manualRecover = page.locator('.manual-stream-recovery-composer-button').first()
   await expect(manualRecover).toBeVisible()
@@ -486,7 +541,7 @@ test('manual stream recovery also prefers the native checkpoint path', async ({ 
 
 test('a late native checkpoint fork cannot overwrite a newer user-owned stream', async ({ page }) => {
   const mock = await installMockDesktopBridge(page, { deferNativeFork: true })
-  await page.goto('http://localhost:5173')
+  await page.goto(appUrl)
 
   const composer = page.locator('.pane-tab-panel.is-active .composer textarea').first()
   const sendButton = page.getByRole('button', { name: 'Send message' })
@@ -544,7 +599,7 @@ test('a late native checkpoint fork cannot overwrite a newer user-owned stream',
 
 test('reasoning-only progress does not bypass a finite recovery budget', async ({ page }) => {
   const mock = await installMockDesktopBridge(page, { maxRetries: 1 })
-  await page.goto('http://localhost:5173')
+  await page.goto(appUrl)
 
   await expect(page.locator('.pane-tab-panel.is-active .composer textarea').first()).toBeVisible()
   await expect.poll(() => hasDesktopStreamSubscription(page, 'stream-1')).toBe(true)
@@ -574,7 +629,7 @@ test('reasoning-only progress does not bypass a finite recovery budget', async (
 
 test('transient-only reconnect errors do not exhaust the recovery budget', async ({ page }) => {
   const mock = await installMockDesktopBridge(page)
-  await page.goto('http://localhost:5173')
+  await page.goto(appUrl)
 
   await expect(page.locator('.pane-tab-panel.is-active .composer textarea').first()).toBeVisible()
 
@@ -609,7 +664,7 @@ test('transient-only reconnect errors do not exhaust the recovery budget', async
 // card that was visibly running again (2026-07-31 实测：判失败后又跑了 15 分钟).
 test('an unsolicited keepalive wake-up retires the stale failed banner', async ({ page }) => {
   const mock = await installMockDesktopBridge(page)
-  await page.goto('http://localhost:5173')
+  await page.goto(appUrl)
 
   await expect(page.locator('.pane-tab-panel.is-active .composer textarea').first()).toBeVisible()
   await expect.poll(() => hasDesktopStreamSubscription(page, 'stream-1')).toBe(true)
@@ -644,7 +699,7 @@ test('an unsolicited keepalive wake-up retires the stale failed banner', async (
 // (a dead stream's trailing signal erasing a real failure) comes straight back.
 test('a late event from the dead stream does not retire the failed banner', async ({ page }) => {
   const mock = await installMockDesktopBridge(page)
-  await page.goto('http://localhost:5173')
+  await page.goto(appUrl)
 
   await expect(page.locator('.pane-tab-panel.is-active .composer textarea').first()).toBeVisible()
   await expect.poll(() => hasDesktopStreamSubscription(page, 'stream-1')).toBe(true)

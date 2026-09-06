@@ -13,6 +13,10 @@ const recoverableErrorPatterns = [
   'ended without emitting a terminal completion event',
   'closed before completion',
   'stream closed before',
+  // 2026-09-06 截图里的 Codex 断流终态；只匹配固定短语，保留 session/预算护栏。
+  // 不用裸 overloaded 或 error，否则认证、配置类永久错误也会被反复续传。
+  'upstream stream ended without a terminal event',
+  'our servers are currently overloaded',
   // The Anthropic SDK / Node fetch (undici) surfaces a dropped socket mid-stream
   // as "The socket connection was closed unexpectedly" — a transient network
   // disconnect in the same class as "closed before completion", so resume it.

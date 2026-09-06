@@ -122,7 +122,13 @@ export const shouldClearRecoveryStatusOnStreamIdle = (
 
 ## Testing
 
+### 2026-09-06 native retry noise repair
+
+Reuse the existing local disconnect stats emitter for Codex `willRetry: true` notifications instead of `sink.onLog`. Do not mark raw retry errors as placeholder-only assistant content, because that would incorrectly bypass the configured retry budget. Share the emitter's per-run statistical deduplication with native placeholder diagnostics, but re-emit the control signal when real output has occurred since the previous reconnect. In `App.tsx`, a local disconnect stats event enters an idempotent `native-reconnecting` state before honoring `alreadyRecorded`. Native feedback has no attempt denominator; IDE-scheduled resume retains the configured attempt label. Real output uses the existing resumed transition, while `willRetry: false` keeps the final diagnostic path. Extend only the two observed fixed upstream phrases in the shared, session-guarded classifier.
+
 ### Tier 1 (logic) — red-first
+
+Native retry notifications must preserve an existing IDE `reconnecting` state. Its attempt label describes an already scheduled IDE resume and is also the monotonic counter for placeholder-only retries; replacing it with `native-reconnecting` would reset the next visible attempt to 1. Only an initial native retry, or a new native disconnect after resumed output, enters the count-free state.
 
 Unit test `src/stream-recovery-feedback.ts`:
 - Transition to `reconnecting` increments attempt count.

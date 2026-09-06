@@ -91,6 +91,7 @@ import {
 import { publishStatsSource } from './stats-card-source'
 import {
   computeRecoveryStatusAfterFinalFailure,
+  computeRecoveryStatusAfterNativeRetry,
   computeRecoveryStatusAfterRetryScheduled,
   computeRecoveryStatusAfterSuccess,
   shouldClearRecoveryStatusForNewStream,
@@ -868,7 +869,10 @@ function App() {
     (cardId: string) => {
       updateRecoveryStatus(cardId, (previous) => {
         const next = computeRecoveryStatusAfterSuccess(previous)
-        if (next?.kind === 'resumed' && previous?.kind === 'reconnecting') {
+        if (
+          next?.kind === 'resumed' &&
+          (previous?.kind === 'reconnecting' || previous?.kind === 'native-reconnecting')
+        ) {
           clearRecoveryResumedTimer(cardId)
           const timer = setTimeout(() => {
             recoveryResumedTimersRef.current.delete(cardId)
@@ -5009,6 +5013,16 @@ function App() {
                 events: [payload.event],
               }
           localRecoveryStatsRef.current.set(card.id, disconnectedLocalRecoveryStats.state)
+          // 症状：原生重试不再刷日志后，气泡却仍只显示普通等待状态。
+          // 根因：2026-09-06 回放的 alreadyRecorded 提前返回，漏掉了状态更新。
+          // 先更新幂等原生反馈再跳过重复记账，不借用 IDE 续传次数。见 stream-recovery-feedback。
+          if (
+            payload.event === 'disconnect' &&
+            payload.endpoint === '/cli/local-stream'
+          ) {
+            clearRecoveryResumedTimer(card.id)
+            updateRecoveryStatus(card.id, computeRecoveryStatusAfterNativeRetry)
+          }
           if (payload.alreadyRecorded) {
             return
           }
@@ -5518,6 +5532,7 @@ function App() {
       applyAction,
       applyActions,
       buildWakeTimerTargetReleaseActions,
+      clearRecoveryResumedTimer,
       clearRecoveryStatusForNewStream,
       clearRecoveryStatusIfAllowed,
       clearStopCompletionFallbackTimer,
@@ -5539,6 +5554,7 @@ function App() {
       requestStopForCard,
       scheduleAllAgentsDoneSound,
       scheduleStableWakeTimerCompletion,
+      updateRecoveryStatus,
     ],
   )
 

@@ -187,6 +187,9 @@ export const StreamingIndicator = ({
   if (recoveryStatus?.kind === 'reconnecting') {
     label = locale.streamRecoveryReconnecting(recoveryStatus.attempt, recoveryStatus.max)
     recoveryClass = 'is-reconnecting'
+  } else if (recoveryStatus?.kind === 'native-reconnecting') {
+    label = locale.streamRecoveryNativeReconnecting
+    recoveryClass = 'is-reconnecting'
   } else if (recoveryStatus?.kind === 'resumed') {
     label = locale.streamRecoveryResumed
     recoveryClass = 'is-resumed'

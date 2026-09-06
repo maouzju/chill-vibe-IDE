@@ -616,6 +616,20 @@ export const parseStructuredAgentsMessage = (message: ChatMessage): StructuredAg
     })
     .filter((entry): entry is StructuredAgentEntry => entry !== null)
 
+  const prompt = readStructuredString(payload, 'prompt') ?? null
+  const model = readStructuredString(payload, 'model') ?? null
+  const reasoningEffort = readStructuredString(payload, 'reasoningEffort') ?? null
+
+  // Empty successful waits were shown as "0 agents completed" (2026-09-06).
+  // Filter on read, including saved history; dropping the provider's completion
+  // would strand an earlier in-progress item. See codex-multi-agent-ui.
+  if (
+    view === 'toolCall' && tool === 'wait' && callStatus === 'completed' &&
+    agents.length === 0 && ![prompt, model, reasoningEffort].some((value) => value?.trim())
+  ) {
+    return null
+  }
+
   return {
     itemId,
     status: 'completed',
@@ -626,9 +640,9 @@ export const parseStructuredAgentsMessage = (message: ChatMessage): StructuredAg
     ...(callStatus && structuredAgentCallStatuses.has(callStatus as StreamAgentToolCallStatus)
       ? { callStatus: callStatus as StreamAgentToolCallStatus }
       : {}),
-    prompt: readStructuredString(payload, 'prompt') ?? null,
-    model: readStructuredString(payload, 'model') ?? null,
-    reasoningEffort: readStructuredString(payload, 'reasoningEffort') ?? null,
+    prompt,
+    model,
+    reasoningEffort,
     agents,
   }
 }

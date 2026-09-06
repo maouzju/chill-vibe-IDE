@@ -3,6 +3,7 @@ import assert from 'node:assert/strict'
 
 import {
   computeRecoveryStatusAfterRetryScheduled,
+  computeRecoveryStatusAfterNativeRetry,
   computeRecoveryStatusAfterSuccess,
   computeRecoveryStatusAfterFinalFailure,
   shouldClearRecoveryStatusOnStreamIdle,
@@ -12,6 +13,20 @@ import {
 } from '../src/stream-recovery-feedback.js'
 
 describe('stream-recovery-feedback — pure transitions', () => {
+  it('native reconnect feedback is idempotent and separate from the IDE retry budget', () => {
+    const native = computeRecoveryStatusAfterNativeRetry(undefined)
+    assert.deepEqual(native, { kind: 'native-reconnecting' })
+    assert.equal(computeRecoveryStatusAfterNativeRetry(native), native)
+    assert.deepEqual(computeRecoveryStatusAfterSuccess(native), { kind: 'resumed' })
+    assert.deepEqual(computeRecoveryStatusAfterNativeRetry({ kind: 'resumed' }), native)
+    assert.deepEqual(computeRecoveryStatusAfterRetryScheduled(0, 6, native), {
+      kind: 'reconnecting', attempt: 1, max: 6,
+    })
+    const failed = computeRecoveryStatusAfterFinalFailure('dead')
+    assert.equal(computeRecoveryStatusAfterNativeRetry(failed), failed)
+    assert.equal(shouldShowManualStreamRecoveryControl({ cardStatus: 'streaming', recoveryStatus: native }), true)
+  })
+
   it('retry scheduled produces reconnecting with attempt = previous + 1', () => {
     const next = computeRecoveryStatusAfterRetryScheduled(0, 6)
     assert.deepEqual(next, { kind: 'reconnecting', attempt: 1, max: 6 })
@@ -28,6 +43,15 @@ describe('stream-recovery-feedback — pure transitions', () => {
     const previous: CardRecoveryStatus = { kind: 'reconnecting', attempt: 1, max: 'unlimited' }
     const next = computeRecoveryStatusAfterRetryScheduled(0, Number.POSITIVE_INFINITY, previous)
     assert.deepEqual(next, { kind: 'reconnecting', attempt: 2, max: 'unlimited' })
+  })
+
+  it('native retry feedback preserves the IDE resume counter between unbudgeted attempts', () => {
+    const first = computeRecoveryStatusAfterRetryScheduled(0, Number.POSITIVE_INFINITY)
+    const native = computeRecoveryStatusAfterNativeRetry(first)
+    assert.equal(native, first, 'a native retry must not discard an already scheduled IDE attempt')
+    assert.deepEqual(computeRecoveryStatusAfterRetryScheduled(0, Number.POSITIVE_INFINITY, native), {
+      kind: 'reconnecting', attempt: 2, max: 'unlimited',
+    })
   })
 
   it('success after reconnecting flips to resumed', () => {

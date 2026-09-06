@@ -1,5 +1,6 @@
 export type CardRecoveryStatus =
   | { kind: 'reconnecting'; attempt: number; max: number | 'unlimited' }
+  | { kind: 'native-reconnecting' }
   | { kind: 'resumed' }
   // `streamId` is the stream this failure belongs to. It is what lets a genuinely
   // new stream clear the sticky banner while a late signal from the dead stream
@@ -19,11 +20,23 @@ export const computeRecoveryStatusAfterRetryScheduled = (
   max: Number.isFinite(max) ? max : 'unlimited',
 })
 
+export const computeRecoveryStatusAfterNativeRetry = (
+  previous?: CardRecoveryStatus,
+): CardRecoveryStatus => {
+  // 2026-09-06: 已有 IDE 续传计数不能被原生状态覆盖，否则无预算续传下一轮又回到 1。
+  if (
+    previous?.kind === 'failed' ||
+    previous?.kind === 'native-reconnecting' ||
+    previous?.kind === 'reconnecting'
+  ) return previous
+  return { kind: 'native-reconnecting' }
+}
+
 export const computeRecoveryStatusAfterSuccess = (
   previous: CardRecoveryStatus | undefined,
 ): CardRecoveryStatus | undefined => {
   if (!previous) return undefined
-  if (previous.kind === 'reconnecting') return { kind: 'resumed' }
+  if (previous.kind === 'reconnecting' || previous.kind === 'native-reconnecting') return { kind: 'resumed' }
   // resumed / failed are terminal for the success path: resumed persists until the
   // clear timer fires; failed must not be silently revived by a late reset signal.
   return previous
@@ -80,6 +93,7 @@ export const shouldShowManualStreamRecoveryControl = ({
 
   return (
     recoveryStatus?.kind === 'reconnecting' ||
+    recoveryStatus?.kind === 'native-reconnecting' ||
     (latestAssistantContent ? isTransientRecoveryPlaceholder(latestAssistantContent) : false)
   )
 }

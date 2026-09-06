@@ -1,5 +1,18 @@
 # Tasks: Codex Multi-Agent UI Parity
 
+## Regression fix - empty completed wait history (2026-09-06)
+
+- [x] Inspect installed 0.153.4 protocol and freeze the historical wait filtering boundary.
+- [x] Add red-first cases for saved empty waits, invalid results, preserved failures/in-progress/metadata, live empty status, and terminal activity delivery.
+- [x] Filter only content-free completed waits at render parsing; keep provider lifecycle updates intact.
+- [x] Run focused parser/renderer tests and quality checks.
+- [x] Inspect both themes at desktop and narrow widths; all four new snapshots deliberately reviewed.
+- [x] Package through the parent task.
+
+Verification: three new renderer proving tests failed before implementation; all 48 parser/renderer tests passed afterward. The related parser/performance/agent-status sweep passed 116 tests. `pnpm test:quality` passed. The provider completion test confirms both started and completed updates remain available under the same item id.
+
+Integrated verification: 2026-09-06, 151 focused Node tests and 21 recovery/theme Playwright cases passed; quality passed. Four empty-wait snapshots (light/dark, 1280/440px) and two native-retry snapshots were deliberately reviewed. `pnpm test:theme` was blocked by another project's 5173 listener; the relevant theme and runtime cases ran with the existing repo config derived on isolated port 5198. Windows zip: `dist/release-20260906-232949/Chill Vibe-0.20.15-win.zip`; runnable executable: `win-unpacked/Chill Vibe.exe` in the same release directory. The user's packaged instance was not restarted. This scoped bug fix extends the existing SPEC and follows `docs/ui-principles.md`; no new feature SPEC is needed.
+
 ## Slice 1 - freeze parity and proving tests
 
 - [x] Inspect installed Codex CLI version and matching official source tag.

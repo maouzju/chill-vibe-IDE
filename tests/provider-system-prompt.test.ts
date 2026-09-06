@@ -1831,7 +1831,10 @@ const captureProviderRecoveryFailure = async (request: ChatRequest) =>
     }).catch(reject)
   })
 
-const captureProviderLogs = async (request: ChatRequest) =>
+const captureProviderLogs = async (
+  request: ChatRequest,
+  observer: Partial<Pick<Parameters<typeof launchProviderRun>[1], 'onStats' | 'onDelta' | 'onError'>> = {},
+) =>
   new Promise<
     Array<
       | { kind: 'log'; message: string }
@@ -1848,6 +1851,7 @@ const captureProviderLogs = async (request: ChatRequest) =>
     void launchProviderRun(request, {
       onSession: () => undefined,
       onDelta: () => undefined,
+      ...observer,
       onLog: (message) => {
         events.push({ kind: 'log', message })
       },
@@ -1857,7 +1861,8 @@ const captureProviderLogs = async (request: ChatRequest) =>
         events.push({ kind: 'done' })
         resolve(events)
       },
-      onError: (message) => {
+      onError: (message, hint, recovery) => {
+        observer.onError?.(message, hint, recovery)
         events.push({ kind: 'error', message })
         resolve(events)
       },
@@ -2103,14 +2108,17 @@ const buildFakeCodexEmptyRolloutResumeScript = (
 const upstreamNoChannelDetail =
   'unexpected status 503 Service Unavailable: No available channel for model gpt-9.9-nonexistent under group CodeX-Sale (distributor), url: https://api.duckcoding.ai/v1/responses'
 
-const buildFakeCodexRetryingUpstreamErrorScript = (capturePath: string) =>
+const buildFakeCodexRetryingUpstreamErrorScript = (
+  capturePath: string,
+  options: { recover?: boolean; repeatDisconnect?: boolean; detail?: string } = {},
+) =>
   [
     "const fs = require('node:fs')",
     "const readline = require('node:readline')",
     `const capturePath = ${JSON.stringify(capturePath)}`,
     'const appendMessage = (message) => fs.appendFileSync(capturePath, `${JSON.stringify(message)}\\n`, "utf8")',
     "const reply = (message) => process.stdout.write(`${JSON.stringify(message)}\\n`)",
-    `const detail = ${JSON.stringify(upstreamNoChannelDetail)}`,
+    `const detail = ${JSON.stringify(options.detail ?? upstreamNoChannelDetail)}`,
     "const rl = readline.createInterface({ input: process.stdin, crlfDelay: Infinity })",
     "rl.on('line', (line) => {",
     '  if (!line.trim()) {',
@@ -2131,7 +2139,17 @@ const buildFakeCodexRetryingUpstreamErrorScript = (capturePath: string) =>
     '    for (let attempt = 1; attempt <= 5; attempt += 1) {',
     "      reply({ method: 'error', params: { error: { message: `Reconnecting... ${attempt}/5`, codexErrorInfo: { responseStreamDisconnected: { httpStatusCode: 503 } }, additionalDetails: detail }, willRetry: true, threadId: 'thread-1', turnId: 'turn-1' } })",
     '    }',
-    "    reply({ method: 'error', params: { error: { message: detail, codexErrorInfo: 'other', additionalDetails: null }, willRetry: false, threadId: 'thread-1', turnId: 'turn-1' } })",
+    ...(options.recover ? [
+      "    reply({ method: 'item/agentMessage/delta', params: { itemId: 'retry-placeholder', delta: 'Reconnecting... 5/5' } })",
+      "    reply({ method: 'item/agentMessage/delta', params: { itemId: 'reply-1', delta: 'Recovered answer.' } })",
+      ...(options.repeatDisconnect ? [
+        "    reply({ method: 'error', params: { error: { message: detail }, willRetry: true, threadId: 'thread-1', turnId: 'turn-1' } })",
+        "    reply({ method: 'item/agentMessage/delta', params: { itemId: 'reply-2', delta: 'Recovered again.' } })",
+      ] : []),
+      "    reply({ method: 'turn/completed', params: {} })",
+    ] : [
+      "    reply({ method: 'error', params: { error: { message: detail, codexErrorInfo: 'other', additionalDetails: null }, willRetry: false, threadId: 'thread-1', turnId: 'turn-1' } })",
+    ]),
     '  }',
     '})',
   ].join('\n')
@@ -5515,6 +5533,8 @@ test('codex app-server continues an active resumed thread with a neutral continu
 })
 
 test('codex app-server survives upstream reconnects and reports the real reason once', async () => {
+  let recordedDisconnects = 0
+  const stats: Array<Parameters<NonNullable<Parameters<typeof launchProviderRun>[1]['onStats']>>[0]> = []
   const capturePath = path.join(
     os.tmpdir(),
     `chill-vibe-codex-app-server-upstream-retry-${Date.now()}-${Math.random().toString(36).slice(2)}.jsonl`,
@@ -5524,8 +5544,10 @@ test('codex app-server survives upstream reconnects and reports the real reason 
     const events = await withFakeProviderCommand(
       'codex',
       buildFakeCodexRetryingUpstreamErrorScript(capturePath),
-      async (workspacePath) =>
-        captureProviderLogs(
+      async (workspacePath) => {
+        const { proxyStats } = await import('../server/proxy-stats-store.ts')
+        const previousDisconnects = proxyStats.getStats().currentSession.disconnects
+        const result = await captureProviderLogs(
           createRequest({
             provider: 'codex',
             language: 'en',
@@ -5533,11 +5555,15 @@ test('codex app-server survives upstream reconnects and reports the real reason 
             model: 'gpt-9.9-nonexistent',
             prompt: 'Say ok.',
           }),
-        ),
+          { onStats: (event) => stats.push(event) },
+        )
+        recordedDisconnects = proxyStats.getStats().currentSession.disconnects - previousDisconnects
+        return result
+      },
     )
 
     // 旧实现在第一条「Reconnecting... 1/5」上就 finishWithError，用户看到的错误正文
-    // 就是那句重连计数，且回合被判死。现在重连只进日志。
+    // 就是那句重连计数，且回合被判死。中间错误只更新重连状态，不刷屏。
     const errors = events.filter((event) => event.kind === 'error')
     assert.equal(errors.length, 1, 'a retrying turn must fail exactly once, at the terminal error')
     assert.ok(
@@ -5551,11 +5577,83 @@ test('codex app-server survives upstream reconnects and reports the real reason 
     assert.match(errors[0].message, /settings/i, 'the failure must say where to fix it')
 
     const logs = events.filter((event) => event.kind === 'log')
-    assert.equal(logs.length, 5, 'each reconnect attempt should surface as a log line')
-    assert.ok(
-      logs.every((entry) => entry.message.includes('No available channel')),
-      'reconnect logs must carry additionalDetails, not the bare counter',
+    assert.equal(logs.length, 0, 'native retries must not append raw error logs')
+    assert.deepEqual(stats, [{
+      event: 'disconnect',
+      endpoint: '/cli/local-stream',
+      errorType: 'native-reconnect-placeholder',
+      alreadyRecorded: true,
+    }])
+    assert.equal(recordedDisconnects, 1)
+  } finally {
+    await rm(capturePath, { force: true }).catch(() => {})
+  }
+})
+
+test('codex native retries resume output without duplicate logs or disconnect stats', async () => {
+  const capturePath = path.join(os.tmpdir(), `chill-vibe-codex-native-retry-success-${Date.now()}.jsonl`)
+  const stats: Array<Parameters<NonNullable<Parameters<typeof launchProviderRun>[1]['onStats']>>[0]> = []
+  const deltas: string[] = []
+  try {
+    const events = await withFakeProviderCommand(
+      'codex',
+      buildFakeCodexRetryingUpstreamErrorScript(capturePath, { recover: true }),
+      async (workspacePath) => captureProviderLogs(createRequest({ workspacePath }), {
+        onStats: (event) => stats.push(event),
+        onDelta: (delta) => deltas.push(delta),
+      }),
     )
+    assert.deepEqual(events, [{ kind: 'done' }])
+    assert.deepEqual(deltas, ['Recovered answer.'])
+    assert.equal(stats.length, 1, 'retry notifications and placeholders describe the same disconnect')
+    assert.equal(stats[0].event, 'disconnect')
+    assert.equal(stats[0].alreadyRecorded, true)
+  } finally {
+    await rm(capturePath, { force: true }).catch(() => {})
+  }
+})
+
+test('codex second native disconnect after output emits fresh feedback without recounting the run', async () => {
+  const capturePath = path.join(os.tmpdir(), `chill-vibe-codex-second-disconnect-${Date.now()}.jsonl`)
+  const signals: string[] = []
+  try {
+    const outcome = await withFakeProviderCommand(
+      'codex',
+      buildFakeCodexRetryingUpstreamErrorScript(capturePath, { recover: true, repeatDisconnect: true }),
+      async (workspacePath) => {
+        const { proxyStats } = await import('../server/proxy-stats-store.ts')
+        const before = proxyStats.getStats().currentSession.disconnects
+        const events = await captureProviderLogs(createRequest({ workspacePath }), {
+          onStats: (event) => signals.push(event.event),
+          onDelta: (delta) => signals.push(delta),
+        })
+        return { events, disconnects: proxyStats.getStats().currentSession.disconnects - before }
+      },
+    )
+    assert.deepEqual(signals, ['disconnect', 'Recovered answer.', 'disconnect', 'Recovered again.'])
+    assert.deepEqual(outcome.events, [{ kind: 'done' }])
+    assert.equal(outcome.disconnects, 1)
+  } finally {
+    await rm(capturePath, { force: true }).catch(() => {})
+  }
+})
+
+test('codex native retry exhaustion preserves real error details and finite-budget recovery', async () => {
+  const capturePath = path.join(os.tmpdir(), `chill-vibe-codex-native-retry-failure-${Date.now()}.jsonl`)
+  const detail = 'stream disconnected before completion: Our servers are currently overloaded. Please try again later.'
+  let recovery: Parameters<Parameters<typeof launchProviderRun>[1]['onError']>[2]
+  try {
+    const events = await withFakeProviderCommand(
+      'codex',
+      buildFakeCodexRetryingUpstreamErrorScript(capturePath, { detail }),
+      async (workspacePath) => captureProviderLogs(createRequest({ workspacePath }), {
+        onError: (_message, _hint, event) => { recovery = event },
+      }),
+    )
+    assert.deepEqual(events, [{ kind: 'error', message: detail }])
+    assert.equal(recovery?.recoverable, true)
+    assert.equal(recovery?.recoveryMode, 'resume-session')
+    assert.notEqual(recovery?.transientOnly, true, 'raw retry errors must still consume the finite retry budget')
   } finally {
     await rm(capturePath, { force: true }).catch(() => {})
   }

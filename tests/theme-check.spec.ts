@@ -5595,6 +5595,133 @@ test('structured todo cards stay readable across themes', async ({ page }) => {
 })
 
 for (const theme of ['dark', 'light'] as const) {
+  test(`Codex native retry feedback stays quiet in ${theme} theme`, async ({ page }) => {
+    const state = createCodexSubAgentStatusState(theme, true)
+    state.settings.language = 'zh-CN'
+    state.settings.resilientProxyMaxRetries = 0
+    const card = state.columns[0]!.cards[0]!
+    card.streamId = 'native-retry-stream'
+    card.sessionId = 'native-retry-session'
+    card.messages = [{
+      id: 'native-retry-assistant',
+      role: 'assistant',
+      content: '',
+      createdAt: new Date().toISOString(),
+      meta: { provider: 'codex', streamId: 'native-retry-stream' },
+    }]
+    await mockAppApis(page, { state })
+    await page.addInitScript(() => {
+      const bridge = window as typeof window & { __retrySubscriptionId?: string }
+      window.electronAPI!.subscribeChatStream = async (_streamId, subscriptionId) => {
+        bridge.__retrySubscriptionId = subscriptionId
+      }
+    })
+    await page.setViewportSize({ width: 440, height: 800 })
+    await page.goto(appUrl)
+    await expect.poll(() => page.evaluate(() =>
+      (window as typeof window & { __retrySubscriptionId?: string }).__retrySubscriptionId,
+    )).toBeTruthy()
+    await page.evaluate(() => {
+      const bridge = window as typeof window & { __retrySubscriptionId?: string }
+      window.dispatchEvent(new CustomEvent('chill-vibe:chat-stream', {
+        detail: {
+          subscriptionId: bridge.__retrySubscriptionId,
+          event: 'stats',
+          data: {
+            event: 'disconnect',
+            endpoint: '/cli/local-stream',
+            errorType: 'native-reconnect-placeholder',
+            alreadyRecorded: true,
+          },
+        },
+      }))
+    })
+    const cardShell = page.locator('.pane-tab-panel.is-active .card-shell').first()
+    const indicator = cardShell.locator('.streaming-recovery')
+    await expect(page.locator('html')).toHaveAttribute('data-theme', theme)
+    await expect(indicator.locator('.streaming-label')).toHaveText('正在重连…')
+    await expect(cardShell.locator('.message-entry-system')).toHaveCount(0)
+    await expectChildToFitWithinParent(cardShell, indicator, 'native retry indicator')
+    await expect(indicator).toHaveScreenshot(`codex-native-retry-${theme}.png`, {
+      animations: 'disabled',
+      caret: 'hide',
+    })
+  })
+
+  for (const width of [1280, 440]) {
+    test(`Codex empty wait history stays hidden in ${theme} at ${width}px`, async ({ page }) => {
+      const state = createCodexSubAgentStatusState(theme, true)
+      state.settings.language = 'zh-CN'
+      const card = state.columns[0]!.cards[0]!
+      card.status = 'idle'
+      const template = card.messages[0]!
+      card.messages = [
+        ...[1, 2, 3].map((index) => ({
+          ...template,
+          id: `empty-wait-${index}`,
+          meta: {
+            ...template.meta,
+            structuredData: JSON.stringify({
+              itemId: `empty-wait-${index}`,
+              kind: 'agents',
+              status: 'completed',
+              tool: 'wait',
+              callStatus: 'completed',
+              agents: [],
+            }),
+          },
+        })),
+        {
+          ...template,
+          id: 'valid-wait',
+          meta: {
+            ...template.meta,
+            structuredData: JSON.stringify({
+              itemId: 'valid-wait',
+              kind: 'agents',
+              status: 'completed',
+              tool: 'wait',
+              callStatus: 'completed',
+              agents: [{ threadId: 'reviewer', nickname: 'Reviewer', status: 'completed' }],
+            }),
+          },
+        },
+        {
+          ...template,
+          id: 'failed-wait',
+          meta: {
+            ...template.meta,
+            structuredData: JSON.stringify({
+              itemId: 'failed-wait',
+              kind: 'agents',
+              status: 'completed',
+              tool: 'wait',
+              callStatus: 'failed',
+              agents: [],
+            }),
+          },
+        },
+      ]
+      await mockAppApis(page, { state })
+      await page.setViewportSize({ width, height: 800 })
+      await page.goto(appUrl)
+
+      const list = page.locator('.pane-tab-panel.is-active .message-list').first()
+      const agents = list.locator('.structured-agents-card')
+      await expect(page.locator('html')).toHaveAttribute('data-theme', theme)
+      await expect(agents).toHaveCount(2)
+      await expect(list.locator('.message-entry-assistant')).toHaveCount(2)
+      await expect(list).not.toContainText('0 个后台智能体')
+      await expect(agents.first()).toContainText('Reviewer')
+      await expect(agents.last().locator('.structured-agents-call-status')).toHaveClass(/is-failed/)
+      await expectChildToFitWithinParent(list, agents.first(), 'valid agent wait')
+      await expect(list).toHaveScreenshot(`codex-empty-wait-filtered-${theme}-${width}.png`, {
+        animations: 'disabled',
+        caret: 'hide',
+      })
+    })
+  }
+
   test(`Codex sub-agent status panel stays readable in ${theme} theme`, async ({ page }) => {
     await mockAppApis(page, { state: createCodexSubAgentStatusState(theme) })
     await page.setViewportSize({ width: 760, height: 720 })

@@ -116,6 +116,7 @@ export const summarizeCodexAgentActivityItem = (value: unknown): string | null =
         started: 'Started',
         interacted: 'Contacted',
         interrupted: 'Interrupted',
+        completed: 'Completed',
       }
       return kind && path && actions[kind] ? boundedSummary(`${actions[kind]} ${path}`) : null
     }
@@ -345,7 +346,10 @@ export const createCodexAgentStatusTracker = ({
 
       const agent = ensureAgent(agentThreadId, {
         path,
-        status: kind === 'interrupted' ? 'interrupted' : 'running',
+        // 症状：主任务已答完，卡片仍等待一个已结束的子任务（2026-09-06 实证）。
+        // Codex 0.153.4 增加 completed；不能再把所有非 interrupted 活动都视为 running。
+        // 复用现有完成收敛，不缩短真实子任务的等待上限；见 codex-multi-agent-ui SPEC。
+        status: kind === 'completed' ? 'completed' : kind === 'interrupted' ? 'interrupted' : 'running',
       })
       updatePreview(agent, item)
       return settleUpdate(sourceThreadId !== rootThreadId, true)

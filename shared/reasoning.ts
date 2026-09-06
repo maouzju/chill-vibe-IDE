@@ -1,4 +1,4 @@
-import { isFableModel } from './models.js'
+import { isAstraModel, isFableModel } from './models.js'
 import type { AppLanguage, Provider } from './schema.js'
 
 type CodexReasoningEffort = 'low' | 'medium' | 'high' | 'xhigh' | 'max' | 'ultra'
@@ -16,7 +16,7 @@ export type ReasoningOption = {
 // sends xhigh to the model and additionally has Claude orchestrate dynamic
 // workflows. We surface it as a selectable tier and activate it by sending
 // `--effort xhigh` plus `"ultracode": true` in `--settings` (see providers.ts).
-// Current Codex 5.6 models can add max and, for Sol/Terra, Ultra. Older
+// Astra and Codex 5.6 models can add max and, for Astra/Sol/Terra, Ultra. Older
 // Codex models still top out at xhigh; model-aware filtering below keeps the
 // persisted tier compatible with the selected model.
 const reasoningOptionLabels: Record<AppLanguage, Record<ReasoningEffort, string>> = {
@@ -111,7 +111,9 @@ export const getDefaultReasoningEffortForModel = (
   provider: Provider,
   model?: string | null,
 ): ReasoningEffort =>
-  provider === 'claude' && isClaudeAlwaysThinkingModel(model) ? 'high' : getDefaultReasoningEffort(provider)
+  provider === 'codex' && isAstraModel(model)
+    ? 'low'
+    : provider === 'claude' && isClaudeAlwaysThinkingModel(model) ? 'high' : getDefaultReasoningEffort(provider)
 
 export const getReasoningOptions = (provider: Provider, language: AppLanguage = 'en') =>
   reasoningOptionsByProvider[provider].map((option) => ({
@@ -124,6 +126,7 @@ const getCodexReasoningOptionValuesForModel = (model?: string | null): CodexReas
   const base: CodexReasoningEffort[] = ['low', 'medium', 'high', 'xhigh']
 
   if (
+    isAstraModel(model) ||
     normalizedModel === 'gpt-5.6-sol' ||
     normalizedModel === 'gpt-5.6-terra' ||
     normalizedModel === 'gpt-5.6'
@@ -194,6 +197,9 @@ export const normalizeReasoningEffortForModel = (
   effort?: string | null,
 ): ReasoningEffort => {
   if (provider === 'codex') {
+    if (isAstraModel(model) && !effort?.trim()) {
+      return getDefaultReasoningEffortForModel(provider, model)
+    }
     const normalized = normalizeReasoningEffort(provider, effort) as CodexReasoningEffort
     const supportedValues = getCodexReasoningOptionValuesForModel(model)
 
@@ -219,6 +225,19 @@ export const normalizeReasoningEffortForModel = (
 
   return matched
 }
+
+// 2026-09-06：Astra 不支持 none，旧卡片关思考会直接发出非法参数。
+// app-server 与 exec 必须共用出口；不能只修 UI 或丢掉 effort 回到未知默认。
+// 依据与 CLI 的 Ultra 能力见 gpt-6-astra-support SPEC。
+export const toCodexEffortValue = (
+  model: string | null | undefined,
+  effort: string | null | undefined,
+  thinkingEnabled: boolean | undefined,
+): string => thinkingEnabled === false
+  ? (isAstraModel(model) ? 'low' : 'none')
+  : isAstraModel(model)
+    ? normalizeReasoningEffortForModel('codex', model, effort)
+    : normalizeReasoningEffort('codex', effort)
 
 // Single exit point for the `--effort` flag value. `null` means "omit the flag
 // entirely" — callers must not stringify it onto the command line.

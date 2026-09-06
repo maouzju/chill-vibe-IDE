@@ -6,7 +6,7 @@ import remarkGfm from 'remark-gfm'
 import type { AppLanguage, ChatMessage, StreamEditedFile } from '../../shared/schema'
 import { resolveMarkdownImageSrc } from '../../shared/local-image-protocol'
 import { openExternalLink, openMessageLocalLink } from '../api'
-import { stripLeakedClaudeToolXml } from './chat-card-parsing'
+import { parseStructuredAgentsMessage, readStructuredData, stripLeakedClaudeToolXml } from './chat-card-parsing'
 import type { StructuredToolGroupItem } from './chat-card-parsing'
 import { MessageFileOpenContext } from './message-file-open-context'
 import type { MessageFileOpenHandler } from './message-file-open-context'
@@ -1406,14 +1406,53 @@ const getStreamingActivityLabel = (kind: string, language: AppLanguage): string 
 export const getStreamingLabel = (messages: ChatMessage[], language: AppLanguage): string => {
   const lastUserIndex = messages.findLastIndex((message) => message.role === 'user')
   const currentTurnMessages = lastUserIndex >= 0 ? messages.slice(lastUserIndex + 1) : messages
+  const currentAgentStatus = currentTurnMessages.findLast((message) =>
+    message.role === 'assistant'
+    && message.meta?.kind === 'agents'
+    && parseStructuredAgentsMessage(message)?.view === 'status')
+  let hasNewerActivity = false
+  let hasNewerAgentSnapshot = false
 
+  // 症状：回复已结束，尾部仍显示“执行命令中”；2026-09-06 现场命令已 completed。
+  // 根因：仅倒查 kind 会复活历史活动，见 stream-recovery-feedback。
+  // 不在普通回复处直接停查，否则会隐藏仍在运行的并行命令；只让它淘汰无状态旧格式。
   for (let i = currentTurnMessages.length - 1; i >= 0; i--) {
-    const kind = currentTurnMessages[i].meta?.kind
-    if (!kind) continue
-    const label = getStreamingActivityLabel(kind, language)
-    if (label) {
-      return label
+    const message = currentTurnMessages[i]
+    if (message.role !== 'assistant') continue
+    const kind = message.meta?.kind
+    if (!kind) {
+      if (message.content.trim()) hasNewerActivity = true
+      continue
     }
+    const label = getStreamingActivityLabel(kind, language)
+    if (!label) continue
+
+    const isLatestActivity = !hasNewerActivity
+    hasNewerActivity = true
+    const payload = readStructuredData(message)
+
+    if (kind === 'agents') {
+      // 实时 status 行会原位更新，不能被位置更晚的历史 toolCall 快照覆盖。
+      if (currentAgentStatus && message !== currentAgentStatus) continue
+      const agents = parseStructuredAgentsMessage(message)
+      if (agents) {
+        if (hasNewerAgentSnapshot) continue
+        hasNewerAgentSnapshot = true
+        if (agents.callStatus === 'inProgress'
+          || agents.agents.some((agent) => agent.status === 'running' || agent.status === 'pendingInit')) {
+          return label
+        }
+        continue
+      }
+    }
+
+    if (kind === 'ask-user') {
+      if (isLatestActivity) return label
+      continue
+    }
+
+    if (payload?.status === 'in_progress') return label
+    if (payload?.status == null && isLatestActivity) return label
   }
 
   return language === 'en' ? 'Writing' : '\u751F\u6210\u4E2D'

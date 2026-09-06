@@ -40,3 +40,12 @@
 
 - [x] Add a focused tracker regression for `thread/started` arriving before canonical-path activity.
 - [x] Keep the running child visible through nickname/role/thread-id fallback until its path arrives.
+
+## Regression fix - completed activity remains running (2026-09-06)
+
+- [x] Compare root/child native completion records with the saved card and inspect the installed 0.153.4 protocol.
+- [x] Add red-first tracker/provider tests for completed activities before/after root completion, concurrent/nested agents, and exactly-once completion.
+- [x] Map the new terminal activity kind without changing ordinary parent/child waiting semantics.
+- [x] Run focused regressions and quality checks, then package a Windows zip/executable without stopping the user's release instance.
+
+Verification: four new proving cases failed before the tracker fix and passed afterward; 155 related Node tests passed, followed by 39 tracker/label tests after the final label adjustment. `pnpm test:quality` passed. The existing light/dark command-group Playwright case passed on isolated port 5196 with no snapshot updates (5173 belongs to another project). Build: `dist/release-20260906-224336/Chill Vibe-0.20.15-win.zip`, executable in its `win-unpacked/`. The currently used packaged instance was deliberately left running; no runtime restart or user-state rewrite was performed.

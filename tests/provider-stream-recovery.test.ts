@@ -561,3 +561,68 @@ test('a diagnostic that reports real content is not treated as an empty relay re
     {},
   )
 })
+
+// 症状：卡片红出 `API Error: Repeated 529 Overloaded errors. The API is at
+//   capacity — this is usually temporary. Try again in a moment. If it persists,
+//   check your inference gateway (api.duckcoding.ai).`，停在「重连失败」等手点。
+// 根因：2026-09-03 现场。这是 claude CLI 自身重试 529 耗尽后的固定文案，与名单里
+//   'model is at capacity' 是同一类瞬时上游容量故障，但词形不同（"API is at
+//   capacity" / "529 Overloaded"），现有名单命不中。
+test('repeated 529 overloaded errors are resumable instead of dead-ending', () => {
+  assert.deepEqual(
+    classifyProviderStreamErrorRecovery(
+      { sessionId: 'session-1' },
+      'API Error: Repeated 529 Overloaded errors. The API is at capacity — this is usually temporary. Try again in a moment. If it persists, check your inference gateway (api.duckcoding.ai).',
+    ),
+    {
+      recoverable: true,
+      recoveryMode: 'resume-session',
+    },
+  )
+})
+
+test('repeated 529 overloaded errors without a session are not resumable', () => {
+  assert.deepEqual(
+    classifyProviderStreamErrorRecovery(
+      { sessionId: '' },
+      'API Error: Repeated 529 Overloaded errors. The API is at capacity — this is usually temporary.',
+    ),
+    {},
+  )
+})
+
+// 2026-09-03 从 claude.exe 抠出的固定文案表：CLI 把所有 HTTP ≥500 统一收尾成
+//   `API Error: <上游文案>. This is a server-side issue, usually temporary — try again
+//   in a moment.`，把模型级过载收尾成 `<Model> is experiencing high load, please use
+//   /model to switch to Sonnet`。两者都是 CLI 自己判定的瞬时故障，与 529 同类。
+test('generic 5xx server-side errors are resumable', () => {
+  assert.deepEqual(
+    classifyProviderStreamErrorRecovery(
+      { sessionId: 'session-1' },
+      'API Error: 502 Bad Gateway. This is a server-side issue, usually temporary — try again in a moment.',
+    ),
+    { recoverable: true, recoveryMode: 'resume-session' },
+  )
+})
+
+test('model high-load errors are resumable', () => {
+  assert.deepEqual(
+    classifyProviderStreamErrorRecovery(
+      { sessionId: 'session-1' },
+      'API Error: Opus is experiencing high load, please use /model to switch to Sonnet',
+    ),
+    { recoverable: true, recoveryMode: 'resume-session' },
+  )
+})
+
+// 同一张表里 `Unable to connect to API: SSL certificate ...` 是证书/代理配置的永久错，
+// 与 ConnectionRefused 共用前缀但不该续传——续传只会把同一条红错再刷 N 遍。
+test('SSL certificate connection failures are not resumable', () => {
+  assert.deepEqual(
+    classifyProviderStreamErrorRecovery(
+      { sessionId: 'session-1' },
+      'API Error: Unable to connect to API: SSL certificate verification failed. Check your proxy or corporate SSL certificate configuration.',
+    ),
+    {},
+  )
+})

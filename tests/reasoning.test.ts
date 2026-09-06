@@ -113,6 +113,10 @@ describe('reasoning helpers', () => {
       ['auto', 'low', 'medium', 'high', 'xhigh', 'max', 'ultracode'],
     )
     assert.deepEqual(
+      getReasoningOptionsForModel('codex', 'gpt-6-astra').map((option) => option.value),
+      ['low', 'medium', 'high', 'xhigh', 'max', 'ultra'],
+    )
+    assert.deepEqual(
       getReasoningOptionsForModel('codex', 'gpt-5.6-sol').map((option) => option.value),
       ['low', 'medium', 'high', 'xhigh', 'max', 'ultra'],
     )
@@ -131,6 +135,8 @@ describe('reasoning helpers', () => {
   })
 
   it('clamps saved Codex 5.6 tiers to each model capability', () => {
+    assert.equal(normalizeReasoningEffortForModel('codex', 'gpt-6-astra', 'ultra'), 'ultra')
+    assert.equal(normalizeReasoningEffortForModel('codex', 'gpt-6-astra', 'max'), 'max')
     assert.equal(normalizeReasoningEffortForModel('codex', 'gpt-5.6-sol', 'ultra'), 'ultra')
     assert.equal(normalizeReasoningEffortForModel('codex', 'gpt-5.6-terra', 'max'), 'max')
     assert.equal(normalizeReasoningEffortForModel('codex', 'gpt-5.6-luna', 'ultra'), 'max')
@@ -196,6 +202,14 @@ describe('reasoning helpers', () => {
     const settings = createDefaultSettings()
     assert.equal(getPreferredReasoningEffort(settings, 'claude', 'claude-fable-5'), 'high')
     assert.equal(getPreferredReasoningEffort(settings, 'claude', 'claude-opus-4-8'), 'max')
+  })
+
+  it('defaults Astra to low without changing saved efforts or other model defaults', () => {
+    assert.equal(getDefaultReasoningEffortForModel('codex', 'gpt-6-astra'), 'low')
+    assert.equal(createCard(undefined, undefined, 'codex', 'gpt-6-astra').reasoningEffort, 'low')
+    assert.equal(getPreferredReasoningEffort(createDefaultSettings(), 'codex', 'gpt-6-astra'), 'low')
+    assert.equal(normalizeReasoningEffortForModel('codex', 'gpt-6-astra', 'medium'), 'medium')
+    assert.equal(normalizeReasoningEffortForModel('codex', ' GPT-6-ASTRA ', ''), 'low')
   })
 
   it('creates Fable 5 cards with the high default tier', () => {

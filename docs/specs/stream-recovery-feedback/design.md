@@ -116,6 +116,10 @@ export const shouldClearRecoveryStatusOnStreamIdle = (
    - `streamRecoveryResumed` → `已恢复` / `Resumed`
    - `streamRecoveryFailed` → `重连失败` / `Reconnect failed`
 
+### 2026-09-06 completed-command label repair
+
+`getStreamingLabel` selects active work from the current user turn using the existing structured-data parser. Explicit terminal command/activity states are excluded; active work survives later assistant progress notes. Plain assistant text supersedes only the status-less legacy fallback. Agent snapshots and question payloads retain their distinct lifecycle semantics. Add focused label tests and align the existing light/dark command-group regression with completed-command behavior.
+
 ## Testing
 
 ### Tier 1 (logic) — red-first

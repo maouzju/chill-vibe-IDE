@@ -35,6 +35,7 @@ The source of truth for this SPEC is the installed Codex CLI (`codex-cli 0.144.1
 - A child `turn/completed` notification never calls the parent stream's completion path.
 - If the parent turn completes while tracked children are still running, the provider process remains attached until those children settle or the user stops the run.
 - While that completion is deferred, a separate absolute hard cap remains armed; a silent child cannot leave the card streaming forever.
+- Codex 0.153.4 `subAgentActivity.kind: 'completed'` settles its target child, including nested descendants. It must release deferred root completion only after every child settles, and must not complete a still-running root.
 - Nested sub-agents are supported when a known child creates another child.
 - Unknown or malformed child events are ignored safely and do not corrupt the parent session.
 

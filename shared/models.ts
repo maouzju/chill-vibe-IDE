@@ -3,6 +3,8 @@ import type { LocalModelEntry, Provider } from './schema.js'
 export const DEFAULT_CODEX_MODEL = 'gpt-5.6-sol'
 export const DEFAULT_CLAUDE_MODEL = 'claude-opus-5'
 export const DEFAULT_GIT_AGENT_MODEL = 'gpt-5.6-terra medium'
+export const isAstraModel = (model?: string | null): boolean =>
+  model?.trim().toLowerCase() === 'gpt-6-astra'
 export const GIT_TOOL_MODEL = '__git_tool__'
 export const MUSIC_TOOL_MODEL = '__music_tool__'
 export const WHITENOISE_TOOL_MODEL = '__whitenoise_tool__'
@@ -112,6 +114,12 @@ export const MODEL_OPTIONS: ModelOption[] = [
     provider: 'codex',
     model: DEFAULT_CODEX_MODEL,
     aliases: ['gpt-5.6', 'gpt-5.6-sol', '5.6', '5.6-sol', 'sol', 'gpt56'],
+  },
+  {
+    label: 'GPT-6 Astra',
+    provider: 'codex',
+    model: 'gpt-6-astra',
+    aliases: ['gpt-6-astra', 'astra', 'gpt6', 'gpt-6'],
   },
   {
     label: 'GPT-5.6 Terra',

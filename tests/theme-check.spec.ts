@@ -4849,7 +4849,7 @@ test('streaming structured command groups avoid duplicate inline cursors across 
 
   await expect(commandGroup.locator('.structured-command-inline-row')).toHaveCount(3)
   await expect(commandGroup.locator('.structured-group-summary-text')).toContainText('Ran 3 commands')
-  await expect(streamingIndicator).toContainText('Running command')
+  await expect(streamingIndicator).toContainText('Writing')
   expect(await countInlineGroupCursors()).toBe(0)
   await expect(commandGroup).toHaveScreenshot('structured-command-group-streaming-dark.png', {
     animations: 'disabled',
@@ -4862,7 +4862,7 @@ test('streaming structured command groups avoid duplicate inline cursors across 
   await ambienceTab.click()
 
   await expect(commandGroup.locator('.structured-command-inline-row')).toHaveCount(3)
-  await expect(streamingIndicator).toContainText('Running command')
+  await expect(streamingIndicator).toContainText('Writing')
   expect(await countInlineGroupCursors()).toBe(0)
   await expect(commandGroup).toHaveScreenshot('structured-command-group-streaming-light.png', {
     animations: 'disabled',

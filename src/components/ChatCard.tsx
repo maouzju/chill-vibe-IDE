@@ -36,6 +36,7 @@ import {
   TOOL_CARD_MODELS,
   buildLocalModelOptions,
   isBrainstormRequestModelVisible,
+  isAstraModel,
   isLocalModelToken,
   isModelPickerOptionVisible,
   normalizeStoredModel,
@@ -3650,13 +3651,16 @@ const ChatCardView = ({
     selectOptions.find((option) => `${option.provider}:${option.model}` === selectValue) ??
     MODEL_OPTIONS.find((option) => `${option.provider}:${option.model}` === selectValue) ??
     selectOptions[0]
-  // Fable 5 always thinks: the thinking toggle is disabled there and the auto
-  // tier is hidden from its menu.
-  const alwaysThinkingModel =
-    effectiveProvider === 'claude' && isClaudeAlwaysThinkingModel(card.model)
   const reasoningModel =
     card.model || (effectiveProvider === 'codex' ? brainstormRequestModel : '')
-  const reasoningValue = normalizeReasoningEffortForModel(
+  const astraModel = effectiveProvider === 'codex' && isAstraModel(reasoningModel)
+  // 旧 Astra 卡的 false 在请求层落 low；界面必须显示同一档位。
+  // 选深度仍要清掉旧 false，否则用户选了 Ultra，请求却继续发 low。
+  // 不在渲染期间迁移存量状态，见 gpt-6-astra-support。
+  const alwaysThinkingModel =
+    (effectiveProvider === 'claude' && isClaudeAlwaysThinkingModel(reasoningModel)) ||
+    astraModel
+  const reasoningValue = astraModel && card.thinkingEnabled === false ? 'low' : normalizeReasoningEffortForModel(
     effectiveProvider,
     reasoningModel,
     card.reasoningEffort,
@@ -4942,7 +4946,7 @@ const ChatCardView = ({
                                 if (
                                   shouldEnableThinkingForDepthChange(
                                     card.thinkingEnabled,
-                                    alwaysThinkingModel,
+                                    alwaysThinkingModel && !astraModel,
                                   )
                                 ) {
                                   onToggleThinking()
@@ -4956,7 +4960,7 @@ const ChatCardView = ({
                                 if (
                                   shouldEnableThinkingForDepthChange(
                                     card.thinkingEnabled,
-                                    alwaysThinkingModel,
+                                    alwaysThinkingModel && !astraModel,
                                   )
                                 ) {
                                   onToggleThinking()
@@ -4967,7 +4971,7 @@ const ChatCardView = ({
                                 if (
                                   shouldEnableThinkingForDepthChange(
                                     card.thinkingEnabled,
-                                    alwaysThinkingModel,
+                                    alwaysThinkingModel && !astraModel,
                                   )
                                 ) {
                                   onToggleThinking()

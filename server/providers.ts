@@ -21,7 +21,7 @@ import {
   normalizeLanguage,
 } from '../shared/i18n.js'
 import { getActiveProviderProfile } from '../shared/default-state.js'
-import { parseLocalModelToken } from '../shared/models.js'
+import { isAstraModel, parseLocalModelToken } from '../shared/models.js'
 import { isLoopbackHostname } from './automation-board-bridge.js'
 import { resolveOllamaBaseUrl } from './ollama-manager.js'
 import { buildSystemPromptForModel, normalizeSystemPrompt } from '../shared/system-prompt.js'
@@ -30,7 +30,7 @@ import {
   getLocalSlashCommands,
   parseSlashCommandInput,
 } from '../shared/slash-commands.js'
-import { isUltracodeEffort, normalizeReasoningEffort, toClaudeEffortFlagValue } from '../shared/reasoning.js'
+import { isUltracodeEffort, toCodexEffortValue, toClaudeEffortFlagValue } from '../shared/reasoning.js'
 import { providerSupportsImageAttachments } from '../shared/chat-attachments.js'
 import type {
   AppLanguage,
@@ -2061,15 +2061,15 @@ const buildCodexTurnStartParams = (
   ...(options?.includeAgentParams === false
     ? {}
     : {
-        ...(request.personality ? { personality: request.personality } : {}),
+        // Codex 0.153.4 model/list：Astra supportsPersonality=false（2026-09-06）。
+        // 只省略该请求字段，不抹掉用户留给其它模型的人格设置。
+        ...(request.personality && !isAstraModel(request.model) ? { personality: request.personality } : {}),
         ...(request.serviceTier ? { serviceTier: request.serviceTier } : {}),
       }),
   ...(options?.includeEffort === false
     ? {}
     : {
-        effort: request.thinkingEnabled === false
-          ? 'none'
-          : normalizeReasoningEffort('codex', request.reasoningEffort),
+        effort: toCodexEffortValue(request.model, request.reasoningEffort, request.thinkingEnabled),
       }),
 })
 
@@ -4193,7 +4193,7 @@ export const buildCodexArgs = (request: ChatRequest, attachmentPaths: string[]) 
   const args = request.sessionId
     ? ['exec', 'resume', '--json', '--skip-git-repo-check']
     : ['exec', '--json', '--skip-git-repo-check']
-  const reasoningEffort = normalizeReasoningEffort('codex', request.reasoningEffort)
+  const reasoningEffort = toCodexEffortValue(request.model, request.reasoningEffort, request.thinkingEnabled)
   const systemPrompt = [
     buildProviderSystemPrompt(request.language, getRequestBaseSystemPrompt(request)),
     getCodexAskUserQuestionInstruction(request.language),
@@ -4215,7 +4215,7 @@ export const buildCodexArgs = (request: ChatRequest, attachmentPaths: string[]) 
   //       必须继续显式钉死 never；`-c` 覆盖在新旧 CLI 上都受支持，是唯一向后兼容的写法。
   args.push('-c', 'approval_policy="never"')
   args.push('--sandbox', getCodexSandboxMode(request))
-  args.push('-c', `model_reasoning_effort="${request.thinkingEnabled === false ? 'none' : reasoningEffort}"`)
+  args.push('-c', `model_reasoning_effort="${reasoningEffort}"`)
   args.push('-c', `instructions=${formatTomlString(systemPrompt)}`)
 
   if (request.sessionId) {

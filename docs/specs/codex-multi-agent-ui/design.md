@@ -67,12 +67,17 @@ Add a small pure tracker module owned by the Codex app-server adapter.
 
 - child thread/turn active or `subAgentActivity.started` -> `running`;
 - turn completed or thread idle -> `completed`;
+- `subAgentActivity.completed` -> `completed` (Codex 0.153.4 also reports child completion through the parent thread);
 - turn interrupted or `subAgentActivity.interrupted` -> `interrupted`;
 - failed turn or system error -> `errored`;
 - thread closed/not loaded -> `shutdown`;
 - metadata-only child before a turn begins -> `pendingInit`.
 
 Only `pendingInit` and `running` entries appear in the live running panel. The tracker retains settled metadata during the process lifetime so a later interaction can reactivate the same entry without changing its original order.
+
+### 2026-09-06 completed activity compatibility
+
+The reported root rollout completed at 21:18:14 and its child completed at 21:17:24, but the saved card still marked the child running. The installed 0.153.4 experimental protocol defines `SubAgentActivityKind` as `started | interacted | interrupted | completed`; the old mapping treated every non-interrupted kind as running. Map explicit completion to the existing terminal path and summarize it as `Completed <path>`. Preserve root-target filtering, concurrent/nested child isolation, and the hard cap. Do not add status polling for a lifecycle event already available in the protocol.
 
 ## Preview summarization
 

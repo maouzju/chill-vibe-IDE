@@ -26,7 +26,7 @@ const childStarted = (threadId = childThreadId, parentThreadId = rootThreadId) =
 const subAgentActivity = (
   threadId: string,
   path: string,
-  kind: 'started' | 'interacted' | 'interrupted' = 'started',
+  kind: 'started' | 'interacted' | 'interrupted' | 'completed' = 'started',
   senderThreadId = rootThreadId,
 ) => ({
   method: 'item/completed',
@@ -239,6 +239,47 @@ test('uses reasoning summaries without exposing raw reasoning content', () => {
   const serialized = JSON.stringify(tracker.snapshot())
   assert.match(serialized, /safe summary/)
   assert.doesNotMatch(serialized, /older summary|hidden raw reasoning|raw-only reasoning/)
+})
+
+test('completed sub-agent activity settles a child before root completion', () => {
+  const tracker = createCodexAgentStatusTracker({ rootThreadId })
+  tracker.handleNotification(childStarted())
+  tracker.handleNotification(subAgentActivity(childThreadId, '/root/reviewer'))
+
+  const update = tracker.handleNotification(subAgentActivity(childThreadId, '/root/reviewer', 'completed'))
+
+  assert.equal(tracker.getAgent(childThreadId)?.status, 'completed')
+  assert.deepEqual(update.activity?.agents, [])
+  assert.equal(update.releaseDeferredRootCompletion, undefined, 'a child cannot finish an active root')
+  assert.equal(tracker.markRootTurnCompleted(), 'finish')
+  assert.ok(tracker.getAgent(childThreadId)?.activity?.includes('Completed /root/reviewer'))
+})
+
+test('completed sub-agent activities release deferred root only once after every nested child settles', () => {
+  const tracker = createCodexAgentStatusTracker({ rootThreadId })
+  tracker.handleNotification(childStarted())
+  tracker.handleNotification(childStarted(nestedThreadId, childThreadId))
+  assert.equal(tracker.markRootTurnCompleted(), 'defer')
+
+  const childDone = tracker.handleNotification(subAgentActivity(childThreadId, '/root/reviewer', 'completed'))
+  assert.equal(childDone.releaseDeferredRootCompletion, undefined)
+  assert.deepEqual(childDone.activity?.agents.map((agent) => agent.threadId), [nestedThreadId])
+
+  const nestedDone = subAgentActivity(nestedThreadId, '/root/reviewer/worker', 'completed', childThreadId)
+  assert.equal(tracker.handleNotification({ ...nestedDone, method: 'item/started' }).releaseDeferredRootCompletion, true)
+  assert.equal(tracker.handleNotification(nestedDone).releaseDeferredRootCompletion, undefined)
+  assert.equal(tracker.hasRunningAgents(), false)
+})
+
+test('a completed child may run again when explicitly started or contacted', () => {
+  for (const kind of ['started', 'interacted'] as const) {
+    const tracker = createCodexAgentStatusTracker({ rootThreadId })
+    tracker.handleNotification(childStarted())
+    tracker.handleNotification(subAgentActivity(childThreadId, '/root/reviewer', 'completed'))
+    assert.equal(tracker.hasRunningAgents(), false)
+    tracker.handleNotification(subAgentActivity(childThreadId, '/root/reviewer', kind))
+    assert.equal(tracker.hasRunningAgents(), true)
+  }
 })
 
 test('defers root completion until the final running child settles', () => {

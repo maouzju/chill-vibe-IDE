@@ -316,3 +316,197 @@ test('prefers current-turn structured activity over the generic writing placehol
   assert.equal(getStreamingLabel(messages, 'zh-CN'), '思考中')
   assert.equal(getStreamingLabel(messages, 'en'), 'Thinking')
 })
+
+test('does not keep a completed command as the streaming label after the assistant reply', () => {
+  const messages = [
+    createMessage('user', 'run checks'),
+    createMessage('assistant', '', {
+      kind: 'command',
+      provider: 'codex',
+      itemId: 'done-command',
+      structuredData: JSON.stringify({
+        itemId: 'done-command',
+        status: 'completed',
+        command: 'pnpm test',
+        output: 'ok',
+        exitCode: 0,
+      }),
+    }),
+    createMessage('assistant', 'All checks passed.'),
+  ]
+
+  assert.equal(getStreamingLabel(messages, 'zh-CN'), '生成中')
+  assert.equal(getStreamingLabel(messages, 'en'), 'Writing')
+})
+
+test('keeps an in-progress command visible even when a parallel command completed later', () => {
+  const messages = [
+    createMessage('user', 'run checks'),
+    createMessage('assistant', '', {
+      kind: 'command',
+      provider: 'codex',
+      itemId: 'active-command',
+      structuredData: JSON.stringify({
+        itemId: 'active-command',
+        status: 'in_progress',
+        command: 'pnpm test',
+        output: '',
+        exitCode: null,
+      }),
+    }),
+    createMessage('assistant', '', {
+      kind: 'command',
+      provider: 'codex',
+      itemId: 'done-command',
+      structuredData: JSON.stringify({
+        itemId: 'done-command',
+        status: 'completed',
+        command: 'pnpm lint',
+        output: 'ok',
+        exitCode: 0,
+      }),
+    }),
+  ]
+
+  assert.equal(getStreamingLabel(messages, 'zh-CN'), '执行命令中')
+  assert.equal(getStreamingLabel(messages, 'en'), 'Running command')
+})
+
+test('treats a legacy status-less empty activity as active, but plain output takes precedence', () => {
+  const activeLegacy = [
+    createMessage('user', 'legacy turn'),
+    createMessage('assistant', '', {
+      kind: 'command',
+      provider: 'codex',
+      itemId: 'legacy-command',
+      structuredData: '{}',
+    }),
+  ]
+  assert.equal(getStreamingLabel(activeLegacy, 'en'), 'Running command')
+
+  const finishedLegacy = [...activeLegacy, createMessage('assistant', 'Finished.')]
+  assert.equal(getStreamingLabel(finishedLegacy, 'en'), 'Writing')
+})
+
+for (const status of ['completed', 'failed', 'declined']) {
+  test(`does not advertise a ${status} command as running without a following reply`, () => {
+    const messages = [
+      createMessage('user', 'run checks'),
+      createMessage('assistant', '', {
+        kind: 'command',
+        provider: 'codex',
+        itemId: 'command',
+        structuredData: JSON.stringify({ itemId: 'command', status }),
+      }),
+    ]
+
+    assert.equal(getStreamingLabel(messages, 'zh-CN'), '生成中')
+    assert.equal(getStreamingLabel(messages, 'en'), 'Writing')
+  })
+}
+
+test('does not revive legacy activity when the latest activity is already completed', () => {
+  const messages = [
+    createMessage('user', 'run checks'),
+    createMessage('assistant', '', {
+      kind: 'reasoning',
+      provider: 'codex',
+      structuredData: '{}',
+    }),
+    createMessage('assistant', '', {
+      kind: 'command',
+      provider: 'codex',
+      structuredData: JSON.stringify({ itemId: 'command', status: 'completed' }),
+    }),
+  ]
+
+  assert.equal(getStreamingLabel(messages, 'en'), 'Writing')
+})
+
+test('keeps explicit in-progress work visible after assistant commentary', () => {
+  const messages = [
+    createMessage('user', 'run checks'),
+    createMessage('assistant', '', {
+      kind: 'command',
+      provider: 'codex',
+      structuredData: JSON.stringify({ itemId: 'command', status: 'in_progress' }),
+    }),
+    createMessage('assistant', 'The long-running check is still in progress.'),
+  ]
+
+  assert.equal(getStreamingLabel(messages, 'en'), 'Running command')
+})
+
+test('uses reasoning status without reviving an explicitly completed thought', () => {
+  const reasoning = (status: string) => createMessage('assistant', '', {
+    kind: 'reasoning',
+    provider: 'claude',
+    structuredData: JSON.stringify({ itemId: 'reasoning', status, text: 'Checking the result' }),
+  })
+
+  assert.equal(getStreamingLabel([reasoning('in_progress')], 'en'), 'Thinking')
+  assert.equal(getStreamingLabel([reasoning('completed')], 'en'), 'Writing')
+})
+
+test('keeps active agents and unanswered questions distinct from completed command payloads', () => {
+  const messages = [
+    createMessage('assistant', '', {
+      kind: 'agents',
+      provider: 'codex',
+      structuredData: JSON.stringify({
+        itemId: 'agents',
+        status: 'completed',
+        view: 'status',
+        agents: [{ threadId: 'child', status: 'running' }],
+      }),
+    }),
+  ]
+
+  assert.equal(getStreamingLabel(messages, 'en'), 'Coordinating agents')
+  assert.equal(getStreamingLabel([
+    createMessage('assistant', '', {
+      kind: 'ask-user',
+      provider: 'claude',
+      structuredData: JSON.stringify({
+        itemId: 'question',
+        status: 'completed',
+        question: 'Continue?',
+        options: [{ label: 'Yes', description: '' }],
+      }),
+    }),
+  ], 'en'), 'Waiting for input')
+})
+
+test('uses the live agent status snapshot instead of a later historical tool-call snapshot', () => {
+  const statusSnapshot = (status: string) => createMessage('assistant', '', {
+    kind: 'agents',
+    provider: 'codex',
+    structuredData: JSON.stringify({
+      itemId: 'agent-status:root',
+      status: 'completed',
+      view: 'status',
+      agents: [{ threadId: 'child', status }],
+    }),
+  })
+  const toolCallSnapshot = (status: string) => createMessage('assistant', '', {
+    kind: 'agents',
+    provider: 'codex',
+    structuredData: JSON.stringify({
+      itemId: 'agent-call',
+      status: 'completed',
+      view: 'toolCall',
+      tool: 'wait',
+      callStatus: 'completed',
+      agents: [{ threadId: 'child', status }],
+    }),
+  })
+
+  assert.equal(getStreamingLabel([
+    statusSnapshot('completed'),
+    toolCallSnapshot('running'),
+  ], 'en'), 'Writing')
+  assert.equal(getStreamingLabel([
+    statusSnapshot('running'),
+    toolCallSnapshot('completed'),
+  ], 'en'), 'Coordinating agents')
+})

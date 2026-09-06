@@ -75,6 +75,7 @@ describe('model helpers', () => {
         STATS_TOOL_MODEL,
         '',
         DEFAULT_CODEX_MODEL,
+        'gpt-6-astra',
         'gpt-5.6-terra',
         'gpt-5.6-luna',
         'gpt-5.5',
@@ -113,12 +114,17 @@ describe('model helpers', () => {
     assert.equal(normalizeModel('claude', 'claude-sonnet-4-6'), 'claude-sonnet-4-6')
   })
 
+  it('resolves GPT-6 Astra aliases', () => {
+    assert.equal(resolveSlashModel('codex', 'gpt-6-astra'), 'gpt-6-astra')
+    assert.equal(resolveSlashModel('codex', 'astra'), 'gpt-6-astra')
+  })
+
   it('keeps tool cards out of the ordinary model picker', () => {
     assert.deepEqual(
       getModelOptions('codex')
         .filter(isModelPickerOptionVisible)
         .map((option) => option.model),
-      ['', DEFAULT_CODEX_MODEL, 'gpt-5.6-terra', 'gpt-5.6-luna', 'gpt-5.5'],
+      ['', DEFAULT_CODEX_MODEL, 'gpt-6-astra', 'gpt-5.6-terra', 'gpt-5.6-luna', 'gpt-5.5'],
     )
   })
 
@@ -130,6 +136,7 @@ describe('model helpers', () => {
     assert.equal(visible.includes('claude-fable-5'), false)
     assert.equal(visible.includes('claude-sonnet-4-6'), false)
     assert.equal(visible.includes('claude-fable-5-1'), true)
+    assert.equal(visible.includes('gpt-6-astra'), true)
     // 与普通选择器的唯一差别：头脑风暴请求必须指名具体模型，没有「用默认模型」项。
     assert.equal(visible.includes(''), false)
     assert.equal(visible.includes(GIT_TOOL_MODEL), false)

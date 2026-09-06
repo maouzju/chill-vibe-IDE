@@ -22,6 +22,21 @@ const recoverableErrorPatterns = [
   'stalled after emitting stream output',
   'selected model is at capacity',
   'model is at capacity',
+  // 症状：卡片红出 `API Error: Repeated 529 Overloaded errors. The API is at
+  //   capacity — this is usually temporary...`，停在「重连失败」等用户手点。
+  // 根因：2026-09-03 现场。CLI 自带的 529 重试耗尽后用这组固定文案收尾，词形是
+  //   "API is at capacity" / "529 Overloaded"，上面的 'model is at capacity' 命不中。
+  //   它和 model-at-capacity 同属瞬时上游容量故障，稍等再续一轮通常就好。
+  // 被否决：不拿裸 '529' 或 'overloaded' 当判据——工具输出里回显的 HTTP 日志也会带
+  //   这些词；只接 CLI 这两个完整短语。
+  'repeated 529 overloaded',
+  'api is at capacity',
+  // 2026-09-03 从 claude.exe 的固定文案表对齐（pitfall #358）：CLI 把所有 HTTP ≥500
+  //   统一收尾成 "...This is a server-side issue, usually temporary — try again in a
+  //   moment."，把模型级过载收尾成 "<Model> is experiencing high load, please use
+  //   /model to switch to Sonnet"。都是 CLI 自己判定的瞬时故障，与 529 同类。
+  'server-side issue, usually temporary',
+  'is experiencing high load',
   // Anthropic intermittently returns stop_reason: tool_use with no tool_use
   // block, so the CLI's own retry fails and it surfaces "tool call could not be
   // parsed". Re-issuing a fresh turn usually succeeds, so treat it as resumable.
@@ -71,6 +86,16 @@ const recoverableErrorPatterns = [
 
 const zeroExitPattern = /\b(?:codex|claude) exited with status code:\s*0\b/i
 
+// 同一张 CLI 文案表里 "Unable to connect to API: SSL certificate ..." / "Self-signed
+// certificate detected" 与 ConnectionRefused 共用前缀，却是证书/代理配置的永久错；
+// 续传只会把同一条红错再刷到 retry budget 耗尽。只在 unable-to-connect 前缀下排除，
+// 不影响其他名单项。
+const permanentConnectErrorPatterns = ['ssl', 'certificate'] as const
+
+const isPermanentConnectError = (normalizedMessage: string) =>
+  normalizedMessage.includes('unable to connect to api') &&
+  permanentConnectErrorPatterns.some((pattern) => normalizedMessage.includes(pattern))
+
 const recoverableSwitchConfigErrorPatterns = [
   'third-party apps now draw from your extra usage',
   'claim it at',
@@ -98,6 +123,10 @@ export const classifyProviderStreamErrorRecovery = (
   const switchConfigRecoverable = isRecoverableSwitchConfigError(normalizedMessage)
 
   if (hint === 'env-setup' || (hint === 'switch-config' && !switchConfigRecoverable)) {
+    return {}
+  }
+
+  if (isPermanentConnectError(normalizedMessage)) {
     return {}
   }
 

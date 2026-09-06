@@ -81,3 +81,11 @@
 36. Add a red-first provider recovery test for `API Error: Unable to connect to API (ConnectionRefused)` (plus the common spaced/`ECONNREFUSED` spellings) with a live session.
 37. Classify those explicit short-lived connection failures as bounded `resume-session` errors while keeping the no-session guard.
 38. Run the focused provider recovery tests and `pnpm test:quality`; package the verified bug fix and restart the active runtime.
+
+## Slice 11 - completed command label (2026-09-06)
+
+- [x] Reproduce completed command and legacy-command-plus-reply labels with failing tests.
+- [x] Exclude terminal work while preserving explicitly active concurrent work and snapshot-specific lifecycles.
+- [x] Verify current-turn boundaries, light/dark command-group rendering, and package alongside the child-completion repair.
+
+Verification: `tests/message-local-link.test.ts` passed 25/25 after red-first coverage; the file-scoped `streaming structured command groups` Playwright case passed in both themes with unchanged snapshots. Default `pnpm test:theme` was blocked by another project's 5173 listener, so verification used a temporary derived repo config on port 5196. Quality passed; Windows handoff shares `dist/release-20260906-224336/` with the child-completion fix. This scoped repair extends the existing SPEC rather than creating a new feature SPEC.

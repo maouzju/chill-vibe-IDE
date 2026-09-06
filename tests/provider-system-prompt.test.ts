@@ -53,6 +53,21 @@ test('provider system prompt prepends the zh-CN language instruction', () => {
   assert.match(prompt, /尚未解决：/)
 })
 
+test('codex GPT-6 Astra thinking-off uses low instead of unsupported none', () => {
+  const args = buildCodexArgs(
+    createRequest({ model: 'gpt-6-astra', reasoningEffort: 'max', thinkingEnabled: false }),
+    [],
+  )
+  const effortArg = args.find((arg) => arg.startsWith('model_reasoning_effort='))
+  assert.equal(effortArg, 'model_reasoning_effort="low"')
+  for (const effort of ['low', 'medium', 'high', 'xhigh', 'max', 'ultra']) {
+    assert.ok(buildCodexArgs(createRequest({ model: 'gpt-6-astra', reasoningEffort: effort }), [])
+      .includes(`model_reasoning_effort="${effort}"`))
+  }
+  assert.ok(buildCodexArgs(createRequest({ model: 'gpt-5.6-sol', thinkingEnabled: false }), [])
+    .includes('model_reasoning_effort="none"'))
+})
+
 test('provider system prompt preserves the built-in default for English sessions', () => {
   const prompt = buildProviderSystemPrompt('en', defaultSystemPrompt)
 
@@ -2297,7 +2312,7 @@ const buildFakeCodexDuplicateCompactionScript = () =>
     '})',
   ].join('\n')
 
-const buildFakeCodexSubAgentStatusScript = () =>
+const buildFakeCodexSubAgentStatusScript = (completionViaActivity = false, childCompletesFirst = false) =>
   [
     "const readline = require('node:readline')",
     "const reply = (message) => process.stdout.write(`${JSON.stringify(message)}\\n`)",
@@ -2317,10 +2332,14 @@ const buildFakeCodexSubAgentStatusScript = () =>
     "    reply({ method: 'item/agentMessage/delta', params: { threadId: 'thread-child', turnId: 'turn-child', itemId: 'child-message', delta: 'CHILD DELTA MUST NOT LEAK' } })",
     "    reply({ method: 'item/started', params: { threadId: 'thread-child', turnId: 'turn-child', item: { id: 'child-command', type: 'commandExecution', command: 'pnpm test', aggregatedOutput: 'CHILD OUTPUT MUST NOT LEAK' } } })",
     "    reply({ method: 'item/completed', params: { threadId: 'thread-root', turnId: 'turn-root', item: { id: 'parent-message', type: 'agentMessage', text: 'Parent answer' } } })",
-    "    reply({ method: 'turn/completed', params: { threadId: 'thread-root', turn: { id: 'turn-root', status: 'completed', items: [] } } })",
+    ...(!childCompletesFirst ? ["    reply({ method: 'turn/completed', params: { threadId: 'thread-root', turn: { id: 'turn-root', status: 'completed', items: [] } } })"] : []),
     "    setTimeout(() => {",
     "      reply({ method: 'item/completed', params: { threadId: 'thread-child', turnId: 'turn-child', item: { id: 'child-command', type: 'commandExecution', command: 'pnpm test', aggregatedOutput: 'CHILD OUTPUT MUST NOT LEAK', exitCode: 0 } } })",
-    "      reply({ method: 'turn/completed', params: { threadId: 'thread-child', turn: { id: 'turn-child', status: 'completed', items: [] } } })",
+    completionViaActivity
+      ? "      reply({ method: 'item/completed', params: { threadId: 'thread-root', turnId: 'turn-root', item: { id: 'child-completed', type: 'subAgentActivity', kind: 'completed', agentThreadId: 'thread-child', agentPath: '/root/reviewer' } } })"
+      : "      reply({ method: 'turn/completed', params: { threadId: 'thread-child', turn: { id: 'turn-child', status: 'completed', items: [] } } })",
+    ...(childCompletesFirst ? ["      reply({ method: 'turn/completed', params: { threadId: 'thread-root', turn: { id: 'turn-root', status: 'completed', items: [] } } })"] : []),
+    ...(completionViaActivity ? ["      setTimeout(() => { reply({ method: 'error', params: { threadId: 'thread-root', message: 'Completed child still blocks root', willRetry: false } }) }, 150)"] : []),
     "    }, 25)",
     "  }",
     "})",
@@ -4553,6 +4572,21 @@ test('codex app-server isolates child output and waits for active sub-agents aft
   assert.equal(events.at(-1)?.kind, 'done')
 })
 
+test('codex app-server finishes on completed sub-agent activities in either root completion order', async () => {
+  for (const childCompletesFirst of [true, false]) {
+    const events = await withFakeProviderCommand(
+      'codex',
+      buildFakeCodexSubAgentStatusScript(true, childCompletesFirst),
+      async (workspacePath) => captureProviderEvents(createRequest({ provider: 'codex', language: 'en', workspacePath })),
+    )
+    assert.equal(events.at(-1)?.kind, 'done', `childCompletesFirst=${childCompletesFirst}`)
+    assert.equal(events.filter((event) => event.kind === 'done').length, 1)
+    const lastStatus = events.findLast((event) => event.kind === 'activity' && event.activity.kind === 'agents' && event.activity.view === 'status')
+    assert.ok(lastStatus?.kind === 'activity' && lastStatus.activity.kind === 'agents')
+    assert.deepEqual(lastStatus.activity.agents, [])
+  }
+})
+
 test('codex app-server keeps the stall watchdog armed after root completion with a silent sub-agent', async () => {
   const originalLocalAbsoluteHardCap = process.env.CHILL_VIBE_LOCAL_PROVIDER_ABSOLUTE_HARD_CAP_MS
   process.env.CHILL_VIBE_LOCAL_PROVIDER_ABSOLUTE_HARD_CAP_MS = '200'
@@ -5288,6 +5322,33 @@ test('codex app-server retries without optional agent params when an older CLI r
     assert.equal(Object.hasOwn(requests[1]?.params ?? {}, 'serviceTier'), false)
   } finally {
     await rm(capturePath, { force: true }).catch(() => {})
+  }
+})
+
+test('codex Astra app-server omits personality and preserves model, effort, Fast on fresh and resumed turns', async () => {
+  for (const sessionId of [undefined, 'thread-1']) {
+    for (const thinkingEnabled of [false, true]) {
+      const capturePath = path.join(os.tmpdir(), `chill-vibe-astra-${Date.now()}-${Math.random().toString(36).slice(2)}.jsonl`)
+      try {
+        const outcome = await withFakeProviderCommand('codex', buildFakeCodexAppServerScript(capturePath),
+          async (workspacePath) => captureProviderOutcome(createRequest({
+            workspacePath, sessionId, model: 'gpt-6-astra', reasoningEffort: 'ultra', thinkingEnabled,
+            personality: 'friendly', serviceTier: 'priority',
+          })))
+        assert.deepEqual(outcome, { kind: 'done' })
+        const requests = (await readFile(capturePath, 'utf8')).trim().split(/\r?\n/)
+          .map((line) => JSON.parse(line) as { method?: string; params?: Record<string, unknown> })
+        const thread = requests.find((request) => request.method === (sessionId ? 'thread/resume' : 'thread/start'))
+        const turn = requests.find((request) => request.method === 'turn/start')
+        assert.equal(thread?.params?.model, 'gpt-6-astra')
+        assert.equal(turn?.params?.model, 'gpt-6-astra')
+        assert.equal(turn?.params?.effort, thinkingEnabled ? 'ultra' : 'low')
+        assert.equal(turn?.params?.serviceTier, 'priority')
+        assert.equal(Object.hasOwn(turn?.params ?? {}, 'personality'), false)
+      } finally {
+        await rm(capturePath, { force: true })
+      }
+    }
   }
 })
 

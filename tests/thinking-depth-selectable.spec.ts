@@ -171,6 +171,57 @@ const installMockApis = async (page: Page, factory: () => ReturnType<typeof crea
   })
 }
 
+for (const theme of ['light', 'dark'] as const) {
+  for (const inherited of [false, true]) {
+    test(`Astra ${theme} ${inherited ? 'default' : 'explicit'} model keeps thinking on and accepts Ultra`, async ({ page }) => {
+      await installMockApis(page, () => {
+        const state = createChatState()
+        state.settings.theme = theme
+        state.settings.requestModels.codex = 'gpt-6-astra'
+        state.columns[0].cards['card-1'].model = inherited ? '' : 'gpt-6-astra'
+        state.columns[0].cards['card-1'].reasoningEffort = 'max'
+        return state
+      })
+      await page.goto(appUrl)
+      await page.locator('.pane-tab-panel.is-active .composer-settings-trigger').first().click()
+      const menu = page.locator('.composer-settings-menu').first()
+      const row = (label: string) => menu.locator('.composer-settings-row')
+        .filter({ has: page.locator('.composer-settings-label', { hasText: new RegExp(`^${label}$`) }) })
+      const thinking = row('思考').locator('input')
+      const depth = row('思考深度').locator('select')
+      await expect(thinking).toBeChecked()
+      await expect(thinking).toBeDisabled()
+      await expect(depth).toHaveValue('low')
+      await expect(depth.locator('option')).toHaveText(['低', '中', '高', '超高', '最高', 'Ultra（多 Agent）'])
+      await depth.selectOption('ultra')
+      await expect(depth).toHaveValue('ultra')
+      await expect(thinking).toBeChecked()
+      await page.screenshot({ path: `test-results/astra-${theme}-${inherited ? 'default' : 'explicit'}.png` })
+    })
+  }
+  test(`Astra ${theme} automation template keeps thinking on and accepts Max`, async ({ page }) => {
+    await installMockApis(page, () => {
+      const state = createState()
+      state.settings.theme = theme
+      state.automationBoards[workspacePath].templates[0].model = 'gpt-6-astra'
+      return state
+    })
+    await page.setViewportSize({ width: 1440, height: 1000 })
+    await page.goto(appUrl)
+    await page.locator('.automation-board-template-configure').first().click()
+    const panel = page.locator('.automation-board-template-config')
+    const field = (label: string) => panel.locator('label.automation-board-template-field')
+      .filter({ has: page.locator('span', { hasText: new RegExp(`^${label}$`) }) })
+    const thinking = field('思考').locator('input')
+    const depth = field('思考深度').locator('select')
+    await expect(thinking).toBeChecked()
+    await expect(thinking).toBeDisabled()
+    await expect(depth).toHaveValue('low')
+    await depth.selectOption('max')
+    await expect(depth).toHaveValue('max')
+  })
+}
+
 test('picking a thinking depth turns thinking back on instead of staying locked', async ({
   page,
 }) => {

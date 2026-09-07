@@ -9,28 +9,52 @@ Keep the change tightly scoped. Do **not** modify `chatCardSchema` or persistenc
 ```ts
 type CardRecoveryStatus =
   | { kind: 'reconnecting'; attempt: number; max: number | 'unlimited' }
+  | { kind: 'native-reconnecting' }
   | { kind: 'resumed' }     // shown briefly, auto-clears after ~2s
-  | { kind: 'failed' }      // shown until card exits streaming
+  | { kind: 'failed'; streamId?: string } // sticky until a new stream starts
 ```
 
 ## Pure state-transition function
 
-All state writes go through one helper — trivial to unit test red-first:
+All state transitions use pure helpers for red-first unit testing:
 
 ```ts
 // src/stream-recovery-feedback.ts
 export const computeRecoveryStatusAfterRetryScheduled = (
   currentAttempt: number,
-  max: number | 'unlimited',
-): CardRecoveryStatus => ({ kind: 'reconnecting', attempt: currentAttempt + 1, max })
+  max: number,
+  previous?: CardRecoveryStatus,
+): CardRecoveryStatus => ({
+  kind: 'reconnecting',
+  attempt:
+    previous?.kind === 'reconnecting'
+      ? Math.max(currentAttempt + 1, previous.attempt + 1)
+      : currentAttempt + 1,
+  max: Number.isFinite(max) ? max : 'unlimited',
+})
+
+export const computeRecoveryStatusAfterNativeRetry = (
+  previous?: CardRecoveryStatus,
+): CardRecoveryStatus => {
+  if (
+    previous?.kind === 'failed' ||
+    previous?.kind === 'native-reconnecting' ||
+    previous?.kind === 'reconnecting'
+  ) return previous
+  return { kind: 'native-reconnecting' }
+}
 
 export const computeRecoveryStatusAfterSuccess = (
   previous: CardRecoveryStatus | undefined,
 ): CardRecoveryStatus | undefined =>
-  previous?.kind === 'reconnecting' ? { kind: 'resumed' } : previous
+  previous?.kind === 'reconnecting' || previous?.kind === 'native-reconnecting'
+    ? { kind: 'resumed' }
+    : previous
 
-export const computeRecoveryStatusAfterFinalFailure = (): CardRecoveryStatus =>
-  ({ kind: 'failed' })
+export const computeRecoveryStatusAfterFinalFailure = (streamId?: string): CardRecoveryStatus => ({
+  kind: 'failed',
+  ...(streamId ? { streamId } : {}),
+})
 
 export const shouldClearRecoveryStatusOnStreamIdle = (
   previous: CardRecoveryStatus | undefined,
@@ -132,7 +156,7 @@ Native retry notifications must preserve an existing IDE `reconnecting` state. I
 
 Unit test `src/stream-recovery-feedback.ts`:
 - Transition to `reconnecting` increments attempt count.
-- `resumed` only emits when previous was `reconnecting` (no false positives on fresh streams).
+- `resumed` only emits when previous was `reconnecting` or `native-reconnecting` (no false positives on fresh streams).
 - `failed` overrides `reconnecting`.
 - `shouldClearRecoveryStatusOnStreamIdle` preserves `failed` but clears others.
 - `shouldFallbackToFreshSessionAfterResumeLoop` triggers for any recoverable repeated `resume-session` failure at the configured threshold, including ordinary stall errors where `transientOnly` is false.

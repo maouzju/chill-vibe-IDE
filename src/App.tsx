@@ -9208,8 +9208,6 @@ function App() {
       <h3 className="settings-group-title">{text.settingsGroupModels}</h3>
 
       <div className="settings-section">
-        <p className="settings-note">{text.defaultRequestModelsNote}</p>
-
         <label className="settings-field" htmlFor="codex-model-input">
           <span className="settings-field-label">
             <ModelIcon className="settings-field-icon" aria-hidden="true" />
@@ -10694,8 +10692,6 @@ function App() {
               <h3 className="settings-group-title">{text.settingsGroupModels}</h3>
 
               <div className="settings-section">
-                <p className="settings-note">{text.defaultRequestModelsNote}</p>
-
                 <label className="settings-field" htmlFor="codex-model-input">
                   <span className="settings-field-label">
                     <ModelIcon className="settings-field-icon" aria-hidden="true" />

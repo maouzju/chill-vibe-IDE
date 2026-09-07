@@ -126,7 +126,6 @@ type LocaleText = {
   showAlbumCover: string
   neteaseLogout: string
   defaultRequestModels: string
-  defaultRequestModelsNote: string
   codexPersonalityLabel: string
   codexPersonalityNote: string
   codexPersonalityDefault: string
@@ -627,7 +626,6 @@ const localeTextByLanguage: Record<AppLanguage, LocaleText> = {
     showAlbumCover: '显示专辑封面',
     neteaseLogout: '注销网易云',
     defaultRequestModels: '默认请求模型',
-    defaultRequestModelsNote: 'Codex 推荐默认使用 GPT-5.6 Sol + 中等推理；你也可以同步到现有会话。',
     codexPersonalityLabel: 'Codex Agent 人格',
     codexPersonalityNote: '默认跟随 Codex CLI；只在需要固定表达风格时覆盖。',
     codexPersonalityDefault: '跟随 Codex',
@@ -1162,8 +1160,6 @@ const localeTextByLanguage: Record<AppLanguage, LocaleText> = {
     showAlbumCover: 'Show album cover',
     neteaseLogout: 'Sign out of NetEase',
     defaultRequestModels: 'Default request models',
-    defaultRequestModelsNote:
-      'Codex recommends GPT-5.6 Sol with medium reasoning by default; you can also sync it into existing chats.',
     codexPersonalityLabel: 'Codex Agent personality',
     codexPersonalityNote: 'Follow Codex CLI by default; override only when you need a fixed communication style.',
     codexPersonalityDefault: 'Follow Codex',

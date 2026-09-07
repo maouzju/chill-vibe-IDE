@@ -3151,8 +3151,8 @@ test('settings panel flows category cards through two waterfall columns in both 
 
   await settingsTab.click()
   await expect(settingsPanel).toBeVisible()
-  // 编辑器自 2026-08-16 起是外观分组内的子模块，不再是独立分组，所以顶层分组是 8 个。
-  await expect(settingsGroups).toHaveCount(8)
+  await expect(settingsGroups).toHaveCount(9)
+  await expect(settingsGroups.getByRole('heading', { name: '本地模型', exact: true })).toBeVisible()
   await expect(
     settingsPanel.getByLabel(/Codex Agent 人格|Codex Agent personality/).first(),
   ).toHaveValue('default')
@@ -3214,7 +3214,8 @@ test('settings panel stacks category cards cleanly on a narrow viewport', async 
 
   await settingsTab.click()
   await expect(settingsPanel).toBeVisible()
-  await expect(settingsGroups).toHaveCount(8)
+  await expect(settingsGroups).toHaveCount(9)
+  await expect(settingsGroups.getByRole('heading', { name: '本地模型', exact: true })).toBeVisible()
 
   const [firstGroupRect, secondGroupRect] = await Promise.all([
     readRect(settingsGroups.nth(0)),
@@ -3234,6 +3235,36 @@ test('settings panel stacks category cards cleanly on a narrow viewport', async 
     animations: 'disabled',
   })
 })
+
+for (const theme of ['dark', 'light'] as const) {
+  for (const width of [1440, 390]) {
+    test(`model settings omit default recommendation in ${theme} theme at ${width}px`, async ({ page }) => {
+      const state = createMockState()
+      state.settings.theme = theme
+      state.settings.language = theme === 'dark' ? 'zh-CN' : 'en'
+      await page.setViewportSize({ width, height: 960 })
+      await mockAppApis(page, { state })
+      await page.goto(appUrl)
+      await page.locator('.card-shell').first().waitFor()
+      await page.locator('#app-tab-settings').click()
+
+      const settingsPanel = page.locator('#app-panel-settings')
+      const modelGroup = settingsPanel.locator('.settings-group:visible').filter({
+        has: page.locator('#codex-model-input'),
+      })
+      const modelSection = modelGroup.locator('.settings-section').first()
+      await expect(modelSection.locator(':scope > :first-child')).toHaveAttribute('for', 'codex-model-input')
+      await expect(settingsPanel).not.toContainText(/Codex 推荐默认使用|Codex recommends GPT/)
+      await expect(modelSection.locator('#codex-model-input')).toHaveValue(state.settings.requestModels.codex)
+      await expect(modelSection.locator('#claude-model-input')).toHaveValue(state.settings.requestModels.claude)
+      await page.mouse.move(0, 0)
+      await expect(modelSection).toHaveScreenshot(`model-settings-no-recommendation-${theme}-${width}.png`, {
+        animations: 'disabled',
+        caret: 'hide',
+      })
+    })
+  }
+}
 
 test('Codex Fast mode requires a visible cost confirmation across themes', async ({ page }) => {
   await page.setViewportSize({ width: 1280, height: 960 })

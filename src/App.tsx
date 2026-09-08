@@ -1,3 +1,4 @@
+import { applyClaudeAgentStatusPush } from '../shared/claude-agent-push'
 import {
   useCallback,
   useEffect,
@@ -5606,11 +5607,20 @@ function App() {
   // new turn in a fresh stream — attach the owning card so the unsolicited
   // report renders exactly like a normal streamed reply.
   useEffect(() => {
-    return subscribeUnsolicitedStreams(({ cardId, streamId }) => {
+    return subscribeUnsolicitedStreams(({ cardId, streamId, sessionId, agentStatus }) => {
       for (const column of appStateRef.current.columns) {
         const card = column.cards[cardId]
         if (!card) {
           continue
+        }
+
+        if (agentStatus) {
+          const next = applyClaudeAgentStatusPush(card, { cardId, streamId, sessionId: sessionId ?? null, agentStatus })
+          if (next !== card) {
+            const action: IdeAction = { type: 'updateCard', columnId: column.id, cardId, patch: { messages: next.messages } }
+            persistAfterAction(action.type, applyAction(action))
+          }
+          return
         }
 
         if (card.status === 'streaming' && card.streamId) {
@@ -5636,7 +5646,7 @@ function App() {
 
       // The card is gone (closed/deleted): stop the orphaned stream so the
       // pooled process is not left running an unobserved turn.
-      void stopChat(streamId).catch(() => undefined)
+      if (!agentStatus) void stopChat(streamId).catch(() => undefined)
     })
   }, [applyAction, attachStream, getColumn, persistAfterAction])
 
@@ -5692,7 +5702,7 @@ function App() {
               command.lane,
               command.requirement,
               undefined,
-              { provider: command.provider, model: command.model },
+              { provider: command.provider, model: command.model, adminAccess: false },
             )
             return
           }
@@ -5706,6 +5716,9 @@ function App() {
             columnId: owner.id,
             paneId: getFirstPane(owner.layout).id,
             cardId,
+            // 默认开关是用户新建的授权种子，不能让 MCP 自建会话扩散权限。
+            // 见 default-admin-access 与 workspace-admin-create-session SPEC。
+            adminAccess: false,
             provider: command.provider,
             model: command.model,
           }
@@ -8288,6 +8301,24 @@ function App() {
 
   const renderCodexSafetySettings = (idPrefix: string) => (
     <div className="codex-safety-settings">
+      <div className="settings-hover-detail">
+        <label className="settings-toggle" htmlFor={`${idPrefix}-default-admin-access`}>
+          <span>{text.defaultAdminAccessLabel}</span>
+          <input
+            id={`${idPrefix}-default-admin-access`}
+            type="checkbox"
+            aria-describedby={`${idPrefix}-default-admin-access-note`}
+            checked={appState.settings.defaultAdminAccess}
+            onChange={(event) => applyAction({
+              type: 'updateSettings',
+              patch: { defaultAdminAccess: event.target.checked },
+            })}
+          />
+        </label>
+        <p id={`${idPrefix}-default-admin-access-note`} className="settings-note settings-hover-note" role="tooltip">
+          {text.defaultAdminAccessHint}
+        </p>
+      </div>
       {codexManagementPolicy?.supported ? (
         <div className="settings-toggle codex-management-policy-row">
           <span>
@@ -11282,6 +11313,7 @@ function App() {
             globalUrgeProfileId={appState.settings.autoUrgeGlobalProfileId}
             repeatLoopEnabled={appState.settings.repeatLoopEnabled}
             wakeTimerEnabled={appState.settings.wakeTimerEnabled}
+            defaultAdminAccess={appState.settings.defaultAdminAccess}
             onSetAutoUrgeEnabled={setAutoUrgeEnabled}
             onChangeColumn={(patch) => {
               if (patch.workspacePath !== undefined) {

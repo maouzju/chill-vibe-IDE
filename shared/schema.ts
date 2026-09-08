@@ -744,6 +744,7 @@ export const closeBehaviorSchema = z.enum(['quit', 'minimize', 'tray'])
 export type CloseBehavior = z.infer<typeof closeBehaviorSchema>
 
 export const appSettingsSchema = z.object({
+  defaultAdminAccess: z.boolean().default(false),
   language: appLanguageSchema.default('zh-CN'),
   theme: themeSchema.default('dark'),
   customThemeBase: customThemeBaseSchema.catch('dark').default('dark'),
@@ -1045,6 +1046,7 @@ export type StickyNoteVersionDocument = z.infer<typeof stickyNoteVersionDocument
 export const appStateSchema = z.object({
   version: z.literal(1),
   settings: appSettingsSchema.default({
+    defaultAdminAccess: false,
     language: 'zh-CN',
     theme: 'dark',
     customThemeBase: 'dark',
@@ -1906,6 +1908,14 @@ export const streamAgentsActivitySchema = z.object({
   agents: z.array(streamAgentEntrySchema).default([]),
 })
 export type StreamAgentsActivity = z.infer<typeof streamAgentsActivitySchema>
+
+export const claudeAgentStatusPushSchema = z.object({
+  cardId: z.string().min(1),
+  streamId: z.string().min(1),
+  sessionId: z.string().nullable(),
+  agentStatus: streamAgentsActivitySchema,
+})
+export type ClaudeAgentStatusPush = z.infer<typeof claudeAgentStatusPushSchema>
 
 export const askUserOptionSchema = z.object({
   label: z.string().min(1),

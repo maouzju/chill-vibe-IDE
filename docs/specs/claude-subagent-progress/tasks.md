@@ -31,6 +31,18 @@
 
 ## Slice 2 — 后续（不在本次范围）
 
+### 2026-09-08 用户要求继续修复
+
+- [x] 切片 A 红→绿：Workflow 失败/后台回执/原生任务别名/迟到终态。
+- [x] 切片 B 红→绿：pool 输出观察与进程级 runtime，跨回合/空闲计时及释放。
+- [x] 切片 C 红→绿：共享推送校验与前端纯状态更新，旧快照加载收敛。
+- [x] 窄回归 151/151；浏览器 12/12（含亮暗 Workflow 推送）；修改文件定向 ESLint 通过。
+- [x] 已运行全仓 quality：被并行更新器测试 `tests/updater.test.ts` 的未使用导入阻塞，本次不改写其 WIP。
+- [x] Windows zip 打包成功：`dist/release-20260908-192743/Chill Vibe-0.20.17-win.zip`；核验 asar 中 runtime、共享状态模块及 keepalive 接线；保留用户运行实例。
+
+- [x] 2026-09-08：定位旧包 Workflow 计时结束快照漏发；在已有收尾修正上补端到端解析器守卫，旧包等价缺陷探针红、当前代码绿。
+- [x] Workflow 失败结果与后台任务 ID 关联、跨回合生命周期：不把工具调用兜底条目等同于实际仍在运行的子代理。
+
 - [ ] 子代理明细展开：消费 sidechain 行，点开面板可看到子代理内部的逐条工具调用。
 - [ ] 回合结束但仍有子代理在跑时的收尾策略（对齐 Codex 的 `markRootTurnCompleted` 延迟结算）。
 - [ ] `system:task_notification` 的 `summary` / `output_file` 接入卡片，便于回看子代理产出。

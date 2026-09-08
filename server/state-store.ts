@@ -3,6 +3,7 @@ import { copyFile, mkdir, open, readdir, readFile, rename, rm, stat, unlink, wri
 import path from 'node:path'
 
 import { getChatMessageAttachments } from '../shared/chat-attachments.js'
+import { retireUntrackedClaudeAgents } from '../shared/claude-agent-push.js'
 import {
   archiveOpenChatsForCrashRecovery,
   automationBoardSupervisorTemplateId,
@@ -2922,7 +2923,18 @@ export const loadStateForRenderer = async (): Promise<AppStateLoadResponse> => {
   const state = await loadRendererStartupState(dataDir)
   const recentCrash = await readRecentCrashRecovery(dataDir)
   const interruptedSessions = recentCrash ? null : inspectInterruptedSessionRecovery(state)
-  const rendererState = renderInterruptedSessionsAsIdle(state, interruptedSessions)
+  const recoveredState = renderInterruptedSessionsAsIdle(state, interruptedSessions)
+  // 启动快照不拥有上一进程的时钟。旧版 idle 卡也可能残留 running，不能只修 streaming 卡。
+  // 保留历史耗时并标中断；新进程的状态推送会另行恢复真实追踪，见 claude-subagent-progress。
+  const rendererState = {
+    ...recoveredState,
+    columns: recoveredState.columns.map((column) => ({
+      ...column,
+      cards: Object.fromEntries(Object.entries(column.cards).map(([id, card]) => [id, {
+        ...card, messages: retireUntrackedClaudeAgents(card.messages),
+      }])),
+    })),
+  }
 
   // Reuse the sanitized startup state, then trim archived session history before
   // sending it to the renderer so packaged startup does not clone extra data.

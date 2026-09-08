@@ -164,6 +164,7 @@ type WorkspaceColumnProps = {
   globalUrgeProfileId: string
   repeatLoopEnabled?: boolean
   wakeTimerEnabled?: boolean
+  defaultAdminAccess?: boolean
   onSetAutoUrgeEnabled: (enabled: boolean) => void
   onChangeColumn: (
     patch: Partial<Pick<BoardColumn, 'title' | 'provider' | 'workspacePath' | 'model'>>,
@@ -282,6 +283,7 @@ const WorkspaceColumnView = ({
   globalUrgeProfileId,
   repeatLoopEnabled = false,
   wakeTimerEnabled = false,
+  defaultAdminAccess = false,
   onSetAutoUrgeEnabled,
   onChangeColumn,
   onChangeCardModel,
@@ -1236,6 +1238,7 @@ const WorkspaceColumnView = ({
           globalUrgeProfileId={globalUrgeProfileId}
           repeatLoopEnabled={repeatLoopEnabled}
           wakeTimerEnabled={wakeTimerEnabled}
+          defaultAdminAccess={defaultAdminAccess}
           onSetAutoUrgeEnabled={onSetAutoUrgeEnabled}
           onAddTab={onAddTab}
           onSplitPane={onSplitPane}

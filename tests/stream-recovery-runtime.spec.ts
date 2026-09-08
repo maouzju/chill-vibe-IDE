@@ -32,7 +32,7 @@ const hasDesktopStreamSubscription = async (page: Page, streamId: string) =>
 
 const installMockDesktopBridge = async (
   page: Page,
-  options: { maxRetries?: number; nativeFork?: boolean; deferNativeFork?: boolean } = {},
+  options: { maxRetries?: number; nativeFork?: boolean; deferNativeFork?: boolean; claude?: boolean; theme?: 'light' | 'dark' } = {},
 ) => {
   await page.addInitScript(() => {
     const subscriptionsByStream = new Map<string, Set<string>>()
@@ -213,7 +213,7 @@ const installMockDesktopBridge = async (
     settings: {
       activeTopTab: 'ambience',
       language: 'en' as const,
-      theme: 'dark' as const,
+      theme: options.theme ?? 'dark',
       fontScale: 1,
       lineHeightScale: 1,
       resilientProxyEnabled: true,
@@ -251,7 +251,7 @@ const installMockDesktopBridge = async (
             title: 'Recoverable Chat',
             status: 'streaming',
             size: 560,
-            provider: 'codex' as const,
+            provider: options.claude ? 'claude' as const : 'codex' as const,
             model: 'gpt-5.5',
             reasoningEffort: 'medium',
             draft: '',
@@ -662,6 +662,33 @@ test('transient-only reconnect errors do not exhaust the recovery budget', async
 // the card back to work. That path never goes through sendMessage / manual resume,
 // so before this was wired the sticky "重连失败" banner stayed on screen over a
 // card that was visibly running again (2026-07-31 实测：判失败后又跑了 15 分钟).
+for (const theme of ['light', 'dark'] as const) {
+  test(`后台 Workflow 推送更新耗时但不新开聊天流 ${theme}`, async ({ page }) => {
+    const mock = await installMockDesktopBridge(page, { claude: true, theme })
+    await page.goto(appUrl)
+    await expect(page.locator('.pane-tab-panel.is-active .composer textarea').first()).toBeVisible()
+    await expect.poll(() => hasDesktopStreamSubscription(page, 'stream-1')).toBe(true)
+    for (const seconds of [90, 210]) {
+      await page.evaluate((value) => {
+        window.dispatchEvent(new CustomEvent('chill-vibe:unsolicited-stream', { detail: {
+          cardId: 'card-1', streamId: 'agent-runtime:test', sessionId: 'session-1',
+          agentStatus: { itemId: 'agent-status:claude', kind: 'agents', status: 'completed', view: 'status',
+            agents: [{ threadId: 'workflow:test', nickname: 'Workflow', status: 'running', activity: [`running ${value}s`] }] },
+        } }))
+      }, seconds)
+      await expect(page.locator('.structured-agent-activity-line')).toHaveText(`running ${seconds}s`)
+    }
+    expect(await hasDesktopStreamSubscription(page, 'agent-runtime:test')).toBe(false)
+    expect(mock.readState().columns[0]?.cards['card-1']?.streamId).toBe('stream-1')
+    await page.evaluate(() => window.dispatchEvent(new CustomEvent('chill-vibe:unsolicited-stream', { detail: {
+      cardId: 'card-1', streamId: 'agent-runtime:test', sessionId: 'session-1',
+      agentStatus: { itemId: 'agent-status:claude', kind: 'agents', status: 'completed', view: 'status', agents: [] },
+    } })))
+    await expect(page.locator('.structured-agent-status-entry')).toHaveCount(0)
+    await expect(page.locator('.structured-agents-card')).toHaveCount(1)
+  })
+}
+
 test('an unsolicited keepalive wake-up retires the stale failed banner', async ({ page }) => {
   const mock = await installMockDesktopBridge(page)
   await page.goto(appUrl)

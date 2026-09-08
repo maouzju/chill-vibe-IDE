@@ -21,6 +21,29 @@ import {
 } from '../server/claude-completion-boundary.ts'
 import { createClaudeTurnParser } from '../server/providers.ts'
 
+test('ChatManager 的后台计时推送不创建 unsolicited 聊天流', async (t) => {
+  const notifications: unknown[] = []
+  const manager = new ChatManager({ enableClaudeKeepalive: true, onUnsolicitedStream: (n) => notifications.push(n) })
+  t.after(() => manager.closeAll())
+  const pool = (manager as unknown as { claudePool: ClaudeSessionPool }).claudePool
+  const stdout = new PassThrough()
+  const emitter = new EventEmitter()
+  const child: ClaudeSessionPoolChild = {
+    stdout, stderr: new PassThrough(), stdin: { write: () => true, end: () => {} }, kill: () => true,
+    on: (event, cb) => emitter.on(event, cb), once: (event, cb) => emitter.once(event, cb),
+  }
+  await pool.acquireForTurn({ key: 'runtime-card', signature: 'sig', sessionId: 'session', meta: { language: 'zh-CN' }, spawn: async () => child })
+  stdout.write(JSON.stringify({ type: 'assistant', message: { content: [{ type: 'tool_use', id: 'w1', name: 'Workflow' }] } }) + '\n')
+  assert.equal(notifications.length, 1)
+  const first = notifications[0] as { streamId: string; agentStatus: { agents: unknown[] } }
+  assert.equal(first.agentStatus.agents.length, 1)
+  assert.equal((manager as unknown as { streams: Map<string, unknown> }).streams.size, 0)
+  pool.releaseEntry('runtime-card', child)
+  const last = notifications.at(-1) as typeof first
+  assert.equal(last.streamId, first.streamId)
+  assert.deepEqual(last.agentStatus.agents, [])
+})
+
 test('Claude Stop snapshot distinguishes native background work from terminal completion', async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), 'claude-completion-boundary-'))
   const snapshotPath = path.join(root, 'stop.json')

@@ -75,6 +75,13 @@ export function resolveDownloadedAssetStrategy(
   return 'shell-open'
 }
 
+export function isDownloadedAssetPathAllowed(
+  assetPath: string,
+  allowedPaths: ReadonlySet<string>,
+): boolean {
+  return allowedPaths.has(assetPath)
+}
+
 export type DownloadResponseLike = {
   ok: boolean
   status: number

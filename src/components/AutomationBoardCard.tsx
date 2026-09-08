@@ -130,6 +130,7 @@ export type AutomationBoardCardProps = {
   templates: AutomationBoardTemplate[]
   /** 这一列的 provider/model，只在这张看板还没存过 `composeDefaults` 时兜底。 */
   defaultProvider: Provider
+  defaultAdminAccess: boolean
   defaultModel: string
   wakeTimerEnabled: boolean
   repeatLoopEnabled: boolean
@@ -995,7 +996,7 @@ const AutomationBoardCardView = (props: AutomationBoardCardProps) => {
     reasoningEffort: '',
     thinkingEnabled: true,
     planMode: false,
-    adminAccess: false,
+    adminAccess: props.defaultAdminAccess,
   }
   const [composeSettingsOpen, setComposeSettingsOpen] = useState(false)
   const textareaRef = useRef<HTMLTextAreaElement | null>(null)

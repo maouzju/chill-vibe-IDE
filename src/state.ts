@@ -284,6 +284,7 @@ export type IdeAction =
           | 'codexFastMode'
           | 'agentOutsideWorkspaceWriteEnabled'
           | 'codexDestructiveCommandProtectionEnabled'
+          | 'defaultAdminAccess'
           | 'codexIsolatedHomeEnabled'
           | 'gitAgentModel'
           | 'providerProfiles'
@@ -359,6 +360,7 @@ export type IdeAction =
       model?: string
       reasoningEffort?: string
       stickyNote?: string
+      adminAccess?: boolean
     }
   | {
       type: 'spawnRepeatLoopTab'
@@ -2071,7 +2073,13 @@ const ideReducerCore = (state: AppState, action: IdeAction): AppState => {
 
       return touchState({
         ...state,
-        columns: [...state.columns, nextColumn],
+        columns: [...state.columns, action.column ? nextColumn : {
+          ...nextColumn,
+          cards: Object.fromEntries(Object.entries(nextColumn.cards).map(([id, card]) => [id, {
+            ...card,
+            adminAccess: !toolCardModels.has(card.model) && state.settings.defaultAdminAccess,
+          }])),
+        }],
       })
     }
     case 'duplicateColumn': {
@@ -2379,6 +2387,7 @@ const ideReducerCore = (state: AppState, action: IdeAction): AppState => {
             state.settings.language,
           ),
           id: action.cardId ?? createId(),
+          adminAccess: !toolCardModels.has(model) && (action.adminAccess ?? state.settings.defaultAdminAccess),
           // 唤醒方式跟模型默认同一个语义：只喂新 Tab，不回溯改写已开的卡
           // （AGENTS.md pitfall #40）。开关本身仍默认关闭 —— 记住的是"怎么等"，
           // 不是"要不要等"。
@@ -3198,15 +3207,17 @@ const ideReducerCore = (state: AppState, action: IdeAction): AppState => {
       //   settings.requestModels；聊天卡走的一直是 getEffectiveCardModel。
       // 为什么不留空串让发送时再解析：看板项卡在列表上直接显示 card.model，
       //   template-sync 也拿它和模板比对，都需要一个具体型号（pitfall #363）。
+      const itemModel = getEffectiveCardModel(state.settings, provider, action.model ?? column.model)
       const itemCard: ChatCard = {
         ...createAutomationBoardItemCard({
           requirement,
           provider,
-          model: getEffectiveCardModel(state.settings, provider, action.model ?? column.model),
+          model: itemModel,
           reasoningEffort: action.reasoningEffort,
           thinkingEnabled: action.thinkingEnabled,
           planMode: action.planMode,
-          adminAccess: action.adminAccess,
+          // 与 addTab 同一道守卫：工具卡永不提权，默认开关只播种给会话卡（default-admin-access SPEC）。
+          adminAccess: !toolCardModels.has(itemModel) && (action.adminAccess ?? state.settings.defaultAdminAccess),
           language: state.settings.language,
         }),
         ...(action.cardId ? { id: action.cardId } : {}),

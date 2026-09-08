@@ -114,6 +114,7 @@ const app = await electron.launch({
     // 关掉它不削弱结论：判据取的是守卫日志里那句 stand-down，即「守卫没有拉起旧版」，
     // 而不是「新版侥幸抢到了锁」。
     CHILL_VIBE_DISABLE_SINGLE_INSTANCE_LOCK: '1',
+    CHILL_VIBE_ALLOW_EXTERNAL_UPDATE_PATH: '1',
   },
   timeout: 120_000,
 })

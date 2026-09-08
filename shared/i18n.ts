@@ -203,6 +203,8 @@ type LocaleText = {
   planModeHint: string
   // 超管权限：这个会话能读写同一工作区里的其他会话。任何卡片都能开。
   adminAccessLabel: string
+  defaultAdminAccessLabel: string
+  defaultAdminAccessHint: string
   adminAccessHint: string
   adminAccessBadgeTitle: string
   placeholderSetWorkspace: string
@@ -711,6 +713,8 @@ const localeTextByLanguage: Record<AppLanguage, LocaleText> = {
     planMode: '计划模式',
     planModeHint: 'Claude 专用：先只读地调研并给出方案，等你点头再动代码。适合大改动前先看清楚它想干什么。',
     adminAccessLabel: '超管权限',
+    defaultAdminAccessLabel: '默认开启超管模式',
+    defaultAdminAccessHint: '仅对之后新建的会话生效，允许查看和操作本工作区的其他会话。已有会话不变，单个会话和看板参数仍可单独关闭；Agent 自建会话不自动获得超管权限。',
     adminAccessHint: '开启后，这个会话可以查看并操作本工作区的其他会话（发消息、换泳道、挂唤醒）。',
     adminAccessBadgeTitle: '这个会话有超管权限',
     forkConversation: '从此处分叉',
@@ -1249,6 +1253,8 @@ const localeTextByLanguage: Record<AppLanguage, LocaleText> = {
     planMode: 'Plan mode',
     planModeHint: 'Claude only: research read-only and propose a plan first, then wait for your approval before touching code. Useful before a large change.',
     adminAccessLabel: 'Admin access',
+    defaultAdminAccessLabel: 'Enable admin access by default',
+    defaultAdminAccessHint: 'New sessions can view and operate other sessions in this workspace. Existing sessions stay unchanged; session and board settings can override this. Agent-created sessions never receive admin access automatically.',
     adminAccessHint:
       'Lets this session inspect and act on the other sessions in this workspace — message them, move them between lanes, arm wake timers.',
     adminAccessBadgeTitle: 'This session has admin access',

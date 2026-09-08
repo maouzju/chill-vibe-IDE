@@ -3,6 +3,7 @@ import type { ChildProcess } from 'node:child_process'
 import type { Request, Response } from 'express'
 
 import type {
+  ClaudeAgentStatusPush,
   ChatRequest,
   StreamActivity,
   StreamAssistantMessage,
@@ -10,6 +11,8 @@ import type {
   StreamErrorHint,
   StreamEventMap,
 } from '../shared/schema.js'
+import { createClaudeAgentRuntime } from './claude-agent-runtime.js'
+import { readClaudeCompletionBoundary } from './claude-completion-boundary.js'
 import {
   ClaudeSessionPool,
   type ClaudeSessionPoolEntryView,
@@ -75,6 +78,8 @@ type StreamRecord = {
 export type UnsolicitedStreamNotification = {
   cardId: string
   streamId: string
+  sessionId?: string | null
+  agentStatus?: ClaudeAgentStatusPush['agentStatus']
 }
 
 export type ChatStreamStopResult = {
@@ -323,6 +328,21 @@ export class ChatManager {
       options?.workspaceSnapshotTimeoutMs ?? workspaceSnapshotHardTimeoutMs
     this.claudePool = options?.enableClaudeKeepalive
       ? new ClaudeSessionPool({
+          onProcessAcquired: (entry) => {
+            const runtimeId = `agent-runtime:${crypto.randomUUID()}`
+            entry.meta.externalAgentTracking = true
+            const runtime = createClaudeAgentRuntime({
+              language: entry.meta.language === 'en' ? 'en' : 'zh-CN',
+              readCompletionBoundary: () => typeof entry.meta.completionBoundaryPath === 'string'
+                ? readClaudeCompletionBoundary(entry.meta.completionBoundaryPath) : 'unknown',
+              publish: (agentStatus) => {
+                if (!this.claudePool?.isCurrentChild(entry.key, entry.child)) return
+                this.onUnsolicitedStream?.({ cardId: entry.key, streamId: runtimeId,
+                  sessionId: this.claudePool.getSessionId(entry.key), agentStatus })
+              },
+            })
+            this.claudePool?.observeProcess(entry.key, entry.child, runtime)
+          },
           shouldWakeOnLine: isClaudeTurnStartLine,
           shouldIgnoreIdleLine: isClaudeSidechainLine,
           onUnsolicited: (entry, attach) => {

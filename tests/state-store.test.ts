@@ -48,6 +48,20 @@ describe('state-store persistence', () => {
     assert.ok(loaded.columns.length > 0)
   })
 
+  it('renderer startup retires stale Claude agent panels even when the old card was idle', async () => {
+    const { saveState, loadStateForRenderer } = await import('../server/state-store.ts')
+    const state = createDefaultState('D:/stale-workflow')
+    const card = getFirstCard(state)!
+    card.provider = 'claude'
+    card.status = 'idle'
+    card.messages = [{ id: 'stale', role: 'assistant', content: '', createdAt: new Date().toISOString(), meta: { provider: 'claude', kind: 'agents', structuredData: JSON.stringify({ view: 'status', agents: [{ threadId: 'workflow:old', status: 'running', activity: ['⏳ 已运行 1分34秒'] }] }) } }]
+    await saveState(state)
+    const loaded = await loadStateForRenderer()
+    const agent = JSON.parse(getFirstCard(loaded.state)!.messages[0].meta!.structuredData!).agents[0]
+    assert.equal(agent.status, 'interrupted')
+    assert.deepEqual(agent.activity, ['⏳ 已运行 1分34秒'])
+  })
+
   it('keeps the full live-card message count when state.json trims the transcript tail', async () => {
     const { saveState, loadState } = await import('../server/state-store.ts')
     const state = createDefaultState('D:/trimmed-live-card-count')

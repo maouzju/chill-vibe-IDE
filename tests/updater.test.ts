@@ -18,12 +18,19 @@ import {
   selectPlatformAsset,
   parseReleaseResponse,
   resolveDownloadedAssetStrategy,
+  isDownloadedAssetPathAllowed,
   UPDATE_EXIT_FLUSH_DELAY_MS,
 } from '../electron/updater-core.ts'
 import {
   launchDetachedPowerShellScriptFile,
   resolveWindowsPowerShellPath,
 } from '../electron/updater-launch.ts'
+
+test('update installation only accepts an explicitly downloaded asset path', () => {
+  const allowed = new Set(['/tmp/update.zip'])
+  assert.equal(isDownloadedAssetPathAllowed('/tmp/update.zip', allowed), true)
+  assert.equal(isDownloadedAssetPathAllowed('/tmp/calc.exe', allowed), false)
+})
 
 describe('parseVersionTag', () => {
   test('strips v prefix', () => {

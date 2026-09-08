@@ -4,6 +4,7 @@ import type {
   StreamAgentsActivity,
   StreamAgentStatus,
 } from '../shared/schema.js'
+import { parseClaudeToolResults } from './claude-tool-result.js'
 
 // 症状：Claude 派发子代理后卡片只剩一个通用计时器，用户无法判断跑到哪一步、是否卡住。
 // 根因：2026-08-09 实测 claude 2.1.206 的 stream-json stdout（168 行）证明 CLI 在顶层
@@ -43,6 +44,10 @@ export type ClaudeAgentTrackerUpdate = {
 // 前缀必须是 `agent-status:`：src/codex-agent-status-slash.ts 靠它回溯最近一次子代理快照，
 // 换成别的前缀会让 /agents 斜杠命令在 Claude 会话里退化成模糊 fallback。
 const claudeAgentStatusItemId = 'agent-status:claude'
+
+// 合成条目以派发它的 tool_use_id 为键：CLI 随后发出的 system:task_* 带着同一个
+// tool_use_id，tracker 靠它把兜底条目换成真实子代理，两边都不能各自拼字符串。
+export const syntheticClaudeAgentId = (toolUseId: string) => `workflow:${toolUseId}`
 
 const subAgentSubtypes = new Set([
   'task_started',
@@ -168,6 +173,8 @@ export const createClaudeAgentStatusTracker = ({
 }: ClaudeAgentStatusTrackerOptions = {}) => {
   const order: string[] = []
   const agents = new Map<string, TrackedAgent>()
+  const aliases = new Map<string, string>()
+  const background = new Set<string>()
 
   const ensureAgent = (
     taskId: string,
@@ -224,6 +231,60 @@ export const createClaudeAgentStatusTracker = ({
       return Boolean(agent && isRunningStatus(agent.status))
     })
 
+  // 症状：Fable 5.1 / 新 CLI 有时只发 Workflow 的 tool_use、不发 system:task_*，面板整轮空白，
+  //       用户只能看到一段静态汇总文字；而一旦按 tool_use 先建条目兜底，正常派发 Task/Agent 时
+  //       面板又会多出一条永不退役的「子代理」——真实那条完成后它仍在"已运行 …"，直到整轮结束。
+  // 根因：2026-09-08 发布审计实测 claude 2.1.263 正常派发仍发 task_started，且带着同一个
+  //       tool_use_id；合成条目与真实条目键不同，谁也不认识谁。
+  // 被否决：只给 Workflow 建合成条目——Task/Agent 同样会撞上不发 task_* 的 CLI；
+  //         改为按 tool_use_id 关联，真实事件一到就把兜底条目换掉（见 retireSyntheticFor）。
+  const beginSynthetic = (taskId: string, toolName: string): StreamAgentsActivity => {
+    if (agents.has(aliases.get(taskId) ?? taskId)) return snapshot()
+    const fallbackNickname = language === 'en' ? 'Sub-agent' : '子代理'
+    ensureAgent(taskId, {
+      nickname: toolName === 'Workflow' ? 'Workflow' : fallbackNickname,
+      role: toolName,
+      status: 'running',
+    })
+    return snapshot()
+  }
+
+  // 返回是否真的收掉了一条仍在跑的合成条目；已被真实事件换掉的返回 false，
+  // 调用方据此决定要不要再广播一次快照，避免整轮末尾多推一张空面板。
+  const completeSynthetic = (taskId: string): boolean => {
+    const agent = agents.get(taskId)
+    if (!agent || !isRunningStatus(agent.status)) {
+      return false
+    }
+    agent.status = 'completed'
+    return true
+  }
+
+  const retireSyntheticFor = (event: JsonRecord) => {
+    const toolUseId = readString(event, 'tool_use_id')
+    if (!toolUseId) {
+      return
+    }
+    const syntheticId = syntheticClaudeAgentId(toolUseId)
+    // 已有后台回执别名仍指向该条目，不能删掉它再从零建时钟。
+    if (background.has(syntheticId)) return
+    const previous = agents.get(syntheticId)
+    const nativeId = readString(event, 'task_id')
+    if (previous && nativeId) {
+      agents.set(nativeId, { ...previous, threadId: nativeId })
+      aliases.set(syntheticId, nativeId)
+      if (background.delete(syntheticId)) background.add(nativeId)
+    }
+    if (!agents.delete(syntheticId)) {
+      return
+    }
+    const index = order.indexOf(syntheticId)
+    if (index >= 0) {
+      order.splice(index, 1)
+      if (nativeId && !order.includes(nativeId)) order.splice(index, 0, nativeId)
+    }
+  }
+
   const pushPreview = (agent: TrackedAgent, line: string) => {
     agent.activity.push(line)
     while (agent.activity.length > maxPreviewItems) {
@@ -231,25 +292,98 @@ export const createClaudeAgentStatusTracker = ({
     }
   }
 
+  const resolveTask = (id: string) => aliases.get(id) ?? id
+  const settleAll = (status: StreamAgentStatus = 'interrupted') => {
+    for (const agent of agents.values()) {
+      if (isRunningStatus(agent.status)) agent.status = status
+    }
+    return snapshot()
+  }
+
+  // status 由调用方按回合结局给：正常结束是 completed，回合报错是 interrupted。
+  // 跨回合保留的后台条目两种情况都不动——它们的终态只能来自原生 task_* 事件。
+  const finishTurn = (keepBackground: boolean, status: StreamAgentStatus = 'completed') => {
+    for (const agent of agents.values()) {
+      if (isRunningStatus(agent.status) && !(keepBackground && background.has(agent.threadId))) {
+        agent.status = status
+      }
+    }
+    return snapshot()
+  }
+
   const handleEvent = (value: unknown): ClaudeAgentTrackerUpdate => {
-    if (!isRecord(value) || value.type !== 'system') {
+    if (!isRecord(value) || readString(value, 'parent_tool_use_id')) {
       return { handled: false }
     }
+
+    // 2026-09-08 原生记录：Workflow 可立即报文件不存在，也可返回后台 task id。
+    // 不能把 tool_result 一律当完成；别名让后续 task_notification 结算同一计时器。
+    if (value.type === 'user') {
+      let changed = false
+      for (const result of parseClaudeToolResults(value.message)) {
+        const syntheticId = syntheticClaudeAgentId(result.toolUseId)
+        const id = resolveTask(syntheticId)
+        const agent = agents.get(id)
+        if (!agent || !isRunningStatus(agent.status)) continue
+        const task = /^Workflow launched in background\. Task ID:\s*(\S+)/u.exec(result.text)
+        if (result.isError || /^<tool_use_error>/u.test(result.text)) {
+          agent.status = 'errored'
+        } else if (task) {
+          aliases.set(task[1], id)
+          background.add(id)
+        } else if (id !== syntheticId) {
+          // 已被原生 task_started 认领：后台 Agent/Task 的「Async agent launched」回执在
+          // task_started 之后才到，它只是派发回执，终态由 system:task_notification 决定。
+          // 2026-09-08 实测 claude 2.1.263；前台 Agent 的回执晚于终态，走上面的 continue。
+          continue
+        } else if (!background.has(id)) {
+          agent.status = 'completed'
+        }
+        changed = true
+      }
+      const message = readRecord(value, 'message')
+      const content = message?.content
+      const notification = (typeof content === 'string' ? content : Array.isArray(content)
+        ? content.filter((block) => isRecord(block) && block.type === 'text').map((block) => block.text).join('')
+        : '').trim()
+      if (notification.startsWith('<task-notification>') && notification.endsWith('</task-notification>')) {
+        const taskId = /<task-id>([^<]+)<\/task-id>/u.exec(notification)?.[1]
+        const toolId = /<tool-use-id>([^<]+)<\/tool-use-id>/u.exec(notification)?.[1]
+        const status = /<status>([^<]+)<\/status>/u.exec(notification)?.[1]
+        const agent = agents.get(resolveTask(taskId ?? '')) ?? agents.get(resolveTask(`workflow:${toolId}`))
+        if (agent && status) {
+          agent.status = mapTerminalStatus(status)
+          changed = true
+        }
+      }
+      return { handled: false, ...(changed ? { activity: snapshot() } : {}) }
+    }
+    if (value.type !== 'system') return { handled: false }
 
     const subtype = readString(value, 'subtype')
     if (!subtype || !subAgentSubtypes.has(subtype)) {
       return { handled: false }
     }
 
-    const taskId = readString(value, 'task_id')
-    if (!taskId) {
+    const nativeId = readString(value, 'task_id')
+    if (!nativeId) {
       return { handled: true }
     }
+    const toolUseId = readString(value, 'tool_use_id')
+    const synthetic = toolUseId ? agents.get(syntheticClaudeAgentId(toolUseId)) : undefined
+    if (synthetic?.role === 'Workflow') {
+      aliases.set(nativeId, synthetic.threadId)
+      background.add(synthetic.threadId)
+    }
+    const taskId = resolveTask(nativeId)
+    const known = agents.get(taskId)
+    if (known && !isRunningStatus(known.status)) return { handled: true }
 
     if (subtype === 'task_started') {
-      if (!looksLikeSubAgentTask(value)) {
+      if (!known && !looksLikeSubAgentTask(value)) {
         return { handled: true }
       }
+      retireSyntheticFor(value)
       ensureAgent(taskId, {
         nickname: readString(value, 'description'),
         role: readString(value, 'subagent_type'),
@@ -259,7 +393,7 @@ export const createClaudeAgentStatusTracker = ({
     }
 
     if (subtype === 'task_progress') {
-      if (!looksLikeSubAgentTask(value)) {
+      if (!known && !looksLikeSubAgentTask(value)) {
         return { handled: true }
       }
 
@@ -269,6 +403,7 @@ export const createClaudeAgentStatusTracker = ({
       }
 
       // 心跳先于 task_started 到达（或该轮是恢复出来的）时仍要显示，否则面板会漏掉整个子代理。
+      retireSyntheticFor(value)
       const agent = ensureAgent(taskId, {
         role: readString(value, 'subagent_type'),
         status: 'running',
@@ -299,6 +434,14 @@ export const createClaudeAgentStatusTracker = ({
     handleEvent,
     snapshot,
     hasRunningAgents,
+    beginSynthetic,
+    completeSynthetic,
+    settleAll,
+    finishTurn,
+    hasBackgroundAgents: () => [...background].some((id) => {
+      const agent = agents.get(id)
+      return agent && isRunningStatus(agent.status)
+    }),
     getAgent: (taskId: string) => {
       const agent = agents.get(taskId)
       return agent ? publicAgent(agent) : undefined

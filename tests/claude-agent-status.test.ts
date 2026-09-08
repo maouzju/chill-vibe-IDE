@@ -4,6 +4,7 @@ import test from 'node:test'
 import {
   claudeAgentElapsedPrefix,
   createClaudeAgentStatusTracker,
+  syntheticClaudeAgentId,
 } from '../server/claude-agent-status'
 
 // 面板底部那行本地推算的"已运行"不是 CLI 活动，断言真实进度行时要先滤掉。
@@ -12,6 +13,67 @@ const progressLines = (activity: string[] | undefined) =>
 
 const elapsedLine = (activity: string[] | undefined) =>
   (activity ?? []).find((line) => line.startsWith(claudeAgentElapsedPrefix))
+
+test('Workflow failure retires immediately, background receipt binds task id without resetting elapsed', () => {
+  let now = 1_000_000
+  const tracker = createClaudeAgentStatusTracker({ now: () => now })
+  tracker.beginSynthetic('workflow:failed', 'Workflow')
+  tracker.handleEvent({ type: 'user', message: { content: [
+    { type: 'tool_result', tool_use_id: 'failed', is_error: true, content: '<tool_use_error>Workflow script file not found</tool_use_error>' },
+  ] } })
+  assert.equal(tracker.hasRunningAgents(), false)
+  assert.equal(tracker.getAgent('workflow:failed')?.status, 'errored')
+  tracker.beginSynthetic('workflow:started', 'Workflow')
+  now += 60_000
+  tracker.handleEvent({ type: 'user', message: { content: [
+    { type: 'tool_result', tool_use_id: 'started', content: 'Workflow launched in background. Task ID: w123\nSummary: test' },
+  ] } })
+  tracker.handleEvent({ type: 'system', subtype: 'task_started', task_id: 'w123', tool_use_id: 'started', task_type: 'local_workflow' })
+  assert.equal(tracker.snapshot().agents.length, 1)
+  assert.equal(elapsedLine(tracker.snapshot().agents[0]?.activity), '⏳ 已运行 1分0秒')
+  tracker.handleEvent({ type: 'system', subtype: 'task_notification', task_id: 'unrelated', status: 'completed' })
+  assert.equal(tracker.hasRunningAgents(), true)
+  tracker.handleEvent({ type: 'system', subtype: 'task_notification', task_id: 'w123', status: 'completed' })
+  assert.equal(tracker.hasRunningAgents(), false)
+  tracker.handleEvent({ type: 'system', subtype: 'task_progress', task_id: 'w123', subagent_type: 'Workflow', description: 'late progress' })
+  assert.equal(tracker.hasRunningAgents(), false, '迟到进度不能复活终态')
+})
+
+test('Workflow native notification text settles only the matched tool, not sidechain or quoted user text', () => {
+  const tracker = createClaudeAgentStatusTracker()
+  tracker.beginSynthetic('workflow:one', 'Workflow')
+  const notification = '<task-notification>\n<task-id>w1</task-id>\n<tool-use-id>one</tool-use-id>\n<status>stopped</status>\n</task-notification>'
+  tracker.handleEvent({ type: 'user', parent_tool_use_id: 'child', message: { content: notification } })
+  assert.equal(tracker.hasRunningAgents(), true)
+  tracker.handleEvent({ type: 'user', message: { content: '请解释：' + notification } })
+  assert.equal(tracker.hasRunningAgents(), true)
+  tracker.handleEvent({ type: 'user', message: { content: notification } })
+  assert.equal(tracker.hasRunningAgents(), false)
+  assert.equal(tracker.getAgent('workflow:one')?.status, 'interrupted')
+})
+
+test('块数组里的原生 Workflow 通知也能停止计时', () => {
+  const tracker = createClaudeAgentStatusTracker()
+  tracker.beginSynthetic('workflow:one', 'Workflow')
+  tracker.handleEvent({ type: 'user', message: { content: [{ type: 'text', text: '<task-notification><tool-use-id>one</tool-use-id><status>completed</status></task-notification>' }] } })
+  assert.equal(tracker.hasRunningAgents(), false)
+})
+
+test('原生任务先于后台回执时仍继承启动时间，重复派发与 progress 不重置它', () => {
+  let now = 1_000_000
+  const tracker = createClaudeAgentStatusTracker({ now: () => now })
+  tracker.beginSynthetic('workflow:one', 'Workflow')
+  now += 90_000
+  tracker.handleEvent({ type: 'system', subtype: 'task_started', task_id: 'w1', tool_use_id: 'one', task_type: 'local_workflow' })
+  tracker.handleEvent({ type: 'system', subtype: 'task_progress', task_id: 'w1', tool_use_id: 'one', subagent_type: 'Workflow', description: 'working' })
+  tracker.handleEvent({ type: 'user', message: { content: [{ type: 'tool_result', tool_use_id: 'one', content: 'Workflow launched in background. Task ID: w1\n' }] } })
+  tracker.beginSynthetic('workflow:one', 'Workflow')
+  tracker.finishTurn(true)
+  assert.equal(tracker.snapshot().agents.length, 1)
+  assert.equal(elapsedLine(tracker.snapshot().agents[0]?.activity), '⏳ 已运行 1分30秒')
+  tracker.handleEvent({ type: 'system', subtype: 'task_notification', task_id: 'w1', status: 'completed' })
+  assert.equal(tracker.hasRunningAgents(), false)
+})
 
 // 事件样本取自 2026-08-09 对 claude 2.1.206 的实测 stdout（-p --verbose
 // --output-format stream-json --include-partial-messages），字段名与嵌套结构
@@ -363,4 +425,82 @@ test('progress for an unknown task still registers it so late joiners are visibl
   assert.equal(update.handled, true)
   assert.equal(update.activity?.agents.length, 1)
   assert.equal(update.activity?.agents[0]?.threadId, taskId)
+})
+
+// 症状：模型每派发一次 Task/Agent，「正在运行的子智能体」面板就多出一条永不退役的「子代理」，
+//       真实子代理完成后它仍在"已运行 …"，15s 心跳一直重绘，直到整轮结束才被收掉。
+// 根因：2026-09-08 发布审计实测——providers 在 tool_use 到达时先按 tool_use_id 建一条合成
+//       条目兜底（Fable 新 CLI 有时不发 system:task_*），但 claude 2.1.263 正常派发时仍会发
+//       task_started，且带着同一个 tool_use_id；两条目键不同，谁也不认识谁。
+// 被否决：只给 Workflow 建合成条目——Task/Agent 同样会撞上不发 task_* 的 CLI；
+//         按 tool_use_id 关联才能兜底与真实两头都对。
+test('a synthetic dispatch entry is replaced once the CLI reports task_started for the same tool_use_id', () => {
+  const tracker = createClaudeAgentStatusTracker()
+  const syntheticId = syntheticClaudeAgentId(toolUseId)
+  tracker.beginSynthetic(syntheticId, 'Task')
+  assert.equal(tracker.snapshot().agents.length, 1)
+
+  const update = tracker.handleEvent(taskStarted())
+  assert.equal(update.activity?.agents.length, 1, 'one dispatch must render as one entry')
+  assert.equal(update.activity?.agents[0]?.threadId, taskId)
+  assert.equal(tracker.getAgent(syntheticId), undefined)
+
+  tracker.handleEvent(taskNotification('completed'))
+  assert.equal(tracker.hasRunningAgents(), false, 'nothing may keep the ticker alive after the real sub-agent settles')
+  assert.equal(tracker.completeSynthetic(syntheticId), false)
+})
+
+test('a progress heartbeat arriving before task_started also retires the synthetic entry', () => {
+  const tracker = createClaudeAgentStatusTracker()
+  const syntheticId = syntheticClaudeAgentId(toolUseId)
+  tracker.beginSynthetic(syntheticId, 'Agent')
+
+  const update = tracker.handleEvent(taskProgress('Running Count total files', 1, 5159))
+  assert.equal(update.activity?.agents.length, 1)
+  assert.equal(update.activity?.agents[0]?.threadId, taskId)
+  assert.equal(tracker.getAgent(syntheticId), undefined)
+})
+
+test('a synthetic Workflow entry stays visible without task_* events and completes at turn end', () => {
+  const tracker = createClaudeAgentStatusTracker()
+  const syntheticId = syntheticClaudeAgentId('toolu_01WorkflowOnly')
+  const begun = tracker.beginSynthetic(syntheticId, 'Workflow')
+  assert.equal(begun.agents.length, 1)
+  assert.equal(begun.agents[0]?.nickname, 'Workflow')
+  assert.equal(tracker.hasRunningAgents(), true)
+
+  assert.equal(tracker.completeSynthetic(syntheticId), true)
+  assert.equal(tracker.snapshot().agents.length, 0)
+  assert.equal(tracker.hasRunningAgents(), false)
+})
+
+test('the synthetic sub-agent nickname honours the English locale', () => {
+  const tracker = createClaudeAgentStatusTracker({ language: 'en' })
+  const begun = tracker.beginSynthetic(syntheticClaudeAgentId('toolu_01TaskOnly'), 'Task')
+
+  const nickname = begun.agents[0]?.nickname ?? ''
+  assert.ok(nickname.length > 0)
+  assert.doesNotMatch(nickname, /[一-龥]/u, `English locale must not emit CJK: ${nickname}`)
+})
+
+// 症状：后台派发（run_in_background）的 Agent/Task 在启动回执到达的瞬间从面板消失，
+//       之后的进度与真实终态全部丢弃，用户看不到它还在跑、也看不到它跑完。
+// 根因：2026-09-08 发布审计实测 claude 2.1.263 的顺序是 tool_use → system:task_started（此时合成
+//       条目已被别名到原生 task_id）→ user tool_result「Async agent launched successfully」；
+//       tool_result 分支把已被原生任务认领的条目当成完成，随后的 task_progress / task_notification
+//       撞上「终态不复活」守卫被丢弃。前台 Agent 不受影响：它的 tool_result 在 task_notification 之后。
+test('a background Agent launch receipt does not settle the sub-agent the CLI already registered', () => {
+  const tracker = createClaudeAgentStatusTracker()
+  tracker.beginSynthetic(syntheticClaudeAgentId(toolUseId), 'Agent')
+  tracker.handleEvent(taskStarted())
+  tracker.handleEvent({ type: 'user', message: { content: [
+    { type: 'tool_result', tool_use_id: toolUseId, content: 'Async agent launched successfully. (This tool result is internal metadata, do not repeat it to the user.)' },
+  ] } })
+
+  assert.equal(tracker.hasRunningAgents(), true, 'a launch receipt is not a terminal state')
+  const progress = tracker.handleEvent(taskProgress('Running Count total files', 1, 5159))
+  assert.equal(progress.activity?.agents.length, 1, 'progress after the receipt must still render')
+  tracker.handleEvent(taskNotification('completed'))
+  assert.equal(tracker.hasRunningAgents(), false)
+  assert.equal(tracker.getAgent(taskId)?.status, 'completed')
 })

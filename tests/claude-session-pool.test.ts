@@ -102,6 +102,31 @@ const createPool = (overrides?: {
   })
 }
 
+test('进程观察者跨空闲和回合接收顶层行，替换时释放且不接收子链', async () => {
+  const lines: string[] = []
+  let disposed = 0
+  const pool = new ClaudeSessionPool({
+    onUnsolicited: () => {},
+    shouldWakeOnLine: () => false,
+    shouldIgnoreIdleLine: (line) => line === 'sidechain',
+  })
+  const child = createFakeChild()
+  try {
+    await pool.acquireForTurn({ key: 'card', signature: 'one', sessionId: 'session', spawn: async () => child })
+    pool.observeProcess('card', child, { onLine: (line: string) => lines.push(line), dispose: () => { disposed += 1 } })
+    child.stdoutStream.write('idle\nsidechain\n')
+    pool.beginTurn('card', createAttachment().attachment, child)
+    child.stdoutStream.write('active\n')
+    pool.endTurn('card', child)
+    child.stdoutStream.write('idle-again\n')
+    assert.deepEqual(lines, ['idle', 'active', 'idle-again'])
+    pool.releaseEntry('card', child)
+    assert.equal(disposed, 1)
+    child.emitExit(0)
+    assert.equal(disposed, 1)
+  } finally { pool.dispose() }
+})
+
 test('acquireForTurn spawns a new process for an unknown card', async () => {
   const pool = createPool()
   const child = createFakeChild()

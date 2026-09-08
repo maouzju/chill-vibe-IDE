@@ -66,7 +66,7 @@ import {
 } from './claude-capabilities.js'
 import { createCodexCompactionActivityDeduper } from './codex-compaction-dedupe.js'
 import { createCodexAgentStatusTracker } from './codex-agent-status.js'
-import { createClaudeAgentStatusTracker } from './claude-agent-status.js'
+import { createClaudeAgentStatusTracker, syntheticClaudeAgentId } from './claude-agent-status.js'
 import { writeServerLog } from './crash-logger.js'
 import { resolveClaudeRuntimeEnvironment } from './claude-runtime-environment.js'
 import {
@@ -3160,6 +3160,7 @@ type ClaudeTurnParser = {
 // Exported for the keepalive integration test, which drives a real fake-CLI
 // child process through the pool + parser composition.
 export const createClaudeTurnParser = (hooks: {
+  externalAgentTracking?: boolean
   request: ChatRequest
   sink: StreamSink
   language: AppLanguage
@@ -3186,6 +3187,7 @@ export const createClaudeTurnParser = (hooks: {
   const typedToolChatterFilter = createClaudeTypedToolChatterFilter()
   // Per-turn sub-agent progress. See the system/task_* branch in handleLine.
   const claudeAgentTracker = createClaudeAgentStatusTracker({ language })
+  const syntheticClaudeAgentIds = new Set<string>()
   // 15s：CLI 在子代理执行长命令期间静默上百秒（2026-08-09 实测 39.6s→195.1s 无事件），
   // 面板只能靠周期重发让本地推算的已运行时长走动，证明子代理还活着。
   const claudeAgentTickMs = 15_000
@@ -3256,6 +3258,16 @@ export const createClaudeTurnParser = (hooks: {
   }
 
   const markFinished = () => {
+    let retiredSynthetic = false
+    for (const taskId of syntheticClaudeAgentIds) {
+      if (claudeAgentTracker.completeSynthetic(taskId)) {
+        retiredSynthetic = true
+      }
+    }
+    if (retiredSynthetic) {
+      sink.onActivity(claudeAgentTracker.snapshot())
+    }
+    syntheticClaudeAgentIds.clear()
     finished = true
     clearClaudeStallTimer()
     clearClaudeAgentTicker()
@@ -3327,11 +3339,11 @@ export const createClaudeTurnParser = (hooks: {
       //       task_progress / task_updated / task_notification（含 subagent_type、当前动作、
       //       last_tool_name、usage），但此处的 system 分支此前只认 init，其余全部丢弃。
       // 必须在通用结构化解析之前 return：这些事件不属于主代理的活动流，落进去会污染主卡片。
-      const claudeAgentUpdate = claudeAgentTracker.handleEvent(event)
+      const claudeAgentUpdate = hooks.externalAgentTracking
+        ? { handled: false }
+        : claudeAgentTracker.handleEvent(event)
+      if (claudeAgentUpdate.activity) sink.onActivity(claudeAgentUpdate.activity)
       if (claudeAgentUpdate.handled) {
-        if (claudeAgentUpdate.activity) {
-          sink.onActivity(claudeAgentUpdate.activity)
-        }
         syncClaudeAgentTicker()
         return
       }
@@ -3394,6 +3406,15 @@ export const createClaudeTurnParser = (hooks: {
           // 播报 system:task_* 进度（已由 claudeAgentTracker 渲染成子代理面板），但主消息
           // 流没有 assistant 增量，看门狗仍需在本轮剩余时间保持耐心。
           sawBackgroundAwaitTool = true
+          // Fable 5.1/新 CLI 有时只发 tool_use，不发 system:task_*；
+          // 立即创建兜底状态，避免用户只能看到一段静态汇总文字。
+          // 键必须是 tool_use_id：CLI 随后的 task_started 带同一个 id，tracker 靠它换掉兜底条目。
+          if (!hooks.externalAgentTracking) {
+            const syntheticId = syntheticClaudeAgentId(parsed.itemId)
+            syntheticClaudeAgentIds.add(syntheticId)
+            sink.onActivity(claudeAgentTracker.beginSynthetic(syntheticId, parsed.toolName))
+            syncClaudeAgentTicker()
+          }
         }
         const activity = { ...parsed }
         delete (activity as { type?: 'activity' }).type
@@ -4008,6 +4029,7 @@ const launchClaudeKeepaliveRun = async (
 
     let turnCompletionBoundary: ClaudeCompletionBoundary | undefined
     const parser = createClaudeTurnParser({
+      externalAgentTracking: pool.hasProcessObserver(cardId, child),
       request: currentRequest,
       sink,
       language,
@@ -4158,6 +4180,7 @@ export const createClaudeUnsolicitedTurnAttachment = (options: {
 
   const parser = createClaudeTurnParser({
     request: pseudoRequest,
+    externalAgentTracking: options.entry.meta.externalAgentTracking === true,
     sink: options.sink,
     language,
     killChild: options.killChild,

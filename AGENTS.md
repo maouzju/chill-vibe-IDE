@@ -686,6 +686,8 @@ A living list of traps that have wasted time before. **When you hit a new pitfal
 
 ### Self-maintenance rule
 
+- Workflow 耗时冻结（2026-09-08）：旧包结束时只内部结算 synthetic 条目并停表，未推结束快照，面板永久残留“运行中 1分34秒/30秒”。先对拍当前运行的 app.asar 与工作区，不能把工作区已有修正当作用户已用上；keepalive 计时器必须属于进程而非回合，后台回执关联原生 task ID、空闲终态也须处理，守卫见 `claude-agent-runtime` / `claude-agent-status` / `stream-recovery-runtime` 测试。状态推送不能伪造新聊天流；不能用计时器证明任务存活。
+
 - Codex 子任务完成事件适配（2026-09-06）：0.153.4 的 `subAgentActivity.kind` 新增 `completed`，不能把非 `interrupted` 一律当 `running`，否则主任务已结束仍等到 30 分钟硬上限。同一活动外层会成对发 `item/started` / `item/completed`，生命周期看内层 `kind`。再遇停在“执行命令中”先对拍根/子 rollout；提示也必须检查命令 status，不可倒捡已完成命令。回归见 `tests/codex-agent-status.test.ts`、`tests/provider-system-prompt.test.ts`、`tests/message-local-link.test.ts`，规格 `codex-multi-agent-ui` / `stream-recovery-feedback`。
 
 - GPT-6 Astra 适配（2026-09-06）：以 Codex `model/list` 校验 CLI 能力，不把 API `reasoning.effort` 枚举当作 CLI 全部档位；0.153.4 的 Astra 支持 Ultra、默认 Low、不支持人格。旧 `thinkingEnabled=false` 必须在 app-server/exec 共用出口映射 Low，UI 改深度时清掉旧 false，避免显示 Ultra 却发送 Low。回归见 `tests/reasoning.test.ts`、`tests/provider-system-prompt.test.ts`、`tests/thinking-depth-selectable.spec.ts`。

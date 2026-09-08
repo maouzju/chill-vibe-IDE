@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 
-import type { ChatRequest } from '../shared/schema.ts'
+import type { ChatRequest, StreamActivity } from '../shared/schema.ts'
 import { createClaudeTurnParser } from '../server/providers.ts'
 
 // Regression coverage for the stall watchdog vs. synchronously-awaited background
@@ -86,6 +86,44 @@ const textDeltaLine = (text: string) =>
     event: { type: 'content_block_delta', delta: { type: 'text_delta', text } },
   })
 const resultLine = JSON.stringify({ type: 'result', subtype: 'success' })
+
+test('Workflow elapsed time advances during silence and its terminal snapshot reaches the UI', (t) => {
+  t.mock.timers.enable({ apis: ['Date', 'setInterval', 'setTimeout'], now: 1_000_000 })
+  const activities: StreamActivity[] = []
+  const { record, sink } = createRecordingSink()
+  const parser = createClaudeTurnParser({
+    request: baseRequest,
+    language: 'zh-CN',
+    killChild: () => {},
+    sink: {
+      ...sink,
+      onActivity: (activity) => activities.push(activity),
+      onDone: () => {
+        const last = activities.at(-1)
+        assert.equal(last?.kind, 'agents')
+        if (last?.kind === 'agents') assert.deepEqual(last.agents, [])
+        record.done = true
+      },
+    },
+  })
+  try {
+    parser.handleLine(workflowToolLine)
+    t.mock.timers.tick(90_000)
+    const running = activities.at(-1)
+    assert.equal(running?.kind, 'agents')
+    if (running?.kind === 'agents') {
+      assert.deepEqual(running.agents[0]?.activity, ['⏳ 已运行 1分30秒'])
+    }
+    parser.handleLine(resultLine)
+    assert.equal(record.done, true, '结束快照必须先于完成事件送到 UI')
+    const count = activities.length
+    t.mock.timers.tick(60_000)
+    assert.equal(activities.length, count, '结束后不得继续推送运行中快照')
+  } finally {
+    parser.cancel()
+    t.mock.timers.reset()
+  }
+})
 
 const withShortStallWindow = async (run: () => Promise<void>) => {
   const origStall = process.env.CHILL_VIBE_LOCAL_PROVIDER_STALL_TIMEOUT_MS

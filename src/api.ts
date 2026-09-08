@@ -1,6 +1,7 @@
 import { z } from 'zod'
 
 import {
+  claudeAgentStatusPushSchema,
   appSettingsSchema,
   attachmentUploadRequestSchema,
   appStateLoadResponseSchema,
@@ -741,6 +742,8 @@ export const getNativeTurnCompletion = async (
 export type UnsolicitedStreamNotification = {
   cardId: string
   streamId: string
+  sessionId?: string | null
+  agentStatus?: import('../shared/schema').StreamAgentsActivity
 }
 
 // Desktop push channel: a pooled Claude keepalive process woke itself between
@@ -751,6 +754,11 @@ export const subscribeUnsolicitedStreams = (
 ) => {
   const listener = (event: Event) => {
     const detail = (event as CustomEvent<UnsolicitedStreamNotification>).detail
+    if (detail && 'agentStatus' in detail) {
+      const parsed = claudeAgentStatusPushSchema.safeParse(detail)
+      if (parsed.success) handler(parsed.data)
+      return
+    }
     if (
       detail &&
       typeof detail.cardId === 'string' &&

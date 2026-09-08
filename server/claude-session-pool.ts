@@ -59,6 +59,7 @@ type PoolEntry = {
   idleTimer: ReturnType<typeof setTimeout> | undefined
   stdoutReader: Interface | null
   stderrReader: Interface | null
+  observer?: { onLine: (line: string) => void; dispose: () => void }
 }
 
 const DEFAULT_IDLE_TIMEOUT_MS = 30 * 60_000
@@ -102,9 +103,11 @@ export class ClaudeSessionPool {
   private readonly shouldIgnoreIdleLine: (line: string) => boolean
   private readonly interruptDrainTimeoutMs: number
   private readonly idleTimeoutMs: number
+  private readonly onProcessAcquired?: (entry: ClaudeSessionPoolEntryView) => void
   private disposed = false
 
   constructor(options: {
+    onProcessAcquired?: (entry: ClaudeSessionPoolEntryView) => void
     onUnsolicited: (
       entry: ClaudeSessionPoolEntryView,
       attach: (attachment: ClaudeTurnAttachment) => void,
@@ -124,6 +127,7 @@ export class ClaudeSessionPool {
     interruptDrainTimeoutMs?: number
   }) {
     this.onUnsolicited = options.onUnsolicited
+    this.onProcessAcquired = options.onProcessAcquired
     this.onIdleClose = options.onIdleClose
     this.shouldWakeOnLine = options.shouldWakeOnLine ?? (() => true)
     this.shouldIgnoreIdleLine = options.shouldIgnoreIdleLine ?? (() => false)
@@ -142,6 +146,28 @@ export class ClaudeSessionPool {
 
   isTurnActive(key: string) {
     return this.entries.get(key)?.state === 'turn-active'
+  }
+
+  observeProcess(key: string, child: ClaudeSessionPoolChild, observer: NonNullable<PoolEntry['observer']>) {
+    const entry = this.entries.get(key)
+    if (!entry || entry.child !== child || entry.observer) return false
+    entry.observer = observer
+    return true
+  }
+
+  isCurrentChild(key: string, child: ClaudeSessionPoolChild) {
+    return this.entries.get(key)?.child === child
+  }
+
+  hasProcessObserver(key: string, child: ClaudeSessionPoolChild) {
+    const entry = this.entries.get(key)
+    return entry?.child === child && Boolean(entry.observer)
+  }
+
+  private disposeObserver(entry: PoolEntry) {
+    const observer = entry.observer
+    entry.observer = undefined
+    observer?.dispose()
   }
 
   async acquireForTurn(options: {
@@ -203,6 +229,7 @@ export class ClaudeSessionPool {
     }
 
     this.entries.set(options.key, entry)
+    this.onProcessAcquired?.(this.toEntryView(entry))
     this.wireChild(entry)
     this.armIdleTimer(entry)
     return { child, reused: false }
@@ -406,6 +433,8 @@ export class ClaudeSessionPool {
   }
 
   private handleStdoutLine(entry: PoolEntry, line: string) {
+    if (this.entries.get(entry.key) !== entry || this.shouldIgnoreIdleLine(line)) return
+    entry.observer?.onLine(line)
     if (entry.state === 'turn-active' && entry.attachment) {
       if (this.shouldIgnoreIdleLine(line)) {
         return
@@ -482,6 +511,7 @@ export class ClaudeSessionPool {
   }
 
   private handleChildClose(entry: PoolEntry, code: number | null) {
+    this.disposeObserver(entry)
     entry.closed = true
     entry.closedCode = code
     this.clearIdleTimer(entry)
@@ -551,6 +581,7 @@ export class ClaudeSessionPool {
     entry: PoolEntry,
     options: { kill: boolean; notifyPendingIdleClose?: boolean },
   ) {
+    this.disposeObserver(entry)
     this.clearIdleTimer(entry)
     this.clearInterruptDrainTimer(entry)
 

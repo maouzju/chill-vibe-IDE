@@ -100,6 +100,7 @@ const renderBoard = (overrides: Partial<AutomationBoardCardProps> = {}) => {
     cards,
     templates: [supervisorTemplate, template],
     defaultProvider: 'codex',
+    defaultAdminAccess: false,
     defaultModel: DEFAULT_CODEX_MODEL,
     wakeTimerEnabled: true,
     repeatLoopEnabled: true,

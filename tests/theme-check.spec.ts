@@ -21,6 +21,38 @@ import { createPlaywrightState } from './playwright-state.ts'
 
 const appUrl = process.env.PLAYWRIGHT_APP_URL ?? 'http://localhost:5173'
 
+for (const theme of ['dark', 'light'] as const) {
+  test(`default admin setting in ${theme}`, async ({ page }) => {
+    test.slow()
+    const state = createMockState()
+    state.settings.theme = theme
+    state.settings.language = 'zh-CN'
+    await mockAppApis(page, { state })
+    await page.setViewportSize({ width: 1280, height: 900 })
+    await page.goto(appUrl)
+    await page.locator('#app-tab-settings').click()
+    const toggle = page.getByRole('checkbox', { name: '默认开启超管模式', exact: true })
+    const row = page.locator('.settings-hover-detail').filter({ has: toggle })
+    await expect(toggle).not.toBeChecked()
+    const hint = row.locator('[role="tooltip"]')
+    await expect(hint).toBeHidden()
+    await expect(row).toHaveScreenshot(`default-admin-${theme}-off.png`)
+    await toggle.check()
+    await expect(toggle).toBeChecked()
+    await toggle.focus()
+    await row.hover()
+    await expect(hint).toBeVisible()
+    await expect(row).toHaveScreenshot(`default-admin-${theme}-on.png`)
+    await page.reload()
+    await page.locator('#app-tab-settings').click()
+    await expect(toggle).toBeChecked()
+    await page.setViewportSize({ width: 640, height: 720 })
+    await expect(toggle).toBeVisible()
+    await toggle.uncheck()
+    await expect(toggle).not.toBeChecked()
+  })
+}
+
 const attachmentPreviewSvg = `
   <svg xmlns="http://www.w3.org/2000/svg" width="960" height="640" viewBox="0 0 960 640">
     <rect width="960" height="640" fill="#0f1726" />

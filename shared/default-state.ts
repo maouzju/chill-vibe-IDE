@@ -610,6 +610,7 @@ export const createDefaultSettings = (language: AppLanguage = defaultAppLanguage
   codexFastMode: false,
   agentOutsideWorkspaceWriteEnabled: true,
   codexDestructiveCommandProtectionEnabled: true,
+  defaultAdminAccess: false,
   codexIsolatedHomeEnabled: true,
   gitAgentModel: DEFAULT_GIT_AGENT_MODEL,
   requestModels: {
@@ -839,6 +840,7 @@ export const normalizeAppSettings = (settings?: Partial<AppSettings> | null): Ap
       typeof settings?.codexDestructiveCommandProtectionEnabled === 'boolean'
         ? settings.codexDestructiveCommandProtectionEnabled
         : defaults.codexDestructiveCommandProtectionEnabled,
+    defaultAdminAccess: settings?.defaultAdminAccess === true,
     codexIsolatedHomeEnabled:
       typeof settings?.codexIsolatedHomeEnabled === 'boolean'
         ? settings.codexIsolatedHomeEnabled

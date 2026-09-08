@@ -69,7 +69,9 @@ export const workspaceAdminCreatableLaneSchema = z.enum(workspaceAdminCreatableL
 
 ### 4. 不暴露 `adminAccess`
 
-`createItem` 的 options 支持 `adminAccess`，但本工具**刻意不透传**。
+`createItem` 的 options 支持 `adminAccess`，但本工具**刻意不从命令透传**。
+2026-09-08 新增全局默认超管设置后，执行器在看板及普通 Tab 两条创建路径均显式传 `adminAccess: false`，
+防止省略字段落入用户新建会话的默认授权；见 `default-admin-access` SPEC。
 
 否决理由：超管权限一旦可以由超管自己授予，就形成了自我复制的权限扩散链 ——
 一个超管能建出 N 个超管，每个又能再建 N 个，而用户在界面上只授权过一次。

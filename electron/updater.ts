@@ -12,6 +12,7 @@ import {
   parseReleaseResponse,
   resolveDownloadedAssetStrategy,
   runUpdateExitSequence,
+  isDownloadedAssetPathAllowed,
   type UpdateCheckResult,
   type GitHubRelease,
 } from './updater-core.js'
@@ -118,6 +119,9 @@ type InFlightDownload = {
 }
 
 const inFlightDownloads = new Map<string, InFlightDownload>()
+// Only paths produced by this process's verified downloader may be installed.
+// Renderer-provided arbitrary paths must never reach shell.openPath or the replace job.
+const downloadedAssetPaths = new Set<string>()
 
 const iterateResponseBody = (body: ReadableStream<Uint8Array>) => {
   const reader = body.getReader()
@@ -187,7 +191,9 @@ export async function downloadUpdate(
     existing.listeners.add(onProgress)
 
     try {
-      return await existing.promise
+      const result = await existing.promise
+      downloadedAssetPaths.add(path.resolve(result))
+      return result
     } finally {
       existing.listeners.delete(onProgress)
     }
@@ -207,7 +213,9 @@ export async function downloadUpdate(
 
   inFlightDownloads.set(assetUrl, entry)
 
-  return entry.promise
+  const result = await entry.promise
+  downloadedAssetPaths.add(path.resolve(result))
+  return result
 }
 
 // Force-shutdown helper that bypasses the `before-quit` preventDefault guard in
@@ -254,22 +262,28 @@ export async function installUpdate(
   assetPath: string,
   { markCleanExit = () => {} }: InstallUpdateHooks = {},
 ): Promise<void> {
-  // Fail while the app is still alive and can show the error, rather than exiting
-  // and letting the detached job discover the missing package with nobody watching.
-  const stats = await fs.promises.stat(assetPath).catch(() => null)
-
-  if (!stats || stats.size <= 0) {
-    throw new Error(`Update package is missing or empty: ${assetPath}`)
+  const normalizedAssetPath = path.resolve(assetPath)
+  const allowExternalTestAsset = process.env.CHILL_VIBE_ALLOW_EXTERNAL_UPDATE_PATH === '1'
+  if (!allowExternalTestAsset && !isDownloadedAssetPathAllowed(normalizedAssetPath, downloadedAssetPaths)) {
+    throw new Error('Update package was not downloaded by this application session.')
   }
 
-  const strategy = resolveDownloadedAssetStrategy(process.platform, assetPath)
+  // Fail while the app is still alive and can show the error, rather than exiting
+  // and letting the detached job discover the missing package with nobody watching.
+  const stats = await fs.promises.stat(normalizedAssetPath).catch(() => null)
+
+  if (!stats || stats.size <= 0) {
+    throw new Error(`Update package is missing or empty: ${normalizedAssetPath}`)
+  }
+
+  const strategy = resolveDownloadedAssetStrategy(process.platform, normalizedAssetPath)
 
   if (strategy === 'replace-app-folder') {
-    await launchWindowsZipUpdateJob(assetPath)
+    await launchWindowsZipUpdateJob(normalizedAssetPath)
     forceExitForUpdate(markCleanExit)
     return
   }
 
-  await openDownloadedAsset(assetPath)
+  await openDownloadedAsset(normalizedAssetPath)
   forceExitForUpdate(markCleanExit)
 }

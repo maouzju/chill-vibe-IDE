@@ -111,6 +111,7 @@ type PaneViewProps = {
   globalUrgeProfileId: string
   repeatLoopEnabled?: boolean
   wakeTimerEnabled?: boolean
+  defaultAdminAccess?: boolean
   onSetAutoUrgeEnabled: (enabled: boolean) => void
   onAddTab: (paneId: string) => void
   onSplitPane: (
@@ -379,6 +380,7 @@ const PaneViewView = ({
   globalUrgeProfileId,
   repeatLoopEnabled = false,
   wakeTimerEnabled = false,
+  defaultAdminAccess = false,
   onSetAutoUrgeEnabled,
   onAddTab,
   onSplitPane,
@@ -1582,6 +1584,7 @@ const PaneViewView = ({
                   cards: column.cards,
                   templates: automationBoardWorkspace.templates,
                   defaultProvider: column.provider,
+                  defaultAdminAccess,
                   defaultModel: column.model,
                   wakeTimerEnabled: wakeTimerEnabled === true,
                   repeatLoopEnabled: repeatLoopEnabled === true,

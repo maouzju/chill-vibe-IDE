@@ -153,3 +153,14 @@ tab 按钮 `draggable`，Chromium ~4px 即触发原生 dragstart（吞掉后续 
 
 - Workflow run: `wf_d6135504-89b`（19 subagents，545 tool uses）。
 - 对抗验证：14 个根因候选全部核实为至少部分成立（0 个被完全反驳），其中「1.5s 节流导致连点全无效」「'unrelated' 死路径是根因」两条被显著收窄/降级，本文采用收窄后的表述。
+
+## 2026-09-08 补记：窗口级陈旧 hit-test 与"缩小窗口自愈"
+
+用户报"极小概率所有输入框无法悬停聚焦，缩小窗口后自行恢复"。排查结论与处置：
+
+- **应用层全部排除**：CSS 无任何非伪元素的全局 `pointer-events: none` 门控；`is-pane-resizing/is-col-resizing` 只改 cursor；覆盖层全是 pointer-events none；hover retire 排除本卡祖先且 2.5s 自复原，只能伤别的卡。
+- **日志零证据**：main.log（08-24 起）无 frame stall、无 unresponsive；唯一 GPU 进程退出是关机终止码；无对应 dump。根本原因是 §3.8 的盲区仍在：hover 路径的 `repairStaleCardHitTest` 只加 dataset 计数，不发取证事件。
+- **主嫌**：窗口级 Chromium 陈旧 hit-test。frameless 窗口的 `app-region: drag` 在 Windows 走 HTCAPTION 非客户区判定，拖拽区缓存陈旧同样表现为全窗口无 hover / 无点击聚焦、resize 重算后恢复（electron#13140 / #13534 / #7347，200% DPI 更敏感）。
+- **处置**（pitfall #129C）：①每次真正应用的修复发 `hit-test-repair:<scope>` 取证事件，纯悬停失效也能自动 dump；②新增 `src/components/window-hit-test-rebuild.ts`：同一 15s 观察窗内多张卡误路由、或面板重建后同一张卡仍误路由，才经 `diagnostics:rebuild-window-hit-test` 请主进程执行 `electron/window-hit-test-rebuild.ts` 的 1px 抖动（最大化态还原再最大化），60s 冷却，动作写入 main.log。
+- **下次复现的判据**：main.log 有 `window hit-test rebuild requested` 且随后恢复 = 几何类实锤；有但没恢复 = 不是几何类；没有 = 判定没触发，要 Ctrl+Shift+F9 dump 看 `rescueEventTimesMs` 与 `appliedActions`。另问用户"故障态按住输入框拖动窗口会不会动"，会动 = 拖拽区缓存陈旧。
+- **验证载体**：`tests/window-hit-test-nudge.test.ts`、`tests/window-hit-test-rebuild.test.ts`（主进程动作与判定纯函数）；`tests/card-title-editing.spec.ts` 新增"面板重建后仍误路由 → 请求窗口重建"与"同一张卡 tab 切走再切回不算两张卡"两组用例（tracker 的卡 key 是 `card.id`，不是 DOM 元素——重挂载换了 shell 不能算多卡）。

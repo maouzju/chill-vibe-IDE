@@ -1,5 +1,13 @@
 # 自动化看板 — Design
 
+## v2.12：「用默认模型」跟随设置→模型（pitfall 363）
+
+看板 composer / 模板里选「Claude」「Codex」（`usesConfiguredDefault`，存空串）表示"用默认模型"，而"默认"永远指设置面板里的
+`settings.requestModels[provider]`，不是 `shared/models.ts` 写死的 `DEFAULT_*_MODEL`。建卡 reducer
+（`createAutomationBoardItem`）与模板同步（`resolveAutomationBoardTemplateInstanceSync`，新增第三参 `settings`）
+都改走 `getEffectiveCardModel(settings, provider, model)`；`normalizeModel` / `getDefaultModel` 只留给没有 settings 可看的存档规范化。
+已建好的项卡不自愈。
+
 ## v2.11：Ctrl+回车换行（FR18）
 
 换行本身是一个纯函数 `insertNewlineIntoDraft(value, selectionStart, selectionEnd)`
@@ -608,7 +616,7 @@ const fireAutomationBoardTemplateTrigger = (columnId, boardCardId, templateId) =
 ### 复用实例前先追平模板配置（v2.6）
 
 触发器复用上一轮的实例卡（`template.instanceCardId`）是为了保住跨轮上下文，但模板的执行参数在那之后可能已被用户改过。换道与投递**之前**先跑
-`resolveAutomationBoardTemplateInstanceSync(template, card)`（`src/components/automation-board-template-sync.ts`）：
+`resolveAutomationBoardTemplateInstanceSync(template, card, settings)`（`src/components/automation-board-template-sync.ts`）：
 
 - provider/model 有变 → 走 `selectCardModel`（换模型要连带作废旧 session，普通 patch 不做这件事）
 - 思考 / 深度 / 计划模式 / 超管有变 → 一次 `updateCard` 浅 patch
@@ -616,7 +624,7 @@ const fireAutomationBoardTemplateTrigger = (columnId, boardCardId, templateId) =
 
 深度不是直接比模板里存的原值：它按**将要生效的**模型重新归一化（`normalizeReasoningEffortForModel`），所以"只换了模型、深度没动"也可能产出一条 depth patch —— 否则会把一个启动即被 CLI 拒绝的档位（Codex 老模型上的 `max`/`ultra`）钉到卡上。
 
-模板的 `model: ''` 表示"用默认模型"，落到卡上必须归一成具体型号，走的是与建卡同一个 `normalizeModel`。这条与 pitfall 40 不冲突：那条禁止的是**全局默认模型**去改用户手开的卡，而实例卡是模板自己的产物，模板就是它唯一的配置源。
+模板的 `model: ''` 表示"用默认模型"，落到卡上必须归一成具体型号，走的是与建卡同一个 `getEffectiveCardModel(settings, provider, model)`（v2.12 起；此前用的 `normalizeModel` 会兜到 `shared/models` 写死的常量，设置→模型里改了默认也不跟，见 pitfall 363）。"默认模型"永远指设置面板里的 `requestModels[provider]`。这条与 pitfall 40 不冲突：那条禁止的是**全局默认模型**去改用户手开的卡，而实例卡是模板自己的产物，模板就是它唯一的配置源；设置里的默认只在"模板/composer 明确选了『用默认』"时才参与解析。
 
 ## 超管权限的接线
 

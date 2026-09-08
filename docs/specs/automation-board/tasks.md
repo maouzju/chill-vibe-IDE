@@ -363,3 +363,14 @@ MCP 端到端实测（一次性探针，非注册测试）：起真实桥接 →
 - [x] `tests/automation-board-mcp.test.ts`：自归档成功、非 done 泳道被拒，以及**显式传空 `cardId`
       仍报错而不是静默把自己归档**（最后一条是 2026-08-22 发布审计抓出的回归）
 - [x] `pnpm test:quality`
+
+## Slice V17 — 「用默认模型」跟随设置→模型（v2.12 / pitfall 363）
+
+- [x] `src/state.ts`：`createAutomationBoardItem` 建卡把空串 model 交给 `getEffectiveCardModel(state.settings, …)`，
+      不再兜 `shared/models` 的写死常量；红先 `tests/automation-board-state.test.ts`
+      「resolves the "use configured default" model from settings, not the hard-coded default」
+- [x] `src/components/automation-board-template-sync.ts`：`resolveAutomationBoardTemplateInstanceSync` 新增第三参 `settings`，
+      模板 `model: ''` 与卡上型号都按设置解析；红先 `tests/automation-board-template-sync.test.ts` 两条
+      （配置默认非常量时同步 / 已在配置默认上不动）
+- [x] `src/App.tsx`：触发器调用点传入 `appStateRef.current.settings`
+- [x] `pnpm test:quality`

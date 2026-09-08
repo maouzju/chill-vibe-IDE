@@ -33,7 +33,6 @@ import { getDuplicateColumnTitle, getForkConversationTitle, getWorkspaceTitle } 
 import {
   AUTOMATIONBOARD_TOOL_MODEL,
   buildLocalModelToken,
-  getDefaultModel,
   isFableModel,
   isLocalModelToken,
   normalizeStoredModel,
@@ -3193,11 +3192,17 @@ const ideReducerCore = (state: AppState, action: IdeAction): AppState => {
 
       const requirement = action.requirement.slice(0, automationBoardRequirementMaxChars)
       const provider = action.provider ?? column.provider
+      // 症状（2026-09-08）：设置→模型里 Claude 默认已是 Fable 5.1，看板选「Claude」
+      //   （= 用默认模型，存空串）建出来的项卡却是 claude-opus-5。
+      // 根因：这里曾把空串兜成 shared/models 写死的 DEFAULT_*_MODEL，从没看
+      //   settings.requestModels；聊天卡走的一直是 getEffectiveCardModel。
+      // 为什么不留空串让发送时再解析：看板项卡在列表上直接显示 card.model，
+      //   template-sync 也拿它和模板比对，都需要一个具体型号（pitfall #363）。
       const itemCard: ChatCard = {
         ...createAutomationBoardItemCard({
           requirement,
           provider,
-          model: normalizeStoredModel(provider, action.model ?? column.model) || getDefaultModel(provider),
+          model: getEffectiveCardModel(state.settings, provider, action.model ?? column.model),
           reasoningEffort: action.reasoningEffort,
           thinkingEnabled: action.thinkingEnabled,
           planMode: action.planMode,

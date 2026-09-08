@@ -73,6 +73,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   isWindowMaximized: () => ipcRenderer.invoke('window:is-maximized') as Promise<boolean>,
   writeForensicsDump: (json: string) =>
     ipcRenderer.invoke('diagnostics:write-forensics', json) as Promise<string | null>,
+  requestWindowHitTestRebuild: (reason: string) =>
+    ipcRenderer.invoke('diagnostics:rebuild-window-hit-test', reason) as Promise<string>,
   onWindowMaximizedChanged: (listener: (maximized: boolean) => void) => {
     const handler = (_event: IpcRendererEvent, maximized: boolean) => {
       listener(maximized)

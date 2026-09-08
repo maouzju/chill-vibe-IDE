@@ -467,6 +467,148 @@ for (const theme of ['dark', 'light'] as const) {
       .not.toBeNull()
   })
 
+  test(`repeated misrouting after a panel-level rebuild escalates to a window-level hit-test rebuild in ${theme} theme`, async ({
+    page,
+  }) => {
+    // 2026-09-08：所有输入框无法悬停聚焦、缩小窗口后自愈。卡级/面板级重建对
+    // 窗口级陈旧 hit-test 无效；连续误路由必须①每次都留取证事件②在面板重建
+    // 后仍误路由时请求主进程抖动窗口。这里断言的是渲染层发出的两类事件。
+    await installMockApis(page, theme)
+    await page.goto('http://localhost:5173')
+
+    const composer = page
+      .locator('.pane-view')
+      .first()
+      .locator('.pane-content > .pane-tab-panel.is-active .composer textarea')
+
+    await expect(composer).toBeVisible()
+
+    const composerBox = await composer.boundingBox()
+    if (!composerBox) {
+      throw new Error('Expected the composer textarea to have measurable geometry')
+    }
+
+    await page.evaluate(() => {
+      const kinds: string[] = []
+      ;(window as unknown as { __forensicsRescueKinds: string[] }).__forensicsRescueKinds = kinds
+      window.addEventListener('chill-vibe:forensics-rescue-event', (event) => {
+        kinds.push(String((event as CustomEvent<{ kind?: string }>).detail?.kind))
+      })
+    })
+
+    const dispatchStaleHover = () =>
+      page.evaluate((box) => {
+        const staleTarget = document.querySelector('.pane-tab')
+        if (!staleTarget) {
+          throw new Error('Expected a pane tab to exist as the stale routing target')
+        }
+        staleTarget.dispatchEvent(
+          new PointerEvent('pointermove', {
+            bubbles: true,
+            cancelable: true,
+            clientX: box.x + box.width / 2,
+            clientY: box.y + box.height / 2,
+            buttons: 0,
+          }),
+        )
+      }, composerBox)
+
+    const readKinds = () =>
+      page.evaluate(
+        () => (window as unknown as { __forensicsRescueKinds: string[] }).__forensicsRescueKinds,
+      )
+
+    // First misroute: card-level repair, no window request yet.
+    await dispatchStaleHover()
+    await expect.poll(readKinds).toContain('hit-test-repair:card')
+    expect(await readKinds()).not.toContain('window-hit-test-rebuild')
+
+    // Past the 1.5s repair throttle but inside the 5s escalation window: the
+    // card rebuild demonstrably did not clear it, so the pane panel is rebuilt.
+    await page.waitForTimeout(1700)
+    await dispatchStaleHover()
+    await expect.poll(readKinds).toContain('hit-test-repair:card-and-panel')
+    expect(await readKinds()).not.toContain('window-hit-test-rebuild')
+
+    // Still misrouting after the panel rebuild: the stale surface sits above
+    // everything the renderer can rebuild, so ask the window to change geometry.
+    await page.waitForTimeout(1700)
+    await dispatchStaleHover()
+    await expect.poll(readKinds).toContain('window-hit-test-rebuild')
+  })
+
+  test(`a card remounted by a tab round-trip still counts as one card for the window-level hit-test rebuild in ${theme} theme`, async ({
+    page,
+  }) => {
+    // 2026-09-08：tracker 按 card.id 记卡，不按 DOM 元素。切走再切回的 tab 会卸载并
+    // 重挂 ChatCard（新的 .card-shell）；同一张卡前后两次孤立的误路由绝不能被算成
+    // "两张卡都误路由"，否则一次 tab 往返就把窗口抖动的门槛降到两次孤立误路由。
+    await installMockApis(page, theme)
+    await page.goto('http://localhost:5173')
+
+    const pane = page.locator('.pane-view').first()
+    const activeComposer = pane.locator('.pane-content > .pane-tab-panel.is-active .composer textarea')
+    const activeShell = pane.locator('.pane-content > .pane-tab-panel.is-active .card-shell')
+    await expect(activeComposer).toBeVisible()
+
+    await page.evaluate(() => {
+      const kinds: string[] = []
+      ;(window as unknown as { __forensicsRescueKinds: string[] }).__forensicsRescueKinds = kinds
+      window.addEventListener('chill-vibe:forensics-rescue-event', (event) => {
+        kinds.push(String((event as CustomEvent<{ kind?: string }>).detail?.kind))
+      })
+    })
+
+    const readKinds = () =>
+      page.evaluate(
+        () => (window as unknown as { __forensicsRescueKinds: string[] }).__forensicsRescueKinds,
+      )
+    const countCardRepairs = async () =>
+      (await readKinds()).filter((kind) => kind === 'hit-test-repair:card').length
+
+    const dispatchStaleHover = async () => {
+      const box = await activeComposer.boundingBox()
+      if (!box) {
+        throw new Error('Expected the composer textarea to have measurable geometry')
+      }
+      await page.evaluate((box) => {
+        const staleTarget = document.querySelector('.pane-tab')
+        if (!staleTarget) {
+          throw new Error('Expected a pane tab to exist as the stale routing target')
+        }
+        staleTarget.dispatchEvent(
+          new PointerEvent('pointermove', {
+            bubbles: true,
+            cancelable: true,
+            clientX: box.x + box.width / 2,
+            clientY: box.y + box.height / 2,
+            buttons: 0,
+          }),
+        )
+      }, box)
+    }
+
+    await dispatchStaleHover()
+    await expect.poll(countCardRepairs).toBe(1)
+
+    // Mark the live shell, round-trip through the other tab, and prove the card
+    // really was remounted: the active shell no longer carries the marker.
+    await activeShell.evaluate((shell) => {
+      ;(shell as HTMLElement).dataset.remountProbe = 'before'
+    })
+    const tabs = pane.locator('.pane-tab')
+    await expect(tabs).toHaveCount(2)
+    await tabs.nth(1).click()
+    await expect(activeShell).not.toHaveAttribute('data-remount-probe', 'before')
+    await tabs.nth(0).click()
+    await expect(activeComposer).toBeVisible()
+    await expect(activeShell).not.toHaveAttribute('data-remount-probe', 'before')
+
+    await dispatchStaleHover()
+    await expect.poll(countCardRepairs).toBe(2)
+    expect(await readKinds()).not.toContain('window-hit-test-rebuild')
+  })
+
   test(`composer clicks recover focus when stale hit-testing routes the click to the page body in ${theme} theme`, async ({
     page,
   }) => {

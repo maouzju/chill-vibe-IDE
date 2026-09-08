@@ -312,6 +312,37 @@ describe('createAutomationBoardItem', () => {
     assert.equal(card?.adminAccess, true)
   })
 
+  // 症状（2026-09-08 用户现场）：设置→模型里 Claude 默认已改成 Fable 5.1，看板
+  //   composer 选「Claude」（= 用默认模型，存的是空串）建出来的项卡却仍是 claude-opus-5。
+  // 根因：建卡把空串兜成写死的 DEFAULT_CLAUDE_MODEL，从没看 settings.requestModels；
+  //   聊天卡走的是 getEffectiveCardModel（card.model || requestModels[provider]）。
+  it('resolves the "use configured default" model from settings, not the hard-coded default', () => {
+    const base = buildState({
+      cards: { 'board-1': boardCard([]) },
+      layout: pane('pane-1', ['board-1']),
+    })
+    const state: AppState = {
+      ...base,
+      settings: {
+        ...base.settings,
+        requestModels: { ...base.settings.requestModels, claude: 'claude-fable-5-1' },
+      },
+    }
+
+    const next = ideReducer(state, {
+      type: 'createAutomationBoardItem',
+      columnId: 'column-1',
+      boardCardId: 'board-1',
+      lane: 'standby',
+      requirement: '跟着设置里的默认模型走',
+      cardId: 'new-item',
+      provider: 'claude',
+      model: '',
+    })
+
+    assert.equal(next.columns[0]!.cards['new-item']?.model, 'claude-fable-5-1')
+  })
+
   it('is inert when the board card does not exist', () => {
     const state = buildState()
     const next = ideReducer(state, {

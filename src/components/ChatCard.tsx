@@ -141,8 +141,10 @@ import {
   startComposerFocusAttempt,
   type ComposerFocusAttemptDeps,
 } from './composer-focus'
+import { createWindowHitTestRebuildTracker } from './window-hit-test-rebuild'
 import {
   notifyForensicsRescueEvent,
+  recordAppliedActionsForForensics,
   recordMissingComposerForForensics,
 } from '../diagnostics/stuck-pane-forensics'
 import { createDraftSyncScheduler, draftSyncIdleMs } from './chat-draft-sync'
@@ -798,9 +800,40 @@ const applyTransientHitTestRepair = (element: HTMLElement) => {
   })
 }
 
+// 症状：所有输入框无法悬停聚焦、缩小窗口后自愈（2026-09-08，pitfall #129C）。
+// 根因：卡级/面板级 transform 重建只重建自己子树的合成层，对窗口级陈旧
+// hit-test 无效，唯一已知有效手势是改窗口几何；而 hover 路径的修复此前只加
+// dataset 计数，自动 dump 永远不触发，纯悬停失效零痕迹。
+// 被否决的替代：每次误路由都抖窗口——菜单收起瞬间的单次误路由也会触发。
+// 这里每次真正应用的修复都记入取证，由 tracker 判定"子树重建已证明无效"
+// （多卡同窗口内都误路由 / 面板重建后仍误路由）后才请主进程抖动窗口边界。
+// 卡的 key 必须是 card.id，不能是 .card-shell 元素：tab 切走再切回会卸载重挂
+// ChatCard，同一张卡换了 shell 就被算成"两张卡都误路由"，一次 tab 往返就把
+// 门槛降到两次孤立误路由（回归钉在 card-title-editing.spec 的 remount 用例）。
+const windowHitTestRebuildTracker = createWindowHitTestRebuildTracker()
+
+const noteHitTestRepairForWindowRebuild = (
+  cardKey: string,
+  scope: 'card' | 'card-and-panel',
+  nowMs: number,
+) => {
+  notifyForensicsRescueEvent(`hit-test-repair:${scope}`)
+  const decision = windowHitTestRebuildTracker.note({ atMs: nowMs, cardKey, scope })
+  if (decision !== 'request') {
+    return
+  }
+  recordAppliedActionsForForensics(['window-hit-test-rebuild'])
+  notifyForensicsRescueEvent('window-hit-test-rebuild')
+  void window.electronAPI?.requestWindowHitTestRebuild?.(`stale-hit-test:${scope}`)?.catch(() => {
+    // The main process logs its own outcome; a rejected bridge call carries
+    // nothing the renderer could act on.
+  })
+}
+
 const repairStaleCardHitTest = (
   textarea: HTMLTextAreaElement,
   lastRepairAtRef: RefObject<number>,
+  cardId: string,
   options?: { escalateToPanel?: boolean },
 ) => {
   const shell = textarea.closest('.card-shell')
@@ -829,12 +862,18 @@ const repairStaleCardHitTest = (
   lastRepairAtRef.current = now
 
   applyTransientHitTestRepair(shell)
+  // Only a panel that actually got rebuilt counts as "panel rebuild proved
+  // ineffective" for the window-level escalation; a card outside pane chrome
+  // has no panel to rebuild and stays a card-level repair.
+  let panelRebuilt = false
   if (scope === 'card-and-panel') {
     const panel = shell.closest('.pane-tab-panel')
     if (panel instanceof HTMLElement) {
       applyTransientHitTestRepair(panel)
+      panelRebuilt = true
     }
   }
+  noteHitTestRepairForWindowRebuild(cardId, panelRebuilt ? 'card-and-panel' : 'card', now)
 }
 
 // Diagnostic trail for the one rescue path that ends with no action: target
@@ -2169,7 +2208,7 @@ const ChatCardView = ({
             console.debug(
               '[composer-focus] retry ladder exhausted with focus still vacant; escalating to a panel-level repair',
             )
-            repairStaleCardHitTest(textarea, lastHitTestRepairAtRef, { escalateToPanel: true })
+            repairStaleCardHitTest(textarea, lastHitTestRepairAtRef, card.id, { escalateToPanel: true })
             followUpCancel?.()
             followUpCancel = startComposerFocusAttempt(makeDeps(false))
           }
@@ -2322,7 +2361,7 @@ const ChatCardView = ({
       // No focus here: hover must never steal focus.
       const routing = classifyComposerPointerRouting(textarea, event)
       if (routing === 'misrouted-to-textarea' || routing === 'misrouted-to-composer') {
-        repairStaleCardHitTest(textarea, lastHitTestRepairAtRef)
+        repairStaleCardHitTest(textarea, lastHitTestRepairAtRef, card.id)
         return
       }
 
@@ -2331,7 +2370,7 @@ const ChatCardView = ({
       // stray inline pointer-events: none on this card's ancestors makes every
       // event fall through to the opaque pane background. Heal it in place.
       if (routing === 'unrelated' && healDisabledComposerAncestors(textarea)) {
-        repairStaleCardHitTest(textarea, lastHitTestRepairAtRef)
+        repairStaleCardHitTest(textarea, lastHitTestRepairAtRef, card.id)
       }
     }
 
@@ -2409,7 +2448,7 @@ const ChatCardView = ({
             console.debug(
               '[composer-focus] textarea press verification exhausted with focus still vacant; escalating to a panel-level repair',
             )
-            repairStaleCardHitTest(textarea, lastHitTestRepairAtRef, { escalateToPanel: true })
+            repairStaleCardHitTest(textarea, lastHitTestRepairAtRef, card.id, { escalateToPanel: true })
             cancelTextareaPressFollowUp?.()
             cancelTextareaPressFollowUp = startComposerFocusAttempt(
               makeTextareaPressVerifyDeps(false),
@@ -2483,7 +2522,7 @@ const ChatCardView = ({
         : classifyComposerPointerRouting(textarea, event)
 
       if (routing === 'misrouted-to-textarea' || routing === 'misrouted-to-composer') {
-        repairStaleCardHitTest(textarea, lastHitTestRepairAtRef)
+        repairStaleCardHitTest(textarea, lastHitTestRepairAtRef, card.id)
         // The click physically landed inside the textarea rect and only stale
         // routing sent it elsewhere; both misrouted flavors must restore focus
         // or the user's click is silently swallowed (investigation §3.2).
@@ -2508,10 +2547,10 @@ const ChatCardView = ({
           // the strongest stuck-pane signal there is (frozen frame / stale
           // paint, investigation §3.6). Rebuild the whole panel's layer tree
           // instead of returning silently (F9).
-          repairStaleCardHitTest(textarea, lastHitTestRepairAtRef, { escalateToPanel: true })
+          repairStaleCardHitTest(textarea, lastHitTestRepairAtRef, card.id, { escalateToPanel: true })
           return
         }
-        repairStaleCardHitTest(textarea, lastHitTestRepairAtRef)
+        repairStaleCardHitTest(textarea, lastHitTestRepairAtRef, card.id)
         const healedHit = document.elementFromPoint(event.clientX, event.clientY)
         const scope = textarea.closest('.composer') ?? textarea
         if (healedHit !== null && scope.contains(healedHit)) {

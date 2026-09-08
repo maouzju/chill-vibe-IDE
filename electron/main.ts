@@ -56,6 +56,7 @@ import {
   writeAccessibilitySupportFlag,
 } from './accessibility-support.js'
 import { attachFrameStallWatchdog } from './frame-stall-watchdog.js'
+import { nudgeWindowForHitTestRebuild } from './window-hit-test-rebuild.js'
 import { loadRendererWithRetry } from './renderer-load-retry.js'
 import {
   classifyPreviousRun,
@@ -1220,6 +1221,24 @@ function registerDesktopHandlers() {
     await writeFile(filePath, json, 'utf8')
     log.warn('[main] stuck-pane forensics dump written.', { filePath })
     return filePath
+  })
+
+  // 症状：所有输入框无法悬停聚焦、缩小窗口后自愈（2026-09-08，pitfall #129C）。
+  // 渲染层判定误路由是窗口级的（多卡同时中招 / 面板重建后仍误路由）就走到
+  // 这里，主进程替用户"缩小一下窗口"：抖 1px 再复原（最大化态：还原再最大化）。
+  // 动作落 main.log——hover-only 的误路由在此之前不留任何痕迹。
+  ipcMain.handle('diagnostics:rebuild-window-hit-test', (event, reason: unknown) => {
+    const win = getEventWindow(event)
+    if (!win) {
+      return 'skip'
+    }
+    const action = nudgeWindowForHitTestRebuild(win)
+    log.warn('[main] window hit-test rebuild requested by renderer.', {
+      windowId: win.id,
+      reason: typeof reason === 'string' ? reason.slice(0, 200) : String(reason),
+      action,
+    })
+    return action
   })
 
   ipcMain.handle('desktop:fetch-state', () => desktopBackend.fetchState())

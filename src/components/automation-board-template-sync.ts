@@ -1,6 +1,6 @@
-import { normalizeModel } from '../../shared/models'
+import { getEffectiveCardModel } from '../../shared/default-state'
 import { normalizeReasoningEffortForModel } from '../../shared/reasoning'
-import type { AutomationBoardTemplate, ChatCard, Provider } from '../../shared/schema'
+import type { AppSettings, AutomationBoardTemplate, ChatCard, Provider } from '../../shared/schema'
 
 /**
  * 把模板当前的执行参数带到它复用的那张实例卡上，需要改什么就返回什么。
@@ -36,11 +36,16 @@ type SyncableCard = Pick<
 export const resolveAutomationBoardTemplateInstanceSync = (
   template: AutomationBoardTemplate,
   card: SyncableCard,
+  settings: AppSettings,
 ): AutomationBoardTemplateInstanceSync | null => {
   // 模板的 `model: ''` 表示"用默认模型"，而卡上必须是一个具体型号 —— 与
   // reducer 里 createAutomationBoardItem 建卡时同一条规则，别在这里另写一份。
-  const nextModel = normalizeModel(template.provider, template.model)
-  const currentModel = normalizeModel(card.provider, card.model)
+  //
+  // "默认模型"指设置→模型里的 requestModels，不是 shared/models 写死的常量：
+  // 2026-09-08 用户把 Claude 默认改成 Fable 5.1 后，这里仍把监工换到 opus-5
+  // （pitfall #363）。传 settings 进来是为了这一件事，别拿它做别的。
+  const nextModel = getEffectiveCardModel(settings, template.provider, template.model)
+  const currentModel = getEffectiveCardModel(settings, card.provider, card.model)
   const modelChanged = card.provider !== template.provider || currentModel !== nextModel
 
   // 深度档位随 provider/model 变，所以要按**将要生效的**模型归一化，不能拿

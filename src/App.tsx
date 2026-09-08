@@ -4366,7 +4366,7 @@ function App() {
       // 追平，改模板就等于白改（见 automation-board-template-sync.ts 顶部）。
       const reuseCard = column.cards[reuseCardId]
       const sync = reuseCard
-        ? resolveAutomationBoardTemplateInstanceSync(template, reuseCard)
+        ? resolveAutomationBoardTemplateInstanceSync(template, reuseCard, appStateRef.current.settings)
         : null
       if (sync?.model) {
         changeCardModelSelectionRef.current?.(

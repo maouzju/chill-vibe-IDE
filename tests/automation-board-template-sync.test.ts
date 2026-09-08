@@ -3,8 +3,9 @@ import { readFile } from 'node:fs/promises'
 import { describe, it } from 'node:test'
 
 import { resolveAutomationBoardTemplateInstanceSync } from '../src/components/automation-board-template-sync.ts'
+import { createDefaultSettings } from '../shared/default-state.ts'
 import { DEFAULT_CLAUDE_MODEL, DEFAULT_CODEX_MODEL } from '../shared/models.ts'
-import type { AutomationBoardTemplate, ChatCard } from '../shared/schema.ts'
+import type { AppSettings, AutomationBoardTemplate, ChatCard } from '../shared/schema.ts'
 
 const template = (patch: Partial<AutomationBoardTemplate> = {}): AutomationBoardTemplate => ({
   id: 'tpl-1',
@@ -39,9 +40,15 @@ const card = (patch: Partial<ChatCard> = {}) =>
     ...patch,
   }) as ChatCard
 
+// 「用默认模型」解析的是设置→模型里的 requestModels，不是 shared/models 里写死的常量。
+const settings = (requestModels: Partial<AppSettings['requestModels']> = {}): AppSettings => {
+  const base = createDefaultSettings()
+  return { ...base, requestModels: { ...base.requestModels, ...requestModels } }
+}
+
 describe('automation board template instance sync', () => {
   it('asks for nothing when the instance already matches the template', () => {
-    assert.equal(resolveAutomationBoardTemplateInstanceSync(template(), card()), null)
+    assert.equal(resolveAutomationBoardTemplateInstanceSync(template(), card(), settings()), null)
   })
 
   // 2026-08-16 用户现场：模板是 claude + 跟随默认，复用的监工卡却还在
@@ -50,6 +57,7 @@ describe('automation board template instance sync', () => {
     const sync = resolveAutomationBoardTemplateInstanceSync(
       template({ provider: 'claude', model: '' }),
       card(),
+      settings(),
     )
 
     // `model: ''` 是"用默认模型"，落到卡上必须是一个具体型号。
@@ -60,6 +68,29 @@ describe('automation board template instance sync', () => {
     const sync = resolveAutomationBoardTemplateInstanceSync(
       template({ provider: 'claude', model: '' }),
       card({ provider: 'claude', model: DEFAULT_CLAUDE_MODEL }),
+      settings(),
+    )
+
+    assert.equal(sync, null)
+  })
+
+  // 2026-09-08 用户现场：设置→模型里 Claude 默认已是 Fable 5.1，模板选「Claude」
+  // （model: ''）触发时监工却被换到 claude-opus-5 —— 空串被兜成写死的常量，没看设置。
+  it('resolves an empty template model against the configured default, not the hard-coded one', () => {
+    const sync = resolveAutomationBoardTemplateInstanceSync(
+      template({ provider: 'claude', model: '' }),
+      card(),
+      settings({ claude: 'claude-fable-5-1' }),
+    )
+
+    assert.deepEqual(sync?.model, { provider: 'claude', model: 'claude-fable-5-1' })
+  })
+
+  it('treats an empty template model as already-matching when the card is on the configured default', () => {
+    const sync = resolveAutomationBoardTemplateInstanceSync(
+      template({ provider: 'claude', model: '' }),
+      card({ provider: 'claude', model: 'claude-fable-5-1' }),
+      settings({ claude: 'claude-fable-5-1' }),
     )
 
     assert.equal(sync, null)
@@ -69,6 +100,7 @@ describe('automation board template instance sync', () => {
     const sync = resolveAutomationBoardTemplateInstanceSync(
       template({ reasoningEffort: 'high', thinkingEnabled: false, adminAccess: false }),
       card(),
+      settings(),
     )
 
     assert.equal(sync?.model, undefined)
@@ -85,6 +117,7 @@ describe('automation board template instance sync', () => {
     const sync = resolveAutomationBoardTemplateInstanceSync(
       template({ provider: 'claude', model: DEFAULT_CLAUDE_MODEL, reasoningEffort: 'ultra' }),
       card({ provider: 'claude', model: DEFAULT_CLAUDE_MODEL, reasoningEffort: 'high' }),
+      settings(),
     )
 
     assert.notEqual(sync?.patch?.reasoningEffort, 'ultra')
@@ -99,6 +132,7 @@ describe('automation board template instance sync', () => {
     const sync = resolveAutomationBoardTemplateInstanceSync(
       template({ provider: 'claude', model: DEFAULT_CLAUDE_MODEL, reasoningEffort: 'high' }),
       card({ provider: 'claude', model: 'claude-sonnet-4-5', reasoningEffort: 'high' }),
+      settings(),
     )
 
     assert.equal(sync?.model?.model, DEFAULT_CLAUDE_MODEL)
@@ -109,6 +143,7 @@ describe('automation board template instance sync', () => {
     const sync = resolveAutomationBoardTemplateInstanceSync(
       template({ planMode: true }),
       card(),
+      settings(),
     )
 
     assert.deepEqual(sync?.patch, { planMode: true })

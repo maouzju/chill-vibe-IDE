@@ -504,3 +504,27 @@ test('a background Agent launch receipt does not settle the sub-agent the CLI al
   assert.equal(tracker.hasRunningAgents(), false)
   assert.equal(tracker.getAgent(taskId)?.status, 'completed')
 })
+
+// 症状：模型停止输出的瞬间，仍在后台跑的子代理面板整个消失，之后再也不回来
+//   （2026-09-10 用户实测：三个 run_in_background Agent 在根回合 end_turn 后又各跑了 6～12 分钟）。
+// 根因：background 集合只登记 Workflow 的回执；普通后台 Agent 的「Async agent launched」回执
+//   走了 continue 不登记，回合结束的 finishTurn(keep) 不管 keep 真假都把它们结算成 completed，
+//   之后的 task_progress 撞「终态不复活」守卫被丢。
+test('a background Agent survives the root turn boundary until its native terminal event', () => {
+  const tracker = createClaudeAgentStatusTracker()
+  tracker.beginSynthetic(syntheticClaudeAgentId(toolUseId), 'Agent')
+  tracker.handleEvent(taskStarted())
+  tracker.handleEvent({ type: 'user', message: { content: [
+    { type: 'tool_result', tool_use_id: toolUseId, content: 'Async agent launched successfully. (This tool result is internal metadata — never quote or paste it to the user.)' },
+  ] } })
+
+  assert.equal(tracker.hasBackgroundAgents(), true, 'the launch receipt is the evidence that this agent outlives the turn')
+  tracker.finishTurn(true)
+  assert.equal(tracker.hasRunningAgents(), true, 'finishTurn must not settle a background agent the CLI is still running')
+  assert.equal(tracker.snapshot().agents.length, 1)
+  const progress = tracker.handleEvent(taskProgress('Editing lineup.ts', 3, 120_000))
+  assert.equal(progress.activity?.agents.length, 1, 'progress after the turn boundary must still render')
+  tracker.handleEvent(taskNotification('completed'))
+  assert.equal(tracker.hasRunningAgents(), false)
+  assert.equal(tracker.getAgent(taskId)?.status, 'completed')
+})

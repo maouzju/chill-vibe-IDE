@@ -371,6 +371,9 @@ export const boardColumnSchema = z.object({
   workspacePath: z.string(),
   model: z.string(),
   width: z.number().finite().positive().optional(),
+  // 停靠到顶栏的列：只在 true 时写入，未停靠时不带这个键，
+  // 旧存档与各处 fixture 的形状因此不变。见 docs/specs/workspace-column-dock。
+  docked: z.boolean().optional(),
   layout: layoutNodeSchema,
   cards: z.record(z.string(), chatCardSchema),
 })

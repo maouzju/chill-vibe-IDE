@@ -131,6 +131,21 @@ describe('default-state helpers', () => {
     assert.match(resolveAppFontFamilyCss('cascadia-code'), /Cascadia Code/)
   })
 
+  it('keeps a CJK-capable fallback in every app font option', () => {
+    // 症状：设置面板选 Arial / Consolas / Cascadia Code / 等宽后，整个界面中文变成问号，
+    //       ASCII（路径、数字）却正常 —— 问号个数与中文字数一一对应（2026-09-10 用户截图实证）。
+    // 根因：字体链末端是 sans-serif / monospace 这类通用族，Chromium 在 Windows 上把它们解析成
+    //       Arial / Courier New 等纯西文字体，没有任何 CJK 字形，于是 tofu 化。同表里的
+    //       serif/georgia/times-new-roman 都写了 SimSun 兜底，唯独这几项漏了。
+    // 为什么不能换写法：不能只靠 system-ui —— 它在 Windows 上解析为 Segoe UI，同样不含汉字。
+    //       必须显式写出一个确定存在的 CJK 字族。
+    const cjkCapable = /Microsoft YaHei|SimSun|SimHei|DengXian|KaiTi|FangSong|PingFang|Noto Sans (SC|CJK)|Source Han/i
+    const missing = appFontFamilyOptions
+      .filter((option) => !cjkCapable.test(option.css))
+      .map((option) => option.value)
+    assert.deepEqual(missing, [])
+  })
+
   it('normalizes custom accent colors without breaking older settings', () => {
     assert.equal(createDefaultSettings().accentColor, null)
     assert.equal(normalizeAppSettings({}).accentColor, null)

@@ -131,3 +131,26 @@ CLI 用同一套 `system:task_*` 上报后台 shell 命令：
 被否决：把 `'agents'` 从 `isEmptySkippableMessage` 的 kind 名单里删掉——那会让真正 `structuredData` 缺失的坏卡渲染成空气泡。
 
 守卫：`tests/chat-card-parsing.test.ts` 三条——工具卡后、两张工具卡之间、以及「无 structuredData 的坏 agents 卡仍应丢弃」。
+
+## 沉底单窗口（2026-09-10）
+
+数据层与后端追踪器不动，只改渲染路由：
+
+| 层 | 改动 |
+| --- | --- |
+| `src/components/chat-card-parsing.ts` | `buildRenderableMessages` 跳过 `view === 'status'` 的 agents 卡；新增 `selectDockedAgentStatus(messages)`，回溯最新一张状态快照，仅当其中含 `running` / `pendingInit` 条目时返回该快照（只含运行中条目），否则返回 `null`。 |
+| `src/components/ChatCard.tsx` | `ChatTranscript` 在 `.message-transcript-shell` 之后、`StreamingIndicator` 之前渲染 `.subagent-dock`，内部复用 `StructuredAgentsCard` 的 status 视图。 |
+| `src/index.css` | `.subagent-dock`：`flex: 0 0 auto`、限高 + 内部滚动，亮暗主题共用既有 `--structured-card-*` 令牌。 |
+
+被否决：
+- **聚合所有历史快照里的运行中条目**——旧包遗留的 `workflow:` 幻影条目会永久复活（见 2026-09-08 记录），最新快照即真相。
+- **保留内联卡片再叠加沉底面板**——用户明确要「仅一个窗口」，且内联空卡正是被误读成「识别不了」的来源。
+- **只隐藏空卡、保留内联位置**——跑起来后仍被正文顶走，问题依旧。
+
+守卫：`tests/chat-card-parsing.test.ts`（状态卡不进转录、`selectDockedAgentStatus` 取最新且过滤空态、toolCall 视图不受影响）、`tests/theme-check.spec.ts`（沉底面板亮暗快照、无运行中子代理时不渲染）。
+
+### 后台 Agent 跨回合保留与 Stop 钩子编码（2026-09-10）
+
+- 「后台启动回执」对 Workflow 是 `Workflow launched in background. Task ID: …`，对 Agent/Task 是 `Async agent launched successfully`；两者都必须登记为跨回合保留，根回合 `result` 只结算本回合的前台条目。此前只登记 Workflow，后台 Agent 在模型停止输出的瞬间被结算、沉底面板消失且不再恢复。
+- Windows Stop 钩子读 stdin 必须走 `[Console]::OpenStandardInput()` 字节流按 UTF-8 解码；`[Console]::In` 在新起的 powershell.exe 里按系统 ANSI 代码页解码，含中文的快照会损坏成不可解析的 JSON，边界退化为 `unknown`。
+- 边界为 `unknown` 时跨回合保留退回到追踪器自身的后台登记；两层各自独立，任一失效都不能让后台条目在回合末被结算。

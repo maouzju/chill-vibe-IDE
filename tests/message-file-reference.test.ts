@@ -120,3 +120,16 @@ test('markdown links may contain spaces because the author was explicit', () => 
   })
   assert.equal(parseFileReferenceCandidate('docs/my notes.md'), null)
 })
+
+test('decodes percent-encoded non-ASCII markdown link paths', () => {
+  assert.deepEqual(
+    resolveMessageLinkFileTarget(
+      WORKSPACE,
+      'docs/%E8%B0%83%E7%A0%94-%E8%AE%A9%E6%B3%95%E6%9C%AF%E6%88%90%E4%B8%BA%E6%9E%84%E7%AD%91%E7%9A%84%E7%82%B9%E7%81%AB%E5%99%A8.md',
+    ),
+    {
+      openPath: 'docs/调研-让法术成为构筑的点火器.md',
+      line: undefined,
+    },
+  )
+})

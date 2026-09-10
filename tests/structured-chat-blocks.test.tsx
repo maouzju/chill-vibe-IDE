@@ -1084,7 +1084,7 @@ test('renders the Codex live sub-agent status panel without unsupported controls
   assert.doesNotMatch(markup, /mention agents/)
 })
 
-test('renders the Codex live sub-agent empty state', () => {
+test('keeps the Codex live sub-agent status quiet when nothing is running', () => {
   const card = createCard()
   card.messages = [
     {
@@ -1108,6 +1108,9 @@ test('renders the Codex live sub-agent empty state', () => {
 
   const markup = renderCard(card)
 
-  assert.match(markup, /Sub-agents running/)
-  assert.match(markup, /No sub-agents running/)
+  // 2026-09-10：没有运行中的子代理时沉底面板整个不渲染，也不再往转录里放空态卡。
+  // 卡片本身仍要渲染出来，否则"整页空白"也会让下面两条 doesNotMatch 通过。
+  assert.match(markup, /class="card-shell/)
+  assert.doesNotMatch(markup, /subagent-dock/)
+  assert.doesNotMatch(markup, /Sub-agents running/)
 })

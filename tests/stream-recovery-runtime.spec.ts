@@ -676,7 +676,7 @@ for (const theme of ['light', 'dark'] as const) {
             agents: [{ threadId: 'workflow:test', nickname: 'Workflow', status: 'running', activity: [`running ${value}s`] }] },
         } }))
       }, seconds)
-      await expect(page.locator('.structured-agent-activity-line')).toHaveText(`running ${seconds}s`)
+      await expect(page.locator('.subagent-dock .structured-agent-activity-line')).toHaveText(`running ${seconds}s`)
     }
     expect(await hasDesktopStreamSubscription(page, 'agent-runtime:test')).toBe(false)
     expect(mock.readState().columns[0]?.cards['card-1']?.streamId).toBe('stream-1')
@@ -684,8 +684,10 @@ for (const theme of ['light', 'dark'] as const) {
       cardId: 'card-1', streamId: 'agent-runtime:test', sessionId: 'session-1',
       agentStatus: { itemId: 'agent-status:claude', kind: 'agents', status: 'completed', view: 'status', agents: [] },
     } })))
+    // 2026-09-10：运行中子代理只在沉底单窗口显示，收敛为空后面板整个卸载，转录里也不留空卡。
     await expect(page.locator('.structured-agent-status-entry')).toHaveCount(0)
-    await expect(page.locator('.structured-agents-card')).toHaveCount(1)
+    await expect(page.locator('.subagent-dock')).toHaveCount(0)
+    await expect(page.locator('.structured-agents-card')).toHaveCount(0)
   })
 }
 

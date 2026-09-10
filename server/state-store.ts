@@ -2085,6 +2085,11 @@ const normalizePersistedColumn = (
     workspacePath: typeof column.workspacePath === 'string' ? column.workspacePath : options.fallbackColumn.workspacePath,
     model: normalizedColumnModel,
     width: normalizeColumnWidth(column.width as number | undefined),
+    // 症状: 收进顶栏的列重启后又回到看板。根因: 这里逐字段重建 BoardColumn，
+    // 新字段不显式抄一遍就会被静默丢掉（同族: usageTotals）。写法与
+    // shared/default-state.ts 的 createColumn 对齐——只在 true 时写键，
+    // 未停靠的列形状与旧存档保持一致。
+    ...(column.docked === true ? { docked: true } : {}),
     layout: resolveRecoveredColumnLayout(layout, cards, boardOwnedCardIds),
     cards,
   }

@@ -4,17 +4,15 @@ import path from 'path'
 import { app, BrowserWindow, net, shell } from 'electron'
 
 import {
-  GITHUB_API_URL,
-  CHECK_TIMEOUT_MS,
+  checkForUpdateWithFallback,
   buildWindowsZipReplaceScript,
   encodePowerShellScriptUtf8Bom,
   downloadWithResume,
-  parseReleaseResponse,
   resolveDownloadedAssetStrategy,
   runUpdateExitSequence,
   isDownloadedAssetPathAllowed,
+  createUpdateInstallGate,
   type UpdateCheckResult,
-  type GitHubRelease,
 } from './updater-core.js'
 import { launchDetachedPowerShellScriptFile } from './updater-launch.js'
 
@@ -28,6 +26,7 @@ export {
   resolveDownloadedAssetStrategy,
   buildWindowsZipReplaceScript,
   encodePowerShellScriptUtf8Bom,
+  createUpdateInstallGate,
 } from './updater-core.js'
 
 const UPDATE_WAIT_TIMEOUT_SECONDS = 30
@@ -83,24 +82,11 @@ const openDownloadedAsset = async (assetPath: string) => {
 }
 
 export async function checkForUpdate(): Promise<UpdateCheckResult> {
-  const currentVersion = app.getVersion()
-
-  try {
-    const response = await net.fetch(GITHUB_API_URL, {
-      headers: { 'User-Agent': 'chill-vibe-ide', Accept: 'application/vnd.github.v3+json' },
-      signal: AbortSignal.timeout(CHECK_TIMEOUT_MS),
-    })
-
-    if (!response.ok) {
-      return { hasUpdate: false, currentVersion, error: `GitHub API responded with ${response.status}` }
-    }
-
-    const release = (await response.json()) as GitHubRelease
-    return parseReleaseResponse(release, currentVersion, process.platform)
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error)
-    return { hasUpdate: false, currentVersion, error: message }
-  }
+  return checkForUpdateWithFallback({
+    currentVersion: app.getVersion(),
+    platform: process.platform,
+    fetch: (url, options) => net.fetch(url, options),
+  })
 }
 
 // One in-flight download per asset URL. Re-checking for updates while a download is
@@ -122,6 +108,7 @@ const inFlightDownloads = new Map<string, InFlightDownload>()
 // Only paths produced by this process's verified downloader may be installed.
 // Renderer-provided arbitrary paths must never reach shell.openPath or the replace job.
 const downloadedAssetPaths = new Set<string>()
+const updateInstallGate = createUpdateInstallGate()
 
 const iterateResponseBody = (body: ReadableStream<Uint8Array>) => {
   const reader = body.getReader()
@@ -276,14 +263,28 @@ export async function installUpdate(
     throw new Error(`Update package is missing or empty: ${normalizedAssetPath}`)
   }
 
-  const strategy = resolveDownloadedAssetStrategy(process.platform, normalizedAssetPath)
-
-  if (strategy === 'replace-app-folder') {
-    await launchWindowsZipUpdateJob(normalizedAssetPath)
-    forceExitForUpdate(markCleanExit)
-    return
+  if (!updateInstallGate.tryAcquire()) {
+    throw new Error('An update installation is already in progress.')
   }
 
-  await openDownloadedAsset(normalizedAssetPath)
-  forceExitForUpdate(markCleanExit)
+  let keepGate = false
+
+  try {
+    const strategy = resolveDownloadedAssetStrategy(process.platform, normalizedAssetPath)
+
+    if (strategy === 'replace-app-folder') {
+      await launchWindowsZipUpdateJob(normalizedAssetPath)
+      keepGate = true
+      forceExitForUpdate(markCleanExit)
+      return
+    }
+
+    await openDownloadedAsset(normalizedAssetPath)
+    keepGate = true
+    forceExitForUpdate(markCleanExit)
+  } finally {
+    if (!keepGate) {
+      updateInstallGate.release()
+    }
+  }
 }

@@ -24,12 +24,147 @@ export type GitHubRelease = {
   assets: GitHubAsset[]
 }
 
+const isOfficialReleaseUrl = (url: URL) =>
+  url.origin === 'https://github.com' && !url.username && !url.password && !url.search && !url.hash
+
+/** 版本只取可信响应最终 URL，HTML 中的其它发布链接不是版本依据。 */
+export function parseReleasePageHtml(html: string, pageUrl: string): GitHubRelease | null {
+  // Electron 36 实测 net.fetch 的 Response.url 为空；仅此时使用官方页面 canonical。
+  if (!pageUrl) {
+    const canonical = html.match(/<link\b[^>]*\brel=["']canonical["'][^>]*>/i)?.[0]
+    const ogUrl = html.match(/<meta\b[^>]*\bproperty=["']og:url["'][^>]*>/i)?.[0]
+    const declaredUrl = canonical?.match(/\bhref=["']([^"']+)["']/i)?.[1] ?? ogUrl?.match(/\bcontent=["']([^"']+)["']/i)?.[1]
+    try {
+      pageUrl = declaredUrl ? new URL(declaredUrl, 'https://github.com').toString() : ''
+    } catch {
+      return null
+    }
+  }
+  let page: URL
+  try {
+    page = new URL(pageUrl)
+  } catch {
+    return null
+  }
+  const tagPrefix = `/${GITHUB_REPO}/releases/tag/`
+  if (!isOfficialReleaseUrl(page) || !page.pathname.startsWith(tagPrefix)) return null
+  const tag = page.pathname.slice(tagPrefix.length)
+  if (!parseVersionTag(tag)) return null
+  const assets: GitHubAsset[] = []
+  const seen = new Set<string>()
+  const pattern = /\bhref\s*=\s*["']([^"']+)["']/gi
+  for (const match of html.matchAll(pattern)) {
+    try {
+      const url = new URL(match[1], 'https://github.com')
+      if (!isOfficialReleaseUrl(url)) continue
+      const prefix = `/${GITHUB_REPO}/releases/download/${tag}/`
+      if (!url.pathname.startsWith(prefix)) continue
+      const href = url.toString()
+      const name = decodeURIComponent(url.pathname.slice(prefix.length))
+      // eslint-disable-next-line no-control-regex -- reject control characters in archive names
+      if (!name || /[\\/\x00-\x1f]/.test(name) || seen.has(href)) continue
+      seen.add(href)
+      assets.push({ name, browser_download_url: href })
+    } catch {
+      // 不跟随格式异常的附件链接。
+    }
+  }
+  return { tag_name: tag, html_url: page.toString(), assets }
+}
+
 export type DownloadedAssetKind = 'zip' | 'installer' | 'disk-image' | 'unknown'
 export type DownloadedAssetStrategy = 'replace-app-folder' | 'shell-open'
 
 export const GITHUB_REPO = 'maouzju/chill-vibe-IDE'
 export const GITHUB_API_URL = `https://api.github.com/repos/${GITHUB_REPO}/releases/latest`
+export const GITHUB_RELEASE_PAGE_URL = `https://github.com/${GITHUB_REPO}/releases/latest`
 export const CHECK_TIMEOUT_MS = 15_000
+
+type UpdateCheckFetch = (
+  url: string,
+  options: { headers: Record<string, string>; signal: AbortSignal },
+) => Promise<Pick<Response, 'ok' | 'status' | 'url' | 'text'>>
+
+const isGitHubRelease = (value: unknown): value is GitHubRelease => {
+  if (!value || typeof value !== 'object') return false
+  const release = value as Partial<GitHubRelease>
+  return typeof release.tag_name === 'string' && parseVersionTag(release.tag_name) !== null &&
+    (release.body === undefined || typeof release.body === 'string') &&
+    (release.html_url === undefined || typeof release.html_url === 'string') &&
+    Array.isArray(release.assets) && release.assets.every((asset) =>
+      asset && typeof asset.name === 'string' && typeof asset.browser_download_url === 'string',
+    )
+}
+
+// 症状：检查更新失败，即使官方网页与 ZIP 仍可访问。
+// 根因：2026-09-09 实测共享出口 API 403 限流；网页的附件又由 expanded_assets 懒加载。
+// 不加用户 token 或第三方镜像：固定官方页面回退即可，见 automatic-updater-reliability。
+export async function checkForUpdateWithFallback({
+  currentVersion,
+  platform,
+  fetch: fetchRelease,
+  timeoutMs = CHECK_TIMEOUT_MS,
+}: {
+  currentVersion: string
+  platform: string
+  fetch: UpdateCheckFetch
+  timeoutMs?: number
+}): Promise<UpdateCheckResult> {
+  const request = async (url: string, accept: string) => {
+    const controller = new AbortController()
+    let timer: ReturnType<typeof setTimeout> | undefined
+    const timeout = new Promise<never>((_resolve, reject) => {
+      timer = setTimeout(() => {
+        reject(new Error(`Update check timed out after ${timeoutMs}ms.`))
+        controller.abort()
+      }, timeoutMs)
+    })
+    try {
+      return await Promise.race([
+        (async () => {
+          const response = await fetchRelease(url, {
+            headers: { 'User-Agent': 'chill-vibe-ide', Accept: accept },
+            signal: controller.signal,
+          })
+          if (!response.ok) throw new Error(`GitHub responded with ${response.status} (${url}).`)
+          return { url: response.url, text: await response.text() }
+        })(),
+        timeout,
+      ])
+    } finally {
+      clearTimeout(timer)
+      controller.abort()
+    }
+  }
+  const describeError = (error: unknown) => error instanceof Error ? error.message : String(error)
+
+  try {
+    const response = await request(GITHUB_API_URL, 'application/vnd.github.v3+json')
+    const release: unknown = JSON.parse(response.text)
+    if (!isGitHubRelease(release)) throw new Error('Invalid GitHub release response.')
+    return parseReleaseResponse(release, currentVersion, platform)
+  } catch (apiError) {
+    try {
+      const response = await request(GITHUB_RELEASE_PAGE_URL, 'text/html')
+      let release = parseReleasePageHtml(response.text, response.url)
+      if (!release) throw new Error('Could not identify the latest stable GitHub release.')
+      const parsed = parseReleaseResponse(release, currentVersion, platform)
+      if (!parsed.hasUpdate || parsed.assetUrl) return parsed
+
+      const assetsUrl = `https://github.com/${GITHUB_REPO}/releases/expanded_assets/${release.tag_name}`
+      const assets = await request(assetsUrl, 'text/html')
+      if (assets.url && assets.url !== assetsUrl) throw new Error('Unexpected GitHub release assets redirect.')
+      release = parseReleasePageHtml(assets.text, release.html_url!)!
+      return parseReleaseResponse(release, currentVersion, platform)
+    } catch (fallbackError) {
+      return {
+        hasUpdate: false,
+        currentVersion,
+        error: `${describeError(apiError)}; fallback: ${describeError(fallbackError)}`,
+      }
+    }
+  }
+}
 
 export function parseVersionTag(tag: string): string | null {
   const stripped = tag.startsWith('v') ? tag.slice(1) : tag
@@ -80,6 +215,32 @@ export function isDownloadedAssetPathAllowed(
   allowedPaths: ReadonlySet<string>,
 ): boolean {
   return allowedPaths.has(assetPath)
+}
+
+/**
+ * 进程级更新安装闸门：同一时间只允许一个 PowerShell 替换作业。
+ * 两次点击若并发启动两个作业，较快的作业会先拉起 IDE，而另一个仍在解包，
+ * 用户就会看到“还没解包完就重启”。
+ */
+export type UpdateInstallGate = {
+  tryAcquire: () => boolean
+  release: () => void
+  isAcquired: () => boolean
+}
+
+export const createUpdateInstallGate = (): UpdateInstallGate => {
+  let acquired = false
+  return {
+    tryAcquire: () => {
+      if (acquired) return false
+      acquired = true
+      return true
+    },
+    release: () => {
+      acquired = false
+    },
+    isAcquired: () => acquired,
+  }
 }
 
 export type DownloadResponseLike = {

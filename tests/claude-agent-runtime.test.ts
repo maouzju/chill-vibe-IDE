@@ -79,3 +79,29 @@ test('原生明确终态优先于旧后台回执，不为普通文本或 sidecha
     assert.deepEqual(updates.at(-1)?.agents, [])
   } finally { runtime.dispose() }
 })
+
+// 症状：模型停止输出的瞬间沉底面板消失（2026-09-10 用户实测）。这台机器上 Stop 钩子快照解析失败，
+//   boundary 只会是 unknown，此时 keep 完全取决于 tracker 是否认得后台条目。
+test('a background Agent keeps running across the root turn when the Stop boundary is unknown', (t) => {
+  t.mock.timers.enable({ apis: ['Date', 'setInterval'], now: 1_000_000 })
+  const updates: StreamAgentsActivity[] = []
+  const runtime = createClaudeAgentRuntime({ language: 'zh-CN', publish: (a) => updates.push(a), readCompletionBoundary: () => 'unknown' })
+  const line = (e: unknown) => runtime.onLine(JSON.stringify(e))
+  const taskId = 'aa3d60cc650c2864b'
+  try {
+    line({ type: 'assistant', message: { content: [{ type: 'tool_use', id: 'toolu_bg', name: 'Agent', input: { run_in_background: true, subagent_type: 'general-purpose', description: '桶 A' } }] } })
+    line({ type: 'system', subtype: 'task_started', task_id: taskId, tool_use_id: 'toolu_bg', description: '桶 A', subagent_type: 'general-purpose', task_type: 'local_agent' })
+    line({ type: 'user', message: { content: [{ type: 'tool_result', tool_use_id: 'toolu_bg', content: [{ type: 'text', text: 'Async agent launched successfully. (This tool result is internal metadata — never quote or paste it to the user.)' }] }] } })
+    line({ type: 'result', subtype: 'success' })
+    assert.equal(updates.at(-1)?.agents.length, 1, 'the root turn ending must not unmount a background Agent')
+    assert.equal(updates.at(-1)?.agents[0]?.status, 'running')
+    t.mock.timers.tick(30_000)
+    line({ type: 'system', subtype: 'task_progress', task_id: taskId, tool_use_id: 'toolu_bg', subagent_type: 'general-purpose', description: 'Editing lineup.ts' })
+    assert.equal(updates.at(-1)?.agents.length, 1, 'progress after the turn boundary must still render')
+    line({ type: 'system', subtype: 'task_notification', task_id: taskId, tool_use_id: 'toolu_bg', status: 'completed' })
+    assert.deepEqual(updates.at(-1)?.agents, [])
+  } finally {
+    runtime.dispose()
+    t.mock.timers.reset()
+  }
+})

@@ -101,6 +101,12 @@ export const maxLineHeightScale = 1.5
 
 export const defaultAppFontFamily: AppFontFamily = 'default'
 
+// 症状（2026-09-10 用户截图）：选 Arial / Consolas / Cascadia Code / 等宽后界面中文全变问号，
+//   ASCII 路径与数字正常，问号个数 == 中文字数（字形缺失，非编码错误）。
+// 根因：链末的 sans-serif / monospace / system-ui 在 Windows 上被 Chromium 解成
+//   Arial / Courier New / Segoe UI，均无 CJK 字形。表内 serif 系已写 SimSun 兜底，这 8 项漏了。
+// 为什么不能换写法：不能依赖浏览器隐式回退，必须显式写出确定存在的 CJK 字族；
+//   约束由 tests/default-state.test.ts 的 CJK-capable fallback 用例守住。
 export const appFontFamilyOptions: ReadonlyArray<{
   value: AppFontFamily
   label: string
@@ -111,31 +117,31 @@ export const appFontFamilyOptions: ReadonlyArray<{
     value: 'default',
     label: '默认字体',
     labelEn: 'Default font',
-    css: "'Aptos', 'IBM Plex Sans', 'Segoe UI Variable', 'Segoe UI', system-ui, sans-serif",
+    css: "'Aptos', 'IBM Plex Sans', 'Segoe UI Variable', 'Segoe UI', system-ui, 'Microsoft YaHei UI', 'Microsoft YaHei', sans-serif",
   },
   {
     value: 'system',
     label: '系统字体',
     labelEn: 'System sans',
-    css: "system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif",
+    css: "system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Microsoft YaHei UI', 'Microsoft YaHei', sans-serif",
   },
   {
     value: 'aptos',
     label: 'Aptos',
     labelEn: 'Aptos',
-    css: "Aptos, 'Segoe UI Variable', 'Segoe UI', system-ui, sans-serif",
+    css: "Aptos, 'Segoe UI Variable', 'Segoe UI', system-ui, 'Microsoft YaHei UI', 'Microsoft YaHei', sans-serif",
   },
   {
     value: 'segoe-ui',
     label: 'Segoe UI',
     labelEn: 'Segoe UI',
-    css: "'Segoe UI Variable', 'Segoe UI', system-ui, sans-serif",
+    css: "'Segoe UI Variable', 'Segoe UI', system-ui, 'Microsoft YaHei UI', 'Microsoft YaHei', sans-serif",
   },
   {
     value: 'arial',
     label: 'Arial',
     labelEn: 'Arial',
-    css: "Arial, Helvetica, sans-serif",
+    css: "Arial, Helvetica, 'Microsoft YaHei UI', 'Microsoft YaHei', sans-serif",
   },
   {
     value: 'microsoft-yahei',
@@ -195,19 +201,19 @@ export const appFontFamilyOptions: ReadonlyArray<{
     value: 'mono',
     label: '等宽字体',
     labelEn: 'Monospace',
-    css: "'IBM Plex Mono', 'Cascadia Mono', Consolas, monospace",
+    css: "'IBM Plex Mono', 'Cascadia Mono', Consolas, 'Microsoft YaHei UI', 'Microsoft YaHei', monospace",
   },
   {
     value: 'cascadia-code',
     label: 'Cascadia Code',
     labelEn: 'Cascadia Code',
-    css: "'Cascadia Code', 'Cascadia Mono', Consolas, monospace",
+    css: "'Cascadia Code', 'Cascadia Mono', Consolas, 'Microsoft YaHei UI', 'Microsoft YaHei', monospace",
   },
   {
     value: 'consolas',
     label: 'Consolas',
     labelEn: 'Consolas',
-    css: "Consolas, 'Cascadia Mono', 'Courier New', monospace",
+    css: "Consolas, 'Cascadia Mono', 'Courier New', 'Microsoft YaHei UI', 'Microsoft YaHei', monospace",
   },
 ]
 
@@ -1542,6 +1548,7 @@ export const createColumn = (
     workspacePath: overrides.workspacePath ?? '',
     model,
     width: normalizeColumnWidth(overrides.width),
+    ...(overrides.docked === true ? { docked: true } : {}),
     layout: normalizeLayoutNode(overrides.layout, cards),
     cards,
   }

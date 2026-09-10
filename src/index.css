@@ -580,6 +580,123 @@ body.is-card-dragging .lane-drop-zone-top {
   color: var(--accent);
 }
 
+/* 停靠到顶栏的工作区列：点击恢复。见 docs/specs/workspace-column-dock */
+.app-topbar-docked-column {
+  appearance: none;
+  border: 1px solid var(--line);
+  background: transparent;
+  color: var(--ink-3);
+  display: inline-flex;
+  align-items: center;
+  flex: 0 0 auto;
+  max-width: 9rem;
+  padding: 0.1rem 0.55rem;
+  border-radius: 999px;
+  font-size: 0.74rem;
+  line-height: 1.3;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  cursor: pointer;
+  transition:
+    color 140ms var(--ease),
+    border-color 140ms var(--ease);
+  -webkit-app-region: no-drag;
+  app-region: no-drag;
+}
+
+.app-topbar-docked-column:hover,
+.app-topbar-docked-column:focus-visible {
+  color: var(--ink-1);
+  border-color: var(--line-strong);
+}
+
+.app-topbar-docked-column:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+/* 收起的列仍在跑 / 有新结果时的状态提示。
+   症状: 列被收进顶栏后就"失联"了 —— 跑完只能靠把列拖回看板才能发现。
+   根因: 停靠列不在 DOM 里，卡片自身的 is-streaming / is-complete-unread 光效
+         一个都渲染不到，顶栏 chip 是它唯一的可见代表。
+   被否决的替代: 照抄 `.card-shell.is-complete-unread` 那套 inset:0 全卡呼吸光晕 ——
+         那是 pitfall 216/218 的原始事故面（每个后台 pane 都在给合成器记账）。
+         这里能用无限动画的唯一理由是**基数**：顶栏只有一个，chip 数 = 收起的列数，
+         且只在真的在跑时才附着，与 pane 数无关，不随会话时长增长。
+         见 tests/idle-animation-budget.test.ts 的 allowlist 条目。 */
+.app-topbar-docked-column.is-running {
+  border-color: color-mix(in srgb, var(--warn) 46%, var(--line));
+  color: color-mix(in srgb, var(--ink-2) 84%, var(--warn));
+  animation: docked-column-running-breathe 2200ms ease-in-out infinite;
+}
+
+.app-topbar-docked-column.is-running:hover,
+.app-topbar-docked-column.is-running:focus-visible {
+  color: var(--ink-1);
+  border-color: var(--warn);
+}
+
+@keyframes docked-column-running-breathe {
+  0%,
+  100% {
+    border-color: color-mix(in srgb, var(--warn) 40%, var(--line));
+    box-shadow: 0 0 0 0 transparent;
+  }
+
+  50% {
+    border-color: color-mix(in srgb, var(--warn) 88%, var(--line));
+    box-shadow: 0 0 7px -1px var(--stream-border-glow);
+  }
+}
+
+/* 有新结果的蓝点，与卡片右上角的 .card-unread-dot、页签的 .pane-tab-status
+   共用 --accent，保持"蓝 = 有你没看过的产出"这一条全局约定。 */
+.app-topbar-docked-column-dot {
+  width: 5px;
+  height: 5px;
+  margin-left: 0.34rem;
+  border-radius: 50%;
+  background: var(--accent);
+  flex: 0 0 auto;
+}
+
+/* 两者可以同时出现：一张卡还在跑，另一张已经跑完没看。此时橙色呼吸边框继续，
+   蓝点也在，不互相压制。 */
+.app-topbar-docked-column.has-new-result {
+  color: var(--ink-1);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .app-topbar-docked-column.is-running {
+    animation: none;
+    border-color: color-mix(in srgb, var(--warn) 70%, var(--line));
+  }
+}
+
+/* 只在拖动一列期间出现的停靠落区 */
+.app-topbar-dock-zone {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  padding: 0.1rem 0.7rem;
+  border: 1px dashed color-mix(in srgb, var(--accent) 55%, transparent);
+  border-radius: 999px;
+  color: var(--ink-3);
+  font-size: 0.74rem;
+  line-height: 1.3;
+  white-space: nowrap;
+  -webkit-app-region: no-drag;
+  app-region: no-drag;
+}
+
+.app-topbar-dock-zone.is-over {
+  border-style: solid;
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  color: var(--ink-1);
+}
+
 .remote-monitor-body {
   display: flex;
   flex-direction: column;
@@ -3516,6 +3633,14 @@ body.is-card-dragging .lane-drop-zone-top {
 
 
 /* -- Streaming Activity Indicator --------------------------*/
+/* 运行中子代理的沉底单窗口：贴在转录与输入区之间，只在有运行中条目时挂载。 */
+.subagent-dock {
+  flex: 0 0 auto;
+  max-height: 38%;
+  overflow-y: auto;
+  padding: 0.3rem 0.55rem 0.35rem;
+}
+
 .streaming-indicator {
   display: flex;
   align-items: center;

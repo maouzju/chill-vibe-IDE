@@ -97,6 +97,42 @@ export const isUntouchedWorkspacePlaceholderColumn = (column: BoardColumn | unde
   )
 }
 
+export interface DockedColumnStatus {
+  /** At least one card in the column is still streaming. */
+  readonly running: boolean
+  /** At least one card finished with output the user has not looked at yet. */
+  readonly hasNewResult: boolean
+}
+
+/**
+ * Aggregates a docked column's cards into the two signals its top-bar chip can
+ * show. A docked column is invisible on the board, so without this the only way
+ * to notice a run finishing is to restore the column and look — see
+ * docs/specs/workspace-column-dock (the "no status badge" non-goal, lifted
+ * 2026-09-10 at the user's request).
+ *
+ * The two flags are deliberately independent rather than one enum: a column can
+ * have one card still streaming while an earlier one already finished unread,
+ * and collapsing that into a single state would silently drop the finished one.
+ */
+export const selectDockedColumnStatus = (
+  column: Pick<BoardColumn, 'cards'>,
+): DockedColumnStatus => {
+  let running = false
+  let hasNewResult = false
+
+  for (const card of Object.values(column.cards)) {
+    if (card.status === 'streaming') running = true
+    // `completionGlow` and `unread` are cleared by the same user interactions
+    // (App.tsx markRead), but they are set on different paths, so either one
+    // alone still means "finished, not yet seen".
+    if (card.unread || card.completionGlow) hasNewResult = true
+    if (running && hasNewResult) break
+  }
+
+  return { running, hasNewResult }
+}
+
 const cardHasHistoricalImageAttachments = (card: Pick<ChatCard, 'messages'>) =>
   card.messages.some((message) => getChatMessageAttachments(message).length > 0)
 
@@ -338,6 +374,8 @@ export type IdeAction =
       targetColumnId: string
       placement: Placement
     }
+  | { type: 'dockColumn'; columnId: string }
+  | { type: 'undockColumn'; columnId: string }
   | { type: 'removeColumn'; columnId: string; workspaceCloseId?: string }
   | {
       type: 'restoreClosedWorkspace'
@@ -2296,6 +2334,38 @@ const ideReducerCore = (state: AppState, action: IdeAction): AppState => {
     case 'reorderColumn': {
       const next = reorderColumn(state, action.sourceColumnId, action.targetColumnId, action.placement)
       return next === state ? state : touchState(next)
+    }
+    case 'dockColumn': {
+      const target = state.columns.find((column) => column.id === action.columnId)
+      if (!target || target.docked === true) {
+        return state
+      }
+
+      return touchState({
+        ...state,
+        columns: state.columns.map((column) =>
+          column.id === action.columnId ? { ...column, docked: true } : column,
+        ),
+      })
+    }
+    case 'undockColumn': {
+      const target = state.columns.find((column) => column.id === action.columnId)
+      if (!target || target.docked !== true) {
+        return state
+      }
+
+      // 顺序不动：停靠只是隐藏，恢复后列回到原来的位置。
+      return touchState({
+        ...state,
+        columns: state.columns.map((column) => {
+          if (column.id !== action.columnId) {
+            return column
+          }
+          const rest = { ...column }
+          delete rest.docked
+          return rest
+        }),
+      })
     }
     case 'removeColumn': {
       const column = state.columns.find((item) => item.id === action.columnId)

@@ -5790,7 +5790,7 @@ for (const theme of ['dark', 'light'] as const) {
     await page.setViewportSize({ width: 760, height: 720 })
     await page.goto(appUrl)
 
-    const panel = page.locator('.structured-agents-card.is-status').first()
+    const panel = page.locator('.subagent-dock .structured-agents-card.is-status').first()
     const longPath = panel.locator('.structured-agent-path').first()
 
     await expect(page.locator('html')).toHaveAttribute('data-theme', theme)
@@ -5812,12 +5812,41 @@ for (const theme of ['dark', 'light'] as const) {
     await page.setViewportSize({ width: 760, height: 720 })
     await page.goto(appUrl)
 
-    const panel = page.locator('.structured-agents-card.is-status').first()
+    // 2026-09-10：没有运行中的子代理时沉底面板整个不渲染，也不再往转录里放空态卡。
+    await expect(page.locator('.pane-tab-panel.is-active .card-shell').first()).toBeVisible()
+    await expect(page.locator('.subagent-dock')).toHaveCount(0)
+    await expect(page.locator('.structured-agents-card.is-status')).toHaveCount(0)
+  })
 
-    await expect(panel).toBeVisible()
-    await expect(panel).toContainText('No sub-agents running.')
-    await expect(panel.locator('.structured-agent-status-entry')).toHaveCount(0)
-    await expect(panel).toHaveScreenshot(`codex-sub-agent-status-empty-${theme}.png`, {
+  test(`running sub-agents dock to the card bottom in ${theme} theme`, async ({ page }) => {
+    const state = createCodexSubAgentStatusState(theme)
+    const card = state.columns[0]!.cards[0]!
+    card.messages = [
+      { id: 'dock-user-1', role: 'user', content: 'Review the docs.', createdAt: '2026-07-23T07:59:00.000Z' },
+      ...card.messages,
+      {
+        id: 'dock-assistant-1',
+        role: 'assistant',
+        content: 'Dispatching two reviewers; results will follow.',
+        createdAt: '2026-07-23T08:01:00.000Z',
+      },
+    ]
+    await mockAppApis(page, { state })
+    await page.setViewportSize({ width: 760, height: 720 })
+    await page.goto(appUrl)
+
+    const cardShell = page.locator('.pane-tab-panel.is-active .card-shell').first()
+    const dock = cardShell.locator('.subagent-dock')
+    await expect(page.locator('html')).toHaveAttribute('data-theme', theme)
+    await expect(dock).toHaveCount(1)
+    await expect(dock.locator('.structured-agent-status-entry')).toHaveCount(2)
+    await expect(cardShell.locator('.message-list .structured-agents-card')).toHaveCount(0)
+    const dockBox = await dock.boundingBox()
+    const listBox = await cardShell.locator('.message-list').boundingBox()
+    const composerBox = await cardShell.locator('.composer').boundingBox()
+    expect(dockBox!.y).toBeGreaterThanOrEqual(listBox!.y + listBox!.height - 1)
+    expect(dockBox!.y + dockBox!.height).toBeLessThanOrEqual(composerBox!.y + 1)
+    await expect(cardShell).toHaveScreenshot(`subagent-dock-card-${theme}.png`, {
       animations: 'disabled',
       caret: 'hide',
     })
@@ -5830,7 +5859,7 @@ test('Codex sub-agent status preserves its hierarchy without horizontal overflow
   await page.goto(appUrl)
 
   const activePane = page.locator('.pane-tab-panel.is-active').first()
-  const panel = activePane.locator('.structured-agents-card.is-status').first()
+  const panel = activePane.locator('.subagent-dock .structured-agents-card.is-status').first()
   const longPath = panel.locator('.structured-agent-path').first()
 
   await expect(panel).toBeVisible()
@@ -5855,10 +5884,13 @@ test('Codex /agent snapshots the live panel locally without launching another mo
   await textarea.fill('/agent')
   await activePane.getByRole('button', { name: 'Send message' }).click()
 
-  await expect(activePane.locator('.structured-agents-card.is-status')).toHaveCount(2)
-  await expect(activePane.locator('.structured-agents-card.is-status').last()).toContainText(
-    '/root/reviewer_with_a_deliberately_long_canonical_path',
-  )
+  // 2026-09-10：状态卡不再作为转录条目渲染，`/agent` 只刷新卡片底部那一个沉底面板。
+  // 这里改断言沉底面板本身，而不是把原来的 2 放宽成 1 —— 光看数量分不清"面板还在"
+  // 和"整页没渲染出来"。
+  const dock = activePane.locator('.subagent-dock .structured-agents-card.is-status')
+  await expect(dock).toHaveCount(1)
+  await expect(dock.first()).toContainText('/root/reviewer_with_a_deliberately_long_canonical_path')
+  await expect(activePane.locator('.message-list .structured-agents-card.is-status')).toHaveCount(0)
   expect(chatRequests).toEqual([])
 })
 
@@ -8976,3 +9008,61 @@ for (const theme of ['dark', 'light'] as const) {
   })
 }
 
+// 顶栏上收起的项目 chip 也要能报状态：橙色呼吸=在跑，蓝点=有新结果。
+// 见 docs/specs/workspace-column-dock。
+const createDockedColumnStatusState = (theme: 'dark' | 'light'): AppState => {
+  const state = createMockState()
+  state.settings.theme = theme
+
+  const dockedColumn = (id: string, name: string, cardPatch: Record<string, unknown>) => ({
+    id,
+    title: name,
+    provider: 'codex' as const,
+    workspacePath: `d:\\Git\\${name}`,
+    model: 'gpt-5.5',
+    docked: true as const,
+    cards: [
+      {
+        id: `${id}-card`,
+        title: `${name} chat`,
+        status: 'idle' as const,
+        size: 560,
+        provider: 'codex' as const,
+        model: 'gpt-5.5',
+        reasoningEffort: 'medium',
+        draft: '',
+        messages: [],
+        ...cardPatch,
+      },
+    ],
+  })
+
+  state.columns = [
+    state.columns[0]!,
+    dockedColumn('col-running', 'AniBazaar', { status: 'streaming' }),
+    dockedColumn('col-new', 'client', { unread: true }),
+    dockedColumn('col-quiet', 'quiet', {}),
+  ] as AppState['columns']
+
+  return state
+}
+
+for (const theme of ['dark', 'light'] as const) {
+  test(`docked column chips show running and new-result state (${theme})`, async ({ page }) => {
+    await mockAppApis(page, { state: createDockedColumnStatusState(theme) })
+    await page.goto(appUrl)
+
+    const chips = page.locator('.app-topbar-docked-column')
+    await expect(chips).toHaveCount(3)
+
+    // 呼吸动画在快照里必须冻结，否则每次采样的边框亮度都不同 —— 这正是
+    // `animations: 'disabled'` 的用途；它把动画停在第一帧。
+    await expect(chips.first()).toHaveClass(/is-running/)
+    await expect(page.locator('.app-topbar-docked-column-dot')).toHaveCount(1)
+
+    const strip = page.locator('.app-tab-list')
+    await expect(strip).toHaveScreenshot(`docked-column-status-${theme}.png`, {
+      animations: 'disabled',
+    })
+  })
+}

@@ -326,15 +326,26 @@ export const createClaudeAgentStatusTracker = ({
         const agent = agents.get(id)
         if (!agent || !isRunningStatus(agent.status)) continue
         const task = /^Workflow launched in background\. Task ID:\s*(\S+)/u.exec(result.text)
+        // 症状：模型停止输出的瞬间，仍在后台跑的 Agent 面板整个消失、再不回来（2026-09-10 用户实测：
+        //   三个 run_in_background Agent 在根回合 end_turn 后又各跑 6～12 分钟，快照却已是 agents: []）。
+        // 根因：这份「Async agent launched」回执此前只用来"不结算"，从没登记进 background，
+        //   回合末 finishTurn(keep) 不管 keep 真假都把它们收成 completed，之后的 task_progress 撞终态守卫被丢。
+        // 被否决：改读 tool_use 的 input.run_in_background——turn parser 与 runtime 都只把 toolName
+        //   传进 beginSynthetic，而这份回执是 CLI 对后台派发的唯一稳定确认（前台 Agent 的回执晚于终态）。
+        const asyncLaunch = /^Async agent launched/u.test(result.text)
         if (result.isError || /^<tool_use_error>/u.test(result.text)) {
           agent.status = 'errored'
         } else if (task) {
           aliases.set(task[1], id)
           background.add(id)
+        } else if (asyncLaunch) {
+          // 2026-09-08 实测 claude 2.1.263 顺序是 tool_use → task_started（条目已别名到原生 task_id）
+          // → 这份回执；它只是派发回执，终态由 system:task_notification 决定。
+          background.add(id)
+          continue
         } else if (id !== syntheticId) {
-          // 已被原生 task_started 认领：后台 Agent/Task 的「Async agent launched」回执在
-          // task_started 之后才到，它只是派发回执，终态由 system:task_notification 决定。
-          // 2026-09-08 实测 claude 2.1.263；前台 Agent 的回执晚于终态，走上面的 continue。
+          // 已被原生 task_started 认领却收到别的回执：前台 Agent 的回执晚于终态，正常走不到这里；
+          // 保守起见不当完成处理，终态仍交给 task_notification。
           continue
         } else if (!background.has(id)) {
           agent.status = 'completed'

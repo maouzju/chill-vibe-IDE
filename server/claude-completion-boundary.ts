@@ -39,8 +39,14 @@ export const buildClaudeCompletionBoundaryHookCommand = (
 ): ClaudeCompletionBoundaryHook => {
   const directory = path.dirname(snapshotPath)
   if (platform === 'win32') {
+    // 症状：中文 Windows 上落盘的快照 179/179 全部 JSON.parse 失败，边界永远是 unknown
+    //   （2026-09-10 实测 %TEMP%\chill-vibe-claude-completion，自 09-01 起每一份都坏）。
+    // 根因：新起的 powershell.exe 用系统 ANSI 代码页（gb2312）解码 [Console]::In，UTF-8 中文后面
+    //   紧跟的 \" 会把反斜杠 0x5C 当成 GBK 尾字节吞掉，字符串提前终止。同族见 Known Pitfalls #222。
+    // 被否决：先改 [Console]::InputEncoding 再 ReadToEnd——5.1 里 In 可能已按旧编码初始化；
+    //   直接拿原始字节流按 UTF-8 解码不依赖任何控制台编码状态，StreamReader 顺手剥 BOM。
     const script = [
-      '$inputJson=[Console]::In.ReadToEnd()',
+      '$inputJson=[System.IO.StreamReader]::new([Console]::OpenStandardInput(),[System.Text.UTF8Encoding]::new($false)).ReadToEnd()',
       `[System.IO.Directory]::CreateDirectory(${quotePowerShellLiteral(directory)}) | Out-Null`,
       `[System.IO.File]::WriteAllText(${quotePowerShellLiteral(snapshotPath)},$inputJson,[System.Text.UTF8Encoding]::new($false))`,
     ].join('; ')

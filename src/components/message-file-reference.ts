@@ -59,6 +59,18 @@ const stripLineAnchor = (value: string): FileReferenceCandidate => {
   return { path: value, line: undefined }
 }
 
+// Markdown parsers percent-encode non-ASCII path characters in `href`. Decode
+// before filesystem resolution so links such as `docs/调研.md` still target the
+// real file instead of a literal `%E8%...` filename. Keep malformed escapes
+// untouched; the subsequent path validation will reject them safely.
+const decodeHrefPath = (value: string) => {
+  try {
+    return decodeURIComponent(value)
+  } catch {
+    return value
+  }
+}
+
 const hasNonFileScheme = (value: string) => {
   if (WINDOWS_DRIVE_PREFIX.test(value) || FILE_URL.test(value)) {
     return false
@@ -126,7 +138,7 @@ const resolveMessageLinkFileTargetInternal = (
   workspacePath: string | undefined,
   raw: string,
 ): MessageFileTarget | null => {
-  const trimmed = raw.trim()
+  const trimmed = decodeHrefPath(raw.trim())
 
   if (!trimmed || trimmed.length > 1024 || trimmed.endsWith('/') || trimmed.endsWith('\\')) {
     return null

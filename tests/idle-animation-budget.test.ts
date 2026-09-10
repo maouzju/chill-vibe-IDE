@@ -73,6 +73,21 @@ const INFINITE_ANIMATION_ALLOWLIST: readonly InfiniteAnimationException[] = [
       'Untabbed pane layout counterpart: a direct `.pane-content` child card is the pane, so it is always on screen.',
   },
 
+  // ── Docked workspace column chip (top bar) ──
+  // The one place an infinite loop is defensible on *status* chrome, and only
+  // because of multiplicity: there is exactly one top bar, the selector matches
+  // one element per docked column (typically 0-3), and it only attaches while
+  // that column actually has a streaming card. Unlike `.pane-tab.is-streaming`
+  // — the pitfall 218 surface — it does not multiply across mounted-but-hidden
+  // panes and does not grow with session length. A docked column is invisible on
+  // the board, so this chip is the only affordance that can report the run at
+  // all; a bounded count would stop breathing while the run was still going.
+  {
+    selector: '.app-topbar-docked-column.is-running',
+    reason:
+      'Top-bar chip for a docked (off-board) column: one element per docked column, attached only while that column has a streaming card. Bounded to the top bar, so it cannot multiply across background panes the way pitfall 218 did.',
+  },
+
   // ── Weather card ambience ──
   // Legacy decorative motion, kept because it only mounts while the weather card
   // itself is rendered (one opt-in card, not per-pane chrome) and because the
@@ -318,8 +333,12 @@ test('every infinite CSS animation is on the reviewed allowlist', async () => {
 
 const completeUnreadAnimationDeclarations = (css: string) => {
   const declarations: string[] = []
+  // Comments must be stripped first: the selector text also appears in prose
+  // inside decision comments elsewhere in the sheet, and `[^{]*` then runs past
+  // the commented mention into the *next* real rule's body — reporting an
+  // unrelated rule's `animation` as if it were the completion glow's.
   const blockPattern = /\.card-shell\.is-complete-unread[^{]*\{([^}]*)\}/g
-  for (const match of css.matchAll(blockPattern)) {
+  for (const match of stripCssComments(css).matchAll(blockPattern)) {
     const body = match[1] ?? ''
     for (const line of body.split(';')) {
       if (/^\s*animation\s*:/.test(line)) {

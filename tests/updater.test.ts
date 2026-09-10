@@ -14,22 +14,34 @@ import {
   encodePowerShellScriptUtf8Bom,
   isNewerVersion,
   parseVersionTag,
+  parseReleasePageHtml,
   runUpdateExitSequence,
   selectPlatformAsset,
   parseReleaseResponse,
   resolveDownloadedAssetStrategy,
   isDownloadedAssetPathAllowed,
   UPDATE_EXIT_FLUSH_DELAY_MS,
+  createUpdateInstallGate,
 } from '../electron/updater-core.ts'
 import {
   launchDetachedPowerShellScriptFile,
   resolveWindowsPowerShellPath,
 } from '../electron/updater-launch.ts'
+import * as updaterCore from '../electron/updater-core.ts'
 
 test('update installation only accepts an explicitly downloaded asset path', () => {
   const allowed = new Set(['/tmp/update.zip'])
   assert.equal(isDownloadedAssetPathAllowed('/tmp/update.zip', allowed), true)
   assert.equal(isDownloadedAssetPathAllowed('/tmp/calc.exe', allowed), false)
+})
+
+test('update installation gate rejects concurrent jobs until the first job is released', () => {
+  const gate = createUpdateInstallGate()
+  assert.equal(gate.tryAcquire(), true)
+  assert.equal(gate.tryAcquire(), false)
+  assert.equal(gate.isAcquired(), true)
+  gate.release()
+  assert.equal(gate.tryAcquire(), true)
 })
 
 describe('parseVersionTag', () => {
@@ -184,6 +196,157 @@ describe('parseReleaseResponse', () => {
     const result = parseReleaseResponse(release, '0.1.0', 'win32')
 
     assert.ok(result.htmlUrl?.includes('v0.2.0'))
+  })
+})
+
+test('parses only fixed-repository release download links from fallback HTML', () => {
+  const release = parseReleasePageHtml(`
+    <a href="/maouzju/chill-vibe-IDE/releases/tag/v0.20.19">v0.20.19</a>
+    <a href="/maouzju/chill-vibe-IDE/releases/download/v0.20.19/Chill%20Vibe-0.20.19-win.zip">zip</a>
+    <a href="https://evil.example/releases/download/v0.20.19/evil.zip">evil</a>
+  `, 'https://github.com/maouzju/chill-vibe-IDE/releases/tag/v0.20.19')
+  assert.equal(release?.tag_name, 'v0.20.19')
+  assert.deepEqual(release?.assets, [{
+    name: 'Chill Vibe-0.20.19-win.zip',
+    browser_download_url: 'https://github.com/maouzju/chill-vibe-IDE/releases/download/v0.20.19/Chill%20Vibe-0.20.19-win.zip',
+  }])
+})
+
+describe('更新检查的官方页面回退', () => {
+  const base = 'https://github.com/maouzju/chill-vibe-IDE'
+  const pageUrl = `${base}/releases/tag/v0.20.19`
+  const zipPath = '/maouzju/chill-vibe-IDE/releases/download/v0.20.19/Chill.Vibe-0.20.19-win.zip'
+  // 实际 GitHub 版本页只有懒加载容器，下载链接由 expanded_assets 单独返回。
+  const lazyPage = `<a href="/someone/else/releases/tag/v99.0.0">引用其它版本</a>
+    <include-fragment src="${base}/releases/expanded_assets/v0.20.19"></include-fragment>`
+  const assetsHtml = `<a href="${zipPath}">ZIP</a><a href="${zipPath}">重复链接</a>`
+  const response = (body: string, url: string, status = 200) => {
+    const result = new Response(body, { status })
+    Object.defineProperty(result, 'url', { value: url })
+    return result
+  }
+
+  test('以最终发布 URL 为准，不把说明里的其它版本当成最新版', () => {
+    const release = parseReleasePageHtml(lazyPage + assetsHtml, pageUrl)
+    assert.equal(release?.tag_name, 'v0.20.19')
+    assert.equal(release?.assets.length, 1)
+  })
+
+  test('Electron net.fetch 的空响应 URL 使用页面 canonical，不猜普通链接', () => {
+    assert.equal(parseReleasePageHtml(`<meta property="og:url" content="/maouzju/chill-vibe-IDE/releases/tag/v0.20.19">${assetsHtml}`, '')?.tag_name, 'v0.20.19')
+    assert.equal(parseReleasePageHtml(`<link rel="canonical" href="${pageUrl}">${lazyPage}${assetsHtml}`, '')?.tag_name, 'v0.20.19')
+    assert.equal(parseReleasePageHtml(lazyPage + assetsHtml, ''), null)
+  })
+
+  test('没有稳定版本 URL 时拒绝猜测，并排除外站及预发布', () => {
+    for (const url of [base + '/releases/latest', pageUrl + '-beta.1', pageUrl.replace('github.com', 'evil.example'), pageUrl.replace('maouzju', 'other')]) {
+      assert.equal(parseReleasePageHtml(lazyPage + assetsHtml, url), null, url)
+    }
+  })
+
+  test('附件必须来自同一仓库同一完整版本，不接受外站、认证信息和子目录', () => {
+    const invalidLinks = [
+      zipPath.replace('v0.20.19', 'v0.20.18'),
+      zipPath.replace('maouzju', 'other'),
+      `https://evil.example${zipPath}`,
+      `https://user:pass@github.com${zipPath}`,
+      `${zipPath}/nested.zip`,
+      '/maouzju/chill-vibe-IDE/archive/refs/tags/v0.20.19.zip',
+    ].map((href) => `<a href="${href}">非目标附件</a>`).join('')
+    const release = parseReleasePageHtml(`<a href="${pageUrl}">版本</a>${invalidLinks}${assetsHtml}`, pageUrl)
+    assert.deepEqual(release?.assets, [{ name: 'Chill.Vibe-0.20.19-win.zip', browser_download_url: `https://github.com${zipPath}` }])
+  })
+
+  test('API 限流后读取懒加载附件，得到可下载的新版本而非空资产', async () => {
+    const calls: string[] = []
+    const result = await updaterCore.checkForUpdateWithFallback({
+      currentVersion: '0.20.18', platform: 'win32',
+      fetch: async (url, options) => {
+        calls.push(url)
+        assert.ok(options.signal instanceof AbortSignal)
+        if (calls.length === 1) return response('{"message":"API rate limit exceeded"}', url, 403)
+        if (calls.length === 2) return response(lazyPage, pageUrl)
+        return response(assetsHtml, url)
+      },
+    })
+    assert.deepEqual(calls, [updaterCore.GITHUB_API_URL, `${base}/releases/latest`, `${base}/releases/expanded_assets/v0.20.19`])
+    assert.equal(result.latestVersion, '0.20.19')
+    assert.equal(result.assetUrl, `https://github.com${zipPath}`)
+    assert.equal(result.htmlUrl, pageUrl)
+    assert.equal(result.error, undefined)
+  })
+
+  test('API 成功时不额外访问网页', async () => {
+    let calls = 0
+    const result = await updaterCore.checkForUpdateWithFallback({
+      currentVersion: '0.20.18', platform: 'win32',
+      fetch: async (url) => {
+        calls += 1
+        return response(JSON.stringify({ tag_name: 'v0.20.19', assets: [{ name: 'update.zip', browser_download_url: `https://github.com${zipPath}` }] }), url)
+      },
+    })
+    assert.equal(calls, 1)
+    assert.equal(result.hasUpdate, true)
+    assert.equal(result.error, undefined)
+  })
+
+  test('API 网络错误或无效 JSON 同样回退，已是最新版时不拉附件', async () => {
+    for (const mode of ['network', 'json', 'shape']) {
+      let calls = 0
+      const result = await updaterCore.checkForUpdateWithFallback({
+        currentVersion: '0.20.19', platform: 'win32',
+        fetch: async (url) => {
+          calls += 1
+          if (calls > 1) return response(lazyPage, pageUrl)
+          if (mode === 'network') throw new Error('网络断开')
+          return response(mode === 'json' ? 'not-json' : '{"tag_name":"v0.20.19","assets":null}', url)
+        },
+      })
+      assert.equal(calls, 2)
+      assert.equal(result.hasUpdate, false)
+      assert.equal(result.error, undefined)
+    }
+  })
+
+  test('两条检查路径都失败时保留原因，不误报已是最新版', async () => {
+    const result = await updaterCore.checkForUpdateWithFallback({
+      currentVersion: '0.20.18', platform: 'win32',
+      fetch: async (url) => response('', url, url === updaterCore.GITHUB_API_URL ? 403 : 503),
+    })
+    assert.match(result.error ?? '', /403.*503/)
+  })
+
+  test('附件列表为空或读取失败时返回明确错误', async () => {
+    for (const status of [200, 503]) {
+      let calls = 0
+      const result = await updaterCore.checkForUpdateWithFallback({
+        currentVersion: '0.20.18', platform: 'win32',
+        fetch: async (url) => {
+          calls += 1
+          if (calls === 1) return response('', url, 403)
+          if (calls === 2) return response(lazyPage, pageUrl)
+          return response('', url, status)
+        },
+      })
+      assert.ok(result.error)
+      assert.equal(result.assetUrl, undefined)
+    }
+  })
+
+  test('回退响应头和响应体均受超时限制，坏连接不会永远卡住', async () => {
+    for (const phase of ['headers', 'body']) {
+      const result = await updaterCore.checkForUpdateWithFallback({
+        currentVersion: '0.20.18', platform: 'win32', timeoutMs: 30,
+        fetch: async (url) => {
+          if (url === updaterCore.GITHUB_API_URL) return response('', url, 403)
+          if (phase === 'headers') return new Promise<Response>(() => {})
+          const hanging = response('', pageUrl)
+          hanging.text = () => new Promise<string>(() => {})
+          return hanging
+        },
+      })
+      assert.match(result.error ?? '', /timed out/i)
+    }
   })
 })
 

@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import type { ChildProcess } from 'node:child_process'
 import { spawnSync } from 'node:child_process'
 import { EventEmitter } from 'node:events'
-import { mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import { PassThrough } from 'node:stream'
@@ -88,7 +88,7 @@ test('Claude Stop hook command quietly writes stdin to the native completion sid
     '-ExecutionPolicy',
     'Bypass',
   ])
-  assert.match(windows.args.at(-1) ?? '', /Console.*In.*ReadToEnd/)
+  assert.match(windows.args.at(-1) ?? '', /OpenStandardInput.*UTF8Encoding.*ReadToEnd/)
   assert.match(windows.args.at(-1) ?? '', /stop boundary\.json/)
 
   const posix = buildClaudeCompletionBoundaryHookCommand('/tmp/stop boundary.json', 'linux')
@@ -265,4 +265,34 @@ test('ChatManager emits a terminal error when a pending Claude background proces
       },
     },
   )
+})
+
+// 症状：中文 Windows 上 Stop 钩子落盘的快照 179/179 全部 JSON.parse 失败，边界永远是 unknown
+//   （2026-09-10 实测 %TEMP%\chill-vibe-claude-completion，自 09-01 起每一份）。
+// 根因：新起的 powershell.exe 以 gb2312 解码 stdin；UTF-8 中文后面若紧跟 \"，反斜杠 0x5C 会被当成
+//   GBK 尾字节吞掉，字符串提前终止。此前的用例只喂 ASCII，所以一直绿。
+test('Claude Stop hook keeps a UTF-8 snapshot intact when the last message holds CJK and escaped quotes', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'claude-completion-hook-utf8-'))
+  const snapshotPath = path.join(root, 'stop boundary.json')
+  const hook = buildClaudeCompletionBoundaryHookCommand(snapshotPath)
+  const lastAssistantMessage = '已确认：他说"好"。结束'
+  const input = JSON.stringify({
+    hook_event_name: 'Stop',
+    last_assistant_message: lastAssistantMessage,
+    background_tasks: [{ id: 'aa3d60cc650c2864b', status: 'running' }],
+    session_crons: [],
+  })
+
+  try {
+    const result = spawnSync(hook.command, hook.args, {
+      input: Buffer.from(input, 'utf8'),
+      windowsHide: true,
+    })
+    assert.equal(result.status, 0, String(result.stderr) || result.error?.message)
+    assert.equal(readClaudeCompletionBoundary(snapshotPath), 'background-pending')
+    const written = JSON.parse(await readFile(snapshotPath, 'utf8')) as { last_assistant_message?: string }
+    assert.equal(written.last_assistant_message, lastAssistantMessage)
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
 })

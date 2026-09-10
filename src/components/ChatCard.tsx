@@ -77,6 +77,7 @@ import {
   getTopVisibleRenderableEntryId,
   getStickyRenderableUserMessageId,
   getToolGroupKey,
+  selectDockedAgentStatus,
   type RenderableMessage,
 } from './chat-card-parsing'
 import { createScrollDriftWatcher, type ScrollDriftWatcher } from './chat-scroll-drift-watcher'
@@ -200,6 +201,7 @@ import { MessageBubble, StreamingIndicator } from './MessageBubble'
 import { getStructuredLabels } from './chat-card-rendering'
 import { useDialogFocus } from './dialog-focus'
 import {
+  StructuredAgentsCard,
   StructuredToolGroupCard,
 } from './StructuredBlocks'
 import {
@@ -1315,6 +1317,9 @@ const ChatTranscript = memo(
     const revealAllCompactedHistoryPressHandlers = usePrimaryMouseDownActivation<HTMLButtonElement>(
       onRevealAllCompactedHistory,
     )
+    // 运行中的子代理只在卡片底部保留一个沉底面板；没有运行中的就整个不渲染。
+    // 数据来自转录里最新一张 status 快照（docs/specs/claude-subagent-progress Slice 3）。
+    const dockedAgentStatus = useMemo(() => selectDockedAgentStatus(messages), [messages])
 
     return (
       <>
@@ -1460,6 +1465,12 @@ const ChatTranscript = memo(
             ) : null}
           </div>
         </div>
+
+        {dockedAgentStatus ? (
+          <div className="subagent-dock" data-testid="subagent-dock">
+            <StructuredAgentsCard language={language} data={dockedAgentStatus} />
+          </div>
+        ) : null}
 
         {cardStatus === 'streaming' || recoveryStatus?.kind === 'failed' ? (
           <StreamingIndicator

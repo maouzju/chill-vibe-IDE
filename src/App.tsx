@@ -7,6 +7,7 @@ import {
   useRef,
   useState,
   type ChangeEvent,
+  type DragEvent,
   type ReactNode,
   type WheelEvent,
 } from 'react'
@@ -200,6 +201,7 @@ import {
   planAutoUrgeForCompletedCard,
 } from './components/chat-auto-urge'
 import { resolveAppLoadError } from './app-load-error'
+import { clearDragPayload, peekDragPayload, readDragPayload, releaseDragPayloadIfStale } from './dnd'
 import {
   isProviderStatusExplicitlyUnavailable,
   startInitialAppLoad,
@@ -396,6 +398,7 @@ import {
   ideReducer,
   isUntouchedWorkspacePlaceholderColumn,
   resolveForkPointMessage,
+  selectDockedColumnStatus,
   type IdeAction,
 } from './state'
 
@@ -727,7 +730,10 @@ function App() {
   const [proxyStats, setProxyStats] = useState<ProxyStatsSummary | null>(null)
   const [proxyStatsRange, setProxyStatsRange] = useState<'all' | 'session' | '1h' | '24h'>('all')
   const [windowMaximized, setWindowMaximized] = useState(false)
-  const [updateStatus, setUpdateStatus] = useState<'idle' | 'checking' | 'downloading' | 'ready' | 'no-update' | 'error'>('idle')
+  // 顶栏停靠落区只在"正在拖一列"期间存在（ui-principles 规则 3：闲置 chrome 退场）。
+  const [columnDragInFlight, setColumnDragInFlight] = useState(false)
+  const [dockZoneOver, setDockZoneOver] = useState(false)
+  const [updateStatus, setUpdateStatus] = useState<'idle' | 'checking' | 'downloading' | 'ready' | 'installing' | 'no-update' | 'error'>('idle')
   const [updateResult, setUpdateResult] = useState<UpdateCheckResult | null>(null)
   const [downloadProgress, setDownloadProgress] = useState(0)
   const [downloadedUpdatePath, setDownloadedUpdatePath] = useState<string | null>(null)
@@ -766,6 +772,70 @@ function App() {
     ],
     [topTabText],
   )
+  const visibleColumns = useMemo(
+    () => appState.columns.filter((column) => column.docked !== true),
+    [appState.columns],
+  )
+  const dockedColumns = useMemo(
+    () => appState.columns.filter((column) => column.docked === true),
+    [appState.columns],
+  )
+
+  useEffect(() => {
+    // dragstart 走冒泡阶段：WorkspaceColumn 的 React handler 已经 writeDragPayload，
+    // 这里才能从 peekDragPayload 认出"拖的是一列"。drop / dragend 同样走冒泡，
+    // 让落区自己的 onDrop 先于这里的收尾执行。
+    const handleDragStart = () => {
+      if (peekDragPayload()?.type === 'column') {
+        setColumnDragInFlight(true)
+      }
+    }
+    const handleDragFinish = () => {
+      setColumnDragInFlight(false)
+      setDockZoneOver(false)
+    }
+    document.addEventListener('dragstart', handleDragStart)
+    document.addEventListener('dragend', handleDragFinish)
+    document.addEventListener('drop', handleDragFinish)
+    return () => {
+      document.removeEventListener('dragstart', handleDragStart)
+      document.removeEventListener('dragend', handleDragFinish)
+      document.removeEventListener('drop', handleDragFinish)
+    }
+  }, [])
+
+  useEffect(() => {
+    if (!columnDragInFlight) {
+      return
+    }
+    // Electron 会丢 dragend（pitfall 132）：没有这个看门狗，落区会永久留在顶栏上。
+    // releaseDragPayloadIfStale 只在拖拽真的停止活动 800ms 后才释放，不会误杀飞行中的拖拽（pitfall 196）。
+    const timer = window.setInterval(() => {
+      if (releaseDragPayloadIfStale(Date.now())) {
+        setColumnDragInFlight(false)
+        setDockZoneOver(false)
+      }
+    }, 500)
+    return () => window.clearInterval(timer)
+  }, [columnDragInFlight])
+
+  const handleTopbarColumnDragOver = useCallback((event: DragEvent<HTMLElement>) => {
+    if (readDragPayload(event)?.type !== 'column') {
+      return
+    }
+    event.preventDefault()
+    event.dataTransfer.dropEffect = 'move'
+    setDockZoneOver(true)
+  }, [])
+
+  const handleTopbarColumnDragLeave = useCallback((event: DragEvent<HTMLElement>) => {
+    const nextTarget = event.relatedTarget
+    if (nextTarget instanceof Node && event.currentTarget.contains(nextTarget)) {
+      return
+    }
+    setDockZoneOver(false)
+  }, [])
+
   const availableQuickToolModels = useMemo(
     () => getAvailableQuickToolModels(appState.settings, appState.columns),
     [appState.settings, appState.columns],
@@ -1246,6 +1316,7 @@ function App() {
 
   const handleInstallUpdate = useCallback(() => {
     if (!downloadedUpdatePath) return
+    setUpdateStatus('installing')
     void installUpdate(downloadedUpdatePath).catch(() => setUpdateStatus('error'))
   }, [downloadedUpdatePath])
 
@@ -1348,6 +1419,21 @@ function App() {
   }, [])
 
   const applyAction = useCallback((action: IdeAction) => applyActions([action]), [applyActions])
+
+  const handleTopbarColumnDrop = useCallback(
+    (event: DragEvent<HTMLElement>) => {
+      const payload = readDragPayload(event)
+      if (payload?.type !== 'column') {
+        return
+      }
+      event.preventDefault()
+      applyAction({ type: 'dockColumn', columnId: payload.columnId })
+      clearDragPayload()
+      setColumnDragInFlight(false)
+      setDockZoneOver(false)
+    },
+    [applyAction],
+  )
 
   const closeCodexFastModeDialog = useCallback(() => {
     setCodexFastModeDialogOpen(false)
@@ -6103,6 +6189,15 @@ function App() {
     const actions: IdeAction[] = []
 
     for (const column of appState.columns) {
+      // 症状: 收起到顶栏的列，跑完的蓝点会立刻自己消失，用户永远看不到"有新结果"。
+      // 根因: 自动已读把"每个 pane 的活动 tab"当成用户正看着它，可停靠列整棵
+      //       layout 根本没渲染 —— 它唯一的可见代表是顶栏那个 chip。
+      // 被否决的替代: 在 pane-read-state 里判 docked —— 那个模块只认 layout，
+      //       不该知道列级的停靠状态；可见性判断留在调用点才是它的语义。
+      if (column.docked === true) {
+        continue
+      }
+
       for (const cardId of getAutoReadCardIdsForVisiblePanes(column.layout, column.cards, true)) {
         actions.push({
           type: 'updateCard',
@@ -8782,6 +8877,12 @@ function App() {
           </div>
         ) : null}
 
+        {updateStatus === 'installing' ? (
+          <div className="update-banner is-downloading" role="status">
+            <span>{text.updateInstalling}</span>
+          </div>
+        ) : null}
+
         {updateStatus === 'no-update' ? (
           <div className="update-banner is-current" role="status">
             <span>{text.updateNoUpdate}</span>
@@ -8797,7 +8898,7 @@ function App() {
         <div className="settings-actions">
           <AppButton
             type="button"
-            disabled={updateStatus === 'checking' || updateStatus === 'downloading'}
+            disabled={updateStatus === 'checking' || updateStatus === 'downloading' || updateStatus === 'installing'}
             onClick={handleCheckForUpdate}
           >
             {text.updateCheckNow}
@@ -9911,7 +10012,12 @@ function App() {
     <div className={`app-shell${isDesktopRuntime ? ` is-desktop-shell${desktopPlatformClass}` : ''}`}>
       <WeatherAmbientOverlay />
       <header className="app-topbar">
-        <div className="app-topbar-frame">
+        <div
+          className={`app-topbar-frame${columnDragInFlight ? ' is-column-drop-target' : ''}`}
+          onDragOver={columnDragInFlight ? handleTopbarColumnDragOver : undefined}
+          onDragLeave={columnDragInFlight ? handleTopbarColumnDragLeave : undefined}
+          onDrop={columnDragInFlight ? handleTopbarColumnDrop : undefined}
+        >
           <div className="app-tab-list" role="tablist" aria-label={topTabText.navLabel}>
             {topTabs.map((tab) => {
               const active = activeTab === tab.id
@@ -9941,6 +10047,37 @@ function App() {
             >
               <PlusIcon />
             </button>
+            {dockedColumns.map((column) => {
+              const label =
+                column.workspacePath.split(/[/\\]/).filter(Boolean).at(-1) ?? column.title
+              const { running, hasNewResult } = selectDockedColumnStatus(column)
+              const statusSuffix = running
+                ? ` — ${text.dockedColumnRunning}`
+                : hasNewResult
+                  ? ` — ${text.dockedColumnNewResult}`
+                  : ''
+              return (
+                <button
+                  key={column.id}
+                  type="button"
+                  className={`app-topbar-docked-column${running ? ' is-running' : ''}${
+                    hasNewResult ? ' has-new-result' : ''
+                  }`}
+                  data-column-id={column.id}
+                  title={`${column.workspacePath || column.title}${statusSuffix}`}
+                  aria-label={`${text.restoreDockedColumn(label)}${statusSuffix}`}
+                  onClick={() => applyAction({ type: 'undockColumn', columnId: column.id })}
+                >
+                  {label}
+                  {hasNewResult ? <span className="app-topbar-docked-column-dot" /> : null}
+                </button>
+              )
+            })}
+            {columnDragInFlight ? (
+              <div className={`app-topbar-dock-zone${dockZoneOver ? ' is-over' : ''}`}>
+                {text.dockColumnZoneLabel}
+              </div>
+            ) : null}
             {isRemoteMonitorSupported() ? (
               <button
                 type="button"
@@ -10562,6 +10699,12 @@ function App() {
                   </div>
                 ) : null}
 
+                {updateStatus === 'installing' ? (
+                  <div className="update-banner is-downloading" role="status">
+                    <span>{text.updateInstalling}</span>
+                  </div>
+                ) : null}
+
                 {updateStatus === 'no-update' ? (
                   <div className="update-banner is-current" role="status">
                     <span>{text.updateNoUpdate}</span>
@@ -10577,7 +10720,7 @@ function App() {
                 <div className="settings-actions">
                   <AppButton
                     type="button"
-                    disabled={updateStatus === 'checking' || updateStatus === 'downloading'}
+                    disabled={updateStatus === 'checking' || updateStatus === 'downloading' || updateStatus === 'installing'}
                     onClick={handleCheckForUpdate}
                   >
                     {text.updateCheckNow}
@@ -11281,7 +11424,7 @@ function App() {
         hidden={activeTab !== 'ambience'}
         onWheelCapture={handleBoardWheelCapture}
       >
-        {appState.columns.map((column) => {
+        {visibleColumns.map((column) => {
           const sessionHistory =
             sessionHistoryByWorkspacePath.get(normalizeWorkspaceHistoryKey(column.workspacePath)) ?? emptySessionHistory
 

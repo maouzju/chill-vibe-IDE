@@ -16,6 +16,7 @@ import {
   parseStructuredAskUserMessage,
   parseStructuredReasoningMessage,
   parseStructuredTodoMessage,
+  selectDockedAgentStatus,
 } from '../src/components/chat-card-parsing.ts'
 
 test('renderable entry structure key ignores streaming content-only updates', () => {
@@ -208,38 +209,90 @@ const makeAgentsStatusMessage = (
     },
   })
 
-// 症状：Claude 派发子代理时「正在运行的子智能体」面板整个不显示。
-// 根因：派发必然先产生一张 Task/Agent 工具卡，之后的 agents 状态卡紧跟其后，落进
-//       buildRenderableMessages 的工具分组循环；循环里只认 command/tool/edits，
-//       其余一律走 isEmptySkippableMessage —— 而 agents 卡的 content 恒为空，
-//       于是被当成「解析失败的坏卡」静默丢弃。
-test('buildRenderableMessages keeps an agents status card that follows a tool card', () => {
+// 症状（2026-08-12）：Claude 派发子代理时「正在运行的子智能体」面板整个不显示——状态卡紧跟
+//   Task/Agent 工具卡落进工具分组循环，被 isEmptySkippableMessage 当坏卡吞掉。
+// 症状（2026-09-10）：面板落在派发那一刻的转录位置，随后被正文顶走，跑完还留一张空卡，
+//   用户读成「IDE 识别不了子 agent」。状态卡改由 selectDockedAgentStatus 送到卡片底部的
+//   沉底单窗口，不再作为转录条目；这两条守卫同时锁住「不被吞」与「不进转录」。
+test('buildRenderableMessages routes an agents status card after a tool card to the dock, not the transcript', () => {
   const dispatch = makeToolMessage('Task', 'Explore the repo')
   const agentsCard = makeAgentsStatusMessage([
     { threadId: 'task-1', nickname: 'Explore the repo', role: 'Explore', activity: ['Read · 2 tools · 3.3s'] },
   ])
 
   const result = buildRenderableMessages([dispatch, agentsCard])
+  assert.deepEqual(result.map((entry) => entry.type), ['tool-group'])
 
-  const types = result.map((entry) => entry.type)
-  assert.deepEqual(types, ['tool-group', 'message'])
-  assert.equal(
-    result[1]!.type === 'message' ? result[1]!.message.meta?.kind : undefined,
-    'agents',
-  )
+  const docked = selectDockedAgentStatus([dispatch, agentsCard])
+  assert.equal(docked?.view, 'status')
+  assert.deepEqual(docked?.agents.map((agent) => agent.threadId), ['task-1'])
 })
 
-test('buildRenderableMessages keeps an agents status card between two tool cards', () => {
+test('buildRenderableMessages keeps the tool card that follows an agents status card', () => {
   const dispatch = makeToolMessage('Task', 'Explore the repo')
   const agentsCard = makeAgentsStatusMessage([{ threadId: 'task-1', role: 'Explore' }])
   const afterTool = makeToolMessage('Read', 'Read file.ts')
 
   const result = buildRenderableMessages([dispatch, agentsCard, afterTool])
 
-  const agentsEntries = result.filter(
-    (entry) => entry.type === 'message' && entry.message.meta?.kind === 'agents',
+  assert.equal(result.some((entry) => entry.type === 'message' && entry.message.meta?.kind === 'agents'), false)
+  const toolNames = result.flatMap((entry) =>
+    entry.type === 'tool-group' ? entry.items.map((item) => (item.kind === 'tool' ? item.data.toolName : item.kind)) : [],
   )
-  assert.equal(agentsEntries.length, 1)
+  assert.deepEqual(toolNames, ['Task', 'Read'])
+})
+
+test('selectDockedAgentStatus returns null when the latest snapshot has no running agents', () => {
+  const running = makeAgentsStatusMessage([{ threadId: 'task-1', role: 'Explore' }])
+  const settled = makeAgentsStatusMessage([])
+  assert.equal(selectDockedAgentStatus([running, settled]), null)
+  assert.equal(selectDockedAgentStatus([makeToolMessage('Read', 'Read file.ts')]), null)
+  assert.equal(selectDockedAgentStatus([]), null)
+})
+
+test('selectDockedAgentStatus only lists running entries from the latest snapshot', () => {
+  const stale = makeAgentsStatusMessage([{ threadId: 'ghost', role: 'Explore' }])
+  const latest = makeMessage({
+    content: '',
+    meta: {
+      provider: 'claude',
+      kind: 'agents',
+      itemId: 'agent-status:claude',
+      structuredData: JSON.stringify({
+        itemId: 'agent-status:claude',
+        kind: 'agents',
+        status: 'completed',
+        view: 'status',
+        agents: [
+          { threadId: 'done', status: 'completed', activity: [] },
+          { threadId: 'live', status: 'running', nickname: 'Review docs', activity: ['⏳ 已运行 12秒'] },
+        ],
+      }),
+    },
+  })
+  const docked = selectDockedAgentStatus([stale, latest, makeMessage({ content: 'trailing text' })])
+  assert.deepEqual(docked?.agents.map((agent) => agent.threadId), ['live'])
+})
+
+test('selectDockedAgentStatus ignores toolCall-view agents cards and keeps them in the transcript', () => {
+  const waitCard = makeMessage({
+    content: '',
+    meta: {
+      provider: 'codex',
+      kind: 'agents',
+      itemId: 'wait-1',
+      structuredData: JSON.stringify({
+        itemId: 'wait-1',
+        kind: 'agents',
+        status: 'completed',
+        tool: 'wait',
+        callStatus: 'inProgress',
+        agents: [{ threadId: 'reviewer', nickname: 'Reviewer', status: 'running' }],
+      }),
+    },
+  })
+  assert.equal(selectDockedAgentStatus([waitCard]), null)
+  assert.deepEqual(buildRenderableMessages([waitCard]).map((entry) => entry.type), ['message'])
 })
 
 test('buildRenderableMessages still drops an agents card with no structuredData', () => {

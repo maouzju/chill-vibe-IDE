@@ -647,6 +647,26 @@ export const parseStructuredAgentsMessage = (message: ChatMessage): StructuredAg
   }
 }
 
+const isRunningAgentEntry = (agent: StructuredAgentEntry) =>
+  agent.status === 'running' || agent.status === 'pendingInit'
+
+// 症状：子代理状态卡落在派发那一刻的转录位置，随后被正文顶走，跑完还留一张空卡，用户读成
+//   「IDE 识别不了子 agent」（2026-09-10，Fable 5.1；探针证实 CLI 事件与存档快照都齐全）。
+// 决策：卡片底部只保留一个沉底面板，数据取转录里最新一张 status 快照，只列运行中条目，
+//   没有运行中条目就返回 null（面板整个不渲染）。
+// 被否决：聚合所有历史快照的运行中条目——旧包遗留的 workflow: 幻影会永久复活；最新快照即真相。
+export const selectDockedAgentStatus = (messages: ChatMessage[]): StructuredAgentsMessage | null => {
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const message = messages[index]!
+    if (message.meta?.kind !== 'agents') continue
+    const parsed = parseStructuredAgentsMessage(message)
+    if (!parsed || parsed.view !== 'status') continue
+    const running = parsed.agents.filter(isRunningAgentEntry)
+    return running.length > 0 ? { ...parsed, agents: running } : null
+  }
+  return null
+}
+
 export const getAskUserAnswerKey = (message: ChatMessage) => {
   if (message.meta?.kind !== 'ask-user') {
     return message.id
@@ -1273,6 +1293,13 @@ export const buildRenderableMessages = (messages: ChatMessage[]): RenderableMess
         continue
       }
 
+      if (agents?.view === 'status') {
+        // 运行中子代理状态卡由 selectDockedAgentStatus 送到卡片底部的沉底单窗口，
+        // 不再作为转录条目（2026-09-10，见 docs/specs/claude-subagent-progress Slice 3）。
+        index += 1
+        continue
+      }
+
       if (todo || agents) {
         items.push({
           type: 'message',
@@ -1323,8 +1350,16 @@ export const buildRenderableMessages = (messages: ChatMessage[]): RenderableMess
       // 被否决：把 'agents' 从 isEmptySkippableMessage 的 kind 名单里删掉——那会让真正
       //       structuredData 缺失的坏 agents 卡渲染成空气泡。这里 break 让外层的
       //       `if (todo || agents)` 分支照常把它渲染成独立卡片。
-      if (!cmd && !tl && !ed && (parseStructuredTodoMessage(msg) || parseStructuredAgentsMessage(msg))) {
-        break
+      if (!cmd && !tl && !ed) {
+        const groupedAgents = parseStructuredAgentsMessage(msg)
+        if (groupedAgents?.view === 'status') {
+          // 沉底面板的数据源，转录里直接跳过；后面的工具卡继续并入本分组。
+          index += 1
+          continue
+        }
+        if (parseStructuredTodoMessage(msg) || groupedAgents) {
+          break
+        }
       }
 
       if (cmd) {

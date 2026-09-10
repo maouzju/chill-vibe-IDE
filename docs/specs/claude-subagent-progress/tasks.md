@@ -46,3 +46,20 @@
 - [ ] 子代理明细展开：消费 sidechain 行，点开面板可看到子代理内部的逐条工具调用。
 - [ ] 回合结束但仍有子代理在跑时的收尾策略（对齐 Codex 的 `markRootTurnCompleted` 延迟结算）。
 - [ ] `system:task_notification` 的 `summary` / `output_file` 接入卡片，便于回看子代理产出。
+
+## Slice 3 — 运行中子代理沉底单窗口（2026-09-10）
+
+- [x] 红：`tests/chat-card-parsing.test.ts` 改写两条「状态卡进转录」守卫为「状态卡出转录、进沉底」，新增 `selectDockedAgentStatus` 用例（最新快照优先 / 无运行中返回 null / toolCall 视图不受影响）。
+- [x] 绿：`chat-card-parsing.ts` + `ChatCard.tsx` + `index.css`。
+- [x] Tier 2：`theme-check.spec.ts` 更新 Codex 状态面板三条用例到 `.subagent-dock`，空态改为不渲染，新增整卡沉底快照（亮/暗）。
+- [x] `pnpm test:quality` 通过；相关 Node 单测 4 文件绿；Playwright 子代理/Workflow 推送 9/9 绿（`codex-sub-agent-status-*` 快照因面板改挂沉底容器重生成，`codex-sub-agent-status-empty-*` 随空态不再渲染而删除，新增 `subagent-dock-card-*`）。
+- [x] `tests/stream-recovery-runtime.spec.ts` 的后台 Workflow 推送用例改为断言收敛后沉底面板卸载。
+
+## Slice 4 — 后台 Agent 跨回合保留 + Stop 钩子 UTF-8（2026-09-10）
+
+- [x] 现场证据：卡 a2cd0e4f 三个 `run_in_background` Agent 在根回合 end_turn（04:34:03）后分别跑到 04:40 / 04:42 / 04:46，state.json 里的状态快照却已是 `agents: []`；`%TEMP%\chill-vibe-claude-completion` 下 179 份 Stop 钩子快照全部 JSON.parse 失败（自 09-01 起每一份）。
+- [x] 红：`tests/claude-agent-status.test.ts` 新增「后台 Agent 回执后 finishTurn(true) 仍 running」；`tests/claude-agent-runtime.test.ts` 新增「boundary=unknown 时 result 不卸掉后台 Agent」；`tests/claude-completion-boundary.test.ts` 新增「中文 + 转义引号载荷经钩子落盘后仍可解析」。三条确认失败（agents 0≠1、hasBackgroundAgents false、boundary unknown）。
+- [x] 绿：`server/claude-agent-status.ts` 的「Async agent launched」回执分支登记 background，终态仍只由 `system:task_notification` 决定；`server/claude-completion-boundary.ts` Windows 钩子改读 `[Console]::OpenStandardInput()` 字节流按 UTF-8 解码。
+- [ ] 后续：CLI 2.1.263 另有 `system:background_tasks_changed`（REPLACE 语义、全量存活后台任务），可替代回执文案正则与 Stop 旁路文件成为后台真相源。
+- [x] `pnpm test:quality` 通过；三份 Node 单测 43/43 绿。
+- [x] Windows zip 打包成功：`dist/release-20260910-133457/Chill Vibe-0.20.19-win.zip`；asar 内含 `Async agent launched` 分支与 `OpenStandardInput` 钩子脚本，旧 `[Console]::In.ReadToEnd` 为 0 处。

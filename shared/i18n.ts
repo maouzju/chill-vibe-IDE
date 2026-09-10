@@ -197,6 +197,10 @@ type LocaleText = {
   emptyColumnTitle: string
   emptyColumnDescription: string
   addWorkspace: string
+  dockColumnZoneLabel: string
+  restoreDockedColumn: (name: string) => string
+  dockedColumnRunning: string
+  dockedColumnNewResult: string
   resizeColumn: string
   deleteCard: string
   planMode: string
@@ -481,6 +485,7 @@ type LocaleText = {
   updateAvailable: (version: string) => string
   updateDownloading: (percent: number) => string
   updateReady: (version: string) => string
+  updateInstalling: string
   updateInstallNow: string
   updateCheckNow: string
   updateNoUpdate: string
@@ -708,6 +713,10 @@ const localeTextByLanguage: Record<AppLanguage, LocaleText> = {
     emptyColumnTitle: '这一列已经没有卡片了',
     emptyColumnDescription: '点击右上角加号可以新建会话，也可以把别的卡片拖进来。',
     addWorkspace: '新增工作区',
+    dockColumnZoneLabel: '拖到这里收起',
+    restoreDockedColumn: (name) => `恢复工作区 ${name}`,
+    dockedColumnRunning: '正在运行',
+    dockedColumnNewResult: '有新结果',
     resizeColumn: '拖拽调整列宽',
     deleteCard: '删除卡片',
     planMode: '计划模式',
@@ -1014,6 +1023,7 @@ const localeTextByLanguage: Record<AppLanguage, LocaleText> = {
     updateAvailable: (version) => `发现新版本 ${version}`,
     updateDownloading: (percent) => `正在下载更新... ${percent}%`,
     updateReady: (version) => `新版本 ${version} 已下载完成，点击后将自动替换当前应用目录并重启。`,
+    updateInstalling: '正在替换应用文件并重启，请不要重复点击。',
     updateInstallNow: '更新并重启',
     updateCheckNow: '检查更新',
     updateNoUpdate: '当前已是最新版本。',
@@ -1248,6 +1258,10 @@ const localeTextByLanguage: Record<AppLanguage, LocaleText> = {
     emptyColumnTitle: 'This column has no cards yet',
     emptyColumnDescription: 'Use the add button above, or drag a card here to keep going.',
     addWorkspace: 'Add workspace',
+    dockColumnZoneLabel: 'Drop here to tuck away',
+    restoreDockedColumn: (name) => `Restore workspace ${name}`,
+    dockedColumnRunning: 'Running',
+    dockedColumnNewResult: 'New result',
     resizeColumn: 'Drag to resize column width',
     deleteCard: 'Delete card',
     planMode: 'Plan mode',
@@ -1570,6 +1584,7 @@ const localeTextByLanguage: Record<AppLanguage, LocaleText> = {
     updateDownloading: (percent) => `Downloading update... ${percent}%`,
     updateReady: (version) =>
       `Version ${version} is ready. Chill Vibe will replace the local app folder and restart automatically.`,
+    updateInstalling: 'Replacing app files and restarting. Please do not click again.',
     updateInstallNow: 'Update and Restart',
     updateCheckNow: 'Check for Updates',
     updateNoUpdate: 'You are on the latest version.',

@@ -103,3 +103,13 @@ Verification: `tests/message-local-link.test.ts` passed 25/25 after red-first co
 Integrated verification (2026-09-06): 126 focused classifier/parser/renderer/helper Node tests plus 25 Codex provider cases passed. All 21 targeted browser recovery/theme cases passed on isolated port 5198; `pnpm test:quality` passed. Six new snapshots were reviewed, preserving actual failures and valid agent results. `pnpm test:theme` could not own 5173 because another project uses it; no user process was stopped. `pnpm electron:build` produced `dist/release-20260906-232949/Chill Vibe-0.20.15-win.zip` plus `win-unpacked/Chill Vibe.exe`. The existing packaged user instance remains running, so the fix takes effect when switching to the new build. This is a focused extension of the existing SPEC, not a new feature or a claim to fix remote service capacity.
 
 Node verification: the initial five-case proving run failed four cases (5 raw retry logs instead of 0, and both screenshot phrases classified as non-recoverable), then passed 5/5. The additional native-label/second-disconnect red tests failed before their implementation, then passed. Final focused checks passed 77/77 helper/classifier/MessageBubble tests and 19/19 Codex reconnect/provider tests, including backend record-count verification and final finite-budget recovery. Renderer red was confirmed on the isolated port 5198 because the reconnect element was missing; integrated green/theme/quality/package verification is tracked by the parent handoff.
+
+
+## Slice 13 - unclassified TLS code and relay 503 (2026-09-10)
+
+- [x] Red-first classifier coverage: `UNKNOWN_CERTIFICATE_VERIFICATION_ERROR` with a live session resumes, without a session stays a start failure, and the four CLI-classified certificate phrasings stay permanent.
+- [x] Red-first classifier coverage: `503 No accounts are currently available` resumes both with and without the CLI >=500 suffix, and stays non-resumable without a session.
+- [x] Exempt the single Bun fallback code from the permanent-certificate exclusion and pin both literal substrings in `recoverableErrorPatterns`.
+- [x] Run the focused provider recovery tests and `pnpm test:quality`; package the verified bug fix.
+
+2026-09-11 续接验证：接手时本切片的代码与测试已在工作区，未重写生产逻辑。把当前测试放到隔离副本，对照 `HEAD` 分类器得到预期的 2 项失败（未知证书码、无 CLI 后缀的 503）；当前分类器与续传策略/反馈测试共 86 项通过。证据位于 `dist/tls-recovery-proof-20260911/`。整库 `pnpm test:quality` 的 lint 通过，但另一个尚未完成的停止会话切片在 `server/index.ts:936` 读取不存在的 `ChatStreamStopResult.interrupted`，导致类型检查失败；本次不修改该切片，改在仅包含本修复的隔离候选上验证和打包。沿用现有 `stream-recovery-feedback` SPEC 与 AGENTS.md 的窄范围恢复规则，不另建功能 SPEC。

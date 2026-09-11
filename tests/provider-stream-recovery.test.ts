@@ -648,3 +648,79 @@ test('SSL certificate connection failures are not resumable', () => {
     {},
   )
 })
+
+// 症状：卡片红出 `API Error: Unable to connect to API (UNKNOWN_CERTIFICATE_VERIFICATION_ERROR)`
+//   停在终态，用户只能手点续传。
+// 根因：2026-09-10 现场（server.log apiErrorStatus=null，同节点前后几分钟都正常）。
+//   这是 Bun 的兜底 TLS 码——CLI 把它按 `Unable to connect to API (${code})` 原样透传，
+//   而 CLI 自己归类出的证书错走的是冒号形式 `Unable to connect to API: SSL certificate …`。
+//   上面为 pitfall #358 加的"含 certificate 即永久错"排除把这个瞬时码一起吃掉了。
+test('the Bun fallback TLS code UNKNOWN_CERTIFICATE_VERIFICATION_ERROR is resumable', () => {
+  assert.deepEqual(
+    classifyProviderStreamErrorRecovery(
+      { sessionId: 'session-1' },
+      'API Error: Unable to connect to API (UNKNOWN_CERTIFICATE_VERIFICATION_ERROR)',
+    ),
+    { recoverable: true, recoveryMode: 'resume-session' },
+  )
+})
+
+test('UNKNOWN_CERTIFICATE_VERIFICATION_ERROR without a native session is not resumable', () => {
+  assert.deepEqual(
+    classifyProviderStreamErrorRecovery(
+      { sessionId: undefined },
+      'API Error: Unable to connect to API (UNKNOWN_CERTIFICATE_VERIFICATION_ERROR)',
+    ),
+    {},
+  )
+})
+
+// CLI 自己归类出的证书错（冒号形式）仍然是永久配置错，不能被上面的放行带偏。
+test('CLI-classified certificate failures stay non-resumable next to the transient code', () => {
+  for (const message of [
+    'API Error: Unable to connect to API: Self-signed certificate detected. Check your proxy or corporate SSL certificates',
+    'API Error: Unable to connect to API: SSL certificate has expired',
+    'API Error: Unable to connect to API: SSL certificate hostname mismatch',
+    'API Error: Unable to connect to API: SSL error (CERT_HAS_EXPIRED)',
+  ]) {
+    assert.deepEqual(
+      classifyProviderStreamErrorRecovery({ sessionId: 'session-1' }, message),
+      {},
+      message,
+    )
+  }
+})
+
+// 症状：中转站（api.duckcoding.ai）容量耗尽时回 `503 No accounts are currently available`。
+// 现状：claude CLI 给所有 ≥500 加的固定后缀 "This is a server-side issue, usually temporary"
+//   已经能命中名单（2026-09-10 现场连续 5 条 503 后自动续上）。这里把中转站自己的
+//   文案也钉进名单，让不带 CLI 后缀的形态（Codex 路径 / CLI 改文案）同样可恢复。
+test('a relay 503 "No accounts are currently available" is resumable with the CLI suffix', () => {
+  assert.deepEqual(
+    classifyProviderStreamErrorRecovery(
+      { sessionId: 'session-1' },
+      'API Error: 503 No accounts are currently available. Please try again later. (request id: 20260910225730272-69c09d65) (request id: 202609101457302676198128268d9d6nVd0RNip) (request id: 202609101457302136089828268d9d6d2kAgPkd) (request id: 202609101457301125382888268d9d6Hsy4mFM6). This is a server-side issue, usually temporary — try again in a moment. If it persists, check your inference gateway (api.duckcoding.ai).',
+    ),
+    { recoverable: true, recoveryMode: 'resume-session' },
+  )
+})
+
+test('a relay 503 "No accounts are currently available" is resumable without the CLI suffix', () => {
+  assert.deepEqual(
+    classifyProviderStreamErrorRecovery(
+      { sessionId: 'session-1' },
+      'API Error: 503 No accounts are currently available. Please try again later. (request id: 20260910225730272-69c09d65)',
+    ),
+    { recoverable: true, recoveryMode: 'resume-session' },
+  )
+})
+
+test('a relay 503 "No accounts are currently available" without a session is not resumable', () => {
+  assert.deepEqual(
+    classifyProviderStreamErrorRecovery(
+      { sessionId: undefined },
+      'API Error: 503 No accounts are currently available. Please try again later.',
+    ),
+    {},
+  )
+})

@@ -86,6 +86,21 @@ const recoverableErrorPatterns = [
   // 为什么不匹配整个 `[ede_diagnostic]` 前缀：CLI 把该诊断串放在 errors[0]，其后还会
   //   拼接真实异常（余额不足这类不该重试的也走同一条），只有"末块为空"确定是瞬时的。
   'last_content_type=none',
+  // 症状：卡片红出 `API Error: Unable to connect to API
+  //   (UNKNOWN_CERTIFICATE_VERIFICATION_ERROR)` 停在终态，用户只能手点续传。
+  // 根因：2026-09-10 现场（server.log apiErrorStatus=null，同一节点前后几分钟都正常）。
+  //   这是 Bun 的兜底 TLS 码（"验证失败但归不进任何具体原因"），CLI 按
+  //   `Unable to connect to API (${code})` 原样透传；在中转/代理链路上它是握手抖动，
+  //   与 ConnectionRefused 同类。下面 isPermanentConnectError 为 pitfall #358 加的
+  //   "含 certificate 即永久错"排除把它一起吃掉了，所以这里显式点名放行。
+  // 被否决：不放行括号形式的全部 TLS 码——CERT_HAS_EXPIRED 这类真是配置错。
+  'unknown_certificate_verification_error',
+  // 症状：中转站（api.duckcoding.ai）账号池耗尽时回 `503 No accounts are currently
+  //   available. Please try again later.`。2026-09-10 现场它带着 CLI 的 ≥500 固定后缀
+  //   已能命中上面的 'server-side issue, usually temporary' 并自动续上（连续 5 条 503
+  //   后接回正常输出）。这里把中转站自己的文案也钉进名单，Codex 路径和 CLI 改后缀
+  //   的形态就不再依赖那个后缀。
+  'no accounts are currently available',
 ] as const
 
 const zeroExitPattern = /\b(?:codex|claude) exited with status code:\s*0\b/i
@@ -96,8 +111,15 @@ const zeroExitPattern = /\b(?:codex|claude) exited with status code:\s*0\b/i
 // 不影响其他名单项。
 const permanentConnectErrorPatterns = ['ssl', 'certificate'] as const
 
+// CLI 自己归类出的证书错走冒号形式 `Unable to connect to API: SSL certificate …` /
+// `: Self-signed certificate detected`；括号形式 `(UNKNOWN_CERTIFICATE_VERIFICATION_ERROR)`
+// 是 CLI 归不了类才透传的 Bun 兜底码，实测为瞬时握手抖动（见名单里的说明）。
+// 只豁免这一个词形，其余带 ssl/certificate 的 unable-to-connect 仍按永久错处理。
+const transientCertificateErrorCodes = ['unknown_certificate_verification_error'] as const
+
 const isPermanentConnectError = (normalizedMessage: string) =>
   normalizedMessage.includes('unable to connect to api') &&
+  !transientCertificateErrorCodes.some((code) => normalizedMessage.includes(code)) &&
   permanentConnectErrorPatterns.some((pattern) => normalizedMessage.includes(pattern))
 
 const recoverableSwitchConfigErrorPatterns = [

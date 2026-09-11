@@ -126,6 +126,11 @@ export const shouldClearRecoveryStatusOnStreamIdle = (
    - Keep the transport fix in the shared provider error classifier rather than adding provider-specific retry code. Match the CLI's explicit connection-refused wording (`unable to connect to api`, `connectionrefused`, and the spaced/`ECONNREFUSED` variants) as a transient stream failure.
    - Preserve the existing session-id guard and renderer retry budget. A connection error without a native session cannot be resumed safely and remains a normal start failure; a live session uses the same `resume-session` / native-checkpoint escape hatch as other recoverable stream failures.
 
+8B. **Unclassified TLS code and relay 503 (2026-09-10)**:
+   - The CLI phrase table has two certificate shapes. Colon form (`Unable to connect to API: SSL certificate …`, `: Self-signed certificate detected`) is a CLI-classified permanent configuration error and stays excluded by `isPermanentConnectError`. Parenthesised form (`Unable to connect to API (${code})`) passes through a raw Bun TLS code the CLI could not classify; `UNKNOWN_CERTIFICATE_VERIFICATION_ERROR` is Bun's fallback code and shows up as a one-off handshake wobble on relay links (server.log `apiErrorStatus: null`, same node healthy minutes before and after).
+   - Exempt only that one code from the permanent-certificate exclusion and list it explicitly in `recoverableErrorPatterns`. Do not exempt every parenthesised TLS code — `CERT_HAS_EXPIRED` and friends are genuine configuration errors.
+   - Pin the relay's own text `no accounts are currently available` in the pattern list. It already resumes today through the CLI's generic >=500 suffix `server-side issue, usually temporary`; the explicit entry keeps the Codex path and any future CLI wording change covered without depending on that suffix.
+
 9. **Renderer/window lifetime cleanup**:
    - Electron main owns stream subscription cleanup by `BrowserWindow` / `WebContents` lifetime.
    - Cleanup runs on `close`, `closed`, `webContents.destroyed`, and `render-process-gone`, so provider stream events stop before they can keep sending into a destroyed renderer.

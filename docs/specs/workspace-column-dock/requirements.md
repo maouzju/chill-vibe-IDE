@@ -39,7 +39,10 @@
 列被收起后就不在看板上，跑没跑完只能靠拖回来看 —— 顶栏 chip 是它唯一的可见代表。
 
 - [x] 列内任一卡片 `status === 'streaming'` 时，chip 显示橙色呼吸边框（复用 `--warn` / `--stream-border-glow`，与卡片、页签的"橙 = 在跑"一致）。
-- [x] 列内任一卡片 `unread` 或 `completionGlow` 时，chip 末尾显示蓝点（复用 `--accent`，与 `.card-unread-dot` / `.pane-tab-status.is-unread` 一致）。
+- [x] 列内任一卡片 `unread` 时，chip 末尾显示蓝点（复用 `--accent`，与 `.card-unread-dot` / `.pane-tab-status.is-unread` 一致）。
+  - 2026-09-10 修订：首版把 `completionGlow` 也算作"有新结果"，用户报偶发误报。glow 只在用户触碰卡片时清除，自动已读只清 `unread`，"看过没点"的卡收起后就会亮蓝点。现在 chip 只认 `unread`；作为交换，流结束时的 `unread` 判定必须把"列已收起"当作不可见（`isColumnVisibleOnBoard`），否则收起列里活动 tab 上跑完的卡亮不起来。
+
+
 - [x] 两者互相独立，可同时出现（一张卡在跑、另一张已跑完没看）。
 - [x] 状态同时进入 `title` 与 `aria-label`，不做纯颜色编码。
 - [x] 停靠列不参与"活动 tab 自动已读"，否则蓝点会立刻自己消失。

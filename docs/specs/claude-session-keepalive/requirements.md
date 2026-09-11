@@ -19,7 +19,7 @@ Chill Vibe 当前为 Claude 卡片的**每一轮对话**启动一个一次性 CL
 
 - Codex 路径改动（app-server 已是长驻进程）。
 - 纯 web（Express HTTP/SSE）模式的自发输出推送 —— keepalive 仅在 Electron desktop backend 启用，web 路径保持现状单次进程，零回归。
-- interrupt 的 stdin 控制消息 —— 用户打断仍 kill 进程，下次请求起新进程（与现状一致，且 pitfall #118 本就要求 interrupt 后 fresh session）。
+- ~~interrupt 的 stdin 控制消息 —— 用户打断仍 kill 进程，下次请求起新进程（与现状一致，且 pitfall #118 本就要求 interrupt 后 fresh session）。~~ **已过时（2026-08-09 接上 control_request 软中断；2026-09-11 起软中断成功时会话与进程一并保留，见 pitfall #118 修订）。**
 - 新增持久化字段 —— 长驻进程死亡即死亡，崩溃恢复沿用现有 sessionId resume 路径。
 
 ## 验收标准
@@ -27,7 +27,7 @@ Chill Vibe 当前为 Claude 卡片的**每一轮对话**启动一个一次性 CL
 1. 同一 Claude 卡片连续两次发送，第二次复用同一 CLI 进程（写 stdin），不再 spawn 新进程。
 2. agent 在 turn 内启动后台任务、turn 结束后，CLI 进程仍存活；后台任务完成时，卡片**自动**出现 agent 的汇报输出（用户零操作）。
 3. 模型 / effort / workspace / planMode 任一变化，或卡片 sessionId 与进程不匹配时，不复用：杀旧进程并按现有路径起新进程（兼容 pitfall #47/#118）。
-4. 用户打断（stop）杀进程；下次发送起新进程，不复用已中断会话（pitfall #118）。
+4. ~~用户打断（stop）杀进程；下次发送起新进程，不复用已中断会话（pitfall #118）。~~ **2026-09-11 修订**：stop 优先走 CLI 软中断；成功时 done 信封带 `interrupted:true`，卡片保留 sessionId，下次发送等池内进程收尾后复用同一进程与会话；软中断失败退回 kill 并按旧规则清会话。
 5. 长驻进程空闲（无活跃 turn 且无任何 stdout 输出）超过回收阈值后自动退出；应用退出时全部清理。
 6. turn 之间的静默不触发 stall watchdog（watchdog 仅在 turn 进行中布防，沿用 openCommandCount disarm 规则，pitfall #145）。
 7. 现有恢复链路（resume-session、重试预算、可恢复错误分类）行为不变；keepalive 进程在 turn 进行中死亡时走现有 close → recovery 分类。

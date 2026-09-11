@@ -6,7 +6,7 @@
 
 后端复用 `inspectGitWorkspace(workspacePath, { includeChangePreviews: false, includeRepositoryDetails: false })`：
 
-- 保留：repoRoot、branch、upstream、ahead/behind、summary、changes、clean、hasConflicts。
+- 保留：repoRoot、branch、upstream、upstreamGone、ahead/behind、summary、changes、clean、hasConflicts。
 - 跳过：每个文件的 patch / addedLines / removedLines、lastCommit、package description。
 
 完整 `fetchGitStatus()` 仍保留现有行为，用于 full Git、diff 预览、分析提示等需要更多上下文的场景。
@@ -72,3 +72,13 @@ Git 卡片常驻在布局中，即使 tab 不可见也不会卸载。因此刷�
 批量 patch 读取后用 `createGitPatchBlockIndex()` 一次扫描每个 block，分别索引 marker/header
 匹配并保留旧实现的“最早命中”规则；这样查找从 N×N 降为一次建索引加 O(1) 查询，异常时仍沿用
 现有单文件回退路径。
+
+## 远端分支尚不存在时的同步（2026-09-11）
+
+`git status -sb` 的分支行带 `[gone]`（tracking 已配置但远端没有这条分支：远端刚建好还没推过，或远端分支被删）时：
+
+- `parseBranchLine` 单独解析出 `upstreamGone`（`[gone]` 与 `[ahead N, gone]` 都按 token 判），`upstream` 保留名字，所以「同步」入口的显隐规则（只看 upstream）不受影响。
+- git 此时不给 ahead 计数；只在 `[gone]` 时用 `for-each-ref` 的 upstream 元数据读取真实 remote/ref，再以 `rev-list --count HEAD --not --remotes=<remote>` 排除该远端已知提交。正常 tracking 仍用 `status -sb` 自带的计数。状态检查不联网，计数以本地已获取的远端引用为准。
+- `pullGitWorkspace` 首先成功执行 `fetch --prune`，使远端删除分支后的旧 tracking 引用失效；失败则直接报错。随后 `rev-parse --verify --quiet <upstream>^{commit}`，ref 不存在就返回 `Remote branch … does not exist yet; nothing to pull.`，让同步继续到 push。未配置 tracking 的行为不变。
+- `pushGitWorkspace` 在 `[gone]` 时读取 upstream 的真实远端名与完整目标 ref，用 `push -- <remote> HEAD:<remote-ref>` 显式创建分支。保留 tracking 配置，不强推；正常 tracking 的推送路径不变。
+- 否决的替代：把 upstream 置空会让同步按钮整个消失；按 pull 报错文案兜底会随 git 版本/语言漂移。未配 tracking 的仓库不走这条捷径。见 AGENTS.md pitfall #368。

@@ -1,5 +1,11 @@
 import type { Page } from '@playwright/test'
 
+declare global {
+  interface Window {
+    __topbarWindowDragCalls?: string[]
+  }
+}
+
 export const installMockElectronBridge = async (page: Page) => {
   await page.addInitScript(() => {
     const streamSources = new Map()
@@ -50,6 +56,16 @@ export const installMockElectronBridge = async (page: Page) => {
       toggleMaximizeWindow: async () => false,
       closeWindow: async () => undefined,
       isWindowMaximized: async () => false,
+      beginWindowPointerDrag: async () => {
+        ;(window.__topbarWindowDragCalls ??= []).push('begin')
+        return true
+      },
+      moveWindowPointerDrag: () => {
+        ;(window.__topbarWindowDragCalls ??= []).push('move')
+      },
+      endWindowPointerDrag: () => {
+        ;(window.__topbarWindowDragCalls ??= []).push('end')
+      },
       onWindowMaximizedChanged: () => () => undefined,
       openFolderDialog: async () => null,
       listStickyNotes: async ({ workspacePath }) => ({

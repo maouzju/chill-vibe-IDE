@@ -11,8 +11,11 @@ import {
   type BoardColumn,
   type ChatCard,
 } from '../shared/schema.ts'
-import { ideReducer, selectDockedColumnStatus } from '../src/state.ts'
-import { getAutoReadCardIdsForVisiblePanes } from '../src/components/pane-read-state.ts'
+import { ideReducer, isColumnVisibleOnBoard, selectDockedColumnStatus } from '../src/state.ts'
+import {
+  getAutoReadCardIdsForVisiblePanes,
+  shouldMarkCardUnreadOnStreamDone,
+} from '../src/components/pane-read-state.ts'
 
 const createState = (): AppState => {
   const base = createDefaultState('D:/Git/other-repo', 'en')
@@ -159,11 +162,16 @@ describe('docked column status badge', () => {
     assert.equal(status.hasNewResult, true)
   })
 
-  it('treats a completion glow as a new result too', () => {
+  // 症状（2026-09-10 用户报）: 收起的列偶尔亮着"有新结果"蓝点，拖回来却没有任何没看过的回答。
+  // 根因: `completionGlow` 只在用户**触碰**卡片（pointerdown/focus/input/click）时清除，
+  //       而"看板可见时自动已读"只清 `unread`。一张卡在用户眼前跑完（unread=false）、
+  //       用户读了结果但没点它，glow 仍为 true —— 这时收起列就误报。
+  // 判据: glow 表示"没碰过"，不表示"没看过"；chip 只认 `unread`。
+  it('a completion glow alone is not a new result', () => {
     const status = selectDockedColumnStatus(
       columnWith([{ status: 'idle', unread: false, completionGlow: true }]),
     )
-    assert.equal(status.hasNewResult, true)
+    assert.equal(status.hasNewResult, false)
   })
 
   // A column can be both: one card still streaming while an earlier one already
@@ -208,6 +216,38 @@ describe('docked columns are not auto-marked read', () => {
       selectDockedColumnStatus({
         cards: { [cardId]: { ...column.cards[cardId]!, unread: true } },
       }).hasNewResult,
+      true,
+    )
+  })
+})
+
+describe('stream completion inside a docked column', () => {
+  // 既然 chip 不再拿 `completionGlow` 兜底，`unread` 就必须自己扛住"收起列里跑完"这一幕：
+  // 完成回调原本只按 layout 的活动 tab 判可见，不知道整列已经被收起 ——
+  // 活动 tab 上跑完的卡会被记成 unread=false，蓝点根本亮不起来。
+  // 两个调用点（完成回调 / 自动已读）共用同一个可见性判据，免得再次分叉。
+  it('a docked column is never visible on the board, whatever tab is active', () => {
+    const docked = createColumn({ id: 'c', workspacePath: 'D:/Git/other-repo', docked: true }, 'en')
+    const shown = createColumn({ id: 'd', workspacePath: 'D:/Git/other-repo' }, 'en')
+
+    assert.equal(isColumnVisibleOnBoard(docked, true), false)
+    assert.equal(isColumnVisibleOnBoard(docked, false), false)
+    assert.equal(isColumnVisibleOnBoard(shown, true), true)
+    assert.equal(isColumnVisibleOnBoard(shown, false), false)
+  })
+
+  it('marks the active-tab card unread when its column is docked', () => {
+    const column = createColumn({ id: 'c', workspacePath: 'D:/Git/other-repo', docked: true }, 'en')
+    const cardId = Object.keys(column.cards)[0] ?? ''
+    assert.ok(cardId, 'fixture should have a card')
+
+    // 同一张卡、同一份 layout：列在看板上时它是活动 tab，不记未读；收起后必须记未读。
+    assert.equal(
+      shouldMarkCardUnreadOnStreamDone(column.layout, cardId, isColumnVisibleOnBoard({ ...column, docked: undefined }, true)),
+      false,
+    )
+    assert.equal(
+      shouldMarkCardUnreadOnStreamDone(column.layout, cardId, isColumnVisibleOnBoard(column, true)),
       true,
     )
   })

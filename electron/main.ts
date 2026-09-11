@@ -8,6 +8,7 @@ import {
   nativeImage,
   net,
   protocol,
+  screen,
   shell,
   Tray,
   utilityProcess,
@@ -57,6 +58,8 @@ import {
 } from './accessibility-support.js'
 import { attachFrameStallWatchdog } from './frame-stall-watchdog.js'
 import { nudgeWindowForHitTestRebuild } from './window-hit-test-rebuild.js'
+import { createWindowPointerDragController } from './window-pointer-drag.js'
+import type { WindowPointerDragController } from './window-pointer-drag.js'
 import { loadRendererWithRetry } from './renderer-load-retry.js'
 import {
   classifyPreviousRun,
@@ -884,7 +887,7 @@ function cleanupSubscriptionsForContentsId(webContentsId: number) {
   }
 }
 
-function getEventWindow(event: IpcMainInvokeEvent) {
+function getEventWindow(event: Pick<IpcMainInvokeEvent, 'sender'>) {
   return BrowserWindow.fromWebContents(event.sender)
     ?? BrowserWindow.getFocusedWindow()
     ?? BrowserWindow.getAllWindows()[0]
@@ -894,6 +897,23 @@ const clampUiZoomFactor = (value: unknown) =>
   typeof value === 'number' && Number.isFinite(value)
     ? Math.min(maxUiScale, Math.max(minUiScale, value))
     : 1
+
+const windowPointerDragControllers = new WeakMap<BrowserWindow, WindowPointerDragController>()
+
+function getWindowPointerDragController(win: BrowserWindow) {
+  const existing = windowPointerDragControllers.get(win)
+  if (existing) {
+    return existing
+  }
+  const controller = createWindowPointerDragController(win, {
+    getCursor: () => screen.getCursorScreenPoint(),
+  })
+  // 拖动中窗口失焦（Alt+Tab、系统弹窗）就结束会话，否则窗口会在用户回来时突然跳到光标下。
+  win.on('blur', () => controller.end())
+  win.once('closed', () => controller.end())
+  windowPointerDragControllers.set(win, controller)
+  return controller
+}
 
 function broadcastWindowState(win: BrowserWindow) {
   if (!win.isDestroyed()) {
@@ -1206,6 +1226,29 @@ function registerDesktopHandlers() {
     getEventWindow(event)?.webContents.setZoomFactor(clampUiZoomFactor(zoomFactor))
   })
   ipcMain.handle('window:is-maximized', (event) => getEventWindow(event)?.isMaximized() ?? false)
+
+  // 顶栏标签"按住拖动窗口"：标签必须留在 no-drag（Windows 上 drag 元素收不到 click），
+  // 所以手势在渲染层识别，这里只按光标移动窗口。光标位置由主进程自己读
+  // （screen.getCursorScreenPoint 与 setPosition 同为 DIP 坐标），不信任渲染进程传来的
+  // screenX —— 200% DPI 下两边坐标系对不齐就会"越拖越偏"。move/end 走 ipcMain.on：
+  // pointermove 可达数百 Hz，invoke 的回执没人读，只会在主进程排队。
+  // 见 docs/specs/topbar-tab-window-drag。
+  ipcMain.handle('window:pointer-drag-begin', (event) => {
+    const win = getEventWindow(event)
+    return win ? getWindowPointerDragController(win).begin() : false
+  })
+  ipcMain.on('window:pointer-drag-move', (event) => {
+    const win = getEventWindow(event)
+    if (win) {
+      getWindowPointerDragController(win).move()
+    }
+  })
+  ipcMain.on('window:pointer-drag-end', (event) => {
+    const win = getEventWindow(event)
+    if (win) {
+      getWindowPointerDragController(win).end()
+    }
+  })
 
   // Stuck-pane forensics dumps land next to main.log so a single logs/ folder
   // carries everything needed to attribute a misroute recurrence in the wild.

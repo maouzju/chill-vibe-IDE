@@ -1,5 +1,15 @@
 # Claude 长驻会话进程 — 任务切片
 
+## 软中断保留会话（2026-09-11，仅方案 ②）
+
+- [x] 重跑已有红测：终态标记、Claude reducer、收尾期间 acquire，共 5 个预期失败。
+- [x] 在 done 信封携带软中断结果，覆盖普通 turn、自发 turn 与延迟 workspace diff 收尾。
+- [x] reducer 仅凭 Claude 的明确软中断标记保留会话；硬杀、Codex、无 done 兜底不放宽。
+- [x] 池等待匹配进程的中断收尾；退出、超时、dispose、并发替换均释放等待，旧请求不得抢占新进程。
+- [x] 聚焦 Node 与发送中断 Playwright 回归、质量检查，Windows zip 打包；仅按运行面安全重启开发实例。
+
+不改左键/回车/右键发送语义；不承诺恢复被 CLI 中断的子代理。不新增持久化字段。
+
 ## 切片 1：池核心（红 → 绿）✅
 - [x] `tests/claude-session-pool.test.ts`（已注册进 `tests/index.test.ts`）：
   - 复用判定：同 card+signature+session → 复用；任一变化 → 杀旧起新

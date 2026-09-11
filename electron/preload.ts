@@ -71,6 +71,14 @@ contextBridge.exposeInMainWorld('electronAPI', {
   flashWindowOnce: () => ipcRenderer.invoke('window:flash-once') as Promise<boolean>,
   setUiZoomFactor: (zoomFactor: number) => ipcRenderer.invoke('window:set-zoom-factor', zoomFactor),
   isWindowMaximized: () => ipcRenderer.invoke('window:is-maximized') as Promise<boolean>,
+  beginWindowPointerDrag: () =>
+    ipcRenderer.invoke('window:pointer-drag-begin') as Promise<boolean>,
+  moveWindowPointerDrag: () => {
+    ipcRenderer.send('window:pointer-drag-move')
+  },
+  endWindowPointerDrag: () => {
+    ipcRenderer.send('window:pointer-drag-end')
+  },
   writeForensicsDump: (json: string) =>
     ipcRenderer.invoke('diagnostics:write-forensics', json) as Promise<string | null>,
   requestWindowHitTestRebuild: (reason: string) =>

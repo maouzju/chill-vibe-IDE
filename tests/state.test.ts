@@ -2624,6 +2624,110 @@ describe('ideReducer pane layout', () => {
     })
   })
 
+  it('keeps the Claude session when the server confirmed a soft interrupt', () => {
+    const state = createState()
+    state.columns[0] = createColumn({
+      id: 'column-1',
+      layout: createPane('pane-1', ['card-1'], 'card-1'),
+      cards: {
+        'card-1': createCard({
+          id: 'card-1',
+          provider: 'claude',
+          status: 'streaming',
+          streamId: 'stream-1',
+          sessionId: 'claude-session-still-alive',
+          sessionModel: 'claude-opus-4-7',
+          providerSessions: {
+            claude: 'claude-session-still-alive',
+            codex: 'codex-session-safe-to-keep',
+          },
+          messages: [
+            {
+              id: 'live-assistant-1',
+              role: 'assistant',
+              content: 'Partial Claude answer that survives a soft interrupt.',
+              createdAt: timestamp,
+            },
+          ],
+        }),
+      },
+    })
+
+    const next = ideReducer(state, {
+      type: 'finishStoppedStream',
+      columnId: 'column-1',
+      cardId: 'card-1',
+      softInterrupted: true,
+      stoppedMessage: {
+        id: 'stopped-1',
+        role: 'system',
+        content: 'User interrupted',
+        createdAt: timestamp,
+        meta: {
+          kind: 'run-stopped',
+          stopReason: 'user-interrupt',
+        },
+      },
+    })
+
+    const card = next.columns[0]?.cards['card-1']
+    assert.equal(card?.status, 'idle')
+    assert.equal(card?.streamId, undefined)
+    assert.equal(card?.messages[1]?.meta?.kind, 'run-stopped')
+    assert.equal(card?.sessionId, 'claude-session-still-alive')
+    assert.equal(card?.sessionModel, 'claude-opus-4-7')
+    assert.deepEqual(card?.providerSessions, {
+      claude: 'claude-session-still-alive',
+      codex: 'codex-session-safe-to-keep',
+    })
+    assert.equal(card?.autoUrgeActive, false)
+  })
+
+  it('still clears the Claude session when the interrupt fell back to a hard kill', () => {
+    const state = createState()
+    state.columns[0] = createColumn({
+      id: 'column-1',
+      layout: createPane('pane-1', ['card-1'], 'card-1'),
+      cards: {
+        'card-1': createCard({
+          id: 'card-1',
+          provider: 'claude',
+          status: 'streaming',
+          streamId: 'stream-1',
+          sessionId: 'claude-session-killed',
+          sessionModel: 'claude-opus-4-7',
+          providerSessions: {
+            claude: 'claude-session-killed',
+            codex: 'codex-session-safe-to-keep',
+          },
+        }),
+      },
+    })
+
+    const next = ideReducer(state, {
+      type: 'finishStoppedStream',
+      columnId: 'column-1',
+      cardId: 'card-1',
+      stoppedMessage: {
+        id: 'stopped-1',
+        role: 'system',
+        content: 'User interrupted',
+        createdAt: timestamp,
+        meta: {
+          kind: 'run-stopped',
+          stopReason: 'user-interrupt',
+        },
+      },
+    })
+
+    const card = next.columns[0]?.cards['card-1']
+    assert.equal(card?.sessionId, undefined)
+    assert.equal(card?.sessionModel, undefined)
+    assert.deepEqual(card?.providerSessions, {
+      codex: 'codex-session-safe-to-keep',
+    })
+  })
+
   it('turns off auto urge when a streaming card is stopped manually', () => {
     const state = createState()
     state.columns[0] = createColumn({

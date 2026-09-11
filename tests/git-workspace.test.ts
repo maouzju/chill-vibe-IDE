@@ -15,6 +15,8 @@ import {
   fetchGitLog,
   initGitWorkspace,
   inspectGitWorkspace,
+  pullGitWorkspace,
+  pushGitWorkspace,
   setGitWorkspaceStage,
 } from '../server/git-workspace.ts'
 import { gitStatusSchema } from '../shared/schema.ts'
@@ -1293,5 +1295,186 @@ describe('git workspace helpers', () => {
     )
     const { readFile } = await import('node:fs/promises')
     assert.equal(await readFile(path.join(repoPath, 'keep.md'), 'utf8'), 'keep this draft\n')
+  })
+})
+
+// 症状（2026-09-11 用户报「Git 卡不能同步本地提交到远端」）：远端是刚建好的空 Gitea 仓库，
+// 本地已配好 tracking（`## main...origin/main [gone]`），点「同步」永远停在 pull 报错
+// "no such ref was fetched"，push 一步永远到不了；卡片也不显示任何 ↑ 待推送计数。
+// 这里用真实的空 bare 远端复现，而不是 mock：`[gone]` 的解析、fetch 后 ref 是否存在、
+// push 能否建出远端分支，三者都是 git 本身的行为，mock 只会证明我们相信的东西。
+describe('git sync with a tracking branch that is missing on the remote', () => {
+  const createRepoWithMissingUpstream = async () => {
+    const repoPath = await createTempRepo()
+    const remotePath = await mkdtemp(path.join(tmpdir(), 'chill-vibe-git-bare-'))
+    tempRoots.push(remotePath)
+    await runGit(remotePath, ['init', '--bare', '--initial-branch=main'])
+
+    await runGit(repoPath, ['remote', 'add', 'origin', remotePath])
+    // 与用户现场一致：tracking 已配置，但远端从未收到过任何分支。
+    await runGit(repoPath, ['config', 'branch.main.remote', 'origin'])
+    await runGit(repoPath, ['config', 'branch.main.merge', 'refs/heads/main'])
+
+    await writeFile(path.join(repoPath, 'second.txt'), 'second\n')
+    await runGit(repoPath, ['add', 'second.txt'])
+    await runGit(repoPath, ['commit', '-m', 'Second commit'])
+
+    return { repoPath, remotePath }
+  }
+
+  it('reports the tracking branch as gone and counts every local commit as unpushed', async () => {
+    const { repoPath } = await createRepoWithMissingUpstream()
+
+    const status = await inspectGitWorkspace(repoPath, { includeChangePreviews: false })
+
+    assert.equal(status.upstream, 'origin/main')
+    assert.equal(status.upstreamGone, true)
+    // 远端没有这条分支时 git 不会给 ahead 计数，但对用户来说本地的每一个提交都还没推上去。
+    assert.equal(status.ahead, 2)
+    assert.equal(status.behind, 0)
+  })
+
+  it('pull skips the merge instead of failing when the remote has no such branch yet', async () => {
+    const { repoPath } = await createRepoWithMissingUpstream()
+    const headBefore = (await runGit(repoPath, ['rev-parse', 'HEAD'])).trim()
+
+    const result = await pullGitWorkspace(repoPath)
+
+    assert.equal(result.blockedFiles, undefined)
+    assert.equal(result.status.upstreamGone, true)
+    assert.match(result.message ?? '', /origin\/main/)
+    assert.equal((await runGit(repoPath, ['rev-parse', 'HEAD'])).trim(), headBefore)
+  })
+
+  it('pull then push publishes the branch and clears the gone state', async () => {
+    const { repoPath, remotePath } = await createRepoWithMissingUpstream()
+
+    await pullGitWorkspace(repoPath)
+    const pushed = await pushGitWorkspace(repoPath)
+
+    const localHead = (await runGit(repoPath, ['rev-parse', 'HEAD'])).trim()
+    const remoteHead = (await runGit(remotePath, ['rev-parse', 'main'])).trim()
+    assert.equal(remoteHead, localHead)
+    assert.equal(pushed.status.upstream, 'origin/main')
+    assert.ok(!pushed.status.upstreamGone)
+    assert.equal(pushed.status.ahead, 0)
+  })
+
+  it('a tracking branch that still exists on the remote is not reported as gone', async () => {
+    const { repoPath } = await createRepoWithMissingUpstream()
+    await runGit(repoPath, ['push', '-u', 'origin', 'main'])
+    await writeFile(path.join(repoPath, 'third.txt'), 'third\n')
+    await runGit(repoPath, ['add', 'third.txt'])
+    await runGit(repoPath, ['commit', '-m', 'Third commit'])
+
+    const status = await inspectGitWorkspace(repoPath, { includeChangePreviews: false })
+
+    assert.equal(status.upstream, 'origin/main')
+    assert.ok(!status.upstreamGone)
+    assert.equal(status.ahead, 1)
+  })
+
+  it('pull recovers when the remote branch was deleted out-of-band and the local tracking ref is stale', async () => {
+    const { repoPath, remotePath } = await createRepoWithMissingUpstream()
+    await runGit(repoPath, ['push', '-u', 'origin', 'main'])
+    // 别人在服务器上删掉了这条分支；本地 refs/remotes/origin/main 还留着，status 看不到 [gone]，
+    // 直接 `git pull` 同样死在 "no such ref was fetched"（2026-09-11 实测 git 2.51）。
+    await runGit(remotePath, ['update-ref', '-d', 'refs/heads/main'])
+    const before = await inspectGitWorkspace(repoPath, { includeChangePreviews: false })
+    assert.ok(!before.upstreamGone)
+
+    const result = await pullGitWorkspace(repoPath)
+
+    assert.equal(result.blockedFiles, undefined)
+    assert.equal(result.status.upstreamGone, true)
+    const pushed = await pushGitWorkspace(repoPath)
+    assert.ok(!pushed.status.upstreamGone)
+    assert.equal(
+      (await runGit(remotePath, ['rev-parse', 'main'])).trim(),
+      (await runGit(repoPath, ['rev-parse', 'HEAD'])).trim(),
+    )
+  })
+
+  it('push publishes the gone branch with an explicit refspec regardless of push.default', async () => {
+    const { repoPath, remotePath } = await createRepoWithMissingUpstream()
+    // push.default=nothing / matching 下裸 `git push` 建不出远端分支（2026-09-11 实测 git 2.51）。
+    await runGit(repoPath, ['config', 'push.default', 'nothing'])
+
+    await pullGitWorkspace(repoPath)
+    const pushed = await pushGitWorkspace(repoPath)
+
+    assert.equal(
+      (await runGit(remotePath, ['rev-parse', 'main'])).trim(),
+      (await runGit(repoPath, ['rev-parse', 'HEAD'])).trim(),
+    )
+    assert.ok(!pushed.status.upstreamGone)
+  })
+
+  it('counts only commits missing from the remote as ahead when the tracking branch is gone', async () => {
+    const { repoPath } = await createRepoWithMissingUpstream()
+    // 提交都已经在远端的另一条分支上，只是 main 本身还没建：ahead 不该把整段历史都算成待推送。
+    await runGit(repoPath, ['push', 'origin', 'main:keep'])
+
+    let status = await inspectGitWorkspace(repoPath, { includeChangePreviews: false })
+    assert.equal(status.upstreamGone, true)
+    assert.equal(status.ahead, 0)
+
+    await writeFile(path.join(repoPath, 'fourth.txt'), 'fourth\n')
+    await runGit(repoPath, ['add', 'fourth.txt'])
+    await runGit(repoPath, ['commit', '-m', 'Fourth commit'])
+    status = await inspectGitWorkspace(repoPath, { includeChangePreviews: false })
+    assert.equal(status.ahead, 1)
+  })
+
+  it('does not treat a failed fetch as a missing remote branch', async () => {
+    const { repoPath, remotePath } = await createRepoWithMissingUpstream()
+    await runGit(repoPath, ['remote', 'set-url', 'origin', path.join(remotePath, 'unavailable')])
+
+    await assert.rejects(pullGitWorkspace(repoPath), /repository|remote/i)
+  })
+
+  it('publishes to the configured remote and differently named branch with matching push mode', async () => {
+    const { repoPath, remotePath } = await createRepoWithMissingUpstream()
+    await runGit(repoPath, ['remote', 'rename', 'origin', 'team/server'])
+    await runGit(repoPath, ['config', 'branch.main.merge', 'refs/heads/published'])
+    await runGit(repoPath, ['config', 'push.default', 'matching'])
+
+    await pullGitWorkspace(repoPath)
+    const pushed = await pushGitWorkspace(repoPath)
+
+    assert.equal(pushed.status.upstream, 'team/server/published')
+    assert.ok(!pushed.status.upstreamGone)
+    assert.equal(
+      (await runGit(remotePath, ['rev-parse', 'published'])).trim(),
+      (await runGit(repoPath, ['rev-parse', 'HEAD'])).trim(),
+    )
+    assert.equal((await runGit(remotePath, ['branch', '--list', 'main'])).trim(), '')
+  })
+
+  it('does not subtract commits that only exist on another remote', async () => {
+    const { repoPath } = await createRepoWithMissingUpstream()
+    const otherRemotePath = await mkdtemp(path.join(tmpdir(), 'chill-vibe-git-other-'))
+    tempRoots.push(otherRemotePath)
+    await runGit(otherRemotePath, ['init', '--bare', '--initial-branch=main'])
+    await runGit(repoPath, ['remote', 'add', 'backup', otherRemotePath])
+    await runGit(repoPath, ['push', 'backup', 'main'])
+
+    const status = await inspectGitWorkspace(repoPath, { includeChangePreviews: false })
+
+    assert.equal(status.upstreamGone, true)
+    assert.equal(status.ahead, 2)
+  })
+
+  it('keeps an existing remote branch protected from a non-fast-forward push', async () => {
+    const { repoPath, remotePath } = await createRepoWithMissingUpstream()
+    await runGit(repoPath, ['push', '-u', 'origin', 'main'])
+    const remoteHead = (await runGit(remotePath, ['rev-parse', 'main'])).trim()
+    await runGit(repoPath, ['reset', '--hard', 'HEAD~1'])
+    await writeFile(path.join(repoPath, 'diverged.txt'), 'diverged\n')
+    await runGit(repoPath, ['add', 'diverged.txt'])
+    await runGit(repoPath, ['commit', '-m', 'Diverged commit'])
+
+    await assert.rejects(pushGitWorkspace(repoPath), /rejected|fast-forward/i)
+    assert.equal((await runGit(remotePath, ['rev-parse', 'main'])).trim(), remoteHead)
   })
 })

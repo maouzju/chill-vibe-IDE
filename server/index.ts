@@ -933,7 +933,7 @@ app.post('/api/chat/stop/:streamId', (request, response) => {
 
   // settlingWithinMs 必须透传：渲染端要据此放宽本地兜底，否则它会抢在被推迟的
   // 终态之前 close 掉 EventSource，让这次推迟白做。
-  response.json({ ok: true, settlingWithinMs: result.settlingWithinMs })
+  response.json({ ok: true, settlingWithinMs: result.settlingWithinMs, interrupted: result.interrupted })
 })
 
 app.use(

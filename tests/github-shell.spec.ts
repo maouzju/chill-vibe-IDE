@@ -274,3 +274,47 @@ test('navigation and mobile column chrome stay compact and GitHub-like', async (
   expect(mobileTopbarRect.height).toBeLessThanOrEqual(42)
   expect(headerRect.height).toBeLessThanOrEqual(25)
 })
+
+for (const theme of ['dark', 'light'] as const) {
+test(`topbar tabs drag the window on press-and-move but still switch on a plain click (${theme})`, async ({ page }) => {
+  // 2026-09-11：标签必须留在 no-drag（上面的用例已钉住），"按住拖动"走渲染层手势 +
+  // 桥接。这里验证手势会经桥接 begin/move/end、拖完不切标签，普通点击照常切换。
+  await mockAppApis(page)
+  await page.setViewportSize({ width: 1440, height: 960 })
+  await page.goto('http://localhost:5173')
+  await page.locator('.workspace-column').first().waitFor()
+  await page.evaluate((nextTheme) => {
+    document.documentElement.setAttribute('data-theme', nextTheme)
+  }, theme)
+
+  const routingTab = page.locator('#app-tab-routing')
+  await expect(routingTab).toHaveAttribute('aria-selected', 'false')
+  const box = await routingTab.boundingBox()
+  if (!box) {
+    throw new Error('routing tab has no layout box')
+  }
+  const startX = box.x + box.width / 2
+  const startY = box.y + box.height / 2
+
+  await page.mouse.move(startX, startY)
+  await page.mouse.down()
+  await page.mouse.move(startX + 40, startY + 6, { steps: 4 })
+  await page.evaluate(() => new Promise<void>((resolve) => requestAnimationFrame(() => resolve())))
+  // 不移动光标也要续期，避免主进程把正常暂停误判为失联。
+  const beforePause = await page.evaluate(() => window.__topbarWindowDragCalls?.length ?? 0)
+  await expect.poll(() => page.evaluate(() => window.__topbarWindowDragCalls?.length ?? 0))
+    .toBeGreaterThan(beforePause)
+  await page.mouse.up()
+
+  const dragCalls = await page.evaluate(() => window.__topbarWindowDragCalls ?? [])
+  expect(dragCalls[0]).toBe('begin')
+  expect(dragCalls).toContain('move')
+  expect(dragCalls.at(-1)).toBe('end')
+  await expect(routingTab).toHaveAttribute('aria-selected', 'false')
+
+  await routingTab.click()
+  await expect(routingTab).toHaveAttribute('aria-selected', 'true')
+  const callsAfterClick = await page.evaluate(() => window.__topbarWindowDragCalls ?? [])
+  expect(callsAfterClick).toEqual(dragCalls)
+})
+}

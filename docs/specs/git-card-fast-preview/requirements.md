@@ -26,6 +26,13 @@ Git 卡牌打开时会先等待完整 `inspectGitWorkspace()` 返回。完整状
 11. Git 子进程的 stdout/stderr 按完整字节流解码，UTF-8 多字节字符跨 chunk 边界时不得产生替换字符。
 12. 多文件 patch 按 block 建立一次索引，查找结果必须与原有线性匹配语义一致，同时避免随改动数平方增长。
 
+## 2026-09-11 远端分支尚不存在时的同步
+
+13. 本地分支已配置 tracking 但远端没有这条分支（`git status -sb` 分支行带 `[gone]`：远端刚建好还没推过，或远端分支被删）时，Git 状态必须以 `upstreamGone: true` 如实标出，`upstream` 名字保留，同步入口显隐规则不变。
+14. `[gone]` 时 git 不提供 ahead 计数，卡片仍必须显示待推送数：统计本地 HEAD 中尚未出现在该 tracking 远端已知分支上的提交；空远端计入全部本地提交，其他远端的提交不参与扣除。
+15. 「同步」在 `[gone]` 时不得停在 pull 报错：成功 fetch 并清理失效引用后，确认 tracking ref 不存在才按"无需拉取"完成，流程继续走到 push；连接、认证等 fetch 失败必须报错，不能伪装成空远端。没配 tracking 的仓库保持原有报错。
+16. 缺失分支的 push 必须使用已配置的 tracking 远端和目标分支显式推送，不受 `push.default=nothing/matching` 影响，不能强推，也不能假定远端总叫 origin 或目标分支与本地同名。
+
 ## 非目标
 
 - 不重做完整 Git 界面。

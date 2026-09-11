@@ -50,6 +50,7 @@ type PoolEntry = {
   // 由它正常收口并 endTurn。截断这条通道会让 parser 永远等不到 result。
   interruptRequested: boolean
   interruptDrainTimer: ReturnType<typeof setTimeout> | undefined
+  interruptDrainWaiters: Set<() => void>
   // Idle output buffered between the unsolicited wake-up and the host attach.
   pendingUnsolicited: boolean
   bufferedStdout: string[]
@@ -179,10 +180,24 @@ export class ClaudeSessionPool {
   }): Promise<{ child: ClaudeSessionPoolChild; reused: boolean } | null> {
     const generation = (this.acquireGenerations.get(options.key) ?? 0) + 1
     this.acquireGenerations.set(options.key, generation)
-    const existing = this.entries.get(options.key)
+    let existing = this.entries.get(options.key)
+    const requestedSessionId = options.sessionId?.trim() || null
+
+    // 2026-09-11：done 先到、CLI result 后到，紧随的追问会把健康收尾进程误杀（#369）。
+    // 只等明确已中断且身份匹配的旧 turn；不能取消 idle 判据或把新输入直接写进旧 parser。
+    // endTurn / exit / removeEntry 均释放等待；醒来后重新校验所有权，不能抢占新请求。
+    if (existing && !existing.closed && existing.state === 'turn-active' &&
+      existing.interruptRequested && existing.signature === options.signature &&
+      requestedSessionId !== null && existing.sessionId === requestedSessionId) {
+      await new Promise<void>((resolve) => existing!.interruptDrainWaiters.add(resolve))
+      existing = this.entries.get(options.key)
+    }
+
+    if (this.disposed || this.acquireGenerations.get(options.key) !== generation) {
+      return null
+    }
 
     if (existing) {
-      const requestedSessionId = options.sessionId?.trim() || null
       const reusable =
         !existing.closed &&
         existing.state === 'idle' &&
@@ -217,6 +232,7 @@ export class ClaudeSessionPool {
       state: 'idle',
       interruptRequested: false,
       interruptDrainTimer: undefined,
+      interruptDrainWaiters: new Set(),
       attachment: null,
       pendingUnsolicited: false,
       bufferedStdout: [],
@@ -268,6 +284,7 @@ export class ClaudeSessionPool {
     entry.interruptRequested = false
     this.clearInterruptDrainTimer(entry)
     this.armIdleTimer(entry)
+    this.resolveInterruptDrainWaiters(entry)
   }
 
   // 软中断：往 CLI 的 stdin 写一行 control_request，让它 abort 当前 turn，
@@ -432,6 +449,11 @@ export class ClaudeSessionPool {
     }
   }
 
+  private resolveInterruptDrainWaiters(entry: PoolEntry) {
+    for (const resolve of entry.interruptDrainWaiters) resolve()
+    entry.interruptDrainWaiters.clear()
+  }
+
   private handleStdoutLine(entry: PoolEntry, line: string) {
     if (this.entries.get(entry.key) !== entry || this.shouldIgnoreIdleLine(line)) return
     entry.observer?.onLine(line)
@@ -523,6 +545,7 @@ export class ClaudeSessionPool {
     if (wasCurrentEntry) {
       this.entries.delete(entry.key)
     }
+    this.resolveInterruptDrainWaiters(entry)
 
     if (entry.state === 'turn-active' && entry.attachment) {
       entry.attachment.onProcessClosed(code)
@@ -598,6 +621,7 @@ export class ClaudeSessionPool {
     if (this.entries.get(entry.key) === entry) {
       this.entries.delete(entry.key)
     }
+    this.resolveInterruptDrainWaiters(entry)
 
     if (options.kill && !entry.closed) {
       try {

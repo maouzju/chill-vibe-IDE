@@ -74,9 +74,20 @@
 `selectDockedColumnStatus(column)`（`src/state.ts`）把一列的卡片聚合成两个**相互独立**的布尔量：
 
 - `running` —— 任一卡片 `status === 'streaming'`。
-- `hasNewResult` —— 任一卡片 `unread` 或 `completionGlow`。
+- `hasNewResult` —— 任一卡片 `unread`。
 
 刻意不合成单一枚举：一列完全可能"一张卡还在跑，另一张已经跑完没看"，压成一个状态就会把后者悄悄吞掉。
+
+### 为什么 `completionGlow` 不算"有新结果"（2026-09-10 修订）
+
+首版是 `unread || completionGlow`，用户报"收起的项目有新结果有时候是误报"。两个字段的清除路径不同：
+
+- `unread` 由"看板可见时自动已读"清（`App.tsx` 的活动 tab 扫描），语义是**用户没看到**。
+- `completionGlow` 只由 `ChatCard` 的 pointerdown / focus / input / click 清，语义是**用户没碰过**。
+
+一张卡在用户眼前跑完（`unread=false`）、用户读完没点它、再收起这列 —— glow 仍为 true，chip 就误报。当初拿 glow 兜底，是因为流结束时的 `unread` 判定只看 layout 的活动 tab，不知道整列已收起，活动 tab 上跑完的卡会被记成 `unread=false`。
+
+修法是让 `unread` 自己扛住这一幕：`isColumnVisibleOnBoard(column, boardTabActive)`（`src/state.ts`）成为唯一的列级可见性判据，流结束的 `unread` 计算与自动已读扫描都走它。**不要**改成"自动已读顺手清 glow"——那会让视口外 pane 里跑完的卡在用户没看到结果时就熄灭完成光，改坏另一个信号。守卫在 `tests/column-dock.test.ts` 的 `a completion glow alone is not a new result` 与 `stream completion inside a docked column`。
 
 ### 为什么这里可以用无限动画
 

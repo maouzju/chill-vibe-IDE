@@ -582,7 +582,15 @@ const installMockApis = async (
 
     await route.fulfill({ status: 204 })
     if (autoEmitDoneOnStop) {
-      await emitStreamEvent(page, streamId, 'done', { stopped: true }, { waitForSubscriber: false })
+      // 真实服务端只有 Claude keepalive 路径能软中断（interrupted=true）；Codex 停止
+      // 仍是硬 kill。mock 按 provider 如实模拟，让两条分支的断言各自成立。
+      await emitStreamEvent(
+        page,
+        streamId,
+        'done',
+        { stopped: true, interrupted: initialCard.provider === 'claude' },
+        { waitForSubscriber: false },
+      )
     }
   })
 
@@ -1321,7 +1329,9 @@ test('queued messages can be sent now by intentionally interrupting the running 
   await expect.poll(() => mock.readState().columns[0]?.cards['card-1']?.messages[1]?.meta?.stopReason).toBe('user-interrupt')
 })
 
-test('sending a queued running Claude chat now does not keep the interrupted session id for the follow-up', async ({ page }) => {
+// 2026-09-11 之前这里断言 sessionId 必须为 undefined（pitfall #118 的硬杀年代前提）。
+// 软中断后进程与原生会话都活着，follow-up 必须带原 sessionId、发原文而不是 seeded 摘要。
+test('sending a queued running Claude chat now keeps the softly interrupted session id for the follow-up', async ({ page }) => {
   const mock = await installMockApis(page, {
     initialCard: {
       status: 'streaming',
@@ -1351,7 +1361,8 @@ test('sending a queued running Claude chat now does not keep the interrupted ses
 
   await expect.poll(() => mock.readRequests()[0]).toBe('stop:stream-1')
   await expect.poll(() => mock.readChatRequests()[0]?.prompt).toContain('Use this replacement instruction')
-  await expect.poll(() => mock.readChatRequests()[0]?.sessionId).toBeUndefined()
+  await expect.poll(() => mock.readChatRequests()[0]?.sessionId).toBe('claude-session-1')
+  expect(mock.readChatRequests()[0]?.prompt).not.toContain('Latest user message:')
   await expect(page.locator('.message-entry-user').filter({ hasText: 'Use this replacement instruction' })).toBeVisible()
   await expect.poll(() => mock.readState().columns[0]?.cards['card-1']?.messages[1]?.meta?.stopReason).toBe('user-interrupt')
   await expect(page.locator('.streaming-indicator')).toContainText('Writing')

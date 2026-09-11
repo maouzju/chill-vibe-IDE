@@ -63,12 +63,12 @@ type StreamRecord = {
   listeners: Set<Response>
   subscribers: Set<StreamSubscriber>
   child?: ChildProcess
-  // Unsolicited keepalive turns have no ChildProcess handle; stopping them
-  // tears down the pooled process through this hook instead.
-  stopHook?: () => void
+  // 自发 turn 没有 managed child；返回 true 表示控制通道软中断，否则已硬杀兜底。
+  stopHook?: () => boolean
   latestSessionId?: string
   terminal: boolean
   stopRequested: boolean
+  softInterrupted?: boolean
   cleanupTimer?: ReturnType<typeof setTimeout>
   // Set while finalizeWithWorkspaceEdits awaits the git diff. stop() uses it to
   // hand its terminal `done` to that in-flight settle instead of racing it.
@@ -84,6 +84,7 @@ export type UnsolicitedStreamNotification = {
 
 export type ChatStreamStopResult = {
   stopped: boolean
+  interrupted?: boolean
   // 0 表示终态已经同步发出；> 0 表示终态被刻意推迟（正在等收尾 workspace diff），
   // 且最长不超过这么久。渲染进程据此放宽它自己的"服务端没回应"本地兜底。
   settlingWithinMs: number
@@ -479,17 +480,13 @@ export class ChatManager {
     }
 
     stream.stopRequested = true
-    // 症状：点停止会连整个 Claude CLI 进程一起杀掉，会话作废、进程内正在跑的
-    //   Workflow 子 agent 全部陪葬，下一轮只能冷启动（Known Pitfall 118 的
-    //   「打断后清 sessionId」正是为绕开被 kill 弄脏的原生会话）。
-    // 根因：停止一直只有 OS 信号一条路，CLI 的 stream-json 控制通道从未接过。
-    //   2026-08-09 实测：发 control_request/interrupt 后 1-2ms 回 success，
-    //   进程存活、session_id 不变、上下文完整，可以立刻接下一轮。
-    // 为什么不能只软中断：控制通道依赖 keepalive 的常驻 stdin，写不进去时必须
-    //   如实退回硬 kill —— 停止按钮失灵比退化回 kill 严重得多。
-    if (!tryInterruptProviderTurn(stream.child)) {
+    // 症状：软中断后追问仍冷启动。2026-09-11 审计：done 早于停止响应，renderer 先清会话。
+    // 结果必须随终态信封发送（含延迟 diff / 自发 turn），不能只塞 HTTP 响应，见 #369。
+    // 控制通道只保住主会话，不保住被 CLI 主动中断的子代理；写入失败仍硬杀兜底。
+    stream.softInterrupted = tryInterruptProviderTurn(stream.child)
+    if (!stream.softInterrupted) {
       if (stream.stopHook) {
-        stream.stopHook()
+        stream.softInterrupted = stream.stopHook()
       } else {
         stream.child?.kill()
       }
@@ -504,11 +501,11 @@ export class ChatManager {
     // 立即的，只有终态信封被推迟。终态一定会来：那次 settle 自己带硬超时
     // （workspaceDiffHardTimeoutMs），所以这里不需要、也不该再挂第二个竞速定时器。
     if (stream.workspaceDiffInFlight) {
-      return { stopped: true, settlingWithinMs: workspaceDiffHardTimeoutMs }
+      return { stopped: true, interrupted: stream.softInterrupted, settlingWithinMs: workspaceDiffHardTimeoutMs }
     }
 
-    this.finalize(stream, 'done', { stopped: true })
-    return { stopped: true, settlingWithinMs: 0 }
+    this.finalize(stream, 'done', { stopped: true, interrupted: stream.softInterrupted })
+    return { stopped: true, interrupted: stream.softInterrupted, settlingWithinMs: 0 }
   }
 
   closeAll() {
@@ -545,9 +542,10 @@ export class ChatManager {
       // 中断只会落在这一轮上。软中断不成立才回落到 kill 掉池内进程。
       stopHook: () => {
         if (this.claudePool?.interruptTurn(entry.key, entry.child)) {
-          return
+          return true
         }
         this.claudePool?.releaseEntry(entry.key, entry.child)
+        return false
       },
       latestSessionId: normalizeSessionId(entry.sessionId),
       terminal: false,
@@ -869,7 +867,7 @@ export class ChatManager {
     // 判据用 stopRequested（stop() 入口就置好的既有字段），不再需要一个专门的
     // 定时器句柄来记"停止来过"——少一个字段、少两处清理点、也少一条竞速。
     if (stream.stopRequested) {
-      this.finalize(stream, 'done', { stopped: true })
+      this.finalize(stream, 'done', { stopped: true, interrupted: stream.softInterrupted })
       return
     }
 

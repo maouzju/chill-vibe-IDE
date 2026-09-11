@@ -8,6 +8,7 @@ import {
   useState,
   type ChangeEvent,
   type DragEvent,
+  type PointerEvent as ReactPointerEvent,
   type ReactNode,
   type WheelEvent,
 } from 'react'
@@ -153,6 +154,9 @@ import {
   importCcSwitchRouting,
   isWindowMaximized,
   minimizeWindow,
+  moveWindowPointerDrag,
+  endWindowPointerDrag,
+  beginWindowPointerDrag,
   onWindowMaximizedChanged,
   openChatStream,
   requestChat,
@@ -350,6 +354,10 @@ import { getOnboardingText, getPanelText, getResilientProxyText, getTopTabText }
 import { AppButton } from './components/AppButton'
 import { dispatchComposerFocusRequest } from './components/composer-focus'
 import {
+  createTopbarWindowDragController,
+  type TopbarWindowDragController,
+} from './components/topbar-window-drag'
+import {
   installStuckPaneForensics,
   measureTabSwitchForForensics,
   recordAppliedActionsForForensics,
@@ -396,6 +404,7 @@ import {
   findPaneForTab,
   findPaneInLayout,
   ideReducer,
+  isColumnVisibleOnBoard,
   isUntouchedWorkspacePlaceholderColumn,
   resolveForkPointMessage,
   selectDockedColumnStatus,
@@ -2315,6 +2324,54 @@ function App() {
       setWindowMaximized(maximized)
     }).catch(() => undefined)
   }, [])
+
+  // 症状：2026-09-11 用户报顶栏「Chill Vibe / 接口 / 设置」按住拖不动窗口。
+  // 根因：标签必须是 app-region: no-drag —— Windows 无边框窗口里 drag 元素由系统接管、
+  // DOM 收不到 click，标成 drag 就再也点不了。所以手势在渲染层识别，超阈值后请主进程
+  // 按光标移动窗口；松手后吞掉一次 click，拖完不切标签。只在自定义窗框下挂载。
+  // 被否决：只把 padding 做成 drag —— 用户按在文字上照样拖不动。见 docs/specs/topbar-tab-window-drag。
+  const topbarWindowDragRef = useRef<TopbarWindowDragController | null>(null)
+  if (topbarWindowDragRef.current === null) {
+    topbarWindowDragRef.current = createTopbarWindowDragController({
+      begin: () => {
+        void beginWindowPointerDrag().catch(() => undefined)
+      },
+      move: moveWindowPointerDrag,
+      end: endWindowPointerDrag,
+    })
+  }
+  const topbarWindowDrag = topbarWindowDragRef.current
+  const topbarTabDragHandlers = useMemo(
+    () =>
+      usesCustomWindowFrame
+        ? {
+            onPointerDown: (event: ReactPointerEvent<HTMLButtonElement>) => {
+              if (topbarWindowDrag.onPointerDown(event)) {
+                // 捕获指针：窗口一动，光标相对窗口的位置就变了，不捕获的话 move/up
+                // 会落到别的元素上，拖动半途失联。
+                try {
+                  event.currentTarget.setPointerCapture(event.pointerId)
+                } catch {
+                  // 不支持指针捕获的环境（测试桩）退化为普通点击。
+                }
+              }
+            },
+            onPointerMove: (event: ReactPointerEvent<HTMLButtonElement>) => {
+              topbarWindowDrag.onPointerMove(event)
+            },
+            onPointerUp: (event: ReactPointerEvent<HTMLButtonElement>) => {
+              topbarWindowDrag.onPointerUp(event)
+            },
+            onPointerCancel: (event: ReactPointerEvent<HTMLButtonElement>) => {
+              topbarWindowDrag.onPointerCancel(event)
+            },
+            onLostPointerCapture: (event: ReactPointerEvent<HTMLButtonElement>) => {
+              topbarWindowDrag.onLostPointerCapture(event)
+            },
+          }
+        : {},
+    [topbarWindowDrag, usesCustomWindowFrame],
+  )
 
   const syncProviderStatuses = useCallback(async () => {
     try {
@@ -5123,7 +5180,7 @@ function App() {
             }).catch(() => undefined)
           }
         },
-        onDone: ({ stopped, completion, turnStopReason, usage }) => {
+        onDone: ({ stopped, interrupted, completion, turnStopReason, usage }) => {
           const donePlan = getStreamDonePlan({ stopped, completion })
           flushBufferedAssistantDeltaForCard(card.id)
           const activityFlushedState = flushBufferedActivitiesForCard(card.id)
@@ -5177,12 +5234,17 @@ function App() {
           }
 
           const liveColumn = getColumnById(activityFlushedState.columns, columnId)
+          // 收起的列整棵 layout 都没渲染，活动 tab 上跑完的卡同样没人看见 ——
+          // 可见性必须连 docked 一起判，否则顶栏 chip 的蓝点亮不起来（见 isColumnVisibleOnBoard）。
           const unread =
             liveColumn
               ? shouldMarkCardUnreadOnStreamDone(
                   liveColumn.layout,
                   card.id,
-                  appStateRef.current.settings.activeTopTab === 'ambience',
+                  isColumnVisibleOnBoard(
+                    liveColumn,
+                    appStateRef.current.settings.activeTopTab === 'ambience',
+                  ),
                 )
               : true
 
@@ -5205,6 +5267,7 @@ function App() {
               type: 'finishStoppedStream',
               columnId,
               cardId: card.id,
+              softInterrupted: interrupted === true,
               unread,
               stoppedMessage:
                 stoppedRunReason !== 'ask-user-answer'
@@ -6194,7 +6257,8 @@ function App() {
       //       layout 根本没渲染 —— 它唯一的可见代表是顶栏那个 chip。
       // 被否决的替代: 在 pane-read-state 里判 docked —— 那个模块只认 layout，
       //       不该知道列级的停靠状态；可见性判断留在调用点才是它的语义。
-      if (column.docked === true) {
+      //       判据与流结束时的 unread 计算共用 isColumnVisibleOnBoard，不许各写一份。
+      if (!isColumnVisibleOnBoard(column, true)) {
         continue
       }
 
@@ -10032,7 +10096,13 @@ function App() {
                   aria-controls={`app-panel-${tab.id}`}
                   tabIndex={active ? 0 : -1}
                   className={`app-tab${active ? ' is-active' : ''}`}
-                  onClick={() => setActiveTopTab(tab.id)}
+                  onClick={() => {
+                    if (topbarWindowDrag.consumeSuppressedClick()) {
+                      return
+                    }
+                    setActiveTopTab(tab.id)
+                  }}
+                  {...topbarTabDragHandlers}
                 >
                   {tab.label}
                 </button>

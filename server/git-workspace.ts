@@ -631,7 +631,7 @@ const classifyGitChange = (
 const parseBranchLine = (
   branchLine: string | undefined,
   repoRoot: string,
-): Pick<GitStatus, 'branch' | 'upstream' | 'ahead' | 'behind'> => {
+): Pick<GitStatus, 'branch' | 'upstream' | 'upstreamGone' | 'ahead' | 'behind'> => {
   if (!branchLine) {
     return {
       branch: path.basename(repoRoot),
@@ -668,6 +668,9 @@ const parseBranchLine = (
   return {
     branch: local.trim(),
     upstream: trackingMatch?.[1],
+    // `## main...origin/main [gone]`：tracking 配好了但远端没有这条分支（空远端 / 远端分支被删）。
+    // 之前这里只认 ahead/behind，[gone] 被当成普通 upstream，同步流程一头撞进必败的 pull。
+    upstreamGone: counters.split(/[ ,]+/).includes('gone'),
     ahead: Number(counters.match(/ahead (\d+)/)?.[1] ?? 0),
     behind: Number(counters.match(/behind (\d+)/)?.[1] ?? 0),
   }
@@ -1618,6 +1621,31 @@ const assertRepository = async (workspacePath: string) => {
   return status
 }
 
+const readTrackingTarget = async (workspacePath: string, branch: string) => {
+  const result = await runGit(workspacePath, [
+    'for-each-ref',
+    '--format=%(upstream:remotename)%00%(upstream:remoteref)',
+    `refs/heads/${branch}`,
+  ])
+  const [remote, ref] = result.stdout.trim().split('\0')
+
+  return remote && ref ? { remote, ref } : null
+}
+
+const countUnpublishedCommits = async (workspacePath: string, branch: string) => {
+  const target = await readTrackingTarget(workspacePath, branch)
+  const args = ['rev-list', '--count', 'HEAD']
+  if (target) {
+    args.push('--not', `--remotes=${target.remote}`)
+  }
+  const result = await runGit(workspacePath, args, {
+    allowFailure: true,
+  })
+  const count = Number.parseInt(result.stdout.trim(), 10)
+
+  return result.exitCode === 0 && Number.isFinite(count) ? count : 0
+}
+
 const hasHeadCommit = async (workspacePath: string) => {
   const result = await runGit(workspacePath, ['rev-parse', '--verify', 'HEAD'], {
     allowFailure: true,
@@ -1652,6 +1680,12 @@ const inspectResolvedGitWorkspace = async (
     .map((line) => line.trimEnd())
     .filter(Boolean)
   const branchInfo = parseBranchLine(lines.find((line) => line.startsWith('## ')), repoRoot)
+  // 2026-09-11：tracking ref 缺失时 git 不给 ahead，卡片隐藏了待推送数（pitfall #368）。
+  // 排除目标远端已知的提交；直接数整个 HEAD 会把已发布到该远端其他分支的历史也算进去。
+  // 正常 tracking 继续使用 status -sb，不给每次轻量刷新额外增加 Git 进程。
+  const aheadWhenGone = branchInfo.upstreamGone
+    ? await countUnpublishedCommits(repoRoot, branchInfo.branch)
+    : null
   const parsedChanges = lines
     .map(parseStatusLine)
     .filter((change): change is GitChange => change !== null)
@@ -1668,7 +1702,8 @@ const inspectResolvedGitWorkspace = async (
     repoRoot,
     branch: branchInfo.branch,
     upstream: branchInfo.upstream,
-    ahead: branchInfo.ahead,
+    upstreamGone: branchInfo.upstreamGone,
+    ahead: aheadWhenGone ?? branchInfo.ahead,
     behind: branchInfo.behind,
     hasConflicts: summary.conflicted > 0,
     clean: changes.length === 0,
@@ -2440,8 +2475,26 @@ export const commitGitWorkspace = async ({
 export const pullGitWorkspace = async (workspacePath: string): Promise<GitOperationResponse> => {
   const status = await assertRepository(workspacePath)
 
-  // Fetch first so we can detect potential conflicts before pulling
-  await runGit(status.repoRoot, ['fetch'], { allowFailure: true })
+  // 2026-09-11：空远端/已删分支让同步停在 pull，永远到不了 push（pitfall #368）。
+  // 必须成功 fetch 并 prune 后再判 ref；旧引用和 fetch 失败都不能证明远端分支存在与否。
+  // 不清空 upstream（会隐藏同步入口），也不依赖随 Git 版本/语言变化的错误文案。
+  await runGit(status.repoRoot, ['fetch', '--prune'])
+
+  if (status.upstream) {
+    const upstreamRef = await runGit(
+      status.repoRoot,
+      ['rev-parse', '--verify', '--quiet', `${status.upstream}^{commit}`],
+      { allowFailure: true },
+    )
+
+    if (upstreamRef.exitCode !== 0) {
+      const refreshed = await inspectGitWorkspace(workspacePath)
+      return {
+        status: refreshed,
+        message: `Remote branch ${status.upstream} does not exist yet; nothing to pull.`,
+      }
+    }
+  }
 
   // Check which files are incoming from remote
   const upstream = status.upstream || `origin/${status.branch}`
@@ -2491,6 +2544,15 @@ export const pushGitWorkspace = async (workspacePath: string): Promise<GitOperat
 
   if (!status.upstream) {
     args.push('-u', 'origin', status.branch)
+  } else if (status.upstreamGone) {
+    // 2026-09-11：裸 push 在 nothing/matching 模式下不会创建缺失分支（pitfall #368）。
+    // 使用 Git 提供的 tracking 目标，不能拆 upstream 字符串猜 remote（名字可含 /）。
+    // 显式 refspec 不带 +，保留远端并发更新时的非快进保护。
+    const target = await readTrackingTarget(status.repoRoot, status.branch)
+    if (!target) {
+      throw new Error('The configured upstream target could not be resolved.')
+    }
+    args.push('--', target.remote, `HEAD:${target.ref}`)
   }
 
   const result = await runGit(status.repoRoot, args, { allowFailure: true })

@@ -97,6 +97,20 @@ export const isUntouchedWorkspacePlaceholderColumn = (column: BoardColumn | unde
   )
 }
 
+/**
+ * Whether a column's panes are actually on screen. Both places that reason
+ * about "is the user looking at this card" (the stream-done unread decision and
+ * the visible-pane auto-read sweep in App.tsx) must go through this, so a
+ * docked column cannot be treated as visible by one and invisible by the other.
+ *
+ * This lives here rather than in pane-read-state.ts on purpose: that module
+ * only knows layouts, and column-level docking is not a layout concern.
+ */
+export const isColumnVisibleOnBoard = (
+  column: Pick<BoardColumn, 'docked'>,
+  boardTabActive: boolean,
+): boolean => boardTabActive && column.docked !== true
+
 export interface DockedColumnStatus {
   /** At least one card in the column is still streaming. */
   readonly running: boolean
@@ -123,10 +137,16 @@ export const selectDockedColumnStatus = (
 
   for (const card of Object.values(column.cards)) {
     if (card.status === 'streaming') running = true
-    // `completionGlow` and `unread` are cleared by the same user interactions
-    // (App.tsx markRead), but they are set on different paths, so either one
-    // alone still means "finished, not yet seen".
-    if (card.unread || card.completionGlow) hasNewResult = true
+    // 症状（2026-09-10）: 收起的列偶尔亮"有新结果"，拖回来却没有没看过的回答。
+    // 根因: 这里曾把 `completionGlow` 也当"有新结果"。可 glow 只在用户**触碰**卡片
+    //       时清除（ChatCard pointerdown/focus/input/click），而"看板可见时自动已读"
+    //       只清 `unread` —— 一张卡在用户眼前跑完、读了没点，glow 仍为 true，
+    //       这时收起列就误报。glow 的语义是"没碰过"，不是"没看过"。
+    // 被否决的替代: 让自动已读顺手清 glow —— 那会让板上的完成光效在用户没看到
+    //       结果时就熄灭（比如卡在视口外的 pane 里跑完），改坏另一个信号。
+    //       当初拿 glow 兜底是因为完成回调不知道列已收起、把活动 tab 上的卡记成
+    //       unread=false；现在 isColumnVisibleOnBoard 让 `unread` 自己扛住这一幕。
+    if (card.unread) hasNewResult = true
     if (running && hasNewResult) break
   }
 
@@ -531,6 +551,7 @@ export type IdeAction =
       type: 'finishStoppedStream'
       columnId: string
       cardId: string
+      softInterrupted?: boolean
       stoppedMessage?: ChatMessage
       unread?: boolean
     }
@@ -3037,7 +3058,10 @@ const ideReducerCore = (state: AppState, action: IdeAction): AppState => {
             : undefined
           const shouldCancelAutoUrge =
             stopReason === 'manual' || stopReason === 'user-interrupt'
-          const shouldResetInterruptedSession = stopReason === 'user-interrupt'
+          // 2026-09-11：软中断进程仍活着，一律清会话会强迫下一轮 seeded 冷启动。
+          // 只信 Claude done 的明确标记；无终态兜底 / 硬杀 / Codex 仍按 #118 清理，见 #369。
+          const shouldResetInterruptedSession = stopReason === 'user-interrupt' &&
+            !(card.provider === 'claude' && action.softInterrupted === true)
           const nextProviderSessions = shouldResetInterruptedSession
             ? { ...card.providerSessions }
             : card.providerSessions

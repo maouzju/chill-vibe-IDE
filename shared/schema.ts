@@ -1691,6 +1691,9 @@ export const gitStatusSchema = z.object({
   repoRoot: z.string().default(''),
   branch: z.string().default(''),
   upstream: z.string().min(1).optional(),
+  // tracking 已配置但远端上没有这条分支（`git status -sb` 的 `[gone]`）：远端刚建好还没推过，
+  // 或远端分支被删。upstream 仍保留名字供 UI 显示与 push 使用；见 AGENTS.md pitfall #368。
+  upstreamGone: z.boolean().optional(),
   ahead: z.number().int().nonnegative().default(0),
   behind: z.number().int().nonnegative().default(0),
   hasConflicts: z.boolean().default(false),
@@ -2031,6 +2034,8 @@ export type StreamEventMap = {
   // 既有的 stopped / completion 语义一个字节都没动。
   done: {
     stopped?: boolean
+    // 已通过 Claude keepalive 控制通道提交软中断；不等同于 CLI 已吐完收尾 result。
+    interrupted?: boolean
     completion?: StreamCompletion
     turnStopReason?: ProviderTurnStopReason
     usage?: ProviderTurnUsage

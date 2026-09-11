@@ -412,6 +412,26 @@ export const toggleMaximizeWindow = async (): Promise<boolean> => {
   return Boolean(await fn())
 }
 
+// 顶栏标签拖动窗口的三段桥接。没有桥接（浏览器模式）时静默：顶栏导航按钮不能
+// 因为一个可选手势变成异常源。
+export const beginWindowPointerDrag = async (): Promise<boolean> => {
+  const fn = getDesktopApi()?.beginWindowPointerDrag
+
+  if (typeof fn !== 'function') {
+    return false
+  }
+
+  return Boolean(await fn())
+}
+
+export const moveWindowPointerDrag = () => {
+  getDesktopApi()?.moveWindowPointerDrag?.()
+}
+
+export const endWindowPointerDrag = () => {
+  getDesktopApi()?.endWindowPointerDrag?.()
+}
+
 export const closeWindow = async () => {
   const fn = requireDesktopAction(getDesktopApi()?.closeWindow)
   await fn()

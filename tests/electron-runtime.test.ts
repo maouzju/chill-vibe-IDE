@@ -790,3 +790,20 @@ test('performance smoke runner uses headless node checks and the add-card freeze
     await rm(tempDir, { recursive: true, force: true })
   }
 })
+
+test('Electron topbar tab pointer drag is wired from preload to a main-process controller', async () => {
+  const projectRoot = process.cwd()
+  const [mainBody, preloadBody] = await Promise.all([
+    readFile(path.join(projectRoot, 'electron', 'main.ts'), 'utf8'),
+    readFile(path.join(projectRoot, 'electron', 'preload.ts'), 'utf8'),
+  ])
+
+  assert.match(mainBody, /import \{ createWindowPointerDragController \} from '\.\/window-pointer-drag\.js'/)
+  assert.match(mainBody, /ipcMain\.handle\('window:pointer-drag-begin'/)
+  // move/end are one-way: pointermove can run at hundreds of Hz and nobody reads a reply.
+  assert.match(mainBody, /ipcMain\.on\('window:pointer-drag-move'/)
+  assert.match(mainBody, /ipcMain\.on\('window:pointer-drag-end'/)
+  assert.match(preloadBody, /beginWindowPointerDrag: \(\) =>\s*ipcRenderer\.invoke\('window:pointer-drag-begin'\)/)
+  assert.match(preloadBody, /moveWindowPointerDrag: \(\) =>\s*\{?\s*ipcRenderer\.send\('window:pointer-drag-move'\)/)
+  assert.match(preloadBody, /endWindowPointerDrag: \(\) =>\s*\{?\s*ipcRenderer\.send\('window:pointer-drag-end'\)/)
+})

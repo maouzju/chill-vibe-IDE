@@ -18,7 +18,7 @@
 - model、reasoningEffort/thinkingEnabled、workspace（cwd）、planMode（permission-mode）一致 —— 这些都是进程级参数
 - 进程存活且无活跃 turn
 
-任一不满足：kill 旧进程（若存在），按 keepalive 模式 spawn 新进程（带 `-r sessionId` 恢复历史）。用户打断（stop）由 ChatManager `child.kill()` 杀进程，池在 exit 处理中清掉注册表项 —— 下次请求自然不复用（满足 pitfall #118）。
+任一不满足：kill 旧进程（若存在），按 keepalive 模式 spawn 新进程（带 `-r sessionId` 恢复历史）。用户打断（stop）优先走 CLI 控制通道软中断（`interruptTurn`），进程与会话存活，done 信封带 `interrupted:true`；随后到达的 `acquireForTurn` 若命中同签名同会话的 turn-active 条目，等 `endTurn` 后复用而不是杀。软中断失败才退回 `child.kill()`，池在 exit 处理中清掉注册表项 —— 下次请求不复用（pitfall #118 的硬杀分支，2026-09-11 修订）。
 
 ### D3：CLI 启动形态（keepalive 变体）
 ```

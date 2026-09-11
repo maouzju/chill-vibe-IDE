@@ -97,6 +97,9 @@ declare global {
       flashWindowOnce?: () => Promise<boolean>
       setUiZoomFactor?: (zoomFactor: number) => Promise<void>
       isWindowMaximized?: () => Promise<boolean>
+      beginWindowPointerDrag?: () => Promise<boolean>
+      moveWindowPointerDrag?: () => void
+      endWindowPointerDrag?: () => void
       requestWindowHitTestRebuild?: (reason: string) => Promise<string>
       onWindowMaximizedChanged?: (listener: (maximized: boolean) => void) => (() => void)
       openFolderDialog?: () => Promise<string | null>

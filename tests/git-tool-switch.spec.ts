@@ -1317,6 +1317,60 @@ test('pane-mounted Git tab keeps its loaded state after being backgrounded and r
 })
 
 for (const theme of ['dark', 'light'] as const) {
+  test(`switching to Git can sync a missing upstream branch in ${theme} theme`, async ({ page }, testInfo) => {
+    await installMockApis(page, theme)
+    const calls: string[] = []
+    let status = createGitStatus([], {
+      branch: 'main',
+      upstream: 'origin/main',
+      upstreamGone: true,
+      ahead: 2,
+      behind: 0,
+    })
+
+    for (const endpoint of ['status', 'status/preview']) {
+      await page.route(`**/api/git/${endpoint}?workspacePath=*`, async (route) => {
+        await route.fulfill({ json: status })
+      })
+    }
+    await page.route('**/api/git/pull', async (route) => {
+      calls.push('pull')
+      await route.fulfill({ json: { status, message: 'Remote branch origin/main does not exist yet; nothing to pull.' } })
+    })
+    await page.route('**/api/git/push', async (route) => {
+      calls.push('push')
+      status = { ...status, upstreamGone: false, ahead: 0 }
+      await route.fulfill({ json: { status } })
+    })
+
+    await page.goto('http://localhost:5173')
+    await page.evaluate(() => {
+      window.electronAPI!.pushGitChanges = async (request) => {
+        const response = await fetch('/api/git/push', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(request),
+        })
+        return response.json()
+      }
+    })
+    const modelSelect = page.locator('.pane-tab-panel.is-active .model-select').first()
+    await modelSelect.waitFor()
+    await selectModel(page, modelSelect, 'Git')
+
+    const card = page.locator('.pane-tab-panel.is-active .git-tool-card')
+    await expect(card).toBeVisible()
+    await expect(card.locator('.git-sync-counts')).toHaveText('↑2')
+    await page.screenshot({ path: testInfo.outputPath(`missing-upstream-${theme}-before.png`) })
+    await card.getByRole('button', { name: /Sync/ }).click()
+
+    await expect(card.getByRole('status')).toBeVisible()
+    await expect(card.getByRole('status')).toContainText('Sync complete.')
+    expect(calls).toEqual(['pull', 'push'])
+    await expect(card.locator('.git-sync-counts')).toHaveCount(0)
+    await page.screenshot({ path: testInfo.outputPath(`missing-upstream-${theme}-after.png`) })
+  })
+
   test(`switching a card to Git reveals git controls in ${theme} theme`, async ({ page }) => {
     await installMockApis(page, theme)
 

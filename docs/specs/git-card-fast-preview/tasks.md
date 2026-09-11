@@ -31,3 +31,12 @@
 - [x] Git stdout/stderr 按 Buffer 完整解码，覆盖跨 chunk 的 UTF-8 路径与内容。
 - [x] 为批量 patch 建立等价索引，保留 rename、add、delete、引号路径和 header 回退语义。
 - [x] 新增 `git-patch-block-index.test.ts`（8 项）与 `git-status-refresh-policy.test.ts`（17 项）窄测，均已通过。
+
+## 2026-09-11 远端分支尚不存在时的同步
+
+- [x] 红测：用真实 bare 空远端复现 `[gone]`，并覆盖旧引用、fetch 失败、特殊 push.default、异名 tracking 目标、跨分支历史计数和非快进保护（`tests/git-workspace.test.ts` "missing on the remote" 组，11 项）。
+- [x] `parseBranchLine` 解析 `[gone]`；`[gone]` 时 ahead 排除目标远端已知提交；`pullGitWorkspace` 成功 fetch/prune 后再验 ref 决定是否 pull。
+- [x] `gitStatusSchema` 新增可选 `upstreamGone`；AGENTS.md 新增 pitfall #368。
+- [x] 补充红测并修复：远端删除分支后的旧引用、特殊 push.default、按目标远端扣除已发布提交；覆盖 fetch 失败和异名 tracking 目标。
+- [x] 复跑 Git workspace 窄测与质量检查（Git/界面窄测通过；整仓 quality 被并行聊天中断改动的既有类型错误阻塞）。
+- [x] Windows zip 打包，交付可直接启动的 exe；核对运行实例，遵守已打开发布版不可擅自重启的规则。

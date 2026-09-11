@@ -4,10 +4,12 @@ import { afterEach, beforeEach, test } from 'node:test'
 import { createDefaultState } from '../shared/default-state.ts'
 import { getImageAttachmentUrl } from '../shared/chat-attachments.ts'
 import {
+  beginWindowPointerDrag,
   closeWindow,
   createWorkspaceDirectory,
   createWorkspaceFile,
   deleteWorkspaceEntry,
+  endWindowPointerDrag,
   fetchGitStatusPreview,
   fetchSlashCommands,
   fetchState,
@@ -17,6 +19,7 @@ import {
   loadClosedWorkspaceSnapshot,
   listInternalSessionHistory,
   minimizeWindow,
+  moveWindowPointerDrag,
   moveWorkspaceEntry,
   onWindowMaximizedChanged,
   openChatStream,
@@ -30,6 +33,9 @@ type ElectronBridgeWindow = Window & typeof globalThis & {
   electronAPI?: {
     minimizeWindow?: () => Promise<void>
     toggleMaximizeWindow?: () => Promise<boolean>
+    beginWindowPointerDrag?: () => Promise<boolean>
+    moveWindowPointerDrag?: () => void
+    endWindowPointerDrag?: () => void
     closeWindow?: () => Promise<void>
     flashWindowOnce?: () => Promise<boolean>
     isWindowMaximized?: () => Promise<boolean>
@@ -852,4 +858,37 @@ test('window controls use the Electron bridge when available', async () => {
 test('flashWindowOnce becomes a no-op when the Electron bridge is unavailable', async () => {
   await assert.doesNotReject(() => flashWindowOnce())
   assert.equal(await flashWindowOnce(), false)
+})
+
+test('topbar pointer drag forwards begin/move/end to the bridge and stays silent without one', async () => {
+  const calls: string[] = []
+
+  setWindow({
+    electronAPI: {
+      beginWindowPointerDrag: async () => {
+        calls.push('begin')
+        return true
+      },
+      moveWindowPointerDrag: () => {
+        calls.push('move')
+      },
+      endWindowPointerDrag: () => {
+        calls.push('end')
+      },
+    },
+  } as ElectronBridgeWindow)
+
+  assert.equal(await beginWindowPointerDrag(), true)
+  moveWindowPointerDrag()
+  endWindowPointerDrag()
+  assert.deepEqual(calls, ['begin', 'move', 'end'])
+
+  // Browser mode has no bridge: the topbar gesture must stay silent instead of
+  // turning a navigation button into an exception source.
+  setWindow({} as ElectronBridgeWindow)
+  assert.equal(await beginWindowPointerDrag(), false)
+  assert.doesNotThrow(() => {
+    moveWindowPointerDrag()
+    endWindowPointerDrag()
+  })
 })

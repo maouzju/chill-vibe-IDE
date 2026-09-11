@@ -635,3 +635,134 @@ test('closeAll kills every pooled process', async () => {
   assert.equal(pool.hasEntry('card-b'), false)
   pool.dispose()
 })
+
+test('acquireForTurn waits for an interrupted turn to settle and reuses the process', async (t) => {
+  const pool = createPool()
+  t.after(() => pool.dispose())
+  const first = createFakeChild()
+
+  const initial = await pool.acquireForTurn({
+    key: 'card-1',
+    signature: 'sig-a',
+    sessionId: undefined,
+    spawn: async () => first,
+  })
+  assert.ok(initial)
+
+  const { attachment } = createAttachment()
+  pool.beginTurn('card-1', attachment)
+  pool.updateSessionId('card-1', 'session-1')
+  assert.equal(pool.interruptTurn('card-1', first), true)
+
+  let spawnedAgain = false
+  let settled = false
+  const pending = pool
+    .acquireForTurn({
+      key: 'card-1',
+      signature: 'sig-a',
+      sessionId: 'session-1',
+      spawn: async () => {
+        spawnedAgain = true
+        return createFakeChild()
+      },
+    })
+    .then((result) => {
+      settled = true
+      return result
+    })
+
+  await new Promise((resolve) => setTimeout(resolve, 25))
+  assert.equal(settled, false, 'acquire must wait for the interrupted turn to drain')
+  assert.equal(first.killed, false, 'a process draining an interrupt must not be killed')
+
+  pool.endTurn('card-1', first)
+  const second = await pending
+
+  assert.ok(second)
+  assert.equal(second.reused, true)
+  assert.equal(second.child, first)
+  assert.equal(spawnedAgain, false)
+  assert.equal(first.killed, false)
+})
+
+test('acquireForTurn spawns fresh once the interrupt drain timer gives up on the process', async (t) => {
+  const pool = new ClaudeSessionPool({
+    onUnsolicited: () => {},
+    interruptDrainTimeoutMs: 30,
+  })
+  t.after(() => pool.dispose())
+  const first = createFakeChild()
+
+  await pool.acquireForTurn({
+    key: 'card-1',
+    signature: 'sig-a',
+    sessionId: undefined,
+    spawn: async () => first,
+  })
+  const { attachment } = createAttachment()
+  pool.beginTurn('card-1', attachment)
+  pool.updateSessionId('card-1', 'session-1')
+  assert.equal(pool.interruptTurn('card-1', first), true)
+
+  const replacement = createFakeChild()
+  const second = await pool.acquireForTurn({
+    key: 'card-1',
+    signature: 'sig-a',
+    sessionId: 'session-1',
+    spawn: async () => replacement,
+  })
+
+  assert.ok(second)
+  assert.equal(second.reused, false)
+  assert.equal(second.child, replacement)
+  assert.equal(first.killed, true)
+})
+
+for (const outcome of ['close', 'release', 'dispose', 'newer-acquire', 'changed-signature'] as const) {
+  test(`中断收尾等待被 ${outcome} 结束时不会悬挂或抢占新进程`, async (t) => {
+    const pool = createPool()
+    t.after(() => pool.dispose())
+    const child = createFakeChild()
+    await pool.acquireForTurn({ key: 'card', signature: 'sig', sessionId: undefined, spawn: async () => child })
+    pool.beginTurn('card', createAttachment().attachment, child)
+    pool.updateSessionId('card', 'session', child)
+    pool.interruptTurn('card', child)
+
+    let spawnCount = 0
+    const replacement = createFakeChild()
+    const options = {
+      key: 'card', signature: 'sig', sessionId: 'session',
+      spawn: async () => { spawnCount += 1; return replacement },
+    }
+    const pending = pool.acquireForTurn(options)
+    let newer: ReturnType<typeof pool.acquireForTurn> | undefined
+    if (outcome === 'close') child.emitExit(1)
+    if (outcome === 'release') pool.releaseEntry('card', child)
+    if (outcome === 'dispose') pool.dispose()
+    if (outcome === 'newer-acquire') {
+      newer = pool.acquireForTurn(options)
+      pool.endTurn('card', child)
+    }
+    if (outcome === 'changed-signature') {
+      newer = pool.acquireForTurn({ ...options, signature: 'changed' })
+    }
+
+    const result = await pending
+    if (outcome === 'close') {
+      assert.equal(result?.child, replacement)
+      assert.equal(result?.reused, false)
+      assert.equal(spawnCount, 1)
+    } else {
+      assert.equal(result, null, '已撤销/过期的等待不能再取得池所有权')
+    }
+    if (outcome === 'newer-acquire') {
+      assert.equal((await newer)?.child, child)
+      assert.equal(child.killed, false)
+      assert.equal(spawnCount, 0)
+    } else if (outcome === 'changed-signature') {
+      assert.equal((await newer)?.child, replacement)
+      assert.equal(child.killed, true)
+      assert.equal(spawnCount, 1)
+    }
+  })
+}

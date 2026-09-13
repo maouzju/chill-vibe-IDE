@@ -62,3 +62,13 @@ Integrated verification: 2026-09-06, 151 focused Node tests and 21 recovery/them
 - [x] Run focused regressions and quality checks, then package a Windows zip/executable without stopping the user's release instance.
 
 Verification: four new proving cases failed before the tracker fix and passed afterward; 155 related Node tests passed, followed by 39 tracker/label tests after the final label adjustment. `pnpm test:quality` passed. The existing light/dark command-group Playwright case passed on isolated port 5196 with no snapshot updates (5173 belongs to another project). Build: `dist/release-20260906-224336/Chill Vibe-0.20.15-win.zip`, executable in its `win-unpacked/`. The currently used packaged instance was deliberately left running; no runtime restart or user-state rewrite was performed.
+
+## Regression fix - descendant report-back revives a completed parent (2026-09-12)
+
+- [x] Align root / child / grandchild rollouts with the saved card: `/root/skills_logic` completed 16:07:12Z, five grandchild `send_message` report-backs 16:10-16:19Z flipped it back to running, root `task_complete` 17:01:49Z, card finalised by the 30-minute hard cap at 17:31:49Z, panel still "运行中" on the idle card.
+- [x] Red-first tracker tests: descendant report-back keeps the parent completed (parentThreadId chain and canonical-path fallback), parent → child contact still marks the child running, `settleRunningAgents` empties the live panel.
+- [x] Red-first provider test: silent child + native-rollout completion finalises `done` only after pushing an empty agents snapshot.
+- [x] Tracker: treat `interacted` from a descendant of the target as a report-back attributed to the sender; provider: settle running agents before `onDone`/`onError`.
+- [x] Focused regressions, `pnpm test:quality`, Windows zip build.
+
+Verification: 18/18 `tests/codex-agent-status.test.ts` (3 new cases red before the fix), 11/11 sub-agent/stall provider cases, 71/71 across the tracker/slash/stream-recovery files, lint + 4× tsc clean. Pitfall #370 records the two-root-cause split of the 30-minute fingerprint.

@@ -180,6 +180,104 @@ test('a child reporting back to /root never turns the root thread into a tracked
   )
 })
 
+test('a nested child reporting back to its parent never revives the completed parent', () => {
+  // 2026-09-12 实测 codex 0.153.4（rollout 01a0962d-4749 / 01a0962d-a5bb / 01a09652-fef5）：
+  //   /root/skills_logic 16:07 完成 → 其孙 /root/skills_logic/audit_progression 16:10~16:19 五次
+  //   send_message 回报父线程，app-server 从孙线程视角推 subAgentActivity{agentThreadId: <父>,
+  //   agentPath: '/root/skills_logic', kind: 'interacted'}；父线程 idle 时收到消息并不开新回合
+  //   （子 rollout 此后没有任何 task_started）。
+  const tracker = createCodexAgentStatusTracker({ rootThreadId })
+  tracker.handleNotification(childStarted())
+  tracker.handleNotification(subAgentActivity(childThreadId, '/root/skills_logic'))
+  tracker.handleNotification(childStarted(nestedThreadId, childThreadId))
+  tracker.handleNotification(
+    subAgentActivity(nestedThreadId, '/root/skills_logic/audit_progression', 'started', childThreadId),
+  )
+  tracker.handleNotification(subAgentActivity(childThreadId, '/root/skills_logic', 'completed'))
+  assert.equal(tracker.getAgent(childThreadId)?.status, 'completed')
+
+  const reportBack = tracker.handleNotification(
+    subAgentActivity(childThreadId, '/root/skills_logic', 'interacted', nestedThreadId),
+  )
+
+  assert.equal(reportBack.handled, true, 'nested-side notification stays out of the parent parser')
+  assert.equal(
+    tracker.getAgent(childThreadId)?.status,
+    'completed',
+    'a report-back from a descendant must not flip the parent back to running',
+  )
+  assert.deepEqual(
+    reportBack.activity?.agents.map((agent) => ({ threadId: agent.threadId, activity: agent.activity })),
+    [
+      {
+        threadId: nestedThreadId,
+        activity: ['Started /root/skills_logic/audit_progression', 'Contacted /root/skills_logic'],
+      },
+    ],
+    'the interaction is attributed to the descendant that sent it',
+  )
+
+  tracker.handleNotification(
+    subAgentActivity(nestedThreadId, '/root/skills_logic/audit_progression', 'completed', childThreadId),
+  )
+  assert.equal(tracker.hasRunningAgents(), false)
+  assert.equal(
+    tracker.markRootTurnCompleted(),
+    'finish',
+    'root completion must not be deferred behind a parent that only received mail',
+  )
+})
+
+test('a report-back is recognised by canonical path when the nested thread/started never arrived', () => {
+  const tracker = createCodexAgentStatusTracker({ rootThreadId })
+  tracker.handleNotification(childStarted())
+  tracker.handleNotification(subAgentActivity(childThreadId, '/root/skills_logic'))
+  // 孙线程没有 thread/started（拿不到 parentThreadId），只从父线程视角拿到 canonical path。
+  tracker.handleNotification(
+    subAgentActivity(nestedThreadId, '/root/skills_logic/audit_progression', 'started', childThreadId),
+  )
+  tracker.handleNotification(subAgentActivity(childThreadId, '/root/skills_logic', 'completed'))
+
+  tracker.handleNotification(
+    subAgentActivity(childThreadId, '/root/skills_logic', 'interacted', nestedThreadId),
+  )
+
+  assert.equal(tracker.getAgent(childThreadId)?.status, 'completed')
+  assert.deepEqual(tracker.snapshot().agents.map((agent) => agent.threadId), [nestedThreadId])
+})
+
+test('a parent contacting its own child still marks that child as running again', () => {
+  // 反向（父 → 子 followup_task）是真的开新回合：2026-09-12 root followup_task /root/visual_ui
+  //   15:45:17 → visual_ui task_started 15:45:17.977。祖先判定不能误伤这条。
+  const tracker = createCodexAgentStatusTracker({ rootThreadId })
+  tracker.handleNotification(childStarted())
+  tracker.handleNotification(subAgentActivity(childThreadId, '/root/skills_logic'))
+  tracker.handleNotification(childStarted(nestedThreadId, childThreadId))
+  tracker.handleNotification(
+    subAgentActivity(nestedThreadId, '/root/skills_logic/audit_progression', 'completed', childThreadId),
+  )
+  assert.equal(tracker.getAgent(nestedThreadId)?.status, 'completed')
+
+  tracker.handleNotification(
+    subAgentActivity(nestedThreadId, '/root/skills_logic/audit_progression', 'interacted', childThreadId),
+  )
+
+  assert.equal(tracker.getAgent(nestedThreadId)?.status, 'running')
+})
+
+test('settling running agents at run end empties the live panel without inventing completion', () => {
+  const tracker = createCodexAgentStatusTracker({ rootThreadId })
+  tracker.handleNotification(childStarted())
+  tracker.handleNotification(subAgentActivity(childThreadId, '/root/worker'))
+  assert.equal(tracker.hasRunningAgents(), true)
+
+  const settled = tracker.settleRunningAgents('interrupted')
+
+  assert.deepEqual(settled.agents, [])
+  assert.equal(tracker.getAgent(childThreadId)?.status, 'interrupted')
+  assert.equal(tracker.hasRunningAgents(), false)
+})
+
 test('deduplicates item lifecycle updates and retains only the latest six previews', () => {
   const tracker = createCodexAgentStatusTracker({ rootThreadId })
   tracker.handleNotification(childStarted())

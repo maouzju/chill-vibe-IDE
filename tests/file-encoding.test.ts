@@ -159,3 +159,21 @@ test('files with NUL bytes and no BOM are still detected as binary', async (t) =
   assert.equal(result.binary, true)
   assert.equal(result.content, '')
 })
+
+test('decodeConsoleOutput recovers a GBK where.exe path with a CJK user name', async () => {
+  const { decodeConsoleOutput } = await import('../server/file-encoding.js')
+  const original = String.raw`C:\Users\tester\阿松\AppData\Roaming\npm\claude.cmd` + '\r\n' + String.raw`C:\Users\tester\阿松\AppData\Roaming\npm\claude` + '\r\n'
+  const bytes = iconv.encode(original, 'gb18030')
+  // where.exe streams arbitrarily; split inside the multi-byte 阿 (bytes 9-10) to prove chunk joins happen before decode.
+  const chunks = [bytes.subarray(0, 10), bytes.subarray(10)]
+  assert.notEqual(Buffer.concat(chunks).toString('utf8'), original, 'fixture must not be valid UTF-8')
+
+  assert.equal(decodeConsoleOutput(chunks), original)
+})
+
+test('decodeConsoleOutput leaves UTF-8 console output untouched', async () => {
+  const { decodeConsoleOutput } = await import('../server/file-encoding.js')
+  const original = String.raw`C:\Users\tester\阿松\AppData\Roaming\npm\claude.cmd` + '\r\n'
+
+  assert.equal(decodeConsoleOutput([Buffer.from(original, 'utf8')]), original)
+})

@@ -4723,6 +4723,76 @@ test('codex stall finalizes done when the native rollout already completed', asy
   }
 })
 
+test('codex settles a still-running sub-agent panel before finalizing done from the native rollout', async () => {
+  // 症状：2026-09-12 用户截图——Codex 卡已 idle 半小时，底部仍挂着 "/root/skills_logic 运行中"。
+  // 根因之二：done 路径只结算 transport，最后一张 agents 快照里的 running 条目没人收尾，
+  //   渲染端 selectDockedAgentStatus 取"最新快照"于是永远显示运行中（Claude 侧 finishTurn 有收尾，Codex 没有）。
+  const originalLocalAbsoluteHardCap = process.env.CHILL_VIBE_LOCAL_PROVIDER_ABSOLUTE_HARD_CAP_MS
+  const originalExternalHistoryHome = process.env.CHILL_VIBE_EXTERNAL_HISTORY_HOME
+  process.env.CHILL_VIBE_LOCAL_PROVIDER_ABSOLUTE_HARD_CAP_MS = '200'
+
+  try {
+    const events = await withFakeProviderCommand(
+      'codex',
+      buildFakeCodexSilentSubAgentAfterRootCompletionScript(),
+      async (workspacePath) => {
+        const homeDir = path.dirname(workspacePath)
+        const rolloutDir = path.join(homeDir, '.codex', 'sessions', '2026', '09', '12')
+        await mkdir(rolloutDir, { recursive: true })
+        await writeFile(
+          path.join(rolloutDir, 'rollout-test-thread-root.jsonl'),
+          `${JSON.stringify({
+            type: 'event_msg',
+            payload: { type: 'task_complete', turn_id: 'turn-root' },
+          })}\n`,
+          'utf8',
+        )
+        process.env.CHILL_VIBE_EXTERNAL_HISTORY_HOME = homeDir
+
+        return await Promise.race([
+          captureProviderEvents(createRequest({ provider: 'codex', language: 'en', workspacePath })),
+          new Promise<'timeout'>((resolve) => setTimeout(() => resolve('timeout'), 15_000)),
+        ])
+      },
+    )
+
+    assert.notEqual(events, 'timeout', 'the run must finalize via the native rollout')
+    if (events === 'timeout') return
+
+    const agentSnapshots = events.flatMap((event) =>
+      event.kind === 'activity' && event.activity.kind === 'agents' && event.activity.view === 'status'
+        ? [event.activity]
+        : [],
+    )
+    assert.ok(
+      agentSnapshots.some((snapshot) => snapshot.agents.some((agent) => agent.status === 'running')),
+      'the child must have been shown as running while the run was alive',
+    )
+    assert.deepEqual(
+      agentSnapshots.at(-1)?.agents,
+      [],
+      'the final snapshot before done must leave no running sub-agent for the docked panel',
+    )
+    assert.equal(events.at(-1)?.kind, 'done')
+    assert.ok(
+      events.findIndex((event) => event.kind === 'done') >
+        events.lastIndexOf(events.filter((event) => event.kind === 'activity').at(-1)!),
+      'the settled snapshot must be pushed before done',
+    )
+  } finally {
+    if (typeof originalLocalAbsoluteHardCap === 'string') {
+      process.env.CHILL_VIBE_LOCAL_PROVIDER_ABSOLUTE_HARD_CAP_MS = originalLocalAbsoluteHardCap
+    } else {
+      delete process.env.CHILL_VIBE_LOCAL_PROVIDER_ABSOLUTE_HARD_CAP_MS
+    }
+    if (typeof originalExternalHistoryHome === 'string') {
+      process.env.CHILL_VIBE_EXTERNAL_HISTORY_HOME = originalExternalHistoryHome
+    } else {
+      delete process.env.CHILL_VIBE_EXTERNAL_HISTORY_HOME
+    }
+  }
+})
+
 test('codex app-server never replaces the root session with a child thread id', async () => {
   const sessions: string[] = []
 

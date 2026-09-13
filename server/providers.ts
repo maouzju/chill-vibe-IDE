@@ -24,6 +24,7 @@ import { getActiveProviderProfile } from '../shared/default-state.js'
 import { isAstraModel, parseLocalModelToken } from '../shared/models.js'
 import { isLoopbackHostname } from './automation-board-bridge.js'
 import { resolveOllamaBaseUrl } from './ollama-manager.js'
+import { decodeConsoleOutput } from './file-encoding.js'
 import { buildSystemPromptForModel, normalizeSystemPrompt } from '../shared/system-prompt.js'
 import {
   getSlashCommandDescription,
@@ -733,13 +734,15 @@ export const resolveCommand = async (provider: Provider) => {
       windowsHide: true,
     })
 
-    let output = ''
+    // where.exe 按系统 OEM 代码页（中文 Windows = GBK）输出，含中文用户名的路径不能按 UTF-8 解，
+    // 见 decodeConsoleOutput 上方的根因注释。
+    const chunks: Buffer[] = []
     child.stdout.on('data', (chunk: Buffer) => {
-      output += chunk.toString()
+      chunks.push(chunk)
     })
 
     child.on('close', () => {
-      const matches = output
+      const matches = decodeConsoleOutput(chunks)
         .split(/\r?\n/)
         .map((line) => line.trim())
         .filter(Boolean)
@@ -2363,6 +2366,19 @@ const launchCodexAppServerRun = async (
     pendingRequests.clear()
   }
 
+  // 症状：Codex 卡已 idle，底部仍挂着 "/root/skills_logic 运行中"（2026-09-12 用户截图，原生
+  //   17:01 完成、卡 17:31 硬上限结束、面板照旧）。
+  // 根因：done/error 只结算 transport；追踪器里没等到终态的子 agent 停在 running，最后一张
+  //   快照就是渲染端 selectDockedAgentStatus 取的"最新快照"。Claude 侧 finishTurn 有同样的收尾，
+  //   Codex 侧一直没有。正常完成时子 agent 早已全部 settle，这里是 no-op；只有硬上限/原生
+  //   完成兜底/报错路径才会真的推一张空面板。状态沿用 Claude 约定：正常结束 completed，报错 interrupted。
+  const settleAgentPanelForRunEnd = (status: 'completed' | 'interrupted') => {
+    if (!agentStatusTracker.hasRunningAgents()) {
+      return
+    }
+    sink.onActivity(agentStatusTracker.settleRunningAgents(status))
+  }
+
   const finishWithDone = () => {
     if (finished) {
       return
@@ -2378,6 +2394,7 @@ const launchCodexAppServerRun = async (
     finished = true
     rejectPendingRequests('Codex run completed.')
     void cleanupArchiveRecall()
+    settleAgentPanelForRunEnd('completed')
     sink.onDone()
     child.kill()
   }
@@ -2400,6 +2417,7 @@ const launchCodexAppServerRun = async (
     finished = true
     rejectPendingRequests(visibleMessage)
     void cleanupArchiveRecall()
+    settleAgentPanelForRunEnd('interrupted')
     sink.onError(
       visibleMessage,
       hint,

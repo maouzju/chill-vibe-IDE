@@ -242,6 +242,31 @@ export const createCodexAgentStatusTracker = ({
       return Boolean(agent && isRunningStatus(agent.status))
     })
 
+  // 发送方是否是目标线程的后代（子/孙/...）。先走 parentThreadId 链；孙线程若没收到
+  // thread/started（拿不到 parentThreadId），退化为 canonical path 前缀判定。
+  const isDescendantOf = (senderThreadId: string, targetThreadId: string, targetPath?: string) => {
+    const seen = new Set<string>()
+    let cursor: string | undefined = agents.get(senderThreadId)?.parentThreadId
+    while (cursor && !seen.has(cursor)) {
+      if (cursor === targetThreadId) return true
+      seen.add(cursor)
+      cursor = agents.get(cursor)?.parentThreadId
+    }
+    const senderPath = agents.get(senderThreadId)?.path
+    const parentPath = targetPath ?? agents.get(targetThreadId)?.path
+    return Boolean(senderPath && parentPath && senderPath.startsWith(`${parentPath}/`))
+  }
+
+  // 运行结束（done / error / 硬上限）时把仍在跑的条目收成给定终态，让快照清空面板。
+  // 这里不发明"已完成"：默认 interrupted，只有调用方确知回合正常结束才传 completed。
+  const settleRunningAgents = (status: StreamAgentStatus = 'interrupted'): StreamAgentsActivity => {
+    for (const agent of agents.values()) {
+      if (isRunningStatus(agent.status)) agent.status = status
+    }
+    rootCompletionDeferred = false
+    return snapshot()
+  }
+
   const updatePreview = (agent: TrackedAgent, item: JsonRecord) => {
     const itemId = readString(item, 'id')
     const summary = summarizeCodexAgentActivityItem(item)
@@ -344,6 +369,27 @@ export const createCodexAgentStatusTracker = ({
         return settleUpdate(sourceThreadId !== rootThreadId, sender ? updatePreview(sender, item) : false)
       }
 
+      // 症状：/root/skills_logic 已完成，面板却一直显示它"运行中"并堆满 "Contacted /root/skills_logic"，
+      //   根线程 task_complete 后卡片再转 30 分钟硬上限才结束（2026-09-12 实测 codex 0.153.4，
+      //   run-duration 8364872ms = 原生 17:01:49 完成 + 1_800_000ms）。
+      // 根因：#355 只挡了"目标是根线程"的回报；孙线程给父线程 send_message 时 app-server 同样从
+      //   发送方视角推 subAgentActivity{agentThreadId: <父>, agentPath: <父路径>, kind: 'interacted'}，
+      //   旧代码把它当成"父被联系 → 父在跑"重新 ensureAgent(running)。父线程 idle 时收到消息并不会
+      //   开新回合（子 rollout 16:07 task_complete 之后再无 task_started），这条 running 永远等不到终态。
+      // 为什么不按 kind==='interacted' 一律不复活：父 → 子 的 followup_task/send_message 是真的
+      //   让子线程开新回合（同日 root → /root/visual_ui 15:45:17 → 子 task_started 15:45:17.977），
+      //   只有"发送方是目标的后代"这个方向才是纯回报。判定用 parentThreadId 链，退化用 canonical
+      //   path 前缀（孙线程没有 thread/started 时拿不到 parentThreadId）。见 pitfall #370。
+      const senderReportsUpward =
+        kind === 'interacted' &&
+        sourceThreadId !== undefined &&
+        sourceThreadId !== rootThreadId &&
+        isDescendantOf(sourceThreadId, agentThreadId, path)
+      if (senderReportsUpward) {
+        const sender = agents.get(sourceThreadId)
+        return settleUpdate(true, sender ? updatePreview(sender, item) : false)
+      }
+
       const agent = ensureAgent(agentThreadId, {
         path,
         // 症状：主任务已答完，卡片仍等待一个已结束的子任务（2026-09-06 实证）。
@@ -391,6 +437,7 @@ export const createCodexAgentStatusTracker = ({
     handleNotification,
     snapshot,
     hasRunningAgents,
+    settleRunningAgents,
     setRootThreadId(threadId: string) {
       if (threadId.trim()) rootThreadId = threadId.trim()
     },

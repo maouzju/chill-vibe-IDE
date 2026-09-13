@@ -3,6 +3,8 @@ import { access } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 
+import { decodeConsoleOutput } from './file-encoding.js'
+
 import type { EnvironmentCheckId, OnboardingStatus } from '../shared/schema.js'
 
 const commandLookupTool = process.platform === 'win32' ? 'where.exe' : 'which'
@@ -38,13 +40,13 @@ const resolveCommand = async (checkId: EnvironmentCheckId) =>
       windowsHide: true,
     })
 
-    let output = ''
+    const chunks: Buffer[] = []
     child.stdout.on('data', (chunk: Buffer) => {
-      output += chunk.toString()
+      chunks.push(chunk)
     })
 
     child.on('close', () => {
-      const matches = output
+      const matches = decodeConsoleOutput(chunks)
         .split(/\r?\n/)
         .map((line) => line.trim())
         .filter(Boolean)

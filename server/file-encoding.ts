@@ -107,3 +107,16 @@ export const encodeForWrite = (content: string, encoding: string | undefined): B
   }
   return iconv.encodingExists(encoding) ? iconv.encode(content, encoding) : Buffer.from(content, 'utf8')
 }
+
+// 症状：2026-09-13 用户机（Windows 用户名含中文）卡上一发消息就报 CLI 找不到 / 读不到 claude.cmd，
+//       而终端里手敲 claude 完全正常。
+// 根因：resolveCommand 用 where.exe 找 claude.cmd / codex.cmd，where.exe 按 OEM 代码页
+//       （中文 Windows 是 CP936/GBK）输出类似 `C:\Users\<用户名>\AppData\Roaming\npm\claude.cmd`，
+//       而 `chunk.toString()` 默认按 UTF-8 解码，「阿松」变成 U+FFFD 乱码，后续 readFile(.cmd)
+//       自然 ENOENT。纯 ASCII 路径完全不触发，所以多年没暴露。
+// 为什么不能 spawn 时 `chcp 65001`：where.exe 是直接 spawn 的独立进程，没有 cmd 会话可以改码页；
+//       也不能写死 GBK —— 英文/日文 Windows 的 OEM 页不同。strict UTF-8 先试、失败再走
+//       jschardet/GB18030 回落，与 detectAndDecode 同一条路，两边行为一致。
+// 分块必须先 concat 再解码：stdout 可能在一个多字节字符中间切开，逐块 toString 会把两半各解成乱码。
+export const decodeConsoleOutput = (chunks: Buffer[]): string =>
+  chunks.length === 0 ? '' : detectAndDecode(Buffer.concat(chunks)).content

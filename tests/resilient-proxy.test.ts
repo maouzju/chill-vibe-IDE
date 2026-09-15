@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import http from 'node:http'
 import { once } from 'node:events'
 import { describe, it } from 'node:test'
+import zlib from 'node:zlib'
 
 import { startResilientProxyServer } from '../server/resilient-proxy.ts'
 
@@ -104,6 +105,77 @@ const hasResponsesCompletedEvent = (payload: string) => {
 }
 
 describe('internal resilient proxy', () => {
+
+  it('strips content-encoding from gzip upstream streams so clients never hit ZlibError', async () => {
+    let upstreamAcceptEncoding: string | undefined
+
+    const upstream = http.createServer(async (request, response) => {
+      if (request.method !== 'POST' || request.url !== '/v1/messages') {
+        response.statusCode = 404
+        response.end('not found')
+        return
+      }
+
+      upstreamAcceptEncoding = request.headers['accept-encoding'] as string | undefined
+      await readJsonBody(request)
+
+      const sse = [
+        'event: message_start',
+        'data: {"type":"message_start","message":{"id":"msg-1","model":"claude-opus-4-7"}}',
+        '',
+        'event: content_block_delta',
+        'data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Hello gzip"}}',
+        '',
+        'event: message_stop',
+        'data: {"type":"message_stop"}',
+        '',
+        '',
+      ].join('\n')
+
+      response.statusCode = 200
+      response.setHeader('Content-Type', 'text/event-stream')
+      response.setHeader('Content-Encoding', 'gzip')
+      response.end(zlib.gzipSync(sse))
+    })
+
+    upstream.listen(0, '127.0.0.1')
+    await once(upstream, 'listening')
+    const address = upstream.address()
+    if (!address || typeof address === 'string') {
+      throw new Error('Failed to bind upstream test server.')
+    }
+
+    const proxy = await startResilientProxyServer({
+      provider: 'claude',
+      upstreamBaseUrl: `http://127.0.0.1:${address.port}`,
+      maxRecoveryRetries: 0,
+    })
+
+    try {
+      const response = await fetch(`${proxy.clientBaseUrl}/v1/messages`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Accept-Encoding': 'gzip, deflate, br',
+          'x-api-key': 'sk-test',
+        },
+        body: JSON.stringify({
+          model: 'claude-opus-4-7',
+          stream: true,
+          messages: [{ role: 'user', content: 'hi' }],
+        }),
+      })
+
+      assert.equal(response.status, 200)
+      assert.equal(response.headers.get('content-encoding'), null)
+      assert.equal(parseSseDeltaText(await response.text()), 'Hello gzip')
+      assert.equal(upstreamAcceptEncoding, 'identity')
+    } finally {
+      await proxy.stop()
+      upstream.close()
+      await once(upstream, 'close').catch(() => undefined)
+    }
+  })
 
   it('honors unlimited recovery retries for long-running streams', async () => {
     let requestCount = 0

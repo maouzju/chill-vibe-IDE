@@ -458,6 +458,59 @@ describe('git workspace helpers', () => {
     assert.equal(modifiedChange.removedLines, undefined)
   })
 
+  it('keeps a content signature on oversized changes so incremental commit still sees later edits', async () => {
+    const repoPath = await createTempRepo()
+    const largeBody = 'large line\n'.repeat(70000)
+    await writeFile(path.join(repoPath, 'tracked.txt'), `${largeBody}tail\n`)
+
+    const first = await inspectGitWorkspace(repoPath)
+    const firstChange = first.changes.find((change) => change.path === 'tracked.txt')
+    assert.ok(firstChange)
+    assert.equal(firstChange.patch, '')
+    assert.ok(firstChange.contentSignature, 'oversized change must carry a content signature')
+
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    await writeFile(path.join(repoPath, 'tracked.txt'), `${largeBody}tail\nmore\n`)
+
+    const second = await inspectGitWorkspace(repoPath)
+    const secondChange = second.changes.find((change) => change.path === 'tracked.txt')
+    assert.ok(secondChange)
+    assert.ok(secondChange.contentSignature)
+    assert.notEqual(secondChange.contentSignature, firstChange.contentSignature)
+  })
+
+  // 「提交新增」记快照用的是 setGitStage / commit 的返回值，那条路径走
+  // includeChangePreviews:false。签名若只在 hydrate 里拼，这些 status 就不带它，
+  // 快照存下常量后与带签名的完整 status 一比必然恒为"变了"——大文件会被反复自动提交。
+  it('keeps the content signature on preview-less statuses so commit-new snapshots stay comparable', async () => {
+    const repoPath = await createTempRepo()
+    const largeBody = 'large line\n'.repeat(70000)
+    await writeFile(path.join(repoPath, 'tracked.txt'), `${largeBody}tail\n`)
+
+    const full = await inspectGitWorkspace(repoPath)
+    const fullChange = full.changes.find((change) => change.path === 'tracked.txt')
+    assert.ok(fullChange)
+    assert.ok(fullChange.contentSignature)
+
+    const previewLess = await inspectGitWorkspace(repoPath, { includeChangePreviews: false })
+    const previewLessChange = previewLess.changes.find((change) => change.path === 'tracked.txt')
+    assert.ok(previewLessChange)
+    assert.ok(
+      previewLessChange.contentSignature,
+      'preview-less status must still carry a content signature',
+    )
+    assert.equal(previewLessChange.contentSignature, fullChange.contentSignature)
+
+    const staged = await setGitWorkspaceStage({
+      workspacePath: repoPath,
+      paths: ['tracked.txt'],
+      staged: true,
+    })
+    const stagedChange = staged.changes.find((change) => change.path === 'tracked.txt')
+    assert.ok(stagedChange)
+    assert.equal(stagedChange.contentSignature, fullChange.contentSignature)
+  })
+
   it('captures only the edits introduced after a workspace snapshot', async () => {
     const repoPath = await createTempRepo()
 

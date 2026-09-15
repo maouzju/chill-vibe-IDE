@@ -14528,6 +14528,10 @@ body.is-pane-resizing .split-resize-handle::before {
   color: var(--ink-1);
 }
 
+.text-editor-wordwrap-toggle[aria-pressed='true'] {
+  color: var(--accent);
+}
+
 /* Git gutter markers rendered through Monaco linesDecorationsClassName. */
 .text-editor-gutter-added,
 .text-editor-gutter-modified,

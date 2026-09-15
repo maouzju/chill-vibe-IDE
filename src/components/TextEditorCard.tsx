@@ -26,7 +26,11 @@ import {
 } from './text-editor-model-cache'
 import { describeTextEditorLoadFailure } from './text-editor-load-failure'
 import { consumePendingEditorReveal } from './text-editor-reveal'
-import { getTextEditorSettings, subscribeTextEditorSettings } from './text-editor-settings'
+import {
+  getTextEditorSettings,
+  requestTextEditorSettingsPatch,
+  subscribeTextEditorSettings,
+} from './text-editor-settings'
 import { mapTsconfigToMonacoCompilerOptions } from './text-editor-tsconfig'
 import { resolveTextEditorMonacoTheme } from './text-editor-monaco-config'
 import { FileTextIcon } from './Icons'
@@ -1135,10 +1139,19 @@ const TextEditorCardInner = ({ workspacePath, filePath, language }: TextEditorCa
           <span className="text-editor-statusbar-item">{formatEncodingLabel(fileEncoding)}</span>
         )}
         <span className="text-editor-statusbar-item">{fileLanguage}</span>
+        <button
+          type="button"
+          className="text-editor-statusbar-button text-editor-wordwrap-toggle"
+          title={text.toggleWordWrap}
+          aria-pressed={editorSettings.wordWrap}
+          onClick={() => requestTextEditorSettingsPatch({ wordWrap: !editorSettings.wordWrap })}
+        >
+          {editorSettings.wordWrap ? text.wordWrapOn : text.wordWrapOff}
+        </button>
         {eol !== null && (
           <button
             type="button"
-            className="text-editor-statusbar-button"
+            className="text-editor-statusbar-button text-editor-eol-toggle"
             title={text.switchEol}
             onClick={toggleEol}
           >

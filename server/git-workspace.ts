@@ -859,17 +859,21 @@ const readWorkspaceFile = async (repoRoot: string, relativePath: string) => {
   }
 }
 
-const readWorkspaceFileSize = async (repoRoot: string, relativePath: string) => {
+const readWorkspaceFileStat = async (repoRoot: string, relativePath: string) => {
   try {
-    return (await stat(path.join(repoRoot, relativePath))).size
+    const stats = await stat(path.join(repoRoot, relativePath))
+    return { size: stats.size, mtimeMs: stats.mtimeMs }
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
-      return 0
+      return { size: 0, mtimeMs: 0 }
     }
 
     throw error
   }
 }
+
+const readWorkspaceFileSize = async (repoRoot: string, relativePath: string) =>
+  (await readWorkspaceFileStat(repoRoot, relativePath)).size
 
 const workspaceFileExists = async (repoRoot: string, relativePath: string) => {
   try {
@@ -1369,6 +1373,32 @@ const createAddedFilePatch = (relativePath: string, content: string | null) => {
   ].join('\n')
 }
 
+// 症状 — 「提交新增」每次都提交不全，修掉后又变成未改动的大文件被反复自动提交。
+// 根因 — 2026-09-15 实测：预览预算耗尽的文件只回 patch: '' 且无行数，前端签名退化成常量；
+//   而「提交新增」记快照用的是 setGitStage / commit 的返回值，那条路径走
+//   includeChangePreviews:false，签名若只在 hydrate 里拼就整条旁路都没有，
+//   存下的常量与带签名的完整 status 一比又恒为"变了"。
+// 为什么下沉到这里：patch 为空的出口有五个、外加一条完全跳过 hydrate 的旁路，
+//   逐个出口补字段必漏；stat 一次让所有路径恒定可用。
+// 为什么不补 numstat：那要为每个文件多起一个 git 进程；size:mtime 已足够区分"又改了"。
+const attachContentSignatures = async (repoRoot: string, changes: GitChange[]) =>
+  await Promise.all(
+    changes.map(async (change) => {
+      if (change.kind === 'deleted') {
+        return change
+      }
+
+      try {
+        const stats = await readWorkspaceFileStat(repoRoot, change.path)
+        return { ...change, contentSignature: `${stats.size}:${Math.round(stats.mtimeMs)}` }
+      } catch {
+        // stat 失败（权限、占用）时留一个稳定标记：用 Date.now() 会让这类文件每次刷新
+        // 都判为"又改了"，从此被无休止地自动暂存提交。
+        return { ...change, contentSignature: 'unstat' }
+      }
+    }),
+  )
+
 type GitPreviewCandidate = {
   change: GitChange
   currentFileSize: number
@@ -1381,9 +1411,10 @@ const getGitPreviewCandidate = async (
   change: GitChange,
   headFileSizes: Map<string, number> | null,
 ): Promise<GitPreviewCandidate> => {
-  const currentFileSize = change.kind === 'deleted'
-    ? 0
-    : await readWorkspaceFileSize(repoRoot, change.path)
+  const currentFileStat = change.kind === 'deleted'
+    ? { size: 0, mtimeMs: 0 }
+    : await readWorkspaceFileStat(repoRoot, change.path)
+  const currentFileSize = currentFileStat.size
   const baselinePath = (change.originalPath ?? change.path).replace(/\\/g, '/')
   const baselineFileSize = change.kind === 'untracked' || change.kind === 'added'
     ? 0
@@ -1462,6 +1493,7 @@ const hydrateGitChangePreviews = async (repoRoot: string, changes: GitChange[]) 
       candidate.baselineFileSize > gitChangePreviewMaxFileBytes ||
       candidate.combinedFileSize > remainingPreviewBudgetBytes
 
+    // patch 置空后签名全靠上游 attachContentSignatures 附加的 contentSignature 区分。
     if (shouldSkip) {
       hydratedChanges.push({ ...change, patch: '' })
       index += 1
@@ -1686,9 +1718,10 @@ const inspectResolvedGitWorkspace = async (
   const aheadWhenGone = branchInfo.upstreamGone
     ? await countUnpublishedCommits(repoRoot, branchInfo.branch)
     : null
-  const parsedChanges = lines
-    .map(parseStatusLine)
-    .filter((change): change is GitChange => change !== null)
+  const parsedChanges = await attachContentSignatures(
+    repoRoot,
+    lines.map(parseStatusLine).filter((change): change is GitChange => change !== null),
+  )
   const includeChangePreviews = options?.includeChangePreviews !== false
   const includeRepositoryDetails = options?.includeRepositoryDetails !== false
   const changes = includeChangePreviews

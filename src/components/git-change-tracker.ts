@@ -12,6 +12,8 @@ export const buildGitChangeSignatureMap = (changes: GitChange[]) =>
         patch: change.patch ?? '',
         addedLines: change.addedLines ?? -1,
         removedLines: change.removedLines ?? -1,
+        // 预览被预算跳过时 patch/行数都为空，只能靠服务端附带的 size:mtime 区分"又改了"
+        contentSignature: change.contentSignature ?? '',
         conflicted: change.conflicted,
       }),
     ]),

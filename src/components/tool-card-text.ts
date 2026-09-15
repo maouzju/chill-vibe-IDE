@@ -48,6 +48,12 @@ export const getTextEditorCardText = (language: AppLanguage) => ({
   compareWithHead: language === 'en' ? 'Compare with HEAD' : '\u5bf9\u6bd4 HEAD',
   exitDiff: language === 'en' ? 'Exit diff' : '\u9000\u51fa\u5bf9\u6bd4',
   switchEol: language === 'en' ? 'Switch line endings' : '\u5207\u6362\u6362\u884c\u7b26',
+  wordWrapOn: language === 'en' ? 'Wrap' : '\u81ea\u52a8\u6362\u884c',
+  wordWrapOff: language === 'en' ? 'No wrap' : '\u4e0d\u6362\u884c',
+  toggleWordWrap:
+    language === 'en'
+      ? 'Toggle word wrap (applies to all editors)'
+      : '\u5f00\u5173\u81ea\u52a8\u6362\u884c\uff08\u5bf9\u6240\u6709\u7f16\u8f91\u5668\u751f\u6548\uff09',
   copyFile: language === 'en' ? 'Copy file' : '\u590d\u5236\u6587\u4ef6',
   copyFileHint:
     language === 'en'

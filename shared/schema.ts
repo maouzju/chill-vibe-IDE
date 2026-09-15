@@ -1664,6 +1664,12 @@ export const gitChangeSchema = z.object({
   addedLines: z.number().int().nonnegative().optional(),
   removedLines: z.number().int().nonnegative().optional(),
   patch: z.string().optional(),
+  /**
+   * size:mtime fingerprint attached to every non-deleted change, independent of whether a
+   * diff preview was produced — a budget-skipped file has an empty patch and no line counts,
+   * so this is the only thing that still tells "edited again" apart from "already seen".
+   */
+  contentSignature: z.string().optional(),
 })
 export type GitChange = z.infer<typeof gitChangeSchema>
 

@@ -347,7 +347,10 @@ import { clearFileTreeCacheForCard } from './components/tool-card-state'
 import { evictTextEditorModel } from './components/text-editor-model-cache'
 import { setPendingEditorReveal } from './components/text-editor-reveal'
 import { resolveExistingWorkspaceFilePath } from './components/workspace-file-fallback'
-import { publishTextEditorSettings } from './components/text-editor-settings'
+import {
+  publishTextEditorSettings,
+  registerTextEditorSettingsPatchHandler,
+} from './components/text-editor-settings'
 import { buildSeededChatPrompt, collectSeededChatAttachments, hasSeededChatTranscript } from './chat-request-seeding'
 import { buildArchiveRecallSnapshot } from './archive-recall'
 import { getOnboardingText, getPanelText, getResilientProxyText, getTopTabText } from './app-panel-text'
@@ -6221,6 +6224,17 @@ function App() {
     // Mounted editor cards pick this up through the settings bridge.
     publishTextEditorSettings(appState.settings.editor)
   }, [appState.settings.editor])
+
+  useEffect(
+    () =>
+      registerTextEditorSettingsPatchHandler((patch) => {
+        applyAction({
+          type: 'updateSettings',
+          patch: { editor: { ...appStateRef.current.settings.editor, ...patch } },
+        })
+      }),
+    [applyAction],
+  )
 
   useEffect(() => {
     if (activeTab === 'ambience') {

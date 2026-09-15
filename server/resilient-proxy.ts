@@ -98,6 +98,17 @@ class UpstreamClientError extends Error {
 
 const normalizeBaseUrl = (value: string) => value.trim().replace(/\/+$/g, '')
 
+// 上游响应头里不能原样透传给客户端的项：
+// - content-length / transfer-encoding / connection 是逐跳头，代理自己重新分帧；
+// - content-encoding 必须剥掉 —— Node fetch 已经把 gzip/br 解压成明文再交给我们，
+//   若把「声明压缩」的头继续带给 Claude CLI，它会对明文做 zlib 解码并报
+//   `ZlibError fetching .../v1/messages`，整条流直接失败且不会走恢复重试。
+const isHopByHopOrEncodingResponseHeader = (lowerName: string) =>
+  lowerName === 'content-length' ||
+  lowerName === 'transfer-encoding' ||
+  lowerName === 'connection' ||
+  lowerName === 'content-encoding'
+
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null
 
@@ -424,6 +435,11 @@ const createForwardHeaders = (headers: http.IncomingHttpHeaders) => {
       continue
     }
 
+    // 客户端的 accept-encoding 不转发给上游，下面统一改成 identity。
+    if (lower === 'accept-encoding') {
+      continue
+    }
+
     if (Array.isArray(value)) {
       forward.set(key, value.join(', '))
       continue
@@ -432,14 +448,17 @@ const createForwardHeaders = (headers: http.IncomingHttpHeaders) => {
     forward.set(key, value)
   }
 
+  // 显式要求上游回明文：Node fetch 不带此头时会自动补 gzip/deflate，
+  // 而代理只会转发明文，省去解压一环，也避免中转站截断的压缩体在代理里炸成 ZlibError。
+  forward.set('accept-encoding', 'identity')
+
   return forward
 }
 
 const writeResponseHeaders = (response: http.ServerResponse, upstream: Response) => {
   response.statusCode = upstream.status
   upstream.headers.forEach((value, key) => {
-    const lower = key.toLowerCase()
-    if (lower === 'content-length' || lower === 'transfer-encoding' || lower === 'connection') {
+    if (isHopByHopOrEncodingResponseHeader(key.toLowerCase())) {
       return
     }
 
@@ -566,8 +585,7 @@ class SseClientWriter {
     this.response.statusCode = statusCode
 
     headers?.forEach((value, key) => {
-      const lower = key.toLowerCase()
-      if (lower === 'content-length' || lower === 'transfer-encoding' || lower === 'connection') {
+      if (isHopByHopOrEncodingResponseHeader(key.toLowerCase())) {
         return
       }
 

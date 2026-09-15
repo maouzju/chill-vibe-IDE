@@ -34,3 +34,25 @@ export const subscribeTextEditorSettings = (listener: () => void) => {
     listeners.delete(listener)
   }
 }
+
+// Reverse channel: editor cards live four layers below App and never see the
+// reducer, but the statusbar word-wrap toggle must persist as the same global
+// `settings.editor.wordWrap` that Settings → Editor edits. App registers one
+// handler that dispatches `updateSettings`; with no host mounted (SSR tests)
+// the request is a silent no-op rather than a local-only fork of the setting.
+type TextEditorSettingsPatchHandler = (patch: Partial<EditorSettings>) => void
+
+let patchHandler: TextEditorSettingsPatchHandler | null = null
+
+export const registerTextEditorSettingsPatchHandler = (handler: TextEditorSettingsPatchHandler) => {
+  patchHandler = handler
+  return () => {
+    if (patchHandler === handler) {
+      patchHandler = null
+    }
+  }
+}
+
+export const requestTextEditorSettingsPatch = (patch: Partial<EditorSettings>) => {
+  patchHandler?.(patch)
+}

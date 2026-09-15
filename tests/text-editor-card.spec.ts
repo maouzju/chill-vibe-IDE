@@ -474,11 +474,46 @@ test('status bar tracks cursor position and toggles line endings', async ({ page
 
   const statusbar = editorCard.locator('.text-editor-statusbar')
   await expect(statusbar).toBeVisible()
-  await expect(statusbar.locator('.text-editor-statusbar-button')).toHaveText('LF')
+  await expect(statusbar.locator('.text-editor-eol-toggle')).toHaveText('LF')
 
-  await statusbar.locator('.text-editor-statusbar-button').click()
-  await expect(statusbar.locator('.text-editor-statusbar-button')).toHaveText('CRLF')
+  await statusbar.locator('.text-editor-eol-toggle').click()
+  await expect(statusbar.locator('.text-editor-eol-toggle')).toHaveText('CRLF')
 
   // The EOL rewrite marks the buffer dirty and flows through autosave.
   await expect.poll(() => lastWrittenContent, { timeout: 10_000 }).toContain('\r\n')
+})
+
+test('status bar word-wrap toggle flips the shared editor setting', async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 820 })
+  await installEditorApis(page, 'dark', {
+    read: () => ({
+      content: 'a very long markdown line '.repeat(40) + '\n',
+      language: 'markdown',
+      revision: 'rev-1',
+      size: 1000,
+    }),
+  })
+
+  await page.goto(appUrl)
+
+  const editorCard = page.locator('.text-editor-card').first()
+  await expect(editorCard.locator('.monaco-editor').first()).toBeVisible()
+
+  const toggle = editorCard.locator('.text-editor-wordwrap-toggle')
+  await expect(toggle).toHaveAttribute('aria-pressed', 'false')
+  await expect(toggle).toHaveText('No wrap')
+
+  await toggle.click()
+
+  await expect(toggle).toHaveAttribute('aria-pressed', 'true')
+  await expect(toggle).toHaveText('Wrap')
+  // The click must round-trip through App's settings reducer, not a local flag.
+  await expect
+    .poll(async () =>
+      page.evaluate(async () => {
+        const module = await import('/src/components/text-editor-settings.ts')
+        return module.getTextEditorSettings().wordWrap
+      }),
+    )
+    .toBe(true)
 })

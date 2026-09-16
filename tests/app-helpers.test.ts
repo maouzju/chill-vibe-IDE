@@ -552,6 +552,38 @@ test('finalizeStreamedAssistantMessage replaces the live streamed bubble in plac
   assert.equal(nextMessages[0]?.meta?.itemId, 'assistant-item-1')
 })
 
+// 2026-09-16「完成。末」+「已完成。……」：上游断流后 CLI 进程内重试，服务端对被弃的半截
+// 发一条空 content 的 assistant_message 作为撤回信号。空正文的孤儿气泡必须整条移除，
+// 而不是留一个空壳；找不到对应气泡时不能凭空造一条空消息。
+test('finalizeStreamedAssistantMessage with empty content removes the orphaned streamed bubble', () => {
+  const orphanId = 'claude:stream-1:item:msg_dead:text:0'
+  const messages = [
+    { id: 'user-1', role: 'user' as const, content: '继续', createdAt: '2026-09-16T08:43:00.000Z' },
+    {
+      id: orphanId,
+      role: 'assistant' as const,
+      content: '完成。末',
+      createdAt: '2026-09-16T08:44:09.000Z',
+      meta: { provider: 'claude' as const, itemId: 'msg_dead:text:0' },
+    },
+  ]
+
+  const next = finalizeStreamedAssistantMessage(messages, orphanId, 'claude', 'stream-1', {
+    itemId: 'msg_dead:text:0',
+    content: '',
+  })
+  assert.deepEqual(next.map((m) => m.id), ['user-1'])
+
+  const untouched = finalizeStreamedAssistantMessage(
+    messages.slice(0, 1),
+    undefined,
+    'claude',
+    'stream-1',
+    { itemId: 'msg_never_streamed:text:0', content: '' },
+  )
+  assert.deepEqual(untouched.map((m) => m.id), ['user-1'], 'no phantom empty bubble is created')
+})
+
 test('finalizeStreamedAssistantMessage records the requested model on assistant output', () => {
   const nextMessages = finalizeStreamedAssistantMessage(
     [

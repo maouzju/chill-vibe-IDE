@@ -3217,6 +3217,24 @@ export const createClaudeTurnParser = (hooks: {
   // one block share an id, and each new assistant message starts a new one.
   let claudeStreamMessageId: string | null = null
   let claudeTextBlockItemId: string | null = null
+  // 症状：气泡「完成。末」下面紧跟一条完整的「已完成。……」（2026-09-16 用户截图，会话
+  //   a2621231：半截属于 msg_011Cf6phFS，完整的是 msg_011Cf6pkDY）。
+  // 根因：上游流吐了几个字就断，CLI 在同一进程内静默重试开了新 message；被弃的半截既没有
+  //   content_block_stop 也没有 `assistant` 落盘事件，原生 jsonl 里根本不存在它。IDE 按
+  //   message_start 正确开了新气泡，却没人收回被重试替代的旧半截。
+  // 为什么不能在 message_start 一律清掉上一条：正常的 text→tool_use→text 回合也是多条
+  //   message，但每条都会先收到 `assistant` 事件/content_block_stop 再开下一条。只有
+  //   「块仍开着就来了新 message_start」才是重试指纹。
+  let claudeOpenTextBlock: { itemId: string; sawDelta: boolean } | null = null
+  const closeClaudeOpenTextBlock = () => {
+    claudeOpenTextBlock = null
+  }
+  const retractOrphanedClaudeTextBlock = () => {
+    if (claudeOpenTextBlock?.sawDelta) {
+      sink.onAssistantMessage({ itemId: claudeOpenTextBlock.itemId, content: '' })
+    }
+    claudeOpenTextBlock = null
+  }
   let claudeTextBlockSeq = 0
   const nextClaudeTextItemId = (blockIndex: number | null) => {
     claudeTextBlockSeq += 1
@@ -3458,6 +3476,7 @@ export const createClaudeTurnParser = (hooks: {
       }
 
       if (event.type === 'stream_event' && event.event?.type === 'message_start') {
+        retractOrphanedClaudeTextBlock()
         const startedMessageId = readString(event.event.message, 'id')
         claudeStreamMessageId = startedMessageId ?? null
         // A new assistant message is a genuine bubble boundary: drop the old
@@ -3473,6 +3492,13 @@ export const createClaudeTurnParser = (hooks: {
                 typeof event.event.index === 'number' ? event.event.index : null,
               )
             : null
+        claudeOpenTextBlock = claudeTextBlockItemId
+          ? { itemId: claudeTextBlockItemId, sawDelta: false }
+          : null
+      }
+
+      if (event.type === 'stream_event' && event.event?.type === 'content_block_stop') {
+        closeClaudeOpenTextBlock()
       }
 
       if (
@@ -3488,6 +3514,10 @@ export const createClaudeTurnParser = (hooks: {
           claudeTextBlockItemId = nextClaudeTextItemId(
             typeof event.event.index === 'number' ? event.event.index : null,
           )
+          claudeOpenTextBlock = { itemId: claudeTextBlockItemId, sawDelta: false }
+        }
+        if (claudeOpenTextBlock?.itemId === claudeTextBlockItemId) {
+          claudeOpenTextBlock.sawDelta = true
         }
         const safeText = askUserDeltaStripper.push(event.event.delta.text)
         const visibleText = typedToolChatterFilter.push(safeText)
@@ -3501,10 +3531,14 @@ export const createClaudeTurnParser = (hooks: {
       }
 
       if (event.type === 'assistant') {
+        // The CLI only emits a full `assistant` message once it committed it to
+        // the transcript, so the streamed block is no longer an orphan candidate.
+        closeClaudeOpenTextBlock()
         return
       }
 
       if (event.type === 'result') {
+        closeClaudeOpenTextBlock()
         markFinished()
 
         const residualDelta = askUserDeltaStripper.flush()

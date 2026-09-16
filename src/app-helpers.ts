@@ -604,6 +604,20 @@ export const finalizeStreamedAssistantMessage = (
   model?: string,
 ): ChatMessage[] => {
   const normalizedModel = model?.trim()
+  // 空正文 = 服务端撤回信号（2026-09-16「完成。末」案：上游断流后 CLI 进程内重试，被弃的
+  // 半截块没有任何落盘事件，服务端在下一个 message_start 时发空 assistant_message 收回它）。
+  // 整条移除而不是留空壳；找不到对应气泡就什么都不做，绝不凭空造一条空消息。
+  if (payload.content === '') {
+    const retractIds = new Set<string>([
+      createStructuredMessageId(provider, streamId, getStructuredMessageKey(payload)),
+      ...(streamingMessageId ? [streamingMessageId] : []),
+    ])
+    const next = messages.filter(
+      (message) =>
+        !(retractIds.has(message.id) && message.role === 'assistant' && !message.meta?.structuredData),
+    )
+    return next.length === messages.length ? messages : next
+  }
   if (streamingMessageId) {
     const existingIndex = messages.findIndex((message) => message.id === streamingMessageId)
 

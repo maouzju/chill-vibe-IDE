@@ -196,3 +196,98 @@ test('an itemId keeps resolving to the same bubble after activity cleared the ac
   assert.equal(second.messageId, first.messageId)
   assert.equal(second.messageToAppend, undefined, 'no second bubble for the same block')
 })
+
+// 症状：气泡「完成。末」下面紧跟一条完整的「已完成。……」（2026-09-16 用户截图，
+// 会话 a2621231）。原生 jsonl 里根本没有 msg_011Cf6phFS：上游流吐了几个字就断，
+// CLI 在进程内静默重试开了新 message（msg_011Cf6pkDY），旧半截既没有
+// content_block_stop 也没有 `assistant` 落盘事件。IDE 按 message_start 正确开了新气泡，
+// 却没人收回被重试替代的那半截。
+test('a message_start arriving while the previous text block is still open retracts the orphaned partial bubble', () => {
+  const retracted: { itemId: string; content: string }[] = []
+  const sinkWithRetract = createRecordingSink()
+  const retractingParser = createClaudeTurnParser({
+    request: { prompt: 'go', provider: 'claude' } as ChatRequest,
+    sink: {
+      ...sinkWithRetract.sink,
+      onAssistantMessage: (message: { itemId: string; content: string }) => retracted.push(message),
+    },
+    language: 'zh-CN',
+    killChild: () => {},
+  })
+
+  retractingParser.handleLine(line({ type: 'system', subtype: 'init', session_id: 'sess-3' }))
+  retractingParser.handleLine(
+    line({ type: 'stream_event', event: { type: 'message_start', message: { id: 'msg_dead' } } }),
+  )
+  retractingParser.handleLine(
+    line({
+      type: 'stream_event',
+      event: { type: 'content_block_start', index: 0, content_block: { type: 'text', text: '' } },
+    }),
+  )
+  retractingParser.handleLine(
+    line({
+      type: 'stream_event',
+      event: { type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text: '完成。末' } },
+    }),
+  )
+  // No content_block_stop / assistant event: upstream died, CLI retried in-process.
+  retractingParser.handleLine(
+    line({ type: 'stream_event', event: { type: 'message_start', message: { id: 'msg_alive' } } }),
+  )
+  retractingParser.handleLine(
+    line({
+      type: 'stream_event',
+      event: { type: 'content_block_start', index: 0, content_block: { type: 'text', text: '' } },
+    }),
+  )
+  retractingParser.handleLine(
+    line({
+      type: 'stream_event',
+      event: { type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text: '已完成。' } },
+    }),
+  )
+
+  const deadItemId = sinkWithRetract.record.deltas.find((d) => d.content === '完成。末')?.itemId
+  assert.ok(deadItemId, 'the partial text was streamed under an itemId')
+  assert.deepEqual(
+    retracted,
+    [{ itemId: deadItemId, content: '' }],
+    'the orphaned block must be retracted exactly once when the retry message starts',
+  )
+})
+
+test('a properly closed message followed by a new message_start is NOT retracted', () => {
+  const retracted: { itemId: string; content: string }[] = []
+  const { sink } = createRecordingSink()
+  const parser = createClaudeTurnParser({
+    request: { prompt: 'go', provider: 'claude' } as ChatRequest,
+    sink: {
+      ...sink,
+      onAssistantMessage: (message: { itemId: string; content: string }) => retracted.push(message),
+    },
+    language: 'zh-CN',
+    killChild: () => {},
+  })
+  parser.handleLine(line({ type: 'system', subtype: 'init', session_id: 'sess-4' }))
+  parser.handleLine(
+    line({ type: 'stream_event', event: { type: 'message_start', message: { id: 'msg_a' } } }),
+  )
+  parser.handleLine(
+    line({
+      type: 'stream_event',
+      event: { type: 'content_block_start', index: 0, content_block: { type: 'text', text: '' } },
+    }),
+  )
+  parser.handleLine(
+    line({
+      type: 'stream_event',
+      event: { type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text: '先看代码。' } },
+    }),
+  )
+  parser.handleLine(line({ type: 'stream_event', event: { type: 'content_block_stop', index: 0 } }))
+  parser.handleLine(
+    line({ type: 'stream_event', event: { type: 'message_start', message: { id: 'msg_b' } } }),
+  )
+  assert.deepEqual(retracted, [])
+})

@@ -123,3 +123,58 @@ test('trimStateForRendererCrashCapture keeps crash payload bounded without dropp
   assert.ok(trimmed.sessionHistory.every((entry) => entry.messages.length === 0))
   assert.ok(trimmed.sessionHistory.every((entry) => entry.messagesPreview === true))
 })
+
+test('installRendererCrashLogger does not archive a crash for Monaco cancellation rejections', async () => {
+  // 2026-09-03/09-14/09-16 main.log: `Unhandled rejection: Canceled` thrown by
+  // editor.restoreViewState while the app kept running fine. Each one wrote
+  // state.crash-recovery.json, so the next launch (usually a freshly packaged
+  // build) greeted the user with the "本次崩溃记录" dialog.
+  const logged: Array<{ level: string; message: string }> = []
+  const captured: Array<{ source: string; message: string }> = []
+  const target: MockRendererWindow = { onerror: null, onunhandledrejection: null }
+
+  installRendererCrashLogger(target as unknown as Window, {
+    sendLogFn: (level, message) => {
+      logged.push({ level, message })
+    },
+    captureFatalRendererCrashFn: async (payload) => {
+      captured.push(payload)
+      return null
+    },
+  })
+
+  const canceled = new Error('Canceled')
+  canceled.name = 'Canceled'
+  target.onunhandledrejection?.({ reason: canceled })
+  await Promise.resolve()
+
+  assert.equal(logged.length, 1, 'cancellation is still logged for forensics')
+  assert.equal(logged[0]?.level, 'warn')
+  assert.deepEqual(captured, [], 'cancellation must not be archived as a renderer crash')
+})
+
+test('a genuine crash that merely says Canceled is still archived', () => {
+  // 2026-09-17 审计：过滤条件曾写成 `name === 'Canceled' || message === 'Canceled'`，
+  // 比 Monaco 自己的 isCancellationError 更宽 —— 后者要求 name 和 message 同时相等
+  // （monaco-editor/esm/vs/base/common/errors.js: CancellationError 把 name 设成 message）。
+  // 宽出来的那一半会把普通 `new Error('Canceled')` 的真实崩溃静默降级成 warn。
+  const logged: Array<{ level: string; message: string }> = []
+  const captured: Array<{ source: string; message: string }> = []
+  const target: MockRendererWindow = { onerror: null, onunhandledrejection: null }
+
+  installRendererCrashLogger(target as unknown as Window, {
+    sendLogFn: (level, message) => {
+      logged.push({ level, message })
+    },
+    captureFatalRendererCrashFn: async (payload) => {
+      captured.push(payload)
+      return null
+    },
+  })
+
+  // name 仍是默认的 'Error'，不是取消语义。
+  target.onunhandledrejection?.({ reason: new Error('Canceled') })
+
+  assert.equal(logged[0]?.level, 'error')
+  assert.equal(captured.length, 1, 'a real crash must still be archived')
+})

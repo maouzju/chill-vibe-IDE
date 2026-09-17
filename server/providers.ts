@@ -3986,6 +3986,7 @@ export const buildClaudeKeepaliveSignature = (
     ),
     outsideWorkspaceWrite: request.agentOutsideWorkspaceWriteEnabled !== false,
     destructiveCommandProtection: request.codexDestructiveCommandProtectionEnabled === true,
+    attackPatternProtection: request.attackPatternProtectionEnabled === true,
     safetyHookCommand: safetyHookCommand ?? '',
     completionBoundaryHook: completionBoundaryHook ?? null,
   })
@@ -4556,7 +4557,8 @@ export const buildClaudeArgs = (
   const outsideWorkspaceWriteRestricted = request.agentOutsideWorkspaceWriteEnabled === false
   const safetyHookCommand = (
     request.codexDestructiveCommandProtectionEnabled === true ||
-    outsideWorkspaceWriteRestricted
+    outsideWorkspaceWriteRestricted ||
+    request.attackPatternProtectionEnabled === true
   )
     ? options?.safetyHookCommand
     : undefined

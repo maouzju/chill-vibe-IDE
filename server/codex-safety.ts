@@ -18,6 +18,7 @@ const safetyEnvironmentKeys = [
   'CHILL_VIBE_PROTECTED_APP_DATA',
   'CHILL_VIBE_DESTRUCTIVE_COMMAND_PROTECTION_ENABLED',
   'CHILL_VIBE_OUTSIDE_WORKSPACE_WRITE_ENABLED',
+  'CHILL_VIBE_ATTACK_PATTERN_PROTECTION_ENABLED',
   'CHILL_VIBE_CODEX_GUARD_EXECUTABLE',
   'CHILL_VIBE_CODEX_GUARD_SCRIPT',
   'CHILL_VIBE_CODEX_SAFETY_HOOK_COMMAND',
@@ -133,7 +134,15 @@ export const prepareDestructiveCommandGuardRuntime = async (
     request.codexDestructiveCommandProtectionEnabled === true
   const outsideWorkspaceWriteEnabled = request.agentOutsideWorkspaceWriteEnabled !== false
 
-  if (outsideWorkspaceWriteEnabled && !destructiveCommandProtectionEnabled) {
+  // 疑似攻击形状检测：默认关闭，与上面两项相互独立 —— 用户可能既不想拦常规
+  // 高风险命令，又想单独开这一项（2026-09-17 玩家要求默认关闭）。
+  const attackPatternProtectionEnabled = request.attackPatternProtectionEnabled === true
+
+  if (
+    outsideWorkspaceWriteEnabled &&
+    !destructiveCommandProtectionEnabled &&
+    !attackPatternProtectionEnabled
+  ) {
     return { env }
   }
 
@@ -156,6 +165,7 @@ export const prepareDestructiveCommandGuardRuntime = async (
   env.CHILL_VIBE_DESTRUCTIVE_COMMAND_PROTECTION_ENABLED =
     destructiveCommandProtectionEnabled ? '1' : '0'
   env.CHILL_VIBE_OUTSIDE_WORKSPACE_WRITE_ENABLED = outsideWorkspaceWriteEnabled ? '1' : '0'
+  env.CHILL_VIBE_ATTACK_PATTERN_PROTECTION_ENABLED = attackPatternProtectionEnabled ? '1' : '0'
   env.CHILL_VIBE_CODEX_GUARD_EXECUTABLE = process.execPath
   env.CHILL_VIBE_CODEX_GUARD_SCRIPT = guardScriptPath
 

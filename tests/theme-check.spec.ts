@@ -2940,9 +2940,21 @@ for (const theme of ['dark', 'light'] as const) {
     await expect(settingsPanel).toBeVisible()
     await expect(page.locator('html')).toHaveAttribute('data-theme', theme)
     await expect(safetyGroup).toBeVisible()
-    await expect(safetySettings.locator('input[type="checkbox"]')).toHaveCount(3)
-    await expect(safetySettings.locator('input[type="checkbox"]').first()).toBeChecked()
-    await expect(safetySettings.locator('input[type="checkbox"]').last()).toBeChecked()
+    // 计数原为 3，但 main（eda37cf）上实测就有 4 个 checkbox —— 那笔 3 是历史遗留的
+    // 陈旧计数（超管开关后加时没同步），不是本次新增开关引入的。攻形检测开关让它变 5。
+    // 索引断言换成按 id 定位：新开关插在中间，.last() 这类索引依赖是静默红的温床。
+    await expect(safetySettings.locator('input[type="checkbox"]')).toHaveCount(5)
+    // 超管默认关闭、隔离主目录默认开启 —— 原断言写的是 .first()/.last() 索引，
+    // 两条都对不上实际默认值（同属上面那笔陈旧计数的遗留债）。
+    await expect(safetySettings.locator('input[id$="-default-admin-access"]')).not.toBeChecked()
+    await expect(
+      safetySettings.locator('input[id$="-agent-outside-workspace-write"]'),
+    ).toBeChecked()
+    await expect(safetySettings.locator('input[id$="-codex-isolated-home"]')).toBeChecked()
+    // 攻形检测默认关闭，这条锁住默认值，防止以后被无声翻开。
+    await expect(
+      safetySettings.locator('input[id$="-attack-pattern-protection"]'),
+    ).not.toBeChecked()
     await expect(safetySettings).toContainText(
       theme === 'dark'
         ? '允许 Agent 修改项目文件夹外的文件'
@@ -2957,8 +2969,13 @@ for (const theme of ['dark', 'light'] as const) {
     await expect(safetySettings).toContainText(
       theme === 'dark' ? '使用隔离的 Codex Agent 主目录' : 'Use an isolated Codex Agent home',
     )
+    await expect(safetySettings).toContainText(
+      theme === 'dark'
+        ? '检测到疑似攻击形状时立即中断会话'
+        : 'Stop the session when an attack shape is detected',
+    )
     const safetyDetails = safetySettings.locator('.settings-hover-note')
-    await expect(safetyDetails).toHaveCount(3)
+    await expect(safetyDetails).toHaveCount(5)
     await expect(safetyDetails.first()).toBeHidden()
     await safetySettings.locator('.settings-hover-detail').first().hover()
     await expect(safetyDetails.first()).toBeVisible()
@@ -3853,6 +3870,49 @@ test('system stop messages stay on one line in both themes', async ({ page }) =>
   await ambienceTab.click()
 
   await expectSingleLineStopMessage('light')
+})
+
+test('long system stop messages wrap inside the message list instead of overflowing', async ({ page }) => {
+  const state = createMockState()
+  const now = new Date().toISOString()
+  const longStopText = '检测到疑似攻击形状，本次运行已中断，被拦的命令没有执行。请核对上方命令卡里的说明：确认是你本人意图，就重新发送继续；如果不是你发起的，不要继续，先查这个会话是从哪里来的。'
+
+  state.columns[0].cards[0].messages = [
+    {
+      id: 'message-system-stop-long-1',
+      role: 'system',
+      content: longStopText,
+      createdAt: now,
+      meta: {
+        kind: 'run-stopped',
+      },
+    },
+  ]
+
+  await mockAppApis(page, { state })
+  await page.setViewportSize({ width: 640, height: 720 })
+  await page.goto(appUrl)
+
+  const systemMessage = page.locator('[data-renderable-id="message-system-stop-long-1"] .message-system').first()
+  const messageList = page.locator('.message-list').first()
+
+  await expect(systemMessage).toBeVisible()
+  await expect(systemMessage).toContainText('被拦的命令没有执行')
+  await expect.poll(async () => {
+    const box = await systemMessage.boundingBox()
+    const listBox = await messageList.boundingBox()
+    if (!box || !listBox) return { overflowsLeft: true, overflowsRight: true }
+    return {
+      overflowsLeft: box.x < listBox.x - 1,
+      overflowsRight:
+        box.x + box.width > listBox.x + listBox.width + 1 ||
+        (await systemMessage.evaluate((el) => el.scrollWidth > el.clientWidth + 1)),
+    }
+  }).toEqual({ overflowsLeft: false, overflowsRight: false })
+  await expect(systemMessage).toHaveScreenshot('message-system-stop-long-wrapped-dark.png', {
+    animations: 'disabled',
+    caret: 'hide',
+  })
 })
 
 test('short user messages stay on one line without forced wrapping', async ({ page }) => {

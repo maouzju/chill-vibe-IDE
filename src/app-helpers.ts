@@ -51,7 +51,23 @@ export type ProfileDraft = {
   apiKey: string
 }
 
-export type StoppedRunReason = 'manual' | 'user-interrupt' | 'ask-user-answer'
+export type StoppedRunReason =
+  | 'manual'
+  | 'user-interrupt'
+  | 'ask-user-answer'
+  | 'attack-pattern-detected'
+
+// 会话历史里算「被中断」而不是「正常结束」的原因。
+// 攻形中断和用户主动停止一样是没跑完的会话，必须同列，否则历史列表会把它
+// 显示成正常结束（workspace-column-history 的 lifecycle 判据）。
+export const interruptedRunReasons: readonly StoppedRunReason[] = [
+  'manual',
+  'user-interrupt',
+  'attack-pattern-detected',
+]
+
+export const isInterruptedRunReason = (reason: string | undefined): boolean =>
+  interruptedRunReasons.some((entry) => entry === reason)
 
 export const emptyProfileDraft = (): ProfileDraft => ({
   name: '',
@@ -490,7 +506,11 @@ export const createStoppedRunMessage = (
 ): ChatMessage =>
   createMessage(
     'system',
-    reason === 'user-interrupt' ? getLocaleText(language).userInterrupted : getLocaleText(language).runStopped,
+    reason === 'user-interrupt'
+      ? getLocaleText(language).userInterrupted
+      : reason === 'attack-pattern-detected'
+        ? getLocaleText(language).attackPatternStopMessage
+        : getLocaleText(language).runStopped,
     {
       kind: 'run-stopped',
       stopReason: reason,

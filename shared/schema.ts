@@ -828,6 +828,7 @@ export const appSettingsSchema = z.object({
   codexFastMode: z.boolean().default(false),
   agentOutsideWorkspaceWriteEnabled: z.boolean().default(true),
   codexDestructiveCommandProtectionEnabled: z.boolean().default(true),
+  attackPatternProtectionEnabled: z.boolean().default(false),
   codexIsolatedHomeEnabled: z.boolean().default(true),
   requestModels: requestModelSettingsSchema.default({
     codex: DEFAULT_CODEX_MODEL,
@@ -1113,6 +1114,7 @@ export const appStateSchema = z.object({
     codexFastMode: false,
     agentOutsideWorkspaceWriteEnabled: true,
     codexDestructiveCommandProtectionEnabled: true,
+    attackPatternProtectionEnabled: false,
     codexIsolatedHomeEnabled: true,
     requestModels: {
       codex: DEFAULT_CODEX_MODEL,
@@ -1322,6 +1324,7 @@ export const chatRequestSchema = z.object({
   networkAccessEnabled: z.boolean().optional(),
   agentOutsideWorkspaceWriteEnabled: z.boolean().default(true),
   codexDestructiveCommandProtectionEnabled: z.boolean().default(true),
+  attackPatternProtectionEnabled: z.boolean().default(false),
   codexIsolatedHomeEnabled: z.boolean().default(true),
   personality: codexPersonalitySchema.optional(),
   serviceTier: z.literal('priority').optional(),
@@ -1348,12 +1351,14 @@ export type ChatRequest = Omit<
   ParsedChatRequest,
   | 'agentOutsideWorkspaceWriteEnabled'
   | 'codexDestructiveCommandProtectionEnabled'
+  | 'attackPatternProtectionEnabled'
   | 'codexIsolatedHomeEnabled'
 > & Partial<
   Pick<
     ParsedChatRequest,
     | 'agentOutsideWorkspaceWriteEnabled'
     | 'codexDestructiveCommandProtectionEnabled'
+    | 'attackPatternProtectionEnabled'
     | 'codexIsolatedHomeEnabled'
   >
 >

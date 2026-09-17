@@ -147,6 +147,8 @@ type LocaleText = {
   codexManagementPolicyAllowed: (modes: string) => string
   codexManagementPolicyUnavailable: (message: string) => string
   codexDestructiveCommandProtectionLabel: string
+  attackPatternProtectionLabel: string
+  attackPatternProtectionNote: string
   codexDestructiveCommandProtectionNote: string
   codexIsolatedHomeLabel: string
   codexIsolatedHomeNote: string
@@ -242,6 +244,7 @@ type LocaleText = {
   logWithProvider: (provider: string) => string
   unexpectedError: string
   runStopped: string
+  attackPatternStopMessage: string
   userInterrupted: string
   localCliUnavailable: string
   statusProvider: string
@@ -658,6 +661,9 @@ const localeTextByLanguage: Record<AppLanguage, LocaleText> = {
     codexDestructiveCommandProtectionLabel: '阻止 Agent 高风险删除命令',
     codexDestructiveCommandProtectionNote:
       '默认同时保护 Codex 和 Claude CLI。执行前拦截主目录、工作区外路径、工作区根目录、Git 元数据、未解析变量和大范围不可恢复删除；递归清理需使用工作区内绝对路径。不改变 Full Access、审批或 Claude 权限模式。这不是完整 OS 沙箱，关闭后两个 CLI 都会恢复原有无额外 IDE 拦截的行为。',
+    attackPatternProtectionLabel: '检测到疑似攻击形状时立即中断会话',
+    attackPatternProtectionNote:
+      '默认关闭。开启后在每次工具调用执行前检查已知攻击形状：远程内容直接管道进解释器、base64 编码执行、计划任务/服务/自启动等持久化写入、切换 npm/pip 包源、矿池与匿名网络、即时通讯机器人回传。命中时命令不执行，且整个会话立即停止并说明情况，是否继续由你决定。这是按固定规则匹配的机械检查，只覆盖最省事的一档攻击写法；攻击者换个写法即可绕过，不构成完整防护。',
     codexIsolatedHomeLabel: '使用隔离的 Codex Agent 主目录',
     codexIsolatedHomeNote:
       '默认开启。在 Windows 隔离 USERPROFILE 和 PowerShell 的 $HOME；其他平台隔离 HOME，降低主目录变量展开错误的风险。Codex 登录、配置及 Windows Git 全局配置仍沿用原位置。它不能隔离绝对路径或任意外部程序，需与上方命令防护配合。',
@@ -774,6 +780,8 @@ const localeTextByLanguage: Record<AppLanguage, LocaleText> = {
     logWithProvider: (provider) => `日志 · ${provider}`,
     unexpectedError: '发生了未知错误。',
     runStopped: '这次运行已停止。',
+    attackPatternStopMessage:
+      '检测到疑似攻击形状，本次运行已中断，被拦的命令没有执行。请核对上方命令卡里的说明：确认是你本人意图，就重新发送继续；如果不是你发起的，不要继续，先查这个会话是从哪里来的。',
     userInterrupted: '用户打断',
     localCliUnavailable: '本地 CLI 不可用。',
     statusProvider: '提供方',
@@ -1199,6 +1207,9 @@ const localeTextByLanguage: Record<AppLanguage, LocaleText> = {
     codexDestructiveCommandProtectionLabel: 'Block high-risk Agent deletion commands',
     codexDestructiveCommandProtectionNote:
       'On by default for both Codex and Claude CLI. Blocks common shell/script forms of machine-scale or irreversible deletion involving home paths, targets outside the workspace, workspace roots, Git metadata, unresolved variables, and unsafe broad targets before execution. Recursive cleanup must use an absolute path inside the workspace. It does not change Full Access, approval, or Claude permission modes and is not a complete OS sandbox.',
+    attackPatternProtectionLabel: 'Stop the session when an attack shape is detected',
+    attackPatternProtectionNote:
+      'Off by default. When enabled, every tool call is checked before execution for known attack shapes: remote content piped straight into an interpreter, base64-encoded execution, persistence writes (scheduled tasks, services, auto-start), package registry switches, mining pools and anonymity networks, and chat-bot data exfiltration. On a hit the command does not run and the whole session stops with an explanation; whether to continue is your call. This is a fixed-rule mechanical check covering the laziest tier of attack writing only, so a different phrasing walks past it.',
     codexIsolatedHomeLabel: 'Use an isolated Codex Agent home',
     codexIsolatedHomeNote:
       'On by default. Windows isolates USERPROFILE and PowerShell $HOME while other platforms isolate HOME, reducing damage from home-variable expansion mistakes. Codex login/configuration and Windows Git global config stay in their original location. Absolute paths and arbitrary external programs are not isolated, so keep the command guard above enabled too.',
@@ -1322,6 +1333,8 @@ const localeTextByLanguage: Record<AppLanguage, LocaleText> = {
     logWithProvider: (provider) => `Log · ${provider}`,
     unexpectedError: 'An unexpected error occurred.',
     runStopped: 'This run was stopped.',
+    attackPatternStopMessage:
+      'An attack shape was detected and this run was interrupted. The blocked command did not execute. Check the note on the command card above: if this was your own intent, send again to continue. If it was not yours, do not continue — first find out where this session came from.',
     userInterrupted: 'User interrupted',
     localCliUnavailable: 'The local CLI is not available.',
     statusProvider: 'Provider',

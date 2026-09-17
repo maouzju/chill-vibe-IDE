@@ -27,3 +27,7 @@ export function assessCodexToolUse(
   input: CodexPreToolUseInput,
   options?: CodexSafetyAssessmentOptions,
 ): CodexSafetyAssessment
+
+export const attackPatternExitCode: number
+export const destructiveCommandExitCode: number
+export const attackPatternStderrMarker: string

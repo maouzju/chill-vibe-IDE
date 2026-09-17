@@ -263,6 +263,7 @@ import {
   resolveQueuedSendTargetColumnId,
   shouldSuppressStreamOutputAfterAskUserActivity,
   shouldStopStreamForAskUserActivity,
+  shouldStopRunForAttackPattern,
   summarizeQueuedSends,
   type QueuedSendRequest,
   type QueuedSendSummary,
@@ -719,11 +720,13 @@ function App() {
         appState.settings.agentOutsideWorkspaceWriteEnabled,
       codexDestructiveCommandProtectionEnabled:
         appState.settings.codexDestructiveCommandProtectionEnabled,
+      attackPatternProtectionEnabled: appState.settings.attackPatternProtectionEnabled,
       codexIsolatedHomeEnabled: appState.settings.codexIsolatedHomeEnabled,
     }),
     [
       appState.settings.agentOutsideWorkspaceWriteEnabled,
       appState.settings.codexDestructiveCommandProtectionEnabled,
+      appState.settings.attackPatternProtectionEnabled,
       appState.settings.codexFastMode,
       appState.settings.codexIsolatedHomeEnabled,
       appState.settings.codexPersonality,
@@ -5145,6 +5148,24 @@ function App() {
             )
           }
 
+          // 疑似攻击形状命中：guard 已让命令失败（命令一定没执行），但模型会拿到
+          // 拒绝结果继续换写法，所以这里必须掐掉整个 run，把决定权交回用户。
+          // 判据是 guard 写进 stderr 的固定前缀（即工具结果的 output 原文）；
+          // 不走 exitCode —— CLI 只把 "Exit code N" 这种正文交给解析器，
+          // hook 的退出码不会出现在命令卡上。
+          // 开关关闭时不再停流：用户已明确表态由自己承担（见 shouldStopRunForAttackPattern）。
+          if (shouldStopRunForAttackPattern(payload, appStateRef.current.settings)) {
+            enqueueActivityMessage(
+              columnId,
+              card.id,
+              createStructuredActivityMessage(card.provider, card.streamId!, payload),
+            )
+            queueMicrotask(() => {
+              void requestStopForCard(card.id, 'attack-pattern-detected')
+            })
+            return
+          }
+
           enqueueActivityMessage(
             columnId,
             card.id,
@@ -8559,6 +8580,34 @@ function App() {
           role="tooltip"
         >
           {text.codexDestructiveCommandProtectionNote}
+        </p>
+      </div>
+
+      <div className="settings-hover-detail">
+        <label
+          className="settings-toggle"
+          htmlFor={`${idPrefix}-attack-pattern-protection`}
+        >
+          <span>{text.attackPatternProtectionLabel}</span>
+          <input
+            id={`${idPrefix}-attack-pattern-protection`}
+            type="checkbox"
+            aria-describedby={`${idPrefix}-attack-pattern-protection-note`}
+            checked={appState.settings.attackPatternProtectionEnabled}
+            onChange={(event) =>
+              applyAction({
+                type: 'updateSettings',
+                patch: { attackPatternProtectionEnabled: event.target.checked },
+              })
+            }
+          />
+        </label>
+        <p
+          id={`${idPrefix}-attack-pattern-protection-note`}
+          className="settings-note settings-hover-note"
+          role="tooltip"
+        >
+          {text.attackPatternProtectionNote}
         </p>
       </div>
 

@@ -24,11 +24,13 @@ describe('Agent chat request settings', () => {
         codexFastMode: false,
         agentOutsideWorkspaceWriteEnabled: true,
         codexDestructiveCommandProtectionEnabled: true,
+        attackPatternProtectionEnabled: false,
         codexIsolatedHomeEnabled: true,
       }),
       {
         agentOutsideWorkspaceWriteEnabled: true,
         codexDestructiveCommandProtectionEnabled: true,
+        attackPatternProtectionEnabled: false,
         codexIsolatedHomeEnabled: true,
       },
     )
@@ -41,6 +43,7 @@ describe('Agent chat request settings', () => {
         codexFastMode: true,
         agentOutsideWorkspaceWriteEnabled: false,
         codexDestructiveCommandProtectionEnabled: false,
+        attackPatternProtectionEnabled: true,
         codexIsolatedHomeEnabled: false,
       }),
       {
@@ -48,6 +51,7 @@ describe('Agent chat request settings', () => {
         serviceTier: 'priority',
         agentOutsideWorkspaceWriteEnabled: false,
         codexDestructiveCommandProtectionEnabled: false,
+        attackPatternProtectionEnabled: true,
         codexIsolatedHomeEnabled: false,
       },
     )
@@ -60,11 +64,13 @@ describe('Agent chat request settings', () => {
         codexFastMode: true,
         agentOutsideWorkspaceWriteEnabled: false,
         codexDestructiveCommandProtectionEnabled: true,
+        attackPatternProtectionEnabled: false,
         codexIsolatedHomeEnabled: true,
       }),
       {
         agentOutsideWorkspaceWriteEnabled: false,
         codexDestructiveCommandProtectionEnabled: true,
+        attackPatternProtectionEnabled: false,
       },
     )
 
@@ -74,11 +80,13 @@ describe('Agent chat request settings', () => {
         codexFastMode: false,
         agentOutsideWorkspaceWriteEnabled: true,
         codexDestructiveCommandProtectionEnabled: false,
+        attackPatternProtectionEnabled: false,
         codexIsolatedHomeEnabled: true,
       }),
       {
         agentOutsideWorkspaceWriteEnabled: true,
         codexDestructiveCommandProtectionEnabled: false,
+        attackPatternProtectionEnabled: false,
       },
     )
   })

@@ -1,4 +1,5 @@
 import type { AppLanguage, ExternalSessionSummary, Provider, SessionHistoryEntry } from '../../shared/schema'
+import { isInterruptedRunReason } from '../app-helpers'
 
 const normalizeHistorySearchQuery = (value: string) => value.trim().toLocaleLowerCase()
 
@@ -13,7 +14,7 @@ export const getSessionHistoryLifecycle = (entry: SessionHistoryEntry): SessionH
   const lastMessage = entry.messages.at(-1)
   if (
     lastMessage?.meta?.kind === 'run-stopped' &&
-    ['manual', 'user-interrupt'].includes(lastMessage.meta.stopReason ?? '')
+    isInterruptedRunReason(lastMessage.meta.stopReason)
   ) {
     return 'interrupted'
   }

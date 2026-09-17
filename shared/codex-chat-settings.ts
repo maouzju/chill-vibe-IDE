@@ -7,6 +7,7 @@ export type CodexChatSettings = Pick<
   | 'agentOutsideWorkspaceWriteEnabled'
   | 'codexDestructiveCommandProtectionEnabled'
   | 'codexIsolatedHomeEnabled'
+  | 'attackPatternProtectionEnabled'
 >
 type CodexChatRequestOverrides = Pick<
   ChatRequest,
@@ -15,6 +16,7 @@ type CodexChatRequestOverrides = Pick<
   | 'agentOutsideWorkspaceWriteEnabled'
   | 'codexDestructiveCommandProtectionEnabled'
   | 'codexIsolatedHomeEnabled'
+  | 'attackPatternProtectionEnabled'
 >
 
 export const defaultCodexChatSettings: CodexChatSettings = {
@@ -22,6 +24,7 @@ export const defaultCodexChatSettings: CodexChatSettings = {
   codexFastMode: false,
   agentOutsideWorkspaceWriteEnabled: true,
   codexDestructiveCommandProtectionEnabled: true,
+  attackPatternProtectionEnabled: false,
   codexIsolatedHomeEnabled: true,
 }
 
@@ -34,12 +37,14 @@ export const buildCodexChatRequestOverrides = (
       agentOutsideWorkspaceWriteEnabled: settings.agentOutsideWorkspaceWriteEnabled,
       codexDestructiveCommandProtectionEnabled:
         settings.codexDestructiveCommandProtectionEnabled,
+      attackPatternProtectionEnabled: settings.attackPatternProtectionEnabled,
     }
   }
 
   return {
     agentOutsideWorkspaceWriteEnabled: settings.agentOutsideWorkspaceWriteEnabled,
     codexDestructiveCommandProtectionEnabled: settings.codexDestructiveCommandProtectionEnabled,
+    attackPatternProtectionEnabled: settings.attackPatternProtectionEnabled,
     codexIsolatedHomeEnabled: settings.codexIsolatedHomeEnabled,
     ...(settings.codexPersonality === 'default'
       ? {}
@@ -47,3 +52,4 @@ export const buildCodexChatRequestOverrides = (
     ...(settings.codexFastMode ? { serviceTier: 'priority' as const } : {}),
   }
 }
+

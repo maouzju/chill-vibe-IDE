@@ -4764,9 +4764,13 @@ body.is-card-dragging .lane-drop-zone-top {
 .message-assistant .message-role { color: var(--ink-3); }
 .message-assistant time           { color: var(--ink-4); }
 .message-system .message-topline { display: none; }
+/* 症状: 停止提示文案一长(多列布局/窄窗口)整行顶出消息列表两端被裁掉(2026-09-17 实测 640px 视口下 1069px 文案只剩 520px 可见)。
+   根因: 曾写死 white-space: nowrap + width: fit-content, 文案永远不折行。
+   为什么不能换回 nowrap: 居中气泡靠 fit-content 收窄, 所以只能让文本在 max-width:100% 内正常折行。 */
 .message-is-run-stopped .message-content,
 .message-is-run-stopped .message-content > p {
-  white-space: nowrap;
+  white-space: normal;
+  overflow-wrap: anywhere;
 }
 
 .message-entry {
@@ -4804,11 +4808,15 @@ body.is-card-dragging .lane-drop-zone-top {
 
 .message-is-run-stopped {
   width: fit-content;
+  max-width: 100%;
+  min-width: 0;
   margin-inline: auto;
 }
 
 .message-is-run-stopped .message-content {
   display: inline-flex;
+  max-width: 100%;
+  min-width: 0;
   align-items: center;
   justify-content: center;
   text-align: center;

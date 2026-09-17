@@ -340,6 +340,7 @@ export type IdeAction =
           | 'codexFastMode'
           | 'agentOutsideWorkspaceWriteEnabled'
           | 'codexDestructiveCommandProtectionEnabled'
+          | 'attackPatternProtectionEnabled'
           | 'defaultAdminAccess'
           | 'codexIsolatedHomeEnabled'
           | 'gitAgentModel'
@@ -3056,8 +3057,11 @@ const ideReducerCore = (state: AppState, action: IdeAction): AppState => {
           const stopReason = action.stoppedMessage?.meta?.kind === 'run-stopped'
             ? action.stoppedMessage.meta.stopReason
             : undefined
+          // 攻形中断同列：命令没跑、决定权在用户，自动催续会把它重新启动。
           const shouldCancelAutoUrge =
-            stopReason === 'manual' || stopReason === 'user-interrupt'
+            stopReason === 'manual' ||
+            stopReason === 'user-interrupt' ||
+            stopReason === 'attack-pattern-detected'
           // 2026-09-11：软中断进程仍活着，一律清会话会强迫下一轮 seeded 冷启动。
           // 只信 Claude done 的明确标记；无终态兜底 / 硬杀 / Codex 仍按 #118 清理，见 #369。
           const shouldResetInterruptedSession = stopReason === 'user-interrupt' &&

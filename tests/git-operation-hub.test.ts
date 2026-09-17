@@ -193,6 +193,7 @@ test('agent analysis forwards Codex personality and Fast settings', async () => 
       agentOutsideWorkspaceWriteEnabled: true,
       codexDestructiveCommandProtectionEnabled: true,
       codexIsolatedHomeEnabled: true,
+      attackPatternProtectionEnabled: true,
     },
   }, createGitStatus())
 

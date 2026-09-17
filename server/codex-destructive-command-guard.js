@@ -2,6 +2,11 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { pathToFileURL } from 'node:url'
 
+import {
+  detectAttackPatterns,
+  formatAttackPatternReason,
+} from './attack-pattern-rules.js'
+
 const shellToolPattern = /^(?:Bash|shell|shell_command|exec_command|write_stdin)$/i
 const directWriteToolPattern = /^(?:apply_patch|Edit|Write|NotebookEdit)$/i
 const powershellDeletePattern = /(?:^|[;&|{}]\s*)Remove-Item\b/i
@@ -612,19 +617,71 @@ const readStdin = async () => {
   return content
 }
 
+// 症状：攻形检测开着，`curl ... | bash` 仍然真的执行了，事后才停流。
+// 根因：曾用退出码 3 来和常规高风险操作区分。但 Claude CLI 2.1.263 与 Codex CLI
+//   0.153.4 的 PreToolUse 契约里只有 2 被当作阻断，二进制内原文：
+//     Exit code 2 - show stderr to model and block tool call
+//     Other exit codes - show stderr to user only but continue with tool call
+//   于是 3 走 hook_non_blocking_error 分支，命令照跑 —— 安全开关制造了「已防护」
+//   的错觉，比没有这个开关更危险。
+// 为什么不能换写法：两类拦截都必须真阻断，所以退出码只能同为 2；渲染层需要的
+//   「是攻形还是常规」改由 stderr 里的 ASCII 哨兵承担（见 attackPatternStderrMarker）。
+//   CLI 不会把 hook 退出码结构化透传给渲染层，本来就只能读正文。
+export const attackPatternExitCode = 2
+export const destructiveCommandExitCode = 2
+
+// 纯 ASCII 哨兵：中文说明经 cmd 包装层可能被 GBK 解码损坏，届时中文匹配会静默
+// 失配、拦截功能无声消失。哨兵不含非 ASCII 字符，任何单字节编码下都原样存活。
+export const attackPatternStderrMarker = 'CHILL_VIBE_ATTACK_PATTERN_BLOCK'
+
+const evaluateToolUse = (input) => {
+  const attackPatternsEnabled = resolveBooleanSetting(
+    undefined,
+    process.env.CHILL_VIBE_ATTACK_PATTERN_PROTECTION_ENABLED,
+    false,
+  )
+  if (attackPatternsEnabled) {
+    const matches = detectAttackPatterns(input)
+    if (matches.length > 0) {
+      return {
+        exitCode: attackPatternExitCode,
+        reason: [
+          attackPatternStderrMarker,
+          formatAttackPatternReason(matches),
+          '',
+          `命中内容：${matches[0].sample}`,
+          '',
+          '该形状在工作流中没有合法用途，已按疑似攻击处理。命令未执行，是否继续由你决定。',
+        ].join(String.fromCharCode(10)),
+      }
+    }
+  }
+
+  const result = assessCodexToolUse(input)
+  if (result.allowed) {
+    return null
+  }
+  return {
+    exitCode: destructiveCommandExitCode,
+    reason: result.reason ?? '已阻止高风险操作。',
+  }
+}
+
 const runCli = async () => {
   try {
     const input = JSON.parse(await readStdin())
-    const result = assessCodexToolUse(input)
-    if (result.allowed) {
+    const verdict = evaluateToolUse(input)
+    if (!verdict) {
       return
     }
-    process.stderr.write(`Chill Vibe 安全防护：${result.reason ?? '已阻止高风险操作。'}\n`)
-    process.exitCode = 2
+    process.stderr.write(`Chill Vibe 安全防护：${verdict.reason}
+`)
+    process.exitCode = verdict.exitCode
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
-    process.stderr.write(`Chill Vibe 安全防护无法解析命令，已失败关闭：${message}\n`)
-    process.exitCode = 2
+    process.stderr.write(`Chill Vibe 安全防护无法解析命令，已失败关闭：${message}
+`)
+    process.exitCode = destructiveCommandExitCode
   }
 }
 

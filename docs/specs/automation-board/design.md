@@ -681,7 +681,7 @@ lastActivityAt。推送节流仍是 2000ms。
 | `read_session` | 读 | 单个会话最近 N 条转录（默认 20，上限 60） |
 | `send_session_message` | 写 | `{ cardId, message }` → `sendMessage`（"鞭策"） |
 | `move_session_to_lane` | 写 | `{ cardId?, lane }` → 移进看板某道。目标看板：该卡已在某看板则用那个，否则用本列第一张看板卡；本列没有看板则报错。**省略 `cardId` = 归档我自己**（见下） |
-| `set_session_wake_timer` | 写 | `{ cardId, mode, durationMinutes }` |
+| `set_session_wake_timer` | 写 | `{ cardId, mode?, durationMinutes?, cardIds?, timeoutMinutes? }`；给 `cardIds` = 那张卡只等这几个会话结束（写 `wakeTimerTargetCardIds`，`timeoutMinutes` 作兜底上限，2026-09-20） |
 
 #### 自我归档：`move_session_to_lane` 省略 `cardId`（2026-08-17）
 

@@ -42,6 +42,25 @@ describe('待唤醒卡上直接换唤醒方式', () => {
     assert.match(markup, new RegExp(text.wakeTimerModeDuration))
   })
 
+  it('给了可选会话就多一项「指定会话」，选中时列出复选框并标出正在等的', () => {
+    const markup = render({
+      wakeTimerMode: 'workspace-agents',
+      targetOptions: [
+        { id: 'a', title: '白皇后 A' },
+        { id: 'b', title: '白皇后 B' },
+      ],
+      targetCardIds: ['a'],
+      pendingTargetIds: ['a'],
+      onChangeTargetCardIds: () => undefined,
+    })
+
+    assert.match(markup, /<option value="sessions" selected=""/)
+    assert.match(markup, new RegExp(text.wakeTimerModeSessions))
+    assert.match(markup, /composer-wake-timer-target-option[^>]*>[\s\S]*白皇后 A/)
+    assert.match(markup, /<input[^>]*checked=""[^>]*value="a"/)
+    assert.doesNotMatch(markup, /<input[^>]*checked=""[^>]*value="b"/)
+  })
+
   it('没有左邻可等时禁掉那个选项，不让用户切进死条件', () => {
     const markup = render({ wakeTimerMode: 'duration', neighbourAvailable: false })
 

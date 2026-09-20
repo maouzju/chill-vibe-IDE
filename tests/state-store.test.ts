@@ -259,6 +259,7 @@ describe('state-store persistence', () => {
     rawCard.wakeTimerArmedAt = '2026-07-25T00:00:00.000Z'
     rawCard.wakeTimerWakeAt = '2026-07-25T00:30:00.000Z'
     rawCard.wakeTimerPendingTargetIds = ['agent-1', '', 'agent-1', 'agent-2']
+    rawCard.wakeTimerTargetCardIds = ['agent-2', '', 'agent-2', 'agent-3']
     rawCard.wakeTimerQueuedSends = [
       { id: '', prompt: 'drop missing id', attachments: [] },
       { id: 'wake-1', prompt: 'restore me', attachments: [] },
@@ -275,11 +276,30 @@ describe('state-store persistence', () => {
     assert.equal(restored?.wakeTimerArmedAt, '2026-07-25T00:00:00.000Z')
     assert.equal(restored?.wakeTimerWakeAt, '2026-07-25T00:30:00.000Z')
     assert.deepEqual(restored?.wakeTimerPendingTargetIds, ['agent-1', 'agent-2'])
+    assert.deepEqual(restored?.wakeTimerTargetCardIds, ['agent-2', 'agent-3'])
     assert.deepEqual(restored?.wakeTimerQueuedSends, [
       { id: 'wake-1', prompt: 'restore me', attachments: [] },
     ])
   })
 
+  // 2026-09-20：normalizePersistedCard 是手抄白名单，没列到的字段落盘即丢。
+  // spawnedByAgent 决定 tab 上显示机器人还是 provider 图标，漏掉它等于重启后
+  // 「哪些 tab 是 agent 替我开的」这一信息永久消失。
+  it('loadState keeps the agent-spawned marker so the bot tab icon survives a restart', async () => {
+    const state = createDefaultState('D:/spawned-by-agent')
+    const card = getFirstCard(state)
+    assert.ok(card)
+
+    const rawState = structuredClone(state) as unknown as Record<string, unknown>
+    const rawColumns = rawState.columns as Array<Record<string, unknown>>
+    const rawCards = rawColumns[0]?.cards as Record<string, Record<string, unknown>>
+    rawCards[card.id]!.spawnedByAgent = true
+    await writeFile(path.join(tmpDir, 'state.json'), JSON.stringify(rawState, null, 2), 'utf8')
+
+    const { loadState } = await import('../server/state-store.ts')
+    const loaded = await loadState()
+    assert.equal(loaded.columns[0]?.cards[card.id]?.spawnedByAgent, true)
+  })
   it('loadState returns defaults when file is missing', async () => {
     const { loadState } = await import('../server/state-store.ts')
     const loaded = await loadState()

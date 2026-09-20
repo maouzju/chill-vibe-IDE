@@ -420,6 +420,7 @@ export type IdeAction =
       reasoningEffort?: string
       stickyNote?: string
       adminAccess?: boolean
+      spawnedByAgent?: boolean
     }
   | {
       type: 'spawnRepeatLoopTab'
@@ -537,6 +538,7 @@ export type IdeAction =
           | 'wakeTimerWakeAt'
           | 'wakeTimerPendingTargetIds'
           | 'wakeTimerExplicitTargets'
+          | 'wakeTimerTargetCardIds'
         >
       >
     }
@@ -585,6 +587,7 @@ export type IdeAction =
       templateId?: string
       /** 实例化自带超管权限的模板时为 true —— "监工性"的全部就是这两个字段。 */
       adminAccess?: boolean
+      spawnedByAgent?: boolean
     }
   | {
       type: 'setAutomationBoardItemLane'
@@ -2480,6 +2483,7 @@ const ideReducerCore = (state: AppState, action: IdeAction): AppState => {
           ),
           id: action.cardId ?? createId(),
           adminAccess: !toolCardModels.has(model) && (action.adminAccess ?? state.settings.defaultAdminAccess),
+          ...(action.spawnedByAgent ? { spawnedByAgent: true } : {}),
           // 唤醒方式跟模型默认同一个语义：只喂新 Tab，不回溯改写已开的卡
           // （AGENTS.md pitfall #40）。开关本身仍默认关闭 —— 记住的是"怎么等"，
           // 不是"要不要等"。
@@ -2497,8 +2501,17 @@ const ideReducerCore = (state: AppState, action: IdeAction): AppState => {
             ...column.cards,
             [newCard.id]: newCard,
           },
+          // 症状（2026-09-20）：用户正在别的卡上操作，超管 agent 用 create_session 建的
+          //   普通 tab 会话一落地就成为活动 tab，把用户的视图顶走。
+          // 修法：agent 派发的 tab 静默追加在后台，活动 tab 不动；用户点「＋」仍照旧切过去。
+          //   空 pane（没有活动 tab）才让它顶上，否则用户面对一个空白面板。
           layout: updatePaneNode(column.layout, action.paneId, (pane) =>
-            createPane([...pane.tabs, newCard.id], newCard.id, pane.id, pane.tabHistory),
+            createPane(
+              [...pane.tabs, newCard.id],
+              action.spawnedByAgent && pane.activeTabId ? pane.activeTabId : newCard.id,
+              pane.id,
+              pane.tabHistory,
+            ),
           ),
         }
       })
@@ -3319,6 +3332,7 @@ const ideReducerCore = (state: AppState, action: IdeAction): AppState => {
           language: state.settings.language,
         }),
         ...(action.cardId ? { id: action.cardId } : {}),
+        ...(action.spawnedByAgent ? { spawnedByAgent: true } : {}),
         ...(action.wakeTimerActive !== undefined ? { wakeTimerActive: action.wakeTimerActive } : {}),
         ...(action.wakeTimerMode ? { wakeTimerMode: action.wakeTimerMode } : {}),
         ...(typeof action.wakeTimerDurationMinutes === 'number'

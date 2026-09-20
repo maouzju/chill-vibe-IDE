@@ -45,17 +45,20 @@ export type GitAgentPhase =
   | { kind: 'done'; success: boolean; message: string }
   | { kind: 'error'; message: string }
 
+// 同步成功没有 `done` 态：push 一成功面板就收起，结果只以自动消失的飘字呈现
+// （SPEC docs/specs/git-sync-success-toast）。error 仍然留面板，因为失败要用户决策。
 export type GitSyncStep =
   | { kind: 'idle' }
   | { kind: 'pull' }
   | { kind: 'conflict'; streamId: string }
   | { kind: 'push' }
-  | { kind: 'done'; message: string }
   | { kind: 'error'; message: string }
 
 export type GitOperationNotice = {
   tone: 'info' | 'success' | 'error'
   message: string
+  /** true = 飘字：渲染成不占布局的浮层，并由 hub 在 TRANSIENT_NOTICE_MS 后自动清掉。 */
+  transient?: boolean
 }
 
 export type GitOperationSnapshot = {
@@ -134,7 +137,12 @@ type WorkspaceSession = {
   analysisRunId: number
   conflictStream: { close: () => void } | null
   syncRunId: number
+  noticeTimeout: ReturnType<typeof setTimeout> | null
+  noticeToken: number
 }
+
+/** 飘字停留时长：够看清一行"同步完成。"，又不至于挡住用户接下来的操作。 */
+const TRANSIENT_NOTICE_MS = 2600
 
 const getCommitNewVerb = (change: GitStatus['changes'][number]) => {
   switch (change.kind) {
@@ -199,6 +207,8 @@ export const createGitOperationHub = (deps: GitOperationHubDeps) => {
         analysisRunId: 0,
         conflictStream: null,
         syncRunId: 0,
+        noticeTimeout: null,
+        noticeToken: 0,
       }
       sessions.set(workspacePath, session)
     }
@@ -211,6 +221,29 @@ export const createGitOperationHub = (deps: GitOperationHubDeps) => {
     for (const listener of session.listeners) {
       listener()
     }
+  }
+
+  const cancelNoticeExpiry = (session: WorkspaceSession) => {
+    if (session.noticeTimeout) {
+      clearTimeout(session.noticeTimeout)
+      session.noticeTimeout = null
+    }
+  }
+
+  // 过期计时器挂在 hub（模块级 store）而不是组件上：卡片切到后台会被 unmount，
+  // 组件里的 setTimeout 就不再执行，用户切回来会看到一条永不消失的旧飘字。
+  const showTransientNotice = (workspacePath: string, notice: GitOperationNotice) => {
+    const session = getSession(workspacePath)
+    cancelNoticeExpiry(session)
+    session.noticeToken += 1
+    const token = session.noticeToken
+    patch(workspacePath, { notice: { ...notice, transient: true } })
+    session.noticeTimeout = setTimeout(() => {
+      session.noticeTimeout = null
+      // 期间若有新的 notice（尤其是 error）写进来，token 已经变了，不能替它做主清掉
+      if (session.noticeToken !== token) return
+      patch(workspacePath, { notice: null })
+    }, TRANSIENT_NOTICE_MS)
   }
 
   const settleAnalysisStream = (session: WorkspaceSession) => {
@@ -517,17 +550,12 @@ export const createGitOperationHub = (deps: GitOperationHubDeps) => {
           let settled = false
           const settle = () => {
             settled = true
-            clearTimeout(timeout)
             session.conflictStream?.close()
             session.conflictStream = null
           }
-          const timeout = setTimeout(() => {
-            if (settled) return
-            settle()
-            void deps.stopChat(result.streamId).catch(() => {})
-            reject(new Error(language === 'zh-CN' ? '冲突解决超时。' : 'Conflict resolution timed out.'))
-          }, 60000)
 
+          // 2026-09-18：固定 60 秒会强停仍在正常处理的冲突解决任务。
+          // 按 git-card-fast-preview 约定只等待真实终态，不用更长时限替代旧上限。
           session.conflictStream = deps.openChatStream(result.streamId, {
             onDone: () => {
               if (settled) return
@@ -621,10 +649,13 @@ export const createGitOperationHub = (deps: GitOperationHubDeps) => {
       const pushResult = await deps.pushGitChanges({ workspacePath })
       latestStatus = pushResult.status
       if (!stillCurrent()) return
+      // 成功不留窗口：面板当场收起，结果交给自动消失的飘字（SPEC git-sync-success-toast）
       patch(workspacePath, {
         lastStatus: latestStatus,
-        syncStep: { kind: 'done', message: text.syncSuccess },
+        syncPanelOpen: false,
+        syncStep: { kind: 'idle' },
       })
+      showTransientNotice(workspacePath, { tone: 'success', message: text.syncSuccess })
     } catch (error) {
       if (!stillCurrent()) return
       patch(workspacePath, {
@@ -829,6 +860,7 @@ export const createGitOperationHub = (deps: GitOperationHubDeps) => {
     },
     clearNotice: (workspacePath: string) => {
       const session = getSession(workspacePath)
+      cancelNoticeExpiry(session)
       if (!session.snapshot.notice) return
       patch(workspacePath, { notice: null })
     },

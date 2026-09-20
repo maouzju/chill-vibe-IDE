@@ -769,7 +769,10 @@ test('git sync retries through conflict resolution when pull leaves merge confli
       __gitSyncTestState: { prompt: string }
     }).__gitSyncTestState.prompt),
   ).toContain('complete the merge commit')
-  await expect(page.locator('.git-agent-panel .git-tool-notice.is-success')).toBeVisible()
+  // 同步成功没有可点关闭的成功面板了：面板当场收起，结果只以自动消失的飘字呈现
+  // （SPEC docs/specs/git-sync-success-toast 需求 1、2）。
+  await expect(page.locator('.git-agent-panel')).toHaveCount(0)
+  await expect(page.locator('.git-tool-toast .git-tool-toast-body.is-success')).toBeVisible()
 })
 
 test('git sync disables analysis while the sync panel is open', async ({ page }) => {

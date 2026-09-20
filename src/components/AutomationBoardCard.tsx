@@ -440,6 +440,7 @@ const AutomationBoardItemCard = ({
   wakeTimerEnabled,
   repeatLoopEnabled,
   workspaceAgentCount,
+  wakeTimerTargetOptions,
   onPopOutItem,
   onDeleteItem,
   onSaveTemplate,
@@ -452,6 +453,8 @@ const AutomationBoardItemCard = ({
   lane: AutomationBoardLane
   /** 本工作区里除这一项以外的 Agent 数量，`workspace-agents` 模式的提示用。 */
   workspaceAgentCount: number
+  /** 本工作区里可点名等待的会话（含看板外的普通 tab 会话），「指定会话」条件用。 */
+  wakeTimerTargetOptions: readonly { id: string; title: string }[]
 } & Pick<
   AutomationBoardCardProps,
   | 'boardCardId'
@@ -620,6 +623,7 @@ const AutomationBoardItemCard = ({
             wakeTimerEnabled={wakeTimerEnabled}
             repeatLoopEnabled={repeatLoopEnabled}
             workspaceAgentCount={workspaceAgentCount}
+            wakeTimerTargetOptions={wakeTimerTargetOptions.filter((option) => option.id !== card.id)}
             nudge={nudge}
             onNudgeChange={setNudge}
             onNudgeSubmit={submitNudge}
@@ -646,6 +650,7 @@ export const AutomationBoardItemDrawer = ({
   wakeTimerEnabled,
   repeatLoopEnabled,
   workspaceAgentCount,
+  wakeTimerTargetOptions,
   nudge,
   onNudgeChange,
   onNudgeSubmit,
@@ -656,6 +661,7 @@ export const AutomationBoardItemDrawer = ({
   view: AutomationBoardItemView
   lane: AutomationBoardLane
   workspaceAgentCount: number
+  wakeTimerTargetOptions?: readonly { id: string; title: string }[]
   nudge: string
   onNudgeChange: (next: string) => void
   onNudgeSubmit: () => void
@@ -719,6 +725,7 @@ export const AutomationBoardItemDrawer = ({
           context="board"
           card={card}
           neighbourTarget={aboveCardId ? { id: aboveCardId, title: aboveTitle ?? '' } : null}
+          targetOptions={wakeTimerTargetOptions}
           workspaceAgentCount={workspaceAgentCount}
           locked={(card.wakeTimerQueuedSends?.length ?? 0) > 0}
           onPatch={(patch) => onPatchItemCard(card.id, patch)}
@@ -1150,6 +1157,14 @@ const AutomationBoardCardView = (props: AutomationBoardCardProps) => {
     () =>
       Object.values(cards).filter((entry) => !MODEL_PICKER_HIDDEN_TOOL_MODELS.has(entry.model))
         .length,
+    [cards],
+  )
+  // 「指定会话」的候选：同列所有 Agent 卡（看板项 + 普通 tab 会话），逐项再剔掉自己。
+  const wakeTimerTargetOptions = useMemo(
+    () =>
+      Object.values(cards)
+        .filter((entry) => !MODEL_PICKER_HIDDEN_TOOL_MODELS.has(entry.model))
+        .map((entry) => ({ id: entry.id, title: entry.title })),
     [cards],
   )
 
@@ -1614,6 +1629,7 @@ const AutomationBoardCardView = (props: AutomationBoardCardProps) => {
                       workspaceAgentCardCount -
                         (MODEL_PICKER_HIDDEN_TOOL_MODELS.has(view.card.model) ? 0 : 1),
                     )}
+                    wakeTimerTargetOptions={wakeTimerTargetOptions}
                     onPopOutItem={props.onPopOutItem}
                     onDeleteItem={props.onDeleteItem}
                     onSaveTemplate={props.onSaveTemplate}

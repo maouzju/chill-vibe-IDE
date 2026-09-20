@@ -63,7 +63,7 @@ export const applyOptimisticGitStageState = (change: GitChange, staged: boolean)
 //   本仓库没有可驱动交互的 React 组件测试设施（只有 renderToStaticMarkup），留在组件里就等于没有
 //   回归防线，所以按 GitFullDialog.tsx:94 runCommitDiffSelection 的既有模式抽成模块级纯函数。
 
-/** 自动刷新（聚焦、tab 激活）共用的节流窗口。 */
+/** 自动刷新（卡片任意位置点击聚焦、tab 激活）共用的节流窗口。 */
 export const gitStatusRefreshThrottleMs = 3000
 
 export type GitStatusRefreshDecision = {

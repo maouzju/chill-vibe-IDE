@@ -30,15 +30,6 @@ export const GitSyncPanel = ({ step, language, onRetry, onClose }: GitSyncPanelP
         </div>
       ) : null}
 
-      {step.kind === 'done' ? (
-        <div className="git-tool-notice is-success" role="status">
-          {step.message}
-          <button type="button" className="git-tool-button" onClick={onClose}>
-            {text.closeFullGit}
-          </button>
-        </div>
-      ) : null}
-
       {step.kind === 'error' ? (
         <div className="git-tool-notice is-error" role="alert">
           {step.message}

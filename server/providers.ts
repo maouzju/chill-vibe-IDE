@@ -2869,6 +2869,13 @@ const launchCodexAppServerRun = async (
     finished = true
     rejectPendingRequests(code === 0 ? 'Codex app-server closed before completion.' : formatProviderExit(language, 'codex', code))
 
+    // 症状：主卡已经停止输出，但底部仍显示子智能体“运行中”（用户截图，2026-09-18）。
+    // 根因：app-server 在丢失子线程终态后直接 close/error；此前这里只结束 transport，
+    //       没有发布最后一张收敛快照，沉底面板会永远取到上一张 running 快照。
+    // 被否决：让渲染层按主卡 idle 猜测并清空——这会误杀仍由 keepalive 接管的后台任务；
+    //       这里只处理本次 Codex transport 已经结束、无法再收到终态的运行条目。
+    settleAgentPanelForRunEnd('interrupted')
+
     if (code === 0) {
       const diagnostics = summarizeProviderDiagnostics(stderr)
       const message = hasOnlyTransientRecoveryPlaceholderDiagnostics(diagnostics || stderr)
@@ -2913,6 +2920,7 @@ const launchCodexAppServerRun = async (
     stdoutLines.close()
     stderrLines.close()
     rejectPendingRequests(error.message)
+    settleAgentPanelForRunEnd('interrupted')
     const hint = classifyLaunchErrorHint(error.message)
     sink.onError(
       error.message,

@@ -1,6 +1,10 @@
+import { useState } from 'react'
+
 import { getLocaleText } from '../../shared/i18n'
 import type { AppLanguage, ChatCard, WakeTimerMode } from '../../shared/schema'
 import { ComposerSettingsRow } from './ComposerSettingsRow'
+import { WakeTimerTargetPicker, type WakeTimerTargetOption } from './WakeTimerTargetPicker'
+import type { WakeTimerUiMode } from './WakeTimerStatus'
 
 /** 等待的那个邻居：普通 tab 是左邻 tab，看板项是同泳道上一项。 */
 export type WakeTimerNeighbourTarget = { id: string; title: string } | null
@@ -12,8 +16,11 @@ export type WakeTimerSettingsPanelProps = {
    * 只有方位词不同：composer 里是"左侧 Tab"，看板里是"上方需求"。
    */
   context: 'tab' | 'board'
-  card: Pick<ChatCard, 'wakeTimerActive' | 'wakeTimerMode' | 'wakeTimerDurationMinutes'>
+  card: Pick<ChatCard, 'wakeTimerActive' | 'wakeTimerMode' | 'wakeTimerDurationMinutes'> &
+    Partial<Pick<ChatCard, 'wakeTimerTargetCardIds' | 'wakeTimerPendingTargetIds' | 'wakeTimerExplicitTargets'>>
   neighbourTarget: WakeTimerNeighbourTarget
+  /** 可以点名等待的会话；不给就不露出「指定会话」。 */
+  targetOptions?: readonly WakeTimerTargetOption[]
   /** 本工作区里除自己以外的 Agent 数量，`workspace-agents` 模式的提示用。 */
   workspaceAgentCount: number
   /**
@@ -40,6 +47,7 @@ export const WakeTimerSettingsPanel = ({
   context,
   card,
   neighbourTarget,
+  targetOptions,
   workspaceAgentCount,
   locked,
   onPatch,
@@ -47,6 +55,14 @@ export const WakeTimerSettingsPanel = ({
 }: WakeTimerSettingsPanelProps) => {
   const text = getLocaleText(language)
   const mode: WakeTimerMode = card.wakeTimerMode ?? 'workspace-agents'
+  const targetCardIds = card.wakeTimerTargetCardIds ?? []
+  const [pickingSessions, setPickingSessions] = useState(false)
+  const sessionsAvailable = targetOptions !== undefined
+  // 「指定会话」是名单非空时的投影，同 WakeTimerStatus；本地态只为撑住"选了还没勾"那一步。
+  const uiMode: WakeTimerUiMode =
+    sessionsAvailable && (pickingSessions || targetCardIds.length > 0 || card.wakeTimerExplicitTargets === true)
+      ? 'sessions'
+      : mode
   const isBoard = context === 'board'
   const neighbourLabel = isBoard ? text.automationBoardWakeAboveLabel : text.wakeTimerModeLeftTab
   const neighbourUnavailable = isBoard
@@ -75,20 +91,45 @@ export const WakeTimerSettingsPanel = ({
           >
             <select
               className="reasoning-select"
-              value={mode}
-              onChange={(event) => onPatch({ wakeTimerMode: event.target.value as WakeTimerMode })}
+              value={uiMode}
+              onChange={(event) => {
+                const next = event.target.value as WakeTimerUiMode
+                if (next === 'sessions') {
+                  setPickingSessions(true)
+                  return
+                }
+                setPickingSessions(false)
+                // 名单非空会压过 mode（armWakeTimerBatch），换回普通条件必须一起清掉。
+                onPatch({ wakeTimerMode: next, wakeTimerTargetCardIds: [] })
+              }}
             >
               <option value="workspace-agents">{text.wakeTimerModeWorkspace}</option>
               {/* 没有邻居可等时切进去就是把批次埋掉，直接不让选。 */}
               <option value="left-tab" disabled={!neighbourTarget}>{neighbourLabel}</option>
               <option value="duration">{text.wakeTimerModeDuration}</option>
+              {sessionsAvailable ? <option value="sessions">{text.wakeTimerModeSessions}</option> : null}
             </select>
           </ComposerSettingsRow>
-          {mode === 'duration' ? (
+          {uiMode === 'sessions' && targetOptions ? (
+            <ComposerSettingsRow
+              className="composer-wake-timer-sessions-row"
+              label={text.wakeTimerModeSessions}
+              hint={text.wakeTimerSessionsHint}
+            >
+              <WakeTimerTargetPicker
+                language={language}
+                options={targetOptions}
+                selectedIds={targetCardIds}
+                pendingIds={card.wakeTimerPendingTargetIds ?? []}
+                onChange={(next) => onPatch({ wakeTimerTargetCardIds: next })}
+              />
+            </ComposerSettingsRow>
+          ) : null}
+          {uiMode === 'duration' || uiMode === 'sessions' ? (
             <ComposerSettingsRow
               className="composer-wake-timer-duration-row"
-              label={text.wakeTimerDurationLabel}
-              hint={text.wakeTimerDurationHint}
+              label={uiMode === 'sessions' ? text.wakeTimerSessionsTimeoutLabel : text.wakeTimerDurationLabel}
+              hint={uiMode === 'sessions' ? text.wakeTimerSessionsTimeoutHint : text.wakeTimerDurationHint}
             >
               <span className="composer-wake-timer-duration-control">
                 <input
@@ -112,7 +153,7 @@ export const WakeTimerSettingsPanel = ({
           {neighbourMissing ? (
             <div className="composer-settings-note is-warning">{neighbourUnavailable}</div>
           ) : null}
-          {mode === 'workspace-agents' ? (
+          {uiMode === 'workspace-agents' ? (
             <div className="composer-settings-note">
               {text.wakeTimerWorkspaceAgentCount(workspaceAgentCount)}
             </div>

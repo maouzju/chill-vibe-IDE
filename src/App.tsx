@@ -3001,6 +3001,9 @@ function App() {
           waitingMode: card.wakeTimerMode ?? 'workspace-agents',
           completedTargetHasPendingWakeBatch,
           forceRelease,
+          // 点名等待与左邻拓扑无关；卡上残留的 left-tab 不该把点到的目标永远
+          // 钉在 pendingTargetIds 里。
+          explicitTargets: card.wakeTimerExplicitTargets === true,
         })) {
           continue
         }
@@ -3219,6 +3222,7 @@ function App() {
         mode: card.wakeTimerMode ?? 'workspace-agents',
         ownerCardId: cardId,
         durationMinutes: card.wakeTimerDurationMinutes ?? 30,
+        targetCardIds: card.wakeTimerTargetCardIds,
         nowMs: Date.now(),
         cards: Object.values(column.cards).map((entry) => ({
           id: entry.id,
@@ -3242,6 +3246,7 @@ function App() {
         wakeTimerArmedAt: arm.armedAt,
         wakeTimerWakeAt: arm.wakeAt,
         wakeTimerPendingTargetIds: arm.pendingTargetIds,
+        wakeTimerExplicitTargets: arm.explicitTargets === true ? true : undefined,
       }
     }
 
@@ -4198,6 +4203,7 @@ function App() {
           thinkingEnabled: options?.thinkingEnabled,
           planMode: options?.planMode,
           adminAccess: options?.adminAccess,
+          spawnedByAgent: options?.spawnedByAgent,
         }
         const nextState = applyAction(action)
         persistAfterAction(action.type, nextState)
@@ -5875,7 +5881,7 @@ function App() {
               command.lane,
               command.requirement,
               undefined,
-              { provider: command.provider, model: command.model, adminAccess: false },
+              { provider: command.provider, model: command.model, adminAccess: false, spawnedByAgent: true },
             )
             return
           }
@@ -5894,6 +5900,7 @@ function App() {
             adminAccess: false,
             provider: command.provider,
             model: command.model,
+            spawnedByAgent: true,
           }
           persistAfterAction(addTab.type, applyAction(addTab))
 
@@ -5929,6 +5936,9 @@ function App() {
             ...(typeof command.durationMinutes === 'number'
               ? { wakeTimerDurationMinutes: command.durationMinutes }
               : {}),
+            // 点名 = 写名单；没点名 = 按 mode 走，并把旧名单清掉 —— 名单非空时会
+            // 压过 mode（armWakeTimerBatch），不清等于这次 mode 白设。
+            wakeTimerTargetCardIds: command.targetCardIds?.filter((id) => id !== command.cardId) ?? [],
           })
           return
         case 'admin-await-sessions': {

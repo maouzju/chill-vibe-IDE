@@ -144,7 +144,7 @@ export const workspaceAdminMcpToolDefinitions = [
   {
     name: wakeToolName,
     description:
-      'Arm a wake timer on one session so it resumes later instead of being nagged now. mode "duration" means "check back after N minutes" (durationMinutes, default 30). mode "workspace-agents" waits until every other agent in this workspace has finished. mode "left-tab" waits until the session before it has finished. Prefer this over repeated nudging when an agent is legitimately waiting on sub-tasks.',
+      'Arm a wake timer on one session so it resumes later instead of being nagged now. Pass cardIds to make that session wait for exactly those sessions (precise: the user\'s own chat windows and unrelated agents cannot hold it back; timeoutMinutes is the hard upper bound, default 60). Otherwise pass mode: "duration" means "check back after N minutes" (durationMinutes, default 30); "workspace-agents" waits until every other agent in this workspace has finished; "left-tab" waits until the session before it has finished. Prefer this over repeated nudging when an agent is legitimately waiting on sub-tasks.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -155,7 +155,7 @@ export const workspaceAdminMcpToolDefinitions = [
         mode: {
           type: 'string',
           enum: wakeTimerModes,
-          description: 'duration = check back after N minutes; workspace-agents / left-tab = wait for others.',
+          description: 'duration = check back after N minutes; workspace-agents / left-tab = wait for others. Required unless cardIds is given.',
         },
         durationMinutes: {
           type: 'number',
@@ -163,8 +163,20 @@ export const workspaceAdminMcpToolDefinitions = [
           maximum: maxWakeDurationMinutes,
           description: 'Minutes to wait when mode is "duration" (default 30).',
         },
+        cardIds: {
+          type: 'array',
+          items: { type: 'string' },
+          description:
+            'Exact sessions that cardId should wait for, from list_sessions. When given, mode is ignored and the session wakes once every listed session has finished.',
+        },
+        timeoutMinutes: {
+          type: 'number',
+          minimum: minWakeDurationMinutes,
+          maximum: maxWakeDurationMinutes,
+          description: 'With cardIds: wake no later than this many minutes from now even if a listed session never finishes (default 60).',
+        },
       },
-      required: ['cardId', 'mode'],
+      required: ['cardId'],
       additionalProperties: false,
     },
   },
@@ -520,9 +532,52 @@ export const resolveWorkspaceAdminCommandFromToolCall = (name, args, columnId, s
   }
 
   if (name === wakeToolName) {
+    // 点名等待：名单压过 mode。目标卡自己永远不进名单（等自己结束 = 等一个永远
+    // 不会到达的事件），剔完为空就报错，绝不静默退化成"等全列没人在跑"。
+    const rawTargetIds = args?.cardIds
+    if (rawTargetIds !== undefined && rawTargetIds !== null) {
+      if (!Array.isArray(rawTargetIds)) {
+        return { error: `cardIds must be an array of session cardIds from ${listToolName}.` }
+      }
+
+      const targetCardIds = [...new Set(
+        rawTargetIds.map((entry) => normalizeText(entry)).filter((entry) => entry && entry !== cardId),
+      )]
+      if (targetCardIds.length === 0) {
+        return {
+          error: `cardIds must name at least one OTHER session for ${cardId} to wait for. Call ${listToolName} to get the current cardIds.`,
+        }
+      }
+
+      const rawTimeout = args?.timeoutMinutes
+      const timeoutMinutes = rawTimeout === undefined || rawTimeout === null
+        ? defaultAwaitTimeoutMinutes
+        : Number(rawTimeout)
+      if (
+        !Number.isFinite(timeoutMinutes)
+        || timeoutMinutes < minWakeDurationMinutes
+        || timeoutMinutes > maxWakeDurationMinutes
+      ) {
+        return {
+          error: `timeoutMinutes must be a number between ${minWakeDurationMinutes} and ${maxWakeDurationMinutes}.`,
+        }
+      }
+
+      return {
+        command: {
+          type: 'admin-set-session-wake-timer',
+          columnId: normalizedColumnId,
+          cardId,
+          mode: 'workspace-agents',
+          durationMinutes: timeoutMinutes,
+          targetCardIds,
+        },
+      }
+    }
+
     const mode = readStringArg(args, 'mode')
     if (!wakeTimerModes.includes(mode)) {
-      return { error: `mode must be one of ${wakeTimerModes.join(', ')}. Received: ${mode || '(missing)'}.` }
+      return { error: `mode must be one of ${wakeTimerModes.join(', ')} (or pass cardIds to wait for specific sessions). Received: ${mode || '(missing)'}.` }
     }
 
     if (mode !== 'duration') {
@@ -596,13 +651,35 @@ const validateAwaitTargets = async (command, context) => {
     )
   }
 
+  // 等自己是 wake_me_when_sessions_finish 的语义（调用者被镜像滤掉了）；给别的卡
+  // 点名时那张卡的名单里可以出现调用者自己 —— "等我做完再继续"是合理的。
   const knownIds = new Set(
-    selectVisibleSessions(mirror, context.selfCardId)
+    selectVisibleSessions(
+      mirror,
+      command.type === 'admin-set-session-wake-timer' ? '' : context.selfCardId,
+    )
       .map((session) => normalizeText(session?.cardId))
       .filter(Boolean),
   )
 
-  const unknown = command.targetCardIds.filter((cardId) => !knownIds.has(cardId))
+  // 症状：给 set_session_wake_timer 传一个拼错的 cardId，MCP 照样回 "delivered"，
+  //   而渲染端的 patchItemCard 找不到那张卡就静默 no-op —— 计时器根本没挂上，
+  //   模型却以为挂上了，跟「等一张不存在的卡」同样是无声空等。
+  // 根因：这道校验从头到尾只看名单（targetCardIds），从不看命令自己的目标卡。
+  // 只对 wake timer 生效：await 的 cardId 是调用者自己，而 knownIds 对 await 刻意
+  // 滤掉了调用者，拿它去比对会把每一条合法的 await 都判成幽灵卡。
+  const targetCardId = command.type === 'admin-set-session-wake-timer'
+    ? normalizeText(command.cardId)
+    : ''
+  if (targetCardId && !knownIds.has(targetCardId)) {
+    return textResult(
+      `No session exists in this workspace for cardId ${targetCardId}, so nothing was registered. Call ${listToolName} to get the current cardIds.`,
+      true,
+    )
+  }
+
+  const targetCardIds = Array.isArray(command.targetCardIds) ? command.targetCardIds : []
+  const unknown = targetCardIds.filter((cardId) => !knownIds.has(cardId))
   if (unknown.length > 0) {
     return textResult(
       `No session exists in this workspace for cardId ${unknown.join(', ')}, so nothing was registered. Call ${listToolName} to get the current cardIds.`,
@@ -610,7 +687,7 @@ const validateAwaitTargets = async (command, context) => {
     )
   }
 
-  if (command.targetCardIds.length === 0 && knownIds.size === 0) {
+  if (command.type === 'admin-await-sessions' && targetCardIds.length === 0 && knownIds.size === 0) {
     return textResult(
       `This workspace has no other session to wait for, so nothing would ever wake you up and nothing was registered. Use ${createToolName} to dispatch work first.`,
       true,
@@ -690,7 +767,12 @@ export const callWorkspaceAdminTool = async (name, args, context) => {
       return textResult(resolved.error, true)
     }
 
-    if (resolved.command.type === 'admin-await-sessions') {
+    if (
+      resolved.command.type === 'admin-await-sessions'
+      // 不能再加 `&& targetCardIds` 条件：不带名单的 wake timer 也有目标卡，
+      // 目标卡不存在时渲染端同样静默 no-op。
+      || resolved.command.type === 'admin-set-session-wake-timer'
+    ) {
       const rejection = await validateAwaitTargets(resolved.command, context)
       if (rejection) {
         return rejection

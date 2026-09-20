@@ -273,6 +273,12 @@ export const chatCardSchema = z.object({
   // 下拉是硬编码三项的 `<select>`，值对不上会渲染成空白选中项，用户随手一点
   // 就把名单擦了。布尔是纯附加的：旧包读到只是忽略它，退回原有的拓扑判据。
   wakeTimerExplicitTargets: z.boolean().optional(),
+  // 用户 / 超管在这张卡上**配置**的等待名单（「指定会话」条件）。非空时每一批
+  // 新入队的消息都按名单 arm 成显式等待（见 armWakeTimerBatch.targetCardIds），
+  // 而不是"等这一列没人在跑" —— 那条会被用户自己正在聊的窗口无限压住
+  // （2026-09-20 用户反馈）。与 `wakeTimerExplicitTargets` 的分工：这条是配置，
+  // 批次结束后仍留着；那条是当前批次的标记，批次一结束就清。
+  wakeTimerTargetCardIds: z.array(z.string().min(1)).optional(),
   stickyNote: z.string().default(''),
   stickyNoteId: z.string().min(1).optional(),
   stickyNoteViewState: z.object({
@@ -299,6 +305,10 @@ export const chatCardSchema = z.object({
   // 挂唤醒）。任何卡片都能开，默认关。optional 而非 default 的理由同上。
   // 关闭时 provider 启动里完全没有这组 MCP —— 这是权限边界，不只是优化。
   adminAccess: z.boolean().optional(),
+  // 这个会话是超管 agent 通过 create_session 派发的，不是用户亲手建的。只在派发
+  // 那一刻写一次，之后不再变；tab 图标据此显示机器人而不是 provider 图标，
+  // 让用户一眼分清哪些 tab 是自己开的、哪些是 agent 替自己开的。
+  spawnedByAgent: z.boolean().optional(),
   // 症状（要防的）：监工被「拖出为独立 tab」再拖回泳道之后，每答完一轮就把自己
   //   再叫起来一轮，无限自触发烧钱。
   // 根因：防自触发认的是 `board.items[].templateId`，而拖出会把整条项删掉；拖回
@@ -1431,6 +1441,9 @@ export const workspaceAdminCommandSchema = z.discriminatedUnion('type', [
       .min(minWakeTimerDurationMinutes)
       .max(maxWakeTimerDurationMinutes)
       .optional(),
+    // 点名等待：非空时写进目标卡的 `wakeTimerTargetCardIds`，`durationMinutes`
+    // 这时是兜底上限而不是"干等 N 分钟"。省略 = 按 mode 走老路并清掉旧名单。
+    targetCardIds: z.array(z.string().min(1)).optional(),
   }),
   // 唯一一条目标卡还不存在的命令，因此没有 `cardId`。落位同样由渲染端解析：
   // 本列有看板就建成看板项，没有就建成普通 tab 会话 —— 空工作区（一张卡都没有，

@@ -80,6 +80,12 @@ type LocaleText = {
   wakeTimerModeWorkspace: string
   wakeTimerModeLeftTab: string
   wakeTimerModeDuration: string
+  wakeTimerModeSessions: string
+  wakeTimerSessionsHint: string
+  wakeTimerSessionsEmpty: string
+  wakeTimerSessionsTimeoutLabel: string
+  wakeTimerSessionsTimeoutHint: string
+  wakeTimerWaitingSessions: (count: number, titles: readonly string[]) => string
   wakeTimerDurationLabel: string
   wakeTimerDurationHint: string
   wakeTimerMinutes: string
@@ -590,6 +596,13 @@ const localeTextByLanguage: Record<AppLanguage, LocaleText> = {
     wakeTimerModeWorkspace: '其他 Agent 完成',
     wakeTimerModeLeftTab: '左侧 Tab 完成',
     wakeTimerModeDuration: '指定时长',
+    wakeTimerModeSessions: '指定会话完成',
+    wakeTimerSessionsHint: '只等勾选的这几个会话结束，其他会话（包括你自己正在聊的窗口）在跑也不影响。',
+    wakeTimerSessionsEmpty: '本工作区没有别的会话可以等',
+    wakeTimerSessionsTimeoutLabel: '最长等待',
+    wakeTimerSessionsTimeoutHint: '勾选的会话被停止、报错或一直没开跑时不会发完成信号，到这个时长就强制唤醒。',
+    wakeTimerWaitingSessions: (count, titles) =>
+      titles.length > 0 ? `等待 ${count} 个会话完成：${titles.join('、')}` : `等待 ${count} 个会话完成`,
     wakeTimerDurationLabel: '等待时长',
     wakeTimerDurationHint: '从挂起那一刻算起要等多少分钟，最长 7 天（10080 分钟）。',
     wakeTimerMinutes: '分钟',
@@ -1134,6 +1147,15 @@ const localeTextByLanguage: Record<AppLanguage, LocaleText> = {
     wakeTimerModeWorkspace: 'Other agents finish',
     wakeTimerModeLeftTab: 'Left tab finishes',
     wakeTimerModeDuration: 'After a duration',
+    wakeTimerModeSessions: 'Chosen sessions finish',
+    wakeTimerSessionsHint: 'Wait only for the sessions ticked below; anything else running (including your own chat windows) does not hold it back.',
+    wakeTimerSessionsEmpty: 'No other session in this workspace to wait for',
+    wakeTimerSessionsTimeoutLabel: 'Wait at most',
+    wakeTimerSessionsTimeoutHint: 'A ticked session that is stopped, errors out or never starts sends no completion; wake anyway once this many minutes pass.',
+    wakeTimerWaitingSessions: (count, titles) =>
+      titles.length > 0
+        ? `Waiting for ${count} session${count === 1 ? '' : 's'}: ${titles.join(', ')}`
+        : `Waiting for ${count} session${count === 1 ? '' : 's'}`,
     wakeTimerDurationLabel: 'Wait time',
     wakeTimerDurationHint: 'Minutes to wait from the moment the message is armed, up to 7 days (10080 minutes).',
     wakeTimerMinutes: 'minutes',

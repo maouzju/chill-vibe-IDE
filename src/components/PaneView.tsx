@@ -60,22 +60,10 @@ import { getAutoReadCardId } from './pane-read-state'
 import { syncMessageListElementToBottom } from './pane-scroll'
 import { ChatCard } from './ChatCard'
 import {
-  ChartIcon,
-  ClaudeIcon,
-  CloudIcon,
   CloseIcon,
-  FileTextIcon,
-  FolderIcon,
-  GitBranchIcon,
-  GptIcon,
-  HeadphonesIcon,
-  ImageIcon,
-  KanbanIcon,
-  NeteaseCloudMusicIcon,
   PlusIcon,
-  SparklesIcon,
-  StickyNoteIcon,
 } from './Icons'
+import { getPaneTabIcon } from './pane-tab-icon'
 
 type DropEdge = 'left' | 'right' | 'top' | 'bottom'
 type DropPlacement = 'before' | 'after'
@@ -252,58 +240,6 @@ const edgeToSplit = (edge: DropEdge): { direction: 'horizontal' | 'vertical'; pl
       : edge === 'top'
         ? { direction: 'vertical', placement: 'before' }
         : { direction: 'vertical', placement: 'after' }
-
-const getPaneTabIcon = (card: ChatCardState) => {
-  if (card.model === GIT_TOOL_MODEL) {
-    return <GitBranchIcon className="pane-tab-icon" aria-hidden="true" />
-  }
-
-  if (card.model === MUSIC_TOOL_MODEL) {
-    return <NeteaseCloudMusicIcon className="pane-tab-icon" aria-hidden="true" />
-  }
-
-  if (card.model === WHITENOISE_TOOL_MODEL) {
-    return <HeadphonesIcon className="pane-tab-icon" aria-hidden="true" />
-  }
-
-  if (card.model === WEATHER_TOOL_MODEL) {
-    return <CloudIcon className="pane-tab-icon" aria-hidden="true" />
-  }
-
-  if (card.model === STICKYNOTE_TOOL_MODEL) {
-    return <StickyNoteIcon className="pane-tab-icon" aria-hidden="true" />
-  }
-
-  if (card.model === FILETREE_TOOL_MODEL) {
-    return <FolderIcon className="pane-tab-icon" aria-hidden="true" />
-  }
-
-  if (card.model === BRAINSTORM_TOOL_MODEL) {
-    return <SparklesIcon className="pane-tab-icon" aria-hidden="true" />
-  }
-
-  if (card.model === TEXTEDITOR_TOOL_MODEL) {
-    return <FileTextIcon className="pane-tab-icon" aria-hidden="true" />
-  }
-
-  if (card.model === IMAGEEDITOR_TOOL_MODEL) {
-    return <ImageIcon className="pane-tab-icon" aria-hidden="true" />
-  }
-
-  if (card.model === AUTOMATIONBOARD_TOOL_MODEL) {
-    return <KanbanIcon className="pane-tab-icon" aria-hidden="true" />
-  }
-
-  if (card.model === STATS_TOOL_MODEL) {
-    return <ChartIcon className="pane-tab-icon" aria-hidden="true" />
-  }
-
-  if (card.provider === 'claude') {
-    return <ClaudeIcon className="pane-tab-icon" aria-hidden="true" />
-  }
-
-  return <GptIcon className="pane-tab-icon" aria-hidden="true" />
-}
 
 const isTabCloseTarget = (target: EventTarget | null) =>
   target instanceof Element && target.closest('.pane-tab-close') !== null
@@ -1565,9 +1501,10 @@ const PaneViewView = ({
             leftCard && !MODEL_PICKER_HIDDEN_TOOL_MODELS.has(leftCard.model)
               ? { id: leftCard.id, title: leftCard.title }
               : null
-          const workspaceWakeTimerAgentCount = Object.values(column.cards).filter(
-            (entry) => entry.id !== card.id && !MODEL_PICKER_HIDDEN_TOOL_MODELS.has(entry.model),
-          ).length
+          const wakeTimerTargetOptions = Object.values(column.cards)
+            .filter((entry) => entry.id !== card.id && !MODEL_PICKER_HIDDEN_TOOL_MODELS.has(entry.model))
+            .map((entry) => ({ id: entry.id, title: entry.title }))
+          const workspaceWakeTimerAgentCount = wakeTimerTargetOptions.length
           // The board's props are bound here rather than inside ChatCard because
           // only this component holds the column (and therefore the card record,
           // workspacePath, and the pane a popped-out item should land in).
@@ -1674,6 +1611,7 @@ const PaneViewView = ({
                   wakeTimerEnabled={wakeTimerEnabled}
                   leftWakeTimerTarget={leftWakeTimerTarget}
                   workspaceWakeTimerAgentCount={workspaceWakeTimerAgentCount}
+                  wakeTimerTargetOptions={wakeTimerTargetOptions}
                   automationBoardProps={automationBoardProps}
                   onSetAutoUrgeEnabled={onSetAutoUrgeEnabled}
                   onRemove={() => onCloseTab(pane.id, card.id)}

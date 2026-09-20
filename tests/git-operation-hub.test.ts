@@ -338,7 +338,7 @@ test('closing the agent panel mid-analysis stops the stream explicitly', async (
   assert.deepEqual(fake.stoppedStreams, ['stream-1'])
 })
 
-test('sync flow completes pull -> push in the background and reattach sees done', async () => {
+test('sync flow completes pull -> push in the background and reattach sees a transient toast', async () => {
   const fake = createFakeDeps()
   const hub = createGitOperationHub(fake.deps)
   const ws = 'D:\\repo'
@@ -350,10 +350,29 @@ test('sync flow completes pull -> push in the background and reattach sees done'
   await syncPromise
 
   const snapshot = hub.getSnapshot(ws)
-  assert.equal(snapshot.syncPanelOpen, true)
-  assert.equal(snapshot.syncStep.kind, 'done')
+  // 同步成功不再留一个要点击关闭的面板：面板自动收起，成功只以飘字呈现
+  assert.equal(snapshot.syncPanelOpen, false)
+  assert.equal(snapshot.syncStep.kind, 'idle')
+  assert.equal(snapshot.notice?.tone, 'success')
+  assert.equal(snapshot.notice?.transient, true)
   assert.ok(fake.calls.includes('pullGitChanges'))
   assert.ok(fake.calls.includes('pushGitChanges'))
+})
+
+test('sync success toast expires on its own without any user interaction', async (t) => {
+  const fake = createFakeDeps()
+  const hub = createGitOperationHub(fake.deps)
+  const ws = 'D:\\repo'
+
+  // 虚拟时钟必须在 hub 安装过期计时器之前接管，否则 tick 推不动那个真实 setTimeout
+  t.mock.timers.enable({ apis: ['setTimeout'] })
+  await hub.beginSync(createContext(ws))
+  assert.equal(hub.getSnapshot(ws).notice?.transient, true)
+
+  t.mock.timers.tick(10_000)
+  await new Promise<void>((resolve) => setImmediate(resolve))
+
+  assert.equal(hub.getSnapshot(ws).notice, null)
 })
 
 test('beginSync opens the panel with pull progress immediately, before pull resolves', async () => {
@@ -377,7 +396,8 @@ test('beginSync opens the panel with pull progress immediately, before pull reso
   resolvePull({ status: createGitStatus() })
   await syncPromise
 
-  assert.equal(hub.getSnapshot(ws).syncStep.kind, 'done')
+  assert.equal(hub.getSnapshot(ws).syncPanelOpen, false)
+  assert.equal(hub.getSnapshot(ws).notice?.transient, true)
 })
 
 test('sync flow surfaces blocked files instead of opening the panel', async () => {
@@ -394,6 +414,49 @@ test('sync flow surfaces blocked files instead of opening the panel', async () =
   const snapshot = hub.getSnapshot(ws)
   assert.deepEqual(snapshot.blockedFiles, ['src/a.ts'])
   assert.equal(snapshot.syncPanelOpen, false)
+})
+
+test('conflict resolution has no elapsed-time limit and pushes only after completion', async (t) => {
+  const fake = createFakeDeps()
+  fake.deps.pullGitChanges = async () => ({ status: createGitStatus({ hasConflicts: true }) })
+  const hub = createGitOperationHub(fake.deps)
+  const ws = 'D:\\repo'
+  const sync = hub.beginSync(createContext(ws))
+  // 在请求续体安装计时器之前启用虚拟时钟，避免真实等待。
+  t.mock.timers.enable({ apis: ['setTimeout'] })
+  await new Promise<void>((resolve) => setImmediate(resolve))
+  assert.equal(hub.getSnapshot(ws).syncStep.kind, 'conflict')
+
+  t.mock.timers.tick(24 * 60 * 60 * 1000)
+  await new Promise<void>((resolve) => setImmediate(resolve))
+  assert.equal(hub.getSnapshot(ws).syncStep.kind, 'conflict')
+  assert.deepEqual(fake.stoppedStreams, [])
+  assert.equal(fake.getStreamClosedCount(), 0)
+  assert.equal(fake.calls.includes('pushGitChanges'), false)
+
+  fake.getStreamHandlers()?.onDone?.()
+  await sync
+  assert.equal(hub.getSnapshot(ws).syncPanelOpen, false)
+  assert.equal(hub.getSnapshot(ws).notice?.transient, true)
+  assert.equal(fake.getStreamClosedCount(), 1)
+  assert.equal(fake.calls.includes('pushGitChanges'), true)
+})
+
+test('conflict resolution still reports provider errors without pushing', async () => {
+  const fake = createFakeDeps()
+  fake.deps.pullGitChanges = async () => ({ status: createGitStatus({ hasConflicts: true }) })
+  const hub = createGitOperationHub(fake.deps)
+  const ws = 'D:\\repo'
+  const sync = hub.beginSync(createContext(ws))
+  await flushAsync()
+
+  fake.getStreamHandlers()?.onError?.({ message: '连接失败' })
+  await sync
+  assert.deepEqual(hub.getSnapshot(ws).syncStep, { kind: 'error', message: '连接失败' })
+  // 失败需要用户决策（重试 / 取消），面板必须留着，不能像成功那样飘走
+  assert.equal(hub.getSnapshot(ws).syncPanelOpen, true)
+  assert.equal(fake.getStreamClosedCount(), 1)
+  assert.equal(fake.calls.includes('pushGitChanges'), false)
 })
 
 test('runCommitNew finishes in the background and records a success notice', async () => {

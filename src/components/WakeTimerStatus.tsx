@@ -1,5 +1,11 @@
+import { useState } from 'react'
+
 import { getLocaleText } from '../../shared/i18n'
 import type { AppLanguage, WakeTimerMode } from '../../shared/schema'
+import { WakeTimerTargetPicker, type WakeTimerTargetOption } from './WakeTimerTargetPicker'
+
+/** 下拉里多出的「指定会话」不是第四种 wakeTimerMode，只是名单非空时的投影（见 schema 注释）。 */
+export type WakeTimerUiMode = WakeTimerMode | 'sessions'
 
 export type WakeTimerStatusProps = {
   language: AppLanguage
@@ -14,8 +20,17 @@ export type WakeTimerStatusProps = {
   /** 有没有可等的左邻。没有就不让选 left-tab，否则批次会永远等不到。 */
   neighbourAvailable: boolean
   isEmptyState?: boolean
+  /** 可以点名等待的会话；不给就不露出「指定会话」。 */
+  targetOptions?: readonly WakeTimerTargetOption[]
+  /** 卡上配置的名单（`wakeTimerTargetCardIds`）。 */
+  targetCardIds?: readonly string[]
+  /** 当前批次还在等的卡（`wakeTimerPendingTargetIds`）。 */
+  pendingTargetIds?: readonly string[]
+  /** 当前批次是超管点名的（`wakeTimerExplicitTargets`），即使卡上没有持久化名单也按「指定会话」显示。 */
+  explicitTargets?: boolean
   onChangeMode?: (mode: WakeTimerMode) => void
   onChangeDurationMinutes?: (minutes: number) => void
+  onChangeTargetCardIds?: (targetCardIds: string[]) => void
   onWakeNow?: () => void
   onCancel?: () => void
 }
@@ -40,12 +55,27 @@ export const WakeTimerStatus = ({
   wakeTimerDurationMinutes,
   neighbourAvailable,
   isEmptyState = false,
+  targetOptions,
+  targetCardIds = [],
+  pendingTargetIds = [],
+  explicitTargets = false,
   onChangeMode,
   onChangeDurationMinutes,
+  onChangeTargetCardIds,
   onWakeNow,
   onCancel,
 }: WakeTimerStatusProps) => {
   const text = getLocaleText(language)
+  // 选了「指定会话」但还一张没勾时名单为空，投影会立刻跳回原模式，用户根本
+  // 来不及勾。用本地态把这一步撑住；一旦换回别的模式就放手。
+  const [pickingSessions, setPickingSessions] = useState(false)
+  const sessionsAvailable = targetOptions !== undefined
+  const uiMode: WakeTimerUiMode =
+    sessionsAvailable && (pickingSessions || targetCardIds.length > 0 || explicitTargets)
+      ? 'sessions'
+      : wakeTimerMode
+  const showsPicker = uiMode === 'sessions' && (pickingSessions || targetCardIds.length > 0 || !explicitTargets)
+  const showsDuration = uiMode === 'duration' || uiMode === 'sessions'
 
   return (
     <div
@@ -69,22 +99,44 @@ export const WakeTimerStatus = ({
         className="reasoning-select composer-wake-timer-mode-select"
         aria-label={text.wakeTimerModeLabel}
         title={text.wakeTimerModeLabel}
-        value={wakeTimerMode}
+        value={uiMode}
         disabled={!onChangeMode}
-        onChange={(event) => onChangeMode?.(event.target.value as WakeTimerMode)}
+        onChange={(event) => {
+          const next = event.target.value as WakeTimerUiMode
+          if (next === 'sessions') {
+            setPickingSessions(true)
+            return
+          }
+          setPickingSessions(false)
+          onChangeMode?.(next)
+        }}
       >
         <option value="workspace-agents">{text.wakeTimerModeWorkspace}</option>
         <option value="left-tab" disabled={!neighbourAvailable}>
           {text.wakeTimerModeLeftTab}
         </option>
         <option value="duration">{text.wakeTimerModeDuration}</option>
+        {sessionsAvailable ? <option value="sessions">{text.wakeTimerModeSessions}</option> : null}
       </select>
-      {wakeTimerMode === 'duration' ? (
-        <span className="composer-wake-timer-duration-control">
+      {showsPicker && targetOptions ? (
+        <WakeTimerTargetPicker
+          language={language}
+          options={targetOptions}
+          selectedIds={targetCardIds}
+          pendingIds={pendingTargetIds}
+          onChange={onChangeTargetCardIds}
+        />
+      ) : null}
+      {showsDuration ? (
+        <span
+          className="composer-wake-timer-duration-control"
+          title={uiMode === 'sessions' ? text.wakeTimerSessionsTimeoutHint : undefined}
+        >
+          {uiMode === 'sessions' ? <span>{text.wakeTimerSessionsTimeoutLabel}</span> : null}
           <input
             type="number"
             className="control composer-wake-timer-duration-input"
-            aria-label={text.wakeTimerDurationLabel}
+            aria-label={uiMode === 'sessions' ? text.wakeTimerSessionsTimeoutLabel : text.wakeTimerDurationLabel}
             min={1}
             max={10080}
             step={1}

@@ -47,6 +47,7 @@ The source of truth for this SPEC is the installed Codex CLI (`codex-cli 0.144.1
 - A newly started child appears immediately from its nickname/role/thread id metadata; the panel must not stay empty while waiting for a later event to provide its canonical path.
 - The panel title and empty state follow Codex CLI semantics: `Sub-agents running` and `No sub-agents running.` (localized in Chill Vibe).
 - Completed, interrupted, failed, idle, or closed agents leave the running list; their historical tool-call/lifecycle activity remains available in the transcript.
+- If the Codex transport closes or errors before a child terminal event arrives, the provider publishes a final interrupted snapshot so the dock never remains stuck on a stale `running` entry.
 - No disabled `Open` button or unsupported mention hint is shown.
 
 ### Preview parity

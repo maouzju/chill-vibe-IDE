@@ -200,8 +200,24 @@ export type WakeTimerArmResult =
       armedAt: string
       wakeAt: string | undefined
       pendingTargetIds: string[]
+      /** 名单 arm 出来的批次；调用方要把它写成 `wakeTimerExplicitTargets: true`。 */
+      explicitTargets?: true
     }
   | { ok: false; reason: 'left-target-unavailable' }
+
+/**
+ * 「指定会话」：名单非空时它压过 mode。
+ *
+ * 症状：2026-09-20 用户反馈"待唤醒只能等其他 Agent 完成，用户自己正在聊的窗口
+ *   也算 Agent，超管/普通卡被无关会话无限压住"。
+ * 根因：三种条件里唯一等别人的 `workspace-agents` 是全对全，名单不可定制；
+ *   只有超管 MCP 的 `wake_me_when_sessions_finish` 能点名，且只能点给自己。
+ * 被否决：加第四种 `wakeTimerMode` —— 它会顺着 `wakeTimerDefaultMode` 和看板模板
+ *   泄漏成普通卡永远算不出名单的默认值（见 schema 上 wakeTimerExplicitTargets 的注释）。
+ *   名单作为独立字段附加，UI 下拉里的「指定会话」只是它的投影。
+ */
+const hasWakeTimerTargetList = (targetCardIds: readonly string[] | undefined): targetCardIds is readonly string[] =>
+  Array.isArray(targetCardIds) && targetCardIds.length > 0
 
 export const armWakeTimerBatch = ({
   mode,
@@ -210,6 +226,7 @@ export const armWakeTimerBatch = ({
   nowMs,
   cards,
   paneTabIds,
+  targetCardIds,
 }: {
   mode: WakeTimerMode
   ownerCardId: string
@@ -217,8 +234,28 @@ export const armWakeTimerBatch = ({
   nowMs: number
   cards: readonly WakeTimerCardSnapshot[]
   paneTabIds: readonly string[]
+  /** 「指定会话」名单；非空时忽略 mode，按 resolveSupervisorWakeTargets 的口径等这几张。 */
+  targetCardIds?: readonly string[]
 }): WakeTimerArmResult => {
   const armedAt = new Date(nowMs).toISOString()
+
+  if (hasWakeTimerTargetList(targetCardIds)) {
+    const resolved = resolveSupervisorWakeTargets({
+      ownerCardId,
+      requestedTargetIds: targetCardIds,
+      cards,
+    })
+    return {
+      ok: true,
+      armedAt,
+      // 名单里的卡可能被打断/报错/从没开跑，永远不广播完成（pitfall 327）：
+      // durationMinutes 在这里是兜底上限，不是等待时长。
+      wakeAt: new Date(nowMs + durationMinutes * 60_000).toISOString(),
+      // 名单全部失效（卡都关了）→ 空名单 + 上限：本轮一结束就发车，比永久挂起好。
+      pendingTargetIds: resolved.ok ? resolved.targetIds : [],
+      explicitTargets: true,
+    }
+  }
 
   if (mode === 'duration') {
     return {
@@ -331,7 +368,7 @@ export const rearmWakeTimerBatchForPatch = ({
     | 'wakeTimerDurationMinutes'
     | 'wakeTimerQueuedSends'
     | 'wakeTimerExplicitTargets'
-  >
+  > & Partial<Pick<ChatCard, 'wakeTimerTargetCardIds' | 'wakeTimerPendingTargetIds'>>
   cards: readonly WakeTimerCardSnapshot[]
   paneTabIds: readonly string[]
   nowMs: number
@@ -340,31 +377,44 @@ export const rearmWakeTimerBatchForPatch = ({
       ok: true
       patch: Pick<
         ChatCard,
-        'wakeTimerArmedAt' | 'wakeTimerWakeAt' | 'wakeTimerPendingTargetIds'
+        | 'wakeTimerArmedAt'
+        | 'wakeTimerWakeAt'
+        | 'wakeTimerPendingTargetIds'
+        | 'wakeTimerExplicitTargets'
       >
     }
   | { ok: false; reason: 'left-target-unavailable' }
   | null => {
   const changesCondition =
-    patch.wakeTimerMode !== undefined || patch.wakeTimerDurationMinutes !== undefined
+    patch.wakeTimerMode !== undefined ||
+    patch.wakeTimerDurationMinutes !== undefined ||
+    patch.wakeTimerTargetCardIds !== undefined
   if (!changesCondition || (card.wakeTimerQueuedSends?.length ?? 0) === 0) {
     return null
   }
 
-  // 显式名单**算不出来**：armWakeTimerBatch 只认 streaming 快照和左邻拓扑，重算
-  // 会把超管点名的那几张换成"此刻在跑的所有 agent"、并把兜底超时一起置空。
-  // 用户在这张卡上碰一下条件下拉或时长框就会走到这里，所以必须在重算之前退出。
-  if (card.wakeTimerExplicitTargets === true) {
-    return null
+  const targetCardIds = patch.wakeTimerTargetCardIds ?? card.wakeTimerTargetCardIds
+  const durationMinutes = patch.wakeTimerDurationMinutes ?? card.wakeTimerDurationMinutes ?? 30
+
+  if (card.wakeTimerExplicitTargets === true && !hasWakeTimerTargetList(targetCardIds)) {
+    // 超管用 wake_me_when_sessions_finish 点的名**没有**持久化名单：它算不出来
+    // （armWakeTimerBatch 只认 streaming 快照和左邻拓扑），重算会把点名的那几张
+    // 换成"此刻在跑的所有 agent"、并把兜底超时一起置空。用户碰一下时长框就会走到
+    // 这里，所以必须在重算之前退出；只有用户明确换了条件（patch 带 mode 或名单）
+    // 才往下走 —— 那是有意放弃点名，UI 上「指定会话」一项已经把这一点摆明了。
+    if (patch.wakeTimerMode === undefined && patch.wakeTimerTargetCardIds === undefined) {
+      return null
+    }
   }
 
   const arm = armWakeTimerBatch({
     mode: patch.wakeTimerMode ?? card.wakeTimerMode ?? 'workspace-agents',
     ownerCardId: card.id,
-    durationMinutes: patch.wakeTimerDurationMinutes ?? card.wakeTimerDurationMinutes ?? 30,
+    durationMinutes,
     nowMs,
     cards,
     paneTabIds,
+    targetCardIds,
   })
 
   if (!arm.ok) {
@@ -377,6 +427,7 @@ export const rearmWakeTimerBatchForPatch = ({
       wakeTimerArmedAt: arm.armedAt,
       wakeTimerWakeAt: arm.wakeAt,
       wakeTimerPendingTargetIds: arm.pendingTargetIds,
+      wakeTimerExplicitTargets: arm.explicitTargets === true ? true : undefined,
     },
   }
 }
@@ -420,7 +471,15 @@ export const isWakeTimerConditionReady = ({
     return true
   }
 
-  if (mode === 'duration') {
+  // 症状：UI 上给一张「指定时长 30 分钟」的卡改选「指定会话完成」并勾了 peer，
+  //   peer 早就跑完，这张卡仍干等满 30 分钟。
+  // 根因：名单只写 wakeTimerTargetCardIds，wakeTimerMode 原样保留，而这里的
+  //   duration 短路完全忽略 pendingTargetIds / explicitTargets。MCP 那条路径是
+  //   靠把 mode 归一到 workspace-agents 绕开的（App.tsx admin-set-session-wake-timer），
+  //   UI 没有同样的归一。
+  // 被否决：在每个写名单的 UI 回调里补一次 mode 归一 —— 写入口不止一个（状态行、
+  //   设置面板、将来的入口），判据这一层认名单才是一次性覆盖所有路径。
+  if (mode === 'duration' && !explicitTargets) {
     return false
   }
 
@@ -442,12 +501,18 @@ export const shouldReleaseCompletedWakeTimerTarget = ({
   waitingMode,
   completedTargetHasPendingWakeBatch,
   forceRelease = false,
+  explicitTargets = false,
 }: {
   waitingMode: WakeTimerMode
   completedTargetHasPendingWakeBatch: boolean
   forceRelease?: boolean
+  /** 等待方挂的是显式名单（见 isWakeTimerConditionReady 的同名参数）。 */
+  explicitTargets?: boolean
 }) =>
   forceRelease ||
+  // 名单是点名等这几张卡，与左邻拓扑无关：卡上残留的 left-tab 不该让点到的
+  // 目标永远出不了 pendingTargetIds，那样只剩兜底超时能拆开。
+  explicitTargets ||
   waitingMode !== 'left-tab' ||
   !completedTargetHasPendingWakeBatch
 

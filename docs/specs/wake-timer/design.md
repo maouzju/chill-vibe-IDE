@@ -13,6 +13,8 @@
 - `ChatCard.wakeTimerArmedAt?: ISO datetime`
 - `ChatCard.wakeTimerWakeAt?: ISO datetime`
 - `ChatCard.wakeTimerPendingTargetIds: string[]`
+- `ChatCard.wakeTimerExplicitTargets?: true` —— 当前批次的等待名单是点名的（超管 MCP 或用户勾选），不是从拓扑推出来的；批次一结束就清
+- `ChatCard.wakeTimerTargetCardIds?: string[]`（2026-09-20）—— 卡上**配置**的「指定会话」名单，批次结束后仍留着；非空时 `armWakeTimerBatch` 忽略 mode，按 `resolveSupervisorWakeTargets` 的口径 arm 成显式等待并把 `durationMinutes` 当兜底上限
 
 复用 `QueuedSendRequest` 保存提示词与附件元数据，但与 `queuedSends` 分开持久化，避免把现有 FIFO “延后发送”误当成整批计时唤醒。`QueuedSendRequest.isContinuation?: true` 显式表示空输入“继续会话”：只有带该标记的空项才合法，普通空 prompt + 空附件仍由 schema/恢复预处理丢弃，保留 2026-07-26 存档崩溃防线。
 
@@ -115,7 +117,9 @@ composer 设置菜单顶部增加一个安静的 `.composer-wake-timer-module`�
 
 composer 输入框上方增加待唤醒状态行，与现有延后发送状态并列但视觉层级保持克制：数量、条件/剩余时间、批次摘要、立即唤醒、取消。
 
-状态行右侧的唤醒方式下拉直接改当前批次的条件。任何一次带 `wakeTimerMode` / `wakeTimerDurationMinutes` 的卡片 patch 都经过 `rearmWakeTimerBatchForPatch`（`src/components/wake-timer.ts`）：卡上没有挂起批次时返回 `null`（原样 patch，只影响下一批），有批次时用新条件跑一遍 `armWakeTimerBatch`，把新的 `wakeTimerArmedAt` / `wakeTimerWakeAt` / `wakeTimerPendingTargetIds` 合进同一次原子更新。切到 duration 时以「改的那一刻」为起点重新计时，而不是沿用首条消息入队时间——用户改期的意图就是「从现在起再等 N 分钟」。`left-tab` 无有效左邻时 arm 失败，此时保持原条件不变，UI 侧也把该选项禁用避免走到这个分支。
+「指定会话完成」（`WakeTimerTargetPicker`，`src/components/WakeTimerTargetPicker.tsx`）在状态行与设置面板两处共用：下拉里的 `sessions` 是 UI 层的投影值（`WakeTimerUiMode`），名单非空或当前批次带 `wakeTimerExplicitTargets` 时选中；刚选中还没勾时靠组件本地态撑住，换回普通模式时 patch 一并带 `wakeTimerTargetCardIds: []`（名单非空会压过 mode，不清等于 mode 白改）。候选名单由 `PaneView`（同列非工具卡、剔自己）和看板卡（`AutomationBoardCard` 一次 `useMemo`，逐项剔自己）算好传下来；状态行文案用候选名单把 `wakeTimerPendingTargetIds` 翻成标题。超管 MCP 的 `set_session_wake_timer` 带 `cardIds` 时执行器只写 `wakeTimerTargetCardIds`（+ `durationMinutes` 作上限），不带时写空数组清名单；批次挂起中改名单同样走下面的 rearm。
+
+状态行右侧的唤醒方式下拉直接改当前批次的条件。任何一次带 `wakeTimerMode` / `wakeTimerDurationMinutes` / `wakeTimerTargetCardIds` 的卡片 patch 都经过 `rearmWakeTimerBatchForPatch`（`src/components/wake-timer.ts`）：卡上没有挂起批次时返回 `null`（原样 patch，只影响下一批），有批次时用新条件跑一遍 `armWakeTimerBatch`，把新的 `wakeTimerArmedAt` / `wakeTimerWakeAt` / `wakeTimerPendingTargetIds` 合进同一次原子更新。切到 duration 时以「改的那一刻」为起点重新计时，而不是沿用首条消息入队时间——用户改期的意图就是「从现在起再等 N 分钟」。`left-tab` 无有效左邻时 arm 失败，此时保持原条件不变，UI 侧也把该选项禁用避免走到这个分支。
 
 批次摘要由 `summarizeWakeTimerBatch`（`src/components/wake-timer.ts`）从 `mergeWakeTimerRequests` 的合并结果取前 120 字并折叠空白，而不是复用延后发送队列的“下一条”预览：唤醒是整批合并成一次发送，只预览首条会漏掉后面追加的内容。摘要以次要行渲染（`.composer-wake-timer-preview`），单行省略号收口，全文放 `title` 悬停查看，纯附件批次退化为“图片消息”。状态行组件是独立的 `src/components/WakeTimerStatus.tsx`，便于 SSR 渲染测试直接覆盖这一行文案。
 

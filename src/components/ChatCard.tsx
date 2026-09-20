@@ -435,6 +435,8 @@ type ChatCardProps = {
   wakeTimerEnabled?: boolean
   leftWakeTimerTarget?: { id: string; title: string } | null
   workspaceWakeTimerAgentCount?: number
+  /** 同列里可点名等待的会话（不含自己和工具卡），「指定会话」条件用。 */
+  wakeTimerTargetOptions?: readonly { id: string; title: string }[]
   // Fully bound by PaneView (it owns the column and the App callbacks) so this
   // component stays a pure pass-through for the board — no board logic here.
   automationBoardProps?: AutomationBoardCardProps
@@ -477,6 +479,7 @@ type ChatCardProps = {
         | 'wakeTimerActive'
         | 'wakeTimerMode'
         | 'wakeTimerDurationMinutes'
+        | 'wakeTimerTargetCardIds'
         | 'stickyNote'
         | 'stickyNoteId'
         | 'stickyNoteViewState'
@@ -929,6 +932,8 @@ const areChatCardPropsEqual = (previous: ChatCardProps, next: ChatCardProps) =>
   // 所以 title 变化对这张卡的渲染无影响，比较它只会让左邻改标题时白白重渲染整卡。
   previous.leftWakeTimerTarget?.id === next.leftWakeTimerTarget?.id &&
   previous.workspaceWakeTimerAgentCount === next.workspaceWakeTimerAgentCount &&
+  wakeTimerTargetOptionsKey(previous.wakeTimerTargetOptions) ===
+    wakeTimerTargetOptionsKey(next.wakeTimerTargetOptions) &&
   previous.automationBoardProps === next.automationBoardProps &&
   previous.queuedSendSummary === next.queuedSendSummary &&
   previous.isRestored === next.isRestored &&
@@ -959,6 +964,10 @@ type ChatTranscriptProps = {
   wakeTimerMode: WakeTimerMode
   wakeTimerDurationMinutes: number
   wakeTimerNeighbourAvailable: boolean
+  wakeTimerTargetOptions?: readonly { id: string; title: string }[]
+  wakeTimerTargetCardIds: readonly string[]
+  wakeTimerPendingTargetIds: readonly string[]
+  wakeTimerExplicitTargets: boolean
   wakeTimerWakeNowLabel: string
   wakeTimerCancelLabel: string
   showsQuickToolGrid: boolean
@@ -972,6 +981,7 @@ type ChatTranscriptProps = {
   onCancelWakeTimerBatch?: () => void
   onChangeWakeTimerMode?: (mode: WakeTimerMode) => void
   onChangeWakeTimerDurationMinutes?: (minutes: number) => void
+  onChangeWakeTimerTargetCardIds?: (targetCardIds: string[]) => void
   onActivateQuickTool: (entry: EmptyStateToolEntry) => void
   onToggleToolGroup: (key: string) => void
   onSelectAskUserOption: (answerKey: string, label: string) => void
@@ -979,6 +989,10 @@ type ChatTranscriptProps = {
   onOpenFile?: (relativePath: string, options?: { line?: number }) => void
   onForkConversation?: (messageId: string) => void
 }
+
+// 名单每次渲染都是新数组；按内容比，别让 PaneView 的一次重渲染把整张卡拖下水。
+const wakeTimerTargetOptionsKey = (options?: readonly { id: string; title: string }[]) =>
+  options ? options.map((option) => `${option.id}\u0000${option.title}`).join('\u0001') : ''
 
 const ChatTranscript = memo(
   ({
@@ -1002,6 +1016,10 @@ const ChatTranscript = memo(
     wakeTimerMode,
     wakeTimerDurationMinutes,
     wakeTimerNeighbourAvailable,
+    wakeTimerTargetOptions,
+    wakeTimerTargetCardIds,
+    wakeTimerPendingTargetIds,
+    wakeTimerExplicitTargets,
     wakeTimerWakeNowLabel,
     wakeTimerCancelLabel,
     showsQuickToolGrid,
@@ -1015,6 +1033,7 @@ const ChatTranscript = memo(
     onCancelWakeTimerBatch,
     onChangeWakeTimerMode,
     onChangeWakeTimerDurationMinutes,
+    onChangeWakeTimerTargetCardIds,
     onActivateQuickTool,
     onToggleToolGroup,
     onSelectAskUserOption,
@@ -1380,11 +1399,16 @@ const ChatTranscript = memo(
                 wakeTimerMode={wakeTimerMode}
                 wakeTimerDurationMinutes={wakeTimerDurationMinutes}
                 neighbourAvailable={wakeTimerNeighbourAvailable}
+                targetOptions={wakeTimerTargetOptions}
+                targetCardIds={wakeTimerTargetCardIds}
+                pendingTargetIds={wakeTimerPendingTargetIds}
+                explicitTargets={wakeTimerExplicitTargets}
                 wakeNowLabel={wakeTimerWakeNowLabel}
                 cancelLabel={wakeTimerCancelLabel}
                 isEmptyState
                 onChangeMode={onChangeWakeTimerMode}
                 onChangeDurationMinutes={onChangeWakeTimerDurationMinutes}
+                onChangeTargetCardIds={onChangeWakeTimerTargetCardIds}
                 onWakeNow={onWakeTimerBatchNow}
                 onCancel={onCancelWakeTimerBatch}
               />
@@ -1512,6 +1536,7 @@ const ChatCardView = ({
   wakeTimerEnabled = false,
   leftWakeTimerTarget = null,
   workspaceWakeTimerAgentCount = 0,
+  wakeTimerTargetOptions,
   automationBoardProps,
   queuedSendSummary,
   onSetAutoUrgeEnabled,
@@ -1721,14 +1746,16 @@ const ChatCardView = ({
         .join(':')
       return language === 'en' ? `Wakes in ${clock}` : `${clock} 后唤醒`
     }
-    // 超管点名的等待名单：数量就是它点的那几张卡，说"其他 Agent"会让用户以为
-    // 它在等整列。这条要排在 mode 分支之前 —— 名单批次的 mode 只是个载体。
+    // 点名的等待名单（超管 MCP 或用户勾选）：数量就是点的那几张卡，说"其他 Agent"
+    // 会让用户以为它在等整列，再把标题列出来用户才知道在等谁。这条要排在 mode
+    // 分支之前 —— 名单批次的 mode 只是个载体。
     if (card.wakeTimerExplicitTargets === true) {
-      const pendingCount = card.wakeTimerPendingTargetIds?.length ?? 0
-      return pendingCount > 0
-        ? (language === 'en'
-            ? `Waiting for ${pendingCount} session${pendingCount === 1 ? '' : 's'}`
-            : `等待 ${pendingCount} 个会话完成`)
+      const pendingIds = card.wakeTimerPendingTargetIds ?? []
+      const titles = pendingIds.map((id) =>
+        wakeTimerTargetOptions?.find((option) => option.id === id)?.title || id.slice(0, 8),
+      )
+      return pendingIds.length > 0
+        ? text.wakeTimerWaitingSessions(pendingIds.length, titles)
         : (language === 'en' ? 'Watched sessions are complete' : '等待的会话已完成')
     }
     if (wakeTimerMode === 'left-tab') {
@@ -3613,11 +3640,16 @@ const ChatCardView = ({
   // 待唤醒状态行上的两个控件走同一条卡片 patch 通道；重新计时由 App 侧的
   // rearmWakeTimerBatchForPatch 统一处理，UI 这层不自己算 arm 数据。
   const handleChangeWakeTimerMode = (mode: WakeTimerMode) => {
-    onPatchCard({ wakeTimerMode: mode })
+    // 名单非空会压过 mode（armWakeTimerBatch），换回普通条件必须一起清掉。
+    onPatchCard({ wakeTimerMode: mode, wakeTimerTargetCardIds: [] })
   }
 
   const handleChangeWakeTimerDurationMinutes = (minutes: number) => {
     onPatchCard({ wakeTimerDurationMinutes: minutes })
+  }
+
+  const handleChangeWakeTimerTargetCardIds = (targetCardIds: string[]) => {
+    onPatchCard({ wakeTimerTargetCardIds: targetCardIds })
   }
 
   const handleSendButtonContextMenu = (event: MouseEvent<HTMLButtonElement>) => {
@@ -4729,6 +4761,10 @@ const ChatCardView = ({
                 wakeTimerMode={wakeTimerMode}
                 wakeTimerDurationMinutes={card.wakeTimerDurationMinutes ?? 30}
                 wakeTimerNeighbourAvailable={Boolean(leftWakeTimerTarget)}
+                wakeTimerTargetOptions={wakeTimerTargetOptions}
+                wakeTimerTargetCardIds={card.wakeTimerTargetCardIds ?? []}
+                wakeTimerPendingTargetIds={card.wakeTimerPendingTargetIds ?? []}
+                wakeTimerExplicitTargets={card.wakeTimerExplicitTargets === true}
                 wakeTimerWakeNowLabel={text.wakeTimerWakeNow}
                 wakeTimerCancelLabel={text.wakeTimerCancel}
                 showsQuickToolGrid={showsQuickToolGrid}
@@ -4741,6 +4777,7 @@ const ChatCardView = ({
                 onWakeTimerBatchNow={onWakeTimerBatchNow}
                 onCancelWakeTimerBatch={handleCancelWakeTimerBatch}
                 onChangeWakeTimerMode={handleChangeWakeTimerMode}
+                onChangeWakeTimerTargetCardIds={handleChangeWakeTimerTargetCardIds}
                 onChangeWakeTimerDurationMinutes={handleChangeWakeTimerDurationMinutes}
                 onActivateQuickTool={activateQuickTool}
                 onToggleToolGroup={toggleToolGroup}
@@ -4807,10 +4844,15 @@ const ChatCardView = ({
                   wakeTimerMode={wakeTimerMode}
                   wakeTimerDurationMinutes={card.wakeTimerDurationMinutes ?? 30}
                   neighbourAvailable={Boolean(leftWakeTimerTarget)}
+                  targetOptions={wakeTimerTargetOptions}
+                  targetCardIds={card.wakeTimerTargetCardIds ?? []}
+                  pendingTargetIds={card.wakeTimerPendingTargetIds ?? []}
+                  explicitTargets={card.wakeTimerExplicitTargets === true}
                   wakeNowLabel={text.wakeTimerWakeNow}
                   cancelLabel={text.wakeTimerCancel}
                   onChangeMode={handleChangeWakeTimerMode}
                   onChangeDurationMinutes={handleChangeWakeTimerDurationMinutes}
+                  onChangeTargetCardIds={handleChangeWakeTimerTargetCardIds}
                   onWakeNow={onWakeTimerBatchNow}
                   onCancel={handleCancelWakeTimerBatch}
                 />
@@ -4950,6 +4992,7 @@ const ChatCardView = ({
                               context="tab"
                               card={card}
                               neighbourTarget={leftWakeTimerTarget ?? null}
+                              targetOptions={wakeTimerTargetOptions}
                               workspaceAgentCount={workspaceWakeTimerAgentCount}
                               locked={hasWakeTimerBatch}
                               onPatch={onPatchCard}

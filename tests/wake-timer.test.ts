@@ -330,6 +330,7 @@ describe('changing the wake condition while a batch is pending', () => {
           wakeTimerArmedAt: '2026-08-15T00:00:00.000Z',
           wakeTimerWakeAt: '2026-08-15T00:45:00.000Z',
           wakeTimerPendingTargetIds: [],
+          wakeTimerExplicitTargets: undefined,
         },
       },
     )
@@ -392,6 +393,203 @@ describe('changing the wake condition while a batch is pending', () => {
       }),
       null,
     )
+  })
+})
+
+describe('指定会话名单（wakeTimerTargetCardIds）', () => {
+  const cards = [
+    { id: 'owner', status: 'idle' as const, isAgent: true },
+    { id: 'peer-idle', status: 'idle' as const, isAgent: true },
+    { id: 'peer-running', status: 'streaming' as const, isAgent: true },
+    { id: 'user-chat', status: 'streaming' as const, isAgent: true },
+    { id: 'board', status: 'idle' as const, isAgent: false },
+  ]
+  const nowMs = Date.parse('2026-09-20T00:00:00.000Z')
+
+  it('schema 接受卡上持久化的目标名单', () => {
+    const card = chatCardSchema.parse({
+      ...createCard('Timer card'),
+      wakeTimerTargetCardIds: ['peer-idle', 'peer-running'],
+    })
+    assert.deepEqual(card.wakeTimerTargetCardIds, ['peer-idle', 'peer-running'])
+  })
+
+  it('名单 arm 出显式等待：不按忙闲过滤、剔除自己/工具卡/不存在的卡，并带兜底上限', () => {
+    assert.deepEqual(
+      armWakeTimerBatch({
+        mode: 'workspace-agents',
+        ownerCardId: 'owner',
+        durationMinutes: 45,
+        nowMs,
+        cards,
+        paneTabIds: ['owner'],
+        targetCardIds: ['peer-idle', 'owner', 'board', 'ghost', 'peer-running'],
+      }),
+      {
+        ok: true,
+        armedAt: '2026-09-20T00:00:00.000Z',
+        wakeAt: '2026-09-20T00:45:00.000Z',
+        pendingTargetIds: ['peer-idle', 'peer-running'],
+        explicitTargets: true,
+      },
+    )
+  })
+
+  it('用户自己的聊天窗口在跑也不影响名单等待', () => {
+    const arm = armWakeTimerBatch({
+      mode: 'workspace-agents',
+      ownerCardId: 'owner',
+      durationMinutes: 60,
+      nowMs,
+      cards,
+      paneTabIds: ['owner'],
+      targetCardIds: ['peer-running'],
+    })
+    assert.equal(arm.ok, true)
+    assert.deepEqual(arm.ok ? arm.pendingTargetIds : null, ['peer-running'])
+    assert.equal(
+      isWakeTimerConditionReady({
+        mode: 'workspace-agents',
+        ownerStatus: 'idle',
+        pendingTargetIds: [],
+        activePeerIds: ['user-chat'],
+        explicitTargets: true,
+        wakeAt: arm.ok ? arm.wakeAt : undefined,
+        nowMs: nowMs + 1000,
+      }),
+      true,
+    )
+  })
+
+  // 2026-09-20：UI 上选「指定会话」只写名单、不动 wakeTimerMode，卡上残留的
+  // duration / left-tab 会把「等这几张卡」悄悄变回「干等 N 分钟」。MCP 侧靠把
+  // mode 归一到 workspace-agents 绕开，UI 侧没有同样的处理，所以判据本身必须
+  // 认显式名单 —— 否则名单早已清空，卡仍干等满兜底上限。
+  it('显式名单的条件判定不被残留的 duration / left-tab 模式压住', () => {
+    const armedAt = nowMs
+    const wakeAt = new Date(armedAt + 30 * 60_000).toISOString()
+    for (const staleMode of ['duration', 'left-tab'] as const) {
+      assert.equal(
+        isWakeTimerConditionReady({
+          mode: staleMode,
+          ownerStatus: 'idle',
+          pendingTargetIds: [],
+          activePeerIds: ['user-chat'],
+          explicitTargets: true,
+          wakeAt,
+          nowMs: armedAt + 1000,
+        }),
+        true,
+        `${staleMode}: 名单已清空就该发车`,
+      )
+      assert.equal(
+        isWakeTimerConditionReady({
+          mode: staleMode,
+          ownerStatus: 'idle',
+          pendingTargetIds: ['peer-running'],
+          explicitTargets: true,
+          wakeAt,
+          nowMs: armedAt + 1000,
+        }),
+        false,
+        `${staleMode}: 名单还有人没跑完就不能发车`,
+      )
+    }
+  })
+  it('挂起批次改名单会立刻按名单重新 arm，并打上显式标记', () => {
+    const result = rearmWakeTimerBatchForPatch({
+      patch: { wakeTimerTargetCardIds: ['peer-idle'] },
+      card: {
+        id: 'owner',
+        wakeTimerMode: 'workspace-agents' as const,
+        wakeTimerDurationMinutes: 30,
+        wakeTimerQueuedSends: [request('one', '等 A 做完')],
+      },
+      cards,
+      paneTabIds: ['owner'],
+      nowMs,
+    })
+    assert.deepEqual(result, {
+      ok: true,
+      patch: {
+        wakeTimerArmedAt: '2026-09-20T00:00:00.000Z',
+        wakeTimerWakeAt: '2026-09-20T00:30:00.000Z',
+        wakeTimerPendingTargetIds: ['peer-idle'],
+        wakeTimerExplicitTargets: true,
+      },
+    })
+  })
+
+  it('名单卡上改时长只刷新兜底上限，名单不变', () => {
+    const result = rearmWakeTimerBatchForPatch({
+      patch: { wakeTimerDurationMinutes: 90 },
+      card: {
+        id: 'owner',
+        wakeTimerMode: 'workspace-agents' as const,
+        wakeTimerDurationMinutes: 30,
+        wakeTimerQueuedSends: [request('one', '等 A 做完')],
+        wakeTimerExplicitTargets: true,
+        wakeTimerPendingTargetIds: ['peer-idle'],
+        wakeTimerTargetCardIds: ['peer-idle'],
+      },
+      cards,
+      paneTabIds: ['owner'],
+      nowMs,
+    })
+    assert.equal(result?.ok, true)
+    assert.deepEqual(result?.ok === true ? result.patch.wakeTimerPendingTargetIds : null, ['peer-idle'])
+    assert.equal(result?.ok === true ? result.patch.wakeTimerWakeAt : null, '2026-09-20T01:30:00.000Z')
+  })
+
+  it('超管点名的批次（没有持久化名单）碰一下时长框仍不会被重算掉', () => {
+    assert.equal(
+      rearmWakeTimerBatchForPatch({
+        patch: { wakeTimerDurationMinutes: 90 },
+        card: {
+          id: 'owner',
+          wakeTimerMode: 'workspace-agents' as const,
+          wakeTimerDurationMinutes: 30,
+          wakeTimerQueuedSends: [request('one', '等 A 做完')],
+          wakeTimerExplicitTargets: true,
+          wakeTimerPendingTargetIds: ['peer-idle'],
+        },
+        cards,
+        paneTabIds: ['owner'],
+        nowMs,
+      }),
+      null,
+    )
+  })
+
+  it('从名单切回普通条件会清掉显式标记并按拓扑重算', () => {
+    const result = rearmWakeTimerBatchForPatch({
+      patch: { wakeTimerMode: 'workspace-agents', wakeTimerTargetCardIds: [] },
+      card: {
+        id: 'owner',
+        wakeTimerMode: 'workspace-agents' as const,
+        wakeTimerDurationMinutes: 30,
+        wakeTimerQueuedSends: [request('one', '等 A 做完')],
+        wakeTimerExplicitTargets: true,
+        wakeTimerPendingTargetIds: ['peer-idle'],
+        wakeTimerTargetCardIds: ['peer-idle'],
+      },
+      cards,
+      paneTabIds: ['owner'],
+      nowMs,
+    })
+    assert.deepEqual(result, {
+      ok: true,
+      patch: {
+        wakeTimerArmedAt: '2026-09-20T00:00:00.000Z',
+        wakeTimerWakeAt: undefined,
+        wakeTimerPendingTargetIds: ['peer-running', 'user-chat'],
+        wakeTimerExplicitTargets: undefined,
+      },
+    })
+  })
+
+  it('名单不会变成新会话默认偏好', () => {
+    assert.equal(collectWakeTimerDefaultPreference({ wakeTimerTargetCardIds: ['peer-idle'] }), null)
   })
 })
 

@@ -1044,6 +1044,10 @@ const normalizePersistedCard = (
     // 显示了，重启后 `wakeTimerExplicitTargets` 消失，那批显式名单退化成"等全列
     // 没人在跑"、兜底上界也不再被读取。加持久化字段必须同时加这里。
     wakeTimerExplicitTargets: card.wakeTimerExplicitTargets === true ? true : undefined,
+    wakeTimerTargetCardIds: (() => {
+      const targetCardIds = normalizeWakeTimerTargetIds(card.wakeTimerTargetCardIds)
+      return targetCardIds.length > 0 ? targetCardIds : undefined
+    })(),
     stickyNote: typeof card.stickyNote === 'string' ? card.stickyNote : fallback.stickyNote,
     stickyNoteId:
       normalizedModel === STICKYNOTE_TOOL_MODEL
@@ -1089,6 +1093,9 @@ const normalizePersistedCard = (
     // 卡片级超管权限（v2 取代了看板上的 supervisorCardId 指针）。optional 而非
     // default：绝大多数卡片没有它，不给每张卡在 state.json 里加一个 false。
     adminAccess: card.adminAccess === true ? true : undefined,
+    // agent 派发的会话标记：tab 图标据此显示机器人而不是 provider 图标。这个
+    // return 是手抄白名单，漏掉它重启后就分不清哪些 tab 是 agent 替用户开的。
+    spawnedByAgent: card.spawnedByAgent === true ? true : undefined,
     // 模板血缘：项被拖出看板时盖在卡片上，拖回来时读回去还原 item.templateId。
     // 这个 return 是**手抄白名单**，漏掉它就等于每存一次盘剥一次血缘 —— 症状是
     // 重启后拖回看板的监工实例 templateId 变空串，触发器的防自触发守卫

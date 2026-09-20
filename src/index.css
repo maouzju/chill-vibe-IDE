@@ -5071,6 +5071,50 @@ body.is-card-dragging .lane-drop-zone-top {
   font-size: 0.66rem;
 }
 
+/* 「指定会话」勾选名单：状态行里整行换到下一行铺开，设置面板里跟在行标签后面。
+   标题必须能截断 —— 会话标题是需求原文，动辄一整句。 */
+.composer-wake-timer-target-picker {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.24rem 0.5rem;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.composer-wake-timer-status .composer-wake-timer-target-picker {
+  flex: 1 1 100%;
+  order: 10;
+}
+
+.composer-wake-timer-target-option {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.28rem;
+  max-width: 14rem;
+  padding: 0.08rem 0.4rem 0.08rem 0.24rem;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  color: var(--ink-2);
+  font-size: 0.66rem;
+  cursor: pointer;
+}
+
+.composer-wake-timer-target-option.is-selected {
+  border-color: var(--accent);
+  color: var(--ink);
+}
+
+.composer-wake-timer-target-option.is-pending {
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+}
+
+.composer-wake-timer-target-option .composer-wake-timer-target-title {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 @media (max-width: 600px) {
   .composer-wake-timer-status {
     flex-wrap: wrap;
@@ -9301,6 +9345,8 @@ body,
 }
 
 .git-tool-card {
+  /* 根节点 tabIndex=-1 仅为承接鼠标点击触发 onFocus 刷新，不该画焦点环 */
+  outline: none;
   position: relative;
   display: flex;
   flex: 1;
@@ -9769,6 +9815,70 @@ body,
 .git-tool-notice.is-success {
   background: var(--git-tool-notice-success-bg);
   border-color: var(--git-tool-notice-success-border);
+}
+
+/* 飘字（同步完成等一次性成功提示）：绝对定位浮层，不参与布局，
+   2.6s 后由 git-operation-hub 清掉 state —— 动画的淡出时长与之对齐。 */
+.git-tool-toast {
+  position: absolute;
+  top: 0.5rem;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 6;
+  display: flex;
+  justify-content: center;
+  max-width: calc(100% - 1.5rem);
+  pointer-events: none;
+}
+
+.git-tool-toast-body {
+  padding: 0.3rem 0.7rem;
+  border: 1px solid var(--git-tool-notice-info-border);
+  border-radius: 999px;
+  background: var(--git-tool-notice-info-bg);
+  color: var(--ink-2);
+  font-size: 0.76rem;
+  line-height: 1.35;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.16);
+  backdrop-filter: blur(6px);
+  animation: git-tool-toast-float 2600ms ease forwards;
+}
+
+.git-tool-toast-body.is-success {
+  border-color: var(--git-tool-notice-success-border);
+  background: var(--git-tool-notice-success-bg);
+}
+
+.git-tool-toast-body.is-error {
+  border-color: var(--git-tool-conflict-border);
+  background: var(--git-tool-conflict-bg);
+}
+
+@keyframes git-tool-toast-float {
+  0% {
+    opacity: 0;
+    transform: translateY(-0.35rem);
+  }
+  10% {
+    opacity: 1;
+    transform: translateY(0);
+  }
+  78% {
+    opacity: 1;
+    transform: translateY(0);
+  }
+  100% {
+    opacity: 0;
+    transform: translateY(-0.35rem);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .git-tool-toast-body {
+    animation: none;
+  }
 }
 
 .git-tool-notice.is-error,

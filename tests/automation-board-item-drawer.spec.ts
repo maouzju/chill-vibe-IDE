@@ -169,6 +169,7 @@ for (const theme of ['dark', 'light'] as const) {
       '其他 Agent 完成',
       '上方需求完成',
       '指定时长',
+      '指定会话完成',
     ])
 
     await expect(item.locator('.automation-board-item-drawer')).toHaveScreenshot(
@@ -177,6 +178,32 @@ for (const theme of ['dark', 'light'] as const) {
     )
   })
 }
+
+test('picking chosen sessions inside the drawer lists the other sessions as checkboxes', async ({
+  page,
+}) => {
+  await installMockApis(page, 'dark')
+  await page.setViewportSize({ width: 1440, height: 1000 })
+  await page.goto(appUrl)
+
+  await expect(page.locator('.automation-board')).toBeVisible()
+  const item = await openSecondItemDrawer(page)
+
+  const panel = item.locator('.composer-wake-timer-module')
+  await expect(panel.locator('.composer-wake-timer-target-picker')).toHaveCount(0)
+
+  await panel.locator('select').selectOption('sessions')
+  const picker = panel.locator('.composer-wake-timer-target-picker')
+  await expect(picker).toBeVisible()
+  // 候选是同列其他 Agent 卡：只有 item-running-a（自己被剔掉，看板卡是工具卡）。
+  await expect(picker.locator('input[type="checkbox"]')).toHaveCount(1)
+  await expect(picker.locator('.composer-wake-timer-target-title')).toHaveText(['重建会话历史索引'])
+
+  await picker.locator('input[type="checkbox"]').check()
+  await expect(picker.locator('.composer-wake-timer-target-option.is-selected')).toHaveCount(1)
+  // 名单模式露出"最长等待"兜底上限。
+  await expect(panel.locator('.composer-wake-timer-duration-input')).toBeVisible()
+})
 
 test('switching to the duration mode reveals the minutes input inside the drawer', async ({
   page,

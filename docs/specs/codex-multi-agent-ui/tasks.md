@@ -72,3 +72,11 @@ Verification: four new proving cases failed before the tracker fix and passed af
 - [x] Focused regressions, `pnpm test:quality`, Windows zip build.
 
 Verification: 18/18 `tests/codex-agent-status.test.ts` (3 new cases red before the fix), 11/11 sub-agent/stall provider cases, 71/71 across the tracker/slash/stream-recovery files, lint + 4× tsc clean. Pitfall #370 records the two-root-cause split of the 30-minute fingerprint.
+
+## Regression fix - transport closes with a stale running child (2026-09-18)
+
+- [x] Add a red-first provider regression where the Codex app-server exits before a child emits its terminal event; the parent answer has already been emitted, but the latest status snapshot still says `running`.
+- [x] On Codex `close`/`error`, publish an interrupted agents snapshot before the terminal error so the dock cannot retain the stale running child.
+- [x] Keep the normal deferred-child and keepalive paths unchanged; this cleanup only applies after the transport itself has ended.
+
+Verification: the new provider regression failed before the fix and passed afterward; the focused provider-system-prompt file passed 119/119 tests. No new persisted fields or renderer changes were needed.

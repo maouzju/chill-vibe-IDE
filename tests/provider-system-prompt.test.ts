@@ -2386,6 +2386,30 @@ const buildFakeCodexSilentSubAgentAfterRootCompletionScript = () =>
     "})",
   ].join('\n')
 
+// 子代理仍在运行时 app-server 进程提前退出，模拟真实 CLI 丢失终态通知的收尾路径。
+const buildFakeCodexSubAgentProcessCloseScript = () =>
+  [
+    "const readline = require('node:readline')",
+    "const reply = (message) => process.stdout.write(`${JSON.stringify(message)}\\n`)",
+    "const rl = readline.createInterface({ input: process.stdin, crlfDelay: Infinity })",
+    "rl.on('line', (line) => {",
+    "  if (!line.trim()) return",
+    "  const request = JSON.parse(line)",
+    "  if (request.method === 'initialize' && request.id) { reply({ id: request.id, result: {} }); return }",
+    "  if (request.method === 'thread/start' && request.id) {",
+    "    reply({ id: request.id, result: { thread: { id: 'thread-root', parentThreadId: null, status: { type: 'active' } } } })",
+    "    return",
+    "  }",
+    "  if (request.method === 'turn/start' && request.id) {",
+    "    reply({ id: request.id, result: { turn: { id: 'turn-root', status: 'inProgress', items: [] } } })",
+    "    reply({ method: 'thread/started', params: { thread: { id: 'thread-child', parentThreadId: 'thread-root', agentNickname: 'Robie', agentRole: 'explorer', status: { type: 'active' } } } })",
+    "    reply({ method: 'item/completed', params: { threadId: 'thread-root', turnId: 'turn-root', item: { id: 'spawn-child', type: 'subAgentActivity', kind: 'started', agentThreadId: 'thread-child', agentPath: '/root/reviewer' } } })",
+    "    reply({ method: 'item/completed', params: { threadId: 'thread-root', turnId: 'turn-root', item: { id: 'parent-message', type: 'agentMessage', text: 'Parent answer' } } })",
+    "    setTimeout(() => process.exit(0), 25)",
+    "  }",
+    "})",
+  ].join('\n')
+
 const buildFakeCodexSilentOpenCommandScript = () =>
   [
     "const readline = require('node:readline')",
@@ -4791,6 +4815,31 @@ test('codex settles a still-running sub-agent panel before finalizing done from 
       delete process.env.CHILL_VIBE_EXTERNAL_HISTORY_HOME
     }
   }
+})
+
+test('codex settles a still-running sub-agent panel when app-server closes before child completion', async () => {
+  const events = await withFakeProviderCommand(
+    'codex',
+    buildFakeCodexSubAgentProcessCloseScript(),
+    async (workspacePath) =>
+      captureProviderEvents(createRequest({ provider: 'codex', language: 'en', workspacePath })),
+  )
+
+  const agentSnapshots = events.flatMap((event) =>
+    event.kind === 'activity' && event.activity.kind === 'agents' && event.activity.view === 'status'
+      ? [event.activity]
+      : [],
+  )
+  assert.ok(
+    agentSnapshots.some((snapshot) => snapshot.agents.some((agent) => agent.status === 'running')),
+    'the child must be shown as running while the process is alive',
+  )
+  assert.deepEqual(
+    agentSnapshots.at(-1)?.agents,
+    [],
+    'a transport close must publish a settled snapshot so the dock cannot keep a stale running child',
+  )
+  assert.equal(events.at(-1)?.kind, 'error')
 })
 
 test('codex app-server never replaces the root session with a child thread id', async () => {

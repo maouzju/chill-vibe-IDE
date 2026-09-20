@@ -53,6 +53,8 @@ type NoticeTone = 'info' | 'success' | 'error'
 type NoticeState = {
   tone: NoticeTone
   message: string
+  /** 飘字：渲染成不占布局的浮层，由 git-operation-hub 负责自动过期。 */
+  transient?: boolean
 }
 
 export type GitInfoSummary = {
@@ -417,6 +419,9 @@ export const GitToolCard = ({
   // 真实聚焦意图才刷新（节流 3s、in-flight 去重都在 requestAutoRefresh 里）。
   // 这里刻意没有 onMouseEnter：鼠标划过卡片就打一发主进程全量 git 管线，
   // 是本次卡顿事故里最离谱的过度触发。
+  // 2026-09-20：根节点必须带 tabIndex={-1}。React 的 onFocus 靠子元素冒泡，根节点自身不可聚焦时
+  // 只有点到按钮才会刷新，点文件列表/标题/空白处毫无反应，用户感受就是"聚焦更新没生效"。
+  // 不能改成 onClick：focus 语义天然覆盖键盘 Tab 进卡片，且 -1 不进入 Tab 序列不打扰导航。
   const handleCardFocus = useCallback(() => {
     requestAutoRefresh(true)
   }, [requestAutoRefresh])
@@ -649,7 +654,12 @@ export const GitToolCard = ({
   }, [workspacePath])
 
   const renderNotRepositoryState = (message?: string) => (
-    <div ref={cardRef} className="git-tool-card git-tool-empty-state git-onboarding-empty">
+    <div
+      ref={cardRef}
+      className="git-tool-card git-tool-empty-state git-onboarding-empty"
+      tabIndex={-1}
+      onFocus={handleCardFocus}
+    >
       <div className="git-onboarding-header">
         <div className="git-onboarding-orb" aria-hidden="true">
           <GitBranchIcon />
@@ -714,7 +724,12 @@ export const GitToolCard = ({
 
   if (!gitStatus) {
     return (
-      <div ref={cardRef} className="git-tool-card git-tool-empty-state">
+      <div
+        ref={cardRef}
+        className="git-tool-card git-tool-empty-state"
+        tabIndex={-1}
+        onFocus={handleCardFocus}
+      >
         <strong>{text.notRepoTitle}</strong>
         <p>{notice?.message ?? text.notRepoCopy}</p>
         <button type="button" className="git-tool-button" onClick={() => void refreshStatus()}>
@@ -751,16 +766,26 @@ export const GitToolCard = ({
     <div
       ref={cardRef}
       className={`git-tool-card${hasFloatingPanelOpen ? ' is-agent-panel-open' : ''}`}
+      tabIndex={-1}
       onFocus={handleCardFocus}
     >
       {/* ── Notice ─────────────────────────────────────────────────────────── */}
       {displayNotice ? (
-        <div
-          className={`git-tool-notice is-${displayNotice.tone}`}
-          role={displayNotice.tone === 'error' ? 'alert' : 'status'}
-        >
-          {displayNotice.message}
-        </div>
+        displayNotice.transient ? (
+          // 飘字走绝对定位浮层：成功提示不该把整张卡的内容往下顶一次、过两秒再弹回来
+          <div className="git-tool-toast" role="status" aria-live="polite">
+            <span className={`git-tool-toast-body is-${displayNotice.tone}`}>
+              {displayNotice.message}
+            </span>
+          </div>
+        ) : (
+          <div
+            className={`git-tool-notice is-${displayNotice.tone}`}
+            role={displayNotice.tone === 'error' ? 'alert' : 'status'}
+          >
+            {displayNotice.message}
+          </div>
+        )
       ) : null}
 
       {/* ── Conflict banner ────────────────────────────────────────────────── */}

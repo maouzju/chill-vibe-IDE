@@ -44,3 +44,10 @@
       `dispatchCommand`。这条覆盖了纯函数单测覆盖不到的东西 —— `automation-board-mcp.js` 里的 lane
       白名单是**抄写**的字面量，单测断言的两边是同一份抄写，只有让命令真的过一次共享 zod schema
       才能抓住漂移。
+
+## 切片 5：静默派发（2026-09-20）
+
+- [x] T5.1 红测试：`spawnedByAgent` 的 `addTab` 不改 `activeTabId`（`tests/agent-spawned-session-tab-icon.test.tsx`）。
+- [x] T5.2 `src/state.ts` `addTab` 分流，pane 为空时仍激活新卡。
+- [x] T5.3 requirements AC12b / design §6 同步。
+

@@ -250,6 +250,79 @@ test('resolveWorkspaceAdminCommandFromToolCall defaults the duration mode and om
   assert.equal(workspaceAdminCommandSchema.safeParse(waiting.command).success, true)
 })
 
+test('resolveWorkspaceAdminCommandFromToolCall turns cardIds into an explicit target list for set_session_wake_timer', () => {
+  // 点名等待时 mode 可省略：名单本身就是条件；timeoutMinutes 是兜底上限，默认 60。
+  const named = resolveWorkspaceAdminCommandFromToolCall(
+    'set_session_wake_timer',
+    { cardId: 'item-running', cardIds: ['item-standby', 'item-running', 'item-standby', ' '] },
+    'col-1',
+  )
+  assert.deepEqual(named.command, {
+    type: 'admin-set-session-wake-timer',
+    columnId: 'col-1',
+    cardId: 'item-running',
+    mode: 'workspace-agents',
+    durationMinutes: 60,
+    targetCardIds: ['item-standby'],
+  })
+  assert.equal(workspaceAdminCommandSchema.safeParse(named.command).success, true)
+
+  const bounded = resolveWorkspaceAdminCommandFromToolCall(
+    'set_session_wake_timer',
+    { cardId: 'item-running', cardIds: ['item-standby'], timeoutMinutes: 15 },
+    'col-1',
+  )
+  assert.equal(
+    bounded.command?.type === 'admin-set-session-wake-timer' ? bounded.command.durationMinutes : null,
+    15,
+  )
+
+  // 名单全是自己 = 没有可等的对象，必须报错而不是静默退化成"等全列"。
+  const onlySelf = resolveWorkspaceAdminCommandFromToolCall(
+    'set_session_wake_timer',
+    { cardId: 'item-running', cardIds: ['item-running'] },
+    'col-1',
+  )
+  assert.match(onlySelf.error ?? '', /cardIds/)
+
+  // 没给名单就必须给 mode，老行为一个字不变。
+  const missingMode = resolveWorkspaceAdminCommandFromToolCall(
+    'set_session_wake_timer',
+    { cardId: 'item-running' },
+    'col-1',
+  )
+  assert.match(missingMode.error ?? '', /mode/)
+})
+
+test('callWorkspaceAdminTool refuses a wake-timer target list naming a card outside this workspace', async () => {
+  const harness = createToolHarness()
+
+  const result = await callWorkspaceAdminTool(
+    'set_session_wake_timer',
+    { cardId: 'item-running', cardIds: ['item-standby', 'ghost-card'] },
+    harness.context,
+  )
+
+  assert.equal(result.isError, true)
+  assert.match(result.content[0]?.text ?? '', /ghost-card/)
+  assert.deepEqual(harness.posted, [])
+
+  // deepEqual(posted, []) 把类型收窄成 never[]，第二段换一个新 harness。
+  const accepted = createToolHarness()
+  const ok = await callWorkspaceAdminTool(
+    'set_session_wake_timer',
+    { cardId: 'item-running', cardIds: ['item-standby'] },
+    accepted.context,
+  )
+  assert.equal(ok.isError, false)
+  const posted = accepted.posted[0]
+  assert.equal(posted?.type, 'admin-set-session-wake-timer')
+  assert.deepEqual(
+    posted?.type === 'admin-set-session-wake-timer' ? posted.targetCardIds : null,
+    ['item-standby'],
+  )
+})
+
 test('resolveWorkspaceAdminCommandFromToolCall rejects bad arguments instead of forwarding them', () => {
   const noCardId = resolveWorkspaceAdminCommandFromToolCall('move_session_to_lane', { lane: 'done' }, 'col-1')
   assert.equal(noCardId.command, undefined)
@@ -869,6 +942,22 @@ test('callWorkspaceAdminTool refuses to wait on a cardId that is not in this wor
   assert.deepEqual(harness.posted, [])
 })
 
+test('callWorkspaceAdminTool refuses to arm a wake timer on a cardId that is not in this workspace', async () => {
+  const harness = createToolHarness()
+
+  const result = await callWorkspaceAdminTool(
+    'set_session_wake_timer',
+    { cardId: 'ghost-card', cardIds: ['item-running'] },
+    harness.context,
+  )
+
+  // 目标卡拼错时渲染端的 patchItemCard 找不到卡就静默 no-op，而这里已经回了
+  // "delivered"：agent 以为等待挂上了，实际上什么都没发生。校验名单的那一步
+  // 顺手把目标卡自己也校验掉。
+  assert.equal(result.isError, true)
+  assert.match(result.content[0]?.text ?? '', /ghost-card/)
+  assert.deepEqual(harness.posted, [])
+})
 test('callWorkspaceAdminTool refuses to wait when the workspace has no other session', async () => {
   const harness = createToolHarness({ mirror: buildMirror({ sessions: [] }) })
 

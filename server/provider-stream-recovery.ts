@@ -101,9 +101,27 @@ const recoverableErrorPatterns = [
   //   后接回正常输出）。这里把中转站自己的文案也钉进名单，Codex 路径和 CLI 改后缀
   //   的形态就不再依赖那个后缀。
   'no accounts are currently available',
+  // 症状：卡片红出 `API Error: Request rejected (429) · 上游已负载，请稍后重试
+  //   (request id: ...)` 停在终态等用户手点续传（2026-09-19 现场，已跑 15 分 40 秒）。
+  // 根因：429 是 <500，claude CLI 不给它加 'server-side issue, usually temporary'
+  //   后缀，名单里的容量类词形（529 / at capacity / high load / 503 no accounts）
+  //   全都命不中。它与 503 账号池耗尽同属中转站瞬时限流，稍等再续一轮通常就好。
+  // 被否决：不拿裸 '429' 当判据——工具输出里回显的 HTTP 日志也带这个数字；只接
+  //   CLI 的 `request rejected (429)` 词形、中转站的中文「上游已负载」，以及
+  //   429 与 rate-limit 同现的标准文案（下面的 rateLimitPattern）。
+  'request rejected (429)',
+  '上游已负载',
 ] as const
 
 const zeroExitPattern = /\b(?:codex|claude) exited with status code:\s*0\b/i
+
+// 标准限流文案：必须 429 与 rate limit/too many requests 同现，避免把工具输出里
+// 单独回显的 429 日志行、或泛泛的 'rate limit' 文字当成可恢复错误。
+// 窗口刻意用 [^\n] 限在同一行：真实限流文案永远是一句话，而 [\s\S] 能横跨换行
+// 把「某行回显的 429 日志」和「另一行无关的 rate limit 字样」凑成可恢复错误，
+// 让一条永久错误（例如认证失败）被反复续传到 retry budget 耗尽。
+const rateLimitPattern =
+  /\b429\b[^\n]{0,200}?(?:rate limit|too many requests)|(?:rate limit|too many requests)[^\n]{0,200}?\b429\b/i
 
 // 同一张 CLI 文案表里 "Unable to connect to API: SSL certificate ..." / "Self-signed
 // certificate detected" 与 ConnectionRefused 共用前缀，却是证书/代理配置的永久错；
@@ -159,7 +177,8 @@ export const classifyProviderStreamErrorRecovery = (
   if (
     switchConfigRecoverable ||
     recoverableErrorPatterns.some((pattern) => normalizedMessage.includes(pattern)) ||
-    zeroExitPattern.test(normalizedMessage)
+    zeroExitPattern.test(normalizedMessage) ||
+    rateLimitPattern.test(normalizedMessage)
   ) {
     return {
       recoverable: true,

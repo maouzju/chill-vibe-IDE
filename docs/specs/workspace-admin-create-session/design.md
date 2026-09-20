@@ -84,6 +84,17 @@ export const workspaceAdminCreatableLaneSchema = z.enum(workspaceAdminCreatableL
 **目标卡还不存在**的写工具，必须在那道检查之前分流出去，否则它永远返回
 "cardId is required"。这是本次改动里最容易踩空的一处，测试直接钉这一条。
 
+### 6. agent 派发的 tab 不抢活动 tab（2026-09-20）
+
+`addTab` reducer 原本无条件把新卡设成 pane 的 `activeTabId`。用户点「＋」时这是期望行为，
+但超管 `create_session` 走同一个 action，落地瞬间就把用户正在操作的卡顶走。修法在 reducer
+里按 `spawnedByAgent` 分流：带该标记且 pane 已有活动 tab 时，新卡只追加进 `tabs`，`activeTabId`
+不动；pane 为空时仍让它顶上，避免留下空白面板。守卫测试：
+`tests/agent-spawned-session-tab-icon.test.tsx`「appended silently」。
+
+否决的替代方案：在 App 执行器里建完卡再派一个 `setActiveTab` 切回去 —— 会先渲染一帧新卡再切回，
+用户可见闪烁，且 PaneView 的活动 tab 聚焦副作用会在那一帧把焦点从用户的输入框抢走。
+
 ## 涉及文件
 
 | 文件 | 改动 |
@@ -92,6 +103,7 @@ export const workspaceAdminCreatableLaneSchema = z.enum(workspaceAdminCreatableL
 | `server/automation-board-mcp.js` | 新增工具定义、命令解析分支、`callWorkspaceAdminTool` 放行 |
 | `server/automation-board-runtime.ts` | 中英文系统提示：5 个工具 → 6 个 |
 | `src/App.tsx` | 执行器新增 `admin-create-session` case（看板 / tab 两条路） |
+| `src/state.ts` | `addTab` 按 `spawnedByAgent` 保留当前活动 tab |
 | `tests/automation-board-mcp.test.ts` | 工具契约、命令契约、错误路径 |
 
 ## 验证策略

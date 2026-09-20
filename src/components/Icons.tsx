@@ -301,6 +301,17 @@ export const WaveIcon = (props: SVGProps<SVGSVGElement>) => (
   </BaseIcon>
 )
 
+/** Bot — session spawned by a supervising agent */
+export const BotIcon = (props: SVGProps<SVGSVGElement>) => (
+  <BaseIcon {...props}>
+    <rect x="4" y="9" width="16" height="11" rx="2" />
+    <path d="M12 9V5M9 5h6M2 14h2M20 14h2" strokeLinecap="round" />
+    <circle cx="9" cy="14" r="1" fill="currentColor" stroke="none" />
+    <circle cx="15" cy="14" r="1" fill="currentColor" stroke="none" />
+    <path d="M9.5 17.5h5" strokeLinecap="round" />
+  </BaseIcon>
+)
+
 /** Sparkles — AI magic / generation */
 export const SparklesIcon = (props: SVGProps<SVGSVGElement>) => (
   <BaseIcon {...props}>

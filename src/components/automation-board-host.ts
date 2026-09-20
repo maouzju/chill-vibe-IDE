@@ -28,7 +28,11 @@ export type AutomationBoardActions = {
      * 超管权限；不给就沿用这一列的默认），以及粘在需求上的图片。待命项还没开跑，
      * 图片先存进卡片的 draftAttachments。
      */
-    options?: Partial<AutomationBoardComposeDefaults> & { attachments?: ImageAttachment[] },
+    options?: Partial<AutomationBoardComposeDefaults> & {
+      attachments?: ImageAttachment[]
+      /** 超管 agent 派发的会话；tab 图标显示机器人。 */
+      spawnedByAgent?: boolean
+    },
   ) => void
   moveItem: (
     columnId: string,

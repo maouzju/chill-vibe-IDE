@@ -724,3 +724,69 @@ test('a relay 503 "No accounts are currently available" without a session is not
     {},
   )
 })
+
+// 症状：卡片红出 `API Error: Request rejected (429) · 上游已负载，请稍后重试
+//   (request id: ...)` 停在终态，用户只能手点续传（2026-09-19 现场截图，已跑 15 分 40 秒）。
+// 根因：429 是 <500，claude CLI 不会给它加 "This is a server-side issue, usually
+//   temporary" 后缀，名单里所有容量类词形（529/at capacity/high load/503 no accounts）
+//   全都命不中，于是走最终失败分支。它与 503 账号池耗尽同属中转站瞬时限流，
+//   稍等再续一轮通常就好。
+// 被否决：不拿裸 '429' 当判据——工具输出里回显的 HTTP 日志也会带这个数字；
+//   只接 CLI 的 `request rejected (429)` 词形和中转站自己的「上游已负载」中文文案。
+test('a relay 429 "Request rejected" rate-limit is resumable', () => {
+  assert.deepEqual(
+    classifyProviderStreamErrorRecovery(
+      { sessionId: 'session-1' },
+      'API Error: Request rejected (429) · 上游已负载，请稍后重试 (request id: 20260919233329775-cdcec3ee) (request id: 202609191533297467033308268d9d6TNLdyXTt)',
+    ),
+    { recoverable: true, recoveryMode: 'resume-session' },
+  )
+})
+
+test('a bare 429 rate-limit phrase is resumable', () => {
+  assert.deepEqual(
+    classifyProviderStreamErrorRecovery(
+      { sessionId: 'session-1' },
+      'API Error: 429 Too Many Requests. Rate limit exceeded, please retry later.',
+    ),
+    { recoverable: true, recoveryMode: 'resume-session' },
+  )
+})
+
+test('a relay 429 without a session is not resumable', () => {
+  assert.deepEqual(
+    classifyProviderStreamErrorRecovery(
+      { sessionId: undefined },
+      'API Error: Request rejected (429) · 上游已负载，请稍后重试',
+    ),
+    {},
+  )
+})
+
+// 护栏：跨行拼凑不算限流文案。rateLimitPattern 的窗口原本是 [\s\S]{0,200}，
+// 能横跨换行把「某行回显的 429 日志」和「另一行无关的 rate limit 字样」凑成一条
+// 可恢复错误，于是一个永久错误被反复续传到 retry budget 耗尽。限流文案自己永远
+// 在同一行里，把窗口收到行内即可，不影响任何真实词形。
+test('a 429 and an unrelated rate-limit phrase on different lines are not resumable', () => {
+  assert.deepEqual(
+    classifyProviderStreamErrorRecovery(
+      { sessionId: 'session-1' },
+      [
+        'API Error: authentication failed (invalid api key)',
+        'tool output: GET /v1/quota -> HTTP 429 logged at 12:01',
+        'tool output: configured rate limit is 60 requests per minute',
+      ].join('\n'),
+    ),
+    {},
+  )
+})
+// 护栏：工具输出里回显的 429 日志行不能被当成可恢复错误。
+test('a 429 echoed inside tool output text is not resumable', () => {
+  assert.deepEqual(
+    classifyProviderStreamErrorRecovery(
+      { sessionId: 'session-1' },
+      'API Error: curl exited with 22; the server replied with HTTP/1.1 429 while fetching the changelog',
+    ),
+    {},
+  )
+})

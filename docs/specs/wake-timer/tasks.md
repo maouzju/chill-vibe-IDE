@@ -177,6 +177,21 @@
 - `pnpm test:quality`：通过。
 - 视觉：空状态卡 22rem 横排放不下下拉，实截发现标题折行、条件被截断；改为文案独占一行 + 控件另起一行（`is-empty-state` 内 `flex-wrap`），宽度放到 24rem 后复测正常。CSS 特异性坑记进 AGENTS 第 90 条。
 
+## 指定会话完成（2026-09-20）
+
+用户反馈：待唤醒只有「其他 Agent 完成」可选，用户自己正在聊的窗口也算 Agent，超管/普通卡会被无关会话压住；超管虽能用 `wake_me_when_sessions_finish` 点名，但只能点给自己，界面上也看不到点了谁、改不了名单。
+
+- [x] 红测锁定：`armWakeTimerBatch({ targetCardIds })` 按名单 arm、不按忙闲过滤、带兜底上限；`rearmWakeTimerBatchForPatch` 对 `wakeTimerTargetCardIds` patch 重新 arm 并打显式标记，超管点名批次碰时长框仍不重算；换回普通模式清标记；名单不进默认偏好；state-store 归一化保留名单；MCP `set_session_wake_timer` 的 `cardIds` → `targetCardIds`（缺 mode 合法、只剩自己/未知 id 报错）；状态行渲染「指定会话完成」+ 复选框。
+- [x] `shared/schema.ts` 加 `wakeTimerTargetCardIds`；命令 `admin-set-session-wake-timer` 加 `targetCardIds`；`server/state-store.ts` 白名单同步。
+- [x] `armWakeTimerBatch` / `rearmWakeTimerBatchForPatch` 支持名单；`enqueueWakeTimerSend` 从卡上名单 arm；执行器写名单。
+- [x] `WakeTimerTargetPicker` 新组件；`WakeTimerStatus` / `WakeTimerSettingsPanel` 下拉加「指定会话完成」；`ChatCard` / `PaneView` / `AutomationBoardCard` 传候选名单；状态行列出正在等的会话标题。
+- [x] MCP 工具定义、`.js` 解析、镜像校验（给别人点名时名单里可含调用者自己）、两种语言的运行时提示。
+
+验证记录：
+
+- 红测：`pnpm exec tsx --test tests/wake-timer.test.ts`（新 describe「指定会话名单」）、`tests/automation-board-mcp.test.ts`、`tests/state-store.test.ts`、`tests/wake-timer-status.test.tsx` 先失败。
+- 绿测：上述四个文件 + `tests/wake-timer-settings-panel.test.tsx` 全部通过；`pnpm test:quality` 通过。
+
 ## 计时到点后的运行态重扫（2026-08-23）
 
 - [x] 红测锁定：重扫签名必须区分计时器到点后 `backgroundWorkPending: true → false`；

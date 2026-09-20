@@ -1,7 +1,10 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
-import { parseCodexResponseEvent } from '../server/codex-structured-output.ts'
+import {
+  createCodexAskUserActivityDeduper,
+  parseCodexResponseEvent,
+} from '../server/codex-structured-output.ts'
 
 test('parses Codex command, reasoning, and assistant items into structured chat events', () => {
   assert.deepEqual(
@@ -586,4 +589,111 @@ test('delivers empty wait completion updates so an earlier in-progress activity 
       agents: [],
     })
   }
+})
+
+// Codex CLI 0.153.x 新增 `request_user_input_async` 工具：模型调用后 CLI 立刻返回
+// {"accepted":true}，随后把问题预渲染成一条 agentMessage（delivery: "async"，
+// questions: [{title, options}]）。2026-09-20 实测它被当普通气泡显示，用户无处作答，
+// 模型每回合重问一次（同一题在一张卡上刷出 4 遍）。这里把它解析成 ask-user 卡。
+test('parses Codex async user-input questions on agent messages into ask-user cards', () => {
+  assert.deepEqual(
+    parseCodexResponseEvent({
+      method: 'item/completed',
+      params: {
+        item: {
+          id: 'call_wZ18dfGnI60A4rBjTNVshb57',
+          type: 'agentMessage',
+          text: '继续修复咖啡师卡牌\n- 直接按“本单位获得的能量翻倍”修复并验证\n- 先只检查现有实现，暂不改代码',
+          phase: 'final_answer',
+          delivery: 'async',
+          questions: [
+            {
+              title: '继续修复咖啡师卡牌',
+              options: ['直接按“本单位获得的能量翻倍”修复并验证', '先只检查现有实现，暂不改代码'],
+            },
+          ],
+        },
+      },
+    }),
+    [
+      {
+        type: 'activity',
+        itemId: 'call_wZ18dfGnI60A4rBjTNVshb57',
+        kind: 'ask-user',
+        status: 'completed',
+        header: '继续修复咖啡师卡牌',
+        question: '继续修复咖啡师卡牌',
+        multiSelect: false,
+        options: [
+          { label: '直接按“本单位获得的能量翻倍”修复并验证', description: '' },
+          { label: '先只检查现有实现，暂不改代码', description: '' },
+        ],
+      },
+    ],
+  )
+})
+
+test('parses grouped Codex async user-input questions and skips empty ones', () => {
+  const events = parseCodexResponseEvent({
+    type: 'item.completed',
+    item: {
+      id: 'call_a',
+      type: 'agent_message',
+      text: 'ignored pre-rendered text',
+      delivery: 'async',
+      questions: [
+        { title: 'First', options: ['A', 'B'] },
+        { title: '', options: ['X'] },
+        { title: 'Second', options: ['C', ''] },
+      ],
+    },
+  })
+
+  assert.equal(events.length, 1)
+  const activity = events[0]!
+  assert.equal(activity.type, 'activity')
+  if (activity.type !== 'activity' || activity.kind !== 'ask-user') {
+    throw new Error('expected ask-user activity')
+  }
+  assert.equal(activity.header, 'First')
+  assert.deepEqual(activity.questions, [
+    { header: 'First', question: 'First', multiSelect: false, options: [{ label: 'A', description: '' }, { label: 'B', description: '' }] },
+    { header: 'Second', question: 'Second', multiSelect: false, options: [{ label: 'C', description: '' }] },
+  ])
+})
+
+test('agent messages with an empty questions array still render as plain text', () => {
+  assert.deepEqual(
+    parseCodexResponseEvent({
+      type: 'item.completed',
+      item: { id: 'call_b', type: 'agent_message', text: 'Done.', delivery: 'async', questions: [] },
+    }),
+    [{ type: 'assistant_message', itemId: 'call_b', content: 'Done.' }],
+  )
+})
+
+// 同一回合里模型把 request_user_input_async 连调两次（rollout 里两条 function_call
+// 相隔 66ms，题目逐字相同），CLI 忠实吐出两条 agentMessage。去重按题面签名，
+// 遇到任何非 ask-user 事件即复位，所以真正的再次提问不会被吞。
+test('deduplicates back-to-back identical Codex ask-user activities within a turn', () => {
+  const deduper = createCodexAskUserActivityDeduper()
+  const parseAskUser = (id: string, options: string[]) => {
+    const event = parseCodexResponseEvent({
+      type: 'item.completed',
+      item: { id, type: 'agent_message', text: 'Q', questions: [{ title: 'Q', options }] },
+    })[0]
+    if (!event || event.type !== 'activity' || event.kind !== 'ask-user') {
+      throw new Error('expected ask-user activity')
+    }
+    return event
+  }
+  const first = parseAskUser('call_1', ['A', 'B'])
+  const second = parseAskUser('call_2', ['A', 'B'])
+  const different = parseAskUser('call_3', ['A', 'C'])
+
+  assert.equal(deduper.shouldEmit(first), true)
+  assert.equal(deduper.shouldEmit(second), false)
+  assert.equal(deduper.shouldEmit(different), true)
+  deduper.reset()
+  assert.equal(deduper.shouldEmit(different), true)
 })

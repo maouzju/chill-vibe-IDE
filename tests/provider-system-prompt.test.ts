@@ -88,7 +88,7 @@ test('codex runs include the final resolution marker instruction', () => {
   assert.ok(instructionsArg)
   assert.match(instructionsArg, /Always leave a clear final status line\./)
   assert.match(instructionsArg, /ask-user-question/)
-  assert.match(instructionsArg, /request_user_input/i)
+  assert.match(instructionsArg, /request_user_input_async/)
 })
 
 test('codex ask-user instructions support question groups without a question count limit', () => {

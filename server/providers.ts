@@ -71,6 +71,7 @@ import { createClaudeAgentStatusTracker, syntheticClaudeAgentId } from './claude
 import { writeServerLog } from './crash-logger.js'
 import { resolveClaudeRuntimeEnvironment } from './claude-runtime-environment.js'
 import {
+  createCodexAskUserActivityDeduper,
   looksLikeCodexStructuredAgentMessage,
   parseCodexResponseEvent,
 } from './codex-structured-output.js'
@@ -299,8 +300,8 @@ const getRequestBaseSystemPrompt = (request: ChatRequest) =>
 
 const getCodexAskUserQuestionInstruction = (language: AppLanguage) =>
   normalizeLanguage(language) === 'en'
-    ? 'In this Chill Vibe Codex exec environment, the native request_user_input tool is unavailable. When you must ask the user to choose before you can continue safely, do not call request_user_input and do not ask a plain-text multiple-choice question. Reply with only one complete XML block and no extra text. For one question, use this single-question shape: <ask-user-question>{"header":"Short title","question":"One concise question","multiSelect":false,"options":[{"label":"Option A","description":"Short tradeoff"},{"label":"Option B","description":"Short tradeoff"}]}</ask-user-question>. When multiple questions can be answered together, use this grouped shape: <ask-user-question>{"questions":[{"header":"First title","question":"First concise question","multiSelect":false,"options":[{"label":"Option A","description":"Short tradeoff"},{"label":"Option B","description":"Short tradeoff"}]},{"header":"Second title","question":"Second concise question","multiSelect":false,"options":[{"label":"Option A","description":"Short tradeoff"},{"label":"Option B","description":"Short tradeoff"}]}]}</ask-user-question>. The question group has no count limit. Use 2-3 options per question, keep labels short, omit any Other option, keep multiSelect false, and wait for the next user reply after emitting the block.'
-    : '在这个 Chill Vibe 的 Codex exec 运行环境里，原生 request_user_input 工具不可用。当你必须在继续之前让用户做选择时，不要调用 request_user_input，也不要用普通文本写多选题。只输出一个完整的 XML 块，不要添加任何其他文本。只有一个问题时，使用这个单题格式：<ask-user-question>{"header":"简短标题","question":"一句简洁问题","multiSelect":false,"options":[{"label":"选项 A","description":"简短权衡"},{"label":"选项 B","description":"简短权衡"}]}</ask-user-question>。有多个问题可以一起回答时，使用这个题组格式：<ask-user-question>{"questions":[{"header":"第一题标题","question":"第一句简洁问题","multiSelect":false,"options":[{"label":"选项 A","description":"简短权衡"},{"label":"选项 B","description":"简短权衡"}]},{"header":"第二题标题","question":"第二句简洁问题","multiSelect":false,"options":[{"label":"选项 A","description":"简短权衡"},{"label":"选项 B","description":"简短权衡"}]}]}</ask-user-question>。题组数量不设上限；每题保持 2-3 个选项，label 要简短，不要自己添加 Other，multiSelect 保持 false，并在输出这个块后等待用户下一条回复。'
+    ? 'In this Chill Vibe Codex exec environment, the native request_user_input and request_user_input_async tools are unavailable. When you must ask the user to choose before you can continue safely, do not call request_user_input or request_user_input_async (and never ask the same question twice), and do not ask a plain-text multiple-choice question. Reply with only one complete XML block and no extra text. For one question, use this single-question shape: <ask-user-question>{"header":"Short title","question":"One concise question","multiSelect":false,"options":[{"label":"Option A","description":"Short tradeoff"},{"label":"Option B","description":"Short tradeoff"}]}</ask-user-question>. When multiple questions can be answered together, use this grouped shape: <ask-user-question>{"questions":[{"header":"First title","question":"First concise question","multiSelect":false,"options":[{"label":"Option A","description":"Short tradeoff"},{"label":"Option B","description":"Short tradeoff"}]},{"header":"Second title","question":"Second concise question","multiSelect":false,"options":[{"label":"Option A","description":"Short tradeoff"},{"label":"Option B","description":"Short tradeoff"}]}]}</ask-user-question>. The question group has no count limit. Use 2-3 options per question, keep labels short, omit any Other option, keep multiSelect false, and wait for the next user reply after emitting the block.'
+    : '在这个 Chill Vibe 的 Codex exec 运行环境里，原生 request_user_input 与 request_user_input_async 工具都不可用。当你必须在继续之前让用户做选择时，不要调用 request_user_input 或 request_user_input_async（同一个问题也绝不要连问两次），也不要用普通文本写多选题。只输出一个完整的 XML 块，不要添加任何其他文本。只有一个问题时，使用这个单题格式：<ask-user-question>{"header":"简短标题","question":"一句简洁问题","multiSelect":false,"options":[{"label":"选项 A","description":"简短权衡"},{"label":"选项 B","description":"简短权衡"}]}</ask-user-question>。有多个问题可以一起回答时，使用这个题组格式：<ask-user-question>{"questions":[{"header":"第一题标题","question":"第一句简洁问题","multiSelect":false,"options":[{"label":"选项 A","description":"简短权衡"},{"label":"选项 B","description":"简短权衡"}]},{"header":"第二题标题","question":"第二句简洁问题","multiSelect":false,"options":[{"label":"选项 A","description":"简短权衡"},{"label":"选项 B","description":"简短权衡"}]}]}</ask-user-question>。题组数量不设上限；每题保持 2-3 个选项，label 要简短，不要自己添加 Other，multiSelect 保持 false，并在输出这个块后等待用户下一条回复。'
 
 // 症状：agent 用 `Get-Content` 读仓库里任何含中文的 UTF-8 文件（AGENTS.md、
 // SKILL.md、docs/），终端输出整片变成生僻汉字，agent 会误判文件损坏。
@@ -2135,6 +2136,7 @@ const launchCodexAppServerRun = async (
   const nextRequestId = createCodexJsonRpcIdFactory()
   const manualCompactRequest = isManualCodexCompactRequest(request)
   const compactionActivityDeduper = createCodexCompactionActivityDeduper()
+  const askUserActivityDeduper = createCodexAskUserActivityDeduper()
   const bufferedStructuredAgentMessageDeltas = new Map<string, string>()
   const transientPlaceholderCandidateContentByItemId = new Map<string, string>()
   const emittedAssistantContent = {
@@ -2626,6 +2628,7 @@ const launchCodexAppServerRun = async (
 
       if (parsed.type === 'assistant_message') {
         compactionActivityDeduper.reset()
+        askUserActivityDeduper.reset()
         const shouldSuppressTransientPlaceholder = isTransientRecoveryPlaceholderPrefix(parsed.content)
         recordAssistantContentProgress(parsed.content, parsed.itemId)
         if (shouldSuppressTransientPlaceholder) {
@@ -2641,6 +2644,13 @@ const launchCodexAppServerRun = async (
 
       const activity = { ...parsed }
       delete (activity as { type?: 'activity' }).type
+      if (activity.kind === 'ask-user') {
+        if (!askUserActivityDeduper.shouldEmit(activity)) {
+          continue
+        }
+      } else {
+        askUserActivityDeduper.reset()
+      }
       if (structuredActivityCountsAsTurnOutput(activity.kind)) {
         nativeReconnectFeedbackActive = false
       }

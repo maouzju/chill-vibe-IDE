@@ -427,6 +427,98 @@ const parseCodexAskUserActivity = (
   }
 }
 
+// 症状：Codex 卡上同一道选择题以普通文本气泡刷出 4 遍，用户无处作答，模型每回合重问。
+// 根因：Codex CLI 0.153.x 新增 `request_user_input_async` 工具（CLI 自带提示词主动推荐
+//   它），调用后 CLI 立刻回 {"accepted":true}、不结束回合，再把问题预渲染成一条
+//   agentMessage（delivery: "async"，questions: [{title, options: string[]}]）。2026-09-20
+//   实测 rollout：IDE 只读 item.text，把它当普通回复，选择卡从未出现。
+// 为什么不能只改提示词：CLI 系统提示词会持续推荐该工具，模型偶尔仍会调用；
+//   这里按 questions 字段兜底成 ask-user 卡，提示词禁用只是减少触发。
+//   题目 schema 只有 title/options（rollout 里带 `question` 字段的调用被 CLI 以
+//   "unknown field `question`" 拒绝），所以 question 直接复用 title。
+const parseCodexAsyncUserInputActivity = (
+  itemId: string,
+  item: Record<string, unknown>,
+): Extract<StreamActivity, { kind: 'ask-user' }> | null => {
+  if (!Array.isArray(item.questions) || item.questions.length === 0) {
+    return null
+  }
+
+  const questions = item.questions
+    .map((entry) => {
+      if (!isRecord(entry) || !Array.isArray(entry.options)) {
+        return null
+      }
+
+      const title = readString(entry, 'title')?.trim()
+      if (!title) {
+        return null
+      }
+
+      const options = entry.options
+        .map((option) => {
+          const label = typeof option === 'string' ? option.trim() : readString(option as Record<string, unknown>, 'label')?.trim()
+          return label ? { label, description: '' } : null
+        })
+        .filter(
+          (option): option is Extract<StreamActivity, { kind: 'ask-user' }>['options'][number] => option !== null,
+        )
+
+      if (options.length === 0) {
+        return null
+      }
+
+      return { header: title, question: title, multiSelect: false, options }
+    })
+    .filter((question): question is NonNullable<typeof question> => question !== null)
+
+  const first = questions[0]
+  if (!first) {
+    return null
+  }
+
+  return {
+    itemId,
+    kind: 'ask-user',
+    status: 'completed',
+    header: first.header,
+    question: first.question,
+    multiSelect: false,
+    options: first.options,
+    ...(questions.length > 1 ? { questions } : {}),
+  }
+}
+
+const getCodexAskUserSignature = (activity: Extract<StreamActivity, { kind: 'ask-user' }>) =>
+  JSON.stringify(
+    (activity.questions ?? [activity]).map((question) => [
+      question.header,
+      question.question,
+      question.options.map((option) => option.label),
+    ]),
+  )
+
+// 同一回合里模型会把 request_user_input_async 连调两次（2026-09-20 rollout：两条
+// function_call 相隔 66ms、题面逐字相同），CLI 忠实吐出两条 agentMessage。按题面
+// 签名去重；任何非 ask-user 事件都复位，所以模型之后真的再问一次不会被吞。
+export const createCodexAskUserActivityDeduper = () => {
+  let lastSignature: string | null = null
+
+  return {
+    shouldEmit(activity: Extract<StreamActivity, { kind: 'ask-user' }>) {
+      const signature = getCodexAskUserSignature(activity)
+      if (lastSignature === signature) {
+        return false
+      }
+      lastSignature = signature
+      return true
+    },
+    reset() {
+      lastSignature = null
+    },
+  }
+}
+
 const readCodexCommentaryEntryText = (entry: unknown) => {
   if (typeof entry === 'string') {
     return entry.trim()
@@ -711,6 +803,11 @@ export const parseCodexResponseEvent = (event: unknown): CodexStructuredStreamEv
   }
 
   if (eventType === 'item.completed' && normalizedItemType === 'agent_message') {
+    const asyncUserInput = parseCodexAsyncUserInputActivity(itemId, item)
+    if (asyncUserInput) {
+      return [{ type: 'activity', ...asyncUserInput }]
+    }
+
     const content = readString(item, 'text')
 
     if (!content) {

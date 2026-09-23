@@ -528,3 +528,53 @@ test('a background Agent survives the root turn boundary until its native termin
   assert.equal(tracker.hasRunningAgents(), false)
   assert.equal(tracker.getAgent(taskId)?.status, 'completed')
 })
+
+// 子 agent 实际用的模型只出现在 sidechain 的 assistant 行里（system:task_* 不带），
+// 通过 parent_tool_use_id ↔ tool_use_id 关联到条目。
+const sidechainAssistant = (parentToolUseId: string, model: string) => ({
+  type: 'assistant',
+  parent_tool_use_id: parentToolUseId,
+  session_id: sessionId,
+  message: {
+    model,
+    id: 'msg_child',
+    type: 'message',
+    role: 'assistant',
+    content: [{ type: 'text', text: 'working' }],
+  },
+})
+
+test('a sidechain assistant line attaches the real model to the sub-agent it belongs to', () => {
+  const tracker = createClaudeAgentStatusTracker()
+  tracker.handleEvent(taskStarted())
+
+  const update = tracker.handleEvent(sidechainAssistant(toolUseId, 'claude-haiku-4-5-20251001'))
+  // sidechain 行仍不能被当成主 Agent 的事件消费（pitfall #223）。
+  assert.equal(update.handled, false)
+  assert.equal(update.activity?.agents[0]?.model, 'claude-haiku-4-5-20251001')
+  assert.equal(tracker.snapshot().agents[0]?.model, 'claude-haiku-4-5-20251001')
+
+  // 同一模型重复到达不再推快照，避免每条子 agent 输出都刷一次面板。
+  const repeat = tracker.handleEvent(sidechainAssistant(toolUseId, 'claude-haiku-4-5-20251001'))
+  assert.equal(repeat.handled, false)
+  assert.equal(repeat.activity, undefined)
+})
+
+test('a sidechain assistant line for an unknown parent tool call changes nothing', () => {
+  const tracker = createClaudeAgentStatusTracker()
+  tracker.handleEvent(taskStarted())
+
+  const update = tracker.handleEvent(sidechainAssistant('toolu_unknown', 'claude-opus-5'))
+  assert.equal(update.handled, false)
+  assert.equal(update.activity, undefined)
+  assert.equal(tracker.snapshot().agents[0]?.model, undefined)
+})
+
+test('a synthetic Workflow entry also picks up its model from the sidechain', () => {
+  const tracker = createClaudeAgentStatusTracker()
+  tracker.beginSynthetic(syntheticClaudeAgentId('toolu_workflow'), 'Workflow')
+
+  const update = tracker.handleEvent(sidechainAssistant('toolu_workflow', 'claude-sonnet-5'))
+  assert.equal(update.handled, false)
+  assert.equal(update.activity?.agents[0]?.model, 'claude-sonnet-5')
+})

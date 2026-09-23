@@ -59,6 +59,7 @@
 - AC11：`lane: 'running'` = 建卡并**立刻把 requirement 作为第一条消息发出去**；
   `lane: 'standby'` = 建卡但**只把 requirement 放进草稿**，不发送。这两条语义在看板项与普通 tab 两条路径上一致。
 - AC12：`provider` / `model` 省略时，继承所在列的默认值，与用户在界面上手动新建 tab 的继承规则一致。
+- AC12c（2026-09-21 补，详见 `docs/specs/agent-model-choice`）：宿主把可选模型目录经 `CHILL_VIBE_ADMIN_MCP_MODELS` 注入子进程后，`model` 参数描述按 provider 列出候选；不在目录里的模型被拒绝并附候选，只给 `model` 时按目录推断 `provider`。没有目录时行为与 AC12 完全一致。
 - AC12b（2026-09-20 补）：普通 tab 路径上，agent 派发的新会话**静默追加在后台**，pane 的活动 tab
   保持用户当前所在的那张不变；只有 pane 为空（没有活动 tab）时才让新卡成为活动 tab。用户点「＋」新建的
   tab 仍照旧切过去。理由：用户正在某张卡上输入/阅读时被超管建的卡顶走视图，是对当前操作的打扰。

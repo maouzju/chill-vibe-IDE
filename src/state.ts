@@ -343,6 +343,7 @@ export type IdeAction =
           | 'attackPatternProtectionEnabled'
           | 'defaultAdminAccess'
           | 'codexIsolatedHomeEnabled'
+          | 'computerUseEnabled'
           | 'gitAgentModel'
           | 'providerProfiles'
         >
@@ -3076,9 +3077,11 @@ const ideReducerCore = (state: AppState, action: IdeAction): AppState => {
             stopReason === 'user-interrupt' ||
             stopReason === 'attack-pattern-detected'
           // 2026-09-11：软中断进程仍活着，一律清会话会强迫下一轮 seeded 冷启动。
-          // 只信 Claude done 的明确标记；无终态兜底 / 硬杀 / Codex 仍按 #118 清理，见 #369。
+          // 只信 done 终态信封的明确标记；无终态兜底 / 硬杀回退仍按 #118 清理，见 #369。
+          // 2026-09-21：Codex 也接上 app-server turn/interrupt（#382）——此前按 provider 区分，
+          // 3 天 328 个 gpt-6 rollout 里 135 个是打断后的 seeded 冷启动壳子，最多省略 263 条。
           const shouldResetInterruptedSession = stopReason === 'user-interrupt' &&
-            !(card.provider === 'claude' && action.softInterrupted === true)
+            action.softInterrupted !== true
           const nextProviderSessions = shouldResetInterruptedSession
             ? { ...card.providerSessions }
             : card.providerSessions

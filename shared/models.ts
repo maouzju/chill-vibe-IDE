@@ -1,8 +1,8 @@
 import type { LocalModelEntry, Provider } from './schema.js'
 
-export const DEFAULT_CODEX_MODEL = 'gpt-5.6-sol'
-export const DEFAULT_CLAUDE_MODEL = 'claude-opus-5'
-export const DEFAULT_GIT_AGENT_MODEL = 'gpt-5.6-terra medium'
+export const DEFAULT_CODEX_MODEL = 'gpt-6-sol'
+export const DEFAULT_CLAUDE_MODEL = 'claude-opus-5-5'
+export const DEFAULT_GIT_AGENT_MODEL = 'gpt-6-luna medium'
 export const isAstraModel = (model?: string | null): boolean =>
   model?.trim().toLowerCase() === 'gpt-6-astra'
 export const GIT_TOOL_MODEL = '__git_tool__'
@@ -110,10 +110,22 @@ export const MODEL_OPTIONS: ModelOption[] = [
     usesConfiguredDefault: true,
   },
   {
-    label: 'GPT-5.6 Sol',
+    label: 'GPT-6 Sol',
     provider: 'codex',
     model: DEFAULT_CODEX_MODEL,
-    aliases: ['gpt-5.6', 'gpt-5.6-sol', '5.6', '5.6-sol', 'sol', 'gpt56'],
+    aliases: ['gpt-6-sol', '6', '6-sol', 'sol', 'gpt6sol'],
+  },
+  {
+    label: 'GPT-6 Luna',
+    provider: 'codex',
+    model: 'gpt-6-luna',
+    aliases: ['gpt-6-luna', '6-luna', 'luna', 'gpt6luna'],
+  },
+  {
+    label: 'GPT-5.6 Sol',
+    provider: 'codex',
+    model: 'gpt-5.6-sol',
+    aliases: ['gpt-5.6', 'gpt-5.6-sol', '5.6', '5.6-sol', 'gpt56'],
   },
   {
     label: 'GPT-6 Astra',
@@ -157,10 +169,18 @@ export const MODEL_OPTIONS: ModelOption[] = [
   },
   {
     // Bare "opus" follows the newest Opus tier, like bare "sonnet" does.
-    label: 'Opus 5',
+    label: 'Opus 5.5',
     provider: 'claude',
     model: DEFAULT_CLAUDE_MODEL,
-    aliases: ['opus', 'opus-5', 'claude-opus-5'],
+    aliases: ['opus', 'opus-5.5', 'claude-opus-5-5'],
+  },
+  {
+    // Retired from the picker, but kept for exact legacy commands and saved cards.
+    label: 'Opus 5',
+    provider: 'claude',
+    model: 'claude-opus-5',
+    aliases: ['opus-5', 'claude-opus-5'],
+    hiddenFromPicker: true,
   },
   {
     // Bare "sonnet" follows the official alias to Sonnet 5 (native 1M window).
@@ -350,4 +370,53 @@ export const resolveSlashModelInput = (
   }
 
   return { model: trimmed, custom: true }
+}
+
+// ---------------------------------------------------------------------------
+// 可选模型目录（SPEC agent-model-choice）
+//
+// 超管 create_session 把这份目录塞给 MCP 子进程，agent 才知道自己能选什么。
+// 三个来源按顺序合并、按 provider+model 去重：
+//   1. 模型目录里对选择器可见的真实模型（排除工具卡 / hiddenFromPicker / "用默认"占位项）
+//   2. 各 provider 在设置里配置的默认模型 —— 即使它已从选择器下架（用户当前就是
+//      claude-fable-5），或是目录里根本没有的自定义名，也必须可选，否则"默认"本身选不到
+//   3. 本地模型条目，以 `__local__:<id>` 令牌出现，标签取条目名
+// ---------------------------------------------------------------------------
+export type SelectableModel = {
+  provider: Provider
+  model: string
+  label: string
+}
+
+export const listSelectableModelCatalog = (settings: {
+  requestModels: Record<Provider, string>
+  localModelEntries: LocalModelEntry[]
+}): SelectableModel[] => {
+  const seen = new Set<string>()
+  const catalog: SelectableModel[] = []
+  const push = (entry: SelectableModel) => {
+    const key = `${entry.provider} ${entry.model}`
+    if (!entry.model || seen.has(key)) return
+    seen.add(key)
+    catalog.push(entry)
+  }
+
+  for (const option of MODEL_OPTIONS) {
+    if (isModelPickerOptionVisible(option) && !option.usesConfiguredDefault) {
+      push({ provider: option.provider, model: option.model, label: option.label })
+    }
+  }
+
+  for (const provider of ['codex', 'claude'] as const) {
+    const configured = normalizeStoredModel(provider, settings.requestModels[provider])
+    if (!configured || isLocalModelToken(configured)) continue
+    const known = MODEL_OPTIONS.find((option) => option.provider === provider && option.model === configured)
+    push({ provider, model: configured, label: known?.label ?? 'configured default' })
+  }
+
+  for (const option of buildLocalModelOptions(settings.localModelEntries)) {
+    push({ provider: option.provider, model: option.model, label: option.label })
+  }
+
+  return catalog
 }

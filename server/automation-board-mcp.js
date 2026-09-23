@@ -8,6 +8,7 @@ const adminMcpUrlEnvKey = 'CHILL_VIBE_ADMIN_MCP_URL'
 const adminMcpTokenEnvKey = 'CHILL_VIBE_ADMIN_MCP_TOKEN'
 const adminMcpColumnIdEnvKey = 'CHILL_VIBE_ADMIN_MCP_COLUMN_ID'
 const adminMcpSelfCardIdEnvKey = 'CHILL_VIBE_ADMIN_MCP_SELF_CARD_ID'
+const adminMcpModelsEnvKey = 'CHILL_VIBE_ADMIN_MCP_MODELS'
 
 const listToolName = 'list_sessions'
 const readToolName = 'read_session'
@@ -33,6 +34,45 @@ const creatableLanes = ['standby', 'running']
 const providers = ['codex', 'claude']
 const wakeTimerModes = ['duration', 'workspace-agents', 'left-tab']
 const defaultCreateLane = 'running'
+
+// 候选模型目录由宿主通过 CHILL_VIBE_ADMIN_MCP_MODELS（JSON 的 SelectableModel[]）注入。
+// 解析失败 / 形状不对一律当作"没有目录"：工具描述退回旧文案、create 不校验模型，
+// 旧宿主启动的子进程行为与从前逐字相同（SPEC agent-model-choice AC9）。
+export const parseWorkspaceAdminModelCatalog = (raw) => {
+  if (typeof raw !== 'string' || !raw.trim()) return null
+  try {
+    const parsed = JSON.parse(raw)
+    if (!Array.isArray(parsed)) return null
+    const entries = parsed
+      .filter(
+        (entry) =>
+          entry
+          && typeof entry === 'object'
+          && providers.includes(entry.provider)
+          && typeof entry.model === 'string'
+          && entry.model.trim().length > 0,
+      )
+      .map((entry) => ({
+        provider: entry.provider,
+        model: entry.model.trim(),
+        label: typeof entry.label === 'string' && entry.label.trim() ? entry.label.trim() : entry.model.trim(),
+      }))
+    return entries.length > 0 ? entries : null
+  } catch {
+    return null
+  }
+}
+
+const describeModelCatalog = (catalog) =>
+  providers
+    .map((provider) => {
+      const items = catalog.filter((entry) => entry.provider === provider)
+      return items.length > 0
+        ? `${provider}: ${items.map((entry) => `\`${entry.model}\` (${entry.label})`).join(', ')}`
+        : null
+    })
+    .filter(Boolean)
+    .join('; ')
 
 export const workspaceAdminMcpToolDefinitions = [
   {
@@ -263,6 +303,30 @@ const selectVisibleSessions = (mirror, selfCardId) => {
   return self ? sessions.filter((session) => normalizeText(session?.cardId) !== self) : sessions
 }
 
+// 有目录时只改写 create_session 的 model 描述：候选只是提示，省略仍合法，所以不用 enum 锁死。
+export const buildWorkspaceAdminMcpToolDefinitions = (modelCatalog) => {
+  if (!Array.isArray(modelCatalog) || modelCatalog.length === 0) {
+    return workspaceAdminMcpToolDefinitions
+  }
+  return workspaceAdminMcpToolDefinitions.map((tool) => {
+    if (tool.name !== createToolName) return tool
+    return {
+      ...tool,
+      inputSchema: {
+        ...tool.inputSchema,
+        properties: {
+          ...tool.inputSchema.properties,
+          model: {
+            type: 'string',
+            description:
+              `Model id for the new session. Omit it to inherit this workspace column's model. Pick per task from the models available here (lighter models for lighter tasks) — ${describeModelCatalog(modelCatalog)}. Giving only model lets the app infer the provider.`,
+          },
+        },
+      },
+    }
+  })
+}
+
 export const buildWorkspaceSessionsText = (mirror, nowMs, selfCardId) => {
   const columnId = normalizeText(mirror?.columnId) || '(unknown workspace)'
   const sessions = selectVisibleSessions(mirror, selfCardId)
@@ -351,7 +415,7 @@ export const buildSessionTranscriptText = (cardId, entries) => {
   return lines.join('\n')
 }
 
-export const resolveWorkspaceAdminCommandFromToolCall = (name, args, columnId, selfCardId) => {
+export const resolveWorkspaceAdminCommandFromToolCall = (name, args, columnId, selfCardId, modelCatalog = null) => {
   const normalizedColumnId = normalizeText(columnId)
   if (!normalizedColumnId) {
     return { error: 'This session has no workspace admin access, so the write tools are unavailable.' }
@@ -436,12 +500,32 @@ export const resolveWorkspaceAdminCommandFromToolCall = (name, args, columnId, s
       }
     }
 
-    const provider = readStringArg(args, 'provider')
+    let provider = readStringArg(args, 'provider')
     if (provider && !providers.includes(provider)) {
       return { error: `provider must be one of ${providers.join(', ')}. Received: ${provider}.` }
     }
 
     const model = readStringArg(args, 'model')
+
+    // 有目录才校验（AC7）：拒绝时把候选一并列出，模型下一次就能选对；
+    // 只给 model 不给 provider 时按目录推断，省得模型再猜一次。
+    if (model && Array.isArray(modelCatalog) && modelCatalog.length > 0) {
+      const matches = modelCatalog.filter((entry) => entry.model === model)
+      if (matches.length === 0) {
+        return {
+          error: `model "${model}" is not available in this workspace. Available — ${describeModelCatalog(modelCatalog)}. Omit model to inherit the column's model.`,
+        }
+      }
+      if (provider && !matches.some((entry) => entry.provider === provider)) {
+        const owners = [...new Set(matches.map((entry) => entry.provider))].join('/')
+        return {
+          error: `model "${model}" belongs to ${owners}, not ${provider}. Drop provider to let the app infer it, or pick a ${provider} model — ${describeModelCatalog(modelCatalog.filter((entry) => entry.provider === provider))}.`,
+        }
+      }
+      if (!provider && matches.length === 1) {
+        provider = matches[0].provider
+      }
+    }
 
     return {
       command: {
@@ -762,6 +846,7 @@ export const callWorkspaceAdminTool = async (name, args, context) => {
       args,
       context.columnId,
       context.selfCardId,
+      context.modelCatalog ?? null,
     )
     if (resolved.error) {
       return textResult(resolved.error, true)
@@ -804,6 +889,7 @@ const createHttpWorkspaceContext = () => {
   return {
     columnId,
     selfCardId,
+    modelCatalog: parseWorkspaceAdminModelCatalog(process.env[adminMcpModelsEnvKey]),
     fetchWorkspace: async () => {
       if (!baseUrl) {
         return null
@@ -909,7 +995,7 @@ const handleRequest = async (request, context) => {
     sendMessage({
       jsonrpc: '2.0',
       id: request.id,
-      result: { tools: workspaceAdminMcpToolDefinitions },
+      result: { tools: buildWorkspaceAdminMcpToolDefinitions(context.modelCatalog ?? null) },
     })
     return
   }

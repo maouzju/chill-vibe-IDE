@@ -206,3 +206,24 @@
 - 绿测：`node --import tsx --test tests/wake-timer.test.ts`：48/48 通过。
 - 绿测：`pnpm exec playwright test --config playwright.config.ts tests/chat-interrupt.spec.ts --grep 'duration wake timer'`：2/2 通过。
 - `pnpm test:quality`：通过。
+
+## 用户打断不触发完成回调（2026-09-21）
+
+需求：用户在流式输出中直接发新消息（自动打断）时，这一轮不能算「会话结束」，
+不得触发完成监听。对应 requirements.md 第 19 条已有规格「手动停止、用户打断、
+终端错误也不算完成」——本次是该规格的一处实现漏洞。
+
+- [x] 红测锁定：`Stream not found.` 收尾分支无条件跑成功回调，被打断的一轮仍被当成正常结束。
+- [x] 新增判据 `shouldRunCompletionCallbacksForLostStream`，复用既有 `isInterruptedRunReason`。
+- [x] `onError` 在清 `stoppedRunReasonRef` 之前读走本轮 stopReason，交给该判据门控成功回调。
+- [x] 唤醒链的 `forceRelease` 保持无条件执行，下游不会因为上游被打断而永久卡死。
+
+三个完成监听入口全部核查：`onDone`（已由 `donePlan.runSuccessCallbacks` 正确门控）、
+`Stream not found.`（本次修复）、断线续传事实核查判定 `completed`（确为正常跑完，不门控）。
+
+验证记录：
+
+- 红测：`npx tsx --test tests/wake-timer.test.ts` 因缺少 `shouldRunCompletionCallbacksForLostStream` 导出稳定失败。
+- 绿测：`npx tsx --test tests/wake-timer.test.ts`：61/61 通过。
+- 绿测：`npx tsx --test tests/wake-timer.test.ts tests/app-helpers.test.ts tests/chat-interrupt-session-reset.test.ts tests/interrupted-session-recovery.test.ts tests/state.test.ts`：187/187 通过。
+- `npx tsc --noEmit`、`npx eslint src/App.tsx src/app-helpers.ts tests/wake-timer.test.ts`：均通过。

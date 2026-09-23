@@ -1,3 +1,5 @@
+import { supportedImageMimeTypes as defaultSupportedImageMimeTypes } from './composer-image-paste'
+
 // Pasting files copied from the OS file manager inserts their local absolute
 // paths into the composer as text. Path resolution goes through the preload
 // `getPathForFile` bridge (Electron 32+ removed `File.path`); in-memory blobs
@@ -45,4 +47,24 @@ export function insertTextAtSelection(
     value: `${before}${inserted}${after}`,
     caret: start + inserted.length,
   }
+}
+
+// Dropping files from the OS file manager takes the same two exits as paste:
+// supported raster images become image attachments, everything else (including
+// SVG and untyped blobs) is a path candidate. The MIME set is injected so this
+// stays a pure function for the node test runner.
+export function partitionDroppedFiles(
+  files: Iterable<File>,
+  supportedImageMimeTypes: ReadonlySet<string> = defaultSupportedImageMimeTypes,
+): { imageFiles: File[]; pathCandidateFiles: File[] } {
+  const imageFiles: File[] = []
+  const pathCandidateFiles: File[] = []
+  for (const file of files) {
+    if (supportedImageMimeTypes.has(file.type)) {
+      imageFiles.push(file)
+    } else {
+      pathCandidateFiles.push(file)
+    }
+  }
+  return { imageFiles, pathCandidateFiles }
 }

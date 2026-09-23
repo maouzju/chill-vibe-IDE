@@ -187,7 +187,7 @@ export const createCodexAgentStatusTracker = ({
 
   const ensureAgent = (
     threadId: string,
-    patch: Partial<Pick<TrackedAgent, 'nickname' | 'role' | 'path' | 'parentThreadId' | 'status'>> = {},
+    patch: Partial<Pick<TrackedAgent, 'nickname' | 'role' | 'path' | 'parentThreadId' | 'status' | 'model' | 'reasoningEffort'>> = {},
   ) => {
     let agent = agents.get(threadId)
     if (!agent) {
@@ -205,6 +205,8 @@ export const createCodexAgentStatusTracker = ({
     if (patch.role) agent.role = patch.role
     if (patch.path) agent.path = patch.path
     if (patch.parentThreadId) agent.parentThreadId = patch.parentThreadId
+    if (patch.model) agent.model = patch.model
+    if (patch.reasoningEffort) agent.reasoningEffort = patch.reasoningEffort
     if (patch.status) agent.status = patch.status
     return agent
   }
@@ -214,6 +216,8 @@ export const createCodexAgentStatusTracker = ({
     ...(agent.nickname ? { nickname: agent.nickname } : {}),
     ...(agent.role ? { role: agent.role } : {}),
     ...(agent.path ? { path: agent.path } : {}),
+    ...(agent.model ? { model: agent.model } : {}),
+    ...(agent.reasoningEffort ? { reasoningEffort: agent.reasoningEffort } : {}),
     status: agent.status,
     ...(agent.message !== undefined ? { message: agent.message } : {}),
     activity: agent.previewOrder
@@ -329,6 +333,10 @@ export const createCodexAgentStatusTracker = ({
         parentThreadId,
         nickname: readString(thread, 'agentNickname'),
         role: readString(thread, 'agentRole'),
+        // app-server v2 的 Thread 自带 model / reasoningEffort（含继承父模型的情况），
+        // 是子 agent 实际模型的唯一权威来源（SPEC subagent-model-badge）。
+        model: readString(thread, 'model'),
+        reasoningEffort: readString(thread, 'reasoningEffort'),
         status: status ? mapThreadStatus(status) : 'pendingInit',
       })
       return settleUpdate(true, true)

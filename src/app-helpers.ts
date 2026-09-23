@@ -69,6 +69,25 @@ export const interruptedRunReasons: readonly StoppedRunReason[] = [
 export const isInterruptedRunReason = (reason: string | undefined): boolean =>
   interruptedRunReasons.some((entry) => entry === reason)
 
+/**
+ * 流以「Stream not found.」收场时，要不要跑"这一轮正常结束"的那串回调
+ * （自动鞭策 / 自动化看板模板触发）。
+ *
+ * 症状：用户在流式输出中直接发新消息触发自动打断后，被打断的这一轮仍被当成
+ *   正常结束——自动鞭策把刚被用户叫停的卡重新启动，看板模板也跟着误触发。
+ * 根因：该收尾分支从不查本轮 stopReason，而打断路径早已把 'user-interrupt'
+ *   写进 stoppedRunReasonRef；normalCompletion 在那里被硬编码成 true。
+ * 被否决：整条分支不再收尾 —— 唤醒链的 forceRelease 必须照常放行，否则等这张
+ *   卡的下游会永久卡死（见 wake-timer design.md「链断点的解锁」）。这里只压住
+ *   成功回调，收尾本身不动。
+ * 规格：wake-timer requirements.md 第 19 条「手动停止、用户打断、终端错误也不算完成」。
+ */
+export const shouldRunCompletionCallbacksForLostStream = ({
+  stopReason,
+}: {
+  stopReason: StoppedRunReason | undefined
+}): boolean => !isInterruptedRunReason(stopReason)
+
 export const emptyProfileDraft = (): ProfileDraft => ({
   name: '',
   baseUrl: '',

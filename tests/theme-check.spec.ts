@@ -1428,6 +1428,8 @@ const createCodexSubAgentStatusState = (theme: 'dark' | 'light', empty = false):
                     threadId: 'thread-reviewer',
                     path: '/root/reviewer_with_a_deliberately_long_canonical_path',
                     status: 'running',
+                    model: 'gpt-5.6-luna',
+                    reasoningEffort: 'medium',
                     activity: [
                       'Inspecting the provider stream and isolating child-thread output.',
                       '$ pnpm test --filter codex-agent-status',
@@ -1438,6 +1440,7 @@ const createCodexSubAgentStatusState = (theme: 'dark' | 'light', empty = false):
                     threadId: 'thread-tester',
                     path: '/root/tester',
                     status: 'running',
+                    model: 'gpt-5.4',
                     activity: ['Running the focused renderer verification.'],
                   },
                 ],
@@ -2943,7 +2946,8 @@ for (const theme of ['dark', 'light'] as const) {
     // 计数原为 3，但 main（eda37cf）上实测就有 4 个 checkbox —— 那笔 3 是历史遗留的
     // 陈旧计数（超管开关后加时没同步），不是本次新增开关引入的。攻形检测开关让它变 5。
     // 索引断言换成按 id 定位：新开关插在中间，.last() 这类索引依赖是静默红的温床。
-    await expect(safetySettings.locator('input[type="checkbox"]')).toHaveCount(5)
+    // 浏览器控制（computer use）开关让它变 6。
+    await expect(safetySettings.locator('input[type="checkbox"]')).toHaveCount(6)
     // 超管默认关闭、隔离主目录默认开启 —— 原断言写的是 .first()/.last() 索引，
     // 两条都对不上实际默认值（同属上面那笔陈旧计数的遗留债）。
     await expect(safetySettings.locator('input[id$="-default-admin-access"]')).not.toBeChecked()
@@ -2955,6 +2959,13 @@ for (const theme of ['dark', 'light'] as const) {
     await expect(
       safetySettings.locator('input[id$="-attack-pattern-protection"]'),
     ).not.toBeChecked()
+    // 浏览器控制默认关闭：会以用户身份操作已登录网站，必须显式打开。
+    await expect(safetySettings.locator('input[id$="-computer-use"]')).not.toBeChecked()
+    await expect(safetySettings).toContainText(
+      theme === 'dark'
+        ? '允许 Agent 使用浏览器（Computer Use）'
+        : 'Allow Agent to use the browser (Computer Use)',
+    )
     await expect(safetySettings).toContainText(
       theme === 'dark'
         ? '允许 Agent 修改项目文件夹外的文件'
@@ -2975,7 +2986,7 @@ for (const theme of ['dark', 'light'] as const) {
         : 'Stop the session when an attack shape is detected',
     )
     const safetyDetails = safetySettings.locator('.settings-hover-note')
-    await expect(safetyDetails).toHaveCount(5)
+    await expect(safetyDetails).toHaveCount(6)
     await expect(safetyDetails.first()).toBeHidden()
     await safetySettings.locator('.settings-hover-detail').first().hover()
     await expect(safetyDetails.first()).toBeVisible()
@@ -6504,7 +6515,7 @@ for (const theme of ['dark', 'light'] as const) {
 
     await expect(tabBar).toContainText('新会话')
     await expect(contentHeader).toHaveCount(0)
-    await expect(composerModelSelect).toContainText(/GPT-5\.6 Sol/i)
+    await expect(composerModelSelect).toContainText(/GPT-6 Sol/i)
     await expect(duplicatedTitle).toHaveCount(0)
     await expect(paneView).toHaveScreenshot(`pane-single-tab-chrome-${theme}.png`, {
       animations: 'disabled',
@@ -9126,3 +9137,50 @@ for (const theme of ['dark', 'light'] as const) {
     })
   })
 }
+
+test('composer shows a file drop target frame and inserts dropped paths in both themes', async ({ page }) => {
+  await mockAppApis(page, { state: createOverflowStructuredState() })
+  await page.goto(appUrl)
+  await page.locator('.card-shell').first().waitFor()
+  // The row animates border-color over 140ms; a computed read in the same frame
+  // as the class flip still returns the transition's start value.
+  await page.addStyleTag({ content: '.composer-input-row { transition: none !important; }' })
+
+  const inputRow = page.locator('.composer-input-row').first()
+  const textarea = inputRow.locator('textarea.textarea').first()
+
+  for (const theme of ['dark', 'light'] as const) {
+    await page.evaluate((nextTheme) => {
+      document.documentElement.setAttribute('data-theme', nextTheme)
+    }, theme)
+    await expect(page.locator('html')).toHaveAttribute('data-theme', theme)
+
+    const restBorder = await readComputedValue(inputRow, 'border-top-color')
+    const restStyle = await readComputedValue(inputRow, 'border-top-style')
+    expect(restStyle).toBe('solid')
+
+    await inputRow.evaluate((node) => {
+      const transfer = new DataTransfer()
+      transfer.items.add(new File(['x'], 'notes.txt', { type: 'text/plain' }))
+      node.dispatchEvent(new DragEvent('dragover', { bubbles: true, cancelable: true, dataTransfer: transfer }))
+    })
+    await expect(inputRow).toHaveClass(/is-file-drop-target/)
+    expect(await readComputedValue(inputRow, 'border-top-style')).toBe('dashed')
+    expect(await readComputedValue(inputRow, 'border-top-color')).not.toBe(restBorder)
+    await expect(inputRow).toHaveScreenshot(`composer-file-drop-target-${theme}.png`, {
+      animations: 'disabled',
+    })
+
+    await inputRow.evaluate((node) => {
+      const transfer = new DataTransfer()
+      transfer.items.add(new File(['x'], 'notes.txt', { type: 'text/plain' }))
+      node.dispatchEvent(new DragEvent('drop', { bubbles: true, cancelable: true, dataTransfer: transfer }))
+    })
+    await expect(inputRow).not.toHaveClass(/is-file-drop-target/)
+    expect(await readComputedValue(inputRow, 'border-top-style')).toBe('solid')
+    // Browser mode has no preload path bridge, so the drop is swallowed without
+    // navigating away and without inserting text.
+    await expect(page.locator('.card-shell').first()).toBeVisible()
+    await expect(textarea).toHaveValue('')
+  }
+})

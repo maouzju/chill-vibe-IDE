@@ -21,6 +21,7 @@ import {
   rearmWakeTimerBatchForPatch,
   summarizeWakeTimerBatch,
 } from '../src/components/wake-timer.ts'
+import { shouldRunCompletionCallbacksForLostStream } from '../src/app-helpers.ts'
 
 const request = (id: string, prompt: string) => ({
   id,
@@ -1122,5 +1123,39 @@ describe('supervisor wake timer batches (explicit targets)', () => {
       }),
       false,
     )
+  })
+})
+
+// 症状：用户在流式输出中直接发新消息（自动打断），打断后的收尾走 `Stream not found.`
+//   分支，完成监听被当成「正常结束」触发：自动鞭策把刚被打断的卡重新启动、
+//   自动化看板模板也被误触发。
+// 根因：该分支无条件 `scheduleStableWakeTimerCompletion`，从不查这一轮的
+//   stopReason，而打断时 `stoppedRunReasonRef` 早已写入 'user-interrupt'。
+// 规格依据：wake-timer requirements.md 第 19 条「手动停止、用户打断、终端错误也不算完成」。
+describe('run-success callbacks after an interrupted turn', () => {
+  it('does not treat a user-interrupted stream teardown as a normal completion', () => {
+    assert.equal(shouldRunCompletionCallbacksForLostStream({
+      stopReason: 'user-interrupt',
+    }), false)
+  })
+
+  it('does not treat a manual stop teardown as a normal completion', () => {
+    assert.equal(shouldRunCompletionCallbacksForLostStream({
+      stopReason: 'manual',
+    }), false)
+  })
+
+  it('still runs completion callbacks when the stream was lost on its own', () => {
+    assert.equal(shouldRunCompletionCallbacksForLostStream({
+      stopReason: undefined,
+    }), true)
+  })
+
+  // ask-user-answer 是「用户回答了提问」，那一轮本来就要接着跑下一条队列消息，
+  // 不是用户喊停，所以仍按正常结束处理。
+  it('keeps ask-user answers on the normal completion path', () => {
+    assert.equal(shouldRunCompletionCallbacksForLostStream({
+      stopReason: 'ask-user-answer',
+    }), true)
   })
 })

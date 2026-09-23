@@ -21,6 +21,7 @@
 
 - `thread/start` 与 `thread/resume`：传入归一化后的 `approvalPolicy`，让线程级配置跟当前卡一致。
 - `turn/start`：传入同样的 `approvalPolicy`，确保单次请求也能覆盖。
+- `turn/interrupt`：停止按钮与流式中发送触发的打断发 `{ threadId, turnId }`（`turnId` 取自根线程的 `turn/started`），等 Codex 回 `turn/completed(status: interrupted)` 后才释放进程，8s 不回应才硬杀兜底；软中断成功时渲染端保留 `sessionId`，下一条消息用 `thread/resume` 续同一线程而不是 seeded 冷启动（pitfall #382）。
 - `sandboxPolicy`：
   - `read-only`：继续 `readOnly`，网络恒为 false。
   - `workspace-write`：继续 `workspaceWrite`，把 `networkAccessEnabled` 归一化为布尔值

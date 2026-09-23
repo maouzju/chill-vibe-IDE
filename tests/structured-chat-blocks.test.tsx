@@ -1114,3 +1114,57 @@ test('keeps the Codex live sub-agent status quiet when nothing is running', () =
   assert.doesNotMatch(markup, /subagent-dock/)
   assert.doesNotMatch(markup, /Sub-agents running/)
 })
+
+test('the live sub-agent status panel shows each agent model and reasoning effort when known', () => {
+  const card = createCard()
+  card.status = 'streaming'
+  card.messages = [
+    {
+      id: 'agents-status-model',
+      role: 'assistant',
+      content: '',
+      createdAt: '2026-09-21T08:00:00.000Z',
+      meta: {
+        kind: 'agents',
+        provider: 'codex',
+        structuredData: JSON.stringify({
+          itemId: 'agent-status:root',
+          kind: 'agents',
+          status: 'completed',
+          view: 'status',
+          agents: [
+            {
+              threadId: 'thread-reviewer',
+              path: '/root/reviewer',
+              status: 'running',
+              model: 'gpt-5.6-luna',
+              reasoningEffort: 'medium',
+              activity: ['Reviewing the diff.'],
+            },
+            {
+              threadId: 'thread-tester',
+              path: '/root/tester',
+              status: 'running',
+              model: 'claude-haiku-4-5-20251001',
+              activity: ['Running tests.'],
+            },
+            {
+              threadId: 'thread-legacy',
+              path: '/root/legacy',
+              status: 'running',
+              activity: ['Old snapshot without model.'],
+            },
+          ],
+        }),
+      },
+    },
+  ]
+
+  const markup = renderCard(card)
+
+  assert.match(markup, /structured-agent-model[^>]*>gpt-5\.6-luna · medium</)
+  assert.match(markup, /structured-agent-model[^>]*>claude-haiku-4-5-20251001</)
+  // 没有模型信息的老条目不渲染徽标，也不能出现 undefined。
+  assert.equal((markup.match(/structured-agent-model/g) ?? []).length, 2)
+  assert.doesNotMatch(markup, /undefined/)
+})

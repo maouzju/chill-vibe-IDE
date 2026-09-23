@@ -3987,6 +3987,13 @@ body.is-card-dragging .lane-drop-zone-top {
   box-shadow: none;
 }
 
+/* OS file hovering over the composer: dashed accent frame, same tokens in both themes */
+.composer-input-row.is-file-drop-target {
+  border-style: dashed;
+  border-color: color-mix(in srgb, var(--accent) 55%, var(--line-strong));
+  background: color-mix(in srgb, var(--accent-soft) 60%, var(--panel-strong));
+}
+
 
 .composer-input-row .textarea {
   flex: 1;
@@ -6092,6 +6099,18 @@ a.message-file-reference-link:focus-visible {
   font-family: var(--font-mono);
   font-size: 0.68rem;
   font-weight: 650;
+  line-height: 1.4;
+}
+
+.structured-agent-model {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--ink-3);
+  font-family: var(--font-mono);
+  font-size: 0.66rem;
   line-height: 1.4;
 }
 
@@ -10764,6 +10783,12 @@ body,
   padding-block: 0.04rem;
   direction: rtl;
   text-align: left;
+}
+
+/* 这些行可以右键"打开文件 / 打开文件位置"，悬停提亮是唯一的可交互提示；
+   不加 background/padding，否则会改变文件列表的虚拟化行高（20px）。 */
+.git-dashboard-file-item:hover {
+  color: var(--ink-2);
 }
 
 .git-dashboard-actions-bar {

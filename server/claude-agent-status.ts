@@ -175,10 +175,12 @@ export const createClaudeAgentStatusTracker = ({
   const agents = new Map<string, TrackedAgent>()
   const aliases = new Map<string, string>()
   const background = new Set<string>()
+  // tool_use_id → 条目 id：sidechain 行只带 parent_tool_use_id，要靠它找回子代理条目。
+  const toolUseIds = new Map<string, string>()
 
   const ensureAgent = (
     taskId: string,
-    patch: Partial<Pick<TrackedAgent, 'nickname' | 'role' | 'status'>> = {},
+    patch: Partial<Pick<TrackedAgent, 'nickname' | 'role' | 'status' | 'model'>> = {},
   ) => {
     let agent = agents.get(taskId)
     if (!agent) {
@@ -190,6 +192,7 @@ export const createClaudeAgentStatusTracker = ({
     if (patch.nickname) agent.nickname = patch.nickname
     if (patch.role) agent.role = patch.role
     if (patch.status) agent.status = patch.status
+    if (patch.model) agent.model = patch.model
     return agent
   }
 
@@ -208,6 +211,7 @@ export const createClaudeAgentStatusTracker = ({
     threadId: agent.threadId,
     ...(agent.nickname ? { nickname: agent.nickname } : {}),
     ...(agent.role ? { role: agent.role } : {}),
+    ...(agent.model ? { model: agent.model } : {}),
     status: agent.status,
     ...(agent.message !== undefined ? { message: agent.message } : {}),
     activity: [...agent.activity, ...(isRunningStatus(agent.status) ? [formatElapsed(agent.startedAt)] : [])],
@@ -311,9 +315,29 @@ export const createClaudeAgentStatusTracker = ({
     return snapshot()
   }
 
+  // 症状：面板看不出子代理跑在哪个模型上（SPEC subagent-model-badge）。
+  // 数据源：system:task_* 事件不带模型；只有 sidechain 的 assistant 行 message.model 是 CLI 解析
+  //   别名后的真实 id（Agent 工具入参里的 haiku/opus 只是别名且多数派发不填）。
+  // 边界：只读这一个字段，不消费该行（handled 仍为 false，pitfall #223 的 sidechain 规则不动），
+  //   同一模型重复到达不再推快照，否则子代理每说一句面板就刷一次。
+  const attachSidechainModel = (parentToolUseId: string, value: JsonRecord) => {
+    if (value.type !== 'assistant') return false
+    const model = readString(readRecord(value, 'message'), 'model')
+    if (!model) return false
+    const taskId = resolveTask(toolUseIds.get(parentToolUseId) ?? syntheticClaudeAgentId(parentToolUseId))
+    const agent = agents.get(taskId)
+    if (!agent || agent.model === model) return false
+    agent.model = model
+    return true
+  }
+
   const handleEvent = (value: unknown): ClaudeAgentTrackerUpdate => {
-    if (!isRecord(value) || readString(value, 'parent_tool_use_id')) {
+    if (!isRecord(value)) {
       return { handled: false }
+    }
+    const parentToolUseId = readString(value, 'parent_tool_use_id')
+    if (parentToolUseId) {
+      return { handled: false, ...(attachSidechainModel(parentToolUseId, value) ? { activity: snapshot() } : {}) }
     }
 
     // 2026-09-08 原生记录：Workflow 可立即报文件不存在，也可返回后台 task id。
@@ -387,6 +411,7 @@ export const createClaudeAgentStatusTracker = ({
       background.add(synthetic.threadId)
     }
     const taskId = resolveTask(nativeId)
+    if (toolUseId) toolUseIds.set(toolUseId, taskId)
     const known = agents.get(taskId)
     if (known && !isRunningStatus(known.status)) return { handled: true }
 

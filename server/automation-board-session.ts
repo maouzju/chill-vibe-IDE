@@ -1,5 +1,6 @@
 import process from 'node:process'
 
+import type { SelectableModel } from '../shared/models.js'
 import {
   workspaceMirrorEntryLimit,
   workspaceMirrorEntryMaxChars,
@@ -144,6 +145,10 @@ export type WorkspaceAdminRuntime = {
  */
 export const createWorkspaceAdminRuntime = async (
   request: ChatRequest,
+  options: {
+    /** 超管 create_session 的候选模型目录；调用方读不到设置时传 undefined，行为退回旧版。 */
+    modelCatalog?: SelectableModel[]
+  } = {},
 ): Promise<WorkspaceAdminRuntime | null> => {
   if (!request.adminAccess) {
     return null
@@ -158,6 +163,9 @@ export const createWorkspaceAdminRuntime = async (
     scriptPath: getWorkspaceAdminMcpScriptPath(),
     execPath: process.execPath,
     isElectron: Boolean(process.versions.electron),
+    ...(options.modelCatalog && options.modelCatalog.length > 0
+      ? { modelCatalog: options.modelCatalog }
+      : {}),
   }
 
   return {

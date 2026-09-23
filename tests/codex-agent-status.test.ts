@@ -526,3 +526,31 @@ test('summarizes Codex CLI preview categories with whitespace and length bounds'
   assert.equal([...segmenter.segment(graphemeBounded ?? '')].length, 240)
   assert.equal(graphemeBounded, family.repeat(240))
 })
+
+test('thread/started carries the child model and reasoning effort into the status snapshot', () => {
+  const tracker = createCodexAgentStatusTracker({ rootThreadId })
+  const started = childStarted()
+  started.params.thread = {
+    ...started.params.thread,
+    model: 'gpt-5.6-luna',
+    reasoningEffort: 'medium',
+  } as typeof started.params.thread & { model: string; reasoningEffort: string }
+  tracker.handleNotification(started)
+
+  const [agent] = tracker.snapshot().agents
+  assert.equal(agent?.model, 'gpt-5.6-luna')
+  assert.equal(agent?.reasoningEffort, 'medium')
+
+  // 后续活动快照不能把模型冲掉。
+  tracker.handleNotification(subAgentActivity(childThreadId, '/root/explorer'))
+  assert.equal(tracker.snapshot().agents[0]?.model, 'gpt-5.6-luna')
+})
+
+test('a child thread without model fields stays free of undefined model keys', () => {
+  const tracker = createCodexAgentStatusTracker({ rootThreadId })
+  tracker.handleNotification(childStarted())
+
+  const [agent] = tracker.snapshot().agents
+  assert.equal(agent !== undefined && 'model' in agent, false)
+  assert.equal(agent !== undefined && 'reasoningEffort' in agent, false)
+})

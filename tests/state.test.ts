@@ -2683,6 +2683,64 @@ describe('ideReducer pane layout', () => {
     assert.equal(card?.autoUrgeActive, false)
   })
 
+  it('keeps the Codex session when the server confirmed a soft interrupt', () => {
+    const state = createState()
+    state.columns[0] = createColumn({
+      id: 'column-1',
+      layout: createPane('pane-1', ['card-1'], 'card-1'),
+      cards: {
+        'card-1': createCard({
+          id: 'card-1',
+          provider: 'codex',
+          status: 'streaming',
+          streamId: 'stream-1',
+          sessionId: 'codex-thread-still-alive',
+          sessionModel: 'gpt-6-astra',
+          providerSessions: {
+            codex: 'codex-thread-still-alive',
+            claude: 'claude-session-safe-to-keep',
+          },
+          messages: [
+            {
+              id: 'live-assistant-1',
+              role: 'assistant',
+              content: 'Partial Codex answer that survives turn/interrupt.',
+              createdAt: timestamp,
+            },
+          ],
+        }),
+      },
+    })
+
+    const next = ideReducer(state, {
+      type: 'finishStoppedStream',
+      columnId: 'column-1',
+      cardId: 'card-1',
+      softInterrupted: true,
+      stoppedMessage: {
+        id: 'stopped-1',
+        role: 'system',
+        content: 'User interrupted',
+        createdAt: timestamp,
+        meta: {
+          kind: 'run-stopped',
+          stopReason: 'user-interrupt',
+        },
+      },
+    })
+
+    const card = next.columns[0]?.cards['card-1']
+    assert.equal(card?.status, 'idle')
+    assert.equal(card?.streamId, undefined)
+    assert.equal(card?.messages[1]?.meta?.kind, 'run-stopped')
+    assert.equal(card?.sessionId, 'codex-thread-still-alive')
+    assert.equal(card?.sessionModel, 'gpt-6-astra')
+    assert.deepEqual(card?.providerSessions, {
+      codex: 'codex-thread-still-alive',
+      claude: 'claude-session-safe-to-keep',
+    })
+  })
+
   it('still clears the Claude session when the interrupt fell back to a hard kill', () => {
     const state = createState()
     state.columns[0] = createColumn({

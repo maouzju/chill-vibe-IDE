@@ -5,6 +5,7 @@ import {
   collectPastedFilePaths,
   formatPastedFilePathInsertion,
   insertTextAtSelection,
+  partitionDroppedFiles,
 } from '../src/components/composer-paste'
 
 const fakeFile = (name: string) => new File(['x'], name)
@@ -72,4 +73,21 @@ test('insertTextAtSelection replaces the selected range', () => {
   const result = insertTextAtSelection('把 XXX 发给我', 2, 5, 'D:\\a.txt')
   assert.equal(result.value, '把 D:\\a.txt 发给我')
   assert.equal(result.caret, '把 D:\\a.txt'.length)
+})
+
+test('partitionDroppedFiles splits dropped files into image attachments and path candidates by MIME type', () => {
+  const png = new File(['x'], 'shot.png', { type: 'image/png' })
+  const gif = new File(['x'], 'anim.gif', { type: 'image/gif' })
+  const svg = new File(['x'], 'logo.svg', { type: 'image/svg+xml' })
+  const txt = new File(['x'], 'notes.txt', { type: 'text/plain' })
+  const untyped = new File(['x'], 'archive.bin', { type: '' })
+
+  const result = partitionDroppedFiles([png, txt, gif, svg, untyped])
+
+  assert.deepEqual(result.imageFiles, [png, gif])
+  assert.deepEqual(result.pathCandidateFiles, [txt, svg, untyped])
+})
+
+test('partitionDroppedFiles returns empty groups for an empty drop', () => {
+  assert.deepEqual(partitionDroppedFiles([]), { imageFiles: [], pathCandidateFiles: [] })
 })

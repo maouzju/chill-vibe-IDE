@@ -21,7 +21,13 @@ import {
   normalizeLanguage,
 } from '../shared/i18n.js'
 import { getActiveProviderProfile } from '../shared/default-state.js'
-import { isAstraModel, parseLocalModelToken } from '../shared/models.js'
+import {
+  getModelOptions,
+  isAstraModel,
+  isModelPickerOptionVisible,
+  listSelectableModelCatalog,
+  parseLocalModelToken,
+} from '../shared/models.js'
 import { isLoopbackHostname } from './automation-board-bridge.js'
 import { resolveOllamaBaseUrl } from './ollama-manager.js'
 import { decodeConsoleOutput } from './file-encoding.js'
@@ -96,6 +102,7 @@ import type { ResilientProxyRuntimeConfig } from './resilient-proxy.js'
 import { resilientProxyPool } from './resilient-proxy.js'
 import { createArchiveRecallRuntimeOverrides, getCodexArchiveRecallInstruction } from './archive-recall.js'
 import { createWorkspaceAdminRuntime } from './automation-board-session.js'
+import { createComputerUseRuntime } from './computer-use-runtime.js'
 import type { WorkspaceAdminClaudeMcpConfig } from './automation-board-runtime.js'
 import {
   ensureCodexSafetyHookTrusted,
@@ -320,6 +327,53 @@ const getClaudeAskUserQuestionInstruction = (language: AppLanguage) =>
   normalizeLanguage(language) === 'en'
     ? 'In this Chill Vibe Claude runtime, ask-user-question is only a renderer convention for asking the user to choose. Do not use it for normal replies unless you truly need a user decision before continuing. Every real action (running commands, reading files, editing files, searching, etc.) must go through native tool calls. Do not write tool calls as text, XML, JSON, markdown, or the word call.'
     : '在这个 Chill Vibe 的 Claude 运行环境里，ask-user-question 只是一种向用户提问并让用户选择的渲染约定。除非继续前确实需要用户做决定，否则不要在普通回复里使用它。所有实际操作（运行命令、读取文件、编辑文件、搜索等）都必须走原生工具调用。不要把工具调用写成文本、XML、JSON、Markdown，也不要输出单独的 call。'
+
+// 症状（2026-09-21 用户原话）：agent 派子 agent 时既看不到自己能选什么模型，也从不自己选。
+// 根因：Codex CLI 自带的 spawn_agent 描述写着 "Do not set the model field unless the user
+//   explicitly asks"（本机 9 月 42 次真实调用 0 次带 model）；Claude 的 Agent 工具只暴露别名
+//   sonnet/opus/haiku/fable，agent 不知道本环境对应哪些模型。
+// 做法：在系统提示里替用户把授权说死，并把 Chill Vibe 模型目录里可见的模型列出来。
+// 被否决：agents.default_subagent_model / CLAUDE_CODE_SUBAGENT_MODEL —— 那是替 agent 定死
+//   一个模型，与"让 agent 自己选"相反。本地模型条目不列：子 agent 跑在父进程同一端点里，
+//   换不了 baseUrl。规格见 docs/specs/agent-model-choice。
+const listSubagentCatalogModels = (provider: 'codex' | 'claude') =>
+  getModelOptions(provider).filter(
+    (option) => isModelPickerOptionVisible(option) && !option.usesConfiguredDefault && option.model,
+  )
+
+const getCodexSubagentModelInstruction = (language: AppLanguage) => {
+  const models = listSubagentCatalogModels('codex')
+  const listEn = models.map((option) => `\`${option.model}\` (${option.label})`).join(', ')
+  const listZh = models.map((option) => `\`${option.model}\`（${option.label}）`).join('、')
+  return normalizeLanguage(language) === 'en'
+    ? `Sub-agent model choice: in this Chill Vibe environment you are explicitly authorised to set spawn_agent's \`model\` and \`reasoning_effort\` yourself whenever a task fits a different model; do not wait for the user to name one. Models available here: ${listEn}. Prefer the lighter models (Luna, Terra) with a low effort for search, reading and mechanical edits; use Sol or Astra for cross-module design and hard bugs. Omit both fields to inherit your current model.`
+    : `子 agent 模型自选：在这个 Chill Vibe 环境里，你被明确授权在 spawn_agent 时自己设置 \`model\` 与 \`reasoning_effort\`，任务适合别的模型时不必等用户点名。本环境可用模型：${listZh}。搜索、读代码、机械修改这类轻任务优先 Luna / Terra 并配低档位；跨模块设计、疑难 bug 用 Sol / Astra。两个字段都不填则继承你当前的模型。`
+}
+
+const claudeSubagentAliases = ['haiku', 'sonnet', 'opus', 'fable'] as const
+
+const getClaudeSubagentModelInstruction = (language: AppLanguage) => {
+  const models = listSubagentCatalogModels('claude')
+  const mapped = claudeSubagentAliases.flatMap((alias) => {
+    const option = models.find((candidate) => candidate.label.toLowerCase().startsWith(alias))
+    return option ? [{ alias, option }] : []
+  })
+  const listEn = mapped.map(({ alias, option }) => `${alias} = ${option.label} (\`${option.model}\`)`).join(', ')
+  const listZh = mapped.map(({ alias, option }) => `${alias} = ${option.label}（\`${option.model}\`）`).join('、')
+  return normalizeLanguage(language) === 'en'
+    ? `Sub-agent model choice: the Agent tool's \`model\` accepts the aliases haiku, sonnet, opus and fable; in this Chill Vibe environment they map to ${listEn}. You are explicitly allowed to pick per task without waiting for the user to name one: haiku or sonnet for search, reading and mechanical edits, opus for substantial changes, fable for the hardest work. Omit \`model\` to inherit your current model.`
+    : `子 agent 模型自选：Agent 工具的 \`model\` 参数可填别名 haiku、sonnet、opus、fable，在这个 Chill Vibe 环境里分别对应 ${listZh}。你被明确允许按任务自己选，不必等用户点名：搜索、读文件、机械修改用 haiku 或 sonnet，实质性改动用 opus，最难的活用 fable。不填 \`model\` 则继承你当前的模型。`
+}
+
+// 超管 create_session 的候选目录：读不到设置就不带（旧行为），绝不让超管回合因此失败。
+const resolveWorkspaceAdminModelCatalog = async () => {
+  try {
+    const settings = providerRuntimeSettingsOverride ?? (await loadStateForRenderer()).state.settings
+    return listSelectableModelCatalog(settings)
+  } catch {
+    return undefined
+  }
+}
 
 // 手填的本机端点（用户不建本地模型条目，直接在「接口配置」里填 127.0.0.1）同样是本地推理。
 // URL 解析失败时返回 false —— 认不出来就按远端处理，保留代理，不去猜。
@@ -931,10 +985,16 @@ const formatCodexStaleSessionRecoveryNotice = (language: AppLanguage) =>
     ? 'The resumed Codex session could not be loaded from its rollout file. Chill Vibe started a new session automatically so your latest prompt and attachments are not lost.'
     : '恢复的 Codex 会话文件无法加载，Chill Vibe 已自动开启一个新会话，保留你本次发送的内容和附件。'
 
-// 支持软中断的子进程句柄。只有 Claude keepalive 路径会挂上 `interruptTurn`：
-// 它背后是 CLI 的 stream-json 控制通道，能只 abort 当前 turn 而保住进程与会话。
-// 其余 provider（含 Claude 的非 keepalive 回退路径）没有这个能力，停止仍走 kill。
+// 支持软中断的子进程句柄。Claude keepalive 路径靠 CLI 的 stream-json 控制通道，
+// Codex app-server 路径靠 JSON-RPC `turn/interrupt`（见 launchCodexAppServerRun）；
+// 两者都只 abort 当前 turn 而保住进程与会话。没挂上这个方法的路径（Claude 非
+// keepalive 回退等）停止仍走 kill。
 export type InterruptibleChild = ChildProcess & { interruptTurn?: () => boolean }
+
+// turn/interrupt 发出后 Codex 正常在几十毫秒内回 turn/completed(interrupted) 并由
+// finishWithDone 释放进程；这两个兜底只在 app-server 不回应时把它硬杀掉，避免僵尸进程。
+const codexTurnInterruptAckTimeoutMs = 5_000
+const codexTurnInterruptSettleTimeoutMs = 8_000
 
 // 停止一个 turn 时的路径选择：能软中断就软中断，否则如实返回 false 让调用方硬 kill。
 // 抽成纯函数是为了让"绝不静默失败"这条约束可被单测钉住——软中断一旦悄悄吞掉
@@ -1851,10 +1911,11 @@ export const expandCodexNativeSlashPrompt = (request: ChatRequest) => {
   }
 }
 
-const buildCodexAppServerBaseInstructions = (request: ChatRequest) =>
+export const buildCodexAppServerBaseInstructions = (request: ChatRequest) =>
   [
     buildProviderSystemPrompt(request.language, request.systemPrompt),
     getCodexAskUserQuestionInstruction(request.language),
+    getCodexSubagentModelInstruction(request.language),
     getWindowsShellSafetyInstruction(),
   ].join(' ')
 
@@ -2476,6 +2537,38 @@ const launchCodexAppServerRun = async (
     })
   }
 
+  // 症状：Codex 卡点停止 / 流式中左键发送后，下一条消息以 seeded 摘要冷启动，早先上下文整段丢失。
+  // 根因：2026-09-21 对拍 ~/.codex/sessions，3 天 328 个 gpt-6 rollout 里 135 个首条 user 是
+  //   「请在一个新的会话里继续这段对话」壳子（最多省略 263 条）——stop() 对 Codex 只能 child.kill()，
+  //   done 信封 interrupted:false，reducer 按 #118 清 sessionId。Codex 0.153.4 app-server 本就有
+  //   turn/interrupt（TurnInterruptParams{threadId,turnId}），线程与 rollout 都活着。见 pitfall #382。
+  // 被否决：只改 reducer 保留 sessionId 但仍硬杀——硬杀不写 turn_aborted、悬空 function_call 能否
+  //   resume 本地零样本，没实证不赌。
+  let activeTurnId: string | null = null
+  let interruptFallbackKillTimer: ReturnType<typeof setTimeout> | undefined
+  ;(child as InterruptibleChild).interruptTurn = () => {
+    if (finished || !emittedSessionId || !activeTurnId) {
+      return false
+    }
+
+    void sendRequest(
+      'turn/interrupt',
+      { threadId: emittedSessionId, turnId: activeTurnId },
+      codexTurnInterruptAckTimeoutMs,
+    ).catch(() => {
+      if (!finished) {
+        child.kill()
+      }
+    })
+    interruptFallbackKillTimer ??= setTimeout(() => {
+      if (!finished) {
+        child.kill()
+      }
+    }, codexTurnInterruptSettleTimeoutMs)
+    interruptFallbackKillTimer.unref?.()
+    return true
+  }
+
   const narrowCodexSandboxForRequirementsConflict = async (message: string) => {
     const currentSandboxMode = getCodexSandboxMode(currentRequest)
     if (!isCodexSandboxRequirementsConflict(message, currentSandboxMode)) {
@@ -2749,6 +2842,15 @@ const launchCodexAppServerRun = async (
 
       const params = readRecord(message, 'params') ?? {}
 
+      // 根线程的 turn id 只为 turn/interrupt 服务；子 agent 线程的 turn/started 带自己的 threadId，跳过。
+      if (method === 'turn/started') {
+        const turnThreadId = readString(params, 'threadId')
+        if (!turnThreadId || turnThreadId === emittedSessionId) {
+          const turn = readRecord(params, 'turn')
+          activeTurnId = (turn ? readString(turn, 'id') : undefined) ?? null
+        }
+      }
+
       const agentUpdate = agentStatusTracker.handleNotification(message)
       if (agentUpdate.activity) {
         nativeReconnectFeedbackActive = false
@@ -2819,6 +2921,7 @@ const launchCodexAppServerRun = async (
       }
 
       if (method === 'turn/completed' && !manualCompactRequest) {
+        activeTurnId = null
         if (agentStatusTracker.markRootTurnCompleted() === 'finish') {
           finishWithDone()
         } else {
@@ -3097,12 +3200,25 @@ export const launchProviderRun = async (
   let adminRuntime: Awaited<ReturnType<typeof createWorkspaceAdminRuntime>> = null
 
   try {
-    adminRuntime = await createWorkspaceAdminRuntime(currentRequest)
+    adminRuntime = await createWorkspaceAdminRuntime(currentRequest, {
+      modelCatalog: await resolveWorkspaceAdminModelCatalog(),
+    })
   } catch (error) {
     console.warn(
       `[workspace-admin] Unable to prepare workspace admin MCP runtime: ${error instanceof Error ? error.message : String(error)}`,
     )
     adminRuntime = null
+  }
+
+  // 浏览器控制（computer use）与超管 MCP 同一形态：只在开关打开的回合注入，fail-open。
+  let computerUseRuntime: Awaited<ReturnType<typeof createComputerUseRuntime>> = null
+  try {
+    computerUseRuntime = await createComputerUseRuntime(currentRequest)
+  } catch (error) {
+    console.warn(
+      `[computer-use] Unable to prepare browser MCP runtime: ${error instanceof Error ? error.message : String(error)}`,
+    )
+    computerUseRuntime = null
   }
 
   if (currentRequest.provider === 'codex') {
@@ -3118,10 +3234,12 @@ export const launchProviderRun = async (
     const extraCodexArgs = [
       ...(archiveRecallRuntime?.runtimeArgs ?? []),
       ...(adminRuntime?.codexRuntimeArgs ?? []),
+      ...(computerUseRuntime?.codexRuntimeArgs ?? []),
     ]
     const extraSystemPrompt = [
       ...(archiveRecallRuntime ? [getCodexArchiveRecallInstruction(language)] : []),
       ...(adminRuntime ? [adminRuntime.instruction] : []),
+      ...(computerUseRuntime ? [computerUseRuntime.instruction] : []),
     ]
     const codexRuntime = extraCodexArgs.length > 0
       ? {
@@ -3148,10 +3266,14 @@ export const launchProviderRun = async (
     )
   }
 
-  const claudeRequest = adminRuntime
+  const claudeExtraInstructions = [
+    ...(adminRuntime ? [adminRuntime.instruction] : []),
+    ...(computerUseRuntime ? [computerUseRuntime.instruction] : []),
+  ]
+  const claudeRequest = claudeExtraInstructions.length > 0
     ? {
         ...currentRequest,
-        systemPrompt: [currentRequest.systemPrompt, adminRuntime.instruction]
+        systemPrompt: [currentRequest.systemPrompt, ...claudeExtraInstructions]
           .filter((part) => part.trim().length > 0)
           .join('\n\n'),
       }
@@ -3165,6 +3287,7 @@ export const launchProviderRun = async (
     attachmentPaths,
     options?.claudeSessionPool ?? null,
     adminRuntime?.claudeMcpConfig,
+    computerUseRuntime?.claudeMcpConfig,
   )
 }
 
@@ -3721,6 +3844,7 @@ const launchClaudeRun = async (
   attachmentPaths: string[],
   pool: ClaudeSessionPool | null,
   workspaceAdminMcpConfig?: WorkspaceAdminClaudeMcpConfig,
+  computerUseMcpConfig?: WorkspaceAdminClaudeMcpConfig,
 ) => {
   const cardId = request.cardId?.trim()
 
@@ -3751,6 +3875,7 @@ const launchClaudeRun = async (
       cardId,
       safetyRuntime.hookCommand,
       workspaceAdminMcpConfig,
+      computerUseMcpConfig,
     )
   }
 
@@ -3762,6 +3887,7 @@ const launchClaudeRun = async (
     attachmentPaths,
     safetyRuntime.hookCommand,
     workspaceAdminMcpConfig,
+    computerUseMcpConfig,
   )
 }
 
@@ -3773,6 +3899,7 @@ const launchClaudeSingleShotRun = async (
   attachmentPaths: string[],
   safetyHookCommand?: string,
   workspaceAdminMcpConfig?: WorkspaceAdminClaudeMcpConfig,
+  computerUseMcpConfig?: WorkspaceAdminClaudeMcpConfig,
 ) => {
   const managedChild = createManagedChildHandle()
   let currentRequest = request
@@ -3786,6 +3913,7 @@ const launchClaudeSingleShotRun = async (
         includeEffort,
         safetyHookCommand,
         workspaceAdminMcpConfig,
+        computerUseMcpConfig,
         settingsEnvOverride: runtime.claudeSettingsEnv,
       }),
     ]
@@ -3991,6 +4119,8 @@ export const buildClaudeKeepaliveSignature = (
       : 'omitted',
     ultracode: request.thinkingEnabled !== false && isUltracodeEffort(request.reasoningEffort),
     plan: Boolean(request.planMode),
+    // 切换浏览器控制开关必须换进程：旧进程的 argv 里没有（或多了）chill_vibe_browser MCP。
+    computerUse: request.computerUseEnabled === true,
     language: normalizeLanguage(request.language),
     systemPrompt: request.systemPrompt,
     modelPromptRules: request.modelPromptRules,
@@ -4019,6 +4149,7 @@ const launchClaudeKeepaliveRun = async (
   cardId: string,
   safetyHookCommand?: string,
   workspaceAdminMcpConfig?: WorkspaceAdminClaudeMcpConfig,
+  computerUseMcpConfig?: WorkspaceAdminClaudeMcpConfig,
 ) => {
   const managedChild = createManagedChildHandle()
   let currentRequest = request
@@ -4054,6 +4185,7 @@ const launchClaudeKeepaliveRun = async (
             safetyHookCommand,
             completionBoundaryHook,
             workspaceAdminMcpConfig,
+            computerUseMcpConfig,
             settingsEnvOverride: runtime.claudeSettingsEnv,
           }),
         ]
@@ -4305,6 +4437,7 @@ export const buildCodexArgs = (request: ChatRequest, attachmentPaths: string[]) 
   const systemPrompt = [
     buildProviderSystemPrompt(request.language, getRequestBaseSystemPrompt(request)),
     getCodexAskUserQuestionInstruction(request.language),
+    getCodexSubagentModelInstruction(request.language),
     getWindowsShellSafetyInstruction(),
   ].join(' ')
 
@@ -4550,6 +4683,9 @@ export const buildClaudeArgs = (
     // 看板监工回合专属。--strict-mcp-config 让本次启动只认这里给的 MCP，
     // 不继承用户 ~/.claude 里配置的其它 server。
     workspaceAdminMcpConfig?: WorkspaceAdminClaudeMcpConfig
+    // 浏览器控制（computer use）的 Playwright MCP；与超管配置合并进同一个 --mcp-config，
+    // 但单独存在时**不**加 --strict-mcp-config（那会丢掉用户自己配置的 MCP）。
+    computerUseMcpConfig?: WorkspaceAdminClaudeMcpConfig
     // resolveProviderRuntime 注入的 ANTHROPIC_* 原样透传到 `--settings`，用来压住
     // 用户 `~/.claude/settings.json` 里的同名 env（后者优先级高于进程环境变量）。
     // 见 ProviderRuntime.claudeSettingsEnv 上的根因说明。
@@ -4612,16 +4748,23 @@ export const buildClaudeArgs = (
   const systemPrompt = [
     buildProviderSystemPrompt(request.language, getRequestBaseSystemPrompt(request)),
     getClaudeAskUserQuestionInstruction(request.language),
+    getClaudeSubagentModelInstruction(request.language),
     getWindowsShellSafetyInstruction(),
   ].join(' ')
 
   args.push('--permission-mode', permissionMode)
-  if (options?.workspaceAdminMcpConfig) {
-    args.push(
-      '--mcp-config',
-      JSON.stringify(options.workspaceAdminMcpConfig),
-      '--strict-mcp-config',
-    )
+  // `--mcp-config <configs...>` 是可变参数：JSON 后面紧跟的位置参数会被当成第二个配置文件
+  // 路径吞掉（2026-09-21 实测，提示词直接变成 "MCP config file not found"）。这里后面永远是
+  // --add-dir / --settings 这类 flag，提示词在最后；新增参数时别把位置参数排到它后面。
+  const mcpServers = {
+    ...(options?.computerUseMcpConfig?.mcpServers ?? {}),
+    ...(options?.workspaceAdminMcpConfig?.mcpServers ?? {}),
+  }
+  if (Object.keys(mcpServers).length > 0) {
+    args.push('--mcp-config', JSON.stringify({ mcpServers }))
+    if (options?.workspaceAdminMcpConfig) {
+      args.push('--strict-mcp-config')
+    }
   }
   if (additionalDirectories.length > 0) {
     args.push('--add-dir', ...additionalDirectories)
@@ -4638,6 +4781,9 @@ export const buildClaudeArgs = (
       // 这里省略才是继承，写了才是覆盖 —— 而未注入的场景（路由关闭 / 无 profile）
       // 正需要继承，所以不能无条件展开成空对象。
       ...(options?.settingsEnvOverride ? { env: options.settingsEnvOverride } : {}),
+      // 浏览器控制开关：写 true 让装了 Claude in Chrome 扩展的用户走原生路径；关闭时省略
+      // 这个键（省略 = 继承用户 settings.json，与上面 env 键同一条规则）。
+      ...(request.computerUseEnabled === true ? { chrome: true } : {}),
       // Official ultracode channel (Claude Code v2.1.157+): a session-level
       // settings key that sends xhigh plus dynamic-workflow orchestration.
       // Older CLIs treat unknown settings keys as a warning, degrading to

@@ -840,6 +840,8 @@ export const appSettingsSchema = z.object({
   codexDestructiveCommandProtectionEnabled: z.boolean().default(true),
   attackPatternProtectionEnabled: z.boolean().default(false),
   codexIsolatedHomeEnabled: z.boolean().default(true),
+  // 允许 Agent 使用浏览器（computer use）。默认关：会以用户身份操作已登录网站。
+  computerUseEnabled: z.boolean().default(false),
   requestModels: requestModelSettingsSchema.default({
     codex: DEFAULT_CODEX_MODEL,
     claude: DEFAULT_CLAUDE_MODEL,
@@ -1126,6 +1128,7 @@ export const appStateSchema = z.object({
     codexDestructiveCommandProtectionEnabled: true,
     attackPatternProtectionEnabled: false,
     codexIsolatedHomeEnabled: true,
+    computerUseEnabled: false,
     requestModels: {
       codex: DEFAULT_CODEX_MODEL,
       claude: DEFAULT_CLAUDE_MODEL,
@@ -1336,6 +1339,10 @@ export const chatRequestSchema = z.object({
   codexDestructiveCommandProtectionEnabled: z.boolean().default(true),
   attackPatternProtectionEnabled: z.boolean().default(false),
   codexIsolatedHomeEnabled: z.boolean().default(true),
+  // 这一回合是否注入浏览器控制 MCP（两条 provider 共用，见 docs/specs/computer-use-toggle）。
+  // optional 而非 default(false)：renderer 侧 ChatRequest 是输出类型，default 会让所有
+  // 请求构造点（Brainstorm / Git Agent / 白噪音…）都被迫补这个字段；服务端只认 === true。
+  computerUseEnabled: z.boolean().optional(),
   personality: codexPersonalitySchema.optional(),
   serviceTier: z.literal('priority').optional(),
   // 这一回合带超管权限（card.adminAccess === true），是唯一会把工作区 MCP
@@ -1919,6 +1926,9 @@ export const streamAgentEntrySchema = z.object({
   nickname: z.string().optional(),
   role: z.string().optional(),
   path: z.string().optional(),
+  // 子 agent 实际运行的模型 / 思考档位（SPEC subagent-model-badge）；老快照没有这两个键，保持可选。
+  model: z.string().optional(),
+  reasoningEffort: z.string().optional(),
   status: streamAgentStatusSchema.default('pendingInit'),
   message: z.string().nullable().optional(),
   activity: z.array(z.string()).optional(),

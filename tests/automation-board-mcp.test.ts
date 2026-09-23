@@ -1868,3 +1868,192 @@ test(
     }
   },
 )
+
+// ---------------------------------------------------------------------------
+// 超管看得见可选模型并自己选（SPEC agent-model-choice AC5–AC9）
+// ---------------------------------------------------------------------------
+
+import * as adminMcpModule from '../server/automation-board-mcp.js'
+import * as adminRuntimeModule from '../server/automation-board-runtime.ts'
+
+const modelCatalog = [
+  { provider: 'codex', model: 'gpt-5.6-luna', label: 'GPT-5.6 Luna' },
+  { provider: 'codex', model: 'gpt-6-astra', label: 'GPT-6 Astra' },
+  { provider: 'claude', model: 'claude-sonnet-5', label: 'Sonnet 5' },
+  { provider: 'claude', model: '__local__:ollama-1', label: 'Qwen local' },
+]
+const modelsEnvKey = 'CHILL_VIBE_ADMIN_MCP_MODELS'
+
+const buildDefinitions = (adminMcpModule as Record<string, unknown>).buildWorkspaceAdminMcpToolDefinitions as
+  | ((catalog?: typeof modelCatalog) => typeof workspaceAdminMcpToolDefinitions)
+  | undefined
+
+test('create_session lists the selectable models per provider when a catalog is supplied', () => {
+  assert.equal(typeof buildDefinitions, 'function', 'buildWorkspaceAdminMcpToolDefinitions must be exported')
+  const definitions = buildDefinitions!(modelCatalog)
+  const createTool = definitions.find((tool) => tool.name === 'create_session')
+  const modelProp = (createTool?.inputSchema.properties as Record<string, { description?: string; enum?: string[] }>).model
+
+  assert.match(modelProp?.description ?? '', /codex:/)
+  assert.match(modelProp?.description ?? '', /claude:/)
+  for (const entry of modelCatalog) {
+    assert.match(modelProp?.description ?? '', new RegExp(`${entry.model.replace(/[.]/g, '[.]')}[^;]*${entry.label}`))
+  }
+  // 候选只是提示，省略仍合法，所以不用 enum 把模型锁死。
+  assert.equal(modelProp?.enum, undefined)
+  assert.match(modelProp?.description ?? '', /omit/i)
+
+  // 其它工具与无目录时逐字相同；无目录时整份定义退回既有导出。
+  const withoutCatalog = buildDefinitions!(undefined)
+  assert.deepEqual(withoutCatalog, workspaceAdminMcpToolDefinitions)
+  assert.deepEqual(
+    definitions.filter((tool) => tool.name !== 'create_session'),
+    workspaceAdminMcpToolDefinitions.filter((tool) => tool.name !== 'create_session'),
+  )
+})
+
+test('create_session validates the model against the catalog and infers the provider from it', () => {
+  const resolve = resolveWorkspaceAdminCommandFromToolCall as unknown as (
+    name: string,
+    args: Record<string, unknown>,
+    columnId: string,
+    selfCardId: string,
+    catalog?: typeof modelCatalog,
+  ) => { error?: string; command?: Record<string, unknown> }
+
+  const unknown = resolve('create_session', { requirement: 'x', model: 'gpt-9-nope' }, 'col-1', 'self', modelCatalog)
+  assert.ok(unknown.error, 'an unknown model must be rejected')
+  assert.match(unknown.error ?? '', /gpt-9-nope/)
+  assert.match(unknown.error ?? '', /gpt-5\.6-luna/, 'the rejection must list the candidates')
+  assert.equal(unknown.command, undefined)
+
+  const mismatch = resolve(
+    'create_session',
+    { requirement: 'x', provider: 'codex', model: 'claude-sonnet-5' },
+    'col-1',
+    'self',
+    modelCatalog,
+  )
+  assert.ok(mismatch.error, 'a model that belongs to another provider must be rejected')
+  assert.match(mismatch.error ?? '', /claude/)
+
+  const inferred = resolve('create_session', { requirement: 'x', model: 'claude-sonnet-5' }, 'col-1', 'self', modelCatalog)
+  assert.equal(inferred.error, undefined)
+  assert.equal(inferred.command?.provider, 'claude')
+  assert.equal(inferred.command?.model, 'claude-sonnet-5')
+  assert.ok(workspaceAdminCommandSchema.safeParse(inferred.command).success)
+
+  const local = resolve('create_session', { requirement: 'x', model: '__local__:ollama-1' }, 'col-1', 'self', modelCatalog)
+  assert.equal(local.error, undefined)
+  assert.equal(local.command?.provider, 'claude')
+
+  // 没有目录（旧环境）时不校验，行为与现在一致。
+  const legacy = resolve('create_session', { requirement: 'x', model: 'gpt-9-nope' }, 'col-1', 'self')
+  assert.equal(legacy.error, undefined)
+  assert.equal(legacy.command?.model, 'gpt-9-nope')
+  // 只省略 model 时也不能凭空捏造 provider。
+  const bare = resolve('create_session', { requirement: 'x' }, 'col-1', 'self', modelCatalog)
+  assert.equal(bare.command?.provider, undefined)
+})
+
+test('both MCP launch paths hand the model catalog to the subprocess through one env key', () => {
+  const exportedKey = (adminRuntimeModule as Record<string, unknown>).workspaceAdminMcpModelsEnvKey
+  assert.equal(exportedKey, modelsEnvKey)
+
+  const codexArgs = buildWorkspaceAdminCodexRuntimeArgs({ ...launchInput, modelCatalog } as typeof launchInput)
+  const codexValues = codexArgs.filter((_, index) => index % 2 === 1)
+  const codexEnv = codexValues.find((value) => value.startsWith(`mcp_servers.${workspaceAdminMcpServerName}.env.${modelsEnvKey}=`))
+  assert.ok(codexEnv, 'codex launch must carry the catalog env')
+  // TOML 字符串里的双引号必须转义，否则 codex 直接拒绝启动。
+  assert.ok(codexEnv!.includes('\\"model\\":\\"gpt-5.6-luna\\"'), codexEnv)
+
+  const claudeConfig = buildWorkspaceAdminClaudeMcpConfig({ ...launchInput, modelCatalog } as typeof launchInput)
+  const claudeEnv = claudeConfig.mcpServers[workspaceAdminMcpServerName]?.env ?? {}
+  assert.deepEqual(JSON.parse(claudeEnv[modelsEnvKey] ?? 'null'), modelCatalog)
+
+  // 没有目录时两条路径都不带这个键，旧行为不变。
+  assert.ok(!buildWorkspaceAdminCodexRuntimeArgs(launchInput).some((value) => value.includes(modelsEnvKey)))
+  assert.equal(modelsEnvKey in (buildWorkspaceAdminClaudeMcpConfig(launchInput).mcpServers[workspaceAdminMcpServerName]?.env ?? {}), false)
+})
+
+test('the admin instruction tells the agent that create_session provider/model are its own call', () => {
+  const zh = getWorkspaceAdminInstruction('zh-CN')
+  const en = getWorkspaceAdminInstruction('en')
+  assert.match(zh, /create_session[^；]*模型[^；]*自己选/)
+  assert.match(en, /create_session[^.]*model[^.]*(your|yourself|you choose|pick)/i)
+})
+
+test(
+  'a real stdio server advertises the catalog in tools/list and rejects an unknown model before touching the bridge',
+  { timeout: 20_000 },
+  async () => {
+    const harness = createBridgeHarness()
+    const info = await harness.bridge.start()
+    const scriptPath = fileURLToPath(new URL('../server/automation-board-mcp.js', import.meta.url))
+    const child = spawn(process.execPath, [scriptPath], {
+      stdio: ['pipe', 'pipe', 'pipe'],
+      env: {
+        ...process.env,
+        [workspaceAdminMcpUrlEnvKey]: info.url,
+        [workspaceAdminMcpTokenEnvKey]: info.token,
+        [workspaceAdminMcpColumnIdEnvKey]: 'col-1',
+        [workspaceAdminMcpSelfCardIdEnvKey]: 'self-card',
+        [modelsEnvKey]: JSON.stringify(modelCatalog),
+      },
+    })
+
+    try {
+      const lines: string[] = []
+      let pending = ''
+      let resolveAnswer = () => {}
+      const answered = new Promise<void>((resolve) => {
+        resolveAnswer = resolve
+      })
+      child.stdout.setEncoding('utf8')
+      child.stdout.on('data', (chunk: string) => {
+        pending += chunk
+        const parts = pending.split('\n')
+        pending = parts.pop() ?? ''
+        for (const part of parts) {
+          if (part.trim()) lines.push(part)
+        }
+        if (lines.length >= 2) resolveAnswer()
+      })
+
+      child.stdin.write(`${JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/list' })}\n`)
+      child.stdin.write(
+        `${JSON.stringify({
+          jsonrpc: '2.0',
+          id: 2,
+          method: 'tools/call',
+          params: { name: 'create_session', arguments: { requirement: 'x', model: 'gpt-9-nope' } },
+        })}\n`,
+      )
+
+      await Promise.race([
+        answered,
+        new Promise<never>((_, reject) => {
+          setTimeout(
+            () => reject(new Error(`stdio server never answered; raw stdout so far: ${JSON.stringify(pending)}`)),
+            8_000,
+          ).unref()
+        }),
+      ])
+
+      const byId = new Map(lines.map((line) => JSON.parse(line) as { id: number; result?: Record<string, unknown> }).map((message) => [message.id, message]))
+      const listed = byId.get(1)?.result as { tools?: { name: string; inputSchema: { properties: Record<string, { description?: string }> } }[] } | undefined
+      const createTool = listed?.tools?.find((tool) => tool.name === 'create_session')
+      assert.match(createTool?.inputSchema.properties.model?.description ?? '', /gpt-5\.6-luna/)
+      assert.match(createTool?.inputSchema.properties.model?.description ?? '', /Qwen local/)
+
+      const call = byId.get(2)?.result as { isError?: boolean; content?: { text?: string }[] } | undefined
+      assert.equal(call?.isError, true)
+      assert.match(call?.content?.[0]?.text ?? '', /gpt-9-nope/)
+      assert.match(call?.content?.[0]?.text ?? '', /gpt-5\.6-luna/)
+      assert.equal(harness.dispatched.length, 0, 'a rejected model must never reach the bridge')
+    } finally {
+      child.kill()
+      await harness.bridge.stop()
+    }
+  },
+)

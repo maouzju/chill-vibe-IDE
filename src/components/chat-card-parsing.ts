@@ -607,6 +607,12 @@ export const parseStructuredAgentsMessage = (message: ChatMessage): StructuredAg
         ...(readStructuredString(record, 'path')
           ? { path: readStructuredString(record, 'path') }
           : {}),
+        ...(readStructuredString(record, 'model')
+          ? { model: readStructuredString(record, 'model') }
+          : {}),
+        ...(readStructuredString(record, 'reasoningEffort')
+          ? { reasoningEffort: readStructuredString(record, 'reasoningEffort') }
+          : {}),
         status: entryStatus as StructuredAgentEntry['status'],
         message: readStructuredString(record, 'message') ?? null,
         activity: Array.isArray(record.activity)

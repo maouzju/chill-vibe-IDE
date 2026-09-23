@@ -27,7 +27,7 @@ const createState = () =>
       lineHeightScale: 1,
       resilientProxyEnabled: true,
       automationBoardCardEnabled: true,
-      requestModels: { codex: 'gpt-5.5', claude: 'claude-opus-5' },
+      requestModels: { codex: 'gpt-5.5', claude: 'claude-opus-5-5' },
       modelReasoningEfforts: { codex: {}, claude: {} },
       providerProfiles: {
         codex: { activeProfileId: '', profiles: [] },
@@ -191,8 +191,8 @@ test('template execution settings survive a reload', async ({ page }) => {
 
   await expect(model).toHaveValue('codex::gpt-5.5')
 
-  await model.selectOption('claude::claude-opus-5')
-  await expect(model).toHaveValue('claude::claude-opus-5')
+  await model.selectOption('claude::claude-opus-5-5')
+  await expect(model).toHaveValue('claude::claude-opus-5-5')
   await depth.selectOption('high')
   await expect(depth).toHaveValue('high')
   await admin.check()
@@ -204,7 +204,7 @@ test('template execution settings survive a reload', async ({ page }) => {
 
   const reopened = await openTemplateConfig(page)
   await expect(fieldByLabel(page, reopened, '模型').locator('select')).toHaveValue(
-    'claude::claude-opus-5',
+    'claude::claude-opus-5-5',
   )
   await expect(fieldByLabel(page, reopened, '思考深度').locator('select')).toHaveValue('high')
   await expect(fieldByLabel(page, reopened, '超管权限').locator('input[type="checkbox"]')).toBeChecked()
@@ -224,8 +224,8 @@ test('the standby composer remembers the model and depth it was set to', async (
   await expect(composeModel).toBeVisible()
   await expect(composeModel).toHaveValue('codex::gpt-5.5')
 
-  await composeModel.selectOption('claude::claude-opus-5')
-  await expect(composeModel).toHaveValue('claude::claude-opus-5')
+  await composeModel.selectOption('claude::claude-opus-5-5')
+  await expect(composeModel).toHaveValue('claude::claude-opus-5-5')
 
   await page.locator('.automation-board-compose-settings-toggle').click()
   const settings = page.locator('.automation-board-compose-settings')
@@ -238,7 +238,7 @@ test('the standby composer remembers the model and depth it was set to', async (
 
   await page.reload()
 
-  await expect(page.locator('.automation-board-compose-model')).toHaveValue('claude::claude-opus-5')
+  await expect(page.locator('.automation-board-compose-model')).toHaveValue('claude::claude-opus-5-5')
   await page.locator('.automation-board-compose-settings-toggle').click()
   await expect(
     page
@@ -265,9 +265,9 @@ test('a reused template instance picks up the model the template was changed to'
   await expect(instance.locator('.automation-board-item-model')).toHaveText('gpt-5.5')
 
   const panel = await openTemplateConfig(page)
-  await fieldByLabel(page, panel, '模型').locator('select').selectOption('claude::claude-opus-5')
+  await fieldByLabel(page, panel, '模型').locator('select').selectOption('claude::claude-opus-5-5')
 
   await panel.getByRole('button', { name: '立即执行一次' }).click()
 
-  await expect(instance.locator('.automation-board-item-model')).toHaveText('claude-opus-5')
+  await expect(instance.locator('.automation-board-item-model')).toHaveText('claude-opus-5-5')
 })

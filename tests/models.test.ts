@@ -28,13 +28,13 @@ import {
 } from '../shared/models.ts'
 
 describe('model helpers', () => {
-  it('uses the current Codex 5.6 defaults for new agent and Git chats', () => {
-    assert.equal(DEFAULT_CODEX_MODEL, 'gpt-5.6-sol')
-    assert.equal(DEFAULT_GIT_AGENT_MODEL, 'gpt-5.6-terra medium')
+  it('uses the current GPT-6 defaults for new agent and Git chats', () => {
+    assert.equal(DEFAULT_CODEX_MODEL, 'gpt-6-sol')
+    assert.equal(DEFAULT_GIT_AGENT_MODEL, 'gpt-6-luna medium')
   })
 
-  it('uses Opus 5 as the Claude default', () => {
-    assert.equal(DEFAULT_CLAUDE_MODEL, 'claude-opus-5')
+  it('uses Opus 5.5 as the Claude default', () => {
+    assert.equal(DEFAULT_CLAUDE_MODEL, 'claude-opus-5-5')
   })
 
   it('resolves configured defaults and preserves stored default selections', () => {
@@ -50,7 +50,7 @@ describe('model helpers', () => {
     // Opus 4.8 is still a live model: an explicitly stored value must not be
     // migrated onto the newer default (Pitfall #119).
     assert.equal(normalizeModel('claude', ' claude-opus-4-8 '), 'claude-opus-4-8')
-    assert.equal(normalizeModel('claude', ' claude-opus-5 '), DEFAULT_CLAUDE_MODEL)
+    assert.equal(normalizeModel('claude', ' claude-opus-5 '), 'claude-opus-5')
   })
 
   it('lists Git tool first among codex model options', () => {
@@ -75,6 +75,8 @@ describe('model helpers', () => {
         STATS_TOOL_MODEL,
         '',
         DEFAULT_CODEX_MODEL,
+        'gpt-6-luna',
+        'gpt-5.6-sol',
         'gpt-6-astra',
         'gpt-5.6-terra',
         'gpt-5.6-luna',
@@ -88,6 +90,7 @@ describe('model helpers', () => {
         'claude-fable-5-1',
         'claude-fable-5',
         DEFAULT_CLAUDE_MODEL,
+        'claude-opus-5',
         'claude-sonnet-5',
         'claude-sonnet-4-6',
         'claude-haiku-4-5-20251001',
@@ -124,7 +127,7 @@ describe('model helpers', () => {
       getModelOptions('codex')
         .filter(isModelPickerOptionVisible)
         .map((option) => option.model),
-      ['', DEFAULT_CODEX_MODEL, 'gpt-6-astra', 'gpt-5.6-terra', 'gpt-5.6-luna', 'gpt-5.5'],
+      ['', DEFAULT_CODEX_MODEL, 'gpt-6-luna', 'gpt-5.6-sol', 'gpt-6-astra', 'gpt-5.6-terra', 'gpt-5.6-luna', 'gpt-5.5'],
     )
   })
 
@@ -183,9 +186,9 @@ describe('model helpers', () => {
 
   it('resolves slash-command aliases to canonical model names', () => {
     assert.equal(resolveSlashModel('codex', 'gpt'), '')
-    assert.equal(resolveSlashModel('codex', '5.6'), DEFAULT_CODEX_MODEL)
+    assert.equal(resolveSlashModel('codex', '5.6'), 'gpt-5.6-sol')
     assert.equal(resolveSlashModel('codex', 'terra'), 'gpt-5.6-terra')
-    assert.equal(resolveSlashModel('codex', 'luna'), 'gpt-5.6-luna')
+    assert.equal(resolveSlashModel('codex', 'luna'), 'gpt-6-luna')
     assert.equal(resolveSlashModel('codex', '5.5'), 'gpt-5.5')
     assert.equal(resolveSlashModel('codex', 'git'), GIT_TOOL_MODEL)
     assert.equal(resolveSlashModel('codex', 'files'), FILETREE_TOOL_MODEL)
@@ -203,8 +206,9 @@ describe('model helpers', () => {
     // Bare "opus" follows the newest Opus tier, the same way bare "sonnet"
     // moved to Sonnet 5.
     assert.equal(resolveSlashModel('claude', 'opus'), DEFAULT_CLAUDE_MODEL)
-    assert.equal(resolveSlashModel('claude', 'opus 5'), DEFAULT_CLAUDE_MODEL)
-    assert.equal(resolveSlashModel('claude', 'claude-opus-5'), DEFAULT_CLAUDE_MODEL)
+    assert.equal(resolveSlashModel('claude', 'opus 5'), 'claude-opus-5')
+    assert.equal(resolveSlashModel('claude', 'claude-opus-5'), 'claude-opus-5')
+    assert.equal(resolveSlashModel('claude', 'opus 5.5'), DEFAULT_CLAUDE_MODEL)
     assert.equal(resolveSlashModel('claude', 'opus 4.8'), null)
     assert.equal(resolveSlashModel('claude', 'claude-opus-4-8'), null)
     assert.equal(resolveSlashModel('claude', 'unknown-model'), null)

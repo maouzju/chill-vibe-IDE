@@ -3,6 +3,7 @@ import type {
   ClipboardEvent,
   CompositionEvent,
   CSSProperties,
+  DragEvent,
   FocusEvent,
   KeyboardEvent,
   MouseEvent,
@@ -112,6 +113,7 @@ import { WakeTimerStatus } from './WakeTimerStatus'
 import { summarizeWakeTimerBatch } from './wake-timer'
 import {
   collectPastedFilePaths,
+  partitionDroppedFiles,
   formatPastedFilePathInsertion,
   insertTextAtSelection,
 } from './composer-paste'
@@ -1577,6 +1579,7 @@ const ChatCardView = ({
     draftValueRef.current.trimStart().startsWith('/') ? draftValueRef.current : '',
   )
   const [draftHasText, setDraftHasText] = useState(() => draftHasTextRef.current)
+  const [composerFileDropActive, setComposerFileDropActive] = useState(false)
   const [slashDraft, setSlashDraft] = useState(() => slashDraftRef.current)
   const [remoteSlashCommands, setRemoteSlashCommands] = useState<SlashCommand[]>(localSlashCommands)
   const [slashCommandsStatus, setSlashCommandsStatus] = useState<'idle' | 'loading' | 'ready' | 'error'>('idle')
@@ -3530,16 +3533,25 @@ const ChatCardView = ({
       .filter((item) => !supportedImageMimeTypes.has(item.type))
       .map((item) => item.getAsFile())
       .filter((file): file is File => file !== null)
+    if (ingestExternalFiles(imageFiles, pathCandidateFiles)) {
+      event.preventDefault()
+    }
+  }
+
+  // Paste and OS file drop share one landing path (SPEC composer-drop-file-path):
+  // raster images become attachments, everything else lands as a quoted absolute
+  // path at the caret. Returns whether anything was consumed so the caller can
+  // decide about preventDefault.
+  const ingestExternalFiles = (imageFiles: File[], pathCandidateFiles: File[]): boolean => {
     const getPathForFile = window.electronAPI?.getPathForFile
     const pastedFilePaths = getPathForFile
       ? collectPastedFilePaths(pathCandidateFiles, getPathForFile)
       : []
 
     if (imageFiles.length === 0 && pastedFilePaths.length === 0) {
-      return
+      return false
     }
 
-    event.preventDefault()
     setComposerError(null)
     if (imageFiles.length > 0) {
       const added = imageFiles.map<PendingAttachment>((file) => ({
@@ -3571,6 +3583,42 @@ const ChatCardView = ({
       }
       syncLocalDraft(value)
     }
+    return true
+  }
+
+  // Only a drag carrying OS files is ours. Pane-tab / board-item / column drags
+  // ride the module-level payload and never list `Files`, so leaving them alone
+  // keeps their own drop targets working. Reading `dataTransfer.files` during
+  // dragover is forbidden by the browser (pitfall 196 family) - only `types`.
+  const dragCarriesFiles = (event: DragEvent<HTMLElement>) =>
+    Array.from(event.dataTransfer?.types ?? []).includes('Files')
+
+  const handleComposerDragOver = (event: DragEvent<HTMLDivElement>) => {
+    if (!dragCarriesFiles(event)) return
+    event.preventDefault()
+    event.dataTransfer.dropEffect = 'copy'
+    if (!composerFileDropActive) setComposerFileDropActive(true)
+  }
+
+  const handleComposerDragLeave = (event: DragEvent<HTMLDivElement>) => {
+    const nextTarget = event.relatedTarget
+    if (nextTarget instanceof Node && event.currentTarget.contains(nextTarget)) return
+    setComposerFileDropActive(false)
+  }
+
+  const handleComposerDrop = (event: DragEvent<HTMLDivElement>) => {
+    setComposerFileDropActive(false)
+    if (!dragCarriesFiles(event)) return
+    // Always claim a file drop over the composer: even when nothing usable is
+    // inside, letting it through would make Chromium navigate to file://.
+    event.preventDefault()
+    event.stopPropagation()
+    const { imageFiles, pathCandidateFiles } = partitionDroppedFiles(
+      Array.from(event.dataTransfer.files),
+      supportedImageMimeTypes,
+    )
+    ingestExternalFiles(imageFiles, pathCandidateFiles)
+    textareaRef.current?.focus()
   }
 
   const handleSubmit = async (options?: SendMessageOptions) => {
@@ -4627,6 +4675,7 @@ const ChatCardView = ({
             requestedHeight={card.size ?? 440}
             onAgentPanelToggle={setGitAgentPanelOpen}
             onGitInfoChange={setGitInfo}
+            onOpenFile={openFileCallback}
           />
         </div>
       )}
@@ -4880,7 +4929,12 @@ const ChatCardView = ({
                 </div>
               ) : null}
 
-              <div className="composer-input-row">
+              <div
+                className={`composer-input-row${composerFileDropActive ? ' is-file-drop-target' : ''}`}
+                onDragOver={handleComposerDragOver}
+                onDragLeave={handleComposerDragLeave}
+                onDrop={handleComposerDrop}
+              >
                 {showsComposerModelSelect ? renderModelSelect('composer') : null}
                 <textarea
                   ref={textareaRef}

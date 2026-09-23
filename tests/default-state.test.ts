@@ -237,7 +237,7 @@ describe('default-state helpers', () => {
       modelPromptRules: [],
       codexPersonality: 'default',
       codexFastMode: false,
-      gitAgentModel: 'gpt-5.6-terra medium',
+      gitAgentModel: 'gpt-6-luna medium',
       lastModel: undefined,
       requestModels: {
         codex: DEFAULT_CODEX_MODEL,
@@ -330,9 +330,20 @@ describe('default-state helpers', () => {
   })
 
   it('normalizes gitAgentModel with default fallback', () => {
-    assert.equal(normalizeAppSettings({}).gitAgentModel, 'gpt-5.6-terra medium')
+    assert.equal(normalizeAppSettings({}).gitAgentModel, 'gpt-6-luna medium')
     assert.equal(normalizeAppSettings({ gitAgentModel: '  o3-pro high  ' }).gitAgentModel, 'o3-pro high')
-    assert.equal(normalizeAppSettings({ gitAgentModel: '' }).gitAgentModel, 'gpt-5.6-terra medium')
+    assert.equal(normalizeAppSettings({ gitAgentModel: '' }).gitAgentModel, 'gpt-6-luna medium')
+  })
+
+  it('normalizes the computer use toggle with an off default', () => {
+    const defaults = normalizeAppSettings({}) as ReturnType<typeof normalizeAppSettings> & {
+      computerUseEnabled: boolean
+    }
+    assert.equal(defaults.computerUseEnabled, false)
+    const enabled = normalizeAppSettings({ computerUseEnabled: true } as never) as typeof defaults
+    assert.equal(enabled.computerUseEnabled, true)
+    const garbage = normalizeAppSettings({ computerUseEnabled: 'yes' } as never) as typeof defaults
+    assert.equal(garbage.computerUseEnabled, false)
   })
 
   it('normalizes Codex agent personality and Fast mode settings', () => {

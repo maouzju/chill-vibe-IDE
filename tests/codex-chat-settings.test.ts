@@ -17,6 +17,34 @@ describe('Agent chat request settings', () => {
     assert.equal(request.codexIsolatedHomeEnabled, true)
   })
 
+  it('defaults computer use off on parsed requests from older callers', () => {
+    const request = chatRequestSchema.parse({
+      provider: 'claude',
+      workspacePath: 'D:/repo',
+      prompt: 'Open the site.',
+    })
+    assert.notEqual(request.computerUseEnabled, true, '省略 = 关闭')
+  })
+
+  it('forwards computerUseEnabled to both Claude and Codex requests', () => {
+    const settings = {
+      codexPersonality: 'default' as const,
+      codexFastMode: false,
+      agentOutsideWorkspaceWriteEnabled: true,
+      codexDestructiveCommandProtectionEnabled: true,
+      attackPatternProtectionEnabled: false,
+      codexIsolatedHomeEnabled: true,
+      computerUseEnabled: true,
+    }
+    assert.equal(buildCodexChatRequestOverrides('claude', settings).computerUseEnabled, true)
+    assert.equal(buildCodexChatRequestOverrides('codex', settings).computerUseEnabled, true)
+    assert.equal(
+      'computerUseEnabled' in buildCodexChatRequestOverrides('codex', { ...settings, computerUseEnabled: false }),
+      false,
+      '关闭时省略字段，请求 schema 默认 false',
+    )
+  })
+
   it('omits optional overrides when settings follow Codex defaults', () => {
     assert.deepEqual(
       buildCodexChatRequestOverrides('codex', {
@@ -26,6 +54,7 @@ describe('Agent chat request settings', () => {
         codexDestructiveCommandProtectionEnabled: true,
         attackPatternProtectionEnabled: false,
         codexIsolatedHomeEnabled: true,
+        computerUseEnabled: false,
       }),
       {
         agentOutsideWorkspaceWriteEnabled: true,
@@ -45,6 +74,7 @@ describe('Agent chat request settings', () => {
         codexDestructiveCommandProtectionEnabled: false,
         attackPatternProtectionEnabled: true,
         codexIsolatedHomeEnabled: false,
+        computerUseEnabled: false,
       }),
       {
         personality: 'pragmatic',
@@ -66,6 +96,7 @@ describe('Agent chat request settings', () => {
         codexDestructiveCommandProtectionEnabled: true,
         attackPatternProtectionEnabled: false,
         codexIsolatedHomeEnabled: true,
+        computerUseEnabled: false,
       }),
       {
         agentOutsideWorkspaceWriteEnabled: false,
@@ -82,6 +113,7 @@ describe('Agent chat request settings', () => {
         codexDestructiveCommandProtectionEnabled: false,
         attackPatternProtectionEnabled: false,
         codexIsolatedHomeEnabled: true,
+        computerUseEnabled: false,
       }),
       {
         agentOutsideWorkspaceWriteEnabled: true,

@@ -147,6 +147,8 @@ type LocaleText = {
   codexFastModeDialogConfirm: string
   agentOutsideWorkspaceWriteLabel: string
   agentOutsideWorkspaceWriteNote: string
+  computerUseLabel: string
+  computerUseNote: string
   codexManagementPolicyTitle: string
   codexManagementPolicyDetecting: string
   codexManagementPolicyRefresh: string
@@ -663,6 +665,9 @@ const localeTextByLanguage: Record<AppLanguage, LocaleText> = {
       '开启后，普通聊天、恢复与重试、Brainstorm 和 Git Agent 的 Codex 请求都会使用高价服务档，直到你再次关闭。',
     codexFastModeDialogCancel: '保持关闭',
     codexFastModeDialogConfirm: '了解费用并开启',
+    computerUseLabel: '允许 Agent 使用浏览器（Computer Use）',
+    computerUseNote:
+      '打开后 Claude 与 Codex 会话都会拿到浏览器控制工具，可以替你打开网页、点击、填表、读取页面。Claude 装了 Claude in Chrome 扩展时优先走扩展；否则两者都使用 Playwright MCP，需要先执行 npm i -g @playwright/mcp（或本机能用 npx）。浏览器会以你的身份操作已登录网站，默认关闭。切换后下一条消息生效。',
     agentOutsideWorkspaceWriteLabel: '允许 Agent 修改项目文件夹外的文件',
     agentOutsideWorkspaceWriteNote:
       '这是 Chill Vibe 的权限请求上限。Codex 会在运行前自动读取并服从本机或组织管理策略，直接选择允许的最宽权限，不修改或绕过系统策略。关闭后只写当前项目：Codex 使用工作区沙箱；Claude 在支持的平台使用严格沙箱，原生 Windows 用 IDE 路径防护兜底（不是完整 OS 沙箱）。项目外 Skill、配置和附件仍可读取。',
@@ -1218,6 +1223,9 @@ const localeTextByLanguage: Record<AppLanguage, LocaleText> = {
       'Once enabled, Codex requests from regular chats, recovery and retries, Brainstorm, and Git Agent will use the higher-cost tier until you turn it off.',
     codexFastModeDialogCancel: 'Keep off',
     codexFastModeDialogConfirm: 'I understand the cost — enable',
+    computerUseLabel: 'Allow Agent to use the browser (Computer Use)',
+    computerUseNote:
+      'When on, both Claude and Codex sessions get browser-control tools to open pages, click, fill forms, and read page state on your behalf. Claude prefers the Claude in Chrome extension when it is installed; otherwise both use the Playwright MCP, which needs npm i -g @playwright/mcp (or a working npx). The browser acts as you on sites you are signed in to, so this is off by default. Takes effect from the next message.',
     agentOutsideWorkspaceWriteLabel: 'Allow Agent writes outside the project folder',
     agentOutsideWorkspaceWriteNote:
       'This is Chill Vibe’s requested access ceiling. Before each run, Codex automatically reads and follows machine or organization policy, selecting the widest permitted access without modifying or bypassing system policy. Turn it off to keep writes in the current project: Codex uses workspace-write; Claude uses strict sandboxing where supported and IDE path guards on native Windows (not a complete OS sandbox). Skills, configuration, and attachments remain readable.',
@@ -1251,7 +1259,7 @@ const localeTextByLanguage: Record<AppLanguage, LocaleText> = {
     remoteMonitorSecurityNote:
       'The link embeds an access token that allows sending prompts, stopping runs, and changing models remotely; share it only on a trusted local network.',
     gitAgentModel: 'Git card AI model',
-    gitAgentModelNote: 'Git analysis defaults to balanced GPT-5.6 Terra. Format: model-name reasoning-effort (e.g. gpt-5.6-terra medium).',
+    gitAgentModelNote: 'Git analysis defaults to fast GPT-6 Luna. Format: model-name reasoning-effort (e.g. gpt-6-luna medium).',
     systemPromptLabel: 'System prompt',
     systemPromptNote:
       'This prompt is appended before each AI run. Restore default to go back to the built-in prompt.',

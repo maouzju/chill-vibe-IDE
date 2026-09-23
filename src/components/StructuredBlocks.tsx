@@ -503,6 +503,11 @@ export const StructuredAgentsCard = ({
                 <div key={agent.threadId} className="structured-agent-status-entry">
                   <div className="structured-agent-status-title-row">
                     <code className="structured-agent-path">{agentLabel}</code>
+                    {agent.model ? (
+                      <span className="structured-agent-model">
+                        {agent.reasoningEffort ? `${agent.model} · ${agent.reasoningEffort}` : agent.model}
+                      </span>
+                    ) : null}
                     <span className={`structured-agent-status is-${agent.status}`}>
                       {labels.agentStatus[agent.status]}
                     </span>

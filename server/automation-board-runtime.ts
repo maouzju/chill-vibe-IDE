@@ -1,5 +1,6 @@
 import { fileURLToPath } from 'node:url'
 
+import type { SelectableModel } from '../shared/models.js'
 import type { AppLanguage } from '../shared/schema.js'
 
 export const workspaceAdminMcpServerName = 'chill_vibe_workspace'
@@ -7,6 +8,8 @@ export const workspaceAdminMcpUrlEnvKey = 'CHILL_VIBE_ADMIN_MCP_URL'
 export const workspaceAdminMcpTokenEnvKey = 'CHILL_VIBE_ADMIN_MCP_TOKEN'
 export const workspaceAdminMcpColumnIdEnvKey = 'CHILL_VIBE_ADMIN_MCP_COLUMN_ID'
 export const workspaceAdminMcpSelfCardIdEnvKey = 'CHILL_VIBE_ADMIN_MCP_SELF_CARD_ID'
+/** JSON 的 SelectableModel[]：超管 create_session 的候选模型目录（SPEC agent-model-choice）。 */
+export const workspaceAdminMcpModelsEnvKey = 'CHILL_VIBE_ADMIN_MCP_MODELS'
 
 export type WorkspaceAdminMcpLaunchInput = {
   /** Loopback bridge base URL, e.g. http://127.0.0.1:54321 */
@@ -18,6 +21,8 @@ export type WorkspaceAdminMcpLaunchInput = {
   selfCardId: string
   /** Absolute path to automation-board-mcp.js. */
   scriptPath: string
+  /** 可选模型目录；缺省时子进程不校验模型、工具描述退回旧文案。 */
+  modelCatalog?: SelectableModel[]
   /** Node/Electron executable that will run the script. */
   execPath: string
   /** True on the Electron host, where the exec path needs ELECTRON_RUN_AS_NODE. */
@@ -41,15 +46,20 @@ const buildWorkspaceAdminMcpEnv = ({
   columnId,
   selfCardId,
   isElectron,
+  modelCatalog,
 }: Pick<
   WorkspaceAdminMcpLaunchInput,
-  'url' | 'token' | 'columnId' | 'selfCardId' | 'isElectron'
+  'url' | 'token' | 'columnId' | 'selfCardId' | 'isElectron' | 'modelCatalog'
 >) => {
   const envEntries: Record<string, string> = {
     [workspaceAdminMcpUrlEnvKey]: url,
     [workspaceAdminMcpTokenEnvKey]: token,
     [workspaceAdminMcpColumnIdEnvKey]: columnId,
     [workspaceAdminMcpSelfCardIdEnvKey]: selfCardId,
+  }
+
+  if (modelCatalog && modelCatalog.length > 0) {
+    envEntries[workspaceAdminMcpModelsEnvKey] = JSON.stringify(modelCatalog)
   }
 
   if (isElectron) {
@@ -67,6 +77,7 @@ export const buildWorkspaceAdminCodexRuntimeArgs = ({
   scriptPath,
   execPath,
   isElectron,
+  modelCatalog,
 }: WorkspaceAdminMcpLaunchInput): string[] => {
   const runtimeArgs = [
     '-c',
@@ -75,7 +86,7 @@ export const buildWorkspaceAdminCodexRuntimeArgs = ({
     `mcp_servers.${workspaceAdminMcpServerName}.args=${formatTomlStringArray([scriptPath])}`,
   ]
 
-  const envEntries = buildWorkspaceAdminMcpEnv({ url, token, columnId, selfCardId, isElectron })
+  const envEntries = buildWorkspaceAdminMcpEnv({ url, token, columnId, selfCardId, isElectron, modelCatalog })
   for (const [key, value] of Object.entries(envEntries)) {
     runtimeArgs.push(
       '-c',
@@ -98,12 +109,13 @@ export const buildWorkspaceAdminClaudeMcpConfig = ({
   scriptPath,
   execPath,
   isElectron,
+  modelCatalog,
 }: WorkspaceAdminMcpLaunchInput): WorkspaceAdminClaudeMcpConfig => ({
   mcpServers: {
     [workspaceAdminMcpServerName]: {
       command: execPath,
       args: [scriptPath],
-      env: buildWorkspaceAdminMcpEnv({ url, token, columnId, selfCardId, isElectron }),
+      env: buildWorkspaceAdminMcpEnv({ url, token, columnId, selfCardId, isElectron, modelCatalog }),
     },
   },
 })
@@ -117,6 +129,7 @@ const workspaceAdminInstructionZh =
   + 'list_sessions 列出本工作区全部会话（cardId、标题、provider/模型、运行状态、是否在某张看板的哪条泳道、原始需求、已静默多少分钟、最后一条消息预览）；'
   + 'read_session 读某个会话最近的转录，用来判断它到底交付了没有；'
   + 'create_session 新建一个会话并派给它一段需求 —— 需要再开一个 agent 时用它，包括这个工作区现在一张卡都没有、其它工具无对象可操作的时候；'
+  + 'create_session 的 provider 与模型由你按任务自己选：候选见工具描述，轻任务选轻模型；只填模型不填 provider 时系统会按候选推断 provider；'
   + 'lane=running（默认）是建好就把需求作为第一条消息发出去，lane=standby 是先建好、需求存进草稿、之后再用 move_session_to_lane 启动；'
   + '本工作区有看板就建成看板项，没有看板就建成普通 tab 会话；新会话不会继承你的超管权限。'
   + 'send_session_message 把一句话发进那个会话自己的聊天里 —— 这就是"鞭策"，消息会像用户亲自输入一样出现在那张卡的对话里；'
@@ -139,6 +152,7 @@ const workspaceAdminInstructionEn =
   + 'list_sessions lists every session in this workspace (cardId, title, provider/model, run status, which board lane it sits in if any, its original requirement, how many minutes it has been silent, and a preview of its last message); '
   + 'read_session reads one session\'s recent transcript so you can judge whether it actually delivered; '
   + 'create_session creates a NEW session and hands it a requirement — use it when the work needs another agent, including when this workspace has no sessions at all and the other tools have nothing to operate on; '
+  + 'create_session provider/model are your own call: pick them per task from the candidates listed in the tool description (lighter models for lighter tasks); giving only model lets the app infer the provider. '
   + 'lane=running (the default) sends the requirement immediately, lane=standby parks it in the new session\'s draft for you to start later with move_session_to_lane; '
   + 'it becomes a board item if this workspace has a board and an ordinary tab session otherwise, and it does not inherit your admin access; '
   + 'send_session_message posts a message into that session\'s own chat — this is what "鞭策" (nudging) means here, and the message appears in that card\'s conversation exactly as if the user had typed it; '

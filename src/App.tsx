@@ -248,6 +248,7 @@ import {
   resolveStreamedAssistantMessageTarget,
   resolveTabMoveSideEffects,
   runWorkspaceClose,
+  shouldRunCompletionCallbacksForLostStream,
 } from './app-helpers'
 import {
   clearPendingCompactBoundaryMessage,
@@ -716,6 +717,7 @@ function App() {
     () => ({
       codexPersonality: appState.settings.codexPersonality,
       codexFastMode: appState.settings.codexFastMode,
+      computerUseEnabled: appState.settings.computerUseEnabled,
       agentOutsideWorkspaceWriteEnabled:
         appState.settings.agentOutsideWorkspaceWriteEnabled,
       codexDestructiveCommandProtectionEnabled:
@@ -728,6 +730,7 @@ function App() {
       appState.settings.codexDestructiveCommandProtectionEnabled,
       appState.settings.attackPatternProtectionEnabled,
       appState.settings.codexFastMode,
+      appState.settings.computerUseEnabled,
       appState.settings.codexIsolatedHomeEnabled,
       appState.settings.codexPersonality,
     ],
@@ -809,13 +812,25 @@ function App() {
       setColumnDragInFlight(false)
       setDockZoneOver(false)
     }
+    // 症状：文件拖到窗口任意非落区松手，Chromium 默认导航到 file://，整个界面被替换。
+    // 根因：主进程没有 will-navigate 守卫，pane / 看板的 onDrop 对不认识的 payload 也不 preventDefault。
+    // composer 自己的 drop 先 stopPropagation 落地路径（SPEC composer-drop-file-path），其余带 Files 的一律吞掉。
+    const swallowStrayFileDrag = (event: globalThis.DragEvent) => {
+      if (Array.from(event.dataTransfer?.types ?? []).includes('Files')) {
+        event.preventDefault()
+      }
+    }
     document.addEventListener('dragstart', handleDragStart)
     document.addEventListener('dragend', handleDragFinish)
     document.addEventListener('drop', handleDragFinish)
+    document.addEventListener('dragover', swallowStrayFileDrag)
+    document.addEventListener('drop', swallowStrayFileDrag)
     return () => {
       document.removeEventListener('dragstart', handleDragStart)
       document.removeEventListener('dragend', handleDragFinish)
       document.removeEventListener('drop', handleDragFinish)
+      document.removeEventListener('dragover', swallowStrayFileDrag)
+      document.removeEventListener('drop', swallowStrayFileDrag)
     }
   }, [])
 
@@ -5447,6 +5462,11 @@ function App() {
           source.close()
           activeStreamsRef.current.delete(card.id)
           clearStopCompletionFallbackTimer(card.id)
+          // 这一轮"为什么停"必须在清表之前读走：下面的 `Stream not found.` 收尾
+          // 要靠它区分「用户打断」和「流自己没了」，删掉就永远读不到了。
+          const lostStreamStopReason = card.streamId
+            ? stoppedRunReasonRef.current.get(card.streamId)
+            : undefined
           if (card.streamId) {
             stoppedRunReasonRef.current.delete(card.streamId)
           }
@@ -5635,7 +5655,14 @@ function App() {
             // 同 stopped：这一轮以"流没了"收场，等它的人必须被放行。
             actions.push(...buildWakeTimerTargetReleaseActions(card.id, { forceRelease: true }))
             persistAfterActions(actions, applyActions(actions))
-            scheduleStableWakeTimerCompletion(card.id)
+            // 用户打断（流式中直接发新消息）也以"流没了"收场，但那不是正常结束：
+            // 无条件跑成功回调会让自动鞭策把刚被叫停的卡重新启动、看板模板误触发。
+            // 放行下游的 forceRelease 在上面照常执行，这里只压成功回调。
+            if (shouldRunCompletionCallbacksForLostStream({
+              stopReason: lostStreamStopReason,
+            })) {
+              scheduleStableWakeTimerCompletion(card.id)
+            }
             dispatchNextQueuedSend(columnId, card.id)
             flushReadyWakeTimersRef.current?.()
             return
@@ -8645,6 +8672,31 @@ function App() {
           {text.codexIsolatedHomeNote}
         </p>
       </div>
+
+      <div className="settings-hover-detail">
+        <label className="settings-toggle" htmlFor={`${idPrefix}-computer-use`}>
+          <span>{text.computerUseLabel}</span>
+          <input
+            id={`${idPrefix}-computer-use`}
+            type="checkbox"
+            aria-describedby={`${idPrefix}-computer-use-note`}
+            checked={appState.settings.computerUseEnabled}
+            onChange={(event) =>
+              applyAction({
+                type: 'updateSettings',
+                patch: { computerUseEnabled: event.target.checked },
+              })
+            }
+          />
+        </label>
+        <p
+          id={`${idPrefix}-computer-use-note`}
+          className="settings-note settings-hover-note"
+          role="tooltip"
+        >
+          {text.computerUseNote}
+        </p>
+      </div>
     </div>
   )
 
@@ -9577,7 +9629,7 @@ function App() {
                   patch: { gitAgentModel: event.target.value },
                 })
               }
-              placeholder="gpt-5.6-terra medium"
+              placeholder="gpt-6-luna medium"
             />
           </label>
           <p id="git-agent-model-note" className="settings-note settings-hover-note" role="tooltip">
@@ -11097,7 +11149,7 @@ function App() {
                         patch: { gitAgentModel: event.target.value },
                       })
                     }
-                    placeholder="gpt-5.6-terra medium"
+                    placeholder="gpt-6-luna medium"
                   />
                 </label>
 

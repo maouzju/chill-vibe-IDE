@@ -5957,3 +5957,167 @@ test('codex app-server retries with a fresh thread when no rollout is found for 
     await rm(capturePath, { force: true }).catch(() => {})
   }
 })
+
+// 停止时 Codex 只能硬杀 → reducer 按 #118 清 sessionId → 下一条消息 seeded 冷启动丢上下文。
+// 这里的假 app-server 在 turn/start 后只推 turn/started、不结束回合，收到 turn/interrupt 才补
+// turn/completed(interrupted)，钉住"停止 = 软中断当前 turn，线程与进程都不硬杀"。见 pitfall #382。
+const buildFakeCodexInterruptibleAppServerScript = (capturePath: string) =>
+  [
+    "const fs = require('node:fs')",
+    "const readline = require('node:readline')",
+    `const capturePath = ${JSON.stringify(capturePath)}`,
+    'const appendMessage = (message) => fs.appendFileSync(capturePath, `${JSON.stringify(message)}\n`, "utf8")',
+    "const reply = (message) => process.stdout.write(`${JSON.stringify(message)}\n`)",
+    "const rl = readline.createInterface({ input: process.stdin, crlfDelay: Infinity })",
+    "rl.on('line', (line) => {",
+    '  if (!line.trim()) return',
+    '  const request = JSON.parse(line)',
+    '  appendMessage(request)',
+    "  if (request.method === 'initialize' && request.id) { reply({ id: request.id, result: {} }); return }",
+    "  if (request.method === 'thread/start' && request.id) {",
+    "    reply({ id: request.id, result: { thread: { id: 'thread-1', status: { type: 'active' } } } })",
+    '    return',
+    '  }',
+    "  if (request.method === 'turn/start' && request.id) {",
+    '    reply({ id: request.id, result: {} })',
+    "    reply({ method: 'turn/started', params: { threadId: 'thread-1', turn: { id: 'turn-1', status: 'inProgress', items: [] } } })",
+    '    return',
+    '  }',
+    "  if (request.method === 'turn/interrupt' && request.id) {",
+    '    reply({ id: request.id, result: {} })',
+    "    reply({ method: 'turn/completed', params: { threadId: 'thread-1', turn: { id: 'turn-1', status: 'interrupted', items: [] } } })",
+    '  }',
+    '})',
+  ].join('\n')
+
+test('codex app-server soft-interrupts the active turn with turn/interrupt instead of killing the process', async () => {
+  const capturePath = path.join(
+    os.tmpdir(),
+    `chill-vibe-codex-interrupt-${Date.now()}-${Math.random().toString(36).slice(2)}.jsonl`,
+  )
+  const readCaptured = async () =>
+    (await readFile(capturePath, 'utf8').catch(() => ''))
+      .trim()
+      .split(/\r?\n/)
+      .filter(Boolean)
+      .map((line) => JSON.parse(line) as { method?: string; params?: Record<string, unknown> })
+  const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
+
+  try {
+    const outcome = await withFakeProviderCommand(
+      'codex',
+      buildFakeCodexInterruptibleAppServerScript(capturePath),
+      async (workspacePath) => {
+        let resolveOutcome!: (value: { kind: 'done' } | { kind: 'error'; message: string }) => void
+        const outcomePromise = new Promise<{ kind: 'done' } | { kind: 'error'; message: string }>(
+          (resolve) => {
+            resolveOutcome = resolve
+          },
+        )
+        const child = await launchProviderRun(
+          createRequest({ provider: 'codex', language: 'en', workspacePath }),
+          {
+            onSession: () => undefined,
+            onDelta: () => undefined,
+            onLog: () => undefined,
+            onAssistantMessage: () => undefined,
+            onActivity: () => undefined,
+            onDone: () => resolveOutcome({ kind: 'done' }),
+            onError: (message) => resolveOutcome({ kind: 'error', message }),
+          },
+        )
+        assert.ok(child, 'Expected fake codex app-server to launch.')
+        const interruptible = child as typeof child & { interruptTurn?: () => boolean }
+        assert.equal(typeof interruptible.interruptTurn, 'function')
+        assert.equal(interruptible.interruptTurn?.(), false, 'no active turn to interrupt yet')
+
+        const deadline = Date.now() + 5_000
+        let interrupted = false
+        while (Date.now() < deadline) {
+          if (interruptible.interruptTurn?.() === true) {
+            interrupted = true
+            break
+          }
+          await sleep(20)
+        }
+        assert.equal(interrupted, true, 'turn/started should make the turn interruptible')
+
+        const result = await Promise.race([
+          outcomePromise,
+          sleep(5_000).then(() => ({ kind: 'error' as const, message: 'timed out waiting for done' })),
+        ])
+        const exitDeadline = Date.now() + 5_000
+        while (child.exitCode === null && child.signalCode === null && Date.now() < exitDeadline) {
+          await sleep(20)
+        }
+        return {
+          result,
+          exited: child.exitCode !== null || child.signalCode !== null,
+          requests: await readCaptured(),
+        }
+      },
+    )
+
+    assert.deepEqual(outcome.result, { kind: 'done' })
+    const interrupt = outcome.requests.find((request) => request.method === 'turn/interrupt')
+    assert.deepEqual(interrupt?.params, { threadId: 'thread-1', turnId: 'turn-1' })
+    assert.equal(outcome.exited, true, 'app-server process is released once the interrupted turn completes')
+  } finally {
+    await rm(capturePath, { force: true }).catch(() => {})
+  }
+})
+
+// ---------------------------------------------------------------------------
+// 派发子 agent 时的模型自选指令（SPEC agent-model-choice AC1–AC3）
+// ---------------------------------------------------------------------------
+
+import * as providersModule from '../server/providers.ts'
+
+test('codex exec instructions authorise the agent to pick spawn_agent models from the catalog', () => {
+  for (const language of ['en', 'zh-CN'] as const) {
+    const args = buildCodexArgs(createRequest({ provider: 'codex', language, systemPrompt: 'Base.' }), [])
+    const instructions = args.find((arg) => arg.startsWith('instructions=')) ?? ''
+
+    assert.match(instructions, /spawn_agent/)
+    assert.match(instructions, /reasoning_effort/)
+    // 目录里 Codex 可见的模型都要列出来，agent 才知道自己能选什么。
+    for (const model of ['gpt-6-astra', 'gpt-5.6-sol', 'gpt-5.6-terra', 'gpt-5.6-luna', 'gpt-5.5']) {
+      assert.match(instructions, new RegExp(model.replace(/\./g, '[.]')), `${language} must list ${model}`)
+    }
+    // 工具卡与"用默认模型"占位项绝不能混进去。
+    assert.doesNotMatch(instructions, /__git_tool__/)
+    assert.match(instructions, language === 'en' ? /inherit/i : /继承/)
+  }
+})
+
+test('codex app-server base instructions carry the same spawn_agent model choice', () => {
+  const build = (providersModule as Record<string, unknown>).buildCodexAppServerBaseInstructions as
+    | ((request: ChatRequest) => string)
+    | undefined
+  assert.equal(typeof build, 'function', 'buildCodexAppServerBaseInstructions must be exported')
+  const instructions = build!(createRequest({ provider: 'codex', language: 'en', systemPrompt: 'Base.' }))
+
+  assert.match(instructions, /spawn_agent/)
+  assert.match(instructions, /gpt-5\.6-luna/)
+  // 顺序：既有 ask-user 指令在前，shell 安全指令仍在最后。
+  assert.ok(instructions.indexOf('ask-user-question') < instructions.indexOf('spawn_agent'))
+  assert.ok(instructions.indexOf('spawn_agent') < instructions.indexOf('Windows shell safety'))
+})
+
+test('claude append prompt maps the Agent tool aliases onto this environment and allows self-selection', () => {
+  for (const language of ['en', 'zh-CN'] as const) {
+    const args = buildClaudeArgs(
+      createRequest({ provider: 'claude', model: 'claude-opus-5', language, systemPrompt: 'Base.' }),
+      [],
+    )
+    const prompt = args[args.indexOf('--append-system-prompt') + 1] ?? ''
+
+    for (const alias of ['haiku', 'sonnet', 'opus', 'fable']) {
+      assert.match(prompt, new RegExp('(^|[^a-z])' + alias + '([^a-z]|$)'), `${language} must list alias ${alias}`)
+    }
+    for (const label of ['Haiku 4.5', 'Sonnet 5', 'Opus 5', 'Fable 5.1']) {
+      assert.match(prompt, new RegExp(label.replace(/\./g, '[.]')), `${language} must map to ${label}`)
+    }
+    assert.match(prompt, language === 'en' ? /inherit/i : /继承/)
+  }
+})

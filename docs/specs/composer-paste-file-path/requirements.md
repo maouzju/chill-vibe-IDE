@@ -16,5 +16,5 @@
 
 ## 非目标
 
-- 拖拽文件到 composer（另行处理）。
+- 拖拽文件到 composer：已在 `docs/specs/composer-drop-file-path/` 单独落地（2026-09-21），复用本 SPEC 的路径格式与插入逻辑。
 - 把非图片文件作为附件上传。

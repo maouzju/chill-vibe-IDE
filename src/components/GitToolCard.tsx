@@ -32,6 +32,7 @@ import { GitFullDialog, type GitFullDialogMode } from './GitFullDialog'
 import { GitAgentPanel } from './GitAgentPanel'
 import { GitSyncPanel } from './GitSyncPanel'
 import { HoverTooltip } from './HoverTooltip'
+import { useFilePathContextMenu } from './use-file-path-context-menu'
 import { GitBranchIcon } from './Icons'
 import { gitOperationHub, type GitOperationContext } from './git-operation-hub'
 import {
@@ -77,6 +78,7 @@ type GitToolCardProps = {
   onCompactHeightChange?: (height: number) => void
   onAgentPanelToggle?: (open: boolean) => void
   onGitInfoChange?: (info: GitInfoSummary | null) => void
+  onOpenFile?: (relativePath: string, options?: { line?: number }) => void
 }
 
 const legacyGitToolCompactHeight = 190
@@ -105,8 +107,14 @@ export const GitToolCard = ({
   onCompactHeightChange,
   onAgentPanelToggle,
   onGitInfoChange,
+  onOpenFile,
 }: GitToolCardProps) => {
   const text = useMemo(() => getGitLocaleText(language), [language])
+
+  // 已改动文件行复用聊天转录那套右键菜单（打开文件 / 打开文件位置 / 复制路径），
+  // 靠 data-open-file-path 标记识别目标，不再为 git 卡片单独铺一条回调链路。
+  const { handleContextMenu: handleFilePathContextMenu, menu: filePathContextMenu } =
+    useFilePathContextMenu({ language, workspacePath, onOpenFile })
 
   // 进行中的 git 操作（AI 分析、策略执行、同步、快速提交）全部住在 gitOperationHub 里，
   // 卡片被拖到别的 pane / unmount 时操作继续跑，remount 后从快照恢复画面。
@@ -868,6 +876,7 @@ export const GitToolCard = ({
             className="git-dashboard-file-list"
             data-virtualized={isFileListVirtualized ? 'true' : 'false'}
             onScroll={isFileListVirtualized ? syncFileListMetrics : undefined}
+            onContextMenu={handleFilePathContextMenu}
           >
             {virtualizedFileListWindow ? (
               <>
@@ -881,7 +890,13 @@ export const GitToolCard = ({
                   />
                 ) : null}
                 {visibleGitChanges.map((change) => (
-                  <span key={change.path} className="git-dashboard-file-item" title={change.path}>
+                  <span
+                    key={change.path}
+                    className="git-dashboard-file-item"
+                    title={change.path}
+                    data-open-file-path={change.path}
+                    data-open-file-reveal-only={change.kind === 'deleted' ? 'true' : undefined}
+                  >
                     {change.path}
                   </span>
                 ))}
@@ -897,7 +912,13 @@ export const GitToolCard = ({
               </>
             ) : (
               gitStatus.changes.map((change) => (
-                <span key={change.path} className="git-dashboard-file-item" title={change.path}>
+                <span
+                  key={change.path}
+                  className="git-dashboard-file-item"
+                  title={change.path}
+                  data-open-file-path={change.path}
+                  data-open-file-reveal-only={change.kind === 'deleted' ? 'true' : undefined}
+                >
                   {change.path}
                 </span>
               ))
@@ -990,6 +1011,8 @@ export const GitToolCard = ({
           onStatusChange={handleStatusChange}
         />
       ) : null}
+
+      {filePathContextMenu}
     </div>
   )
 }

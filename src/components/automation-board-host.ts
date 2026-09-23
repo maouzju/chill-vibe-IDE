@@ -32,6 +32,7 @@ export type AutomationBoardActions = {
       attachments?: ImageAttachment[]
       /** 超管 agent 派发的会话；tab 图标显示机器人。 */
       spawnedByAgent?: boolean
+      parentCardId?: string
     },
   ) => void
   moveItem: (

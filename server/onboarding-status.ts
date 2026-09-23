@@ -3,6 +3,7 @@ import { access } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 
+import { resolveCompatCommand } from './cli-compat-manager.js'
 import { decodeConsoleOutput } from './file-encoding.js'
 
 import type { EnvironmentCheckId, OnboardingStatus } from '../shared/schema.js'
@@ -76,7 +77,9 @@ export const inspectOnboardingStatus = async (): Promise<OnboardingStatus> => {
     (['git', 'node', 'claude', 'codex'] as const).map(async (id) => ({
       id,
       label: checkLabels[id],
-      available: await resolveCommand(id),
+      available:
+        ((id === 'claude' || id === 'codex') && (await resolveCompatCommand(id)) !== null) ||
+        (await resolveCommand(id)),
     })),
   )
 

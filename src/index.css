@@ -3640,6 +3640,9 @@ body.is-card-dragging .lane-drop-zone-top {
   overflow-y: auto;
   padding: 0.3rem 0.55rem 0.35rem;
 }
+.structured-agent-launchers { display: flex; flex-wrap: wrap; gap: 0.35rem; margin-top: 0.3rem; }
+.structured-agent-launcher { border: 1px solid var(--line); border-radius: 999px; background: var(--panel-strong); color: var(--ink-2); padding: 0.18rem 0.5rem; cursor: pointer; }
+.structured-agent-launcher:hover, .structured-agent-launcher:focus-visible { border-color: var(--accent); color: var(--ink-1); }
 
 .streaming-indicator {
   display: flex;

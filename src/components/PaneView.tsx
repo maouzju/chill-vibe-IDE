@@ -1668,6 +1668,15 @@ const PaneViewView = ({
                   isActive={isActive}
                   composerFocusRequest={composerFocusRequest}
                   recoveryStatus={cardRecoveryStatuses?.get(card.id)}
+                  childTabs={Object.values(column.cards).filter((candidate) => candidate.parentCardId === card.id).map((candidate) => ({ id: candidate.id, title: candidate.title }))}
+                  onOpenChildTab={(childCardId) => {
+                    const childPane = findPaneForTab(column.layout, childCardId)
+                    if (childPane) onSetActiveTab(childPane.id, childCardId)
+                  }}
+                  onReturnToParent={card.parentCardId ? () => {
+                    const parentPane = findPaneForTab(column.layout, card.parentCardId!)
+                    if (parentPane) onSetActiveTab(parentPane.id, card.parentCardId!)
+                  } : undefined}
                 />
               ) : null}
             </div>

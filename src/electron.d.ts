@@ -1,3 +1,4 @@
+import type { CliCompatRequest, CliCompatStatus } from '../shared/cli-compat'
 import type {
   AppSettings,
   AppState,
@@ -137,6 +138,9 @@ declare global {
       importCcSwitchRouting?: (request: CcSwitchImportRequest) => Promise<CcSwitchImportResponse>
       fetchSetupStatus?: () => Promise<SetupStatus>
       runEnvironmentSetup?: (request?: SetupRunRequestInput) => Promise<SetupStatus>
+      fetchCliCompatStatus?: () => Promise<CliCompatStatus>
+      installCliCompat?: (request: CliCompatRequest) => Promise<CliCompatStatus>
+      setCliCompatActive?: (request: CliCompatRequest) => Promise<CliCompatStatus>
       fetchOllamaStatus?: () => Promise<OllamaStatus>
       runOllamaInstall?: () => Promise<OllamaTask>
       runOllamaPull?: (request: OllamaPullRequest) => Promise<OllamaTask>

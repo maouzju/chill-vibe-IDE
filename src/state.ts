@@ -422,6 +422,7 @@ export type IdeAction =
       stickyNote?: string
       adminAccess?: boolean
       spawnedByAgent?: boolean
+      parentCardId?: string
     }
   | {
       type: 'spawnRepeatLoopTab'
@@ -589,6 +590,7 @@ export type IdeAction =
       /** 实例化自带超管权限的模板时为 true —— "监工性"的全部就是这两个字段。 */
       adminAccess?: boolean
       spawnedByAgent?: boolean
+      parentCardId?: string
     }
   | {
       type: 'setAutomationBoardItemLane'
@@ -2485,6 +2487,7 @@ const ideReducerCore = (state: AppState, action: IdeAction): AppState => {
           id: action.cardId ?? createId(),
           adminAccess: !toolCardModels.has(model) && (action.adminAccess ?? state.settings.defaultAdminAccess),
           ...(action.spawnedByAgent ? { spawnedByAgent: true } : {}),
+          ...(action.parentCardId ? { parentCardId: action.parentCardId } : {}),
           // 唤醒方式跟模型默认同一个语义：只喂新 Tab，不回溯改写已开的卡
           // （AGENTS.md pitfall #40）。开关本身仍默认关闭 —— 记住的是"怎么等"，
           // 不是"要不要等"。
@@ -3336,6 +3339,7 @@ const ideReducerCore = (state: AppState, action: IdeAction): AppState => {
         }),
         ...(action.cardId ? { id: action.cardId } : {}),
         ...(action.spawnedByAgent ? { spawnedByAgent: true } : {}),
+        ...(action.parentCardId ? { parentCardId: action.parentCardId } : {}),
         ...(action.wakeTimerActive !== undefined ? { wakeTimerActive: action.wakeTimerActive } : {}),
         ...(action.wakeTimerMode ? { wakeTimerMode: action.wakeTimerMode } : {}),
         ...(typeof action.wakeTimerDurationMinutes === 'number'

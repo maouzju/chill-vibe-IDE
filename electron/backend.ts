@@ -53,6 +53,7 @@ import {
   readCodexManagementPolicy,
   recordProviderProxyStatsEvent,
   getProviderStatuses,
+  resolveSystemCommand,
   setProviderRuntimeSettingsOverride,
   validateWorkspacePath,
 } from '../server/providers.ts'
@@ -71,6 +72,8 @@ import {
 import { resilientProxyPool } from '../server/resilient-proxy.ts'
 import { SetupManager } from '../server/setup-manager.ts'
 import { OllamaManager } from '../server/ollama-manager.ts'
+import { CliCompatManager } from '../server/cli-compat-manager.ts'
+import { cliCompatRequestSchema } from '../shared/cli-compat.ts'
 import {
   captureRendererCrash as captureRendererCrashState,
   deleteSessionHistoryEntry,
@@ -287,6 +290,9 @@ export const createDesktopBackend = (deps: DesktopBackendDependencies = {}) => {
     return setupManager
   }
 
+  let cliCompatManager: CliCompatManager | null = null
+  const getCliCompatManager = () => (cliCompatManager ??= new CliCompatManager(resolveSystemCommand))
+
   const getOllamaManager = () => {
     if (!ollamaManager) {
       ollamaManager = deps.createOllamaManager?.() ?? new OllamaManager()
@@ -409,6 +415,16 @@ export const createDesktopBackend = (deps: DesktopBackendDependencies = {}) => {
     },
     runEnvironmentSetup(request?: unknown) {
       return getSetupManager().start(setupRunRequestSchema.parse(request ?? {}))
+    },
+    async fetchCliCompatStatus() {
+      return getCliCompatManager().getStatus()
+    },
+    async installCliCompat(request: unknown) {
+      return getCliCompatManager().install(cliCompatRequestSchema.parse(request ?? {}).provider)
+    },
+    async setCliCompatActive(request: unknown) {
+      const parsed = cliCompatRequestSchema.parse(request ?? {})
+      return getCliCompatManager().setActive(parsed.provider, parsed.active ?? false)
     },
     async fetchOllamaStatus() {
       return getOllamaManager().getStatus()

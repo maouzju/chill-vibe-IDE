@@ -1374,6 +1374,13 @@ function registerDesktopHandlers() {
   ipcMain.handle('desktop:run-environment-setup', (_event, request: unknown) =>
     desktopBackend.runEnvironmentSetup(request),
   )
+  ipcMain.handle('desktop:fetch-cli-compat-status', () => desktopBackend.fetchCliCompatStatus())
+  ipcMain.handle('desktop:install-cli-compat', (_event, request: unknown) =>
+    desktopBackend.installCliCompat(request),
+  )
+  ipcMain.handle('desktop:set-cli-compat-active', (_event, request: unknown) =>
+    desktopBackend.setCliCompatActive(request),
+  )
   ipcMain.handle('desktop:fetch-ollama-status', () => desktopBackend.fetchOllamaStatus())
   ipcMain.handle('desktop:run-ollama-install', () => desktopBackend.runOllamaInstall())
   ipcMain.handle('desktop:run-ollama-pull', (_event, request: unknown) =>

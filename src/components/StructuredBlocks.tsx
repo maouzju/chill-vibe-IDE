@@ -480,9 +480,13 @@ const formatAgentName = (agent: StructuredAgentsMessage['agents'][number]) => {
 export const StructuredAgentsCard = ({
   language,
   data,
+  childTabs = [],
+  onOpenChildTab,
 }: {
   language: AppLanguage
   data: StructuredAgentsMessage
+  childTabs?: Array<{ id: string; title: string }>
+  onOpenChildTab?: (cardId: string) => void
 }) => {
   const labels = getStructuredLabels(language)
   if (data.view === 'status') {
@@ -512,6 +516,15 @@ export const StructuredAgentsCard = ({
                       {labels.agentStatus[agent.status]}
                     </span>
                   </div>
+                  {onOpenChildTab && childTabs.length > 0 ? (
+                    <div className="structured-agent-launchers">
+                      {childTabs.map((child) => (
+                        <button key={child.id} type="button" className="structured-agent-launcher" onClick={() => onOpenChildTab(child.id)}>
+                          {child.title || child.id}
+                        </button>
+                      ))}
+                    </div>
+                  ) : null}
                   {activity.length > 0 ? (
                     <div className="structured-agent-activity">
                       {activity.map((entry, index) => (

@@ -309,6 +309,7 @@ export const chatCardSchema = z.object({
   // 那一刻写一次，之后不再变；tab 图标据此显示机器人而不是 provider 图标，
   // 让用户一眼分清哪些 tab 是自己开的、哪些是 agent 替自己开的。
   spawnedByAgent: z.boolean().optional(),
+  parentCardId: z.string().min(1).optional(),
   // 症状（要防的）：监工被「拖出为独立 tab」再拖回泳道之后，每答完一轮就把自己
   //   再叫起来一轮，无限自触发烧钱。
   // 根因：防自触发认的是 `board.items[].templateId`，而拖出会把整条项删掉；拖回

@@ -17,8 +17,16 @@ test('agent-spawned sessions carry spawnedByAgent on both the tab path and the b
   const column = state.columns[0]!
   const paneId = column.layout.id
 
-  const viaTab = ideReducer(state, { type: 'addTab', columnId: column.id, paneId, cardId: 'spawned', spawnedByAgent: true })
+  const viaTab = ideReducer(state, {
+    type: 'addTab',
+    columnId: column.id,
+    paneId,
+    cardId: 'spawned',
+    spawnedByAgent: true,
+    parentCardId: column.layout.type === 'pane' ? column.layout.activeTabId : undefined,
+  })
   assert.equal(viaTab.columns[0]!.cards.spawned!.spawnedByAgent, true)
+  assert.equal(viaTab.columns[0]!.cards.spawned!.parentCardId, column.layout.type === 'pane' ? column.layout.activeTabId : undefined)
   const userTab = ideReducer(state, { type: 'addTab', columnId: column.id, paneId, cardId: 'user' })
   assert.notEqual(userTab.columns[0]!.cards.user!.spawnedByAgent, true)
 

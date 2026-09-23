@@ -17,7 +17,7 @@ export type ReasoningOption = {
 // workflows. We surface it as a selectable tier and activate it by sending
 // `--effort xhigh` plus `"ultracode": true` in `--settings` (see providers.ts).
 // Astra and Codex 5.6 models can add max and, for Astra/Sol/Terra, Ultra. Older
-// Codex models still top out at xhigh; model-aware filtering below keeps the
+// Older Codex models top out at xhigh (gpt-6-*/5.6 go to max/ultra); model-aware filtering below keeps the
 // persisted tier compatible with the selected model.
 const reasoningOptionLabels: Record<AppLanguage, Record<ReasoningEffort, string>> = {
   'zh-CN': {
@@ -127,6 +127,7 @@ const getCodexReasoningOptionValuesForModel = (model?: string | null): CodexReas
 
   if (
     isAstraModel(model) ||
+    normalizedModel === 'gpt-6-sol' ||
     normalizedModel === 'gpt-5.6-sol' ||
     normalizedModel === 'gpt-5.6-terra' ||
     normalizedModel === 'gpt-5.6'
@@ -134,7 +135,9 @@ const getCodexReasoningOptionValuesForModel = (model?: string | null): CodexReas
     return [...base, 'max', 'ultra']
   }
 
-  if (normalizedModel === 'gpt-5.6-luna') {
+  // Codex CLI 0.156.1 的 spawn_agent 模型目录（scripts/probe-codex-tool-schema.mjs）：
+  // gpt-6-sol 与 5.6-sol 一样顶到 ultra，gpt-6-luna 与 5.6-luna 一样顶到 max。
+  if (normalizedModel === 'gpt-6-luna' || normalizedModel === 'gpt-5.6-luna') {
     return [...base, 'max']
   }
 

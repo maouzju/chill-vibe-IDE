@@ -83,10 +83,12 @@ import {
   setGitWorkspaceStage,
 } from './git-workspace.js'
 import { inspectOnboardingStatus } from './onboarding-status.js'
-import { getProviderSlashCommands, getProviderStatuses, validateWorkspacePath } from './providers.js'
+import { getProviderSlashCommands, getProviderStatuses, resolveSystemCommand, validateWorkspacePath } from './providers.js'
 import { resilientProxyPool } from './resilient-proxy.js'
 import { SetupManager } from './setup-manager.js'
 import { OllamaManager } from './ollama-manager.js'
+import { CliCompatManager } from './cli-compat-manager.js'
+import { cliCompatRequestSchema } from '../shared/cli-compat.js'
 import {
   deleteSessionHistoryEntry,
   loadClosedWorkspaceSnapshot,
@@ -126,6 +128,7 @@ const app = express()
 const chatManager = new ChatManager()
 const setupManager = new SetupManager()
 const ollamaManager = new OllamaManager()
+const cliCompatManager = new CliCompatManager(resolveSystemCommand)
 
 app.disable('x-powered-by')
 app.use((request, response, next) => {
@@ -280,6 +283,32 @@ app.post('/api/setup/run', (request, response) => {
   }
 
   response.status(202).json(setupManager.start(parsed.data))
+})
+
+app.get('/api/cli-compat/status', async (_request, response) => {
+  response.json(await cliCompatManager.getStatus())
+})
+
+app.post('/api/cli-compat/install', async (request, response) => {
+  const parsed = cliCompatRequestSchema.safeParse(request.body ?? {})
+  if (!parsed.success) {
+    response.status(400).json({ message: 'Invalid CLI compat request.' })
+    return
+  }
+  response.status(202).json(await cliCompatManager.install(parsed.data.provider))
+})
+
+app.post('/api/cli-compat/active', async (request, response) => {
+  const parsed = cliCompatRequestSchema.safeParse(request.body ?? {})
+  if (!parsed.success) {
+    response.status(400).json({ message: 'Invalid CLI compat request.' })
+    return
+  }
+  try {
+    response.json(await cliCompatManager.setActive(parsed.data.provider, parsed.data.active ?? false))
+  } catch (error) {
+    response.status(409).json({ message: error instanceof Error ? error.message : String(error) })
+  }
 })
 
 app.get('/api/ollama/status', async (_request, response) => {

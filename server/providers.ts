@@ -74,6 +74,7 @@ import {
 import { createCodexCompactionActivityDeduper } from './codex-compaction-dedupe.js'
 import { createCodexAgentStatusTracker } from './codex-agent-status.js'
 import { createClaudeAgentStatusTracker, syntheticClaudeAgentId } from './claude-agent-status.js'
+import { resolveCompatCommand } from './cli-compat-manager.js'
 import { writeServerLog } from './crash-logger.js'
 import { resolveClaudeRuntimeEnvironment } from './claude-runtime-environment.js'
 import {
@@ -782,7 +783,11 @@ export const resolveLocalModelEntry = async (
   }
 }
 
-export const resolveCommand = async (provider: Provider) => {
+// 设置里「兼容版 CLI」激活时优先用它（server/cli-compat-manager.ts），否则走系统 PATH。
+export const resolveCommand = async (provider: Provider) =>
+  (await resolveCompatCommand(provider)) ?? (await resolveSystemCommand(provider))
+
+export const resolveSystemCommand = async (provider: Provider) => {
   const lookup = await new Promise<string[]>((resolve) => {
     const child = spawn(commandLookupTool, providerCommandPreferences[provider], {
       stdio: ['ignore', 'pipe', 'ignore'],

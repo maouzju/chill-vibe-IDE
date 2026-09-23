@@ -128,6 +128,15 @@ describe('reasoning helpers', () => {
       getReasoningOptionsForModel('codex', 'gpt-5.6-luna').map((option) => option.value),
       ['low', 'medium', 'high', 'xhigh', 'max'],
     )
+    // Codex CLI 0.156.1 spawn_agent 目录：gpt-6-sol 顶到 ultra、gpt-6-luna 顶到 max
+    assert.deepEqual(
+      getReasoningOptionsForModel('codex', 'gpt-6-sol').map((option) => option.value),
+      ['low', 'medium', 'high', 'xhigh', 'max', 'ultra'],
+    )
+    assert.deepEqual(
+      getReasoningOptionsForModel('codex', 'gpt-6-luna').map((option) => option.value),
+      ['low', 'medium', 'high', 'xhigh', 'max'],
+    )
     assert.deepEqual(
       getReasoningOptionsForModel('codex', 'gpt-5.5').map((option) => option.value),
       ['low', 'medium', 'high', 'xhigh'],

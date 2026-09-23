@@ -357,6 +357,7 @@ import { buildSeededChatPrompt, collectSeededChatAttachments, hasSeededChatTrans
 import { buildArchiveRecallSnapshot } from './archive-recall'
 import { getOnboardingText, getPanelText, getResilientProxyText, getTopTabText } from './app-panel-text'
 import { AppButton } from './components/AppButton'
+import { CliCompatSettings } from './components/CliCompatSettings'
 import { dispatchComposerFocusRequest } from './components/composer-focus'
 import {
   createTopbarWindowDragController,
@@ -4219,6 +4220,7 @@ function App() {
           planMode: options?.planMode,
           adminAccess: options?.adminAccess,
           spawnedByAgent: options?.spawnedByAgent,
+          parentCardId: options?.parentCardId,
         }
         const nextState = applyAction(action)
         persistAfterAction(action.type, nextState)
@@ -5908,7 +5910,7 @@ function App() {
               command.lane,
               command.requirement,
               undefined,
-              { provider: command.provider, model: command.model, adminAccess: false, spawnedByAgent: true },
+              { provider: command.provider, model: command.model, adminAccess: false, spawnedByAgent: true, parentCardId: owner.id },
             )
             return
           }
@@ -10445,6 +10447,8 @@ function App() {
                       </label>
                     </div>
                   </div>
+
+                  <CliCompatSettings language={appState.settings.language} />
 
                   {switchNotice ? (
                     <div className="panel-alert" role="alert">

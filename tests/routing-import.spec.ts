@@ -508,3 +508,36 @@ test('shows the auto-retry controls on routing instead of settings', async ({ pa
   await expect(page.locator('#app-panel-routing')).toContainText(/\u542f\u7528|Status/)
   await expect(page.locator('#app-panel-routing')).toContainText(/\u672c\u6b21\u542f\u52a8|This launch/)
 })
+
+test('downloads the compatible CLI build and switches to it from the routing panel', async ({ page }) => {
+  await mockBaseApis(page)
+
+  const entry = (provider: 'claude' | 'codex', compatibleVersion: string, active: boolean) => ({
+    provider,
+    compatibleVersion,
+    installed: active,
+    active,
+    activeVersion: active ? compatibleVersion : null,
+    systemVersion: '2.1.200',
+    task: active ? { status: 'succeeded', message: compatibleVersion } : null,
+  })
+  let claudeActive = false
+  const status = () => ({ entries: [entry('claude', '2.1.280', claudeActive), entry('codex', '0.156.1', false)] })
+
+  await page.route('**/api/cli-compat/status', (route) => route.fulfill({ json: status() }))
+  await page.route('**/api/cli-compat/install', async (route) => {
+    expect(JSON.parse(route.request().postData() ?? '{}')).toEqual({ provider: 'claude' })
+    claudeActive = true
+    await route.fulfill({ json: status() })
+  })
+
+  await page.setViewportSize({ width: 1280, height: 900 })
+  await openRoutingPanel(page)
+
+  const claudeRow = page.locator('.cli-compat-row[data-provider="claude"]')
+  await expect(claudeRow).toContainText('v2.1.280')
+  await claudeRow.getByRole('button', { name: /下载兼容版并切换/ }).click()
+  await expect(claudeRow.getByRole('button', { name: /改用系统 CLI/ })).toBeVisible()
+  await expect(claudeRow).toContainText('兼容版 v2.1.280')
+  await page.locator('.cli-compat-settings').screenshot({ path: 'test-results/cli-compat-settings.png' })
+})

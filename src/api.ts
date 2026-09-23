@@ -1,3 +1,4 @@
+import { cliCompatStatusSchema, type CliCompatRequest, type CliCompatStatus } from '../shared/cli-compat'
 import { z } from 'zod'
 
 import {
@@ -535,6 +536,35 @@ const postJson = async (url: string, body: unknown) => {
   }
 
   return (await response.json()) as unknown
+}
+
+export const fetchCliCompatStatus = async (): Promise<CliCompatStatus> => {
+  const desktop = getDesktopApi()
+  if (desktop?.fetchCliCompatStatus) {
+    return readDesktop(() => desktop.fetchCliCompatStatus!(), cliCompatStatusSchema)
+  }
+
+  const response = await fetch('/api/cli-compat/status')
+  if (!response.ok) throw new Error('Failed to fetch CLI compat status')
+  return cliCompatStatusSchema.parse(await response.json())
+}
+
+export const installCliCompat = async (provider: CliCompatRequest['provider']): Promise<CliCompatStatus> => {
+  const desktop = getDesktopApi()
+  if (desktop?.installCliCompat) {
+    return readDesktop(() => desktop.installCliCompat!({ provider }), cliCompatStatusSchema)
+  }
+
+  return cliCompatStatusSchema.parse(await postJson('/api/cli-compat/install', { provider }))
+}
+
+export const setCliCompatActive = async (provider: CliCompatRequest['provider'], active: boolean): Promise<CliCompatStatus> => {
+  const desktop = getDesktopApi()
+  if (desktop?.setCliCompatActive) {
+    return readDesktop(() => desktop.setCliCompatActive!({ provider, active }), cliCompatStatusSchema)
+  }
+
+  return cliCompatStatusSchema.parse(await postJson('/api/cli-compat/active', { provider, active }))
 }
 
 export const fetchOllamaStatus = async (): Promise<OllamaStatus> => {

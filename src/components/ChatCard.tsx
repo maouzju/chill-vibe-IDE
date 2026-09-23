@@ -498,6 +498,9 @@ type ChatCardProps = {
   isActive?: boolean
   composerFocusRequest?: number
   recoveryStatus?: CardRecoveryStatus
+  childTabs?: Array<{ id: string; title: string }>
+  onOpenChildTab?: (cardId: string) => void
+  onReturnToParent?: () => void
 }
 
 const getSelectValue = (provider: Provider, model: string) =>
@@ -990,6 +993,9 @@ type ChatTranscriptProps = {
   onJumpToStickyMessageSource: (targetScrollTop: number) => void
   onOpenFile?: (relativePath: string, options?: { line?: number }) => void
   onForkConversation?: (messageId: string) => void
+  childTabs?: Array<{ id: string; title: string }>
+  onOpenChildTab?: (cardId: string) => void
+  onReturnToParent?: () => void
 }
 
 // 名单每次渲染都是新数组；按内容比，别让 PaneView 的一次重渲染把整张卡拖下水。
@@ -1042,6 +1048,9 @@ const ChatTranscript = memo(
     onJumpToStickyMessageSource,
     onOpenFile,
     onForkConversation,
+    childTabs,
+    onOpenChildTab,
+    onReturnToParent,
   }: ChatTranscriptProps) => {
     // 右键任意可打开的文件行（改动汇总 / 编辑列表 / 工具详情 / 正文里的文件引用）都能
     // 直接跳到资源管理器。走 message-list 上的一次事件委托而不是给每个卡片单独接一份
@@ -1494,7 +1503,15 @@ const ChatTranscript = memo(
 
         {dockedAgentStatus ? (
           <div className="subagent-dock" data-testid="subagent-dock">
-            <StructuredAgentsCard language={language} data={dockedAgentStatus} />
+            <StructuredAgentsCard language={language} data={dockedAgentStatus} childTabs={childTabs} onOpenChildTab={onOpenChildTab} />
+          </div>
+        ) : null}
+
+        {onReturnToParent ? (
+          <div className="subagent-dock" data-testid="subagent-return-dock">
+            <button type="button" className="structured-agent-launcher" onClick={onReturnToParent}>
+              {language === 'zh-CN' ? '收回到父会话' : 'Return to parent'}
+            </button>
           </div>
         ) : null}
 
@@ -1569,6 +1586,9 @@ const ChatCardView = ({
   isActive = true,
   composerFocusRequest = 0,
   recoveryStatus,
+  childTabs,
+  onOpenChildTab,
+  onReturnToParent,
 }: ChatCardProps) => {
   const text = useMemo(() => getLocaleText(language), [language])
   const localSlashCommands = useMemo(() => getLocalSlashCommands(language), [language])
@@ -4795,6 +4815,9 @@ const ChatCardView = ({
                 workspacePath={workspacePath}
                 cardStatus={card.status}
                 recoveryStatus={recoveryStatus}
+                childTabs={childTabs}
+                onOpenChildTab={onOpenChildTab}
+                onReturnToParent={onReturnToParent}
                 onManualRecoverStream={showManualStreamRecovery ? onManualRecoverStream : undefined}
                 messages={card.messages}
                 messageListRef={messageListRef}

@@ -17,11 +17,13 @@ import type {
   AutomationBoardActions,
   AutomationBoardWorkspaceView,
 } from './automation-board-host'
+import type { SubagentTabSummary } from './subagent-cross-column-navigation'
 import { PaneView } from './PaneView'
 import { SplitResizeHandle } from './SplitResizeHandle'
 
 type LayoutRendererProps = {
   column: BoardColumn
+  subagentColumns?: BoardColumn[]
   node: LayoutNode
   providers: Record<string, ProviderStatus>
   language: AppLanguage
@@ -120,10 +122,13 @@ type LayoutRendererProps = {
   onOpenFile?: (paneId: string, relativePath: string, options?: { line?: number }) => void
   cardRecoveryStatuses?: ReadonlyMap<string, CardRecoveryStatus>
   queuedSendSummaries?: ReadonlyMap<string, QueuedSendSummary>
+  getSubagentChildTabs?: (parentCardId: string) => SubagentTabSummary[]
+  onNavigateToCard?: (cardId: string) => void
 }
 
 export const LayoutRenderer = ({
   column,
+  subagentColumns,
   node,
   onResizePane,
   ...props
@@ -136,6 +141,7 @@ export const LayoutRenderer = ({
             <LayoutRenderer
               {...props}
               column={column}
+              subagentColumns={subagentColumns}
               node={child}
               onResizePane={onResizePane}
             />
@@ -159,6 +165,7 @@ export const LayoutRenderer = ({
     <PaneView
       {...props}
       column={column}
+      subagentColumns={subagentColumns}
       pane={node}
     />
   )

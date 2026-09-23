@@ -2,6 +2,7 @@ import { expect, test, type Page } from '@playwright/test'
 
 import { installMockElectronBridge } from './electron-bridge.ts'
 import { createPlaywrightState } from './playwright-state.ts'
+import { revealSettingsItem } from './settings-panel-helpers.ts'
 
 const appUrl = process.env.PLAYWRIGHT_APP_URL ?? 'http://localhost:5173'
 const defaultAutoUrgeMessage = 'Please keep verifying until you have evidence.'
@@ -383,8 +384,7 @@ test('settings can add named auto urge profiles and each chat picks one manually
 
   await page.locator('#app-tab-settings').click()
 
-  const settingsPanel = page.locator('#app-panel-settings')
-  const utilityGroup = settingsPanel.locator('.settings-group').filter({ hasText: 'Utility' }).first()
+  const utilityGroup = await revealSettingsItem(page, 'auto-urge')
 
   await expect(utilityGroup).toBeVisible()
   await utilityGroup.getByRole('button', { name: 'Add Auto Urge Type' }).click()

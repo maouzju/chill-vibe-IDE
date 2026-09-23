@@ -42,7 +42,9 @@ export type ActiveStream = {
   suppressOutputAfterAskUser?: boolean
 }
 
-export type OnboardingStage = 'loading' | 'setup' | 'import' | 'complete'
+export type OnboardingStage = 'loading' | 'setup' | 'account' | 'model' | 'complete'
+export type OnboardingAccountState = 'idle' | 'connected' | 'skipped'
+export type OnboardingModelState = 'idle' | 'confirmed'
 export type OnboardingImportState = 'idle' | 'imported' | 'skipped'
 
 export type ProfileDraft = {

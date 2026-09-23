@@ -5,6 +5,7 @@ import path from 'node:path'
 import { describe, it } from 'node:test'
 
 import {
+  CliCompatManager,
   getCompatBinPath,
   readActiveCompatVersions,
   resolveCompatCommand,
@@ -46,5 +47,17 @@ describe('cli compat manager', () => {
     const root = makeRoot()
     writeFileSync(path.join(root, 'active.json'), '\0\0\0')
     assert.deepEqual(await readActiveCompatVersions(root), {})
+  })
+
+  it('re-reads the system CLI version after a refresh instead of serving a permanent cache', async () => {
+    let version = '2.1.280'
+    const manager = new CliCompatManager(async () => 'claude', async () => version)
+    const first = await manager.getStatus()
+    version = '2.1.281'
+    const second = await manager.getStatus()
+    assert.notEqual(
+      first.entries.find((entry) => entry.provider === 'claude')?.systemVersion,
+      second.entries.find((entry) => entry.provider === 'claude')?.systemVersion,
+    )
   })
 })

@@ -1349,7 +1349,10 @@ const ChatTranscript = memo(
     )
     // 运行中的子代理只在卡片底部保留一个沉底面板；没有运行中的就整个不渲染。
     // 数据来自转录里最新一张 status 快照（docs/specs/claude-subagent-progress Slice 3）。
-    const dockedAgentStatus = useMemo(() => selectDockedAgentStatus(messages), [messages])
+    const dockedAgentStatus = useMemo(
+      () => selectDockedAgentStatus(messages, { includeSettled: (childTabs?.length ?? 0) > 0 }),
+      [childTabs, messages],
+    )
 
     return (
       <>

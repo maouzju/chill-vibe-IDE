@@ -15,9 +15,13 @@ import { getAutomationBoard } from '../../shared/default-state'
 import type { CardRecoveryStatus } from '../stream-recovery-feedback'
 import type { CodexChatSettings } from '../../shared/codex-chat-settings'
 import type { QueuedSendSummary } from './deferred-send-queue'
+import { sameColumnSourceCards } from './subagent-cross-column-navigation'
 
 type WorkspaceColumnMemoProps = {
   column: BoardColumn
+  subagentColumns?: BoardColumn[]
+  getSubagentChildTabs?: (parentCardId: string) => Array<{ id: string; title: string }>
+  onNavigateToCard?: (cardId: string) => void
   providers: Record<string, ProviderStatus>
   language: AppLanguage
   systemPrompt: string
@@ -48,6 +52,7 @@ type WorkspaceColumnMemoProps = {
 
 type PaneViewMemoProps = {
   column: BoardColumn
+  subagentColumns?: BoardColumn[]
   pane: PaneNode
   automationBoardActions?: unknown
   automationBoardWorkspace?: unknown
@@ -73,6 +78,8 @@ type PaneViewMemoProps = {
   wakeTimerEnabled?: boolean
   cardRecoveryStatuses?: ReadonlyMap<string, CardRecoveryStatus>
   queuedSendSummaries?: ReadonlyMap<string, QueuedSendSummary>
+  getSubagentChildTabs?: (parentCardId: string) => Array<{ id: string; title: string }>
+  onNavigateToCard?: (cardId: string) => void
 }
 
 const haveSameSessionHistoryEntries = (
@@ -119,6 +126,9 @@ export const areWorkspaceColumnPropsEqual = (
   next: WorkspaceColumnMemoProps,
 ) =>
   previous.column === next.column &&
+  sameColumnSourceCards(previous.subagentColumns ?? [previous.column], next.subagentColumns ?? [next.column], previous.column.id) &&
+  previous.getSubagentChildTabs === next.getSubagentChildTabs &&
+  previous.onNavigateToCard === next.onNavigateToCard &&
   previous.providers === next.providers &&
   previous.language === next.language &&
   previous.systemPrompt === next.systemPrompt &&
@@ -261,6 +271,9 @@ const haveSamePaneCardRefs = (previous: PaneViewMemoProps, next: PaneViewMemoPro
 }
 
 export const arePaneViewPropsEqual = (previous: PaneViewMemoProps, next: PaneViewMemoProps) =>
+  (previous.subagentColumns === next.subagentColumns || sameColumnSourceCards(previous.subagentColumns ?? [previous.column], next.subagentColumns ?? [next.column], previous.column.id)) &&
+  previous.getSubagentChildTabs === next.getSubagentChildTabs &&
+  previous.onNavigateToCard === next.onNavigateToCard &&
   previous.automationBoardWorkspace === next.automationBoardWorkspace &&
   previous.automationBoardActions === next.automationBoardActions &&
   previous.pane === next.pane &&

@@ -64,6 +64,7 @@ import {
   PlusIcon,
 } from './Icons'
 import { getPaneTabIcon } from './pane-tab-icon'
+import type { SubagentTabSummary } from './subagent-cross-column-navigation'
 
 type DropEdge = 'left' | 'right' | 'top' | 'bottom'
 type DropPlacement = 'before' | 'after'
@@ -71,6 +72,7 @@ const tabPointerDownFallbackDelayMs = 80
 
 type PaneViewProps = {
   column: BoardColumn
+  subagentColumns?: BoardColumn[]
   pane: PaneNode
   providers: Record<string, ProviderStatus>
   language: AppLanguage
@@ -128,6 +130,8 @@ type PaneViewProps = {
   ) => void
   onReorderTab: (paneId: string, tabId: string, index: number) => void
   onSetActiveTab: (paneId: string, tabId: string) => void
+  getSubagentChildTabs?: (parentCardId: string) => SubagentTabSummary[]
+  onNavigateToCard?: (cardId: string) => void
   onActivatePane: (paneId: string) => void
   onChangeCardModel: (cardId: string, provider: Provider, model: string) => void
   onChangeCardReasoningEffort: (cardId: string, reasoningEffort: string) => void
@@ -325,6 +329,8 @@ const PaneViewView = ({
   onMoveTab,
   onReorderTab,
   onSetActiveTab,
+  getSubagentChildTabs = () => [],
+  onNavigateToCard = () => undefined,
   onActivatePane,
   onChangeCardModel,
   onChangeCardReasoningEffort,
@@ -1668,15 +1674,9 @@ const PaneViewView = ({
                   isActive={isActive}
                   composerFocusRequest={composerFocusRequest}
                   recoveryStatus={cardRecoveryStatuses?.get(card.id)}
-                  childTabs={Object.values(column.cards).filter((candidate) => candidate.parentCardId === card.id).map((candidate) => ({ id: candidate.id, title: candidate.title }))}
-                  onOpenChildTab={(childCardId) => {
-                    const childPane = findPaneForTab(column.layout, childCardId)
-                    if (childPane) onSetActiveTab(childPane.id, childCardId)
-                  }}
-                  onReturnToParent={card.parentCardId ? () => {
-                    const parentPane = findPaneForTab(column.layout, card.parentCardId!)
-                    if (parentPane) onSetActiveTab(parentPane.id, card.parentCardId!)
-                  } : undefined}
+                  childTabs={getSubagentChildTabs(card.id)}
+                  onOpenChildTab={onNavigateToCard}
+                  onReturnToParent={card.parentCardId ? () => onNavigateToCard(card.parentCardId!) : undefined}
                 />
               ) : null}
             </div>

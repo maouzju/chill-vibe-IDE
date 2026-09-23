@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 
-import type { CliCompatEntry, CliCompatStatus } from '../../shared/cli-compat'
+import { cliCompatNeedsAction, type CliCompatEntry, type CliCompatStatus } from '../../shared/cli-compat'
 import type { AppLanguage } from '../../shared/schema'
 import { fetchCliCompatStatus, installCliCompat, setCliCompatActive } from '../api'
 import { AppButton } from './AppButton'
@@ -15,6 +15,7 @@ const texts = {
     using: '当前使用',
     usingCompat: '兼容版',
     usingSystem: '系统 CLI',
+    systemIsCompat: '（已是兼容版本，无需切换）',
     download: '下载兼容版并切换',
     downloading: '下载中…',
     useCompat: '切换到兼容版',
@@ -32,6 +33,7 @@ const texts = {
     usingCompat: 'compatible build',
     usingSystem: 'system CLI',
     download: 'Download & switch',
+    systemIsCompat: ' (already the compatible version, nothing to do)',
     downloading: 'Downloading…',
     useCompat: 'Use compatible build',
     useSystem: 'Use system CLI',
@@ -45,9 +47,22 @@ const providerLabels: Record<CliCompatEntry['provider'], string> = {
   codex: 'Codex',
 }
 
-export function CliCompatSettings({ language }: { language: AppLanguage }) {
+export function CliCompatSettings({
+  language,
+  onStatusChange,
+}: {
+  language: AppLanguage
+  /** 让宿主（设置页的环境健康卡）与这里看到同一份状态，避免两处各拉各的、灯和按钮打架。 */
+  onStatusChange?: (status: CliCompatStatus) => void
+}) {
   const text = texts[language === 'zh-CN' ? 'zh-CN' : 'en']
-  const [status, setStatus] = useState<CliCompatStatus | null>(null)
+  const [status, setStatusState] = useState<CliCompatStatus | null>(null)
+  const onStatusChangeRef = useRef(onStatusChange)
+  onStatusChangeRef.current = onStatusChange
+  const setStatus = useCallback((next: CliCompatStatus) => {
+    setStatusState(next)
+    onStatusChangeRef.current?.(next)
+  }, [])
   const [pending, setPending] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const mountedRef = useRef(true)
@@ -59,7 +74,7 @@ export function CliCompatSettings({ language }: { language: AppLanguage }) {
     } catch (caught) {
       if (mountedRef.current) setError(caught instanceof Error ? caught.message : String(caught))
     }
-  }, [])
+  }, [setStatus])
 
   useEffect(() => {
     mountedRef.current = true
@@ -98,7 +113,7 @@ export function CliCompatSettings({ language }: { language: AppLanguage }) {
         const running = entry.task?.status === 'running'
         const inUse = entry.activeVersion
           ? `${text.usingCompat} v${entry.activeVersion}${entry.active ? '' : text.outdated.replace('{v}', entry.activeVersion)}`
-          : text.usingSystem
+          : `${text.usingSystem}${cliCompatNeedsAction(entry) ? '' : text.systemIsCompat}`
 
         return (
           <div key={entry.provider} className="cli-compat-row" data-provider={entry.provider}>
@@ -109,7 +124,7 @@ export function CliCompatSettings({ language }: { language: AppLanguage }) {
               {` · ${text.using}: ${inUse}`}
             </p>
             <div className="settings-actions">
-              {!entry.installed || !entry.active ? (
+              {cliCompatNeedsAction(entry) && (!entry.installed || !entry.active) ? (
                 entry.installed ? (
                   <AppButton
                     type="button"

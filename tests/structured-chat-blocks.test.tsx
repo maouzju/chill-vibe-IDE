@@ -12,6 +12,7 @@ import {
   getStructuredLabels,
   summarizeCommandDisplay,
 } from '../src/components/chat-card-rendering.tsx'
+import { StructuredAgentsCard } from '../src/components/StructuredBlocks.tsx'
 import { getStructuredToolGroupRenderWindow } from '../src/components/structured-tool-group-window.ts'
 import { buildRenderableMessages, parseStructuredAgentsMessage } from '../src/components/chat-card-parsing.ts'
 
@@ -1167,4 +1168,39 @@ test('the live sub-agent status panel shows each agent model and reasoning effor
   // 没有模型信息的老条目不渲染徽标，也不能出现 undefined。
   assert.equal((markup.match(/structured-agent-model/g) ?? []).length, 2)
   assert.doesNotMatch(markup, /undefined/)
+})
+
+test('renders child session launchers once even when the status snapshot has no active agents', () => {
+  const markup = renderToStaticMarkup(
+    <StructuredAgentsCard
+      language="en"
+      data={{ itemId: 'agent-status:done', status: 'completed', view: 'status', agents: [] }}
+      childTabs={[{ id: 'child-a', title: 'Finished review' }]}
+      onOpenChildTab={() => undefined}
+    />,
+  )
+
+  assert.equal((markup.match(/class="structured-agent-launcher"/g) ?? []).length, 1)
+  assert.match(markup, /Finished review/)
+})
+
+test('does not repeat child session launchers for each active agent row', () => {
+  const markup = renderToStaticMarkup(
+    <StructuredAgentsCard
+      language="en"
+      data={{
+        itemId: 'agent-status:running',
+        status: 'completed',
+        view: 'status',
+        agents: [
+          { threadId: 'thread-a', status: 'running' },
+          { threadId: 'thread-b', status: 'running' },
+        ],
+      }}
+      childTabs={[{ id: 'child-a', title: 'Review' }, { id: 'child-b', title: 'Tests' }]}
+      onOpenChildTab={() => undefined}
+    />,
+  )
+
+  assert.equal((markup.match(/class="structured-agent-launcher"/g) ?? []).length, 2)
 })

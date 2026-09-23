@@ -661,14 +661,18 @@ const isRunningAgentEntry = (agent: StructuredAgentEntry) =>
 // 决策：卡片底部只保留一个沉底面板，数据取转录里最新一张 status 快照，只列运行中条目，
 //   没有运行中条目就返回 null（面板整个不渲染）。
 // 被否决：聚合所有历史快照的运行中条目——旧包遗留的 workflow: 幻影会永久复活；最新快照即真相。
-export const selectDockedAgentStatus = (messages: ChatMessage[]): StructuredAgentsMessage | null => {
+export const selectDockedAgentStatus = (
+  messages: ChatMessage[],
+  options: { includeSettled?: boolean } = {},
+): StructuredAgentsMessage | null => {
   for (let index = messages.length - 1; index >= 0; index -= 1) {
     const message = messages[index]!
     if (message.meta?.kind !== 'agents') continue
     const parsed = parseStructuredAgentsMessage(message)
     if (!parsed || parsed.view !== 'status') continue
     const running = parsed.agents.filter(isRunningAgentEntry)
-    return running.length > 0 ? { ...parsed, agents: running } : null
+    if (running.length > 0) return { ...parsed, agents: running }
+    return options.includeSettled ? parsed : null
   }
   return null
 }

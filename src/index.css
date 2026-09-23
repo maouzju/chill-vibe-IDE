@@ -1340,25 +1340,6 @@ body.is-card-dragging .lane-drop-zone-top {
   width: min(74rem, 100%);
 }
 
-#app-panel-settings .settings-panel-columns {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr);
-  gap: 1rem;
-  align-items: start;
-}
-
-#app-panel-settings .settings-panel-columns.is-columns-2 {
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-}
-
-#app-panel-settings .settings-panel-column {
-  display: flex;
-  flex-direction: column;
-  gap: 1rem;
-  min-width: 0;
-  align-self: start;
-}
-
 #app-panel-routing .settings-group,
 #app-panel-settings .settings-group {
   display: flex;
@@ -1371,12 +1352,6 @@ body.is-card-dragging .lane-drop-zone-top {
   border-radius: 1rem;
   background: color-mix(in srgb, var(--panel-soft) 88%, var(--panel));
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.36);
-}
-
-#app-panel-settings .settings-panel-column > .settings-group:first-of-type {
-  margin-top: 0;
-  padding-top: 1rem;
-  border-top: 1px solid var(--line);
 }
 
 #app-panel-routing .settings-group > .settings-section:first-of-type,
@@ -4727,10 +4702,6 @@ body.is-card-dragging .lane-drop-zone-top {
 
   .auto-urge-profile-field-grid {
     grid-template-columns: minmax(0, 1fr);
-  }
-
-  #app-panel-settings .settings-panel-columns {
-    gap: 0.85rem;
   }
 
   #app-panel-routing .settings-group,
@@ -16679,4 +16650,438 @@ body.is-col-resizing .automation-board-lane-resize-handle::after {
     align-items: flex-start;
     flex-direction: column;
   }
+}
+
+/* -- Settings: beginner layout (docs/specs/settings-beginner-redesign) -- */
+#app-panel-settings .settings-panel-beginner {
+  width: min(78rem, 100%);
+}
+
+.settings-layout {
+  display: grid;
+  grid-template-columns: 13.5rem minmax(0, 1fr);
+  gap: 1.1rem;
+  align-items: start;
+}
+
+.settings-nav {
+  position: sticky;
+  top: 0.25rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+  min-width: 0;
+}
+
+.settings-search {
+  display: block;
+}
+
+.settings-search-input.control {
+  width: 100%;
+}
+
+.settings-nav-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+}
+
+.settings-nav-item {
+  appearance: none;
+  display: block;
+  width: 100%;
+  padding: 0.55rem 0.75rem;
+  border: 1px solid transparent;
+  border-radius: 0.7rem;
+  background: transparent;
+  text-align: left;
+  font-size: 0.9rem;
+  font-weight: 650;
+  color: var(--ink-2);
+  cursor: pointer;
+  transition:
+    background 140ms var(--ease),
+    color 140ms var(--ease),
+    border-color 140ms var(--ease);
+}
+
+.settings-nav-item:hover {
+  background: color-mix(in srgb, var(--panel-soft) 70%, var(--panel));
+  color: var(--ink-1);
+}
+
+.settings-nav-item:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.settings-nav-item.is-active {
+  border-color: color-mix(in srgb, var(--accent) 28%, var(--line));
+  background: color-mix(in srgb, var(--accent-soft) 60%, var(--panel-soft));
+  color: var(--ink-1);
+}
+
+.settings-content {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  min-width: 0;
+}
+
+.settings-category {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.settings-category-head {
+  padding: 0 0.15rem;
+}
+
+.settings-category-title {
+  margin: 0;
+  font-size: 1.12rem;
+  font-weight: 800;
+  letter-spacing: -0.01em;
+  color: var(--ink-1);
+}
+
+.settings-category-head .settings-note {
+  margin-top: 0.15rem;
+}
+
+#app-panel-settings .settings-item {
+  margin-top: 0;
+  padding-top: 1rem;
+  border-top: 1px solid var(--line);
+}
+
+.settings-item-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.6rem;
+}
+
+.settings-item-head .settings-group-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  margin: 0;
+}
+
+.settings-item-hint {
+  margin-top: 0.1rem;
+}
+
+.settings-tag {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.05rem 0.45rem;
+  border-radius: 999px;
+  border: 1px solid var(--line-strong);
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  color: var(--ink-2);
+  background: var(--panel-soft);
+}
+
+.settings-tag-experimental {
+  border-color: color-mix(in srgb, var(--accent) 40%, var(--line));
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent-soft) 80%, transparent);
+}
+
+.settings-tag-danger {
+  border-color: color-mix(in srgb, var(--danger) 40%, var(--line));
+  color: var(--danger);
+  background: color-mix(in srgb, var(--danger) 10%, transparent);
+}
+
+.settings-item-category-chip {
+  appearance: none;
+  flex-shrink: 0;
+  padding: 0.2rem 0.6rem;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--panel-soft);
+  font-size: 0.74rem;
+  font-weight: 650;
+  color: var(--ink-3);
+  cursor: pointer;
+}
+
+.settings-item-category-chip:hover {
+  color: var(--ink-1);
+  border-color: var(--line-strong);
+}
+
+.settings-advanced {
+  border: 1px dashed var(--line-strong);
+  border-radius: 1rem;
+  padding: 0.15rem 0.9rem;
+}
+
+.settings-advanced[open] {
+  padding-bottom: 0.9rem;
+}
+
+.settings-advanced-summary {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.2rem 0.6rem;
+  padding: 0.65rem 0;
+  font-size: 0.92rem;
+  font-weight: 750;
+  color: var(--ink-1);
+  cursor: pointer;
+  list-style: none;
+}
+
+.settings-advanced-summary::-webkit-details-marker {
+  display: none;
+}
+
+.settings-advanced-summary::before {
+  content: '\25B8';
+  display: inline-block;
+  margin-right: 0.35rem;
+  color: var(--ink-3);
+  transition: transform 140ms var(--ease);
+}
+
+.settings-advanced[open] > .settings-advanced-summary::before {
+  transform: rotate(90deg);
+}
+
+.settings-advanced-summary .settings-note {
+  margin-top: 0;
+  font-weight: 500;
+}
+
+.settings-advanced-body {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.settings-leave-alone {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  margin-top: 0.4rem;
+  padding: 0.9rem;
+  border: 1px solid color-mix(in srgb, var(--danger) 22%, var(--line));
+  border-radius: 1rem;
+  background: color-mix(in srgb, var(--danger) 4%, var(--panel-soft));
+}
+
+.settings-leave-alone-head {
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+}
+
+.settings-leave-alone-head strong {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.95rem;
+  color: var(--danger);
+}
+
+.settings-leave-alone-head strong::before {
+  content: '';
+  width: 0.55rem;
+  height: 0.55rem;
+  border-radius: 50%;
+  background: var(--danger);
+}
+
+.settings-leave-alone-head .settings-note {
+  margin-top: 0;
+}
+
+.settings-search-results {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.settings-search-summary {
+  margin-top: 0;
+  padding: 0 0.15rem;
+}
+
+/* 环境健康卡 */
+.settings-health-card {
+  padding: 0.95rem 1.05rem 1rem;
+  border: 1px solid var(--line);
+  border-radius: 1rem;
+  background: color-mix(in srgb, var(--panel-soft) 88%, var(--panel));
+}
+
+.settings-health-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.6rem;
+}
+
+.settings-health-card.is-compact {
+  padding: 0.55rem 0.8rem;
+}
+
+.settings-health-card.is-compact .settings-health-item {
+  display: inline-flex;
+  padding: 0;
+  border: 0;
+  background: none;
+}
+
+.settings-health-summary {
+  flex: 1;
+  color: var(--ink-2);
+}
+
+.settings-health-head .settings-group-title {
+  margin: 0;
+}
+
+.settings-health-list {
+  display: grid;
+  gap: 0.5rem;
+  margin: 0.75rem 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.settings-health-item {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 0.7rem;
+  padding: 0.6rem 0.75rem;
+  border: 1px solid var(--line);
+  border-radius: 0.8rem;
+  background: var(--panel);
+}
+
+.settings-health-light {
+  width: 0.7rem;
+  height: 0.7rem;
+  border-radius: 50%;
+  background: var(--ink-3);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--ink-3) 18%, transparent);
+}
+
+.settings-health-item.is-ok .settings-health-light {
+  background: #3aa76d;
+  box-shadow: 0 0 0 3px color-mix(in srgb, #3aa76d 22%, transparent);
+}
+
+.settings-health-item.is-warn .settings-health-light {
+  background: #d9a33a;
+  box-shadow: 0 0 0 3px color-mix(in srgb, #d9a33a 24%, transparent);
+}
+
+.settings-health-item.is-error .settings-health-light {
+  background: var(--danger);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--danger) 24%, transparent);
+}
+
+.settings-health-copy {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.settings-health-copy strong {
+  font-size: 0.9rem;
+  color: var(--ink-1);
+}
+
+.settings-health-copy .settings-note {
+  margin-top: 0.05rem;
+}
+
+.settings-health-state {
+  font-size: 0.78rem;
+  font-weight: 700;
+  color: var(--ink-3);
+  white-space: nowrap;
+}
+
+.settings-health-item.is-ok .settings-health-state {
+  color: #3aa76d;
+}
+
+.settings-health-item.is-warn .settings-health-state {
+  color: #b8861f;
+}
+
+.settings-health-item.is-error .settings-health-state {
+  color: var(--danger);
+}
+
+:root[data-theme='dark'] .settings-health-item.is-warn .settings-health-state {
+  color: #e0b452;
+}
+
+/* 首启向导：三步摘要与账号/模型表单 */
+.onboarding-summary-list {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.onboarding-account-form,
+.onboarding-model-form {
+  display: grid;
+  gap: 0.6rem;
+  margin-top: 0.75rem;
+}
+
+@media (max-width: 720px) {
+  .settings-layout {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .settings-nav {
+    position: static;
+  }
+
+  .settings-nav-list {
+    flex-direction: row;
+    flex-wrap: wrap;
+    gap: 0.3rem;
+  }
+
+  .settings-nav-item {
+    width: auto;
+    padding: 0.4rem 0.7rem;
+    border-color: var(--line);
+    border-radius: 999px;
+    font-size: 0.82rem;
+  }
+
+  .settings-health-item {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+
+  .settings-health-state,
+  .settings-health-item .btn {
+    grid-column: 2;
+    justify-self: start;
+  }
+
+  .onboarding-summary-list {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+/* 设置项已经有自己的标题，嵌在项里的 CLI 兼容版本块不再重复打标题（接口页里仍显示）。 */
+.settings-item .cli-compat-settings > .settings-group-title {
+  display: none;
 }

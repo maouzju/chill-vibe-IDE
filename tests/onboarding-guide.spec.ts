@@ -152,16 +152,21 @@ test('first open wizard auto-runs setup, supports language flags, and can import
   await page.getByRole('button', { name: /English/ }).click()
   await expect(page.getByRole('dialog')).toContainText(/Quick start/)
   await expect(page.getByRole('dialog')).toContainText(/Environment setup completed\.|Environment ready\./, { timeout: 15000 })
-  await expect(page.getByRole('dialog')).toContainText(/Import from cc-switch/)
+  // 向导 2026-09-23 起是三步：装 CLI → 连账号（导入 cc-switch 或填 key）→ 选模型。
+  await expect(page.getByRole('dialog')).toContainText(/Connect an account/)
   await page.getByRole('button', { name: /Import now/ }).click()
   await expect(page.getByRole('dialog')).toContainText(/Imported 2 profiles/)
+  await expect(page.getByRole('dialog')).toContainText(/Pick a default model/)
+  await expect(page.locator('#onboarding-model-claude')).toBeVisible()
+  await page.getByRole('button', { name: /Use this/ }).click()
+  await expect(page.getByRole('dialog')).toContainText(/You are ready to go/)
   await page.getByRole('button', { name: /Open workspace/ }).click()
   await expect(page.getByRole('dialog')).toBeHidden()
   expect(setupRuns).toBe(1)
   expect(importRuns).toBe(1)
 })
 
-test('first open wizard skips setup and cc-switch import when nothing needs attention', async ({ page }) => {
+test('first open wizard skips setup, lets the account step be skipped, and confirms a model', async ({ page }) => {
   await installMockElectronBridge(page)
   await clearOnboarding(page)
 
@@ -244,7 +249,12 @@ test('first open wizard skips setup and cc-switch import when nothing needs atte
   await page.goto('http://localhost:5173')
 
   await expect(page.getByRole('dialog')).toBeVisible()
-  await expect(page.getByRole('dialog')).toContainText(/No cc-switch settings found|未发现 cc-switch 配置/)
+  // 环境就绪、没有 cc-switch：直接落在「连账号」，没 key 也能跳过，然后确认默认模型。
+  await expect(page.getByRole('dialog')).toContainText(/No account connected yet|还没有连接账号/)
+  await expect(page.getByRole('button', { name: /Import now|立即导入/ })).toHaveCount(0)
+  await page.getByRole('button', { name: /Skip for now|暂时跳过/ }).click()
+  await expect(page.getByRole('dialog')).toContainText(/Pick a default model|选择默认模型/)
+  await page.getByRole('button', { name: /Use this|就用这个/ }).click()
   await expect(page.getByRole('dialog')).toContainText(/You are ready to go|已经可以开始使用了/)
   await page.getByRole('button', { name: /Open workspace|进入工作台/ }).click()
   await expect(page.getByRole('dialog')).toBeHidden()

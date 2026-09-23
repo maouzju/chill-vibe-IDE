@@ -37,6 +37,7 @@ import { clearDragPayload, readDragPayload, type Placement, writeDragPayload } f
 import type { CardRecoveryStatus } from '../stream-recovery-feedback'
 import type { QueuedSendSummary, SendMessageOptions } from './deferred-send-queue'
 import { areWorkspaceColumnPropsEqual } from './layout-memoization'
+import type { SubagentTabSummary } from './subagent-cross-column-navigation'
 import {
   filterExternalSessionHistory,
   filterCatalogSessionHistoryForWorkspace,
@@ -144,6 +145,7 @@ const usePrimaryMouseDownActivation = <T extends HTMLElement>(
 
 type WorkspaceColumnProps = {
   column: BoardColumn
+  subagentColumns: BoardColumn[]
   providers: Record<string, ProviderStatus>
   language: AppLanguage
   systemPrompt: string
@@ -229,6 +231,8 @@ type WorkspaceColumnProps = {
   ) => void
   onReorderTab: (paneId: string, tabId: string, index: number) => void
   onSetActiveTab: (paneId: string, tabId: string) => void
+  getSubagentChildTabs: (parentCardId: string) => SubagentTabSummary[]
+  onNavigateToCard: (cardId: string) => void
   onResizePane: (splitId: string, ratios: number[]) => void
   onActivatePane: (paneId: string) => void
   onSendMessage: (
@@ -263,6 +267,7 @@ const getHorizontalPlacement = (event: DragEvent<HTMLElement>) => {
 
 const WorkspaceColumnView = ({
   column,
+  subagentColumns,
   providers,
   language,
   systemPrompt,
@@ -310,6 +315,8 @@ const WorkspaceColumnView = ({
   onMoveTab,
   onReorderTab,
   onSetActiveTab,
+  getSubagentChildTabs,
+  onNavigateToCard,
   onResizePane,
   onActivatePane,
   onSendMessage,
@@ -1217,7 +1224,10 @@ const WorkspaceColumnView = ({
       <div className="column-body">
         <LayoutRenderer
           column={column}
+          subagentColumns={subagentColumns}
           node={column.layout}
+          getSubagentChildTabs={getSubagentChildTabs}
+          onNavigateToCard={onNavigateToCard}
           providers={providers}
           language={language}
           systemPrompt={systemPrompt}

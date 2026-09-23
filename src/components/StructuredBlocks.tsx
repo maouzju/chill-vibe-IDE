@@ -490,12 +490,22 @@ export const StructuredAgentsCard = ({
 }) => {
   const labels = getStructuredLabels(language)
   if (data.view === 'status') {
+    const childLaunchers = onOpenChildTab && childTabs.length > 0 ? (
+      <div className="structured-agent-launchers">
+        {childTabs.map((child) => (
+          <button key={child.id} type="button" className="structured-agent-launcher" onClick={() => onOpenChildTab(child.id)}>
+            {child.title || child.id}
+          </button>
+        ))}
+      </div>
+    ) : null
     return (
       <section className="structured-agents-card is-status" aria-label={labels.subAgentsRunning}>
         <div className="structured-agents-header">
           <span className="structured-agents-icon" aria-hidden="true">•</span>
           <span className="structured-agents-title">{labels.subAgentsRunning}</span>
         </div>
+        {childLaunchers}
         {data.agents.length === 0 ? (
           <div className="structured-agents-empty">{labels.noSubAgentsRunning}</div>
         ) : (
@@ -516,15 +526,6 @@ export const StructuredAgentsCard = ({
                       {labels.agentStatus[agent.status]}
                     </span>
                   </div>
-                  {onOpenChildTab && childTabs.length > 0 ? (
-                    <div className="structured-agent-launchers">
-                      {childTabs.map((child) => (
-                        <button key={child.id} type="button" className="structured-agent-launcher" onClick={() => onOpenChildTab(child.id)}>
-                          {child.title || child.id}
-                        </button>
-                      ))}
-                    </div>
-                  ) : null}
                   {activity.length > 0 ? (
                     <div className="structured-agent-activity">
                       {activity.map((entry, index) => (

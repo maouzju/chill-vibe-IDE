@@ -39,3 +39,13 @@ export const cliCompatRequestSchema = z.object({
 export type CliCompatEntry = z.infer<typeof cliCompatEntrySchema>
 export type CliCompatStatus = z.infer<typeof cliCompatStatusSchema>
 export type CliCompatRequest = z.infer<typeof cliCompatRequestSchema>
+
+/**
+ * 要不要提示「下载/切换兼容版」：正在用兼容私有副本，或者系统 CLI 本身就是兼容版本（且没切到别的私有副本）都不用。
+ * 09-23 用户截图：系统 CLI 已是 v2.1.280 仍提示「下载兼容版并切换」。设置面板和健康灯共用这一条判据。
+ */
+export const cliCompatNeedsAction = (entry: CliCompatEntry) => {
+  const usingCompat = entry.active && entry.activeVersion === entry.compatibleVersion
+  const systemMatches = !entry.active && entry.systemVersion === entry.compatibleVersion
+  return !usingCompat && !systemMatches
+}

@@ -2,6 +2,7 @@ import { expect, test, type Page } from '@playwright/test'
 
 import { installMockElectronBridge } from './electron-bridge.ts'
 import { createPlaywrightState } from './playwright-state.ts'
+import { revealSettingsItem } from './settings-panel-helpers.ts'
 
 const appUrl = process.env.PLAYWRIGHT_APP_URL ?? 'http://localhost:5173'
 
@@ -108,23 +109,26 @@ const installMockApis = async (page: Page, theme: 'dark' | 'light' = 'dark') => 
   })
 }
 
-const readSettingsGroupColumns = async (page: Page) =>
-  Object.fromEntries(
-    await page.locator('#app-panel-settings .settings-group').evaluateAll((nodes) =>
-      nodes.map((node) => [
-        node.querySelector('.settings-group-title')?.textContent?.trim() ?? '',
-        Math.round(node.getBoundingClientRect().left),
-      ]),
-    ),
+// 单列布局：可见的设置项必须一个接一个往下排（展开子区块后也不能并排/重叠）。
+const expectVisibleSettingsItemsStacked = async (page: Page) => {
+  const rects = await page.locator('#app-panel-settings .settings-item:visible').evaluateAll((nodes) =>
+    nodes.map((node) => {
+      const rect = node.getBoundingClientRect()
+      return { top: rect.top, bottom: rect.bottom }
+    }),
   )
+  expect(rects.length).toBeGreaterThan(0)
+  expect(rects.every((rect, index) => index === 0 || rect.top >= rects[index - 1]!.bottom - 1)).toBe(true)
+}
 
-test('settings keep archived brainstorm tooling hidden while auto urge stays under utility', async ({ page }) => {
+test('settings keep archived brainstorm tooling hidden while auto urge stays under automation', async ({ page }) => {
   await installMockApis(page)
   await page.goto(appUrl)
 
   const settingsPanel = page.locator('#app-panel-settings')
-  const utilityGroup = settingsPanel.locator('.settings-group').filter({ hasText: 'Utility' }).first()
-  const cardTypeGroup = settingsPanel.locator('.settings-group').filter({ hasText: 'Card Type' }).first()
+  const utilityGroup = settingsPanel.locator('#settings-item-auto-urge')
+  const cardTypeGroup = settingsPanel.locator('#settings-item-tool-cards')
+  const experimentalGroup = settingsPanel.locator('#settings-item-experimental')
   const quickToolButtons = page.locator('.pane-view').first().locator('.chat-empty-tool-button')
 
   // 自动化看板 2026-08-17 转正为默认开启，所以快捷工具是四个。
@@ -137,16 +141,15 @@ test('settings keep archived brainstorm tooling hidden while auto urge stays und
   await page.locator('#app-tab-settings').click()
   await expect(settingsPanel).toBeVisible()
 
+  await revealSettingsItem(page, 'auto-urge')
   await expect(utilityGroup).toContainText('Auto Urge')
+  await revealSettingsItem(page, 'tool-cards')
   await expect(cardTypeGroup).not.toContainText('Auto Urge')
 
   const gitToggle = cardTypeGroup.getByLabel('Git')
   const filesToggle = cardTypeGroup.getByLabel('Files')
   const stickyToggle = cardTypeGroup.getByLabel('Sticky Note')
   const automationBoardToggle = cardTypeGroup.getByLabel('Automation Board')
-  const weatherToggle = cardTypeGroup.getByLabel('Weather')
-  const musicToggle = cardTypeGroup.getByLabel('NetEase Music')
-  const whiteNoiseToggle = cardTypeGroup.getByLabel('White Noise')
   const brainstormToggle = cardTypeGroup.getByLabel('Brainstorm')
 
   await expect(gitToggle).toBeChecked()
@@ -154,15 +157,21 @@ test('settings keep archived brainstorm tooling hidden while auto urge stays und
   await expect(stickyToggle).toBeChecked()
   await expect(automationBoardToggle).toBeChecked()
   await expect(brainstormToggle).toHaveCount(0)
-  await expect(weatherToggle).not.toBeChecked()
-  await expect(musicToggle).not.toBeChecked()
-  await expect(whiteNoiseToggle).not.toBeChecked()
 
   await gitToggle.uncheck()
-  await weatherToggle.check()
   // 看板虽然默认开，开关仍然要能真正关掉它——只断言默认四个的话，
   // 「开关点了没反应」也会一路绿。
   await automationBoardToggle.uncheck()
+
+  // 天气/音乐/白噪音是实验功能，住在「系统 → 一般不用动」。
+  await revealSettingsItem(page, 'experimental')
+  const weatherToggle = experimentalGroup.getByLabel('Weather')
+  const musicToggle = experimentalGroup.getByLabel('NetEase Music')
+  const whiteNoiseToggle = experimentalGroup.getByLabel('White Noise')
+  await expect(weatherToggle).not.toBeChecked()
+  await expect(musicToggle).not.toBeChecked()
+  await expect(whiteNoiseToggle).not.toBeChecked()
+  await weatherToggle.check()
 
   await page.locator('#app-tab-ambience').click()
   // Git 与看板关掉、天气打开：Files / Sticky Note / Weather
@@ -192,6 +201,7 @@ test('clear user data stays behind a confirmation dialog', async ({ page }) => {
   })
 
   await page.locator('#app-tab-settings').click()
+  await revealSettingsItem(page, 'data')
 
   const clearButton = page.getByRole('button', { name: 'Clear User Data' })
   const dialog = page.getByRole('dialog', { name: 'Clear User Data?' })
@@ -213,7 +223,7 @@ test('clear user data stays behind a confirmation dialog', async ({ page }) => {
 })
 
 for (const theme of ['dark', 'light'] as const) {
-  test(`settings groups stay in the same waterfall column while sections expand in ${theme} theme`, async ({
+  test(`settings groups stay in one column while sections expand in ${theme} theme`, async ({
     page,
   }) => {
     await installMockApis(page, theme)
@@ -223,8 +233,8 @@ for (const theme of ['dark', 'light'] as const) {
     await page.locator('#app-tab-settings').click()
     await expect(page.locator('#app-panel-settings')).toBeVisible()
 
-    const initialColumns = await readSettingsGroupColumns(page)
-    expect(new Set(Object.values(initialColumns)).size).toBe(2)
+    await revealSettingsItem(page, 'general')
+    await expectVisibleSettingsItemsStacked(page)
 
     await page.locator('#agent-done-sound-toggle').check()
     await page.locator('#all-agents-done-sound-toggle').check()
@@ -237,13 +247,15 @@ for (const theme of ['dark', 'light'] as const) {
     await allAgentsDoneVolume.fill('0.25')
     await expect(allAgentsDoneVolume).toHaveValue('0.25')
     await expect(agentDoneVolume).toHaveValue('0.7')
+    await revealSettingsItem(page, 'auto-urge')
     await page.locator('#auto-urge-toggle').check()
     await expect(page.locator('.auto-urge-profile-card')).toHaveCount(1)
-    expect(await readSettingsGroupColumns(page)).toEqual(initialColumns)
+    await expectVisibleSettingsItemsStacked(page)
 
+    await revealSettingsItem(page, 'experimental')
     await page.locator('#experimental-weather-toggle').check()
     await expect(page.locator('#weather-city-input')).toBeVisible()
-    expect(await readSettingsGroupColumns(page)).toEqual(initialColumns)
+    await expectVisibleSettingsItemsStacked(page)
   })
 
   test(`settings card types stay legible in ${theme} theme`, async ({ page }) => {
@@ -251,16 +263,17 @@ for (const theme of ['dark', 'light'] as const) {
     await page.goto(appUrl)
 
     const settingsPanel = page.locator('#app-panel-settings')
-    const utilityGroup = settingsPanel.locator('.settings-group').filter({ hasText: 'Utility' }).first()
-    const cardTypeGroup = settingsPanel.locator('.settings-group').filter({ hasText: 'Card Type' }).first()
 
     await page.locator('#app-tab-settings').click()
     await expect(settingsPanel).toBeVisible()
+    const cardTypeGroup = await revealSettingsItem(page, 'tool-cards')
     await expect(cardTypeGroup).toContainText('Git')
     await expect(cardTypeGroup).toContainText('Files')
     await expect(cardTypeGroup).toContainText('Sticky Note')
-    await expect(cardTypeGroup).toContainText('NetEase Music')
+    await expect(cardTypeGroup).not.toContainText('NetEase Music')
+    const utilityGroup = await revealSettingsItem(page, 'auto-urge')
     await expect(utilityGroup).toContainText('Auto Urge')
+    await revealSettingsItem(page, 'tool-cards')
 
     await expect(cardTypeGroup).toHaveScreenshot(`card-type-settings-experimental-${theme}.png`, {
       animations: 'disabled',

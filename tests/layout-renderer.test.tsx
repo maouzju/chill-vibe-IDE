@@ -115,6 +115,8 @@ const renderLayout = (customize?: (column: BoardColumn) => BoardColumn) => {
       onMoveTab={() => undefined}
       onReorderTab={() => undefined}
       onSetActiveTab={() => undefined}
+      getSubagentChildTabs={() => []}
+      onNavigateToCard={() => undefined}
       onResizePane={() => undefined}
       onActivatePane={() => undefined}
       onChangeCardModel={() => undefined}

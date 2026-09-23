@@ -18,6 +18,7 @@ import {
 import type { AppState, SetupStatus, SlashCommand } from '../shared/schema.ts'
 import { installMockElectronBridge } from './electron-bridge.ts'
 import { createPlaywrightState } from './playwright-state.ts'
+import { revealSettingsItem, switchSettingsTheme } from './settings-panel-helpers.ts'
 
 const appUrl = process.env.PLAYWRIGHT_APP_URL ?? 'http://localhost:5173'
 
@@ -31,6 +32,7 @@ for (const theme of ['dark', 'light'] as const) {
     await page.setViewportSize({ width: 1280, height: 900 })
     await page.goto(appUrl)
     await page.locator('#app-tab-settings').click()
+    await revealSettingsItem(page, 'codex-safety')
     const toggle = page.getByRole('checkbox', { name: '默认开启超管模式', exact: true })
     const row = page.locator('.settings-hover-detail').filter({ has: toggle })
     await expect(toggle).not.toBeChecked()
@@ -45,6 +47,7 @@ for (const theme of ['dark', 'light'] as const) {
     await expect(row).toHaveScreenshot(`default-admin-${theme}-on.png`)
     await page.reload()
     await page.locator('#app-tab-settings').click()
+    await revealSettingsItem(page, 'codex-safety')
     await expect(toggle).toBeChecked()
     await page.setViewportSize({ width: 640, height: 720 })
     await expect(toggle).toBeVisible()
@@ -2279,6 +2282,7 @@ test('theme toggle applies dark and light surfaces consistently', async ({ page 
   await expect(page.locator('#app-panel-ambience')).toBeHidden()
   await expect(page.locator('#app-panel-routing')).toBeHidden()
   await expect(page.locator('#app-panel-settings')).toBeVisible()
+  await revealSettingsItem(page, 'typography')
   await expect(page.locator('#line-height-range')).toHaveAttribute('min', `${minLineHeightScale}`)
   const scopedDarkThemeButton = page.locator('#app-panel-settings').getByRole('button', {
     name: /\u6df1\u8272|Dark/,
@@ -2296,7 +2300,8 @@ test('theme toggle applies dark and light surfaces consistently', async ({ page 
     page.locator('#language-select'),
     'background-color',
   )
-  await expect(page.locator('.settings-field-icon')).toHaveCount(6)
+  await revealSettingsItem(page, 'model-behavior')
+  await expect(page.locator('.settings-field-icon')).toHaveCount(8)
   const darkSettingsModelIconColor = await readComputedRgb(page.locator('.settings-field-icon').first(), 'color')
   expect(darkActiveThemeChipBackgroundImage).toBe('none')
   expect(darkProxyEnabledBackgroundImage).toBe('none')
@@ -2324,6 +2329,7 @@ test('theme toggle applies dark and light surfaces consistently', async ({ page 
   expect(lacksGreenCast(darkSwitchPanelBackground)).toBeTruthy()
   expect(lacksGreenCast(darkSwitchProfileBackground)).toBeTruthy()
   await settingsTab.click()
+  await revealSettingsItem(page, 'language-theme')
   await scopedLightThemeButton.click()
   await expect(page.locator('html')).toHaveAttribute('data-theme', 'light')
   await expect.poll(async () => isTransparentColor(await readCardHeaderBackgroundValue())).toBeFalsy()
@@ -2377,7 +2383,6 @@ test('theme toggle applies dark and light surfaces consistently', async ({ page 
   const lightInactiveTabBackground = await readComputedRgb(routingTab, 'background-color')
   const lightActiveTabBackground = await readComputedRgb(ambienceTab, 'background-color')
   const lightTopbarRect = await readRect(appTopbar)
-  await expect(page.locator('#line-height-range')).toHaveAttribute('min', `${minLineHeightScale}`)
   await ambienceTab.click()
   await expect(ambienceTab).toHaveAttribute('aria-selected', 'true')
   await expect(page.locator('#app-panel-ambience')).toBeVisible()
@@ -2842,7 +2847,7 @@ test('language setting updates the interface copy in both themes', async ({ page
   await expect(page.locator('html')).toHaveAttribute('lang', 'en')
   await expect(page.locator('#app-tab-settings')).toHaveAttribute('aria-selected', 'true')
   await expect(page.getByRole('heading', { name: 'Interface and request settings' })).toBeVisible()
-  await expect(settingsPanel).toContainText('Reuse Codex / Claude skills')
+  await expect(settingsPanel).toContainText('Connect account')
   await page
     .locator('#app-panel-settings .theme-chip')
     .first()
@@ -2858,7 +2863,7 @@ test('language setting updates the interface copy in both themes', async ({ page
   await expect(settingsPanel).toContainText('\u754C\u9762\u548C\u8BF7\u6C42\u8BBE\u7F6E')
   await expect(settingsPanel).toContainText('\u6D45\u8272')
   await expect(settingsPanel).toContainText('\u6DF1\u8272')
-  await expect(settingsPanel).toContainText('Codex / Claude Skill 互相复用')
+  await expect(settingsPanel).toContainText('连接账号')
 })
 
 for (const scenario of [
@@ -2898,6 +2903,7 @@ for (const scenario of [
 
     await settingsTab.click()
     await expect(settingsPanel).toBeVisible()
+    await revealSettingsItem(page, 'model-behavior')
     await expect(page.locator('html')).toHaveAttribute('lang', scenario.language)
     await expect(page.locator('html')).toHaveAttribute('data-theme', scenario.theme)
     await expect(crossProviderSkillToggle).toBeChecked()
@@ -2941,6 +2947,7 @@ for (const theme of ['dark', 'light'] as const) {
 
     await page.locator('#app-tab-settings').click()
     await expect(settingsPanel).toBeVisible()
+    await revealSettingsItem(page, 'codex-safety')
     await expect(page.locator('html')).toHaveAttribute('data-theme', theme)
     await expect(safetyGroup).toBeVisible()
     // 计数原为 3，但 main（eda37cf）上实测就有 4 个 checkbox —— 那笔 3 是历史遗留的
@@ -3025,6 +3032,7 @@ for (const theme of ['dark', 'light'] as const) {
     await page.goto(appUrl)
     await page.locator('.card-shell').first().waitFor()
     await page.locator('#app-tab-settings').click()
+    await revealSettingsItem(page, 'codex-safety')
 
     await expect(page.locator('.codex-management-policy-row:visible')).toHaveCount(0)
   })
@@ -3054,6 +3062,7 @@ for (const theme of ['dark', 'light'] as const) {
 
     await page.locator('#app-tab-settings').click()
     await expect(settingsPanel).toBeVisible()
+    await revealSettingsItem(page, 'model-behavior')
     await expect(page.locator('html')).toHaveAttribute('data-theme', theme)
     await expect(modelSettingsGroup).toContainText(/已配置 1 条规则|1 rule configured/)
     await expect(modelSettingsGroup.locator('.model-prompt-rules-summary')).toHaveScreenshot(
@@ -3077,39 +3086,43 @@ for (const theme of ['dark', 'light'] as const) {
   })
 }
 
-test('card type settings group keeps tool toggles readable in both themes', async ({ page }) => {
+// 「卡片类型」只剩工具卡；音乐/天气/白噪音/统计搬进了「系统 → 实验功能」并带「实验」标签。
+test('card type and experimental settings groups keep tool toggles readable in both themes', async ({ page }) => {
   await mockAppApis(page)
   await page.goto(appUrl)
   await page.locator('.card-shell').first().waitFor()
 
   const settingsTab = page.getByRole('tab', { name: /设置|Settings/ })
-  const lightThemeButton = page.locator('#app-panel-settings .theme-toggle').first().locator('.theme-chip').first()
-  const cardTypeSettingsGroup = page
-    .locator('#app-panel-settings .settings-group')
-    .filter({ hasText: /卡片类型|Card Type/ })
-    .first()
 
   await settingsTab.click()
   await expect(page.locator('#app-panel-settings')).toBeVisible()
-  await expect(cardTypeSettingsGroup).toContainText(/网易云音乐|NetEase Music/)
+  const cardTypeSettingsGroup = await revealSettingsItem(page, 'tool-cards')
   await expect(cardTypeSettingsGroup).toContainText(/Git/)
   await expect(cardTypeSettingsGroup).toContainText(/Files|\u6587\u4ef6/)
   await expect(cardTypeSettingsGroup).toContainText(/Sticky Note|\u4fbf\u7b7e/)
-  await expect(cardTypeSettingsGroup).toContainText(/Weather|\u5929\u6c14/)
-  await expect(cardTypeSettingsGroup).toContainText(/White Noise|\u767d\u566a\u97f3/)
-  await expect(cardTypeSettingsGroup).toHaveScreenshot('experimental-settings-group-dark.png', {
+  await expect(cardTypeSettingsGroup).not.toContainText(/网易云音乐|NetEase Music/)
+  await expect(cardTypeSettingsGroup).toHaveScreenshot('tool-cards-settings-group-dark.png', {
     animations: 'disabled',
   })
 
-  await lightThemeButton.click()
-  await expect(page.locator('html')).toHaveAttribute('data-theme', 'light')
-  await expect(cardTypeSettingsGroup).toContainText(/网易云音乐|NetEase Music/)
+  const experimentalGroup = await revealSettingsItem(page, 'experimental')
+  await expect(experimentalGroup).toContainText(/网易云音乐|NetEase Music/)
+  await expect(experimentalGroup).toContainText(/Weather|\u5929\u6c14/)
+  await expect(experimentalGroup).toContainText(/White Noise|\u767d\u566a\u97f3/)
+  await expect(experimentalGroup.locator('.settings-tag-experimental')).toBeVisible()
+  await expect(page.getByTestId('settings-leave-alone')).toContainText(/一般不用动|Usually leave as is/)
+  await expect(experimentalGroup).toHaveScreenshot('experimental-settings-group-dark.png', {
+    animations: 'disabled',
+  })
+
+  await switchSettingsTheme(page, 'light')
+  await expect(experimentalGroup).toContainText(/网易云音乐|NetEase Music/)
+  await expect(experimentalGroup).toHaveScreenshot('experimental-settings-group-light.png', {
+    animations: 'disabled',
+  })
+  await revealSettingsItem(page, 'tool-cards')
   await expect(cardTypeSettingsGroup).toContainText(/Git/)
-  await expect(cardTypeSettingsGroup).toContainText(/Files|\u6587\u4ef6/)
-  await expect(cardTypeSettingsGroup).toContainText(/Sticky Note|\u4fbf\u7b7e/)
-  await expect(cardTypeSettingsGroup).toContainText(/Weather|\u5929\u6c14/)
-  await expect(cardTypeSettingsGroup).toContainText(/White Noise|\u767d\u566a\u97f3/)
-  await expect(cardTypeSettingsGroup).toHaveScreenshot('experimental-settings-group-light.png', {
+  await expect(cardTypeSettingsGroup).toHaveScreenshot('tool-cards-settings-group-light.png', {
     animations: 'disabled',
   })
 })
@@ -3120,11 +3133,7 @@ test('weather city input stays directly under the weather toggle in both themes'
   await page.locator('.card-shell').first().waitFor()
 
   const settingsTab = page.getByRole('tab', { name: /设置|Settings/ })
-  const lightThemeButton = page.locator('#app-panel-settings .theme-toggle').first().locator('.theme-chip').first()
-  const cardTypeSettingsGroup = page
-    .locator('#app-panel-settings .settings-group')
-    .filter({ hasText: /卡片类型|Card Type/ })
-    .first()
+  const cardTypeSettingsGroup = page.locator('#settings-item-experimental')
   const weatherToggle = cardTypeSettingsGroup.locator('label.settings-toggle').filter({
     hasText: /Weather|\u5929\u6c14/,
   })
@@ -3135,6 +3144,7 @@ test('weather city input stays directly under the weather toggle in both themes'
 
   await settingsTab.click()
   await expect(page.locator('#app-panel-settings')).toBeVisible()
+  await revealSettingsItem(page, 'experimental')
   await weatherToggle.click()
   await expect(weatherInput).toBeVisible()
 
@@ -3156,8 +3166,7 @@ test('weather city input stays directly under the weather toggle in both themes'
     animations: 'disabled',
   })
 
-  await lightThemeButton.click()
-  await expect(page.locator('html')).toHaveAttribute('data-theme', 'light')
+  await switchSettingsTheme(page, 'light')
   await assertWeatherInputPlacement()
   await expect(cardTypeSettingsGroup).toHaveScreenshot('experimental-settings-group-weather-input-light.png', {
     animations: 'disabled',
@@ -3172,7 +3181,6 @@ test('environment setup group highlights only missing tools in both themes', asy
   await page.locator('.card-shell').first().waitFor()
 
   const settingsTab = page.locator('#app-tab-settings')
-  const lightThemeButton = page.locator('#app-panel-settings .theme-toggle').first().locator('.theme-chip').first()
   const environmentSettingsGroup = page
     .locator('#app-panel-settings .settings-group')
     .filter({ has: page.locator('.setup-missing-list') })
@@ -3180,6 +3188,7 @@ test('environment setup group highlights only missing tools in both themes', asy
 
   await settingsTab.click()
   await expect(page.locator('#app-panel-settings')).toBeVisible()
+  await revealSettingsItem(page, 'environment')
   await expect(environmentSettingsGroup).toContainText(/Git/)
   await expect(environmentSettingsGroup).toContainText(/Codex CLI/)
   await expect(environmentSettingsGroup.getByRole('button', { name: /Install missing tools|\u4e00\u952e\u5b89\u88c5\u7f3a\u5931\u73af\u5883/ })).toBeVisible()
@@ -3188,8 +3197,7 @@ test('environment setup group highlights only missing tools in both themes', asy
     animations: 'disabled',
   })
 
-  await lightThemeButton.click()
-  await expect(page.locator('html')).toHaveAttribute('data-theme', 'light')
+  await switchSettingsTheme(page, 'light')
   await expect(environmentSettingsGroup).toContainText(/Git/)
   await expect(environmentSettingsGroup).toContainText(/Codex CLI/)
   await expect(environmentSettingsGroup).toHaveScreenshot('environment-settings-group-light.png', {
@@ -3197,70 +3205,143 @@ test('environment setup group highlights only missing tools in both themes', asy
   })
 })
 
-test('settings panel flows category cards through two waterfall columns in both themes', async ({ page }) => {
+// 2026-09-23：全绿时健康卡只占一行，不再把「基础」设置挤到屏幕下半截。
+test('all-green environment health collapses into a single summary row in both themes', async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 900 })
+  await mockAppApis(page)
+  await page.route('**/api/providers', async (route) => {
+    await route.fulfill({
+      json: [
+        { provider: 'codex', available: true, command: 'codex' },
+        { provider: 'claude', available: true, command: 'claude' },
+      ],
+    })
+  })
+  await page.route('**/api/cli-compat/status', async (route) => {
+    const entry = (provider: string, version: string) => ({
+      provider, compatibleVersion: version, installed: true, active: true,
+      activeVersion: version, systemVersion: version, task: null,
+    })
+    await route.fulfill({ json: { entries: [entry('claude', '2.1.280'), entry('codex', '0.156.1')] } })
+  })
+  await page.goto(appUrl)
+  await page.locator('.card-shell').first().waitFor()
+  await page.locator('#app-tab-settings').click()
+
+  const healthCard = page.getByTestId('settings-health-card')
+  await expect(healthCard).toHaveClass(/is-compact/)
+  await expect(healthCard.locator('.settings-health-list')).toHaveCount(0)
+  const box = await healthCard.boundingBox()
+  expect(box!.height).toBeLessThan(80)
+
+  await switchSettingsTheme(page, 'dark')
+  await expect(healthCard).toHaveScreenshot('settings-health-compact-dark.png', { animations: 'disabled' })
+  await switchSettingsTheme(page, 'light')
+  await expect(healthCard).toHaveScreenshot('settings-health-compact-light.png', { animations: 'disabled' })
+})
+
+test('settings panel lands on the basics view with a left nav and a single column in both themes', async ({ page }) => {
   await page.setViewportSize({ width: 1280, height: 1400 })
   await mockAppApis(page)
   await mockMissingEnvironmentStatus(page)
+  // 健康灯同时看环境检测和 provider 状态，两边都得说 Codex 不可用它才会亮黄。
+  await page.route('**/api/providers', async (route) => {
+    await route.fulfill({
+      json: [
+        { provider: 'codex', available: false },
+        { provider: 'claude', available: true, command: 'claude' },
+      ],
+    })
+  })
   await page.goto(appUrl)
   await page.locator('.card-shell').first().waitFor()
 
   const settingsTab = page.locator('#app-tab-settings')
   const settingsPanel = page.locator('#app-panel-settings .settings-panel')
-  const settingsGroups = settingsPanel.locator('.settings-group')
-  const lightThemeButton = page.locator('#app-panel-settings .theme-toggle').first().locator('.theme-chip').first()
+  const visibleGroups = settingsPanel.locator('.settings-item:visible')
 
   await settingsTab.click()
   await expect(settingsPanel).toBeVisible()
-  await expect(settingsGroups).toHaveCount(9)
-  await expect(settingsGroups.getByRole('heading', { name: '本地模型', exact: true })).toBeVisible()
-  await expect(
-    settingsPanel.getByLabel(/Codex Agent 人格|Codex Agent personality/).first(),
-  ).toHaveValue('default')
-  await expect(
-    settingsPanel.getByLabel(/Codex Fast 加速|Codex Fast mode/).first(),
-  ).not.toBeChecked()
-  await expect(settingsPanel.getByLabel('计划唤醒')).toBeChecked()
 
-  const settingsGroupRects = await settingsGroups.evaluateAll((nodes) =>
+  // 左导航：基础 + 六个分类；落地页是「基础」，只露四项。
+  await expect(settingsPanel.locator('.settings-nav-item')).toHaveCount(7)
+  await expect(settingsPanel.locator('#settings-nav-basics')).toHaveAttribute('aria-selected', 'true')
+  await expect(visibleGroups).toHaveCount(4)
+  await expect(visibleGroups.getByRole('heading', { name: /语言与主题|Language & theme/ })).toBeVisible()
+  await expect(visibleGroups.getByRole('heading', { name: /连接账号|Connect account/ })).toBeVisible()
+  await expect(visibleGroups.getByRole('heading', { name: /默认模型|Default model/ })).toBeVisible()
+  await expect(visibleGroups.getByRole('heading', { name: /应用更新|App Update/ })).toBeVisible()
+
+  // 健康卡在最上面：缺 Codex CLI → CLI 灯黄 + 一键安装。
+  const healthCard = page.getByTestId('settings-health-card')
+  await expect(healthCard.locator('[data-health="cli"]')).toHaveAttribute('data-state', 'warn')
+  await expect(healthCard.locator('[data-health="cli"]').getByRole('button')).toBeVisible()
+
+  const groupRects = await visibleGroups.evaluateAll((nodes) =>
     nodes.map((node) => {
       const rect = node.getBoundingClientRect()
-
-      return {
-        left: rect.left,
-        top: rect.top,
-        width: rect.width,
-      }
+      return { left: rect.left, top: rect.top, width: rect.width }
     }),
   )
+  const lefts = new Set(groupRects.map((rect) => Math.round(rect.left)))
+  expect(lefts.size).toBe(1)
+  expect(groupRects.every((rect) => rect.width > 600)).toBe(true)
+  expect(groupRects.every((rect, index) => index === 0 || rect.top > groupRects[index - 1]!.top + 1)).toBe(true)
 
-  const columnLefts = Array.from(
-    new Set(settingsGroupRects.map((rect) => Math.round(rect.left / 10) * 10)),
-  ).sort((a, b) => a - b)
-
-  expect(columnLefts).toHaveLength(2)
-
-  const columns = columnLefts.map((left) =>
-    settingsGroupRects
-      .filter((rect) => Math.abs(Math.round(rect.left / 10) * 10 - left) <= 1)
-      .sort((a, b) => a.top - b.top),
-  )
-
-  expect(columns.every((column) => column.length > 0)).toBe(true)
-  expect(columns.flat().every((rect) => rect.width > 360)).toBe(true)
-  expect(columns.every((column) => column.every((rect, index) => index === 0 || rect.top > column[index - 1]!.top + 1))).toBe(true)
-
-  await expect(settingsPanel).toHaveScreenshot('settings-panel-card-grid-dark.png', {
+  await expect(settingsPanel).toHaveScreenshot('settings-panel-basics-dark.png', {
     animations: 'disabled',
   })
 
-  await lightThemeButton.click()
-  await expect(page.locator('html')).toHaveAttribute('data-theme', 'light')
-  await expect(settingsPanel).toHaveScreenshot('settings-panel-card-grid-light.png', {
+  // 切到「模型与对话」：基础项直接可见，高级项默认收起。
+  await settingsPanel.locator('#settings-nav-models').click()
+  await expect(visibleGroups).toHaveCount(1)
+  await expect(settingsPanel.locator('details.settings-advanced')).not.toHaveAttribute('open', '')
+  await revealSettingsItem(page, 'local-models')
+  await expect(visibleGroups.getByRole('heading', { name: '本地模型', exact: true })).toBeVisible()
+  await expect(
+    settingsPanel.getByLabel(/Codex Agent 人格|Codex Agent personality/).first(),
+  ).toHaveValue('default')
+  await revealSettingsItem(page, 'wake-timer')
+  await expect(settingsPanel.getByLabel('计划唤醒')).toBeChecked()
+
+  await switchSettingsTheme(page, 'light')
+  await settingsPanel.locator('#settings-nav-basics').click()
+  await expect(visibleGroups).toHaveCount(4)
+  await expect(settingsPanel).toHaveScreenshot('settings-panel-basics-light.png', {
     animations: 'disabled',
   })
 })
 
-test('settings panel stacks category cards cleanly on a narrow viewport', async ({ page }) => {
+test('settings panel search flattens matches across categories with plain-language hints', async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 1200 })
+  await mockAppApis(page)
+  await page.goto(appUrl)
+  await page.locator('.card-shell').first().waitFor()
+
+  await page.locator('#app-tab-settings').click()
+  const settingsPanel = page.locator('#app-panel-settings .settings-panel')
+  const search = page.getByTestId('settings-search')
+
+  // 中文界面搜英文词也要命中；命中项带分类 chip 与「拿不准就保持默认」的人话提示。
+  await search.fill('proxy')
+  const results = settingsPanel.locator('.settings-search-results .settings-group')
+  // 代理本体在「接口」选项卡，搜索落到「连接账号」跳转卡上。
+  await expect(results.getByRole('heading', { name: /连接账号|Connect account/ })).toBeVisible()
+  await expect(results.first().locator('.settings-item-category-chip')).toContainText(/开始使用|Get started/)
+  await expect(results.first().locator('.settings-item-hint')).toContainText(/拿不准就保持默认|keep the default/)
+
+  await search.fill('zzz-no-such-setting')
+  await expect(settingsPanel.locator('.settings-search-results .settings-empty')).toBeVisible()
+
+  // 点分类 chip 会退出搜索并落到对应分类（高级项自动展开）。
+  await search.fill('安全')
+  await results.filter({ hasText: /Agent 安全防护/ }).first().locator('.settings-item-category-chip').click()
+  await expect(search).toHaveValue('')
+  await expect(settingsPanel.locator('#settings-nav-network')).toHaveAttribute('aria-selected', 'true')
+  await expect(page.locator('#settings-item-codex-safety')).toBeVisible()
+})
+
+test('settings panel stacks nav chips above a single column on a narrow viewport', async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 })
   await mockAppApis(page)
   await mockMissingEnvironmentStatus(page)
@@ -3269,29 +3350,29 @@ test('settings panel stacks category cards cleanly on a narrow viewport', async 
 
   const settingsTab = page.locator('#app-tab-settings')
   const settingsPanel = page.locator('#app-panel-settings .settings-panel')
-  const settingsGroups = settingsPanel.locator('.settings-group')
-  const lightThemeButton = page.locator('#app-panel-settings .theme-toggle').first().locator('.theme-chip').first()
+  const visibleGroups = settingsPanel.locator('.settings-item:visible')
 
   await settingsTab.click()
   await expect(settingsPanel).toBeVisible()
-  await expect(settingsGroups).toHaveCount(9)
-  await expect(settingsGroups.getByRole('heading', { name: '本地模型', exact: true })).toBeVisible()
+  await expect(visibleGroups).toHaveCount(4)
 
-  const [firstGroupRect, secondGroupRect] = await Promise.all([
-    readRect(settingsGroups.nth(0)),
-    readRect(settingsGroups.nth(1)),
+  const [navRect, firstGroupRect, secondGroupRect] = await Promise.all([
+    readRect(settingsPanel.locator('.settings-nav')),
+    readRect(visibleGroups.nth(0)),
+    readRect(visibleGroups.nth(1)),
   ])
 
+  expect(firstGroupRect.top).toBeGreaterThan(navRect.bottom - 1)
   expect(Math.abs(firstGroupRect.left - secondGroupRect.left)).toBeLessThan(2)
   expect(secondGroupRect.top).toBeGreaterThan(firstGroupRect.bottom - 1)
 
-  await expect(settingsPanel).toHaveScreenshot('settings-panel-card-stack-dark.png', {
+  await expect(settingsPanel).toHaveScreenshot('settings-panel-narrow-dark.png', {
     animations: 'disabled',
   })
 
-  await lightThemeButton.click()
-  await expect(page.locator('html')).toHaveAttribute('data-theme', 'light')
-  await expect(settingsPanel).toHaveScreenshot('settings-panel-card-stack-light.png', {
+  await switchSettingsTheme(page, 'light')
+  await settingsPanel.locator('#settings-nav-basics').click()
+  await expect(settingsPanel).toHaveScreenshot('settings-panel-narrow-light.png', {
     animations: 'disabled',
   })
 })
@@ -3336,10 +3417,10 @@ test('Codex Fast mode requires a visible cost confirmation across themes', async
   const settingsTab = page.locator('#app-tab-settings')
   const settingsPanel = page.locator('#app-panel-settings .settings-panel')
   const fastToggle = settingsPanel.getByLabel(/Codex Fast 加速|Codex Fast mode/).first()
-  const lightThemeButton = page.locator('#app-panel-settings .theme-toggle').first().locator('.theme-chip').first()
 
   await settingsTab.click()
   await expect(settingsPanel).toBeVisible()
+  await revealSettingsItem(page, 'model-behavior')
   await expect(fastToggle).not.toBeChecked()
 
   await fastToggle.click()
@@ -3367,8 +3448,7 @@ test('Codex Fast mode requires a visible cost confirmation across themes', async
   await expect(fastToggle).not.toBeChecked()
   await expect(darkDialog).toBeHidden()
 
-  await lightThemeButton.click()
-  await expect(page.locator('html')).toHaveAttribute('data-theme', 'light')
+  await switchSettingsTheme(page, 'light')
   await fastToggle.click()
 
   const lightDialog = page.getByRole('dialog', { name: /开启 Codex Fast 加速？|Enable Codex Fast mode\?/ })
@@ -3398,10 +3478,10 @@ test('clear user data dialog stays legible across themes', async ({ page }) => {
   const settingsTab = page.locator('#app-tab-settings')
   const settingsPanel = page.locator('#app-panel-settings .settings-panel')
   const dangerButton = page.getByRole('button', { name: /清理用户数据|Clear User Data/ })
-  const lightThemeButton = page.locator('#app-panel-settings .theme-toggle').first().locator('.theme-chip').first()
 
   await settingsTab.click()
   await expect(settingsPanel).toBeVisible()
+  await revealSettingsItem(page, 'data')
 
   await dangerButton.click()
   const darkDialog = page.getByRole('dialog', { name: /清理用户数据？|Clear User Data\?/ })
@@ -3414,8 +3494,7 @@ test('clear user data dialog stays legible across themes', async ({ page }) => {
   await darkDialog.locator('.settings-danger-actions').getByRole('button', { name: /取消|Cancel/ }).click()
   await expect(darkDialog).toBeHidden()
 
-  await lightThemeButton.click()
-  await expect(page.locator('html')).toHaveAttribute('data-theme', 'light')
+  await switchSettingsTheme(page, 'light')
   await dangerButton.click()
 
   const lightDialog = page.getByRole('dialog', { name: /清理用户数据？|Clear User Data\?/ })
@@ -5179,9 +5258,9 @@ for (const theme of ['dark', 'light'] as const) {
     await page.goto(appUrl)
 
     const settingsTab = page.locator('#app-tab-settings')
-    const utilityGroup = page.locator('#app-panel-settings .settings-group').filter({ hasText: 'Utility' }).first()
 
     await settingsTab.click()
+    const utilityGroup = await revealSettingsItem(page, 'auto-urge')
     await expect(utilityGroup).toBeVisible()
     await expect(utilityGroup.locator('.auto-urge-profile-card')).toHaveCount(2)
     await expect(utilityGroup.getByRole('button', { name: 'Use This Type' })).toHaveCount(0)
@@ -5330,6 +5409,7 @@ for (const theme of ['dark', 'light'] as const) {
     await expect(repeatStatus).toBeVisible()
     await expect(settingsTrigger).toHaveClass(/has-repeat-loop/)
     await page.locator('#app-tab-settings').click()
+    await revealSettingsItem(page, 'repeat-loop')
     await expect(page.locator('#repeat-loop-feature-toggle')).toBeChecked()
     await expect(page.locator('#app-panel-settings')).toContainText(
       'Adds a Repeat loop switch to the settings menu beside the agent composer.',

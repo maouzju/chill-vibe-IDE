@@ -499,6 +499,8 @@ type LocaleText = {
   updateInstalling: string
   updateInstallNow: string
   updateCheckNow: string
+  reasoningEffortLabel: string
+  reasoningEffortNote: string
   updateNoUpdate: string
   updateError: string
   updateCurrentVersion: (version: string) => string
@@ -1052,6 +1054,8 @@ const localeTextByLanguage: Record<AppLanguage, LocaleText> = {
     updateInstalling: '正在替换应用文件并重启，请不要重复点击。',
     updateInstallNow: '更新并重启',
     updateCheckNow: '检查更新',
+    reasoningEffortLabel: '思考深度',
+    reasoningEffortNote: '新会话默认想多深。越深越慢、越贵，但更细致；拿不准就保持默认。',
     updateNoUpdate: '当前已是最新版本。',
     updateError: '检查更新时出错。',
     updateCurrentVersion: (version) => `当前版本：${version}`,
@@ -1630,6 +1634,8 @@ const localeTextByLanguage: Record<AppLanguage, LocaleText> = {
     updateInstalling: 'Replacing app files and restarting. Please do not click again.',
     updateInstallNow: 'Update and Restart',
     updateCheckNow: 'Check for Updates',
+    reasoningEffortLabel: 'Reasoning effort',
+    reasoningEffortNote: 'How deeply new chats think by default. Deeper is slower and pricier but more careful; if unsure, keep the default.',
     updateNoUpdate: 'You are on the latest version.',
     updateError: 'Error checking for updates.',
     updateCurrentVersion: (version) => `Current version: ${version}`,

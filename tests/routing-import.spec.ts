@@ -1,5 +1,6 @@
 import { expect, test, type Page } from '@playwright/test'
 import { installMockElectronBridge } from './electron-bridge.ts'
+import { revealSettingsItem } from './settings-panel-helpers.ts'
 
 const routingTabPattern = /\u8def\u7531|\u63a5\u53e3|Routing/
 const settingsTabPattern = /\u8bbe\u7f6e|Settings/
@@ -109,7 +110,7 @@ const openRoutingPanel = async (page: Page) => {
 }
 
 const readProviderSectionRect = async (page: Page, index: number) => {
-  const rect = await page.locator('.switch-provider-section').nth(index).boundingBox()
+  const rect = await page.locator('#app-panel-routing .switch-provider-section').nth(index).boundingBox()
 
   if (!rect) {
     throw new Error(`Provider section ${index} is not visible`)
@@ -180,7 +181,8 @@ test('keeps Claude and Codex in two columns on desktop and one column on narrow 
   await page.setViewportSize({ width: 1280, height: 900 })
   await openRoutingPanel(page)
 
-  await expect(page.locator('.switch-provider-section')).toHaveCount(2)
+  // 设置页「连接账号」也复用这两块 provider 卡（隐藏着），所以要圈在接口页里数。
+  await expect(page.locator('#app-panel-routing .switch-provider-section')).toHaveCount(2)
 
   const desktopClaudeRect = await readProviderSectionRect(page, 0)
   const desktopCodexRect = await readProviderSectionRect(page, 1)
@@ -207,7 +209,7 @@ test('keeps routing surfaces readable in dark and light themes', async ({ page }
   const proxySubTab = routingSubTabs.nth(1)
 
   const darkEmptyBackground = await readComputedRgb(page, '.provider-profile-empty', 'background-color')
-  const draftAddButtons = page.locator('.provider-profile-card.is-draft .btn-primary')
+  const draftAddButtons = page.locator('#app-panel-routing .provider-profile-card.is-draft .btn-primary')
 
   await expect(draftAddButtons).toHaveCount(2)
   await expect(draftAddButtons.first()).toBeDisabled()
@@ -327,6 +329,7 @@ test('hides the missing install action but keeps CLI updates available when the 
   await page.getByRole('tab', { name: settingsTabPattern }).click()
   await expect(page.locator('#app-panel-settings')).toBeVisible()
   await expect.poll(() => onboardingStatusRequests).toBeGreaterThan(0)
+  await revealSettingsItem(page, 'environment')
   await expect(page.locator('.setup-missing-list')).toHaveCount(0)
   await expect(page.locator('#app-panel-settings').getByRole('button', { name: installMissingToolsPattern })).toHaveCount(0)
   await expect(page.locator('#app-panel-settings').getByRole('button', { name: /更新 CLI|Update CLI/ })).toBeVisible()
@@ -353,6 +356,8 @@ test('waits for onboarding detection before showing the setup panel', async ({ p
   await page.goto('http://localhost:5173')
   await page.getByRole('tab', { name: settingsTabPattern }).click()
   await expect(page.locator('#app-panel-settings')).toBeVisible()
+  // 「环境设置」项要等检测结果才出现；先把它所在的「开始使用 → 高级设置」展开着等。
+  await revealSettingsItem(page, 'cli-compat')
   await expect(page.locator('.setup-missing-list')).toHaveCount(0)
 
   releaseOnboardingStatus?.()
@@ -378,6 +383,7 @@ test('lists only missing tools in the setup panel and keeps a single install but
   const settingsPanel = page.locator('#app-panel-settings')
   const missingList = settingsPanel.locator('.setup-missing-list')
 
+  await revealSettingsItem(page, 'environment')
   await expect(missingList).toHaveCount(1)
   await expect(missingList).toContainText('Git')
   await expect(missingList).toContainText('Codex CLI')
@@ -412,6 +418,7 @@ test('CLI update form defaults to latest and can target a specific CLI version',
   await page.getByRole('tab', { name: settingsTabPattern }).click()
 
   const settingsPanel = page.locator('#app-panel-settings')
+  await revealSettingsItem(page, 'environment')
   await settingsPanel.locator('#cli-update-target').selectOption('codex')
   await settingsPanel.locator('#cli-update-version').fill('0.23.4')
   await settingsPanel.getByRole('button', { name: /更新 CLI|Update CLI/ }).click()
@@ -466,9 +473,9 @@ test('imports cc-switch profiles and shows a summary notice', async ({ page }) =
   await openRoutingPanel(page)
   await page.getByRole('button', { name: importDefaultPattern }).click()
 
-  await expect(page.locator('.panel-alert')).toContainText('~/.cc-switch/cc-switch.db')
-  await expect(page.locator('input[value="Claude Proxy"]')).toBeVisible()
-  await expect(page.locator('input[value="Codex Proxy"]')).toBeVisible()
+  await expect(page.locator('#app-panel-routing .panel-alert')).toContainText('~/.cc-switch/cc-switch.db')
+  await expect(page.locator('#app-panel-routing input[value="Claude Proxy"]')).toBeVisible()
+  await expect(page.locator('#app-panel-routing input[value="Codex Proxy"]')).toBeVisible()
 })
 
 test('shows a readable message when an uploaded cc-switch export is too large', async ({ page }) => {
@@ -488,7 +495,7 @@ test('shows a readable message when an uploaded cc-switch export is too large', 
     buffer: Buffer.from('not-a-real-db'),
   })
 
-  await expect(page.locator('.panel-alert')).toContainText(importTooLargePattern)
+  await expect(page.locator('#app-panel-routing .panel-alert')).toContainText(importTooLargePattern)
 })
 
 test('shows the auto-retry controls on routing instead of settings', async ({ page }) => {
@@ -532,7 +539,10 @@ test('downloads the compatible CLI build and switches to it from the routing pan
   })
 
   await page.setViewportSize({ width: 1280, height: 900 })
-  await openRoutingPanel(page)
+  // CLI 兼容版本只在设置「开始使用」里（09-23 起不再在接口页重复摆一份）。
+  await page.goto('http://localhost:5173')
+  await page.getByRole('tab', { name: settingsTabPattern }).click()
+  await revealSettingsItem(page, 'cli-compat')
 
   const claudeRow = page.locator('.cli-compat-row[data-provider="claude"]')
   await expect(claudeRow).toContainText('v2.1.280')

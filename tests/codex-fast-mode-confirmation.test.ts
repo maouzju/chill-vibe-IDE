@@ -10,7 +10,7 @@ test('Codex Fast mode requires an in-app cost confirmation before enabling', asy
   assert.match(appSource, /handleCodexFastModeToggle/)
   assert.equal(
     appSource.match(/handleCodexFastModeToggle\(event\.target\.checked\)/g)?.length,
-    2,
+    1,
   )
   assert.match(appSource, /confirmCodexFastMode/)
   assert.match(appSource, /codex-fast-mode-dialog-title/)

@@ -2,6 +2,7 @@ import { expect, test, type Page } from '@playwright/test'
 import { installMockElectronBridge } from './electron-bridge.ts'
 import { createDefaultState } from '../shared/default-state.ts'
 import { createPlaywrightState } from './playwright-state.ts'
+import { revealSettingsItem } from './settings-panel-helpers.ts'
 
 const settingsTabPattern = /设置|Settings/
 const localModelsPattern = /本地模型|Local models/
@@ -55,6 +56,7 @@ test('local model section lives in the settings panel, even without Ollama', asy
   await page.getByRole('tab', { name: settingsTabPattern }).click()
   const panel = page.locator('#app-panel-settings')
   await expect(panel).toBeVisible()
+  await revealSettingsItem(page, 'local-models')
 
   // 收窄到「本地模型」那个分组内再断言字段，否则 /模型名/ 会先撞上设置页其它分组里
   // 同名的隐藏文案（.first() 抓到的不一定是这块）。

@@ -2,6 +2,7 @@ import { expect, test, type Page } from '@playwright/test'
 
 import { installMockElectronBridge } from './electron-bridge.ts'
 import { createPlaywrightState } from './playwright-state.ts'
+import { revealSettingsItem } from './settings-panel-helpers.ts'
 
 const appUrl = process.env.PLAYWRIGHT_APP_URL ?? 'http://localhost:5173'
 
@@ -100,20 +101,21 @@ const openSettings = async (page: Page) => {
 
 // 这些开关的说明曾经全部常驻在开关下方，把设置面板撑成一屏长文
 // （见 docs/ui-principles.md 第 3 条：解释性文案也是 idle chrome）。
-const hoverDocumentedToggles = [
-  'accessibility-support-toggle',
-  'repeat-loop-feature-toggle',
-  'wake-timer-feature-toggle',
-  'auto-urge-toggle',
-  'global-urge-control-toggle',
-  'close-behavior-select',
-  'cross-provider-skill-reuse-toggle',
+const hoverDocumentedToggles: Array<[toggleId: string, settingsItemId: string]> = [
+  ['accessibility-support-toggle', 'general'],
+  ['repeat-loop-feature-toggle', 'repeat-loop'],
+  ['wake-timer-feature-toggle', 'wake-timer'],
+  ['auto-urge-toggle', 'auto-urge'],
+  ['global-urge-control-toggle', 'auto-urge'],
+  ['close-behavior-select', 'general'],
+  ['cross-provider-skill-reuse-toggle', 'model-behavior'],
 ]
 
 test('settings explanations stay behind hover instead of padding the panel', async ({ page }) => {
   const settingsPanel = await openSettings(page)
 
-  for (const toggleId of hoverDocumentedToggles) {
+  for (const [toggleId, settingsItemId] of hoverDocumentedToggles) {
+    await revealSettingsItem(page, settingsItemId)
     const toggle = settingsPanel.locator(`#${toggleId}`)
     await expect(toggle, `${toggleId} should exist in the settings panel`).toHaveCount(1)
 
@@ -133,6 +135,7 @@ test('hovering an accessibility setting reveals its hint and leaving hides it ag
   page,
 }) => {
   const settingsPanel = await openSettings(page)
+  await revealSettingsItem(page, 'general')
 
   const accessibilityRow = settingsPanel
     .locator('.settings-hover-detail')

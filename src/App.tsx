@@ -37,6 +37,7 @@ import {
   createAutomationBoardTemplateFromCard,
   createDefaultAutomationBoardWorkspaceState,
   getAutomationBoard,
+  getPreferredReasoningEffort,
   titleFromPrompt,
 } from '../shared/default-state'
 import { attachImagesToMessageMeta } from '../shared/chat-attachments'
@@ -140,7 +141,10 @@ import {
   closeWindow,
   type ChatStreamSource,
   flashWindowOnce,
+  fetchCliCompatStatus,
   fetchOnboardingStatus,
+  installCliCompat,
+  setCliCompatActive,
   fetchProviders,
   fetchCodexManagementPolicy,
   fetchProxyStats,
@@ -215,7 +219,9 @@ import { WeatherAmbientOverlay } from './components/WeatherAmbientOverlay'
 import {
   type ActiveStream,
   type LoadStatus,
+  type OnboardingAccountState,
   type OnboardingImportState,
+  type OnboardingModelState,
   type OnboardingStage,
   type ProfileDraft,
   type SaveStatus,
@@ -369,11 +375,18 @@ import {
   recordAppliedActionsForForensics,
   registerForensicsAppStateTruth,
 } from './diagnostics/stuck-pane-forensics'
+import { createInterfaceDefaultsPatch } from './settings-layout'
+import { EnvironmentHealthCard } from './components/settings/EnvironmentHealthCard'
+import { SettingsPanel, type SettingsPanelItem } from './components/settings/SettingsPanel'
 import {
-  createInterfaceDefaultsPatch,
-  getStableSettingsPanelColumnCount,
-  splitSettingsGroupsIntoStableColumns,
-} from './settings-layout'
+  deriveEnvironmentHealth,
+  resolveOnboardingWizardStage,
+  type HealthFix,
+} from './components/settings/settings-model'
+import { getSettingsPanelText } from './components/settings/settings-text'
+import { getReasoningOptionsForModel } from '../shared/reasoning'
+import type { CliCompatStatus } from '../shared/cli-compat'
+import { findChildCards, getSubagentNavigationActions } from './components/subagent-cross-column-navigation'
 import {
   CloseIcon,
   MaximizeWindowIcon,
@@ -707,6 +720,14 @@ function App() {
   const [onboardingImportState, setOnboardingImportState] = useState<OnboardingImportState>('idle')
   const [onboardingImportNotice, setOnboardingImportNotice] = useState<string | null>(null)
   const [onboardingImportError, setOnboardingImportError] = useState<string | null>(null)
+  const [onboardingAccountState, setOnboardingAccountState] = useState<OnboardingAccountState>('idle')
+  const [onboardingModelState, setOnboardingModelState] = useState<OnboardingModelState>('idle')
+  const [onboardingAccountDraft, setOnboardingAccountDraft] = useState<{ provider: Provider } & ProfileDraft>(
+    () => ({ provider: 'claude', ...emptyProfileDraft() }),
+  )
+  const [cliCompatStatus, setCliCompatStatus] = useState<CliCompatStatus | null>(null)
+  const [healthFixPending, setHealthFixPending] = useState(false)
+  const [settingsFocusRequest, setSettingsFocusRequest] = useState<{ id: string; token: number } | null>(null)
   const [profileDrafts, setProfileDrafts] = useState<Record<Provider, ProfileDraft>>({
     codex: emptyProfileDraft(),
     claude: emptyProfileDraft(),
@@ -3814,6 +3835,22 @@ function App() {
   const rememberPaneTarget = useCallback((columnId: string, paneId: string) => {
     activePaneTargetRef.current = { columnId, paneId }
   }, [])
+
+  const getSubagentChildTabs = useCallback(
+    (parentCardId: string) => findChildCards(appStateRef.current.columns, parentCardId),
+    [],
+  )
+
+  const navigateToSubagentCard = useCallback(
+    (cardId: string) => {
+      const actions = getSubagentNavigationActions(appStateRef.current.columns, cardId)
+      const target = actions.find((action) => action.type === 'setActiveTab')
+      if (!target || target.type !== 'setActiveTab') return
+      rememberPaneTarget(target.columnId, target.paneId)
+      for (const action of actions) applyAction(action)
+    },
+    [applyAction, rememberPaneTarget],
+  )
 
   const resolvePaneTarget = useCallback((): PaneTarget | null => {
     const current = activePaneTargetRef.current
@@ -8272,6 +8309,79 @@ function App() {
     [],
   )
 
+  const saveOnboardingAccount = useCallback(() => {
+    const apiKey = onboardingAccountDraft.apiKey.trim()
+    if (!apiKey) {
+      return
+    }
+    const provider = onboardingAccountDraft.provider
+    const profiles = appStateRef.current.settings.providerProfiles[provider].profiles
+    const profile = {
+      id: crypto.randomUUID(),
+      name: onboardingAccountDraft.name.trim() || `${getProviderLabel(onboardingLanguage, provider)} ${profiles.length + 1}`,
+      baseUrl: onboardingAccountDraft.baseUrl.trim(),
+      apiKey,
+    }
+    const actions: IdeAction[] = [
+      { type: 'upsertProviderProfile', provider, profile },
+      { type: 'setActiveProviderProfile', provider, profileId: profile.id },
+    ]
+    persistAfterActions(actions, applyActions(actions))
+    setOnboardingAccountState('connected')
+    setOnboardingImportError(null)
+  }, [applyActions, onboardingAccountDraft, onboardingLanguage, persistAfterActions])
+
+  const refreshEnvironmentHealth = useCallback(async () => {
+    await Promise.all([
+      loadOnboarding().catch(() => undefined),
+      syncProviderStatuses(),
+      fetchCliCompatStatus()
+        .then((status) => setCliCompatStatus(status))
+        .catch(() => undefined),
+    ])
+  }, [loadOnboarding, syncProviderStatuses])
+
+  useEffect(() => {
+    if (!settingsOpen) {
+      return
+    }
+    fetchCliCompatStatus()
+      .then((status) => setCliCompatStatus(status))
+      .catch(() => undefined)
+  }, [settingsOpen])
+
+  const focusSettingsItem = useCallback((id: string) => {
+    setSettingsFocusRequest((current) => ({ id, token: (current?.token ?? 0) + 1 }))
+  }, [])
+
+  const handleHealthFix = useCallback(
+    async (fix: HealthFix) => {
+      if (fix.kind === 'connect-account') {
+        focusSettingsItem('account')
+        return
+      }
+      if (fix.kind === 'install-cli') {
+        focusSettingsItem('environment')
+        await handleRunSetup()
+        return
+      }
+      setHealthFixPending(true)
+      try {
+        const next =
+          fix.kind === 'install-compat'
+            ? await installCliCompat(fix.provider)
+            : await setCliCompatActive(fix.provider, true)
+        setCliCompatStatus(next)
+        void syncProviderStatuses()
+      } catch (error) {
+        setSettingsNotice(errorMessage(error, text.unexpectedError))
+      } finally {
+        setHealthFixPending(false)
+      }
+    },
+    [focusSettingsItem, handleRunSetup, syncProviderStatuses, text.unexpectedError],
+  )
+
   const completeOnboarding = useCallback(() => {
     try {
       window.localStorage.setItem(onboardingStorageKey, 'done')
@@ -8337,14 +8447,27 @@ function App() {
       : hasMissingEnvironmentChecks
         ? panelText.setupReadyToInstall
         : panelText.setupIdle)
-  const onboardingStage: OnboardingStage =
-    onboardingStatusPending || !onboardingStatus
-      ? 'loading'
-      : !onboardingEnvironmentReady && !onboardingSetupSkipped
-        ? 'setup'
-        : onboardingStatus.ccSwitch.available && onboardingImportState === 'idle'
-          ? 'import'
-          : 'complete'
+  const onboardingHasUsableAccount = useMemo(
+    () =>
+      !appState.settings.cliRoutingEnabled ||
+      (['claude', 'codex'] as const).some((provider) => {
+        const collection = appState.settings.providerProfiles[provider]
+        const active = collection.profiles.find((profile) => profile.id === collection.activeProfileId)
+        return Boolean(active?.apiKey.trim())
+      }),
+    [appState.settings.cliRoutingEnabled, appState.settings.providerProfiles],
+  )
+  const onboardingStage: OnboardingStage = resolveOnboardingWizardStage({
+    statusLoaded: !onboardingStatusPending && Boolean(onboardingStatus),
+    environmentReady: onboardingEnvironmentReady,
+    setupSkipped: onboardingSetupSkipped,
+    importState: onboardingImportState,
+    accountState: onboardingAccountState,
+    hasUsableAccount: onboardingHasUsableAccount,
+    modelState: onboardingModelState,
+  })
+  const wizardText = useMemo(() => getSettingsPanelText(onboardingLanguage).wizard, [onboardingLanguage])
+  const settingsPanelCopy = useMemo(() => getSettingsPanelText(appState.settings.language), [appState.settings.language])
   const onboardingSetupSummary = onboardingSetupSkipped
     ? onboardingText.setupSkipped
     : onboardingEnvironmentReady
@@ -8361,19 +8484,32 @@ function App() {
   const onboardingImportSummary =
     onboardingImportState === 'imported' && onboardingImportNotice
       ? onboardingImportNotice
-      : onboardingImportState === 'skipped'
-        ? onboardingText.importSkipped
-        : onboardingStatus?.ccSwitch.available
-          ? onboardingText.ccSwitchDetected(onboardingStatus.ccSwitch.source ?? '~/.cc-switch/cc-switch.db')
-          : onboardingText.ccSwitchMissing
+      : onboardingAccountState === 'connected'
+        ? wizardText.accountConnected(getProviderLabel(onboardingLanguage, onboardingAccountDraft.provider))
+        : onboardingImportState === 'skipped' || onboardingAccountState === 'skipped'
+          ? wizardText.accountSkipped
+          : onboardingHasUsableAccount
+            ? wizardText.accountExisting
+            : onboardingStatus?.ccSwitch.available
+              ? onboardingText.ccSwitchDetected(onboardingStatus.ccSwitch.source ?? '~/.cc-switch/cc-switch.db')
+              : wizardText.accountPending
+  const onboardingModelSummary =
+    onboardingModelState === 'confirmed'
+      ? wizardText.modelConfirmed(
+          appState.settings.requestModels.claude || DEFAULT_CLAUDE_MODEL,
+          appState.settings.requestModels.codex || DEFAULT_CODEX_MODEL,
+        )
+      : wizardText.modelPending
   const onboardingCurrentTitle =
     onboardingStage === 'loading'
       ? onboardingText.loadingTitle
       : onboardingStage === 'setup'
         ? onboardingText.setupStepTitle
-        : onboardingStage === 'import'
-          ? onboardingText.importStepTitle
-          : onboardingText.completeTitle
+        : onboardingStage === 'account'
+          ? wizardText.accountTitle
+          : onboardingStage === 'model'
+            ? wizardText.modelTitle
+            : onboardingText.completeTitle
   const onboardingCurrentDescription =
     onboardingStage === 'loading'
       ? onboardingText.loadingDescription
@@ -8383,9 +8519,13 @@ function App() {
           : onboardingMissingTools
             ? onboardingText.missingTools(onboardingMissingTools)
             : onboardingText.runningSetup
-        : onboardingStage === 'import'
-          ? onboardingText.importPrompt(onboardingStatus?.ccSwitch.source ?? '~/.cc-switch/cc-switch.db')
-          : onboardingText.completeDescription
+        : onboardingStage === 'account'
+          ? onboardingStatus?.ccSwitch.available
+            ? onboardingText.importPrompt(onboardingStatus.ccSwitch.source ?? '~/.cc-switch/cc-switch.db')
+            : wizardText.accountDescription
+          : onboardingStage === 'model'
+            ? wizardText.modelDescription
+            : onboardingText.completeDescription
   const onboardingSetupButtonLabel =
     setupStatusPending || setupStatus?.state === 'running'
       ? onboardingText.installing
@@ -9029,292 +9169,707 @@ function App() {
     )
   }
 
-  const settingsGroupNodes: ReactNode[] = [
-    <div key="update" className="settings-group">
-      <h3 className="settings-group-title">{text.settingsGroupUpdate}</h3>
+  const renderRoutingToggle = () => (
       <div className="settings-section">
-        {appVersion ? (
-          <p className="settings-note">{text.updateCurrentVersion(appVersion)}</p>
-        ) : null}
-
-        {updateStatus === 'checking' ? (
-          <div className="update-banner is-checking" role="status">
-            <span>{text.updateChecking}</span>
+        <div className="settings-toggle-row">
+          <div>
+            <label>{resilientProxyText.cliRoutingEnabled}</label>
           </div>
-        ) : null}
+          <label className="toggle-switch">
+            <input
+              type="checkbox"
+              checked={appState.settings.cliRoutingEnabled}
+              onChange={(event) =>
+                applyAction({
+                  type: 'updateSettings',
+                  patch: { cliRoutingEnabled: event.target.checked },
+                })
+              }
+            />
+            <span className="toggle-switch-track" />
+            <span className="toggle-switch-knob" />
+          </label>
+        </div>
+      </div>
+  )
 
-        {updateStatus === 'downloading' ? (
-          <div className="update-banner is-downloading" role="status">
-            <span>
-              {updateResult?.latestVersion
-                ? `${text.updateAvailable(updateResult!.latestVersion!)} — ${text.updateDownloading(downloadProgress)}`
-                : text.updateDownloading(downloadProgress)}
-            </span>
-            <div className="update-progress-bar">
-              <div
-                className="update-progress-fill"
-                style={{ width: `${downloadProgress}%` }}
-              />
-            </div>
-          </div>
-        ) : null}
+  const renderRoutingImport = () => (
+      <div className="settings-section">
+        <p className="settings-note">{panelText.importDescription}</p>
+        <p className="settings-note">{panelText.importSupportedFiles}</p>
 
-        {updateStatus === 'ready' && updateResult?.latestVersion ? (
-          <div className="update-banner is-ready" role="status">
-            <span>{text.updateReady(updateResult!.latestVersion!)}</span>
-            <AppButton tone="primary" type="button" onClick={handleInstallUpdate}>
-              {text.updateInstallNow}
+        <div className="routing-import-card">
+          <div className="settings-actions routing-import-actions">
+            <AppButton
+              tone="primary"
+              type="button"
+              disabled={routingImportPending}
+              onClick={() => {
+                void runCcSwitchImport({ mode: 'default' }).catch(() => undefined)
+              }}
+            >
+              {panelText.importDefault}
+            </AppButton>
+            <AppButton
+              type="button"
+              disabled={routingImportPending}
+              onClick={openCcSwitchImportPicker}
+            >
+              {panelText.importChooseFile}
             </AppButton>
           </div>
-        ) : null}
 
-        {updateStatus === 'installing' ? (
-          <div className="update-banner is-downloading" role="status">
-            <span>{text.updateInstalling}</span>
-          </div>
-        ) : null}
-
-        {updateStatus === 'no-update' ? (
-          <div className="update-banner is-current" role="status">
-            <span>{text.updateNoUpdate}</span>
-          </div>
-        ) : null}
-
-        {updateStatus === 'error' ? (
-          <div className="update-banner is-error" role="alert">
-            <span>{updateDownloadError ?? updateResult?.error ?? text.updateError}</span>
-          </div>
-        ) : null}
-
-        <div className="settings-actions">
-          <AppButton
-            type="button"
-            disabled={updateStatus === 'checking' || updateStatus === 'downloading' || updateStatus === 'installing'}
-            onClick={handleCheckForUpdate}
-          >
-            {text.updateCheckNow}
-          </AppButton>
+          {routingImportPending ? (
+            <p className="settings-note routing-import-note">{panelText.importPending}</p>
+          ) : null}
         </div>
       </div>
-    </div>,
+  )
 
-    <div key="codex-safety" className="settings-group codex-safety-settings-group">
-      <h3 className="settings-group-title">{text.settingsGroupCodexSafety}</h3>
+  const renderProviderProfiles = () => (
+    <>
+    {(['claude', 'codex'] as const).map((provider) => {
+      const collection = appState.settings.providerProfiles[provider]
+      const providerLabel = getProviderLabel(appState.settings.language, provider)
+      const draft = profileDrafts[provider]
+
+      return (
+        <div
+          key={provider}
+          className="settings-group routing-group switch-provider-group switch-provider-section"
+        >
+          <h3 className="settings-group-title">{providerLabel}</h3>
+
+          <div className="settings-section switch-provider-group-body">
+            {collection.profiles.length === 0 ? (
+              <div className="provider-profile-empty">
+                <strong>{panelText.noProfiles}</strong>
+                <span>{panelText.noProfilesDescription}</span>
+              </div>
+            ) : null}
+
+            {collection.profiles.map((profile) => {
+              const active = collection.activeProfileId === profile.id
+
+              return (
+                <div
+                  key={profile.id}
+                  className={`provider-profile-card${active ? ' is-active' : ''}`}
+                >
+                  <label className="settings-field">
+                    <span>{panelText.profileName}</span>
+                    <input
+                      className="control settings-input"
+                      value={profile.name}
+                      onChange={(event) =>
+                        updateProviderProfile(provider, profile.id, { name: event.target.value })
+                      }
+                    />
+                  </label>
+
+                  <div className="settings-field">
+                    <span>{panelText.apiKey}</span>
+                    <div className="api-key-field">
+                      <input
+                        className="control settings-input"
+                        type={visibleApiKeys.has(profile.id) ? 'text' : 'password'}
+                        value={profile.apiKey}
+                        onChange={(event) =>
+                          updateProviderProfile(provider, profile.id, { apiKey: event.target.value })
+                        }
+                      />
+                      <button
+                        type="button"
+                        className="api-key-eye"
+                        onClick={() => setVisibleApiKeys((prev) => {
+                          const next = new Set(prev)
+                          if (next.has(profile.id)) next.delete(profile.id)
+                          else next.add(profile.id)
+                          return next
+                        })}
+                      >
+                        {visibleApiKeys.has(profile.id) ? <EyeOffIcon /> : <EyeIcon />}
+                      </button>
+                    </div>
+                  </div>
+
+                  <label className="settings-field">
+                    <span>{panelText.baseUrl}</span>
+                    <input
+                      className="control settings-input"
+                      value={profile.baseUrl}
+                      placeholder={
+                        provider === 'claude' ? 'https://api.anthropic.com' : 'https://api.openai.com/v1'
+                      }
+                      onChange={(event) =>
+                        updateProviderProfile(provider, profile.id, { baseUrl: event.target.value })
+                      }
+                    />
+                  </label>
+
+                  <p className="settings-note">{panelText.baseUrlNote}</p>
+
+                  <div className="settings-actions provider-profile-actions">
+                    <AppButton
+                      tone={active ? 'primary' : 'ghost'}
+                      type="button"
+                      onClick={() => {
+                        applyAction({
+                          type: 'setActiveProviderProfile',
+                          provider,
+                          profileId: profile.id,
+                        })
+                        setSwitchNotice(null)
+                      }}
+                    >
+                      {active ? panelText.activeProfile : panelText.activateProfile}
+                    </AppButton>
+                    <AppButton
+                      type="button"
+                      onClick={() =>
+                        applyAction({
+                          type: 'removeProviderProfile',
+                          provider,
+                          profileId: profile.id,
+                        })
+                      }
+                    >
+                      {panelText.removeProfile}
+                    </AppButton>
+                  </div>
+                </div>
+              )
+            })}
+
+            <div className="provider-profile-card is-draft">
+              <label className="settings-field">
+                <span>{panelText.profileName}</span>
+                <input
+                  className="control settings-input"
+                  value={draft.name}
+                  onChange={(event) => updateDraft(provider, { name: event.target.value })}
+                />
+              </label>
+
+              <div className="settings-field">
+                <span>{panelText.apiKey}</span>
+                <div className="api-key-field">
+                  <input
+                    className="control settings-input"
+                    type={visibleApiKeys.has(`draft-${provider}`) ? 'text' : 'password'}
+                    value={draft.apiKey}
+                    onChange={(event) => updateDraft(provider, { apiKey: event.target.value })}
+                  />
+                  <button
+                    type="button"
+                    className="api-key-eye"
+                    onClick={() => setVisibleApiKeys((prev) => {
+                      const next = new Set(prev)
+                      const key = `draft-${provider}`
+                      if (next.has(key)) next.delete(key)
+                      else next.add(key)
+                      return next
+                    })}
+                  >
+                    {visibleApiKeys.has(`draft-${provider}`) ? <EyeOffIcon /> : <EyeIcon />}
+                  </button>
+                </div>
+              </div>
+
+              <label className="settings-field">
+                <span>{panelText.baseUrl}</span>
+                <input
+                  className="control settings-input"
+                  value={draft.baseUrl}
+                  placeholder={
+                    provider === 'claude' ? 'https://api.anthropic.com' : 'https://api.openai.com/v1'
+                  }
+                  onChange={(event) => updateDraft(provider, { baseUrl: event.target.value })}
+                />
+              </label>
+
+              <p className="settings-note">{panelText.baseUrlNote}</p>
+
+              <div className="settings-actions provider-profile-actions">
+                <AppButton
+                  tone="primary"
+                  type="button"
+                  disabled={!draft.apiKey.trim()}
+                  onClick={() => addProviderProfile(provider)}
+                >
+                  {panelText.addProfile}
+                </AppButton>
+              </div>
+            </div>
+          </div>
+        </div>
+      )
+    })}
+    </>
+  )
+
+  const renderResilientProxySettings = (idPrefix: string) => (
+    <>
       <div className="settings-section">
-        {renderCodexSafetySettings('modal')}
-      </div>
-    </div>,
-
-    <div key="appearance" className="settings-group">
-      <h3 className="settings-group-title">{text.settingsGroupAppearance}</h3>
-
-      <div className="settings-section">
-        <label className="settings-field" htmlFor="language-select">
-          <span>{text.language}</span>
-          <select
-            id="language-select"
-            className="control settings-input"
-            value={appState.settings.language}
-            onChange={(event) =>
-              applyAction({
-                type: 'updateSettings',
-                patch: { language: event.target.value as AppState['settings']['language'] },
-              })
-            }
-          >
-            {onboardingLanguages.map((language) => (
-              <option key={language.value} value={language.value}>
-                {`${language.flag} ${language.label}`}
-              </option>
-            ))}
-          </select>
-        </label>
+        <p className="settings-note">{resilientProxyText.description}</p>
+        <p className="settings-note">{resilientProxyText.footnote}</p>
       </div>
 
       <div className="settings-section">
-        <div className="settings-section-title">{text.theme}</div>
-        {renderThemeToggle()}
+        <div className="settings-toggle-row">
+          <label>{resilientProxyText.status}</label>
+          <label className="toggle-switch">
+            <input
+              type="checkbox"
+              checked={appState.settings.resilientProxyEnabled}
+              onChange={(event) =>
+                applyAction({
+                  type: 'updateSettings',
+                  patch: { resilientProxyEnabled: event.target.checked },
+                })
+              }
+            />
+            <span className="toggle-switch-track" />
+            <span className="toggle-switch-knob" />
+          </label>
+        </div>
       </div>
-
-      {renderFontFamilySettings('font-family-select')}
 
       <div className="settings-section">
         <div className="settings-row">
           <div className="settings-row-copy">
-            <label htmlFor="ui-scale-range">{text.uiScale}</label>
-            <span>{Math.round(appState.settings.uiScale * 100)}%</span>
+            <label htmlFor={`${idPrefix}proxy-stall-timeout`}>{resilientProxyText.stallTimeout}</label>
+            <span>{appState.settings.resilientProxyStallTimeoutSec}s</span>
           </div>
           <input
-            id="ui-scale-range"
-            className="settings-range"
-            type="range"
-            min={minUiScale}
-            max={maxUiScale}
-            step={0.05}
-            value={appState.settings.uiScale}
-            onChange={(event) =>
-              applyAction({
-                type: 'updateSettings',
-                patch: { uiScale: Number(event.target.value) },
-              })
-            }
-          />
-        </div>
-
-        <div className="settings-row">
-          <div className="settings-row-copy">
-            <label htmlFor="font-scale-range">{text.fontScale}</label>
-            <span>{Math.round(appState.settings.fontScale * 100)}%</span>
-          </div>
-          <input
-            id="font-scale-range"
-            className="settings-range"
-            type="range"
-            min={minFontScale}
-            max={maxFontScale}
-            step={0.05}
-            value={appState.settings.fontScale}
-            onChange={(event) =>
-              applyAction({
-                type: 'updateSettings',
-                patch: { fontScale: Number(event.target.value) },
-              })
-            }
-          />
-        </div>
-
-        <div className="settings-row">
-          <div className="settings-row-copy">
-            <label htmlFor="line-height-range">{text.lineHeight}</label>
-            <span>{appState.settings.lineHeightScale.toFixed(2)}x</span>
-          </div>
-          <input
-            id="line-height-range"
-            className="settings-range"
-            type="range"
-            min={minLineHeightScale}
-            max={maxLineHeightScale}
-            step={0.05}
-            value={appState.settings.lineHeightScale}
-            onChange={(event) =>
-              applyAction({
-                type: 'updateSettings',
-                patch: { lineHeightScale: Number(event.target.value) },
-              })
-            }
-          />
-        </div>
-      </div>
-
-      <div className="settings-section">
-        <div className="settings-section-title">{text.settingsGroupEditor}</div>
-
-        <div className="settings-row">
-          <div className="settings-row-copy">
-            <label htmlFor="editor-font-size-range">{text.editorFontSizeLabel}</label>
-            <span>{appState.settings.editor.fontSize}px</span>
-          </div>
-          <input
-            id="editor-font-size-range"
+            id={`${idPrefix}proxy-stall-timeout`}
             className="settings-range"
             type="range"
             min={10}
-            max={24}
-            step={1}
-            value={appState.settings.editor.fontSize}
+            max={300}
+            step={5}
+            value={appState.settings.resilientProxyStallTimeoutSec}
             onChange={(event) =>
               applyAction({
                 type: 'updateSettings',
-                patch: {
-                  editor: { ...appState.settings.editor, fontSize: Number(event.target.value) },
-                },
+                patch: { resilientProxyStallTimeoutSec: Number(event.target.value) },
               })
             }
           />
-        </div>
-
-        <div className="settings-row">
-          <label className="settings-toggle" htmlFor="editor-word-wrap-toggle">
-            <span>{text.editorWordWrapLabel}</span>
-            <input
-              id="editor-word-wrap-toggle"
-              type="checkbox"
-              checked={appState.settings.editor.wordWrap}
-              onChange={(event) =>
-                applyAction({
-                  type: 'updateSettings',
-                  patch: {
-                    editor: { ...appState.settings.editor, wordWrap: event.target.checked },
-                  },
-                })
-              }
-            />
-          </label>
-        </div>
-
-        <div className="settings-row">
-          <label className="settings-toggle" htmlFor="editor-minimap-toggle">
-            <span>{text.editorMinimapLabel}</span>
-            <input
-              id="editor-minimap-toggle"
-              type="checkbox"
-              checked={appState.settings.editor.minimap}
-              onChange={(event) =>
-                applyAction({
-                  type: 'updateSettings',
-                  patch: {
-                    editor: { ...appState.settings.editor, minimap: event.target.checked },
-                  },
-                })
-              }
-            />
-          </label>
+          <p className="settings-note">{resilientProxyText.stallTimeoutNote}</p>
         </div>
 
         <div className="settings-row">
           <div className="settings-row-copy">
-            <label htmlFor="editor-tab-size-select">{text.editorTabSizeLabel}</label>
+            <label htmlFor={`${idPrefix}proxy-first-byte-timeout`}>{resilientProxyText.firstByteTimeout}</label>
+            <span>{appState.settings.resilientProxyFirstByteTimeoutSec}s</span>
           </div>
-          <select
-            id="editor-tab-size-select"
-            className="control settings-input"
-            value={appState.settings.editor.tabSize}
+          <input
+            id={`${idPrefix}proxy-first-byte-timeout`}
+            className="settings-range"
+            type="range"
+            min={30}
+            max={600}
+            step={10}
+            value={appState.settings.resilientProxyFirstByteTimeoutSec}
             onChange={(event) =>
               applyAction({
                 type: 'updateSettings',
-                patch: {
-                  editor: {
-                    ...appState.settings.editor,
-                    tabSize: Number(event.target.value) === 4 ? 4 : 2,
-                  },
-                },
+                patch: { resilientProxyFirstByteTimeoutSec: Number(event.target.value) },
               })
             }
-          >
-            <option value={2}>2</option>
-            <option value={4}>4</option>
-          </select>
+          />
+          <p className="settings-note">{resilientProxyText.firstByteTimeoutNote}</p>
+        </div>
+
+        <div className="settings-row">
+          <div className="settings-row-copy">
+            <label htmlFor={`${idPrefix}proxy-max-retries`}>{resilientProxyText.maxRetries}</label>
+            <span>
+              {appState.settings.resilientProxyMaxRetries === -1
+                ? resilientProxyText.unlimited
+                : appState.settings.resilientProxyMaxRetries}
+            </span>
+          </div>
+          <input
+            id={`${idPrefix}proxy-max-retries`}
+            className="settings-range"
+            type="range"
+            min={-1}
+            max={50}
+            step={1}
+            value={appState.settings.resilientProxyMaxRetries}
+            onChange={(event) =>
+              applyAction({
+                type: 'updateSettings',
+                patch: { resilientProxyMaxRetries: Number(event.target.value) },
+              })
+            }
+          />
+          <p className="settings-note">{resilientProxyText.maxRetriesNote}</p>
         </div>
       </div>
 
-      <div className="settings-actions">
-        <AppButton
-          type="button"
-          onClick={() =>
-            applyAction({
-              type: 'updateSettings',
-              patch: createInterfaceDefaultsPatch(),
-            })
-          }
-        >
-          {text.resetInterfaceDefaults}
-        </AppButton>
+      <div className="settings-section">
+        <div className="settings-section-title">{resilientProxyText.featureTitle}</div>
+        <ul className="proxy-feature-list">
+          {resilientProxyText.features.map((feature, i) => (
+            <li key={i} className="settings-note">{feature}</li>
+          ))}
+        </ul>
       </div>
-    </div>,
+    </>
+  )
 
-    <div key="local-models" className="settings-group">
-      <h3 className="settings-group-title">{panelText.localModelsTitle}</h3>
+  const renderProxyStats = () => (
+      <div className="settings-section">
+        <div className="proxy-stats-filter" role="group" aria-label={resilientProxyText.statsTimeFilter}>
+          {(['all', 'session', '1h', '24h'] as const).map((range) => (
+            <button
+              key={range}
+              type="button"
+              className={`theme-chip${proxyStatsRange === range ? ' is-active' : ''}`}
+              onClick={() => setProxyStatsRange(range)}
+            >
+              {range === 'all' ? resilientProxyText.statsAll
+                : range === 'session' ? resilientProxyText.statsCurrentSession
+                : range === '1h' ? resilientProxyText.statsLast1h
+                : resilientProxyText.statsLast24h}
+            </button>
+          ))}
+        </div>
 
+        <div className="proxy-stats-grid">
+          <div className="proxy-stat-card">
+            <span className="proxy-stat-value">{displayedProxyStats.requests}</span>
+            <span className="proxy-stat-label">{resilientProxyText.statsRequests}</span>
+          </div>
+          <div className="proxy-stat-card">
+            <span className="proxy-stat-value">{displayedProxyStats.disconnects}</span>
+            <span className="proxy-stat-label">{resilientProxyText.statsDisconnects}</span>
+          </div>
+          <div className="proxy-stat-card">
+            <span className="proxy-stat-value">{displayedProxyStats.recoverySuccesses}</span>
+            <span className="proxy-stat-label">{resilientProxyText.statsRecoveries}</span>
+          </div>
+          <div className="proxy-stat-card">
+            <span className="proxy-stat-value">{displayedProxyStats.recoveryFailures}</span>
+            <span className="proxy-stat-label">{resilientProxyText.statsFailures}</span>
+          </div>
+        </div>
+      </div>
+  )
+
+  const settingsItems: SettingsPanelItem[] = [
+    {
+      // 接口配置本体只在「接口」选项卡；设置里只报当前在用什么 + 跳转（09-23 用户反馈重复）。
+      id: 'account',
+      node: (
+        <div className="settings-section settings-account-summary">
+          <ul className="settings-account-summary-list">
+            {appState.settings.cliRoutingEnabled ? (
+              (['claude', 'codex'] as const).map((provider) => {
+                const collection = appState.settings.providerProfiles[provider]
+                const active = collection.profiles.find((profile) => profile.id === collection.activeProfileId)
+                const label = getProviderLabel(appState.settings.language, provider)
+                return (
+                  <li key={provider} className="settings-note">
+                    {active
+                      ? settingsPanelCopy.accountSummary.using(label, active.name || label)
+                      : settingsPanelCopy.accountSummary.noProfile(label)}
+                  </li>
+                )
+              })
+            ) : (
+              <li className="settings-note">{settingsPanelCopy.accountSummary.routingOff}</li>
+            )}
+          </ul>
+          <div className="settings-actions">
+            <AppButton type="button" onClick={() => setActiveTopTab('routing')}>
+              {settingsPanelCopy.accountSummary.open}
+            </AppButton>
+          </div>
+        </div>
+      ),
+    },
+    {
+      id: 'cli-compat',
+      node: <CliCompatSettings language={appState.settings.language} onStatusChange={setCliCompatStatus} />,
+    },
+    {
+      id: 'models',
+      node: (
+        <div className="settings-section">
+        <label className="settings-field" htmlFor="codex-model-input">
+          <span className="settings-field-label">
+            <ModelIcon className="settings-field-icon" aria-hidden="true" />
+            <span className="settings-field-label-text">Codex</span>
+          </span>
+          <input
+            id="codex-model-input"
+            className="control settings-input"
+            value={appState.settings.requestModels.codex}
+            onChange={(event) =>
+              applyAction({
+                type: 'updateRequestModels',
+                patch: { codex: event.target.value },
+              })
+            }
+            placeholder={DEFAULT_CODEX_MODEL}
+          />
+        </label>
+
+        <label className="settings-field" htmlFor="claude-model-input">
+          <span className="settings-field-label">
+            <ModelIcon className="settings-field-icon" aria-hidden="true" />
+            <span className="settings-field-label-text">Claude</span>
+          </span>
+          <input
+            id="claude-model-input"
+            className="control settings-input"
+            value={appState.settings.requestModels.claude}
+            onChange={(event) =>
+              applyAction({
+                type: 'updateRequestModels',
+                patch: { claude: event.target.value },
+              })
+            }
+            placeholder={DEFAULT_CLAUDE_MODEL}
+          />
+        </label>
+
+        {(['claude', 'codex'] as const).map((provider) => {
+          const model = appState.settings.requestModels[provider]
+          const effort = getPreferredReasoningEffort(appState.settings, provider, model)
+          const options = getReasoningOptionsForModel(provider, model, appState.settings.language)
+          const selectId = `${provider}-reasoning-effort-select`
+          return (
+            <div className="settings-hover-detail is-field" key={provider}>
+              <label className="settings-field" htmlFor={selectId}>
+                <span className="settings-field-label">
+                  <ModelIcon className="settings-field-icon" aria-hidden="true" />
+                  <span className="settings-field-label-text">
+                    {`${getProviderLabel(appState.settings.language, provider)} · ${text.reasoningEffortLabel}`}
+                  </span>
+                </span>
+                <select
+                  id={selectId}
+                  className="control settings-input"
+                  aria-describedby={`${selectId}-note`}
+                  value={effort ?? ''}
+                  onChange={(event) =>
+                    applyAction({
+                      type: 'rememberModelReasoningEffort',
+                      provider,
+                      model,
+                      reasoningEffort: event.target.value || undefined,
+                    })
+                  }
+                >
+                  {options.map((option) => (
+                    <option key={option.value} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <p id={`${selectId}-note`} className="settings-note settings-hover-note" role="tooltip">
+                {text.reasoningEffortNote}
+              </p>
+            </div>
+          )
+        })}
+
+          <div className="settings-actions">
+          <AppButton
+            tone="primary"
+            type="button"
+            onClick={() => applyAction({ type: 'applyConfiguredModels' })}
+          >
+            {text.applyToExistingChats}
+          </AppButton>
+          </div>
+        </div>
+      ),
+    },
+    {
+      id: 'model-behavior',
+      node: (
+        <div className="settings-section">
+        <div className="settings-hover-detail is-field">
+          <label className="settings-field">
+            <span className="settings-field-label">
+              <ModelIcon className="settings-field-icon" aria-hidden="true" />
+              <span className="settings-field-label-text">{text.codexPersonalityLabel}</span>
+            </span>
+            <select
+              className="control settings-input"
+              aria-describedby="codex-personality-note"
+              value={appState.settings.codexPersonality}
+              onChange={(event) =>
+                applyAction({
+                  type: 'updateSettings',
+                  patch: {
+                    codexPersonality: event.target.value as AppState['settings']['codexPersonality'],
+                  },
+                })
+              }
+            >
+              <option value="default">{text.codexPersonalityDefault}</option>
+              <option value="none">{text.codexPersonalityNone}</option>
+              <option value="friendly">{text.codexPersonalityFriendly}</option>
+              <option value="pragmatic">{text.codexPersonalityPragmatic}</option>
+            </select>
+          </label>
+          <p id="codex-personality-note" className="settings-note settings-hover-note" role="tooltip">
+            {text.codexPersonalityNote}
+          </p>
+        </div>
+
+        <div className="settings-hover-detail">
+          <label className="settings-toggle">
+            <span>{text.codexFastModeLabel}</span>
+            <input
+              type="checkbox"
+              aria-describedby="codex-fast-mode-note"
+              checked={appState.settings.codexFastMode}
+              onChange={(event) => handleCodexFastModeToggle(event.target.checked)}
+            />
+          </label>
+          <p id="codex-fast-mode-note" className="settings-note settings-hover-note" role="tooltip">
+            {text.codexFastModeNote}
+          </p>
+        </div>
+
+        <div className="settings-hover-detail is-field">
+          <label className="settings-field" htmlFor="git-agent-model-input">
+            <span className="settings-field-label">
+              <ModelIcon className="settings-field-icon" aria-hidden="true" />
+              <span className="settings-field-label-text">{text.gitAgentModel}</span>
+            </span>
+            <input
+              id="git-agent-model-input"
+              className="control settings-input"
+              aria-describedby="git-agent-model-note"
+              value={appState.settings.gitAgentModel}
+              onChange={(event) =>
+                applyAction({
+                  type: 'updateSettings',
+                  patch: { gitAgentModel: event.target.value },
+                })
+              }
+              placeholder="gpt-6-luna medium"
+            />
+          </label>
+          <p id="git-agent-model-note" className="settings-note settings-hover-note" role="tooltip">
+            {text.gitAgentModelNote}
+          </p>
+        </div>
+
+        <div className="settings-hover-detail is-field">
+          <label className="settings-field" htmlFor="system-prompt-input">
+            <span className="settings-field-label">
+              <ModelIcon className="settings-field-icon" aria-hidden="true" />
+              <span className="settings-field-label-text">{text.systemPromptLabel}</span>
+            </span>
+            <textarea
+              id="system-prompt-input"
+              className="control settings-input"
+              rows={4}
+              aria-describedby="system-prompt-note"
+              value={appState.settings.systemPrompt}
+              onChange={(event) =>
+                applyAction({
+                  type: 'updateSettings',
+                  patch: { systemPrompt: event.target.value },
+                })
+              }
+            />
+          </label>
+          <p id="system-prompt-note" className="settings-note settings-hover-note" role="tooltip">
+            {text.systemPromptNote}
+          </p>
+        </div>
+
+        <div className="settings-hover-detail is-field">
+          <div
+            className="settings-field model-prompt-rules-summary-row"
+            aria-describedby="model-prompt-rules-note"
+          >
+            <span className="settings-field-label">
+              <ModelIcon className="settings-field-icon" aria-hidden="true" />
+              <span className="settings-field-label-text">
+                {appState.settings.language === 'zh-CN' ? '基于模型的提示词' : 'Model prompt rules'}
+              </span>
+            </span>
+            <div className="model-prompt-rules-summary">
+              {/* 规则条数是实时状态，按 ui-principles 第 3 条留在面板上；
+                  「怎么匹配」是解释，收进悬停气泡。 */}
+              <strong>{modelPromptRulesSummary}</strong>
+            </div>
+          </div>
+          <p
+            id="model-prompt-rules-note"
+            className="settings-note settings-hover-note"
+            role="tooltip"
+          >
+            {appState.settings.language === 'zh-CN'
+              ? '按模型关键字做包含匹配。命中后，会把规则提示词追加到系统提示词后面。'
+              : 'Rules match by model keyword substring. Matching prompts are appended after the base system prompt.'}
+          </p>
+        </div>
+
+        <div className="settings-actions">
+          <AppButton type="button" onClick={openModelPromptRulesDialog}>
+            {appState.settings.language === 'zh-CN' ? '编辑规则' : 'Edit rules'}
+          </AppButton>
+        </div>
+
+        <div className="settings-hover-detail">
+          <label className="settings-toggle" htmlFor="cross-provider-skill-reuse-toggle">
+            <span>{text.crossProviderSkillReuseLabel}</span>
+            <input
+              id="cross-provider-skill-reuse-toggle"
+              type="checkbox"
+              aria-describedby="cross-provider-skill-reuse-note"
+              checked={appState.settings.crossProviderSkillReuseEnabled}
+              onChange={(event) =>
+                applyAction({
+                  type: 'updateSettings',
+                  patch: { crossProviderSkillReuseEnabled: event.target.checked },
+                })
+              }
+            />
+          </label>
+          <p
+            id="cross-provider-skill-reuse-note"
+            className="settings-note settings-hover-note"
+            role="tooltip"
+          >
+            {text.crossProviderSkillReuseNote}
+          </p>
+        </div>
+
+          <div className="settings-actions">
+          <AppButton
+            type="button"
+            onClick={() =>
+              applyAction({
+                type: 'updateSettings',
+                patch: { systemPrompt: defaultSystemPrompt },
+              })
+            }
+          >
+            {text.restoreDefaultSystemPrompt}
+          </AppButton>
+          </div>
+        </div>
+      ),
+    },
+    {
+      id: 'local-models',
+      node: (
+        <>
       <div className="settings-section">
         <p className="settings-note">{panelText.localModelsDescription}</p>
       </div>
@@ -9526,230 +10081,378 @@ function App() {
           </div>
         </div>
       </div>
-    </div>,
-    <div key="models" className="settings-group">
-      <h3 className="settings-group-title">{text.settingsGroupModels}</h3>
-
+        </>
+      ),
+    },
+    {
+      id: 'language-theme',
+      node: (
+        <>
       <div className="settings-section">
-        <label className="settings-field" htmlFor="codex-model-input">
-          <span className="settings-field-label">
-            <ModelIcon className="settings-field-icon" aria-hidden="true" />
-            <span className="settings-field-label-text">Codex</span>
-          </span>
-          <input
-            id="codex-model-input"
+        <label className="settings-field" htmlFor="language-select">
+          <span>{text.language}</span>
+          <select
+            id="language-select"
             className="control settings-input"
-            value={appState.settings.requestModels.codex}
+            value={appState.settings.language}
             onChange={(event) =>
               applyAction({
-                type: 'updateRequestModels',
-                patch: { codex: event.target.value },
+                type: 'updateSettings',
+                patch: { language: event.target.value as AppState['settings']['language'] },
               })
             }
-            placeholder={DEFAULT_CODEX_MODEL}
-          />
+          >
+            {onboardingLanguages.map((language) => (
+              <option key={language.value} value={language.value}>
+                {`${language.flag} ${language.label}`}
+              </option>
+            ))}
+          </select>
         </label>
+      </div>
 
-        <div className="settings-hover-detail is-field">
-          <label className="settings-field">
-            <span className="settings-field-label">
-              <ModelIcon className="settings-field-icon" aria-hidden="true" />
-              <span className="settings-field-label-text">{text.codexPersonalityLabel}</span>
-            </span>
-            <select
-              className="control settings-input"
-              aria-describedby="codex-personality-note"
-              value={appState.settings.codexPersonality}
+      <div className="settings-section">
+        <div className="settings-section-title">{text.theme}</div>
+        {renderThemeToggle()}
+      </div>
+
+      <div className="settings-actions">
+        <AppButton
+          type="button"
+          onClick={() =>
+            applyAction({
+              type: 'updateSettings',
+              patch: createInterfaceDefaultsPatch(),
+            })
+          }
+        >
+          {text.resetInterfaceDefaults}
+        </AppButton>
+      </div>
+        </>
+      ),
+    },
+    {
+      id: 'typography',
+      node: (
+        <>
+      {renderFontFamilySettings('font-family-select')}
+
+      <div className="settings-section">
+        <div className="settings-row">
+          <div className="settings-row-copy">
+            <label htmlFor="ui-scale-range">{text.uiScale}</label>
+            <span>{Math.round(appState.settings.uiScale * 100)}%</span>
+          </div>
+          <input
+            id="ui-scale-range"
+            className="settings-range"
+            type="range"
+            min={minUiScale}
+            max={maxUiScale}
+            step={0.05}
+            value={appState.settings.uiScale}
+            onChange={(event) =>
+              applyAction({
+                type: 'updateSettings',
+                patch: { uiScale: Number(event.target.value) },
+              })
+            }
+          />
+        </div>
+
+        <div className="settings-row">
+          <div className="settings-row-copy">
+            <label htmlFor="font-scale-range">{text.fontScale}</label>
+            <span>{Math.round(appState.settings.fontScale * 100)}%</span>
+          </div>
+          <input
+            id="font-scale-range"
+            className="settings-range"
+            type="range"
+            min={minFontScale}
+            max={maxFontScale}
+            step={0.05}
+            value={appState.settings.fontScale}
+            onChange={(event) =>
+              applyAction({
+                type: 'updateSettings',
+                patch: { fontScale: Number(event.target.value) },
+              })
+            }
+          />
+        </div>
+
+        <div className="settings-row">
+          <div className="settings-row-copy">
+            <label htmlFor="line-height-range">{text.lineHeight}</label>
+            <span>{appState.settings.lineHeightScale.toFixed(2)}x</span>
+          </div>
+          <input
+            id="line-height-range"
+            className="settings-range"
+            type="range"
+            min={minLineHeightScale}
+            max={maxLineHeightScale}
+            step={0.05}
+            value={appState.settings.lineHeightScale}
+            onChange={(event) =>
+              applyAction({
+                type: 'updateSettings',
+                patch: { lineHeightScale: Number(event.target.value) },
+              })
+            }
+          />
+        </div>
+      </div>
+        </>
+      ),
+    },
+    {
+      id: 'editor',
+      node: (
+        <>
+      <div className="settings-section">
+        <div className="settings-row">
+          <div className="settings-row-copy">
+            <label htmlFor="editor-font-size-range">{text.editorFontSizeLabel}</label>
+            <span>{appState.settings.editor.fontSize}px</span>
+          </div>
+          <input
+            id="editor-font-size-range"
+            className="settings-range"
+            type="range"
+            min={10}
+            max={24}
+            step={1}
+            value={appState.settings.editor.fontSize}
+            onChange={(event) =>
+              applyAction({
+                type: 'updateSettings',
+                patch: {
+                  editor: { ...appState.settings.editor, fontSize: Number(event.target.value) },
+                },
+              })
+            }
+          />
+        </div>
+
+        <div className="settings-row">
+          <label className="settings-toggle" htmlFor="editor-word-wrap-toggle">
+            <span>{text.editorWordWrapLabel}</span>
+            <input
+              id="editor-word-wrap-toggle"
+              type="checkbox"
+              checked={appState.settings.editor.wordWrap}
               onChange={(event) =>
                 applyAction({
                   type: 'updateSettings',
                   patch: {
-                    codexPersonality: event.target.value as AppState['settings']['codexPersonality'],
+                    editor: { ...appState.settings.editor, wordWrap: event.target.checked },
                   },
                 })
               }
-            >
-              <option value="default">{text.codexPersonalityDefault}</option>
-              <option value="none">{text.codexPersonalityNone}</option>
-              <option value="friendly">{text.codexPersonalityFriendly}</option>
-              <option value="pragmatic">{text.codexPersonalityPragmatic}</option>
-            </select>
-          </label>
-          <p id="codex-personality-note" className="settings-note settings-hover-note" role="tooltip">
-            {text.codexPersonalityNote}
-          </p>
-        </div>
-
-        <div className="settings-hover-detail">
-          <label className="settings-toggle">
-            <span>{text.codexFastModeLabel}</span>
-            <input
-              type="checkbox"
-              aria-describedby="codex-fast-mode-note"
-              checked={appState.settings.codexFastMode}
-              onChange={(event) => handleCodexFastModeToggle(event.target.checked)}
             />
           </label>
-          <p id="codex-fast-mode-note" className="settings-note settings-hover-note" role="tooltip">
-            {text.codexFastModeNote}
-          </p>
         </div>
 
-        <label className="settings-field" htmlFor="claude-model-input">
-          <span className="settings-field-label">
-            <ModelIcon className="settings-field-icon" aria-hidden="true" />
-            <span className="settings-field-label-text">Claude</span>
-          </span>
-          <input
-            id="claude-model-input"
+        <div className="settings-row">
+          <label className="settings-toggle" htmlFor="editor-minimap-toggle">
+            <span>{text.editorMinimapLabel}</span>
+            <input
+              id="editor-minimap-toggle"
+              type="checkbox"
+              checked={appState.settings.editor.minimap}
+              onChange={(event) =>
+                applyAction({
+                  type: 'updateSettings',
+                  patch: {
+                    editor: { ...appState.settings.editor, minimap: event.target.checked },
+                  },
+                })
+              }
+            />
+          </label>
+        </div>
+
+        <div className="settings-row">
+          <div className="settings-row-copy">
+            <label htmlFor="editor-tab-size-select">{text.editorTabSizeLabel}</label>
+          </div>
+          <select
+            id="editor-tab-size-select"
             className="control settings-input"
-            value={appState.settings.requestModels.claude}
+            value={appState.settings.editor.tabSize}
             onChange={(event) =>
               applyAction({
-                type: 'updateRequestModels',
-                patch: { claude: event.target.value },
+                type: 'updateSettings',
+                patch: {
+                  editor: {
+                    ...appState.settings.editor,
+                    tabSize: Number(event.target.value) === 4 ? 4 : 2,
+                  },
+                },
               })
             }
-            placeholder={DEFAULT_CLAUDE_MODEL}
+          >
+            <option value={2}>2</option>
+            <option value={4}>4</option>
+          </select>
+        </div>
+      </div>
+        </>
+      ),
+    },
+    { id: 'wake-timer', node: <div className="settings-section">{renderWakeTimerSettings()}</div> },
+    { id: 'auto-urge', node: <div className="settings-section">{renderAutoUrgeSettings()}</div> },
+    { id: 'repeat-loop', node: <div className="settings-section">{renderRepeatLoopSettings()}</div> },
+    {
+      id: 'tool-cards',
+      node: (
+        <div className="settings-section">
+        <label className="settings-toggle" htmlFor="git-card-toggle">
+          <span>Git</span>
+          <input
+            id="git-card-toggle"
+            type="checkbox"
+            checked={appState.settings.gitCardEnabled}
+            onChange={(event) =>
+              applyAction({
+                type: 'updateSettings',
+                patch: { gitCardEnabled: event.target.checked },
+              })
+            }
           />
         </label>
 
-        <div className="settings-hover-detail is-field">
-          <label className="settings-field" htmlFor="git-agent-model-input">
-            <span className="settings-field-label">
-              <ModelIcon className="settings-field-icon" aria-hidden="true" />
-              <span className="settings-field-label-text">{text.gitAgentModel}</span>
-            </span>
-            <input
-              id="git-agent-model-input"
-              className="control settings-input"
-              aria-describedby="git-agent-model-note"
-              value={appState.settings.gitAgentModel}
-              onChange={(event) =>
-                applyAction({
-                  type: 'updateSettings',
-                  patch: { gitAgentModel: event.target.value },
-                })
-              }
-              placeholder="gpt-6-luna medium"
-            />
-          </label>
-          <p id="git-agent-model-note" className="settings-note settings-hover-note" role="tooltip">
-            {text.gitAgentModelNote}
-          </p>
-        </div>
-
-        <div className="settings-hover-detail is-field">
-          <label className="settings-field" htmlFor="system-prompt-input">
-            <span className="settings-field-label">
-              <ModelIcon className="settings-field-icon" aria-hidden="true" />
-              <span className="settings-field-label-text">{text.systemPromptLabel}</span>
-            </span>
-            <textarea
-              id="system-prompt-input"
-              className="control settings-input"
-              rows={4}
-              aria-describedby="system-prompt-note"
-              value={appState.settings.systemPrompt}
-              onChange={(event) =>
-                applyAction({
-                  type: 'updateSettings',
-                  patch: { systemPrompt: event.target.value },
-                })
-              }
-            />
-          </label>
-          <p id="system-prompt-note" className="settings-note settings-hover-note" role="tooltip">
-            {text.systemPromptNote}
-          </p>
-        </div>
-
-        <div className="settings-hover-detail is-field">
-          <div
-            className="settings-field model-prompt-rules-summary-row"
-            aria-describedby="model-prompt-rules-note"
-          >
-            <span className="settings-field-label">
-              <ModelIcon className="settings-field-icon" aria-hidden="true" />
-              <span className="settings-field-label-text">
-                {appState.settings.language === 'zh-CN' ? '基于模型的提示词' : 'Model prompt rules'}
-              </span>
-            </span>
-            <div className="model-prompt-rules-summary">
-              {/* 规则条数是实时状态，按 ui-principles 第 3 条留在面板上；
-                  「怎么匹配」是解释，收进悬停气泡。 */}
-              <strong>{modelPromptRulesSummary}</strong>
-            </div>
-          </div>
-          <p
-            id="model-prompt-rules-note"
-            className="settings-note settings-hover-note"
-            role="tooltip"
-          >
-            {appState.settings.language === 'zh-CN'
-              ? '按模型关键字做包含匹配。命中后，会把规则提示词追加到系统提示词后面。'
-              : 'Rules match by model keyword substring. Matching prompts are appended after the base system prompt.'}
-          </p>
-        </div>
-
-        <div className="settings-actions">
-          <AppButton type="button" onClick={openModelPromptRulesDialog}>
-            {appState.settings.language === 'zh-CN' ? '编辑规则' : 'Edit rules'}
-          </AppButton>
-        </div>
-
-        <div className="settings-hover-detail">
-          <label className="settings-toggle" htmlFor="cross-provider-skill-reuse-toggle">
-            <span>{text.crossProviderSkillReuseLabel}</span>
-            <input
-              id="cross-provider-skill-reuse-toggle"
-              type="checkbox"
-              aria-describedby="cross-provider-skill-reuse-note"
-              checked={appState.settings.crossProviderSkillReuseEnabled}
-              onChange={(event) =>
-                applyAction({
-                  type: 'updateSettings',
-                  patch: { crossProviderSkillReuseEnabled: event.target.checked },
-                })
-              }
-            />
-          </label>
-          <p
-            id="cross-provider-skill-reuse-note"
-            className="settings-note settings-hover-note"
-            role="tooltip"
-          >
-            {text.crossProviderSkillReuseNote}
-          </p>
-        </div>
-
-        <div className="settings-actions">
-          <AppButton
-            type="button"
-            onClick={() =>
+        <label className="settings-toggle" htmlFor="filetree-card-toggle">
+          <span>{text.emptyStateFilesTitle}</span>
+          <input
+            id="filetree-card-toggle"
+            type="checkbox"
+            checked={appState.settings.fileTreeCardEnabled}
+            onChange={(event) =>
               applyAction({
                 type: 'updateSettings',
-                patch: { systemPrompt: defaultSystemPrompt },
+                patch: { fileTreeCardEnabled: event.target.checked },
               })
             }
-          >
-            {text.restoreDefaultSystemPrompt}
-          </AppButton>
+          />
+        </label>
+
+        <label className="settings-toggle" htmlFor="stickynote-card-toggle">
+          <span>{text.stickyNoteTitle}</span>
+          <input
+            id="stickynote-card-toggle"
+            type="checkbox"
+            checked={appState.settings.stickyNoteCardEnabled}
+            onChange={(event) =>
+              applyAction({
+                type: 'updateSettings',
+                patch: { stickyNoteCardEnabled: event.target.checked },
+              })
+            }
+          />
+        </label>
+
+        <label className="settings-toggle" htmlFor="automation-board-card-toggle">
+          <span>{text.automationBoardTitle}</span>
+          <input
+            id="automation-board-card-toggle"
+            type="checkbox"
+            checked={appState.settings.automationBoardCardEnabled}
+            onChange={(event) =>
+              applyAction({
+                type: 'updateSettings',
+                patch: { automationBoardCardEnabled: event.target.checked },
+              })
+            }
+          />
+        </label>
+        </div>
+      ),
+    },
+    {
+      id: 'codex-safety',
+      node: (
+      <div className="settings-section">
+        {renderCodexSafetySettings('modal')}
+      </div>
+      ),
+    },
+    {
+      id: 'update',
+      node: (
+      <div className="settings-section">
+        {appVersion ? (
+          <p className="settings-note">{text.updateCurrentVersion(appVersion)}</p>
+        ) : null}
+
+        {updateStatus === 'checking' ? (
+          <div className="update-banner is-checking" role="status">
+            <span>{text.updateChecking}</span>
+          </div>
+        ) : null}
+
+        {updateStatus === 'downloading' ? (
+          <div className="update-banner is-downloading" role="status">
+            <span>
+              {updateResult?.latestVersion
+                ? `${text.updateAvailable(updateResult!.latestVersion!)} — ${text.updateDownloading(downloadProgress)}`
+                : text.updateDownloading(downloadProgress)}
+            </span>
+            <div className="update-progress-bar">
+              <div
+                className="update-progress-fill"
+                style={{ width: `${downloadProgress}%` }}
+              />
+            </div>
+          </div>
+        ) : null}
+
+        {updateStatus === 'ready' && updateResult?.latestVersion ? (
+          <div className="update-banner is-ready" role="status">
+            <span>{text.updateReady(updateResult!.latestVersion!)}</span>
+            <AppButton tone="primary" type="button" onClick={handleInstallUpdate}>
+              {text.updateInstallNow}
+            </AppButton>
+          </div>
+        ) : null}
+
+        {updateStatus === 'installing' ? (
+          <div className="update-banner is-downloading" role="status">
+            <span>{text.updateInstalling}</span>
+          </div>
+        ) : null}
+
+        {updateStatus === 'no-update' ? (
+          <div className="update-banner is-current" role="status">
+            <span>{text.updateNoUpdate}</span>
+          </div>
+        ) : null}
+
+        {updateStatus === 'error' ? (
+          <div className="update-banner is-error" role="alert">
+            <span>{updateDownloadError ?? updateResult?.error ?? text.updateError}</span>
+          </div>
+        ) : null}
+
+        <div className="settings-actions">
           <AppButton
-            tone="primary"
             type="button"
-            onClick={() => applyAction({ type: 'applyConfiguredModels' })}
+            disabled={updateStatus === 'checking' || updateStatus === 'downloading' || updateStatus === 'installing'}
+            onClick={handleCheckForUpdate}
           >
-            {text.applyToExistingChats}
+            {text.updateCheckNow}
           </AppButton>
         </div>
       </div>
-    </div>,
-
-    <div key="utility" className="settings-group">
-      <h3 className="settings-group-title">{text.settingsGroupUtility}</h3>
-
-      <div className="settings-section">
+      ),
+    },
+    {
+      id: 'general',
+      node: (
+        <div className="settings-section">
         {renderCloseBehaviorSettings()}
 
         <label className="settings-toggle" htmlFor="agent-done-sound-toggle">
@@ -9874,77 +10577,13 @@ function App() {
             {text.accessibilitySupportNote}
           </p>
         </div>
-
-        {renderRepeatLoopSettings()}
-        {renderWakeTimerSettings()}
-        {renderAutoUrgeSettings()}
-      </div>
-    </div>,
-
-    <div key="experimental" className="settings-group">
-      <h3 className="settings-group-title">{text.settingsGroupExperimental}</h3>
-
-      <div className="settings-section">
-        <label className="settings-toggle" htmlFor="git-card-toggle">
-          <span>Git</span>
-          <input
-            id="git-card-toggle"
-            type="checkbox"
-            checked={appState.settings.gitCardEnabled}
-            onChange={(event) =>
-              applyAction({
-                type: 'updateSettings',
-                patch: { gitCardEnabled: event.target.checked },
-              })
-            }
-          />
-        </label>
-
-        <label className="settings-toggle" htmlFor="filetree-card-toggle">
-          <span>{text.emptyStateFilesTitle}</span>
-          <input
-            id="filetree-card-toggle"
-            type="checkbox"
-            checked={appState.settings.fileTreeCardEnabled}
-            onChange={(event) =>
-              applyAction({
-                type: 'updateSettings',
-                patch: { fileTreeCardEnabled: event.target.checked },
-              })
-            }
-          />
-        </label>
-
-        <label className="settings-toggle" htmlFor="stickynote-card-toggle">
-          <span>{text.stickyNoteTitle}</span>
-          <input
-            id="stickynote-card-toggle"
-            type="checkbox"
-            checked={appState.settings.stickyNoteCardEnabled}
-            onChange={(event) =>
-              applyAction({
-                type: 'updateSettings',
-                patch: { stickyNoteCardEnabled: event.target.checked },
-              })
-            }
-          />
-        </label>
-
-        <label className="settings-toggle" htmlFor="automation-board-card-toggle">
-          <span>{text.automationBoardTitle}</span>
-          <input
-            id="automation-board-card-toggle"
-            type="checkbox"
-            checked={appState.settings.automationBoardCardEnabled}
-            onChange={(event) =>
-              applyAction({
-                type: 'updateSettings',
-                patch: { automationBoardCardEnabled: event.target.checked },
-              })
-            }
-          />
-        </label>
-
+        </div>
+      ),
+    },
+    {
+      id: 'experimental',
+      node: (
+        <div className="settings-section">
         <label className="settings-toggle" htmlFor="experimental-stats-toggle">
           <span>{text.experimentalStatsLabel}</span>
           <input
@@ -10041,143 +10680,142 @@ function App() {
             }
           />
         </label>
-      </div>
-    </div>,
+        </div>
+      ),
+    },
   ]
 
   if (showSettingsSetupPanel) {
-    settingsGroupNodes.push(
-      <div key="environment" className="settings-group">
-        <h3 className="settings-group-title">{text.settingsGroupEnvironment}</h3>
+    settingsItems.push({
+      id: 'environment',
+      node: (
+      <div className="settings-section">
+        <p className="settings-note">{panelText.setupDescription}</p>
 
-        <div className="settings-section">
-          <p className="settings-note">{panelText.setupDescription}</p>
+        {hasMissingEnvironmentChecks ? (
+          <div className="setup-missing-shell">
+            <div className="settings-section-title">{panelText.setupMissingListTitle}</div>
+            <p className="settings-note">{panelText.setupMissingListDescription}</p>
+            <ul className="setup-missing-list">
+              {missingEnvironmentChecks.map((check) => (
+                <li key={check.id}>{check.label}</li>
+              ))}
+            </ul>
+          </div>
+        ) : null}
 
+        {settingsNotice ? (
+          <div className="panel-alert" role="alert">
+            {settingsNotice}
+          </div>
+        ) : null}
+
+        <div className={`setup-status-card is-${setupStatus?.state ?? 'idle'}`}>
+          <strong>{setupHeadline}</strong>
+          <p className="settings-note">{setupStatusMessage}</p>
+        </div>
+
+        <div className="settings-actions">
           {hasMissingEnvironmentChecks ? (
-            <div className="setup-missing-shell">
-              <div className="settings-section-title">{panelText.setupMissingListTitle}</div>
-              <p className="settings-note">{panelText.setupMissingListDescription}</p>
-              <ul className="setup-missing-list">
-                {missingEnvironmentChecks.map((check) => (
-                  <li key={check.id}>{check.label}</li>
-                ))}
-              </ul>
-            </div>
-          ) : null}
-
-          {settingsNotice ? (
-            <div className="panel-alert" role="alert">
-              {settingsNotice}
-            </div>
-          ) : null}
-
-          <div className={`setup-status-card is-${setupStatus?.state ?? 'idle'}`}>
-            <strong>{setupHeadline}</strong>
-            <p className="settings-note">{setupStatusMessage}</p>
-          </div>
-
-          <div className="settings-actions">
-            {hasMissingEnvironmentChecks ? (
-              <AppButton
-                tone="primary"
-                type="button"
-                disabled={setupStatusPending || setupStatus?.state === 'running'}
-                onClick={() => void handleRunSetup()}
-              >
-                {hasRunSetup ? panelText.rerunSetup : panelText.installMissingTools}
-              </AppButton>
-            ) : null}
             <AppButton
+              tone="primary"
               type="button"
-              disabled={setupStatusPending}
-              onClick={() => {
-                void loadSetup()
-                void syncProviderStatuses()
-              }}
+              disabled={setupStatusPending || setupStatus?.state === 'running'}
+              onClick={() => void handleRunSetup()}
             >
-              {panelText.refreshSetup}
+              {hasRunSetup ? panelText.rerunSetup : panelText.installMissingTools}
             </AppButton>
-          </div>
+          ) : null}
+          <AppButton
+            type="button"
+            disabled={setupStatusPending}
+            onClick={() => {
+              void loadSetup()
+              void syncProviderStatuses()
+            }}
+          >
+            {panelText.refreshSetup}
+          </AppButton>
+        </div>
 
-          <div className="cli-update-shell">
+        <div className="cli-update-shell">
+          <div className="settings-hover-detail">
+            <div className="settings-section-title" aria-describedby="cli-update-note">
+              {panelText.cliUpdateTitle}
+            </div>
+            <p id="cli-update-note" className="settings-note settings-hover-note" role="tooltip">
+              {panelText.cliUpdateDescription}
+            </p>
+          </div>
+          <div className="cli-update-grid">
+            <label className="settings-field" htmlFor="cli-update-target">
+              <span>{panelText.cliUpdateTarget}</span>
+              <select
+                id="cli-update-target"
+                className="control settings-input"
+                value={cliUpdateTarget}
+                onChange={(event) =>
+                  setCliUpdateTarget(event.target.value as 'all' | 'claude' | 'codex')
+                }
+              >
+                <option value="all">{panelText.cliUpdateTargetAll}</option>
+                <option value="claude">Claude</option>
+                <option value="codex">Codex</option>
+              </select>
+            </label>
+
             <div className="settings-hover-detail">
-              <div className="settings-section-title" aria-describedby="cli-update-note">
-                {panelText.cliUpdateTitle}
-              </div>
-              <p id="cli-update-note" className="settings-note settings-hover-note" role="tooltip">
-                {panelText.cliUpdateDescription}
+              <label className="settings-field" htmlFor="cli-update-version">
+                <span>{panelText.cliUpdateVersion}</span>
+                <input
+                  id="cli-update-version"
+                  className="control settings-input"
+                  aria-describedby="cli-update-version-note"
+                  value={cliUpdateVersion}
+                  placeholder={panelText.cliUpdateVersionPlaceholder}
+                  onChange={(event) => setCliUpdateVersion(event.target.value)}
+                />
+              </label>
+              <p
+                id="cli-update-version-note"
+                className="settings-note settings-hover-note"
+                role="tooltip"
+              >
+                {panelText.cliUpdateVersionNote}
               </p>
             </div>
-            <div className="cli-update-grid">
-              <label className="settings-field" htmlFor="cli-update-target">
-                <span>{panelText.cliUpdateTarget}</span>
-                <select
-                  id="cli-update-target"
-                  className="control settings-input"
-                  value={cliUpdateTarget}
-                  onChange={(event) =>
-                    setCliUpdateTarget(event.target.value as 'all' | 'claude' | 'codex')
-                  }
-                >
-                  <option value="all">{panelText.cliUpdateTargetAll}</option>
-                  <option value="claude">Claude</option>
-                  <option value="codex">Codex</option>
-                </select>
-              </label>
+          </div>
+          <div className="settings-actions cli-update-actions">
+            <AppButton
+              type="button"
+              disabled={setupStatusPending || setupStatus?.state === 'running'}
+              onClick={() => void handleUpdateCli()}
+            >
+              {panelText.cliUpdateButton}
+            </AppButton>
+          </div>
+        </div>
 
-              <div className="settings-hover-detail">
-                <label className="settings-field" htmlFor="cli-update-version">
-                  <span>{panelText.cliUpdateVersion}</span>
-                  <input
-                    id="cli-update-version"
-                    className="control settings-input"
-                    aria-describedby="cli-update-version-note"
-                    value={cliUpdateVersion}
-                    placeholder={panelText.cliUpdateVersionPlaceholder}
-                    onChange={(event) => setCliUpdateVersion(event.target.value)}
-                  />
-                </label>
-                <p
-                  id="cli-update-version-note"
-                  className="settings-note settings-hover-note"
-                  role="tooltip"
-                >
-                  {panelText.cliUpdateVersionNote}
-                </p>
-              </div>
-            </div>
-            <div className="settings-actions cli-update-actions">
-              <AppButton
-                type="button"
-                disabled={setupStatusPending || setupStatus?.state === 'running'}
-                onClick={() => void handleUpdateCli()}
-              >
-                {panelText.cliUpdateButton}
-              </AppButton>
+        {hasSetupLogs ? (
+          <div className="setup-log-shell">
+            <div className="settings-section-title">{panelText.setupLogs}</div>
+            <div className="setup-log-list">
+              {setupLogs.map((entry, index) => (
+                <div key={`${entry.createdAt}-${index}`} className={`setup-log-entry is-${entry.level}`}>
+                  {entry.message}
+                </div>
+              ))}
             </div>
           </div>
-
-          {hasSetupLogs ? (
-            <div className="setup-log-shell">
-              <div className="settings-section-title">{panelText.setupLogs}</div>
-              <div className="setup-log-list">
-                {setupLogs.map((entry, index) => (
-                  <div key={`${entry.createdAt}-${index}`} className={`setup-log-entry is-${entry.level}`}>
-                    {entry.message}
-                  </div>
-                ))}
-              </div>
-            </div>
-          ) : null}
-        </div>
-      </div>,
-    )
+        ) : null}
+      </div>
+      ),
+    })
   }
 
-  settingsGroupNodes.push(
-    <div key="data" className="settings-group settings-group-danger">
-      <h3 className="settings-group-title">{text.settingsGroupData}</h3>
-
+  settingsItems.push({
+    id: 'data',
+    node: (
       <div className="settings-section settings-danger-section">
         <p className="settings-note">{text.clearUserDataDialogBody}</p>
 
@@ -10191,13 +10829,16 @@ function App() {
           </AppButton>
         </div>
       </div>
-    </div>,
-  )
+    ),
+  })
 
-  const settingsPanelColumnCount =
-    typeof window === 'undefined' ? 1 : getStableSettingsPanelColumnCount(window.innerWidth)
-  const showLegacySettingsPanel = false
-  const settingsColumns = splitSettingsGroupsIntoStableColumns(settingsGroupNodes, settingsPanelColumnCount)
+  const environmentHealth = deriveEnvironmentHealth({
+    onboardingStatus,
+    providers,
+    cliCompatStatus,
+    settings: appState.settings,
+  })
+
 
   return renderWithPrimer(
     <div className={`app-shell${isDesktopRuntime ? ` is-desktop-shell${desktopPlatformClass}` : ''}`}>
@@ -10426,29 +11067,7 @@ function App() {
                 <div className="settings-group routing-group routing-group-overview">
                   <h3 className="settings-group-title">{panelText.switchTitle}</h3>
 
-                  <div className="settings-section">
-                    <div className="settings-toggle-row">
-                      <div>
-                        <label>{resilientProxyText.cliRoutingEnabled}</label>
-                      </div>
-                      <label className="toggle-switch">
-                        <input
-                          type="checkbox"
-                          checked={appState.settings.cliRoutingEnabled}
-                          onChange={(event) =>
-                            applyAction({
-                              type: 'updateSettings',
-                              patch: { cliRoutingEnabled: event.target.checked },
-                            })
-                          }
-                        />
-                        <span className="toggle-switch-track" />
-                        <span className="toggle-switch-knob" />
-                      </label>
-                    </div>
-                  </div>
-
-                  <CliCompatSettings language={appState.settings.language} />
+                  {renderRoutingToggle()}
 
                   {switchNotice ? (
                     <div className="panel-alert" role="alert">
@@ -10463,222 +11082,11 @@ function App() {
 
                   <div className="settings-section">
                     <div className="settings-section-title">{panelText.importTitle}</div>
-                    <p className="settings-note">{panelText.importDescription}</p>
-                    <p className="settings-note">{panelText.importSupportedFiles}</p>
-
-                    <div className="routing-import-card">
-                      <div className="settings-actions routing-import-actions">
-                        <AppButton
-                          tone="primary"
-                          type="button"
-                          disabled={routingImportPending}
-                          onClick={() => {
-                            void runCcSwitchImport({ mode: 'default' }).catch(() => undefined)
-                          }}
-                        >
-                          {panelText.importDefault}
-                        </AppButton>
-                        <AppButton
-                          type="button"
-                          disabled={routingImportPending}
-                          onClick={openCcSwitchImportPicker}
-                        >
-                          {panelText.importChooseFile}
-                        </AppButton>
-                      </div>
-
-                      {routingImportPending ? (
-                        <p className="settings-note routing-import-note">{panelText.importPending}</p>
-                      ) : null}
-                    </div>
-
-                    <input
-                      ref={routingImportInputRef}
-                      hidden
-                      type="file"
-                      accept=".db,.sql,application/octet-stream,text/plain"
-                      onChange={(event) => void handleCcSwitchFileImport(event)}
-                    />
+                    {renderRoutingImport()}
                   </div>
                 </div>
 
-                {(['claude', 'codex'] as const).map((provider) => {
-                  const collection = appState.settings.providerProfiles[provider]
-                  const providerLabel = getProviderLabel(appState.settings.language, provider)
-                  const draft = profileDrafts[provider]
-
-                  return (
-                    <div
-                      key={provider}
-                      className="settings-group routing-group switch-provider-group switch-provider-section"
-                    >
-                      <h3 className="settings-group-title">{providerLabel}</h3>
-
-                      <div className="settings-section switch-provider-group-body">
-                        {collection.profiles.length === 0 ? (
-                          <div className="provider-profile-empty">
-                            <strong>{panelText.noProfiles}</strong>
-                            <span>{panelText.noProfilesDescription}</span>
-                          </div>
-                        ) : null}
-
-                        {collection.profiles.map((profile) => {
-                          const active = collection.activeProfileId === profile.id
-
-                          return (
-                            <div
-                              key={profile.id}
-                              className={`provider-profile-card${active ? ' is-active' : ''}`}
-                            >
-                              <label className="settings-field">
-                                <span>{panelText.profileName}</span>
-                                <input
-                                  className="control settings-input"
-                                  value={profile.name}
-                                  onChange={(event) =>
-                                    updateProviderProfile(provider, profile.id, { name: event.target.value })
-                                  }
-                                />
-                              </label>
-
-                              <div className="settings-field">
-                                <span>{panelText.apiKey}</span>
-                                <div className="api-key-field">
-                                  <input
-                                    className="control settings-input"
-                                    type={visibleApiKeys.has(profile.id) ? 'text' : 'password'}
-                                    value={profile.apiKey}
-                                    onChange={(event) =>
-                                      updateProviderProfile(provider, profile.id, { apiKey: event.target.value })
-                                    }
-                                  />
-                                  <button
-                                    type="button"
-                                    className="api-key-eye"
-                                    onClick={() => setVisibleApiKeys((prev) => {
-                                      const next = new Set(prev)
-                                      if (next.has(profile.id)) next.delete(profile.id)
-                                      else next.add(profile.id)
-                                      return next
-                                    })}
-                                  >
-                                    {visibleApiKeys.has(profile.id) ? <EyeOffIcon /> : <EyeIcon />}
-                                  </button>
-                                </div>
-                              </div>
-
-                              <label className="settings-field">
-                                <span>{panelText.baseUrl}</span>
-                                <input
-                                  className="control settings-input"
-                                  value={profile.baseUrl}
-                                  placeholder={
-                                    provider === 'claude' ? 'https://api.anthropic.com' : 'https://api.openai.com/v1'
-                                  }
-                                  onChange={(event) =>
-                                    updateProviderProfile(provider, profile.id, { baseUrl: event.target.value })
-                                  }
-                                />
-                              </label>
-
-                              <p className="settings-note">{panelText.baseUrlNote}</p>
-
-                              <div className="settings-actions provider-profile-actions">
-                                <AppButton
-                                  tone={active ? 'primary' : 'ghost'}
-                                  type="button"
-                                  onClick={() => {
-                                    applyAction({
-                                      type: 'setActiveProviderProfile',
-                                      provider,
-                                      profileId: profile.id,
-                                    })
-                                    setSwitchNotice(null)
-                                  }}
-                                >
-                                  {active ? panelText.activeProfile : panelText.activateProfile}
-                                </AppButton>
-                                <AppButton
-                                  type="button"
-                                  onClick={() =>
-                                    applyAction({
-                                      type: 'removeProviderProfile',
-                                      provider,
-                                      profileId: profile.id,
-                                    })
-                                  }
-                                >
-                                  {panelText.removeProfile}
-                                </AppButton>
-                              </div>
-                            </div>
-                          )
-                        })}
-
-                        <div className="provider-profile-card is-draft">
-                          <label className="settings-field">
-                            <span>{panelText.profileName}</span>
-                            <input
-                              className="control settings-input"
-                              value={draft.name}
-                              onChange={(event) => updateDraft(provider, { name: event.target.value })}
-                            />
-                          </label>
-
-                          <div className="settings-field">
-                            <span>{panelText.apiKey}</span>
-                            <div className="api-key-field">
-                              <input
-                                className="control settings-input"
-                                type={visibleApiKeys.has(`draft-${provider}`) ? 'text' : 'password'}
-                                value={draft.apiKey}
-                                onChange={(event) => updateDraft(provider, { apiKey: event.target.value })}
-                              />
-                              <button
-                                type="button"
-                                className="api-key-eye"
-                                onClick={() => setVisibleApiKeys((prev) => {
-                                  const next = new Set(prev)
-                                  const key = `draft-${provider}`
-                                  if (next.has(key)) next.delete(key)
-                                  else next.add(key)
-                                  return next
-                                })}
-                              >
-                                {visibleApiKeys.has(`draft-${provider}`) ? <EyeOffIcon /> : <EyeIcon />}
-                              </button>
-                            </div>
-                          </div>
-
-                          <label className="settings-field">
-                            <span>{panelText.baseUrl}</span>
-                            <input
-                              className="control settings-input"
-                              value={draft.baseUrl}
-                              placeholder={
-                                provider === 'claude' ? 'https://api.anthropic.com' : 'https://api.openai.com/v1'
-                              }
-                              onChange={(event) => updateDraft(provider, { baseUrl: event.target.value })}
-                            />
-                          </label>
-
-                          <p className="settings-note">{panelText.baseUrlNote}</p>
-
-                          <div className="settings-actions provider-profile-actions">
-                            <AppButton
-                              tone="primary"
-                              type="button"
-                              disabled={!draft.apiKey.trim()}
-                              onClick={() => addProviderProfile(provider)}
-                            >
-                              {panelText.addProfile}
-                            </AppButton>
-                          </div>
-                        </div>
-                      </div>
-                    </div>
-                  )
-                })}
+                {renderProviderProfiles()}
 
               </div>
             ) : (
@@ -10686,155 +11094,13 @@ function App() {
                 <div className="settings-group routing-group routing-group-overview">
                   <h3 className="settings-group-title">{resilientProxyText.tabProxy}</h3>
 
-                  <div className="settings-section">
-                    <p className="settings-note">{resilientProxyText.description}</p>
-                    <p className="settings-note">{resilientProxyText.footnote}</p>
-                  </div>
-
-                  <div className="settings-section">
-                    <div className="settings-toggle-row">
-                      <label>{resilientProxyText.status}</label>
-                      <label className="toggle-switch">
-                        <input
-                          type="checkbox"
-                          checked={appState.settings.resilientProxyEnabled}
-                          onChange={(event) =>
-                            applyAction({
-                              type: 'updateSettings',
-                              patch: { resilientProxyEnabled: event.target.checked },
-                            })
-                          }
-                        />
-                        <span className="toggle-switch-track" />
-                        <span className="toggle-switch-knob" />
-                      </label>
-                    </div>
-                  </div>
-
-                  <div className="settings-section">
-                    <div className="settings-row">
-                      <div className="settings-row-copy">
-                        <label htmlFor="proxy-stall-timeout">{resilientProxyText.stallTimeout}</label>
-                        <span>{appState.settings.resilientProxyStallTimeoutSec}s</span>
-                      </div>
-                      <input
-                        id="proxy-stall-timeout"
-                        className="settings-range"
-                        type="range"
-                        min={10}
-                        max={300}
-                        step={5}
-                        value={appState.settings.resilientProxyStallTimeoutSec}
-                        onChange={(event) =>
-                          applyAction({
-                            type: 'updateSettings',
-                            patch: { resilientProxyStallTimeoutSec: Number(event.target.value) },
-                          })
-                        }
-                      />
-                      <p className="settings-note">{resilientProxyText.stallTimeoutNote}</p>
-                    </div>
-
-                    <div className="settings-row">
-                      <div className="settings-row-copy">
-                        <label htmlFor="proxy-first-byte-timeout">{resilientProxyText.firstByteTimeout}</label>
-                        <span>{appState.settings.resilientProxyFirstByteTimeoutSec}s</span>
-                      </div>
-                      <input
-                        id="proxy-first-byte-timeout"
-                        className="settings-range"
-                        type="range"
-                        min={30}
-                        max={600}
-                        step={10}
-                        value={appState.settings.resilientProxyFirstByteTimeoutSec}
-                        onChange={(event) =>
-                          applyAction({
-                            type: 'updateSettings',
-                            patch: { resilientProxyFirstByteTimeoutSec: Number(event.target.value) },
-                          })
-                        }
-                      />
-                      <p className="settings-note">{resilientProxyText.firstByteTimeoutNote}</p>
-                    </div>
-
-                    <div className="settings-row">
-                      <div className="settings-row-copy">
-                        <label htmlFor="proxy-max-retries">{resilientProxyText.maxRetries}</label>
-                        <span>
-                          {appState.settings.resilientProxyMaxRetries === -1
-                            ? resilientProxyText.unlimited
-                            : appState.settings.resilientProxyMaxRetries}
-                        </span>
-                      </div>
-                      <input
-                        id="proxy-max-retries"
-                        className="settings-range"
-                        type="range"
-                        min={-1}
-                        max={50}
-                        step={1}
-                        value={appState.settings.resilientProxyMaxRetries}
-                        onChange={(event) =>
-                          applyAction({
-                            type: 'updateSettings',
-                            patch: { resilientProxyMaxRetries: Number(event.target.value) },
-                          })
-                        }
-                      />
-                      <p className="settings-note">{resilientProxyText.maxRetriesNote}</p>
-                    </div>
-                  </div>
-
-                  <div className="settings-section">
-                    <div className="settings-section-title">{resilientProxyText.featureTitle}</div>
-                    <ul className="proxy-feature-list">
-                      {resilientProxyText.features.map((feature, i) => (
-                        <li key={i} className="settings-note">{feature}</li>
-                      ))}
-                    </ul>
-                  </div>
+                  {renderResilientProxySettings('')}
                 </div>
 
                 <div className="settings-group routing-group">
                   <h3 className="settings-group-title">{resilientProxyText.statsTitle}</h3>
 
-                  <div className="settings-section">
-                    <div className="proxy-stats-filter" role="group" aria-label={resilientProxyText.statsTimeFilter}>
-                      {(['all', 'session', '1h', '24h'] as const).map((range) => (
-                        <button
-                          key={range}
-                          type="button"
-                          className={`theme-chip${proxyStatsRange === range ? ' is-active' : ''}`}
-                          onClick={() => setProxyStatsRange(range)}
-                        >
-                          {range === 'all' ? resilientProxyText.statsAll
-                            : range === 'session' ? resilientProxyText.statsCurrentSession
-                            : range === '1h' ? resilientProxyText.statsLast1h
-                            : resilientProxyText.statsLast24h}
-                        </button>
-                      ))}
-                    </div>
-
-                    <div className="proxy-stats-grid">
-                      <div className="proxy-stat-card">
-                        <span className="proxy-stat-value">{displayedProxyStats.requests}</span>
-                        <span className="proxy-stat-label">{resilientProxyText.statsRequests}</span>
-                      </div>
-                      <div className="proxy-stat-card">
-                        <span className="proxy-stat-value">{displayedProxyStats.disconnects}</span>
-                        <span className="proxy-stat-label">{resilientProxyText.statsDisconnects}</span>
-                      </div>
-                      <div className="proxy-stat-card">
-                        <span className="proxy-stat-value">{displayedProxyStats.recoverySuccesses}</span>
-                        <span className="proxy-stat-label">{resilientProxyText.statsRecoveries}</span>
-                      </div>
-                      <div className="proxy-stat-card">
-                        <span className="proxy-stat-value">{displayedProxyStats.recoveryFailures}</span>
-                        <span className="proxy-stat-label">{resilientProxyText.statsFailures}</span>
-                      </div>
-                    </div>
-                  </div>
+                  {renderProxyStats()}
                 </div>
               </div>
             )}
@@ -10848,770 +11114,28 @@ function App() {
           aria-labelledby="app-tab-settings"
           hidden={!settingsOpen}
         >
-          <section className="settings-panel">
-            <h2 className="visually-hidden">{text.settingsPanelHeading}</h2>
-            <div className={`settings-panel-columns is-columns-${settingsColumns.length}`}>
-              {settingsColumns.map((columnGroups, index) => (
-                <div key={`settings-column-${index}`} className="settings-panel-column">
-                  {columnGroups}
-                </div>
-              ))}
-            </div>
-            {showLegacySettingsPanel && (
-              <>
-
-            <div className="settings-group">
-              <h3 className="settings-group-title">{text.settingsGroupUpdate}</h3>
-              <div className="settings-section">
-                {appVersion ? (
-                  <p className="settings-note">{text.updateCurrentVersion(appVersion)}</p>
-                ) : null}
-
-                {updateStatus === 'checking' ? (
-                  <div className="update-banner is-checking" role="status">
-                    <span>{text.updateChecking}</span>
-                  </div>
-                ) : null}
-
-                {updateStatus === 'downloading' ? (
-                  <div className="update-banner is-downloading" role="status">
-                    <span>
-                      {updateResult?.latestVersion
-                        ? `${text.updateAvailable(updateResult!.latestVersion!)} — ${text.updateDownloading(downloadProgress)}`
-                        : text.updateDownloading(downloadProgress)}
-                    </span>
-                    <div className="update-progress-bar">
-                      <div
-                        className="update-progress-fill"
-                        style={{ width: `${downloadProgress}%` }}
-                      />
-                    </div>
-                  </div>
-                ) : null}
-
-                {updateStatus === 'ready' && updateResult?.latestVersion ? (
-                  <div className="update-banner is-ready" role="status">
-                    <span>{text.updateReady(updateResult!.latestVersion!)}</span>
-                    <AppButton tone="primary" type="button" onClick={handleInstallUpdate}>
-                      {text.updateInstallNow}
-                    </AppButton>
-                  </div>
-                ) : null}
-
-                {updateStatus === 'installing' ? (
-                  <div className="update-banner is-downloading" role="status">
-                    <span>{text.updateInstalling}</span>
-                  </div>
-                ) : null}
-
-                {updateStatus === 'no-update' ? (
-                  <div className="update-banner is-current" role="status">
-                    <span>{text.updateNoUpdate}</span>
-                  </div>
-                ) : null}
-
-                {updateStatus === 'error' ? (
-                  <div className="update-banner is-error" role="alert">
-                    <span>{updateResult?.error ?? text.updateError}</span>
-                  </div>
-                ) : null}
-
-                <div className="settings-actions">
-                  <AppButton
-                    type="button"
-                    disabled={updateStatus === 'checking' || updateStatus === 'downloading' || updateStatus === 'installing'}
-                    onClick={handleCheckForUpdate}
-                  >
-                    {text.updateCheckNow}
-                  </AppButton>
-                </div>
-              </div>
-            </div>
-
-            <div className="settings-group codex-safety-settings-group">
-              <h3 className="settings-group-title">{text.settingsGroupCodexSafety}</h3>
-              <div className="settings-section">
-                {renderCodexSafetySettings('inline')}
-              </div>
-            </div>
-
-            <div className="settings-group">
-              <h3 className="settings-group-title">{text.settingsGroupAppearance}</h3>
-
-              <div className="settings-section">
-                <label className="settings-field" htmlFor="language-select">
-                  <span>{text.language}</span>
-                  <select
-                    id="language-select"
-                    className="control settings-input"
-                    value={appState.settings.language}
-                    onChange={(event) =>
-                      applyAction({
-                        type: 'updateSettings',
-                        patch: { language: event.target.value as AppState['settings']['language'] },
-                      })
-                    }
-                  >
-                    {onboardingLanguages.map((language) => (
-                      <option key={language.value} value={language.value}>
-                        {`${language.flag} ${language.label}`}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-              </div>
-
-              <div className="settings-section">
-                <div className="settings-section-title">{text.theme}</div>
-                {renderThemeToggle()}
-              </div>
-
-              {renderFontFamilySettings('font-family-select-inline')}
-
-              <div className="settings-section">
-                <div className="settings-row">
-                  <div className="settings-row-copy">
-                    <label htmlFor="ui-scale-range">{text.uiScale}</label>
-                    <span>{Math.round(appState.settings.uiScale * 100)}%</span>
-                  </div>
-                  <input
-                    id="ui-scale-range"
-                    className="settings-range"
-                    type="range"
-                    min={minUiScale}
-                    max={maxUiScale}
-                    step={0.05}
-                    value={appState.settings.uiScale}
-                    onChange={(event) =>
-                      applyAction({
-                        type: 'updateSettings',
-                        patch: { uiScale: Number(event.target.value) },
-                      })
-                    }
-                  />
-                </div>
-
-                <div className="settings-row">
-                  <div className="settings-row-copy">
-                    <label htmlFor="font-scale-range">{text.fontScale}</label>
-                    <span>{Math.round(appState.settings.fontScale * 100)}%</span>
-                  </div>
-                  <input
-                    id="font-scale-range"
-                    className="settings-range"
-                    type="range"
-                    min={minFontScale}
-                    max={maxFontScale}
-                    step={0.05}
-                    value={appState.settings.fontScale}
-                    onChange={(event) =>
-                      applyAction({
-                        type: 'updateSettings',
-                        patch: { fontScale: Number(event.target.value) },
-                      })
-                    }
-                  />
-                </div>
-
-                <div className="settings-row">
-                  <div className="settings-row-copy">
-                    <label htmlFor="line-height-range">{text.lineHeight}</label>
-                    <span>{appState.settings.lineHeightScale.toFixed(2)}x</span>
-                  </div>
-                  <input
-                    id="line-height-range"
-                    className="settings-range"
-                    type="range"
-                    min={minLineHeightScale}
-                    max={maxLineHeightScale}
-                    step={0.05}
-                    value={appState.settings.lineHeightScale}
-                    onChange={(event) =>
-                      applyAction({
-                        type: 'updateSettings',
-                        patch: { lineHeightScale: Number(event.target.value) },
-                      })
-                    }
-                  />
-                </div>
-              </div>
-
-              <div className="settings-actions">
-                <AppButton
-                  type="button"
-                  onClick={() =>
-                    applyAction({
-                      type: 'updateSettings',
-                      patch: {
-                        uiScale: 1,
-                        fontFamily: 'default',
-                        fontScale: 1,
-                        lineHeightScale: 1,
-                        theme: 'light',
-                        customThemeBase: 'dark',
-                        customBaseColor: null,
-                        accentColor: null,
-                      },
-                    })
-                  }
-                >
-                  {text.resetInterfaceDefaults}
-                </AppButton>
-              </div>
-            </div>
-
-
-            <div className="settings-group">
-              <h3 className="settings-group-title">{text.settingsGroupModels}</h3>
-
-              <div className="settings-section">
-                <label className="settings-field" htmlFor="codex-model-input">
-                  <span className="settings-field-label">
-                    <ModelIcon className="settings-field-icon" aria-hidden="true" />
-                    <span className="settings-field-label-text">Codex</span>
-                  </span>
-                  <input
-                    id="codex-model-input"
-                    className="control settings-input"
-                    value={appState.settings.requestModels.codex}
-                    onChange={(event) =>
-                      applyAction({
-                        type: 'updateRequestModels',
-                        patch: { codex: event.target.value },
-                      })
-                    }
-                    placeholder={DEFAULT_CODEX_MODEL}
-                  />
-                </label>
-
-                <label className="settings-field">
-                  <span className="settings-field-label">
-                    <ModelIcon className="settings-field-icon" aria-hidden="true" />
-                    <span className="settings-field-label-text">{text.codexPersonalityLabel}</span>
-                  </span>
-                  <select
-                    className="control settings-input"
-                    value={appState.settings.codexPersonality}
-                    onChange={(event) =>
-                      applyAction({
-                        type: 'updateSettings',
-                        patch: {
-                          codexPersonality: event.target.value as AppState['settings']['codexPersonality'],
-                        },
-                      })
-                    }
-                  >
-                    <option value="default">{text.codexPersonalityDefault}</option>
-                    <option value="none">{text.codexPersonalityNone}</option>
-                    <option value="friendly">{text.codexPersonalityFriendly}</option>
-                    <option value="pragmatic">{text.codexPersonalityPragmatic}</option>
-                  </select>
-                </label>
-                <p className="settings-note">{text.codexPersonalityNote}</p>
-
-                <label className="settings-toggle">
-                  <span>{text.codexFastModeLabel}</span>
-                  <input
-                    type="checkbox"
-                    checked={appState.settings.codexFastMode}
-                    onChange={(event) => handleCodexFastModeToggle(event.target.checked)}
-                  />
-                </label>
-                <p className="settings-note">{text.codexFastModeNote}</p>
-
-                <label className="settings-field" htmlFor="claude-model-input">
-                  <span className="settings-field-label">
-                    <ModelIcon className="settings-field-icon" aria-hidden="true" />
-                    <span className="settings-field-label-text">Claude</span>
-                  </span>
-                  <input
-                    id="claude-model-input"
-                    className="control settings-input"
-                    value={appState.settings.requestModels.claude}
-                    onChange={(event) =>
-                      applyAction({
-                        type: 'updateRequestModels',
-                        patch: { claude: event.target.value },
-                      })
-                    }
-                    placeholder={DEFAULT_CLAUDE_MODEL}
-                  />
-                </label>
-
-                <label className="settings-field" htmlFor="git-agent-model-input">
-                  <span className="settings-field-label">
-                    <ModelIcon className="settings-field-icon" aria-hidden="true" />
-                    <span className="settings-field-label-text">{text.gitAgentModel}</span>
-                  </span>
-                  <input
-                    id="git-agent-model-input"
-                    className="control settings-input"
-                    value={appState.settings.gitAgentModel}
-                    onChange={(event) =>
-                      applyAction({
-                        type: 'updateSettings',
-                        patch: { gitAgentModel: event.target.value },
-                      })
-                    }
-                    placeholder="gpt-6-luna medium"
-                  />
-                </label>
-
-                <p className="settings-note">{text.gitAgentModelNote}</p>
-
-                <label className="settings-field" htmlFor="system-prompt-input">
-                  <span className="settings-field-label">
-                    <ModelIcon className="settings-field-icon" aria-hidden="true" />
-                    <span className="settings-field-label-text">{text.systemPromptLabel}</span>
-                  </span>
-                  <textarea
-                    id="system-prompt-input"
-                    className="control settings-input"
-                    rows={4}
-                    value={appState.settings.systemPrompt}
-                    onChange={(event) =>
-                      applyAction({
-                        type: 'updateSettings',
-                        patch: { systemPrompt: event.target.value },
-                      })
-                    }
-                  />
-                </label>
-
-                <p className="settings-note">{text.systemPromptNote}</p>
-
-                <label className="settings-toggle" htmlFor="cross-provider-skill-reuse-toggle">
-                  <span>{text.crossProviderSkillReuseLabel}</span>
-                  <input
-                    id="cross-provider-skill-reuse-toggle"
-                    type="checkbox"
-                    checked={appState.settings.crossProviderSkillReuseEnabled}
-                    onChange={(event) =>
-                      applyAction({
-                        type: 'updateSettings',
-                        patch: { crossProviderSkillReuseEnabled: event.target.checked },
-                      })
-                    }
-                  />
-                </label>
-
-                <p className="settings-note">{text.crossProviderSkillReuseNote}</p>
-
-                <div className="settings-actions">
-                  <AppButton
-                    type="button"
-                    onClick={() =>
-                      applyAction({
-                        type: 'updateSettings',
-                        patch: { systemPrompt: defaultSystemPrompt },
-                      })
-                    }
-                  >
-                    {text.restoreDefaultSystemPrompt}
-                  </AppButton>
-                  <AppButton
-                    tone="primary"
-                    type="button"
-                    onClick={() => applyAction({ type: 'applyConfiguredModels' })}
-                  >
-                    {text.applyToExistingChats}
-                  </AppButton>
-                </div>
-              </div>
-            </div>
-
-
-            <div className="settings-group">
-              <h3 className="settings-group-title">{text.settingsGroupUtility}</h3>
-
-              <div className="settings-section">
-                {renderCloseBehaviorSettings()}
-
-                <label className="settings-toggle" htmlFor="agent-done-sound-toggle">
-                  <span>{text.agentDoneSoundLabel}</span>
-                  <input
-                    id="agent-done-sound-toggle"
-                    type="checkbox"
-                    checked={appState.settings.agentDoneSoundEnabled}
-                    onChange={(event) =>
-                      applyAction({
-                        type: 'updateSettings',
-                        patch: { agentDoneSoundEnabled: event.target.checked },
-                      })
-                    }
-                  />
-                </label>
-
-                {appState.settings.agentDoneSoundEnabled && (
-                  <div className="settings-row">
-                    <div className="settings-row-copy">
-                      <label htmlFor="agent-done-sound-volume">{text.agentDoneSoundVolumeLabel}</label>
-                      <span>{Math.round(appState.settings.agentDoneSoundVolume * 100)}%</span>
-                    </div>
-                    <input
-                      id="agent-done-sound-volume"
-                      className="settings-range"
-                      type="range"
-                      min={0}
-                      max={1}
-                      step={0.05}
-                      value={appState.settings.agentDoneSoundVolume}
-                      onChange={(event) =>
-                        applyAction({
-                          type: 'updateSettings',
-                          patch: { agentDoneSoundVolume: Number(event.target.value) },
-                        })
-                      }
-                      onMouseUp={(event) => {
-                        const audio = new Audio(getAgentDoneSoundUrl())
-                        audio.volume = Number((event.target as HTMLInputElement).value)
-                        audio.play().catch(() => {})
-                      }}
-                      onTouchEnd={(event) => {
-                        const audio = new Audio(getAgentDoneSoundUrl())
-                        audio.volume = Number((event.target as HTMLInputElement).value)
-                        audio.play().catch(() => {})
-                      }}
-                    />
-                  </div>
-                )}
-
-                <label className="settings-toggle" htmlFor="all-agents-done-sound-toggle">
-                  <span>{text.allAgentsDoneSoundLabel}</span>
-                  <input
-                    id="all-agents-done-sound-toggle"
-                    type="checkbox"
-                    checked={appState.settings.allAgentsDoneSoundEnabled}
-                    onChange={(event) =>
-                      applyAction({
-                        type: 'updateSettings',
-                        patch: { allAgentsDoneSoundEnabled: event.target.checked },
-                      })
-                    }
-                  />
-                </label>
-
-                {appState.settings.allAgentsDoneSoundEnabled && (
-                  <div className="settings-row">
-                    <div className="settings-row-copy">
-                      <label htmlFor="all-agents-done-sound-volume">{text.agentDoneSoundVolumeLabel}</label>
-                      <span>{Math.round(appState.settings.allAgentsDoneSoundVolume * 100)}%</span>
-                    </div>
-                    <input
-                      id="all-agents-done-sound-volume"
-                      className="settings-range"
-                      type="range"
-                      min={0}
-                      max={1}
-                      step={0.05}
-                      value={appState.settings.allAgentsDoneSoundVolume}
-                      onChange={(event) =>
-                        applyAction({
-                          type: 'updateSettings',
-                          patch: { allAgentsDoneSoundVolume: Number(event.target.value) },
-                        })
-                      }
-                      onMouseUp={(event) => {
-                        const audio = new Audio(getAllAgentsDoneSoundUrl())
-                        audio.volume = Number((event.target as HTMLInputElement).value)
-                        audio.play().catch(() => {})
-                      }}
-                      onTouchEnd={(event) => {
-                        const audio = new Audio(getAllAgentsDoneSoundUrl())
-                        audio.volume = Number((event.target as HTMLInputElement).value)
-                        audio.play().catch(() => {})
-                      }}
-                    />
-                  </div>
-                )}
-
-                {renderWakeTimerSettings()}
-                {renderAutoUrgeSettings()}
-
-              </div>
-            </div>
-
-            <div className="settings-group">
-              <h3 className="settings-group-title">{text.settingsGroupExperimental}</h3>
-
-              <div className="settings-section">
-                <label className="settings-toggle" htmlFor="git-card-toggle">
-                  <span>Git</span>
-                  <input
-                    id="git-card-toggle"
-                    type="checkbox"
-                    checked={appState.settings.gitCardEnabled}
-                    onChange={(event) =>
-                      applyAction({
-                        type: 'updateSettings',
-                        patch: { gitCardEnabled: event.target.checked },
-                      })
-                    }
-                  />
-                </label>
-
-                <label className="settings-toggle" htmlFor="filetree-card-toggle">
-                  <span>{text.emptyStateFilesTitle}</span>
-                  <input
-                    id="filetree-card-toggle"
-                    type="checkbox"
-                    checked={appState.settings.fileTreeCardEnabled}
-                    onChange={(event) =>
-                      applyAction({
-                        type: 'updateSettings',
-                        patch: { fileTreeCardEnabled: event.target.checked },
-                      })
-                    }
-                  />
-                </label>
-
-                <label className="settings-toggle" htmlFor="stickynote-card-toggle">
-                  <span>{text.stickyNoteTitle}</span>
-                  <input
-                    id="stickynote-card-toggle"
-                    type="checkbox"
-                    checked={appState.settings.stickyNoteCardEnabled}
-                    onChange={(event) =>
-                      applyAction({
-                        type: 'updateSettings',
-                        patch: { stickyNoteCardEnabled: event.target.checked },
-                      })
-                    }
-                  />
-                </label>
-
-                <label className="settings-toggle" htmlFor="experimental-stats-toggle">
-                  <span>{text.experimentalStatsLabel}</span>
-                  <input
-                    id="experimental-stats-toggle"
-                    type="checkbox"
-                    checked={appState.settings.experimentalStatsEnabled}
-                    onChange={(event) =>
-                      applyAction({
-                        type: 'updateSettings',
-                        patch: { experimentalStatsEnabled: event.target.checked },
-                      })
-                    }
-                  />
-                </label>
-
-                <label className="settings-toggle" htmlFor="experimental-weather-toggle">
-                  <span>{text.experimentalWeatherLabel}</span>
-                  <input
-                    id="experimental-weather-toggle"
-                    type="checkbox"
-                    checked={appState.settings.experimentalWeatherEnabled}
-                    onChange={(event) =>
-                      applyAction({
-                        type: 'updateSettings',
-                        patch: { experimentalWeatherEnabled: event.target.checked },
-                      })
-                    }
-                  />
-                </label>
-
-                {appState.settings.experimentalWeatherEnabled && (
-                  <div className="settings-sub-field" ref={weatherCityWrapperRef}>
-                    <div className="weather-city-input-wrapper">
-                      <input
-                        id="weather-city-input"
-                        className="control settings-input"
-                        value={weatherCityDraft}
-                        onChange={(e) => handleWeatherCityInput(e.target.value)}
-                        onKeyDown={handleWeatherCityKeyDown}
-                        onFocus={() => {
-                          if (weatherCitySuggestions.length > 0) setWeatherCitySuggestionsOpen(true)
-                        }}
-                        placeholder={text.weatherCityPlaceholder}
-                        autoComplete="off"
-                      />
-                      {weatherCitySuggestionsOpen && weatherCitySuggestions.length > 0 && (
-                        <div className="weather-city-suggestions">
-                          {weatherCitySuggestions.map((s, i) => (
-                            <button
-                              key={`${s.latitude}-${s.longitude}`}
-                              type="button"
-                              className={`weather-city-suggestion${i === weatherCitySelectedIndex ? ' is-selected' : ''}`}
-                              onMouseDown={() => handleWeatherCitySelect(s)}
-                              onMouseEnter={() => setWeatherCitySelectedIndex(i)}
-                            >
-                              <span className="weather-city-suggestion-name">{s.name}</span>
-                              <span className="weather-city-suggestion-detail">
-                                {[s.admin1, s.country].filter(Boolean).join(', ')}
-                              </span>
-                            </button>
-                          ))}
-                        </div>
-                      )}
-                    </div>
-                  </div>
-                )}
-
-                <label className="settings-toggle" htmlFor="experimental-music-toggle">
-                  <span>{text.experimentalMusicLabel}</span>
-                  <input
-                    id="experimental-music-toggle"
-                    type="checkbox"
-                    checked={appState.settings.experimentalMusicEnabled}
-                    onChange={(event) =>
-                      applyAction({
-                        type: 'updateSettings',
-                        patch: { experimentalMusicEnabled: event.target.checked },
-                      })
-                    }
-                  />
-                </label>
-
-                <label className="settings-toggle" htmlFor="experimental-whitenoise-toggle">
-                  <span>{text.experimentalWhiteNoiseLabel}</span>
-                  <input
-                    id="experimental-whitenoise-toggle"
-                    type="checkbox"
-                    checked={appState.settings.experimentalWhiteNoiseEnabled}
-                    onChange={(event) =>
-                      applyAction({
-                        type: 'updateSettings',
-                        patch: { experimentalWhiteNoiseEnabled: event.target.checked },
-                      })
-                    }
-                  />
-                </label>
-
-              </div>
-            </div>
-
-            {showSettingsSetupPanel ? (
-              <div className="settings-group">
-                <h3 className="settings-group-title">{text.settingsGroupEnvironment}</h3>
-
-                <div className="settings-section">
-                  <p className="settings-note">{panelText.setupDescription}</p>
-
-                  {hasMissingEnvironmentChecks ? (
-                    <div className="setup-missing-shell">
-                      <div className="settings-section-title">{panelText.setupMissingListTitle}</div>
-                      <p className="settings-note">{panelText.setupMissingListDescription}</p>
-                      <ul className="setup-missing-list">
-                        {missingEnvironmentChecks.map((check) => (
-                          <li key={check.id}>{check.label}</li>
-                        ))}
-                      </ul>
-                    </div>
-                  ) : null}
-
-                  {settingsNotice ? (
-                    <div className="panel-alert" role="alert">
-                      {settingsNotice}
-                    </div>
-                  ) : null}
-
-                  <div className={`setup-status-card is-${setupStatus?.state ?? 'idle'}`}>
-                    <strong>{setupHeadline}</strong>
-                    <p className="settings-note">{setupStatusMessage}</p>
-                  </div>
-
-                  <div className="settings-actions">
-                    {hasMissingEnvironmentChecks ? (
-                      <AppButton
-                        tone="primary"
-                        type="button"
-                        disabled={setupStatusPending || setupStatus?.state === 'running'}
-                        onClick={() => void handleRunSetup()}
-                      >
-                        {hasRunSetup ? panelText.rerunSetup : panelText.installMissingTools}
-                      </AppButton>
-                    ) : null}
-                    <AppButton
-                      type="button"
-                      disabled={setupStatusPending}
-                      onClick={() => {
-                        void loadSetup()
-                        void syncProviderStatuses()
-                      }}
-                    >
-                      {panelText.refreshSetup}
-                    </AppButton>
-                  </div>
-
-                  <div className="cli-update-shell">
-                    <div className="settings-section-title">{panelText.cliUpdateTitle}</div>
-                    <p className="settings-note">{panelText.cliUpdateDescription}</p>
-                    <div className="cli-update-grid">
-                      <label className="settings-field" htmlFor="cli-update-target">
-                        <span>{panelText.cliUpdateTarget}</span>
-                        <select
-                          id="cli-update-target"
-                          className="control settings-input"
-                          value={cliUpdateTarget}
-                          onChange={(event) =>
-                            setCliUpdateTarget(event.target.value as 'all' | 'claude' | 'codex')
-                          }
-                        >
-                          <option value="all">{panelText.cliUpdateTargetAll}</option>
-                          <option value="claude">Claude</option>
-                          <option value="codex">Codex</option>
-                        </select>
-                      </label>
-
-                      <label className="settings-field" htmlFor="cli-update-version">
-                        <span>{panelText.cliUpdateVersion}</span>
-                        <input
-                          id="cli-update-version"
-                          className="control settings-input"
-                          value={cliUpdateVersion}
-                          placeholder={panelText.cliUpdateVersionPlaceholder}
-                          onChange={(event) => setCliUpdateVersion(event.target.value)}
-                        />
-                      </label>
-                    </div>
-                    <p className="settings-note">{panelText.cliUpdateVersionNote}</p>
-                    <div className="settings-actions cli-update-actions">
-                      <AppButton
-                        type="button"
-                        disabled={setupStatusPending || setupStatus?.state === 'running'}
-                        onClick={() => void handleUpdateCli()}
-                      >
-                        {panelText.cliUpdateButton}
-                      </AppButton>
-                    </div>
-                  </div>
-
-                  {hasSetupLogs ? (
-                    <div className="setup-log-shell">
-                      <div className="settings-section-title">{panelText.setupLogs}</div>
-                      <div className="setup-log-list">
-                        {setupLogs.map((entry, index) => (
-                          <div key={`${entry.createdAt}-${index}`} className={`setup-log-entry is-${entry.level}`}>
-                            {entry.message}
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  ) : null}
-                </div>
-              </div>
-            ) : null}
-
-            <div className="settings-group settings-group-danger">
-              <h3 className="settings-group-title">{text.settingsGroupData}</h3>
-
-              <div className="settings-section settings-danger-section">
-                <p className="settings-note">{text.clearUserDataDialogBody}</p>
-
-                <div className="settings-actions">
-                  <AppButton
-                    type="button"
-                    className="settings-danger-button"
-                    onClick={openClearUserDataDialog}
-                  >
-                    {text.clearUserDataButton}
-                  </AppButton>
-                </div>
-              </div>
-            </div>
-              </>
-            )}
-          </section>
+          <SettingsPanel
+            language={appState.settings.language}
+            heading={text.settingsPanelHeading}
+            items={settingsItems}
+            focusRequest={settingsFocusRequest}
+            banner={
+              <EnvironmentHealthCard
+                language={appState.settings.language}
+                health={environmentHealth}
+                pending={healthFixPending || setupStatusPending}
+                onFix={(fix) => void handleHealthFix(fix)}
+                onRefresh={() => void refreshEnvironmentHealth()}
+              />
+            }
+          />
+          <input
+            ref={routingImportInputRef}
+            hidden
+            type="file"
+            accept=".db,.sql,application/octet-stream,text/plain"
+            onChange={(event) => void handleCcSwitchFileImport(event)}
+          />
         </section>
       </div>
 
@@ -11631,6 +11155,9 @@ function App() {
             <WorkspaceColumn
             key={column.id}
             column={column}
+            subagentColumns={appState.columns}
+            getSubagentChildTabs={getSubagentChildTabs}
+            onNavigateToCard={navigateToSubagentCard}
             providers={providerByName}
             language={appState.settings.language}
             systemPrompt={appState.settings.systemPrompt}
@@ -12037,17 +11564,33 @@ function App() {
 
                 <div
                   className={`onboarding-summary-item${
-                    onboardingStage === 'import'
+                    onboardingStage === 'account'
                       ? ' is-current'
-                      : onboardingStage === 'complete'
+                      : onboardingStage === 'model' || onboardingStage === 'complete'
                         ? ' is-complete'
                         : ''
                   }`}
                 >
                   <div className="onboarding-summary-number">2</div>
                   <div>
-                    <strong>{onboardingText.importStepTitle}</strong>
+                    <strong>{wizardText.stepAccount}</strong>
                     <p>{onboardingImportSummary}</p>
+                  </div>
+                </div>
+
+                <div
+                  className={`onboarding-summary-item${
+                    onboardingStage === 'model'
+                      ? ' is-current'
+                      : onboardingStage === 'complete'
+                        ? ' is-complete'
+                        : ''
+                  }`}
+                >
+                  <div className="onboarding-summary-number">3</div>
+                  <div>
+                    <strong>{wizardText.stepModel}</strong>
+                    <p>{onboardingModelSummary}</p>
                   </div>
                 </div>
               </div>
@@ -12095,6 +11638,76 @@ function App() {
                     ) : null}
                   </>
                 ) : null}
+
+                {onboardingStage === 'account' ? (
+                  <div className="onboarding-account-form" data-testid="onboarding-account-form">
+                    <label className="settings-field" htmlFor="onboarding-account-provider">
+                      <span>{wizardText.accountProvider}</span>
+                      <select
+                        id="onboarding-account-provider"
+                        className="control settings-input"
+                        value={onboardingAccountDraft.provider}
+                        onChange={(event) =>
+                          setOnboardingAccountDraft((prev) => ({
+                            ...prev,
+                            provider: event.target.value === 'codex' ? 'codex' : 'claude',
+                          }))
+                        }
+                      >
+                        <option value="claude">Claude</option>
+                        <option value="codex">Codex</option>
+                      </select>
+                    </label>
+                    <label className="settings-field" htmlFor="onboarding-account-api-key">
+                      <span>{wizardText.accountApiKey}</span>
+                      <input
+                        id="onboarding-account-api-key"
+                        className="control settings-input"
+                        type="password"
+                        autoComplete="off"
+                        value={onboardingAccountDraft.apiKey}
+                        onChange={(event) =>
+                          setOnboardingAccountDraft((prev) => ({ ...prev, apiKey: event.target.value }))
+                        }
+                      />
+                    </label>
+                    <label className="settings-field" htmlFor="onboarding-account-base-url">
+                      <span>{wizardText.accountBaseUrl}</span>
+                      <input
+                        id="onboarding-account-base-url"
+                        className="control settings-input"
+                        value={onboardingAccountDraft.baseUrl}
+                        placeholder={
+                          onboardingAccountDraft.provider === 'claude'
+                            ? 'https://api.anthropic.com'
+                            : 'https://api.openai.com/v1'
+                        }
+                        onChange={(event) =>
+                          setOnboardingAccountDraft((prev) => ({ ...prev, baseUrl: event.target.value }))
+                        }
+                      />
+                    </label>
+                  </div>
+                ) : null}
+
+                {onboardingStage === 'model' ? (
+                  <div className="onboarding-model-form" data-testid="onboarding-model-form">
+                    {(['claude', 'codex'] as const).map((provider) => (
+                      <label className="settings-field" htmlFor={`onboarding-model-${provider}`} key={provider}>
+                        <span>{getProviderLabel(onboardingLanguage, provider)}</span>
+                        <input
+                          id={`onboarding-model-${provider}`}
+                          className="control settings-input"
+                          value={appState.settings.requestModels[provider]}
+                          placeholder={provider === 'claude' ? DEFAULT_CLAUDE_MODEL : DEFAULT_CODEX_MODEL}
+                          onChange={(event) =>
+                            applyAction({ type: 'updateRequestModels', patch: { [provider]: event.target.value } })
+                          }
+                        />
+                      </label>
+                    ))}
+                  </div>
+                ) : null}
               </div>
 
               <div className="settings-actions onboarding-actions">
@@ -12127,27 +11740,43 @@ function App() {
                   </>
                 ) : null}
 
-                {onboardingStage === 'import' ? (
+                {onboardingStage === 'account' ? (
                   <>
+                    {onboardingStatus?.ccSwitch.available ? (
+                      <AppButton
+                        tone="primary"
+                        type="button"
+                        disabled={routingImportPending}
+                        onClick={() => void handleOnboardingImport()}
+                      >
+                        {onboardingText.importNow}
+                      </AppButton>
+                    ) : null}
                     <AppButton
-                      tone="primary"
+                      tone={onboardingStatus?.ccSwitch.available ? 'ghost' : 'primary'}
                       type="button"
-                      disabled={routingImportPending}
-                      onClick={() => void handleOnboardingImport()}
+                      disabled={routingImportPending || !onboardingAccountDraft.apiKey.trim()}
+                      onClick={saveOnboardingAccount}
                     >
-                      {onboardingText.importNow}
+                      {wizardText.accountSave}
                     </AppButton>
                     <AppButton
                       type="button"
                       disabled={routingImportPending}
                       onClick={() => {
-                        setOnboardingImportState('skipped')
+                        setOnboardingAccountState('skipped')
                         setOnboardingImportError(null)
                       }}
                     >
                       {onboardingText.skipForNow}
                     </AppButton>
                   </>
+                ) : null}
+
+                {onboardingStage === 'model' ? (
+                  <AppButton tone="primary" type="button" onClick={() => setOnboardingModelState('confirmed')}>
+                    {wizardText.modelConfirm}
+                  </AppButton>
                 ) : null}
 
                 {onboardingStage === 'complete' ? (

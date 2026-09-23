@@ -156,7 +156,7 @@ export function useOnboarding(deps: UseOnboardingDeps) {
       : !onboardingEnvironmentReady && !onboardingSetupSkipped
         ? 'setup'
         : onboardingStatus.ccSwitch.available && onboardingImportState === 'idle'
-          ? 'import'
+          ? 'account'
           : 'complete'
   const onboardingSetupSummary = onboardingSetupSkipped
     ? onboardingText.setupSkipped
@@ -184,7 +184,7 @@ export function useOnboarding(deps: UseOnboardingDeps) {
       ? onboardingText.loadingTitle
       : onboardingStage === 'setup'
         ? onboardingText.setupStepTitle
-        : onboardingStage === 'import'
+        : onboardingStage === 'account'
           ? onboardingText.importStepTitle
           : onboardingText.completeTitle
   const onboardingCurrentDescription =
@@ -196,7 +196,7 @@ export function useOnboarding(deps: UseOnboardingDeps) {
           : onboardingMissingTools
             ? onboardingText.missingTools(onboardingMissingTools)
             : onboardingText.runningSetup
-        : onboardingStage === 'import'
+        : onboardingStage === 'account'
           ? onboardingText.importPrompt(onboardingStatus?.ccSwitch.source ?? '~/.cc-switch/cc-switch.db')
           : onboardingText.completeDescription
   const onboardingSetupButtonLabel =

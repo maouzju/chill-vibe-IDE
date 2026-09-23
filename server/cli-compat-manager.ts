@@ -116,19 +116,15 @@ type Task = NonNullable<CliCompatEntry['task']>
 
 export class CliCompatManager {
   private readonly tasks = new Map<Provider, Task>()
-  private readonly systemVersionCache = new Map<string, Promise<string | null>>()
+  private readonly resolveSystemCommand: (provider: Provider) => Promise<string | null | undefined>
+  private readonly readSystemVersion: (command: string) => Promise<string | null>
 
   constructor(
-    private readonly resolveSystemCommand: (provider: Provider) => Promise<string | null | undefined>,
-  ) {}
-
-  private getSystemVersion(command: string) {
-    let cached = this.systemVersionCache.get(command)
-    if (!cached) {
-      cached = readCliVersion(command)
-      this.systemVersionCache.set(command, cached)
-    }
-    return cached
+    resolveSystemCommand: (provider: Provider) => Promise<string | null | undefined>,
+    readSystemVersion: (command: string) => Promise<string | null> = readCliVersion,
+  ) {
+    this.resolveSystemCommand = resolveSystemCommand
+    this.readSystemVersion = readSystemVersion
   }
 
   async getStatus(): Promise<CliCompatStatus> {
@@ -145,7 +141,7 @@ export class CliCompatManager {
           installed: existsSync(getCompatBinPath(provider, compatibleVersion)),
           active: activeVersion === compatibleVersion,
           activeVersion,
-          systemVersion: systemCommand ? await this.getSystemVersion(systemCommand) : null,
+          systemVersion: systemCommand ? await this.readSystemVersion(systemCommand) : null,
           task: this.tasks.get(provider) ?? null,
         }
       }),

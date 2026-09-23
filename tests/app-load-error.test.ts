@@ -24,10 +24,10 @@ test('generic load errors no longer tell users to start a browser dev server', (
 test('startup recovery renders as a standalone recovery shell instead of mounting the full blurred board', async () => {
   const source = await readFile(path.join(process.cwd(), 'src', 'App.tsx'), 'utf8')
   const startupRecoveryStart = source.indexOf('if (startupRecovery) {')
-  const settingsGroupStart = source.indexOf('const settingsGroupNodes:')
+  const nextRenderHelperStart = source.indexOf('const renderRoutingToggle =')
   const startupRecoveryBlock =
-    startupRecoveryStart >= 0 && settingsGroupStart > startupRecoveryStart
-      ? source.slice(startupRecoveryStart, settingsGroupStart)
+    startupRecoveryStart >= 0 && nextRenderHelperStart > startupRecoveryStart
+      ? source.slice(startupRecoveryStart, nextRenderHelperStart)
       : ''
 
   assert.match(startupRecoveryBlock, /if \(startupRecovery\)/)

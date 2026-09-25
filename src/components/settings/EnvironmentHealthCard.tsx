@@ -39,6 +39,12 @@ const describe = (
     }
     return light.viaCliLogin ? text.detail.accountCliLogin : text.detail.accountOk
   }
+  if (light.task?.status === 'running') {
+    return text.detail.compatDownloading
+  }
+  if (light.task?.status === 'failed') {
+    return text.detail.compatFailed(light.task.message)
+  }
   return light.state === 'ok'
     ? text.detail.versionOk
     : text.detail.versionMismatch(names(light.providers))
@@ -90,7 +96,7 @@ export function EnvironmentHealthCard({ language, health, pending, onFix, onRefr
                   disabled={pending}
                   onClick={() => onFix(light.fix as HealthFix)}
                 >
-                  {text.fix[light.fix.kind]}
+                  {light.task?.status === 'running' ? text.fixRunning : text.fix[light.fix.kind]}
                 </AppButton>
               ) : null}
             </li>

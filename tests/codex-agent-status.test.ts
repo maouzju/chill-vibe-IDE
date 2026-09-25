@@ -554,3 +554,38 @@ test('a child thread without model fields stays free of undefined model keys', (
   assert.equal(agent !== undefined && 'model' in agent, false)
   assert.equal(agent !== undefined && 'reasoningEffort' in agent, false)
 })
+
+test('spawnAgent collab call supplies the child model when thread/started never reports one', () => {
+  // 2026-09-25 实测：Codex 子 agent 只经 subAgentActivity 入表，面板无模型；
+  // 而父线程的 collabAgentToolCall(spawnAgent) 带着 model/reasoningEffort。
+  const tracker = createCodexAgentStatusTracker({ rootThreadId })
+  const spawn = {
+    method: 'item/completed',
+    params: {
+      threadId: rootThreadId,
+      turnId: 'turn-root',
+      item: {
+        id: 'spawn-1',
+        type: 'collabAgentToolCall',
+        tool: 'spawnAgent',
+        status: 'completed',
+        senderThreadId: rootThreadId,
+        receiverThreadIds: [childThreadId],
+        prompt: null,
+        model: 'gpt-6-sol',
+        reasoningEffort: 'high',
+        agentsStates: {},
+      },
+    },
+  }
+  // 两种先后顺序都要覆盖：spawn 先到，或子 agent 先入表。
+  tracker.handleNotification(spawn)
+  tracker.handleNotification(subAgentActivity(childThreadId, '/root/broad_review'))
+  assert.equal(tracker.snapshot().agents[0]?.model, 'gpt-6-sol')
+  assert.equal(tracker.snapshot().agents[0]?.reasoningEffort, 'high')
+
+  const later = createCodexAgentStatusTracker({ rootThreadId })
+  later.handleNotification(subAgentActivity(childThreadId, '/root/broad_review'))
+  const update = later.handleNotification(spawn)
+  assert.equal(update.activity?.agents[0]?.model, 'gpt-6-sol')
+})

@@ -184,6 +184,7 @@ export const createCodexAgentStatusTracker = ({
   let rootCompletionDeferred = false
   const order: string[] = []
   const agents = new Map<string, TrackedAgent>()
+  const spawnModels = new Map<string, { model?: string; reasoningEffort?: string }>()
 
   const ensureAgent = (
     threadId: string,
@@ -197,6 +198,7 @@ export const createCodexAgentStatusTracker = ({
         status: 'pendingInit',
         previewOrder: [],
         previewByItemId: new Map(),
+        ...spawnModels.get(threadId),
       }
       agents.set(threadId, agent)
     }
@@ -345,6 +347,31 @@ export const createCodexAgentStatusTracker = ({
     const sourceThreadId = readString(params, 'threadId')
     const item = readRecord(params, 'item')
     const itemType = item ? readItemType(item) : undefined
+
+    // 症状：Codex 子 agent 面板只有路径和"运行中"，看不到派的是什么模型（2026-09-25，v0.20.27）。
+    // 根因：模型原来只从 thread/started 读，实测子 agent 常只经 subAgentActivity 入表；
+    //   而父线程的 collabAgentToolCall(spawnAgent) 自带 model/reasoningEffort（spawn_agent 参数原样）。
+    // 为什么不删 thread/started 那路：它反映继承父模型的情况，两路都是权威来源，谁先到都记下。
+    if (item && itemType === 'collabAgentToolCall' && readString(item, 'tool') === 'spawnAgent') {
+      const model = readString(item, 'model')
+      const reasoningEffort = readString(item, 'reasoningEffort')
+      const receivers = Array.isArray(item.receiverThreadIds) ? item.receiverThreadIds : []
+      let changed = false
+      if (model || reasoningEffort) {
+        for (const receiver of receivers) {
+          if (typeof receiver !== 'string' || !receiver) continue
+          spawnModels.set(receiver, { model, reasoningEffort })
+          const agent = agents.get(receiver)
+          if (agent) {
+            ensureAgent(receiver, { model, reasoningEffort })
+            changed = true
+          }
+        }
+      }
+      if (changed) {
+        return settleUpdate(sourceThreadId !== rootThreadId, true)
+      }
+    }
 
     if (item && itemType === 'subAgentActivity') {
       const agentThreadId = readString(item, 'agentThreadId')

@@ -578,3 +578,35 @@ test('a synthetic Workflow entry also picks up its model from the sidechain', ()
   assert.equal(update.handled, false)
   assert.equal(update.activity?.agents[0]?.model, 'claude-sonnet-5')
 })
+
+// 2026-09-25 用户实测：主回合用 SendMessage 续跑一个已完成的子代理，回执 toolUseResult 带
+// resumedAgentId，面板整段空白。
+test('SendMessage 续跑已完成的子代理时面板重新显示它', () => {
+  const tracker = createClaudeAgentStatusTracker()
+  tracker.handleEvent(taskStarted())
+  tracker.handleEvent(taskNotification('completed'))
+  assert.equal(tracker.hasRunningAgents(), false)
+
+  const resumed = tracker.handleEvent({
+    type: 'user',
+    message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'toolu_send', content: [{ type: 'text', text: JSON.stringify({ success: true, resumedAgentId: taskId }) }] }] },
+  })
+  assert.equal(resumed.activity?.agents.length, 1)
+  assert.equal(resumed.activity?.agents[0].status, 'running')
+  assert.equal(tracker.hasBackgroundAgents(), true)
+
+  // 续跑后 CLI 的 task_started / progress 不能再被终态守卫丢掉
+  const started = tracker.handleEvent(taskStarted())
+  assert.equal(started.activity?.agents[0].status, 'running')
+  tracker.handleEvent(taskNotification('completed'))
+  assert.equal(tracker.hasRunningAgents(), false)
+})
+
+test('已完成子代理再次收到 task_started 时复活', () => {
+  const tracker = createClaudeAgentStatusTracker()
+  tracker.handleEvent(taskStarted())
+  tracker.handleEvent(taskNotification('completed'))
+  const update = tracker.handleEvent(taskStarted())
+  assert.equal(update.activity?.agents.length, 1)
+  assert.equal(update.activity?.agents[0].status, 'running')
+})

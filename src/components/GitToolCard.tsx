@@ -136,8 +136,6 @@ export const GitToolCard = ({
     commitingBlocked,
     commitNewPending,
   } = operationState
-  const agentAnalysisPending =
-    agentPanelOpen && (agentPhase.kind === 'idle' || agentPhase.kind === 'analyzing')
 
   const operationContext = useMemo<GitOperationContext>(
     () => ({
@@ -417,10 +415,6 @@ export const GitToolCard = ({
 
     return message
   }
-  const analyzeButtonLabel = agentAnalysisPending
-    ? text.analyzing.replace(/[\s.。…]+$/u, '')
-    : text.analyzeChanges
-
   // 后台操作产生的通知优先展示，其次才是本卡片本地的刷新错误等提示
   const displayNotice = operationState.notice ?? notice
 
@@ -642,21 +636,6 @@ export const GitToolCard = ({
     workspacePath,
   ])
 
-  const handleAnalyzeToggle = useCallback(async () => {
-    if (agentPanelOpen) {
-      gitOperationHub.closeAgentPanel(workspacePath)
-      return
-    }
-
-    const statusForAnalysis = await ensureFullGitStatus()
-
-    if (!statusForAnalysis) {
-      return
-    }
-
-    void gitOperationHub.openAgentAnalysis(operationContext, statusForAnalysis)
-  }, [agentPanelOpen, ensureFullGitStatus, operationContext, workspacePath])
-
   const handleCloseAgentPanel = useCallback(() => {
     gitOperationHub.closeAgentPanel(workspacePath)
   }, [workspacePath])
@@ -845,16 +824,6 @@ export const GitToolCard = ({
                     onClick={handleCommitNew}
                   >
                     {text.commitNew}
-                  </button>
-                </HoverTooltip>
-                <HoverTooltip content={text.analyzeChangesTooltip}>
-                  <button
-                    type="button"
-                    className="git-tool-button"
-                    disabled={isBusy || gitStatus.clean || syncPanelOpen || agentAnalysisPending}
-                    onClick={() => void handleAnalyzeToggle()}
-                  >
-                    {analyzeButtonLabel}
                   </button>
                 </HoverTooltip>
               {syncButton}

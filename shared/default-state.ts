@@ -1559,6 +1559,7 @@ export const createColumn = (
     model,
     width: normalizeColumnWidth(overrides.width),
     ...(overrides.docked === true ? { docked: true } : {}),
+    ...(overrides.docked === true && typeof overrides.dockedOrder === 'number' && Number.isFinite(overrides.dockedOrder) ? { dockedOrder: overrides.dockedOrder } : {}),
     layout: normalizeLayoutNode(overrides.layout, cards),
     cards,
   }

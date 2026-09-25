@@ -1843,38 +1843,6 @@ const mockMissingEnvironmentStatus = async (page: Page) => {
   })
 }
 
-const mockGitAnalysisResult = async (page: Page, content: string) => {
-  await page.evaluate((analysisContent) => {
-    const dispatchStreamEvent = (subscriptionId: string, eventName: string, data: unknown) => {
-      window.dispatchEvent(
-        new CustomEvent('chill-vibe:chat-stream', {
-          detail: {
-            subscriptionId,
-            event: eventName,
-            data,
-          },
-        }),
-      )
-    }
-
-    if (!window.electronAPI) {
-      throw new Error('Electron bridge is unavailable.')
-    }
-
-    window.electronAPI.requestChat = async () => ({ streamId: 'git-analysis-stream' })
-    window.electronAPI.stopChat = async () => undefined
-    window.electronAPI.subscribeChatStream = async (_streamId, subscriptionId) => {
-      window.setTimeout(() => {
-        dispatchStreamEvent(subscriptionId, 'assistant_message', {
-          itemId: 'git-analysis-result',
-          content: analysisContent,
-        })
-        dispatchStreamEvent(subscriptionId, 'done', {})
-      }, 20)
-    }
-  }, content)
-}
-
 const installMockMusicApis = async (page: Page) => {
   await page.addInitScript((coverBase64) => {
     const coverUrl = `data:image/gif;base64,${coverBase64}`
@@ -6915,7 +6883,7 @@ test('git tool card stays legible across themes and exposes local changes', asyn
   await expect(page.getByText('feature/git-tool-card')).toBeVisible()
   await expect(gitActionsBar).toBeVisible()
   await expect(page.locator('.git-dashboard-summary-count')).toContainText('3')
-  await expect(page.getByRole('button', { name: 'Analyze changes' })).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Analyze changes' })).toHaveCount(0)
   await expect(page.getByRole('button', { name: 'Commit new' })).toBeVisible()
   await expect(fullGitButton).toBeVisible()
   await expect(page.locator('.reasoning-select')).toHaveCount(0)
@@ -7144,7 +7112,7 @@ for (const theme of ['dark', 'light'] as const) {
     await expect(summaryTop).toBeVisible()
     await expect(fileList).toBeVisible()
     await expect(actionBar).toBeVisible()
-    await expect(actionBar.getByRole('button', { name: 'Analyze changes' })).toBeVisible()
+    await expect(actionBar.getByRole('button', { name: 'Analyze changes' })).toHaveCount(0)
     await expect(actionBar.getByRole('button', { name: 'Sync' })).toBeVisible()
     await expect(actionBar.getByRole('button', { name: 'Full Git' })).toBeVisible()
 
@@ -7715,191 +7683,6 @@ test('git full dialog header stays compact on a wide light-theme card', async ({
   })
 })
 
-for (const theme of ['dark', 'light'] as const) {
-  test(`git analysis panel floats inside the card without shifting the stack in ${theme} theme`, async ({ page }) => {
-    await page.setViewportSize({ width: 1180, height: 980 })
-
-    const state = createMockState()
-    state.settings.language = 'en'
-    state.settings.theme = theme
-    state.columns[0]!.width = 520
-    const gitCard = {
-      ...state.columns[0]!.cards[0]!,
-      id: 'git-card',
-      title: 'Git analysis',
-      provider: 'codex' as const,
-      model: '__git_tool__',
-      reasoningEffort: 'medium',
-      size: 320,
-    }
-    const chatCard = {
-      ...state.columns[0]!.cards[0]!,
-      id: 'chat-card',
-      title: 'Below chat',
-      provider: 'claude' as const,
-      model: 'claude-opus-4-7',
-      reasoningEffort: 'medium',
-      size: 280,
-    }
-
-    configureColumnCardsAndLayout(
-      state,
-      [gitCard, chatCard],
-      createSplit(
-        'vertical',
-        [
-          createPane(['git-card'], 'git-card', 'pane-git'),
-          createPane(['chat-card'], 'chat-card', 'pane-chat'),
-        ],
-        [0.56, 0.44],
-        'git-analysis-split',
-      ),
-    )
-
-    await mockAppApis(page, { state })
-    await page.route('**/api/git/status?workspacePath=*', async (route) => {
-      await route.fulfill({
-        json: {
-          workspacePath: 'd:\\Git\\chill-vibe',
-          isRepository: true,
-          repoRoot: 'd:\\Git\\chill-vibe',
-          branch: 'feature/git-analysis-panel',
-          upstream: 'origin/main',
-          ahead: 1,
-          behind: 0,
-          hasConflicts: false,
-          clean: false,
-          summary: {
-            staged: 1,
-            unstaged: 2,
-            untracked: 0,
-            conflicted: 0,
-          },
-          changes: [
-            {
-              path: 'src/components/GitToolCard.tsx',
-              kind: 'modified',
-              stagedStatus: 'M',
-              workingTreeStatus: ' ',
-              staged: true,
-              conflicted: false,
-              addedLines: 12,
-              removedLines: 3,
-              patch: '@@ -1,4 +1,12 @@\n-export const oldCard = true\n+export const dockedPanel = true',
-            },
-            {
-              path: 'src/index.css',
-              kind: 'modified',
-              stagedStatus: ' ',
-              workingTreeStatus: 'M',
-              staged: false,
-              conflicted: false,
-              addedLines: 18,
-              removedLines: 4,
-              patch: '@@ -10,6 +10,18 @@\n+.git-agent-panel-shell { position: absolute; }',
-            },
-            {
-              path: 'tests/theme-check.spec.ts',
-              kind: 'modified',
-              stagedStatus: ' ',
-              workingTreeStatus: 'M',
-              staged: false,
-              conflicted: false,
-              addedLines: 24,
-              removedLines: 0,
-              patch: '@@ -1,0 +1,24 @@\n+test(\'git analysis panel docks to the card bottom\')',
-            },
-          ],
-          lastCommit: {
-            hash: 'abc1234def5678',
-            shortHash: 'abc1234',
-            summary: 'Dock git analysis panel',
-            description: '',
-            authorName: 'Alex',
-            authoredAt: '2026-04-05T03:00:00.000Z',
-          },
-        },
-      })
-    })
-
-    await page.goto(appUrl)
-    await mockGitAnalysisResult(
-      page,
-      JSON.stringify({
-        summary: 'Keep the Git card compact and layer the analysis over the existing card body.',
-        strategies: [
-          {
-            label: 'Commit all',
-            description: 'One commit for the full Git card pass.',
-            commits: [
-              {
-                summary: 'Dock the git analysis panel',
-                paths: ['src/components/GitToolCard.tsx', 'src/index.css', 'tests/theme-check.spec.ts'],
-              },
-            ],
-          },
-          {
-            label: 'Git UI',
-            description: 'Card sizing and bottom docking.',
-            commits: [
-              {
-                summary: 'Tighten the git card chrome',
-                paths: ['src/components/GitToolCard.tsx', 'src/index.css'],
-              },
-            ],
-          },
-          {
-            label: 'Regression',
-            description: 'Theme coverage for the docked panel.',
-            commits: [
-              {
-                summary: 'Cover the git analysis panel layout',
-                paths: ['tests/theme-check.spec.ts'],
-              },
-            ],
-          },
-        ],
-      }),
-    )
-
-    const gitCardShell = page.locator('.card-shell').first()
-    const gitToolCard = page.locator('.git-tool-card').first()
-    const belowCardShell = page.locator('.card-shell').nth(1)
-
-    await expect(gitCardShell).toBeVisible()
-
-    const [cardBefore, belowBefore] = await Promise.all([
-      readRect(gitCardShell),
-      readRect(belowCardShell),
-    ])
-
-    await gitCardShell.getByRole('button', { name: 'Analyze changes', exact: true }).click()
-
-    const floatingPanelShell = page.locator('.git-agent-panel-shell').first()
-    const floatingPanel = page.locator('.git-agent-panel').first()
-    await expect(floatingPanel).toBeVisible()
-    await expect(floatingPanel).toContainText('Git UI')
-
-    const [cardAfter, toolCardAfter, belowAfter, panelShellRect] = await Promise.all([
-      readRect(gitCardShell),
-      readRect(gitToolCard),
-      readRect(belowCardShell),
-      readRect(floatingPanelShell),
-    ])
-
-    expect(Math.abs(cardAfter.height - cardBefore.height)).toBeLessThan(2)
-    expect(Math.abs(belowAfter.top - belowBefore.top)).toBeLessThan(2)
-    expect(panelShellRect.top - toolCardAfter.top).toBeLessThan(24)
-    expect(toolCardAfter.right - panelShellRect.right).toBeLessThan(24)
-    expect(panelShellRect.bottom).toBeLessThanOrEqual(toolCardAfter.bottom + 1)
-
-    await expect(gitCardShell).toHaveScreenshot(`git-tool-analysis-panel-docked-${theme}.png`, {
-      animations: 'disabled',
-      caret: 'hide',
-    })
-  })
-}
-
 test('git tool card keeps long zh-CN metadata rows fully visible instead of clipping them', async ({ page }) => {
   await page.setViewportSize({ width: 1100, height: 1065 })
 
@@ -8197,7 +7980,7 @@ test('git tool card localizes controls and section labels in zh-CN', async ({ pa
   const gitToolCard = page.locator('.git-tool-card').first()
 
   await expect(gitToolCard).toBeVisible()
-  await expect(page.getByRole('button', { name: '分析改动' })).toBeVisible()
+  await expect(page.getByRole('button', { name: '分析改动' })).toHaveCount(0)
   await expect(page.getByRole('button', { name: '提交新增' })).toBeVisible()
   await expect(page.getByRole('button', { name: '同步' })).toBeVisible()
   await expect(page.getByRole('button', { name: '古法 Git' })).toBeVisible()

@@ -196,7 +196,7 @@ test('non-repo Git cards offer a create-repository action and recover into repo 
 
   await expect.poll(() => initRequests).toEqual(['d:\\Git\\chill-vibe'])
   await expect(createButton).toHaveCount(0)
-  await expect(page.getByRole('button', { name: 'Analyze changes' })).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Analyze changes' })).toHaveCount(0)
   await expect(page.getByText('README.md')).toBeVisible()
 })
 
@@ -244,7 +244,7 @@ test('git card shows preview actions before the full status request finishes', a
   await expect(page.getByText('2 changed files')).toBeVisible()
   await expect(page.getByText('+? / -?')).toBeVisible()
   await expect(page.getByRole('button', { name: 'Commit new' })).toBeVisible()
-  await expect(page.getByRole('button', { name: 'Analyze changes' })).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Analyze changes' })).toHaveCount(0)
   await expect(page.getByRole('button', { name: 'Full Git' })).toBeVisible()
   await expect(page.getByText('src/components/GitToolCard.tsx')).toBeVisible()
 })
@@ -831,7 +831,6 @@ test('git sync disables analysis while the sync panel is open', async ({ page })
   await page.getByRole('button', { name: 'Sync' }).click()
 
   await expect(page.locator('.git-agent-loading')).toBeVisible()
-  await expect(page.getByRole('button', { name: 'Analyze changes' })).toBeDisabled()
 })
 
 test('commit new one-click commits only changes since the last git snapshot', async ({ page }) => {
@@ -1023,7 +1022,6 @@ test('git dashboard buttons show delayed tooltips and keep commit new as a one-c
   await selectModel(page, modelSelect, 'Git')
 
   for (const [label, snippet] of [
-    ['Analyze changes', 'review the current changes'],
     ['Commit new', 'One-click commit files changed since the last Git snapshot'],
     ['Sync', 'Pull remote changes'],
     ['Full Git', 'full Git view'],
@@ -1433,7 +1431,7 @@ for (const theme of ['dark', 'light'] as const) {
     await expect(page.locator('.git-tool-card')).toBeVisible()
     await expect(page.locator('.pane-tab.is-active .pane-tab-label')).toHaveText('Git')
     await expect(page.getByText('feature/git-tool-switch')).toBeVisible({ timeout: 15000 })
-    await expect(page.getByRole('button', { name: 'Analyze changes' })).toBeVisible()
+    await expect(page.getByRole('button', { name: 'Analyze changes' })).toHaveCount(0)
     await expect(syncButton).toBeVisible()
     await expect(page.locator('.git-sync-counts')).toContainText('1')
     await expect(page.getByRole('button', { name: 'Full Git' })).toBeVisible()
@@ -1464,7 +1462,7 @@ for (const theme of ['dark', 'light'] as const) {
     await expect(page.locator('.pane-tab.is-active .pane-tab-label')).toHaveText('Git')
     await expect(syncButton).toHaveCount(0)
     await expect(page.locator('.git-sync-counts')).toHaveCount(0)
-    await expect(page.getByRole('button', { name: 'Analyze changes' })).toBeVisible()
+    await expect(page.getByRole('button', { name: 'Analyze changes' })).toHaveCount(0)
     await expect(page.getByRole('button', { name: 'Full Git' })).toBeVisible()
   })
 

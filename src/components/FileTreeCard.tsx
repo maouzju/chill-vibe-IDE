@@ -10,10 +10,12 @@ import {
   moveWorkspaceEntry,
   openMessageLocalLink,
   renameWorkspaceEntry,
+  runLocalFile,
   searchFiles,
 } from '../api'
 import { clearDragPayload, readDragPayload, writeDragPayload } from '../dnd'
 import type { AppLanguage, FileEntry, FileSearchEntry } from '../../shared/schema'
+import { isRunnableFilePath } from './file-path-context-menu'
 import { resolveFileTreeMoveDestination } from './file-tree-dnd'
 import {
   applyRefreshedFileTreeDirectories,
@@ -55,6 +57,25 @@ type ContextMenuAction = {
   key: string
   label: string
   danger?: boolean
+}
+
+// 双击可执行文件的确认弹窗勾了「不再提示」后记在本机，跨卡片、跨重启都生效。
+const SKIP_RUN_CONFIRM_STORAGE_KEY = 'chill-vibe:file-tree-skip-run-confirm'
+
+const readSkipRunConfirm = () => {
+  try {
+    return window.localStorage.getItem(SKIP_RUN_CONFIRM_STORAGE_KEY) === '1'
+  } catch {
+    return false
+  }
+}
+
+const writeSkipRunConfirm = () => {
+  try {
+    window.localStorage.setItem(SKIP_RUN_CONFIRM_STORAGE_KEY, '1')
+  } catch {
+    // 存不下就每次都问，不影响运行本身。
+  }
 }
 
 type FileTreeNameDialogMode = 'new-file' | 'new-folder' | 'rename'
@@ -122,6 +143,7 @@ const TreeItem = ({
   dropTargetPath,
   onToggle,
   onSelect,
+  onRunRequest,
   onContextMenu,
   onDragStart,
   onDragEnter,
@@ -135,6 +157,7 @@ const TreeItem = ({
   dropTargetPath: string | null
   onToggle: (node: TreeNode) => void
   onSelect: (path: string) => void
+  onRunRequest: (path: string) => void
   onContextMenu: (event: ReactMouseEvent<HTMLButtonElement>, target: ContextMenuTarget) => void
   onDragStart: (event: ReactDragEvent<HTMLButtonElement>, target: FileTreeDropTarget) => void
   onDragEnter: (event: ReactDragEvent<HTMLButtonElement>, target: FileTreeDropTarget) => void
@@ -164,6 +187,13 @@ const TreeItem = ({
         onDragLeave={(event) => onDragLeave(event, node.path)}
         onDrop={(event) => onDrop(event, { path: node.path, isDirectory: node.isDirectory })}
         onDragEnd={onDragEnd}
+        onDoubleClick={(event) => {
+          event.preventDefault()
+          event.stopPropagation()
+          if (!node.isDirectory && isRunnableFilePath(node.path)) {
+            onRunRequest(node.path)
+          }
+        }}
         onClick={() => {
           if (node.isDirectory) {
             onToggle(node)
@@ -193,6 +223,7 @@ const TreeItem = ({
           dropTargetPath={dropTargetPath}
           onToggle={onToggle}
           onSelect={onSelect}
+          onRunRequest={onRunRequest}
           onContextMenu={onContextMenu}
           onDragStart={onDragStart}
           onDragEnter={onDragEnter}
@@ -210,6 +241,7 @@ const SearchResultItem = ({
   entry,
   dropTargetPath,
   onSelect,
+  onRunRequest,
   onContextMenu,
   onDragStart,
   onDragEnter,
@@ -221,6 +253,7 @@ const SearchResultItem = ({
   entry: FileSearchEntry
   dropTargetPath: string | null
   onSelect: (path: string) => void
+  onRunRequest: (path: string) => void
   onContextMenu: (event: ReactMouseEvent<HTMLButtonElement>, target: ContextMenuTarget) => void
   onDragStart: (event: ReactDragEvent<HTMLButtonElement>, target: FileTreeDropTarget) => void
   onDragEnter: (event: ReactDragEvent<HTMLButtonElement>, target: FileTreeDropTarget) => void
@@ -238,6 +271,13 @@ const SearchResultItem = ({
       className={`file-tree-search-result${dropTargetPath === entry.path ? ' is-drop-target' : ''}`}
       draggable
       onClick={() => onSelect(entry.path)}
+      onDoubleClick={(event) => {
+        event.preventDefault()
+        event.stopPropagation()
+        if (!entry.isDirectory && isRunnableFilePath(entry.path)) {
+          onRunRequest(entry.path)
+        }
+      }}
       onContextMenu={(event) =>
         onContextMenu(event, {
           source: 'search',
@@ -294,6 +334,14 @@ const getActionText = (language: AppLanguage) => ({
   copyAbsolutePath: language === 'en' ? 'Copy Absolute Path' : '复制绝对路径',
   revealInSystem: language === 'en' ? 'Show in System' : '在系统中显示',
   refresh: language === 'en' ? 'Refresh' : '刷新',
+  run: language === 'en' ? 'Run' : '直接运行',
+  runDialogTitle: (name: string) =>
+    language === 'en' ? `Run "${name}"?` : `运行“${name}”？`,
+  runDialogHint:
+    language === 'en'
+      ? 'It will run with its own folder as the working directory.'
+      : '将以文件所在目录为工作目录运行。',
+  runDontAskAgain: language === 'en' ? "Don't ask again" : '不再提示',
   promptNewFile: language === 'en' ? 'New file name' : '新文件名',
   promptNewFolder: language === 'en' ? 'New folder name' : '新文件夹名',
   promptRename: language === 'en' ? 'Rename to' : '重命名为',
@@ -352,6 +400,7 @@ const FileTreeCardInner = ({ cardId, workspacePath, language, onOpenFile }: File
   const [nameDialog, setNameDialog] = useState<FileTreeNameDialogState | null>(null)
   const [nameDialogError, setNameDialogError] = useState<string | null>(null)
   const [nameDialogPending, setNameDialogPending] = useState(false)
+  const [runDialog, setRunDialog] = useState<{ path: string; dontAskAgain: boolean } | null>(null)
   const [dropTargetPath, setDropTargetPath] = useState<string | null>(null)
   const [rootDropActive, setRootDropActive] = useState(false)
   const mountedRef = useRef(true)
@@ -743,6 +792,10 @@ const FileTreeCardInner = ({ cardId, workspacePath, language, onOpenFile }: File
   if (contextMenu) {
     const { target } = contextMenu
 
+    if (!target.isDirectory && isRunnableFilePath(target.path)) {
+      contextMenuActions.push({ key: 'run', label: actionText.run })
+    }
+
     contextMenuActions.push(
       target.isDirectory
         ? {
@@ -797,6 +850,28 @@ const FileTreeCardInner = ({ cardId, workspacePath, language, onOpenFile }: File
     )
   }
 
+  const requestRunFile = useCallback((path: string) => {
+    if (readSkipRunConfirm()) {
+      void runLocalFile(path, workspacePath).catch(reportActionError)
+      return
+    }
+
+    setRunDialog({ path, dontAskAgain: false })
+  }, [reportActionError, workspacePath])
+
+  const confirmRunDialog = useCallback(() => {
+    if (!runDialog) {
+      return
+    }
+
+    if (runDialog.dontAskAgain) {
+      writeSkipRunConfirm()
+    }
+
+    setRunDialog(null)
+    void runLocalFile(runDialog.path, workspacePath).catch(reportActionError)
+  }, [reportActionError, runDialog, workspacePath])
+
   const runContextMenuAction = useCallback(async (key: string) => {
     const target = contextMenu?.target
 
@@ -807,6 +882,9 @@ const FileTreeCardInner = ({ cardId, workspacePath, language, onOpenFile }: File
     const parentRelativePath = getRelativeParentPath(target.path)
 
     switch (key) {
+      case 'run':
+        requestRunFile(target.path)
+        return
       case 'toggle':
         await toggleDirectory(target.path)
         return
@@ -860,6 +938,7 @@ const FileTreeCardInner = ({ cardId, workspacePath, language, onOpenFile }: File
     copyText,
     hasSearchQuery,
     onOpenFile,
+    requestRunFile,
     openNameDialog,
     refreshSearch,
     refreshVisibleTree,
@@ -1137,6 +1216,7 @@ const FileTreeCardInner = ({ cardId, workspacePath, language, onOpenFile }: File
                   entry={entry}
                   dropTargetPath={dropTargetPath}
                   onSelect={onOpenFile}
+                  onRunRequest={requestRunFile}
                   onContextMenu={handleContextMenuOpen}
                   onDragStart={handleItemDragStart}
                   onDragEnter={handleItemDragEnter}
@@ -1162,6 +1242,7 @@ const FileTreeCardInner = ({ cardId, workspacePath, language, onOpenFile }: File
                 dropTargetPath={dropTargetPath}
                 onToggle={toggleNode}
                 onSelect={onOpenFile}
+                onRunRequest={requestRunFile}
                 onContextMenu={handleContextMenuOpen}
                 onDragStart={handleItemDragStart}
                 onDragEnter={handleItemDragEnter}
@@ -1266,6 +1347,68 @@ const FileTreeCardInner = ({ cardId, workspacePath, language, onOpenFile }: File
                     </button>
                     <button type="submit" className="btn btn-primary" disabled={nameDialogPending}>
                       {nameDialogPending ? '…' : nameDialogSubmitLabel}
+                    </button>
+                  </div>
+                </form>
+              </section>
+            </div>,
+            ownerDocument.body,
+          )
+        : null}
+      {runDialog && ownerDocument
+        ? createPortal(
+            <div className="structured-preview-layer file-tree-name-dialog-layer">
+              <div className="structured-preview-backdrop" onClick={() => setRunDialog(null)} />
+              <section
+                className="structured-preview-dialog file-tree-name-dialog"
+                role="dialog"
+                aria-modal="true"
+                aria-labelledby={`file-tree-run-dialog-title-${cardId}`}
+              >
+                <form
+                  className="structured-preview-card file-tree-name-dialog-card"
+                  onSubmit={(event) => {
+                    event.preventDefault()
+                    confirmRunDialog()
+                  }}
+                >
+                  <div className="structured-preview-header">
+                    <div className="structured-preview-copy">
+                      <h3 id={`file-tree-run-dialog-title-${cardId}`}>
+                        {actionText.runDialogTitle(runDialog.path.split('/').pop() ?? runDialog.path)}
+                      </h3>
+                      <p className="settings-note">{actionText.runDialogHint}</p>
+                    </div>
+                    <button
+                      type="button"
+                      className="btn btn-ghost structured-preview-close"
+                      onClick={() => setRunDialog(null)}
+                      aria-label={actionText.cancel}
+                    >
+                      <CloseIcon />
+                    </button>
+                  </div>
+
+                  <div className="structured-preview-body file-tree-name-dialog-body">
+                    <label className="file-tree-run-dialog-skip">
+                      <input
+                        type="checkbox"
+                        checked={runDialog.dontAskAgain}
+                        onChange={(event) => {
+                          const dontAskAgain = event.target.checked
+                          setRunDialog((current) => (current ? { ...current, dontAskAgain } : current))
+                        }}
+                      />
+                      <span>{actionText.runDontAskAgain}</span>
+                    </label>
+                  </div>
+
+                  <div className="settings-actions file-tree-name-dialog-actions">
+                    <button type="button" className="btn btn-ghost" onClick={() => setRunDialog(null)}>
+                      {actionText.cancel}
+                    </button>
+                    <button type="submit" className="btn btn-primary" autoFocus>
+                      {actionText.run}
                     </button>
                   </div>
                 </form>

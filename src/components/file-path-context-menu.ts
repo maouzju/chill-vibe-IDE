@@ -16,7 +16,15 @@ export type FilePathContextMenuTarget = {
   revealOnly?: true
 }
 
-export type FilePathContextMenuActionKey = 'open' | 'reveal' | 'copy-path'
+export type FilePathContextMenuActionKey = 'run' | 'open' | 'reveal' | 'copy-path'
+
+const RUNNABLE_FILE_EXTENSIONS = new Set(['bat', 'cmd', 'com', 'exe', 'lnk', 'msi', 'vbs'])
+
+export const isRunnableFilePath = (filePath: string) => {
+  const name = filePath.split(/[\\/]/).pop() ?? ''
+  const dotIndex = name.lastIndexOf('.')
+  return dotIndex > 0 && RUNNABLE_FILE_EXTENSIONS.has(name.slice(dotIndex + 1).toLowerCase())
+}
 
 export type FilePathContextMenuAction = {
   key: FilePathContextMenuActionKey
@@ -55,11 +63,13 @@ export const resolveFilePathContextMenuTarget = (node: unknown): FilePathContext
 export const getFilePathContextMenuLabels = (language: AppLanguage) =>
   language === 'en'
     ? {
+        run: 'Run',
         open: 'Open File',
         reveal: 'Show File Location',
         copyPath: 'Copy Path',
       }
     : {
+        run: '直接运行',
         open: '打开文件',
         reveal: '打开文件位置',
         copyPath: '复制路径',
@@ -69,13 +79,19 @@ export const buildFilePathContextMenuActions = ({
   language,
   canOpenInEditor,
   revealOnly = false,
+  runnable = false,
 }: {
   language: AppLanguage
   canOpenInEditor: boolean
   revealOnly?: boolean
+  runnable?: boolean
 }): FilePathContextMenuAction[] => {
   const labels = getFilePathContextMenuLabels(language)
   const actions: FilePathContextMenuAction[] = []
+
+  if (runnable && !revealOnly) {
+    actions.push({ key: 'run', label: labels.run })
+  }
 
   if (canOpenInEditor && !revealOnly) {
     actions.push({ key: 'open', label: labels.open })

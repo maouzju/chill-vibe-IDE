@@ -60,7 +60,10 @@ const zh = {
       versionOk: '正在使用验证过的 CLI 版本。',
       versionMismatch: (provider: string) => `${provider} 的版本和本 IDE 验证过的不一致。`,
       unknown: '正在检测……',
+      compatDownloading: '正在下载兼容版，可能要一两分钟……',
+      compatFailed: (reason: string) => `下载失败：${reason}`,
     },
+    fixRunning: '下载中…',
     fix: {
       'install-cli': '一键安装',
       'connect-account': '去连接账号',
@@ -150,7 +153,10 @@ const en: typeof zh = {
       versionOk: 'Using the verified CLI versions.',
       versionMismatch: (provider: string) => `${provider} is not on the version this IDE was verified with.`,
       unknown: 'Checking…',
+      compatDownloading: 'Downloading the compatible build, this can take a minute or two…',
+      compatFailed: (reason: string) => `Download failed: ${reason}`,
     },
+    fixRunning: 'Downloading…',
     fix: {
       'install-cli': 'Install',
       'connect-account': 'Connect account',

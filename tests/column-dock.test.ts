@@ -252,3 +252,62 @@ describe('stream completion inside a docked column', () => {
     )
   })
 })
+
+describe('docked column chip order', () => {
+  it('orders docked chips by dock time, not board order', async () => {
+    const { selectDockedColumnsInOrder } = await import('../src/state.ts')
+    let state = createState()
+    state = ideReducer(state, { type: 'dockColumn', columnId: 'column-3' })
+    state = ideReducer(state, { type: 'dockColumn', columnId: 'column-1' })
+    assert.deepEqual(selectDockedColumnsInOrder(state.columns).map((c) => c.id), ['column-3', 'column-1'])
+    state = ideReducer(state, { type: 'dockColumn', columnId: 'column-2' })
+    assert.deepEqual(
+      selectDockedColumnsInOrder(state.columns).map((c) => c.id),
+      ['column-3', 'column-1', 'column-2'],
+    )
+    // round-trips through schema
+    assert.equal(boardColumnSchema.parse(state.columns[0]).dockedOrder !== undefined, true)
+  })
+
+  it('reorderDockedColumn moves a chip before/after another', async () => {
+    const { selectDockedColumnsInOrder } = await import('../src/state.ts')
+    let state = createState()
+    for (const id of ['column-1', 'column-2', 'column-3']) {
+      state = ideReducer(state, { type: 'dockColumn', columnId: id })
+    }
+    state = ideReducer(state, {
+      type: 'reorderDockedColumn',
+      columnId: 'column-3',
+      targetColumnId: 'column-1',
+      placement: 'before',
+    })
+    assert.deepEqual(selectDockedColumnsInOrder(state.columns).map((c) => c.id), ['column-3', 'column-1', 'column-2'])
+    state = ideReducer(state, {
+      type: 'reorderDockedColumn',
+      columnId: 'column-3',
+      targetColumnId: 'column-2',
+      placement: 'after',
+    })
+    assert.deepEqual(selectDockedColumnsInOrder(state.columns).map((c) => c.id), ['column-1', 'column-2', 'column-3'])
+    // undock then redock goes to the end
+    state = ideReducer(state, { type: 'undockColumn', columnId: 'column-1' })
+    state = ideReducer(state, { type: 'dockColumn', columnId: 'column-1' })
+    assert.deepEqual(selectDockedColumnsInOrder(state.columns).map((c) => c.id), ['column-2', 'column-3', 'column-1'])
+  })
+
+  it('puts a newly docked column after legacy docked columns without an order', () => {
+    const state = createState()
+    state.columns = state.columns.map((column, index) =>
+      index < 2 ? { ...column, docked: true } : column,
+    )
+
+    const next = ideReducer(state, { type: 'dockColumn', columnId: 'column-3' })
+    assert.deepEqual(
+      next.columns
+        .filter((column) => column.docked === true)
+        .sort((a, b) => (a.dockedOrder ?? Infinity) - (b.dockedOrder ?? Infinity))
+        .map((column) => column.id),
+      ['column-1', 'column-2', 'column-3'],
+    )
+  })
+})

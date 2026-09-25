@@ -63,7 +63,7 @@ export const settingsItemCatalog: readonly SettingsItemMeta[] = [
   {
     id: 'environment',
     category: 'get-started',
-    tier: 'advanced',
+    tier: 'basic',
     label: { 'zh-CN': '环境设置', en: 'Environment' },
     hint: hint(
       '检查并一键安装 Git、Node、Claude CLI、Codex CLI，也能把 CLI 更新到指定版本；',
@@ -98,7 +98,7 @@ export const settingsItemCatalog: readonly SettingsItemMeta[] = [
   {
     id: 'model-behavior',
     category: 'models',
-    tier: 'advanced',
+    tier: 'basic',
     label: { 'zh-CN': '对话行为', en: 'Chat behavior' },
     hint: hint(
       'Agent 的性格、系统提示词、按模型追加的提示词、Git 分析用的模型；',
@@ -129,14 +129,14 @@ export const settingsItemCatalog: readonly SettingsItemMeta[] = [
   {
     id: 'typography',
     category: 'appearance',
-    tier: 'advanced',
+    tier: 'basic',
     label: { 'zh-CN': '字体与缩放', en: 'Font & scale' },
     keywords: ['font', '字体', 'scale', '缩放', 'line height', '行高', 'ui scale', 'zoom'],
   },
   {
     id: 'editor',
     category: 'appearance',
-    tier: 'advanced',
+    tier: 'basic',
     label: { 'zh-CN': '编辑器', en: 'Editor' },
     keywords: ['editor', '编辑器', 'word wrap', '换行', 'minimap', 'tab size', 'font size'],
   },
@@ -145,7 +145,7 @@ export const settingsItemCatalog: readonly SettingsItemMeta[] = [
   {
     id: 'wake-timer',
     category: 'automation',
-    tier: 'advanced',
+    tier: 'basic',
     label: { 'zh-CN': '计划唤醒', en: 'Wake timer' },
     hint: hint(
       '让会话在别的会话干完、或过一段时间后自动醒来继续；',
@@ -156,7 +156,7 @@ export const settingsItemCatalog: readonly SettingsItemMeta[] = [
   {
     id: 'auto-urge',
     category: 'automation',
-    tier: 'advanced',
+    tier: 'basic',
     label: { 'zh-CN': '自动鞭策', en: 'Auto urge' },
     hint: hint(
       'Agent 停下来但没干完时自动催它继续，直到看到成功关键字；',
@@ -175,7 +175,7 @@ export const settingsItemCatalog: readonly SettingsItemMeta[] = [
   {
     id: 'tool-cards',
     category: 'automation',
-    tier: 'advanced',
+    tier: 'basic',
     label: { 'zh-CN': '卡片类型', en: 'Card Type' },
     hint: hint(
       '决定工作区里能开哪些工具卡：Git、文件树、便签、自动化看板……；',
@@ -188,7 +188,7 @@ export const settingsItemCatalog: readonly SettingsItemMeta[] = [
   {
     id: 'codex-safety',
     category: 'network',
-    tier: 'advanced',
+    tier: 'basic',
     label: { 'zh-CN': 'Agent 安全防护', en: 'Agent Safety' },
     hint: hint(
       '限制 Agent 能改哪些目录、能不能跑删库式命令、能不能操作浏览器；',
@@ -210,7 +210,7 @@ export const settingsItemCatalog: readonly SettingsItemMeta[] = [
   {
     id: 'general',
     category: 'system',
-    tier: 'advanced',
+    tier: 'basic',
     label: { 'zh-CN': '通用行为', en: 'General' },
     keywords: ['close', '关闭', 'sound', '提示音', '声音', 'accessibility', '无障碍', '读屏', 'tray', '托盘'],
   },
@@ -297,6 +297,8 @@ export type HealthLight = {
   providers: Provider[]
   /** 账号灯：绿是因为关了路由、走 CLI 自己的登录。 */
   viaCliLogin?: boolean
+  /** 版本灯：兼容版后台下载任务，UI 据此显示「下载中」/失败原因，否则点了像没反应。 */
+  task?: { status: 'running' | 'succeeded' | 'failed'; message: string } | null
 }
 
 export type EnvironmentHealth = {
@@ -385,6 +387,7 @@ export const deriveEnvironmentHealth = (input: EnvironmentHealthInput): Environm
           ? { kind: 'activate-compat', provider: entry.provider }
           : { kind: 'install-compat', provider: entry.provider },
         providers: [entry.provider],
+        task: entry.task ?? null,
       }
     }
     return { state: 'ok', fix: null, providers: available }

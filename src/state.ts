@@ -106,6 +106,14 @@ export const isUntouchedWorkspacePlaceholderColumn = (column: BoardColumn | unde
  * This lives here rather than in pane-read-state.ts on purpose: that module
  * only knows layouts, and column-level docking is not a layout concern.
  */
+/** 顶栏 chip 顺序：按 dockedOrder 升序；旧存档没有该字段的排最后，保持看板相对顺序。 */
+export const selectDockedColumnsInOrder = <T extends Pick<BoardColumn, 'docked' | 'dockedOrder'>>(columns: T[]): T[] =>
+  columns
+    .map((column, index) => ({ column, index }))
+    .filter(({ column }) => column.docked === true)
+    .sort((a, b) => (a.column.dockedOrder ?? Infinity) - (b.column.dockedOrder ?? Infinity) || a.index - b.index)
+    .map(({ column }) => column)
+
 export const isColumnVisibleOnBoard = (
   column: Pick<BoardColumn, 'docked'>,
   boardTabActive: boolean,
@@ -398,6 +406,7 @@ export type IdeAction =
     }
   | { type: 'dockColumn'; columnId: string }
   | { type: 'undockColumn'; columnId: string }
+  | { type: 'reorderDockedColumn'; columnId: string; targetColumnId: string; placement: 'before' | 'after' }
   | { type: 'removeColumn'; columnId: string; workspaceCloseId?: string }
   | {
       type: 'restoreClosedWorkspace'
@@ -2369,10 +2378,47 @@ const ideReducerCore = (state: AppState, action: IdeAction): AppState => {
         return state
       }
 
+      const dockedColumns = state.columns.filter((column) => column.docked === true)
+      const maxOrder = dockedColumns.reduce(
+        (max, column) =>
+          typeof column.dockedOrder === 'number' && Number.isFinite(column.dockedOrder)
+            ? Math.max(max, column.dockedOrder)
+            : max,
+        0,
+      )
+      const legacyOrders = new Map<string, number>()
+      dockedColumns.forEach((column) => {
+        if (typeof column.dockedOrder !== 'number' || !Number.isFinite(column.dockedOrder)) {
+          legacyOrders.set(column.id, maxOrder + legacyOrders.size + 1)
+        }
+      })
+
+      return touchState({
+        ...state,
+        columns: state.columns.map((column) => {
+          if (column.id === action.columnId) {
+            return { ...column, docked: true, dockedOrder: maxOrder + legacyOrders.size + 1 }
+          }
+          const legacyOrder = legacyOrders.get(column.id)
+          return legacyOrder === undefined ? column : { ...column, dockedOrder: legacyOrder }
+        }),
+      })
+    }
+    case 'reorderDockedColumn': {
+      const ordered = selectDockedColumnsInOrder(state.columns).map((column) => column.id)
+      if (!ordered.includes(action.columnId) || !ordered.includes(action.targetColumnId) || action.columnId === action.targetColumnId) {
+        return state
+      }
+      const without = ordered.filter((id) => id !== action.columnId)
+      const targetIndex = without.indexOf(action.targetColumnId)
+      without.splice(action.placement === 'before' ? targetIndex : targetIndex + 1, 0, action.columnId)
+      if (without.every((id, index) => id === ordered[index])) {
+        return state
+      }
       return touchState({
         ...state,
         columns: state.columns.map((column) =>
-          column.id === action.columnId ? { ...column, docked: true } : column,
+          column.docked === true ? { ...column, dockedOrder: without.indexOf(column.id) + 1 } : column,
         ),
       })
     }
@@ -2391,6 +2437,7 @@ const ideReducerCore = (state: AppState, action: IdeAction): AppState => {
           }
           const rest = { ...column }
           delete rest.docked
+          delete rest.dockedOrder
           return rest
         }),
       })

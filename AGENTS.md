@@ -42,7 +42,7 @@ Applies to: bug fixes, behavior changes, state mutations, server handlers, schem
 - For those high-risk changes, write or update a focused test **before** changing production code.
 - Run that test first and confirm it **fails** so the issue is demonstrated, not assumed.
 - Only after a failing test is observed may you implement the fix.
-- Low-risk logic changes may use a prove-after path when red-first would add more ceremony than signal: pure refactors with no intended behavior change, small glue code, logging/telemetry wiring, prototypes, or exploratory spikes.
+- Low-risk logic changes may use a prove-after path when red-first would add more ceremony than signal: pure refactors with no intended behavior change, small glue code, static catalog/config data tweaks (e.g. moving a settings item between tiers), logging/telemetry wiring, prototypes, or exploratory spikes.
 - The prove-after path still requires targeted verification before handoff: add or update the narrowest relevant test after implementation when practical, or explain why runtime/manual verification is the better fit.
 - If you skip red-first for a logic change, say why in the handoff and keep the verification narrow and concrete.
 - Before ending your response, rerun the relevant tests and confirm they pass.

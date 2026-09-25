@@ -427,6 +427,7 @@ import {
   isUntouchedWorkspacePlaceholderColumn,
   resolveForkPointMessage,
   selectDockedColumnStatus,
+  selectDockedColumnsInOrder,
   type IdeAction,
 } from './state'
 
@@ -817,9 +818,10 @@ function App() {
     [appState.columns],
   )
   const dockedColumns = useMemo(
-    () => appState.columns.filter((column) => column.docked === true),
+    () => selectDockedColumnsInOrder(appState.columns),
     [appState.columns],
   )
+  const draggingDockedColumnIdRef = useRef<string | null>(null)
 
   useEffect(() => {
     // dragstart 走冒泡阶段：WorkspaceColumn 的 React handler 已经 writeDragPayload，
@@ -8350,6 +8352,37 @@ function App() {
       .catch(() => undefined)
   }, [settingsOpen])
 
+  // 09-25 用户报「下载兼容版」点了没反应：体检卡的修复按钮只触发后台 npm 下载就返回，
+  // 这里原先不轮询，按钮立刻恢复、失败也不提示，看起来像没点上。进行中轮询到结束，失败进 settingsNotice。
+  const cliCompatRunning = cliCompatStatus?.entries.some((entry) => entry.task?.status === 'running') ?? false
+  const cliCompatPreviousTasksRef = useRef<Record<string, string | null>>({})
+  useEffect(() => {
+    if (!cliCompatRunning) return
+    const timer = window.setInterval(() => {
+      fetchCliCompatStatus()
+        .then((status) => setCliCompatStatus(status))
+        .catch(() => undefined)
+    }, 1500)
+    return () => window.clearInterval(timer)
+  }, [cliCompatRunning])
+  useEffect(() => {
+    const previous = cliCompatPreviousTasksRef.current
+    const current = Object.fromEntries(
+      (cliCompatStatus?.entries ?? []).map((entry) => [entry.provider, entry.task?.status ?? null]),
+    ) as Record<string, string | null>
+    const transitions = Object.keys(current).filter(
+      (provider) => previous[provider] === 'running' && current[provider] !== 'running',
+    )
+    const failedProvider = transitions.find((provider) => current[provider] === 'failed')
+    if (failedProvider) {
+      const failed = cliCompatStatus?.entries.find((entry) => entry.provider === failedProvider)
+      setSettingsNotice(failed?.task?.message ?? text.unexpectedError)
+    }
+    if (transitions.length > 0) {
+      void syncProviderStatuses()
+    }
+    cliCompatPreviousTasksRef.current = current
+  }, [cliCompatStatus, syncProviderStatuses, text.unexpectedError])
   const focusSettingsItem = useCallback((id: string) => {
     setSettingsFocusRequest((current) => ({ id, token: (current?.token ?? 0) + 1 }))
   }, [])
@@ -10905,6 +10938,39 @@ function App() {
                   title={`${column.workspacePath || column.title}${statusSuffix}`}
                   aria-label={`${text.restoreDockedColumn(label)}${statusSuffix}`}
                   onClick={() => applyAction({ type: 'undockColumn', columnId: column.id })}
+                  draggable
+                  onDragStart={(event) => {
+                    draggingDockedColumnIdRef.current = column.id
+                    event.dataTransfer.effectAllowed = 'move'
+                    event.dataTransfer.setData('application/x-chill-vibe-docked-column', column.id)
+                  }}
+                  onDragEnd={() => {
+                    draggingDockedColumnIdRef.current = null
+                  }}
+                  onDragOver={(event) => {
+                    const sourceId = draggingDockedColumnIdRef.current
+                    if (!sourceId || sourceId === column.id) {
+                      return
+                    }
+                    event.preventDefault()
+                    event.dataTransfer.dropEffect = 'move'
+                  }}
+                  onDrop={(event) => {
+                    const sourceId = draggingDockedColumnIdRef.current
+                    draggingDockedColumnIdRef.current = null
+                    if (!sourceId || sourceId === column.id) {
+                      return
+                    }
+                    event.preventDefault()
+                    event.stopPropagation()
+                    const rect = event.currentTarget.getBoundingClientRect()
+                    applyAction({
+                      type: 'reorderDockedColumn',
+                      columnId: sourceId,
+                      targetColumnId: column.id,
+                      placement: event.clientX < rect.left + rect.width / 2 ? 'before' : 'after',
+                    })
+                  }}
                 >
                   {label}
                   {hasNewResult ? <span className="app-topbar-docked-column-dot" /> : null}
@@ -11123,7 +11189,7 @@ function App() {
               <EnvironmentHealthCard
                 language={appState.settings.language}
                 health={environmentHealth}
-                pending={healthFixPending || setupStatusPending}
+                pending={healthFixPending || setupStatusPending || cliCompatRunning}
                 onFix={(fix) => void handleHealthFix(fix)}
                 onRefresh={() => void refreshEnvironmentHealth()}
               />

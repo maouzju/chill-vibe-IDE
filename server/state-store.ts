@@ -2097,6 +2097,9 @@ const normalizePersistedColumn = (
     // shared/default-state.ts 的 createColumn 对齐——只在 true 时写键，
     // 未停靠的列形状与旧存档保持一致。
     ...(column.docked === true ? { docked: true } : {}),
+    ...(column.docked === true && typeof column.dockedOrder === 'number' && Number.isFinite(column.dockedOrder)
+      ? { dockedOrder: column.dockedOrder }
+      : {}),
     layout: resolveRecoveredColumnLayout(layout, cards, boardOwnedCardIds),
     cards,
   }

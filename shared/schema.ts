@@ -385,6 +385,8 @@ export const boardColumnSchema = z.object({
   // 停靠到顶栏的列：只在 true 时写入，未停靠时不带这个键，
   // 旧存档与各处 fixture 的形状因此不变。见 docs/specs/workspace-column-dock。
   docked: z.boolean().optional(),
+  // 顶栏 chip 顺序：停靠时取 max+1（新收起的排最后），拖拽重排时重新编号。
+  dockedOrder: z.number().finite().optional(),
   layout: layoutNodeSchema,
   cards: z.record(z.string(), chatCardSchema),
 })

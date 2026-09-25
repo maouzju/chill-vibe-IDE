@@ -14416,6 +14416,15 @@ body.is-pane-resizing .split-resize-handle::before {
   font-size: 0.9rem;
 }
 
+.file-tree-run-dialog-skip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  color: var(--ink);
+  font-size: 0.86rem;
+  cursor: pointer;
+}
+
 .file-tree-name-dialog-error {
   margin: 0;
   padding: 0.62rem 0.7rem;

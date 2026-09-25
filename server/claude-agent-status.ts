@@ -196,6 +196,13 @@ export const createClaudeAgentStatusTracker = ({
     return agent
   }
 
+  const reviveAgent = (taskId: string) => {
+    const agent = ensureAgent(taskId, { status: 'running' })
+    agent.startedAt = now()
+    agent.activity = []
+    return agent
+  }
+
   const formatElapsed = (startedAt: number) => {
     const elapsedMs = Math.max(0, now() - startedAt)
     const totalSeconds = Math.floor(elapsedMs / 1000)
@@ -345,6 +352,16 @@ export const createClaudeAgentStatusTracker = ({
     if (value.type === 'user') {
       let changed = false
       for (const result of parseClaudeToolResults(value.message)) {
+        // 症状：主回合用 SendMessage 续跑已完成的子代理，面板整段空白（2026-09-25 用户实测）。
+        // 根因：续跑复用原 agent id，条目已是终态，之后的 task_* 全撞终态守卫被丢；
+        //   CLI 唯一稳定确认是回执里的 resumedAgentId。续跑一律异步，登记进 background 跨回合保留。
+        const resumedId = /"resumedAgentId"\s*:\s*"([^"]+)"/u.exec(result.text)?.[1]
+        if (resumedId && !result.isError) {
+          reviveAgent(resolveTask(resumedId))
+          background.add(resolveTask(resumedId))
+          changed = true
+          continue
+        }
         const syntheticId = syntheticClaudeAgentId(result.toolUseId)
         const id = resolveTask(syntheticId)
         const agent = agents.get(id)
@@ -413,6 +430,8 @@ export const createClaudeAgentStatusTracker = ({
     const taskId = resolveTask(nativeId)
     if (toolUseId) toolUseIds.set(toolUseId, taskId)
     const known = agents.get(taskId)
+    // 同一 id 再次 task_started 只可能是续跑，复活而不是丢弃；其余事件仍守终态。
+    if (known && !isRunningStatus(known.status) && subtype === 'task_started') reviveAgent(taskId)
     if (known && !isRunningStatus(known.status)) return { handled: true }
 
     if (subtype === 'task_started') {

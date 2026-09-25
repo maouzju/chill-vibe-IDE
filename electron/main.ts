@@ -42,6 +42,7 @@ import {
   resolveMessageLocalLinkTarget,
   revealMessageLocalLinkTarget,
 } from './message-local-link.js'
+import { runLocalFileTarget } from './local-file-run.js'
 import { localImageProtocolScheme } from '../shared/local-image-protocol.js'
 import { resolveLocalImageRequestTarget } from './local-image-protocol.js'
 import {
@@ -1606,6 +1607,18 @@ function registerDesktopHandlers() {
         shellAdapter: shell,
         statPath: stat,
       })
+    },
+  )
+  ipcMain.handle(
+    'desktop:run-local-file',
+    async (_event, request: { href: string; workspacePath?: string }) => {
+      const targetPath = resolveMessageLocalLinkTarget(request.href, request.workspacePath)
+
+      if (!targetPath) {
+        throw new Error('Only local files can be run.')
+      }
+
+      await runLocalFileTarget(targetPath)
     },
   )
   ipcMain.handle('desktop:open-external-link', async (_event, href: string) => {

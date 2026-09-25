@@ -98,6 +98,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.invoke('dialog:openFolder') as Promise<string | null>,
   openMessageLocalLink: (href: string, workspacePath?: string) =>
     ipcRenderer.invoke('desktop:open-message-local-link', { href, workspacePath }) as Promise<void>,
+  runLocalFile: (href: string, workspacePath?: string) =>
+    ipcRenderer.invoke('desktop:run-local-file', { href, workspacePath }) as Promise<void>,
   openExternalLink: (href: string) =>
     ipcRenderer.invoke('desktop:open-external-link', href) as Promise<void>,
   fetchState: () => ipcRenderer.invoke('desktop:fetch-state'),

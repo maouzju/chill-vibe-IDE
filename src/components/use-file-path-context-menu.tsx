@@ -10,10 +10,11 @@ import {
 import { createPortal } from 'react-dom'
 
 import type { AppLanguage } from '../../shared/schema'
-import { openMessageLocalLink } from '../api'
+import { openMessageLocalLink, runLocalFile } from '../api'
 import { FilePathContextMenu } from './FilePathContextMenu'
 import {
   buildFilePathContextMenuActions,
+  isRunnableFilePath,
   clampFilePathContextMenuPosition,
   resolveFilePathContextMenuCopyValue,
   resolveFilePathContextMenuTarget,
@@ -115,6 +116,7 @@ export const useFilePathContextMenu = ({
         language,
         canOpenInEditor: Boolean(onOpenFile),
         revealOnly: menuState?.target.revealOnly === true,
+        runnable: menuState ? isRunnableFilePath(menuState.target.openPath) : false,
       }),
     [language, onOpenFile, menuState],
   )
@@ -125,6 +127,11 @@ export const useFilePathContextMenu = ({
       closeMenu()
 
       if (!target) {
+        return
+      }
+
+      if (key === 'run') {
+        void runLocalFile(target.openPath, workspacePath).catch(() => undefined)
         return
       }
 

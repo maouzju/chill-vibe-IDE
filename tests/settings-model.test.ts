@@ -73,9 +73,13 @@ describe('settings catalog', () => {
     }
   })
 
-  it('keeps the basic tier down to language/theme, account, default model and update check', () => {
-    const basic = settingsItemCatalog.filter((item) => item.tier === 'basic').map((item) => item.id)
-    assert.deepEqual(basic.sort(), ['account', 'language-theme', 'models', 'update'].sort())
+  it('only folds rarely-touched items into the advanced drawer', () => {
+    // 09-25 用户反馈：完成提示音这类常用开关不该藏进「高级设置」。
+    const advanced = settingsItemCatalog.filter((item) => item.tier === 'advanced').map((item) => item.id)
+    assert.deepEqual(advanced.sort(), ['cli-compat', 'data', 'experimental', 'local-models', 'repeat-loop'].sort())
+  })
+
+  it('keeps the basic view down to language/theme, account, default model and update check', () => {
     // 基础视图的顺序是新手的操作顺序：先看得懂界面，再连账号，再选模型，最后更新。
     assert.deepEqual(
       getBasicSettingsItems().map((item) => item.id),
@@ -285,5 +289,42 @@ describe('resolveOnboardingWizardStage', () => {
       resolveOnboardingWizardStage({ ...ready, importState: 'skipped', modelState: 'confirmed' }),
       'complete',
     )
+  })
+})
+
+// 2026-09-25 另一台电脑报「下载兼容版」点了没用：下载在后台跑、失败原因只闪一下，版本灯一行毫无变化。
+// 版本灯要把下载任务透传给 UI：下载中、失败原因都得落在这一行。
+describe('deriveEnvironmentHealth compat task', () => {
+  const compatEntry = (task: { status: 'running' | 'succeeded' | 'failed'; message: string } | null) => ({
+    entries: [
+      {
+        provider: 'codex' as const,
+        compatibleVersion: '0.156.1',
+        installed: false,
+        active: false,
+        activeVersion: null,
+        systemVersion: '0.150.0',
+        task,
+      },
+    ],
+  })
+
+  it('exposes the running and failed install task on the version light', () => {
+    const running = deriveEnvironmentHealth({
+      onboardingStatus: onboarding(true, true),
+      providers: providers(true, true),
+      cliCompatStatus: compatEntry({ status: 'running', message: '@openai/codex@0.156.1' }),
+      settings: createDefaultSettings(),
+    })
+    assert.equal(running.version.task?.status, 'running')
+
+    const failed = deriveEnvironmentHealth({
+      onboardingStatus: onboarding(true, true),
+      providers: providers(true, true),
+      cliCompatStatus: compatEntry({ status: 'failed', message: 'npm exit 1' }),
+      settings: createDefaultSettings(),
+    })
+    assert.equal(failed.version.task?.status, 'failed')
+    assert.equal(failed.version.task?.message, 'npm exit 1')
   })
 })

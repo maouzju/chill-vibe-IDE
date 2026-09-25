@@ -92,6 +92,25 @@ export const ImageEditorCard = ({ workspacePath, filePath, language }: ImageEdit
   const [error, setError] = useState<string | null>(null)
   const [size, setSize] = useState<number | null>(null)
   const [zoom, setZoom] = useState(0.85)
+  const stageRef = useRef<HTMLDivElement | null>(null)
+
+  useEffect(() => {
+    const stage = stageRef.current
+    if (!stage) {
+      return
+    }
+    // React 的 onWheel 是 passive，拦不住滚动；原生监听才能 preventDefault，滚轮只用来缩放。
+    const handleWheel = (event: WheelEvent) => {
+      if (event.deltaY === 0) {
+        return
+      }
+      event.preventDefault()
+      const factor = event.deltaY < 0 ? 1.1 : 1 / 1.1
+      setZoom((value) => clamp(Math.round(value * factor * 100) / 100, 0.2, 3))
+    }
+    stage.addEventListener('wheel', handleWheel, { passive: false })
+    return () => stage.removeEventListener('wheel', handleWheel)
+  }, [])
   const [rotation, setRotation] = useState(0)
   const [flipX, setFlipX] = useState(false)
   const [flipY, setFlipY] = useState(false)
@@ -260,7 +279,7 @@ export const ImageEditorCard = ({ workspacePath, filePath, language }: ImageEdit
             <button type="button" onClick={() => setFlipY((value) => !value)}>{text.flipV}</button>
           </div>
         </aside>
-        <div className="image-editor-stage">
+        <div className="image-editor-stage" ref={stageRef}>
           <canvas ref={canvasRef} style={{ width: `${zoom * 100}%`, maxWidth: zoom < 1 ? '100%' : 'none' }} />
         </div>
       </div>

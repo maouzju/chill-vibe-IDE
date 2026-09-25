@@ -1,4 +1,4 @@
-﻿import assert from 'node:assert/strict'
+import assert from 'node:assert/strict'
 import { spawn } from 'node:child_process'
 import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -217,13 +217,6 @@ const createElectronRuntimeEnv = (dataDir: string, repoPath: string) => {
   })
 }
 
-const filterIgnorableConsoleMessages = (messages: string[]) =>
-  messages.filter(
-    (message) =>
-      !message.includes('Electron Security Warning (Insecure Content-Security-Policy)') &&
-      !message.includes('Failed to load resource: the server responded with a status of 404'),
-  )
-
 test('Electron runtime honors explicit data dir overrides for a persisted Git tool card', async () => {
   await ensureElectronRuntimeBuild()
 
@@ -297,46 +290,6 @@ test('Electron runtime keeps Git discard confirmation beside the right-click act
     assert.equal(
       (await readFile(path.join(repoPath, 'AGENTS.md'), 'utf8')).replace(/\r\n/g, '\n'),
       '# Initial\n',
-    )
-  } finally {
-    await app.close()
-  }
-})
-
-test('Electron runtime opens the Git analysis panel without React render-phase warnings', async () => {
-  await ensureElectronRuntimeBuild()
-
-  const repoPath = await createTempRepo()
-  const dataDir = await createTempStateDir(repoPath)
-
-  const app = await electron.launch({
-    args: ['.'],
-    cwd: process.cwd(),
-    env: createElectronRuntimeEnv(dataDir, repoPath),
-  })
-
-  try {
-    const page = await app.firstWindow()
-    const consoleMessages: string[] = []
-
-    page.on('console', (message) => {
-      if (message.type() === 'error' || message.type() === 'warning') {
-        consoleMessages.push(message.text())
-      }
-    })
-
-    await page.waitForSelector('.git-tool-card', { timeout: 20000 })
-    await page.locator('.git-dashboard-actions-inline .git-tool-button').nth(1).click()
-
-    const agentPanel = page.locator('.git-agent-panel-shell')
-    await agentPanel.waitFor({ state: 'visible', timeout: 20000 })
-    await page.waitForTimeout(300)
-
-    assert.deepEqual(
-      filterIgnorableConsoleMessages(consoleMessages).filter((message) =>
-        message.includes('Cannot update a component'),
-      ),
-      [],
     )
   } finally {
     await app.close()

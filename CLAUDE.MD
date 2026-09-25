@@ -7,7 +7,7 @@
 > Skipping it is **not acceptable** — it contains the TDD workflow, tier rules, theme safety checks, and pitfall list that govern every change.
 >
 > **Key non-negotiable from AGENTS.md:**
-> - **Tier 1 (logic changes): red → green TDD is required.** Write a failing test FIRST, confirm it fails, THEN implement the fix, THEN confirm the test passes. No exceptions.
+> - **Tier 1 (logic changes): risk-based TDD.** Bug fixes and high-risk logic (state, persistence, server, schema, Electron bridges) must go red → green: failing test FIRST, then fix. Low-risk changes (pure refactors, glue, static catalog/config tweaks) may prove-after, but must still ship with a passing targeted test. See AGENTS.md Tier 1.
 > - **Tier 2 (style changes): visual regression snapshots are required.**
 > - **All tiers: never finish with an unverified code change.**
 >

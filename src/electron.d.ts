@@ -105,6 +105,7 @@ declare global {
       onWindowMaximizedChanged?: (listener: (maximized: boolean) => void) => (() => void)
       openFolderDialog?: () => Promise<string | null>
       openMessageLocalLink?: (href: string, workspacePath?: string) => Promise<void>
+      runLocalFile?: (href: string, workspacePath?: string) => Promise<void>
       openExternalLink?: (href: string) => Promise<void>
       fetchState?: () => Promise<AppStateLoadResponse | AppState>
       loadSessionHistoryEntry?: (request: InternalSessionHistoryLoadRequest) => Promise<InternalSessionHistoryLoadResponse>

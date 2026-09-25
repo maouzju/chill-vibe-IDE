@@ -463,6 +463,11 @@ export const openMessageLocalLink = async (href: string, workspacePath?: string)
   await fn(href, workspacePath)
 }
 
+export const runLocalFile = async (href: string, workspacePath?: string) => {
+  const fn = requireDesktopAction(getDesktopApi()?.runLocalFile)
+  await fn(href, workspacePath)
+}
+
 export const openExternalLink = async (href: string) => {
   const fn = requireDesktopAction(getDesktopApi()?.openExternalLink)
   await fn(href)

@@ -1,5 +1,5 @@
 import { spawn } from 'node:child_process'
-import { existsSync } from 'node:fs'
+import { existsSync, statSync } from 'node:fs'
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 
@@ -76,30 +76,69 @@ export const writeActiveCompatVersion = async (
   await rename(temp, target)
 }
 
-export const resolveCompatCommand = async (provider: Provider, root = getCliCompatRoot()) => {
+// 症状（2026-09-26 用户实测）：另一台电脑点过「兼容版 CLI」后，Claude 与 Codex 同时只剩
+//   `spawn UNKNOWN`，重装系统 CLI 无效；把 active.json 挪走立刻恢复。
+// 根因：激活后 resolveCommand 只看兼容包文件在不在，不看能不能启动 —— 装完后被杀软隔离/
+//   损坏的包照样被优先选中，系统 CLI 再健康也轮不到。
+// 做法：首次选中前真跑一次 `--version`，失败就回落系统 CLI 并记日志；结果按「路径+mtime」缓存，
+//   不让每条消息多付一次进程启动。被否决：只在 spawn 报错后重试 —— 启动点有 6 处，收口在这里最省。
+export type CompatLaunchProbe = (bin: string) => Promise<boolean>
+const compatLaunchProbeCache = new Map<string, boolean>()
+const defaultCompatLaunchProbe: CompatLaunchProbe = async (bin) => (await readCliVersion(bin)) !== null
+
+export const resolveCompatCommand = async (
+  provider: Provider,
+  root = getCliCompatRoot(),
+  probe: CompatLaunchProbe = defaultCompatLaunchProbe,
+) => {
   const version = (await readActiveCompatVersions(root))[provider]
   if (!version) {
     return null
   }
 
   const bin = getCompatBinPath(provider, version, root)
-  return existsSync(bin) ? bin : null
+  if (!existsSync(bin)) {
+    return null
+  }
+
+  const cacheKey = `${bin}|${statSync(bin).mtimeMs}`
+  let launchable = compatLaunchProbeCache.get(cacheKey)
+  if (launchable === undefined) {
+    launchable = await probe(bin)
+    compatLaunchProbeCache.set(cacheKey, launchable)
+    if (!launchable) {
+      void writeServerLog('WARN', '[cli-compat] compat CLI failed to launch; falling back to system CLI.', {
+        provider,
+        version,
+        bin,
+      })
+    }
+  }
+
+  return launchable ? bin : null
 }
 
 const readCliVersion = async (command: string) => {
   const launch = await resolveProviderCommandLaunch({ command, args: ['--version'] })
 
   return new Promise<string | null>((resolve) => {
-    const child = spawn(launch.command, launch.args, {
-      stdio: ['ignore', 'pipe', 'ignore'],
-      windowsHide: true,
-    })
+    // Windows 上 EINVAL/UNKNOWN 这类启动失败是 spawn 同步抛出的，不走 'error' 事件。
+    let child: ReturnType<typeof spawn>
+    try {
+      child = spawn(launch.command, launch.args, {
+        stdio: ['ignore', 'pipe', 'ignore'],
+        windowsHide: true,
+      })
+    } catch {
+      resolve(null)
+      return
+    }
     const chunks: Buffer[] = []
     const timer = setTimeout(() => {
       child.kill()
       resolve(null)
     }, 15_000)
-    child.stdout.on('data', (chunk: Buffer) => chunks.push(chunk))
+    child.stdout?.on('data', (chunk: Buffer) => chunks.push(chunk))
     child.on('error', () => {
       clearTimeout(timer)
       resolve(null)

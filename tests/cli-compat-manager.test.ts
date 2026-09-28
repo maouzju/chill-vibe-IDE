@@ -61,6 +61,32 @@ describe('cli compat manager', () => {
     assert.equal(probes, 1, 'probe result must be cached per binary')
   })
 
+  // 2026-09-29 用户截图：「切换到兼容版」点了没反应 —— 包装得在但起不来，激活后照样回落系统 CLI，按钮原地不动。
+  it('reports an unlaunchable compat install as not installed so the UI offers a re-download', async () => {
+    const root = makeRoot()
+    const bin = getCompatBinPath('claude', '2.1.280', root)
+    mkdirSync(path.dirname(bin), { recursive: true })
+    writeFileSync(bin, 'broken-dead-switch')
+    const manager = new CliCompatManager(async () => null, async () => null, {
+      root,
+      probe: async () => false,
+    })
+    const claude = (await manager.getStatus()).entries.find((entry) => entry.provider === 'claude')
+    assert.equal(claude?.installed, false)
+    await assert.rejects(manager.setActive('claude', true), /cannot launch/)
+
+    const healthyRoot = makeRoot()
+    const healthyBin = getCompatBinPath('claude', '2.1.280', healthyRoot)
+    mkdirSync(path.dirname(healthyBin), { recursive: true })
+    writeFileSync(healthyBin, '')
+    const healthy = new CliCompatManager(async () => null, async () => null, {
+      root: healthyRoot,
+      probe: async () => true,
+    })
+    const ok = (await healthy.getStatus()).entries.find((entry) => entry.provider === 'claude')
+    assert.equal(ok?.installed, true)
+  })
+
   it('tolerates a corrupt active file', async () => {
     const root = makeRoot()
     writeFileSync(path.join(root, 'active.json'), '\0\0\0')

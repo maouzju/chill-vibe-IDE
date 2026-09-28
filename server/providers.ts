@@ -84,6 +84,7 @@ import {
 } from './codex-structured-output.js'
 import {
   classifyProviderStreamErrorRecovery,
+  isClaudePoisonedHistoryError,
   resolveLocalStreamStallTimeoutMs,
   shouldRecoverEmptyToolCallTurn,
   structuredActivityCountsAsTurnOutput,
@@ -3734,6 +3735,10 @@ export const createClaudeTurnParser = (hooks: {
           const hint = classifyLaunchErrorHint(message)
           sink.onError(message, hint, classifyLiveProviderStreamRecovery(request, message, hint, emittedSessionId))
           hooks.onSettled?.()
+          // 坏历史已在进程内存里，复用它每轮必 400；丢掉让续传新起进程先修存档再 --resume。
+          if (isClaudePoisonedHistoryError(message)) {
+            hooks.killChild()
+          }
           return
         }
 

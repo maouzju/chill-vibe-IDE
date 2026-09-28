@@ -111,7 +111,17 @@ const recoverableErrorPatterns = [
   //   429 与 rate-limit 同现的标准文案（下面的 rateLimitPattern）。
   'request rejected (429)',
   '上游已负载',
+  // 症状：v0.20.31 已在 spawn 前摘合成回复（#386），2026-09-29 用户仍红出
+  //   `400 messages.1: system content must contain at least one block` 停在终态。
+  // 根因：存档修复只在新起进程时跑；报错后卡片不续传、常驻进程也不丢，下一条仍打到
+  //   同一个内存里带坏历史的进程上。配合 providers.ts 丢进程，续传会新起进程先修存档。
+  // 被否决：不放行其它 400——那些多是请求本身非法，续传只会刷满 retry budget。
+  'system content must contain at least one block',
 ] as const
+
+// 进程内存里的历史已坏，只能丢掉常驻进程、新起进程 --resume（spawn 前会修存档）。
+export const isClaudePoisonedHistoryError = (message: string) =>
+  message.toLowerCase().includes('system content must contain at least one block')
 
 const zeroExitPattern = /\b(?:codex|claude) exited with status code:\s*0\b/i
 

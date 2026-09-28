@@ -102,17 +102,14 @@ export const resolveCompatCommand = async (
   }
 
   const cacheKey = `${bin}|${statSync(bin).mtimeMs}`
-  let launchable = compatLaunchProbeCache.get(cacheKey)
-  if (launchable === undefined) {
-    launchable = await probe(bin)
-    compatLaunchProbeCache.set(cacheKey, launchable)
-    if (!launchable) {
-      void writeServerLog('WARN', '[cli-compat] compat CLI failed to launch; falling back to system CLI.', {
-        provider,
-        version,
-        bin,
-      })
-    }
+  const seen = compatLaunchProbeCache.has(cacheKey)
+  const launchable = await isCompatLaunchable(bin, probe)
+  if (!seen && !launchable) {
+    void writeServerLog('WARN', '[cli-compat] compat CLI failed to launch; falling back to system CLI.', {
+      provider,
+      version,
+      bin,
+    })
   }
 
   return launchable ? bin : null
@@ -153,31 +150,61 @@ const readCliVersion = async (command: string) => {
 
 type Task = NonNullable<CliCompatEntry['task']>
 
+// 症状（2026-09-29 用户截图）：「切换到兼容版」点了没反应，也没有报错。
+// 根因：installed 只看文件在不在；包装在但起不来（隔离/损坏）时激活照写 active.json，
+//   resolveCompatCommand 探测失败回落系统 CLI，状态原样返回，按钮原地不动。
+// 做法：installed 同样要求能启动 —— 坏包显示成「下载兼容版」，点一下就重装修好；setActive 也显式报错。
+const isCompatLaunchable = async (bin: string, probe: CompatLaunchProbe) => {
+  if (!existsSync(bin)) {
+    return false
+  }
+  const cacheKey = `${bin}|${statSync(bin).mtimeMs}`
+  const cached = compatLaunchProbeCache.get(cacheKey)
+  if (cached !== undefined) {
+    return cached
+  }
+  const launchable = await probe(bin)
+  compatLaunchProbeCache.set(cacheKey, launchable)
+  return launchable
+}
+
 export class CliCompatManager {
   private readonly tasks = new Map<Provider, Task>()
   private readonly resolveSystemCommand: (provider: Provider) => Promise<string | null | undefined>
   private readonly readSystemVersion: (command: string) => Promise<string | null>
+  private readonly root: string | undefined
+  private readonly probe: CompatLaunchProbe
 
   constructor(
     resolveSystemCommand: (provider: Provider) => Promise<string | null | undefined>,
     readSystemVersion: (command: string) => Promise<string | null> = readCliVersion,
+    options: { root?: string; probe?: CompatLaunchProbe } = {},
   ) {
     this.resolveSystemCommand = resolveSystemCommand
     this.readSystemVersion = readSystemVersion
+    this.root = options.root
+    this.probe = options.probe ?? defaultCompatLaunchProbe
+  }
+
+  private getRoot() {
+    return this.root ?? getCliCompatRoot()
   }
 
   async getStatus(): Promise<CliCompatStatus> {
-    const active = await readActiveCompatVersions()
+    const root = this.getRoot()
+    const active = await readActiveCompatVersions(root)
     const entries = await Promise.all(
       providers.map(async (provider): Promise<CliCompatEntry> => {
         const compatibleVersion = compatibleCliVersions[provider].version
-        const activeVersion = (await resolveCompatCommand(provider)) ? (active[provider] ?? null) : null
+        const activeVersion = (await resolveCompatCommand(provider, root, this.probe))
+          ? (active[provider] ?? null)
+          : null
         const systemCommand = await this.resolveSystemCommand(provider).catch(() => null)
 
         return {
           provider,
           compatibleVersion,
-          installed: existsSync(getCompatBinPath(provider, compatibleVersion)),
+          installed: await isCompatLaunchable(getCompatBinPath(provider, compatibleVersion, root), this.probe),
           active: activeVersion === compatibleVersion,
           activeVersion,
           systemVersion: systemCommand ? await this.readSystemVersion(systemCommand) : null,
@@ -191,11 +218,16 @@ export class CliCompatManager {
 
   async setActive(provider: Provider, active: boolean) {
     const version = compatibleCliVersions[provider].version
-    if (active && !existsSync(getCompatBinPath(provider, version))) {
+    const root = this.getRoot()
+    const bin = getCompatBinPath(provider, version, root)
+    if (active && !existsSync(bin)) {
       throw new Error(`Compatible ${provider} CLI ${version} is not installed.`)
     }
+    if (active && !(await isCompatLaunchable(bin, this.probe))) {
+      throw new Error(`Compatible ${provider} CLI ${version} cannot launch; please re-download it.`)
+    }
 
-    await writeActiveCompatVersion(provider, active ? version : null)
+    await writeActiveCompatVersion(provider, active ? version : null, root)
     return this.getStatus()
   }
 

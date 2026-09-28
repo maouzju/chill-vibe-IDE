@@ -418,6 +418,53 @@ describe('ideReducer pane layout', () => {
     assert.deepEqual(restoredCard?.contextTransfer, state.sessionHistory[0]?.contextTransfer)
   })
 
+  // 症状（2026-09-26）：关闭再重开会话/工作区后，沉底面板仍显示「正在运行的子智能体…运行中」。
+  // 关闭时 CLI 进程已结束，存档里的 running 快照再无推送能结算它。
+  it('retires running Claude sub-agent snapshots when a closed session or workspace is reopened', () => {
+    const agentsMessage: ChatMessage = {
+      id: 'claude:stream-1:item:agent-status:claude',
+      role: 'assistant',
+      content: '',
+      createdAt: timestamp,
+      meta: {
+        provider: 'claude',
+        kind: 'agents',
+        itemId: 'agent-status:claude',
+        structuredData: JSON.stringify({
+          view: 'status',
+          agents: [{ threadId: 'workflow:1', title: 'Workflow', status: 'running' }],
+        }),
+      },
+    }
+    const statusOf = (card: ChatCard | undefined) =>
+      JSON.parse(card?.messages.find((m) => m.meta?.kind === 'agents')?.meta?.structuredData ?? '{}')
+        .agents?.[0]?.status
+
+    const state = createState()
+    state.sessionHistory = [{
+      id: 'h1', title: 't', sessionId: 's1', provider: 'claude', model: 'claude-sonnet-4-6',
+      workspacePath: 'D:/repo/one', messages: [agentsMessage], archivedAt: timestamp,
+    }]
+    const reopened = ideReducer(state, { type: 'restoreSession', columnId: 'column-1', entryId: 'h1' })
+    const pane = reopened.columns[0]!.layout as PaneNode
+    assert.equal(statusOf(reopened.columns[0]!.cards[pane.activeTabId]), 'interrupted')
+
+    const wsState = createState()
+    const next = ideReducer(wsState, {
+      type: 'restoreClosedWorkspace',
+      columnId: wsState.columns[0]!.id,
+      snapshot: {
+        closeId: 'c1',
+        closedAt: timestamp,
+        column: createColumn({
+          id: 'closed', layout: createPane('p', ['k'], 'k'),
+          cards: { k: createCard({ id: 'k', provider: 'claude', messages: [agentsMessage] }) },
+        }),
+      },
+    })
+    assert.equal(statusOf(next.columns[0]!.cards.k), 'interrupted')
+  })
+
   it('imports an external session with its archived provider, model, and session id', () => {
     const state = createState()
 

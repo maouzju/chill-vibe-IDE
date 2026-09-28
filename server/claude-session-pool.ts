@@ -104,6 +104,7 @@ export class ClaudeSessionPool {
   private readonly shouldIgnoreIdleLine: (line: string) => boolean
   private readonly interruptDrainTimeoutMs: number
   private readonly idleTimeoutMs: number
+  private readonly respawnCloseWaitMs: number
   private readonly onProcessAcquired?: (entry: ClaudeSessionPoolEntryView) => void
   private disposed = false
 
@@ -122,6 +123,7 @@ export class ClaudeSessionPool {
     // the owner card nor be replayed into a later genuine top-level turn.
     shouldIgnoreIdleLine?: (line: string) => boolean
     idleTimeoutMs?: number
+    respawnCloseWaitMs?: number
     // 软中断后等 CLI 吐完收尾输出的上限。实测原生响应 1-2ms，收尾行紧随其后；
     // 超时说明这个进程已经不听话了，必须退回硬 kill——用户点停止的心理预期是
     // 「点了就停」，不能因为协议路径卡住就把卡片挂在一个永不结束的中断态上。
@@ -133,6 +135,7 @@ export class ClaudeSessionPool {
     this.shouldWakeOnLine = options.shouldWakeOnLine ?? (() => true)
     this.shouldIgnoreIdleLine = options.shouldIgnoreIdleLine ?? (() => false)
     this.idleTimeoutMs = options.idleTimeoutMs ?? resolveDefaultIdleTimeoutMs()
+    this.respawnCloseWaitMs = options.respawnCloseWaitMs ?? 5_000
     this.interruptDrainTimeoutMs =
       options.interruptDrainTimeoutMs ?? DEFAULT_INTERRUPT_DRAIN_TIMEOUT_MS
   }
@@ -186,8 +189,12 @@ export class ClaudeSessionPool {
     // 2026-09-11：done 先到、CLI result 后到，紧随的追问会把健康收尾进程误杀（#369）。
     // 只等明确已中断且身份匹配的旧 turn；不能取消 idle 判据或把新输入直接写进旧 parser。
     // endTurn / exit / removeEntry 均释放等待；醒来后重新校验所有权，不能抢占新请求。
+    // 2026-09-26：不再要求签名一致。停止后切思考深度再秒发，签名变了，旧实现当场 kill
+    //   正在收尾中断的旧进程并立刻 --resume 同一 session，两个 CLI 并发写同一份转录，
+    //   留下空 content 的消息，API 回 400「system content must contain at least one block」。
+    //   同一 session 的中断收尾必须先走完，签名不符的换进程放到收尾之后。
     if (existing && !existing.closed && existing.state === 'turn-active' &&
-      existing.interruptRequested && existing.signature === options.signature &&
+      existing.interruptRequested &&
       requestedSessionId !== null && existing.sessionId === requestedSessionId) {
       await new Promise<void>((resolve) => existing!.interruptDrainWaiters.add(resolve))
       existing = this.entries.get(options.key)
@@ -210,7 +217,17 @@ export class ClaudeSessionPool {
         return { child: existing.child, reused: true }
       }
 
+      const resumesSameSession =
+        requestedSessionId !== null && existing.sessionId === requestedSessionId && !existing.closed
+      const previous = existing
       this.removeEntry(existing, { kill: true })
+      // 旧进程还没退出就 --resume 同一 session 会让两个 CLI 并发写转录（见上）。
+      if (resumesSameSession) {
+        await this.waitForChildClose(previous)
+        if (this.disposed || this.acquireGenerations.get(options.key) !== generation) {
+          return null
+        }
+      }
     }
 
     const child = await options.spawn()
@@ -598,6 +615,19 @@ export class ClaudeSessionPool {
       meta: entry.meta,
       child: entry.child,
     }
+  }
+
+  private waitForChildClose(entry: PoolEntry) {
+    if (entry.closed) {
+      return Promise.resolve()
+    }
+    return new Promise<void>((resolve) => {
+      const timer = setTimeout(resolve, this.respawnCloseWaitMs)
+      entry.child.once('close', () => {
+        clearTimeout(timer)
+        resolve()
+      })
+    })
   }
 
   private removeEntry(

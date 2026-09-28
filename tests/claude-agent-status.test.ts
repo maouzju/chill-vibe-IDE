@@ -1,15 +1,22 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
+import { setFlagsFromString } from 'node:v8'
+import { runInNewContext } from 'node:vm'
 
 import {
   claudeAgentElapsedPrefix,
+  claudeWorkflowSummaryPrefix,
   createClaudeAgentStatusTracker,
   syntheticClaudeAgentId,
 } from '../server/claude-agent-status'
 
-// 面板底部那行本地推算的"已运行"不是 CLI 活动，断言真实进度行时要先滤掉。
+// 面板底部那行本地推算的"已运行"和 Workflow 汇总行都不是 CLI 心跳，断言真实进度行时要先滤掉。
 const progressLines = (activity: string[] | undefined) =>
-  (activity ?? []).filter((line) => !line.startsWith(claudeAgentElapsedPrefix))
+  (activity ?? []).filter((line) =>
+    !line.startsWith(claudeAgentElapsedPrefix) && !line.startsWith(claudeWorkflowSummaryPrefix))
+
+const summaryLine = (activity: string[] | undefined) =>
+  (activity ?? []).find((line) => line.startsWith(claudeWorkflowSummaryPrefix))
 
 const elapsedLine = (activity: string[] | undefined) =>
   (activity ?? []).find((line) => line.startsWith(claudeAgentElapsedPrefix))
@@ -185,6 +192,318 @@ test('successive progress ticks accumulate as separate preview lines', () => {
   assert.equal(activity.length, 2)
   assert.match(activity[0]!, /Check if target directory exists/u)
   assert.match(activity[1]!, /List top-level \.ts files by name/u)
+})
+
+// 事件形状取自 2026-09-27 claude 2.1.280 的 Workflow 进度发射点：description 是
+// `${phaseTitle}: ${label}`，last_tool_name 又是同一个 label，usage 是整个工作流的累计值。
+const workflowProgress = (
+  label: string,
+  toolUses: number,
+  durationMs: number,
+  { phase = 'Drafts', live }: { phase?: string; live?: WorkflowAgentState[] } = {},
+) => ({
+  type: 'system',
+  subtype: 'task_progress',
+  task_id: 'wf_native',
+  tool_use_id: 'toolu_wf',
+  description: `${phase}: ${label}`,
+  usage: { total_tokens: 1_234_567, tool_uses: toolUses, duration_ms: durationMs },
+  last_tool_name: label,
+  // CLI 只在批次里有状态变化（start/done/error）或节流到点时附带整张 workflow_progress。
+  // 2026-09-27 探针实测：排队中的 agent 是 state=start 但没有 agentId/startedAt，开跑后才补上。
+  ...(live ? {
+    workflow_progress: live.map(([phaseTitle, agentLabel, state, extra], index) => ({
+      type: 'workflow_agent',
+      index,
+      label: agentLabel,
+      phaseTitle,
+      state: state === 'queued' ? 'start' : state,
+      ...(state === 'queued' ? {} : { agentId: `agent-${index}` }),
+      ...extra,
+    })),
+  } : {}),
+})
+
+type WorkflowAgentState = [
+  phaseTitle: string,
+  label: string,
+  state: 'queued' | 'start' | 'progress' | 'done' | 'error',
+  extra?: Record<string, unknown>,
+]
+
+const startWorkflow = (options: Parameters<typeof createClaudeAgentStatusTracker>[0] = {}) => {
+  const tracker = createClaudeAgentStatusTracker(options)
+  tracker.beginSynthetic(syntheticClaudeAgentId('toolu_wf'), 'Workflow')
+  tracker.handleEvent({ type: 'system', subtype: 'task_started', task_id: 'wf_native', tool_use_id: 'toolu_wf', task_type: 'local_workflow' })
+  return tracker
+}
+
+test('a Workflow progress line does not repeat the agent label the description already names', () => {
+  const tracker = startWorkflow()
+  const update = tracker.handleEvent(workflowProgress('draft:concept (throttle-retry)', 149, 3_923_000))
+
+  const [line] = progressLines(update.activity?.agents[0]?.activity)
+  assert.equal(line, 'Drafts: draft:concept (throttle-retry) · 149 tools · 65m23s')
+})
+
+test('Workflow heartbeats for the same agent refresh one line instead of stacking near-identical copies', () => {
+  const tracker = startWorkflow()
+  tracker.handleEvent(workflowProgress('draft:concept (throttle-retry)', 149, 3_923_000))
+  const update = tracker.handleEvent(workflowProgress('draft:concept (throttle-retry)', 150, 3_923_400))
+
+  const activity = progressLines(update.activity?.agents[0]?.activity)
+  assert.deepEqual(activity, ['Drafts: draft:concept (throttle-retry) · 150 tools · 65m23s'])
+})
+
+test('interleaved parallel Workflow agents keep one line each, most recent last', () => {
+  const tracker = startWorkflow()
+  tracker.handleEvent(workflowProgress('draft:concept', 10, 60_000))
+  tracker.handleEvent(workflowProgress('draft:systems', 11, 61_000))
+  const update = tracker.handleEvent(workflowProgress('draft:concept', 12, 62_000))
+
+  const activity = progressLines(update.activity?.agents[0]?.activity)
+  assert.equal(activity.length, 2)
+  assert.match(activity[0]!, /^Drafts: draft:systems · 11 tools/u)
+  assert.match(activity[1]!, /^Drafts: draft:concept · 12 tools/u)
+})
+
+// 2026-09-27 用户那次的实际时间线：首次尝试跑了一段被判限流，45s 后以 `(throttle-retry)` 重派。
+test('a retried Workflow agent replaces the abandoned attempt line instead of looking like a second agent', () => {
+  const tracker = startWorkflow()
+  tracker.handleEvent(workflowProgress('draft:concept', 40, 600_000))
+  tracker.handleEvent(workflowProgress('draft:concept (throttle-retry)', 149, 3_923_000))
+  const update = tracker.handleEvent(workflowProgress('draft:concept (retry 1)', 150, 3_923_400))
+
+  const activity = progressLines(update.activity?.agents[0]?.activity)
+  assert.deepEqual(activity, ['Drafts: draft:concept (retry 1) · 150 tools · 65m23s'])
+})
+
+test('a finished phase drops its lines once workflow_progress reports the agents done', () => {
+  const tracker = startWorkflow()
+  tracker.handleEvent(workflowProgress('draft:a', 10, 60_000))
+  tracker.handleEvent(workflowProgress('draft:b', 11, 61_000))
+  const update = tracker.handleEvent(workflowProgress('critic', 12, 62_000, {
+    phase: 'Review',
+    live: [['Drafts', 'draft:a', 'done'], ['Drafts', 'draft:b', 'done'], ['Review', 'critic', 'start']],
+  }))
+
+  // 表里的 critic 没带自己的 toolCalls/startedAt，行上就不挂计数器，绝不退回整个工作流的累计值。
+  const activity = progressLines(update.activity?.agents[0]?.activity)
+  assert.deepEqual(activity, ['Review: critic'])
+})
+
+test('a done event does not re-add the line of the agent that just finished', () => {
+  const tracker = startWorkflow()
+  tracker.handleEvent(workflowProgress('draft:a', 10, 60_000))
+  tracker.handleEvent(workflowProgress('draft:b', 11, 61_000))
+  const update = tracker.handleEvent(workflowProgress('draft:a', 12, 62_000, {
+    live: [['Drafts', 'draft:a', 'done'], ['Drafts', 'draft:b', 'progress']],
+  }))
+
+  const activity = progressLines(update.activity?.agents[0]?.activity)
+  assert.deepEqual(activity, ['Drafts: draft:b · 11 tools · 1m1s'])
+})
+
+// CLI 不 trim 脚本里的 phase 名，description 与 workflow_progress 用的是同一份原始字符串。
+test('a phase title with stray whitespace still matches its live workflow_progress entry', () => {
+  const tracker = startWorkflow()
+  const update = tracker.handleEvent(workflowProgress('draft:a', 10, 60_000, {
+    phase: 'Drafts ',
+    live: [['Drafts ', 'draft:a', 'progress']],
+  }))
+
+  const activity = progressLines(update.activity?.agents[0]?.activity)
+  assert.deepEqual(activity, ['Drafts : draft:a'])
+})
+
+test('workflow_progress pruning keeps every parallel agent that is still live', () => {
+  const tracker = startWorkflow()
+  tracker.handleEvent(workflowProgress('draft:concept', 10, 60_000))
+  const update = tracker.handleEvent(workflowProgress('draft:systems (throttle-retry)', 11, 61_000, {
+    live: [['Drafts', 'draft:concept', 'progress'], ['Drafts', 'draft:systems (throttle-retry)', 'start']],
+  }))
+
+  const activity = progressLines(update.activity?.agents[0]?.activity)
+  assert.equal(activity.length, 2)
+  assert.match(activity[0]!, /^Drafts: draft:concept · 10 tools/u)
+  assert.equal(activity[1], 'Drafts: draft:systems (throttle-retry)')
+})
+
+// 2026-09-27 用户截图：标题「四模块并行」，面板只有 A3:rig 一行，且 1074 tools / 118m 是整个工作流的累计值。
+// toy-blade 的 journal 证实 core / data+rpg / render 早已跑完。
+test('a Workflow with three of four agents done says so in a summary line the panel keeps visible', () => {
+  const t0 = 1_000_000
+  let now = t0
+  const tracker = startWorkflow({ now: () => now })
+  const wave: WorkflowAgentState[] = [
+    ['Wave1', 'A1:core', 'progress', { startedAt: t0, toolCalls: 3 }],
+    ['Wave1', 'A2:render', 'progress', { startedAt: t0, toolCalls: 2 }],
+    ['Wave1', 'A3:rig', 'progress', { startedAt: t0, toolCalls: 1 }],
+    ['Wave1', 'A7:data+rpg', 'progress', { startedAt: t0, toolCalls: 4 }],
+  ]
+  now += 60_000
+  tracker.handleEvent(workflowProgress('A1:core', 10, 60_000, { phase: 'Wave1', live: wave }))
+  tracker.handleEvent(workflowProgress('A7:data+rpg', 11, 60_000, { phase: 'Wave1' }))
+
+  now = t0 + 7_084_000
+  const update = tracker.handleEvent(workflowProgress('A3:rig', 1_074, 7_084_000, {
+    phase: 'Wave1',
+    live: [
+      ['Wave1', 'A1:core', 'done', { startedAt: t0, toolCalls: 180, durationMs: 3_000_000 }],
+      ['Wave1', 'A2:render', 'done', { startedAt: t0, toolCalls: 200, durationMs: 5_000_000 }],
+      ['Wave1', 'A3:rig', 'progress', { startedAt: t0, toolCalls: 530 }],
+      ['Wave1', 'A7:data+rpg', 'done', { startedAt: t0, toolCalls: 164, durationMs: 4_000_000 }],
+    ],
+  }))
+
+  // 渲染层（桌面与手机监工页）都只取最后 3 行，汇总必须落在里面。
+  const visible = (update.activity?.agents[0]?.activity ?? []).slice(-3)
+  assert.equal(visible[0], 'Wave1: A3:rig · 530 tools · 118m4s', '工具数与时长是 rig 自己的，不是整个工作流的累计值')
+  assert.equal(visible[1], `${claudeWorkflowSummaryPrefix} 已完成 3/4 · 在跑 1`)
+  assert.match(visible[2]!, new RegExp(`^${claudeAgentElapsedPrefix}`, 'u'))
+
+  // 两次状态变化之间的心跳不带 workflow_progress，汇总与该 agent 自己的计数要沿用上一张表。
+  now += 5_000
+  const heartbeat = tracker.handleEvent(workflowProgress('A3:rig', 1_075, 7_089_000, { phase: 'Wave1' }))
+  const afterHeartbeat = heartbeat.activity?.agents[0]?.activity
+  assert.deepEqual(progressLines(afterHeartbeat), ['Wave1: A3:rig · 530 tools · 118m9s'])
+  assert.equal(summaryLine(afterHeartbeat), `${claudeWorkflowSummaryPrefix} 已完成 3/4 · 在跑 1`)
+})
+
+// 2026-09-27 探针回放：刚开跑的条目还没有 toolCalls，若退回心跳 usage（整个工作流累计）会显示 5 tools，
+// 下一张表到了又变成自己的 2 tools，数字倒退。
+test('once the workflow table is known a progress line never falls back to the workflow-wide tool count', () => {
+  const t0 = 1_000_000
+  let now = t0
+  const tracker = startWorkflow({ now: () => now })
+  tracker.handleEvent(workflowProgress('A1:fast', 0, 40, {
+    phase: 'Wave1',
+    live: [['Wave1', 'A1:fast', 'start', { startedAt: t0 }], ['Wave1', 'A2:mid', 'start', { startedAt: t0 }]],
+  }))
+  now = t0 + 10_500
+  const early = tracker.handleEvent(workflowProgress('A1:fast', 5, 10_500, { phase: 'Wave1' }))
+  assert.deepEqual(progressLines(early.activity?.agents[0]?.activity), ['Wave1: A1:fast · 10.5s'])
+
+  now = t0 + 14_300
+  const later = tracker.handleEvent(workflowProgress('A1:fast', 7, 14_300, {
+    phase: 'Wave1',
+    live: [['Wave1', 'A1:fast', 'progress', { startedAt: t0, toolCalls: 2 }], ['Wave1', 'A2:mid', 'progress', { startedAt: t0, toolCalls: 5 }]],
+  }))
+  assert.deepEqual(progressLines(later.activity?.agents[0]?.activity), ['Wave1: A1:fast · 2 tools · 14.3s'])
+})
+
+test('queued Workflow agents are counted in the summary but never get a progress line of their own', () => {
+  const tracker = startWorkflow()
+  tracker.handleEvent(workflowProgress('A1:core', 3, 30_000, { phase: 'Wave1' }))
+  // CLI 把刚入队的 agent 放在批次末尾，description 因而指向一个还没开跑的 agent。
+  const update = tracker.handleEvent(workflowProgress('A4:audio', 4, 31_000, {
+    phase: 'Wave1',
+    live: [
+      ['Wave1', 'A1:core', 'progress'],
+      ['Wave1', 'A2:render', 'start'],
+      ['Wave1', 'A3:rig', 'queued'],
+      ['Wave1', 'A4:audio', 'queued'],
+    ],
+  }))
+
+  const activity = update.activity?.agents[0]?.activity
+  assert.deepEqual(progressLines(activity), ['Wave1: A1:core · 3 tools · 30.0s'])
+  assert.equal(summaryLine(activity), `${claudeWorkflowSummaryPrefix} 已完成 0/4 · 在跑 2 · 排队 2`)
+})
+
+// 2026-09-27 对抗审查实测：列名字的汇总在 217~584px 的列里会折成两行，桌面活动框限高 3 行、底部对齐，
+// 折行会把最新那条心跳行挤出框。只报计数，在跑的是谁由上面的心跳行交代。
+test('the Workflow summary reports counts only so it stays one short line, in English too', () => {
+  const live: WorkflowAgentState[] = [
+    ['Scan', 'scan:a', 'done'],
+    ['Scan', 'scan:b', 'error'],
+    ['Scan', 'scan:c', 'progress'],
+    ['Scan', 'scan:d', 'progress'],
+    ['Scan', 'scan:e', 'start'],
+    ['Scan', 'scan:f (throttle-retry)', 'progress'],
+    ['Scan', 'scan:g', 'queued'],
+  ]
+
+  const english = startWorkflow({ language: 'en' })
+  const en = english.handleEvent(workflowProgress('scan:c', 9, 9_000, { phase: 'Scan', live }))
+  assert.equal(summaryLine(en.activity?.agents[0]?.activity),
+    `${claudeWorkflowSummaryPrefix} 1/7 done · 4 running · 1 failed · 1 queued`)
+
+  const chinese = startWorkflow()
+  const zh = chinese.handleEvent(workflowProgress('scan:c', 9, 9_000, { phase: 'Scan', live }))
+  const summary = summaryLine(zh.activity?.agents[0]?.activity)
+  assert.equal(summary, `${claudeWorkflowSummaryPrefix} 已完成 1/7 · 在跑 4 · 失败 1 · 排队 1`)
+  assert.ok(!summary?.includes('scan:'), '汇总行不列 agent 名字')
+})
+
+// 2026-09-27 对抗审查：CLI 2.1.280 没给 label 时取 prompt 前 60 字，模板化 prompt 或循环里复用同一个 label
+// 都会撞名；心跳不带 index，分不清是哪一个发的。此前那行借用 index 最大那个的计数，它结束后数字还会倒退。
+test('Workflow agents sharing a label share one line that borrows none of their counters', () => {
+  const t0 = 1_000_000
+  let now = t0 + 60_000
+  const tracker = startWorkflow({ now: () => now })
+  const three = tracker.handleEvent(workflowProgress('review', 132, 1_200_000, {
+    phase: 'Review',
+    live: [
+      ['Review', 'review', 'progress', { startedAt: t0 - 1_140_000, toolCalls: 80 }],
+      ['Review', 'review', 'progress', { startedAt: t0 - 540_000, toolCalls: 40 }],
+      ['Review', 'review', 'progress', { startedAt: t0, toolCalls: 12 }],
+    ],
+  }))
+  const activity = three.activity?.agents[0]?.activity
+  assert.deepEqual(progressLines(activity), ['Review: review ×3'])
+  assert.equal(summaryLine(activity), `${claudeWorkflowSummaryPrefix} 已完成 0/3 · 在跑 3`)
+
+  now += 6_000
+  const two = tracker.handleEvent(workflowProgress('review', 140, 1_206_000, {
+    phase: 'Review',
+    live: [
+      ['Review', 'review', 'progress', { startedAt: t0 - 1_140_000, toolCalls: 85 }],
+      ['Review', 'review', 'progress', { startedAt: t0 - 540_000, toolCalls: 43 }],
+      ['Review', 'review', 'done', { startedAt: t0, toolCalls: 12, durationMs: 66_000 }],
+    ],
+  }))
+  assert.deepEqual(progressLines(two.activity?.agents[0]?.activity), ['Review: review ×2'])
+
+  // 只剩一个同名 agent 在跑时身份不再含糊，计数回来。
+  const one = tracker.handleEvent(workflowProgress('review', 150, 1_212_000, {
+    phase: 'Review',
+    live: [
+      ['Review', 'review', 'done', { startedAt: t0 - 1_140_000, toolCalls: 90, durationMs: 1_206_000 }],
+      ['Review', 'review', 'progress', { startedAt: t0 - 540_000, toolCalls: 48 }],
+      ['Review', 'review', 'done', { startedAt: t0, toolCalls: 12, durationMs: 66_000 }],
+    ],
+  }))
+  assert.deepEqual(progressLines(one.activity?.agents[0]?.activity), ['Review: review · 48 tools · 10m6s'])
+})
+
+// 2026-09-27 对抗审查实测：常驻进程的追踪器跨回合存活、从不淘汰条目，结束的 Workflow 仍攥着整张 CLI 原始表
+// （每个 agent 约 1KB，20 个工作流 × 50 个 agent 留下 1.48MB），而结束后再没有任何路径读它。
+test('a finished Workflow lets go of the raw workflow_progress table', async () => {
+  setFlagsFromString('--expose-gc')
+  const gc = runInNewContext('gc') as () => void
+  const tracker = startWorkflow()
+  let entry: Record<string, unknown> | undefined = {
+    type: 'workflow_agent', index: 0, label: 'A1:core', phaseTitle: 'Wave1', state: 'progress', agentId: 'agent-0',
+    promptPreview: 'x'.repeat(400),
+  }
+  const table = new WeakRef(entry)
+  tracker.handleEvent({ ...workflowProgress('A1:core', 3, 30_000, { phase: 'Wave1' }), workflow_progress: [entry] })
+  entry = undefined
+  tracker.handleEvent({ type: 'system', subtype: 'task_notification', task_id: 'wf_native', status: 'completed' })
+
+  await new Promise((resolve) => setImmediate(resolve))
+  gc()
+  assert.equal(table.deref(), undefined)
+})
+
+test('a Workflow that never attached workflow_progress keeps the plain progress lines without a summary', () => {
+  const tracker = startWorkflow()
+  const update = tracker.handleEvent(workflowProgress('draft:a', 10, 60_000))
+
+  const activity = update.activity?.agents[0]?.activity
+  assert.equal(summaryLine(activity), undefined)
+  assert.deepEqual(progressLines(activity), ['Drafts: draft:a · 10 tools · 1m0s'])
 })
 
 test('preview lines stay bounded so a long-running sub-agent cannot grow without limit', () => {

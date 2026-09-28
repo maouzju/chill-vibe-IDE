@@ -4,6 +4,7 @@ import type {
   StreamAgentsActivity,
   StreamAgentStatus,
 } from '../shared/schema.js'
+import { claudeWorkflowSummaryPrefix } from '../shared/claude-agent-push.js'
 import { parseClaudeToolResults } from './claude-tool-result.js'
 
 // 症状：Claude 派发子代理后卡片只剩一个通用计时器，用户无法判断跑到哪一步、是否卡住。
@@ -18,9 +19,14 @@ const maxPreviewItems = 6
 
 type JsonRecord = Record<string, unknown>
 
+// key 是进度行去掉计数器后的"动作身份"，同一动作的新心跳按它替换旧行。
+type ProgressPreview = { key: string; line: string }
+
 type TrackedAgent = StreamAgentEntry & {
-  activity: string[]
+  preview: ProgressPreview[]
   startedAt: number
+  // Workflow 条目专用：CLI workflow_progress 按 `type:index` 合并后的整张表。
+  workflow?: Map<string, JsonRecord>
 }
 
 // 症状：用户报「面板一直没动」——整轮已跑 26 分钟，三条进度还停在 3.3s / 10.7s。
@@ -30,6 +36,18 @@ type TrackedAgent = StreamAgentEntry & {
 // 被否决：静默超时就清空面板——子代理其实活着，清掉等于谎报完成。改为本地推算一行已运行
 //         时长，由 providers 的周期重发驱动它走动。前缀是用户可见文本，不能用内部标记。
 export const claudeAgentElapsedPrefix = '⏳'
+
+// 症状：标题写着「四模块并行」，Workflow 条目却只有一行 A3:rig，看不出另外三个去哪了；
+//   那行的 1074 tools / 118m 读起来像 rig 一个人的（2026-09-27 用户截图）。
+// 根因：同日对拍 toy-blade 的 journal，core / data+rpg / render 早已跑完，只剩 rig；面板只列在跑的 agent，
+//   从不交代"几个里完成了几个"，而心跳的 usage 是整个工作流的累计值。同日探针
+//   （scripts/probe-claude-workflow-progress.mjs，claude 2.1.280）证实 workflow_progress 是按 type:index
+//   合并的整张表：结束的 agent 仍在表里（done/error），排队的是 state=start 但没有 agentId/startedAt，
+//   开跑的带各自的 toolCalls/startedAt。
+// 被否决：放宽渲染层的 slice(-3)——桌面与手机监工页都尾切 3 行，还要动 Tier 2 快照；每个 agent 各画一行——
+//   并行十几个时会把真正的心跳行挤出可见窗口。改为在 ⏳ 行前插一行汇总，尾切后始终可见。
+// 常量本身放在 shared：落盘快照失去追踪时的收尾也要认得这一行。
+export { claudeWorkflowSummaryPrefix }
 
 type ClaudeAgentStatusTrackerOptions = {
   now?: () => number
@@ -136,30 +154,88 @@ const formatDuration = (durationMs: number | undefined) => {
   return `${minutes}m${Math.round(seconds % 60)}s`
 }
 
-export const formatClaudeAgentProgressLine = (event: unknown): string | null => {
-  if (!isRecord(event)) {
-    return null
-  }
-
+// 症状：Workflow 条目同一个 agent 名在一行里出现两次，且每次心跳多一行只差工具数的近似副本
+//   （2026-09-27 用户截图：「Drafts: draft:concept (throttle-retry) · draft:concept (throttle-retry) · 149 tools」下面紧跟 150 tools 一行）。
+// 根因：2026-09-27 抠 claude 2.1.280 的 Workflow 进度发射点：description=`${phaseTitle}: ${label}`、
+//   last_tool_name=label；usage 是整个工作流的累计值，同一 agent 的每次心跳只有计数器在变。
+//   journal 核实当时只有一个 draft:concept 在跑，不是 CLI 派了两个。
+// 被否决：按整行字符串去重——计数器每次都变，永远不相等；只去连续重复——并行 agent 交替上报时仍会刷出旧副本。
+const readProgressAction = (event: JsonRecord) => {
   const description = readString(event, 'description')
   if (!description) {
     return null
   }
-
-  const usage = readRecord(event, 'usage')
-  const segments = [description]
-
   const toolName = readString(event, 'last_tool_name')
-  if (toolName) {
-    segments.push(toolName)
+  const redundantTool = toolName !== undefined
+    && (description === toolName || description.endsWith(`: ${toolName}`))
+  return toolName && !redundantTool ? `${description} · ${toolName}` : description
+}
+
+// 症状：按动作去重后，被放弃的首次尝试与已跑完的上一阶段会一直钉在面板第二行，看着像还有一个在跑
+//   （2026-09-27 对抗审查实锤；改前的滚动列表两次心跳就能把它们冲掉）。
+// 根因：claude 2.1.280 重派时把 label 改成 `${label} (throttle-retry)` / `${label} (retry N)`，index 不变；
+//   agent 结束只体现在 workflow_progress 里该 agent 的 state 变成 done/error，心跳本身不带终态。
+// 被否决：按心跳次数淘汰旧行——分不清"上一阶段已结束"和"并行 agent 正卡在一条长命令里"，
+//   而 CLI 每次状态变化都会附带整张 workflow_progress，按它的活跃集合裁剪是精确的。
+const previewKey = (action: string) => action.replace(/ \((?:throttle-retry|retry \d+)\)$/u, '')
+
+type WorkflowAgentState = 'queued' | 'running' | 'done' | 'failed'
+
+const readWorkflowAgentState = (entry: JsonRecord): WorkflowAgentState | undefined => {
+  switch (readString(entry, 'state')) {
+    case 'start':
+      return readString(entry, 'agentId') || readFiniteNumber(entry, 'startedAt') !== undefined ? 'running' : 'queued'
+    case 'progress':
+      return 'running'
+    case 'done':
+      return 'done'
+    case 'error':
+      return 'failed'
+    default:
+      return undefined
+  }
+}
+
+// 与心跳 description 同一身份：按 CLI 拼 description 的原样拼（它不 trim phase 名与 label），再像 readString 那样只 trim 两端。
+const workflowEntryKey = (entry: JsonRecord) => {
+  if (typeof entry.label !== 'string') return undefined
+  const phaseTitle = typeof entry.phaseTitle === 'string' && entry.phaseTitle ? entry.phaseTitle : undefined
+  const description = (phaseTitle ? `${phaseTitle}: ${entry.label}` : entry.label).trim()
+  return description ? previewKey(description) : undefined
+}
+
+const listWorkflowAgents = (table: Map<string, JsonRecord> | undefined) =>
+  table ? [...table.values()].filter((entry) => entry.type === 'workflow_agent') : []
+
+const listRunningWorkflowAgents = (table: Map<string, JsonRecord> | undefined, key: string) =>
+  listWorkflowAgents(table).filter((entry) =>
+    readWorkflowAgentState(entry) === 'running' && workflowEntryKey(entry) === key)
+
+// copies > 1 表示几个同名 agent 共用这一行（行尾标 ×N）；此时调用方不给计数，见 task_progress 分支。
+type ProgressCounters = { toolUses?: number; durationMs?: number; copies?: number }
+
+// 传了 counters 就只用它（缺的段落省略），不再读心跳 usage：Workflow 的 usage 是整个工作流的累计值，
+// 与表里单个 agent 的计数混用会让同一行的工具数时大时小。
+export const formatClaudeAgentProgressLine = (event: unknown, counters?: ProgressCounters): string | null => {
+  if (!isRecord(event)) {
+    return null
   }
 
-  const toolUses = readFiniteNumber(usage, 'tool_uses')
+  const action = readProgressAction(event)
+  if (!action) {
+    return null
+  }
+
+  const usage = readRecord(event, 'usage')
+  const copies = counters?.copies ?? 0
+  const segments = [copies > 1 ? `${action} ×${copies}` : action]
+
+  const toolUses = counters ? counters.toolUses : readFiniteNumber(usage, 'tool_uses')
   if (toolUses !== undefined && toolUses > 0) {
     segments.push(`${toolUses} ${toolUses === 1 ? 'tool' : 'tools'}`)
   }
 
-  const duration = formatDuration(readFiniteNumber(usage, 'duration_ms'))
+  const duration = formatDuration(counters ? counters.durationMs : readFiniteNumber(usage, 'duration_ms'))
   if (duration) {
     segments.push(duration)
   }
@@ -185,7 +261,7 @@ export const createClaudeAgentStatusTracker = ({
     let agent = agents.get(taskId)
     if (!agent) {
       order.push(taskId)
-      agent = { threadId: taskId, status: 'running', activity: [], startedAt: now() }
+      agent = { threadId: taskId, status: 'running', preview: [], startedAt: now() }
       agents.set(taskId, agent)
     }
 
@@ -196,10 +272,19 @@ export const createClaudeAgentStatusTracker = ({
     return agent
   }
 
+  // 进入终态就丢掉 workflow 表：结束后没有任何路径再读它（汇总只在运行中出，后续心跳撞终态守卫，
+  // 复活会重建），而常驻进程的追踪器跨回合存活、从不淘汰条目。2026-09-27 对抗审查实测：
+  // 20 个工作流 × 50 个 agent 留下 1.48MB 的 CLI 原始记录（每条带 promptPreview/resultPreview）。
+  const setStatus = (agent: TrackedAgent, status: StreamAgentStatus) => {
+    agent.status = status
+    if (!isRunningStatus(status)) agent.workflow = undefined
+  }
+
   const reviveAgent = (taskId: string) => {
     const agent = ensureAgent(taskId, { status: 'running' })
     agent.startedAt = now()
-    agent.activity = []
+    agent.preview = []
+    agent.workflow = undefined
     return agent
   }
 
@@ -214,15 +299,43 @@ export const createClaudeAgentStatusTracker = ({
     return `${claudeAgentElapsedPrefix} ${language === 'en' ? 'running' : '已运行'} ${duration}`
   }
 
-  const publicAgent = (agent: TrackedAgent): StreamAgentEntry => ({
-    threadId: agent.threadId,
-    ...(agent.nickname ? { nickname: agent.nickname } : {}),
-    ...(agent.role ? { role: agent.role } : {}),
-    ...(agent.model ? { model: agent.model } : {}),
-    status: agent.status,
-    ...(agent.message !== undefined ? { message: agent.message } : {}),
-    activity: [...agent.activity, ...(isRunningStatus(agent.status) ? [formatElapsed(agent.startedAt)] : [])],
-  })
+  // 例：`📋 已完成 3/4 · 在跑 1 · 失败 1 · 排队 2`；为 0 的计数不出现。
+  // 只报计数不列名字：2026-09-27 对抗审查在 Chromium 里按 index.css 实测，列 3 个名字的汇总在
+  // 217~584px 的列里折成两行，而桌面活动框限高 3 行、底部对齐，折行会把最新那条心跳行挤出框。
+  // 在跑的是谁由心跳行交代。
+  const formatWorkflowSummary = (agent: TrackedAgent) => {
+    const entries = listWorkflowAgents(agent.workflow)
+    if (entries.length === 0) {
+      return undefined
+    }
+    const states = entries.map(readWorkflowAgentState)
+    const count = (state: WorkflowAgentState) => states.filter((value) => value === state).length
+    const en = language === 'en'
+    const segments = [en ? `${count('done')}/${entries.length} done` : `已完成 ${count('done')}/${entries.length}`]
+    if (count('running') > 0) segments.push(en ? `${count('running')} running` : `在跑 ${count('running')}`)
+    if (count('failed') > 0) segments.push(en ? `${count('failed')} failed` : `失败 ${count('failed')}`)
+    if (count('queued') > 0) segments.push(en ? `${count('queued')} queued` : `排队 ${count('queued')}`)
+    return `${claudeWorkflowSummaryPrefix} ${segments.join(' · ')}`
+  }
+
+  // 顺序固定为 心跳行… → 汇总 → ⏳：渲染端尾切 3 行，汇总与计时必须都留在窗口里。
+  const publicAgent = (agent: TrackedAgent): StreamAgentEntry => {
+    const running = isRunningStatus(agent.status)
+    const summary = running ? formatWorkflowSummary(agent) : undefined
+    return {
+      threadId: agent.threadId,
+      ...(agent.nickname ? { nickname: agent.nickname } : {}),
+      ...(agent.role ? { role: agent.role } : {}),
+      ...(agent.model ? { model: agent.model } : {}),
+      status: agent.status,
+      ...(agent.message !== undefined ? { message: agent.message } : {}),
+      activity: [
+        ...agent.preview.map((entry) => entry.line),
+        ...(summary ? [summary] : []),
+        ...(running ? [formatElapsed(agent.startedAt)] : []),
+      ],
+    }
+  }
 
   // itemId 固定：整轮内就地更新同一张卡片，否则每个进度心跳都会新开一张卡把聊天流冲垮。
   const snapshot = (): StreamAgentsActivity => ({
@@ -267,7 +380,7 @@ export const createClaudeAgentStatusTracker = ({
     if (!agent || !isRunningStatus(agent.status)) {
       return false
     }
-    agent.status = 'completed'
+    setStatus(agent, 'completed')
     return true
   }
 
@@ -296,17 +409,19 @@ export const createClaudeAgentStatusTracker = ({
     }
   }
 
-  const pushPreview = (agent: TrackedAgent, line: string) => {
-    agent.activity.push(line)
-    while (agent.activity.length > maxPreviewItems) {
-      agent.activity.shift()
+  // 同一动作只留最新一行并挪到末尾：渲染端只取尾部几行，末尾必须是最近的心跳。
+  const pushPreview = (agent: TrackedAgent, entry: ProgressPreview) => {
+    agent.preview = agent.preview.filter((existing) => existing.key !== entry.key)
+    agent.preview.push(entry)
+    while (agent.preview.length > maxPreviewItems) {
+      agent.preview.shift()
     }
   }
 
   const resolveTask = (id: string) => aliases.get(id) ?? id
   const settleAll = (status: StreamAgentStatus = 'interrupted') => {
     for (const agent of agents.values()) {
-      if (isRunningStatus(agent.status)) agent.status = status
+      if (isRunningStatus(agent.status)) setStatus(agent, status)
     }
     return snapshot()
   }
@@ -316,7 +431,7 @@ export const createClaudeAgentStatusTracker = ({
   const finishTurn = (keepBackground: boolean, status: StreamAgentStatus = 'completed') => {
     for (const agent of agents.values()) {
       if (isRunningStatus(agent.status) && !(keepBackground && background.has(agent.threadId))) {
-        agent.status = status
+        setStatus(agent, status)
       }
     }
     return snapshot()
@@ -375,7 +490,7 @@ export const createClaudeAgentStatusTracker = ({
         //   传进 beginSynthetic，而这份回执是 CLI 对后台派发的唯一稳定确认（前台 Agent 的回执晚于终态）。
         const asyncLaunch = /^Async agent launched/u.test(result.text)
         if (result.isError || /^<tool_use_error>/u.test(result.text)) {
-          agent.status = 'errored'
+          setStatus(agent, 'errored')
         } else if (task) {
           aliases.set(task[1], id)
           background.add(id)
@@ -389,7 +504,7 @@ export const createClaudeAgentStatusTracker = ({
           // 保守起见不当完成处理，终态仍交给 task_notification。
           continue
         } else if (!background.has(id)) {
-          agent.status = 'completed'
+          setStatus(agent, 'completed')
         }
         changed = true
       }
@@ -404,7 +519,7 @@ export const createClaudeAgentStatusTracker = ({
         const status = /<status>([^<]+)<\/status>/u.exec(notification)?.[1]
         const agent = agents.get(resolveTask(taskId ?? '')) ?? agents.get(resolveTask(`workflow:${toolId}`))
         if (agent && status) {
-          agent.status = mapTerminalStatus(status)
+          setStatus(agent, mapTerminalStatus(status))
           changed = true
         }
       }
@@ -452,8 +567,8 @@ export const createClaudeAgentStatusTracker = ({
         return { handled: true }
       }
 
-      const line = formatClaudeAgentProgressLine(value)
-      if (!line) {
+      const action = readProgressAction(value)
+      if (!action) {
         return { handled: true }
       }
 
@@ -463,7 +578,38 @@ export const createClaudeAgentStatusTracker = ({
         role: readString(value, 'subagent_type'),
         status: 'running',
       })
-      pushPreview(agent, line)
+      const key = previewKey(action)
+      const progress = Array.isArray(value.workflow_progress) ? value.workflow_progress : undefined
+      if (progress) {
+        agent.workflow ??= new Map()
+        for (const entry of progress) {
+          if (isRecord(entry) && typeof entry.type === 'string') agent.workflow.set(`${entry.type}:${String(entry.index)}`, entry)
+        }
+        const liveKeys = new Set(listWorkflowAgents(agent.workflow)
+          .filter((entry) => readWorkflowAgentState(entry) === 'running')
+          .map(workflowEntryKey))
+        agent.preview = agent.preview.filter((entry) => liveKeys.has(entry.key))
+        // 状态变化批次的 description 指向刚结束或刚入队的 agent（或整个工作流），不能给它加行。
+        if (!liveKeys.has(key)) {
+          return { handled: true, activity: snapshot() }
+        }
+      }
+      // 收到过表就只用表里这个 agent 自己的计数（最多落后一次节流，10 秒）；没收到过才退回心跳 usage。
+      // 症状：几个同名 agent 并行时，那一行显示的是 index 最大那个的计数，它一结束数字就倒退（2026-09-27 对抗审查复现）。
+      // 根因：CLI 2.1.280 没给 label 时取 prompt 前 60 字，模板化 prompt 或循环复用 label 都会撞名；心跳只带
+      //   `${phaseTitle}: ${label}`，不带 index，分不清是谁发的。
+      // 被否决：按 index 分行——心跳认不出 index，照样不知道该更新哪一行。改为同名的共用一行、标 ×N、不给计数。
+      const running = agent.workflow ? listRunningWorkflowAgents(agent.workflow, key) : []
+      const own = running.length === 1 ? running[0] : undefined
+      const ownStartedAt = own ? readFiniteNumber(own, 'startedAt') : undefined
+      const line = formatClaudeAgentProgressLine(value, agent.workflow ? {
+        toolUses: own ? readFiniteNumber(own, 'toolCalls') : undefined,
+        durationMs: ownStartedAt !== undefined ? Math.max(0, now() - ownStartedAt) : undefined,
+        copies: running.length,
+      } : undefined)
+      if (line) {
+        pushPreview(agent, { key, line })
+      }
       return { handled: true, activity: snapshot() }
     }
 
@@ -477,11 +623,11 @@ export const createClaudeAgentStatusTracker = ({
       if (!patch) {
         return { handled: true }
       }
-      existing.status = mapTerminalStatus(readString(patch, 'status'))
+      setStatus(existing, mapTerminalStatus(readString(patch, 'status')))
       return { handled: true, activity: snapshot() }
     }
 
-    existing.status = mapTerminalStatus(readString(value, 'status'))
+    setStatus(existing, mapTerminalStatus(readString(value, 'status')))
     return { handled: true, activity: snapshot() }
   }
 

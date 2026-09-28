@@ -744,7 +744,9 @@ for (const outcome of ['close', 'release', 'dispose', 'newer-acquire', 'changed-
       pool.endTurn('card', child)
     }
     if (outcome === 'changed-signature') {
+      // 签名变了也要先等同 session 的中断收尾（2026-09-26，见文件末回归），不能当场抢占。
       newer = pool.acquireForTurn({ ...options, signature: 'changed' })
+      pool.endTurn('card', child)
     }
 
     const result = await pending
@@ -766,3 +768,37 @@ for (const outcome of ['close', 'release', 'dispose', 'newer-acquire', 'changed-
     }
   })
 }
+
+// 2026-09-26 回归：停止后切思考深度（签名变了）再秒发，旧实现当场 kill 正在收尾中断的旧进程并
+// 立刻 --resume 同一 session，两个 CLI 并发写同一份转录，API 回 400
+// 「system content must contain at least one block」。新进程必须等旧进程收尾并退出后才 spawn。
+test('签名变更的同 session 重发会等中断收尾且旧进程退出后才 spawn', async () => {
+  const pool = createPool()
+  const first = createFakeChild()
+  await pool.acquireForTurn({ key: 'card-1', signature: 'sig-a', sessionId: undefined, spawn: async () => first })
+  pool.beginTurn('card-1', createAttachment().attachment, first)
+  pool.updateSessionId('card-1', 'session-1')
+  assert.equal(pool.interruptTurn('card-1', first), true)
+
+  const events: string[] = []
+  const replacement = createFakeChild()
+  const acquire = pool.acquireForTurn({
+    key: 'card-1',
+    signature: 'sig-b',
+    sessionId: 'session-1',
+    spawn: async () => {
+      events.push(`spawn:${first.killed ? 'old-closed' : 'old-alive'}`)
+      return replacement
+    },
+  })
+
+  await new Promise((resolve) => setTimeout(resolve, 20))
+  assert.deepEqual(events, [])
+  assert.equal(first.killed, false)
+
+  pool.endTurn('card-1', first)
+  const result = await acquire
+  assert.equal(result?.child, replacement)
+  assert.deepEqual(events, ['spawn:old-closed'])
+  pool.dispose()
+})

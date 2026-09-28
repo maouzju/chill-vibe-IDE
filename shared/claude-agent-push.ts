@@ -1,5 +1,15 @@
 import type { ChatCard, ChatMessage, ClaudeAgentStatusPush } from './schema.js'
 
+// Workflow 条目的汇总行前缀（由 server/claude-agent-status.ts 生成，决策记录在那里）。
+// 放在 shared 是因为落盘快照的收尾（下方 retireUntrackedClaudeAgents）也要认得它。
+export const claudeWorkflowSummaryPrefix = '📋'
+
+// 症状：中途退出再启动，Workflow 条目已标 interrupted，旁边的汇总仍写着「在跑 1 · 排队 2」（2026-09-27 对抗审查复现）。
+// 根因：汇总行第一段「已完成 x/y」是跑到哪的事实，后面几段是生成那一刻的实时计数；收尾只改 status、原样保留 activity。
+// 被否决：整行删掉——丢了"四个里完成了几个"这条历史。只留第一段，中英文格式都以它开头。
+const settleWorkflowSummary = (line: unknown) =>
+  typeof line === 'string' && line.startsWith(`${claudeWorkflowSummaryPrefix} `) ? line.split(' · ')[0] : line
+
 export const retireUntrackedClaudeAgents = (messages: ChatMessage[]): ChatMessage[] => {
   let changed = false
   const next = messages.map((message) => {
@@ -11,7 +21,11 @@ export const retireUntrackedClaudeAgents = (messages: ChatMessage[]): ChatMessag
       const agents = data.agents.map((agent: Record<string, unknown>) => {
         if (agent && ['running', 'pendingInit'].includes(String(agent.status))) {
           updated = true
-          return { ...agent, status: 'interrupted' }
+          return {
+            ...agent,
+            status: 'interrupted',
+            ...(Array.isArray(agent.activity) ? { activity: agent.activity.map(settleWorkflowSummary) } : {}),
+          }
         }
         return agent
       })

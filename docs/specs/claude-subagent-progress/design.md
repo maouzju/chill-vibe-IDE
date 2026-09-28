@@ -21,7 +21,7 @@ Codex 侧的整条链路已经齐备，Claude 侧缺的只是「把 CLI 的 `sys
 | `description`（`task_started`） | `nickname` | 例：`Count .ts files in server dir` |
 | `subagent_type` | `role` | 例：`Explore`；渲染为 `名称 [角色]` |
 | `description`（`task_progress`） | `activity[]` 一行 | 例：`Running List top-level .ts files by name` |
-| `last_tool_name` | 拼进同一条 `activity` 行 | 例：`· PowerShell` |
+| `last_tool_name` | 拼进同一条 `activity` 行 | 例：`· PowerShell`；与 `description` 相同或是其 `: <label>` 结尾时省略（Workflow 的 description 已含 agent 名，见下方 2026-09-27 记录） |
 | `usage.tool_uses` / `usage.duration_ms` | 拼进同一条 `activity` 行 | 例：`· 2 次工具 · 17.8s` |
 | `patch.status`（`task_updated`） | `status` | `completed` / `failed` / `cancelled` 等映射到 `StreamAgentStatus` |
 | `status`（`task_notification`） | `status` | 同上，作为终态兜底 |
@@ -35,7 +35,8 @@ Codex 侧的整条链路已经齐备，Claude 侧缺的只是「把 CLI 的 `sys
 - `handleEvent(event)` → `{ handled, activity? }`；只在状态真正变化时返回 `activity` 快照，避免无谓重渲染。
 - `snapshot()` → `StreamAgentsActivity`，`view: 'status'`，`agents` 仅含运行中的条目（与 Codex 的 `isRunningStatus` 过滤一致）。
 - `hasRunningAgents()` → 供调用方判断是否仍有子代理在跑。
-- 活动预览上限沿用 Codex 的 `maxPreviewItems` 量级，按 `task_id` 各自保留最近若干条。
+- 活动预览上限沿用 Codex 的 `maxPreviewItems` 量级，按 `task_id` 各自保留最近若干条；同一动作（去掉工具数/时长后的行首，再去掉 ` (throttle-retry)` / ` (retry N)` 重试后缀）只留最新一行并挪到末尾，心跳不再堆出只差计数器的副本，重派也不会和被放弃的首次尝试并排。事件带 `workflow_progress` 时按 `type:index` 合并进该条目自己的一张表（与 CLI 同一合并规则），只保留表里正在跑（`progress`，或带 `agentId`/`startedAt` 的 `start`）的 agent 对应的行；刚结束或刚入队的 agent 不加行。
+- Workflow 条目的 `activity` 顺序固定为「心跳行… → 汇总行 → ⏳ 已运行」。汇总行以 `📋` 开头，只报计数，例：`📋 已完成 3/4 · 在跑 1 · 失败 1 · 排队 2`（为 0 的计数省略）。不列名字：同日对抗审查按 `index.css` 在 Chromium 实测，列 3 个名字的汇总在 217~584px 的列里折成两行，而活动框限高 3 行、底部对齐，折行会把最新的心跳行挤出框；在跑的是谁由心跳行交代。收到过表后，心跳行的工具数与时长只取表里该 agent 自己的 `toolCalls` 与 `now − startedAt`（缺就省略该段），绝不退回心跳 `usage`：那是整个工作流的累计值，两种来源混用时同一行的工具数会倒退（探针回放实测 5 → 2）。从没收到过表（例如恢复出来的会话）时不出汇总行，行为与改动前一致。几个同名 agent 并行时（没给 label 时 CLI 取 prompt 前 60 字，模板化 prompt 会撞名），心跳只带 `${phaseTitle}: ${label}`、不带 index，认不出是谁发的：共用一行、行尾标 `×N`、不给计数，只剩一个同名在跑时计数恢复。条目进入终态就丢掉这张表——结束后没有路径再读它，而常驻进程的追踪器跨回合存活、从不淘汰条目。
 
 `itemId` 取 `claude-agent-status`，保证整轮内是同一张卡片被就地更新，而不是每次进度都新开一张。
 
@@ -154,3 +155,20 @@ CLI 用同一套 `system:task_*` 上报后台 shell 命令：
 - 「后台启动回执」对 Workflow 是 `Workflow launched in background. Task ID: …`，对 Agent/Task 是 `Async agent launched successfully`；两者都必须登记为跨回合保留，根回合 `result` 只结算本回合的前台条目。此前只登记 Workflow，后台 Agent 在模型停止输出的瞬间被结算、沉底面板消失且不再恢复。
 - Windows Stop 钩子读 stdin 必须走 `[Console]::OpenStandardInput()` 字节流按 UTF-8 解码；`[Console]::In` 在新起的 powershell.exe 里按系统 ANSI 代码页解码，含中文的快照会损坏成不可解析的 JSON，边界退化为 `unknown`。
 - 边界为 `unknown` 时跨回合保留退回到追踪器自身的后台登记；两层各自独立，任一失效都不能让后台条目在回合末被结算。
+
+### Workflow 进度行重复（2026-09-27）
+
+用户截图的 Workflow 条目显示两行「Drafts: draft:concept (throttle-retry) · draft:concept (throttle-retry) · 149/150 tools · 65m23s」。对拍该工作流 journal：脚本只有一个 `draft:concept`，首次尝试被 CLI 判为限流后以 `(throttle-retry)` 标签重派，截图时刻只有它在跑。抠 claude 2.1.280 的发射点：Workflow 的 `task_progress` 里 `description = ${phaseTitle}: ${label}`、`last_tool_name = label`、`usage` 是整个工作流的累计值。于是同名出现两次是我们把 `last_tool_name` 又拼了一遍；两行近似副本是每次心跳都新增一行。修法见上方字段表与「活动预览」一条，守卫在 `tests/claude-agent-status.test.ts` 的 Workflow 进度用例。
+
+同日对抗审查补出第二层：只按动作去重后，被放弃的首次尝试（`draft:concept`）和已跑完的上一阶段会一直钉在可见的第二行——改前的滚动列表两次心跳就能冲掉它们。CLI 重派时 index 不变、只改 label 加后缀；agent 结束只体现在 `workflow_progress`（按 `type:index` 合并的整张表，每次 start/done/error 批次必附带）里的 `state`。所以键去掉重试后缀，并按该表的活跃集合裁剪。没选"按心跳次数淘汰"：它分不清上一阶段已结束与并行 agent 正卡在一条长命令里。
+
+同日第三层（用户第二张截图）：标题「四模块并行」，条目只有一行 `Wave1: A3:rig · 1074 tools · 118m`。对拍 toy-blade 的 journal，core / data+rpg / render 早已跑完，只剩 rig——面板没错，但从不交代"四个里完成了几个"，而 1074 tools / 118m 是整个工作流的累计值，读着像 rig 一个人的。`scripts/probe-claude-workflow-progress.mjs`（claude 2.1.280 实跑 3 个并行 agent，27 次心跳里 8 次附带表）证实：
+
+- 表是按 `type:index` 合并的整张快照，结束的 agent 仍以 `done`（带 `durationMs`/`resultPreview`/`toolCalls`）留在表里；
+- 排队的 agent 是 `state: 'start'` 但没有 `agentId`/`startedAt`；
+- 开跑后每个 agent 带自己的 `toolCalls`，心跳 `usage.tool_uses` 是它们的总和；
+- 两次附带之间最多 10 秒（`Xr=1e4` 节流），中间的心跳不带表。
+
+于是追踪器按同一规则合并表，汇总行放在 ⏳ 之前；心跳行改用 agent 自己的计数。失去追踪的落盘快照（重启后 `retireUntrackedClaudeAgents` 收成 `interrupted`）只保留汇总第一段「已完成 x/y」，后面几段是生成那一刻的实时计数，留着会和中断状态自相矛盾。被否决：放宽渲染层 `slice(-3)`——桌面与手机监工页（`server/remote-monitor-page.ts`）都尾切 3 行，还要动 Tier 2 快照；每个 agent 各画一行——并行十几个时真正的心跳行会被挤出可见窗口。守卫在 `tests/claude-agent-status.test.ts` 的 summary / 同名 agent / 释放表用例与 `tests/claude-agent-push.test.ts` 的汇总收尾用例。
+
+已知残留：限流重派（`throttle-retry`）时 CLI 先把首次尝试报成 `done`，睡 45 秒后才以同一 index 重新 `start`，`done` 条目不带任何"暂定"标记，这段时间汇总会显示全部完成、随后倒回。正常结束的 `stop` 不受影响（追踪器随即推送空快照覆盖），`src/state.ts` 里流被停止时的收尾仍原样保留汇总行。

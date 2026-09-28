@@ -28,6 +28,7 @@ import {
   updateStickyNoteArchiveViewState,
 } from '../shared/default-state'
 import { createDefaultBrainstormState } from '../shared/brainstorm'
+import { retireUntrackedClaudeAgents } from '../shared/claude-agent-push'
 import { getChatMessageAttachments } from '../shared/chat-attachments'
 import { getDuplicateColumnTitle, getForkConversationTitle, getWorkspaceTitle } from '../shared/i18n'
 import {
@@ -1727,7 +1728,8 @@ const buildRestoredCard = (state: AppState, entry: SessionHistoryEntry): ChatCar
   pm: createDefaultPmState(),
   pmTaskCardId: '',
   pmOwnerCardId: '',
-  messages: entry.messages,
+  // 关闭时 CLI 已结束，存档里 running 的子代理快照再无推送能结算，重开会残留「运行中」面板。
+  messages: retireUntrackedClaudeAgents(entry.messages),
 })
 
 const restoreSessionEntryToColumn = (
@@ -1754,6 +1756,7 @@ const restoreClosedWorkspaceSnapshotToColumn = (
           ...card,
           status: card.status === 'streaming' ? 'idle' : card.status,
           streamId: undefined,
+          messages: retireUntrackedClaudeAgents(card.messages),
         },
       ]),
     )

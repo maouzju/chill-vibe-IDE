@@ -90,6 +90,7 @@ import {
 } from './provider-stream-recovery.js'
 import { readStringPreserveWhitespace } from './provider-stream-text.js'
 import { getCodexNativeTurnCompletion } from './native-turn-completion.js'
+import { repairClaudeSessionForResume } from './claude-session-repair.js'
 import { resolveProviderCommandLaunch } from './provider-command-launch.js'
 import {
   discoverProviderSkills,
@@ -3924,6 +3925,9 @@ const launchClaudeSingleShotRun = async (
     ]
 
     reportUnsupportedClaudeFlags(args, runtime.env)
+    if (currentRequest.sessionId) {
+      await repairClaudeSessionForResume(currentRequest.sessionId)
+    }
 
     const child = await spawnProvider(
       currentRequest.provider,
@@ -4195,6 +4199,10 @@ const launchClaudeKeepaliveRun = async (
           }),
         ]
 
+        // 进程池只在这里新起进程；复用的常驻进程不重读存档，不需要修。
+        if (currentRequest.sessionId) {
+          await repairClaudeSessionForResume(currentRequest.sessionId)
+        }
         const spawned = await spawnProvider(
           currentRequest.provider,
           args,

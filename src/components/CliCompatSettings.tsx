@@ -1,6 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 
-import { cliCompatNeedsAction, type CliCompatEntry, type CliCompatStatus } from '../../shared/cli-compat'
+import {
+  cliCompatNeedsAction,
+  isCliVersionInRange,
+  type CliCompatEntry,
+  type CliCompatStatus,
+} from '../../shared/cli-compat'
 import type { AppLanguage } from '../../shared/schema'
 import { fetchCliCompatStatus, installCliCompat, setCliCompatActive } from '../api'
 import { AppButton } from './AppButton'
@@ -8,7 +13,7 @@ import { AppButton } from './AppButton'
 const texts = {
   'zh-CN': {
     title: 'CLI 兼容版本',
-    note: '本版本 IDE 已验证兼容下列 CLI 版本。一键下载后装在 IDE 数据目录，不影响系统全局 CLI，并自动切换为使用兼容版。',
+    note: '本版本 IDE 已验证兼容下列 CLI 版本区间，区间内的 CLI 无需更新。一键下载会把推荐版本装在 IDE 数据目录，不影响系统全局 CLI，并自动切换为使用兼容版。',
     compatible: '兼容版本',
     system: '系统 CLI',
     notFound: '未找到',
@@ -25,7 +30,7 @@ const texts = {
   },
   en: {
     title: 'CLI compatibility',
-    note: 'This IDE build is verified against the CLI versions below. One click downloads it into the IDE data folder (your global CLI is untouched) and switches to it.',
+    note: 'This IDE build is verified against the CLI version ranges below; any CLI inside the range needs no update. One click downloads the recommended version into the IDE data folder (your global CLI is untouched) and switches to it.',
     compatible: 'Compatible',
     system: 'System CLI',
     notFound: 'not found',
@@ -111,15 +116,17 @@ export function CliCompatSettings({
       <p className="settings-note">{text.note}</p>
       {status?.entries.map((entry) => {
         const running = entry.task?.status === 'running'
+        const minVersion = entry.minCompatibleVersion ?? entry.compatibleVersion
+        const activeInRange = isCliVersionInRange(entry.activeVersion, minVersion, entry.compatibleVersion)
         const inUse = entry.activeVersion
-          ? `${text.usingCompat} v${entry.activeVersion}${entry.active ? '' : text.outdated.replace('{v}', entry.activeVersion)}`
+          ? `${text.usingCompat} v${entry.activeVersion}${activeInRange ? '' : text.outdated.replace('{v}', entry.activeVersion)}`
           : `${text.usingSystem}${cliCompatNeedsAction(entry) ? '' : text.systemIsCompat}`
 
         return (
           <div key={entry.provider} className="cli-compat-row" data-provider={entry.provider}>
             <p className="settings-note">
               <strong>{providerLabels[entry.provider]}</strong>
-              {` · ${text.compatible} v${entry.compatibleVersion}`}
+              {` · ${text.compatible} ${minVersion === entry.compatibleVersion ? '' : `v${minVersion} ~ `}v${entry.compatibleVersion}`}
               {` · ${text.system} ${entry.systemVersion ? `v${entry.systemVersion}` : text.notFound}`}
               {` · ${text.using}: ${inUse}`}
             </p>

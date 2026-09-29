@@ -5,6 +5,7 @@ import { attachImagesToMessageMeta } from '../shared/chat-attachments.ts'
 import {
   getRecoverableStreamRetryLimit,
   getRecoverableStreamErrorSessionId,
+  resolveNextFailedResumeSessionAttempt,
   resolveStreamRecoveryMode,
   resolveStreamRecoveryCheckpointTurn,
   shouldFallbackToFreshSessionAfterResumeLoop,
@@ -157,6 +158,37 @@ test('repeated ordinary stalled resume loops also fall back to a fresh session',
       maxResumeAttempts: 2,
     }),
     true,
+  )
+})
+
+test('upstream transport failures after real progress start a new failed-resume streak', () => {
+  const malformed =
+    'API Error: API returned an empty or malformed response (HTTP 200) — check for a proxy or gateway intercepting the request.'
+  assert.equal(
+    resolveNextFailedResumeSessionAttempt({ previousAttempt: 1, madeMeaningfulProgress: true, message: malformed }),
+    1,
+  )
+  assert.equal(
+    resolveNextFailedResumeSessionAttempt({
+      previousAttempt: 1,
+      madeMeaningfulProgress: true,
+      message: 'API Error: 503 No accounts are currently available. Please try again later.',
+    }),
+    1,
+  )
+  // No progress between failures: the tip may really be poisoned, keep the escape hatch.
+  assert.equal(
+    resolveNextFailedResumeSessionAttempt({ previousAttempt: 1, madeMeaningfulProgress: false, message: malformed }),
+    2,
+  )
+  // Stall-class failures can follow partial output on a poisoned Codex tip.
+  assert.equal(
+    resolveNextFailedResumeSessionAttempt({
+      previousAttempt: 1,
+      madeMeaningfulProgress: true,
+      message: 'Codex stalled after emitting stream output.',
+    }),
+    2,
   )
 })
 

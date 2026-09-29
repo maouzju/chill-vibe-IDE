@@ -79,6 +79,7 @@ import {
 import {
   getRecoverableStreamRetryLimit,
   getRecoverableStreamErrorSessionId,
+  resolveNextFailedResumeSessionAttempt,
   resolveStreamRecoveryCheckpointTurn,
   resolveStreamRecoveryMode,
   shouldKeepRecoveringResumeWithFreshSession,
@@ -948,6 +949,9 @@ function App() {
   const activePaneTargetRef = useRef<PaneTarget | null>(null)
   const streamRetryCountRef = useRef(new Map<string, number>())
   const resumeSessionLoopCountRef = useRef(new Map<string, number>())
+  // 当前这条流有没有真实进展（文本/工具，不含 reasoning 和 session 握手），
+  // 供 resolveNextFailedResumeSessionAttempt 区分「连环死」与「隔很久各抽一次」。
+  const streamMeaningfulProgressRef = useRef(new Set<string>())
   const streamRecoveryTurnRef = useRef(new Map<string, StreamRecoveryTurnSnapshot>())
   const localRecoveryStatsRef = useRef(new Map<string, LocalRecoveryStatsState>())
   const [cardRecoveryStatuses, setCardRecoveryStatuses] = useState<
@@ -4953,6 +4957,7 @@ function App() {
         activeStreamsRef.current.delete(card.id)
       }
 
+      streamMeaningfulProgressRef.current.delete(card.id)
       const source = openChatStream(card.streamId, {
         onSession: ({ sessionId }) => {
           if (shouldResetStreamRecoveryAttemptsForActivity('session')) {
@@ -4985,6 +4990,7 @@ function App() {
 
           if (shouldResetStreamRecoveryAttemptsForText(content)) {
             streamRetryCountRef.current.delete(card.id)
+            streamMeaningfulProgressRef.current.add(card.id)
             markRecoveryResumedIfActive(card.id)
           }
           enqueueAssistantDelta(columnId, card.id, messageId, content, card.model)
@@ -5002,6 +5008,7 @@ function App() {
 
           if (shouldResetStreamRecoveryAttemptsForActivity('log')) {
             streamRetryCountRef.current.delete(card.id)
+            streamMeaningfulProgressRef.current.add(card.id)
             markRecoveryResumedIfActive(card.id)
           }
           const action: IdeAction = {
@@ -5024,6 +5031,7 @@ function App() {
             shouldResetStreamRecoveryAttemptsForText(payload.content)
           ) {
             streamRetryCountRef.current.delete(card.id)
+            streamMeaningfulProgressRef.current.add(card.id)
             markRecoveryResumedIfActive(card.id)
           }
           const assistantMessageId =
@@ -5091,6 +5099,7 @@ function App() {
 
           if (shouldResetStreamRecoveryAttemptsForActivity('activity', payload.kind)) {
             streamRetryCountRef.current.delete(card.id)
+            streamMeaningfulProgressRef.current.add(card.id)
             markRecoveryResumedIfActive(card.id)
           }
 
@@ -5573,7 +5582,11 @@ function App() {
               // completion proves that the resumed session is healthy again.
               const resumeSessionAttempt =
                 recoveryMode === 'resume-session'
-                  ? (resumeSessionLoopCountRef.current.get(card.id) ?? 0) + 1
+                  ? resolveNextFailedResumeSessionAttempt({
+                      previousAttempt: resumeSessionLoopCountRef.current.get(card.id) ?? 0,
+                      madeMeaningfulProgress: streamMeaningfulProgressRef.current.has(card.id),
+                      message,
+                    })
                   : 0
               if (resumeSessionAttempt > 0) {
                 resumeSessionLoopCountRef.current.set(card.id, resumeSessionAttempt)

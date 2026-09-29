@@ -503,6 +503,40 @@ test('ordinary stalled resume loops roll back to a native checkpoint after reaso
   await expect.poll(() => mock.readState().columns[0]?.cards['card-1']?.status).toBe('idle')
 })
 
+test('upstream hiccups separated by real tool progress keep resuming the same session instead of rolling back the turn', async ({ page }) => {
+  const mock = await installMockDesktopBridge(page, { claude: true })
+  await page.goto(appUrl)
+
+  await expect.poll(() => hasDesktopStreamSubscription(page, 'stream-1')).toBe(true)
+  const malformed200 = {
+    message:
+      'API Error: API returned an empty or malformed response (HTTP 200) — check for a proxy or gateway intercepting the request.',
+    recoverable: true,
+    recoveryMode: 'resume-session',
+  }
+
+  await emitDesktopStreamEvent(page, 'stream-1', 'error', malformed200)
+  await expect.poll(() => hasDesktopStreamSubscription(page, 'stream-2')).toBe(true)
+
+  await emitDesktopStreamEvent(page, 'stream-2', 'activity', {
+    itemId: 'cmd-1',
+    kind: 'command',
+    status: 'completed',
+    command: 'git status',
+    output: 'clean',
+    exitCode: 0,
+  })
+  await emitDesktopStreamEvent(page, 'stream-2', 'error', malformed200)
+  await expect.poll(() => hasDesktopStreamSubscription(page, 'stream-3')).toBe(true)
+
+  expect(mock.readForkRequests()).toHaveLength(0)
+  expect(mock.readRequests().map((request) => request.sessionId)).toEqual(['session-1', 'session-1'])
+  expect(mock.readRequests()[1]?.prompt).toBe('')
+
+  await emitDesktopStreamEvent(page, 'stream-3', 'done', {})
+  await expect.poll(() => mock.readState().columns[0]?.cards['card-1']?.status).toBe('idle')
+})
+
 test('native checkpoint failure degrades to the seeded fresh-session recovery', async ({ page }) => {
   const mock = await installMockDesktopBridge(page, { nativeFork: false })
   await page.goto(appUrl)

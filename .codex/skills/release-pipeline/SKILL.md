@@ -142,7 +142,7 @@ Reuse the verification posture from `../chill-vibe-full-regression/SKILL.md`, bu
 
 - Default bump: patch. Minor is reserved for a major stability milestone or a marker over many accumulated patches — never for feature volume (see Workflow step 3).
 - Tag format: `v<package.json version>`.
-- CLI compatibility pin: before tagging, if this release was verified against a newer Claude Code / Codex CLI, update `compatibleCliVersions` in `shared/cli-compat.ts` (it drives the Settings → CLI 兼容版本 one-click download). Verify with `claude --version`/`codex --version`, `scripts/probe-codex-app-server.mjs`, and one `claude -p --output-format stream-json` turn; list the pinned versions in the release notes.
+- CLI compatibility pin: before tagging, if this release was verified against a newer Claude Code / Codex CLI, update `compatibleCliVersions` in `shared/cli-compat.ts` (it drives the Settings → CLI 兼容版本 one-click download). Each entry is a range: bump `version` (recommended build = range max) and leave `minVersion` alone unless this release's code starts depending on a flag/protocol field/tool that older CLIs lack — CLIs inside `[minVersion, version]` are never nagged to update. Cheap diff before bumping: `--help` diff old vs new, `codex app-server generate-json-schema` diff, and `scripts/probe-codex-tool-schema.mjs` tool-list diff. Verify with `claude --version`/`codex --version`, `scripts/probe-codex-app-server.mjs`, and one `claude -p --output-format stream-json` turn; list the pinned versions in the release notes.
 - Keep the release title equal to the tag unless the user asked for a different naming scheme.
 - Release notes can be concise and derived from the audited diff summary; do not paste huge raw diffs.
 

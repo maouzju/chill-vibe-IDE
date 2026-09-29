@@ -195,7 +195,7 @@ export class CliCompatManager {
     const active = await readActiveCompatVersions(root)
     const entries = await Promise.all(
       providers.map(async (provider): Promise<CliCompatEntry> => {
-        const compatibleVersion = compatibleCliVersions[provider].version
+        const { version: compatibleVersion, minVersion: minCompatibleVersion } = compatibleCliVersions[provider]
         const activeVersion = (await resolveCompatCommand(provider, root, this.probe))
           ? (active[provider] ?? null)
           : null
@@ -204,6 +204,7 @@ export class CliCompatManager {
         return {
           provider,
           compatibleVersion,
+          minCompatibleVersion,
           installed: await isCompatLaunchable(getCompatBinPath(provider, compatibleVersion, root), this.probe),
           active: activeVersion === compatibleVersion,
           activeVersion,

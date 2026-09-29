@@ -551,3 +551,49 @@ test('downloads the compatible CLI build and switches to it from the routing pan
   await expect(claudeRow).toContainText('兼容版 v2.1.280')
   await page.locator('.cli-compat-settings').screenshot({ path: 'test-results/cli-compat-settings.png' })
 })
+
+// 2026-09-29：IDE 兼容一个 CLI 区间；系统 CLI 落在区间内（哪怕低于推荐版本）就不再催下载。
+test('shows the verified CLI range and does not nag when the system CLI is inside it', async ({ page }) => {
+  await mockBaseApis(page)
+  await page.route('**/api/cli-compat/status', (route) =>
+    route.fulfill({
+      json: {
+        entries: [
+          {
+            provider: 'claude',
+            compatibleVersion: '2.1.284',
+            minCompatibleVersion: '2.1.280',
+            installed: false,
+            active: false,
+            activeVersion: null,
+            systemVersion: '2.1.280',
+            task: null,
+          },
+          {
+            provider: 'codex',
+            compatibleVersion: '0.158.0',
+            minCompatibleVersion: '0.156.1',
+            installed: false,
+            active: false,
+            activeVersion: null,
+            systemVersion: '0.155.0',
+            task: null,
+          },
+        ],
+      },
+    }),
+  )
+
+  await page.setViewportSize({ width: 1280, height: 900 })
+  await page.goto('http://localhost:5173')
+  await page.getByRole('tab', { name: settingsTabPattern }).click()
+  await revealSettingsItem(page, 'cli-compat')
+
+  const claudeRow = page.locator('.cli-compat-row[data-provider="claude"]')
+  await expect(claudeRow).toContainText('v2.1.280 ~ v2.1.284')
+  await expect(claudeRow).toContainText('已是兼容版本')
+  await expect(claudeRow.getByRole('button', { name: /下载兼容版并切换/ })).toHaveCount(0)
+
+  const codexRow = page.locator('.cli-compat-row[data-provider="codex"]')
+  await expect(codexRow.getByRole('button', { name: /下载兼容版并切换/ })).toBeVisible()
+})

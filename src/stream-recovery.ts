@@ -131,6 +131,50 @@ export const resolveStreamRecoveryCheckpointTurn = ({
   }
 }
 
+// 中转/网关层的瞬时故障：HTTP 层就坏了（HTML 错误页、5xx、429、建连失败、断 socket），
+// 与会话内容无关。停滞看门狗、Reconnecting 占位这类**不在**这里——那些可能是 Codex
+// 毒化的会话尖端，吐完半截输出照样死。
+const sessionIndependentUpstreamFailurePatterns = [
+  'empty or malformed response',
+  'last_content_type=none',
+  'server-side issue, usually temporary',
+  'repeated 529 overloaded',
+  'api is at capacity',
+  'model is at capacity',
+  'is experiencing high load',
+  'our servers are currently overloaded',
+  'no accounts are currently available',
+  'request rejected (429)',
+  '上游已负载',
+  'unable to connect to api',
+  'connection refused',
+  'econnrefused',
+  'socket connection was closed',
+  'connection closed mid-response',
+] as const
+
+export const isSessionIndependentUpstreamFailure = (message: string) => {
+  const normalized = message.trim().toLowerCase()
+  return sessionIndependentUpstreamFailurePatterns.some((pattern) => normalized.includes(pattern))
+}
+
+// 症状：长任务里中转偶发吐 HTML 空 200，续上后跑了一堆命令又抽一次，卡片就回滚到本轮
+//   用户消息重发（fork 失败时更糟：seeded 冷启动），模型说「之前的摸底记录被截断了」。
+// 根因：2026-09-29 截图 + 回归钉死。失败续传计数只在整轮 done 时清零，两次互不相干的
+//   中转抽风（中间有真实工具进展）也凑满 maxResumeSessionLoopAttempts=2 触发逃生舱。
+// 被否决：不在任意进展后清零——Codex 毒化尖端会先吐半截输出再停滞（stream-recovery-feedback
+//   design），那样会无限续传；只对与会话无关的传输类故障、且确有进展时重开计数。
+export const resolveNextFailedResumeSessionAttempt = ({
+  previousAttempt,
+  madeMeaningfulProgress,
+  message,
+}: {
+  previousAttempt: number
+  madeMeaningfulProgress: boolean
+  message: string
+}) =>
+  madeMeaningfulProgress && isSessionIndependentUpstreamFailure(message) ? 1 : previousAttempt + 1
+
 export const shouldFallbackToFreshSessionAfterResumeLoop = ({
   recoverable,
   recoveryMode,

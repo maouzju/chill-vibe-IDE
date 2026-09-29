@@ -11,6 +11,7 @@ import {
   resolveCompatCommand,
   writeActiveCompatVersion,
 } from '../server/cli-compat-manager.ts'
+import { compatibleCliVersions } from '../shared/cli-compat.ts'
 
 const makeRoot = () => mkdtempSync(path.join(os.tmpdir(), 'cli-compat-'))
 const launches = async () => true
@@ -64,7 +65,8 @@ describe('cli compat manager', () => {
   // 2026-09-29 用户截图：「切换到兼容版」点了没反应 —— 包装得在但起不来，激活后照样回落系统 CLI，按钮原地不动。
   it('reports an unlaunchable compat install as not installed so the UI offers a re-download', async () => {
     const root = makeRoot()
-    const bin = getCompatBinPath('claude', '2.1.280', root)
+    const pinned = compatibleCliVersions.claude.version
+    const bin = getCompatBinPath('claude', pinned, root)
     mkdirSync(path.dirname(bin), { recursive: true })
     writeFileSync(bin, 'broken-dead-switch')
     const manager = new CliCompatManager(async () => null, async () => null, {
@@ -76,7 +78,7 @@ describe('cli compat manager', () => {
     await assert.rejects(manager.setActive('claude', true), /cannot launch/)
 
     const healthyRoot = makeRoot()
-    const healthyBin = getCompatBinPath('claude', '2.1.280', healthyRoot)
+    const healthyBin = getCompatBinPath('claude', pinned, healthyRoot)
     mkdirSync(path.dirname(healthyBin), { recursive: true })
     writeFileSync(healthyBin, '')
     const healthy = new CliCompatManager(async () => null, async () => null, {
@@ -85,6 +87,7 @@ describe('cli compat manager', () => {
     })
     const ok = (await healthy.getStatus()).entries.find((entry) => entry.provider === 'claude')
     assert.equal(ok?.installed, true)
+    assert.equal(ok?.minCompatibleVersion, compatibleCliVersions.claude.minVersion)
   })
 
   it('tolerates a corrupt active file', async () => {

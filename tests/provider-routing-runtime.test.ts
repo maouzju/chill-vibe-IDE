@@ -747,4 +747,28 @@ describe('cc-switch provider profile import merge', () => {
       setProviderRuntimeSettingsOverride(null)
     }
   })
+
+  // 子 agent 只能填别名；CLI 2.1.280 的 `sonnet` 仍指向 claude-sonnet-5（2026-09-29 实测），
+  // 不钉住的话提示词宣称的 sonnet = Sonnet 5.5 就是假话。用户自己在环境里配了就不覆盖。
+  it('pins Claude Agent-tool aliases to the catalog without overriding the user', async () => {
+    const { resolveProviderRuntime } = await import('../server/providers.ts')
+    const original = process.env.ANTHROPIC_DEFAULT_OPUS_MODEL
+    delete process.env.ANTHROPIC_DEFAULT_SONNET_MODEL
+    process.env.ANTHROPIC_DEFAULT_OPUS_MODEL = 'user-pinned-opus'
+
+    try {
+      const runtime = await resolveProviderRuntime('claude')
+      assert.equal(runtime.env.ANTHROPIC_DEFAULT_SONNET_MODEL, 'claude-sonnet-5-5')
+      assert.equal(runtime.env.ANTHROPIC_DEFAULT_OPUS_MODEL, 'user-pinned-opus')
+
+      const codexRuntime = await resolveProviderRuntime('codex')
+      assert.equal(codexRuntime.env.ANTHROPIC_DEFAULT_SONNET_MODEL, undefined)
+    } finally {
+      if (typeof original === 'string') {
+        process.env.ANTHROPIC_DEFAULT_OPUS_MODEL = original
+      } else {
+        delete process.env.ANTHROPIC_DEFAULT_OPUS_MODEL
+      }
+    }
+  })
 })

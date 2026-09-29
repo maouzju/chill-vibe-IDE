@@ -13,6 +13,7 @@ import {
   MODEL_OPTIONS,
   MUSIC_TOOL_MODEL,
   STATS_TOOL_MODEL,
+  buildClaudeAgentAliasModelEnv,
   STICKYNOTE_TOOL_MODEL,
   TEXTEDITOR_TOOL_MODEL,
   WEATHER_TOOL_MODEL,
@@ -91,6 +92,7 @@ describe('model helpers', () => {
         'claude-fable-5',
         DEFAULT_CLAUDE_MODEL,
         'claude-opus-5',
+        'claude-sonnet-5-5',
         'claude-sonnet-5',
         'claude-sonnet-4-6',
         'claude-haiku-4-5-20251001',
@@ -98,7 +100,7 @@ describe('model helpers', () => {
     )
   })
 
-  it('resolves Fable 5.1 and Sonnet 5 aliases while keeping stored legacy ids usable', () => {
+  it('resolves Fable 5.1 and Sonnet 5.5 aliases while keeping stored legacy ids usable', () => {
     // 裸别名跟随最新一代（与官方 `sonnet` 别名语义一致）。
     assert.equal(resolveSlashModel('claude', 'fable'), 'claude-fable-5-1')
     assert.equal(resolveSlashModel('claude', 'fable-5.1'), 'claude-fable-5-1')
@@ -107,9 +109,14 @@ describe('model helpers', () => {
     assert.equal(resolveSlashModel('claude', 'fable-5'), 'claude-fable-5')
     assert.equal(resolveSlashModel('claude', 'claude-fable-5'), 'claude-fable-5')
     assert.equal(normalizeModel('claude', 'claude-fable-5'), 'claude-fable-5')
-    // Bare "sonnet" follows the official Claude Code alias to Sonnet 5.
-    assert.equal(resolveSlashModel('claude', 'sonnet'), 'claude-sonnet-5')
+    // Bare "sonnet" follows the newest Sonnet tier (Sonnet 5.5, 2026-09-28).
+    assert.equal(resolveSlashModel('claude', 'sonnet'), 'claude-sonnet-5-5')
+    assert.equal(resolveSlashModel('claude', 'sonnet-5.5'), 'claude-sonnet-5-5')
+    assert.equal(resolveSlashModel('claude', 'claude-sonnet-5-5'), 'claude-sonnet-5-5')
+    // Sonnet 5 leaves the picker but exact legacy ids stay usable (Pitfall #119).
     assert.equal(resolveSlashModel('claude', 'sonnet-5'), 'claude-sonnet-5')
+    assert.equal(resolveSlashModel('claude', 'claude-sonnet-5'), 'claude-sonnet-5')
+    assert.equal(normalizeModel('claude', 'claude-sonnet-5'), 'claude-sonnet-5')
     // Retiring the picker entry must not rewrite historical sessions or make
     // an explicit legacy model id impossible to recover.
     assert.equal(resolveSlashModel('claude', 'sonnet-4.6'), 'claude-sonnet-4-6')
@@ -150,8 +157,20 @@ describe('model helpers', () => {
       getModelOptions('claude')
         .filter(isModelPickerOptionVisible)
         .map((option) => option.model),
-      ['', 'claude-fable-5-1', DEFAULT_CLAUDE_MODEL, 'claude-sonnet-5', 'claude-haiku-4-5-20251001'],
+      ['', 'claude-fable-5-1', DEFAULT_CLAUDE_MODEL, 'claude-sonnet-5-5', 'claude-haiku-4-5-20251001'],
     )
+  })
+
+  // 症状（2026-09-29 实测 CLI 2.1.280）：Sonnet 5.5 已发布，但 CLI 自带的 `sonnet` 别名仍解析到
+  //   claude-sonnet-5；子 agent 的 Agent 工具只收别名，提示词却按目录宣称 sonnet = Sonnet 5.5。
+  // 所以别名落点必须由同一份目录经 ANTHROPIC_DEFAULT_*_MODEL 钉给 CLI。
+  it('pins every Claude Agent-tool alias to the newest visible catalog model', () => {
+    assert.deepEqual(buildClaudeAgentAliasModelEnv(), {
+      ANTHROPIC_DEFAULT_HAIKU_MODEL: 'claude-haiku-4-5-20251001',
+      ANTHROPIC_DEFAULT_SONNET_MODEL: 'claude-sonnet-5-5',
+      ANTHROPIC_DEFAULT_OPUS_MODEL: DEFAULT_CLAUDE_MODEL,
+      ANTHROPIC_DEFAULT_FABLE_MODEL: 'claude-fable-5-1',
+    })
   })
 
   // 症状（要防的）：打开某张工具卡后，之后新建的每一张卡都变成那张工具卡且一片空白。
@@ -204,7 +223,7 @@ describe('model helpers', () => {
     assert.equal(resolveSlashModel('codex', 'ambient'), WHITENOISE_TOOL_MODEL)
     assert.equal(resolveSlashModel('claude', 'claude'), '')
     // Bare "opus" follows the newest Opus tier, the same way bare "sonnet"
-    // moved to Sonnet 5.
+    // moved to Sonnet 5.5.
     assert.equal(resolveSlashModel('claude', 'opus'), DEFAULT_CLAUDE_MODEL)
     assert.equal(resolveSlashModel('claude', 'opus 5'), 'claude-opus-5')
     assert.equal(resolveSlashModel('claude', 'claude-opus-5'), 'claude-opus-5')

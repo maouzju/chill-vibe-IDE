@@ -7,6 +7,7 @@ import os from 'os'
 import {
   repairClaudeSessionForResume,
   stripSyntheticNoResponseEntries,
+  stripTurnEffortsWhenTailDangles,
 } from '../server/claude-session-repair.ts'
 
 const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'claude-session-repair-test-'))
@@ -90,7 +91,92 @@ describe('stripSyntheticNoResponseEntries', () => {
   })
 })
 
+// 取自 2026-09-26 rogue-td 会话 bcebd1f1 的真实形状：历史回复带 effort/perTurnEffort=max，
+// 停止后存档尾巴是一条用户消息（工具结果后的「[Request interrupted by user]」）。
+const effortAssistant = (uuid: string, parentUuid: string | null, content: unknown[], effort = 'max') =>
+  line({
+    type: 'assistant',
+    uuid,
+    parentUuid,
+    isSidechain: false,
+    effort,
+    perTurnEffort: effort,
+    message: { role: 'assistant', model: 'claude-opus-5-5', content },
+  })
+
+const danglingTailTranscript = () => [
+  line({ type: 'user', uuid: 'u1', parentUuid: null, message: { role: 'user', content: [{ type: 'text', text: 'do it' }] } }),
+  effortAssistant('a1', 'u1', [{ type: 'text', text: 'on it' }]),
+  effortAssistant('a2', 'a1', [{ type: 'tool_use', id: 't1', name: 'Bash', input: {} }]),
+  line({ type: 'user', uuid: 'u2', parentUuid: 'a2', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 't1', content: 'ok' }] } }),
+  line({ type: 'user', uuid: 'u3', parentUuid: 'u2', message: { role: 'user', content: [{ type: 'text', text: '[Request interrupted by user]' }] } }),
+  JSON.stringify({ type: 'last-prompt', sessionId }),
+].join('\n') + '\n'
+
+const parseEntries = (content: string) =>
+  content.trim().split('\n').map((raw) => JSON.parse(raw) as Record<string, unknown>)
+
+describe('stripTurnEffortsWhenTailDangles', () => {
+  it('drops per-turn effort stamps when the transcript ends on a user message', () => {
+    const result = stripTurnEffortsWhenTailDangles(danglingTailTranscript())
+    assert.equal(result.stripped, 2)
+    const entries = parseEntries(result.content)
+    for (const entry of entries.filter((item) => item.type === 'assistant')) {
+      assert.equal('effort' in entry, false)
+      assert.equal('perTurnEffort' in entry, false)
+      assert.ok(entry.message)
+    }
+    assert.equal(entries.length, 6)
+    assert.ok(result.content.endsWith('\n'))
+  })
+
+  it('also treats an unanswered tool_use tail as dangling', () => {
+    const content = danglingTailTranscript().split('\n').slice(0, 3).join('\n')
+    assert.equal(stripTurnEffortsWhenTailDangles(content).stripped, 2)
+  })
+
+  it('keeps effort stamps when the transcript ends on a finished assistant reply', () => {
+    const healthy = danglingTailTranscript().split('\n').slice(0, 2).join('\n') + '\n'
+    const result = stripTurnEffortsWhenTailDangles(healthy)
+    assert.equal(result.stripped, 0)
+    assert.equal(result.content, healthy)
+  })
+
+  it('treats an API error reply as a finished tail and ignores sidechain entries', () => {
+    const content = danglingTailTranscript() + [
+      line({ type: 'assistant', uuid: 'x1', parentUuid: 'u3', isApiErrorMessage: true, message: { role: 'assistant', model: '<synthetic>', content: [{ type: 'text', text: 'API Error: 400' }] } }),
+      line({ type: 'user', uuid: 'sc1', parentUuid: null, isSidechain: true, message: { role: 'user', content: 'sub' } }),
+    ].join('\n') + '\n'
+    assert.equal(stripTurnEffortsWhenTailDangles(content).stripped, 0)
+  })
+
+  it('does not depend on compact JSON spacing', () => {
+    const spaced = parseEntries(danglingTailTranscript())
+      .map((entry) => JSON.stringify(entry, null, 1).replaceAll('\n', ''))
+      .join('\n') + '\n'
+    assert.equal(stripTurnEffortsWhenTailDangles(spaced).stripped, 2)
+  })
+})
+
 describe('repairClaudeSessionForResume', () => {
+  it('repairs a dangling-tail transcript even without a synthetic reply', async () => {
+    const filePath = path.join(tmpDir, 'dangling.jsonl')
+    fs.writeFileSync(filePath, danglingTailTranscript(), 'utf8')
+    assert.equal(await repairClaudeSessionForResume('dangling', () => filePath), 2)
+    assert.equal(fs.readFileSync(filePath, 'utf8').includes('perTurnEffort'), false)
+    assert.equal(await repairClaudeSessionForResume('dangling', () => filePath), 0)
+  })
+
+  it('strips effort stamps left dangling after removing the synthetic reply', async () => {
+    const filePath = path.join(tmpDir, 'synthetic-dangling.jsonl')
+    const content = danglingTailTranscript() + syntheticNoResponse('s1', 'u3') + '\n'
+    fs.writeFileSync(filePath, content, 'utf8')
+    assert.equal(await repairClaudeSessionForResume('synthetic-dangling', () => filePath), 3)
+    const after = fs.readFileSync(filePath, 'utf8')
+    assert.equal(after.includes('No response requested.'), false)
+    assert.equal(after.includes('perTurnEffort'), false)
+  })
+
   it('rewrites the on-disk transcript so the next --resume stops failing', async () => {
     const filePath = path.join(tmpDir, `${sessionId}.jsonl`)
     fs.writeFileSync(filePath, interruptedTranscript(), 'utf8')

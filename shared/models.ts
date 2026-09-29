@@ -183,11 +183,19 @@ export const MODEL_OPTIONS: ModelOption[] = [
     hiddenFromPicker: true,
   },
   {
-    // Bare "sonnet" follows the official alias to Sonnet 5 (native 1M window).
+    // Bare "sonnet" follows the newest Sonnet tier, like bare "opus" does.
+    label: 'Sonnet 5.5',
+    provider: 'claude',
+    model: 'claude-sonnet-5-5',
+    aliases: ['sonnet', 'sonnet-5.5', 'claude-sonnet-5-5'],
+  },
+  {
+    // Retired from the picker, but kept for exact legacy commands and saved cards.
     label: 'Sonnet 5',
     provider: 'claude',
     model: 'claude-sonnet-5',
-    aliases: ['sonnet', 'sonnet-5', 'claude-sonnet-5'],
+    aliases: ['sonnet-5', 'claude-sonnet-5'],
+    hiddenFromPicker: true,
   },
   {
     // Retired from the picker, but kept for exact legacy commands and saved cards.
@@ -259,6 +267,35 @@ export const getDefaultModel = (provider: Provider) =>
 
 export const getModelOptions = (provider: Provider) =>
   MODEL_OPTIONS.filter((option) => option.provider === provider)
+
+/**
+ * Claude Agent 工具的 `model` 只收这四个别名；子 agent 提示词与 CLI 的别名落点都从这里派生。
+ *
+ * 症状（2026-09-29 实测 CLI 2.1.280）：Sonnet 5.5 发布次日，CLI 自带的 `sonnet` 别名仍解析到
+ *   claude-sonnet-5，而提示词按目录告诉 agent「sonnet = Sonnet 5.5」—— 子 agent 实际跑的是旧型号。
+ * 根因：别名表在 CLI 二进制里，随 CLI 版本走，与本目录各自演化。
+ * 做法：同一份映射经 ANTHROPIC_DEFAULT_*_MODEL 钉给 CLI（实测子 agent 随之落到 claude-sonnet-5-5）。
+ * 被否决：CLAUDE_CODE_SUBAGENT_MODEL —— 那是把所有子 agent 定死成一个模型，不是修正别名。
+ */
+export const CLAUDE_AGENT_MODEL_ALIASES = ['haiku', 'sonnet', 'opus', 'fable'] as const
+
+export const resolveClaudeAgentAliasModels = () => {
+  const models = getModelOptions('claude').filter(
+    (option) => isModelPickerOptionVisible(option) && !option.usesConfiguredDefault && option.model,
+  )
+  return CLAUDE_AGENT_MODEL_ALIASES.flatMap((alias) => {
+    const option = models.find((candidate) => candidate.label.toLowerCase().startsWith(alias))
+    return option ? [{ alias, option }] : []
+  })
+}
+
+export const buildClaudeAgentAliasModelEnv = (): Record<string, string> =>
+  Object.fromEntries(
+    resolveClaudeAgentAliasModels().map(({ alias, option }) => [
+      `ANTHROPIC_DEFAULT_${alias.toUpperCase()}_MODEL`,
+      option.model,
+    ]),
+  )
 
 export const normalizeStoredModel = (provider: Provider, model?: string | null) => {
   const trimmed = model?.trim() ?? ''

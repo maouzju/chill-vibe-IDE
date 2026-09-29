@@ -22,11 +22,13 @@ import {
 } from '../shared/i18n.js'
 import { getActiveProviderProfile } from '../shared/default-state.js'
 import {
+  buildClaudeAgentAliasModelEnv,
   getModelOptions,
   isAstraModel,
   isModelPickerOptionVisible,
   listSelectableModelCatalog,
   parseLocalModelToken,
+  resolveClaudeAgentAliasModels,
 } from '../shared/models.js'
 import { isLoopbackHostname } from './automation-board-bridge.js'
 import { resolveOllamaBaseUrl } from './ollama-manager.js'
@@ -353,14 +355,8 @@ const getCodexSubagentModelInstruction = (language: AppLanguage) => {
     : `子 agent 模型自选：在这个 Chill Vibe 环境里，你被明确授权在 spawn_agent 时自己设置 \`model\` 与 \`reasoning_effort\`，任务适合别的模型时不必等用户点名。本环境可用模型：${listZh}。搜索、读代码、机械修改这类轻任务优先 Luna / Terra 并配低档位；跨模块设计、疑难 bug 用 Sol / Astra。两个字段都不填则继承你当前的模型。`
 }
 
-const claudeSubagentAliases = ['haiku', 'sonnet', 'opus', 'fable'] as const
-
 const getClaudeSubagentModelInstruction = (language: AppLanguage) => {
-  const models = listSubagentCatalogModels('claude')
-  const mapped = claudeSubagentAliases.flatMap((alias) => {
-    const option = models.find((candidate) => candidate.label.toLowerCase().startsWith(alias))
-    return option ? [{ alias, option }] : []
-  })
+  const mapped = resolveClaudeAgentAliasModels()
   const listEn = mapped.map(({ alias, option }) => `${alias} = ${option.label} (\`${option.model}\`)`).join(', ')
   const listZh = mapped.map(({ alias, option }) => `${alias} = ${option.label}（\`${option.model}\`）`).join('、')
   return normalizeLanguage(language) === 'en'
@@ -602,8 +598,14 @@ export const resolveProviderRuntime = async (
   provider: Provider,
   options: { localModelId?: string } = {},
 ): Promise<ProviderRuntime> => {
+  // 别名落点从模型目录钉给 CLI（见 shared/models.ts 的 CLAUDE_AGENT_MODEL_ALIASES）；
+  // 用户自己在环境里配过的别名优先，不覆盖。
   const baseEnv =
-    provider === 'claude' ? await resolveClaudeRuntimeEnvironment({ env: process.env }) : process.env
+    provider === 'claude'
+      ? await resolveClaudeRuntimeEnvironment({
+          env: { ...buildClaudeAgentAliasModelEnv(), ...process.env },
+        })
+      : process.env
 
   try {
     // Provider launch can race the renderer's first runtime-settings sync. Use

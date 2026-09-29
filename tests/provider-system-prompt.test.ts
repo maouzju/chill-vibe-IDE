@@ -6115,7 +6115,7 @@ test('claude append prompt maps the Agent tool aliases onto this environment and
     for (const alias of ['haiku', 'sonnet', 'opus', 'fable']) {
       assert.match(prompt, new RegExp('(^|[^a-z])' + alias + '([^a-z]|$)'), `${language} must list alias ${alias}`)
     }
-    for (const label of ['Haiku 4.5', 'Sonnet 5', 'Opus 5', 'Fable 5.1']) {
+    for (const label of ['Haiku 4.5', 'Sonnet 5.5', 'Opus 5.5', 'Fable 5.1']) {
       assert.match(prompt, new RegExp(label.replace(/\./g, '[.]')), `${language} must map to ${label}`)
     }
     assert.match(prompt, language === 'en' ? /inherit/i : /继承/)

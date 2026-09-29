@@ -226,6 +226,7 @@ const desktopAppStateLoadResponseSchema = appStateLoadResponseSchema.or(appState
           startup: null,
           recentCrash: null,
           interruptedSessions: null,
+          promptVault: null,
         },
       },
 )

@@ -124,6 +124,7 @@ import type {
   ImageAttachment,
   InterruptedSessionEntry,
   InterruptedSessionRecovery,
+  PromptVaultEntry,
   LocalModelEntry,
   OnboardingStatus,
   Provider,
@@ -688,6 +689,7 @@ function App() {
   const [startupRecovery, setStartupRecovery] = useState<StartupStateRecovery | null>(null)
   const [recentCrashRecovery, setRecentCrashRecovery] = useState<RecentCrashRecovery | null>(null)
   const [interruptedSessionRecovery, setInterruptedSessionRecovery] = useState<InterruptedSessionRecovery | null>(null)
+  const [promptVaultOffer, setPromptVaultOffer] = useState<PromptVaultEntry | null>(null)
   const [stateRecoveryPending, setStateRecoveryPending] = useState(false)
   const [stateRecoveryError, setStateRecoveryError] = useState<string | null>(null)
   const [recentCrashActionPending, setRecentCrashActionPending] = useState(false)
@@ -1412,6 +1414,7 @@ function App() {
       startup: StartupStateRecovery | null
       recentCrash: RecentCrashRecovery | null
       interruptedSessions: InterruptedSessionRecovery | null
+      promptVault?: PromptVaultEntry | null
     } = {
       startup: null,
       recentCrash: null,
@@ -1443,6 +1446,7 @@ function App() {
     setStartupRecovery(recovery.startup)
     setRecentCrashRecovery(recovery.recentCrash)
     setInterruptedSessionRecovery(recovery.interruptedSessions)
+    setPromptVaultOffer(recovery.promptVault ?? null)
     setStateRecoveryError(null)
     setRecentCrashActionError(null)
     setInterruptedSessionActionError(null)
@@ -9739,6 +9743,124 @@ function App() {
       ),
     },
     {
+      // 09-29 用户反馈：系统提示词是最重要的设置，从「对话行为」里拆出来放进「基础」第一项。
+      id: 'system-prompt',
+      node: (
+        <div className="settings-section">
+        <div className="settings-hover-detail is-field">
+          <label className="settings-field" htmlFor="system-prompt-input">
+            <span className="settings-field-label">
+              <ModelIcon className="settings-field-icon" aria-hidden="true" />
+              <span className="settings-field-label-text">{text.systemPromptLabel}</span>
+            </span>
+            <textarea
+              id="system-prompt-input"
+              className="control settings-input"
+              rows={4}
+              aria-describedby="system-prompt-note"
+              value={appState.settings.systemPrompt}
+              onChange={(event) =>
+                applyAction({
+                  type: 'updateSettings',
+                  patch: { systemPrompt: event.target.value },
+                })
+              }
+            />
+          </label>
+          <p id="system-prompt-note" className="settings-note settings-hover-note" role="tooltip">
+            {text.systemPromptNote}
+          </p>
+        </div>
+
+        <div className="settings-hover-detail is-field">
+          <div
+            className="settings-field model-prompt-rules-summary-row"
+            aria-describedby="model-prompt-rules-note"
+          >
+            <span className="settings-field-label">
+              <ModelIcon className="settings-field-icon" aria-hidden="true" />
+              <span className="settings-field-label-text">
+                {appState.settings.language === 'zh-CN' ? '基于模型的提示词' : 'Model prompt rules'}
+              </span>
+            </span>
+            <div className="model-prompt-rules-summary">
+              {/* 规则条数是实时状态，按 ui-principles 第 3 条留在面板上；
+                  「怎么匹配」是解释，收进悬停气泡。 */}
+              <strong>{modelPromptRulesSummary}</strong>
+            </div>
+          </div>
+          <p
+            id="model-prompt-rules-note"
+            className="settings-note settings-hover-note"
+            role="tooltip"
+          >
+            {appState.settings.language === 'zh-CN'
+              ? '按模型关键字做包含匹配。命中后，会把规则提示词追加到系统提示词后面。'
+              : 'Rules match by model keyword substring. Matching prompts are appended after the base system prompt.'}
+          </p>
+        </div>
+
+        {promptVaultOffer && appState.settings.systemPrompt.trim() === defaultSystemPrompt.trim() ? (
+          // 当前提示词已是内置默认，而 prompt-vault.json 里还存着上次自定义的那份：让用户一键找回。
+          // 冲掉它的路径没查全（见 server/prompt-vault.ts），所以不自动写回，由用户决定。
+          <div className="prompt-vault-offer">
+            <p className="settings-note">
+              {appState.settings.language === 'zh-CN'
+                ? `系统提示词现在是内置默认，但找到了你 ${new Date(promptVaultOffer.savedAt).toLocaleString('zh-CN')} 保存的自定义提示词${promptVaultOffer.modelPromptRules.length > 0 ? `（含 ${promptVaultOffer.modelPromptRules.length} 条模型规则）` : ''}。`
+                : `The system prompt is the built-in default, but a custom prompt saved ${new Date(promptVaultOffer.savedAt).toLocaleString('en')} was found${promptVaultOffer.modelPromptRules.length > 0 ? ` (with ${promptVaultOffer.modelPromptRules.length} model rule${promptVaultOffer.modelPromptRules.length === 1 ? '' : 's'})` : ''}.`}
+            </p>
+            <div className="settings-actions">
+              <AppButton
+                type="button"
+                onClick={() => {
+                  applyAction({
+                    type: 'updateSettings',
+                    patch: {
+                      systemPrompt: promptVaultOffer.systemPrompt,
+                      modelPromptRules: promptVaultOffer.modelPromptRules,
+                    },
+                  })
+                  setPromptVaultOffer(null)
+                }}
+              >
+                {appState.settings.language === 'zh-CN' ? '找回自定义提示词' : 'Restore custom prompt'}
+              </AppButton>
+              <AppButton
+                type="button"
+                onClick={() => {
+                  applyAction({
+                    type: 'updateSettings',
+                    patch: { promptVaultDismissedAt: promptVaultOffer.savedAt },
+                  })
+                  setPromptVaultOffer(null)
+                }}
+              >
+                {appState.settings.language === 'zh-CN' ? '忽略' : 'Dismiss'}
+              </AppButton>
+            </div>
+          </div>
+        ) : null}
+
+        <div className="settings-actions">
+          <AppButton type="button" onClick={openModelPromptRulesDialog}>
+            {appState.settings.language === 'zh-CN' ? '编辑规则' : 'Edit rules'}
+          </AppButton>
+          <AppButton
+            type="button"
+            onClick={() =>
+              applyAction({
+                type: 'updateSettings',
+                patch: { systemPrompt: defaultSystemPrompt },
+              })
+            }
+          >
+            {text.restoreDefaultSystemPrompt}
+          </AppButton>
+        </div>
+        </div>
+      ),
+    },
+    {
       id: 'model-behavior',
       node: (
         <div className="settings-section">
@@ -9812,65 +9934,6 @@ function App() {
           </p>
         </div>
 
-        <div className="settings-hover-detail is-field">
-          <label className="settings-field" htmlFor="system-prompt-input">
-            <span className="settings-field-label">
-              <ModelIcon className="settings-field-icon" aria-hidden="true" />
-              <span className="settings-field-label-text">{text.systemPromptLabel}</span>
-            </span>
-            <textarea
-              id="system-prompt-input"
-              className="control settings-input"
-              rows={4}
-              aria-describedby="system-prompt-note"
-              value={appState.settings.systemPrompt}
-              onChange={(event) =>
-                applyAction({
-                  type: 'updateSettings',
-                  patch: { systemPrompt: event.target.value },
-                })
-              }
-            />
-          </label>
-          <p id="system-prompt-note" className="settings-note settings-hover-note" role="tooltip">
-            {text.systemPromptNote}
-          </p>
-        </div>
-
-        <div className="settings-hover-detail is-field">
-          <div
-            className="settings-field model-prompt-rules-summary-row"
-            aria-describedby="model-prompt-rules-note"
-          >
-            <span className="settings-field-label">
-              <ModelIcon className="settings-field-icon" aria-hidden="true" />
-              <span className="settings-field-label-text">
-                {appState.settings.language === 'zh-CN' ? '基于模型的提示词' : 'Model prompt rules'}
-              </span>
-            </span>
-            <div className="model-prompt-rules-summary">
-              {/* 规则条数是实时状态，按 ui-principles 第 3 条留在面板上；
-                  「怎么匹配」是解释，收进悬停气泡。 */}
-              <strong>{modelPromptRulesSummary}</strong>
-            </div>
-          </div>
-          <p
-            id="model-prompt-rules-note"
-            className="settings-note settings-hover-note"
-            role="tooltip"
-          >
-            {appState.settings.language === 'zh-CN'
-              ? '按模型关键字做包含匹配。命中后，会把规则提示词追加到系统提示词后面。'
-              : 'Rules match by model keyword substring. Matching prompts are appended after the base system prompt.'}
-          </p>
-        </div>
-
-        <div className="settings-actions">
-          <AppButton type="button" onClick={openModelPromptRulesDialog}>
-            {appState.settings.language === 'zh-CN' ? '编辑规则' : 'Edit rules'}
-          </AppButton>
-        </div>
-
         <div className="settings-hover-detail">
           <label className="settings-toggle" htmlFor="cross-provider-skill-reuse-toggle">
             <span>{text.crossProviderSkillReuseLabel}</span>
@@ -9896,19 +9959,6 @@ function App() {
           </p>
         </div>
 
-          <div className="settings-actions">
-          <AppButton
-            type="button"
-            onClick={() =>
-              applyAction({
-                type: 'updateSettings',
-                patch: { systemPrompt: defaultSystemPrompt },
-              })
-            }
-          >
-            {text.restoreDefaultSystemPrompt}
-          </AppButton>
-          </div>
         </div>
       ),
     },

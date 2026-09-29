@@ -610,6 +610,7 @@ export const createDefaultSettings = (language: AppLanguage = defaultAppLanguage
   wakeTimerDefaultMode: 'workspace-agents',
   wakeTimerDefaultDurationMinutes: defaultWakeTimerDurationMinutes,
   weatherCity: '',
+  promptVaultDismissedAt: '',
   systemPrompt: defaultSystemPrompt,
   modelPromptRules: [],
   codexPersonality: 'default',
@@ -836,6 +837,7 @@ export const normalizeAppSettings = (settings?: Partial<AppSettings> | null): Ap
         ? settings.wakeTimerDefaultDurationMinutes
         : defaults.wakeTimerDefaultDurationMinutes,
     weatherCity: normalizeText(settings?.weatherCity) || defaults.weatherCity,
+    promptVaultDismissedAt: normalizeText(settings?.promptVaultDismissedAt),
     systemPrompt: normalizeSystemPrompt(settings?.systemPrompt),
     modelPromptRules: normalizeModelPromptRules(settings?.modelPromptRules),
     codexPersonality: normalizeCodexPersonality(settings?.codexPersonality),

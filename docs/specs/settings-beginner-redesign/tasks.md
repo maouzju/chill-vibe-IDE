@@ -3,7 +3,7 @@
 ## Slice 1 - 纯逻辑（Tier 1，红→绿）
 
 - [x] 红：`tests/settings-model.test.ts`
-  - 目录：每个 id 唯一；六个分类都非空；基础项恰好是 language-theme / account / models / update；danger 在系统分类且排最后；experimental 排在普通项之后。
+  - 目录：每个 id 唯一；六个分类都非空；基础项恰好是 system-prompt / language-theme / account / models / update；danger 在系统分类且排最后；experimental 排在普通项之后。
   - 搜索：空串返回全部；中文界面搜 "proxy" 命中断线重连；搜 "思考" 命中模型项；大小写不敏感；无命中返回空数组。
   - 健康灯：无数据 → unknown；双 CLI 可用 → ok；仅一个 → warn + install-cli；有 profile → account ok；关路由 → ok；无 profile → warn + connect-account；compat active → ok；系统版本不一致 → warn + install-compat（未装）/ activate-compat（已装未激活）。
   - 向导：loading / setup / 跳过后到 account / 导入或填 key 或已有 profile 后到 model / 确认后 complete。

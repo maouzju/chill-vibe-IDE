@@ -85,6 +85,7 @@ import {
   type StateRecoveryOption,
 } from '../shared/schema.js'
 import { getAppDataDir, getDefaultWorkspacePath } from './app-paths.js'
+import { getPromptVaultOffer, recordPromptVault } from './prompt-vault.js'
 import {
   compactPersistedMessages,
   compactSessionHistoryEntryForTransfer,
@@ -2454,18 +2455,50 @@ const stateRecoveryCandidateTimestamp = (fileName: string) => {
 // 不能只把 snapshot 追加进原来的 files.sort().reverse()：两种前缀的字典序会先按前缀
 // 分堆，本仓库测试实测会让 2026-08-24 的 backup 胜过 2026-08-25 的 snapshot，
 // 恢复出更旧的数据。必须解析文件名里的时间戳后统一排序。
+const listStateRecoveryCandidates = async (dataDir: string) =>
+  (await readdir(dataDir))
+    .filter(
+      (fileName) =>
+        (fileName.startsWith('state.backup-') || fileName.startsWith(stateSnapshotPrefix)) &&
+        fileName.endsWith(stateSnapshotSuffix),
+    )
+    .map((fileName) => ({ fileName, at: stateRecoveryCandidateTimestamp(fileName) }))
+    // 时间戳解析失败的排到末尾，但仍然参与尝试——聊胜于无。
+    .sort((a, b) => b.at - a.at || b.fileName.localeCompare(a.fileName))
+
+// 症状：2026-09-29 用户报「每次更新系统提示词都被冲掉」；实测 codex rollout 注入的指令
+//   08-24 还是自定义三条、08-27 起变内置默认，同期 autoUrge/路由/推理档位也全回默认。
+// 根因：看板候选全救不回时直接 createDefaultState，设置随空看板一起写回盘。提示词在界面上
+//   不显眼，别的设置用户手动改回了，唯独它三周后才被发现。
+// 为什么只救 settings：看板结构坏了不代表设置坏了，settings 只要是个对象就走启动归一化。
+const salvageSettingsFromCandidates = async (dataDir: string): Promise<AppState['settings'] | null> => {
+  try {
+    for (const { fileName } of await listStateRecoveryCandidates(dataDir)) {
+      try {
+        const raw = JSON.parse(await readFile(path.join(dataDir, fileName), 'utf8')) as unknown
+        if (isRecord(raw) && isRecord(raw.settings)) {
+          console.warn(`[state-store] Salvaged settings from ${fileName}`)
+          return normalizePersistedStartupSettings(raw.settings)
+        }
+      } catch {
+        // 这个候选读不了，试下一个。
+      }
+    }
+  } catch {
+    // 数据目录读不了：没有可救的。
+  }
+  return null
+}
+
+const createDefaultStateWithSalvagedSettings = async (dataDir: string): Promise<AppState> => {
+  const settings = await salvageSettingsFromCandidates(dataDir)
+  const defaultState = createDefaultState(getDefaultWorkspacePath(), settings?.language)
+  return settings ? { ...defaultState, settings } : defaultState
+}
+
 const recoverFromBackups = async (dataDir = getAppDataDir()): Promise<AppState | null> => {
   try {
-    const files = await readdir(dataDir)
-    const candidates = files
-      .filter(
-        (fileName) =>
-          (fileName.startsWith('state.backup-') || fileName.startsWith(stateSnapshotPrefix)) &&
-          fileName.endsWith(stateSnapshotSuffix),
-      )
-      .map((fileName) => ({ fileName, at: stateRecoveryCandidateTimestamp(fileName) }))
-      // 时间戳解析失败的排到末尾，但仍然参与尝试——聊胜于无。
-      .sort((a, b) => b.at - a.at || b.fileName.localeCompare(a.fileName))
+    const candidates = await listStateRecoveryCandidates(dataDir)
 
     for (const { fileName } of candidates) {
       try {
@@ -2632,7 +2665,7 @@ export const loadState = async () => {
     // 冻结：它们是仅剩的历史，绝不能被接下来的空看板保存挤掉。
     console.warn('[state-store] State file unreadable and no candidate recovered — using defaults.')
     markDegradedStartup(dataDir)
-    return setCachedState(createDefaultState(getDefaultWorkspacePath()), dataDir, await getStateDiskStamp(dataDir))
+    return setCachedState(await createDefaultStateWithSalvagedSettings(dataDir), dataDir, await getStateDiskStamp(dataDir))
   }
 }
 
@@ -2704,7 +2737,7 @@ const loadRendererStartupState = async (dataDir = getAppDataDir()): Promise<AppS
       }
     }
 
-    return createDefaultState(getDefaultWorkspacePath())
+    return createDefaultStateWithSalvagedSettings(dataDir)
   }
 }
 
@@ -2845,6 +2878,11 @@ const saveStateToDataDir = async (
   }
   const content = `${JSON.stringify(lightweightState, null, 2)}\n`
 
+  // 放在空状态保护之前：被拒写的保存也要把自定义提示词记进存档，见 server/prompt-vault.ts。
+  await recordPromptVault(dataDir, safeState.settings).catch((error) => {
+    console.warn('[state-store] Failed to record prompt vault:', error)
+  })
+
   // Safety: if the new state has no real content but the existing file does,
   // backup and skip the write to avoid silent data loss.
   const hasRealContent =
@@ -2964,6 +3002,7 @@ export const loadStateForRenderer = async (): Promise<AppStateLoadResponse> => {
       startup: await inspectStartupRecovery(dataDir),
       recentCrash,
       interruptedSessions,
+      promptVault: await getPromptVaultOffer(dataDir, state.settings).catch(() => null),
     },
   }
 }

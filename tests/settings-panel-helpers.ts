@@ -3,7 +3,7 @@ import { expect, type Locator, type Page } from '@playwright/test'
 import { getSettingsItemMeta } from '../src/components/settings/settings-model.ts'
 
 // 设置面板 2026-09-23 起一次只渲染一个分类（docs/specs/settings-beginner-redesign），
-// 落地页是「基础」四项。要断言别的项，先把它所在的分类切出来、把「高级设置」展开。
+// 落地页是「基础」五项。要断言别的项，先把它所在的分类切出来、把「高级设置」展开。
 export const revealSettingsItem = async (page: Page, itemId: string): Promise<Locator> => {
   const meta = getSettingsItemMeta(itemId)
   if (!meta) {

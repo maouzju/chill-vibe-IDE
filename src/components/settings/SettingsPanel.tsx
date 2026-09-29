@@ -33,7 +33,7 @@ type SettingsView = 'basics' | SettingsCategoryId
 
 export function SettingsPanel({ language, heading, items, banner, focusRequest }: SettingsPanelProps) {
   const text = getSettingsPanelText(language)
-  // 落地页是「基础」：四个新手必看项。分类只在用户主动点左边导航时才切过去。
+  // 落地页是「基础」：五个新手必看项（系统提示词置顶）。分类只在用户主动点左边导航时才切过去。
   const [activeView, setActiveView] = useState<SettingsView>('basics')
   const activeCategory: SettingsCategoryId = activeView === 'basics' ? 'get-started' : activeView
   const setActiveCategory = setActiveView as (view: SettingsView) => void

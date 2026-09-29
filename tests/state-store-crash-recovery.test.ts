@@ -101,6 +101,54 @@ describe('state-store crash recovery', () => {
     )
   })
 
+  // 2026-09-29 用户报「每次更新系统提示词都被冲掉」：实际是 08-25 那次读档兜底整份
+  // createDefaultState，连手写的 systemPrompt / modelPromptRules 一起写回默认。
+  // 看板救不回来时，设置也必须能从残存快照里单独救回。
+  const brokenBoardWithSettings = () => {
+    const state = createDefaultState('D:/unrecoverable-board')
+    return {
+      ...state,
+      columns: 'corrupted-board',
+      settings: {
+        ...state.settings,
+        systemPrompt: '1.说人话\n2.干就是了',
+        modelPromptRules: [{ id: 'rule-1', modelMatch: 'gpt', prompt: '确认问题后直接修复' }],
+      },
+    }
+  }
+
+  it('salvages settings from a snapshot even when no candidate board is recoverable', async () => {
+    const { loadState } = await import('../server/state-store.ts')
+
+    await writeFile(
+      path.join(tmpDir, snapshotName('2026-08-25T01-03-54-000Z')),
+      `${JSON.stringify(brokenBoardWithSettings(), null, 2)}\n`,
+      'utf8',
+    )
+    await writeFile(path.join(tmpDir, 'state.json'), Buffer.alloc(4096, 0))
+
+    const loaded = await loadState()
+
+    assert.equal(loaded.settings.systemPrompt, '1.说人话\n2.干就是了')
+    assert.deepEqual(loaded.settings.modelPromptRules.map((rule) => rule.prompt), ['确认问题后直接修复'])
+  })
+
+  it('salvages settings for the renderer startup load when no candidate board is recoverable', async () => {
+    const { loadStateForRenderer } = await import('../server/state-store.ts')
+
+    await writeFile(
+      path.join(tmpDir, snapshotName('2026-08-25T01-03-54-000Z')),
+      `${JSON.stringify(brokenBoardWithSettings(), null, 2)}\n`,
+      'utf8',
+    )
+    await writeFile(path.join(tmpDir, 'state.json'), Buffer.alloc(4096, 0))
+
+    const { state } = await loadStateForRenderer()
+
+    assert.equal(state.settings.systemPrompt, '1.说人话\n2.干就是了')
+    assert.equal(state.settings.modelPromptRules.length, 1)
+  })
+
   // Slice 2 —— 降级启动后不得裁剪既有快照
   it('does not prune pre-existing snapshots after a degraded startup', async () => {
     const { loadState, saveState } = await import('../server/state-store.ts')

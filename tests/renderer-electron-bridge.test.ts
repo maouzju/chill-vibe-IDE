@@ -130,6 +130,7 @@ test('fetchState uses the Electron bridge when available', async () => {
       startup: null,
       recentCrash: null,
       interruptedSessions: null,
+      promptVault: null,
     },
   })
   assert.equal(fetchCalls, 0)

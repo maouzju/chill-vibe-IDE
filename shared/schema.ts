@@ -835,6 +835,8 @@ export const appSettingsSchema = z.object({
     .max(maxWakeTimerDurationMinutes)
     .default(defaultWakeTimerDurationMinutes),
   weatherCity: z.string().default(''),
+  // 用户对某一份提示词存档点过「忽略」后记下它的 savedAt，同一份不再提示。
+  promptVaultDismissedAt: z.string().default(''),
   systemPrompt: z.string().default(defaultSystemPrompt),
   modelPromptRules: z.array(modelPromptRuleSchema).default([]),
   codexPersonality: codexPersonalitySettingSchema.default('default'),
@@ -1123,6 +1125,7 @@ export const appStateSchema = z.object({
     wakeTimerDefaultMode: 'workspace-agents' as const,
     wakeTimerDefaultDurationMinutes: defaultWakeTimerDurationMinutes,
     weatherCity: '',
+    promptVaultDismissedAt: '',
     systemPrompt: defaultSystemPrompt,
     modelPromptRules: [],
     codexPersonality: 'default',
@@ -1226,10 +1229,20 @@ export const interruptedSessionRecoverySchema = z.object({
 })
 export type InterruptedSessionRecovery = z.infer<typeof interruptedSessionRecoverySchema>
 
+// 最近一次自定义的系统提示词，存在 state.json 之外。只在当前设置已回落到默认时才随启动下发，
+// 让用户一键找回；见 server/prompt-vault.ts。
+export const promptVaultEntrySchema = z.object({
+  systemPrompt: z.string(),
+  modelPromptRules: z.array(modelPromptRuleSchema).default([]),
+  savedAt: z.string(),
+})
+export type PromptVaultEntry = z.infer<typeof promptVaultEntrySchema>
+
 export const appStateRecoverySchema = z.object({
   startup: startupStateRecoverySchema.nullable().default(null),
   recentCrash: recentCrashRecoverySchema.nullable().default(null),
   interruptedSessions: interruptedSessionRecoverySchema.nullable().default(null),
+  promptVault: promptVaultEntrySchema.nullable().default(null),
 })
 export type AppStateRecovery = z.infer<typeof appStateRecoverySchema>
 
@@ -1239,6 +1252,7 @@ export const appStateLoadResponseSchema = z.object({
     startup: null,
     recentCrash: null,
     interruptedSessions: null,
+    promptVault: null,
   }),
 })
 export type AppStateLoadResponse = z.infer<typeof appStateLoadResponseSchema>

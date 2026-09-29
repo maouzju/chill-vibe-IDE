@@ -85,6 +85,18 @@ export const settingsItemCatalog: readonly SettingsItemMeta[] = [
 
   // ---- 模型与对话 ----
   {
+    // 每次 AI 运行前都会附加，影响所有会话的回答风格——09-29 用户点名它是最重要的设置项。
+    id: 'system-prompt',
+    category: 'models',
+    tier: 'basic',
+    label: { 'zh-CN': '系统提示词', en: 'System prompt' },
+    hint: {
+      'zh-CN': '每次 AI 运行前都会附加的要求，对所有会话生效；还能按模型再追加规则。',
+      en: 'Instructions appended before every AI run, for all chats; per-model rules can add more.',
+    },
+    keywords: ['prompt', '提示词', 'system prompt', '系统提示词', 'instructions', '指令', 'rules', '规则', 'append'],
+  },
+  {
     id: 'models',
     category: 'models',
     tier: 'basic',
@@ -101,10 +113,10 @@ export const settingsItemCatalog: readonly SettingsItemMeta[] = [
     tier: 'basic',
     label: { 'zh-CN': '对话行为', en: 'Chat behavior' },
     hint: hint(
-      'Agent 的性格、系统提示词、按模型追加的提示词、Git 分析用的模型；',
-      'Agent personality, system prompt, per-model prompt rules and the model used for Git analysis.',
+      'Agent 的性格、Codex 加速、Git 分析用的模型、Skill 互相复用；',
+      'Agent personality, Codex Fast mode, the model used for Git analysis and cross-provider skill reuse.',
     ),
-    keywords: ['prompt', '提示词', 'personality', '人格', 'fast', 'skill', 'git agent', 'system prompt', 'rules', '规则'],
+    keywords: ['personality', '人格', 'fast', 'skill', 'git agent'],
   },
   {
     id: 'local-models',
@@ -245,8 +257,8 @@ export const orderSettingsItems = <T extends SettingsItemMeta>(items: readonly T
 export const getSettingsCategoryItems = (category: SettingsCategoryId): SettingsItemMeta[] =>
   orderSettingsItems(settingsItemCatalog.filter((item) => item.category === category))
 
-/** 「基础」视图：四个新手必看项，按新手的操作顺序排。 */
-const basicViewOrder = ['language-theme', 'account', 'models', 'update'] as const
+/** 「基础」视图：系统提示词置顶（最常改、影响所有会话），其余按新手的操作顺序排。 */
+const basicViewOrder = ['system-prompt', 'language-theme', 'account', 'models', 'update'] as const
 
 export const getBasicSettingsItems = (): SettingsItemMeta[] =>
   basicViewOrder

@@ -79,11 +79,11 @@ describe('settings catalog', () => {
     assert.deepEqual(advanced.sort(), ['cli-compat', 'data', 'experimental', 'local-models', 'repeat-loop'].sort())
   })
 
-  it('keeps the basic view down to language/theme, account, default model and update check', () => {
-    // 基础视图的顺序是新手的操作顺序：先看得懂界面，再连账号，再选模型，最后更新。
+  it('keeps the basic view down to system prompt, language/theme, account, default model and update check', () => {
+    // 系统提示词置顶（09-29 用户：基础里最重要的设置）；其余是新手的操作顺序：先看得懂界面，再连账号，再选模型，最后更新。
     assert.deepEqual(
       getBasicSettingsItems().map((item) => item.id),
-      ['language-theme', 'account', 'models', 'update'],
+      ['system-prompt', 'language-theme', 'account', 'models', 'update'],
     )
   })
 

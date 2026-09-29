@@ -3005,6 +3005,52 @@ for (const theme of ['dark', 'light'] as const) {
     await expect(page.locator('.codex-management-policy-row:visible')).toHaveCount(0)
   })
 
+  // 09-29：提示词被未知路径冲回默认后，启动时带回的 prompt-vault 存档要能在设置里一键找回。
+  test(`prompt vault offer restores the custom prompt in ${theme} theme`, async ({ page }) => {
+    const state = createMockState()
+    state.settings.language = theme === 'dark' ? 'zh-CN' : 'en'
+    state.settings.theme = theme
+
+    await page.setViewportSize({ width: 1280, height: 960 })
+    await mockAppApis(page, { state })
+    await page.route('**/api/state', async (route) => {
+      if (route.request().method() !== 'GET') {
+        await route.fallback()
+        return
+      }
+      await route.fulfill({
+        json: {
+          state: createPlaywrightState(state),
+          recovery: {
+            startup: null,
+            recentCrash: null,
+            interruptedSessions: null,
+            promptVault: {
+              systemPrompt: '1.说人话\n2.干就是了',
+              modelPromptRules: [{ id: 'rule-1', modelMatch: 'gpt', prompt: '确认问题后直接修复' }],
+              savedAt: '2026-09-20T08:00:00.000Z',
+            },
+          },
+        },
+      })
+    })
+    await page.goto(appUrl)
+    await page.locator('.card-shell').first().waitFor()
+
+    await page.locator('#app-tab-settings').click()
+    await revealSettingsItem(page, 'system-prompt')
+    const offer = page.locator('#app-panel-settings .prompt-vault-offer:visible')
+    await expect(offer).toBeVisible()
+    await expect(offer).toHaveScreenshot(`prompt-vault-offer-${theme}.png`, {
+      animations: 'disabled',
+      caret: 'hide',
+    })
+
+    await offer.getByRole('button', { name: /找回自定义提示词|Restore custom prompt/ }).click()
+    await expect(page.locator('#system-prompt-input:visible')).toHaveValue('1.说人话\n2.干就是了')
+    await expect(page.locator('#app-panel-settings .prompt-vault-offer')).toHaveCount(0)
+  })
+
   test(`model prompt rules editor stays legible in ${theme} theme`, async ({ page }) => {
     const state = createMockState()
     state.settings.language = theme === 'dark' ? 'zh-CN' : 'en'
@@ -3030,7 +3076,7 @@ for (const theme of ['dark', 'light'] as const) {
 
     await page.locator('#app-tab-settings').click()
     await expect(settingsPanel).toBeVisible()
-    await revealSettingsItem(page, 'model-behavior')
+    await revealSettingsItem(page, 'system-prompt')
     await expect(page.locator('html')).toHaveAttribute('data-theme', theme)
     await expect(modelSettingsGroup).toContainText(/已配置 1 条规则|1 rule configured/)
     await expect(modelSettingsGroup.locator('.model-prompt-rules-summary')).toHaveScreenshot(
@@ -3231,10 +3277,12 @@ test('settings panel lands on the basics view with a left nav and a single colum
   await settingsTab.click()
   await expect(settingsPanel).toBeVisible()
 
-  // 左导航：基础 + 六个分类；落地页是「基础」，只露四项。
+  // 左导航：基础 + 六个分类；落地页是「基础」，只露五项，系统提示词置顶。
   await expect(settingsPanel.locator('.settings-nav-item')).toHaveCount(7)
   await expect(settingsPanel.locator('#settings-nav-basics')).toHaveAttribute('aria-selected', 'true')
-  await expect(visibleGroups).toHaveCount(4)
+  await expect(visibleGroups).toHaveCount(5)
+  await expect(visibleGroups.first().getByRole('heading', { name: /系统提示词|System prompt/ })).toBeVisible()
+  await expect(visibleGroups.first().locator('#system-prompt-input')).toBeVisible()
   await expect(visibleGroups.getByRole('heading', { name: /语言与主题|Language & theme/ })).toBeVisible()
   await expect(visibleGroups.getByRole('heading', { name: /连接账号|Connect account/ })).toBeVisible()
   await expect(visibleGroups.getByRole('heading', { name: /默认模型|Default model/ })).toBeVisible()
@@ -3262,7 +3310,7 @@ test('settings panel lands on the basics view with a left nav and a single colum
 
   // 切到「模型与对话」：基础项直接可见，高级项默认收起。
   await settingsPanel.locator('#settings-nav-models').click()
-  await expect(visibleGroups).toHaveCount(1)
+  await expect(visibleGroups).toHaveCount(3)
   await expect(settingsPanel.locator('details.settings-advanced')).not.toHaveAttribute('open', '')
   await revealSettingsItem(page, 'local-models')
   await expect(visibleGroups.getByRole('heading', { name: '本地模型', exact: true })).toBeVisible()
@@ -3274,7 +3322,7 @@ test('settings panel lands on the basics view with a left nav and a single colum
 
   await switchSettingsTheme(page, 'light')
   await settingsPanel.locator('#settings-nav-basics').click()
-  await expect(visibleGroups).toHaveCount(4)
+  await expect(visibleGroups).toHaveCount(5)
   await expect(settingsPanel).toHaveScreenshot('settings-panel-basics-light.png', {
     animations: 'disabled',
   })
@@ -3322,7 +3370,7 @@ test('settings panel stacks nav chips above a single column on a narrow viewport
 
   await settingsTab.click()
   await expect(settingsPanel).toBeVisible()
-  await expect(visibleGroups).toHaveCount(4)
+  await expect(visibleGroups).toHaveCount(5)
 
   const [navRect, firstGroupRect, secondGroupRect] = await Promise.all([
     readRect(settingsPanel.locator('.settings-nav')),

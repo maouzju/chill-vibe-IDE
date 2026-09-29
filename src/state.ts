@@ -343,6 +343,7 @@ export type IdeAction =
           | 'wakeTimerDefaultMode'
           | 'wakeTimerDefaultDurationMinutes'
           | 'weatherCity'
+          | 'promptVaultDismissedAt'
           | 'systemPrompt'
           | 'modelPromptRules'
           | 'codexPersonality'

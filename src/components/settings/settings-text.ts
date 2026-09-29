@@ -14,7 +14,7 @@ const zh = {
   experimentalTag: '实验',
   dangerTag: '危险',
   basicsLabel: '基础',
-  basicsNote: '新手只需要看这四项。其他都在左边的分类里。',
+  basicsNote: '最常用的几项都在这里。其他都在左边的分类里。',
   categories: {
     'get-started': '开始使用',
     models: '模型与对话',
@@ -107,7 +107,7 @@ const en: typeof zh = {
   experimentalTag: 'Experimental',
   dangerTag: 'Danger',
   basicsLabel: 'Basics',
-  basicsNote: 'These four are all a beginner needs. Everything else lives in the categories on the left.',
+  basicsNote: 'The settings you touch most live here. Everything else lives in the categories on the left.',
   categories: {
     'get-started': 'Get started',
     models: 'Models & chat',

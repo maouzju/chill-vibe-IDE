@@ -69,6 +69,7 @@ const createLoadResponse = (state: AppState): AppStateLoadResponse => ({
     startup: null,
     recentCrash: null,
     interruptedSessions: null,
+    promptVault: null,
   },
 })
 
@@ -180,6 +181,7 @@ test('startInitialAppLoad preserves startup recovery metadata for the renderer p
         startup,
         recentCrash,
         interruptedSessions: null,
+        promptVault: null,
       },
     }),
     fetchProviders: async () => [],
@@ -189,5 +191,6 @@ test('startInitialAppLoad preserves startup recovery metadata for the renderer p
     startup,
     recentCrash,
     interruptedSessions: null,
+    promptVault: null,
   })
 })

@@ -149,6 +149,13 @@ type LocaleText = {
   agentOutsideWorkspaceWriteNote: string
   computerUseLabel: string
   computerUseNote: string
+  jevExplainMcp: string
+  jevExplainJev: string
+  jevLabel: string
+  jevNote: string
+  jevApiKeyLabel: string
+  jevApiKeyPlaceholder: string
+  jevApiKeyMissing: string
   codexManagementPolicyTitle: string
   codexManagementPolicyDetecting: string
   codexManagementPolicyRefresh: string
@@ -670,6 +677,16 @@ const localeTextByLanguage: Record<AppLanguage, LocaleText> = {
     computerUseLabel: '允许 Agent 使用浏览器（Computer Use）',
     computerUseNote:
       '打开后 Claude 与 Codex 会话都会拿到浏览器控制工具，可以替你打开网页、点击、填表、读取页面。Claude 装了 Claude in Chrome 扩展时优先走扩展；否则两者都使用 Playwright MCP，需要先执行 npm i -g @playwright/mcp（或本机能用 npx）。浏览器会以你的身份操作已登录网站，默认关闭。切换后下一条消息生效。',
+    jevExplainMcp:
+      'MCP 是什么：给 AI 外接工具的通用插口。插上一个 MCP，AI 在对话里就多了一样能自己决定用不用的工具。',
+    jevExplainJev:
+      'JEV 是什么：TypeSafe 出的「判断专用」小模型，不会写字，只回答「是不是 / 选哪个 / 打几分」，一次约 0.1~1 秒、按量计费很便宜。适合让 AI 先把几十上百个文件快速筛一遍，再只读真正相关的那几个。',
+    jevLabel: '让 Agent 使用 JEV 快速判断',
+    jevNote:
+      '打开并填好 key 后，Claude 与 Codex 会话都会多一个 jev_ask 工具，AI 觉得有用时自己调用；只追加一句话的说明，不占多少上下文。关闭时什么都不注入。切换后下一条消息生效。',
+    jevApiKeyLabel: 'JEV API key',
+    jevApiKeyPlaceholder: 'OpenRouter（sk-or- 开头）或 TypeSafe 的 key',
+    jevApiKeyMissing: '还没填 key：开关打开也不会生效。',
     agentOutsideWorkspaceWriteLabel: '允许 Agent 修改项目文件夹外的文件',
     agentOutsideWorkspaceWriteNote:
       '这是 Chill Vibe 的权限请求上限。Codex 会在运行前自动读取并服从本机或组织管理策略，直接选择允许的最宽权限，不修改或绕过系统策略。关闭后只写当前项目：Codex 使用工作区沙箱；Claude 在支持的平台使用严格沙箱，原生 Windows 用 IDE 路径防护兜底（不是完整 OS 沙箱）。项目外 Skill、配置和附件仍可读取。',
@@ -1230,6 +1247,16 @@ const localeTextByLanguage: Record<AppLanguage, LocaleText> = {
     computerUseLabel: 'Allow Agent to use the browser (Computer Use)',
     computerUseNote:
       'When on, both Claude and Codex sessions get browser-control tools to open pages, click, fill forms, and read page state on your behalf. Claude prefers the Claude in Chrome extension when it is installed; otherwise both use the Playwright MCP, which needs npm i -g @playwright/mcp (or a working npx). The browser acts as you on sites you are signed in to, so this is off by default. Takes effect from the next message.',
+    jevExplainMcp:
+      'What is MCP: a standard plug for giving the AI extra tools. Plug one in and the AI gains a tool it can choose to use during a chat.',
+    jevExplainJev:
+      'What is JEV: a judgment-only small model from TypeSafe. It never writes text; it only answers yes/no, pick-one, or a score, in about 0.1-1s each and at very low per-use cost. Good for letting the AI sweep dozens or hundreds of files first, then read only the relevant ones.',
+    jevLabel: 'Let the Agent use JEV quick judgments',
+    jevNote:
+      'With this on and a key filled in, Claude and Codex chats get a jev_ask tool the AI calls when it helps; it adds only one sentence of instructions. Nothing is injected while off. Takes effect from the next message.',
+    jevApiKeyLabel: 'JEV API key',
+    jevApiKeyPlaceholder: 'OpenRouter (starts with sk-or-) or TypeSafe key',
+    jevApiKeyMissing: 'No key yet: the toggle has no effect until you add one.',
     agentOutsideWorkspaceWriteLabel: 'Allow Agent writes outside the project folder',
     agentOutsideWorkspaceWriteNote:
       'This is Chill Vibe’s requested access ceiling. Before each run, Codex automatically reads and follows machine or organization policy, selecting the widest permitted access without modifying or bypassing system policy. Turn it off to keep writes in the current project: Codex uses workspace-write; Claude uses strict sandboxing where supported and IDE path guards on native Windows (not a complete OS sandbox). Skills, configuration, and attachments remain readable.',

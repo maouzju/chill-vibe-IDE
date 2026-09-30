@@ -45,6 +45,22 @@ describe('Agent chat request settings', () => {
     )
   })
 
+  it('forwards the JEV toggle to both providers only when it is on', () => {
+    const settings = {
+      codexPersonality: 'default' as const,
+      codexFastMode: false,
+      agentOutsideWorkspaceWriteEnabled: true,
+      codexDestructiveCommandProtectionEnabled: true,
+      attackPatternProtectionEnabled: false,
+      codexIsolatedHomeEnabled: true,
+      computerUseEnabled: false,
+      jevEnabled: true,
+    }
+    assert.equal(buildCodexChatRequestOverrides('claude', settings).jevEnabled, true)
+    assert.equal(buildCodexChatRequestOverrides('codex', settings).jevEnabled, true)
+    assert.equal('jevEnabled' in buildCodexChatRequestOverrides('claude', { ...settings, jevEnabled: false }), false)
+  })
+
   it('omits optional overrides when settings follow Codex defaults', () => {
     assert.deepEqual(
       buildCodexChatRequestOverrides('codex', {

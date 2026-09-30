@@ -2,6 +2,8 @@ import { randomUUID } from 'node:crypto'
 import { createInterface, type Interface } from 'node:readline'
 import type { Readable } from 'node:stream'
 
+import { writeServerLog } from './crash-logger.js'
+
 // Long-lived Claude CLI process pool, keyed by card. The pool only understands
 // process lifecycle and line routing; it never parses stream-json semantics.
 // Turn parsing stays in providers.ts and is attached per turn. While a process
@@ -45,6 +47,9 @@ type PoolEntry = {
   meta: Record<string, unknown>
   state: 'idle' | 'turn-active'
   attachment: ClaudeTurnAttachment | null
+  // 轮次序号：每次 beginTurn / 自发轮次挂载都 +1。interruptTurn 靠它认出「这条 stop 是
+  // 冲着哪一轮来的」，进程是复用的，光看 state==='turn-active' 分不出上一轮还是下一轮。
+  turnSerial: number
   // 本轮已发出 interrupt control_request。turn 依然 active：CLI 的收尾输出
   // （partial assistant → 合成 user 帧 → result）必须照常流给 provider 的 parser，
   // 由它正常收口并 endTurn。截断这条通道会让 parser 永远等不到 result。
@@ -94,7 +99,7 @@ export class ClaudeSessionPool {
   private readonly acquireGenerations = new Map<string, number>()
   private readonly onUnsolicited: (
     entry: ClaudeSessionPoolEntryView,
-    attach: (attachment: ClaudeTurnAttachment) => void,
+    attach: (attachment: ClaudeTurnAttachment) => number,
   ) => void
   private readonly onIdleClose?: (
     entry: ClaudeSessionPoolEntryView,
@@ -112,7 +117,7 @@ export class ClaudeSessionPool {
     onProcessAcquired?: (entry: ClaudeSessionPoolEntryView) => void
     onUnsolicited: (
       entry: ClaudeSessionPoolEntryView,
-      attach: (attachment: ClaudeTurnAttachment) => void,
+      attach: (attachment: ClaudeTurnAttachment) => number,
     ) => void
     onIdleClose?: (entry: ClaudeSessionPoolEntryView, code: number | null) => void
     // Decides whether an idle stdout line actually starts a turn. The pool has
@@ -247,6 +252,7 @@ export class ClaudeSessionPool {
       sessionId: options.sessionId?.trim() || null,
       meta: options.meta ?? {},
       state: 'idle',
+      turnSerial: 0,
       interruptRequested: false,
       interruptDrainTimer: undefined,
       interruptDrainWaiters: new Set(),
@@ -275,6 +281,7 @@ export class ClaudeSessionPool {
     }
 
     entry.state = 'turn-active'
+    entry.turnSerial += 1
     entry.attachment = attachment
     entry.pendingUnsolicited = false
     entry.bufferedStdout = []
@@ -283,6 +290,16 @@ export class ClaudeSessionPool {
     this.clearInterruptDrainTimer(entry)
     this.clearIdleTimer(entry)
     return true
+  }
+
+  // 当前（最近一次开始的）轮次序号。调用方在 beginTurn 之后取一次，之后所有
+  // interruptTurn 都带着它，这样「上一轮的迟到 stop」就打不到复用同一进程的下一轮。
+  getTurnSerial(key: string, expectedChild?: ClaudeSessionPoolChild): number | null {
+    const entry = this.entries.get(key)
+    if (!entry || (expectedChild && entry.child !== expectedChild)) {
+      return null
+    }
+    return entry.turnSerial
   }
 
   endTurn(key: string, expectedChild?: ClaudeSessionPoolChild) {
@@ -313,11 +330,39 @@ export class ClaudeSessionPool {
   // 为什么不能换写法：这条通道依赖 keepalive 的 `--input-format stream-json` 让 stdin 常驻可写。
   //   写不进去（无 stdin / 进程已关 / 根本没有活动 turn）必须如实返回 false 让调用方硬 kill 兜底，
   //   绝不能静默吞掉——那等于停止按钮失灵，比退化回 kill 更糟。
-  interruptTurn(key: string, expectedChild?: ClaudeSessionPoolChild) {
+  //
+  // 轮次校验（expectedTurnSerial，2026-09-30）：
+  // 症状：点「继续」（空草稿 → "Please continue."）后 0.5~4.6 秒又被停下，得再点一次。
+  //   16 天 48 例、每例都紧跟上一轮被停止（间隔 0.15~0.67s）；09-23 652caedc 的 P1 只跑了 4299ms，
+  //   CLI 写下中断标记后 21ms 渲染层就收到 manual 停止；09-09 19885269 的 P1 只跑了 513ms。
+  // 根因：进程是按卡复用的，这里过去只看「进程此刻是不是 turn-active」。上一轮 X 的迟到 stop
+  //   （重复 stop、无 ack 兜底、竞态）赶在下一轮 P1 已经开始之后才到，进程恰好正忙，
+  //   就把 interrupt 写进了 P1。真实 CLI 探针（09-30）证明 CLI 本身不会自杀 P1，
+  //   所以中断必须是外面写进去的。
+  // 为什么不能换写法：只在 ChatManager 里判 stream 终态挡不住——unsolicited 轮次的 stopHook
+  //   是「进程作用域」，stream 早已 finalize 了它仍然能碰到进程。唯一稳的锚点是池里的轮次序号：
+  //   stop 从 beginTurn 起就带着自己那一轮的序号，序号对不上就一个字节都不写，也不挂兜底 kill。
+  interruptTurn(key: string, expectedChild?: ClaudeSessionPoolChild, expectedTurnSerial?: number) {
     const entry = this.entries.get(key)
+    if (
+      entry &&
+      expectedTurnSerial !== undefined &&
+      entry.turnSerial !== expectedTurnSerial &&
+      (!expectedChild || entry.child === expectedChild)
+    ) {
+      // 自证探针：这一行一旦出现在 server.log，就说明「迟到的 stop 撞上同进程下一轮」
+      // 这条竞态在真实环境里确实发生过，且已被挡下。
+      void writeServerLog('WARN', '[claude-pool] stale interrupt blocked', {
+        key,
+        expectedTurnSerial,
+        currentTurnSerial: entry.turnSerial,
+        turnActive: entry.state === 'turn-active',
+      })
+    }
     if (
       !entry ||
       (expectedChild && entry.child !== expectedChild) ||
+      (expectedTurnSerial !== undefined && entry.turnSerial !== expectedTurnSerial) ||
       entry.closed ||
       entry.state !== 'turn-active' ||
       !entry.child.stdin
@@ -526,8 +571,10 @@ export class ClaudeSessionPool {
     entry.bufferedStderr.push(line)
   }
 
-  private attachUnsolicited(entry: PoolEntry, attachment: ClaudeTurnAttachment) {
+  private attachUnsolicited(entry: PoolEntry, attachment: ClaudeTurnAttachment): number {
     entry.state = 'turn-active'
+    entry.turnSerial += 1
+    const turnSerial = entry.turnSerial
     entry.attachment = attachment
     entry.pendingUnsolicited = false
     this.clearIdleTimer(entry)
@@ -547,6 +594,8 @@ export class ClaudeSessionPool {
     if (entry.closed) {
       attachment.onProcessClosed(entry.closedCode)
     }
+
+    return turnSerial
   }
 
   private handleChildClose(entry: PoolEntry, code: number | null) {

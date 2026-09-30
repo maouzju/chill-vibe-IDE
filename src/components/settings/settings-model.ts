@@ -119,6 +119,18 @@ export const settingsItemCatalog: readonly SettingsItemMeta[] = [
     keywords: ['personality', '人格', 'fast', 'skill', 'git agent'],
   },
   {
+    // 09-30 用户：设置里打开才有、上下文要精简、要讲清 MCP 与 JEV 是什么（docs/specs/jev-mcp-toggle）。
+    id: 'jev',
+    category: 'models',
+    tier: 'basic',
+    label: { 'zh-CN': 'JEV 快速判断（MCP 工具）', en: 'JEV quick judgments (MCP tool)' },
+    hint: hint(
+      '给 AI 加一个只做判断的便宜小模型，批量筛文件更快；需要 OpenRouter 或 TypeSafe 的 key；',
+      'Gives the AI a cheap judgment-only model for fast bulk file triage; needs an OpenRouter or TypeSafe key.',
+    ),
+    keywords: ['jev', 'typesafe', 'mcp', 'openrouter', '判断', '筛选', 'triage', 'classify', '分类', '提速', 'speed', 'tool', '工具'],
+  },
+  {
     id: 'local-models',
     category: 'models',
     tier: 'advanced',

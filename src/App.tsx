@@ -238,6 +238,7 @@ import {
   finalizeStructuredActivityMessage,
   finalizeStreamedAssistantMessage,
   canSendEmptyContinuation,
+  shouldDropEmptyContinuationWhileStreaming,
   shouldSyncOllamaStatus,
   getAgentDoneSoundUrl,
   getAllAgentsDoneSoundUrl,
@@ -744,6 +745,7 @@ function App() {
       codexPersonality: appState.settings.codexPersonality,
       codexFastMode: appState.settings.codexFastMode,
       computerUseEnabled: appState.settings.computerUseEnabled,
+      jevEnabled: appState.settings.jevEnabled,
       agentOutsideWorkspaceWriteEnabled:
         appState.settings.agentOutsideWorkspaceWriteEnabled,
       codexDestructiveCommandProtectionEnabled:
@@ -757,6 +759,7 @@ function App() {
       appState.settings.attackPatternProtectionEnabled,
       appState.settings.codexFastMode,
       appState.settings.computerUseEnabled,
+      appState.settings.jevEnabled,
       appState.settings.codexIsolatedHomeEnabled,
       appState.settings.codexPersonality,
     ],
@@ -2781,7 +2784,7 @@ function App() {
     }
 
     if (stopRemote) {
-      await stopChat(active.streamId).catch(() => undefined)
+      await stopChat(active.streamId, 'close-stream').catch(() => undefined)
     }
   }, [clearStopCompletionFallbackTimer, flushBufferedActivitiesForCard, flushBufferedAssistantDeltaForCard])
 
@@ -2798,7 +2801,7 @@ function App() {
 
       try {
         stoppedRunReasonRef.current.set(streamId, reason)
-        const { settlingWithinMs } = await stopChat(streamId)
+        const { settlingWithinMs } = await stopChat(streamId, reason)
         // 服务端刻意推迟了终态（正在等收尾 workspace diff）：把本地兜底顺延到它
         // 承诺的上限之后，否则兜底会抢在 edits 改动卡之前 close 掉 EventSource。
         deferStopCompletionFallbackTimer(cardId, settlingWithinMs)
@@ -5910,7 +5913,7 @@ function App() {
 
       // The card is gone (closed/deleted): stop the orphaned stream so the
       // pooled process is not left running an unobserved turn.
-      if (!agentStatus) void stopChat(streamId).catch(() => undefined)
+      if (!agentStatus) void stopChat(streamId, 'orphan-unsolicited').catch(() => undefined)
     })
   }, [applyAction, attachStream, getColumn, persistAfterAction])
 
@@ -6793,6 +6796,20 @@ function App() {
       }
     }
 
+    // 症状：点「继续」后 0.5~4.6 秒又被停下，得再点一次。输入框放行空继续时卡片还是空闲，
+    //   到这里已被自发轮次 / 鞭策 / 唤醒拉成 streaming，空发送若走下面的 streaming 分支，
+    //   会把刚起的那一轮当场软中断，并往持久化队列里塞一条空消息（空队列项是 2026-07-26
+    //   崩过存档的非法形态）。这次点击本来就没有可继续的东西：整个丢掉，零副作用。
+    if (shouldDropEmptyContinuationWhileStreaming({
+      cardStatus: card.status,
+      hasContent: hasSendContent,
+      answersPendingAskUser,
+      mode: options.mode,
+      origin: sendOrigin,
+    })) {
+      return
+    }
+
     // A brand-new send clears any previous recovery banner (including failed),
     // otherwise stale "Reconnect failed" can linger on the card after the user
     // retries manually.
@@ -7091,7 +7108,7 @@ function App() {
 
       const liveCard = getColumn(columnId)?.cards[cardId]
       if (!liveCard || liveCard.streamId !== response.streamId) {
-        await stopChat(response.streamId).catch(() => undefined)
+        await stopChat(response.streamId, 'stale-response-guard').catch(() => undefined)
         return
       }
 
@@ -7276,7 +7293,7 @@ function App() {
 
       const liveCard = getColumn(columnId)?.cards[cardId]
       if (!liveCard || liveCard.streamId !== response.streamId) {
-        await stopChat(response.streamId).catch(() => undefined)
+        await stopChat(response.streamId, 'stale-response-guard').catch(() => undefined)
         return
       }
 
@@ -7649,7 +7666,7 @@ function App() {
 
       const liveCard = getColumn(columnId)?.cards[cardId]
       if (!liveCard || liveCard.streamId !== response.streamId) {
-        await stopChat(response.streamId).catch(() => undefined)
+        await stopChat(response.streamId, 'stale-response-guard').catch(() => undefined)
         return false
       }
 
@@ -7744,7 +7761,7 @@ function App() {
         activeStreamsRef.current.delete(cardId)
         clearStopCompletionFallbackTimer(cardId)
         stoppedRunReasonRef.current.set(liveCard.streamId, 'manual')
-        await stopChat(liveCard.streamId).catch(() => undefined)
+        await stopChat(liveCard.streamId, 'manual-recover').catch(() => undefined)
         stoppedRunReasonRef.current.delete(liveCard.streamId)
       }
 
@@ -9959,6 +9976,56 @@ function App() {
           </p>
         </div>
 
+        </div>
+      ),
+    },
+    {
+      id: 'jev',
+      node: (
+        <div className="settings-section" data-testid="jev-settings">
+          <p className="settings-note">{text.jevExplainMcp}</p>
+          <p className="settings-note">{text.jevExplainJev}</p>
+          <div className="settings-hover-detail">
+            <label className="settings-toggle" htmlFor="settings-jev-enabled">
+              <span>{text.jevLabel}</span>
+              <input
+                id="settings-jev-enabled"
+                type="checkbox"
+                aria-describedby="settings-jev-note"
+                checked={appState.settings.jevEnabled}
+                onChange={(event) =>
+                  applyAction({
+                    type: 'updateSettings',
+                    patch: { jevEnabled: event.target.checked },
+                  })
+                }
+              />
+            </label>
+            <p id="settings-jev-note" className="settings-note settings-hover-note" role="tooltip">
+              {text.jevNote}
+            </p>
+          </div>
+          <label className="settings-field" htmlFor="settings-jev-api-key">
+            <span>{text.jevApiKeyLabel}</span>
+            <input
+              id="settings-jev-api-key"
+              className="control settings-input"
+              type="password"
+              autoComplete="off"
+              spellCheck={false}
+              placeholder={text.jevApiKeyPlaceholder}
+              value={appState.settings.jevApiKey}
+              onChange={(event) =>
+                applyAction({
+                  type: 'updateSettings',
+                  patch: { jevApiKey: event.target.value.trim() },
+                })
+              }
+            />
+          </label>
+          {appState.settings.jevEnabled && !appState.settings.jevApiKey ? (
+            <p className="settings-note">{text.jevApiKeyMissing}</p>
+          ) : null}
         </div>
       ),
     },

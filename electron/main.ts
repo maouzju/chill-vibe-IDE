@@ -1435,7 +1435,9 @@ function registerDesktopHandlers() {
   ipcMain.handle('desktop:upload-image-attachment', (_event, request) =>
     desktopBackend.uploadImageAttachment(request),
   )
-  ipcMain.handle('desktop:stop-chat', (_event, streamId) => desktopBackend.stopChat(streamId))
+  ipcMain.handle('desktop:stop-chat', (_event, streamId, origin) =>
+    desktopBackend.stopChat(streamId, typeof origin === 'string' ? origin : undefined),
+  )
   ipcMain.handle('desktop:list-external-history', (_event, request) =>
     desktopBackend.listExternalHistory(request),
   )

@@ -354,6 +354,8 @@ export type IdeAction =
           | 'defaultAdminAccess'
           | 'codexIsolatedHomeEnabled'
           | 'computerUseEnabled'
+          | 'jevEnabled'
+          | 'jevApiKey'
           | 'gitAgentModel'
           | 'providerProfiles'
         >

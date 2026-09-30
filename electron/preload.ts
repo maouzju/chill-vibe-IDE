@@ -168,7 +168,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.invoke('desktop:get-native-turn-completion', request),
   uploadImageAttachment: (request: unknown) =>
     ipcRenderer.invoke('desktop:upload-image-attachment', request),
-  stopChat: (streamId: string) => ipcRenderer.invoke('desktop:stop-chat', streamId),
+  stopChat: (streamId: string, origin?: string) =>
+    ipcRenderer.invoke('desktop:stop-chat', streamId, origin),
   listExternalHistory: (request: unknown) =>
     ipcRenderer.invoke('desktop:list-external-history', request),
   loadExternalSession: (request: unknown) =>

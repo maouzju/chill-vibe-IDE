@@ -517,7 +517,7 @@ export const createDesktopBackend = (deps: DesktopBackendDependencies = {}) => {
       })
       return { sessionId }
     },
-    async stopChat(streamId: string) {
+    async stopChat(streamId: string, origin?: string) {
       // Stop is intentionally idempotent from the renderer's point of view.
       // A stream can finish naturally between the user's click and the IPC call,
       // or a restored card can keep a stale stream id. In both cases the UI is
@@ -526,7 +526,8 @@ export const createDesktopBackend = (deps: DesktopBackendDependencies = {}) => {
       // The result is still returned: settlingWithinMs tells the renderer how long
       // the terminal envelope was deliberately deferred for the settling workspace
       // diff, so its own no-server-ack fallback can stand down for that long.
-      return getChatManager().stop(streamId)
+      // origin 只进 server.log 取证行，不影响停止语义。
+      return getChatManager().stop(streamId, origin)
     },
     // 显式订阅协议：调用方生成 subscriptionId，这里只收纯数据、只回纯数据，
     // 流事件走 deps.onChatStreamEvent 这条独立通道。

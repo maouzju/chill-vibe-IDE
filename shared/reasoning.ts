@@ -1,4 +1,4 @@
-import { isAstraModel, isFableModel } from './models.js'
+import { isCodexNoneEffortUnsupportedModel, isFableModel } from './models.js'
 import type { AppLanguage, Provider } from './schema.js'
 
 type CodexReasoningEffort = 'low' | 'medium' | 'high' | 'xhigh' | 'max' | 'ultra'
@@ -111,7 +111,7 @@ export const getDefaultReasoningEffortForModel = (
   provider: Provider,
   model?: string | null,
 ): ReasoningEffort =>
-  provider === 'codex' && isAstraModel(model)
+  provider === 'codex' && isCodexNoneEffortUnsupportedModel(model)
     ? 'low'
     : provider === 'claude' && isClaudeAlwaysThinkingModel(model) ? 'high' : getDefaultReasoningEffort(provider)
 
@@ -126,7 +126,7 @@ const getCodexReasoningOptionValuesForModel = (model?: string | null): CodexReas
   const base: CodexReasoningEffort[] = ['low', 'medium', 'high', 'xhigh']
 
   if (
-    isAstraModel(model) ||
+    isCodexNoneEffortUnsupportedModel(model) ||
     normalizedModel === 'gpt-6-sol' ||
     normalizedModel === 'gpt-5.6-sol' ||
     normalizedModel === 'gpt-5.6-terra' ||
@@ -200,7 +200,7 @@ export const normalizeReasoningEffortForModel = (
   effort?: string | null,
 ): ReasoningEffort => {
   if (provider === 'codex') {
-    if (isAstraModel(model) && !effort?.trim()) {
+    if (isCodexNoneEffortUnsupportedModel(model) && !effort?.trim()) {
       return getDefaultReasoningEffortForModel(provider, model)
     }
     const normalized = normalizeReasoningEffort(provider, effort) as CodexReasoningEffort
@@ -229,16 +229,16 @@ export const normalizeReasoningEffortForModel = (
   return matched
 }
 
-// 2026-09-06：Astra 不支持 none，旧卡片关思考会直接发出非法参数。
-// app-server 与 exec 必须共用出口；不能只修 UI 或丢掉 effort 回到未知默认。
-// 依据与 CLI 的 Ultra 能力见 gpt-6-astra-support SPEC。
+// 2026-09-06：Astra 不支持 none，旧卡片关思考会直接发出非法参数；2026-09-30 GPT-6.1 Sol
+// 同样（真实中转站 400）。判定来自 shared/models.ts 的单一谓词，app-server 与 exec 必须共用
+// 本出口；不能只修 UI 或丢掉 effort 回到未知默认。依据见 gpt-6-astra-support / gpt-6-1-sol-support SPEC。
 export const toCodexEffortValue = (
   model: string | null | undefined,
   effort: string | null | undefined,
   thinkingEnabled: boolean | undefined,
 ): string => thinkingEnabled === false
-  ? (isAstraModel(model) ? 'low' : 'none')
-  : isAstraModel(model)
+  ? (isCodexNoneEffortUnsupportedModel(model) ? 'low' : 'none')
+  : isCodexNoneEffortUnsupportedModel(model)
     ? normalizeReasoningEffortForModel('codex', model, effort)
     : normalizeReasoningEffort('codex', effort)
 

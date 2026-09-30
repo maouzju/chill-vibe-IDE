@@ -346,6 +346,18 @@ describe('default-state helpers', () => {
     assert.equal(garbage.computerUseEnabled, false)
   })
 
+  it('normalizes the JEV toggle and key with safe defaults', () => {
+    const defaults = normalizeAppSettings({})
+    assert.equal(defaults.jevEnabled, false)
+    assert.equal(defaults.jevApiKey, '')
+    const enabled = normalizeAppSettings({ jevEnabled: true, jevApiKey: ' sk-or-x ' } as never)
+    assert.equal(enabled.jevEnabled, true)
+    assert.equal(enabled.jevApiKey, 'sk-or-x')
+    const garbage = normalizeAppSettings({ jevEnabled: 'yes', jevApiKey: 42 } as never)
+    assert.equal(garbage.jevEnabled, false)
+    assert.equal(garbage.jevApiKey, '')
+  })
+
   it('normalizes Codex agent personality and Fast mode settings', () => {
     const defaults = normalizeAppSettings({}) as ReturnType<typeof normalizeAppSettings> & {
       codexPersonality: string

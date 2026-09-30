@@ -953,7 +953,8 @@ app.get('/api/chat/stream/:streamId', (request, response) => {
 })
 
 app.post('/api/chat/stop/:streamId', (request, response) => {
-  const result = chatManager.stop(request.params.streamId)
+  const origin = typeof request.query.origin === 'string' ? request.query.origin : undefined
+  const result = chatManager.stop(request.params.streamId, origin)
 
   if (!result.stopped) {
     response.status(404).json({ message: 'Stream not found or already finished.' })

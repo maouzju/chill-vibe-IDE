@@ -12,6 +12,7 @@ import {
   normalizeReasoningEffortForModel,
   shouldEnableThinkingForDepthChange,
   toClaudeEffortFlagValue,
+  toCodexEffortValue,
 } from '../shared/reasoning.ts'
 
 describe('reasoning helpers', () => {
@@ -117,6 +118,10 @@ describe('reasoning helpers', () => {
       ['low', 'medium', 'high', 'xhigh', 'max', 'ultra'],
     )
     assert.deepEqual(
+      getReasoningOptionsForModel('codex', 'gpt-6.1-sol').map((option) => option.value),
+      ['low', 'medium', 'high', 'xhigh', 'max', 'ultra'],
+    )
+    assert.deepEqual(
       getReasoningOptionsForModel('codex', 'gpt-5.6-sol').map((option) => option.value),
       ['low', 'medium', 'high', 'xhigh', 'max', 'ultra'],
     )
@@ -219,6 +224,32 @@ describe('reasoning helpers', () => {
     assert.equal(getPreferredReasoningEffort(createDefaultSettings(), 'codex', 'gpt-6-astra'), 'low')
     assert.equal(normalizeReasoningEffortForModel('codex', 'gpt-6-astra', 'medium'), 'medium')
     assert.equal(normalizeReasoningEffortForModel('codex', ' GPT-6-ASTRA ', ''), 'low')
+  })
+
+  // 症状（2026-09-30 真实中转站探针）：gpt-6.1-sol + effort=none → 整轮 400
+  //   `gpt-6.1-sol does not support reasoning effort 'none'`；同一探针换 gpt-6-sol / gpt-6-luna 则正常。
+  // 所以「不收 none」是逐型号性质，判定只能来自 shared/models.ts 的单一谓词，不能在出口各写一份名单。
+  it('treats GPT-6.1 Sol like Astra: default low, six tiers, no none', () => {
+    assert.equal(getDefaultReasoningEffortForModel('codex', 'gpt-6.1-sol'), 'low')
+    assert.equal(createCard(undefined, undefined, 'codex', 'gpt-6.1-sol').reasoningEffort, 'low')
+    assert.equal(getPreferredReasoningEffort(createDefaultSettings(), 'codex', 'gpt-6.1-sol'), 'low')
+    assert.equal(normalizeReasoningEffortForModel('codex', 'gpt-6.1-sol', 'ultra'), 'ultra')
+    assert.equal(normalizeReasoningEffortForModel('codex', ' GPT-6.1-SOL ', ''), 'low')
+    assert.equal(normalizeReasoningEffortForModel('codex', 'gpt-6.1-sol', 'medium'), 'medium')
+    // 相邻代际不受牵连：GPT-6 Sol 仍是 provider 默认 medium，且接受 none。
+    assert.equal(getDefaultReasoningEffortForModel('codex', 'gpt-6-sol'), 'medium')
+    assert.equal(getDefaultReasoningEffortForModel('codex', 'gpt-6-luna'), 'medium')
+  })
+
+  it('maps thinking-off to low for models that reject none and keeps none elsewhere', () => {
+    for (const model of ['gpt-6-astra', 'gpt-6.1-sol', ' GPT-6.1-Sol ']) {
+      assert.equal(toCodexEffortValue(model, 'max', false), 'low', `${model} must never receive none`)
+      assert.equal(toCodexEffortValue(model, 'ultra', true), 'ultra')
+      assert.equal(toCodexEffortValue(model, '', true), 'low')
+    }
+    for (const model of ['gpt-6-sol', 'gpt-6-luna', 'gpt-5.6-sol', 'gpt-5.5', '', undefined]) {
+      assert.equal(toCodexEffortValue(model, 'max', false), 'none', `${String(model)} keeps none`)
+    }
   })
 
   it('creates Fable 5 cards with the high default tier', () => {

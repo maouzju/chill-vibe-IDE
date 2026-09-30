@@ -144,6 +144,39 @@ test('desktop backend treats stopping an already-settled stream as idempotent', 
   assert.deepEqual(stoppedStreamIds, ['stale-stream'])
 })
 
+// 停止来源只用于 server.log 取证：桥上每一层都得把它原样带到 ChatManager.stop。
+test('desktop backend forwards the stop origin to the chat manager', async () => {
+  const stops: Array<{ streamId: string; origin: string | undefined }> = []
+  const backend = createDesktopBackend({
+    createChatManager: () => ({
+      closeAll() {},
+      createStream() {
+        throw new Error('not used in this test')
+      },
+      stop(streamId: string, origin?: string) {
+        stops.push({ streamId, origin })
+        return { stopped: true, settlingWithinMs: 0 }
+      },
+      subscribe() {
+        return null
+      },
+      tapAll() {
+        return () => undefined
+      },
+      listActiveStreams() {
+        return []
+      },
+    }),
+  })
+
+  await backend.stopChat('stream-a', 'stale-response-guard')
+  await backend.stopChat('stream-b')
+  assert.deepEqual(stops, [
+    { streamId: 'stream-a', origin: 'stale-response-guard' },
+    { streamId: 'stream-b', origin: undefined },
+  ])
+})
+
 test('desktop backend reports completed native Codex turns instead of discarding them', async () => {
   const previousHistoryHome = process.env.CHILL_VIBE_EXTERNAL_HISTORY_HOME
   const homeDir = fs.mkdtempSync(path.join(os.tmpdir(), 'desktop-backend-codex-completion-'))

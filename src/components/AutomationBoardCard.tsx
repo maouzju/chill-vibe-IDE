@@ -14,7 +14,7 @@ import { getLocalSlashCommands, getSlashCompletionQuery } from '../../shared/sla
 import {
   MODEL_OPTIONS,
   MODEL_PICKER_HIDDEN_TOOL_MODELS,
-  isAstraModel,
+  isCodexNoneEffortUnsupportedModel,
   isModelPickerOptionVisible,
 } from '../../shared/models'
 import {
@@ -242,13 +242,13 @@ export const AutomationBoardModelSettings = ({
   showModel?: boolean
 }) => {
   const text = getLocaleText(language)
-  const astraModel = value.provider === 'codex' && isAstraModel(value.model)
+  const noneUnsupportedModel = value.provider === 'codex' && isCodexNoneEffortUnsupportedModel(value.model)
   const alwaysThinking =
     (value.provider === 'claude' && isClaudeAlwaysThinkingModel(value.model)) ||
-    astraModel
+    noneUnsupportedModel
   const thinkingOn = alwaysThinking || value.thinkingEnabled
   const reasoningOptions = getReasoningOptionsForModel(value.provider, value.model, language)
-  const reasoningValue = astraModel && value.thinkingEnabled === false ? 'low' : normalizeReasoningEffortForModel(
+  const reasoningValue = noneUnsupportedModel && value.thinkingEnabled === false ? 'low' : normalizeReasoningEffortForModel(
     value.provider,
     value.model,
     value.reasoningEffort,
@@ -312,7 +312,7 @@ export const AutomationBoardModelSettings = ({
           value={reasoningValue}
           title={thinkingOn ? undefined : text.thinkingDepthInactiveHint}
           onPointerDown={() => {
-            if (shouldEnableThinkingForDepthChange(value.thinkingEnabled, alwaysThinking && !astraModel)) {
+            if (shouldEnableThinkingForDepthChange(value.thinkingEnabled, alwaysThinking && !noneUnsupportedModel)) {
               onChange({ thinkingEnabled: true })
             }
           }}
@@ -320,14 +320,14 @@ export const AutomationBoardModelSettings = ({
             if (event.key === 'Tab' || event.key === 'Escape') {
               return
             }
-            if (shouldEnableThinkingForDepthChange(value.thinkingEnabled, alwaysThinking && !astraModel)) {
+            if (shouldEnableThinkingForDepthChange(value.thinkingEnabled, alwaysThinking && !noneUnsupportedModel)) {
               onChange({ thinkingEnabled: true })
             }
           }}
           onChange={(event) =>
             onChange({
               reasoningEffort: event.target.value,
-              ...(shouldEnableThinkingForDepthChange(value.thinkingEnabled, alwaysThinking && !astraModel)
+              ...(shouldEnableThinkingForDepthChange(value.thinkingEnabled, alwaysThinking && !noneUnsupportedModel)
                 ? { thinkingEnabled: true }
                 : {}),
             })

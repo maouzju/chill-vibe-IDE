@@ -20,6 +20,7 @@ import {
   resolveChatReplayMode,
   resolvePaneTabTitle,
   resolveTabMoveSideEffects,
+  shouldDropEmptyContinuationWhileStreaming,
   willMoveTabAcrossColumns,
   resolveStreamedAssistantMessageTarget,
 } from '../src/app-helpers.ts'
@@ -838,6 +839,60 @@ test('canSendEmptyContinuation refuses a card that only holds a system notice', 
     }),
     false,
   )
+})
+
+// 症状：点「继续」后 0.5~4.6 秒又被停下，得再点一次。
+// 根因（渲染端这一路）：输入框的可发送判定用的是渲染时刻的卡片状态，点击到 sendMessage
+//   之间卡片可能已被自发轮次 / 鞭策 / 唤醒拉成 streaming；这条空发送走进 streaming 分支，
+//   被当成「打断并排队」：把刚起的那一轮当场软中断，还把一条空消息排进队列。
+// 为什么不改 sendDisabled：它本来就对 streaming 卡拒绝空继续，竞态只在渲染与点击之间。
+test('shouldDropEmptyContinuationWhileStreaming drops a plain empty send on a running card', () => {
+  assert.equal(
+    shouldDropEmptyContinuationWhileStreaming({
+      cardStatus: 'streaming',
+      hasContent: false,
+      answersPendingAskUser: false,
+    }),
+    true,
+  )
+  assert.equal(
+    shouldDropEmptyContinuationWhileStreaming({
+      cardStatus: 'streaming',
+      hasContent: false,
+      answersPendingAskUser: false,
+      mode: 'auto',
+      origin: 'user',
+    }),
+    true,
+  )
+})
+
+test('shouldDropEmptyContinuationWhileStreaming keeps every send that carries intent', () => {
+  const base = { cardStatus: 'streaming' as const, hasContent: false, answersPendingAskUser: false }
+
+  // 有内容的发送照旧排队 / 打断。
+  assert.equal(shouldDropEmptyContinuationWhileStreaming({ ...base, hasContent: true }), false)
+  // 回答 ask-user 必须走「排队 + 停止」，哪怕答案是空串。
+  assert.equal(shouldDropEmptyContinuationWhileStreaming({ ...base, answersPendingAskUser: true }), false)
+  // 显式打断（队列「立即发送」/ 唤醒批次立即发送）与显式延后是用户点名的动作。
+  assert.equal(shouldDropEmptyContinuationWhileStreaming({ ...base, mode: 'interrupt' }), false)
+  assert.equal(shouldDropEmptyContinuationWhileStreaming({ ...base, mode: 'defer' }), false)
+  // 自动化入口（鞭策 / 唤醒释放）不归这条守卫管。
+  assert.equal(shouldDropEmptyContinuationWhileStreaming({ ...base, origin: 'auto-urge' }), false)
+  assert.equal(shouldDropEmptyContinuationWhileStreaming({ ...base, origin: 'wake-timer-release' }), false)
+})
+
+test('shouldDropEmptyContinuationWhileStreaming never touches a card that is not streaming', () => {
+  for (const cardStatus of ['idle', 'error'] as const) {
+    assert.equal(
+      shouldDropEmptyContinuationWhileStreaming({
+        cardStatus,
+        hasContent: false,
+        answersPendingAskUser: false,
+      }),
+      false,
+    )
+  }
 })
 
 const paneTabLabels = { fallbackTitle: '新会话', pendingWakeTitle: '待唤醒' }

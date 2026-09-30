@@ -24,7 +24,7 @@ import { getActiveProviderProfile } from '../shared/default-state.js'
 import {
   buildClaudeAgentAliasModelEnv,
   getModelOptions,
-  isAstraModel,
+  isCodexNoneEffortUnsupportedModel,
   isModelPickerOptionVisible,
   listSelectableModelCatalog,
   parseLocalModelToken,
@@ -108,6 +108,7 @@ import { resilientProxyPool } from './resilient-proxy.js'
 import { createArchiveRecallRuntimeOverrides, getCodexArchiveRecallInstruction } from './archive-recall.js'
 import { createWorkspaceAdminRuntime } from './automation-board-session.js'
 import { createComputerUseRuntime } from './computer-use-runtime.js'
+import { createJevRuntime, mergeClaudeMcpConfigs } from './jev-runtime.js'
 import type { WorkspaceAdminClaudeMcpConfig } from './automation-board-runtime.js'
 import {
   ensureCodexSafetyHookTrusted,
@@ -2135,9 +2136,9 @@ const buildCodexTurnStartParams = (
   ...(options?.includeAgentParams === false
     ? {}
     : {
-        // Codex 0.153.4 model/list：Astra supportsPersonality=false（2026-09-06）。
-        // 只省略该请求字段，不抹掉用户留给其它模型的人格设置。
-        ...(request.personality && !isAstraModel(request.model) ? { personality: request.personality } : {}),
+        // Codex model/list：Astra（0.153.4，2026-09-06）与 GPT-6.1 Sol（0.159.2，2026-09-30）
+        // supportsPersonality=false。只省略该请求字段，不抹掉用户留给其它模型的人格设置。
+        ...(request.personality && !isCodexNoneEffortUnsupportedModel(request.model) ? { personality: request.personality } : {}),
         ...(request.serviceTier ? { serviceTier: request.serviceTier } : {}),
       }),
   ...(options?.includeEffort === false
@@ -3230,6 +3231,17 @@ export const launchProviderRun = async (
     computerUseRuntime = null
   }
 
+  // JEV 快速判断 MCP（docs/specs/jev-mcp-toggle）：同一形态，设置打开且有 key 才注入。
+  let jevRuntime: Awaited<ReturnType<typeof createJevRuntime>> = null
+  try {
+    jevRuntime = await createJevRuntime(currentRequest)
+  } catch (error) {
+    console.warn(
+      `[jev] Unable to prepare JEV MCP runtime: ${error instanceof Error ? error.message : String(error)}`,
+    )
+    jevRuntime = null
+  }
+
   if (currentRequest.provider === 'codex') {
     let archiveRecallRuntime: Awaited<ReturnType<typeof createArchiveRecallRuntimeOverrides>> | null = null
 
@@ -3244,11 +3256,13 @@ export const launchProviderRun = async (
       ...(archiveRecallRuntime?.runtimeArgs ?? []),
       ...(adminRuntime?.codexRuntimeArgs ?? []),
       ...(computerUseRuntime?.codexRuntimeArgs ?? []),
+      ...(jevRuntime?.codexRuntimeArgs ?? []),
     ]
     const extraSystemPrompt = [
       ...(archiveRecallRuntime ? [getCodexArchiveRecallInstruction(language)] : []),
       ...(adminRuntime ? [adminRuntime.instruction] : []),
       ...(computerUseRuntime ? [computerUseRuntime.instruction] : []),
+      ...(jevRuntime ? [jevRuntime.instruction] : []),
     ]
     const codexRuntime = extraCodexArgs.length > 0
       ? {
@@ -3278,6 +3292,7 @@ export const launchProviderRun = async (
   const claudeExtraInstructions = [
     ...(adminRuntime ? [adminRuntime.instruction] : []),
     ...(computerUseRuntime ? [computerUseRuntime.instruction] : []),
+    ...(jevRuntime ? [jevRuntime.instruction] : []),
   ]
   const claudeRequest = claudeExtraInstructions.length > 0
     ? {
@@ -3296,7 +3311,8 @@ export const launchProviderRun = async (
     attachmentPaths,
     options?.claudeSessionPool ?? null,
     adminRuntime?.claudeMcpConfig,
-    computerUseRuntime?.claudeMcpConfig,
+    // 可选 MCP 共用一条槽位：computer use 与 JEV 合并后一起走 --mcp-config。
+    mergeClaudeMcpConfigs(computerUseRuntime?.claudeMcpConfig, jevRuntime?.claudeMcpConfig),
   )
 }
 
@@ -4137,6 +4153,7 @@ export const buildClaudeKeepaliveSignature = (
     plan: Boolean(request.planMode),
     // 切换浏览器控制开关必须换进程：旧进程的 argv 里没有（或多了）chill_vibe_browser MCP。
     computerUse: request.computerUseEnabled === true,
+    jev: request.jevEnabled === true,
     language: normalizeLanguage(request.language),
     systemPrompt: request.systemPrompt,
     modelPromptRules: request.modelPromptRules,
@@ -4244,9 +4261,13 @@ const launchClaudeKeepaliveRun = async (
     const child = acquired.child as ChildProcess
     managedChild.setActiveChild(child)
     // 软中断只在这条 keepalive 路径成立：stdin 常驻可写才有控制通道。
-    // 绑定时带上 cardId + child，中断永远只作用于这一轮自己的进程，
-    // 不会误伤同一张卡上后开的新 turn。
-    managedChild.setInterruptHandler(() => pool.interruptTurn(cardId, child))
+    // 症状：点「继续」后 0.5~4.6 秒被停下，得再点一次（16 天 48 例，2026-09-30 统计）。
+    // 根因：进程按卡复用，旧 handler 只认 cardId + child；上一轮的迟到 stop 晚到时
+    //   同一进程已在跑下一轮，interrupt 直接写进新一轮。
+    // 为什么不能只认 child：child 在两轮之间不变。所以绑定轮次序号，中断只作用于这一轮自己；
+    //   序号在下面 beginTurn 之后才取得，-1 是 fail-closed 哨兵，拿不到就宁可不中断。
+    let turnSerial = -1
+    managedChild.setInterruptHandler(() => pool.interruptTurn(cardId, child, turnSerial))
     pool.updateMeta(cardId, { backgroundWorkPending: false }, child)
     clearClaudeCompletionBoundarySnapshot(completionBoundaryPath)
 
@@ -4330,6 +4351,7 @@ const launchClaudeKeepaliveRun = async (
         parser.handleProcessClosed(code)
       },
     }, child)
+    turnSerial = pool.getTurnSerial(cardId, child) ?? -1
 
     const prompt = getClaudePrompt(currentRequest, attachmentPaths)
     const written = pool.writeUserMessage(

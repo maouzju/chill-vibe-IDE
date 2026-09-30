@@ -68,6 +68,23 @@ test('codex GPT-6 Astra thinking-off uses low instead of unsupported none', () =
     .includes('model_reasoning_effort="none"'))
 })
 
+// 2026-09-30 真实中转站：gpt-6.1-sol + none → 整轮 400；gpt-6-sol / gpt-6-luna + none 正常。
+test('codex GPT-6.1 Sol thinking-off uses low while GPT-6 Sol keeps none', () => {
+  const args = buildCodexArgs(
+    createRequest({ model: 'gpt-6.1-sol', reasoningEffort: 'max', thinkingEnabled: false }),
+    [],
+  )
+  assert.equal(args.find((arg) => arg.startsWith('model_reasoning_effort=')), 'model_reasoning_effort="low"')
+  for (const effort of ['low', 'medium', 'high', 'xhigh', 'max', 'ultra']) {
+    assert.ok(buildCodexArgs(createRequest({ model: 'gpt-6.1-sol', reasoningEffort: effort }), [])
+      .includes(`model_reasoning_effort="${effort}"`))
+  }
+  for (const model of ['gpt-6-sol', 'gpt-6-luna']) {
+    assert.ok(buildCodexArgs(createRequest({ model, thinkingEnabled: false }), [])
+      .includes('model_reasoning_effort="none"'), `${model} keeps none`)
+  }
+})
+
 test('provider system prompt preserves the built-in default for English sessions', () => {
   const prompt = buildProviderSystemPrompt('en', defaultSystemPrompt)
 
@@ -5462,30 +5479,52 @@ test('codex app-server retries without optional agent params when an older CLI r
   }
 })
 
-test('codex Astra app-server omits personality and preserves model, effort, Fast on fresh and resumed turns', async () => {
-  for (const sessionId of [undefined, 'thread-1']) {
-    for (const thinkingEnabled of [false, true]) {
-      const capturePath = path.join(os.tmpdir(), `chill-vibe-astra-${Date.now()}-${Math.random().toString(36).slice(2)}.jsonl`)
-      try {
-        const outcome = await withFakeProviderCommand('codex', buildFakeCodexAppServerScript(capturePath),
-          async (workspacePath) => captureProviderOutcome(createRequest({
-            workspacePath, sessionId, model: 'gpt-6-astra', reasoningEffort: 'ultra', thinkingEnabled,
-            personality: 'friendly', serviceTier: 'priority',
-          })))
-        assert.deepEqual(outcome, { kind: 'done' })
-        const requests = (await readFile(capturePath, 'utf8')).trim().split(/\r?\n/)
-          .map((line) => JSON.parse(line) as { method?: string; params?: Record<string, unknown> })
-        const thread = requests.find((request) => request.method === (sessionId ? 'thread/resume' : 'thread/start'))
-        const turn = requests.find((request) => request.method === 'turn/start')
-        assert.equal(thread?.params?.model, 'gpt-6-astra')
-        assert.equal(turn?.params?.model, 'gpt-6-astra')
-        assert.equal(turn?.params?.effort, thinkingEnabled ? 'ultra' : 'low')
-        assert.equal(turn?.params?.serviceTier, 'priority')
-        assert.equal(Object.hasOwn(turn?.params ?? {}, 'personality'), false)
-      } finally {
-        await rm(capturePath, { force: true })
+for (const noneRejectingModel of ['gpt-6-astra', 'gpt-6.1-sol']) {
+  test(`codex ${noneRejectingModel} app-server omits personality and preserves model, effort, Fast on fresh and resumed turns`, async () => {
+    for (const sessionId of [undefined, 'thread-1']) {
+      for (const thinkingEnabled of [false, true]) {
+        const capturePath = path.join(os.tmpdir(), `chill-vibe-none-rejecting-${Date.now()}-${Math.random().toString(36).slice(2)}.jsonl`)
+        try {
+          const outcome = await withFakeProviderCommand('codex', buildFakeCodexAppServerScript(capturePath),
+            async (workspacePath) => captureProviderOutcome(createRequest({
+              workspacePath, sessionId, model: noneRejectingModel, reasoningEffort: 'ultra', thinkingEnabled,
+              personality: 'friendly', serviceTier: 'priority',
+            })))
+          assert.deepEqual(outcome, { kind: 'done' })
+          const requests = (await readFile(capturePath, 'utf8')).trim().split(/\r?\n/)
+            .map((line) => JSON.parse(line) as { method?: string; params?: Record<string, unknown> })
+          const thread = requests.find((request) => request.method === (sessionId ? 'thread/resume' : 'thread/start'))
+          const turn = requests.find((request) => request.method === 'turn/start')
+          assert.equal(thread?.params?.model, noneRejectingModel)
+          assert.equal(turn?.params?.model, noneRejectingModel)
+          assert.equal(turn?.params?.effort, thinkingEnabled ? 'ultra' : 'low')
+          assert.equal(turn?.params?.serviceTier, 'priority')
+          assert.equal(Object.hasOwn(turn?.params ?? {}, 'personality'), false)
+        } finally {
+          await rm(capturePath, { force: true })
+        }
       }
     }
+  })
+}
+
+// 对照组：只有目录里明确不收 none / personality 的型号才被特殊处理，GPT-6 Sol 逐字不变。
+test('codex GPT-6 Sol app-server still sends none and personality when thinking is off', async () => {
+  const capturePath = path.join(os.tmpdir(), `chill-vibe-sol-control-${Date.now()}-${Math.random().toString(36).slice(2)}.jsonl`)
+  try {
+    const outcome = await withFakeProviderCommand('codex', buildFakeCodexAppServerScript(capturePath),
+      async (workspacePath) => captureProviderOutcome(createRequest({
+        workspacePath, model: 'gpt-6-sol', reasoningEffort: 'max', thinkingEnabled: false,
+        personality: 'friendly', serviceTier: 'priority',
+      })))
+    assert.deepEqual(outcome, { kind: 'done' })
+    const turn = (await readFile(capturePath, 'utf8')).trim().split(/\r?\n/)
+      .map((line) => JSON.parse(line) as { method?: string; params?: Record<string, unknown> })
+      .find((request) => request.method === 'turn/start')
+    assert.equal(turn?.params?.effort, 'none')
+    assert.equal(turn?.params?.personality, 'friendly')
+  } finally {
+    await rm(capturePath, { force: true })
   }
 })
 
@@ -6081,7 +6120,7 @@ test('codex exec instructions authorise the agent to pick spawn_agent models fro
     assert.match(instructions, /spawn_agent/)
     assert.match(instructions, /reasoning_effort/)
     // 目录里 Codex 可见的模型都要列出来，agent 才知道自己能选什么。
-    for (const model of ['gpt-6-astra', 'gpt-5.6-sol', 'gpt-5.6-terra', 'gpt-5.6-luna', 'gpt-5.5']) {
+    for (const model of ['gpt-6.1-sol', 'gpt-6-astra', 'gpt-5.6-sol', 'gpt-5.6-terra', 'gpt-5.6-luna', 'gpt-5.5']) {
       assert.match(instructions, new RegExp(model.replace(/\./g, '[.]')), `${language} must list ${model}`)
     }
     // 工具卡与"用默认模型"占位项绝不能混进去。

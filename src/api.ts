@@ -911,10 +911,11 @@ export type StopChatResult = {
 
 const noDeferredSettle: StopChatResult = { settlingWithinMs: 0 }
 
-export const stopChat = async (streamId: string): Promise<StopChatResult> => {
+// origin：谁在停这条流（渲染端的停止原因 / 兜底路径名），只落 server.log 取证，不影响语义。
+export const stopChat = async (streamId: string, origin?: string): Promise<StopChatResult> => {
   const stop = requireDesktopAction(getDesktopApi()?.stopChat)
   try {
-    const result = await stop(streamId)
+    const result = await stop(streamId, origin)
     // 旧桥（以及被 stub 掉 stopChat 的测试）返回 undefined —— 一律按"没有推迟"处理，
     // 也就是保持这次改动之前的兜底时序，不会因为缺字段而永远不兜底。
     const settlingWithinMs = (result as StopChatResult | undefined)?.settlingWithinMs

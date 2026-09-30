@@ -24,6 +24,7 @@ import {
   type ActiveStreamView,
   type ChatStreamTapEvent,
 } from './chat-stream-tap.js'
+import { writeServerLog } from './crash-logger.js'
 import {
   captureWorkspaceSnapshot,
   captureWorkspaceSnapshotTimeoutMs,
@@ -63,8 +64,11 @@ type StreamRecord = {
   listeners: Set<Response>
   subscribers: Set<StreamSubscriber>
   child?: ChildProcess
-  // 自发 turn 没有 managed child；返回 true 表示控制通道软中断，否则已硬杀兜底。
+  // 自发 turn 没有 managed child；返回 true = 进程与会话原样保留（软中断成功，或这一轮
+  // 早已结束无需中断），false = 已硬杀兜底、会话可能是脏的。
   stopHook?: () => boolean
+  // 流的创建时刻，只用来在 [chat-stop] 日志里给出「这一轮跑了多久就被停下」。
+  startedAt: number
   latestSessionId?: string
   terminal: boolean
   stopRequested: boolean
@@ -143,6 +147,27 @@ const withHardTimeout = async <T>(
     }
   }
 }
+
+type ChatStopLogFields = {
+  streamId: string
+  cardId?: string
+  origin?: string
+  outcome: 'stopping' | 'already-terminal' | 'unknown-stream'
+  ageMs?: number
+  kind?: 'unsolicited' | 'run' | 'launching'
+  repeat?: boolean
+  softInterrupted?: boolean
+  diffInFlight?: boolean
+}
+
+// server.log 里的取证行。判读：某条流以 aborted_streaming 收尾却没有对应的 [chat-stop]，
+// 说明是 CLI 自己中止的；有，则 origin + ageMs 直接点名是谁、在这一轮跑了多久时停的它。
+const logChatStop = (fields: ChatStopLogFields) => {
+  // origin 来自 IPC / HTTP 查询串，截断以免一行日志被撑爆。
+  const origin = fields.origin?.trim().slice(0, 64) || 'unknown'
+  void writeServerLog('INFO', '[chat-stop]', { ...fields, origin })
+}
+
 const maxBacklogSize = 2000
 export const maxBacklogCommandOutputChars = 16 * 1024
 const backlogCommandOutputHeadChars = 8 * 1024
@@ -371,6 +396,7 @@ export class ChatManager {
       backlog: [],
       listeners: new Set(),
       subscribers: new Set(),
+      startedAt: Date.now(),
       latestSessionId: normalizeSessionId(request.sessionId),
       terminal: false,
       stopRequested: false,
@@ -472,25 +498,58 @@ export class ChatManager {
   // `settlingWithinMs` 是给渲染进程的时序契约：> 0 表示终态被刻意推迟，最长这么久。
   // 渲染端的"服务端没回应"本地兜底必须据此放宽，否则它会先一步 close 掉 EventSource，
   // 让这次推迟白做（症状：改动卡照样丢失，见 Known Pitfall 244）。
-  stop(streamId: string): ChatStreamStopResult {
+  //
+  // `origin` 只用于日志：谁在停这条流（渲染端的停止原因 / 兜底路径名）。缺省记 'unknown'。
+  stop(streamId: string, origin?: string): ChatStreamStopResult {
     const stream = this.streams.get(streamId)
 
     if (!stream || stream.terminal) {
+      logChatStop({
+        streamId,
+        cardId: stream?.cardId,
+        origin,
+        outcome: stream ? 'already-terminal' : 'unknown-stream',
+        ageMs: stream ? Date.now() - stream.startedAt : undefined,
+      })
       return { stopped: false, settlingWithinMs: 0 }
     }
 
+    // 症状：软中断成功后追问仍冷启动（seeded），常驻进程与上下文被丢。
+    // 根因：收尾 diff 挂起的窗口里（最长 12s）流仍是非终态，重复 stop（渲染兜底 / 手机监工 /
+    //   连点）会把「软中断 → 硬杀」整套再跑一遍；此时 managed handle 的控制通道早已随
+    //   onSettled 撤掉，softInterrupted 被覆写成 false，终态 done 变成 interrupted:false，
+    //   渲染端按硬杀年代的 #118 清掉 sessionId。
+    // 为什么不能只在渲染端去重：stop 桥（HTTP / IPC）是纯透传，服务端必须自己幂等——
+    //   第一次 stop 决定这一轮怎么停，后面的只回报结果，不再碰进程。
+    const repeat = stream.stopRequested
     stream.stopRequested = true
-    // 症状：软中断后追问仍冷启动。2026-09-11 审计：done 早于停止响应，renderer 先清会话。
-    // 结果必须随终态信封发送（含延迟 diff / 自发 turn），不能只塞 HTTP 响应，见 #369。
-    // 控制通道只保住主会话，不保住被 CLI 主动中断的子代理；写入失败仍硬杀兜底。
-    stream.softInterrupted = tryInterruptProviderTurn(stream.child)
-    if (!stream.softInterrupted) {
-      if (stream.stopHook) {
-        stream.softInterrupted = stream.stopHook()
-      } else {
-        stream.child?.kill()
+    if (!repeat) {
+      // 症状：软中断后追问仍冷启动。2026-09-11 审计：done 早于停止响应，renderer 先清会话。
+      // 结果必须随终态信封发送（含延迟 diff / 自发 turn），不能只塞 HTTP 响应，见 #369。
+      // 控制通道只保住主会话，不保住被 CLI 主动中断的子代理；写入失败仍硬杀兜底。
+      stream.softInterrupted = tryInterruptProviderTurn(stream.child)
+      if (!stream.softInterrupted) {
+        if (stream.stopHook) {
+          stream.softInterrupted = stream.stopHook()
+        } else {
+          stream.child?.kill()
+        }
       }
     }
+
+    // 每次 stop 留一行：事后要回答「是谁、在这条流跑了多久时停的它」。渲染端的 run-stopped
+    // 原因缺省就是 'manual'，光看它分不清「用户真点了」和「某条代码路径替用户停的」。
+    logChatStop({
+      streamId,
+      cardId: stream.cardId,
+      origin,
+      outcome: 'stopping',
+      ageMs: Date.now() - stream.startedAt,
+      kind: stream.stopHook ? 'unsolicited' : stream.child ? 'run' : 'launching',
+      repeat,
+      softInterrupted: stream.softInterrupted === true,
+      diffInFlight: stream.workspaceDiffInFlight === true,
+    })
 
     // 症状：turn 已 onDone、收尾 workspace diff 还挂在 await 上时用户点停止，
     // done 先落地、edits 改动卡后到；renderer onDone 已 close 掉 EventSource，
@@ -529,22 +588,56 @@ export class ChatManager {
   // fresh stream and tell the host so the renderer can attach the card to it.
   private async handleUnsolicitedClaudeTurn(
     entry: ClaudeSessionPoolEntryView,
-    attach: (attachment: ClaudeTurnAttachment) => void,
+    attach: (attachment: ClaudeTurnAttachment) => number,
   ) {
     const streamId = crypto.randomUUID()
+    // 这一轮在池里的轮次序号，attach 时才拿得到（之前是 null）。stopHook 只认它。
+    let turnSerial: number | null = null
     const record: StreamRecord = {
       id: streamId,
       cardId: entry.key,
       backlog: [],
       listeners: new Set(),
       subscribers: new Set(),
-      // CLI 自己醒来的这一轮同样先试软中断：这里手里就有正确的 key + child，
-      // 中断只会落在这一轮上。软中断不成立才回落到 kill 掉池内进程。
+      startedAt: Date.now(),
+      // 症状：点「继续」后 0.5~4.6 秒又被停下，得再点一次（16 天 48 例，每例都紧跟上一轮被停止）。
+      // 根因：这个钩子过去是进程作用域（key + child），不认轮次。后台任务唤醒的这一轮早已收尾、
+      //   流还挂在收尾 diff 上（最长 12s）时，用户在同一张卡上发的下一轮已经复用了同一个常驻进程：
+      //   迟到的 stop 于是把 interrupt 写进下一轮，或者在进程空闲时 releaseEntry 把健康进程整个
+      //   杀掉（还顺手 invalidatePendingAcquire，掐掉别人正在进行的 acquire）。
+      // 为什么不能换写法：这条流此刻确实还没终态（在等 diff），判 stream 终态挡不住；
+      //   唯一稳的锚点是池里的轮次序号：attach 时取到，之后中断/硬杀只对这一轮生效。
       stopHook: () => {
-        if (this.claudePool?.interruptTurn(entry.key, entry.child)) {
+        const pool = this.claudePool
+        if (!pool) {
+          return false
+        }
+        // 还没 attach：进程上只有这一轮在等宿主接管（pendingUnsolicited 会挡住任何复用），
+        // 按 child 硬杀不会误伤别的轮次。这是原有行为，窗口只有 workspace 基线那一小段。
+        if (turnSerial === null) {
+          pool.releaseEntry(entry.key, entry.child)
+          return false
+        }
+        // 这一轮已经结束（序号被下一轮顶掉，或进程已回到 idle）：没有东西可停。什么都不碰，
+        // 进程与会话原样保留，所以回报 true，渲染端不必为此清 sessionId 走 seeded 冷启动。
+        if (
+          pool.getTurnSerial(entry.key, entry.child) !== turnSerial ||
+          !pool.isTurnActive(entry.key)
+        ) {
+          void writeServerLog('WARN', '[chat-stop] stale unsolicited stop ignored', {
+            streamId,
+            cardId: entry.key,
+            turnSerial,
+            currentTurnSerial: pool.getTurnSerial(entry.key, entry.child),
+            turnActive: pool.isTurnActive(entry.key),
+          })
           return true
         }
-        this.claudePool?.releaseEntry(entry.key, entry.child)
+        if (pool.interruptTurn(entry.key, entry.child, turnSerial)) {
+          return true
+        }
+        // 这一轮还在跑、控制通道却写不进去：软中断的前提不成立，才退回硬杀兜底。
+        pool.releaseEntry(entry.key, entry.child)
         return false
       },
       latestSessionId: normalizeSessionId(entry.sessionId),
@@ -629,7 +722,7 @@ export class ChatManager {
       ),
     })
 
-    attach(attachment)
+    turnSerial = attach(attachment)
     this.onUnsolicitedStream?.({ cardId: entry.key, streamId })
   }
 
@@ -673,6 +766,7 @@ export class ChatManager {
       backlog: [],
       listeners: new Set(),
       subscribers: new Set(),
+      startedAt: Date.now(),
       latestSessionId: normalizeSessionId(entry.sessionId),
       terminal: false,
       stopRequested: false,

@@ -312,6 +312,27 @@ export const canSendEmptyContinuation = (
   return hasResumableSession || hasHistory
 }
 
+// 症状：点「继续」后 0.5~4.6 秒又被停下，得再点一次。
+// 根因：sendDisabled 用的是渲染时刻的卡片状态，点击到 sendMessage 之间卡片可能已被自发
+//   轮次 / 鞭策 / 唤醒拉成 streaming；这条空发送走进 streaming 分支会被当成「打断并排队」，
+//   把刚起的那一轮当场软中断，还往队列里塞一条空消息。
+// 为什么不把 canSendEmptyContinuation 改宽：它对 streaming 卡本来就返回 false，
+//   竞态发生在渲染与点击之间，只有 sendMessage 拿着实时状态才判得准。
+// 只丢「用户自己点的、无内容、非 ask-user 答复、非显式打断/延后」的空发送；有内容的、
+//   答 ask-user 的、队列/唤醒批次的「立即发送」和自动化入口都是用户或系统点名的动作，照旧。
+export const shouldDropEmptyContinuationWhileStreaming = (input: {
+  cardStatus: ChatCard['status']
+  hasContent: boolean
+  answersPendingAskUser: boolean
+  mode?: 'auto' | 'defer' | 'interrupt'
+  origin?: 'user' | 'auto-urge' | 'wake-timer-release'
+}): boolean =>
+  input.cardStatus === 'streaming' &&
+  !input.hasContent &&
+  !input.answersPendingAskUser &&
+  (input.mode ?? 'auto') === 'auto' &&
+  (input.origin ?? 'user') === 'user'
+
 export const getRoutingImportText = (language: AppState['settings']['language']) =>
   language === 'en'
     ? {

@@ -20,6 +20,7 @@ import {
   WHITENOISE_TOOL_MODEL,
   getModelOptions,
   isBrainstormRequestModelVisible,
+  isCodexNoneEffortUnsupportedModel,
   isModelPickerOptionVisible,
   isToolCardModel,
   normalizeModel,
@@ -75,6 +76,7 @@ describe('model helpers', () => {
         AUTOMATIONBOARD_TOOL_MODEL,
         STATS_TOOL_MODEL,
         '',
+        'gpt-6.1-sol',
         DEFAULT_CODEX_MODEL,
         'gpt-6-luna',
         'gpt-5.6-sol',
@@ -129,13 +131,36 @@ describe('model helpers', () => {
     assert.equal(resolveSlashModel('codex', 'astra'), 'gpt-6-astra')
   })
 
+  // GPT-6.1 Sol（2026-09-29）用显式别名；裸 `sol`/`6` 跟随默认模型 GPT-6 Sol，
+  // 否则 `/model sol` 会在用户不知情时换一代（默认模型刻意没动，见 SPEC gpt-6-1-sol-support）。
+  it('resolves GPT-6.1 Sol aliases without stealing the bare sol alias', () => {
+    for (const alias of ['gpt-6.1-sol', '6.1', '6.1-sol', 'sol-6.1', 'sol6.1', 'gpt61sol', 'GPT-6.1 Sol']) {
+      assert.equal(resolveSlashModel('codex', alias), 'gpt-6.1-sol', alias)
+    }
+    assert.equal(resolveSlashModel('codex', 'sol'), DEFAULT_CODEX_MODEL)
+    assert.equal(resolveSlashModel('codex', '6'), DEFAULT_CODEX_MODEL)
+    assert.equal(resolveSlashModel('codex', 'gpt-6-sol'), DEFAULT_CODEX_MODEL)
+    assert.deepEqual(resolveSlashModelInput('codex', '6.1'), { model: 'gpt-6.1-sol', custom: false })
+    assert.equal(DEFAULT_CODEX_MODEL, 'gpt-6-sol')
+  })
+
   it('keeps tool cards out of the ordinary model picker', () => {
     assert.deepEqual(
       getModelOptions('codex')
         .filter(isModelPickerOptionVisible)
         .map((option) => option.model),
-      ['', DEFAULT_CODEX_MODEL, 'gpt-6-luna', 'gpt-5.6-sol', 'gpt-6-astra', 'gpt-5.6-terra', 'gpt-5.6-luna', 'gpt-5.5'],
+      ['', 'gpt-6.1-sol', DEFAULT_CODEX_MODEL, 'gpt-6-luna', 'gpt-5.6-sol', 'gpt-6-astra', 'gpt-5.6-terra', 'gpt-5.6-luna', 'gpt-5.5'],
     )
+  })
+
+  // Astra 与 6.1 Sol 共享「不收 none / 不收 personality」的性质，判定必须来自同一个谓词。
+  it('recognizes the models that reject none from a single predicate', () => {
+    for (const model of ['gpt-6-astra', 'gpt-6.1-sol', ' GPT-6.1-Sol ']) {
+      assert.equal(isCodexNoneEffortUnsupportedModel(model), true, model)
+    }
+    for (const model of ['gpt-6-sol', 'gpt-6-luna', 'gpt-5.6-sol', 'gpt-5.5', 'gpt-6.1-sol-openai-compact', '', null, undefined]) {
+      assert.equal(isCodexNoneEffortUnsupportedModel(model), false, String(model))
+    }
   })
 
   // 头脑风暴的请求模型选单曾另抄一份「排掉工具卡」的过滤，漏掉 hiddenFromPicker，

@@ -3,8 +3,21 @@ import type { LocalModelEntry, Provider } from './schema.js'
 export const DEFAULT_CODEX_MODEL = 'gpt-6-sol'
 export const DEFAULT_CLAUDE_MODEL = 'claude-opus-5-5'
 export const DEFAULT_GIT_AGENT_MODEL = 'gpt-6-luna medium'
-export const isAstraModel = (model?: string | null): boolean =>
-  model?.trim().toLowerCase() === 'gpt-6-astra'
+/**
+ * 目录里明确「不收 reasoning.effort=none、也不收 personality」的 Codex 型号：缺省档 low、六档到 ultra。
+ *
+ * 症状（2026-09-30 真实中转站探针）：gpt-6.1-sol + effort=none → 整轮 400
+ *   `does not support reasoning effort 'none'`；同一探针 gpt-6-sol / gpt-6-luna 则正常。
+ * 根因：`none` 是否合法是逐型号的能力，而「关思考 → none」是全局映射。Astra 时代这条判定
+ *   叫 isAstraModel、散在请求出口与两处 UI，6.1 Sol 一来就有一半出口漏掉。
+ * 做法：判定收在这一处（依据 Codex `model/list` 的 supportedReasoningEfforts / supportsPersonality），
+ *   请求出口、personality 与 UI 一律引用它；新型号进这份名单即可，不再逐处补。
+ * 被否决：前缀匹配——没有实证（日期快照名、`-openai-compact` 变体是否同性质未知），保持精确匹配。
+ */
+const CODEX_NONE_EFFORT_UNSUPPORTED_MODELS = new Set(['gpt-6-astra', 'gpt-6.1-sol'])
+
+export const isCodexNoneEffortUnsupportedModel = (model?: string | null): boolean =>
+  CODEX_NONE_EFFORT_UNSUPPORTED_MODELS.has(model?.trim().toLowerCase() ?? '')
 export const GIT_TOOL_MODEL = '__git_tool__'
 export const MUSIC_TOOL_MODEL = '__music_tool__'
 export const WHITENOISE_TOOL_MODEL = '__whitenoise_tool__'
@@ -108,6 +121,13 @@ export const MODEL_OPTIONS: ModelOption[] = [
     model: '',
     aliases: ['claude'],
     usesConfiguredDefault: true,
+  },
+  {
+    // 2026-09-29 发布。裸别名 sol/6 仍归默认的 GPT-6 Sol：默认模型没动，`/model sol` 不该悄悄换代。
+    label: 'GPT-6.1 Sol',
+    provider: 'codex',
+    model: 'gpt-6.1-sol',
+    aliases: ['gpt-6.1-sol', '6.1', '6.1-sol', 'sol-6.1', 'sol6.1', 'gpt61sol'],
   },
   {
     label: 'GPT-6 Sol',

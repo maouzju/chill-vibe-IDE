@@ -257,10 +257,11 @@ export const installMockElectronBridge = async (page: Page) => {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(request),
         }),
-      stopChat: async (streamId) =>
-        jsonRequest(`/api/chat/stop/${encodeURIComponent(streamId)}`, {
-          method: 'POST',
-        }),
+      stopChat: async (streamId, origin) =>
+        jsonRequest(
+          `/api/chat/stop/${encodeURIComponent(streamId)}${origin ? `?origin=${encodeURIComponent(origin)}` : ''}`,
+          { method: 'POST' },
+        ),
       subscribeChatStream: async (streamId, subscriptionId) => {
         const source = new EventSource(`/api/chat/stream/${encodeURIComponent(streamId)}`)
         const eventNames = [

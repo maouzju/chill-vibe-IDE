@@ -255,6 +255,104 @@ test('软中断可用性可被 expectedChild 校验挡住，避免打断新进�
   pool.dispose()
 })
 
+// ---- 中断必须绑定「轮次」而不是「进程」：迟到的 stop 不能打断同一进程里的下一轮 ----
+
+test('interruptTurn 带轮次序号时，上一轮迟到的 stop 不得打断同一进程里的下一轮', async () => {
+  const pool = new ClaudeSessionPool({ onUnsolicited: () => {}, interruptDrainTimeoutMs: 40 })
+  const child = createFakeChild()
+  await acquire(pool, 'card-serial', child)
+
+  const first = createAttachment()
+  pool.beginTurn('card-serial', first.attachment, child)
+  const firstSerial = pool.getTurnSerial('card-serial', child)
+  assert.equal(typeof firstSerial, 'number')
+  pool.endTurn('card-serial', child)
+
+  const second = createAttachment()
+  pool.beginTurn('card-serial', second.attachment, child)
+  const secondSerial = pool.getTurnSerial('card-serial', child)
+  assert.equal(typeof secondSerial, 'number')
+  assert.notEqual(secondSerial, firstSerial, '同一进程的新一轮必须换新序号')
+
+  // 上一轮（已结算）的迟到 stop：进程此刻正在跑第二轮，旧实现只看「进程是否 turn-active」
+  // 就会把 interrupt 写进第二轮，用户看到的就是「点继续后 1 秒立刻停下」。
+  assert.equal(pool.interruptTurn('card-serial', child, firstSerial as number), false)
+  assert.equal(child.stdinChunks.length, 0, '过期轮次的 interrupt 一个字节都不能写进 stdin')
+
+  // 也不能悄悄挂上兜底 kill 定时器：40ms 后进程必须还活着、第二轮还在跑。
+  await new Promise((resolve) => setTimeout(resolve, 120))
+  assert.equal(child.killed, false)
+  assert.equal(pool.isTurnActive('card-serial'), true)
+
+  // 当前轮的序号仍然可以正常软中断。
+  assert.equal(pool.interruptTurn('card-serial', child, secondSerial as number), true)
+  assert.equal(child.stdinChunks.length, 1)
+
+  pool.dispose()
+})
+
+test('不带轮次序号的 interruptTurn 保持原语义（兼容既有调用点）', async () => {
+  const pool = new ClaudeSessionPool({ onUnsolicited: () => {} })
+  const child = createFakeChild()
+  await acquire(pool, 'card-legacy', child)
+
+  pool.beginTurn('card-legacy', createAttachment().attachment, child)
+  pool.endTurn('card-legacy', child)
+  pool.beginTurn('card-legacy', createAttachment().attachment, child)
+
+  assert.equal(pool.interruptTurn('card-legacy', child), true)
+  assert.equal(child.stdinChunks.length, 1)
+
+  pool.dispose()
+})
+
+test('getTurnSerial 对未知 key 或不匹配的进程返回 null', async () => {
+  const pool = new ClaudeSessionPool({ onUnsolicited: () => {} })
+  const child = createFakeChild()
+  const stranger = createFakeChild()
+  await acquire(pool, 'card-serial-null', child)
+  pool.beginTurn('card-serial-null', createAttachment().attachment, child)
+
+  assert.equal(pool.getTurnSerial('missing-card'), null)
+  assert.equal(pool.getTurnSerial('card-serial-null', stranger), null)
+  assert.equal(typeof pool.getTurnSerial('card-serial-null', child), 'number')
+
+  pool.dispose()
+})
+
+test('空闲进程被唤醒的自发轮次同样占用新序号，旧轮次的 stop 打不到它', async () => {
+  let attachUnsolicited: ((attachment: ClaudeTurnAttachment) => number) | null = null
+  const pool = new ClaudeSessionPool({
+    onUnsolicited: (_entry, attach) => {
+      attachUnsolicited = attach
+    },
+  })
+  const child = createFakeChild()
+  await acquire(pool, 'card-wake-serial', child)
+
+  pool.beginTurn('card-wake-serial', createAttachment().attachment, child)
+  const userTurnSerial = pool.getTurnSerial('card-wake-serial', child) as number
+  pool.endTurn('card-wake-serial', child)
+
+  child.stdoutStream.write('{"type":"stream_event","event":{"type":"message_start"}}\n')
+  await waitFor(() => attachUnsolicited !== null)
+
+  const woken = createAttachment()
+  const wokenSerial = (attachUnsolicited as unknown as (a: ClaudeTurnAttachment) => number)(
+    woken.attachment,
+  )
+  assert.equal(typeof wokenSerial, 'number')
+  assert.notEqual(wokenSerial, userTurnSerial)
+  assert.equal(pool.getTurnSerial('card-wake-serial', child), wokenSerial)
+
+  assert.equal(pool.interruptTurn('card-wake-serial', child, userTurnSerial), false)
+  assert.equal(child.stdinChunks.length, 0)
+  assert.equal(pool.interruptTurn('card-wake-serial', child, wokenSerial), true)
+  assert.equal(child.stdinChunks.length, 1)
+
+  pool.dispose()
+})
+
 // ---- 管道断裂：EPIPE 绝不能掀掉宿主进程 ----
 
 // 症状：2026-08-10 全天 7 次整窗口闪退，内存充足（空闲 13-16GB、应用仅 470MB），

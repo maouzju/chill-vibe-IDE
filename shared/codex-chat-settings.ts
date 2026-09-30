@@ -9,7 +9,8 @@ export type CodexChatSettings = Pick<
   | 'codexIsolatedHomeEnabled'
   | 'attackPatternProtectionEnabled'
   | 'computerUseEnabled'
->
+> &
+  Partial<Pick<AppSettings, 'jevEnabled'>>
 type CodexChatRequestOverrides = Pick<
   ChatRequest,
   | 'personality'
@@ -19,6 +20,7 @@ type CodexChatRequestOverrides = Pick<
   | 'codexIsolatedHomeEnabled'
   | 'attackPatternProtectionEnabled'
   | 'computerUseEnabled'
+  | 'jevEnabled'
 >
 
 export const defaultCodexChatSettings: CodexChatSettings = {
@@ -29,6 +31,7 @@ export const defaultCodexChatSettings: CodexChatSettings = {
   attackPatternProtectionEnabled: false,
   codexIsolatedHomeEnabled: true,
   computerUseEnabled: false,
+  jevEnabled: false,
 }
 
 export const buildCodexChatRequestOverrides = (
@@ -42,6 +45,7 @@ export const buildCodexChatRequestOverrides = (
         settings.codexDestructiveCommandProtectionEnabled,
       attackPatternProtectionEnabled: settings.attackPatternProtectionEnabled,
       ...(settings.computerUseEnabled ? { computerUseEnabled: true as const } : {}),
+      ...(settings.jevEnabled ? { jevEnabled: true as const } : {}),
     }
   }
 
@@ -52,6 +56,7 @@ export const buildCodexChatRequestOverrides = (
     codexIsolatedHomeEnabled: settings.codexIsolatedHomeEnabled,
     // 只在打开时带字段：请求 schema 默认 false，省略即关闭，旧断言的默认形状不变。
     ...(settings.computerUseEnabled ? { computerUseEnabled: true as const } : {}),
+    ...(settings.jevEnabled ? { jevEnabled: true as const } : {}),
     ...(settings.codexPersonality === 'default'
       ? {}
       : { personality: settings.codexPersonality }),

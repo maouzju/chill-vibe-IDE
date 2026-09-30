@@ -2885,6 +2885,39 @@ for (const scenario of [
 }
 
 for (const theme of ['dark', 'light'] as const) {
+  // docs/specs/jev-mcp-toggle：默认关、key 是密码框、MCP/JEV 两句人话解释常显。
+  test(`JEV quick-judgment settings explain MCP and JEV in ${theme} theme`, async ({ page }) => {
+    const state = createMockState()
+    state.settings.language = theme === 'dark' ? 'zh-CN' : 'en'
+    state.settings.theme = theme
+
+    await page.setViewportSize({ width: 1280, height: 960 })
+    await mockAppApis(page, { state })
+    await page.goto(appUrl)
+    await page.locator('.card-shell').first().waitFor()
+
+    await page.locator('#app-tab-settings').click()
+    const item = await revealSettingsItem(page, 'jev')
+    await expect(page.locator('html')).toHaveAttribute('data-theme', theme)
+    const section = item.getByTestId('jev-settings')
+    await expect(section).toContainText(theme === 'dark' ? 'MCP 是什么' : 'What is MCP')
+    await expect(section).toContainText(theme === 'dark' ? 'JEV 是什么' : 'What is JEV')
+    const toggle = section.locator('#settings-jev-enabled')
+    await expect(toggle).not.toBeChecked()
+    await expect(section.locator('#settings-jev-api-key')).toHaveAttribute('type', 'password')
+    await expect(section.locator('.settings-hover-note')).toBeHidden()
+    await expect(section).toHaveScreenshot(`jev-settings-${theme}.png`, {
+      animations: 'disabled',
+      caret: 'hide',
+    })
+
+    // 打开但没填 key：给一句「不会生效」的提示。
+    await toggle.check()
+    await expect(section).toContainText(
+      theme === 'dark' ? '还没填 key' : 'No key yet',
+    )
+  })
+
   test(`Agent destructive-command protection settings stay clear in ${theme} theme`, async ({ page }) => {
     const state = createMockState()
     state.settings.language = theme === 'dark' ? 'zh-CN' : 'en'
@@ -3310,7 +3343,8 @@ test('settings panel lands on the basics view with a left nav and a single colum
 
   // 切到「模型与对话」：基础项直接可见，高级项默认收起。
   await settingsPanel.locator('#settings-nav-models').click()
-  await expect(visibleGroups).toHaveCount(3)
+  // 系统提示词 / 默认模型 / 对话行为 / JEV 快速判断（09-30 新增）。
+  await expect(visibleGroups).toHaveCount(4)
   await expect(settingsPanel.locator('details.settings-advanced')).not.toHaveAttribute('open', '')
   await revealSettingsItem(page, 'local-models')
   await expect(visibleGroups.getByRole('heading', { name: '本地模型', exact: true })).toBeVisible()

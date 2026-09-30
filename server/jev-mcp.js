@@ -11,6 +11,7 @@ import { fileURLToPath } from 'node:url'
 
 export const jevKeyFileEnvKey = 'CHILL_VIBE_JEV_KEY_FILE'
 export const jevRootEnvKey = 'CHILL_VIBE_JEV_ROOT'
+export const jevUrlEnvKey = 'CHILL_VIBE_JEV_URL'
 
 const protocolVersion = '2025-03-26'
 const defaultThreshold = 0.6
@@ -61,8 +62,10 @@ export const jevMcpToolDefinitions = [
 
 const round2 = (value) => Math.round(Number(value) * 100) / 100
 
-export const resolveJevEndpoint = (apiKey) =>
-  apiKey.startsWith('sk-or-')
+export const resolveJevEndpoint = (apiKey, configuredUrl = '') =>
+  configuredUrl && /^https?:\/\//i.test(configuredUrl.trim())
+    ? { provider: 'custom', url: configuredUrl.trim(), model: apiKey.startsWith('sk-or-') ? 'typesafe/jev-1.13' : 'jev-latest' }
+    : apiKey.startsWith('sk-or-')
     ? { provider: 'openrouter', url: 'https://openrouter.ai/api/alpha/decisions', model: 'typesafe/jev-1.13' }
     : { provider: 'typesafe', url: 'https://api.typesafe.ai/v1/systemone', model: 'jev-latest' }
 
@@ -236,7 +239,7 @@ export const runJevAsk = async (args, { apiKey, root, fetchImpl = fetch }) => {
     throw new Error('Nothing to judge: pass paths (files/directories) or texts.')
   }
 
-  const endpoint = resolveJevEndpoint(apiKey)
+  const endpoint = resolveJevEndpoint(apiKey, process.env[jevUrlEnvKey] || '')
   const results = {}
   const unsure = []
   const errors = [...skipped]

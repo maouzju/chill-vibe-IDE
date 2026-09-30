@@ -746,6 +746,7 @@ function App() {
       codexFastMode: appState.settings.codexFastMode,
       computerUseEnabled: appState.settings.computerUseEnabled,
       jevEnabled: appState.settings.jevEnabled,
+      jevApiUrl: appState.settings.jevApiUrl,
       agentOutsideWorkspaceWriteEnabled:
         appState.settings.agentOutsideWorkspaceWriteEnabled,
       codexDestructiveCommandProtectionEnabled:
@@ -760,6 +761,7 @@ function App() {
       appState.settings.codexFastMode,
       appState.settings.computerUseEnabled,
       appState.settings.jevEnabled,
+      appState.settings.jevApiUrl,
       appState.settings.codexIsolatedHomeEnabled,
       appState.settings.codexPersonality,
     ],
@@ -10019,6 +10021,24 @@ function App() {
                 applyAction({
                   type: 'updateSettings',
                   patch: { jevApiKey: event.target.value.trim() },
+                })
+              }
+            />
+          </label>
+          <label className="settings-field" htmlFor="settings-jev-api-url">
+            <span>{text.jevApiUrlLabel}</span>
+            <input
+              id="settings-jev-api-url"
+              className="control settings-input"
+              type="url"
+              autoComplete="off"
+              spellCheck={false}
+              placeholder={text.jevApiUrlPlaceholder}
+              value={appState.settings.jevApiUrl}
+              onChange={(event) =>
+                applyAction({
+                  type: 'updateSettings',
+                  patch: { jevApiUrl: event.target.value.trim() },
                 })
               }
             />

@@ -350,12 +350,15 @@ describe('default-state helpers', () => {
     const defaults = normalizeAppSettings({})
     assert.equal(defaults.jevEnabled, false)
     assert.equal(defaults.jevApiKey, '')
-    const enabled = normalizeAppSettings({ jevEnabled: true, jevApiKey: ' sk-or-x ' } as never)
+    assert.equal(defaults.jevApiUrl, '')
+    const enabled = normalizeAppSettings({ jevEnabled: true, jevApiKey: ' sk-or-x ', jevApiUrl: ' https://example.test/j ' } as never)
     assert.equal(enabled.jevEnabled, true)
     assert.equal(enabled.jevApiKey, 'sk-or-x')
-    const garbage = normalizeAppSettings({ jevEnabled: 'yes', jevApiKey: 42 } as never)
+    assert.equal(enabled.jevApiUrl, 'https://example.test/j')
+    const garbage = normalizeAppSettings({ jevEnabled: 'yes', jevApiKey: 42, jevApiUrl: 42 } as never)
     assert.equal(garbage.jevEnabled, false)
     assert.equal(garbage.jevApiKey, '')
+    assert.equal(garbage.jevApiUrl, '')
   })
 
   it('normalizes Codex agent personality and Fast mode settings', () => {

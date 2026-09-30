@@ -2905,6 +2905,7 @@ for (const theme of ['dark', 'light'] as const) {
     const toggle = section.locator('#settings-jev-enabled')
     await expect(toggle).not.toBeChecked()
     await expect(section.locator('#settings-jev-api-key')).toHaveAttribute('type', 'password')
+    await expect(section.locator('#settings-jev-api-url')).toBeVisible()
     await expect(section.locator('.settings-hover-note')).toBeHidden()
     await expect(section).toHaveScreenshot(`jev-settings-${theme}.png`, {
       animations: 'disabled',

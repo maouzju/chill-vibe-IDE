@@ -850,6 +850,8 @@ export const appSettingsSchema = z.object({
   // JEV 快速判断 MCP（docs/specs/jev-mcp-toggle）。默认关；key 只在服务端读，不进 ChatRequest。
   jevEnabled: z.boolean().default(false),
   jevApiKey: z.string().default(''),
+  // 留空时按 key 前缀自动选择 JEV 服务地址。
+  jevApiUrl: z.string().default(''),
   requestModels: requestModelSettingsSchema.default({
     codex: DEFAULT_CODEX_MODEL,
     claude: DEFAULT_CLAUDE_MODEL,
@@ -1140,6 +1142,7 @@ export const appStateSchema = z.object({
     computerUseEnabled: false,
     jevEnabled: false,
     jevApiKey: '',
+    jevApiUrl: '',
     requestModels: {
       codex: DEFAULT_CODEX_MODEL,
       claude: DEFAULT_CLAUDE_MODEL,
@@ -1367,6 +1370,7 @@ export const chatRequestSchema = z.object({
   computerUseEnabled: z.boolean().optional(),
   // 同上：只在设置打开时带，服务端只认 === true；key 由服务端从 state 读取。
   jevEnabled: z.boolean().optional(),
+  jevApiUrl: z.string().optional(),
   personality: codexPersonalitySchema.optional(),
   serviceTier: z.literal('priority').optional(),
   // 这一回合带超管权限（card.adminAccess === true），是唯一会把工作区 MCP

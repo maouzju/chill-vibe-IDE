@@ -356,6 +356,7 @@ export type IdeAction =
           | 'computerUseEnabled'
           | 'jevEnabled'
           | 'jevApiKey'
+          | 'jevApiUrl'
           | 'gitAgentModel'
           | 'providerProfiles'
         >

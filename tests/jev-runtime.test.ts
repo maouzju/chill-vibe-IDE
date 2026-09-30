@@ -74,6 +74,20 @@ test('createJevRuntime wires the same MCP into both CLIs without putting the key
   })
 })
 
+test('createJevRuntime forwards the optional JEV request URL without putting the key on argv', async () => {
+  await withKeyDir(async (keyFilePath) => {
+    const runtime = await createJevRuntime(createRequest({ jevEnabled: true, jevApiUrl: 'https://jev.example.test/v1/systemone' }), {
+      loadApiKey: async () => 'ts-key',
+      keyFilePath,
+    })
+    assert.ok(runtime)
+    const argv = runtime.codexRuntimeArgs.join(' ')
+    assert.ok(argv.includes('CHILL_VIBE_JEV_URL'))
+    assert.ok(argv.includes('https://jev.example.test/v1/systemone'))
+    assert.ok(!argv.includes('ts-key'))
+  })
+})
+
 test('buildClaudeArgs carries the JEV server alongside computer use in one --mcp-config', async () => {
   await withKeyDir(async (keyFilePath) => {
     const runtime = await createJevRuntime(createRequest({ jevEnabled: true }), {

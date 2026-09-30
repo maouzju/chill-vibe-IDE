@@ -623,6 +623,7 @@ export const createDefaultSettings = (language: AppLanguage = defaultAppLanguage
   computerUseEnabled: false,
   jevEnabled: false,
   jevApiKey: '',
+  jevApiUrl: '',
   gitAgentModel: DEFAULT_GIT_AGENT_MODEL,
   requestModels: {
     codex: DEFAULT_CODEX_MODEL,
@@ -850,6 +851,7 @@ export const normalizeAppSettings = (settings?: Partial<AppSettings> | null): Ap
         : defaults.computerUseEnabled,
     jevEnabled: typeof settings?.jevEnabled === 'boolean' ? settings.jevEnabled : defaults.jevEnabled,
     jevApiKey: typeof settings?.jevApiKey === 'string' ? settings.jevApiKey.trim() : defaults.jevApiKey,
+    jevApiUrl: typeof settings?.jevApiUrl === 'string' ? settings.jevApiUrl.trim() : defaults.jevApiUrl,
     agentOutsideWorkspaceWriteEnabled:
       typeof settings?.agentOutsideWorkspaceWriteEnabled === 'boolean'
         ? settings.agentOutsideWorkspaceWriteEnabled

@@ -156,6 +156,8 @@ type LocaleText = {
   jevApiKeyLabel: string
   jevApiKeyPlaceholder: string
   jevApiKeyMissing: string
+  jevApiUrlLabel: string
+  jevApiUrlPlaceholder: string
   codexManagementPolicyTitle: string
   codexManagementPolicyDetecting: string
   codexManagementPolicyRefresh: string
@@ -687,6 +689,8 @@ const localeTextByLanguage: Record<AppLanguage, LocaleText> = {
     jevApiKeyLabel: 'JEV API key',
     jevApiKeyPlaceholder: 'OpenRouter（sk-or- 开头）或 TypeSafe 的 key',
     jevApiKeyMissing: '还没填 key：开关打开也不会生效。',
+    jevApiUrlLabel: 'JEV 请求地址（可选）',
+    jevApiUrlPlaceholder: '留空自动选择；也可填兼容 JEV 的完整接口地址',
     agentOutsideWorkspaceWriteLabel: '允许 Agent 修改项目文件夹外的文件',
     agentOutsideWorkspaceWriteNote:
       '这是 Chill Vibe 的权限请求上限。Codex 会在运行前自动读取并服从本机或组织管理策略，直接选择允许的最宽权限，不修改或绕过系统策略。关闭后只写当前项目：Codex 使用工作区沙箱；Claude 在支持的平台使用严格沙箱，原生 Windows 用 IDE 路径防护兜底（不是完整 OS 沙箱）。项目外 Skill、配置和附件仍可读取。',
@@ -1257,6 +1261,8 @@ const localeTextByLanguage: Record<AppLanguage, LocaleText> = {
     jevApiKeyLabel: 'JEV API key',
     jevApiKeyPlaceholder: 'OpenRouter (starts with sk-or-) or TypeSafe key',
     jevApiKeyMissing: 'No key yet: the toggle has no effect until you add one.',
+    jevApiUrlLabel: 'JEV request URL (optional)',
+    jevApiUrlPlaceholder: 'Leave empty for auto-detection, or enter a JEV-compatible endpoint',
     agentOutsideWorkspaceWriteLabel: 'Allow Agent writes outside the project folder',
     agentOutsideWorkspaceWriteNote:
       'This is Chill Vibe’s requested access ceiling. Before each run, Codex automatically reads and follows machine or organization policy, selecting the widest permitted access without modifying or bypassing system policy. Turn it off to keep writes in the current project: Codex uses workspace-write; Claude uses strict sandboxing where supported and IDE path guards on native Windows (not a complete OS sandbox). Skills, configuration, and attachments remain readable.',

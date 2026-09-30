@@ -58,6 +58,8 @@ describe('Agent chat request settings', () => {
     }
     assert.equal(buildCodexChatRequestOverrides('claude', settings).jevEnabled, true)
     assert.equal(buildCodexChatRequestOverrides('codex', settings).jevEnabled, true)
+    const withUrl = { ...settings, jevApiUrl: 'https://jev.example.test/v1/systemone' }
+    assert.equal(buildCodexChatRequestOverrides('claude', withUrl).jevApiUrl, 'https://jev.example.test/v1/systemone')
     assert.equal('jevEnabled' in buildCodexChatRequestOverrides('claude', { ...settings, jevEnabled: false }), false)
   })
 

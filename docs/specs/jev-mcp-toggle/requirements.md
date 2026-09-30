@@ -15,3 +15,4 @@
 5. R5 API key 不出现在任何进程命令行 / `--mcp-config` JSON / 请求体里：落在应用数据目录的 key 文件，MCP 通过 env 拿路径读取。
 6. R6 运行时一切失败 fail-open：MCP 起不来或 JEV 报错只影响这个工具的返回，不影响正常聊天。
 7. R7 切换开关后下一条消息生效（Claude 常驻进程签名要带开关状态）。
+8. R8 设置可填写完整 JEV 请求地址（默认空，恢复时 trim）：留空按 key 自动选择，填写时覆盖 endpoint URL 且不自动拼接路径；地址随 `ChatRequest` 传到 Claude/Codex 两条链路，并通过 MCP env 使用；旧配置保持兼容，密钥仍不进入请求或命令行。

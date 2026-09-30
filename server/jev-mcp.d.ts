@@ -22,7 +22,7 @@ export type JevAskResult = {
   note?: string
 }
 
-export type JevEndpoint = { provider: 'openrouter' | 'typesafe'; url: string; model: string }
+export type JevEndpoint = { provider: 'openrouter' | 'typesafe' | 'custom'; url: string; model: string }
 
 export declare const jevMcpToolDefinitions: Array<{
   name: string
@@ -30,7 +30,7 @@ export declare const jevMcpToolDefinitions: Array<{
   inputSchema: Record<string, unknown>
 }>
 
-export declare const resolveJevEndpoint: (apiKey: string) => JevEndpoint
+export declare const resolveJevEndpoint: (apiKey: string, configuredUrl?: string) => JevEndpoint
 
 export declare const compactJevAnswer: (answer: Record<string, unknown>, threshold?: number) => unknown
 
@@ -48,3 +48,4 @@ export declare const runJevAsk: (
     fetchImpl?: (url: string, init: any) => Promise<Response>
   },
 ) => Promise<JevAskResult>
+export declare const jevUrlEnvKey: string;

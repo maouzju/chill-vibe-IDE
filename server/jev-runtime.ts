@@ -5,7 +5,7 @@ import { fileURLToPath } from 'node:url'
 import type { AppLanguage, ChatRequest, Provider } from '../shared/schema.js'
 import { getAppDataDir } from './app-paths.js'
 import type { WorkspaceAdminClaudeMcpConfig } from './automation-board-runtime.js'
-import { jevKeyFileEnvKey, jevRootEnvKey } from './jev-mcp.js'
+import { jevKeyFileEnvKey, jevRootEnvKey, jevUrlEnvKey } from './jev-mcp.js'
 import { loadState } from './state-store.js'
 
 // JEV 快速判断 MCP 的注入（docs/specs/jev-mcp-toggle），形态照 computer-use-runtime（pitfall #383）：
@@ -89,6 +89,7 @@ export const createJevRuntime = async (
   const env: Record<string, string> = {
     [jevKeyFileEnvKey]: keyFilePath,
     [jevRootEnvKey]: request.workspacePath,
+    ...(request.jevApiUrl?.trim() ? { [jevUrlEnvKey]: request.jevApiUrl.trim() } : {}),
   }
   if (process.versions.electron) {
     env.ELECTRON_RUN_AS_NODE = '1'

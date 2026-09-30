@@ -38,7 +38,7 @@ test('compactJevAnswer keeps confident answers tiny and flags unsure ones', () =
   )
 })
 
-test('resolveJevEndpoint routes OpenRouter keys to the decisions endpoint and others to TypeSafe', () => {
+test('resolveJevEndpoint routes keys by default and accepts a custom request URL', () => {
   assert.deepEqual(resolveJevEndpoint('sk-or-v1-abc'), {
     provider: 'openrouter',
     url: 'https://openrouter.ai/api/alpha/decisions',
@@ -49,6 +49,8 @@ test('resolveJevEndpoint routes OpenRouter keys to the decisions endpoint and ot
     url: 'https://api.typesafe.ai/v1/systemone',
     model: 'jev-latest',
   })
+  assert.equal(resolveJevEndpoint('ts-abc', 'https://jev.example.test/v1/systemone').url, 'https://jev.example.test/v1/systemone')
+  assert.equal(resolveJevEndpoint('ts-abc', 'not a url').url, 'https://api.typesafe.ai/v1/systemone')
 })
 
 test('collectJevItems walks directories, skips vendored folders and filters by extension', async () => {

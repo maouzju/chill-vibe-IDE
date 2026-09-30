@@ -4154,6 +4154,8 @@ export const buildClaudeKeepaliveSignature = (
     // 切换浏览器控制开关必须换进程：旧进程的 argv 里没有（或多了）chill_vibe_browser MCP。
     computerUse: request.computerUseEnabled === true,
     jev: request.jevEnabled === true,
+    // JEV 的地址会进入 MCP 环境；不签它会让 Claude 常驻进程继续复用旧地址。
+    jevApiUrl: request.jevEnabled === true ? request.jevApiUrl?.trim() ?? '' : '',
     language: normalizeLanguage(request.language),
     systemPrompt: request.systemPrompt,
     modelPromptRules: request.modelPromptRules,

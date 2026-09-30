@@ -51,6 +51,28 @@ test('Claude keepalive signature changes with runtime environment and attachment
   )
 })
 
+test('keepalive signature changes when the JEV request URL changes', () => {
+  const runtime = { args: [], env: {} }
+  const first = buildClaudeKeepaliveSignature(
+    { ...request, jevEnabled: true, jevApiUrl: 'https://one.example/jev' } as ChatRequest,
+    true,
+    runtime,
+  )
+  const second = buildClaudeKeepaliveSignature(
+    { ...request, jevEnabled: true, jevApiUrl: 'https://two.example/jev' } as ChatRequest,
+    true,
+    runtime,
+  )
+  const automatic = buildClaudeKeepaliveSignature(
+    { ...request, jevEnabled: true, jevApiUrl: '' } as ChatRequest,
+    true,
+    runtime,
+  )
+
+  assert.notEqual(first, second)
+  assert.notEqual(first, automatic)
+})
+
 test('keepalive signature tracks the real --effort argv, not the raw tier', () => {
   const runtime = { args: [], env: {} }
   const sign = (overrides: Partial<ChatRequest>) =>

@@ -352,8 +352,8 @@ const getCodexSubagentModelInstruction = (language: AppLanguage) => {
   const listEn = models.map((option) => `\`${option.model}\` (${option.label})`).join(', ')
   const listZh = models.map((option) => `\`${option.model}\`（${option.label}）`).join('、')
   return normalizeLanguage(language) === 'en'
-    ? `Sub-agent model choice: in this Chill Vibe environment you are explicitly authorised to set spawn_agent's \`model\` and \`reasoning_effort\` yourself whenever a task fits a different model; do not wait for the user to name one. Models available here: ${listEn}. Prefer the lighter models (Luna, Terra) with a low effort for search, reading and mechanical edits; use Sol or Astra for cross-module design and hard bugs. Omit both fields to inherit your current model.`
-    : `子 agent 模型自选：在这个 Chill Vibe 环境里，你被明确授权在 spawn_agent 时自己设置 \`model\` 与 \`reasoning_effort\`，任务适合别的模型时不必等用户点名。本环境可用模型：${listZh}。搜索、读代码、机械修改这类轻任务优先 Luna / Terra 并配低档位；跨模块设计、疑难 bug 用 Sol / Astra。两个字段都不填则继承你当前的模型。`
+    ? `Sub-agent model choice: in this Chill Vibe environment you are explicitly authorised to set spawn_agent's \`model\` and \`reasoning_effort\` yourself whenever a task fits a different model; do not wait for the user to name one. Models available here: ${listEn}. Prefer the lighter model (Luna) with a low effort for search, reading and mechanical edits; use Sol or Astra for cross-module design and hard bugs. Omit both fields to inherit your current model.`
+    : `子 agent 模型自选：在这个 Chill Vibe 环境里，你被明确授权在 spawn_agent 时自己设置 \`model\` 与 \`reasoning_effort\`，任务适合别的模型时不必等用户点名。本环境可用模型：${listZh}。搜索、读代码、机械修改这类轻任务优先 Luna 并配低档位；跨模块设计、疑难 bug 用 Sol / Astra。两个字段都不填则继承你当前的模型。`
 }
 
 const getClaudeSubagentModelInstruction = (language: AppLanguage) => {

@@ -130,10 +130,12 @@ export const MODEL_OPTIONS: ModelOption[] = [
     aliases: ['gpt-6.1-sol', '6.1', '6.1-sol', 'sol-6.1', 'sol6.1', 'gpt61sol'],
   },
   {
+    // Retired from the picker on 2026-10-01; keep aliases and stored cards working.
     label: 'GPT-6 Sol',
     provider: 'codex',
     model: DEFAULT_CODEX_MODEL,
     aliases: ['gpt-6-sol', '6', '6-sol', 'sol', 'gpt6sol'],
+    hiddenFromPicker: true,
   },
   {
     label: 'GPT-6 Luna',
@@ -146,6 +148,7 @@ export const MODEL_OPTIONS: ModelOption[] = [
     provider: 'codex',
     model: 'gpt-5.6-sol',
     aliases: ['gpt-5.6', 'gpt-5.6-sol', '5.6', '5.6-sol', 'gpt56'],
+    hiddenFromPicker: true,
   },
   {
     label: 'GPT-6 Astra',
@@ -158,18 +161,21 @@ export const MODEL_OPTIONS: ModelOption[] = [
     provider: 'codex',
     model: 'gpt-5.6-terra',
     aliases: ['gpt-5.6-terra', '5.6-terra', 'terra'],
+    hiddenFromPicker: true,
   },
   {
     label: 'GPT-5.6 Luna',
     provider: 'codex',
     model: 'gpt-5.6-luna',
     aliases: ['gpt-5.6-luna', '5.6-luna', 'luna'],
+    hiddenFromPicker: true,
   },
   {
     label: 'GPT-5.5',
     provider: 'codex',
     model: 'gpt-5.5',
     aliases: ['gpt-5.5', '5.5', 'gpt55'],
+    hiddenFromPicker: true,
   },
   {
     // Mythos-class tier above Opus; never the default. Bare "fable" follows the

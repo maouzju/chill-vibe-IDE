@@ -6120,9 +6120,13 @@ test('codex exec instructions authorise the agent to pick spawn_agent models fro
     assert.match(instructions, /spawn_agent/)
     assert.match(instructions, /reasoning_effort/)
     // 目录里 Codex 可见的模型都要列出来，agent 才知道自己能选什么。
-    for (const model of ['gpt-6.1-sol', 'gpt-6-astra', 'gpt-5.6-sol', 'gpt-5.6-terra', 'gpt-5.6-luna', 'gpt-5.5']) {
+    for (const model of ['gpt-6.1-sol', 'gpt-6-astra', 'gpt-6-luna']) {
       assert.match(instructions, new RegExp(model.replace(/\./g, '[.]')), `${language} must list ${model}`)
     }
+    for (const retiredModel of ['gpt-6-sol', 'gpt-5.6-sol', 'gpt-5.6-terra', 'gpt-5.6-luna', 'gpt-5.5']) {
+      assert.ok(!instructions.includes(`\`${retiredModel}\``), `${language} must not recommend ${retiredModel}`)
+    }
+    assert.doesNotMatch(instructions, /Terra/)
     // 工具卡与"用默认模型"占位项绝不能混进去。
     assert.doesNotMatch(instructions, /__git_tool__/)
     assert.match(instructions, language === 'en' ? /inherit/i : /继承/)
@@ -6137,7 +6141,7 @@ test('codex app-server base instructions carry the same spawn_agent model choice
   const instructions = build!(createRequest({ provider: 'codex', language: 'en', systemPrompt: 'Base.' }))
 
   assert.match(instructions, /spawn_agent/)
-  assert.match(instructions, /gpt-5\.6-luna/)
+  assert.match(instructions, /gpt-6-luna/)
   // 顺序：既有 ask-user 指令在前，shell 安全指令仍在最后。
   assert.ok(instructions.indexOf('ask-user-question') < instructions.indexOf('spawn_agent'))
   assert.ok(instructions.indexOf('spawn_agent') < instructions.indexOf('Windows shell safety'))

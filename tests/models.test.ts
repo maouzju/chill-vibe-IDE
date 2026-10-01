@@ -144,13 +144,18 @@ describe('model helpers', () => {
     assert.equal(DEFAULT_CODEX_MODEL, 'gpt-6-sol')
   })
 
-  it('keeps tool cards out of the ordinary model picker', () => {
+  it('keeps retired Codex models out of the ordinary model picker', () => {
     assert.deepEqual(
       getModelOptions('codex')
         .filter(isModelPickerOptionVisible)
         .map((option) => option.model),
-      ['', 'gpt-6.1-sol', DEFAULT_CODEX_MODEL, 'gpt-6-luna', 'gpt-5.6-sol', 'gpt-6-astra', 'gpt-5.6-terra', 'gpt-5.6-luna', 'gpt-5.5'],
+      ['', 'gpt-6.1-sol', 'gpt-6-luna', 'gpt-6-astra'],
     )
+    for (const model of ['gpt-6-sol', 'gpt-5.6-sol', 'gpt-5.6-terra', 'gpt-5.6-luna', 'gpt-5.5']) {
+      const option = MODEL_OPTIONS.find((candidate) => candidate.model === model)
+      assert.ok(option, `${model} must remain in the catalog for legacy compatibility`)
+      assert.equal(isModelPickerOptionVisible(option), false, `${model} must stay out of the picker`)
+    }
   })
 
   // Astra 与 6.1 Sol 共享「不收 none / 不收 personality」的性质，判定必须来自同一个谓词。
@@ -168,6 +173,11 @@ describe('model helpers', () => {
   it('keeps retired models out of the brainstorm request model picker too', () => {
     const visible = MODEL_OPTIONS.filter(isBrainstormRequestModelVisible).map((option) => option.model)
 
+    for (const model of ['gpt-6-sol', 'gpt-5.6-sol', 'gpt-5.6-terra', 'gpt-5.6-luna', 'gpt-5.5']) {
+      assert.equal(visible.includes(model), false, `${model} must stay out of the brainstorm picker`)
+      assert.equal(normalizeStoredModel('codex', model), model, `${model} stored cards must remain unchanged`)
+      assert.equal(resolveSlashModel('codex', model), model, `${model} explicit commands must remain usable`)
+    }
     assert.equal(visible.includes('claude-fable-5'), false)
     assert.equal(visible.includes('claude-sonnet-4-6'), false)
     assert.equal(visible.includes('claude-fable-5-1'), true)

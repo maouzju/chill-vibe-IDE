@@ -29,9 +29,12 @@ test('the selectable model catalog lists visible catalog models with labels and 
   assert.ok(!models.includes(GIT_TOOL_MODEL), 'tool cards are not models')
   assert.ok(!models.includes(''), 'the "use configured default" placeholder is not a model')
   assert.deepEqual(
-    catalog.find((entry) => entry.model === 'gpt-5.6-luna'),
-    { provider: 'codex', model: 'gpt-5.6-luna', label: 'GPT-5.6 Luna' },
+    catalog.find((entry) => entry.model === 'gpt-6-astra'),
+    { provider: 'codex', model: 'gpt-6-astra', label: 'GPT-6 Astra' },
   )
+  for (const model of ['gpt-6-sol', 'gpt-5.6-sol', 'gpt-5.6-terra', 'gpt-5.6-luna', 'gpt-5.5']) {
+    assert.equal(catalog.some((entry) => entry.model === model), false, `${model} must be retired from the selectable catalog`)
+  }
   assert.ok(models.includes('claude-haiku-4-5-20251001'))
   assert.ok(!models.includes('claude-sonnet-4-6'), 'models hidden from the picker stay hidden')
 })
@@ -52,6 +55,15 @@ test('the configured default of each provider is always selectable, even when hi
   assert.deepEqual(
     custom.find((entry) => entry.model === 'my-relay-model'),
     { provider: 'codex', model: 'my-relay-model', label: 'configured default' },
+  )
+
+  const retiredDefault = listSelectableModelCatalog({
+    ...settings,
+    requestModels: { codex: 'gpt-5.5', claude: 'claude-opus-5' },
+  })
+  assert.deepEqual(
+    retiredDefault.find((entry) => entry.model === 'gpt-5.5'),
+    { provider: 'codex', model: 'gpt-5.5', label: 'GPT-5.5' },
   )
 })
 

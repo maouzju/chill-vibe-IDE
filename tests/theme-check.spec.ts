@@ -9130,3 +9130,38 @@ test('composer shows a file drop target frame and inserts dropped paths in both 
     await expect(textarea).toHaveValue('')
   }
 })
+
+
+for (const theme of ['dark', 'light'] as const) {
+  for (const width of [1280, 390]) {
+    test(`current model picker excludes retired Codex models in ${theme} at ${width}px`, async ({ page }) => {
+      const state = createMockState()
+      state.settings.theme = theme
+      state.settings.requestModels.codex = 'gpt-6.1-sol'
+      state.columns[0]!.model = 'gpt-6.1-sol'
+      state.columns[0]!.cards[0]!.model = 'gpt-6.1-sol'
+      await mockAppApis(page, { state })
+      await page.setViewportSize({ width, height: 920 })
+      await page.goto(appUrl)
+
+      const modelSelect = page.locator('.pane-tab-panel.is-active .composer-input-row .model-select').first()
+      await expect(modelSelect).toHaveText('GPT-6.1 Sol')
+      await modelSelect.click()
+      const menu = page.locator('.model-dropdown-menu').first()
+      await expect(menu).toBeVisible()
+      for (const label of ['GPT-6 Sol', 'GPT-5.6 Sol', 'GPT-5.6 Terra', 'GPT-5.6 Luna', 'GPT-5.5']) {
+        await expect(menu.getByRole('option', { name: label, exact: true })).toHaveCount(0)
+      }
+      for (const label of ['GPT-6.1 Sol', 'GPT-6 Luna', 'GPT-6 Astra', 'Fable 5.1', 'Opus 5.5', 'Sonnet 5.5', 'Haiku 4.5']) {
+        await expect(menu.getByRole('option', { name: label, exact: true })).toHaveCount(1)
+      }
+      await expect(menu.getByRole('option', { name: 'GPT-6.1 Sol', exact: true })).toHaveAttribute('aria-selected', 'true')
+      await expect(menu).toHaveScreenshot(`current-model-picker-${theme}-${width}.png`, {
+        animations: 'disabled',
+        caret: 'hide',
+      })
+      await menu.getByRole('option', { name: 'GPT-6 Luna', exact: true }).click()
+      await expect(modelSelect).toHaveText('GPT-6 Luna')
+    })
+  }
+}

@@ -1204,3 +1204,27 @@ test('does not repeat child session launchers for each active agent row', () => 
 
   assert.equal((markup.match(/class="structured-agent-launcher"/g) ?? []).length, 2)
 })
+
+test('spawnAgent inline row does not freeze the call-time pendingInit chip', () => {
+  const data = parseStructuredAgentsMessage({
+    id: 'spawn',
+    role: 'assistant',
+    content: '',
+    createdAt: '2026-10-01T02:43:00.000Z',
+    meta: {
+      kind: 'agents',
+      provider: 'codex',
+      structuredData: JSON.stringify({
+        itemId: 'call_spawn',
+        kind: 'agents',
+        status: 'completed',
+        tool: 'spawnAgent',
+        callStatus: 'completed',
+        agents: [{ threadId: '01a0f558-58fe', nickname: 'Sagan', status: 'pendingInit', message: null }],
+      }),
+    },
+  })!
+  const markup = renderToStaticMarkup(<StructuredAgentsCard language="zh-CN" data={data} />)
+  assert.match(markup, /Sagan/)
+  assert.doesNotMatch(markup, /待启动/)
+})

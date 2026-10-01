@@ -206,14 +206,23 @@ const messageLimit = defaultAutomationBoardItemMessageLimit
 
 const modelPickerOptions = MODEL_OPTIONS.filter((option) => isModelPickerOptionVisible(option))
 
+// Symptom: a saved/default model that was just retired from the picker silently falls back to
+// the first option, so a new board item is sent with the wrong model (2026-10-01 regression).
+// Keep only the current retired catalog value visible; do not restore every retired model to the picker.
+const getModelPickerOptions = (provider: Provider, model: string) => {
+  const selected = MODEL_OPTIONS.find((option) => option.provider === provider && option.model === model)
+  if (!selected || isModelPickerOptionVisible(selected)) return modelPickerOptions
+  return [...modelPickerOptions, selected]
+}
+
 /**
  * 存档里的模型可能已经从选单里下架（或是用户手写的自定义型号），那种 value 交给
  * 原生 select 会静默回落到**第一个** option —— 显示的和实际用的对不上。回落到同
  * provider 的"用默认模型"那一项，至少 CLI 是对的。
  */
-const resolveModelPickerValue = (provider: Provider, model: string) => {
+const resolveModelPickerValue = (provider: Provider, model: string, options = modelPickerOptions) => {
   const value = `${provider}::${model}`
-  return modelPickerOptions.some((option) => `${option.provider}::${option.model}` === value)
+  return options.some((option) => `${option.provider}::${option.model}` === value)
     ? value
     : `${provider}::`
 }
@@ -242,6 +251,7 @@ export const AutomationBoardModelSettings = ({
   showModel?: boolean
 }) => {
   const text = getLocaleText(language)
+  const pickerOptions = getModelPickerOptions(value.provider, value.model)
   const noneUnsupportedModel = value.provider === 'codex' && isCodexNoneEffortUnsupportedModel(value.model)
   const alwaysThinking =
     (value.provider === 'claude' && isClaudeAlwaysThinkingModel(value.model)) ||
@@ -260,7 +270,7 @@ export const AutomationBoardModelSettings = ({
       <label className="automation-board-template-field">
         <span>{text.automationBoardTemplateModelLabel}</span>
         <select
-          value={resolveModelPickerValue(value.provider, value.model)}
+          value={resolveModelPickerValue(value.provider, value.model, pickerOptions)}
           onChange={(event) => {
             const [provider, model] = event.target.value.split('::')
             const nextProvider = (provider as Provider) ?? 'codex'
@@ -277,7 +287,7 @@ export const AutomationBoardModelSettings = ({
             })
           }}
         >
-          {modelPickerOptions.map((option) => (
+          {pickerOptions.map((option) => (
             <option
               key={`${option.provider}::${option.model}`}
               value={`${option.provider}::${option.model}`}
@@ -1760,7 +1770,11 @@ const AutomationBoardCardView = (props: AutomationBoardCardProps) => {
                   <select
                     className="automation-board-compose-model"
                     aria-label={text.automationBoardTemplateModelLabel}
-                    value={resolveModelPickerValue(composeDefaults.provider, composeDefaults.model)}
+                    value={resolveModelPickerValue(
+                      composeDefaults.provider,
+                      composeDefaults.model,
+                      getModelPickerOptions(composeDefaults.provider, composeDefaults.model),
+                    )}
                     onChange={(event) => {
                       const [provider, model] = event.target.value.split('::')
                       const nextProvider = (provider as Provider) ?? props.defaultProvider
@@ -1775,7 +1789,7 @@ const AutomationBoardCardView = (props: AutomationBoardCardProps) => {
                       })
                     }}
                   >
-                    {modelPickerOptions.map((option) => (
+                    {getModelPickerOptions(composeDefaults.provider, composeDefaults.model).map((option) => (
                       <option
                         key={`${option.provider}::${option.model}`}
                         value={`${option.provider}::${option.model}`}

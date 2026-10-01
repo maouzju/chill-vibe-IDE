@@ -589,3 +589,75 @@ test('spawnAgent collab call supplies the child model when thread/started never 
   const update = later.handleNotification(spawn)
   assert.equal(update.activity?.agents[0]?.model, 'gpt-6-sol')
 })
+
+// CLI 0.156.1 实测：子线程不发 thread/started、也不发 subAgentActivity，只有父线程的
+// collabAgentToolCall(spawnAgent) + 子线程自己的 turn/thread 通知。
+const spawnCompleted = (receiver = childThreadId, fieldStyle: 'camel' | 'snake' = 'camel') => ({
+  method: 'item/completed',
+  params: {
+    threadId: rootThreadId,
+    item: {
+      type: 'collabAgentToolCall',
+      id: 'call-spawn',
+      tool: 'spawnAgent',
+      status: 'completed',
+      ...(fieldStyle === 'snake'
+        ? { sender_thread_id: rootThreadId, receiver_thread_ids: [receiver] }
+        : { senderThreadId: rootThreadId, receiverThreadIds: [receiver] }),
+      model: 'gpt-6.1-sol',
+      reasoningEffort: 'low',
+      agentsStates: { [receiver]: { status: 'pendingInit', message: null } },
+    },
+  },
+})
+const childTurnCompleted = (threadId = childThreadId) => ({
+  method: 'turn/completed',
+  params: { threadId, turn: { id: 't', status: 'completed' } },
+})
+
+test('registers a sub-agent from the spawnAgent tool call when no thread/started arrives', () => {
+  const tracker = createCodexAgentStatusTracker({ rootThreadId })
+  const update = tracker.handleNotification(spawnCompleted())
+  assert.equal(update.activity?.agents.length, 1)
+  assert.equal(update.activity?.agents[0]?.threadId, childThreadId)
+  assert.equal(update.activity?.agents[0]?.model, 'gpt-6.1-sol')
+  assert.equal(tracker.hasRunningAgents(), true)
+
+  const done = tracker.handleNotification(childTurnCompleted())
+  assert.equal(done.activity?.agents.length, 0)
+  assert.equal(tracker.hasRunningAgents(), false)
+})
+
+test('a sub-agent that finished before the spawn item arrived is not stuck running', () => {
+  const tracker = createCodexAgentStatusTracker({ rootThreadId })
+  tracker.handleNotification(childTurnCompleted())
+  const update = tracker.handleNotification(spawnCompleted())
+  assert.equal(tracker.hasRunningAgents(), false)
+  assert.equal(update.activity?.agents.length ?? 0, 0)
+})
+test('registers a snake_case spawnAgent payload from the compatibility parser', () => {
+  const tracker = createCodexAgentStatusTracker({ rootThreadId })
+  const update = tracker.handleNotification(spawnCompleted(childThreadId, 'snake'))
+  assert.equal(update.activity?.agents[0]?.threadId, childThreadId)
+  assert.equal(tracker.hasRunningAgents(), true)
+})
+
+test('replays an early completed child status even when thread/started arrives before spawn', () => {
+  const tracker = createCodexAgentStatusTracker({ rootThreadId })
+  tracker.handleNotification(childTurnCompleted())
+  tracker.handleNotification(childStarted())
+  const update = tracker.handleNotification(spawnCompleted())
+  assert.equal(tracker.hasRunningAgents(), false)
+  assert.equal(update.activity?.agents.length ?? 0, 0)
+})
+
+test('replays an early idle child status as settled when spawn arrives later', () => {
+  const tracker = createCodexAgentStatusTracker({ rootThreadId })
+  tracker.handleNotification({
+    method: 'thread/status/changed',
+    params: { threadId: childThreadId, status: { type: 'idle' } },
+  })
+  const update = tracker.handleNotification(spawnCompleted())
+  assert.equal(tracker.hasRunningAgents(), false)
+  assert.equal(update.activity?.agents.length ?? 0, 0)
+})

@@ -6023,6 +6023,8 @@ for (const theme of ['dark', 'light'] as const) {
   test(`running sub-agents dock to the card bottom in ${theme} theme`, async ({ page }) => {
     const state = createCodexSubAgentStatusState(theme)
     const card = state.columns[0]!.cards[0]!
+    // Root is idle while children remain active: exercise the dedicated yellow running-state border.
+    card.status = 'idle'
     card.messages = [
       { id: 'dock-user-1', role: 'user', content: 'Review the docs.', createdAt: '2026-07-23T07:59:00.000Z' },
       ...card.messages,
@@ -6041,6 +6043,7 @@ for (const theme of ['dark', 'light'] as const) {
     const dock = cardShell.locator('.subagent-dock')
     await expect(page.locator('html')).toHaveAttribute('data-theme', theme)
     await expect(dock).toHaveCount(1)
+    await expect(cardShell).toHaveClass(/is-subagents-running/)
     await expect(dock.locator('.structured-agent-status-entry')).toHaveCount(2)
     await expect(cardShell.locator('.message-list .structured-agents-card')).toHaveCount(0)
     const dockBox = await dock.boundingBox()

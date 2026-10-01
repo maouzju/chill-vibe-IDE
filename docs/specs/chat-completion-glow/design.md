@@ -9,6 +9,7 @@ The completion glow is its own runtime-only state, `completionGlow`, decoupled f
 - Clicking, pointer interaction, keyboard focus, or input inside the card clears both `unread` and `completionGlow` (the mark-read path now patches both), removing the glow.
 - Visible-pane auto-read still clears only `unread` (the dot), not `completionGlow`. Being on-screen no longer silently dismisses the glow; only a real interaction does.
 - Streaming cards keep the streaming border animation and never show the completion glow at the same time (status-class precedence: streaming > error > completion glow).
+- When the root card is idle but the latest dock snapshot still contains running children, the card uses `is-subagents-running` instead of `is-complete-unread`. This keeps a quiet yellow running affordance without animation and prevents a completion glow from claiming the whole turn is finished.
 - Stopped/errored streams never show the success glow: `finishStoppedStream` explicitly clears `completionGlow`, and the error path keeps the error treatment.
 
 `completionGlow` is intentionally not persisted: it is omitted from `normalizePersistedChatCard`, so it never reaches `state.json` and a restart never resurrects a stale glow. Old saved state stays compatible (the field is optional; absent means no glow). No new persisted schema field is added.

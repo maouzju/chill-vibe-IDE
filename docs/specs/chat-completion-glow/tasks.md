@@ -17,3 +17,4 @@
 - [x] Clear both `unread` and `completionGlow` on user interaction; keep visible-pane auto-read clearing only `unread`.
 - [x] Add `completionGlow` to the `updateCard` action patch whitelist so tsc accepts the patches.
 - [x] Red-then-green via the SSR glow test; rerun state/regression tests and `pnpm test:quality`.
+- [x] Keep the idle-card/sub-agent-running state ahead of completion glow and add light/dark theme coverage for its static border.

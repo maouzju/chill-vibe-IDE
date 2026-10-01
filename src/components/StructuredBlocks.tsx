@@ -583,7 +583,9 @@ export const StructuredAgentsCard = ({
               <div key={agent.threadId} className={`structured-agent-row is-${agent.status}`}>
                 <div className="structured-agent-main">
                   <span className="structured-agent-name">{agentName}</span>
-                  <span className="structured-agent-status">{statusLabel}</span>
+                  {tool === 'spawnAgent' && agent.status === 'pendingInit' ? null : (
+                    <span className="structured-agent-status">{statusLabel}</span>
+                  )}
                   {agent.message ? (
                     <span className="structured-agent-message">{truncateStructuredInlineText(agent.message, 96)}</span>
                   ) : null}

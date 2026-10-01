@@ -29,6 +29,22 @@ const readString = (record: JsonRecord | null | undefined, key: string) => {
   return typeof value === 'string' && value.trim().length > 0 ? value.trim() : undefined
 }
 
+const readStringAny = (record: JsonRecord | null | undefined, keys: readonly string[]) => {
+  for (const key of keys) {
+    const value = readString(record, key)
+    if (value) return value
+  }
+  return undefined
+}
+
+const readArrayAny = (record: JsonRecord | null | undefined, keys: readonly string[]) => {
+  for (const key of keys) {
+    const value = record?.[key]
+    if (Array.isArray(value)) return value
+  }
+  return []
+}
+
 const readStringPreserveWhitespace = (record: JsonRecord | null | undefined, key: string) => {
   const value = record?.[key]
   return typeof value === 'string' ? value : undefined
@@ -185,6 +201,7 @@ export const createCodexAgentStatusTracker = ({
   const order: string[] = []
   const agents = new Map<string, TrackedAgent>()
   const spawnModels = new Map<string, { model?: string; reasoningEffort?: string }>()
+  const earlyChildStatus = new Map<string, StreamAgentStatus>()
 
   const ensureAgent = (
     threadId: string,
@@ -331,6 +348,8 @@ export const createCodexAgentStatusTracker = ({
       }
 
       const status = readRecord(thread, 'status')
+      const early = earlyChildStatus.get(threadId)
+      // 子线程的终态可能先于 thread/started 到达；不要让初始 active 元数据把它重新标成 running。
       ensureAgent(threadId, {
         parentThreadId,
         nickname: readString(thread, 'agentNickname'),
@@ -339,8 +358,9 @@ export const createCodexAgentStatusTracker = ({
         // 是子 agent 实际模型的唯一权威来源（SPEC subagent-model-badge）。
         model: readString(thread, 'model'),
         reasoningEffort: readString(thread, 'reasoningEffort'),
-        status: status ? mapThreadStatus(status) : 'pendingInit',
+        status: early ?? (status ? mapThreadStatus(status) : 'pendingInit'),
       })
+      earlyChildStatus.delete(threadId)
       return settleUpdate(true, true)
     }
 
@@ -354,18 +374,36 @@ export const createCodexAgentStatusTracker = ({
     // 为什么不删 thread/started 那路：它反映继承父模型的情况，两路都是权威来源，谁先到都记下。
     if (item && itemType === 'collabAgentToolCall' && readString(item, 'tool') === 'spawnAgent') {
       const model = readString(item, 'model')
-      const reasoningEffort = readString(item, 'reasoningEffort')
-      const receivers = Array.isArray(item.receiverThreadIds) ? item.receiverThreadIds : []
+      const reasoningEffort = readStringAny(item, ['reasoningEffort', 'reasoning_effort'])
+      const receivers = readArrayAny(item, ['receiverThreadIds', 'receiver_thread_ids'])
       let changed = false
-      if (model || reasoningEffort) {
-        for (const receiver of receivers) {
-          if (typeof receiver !== 'string' || !receiver) continue
-          spawnModels.set(receiver, { model, reasoningEffort })
-          const agent = agents.get(receiver)
-          if (agent) {
+      // 症状：Codex 子 agent 跑着，沉底面板却从不出现，只剩派生卡永远写"待启动"（2026-10-01）。
+      // 根因：CLI 0.156.1 实测不再给子线程发 thread/started，也不发 subAgentActivity，只有父线程的
+      //   collabAgentToolCall(spawnAgent, receiverThreadIds / receiver_thread_ids) + 子线程自己的 turn/thread 通知，
+      //   旧代码只靠前两者建表，子 agent 永远进不了 agents，快照永远为空。
+      // 为什么不删旧路径：老 CLI 仍走 thread/started，两路并存，谁先到都登记。
+      // 子线程通知可能先于本条到达（那时还不在表里），所以用 earlyChildStatus 回放终态，避免卡成 running。
+      const registerFromSpawn = readString(item, 'status') === 'completed'
+      const senderThreadId = readStringAny(item, ['senderThreadId', 'sender_thread_id']) ?? sourceThreadId
+      for (const receiver of receivers) {
+        if (typeof receiver !== 'string' || !receiver) continue
+        if (model || reasoningEffort) spawnModels.set(receiver, { model, reasoningEffort })
+        const known = agents.get(receiver)
+        if (known) {
+          if (model || reasoningEffort) {
             ensureAgent(receiver, { model, reasoningEffort })
             changed = true
           }
+        } else if (registerFromSpawn) {
+          const early = earlyChildStatus.get(receiver)
+          ensureAgent(receiver, {
+            model,
+            reasoningEffort,
+            ...(senderThreadId ? { parentThreadId: senderThreadId } : {}),
+            ...(early ? { status: early } : {}),
+          })
+          earlyChildStatus.delete(receiver)
+          changed = true
         }
       }
       if (changed) {
@@ -439,6 +477,17 @@ export const createCodexAgentStatusTracker = ({
     const isNonRootThread = Boolean(sourceThreadId && rootThreadId && sourceThreadId !== rootThreadId)
     const trackedAgent = sourceThreadId ? agents.get(sourceThreadId) : undefined
     if (!trackedAgent) {
+      if (isNonRootThread && sourceThreadId) {
+        if (method === 'turn/completed') {
+          earlyChildStatus.set(sourceThreadId, mapTurnStatus(readRecord(params, 'turn')))
+        } else if (method === 'thread/status/changed') {
+          earlyChildStatus.set(sourceThreadId, mapThreadStatus(readRecord(params, 'status')))
+        } else if (method === 'thread/closed') {
+          earlyChildStatus.set(sourceThreadId, 'shutdown')
+        } else if (method === 'turn/started') {
+          earlyChildStatus.set(sourceThreadId, 'running')
+        }
+      }
       return { handled: isNonRootThread }
     }
     const agent = trackedAgent

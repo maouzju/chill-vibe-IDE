@@ -80,3 +80,12 @@ Verification: 18/18 `tests/codex-agent-status.test.ts` (3 new cases red before t
 - [x] Keep the normal deferred-child and keepalive paths unchanged; this cleanup only applies after the transport itself has ended.
 
 Verification: the new provider regression failed before the fix and passed afterward; the focused provider-system-prompt file passed 119/119 tests. No new persisted fields or renderer changes were needed.
+
+## Regression fix - Codex 0.156.1 spawnAgent without thread/started (2026-10-01)
+
+- [x] Add red-first tracker coverage for completed `spawnAgent` calls that supply only receiver thread ids.
+- [x] Accept camelCase and snake_case receiver/sender fields and preserve model/reasoning metadata.
+- [x] Cache early child terminal and thread-status events so out-of-order notifications do not leave phantom running children.
+- [x] Run focused tracker/renderer tests and the full Node manifest; document the compatibility path in the design.
+
+Verification: 68 focused tracker/structured-renderer tests and the full 3,162-test Node manifest passed. Theme coverage now exercises the idle-card/sub-agent-running border path in both themes; snapshot review remains part of the release gate.

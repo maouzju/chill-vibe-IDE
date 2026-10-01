@@ -2994,6 +2994,18 @@ body.is-card-dragging .lane-drop-zone-top {
   border-color: var(--stream-border-active);
 }
 
+/* Main turn finished but sub-agents / background workflows still run: keep the
+   streaming (yellow) look, just fainter, and never show the blue "done" halo.
+   Static border only — no animation (pitfall 216). */
+.card-shell.is-subagents-running::after {
+  opacity: 1;
+  border-color: color-mix(in srgb, var(--stream-border) 55%, transparent);
+}
+
+.card-shell.is-subagents-running:focus-within::after {
+  border-color: color-mix(in srgb, var(--stream-border-active) 55%, transparent);
+}
+
 /* Completed: a persistent blue breathing halo until the user interacts with the card */
 .card-shell.is-complete-unread {
   z-index: 1;

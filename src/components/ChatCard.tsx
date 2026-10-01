@@ -4307,12 +4307,20 @@ const ChatCardView = ({
   const highlightedSlashCommand =
     filteredSlashCommands.length > 0 ? filteredSlashCommands[activeSlashIndex] : null
 
+  // 主回合已结束但子代理/后台 Workflow 还在跑：卡片不能亮"完成"蓝光，
+  // 要保持淡黄的"仍在运行"态，否则用户会误以为全部干完了。
+  const hasRunningSubagents = useMemo(
+    () => card.status === 'idle' && selectDockedAgentStatus(card.messages) !== null,
+    [card.messages, card.status],
+  )
   const statusClass =
     card.status === 'streaming'
       ? ' is-streaming'
       : card.status === 'error'
         ? ' is-error'
-        : card.completionGlow
+        : hasRunningSubagents
+          ? ' is-subagents-running'
+          : card.completionGlow
           ? ' is-complete-unread'
           : ''
   const sendButtonLabel = text.sendMessage

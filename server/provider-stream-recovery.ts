@@ -117,11 +117,16 @@ const recoverableErrorPatterns = [
   //   同一个内存里带坏历史的进程上。配合 providers.ts 丢进程，续传会新起进程先修存档。
   // 被否决：不放行其它 400——那些多是请求本身非法，续传只会刷满 retry budget。
   'system content must contain at least one block',
+  // 症状：中转站剥空 thinking 后 `400 ... each thinking block must contain thinking` 一条拖 4 个
+  //   request id，停在终态、之后每轮必挂（2026-10-02 另一台电脑仍复现）。
+  // 根因：空块已在常驻进程内存里；与上一条同理，需丢进程、续传时 spawn 前摘块修存档。
+  'each thinking block must contain thinking',
 ] as const
 
 // 进程内存里的历史已坏，只能丢掉常驻进程、新起进程 --resume（spawn 前会修存档）。
 export const isClaudePoisonedHistoryError = (message: string) =>
-  message.toLowerCase().includes('system content must contain at least one block')
+  message.toLowerCase().includes('system content must contain at least one block') ||
+  message.toLowerCase().includes('each thinking block must contain thinking')
 
 const zeroExitPattern = /\b(?:codex|claude) exited with status code:\s*0\b/i
 

@@ -2,6 +2,7 @@ import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 
 import type { ArchiveRecallSnapshot, ChatMessage } from '../shared/schema.js'
+import { maxPersistedCardMessages } from './session-history-compaction.js'
 
 const compactedCardHistoryDirName = 'compacted-card-history'
 
@@ -101,23 +102,29 @@ const getCompactedPrefix = (card: unknown): ChatMessage[] => {
     provider?: unknown
     messages?: unknown
   }
-  if (candidate.provider !== 'codex' || !Array.isArray(candidate.messages)) {
+  if (!Array.isArray(candidate.messages)) {
     return []
   }
 
   const messages = candidate.messages.filter(isChatMessage)
-  for (let index = messages.length - 1; index > 0; index -= 1) {
-    const message = messages[index]
-    if (
-      message?.role === 'user' &&
-      message.meta?.compactBoundary === 'true' &&
-      message.meta?.compactPending !== 'true'
-    ) {
-      return messages.slice(0, index)
+  // 症状：旧会话往上翻到某处就断了，更早的消息找不到。
+  // 根因：活动卡 500 条上限在 sanitize 里直接 slice，此前只有 Codex 的 compact 前缀会进 sidecar，
+  // Claude 或没 compact 过的会话被裁掉的开头永久丢失。这里把被裁的溢出前缀也归档。
+  const overflowEnd = Math.max(messages.length - maxPersistedCardMessages, 0)
+  if (candidate.provider === 'codex') {
+    for (let index = messages.length - 1; index > 0; index -= 1) {
+      const message = messages[index]
+      if (
+        message?.role === 'user' &&
+        message.meta?.compactBoundary === 'true' &&
+        message.meta?.compactPending !== 'true'
+      ) {
+        return messages.slice(0, Math.max(index, overflowEnd))
+      }
     }
   }
 
-  return []
+  return messages.slice(0, overflowEnd)
 }
 
 export const persistCompactedCardHistories = async (rawState: unknown, dataDir: string) => {
@@ -192,7 +199,6 @@ export const pruneResetCompactedCardHistories = async (rawState: unknown, dataDi
         ? Math.max(Math.trunc(candidate.messageCount), 0)
         : 0
       if (
-        candidate.provider !== 'codex' ||
         !Array.isArray(candidate.messages) ||
         candidate.messages.length > 0 ||
         messageCount > 0 ||

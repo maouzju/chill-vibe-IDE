@@ -41,3 +41,31 @@ test('empty-system 400 discards the pooled process instead of reusing its poison
   assert.equal(errors.length, 1)
   assert.equal(killed, 1)
 })
+
+const thinkingMessage =
+  'API Error: 400 ...thinking: each thinking block must contain thinking (request id: 20261002111355699-3d98ed78)'
+
+test('empty-thinking 400 is resumable and discards the pooled process', () => {
+  assert.deepEqual(
+    classifyProviderStreamErrorRecovery({ sessionId: 's-1' }, thinkingMessage),
+    { recoverable: true, recoveryMode: 'resume-session' },
+  )
+  const request = {
+    provider: 'claude', workspacePath: '.', model: 'claude-opus-5', reasoningEffort: 'max',
+    thinkingEnabled: true, planMode: false, language: 'zh-CN', systemPrompt: '', modelPromptRules: [],
+    crossProviderSkillReuseEnabled: true, prompt: 'test', attachments: [], sessionId: 's-1',
+  } as ChatRequest
+  let killed = 0
+  createClaudeTurnParser({
+    request,
+    language: 'zh-CN',
+    killChild: () => { killed += 1 },
+    sink: {
+      onSession: () => {}, onDelta: () => {}, onLog: () => {}, onAssistantMessage: () => {},
+      onActivity: () => {}, onDone: () => {}, onError: () => {},
+    },
+  }).handleLine(JSON.stringify({
+    type: 'result', subtype: 'success', is_error: true, api_error_status: 400, result: thinkingMessage,
+  }))
+  assert.equal(killed, 1)
+})

@@ -226,6 +226,28 @@ describe('archive recall runtime overrides', () => {
     delete process.env.CHILL_VIBE_DATA_DIR
   })
 
+  it('archives messages trimmed by the 500 cap for Claude cards without a compact boundary', async () => {
+    process.env.CHILL_VIBE_DATA_DIR = tempDataDir
+    const { saveState } = await import('../server/state-store.ts')
+    const { loadCompactedCardHistorySnapshot } = await import('../server/compacted-card-history.ts')
+    const state = createDefaultState('D:\\Git\\chill-vibe')
+    const column = state.columns[0]!
+    const cardId = getFirstPane(column.layout).tabs[0]!
+    const card = column.cards[cardId]!
+    card.provider = 'claude'
+    card.messages = Array.from({ length: 620 }, (_, index) =>
+      createMessage(`plain-${index}`, index % 2 === 0 ? 'user' : 'assistant', `Plain ${index}`),
+    )
+
+    await saveState(state)
+
+    const snapshot = await loadCompactedCardHistorySnapshot(tempDataDir, cardId)
+    assert.equal(snapshot?.messages.length, 120)
+    assert.equal(snapshot?.messages[0]?.id, 'plain-0')
+    assert.equal(snapshot?.messages.at(-1)?.id, 'plain-119')
+    delete process.env.CHILL_VIBE_DATA_DIR
+  })
+
   it('does not let a later trimmed save shorten the cumulative compacted archive', async () => {
     process.env.CHILL_VIBE_DATA_DIR = tempDataDir
     const { saveState } = await import('../server/state-store.ts')

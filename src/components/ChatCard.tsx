@@ -3875,8 +3875,8 @@ const ChatCardView = ({
     [card.messages, card.provider],
   )
   const shouldLoadArchivedHistory =
-    card.provider === 'codex' &&
-    (hasCompactBoundary || (card.messageCount ?? card.messages.length) > card.messages.length)
+    (card.provider === 'codex' && hasCompactBoundary) ||
+    (card.messageCount ?? card.messages.length) > card.messages.length
   const compactedHistoryLoadKey = `${card.id}:${card.provider}`
 
   useEffect(() => {

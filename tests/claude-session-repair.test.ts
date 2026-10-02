@@ -6,6 +6,7 @@ import os from 'os'
 
 import {
   repairClaudeSessionForResume,
+  stripEmptyThinkingBlocks,
   stripSyntheticNoResponseEntries,
   stripTurnEffortsWhenTailDangles,
 } from '../server/claude-session-repair.ts'
@@ -199,5 +200,37 @@ describe('repairClaudeSessionForResume', () => {
   it('fails open when the session file is missing', async () => {
     assert.equal(await repairClaudeSessionForResume('missing', () => null), 0)
     assert.equal(await repairClaudeSessionForResume('missing', () => path.join(tmpDir, 'nope.jsonl')), 0)
+  })
+})
+
+describe('stripEmptyThinkingBlocks', () => {
+  const withEmpty = [
+    line({ type: 'user', uuid: 'u1', parentUuid: null, message: { role: 'user', content: [{ type: 'text', text: 'hi' }] } }),
+    line({ type: 'assistant', uuid: 'a1', parentUuid: 'u1', message: { role: 'assistant', content: [{ type: 'thinking', thinking: '', signature: 'sig' }, { type: 'text', text: 'ok' }] } }),
+    line({ type: 'assistant', uuid: 'a2', parentUuid: 'a1', message: { role: 'assistant', content: [{ type: 'thinking', thinking: '', signature: 'sig' }] } }),
+    line({ type: 'assistant', uuid: 'a3', parentUuid: 'a2', message: { role: 'assistant', content: [{ type: 'thinking', thinking: 'real', signature: 'sig' }] } }),
+  ].join('\n') + '\n'
+
+  it('removes empty thinking blocks, keeps real ones, pads emptied messages', () => {
+    const result = stripEmptyThinkingBlocks(withEmpty)
+    assert.equal(result.removed, 2)
+    const entries = result.content.split('\n').filter(Boolean).map((l) => JSON.parse(l))
+    assert.deepEqual(entries[1].message.content, [{ type: 'text', text: 'ok' }])
+    assert.deepEqual(entries[2].message.content, [{ type: 'text', text: '(thinking content unavailable)' }])
+    assert.equal(entries[3].message.content[0].thinking, 'real')
+    assert.equal(entries[3].parentUuid, 'a2')
+  })
+
+  it('is a no-op without empty blocks', () => {
+    const clean = line({ type: 'assistant', uuid: 'a', message: { content: [{ type: 'text', text: 'x' }] } })
+    assert.deepEqual(stripEmptyThinkingBlocks(clean), { content: clean, removed: 0 })
+  })
+
+  it('repairClaudeSessionForResume fixes it on disk', async () => {
+    const file = path.join(tmpDir, 'empty-thinking.jsonl')
+    fs.writeFileSync(file, withEmpty)
+    const n = await repairClaudeSessionForResume('x', () => file)
+    assert.equal(n, 2)
+    assert.ok(!fs.readFileSync(file, 'utf8').includes('"thinking":""'))
   })
 })

@@ -159,7 +159,44 @@ export const stripTurnEffortsWhenTailDangles = (content: string) => {
   return stripped === 0 ? { content, stripped: 0 } : { content: output.join('\n'), stripped }
 }
 
-// 返回修掉的条数（合成回复 + 摘掉档位戳的回复）；任何读写失败都 fail-open 返回 0，照常 --resume。
+// 症状：会话中途起每一轮都 `400 ... thinking: each thinking block must contain thinking`，
+//   一条报错拖 4 个 request id，重试/续传永远一样（另一台电脑 2026-10-02 仍在复现）。
+// 根因（2026-07/08 实证）：中转站把 thinking 正文剥成空串只留 signature，CLI 原样写进存档，
+//   此后每轮回传必 400。签名对应原文、正文已丢无法补回，只能摘块；摘光的消息补非空占位，
+//   不能补空串、也不能删整行（会断 parentUuid 链）。只能在 spawn 前调用。
+const EMPTY_THINKING_PLACEHOLDER = '(thinking content unavailable)'
+
+const isEmptyThinkingBlock = (block: unknown) => {
+  const record = block as Record<string, unknown> | null
+  return !!record && record.type === 'thinking' && typeof record.thinking === 'string' && record.thinking.trim() === ''
+}
+
+export const stripEmptyThinkingBlocks = (content: string) => {
+  if (!content.includes('"thinking"')) {
+    return { content, removed: 0 }
+  }
+  let removed = 0
+  const output = content.split('\n').map((raw) => {
+    if (!raw.includes('"type":"thinking"')) {
+      return raw
+    }
+    const entry = parseEntry(raw)
+    const message = entry?.message as Record<string, unknown> | undefined
+    const blocks = message?.content
+    if (!entry || !message || !Array.isArray(blocks) || !blocks.some(isEmptyThinkingBlock)) {
+      return raw
+    }
+    const kept = blocks.filter((block) => !isEmptyThinkingBlock(block))
+    removed += blocks.length - kept.length
+    if (kept.length === 0) {
+      kept.push({ type: 'text', text: EMPTY_THINKING_PLACEHOLDER })
+    }
+    return JSON.stringify({ ...entry, message: { ...message, content: kept } })
+  })
+  return removed === 0 ? { content, removed: 0 } : { content: output.join('\n'), removed }
+}
+
+// 返回修掉的条数（合成回复 + 档位戳 + 空 thinking 块）；任何读写失败都 fail-open 返回 0，照常 --resume。
 export const repairClaudeSessionForResume = async (
   sessionId: string,
   findSessionFile: (sessionId: string) => string | null = findClaudeSessionFile,
@@ -174,16 +211,17 @@ export const repairClaudeSessionForResume = async (
       ? stripSyntheticNoResponseEntries(original)
       : { content: original, removed: 0 }
     const efforts = stripTurnEffortsWhenTailDangles(synthetic.content)
-    if (synthetic.removed === 0 && efforts.stripped === 0) {
+    const thinking = stripEmptyThinkingBlocks(efforts.content)
+    if (synthetic.removed === 0 && efforts.stripped === 0 && thinking.removed === 0) {
       return 0
     }
     const tempPath = `${filePath}.chill-vibe-repair.tmp`
-    await fs.promises.writeFile(tempPath, efforts.content, 'utf8')
+    await fs.promises.writeFile(tempPath, thinking.content, 'utf8')
     await fs.promises.rename(tempPath, filePath)
     console.warn(
-      `[claude-session-repair] removed ${synthetic.removed} synthetic "No response requested." entries and stripped turn effort from ${efforts.stripped} replies in ${sessionId}`,
+      `[claude-session-repair] removed ${synthetic.removed} synthetic "No response requested." entries, stripped turn effort from ${efforts.stripped} replies and ${thinking.removed} empty thinking blocks in ${sessionId}`,
     )
-    return synthetic.removed + efforts.stripped
+    return synthetic.removed + efforts.stripped + thinking.removed
   } catch {
     return 0
   }

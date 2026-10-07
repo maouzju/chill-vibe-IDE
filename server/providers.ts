@@ -39,7 +39,12 @@ import {
   getLocalSlashCommands,
   parseSlashCommandInput,
 } from '../shared/slash-commands.js'
-import { isUltracodeEffort, toCodexEffortValue, toClaudeEffortFlagValue } from '../shared/reasoning.js'
+import {
+  isClaudeAlwaysThinkingModel,
+  isUltracodeEffort,
+  toCodexEffortValue,
+  toClaudeEffortFlagValue,
+} from '../shared/reasoning.js'
 import { providerSupportsImageAttachments } from '../shared/chat-attachments.js'
 import type {
   AppLanguage,
@@ -4751,6 +4756,11 @@ export const buildClaudeArgs = (
     thinkingDisabled,
   )
   const ultracodeActive = !thinkingDisabled && isUltracodeEffort(request.reasoningEffort)
+  // Symptom (October 6, 2026): Sonnet 5.5 through Mouxihub stayed terse at a high effort tier.
+  // Root cause: Claude CLI inherited alwaysThinkingEnabled from ~/.claude/settings.json;
+  // false there disables adaptive thinking even when the card has thinkingEnabled=true.
+  // The per-card toggle must be the final value instead of being shadowed by user settings.
+  const alwaysThinkingActive = !thinkingDisabled || isClaudeAlwaysThinkingModel(request.model)
   const permissionMode = request.planMode ? 'plan' : 'bypassPermissions'
   const outsideWorkspaceWriteRestricted = request.agentOutsideWorkspaceWriteEnabled === false
   const safetyHookCommand = (
@@ -4844,6 +4854,7 @@ export const buildClaudeArgs = (
       // 为什么不能写回条件展开：省略这个键不是「保持中立」而是放弃覆盖，只有显式
       // 送 false 才能在合并层压掉用户级的 true。
       ultracode: ultracodeActive,
+      alwaysThinkingEnabled: alwaysThinkingActive,
       ...(sandboxSettings ? { sandbox: sandboxSettings } : {}),
       ...(safetyHookCommand || completionBoundaryHook
         ? {

@@ -91,3 +91,17 @@ UI 封装（第 5 节）为低风险 glue，走 prove-after：类型检查 + 现
 ## 8. New-chat inheritance correction (2026-07-23)
 
 `src/state.ts` now lets the current pane's recent chat choose the provider first, then falls back to the global recent chat before the column provider. Tool tabs do not count as chat-model memory. For model selection, an old column-level `claude-fable-5` seed is ignored when a different recent pane/global chat model is available; other explicit column defaults keep their existing precedence. This prevents tool-only panes and old Fable columns from reviving Fable 5 while preserving deliberate Settings default changes.
+
+
+## 9. Follow-up: per-card thinking wins user settings (2026-10-06)
+
+Claude Code merges the --settings payload on top of the user settings file. A user-level
+alwaysThinkingEnabled: false therefore disables adaptive thinking even when a
+Chill Vibe card has thinking enabled and sends a high --effort value. This is
+especially visible with Sonnet 5.5 behind Anthropic-compatible proxies: the model
+spends little or no budget on reasoning and the visible answer becomes terse.
+
+buildClaudeArgs now explicitly sends alwaysThinkingEnabled from the card state.
+Fable-family models remain thinking-enabled because their model contract already
+forces thinking. The focused provider test covers both card toggle values so a
+user settings file cannot silently shadow the UI again.

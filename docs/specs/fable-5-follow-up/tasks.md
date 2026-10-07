@@ -8,3 +8,5 @@
 - [x] T6 合并回 main、复跑窄测试、清理 worktree、按需重启活跃 runtime
 
 - [x] T7 Fix stale Fable column inheritance with reducer red tests: recent pane chats beat column models, and tool-only panes fall back to the global recent chat.
+
+- [x] T8 Follow-up: explicitly forward the per-card Claude thinking toggle so user-level alwaysThinkingEnabled cannot disable adaptive thinking; add a focused regression test.

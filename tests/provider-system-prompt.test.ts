@@ -300,6 +300,28 @@ test('claude ultracode tier activates via --settings instead of prompt keyword i
 // 泄漏只在 xhigh 档位显形，低档位测不出来。
 // 为什么不能换写法：只有显式写 `false` 才能在合并层压掉用户级的 `true`。省略这个键
 // 等于放弃覆盖，不是「保持中立」。
+test('claude request thinking toggle overrides a user-level alwaysThinkingEnabled setting', () => {
+  for (const thinkingEnabled of [true, false]) {
+    const args = buildClaudeArgs(
+      createRequest({ provider: 'claude', model: 'claude-sonnet-5-5', thinkingEnabled }),
+      [],
+    )
+    const settings = JSON.parse(args[args.indexOf('--settings') + 1] ?? '{}')
+    assert.equal(
+      settings.alwaysThinkingEnabled,
+      thinkingEnabled,
+      'the card toggle must win over ~/.claude/settings.json',
+    )
+  }
+
+  const fableArgs = buildClaudeArgs(
+    createRequest({ provider: 'claude', model: 'claude-fable-5-1', thinkingEnabled: false }),
+    [],
+  )
+  const fableSettings = JSON.parse(fableArgs[fableArgs.indexOf('--settings') + 1] ?? '{}')
+  assert.equal(fableSettings.alwaysThinkingEnabled, true)
+})
+
 test('claude non-ultracode tiers explicitly send ultracode:false so a user-level settings.json cannot leak it in', () => {
   for (const effort of ['xhigh', 'max', 'high', 'medium', 'low', 'auto'] as const) {
     const args = buildClaudeArgs(

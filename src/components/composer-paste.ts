@@ -49,6 +49,55 @@ export function insertTextAtSelection(
   }
 }
 
+const decodeClipboardHtmlText = (value: string): string => value
+  .replaceAll('&nbsp;', ' ')
+  .replaceAll('&quot;', '"')
+  .replaceAll('&#34;', '"')
+  .replaceAll('&#39;', "'")
+  .replaceAll('&apos;', "'")
+  .replaceAll('&lt;', '<')
+  .replaceAll('&gt;', '>')
+  .replaceAll('&amp;', '&')
+  .replace(/&#(x[0-9a-f]+|[0-9]+);/giu, (_match, code: string) => {
+    const parsed = code.toLowerCase().startsWith('x')
+      ? Number.parseInt(code.slice(1), 16)
+      : Number.parseInt(code, 10)
+    return Number.isInteger(parsed) && parsed >= 0 && parsed <= 0x10ffff
+      ? String.fromCodePoint(parsed)
+      : ''
+  })
+
+/**
+ * 从剪贴板生成聊天输入框应插入的纯文本。
+ *
+ * 飞书表格大多数时候会同时提供 text/plain（TSV）和 text/html。优先使用
+ * text/plain 可以保留原始单元格内容；某些浏览器/桌面壳只给 HTML 时，再用
+ * 受限的字符串转换恢复行列，不把不可信 HTML 交给 DOM 或富文本编辑器。
+ */
+export const getPastedClipboardText = (plainText: string, html: string): string => {
+  if (plainText.trim().length > 0) return plainText
+  if (!html || html.length > 2_000_000) return plainText
+
+  const converted = html
+    .replace(/>\s+</g, '><')
+    .replace(/<!--[\s\S]*?-->/g, '')
+    .replace(/<\s*(?:script|style|noscript)\b[^>]*>[\s\S]*?<\s*\/\s*(?:script|style|noscript)\s*>/giu, '')
+    .replace(/<\s*br\s*\/?>/giu, '\n')
+    .replace(/<\s*\/\s*(?:td|th)\s*>/giu, '\t')
+    .replace(/<\s*\/\s*tr\s*>/giu, '\n')
+    .replace(/<\s*\/\s*(?:p|div|li|h[1-6]|section|article|blockquote)\s*>/giu, '\n')
+    .replace(/<\s*li\b[^>]*>/giu, '• ')
+    .replace(/<[^>]*>/g, '')
+
+  const lines = decodeClipboardHtmlText(converted).trim()
+    .replace(/\r\n?/g, '\n')
+    .split('\n')
+    .map((line) => line.replace(/[ \t]+$/g, ''))
+
+  while (lines.length > 0 && lines[0].trim() === '') lines.shift()
+  while (lines.length > 0 && lines.at(-1)?.trim() === '') lines.pop()
+  return lines.join('\n')
+}
 // Dropping files from the OS file manager takes the same two exits as paste:
 // supported raster images become image attachments, everything else (including
 // SVG and untyped blobs) is a path candidate. The MIME set is injected so this

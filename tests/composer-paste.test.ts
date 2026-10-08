@@ -4,6 +4,7 @@ import test from 'node:test'
 import {
   collectPastedFilePaths,
   formatPastedFilePathInsertion,
+  getPastedClipboardText,
   insertTextAtSelection,
   partitionDroppedFiles,
 } from '../src/components/composer-paste'
@@ -90,4 +91,31 @@ test('partitionDroppedFiles splits dropped files into image attachments and path
 
 test('partitionDroppedFiles returns empty groups for an empty drop', () => {
   assert.deepEqual(partitionDroppedFiles([]), { imageFiles: [], pathCandidateFiles: [] })
+})
+
+test('getPastedClipboardText prefers the clipboard plain-text table payload', () => {
+  const plainText = '姓名\t部门\n小明\t研发'
+  const html = '<table><tr><td>错误的 HTML 文本</td></tr></table>'
+
+  assert.equal(getPastedClipboardText(plainText, html), plainText)
+})
+
+test('getPastedClipboardText converts an HTML table to tab-separated rows when plain text is missing', () => {
+  const html = `
+    <table>
+      <tr><th>姓名</th><th>备注</th></tr>
+      <tr><td>小明 &amp; 小红</td><td>第一行<br>第二行</td></tr>
+    </table>
+  `
+
+  assert.equal(
+    getPastedClipboardText('', html),
+    '姓名\t备注\n小明 & 小红\t第一行\n第二行',
+  )
+})
+
+test('getPastedClipboardText strips executable HTML and keeps text when the clipboard HTML is malformed', () => {
+  const html = '<script>alert(1)</script><p>安全内容</p><img src="https://example.com/a.png">'
+
+  assert.equal(getPastedClipboardText('  ', html), '安全内容')
 })

@@ -287,3 +287,5 @@ import './claude-empty-system-400-self-heal.test.ts'
 import './codex-exec-argv-compatibility.test.ts'
 import './codex-upstream-error-message.test.ts'
 import './default-admin-access.test.ts'
+
+import './composer-html-image-paste.test.ts'

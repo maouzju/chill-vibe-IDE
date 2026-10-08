@@ -115,6 +115,7 @@ import {
   collectPastedFilePaths,
   partitionDroppedFiles,
   formatPastedFilePathInsertion,
+  getPastedClipboardText,
   insertTextAtSelection,
 } from './composer-paste'
 import {
@@ -126,6 +127,8 @@ import {
   type PendingComposerAttachment,
 } from './composer-draft-attachments'
 import {
+  collectPastedImageSources,
+  fetchPastedImageFiles,
   supportedImageMimeTypes,
   uploadPendingImage,
 } from './composer-image-paste'
@@ -3529,19 +3532,35 @@ const ChatCardView = ({
   }, [handleMessageListCopy])
 
   const handlePaste = (event: ClipboardEvent<HTMLTextAreaElement>) => {
-    const copiedAttachments = parseImageAttachmentsFromClipboardHtml(
-      event.clipboardData.getData('text/html'),
-    )
+    const html = event.clipboardData.getData('text/html')
+    const pastedText = getPastedClipboardText(event.clipboardData.getData('text/plain'), html)
+    const insertPastedText = () => {
+      if (!pastedText) return
+      const textarea = textareaRef.current
+      const currentValue = textarea?.value ?? draftValueRef.current
+      const { value, caret } = insertTextAtSelection(
+        currentValue,
+        textarea?.selectionStart ?? currentValue.length,
+        textarea?.selectionEnd ?? currentValue.length,
+        pastedText,
+      )
+      if (textarea) {
+        textarea.value = value
+        textarea.setSelectionRange(caret, caret)
+      }
+      syncLocalDraft(value)
+    }
+
+    const copiedAttachments = parseImageAttachmentsFromClipboardHtml(html)
+    const htmlImageSources = collectPastedImageSources(html)
     if (copiedAttachments.length > 0) {
       event.preventDefault()
       setComposerError(null)
-      // 症状：便签图片若退回浏览器 File 粘贴，会二次上传甚至把 GIF/JPEG 转成别的字节。
-      // 根因（2026-08-03）：内部 HTML 已携带原附件 ID；按 sticky-note-images SPEC 直接复用它。
-      // 否决“统一读取剪贴板图片再上传”：会失去逐字节无损保证，并可能同时加入两份预览。
-      const next = mergeUploadedDraftAttachments(
-        pendingAttachmentsRef.current,
-        copiedAttachments,
-      )
+      // 症状：复制带图消息/表格时，旧分支只复用图片附件，文字会被直接吞掉。
+      // 根因（2026-10-08）：附件元数据与 text/plain、text/html 是同一份剪贴板的并行格式。
+      // 决策：先插入纯文本/TSV，再复用内部附件，保持 textarea 的中文输入、撤销和光标稳定。
+      insertPastedText()
+      const next = mergeUploadedDraftAttachments(pendingAttachmentsRef.current, copiedAttachments)
       applyPendingAttachments(next)
       persistDraftAttachments(next)
       return
@@ -3556,11 +3575,21 @@ const ChatCardView = ({
       .filter((item) => !supportedImageMimeTypes.has(item.type))
       .map((item) => item.getAsFile())
       .filter((file): file is File => file !== null)
-    if (ingestExternalFiles(imageFiles, pathCandidateFiles)) {
-      event.preventDefault()
-    }
-  }
 
+    if (htmlImageSources.length > 0) {
+      event.preventDefault()
+      insertPastedText()
+      setComposerError(null)
+      // 同一份飞书剪贴板可能同时带 HTML 图片和原生 File；两条通道都消费，避免漏图/漏路径。
+      ingestExternalFiles(imageFiles, pathCandidateFiles)
+      void fetchPastedImageFiles(htmlImageSources).then((fetchedFiles) => {
+        if (fetchedFiles.length > 0) ingestExternalFiles(fetchedFiles, [])
+      })
+      return
+    }
+
+    if (ingestExternalFiles(imageFiles, pathCandidateFiles)) event.preventDefault()
+  }
   // Paste and OS file drop share one landing path (SPEC composer-drop-file-path):
   // raster images become attachments, everything else lands as a quoted absolute
   // path at the caret. Returns whether anything was consumed so the caller can

@@ -19,6 +19,15 @@ import {
 import { shouldResetStreamRecoveryAttemptsForText } from './stream-recovery'
 
 const MIN_SEEDED_PROMPT_CHARS = 6_000
+// 症状：Codex 长会话切到 Claude 后模型说「更早的 138 条消息被省略、中间上下文又被截断」，
+//   看不到前面的改动与已通过的验证。2026-10-08 用户截图。
+// 根因：model-transfer 只保护了有文字的消息，工具/命令/改动条目仍与 fallback 共用 6000 字符预算，
+//   长会话里几百条全部整条丢成一个计数器，模型无从得知做过什么。
+// 否决的替代：无脑把预算调到无限——转录无界；改成放宽预算 + 放不下的条目降级成一行摘要而非整条丢弃。
+const MODEL_TRANSFER_SEEDED_PROMPT_CHARS = 60_000
+const MAX_REPLAY_DIGEST_CHARS = 200
+// 摘要行单独记账：预算被完整条目吃光后，摘要仍能给出「做过什么」的时间线，但总量封顶。
+const MAX_REPLAY_DIGEST_TOTAL_CHARS = 24_000
 const MAX_STRUCTURED_REPLAY_ENTRY_CHARS = 1_100
 const MIN_REPLAY_ENTRY_CHARS = 260
 
@@ -292,6 +301,30 @@ const getSeedingWindow = ({
 type ReplayEntry = {
   text: string
   protected: boolean
+  digest?: string
+}
+
+const clipDigest = (value: string) => {
+  const oneLine = value.replace(/\s+/g, ' ').trim()
+  return oneLine.length > MAX_REPLAY_DIGEST_CHARS
+    ? `${oneLine.slice(0, MAX_REPLAY_DIGEST_CHARS - 1)}…`
+    : oneLine
+}
+
+const buildReplayDigest = (message: ChatMessage): string | undefined => {
+  const command = parseStructuredCommandMessage(message)
+  if (command) {
+    return clipDigest(`- Ran: ${command.command} (exit ${command.exitCode === null ? 'null' : command.exitCode})`)
+  }
+  const tool = parseStructuredToolMessage(message)
+  if (tool) {
+    return clipDigest(`- Tool ${tool.toolName}: ${tool.summary ?? ''}`)
+  }
+  const edits = parseStructuredEditsMessage(message)
+  if (edits) {
+    return clipDigest(`- Edited: ${edits.files.map((file) => file.path).join(', ')}`)
+  }
+  return undefined
 }
 
 const formatReplayMessage = (
@@ -339,6 +372,7 @@ const formatReplayMessage = (
 
   return {
     text,
+    digest: buildReplayDigest(message),
     protected:
       (forceProtected && includesMeaningfulContent) ||
       (mode === 'model-transfer' && includesMeaningfulContent) ||
@@ -359,6 +393,7 @@ const buildBoundedTranscript = (
   const selected: ReplayEntry[] = []
   let usedChars = 0
   let omittedCount = 0
+  let digestChars = 0
 
   const joinSelected = () => selected.map((entry) => entry.text).join('\n\n')
   const firstDisposableSelectedIndex = () => selected.findIndex((entry) => !entry.protected)
@@ -374,8 +409,18 @@ const buildBoundedTranscript = (
       continue
     }
 
-    if (remainingBudget <= 0) {
-      omittedCount += 1
+    // 放不下的工具/命令/改动条目降级成一行摘要，保留「做过什么」的线索。
+    const digestText = entry.digest
+    if (remainingBudget <= 0 || (entry.text.length > remainingBudget && selected.length > 0)) {
+      if (
+        digestText !== undefined &&
+        digestChars + digestText.length + 2 <= MAX_REPLAY_DIGEST_TOTAL_CHARS
+      ) {
+        selected.unshift({ text: digestText, protected: false })
+        digestChars += digestText.length + 2
+      } else {
+        omittedCount += 1
+      }
       continue
     }
 
@@ -555,7 +600,8 @@ export const buildSeededChatPrompt = ({
     .filter((entry) => entry.protected)
     .reduce((total, entry) => total + entry.text.length + 2, 0)
   const transcriptBudget = Math.max(
-    MIN_SEEDED_PROMPT_CHARS - emptyTranscriptPrompt.length,
+    (mode === 'model-transfer' ? MODEL_TRANSFER_SEEDED_PROMPT_CHARS : MIN_SEEDED_PROMPT_CHARS) -
+      emptyTranscriptPrompt.length,
     protectedTranscriptChars,
     0,
   )

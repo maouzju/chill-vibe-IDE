@@ -649,4 +649,38 @@ describe('chat request seeding', () => {
     assert.match(prompt, /Retry backoff is wired into the queue drain loop\./)
   })
 
+  it('model transfer keeps a long tool-heavy session visible instead of one omitted counter', () => {
+    const messages: ChatMessage[] = [
+      createMessage('opening-user', 'user', 'ORIGINAL TASK: fix battle settlement.'),
+      ...Array.from({ length: 200 }, (_, index) =>
+        createMessage(`command-${index + 1}`, 'assistant', '', {
+          kind: 'command',
+          structuredData: JSON.stringify({
+            itemId: `command-${index + 1}`,
+            kind: 'command',
+            status: 'completed',
+            command: `inspect-step-${index + 1}`,
+            output: `output ${index + 1} ${'x'.repeat(900)}`,
+            exitCode: 0,
+          }),
+        }),
+      ),
+      createMessage('recent-assistant', 'assistant', 'Settlement now happens once.'),
+    ]
+    const prompt = buildSeededChatPrompt({
+      language: 'en',
+      prompt: 'Continue.',
+      attachments: [],
+      messages,
+      provider: 'claude',
+      status: 'idle',
+      mode: 'model-transfer',
+    })
+
+    assert.match(prompt, /inspect-step-1/)
+    assert.match(prompt, /inspect-step-100/)
+    assert.match(prompt, /inspect-step-200/)
+    assert.doesNotMatch(prompt, /Earlier transcript omitted/)
+  })
+
 })

@@ -232,10 +232,20 @@ export const MODEL_OPTIONS: ModelOption[] = [
     hiddenFromPicker: true,
   },
   {
+    // 2026-10-07 发布，API id 为不带日期戳的 claude-haiku-5-5（2026-10-09 用 CLI 2.1.280 实测真实可用，
+    // CLI 只报 unrecognized_model 日志、不拦截）。裸 "haiku" 跟随最新一代，与 opus/sonnet 一致。
+    label: 'Haiku 5.5',
+    provider: 'claude',
+    model: 'claude-haiku-5-5',
+    aliases: ['haiku', 'haiku-5.5', 'claude-haiku-5-5'],
+  },
+  {
+    // Retired from the picker, but kept for exact legacy commands and saved cards.
     label: 'Haiku 4.5',
     provider: 'claude',
     model: 'claude-haiku-4-5-20251001',
-    aliases: ['haiku', 'haiku-4.5', 'claude-haiku-4-5-20251001'],
+    aliases: ['haiku-4.5', 'claude-haiku-4-5-20251001'],
+    hiddenFromPicker: true,
   },
 ]
 

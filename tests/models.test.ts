@@ -97,9 +97,22 @@ describe('model helpers', () => {
         'claude-sonnet-5-5',
         'claude-sonnet-5',
         'claude-sonnet-4-6',
+        'claude-haiku-5-5',
         'claude-haiku-4-5-20251001',
       ],
     )
+  })
+
+  // Haiku 5.5（2026-10-07，API id 为 claude-haiku-5-5，2026-10-09 实测真实可用）接管裸 `haiku`，
+  // Haiku 4.5 下架但精确 id/别名仍可解析，已保存的卡片不被静默改写（Pitfall #119）。
+  it('resolves Haiku 5.5 aliases while keeping Haiku 4.5 ids usable', () => {
+    assert.equal(resolveSlashModel('claude', 'haiku'), 'claude-haiku-5-5')
+    assert.equal(resolveSlashModel('claude', 'haiku-5.5'), 'claude-haiku-5-5')
+    assert.equal(resolveSlashModel('claude', 'claude-haiku-5-5'), 'claude-haiku-5-5')
+    assert.equal(resolveSlashModel('claude', 'Haiku 5.5'), 'claude-haiku-5-5')
+    assert.equal(resolveSlashModel('claude', 'haiku-4.5'), 'claude-haiku-4-5-20251001')
+    assert.equal(resolveSlashModel('claude', 'claude-haiku-4-5-20251001'), 'claude-haiku-4-5-20251001')
+    assert.equal(normalizeModel('claude', 'claude-haiku-4-5-20251001'), 'claude-haiku-4-5-20251001')
   })
 
   it('resolves Fable 5.1 and Sonnet 5.5 aliases while keeping stored legacy ids usable', () => {
@@ -187,12 +200,12 @@ describe('model helpers', () => {
     assert.equal(visible.includes(GIT_TOOL_MODEL), false)
   })
 
-  it('keeps retired Sonnet 4.6 and Fable 5 out of the ordinary model picker', () => {
+  it('keeps retired Sonnet 4.6, Fable 5 and Haiku 4.5 out of the ordinary model picker', () => {
     assert.deepEqual(
       getModelOptions('claude')
         .filter(isModelPickerOptionVisible)
         .map((option) => option.model),
-      ['', 'claude-fable-5-1', DEFAULT_CLAUDE_MODEL, 'claude-sonnet-5-5', 'claude-haiku-4-5-20251001'],
+      ['', 'claude-fable-5-1', DEFAULT_CLAUDE_MODEL, 'claude-sonnet-5-5', 'claude-haiku-5-5'],
     )
   })
 
@@ -201,7 +214,7 @@ describe('model helpers', () => {
   // 所以别名落点必须由同一份目录经 ANTHROPIC_DEFAULT_*_MODEL 钉给 CLI。
   it('pins every Claude Agent-tool alias to the newest visible catalog model', () => {
     assert.deepEqual(buildClaudeAgentAliasModelEnv(), {
-      ANTHROPIC_DEFAULT_HAIKU_MODEL: 'claude-haiku-4-5-20251001',
+      ANTHROPIC_DEFAULT_HAIKU_MODEL: 'claude-haiku-5-5',
       ANTHROPIC_DEFAULT_SONNET_MODEL: 'claude-sonnet-5-5',
       ANTHROPIC_DEFAULT_OPUS_MODEL: DEFAULT_CLAUDE_MODEL,
       ANTHROPIC_DEFAULT_FABLE_MODEL: 'claude-fable-5-1',

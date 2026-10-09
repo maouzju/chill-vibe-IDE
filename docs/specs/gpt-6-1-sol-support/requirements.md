@@ -18,8 +18,16 @@
 
 按用户截图划线范围，从普通聊天、头脑风暴、自动化模板及同源的模型候选目录中隐藏 GPT-6 Sol、GPT-5.6 Sol、GPT-5.6 Terra、GPT-5.6 Luna 和 GPT-5.5。
 
-- 保留可见型号：GPT-6.1 Sol、GPT-6 Luna、GPT-6 Astra、Fable 5.1、Opus 5.5、Sonnet 5.5、Haiku 4.5。
+- 保留可见型号：GPT-6.1 Sol、GPT-6 Luna、GPT-6 Astra、Fable 5.1、Opus 5.5、Sonnet 5.5、Haiku 5.5（2026-10-09 起由 Haiku 4.5 换代，见下）。
 - 复用 `hiddenFromPicker`，不删除旧型号条目、别名或能力判定，不改写已保存的卡片和用户默认模型。
 - 已使用旧型号的卡片仍显示其真实模型；共享超管候选仍按既有规则补入用户显式配置的默认型号。
 - 这是小范围静态目录清理，沿用本规格和 `docs/ui-principles.md`，不新增 SPEC；按低风险目录配置变更做实现后验证。
 - 验证目录过滤、历史兼容、子 agent 候选，以及深浅主题和宽窄窗口的真实菜单；不接受与此无关的全量快照变化。
+
+## 2026-10-09 Haiku 5.5 换代
+
+- Claude Haiku 5.5（2026-10-07 发布，API id `claude-haiku-5-5`，无日期戳）进目录并接管裸别名 `haiku`；别名 `haiku-5.5`、`claude-haiku-5-5`。
+- Haiku 4.5 `hiddenFromPicker`，精确 id `claude-haiku-4-5-20251001` 与别名 `haiku-4.5` 保持可解析，已保存的卡片不改写。
+- 子 agent 的 `haiku` 别名由 `buildClaudeAgentAliasModelEnv` 经 `ANTHROPIC_DEFAULT_HAIKU_MODEL` 钉到 5.5；提示词映射同源跟随。
+- 2026-10-09 用 CLI 2.1.280 实测：`--model claude-haiku-5-5` 可用（仅打印 `unrecognized_model` 日志），`--model haiku` 在钉住环境变量后落到 5.5；上下文窗口由 CLI 自报，无按型号表需改。
+- 小范围静态目录变更，按低风险处理，不新增 SPEC。

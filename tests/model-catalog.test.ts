@@ -35,7 +35,8 @@ test('the selectable model catalog lists visible catalog models with labels and 
   for (const model of ['gpt-6-sol', 'gpt-5.6-sol', 'gpt-5.6-terra', 'gpt-5.6-luna', 'gpt-5.5']) {
     assert.equal(catalog.some((entry) => entry.model === model), false, `${model} must be retired from the selectable catalog`)
   }
-  assert.ok(models.includes('claude-haiku-4-5-20251001'))
+  assert.ok(models.includes('claude-haiku-5-5'))
+  assert.ok(!models.includes('claude-haiku-4-5-20251001'), 'Haiku 4.5 is retired from the selectable catalog')
   assert.ok(!models.includes('claude-sonnet-4-6'), 'models hidden from the picker stay hidden')
 })
 

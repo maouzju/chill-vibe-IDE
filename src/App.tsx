@@ -5372,7 +5372,8 @@ function App() {
               columnId,
               cardId: card.id,
               softInterrupted: interrupted === true,
-              unread,
+              // 被停止的回合没有"新结果"可读，标未读会让收起列的蓝点凭空亮起。
+              unread: false,
               stoppedMessage:
                 stoppedRunReason !== 'ask-user-answer'
                   ? createStoppedRunMessage(appStateRef.current.settings.language, stoppedRunReason)

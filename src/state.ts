@@ -139,12 +139,24 @@ export interface DockedColumnStatus {
  * and collapsing that into a single state would silently drop the finished one.
  */
 export const selectDockedColumnStatus = (
-  column: Pick<BoardColumn, 'cards'>,
+  column: Pick<BoardColumn, 'cards' | 'layout'>,
 ): DockedColumnStatus => {
   let running = false
   let hasNewResult = false
 
+  // 症状（2026-10-09）: 收起的列亮蓝点，展开后没有任何带蓝点的窗口。
+  // 根因: 存档里有不在 layout 任何 tab 里的游离卡带 unread=true（TaleCity 实测 2 张），
+  //       自动已读只扫可见 pane 的活动 tab，永远清不掉它们。
+  // 被否决的替代: 启动时清游离卡 —— 数据迁移风险大，且卡可能是用户想找回的会话。
+  const layoutTabIds = new Set<string>()
+  const collectTabs = (node: BoardColumn['layout']): void => {
+    if (node.type === 'pane') node.tabs.forEach((id) => layoutTabIds.add(id))
+    else node.children.forEach(collectTabs)
+  }
+  collectTabs(column.layout)
+
   for (const card of Object.values(column.cards)) {
+    if (!layoutTabIds.has(card.id)) continue
     if (card.status === 'streaming') running = true
     // 症状（2026-09-10）: 收起的列偶尔亮"有新结果"，拖回来却没有没看过的回答。
     // 根因: 这里曾把 `completionGlow` 也当"有新结果"。可 glow 只在用户**触碰**卡片

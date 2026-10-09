@@ -6169,6 +6169,24 @@ test('codex app-server base instructions carry the same spawn_agent model choice
   assert.ok(instructions.indexOf('spawn_agent') < instructions.indexOf('Windows shell safety'))
 })
 
+test('sub-agent prompts tell the agent to resume a sub-agent that died of network/API errors', () => {
+  for (const language of ['en', 'zh-CN'] as const) {
+    const codexArgs = buildCodexArgs(createRequest({ provider: 'codex', language, systemPrompt: 'Base.' }), [])
+    const codexInstructions = codexArgs.find((arg) => arg.startsWith('instructions=')) ?? ''
+    assert.match(codexInstructions, /send_input/, `${language} codex must name send_input`)
+    assert.match(codexInstructions, /resume_agent/, `${language} codex must name resume_agent`)
+    assert.match(codexInstructions, /429/, `${language} codex must name the error kinds`)
+
+    const claudeArgs = buildClaudeArgs(
+      createRequest({ provider: 'claude', model: 'claude-opus-5', language, systemPrompt: 'Base.' }),
+      [],
+    )
+    const claudePrompt = claudeArgs[claudeArgs.indexOf('--append-system-prompt') + 1] ?? ''
+    assert.match(claudePrompt, /SendMessage/, `${language} claude must name SendMessage`)
+    assert.match(claudePrompt, /429/, `${language} claude must name the error kinds`)
+  }
+})
+
 test('claude append prompt maps the Agent tool aliases onto this environment and allows self-selection', () => {
   for (const language of ['en', 'zh-CN'] as const) {
     const args = buildClaudeArgs(

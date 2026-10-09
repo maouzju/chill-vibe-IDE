@@ -133,10 +133,12 @@ describe('docked column status badge', () => {
     const base = createColumn({ id: 'c', workspacePath: 'D:/Git/other-repo' }, 'en')
     return {
       ...base,
+      layout: { type: 'pane', id: 'p', tabs: cards.map((_, i) => `card-${i}`), activeTabId: 'card-0' } as BoardColumn['layout'],
       cards: Object.fromEntries(
         cards.map((patch, index) => {
           const card = {
             ...createCard(`card-${index}`, undefined, 'codex', undefined, undefined, 'en'),
+            id: `card-${index}`,
             ...patch,
           }
           return [card.id, card]
@@ -144,6 +146,12 @@ describe('docked column status badge', () => {
       ),
     }
   }
+
+  it('ignores unread cards that are not in the layout (orphans)', () => {
+    const column = columnWith([{ status: 'idle', unread: true }])
+    const orphan = { ...column, layout: { ...column.layout, tabs: [] } as BoardColumn['layout'] }
+    assert.equal(selectDockedColumnStatus(orphan).hasNewResult, false)
+  })
 
   it('reports running when any card is streaming', () => {
     const status = selectDockedColumnStatus(
@@ -214,6 +222,7 @@ describe('docked columns are not auto-marked read', () => {
     // 收起状态下派生出的"有新结果"必须仍然为真。
     assert.equal(
       selectDockedColumnStatus({
+        layout: column.layout,
         cards: { [cardId]: { ...column.cards[cardId]!, unread: true } },
       }).hasNewResult,
       true,

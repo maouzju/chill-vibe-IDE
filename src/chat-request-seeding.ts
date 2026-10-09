@@ -454,7 +454,11 @@ const buildBoundedTranscript = (
   while (omittedCount > 0) {
     const notice = copy.omittedTranscript(omittedCount)
     const candidate = `${notice}\n\n${transcript}`
-    if (candidate.length <= transcriptBudget) {
+    // 症状：摘要总量一旦超过 MAX_REPLAY_DIGEST_TOTAL_CHARS（命令较长的 200+ 条会话），
+    //   下面的收尾循环会从最旧的条目起把摘要行整批删光，只剩「N 条被省略」。
+    // 根因（2026-10-09 发布审计实测）：摘要行不计入 usedChars，判超限时却按 transcriptBudget 比。
+    // 决策：摘要有自己的额度（digestChars），判定上限要把它加回来。
+    if (candidate.length <= transcriptBudget + digestChars) {
       return candidate
     }
 

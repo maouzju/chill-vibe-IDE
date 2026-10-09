@@ -683,4 +683,39 @@ describe('chat request seeding', () => {
     assert.doesNotMatch(prompt, /Earlier transcript omitted/)
   })
 
+  it('model transfer keeps the newest command digests when digests alone overflow their cap', () => {
+    const messages: ChatMessage[] = [
+      createMessage('opening-user', 'user', 'ORIGINAL TASK: fix battle settlement.'),
+      ...Array.from({ length: 300 }, (_, index) =>
+        createMessage(`command-${index + 1}`, 'assistant', '', {
+          kind: 'command',
+          structuredData: JSON.stringify({
+            itemId: `command-${index + 1}`,
+            kind: 'command',
+            status: 'completed',
+            command: `inspect-step-${index + 1} ${'y'.repeat(150)}`,
+            output: `output ${index + 1} ${'x'.repeat(900)}`,
+            exitCode: 0,
+          }),
+        }),
+      ),
+      createMessage('recent-assistant', 'assistant', 'Settlement now happens once.'),
+    ]
+    const prompt = buildSeededChatPrompt({
+      language: 'en',
+      prompt: 'Continue.',
+      attachments: [],
+      messages,
+      provider: 'claude',
+      status: 'idle',
+      mode: 'model-transfer',
+    })
+
+    // 摘要超过总量上限后，只该丢最旧的摘要；收尾循环不能把摘要整批删光。
+    const digestLines = prompt.match(/- Ran: inspect-step-\d+/g) ?? []
+    assert.ok(digestLines.length >= 100, `expected >=100 digest lines, got ${digestLines.length}`)
+    assert.match(prompt, /inspect-step-300/)
+    assert.match(prompt, /ORIGINAL TASK: fix battle settlement\./)
+  })
+
 })

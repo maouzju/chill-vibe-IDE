@@ -1706,7 +1706,12 @@ const ChatCardView = ({
     })
     previousAutoScrollCardIdRef.current = card.id
   }, [card.id, shouldStartPinnedToBottom])
-  const pendingAttachmentsRef = useRef<PendingAttachment[]>([])
+  // 症状：从飞书复制带多张图的表格再粘贴，缩略图里一部分裂成「粘贴图片 N」的 alt 文字。
+  // 根因（2026-10-09）：8 张图的上传几乎同时落地，曾有个 effect 在每次渲染后把 ref 回写成
+  // 旧的 state 快照，把已换成服务端地址的条目还原成已 revoke 的 blob: 条目。
+  // 决策：ref 只由 applyPendingAttachments 写入（初值取自 state），不要再加 state→ref 的回写；
+  // 见 tests/composer-multi-image-paste.spec.ts。
+  const pendingAttachmentsRef = useRef<PendingAttachment[]>(pendingAttachments)
   // The ref is the source of truth for pending attachments so async upload
   // callbacks and unmount-time persistence never race a stale render snapshot.
   const applyPendingAttachments = useCallback((next: readonly PendingAttachment[]) => {
@@ -2145,10 +2150,6 @@ const ChatCardView = ({
       observer.disconnect()
     }
   }, [scheduleComposerResize])
-
-  useEffect(() => {
-    pendingAttachmentsRef.current = pendingAttachments
-  }, [pendingAttachments])
 
   useEffect(() => {
     const nextAutoUrgeActive = card.autoUrgeActive === true
@@ -3559,7 +3560,9 @@ const ChatCardView = ({
       // 症状：复制带图消息/表格时，旧分支只复用图片附件，文字会被直接吞掉。
       // 根因（2026-10-08）：附件元数据与 text/plain、text/html 是同一份剪贴板的并行格式。
       // 决策：先插入纯文本/TSV，再复用内部附件，保持 textarea 的中文输入、撤销和光标稳定。
-      insertPastedText()
+      // 便签的「复制图片」把 text/plain 写成文件名只是给外部应用兜底，粘回聊天框不该多出一行文件名。
+      const copiedFileNames = new Set(copiedAttachments.map((attachment) => attachment.fileName.trim()))
+      if (!copiedFileNames.has(pastedText.trim())) insertPastedText()
       const next = mergeUploadedDraftAttachments(pendingAttachmentsRef.current, copiedAttachments)
       applyPendingAttachments(next)
       persistDraftAttachments(next)
@@ -3580,10 +3583,17 @@ const ChatCardView = ({
       event.preventDefault()
       insertPastedText()
       setComposerError(null)
-      // 同一份飞书剪贴板可能同时带 HTML 图片和原生 File；两条通道都消费，避免漏图/漏路径。
-      ingestExternalFiles(imageFiles, pathCandidateFiles)
+      // 症状：浏览器里右键「复制图片」粘进来会出现两张一样的缩略图。
+      // 根因：同一张图在剪贴板里既有原生 image File 又有 <img src>，两条通道各消费一次。
+      // 决策：原生图片够数就只用原生；HTML 图片更多时（表格带多图）改取抓回来的那批，
+      //   抓回的比原生还少（跨域/登录失败）就退回原生；非图片文件路径始终保留。
+      if (imageFiles.length >= htmlImageSources.length) {
+        ingestExternalFiles(imageFiles, pathCandidateFiles)
+        return
+      }
+      ingestExternalFiles([], pathCandidateFiles)
       void fetchPastedImageFiles(htmlImageSources).then((fetchedFiles) => {
-        if (fetchedFiles.length > 0) ingestExternalFiles(fetchedFiles, [])
+        ingestExternalFiles(fetchedFiles.length >= imageFiles.length ? fetchedFiles : imageFiles, [])
       })
       return
     }

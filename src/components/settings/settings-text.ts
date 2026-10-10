@@ -25,7 +25,7 @@ const zh = {
   } satisfies Record<SettingsCategoryId, string>,
   categoryNotes: {
     'get-started': '装好 CLI、连上账号，就能开始用了。',
-    models: '新会话默认用什么模型、怎么思考。',
+    models: '新会话默认用什么模型、对话怎么配。',
     appearance: '语言、主题、字体和编辑器。',
     automation: '让会话自己醒来、自己催、反复跑。',
     network: '断线重连和 Agent 权限边界。',
@@ -118,7 +118,7 @@ const en: typeof zh = {
   },
   categoryNotes: {
     'get-started': 'Install the CLI, connect an account, and you are ready.',
-    models: 'Which model new chats use and how it reasons.',
+    models: 'Which model new chats use and how chats are set up.',
     appearance: 'Language, theme, fonts and the editor.',
     automation: 'Let chats wake up, nudge themselves and repeat.',
     network: 'Reconnection and the agent permission boundary.',

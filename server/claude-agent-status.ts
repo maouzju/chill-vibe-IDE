@@ -318,15 +318,33 @@ export const createClaudeAgentStatusTracker = ({
     return `${claudeWorkflowSummaryPrefix} ${segments.join(' · ')}`
   }
 
+  // 症状：Workflow 卡只有「Scan: scan:gdd · 2 tools」，看不出它究竟派发了哪些模型（2026-10-09 用户截图）。
+  // 根因：2026-10-09 抠 claude 2.1.280：workflow_progress 的 workflow_agent 条目带 model / agentType，
+  //   面板只读了 state/label/计数。模型挂在徽标上而不是进汇总行：汇总行折行会挤掉心跳行。
+  // 在跑的 agent 里有人没指定模型（继承根会话）时记为「默认」，与已指定的并列。
+  const workflowModelBadge = (agent: TrackedAgent) => {
+    const running = listWorkflowAgents(agent.workflow)
+      .filter((entry) => readWorkflowAgentState(entry) === 'running')
+    const counts = new Map<string, number>()
+    for (const entry of running) {
+      const model = readString(entry, 'model') ?? (language === 'en' ? 'default' : '默认')
+      counts.set(model, (counts.get(model) ?? 0) + 1)
+    }
+    if (counts.size === 0) return undefined
+    if (counts.size === 1 && counts.has(language === 'en' ? 'default' : '默认')) return undefined
+    return [...counts].map(([model, n]) => (n > 1 ? `${model}×${n}` : model)).join(' / ')
+  }
+
   // 顺序固定为 心跳行… → 汇总 → ⏳：渲染端尾切 3 行，汇总与计时必须都留在窗口里。
   const publicAgent = (agent: TrackedAgent): StreamAgentEntry => {
     const running = isRunningStatus(agent.status)
     const summary = running ? formatWorkflowSummary(agent) : undefined
+    const model = (running ? workflowModelBadge(agent) : undefined) ?? agent.model
     return {
       threadId: agent.threadId,
       ...(agent.nickname ? { nickname: agent.nickname } : {}),
       ...(agent.role ? { role: agent.role } : {}),
-      ...(agent.model ? { model: agent.model } : {}),
+      ...(model ? { model } : {}),
       status: agent.status,
       ...(agent.message !== undefined ? { message: agent.message } : {}),
       activity: [

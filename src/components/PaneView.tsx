@@ -54,7 +54,7 @@ import {
   recordPanelUnmountForForensics,
 } from '../diagnostics/stuck-pane-forensics'
 import type { QueuedSendSummary, SendMessageOptions } from './deferred-send-queue'
-import { arePaneViewPropsEqual, cardKeepsPaneRuntimeWhenInactive } from './layout-memoization'
+import { arePaneViewPropsEqual, cardKeepsPaneRuntimeWhenInactive, hasRunningSubagentsCached } from './layout-memoization'
 import { getAutomationBoard, getLayoutTabIds } from '../../shared/default-state'
 import { getAutoReadCardId } from './pane-read-state'
 import { syncMessageListElementToBottom } from './pane-scroll'
@@ -1321,8 +1321,11 @@ const PaneViewView = ({
             // 绝不能靠把看板卡片的 status 写成 'streaming' 来实现 —— 那会在磁盘上
             // 留一张没有 streamId 的假 streaming 卡，重启恢复会把它当中断会话
             // （AGENTS.md pitfall 113）。
+            // 主回合已结束但子代理/后台 Workflow 还在跑：tab 也要保持运行态，
+            // 与卡片的 is-subagents-running 同判据（按 messages 引用缓存，免得每次渲染扫全部 tab）。
             const isStreaming =
               card.status === 'streaming' ||
+              (card.status === 'idle' && hasRunningSubagentsCached(card.messages)) ||
               automationBoardHasActiveRun(getAutomationBoard(card), column.cards)
             const isBeforeActive = pane.tabs[index + 1] === pane.activeTabId
             const tabClassName = [

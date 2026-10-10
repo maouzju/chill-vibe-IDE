@@ -411,6 +411,29 @@ test('queued Workflow agents are counted in the summary but never get a progress
   assert.equal(summaryLine(activity), `${claudeWorkflowSummaryPrefix} 已完成 0/4 · 在跑 2 · 排队 2`)
 })
 
+test('the Workflow entry badge lists the models of running agents, with unset ones as 默认', () => {
+  const tracker = startWorkflow()
+  const update = tracker.handleEvent(workflowProgress('A1:core', 3, 30_000, {
+    phase: 'Wave1',
+    live: [
+      ['Wave1', 'A1:core', 'progress', { model: 'claude-sonnet-5-5' }],
+      ['Wave1', 'A2:render', 'progress', { model: 'claude-sonnet-5-5' }],
+      ['Wave1', 'A3:rig', 'progress'],
+      ['Wave1', 'A4:audio', 'done', { model: 'claude-opus-5-5' }],
+    ],
+  }))
+  assert.equal(update.activity?.agents[0]?.model, 'claude-sonnet-5-5×2 / 默认')
+})
+
+test('the Workflow entry has no model badge when no agent names a model', () => {
+  const tracker = startWorkflow()
+  const update = tracker.handleEvent(workflowProgress('A1:core', 3, 30_000, {
+    phase: 'Wave1',
+    live: [['Wave1', 'A1:core', 'progress']],
+  }))
+  assert.equal(update.activity?.agents[0]?.model, undefined)
+})
+
 // 2026-09-27 对抗审查实测：列名字的汇总在 217~584px 的列里会折成两行，桌面活动框限高 3 行、底部对齐，
 // 折行会把最新那条心跳行挤出框。只报计数，在跑的是谁由上面的心跳行交代。
 test('the Workflow summary reports counts only so it stays one short line, in English too', () => {

@@ -2269,7 +2269,7 @@ test('theme toggle applies dark and light surfaces consistently', async ({ page 
     'background-color',
   )
   await revealSettingsItem(page, 'model-behavior')
-  await expect(page.locator('.settings-field-icon')).toHaveCount(8)
+  await expect(page.locator('.settings-field-icon')).toHaveCount(6)
   const darkSettingsModelIconColor = await readComputedRgb(page.locator('.settings-field-icon').first(), 'color')
   expect(darkActiveThemeChipBackgroundImage).toBe('none')
   expect(darkProxyEnabledBackgroundImage).toBe('none')

@@ -375,3 +375,44 @@ test('pane memoization rerenders an inactive tab when its wake-timer queue chang
 
   assert.equal(arePaneViewPropsEqual(previous, next), false)
 })
+
+test('pane memoization rerenders an idle inactive tab when a subagent starts running', () => {
+  const previous = createPaneComparatorProps()
+  const backgroundTabId = previous.pane.tabs[1]!
+  const backgroundCard = previous.column.cards[backgroundTabId]!
+  const next = {
+    ...previous,
+    column: {
+      ...previous.column,
+      cards: {
+        ...previous.column.cards,
+        [backgroundTabId]: {
+          ...backgroundCard,
+          messages: [
+            ...backgroundCard.messages,
+            {
+              id: 'background-agent-status',
+              role: 'assistant' as const,
+              content: '',
+              createdAt: '2026-10-10T00:00:00.000Z',
+              meta: {
+                provider: 'claude',
+                kind: 'agents',
+                itemId: 'agent-status:claude',
+                structuredData: JSON.stringify({
+                  itemId: 'agent-status:claude',
+                  kind: 'agents',
+                  status: 'completed',
+                  view: 'status',
+                  agents: [{ threadId: 'sub-1', status: 'running', activity: [] }],
+                }),
+              },
+            },
+          ],
+        },
+      },
+    },
+  }
+
+  assert.equal(arePaneViewPropsEqual(previous, next), false)
+})

@@ -16,6 +16,7 @@ import type { CardRecoveryStatus } from '../stream-recovery-feedback'
 import type { CodexChatSettings } from '../../shared/codex-chat-settings'
 import type { QueuedSendSummary } from './deferred-send-queue'
 import { sameColumnSourceCards } from './subagent-cross-column-navigation'
+import { selectDockedAgentStatus } from './chat-card-parsing'
 
 type WorkspaceColumnMemoProps = {
   column: BoardColumn
@@ -166,6 +167,16 @@ export const areWorkspaceColumnPropsEqual = (
 export const cardKeepsPaneRuntimeWhenInactive = (card: Pick<ChatCard, 'model'>) =>
   card.model === GIT_TOOL_MODEL
 
+const runningSubagentsCache = new WeakMap<object, boolean>()
+export const hasRunningSubagentsCached = (messages: ChatCard['messages']) => {
+  let value = runningSubagentsCache.get(messages)
+  if (value === undefined) {
+    value = selectDockedAgentStatus(messages) !== null
+    runningSubagentsCache.set(messages, value)
+  }
+  return value
+}
+
 const haveSameInactivePaneTabChrome = (previous: ChatCard | undefined, next: ChatCard | undefined) =>
   previous === next ||
   (
@@ -179,7 +190,13 @@ const haveSameInactivePaneTabChrome = (previous: ChatCard | undefined, next: Cha
     previous.unread === next.unread &&
     // An untitled tab renders a "waiting to wake" label while sends are queued,
     // so the queue depth is part of the inactive tab chrome.
-    (previous.wakeTimerQueuedSends?.length ?? 0) === (next.wakeTimerQueuedSends?.length ?? 0)
+    (previous.wakeTimerQueuedSends?.length ?? 0) === (next.wakeTimerQueuedSends?.length ?? 0) &&
+    // 症状（2026-10-10）：后台 idle 的 tab 子代理启停后运行色不刷新。根因：PaneView 对 idle tab
+    //   靠 messages 判断子代理是否在跑，这里只比 chrome 会吞掉 messages 的变化。
+    //   只在 idle 时比：streaming 的 tab 恒亮，不必为每个流式 delta 重算。
+    (previous.status !== 'idle' ||
+      previous.messages === next.messages ||
+      hasRunningSubagentsCached(previous.messages) === hasRunningSubagentsCached(next.messages))
   )
 
 /**

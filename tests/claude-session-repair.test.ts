@@ -216,7 +216,7 @@ describe('stripEmptyThinkingBlocks', () => {
     assert.equal(result.removed, 2)
     const entries = result.content.split('\n').filter(Boolean).map((l) => JSON.parse(l))
     assert.deepEqual(entries[1].message.content, [{ type: 'text', text: 'ok' }])
-    assert.deepEqual(entries[2].message.content, [{ type: 'text', text: '(thinking content unavailable)' }])
+    assert.deepEqual(entries[2].message.content, [{ type: 'text', text: '…' }])
     assert.equal(entries[3].message.content[0].thinking, 'real')
     assert.equal(entries[3].parentUuid, 'a2')
   })
@@ -232,5 +232,21 @@ describe('stripEmptyThinkingBlocks', () => {
     const n = await repairClaudeSessionForResume('x', () => file)
     assert.equal(n, 2)
     assert.ok(!fs.readFileSync(file, 'utf8').includes('"thinking":""'))
+  })
+
+  it('rewrites the legacy English placeholder that earlier repairs left in assistant text', () => {
+    const legacy = [
+      line({ type: 'user', uuid: 'u1', parentUuid: null, message: { role: 'user', content: [{ type: 'text', text: 'hi' }] } }),
+      line({ type: 'assistant', uuid: 'a1', parentUuid: 'u1', message: { role: 'assistant', content: [{ type: 'text', text: '(thinking content unavailable)' }] } }),
+    ].join('\n') + '\n'
+    const result = stripEmptyThinkingBlocks(legacy)
+    assert.equal(result.removed, 1)
+    const entries = result.content.split('\n').filter(Boolean).map((l) => JSON.parse(l))
+    assert.deepEqual(entries[1].message.content, [{ type: 'text', text: '…' }])
+  })
+
+  it('does not touch a user message that quotes the legacy placeholder', () => {
+    const quoted = line({ type: 'user', uuid: 'u1', parentUuid: null, message: { role: 'user', content: [{ type: 'text', text: '(thinking content unavailable)' }] } })
+    assert.deepEqual(stripEmptyThinkingBlocks(quoted), { content: quoted, removed: 0 })
   })
 })

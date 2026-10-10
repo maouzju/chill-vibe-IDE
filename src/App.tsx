@@ -37,7 +37,6 @@ import {
   createAutomationBoardTemplateFromCard,
   createDefaultAutomationBoardWorkspaceState,
   getAutomationBoard,
-  getPreferredReasoningEffort,
   titleFromPrompt,
 } from '../shared/default-state'
 import { attachImagesToMessageMeta } from '../shared/chat-attachments'
@@ -387,7 +386,6 @@ import {
   type HealthFix,
 } from './components/settings/settings-model'
 import { getSettingsPanelText } from './components/settings/settings-text'
-import { getReasoningOptionsForModel } from '../shared/reasoning'
 import type { CliCompatStatus } from '../shared/cli-compat'
 import { findChildCards, getSubagentNavigationActions } from './components/subagent-cross-column-navigation'
 import {
@@ -9707,48 +9705,6 @@ function App() {
             placeholder={DEFAULT_CLAUDE_MODEL}
           />
         </label>
-
-        {(['claude', 'codex'] as const).map((provider) => {
-          const model = appState.settings.requestModels[provider]
-          const effort = getPreferredReasoningEffort(appState.settings, provider, model)
-          const options = getReasoningOptionsForModel(provider, model, appState.settings.language)
-          const selectId = `${provider}-reasoning-effort-select`
-          return (
-            <div className="settings-hover-detail is-field" key={provider}>
-              <label className="settings-field" htmlFor={selectId}>
-                <span className="settings-field-label">
-                  <ModelIcon className="settings-field-icon" aria-hidden="true" />
-                  <span className="settings-field-label-text">
-                    {`${getProviderLabel(appState.settings.language, provider)} · ${text.reasoningEffortLabel}`}
-                  </span>
-                </span>
-                <select
-                  id={selectId}
-                  className="control settings-input"
-                  aria-describedby={`${selectId}-note`}
-                  value={effort ?? ''}
-                  onChange={(event) =>
-                    applyAction({
-                      type: 'rememberModelReasoningEffort',
-                      provider,
-                      model,
-                      reasoningEffort: event.target.value || undefined,
-                    })
-                  }
-                >
-                  {options.map((option) => (
-                    <option key={option.value} value={option.value}>
-                      {option.label}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <p id={`${selectId}-note`} className="settings-note settings-hover-note" role="tooltip">
-                {text.reasoningEffortNote}
-              </p>
-            </div>
-          )
-        })}
 
           <div className="settings-actions">
           <AppButton

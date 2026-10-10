@@ -102,10 +102,10 @@ export const settingsItemCatalog: readonly SettingsItemMeta[] = [
     tier: 'basic',
     label: { 'zh-CN': '默认模型', en: 'Default model' },
     hint: hint(
-      '新开的会话默认用哪个模型、想多深（思考深度越高越慢越贵）；',
-      'Which model new chats start with and how deeply it reasons (higher effort is slower and pricier).',
+      '新开的会话默认用哪个模型；',
+      'Which model new chats start with.',
     ),
-    keywords: ['model', '模型', 'reasoning', 'effort', '思考', '推理', 'thinking', 'claude', 'codex', 'default'],
+    keywords: ['model', '模型', 'claude', 'codex', 'default'],
   },
   {
     id: 'model-behavior',

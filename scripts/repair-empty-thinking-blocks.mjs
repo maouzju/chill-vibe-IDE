@@ -49,7 +49,7 @@ function repairFile(file) {
     // 所以补一条非空占位而不是 ""；直接删整行会断掉 parentUuid 链，不能那么干。
     if (kept.length === 0) {
       emptiedMessages += 1
-      kept.push({ type: 'text', text: '(thinking content unavailable)' })
+      kept.push({ type: 'text', text: '…' })
     }
     entry.message.content = kept
     return JSON.stringify(entry)

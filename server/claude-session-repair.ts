@@ -161,32 +161,52 @@ export const stripTurnEffortsWhenTailDangles = (content: string) => {
 
 // 症状：会话中途起每一轮都 `400 ... thinking: each thinking block must contain thinking`，
 //   一条报错拖 4 个 request id，重试/续传永远一样（另一台电脑 2026-10-02 仍在复现）。
+// 2026-10-10：占位若是英文句子，模型会在后续每步回复开头照抄成可见文字，故用单个省略号。
 // 根因（2026-07/08 实证）：中转站把 thinking 正文剥成空串只留 signature，CLI 原样写进存档，
 //   此后每轮回传必 400。签名对应原文、正文已丢无法补回，只能摘块；摘光的消息补非空占位，
 //   不能补空串、也不能删整行（会断 parentUuid 链）。只能在 spawn 前调用。
-const EMPTY_THINKING_PLACEHOLDER = '(thinking content unavailable)'
+const EMPTY_THINKING_PLACEHOLDER = '…'
+// 2026-10-10 之前的修复把占位写成了英文句子，已经落盘的存档里仍带着它，模型会照抄成可见文字。
+const LEGACY_THINKING_PLACEHOLDER = '(thinking content unavailable)'
 
 const isEmptyThinkingBlock = (block: unknown) => {
   const record = block as Record<string, unknown> | null
   return !!record && record.type === 'thinking' && typeof record.thinking === 'string' && record.thinking.trim() === ''
 }
 
+const isLegacyPlaceholderBlock = (block: unknown) => {
+  const record = block as Record<string, unknown> | null
+  return !!record && record.type === 'text' && record.text === LEGACY_THINKING_PLACEHOLDER
+}
+
 export const stripEmptyThinkingBlocks = (content: string) => {
-  if (!content.includes('"thinking"')) {
+  if (!content.includes('"thinking"') && !content.includes(LEGACY_THINKING_PLACEHOLDER)) {
     return { content, removed: 0 }
   }
   let removed = 0
   const output = content.split('\n').map((raw) => {
-    if (!raw.includes('"type":"thinking"')) {
+    if (!raw.includes('"type":"thinking"') && !raw.includes(LEGACY_THINKING_PLACEHOLDER)) {
       return raw
     }
     const entry = parseEntry(raw)
     const message = entry?.message as Record<string, unknown> | undefined
     const blocks = message?.content
-    if (!entry || !message || !Array.isArray(blocks) || !blocks.some(isEmptyThinkingBlock)) {
+    if (!entry || !message || !Array.isArray(blocks)) {
       return raw
     }
-    const kept = blocks.filter((block) => !isEmptyThinkingBlock(block))
+    const isAssistant = entry.type === 'assistant'
+    const isDirty = (block: unknown) =>
+      isEmptyThinkingBlock(block) || (isAssistant && isLegacyPlaceholderBlock(block))
+    if (!blocks.some(isDirty)) {
+      return raw
+    }
+    const kept = blocks.map((block) => {
+      if (isAssistant && isLegacyPlaceholderBlock(block)) {
+        removed += 1
+        return { type: 'text', text: EMPTY_THINKING_PLACEHOLDER }
+      }
+      return isEmptyThinkingBlock(block) ? null : block
+    }).filter((block) => block !== null)
     removed += blocks.length - kept.length
     if (kept.length === 0) {
       kept.push({ type: 'text', text: EMPTY_THINKING_PLACEHOLDER })

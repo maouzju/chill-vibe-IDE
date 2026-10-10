@@ -132,8 +132,10 @@ describe('filterSettingsItems', () => {
     const proxyHits = filterSettingsItems(settingsItemCatalog, 'PROXY').map((item) => item.id)
     assert.ok(proxyHits.includes('account'))
 
-    const zhHits = filterSettingsItems(settingsItemCatalog, '思考').map((item) => item.id)
-    assert.ok(zhHits.includes('models'))
+    const modelHits = filterSettingsItems(settingsItemCatalog, '模型').map((item) => item.id)
+    assert.ok(modelHits.includes('models'))
+    const removedEffortHits = filterSettingsItems(settingsItemCatalog, '思考').map((item) => item.id)
+    assert.ok(!removedEffortHits.includes('models'))
 
     const reconnectHits = filterSettingsItems(settingsItemCatalog, '断线').map((item) => item.id)
     assert.ok(reconnectHits.includes('account'))

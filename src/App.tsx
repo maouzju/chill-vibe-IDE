@@ -446,6 +446,9 @@ const interruptedSessionResumeBatchDelayMs = 350
 // 服务端说"终态最长推迟 N 毫秒"之后，本地兜底再多等这一点：覆盖 IPC 往返与
 // 终态事件的渲染排队，免得兜底刚好卡在服务端发 done 的同一毫秒上抢跑。
 const stopSettleFallbackGraceMs = 750
+// 左键打断的本地兜底在 stop 回执未到时按这个节奏复查，最多等到上限仍无回执才按硬杀收尾。
+const interruptFallbackPollMs = 250
+const interruptFallbackAckWaitCapMs = 5000
 
 const normalizeWorkspaceHistoryKey = (workspacePath: string) => workspacePath.trim().toLowerCase()
 const findSessionRestoreColumnId = (state: AppState, entry: Pick<SessionHistoryEntry, 'workspacePath'>) =>
@@ -949,6 +952,9 @@ function App() {
     new Map<string, { timer: number; fire: () => void }>(),
   )
   const stoppedRunReasonRef = useRef(new Map<string, StoppedRunReason>())
+  // 按 streamId 记 stop 回执：'pending' = stop 还没回，'soft' / 'hard' = 服务端回报的停法。
+  // 只给「没等到 done 的本地兜底收尾」用，终态走正常 done 时条目随之删除。
+  const stopAckByStreamIdRef = useRef(new Map<string, 'pending' | 'soft' | 'hard'>())
   const runStartedAtRef = useRef(new Map<string, number>())
   const appStateRef = useRef(appState)
   const activePaneTargetRef = useRef<PaneTarget | null>(null)
@@ -2801,13 +2807,23 @@ function App() {
 
       try {
         stoppedRunReasonRef.current.set(streamId, reason)
-        const { settlingWithinMs } = await stopChat(streamId, reason)
+        if (!stopAckByStreamIdRef.current.has(streamId)) {
+          stopAckByStreamIdRef.current.set(streamId, 'pending')
+        }
+        const { settlingWithinMs, interrupted } = await stopChat(streamId, reason)
+        // done 先到时收尾路径已删掉条目，这里不再写回（否则每次停止漏一条）；
+        // 重复 stop 只回报首次的结果（服务端幂等），已确认的软中断不被降级。
+        const ack = stopAckByStreamIdRef.current.get(streamId)
+        if (ack !== undefined && ack !== 'soft') {
+          stopAckByStreamIdRef.current.set(streamId, interrupted ? 'soft' : 'hard')
+        }
         // 服务端刻意推迟了终态（正在等收尾 workspace diff）：把本地兜底顺延到它
         // 承诺的上限之后，否则兜底会抢在 edits 改动卡之前 close 掉 EventSource。
         deferStopCompletionFallbackTimer(cardId, settlingWithinMs)
         return true
       } catch (error) {
         stoppedRunReasonRef.current.delete(streamId)
+        stopAckByStreamIdRef.current.delete(streamId)
         flushBufferedAssistantDeltaForCard(cardId)
         flushBufferedActivitiesForCard(cardId)
         active?.source.close()
@@ -2965,6 +2981,15 @@ function App() {
     }
 
     const liveCard = appStateRef.current.columns.find((column) => column.id === columnId)?.cards[cardId]
+    const stoppedStreamId = active?.streamId ?? liveCard?.streamId
+    // done 没到但 stop 回执说了软中断：进程与原生会话都活着，和 done 带 interrupted:true
+    // 同等对待（#369），否则 follow-up 被迫 seeded 冷启动、把历史截图重附重读。
+    const softInterrupted = stoppedStreamId
+      ? stopAckByStreamIdRef.current.get(stoppedStreamId) === 'soft'
+      : false
+    if (stoppedStreamId) {
+      stopAckByStreamIdRef.current.delete(stoppedStreamId)
+    }
     if (!liveCard) {
       return
     }
@@ -2978,6 +3003,7 @@ function App() {
           reason !== 'ask-user-answer'
             ? createStoppedRunMessage(appStateRef.current.settings.language, reason)
             : undefined,
+        ...(softInterrupted ? { softInterrupted: true } : {}),
       },
     ]
     const durationMessage = consumeRunDurationMessage(runStartedAtRef.current, cardId)
@@ -5316,6 +5342,7 @@ function App() {
             : 'manual'
           if (card.streamId) {
             stoppedRunReasonRef.current.delete(card.streamId)
+            stopAckByStreamIdRef.current.delete(card.streamId)
           }
 
           const completionSoundPlan = donePlan.runSuccessCallbacks
@@ -5527,6 +5554,7 @@ function App() {
             : undefined
           if (card.streamId) {
             stoppedRunReasonRef.current.delete(card.streamId)
+            stopAckByStreamIdRef.current.delete(card.streamId)
           }
 
           if (recoverable) {
@@ -6867,25 +6895,37 @@ function App() {
         // 症状：旧 stream 的 done 丢失后，左键发送只会排队，卡片永久 streaming。
         // 根因：stop IPC 成功不代表 renderer 仍订阅终态；2026-07-28 现场原生 turn 已完成 4h 仍未收尾。
         // 不能只等服务端 ack；短宽限后仅对同一个旧 stream 做本地幂等收尾（Known Pitfall #224）。
+        // 症状：2026-10-12 用户实证 Claude 卡左键打断后，已读过的截图在 follow-up 里又被 Read。
+        // 根因：stop IPC 437ms 才到服务端（02:05 那次 98ms 就没事），250ms 兜底先按「没回执」
+        //   收尾，#118 硬杀年代的规则清掉 sessionId，排队消息 seeded 冷启动重附历史图片；
+        //   服务端随后其实软中断成功。兜底分不清「服务端失联」和「回执还在路上」。
+        // 被否决：把 250ms 调大——#224 的「done 丢了」场景会一律变慢；回执未到就保会话——
+        //   硬杀回退（写 stdin 失败）留下的残缺会话尾巴正是 #118 要避开的。回执未到就等
+        //   （有上限），到了按它定保不保会话，与 done 带 interrupted 的口径一致（pitfall #396）。
         if (
           interruptedStreamId &&
           !stopCompletionFallbackTimersRef.current.has(cardId)
         ) {
-          armStopCompletionFallbackTimer(
-            cardId,
-            () => {
-              const liveCard = getColumn(columnId)?.cards[cardId]
-              if (
-                !liveCard ||
-                liveCard.status !== 'streaming' ||
-                (activeStreamsRef.current.get(cardId)?.streamId ?? liveCard.streamId) !== interruptedStreamId
-              ) {
-                return
-              }
-              finalizeStoppedStreamWithoutServerAck(columnId, cardId, 'user-interrupt')
-            },
-            250,
-          )
+          const fallbackArmedAt = Date.now()
+          const fireInterruptFallback = () => {
+            const liveCard = getColumn(columnId)?.cards[cardId]
+            if (
+              !liveCard ||
+              liveCard.status !== 'streaming' ||
+              (activeStreamsRef.current.get(cardId)?.streamId ?? liveCard.streamId) !== interruptedStreamId
+            ) {
+              return
+            }
+            if (
+              stopAckByStreamIdRef.current.get(interruptedStreamId) === 'pending' &&
+              Date.now() - fallbackArmedAt < interruptFallbackAckWaitCapMs
+            ) {
+              armStopCompletionFallbackTimer(cardId, fireInterruptFallback, interruptFallbackPollMs)
+              return
+            }
+            finalizeStoppedStreamWithoutServerAck(columnId, cardId, 'user-interrupt')
+          }
+          armStopCompletionFallbackTimer(cardId, fireInterruptFallback, interruptFallbackPollMs)
         }
         await requestStopForCard(cardId, 'user-interrupt')
       }

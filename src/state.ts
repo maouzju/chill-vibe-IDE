@@ -1586,12 +1586,42 @@ const selectCardModel = (
   )
   const shouldInvalidateSessionsForImageReplay =
     modelChanged && cardHasHistoricalImageAttachments(card)
+  // 症状：2026-10-12 用户实证 Claude 卡里已读过的截图，之后换个模型再发一条，agent 又把
+  //   截图 Read 了一遍（haiku→sonnet、sonnet→opus 各一次），原生 CLI 的 /model 不会这样。
+  // 根因：同 provider 换模型一律清 sessionId，下一条只能 seeded 冷启动，
+  //   collectSeededChatAttachments 把历史图片全部重新附上，模型只能再读。
+  //   真 CLI 探针：haiku 会话读图后 `claude -p -r <同会话> --model claude-sonnet-5-5`
+  //   0 次工具调用答出图中细节；keepalive 签名含 model，换模型本就会换进程带 --model 续传。
+  //   Codex 同理（2026-10-12 scripts/probe-codex-model-switch-resume.mjs，codex-cli 0.156.1）：
+  //   gpt-5.5 读图后 thread/resume 带 model=gpt-5.6-sol、gpt-5.6-sol→gpt-6.1-sol 两组都
+  //   0 次工具调用答出图中暗号；跨代时 CLI 自己先做一次交接压缩（旧模型写 Handoff Summary
+  //   再插 <model_switch>），等同 Codex TUI 的 /model，不需要我们重发图片。
+  // 被否决的替代：保留 seeded、只剥历史附件 —— 摘要预算会丢早期需求（见 contextTransfer
+  //   注释），且原生会话本来就是超集。只限会话有明确的旧模型标签：无标签的遗留会话来路
+  //   不明（pitfall #47）；本地模型走别的端点、线程不一定认。见 #397。
+  const keepsLiveSessionAcrossModels =
+    modelChanged &&
+    !providerChanged &&
+    (provider === 'claude' || provider === 'codex') &&
+    Boolean(card.sessionId?.trim()) &&
+    card.sessionModel?.trim() === previousEffectiveModel &&
+    !toolCardModels.has(normalizedModel) &&
+    !toolCardModels.has(card.model) &&
+    !isLocalModelToken(normalizedModel) &&
+    !isLocalModelToken(card.model)
 
   let sessionPatch: Pick<
     Partial<ChatCard>,
     'sessionId' | 'sessionModel' | 'providerSessions' | 'contextTransfer'
   > = {}
-  if (modelChanged && returnsToTransferSource && existingTransfer) {
+  if (keepsLiveSessionAcrossModels) {
+    sessionPatch = {
+      sessionModel: nextEffectiveModel,
+      // 同 provider 的旧锚点比活会话少了锚定之后的所有轮次，切回去反而丢上下文；
+      // 跨 provider 的返程锚点照留。
+      contextTransfer: existingTransfer?.sourceProvider === provider ? undefined : existingTransfer,
+    }
+  } else if (modelChanged && returnsToTransferSource && existingTransfer) {
     const savedSessions = { ...card.providerSessions }
     delete savedSessions[provider]
     const currentSessionId =
@@ -1640,6 +1670,7 @@ const selectCardModel = (
 
   if (
     modelChanged &&
+    !keepsLiveSessionAcrossModels &&
     !returnsToTransferSource &&
     hasTransferableContext &&
     !toolCardModels.has(normalizedModel) &&

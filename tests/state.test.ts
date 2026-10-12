@@ -1447,7 +1447,10 @@ describe('ideReducer pane layout', () => {
     )
   })
 
-  it('drops the active session when switching models inside an image-bearing chat', () => {
+  // 2026-10-12 之前这两条断言 Claude 卡内换模型必须丢会话：下一条以 seeded 摘要冷启动，
+  // 历史截图被 collectSeededChatAttachments 重新附上，模型只能再 Read 一遍。真 CLI 探针
+  // （haiku 读图 → `-r <同会话> --model sonnet`）0 次工具调用就答出图里细节，与 CLI 的 /model 一致。
+  it('keeps the native Claude session when switching models inside an image-bearing chat', () => {
     const state = createState()
     state.columns[1]!.cards['card-3'] = createCard({
       id: 'card-3',
@@ -1455,6 +1458,7 @@ describe('ideReducer pane layout', () => {
       provider: 'claude',
       model: 'claude-opus-4-7',
       sessionId: 'claude-session-active',
+      sessionModel: 'claude-opus-4-7',
       providerSessions: {
         codex: 'codex-session-stale',
       },
@@ -1491,17 +1495,19 @@ describe('ideReducer pane layout', () => {
     assert.equal(updated?.model, 'claude-sonnet-4-6')
     assert.equal(
       updated?.sessionId,
-      undefined,
-      'switching models with historical images must replay the transcript into a fresh session',
+      'claude-session-active',
+      'the native session already holds the screenshot; a fresh seeded session would re-attach and re-read it',
     )
-    assert.deepEqual(
-      updated?.providerSessions,
-      {},
-      'saved sessions from other providers also become stale once the image-bearing history changes model',
+    assert.equal(
+      updated?.sessionModel,
+      'claude-sonnet-4-6',
+      'the next send must resume this session with --model set to the new model',
     )
+    assert.equal(updated?.contextTransfer, undefined, 'resuming the live session needs no transcript replay')
+    assert.deepEqual(updated?.providerSessions, { codex: 'codex-session-stale' })
   })
 
-  it('drops the active session when switching models inside a text-only chat', () => {
+  it('keeps the native Claude session when switching models inside a text-only chat', () => {
     const state = createState()
     state.columns[1]!.cards['card-3'] = createCard({
       id: 'card-3',
@@ -1509,6 +1515,7 @@ describe('ideReducer pane layout', () => {
       provider: 'claude',
       model: 'claude-opus-4-7',
       sessionId: 'claude-session-active',
+      sessionModel: 'claude-opus-4-7',
       providerSessions: {
         codex: 'codex-session-stale',
       },
@@ -1533,18 +1540,171 @@ describe('ideReducer pane layout', () => {
     })
 
     const updated = next.columns[1]!.cards['card-3']
-    assert.equal(updated?.provider, 'claude')
     assert.equal(updated?.model, 'claude-sonnet-4-6')
+    assert.equal(updated?.sessionId, 'claude-session-active')
+    assert.equal(updated?.sessionModel, 'claude-sonnet-4-6')
+    assert.equal(updated?.contextTransfer, undefined)
+    assert.deepEqual(updated?.providerSessions, { codex: 'codex-session-stale' })
+  })
+
+  it('resumes the live Claude session instead of an older same-provider transfer anchor', () => {
+    const state = createState()
+    state.columns[1]!.cards['card-3'] = createCard({
+      id: 'card-3',
+      title: 'Seeded once, now native',
+      provider: 'claude',
+      model: 'claude-opus-4-7',
+      sessionId: 'claude-opus-live',
+      sessionModel: 'claude-opus-4-7',
+      contextTransfer: {
+        sourceProvider: 'claude',
+        sourceModel: 'claude-sonnet-4-6',
+        sourceSessionId: 'claude-sonnet-older',
+      },
+      status: 'idle',
+      streamId: undefined,
+      messages: [
+        {
+          id: 'msg-user-text',
+          role: 'user',
+          content: 'Turns after the transfer only exist in the live Opus session.',
+          createdAt: timestamp,
+        },
+      ],
+    })
+
+    const next = ideReducer(state, {
+      type: 'selectCardModel',
+      columnId: 'column-2',
+      cardId: 'card-3',
+      provider: 'claude',
+      model: 'claude-sonnet-4-6',
+    })
+
+    const updated = next.columns[1]!.cards['card-3']
     assert.equal(
       updated?.sessionId,
-      undefined,
-      'switching text chats to another model must not keep resuming the old-model session',
+      'claude-opus-live',
+      'the older anchor misses every turn after the transfer; the live session is the superset',
     )
-    assert.deepEqual(
-      updated?.providerSessions,
-      {},
-      'saved sessions from other providers also become stale once the active chat switches model',
-    )
+    assert.equal(updated?.sessionModel, 'claude-sonnet-4-6')
+    assert.equal(updated?.contextTransfer, undefined)
+  })
+
+  it('keeps a cross-provider return anchor while switching Claude models on the live session', () => {
+    const state = createState()
+    const solAnchor = {
+      sourceProvider: 'codex' as const,
+      sourceModel: 'gpt-5.6-sol',
+      sourceSessionId: 'sol-session-active',
+    }
+    state.columns[1]!.cards['card-3'] = createCard({
+      id: 'card-3',
+      title: 'Back from Sol',
+      provider: 'claude',
+      model: 'claude-opus-4-7',
+      sessionId: 'claude-opus-live',
+      sessionModel: 'claude-opus-4-7',
+      contextTransfer: solAnchor,
+      status: 'idle',
+      streamId: undefined,
+      messages: [
+        {
+          id: 'msg-user-text',
+          role: 'user',
+          content: 'Switch Claude models but keep the way back to Sol.',
+          createdAt: timestamp,
+        },
+      ],
+    })
+
+    const next = ideReducer(state, {
+      type: 'selectCardModel',
+      columnId: 'column-2',
+      cardId: 'card-3',
+      provider: 'claude',
+      model: 'claude-sonnet-4-6',
+    })
+
+    const updated = next.columns[1]!.cards['card-3']
+    assert.equal(updated?.sessionId, 'claude-opus-live')
+    assert.equal(updated?.sessionModel, 'claude-sonnet-4-6')
+    assert.deepEqual(updated?.contextTransfer, solAnchor)
+  })
+
+  it('still drops an untagged legacy Claude session when switching models (pitfall #47)', () => {
+    const state = createState()
+    state.columns[1]!.cards['card-3'] = createCard({
+      id: 'card-3',
+      title: 'Legacy session',
+      provider: 'claude',
+      model: 'claude-opus-4-7',
+      sessionId: 'claude-session-unknown-model',
+      sessionModel: undefined,
+      status: 'idle',
+      streamId: undefined,
+      messages: [
+        {
+          id: 'msg-user-text',
+          role: 'user',
+          content: 'Old session without a model tag.',
+          createdAt: timestamp,
+        },
+      ],
+    })
+
+    const next = ideReducer(state, {
+      type: 'selectCardModel',
+      columnId: 'column-2',
+      cardId: 'card-3',
+      provider: 'claude',
+      model: 'claude-sonnet-4-6',
+    })
+
+    assert.equal(next.columns[1]!.cards['card-3']?.sessionId, undefined)
+  })
+
+  it('keeps the native Codex thread when switching Codex models inside an image-bearing chat', () => {
+    const state = createState()
+    state.columns[1]!.cards['card-3'] = createCard({
+      id: 'card-3',
+      title: 'Codex chat',
+      provider: 'codex',
+      model: 'gpt-5.5',
+      sessionId: 'codex-session-active',
+      sessionModel: 'gpt-5.5',
+      status: 'idle',
+      streamId: undefined,
+      messages: [
+        {
+          id: 'msg-user-image',
+          role: 'user',
+          content: 'Here is the screenshot.',
+          createdAt: timestamp,
+          meta: attachImagesToMessageMeta([
+            {
+              id: 'image-3',
+              fileName: 'screen.png',
+              mimeType: 'image/png',
+              sizeBytes: 4096,
+            },
+          ]),
+        },
+      ],
+    })
+
+    const next = ideReducer(state, {
+      type: 'selectCardModel',
+      columnId: 'column-2',
+      cardId: 'card-3',
+      provider: 'codex',
+      model: 'gpt-5.6-sol',
+    })
+
+    const card = next.columns[1]!.cards['card-3']
+    assert.equal(card?.sessionId, 'codex-session-active')
+    assert.equal(card?.sessionModel, 'gpt-5.6-sol')
+    assert.equal(card?.contextTransfer, undefined)
   })
 
   it('anchors a Fable session while switching to Sol and restores it when switching back', () => {

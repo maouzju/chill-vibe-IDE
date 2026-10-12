@@ -907,6 +907,9 @@ export type StopChatResult = {
   // 渲染端的"服务端没回应"本地兜底必须据此顺延，否则会抢在终态之前 close 掉
   // EventSource，把改动卡连同文件清单一起丢掉（Known Pitfall 244）。
   settlingWithinMs: number
+  // 服务端确认这次是软中断（进程与原生会话都活着）。done 丢了、渲染端只能本地收尾时，
+  // 靠它决定保不保 sessionId；缺省按硬杀处理（pitfall #118 的旧前提）。
+  interrupted?: boolean
 }
 
 const noDeferredSettle: StopChatResult = { settlingWithinMs: 0 }
@@ -919,9 +922,14 @@ export const stopChat = async (streamId: string, origin?: string): Promise<StopC
     // 旧桥（以及被 stub 掉 stopChat 的测试）返回 undefined —— 一律按"没有推迟"处理，
     // 也就是保持这次改动之前的兜底时序，不会因为缺字段而永远不兜底。
     const settlingWithinMs = (result as StopChatResult | undefined)?.settlingWithinMs
-    return Number.isFinite(settlingWithinMs) && (settlingWithinMs as number) > 0
-      ? { settlingWithinMs: settlingWithinMs as number }
-      : noDeferredSettle
+    const interrupted = (result as StopChatResult | undefined)?.interrupted === true
+    return {
+      settlingWithinMs:
+        Number.isFinite(settlingWithinMs) && (settlingWithinMs as number) > 0
+          ? (settlingWithinMs as number)
+          : 0,
+      ...(interrupted ? { interrupted } : {}),
+    }
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
     if (message.includes('Stream not found') || message.includes('already finished')) {

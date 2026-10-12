@@ -131,6 +131,10 @@ const installMockApis = async (
     autoEmitDoneOnStop?: boolean
     holdChatMessageResponse?: boolean
     stopResponse?: 'ok' | 'not-found'
+    // 真实服务端 stop 回的是 `{ ok, settlingWithinMs, interrupted }`；缺省 204 模拟旧桥。
+    stopAck?: 'no-content' | 'server-result'
+    // stop 回执到达前的延迟：现场 IPC 到服务端要 ~437ms，长于 250ms 的本地兜底。
+    stopDelayMs?: number
     nativeTurnCompletion?: 'completed' | 'incomplete' | 'unknown'
     wakeTimerEnabled?: boolean
     peerCard?: MockCardState & { id: string; title: string }
@@ -418,6 +422,8 @@ const installMockApis = async (
     autoEmitDoneOnStop = true,
     holdChatMessageResponse: initialHoldChatMessageResponse = false,
     stopResponse = 'ok',
+    stopAck = 'no-content',
+    stopDelayMs = 0,
     nativeTurnCompletion = 'unknown',
     wakeTimerEnabled = false,
     peerCard,
@@ -572,6 +578,9 @@ const installMockApis = async (
   await page.route('**/api/chat/stop/*', async (route) => {
     const streamId = decodeURIComponent(route.request().url().split('/').at(-1) ?? '')
     requests.push(`stop:${streamId}`)
+    if (stopDelayMs > 0) {
+      await new Promise((resolve) => setTimeout(resolve, stopDelayMs))
+    }
     if (stopResponse === 'not-found') {
       await route.fulfill({
         status: 404,
@@ -580,7 +589,13 @@ const installMockApis = async (
       return
     }
 
-    await route.fulfill({ status: 204 })
+    if (stopAck === 'server-result') {
+      await route.fulfill({
+        json: { ok: true, settlingWithinMs: 0, interrupted: initialCard.provider === 'claude' },
+      })
+    } else {
+      await route.fulfill({ status: 204 })
+    }
     if (autoEmitDoneOnStop) {
       // 真实服务端只有 Claude keepalive 路径能软中断（interrupted=true）；Codex 停止
       // 仍是硬 kill。mock 按 provider 如实模拟，让两条分支的断言各自成立。
@@ -1366,6 +1381,89 @@ test('sending a queued running Claude chat now keeps the softly interrupted sess
   await expect(page.locator('.message-entry-user').filter({ hasText: 'Use this replacement instruction' })).toBeVisible()
   await expect.poll(() => mock.readState().columns[0]?.cards['card-1']?.messages[1]?.meta?.stopReason).toBe('user-interrupt')
   await expect(page.locator('.streaming-indicator')).toContainText('Writing')
+})
+
+// 2026-10-12 现场：左键打断 Claude 卡，stop IPC 437ms 才到服务端，250ms 本地兜底先按
+// 「没回执」收尾并清了 sessionId；服务端其实软中断成功，follow-up 却 seeded 冷启动，
+// 把历史截图重新附上让模型再读一遍。回执未到时兜底必须等，回执说软中断就保会话。
+const slowAckClaudeCard = {
+  status: 'streaming' as const,
+  streamId: 'stream-1',
+  sessionId: 'claude-session-1',
+  provider: 'claude' as const,
+  model: 'claude-opus-4-7',
+  messages: [
+    {
+      id: 'assistant-1',
+      role: 'assistant' as const,
+      content: 'Still answering from Claude',
+      createdAt: new Date().toISOString(),
+    },
+  ],
+}
+
+test('left-click interrupt keeps the Claude session when the soft-stop ack is slower than the local fallback', async ({ page }) => {
+  const mock = await installMockApis(page, {
+    initialCard: slowAckClaudeCard,
+    stopAck: 'server-result',
+    stopDelayMs: 700,
+    autoEmitDoneOnStop: true,
+  })
+  await page.goto(appUrl)
+
+  const textarea = getActiveComposerTextarea(page)
+  await expect(textarea).toBeVisible()
+  await textarea.fill('Follow up on the screenshot you already read')
+  await page.getByRole('button', { name: 'Send message' }).click()
+
+  await expect.poll(() => mock.readRequests()[0]).toBe('stop:stream-1')
+  await expect.poll(() => mock.readChatRequests()[0]?.prompt, { timeout: 5000 })
+    .toContain('Follow up on the screenshot you already read')
+  expect(mock.readChatRequests()[0]?.sessionId).toBe('claude-session-1')
+  expect(mock.readChatRequests()[0]?.prompt).not.toContain('Latest user message:')
+  await expect.poll(() => mock.readState().columns[0]?.cards['card-1']?.messages[1]?.meta?.stopReason).toBe('user-interrupt')
+})
+
+test('left-click interrupt keeps the Claude session when a slow soft-stop ack arrives but done never does', async ({ page }) => {
+  const mock = await installMockApis(page, {
+    initialCard: slowAckClaudeCard,
+    stopAck: 'server-result',
+    stopDelayMs: 700,
+    autoEmitDoneOnStop: false,
+  })
+  await page.goto(appUrl)
+
+  const textarea = getActiveComposerTextarea(page)
+  await expect(textarea).toBeVisible()
+  await textarea.fill('Continue without losing the session')
+  await page.getByRole('button', { name: 'Send message' }).click()
+
+  await expect.poll(() => mock.readRequests()[0]).toBe('stop:stream-1')
+  await expect.poll(() => mock.readChatRequests()[0]?.prompt, { timeout: 5000 })
+    .toContain('Continue without losing the session')
+  expect(mock.readChatRequests()[0]?.sessionId).toBe('claude-session-1')
+  expect(mock.readChatRequests()[0]?.prompt).not.toContain('Latest user message:')
+  await expect.poll(() => mock.readState().columns[0]?.cards['card-1']?.streamId).toBe('stream-2')
+})
+
+test('left-click interrupt still clears the session when the slow stop ack reports a hard kill', async ({ page }) => {
+  const mock = await installMockApis(page, {
+    initialCard: slowAckClaudeCard,
+    stopAck: 'no-content',
+    stopDelayMs: 700,
+    autoEmitDoneOnStop: false,
+  })
+  await page.goto(appUrl)
+
+  const textarea = getActiveComposerTextarea(page)
+  await expect(textarea).toBeVisible()
+  await textarea.fill('Hard-killed turn falls back to replay')
+  await page.getByRole('button', { name: 'Send message' }).click()
+
+  await expect.poll(() => mock.readChatRequests()[0]?.prompt, { timeout: 5000 })
+    .toContain('Hard-killed turn falls back to replay')
+  expect(mock.readChatRequests()[0]?.sessionId).toBeUndefined()
+  expect(mock.readRequests()[0]).toBe('stop:stream-1')
 })
 
 test('sending during /compact still waits for the compaction stream to finish', async ({ page }) => {

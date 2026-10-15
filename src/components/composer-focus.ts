@@ -411,3 +411,32 @@ export const shouldSkipComposerRescueForIgnoredSurface = (
   }
   return isIgnoredSurface(hit)
 }
+
+// Native controls living inside `.composer` (wake-timer mode <select>, duration
+// <input>, buttons) own their focus. 10-15: clicking the「其他 Agent 完成」
+// <select> opened its popup, then the card's click-capture rescue refocused the
+// textarea on the next frame and the popup closed instantly — unusable. The
+// rescue is only for presses on the textarea/blank composer, never on a control.
+export const composerOwnControlSelector = [
+  'select',
+  'input',
+  'button',
+  'a[href]',
+  '[contenteditable="true"]',
+  '[role="button"]',
+  '[role="combobox"]',
+  '[role="listbox"]',
+  '[role="menu"]',
+  '[role="menuitem"]',
+  '[role="option"]',
+  '[role="checkbox"]',
+].join(', ')
+
+export const shouldRescueComposerFocusOnClick = (
+  target: { closest: (selector: string) => unknown } | null,
+): boolean => {
+  if (!target || target.closest('.composer') === null) {
+    return false
+  }
+  return target.closest(composerOwnControlSelector) === null
+}

@@ -1094,3 +1094,17 @@ test('without guardDelaysMs the ladder behaves exactly as before (no extra timer
   assert.equal(env.focusCalls(), 1)
   assert.equal(env.pendingTimerDelays().length, 0, 'no guard timers may linger for legacy callers')
 })
+
+test('click-capture rescue leaves composer-owned controls like the wake-timer select alone', async () => {
+  const { shouldRescueComposerFocusOnClick } = await import('../src/components/composer-focus.ts')
+  const fakeTarget = (matches: string[]) => ({
+    closest: (selector: string) =>
+      selector.split(',').some((part) => matches.includes(part.trim())) ? {} : null,
+  })
+  assert.equal(shouldRescueComposerFocusOnClick(fakeTarget(['.composer', 'select'])), false)
+  assert.equal(shouldRescueComposerFocusOnClick(fakeTarget(['.composer', 'input'])), false)
+  assert.equal(shouldRescueComposerFocusOnClick(fakeTarget(['.composer', 'button'])), false)
+  assert.equal(shouldRescueComposerFocusOnClick(fakeTarget(['.composer'])), true)
+  assert.equal(shouldRescueComposerFocusOnClick(fakeTarget([])), false)
+  assert.equal(shouldRescueComposerFocusOnClick(null), false)
+})

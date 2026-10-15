@@ -143,6 +143,7 @@ import {
   isReclaimableOwnPaneChrome,
   shouldPreserveComposerFocusAfterVacantFocusOut,
   shouldRefocusAfterComposerBlur,
+  shouldRescueComposerFocusOnClick,
   shouldSkipComposerRescueForIgnoredSurface,
   startComposerFocusAttempt,
   type ComposerFocusAttemptDeps,
@@ -4648,8 +4649,11 @@ const ChatCardView = ({
         // composer un-clickable. Rescue whenever the click lands inside this
         // card's composer and the textarea is not already focused.
         const textarea = textareaRef.current
-        const clickedInComposer =
-          event.target instanceof Element && event.target.closest('.composer') !== null
+        // Composer-owned controls (wake-timer <select>, buttons) keep their own
+        // focus; refocusing the textarea here closed the select popup instantly.
+        const clickedInComposer = shouldRescueComposerFocusOnClick(
+          event.target instanceof Element ? event.target : null,
+        )
         if (
           !isToolCard &&
           textarea &&

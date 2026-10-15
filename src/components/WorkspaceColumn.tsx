@@ -15,7 +15,7 @@ import {
 import { createPortal } from 'react-dom'
 
 import { minColumnWidth } from '../../shared/default-state'
-import { formatLocalizedDateTime, getLocaleText } from '../../shared/i18n'
+import { formatLocalizedDateTime, getLocaleText, getProviderLabel } from '../../shared/i18n'
 import type {
   AppLanguage,
   AutoUrgeProfile,
@@ -55,6 +55,7 @@ import type {
   AutomationBoardActions,
   AutomationBoardWorkspaceView,
 } from './automation-board-host'
+import type { GitAgentSessionRequest } from './git-operation-hub'
 import { LayoutRenderer } from './LayoutRenderer'
 
 const openFolderNative = async (): Promise<FolderDialogResult> => {
@@ -249,6 +250,7 @@ type WorkspaceColumnProps = {
   onManualRecoverStream?: (cardId: string) => Promise<unknown>
   onForkConversation?: (cardId: string, messageId: string) => void
   onOpenFile?: (paneId: string, relativePath: string, options?: { line?: number }) => void
+  onOpenAgentSession?: (paneId: string, request: GitAgentSessionRequest) => boolean
   recentWorkspaces: RecentWorkspace[]
   onRecordRecentWorkspace: (path: string) => void
   onRemoveRecentWorkspaces: (paths: string[]) => void
@@ -328,6 +330,7 @@ const WorkspaceColumnView = ({
   onManualRecoverStream,
   onForkConversation,
   onOpenFile,
+  onOpenAgentSession,
   recentWorkspaces,
   onRecordRecentWorkspace,
   onRemoveRecentWorkspaces,
@@ -1157,7 +1160,7 @@ const WorkspaceColumnView = ({
                         </span>
                       </span>
                       <span className="session-history-meta">
-                        {entry.provider === 'claude' ? 'Claude' : 'Codex'}
+                        {getProviderLabel(language, entry.provider)}
                         {' · '}
                         {formatLocalizedDateTime(language, entry.archivedAt)}
                         {getSessionHistoryDisplayMessageCount(entry) > 0
@@ -1187,7 +1190,7 @@ const WorkspaceColumnView = ({
                 >
                   <span className="session-history-title">{session.title}</span>
                   <span className="session-history-meta">
-                    {session.provider === 'claude' ? 'Claude' : 'Codex'}
+                    {getProviderLabel(language, session.provider)}
                     {' · '}
                     {formatLocalizedDateTime(language, session.updatedAt)}
                     {` · ${session.messageCount} msgs`}
@@ -1282,6 +1285,7 @@ const WorkspaceColumnView = ({
           onManualRecoverStream={onManualRecoverStream}
           onForkConversation={onForkConversation}
         onOpenFile={onOpenFile}
+        onOpenAgentSession={onOpenAgentSession}
         cardRecoveryStatuses={cardRecoveryStatuses}
         queuedSendSummaries={queuedSendSummaries}
       />

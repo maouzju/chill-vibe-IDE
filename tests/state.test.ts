@@ -7,7 +7,10 @@ import { getDuplicateColumnTitle } from '../shared/i18n.ts'
 import {
   BRAINSTORM_TOOL_MODEL,
   DEFAULT_CODEX_MODEL,
+  DEFAULT_GEMINI_MODEL,
+  IMAGEEDITOR_TOOL_MODEL,
   STICKYNOTE_TOOL_MODEL,
+  TEXTEDITOR_TOOL_MODEL,
   WEATHER_TOOL_MODEL,
 } from '../shared/models.ts'
 import { defaultAutoUrgeProfileId } from '../shared/schema.ts'
@@ -113,6 +116,7 @@ const createState = (): AppState => ({
     requestModels: {
       codex: DEFAULT_CODEX_MODEL,
       claude: 'claude-sonnet-4-6',
+      gemini: 'gemini-3.8-flash',
     },
   },
   columns: [
@@ -3319,7 +3323,7 @@ describe('addColumn follows last-used provider/model when available', () => {
       columns: [baseState.columns[1]!],
       settings: {
         ...createDefaultSettings(),
-        requestModels: { codex: DEFAULT_CODEX_MODEL, claude: 'claude-opus-4-7' },
+        requestModels: { codex: DEFAULT_CODEX_MODEL, claude: 'claude-opus-4-7', gemini: DEFAULT_GEMINI_MODEL },
         lastModel: { provider: 'codex', model: DEFAULT_CODEX_MODEL },
       },
     }
@@ -3351,7 +3355,7 @@ describe('addColumn follows last-used provider/model when available', () => {
       columns: [baseState.columns[1]!],
       settings: {
         ...createDefaultSettings(),
-        requestModels: { codex: DEFAULT_CODEX_MODEL, claude: 'claude-opus-4-7' },
+        requestModels: { codex: DEFAULT_CODEX_MODEL, claude: 'claude-opus-4-7', gemini: DEFAULT_GEMINI_MODEL },
         lastModel: { provider: 'claude', model: 'claude-sonnet-4-6' },
       },
     }
@@ -3420,3 +3424,96 @@ describe('setActiveTab no-op short-circuit', () => {
     assert.equal(state, next)
   })
 });
+
+// 2026-10-14 用户报「重命名文件有 bug」：文件树改名/拖动后，打开着的编辑器 tab
+// 还挂在旧路径上，自动保存又把旧文件写回来。改名成功后必须把 tab 的路径跟过去。
+describe('remapEditorTabPaths follows renamed or moved workspace entries', () => {
+  const createEditorState = (): AppState => {
+    const state = createState()
+    const column = state.columns[0]!
+    return {
+      ...state,
+      columns: [
+        {
+          ...column,
+          layout: createPane('pane-1', ['card-1', 'editor-a', 'editor-b', 'image-c', 'editor-x'], 'editor-a'),
+          cards: {
+            ...column.cards,
+            'editor-a': createCard({ id: 'editor-a', title: 'notes.md', model: TEXTEDITOR_TOOL_MODEL, stickyNote: 'docs/notes.md', messages: [] }),
+            'editor-b': createCard({ id: 'editor-b', title: 'guide.md', model: TEXTEDITOR_TOOL_MODEL, stickyNote: 'docs\\deep\\guide.md', messages: [] }),
+            'image-c': createCard({ id: 'image-c', title: 'logo.png', model: IMAGEEDITOR_TOOL_MODEL, stickyNote: 'docs/img/logo.png', messages: [] }),
+            'editor-x': createCard({ id: 'editor-x', title: 'docs-old.md', model: TEXTEDITOR_TOOL_MODEL, stickyNote: 'docs-old.md', messages: [] }),
+          },
+        },
+        state.columns[1]!,
+      ],
+    }
+  }
+
+  it('rewrites the path and default title of a tab whose file was renamed', () => {
+    const state = createEditorState()
+    const next = ideReducer(state, {
+      type: 'remapEditorTabPaths',
+      workspacePath: 'D:/repo/one',
+      fromPath: 'docs/notes.md',
+      toPath: 'docs/notes-v2.md',
+    })
+
+    const card = next.columns[0]!.cards['editor-a']!
+    assert.equal(card.stickyNote, 'docs/notes-v2.md')
+    assert.equal(card.title, 'notes-v2.md')
+    assert.equal(next.columns[0]!.cards['editor-b'], state.columns[0]!.cards['editor-b'])
+    assert.equal(next.columns[1], state.columns[1], 'other workspaces stay untouched')
+  })
+
+  it('rewrites every editor and image tab nested under a renamed folder', () => {
+    const state = createEditorState()
+    const next = ideReducer(state, {
+      type: 'remapEditorTabPaths',
+      workspacePath: 'd:\\repo\\one\\',
+      fromPath: 'docs',
+      toPath: 'documentation',
+    })
+
+    const cards = next.columns[0]!.cards
+    assert.equal(cards['editor-a']!.stickyNote, 'documentation/notes.md')
+    assert.equal(cards['editor-b']!.stickyNote, 'documentation/deep/guide.md')
+    assert.equal(cards['image-c']!.stickyNote, 'documentation/img/logo.png')
+    assert.equal(cards['editor-a']!.title, 'notes.md', 'basename did not change, so title stays')
+    assert.equal(cards['editor-x'], state.columns[0]!.cards['editor-x'], 'docs-old.md is not inside docs/')
+    assert.equal(cards['card-1'], state.columns[0]!.cards['card-1'], 'chat cards are never touched')
+  })
+
+  it('keeps a custom tab title and returns the same state when nothing matches', () => {
+    const state = createEditorState()
+    const custom: AppState = {
+      ...state,
+      columns: [
+        {
+          ...state.columns[0]!,
+          cards: {
+            ...state.columns[0]!.cards,
+            'editor-a': { ...state.columns[0]!.cards['editor-a']!, title: 'Plan' },
+          },
+        },
+        state.columns[1]!,
+      ],
+    }
+    const renamed = ideReducer(custom, {
+      type: 'remapEditorTabPaths',
+      workspacePath: 'D:/repo/one',
+      fromPath: 'docs/notes.md',
+      toPath: 'docs/moved/notes.md',
+    })
+    assert.equal(renamed.columns[0]!.cards['editor-a']!.stickyNote, 'docs/moved/notes.md')
+    assert.equal(renamed.columns[0]!.cards['editor-a']!.title, 'Plan')
+
+    const untouched = ideReducer(state, {
+      type: 'remapEditorTabPaths',
+      workspacePath: 'D:/repo/two',
+      fromPath: 'docs/notes.md',
+      toPath: 'docs/notes-v2.md',
+    })
+    assert.equal(untouched, state)
+  })
+})

@@ -610,7 +610,9 @@ test('full git opens without auto-staging and still seeds a default commit summa
   await expect(page.locator('.git-commit-summary')).toHaveValue('提交信息')
 })
 
-test('git sync retries through conflict resolution when pull leaves merge conflicts', async ({ page }) => {
+// SPEC docs/specs/git-sync-conflict-session：冲突不再在后台静默跑 Codex 后自动 push，
+// 而是在 Git 卡所在 pane 新开一个可见会话接手，push 交给会话里的 Agent。
+test('git sync hands merge conflicts to a new visible chat session instead of a hidden run', async ({ page }) => {
   await installMockApis(page, 'dark')
   await page.goto('http://localhost:5173')
 
@@ -759,20 +761,20 @@ test('git sync retries through conflict resolution when pull leaves merge confli
       __gitSyncTestState: { requestCalls: number }
     }).__gitSyncTestState.requestCalls),
   ).toBe(1)
-  await expect.poll(() =>
-    page.evaluate(() => (window as typeof window & {
-      __gitSyncTestState: { pushCalls: number }
-    }).__gitSyncTestState.pushCalls),
-  ).toBe(1)
-  await expect.poll(() =>
-    page.evaluate(() => (window as typeof window & {
-      __gitSyncTestState: { prompt: string }
-    }).__gitSyncTestState.prompt),
-  ).toContain('complete the merge commit')
-  // 同步成功没有可点关闭的成功面板了：面板当场收起，结果只以自动消失的飘字呈现
-  // （SPEC docs/specs/git-sync-success-toast 需求 1、2）。
+  const prompt = await page.evaluate(() => (window as typeof window & {
+    __gitSyncTestState: { prompt: string }
+  }).__gitSyncTestState.prompt)
+  expect(prompt).toContain('src/components/GitToolCard.tsx')
+  expect(prompt).toContain('complete the merge commit')
+  expect(prompt).toContain('git push')
+
+  // 新会话显式成为活动 tab，Git 卡自己不再 push，同步面板也已收起
+  await expect(page.locator('.pane-tab.is-active .pane-tab-label')).toHaveText('Resolve merge conflicts')
+  await expect(page.locator('.pane-tab-panel.is-active .composer textarea')).toBeVisible()
+  expect(await page.evaluate(() => (window as typeof window & {
+    __gitSyncTestState: { pushCalls: number }
+  }).__gitSyncTestState.pushCalls)).toBe(0)
   await expect(page.locator('.git-agent-panel')).toHaveCount(0)
-  await expect(page.locator('.git-tool-toast .git-tool-toast-body.is-success')).toBeVisible()
 })
 
 test('git sync disables analysis while the sync panel is open', async ({ page }) => {

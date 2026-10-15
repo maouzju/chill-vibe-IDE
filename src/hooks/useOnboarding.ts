@@ -143,7 +143,7 @@ export function useOnboarding(deps: UseOnboardingDeps) {
   const onboardingMissingTools = useMemo(
     () =>
       onboardingStatus?.environment.checks
-        .filter((check) => !check.available)
+        .filter((check) => !check.available && !check.optional)
         .map((check) => check.label)
         .join(', ') ?? '',
     [onboardingStatus],

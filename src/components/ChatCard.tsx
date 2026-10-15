@@ -167,6 +167,7 @@ import {
 } from '../api'
 import { canSendEmptyContinuation } from '../app-helpers'
 import { GitToolCard, type GitInfoSummary } from './GitToolCard'
+import type { GitAgentSessionRequest } from './git-operation-hub'
 import { MusicCard } from './MusicCard'
 import { WhiteNoiseCard } from './WhiteNoiseCard'
 import { WeatherCard } from './WeatherCard'
@@ -217,6 +218,7 @@ import {
   FileTextIcon,
   FolderIcon,
   GitBranchIcon,
+  GeminiIcon,
   GptIcon,
   HeadphonesIcon,
   IconButton,
@@ -496,6 +498,7 @@ type ChatCardProps = {
   onChangeTitle: (title: string) => void
   onForkConversation?: (messageId: string) => void
   onOpenFile?: (relativePath: string, options?: { line?: number }) => void
+  onOpenAgentSession?: (request: GitAgentSessionRequest) => boolean
   isRestored: boolean
   chromeMode?: 'card' | 'pane'
   isActive?: boolean
@@ -564,6 +567,9 @@ const getModelOptionIcon = (option: ModelOption): ReactNode => {
   }
   if (option.provider === 'claude') {
     return <ClaudeIcon className="model-option-icon" aria-hidden="true" />
+  }
+  if (option.provider === 'gemini') {
+    return <GeminiIcon className="model-option-icon" aria-hidden="true" />
   }
   return <GptIcon className="model-option-icon" aria-hidden="true" />
 }
@@ -1586,6 +1592,7 @@ const ChatCardView = ({
   onChangeTitle,
   onForkConversation,
   onOpenFile,
+  onOpenAgentSession,
   onManualRecoverStream,
   isRestored,
   chromeMode = 'card',
@@ -4578,7 +4585,9 @@ const ChatCardView = ({
                 const label = option.usesConfiguredDefault
                   ? option.provider === 'claude'
                     ? text.claudeDefaultModelLabel
-                    : text.codexDefaultModelLabel
+                    : option.provider === 'gemini'
+                      ? text.geminiDefaultModelLabel
+                      : text.codexDefaultModelLabel
                   : option.label
                 return (
                   <button
@@ -4747,6 +4756,7 @@ const ChatCardView = ({
             onAgentPanelToggle={setGitAgentPanelOpen}
             onGitInfoChange={setGitInfo}
             onOpenFile={openFileCallback}
+            onOpenAgentSession={onOpenAgentSession}
           />
         </div>
       )}

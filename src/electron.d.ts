@@ -196,7 +196,7 @@ declare global {
       fetchProxyStats?: (since?: number) => Promise<unknown>
       resetProxyStats?: () => Promise<void>
       recordProxyStatsEvent?: (request: {
-        provider: 'codex' | 'claude'
+        provider: 'codex' | 'claude' | 'gemini'
         event: 'request' | 'disconnect' | 'recovery_success' | 'recovery_fail'
         endpoint: string
         attempt?: number

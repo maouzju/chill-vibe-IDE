@@ -18,7 +18,8 @@ import { resolveProviderCommandLaunch } from './provider-command-launch.js'
 // 「切换使用」只是往 active.json 记一个版本号，resolveCommand 优先读它；
 // 为什么不写进 state.json 的 settings：旧包会用旧 schema 重写 state.json 把新字段剥掉
 // （见 memory stale-packaged-build-strips-new-settings），独立文件不受影响。
-const providers: Provider[] = ['claude', 'codex']
+// 兼容版 CLI 只托管 claude/codex；Gemini CLI 走系统 PATH。
+const providers = ['claude', 'codex'] as const
 
 export const getCliCompatRoot = () => path.join(getAppDataDir(), 'cli-compat')
 

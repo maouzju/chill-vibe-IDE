@@ -248,6 +248,36 @@ describe('archive recall runtime overrides', () => {
     delete process.env.CHILL_VIBE_DATA_DIR
   })
 
+  it('archives the prefix dropped by the load-time pre-trim for cards between 300 and 500 messages', async () => {
+    const isolatedDir = fs.mkdtempSync(path.join(os.tmpdir(), 'archive-recall-pretrim-'))
+    process.env.CHILL_VIBE_DATA_DIR = isolatedDir
+    const { saveState, loadState } = await import('../server/state-store.ts')
+    const { loadCompactedCardHistorySnapshot } = await import('../server/compacted-card-history.ts')
+    const state = createDefaultState('D:\\Git\\chill-vibe')
+    const column = state.columns[0]!
+    const cardId = getFirstPane(column.layout).tabs[0]!
+    const card = column.cards[cardId]!
+    card.provider = 'claude'
+    card.messages = Array.from({ length: 450 }, (_, index) =>
+      createMessage(`pretrim-${index}`, index % 2 === 0 ? 'user' : 'assistant', `Pretrim ${index}`),
+    )
+    await saveState(state)
+
+    const statePath = path.join(isolatedDir, 'state.json')
+    fs.writeFileSync(statePath, `${fs.readFileSync(statePath, 'utf8')}\n\n`)
+
+    const loaded = await loadState()
+    const loadedCard = loaded.columns[0]!.cards[cardId]!
+    const snapshot = await loadCompactedCardHistorySnapshot(isolatedDir, cardId)
+
+    assert.equal(loadedCard.messages.length + (snapshot?.messages.length ?? 0), 450)
+    assert.equal(snapshot?.messages[0]?.id, 'pretrim-0')
+    assert.ok((loadedCard.messageCount ?? 0) >= 450)
+
+    delete process.env.CHILL_VIBE_DATA_DIR
+    fs.rmSync(isolatedDir, { recursive: true, force: true })
+  })
+
   it('does not let a later trimmed save shorten the cumulative compacted archive', async () => {
     process.env.CHILL_VIBE_DATA_DIR = tempDataDir
     const { saveState } = await import('../server/state-store.ts')

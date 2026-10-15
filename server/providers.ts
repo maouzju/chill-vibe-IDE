@@ -100,6 +100,7 @@ import { readStringPreserveWhitespace } from './provider-stream-text.js'
 import { getCodexNativeTurnCompletion } from './native-turn-completion.js'
 import { repairClaudeSessionForResume } from './claude-session-repair.js'
 import { resolveProviderCommandLaunch } from './provider-command-launch.js'
+import { buildGeminiArgs, buildGeminiPrompt, createGeminiStreamParser } from './gemini-runtime.js'
 import {
   discoverProviderSkills,
   getReusableSkillProviders,
@@ -275,10 +276,12 @@ const providerCommandPreferences: Record<Provider, string[]> =
     ? {
         codex: ['codex.exe', 'codex.cmd', 'codex'],
         claude: ['claude.exe', 'claude.cmd', 'claude'],
+        gemini: ['gemini.exe', 'gemini.cmd', 'gemini'],
       }
     : {
         codex: ['codex'],
         claude: ['claude'],
+        gemini: ['gemini'],
       }
 
 const commandLookupTool = process.platform === 'win32' ? 'where.exe' : 'which'
@@ -290,6 +293,7 @@ const claudeSlashCommandCache = createAsyncTtlCache<SlashCommand[]>({
 const defaultProviderBaseUrls: Record<Provider, string> = {
   codex: 'https://api.openai.com/v1',
   claude: 'https://api.anthropic.com',
+  gemini: 'https://generativelanguage.googleapis.com',
 }
 const codexSwitchProviderName = 'chill_vibe_switch'
 
@@ -412,8 +416,15 @@ const maybeResolveProxyBaseUrl = async (
   }
 }
 
+// 症状：`400 ... each thinking block must contain thinking` 本已进可恢复名单，用户现场仍停在终态红错不续传。
+// 根因：2026-10-14 取证（server.log 2026-10-13T17:29/17:31Z 两连挂）：中转站 request id 是时间戳
+//   `20261014013102819`，裸子串 `401` 命中 → hint=switch-config → 分类器直接判不可恢复；历史 49 条同类报错里 8 条中招。
+// 被否决：只给 thinking 文案开白名单——任何报错的 request id 落在 x401/x403 都会被误判鉴权错；状态码只按独立词匹配。
+const requestIdSegmentPattern = /\(request id:[^)]*\)/gi
+const authStatusCodePattern = /\b40[13]\b/
+
 const classifyLaunchErrorHint = (message: string): StreamErrorHint | undefined => {
-  const normalized = message.toLowerCase()
+  const normalized = message.toLowerCase().replace(requestIdSegmentPattern, '')
 
   if (
     normalized.includes('cli was not found') ||
@@ -434,8 +445,7 @@ const classifyLaunchErrorHint = (message: string): StreamErrorHint | undefined =
     normalized.includes('authentication') ||
     normalized.includes('sign in') ||
     normalized.includes('codex login') ||
-    normalized.includes('401') ||
-    normalized.includes('403') ||
+    authStatusCodePattern.test(normalized) ||
     normalized.includes('invalid api key') ||
     normalized.includes('auth token') ||
     normalized.includes('access token')
@@ -688,7 +698,9 @@ export const resolveProviderRuntime = async (
     // 为什么两个条件都要：localEntry 覆盖局域网上的本地推理（192.168 的 LM Studio 不是
     //   loopback 但同样是本地模型）；isLoopbackBaseUrl 覆盖用户不建条目、直接手填本机
     //   端点的那条路径。只判其一都会漏。
+    // Gemini 走 Google 自有协议，断线续传代理只认 OpenAI/Anthropic 两种流格式，不套。
     const useResilientProxy =
+      provider !== 'gemini' &&
       Boolean(settings.resilientProxyEnabled) && !localEntry && !isLoopbackBaseUrl(baseUrl)
     const runtimeBaseUrl = await maybeResolveProxyBaseUrl(
       provider,
@@ -700,6 +712,18 @@ export const resolveProviderRuntime = async (
         maxRecoveryRetries: settings.resilientProxyMaxRetries,
       },
     )
+
+    if (provider === 'gemini') {
+      // 只在用户填了自定义地址时才覆盖：默认官方端点由 CLI 自己决定。
+      return {
+        args: [],
+        env: {
+          ...baseEnv,
+          GEMINI_API_KEY: apiKey,
+          ...(activeProfile?.baseUrl.trim() ? { GOOGLE_GEMINI_BASE_URL: runtimeBaseUrl } : {}),
+        },
+      }
+    }
 
     if (provider === 'claude') {
       // 三个键必须整组覆盖：用户 settings.json 里常驻的通常是 ANTHROPIC_AUTH_TOKEN，
@@ -1766,7 +1790,7 @@ const spawnProvider = async (
 
 export const getProviderStatuses = async (): Promise<ProviderStatus[]> =>
   Promise.all(
-    (['codex', 'claude'] as const).map(async (provider) => {
+    (['codex', 'claude', 'gemini'] as const).map(async (provider) => {
       const command = await resolveCommand(provider)
       return {
         provider,
@@ -3208,6 +3232,11 @@ export const launchProviderRun = async (
     localModelId: requestedLocalModelId ?? undefined,
   })
 
+  // 首版不注入超管/浏览器/JEV MCP（docs/specs/gemini-cli-provider「非目标」），在准备它们之前分流。
+  if (currentRequest.provider === 'gemini') {
+    return launchGeminiRun(currentRequest, sink, language, runtime)
+  }
+
   // 超管回合：把工作区 MCP 接进本次 provider 启动。只有 `card.adminAccess`
   // 开着的回合才走这里（请求上表现为 `request.adminAccess`）—— 普通聊天卡永远
   // 拿不到工作区工具，这是权限边界而不是优化。桥接不可用时降级为"没有工具的
@@ -3923,6 +3952,60 @@ const launchClaudeRun = async (
     workspaceAdminMcpConfig,
     computerUseMcpConfig,
   )
+}
+
+const launchGeminiRun = async (
+  request: ChatRequest,
+  sink: StreamSink,
+  language: AppLanguage,
+  runtime: ProviderRuntime,
+) => {
+  const managedChild = createManagedChildHandle()
+  const child = await spawnProvider(
+    request.provider,
+    [...runtime.args, ...buildGeminiArgs(request)],
+    request.workspacePath,
+    sink,
+    language,
+    runtime.env,
+    { stdin: 'pipe' },
+  )
+
+  if (!child) {
+    return null
+  }
+
+  if (!child.stdout || !child.stderr || !child.stdin) {
+    sink.onError(formatProviderUnexpectedCompletion(language, request.provider))
+    child.kill()
+    return null
+  }
+
+  managedChild.setActiveChild(child)
+  const parser = createGeminiStreamParser(sink, {
+    formatExit: (code) => formatProviderExit(language, request.provider, code),
+  })
+  const stdoutLines = readLines(child.stdout, parser.handleLine)
+  const stderrLines = readLines(child.stderr, parser.handleStderrLine)
+
+  child.on('close', (code) => {
+    stdoutLines.close()
+    stderrLines.close()
+    managedChild.setActiveChild(null)
+    parser.handleProcessClosed(code)
+  })
+  child.on('error', (error) => {
+    stdoutLines.close()
+    stderrLines.close()
+    managedChild.setActiveChild(null)
+    parser.handleSpawnError(error)
+  })
+
+  // prompt 走 stdin：绕开 Windows .cmd 垫片的命令行长度与引号转义。
+  child.stdin.on('error', () => {})
+  child.stdin.end(buildGeminiPrompt(request))
+
+  return managedChild.handle
 }
 
 const launchClaudeSingleShotRun = async (

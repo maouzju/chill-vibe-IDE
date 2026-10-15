@@ -3,8 +3,8 @@ import {
   normalizeBrainstormAnswerCount as normalizeSharedBrainstormAnswerCount,
 } from '../../shared/brainstorm'
 import {
-  DEFAULT_CLAUDE_MODEL,
   DEFAULT_CODEX_MODEL,
+  getDefaultModel,
   normalizeStoredModel,
 } from '../../shared/models'
 import type { BrainstormState, ChatCard, Provider } from '../../shared/schema'
@@ -30,8 +30,9 @@ export const resolveBrainstormRequestTarget = (
   brainstorm: BrainstormRequestTarget,
   fallbackCodexModel = DEFAULT_CODEX_MODEL,
 ) => {
-  const provider: Provider = brainstorm.provider === 'claude' ? 'claude' : 'codex'
-  const fallbackModel = provider === 'claude' ? DEFAULT_CLAUDE_MODEL : fallbackCodexModel
+  const provider: Provider =
+    brainstorm.provider === 'claude' || brainstorm.provider === 'gemini' ? brainstorm.provider : 'codex'
+  const fallbackModel = provider === 'codex' ? fallbackCodexModel : getDefaultModel(provider)
   const model = normalizeStoredModel(provider, brainstorm.model) || fallbackModel
 
   return { provider, model }

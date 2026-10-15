@@ -15,6 +15,8 @@ import {
 } from '../api'
 import { clearDragPayload, readDragPayload, writeDragPayload } from '../dnd'
 import type { AppLanguage, FileEntry, FileSearchEntry } from '../../shared/schema'
+import { dispatchWorkspaceEntryMoved, getWorkspaceEntryBaseName } from '../workspace-entry-remap'
+import { describeFileActionError } from './file-action-errors'
 import { isRunnableFilePath } from './file-path-context-menu'
 import { resolveFileTreeMoveDestination } from './file-tree-dnd'
 import {
@@ -84,6 +86,26 @@ type FileTreeNameDialogState = {
   mode: FileTreeNameDialogMode
   target: ContextMenuTarget
   value: string
+  // 每次打开递增；聚焦/预选只认它，不认随每次按键变化的 value。
+  openId: number
+}
+
+// VS Code 式预选：文件只选最后一个扩展名点之前的主名（report.final.md -> report.final），
+// 目录、无扩展名、只有前导点的 dotfile（.gitignore）整段选中。
+const getNameDialogInitialSelection = (
+  mode: FileTreeNameDialogMode,
+  target: ContextMenuTarget,
+): [number, number] => {
+  if (mode !== 'rename') {
+    return [0, 0]
+  }
+
+  if (target.isDirectory) {
+    return [0, target.name.length]
+  }
+
+  const lastDotIndex = target.name.lastIndexOf('.')
+  return [0, lastDotIndex > 0 ? lastDotIndex : target.name.length]
 }
 
 type FileTreeDropTarget = {
@@ -408,6 +430,9 @@ const FileTreeCardInner = ({ cardId, workspacePath, language, onOpenFile }: File
   const cardRef = useRef<HTMLDivElement | null>(null)
   const contextMenuRef = useRef<HTMLDivElement | null>(null)
   const nameInputRef = useRef<HTMLInputElement | null>(null)
+  const nameDialogOpenSeqRef = useRef(0)
+  const nameDialogSelectionRef = useRef<[number, number]>([0, 0])
+  const wasNameDialogPendingRef = useRef(false)
   const frame = typeof window === 'undefined' ? undefined : window
   const ownerDocument = typeof document === 'undefined' ? undefined : document
 
@@ -667,10 +692,13 @@ const FileTreeCardInner = ({ cardId, workspacePath, language, onOpenFile }: File
   }, [])
 
   const openNameDialog = useCallback((mode: FileTreeNameDialogMode, target: ContextMenuTarget) => {
+    nameDialogOpenSeqRef.current += 1
+    nameDialogSelectionRef.current = getNameDialogInitialSelection(mode, target)
     setNameDialog({
       mode,
       target,
       value: mode === 'rename' ? target.name : '',
+      openId: nameDialogOpenSeqRef.current,
     })
     setNameDialogError(null)
     setNameDialogPending(false)
@@ -685,39 +713,87 @@ const FileTreeCardInner = ({ cardId, workspacePath, language, onOpenFile }: File
     setNameDialogError(null)
   }, [nameDialogPending])
 
+  const nameDialogOpenId = nameDialog?.openId ?? null
+  const isNameDialogOpen = nameDialog !== null
+
+  // 症状：重命名框每敲一个字整框被重新全选，下一个字覆盖全部（敲 abc 只剩 c），中文输入法组字也被打断。
+  // 根因（2026-10-14 Playwright 逐键复现）：这里原先依赖整个 nameDialog，onChange 每次按键都换新对象，
+  // effect 重跑 focus()+select()。只能按「打开」这一事件(openId)聚焦预选；别再把 nameDialog/value 放回依赖。
   useLayoutEffect(() => {
-    if (!nameDialog) {
+    if (nameDialogOpenId === null) {
       return
     }
 
-    nameInputRef.current?.focus()
-    nameInputRef.current?.select()
+    const applyInitialSelection = () => {
+      const input = nameInputRef.current
+
+      if (!input) {
+        return
+      }
+
+      const [selectionStart, selectionEnd] = nameDialogSelectionRef.current
+      input.focus()
+      input.setSelectionRange(selectionStart, selectionEnd)
+    }
+
+    applyInitialSelection()
 
     if (!frame) {
       return
     }
 
+    // 右键菜单收起时可能在下一帧把焦点抢走，只在焦点确实丢了才补一次；
+    // 焦点还在就说明用户可能已经开始输入，重新预选会吞字。
     const frameId = frame.requestAnimationFrame(() => {
-      nameInputRef.current?.focus()
-      nameInputRef.current?.select()
-    })
-    const handleEscape = (event: globalThis.KeyboardEvent) => {
-      if (event.key === 'Escape') {
-        closeNameDialog()
+      const input = nameInputRef.current
+
+      if (input && input.ownerDocument.activeElement !== input) {
+        applyInitialSelection()
       }
+    })
+
+    return () => {
+      frame.cancelAnimationFrame(frameId)
+    }
+  }, [frame, nameDialogOpenId])
+
+  // 提交中输入框被 disabled 会丢焦点；失败回来时把焦点还给输入框，保留用户敲的内容和光标，不重新预选。
+  useLayoutEffect(() => {
+    const wasPending = wasNameDialogPendingRef.current
+    wasNameDialogPendingRef.current = nameDialogPending
+
+    if (wasPending && !nameDialogPending) {
+      nameInputRef.current?.focus()
+    }
+  }, [nameDialogPending])
+
+  useEffect(() => {
+    if (!isNameDialogOpen || !frame) {
+      return
+    }
+
+    const handleEscape = (event: globalThis.KeyboardEvent) => {
+      if (event.key !== 'Escape') {
+        return
+      }
+
+      // 输入法组字中按 Esc 只是取消候选词（isComposing / keyCode 229），不能连对话框一起关掉。
+      if (event.isComposing || event.keyCode === 229) {
+        return
+      }
+
+      closeNameDialog()
     }
 
     frame.addEventListener('keydown', handleEscape)
     return () => {
-      frame.cancelAnimationFrame(frameId)
       frame.removeEventListener('keydown', handleEscape)
     }
-  }, [closeNameDialog, frame, nameDialog])
+  }, [closeNameDialog, frame, isNameDialogOpen])
 
   const reportActionError = useCallback((reason: unknown) => {
-    const message = reason instanceof Error ? reason.message : actionText.genericError
-    window.alert(message)
-  }, [actionText.genericError])
+    window.alert(describeFileActionError(reason, language))
+  }, [language])
 
   const copyText = useCallback(async (value: string) => {
     if (typeof navigator === 'undefined' || typeof navigator.clipboard?.writeText !== 'function') {
@@ -992,6 +1068,14 @@ const FileTreeCardInner = ({ cardId, workspacePath, language, onOpenFile }: File
           sourceParentRelativePath: parentRelativePath,
           destinationParentRelativePath: parentRelativePath,
         })
+        // 2026-10-14: open editor tabs kept the old path, so autosave / unmount save
+        // silently recreated the old file next to the renamed one. Announce the move
+        // even if this card unmounts right away — App owns the tab remap.
+        dispatchWorkspaceEntryMoved({
+          workspacePath,
+          fromPath: nameDialog.target.path,
+          toPath: joinRelativePath(parentRelativePath, trimmedName),
+        })
       }
 
       if (mountedRef.current) {
@@ -1001,12 +1085,12 @@ const FileTreeCardInner = ({ cardId, workspacePath, language, onOpenFile }: File
       }
     } catch (reason) {
       if (mountedRef.current) {
-        setNameDialogError(reason instanceof Error ? reason.message : actionText.genericError)
+        setNameDialogError(describeFileActionError(reason, language))
         setNameDialogPending(false)
       }
     }
   }, [
-    actionText.genericError,
+    language,
     actionText.nameRequired,
     nameDialog,
     nameDialogPending,
@@ -1152,6 +1236,15 @@ const FileTreeCardInner = ({ cardId, workspacePath, language, onOpenFile }: File
       workspacePath: payload.workspacePath,
       sourceParentRelativePath: getRelativeParentPath(payload.relativePath),
       destinationParentRelativePath: moveDestination.destinationParentRelativePath,
+    })
+    // Open editor tabs must follow the moved entry, or their next save recreates the old path.
+    dispatchWorkspaceEntryMoved({
+      workspacePath: payload.workspacePath,
+      fromPath: payload.relativePath,
+      toPath: joinRelativePath(
+        moveDestination.destinationParentRelativePath,
+        getWorkspaceEntryBaseName(payload.relativePath),
+      ),
     })
   }, [clearDropState, workspacePath])
 

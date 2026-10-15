@@ -60,6 +60,8 @@ const reasoningOptionsByProvider = {
     { value: 'max' },
     { value: 'ultracode' },
   ],
+  // Gemini CLI 没有思考档位参数，只保留「自动」一档。
+  gemini: [{ value: 'auto' }],
 } satisfies Record<Provider, readonly Omit<ReasoningOption, 'label'>[]>
 
 const reasoningAliasesByProvider: Record<Provider, Partial<Record<string, ReasoningEffort>>> = {
@@ -67,11 +69,13 @@ const reasoningAliasesByProvider: Record<Provider, Partial<Record<string, Reason
     ultracode: 'ultra',
   },
   claude: {},
+  gemini: {},
 }
 
 const defaultReasoningEffortByProvider: Record<Provider, ReasoningEffort> = {
   codex: 'medium',
   claude: 'max',
+  gemini: 'auto',
 }
 
 export const getDefaultReasoningEffort = (provider: Provider) =>

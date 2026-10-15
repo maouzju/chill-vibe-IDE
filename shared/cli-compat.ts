@@ -14,6 +14,8 @@ import type { Provider } from './schema.js'
 export const compatibleCliVersions: Record<Provider, { version: string; minVersion: string; npmPackage: string }> = {
   claude: { version: '2.1.284', minVersion: '2.1.280', npmPackage: '@anthropic-ai/claude-code' },
   codex: { version: '0.158.0', minVersion: '0.156.1', npmPackage: '@openai/codex' },
+  // 2026-10-14 本机实测 0.24.5 的 `-o stream-json` / `--resume` / `--approval-mode` 均可用（docs/specs/gemini-cli-provider）。
+  gemini: { version: '0.24.5', minVersion: '0.24.0', npmPackage: '@google/gemini-cli' },
 }
 
 const parseCliVersion = (version: string) => (version.match(/\d+/g) ?? []).slice(0, 3).map(Number)

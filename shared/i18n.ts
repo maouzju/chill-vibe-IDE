@@ -145,6 +145,12 @@ type LocaleText = {
   codexFastModeDialogWarning: string
   codexFastModeDialogCancel: string
   codexFastModeDialogConfirm: string
+  modelUpgradeDialogTitle: string
+  modelUpgradeDialogBody: string
+  modelUpgradeDialogNote: string
+  modelUpgradeDialogKeep: string
+  modelUpgradeItemSeparator: string
+  modelUpgradeDialogConfirm: string
   agentOutsideWorkspaceWriteLabel: string
   agentOutsideWorkspaceWriteNote: string
   computerUseLabel: string
@@ -254,6 +260,7 @@ type LocaleText = {
   skillBadge: string
   codexDefaultModelLabel: string
   claudeDefaultModelLabel: string
+  geminiDefaultModelLabel: string
   you: string
   assistant: string
   system: string
@@ -674,6 +681,12 @@ const localeTextByLanguage: Record<AppLanguage, LocaleText> = {
       '开启后，普通聊天、恢复与重试、Brainstorm 和 Git Agent 的 Codex 请求都会使用高价服务档，直到你再次关闭。',
     codexFastModeDialogCancel: '保持关闭',
     codexFastModeDialogConfirm: '了解费用并开启',
+    modelUpgradeDialogTitle: '有更强的新模型',
+    modelUpgradeDialogBody: '你设置的默认模型，已被内置的新型号全面超越：',
+    modelUpgradeDialogNote: '只提示这一次；之后可在 设置 → 模型 里随时改。已开的会话不受影响。',
+    modelUpgradeDialogKeep: '保持不变',
+    modelUpgradeItemSeparator: '：',
+    modelUpgradeDialogConfirm: '设为新模型',
     computerUseLabel: '允许 Agent 使用浏览器（Computer Use）',
     computerUseNote:
       '打开后 Claude 与 Codex 会话都会拿到浏览器控制工具，可以替你打开网页、点击、填表、读取页面。Claude 装了 Claude in Chrome 扩展时优先走扩展；否则两者都使用 Playwright MCP，需要先执行 npm i -g @playwright/mcp（或本机能用 npx）。浏览器会以你的身份操作已登录网站，默认关闭。切换后下一条消息生效。',
@@ -812,6 +825,7 @@ const localeTextByLanguage: Record<AppLanguage, LocaleText> = {
     // 英文侧本来就是 Codex default / Claude CLI default，中文这边此前漏了限定词。
     codexDefaultModelLabel: 'Codex 默认',
     claudeDefaultModelLabel: 'Claude 默认',
+    geminiDefaultModelLabel: 'Gemini 默认',
     you: '你',
     assistant: '助手',
     system: '系统',
@@ -1244,6 +1258,12 @@ const localeTextByLanguage: Record<AppLanguage, LocaleText> = {
       'Once enabled, Codex requests from regular chats, recovery and retries, Brainstorm, and Git Agent will use the higher-cost tier until you turn it off.',
     codexFastModeDialogCancel: 'Keep off',
     codexFastModeDialogConfirm: 'I understand the cost — enable',
+    modelUpgradeDialogTitle: 'A stronger model is available',
+    modelUpgradeDialogBody: 'A built-in model now clearly outperforms your default:',
+    modelUpgradeDialogNote: 'Shown only once; change it anytime in Settings → Models. Open sessions are unaffected.',
+    modelUpgradeDialogKeep: 'Keep current',
+    modelUpgradeItemSeparator: ': ',
+    modelUpgradeDialogConfirm: 'Switch to new model',
     computerUseLabel: 'Allow Agent to use the browser (Computer Use)',
     computerUseNote:
       'When on, both Claude and Codex sessions get browser-control tools to open pages, click, fill forms, and read page state on your behalf. Claude prefers the Claude in Chrome extension when it is installed; otherwise both use the Playwright MCP, which needs npm i -g @playwright/mcp (or a working npx). The browser acts as you on sites you are signed in to, so this is off by default. Takes effect from the next message.',
@@ -1389,6 +1409,7 @@ const localeTextByLanguage: Record<AppLanguage, LocaleText> = {
     skillBadge: 'Skill',
     codexDefaultModelLabel: 'Codex default',
     claudeDefaultModelLabel: 'Claude CLI default',
+    geminiDefaultModelLabel: 'Gemini CLI default',
     you: 'You',
     assistant: 'Assistant',
     system: 'System',
@@ -1786,7 +1807,10 @@ type GitLocaleText = {
   syncing: string
   syncSuccess: string
   syncError: string
-  syncConflictResolving: string
+  syncConflictHandedOff: string
+  syncConflictSessionTitle: string
+  syncConflictNoSession: string
+  syncConflictPending: string
   syncStepPull: string
   syncStepPush: string
   syncStepConflict: string
@@ -1892,7 +1916,10 @@ const gitLocaleTextByLanguage: Record<AppLanguage, GitLocaleText> = {
     syncing: '正在同步...',
     syncSuccess: '同步完成。',
     syncError: '同步失败。',
-    syncConflictResolving: '检测到冲突，正在调用 Codex 解决...',
+    syncConflictHandedOff: '检测到冲突，已打开新会话「解决合并冲突」接手处理。',
+    syncConflictSessionTitle: '解决合并冲突',
+    syncConflictNoSession: '检测到合并冲突，但无法打开会话处理，请手动解决后再同步。',
+    syncConflictPending: '冲突解决会话仍在进行，请在该会话里完成解决、提交与推送。',
     syncStepPull: '正在拉取远程改动...',
     syncStepPush: '正在推送到远程...',
     syncStepConflict: '正在解决合并冲突...',
@@ -1999,7 +2026,10 @@ const gitLocaleTextByLanguage: Record<AppLanguage, GitLocaleText> = {
     syncing: 'Syncing...',
     syncSuccess: 'Sync complete.',
     syncError: 'Sync failed.',
-    syncConflictResolving: 'Conflicts detected, invoking Codex to resolve...',
+    syncConflictHandedOff: 'Conflicts detected. Opened a new "Resolve merge conflicts" session to handle them.',
+    syncConflictSessionTitle: 'Resolve merge conflicts',
+    syncConflictNoSession: 'Merge conflicts detected, but no session could be opened. Resolve them manually, then sync again.',
+    syncConflictPending: 'The conflict session is still open. Finish resolving, committing and pushing there.',
     syncStepPull: 'Pulling remote changes...',
     syncStepPush: 'Pushing to remote...',
     syncStepConflict: 'Resolving merge conflicts...',
@@ -2014,7 +2044,7 @@ export const getGitLocaleText = (language: AppLanguage) =>
   gitLocaleTextByLanguage[normalizeLanguage(language)]
 
 export const getProviderLabel = (_language: AppLanguage, provider: Provider) =>
-  provider === 'claude' ? 'Claude' : 'Codex'
+  provider === 'claude' ? 'Claude' : provider === 'gemini' ? 'Gemini' : 'Codex'
 
 export const getWorkspaceTitle = (language: AppLanguage, index: number) =>
   language === 'en' ? `Workspace ${index}` : `工作区 ${index}`

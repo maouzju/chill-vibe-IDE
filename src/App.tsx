@@ -50,6 +50,8 @@ import {
   IMAGEEDITOR_TOOL_MODEL,
   MODEL_PICKER_HIDDEN_TOOL_MODELS,
   TEXTEDITOR_TOOL_MODEL,
+  findModelUpgradeSuggestions,
+  getModelLabel,
   getModelOptions,
   isModelPickerOptionVisible,
   normalizeModel,
@@ -113,6 +115,7 @@ import {
   type AutomationBoardWorkspaceView,
 } from './components/automation-board-host'
 import type {
+  SetupRunRequest,
   AppLanguage,
   AppState,
   AutomationBoardLane,
@@ -354,7 +357,8 @@ const resolveAutomationBoardWorkspace = (
 import { resolveRepeatLoopCompletion } from './components/repeat-loop'
 import { getAutoReadCardIdsForVisiblePanes, shouldMarkCardUnreadOnStreamDone } from './components/pane-read-state'
 import { clearFileTreeCacheForCard } from './components/tool-card-state'
-import { evictTextEditorModel } from './components/text-editor-model-cache'
+import { evictTextEditorModel, retargetTextEditorPaths } from './components/text-editor-model-cache'
+import { WORKSPACE_ENTRY_MOVED_EVENT, type WorkspaceEntryMovedDetail } from './workspace-entry-remap'
 import { setPendingEditorReveal } from './components/text-editor-reveal'
 import { resolveExistingWorkspaceFilePath } from './components/workspace-file-fallback'
 import {
@@ -400,6 +404,7 @@ import {
   EyeOffIcon,
 } from './components/Icons'
 import { WorkspaceColumn } from './components/WorkspaceColumn'
+import type { GitAgentSessionRequest } from './components/git-operation-hub'
 import {
   drainStreamRenderBufferActionsForColumn,
   createQueuedPersistenceStateSnapshot,
@@ -711,7 +716,7 @@ function App() {
   const [setupStatusPending, setSetupStatusPending] = useState(false)
   const [ollamaStatus, setOllamaStatus] = useState<OllamaStatus | null>(null)
   const [ollamaActionPending, setOllamaActionPending] = useState(false)
-  const [cliUpdateTarget, setCliUpdateTarget] = useState<'all' | 'claude' | 'codex'>('all')
+  const [cliUpdateTarget, setCliUpdateTarget] = useState<SetupRunRequest['cli']>('all')
   const [cliUpdateVersion, setCliUpdateVersion] = useState('')
   const [routingImportPending, setRoutingImportPending] = useState(false)
   const [onboardingCandidate, setOnboardingCandidate] = useState(false)
@@ -737,6 +742,7 @@ function App() {
   const [profileDrafts, setProfileDrafts] = useState<Record<Provider, ProfileDraft>>({
     codex: emptyProfileDraft(),
     claude: emptyProfileDraft(),
+    gemini: emptyProfileDraft(),
   })
   const [localModelDraft, setLocalModelDraft] =
     useState<Omit<LocalModelEntry, 'id'>>(emptyLocalModelDraft)
@@ -1134,6 +1140,34 @@ function App() {
   // misroute recurrence in the wild finally becomes attributable instead of
   // symptom-guessed (docs/specs/composer-focus-loss/investigation.md §3.8).
   useEffect(() => installStuckPaneForensics(), [])
+
+  // File tree rename/move: open editor tabs follow the entry to its new path.
+  // Retarget the model cache + live editor handles BEFORE dispatching, so the
+  // old editor's unmount cleanups (park model, unmount-save) already see the
+  // new path instead of recreating the old file (see retargetTextEditorPaths).
+  useEffect(() => {
+    if (typeof window === 'undefined') {
+      return
+    }
+
+    const handleEntryMoved = (event: Event) => {
+      const detail = (event as CustomEvent<WorkspaceEntryMovedDetail>).detail
+      if (!detail?.workspacePath || !detail.fromPath || !detail.toPath) {
+        return
+      }
+
+      retargetTextEditorPaths(detail.workspacePath, detail.fromPath, detail.toPath)
+      dispatch({
+        type: 'remapEditorTabPaths',
+        workspacePath: detail.workspacePath,
+        fromPath: detail.fromPath,
+        toPath: detail.toPath,
+      })
+    }
+
+    window.addEventListener(WORKSPACE_ENTRY_MOVED_EVENT, handleEntryMoved)
+    return () => window.removeEventListener(WORKSPACE_ENTRY_MOVED_EVENT, handleEntryMoved)
+  }, [])
 
   useEffect(() => {
     const markInteraction = () => {
@@ -1592,6 +1626,70 @@ function App() {
     })
     setCodexFastModeDialogOpen(false)
   }, [applyAction])
+
+  // 「默认模型有更强新型号」提示：弹不弹完全由已落盘的 settings 推导（无独立 open 状态），
+  // 点任何一个出口都把键写进 acknowledgedModelUpgrades，所以每条换代只会弹一次。
+  const modelUpgradeSuggestions = useMemo(
+    () =>
+      findModelUpgradeSuggestions(
+        appState.settings.requestModels,
+        appState.settings.acknowledgedModelUpgrades,
+      ),
+    [appState.settings.requestModels, appState.settings.acknowledgedModelUpgrades],
+  )
+  const modelUpgradeDialogVisible =
+    loadStatus === 'ready' &&
+    modelUpgradeSuggestions.length > 0 &&
+    !onboardingOpen &&
+    !startupRecovery &&
+    !recentCrashRecovery &&
+    !interruptedSessionRecovery
+
+  const acknowledgeModelUpgrades = useCallback(
+    (extraActions: IdeAction[]) => {
+      applyActions([
+        ...extraActions,
+        {
+          type: 'updateSettings',
+          patch: {
+            acknowledgedModelUpgrades: [
+              ...appStateRef.current.settings.acknowledgedModelUpgrades,
+              ...modelUpgradeSuggestions.map((suggestion) => suggestion.key),
+            ],
+          },
+        },
+      ])
+    },
+    [applyActions, modelUpgradeSuggestions],
+  )
+
+  const dismissModelUpgrade = useCallback(() => {
+    acknowledgeModelUpgrades([])
+  }, [acknowledgeModelUpgrades])
+
+  const confirmModelUpgrade = useCallback(() => {
+    acknowledgeModelUpgrades([
+      {
+        type: 'updateRequestModels',
+        patch: Object.fromEntries(modelUpgradeSuggestions.map((suggestion) => [suggestion.provider, suggestion.to])),
+      },
+    ])
+  }, [acknowledgeModelUpgrades, modelUpgradeSuggestions])
+
+  useEffect(() => {
+    if (!modelUpgradeDialogVisible) {
+      return
+    }
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        dismissModelUpgrade()
+      }
+    }
+
+    window.addEventListener('keydown', handleKeyDown)
+    return () => window.removeEventListener('keydown', handleKeyDown)
+  }, [dismissModelUpgrade, modelUpgradeDialogVisible])
 
   const persistAfterAction = useCallback(
     (actionType: IdeAction['type'], nextState: AppState) => {
@@ -2618,6 +2716,7 @@ function App() {
         type: 'updateSettings',
         patch: {
           providerProfiles: {
+            ...currentProfiles,
             claude: nextClaude.collection,
             codex: nextCodex.collection,
           },
@@ -2930,6 +3029,41 @@ function App() {
   const clearQueuedSends = useCallback((cardId: string) => {
     commitQueuedSends(cardId, [])
   }, [commitQueuedSends])
+
+  // 症状：点「取消延后」后排队的文字和图片直接消失，用户得重打。
+  // 根因：取消只调 clearQueuedSends 清队列，从没把内容放回输入框草稿。
+  // 为什么不能换写法：必须在清队列前先读队列，并拼在现有草稿前面而不是覆盖用户正在打的字。
+  const cancelQueuedSendsToDraft = useCallback((cardId: string) => {
+    const queue = queuedSendRequestsRef.current.get(cardId) ?? []
+    const owner = appStateRef.current.columns.find((column) => Boolean(column.cards[cardId]))
+    const restoredPrompt = queue.map((request) => request.prompt).filter((prompt) => prompt.trim()).join('\n\n')
+    const restoredAttachments = queue.flatMap((request) => request.attachments)
+    clearQueuedSends(cardId)
+    if (!owner || (!restoredPrompt && restoredAttachments.length === 0)) {
+      return
+    }
+
+    const card = appStateRef.current.columns.find((column) => column.id === owner.id)?.cards[cardId]
+    const currentDraft = card?.draft ?? ''
+    const actions: IdeAction[] = []
+    if (restoredPrompt) {
+      actions.push({
+        type: 'setCardDraft',
+        columnId: owner.id,
+        cardId,
+        draft: currentDraft.trim() ? `${restoredPrompt}\n\n${currentDraft}` : restoredPrompt,
+      })
+    }
+    if (restoredAttachments.length > 0) {
+      actions.push({
+        type: 'updateCard',
+        columnId: owner.id,
+        cardId,
+        patch: { draftAttachments: [...(card?.draftAttachments ?? []), ...restoredAttachments] },
+      })
+    }
+    persistAfterActions(actions, applyActions(actions))
+  }, [applyActions, clearQueuedSends, persistAfterActions])
 
   const resolveQueuedSendColumnId = useCallback((fallbackColumnId: string, cardId: string) => {
     return resolveQueuedSendTargetColumnId(appStateRef.current.columns, fallbackColumnId, cardId)
@@ -3932,6 +4066,39 @@ function App() {
       })
     },
     [applyAction, getColumn, rememberPaneTarget],
+  )
+
+  // Git 同步遇到冲突时交给一个看得见的会话接手（SPEC git-sync-conflict-session）。
+  // 与超管 create_session 的 running 路径同法：预生成 cardId 原子建卡，再复用 sendMessage。
+  // 不带 spawnedByAgent，新 tab 直接成为活动 tab —— "显式打开"正是这次需求本身。
+  const openAgentSessionTab = useCallback(
+    (columnId: string, paneId: string, request: GitAgentSessionRequest): boolean => {
+      const column = getColumn(columnId)
+      if (!column) {
+        return false
+      }
+
+      // pull 可能跑了好几秒，期间 Git 卡被拖走会让原 pane 消失，退回列内可用的 pane。
+      const targetPaneId = findPaneInLayout(column.layout, paneId)
+        ? paneId
+        : (resolveColumnPaneTarget(columnId) ?? getFirstPane(column.layout).id)
+      const cardId = crypto.randomUUID()
+      const addTab: IdeAction = {
+        type: 'addTab',
+        columnId,
+        paneId: targetPaneId,
+        cardId,
+        title: request.title,
+        provider: request.provider,
+        ...(request.model ? { model: request.model } : {}),
+        ...(request.reasoningEffort ? { reasoningEffort: request.reasoningEffort } : {}),
+      }
+      rememberPaneTarget(columnId, targetPaneId)
+      persistAfterAction(addTab.type, applyAction(addTab))
+      void sendMessageRef.current?.(columnId, cardId, request.prompt, [])
+      return true
+    },
+    [applyAction, getColumn, persistAfterAction, rememberPaneTarget, resolveColumnPaneTarget],
   )
 
   // 症状：正文里的 `PlayerRunSystem.OverflowLoot.cs:195` 点开只显示「工作区里没有这个文件」。
@@ -8530,14 +8697,14 @@ function App() {
             ? panelText.setupUnsupported
             : onboardingStatusPending || !onboardingStatus
               ? panelText.setupLoading
-              : onboardingStatus.environment.checks.some((check) => !check.available)
+              : onboardingStatus.environment.checks.some((check) => !check.available && !check.optional)
                 ? panelText.setupDetectedMissing
                 : panelText.setupIdle
   const setupLogs = setupStatus?.logs ?? []
   const hasRunSetup = (setupStatus?.state ?? 'idle') !== 'idle'
   const hasSetupLogs = setupLogs.length > 0
   const missingEnvironmentChecks = useMemo(
-    () => onboardingStatus?.environment.checks.filter((check) => !check.available) ?? [],
+    () => onboardingStatus?.environment.checks.filter((check) => !check.available && !check.optional) ?? [],
     [onboardingStatus],
   )
   const hasMissingEnvironmentChecks = missingEnvironmentChecks.length > 0
@@ -9336,7 +9503,7 @@ function App() {
 
   const renderProviderProfiles = () => (
     <>
-    {(['claude', 'codex'] as const).map((provider) => {
+    {(['claude', 'codex', 'gemini'] as const).map((provider) => {
       const collection = appState.settings.providerProfiles[provider]
       const providerLabel = getProviderLabel(appState.settings.language, provider)
       const draft = profileDrafts[provider]
@@ -9407,7 +9574,11 @@ function App() {
                       className="control settings-input"
                       value={profile.baseUrl}
                       placeholder={
-                        provider === 'claude' ? 'https://api.anthropic.com' : 'https://api.openai.com/v1'
+                        provider === 'claude'
+                        ? 'https://api.anthropic.com'
+                        : provider === 'gemini'
+                          ? 'https://generativelanguage.googleapis.com'
+                          : 'https://api.openai.com/v1'
                       }
                       onChange={(event) =>
                         updateProviderProfile(provider, profile.id, { baseUrl: event.target.value })
@@ -9490,7 +9661,11 @@ function App() {
                   className="control settings-input"
                   value={draft.baseUrl}
                   placeholder={
-                    provider === 'claude' ? 'https://api.anthropic.com' : 'https://api.openai.com/v1'
+                    provider === 'claude'
+                        ? 'https://api.anthropic.com'
+                        : provider === 'gemini'
+                          ? 'https://generativelanguage.googleapis.com'
+                          : 'https://api.openai.com/v1'
                   }
                   onChange={(event) => updateDraft(provider, { baseUrl: event.target.value })}
                 />
@@ -9676,7 +9851,7 @@ function App() {
         <div className="settings-section settings-account-summary">
           <ul className="settings-account-summary-list">
             {appState.settings.cliRoutingEnabled ? (
-              (['claude', 'codex'] as const).map((provider) => {
+              (['claude', 'codex', 'gemini'] as const).map((provider) => {
                 const collection = appState.settings.providerProfiles[provider]
                 const active = collection.profiles.find((profile) => profile.id === collection.activeProfileId)
                 const label = getProviderLabel(appState.settings.language, provider)
@@ -10935,12 +11110,13 @@ function App() {
                 className="control settings-input"
                 value={cliUpdateTarget}
                 onChange={(event) =>
-                  setCliUpdateTarget(event.target.value as 'all' | 'claude' | 'codex')
+                  setCliUpdateTarget(event.target.value as SetupRunRequest['cli'])
                 }
               >
                 <option value="all">{panelText.cliUpdateTargetAll}</option>
                 <option value="claude">Claude</option>
                 <option value="codex">Codex</option>
+                <option value="gemini">Gemini</option>
               </select>
             </label>
 
@@ -11588,7 +11764,7 @@ function App() {
               sendMessage(column.id, cardId, prompt, attachments, options)
             }
             onStopMessage={(cardId) => stopCard(cardId)}
-            onCancelQueuedSends={(cardId) => clearQueuedSends(cardId)}
+            onCancelQueuedSends={(cardId) => cancelQueuedSendsToDraft(cardId)}
             onSendNextQueuedNow={(cardId) => sendNextQueuedNow(column.id, cardId)}
             onCancelWakeTimerBatch={(cardId) => cancelWakeTimerBatch(column.id, cardId)}
             onWakeTimerBatchNow={(cardId) => sendWakeTimerBatchNow(column.id, cardId)}
@@ -11627,6 +11803,7 @@ function App() {
             onOpenFile={(paneId, relativePath, options) => {
               openTextEditorTabWithLookup(column.id, paneId, relativePath, options?.line)
             }}
+            onOpenAgentSession={(paneId, request) => openAgentSessionTab(column.id, paneId, request)}
             recentWorkspaces={appState.settings.recentWorkspaces}
             onRecordRecentWorkspace={(path) => applyAction({ type: 'recordRecentWorkspace', path })}
             onRemoveRecentWorkspaces={(paths) => applyAction({ type: 'removeRecentWorkspaces', paths })}
@@ -12185,6 +12362,51 @@ function App() {
                     onClick={confirmCodexFastMode}
                   >
                     {text.codexFastModeDialogConfirm}
+                  </AppButton>
+                </div>
+              </div>
+            </div>
+          </section>
+        </div>
+      ) : null}
+
+      {modelUpgradeDialogVisible ? (
+        <div className="structured-preview-layer">
+          <div className="structured-preview-backdrop" onClick={dismissModelUpgrade} />
+          <section
+            className="structured-preview-dialog model-upgrade-dialog"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="model-upgrade-dialog-title"
+          >
+            <div className="structured-preview-card">
+              <div className="structured-preview-header">
+                <div className="structured-preview-copy">
+                  <h3 id="model-upgrade-dialog-title">{text.modelUpgradeDialogTitle}</h3>
+                  <p className="settings-note">{text.modelUpgradeDialogBody}</p>
+                </div>
+              </div>
+
+              <div className="structured-preview-body">
+                <ul className="model-upgrade-list">
+                  {modelUpgradeSuggestions.map((suggestion) => (
+                    <li key={suggestion.key}>
+                      <strong>{getProviderLabel(appState.settings.language, suggestion.provider)}</strong>
+                      {text.modelUpgradeItemSeparator}
+                      {getModelLabel(suggestion.provider, suggestion.from)}
+                      {' → '}
+                      <strong>{getModelLabel(suggestion.provider, suggestion.to)}</strong>
+                    </li>
+                  ))}
+                </ul>
+                <p className="settings-note">{text.modelUpgradeDialogNote}</p>
+
+                <div className="settings-actions">
+                  <AppButton type="button" onClick={dismissModelUpgrade}>
+                    {text.modelUpgradeDialogKeep}
+                  </AppButton>
+                  <AppButton tone="primary" type="button" onClick={confirmModelUpgrade}>
+                    {text.modelUpgradeDialogConfirm}
                   </AppButton>
                 </div>
               </div>

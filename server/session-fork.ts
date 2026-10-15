@@ -15,7 +15,7 @@ export type SessionForkPoint = {
 }
 
 export type ForkProviderSessionOptions = {
-  provider: 'claude' | 'codex'
+  provider: 'claude' | 'codex' | 'gemini'
   workspacePath: string
   sessionId: string
   forkPoint: { content: string; createdAt?: string | null }
@@ -474,6 +474,11 @@ export const forkProviderSession = async (
   options: ForkProviderSessionOptions,
   dependencies: ForkProviderSessionDependencies = {},
 ): Promise<string | null> => {
+  // Gemini CLI 的会话文件格式未做无损手术，按契约返回 null 让渲染端走 seeded 回放。
+  if (options.provider === 'gemini') {
+    return null
+  }
+
   try {
     const forkPoint: SessionForkPoint = {
       content: options.forkPoint.content,

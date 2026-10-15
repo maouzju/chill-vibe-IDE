@@ -2,6 +2,8 @@ import type { LocalModelEntry, Provider } from './schema.js'
 
 export const DEFAULT_CODEX_MODEL = 'gpt-6-sol'
 export const DEFAULT_CLAUDE_MODEL = 'claude-opus-5-5'
+// 2026-10-14 依据 ai.google.dev/gemini-api/docs/models：3.8 Flash 为最新稳定通用档（docs/specs/gemini-cli-provider）。
+export const DEFAULT_GEMINI_MODEL = 'gemini-3.8-flash'
 export const DEFAULT_GIT_AGENT_MODEL = 'gpt-6-luna medium'
 /**
  * 目录里明确「不收 reasoning.effort=none、也不收 personality」的 Codex 型号：缺省档 low、六档到 ultra。
@@ -120,6 +122,13 @@ export const MODEL_OPTIONS: ModelOption[] = [
     provider: 'claude',
     model: '',
     aliases: ['claude'],
+    usesConfiguredDefault: true,
+  },
+  {
+    label: 'Gemini',
+    provider: 'gemini',
+    model: '',
+    aliases: ['gemini', 'google'],
     usesConfiguredDefault: true,
   },
   {
@@ -247,6 +256,53 @@ export const MODEL_OPTIONS: ModelOption[] = [
     aliases: ['haiku-4.5', 'claude-haiku-4-5-20251001'],
     hiddenFromPicker: true,
   },
+  {
+    // 2026-10-13 上架的最新旗舰（Gemini API 标为 New Stable）；部分账号仍在灰度，失败时服务端会报 404。
+    label: 'Gemini 4 Argon',
+    provider: 'gemini',
+    model: 'gemini-4-argon',
+    aliases: ['gemini-4-argon', 'argon', 'gemini-4', '4-argon'],
+  },
+  {
+    label: 'Gemini 3.1 Pro',
+    provider: 'gemini',
+    model: 'gemini-3.1-pro-preview',
+    aliases: ['gemini-3.1-pro-preview', 'gemini-3.1-pro', 'pro', '3.1-pro'],
+  },
+  {
+    // 裸 "flash" 跟随最新一代 Flash，与 opus/sonnet 的裸别名规则一致。
+    label: 'Gemini 3.8 Flash',
+    provider: 'gemini',
+    model: DEFAULT_GEMINI_MODEL,
+    aliases: ['gemini-3.8-flash', 'flash', '3.8-flash', '3.8'],
+  },
+  {
+    label: 'Gemini 3.5 Flash Lite',
+    provider: 'gemini',
+    model: 'gemini-3.5-flash-lite',
+    aliases: ['gemini-3.5-flash-lite', 'flash-lite', 'lite'],
+  },
+  {
+    label: 'Gemini 3.6 Flash',
+    provider: 'gemini',
+    model: 'gemini-3.6-flash',
+    aliases: ['gemini-3.6-flash', '3.6-flash'],
+    hiddenFromPicker: true,
+  },
+  {
+    label: 'Gemini 2.5 Pro',
+    provider: 'gemini',
+    model: 'gemini-2.5-pro',
+    aliases: ['gemini-2.5-pro', '2.5-pro'],
+    hiddenFromPicker: true,
+  },
+  {
+    label: 'Gemini 2.5 Flash',
+    provider: 'gemini',
+    model: 'gemini-2.5-flash',
+    aliases: ['gemini-2.5-flash', '2.5-flash'],
+    hiddenFromPicker: true,
+  },
 ]
 
 /**
@@ -298,8 +354,13 @@ const legacyCodexModels = new Set(['gpt-4.5', '__dream_tool__', '__spec_tool__']
 
 const canonicalizeModelAlias = (value: string) => value.trim().toLowerCase().replace(/\s+/g, '-')
 
-export const getDefaultModel = (provider: Provider) =>
-  provider === 'codex' ? DEFAULT_CODEX_MODEL : DEFAULT_CLAUDE_MODEL
+const DEFAULT_MODELS: Record<Provider, string> = {
+  codex: DEFAULT_CODEX_MODEL,
+  claude: DEFAULT_CLAUDE_MODEL,
+  gemini: DEFAULT_GEMINI_MODEL,
+}
+
+export const getDefaultModel = (provider: Provider) => DEFAULT_MODELS[provider]
 
 export const getModelOptions = (provider: Provider) =>
   MODEL_OPTIONS.filter((option) => option.provider === provider)
@@ -332,6 +393,68 @@ export const buildClaudeAgentAliasModelEnv = (): Record<string, string> =>
       option.model,
     ]),
   )
+
+/**
+ * 「默认模型被内置新型号完爆」的判定表：旧型号 → 同档位更强的新型号（单跳，直指最新）。
+ *
+ * 症状（2026-10-13）：升级后用户在「设置→模型」里手配的默认仍是 GPT-6 Sol，而选择器里
+ *   已上架 GPT-6.1 Sol；没人告诉他，他会一直用着旧档。
+ * 做法：只对「同档位换代」建表（Sol→Sol、Opus→Opus），不跨档——Sonnet 默认不会被 Opus 顶替，
+ *   那是价格取舍，不是被完爆。新型号上架时在此加一行即可，弹窗对每条 provider+from+to 只提示一次。
+ * 被否决：自动静默换——默认模型是用户的选择，且换代会影响计费与行为，必须让用户点头。
+ */
+export const MODEL_SUCCESSORS: Record<Provider, Record<string, string>> = {
+  codex: {
+    'gpt-6-sol': 'gpt-6.1-sol',
+    'gpt-5.6-sol': 'gpt-6.1-sol',
+    'gpt-5.6-luna': 'gpt-6-luna',
+  },
+  claude: {
+    'claude-opus-5': 'claude-opus-5-5',
+    'claude-sonnet-5': 'claude-sonnet-5-5',
+    'claude-sonnet-4-6': 'claude-sonnet-5-5',
+    'claude-fable-5': 'claude-fable-5-1',
+    'claude-haiku-4-5-20251001': 'claude-haiku-5-5',
+  },
+  gemini: {
+    'gemini-2.5-pro': 'gemini-3.1-pro-preview',
+    'gemini-2.5-flash': 'gemini-3.8-flash',
+    'gemini-3.6-flash': 'gemini-3.8-flash',
+  },
+}
+
+export type ModelUpgradeSuggestion = {
+  provider: Provider
+  from: string
+  to: string
+  key: string
+}
+
+const buildModelUpgradeKey = (provider: Provider, from: string, to: string) =>
+  `${provider}:${from}>${to}`
+
+export const listModelUpgradeKeys = (): string[] =>
+  (['codex', 'claude', 'gemini'] as const).flatMap((provider) =>
+    Object.entries(MODEL_SUCCESSORS[provider]).map(([from, to]) => buildModelUpgradeKey(provider, from, to)),
+  )
+
+export const findModelUpgradeSuggestions = (
+  requestModels: Partial<Record<Provider, string>>,
+  acknowledged: readonly string[],
+): ModelUpgradeSuggestion[] =>
+  (['codex', 'claude', 'gemini'] as const).flatMap((provider) => {
+    const from = (requestModels[provider] ?? '').trim().toLowerCase()
+    if (!Object.prototype.hasOwnProperty.call(MODEL_SUCCESSORS[provider], from)) {
+      return []
+    }
+    const to = MODEL_SUCCESSORS[provider][from]
+
+    const key = buildModelUpgradeKey(provider, from, to)
+    return acknowledged.includes(key) ? [] : [{ provider, from, to, key }]
+  })
+
+export const getModelLabel = (provider: Provider, model: string) =>
+  MODEL_OPTIONS.find((option) => option.provider === provider && option.model === model)?.label ?? model
 
 export const normalizeStoredModel = (provider: Provider, model?: string | null) => {
   const trimmed = model?.trim() ?? ''
@@ -462,7 +585,7 @@ export type SelectableModel = {
 }
 
 export const listSelectableModelCatalog = (settings: {
-  requestModels: Record<Provider, string>
+  requestModels: Partial<Record<Provider, string>>
   localModelEntries: LocalModelEntry[]
 }): SelectableModel[] => {
   const seen = new Set<string>()
@@ -480,7 +603,7 @@ export const listSelectableModelCatalog = (settings: {
     }
   }
 
-  for (const provider of ['codex', 'claude'] as const) {
+  for (const provider of ['codex', 'claude', 'gemini'] as const) {
     const configured = normalizeStoredModel(provider, settings.requestModels[provider])
     if (!configured || isLocalModelToken(configured)) continue
     const known = MODEL_OPTIONS.find((option) => option.provider === provider && option.model === configured)

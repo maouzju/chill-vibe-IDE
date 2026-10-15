@@ -326,7 +326,7 @@ const parseCatalogSource = (content: string, sourceFileName: string) => {
   if (
     typeof raw.id !== 'string' || !raw.id.trim() ||
     typeof raw.title !== 'string' || !raw.title.trim() ||
-    !['codex', 'claude'].includes(String(raw.provider)) ||
+    !['codex', 'claude', 'gemini'].includes(String(raw.provider)) ||
     typeof raw.workspacePath !== 'string' || !raw.workspacePath.trim() ||
     typeof raw.archivedAt !== 'string' || Number.isNaN(Date.parse(raw.archivedAt)) ||
     !messages

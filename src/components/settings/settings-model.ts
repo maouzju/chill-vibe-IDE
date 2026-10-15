@@ -311,8 +311,8 @@ export type HealthState = 'ok' | 'warn' | 'error' | 'unknown'
 export type HealthFix =
   | { kind: 'install-cli' }
   | { kind: 'connect-account' }
-  | { kind: 'install-compat'; provider: Provider }
-  | { kind: 'activate-compat'; provider: Provider }
+  | { kind: 'install-compat'; provider: CliCompatStatus['entries'][number]['provider'] }
+  | { kind: 'activate-compat'; provider: CliCompatStatus['entries'][number]['provider'] }
 
 export type HealthLight = {
   state: HealthState

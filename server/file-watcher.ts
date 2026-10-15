@@ -50,6 +50,8 @@ type DirectoryWatchEntry = {
 const normalizeFileName = (value: string) =>
   process.platform === 'win32' ? value.toLowerCase() : value
 
+const toPathComparisonKey = normalizeFileName
+
 /**
  * Watches individual workspace files for the text editor. Watchers are armed on
  * the parent directory (single-file fs.watch breaks on the rename-replace saves
@@ -85,23 +87,8 @@ export class FileWatcherManager {
     const directoryKey = path.dirname(targetPath)
     const fileName = normalizeFileName(path.basename(targetPath))
 
-    if (!this.directories.has(directoryKey)) {
-      let watcher: FSWatcher
-      try {
-        watcher = watch(directoryKey, (_eventType, changedName) => {
-          this.notifyDirectory(directoryKey, changedName)
-        })
-      } catch {
-        return { subscribed: false, reason: 'watch-failed' }
-      }
-
-      watcher.on('error', () => {
-        // A broken watcher must not crash the process; subscribers fall back
-        // to the renderer's slow polling safety net.
-        this.closeDirectory(directoryKey)
-      })
-
-      this.directories.set(directoryKey, { watcher, subscriptionIds: new Set() })
+    if (!this.directories.has(directoryKey) && !this.armDirectory(directoryKey)) {
+      return { subscribed: false, reason: 'watch-failed' }
     }
 
     const entry = this.directories.get(directoryKey)
@@ -138,6 +125,87 @@ export class FileWatcherManager {
       this.closeDirectory(directoryKey)
     }
     this.subscriptions.clear()
+  }
+
+  /**
+   * 症状：Windows 上编辑器开着 a/b/c.txt 时，文件树改名/移动/删除文件夹 a 报
+   *   "EPERM: operation not permitted"，用户以为是别的程序占用。
+   * 根因：2026-10-14 实测 Windows 上目录的 fs.watch 句柄会锁住它的祖先目录
+   *   （监听 a/b 时 rename a 失败；直接被监听的目录自己改名反而成功）——
+   *   锁住它的正是我们自己挂在父目录上的编辑器监听。
+   * 为什么不能换写法：不能等渲染进程先退订（改名请求和 tab 卸载之间没有先后保证，
+   *   且关不掉别的窗口的订阅）；也不能直接丢掉订阅记录——操作失败时必须原样恢复
+   *   监听，成功时重新挂载会因旧目录已不存在而失败，订阅方退回轮询直到按新路径重订。
+   */
+  async runWithWatchersReleasedUnder<T>(absolutePath: string, operation: () => Promise<T>): Promise<T> {
+    const released = this.releaseDirectoriesUnder(absolutePath)
+
+    try {
+      return await operation()
+    } finally {
+      this.rearmDirectories(released)
+    }
+  }
+
+  private releaseDirectoriesUnder(absolutePath: string) {
+    const rootKey = toPathComparisonKey(path.resolve(absolutePath))
+    const nestedPrefix = rootKey.endsWith(path.sep) ? rootKey : `${rootKey}${path.sep}`
+    const released = new Map<string, string[]>()
+
+    for (const [directoryKey, entry] of [...this.directories]) {
+      const key = toPathComparisonKey(directoryKey)
+      if (key !== rootKey && !key.startsWith(nestedPrefix)) {
+        continue
+      }
+
+      released.set(directoryKey, [...entry.subscriptionIds])
+      this.closeDirectory(directoryKey)
+    }
+
+    return released
+  }
+
+  private rearmDirectories(released: Map<string, string[]>) {
+    for (const [directoryKey, subscriptionIds] of released) {
+      const stillSubscribed = subscriptionIds.filter(
+        (subscriptionId) => this.subscriptions.get(subscriptionId)?.directoryKey === directoryKey,
+      )
+
+      if (stillSubscribed.length === 0) {
+        continue
+      }
+
+      // After a successful rename/delete the old directory is gone and arming
+      // fails; those subscribers fall back to polling until they re-subscribe.
+      if (!this.directories.has(directoryKey) && !this.armDirectory(directoryKey)) {
+        continue
+      }
+
+      const entry = this.directories.get(directoryKey)
+      for (const subscriptionId of stillSubscribed) {
+        entry?.subscriptionIds.add(subscriptionId)
+      }
+    }
+  }
+
+  private armDirectory(directoryKey: string) {
+    let watcher: FSWatcher
+    try {
+      watcher = watch(directoryKey, (_eventType, changedName) => {
+        this.notifyDirectory(directoryKey, changedName)
+      })
+    } catch {
+      return false
+    }
+
+    watcher.on('error', () => {
+      // A broken watcher must not crash the process; subscribers fall back
+      // to the renderer's slow polling safety net.
+      this.closeDirectory(directoryKey)
+    })
+
+    this.directories.set(directoryKey, { watcher, subscriptionIds: new Set() })
+    return true
   }
 
   private notifyDirectory(directoryKey: string, changedName: string | Buffer | null) {

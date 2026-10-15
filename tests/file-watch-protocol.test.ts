@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import test from 'node:test'
@@ -160,6 +160,67 @@ test('the desktop backend exposes watchFile as data plus a single event channel'
   await writeFile(path.join(workspace, 'a.txt'), 'three\n', 'utf8')
   await sleep(400)
   assert.equal(events.length, 0)
+})
+
+// 2026-10-14 用户报「重命名文件有 bug」：Windows 上只要编辑器开着 a/b/c.txt（监听句柄挂在 a/b），
+// 文件树里改名/移动/删除 a 就报 EPERM——自己进程的 fs.watch 句柄锁住了祖先目录。
+test('renaming, moving and deleting a folder succeed while a file two levels inside it is watched', async (t) => {
+  const workspace = await mkdtemp(path.join(os.tmpdir(), 'chill-vibe-watch-proto-ancestor-'))
+  const backend = createDesktopBackend({ onFileWatchEvent: () => {} })
+  t.after(async () => {
+    backend.disposeFileWatchers()
+    await rm(workspace, { recursive: true, force: true })
+  })
+
+  await mkdir(path.join(workspace, 'a', 'b'), { recursive: true })
+  await mkdir(path.join(workspace, 'dest'))
+  await writeFile(path.join(workspace, 'a', 'b', 'c.txt'), 'one\n', 'utf8')
+
+  assert.equal(isFileWatchArmed(backend.watchFile(workspace, 'a/b/c.txt', 'sub-1')), true)
+  await sleep(100)
+  await backend.renameEntry({ workspacePath: workspace, relativePath: 'a', nextName: 'a2' })
+  assert.equal(await readFile(path.join(workspace, 'a2', 'b', 'c.txt'), 'utf8'), 'one\n')
+
+  // The remounted editor tab re-subscribes under the new path.
+  assert.equal(isFileWatchArmed(backend.watchFile(workspace, 'a2/b/c.txt', 'sub-2')), true)
+  await sleep(100)
+  await backend.moveEntry({ workspacePath: workspace, relativePath: 'a2', destinationParentRelativePath: 'dest' })
+  assert.equal(await readFile(path.join(workspace, 'dest', 'a2', 'b', 'c.txt'), 'utf8'), 'one\n')
+
+  assert.equal(isFileWatchArmed(backend.watchFile(workspace, 'dest/a2/b/c.txt', 'sub-3')), true)
+  await sleep(100)
+  await backend.deleteEntry({ workspacePath: workspace, relativePath: 'dest' })
+  await assert.rejects(stat(path.join(workspace, 'dest')), { code: 'ENOENT' })
+})
+
+test('a failed folder rename re-arms the nested watcher so changes keep flowing', async (t) => {
+  const workspace = await mkdtemp(path.join(os.tmpdir(), 'chill-vibe-watch-proto-rearm-'))
+  const events: FileWatchEvent[] = []
+  const backend = createDesktopBackend({
+    onFileWatchEvent: (event) => {
+      events.push(event)
+    },
+  })
+  t.after(async () => {
+    backend.disposeFileWatchers()
+    await rm(workspace, { recursive: true, force: true })
+  })
+
+  await mkdir(path.join(workspace, 'a', 'b'), { recursive: true })
+  await mkdir(path.join(workspace, 'taken'))
+  await writeFile(path.join(workspace, 'a', 'b', 'c.txt'), 'one\n', 'utf8')
+
+  assert.equal(isFileWatchArmed(backend.watchFile(workspace, 'a/b/c.txt', 'sub-1')), true)
+  await assert.rejects(
+    backend.renameEntry({ workspacePath: workspace, relativePath: 'a', nextName: 'taken' }),
+    { message: 'Target already exists.' },
+  )
+
+  await sleep(100)
+  events.length = 0
+  await writeFile(path.join(workspace, 'a', 'b', 'c.txt'), 'two\n', 'utf8')
+  assert.equal(await waitFor(() => events.length > 0), true)
+  assert.deepEqual(events[0], { subscriptionId: 'sub-1' })
 })
 
 test('disposeFileWatchers stops the backend event channel', async (t) => {

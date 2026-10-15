@@ -5,10 +5,12 @@ import {
   MAX_BRAINSTORM_ANSWER_COUNT,
   MIN_BRAINSTORM_ANSWER_COUNT,
 } from './brainstorm.js'
-import { DEFAULT_CLAUDE_MODEL, DEFAULT_CODEX_MODEL, DEFAULT_GIT_AGENT_MODEL } from './models.js'
+import { DEFAULT_CLAUDE_MODEL, DEFAULT_CODEX_MODEL, DEFAULT_GEMINI_MODEL, DEFAULT_GIT_AGENT_MODEL } from './models.js'
 import { defaultSystemPrompt } from './system-prompt.js'
 
-export const providerSchema = z.enum(['codex', 'claude'])
+export const providerSchema = z.enum(['codex', 'claude', 'gemini'])
+// 本地模型条目只能挂在 codex/claude 两个 harness 上（Gemini CLI 不走本地推理路径）。
+export const localModelHarnessSchema = z.enum(['codex', 'claude'])
 export type Provider = z.infer<typeof providerSchema>
 
 export const streamErrorHintSchema = z.enum(['switch-config', 'env-setup'])
@@ -395,6 +397,7 @@ export type BoardColumn = z.infer<typeof boardColumnSchema>
 export const requestModelSettingsSchema = z.object({
   codex: z.string().default(DEFAULT_CODEX_MODEL),
   claude: z.string().default(DEFAULT_CLAUDE_MODEL),
+  gemini: z.string().default(DEFAULT_GEMINI_MODEL),
 })
 export type RequestModelSettings = z.infer<typeof requestModelSettingsSchema>
 
@@ -408,6 +411,7 @@ export type ModelPromptRule = z.infer<typeof modelPromptRuleSchema>
 export const modelReasoningEffortsSchema = z.object({
   codex: z.record(z.string(), z.string()).default({}),
   claude: z.record(z.string(), z.string()).default({}),
+  gemini: z.record(z.string(), z.string()).default({}),
 })
 export type ModelReasoningEfforts = z.infer<typeof modelReasoningEffortsSchema>
 
@@ -434,6 +438,10 @@ export const providerProfilesSchema = z.object({
     activeProfileId: '',
     profiles: [],
   }),
+  gemini: providerProfileCollectionSchema.default({
+    activeProfileId: '',
+    profiles: [],
+  }),
 })
 export type ProviderProfiles = z.infer<typeof providerProfilesSchema>
 
@@ -448,7 +456,7 @@ export type ProviderProfiles = z.infer<typeof providerProfilesSchema>
 export const localModelEntrySchema = z.object({
   id: z.string().min(1),
   label: z.string().default(''),
-  harness: providerSchema.default('codex'),
+  harness: localModelHarnessSchema.default('codex'),
   baseUrl: z.string().default(''),
   apiKey: z.string().default(''),
   model: z.string().default(''),
@@ -837,6 +845,8 @@ export const appSettingsSchema = z.object({
   weatherCity: z.string().default(''),
   // 用户对某一份提示词存档点过「忽略」后记下它的 savedAt，同一份不再提示。
   promptVaultDismissedAt: z.string().default(''),
+  // 已弹过「默认模型有更强新型号」提示的 provider:旧>新 键（shared/models.ts MODEL_SUCCESSORS），每条只弹一次。
+  acknowledgedModelUpgrades: z.array(z.string()).default([]),
   systemPrompt: z.string().default(defaultSystemPrompt),
   modelPromptRules: z.array(modelPromptRuleSchema).default([]),
   codexPersonality: codexPersonalitySettingSchema.default('default'),
@@ -855,10 +865,12 @@ export const appSettingsSchema = z.object({
   requestModels: requestModelSettingsSchema.default({
     codex: DEFAULT_CODEX_MODEL,
     claude: DEFAULT_CLAUDE_MODEL,
+    gemini: DEFAULT_GEMINI_MODEL,
   }),
   modelReasoningEfforts: modelReasoningEffortsSchema.default({
     codex: {},
     claude: {},
+    gemini: {},
   }),
   providerProfiles: providerProfilesSchema.default({
     codex: {
@@ -866,6 +878,10 @@ export const appSettingsSchema = z.object({
       profiles: [],
     },
     claude: {
+      activeProfileId: '',
+      profiles: [],
+    },
+    gemini: {
       activeProfileId: '',
       profiles: [],
     },
@@ -1131,6 +1147,7 @@ export const appStateSchema = z.object({
     wakeTimerDefaultDurationMinutes: defaultWakeTimerDurationMinutes,
     weatherCity: '',
     promptVaultDismissedAt: '',
+    acknowledgedModelUpgrades: [],
     systemPrompt: defaultSystemPrompt,
     modelPromptRules: [],
     codexPersonality: 'default',
@@ -1146,10 +1163,12 @@ export const appStateSchema = z.object({
     requestModels: {
       codex: DEFAULT_CODEX_MODEL,
       claude: DEFAULT_CLAUDE_MODEL,
+      gemini: DEFAULT_GEMINI_MODEL,
     },
     modelReasoningEfforts: {
       codex: {},
       claude: {},
+      gemini: {},
     },
     providerProfiles: {
       codex: {
@@ -1157,6 +1176,10 @@ export const appStateSchema = z.object({
         profiles: [],
       },
       claude: {
+        activeProfileId: '',
+        profiles: [],
+      },
+      gemini: {
         activeProfileId: '',
         profiles: [],
       },
@@ -1307,19 +1330,21 @@ export type SetupStatus = z.infer<typeof setupStatusSchema>
 
 export const setupRunRequestSchema = z.object({
   mode: z.enum(['install-missing', 'update-cli']).default('install-missing'),
-  cli: z.enum(['all', 'claude', 'codex']).default('all'),
+  cli: z.enum(['all', 'claude', 'codex', 'gemini']).default('all'),
   version: z.string().default('latest'),
 })
 export type SetupRunRequestInput = z.input<typeof setupRunRequestSchema>
 export type SetupRunRequest = z.infer<typeof setupRunRequestSchema>
 
-export const environmentCheckIdSchema = z.enum(['git', 'node', 'claude', 'codex'])
+export const environmentCheckIdSchema = z.enum(['git', 'node', 'claude', 'codex', 'gemini'])
 export type EnvironmentCheckId = z.infer<typeof environmentCheckIdSchema>
 
 export const environmentCheckSchema = z.object({
   id: environmentCheckIdSchema,
   label: z.string().min(1),
   available: z.boolean(),
+  // 可选 provider（Gemini）：缺失只做提示，不计入 environment.ready、不触发引导弹窗。
+  optional: z.boolean().optional(),
 })
 export type EnvironmentCheck = z.infer<typeof environmentCheckSchema>
 

@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises'
+import { link, mkdir, mkdtemp, readdir, readFile, rm, stat, symlink, writeFile } from 'node:fs/promises'
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import os from 'node:os'
@@ -10,6 +10,7 @@ import {
   ensureWithinWorkspace,
   listFiles,
   moveWorkspaceEntry,
+  normalizeEntryName,
   readWorkspaceFile,
   renameWorkspaceEntry,
   searchWorkspaceFiles,
@@ -397,6 +398,245 @@ test('workspace entry mutations reject invalid names and duplicate targets', asy
   )
 })
 
+// NTFS and default APFS fold case; probe the actual temp volume instead of assuming by platform.
+const isCaseInsensitiveDirectory = async (directory: string) => {
+  const probePath = path.join(directory, '.case-probe')
+  await writeFile(probePath, '', 'utf8')
+  try {
+    await stat(path.join(directory, '.CASE-PROBE'))
+    return true
+  } catch {
+    return false
+  } finally {
+    await rm(probePath, { force: true })
+  }
+}
+
+test('renameWorkspaceEntry performs case-only renames of files and directories', async (t) => {
+  const workspace = await mkdtemp(path.join(os.tmpdir(), 'chill-vibe-file-rename-case-'))
+  t.after(async () => {
+    await rm(workspace, { recursive: true, force: true })
+  })
+
+  await mkdir(path.join(workspace, 'src'), { recursive: true })
+  await mkdir(path.join(workspace, 'docs'), { recursive: true })
+  await writeFile(path.join(workspace, 'src', 'readme.md'), '# keep me\n', 'utf8')
+  await writeFile(path.join(workspace, 'docs', 'inner.txt'), 'inner\n', 'utf8')
+
+  await renameWorkspaceEntry({
+    workspacePath: workspace,
+    relativePath: 'src/readme.md',
+    nextName: 'README.md',
+  })
+  await renameWorkspaceEntry({
+    workspacePath: workspace,
+    relativePath: 'docs',
+    nextName: 'Docs',
+  })
+
+  assert.deepEqual(await readdir(path.join(workspace, 'src')), ['README.md'])
+  const rootEntries = await readdir(workspace)
+  assert.equal(rootEntries.includes('Docs'), true)
+  assert.equal(rootEntries.includes('docs'), false)
+  assert.equal(await readFile(path.join(workspace, 'src', 'README.md'), 'utf8'), '# keep me\n')
+  assert.deepEqual(await readdir(path.join(workspace, 'Docs')), ['inner.txt'])
+})
+
+test('renameWorkspaceEntry keeps rejecting a different existing entry with the exact message', async (t) => {
+  const workspace = await mkdtemp(path.join(os.tmpdir(), 'chill-vibe-file-rename-collide-'))
+  t.after(async () => {
+    await rm(workspace, { recursive: true, force: true })
+  })
+
+  await mkdir(path.join(workspace, 'src', 'folder'), { recursive: true })
+  await writeFile(path.join(workspace, 'src', 'notes.md'), 'notes\n', 'utf8')
+  await writeFile(path.join(workspace, 'src', 'todo.md'), 'todo\n', 'utf8')
+
+  const renameNotesTo = (nextName: string) =>
+    renameWorkspaceEntry({ workspacePath: workspace, relativePath: 'src/notes.md', nextName })
+
+  await assert.rejects(renameNotesTo('todo.md'), { message: 'Target already exists.' })
+  await assert.rejects(renameNotesTo('folder'), { message: 'Target already exists.' })
+
+  if (await isCaseInsensitiveDirectory(path.join(workspace, 'src'))) {
+    // Folding case must not turn "rename onto a different file" into an overwrite.
+    await assert.rejects(renameNotesTo('TODO.md'), { message: 'Target already exists.' })
+    await assert.rejects(renameNotesTo('FOLDER'), { message: 'Target already exists.' })
+  }
+
+  assert.equal(await readFile(path.join(workspace, 'src', 'notes.md'), 'utf8'), 'notes\n')
+  assert.equal(await readFile(path.join(workspace, 'src', 'todo.md'), 'utf8'), 'todo\n')
+})
+
+test('renameWorkspaceEntry rejects a hard link that merely shares the inode', async (t) => {
+  const workspace = await mkdtemp(path.join(os.tmpdir(), 'chill-vibe-file-rename-hardlink-'))
+  t.after(async () => {
+    await rm(workspace, { recursive: true, force: true })
+  })
+
+  await writeFile(path.join(workspace, 'original.md'), 'shared\n', 'utf8')
+  try {
+    await link(path.join(workspace, 'original.md'), path.join(workspace, 'alias.md'))
+  } catch (error) {
+    t.skip(`hard links unsupported here: ${(error as NodeJS.ErrnoException).code}`)
+    return
+  }
+
+  await assert.rejects(
+    renameWorkspaceEntry({ workspacePath: workspace, relativePath: 'original.md', nextName: 'alias.md' }),
+    { message: 'Target already exists.' },
+  )
+  assert.deepEqual((await readdir(workspace)).sort(), ['alias.md', 'original.md'])
+})
+
+test('renameWorkspaceEntry rejects case-variant siblings that are distinct entries on case-sensitive filesystems', async (t) => {
+  const workspace = await mkdtemp(path.join(os.tmpdir(), 'chill-vibe-file-rename-case-sensitive-'))
+  t.after(async () => {
+    await rm(workspace, { recursive: true, force: true })
+  })
+
+  if (await isCaseInsensitiveDirectory(workspace)) {
+    t.skip('volume folds case, so case-variant siblings cannot coexist')
+    return
+  }
+
+  // Same inode under two spellings: identity alone would wrongly call this a case-only rename.
+  await writeFile(path.join(workspace, 'notes.md'), 'notes\n', 'utf8')
+  await link(path.join(workspace, 'notes.md'), path.join(workspace, 'NOTES.md'))
+  await assert.rejects(
+    renameWorkspaceEntry({ workspacePath: workspace, relativePath: 'notes.md', nextName: 'NOTES.md' }),
+    { message: 'Target already exists.' },
+  )
+
+  // stat() follows links, so readme.md -> README.md also looks like "the same file";
+  // renaming over README.md would replace the real file with a self-referencing link.
+  await writeFile(path.join(workspace, 'README.md'), '# real\n', 'utf8')
+  await symlink('README.md', path.join(workspace, 'readme.md'), 'file')
+  await assert.rejects(
+    renameWorkspaceEntry({ workspacePath: workspace, relativePath: 'readme.md', nextName: 'README.md' }),
+    { message: 'Target already exists.' },
+  )
+  assert.equal(await readFile(path.join(workspace, 'README.md'), 'utf8'), '# real\n')
+})
+
+test('renameWorkspaceEntry treats a dangling link at the target name as an existing entry', async (t) => {
+  const workspace = await mkdtemp(path.join(os.tmpdir(), 'chill-vibe-file-rename-dangling-'))
+  t.after(async () => {
+    await rm(workspace, { recursive: true, force: true })
+  })
+
+  await mkdir(path.join(workspace, 'src'), { recursive: true })
+  await mkdir(path.join(workspace, 'gone'), { recursive: true })
+  await writeFile(path.join(workspace, 'src', 'source.md'), 'mine\n', 'utf8')
+  await symlink(
+    path.join(workspace, 'gone'),
+    path.join(workspace, 'src', 'link'),
+    process.platform === 'win32' ? 'junction' : 'dir',
+  )
+  await rm(path.join(workspace, 'gone'), { recursive: true })
+
+  await assert.rejects(
+    renameWorkspaceEntry({ workspacePath: workspace, relativePath: 'src/source.md', nextName: 'link' }),
+    { message: 'Target already exists.' },
+  )
+  assert.equal(await readFile(path.join(workspace, 'src', 'source.md'), 'utf8'), 'mine\n')
+})
+
+const windowsInvalidEntryNames: Array<[string, RegExp]> = [
+  ['a:b.md', /these characters/i],
+  ['existing.md:evil', /these characters/i],
+  ['what?.md', /these characters/i],
+  ['star*.md', /these characters/i],
+  ['a<b.md', /these characters/i],
+  ['a>b.md', /these characters/i],
+  ['quote".md', /these characters/i],
+  ['pipe|.md', /these characters/i],
+  ['bell\u0007.md', /control characters/i],
+  ['notes.', /end with a dot or a space/i],
+  ['notes.md. ', /end with a dot or a space/i],
+  ['notes. .', /end with a dot or a space/i],
+  ['CON', /reserved/i],
+  ['con.txt', /reserved/i],
+  ['NUL.tar.gz', /reserved/i],
+  ['Aux', /reserved/i],
+  ['prn.md', /reserved/i],
+  ['Com1', /reserved/i],
+  ['lpt9.log', /reserved/i],
+]
+
+test('normalizeEntryName applies the Windows naming rules only for win32', () => {
+  for (const [name, expected] of [...windowsInvalidEntryNames, ['COM¹', /reserved/i] as [string, RegExp]]) {
+    assert.throws(() => normalizeEntryName(name, 'win32'), expected, JSON.stringify(name))
+    assert.equal(normalizeEntryName(name, 'linux'), name.trim())
+    assert.equal(normalizeEntryName(name, 'darwin'), name.trim())
+  }
+
+  for (const name of ['console.md', 'COM10.txt', 'nul-check.md', '.env', 'README.md', 'my file.txt', 'a.b.c']) {
+    assert.equal(normalizeEntryName(name, 'win32'), name)
+  }
+  assert.equal(normalizeEntryName('  padded.md  ', 'win32'), 'padded.md')
+  assert.throws(() => normalizeEntryName('nested/file.md', 'win32'), /path separators/i)
+  assert.throws(() => normalizeEntryName('   ', 'win32'), /required/i)
+})
+
+test(
+  'workspace entry names Windows cannot represent are rejected before touching the disk',
+  { skip: process.platform !== 'win32' },
+  async (t) => {
+    const workspace = await mkdtemp(path.join(os.tmpdir(), 'chill-vibe-file-win-names-'))
+    t.after(async () => {
+      await rm(workspace, { recursive: true, force: true })
+    })
+
+    await mkdir(path.join(workspace, 'src'), { recursive: true })
+    await writeFile(path.join(workspace, 'src', 'existing.md'), 'keep\n', 'utf8')
+
+    for (const [name, expected] of windowsInvalidEntryNames) {
+      await assert.rejects(
+        renameWorkspaceEntry({ workspacePath: workspace, relativePath: 'src/existing.md', nextName: name }),
+        expected,
+        `rename -> ${JSON.stringify(name)}`,
+      )
+      await assert.rejects(
+        createWorkspaceFile({ workspacePath: workspace, parentRelativePath: 'src', name }),
+        expected,
+        `new file ${JSON.stringify(name)}`,
+      )
+      await assert.rejects(
+        createWorkspaceDirectory({ workspacePath: workspace, parentRelativePath: 'src', name }),
+        expected,
+        `new folder ${JSON.stringify(name)}`,
+      )
+    }
+
+    assert.deepEqual(await readdir(path.join(workspace, 'src')), ['existing.md'])
+    assert.equal(await readFile(path.join(workspace, 'src', 'existing.md'), 'utf8'), 'keep\n')
+    // "existing.md:evil" would otherwise land in a hidden NTFS alternate data stream.
+    await assert.rejects(readFile(path.join(workspace, 'src', 'existing.md:evil'), 'utf8'), /ENOENT/)
+
+    // Look-alikes that Windows does accept must keep working.
+    for (const name of ['console.md', 'COM10.txt', 'nul-check.md', '.env', 'my file.txt']) {
+      await createWorkspaceFile({ workspacePath: workspace, parentRelativePath: 'src', name })
+    }
+  },
+)
+
+test(
+  'POSIX hosts keep accepting names that are only invalid on Windows',
+  { skip: process.platform === 'win32' },
+  async (t) => {
+    const workspace = await mkdtemp(path.join(os.tmpdir(), 'chill-vibe-file-posix-names-'))
+    t.after(async () => {
+      await rm(workspace, { recursive: true, force: true })
+    })
+
+    for (const name of ['a:b.md', 'CON', 'notes.']) {
+      await createWorkspaceFile({ workspacePath: workspace, parentRelativePath: '', name })
+    }
+    assert.deepEqual((await readdir(workspace)).sort(), ['CON', 'a:b.md', 'notes.'])
+  },
+)
+
 test('readWorkspaceFile flags oversized files without loading their content', async (t) => {
   const workspace = await mkdtemp(path.join(os.tmpdir(), 'chill-vibe-file-read-huge-'))
   t.after(async () => {
@@ -565,6 +805,30 @@ test('writeWorkspaceFile with expectedRevision still writes when the file was de
 
   const { readFile: readRaw } = await import('node:fs/promises')
   assert.equal(await readRaw(target, 'utf8'), 'restored\n')
+})
+
+// 2026-10-14：文件树里的条目已被外部删掉/挪走时，改名/移动/删除抛的是带绝对路径的原始
+// "ENOENT: no such file or directory, stat 'D:\…'"；`if (!sourceStats)` 守卫是死代码，从没生效。
+test('rename, move and delete report a vanished source as "Path not found." instead of a raw ENOENT', async (t) => {
+  const workspace = await mkdtemp(path.join(os.tmpdir(), 'chill-vibe-file-vanished-'))
+  t.after(async () => {
+    await rm(workspace, { recursive: true, force: true })
+  })
+
+  await mkdir(path.join(workspace, 'docs'), { recursive: true })
+
+  await assert.rejects(
+    renameWorkspaceEntry({ workspacePath: workspace, relativePath: 'gone.md', nextName: 'still-gone.md' }),
+    { message: 'Path not found.' },
+  )
+  await assert.rejects(
+    moveWorkspaceEntry({ workspacePath: workspace, relativePath: 'gone.md', destinationParentRelativePath: 'docs' }),
+    { message: 'Path not found.' },
+  )
+  await assert.rejects(
+    deleteWorkspaceEntry({ workspacePath: workspace, relativePath: 'gone.md' }),
+    { message: 'Path not found.' },
+  )
 })
 
 test('moveWorkspaceEntry relocates entries across directories and rejects moving folders into their descendants', async (t) => {

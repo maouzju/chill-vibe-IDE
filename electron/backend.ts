@@ -6,6 +6,7 @@ import {
   createWorkspaceDirectory,
   createWorkspaceFile,
   deleteWorkspaceEntry,
+  ensureWithinWorkspace,
   FileRevisionConflictError,
   listFiles,
   moveWorkspaceEntry,
@@ -267,6 +268,28 @@ export const createDesktopBackend = (deps: DesktopBackendDependencies = {}) => {
     }
 
     return fileWatcherManager
+  }
+
+  // Windows: our own editor watchers on nested directories lock every ancestor
+  // against rename/delete (EPERM). See FileWatcherManager.runWithWatchersReleasedUnder.
+  const runWithEntryWatchersReleased = async (
+    workspacePath: string,
+    relativePath: string,
+    operation: () => Promise<void>,
+  ) => {
+    if (!fileWatcherManager) {
+      return operation()
+    }
+
+    let absolutePath: string
+    try {
+      absolutePath = ensureWithinWorkspace(workspacePath, relativePath)
+    } catch {
+      // Let the operation itself report the traversal error.
+      return operation()
+    }
+
+    return fileWatcherManager.runWithWatchersReleasedUnder(absolutePath, operation)
   }
 
   const getChatManager = () => {
@@ -704,13 +727,16 @@ export const createDesktopBackend = (deps: DesktopBackendDependencies = {}) => {
       await createWorkspaceDirectory(fileCreateRequestSchema.parse(request))
     },
     async renameEntry(request: unknown) {
-      await renameWorkspaceEntry(fileRenameRequestSchema.parse(request))
+      const parsed = fileRenameRequestSchema.parse(request)
+      await runWithEntryWatchersReleased(parsed.workspacePath, parsed.relativePath, () => renameWorkspaceEntry(parsed))
     },
     async moveEntry(request: unknown) {
-      await moveWorkspaceEntry(fileMoveRequestSchema.parse(request))
+      const parsed = fileMoveRequestSchema.parse(request)
+      await runWithEntryWatchersReleased(parsed.workspacePath, parsed.relativePath, () => moveWorkspaceEntry(parsed))
     },
     async deleteEntry(request: unknown) {
-      await deleteWorkspaceEntry(fileDeleteRequestSchema.parse(request))
+      const parsed = fileDeleteRequestSchema.parse(request)
+      await runWithEntryWatchersReleased(parsed.workspacePath, parsed.relativePath, () => deleteWorkspaceEntry(parsed))
     },
     async readFile(request: unknown) {
       return readWorkspaceFile(fileReadRequestSchema.parse(request), DESKTOP_FILE_ACCESS)

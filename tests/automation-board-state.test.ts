@@ -11,7 +11,7 @@ import {
   normalizeAppSettings,
   resolveRecoveredColumnLayout,
 } from '../shared/default-state.ts'
-import { AUTOMATIONBOARD_TOOL_MODEL, DEFAULT_CODEX_MODEL } from '../shared/models.ts'
+import { AUTOMATIONBOARD_TOOL_MODEL, DEFAULT_CODEX_MODEL, DEFAULT_GEMINI_MODEL } from '../shared/models.ts'
 import { createDefaultAutomationBoardTemplateTrigger } from '../shared/schema.ts'
 import type {
   AppState,
@@ -1367,7 +1367,7 @@ describe('the board tool model never leaks into model memory', () => {
   it('heals a save whose remembered models were already poisoned by the board', () => {
     const settings = normalizeAppSettings({
       ...createDefaultSettings(),
-      requestModels: { codex: AUTOMATIONBOARD_TOOL_MODEL, claude: AUTOMATIONBOARD_TOOL_MODEL },
+      requestModels: { codex: AUTOMATIONBOARD_TOOL_MODEL, claude: AUTOMATIONBOARD_TOOL_MODEL, gemini: DEFAULT_GEMINI_MODEL },
       lastModel: { provider: 'codex', model: AUTOMATIONBOARD_TOOL_MODEL },
     })
 

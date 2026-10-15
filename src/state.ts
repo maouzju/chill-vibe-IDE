@@ -28,18 +28,27 @@ import {
   updateStickyNoteArchiveViewState,
 } from '../shared/default-state'
 import { createDefaultBrainstormState } from '../shared/brainstorm'
+import { automationBoardHasActiveRun } from './components/automation-board-transitions'
+import { hasRunningSubagentsCached } from './components/layout-memoization'
 import { retireUntrackedClaudeAgents } from '../shared/claude-agent-push'
 import { getChatMessageAttachments } from '../shared/chat-attachments'
 import { getDuplicateColumnTitle, getForkConversationTitle, getWorkspaceTitle } from '../shared/i18n'
 import {
   AUTOMATIONBOARD_TOOL_MODEL,
   buildLocalModelToken,
+  IMAGEEDITOR_TOOL_MODEL,
   isFableModel,
   isLocalModelToken,
   normalizeStoredModel,
   STICKYNOTE_TOOL_MODEL,
+  TEXTEDITOR_TOOL_MODEL,
   TOOL_CARD_MODELS,
 } from '../shared/models'
+import {
+  getWorkspaceEntryBaseName,
+  isSameWorkspacePath,
+  remapWorkspaceEntryPath,
+} from './workspace-entry-remap'
 import type {
   AppSettings,
   AppState,
@@ -157,7 +166,17 @@ export const selectDockedColumnStatus = (
 
   for (const card of Object.values(column.cards)) {
     if (!layoutTabIds.has(card.id)) continue
-    if (card.status === 'streaming') running = true
+    // 症状（2026-10-14 用户报）: 主回合答完、子 agent 还在后台跑，收起后 chip 不呼吸，
+    //   反而亮"有新结果"蓝点，看着像全干完了。
+    // 根因: 这里只认 status==='streaming'；pane tab 早已额外认"idle 但子 agent 在跑"
+    //   和"看板 running 道有活卡"（PaneView isStreaming），两处判据分了叉。
+    // 被否决的替代: 认 backgroundWorkPending —— 它没有上界（会粘住），tab 也不认它；
+    //   chip 必须与 tab 同判据，否则展开后 tab 不亮、chip 却在呼吸。
+    const cardRunning =
+      card.status === 'streaming' ||
+      (card.status === 'idle' && hasRunningSubagentsCached(card.messages)) ||
+      automationBoardHasActiveRun(getAutomationBoard(card), column.cards)
+    if (cardRunning) running = true
     // 症状（2026-09-10）: 收起的列偶尔亮"有新结果"，拖回来却没有没看过的回答。
     // 根因: 这里曾把 `completionGlow` 也当"有新结果"。可 glow 只在用户**触碰**卡片
     //       时清除（ChatCard pointerdown/focus/input/click），而"看板可见时自动已读"
@@ -167,7 +186,9 @@ export const selectDockedColumnStatus = (
     //       结果时就熄灭（比如卡在视口外的 pane 里跑完），改坏另一个信号。
     //       当初拿 glow 兜底是因为完成回调不知道列已收起、把活动 tab 上的卡记成
     //       unread=false；现在 isColumnVisibleOnBoard 让 `unread` 自己扛住这一幕。
-    if (card.unread) hasNewResult = true
+    // 同一张卡还在跑子 agent 时，它的 unread 先不算新结果，跑完再亮 ——
+    // 与卡片上 is-subagents-running 压过完成光一致。
+    if (card.unread && !cardRunning) hasNewResult = true
     if (running && hasNewResult) break
   }
 
@@ -289,7 +310,7 @@ const localModelEntryRoutingChanged = (
 const clearSessionsForRoutingChanges = (
   previous: AppState,
   next: AppState,
-  providers: Provider[] = ['codex', 'claude'],
+  providers: Provider[] = ['codex', 'claude', 'gemini'],
 ) =>
   providers.reduce(
     (current, provider) =>
@@ -356,6 +377,7 @@ export type IdeAction =
           | 'wakeTimerDefaultDurationMinutes'
           | 'weatherCity'
           | 'promptVaultDismissedAt'
+          | 'acknowledgedModelUpgrades'
           | 'systemPrompt'
           | 'modelPromptRules'
           | 'codexPersonality'
@@ -449,6 +471,13 @@ export type IdeAction =
       adminAccess?: boolean
       spawnedByAgent?: boolean
       parentCardId?: string
+    }
+  | {
+      /** A workspace file/folder was renamed or moved: editor tabs follow it. */
+      type: 'remapEditorTabPaths'
+      workspacePath: string
+      fromPath: string
+      toPath: string
     }
   | {
       type: 'spawnRepeatLoopTab'
@@ -2619,6 +2648,49 @@ const ideReducerCore = (state: AppState, action: IdeAction): AppState => {
 
       return touchState(next)
     }
+    case 'remapEditorTabPaths': {
+      // 症状 (2026-10-14): 文件树改名/拖动后，打开着的编辑器 tab 仍指向旧路径，自动保存或关 tab 时的
+      //   卸载保存把旧文件原样写回来（服务端把 ENOENT 当作「外部删除后恢复」放行，见 file-system.test）。
+      // 根因: tab 的路径存在 card.stickyNote 里，改名流程从没通知过它。
+      // 为什么改 stickyNote 而不是让服务端拒写: 「恢复被删文件」是有意保留的契约；路径跟随也让
+      //   文件夹改名后的子文件 tab 继续可用，而不是从此每次保存都失败。
+      let changed = false
+      const columns = state.columns.map((column) => {
+        if (!isSameWorkspacePath(column.workspacePath, action.workspacePath)) {
+          return column
+        }
+
+        let cards: BoardColumn['cards'] | null = null
+        for (const [cardId, card] of Object.entries(column.cards)) {
+          if (card.model !== TEXTEDITOR_TOOL_MODEL && card.model !== IMAGEEDITOR_TOOL_MODEL) {
+            continue
+          }
+
+          const previousPath = card.stickyNote ?? ''
+          const nextPath = remapWorkspaceEntryPath(column.workspacePath, previousPath, action.fromPath, action.toPath)
+          if (nextPath === null) {
+            continue
+          }
+
+          const keepsCustomTitle = card.title !== getWorkspaceEntryBaseName(previousPath)
+          cards ??= { ...column.cards }
+          cards[cardId] = {
+            ...card,
+            stickyNote: nextPath,
+            title: keepsCustomTitle ? card.title : getWorkspaceEntryBaseName(nextPath),
+          }
+        }
+
+        if (!cards) {
+          return column
+        }
+
+        changed = true
+        return { ...column, cards }
+      })
+
+      return changed ? touchState({ ...state, columns }) : state
+    }
     case 'spawnRepeatLoopTab': {
       const targetColumn = state.columns.find((column) => column.id === action.columnId)
       const sourceCard = targetColumn?.cards[action.sourceCardId]
@@ -3349,7 +3421,10 @@ const ideReducerCore = (state: AppState, action: IdeAction): AppState => {
 
       const { messageIndex, message: forkPointMessage } = forkPoint
       // Messages BEFORE the fork point —the selected user prompt is restored into the composer instead.
-      const forkedMessages = sourceCard.messages.slice(0, messageIndex)
+      // 症状：分叉出的卡已空闲，子代理面板却一直写「运行中」（2026-10-15 实证，Workflow wbnohzxd3）。
+      // 根因：源会话的子代理只属于源进程，分叉卡永远收不到它的终态通知，复制过来的 running 永不收敛。
+      // 不能只靠启动时的 retireUntrackedClaudeAgents：不重启应用就一直挂着。
+      const forkedMessages = settleStoppedStreamMessages(sourceCard.messages.slice(0, messageIndex))
       const forkedDraft = forkPointMessage.content
       const forkedDraftAttachments = getChatMessageAttachments(forkPointMessage)
       const language = state.settings.language

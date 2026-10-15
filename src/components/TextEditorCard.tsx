@@ -18,11 +18,15 @@ import {
 import { getTextEditorCardText } from './tool-card-text'
 import {
   cacheTextEditorModel,
+  getTextEditorLiveFilePath,
   getTextEditorModelCacheKey,
   peekCachedTextEditorModel,
+  registerTextEditorPathHandle,
+  releaseTextEditorPathHandle,
   syncClaimedTextEditorModelContent,
   takeCachedTextEditorModel,
   type TextEditorModelCacheEntry,
+  type TextEditorPathHandle,
 } from './text-editor-model-cache'
 import { describeTextEditorLoadFailure } from './text-editor-load-failure'
 import { consumePendingEditorReveal } from './text-editor-reveal'
@@ -135,6 +139,9 @@ const TextEditorCardInner = ({ workspacePath, filePath, language }: TextEditorCa
   const encodingRef = useRef<string | null>(null)
   const conflictRef = useRef(false)
   const suppressEditorChangeRef = useRef(false)
+  // Kept (not cleared) after release: the park + unmount-save cleanups that run
+  // later in the same unmount still need to see whether the file was renamed.
+  const pathHandleRef = useRef<TextEditorPathHandle | null>(null)
 
   useEffect(() => {
     mountedRef.current = true
@@ -142,6 +149,14 @@ const TextEditorCardInner = ({ workspacePath, filePath, language }: TextEditorCa
       mountedRef.current = false
     }
   }, [])
+
+  useEffect(() => {
+    const handle = registerTextEditorPathHandle(workspacePath, normalizedFilePath)
+    pathHandleRef.current = handle
+    return () => {
+      releaseTextEditorPathHandle(handle)
+    }
+  }, [normalizedFilePath, workspacePath])
 
   useEffect(() => () => {
     if (copyResetTimerRef.current) {
@@ -350,6 +365,11 @@ const TextEditorCardInner = ({ workspacePath, filePath, language }: TextEditorCa
       return
     }
 
+    // After a rename/move (incl. the unmount-save of the tab that is switching
+    // to the new path) write to where the file lives now; saving to the mount
+    // path would silently recreate the old file.
+    const targetFilePath = getTextEditorLiveFilePath(pathHandleRef.current, normalizedFilePath)
+
     if (indicateSaving && mountedRef.current) {
       setSaving(true)
     }
@@ -358,7 +378,7 @@ const TextEditorCardInner = ({ workspacePath, filePath, language }: TextEditorCa
       let expectedRevision = revisionRef.current
 
       if (!force && !expectedRevision) {
-        const diskResult = await fetchFileContent(workspacePath, normalizedFilePath).catch(() => null)
+        const diskResult = await fetchFileContent(workspacePath, targetFilePath).catch(() => null)
         const intent = resolveTextEditorSaveIntent({
           savedContent: savedContentRef.current,
           content: textContent,
@@ -396,7 +416,7 @@ const TextEditorCardInner = ({ workspacePath, filePath, language }: TextEditorCa
 
       const result = await saveFileContent(
         workspacePath,
-        normalizedFilePath,
+        targetFilePath,
         textContent,
         force ? undefined : expectedRevision ?? undefined,
         encodingRef.current ?? undefined,
@@ -404,7 +424,7 @@ const TextEditorCardInner = ({ workspacePath, filePath, language }: TextEditorCa
 
       if (result.conflict) {
         // Re-read the disk so the conflict banner can offer both versions.
-        const diskResult = await fetchFileContent(workspacePath, normalizedFilePath).catch(() => null)
+        const diskResult = await fetchFileContent(workspacePath, targetFilePath).catch(() => null)
         const resolution = diskResult && !diskResult.binary && !diskResult.tooLarge
           ? resolveTextEditorExternalRefresh(savedContentRef.current, contentRef.current, diskResult.content)
           : null
@@ -665,16 +685,23 @@ const TextEditorCardInner = ({ workspacePath, filePath, language }: TextEditorCa
         module.ensureTextEditorMonacoEnvironment()
         module.monaco.editor.setTheme(resolveTextEditorMonacoTheme(getCurrentUiTheme()))
 
-        const model = cachedEntry && !cachedEntry.model.isDisposed()
+        // A renamed file's parked model still carries the old URI: rebuild it
+        // under the new path from the restored buffer (contentRef) and drop it.
+        const reusesCachedModel = Boolean(cachedEntry && !cachedEntry.pathChanged && !cachedEntry.model.isDisposed())
+        const model = reusesCachedModel && cachedEntry
           ? cachedEntry.model
           : await module.createTextEditorModel(contentRef.current, normalizedFilePath, fileLanguage)
         if (cancelled || !mountedRef.current || !editorContainerRef.current) {
-          if (cachedEntry && model === cachedEntry.model) {
-            cacheTextEditorModel(modelCacheKey, cachedEntry)
-          } else {
+          if (model !== cachedEntry?.model) {
             model.dispose()
           }
+          if (cachedEntry) {
+            cacheTextEditorModel(modelCacheKey, cachedEntry)
+          }
           return
+        }
+        if (cachedEntry && model !== cachedEntry.model && !cachedEntry.model.isDisposed()) {
+          cachedEntry.model.dispose()
         }
         modelRef.current = model
 
@@ -712,7 +739,7 @@ const TextEditorCardInner = ({ workspacePath, filePath, language }: TextEditorCa
 
         editorRef.current = editor
 
-        if (cachedEntry && model === cachedEntry.model && cachedEntry.viewState) {
+        if (cachedEntry?.viewState && (model === cachedEntry.model || cachedEntry.pathChanged)) {
           editor.restoreViewState(cachedEntry.viewState)
         }
 
@@ -775,14 +802,19 @@ const TextEditorCardInner = ({ workspacePath, filePath, language }: TextEditorCa
 
       if (editor && model && !model.isDisposed()) {
         // Park the model (undo stack, buffer) and view state (cursor, scroll)
-        // so reopening this file restores the full editing session.
-        cacheTextEditorModel(modelCacheKey, {
+        // so reopening this file restores the full editing session. If the
+        // file was renamed, park under the new path so the follow-up tab
+        // (remounted at that path) inherits the dirty buffer.
+        const liveFilePath = getTextEditorLiveFilePath(pathHandleRef.current, normalizedFilePath)
+        const pathChanged = liveFilePath !== normalizedFilePath
+        cacheTextEditorModel(pathChanged ? getTextEditorModelCacheKey(workspacePath, liveFilePath) : modelCacheKey, {
           model,
           viewState: editor.saveViewState(),
           revision: revisionRef.current,
           savedContent: savedContentRef.current,
           languageId: model.getLanguageId(),
           encoding: encodingRef.current,
+          ...(pathChanged ? { pathChanged: true } : {}),
         })
         editor.dispose()
       } else {

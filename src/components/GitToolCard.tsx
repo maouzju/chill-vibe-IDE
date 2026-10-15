@@ -34,7 +34,11 @@ import { GitSyncPanel } from './GitSyncPanel'
 import { HoverTooltip } from './HoverTooltip'
 import { useFilePathContextMenu } from './use-file-path-context-menu'
 import { GitBranchIcon } from './Icons'
-import { gitOperationHub, type GitOperationContext } from './git-operation-hub'
+import {
+  gitOperationHub,
+  type GitAgentSessionRequest,
+  type GitOperationContext,
+} from './git-operation-hub'
 import {
   getGitDashboardFileListWindow,
   getGitDashboardVisibleChanges,
@@ -79,6 +83,7 @@ type GitToolCardProps = {
   onAgentPanelToggle?: (open: boolean) => void
   onGitInfoChange?: (info: GitInfoSummary | null) => void
   onOpenFile?: (relativePath: string, options?: { line?: number }) => void
+  onOpenAgentSession?: (request: GitAgentSessionRequest) => boolean
 }
 
 const legacyGitToolCompactHeight = 190
@@ -108,6 +113,7 @@ export const GitToolCard = ({
   onAgentPanelToggle,
   onGitInfoChange,
   onOpenFile,
+  onOpenAgentSession,
 }: GitToolCardProps) => {
   const text = useMemo(() => getGitLocaleText(language), [language])
 
@@ -146,6 +152,7 @@ export const GitToolCard = ({
       modelPromptRules,
       codexChatSettings,
       crossProviderSkillReuseEnabled,
+      openAgentSession: onOpenAgentSession,
     }),
     [
       crossProviderSkillReuseEnabled,
@@ -153,6 +160,7 @@ export const GitToolCard = ({
       gitAgentModel,
       language,
       modelPromptRules,
+      onOpenAgentSession,
       systemPrompt,
       workspacePath,
     ],

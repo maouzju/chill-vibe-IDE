@@ -200,6 +200,7 @@ describe('default-state helpers', () => {
       requestModels: {
         codex: 'gpt-4.5',
         claude: '  claude-sonnet-4-6  ',
+        gemini: 'gemini-3.8-flash',
       },
     })
 
@@ -233,6 +234,7 @@ describe('default-state helpers', () => {
       autoUrgeMessage: '你必须百分百验证通过你要解决的问题，才能结束回答，如果确定解决了，回复YES，否则不准停下来',
       autoUrgeSuccessKeyword: 'YES',
       weatherCity: '',
+      acknowledgedModelUpgrades: [],
       systemPrompt: defaultSystemPrompt,
       modelPromptRules: [],
       codexPersonality: 'default',
@@ -242,10 +244,12 @@ describe('default-state helpers', () => {
       requestModels: {
         codex: DEFAULT_CODEX_MODEL,
         claude: 'claude-sonnet-4-6',
+        gemini: 'gemini-3.8-flash',
       },
       modelReasoningEfforts: {
         codex: {},
         claude: {},
+        gemini: {},
       },
       providerProfiles: {
         codex: {
@@ -253,6 +257,10 @@ describe('default-state helpers', () => {
           profiles: [],
         },
         claude: {
+          activeProfileId: '',
+          profiles: [],
+        },
+        gemini: {
           activeProfileId: '',
           profiles: [],
         },
@@ -266,6 +274,7 @@ describe('default-state helpers', () => {
       requestModels: {
         codex: 'gpt-5.4',
         claude: DEFAULT_CLAUDE_MODEL,
+        gemini: 'gemini-3.8-flash',
       },
       gitAgentModel: 'gpt-5.4 high',
       lastModel: { provider: 'codex', model: 'gpt-5.4' },
@@ -286,6 +295,7 @@ describe('default-state helpers', () => {
     assert.deepEqual(createDefaultSettings().modelReasoningEfforts, {
       codex: {},
       claude: {},
+      gemini: {},
     })
     assert.equal(createCard('Chat', 440, 'codex', '').model, '')
     assert.equal(createCard('Chat', 440, 'claude', '').model, '')
@@ -300,6 +310,7 @@ describe('default-state helpers', () => {
         [DEFAULT_CODEX_MODEL]: 'high',
       },
       claude: {},
+      gemini: {},
     })
 
     const next = normalizeAppSettings({

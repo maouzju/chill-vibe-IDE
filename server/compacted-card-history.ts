@@ -93,7 +93,7 @@ const atomicWriteHistoryFile = async (
   }
 }
 
-const getCompactedPrefix = (card: unknown): ChatMessage[] => {
+export const getCompactedPrefix = (card: unknown, keepCount: number): ChatMessage[] => {
   if (!card || typeof card !== 'object' || Array.isArray(card)) {
     return []
   }
@@ -106,28 +106,36 @@ const getCompactedPrefix = (card: unknown): ChatMessage[] => {
     return []
   }
 
-  const messages = candidate.messages.filter(isChatMessage)
   // 症状：旧会话往上翻到某处就断了，更早的消息找不到。
   // 根因：活动卡 500 条上限在 sanitize 里直接 slice，此前只有 Codex 的 compact 前缀会进 sidecar，
   // Claude 或没 compact 过的会话被裁掉的开头永久丢失。这里把被裁的溢出前缀也归档。
-  const overflowEnd = Math.max(messages.length - maxPersistedCardMessages, 0)
+  // 溢出按原始数组算：预裁剪也是按原始数组切，无效消息若按过滤后计数会让归档少算、有效消息被裁掉。
+  const rawMessages = candidate.messages
+  const overflowEnd = Math.max(rawMessages.length - keepCount, 0)
+  let archiveEnd = overflowEnd
   if (candidate.provider === 'codex') {
-    for (let index = messages.length - 1; index > 0; index -= 1) {
-      const message = messages[index]
+    for (let index = rawMessages.length - 1; index > 0; index -= 1) {
+      const message = rawMessages[index]
       if (
-        message?.role === 'user' &&
+        isChatMessage(message) &&
+        message.role === 'user' &&
         message.meta?.compactBoundary === 'true' &&
         message.meta?.compactPending !== 'true'
       ) {
-        return messages.slice(0, Math.max(index, overflowEnd))
+        archiveEnd = Math.max(index, overflowEnd)
+        break
       }
     }
   }
 
-  return messages.slice(0, overflowEnd)
+  return rawMessages.slice(0, archiveEnd).filter(isChatMessage)
 }
 
-export const persistCompactedCardHistories = async (rawState: unknown, dataDir: string) => {
+export const persistCompactedCardHistories = async (
+  rawState: unknown,
+  dataDir: string,
+  keepCount: number = maxPersistedCardMessages,
+) => {
   if (!rawState || typeof rawState !== 'object' || Array.isArray(rawState)) {
     return
   }
@@ -148,7 +156,7 @@ export const persistCompactedCardHistories = async (rawState: unknown, dataDir: 
     }
 
     for (const [cardId, card] of Object.entries(cards)) {
-      const compactedPrefix = getCompactedPrefix(card)
+      const compactedPrefix = getCompactedPrefix(card, keepCount)
       if (!cardId || compactedPrefix.length === 0) {
         continue
       }

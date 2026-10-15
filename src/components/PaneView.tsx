@@ -63,6 +63,7 @@ import {
   CloseIcon,
   PlusIcon,
 } from './Icons'
+import type { GitAgentSessionRequest } from './git-operation-hub'
 import { getPaneTabIcon } from './pane-tab-icon'
 import type { SubagentTabSummary } from './subagent-cross-column-navigation'
 
@@ -177,6 +178,7 @@ type PaneViewProps = {
   onManualRecoverStream?: (cardId: string) => Promise<unknown>
   onForkConversation?: (cardId: string, messageId: string) => void
   onOpenFile?: (paneId: string, relativePath: string, options?: { line?: number }) => void
+  onOpenAgentSession?: (paneId: string, request: GitAgentSessionRequest) => boolean
   cardRecoveryStatuses?: ReadonlyMap<string, CardRecoveryStatus>
   queuedSendSummaries?: ReadonlyMap<string, QueuedSendSummary>
 }
@@ -355,6 +357,7 @@ const PaneViewView = ({
   onManualRecoverStream,
   onForkConversation,
   onOpenFile,
+  onOpenAgentSession,
   cardRecoveryStatuses,
   queuedSendSummaries,
 }: PaneViewProps) => {
@@ -1672,6 +1675,9 @@ const PaneViewView = ({
                   onToggleCollapsed={() => onToggleCardCollapsed(card.id)}
                   onMarkRead={() => onMarkCardRead(card.id)}
                   onOpenFile={(relativePath, options) => onOpenFile?.(pane.id, relativePath, options)}
+                  onOpenAgentSession={
+                    onOpenAgentSession ? (request) => onOpenAgentSession(pane.id, request) : undefined
+                  }
                   isRestored={false}
                   chromeMode="pane"
                   isActive={isActive}

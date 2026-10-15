@@ -1,6 +1,7 @@
 import { spawn } from 'node:child_process'
 import { createHash } from 'node:crypto'
-import { mkdir, readdir, readFile, realpath, rename, rm, stat, writeFile } from 'node:fs/promises'
+import type { BigIntStats } from 'node:fs'
+import { lstat, mkdir, readdir, readFile, realpath, rename, rm, stat, writeFile } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 
@@ -89,7 +90,35 @@ const compareTreeEntries = (
 
 const normalizeSearchValue = (value: string) => value.replace(/\\/g, '/').trim().toLowerCase()
 
-const normalizeEntryName = (value: string) => {
+const windowsReservedNameCharacters = /[<>:"|?*]/
+// Per learn.microsoft.com "Naming Files": COM0/LPT0 are not reserved, the ISO-8859-1 superscripts are.
+const windowsReservedDeviceNames = new Set([
+  'CON',
+  'PRN',
+  'AUX',
+  'NUL',
+  ...['1', '2', '3', '4', '5', '6', '7', '8', '9', '¹', '²', '³'].flatMap((digit) => [
+    `COM${digit}`,
+    `LPT${digit}`,
+  ]),
+])
+
+const hasControlCharacter = (value: string) => {
+  for (let index = 0; index < value.length; index += 1) {
+    if (value.charCodeAt(index) < 0x20) {
+      return true
+    }
+  }
+  return false
+}
+
+// 症状 (2026-10-14): 文件树新建/重命名在 Windows 上输入 `CON`、`notes.` 会真的建出资源管理器打不开也删不掉的
+//   条目；`x.md:evil` 静默写进 x.md 的 NTFS 备用数据流 (树里什么都不出现)；`a:b.md` 报误导性的
+//   "Path traversal is not allowed."。
+// 根因: 2026-10-14 实测 Node 在 Windows 上以 `\\?\` 命名空间路径调用文件 API，跳过了 Win32 的尾点/尾空格裁剪
+//   与保留设备名解析，文件系统不会替我们拒绝这些名字，只能在这里拦。
+// 为什么只在 win32 拦: 这些名字在 Linux/macOS 上合法；platform 可注入只是为了让 Linux CI 也覆盖这张规则表。
+export const normalizeEntryName = (value: string, platform: NodeJS.Platform = process.platform) => {
   const trimmed = value.trim()
 
   if (!trimmed) {
@@ -98,6 +127,28 @@ const normalizeEntryName = (value: string) => {
 
   if (trimmed === '.' || trimmed === '..' || trimmed.includes('/') || trimmed.includes('\\')) {
     throw new Error('Entry names must not contain path separators.')
+  }
+
+  if (platform !== 'win32') {
+    return trimmed
+  }
+
+  if (hasControlCharacter(trimmed)) {
+    throw new Error('Entry names must not contain control characters.')
+  }
+
+  if (windowsReservedNameCharacters.test(trimmed)) {
+    throw new Error('Entry names must not contain any of these characters on Windows: < > : " | ? *')
+  }
+
+  if (trimmed.endsWith('.') || trimmed.endsWith(' ')) {
+    throw new Error('Entry names must not end with a dot or a space on Windows.')
+  }
+
+  // NUL.txt and NUL.tar.gz are both the NUL device, so only the part before the first dot matters.
+  const deviceStem = trimmed.split('.')[0].trimEnd()
+  if (windowsReservedDeviceNames.has(deviceStem.toUpperCase())) {
+    throw new Error(`"${deviceStem}" is a reserved device name on Windows.`)
   }
 
   return trimmed
@@ -363,11 +414,7 @@ export const createWorkspaceDirectory = async (request: FileCreateRequest): Prom
 export const renameWorkspaceEntry = async (request: FileRenameRequest): Promise<void> => {
   const nextName = normalizeEntryName(request.nextName)
   const sourcePath = await ensureWithinWorkspaceCanonical(request.workspacePath, request.relativePath)
-  const sourceStats = await stat(sourcePath)
-
-  if (!sourceStats) {
-    throw new Error('Path not found.')
-  }
+  await statExistingEntry(sourcePath)
 
   const relativeParentPath = path.dirname(request.relativePath)
   const targetRelativePath =
@@ -375,24 +422,79 @@ export const renameWorkspaceEntry = async (request: FileRenameRequest): Promise<
       ? nextName
       : joinRelativePath(relativeParentPath.replace(/\\/g, '/'), nextName)
   const targetPath = await ensureWithinWorkspaceCanonical(request.workspacePath, targetRelativePath)
-  const targetStats = await stat(targetPath).catch(() => null)
+  // lstat, not stat: a dangling link is still an existing entry. stat reported it as missing, so
+  // rename then failed with a raw EPERM on Windows and silently replaced the link on POSIX.
+  const targetStats = await lstatIfExists(targetPath)
 
-  if (targetStats) {
+  if (targetStats && !(await isCaseOnlyRenameOfSameEntry(sourcePath, targetPath, targetStats))) {
     throw new Error('Target already exists.')
   }
 
   await rename(sourcePath, targetPath)
 }
 
+const lstatIfExists = async (targetPath: string): Promise<BigIntStats | null> => {
+  try {
+    return await lstat(targetPath, { bigint: true })
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+      return null
+    }
+    throw error
+  }
+}
+
+// 症状 (2026-10-14): 文件树里的条目已被外部删掉/挪走后再改名、移动或删除，弹出带本机绝对路径的
+//   "ENOENT: no such file or directory, stat 'D:\…'"。
+// 根因: 2026-10-14 读码确认 `const s = await stat(p); if (!s) throw 'Path not found.'` 是死代码——stat 对缺失
+//   路径是 reject 而不是返回空值，守卫从没生效过。
+// 为什么只转 ENOENT: EACCES/EPERM 等是真实的权限/占用问题，必须原样上抛给前端去区分提示。
+const statExistingEntry = async (entryPath: string) => {
+  try {
+    return await stat(entryPath)
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+      throw new Error('Path not found.')
+    }
+    throw error
+  }
+}
+
+const foldEntryName = (name: string) => name.normalize('NFC').toLowerCase()
+
+// 症状 (2026-10-14): Windows/macOS 上把 readme.md 重命名为 README.md 被拒，弹 "Target already exists."。
+// 根因: 大小写不敏感卷上 lstat('README.md') 命中的就是源条目自己。2026-10-14 实测 NTFS 上 fs.rename 能直接
+//   完成纯大小写改名 (文件与目录，readdir 立即显示新大小写)，所以不需要临时名中转。
+// 为什么不能只比「同 dev+ino」或「小写后相同」: 硬链接 / 大小写敏感卷上的 readme.md -> README.md 软链同样满足，
+//   放行会让 rename 覆盖掉另一个真实目录项，所以还要求父目录里不存在两个独立条目。直接去掉存在性检查更不行，
+//   Windows 的 rename 会静默覆盖目标。
+const isCaseOnlyRenameOfSameEntry = async (
+  sourcePath: string,
+  targetPath: string,
+  targetStats: BigIntStats,
+) => {
+  const sourceName = path.basename(sourcePath)
+  const targetName = path.basename(targetPath)
+
+  if (sourceName === targetName || foldEntryName(sourceName) !== foldEntryName(targetName)) {
+    return false
+  }
+
+  // bigint: NTFS file IDs exceed 2^53, so number inodes can collide after rounding.
+  const sourceStats = await lstat(sourcePath, { bigint: true })
+  if (sourceStats.dev !== targetStats.dev || sourceStats.ino !== targetStats.ino) {
+    return false
+  }
+
+  const siblingNames = await readdir(path.dirname(sourcePath))
+  return !(siblingNames.includes(sourceName) && siblingNames.includes(targetName))
+}
+
 export const moveWorkspaceEntry = async (request: FileMoveRequest): Promise<void> => {
   const sourceRelativePath = normalizeRelativePath(request.relativePath)
   const destinationParentRelativePath = normalizeRelativePath(request.destinationParentRelativePath)
   const sourcePath = await ensureWithinWorkspaceCanonical(request.workspacePath, sourceRelativePath)
-  const sourceStats = await stat(sourcePath)
-
-  if (!sourceStats) {
-    throw new Error('Path not found.')
-  }
+  const sourceStats = await statExistingEntry(sourcePath)
 
   const sourceParentRelativePath = path.posix.dirname(sourceRelativePath) === '.'
     ? ''
@@ -433,7 +535,7 @@ export const moveWorkspaceEntry = async (request: FileMoveRequest): Promise<void
 
 export const deleteWorkspaceEntry = async (request: FileDeleteRequest): Promise<void> => {
   const targetPath = await ensureWithinWorkspaceCanonical(request.workspacePath, request.relativePath)
-  await stat(targetPath)
+  await statExistingEntry(targetPath)
   await rm(targetPath, { recursive: true, force: false })
 }
 

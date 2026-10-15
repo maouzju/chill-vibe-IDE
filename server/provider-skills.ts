@@ -22,11 +22,13 @@ const skillReadConcurrency = 8
 const providerSkillDirectoryNames: Record<Provider, string> = {
   codex: '.codex',
   claude: '.claude',
+  gemini: '.gemini',
 }
 
 const providerConfigHomeEnvNames: Record<Provider, string[]> = {
   codex: ['CODEX_HOME'],
   claude: ['CLAUDE_HOME', 'CLAUDE_CONFIG_DIR'],
+  gemini: ['GEMINI_CLI_HOME'],
 }
 
 const oppositeProvider = (provider: Provider): Provider =>

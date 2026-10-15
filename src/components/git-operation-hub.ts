@@ -9,7 +9,7 @@ import {
   setGitStage as apiSetGitStage,
   stopChat as apiStopChat,
 } from '../api'
-import type { AppLanguage, GitStatus, ModelPromptRule } from '../../shared/schema'
+import type { AppLanguage, GitStatus, ModelPromptRule, Provider } from '../../shared/schema'
 import {
   buildCodexChatRequestOverrides,
   defaultCodexChatSettings,
@@ -50,7 +50,6 @@ export type GitAgentPhase =
 export type GitSyncStep =
   | { kind: 'idle' }
   | { kind: 'pull' }
-  | { kind: 'conflict'; streamId: string }
   | { kind: 'push' }
   | { kind: 'error'; message: string }
 
@@ -73,6 +72,15 @@ export type GitOperationSnapshot = {
   notice: GitOperationNotice | null
 }
 
+/** 交给宿主新开一个可见会话 tab 并立即发出第一条消息（SPEC git-sync-conflict-session）。 */
+export type GitAgentSessionRequest = {
+  title: string
+  prompt: string
+  provider: Provider
+  model?: string
+  reasoningEffort?: string
+}
+
 export type GitOperationContext = {
   workspacePath: string
   language: AppLanguage
@@ -81,6 +89,7 @@ export type GitOperationContext = {
   modelPromptRules: ModelPromptRule[]
   codexChatSettings?: CodexChatSettings
   crossProviderSkillReuseEnabled: boolean
+  openAgentSession?: (request: GitAgentSessionRequest) => boolean
 }
 
 type ChatStreamHandlers = {
@@ -135,8 +144,8 @@ type WorkspaceSession = {
   analysisTimeout: ReturnType<typeof setTimeout> | null
   analysisDone: boolean
   analysisRunId: number
-  conflictStream: { close: () => void } | null
   syncRunId: number
+  conflictSessionOpen: boolean
   noticeTimeout: ReturnType<typeof setTimeout> | null
   noticeToken: number
 }
@@ -192,6 +201,42 @@ export const buildCommitNewSummary = (
   return `${mixedKinds ? 'Update' : primaryVerb.en} ${relevantChanges.length} files`
 }
 
+const splitGitAgentModel = (gitAgentModel: string) => {
+  const parts = gitAgentModel.trim().split(/\s+/)
+  return {
+    model: parts[0] || '',
+    reasoningEffort: parts[1] || getDefaultReasoningEffort('codex'),
+  }
+}
+
+// 新会话是一张白纸：提示词必须自带全部上下文（冲突来自哪一步、要做到哪一步才算完）。
+export const buildConflictSessionPrompt = (language: AppLanguage, conflictPaths: string[]) => {
+  const fileList = conflictPaths.map((path) => `- ${path}`).join('\n')
+  return language === 'zh-CN'
+    ? [
+        '我在 Chill Vibe 的 Git 卡片点了「同步」，`git pull --no-rebase` 后出现了合并冲突，请接手把这次同步做完：',
+        '1. 逐个解决下面文件的冲突，保留双方有意义的改动；拿不准取舍时先停下来问我。',
+        '2. 确认文件里不再有 `<<<<<<<` / `=======` / `>>>>>>>` 冲突标记，再 `git add` 暂存。',
+        '3. 如果 Git 仍处于合并中，完成合并提交。',
+        '4. 执行 `git push` 推送到远端，完成同步。',
+        '最后简要说明每个文件是怎么取舍的。',
+        '',
+        '冲突文件：',
+        fileList,
+      ].join('\n')
+    : [
+        'I clicked "Sync" on the Chill Vibe Git card and `git pull --no-rebase` produced merge conflicts. Please take over and finish this sync:',
+        '1. Resolve the conflicts in the files below one by one, keeping the meaningful changes from both sides; stop and ask me when a choice is unclear.',
+        '2. Make sure no `<<<<<<<` / `=======` / `>>>>>>>` markers remain, then `git add` the resolved files.',
+        '3. If Git is still mid-merge, complete the merge commit.',
+        '4. Run `git push` to publish the result and finish the sync.',
+        'Finally, briefly explain how each file was resolved.',
+        '',
+        'Conflict files:',
+        fileList,
+      ].join('\n')
+}
+
 export const createGitOperationHub = (deps: GitOperationHubDeps) => {
   const sessions = new Map<string, WorkspaceSession>()
 
@@ -205,8 +250,8 @@ export const createGitOperationHub = (deps: GitOperationHubDeps) => {
         analysisTimeout: null,
         analysisDone: false,
         analysisRunId: 0,
-        conflictStream: null,
         syncRunId: 0,
+        conflictSessionOpen: false,
         noticeTimeout: null,
         noticeToken: 0,
       }
@@ -261,9 +306,7 @@ export const createGitOperationHub = (deps: GitOperationHubDeps) => {
     prompt: string,
     extras: Record<string, unknown> = {},
   ) => {
-    const parts = context.gitAgentModel.trim().split(/\s+/)
-    const model = parts[0] || ''
-    const reasoningEffort = parts[1] || getDefaultReasoningEffort('codex')
+    const { model, reasoningEffort } = splitGitAgentModel(context.gitAgentModel)
     return {
       provider: 'codex',
       ...buildCodexChatRequestOverrides(
@@ -523,57 +566,6 @@ export const createGitOperationHub = (deps: GitOperationHubDeps) => {
     }
   }
 
-  const resolveConflicts = (
-    context: GitOperationContext,
-    conflictStatus: GitStatus,
-  ): Promise<GitStatus> => {
-    const { workspacePath, language } = context
-    const session = getSession(workspacePath)
-    const text = getGitLocaleText(language)
-
-    return new Promise((resolve, reject) => {
-      const conflictFiles = conflictStatus.changes
-        .filter((change) => change.conflicted)
-        .map((change) => change.path)
-        .join(', ')
-
-      const prompt =
-        language === 'zh-CN'
-          ? `当前 Git 仓库在 pull 后出现了合并冲突。请自动解决以下文件的冲突，保留双方有意义的改动，然后执行 git add 暂存已解决的文件；如果 Git 仍处于合并中，请完成合并提交，让仓库恢复到可以 push 的状态：\n冲突文件: ${conflictFiles}`
-          : `The Git repository has merge conflicts after pulling. Please automatically resolve the conflicts in these files, keep the meaningful changes from both sides, run git add to stage the resolved files, and if Git is still mid-merge, complete the merge commit so the repository is ready to push:\nConflict files: ${conflictFiles}`
-
-      void deps
-        .requestChat(buildAgentRequest(context, prompt))
-        .then((result) => {
-          patch(workspacePath, { syncStep: { kind: 'conflict', streamId: result.streamId } })
-
-          let settled = false
-          const settle = () => {
-            settled = true
-            session.conflictStream?.close()
-            session.conflictStream = null
-          }
-
-          // 2026-09-18：固定 60 秒会强停仍在正常处理的冲突解决任务。
-          // 按 git-card-fast-preview 约定只等待真实终态，不用更长时限替代旧上限。
-          session.conflictStream = deps.openChatStream(result.streamId, {
-            onDone: () => {
-              if (settled) return
-              settle()
-              void deps.flashWindowOnce().catch(() => undefined)
-              void deps.fetchGitStatus(workspacePath).then(resolve, reject)
-            },
-            onError: (payload) => {
-              if (settled) return
-              settle()
-              reject(new Error(payload.message || text.syncError))
-            },
-          })
-        })
-        .catch(reject)
-    })
-  }
-
   const runSyncPipeline = async (
     context: GitOperationContext,
     initialStatus: GitStatus,
@@ -618,32 +610,38 @@ export const createGitOperationHub = (deps: GitOperationHubDeps) => {
     }
 
     if (latestStatus.hasConflicts) {
-      try {
-        latestStatus = await resolveConflicts(context, latestStatus)
-        if (!stillCurrent()) return
-        patch(workspacePath, { lastStatus: latestStatus })
-      } catch (error) {
-        if (!stillCurrent()) return
-        patch(workspacePath, {
-          syncStep: { kind: 'error', message: errorMessage(error, text.syncError) },
-        })
+      if (!stillCurrent()) return
+      // 症状：冲突时面板只剩一行「正在调用 Codex 解决...」，Agent 在后台静默取舍两边改动后直接 push。
+      // 根因：2026-10-13 用户明确要求冲突必须显式打开一个 Chill Vibe 会话继续干，过程可见、可纠正。
+      // 被否决：保留后台流并加个"查看过程"入口 —— 仍是用户没看过就 push；push 改由会话里的 Agent 完成。
+      if (session.conflictSessionOpen) {
+        patch(workspacePath, { syncStep: { kind: 'error', message: text.syncConflictPending } })
         return
       }
 
-      if (latestStatus.hasConflicts) {
-        patch(workspacePath, {
-          syncStep: {
-            kind: 'error',
-            message:
-              language === 'zh-CN'
-                ? '冲突仍未解决，请先手动完成合并后再同步。'
-                : 'Merge conflicts are still present. Finish the merge manually before syncing again.',
-          },
-        })
+      const conflictPaths = latestStatus.changes
+        .filter((change) => change.conflicted)
+        .map((change) => change.path)
+      const { model, reasoningEffort } = splitGitAgentModel(context.gitAgentModel)
+      const opened =
+        context.openAgentSession?.({
+          title: text.syncConflictSessionTitle,
+          prompt: buildConflictSessionPrompt(language, conflictPaths),
+          provider: 'codex',
+          ...(model ? { model } : {}),
+          reasoningEffort,
+        }) ?? false
+      if (!opened) {
+        patch(workspacePath, { syncStep: { kind: 'error', message: text.syncConflictNoSession } })
         return
       }
+      session.conflictSessionOpen = true
+      patch(workspacePath, { syncPanelOpen: false, syncStep: { kind: 'idle' } })
+      showTransientNotice(workspacePath, { tone: 'info', message: text.syncConflictHandedOff })
+      return
     }
 
+    session.conflictSessionOpen = false
     patch(workspacePath, { syncStep: { kind: 'push' } })
     try {
       const pushResult = await deps.pushGitChanges({ workspacePath })
@@ -728,8 +726,6 @@ export const createGitOperationHub = (deps: GitOperationHubDeps) => {
   const closeSyncPanel = (workspacePath: string) => {
     const session = getSession(workspacePath)
     session.syncRunId += 1
-    session.conflictStream?.close()
-    session.conflictStream = null
     patch(workspacePath, { syncPanelOpen: false, syncStep: { kind: 'idle' } })
   }
 

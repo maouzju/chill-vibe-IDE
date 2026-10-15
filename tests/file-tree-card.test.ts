@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import { readFile } from 'node:fs/promises'
 import test from 'node:test'
 
+import { describeFileActionError } from '../src/components/file-action-errors.ts'
 import {
   applyRefreshedFileTreeDirectories,
   collectExpandedFileTreeDirectoryPaths,
@@ -127,6 +128,52 @@ test('applyRefreshedFileTreeDirectories updates nested expanded directories with
       isDirectory: false,
     },
   ])
+})
+
+// 2026-10-14 用户报「重命名文件有 bug」：桌面版改名失败时对话框里直接是
+// "Error invoking remote method 'desktop:rename-entry': Error: ..." 的英文 IPC 包装和 errno 路径。
+test('file action errors drop the Electron IPC wrapper and speak the user language', () => {
+  const ipc = (channel: string, message: string) =>
+    new Error(`Error invoking remote method '${channel}': Error: ${message}`)
+
+  assert.equal(
+    describeFileActionError(ipc('desktop:rename-entry', 'Target already exists.'), 'zh-CN'),
+    '已存在同名文件或文件夹。',
+  )
+  assert.equal(
+    describeFileActionError(ipc('desktop:rename-entry', 'Target already exists.'), 'en'),
+    'A file or folder with that name already exists.',
+  )
+  assert.equal(
+    describeFileActionError(
+      ipc('desktop:rename-entry', "ENOENT: no such file or directory, stat 'D:\\repo\\docs\\gone.md'"),
+      'zh-CN',
+    ),
+    '原文件或文件夹已不存在（可能已被移动或删除），请刷新文件树后重试。',
+  )
+  assert.equal(
+    describeFileActionError(ipc('desktop:move-entry', 'Path not found.'), 'en'),
+    'The file or folder no longer exists (it may have been moved or deleted). Refresh the tree and try again.',
+  )
+  assert.equal(
+    describeFileActionError(
+      ipc('desktop:rename-entry', "EPERM: operation not permitted, rename 'D:\\repo\\a' -> 'D:\\repo\\a2'"),
+      'zh-CN',
+    ),
+    '文件或文件夹正被占用或没有权限（例如其中的文件正被编辑器、终端或其他程序打开），请关闭后重试。',
+  )
+  assert.equal(
+    describeFileActionError(ipc('desktop:rename-entry', '"CON" is a reserved device name on Windows.'), 'zh-CN'),
+    '“CON”是 Windows 保留的设备名，不能用作名称。',
+  )
+
+  // 未识别的消息只剥掉包装，原样给出（HTTP 路径已经是干净的服务端文案）。
+  assert.equal(
+    describeFileActionError(ipc('desktop:delete-entry', 'Something unexpected.'), 'en'),
+    'Something unexpected.',
+  )
+  assert.equal(describeFileActionError(new Error('A file with that name already exists.'), 'zh-CN'), 'A file with that name already exists.')
+  assert.equal(describeFileActionError('boom', 'zh-CN'), '文件操作失败。')
 })
 
 test('file tree name actions avoid Electron unsupported native prompt dialogs', async () => {

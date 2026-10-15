@@ -39,10 +39,12 @@ const createState = (): AppState => ({
     requestModels: {
       codex: 'gpt-5.5',
       claude: 'claude-opus-4-7',
+      gemini: 'gemini-3.8-flash',
     },
     modelReasoningEfforts: {
       codex: {},
       claude: {},
+      gemini: {},
     },
     providerProfiles: {
       codex: {
@@ -50,6 +52,10 @@ const createState = (): AppState => ({
         profiles: [],
       },
       claude: {
+        activeProfileId: '',
+        profiles: [],
+      },
+      gemini: {
         activeProfileId: '',
         profiles: [],
       },

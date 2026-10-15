@@ -2530,6 +2530,17 @@ const recoverFromBackups = async (dataDir = getAppDataDir()): Promise<AppState |
 // The full archived messages stay in sidecar files and are loaded on demand.
 const preTrimMaxCardMessages = 300
 
+// 症状：单轮超 300 条的会话重启后开头消失、往上翻到某处就断，且没有"显示更早消息"。
+// 根因：2026-10-12 实测，预裁剪只留最后 300 条，而归档只处理超过 500 条的溢出，
+//   301-500 之间被砍掉的前缀既没归档又让 messageCount 偏小，界面判成"没缺"。
+// 为什么不能直接取消上限：Zod 深拷贝会放大内存 ~200x（见上）；所以保留窗口、但砍之前必先归档。
+const archiveThenPreTrim = async (raw: unknown, dataDir: string) => {
+  await persistCompactedCardHistories(raw, dataDir, preTrimMaxCardMessages).catch((error) => {
+    console.warn('[state-store] Failed to archive pre-trimmed card history:', error)
+  })
+  preTrimOversizedMessages(raw)
+}
+
 const preTrimOversizedMessages = (raw: unknown) => {
   if (!raw || typeof raw !== 'object') return
   const state = raw as Record<string, unknown>
@@ -2543,6 +2554,8 @@ const preTrimOversizedMessages = (raw: unknown) => {
         if (!card || typeof card !== 'object') continue
         const c = card as Record<string, unknown>
         if (Array.isArray(c.messages) && c.messages.length > preTrimMaxCardMessages) {
+          const previousCount = typeof c.messageCount === 'number' ? c.messageCount : 0
+          c.messageCount = Math.max(previousCount, c.messages.length)
           c.messages = c.messages.slice(-preTrimMaxCardMessages)
         }
       }
@@ -2585,7 +2598,7 @@ export const loadState = async () => {
 
     // Pre-trim oversized message arrays BEFORE Zod validation to prevent OOM.
     // Zod's deep-clone behavior amplifies memory usage ~200x on large arrays.
-    preTrimOversizedMessages(raw)
+    await archiveThenPreTrim(raw, dataDir)
 
     const legacyReset = resetLegacyBoardState(raw)
     if (legacyReset) {
@@ -2691,7 +2704,7 @@ const loadRendererStartupState = async (dataDir = getAppDataDir()): Promise<AppS
     const file = await readFile(getStateFilePathForDir(dataDir), 'utf8')
     const raw = JSON.parse(file) as Record<string, unknown>
 
-    preTrimOversizedMessages(raw)
+    await archiveThenPreTrim(raw, dataDir)
 
     if (Array.isArray(raw.sessionHistory)) {
       raw.sessionHistory = renderSessionHistoryForRenderer(

@@ -48,6 +48,7 @@ import {
   AUTOMATIONBOARD_TOOL_MODEL,
   BRAINSTORM_TOOL_MODEL,
   DEFAULT_CLAUDE_MODEL,
+  DEFAULT_GEMINI_MODEL,
   DEFAULT_CODEX_MODEL,
   DEFAULT_GIT_AGENT_MODEL,
   FILETREE_TOOL_MODEL,
@@ -59,6 +60,7 @@ import {
   WHITENOISE_TOOL_MODEL,
   getDefaultModel,
   isToolCardModel,
+  listModelUpgradeKeys,
   normalizeModel,
   normalizeStoredModel,
 } from './models.js'
@@ -319,11 +321,16 @@ const createDefaultProviderProfiles = (): AppSettings['providerProfiles'] => ({
     activeProfileId: '',
     profiles: [],
   },
+  gemini: {
+    activeProfileId: '',
+    profiles: [],
+  },
 })
 
 const createDefaultModelReasoningEfforts = (): AppSettings['modelReasoningEfforts'] => ({
   codex: {},
   claude: {},
+  gemini: {},
 })
 
 export const getAutoUrgeProfileFallbackName = (
@@ -447,6 +454,7 @@ const normalizeModelReasoningEfforts = (
   return {
     codex: normalizeCollection('codex'),
     claude: normalizeCollection('claude'),
+    gemini: normalizeCollection('gemini'),
   }
 }
 
@@ -477,6 +485,7 @@ const normalizeProviderProfiles = (
   return {
     codex: normalizeCollection(providerProfiles?.codex, 'Codex'),
     claude: normalizeCollection(providerProfiles?.claude, 'Claude'),
+    gemini: normalizeCollection(providerProfiles?.gemini, 'Gemini'),
   }
 }
 
@@ -611,6 +620,8 @@ export const createDefaultSettings = (language: AppLanguage = defaultAppLanguage
   wakeTimerDefaultDurationMinutes: defaultWakeTimerDurationMinutes,
   weatherCity: '',
   promptVaultDismissedAt: '',
+  // 全新安装不算「升级」：当前已知的换代提示一律视为已读，只有存档里没有该字段的老用户才会被提示。
+  acknowledgedModelUpgrades: listModelUpgradeKeys(),
   systemPrompt: defaultSystemPrompt,
   modelPromptRules: [],
   codexPersonality: 'default',
@@ -628,6 +639,7 @@ export const createDefaultSettings = (language: AppLanguage = defaultAppLanguage
   requestModels: {
     codex: DEFAULT_CODEX_MODEL,
     claude: DEFAULT_CLAUDE_MODEL,
+    gemini: DEFAULT_GEMINI_MODEL,
   },
   modelReasoningEfforts: createDefaultModelReasoningEfforts(),
   providerProfiles: createDefaultProviderProfiles(),
@@ -841,6 +853,16 @@ export const normalizeAppSettings = (settings?: Partial<AppSettings> | null): Ap
         : defaults.wakeTimerDefaultDurationMinutes,
     weatherCity: normalizeText(settings?.weatherCity) || defaults.weatherCity,
     promptVaultDismissedAt: normalizeText(settings?.promptVaultDismissedAt),
+    // 有 settings 但缺字段 = 本功能上线前写下的老存档 → 空名单（会被提示一次）；整个 settings 缺失 = 全新安装 → 默认已读。
+    acknowledgedModelUpgrades: settings
+      ? [
+          ...new Set(
+            (Array.isArray(settings.acknowledgedModelUpgrades) ? settings.acknowledgedModelUpgrades : []).filter(
+              (key): key is string => typeof key === 'string' && key.length > 0,
+            ),
+          ),
+        ]
+      : defaults.acknowledgedModelUpgrades,
     systemPrompt: normalizeSystemPrompt(settings?.systemPrompt),
     modelPromptRules: normalizeModelPromptRules(settings?.modelPromptRules),
     codexPersonality: normalizeCodexPersonality(settings?.codexPersonality),
@@ -882,6 +904,7 @@ export const normalizeAppSettings = (settings?: Partial<AppSettings> | null): Ap
     requestModels: {
       codex: normalizeRequestModel('codex', settings?.requestModels?.codex ?? defaults.requestModels.codex),
       claude: normalizeRequestModel('claude', settings?.requestModels?.claude ?? defaults.requestModels.claude),
+      gemini: normalizeRequestModel('gemini', settings?.requestModels?.gemini ?? defaults.requestModels.gemini),
     },
     modelReasoningEfforts: normalizeModelReasoningEfforts(settings?.modelReasoningEfforts),
     providerProfiles: normalizeProviderProfiles(settings?.providerProfiles),

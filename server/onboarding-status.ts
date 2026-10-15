@@ -19,12 +19,14 @@ const commandCandidatesByCheck: Record<EnvironmentCheckId, string[]> =
         node: ['node.exe', 'node.cmd', 'node'],
         claude: ['claude.exe', 'claude.cmd', 'claude'],
         codex: ['codex.exe', 'codex.cmd', 'codex'],
+        gemini: ['gemini.cmd', 'gemini.exe', 'gemini'],
       }
     : {
         git: ['git'],
         node: ['node'],
         claude: ['claude'],
         codex: ['codex'],
+        gemini: ['gemini'],
       }
 
 const checkLabels: Record<EnvironmentCheckId, string> = {
@@ -32,6 +34,26 @@ const checkLabels: Record<EnvironmentCheckId, string> = {
   node: 'Node.js',
   claude: 'Claude CLI',
   codex: 'Codex CLI',
+  gemini: 'Gemini CLI',
+}
+
+// Gemini 是第三个、可选的 provider：多数用户只用 Claude/Codex，缺它就把整个环境判成未就绪会
+// 让引导弹窗反复催装一个用不到的工具。
+const optionalChecks = new Set<EnvironmentCheckId>(['gemini'])
+
+export const summarizeEnvironmentChecks = (
+  results: ReadonlyArray<{ id: EnvironmentCheckId; available: boolean }>,
+): OnboardingStatus['environment'] => {
+  const checks = results.map(({ id, available }) => ({
+    id,
+    label: checkLabels[id],
+    available,
+    ...(optionalChecks.has(id) ? { optional: true } : {}),
+  }))
+  return {
+    ready: checks.every((check) => check.available || check.optional),
+    checks,
+  }
 }
 
 const resolveCommand = async (checkId: EnvironmentCheckId) =>
@@ -73,21 +95,17 @@ const getCcSwitchStatus = async () => {
 }
 
 export const inspectOnboardingStatus = async (): Promise<OnboardingStatus> => {
-  const checks = await Promise.all(
-    (['git', 'node', 'claude', 'codex'] as const).map(async (id) => ({
+  const results = await Promise.all(
+    (['git', 'node', 'claude', 'codex', 'gemini'] as const).map(async (id) => ({
       id,
-      label: checkLabels[id],
       available:
-        ((id === 'claude' || id === 'codex') && (await resolveCompatCommand(id)) !== null) ||
+        ((id === 'claude' || id === 'codex' || id === 'gemini') && (await resolveCompatCommand(id)) !== null) ||
         (await resolveCommand(id)),
     })),
   )
 
   return {
-    environment: {
-      ready: checks.every((check) => check.available),
-      checks,
-    },
+    environment: summarizeEnvironmentChecks(results),
     ccSwitch: await getCcSwitchStatus(),
   }
 }

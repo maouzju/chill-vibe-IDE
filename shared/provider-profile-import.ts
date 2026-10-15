@@ -27,7 +27,7 @@ export const summarizeImportedProfiles = (profiles: readonly CcSwitchImportProfi
       summary[profile.provider] += 1
       return summary
     },
-    { claude: 0, codex: 0 },
+    { claude: 0, codex: 0, gemini: 0 },
   )
 
 export const mergeImportedProviderProfiles = (

@@ -249,3 +249,58 @@ test('a docked chip reports running and new-result state', async ({ page }) => {
   const animation = await running.evaluate((element) => getComputedStyle(element).animationName)
   expect(animation).toBe('docked-column-running-breathe')
 })
+
+// 症状（2026-10-14 用户报）: 主回合答完、子 agent 还在后台跑，收起后 chip 不呼吸，
+//   反而亮"有新结果"蓝点。chip 必须与 pane tab 同判据：idle 但子 agent 在跑也算在跑。
+test('a docked chip keeps running while a finished turn still has subagents running', async ({ page }) => {
+  const agentsStatus = (status: 'running' | 'completed') => ({
+    id: `agents-${status}`,
+    role: 'assistant',
+    content: '',
+    createdAt: '2026-10-14T00:00:00.000Z',
+    meta: {
+      provider: 'claude',
+      kind: 'agents',
+      itemId: 'agent-status:claude',
+      structuredData: JSON.stringify({
+        itemId: 'agent-status:claude',
+        kind: 'agents',
+        status: 'completed',
+        view: 'status',
+        agents: [{ threadId: 'task-1', role: 'Explore', status, activity: [] }],
+      }),
+    },
+  })
+  await mockAppApis(page, 'dark', [
+    createColumnFixture('col-1', 'd:\\Git\\alpha', true, {
+      status: 'idle',
+      unread: true,
+      messages: [agentsStatus('running')],
+    }),
+    createColumnFixture('col-2', 'd:\\Git\\beta', true, {
+      status: 'idle',
+      unread: true,
+      messages: [agentsStatus('completed')],
+    }),
+    createColumnFixture('col-3', 'd:\\Git\\gamma'),
+  ])
+  await page.setViewportSize({ width: 1440, height: 960 })
+  await page.goto('http://localhost:5173')
+
+  const subagentsRunning = page.locator('.app-topbar-docked-column', { hasText: 'alpha' })
+  const settled = page.locator('.app-topbar-docked-column', { hasText: 'beta' })
+
+  // 子 agent 还在跑：呼吸、不亮蓝点（跑完才算新结果）。
+  await expect(subagentsRunning).toHaveClass(/is-running/)
+  await expect(subagentsRunning.locator('.app-topbar-docked-column-dot')).toHaveCount(0)
+  await expect(subagentsRunning).toHaveAttribute('title', /Running/)
+
+  // 子 agent 都结束：回到"有新结果"。
+  await expect(settled).not.toHaveClass(/is-running/)
+  await expect(settled.locator('.app-topbar-docked-column-dot')).toHaveCount(1)
+
+  await page.locator('.app-topbar').screenshot({
+    path: 'test-results/column-dock-subagents-running.png',
+    animations: 'disabled',
+  })
+})

@@ -9155,7 +9155,7 @@ for (const theme of ['dark', 'light'] as const) {
       for (const label of ['GPT-6 Sol', 'GPT-5.6 Sol', 'GPT-5.6 Terra', 'GPT-5.6 Luna', 'GPT-5.5']) {
         await expect(menu.getByRole('option', { name: label, exact: true })).toHaveCount(0)
       }
-      for (const label of ['GPT-6.1 Sol', 'GPT-6 Luna', 'GPT-6 Astra', 'Fable 5.1', 'Opus 5.5', 'Sonnet 5.5', 'Haiku 5.5']) {
+      for (const label of ['GPT-6.1 Sol', 'GPT-6 Luna', 'GPT-6 Astra', 'Fable 5.1', 'Opus 5.5', 'Sonnet 5.5', 'Haiku 5.5', 'Gemini 4 Argon', 'Gemini 3.8 Flash']) {
         await expect(menu.getByRole('option', { name: label, exact: true })).toHaveCount(1)
       }
       await expect(menu.getByRole('option', { name: 'Haiku 4.5', exact: true })).toHaveCount(0)

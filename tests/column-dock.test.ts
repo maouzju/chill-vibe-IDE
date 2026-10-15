@@ -4,12 +4,18 @@ import { mkdir, rm } from 'node:fs/promises'
 import path from 'node:path'
 import os from 'node:os'
 
-import { createCard, createColumn, createDefaultState } from '../shared/default-state.ts'
+import {
+  createAutomationBoardCard,
+  createCard,
+  createColumn,
+  createDefaultState,
+} from '../shared/default-state.ts'
 import {
   boardColumnSchema,
   type AppState,
   type BoardColumn,
   type ChatCard,
+  type ChatMessage,
 } from '../shared/schema.ts'
 import { ideReducer, isColumnVisibleOnBoard, selectDockedColumnStatus } from '../src/state.ts'
 import {
@@ -201,6 +207,71 @@ describe('docked column status badge', () => {
       running: false,
       hasNewResult: false,
     })
+  })
+
+  // 症状（2026-10-14 用户报）: 会话主回合答完、子 agent 还在后台跑，收起后 chip 不呼吸，
+  //   反而亮"有新结果"蓝点，看着像全干完了。
+  // 判据: chip 的"在跑"与 pane tab 的橙色同一个判据（idle 但子 agent 在跑也算）；
+  //   同一张卡在跑时它的 unread 先不算新结果，跑完再亮 —— 与卡片 is-subagents-running 压过完成光一致。
+  const agentsStatusMessage = (agentStatus: 'running' | 'completed'): ChatMessage => ({
+    id: `agents-${agentStatus}`,
+    role: 'assistant',
+    content: '',
+    createdAt: '2026-10-14T00:00:00.000Z',
+    meta: {
+      provider: 'claude',
+      kind: 'agents',
+      itemId: 'agent-status:claude',
+      structuredData: JSON.stringify({
+        itemId: 'agent-status:claude',
+        kind: 'agents',
+        status: 'completed',
+        view: 'status',
+        agents: [{ threadId: 'task-1', role: 'Explore', status: agentStatus, activity: [] }],
+      }),
+    },
+  })
+
+  it('an idle card whose subagents are still running counts as running', () => {
+    const status = selectDockedColumnStatus(
+      columnWith([{ status: 'idle', messages: [agentsStatusMessage('running')] }]),
+    )
+    assert.equal(status.running, true)
+  })
+
+  it('a card still running subagents holds its new-result dot until they settle', () => {
+    const running = selectDockedColumnStatus(
+      columnWith([{ status: 'idle', unread: true, messages: [agentsStatusMessage('running')] }]),
+    )
+    assert.deepEqual(running, { running: true, hasNewResult: false })
+
+    const settled = selectDockedColumnStatus(
+      columnWith([{ status: 'idle', unread: true, messages: [agentsStatusMessage('completed')] }]),
+    )
+    assert.deepEqual(settled, { running: false, hasNewResult: true })
+  })
+
+  it('an automation board with a running-lane item counts as running', () => {
+    const base = columnWith([])
+    const board: ChatCard = {
+      ...createAutomationBoardCard('Board', 'en'),
+      id: 'board-1',
+      automationBoard: {
+        items: [{ cardId: 'item-a', lane: 'running', requirement: 'req', templateId: '' }],
+      },
+    }
+    const item: ChatCard = {
+      ...createCard('Item', undefined, 'codex', undefined, undefined, 'en'),
+      id: 'item-a',
+      status: 'streaming',
+      streamId: 'stream-a',
+    }
+    const status = selectDockedColumnStatus({
+      ...base,
+      layout: { type: 'pane', id: 'p', tabs: ['board-1'], activeTabId: 'board-1' } as BoardColumn['layout'],
+      cards: { 'board-1': board, 'item-a': item },
+    })
+    assert.equal(status.running, true)
   })
 })
 

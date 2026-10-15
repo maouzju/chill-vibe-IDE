@@ -4,6 +4,7 @@ import test from 'node:test'
 import type { GitStatus } from '../shared/schema.ts'
 import {
   createGitOperationHub,
+  type GitAgentSessionRequest,
   type GitOperationContext,
   type GitOperationHubDeps,
 } from '../src/components/git-operation-hub.ts'
@@ -417,46 +418,97 @@ test('sync flow surfaces blocked files instead of opening the panel', async () =
   assert.equal(snapshot.syncPanelOpen, false)
 })
 
-test('conflict resolution has no elapsed-time limit and pushes only after completion', async (t) => {
+const createConflictStatus = () =>
+  createGitStatus({
+    hasConflicts: true,
+    changes: [{ ...createChange('src/a.ts'), conflicted: true }, createChange('src/b.ts')],
+  })
+
+// SPEC docs/specs/git-sync-conflict-session：冲突必须交给一个看得见的会话，
+// 不能再在后台静默跑一个 Codex 回合然后自动 push。
+test('sync conflicts open an explicit agent session instead of a hidden background Codex run', async () => {
   const fake = createFakeDeps()
-  fake.deps.pullGitChanges = async () => ({ status: createGitStatus({ hasConflicts: true }) })
+  fake.deps.pullGitChanges = async () => ({ status: createConflictStatus() })
   const hub = createGitOperationHub(fake.deps)
   const ws = 'D:\\repo'
-  const sync = hub.beginSync(createContext(ws))
-  // 在请求续体安装计时器之前启用虚拟时钟，避免真实等待。
-  t.mock.timers.enable({ apis: ['setTimeout'] })
-  await new Promise<void>((resolve) => setImmediate(resolve))
-  assert.equal(hub.getSnapshot(ws).syncStep.kind, 'conflict')
+  const sessions: GitAgentSessionRequest[] = []
 
-  t.mock.timers.tick(24 * 60 * 60 * 1000)
-  await new Promise<void>((resolve) => setImmediate(resolve))
-  assert.equal(hub.getSnapshot(ws).syncStep.kind, 'conflict')
-  assert.deepEqual(fake.stoppedStreams, [])
-  assert.equal(fake.getStreamClosedCount(), 0)
+  await hub.beginSync({
+    ...createContext(ws),
+    openAgentSession: (request) => {
+      sessions.push(request)
+      return true
+    },
+  })
+
+  assert.equal(sessions.length, 1)
+  assert.equal(sessions[0]?.provider, 'codex')
+  assert.equal(sessions[0]?.model, 'gpt-5.4-codex')
+  assert.equal(sessions[0]?.reasoningEffort, 'high')
+  assert.ok(sessions[0]?.title)
+  assert.match(sessions[0]?.prompt ?? '', /src\/a\.ts/)
+  assert.doesNotMatch(sessions[0]?.prompt ?? '', /src\/b\.ts/)
+  assert.match(sessions[0]?.prompt ?? '', /git push/)
+
+  assert.deepEqual(fake.chatRequests, [])
   assert.equal(fake.calls.includes('pushGitChanges'), false)
 
-  fake.getStreamHandlers()?.onDone?.()
-  await sync
-  assert.equal(hub.getSnapshot(ws).syncPanelOpen, false)
-  assert.equal(hub.getSnapshot(ws).notice?.transient, true)
-  assert.equal(fake.getStreamClosedCount(), 1)
-  assert.equal(fake.calls.includes('pushGitChanges'), true)
+  const snapshot = hub.getSnapshot(ws)
+  assert.equal(snapshot.syncPanelOpen, false)
+  assert.equal(snapshot.syncStep.kind, 'idle')
+  assert.equal(snapshot.notice?.tone, 'info')
 })
 
-test('conflict resolution still reports provider errors without pushing', async () => {
+test('sync conflicts without a session opener stop on an error and never push', async () => {
   const fake = createFakeDeps()
-  fake.deps.pullGitChanges = async () => ({ status: createGitStatus({ hasConflicts: true }) })
+  fake.deps.pullGitChanges = async () => ({ status: createConflictStatus() })
   const hub = createGitOperationHub(fake.deps)
   const ws = 'D:\\repo'
-  const sync = hub.beginSync(createContext(ws))
-  await flushAsync()
 
-  fake.getStreamHandlers()?.onError?.({ message: '连接失败' })
-  await sync
-  assert.deepEqual(hub.getSnapshot(ws).syncStep, { kind: 'error', message: '连接失败' })
+  await hub.beginSync(createContext(ws))
+
+  const snapshot = hub.getSnapshot(ws)
+  assert.equal(snapshot.syncStep.kind, 'error')
   // 失败需要用户决策（重试 / 取消），面板必须留着，不能像成功那样飘走
-  assert.equal(hub.getSnapshot(ws).syncPanelOpen, true)
-  assert.equal(fake.getStreamClosedCount(), 1)
+  assert.equal(snapshot.syncPanelOpen, true)
+  assert.deepEqual(fake.chatRequests, [])
+  assert.equal(fake.calls.includes('pushGitChanges'), false)
+})
+
+test('a session that refuses to open leaves the sync on an error and never pushes', async () => {
+  const fake = createFakeDeps()
+  fake.deps.pullGitChanges = async () => ({ status: createConflictStatus() })
+  const hub = createGitOperationHub(fake.deps)
+  const ws = 'D:\\repo'
+
+  await hub.beginSync({ ...createContext(ws), openAgentSession: () => false })
+
+  const snapshot = hub.getSnapshot(ws)
+  assert.equal(snapshot.syncStep.kind, 'error')
+  assert.equal(snapshot.syncPanelOpen, true)
+  assert.ok(!snapshot.notice)
+  assert.equal(fake.calls.includes('pushGitChanges'), false)
+})
+
+test('a second sync while the conflict session is still open does not open another session', async () => {
+  const fake = createFakeDeps()
+  fake.deps.pullGitChanges = async () => ({ status: createConflictStatus() })
+  const hub = createGitOperationHub(fake.deps)
+  const ws = 'D:\\repo'
+  const sessions: GitAgentSessionRequest[] = []
+  const context = {
+    ...createContext(ws),
+    openAgentSession: (request: GitAgentSessionRequest) => {
+      sessions.push(request)
+      return true
+    },
+  }
+
+  await hub.beginSync(context)
+  await hub.beginSync(context)
+
+  assert.equal(sessions.length, 1)
+  assert.equal(hub.getSnapshot(ws).syncStep.kind, 'error')
   assert.equal(fake.calls.includes('pushGitChanges'), false)
 })
 

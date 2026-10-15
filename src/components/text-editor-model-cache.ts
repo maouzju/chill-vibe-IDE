@@ -2,6 +2,8 @@
 // cursors, and scroll positions) alive across pane tab switches. Entries are
 // plain in-memory objects — they must never reach React state or persistence.
 
+import { isSameWorkspacePath, remapWorkspaceEntryPath } from '../workspace-entry-remap'
+
 type CacheableModel = {
   dispose(): void
   isDisposed(): boolean
@@ -23,6 +25,12 @@ export type TextEditorModelCacheEntry<
   languageId: string
   /** Detected file encoding id from the last read; echoed back on saves. */
   encoding: string | null
+  /**
+   * Set when the file was renamed/moved while this model was parked or live:
+   * the model still carries the old file URI, so the claimer must rebuild it
+   * under the new path (keeping the buffer) instead of adopting it as-is.
+   */
+  pathChanged?: boolean
 }
 
 export const TEXT_EDITOR_MODEL_CACHE_LIMIT = 12
@@ -108,6 +116,84 @@ export const evictTextEditorModel = (workspacePath: string, filePath: string) =>
   modelCache.delete(key)
   if (!entry.model.isDisposed()) {
     entry.model.dispose()
+  }
+}
+
+/**
+ * A mounted editor's claim on its file path. When the file is renamed/moved
+ * the handle is retargeted, so the unmounting editor parks its model under the
+ * new path and stops saving to the old one.
+ */
+export type TextEditorPathHandle = {
+  readonly workspacePath: string
+  readonly filePath: string
+  retargetedFilePath: string | null
+}
+
+const liveHandles = new Set<TextEditorPathHandle>()
+
+export const registerTextEditorPathHandle = (workspacePath: string, filePath: string): TextEditorPathHandle => {
+  const handle: TextEditorPathHandle = { workspacePath, filePath: filePath.trim(), retargetedFilePath: null }
+  liveHandles.add(handle)
+  return handle
+}
+
+export const releaseTextEditorPathHandle = (handle: TextEditorPathHandle) => {
+  liveHandles.delete(handle)
+}
+
+/** Current on-disk path for an editor: the renamed path once retargeted, else its mount path. */
+export const getTextEditorLiveFilePath = (handle: TextEditorPathHandle | null, fallbackFilePath: string) =>
+  handle?.retargetedFilePath ?? fallbackFilePath
+
+// 症状 (2026-10-14): 文件改名后编辑器 tab 跟到新路径时，脏内容/撤销栈仍停在旧路径的 key 下，
+//   旧编辑器卸载时还会把内容存回旧路径。
+// 根因: 缓存 key 与卸载保存都绑死在挂载时的 filePath 上。
+// 为什么必须在 dispatch 改 tab 路径之前调用: React 先跑旧实例的卸载清理（停放模型 + 卸载保存）
+//   再跑新实例的挂载，句柄要在那之前就指向新路径。
+export const retargetTextEditorPaths = (workspacePath: string, fromPath: string, toPath: string) => {
+  const moves: Array<{ fromKey: string; toKey: string; entry: TextEditorModelCacheEntry }> = []
+
+  for (const [key, entry] of modelCache) {
+    const separatorIndex = key.indexOf(cacheKeySeparator)
+    const entryWorkspacePath = key.slice(0, separatorIndex)
+    if (separatorIndex < 0 || !isSameWorkspacePath(entryWorkspacePath, workspacePath)) {
+      continue
+    }
+
+    const nextFilePath = remapWorkspaceEntryPath(
+      entryWorkspacePath,
+      key.slice(separatorIndex + cacheKeySeparator.length),
+      fromPath,
+      toPath,
+    )
+    if (nextFilePath !== null) {
+      moves.push({ fromKey: key, toKey: getTextEditorModelCacheKey(entryWorkspacePath, nextFilePath), entry })
+    }
+  }
+
+  for (const { fromKey } of moves) {
+    modelCache.delete(fromKey)
+  }
+
+  for (const { toKey, entry } of moves) {
+    cacheTextEditorModel(toKey, { ...entry, pathChanged: true })
+  }
+
+  for (const handle of liveHandles) {
+    if (!isSameWorkspacePath(handle.workspacePath, workspacePath)) {
+      continue
+    }
+
+    const nextFilePath = remapWorkspaceEntryPath(
+      handle.workspacePath,
+      handle.retargetedFilePath ?? handle.filePath,
+      fromPath,
+      toPath,
+    )
+    if (nextFilePath !== null) {
+      handle.retargetedFilePath = nextFilePath
+    }
   }
 }
 

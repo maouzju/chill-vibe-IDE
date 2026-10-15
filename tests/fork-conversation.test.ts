@@ -137,6 +137,33 @@ describe('forkConversation', () => {
     ])
   })
 
+  it('forked card does not inherit still-running subagents from the source stream', () => {
+    const agentsPayload = {
+      itemId: 'agent-status:claude', kind: 'agents', status: 'completed', view: 'status',
+      agents: [
+        { threadId: 'workflow:toolu_1', nickname: 'wf', role: 'Workflow', status: 'running', activity: [] },
+        { threadId: 'a-done', nickname: 'done', role: 'general-purpose', status: 'completed', activity: [] },
+      ],
+    }
+    const source = createCard({
+      id: 'card-1', provider: 'claude', status: 'streaming', streamId: 'stream-1',
+      messages: [
+        msg('u1', 'user', 'go'),
+        msg('ag', 'assistant', '', { provider: 'claude', kind: 'agents', structuredData: JSON.stringify(agentsPayload) }),
+        msg('u2', 'user', 'next'),
+      ],
+    })
+    const next = ideReducer(
+      buildState([createColumn({ id: 'col-1', cards: { 'card-1': source }, layout: createPane('pane-1', ['card-1'], 'card-1') })]),
+      { type: 'forkConversation', columnId: 'col-1', cardId: 'card-1', messageId: 'u2' },
+    )
+    const nextColumn = next.columns.find((c) => c.id === 'col-1')!
+    const forked = nextColumn.cards[Object.keys(nextColumn.cards).find((id) => id !== 'card-1')!]!
+    const agents = JSON.parse(forked.messages[1]!.meta!.structuredData!).agents
+    assert.deepEqual(agents.map((a: { status: string }) => a.status), ['interrupted', 'completed'])
+    assert.equal(nextColumn.cards['card-1'], source)
+  })
+
   it('fork updates the state timestamp so the new tab is not lost before delayed autosave', () => {
     const next = ideReducer(state, {
       type: 'forkConversation',

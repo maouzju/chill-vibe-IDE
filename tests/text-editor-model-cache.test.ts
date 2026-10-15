@@ -11,6 +11,7 @@ import {
   takeCachedTextEditorModel,
   TEXT_EDITOR_MODEL_CACHE_LIMIT,
 } from '../src/components/text-editor-model-cache.ts'
+import * as modelCache from '../src/components/text-editor-model-cache.ts'
 
 const makeModel = () => {
   let disposed = false
@@ -165,6 +166,69 @@ test('disposed models are rejected instead of cached', () => {
   cacheTextEditorModel(key, entry)
 
   assert.equal(peekCachedTextEditorModel(key), undefined)
+})
+
+// 2026-10-14 用户报「重命名文件有 bug」：改名后编辑器还拿旧路径的 key 停放模型、
+// 卸载时把脏内容存回旧路径。改名要把停放的模型和活着的编辑器一起改挂到新路径。
+test('retarget re-keys a parked model to the renamed file without disposing it', () => {
+  clearTextEditorModelCache()
+  const entry = makeEntry()
+  cacheTextEditorModel(getTextEditorModelCacheKey('D:\\ws', 'docs/notes.md'), entry)
+
+  modelCache.retargetTextEditorPaths('d:/ws/', 'docs/notes.md', 'docs/notes-v2.md')
+
+  assert.equal(peekCachedTextEditorModel(getTextEditorModelCacheKey('D:\\ws', 'docs/notes.md')), undefined)
+  const moved = peekCachedTextEditorModel(getTextEditorModelCacheKey('D:\\ws', 'docs/notes-v2.md'))
+  assert.equal(moved?.model, entry.model)
+  assert.equal(moved?.revision, 'rev-1')
+  assert.equal(moved?.pathChanged, true, 'the claimer must rebuild the Monaco model under the new URI')
+  assert.equal(entry.model.isDisposed(), false)
+  clearTextEditorModelCache()
+})
+
+test('retarget follows a folder rename for nested models only', () => {
+  clearTextEditorModelCache()
+  const nested = makeEntry()
+  const sibling = makeEntry()
+  const otherWorkspace = makeEntry()
+  cacheTextEditorModel(getTextEditorModelCacheKey('D:/ws', 'docs/deep/guide.md'), nested)
+  cacheTextEditorModel(getTextEditorModelCacheKey('D:/ws', 'docs-old.md'), sibling)
+  cacheTextEditorModel(getTextEditorModelCacheKey('D:/other', 'docs/deep/guide.md'), otherWorkspace)
+
+  modelCache.retargetTextEditorPaths('D:/ws', 'docs', 'documentation')
+
+  assert.equal(peekCachedTextEditorModel(getTextEditorModelCacheKey('D:/ws', 'documentation/deep/guide.md'))?.model, nested.model)
+  assert.equal(peekCachedTextEditorModel(getTextEditorModelCacheKey('D:/ws', 'docs-old.md')), sibling)
+  assert.equal(peekCachedTextEditorModel(getTextEditorModelCacheKey('D:/other', 'docs/deep/guide.md')), otherWorkspace)
+  clearTextEditorModelCache()
+})
+
+test('retarget marks live editor handles so they stop saving to the old path', () => {
+  const renamed = modelCache.registerTextEditorPathHandle('D:/ws', 'docs/notes.md')
+  const untouched = modelCache.registerTextEditorPathHandle('D:/ws', 'src/app.ts')
+  const released = modelCache.registerTextEditorPathHandle('D:/ws', 'docs/notes.md')
+  modelCache.releaseTextEditorPathHandle(released)
+
+  modelCache.retargetTextEditorPaths('D:/ws', 'docs', 'documentation')
+
+  assert.equal(renamed.retargetedFilePath, 'documentation/notes.md')
+  assert.equal(untouched.retargetedFilePath, null)
+  assert.equal(released.retargetedFilePath, null)
+  modelCache.releaseTextEditorPathHandle(renamed)
+  modelCache.releaseTextEditorPathHandle(untouched)
+})
+
+test('live file path follows a retargeted handle and survives release', () => {
+  assert.equal(modelCache.getTextEditorLiveFilePath(null, 'docs/notes.md'), 'docs/notes.md')
+
+  const handle = modelCache.registerTextEditorPathHandle('D:/ws', 'docs/notes.md')
+  assert.equal(modelCache.getTextEditorLiveFilePath(handle, 'docs/notes.md'), 'docs/notes.md')
+
+  modelCache.retargetTextEditorPaths('D:/ws', 'docs/notes.md', 'docs/renamed.md')
+  // The editor releases its handle before the park/unmount-save cleanups run,
+  // so the retargeted path must still be readable afterwards.
+  modelCache.releaseTextEditorPathHandle(handle)
+  assert.equal(modelCache.getTextEditorLiveFilePath(handle, 'docs/notes.md'), 'docs/renamed.md')
 })
 
 test('clear disposes every cached model', () => {

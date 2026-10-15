@@ -4,8 +4,9 @@ import type { AppLanguage } from '../../shared/schema'
 import { getGitLocaleText } from '../../shared/i18n'
 import type { GitSyncStep } from './git-operation-hub'
 
-// 纯展示组件：pull/冲突解决/push 的状态机由 git-operation-hub 持有，
+// 纯展示组件：pull/push 的状态机由 git-operation-hub 持有，
 // 卡片切到后台或被 unmount 时同步照常进行，这里只渲染 hub 快照里的步骤。
+// 冲突不在这里处理：hub 会把它交给一个新开的可见会话（SPEC git-sync-conflict-session）。
 type GitSyncPanelProps = {
   step: GitSyncStep
   language: AppLanguage
@@ -18,13 +19,12 @@ export const GitSyncPanel = ({ step, language, onRetry, onClose }: GitSyncPanelP
 
   const stepLabel =
     step.kind === 'pull' ? text.syncStepPull
-      : step.kind === 'conflict' ? text.syncConflictResolving
-        : step.kind === 'push' ? text.syncStepPush
-          : ''
+      : step.kind === 'push' ? text.syncStepPush
+        : ''
 
   return (
     <div className="git-agent-panel">
-      {(step.kind === 'pull' || step.kind === 'conflict' || step.kind === 'push') ? (
+      {(step.kind === 'pull' || step.kind === 'push') ? (
         <div className="git-agent-loading">
           <span>{stepLabel}</span>
         </div>

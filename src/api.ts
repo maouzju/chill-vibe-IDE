@@ -1102,7 +1102,7 @@ export type ProxyStatsSummary = {
 export type ProxyStatsEvent = 'request' | 'disconnect' | 'recovery_success' | 'recovery_fail'
 
 export type ProxyStatsRecordRequest = {
-  provider: 'codex' | 'claude'
+  provider: 'codex' | 'claude' | 'gemini'
   event: ProxyStatsEvent
   endpoint: string
   attempt?: number

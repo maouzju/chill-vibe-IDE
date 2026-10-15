@@ -6,7 +6,7 @@ const normalizeHistorySearchQuery = (value: string) => value.trim().toLocaleLowe
 const normalizeHistoryWorkspacePath = (value: string) =>
   value.trim().replace(/\\/g, '/').replace(/\/+$/, '').toLocaleLowerCase()
 
-const providerSearchLabel = (provider: Provider) => (provider === 'claude' ? 'claude' : 'codex')
+const providerSearchLabel = (provider: Provider) => provider
 
 type SessionHistoryLifecycle = 'ended' | 'interrupted'
 

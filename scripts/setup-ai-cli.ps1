@@ -2,7 +2,7 @@ param(
     [ValidateSet('install-missing', 'update-cli')]
     [string]$Mode = 'install-missing',
 
-    [ValidateSet('all', 'claude', 'codex')]
+    [ValidateSet('all', 'claude', 'codex', 'gemini')]
     [string]$Cli = 'all',
 
     [string]$Version = 'latest'
@@ -309,6 +309,12 @@ function Update-SelectedCli {
         Install-NpmGlobal -PackageName '@openai/codex' -CommandName 'codex' -DisplayName 'Codex CLI' -PackageVersion $normalizedVersion -Force
     }
 
+    # Gemini is optional: 'all' only refreshes it when it is already installed, so a
+    # routine "update everything" never drops an unwanted CLI onto the machine.
+    if ($SelectedCli -eq 'gemini' -or ($SelectedCli -eq 'all' -and (Get-CommandSafe 'gemini'))) {
+        Install-NpmGlobal -PackageName '@google/gemini-cli' -CommandName 'gemini' -DisplayName 'Gemini CLI' -PackageVersion $normalizedVersion -Force
+    }
+
     Write-Step 'CLI update completed successfully.'
 }
 
@@ -317,7 +323,7 @@ if ($Mode -eq 'update-cli') {
     return
 }
 
-Write-Step 'Starting one-click setup for Git, Node.js, Claude CLI, and Codex CLI.'
+Write-Step 'Starting one-click setup for Git, Node.js, Claude CLI, Codex CLI, and Gemini CLI.'
 
 Install-WingetPackage -Id 'Git.Git' -DisplayName 'Git' -CommandName 'git'
 Configure-GitBashPath
@@ -336,5 +342,14 @@ else {
 
 Install-NpmGlobal -PackageName '@anthropic-ai/claude-code' -CommandName 'claude' -DisplayName 'Claude CLI'
 Install-NpmGlobal -PackageName '@openai/codex' -CommandName 'codex' -DisplayName 'Codex CLI'
+
+# Gemini is optional (see server/onboarding-status.ts): a failed install must not turn
+# an otherwise working Claude/Codex setup into a red "setup failed".
+try {
+    Install-NpmGlobal -PackageName '@google/gemini-cli' -CommandName 'gemini' -DisplayName 'Gemini CLI'
+}
+catch {
+    Write-Step "Gemini CLI could not be installed (optional, skipped): $($_.Exception.Message)"
+}
 
 Write-Step 'One-click environment setup completed successfully.'

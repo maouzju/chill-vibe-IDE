@@ -1317,6 +1317,31 @@ body.is-card-dragging .lane-drop-zone-top {
   justify-content: flex-end;
 }
 
+.model-upgrade-dialog {
+  width: min(30rem, calc(100vw - 2rem));
+}
+
+.model-upgrade-dialog .structured-preview-body {
+  display: grid;
+  gap: 0.9rem;
+}
+
+.model-upgrade-list {
+  margin: 0;
+  padding: 0.7rem 0.85rem;
+  list-style: none;
+  display: grid;
+  gap: 0.45rem;
+  border: 1px solid var(--line-strong);
+  border-radius: 0.95rem;
+  background: var(--panel-strong);
+  color: var(--ink-1);
+}
+
+.model-upgrade-dialog .settings-actions {
+  justify-content: flex-end;
+}
+
 .routing-panel-columns {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));

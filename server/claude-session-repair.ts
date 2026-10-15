@@ -1,5 +1,6 @@
 import fs from 'fs'
 
+import { writeServerLog } from './crash-logger.js'
 import { findClaudeSessionFile } from './session-fork.js'
 
 // 症状：会话"被诅咒"——停止过一次之后，再怎么继续都是
@@ -238,11 +239,22 @@ export const repairClaudeSessionForResume = async (
     const tempPath = `${filePath}.chill-vibe-repair.tmp`
     await fs.promises.writeFile(tempPath, thinking.content, 'utf8')
     await fs.promises.rename(tempPath, filePath)
-    console.warn(
-      `[claude-session-repair] removed ${synthetic.removed} synthetic "No response requested." entries, stripped turn effort from ${efforts.stripped} replies and ${thinking.removed} empty thinking blocks in ${sessionId}`,
-    )
+    const summary = {
+      sessionId,
+      syntheticRemoved: synthetic.removed,
+      effortStripped: efforts.stripped,
+      emptyThinkingRemoved: thinking.removed,
+    }
+    // 症状：2026-10-14 取证「续传到底有没有修过存档」只能去数 jsonl 里剩几个空块。
+    // 根因：打包版后端无控制台，console.warn 不落盘（同 providers.ts 的 [claude-result]）。
+    console.warn(`[claude-session-repair] removed. ${JSON.stringify(summary)}`)
+    void writeServerLog('INFO', '[claude-session-repair] removed.', summary)
     return synthetic.removed + efforts.stripped + thinking.removed
-  } catch {
+  } catch (error) {
+    void writeServerLog('WARN', '[claude-session-repair] repair skipped.', {
+      sessionId,
+      error: error instanceof Error ? error.message : String(error),
+    })
     return 0
   }
 }

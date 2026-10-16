@@ -1,6 +1,7 @@
 import { expect, test, type Locator, type Page } from '@playwright/test'
 import { installMockElectronBridge } from './electron-bridge.ts'
 import { createPlaywrightState } from './playwright-state.ts'
+import { appUrl } from './playwright-app-url.ts'
 
 const readComputedValue = async (locator: Locator, property: string) =>
   locator.evaluate((node, cssProperty) => getComputedStyle(node).getPropertyValue(cssProperty), property)
@@ -145,7 +146,7 @@ const mockAppApis = async (page: Page) => {
 test('shell stays flat and low-depth across themes', async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 960 })
   await mockAppApis(page)
-  await page.goto('http://localhost:5173')
+  await page.goto(appUrl)
   await page.locator('.card-shell').first().waitFor()
 
   const ambienceTab = page.locator('#app-tab-ambience')
@@ -202,7 +203,7 @@ test('shell stays flat and low-depth across themes', async ({ page }) => {
 test('navigation and mobile column chrome stay compact and GitHub-like', async ({ page }) => {
   await mockAppApis(page)
   await page.setViewportSize({ width: 1440, height: 960 })
-  await page.goto('http://localhost:5173')
+  await page.goto(appUrl)
   await page.locator('.workspace-column').first().waitFor()
 
   const topbar = page.locator('.app-topbar-frame')
@@ -281,7 +282,7 @@ test(`topbar tabs drag the window on press-and-move but still switch on a plain 
   // 桥接。这里验证手势会经桥接 begin/move/end、拖完不切标签，普通点击照常切换。
   await mockAppApis(page)
   await page.setViewportSize({ width: 1440, height: 960 })
-  await page.goto('http://localhost:5173')
+  await page.goto(appUrl)
   await page.locator('.workspace-column').first().waitFor()
   await page.evaluate((nextTheme) => {
     document.documentElement.setAttribute('data-theme', nextTheme)

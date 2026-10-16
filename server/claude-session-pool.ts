@@ -70,6 +70,13 @@ type PoolEntry = {
 
 const DEFAULT_IDLE_TIMEOUT_MS = 30 * 60_000
 
+// Stop 钩子报出后台任务 / session_crons 时的空闲回收上限。
+// 症状（2026-10-16）：父 agent 用 CronCreate 给后台 Workflow 定 3 小时自查闹钟，闹钟等待期间零 stdout，
+//   30 分钟空闲回收先把进程杀了，闹钟永远不响。
+// 为什么不是"有后台活就永不回收"：backgroundWorkPending 曾粘住不放（见 auto-urge 记录），必须有上界；
+//   4 小时 = 3 小时闹钟 + 余量。
+const DEFAULT_BACKGROUND_IDLE_TIMEOUT_MS = 4 * 60 * 60_000
+
 // Ceiling on idle lines held for a not-yet-woken stream. A long-lived process
 // can emit task bookkeeping for hours; keep the tail rather than growing without
 // bound.
@@ -109,6 +116,7 @@ export class ClaudeSessionPool {
   private readonly shouldIgnoreIdleLine: (line: string) => boolean
   private readonly interruptDrainTimeoutMs: number
   private readonly idleTimeoutMs: number
+  private readonly backgroundIdleTimeoutMs: number
   private readonly respawnCloseWaitMs: number
   private readonly onProcessAcquired?: (entry: ClaudeSessionPoolEntryView) => void
   private disposed = false
@@ -128,6 +136,7 @@ export class ClaudeSessionPool {
     // the owner card nor be replayed into a later genuine top-level turn.
     shouldIgnoreIdleLine?: (line: string) => boolean
     idleTimeoutMs?: number
+    backgroundIdleTimeoutMs?: number
     respawnCloseWaitMs?: number
     // 软中断后等 CLI 吐完收尾输出的上限。实测原生响应 1-2ms，收尾行紧随其后；
     // 超时说明这个进程已经不听话了，必须退回硬 kill——用户点停止的心理预期是
@@ -140,6 +149,10 @@ export class ClaudeSessionPool {
     this.shouldWakeOnLine = options.shouldWakeOnLine ?? (() => true)
     this.shouldIgnoreIdleLine = options.shouldIgnoreIdleLine ?? (() => false)
     this.idleTimeoutMs = options.idleTimeoutMs ?? resolveDefaultIdleTimeoutMs()
+    this.backgroundIdleTimeoutMs = Math.max(
+      this.idleTimeoutMs,
+      options.backgroundIdleTimeoutMs ?? DEFAULT_BACKGROUND_IDLE_TIMEOUT_MS,
+    )
     this.respawnCloseWaitMs = options.respawnCloseWaitMs ?? 5_000
     this.interruptDrainTimeoutMs =
       options.interruptDrainTimeoutMs ?? DEFAULT_INTERRUPT_DRAIN_TIMEOUT_MS
@@ -405,7 +418,12 @@ export class ClaudeSessionPool {
   ) {
     const entry = this.entries.get(key)
     if (entry && (!expectedChild || entry.child === expectedChild)) {
+      const wasBackgroundPending = entry.meta.backgroundWorkPending === true
       entry.meta = { ...entry.meta, ...patch }
+      // 回合收尾时空闲计时已按旧窗口开始；后台状态翻转要按新窗口重新计时。
+      if (wasBackgroundPending !== (entry.meta.backgroundWorkPending === true) && entry.idleTimer) {
+        this.armIdleTimer(entry)
+      }
     }
   }
 
@@ -647,7 +665,7 @@ export class ClaudeSessionPool {
       // Quiet for the whole idle window: no background task came back, recycle
       // the process. The next user message simply resumes via `-r <sessionId>`.
       this.removeEntry(entry, { kill: true, notifyPendingIdleClose: true })
-    }, this.idleTimeoutMs)
+    }, entry.meta.backgroundWorkPending === true ? this.backgroundIdleTimeoutMs : this.idleTimeoutMs)
   }
 
   private clearIdleTimer(entry: PoolEntry) {

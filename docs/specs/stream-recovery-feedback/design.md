@@ -184,3 +184,11 @@ Add/extend a `tests/theme-check.spec.ts` snapshot for `StreamingIndicator` with 
 
 - Low. No schema or persistence change. No new dependencies. Feature is additive and renders only while streaming.
 - Pitfall #60 alignment: we deliberately tie the `resumed` transition to the *same* predicate (`shouldResetStreamRecoveryAttemptsForText` / `shouldResetStreamRecoveryAttemptsForActivity`) that governs retry-budget reset, so placeholder reconnect deltas cannot flip the bubble to `resumed`.
+
+## 2026-10-16 fallback retry design
+
+- `fallback-retry.ts` owns the pure backoff schedule and consecutive-error normalization helpers; the schedule is 5, 10, 15, 20, 25, then 30 minutes and remains in renderer memory only.
+- `ChatCard` schedules fallback recovery through the existing manual-recovery path after a final error, while user stops, new sends, normal completion, and native-completed checks cancel/reset the pending timer.
+- Recovery banners use the existing localized stream-recovery copy and include the next retry time/attempt; no error path opens Settings or Routing automatically.
+- `workflow-failure-wake.ts` derives a single parent-card wake-up from workflow counts, deferring while the parent is streaming and deduplicating by workflow identity.
+- Persisted state and schemas remain backward-compatible: the new workflow count payload is optional and is not stored as a new recovery persistence field.

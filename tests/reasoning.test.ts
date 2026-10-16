@@ -11,6 +11,7 @@ import {
   normalizeReasoningEffort,
   normalizeReasoningEffortForModel,
   shouldEnableThinkingForDepthChange,
+  stepReasoningEffort,
   toClaudeEffortFlagValue,
   toCodexEffortValue,
 } from '../shared/reasoning.ts'
@@ -283,5 +284,23 @@ describe('reasoning helpers', () => {
     // 强制思考的模型本来就没有关着的状态，不需要也不该去动它的开关。
     assert.equal(shouldEnableThinkingForDepthChange(false, true), false)
     assert.equal(shouldEnableThinkingForDepthChange(true, true), false)
+  })
+
+  // 输入框旋钮悬停滚轮调档：一格一档，到头停住不回绕。
+  it('steps the reasoning tier one rung per wheel notch and clamps at both ends', () => {
+    const options = getReasoningOptionsForModel('codex', 'gpt-6-luna')
+    assert.equal(stepReasoningEffort(options, 'medium', 1), 'high')
+    assert.equal(stepReasoningEffort(options, 'medium', -1), 'low')
+    assert.equal(stepReasoningEffort(options, 'low', -1), null)
+    assert.equal(stepReasoningEffort(options, 'max', 1), null)
+    // 当前值不在列表里（存量脏值）时从最近的合法档位起步，而不是卡死。
+    assert.equal(stepReasoningEffort(options, 'ultra', -1), 'max')
+    assert.equal(stepReasoningEffort(getReasoningOptionsForModel('gemini', ''), 'auto', 1), null)
+    // auto = 跟随 CLI 默认（比 low 深），不能是刻度最左端：滚轮永不进入 auto。
+    const claude = getReasoningOptionsForModel('claude', 'claude-opus-5-5')
+    assert.equal(stepReasoningEffort(claude, 'low', -1), null)
+    assert.equal(stepReasoningEffort(claude, 'auto', 1), 'high')
+    assert.equal(stepReasoningEffort(claude, 'auto', -1), 'medium')
+    assert.equal(stepReasoningEffort(claude, 'max', 1), 'ultracode')
   })
 })

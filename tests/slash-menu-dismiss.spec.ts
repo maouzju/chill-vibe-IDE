@@ -2,6 +2,7 @@ import { expect, test, type Page } from '@playwright/test'
 
 import { installMockElectronBridge } from './electron-bridge.ts'
 import { createPlaywrightState } from './playwright-state.ts'
+import { appUrl } from './playwright-app-url.ts'
 
 const getActiveComposerTextarea = (page: Page) =>
   page.locator('.pane-tab-panel.is-active .composer textarea')
@@ -96,7 +97,7 @@ const installMockApis = async (page: Page) => {
 
 test('slash command menu closes when clicking outside', async ({ page }) => {
   await installMockApis(page)
-  await page.goto('http://localhost:5173')
+  await page.goto(appUrl)
 
   const textarea = getActiveComposerTextarea(page)
   await expect(textarea).toBeVisible()
@@ -115,7 +116,7 @@ test('slash command menu closes when clicking outside', async ({ page }) => {
 
 test('slash command menu closes on Escape key', async ({ page }) => {
   await installMockApis(page)
-  await page.goto('http://localhost:5173')
+  await page.goto(appUrl)
 
   const textarea = getActiveComposerTextarea(page)
   await expect(textarea).toBeVisible()
@@ -133,7 +134,7 @@ test('slash command menu closes on Escape key', async ({ page }) => {
 
 test('slash command menu reopens when user continues typing after dismiss', async ({ page }) => {
   await installMockApis(page)
-  await page.goto('http://localhost:5173')
+  await page.goto(appUrl)
 
   const textarea = getActiveComposerTextarea(page)
   await expect(textarea).toBeVisible()
@@ -146,7 +147,7 @@ test('slash command menu reopens when user continues typing after dismiss', asyn
   await page.locator('.card-shell').first().click({ position: { x: 10, y: 10 } })
   await expect(slashMenu).not.toBeVisible()
 
-  // Focus back and type more â€?menu should reopen
+  // Focus back and type more ï¿½?menu should reopen
   await textarea.click()
   await page.keyboard.type('h')
   await expect(slashMenu).toBeVisible()

@@ -3,6 +3,7 @@ import { expect, test, type Page } from '@playwright/test'
 import { createDefaultState } from '../shared/default-state.ts'
 import type { AppState } from '../shared/schema.ts'
 import { installMockElectronBridge } from './electron-bridge.ts'
+import { appUrl } from './playwright-app-url.ts'
 
 const onboardingStorageKey = 'chill-vibe:onboarding:v1'
 const workspacePath = 'd:\\Git\\chill-vibe'
@@ -143,7 +144,7 @@ test('first open wizard auto-runs setup, supports language flags, and can import
     })
   })
 
-  await page.goto('http://localhost:5173')
+  await page.goto(appUrl)
 
   await expect(page.getByRole('dialog')).toBeVisible()
   await expect.poll(() => setupRuns).toBe(1)
@@ -246,7 +247,7 @@ test('first open wizard skips setup, lets the account step be skipped, and confi
     await route.fulfill({ status: 500, json: { message: 'should not run' } })
   })
 
-  await page.goto('http://localhost:5173')
+  await page.goto(appUrl)
 
   await expect(page.getByRole('dialog')).toBeVisible()
   // 环境就绪、没有 cc-switch：直接落在「连账号」，没 key 也能跳过，然后确认默认模型。

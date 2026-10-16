@@ -1,9 +1,9 @@
 import { expect, test, type Page } from '@playwright/test'
 import { installMockElectronBridge } from './electron-bridge.ts'
 import { createDefaultState } from '../shared/default-state.ts'
+import { DEFAULT_GEMINI_MODEL } from '../shared/models.ts'
 import type { AppState } from '../shared/schema.ts'
-
-const appUrl = process.env.PLAYWRIGHT_APP_URL ?? 'http://127.0.0.1:5173'
+import { appUrl } from './playwright-app-url.ts'
 
 const mockApis = async (page: Page, theme: 'dark' | 'light') => {
   await installMockElectronBridge(page)
@@ -67,7 +67,7 @@ for (const theme of ['dark', 'light'] as const) {
 
     await expect
       .poll(() => getState().settings.requestModels)
-      .toEqual({ codex: 'gpt-6.1-sol', claude: 'claude-sonnet-5-5' })
+      .toEqual({ codex: 'gpt-6.1-sol', claude: 'claude-sonnet-5-5', gemini: DEFAULT_GEMINI_MODEL })
     expect(getState().settings.acknowledgedModelUpgrades).toEqual(
       expect.arrayContaining(['codex:gpt-6-sol>gpt-6.1-sol', 'claude:claude-sonnet-5>claude-sonnet-5-5']),
     )
@@ -89,7 +89,8 @@ test('keeping the current model dismisses the prompt for good without touching t
   await expect
     .poll(() => getState().settings.acknowledgedModelUpgrades.length)
     .toBeGreaterThanOrEqual(2)
-  expect(getState().settings.requestModels).toEqual({ codex: 'gpt-6-sol', claude: 'claude-sonnet-5' })
+  // Gemini 由默认值补上且已是最新，弹窗两条路径都不该碰它。
+  expect(getState().settings.requestModels).toEqual({ codex: 'gpt-6-sol', claude: 'claude-sonnet-5', gemini: DEFAULT_GEMINI_MODEL })
 
   await page.reload()
   await expect(page.getByRole('dialog', { name: /有更强的新模型|A stronger model is available/ })).toHaveCount(0)

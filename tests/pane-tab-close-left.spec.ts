@@ -2,6 +2,7 @@ import { expect, test, type Page } from '@playwright/test'
 
 import { installMockElectronBridge } from './electron-bridge.ts'
 import { createPlaywrightState } from './playwright-state.ts'
+import { appUrl } from './playwright-app-url.ts'
 
 /**
  * tab 右键菜单的「关闭左侧」。和「关闭右侧」对称，但它的边界条件相反：
@@ -97,7 +98,6 @@ const mockAppApis = async (page: Page) => {
 }
 
 // 127.0.0.1 而不是 localhost：见 automation-board-absorb-back.spec.ts 的同名注释。
-const appUrl = 'http://127.0.0.1:5173'
 
 test('the tab context menu closes every tab to the left of the clicked one', async ({ page }) => {
   const mock = await mockAppApis(page)

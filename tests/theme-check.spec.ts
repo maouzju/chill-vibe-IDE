@@ -19,8 +19,7 @@ import type { AppState, SetupStatus, SlashCommand } from '../shared/schema.ts'
 import { installMockElectronBridge } from './electron-bridge.ts'
 import { createPlaywrightState } from './playwright-state.ts'
 import { revealSettingsItem, switchSettingsTheme } from './settings-panel-helpers.ts'
-
-const appUrl = process.env.PLAYWRIGHT_APP_URL ?? 'http://localhost:5173'
+import { appUrl } from './playwright-app-url.ts'
 
 for (const theme of ['dark', 'light'] as const) {
   test(`default admin setting in ${theme}`, async ({ page }) => {
@@ -2591,7 +2590,8 @@ test('proxy stats panel keeps the filter row readable in both themes', async ({ 
 
 test('routing providers panel keeps the same card rhythm in both themes', async ({ page }) => {
   await mockAppApis(page)
-  await page.setViewportSize({ width: 1280, height: 1400 })
+  // \u52a0\u4e86 Gemini \u5361\u540e\u9762\u677f\u7ea6 1.36k \u9ad8\uff0c1400 \u7684\u89c6\u53e3\u4f1a\u88ab\u5916\u5c42\u6eda\u52a8\u533a\u88c1\u6389 Gemini \u5361\u5e95\u90e8\uff1b\u653e\u9ad8\u5230\u6574\u5757\u5165\u955c\u3002
+  await page.setViewportSize({ width: 1280, height: 1800 })
   await page.goto(appUrl)
 
   const routingTab = page.getByRole('tab', { name: /\u8def\u7531|\u63a5\u53e3|Routing/ })

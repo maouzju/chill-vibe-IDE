@@ -4,8 +4,7 @@ import { createPane } from '../shared/default-state.ts'
 import type { AppState, ChatMessage, SlashCommand } from '../shared/schema.ts'
 import { installMockElectronBridge } from './electron-bridge.ts'
 import { createPlaywrightState } from './playwright-state.ts'
-
-const appUrl = 'http://localhost:5173'
+import { appUrl } from './playwright-app-url.ts'
 
 const slashCommands: SlashCommand[] = [
   {

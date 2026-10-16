@@ -1,6 +1,7 @@
 import { expect, test, type Page } from '@playwright/test'
 import { installMockElectronBridge } from './electron-bridge.ts'
 import { revealSettingsItem } from './settings-panel-helpers.ts'
+import { appUrl } from './playwright-app-url.ts'
 
 const routingTabPattern = /\u8def\u7531|\u63a5\u53e3|Routing/
 const settingsTabPattern = /\u8bbe\u7f6e|Settings/
@@ -104,7 +105,7 @@ const mockBaseApis = async (page: Page, initialState = createState()) => {
 }
 
 const openRoutingPanel = async (page: Page) => {
-  await page.goto('http://localhost:5173')
+  await page.goto(appUrl)
   await page.getByRole('tab', { name: routingTabPattern }).click()
   await expect(page.locator('#app-panel-routing')).toBeVisible()
 }
@@ -181,14 +182,18 @@ test('keeps Claude and Codex in two columns on desktop and one column on narrow 
   await page.setViewportSize({ width: 1280, height: 900 })
   await openRoutingPanel(page)
 
-  // 设置页「连接账号」也复用这两块 provider 卡（隐藏着），所以要圈在接口页里数。
-  await expect(page.locator('#app-panel-routing .switch-provider-section')).toHaveCount(2)
+  // 设置页「连接账号」也复用这些 provider 卡（隐藏着），所以要圈在接口页里数。
+  // 第三块是 Gemini：两列网格里落到第二行左列。
+  await expect(page.locator('#app-panel-routing .switch-provider-section')).toHaveCount(3)
 
   const desktopClaudeRect = await readProviderSectionRect(page, 0)
   const desktopCodexRect = await readProviderSectionRect(page, 1)
+  const desktopGeminiRect = await readProviderSectionRect(page, 2)
 
   expect(Math.abs(desktopClaudeRect.y - desktopCodexRect.y)).toBeLessThan(12)
   expect(Math.abs(desktopClaudeRect.x - desktopCodexRect.x)).toBeGreaterThan(160)
+  expect(Math.abs(desktopGeminiRect.x - desktopClaudeRect.x)).toBeLessThan(12)
+  expect(desktopGeminiRect.y).toBeGreaterThan(desktopClaudeRect.y + desktopClaudeRect.height + 8)
 
   await page.setViewportSize({ width: 640, height: 900 })
 
@@ -211,9 +216,10 @@ test('keeps routing surfaces readable in dark and light themes', async ({ page }
   const darkEmptyBackground = await readComputedRgb(page, '.provider-profile-empty', 'background-color')
   const draftAddButtons = page.locator('#app-panel-routing .provider-profile-card.is-draft .btn-primary')
 
-  await expect(draftAddButtons).toHaveCount(2)
+  await expect(draftAddButtons).toHaveCount(3)
   await expect(draftAddButtons.first()).toBeDisabled()
   await expect(draftAddButtons.nth(1)).toBeDisabled()
+  await expect(draftAddButtons.nth(2)).toBeDisabled()
 
   await proxySubTab.click()
   const darkActiveToggleBackground = await readComputedRgb(
@@ -249,6 +255,7 @@ test('keeps routing surfaces readable in dark and light themes', async ({ page }
   await providersSubTab.click()
   await expect(draftAddButtons.first()).toBeDisabled()
   await expect(draftAddButtons.nth(1)).toBeDisabled()
+  await expect(draftAddButtons.nth(2)).toBeDisabled()
 })
 
 test('keeps provider profile name fields inline on desktop and stacked on narrow screens in both themes', async ({
@@ -325,7 +332,7 @@ test('hides the missing install action but keeps CLI updates available when the 
     })
   })
 
-  await page.goto('http://localhost:5173')
+  await page.goto(appUrl)
   await page.getByRole('tab', { name: settingsTabPattern }).click()
   await expect(page.locator('#app-panel-settings')).toBeVisible()
   await expect.poll(() => onboardingStatusRequests).toBeGreaterThan(0)
@@ -353,7 +360,7 @@ test('waits for onboarding detection before showing the setup panel', async ({ p
     })
   })
 
-  await page.goto('http://localhost:5173')
+  await page.goto(appUrl)
   await page.getByRole('tab', { name: settingsTabPattern }).click()
   await expect(page.locator('#app-panel-settings')).toBeVisible()
   // 「环境设置」项要等检测结果才出现；先把它所在的「开始使用 → 高级设置」展开着等。
@@ -377,7 +384,7 @@ test('lists only missing tools in the setup panel and keeps a single install but
     })
   })
 
-  await page.goto('http://localhost:5173')
+  await page.goto(appUrl)
   await page.getByRole('tab', { name: settingsTabPattern }).click()
 
   const settingsPanel = page.locator('#app-panel-settings')
@@ -414,7 +421,7 @@ test('CLI update form defaults to latest and can target a specific CLI version',
     })
   })
 
-  await page.goto('http://localhost:5173')
+  await page.goto(appUrl)
   await page.getByRole('tab', { name: settingsTabPattern }).click()
 
   const settingsPanel = page.locator('#app-panel-settings')
@@ -501,7 +508,7 @@ test('shows a readable message when an uploaded cc-switch export is too large', 
 test('shows the auto-retry controls on routing instead of settings', async ({ page }) => {
   await mockBaseApis(page)
 
-  await page.goto('http://localhost:5173')
+  await page.goto(appUrl)
 
   await page.getByRole('tab', { name: settingsTabPattern }).click()
   await expect(page.locator('#app-panel-settings')).toBeVisible()
@@ -540,7 +547,7 @@ test('downloads the compatible CLI build and switches to it from the routing pan
 
   await page.setViewportSize({ width: 1280, height: 900 })
   // CLI 兼容版本只在设置「开始使用」里（09-23 起不再在接口页重复摆一份）。
-  await page.goto('http://localhost:5173')
+  await page.goto(appUrl)
   await page.getByRole('tab', { name: settingsTabPattern }).click()
   await revealSettingsItem(page, 'cli-compat')
 
@@ -585,7 +592,7 @@ test('shows the verified CLI range and does not nag when the system CLI is insid
   )
 
   await page.setViewportSize({ width: 1280, height: 900 })
-  await page.goto('http://localhost:5173')
+  await page.goto(appUrl)
   await page.getByRole('tab', { name: settingsTabPattern }).click()
   await revealSettingsItem(page, 'cli-compat')
 

@@ -3,10 +3,9 @@ import { expect, test, type Page } from '@playwright/test'
 import type { AppState, ChatMessage } from '../shared/schema.ts'
 import { installMockElectronBridge } from './electron-bridge.ts'
 import { createPlaywrightState } from './playwright-state.ts'
+import { appUrl } from './playwright-app-url.ts'
 
 type ThemeName = 'dark' | 'light'
-
-const appUrl = process.env.PLAYWRIGHT_APP_URL ?? 'http://localhost:5173'
 
 const getActivePaneMessageList = (page: Page) =>
   page.locator('.pane-tab-panel.is-active .message-list').first()

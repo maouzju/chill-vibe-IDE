@@ -2,8 +2,7 @@ import { expect, test, type Locator, type Page } from '@playwright/test'
 
 import { installMockElectronBridge } from './electron-bridge.ts'
 import { createPlaywrightState } from './playwright-state.ts'
-
-const appUrl = process.env.PLAYWRIGHT_APP_URL ?? 'http://localhost:5173'
+import { appUrl } from './playwright-app-url.ts'
 
 const STATS_MODEL = '__stats_tool__'
 

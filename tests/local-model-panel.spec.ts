@@ -3,6 +3,7 @@ import { installMockElectronBridge } from './electron-bridge.ts'
 import { createDefaultState } from '../shared/default-state.ts'
 import { createPlaywrightState } from './playwright-state.ts'
 import { revealSettingsItem } from './settings-panel-helpers.ts'
+import { appUrl } from './playwright-app-url.ts'
 
 const settingsTabPattern = /设置|Settings/
 const localModelsPattern = /本地模型|Local models/
@@ -51,7 +52,7 @@ const mockBaseApis = async (page: Page) => {
 // 它钉在设置页，防止以后有人又按"它跟 API 配置是一类"的理由挪回去。
 test('local model section lives in the settings panel, even without Ollama', async ({ page }) => {
   await mockBaseApis(page)
-  await page.goto('http://localhost:5173')
+  await page.goto(appUrl)
 
   await page.getByRole('tab', { name: settingsTabPattern }).click()
   const panel = page.locator('#app-panel-settings')
@@ -172,7 +173,7 @@ const mockSeededApis = async (page: Page) => {
 // 设置里明明存住了，卡上却永远选不到）。
 test('a saved local model entry reaches the card model picker', async ({ page }) => {
   await mockSeededApis(page)
-  await page.goto('http://localhost:5173')
+  await page.goto(appUrl)
 
   const modelSelect = page.locator('.model-select').first()
   await expect(modelSelect).toBeVisible()

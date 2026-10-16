@@ -3,6 +3,7 @@ import { expect, test, type Page } from '@playwright/test'
 import { WEATHER_TOOL_MODEL } from '../shared/models.ts'
 import { installMockElectronBridge } from './electron-bridge.ts'
 import { createPlaywrightState } from './playwright-state.ts'
+import { appUrl } from './playwright-app-url.ts'
 
 type ThemeName = 'dark' | 'light'
 
@@ -131,7 +132,7 @@ const installMockApis = async (page: Page, theme: ThemeName) => {
 for (const theme of ['dark', 'light'] as const) {
   test(`weather tool cards keep their ambience glow visible without a redundant model picker in ${theme} theme`, async ({ page }) => {
     await installMockApis(page, theme)
-    await page.goto('http://localhost:5173')
+    await page.goto(appUrl)
 
     const weatherCard = page.locator('[data-weather-card]').first()
     const ambientGlow = page.locator('.weather-ambient-glow').first()

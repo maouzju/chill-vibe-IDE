@@ -4,10 +4,9 @@ import { createPane, createSplit } from '../shared/default-state.ts'
 import type { AppState, SlashCommand } from '../shared/schema.ts'
 import { installMockElectronBridge } from './electron-bridge.ts'
 import { createPlaywrightState } from './playwright-state.ts'
+import { appUrl } from './playwright-app-url.ts'
 
 type ThemeName = 'dark' | 'light'
-
-const appUrl = 'http://localhost:5173'
 
 const slashCommands: SlashCommand[] = [
   {

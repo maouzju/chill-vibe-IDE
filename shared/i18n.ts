@@ -347,6 +347,7 @@ type LocaleText = {
   thinkingHint: string
   thinkingDepthLabel: string
   thinkingDepthHint: string
+  reasoningKnobTitle: (tier: string, level: number | null, levels: number) => string
   thinkingDepthInactiveHint: string
   composerSettings: string
   stickyNotePlaceholder: string
@@ -532,6 +533,7 @@ type LocaleText = {
   streamRecoveryNativeReconnecting: string
   streamRecoveryResumed: string
   streamRecoveryFailed: string
+  streamRecoveryAutoRetryScheduled: (time: string, attempt: number) => string
   streamRecoveryManualResume: string
 }
 
@@ -788,6 +790,8 @@ const localeTextByLanguage: Record<AppLanguage, LocaleText> = {
     thinking: '思考',
     thinkingHint: '让模型先想再答。答得更稳，但更慢也更费额度；部分模型强制开启，关不掉。',
     thinkingDepthLabel: '思考深度',
+    reasoningKnobTitle: (tier, level, levels) =>
+      `设置 · 思考深度：${tier}${level === null ? '' : `（第 ${level}/${levels} 档）`} · 悬停滚轮调节`,
     thinkingDepthHint: '思考多久：低=快而省，高/最高=遇到难题更靠谱但明显更慢。简单活儿用低就够。',
     thinkingDepthInactiveHint: '思考已关，这一档暂时不生效；直接选一个深度就会自动开启思考。',
     composerSettings: '对话设置',
@@ -1105,6 +1109,7 @@ const localeTextByLanguage: Record<AppLanguage, LocaleText> = {
     streamRecoveryResumed: '已恢复',
     streamRecoveryNativeReconnecting: '正在重连…',
     streamRecoveryFailed: '重连失败',
+    streamRecoveryAutoRetryScheduled: (time, attempt) => `重连失败 · ${time} 自动重试（第 ${attempt} 次）`,
     streamRecoveryManualResume: '手动续传',
   },
   en: {
@@ -1370,6 +1375,8 @@ const localeTextByLanguage: Record<AppLanguage, LocaleText> = {
     thinking: 'Thinking',
     thinkingHint: 'Let the model reason before answering. Steadier results, but slower and more expensive; some models always think and cannot turn it off.',
     thinkingDepthLabel: 'Thinking depth',
+    reasoningKnobTitle: (tier, level, levels) =>
+      `Settings · Thinking depth: ${tier}${level === null ? '' : ` (${level}/${levels})`} · scroll to adjust`,
     thinkingDepthHint: 'How long it reasons: low is fast and cheap, high/max holds up better on hard problems but is noticeably slower.',
     thinkingDepthInactiveHint: 'Thinking is off, so this tier is not in effect yet — picking a depth turns thinking back on.',
     composerSettings: 'Chat settings',
@@ -1701,6 +1708,7 @@ const localeTextByLanguage: Record<AppLanguage, LocaleText> = {
     streamRecoveryResumed: 'Resumed',
     streamRecoveryNativeReconnecting: 'Reconnecting…',
     streamRecoveryFailed: 'Reconnect failed',
+    streamRecoveryAutoRetryScheduled: (time, attempt) => `Reconnect failed · auto-retry at ${time} (#${attempt})`,
     streamRecoveryManualResume: 'Resume manually',
   },
 }

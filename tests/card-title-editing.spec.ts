@@ -2,6 +2,7 @@ import { expect, test, type Page } from '@playwright/test'
 
 import { installMockElectronBridge } from './electron-bridge.ts'
 import { createPlaywrightState } from './playwright-state.ts'
+import { appUrl } from './playwright-app-url.ts'
 
 type ThemeName = 'dark' | 'light'
 
@@ -206,7 +207,7 @@ const installMockApis = async (
 for (const theme of ['dark', 'light'] as const) {
   test(`clicking a pane tab activates it while the content header stays title-free in ${theme} theme`, async ({ page }) => {
     await installMockApis(page, theme)
-    await page.goto('http://localhost:5173')
+    await page.goto(appUrl)
 
     const featureTab = page.locator('.pane-tab', { hasText: 'Feature Chat' })
     const reviewTab = page.locator('.pane-tab', { hasText: 'Review' })
@@ -228,7 +229,7 @@ for (const theme of ['dark', 'light'] as const) {
 
   test(`clicking a pane tab close button closes only that tab in ${theme} theme`, async ({ page }) => {
     await installMockApis(page, theme)
-    await page.goto('http://localhost:5173')
+    await page.goto(appUrl)
 
     const featureTab = page.locator('.pane-tab', { hasText: 'Feature Chat' })
     const reviewTab = page.locator('.pane-tab', { hasText: 'Review' })
@@ -248,7 +249,7 @@ for (const theme of ['dark', 'light'] as const) {
 
   test(`clicking a pane tab lets the user type immediately in ${theme} theme`, async ({ page }) => {
     await installMockApis(page, theme)
-    await page.goto('http://localhost:5173')
+    await page.goto(appUrl)
 
     const reviewTab = page.locator('.pane-tab', { hasText: 'Review' })
     const composer = page
@@ -268,7 +269,7 @@ for (const theme of ['dark', 'light'] as const) {
 
   test(`composer clicks recover focus when a stray non-modal layer sits above it in ${theme} theme`, async ({ page }) => {
     await installMockApis(page, theme)
-    await page.goto('http://localhost:5173')
+    await page.goto(appUrl)
 
     const composer = page
       .locator('.pane-view')
@@ -304,7 +305,7 @@ for (const theme of ['dark', 'light'] as const) {
 
   test(`composer clicks recover focus when a stale invisible button sits above it in ${theme} theme`, async ({ page }) => {
     await installMockApis(page, theme)
-    await page.goto('http://localhost:5173')
+    await page.goto(appUrl)
 
     const composer = page
       .locator('.pane-view')
@@ -344,7 +345,7 @@ for (const theme of ['dark', 'light'] as const) {
 
   test(`composer hover recovers when a stale transparent layer sits above it in ${theme} theme`, async ({ page }) => {
     await installMockApis(page, theme)
-    await page.goto('http://localhost:5173')
+    await page.goto(appUrl)
 
     const composer = page
       .locator('.pane-view')
@@ -380,7 +381,7 @@ for (const theme of ['dark', 'light'] as const) {
 
   test(`composer focus rescue does not steal focus from a visible control above it in ${theme} theme`, async ({ page }) => {
     await installMockApis(page, theme)
-    await page.goto('http://localhost:5173')
+    await page.goto(appUrl)
 
     const composer = page
       .locator('.pane-view')
@@ -423,7 +424,7 @@ for (const theme of ['dark', 'light'] as const) {
     page,
   }) => {
     await installMockApis(page, theme)
-    await page.goto('http://localhost:5173')
+    await page.goto(appUrl)
 
     const composer = page
       .locator('.pane-view')
@@ -474,7 +475,7 @@ for (const theme of ['dark', 'light'] as const) {
     // 窗口级陈旧 hit-test 无效；连续误路由必须①每次都留取证事件②在面板重建
     // 后仍误路由时请求主进程抖动窗口。这里断言的是渲染层发出的两类事件。
     await installMockApis(page, theme)
-    await page.goto('http://localhost:5173')
+    await page.goto(appUrl)
 
     const composer = page
       .locator('.pane-view')
@@ -544,7 +545,7 @@ for (const theme of ['dark', 'light'] as const) {
     // 重挂 ChatCard（新的 .card-shell）；同一张卡前后两次孤立的误路由绝不能被算成
     // "两张卡都误路由"，否则一次 tab 往返就把窗口抖动的门槛降到两次孤立误路由。
     await installMockApis(page, theme)
-    await page.goto('http://localhost:5173')
+    await page.goto(appUrl)
 
     const pane = page.locator('.pane-view').first()
     const activeComposer = pane.locator('.pane-content > .pane-tab-panel.is-active .composer textarea')
@@ -613,7 +614,7 @@ for (const theme of ['dark', 'light'] as const) {
     page,
   }) => {
     await installMockApis(page, theme)
-    await page.goto('http://localhost:5173')
+    await page.goto(appUrl)
 
     const composer = page
       .locator('.pane-view')
@@ -651,7 +652,7 @@ for (const theme of ['dark', 'light'] as const) {
     page,
   }) => {
     await installMockApis(page, theme)
-    await page.goto('http://localhost:5173')
+    await page.goto(appUrl)
 
     const composer = page
       .locator('.pane-view')
@@ -715,7 +716,7 @@ for (const theme of ['dark', 'light'] as const) {
     const state = createPlaywrightState(baseState)
 
     await installMockApis(page, theme, { state })
-    await page.goto('http://localhost:5173')
+    await page.goto(appUrl)
 
     const firstComposer = page
       .locator('.pane-view')
@@ -771,7 +772,7 @@ for (const theme of ['dark', 'light'] as const) {
     page,
   }) => {
     await installMockApis(page, theme)
-    await page.goto('http://localhost:5173')
+    await page.goto(appUrl)
 
     const composer = page
       .locator('.pane-view')
@@ -810,7 +811,7 @@ for (const theme of ['dark', 'light'] as const) {
 
   test(`composer clicks recover focus after focus already left the same card in ${theme} theme`, async ({ page }) => {
     await installMockApis(page, theme)
-    await page.goto('http://localhost:5173')
+    await page.goto(appUrl)
 
     const composer = page
       .locator('.pane-view')
@@ -880,7 +881,7 @@ for (const theme of ['dark', 'light'] as const) {
     page,
   }) => {
     await installMockApis(page, theme)
-    await page.goto('http://localhost:5173')
+    await page.goto(appUrl)
 
     const composer = page
       .locator('.pane-view')
@@ -928,7 +929,7 @@ for (const theme of ['dark', 'light'] as const) {
 
   test(`dragging a pane tab does not switch focus to its composer in ${theme} theme`, async ({ page }) => {
     await installMockApis(page, theme)
-    await page.goto('http://localhost:5173')
+    await page.goto(appUrl)
 
     const featureTab = page.locator('.pane-tab', { hasText: 'Feature Chat' })
     const reviewTab = page.locator('.pane-tab', { hasText: 'Review' })
@@ -952,7 +953,7 @@ for (const theme of ['dark', 'light'] as const) {
 
   test(`double-clicking empty pane tab bar space opens a new tab in ${theme} theme`, async ({ page }) => {
     await installMockApis(page, theme)
-    await page.goto('http://localhost:5173')
+    await page.goto(appUrl)
 
     const tabStrip = page.locator('.pane-tab-strip').first()
     const existingTabs = page.locator('.pane-tab')
@@ -983,7 +984,7 @@ for (const theme of ['dark', 'light'] as const) {
 
   test(`slight pointer movement while pressing a pane tab still activates it in ${theme} theme`, async ({ page }) => {
     await installMockApis(page, theme)
-    await page.goto('http://localhost:5173')
+    await page.goto(appUrl)
 
     const featureTab = page.locator('.pane-tab', { hasText: 'Feature Chat' })
     const reviewTab = page.locator('.pane-tab', { hasText: 'Review' })
@@ -1006,7 +1007,7 @@ for (const theme of ['dark', 'light'] as const) {
   test(`pane tabs stay reachable without horizontal wheel panning in ${theme} theme`, async ({ page }) => {
     await installMockApis(page, theme, { state: createOverflowingTabState(theme) })
     await page.setViewportSize({ width: 900, height: 700 })
-    await page.goto('http://localhost:5173')
+    await page.goto(appUrl)
 
     const tabStrip = page.locator('.pane-tab-strip').first()
     const lastTab = page.locator('.pane-tab', { hasText: 'Release verification follow-up' })
@@ -1037,7 +1038,7 @@ for (const theme of ['dark', 'light'] as const) {
 
   test(`model picker docks beside the composer while quick tool entries live in the empty chat canvas in ${theme} theme`, async ({ page }) => {
     await installMockApis(page, theme, { state: createToolLauncherState(theme) })
-    await page.goto('http://localhost:5173')
+    await page.goto(appUrl)
 
     const paneView = page.locator('.pane-view').first()
     const composerRow = paneView.locator('.composer-input-row')
@@ -1090,7 +1091,7 @@ for (const theme of ['dark', 'light'] as const) {
 
     await installMockApis(page, theme, { state })
     await page.setViewportSize({ width: 430, height: 820 })
-    await page.goto('http://localhost:5173')
+    await page.goto(appUrl)
 
     const toolButtons = page.locator('.pane-view').first().locator('.chat-empty-tool-button')
     await expect(toolButtons).toHaveCount(7)

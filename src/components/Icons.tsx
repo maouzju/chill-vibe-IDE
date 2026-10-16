@@ -207,6 +207,55 @@ export const SlidersIcon = (props: SVGProps<SVGSVGElement>) => (
   </BaseIcon>
 )
 
+// 思考档位旋钮：外圈 270° 粗弧按档位填满，圈内直接写档位序号 1..N。
+// 症状：2026-10-16 用户反馈细刻度 + 指针「好仔细看才知道是几级」——6 档只差一根 2px 刻度。
+// 序号从「低」=1 起算，所有模型的档位表都从 low 开始，同一数字跨模型同一档；弧长按本模型档数算，满弧 = 已到顶。
+// index 为 -1 表示「自动」（跟随 CLI 默认，不在刻度上）：弧全空，圈内写 A。
+// 弧用 pathLength + dasharray 画而不是每档重算 path，滚轮调档时弧长能平滑过渡。
+const REASONING_KNOB_ARC = 'M5.35 18.65 A9.4 9.4 0 1 1 18.65 18.65'
+
+export const ReasoningKnobIcon = ({
+  steps,
+  index,
+  ...props
+}: SVGProps<SVGSVGElement> & { steps: number; index: number }) => {
+  const filled = index >= 0 && steps > 0 ? (Math.min(index + 1, steps) / steps) * 100 : 0
+  return (
+    <svg viewBox="0 0 24 24" fill="none" aria-hidden="true" {...props}>
+      <path
+        className="knob-track"
+        d={REASONING_KNOB_ARC}
+        stroke="currentColor"
+        strokeWidth="2.8"
+        strokeLinecap="round"
+      />
+      {index >= 0 ? (
+        <path
+          className="knob-fill"
+          d={REASONING_KNOB_ARC}
+          pathLength={100}
+          stroke="currentColor"
+          strokeWidth="2.8"
+          strokeLinecap="round"
+          style={{ strokeDasharray: `${filled} 100` }}
+        />
+      ) : null}
+      <text
+        className={index < 0 ? 'knob-level knob-auto' : 'knob-level'}
+        x="12"
+        y="12.5"
+        textAnchor="middle"
+        dominantBaseline="central"
+        fill="currentColor"
+        fontSize="11.5"
+        fontWeight="700"
+      >
+        {index < 0 ? 'A' : index + 1}
+      </text>
+    </svg>
+  )
+}
+
 export const HeadphonesIcon = (props: SVGProps<SVGSVGElement>) => (
   <BaseIcon {...props}>
     <path d="M3 18v-6a9 9 0 0 1 18 0v6" />

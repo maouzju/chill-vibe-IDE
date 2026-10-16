@@ -2,10 +2,9 @@ import { expect, test, type Page } from '@playwright/test'
 
 import { installMockElectronBridge } from './electron-bridge.ts'
 import { createPlaywrightState } from './playwright-state.ts'
+import { appUrl } from './playwright-app-url.ts'
 
 type ThemeName = 'dark' | 'light'
-
-const appUrl = process.env.PLAYWRIGHT_APP_URL ?? 'http://localhost:5173'
 
 const installMockApis = async (page: Page, theme: ThemeName) => {
   await installMockElectronBridge(page)

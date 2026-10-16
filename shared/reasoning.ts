@@ -168,6 +168,33 @@ export const getReasoningOptionsForModel = (
     : getReasoningOptions(provider, language)
 }
 
+// 输入框旋钮的滚轮调档：返回相邻一档，到两端返回 null（不回绕，免得从最高
+// 一滚跳回最低）。当前值不在列表里时按最高档处理，向下滚即落到合法档位。
+// `auto` 不在刻度上：它是「省略 --effort 跟随 CLI 默认」（见 toClaudeEffortFlagValue），
+// 默认档比 low 深，排在最左会让「往下滚」反而想得更多。滚轮永不进入 auto；
+// 从 auto 出发按「介于 medium 与 high 之间」处理。
+export const stepReasoningEffort = (
+  options: readonly { value: ReasoningEffort }[],
+  current: string,
+  direction: 1 | -1,
+): ReasoningEffort | null => {
+  const dial = options.filter((option) => option.value !== 'auto')
+  if (dial.length < 2) {
+    return null
+  }
+  if (current === 'auto') {
+    const target = direction === 1 ? 'high' : 'medium'
+    return dial.find((option) => option.value === target)?.value ?? dial[0]!.value
+  }
+  const index = dial.findIndex((option) => option.value === current)
+  const from = index === -1 ? dial.length - 1 : index
+  const next = from + direction
+  if (index === -1 && direction === -1) {
+    return dial[from]!.value
+  }
+  return next >= 0 && next < dial.length ? dial[next]!.value : null
+}
+
 export const normalizeReasoningEffort = (
   provider: Provider,
   effort?: string | null,

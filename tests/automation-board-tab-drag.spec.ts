@@ -3,6 +3,7 @@ import { expect, test, type Page } from '@playwright/test'
 import { AUTOMATIONBOARD_TOOL_MODEL } from '../shared/models.ts'
 import { installMockElectronBridge } from './electron-bridge.ts'
 import { createPlaywrightState } from './playwright-state.ts'
+import { appUrl } from './playwright-app-url.ts'
 
 const mockAppApis = async (page: Page) => {
   await installMockElectronBridge(page)
@@ -103,9 +104,7 @@ test('dragging a chat tab keeps the automation board on screen so it can be the 
 }) => {
   const mock = await mockAppApis(page)
   await page.setViewportSize({ width: 1440, height: 960 })
-  // 127.0.0.1 而不是 localhost：Windows 上 localhost 先解析到 ::1，另一个
-  // checkout 的 Vite 常年占着 [::1]:5173，那样这个 spec 会静悄悄地验证别人的代码。
-  await page.goto('http://127.0.0.1:5173')
+  await page.goto(appUrl)
 
   const board = page.locator('.automation-board')
   const boardTab = page.locator('.pane-tab[data-pane-tab-id="board-1"]')

@@ -2,6 +2,7 @@ import { expect, test, type Page } from '@playwright/test'
 
 import { installMockElectronBridge } from './electron-bridge.ts'
 import { createPlaywrightState } from './playwright-state.ts'
+import { appUrl } from './playwright-app-url.ts'
 
 const createColumnFixture = (
   id: string,
@@ -120,7 +121,7 @@ for (const theme of ['light', 'dark'] as const) {
   }) => {
     const mock = await mockAppApis(page, theme)
     await page.setViewportSize({ width: 1440, height: 960 })
-    await page.goto('http://localhost:5173')
+    await page.goto(appUrl)
 
     const chip = page.locator('.app-topbar-docked-column')
     await expect(chip).toHaveCount(1)
@@ -159,7 +160,7 @@ for (const theme of ['light', 'dark'] as const) {
 test('dragging a column headline onto the topbar dock zone tucks the column away', async ({ page }) => {
   const mock = await mockAppApis(page, 'dark')
   await page.setViewportSize({ width: 1440, height: 960 })
-  await page.goto('http://localhost:5173')
+  await page.goto(appUrl)
 
   const sourceHeadline = page.locator('.workspace-column').first().locator('.column-headline')
   await expect(sourceHeadline).toBeVisible()
@@ -225,7 +226,7 @@ test('a docked chip reports running and new-result state', async ({ page }) => {
     createColumnFixture('col-3', 'd:\\Git\\gamma', true),
   ])
   await page.setViewportSize({ width: 1440, height: 960 })
-  await page.goto('http://localhost:5173')
+  await page.goto(appUrl)
 
   const running = page.locator('.app-topbar-docked-column', { hasText: 'alpha' })
   const finished = page.locator('.app-topbar-docked-column', { hasText: 'beta' })
@@ -285,7 +286,7 @@ test('a docked chip keeps running while a finished turn still has subagents runn
     createColumnFixture('col-3', 'd:\\Git\\gamma'),
   ])
   await page.setViewportSize({ width: 1440, height: 960 })
-  await page.goto('http://localhost:5173')
+  await page.goto(appUrl)
 
   const subagentsRunning = page.locator('.app-topbar-docked-column', { hasText: 'alpha' })
   const settled = page.locator('.app-topbar-docked-column', { hasText: 'beta' })

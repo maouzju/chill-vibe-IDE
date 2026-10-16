@@ -2,6 +2,7 @@
 import { createPane } from '../shared/default-state.ts'
 import { installMockElectronBridge } from './electron-bridge.ts'
 import { createPlaywrightState } from './playwright-state.ts'
+import { appUrl } from './playwright-app-url.ts'
 
 const createRestoredMessage = (index: number, createdAt: string) => ({
   id: `restored-msg-${index + 1}`,
@@ -486,7 +487,7 @@ const openSessionHistoryMenu = async (page: Page) => {
 
 test('opening session history does not push the pane tabs under the pointer', async ({ page }) => {
   await mockMultiTabHistoryApis(page)
-  await page.goto('http://localhost:5173')
+  await page.goto(appUrl)
 
   const tabBar = page.locator('.pane-tab-bar').first()
   await expect(tabBar).toBeVisible()
@@ -507,7 +508,7 @@ test('opening session history does not push the pane tabs under the pointer', as
 
 test('clicking session history opens the restored chat instead of reactivating an already-open tab', async ({ page }) => {
   await mockMultiTabHistoryApis(page)
-  await page.goto('http://localhost:5173')
+  await page.goto(appUrl)
 
   await expect(page.locator('.pane-tab.is-active')).toContainText('Already Open 2')
 
@@ -523,7 +524,7 @@ test('clicking session history opens the restored chat instead of reactivating a
 
 test('restored session card does not use a border flash animation', async ({ page }) => {
   await mockAppApis(page)
-  await page.goto('http://localhost:5173')
+  await page.goto(appUrl)
   await page.locator('.card-shell').first().waitFor()
 
   await openSessionHistoryMenu(page)
@@ -535,7 +536,7 @@ test('restored session card does not use a border flash animation', async ({ pag
 
 test('restored card avoids border flash in light theme', async ({ page }) => {
   await mockAppApis(page)
-  await page.goto('http://localhost:5173')
+  await page.goto(appUrl)
   await page.locator('.card-shell').first().waitFor()
 
   await page.evaluate(() => {
@@ -551,7 +552,7 @@ test('restored card avoids border flash in light theme', async ({ page }) => {
 
 test('restored card stays free of border flash after restore settles', async ({ page }) => {
   await mockAppApis(page)
-  await page.goto('http://localhost:5173')
+  await page.goto(appUrl)
   await page.locator('.card-shell').first().waitFor()
 
   await openSessionHistoryMenu(page)
@@ -582,7 +583,7 @@ test('restored session with a short latest reply keeps the latest user prompt vi
   ]
 
   await mockAppApis(page, { restoredMessages })
-  await page.goto('http://localhost:5173')
+  await page.goto(appUrl)
   await page.locator('.card-shell').first().waitFor()
 
   await openSessionHistoryMenu(page)
@@ -620,7 +621,7 @@ test('restored session with a very long latest reply still lands on the latest o
   ]
 
   await mockAppApis(page, { restoredMessages })
-  await page.goto('http://localhost:5173')
+  await page.goto(appUrl)
   await page.locator('.card-shell').first().waitFor()
 
   await openSessionHistoryMenu(page)
@@ -636,7 +637,7 @@ test('restored session with a very long latest reply still lands on the latest o
 
 test('bringing a background tab to the front scrolls its message list to the latest message', async ({ page }) => {
   await mockBackgroundTabApis(page)
-  await page.goto('http://localhost:5173')
+  await page.goto(appUrl)
   await page.locator('.card-shell').first().waitFor()
 
   await page.locator('.pane-tab', { hasText: 'Background Chat' }).click()
@@ -682,7 +683,7 @@ test('restoring session history queues persistence instead of immediate full-sta
     })
   })
 
-  await page.goto('http://localhost:5173')
+  await page.goto(appUrl)
   await page.locator('.card-shell').first().waitFor()
 
   await openSessionHistoryMenu(page)
@@ -723,7 +724,7 @@ test('opening a large session history keeps the pane responsive', async ({ page 
   }))
 
   await mockAppApis(page, { restoredMessages })
-  await page.goto('http://localhost:5173')
+  await page.goto(appUrl)
   await page.locator('.card-shell').first().waitFor()
 
   await openSessionHistoryMenu(page)
@@ -744,7 +745,7 @@ test('session history search filters internal entries by message content and sho
   page,
 }) => {
   await mockHistorySearchApis(page)
-  await page.goto('http://localhost:5173')
+  await page.goto(appUrl)
   await page.locator('.card-shell').first().waitFor()
 
   await openSessionHistoryMenu(page)
@@ -765,7 +766,7 @@ test('session history search filters external entries by summary metadata and sh
   page,
 }) => {
   await mockHistorySearchApis(page)
-  await page.goto('http://localhost:5173')
+  await page.goto(appUrl)
   await page.locator('.card-shell').first().waitFor()
 
   await openSessionHistoryMenu(page)
@@ -799,7 +800,7 @@ test('right-clicking an archived session deletes it after confirmation', async (
       }
     }
   })
-  await page.goto('http://localhost:5173')
+  await page.goto(appUrl)
 
   await openSessionHistoryMenu(page)
 
@@ -825,7 +826,7 @@ test('right-clicking an archived session deletes it after confirmation', async (
 
 test('cancelling the delete confirmation keeps the archived session', async ({ page }) => {
   await mockMultiTabHistoryApis(page)
-  await page.goto('http://localhost:5173')
+  await page.goto(appUrl)
 
   await openSessionHistoryMenu(page)
 

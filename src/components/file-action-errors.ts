@@ -1,7 +1,7 @@
 import type { AppLanguage } from '../../shared/schema'
 
 // 症状 (2026-10-14): 桌面版文件树改名/移动/删除失败时，对话框里是
-//   "Error invoking remote method 'desktop:rename-entry': Error: EPERM: operation not permitted, rename 'D:\…'"
+//   "Error invoking remote method 'desktop:rename-entry': Error: EPERM: operation not permitted, rename '<workspace>'"
 //   这种英文 IPC 包装 + errno + 本机绝对路径，中文界面用户看不懂发生了什么。
 // 根因: 2026-10-14 读码确认 FileTreeCard 直接展示 reason.message；Electron 的 ipcRenderer.invoke
 //   会给主进程抛出的错误套上 "Error invoking remote method '<channel>': Error: " 前缀，HTTP 路径则没有。

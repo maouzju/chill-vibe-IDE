@@ -1,6 +1,7 @@
 ﻿import { expect, test, type Page } from '@playwright/test'
 import { installMockElectronBridge } from './electron-bridge.ts'
 import { createPlaywrightState } from './playwright-state.ts'
+import { appUrl } from './playwright-app-url.ts'
 
 type ThemeName = 'dark' | 'light'
 
@@ -193,7 +194,7 @@ const dispatchImeConfirmationEnter = async (page: Page) => {
 for (const theme of ['dark', 'light'] as const) {
   test(`chat composer ignores IME confirmation Enter in ${theme} theme`, async ({ page }) => {
     await installMockApis(page, theme)
-    await page.goto('http://localhost:5173')
+    await page.goto(appUrl)
 
     const textarea = page.locator('.textarea').first()
     await textarea.waitFor()
@@ -212,7 +213,7 @@ for (const theme of ['dark', 'light'] as const) {
     page,
   }) => {
     await installMockApis(page, theme)
-    await page.goto('http://localhost:5173')
+    await page.goto(appUrl)
 
     const textarea = page.locator('.textarea').first()
     await textarea.waitFor()
@@ -248,7 +249,7 @@ for (const theme of ['dark', 'light'] as const) {
     page,
   }) => {
     await installMockApis(page, theme)
-    await page.goto('http://localhost:5173')
+    await page.goto(appUrl)
 
     const textarea = page.locator('.textarea').first()
     await textarea.waitFor()
@@ -282,7 +283,7 @@ for (const theme of ['dark', 'light'] as const) {
     page,
   }) => {
     await installMockApis(page, theme)
-    await page.goto('http://localhost:5173')
+    await page.goto(appUrl)
 
     const textarea = page.locator('.textarea').first()
     await textarea.waitFor()
@@ -328,7 +329,7 @@ for (const theme of ['dark', 'light'] as const) {
     page,
   }) => {
     await installMockApis(page, theme)
-    await page.goto('http://localhost:5173')
+    await page.goto(appUrl)
 
     const textarea = page.locator('.textarea').first()
     await textarea.waitFor()

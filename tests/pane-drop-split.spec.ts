@@ -3,6 +3,7 @@ import { expect, test, type Page } from '@playwright/test'
 import { createPane, createSplit } from '../shared/default-state.ts'
 import { installMockElectronBridge } from './electron-bridge.ts'
 import { createPlaywrightState } from './playwright-state.ts'
+import { appUrl } from './playwright-app-url.ts'
 
 const mockAppApis = async (page: Page) => {
   await installMockElectronBridge(page)
@@ -126,7 +127,7 @@ const mockAppApis = async (page: Page) => {
 test('dragging a tab onto the lower half of another pane splits it downward', async ({ page }) => {
   const mock = await mockAppApis(page)
   await page.setViewportSize({ width: 1440, height: 960 })
-  await page.goto('http://localhost:5173')
+  await page.goto(appUrl)
 
   const sourceTab = page.locator('.workspace-column').first().locator('.pane-tab', { hasText: 'Source Chat' })
   const targetColumn = page.locator('.workspace-column').nth(1)
@@ -182,7 +183,7 @@ test('dragging a tab onto the lower half of another pane splits it downward', as
 test('dragging a tab away from a split drop target clears the pending highlight', async ({ page }) => {
   await mockAppApis(page)
   await page.setViewportSize({ width: 1440, height: 960 })
-  await page.goto('http://localhost:5173')
+  await page.goto(appUrl)
 
   const sourceTab = page.locator('.workspace-column').first().locator('.pane-tab', { hasText: 'Source Chat' })
   const targetColumn = page.locator('.workspace-column').nth(1)
@@ -342,7 +343,7 @@ test('dragging a tab onto the lower half of another pane in the same column keep
   })
 
   await page.setViewportSize({ width: 1440, height: 960 })
-  await page.goto('http://localhost:5173')
+  await page.goto(appUrl)
 
   const sourceTab = page.locator('.pane-view').first().locator('.pane-tab', { hasText: 'Left Chat' })
   const targetPane = page.locator('.pane-view').nth(1)

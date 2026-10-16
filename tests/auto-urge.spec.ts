@@ -3,8 +3,8 @@ import { expect, test, type Page } from '@playwright/test'
 import { installMockElectronBridge } from './electron-bridge.ts'
 import { createPlaywrightState } from './playwright-state.ts'
 import { revealSettingsItem } from './settings-panel-helpers.ts'
+import { appUrl } from './playwright-app-url.ts'
 
-const appUrl = process.env.PLAYWRIGHT_APP_URL ?? 'http://localhost:5173'
 const defaultAutoUrgeMessage = 'Please keep verifying until you have evidence.'
 
 const readPrompts = (page: Page) =>

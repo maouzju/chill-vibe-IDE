@@ -48,6 +48,14 @@ The streaming indicator must not describe completed, failed, or declined command
 - Real output after a native retry must continue in the same stream and transition the indicator to resumed; only the actual terminal event completes or fails the turn. Preserve the final diagnostic and existing recovery budget.
 - The explicit upstream phrases `Our servers are currently overloaded` and `Upstream stream ended without a terminal event` may resume only with a live session and the existing bounded recovery path. Authentication, routing configuration, and generic error strings remain outside this extension.
 
+### 2026-10-16 fallback retry — no permanent error stop
+
+- A final error (retry budget exhausted, unrecoverable error, start failure, local CLI unavailable) must not be a dead end. Chill Vibe schedules a fallback auto-recovery through the manual-recovery path: first after 5 minutes, +5 minutes after each further failure, capped at 30 minutes, unlimited attempts. The failed banner shows the next retry time and attempt number.
+- A user stop never schedules a fallback retry. A new user message, a normally completed turn, or a native-completed check cancels it and resets the backoff; manual recovery cancels only the pending timer.
+- Errors never auto-open the Settings or Routing page.
+- Consecutive identical error messages (separated only by run-duration rows or empty bubbles) are not appended again; once the session completes a turn normally, legacy consecutive duplicates are stripped from the transcript.
+- Fallback state is in-memory only and does not survive restart.
+
 ## Non-goals
 
 - General recovery retry transport logic (already exists in `resilient-proxy.ts` and `App.tsx:onError`), except for the dead resumed-session escape hatch above.

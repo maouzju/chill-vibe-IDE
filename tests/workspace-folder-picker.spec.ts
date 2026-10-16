@@ -1,6 +1,7 @@
 import { expect, test, type Page } from '@playwright/test'
 import { installMockElectronBridge } from './electron-bridge.ts'
 import { createPlaywrightState } from './playwright-state.ts'
+import { appUrl } from './playwright-app-url.ts'
 
 type ThemeName = 'dark' | 'light'
 
@@ -136,7 +137,7 @@ for (const theme of ['dark', 'light'] as const) {
     page,
   }) => {
     await installMockApis(page, theme)
-    await page.goto('http://localhost:5173')
+    await page.goto(appUrl)
 
     const titleButton = page.getByRole('button', { name: 'chill-vibe' })
     await titleButton.waitFor()

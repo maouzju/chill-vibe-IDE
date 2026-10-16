@@ -1985,6 +1985,14 @@ export const streamAgentEntrySchema = z.object({
   status: streamAgentStatusSchema.default('pendingInit'),
   message: z.string().nullable().optional(),
   activity: z.array(z.string()).optional(),
+  // Workflow 条目在跑时的结构化计数（与 📋 汇总行同源）；渲染端据此判断"失败过半"去叫醒父卡。
+  workflowCounts: z.object({
+    done: z.number().int().nonnegative(),
+    running: z.number().int().nonnegative(),
+    failed: z.number().int().nonnegative(),
+    queued: z.number().int().nonnegative(),
+    total: z.number().int().nonnegative(),
+  }).optional(),
 })
 export type StreamAgentEntry = z.infer<typeof streamAgentEntrySchema>
 

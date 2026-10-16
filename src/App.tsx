@@ -104,6 +104,7 @@ import {
   shouldClearRecoveryStatusOnStreamIdle,
   type CardRecoveryStatus,
 } from './stream-recovery-feedback'
+import { getFallbackRetryDelayMs } from './fallback-retry'
 import {
   consumeRunDurationMessage,
   recordRunStart,
@@ -212,6 +213,7 @@ import {
   getLatestAssistantTurnText,
   planAutoUrgeForCompletedCard,
 } from './components/chat-auto-urge'
+import { buildWorkflowFailureWakePrompt, detectWorkflowFailureMajority } from './components/workflow-failure-wake'
 import { resolveAppLoadError } from './app-load-error'
 import { clearDragPayload, peekDragPayload, readDragPayload, releaseDragPayloadIfStale } from './dnd'
 import {
@@ -1040,6 +1042,58 @@ function App() {
     },
     [clearRecoveryResumedTimer, updateRecoveryStatus],
   )
+  // 症状：中转站长时间抽风时，短间隔断线续传预算一用完，卡片就永久停在「重连失败」。
+  // 2026-10-16 用户需求：永远不要真正的错误中断状态 —— 终态报错改为按 5/10/…/30 分钟
+  // 退避的无限兜底续传；用户发新消息、手动续传或一轮正常收尾即撤销/清零。
+  const cancelFallbackRetry = useCallback((cardId: string, options?: { resetCount?: boolean }) => {
+    const entry = fallbackRetryRef.current.get(cardId)
+    if (!entry) {
+      return
+    }
+    if (entry.timer !== undefined) {
+      window.clearTimeout(entry.timer)
+      entry.timer = undefined
+    }
+    if (options?.resetCount) {
+      fallbackRetryRef.current.delete(cardId)
+    }
+  }, [])
+  const scheduleFallbackRetry = useCallback(
+    (columnId: string, cardId: string, streamId?: string) => {
+      cancelFallbackRetry(cardId)
+      const failureCount = (fallbackRetryRef.current.get(cardId)?.failureCount ?? 0) + 1
+      const retryAt = Date.now() + getFallbackRetryDelayMs(failureCount)
+      const entry: { timer?: number; failureCount: number } = { failureCount }
+      entry.timer = window.setTimeout(() => {
+        entry.timer = undefined
+        const liveCard = getColumnById(appStateRef.current.columns, columnId)?.cards[cardId]
+        if (!liveCard) {
+          fallbackRetryRef.current.delete(cardId)
+          return
+        }
+        if (liveCard.status === 'streaming') {
+          return
+        }
+        void manuallyRecoverStreamRef.current?.(columnId, cardId)
+      }, retryAt - Date.now())
+      fallbackRetryRef.current.set(cardId, entry)
+      clearRecoveryResumedTimer(cardId)
+      updateRecoveryStatus(cardId, () => ({
+        ...computeRecoveryStatusAfterFinalFailure(streamId),
+        autoRetryAt: retryAt,
+        autoRetryAttempt: failureCount,
+      }))
+    },
+    [cancelFallbackRetry, clearRecoveryResumedTimer, updateRecoveryStatus],
+  )
+  useEffect(() => {
+    const retries = fallbackRetryRef.current
+    return () => {
+      for (const entry of retries.values()) {
+        if (entry.timer !== undefined) window.clearTimeout(entry.timer)
+      }
+    }
+  }, [])
   // Any genuinely new stream on this card retires a sticky `failed` banner from a
   // previous, dead stream. Without this the card can be visibly working again
   // (Claude keepalive unsolicited turn, or any future re-stream entrypoint) while
@@ -1078,6 +1132,8 @@ function App() {
     ) => Promise<void>
   ) | null>(null)
   const flushReadyWakeTimersRef = useRef<(() => void) | null>(null)
+  // 每个 `${cardId}:${workflowThreadId}` 只叫醒一次父卡（见 workflow-failure-wake.ts）。
+  const workflowFailureWakesSentRef = useRef(new Set<string>())
   const fireAutomationBoardTemplateTriggerRef = useRef<
     ((columnId: string, boardCardId: string, templateId: string) => void) | null
   >(null)
@@ -1106,6 +1162,9 @@ function App() {
       options?: RecoverLiveStreamOptions,
     ) => Promise<boolean>
   ) | null>(null)
+  const manuallyRecoverStreamRef = useRef<((columnId: string, cardId: string) => Promise<boolean>) | null>(null)
+  // 兜底重试（fallback-retry.ts）：每张卡一个待触发的定时器 + 已连续失败次数。
+  const fallbackRetryRef = useRef(new Map<string, { timer?: number; failureCount: number }>())
   const routingImportInputRef = useRef<HTMLInputElement | null>(null)
   const onboardingAutoSetupStartedRef = useRef(false)
   const setupRunStatusRef = useRef<SetupStatus | null>(null)
@@ -2566,24 +2625,6 @@ function App() {
       setOnboardingStatusPending(false)
     }
   }, [])
-
-  const openRemediationPanel = useCallback(
-    (provider: Provider, hint: 'switch-config' | 'env-setup') => {
-      const providerLabel = getProviderLabel(appStateRef.current.settings.language, provider)
-
-      if (hint === 'switch-config') {
-        setSettingsNotice(null)
-        setSwitchNotice(panelText.switchReminder(providerLabel))
-        setActiveTopTab('routing')
-        return
-      }
-
-      setSwitchNotice(null)
-      setSettingsNotice(panelText.setupReminder(providerLabel))
-      setActiveTopTab('settings')
-    },
-    [panelText, setActiveTopTab],
-  )
 
   const updateDraft = useCallback((provider: Provider, patch: Partial<ProfileDraft>) => {
     setProfileDrafts((current) => ({
@@ -5696,6 +5737,10 @@ function App() {
           if (!donePlan.finalizeLogicalRun) {
             return
           }
+          // 一轮正常收尾 = 会话已恢复：兜底重试清零，并剥掉此前堆叠的连续重复报错。
+          cancelFallbackRetry(card.id, { resetCount: true })
+          const stripAction: IdeAction = { type: 'stripDuplicateErrorMessages', columnId, cardId: card.id }
+          persistAfterAction(stripAction.type, applyAction(stripAction))
           if (donePlan.runSuccessCallbacks) {
             scheduleStableWakeTimerCompletion(card.id)
           }
@@ -5707,7 +5752,7 @@ function App() {
             scheduleAllAgentsDoneSound()
           }
         },
-        onError: ({ message, recoverable, recoveryMode, transientOnly, hint, sessionId }) => {
+        onError: ({ message, recoverable, recoveryMode, transientOnly, sessionId }) => {
           flushBufferedAssistantDeltaForCard(card.id)
           flushBufferedActivitiesForCard(card.id)
           streamEditsActivityCountRef.current.delete(card.id)
@@ -5925,14 +5970,17 @@ function App() {
             return
           }
 
-          if (hint === 'switch-config' || hint === 'env-setup') {
-            openRemediationPanel(card.provider, hint)
-          }
+          // 报错不再自动跳到设置/路由页（2026-10-16 用户要求）：打断用户正在看的地方，
+          // 而兜底重试会自己再试；配置问题用户看报错文本自行去改。
           // Final, unrecoverable failure (or recoverable retries exhausted) —
           // show the failed recovery banner so the user isn't left wondering.
           // Tag it with the dying stream so a later stream on this card can
           // retire the banner without a late signal from THIS stream reviving it.
-          markRecoveryFailed(card.id, card.streamId)
+          if (lostStreamStopReason) {
+            markRecoveryFailed(card.id, card.streamId)
+          } else {
+            scheduleFallbackRetry(columnId, card.id, card.streamId)
+          }
           const activityFlushedState = flushBufferedActivitiesForCard(card.id)
           const liveCard = getColumnById(activityFlushedState.columns, columnId)?.cards[card.id]
           const pendingCompactBoundary = liveCard
@@ -6012,7 +6060,8 @@ function App() {
       markRecoveryReconnecting,
       markRecoveryResumedIfActive,
       openTextEditorTab,
-      openRemediationPanel,
+      cancelFallbackRetry,
+      scheduleFallbackRetry,
       persistAfterAction,
       persistAfterActions,
       requestStopForCard,
@@ -6082,6 +6131,19 @@ function App() {
           if (next !== card) {
             const action: IdeAction = { type: 'updateCard', columnId: column.id, cardId, patch: { messages: next.messages } }
             persistAfterAction(action.type, applyAction(action))
+            for (const hit of detectWorkflowFailureMajority(card, next)) {
+              const key = `${cardId}:${hit.threadId}`
+              if (workflowFailureWakesSentRef.current.has(key)) continue
+              workflowFailureWakesSentRef.current.add(key)
+              // 父卡正在答别的就排到这轮之后，绝不打断它。
+              void sendMessageRef.current?.(
+                column.id,
+                cardId,
+                buildWorkflowFailureWakePrompt(hit, appStateRef.current.settings.language),
+                [],
+                { origin: 'workflow-failure-wake', mode: card.status === 'streaming' ? 'defer' : 'auto' },
+              )
+            }
           }
           return
         }
@@ -6930,6 +6992,8 @@ function App() {
     if (!column || !card || !column.workspacePath.trim()) {
       return
     }
+    // 用户亲自发了新消息就是接手了，兜底重试撤销并清零。
+    cancelFallbackRetry(cardId, { resetCount: true })
 
     const providerStatus = providerByName[card.provider] as ProviderStatus | undefined
     const resolvedModel = normalizeModel(
@@ -7358,6 +7422,9 @@ function App() {
       }
 
       persistAfterActions(actions, applyActions(actions))
+      if (!isManualCodexCompactRequest) {
+        scheduleFallbackRetry(columnId, cardId)
+      }
     }
   }
   sendMessageRef.current = sendMessage
@@ -7522,6 +7589,7 @@ function App() {
           errorType: 'local-provider-start-failed',
         }).catch(() => undefined)
       }
+      scheduleFallbackRetry(columnId, cardId)
       const actions: IdeAction[] = [
         {
           type: 'appendMessages',
@@ -7552,6 +7620,7 @@ function App() {
     applyActions,
     attachStream,
     getColumn,
+    scheduleFallbackRetry,
     persistAfterAction,
     persistAfterActions,
     providerByName,
@@ -7617,6 +7686,7 @@ function App() {
         })
       }
       persistAfterActions(actions, applyActions(actions))
+      scheduleFallbackRetry(columnId, cardId)
       return false
     }
 
@@ -7687,6 +7757,7 @@ function App() {
         return false
       }
       if (completion === 'completed') {
+        cancelFallbackRetry(cardId, { resetCount: true })
         streamRetryCountRef.current.delete(cardId)
         resumeSessionLoopCountRef.current.delete(cardId)
         streamRecoveryTurnRef.current.delete(cardId)
@@ -7896,6 +7967,7 @@ function App() {
           errorType: 'local-provider-start-failed',
         }).catch(() => undefined)
       }
+      scheduleFallbackRetry(columnId, cardId)
       const actions: IdeAction[] = [
         {
           type: 'appendMessages',
@@ -7926,6 +7998,8 @@ function App() {
     applyAction,
     applyActions,
     attachStream,
+    cancelFallbackRetry,
+    scheduleFallbackRetry,
     clearRecoveryStatusForNewStream,
     dispatchNextQueuedSend,
     flushBufferedActivitiesForCard,
@@ -7946,6 +8020,8 @@ function App() {
       if (!liveCard) {
         return false
       }
+      // 手动续传与兜底定时器是同一动作，撤掉待触发的那次；失败次数保留，这次再失败继续往上退避。
+      cancelFallbackRetry(cardId)
 
       if (!streamRecoveryTurnRef.current.has(cardId)) {
         const inferredCheckpointTurn = resolveStreamRecoveryCheckpointTurn({
@@ -8014,12 +8090,14 @@ function App() {
     },
     [
       applyAction,
+      cancelFallbackRetry,
       clearStopCompletionFallbackTimer,
       forceResetRecoveryStatus,
       getColumn,
       persistAfterAction,
     ],
   )
+  manuallyRecoverStreamRef.current = manuallyRecoverStream
 
 
   const closeTab = async (columnId: string, paneId: string, cardId: string) => {

@@ -16,6 +16,7 @@ import { findPaneInLayout } from './state'
 import { getLocaleText } from '../shared/i18n'
 import { BRAINSTORM_TOOL_MODEL, GIT_TOOL_MODEL, STICKYNOTE_TOOL_MODEL } from '../shared/models'
 import type { ChatStreamSource } from './api'
+import type { SendMessageOrigin } from './components/deferred-send-queue'
 
 // 什么时候值得去探一次本机 Ollama 状态。两个消费方互不相干：
 // · 「路由」页的本地模型条目 —— 模型名下拉要列出已装模型，与自动鞭策没有任何关系；
@@ -325,7 +326,7 @@ export const shouldDropEmptyContinuationWhileStreaming = (input: {
   hasContent: boolean
   answersPendingAskUser: boolean
   mode?: 'auto' | 'defer' | 'interrupt'
-  origin?: 'user' | 'auto-urge' | 'wake-timer-release'
+  origin?: SendMessageOrigin
 }): boolean =>
   input.cardStatus === 'streaming' &&
   !input.hasContent &&

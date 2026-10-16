@@ -1,4 +1,5 @@
 import { expect, test } from '@playwright/test'
+import { appUrl } from './playwright-app-url.ts'
 
 // Real-behavior smoke for the stuck-pane forensics capture path: the hotkey
 // must walk the live DOM and emit a parseable snapshot. In the browser there
@@ -8,7 +9,7 @@ test('Ctrl+Shift+F9 captures a parseable stuck-pane forensics snapshot', async (
   const consoleLines: string[] = []
   page.on('console', (message) => consoleLines.push(message.text()))
 
-  await page.goto('http://localhost:5173')
+  await page.goto(appUrl)
   await page.waitForLoadState('domcontentloaded')
   // Give the app root effect a beat to install the hotkey listener.
   await page.waitForTimeout(500)
@@ -49,7 +50,7 @@ test('pointerdown activity lands in the forensics ledger with routing agreement'
   const consoleLines: string[] = []
   page.on('console', (message) => consoleLines.push(message.text()))
 
-  await page.goto('http://localhost:5173')
+  await page.goto(appUrl)
   await page.waitForLoadState('domcontentloaded')
   await page.waitForTimeout(500)
 

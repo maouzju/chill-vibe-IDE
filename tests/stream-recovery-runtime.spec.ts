@@ -1,8 +1,7 @@
 import { expect, test, type Page } from '@playwright/test'
 
 import { createPlaywrightState } from './playwright-state.ts'
-
-const appUrl = process.env.PLAYWRIGHT_APP_URL ?? 'http://localhost:5173'
+import { appUrl } from './playwright-app-url.ts'
 
 const emitDesktopStreamEvent = async (page: Page, streamId: string, eventName: string, data: unknown) => {
   await page.evaluate(
@@ -725,6 +724,30 @@ for (const theme of ['light', 'dark'] as const) {
   })
 }
 
+// 2026-10-16：后台 Workflow 失败过半时父卡收到一次提醒；父卡正在答别的就排到这轮之后，不打断。
+test('a background Workflow crossing half failed queues one wake-up notice for the parent card', async ({ page }) => {
+  const mock = await installMockDesktopBridge(page, { claude: true })
+  await page.goto(appUrl)
+  await expect(page.locator('.pane-tab-panel.is-active .composer textarea').first()).toBeVisible()
+  await expect.poll(() => hasDesktopStreamSubscription(page, 'stream-1')).toBe(true)
+  for (const failed of [2, 3, 4]) {
+    await page.evaluate((value) => {
+      window.dispatchEvent(new CustomEvent('chill-vibe:unsolicited-stream', { detail: {
+        cardId: 'card-1', streamId: 'agent-runtime:test', sessionId: 'session-1',
+        agentStatus: { itemId: 'agent-status:claude', kind: 'agents', status: 'completed', view: 'status',
+          agents: [{ threadId: 'wf_test', nickname: 'Design Workflow', role: 'Workflow', status: 'running', activity: [`failed ${value}`],
+            workflowCounts: { done: 1, running: 5 - value, failed: value, queued: 0, total: 6 } }] },
+      } }))
+    }, failed)
+    await expect(page.locator('.subagent-dock .structured-agent-activity-line').first()).toHaveText(`failed ${failed}`)
+  }
+  expect(mock.readRequests()).toHaveLength(0)
+  await emitDesktopStreamEvent(page, 'stream-1', 'done', {})
+  await expect.poll(() => mock.readRequests().length).toBe(1)
+  expect(JSON.stringify(mock.readRequests()[0])).toContain('Design Workflow')
+  expect(JSON.stringify(mock.readRequests()[0])).toContain('3/6')
+})
+
 test('an unsolicited keepalive wake-up retires the stale failed banner', async ({ page }) => {
   const mock = await installMockDesktopBridge(page)
   await page.goto(appUrl)
@@ -779,4 +802,27 @@ test('a late event from the dead stream does not retire the failed banner', asyn
 
   await expect(failedBanner).toBeVisible()
   await expect.poll(() => mock.readState().columns[0]?.cards['card-1']?.status).toBe('error')
+})
+
+// 2026-10-16：终态报错不再停在死的「错误中断」，而是排期 5 分钟后兜底续传；
+// 带 switch-config / env-setup hint 的报错也不能把用户拽去路由/设置页。
+test('a fatal error schedules a fallback auto-retry and never pops the settings page', async ({ page }) => {
+  const mock = await installMockDesktopBridge(page)
+  await page.goto(appUrl)
+
+  await expect(page.locator('.pane-tab-panel.is-active .composer textarea').first()).toBeVisible()
+  await expect.poll(() => hasDesktopStreamSubscription(page, 'stream-1')).toBe(true)
+
+  await emitDesktopStreamEvent(page, 'stream-1', 'error', {
+    message: 'Fatal upstream failure.',
+    recoverable: false,
+    hint: 'env-setup',
+  })
+
+  const failedBanner = page.locator('.pane-tab-panel.is-active .streaming-recovery.is-failed')
+  await expect(failedBanner).toBeVisible()
+  await expect(failedBanner).toContainText(/auto-retry at|自动重试/)
+  await expect.poll(() => mock.readState().columns[0]?.cards['card-1']?.status).toBe('error')
+  await expect(page.locator('#app-panel-settings')).toBeHidden()
+  await expect(page.locator('#app-panel-routing')).toBeHidden()
 })

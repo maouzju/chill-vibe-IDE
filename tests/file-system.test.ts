@@ -808,7 +808,7 @@ test('writeWorkspaceFile with expectedRevision still writes when the file was de
 })
 
 // 2026-10-14：文件树里的条目已被外部删掉/挪走时，改名/移动/删除抛的是带绝对路径的原始
-// "ENOENT: no such file or directory, stat 'D:\…'"；`if (!sourceStats)` 守卫是死代码，从没生效。
+// "ENOENT: no such file or directory, stat '<workspace>'"；`if (!sourceStats)` 守卫是死代码，从没生效。
 test('rename, move and delete report a vanished source as "Path not found." instead of a raw ENOENT', async (t) => {
   const workspace = await mkdtemp(path.join(os.tmpdir(), 'chill-vibe-file-vanished-'))
   t.after(async () => {

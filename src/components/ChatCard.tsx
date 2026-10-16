@@ -48,6 +48,7 @@ import {
   isClaudeAlwaysThinkingModel,
   normalizeReasoningEffortForModel,
   shouldEnableThinkingForDepthChange,
+  stepReasoningEffort,
 } from '../../shared/reasoning'
 import {
   getLocalSlashCommands,
@@ -229,6 +230,7 @@ import {
   RefreshIcon,
   SendIcon,
   ShieldIcon,
+  ReasoningKnobIcon,
   SlidersIcon,
   SparklesIcon,
   StickyNoteIcon,
@@ -1631,6 +1633,8 @@ const ChatCardView = ({
   const [askUserAnswers, setAskUserAnswers] = useState<Record<string, string>>({})
   const [modelMenuOpen, setModelMenuOpen] = useState(false)
   const [settingsMenuOpen, setSettingsMenuOpen] = useState(false)
+  // 滚轮调档后短暂报出档位名；seq 每次自增让同一档名的气泡也能重播动画。
+  const [reasoningFlash, setReasoningFlash] = useState<{ value: string; seq: number } | null>(null)
   const [editingTitle, setEditingTitle] = useState(false)
   const [editingTitleValue, setEditingTitleValue] = useState('')
   const pendingImmediateAutoUrgeRef = useRef(false)
@@ -3873,6 +3877,88 @@ const ChatCardView = ({
     () => getReasoningOptionsForModel(effectiveProvider, reasoningModel, language),
     [effectiveProvider, language, reasoningModel],
   )
+  // 模型有多档可调时，设置按钮变成档位旋钮：图标显示当前档，悬停滚轮一格一档。
+  // 只有一档（Gemini）时仍是普通设置图标。React 的 onWheel 是 passive，
+  // preventDefault 无效会顺带滚动消息区，所以必须原生非 passive 监听。
+  // 「自动」不占刻度（见 stepReasoningEffort），刻度只列明确档位，自动时 index = -1。
+  const reasoningDialOptions = useMemo(
+    () => reasoningOptions.filter((option) => option.value !== 'auto'),
+    [reasoningOptions],
+  )
+  const reasoningKnobEnabled = reasoningDialOptions.length > 1
+  const reasoningKnobIndex =
+    reasoningValue === 'auto'
+      ? -1
+      : Math.max(0, reasoningDialOptions.findIndex((option) => option.value === reasoningValue))
+  const reasoningKnobLabel =
+    reasoningOptions.find((option) => option.value === reasoningValue)?.label ?? reasoningValue
+  const reasoningThinkingActive = alwaysThinkingModel || card.thinkingEnabled !== false
+  const reasoningFlashText = (() => {
+    if (!reasoningFlash) {
+      return ''
+    }
+    const label =
+      reasoningOptions.find((option) => option.value === reasoningFlash.value)?.label ?? reasoningFlash.value
+    const level = reasoningDialOptions.findIndex((option) => option.value === reasoningFlash.value)
+    return level >= 0 ? `${label} · ${level + 1}/${reasoningDialOptions.length}` : label
+  })()
+  const reasoningKnobWheelRef = useRef<(direction: 1 | -1) => void>(() => {})
+  useEffect(() => {
+    reasoningKnobWheelRef.current = (direction) => {
+      const next = stepReasoningEffort(reasoningOptions, reasoningValue, direction)
+      if (next) {
+        onChangeReasoningEffort(next)
+      }
+      // 到头不动也报一下当前档，让用户知道已经顶到 / 落到底了。菜单开着时菜单里已有档位，
+      // 不再记气泡，否则关菜单那一刻会补播一个过期的气泡。
+      if (!settingsMenuOpen) {
+        setReasoningFlash((prev) => ({ value: next ?? reasoningValue, seq: (prev?.seq ?? 0) + 1 }))
+      }
+      if (
+        (next || direction === 1) &&
+        shouldEnableThinkingForDepthChange(
+          card.thinkingEnabled,
+          alwaysThinkingModel && !noneUnsupportedModel,
+        )
+      ) {
+        onToggleThinking()
+      }
+    }
+  })
+  useEffect(() => {
+    const shell = settingsMenuRef.current
+    if (!shell || !reasoningKnobEnabled) {
+      return
+    }
+    // 鼠标一齿的 deltaY 会随 DPI 缩放变小（100% 约 100，300% 只剩 ~33），所以单个
+    // 事件够大就直接算一格；触控板的一串小 delta 才累积，停顿 200ms 清零。
+    let accumulated = 0
+    let lastWheelAt = 0
+    const handleWheel = (event: globalThis.WheelEvent) => {
+      event.preventDefault()
+      event.stopPropagation()
+      const delta = event.deltaMode === 0 ? event.deltaY : event.deltaY * 40
+      if (delta === 0) {
+        return
+      }
+      if (event.timeStamp - lastWheelAt > 200) {
+        accumulated = 0
+      }
+      lastWheelAt = event.timeStamp
+      accumulated = Math.abs(delta) >= 16 ? delta : accumulated + delta
+      if (Math.abs(accumulated) < 16) {
+        return
+      }
+      const direction = accumulated < 0 ? 1 : -1
+      accumulated = 0
+      reasoningKnobWheelRef.current(direction)
+    }
+    shell.addEventListener('wheel', handleWheel, { passive: false })
+    return () => {
+      shell.removeEventListener('wheel', handleWheel)
+    }
+    // 输入框随折叠 / 工具卡 / 后台 tab 延迟渲染挂卸，监听要跟着重挂。
+  }, [reasoningKnobEnabled, isCollapsed, isToolCard, deferInactivePaneChatBody])
   const mergedDisplayHistory = useMemo(
     () => mergeCompactedHistoryForDisplay(archivedCompactedMessages, card.messages, {
       // 症状：500 条上限把 compact boundary 一并裁掉后，sidecar 与 live tail 可能零重叠。
@@ -5051,16 +5137,43 @@ const ChatCardView = ({
                   ) : null}
                   <div className="composer-settings-shell" ref={settingsMenuRef}>
                     <IconButton
-                      label={text.composerSettings}
-                      className={`composer-settings-trigger${settingsMenuOpen ? ' is-open' : ''}${autoUrgeEnabled && effectiveUrge.active ? ' has-auto-urge' : ''}${wakeTimerEnabled && card.wakeTimerActive === true ? ' has-wake-timer' : ''}${repeatLoopControlsAutomation ? ' has-repeat-loop' : ''}`}
+                      label={
+                        reasoningKnobEnabled
+                          ? text.reasoningKnobTitle(
+                              reasoningKnobLabel,
+                              reasoningKnobIndex >= 0 ? reasoningKnobIndex + 1 : null,
+                              reasoningDialOptions.length,
+                            )
+                          : text.composerSettings
+                      }
+                      data-reasoning-effort={reasoningKnobEnabled ? reasoningValue : undefined}
+                      className={`composer-settings-trigger${reasoningKnobEnabled ? ' is-reasoning-knob' : ''}${reasoningKnobEnabled && !reasoningThinkingActive ? ' is-thinking-off' : ''}${settingsMenuOpen ? ' is-open' : ''}${autoUrgeEnabled && effectiveUrge.active ? ' has-auto-urge' : ''}${wakeTimerEnabled && card.wakeTimerActive === true ? ' has-wake-timer' : ''}${repeatLoopControlsAutomation ? ' has-repeat-loop' : ''}`}
                       aria-expanded={settingsMenuOpen}
                       onClick={() => {
                         setSettingsMenuStyle(null)
+                        setReasoningFlash(null)
                         setSettingsMenuOpen((prev) => !prev)
                       }}
                     >
-                      <SlidersIcon />
+                      {reasoningKnobEnabled ? (
+                        <ReasoningKnobIcon
+                          steps={reasoningDialOptions.length}
+                          index={reasoningKnobIndex}
+                        />
+                      ) : (
+                        <SlidersIcon />
+                      )}
                     </IconButton>
+                    {reasoningKnobEnabled && reasoningFlash && !settingsMenuOpen ? (
+                      <span
+                        key={reasoningFlash.seq}
+                        className="composer-reasoning-flash"
+                        aria-hidden="true"
+                        onAnimationEnd={() => setReasoningFlash(null)}
+                      >
+                        {reasoningFlashText}
+                      </span>
+                    ) : null}
                   </div>
                   {settingsMenuOpen && typeof document !== 'undefined'
                     ? createPortal(

@@ -1,6 +1,7 @@
 import { expect, test, type Page, type Locator } from '@playwright/test'
 import { installMockElectronBridge } from './electron-bridge.ts'
 import { createPlaywrightState } from './playwright-state.ts'
+import { appUrl } from './playwright-app-url.ts'
 
 type ThemeName = 'dark' | 'light'
 
@@ -129,7 +130,7 @@ const installMockApis = async (
 for (const theme of ['dark', 'light'] as const) {
   test(`model-specific reasoning preferences persist across reloads in ${theme} theme`, async ({ page }) => {
     await installMockApis(page, theme)
-    await page.goto('http://localhost:5173')
+    await page.goto(appUrl)
 
     const activePanePanel = page.locator('.pane-tab-panel.is-active')
     const modelSelect = activePanePanel.locator('.model-select').first()
@@ -177,6 +178,73 @@ for (const theme of ['dark', 'light'] as const) {
     await expect(reasoningSelect).toHaveValue('high')
   })
 
+  test(`composer settings trigger becomes a reasoning knob adjustable by wheel in ${theme} theme`, async ({ page }) => {
+    await installMockApis(page, theme)
+    await page.goto(appUrl)
+
+    const knob = page.locator('.pane-tab-panel.is-active .composer-settings-trigger.is-reasoning-knob').first()
+    const flash = page.locator('.pane-tab-panel.is-active .composer-reasoning-flash')
+    await expect(knob).toHaveAttribute('data-reasoning-effort', 'medium')
+    // 档位直接写成圈内数字（低=1），不再靠数细刻度：gpt-6-luna 共 5 档，中 = 第 2 档。
+    await expect(knob.locator('.knob-level')).toHaveText('2')
+    await expect(knob.locator('.knob-fill')).toHaveCount(1)
+    await expect(knob).toHaveAttribute('title', /中（第 2\/5 档）/)
+
+    await knob.hover()
+    await page.mouse.wheel(0, -100)
+    await expect(knob).toHaveAttribute('data-reasoning-effort', 'high')
+    await expect(knob.locator('.knob-level')).toHaveText('3')
+    // 滚一格就在旋钮上方报出档位名，数字和名字当场对上。
+    await expect(flash).toHaveText('高 · 3/5')
+    await page.mouse.wheel(0, -100)
+    await page.mouse.wheel(0, -100)
+    await page.mouse.wheel(0, -100)
+    // 到顶停住不回绕，气泡照样报「已在最高」。
+    await expect(knob).toHaveAttribute('data-reasoning-effort', 'max')
+    await expect(knob.locator('.knob-level')).toHaveText('5')
+    await expect(flash).toHaveText('最高 · 5/5')
+    await page.mouse.wheel(0, 100)
+    await expect(knob).toHaveAttribute('data-reasoning-effort', 'xhigh')
+    await expect(knob.locator('.knob-level')).toHaveText('4')
+    // 气泡是一次性的，过一会自己消失，不常驻占地方。
+    await expect(flash).toHaveCount(0, { timeout: 3_000 })
+
+    await knob.click()
+    await expect(page.locator('.composer-settings-menu .reasoning-select').first()).toHaveValue('xhigh')
+    await page.keyboard.press('Escape')
+    // 关菜单不会补播旧气泡。
+    await expect(flash).toHaveCount(0)
+    await expect(knob).toHaveScreenshot(`reasoning-knob-${theme}.png`)
+  })
+
+  test(`reasoning knob keeps auto off the dial in ${theme} theme`, async ({ page }) => {
+    await installMockApis(page, theme, {
+      cardOverrides: { provider: 'claude', model: 'claude-opus-5-5', reasoningEffort: 'auto' },
+    })
+    await page.goto(appUrl)
+
+    const knob = page.locator('.pane-tab-panel.is-active .composer-settings-trigger.is-reasoning-knob').first()
+    await expect(knob).toHaveAttribute('data-reasoning-effort', 'auto')
+    // 自动 = 跟随 CLI 默认，不占刻度：弧全空，圈内显示 A 而不是数字。
+    await expect(knob.locator('.knob-fill')).toHaveCount(0)
+    await expect(knob.locator('.knob-auto')).toHaveText('A')
+    await expect(knob).toHaveScreenshot(`reasoning-knob-auto-${theme}.png`)
+
+    await knob.hover()
+    await page.mouse.wheel(0, 100)
+    await expect(knob).toHaveAttribute('data-reasoning-effort', 'medium')
+    // Claude 明确档位 6 档（低…Ultracode），中 = 第 2 档，与 Codex 同一数字同一档。
+    await expect(knob.locator('.knob-level')).toHaveText('2')
+    await page.mouse.wheel(0, 100)
+    await expect(knob).toHaveAttribute('data-reasoning-effort', 'low')
+    // 从「低」继续往下滚停在「低」，不会滚进「自动」（那反而想得更多）。
+    await page.mouse.wheel(0, 100)
+    await expect(knob).toHaveAttribute('data-reasoning-effort', 'low')
+    await expect(knob.locator('.knob-auto')).toHaveCount(0)
+    await expect(knob.locator('.knob-level')).toHaveText('1')
+    await expect(page.locator('.pane-tab-panel.is-active .composer-reasoning-flash')).toHaveText('低 · 1/6')
+  })
+
   test(`composer secondary settings stay openable while streaming in ${theme} theme`, async ({ page }) => {
     await installMockApis(page, theme, {
       cardOverrides: {
@@ -191,7 +259,7 @@ for (const theme of ['dark', 'light'] as const) {
         ],
       },
     })
-    await page.goto('http://localhost:5173')
+    await page.goto(appUrl)
 
     const settingsTrigger = page.locator('.pane-tab-panel.is-active .composer-settings-trigger').first()
     const settingsMenu = page.locator('.composer-settings-menu').first()

@@ -4,6 +4,7 @@ import { createPane } from '../shared/default-state.ts'
 import { AUTOMATIONBOARD_TOOL_MODEL } from '../shared/models.ts'
 import { installMockElectronBridge } from './electron-bridge.ts'
 import { createPlaywrightState } from './playwright-state.ts'
+import { appUrl } from './playwright-app-url.ts'
 
 /**
  * 症状：2026-08-16 用户截图报「这什么垃圾UI啊，怎么还没法设置」—— 模板面板里
@@ -14,7 +15,6 @@ import { createPlaywrightState } from './playwright-state.ts'
  *   的状态一致。只断言「不是 disabled」挡不住有人把自动开思考那半边删掉。
  */
 
-const appUrl = process.env.PLAYWRIGHT_APP_URL ?? 'http://localhost:5173'
 const boardCardId = 'board-1'
 const workspacePath = 'd:\\Git\\chill-vibe'
 

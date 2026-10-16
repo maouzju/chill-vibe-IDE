@@ -3,6 +3,7 @@ import { expect, test, type Page } from '@playwright/test'
 import { MUSIC_TOOL_MODEL } from '../shared/models.ts'
 import { installMockElectronBridge } from './electron-bridge.ts'
 import { createPlaywrightState } from './playwright-state.ts'
+import { appUrl } from './playwright-app-url.ts'
 
 type ThemeName = 'dark' | 'light'
 
@@ -187,7 +188,7 @@ for (const theme of ['dark', 'light'] as const) {
   test(`music card keeps a fixed shell height and scrolls internally in ${theme} theme`, async ({ page }) => {
     await installMockApis(page, theme)
     await page.setViewportSize({ width: 1280, height: 960 })
-    await page.goto('http://localhost:5173')
+    await page.goto(appUrl)
 
     const cardShell = page.locator('.card-shell').first()
     const playlistHeader = page.locator('.music-playlist-header').first()

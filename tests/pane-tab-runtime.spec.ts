@@ -4,8 +4,7 @@ import { createPane } from '../shared/default-state.ts'
 import type { AppState, ChatMessage } from '../shared/schema.ts'
 import { installMockElectronBridge } from './electron-bridge.ts'
 import { createPlaywrightState } from './playwright-state.ts'
-
-const appUrl = process.env.PLAYWRIGHT_APP_URL ?? 'http://localhost:5173'
+import { appUrl } from './playwright-app-url.ts'
 
 const createHistoryMessage = (cardId: string, index: number): ChatMessage => ({
   id: `${cardId}-message-${index + 1}`,

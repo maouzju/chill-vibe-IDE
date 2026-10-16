@@ -196,6 +196,21 @@ test('claude runs also receive the Windows PowerShell shell-safety and UTF-8 rea
   assert.match(promptValue, /UTF8Encoding/)
 })
 
+test('claude runs are told to arm a native CronCreate check-in while a long Workflow or background agent runs', () => {
+  for (const language of ['en', 'zh-CN'] as const) {
+    const args = buildClaudeArgs(
+      createRequest({ provider: 'claude', model: 'claude-sonnet-4-6', language, systemPrompt: 'Base.' }),
+      [],
+    )
+    const promptValue = args[args.indexOf('--append-system-prompt') + 1] ?? ''
+    assert.match(promptValue, /CronCreate/)
+    assert.match(promptValue, /CronDelete/)
+    assert.match(promptValue, /TaskStop/)
+    assert.match(promptValue, /Workflow/)
+    assert.match(promptValue, /3 (hours|小时)/)
+  }
+})
+
 test('claude runs include the final resolution marker instruction', () => {
   const args = buildClaudeArgs(
     createRequest({

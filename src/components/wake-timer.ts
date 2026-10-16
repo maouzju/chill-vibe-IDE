@@ -148,7 +148,7 @@ export const shouldQueueWakeTimerSend = ({
 }: {
   featureEnabled: boolean
   cardActive: boolean
-  origin: 'user' | 'auto-urge' | 'wake-timer-release'
+  origin: SendMessageOrigin
   answersPendingAskUser?: boolean
   // Plain empty queue entries remain invalid after the 2026-07-26 persistence
   // crash. A user-triggered empty continuation is real work, but it must carry

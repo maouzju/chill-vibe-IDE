@@ -4,6 +4,7 @@ import { createPane } from '../shared/default-state.ts'
 import { AUTOMATIONBOARD_TOOL_MODEL } from '../shared/models.ts'
 import { installMockElectronBridge } from './electron-bridge.ts'
 import { createPlaywrightState } from './playwright-state.ts'
+import { appUrl } from './playwright-app-url.ts'
 
 /**
  * 模板条 / 模板配置面板的「交互装饰」回归。
@@ -17,7 +18,6 @@ import { createPlaywrightState } from './playwright-state.ts'
  * 「立即运行」整行看不见，以及模型标签被压成 `clau…` 这种无意义残字。
  */
 
-const appUrl = process.env.PLAYWRIGHT_APP_URL ?? 'http://localhost:5173'
 const boardCardId = 'board-1'
 const workspacePath = 'd:\\Git\\chill-vibe'
 

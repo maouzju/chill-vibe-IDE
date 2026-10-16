@@ -3,8 +3,7 @@ import { expect, test, type Page } from '@playwright/test'
 import { DEFAULT_CODEX_MODEL } from '../shared/models.ts'
 import { installMockElectronBridge } from './electron-bridge.ts'
 import { createPlaywrightState } from './playwright-state.ts'
-
-const appUrl = 'http://127.0.0.1:5173'
+import { appUrl } from './playwright-app-url.ts'
 
 const fileContent = Array.from({ length: 40 }, (_, index) => `const line${index + 1} = ${index + 1}`).join('\n')
 

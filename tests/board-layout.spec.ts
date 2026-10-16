@@ -1,6 +1,7 @@
 import { expect, test, type Page } from '@playwright/test'
 import { installMockElectronBridge } from './electron-bridge.ts'
 import { createPlaywrightState } from './playwright-state.ts'
+import { appUrl } from './playwright-app-url.ts'
 
 const createBoardColumnFixture = (index: number, width?: number) => {
   const provider = index % 2 === 0 ? ('codex' as const) : ('claude' as const)
@@ -134,7 +135,7 @@ const mockAppApis = async (
 test('board seams stay aligned and quiet across themes in a narrow viewport', async ({ page }) => {
   await mockAppApis(page)
   await page.setViewportSize({ width: 462, height: 1178 })
-  await page.goto('http://localhost:5173')
+  await page.goto(appUrl)
   await page.locator('.workspace-column').nth(1).waitFor()
   await page.locator('.board').evaluate((node) => {
     node.scrollLeft = 210
@@ -187,7 +188,7 @@ test('board seams stay aligned and quiet across themes in a narrow viewport', as
 test('dragging the column divider left shrinks the left column before persisting the new width', async ({ page }) => {
   const api = await mockAppApis(page)
   await page.setViewportSize({ width: 1440, height: 960 })
-  await page.goto('http://localhost:5173')
+  await page.goto(appUrl)
   await page.locator('.workspace-column').nth(1).waitFor()
 
   const leftColumn = page.locator('.workspace-column').first()
@@ -219,7 +220,7 @@ test('dragging the column divider left shrinks the left column before persisting
 test('dragging a middle divider resizes the columns on both sides of the seam together', async ({ page }) => {
   const api = await mockAppApis(page, 4)
   await page.setViewportSize({ width: 1680, height: 960 })
-  await page.goto('http://localhost:5173')
+  await page.goto(appUrl)
   await page.locator('.workspace-column').nth(3).waitFor()
 
   const columns = page.locator('.workspace-column')
@@ -257,7 +258,7 @@ test('saved explicit column widths still stretch to fill a fullscreen-wide board
     widths: [406, 616, 306, 281],
   })
   await page.setViewportSize({ width: 1920, height: 1080 })
-  await page.goto('http://localhost:5173')
+  await page.goto(appUrl)
   await page.locator('.workspace-column').nth(3).waitFor()
 
   const readLayout = async (theme: 'dark' | 'light') => {

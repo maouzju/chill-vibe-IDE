@@ -4,6 +4,7 @@ import { DEFAULT_CODEX_MODEL, GIT_TOOL_MODEL, TEXTEDITOR_TOOL_MODEL } from '../s
 import type { AppLanguage, GitChange, GitStatus } from '../shared/schema.ts'
 import { installMockElectronBridge } from './electron-bridge.ts'
 import { createPlaywrightState } from './playwright-state.ts'
+import { appUrl } from './playwright-app-url.ts'
 
 type ThemeName = 'dark' | 'light'
 
@@ -180,7 +181,7 @@ test('non-repo Git cards offer a create-repository action and recover into repo 
     })
   })
 
-  await page.goto('http://localhost:5173')
+  await page.goto(appUrl)
 
   const modelSelect = page.locator('.model-select').first()
   await modelSelect.waitFor()
@@ -235,7 +236,7 @@ test('git card shows preview actions before the full status request finishes', a
     await new Promise(() => undefined)
   })
 
-  await page.goto('http://localhost:5173')
+  await page.goto(appUrl)
 
   const modelSelect = page.locator('.model-select').first()
   await modelSelect.waitFor()
@@ -318,7 +319,7 @@ test('commit new ignores an older background status refresh after the commit fin
     })
   })
 
-  await page.goto('http://localhost:5173')
+  await page.goto(appUrl)
 
   const modelSelect = page.locator('.model-select').first()
   await modelSelect.waitFor()
@@ -587,7 +588,7 @@ test('full git opens without auto-staging and still seeds a default commit summa
     await route.fulfill({ json: status })
   })
 
-  await page.goto('http://localhost:5173')
+  await page.goto(appUrl)
 
   const modelSelect = page.locator('.model-select').first()
   await modelSelect.waitFor()
@@ -614,7 +615,7 @@ test('full git opens without auto-staging and still seeds a default commit summa
 // 而是在 Git 卡所在 pane 新开一个可见会话接手，push 交给会话里的 Agent。
 test('git sync hands merge conflicts to a new visible chat session instead of a hidden run', async ({ page }) => {
   await installMockApis(page, 'dark')
-  await page.goto('http://localhost:5173')
+  await page.goto(appUrl)
 
   await page.evaluate(() => {
     const win = window as typeof window & {
@@ -779,7 +780,7 @@ test('git sync hands merge conflicts to a new visible chat session instead of a 
 
 test('git sync disables analysis while the sync panel is open', async ({ page }) => {
   await installMockApis(page, 'dark')
-  await page.goto('http://localhost:5173')
+  await page.goto(appUrl)
 
   await page.evaluate(() => {
     const win = window as typeof window & {
@@ -916,7 +917,7 @@ test('commit new one-click commits only changes since the last git snapshot', as
     })
   })
 
-  await page.goto('http://localhost:5173')
+  await page.goto(appUrl)
 
   const modelSelect = page.locator('.model-select').first()
   await modelSelect.waitFor()
@@ -1017,7 +1018,7 @@ test('git dashboard buttons show delayed tooltips and keep commit new as a one-c
     })
   })
 
-  await page.goto('http://localhost:5173')
+  await page.goto(appUrl)
 
   const modelSelect = page.locator('.model-select').first()
   await modelSelect.waitFor()
@@ -1166,7 +1167,7 @@ test('inactive pane-mounted Git tabs defer status fetch until activated', async 
     await route.fulfill({ json: createBaseGitStatus() })
   })
 
-  await page.goto('http://localhost:5173')
+  await page.goto(appUrl)
 
   await page.locator('.pane-tab.is-active').filter({ hasText: 'Git' }).waitFor()
   await page.locator('.git-tool-card').first().waitFor()
@@ -1302,7 +1303,7 @@ test('pane-mounted Git tab keeps its loaded state after being backgrounded and r
     await route.fulfill({ json: status })
   })
 
-  await page.goto('http://localhost:5173')
+  await page.goto(appUrl)
 
   await expect(page.getByText('1 changed file')).toBeVisible()
   await expect(page.getByText('src/components/GitToolCard.tsx')).toBeVisible()
@@ -1346,7 +1347,7 @@ for (const theme of ['dark', 'light'] as const) {
       await route.fulfill({ json: { status } })
     })
 
-    await page.goto('http://localhost:5173')
+    await page.goto(appUrl)
     await page.evaluate(() => {
       window.electronAPI!.pushGitChanges = async (request) => {
         const response = await fetch('/api/git/push', {
@@ -1413,7 +1414,7 @@ for (const theme of ['dark', 'light'] as const) {
       })
     })
 
-    await page.goto('http://localhost:5173')
+    await page.goto(appUrl)
 
     const modelSelect = page.locator('.model-select').first()
     const syncButton = page.locator('.git-dashboard-actions-inline .git-tool-button').filter({ hasText: 'Sync' })
@@ -1452,7 +1453,7 @@ for (const theme of ['dark', 'light'] as const) {
       })
     })
 
-    await page.goto('http://localhost:5173')
+    await page.goto(appUrl)
 
     const modelSelect = page.locator('.model-select').first()
     const syncButton = page.locator('.git-dashboard-actions-inline .git-tool-button').filter({ hasText: 'Sync' })
@@ -1489,7 +1490,7 @@ for (const theme of ['dark', 'light'] as const) {
       })
     })
 
-    await page.goto('http://localhost:5173')
+    await page.goto(appUrl)
 
     const modelSelect = page.locator('.model-select').first()
     await modelSelect.waitFor()
@@ -1503,7 +1504,7 @@ for (const theme of ['dark', 'light'] as const) {
   test(`switching a card to Editor without a file keeps a visible empty state in ${theme} theme`, async ({ page }) => {
     await installEditorEmptyStateApis(page, theme)
 
-    await page.goto('http://localhost:5173')
+    await page.goto(appUrl)
     await expect(page.locator('.text-editor-card')).toBeVisible()
     await expect(page.locator('.text-editor-empty')).toBeVisible()
     await expect(page.locator('.text-editor-empty-title')).toBeVisible()

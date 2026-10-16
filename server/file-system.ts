@@ -445,7 +445,7 @@ const lstatIfExists = async (targetPath: string): Promise<BigIntStats | null> =>
 }
 
 // 症状 (2026-10-14): 文件树里的条目已被外部删掉/挪走后再改名、移动或删除，弹出带本机绝对路径的
-//   "ENOENT: no such file or directory, stat 'D:\…'"。
+//   "ENOENT: no such file or directory, stat '<workspace>'"。
 // 根因: 2026-10-14 读码确认 `const s = await stat(p); if (!s) throw 'Path not found.'` 是死代码——stat 对缺失
 //   路径是 reject 而不是返回空值，守卫从没生效过。
 // 为什么只转 ENOENT: EACCES/EPERM 等是真实的权限/占用问题，必须原样上抛给前端去区分提示。

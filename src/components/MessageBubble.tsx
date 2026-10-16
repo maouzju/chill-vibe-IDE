@@ -194,7 +194,16 @@ export const StreamingIndicator = ({
     label = locale.streamRecoveryResumed
     recoveryClass = 'is-resumed'
   } else if (recoveryStatus?.kind === 'failed') {
-    label = locale.streamRecoveryFailed
+    label =
+      recoveryStatus.autoRetryAt !== undefined
+        ? locale.streamRecoveryAutoRetryScheduled(
+            new Date(recoveryStatus.autoRetryAt).toLocaleTimeString(language === 'en' ? 'en-US' : 'zh-CN', {
+              hour: '2-digit',
+              minute: '2-digit',
+            }),
+            recoveryStatus.autoRetryAttempt ?? 1,
+          )
+        : locale.streamRecoveryFailed
     recoveryClass = 'is-failed'
   }
   const className = recoveryClass

@@ -5,7 +5,8 @@ export type CardRecoveryStatus =
   // `streamId` is the stream this failure belongs to. It is what lets a genuinely
   // new stream clear the sticky banner while a late signal from the dead stream
   // still cannot revive it — see shouldClearRecoveryStatusForNewStream.
-  | { kind: 'failed'; streamId?: string }
+  // autoRetryAt / autoRetryAttempt：兜底重试已排期（fallback-retry.ts），横幅显示下次自动续传时间。
+  | { kind: 'failed'; streamId?: string; autoRetryAt?: number; autoRetryAttempt?: number }
 
 export const computeRecoveryStatusAfterRetryScheduled = (
   currentAttempt: number,

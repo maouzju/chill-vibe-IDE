@@ -4,6 +4,7 @@ import { createPane } from '../shared/default-state.ts'
 import { AUTOMATIONBOARD_TOOL_MODEL } from '../shared/models.ts'
 import { installMockElectronBridge } from './electron-bridge.ts'
 import { createPlaywrightState } from './playwright-state.ts'
+import { appUrl } from './playwright-app-url.ts'
 
 /**
  * 症状：2026-08-16 用户报「模板的模型选择等配置需要持久保存」—— 在模板配置面板
@@ -13,7 +14,6 @@ import { createPlaywrightState } from './playwright-state.ts'
  *   `state.automationBoards[workspacePath]`，任何一层把它丢了都在这里现形）。
  */
 
-const appUrl = process.env.PLAYWRIGHT_APP_URL ?? 'http://localhost:5173'
 const boardCardId = 'board-1'
 const workspacePath = 'd:\\Git\\chill-vibe'
 

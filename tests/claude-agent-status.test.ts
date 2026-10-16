@@ -952,3 +952,17 @@ test('已完成子代理再次收到 task_started 时复活', () => {
   assert.equal(update.activity?.agents.length, 1)
   assert.equal(update.activity?.agents[0].status, 'running')
 })
+
+// 父卡「失败过半就叫醒」要数字而不是去解析中英两种格式的汇总行。
+test('the Workflow entry carries structured counts while running', () => {
+  const live: WorkflowAgentState[] = [
+    ['Design', 'design:a', 'done'],
+    ['Design', 'design:b', 'error'],
+    ['Design', 'design:c', 'error'],
+    ['Design', 'design:d', 'progress'],
+    ['Design', 'design:e', 'queued'],
+  ]
+  const tracker = startWorkflow()
+  const running = tracker.handleEvent(workflowProgress('design:d', 3, 3_000, { phase: 'Design', live }))
+  assert.deepEqual(running.activity?.agents[0]?.workflowCounts, { done: 1, running: 1, failed: 2, queued: 1, total: 5 })
+})

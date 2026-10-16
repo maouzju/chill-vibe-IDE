@@ -73,6 +73,7 @@ import type {
   SplitNode,
   WakeTimerMode,
 } from '../shared/schema'
+import { isDuplicateTrailingErrorMessage, stripConsecutiveDuplicateErrorMessages } from './fallback-retry'
 import { automationBoardRequirementMaxChars, defaultAutoUrgeProfileId } from '../shared/schema'
 
 type Placement = 'before' | 'after'
@@ -528,6 +529,7 @@ export type IdeAction =
     }
   | { type: 'appendMessages'; columnId: string; cardId: string; messages: ChatMessage[] }
   | { type: 'upsertMessages'; columnId: string; cardId: string; messages: ChatMessage[] }
+  | { type: 'stripDuplicateErrorMessages'; columnId: string; cardId: string }
   | { type: 'resetCardConversation'; columnId: string; cardId: string; title?: string }
   | {
       type: 'forkConversation'
@@ -1238,6 +1240,10 @@ const appendUniqueCardMessages = (messages: ChatMessage[], additions: ChatMessag
     }
 
     seenIds.add(addition.id)
+    // 兜底重试每轮失败都会追加同一句报错；连续重复只留第一条（fallback-retry.ts）。
+    if (isDuplicateTrailingErrorMessage(uniqueAdditions.length > 0 ? [...messages, ...uniqueAdditions] : messages, addition)) {
+      continue
+    }
     uniqueAdditions.push(addition)
   }
 
@@ -3107,6 +3113,18 @@ const ideReducerCore = (state: AppState, action: IdeAction): AppState => {
           messages: appendUniqueCardMessages(card.messages, action.messages),
         })),
       )
+    case 'stripDuplicateErrorMessages': {
+      const card = state.columns.find((column) => column.id === action.columnId)?.cards[action.cardId]
+      if (!card || stripConsecutiveDuplicateErrorMessages(card.messages) === card.messages) {
+        return state
+      }
+      return touchState(
+        updateCard(state, action.columnId, action.cardId, (current) => ({
+          ...current,
+          messages: stripConsecutiveDuplicateErrorMessages(current.messages),
+        })),
+      )
+    }
     case 'upsertMessages':
       return touchState(
         updateCard(state, action.columnId, action.cardId, (card) => ({

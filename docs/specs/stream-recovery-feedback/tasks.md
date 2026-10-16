@@ -115,3 +115,14 @@ Node verification: the initial five-case proving run failed four cases (5 raw re
 2026-09-11 续接验证：接手时本切片的代码与测试已在工作区，未重写生产逻辑。把当前测试放到隔离副本，对照 `HEAD` 分类器得到预期的 2 项失败（未知证书码、无 CLI 后缀的 503）；当前分类器与续传策略/反馈测试共 86 项通过。证据位于 `dist/tls-recovery-proof-20260911/`。整库 `pnpm test:quality` 的 lint 通过，但另一个尚未完成的停止会话切片在 `server/index.ts:936` 读取不存在的 `ChatStreamStopResult.interrupted`，导致类型检查失败；本次不修改该切片，改在仅包含本修复的隔离候选上验证和打包。沿用现有 `stream-recovery-feedback` SPEC 与 AGENTS.md 的窄范围恢复规则，不另建功能 SPEC。
 
 交付确认：修复已独立提交为 `5d26578`；在该提交的干净隔离候选上，86 项定向测试与 `pnpm test:quality` 全通过，`pnpm electron:build` 成功。产物已移回主仓库 `dist/release-20260911-155631/Chill Vibe-0.20.19-win.zip`，免解压入口为同目录 `win-unpacked/Chill Vibe.exe`。从包内 `app.asar` 提取分类器确认与已验证编译产物逐字节相同，并实际断言未知 TLS 错误进入续传、无 session 与证书过期仍不续传；ZIP 顶层仅有 `Chill Vibe IDE`。当前用户运行的是 `release-20260910-133457` 发布包，按规则未关闭或重启，修复需切换新包后生效。此次只交付窄范围修复，不包含其他未完成改动，也未发布 GitHub Release。
+
+## Slice 14 - fallback retry and workflow failure wake (2026-10-16)
+
+- [x] Red-first coverage for 5-minute linear backoff capped at 30 minutes and duplicate error normalization.
+- [x] Red-first coverage for final-error fallback scheduling, cancellation on user stop/new send/completion, and in-memory reset.
+- [x] Red-first coverage for workflow failure majority wake-up, streaming defer, and per-workflow deduplication.
+- [x] Add localized retry scheduling copy and keep Settings/Routing closed on final errors.
+- [x] Register `fallback-retry.test.ts` and `workflow-failure-wake.test.ts` in the manifest.
+- [x] Verify focused Node coverage and the affected recovery/reasoning Playwright specs before release gating.
+
+Verification record (2026-10-16): `pnpm test` passed 3245 tests with 2 skipped; focused provider/recovery/reasoning coverage passed. Full release verification remains the release-pipeline gate.

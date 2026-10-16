@@ -1,8 +1,7 @@
 import { expect, test, type Page } from '@playwright/test'
 
 import { createPlaywrightState } from './playwright-state.ts'
-
-const appUrl = process.env.PLAYWRIGHT_APP_URL ?? 'http://localhost:5173'
+import { appUrl } from './playwright-app-url.ts'
 
 type MockCardState = {
   status: 'idle' | 'streaming'
@@ -691,7 +690,7 @@ test('idle Claude send clears and refocuses the composer before slow request sta
       messages: [],
     },
   })
-  await page.goto('http://localhost:5173')
+  await page.goto(appUrl)
 
   const textarea = getActiveComposerTextarea(page)
   const sendButton = page.getByRole('button', { name: 'Send message' })
@@ -1210,7 +1209,7 @@ test('left-tab wake timer chains onto a left neighbour that is itself waiting to
 
 test('left-clicking send while a card is running interrupts and sends immediately', async ({ page }) => {
   const mock = await installMockApis(page)
-  await page.goto('http://localhost:5173')
+  await page.goto(appUrl)
 
   const textarea = getActiveComposerTextarea(page)
   const sendButton = page.getByRole('button', { name: 'Send message' })
@@ -1236,7 +1235,7 @@ test('left-click send still dispatches when the stale stream never emits done af
   const mock = await installMockApis(page, {
     autoEmitDoneOnStop: false,
   })
-  await page.goto('http://localhost:5173')
+  await page.goto(appUrl)
 
   const textarea = getActiveComposerTextarea(page)
   const sendButton = page.getByRole('button', { name: 'Send message' })
@@ -1274,7 +1273,7 @@ test('a completed native Codex turn finalizes locally instead of ghost-continuin
 
 test('right-clicking send while a card is running queues the composer message', async ({ page }) => {
   const mock = await installMockApis(page)
-  await page.goto('http://localhost:5173')
+  await page.goto(appUrl)
 
   const textarea = getActiveComposerTextarea(page)
   const sendButton = page.getByRole('button', { name: 'Send message' })
@@ -1290,7 +1289,7 @@ test('right-clicking send while a card is running queues the composer message', 
 
 test('queued messages survive a renderer reload without dispatching on startup', async ({ page }) => {
   const mock = await installMockApis(page)
-  await page.goto('http://localhost:5173')
+  await page.goto(appUrl)
 
   const textarea = getActiveComposerTextarea(page)
   const sendButton = page.getByRole('button', { name: 'Send message' })
@@ -1308,7 +1307,7 @@ test('queued messages survive a renderer reload without dispatching on startup',
 
 test('queued messages can be cancelled before they are sent', async ({ page }) => {
   const mock = await installMockApis(page)
-  await page.goto('http://localhost:5173')
+  await page.goto(appUrl)
 
   const textarea = getActiveComposerTextarea(page)
   const sendButton = page.getByRole('button', { name: 'Send message' })
@@ -1326,7 +1325,7 @@ test('queued messages can be cancelled before they are sent', async ({ page }) =
 
 test('queued messages can be sent now by intentionally interrupting the running card', async ({ page }) => {
   const mock = await installMockApis(page)
-  await page.goto('http://localhost:5173')
+  await page.goto(appUrl)
 
   const textarea = getActiveComposerTextarea(page)
   const sendButton = page.getByRole('button', { name: 'Send message' })
@@ -1364,7 +1363,7 @@ test('sending a queued running Claude chat now keeps the softly interrupted sess
       ],
     },
   })
-  await page.goto('http://localhost:5173')
+  await page.goto(appUrl)
 
   const textarea = getActiveComposerTextarea(page)
   const sendButton = page.getByRole('button', { name: 'Send message' })
@@ -1474,7 +1473,7 @@ test('sending during /compact still waits for the compaction stream to finish', 
     },
     autoEmitDoneOnStop: true,
   })
-  await page.goto('http://localhost:5173')
+  await page.goto(appUrl)
 
   const textarea = getActiveComposerTextarea(page)
   const sendButton = page.getByRole('button', { name: 'Send message' })
@@ -1542,7 +1541,7 @@ test('an auto-compaction boundary mid-stream does not turn later sends into queu
       ],
     },
   })
-  await page.goto('http://localhost:5173')
+  await page.goto(appUrl)
 
   const textarea = getActiveComposerTextarea(page)
   await expect(textarea).toBeVisible()
@@ -1622,7 +1621,7 @@ test('send now locally settles an impossible streaming card with no stream id', 
 
 test('answering a live ask-user activity preserves the prior prose and then sends the answer', async ({ page }) => {
   const mock = await installMockApis(page, { autoEmitDoneOnStop: true })
-  await page.goto('http://localhost:5173')
+  await page.goto(appUrl)
 
   await expect(getActiveComposerTextarea(page)).toBeVisible()
 
@@ -1649,7 +1648,7 @@ test('answering a live ask-user activity preserves the prior prose and then send
 
 test('answering a live ask-user activity stops the waiting stream and immediately sends the answer', async ({ page }) => {
   const mock = await installMockApis(page, { autoEmitDoneOnStop: true })
-  await page.goto('http://localhost:5173')
+  await page.goto(appUrl)
 
   await expect(getActiveComposerTextarea(page)).toBeVisible()
 
@@ -1680,7 +1679,7 @@ test('answering a restored ask-user card stops the recovered stream and immediat
     },
     autoEmitDoneOnStop: true,
   })
-  await page.goto('http://localhost:5173')
+  await page.goto(appUrl)
 
   await expect(getActiveComposerTextarea(page)).toBeVisible()
   await expect(page.locator('.ask-user-card')).toBeVisible()
@@ -1709,7 +1708,7 @@ test('answering a restored ask-user card still sends if stop does not emit done'
     },
     autoEmitDoneOnStop: false,
   })
-  await page.goto('http://localhost:5173')
+  await page.goto(appUrl)
 
   await expect(getActiveComposerTextarea(page)).toBeVisible()
   await expect(page.locator('.ask-user-card')).toBeVisible()
@@ -1734,7 +1733,7 @@ test('answering a restored ask-user card still sends if stop says the old stream
     },
     stopResponse: 'not-found',
   })
-  await page.goto('http://localhost:5173')
+  await page.goto(appUrl)
 
   await expect(getActiveComposerTextarea(page)).toBeVisible()
   await expect(page.locator('.ask-user-card')).toBeVisible()
@@ -1773,7 +1772,7 @@ test('restored answered ask-user cards stay locked and keep the composer at the 
       ],
     },
   })
-  await page.goto('http://localhost:5173')
+  await page.goto(appUrl)
 
   const askUserCard = page.locator('.ask-user-card').first()
   await expect(askUserCard).toBeVisible()
@@ -1817,7 +1816,7 @@ test('restored answered merged ask-user cards stay locked after consecutive ques
       ],
     },
   })
-  await page.goto('http://localhost:5173')
+  await page.goto(appUrl)
 
   const askUserCard = page.locator('.ask-user-card').first()
   await expect(askUserCard).toBeVisible()
@@ -1840,7 +1839,7 @@ test('answered merged ask-user cards stay locked after an actual page reload', a
       ],
     },
   })
-  await page.goto('http://localhost:5173')
+  await page.goto(appUrl)
 
   const askUserCard = page.locator('.ask-user-card').first()
   await expect(askUserCard).toBeVisible()
@@ -1879,7 +1878,7 @@ test('choosing ask-user Other keeps the composer anchored to the pane bottom bef
       messages: [createAskUserMessage(now)],
     },
   })
-  await page.goto('http://localhost:5173')
+  await page.goto(appUrl)
 
   const askUserCard = page.locator('.ask-user-card').first()
   await expect(askUserCard).toBeVisible()
@@ -1900,7 +1899,7 @@ test('choosing ask-user Other keeps the composer anchored to the pane bottom bef
 
 test('answering a live ask-user activity still sends if stop does not emit done', async ({ page }) => {
   const mock = await installMockApis(page, { autoEmitDoneOnStop: false })
-  await page.goto('http://localhost:5173')
+  await page.goto(appUrl)
 
   await expect(getActiveComposerTextarea(page)).toBeVisible()
   await emitStreamEvent(page, 'stream-1', 'activity', askUserActivity)
@@ -1940,7 +1939,7 @@ test('old answered ask-user cards allow ordinary queued send-now interrupts', as
     },
     autoEmitDoneOnStop: true,
   })
-  await page.goto('http://localhost:5173')
+  await page.goto(appUrl)
 
   const textarea = getActiveComposerTextarea(page)
   const sendButton = page.getByRole('button', { name: 'Send message' })
@@ -1966,7 +1965,7 @@ test('reused ask-user itemId does not inherit an earlier answered state', async 
     },
     autoEmitDoneOnStop: true,
   })
-  await page.goto('http://localhost:5173')
+  await page.goto(appUrl)
 
   const firstCard = page.locator('.ask-user-card').first()
   await expect(firstCard).toBeVisible()
@@ -2007,7 +2006,7 @@ test('reused ask-user itemId does not inherit an unsubmitted draft selection', a
     },
     autoEmitDoneOnStop: true,
   })
-  await page.goto('http://localhost:5173')
+  await page.goto(appUrl)
 
   const firstCard = page.locator('.ask-user-card').first()
   const textarea = getActiveComposerTextarea(page)
@@ -2035,7 +2034,7 @@ test('reused ask-user itemId does not inherit an unsubmitted draft selection', a
 
 test('updating an existing ask-user card to a later question resets stale local selection state', async ({ page }) => {
   const mock = await installMockApis(page, { autoEmitDoneOnStop: true })
-  await page.goto('http://localhost:5173')
+  await page.goto(appUrl)
 
   await expect(getActiveComposerTextarea(page)).toBeVisible()
   await emitStreamEvent(page, 'stream-1', 'activity', askUserActivity)
@@ -2071,7 +2070,7 @@ test('merged consecutive ask-user questions require answering the later question
     },
     autoEmitDoneOnStop: true,
   })
-  await page.goto('http://localhost:5173')
+  await page.goto(appUrl)
 
   const card = page.locator('.ask-user-card').last()
   await expect(card).toBeVisible()

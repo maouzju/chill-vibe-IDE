@@ -2,8 +2,7 @@ import { expect, test, type Page } from '@playwright/test'
 
 import { createPlaywrightState } from './playwright-state.ts'
 import { installMockElectronBridge } from './electron-bridge.ts'
-
-const appUrl = process.env.PLAYWRIGHT_APP_URL ?? 'http://localhost:5173'
+import { appUrl } from './playwright-app-url.ts'
 
 const IMAGE_COUNT = 8
 const tinyPng = Buffer.from(

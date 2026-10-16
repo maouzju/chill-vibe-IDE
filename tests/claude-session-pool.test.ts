@@ -94,11 +94,13 @@ const createPool = (overrides?: {
   onUnsolicited?: ConstructorParameters<typeof ClaudeSessionPool>[0]['onUnsolicited']
   onIdleClose?: ConstructorParameters<typeof ClaudeSessionPool>[0]['onIdleClose']
   idleTimeoutMs?: number
+  backgroundIdleTimeoutMs?: number
 }) => {
   return new ClaudeSessionPool({
     onUnsolicited: overrides?.onUnsolicited ?? (() => {}),
     onIdleClose: overrides?.onIdleClose,
     idleTimeoutMs: overrides?.idleTimeoutMs,
+    backgroundIdleTimeoutMs: overrides?.backgroundIdleTimeoutMs,
   })
 }
 
@@ -592,6 +594,7 @@ test('idle timeout reports pending native background work before recycling the p
   const idleClosures: string[] = []
   const pool = createPool({
     idleTimeoutMs: 30,
+    backgroundIdleTimeoutMs: 30,
     onIdleClose: (entry) => idleClosures.push(entry.key),
   })
   const child = createFakeChild()
@@ -800,5 +803,21 @@ test('签名变更的同 session 重发会等中断收尾且旧进程退出后�
   const result = await acquire
   assert.equal(result?.child, replacement)
   assert.deepEqual(events, ['spawn:old-closed'])
+  pool.dispose()
+})
+
+// 2026-10-16：父 agent 用 CronCreate 定的 3 小时自查闹钟不出任何 stdout，30 分钟空闲回收会把它连同进程一起杀掉。
+test('pending native background work (e.g. a session cron) keeps the idle process alive for the longer background window', async () => {
+  const pool = createPool({ idleTimeoutMs: 40, backgroundIdleTimeoutMs: 400 })
+  const child = createFakeChild()
+  await pool.acquireForTurn({ key: 'card-cron', signature: 'sig-a', sessionId: undefined, spawn: async () => child })
+  const { attachment } = createAttachment()
+  pool.beginTurn('card-cron', attachment)
+  pool.endTurn('card-cron')
+  // 回合收尾后 Stop 钩子才报出 session_crons：此时已按短窗口计时，必须改按长窗口重新计时。
+  pool.updateMeta('card-cron', { backgroundWorkPending: true })
+  await new Promise((resolve) => setTimeout(resolve, 150))
+  assert.equal(child.killed, false)
+  await waitFor(() => child.killed === true, 2_000)
   pool.dispose()
 })

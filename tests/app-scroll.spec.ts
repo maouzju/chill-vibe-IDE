@@ -3,6 +3,7 @@ import { expect, test, type Page } from '@playwright/test'
 import type { AppState, ChatMessage } from '../shared/schema.ts'
 import { installMockElectronBridge } from './electron-bridge.ts'
 import { createPlaywrightState } from './playwright-state.ts'
+import { appUrl } from './playwright-app-url.ts'
 
 type ThemeName = 'dark' | 'light'
 type ScrollMetrics = {
@@ -15,8 +16,6 @@ type MessageListMetrics = {
   scrollTop: number
   maxScrollTop: number
 }
-
-const appUrl = process.env.PLAYWRIGHT_APP_URL ?? 'http://localhost:5173'
 
 const createHistoryMessage = (index: number): ChatMessage => ({
   id: `message-${index + 1}`,

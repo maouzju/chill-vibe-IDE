@@ -706,7 +706,7 @@ test('completed card defers to the repeat loop instead of urging on top of it', 
 test('stream-not-found graceful completion still enters the stable auto-urge broadcast', () => {
   const appSource = readFileSync(new URL('../src/App.tsx', import.meta.url), 'utf8')
   const branchStart = appSource.indexOf("if (message === 'Stream not found.')")
-  const branchEnd = appSource.indexOf("if (hint === 'switch-config'", branchStart)
+  const branchEnd = appSource.indexOf('// 报错不再自动跳到设置/路由页', branchStart)
 
   assert.notEqual(branchStart, -1)
   assert.notEqual(branchEnd, -1)

@@ -662,7 +662,7 @@ test('buildRemoteMonitorSnapshot attaches model and reasoning options per card',
   assert.ok(
     card.modelOptions?.every(
       (option) =>
-        (option.provider === 'codex' || option.provider === 'claude') &&
+        (option.provider === 'codex' || option.provider === 'claude' || option.provider === 'gemini') &&
         typeof option.model === 'string' &&
         option.label,
     ),
@@ -670,7 +670,7 @@ test('buildRemoteMonitorSnapshot attaches model and reasoning options per card',
   )
   assert.deepEqual(
     new Set(card.modelOptions?.map((option) => option.provider)),
-    new Set(['codex', 'claude']),
+    new Set(['codex', 'claude', 'gemini']),
     'mobile model picker should combine Codex and Claude in one list',
   )
   assert.ok((card.reasoningOptions?.length ?? 0) > 0, 'card should list reasoning tiers')

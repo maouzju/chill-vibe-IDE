@@ -303,18 +303,22 @@ export const createClaudeAgentStatusTracker = ({
   // 只报计数不列名字：2026-09-27 对抗审查在 Chromium 里按 index.css 实测，列 3 个名字的汇总在
   // 217~584px 的列里折成两行，而桌面活动框限高 3 行、底部对齐，折行会把最新那条心跳行挤出框。
   // 在跑的是谁由心跳行交代。
-  const formatWorkflowSummary = (agent: TrackedAgent) => {
+  const countWorkflowAgents = (agent: TrackedAgent): StreamAgentEntry['workflowCounts'] => {
     const entries = listWorkflowAgents(agent.workflow)
     if (entries.length === 0) {
       return undefined
     }
     const states = entries.map(readWorkflowAgentState)
     const count = (state: WorkflowAgentState) => states.filter((value) => value === state).length
+    return { done: count('done'), running: count('running'), failed: count('failed'), queued: count('queued'), total: entries.length }
+  }
+
+  const formatWorkflowSummary = (counts: NonNullable<StreamAgentEntry['workflowCounts']>) => {
     const en = language === 'en'
-    const segments = [en ? `${count('done')}/${entries.length} done` : `已完成 ${count('done')}/${entries.length}`]
-    if (count('running') > 0) segments.push(en ? `${count('running')} running` : `在跑 ${count('running')}`)
-    if (count('failed') > 0) segments.push(en ? `${count('failed')} failed` : `失败 ${count('failed')}`)
-    if (count('queued') > 0) segments.push(en ? `${count('queued')} queued` : `排队 ${count('queued')}`)
+    const segments = [en ? `${counts.done}/${counts.total} done` : `已完成 ${counts.done}/${counts.total}`]
+    if (counts.running > 0) segments.push(en ? `${counts.running} running` : `在跑 ${counts.running}`)
+    if (counts.failed > 0) segments.push(en ? `${counts.failed} failed` : `失败 ${counts.failed}`)
+    if (counts.queued > 0) segments.push(en ? `${counts.queued} queued` : `排队 ${counts.queued}`)
     return `${claudeWorkflowSummaryPrefix} ${segments.join(' · ')}`
   }
 
@@ -338,7 +342,8 @@ export const createClaudeAgentStatusTracker = ({
   // 顺序固定为 心跳行… → 汇总 → ⏳：渲染端尾切 3 行，汇总与计时必须都留在窗口里。
   const publicAgent = (agent: TrackedAgent): StreamAgentEntry => {
     const running = isRunningStatus(agent.status)
-    const summary = running ? formatWorkflowSummary(agent) : undefined
+    const workflowCounts = running ? countWorkflowAgents(agent) : undefined
+    const summary = workflowCounts ? formatWorkflowSummary(workflowCounts) : undefined
     const model = (running ? workflowModelBadge(agent) : undefined) ?? agent.model
     return {
       threadId: agent.threadId,
@@ -347,6 +352,7 @@ export const createClaudeAgentStatusTracker = ({
       ...(model ? { model } : {}),
       status: agent.status,
       ...(agent.message !== undefined ? { message: agent.message } : {}),
+      ...(workflowCounts ? { workflowCounts } : {}),
       activity: [
         ...agent.preview.map((entry) => entry.line),
         ...(summary ? [summary] : []),

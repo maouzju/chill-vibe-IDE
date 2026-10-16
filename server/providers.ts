@@ -374,6 +374,18 @@ const getClaudeSubagentModelInstruction = (language: AppLanguage) => {
     : `子 agent 模型自选：Agent 工具的 \`model\` 参数可填别名 haiku、sonnet、opus、fable，在这个 Chill Vibe 环境里分别对应 ${listZh}。你被明确允许按任务自己选，不必等用户点名：搜索、读文件、机械修改用 haiku 或 sonnet，实质性改动用 opus，最难的活用 fable。不填 \`model\` 则继承你当前的模型。子 agent 断线恢复：子 agent 因报错或中断结束（API 错误、429 / 过载、断网、超时）时它并没有丢——不要悄悄自己重做它的活，也不要放弃。用 SendMessage 带上该子 agent 的 id，让它从中断处继续（CLI 会带着它的转录续跑）；只有续跑失败时才用同样的任务说明重新启动 Agent。`
 }
 
+// 症状（2026-10-16 用户截图）：Workflow 5 个方向里 3 个连挂 3 次（超时 + 429），剩下 2 个几十分钟零输出，
+//   父 agent 却要等整个 Workflow 结束才收到通知，一直干等、最后拿残缺结果去合成。
+// 根因：父回合发起后台 Workflow / 后台 Agent 后就结束了，中途没有任何东西叫醒它。
+// 做法：CLI 自带 CronCreate 在 keepalive（-p + stream-json 输入）进程里实测会按时触发，
+//   Chill Vibe 的 unsolicited 唤醒路径会把它接成新回合——只缺让 agent 知道要这么做。
+//   间隔 3 小时（用户 2026-10-16 拍板：只防极端情况，日常失败过半由 workflow-failure-wake 叫醒）；
+//   claude-session-pool 对有后台活的进程空闲上限放到 4 小时，否则闹钟会随进程一起被回收。
+const getClaudeBackgroundCheckInInstruction = (language: AppLanguage) =>
+  normalizeLanguage(language) === 'en'
+    ? 'Background check-in: when you launch a Workflow or a background Agent that may run longer than about 10 minutes, also arm a recurring safety-net self check-in with CronCreate every 3 hours (not more often — it only guards against extreme cases such as a run that hangs for hours; Chill Vibe separately wakes you if most of a Workflow fails). On each check-in, inspect progress (task output, the workflow journal/agent transcripts) and act: if most branches have failed or agents have produced nothing for a long time (429 / overloaded / timeouts), stop it with TaskStop and tell the user what failed instead of waiting for a degraded result; otherwise end the turn quietly. Call CronDelete as soon as the background work finishes or is stopped.'
+    : '后台自查闹钟：当你发起可能跑超过约 10 分钟的 Workflow 或后台 Agent 时，同时用 CronCreate 给自己定一个每 3 小时一次的兜底自查闹钟（不要更频繁——它只防极端情况，比如一跑几个小时挂死；Workflow 失败过半时 Chill Vibe 另会叫醒你）。每次被唤醒时查看进度（任务输出、workflow 的 journal / 子 agent 转录）并处理：如果大部分分支已失败，或子 agent 长时间零输出（429 / 过载 / 超时），就用 TaskStop 停掉并告诉用户哪里失败了，不要干等残缺结果；否则安静结束本轮。后台工作结束或被停止后立刻用 CronDelete 删掉闹钟。'
+
 // 超管 create_session 的候选目录：读不到设置就不带（旧行为），绝不让超管回合因此失败。
 const resolveWorkspaceAdminModelCatalog = async () => {
   try {
@@ -4886,6 +4898,7 @@ export const buildClaudeArgs = (
     buildProviderSystemPrompt(request.language, getRequestBaseSystemPrompt(request)),
     getClaudeAskUserQuestionInstruction(request.language),
     getClaudeSubagentModelInstruction(request.language),
+    getClaudeBackgroundCheckInInstruction(request.language),
     getWindowsShellSafetyInstruction(),
   ].join(' ')
 

@@ -3,8 +3,7 @@ import { expect, test, type Page } from '@playwright/test'
 import { createPane, createSplit } from '../shared/default-state.ts'
 import { installMockElectronBridge } from './electron-bridge.ts'
 import { createPlaywrightState, getColumnCardIds } from './playwright-state.ts'
-
-const appUrl = process.env.PLAYWRIGHT_APP_URL ?? 'http://localhost:5173'
+import { appUrl } from './playwright-app-url.ts'
 
 const createSinglePaneState = () => {
   const now = new Date().toISOString()

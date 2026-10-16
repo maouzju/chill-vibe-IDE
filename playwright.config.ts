@@ -1,5 +1,7 @@
 import { defineConfig } from '@playwright/test'
 
+import { appUrl, playwrightPort } from './tests/playwright-app-url.ts'
+
 export default defineConfig({
   testDir: './tests',
   testMatch: '**/*.spec.ts',
@@ -7,8 +9,8 @@ export default defineConfig({
     headless: true,
   },
   webServer: {
-    command: 'node scripts/run-vite.mjs --host 127.0.0.1 --strictPort',
-    url: 'http://127.0.0.1:5173',
+    command: `node scripts/run-vite.mjs --host 127.0.0.1 --port ${playwrightPort} --strictPort`,
+    url: appUrl,
     reuseExistingServer: process.env.PW_REUSE_SERVER === '1',
     timeout: 120_000,
     env: {

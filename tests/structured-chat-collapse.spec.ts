@@ -3,8 +3,7 @@ import { expect, test, type Page } from '@playwright/test'
 import type { AppState } from '../shared/schema.ts'
 import { installMockElectronBridge } from './electron-bridge.ts'
 import { createPlaywrightState } from './playwright-state.ts'
-
-const appUrl = process.env.PLAYWRIGHT_APP_URL ?? 'http://localhost:5173'
+import { appUrl } from './playwright-app-url.ts'
 
 const createState = (theme: 'dark' | 'light'): AppState => createPlaywrightState({
   version: 1,

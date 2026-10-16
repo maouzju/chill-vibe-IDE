@@ -157,7 +157,7 @@ describe('gemini runtime', () => {
   it('prefers the API message line over stack traces on a crash exit', () => {
     const crashed = createSink()
     const parser = createGeminiStreamParser(crashed.sink)
-    parser.handleStderrLine('Error when talking to Gemini API Full report available at: C:/tmp/x.json ApiError: {"error":{"message":"quota exceeded"}}')
+    parser.handleStderrLine('Error when talking to Gemini API Full report available at: <workspace>/error.json ApiError: {"error":{"message":"quota exceeded"}}')
     parser.handleStderrLine('    at throwErrorIfNotOK (file:///x/index.mjs:1:1)')
     parser.handleStderrLine('    at process.processTicksAndRejections (node:internal/process/task_queues:103:5)')
     parser.handleProcessClosed(1)

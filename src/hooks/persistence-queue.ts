@@ -241,6 +241,7 @@ export const shouldUseQueuedPersistenceForAction = (actionType: IdeAction['type'
   actionType === 'appendAssistantDelta' ||
   actionType === 'appendMessages' ||
   actionType === 'upsertMessages' ||
+  actionType === 'stripDuplicateErrorMessages' ||
   actionType === 'updateCard' ||
   actionType === 'importExternalSession' ||
   actionType === 'removeSessionHistory' ||

@@ -3,6 +3,7 @@ import { expect, test, type Page } from '@playwright/test'
 import { FILETREE_TOOL_MODEL, GIT_TOOL_MODEL, STICKYNOTE_TOOL_MODEL } from '../shared/models.ts'
 import { installMockElectronBridge } from './electron-bridge.ts'
 import { createPlaywrightState } from './playwright-state.ts'
+import { appUrl } from './playwright-app-url.ts'
 
 type ThemeName = 'dark' | 'light'
 
@@ -184,7 +185,7 @@ for (const theme of ['dark', 'light'] as const) {
       page,
     }) => {
       await installMockApis(page, theme, model, title)
-      await page.goto('http://localhost:5173')
+      await page.goto(appUrl)
 
       const paneView = page.locator('.pane-view').first()
       const modelSelects = paneView.locator('.model-select-shell')
@@ -203,7 +204,7 @@ for (const theme of ['dark', 'light'] as const) {
     page,
   }) => {
     await installMockApis(page, theme, FILETREE_TOOL_MODEL, 'Files')
-    await page.goto('http://localhost:5173')
+    await page.goto(appUrl)
 
     const fileTreeCard = page.locator('.file-tree-card').first()
     await expect(fileTreeCard).toBeVisible()
@@ -237,7 +238,7 @@ for (const theme of ['dark', 'light'] as const) {
     page,
   }) => {
     await installMockApis(page, theme, FILETREE_TOOL_MODEL, 'Files')
-    await page.goto('http://localhost:5173')
+    await page.goto(appUrl)
 
     const fileTreeCard = page.locator('.file-tree-card').first()
     await expect(fileTreeCard).toBeVisible()
@@ -281,7 +282,7 @@ for (const theme of ['dark', 'light'] as const) {
     page,
   }) => {
     await installMockApis(page, theme, FILETREE_TOOL_MODEL, 'Files')
-    await page.goto('http://localhost:5173')
+    await page.goto(appUrl)
 
     const fileTreeCard = page.locator('.file-tree-card').first()
     await expect(fileTreeCard).toBeVisible()
@@ -320,7 +321,7 @@ for (const theme of ['dark', 'light'] as const) {
     await page.route('**/api/files/rename', async (route) => {
       await route.fulfill({ status: 409, json: { message: 'A file with that name already exists.' } })
     })
-    await page.goto('http://localhost:5173')
+    await page.goto(appUrl)
 
     const fileTreeCard = page.locator('.file-tree-card').first()
     await expect(fileTreeCard).toBeVisible()
@@ -353,7 +354,7 @@ for (const theme of ['dark', 'light'] as const) {
     page,
   }) => {
     await installMockApis(page, theme, FILETREE_TOOL_MODEL, 'Files')
-    await page.goto('http://localhost:5173')
+    await page.goto(appUrl)
 
     const fileTreeCard = page.locator('.file-tree-card').first()
     await expect(fileTreeCard).toBeVisible()

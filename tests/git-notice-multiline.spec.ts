@@ -3,6 +3,7 @@ import { expect, test, type Page } from '@playwright/test'
 import type { GitStatus } from '../shared/schema.ts'
 import { installMockElectronBridge } from './electron-bridge.ts'
 import { createPlaywrightState } from './playwright-state.ts'
+import { appUrl } from './playwright-app-url.ts'
 
 // 2026-08-13 用户实拍：Git 卡红色横幅里只有 `git commit ... timed out after 120000ms
 // and was killed.` 一句，没有任何可据以判断的原因。后端这一轮改成把 git 自己吐的原因
@@ -172,7 +173,7 @@ const installMockApis = async (page: Page) => {
 
 test('a multi-line git failure keeps its line breaks in the notice', async ({ page }) => {
   await installMockApis(page)
-  await page.goto('http://localhost:5173')
+  await page.goto(appUrl)
 
   const launcher = page.locator('.chat-empty-tool-button').filter({ hasText: 'Git' }).first()
   await expect(launcher).toBeVisible()

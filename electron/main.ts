@@ -46,6 +46,11 @@ import { runLocalFileTarget } from './local-file-run.js'
 import { localImageProtocolScheme } from '../shared/local-image-protocol.js'
 import { resolveLocalImageRequestTarget } from './local-image-protocol.js'
 import {
+  getLocalImageSnapshotKey,
+  pruneImageSnapshots,
+  resolveSnapshotImagePath,
+} from './local-image-snapshot.js'
+import {
   resolveDesktopDataDir,
   resolveDesktopRuntimeProfilePaths,
   resolveDesktopRuntimeKind,
@@ -1174,11 +1179,29 @@ function registerLocalImageProtocol() {
     }
 
     try {
-      return await net.fetch(pathToFileURL(filePath).toString())
+      const snapshotKey = getLocalImageSnapshotKey(request.url)
+      const servedPath = snapshotKey
+        ? await resolveSnapshotImagePath({
+            snapshotDir: path.join(app.getPath('userData'), 'image-snapshots'),
+            snapshotKey,
+            target: filePath,
+          })
+        : filePath
+
+      if (!servedPath) {
+        return new Response('Image not found.', { status: 404 })
+      }
+
+      return await net.fetch(pathToFileURL(servedPath).toString())
     } catch {
       return new Response('Image not found.', { status: 404 })
     }
   })
+
+  void pruneImageSnapshots(
+    path.join(app.getPath('userData'), 'image-snapshots'),
+    60 * 24 * 60 * 60 * 1000,
+  )
 }
 
 function registerDesktopHandlers() {

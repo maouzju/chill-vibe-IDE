@@ -3391,6 +3391,23 @@ type ClaudeTurnParser = {
 
 // Exported for the keepalive integration test, which drives a real fake-CLI
 // child process through the pool + parser composition.
+const claudeInvalidResponseRetryPrefix = 'The previous response failed to produce a valid tool call'
+const isClaudeInvalidResponseRetryNudge = (content: unknown): boolean => {
+  const text =
+    typeof content === 'string'
+      ? content
+      : Array.isArray(content)
+        ? content
+            .map((block) =>
+              block && typeof block === 'object' && (block as { type?: unknown }).type === 'text'
+                ? String((block as { text?: unknown }).text ?? '')
+                : '',
+            )
+            .join('')
+        : ''
+  return text.trimStart().startsWith(claudeInvalidResponseRetryPrefix)
+}
+
 export const createClaudeTurnParser = (hooks: {
   externalAgentTracking?: boolean
   request: ChatRequest
@@ -3415,8 +3432,8 @@ export const createClaudeTurnParser = (hooks: {
   // instead of silently dead-ending.
   let sawStructuredActivity = false
   let sawMeaningfulAssistantText = false
-  const askUserDeltaStripper = createClaudeAskUserDeltaStripper()
-  const typedToolChatterFilter = createClaudeTypedToolChatterFilter()
+  let askUserDeltaStripper = createClaudeAskUserDeltaStripper()
+  let typedToolChatterFilter = createClaudeTypedToolChatterFilter()
   // Per-turn sub-agent progress. See the system/task_* branch in handleLine.
   const claudeAgentTracker = createClaudeAgentStatusTracker({ language })
   const syntheticClaudeAgentIds = new Set<string>()
@@ -3449,6 +3466,8 @@ export const createClaudeTurnParser = (hooks: {
     }
     claudeOpenTextBlock = null
   }
+  // 当前 assistant message 已流出过文字的气泡 id；CLI 判其无效重试时整条收回。
+  const claudeCurrentMessageTextItemIds = new Set<string>()
   let claudeTextBlockSeq = 0
   const nextClaudeTextItemId = (blockIndex: number | null) => {
     claudeTextBlockSeq += 1
@@ -3598,6 +3617,25 @@ export const createClaudeTurnParser = (hooks: {
         return
       }
 
+      // 症状：卡片永久留着一条把 [SYSTEM NOTIFICATION]/<task-notification> 原样复读的垃圾气泡
+      //   （2026-10-17，CLI 2.1.280，msg_011Cg88kjJLt3hXn6nVKQbmd:text:0）。
+      // 根因：CLI 判定该回复无效、不落盘，注入 meta user「The previous response failed to
+      //   produce a valid tool call…」让模型重来；该 message 早已 content_block_stop，
+      //   不走孤儿块收回路径，IDE 流出的气泡就一直挂着。
+      // 为什么按这条文本认而不是 isMeta：isMeta 的 user 事件还有很多种，只有这条信号明确
+      //   「上一条 assistant 作废」；且必须在通用结构化解析前 return，免得它变成用户气泡/日志。
+      if (event.type === 'user' && isClaudeInvalidResponseRetryNudge(event.message?.content)) {
+        for (const itemId of claudeCurrentMessageTextItemIds) {
+          sink.onAssistantMessage({ itemId, content: '' })
+        }
+        claudeCurrentMessageTextItemIds.clear()
+        claudeOpenTextBlock = null
+        claudeTextBlockItemId = null
+        askUserDeltaStripper = createClaudeAskUserDeltaStripper()
+        typedToolChatterFilter = createClaudeTypedToolChatterFilter()
+        return
+      }
+
       const claudeStructuredEvents = parseClaudeStructuredOutput(event)
 
       if (event.type === 'assistant' && !sawClaudeDelta) {
@@ -3693,6 +3731,7 @@ export const createClaudeTurnParser = (hooks: {
         retractOrphanedClaudeTextBlock()
         const startedMessageId = readString(event.event.message, 'id')
         claudeStreamMessageId = startedMessageId ?? null
+        claudeCurrentMessageTextItemIds.clear()
         // A new assistant message is a genuine bubble boundary: drop the old
         // block identity so its first text delta opens a fresh bubble.
         claudeTextBlockItemId = null
@@ -3739,6 +3778,7 @@ export const createClaudeTurnParser = (hooks: {
           if (visibleText.trim()) {
             sawMeaningfulAssistantText = true
           }
+          claudeCurrentMessageTextItemIds.add(claudeTextBlockItemId)
           sink.onDelta(visibleText, claudeTextBlockItemId)
         }
         return

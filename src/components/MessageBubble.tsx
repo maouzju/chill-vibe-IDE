@@ -42,6 +42,7 @@ import {
   StructuredToolCard,
 } from './StructuredBlocks'
 import { useDialogFocus } from './dialog-focus'
+import { MessageImageSnapshotContext } from './message-image-snapshot-context'
 import type { ChangesSummaryFile } from './StructuredBlocks'
 import {
   areMessageBubblePropsEqual,
@@ -378,7 +379,9 @@ const MessageContent = ({
         ) : shouldUsePlainStreamingAssistantRender(message, isStreamingTail) ? (
           <p className="message-streaming-plain">{message.content}</p>
         ) : (
-          renderMarkdown(message.content, workspacePath)
+          <MessageImageSnapshotContext.Provider value={message.id}>
+            {renderMarkdown(message.content, workspacePath)}
+          </MessageImageSnapshotContext.Provider>
         )
       ) : null}
     </div>

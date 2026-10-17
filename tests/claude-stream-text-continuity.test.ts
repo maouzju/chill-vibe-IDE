@@ -291,3 +291,134 @@ test('a properly closed message followed by a new message_start is NOT retracted
   )
   assert.deepEqual(retracted, [])
 })
+
+// 症状：卡片永久留着一条把 [SYSTEM NOTIFICATION]/<task-notification> 原样复读的垃圾气泡
+//   （2026-10-17，CLI 2.1.280，msg_011Cg88kjJLt3hXn6nVKQbmd:text:0）。
+// 根因：CLI 判定该回复无效、不落盘，注入 meta user「The previous response failed to produce
+//   a valid tool call. Please retry the tool call now.」让模型重来；IDE 已流出的气泡没人收回。
+for (const contentShape of ['string', 'text-blocks'] as const) {
+  test(`CLI "failed to produce a valid tool call" retry (${contentShape}) retracts the discarded message bubbles`, () => {
+    const retracted: { itemId: string; content: string }[] = []
+    const logs: string[] = []
+    const base = createRecordingSink()
+    const parser = createClaudeTurnParser({
+      request: { prompt: 'go', provider: 'claude' } as ChatRequest,
+      sink: {
+        ...base.sink,
+        onLog: (message: string) => logs.push(message),
+        onAssistantMessage: (message: { itemId: string; content: string }) => retracted.push(message),
+      },
+      language: 'zh-CN',
+      killChild: () => {},
+    })
+    parser.handleLine(line({ type: 'system', subtype: 'init', session_id: 'sess-5' }))
+    parser.handleLine(
+      line({ type: 'stream_event', event: { type: 'message_start', message: { id: 'msg_bad' } } }),
+    )
+    parser.handleLine(
+      line({
+        type: 'stream_event',
+        event: { type: 'content_block_start', index: 0, content_block: { type: 'text', text: '' } },
+      }),
+    )
+    parser.handleLine(
+      line({
+        type: 'stream_event',
+        event: {
+          type: 'content_block_delta',
+          index: 0,
+          delta: { type: 'text_delta', text: '[SYSTEM NOTIFICATION - NOT USER INPUT] <task-notification>' },
+        },
+      }),
+    )
+    parser.handleLine(line({ type: 'stream_event', event: { type: 'content_block_stop', index: 0 } }))
+    parser.handleLine(
+      line({
+        type: 'stream_event',
+        event: { type: 'message_delta', delta: { stop_reason: 'end_turn' } },
+      }),
+    )
+    parser.handleLine(line({ type: 'stream_event', event: { type: 'message_stop' } }))
+    const retryText =
+      'The previous response failed to produce a valid tool call. Please retry the tool call now.'
+    parser.handleLine(
+      line({
+        type: 'user',
+        isMeta: true,
+        message: {
+          role: 'user',
+          content: contentShape === 'string' ? retryText : [{ type: 'text', text: retryText }],
+        },
+      }),
+    )
+    const badItemId = base.record.deltas[0]?.itemId
+    assert.equal(badItemId, 'msg_bad:text:0')
+    assert.deepEqual(retracted, [{ itemId: badItemId, content: '' }])
+    assert.ok(!logs.some((entry) => entry.includes('failed to produce a valid tool call')))
+    assert.ok(!base.record.deltas.some((d) => d.content.includes('failed to produce')))
+    assert.ok(
+      !JSON.stringify(base.record.activities).includes('failed to produce'),
+      'retry nudge must not surface as an activity',
+    )
+  })
+}
+
+test('a real reply after the CLI retry is not swallowed by a half-open tool-call block of the discarded message', () => {
+  const base = createRecordingSink()
+  const parser = createClaudeTurnParser({
+    request: { prompt: 'go', provider: 'claude' } as ChatRequest,
+    sink: base.sink,
+    language: 'zh-CN',
+    killChild: () => {},
+  })
+  parser.handleLine(line({ type: 'system', subtype: 'init', session_id: 'sess-6' }))
+  parser.handleLine(line({ type: 'stream_event', event: { type: 'message_start', message: { id: 'msg_bad' } } }))
+  parser.handleLine(
+    line({
+      type: 'stream_event',
+      event: { type: 'content_block_start', index: 0, content_block: { type: 'text', text: '' } },
+    }),
+  )
+  parser.handleLine(
+    line({
+      type: 'stream_event',
+      event: {
+        type: 'content_block_delta',
+        index: 0,
+        delta: { type: 'text_delta', text: '<function_calls>\n<invoke name="AskUserQuestion">' },
+      },
+    }),
+  )
+  parser.handleLine(line({ type: 'stream_event', event: { type: 'content_block_stop', index: 0 } }))
+  parser.handleLine(line({ type: 'stream_event', event: { type: 'message_stop' } }))
+  parser.handleLine(
+    line({
+      type: 'user',
+      isMeta: true,
+      message: {
+        role: 'user',
+        content:
+          'The previous response failed to produce a valid tool call. Please retry the tool call now.',
+      },
+    }),
+  )
+  parser.handleLine(line({ type: 'stream_event', event: { type: 'message_start', message: { id: 'msg_real' } } }))
+  parser.handleLine(
+    line({
+      type: 'stream_event',
+      event: { type: 'content_block_start', index: 0, content_block: { type: 'text', text: '' } },
+    }),
+  )
+  parser.handleLine(
+    line({
+      type: 'stream_event',
+      event: { type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text: '真正的回复' } },
+    }),
+  )
+  parser.handleLine(line({ type: 'stream_event', event: { type: 'content_block_stop', index: 0 } }))
+  parser.handleLine(line({ type: 'stream_event', event: { type: 'message_stop' } }))
+  parser.handleLine(line({ type: 'result', subtype: 'success', is_error: false, session_id: 'sess-6' }))
+
+  const visible = base.record.deltas.map((d) => d.content).join('')
+  assert.ok(visible.includes('真正的回复'), `real reply was swallowed; visible=${JSON.stringify(visible)}`)
+})

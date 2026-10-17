@@ -11,12 +11,20 @@ const imageFileExtensionPattern = /\.(png|jpe?g|gif|webp|svg|bmp|ico|avif)$/i
 export const hasImageFileExtension = (value: string) =>
   imageFileExtensionPattern.test(value.trim())
 
-export const getLocalImageProtocolUrl = (src: string, workspacePath?: string) => {
+export const getLocalImageProtocolUrl = (
+  src: string,
+  workspacePath?: string,
+  snapshotKey?: string,
+) => {
   const params = new URLSearchParams({ src })
   const workspace = workspacePath?.trim()
 
   if (workspace) {
     params.set('workspace', workspace)
+  }
+
+  if (snapshotKey) {
+    params.set('snapshot', snapshotKey)
   }
 
   return `${localImageProtocolScheme}://local/?${params.toString()}`
@@ -29,6 +37,7 @@ export const getLocalImageProtocolUrl = (src: string, workspacePath?: string) =>
 export const resolveMarkdownImageSrc = (
   src: string | null | undefined,
   workspacePath?: string,
+  snapshotKey?: string,
 ): string | undefined => {
   const value = src?.trim()
 
@@ -44,12 +53,12 @@ export const resolveMarkdownImageSrc = (
   }
 
   if (fileUrlPattern.test(value) || windowsDrivePathPattern.test(value)) {
-    return getLocalImageProtocolUrl(value, workspacePath)
+    return getLocalImageProtocolUrl(value, workspacePath, snapshotKey)
   }
 
   if (explicitSchemePattern.test(value)) {
     return value
   }
 
-  return getLocalImageProtocolUrl(value, workspacePath)
+  return getLocalImageProtocolUrl(value, workspacePath, snapshotKey)
 }

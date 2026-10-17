@@ -1,3 +1,4 @@
+import type { ModelPickerCustomization } from '../../shared/models'
 import {
   memo,
   useCallback,
@@ -159,6 +160,7 @@ type WorkspaceColumnProps = {
   brainstormRequestModel: string
   availableQuickToolModels: string[]
   localModelEntries?: LocalModelEntry[]
+  modelPickerCustomization?: ModelPickerCustomization
   autoUrgeEnabled: boolean
   autoUrgeProfiles?: AutoUrgeProfile[]
   autoUrgeMessage: string
@@ -282,6 +284,7 @@ const WorkspaceColumnView = ({
   brainstormRequestModel,
   availableQuickToolModels,
   localModelEntries,
+  modelPickerCustomization,
   autoUrgeEnabled,
   autoUrgeProfiles = [],
   autoUrgeMessage,
@@ -1243,6 +1246,7 @@ const WorkspaceColumnView = ({
           brainstormRequestModel={brainstormRequestModel}
           availableQuickToolModels={availableQuickToolModels}
           localModelEntries={localModelEntries}
+          modelPickerCustomization={modelPickerCustomization}
           autoUrgeEnabled={autoUrgeEnabled}
           autoUrgeProfiles={autoUrgeProfiles}
           autoUrgeMessage={autoUrgeMessage}

@@ -14,6 +14,7 @@ import type {
   CloseBehavior,
   LayoutNode,
   LocalModelEntry,
+  ModelPickerCustomModel,
   PaneNode,
   Provider,
   RecentCrashRecovery,
@@ -60,6 +61,7 @@ import {
   WHITENOISE_TOOL_MODEL,
   getDefaultModel,
   isToolCardModel,
+  isValidCustomPickerModelName,
   listModelUpgradeKeys,
   normalizeModel,
   normalizeStoredModel,
@@ -527,6 +529,61 @@ export const normalizeLocalModelEntries = (
   })
 }
 
+// 模型下拉覆盖表与自定义项（SPEC model-picker-customization）。state.json 可能被手改，
+// 这里只留结构合法的条目：布尔覆盖、非工具卡的键；自定义项按 id 与 provider:model 去重。
+export const normalizeModelPickerVisibility = (
+  visibility?: Record<string, boolean> | null,
+): Record<string, boolean> => {
+  if (!visibility || typeof visibility !== 'object' || Array.isArray(visibility)) {
+    return {}
+  }
+
+  const normalized: Record<string, boolean> = {}
+  for (const [key, value] of Object.entries(visibility)) {
+    const separator = key.indexOf(':')
+    const provider = key.slice(0, separator)
+    if (
+      typeof value !== 'boolean' ||
+      separator <= 0 ||
+      (provider !== 'codex' && provider !== 'claude' && provider !== 'gemini') ||
+      isToolCardModel(key.slice(separator + 1))
+    ) {
+      continue
+    }
+    normalized[key] = value
+  }
+  return normalized
+}
+
+export const normalizeModelPickerCustomModels = (
+  entries?: ModelPickerCustomModel[] | null,
+): ModelPickerCustomModel[] => {
+  if (!Array.isArray(entries)) {
+    return []
+  }
+
+  const seenIds = new Set<string>()
+  const seenKeys = new Set<string>()
+  return entries.flatMap((entry, index) => {
+    if (!entry || typeof entry !== 'object') {
+      return []
+    }
+
+    const id = normalizeText(entry.id) || `picker-model-${index + 1}`
+    const provider: Provider =
+      entry.provider === 'claude' || entry.provider === 'gemini' ? entry.provider : 'codex'
+    const model = normalizeText(entry.model)
+    const key = `${provider}:${model}`
+    if (!isValidCustomPickerModelName(model) || seenIds.has(id) || seenKeys.has(key)) {
+      return []
+    }
+
+    seenIds.add(id)
+    seenKeys.add(key)
+    return [{ id, provider, model, label: normalizeText(entry.label) }]
+  })
+}
+
 export const maxRecentWorkspaces = 20
 export const maxSessionHistoryPerWorkspace = 50
 
@@ -644,6 +701,8 @@ export const createDefaultSettings = (language: AppLanguage = defaultAppLanguage
   modelReasoningEfforts: createDefaultModelReasoningEfforts(),
   providerProfiles: createDefaultProviderProfiles(),
   localModelEntries: [],
+  modelPickerVisibility: {},
+  modelPickerCustomModels: [],
   recentWorkspaces: [],
 })
 
@@ -909,6 +968,8 @@ export const normalizeAppSettings = (settings?: Partial<AppSettings> | null): Ap
     modelReasoningEfforts: normalizeModelReasoningEfforts(settings?.modelReasoningEfforts),
     providerProfiles: normalizeProviderProfiles(settings?.providerProfiles),
     localModelEntries: normalizeLocalModelEntries(settings?.localModelEntries),
+    modelPickerVisibility: normalizeModelPickerVisibility(settings?.modelPickerVisibility),
+    modelPickerCustomModels: normalizeModelPickerCustomModels(settings?.modelPickerCustomModels),
     recentWorkspaces: normalizeRecentWorkspaces(settings?.recentWorkspaces),
   }
 }

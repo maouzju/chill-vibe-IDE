@@ -2008,9 +2008,11 @@ const codexSandboxModesByAccess: CodexSandboxMode[] = [
 
 const getCodexSandboxMode = (request: ChatRequest): CodexSandboxMode =>
   request.sandboxMode ?? (
-    request.agentOutsideWorkspaceWriteEnabled === false
-      ? 'workspace-write'
-      : 'danger-full-access'
+    request.readOnly === true
+      ? 'read-only'
+      : request.agentOutsideWorkspaceWriteEnabled === false
+        ? 'workspace-write'
+        : 'danger-full-access'
   )
 
 type CodexApprovalPolicy = NonNullable<ChatRequest['approvalPolicy']>
@@ -4251,6 +4253,7 @@ export const buildClaudeKeepaliveSignature = (
       : 'omitted',
     ultracode: request.thinkingEnabled !== false && isUltracodeEffort(request.reasoningEffort),
     plan: Boolean(request.planMode),
+    readOnly: request.readOnly === true,
     // 切换浏览器控制开关必须换进程：旧进程的 argv 里没有（或多了）chill_vibe_browser MCP。
     computerUse: request.computerUseEnabled === true,
     jev: request.jevEnabled === true,
@@ -4810,6 +4813,8 @@ const resolveClaudeAdditionalDirectories = (options?: {
   ])
 }
 
+const CLAUDE_READ_ONLY_DENIED_TOOLS = ['Write', 'Edit', 'MultiEdit', 'NotebookEdit', 'Bash', 'PowerShell']
+
 export const buildClaudeArgs = (
   request: ChatRequest,
   attachmentPaths: string[] = [],
@@ -4856,7 +4861,16 @@ export const buildClaudeArgs = (
   // false there disables adaptive thinking even when the card has thinkingEnabled=true.
   // The per-card toggle must be the final value instead of being shadowed by user settings.
   const alwaysThinkingActive = !thinkingDisabled || isClaudeAlwaysThinkingModel(request.model)
-  const permissionMode = request.planMode ? 'plan' : 'bypassPermissions'
+  // 只读回合（Git 分析）用 dontAsk + deny：需要授权的工具一律自动拒绝，读文件照常。
+  // 光 dontAsk 不够：2026-10-17 实测 CLI 2.1.280，用户 ~/.claude/settings.json 的 allow 里有
+  //   Bash / Write / Edit 时照样写出文件；deny 优先于 allow，补上才真正只读。
+  // 不用 plan——plan 会走 ExitPlanMode 审批卡，Git 卡拿不到回答正文。
+  const readOnly = !request.planMode && request.readOnly === true
+  const permissionMode = request.planMode
+    ? 'plan'
+    : readOnly
+      ? 'dontAsk'
+      : 'bypassPermissions'
   const outsideWorkspaceWriteRestricted = request.agentOutsideWorkspaceWriteEnabled === false
   const safetyHookCommand = (
     request.codexDestructiveCommandProtectionEnabled === true ||
@@ -5004,6 +5018,7 @@ export const buildClaudeArgs = (
         : {}),
       permissions: {
         defaultMode: permissionMode,
+        ...(readOnly ? { deny: CLAUDE_READ_ONLY_DENIED_TOOLS } : {}),
         ...(additionalDirectories.length > 0
           ? {
               additionalDirectories,

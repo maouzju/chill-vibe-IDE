@@ -10,7 +10,7 @@ import type {
   RecentWorkspace,
   SessionHistoryEntry,
 } from '../../shared/schema'
-import { AUTOMATIONBOARD_TOOL_MODEL, GIT_TOOL_MODEL } from '../../shared/models'
+import { AUTOMATIONBOARD_TOOL_MODEL, GIT_TOOL_MODEL, type ModelPickerCustomization } from '../../shared/models'
 import { getAutomationBoard } from '../../shared/default-state'
 import type { CardRecoveryStatus } from '../stream-recovery-feedback'
 import type { CodexChatSettings } from '../../shared/codex-chat-settings'
@@ -35,6 +35,7 @@ type WorkspaceColumnMemoProps = {
   brainstormRequestModel: string
   availableQuickToolModels: string[]
   localModelEntries?: LocalModelEntry[]
+  modelPickerCustomization?: ModelPickerCustomization
   autoUrgeEnabled: boolean
   autoUrgeProfiles?: AutoUrgeProfile[]
   autoUrgeMessage: string
@@ -69,6 +70,7 @@ type PaneViewMemoProps = {
   brainstormRequestModel: string
   availableQuickToolModels: string[]
   localModelEntries?: LocalModelEntry[]
+  modelPickerCustomization?: ModelPickerCustomization
   autoUrgeEnabled: boolean
   autoUrgeProfiles?: AutoUrgeProfile[]
   autoUrgeMessage: string
@@ -142,6 +144,7 @@ export const areWorkspaceColumnPropsEqual = (
   previous.brainstormRequestModel === next.brainstormRequestModel &&
   previous.availableQuickToolModels === next.availableQuickToolModels &&
   previous.localModelEntries === next.localModelEntries &&
+  previous.modelPickerCustomization === next.modelPickerCustomization &&
   previous.autoUrgeEnabled === next.autoUrgeEnabled &&
   previous.autoUrgeProfiles === next.autoUrgeProfiles &&
   previous.autoUrgeMessage === next.autoUrgeMessage &&
@@ -308,6 +311,7 @@ export const arePaneViewPropsEqual = (previous: PaneViewMemoProps, next: PaneVie
   previous.brainstormRequestModel === next.brainstormRequestModel &&
   previous.availableQuickToolModels === next.availableQuickToolModels &&
   previous.localModelEntries === next.localModelEntries &&
+  previous.modelPickerCustomization === next.modelPickerCustomization &&
   previous.autoUrgeEnabled === next.autoUrgeEnabled &&
   previous.autoUrgeProfiles === next.autoUrgeProfiles &&
   previous.autoUrgeMessage === next.autoUrgeMessage &&

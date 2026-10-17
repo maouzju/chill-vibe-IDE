@@ -1,3 +1,4 @@
+import type { ModelPickerCustomization } from '../../shared/models'
 import type {
   AutoUrgeProfile,
   BoardColumn,
@@ -38,6 +39,7 @@ type LayoutRendererProps = {
   brainstormRequestModel: string
   availableQuickToolModels: string[]
   localModelEntries?: LocalModelEntry[]
+  modelPickerCustomization?: ModelPickerCustomization
   autoUrgeEnabled: boolean
   autoUrgeProfiles?: AutoUrgeProfile[]
   autoUrgeMessage: string

@@ -189,6 +189,7 @@ type LocaleText = {
   remoteMonitorSecurityNote: string
   gitAgentModel: string
   gitAgentModelNote: string
+  gitAgentModelProviderHint: string
   systemPromptLabel: string
   systemPromptNote: string
   crossProviderSkillReuseLabel: string
@@ -735,7 +736,9 @@ const localeTextByLanguage: Record<AppLanguage, LocaleText> = {
     remoteMonitorClientCount: (count: number) => `${count} 台设备在看`,
     remoteMonitorSecurityNote: '链接内含访问令牌，拿到链接即可远程发送需求、停止会话、调整模型；请只在可信的局域网内分享。',
     gitAgentModel: 'Git 卡片 AI 模型',
-    gitAgentModelNote: 'Git 分析默认使用均衡的 GPT-5.6 Terra；格式：模型名称 推理强度（如 gpt-5.6-terra medium）。',
+    gitAgentModelNote:
+      '格式：模型名称 推理强度（如 gpt-6-luna medium、claude-sonnet-5-5 high）。按模型名自动选择 Codex / Claude / Gemini CLI，认不出的自定义名走 Codex；只写 claude 或 gemini 则用该 CLI 的默认模型。',
+    gitAgentModelProviderHint: '按模型名自动识别的 CLI',
     systemPromptLabel: '系统提示词',
     systemPromptNote: '每次 AI 运行前都会附加这条系统提示词。恢复默认可回到内置提示词。',
     crossProviderSkillReuseLabel: 'Codex / Claude Skill 互相复用',
@@ -1317,7 +1320,9 @@ const localeTextByLanguage: Record<AppLanguage, LocaleText> = {
     remoteMonitorSecurityNote:
       'The link embeds an access token that allows sending prompts, stopping runs, and changing models remotely; share it only on a trusted local network.',
     gitAgentModel: 'Git card AI model',
-    gitAgentModelNote: 'Git analysis defaults to fast GPT-6 Luna. Format: model-name reasoning-effort (e.g. gpt-6-luna medium).',
+    gitAgentModelNote:
+      'Format: model-name reasoning-effort (e.g. gpt-6-luna medium, claude-sonnet-5-5 high). The Codex / Claude / Gemini CLI is picked from the model name; unrecognized custom names run on Codex, and a bare claude or gemini uses that CLI’s default model.',
+    gitAgentModelProviderHint: 'CLI detected from the model name',
     systemPromptLabel: 'System prompt',
     systemPromptNote:
       'This prompt is appended before each AI run. Restore default to go back to the built-in prompt.',

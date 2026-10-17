@@ -16,7 +16,8 @@ import {
   type CodexChatSettings,
 } from '../../shared/codex-chat-settings'
 import { getGitLocaleText } from '../../shared/i18n'
-import { getDefaultReasoningEffort } from '../../shared/reasoning'
+import { inferProviderFromModel, resolveSlashModel } from '../../shared/models'
+import { getReasoningOptions, normalizeReasoningEffortForModel } from '../../shared/reasoning'
 import { buildSystemPromptForModel } from '../../shared/system-prompt'
 import { errorMessage } from './git-utils'
 import {
@@ -201,11 +202,53 @@ export const buildCommitNewSummary = (
   return `${mixedKinds ? 'Update' : primaryVerb.en} ${relevantChanges.length} files`
 }
 
-const splitGitAgentModel = (gitAgentModel: string) => {
-  const parts = gitAgentModel.trim().split(/\s+/)
+// 「Git 卡片 AI 模型」是一行自由文本 `<模型> [推理强度]`，归属哪个 CLI 由模型名推断
+// （2026-10-17 用户填 claude-sonnet-5-5 却被写死发给 Codex）。认不出归属的自定义名维持旧行为走 Codex。
+// 没写强度、或强度写错时用 medium：Git 分析是轻活，不跟各 CLI 聊天卡的默认档（Claude 是 max）。
+const GIT_AGENT_DEFAULT_EFFORT = 'medium'
+const GIT_AGENT_EFFORT_TOKENS = new Set<string>(
+  (['codex', 'claude', 'gemini'] as const).flatMap((provider) =>
+    getReasoningOptions(provider).map((option) => option.value),
+  ),
+)
+
+// 目录命中（正式 id / 选择器标签 / 别名）必须发规范 id：CLI 不认 `--model luna`、`--model flash`。
+// 只写 CLI 名命中的是「跟随配置默认」项（model ''），交给该 CLI 自己的默认模型。
+const resolveGitAgentModelPhrase = (phrase: string) => {
+  const provider = inferProviderFromModel(phrase)
+  const model = provider ? resolveSlashModel(provider, phrase) : null
+  return provider && model !== null ? { provider, model } : null
+}
+
+export const resolveGitAgentModel = (gitAgentModel: string) => {
+  const tokens = gitAgentModel.trim().split(/\s+/).filter(Boolean)
+  const lastToken = tokens.at(-1)?.toLowerCase() ?? ''
+  const rawEffort = tokens.length > 1 && GIT_AGENT_EFFORT_TOKENS.has(lastToken) ? lastToken : ''
+  const modelTokens = rawEffort ? tokens.slice(0, -1) : tokens
+  const [firstToken = '', ...restTokens] = modelTokens
+  const cliName = restTokens.length > 0 ? resolveGitAgentModelPhrase(firstToken) : null
+  // 先整段认（标签「Sonnet 5.5」「GPT-6 Luna」），再认去掉打头 CLI 名的部分（「Claude Sonnet 5.5」），
+  // 最后退回旧格式只取第一个词；目录外的名字原样透传。
+  const { provider, model }: { provider: Provider; model: string } =
+    resolveGitAgentModelPhrase(modelTokens.join(' ')) ??
+    (cliName?.model === ''
+      ? (resolveGitAgentModelPhrase(restTokens.join(' ')) ?? {
+          provider: cliName.provider,
+          model: restTokens.join(' '),
+        })
+      : null) ??
+    resolveGitAgentModelPhrase(firstToken) ?? {
+      provider: inferProviderFromModel(firstToken) ?? 'codex',
+      model: firstToken,
+    }
+  const effort = rawEffort || GIT_AGENT_DEFAULT_EFFORT
   return {
-    model: parts[0] || '',
-    reasoningEffort: parts[1] || getDefaultReasoningEffort('codex'),
+    provider,
+    model,
+    // Codex 档位原样透传（旧行为，服务端按型号再规范化）：按目录夹紧会把中转站自定义型号的
+    // max / ultra 静默降成 xhigh。Claude / Gemini 没有 Codex 的档位，必须落到该 CLI 的合法档。
+    reasoningEffort:
+      provider === 'codex' ? effort : normalizeReasoningEffortForModel(provider, model, effort),
   }
 }
 
@@ -304,13 +347,17 @@ export const createGitOperationHub = (deps: GitOperationHubDeps) => {
   const buildAgentRequest = (
     context: GitOperationContext,
     prompt: string,
-    extras: Record<string, unknown> = {},
+    { readOnly = false }: { readOnly?: boolean } = {},
   ) => {
-    const { model, reasoningEffort } = splitGitAgentModel(context.gitAgentModel)
+    const { provider, model, reasoningEffort } = resolveGitAgentModel(context.gitAgentModel)
     return {
-      provider: 'codex',
+      provider,
+      // 只读由服务端按各 CLI 原生方式落实（Codex 只读沙箱 / Claude dontAsk / Gemini default 审批）；
+      // sandboxMode 是 Codex 专属字段，照旧只发给 Codex。
+      ...(readOnly ? { readOnly: true } : {}),
+      ...(readOnly && provider === 'codex' ? { sandboxMode: 'read-only' as const } : {}),
       ...buildCodexChatRequestOverrides(
-        'codex',
+        provider,
         context.codexChatSettings ?? defaultCodexChatSettings,
       ),
       workspacePath: context.workspacePath,
@@ -324,7 +371,6 @@ export const createGitOperationHub = (deps: GitOperationHubDeps) => {
       thinkingEnabled: true,
       planMode: false,
       attachments: [],
-      ...extras,
     }
   }
 
@@ -346,7 +392,7 @@ export const createGitOperationHub = (deps: GitOperationHubDeps) => {
     try {
       const prompt = buildAnalysisPrompt(gitStatus, language)
       const result = await deps.requestChat(
-        buildAgentRequest(context, prompt, { sandboxMode: 'read-only' }),
+        buildAgentRequest(context, prompt, { readOnly: true }),
       )
 
       if (session.analysisRunId !== runId) {
@@ -622,12 +668,12 @@ export const createGitOperationHub = (deps: GitOperationHubDeps) => {
       const conflictPaths = latestStatus.changes
         .filter((change) => change.conflicted)
         .map((change) => change.path)
-      const { model, reasoningEffort } = splitGitAgentModel(context.gitAgentModel)
+      const { provider, model, reasoningEffort } = resolveGitAgentModel(context.gitAgentModel)
       const opened =
         context.openAgentSession?.({
           title: text.syncConflictSessionTitle,
           prompt: buildConflictSessionPrompt(language, conflictPaths),
-          provider: 'codex',
+          provider,
           ...(model ? { model } : {}),
           reasoningEffort,
         }) ?? false

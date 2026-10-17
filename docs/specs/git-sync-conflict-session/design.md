@@ -3,11 +3,12 @@
 ## Hub（`src/components/git-operation-hub.ts`）
 
 - `GitOperationContext` 新增可选 `openAgentSession(request)`，`request` 为
-  `{ title, prompt, provider: 'codex', model?, reasoningEffort? }`。
+  `{ title, prompt, provider, model?, reasoningEffort? }`（provider 按模型名推断，
+  见 `docs/specs/git-agent-model-provider-inference/`）。
 - 删除 `resolveConflicts` 后台流及 `syncStep: { kind: 'conflict' }`、`conflictStream`。
 - `runSyncPipeline` 检测到 `hasConflicts`：
   - 有 `openAgentSession`：用 `buildConflictSessionPrompt(language, paths)` 组装提示词，
-    model / reasoningEffort 由 `gitAgentModel`（`"<model> <effort>"`）拆出；调用后
+    provider / model / reasoningEffort 由 `resolveGitAgentModel(gitAgentModel)` 得出；调用后
     `syncPanelOpen=false`、`syncStep=idle`，飘字 `syncConflictHandedOff`（info）。
   - 没有：`syncStep=error`，提示手动解决；不 push。
 

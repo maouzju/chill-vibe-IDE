@@ -208,6 +208,65 @@ const extractStrategies = (parsed: Record<string, unknown>): CommitStrategy[] =>
   return collectCommitStrategies(parsed.strategies as unknown[])
 }
 
+const tryParseJson = (text: string): unknown => {
+  try {
+    return JSON.parse(text)
+  } catch {
+    return undefined
+  }
+}
+
+const toAnalysisResult = (parsed: unknown): AnalysisResult | null => {
+  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) return null
+  const record = parsed as Record<string, unknown>
+  const summary = typeof record.summary === 'string' ? record.summary : ''
+  const strategies = extractStrategies(record)
+  return summary || strategies.length > 0 ? { summary, strategies } : null
+}
+
+// 文本里每个配平的顶层 `{...}`；只在对象内部认字符串，旁白里的引号不影响配平。
+// 旁白里未闭合的 `{`（如引用代码 `if (x) {`）不能吞掉后面的 JSON，所以它找不到闭合时从下一位重扫。
+const findJsonObjectEnd = (text: string, start: number): number => {
+  let depth = 0
+  let inString = false
+  let escaped = false
+  for (let index = start; index < text.length; index += 1) {
+    const ch = text[index]
+    if (inString) {
+      if (escaped) escaped = false
+      else if (ch === '\\') escaped = true
+      else if (ch === '"') inString = false
+      continue
+    }
+    if (ch === '"') {
+      inString = true
+    } else if (ch === '{') {
+      depth += 1
+    } else if (ch === '}') {
+      depth -= 1
+      if (depth === 0) return index
+    }
+  }
+  return -1
+}
+
+const findBalancedJsonObjects = (text: string): string[] => {
+  const objects: string[] = []
+  let from = 0
+  while (from < text.length) {
+    const start = text.indexOf('{', from)
+    if (start === -1) break
+    const end = findJsonObjectEnd(text, start)
+    if (end === -1) {
+      from = start + 1
+      continue
+    }
+    objects.push(text.slice(start, end + 1))
+    from = end + 1
+  }
+  return objects
+}
+
 export const parseAnalysisResult = (content: string): AnalysisResult | null => {
   try {
     const cleaned = content
@@ -217,16 +276,22 @@ export const parseAnalysisResult = (content: string): AnalysisResult | null => {
 
     const jsonMatch = cleaned.match(/\{[\s\S]*\}/)
     if (jsonMatch) {
-      const parsed = JSON.parse(jsonMatch[0]) as Record<string, unknown>
-      const summary = typeof parsed.summary === 'string' ? parsed.summary : ''
-      const strategies = extractStrategies(parsed)
-      if (summary || strategies.length > 0) return { summary, strategies }
+      const result = toAnalysisResult(tryParseJson(jsonMatch[0]))
+      if (result) return result
+    }
+
+    // Claude / Gemini 累计的是整轮全部文本增量（没有 Codex 那种整条 assistant_message 覆盖），
+    // JSON 前的旁白一带 `{`，上面「首个 { 到末个 }」就整段解析失败（2026-10-17 Git 卡可走 Claude 后）。
+    // 从后往前逐个试配平的对象：回答正文的 JSON 通常在最后。
+    for (const candidate of findBalancedJsonObjects(cleaned).reverse()) {
+      const result = toAnalysisResult(tryParseJson(candidate))
+      if (result) return result
     }
 
     const arrayMatch = cleaned.match(/\[[\s\S]*\]/)
     if (arrayMatch) {
-      const arr = JSON.parse(arrayMatch[0]) as unknown[]
-      const strategies = collectCommitStrategies(arr)
+      const arr = tryParseJson(arrayMatch[0])
+      const strategies = Array.isArray(arr) ? collectCommitStrategies(arr) : []
       if (strategies.length > 0) return { summary: '', strategies }
     }
 

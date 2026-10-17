@@ -463,6 +463,16 @@ export const localModelEntrySchema = z.object({
 })
 export type LocalModelEntry = z.infer<typeof localModelEntrySchema>
 
+// 模型下拉里用户额外加的一项（SPEC model-picker-customization）：只是同一条路由下多一个
+// 模型名，选中后与 `/model <自定义名>` 同形写进 card.model；带端点的另见 localModelEntrySchema。
+export const modelPickerCustomModelSchema = z.object({
+  id: z.string().min(1),
+  provider: providerSchema,
+  model: z.string().min(1),
+  label: z.string().default(''),
+})
+export type ModelPickerCustomModel = z.infer<typeof modelPickerCustomModelSchema>
+
 export const recentWorkspaceSchema = z.object({
   path: z.string().min(1),
   openedAt: z.string().datetime(),
@@ -887,6 +897,10 @@ export const appSettingsSchema = z.object({
     },
   }),
   localModelEntries: z.array(localModelEntrySchema).default([]),
+  // 模型下拉的可见性覆盖表，键 `${provider}:${model}`；只记用户改过的项，没碰过的跟随内置
+  // hiddenFromPicker（存「可见名单」会让以后新上架的型号对存过名单的人永远不出现）。
+  modelPickerVisibility: z.record(z.string(), z.boolean()).default({}),
+  modelPickerCustomModels: z.array(modelPickerCustomModelSchema).default([]),
   gitAgentModel: z.string().default(DEFAULT_GIT_AGENT_MODEL),
   lastModel: z.object({
     provider: providerSchema,
@@ -1185,6 +1199,8 @@ export const appStateSchema = z.object({
       },
     },
     localModelEntries: [],
+    modelPickerVisibility: {},
+    modelPickerCustomModels: [],
     gitAgentModel: DEFAULT_GIT_AGENT_MODEL,
     recentWorkspaces: [],
   }),
@@ -1383,6 +1399,10 @@ export const chatRequestSchema = z.object({
   attachments: z.array(imageAttachmentSchema).default([]),
   archiveRecall: archiveRecallSnapshotSchema.optional(),
   sandboxMode: codexSandboxModeSchema.optional(),
+  // 只读回合（Git 卡 AI 分析）：各 CLI 用原生方式落实——Codex 只读沙箱、Claude dontAsk、
+  // Gemini 无头 default 审批（自动排除 shell/编辑/写文件）。2026-10-17 Git 卡可走 Claude/Gemini 后，
+  // 只给 Codex 的 sandboxMode 守不住别的 CLI。optional：服务端只认 === true。
+  readOnly: z.boolean().optional(),
   approvalPolicy: codexApprovalPolicySchema.optional(),
   networkAccessEnabled: z.boolean().optional(),
   agentOutsideWorkspaceWriteEnabled: z.boolean().default(true),

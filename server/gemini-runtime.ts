@@ -3,8 +3,14 @@ import type { ChatRequest, ProviderTurnUsage, StreamCommandActivity } from '../s
 // Gemini CLI headless 运行（docs/specs/gemini-cli-provider）。
 // 纯函数部分独立成模块：providers.ts 只负责起进程，参数与 stream-json 事件映射在这里可单测。
 
-export const buildGeminiArgs = (request: Pick<ChatRequest, 'model' | 'sessionId'>) => {
-  const args = ['--output-format', 'stream-json', '--approval-mode', 'yolo']
+// 只读回合用 default：无头模式下 gemini-cli 会把需要审批的 shell / 编辑 / 写文件工具整个排除。
+export const buildGeminiArgs = (request: Pick<ChatRequest, 'model' | 'sessionId' | 'readOnly'>) => {
+  const args = [
+    '--output-format',
+    'stream-json',
+    '--approval-mode',
+    request.readOnly === true ? 'default' : 'yolo',
+  ]
   const model = request.model?.trim()
   if (model) {
     args.push('--model', model)

@@ -467,6 +467,16 @@ describe('ideReducer pane layout', () => {
       },
     })
     assert.equal(statusOf(next.columns[0]!.cards.k), 'interrupted')
+
+    // 症状（2026-10-17）：历史侧栏重开会话后，沉底面板仍冻结在「运行中 2分33秒」。
+    // 根因：UI 的 handleRestoreSession 与崩溃恢复都走 importExternalSession，不走 restoreSession。
+    const imported = ideReducer(createState(), {
+      type: 'importExternalSession',
+      columnId: 'column-1',
+      entry: state.sessionHistory[0]!,
+    })
+    const importedPane = imported.columns[0]!.layout as PaneNode
+    assert.equal(statusOf(imported.columns[0]!.cards[importedPane.activeTabId]), 'interrupted')
   })
 
   it('imports an external session with its archived provider, model, and session id', () => {

@@ -35,13 +35,13 @@ import {
   WHITENOISE_TOOL_MODEL,
   MODEL_OPTIONS,
   TOOL_CARD_MODELS,
-  buildLocalModelOptions,
-  isBrainstormRequestModelVisible,
+  buildModelPickerOptions,
+  getModelPickerOptionKey,
   isCodexNoneEffortUnsupportedModel,
-  isLocalModelToken,
-  isModelPickerOptionVisible,
   normalizeStoredModel,
+  stepModelPickerOption,
   type ModelOption,
+  type ModelPickerCustomization,
 } from '../../shared/models'
 import {
   getReasoningOptionsForModel,
@@ -236,6 +236,7 @@ import {
   StickyNoteIcon,
   StopIcon,
 } from './Icons'
+import { createWheelStepAccumulator, pickWheelPreviewToCommit } from './wheel-step'
 
 
 // 曾经手抄一份，漏了自动化看板，于是看板卡被自动鞭策当成普通聊天卡。
@@ -435,6 +436,7 @@ type ChatCardProps = {
   brainstormRequestModel: string
   availableQuickToolModels: string[]
   localModelEntries?: LocalModelEntry[]
+  modelPickerCustomization?: ModelPickerCustomization
   autoUrgeEnabled: boolean
   autoUrgeProfiles?: AutoUrgeProfile[]
   autoUrgeMessage: string
@@ -514,31 +516,6 @@ type ChatCardProps = {
 
 const getSelectValue = (provider: Provider, model: string) =>
   `${provider}:${normalizeStoredModel(provider, model)}`
-
-const getCustomModelOption = (provider: Provider, model: string): ModelOption | null => {
-  const normalized = normalizeStoredModel(provider, model)
-
-  if (!normalized) {
-    return null
-  }
-
-  // 本地模型令牌由 buildLocalModelOptions 单独产出（带用户起的显示名）。落到这里只可能是
-  // 条目已被删除，这时造一条 label 为 `__local__:xxx` 的选项只会把令牌暴露给用户，
-  // 不如不显示 —— 选择器会回落到第一项，后端也会把无效条目回落成默认模型。
-  if (isLocalModelToken(normalized)) {
-    return null
-  }
-
-  if (MODEL_OPTIONS.some((option) => option.provider === provider && option.model === normalized)) {
-    return null
-  }
-
-  return {
-    provider,
-    model: normalized,
-    label: normalized,
-  }
-}
 
 const getModelOptionIcon = (option: ModelOption): ReactNode => {
   if (option.model === GIT_TOOL_MODEL) {
@@ -937,6 +914,7 @@ const areChatCardPropsEqual = (previous: ChatCardProps, next: ChatCardProps) =>
   previous.brainstormRequestModel === next.brainstormRequestModel &&
   previous.availableQuickToolModels === next.availableQuickToolModels &&
   previous.localModelEntries === next.localModelEntries &&
+  previous.modelPickerCustomization === next.modelPickerCustomization &&
   previous.autoUrgeEnabled === next.autoUrgeEnabled &&
   previous.autoUrgeProfiles === next.autoUrgeProfiles &&
   previous.autoUrgeMessage === next.autoUrgeMessage &&
@@ -1560,6 +1538,7 @@ const ChatCardView = ({
   brainstormRequestModel,
   availableQuickToolModels = [],
   localModelEntries = [],
+  modelPickerCustomization,
   autoUrgeEnabled,
   autoUrgeProfiles = [],
   autoUrgeMessage,
@@ -1632,6 +1611,12 @@ const ChatCardView = ({
     useState<ComposerAttachmentPreview | null>(null)
   const [askUserAnswers, setAskUserAnswers] = useState<Record<string, string>>({})
   const [modelMenuOpen, setModelMenuOpen] = useState(false)
+  // 滚轮切模型先只改按钮显示，停手后才提交一次（SPEC model-picker-customization）。
+  const [wheelPreviewKey, setWheelPreviewKey] = useState<string | null>(null)
+  const modelWheelRef = useRef<{ step: (direction: 1 | -1) => void; flush: () => void }>({
+    step: () => {},
+    flush: () => {},
+  })
   const [settingsMenuOpen, setSettingsMenuOpen] = useState(false)
   // 滚轮调档后短暂报出档位名；seq 每次自增让同一档名的气泡也能重播动画。
   const [reasoningFlash, setReasoningFlash] = useState<{ value: string; seq: number } | null>(null)
@@ -3697,6 +3682,9 @@ const ChatCardView = ({
 
   const handleSubmit = async (options?: SendMessageOptions) => {
     if (sendDisabled) return
+    // 滚轮预览还没提交就按了发送：先落定，否则按钮显示的模型和这条消息实际用的对不上。
+    // sendMessage 读的是 appStateRef，换模型的 applyAction 同步更新它。
+    modelWheelRef.current.flush()
     const prompt = draftValueRef.current.trim()
     // The ref is the attachment source of truth: a background paste upload may
     // have promoted entries after this render's state snapshot was taken.
@@ -3825,36 +3813,129 @@ const ChatCardView = ({
   const selectValue = isBrainstormCard
     ? getSelectValue(brainstormRequestTarget.provider, brainstormRequestTarget.model)
     : getSelectValue(effectiveProvider, card.model ?? '')
-  const selectOptions = useMemo(() => {
-    if (isBrainstormCard) {
-      const custom = getCustomModelOption(
-        brainstormRequestTarget.provider,
-        brainstormRequestTarget.model,
-      )
-      const base = custom ? [custom, ...MODEL_OPTIONS] : MODEL_OPTIONS
-      return base.filter(isBrainstormRequestModelVisible)
-    }
-
-    const custom = getCustomModelOption(effectiveProvider, card.model ?? '')
-    // 本地条目排在最前：它们是用户自己配的，找起来该比内置模型更快。
-    const base = [
-      ...buildLocalModelOptions(localModelEntries),
-      ...(custom ? [custom] : []),
-      ...MODEL_OPTIONS,
-    ]
-    return base.filter(isModelPickerOptionVisible)
-  }, [
-    brainstormRequestTarget.model,
-    brainstormRequestTarget.provider,
-    card.model,
-    effectiveProvider,
-    isBrainstormCard,
-    localModelEntries,
-  ])
+  const selectOptions = useMemo(
+    () =>
+      buildModelPickerOptions({
+        localModelEntries,
+        customization: modelPickerCustomization,
+        current: isBrainstormCard
+          ? { provider: brainstormRequestTarget.provider, model: brainstormRequestTarget.model }
+          : { provider: effectiveProvider, model: card.model ?? '' },
+        mode: isBrainstormCard ? 'brainstorm' : 'chat',
+      }),
+    [
+      brainstormRequestTarget.model,
+      brainstormRequestTarget.provider,
+      card.model,
+      effectiveProvider,
+      isBrainstormCard,
+      localModelEntries,
+      modelPickerCustomization,
+    ],
+  )
   const currentModelOption =
     selectOptions.find((option) => `${option.provider}:${option.model}` === selectValue) ??
     MODEL_OPTIONS.find((option) => `${option.provider}:${option.model}` === selectValue) ??
     selectOptions[0]
+  const displayedModelOption =
+    (wheelPreviewKey !== null
+      ? selectOptions.find((option) => getModelPickerOptionKey(option) === wheelPreviewKey)
+      : undefined) ?? currentModelOption
+  const getModelOptionLabel = (option: ModelOption) =>
+    option.usesConfiguredDefault
+      ? option.provider === 'claude'
+        ? text.claudeDefaultModelLabel
+        : option.provider === 'gemini'
+          ? text.geminiDefaultModelLabel
+          : text.codexDefaultModelLabel
+      : option.label
+  const applyModelPickerOption = (option: ModelOption) => {
+    if (isBrainstormCard) {
+      onPatchCard({
+        brainstorm: {
+          ...card.brainstorm,
+          provider: option.provider,
+          model: normalizeStoredModel(option.provider, option.model),
+        },
+      })
+    } else {
+      onChangeModel(option.provider, option.model)
+    }
+  }
+  const wheelCommitTimerRef = useRef<number | null>(null)
+  const wheelPreviewKeyRef = useRef<string | null>(null)
+  useEffect(() => {
+    const clearCommitTimer = () => {
+      if (wheelCommitTimerRef.current !== null) {
+        window.clearTimeout(wheelCommitTimerRef.current)
+        wheelCommitTimerRef.current = null
+      }
+    }
+    modelWheelRef.current = {
+      step: (direction) => {
+        if (card.status === 'streaming' || modelMenuOpen) {
+          return
+        }
+        const next = stepModelPickerOption(selectOptions, wheelPreviewKeyRef.current ?? selectValue, direction)
+        if (next) {
+          wheelPreviewKeyRef.current = next
+          setWheelPreviewKey(next)
+        }
+        if (wheelPreviewKeyRef.current === null) {
+          return
+        }
+        clearCommitTimer()
+        wheelCommitTimerRef.current = window.setTimeout(() => modelWheelRef.current.flush(), 450)
+      },
+      // 换模型是复合动作（作废/保留 session、跨 provider 存取 providerSessions、含图卡清会话、
+      // 记 lastModel 并落盘），逐格提交会让滚过的每个中间型号都把会话状态折腾一遍；
+      // 所以只在停手 / 鼠标移出 / 发送 / 卸载时从原模型一步提交到目标模型。
+      flush: () => {
+        clearCommitTimer()
+        const target = pickWheelPreviewToCommit({
+          preview: wheelPreviewKeyRef.current,
+          current: selectValue,
+          streaming: card.status === 'streaming',
+        })
+        wheelPreviewKeyRef.current = null
+        setWheelPreviewKey(null)
+        if (target === null) {
+          return
+        }
+        const option = selectOptions.find((entry) => getModelPickerOptionKey(entry) === target)
+        if (option) {
+          applyModelPickerOption(option)
+        }
+      },
+    }
+  })
+  useEffect(() => () => modelWheelRef.current.flush(), [])
+  // React 的根 wheel 监听是 passive 的，preventDefault 无效（pitfall #129B），所以挂原生监听。
+  // 按钮在卡头 / 输入框两处各渲染一份，回调 ref 各自挂卸（React 19 支持 ref 返回清理函数）。
+  const attachModelSelectWheel = useCallback((button: HTMLButtonElement | null) => {
+    if (!button) {
+      return
+    }
+    const toStep = createWheelStepAccumulator()
+    const handleWheel = (event: globalThis.WheelEvent) => {
+      if (button.disabled) {
+        return
+      }
+      event.preventDefault()
+      event.stopPropagation()
+      const direction = toStep(event)
+      if (direction !== 0) {
+        modelWheelRef.current.step(direction)
+      }
+    }
+    const handlePointerLeave = () => modelWheelRef.current.flush()
+    button.addEventListener('wheel', handleWheel, { passive: false })
+    button.addEventListener('pointerleave', handlePointerLeave)
+    return () => {
+      button.removeEventListener('wheel', handleWheel)
+      button.removeEventListener('pointerleave', handlePointerLeave)
+    }
+  }, [])
   const reasoningModel =
     card.model || (effectiveProvider === 'codex' ? brainstormRequestModel : '')
   const noneUnsupportedModel =
@@ -3930,28 +4011,14 @@ const ChatCardView = ({
     if (!shell || !reasoningKnobEnabled) {
       return
     }
-    // 鼠标一齿的 deltaY 会随 DPI 缩放变小（100% 约 100，300% 只剩 ~33），所以单个
-    // 事件够大就直接算一格；触控板的一串小 delta 才累积，停顿 200ms 清零。
-    let accumulated = 0
-    let lastWheelAt = 0
+    const toStep = createWheelStepAccumulator()
     const handleWheel = (event: globalThis.WheelEvent) => {
       event.preventDefault()
       event.stopPropagation()
-      const delta = event.deltaMode === 0 ? event.deltaY : event.deltaY * 40
-      if (delta === 0) {
-        return
+      const direction = toStep(event)
+      if (direction !== 0) {
+        reasoningKnobWheelRef.current(direction)
       }
-      if (event.timeStamp - lastWheelAt > 200) {
-        accumulated = 0
-      }
-      lastWheelAt = event.timeStamp
-      accumulated = Math.abs(delta) >= 16 ? delta : accumulated + delta
-      if (Math.abs(accumulated) < 16) {
-        return
-      }
-      const direction = accumulated < 0 ? 1 : -1
-      accumulated = 0
-      reasoningKnobWheelRef.current(direction)
     }
     shell.addEventListener('wheel', handleWheel, { passive: false })
     return () => {
@@ -4615,6 +4682,7 @@ const ChatCardView = ({
       ref={modelMenuRef}
     >
       <button
+        ref={attachModelSelectWheel}
         type="button"
         className={`model-select${modelMenuOpen ? ' is-open' : ''}`}
         aria-label={text.statusModel}
@@ -4629,16 +4697,10 @@ const ChatCardView = ({
           setModelMenuOpen((prev) => !prev)
         }}
       >
-        {currentModelOption ? (
+        {displayedModelOption ? (
           <>
-            {getModelOptionIcon(currentModelOption)}
-            <span className="model-select-label">
-              {currentModelOption.usesConfiguredDefault
-                ? currentModelOption.provider === 'claude'
-                  ? text.claudeDefaultModelLabel
-                  : text.codexDefaultModelLabel
-                : currentModelOption.label}
-            </span>
+            {getModelOptionIcon(displayedModelOption)}
+            <span className="model-select-label">{getModelOptionLabel(displayedModelOption)}</span>
           </>
         ) : null}
       </button>
@@ -4669,13 +4731,7 @@ const ChatCardView = ({
             >
               {selectOptions.map((option) => {
                 const value = `${option.provider}:${option.model}`
-                const label = option.usesConfiguredDefault
-                  ? option.provider === 'claude'
-                    ? text.claudeDefaultModelLabel
-                    : option.provider === 'gemini'
-                      ? text.geminiDefaultModelLabel
-                      : text.codexDefaultModelLabel
-                  : option.label
+                const label = getModelOptionLabel(option)
                 return (
                   <button
                     key={value}
@@ -4685,17 +4741,7 @@ const ChatCardView = ({
                     aria-selected={value === selectValue}
                     onClick={(event) => {
                       event.stopPropagation()
-                      if (isBrainstormCard) {
-                        onPatchCard({
-                          brainstorm: {
-                            ...card.brainstorm,
-                            provider: option.provider,
-                            model: normalizeStoredModel(option.provider, option.model),
-                          },
-                        })
-                      } else {
-                        onChangeModel(option.provider, option.model)
-                      }
+                      applyModelPickerOption(option)
                       setModelMenuStyle(null)
                       setModelMenuOpen(false)
                     }}

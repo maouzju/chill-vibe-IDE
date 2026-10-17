@@ -53,9 +53,14 @@ import {
   findModelUpgradeSuggestions,
   getModelLabel,
   getModelOptions,
+  getModelPickerOptionKey,
+  isModelPickerOptionEnabled,
   isModelPickerOptionVisible,
+  isValidCustomPickerModelName,
+  listConfigurableModelPickerOptions,
   normalizeModel,
   resolveSlashModelInput,
+  type ModelOption,
 } from '../shared/models'
 import { isImageFilePath } from './components/image-file-routing'
 import {
@@ -406,7 +411,7 @@ import {
   EyeOffIcon,
 } from './components/Icons'
 import { WorkspaceColumn } from './components/WorkspaceColumn'
-import type { GitAgentSessionRequest } from './components/git-operation-hub'
+import { resolveGitAgentModel, type GitAgentSessionRequest } from './components/git-operation-hub'
 import {
   drainStreamRenderBufferActionsForColumn,
   createQueuedPersistenceStateSnapshot,
@@ -748,6 +753,9 @@ function App() {
   })
   const [localModelDraft, setLocalModelDraft] =
     useState<Omit<LocalModelEntry, 'id'>>(emptyLocalModelDraft)
+  const [modelPickerDraft, setModelPickerDraft] = useState<{ provider: Provider; model: string; label: string }>(
+    { provider: 'codex', model: '', label: '' },
+  )
   const text = useMemo(() => getLocaleText(appState.settings.language), [appState.settings.language])
   const codexChatSettings = useMemo(
     () => ({
@@ -776,6 +784,13 @@ function App() {
     ],
   )
   const panelText = useMemo(() => getPanelText(appState.settings.language), [appState.settings.language])
+  const modelPickerCustomization = useMemo(
+    () => ({
+      visibility: appState.settings.modelPickerVisibility,
+      customModels: appState.settings.modelPickerCustomModels,
+    }),
+    [appState.settings.modelPickerCustomModels, appState.settings.modelPickerVisibility],
+  )
   const topTabText = useMemo(() => getTopTabText(appState.settings.language), [appState.settings.language])
   const autoUrgeDescription = appState.settings.language === 'zh-CN'
     ? '\u5728\u8fd9\u91cc\u4fdd\u5b58\u591a\u4e2a\u547d\u540d\u7684\u97ad\u7b56\u7c7b\u578b\uff1b\u5f00\u542f\u540e\u53ea\u4f1a\u8ba9\u6bcf\u4e2a\u4f1a\u8bdd\u53ef\u4ee5\u624b\u52a8\u542f\u7528\uff0c\u5177\u4f53\u4f7f\u7528\u54ea\u79cd\u7c7b\u578b\u5728\u4f1a\u8bdd\u5185\u5355\u72ec\u9009\u3002'
@@ -2725,6 +2740,63 @@ function App() {
     })
     setLocalModelDraft(emptyLocalModelDraft())
   }, [applyAction, localModelDraft])
+
+  // 覆盖表只记「和内置默认不一样」的项：勾回默认状态就删键，以后内置目录改可见性时没碰过的项照常跟随。
+  const setModelPickerOptionEnabled = useCallback(
+    (option: ModelOption, enabled: boolean) => {
+      const key = getModelPickerOptionKey(option)
+      const next = { ...appStateRef.current.settings.modelPickerVisibility }
+      if (enabled === !option.hiddenFromPicker) {
+        delete next[key]
+      } else {
+        next[key] = enabled
+      }
+      applyAction({ type: 'updateSettings', patch: { modelPickerVisibility: next } })
+    },
+    [applyAction],
+  )
+
+  const modelPickerDraftModel = modelPickerDraft.model.trim()
+  const modelPickerDraftError = !modelPickerDraftModel
+    ? null
+    : !isValidCustomPickerModelName(modelPickerDraftModel)
+      ? panelText.modelPickerInvalidName
+      : [...listConfigurableModelPickerOptions(), ...appState.settings.modelPickerCustomModels].some(
+            (option) => getModelPickerOptionKey(option) === `${modelPickerDraft.provider}:${modelPickerDraftModel}`,
+          )
+        ? panelText.modelPickerDuplicate
+        : null
+
+  const addModelPickerCustomModel = useCallback(() => {
+    const model = modelPickerDraft.model.trim()
+    if (!model || !isValidCustomPickerModelName(model)) {
+      return
+    }
+    applyAction({
+      type: 'updateSettings',
+      patch: {
+        modelPickerCustomModels: [
+          ...appStateRef.current.settings.modelPickerCustomModels,
+          { id: crypto.randomUUID(), provider: modelPickerDraft.provider, model, label: modelPickerDraft.label.trim() },
+        ],
+      },
+    })
+    setModelPickerDraft((prev) => ({ ...prev, model: '', label: '' }))
+  }, [applyAction, modelPickerDraft])
+
+  const removeModelPickerCustomModel = useCallback(
+    (id: string) => {
+      applyAction({
+        type: 'updateSettings',
+        patch: {
+          modelPickerCustomModels: appStateRef.current.settings.modelPickerCustomModels.filter(
+            (entry) => entry.id !== id,
+          ),
+        },
+      })
+    },
+    [applyAction],
+  )
 
   const updateLocalModelEntry = useCallback(
     (entryId: string, patch: Partial<Omit<LocalModelEntry, 'id'>>) => {
@@ -9921,6 +9993,9 @@ function App() {
       </div>
   )
 
+  // 与 Git 卡真实路由同一个判据，用户填完就能看到会走哪个 CLI（2026-10-17）。
+  const gitAgentModelProvider = resolveGitAgentModel(appState.settings.gitAgentModel).provider
+
   const settingsItems: SettingsPanelItem[] = [
     {
       // 接口配置本体只在「接口」选项卡；设置里只报当前在用什么 + 跳转（09-23 用户反馈重复）。
@@ -10183,6 +10258,13 @@ function App() {
             <span className="settings-field-label">
               <ModelIcon className="settings-field-icon" aria-hidden="true" />
               <span className="settings-field-label-text">{text.gitAgentModel}</span>
+              <span
+                className="settings-tag git-agent-model-provider-tag"
+                data-provider={gitAgentModelProvider}
+                title={text.gitAgentModelProviderHint}
+              >
+                {getProviderLabel(appState.settings.language, gitAgentModelProvider)} CLI
+              </span>
             </span>
             <input
               id="git-agent-model-input"
@@ -10228,6 +10310,141 @@ function App() {
           </p>
         </div>
 
+        </div>
+      ),
+    },
+    {
+      id: 'model-picker',
+      node: (
+        <div className="settings-section model-picker-settings" data-testid="model-picker-settings">
+          <p className="settings-note">{panelText.modelPickerDescription}</p>
+          {(['codex', 'claude', 'gemini'] as const).map((provider) => (
+            <fieldset className="model-picker-group" key={provider}>
+              <legend>{getProviderLabel(appState.settings.language, provider)}</legend>
+              <div className="model-picker-option-grid">
+                {listConfigurableModelPickerOptions()
+                  .filter((option) => option.provider === provider)
+                  .map((option) => {
+                    const key = getModelPickerOptionKey(option)
+                    return (
+                      <label className="model-picker-option" key={key}>
+                        <input
+                          className="settings-checkbox"
+                          type="checkbox"
+                          data-model-picker-key={key}
+                          checked={isModelPickerOptionEnabled(option, appState.settings.modelPickerVisibility)}
+                          onChange={(event) => setModelPickerOptionEnabled(option, event.target.checked)}
+                        />
+                        <span>
+                          {option.usesConfiguredDefault
+                            ? provider === 'claude'
+                              ? text.claudeDefaultModelLabel
+                              : provider === 'gemini'
+                                ? text.geminiDefaultModelLabel
+                                : text.codexDefaultModelLabel
+                            : option.label}
+                        </span>
+                        {option.hiddenFromPicker && !option.usesConfiguredDefault ? (
+                          <small className="model-picker-option-tag">{panelText.modelPickerRetired}</small>
+                        ) : null}
+                      </label>
+                    )
+                  })}
+              </div>
+            </fieldset>
+          ))}
+          <div className="settings-actions">
+            <AppButton
+              type="button"
+              disabled={Object.keys(appState.settings.modelPickerVisibility).length === 0}
+              onClick={() => applyAction({ type: 'updateSettings', patch: { modelPickerVisibility: {} } })}
+            >
+              {panelText.modelPickerReset}
+            </AppButton>
+          </div>
+
+          <h4 className="settings-section-title model-picker-custom-title">{panelText.modelPickerCustomTitle}</h4>
+          {appState.settings.modelPickerCustomModels.length === 0 ? (
+            <p className="settings-note">{panelText.modelPickerCustomEmpty}</p>
+          ) : (
+            <ul className="model-picker-custom-list">
+              {appState.settings.modelPickerCustomModels.map((entry) => (
+                <li className="model-picker-custom-row" key={entry.id}>
+                  <span className="model-picker-custom-provider">
+                    {getProviderLabel(appState.settings.language, entry.provider)}
+                  </span>
+                  <code className="model-picker-custom-model">{entry.model}</code>
+                  <span className="model-picker-custom-label">{entry.label}</span>
+                  <AppButton type="button" onClick={() => removeModelPickerCustomModel(entry.id)}>
+                    {panelText.modelPickerRemove}
+                  </AppButton>
+                </li>
+              ))}
+            </ul>
+          )}
+          <div className="model-picker-custom-draft">
+            <label className="settings-field">
+              <span>{panelText.modelPickerProviderField}</span>
+              <select
+                className="control settings-input"
+                value={modelPickerDraft.provider}
+                onChange={(event) =>
+                  setModelPickerDraft((prev) => ({
+                    ...prev,
+                    provider:
+                      event.target.value === 'claude' || event.target.value === 'gemini'
+                        ? event.target.value
+                        : 'codex',
+                  }))
+                }
+              >
+                {(['codex', 'claude', 'gemini'] as const).map((provider) => (
+                  <option key={provider} value={provider}>
+                    {getProviderLabel(appState.settings.language, provider)}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="settings-field">
+              <span>{panelText.modelPickerModelField}</span>
+              <input
+                className="control settings-input"
+                spellCheck={false}
+                autoComplete="off"
+                value={modelPickerDraft.model}
+                placeholder={panelText.modelPickerModelPlaceholder}
+                aria-invalid={modelPickerDraftError ? true : undefined}
+                onChange={(event) => setModelPickerDraft((prev) => ({ ...prev, model: event.target.value }))}
+                onKeyDown={(event) => {
+                  if (event.key === 'Enter' && modelPickerDraftModel && !modelPickerDraftError) {
+                    addModelPickerCustomModel()
+                  }
+                }}
+              />
+            </label>
+            <label className="settings-field">
+              <span>{panelText.modelPickerLabelField}</span>
+              <input
+                className="control settings-input"
+                value={modelPickerDraft.label}
+                placeholder={panelText.modelPickerLabelPlaceholder}
+                onChange={(event) => setModelPickerDraft((prev) => ({ ...prev, label: event.target.value }))}
+              />
+            </label>
+            <AppButton
+              tone="primary"
+              type="button"
+              disabled={!modelPickerDraftModel || Boolean(modelPickerDraftError)}
+              onClick={addModelPickerCustomModel}
+            >
+              {panelText.modelPickerAdd}
+            </AppButton>
+          </div>
+          {modelPickerDraftError ? (
+            <p className="settings-note model-picker-draft-error" role="alert">
+              {modelPickerDraftError}
+            </p>
+          ) : null}
         </div>
       ),
     },
@@ -11637,6 +11854,7 @@ function App() {
             brainstormRequestModel={appState.settings.requestModels.codex}
             availableQuickToolModels={availableQuickToolModels}
             localModelEntries={appState.settings.localModelEntries}
+            modelPickerCustomization={modelPickerCustomization}
             autoUrgeEnabled={appState.settings.autoUrgeEnabled}
             autoUrgeProfiles={appState.settings.autoUrgeProfiles}
             autoUrgeMessage={appState.settings.autoUrgeMessage}

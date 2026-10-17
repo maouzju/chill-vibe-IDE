@@ -15,6 +15,7 @@ import {
   TEXTEDITOR_TOOL_MODEL,
   WEATHER_TOOL_MODEL,
   WHITENOISE_TOOL_MODEL,
+  type ModelPickerCustomization,
 } from '../../shared/models'
 import type {
   AppLanguage,
@@ -94,6 +95,7 @@ type PaneViewProps = {
   //   留的，去掉会波及一堆无关渲染点；改由 tests/local-model-panel.spec.ts 端到端钉住
   //   这条转发链，比靠类型系统更贴近用户实际看到的东西。
   localModelEntries?: LocalModelEntry[]
+  modelPickerCustomization?: ModelPickerCustomization
   autoUrgeEnabled: boolean
   autoUrgeProfiles?: AutoUrgeProfile[]
   autoUrgeMessage: string
@@ -314,6 +316,7 @@ const PaneViewView = ({
   brainstormRequestModel,
   availableQuickToolModels,
   localModelEntries,
+  modelPickerCustomization,
   autoUrgeEnabled,
   autoUrgeProfiles = [],
   autoUrgeMessage,
@@ -1613,6 +1616,7 @@ const PaneViewView = ({
                   brainstormRequestModel={brainstormRequestModel}
                   availableQuickToolModels={availableQuickToolModels}
                   localModelEntries={localModelEntries}
+                  modelPickerCustomization={modelPickerCustomization}
                   autoUrgeEnabled={autoUrgeEnabled}
                   autoUrgeProfiles={autoUrgeProfiles}
                   autoUrgeMessage={autoUrgeMessage}

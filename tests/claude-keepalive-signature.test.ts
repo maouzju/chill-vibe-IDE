@@ -130,3 +130,12 @@ test('Claude keepalive signature separates local model entries pointing at diffe
     buildClaudeKeepaliveSignature({ ...request, model: 'qwen3:8b' }, true, localA),
   )
 })
+
+// 只读（dontAsk）与普通（bypassPermissions）回合的 argv 不同，不能共用常驻进程。
+test('keepalive signature changes when the run is read-only', () => {
+  const runtime = { args: [], env: {} }
+  assert.notEqual(
+    buildClaudeKeepaliveSignature(request, true, runtime),
+    buildClaudeKeepaliveSignature({ ...request, readOnly: true }, true, runtime),
+  )
+})

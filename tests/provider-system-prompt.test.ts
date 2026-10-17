@@ -36,6 +36,7 @@ const createRequest = (overrides: Partial<ChatRequest> = {}): ChatRequest => ({
   attachments: overrides.attachments ?? [],
   archiveRecall: overrides.archiveRecall,
   sandboxMode: overrides.sandboxMode,
+  readOnly: overrides.readOnly,
   approvalPolicy: overrides.approvalPolicy,
   networkAccessEnabled: overrides.networkAccessEnabled,
   agentOutsideWorkspaceWriteEnabled: overrides.agentOutsideWorkspaceWriteEnabled,
@@ -521,6 +522,33 @@ test('claude runs pin the permission default mode so spawned subagents inherit i
 
   assert.equal(parsedSettings.permissions?.defaultMode, 'bypassPermissions')
   assert.equal(parsedSettings.skipDangerousModePermissionPrompt, true)
+})
+
+// Git 分析（2026-10-17 起可走 Claude）原来靠 Codex 只读沙箱；Claude 上用 dontAsk：
+// 需要授权的工具（写文件、命令）一律自动拒绝，读文件照常。
+test('read-only claude runs deny every tool that needs approval instead of bypassing', () => {
+  const args = buildClaudeArgs(
+    createRequest({ provider: 'claude', model: 'claude-sonnet-5-5', language: 'en', readOnly: true }),
+    [],
+  )
+
+  assert.equal(args[args.indexOf('--permission-mode') + 1], 'dontAsk')
+  const parsedSettings = JSON.parse(args[args.indexOf('--settings') + 1] ?? '') as {
+    skipDangerousModePermissionPrompt?: boolean
+    permissions?: { defaultMode?: string; deny?: string[] }
+  }
+  assert.equal(parsedSettings.permissions?.defaultMode, 'dontAsk')
+  assert.equal(parsedSettings.skipDangerousModePermissionPrompt, undefined)
+  // 用户 settings.json 的 allow 里常有 Bash / Write / Edit，dontAsk 拦不住，必须 deny（deny 优先于 allow）
+  for (const tool of ['Write', 'Edit', 'NotebookEdit', 'Bash', 'PowerShell']) {
+    assert.ok(parsedSettings.permissions?.deny?.includes(tool), tool)
+  }
+
+  const normalSettings = JSON.parse(
+    buildClaudeArgs(createRequest({ provider: 'claude', model: 'claude-sonnet-5-5' }), []).find((_arg, index, all) =>
+      all[index - 1] === '--settings') ?? '',
+  ) as { permissions?: { deny?: string[] } }
+  assert.equal(normalSettings.permissions?.deny, undefined)
 })
 
 test('Claude safety hook covers direct file writes and is injected into keepalive identity', () => {

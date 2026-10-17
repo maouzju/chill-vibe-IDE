@@ -2398,6 +2398,129 @@ body.is-card-dragging .lane-drop-zone-top {
   background: color-mix(in srgb, var(--accent-soft) 42%, var(--panel-soft));
 }
 
+/* 设置 → 模型下拉菜单（docs/specs/model-picker-customization）：27 个内置项按 provider 分组成勾选网格。 */
+.model-picker-group {
+  margin: 0.75rem 0 0;
+  padding: 0.55rem 0.75rem 0.7rem;
+  border: 1px solid var(--line);
+  border-radius: 0.75rem;
+  background: var(--panel-soft);
+}
+
+.model-picker-group legend {
+  padding: 0 0.3rem;
+  font-size: 0.78rem;
+  font-weight: 700;
+  color: var(--ink-2);
+}
+
+.model-picker-option-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(11.5rem, 1fr));
+  gap: 0.3rem 0.9rem;
+}
+
+.model-picker-option {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  min-width: 0;
+  padding: 0.2rem 0.3rem;
+  border-radius: 0.4rem;
+  font-size: 0.84rem;
+  color: var(--ink-1);
+  cursor: pointer;
+}
+
+.model-picker-option:hover {
+  background: var(--panel-hover);
+}
+
+.model-picker-option span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.model-picker-option-tag {
+  flex-shrink: 0;
+  padding: 0 0.35rem;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  font-size: 0.68rem;
+  color: var(--ink-3);
+}
+
+.model-picker-custom-title {
+  margin: 1.1rem 0 0.4rem;
+}
+
+.model-picker-custom-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.model-picker-custom-row {
+  display: grid;
+  grid-template-columns: 4.5rem minmax(0, max-content) minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.35rem 0.45rem 0.35rem 0.75rem;
+  border: 1px solid var(--line);
+  border-radius: 0.6rem;
+  background: var(--panel-soft);
+  font-size: 0.84rem;
+}
+
+.model-picker-custom-provider {
+  font-weight: 700;
+  color: var(--ink-2);
+}
+
+.model-picker-custom-model {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--ink-1);
+}
+
+.model-picker-custom-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--ink-3);
+}
+
+.model-picker-custom-draft {
+  display: grid;
+  grid-template-columns: 7.5rem minmax(0, 1.4fr) minmax(0, 1fr) auto;
+  align-items: end;
+  gap: 0.6rem;
+  margin-top: 0.6rem;
+}
+
+.model-picker-custom-draft > .btn {
+  min-height: 2rem;
+}
+
+.model-picker-custom-draft .settings-field span {
+  font-size: 0.76rem;
+  color: var(--ink-3);
+}
+
+.model-picker-custom-draft .settings-input[aria-invalid='true'] {
+  border-color: var(--danger);
+}
+
+.model-picker-draft-error {
+  margin-top: 0.4rem;
+  color: var(--danger);
+}
+
 .provider-profile-card.is-draft {
   border-style: dashed;
 }
@@ -16910,6 +17033,11 @@ body.is-col-resizing .automation-board-lane-resize-handle::after {
   letter-spacing: 0.02em;
   color: var(--ink-2);
   background: var(--panel-soft);
+}
+
+.git-agent-model-provider-tag {
+  margin-left: auto;
+  flex-shrink: 0;
 }
 
 .settings-tag-experimental {

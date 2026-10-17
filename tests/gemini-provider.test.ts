@@ -90,6 +90,19 @@ describe('gemini runtime', () => {
     ])
   })
 
+  // 无头模式下 default 审批会把 shell / 编辑 / 写文件工具整个排除（gemini-cli config.js
+  // 「In non-interactive mode, exclude tools that require a prompt」），即只读。Git 分析用它。
+  it('runs read-only requests without yolo approval', () => {
+    assert.deepEqual(buildGeminiArgs({ ...baseRequest, readOnly: true }), [
+      '--output-format',
+      'stream-json',
+      '--approval-mode',
+      'default',
+      '--model',
+      'gemini-3.8-flash',
+    ])
+  })
+
   it('maps stream-json events to sink calls', () => {
     const { calls, sink } = createSink()
     const parser = createGeminiStreamParser(sink)

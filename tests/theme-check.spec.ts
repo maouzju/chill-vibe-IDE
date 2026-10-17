@@ -2885,6 +2885,68 @@ for (const scenario of [
 }
 
 for (const theme of ['dark', 'light'] as const) {
+  // 2026-10-17 用户填 claude-sonnet-5-5 仍被写死发给 Codex：标签与 Git 卡真实路由同一个判据。
+  test(`Git card AI model shows the CLI detected from the model name in ${theme} theme`, async ({ page }) => {
+    const state = createMockState()
+    state.settings.language = theme === 'dark' ? 'zh-CN' : 'en'
+    state.settings.theme = theme
+    state.settings.gitAgentModel = 'claude-sonnet-5-5 high'
+
+    await mockAppApis(page, { state })
+    await page.goto(appUrl)
+    await page.locator('.card-shell').first().waitFor()
+
+    await page.locator('#app-tab-settings').click()
+    await revealSettingsItem(page, 'model-behavior')
+    const input = page.locator('#app-panel-settings #git-agent-model-input:visible').first()
+    const field = page.locator('#app-panel-settings label.settings-field[for="git-agent-model-input"]:visible').first()
+    const tag = field.locator('.git-agent-model-provider-tag')
+
+    await expect(tag).toHaveText('Claude CLI')
+    await expect(field).toHaveScreenshot(`git-agent-model-provider-tag-${theme}.png`, {
+      animations: 'disabled',
+      caret: 'hide',
+    })
+
+    await input.fill('gemini-3.8-flash')
+    await expect(tag).toHaveText('Gemini CLI')
+    await input.fill('deepseek-v3 low')
+    await expect(tag).toHaveText('Codex CLI')
+  })
+}
+
+for (const theme of ['dark', 'light'] as const) {
+  // docs/specs/model-picker-customization：按 provider 分组的勾选网格、下架标签、自定义项行与草稿行。
+  test(`model picker settings group renders in ${theme} theme`, async ({ page }) => {
+    const state = createMockState()
+    state.settings.language = theme === 'dark' ? 'zh-CN' : 'en'
+    state.settings.theme = theme
+    state.settings.modelPickerVisibility = { 'codex:gpt-6-astra': false, 'claude:claude-sonnet-5': true }
+    state.settings.modelPickerCustomModels = [
+      { id: 'c1', provider: 'codex', model: 'deepseek-v4', label: 'DeepSeek V4' },
+    ]
+
+    await page.setViewportSize({ width: 1280, height: 1200 })
+    await mockAppApis(page, { state })
+    await page.goto(appUrl)
+    await page.locator('.card-shell').first().waitFor()
+
+    await page.locator('#app-tab-settings').click()
+    const item = await revealSettingsItem(page, 'model-picker')
+    const section = item.getByTestId('model-picker-settings')
+    await expect(section.locator('[data-model-picker-key="codex:gpt-6-astra"]')).not.toBeChecked()
+    await expect(section.locator('.model-picker-custom-row')).toContainText('deepseek-v4')
+    await section.locator('.model-picker-custom-draft').getByRole('textbox').first().fill('bad name')
+    await expect(section.locator('.model-picker-draft-error')).toBeVisible()
+    await page.mouse.move(0, 0)
+    await expect(item).toHaveScreenshot(`model-picker-settings-${theme}.png`, {
+      animations: 'disabled',
+      caret: 'hide',
+    })
+  })
+}
+
+for (const theme of ['dark', 'light'] as const) {
   // docs/specs/jev-mcp-toggle：默认关、key 是密码框、MCP/JEV 两句人话解释常显。
   test(`JEV quick-judgment settings explain MCP and JEV in ${theme} theme`, async ({ page }) => {
     const state = createMockState()
@@ -3344,8 +3406,9 @@ test('settings panel lands on the basics view with a left nav and a single colum
 
   // 切到「模型与对话」：基础项直接可见，高级项默认收起。
   await settingsPanel.locator('#settings-nav-models').click()
-  // 系统提示词 / 默认模型 / 对话行为 / JEV 快速判断（09-30 新增）。
-  await expect(visibleGroups).toHaveCount(4)
+  // 系统提示词 / 默认模型 / 对话行为 / 模型下拉菜单（10-17 新增）/ JEV 快速判断（09-30 新增）。
+  await expect(visibleGroups).toHaveCount(5)
+  await expect(visibleGroups.getByRole('heading', { name: '模型下拉菜单', exact: true })).toBeVisible()
   await expect(settingsPanel.locator('details.settings-advanced')).not.toHaveAttribute('open', '')
   await revealSettingsItem(page, 'local-models')
   await expect(visibleGroups.getByRole('heading', { name: '本地模型', exact: true })).toBeVisible()

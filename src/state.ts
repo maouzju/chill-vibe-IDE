@@ -393,6 +393,8 @@ export type IdeAction =
           | 'jevApiKey'
           | 'jevApiUrl'
           | 'gitAgentModel'
+          | 'modelPickerVisibility'
+          | 'modelPickerCustomModels'
           | 'providerProfiles'
         >
       >
@@ -3417,7 +3419,10 @@ const ideReducerCore = (state: AppState, action: IdeAction): AppState => {
         pm: createDefaultPmState(),
         pmTaskCardId: '',
         pmOwnerCardId: '',
-        messages: action.entry.messages,
+        // 症状（2026-10-17）：历史侧栏重开会话后，子代理面板冻结在「运行中 2分33秒」。
+        // 根因：UI 重开与崩溃恢复都走这里而非 restoreSession；旧进程按旧卡 id 推送，新卡永远收不到终态。
+        // 不能只靠启动时收尾：不重启应用就一直挂着。
+        messages: retireUntrackedClaudeAgents(action.entry.messages),
       }
 
       const next = insertCardIntoColumn(state, action.columnId, importedCard, action.paneId)

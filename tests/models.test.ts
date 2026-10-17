@@ -19,6 +19,7 @@ import {
   WEATHER_TOOL_MODEL,
   WHITENOISE_TOOL_MODEL,
   getModelOptions,
+  inferProviderFromModel,
   isBrainstormRequestModelVisible,
   isCodexNoneEffortUnsupportedModel,
   isModelPickerOptionVisible,
@@ -319,6 +320,36 @@ describe('model helpers', () => {
       model: DEFAULT_CLAUDE_MODEL,
       custom: false,
     })
+  })
+
+  // 2026-10-17 用户在「Git 卡片 AI 模型」里填 claude-sonnet-5-5，Git 卡仍写死走 Codex。
+  it('infers which CLI owns a free-text model name', () => {
+    // 目录里的正式 id
+    assert.equal(inferProviderFromModel('claude-sonnet-5-5'), 'claude')
+    assert.equal(inferProviderFromModel('gpt-6-luna'), 'codex')
+    assert.equal(inferProviderFromModel('gemini-3.8-flash'), 'gemini')
+    // 目录别名（大小写、首尾空白不敏感）
+    assert.equal(inferProviderFromModel(' Sonnet '), 'claude')
+    assert.equal(inferProviderFromModel('opus'), 'claude')
+    assert.equal(inferProviderFromModel('luna'), 'codex')
+    assert.equal(inferProviderFromModel('flash'), 'gemini')
+    assert.equal(inferProviderFromModel('claude'), 'claude')
+    assert.equal(inferProviderFromModel('gpt'), 'codex')
+    // 目录外的中转站 / 自定义名按家族关键字归属
+    assert.equal(inferProviderFromModel('anthropic/claude-sonnet-4.5'), 'claude')
+    assert.equal(inferProviderFromModel('Claude-Opus-4-1-20250805'), 'claude')
+    assert.equal(inferProviderFromModel('gpt-5.4-codex'), 'codex')
+    assert.equal(inferProviderFromModel('o3-pro'), 'codex')
+    assert.equal(inferProviderFromModel('openai/gpt-4.1'), 'codex')
+    assert.equal(inferProviderFromModel('google/gemini-2.5-pro'), 'gemini')
+    // 认不出来的交给调用方兜底，不瞎猜
+    assert.equal(inferProviderFromModel('deepseek-v3'), null)
+    assert.equal(inferProviderFromModel('pro-max'), null)
+    assert.equal(inferProviderFromModel('claude-gpt-merge'), null)
+    assert.equal(inferProviderFromModel(''), null)
+    assert.equal(inferProviderFromModel('   '), null)
+    assert.equal(inferProviderFromModel(undefined), null)
+    assert.equal(inferProviderFromModel(GIT_TOOL_MODEL), null)
   })
 
   // 空输入命中的是 `model: ''` 的「跟随配置默认」项，这是既有行为；App.tsx 的 'model'

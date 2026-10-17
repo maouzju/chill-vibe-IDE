@@ -1,4 +1,4 @@
-import type { LocalModelEntry, Provider } from './schema.js'
+import type { LocalModelEntry, ModelPickerCustomModel, Provider } from './schema.js'
 
 export const DEFAULT_CODEX_MODEL = 'gpt-6-sol'
 export const DEFAULT_CLAUDE_MODEL = 'claude-opus-5-5'
@@ -511,6 +511,52 @@ export const resolveSlashModel = (provider: Provider, input: string) => {
   return option?.model ?? null
 }
 
+// 目录外的模型名（中转站 / 自定义 / `vendor/model` 形态）按家族关键字归属。关键字必须出现在
+// 词首（行首或分隔符之后），免得 `photogpt`、`foo3` 之类碰巧含片段的名字被误认。
+const PROVIDER_FAMILY_PATTERNS: [Provider, RegExp][] = [
+  ['claude', /(?:^|[^a-z0-9])(?:claude|anthropic|opus|sonnet|haiku|fable)/],
+  ['gemini', /(?:^|[^a-z0-9])gemini/],
+  ['codex', /(?:^|[^a-z0-9])(?:gpt|codex|openai|o\d)/],
+]
+
+/**
+ * 自由文本模型名归属哪个 CLI；认不出来返回 null，由调用方决定兜底。
+ *
+ * 症状：2026-10-17 用户在「Git 卡片 AI 模型」里填 claude-sonnet-5-5，Git 卡仍写死走 Codex，
+ *   把一个 Claude 模型发给 Codex CLI。
+ * 做法：先精确比对模型目录（正式 id / 标签 / 别名，如 `sonnet`、`luna`、`flash`），再按家族
+ *   关键字认目录外的名字；两个家族同时命中视为认不出，不替用户瞎猜。
+ * 被否决：只认目录 —— 绝大多数用户接的是中转站，模型名由服务商决定（见下方 customModelNamePattern 注释）。
+ */
+export const inferProviderFromModel = (model?: string | null): Provider | null => {
+  const candidate = canonicalizeModelAlias(model ?? '')
+
+  if (!candidate || isToolCardModel(candidate) || isLocalModelToken(candidate)) {
+    return null
+  }
+
+  const catalogProviders = new Set(
+    MODEL_OPTIONS.filter((option) => !TOOL_CARD_MODELS.has(option.model))
+      .filter((option) =>
+        [option.model, option.label, ...(option.aliases ?? [])]
+          .filter(Boolean)
+          .map(canonicalizeModelAlias)
+          .includes(candidate),
+      )
+      .map((option) => option.provider),
+  )
+
+  if (catalogProviders.size === 1) {
+    return [...catalogProviders][0]!
+  }
+
+  const familyProviders = PROVIDER_FAMILY_PATTERNS.filter(([, pattern]) => pattern.test(candidate)).map(
+    ([provider]) => provider,
+  )
+
+  return familyProviders.length === 1 ? familyProviders[0]! : null
+}
+
 // 症状：2026-08-14 用户的两名同事「很久都用不了 codex」，报错是服务商回的
 //   `unknown provider for model gpt-5.6-sol`——那正是 DEFAULT_CODEX_MODEL。
 // 根因：MODEL_OPTIONS 是我们维护的几个官方模型，而绝大多数用户接的是中转站，模型名由
@@ -615,4 +661,109 @@ export const listSelectableModelCatalog = (settings: {
   }
 
   return catalog
+}
+
+// ---------------------------------------------------------------------------
+// 会话卡模型下拉的选项（SPEC model-picker-customization）
+//
+// 用户可以在设置里关掉内置项、勾回已下架的型号、额外加自定义模型名。覆盖表只记改过的项，
+// 没碰过的继续跟随 hiddenFromPicker。isModelPickerOptionVisible 仍是「内置可见性」——
+// 看板与超管目录不受这份个人偏好影响。
+// ---------------------------------------------------------------------------
+export type ModelPickerCustomization = {
+  visibility?: Record<string, boolean>
+  customModels?: ModelPickerCustomModel[]
+}
+
+export const getModelPickerOptionKey = (option: Pick<ModelOption, 'provider' | 'model'>) =>
+  `${option.provider}:${option.model}`
+
+export const isModelPickerOptionEnabled = (
+  option: Pick<ModelOption, 'provider' | 'model' | 'hiddenFromPicker'>,
+  visibility?: Record<string, boolean>,
+) => {
+  if (TOOL_CARD_MODELS.has(option.model)) {
+    return false
+  }
+
+  const override = visibility?.[getModelPickerOptionKey(option)]
+  return typeof override === 'boolean' ? override : !option.hiddenFromPicker
+}
+
+/** 设置面板里列出来让用户勾选的内置项：除工具卡外的整份目录（含已下架与「默认」项）。 */
+export const listConfigurableModelPickerOptions = () =>
+  MODEL_OPTIONS.filter((option) => !TOOL_CARD_MODELS.has(option.model))
+
+export const isValidCustomPickerModelName = (model: string) => {
+  const trimmed = model.trim()
+  return customModelNamePattern.test(trimmed) && !isToolCardModel(trimmed) && !isLocalModelToken(trimmed)
+}
+
+export const buildModelPickerOptions = ({
+  localModelEntries = [],
+  customization,
+  current,
+  mode = 'chat',
+}: {
+  localModelEntries?: LocalModelEntry[]
+  customization?: ModelPickerCustomization
+  current: { provider: Provider; model: string }
+  mode?: 'chat' | 'brainstorm'
+}): ModelOption[] => {
+  const currentModel = normalizeStoredModel(current.provider, current.model)
+  const currentKey = `${current.provider}:${currentModel}`
+  const seen = new Set<string>()
+  const options: ModelOption[] = []
+  const push = (option: ModelOption) => {
+    const key = getModelPickerOptionKey(option)
+    if (seen.has(key) || (mode === 'brainstorm' && option.usesConfiguredDefault)) return
+    seen.add(key)
+    options.push(option)
+  }
+
+  // 本地条目与自定义项排在最前：它们是用户自己配的，找起来该比内置模型更快。
+  if (mode === 'chat') {
+    buildLocalModelOptions(localModelEntries).forEach(push)
+  }
+  for (const entry of customization?.customModels ?? []) {
+    push({ provider: entry.provider, model: entry.model, label: entry.label || entry.model })
+  }
+  // 当前卡模型不在目录里（`/model` 手打或设置里填的自定义名）：临时补一项，否则按钮显示
+  // 与列表对不上、滚轮也找不到起点。本地令牌例外——条目被删时不该把令牌暴露给用户。
+  const catalogued = MODEL_OPTIONS.some(
+    (option) => option.provider === current.provider && option.model === currentModel,
+  )
+  if (currentModel && !catalogued && !isLocalModelToken(currentModel)) {
+    push({ provider: current.provider, model: currentModel, label: currentModel })
+  }
+  // 当前选中的内置项即使被关掉/已下架也原位保留（pitfall #394 同款），不恢复其他下架项。
+  for (const option of MODEL_OPTIONS) {
+    if (
+      isModelPickerOptionEnabled(option, customization?.visibility) ||
+      (getModelPickerOptionKey(option) === currentKey && !TOOL_CARD_MODELS.has(option.model))
+    ) {
+      push(option)
+    }
+  }
+
+  return options
+}
+
+/**
+ * 滚轮步进：direction 1 = 上一项（向上滚），-1 = 下一项；到头返回 null，不循环
+ * （快速连滚时循环会从最后一项跳回第一项，比停住更让人迷惑）。
+ */
+export const stepModelPickerOption = (
+  options: Pick<ModelOption, 'provider' | 'model'>[],
+  currentKey: string,
+  direction: 1 | -1,
+): string | null => {
+  if (options.length === 0) return null
+  const index = options.findIndex((option) => getModelPickerOptionKey(option) === currentKey)
+  if (index < 0) {
+    // 找不到起点（例如列表刚被设置改过）：往下滚从第一项开始，往上滚从最后一项开始。
+    return getModelPickerOptionKey(options[direction === 1 ? options.length - 1 : 0]!)
+  }
+  const target = options[index - direction]
+  return target ? getModelPickerOptionKey(target) : null
 }

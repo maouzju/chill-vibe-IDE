@@ -4,11 +4,13 @@ import test from 'node:test'
 import type { GitStatus } from '../shared/schema.ts'
 import {
   createGitOperationHub,
+  resolveGitAgentModel,
   type GitAgentSessionRequest,
   type GitOperationContext,
   type GitOperationHubDeps,
 } from '../src/components/git-operation-hub.ts'
 import { rememberGitChangeSnapshot } from '../src/components/git-change-tracker.ts'
+import { parseAnalysisResult } from '../src/components/git-agent-panel-utils.ts'
 
 const createGitStatus = (overrides: Partial<GitStatus> = {}): GitStatus => ({
   workspacePath: 'D:\\repo',
@@ -203,6 +205,115 @@ test('agent analysis forwards Codex personality and Fast settings', async () => 
   assert.equal(fake.chatRequests[0]?.serviceTier, 'priority')
   assert.equal(fake.chatRequests[0]?.codexDestructiveCommandProtectionEnabled, true)
   assert.equal(fake.chatRequests[0]?.codexIsolatedHomeEnabled, true)
+})
+
+// 2026-10-17 用户截图：「Git 卡片 AI 模型」填 claude-sonnet-5-5，Git 卡仍写死 provider: 'codex'。
+test('agent analysis runs on the CLI that owns the configured Git model', async () => {
+  const cases = [
+    { gitAgentModel: 'claude-sonnet-5-5', provider: 'claude', model: 'claude-sonnet-5-5', effort: 'medium' },
+    { gitAgentModel: 'claude-opus-5-5 high', provider: 'claude', model: 'claude-opus-5-5', effort: 'high' },
+    // Codex 专属档位在 Claude 上不存在，落回 Claude 的合法档位
+    { gitAgentModel: 'claude-sonnet-5-5 ultra', provider: 'claude', model: 'claude-sonnet-5-5', effort: 'max' },
+    { gitAgentModel: 'gemini-3.8-flash high', provider: 'gemini', model: 'gemini-3.8-flash', effort: 'auto' },
+    { gitAgentModel: 'gpt-6-luna', provider: 'codex', model: 'gpt-6-luna', effort: 'medium' },
+    // 只写 CLI 名：交给该 CLI 自己的默认模型
+    { gitAgentModel: 'claude', provider: 'claude', model: '', effort: 'medium' },
+    // 认不出归属的自定义名保持旧行为：走 Codex
+    { gitAgentModel: 'deepseek-v3 low', provider: 'codex', model: 'deepseek-v3', effort: 'low' },
+  ] as const
+
+  for (const expected of cases) {
+    const fake = createFakeDeps()
+    const hub = createGitOperationHub(fake.deps)
+    const ws = 'D:\\repo'
+
+    await hub.openAgentAnalysis(
+      { ...createContext(ws), gitAgentModel: expected.gitAgentModel },
+      createGitStatus(),
+    )
+
+    const request = fake.chatRequests[0]
+    assert.equal(request?.provider, expected.provider, expected.gitAgentModel)
+    assert.equal(request?.model, expected.model, expected.gitAgentModel)
+    assert.equal(request?.reasoningEffort, expected.effort, expected.gitAgentModel)
+    // 只读沙箱是 Codex 的概念；其它 CLI 不该收到 Codex 专属字段
+    assert.equal(
+      request?.sandboxMode,
+      expected.provider === 'codex' ? 'read-only' : undefined,
+      expected.gitAgentModel,
+    )
+    // 但分析必须在每个 CLI 上都只读：由服务端按各 CLI 的原生方式落实
+    assert.equal(request?.readOnly, true, expected.gitAgentModel)
+  }
+})
+
+// 2026-10-17 对抗审查：设置旁的 CLI 标签认得别名 / 选择器标签，但请求原样发出别名，
+// CLI 不认 `--model luna`；档位写错时 Claude 落到最贵的 max；中转站自定义 Codex 名的档位被夹紧。
+test('Git agent model resolves aliases, picker labels and stray effort tokens', () => {
+  const cases = [
+    { input: 'luna', provider: 'codex', model: 'gpt-6-luna', effort: 'medium' },
+    { input: 'sonnet high', provider: 'claude', model: 'claude-sonnet-5-5', effort: 'high' },
+    { input: 'flash', provider: 'gemini', model: 'gemini-3.8-flash', effort: 'auto' },
+    { input: 'Sonnet 5.5 high', provider: 'claude', model: 'claude-sonnet-5-5', effort: 'high' },
+    { input: 'GPT-6 Luna', provider: 'codex', model: 'gpt-6-luna', effort: 'medium' },
+    { input: 'Claude Sonnet 5.5 xhigh', provider: 'claude', model: 'claude-sonnet-5-5', effort: 'xhigh' },
+    { input: 'Gemini 3.1 Pro', provider: 'gemini', model: 'gemini-3.1-pro-preview', effort: 'auto' },
+    // 写错的档位不能让 Claude 落到 max
+    { input: 'claude-sonnet-5-5 hgih', provider: 'claude', model: 'claude-sonnet-5-5', effort: 'medium' },
+    // 目录外的 Codex 名：档位原样透传（旧行为），不按未知型号夹紧
+    { input: 'gpt-5.4 max', provider: 'codex', model: 'gpt-5.4', effort: 'max' },
+    { input: 'gpt-5.4-codex high', provider: 'codex', model: 'gpt-5.4-codex', effort: 'high' },
+  ] as const
+
+  for (const expected of cases) {
+    assert.deepEqual(
+      resolveGitAgentModel(expected.input),
+      { provider: expected.provider, model: expected.model, reasoningEffort: expected.effort },
+      expected.input,
+    )
+  }
+})
+
+// Claude / Gemini 没有 Codex 那种整条 assistant_message 覆盖：累计的是整轮全部文本增量，
+// JSON 前面常有一句带花括号的旁白。
+test('agent analysis on Claude parses the JSON even after a preamble with braces', async () => {
+  const fake = createFakeDeps()
+  const hub = createGitOperationHub(fake.deps)
+  const ws = 'D:\\repo'
+
+  await hub.openAgentAnalysis({ ...createContext(ws), gitAgentModel: 'claude-sonnet-5-5' }, createGitStatus())
+  fake.getStreamHandlers()?.onDelta?.({ content: 'The change adds a `{ codexSandboxMode }` option.' })
+  fake.getStreamHandlers()?.onDelta?.({ content: '\n```json\n' + analysisResultJson + '\n```' })
+  fake.getStreamHandlers()?.onDone?.()
+  await flushAsync()
+
+  const phase = hub.getSnapshot(ws).agentPhase
+  assert.equal(phase.kind, 'result')
+  assert.equal(phase.kind === 'result' ? phase.data.strategies.length : 0, 1)
+})
+
+test('agent analysis only forwards Codex-only overrides to Codex', async () => {
+  const fake = createFakeDeps()
+  const hub = createGitOperationHub(fake.deps)
+
+  await hub.openAgentAnalysis({
+    ...createContext('D:\\repo'),
+    gitAgentModel: 'claude-sonnet-5-5',
+    codexChatSettings: {
+      codexPersonality: 'pragmatic',
+      codexFastMode: true,
+      agentOutsideWorkspaceWriteEnabled: true,
+      codexDestructiveCommandProtectionEnabled: true,
+      codexIsolatedHomeEnabled: true,
+      computerUseEnabled: false,
+      attackPatternProtectionEnabled: true,
+    },
+  }, createGitStatus())
+
+  assert.equal(fake.chatRequests[0]?.provider, 'claude')
+  assert.equal(fake.chatRequests[0]?.personality, undefined)
+  assert.equal(fake.chatRequests[0]?.serviceTier, undefined)
+  assert.equal(fake.chatRequests[0]?.attackPatternProtectionEnabled, true)
 })
 
 const createChange = (path: string): GitStatus['changes'][number] => ({
@@ -459,6 +570,27 @@ test('sync conflicts open an explicit agent session instead of a hidden backgrou
   assert.equal(snapshot.notice?.tone, 'info')
 })
 
+test('sync conflicts open the conflict session on the CLI that owns the Git model', async () => {
+  const fake = createFakeDeps()
+  fake.deps.pullGitChanges = async () => ({ status: createConflictStatus() })
+  const hub = createGitOperationHub(fake.deps)
+  const sessions: GitAgentSessionRequest[] = []
+
+  await hub.beginSync({
+    ...createContext('D:\\repo'),
+    gitAgentModel: 'claude-opus-5-5 xhigh',
+    openAgentSession: (request) => {
+      sessions.push(request)
+      return true
+    },
+  })
+
+  assert.equal(sessions.length, 1)
+  assert.equal(sessions[0]?.provider, 'claude')
+  assert.equal(sessions[0]?.model, 'claude-opus-5-5')
+  assert.equal(sessions[0]?.reasoningEffort, 'xhigh')
+})
+
 test('sync conflicts without a session opener stop on an error and never push', async () => {
   const fake = createFakeDeps()
   fake.deps.pullGitChanges = async () => ({ status: createConflictStatus() })
@@ -544,4 +676,21 @@ test('snapshots are referentially stable between mutations (useSyncExternalStore
   const third = hub.getSnapshot(ws)
   assert.notEqual(first, third)
   assert.equal(third, hub.getSnapshot(ws))
+})
+
+test('Git agent model keeps an uncatalogued relay name after a CLI prefix', () => {
+  assert.deepEqual(resolveGitAgentModel('claude glm-4.6 high'), {
+    provider: 'claude',
+    model: 'glm-4.6',
+    reasoningEffort: 'high',
+  })
+  assert.equal(resolveGitAgentModel('gemini gemini-2.0-flash').model, 'gemini-2.0-flash')
+  assert.equal(resolveGitAgentModel('claude').model, '')
+})
+
+test('analysis JSON is still found when the preamble has an unclosed brace', () => {
+  const content = 'I see `if (x) {` was added in a.ts.\n' + analysisResultJson
+  const result = parseAnalysisResult(content)
+  assert.equal(result?.summary, '一次小改动')
+  assert.equal(result?.strategies.length, 1)
 })

@@ -119,6 +119,18 @@ export const settingsItemCatalog: readonly SettingsItemMeta[] = [
     keywords: ['personality', '人格', 'fast', 'skill', 'git agent'],
   },
   {
+    // 10-17 用户：下拉里关掉不用的默认项、加自己的模型名（docs/specs/model-picker-customization）。
+    id: 'model-picker',
+    category: 'models',
+    tier: 'basic',
+    label: { 'zh-CN': '模型下拉菜单', en: 'Model picker' },
+    hint: hint(
+      '会话卡上的模型下拉里出现哪些模型：关掉不用的，也能加自己的模型名；悬停按钮滚滚轮可以上下切换；',
+      'Which models the chat model picker lists: hide ones you never use or add your own model names. Scroll over the button to step through them.',
+    ),
+    keywords: ['picker', '下拉', 'dropdown', '菜单', 'menu', 'wheel', '滚轮', 'hide', '隐藏', 'custom', '自定义', 'model list', '模型列表'],
+  },
+  {
     // 09-30 用户：设置里打开才有、上下文要精简、要讲清 MCP 与 JEV 是什么（docs/specs/jev-mcp-toggle）。
     id: 'jev',
     category: 'models',

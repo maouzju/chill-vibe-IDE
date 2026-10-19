@@ -123,6 +123,17 @@ const summarizeClaudeToolUse = (
       return language === 'en' ? 'Enter plan mode' : '进入计划模式'
     case 'ExitPlanMode':
       return language === 'en' ? 'Exit plan mode' : '退出计划模式'
+    case 'Skill': {
+      // 不点名的话工具组里只剩「使用工具: Skill」，用户看不出调了哪个 skill。
+      const skill = readString(input, 'skill')
+      return language === 'en'
+        ? skill
+          ? `Use skill: ${truncate(skill)}`
+          : 'Use skill'
+        : skill
+          ? `调用技能: ${truncate(skill)}`
+          : '调用技能'
+    }
     default:
       return language === 'en' ? `Use tool: ${toolName}` : `使用工具: ${toolName}`
   }
@@ -169,6 +180,10 @@ const extractToolInput = (
       break
     case 'WebSearch':
       addString('query')
+      break
+    case 'Skill':
+      addString('skill')
+      addString('args')
       break
     case 'Write':
     case 'Edit':

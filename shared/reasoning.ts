@@ -42,6 +42,21 @@ const reasoningOptionLabels: Record<AppLanguage, Record<ReasoningEffort, string>
   },
 }
 
+// 旋钮圈内的档位缩写：2026-10-18 用户要求旋钮上直接写「H / XH」这种字，而不是第几档的序号——
+// 序号跨模型档数不同时要心算，字母一眼就知道深浅。最多两个字母，圈内放得下；每档必须互不相同。
+const reasoningShortLabels: Record<ReasoningEffort, string> = {
+  auto: 'A',
+  low: 'L',
+  medium: 'M',
+  high: 'H',
+  xhigh: 'XH',
+  max: 'MX',
+  ultra: 'U',
+  ultracode: 'UC',
+}
+
+export const getReasoningShortLabel = (effort: ReasoningEffort) => reasoningShortLabels[effort] ?? '?'
+
 const reasoningOptionsByProvider = {
   codex: [
     { value: 'low' },

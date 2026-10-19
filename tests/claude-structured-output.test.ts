@@ -1316,3 +1316,35 @@ test('does not emit a reasoning activity when the thinking block carries no text
     [],
   )
 })
+
+test('Claude Skill tool use names the invoked skill instead of the bare tool name', () => {
+  const parseClaudeStreamEvent = createClaudeStructuredOutputParser('zh-CN')
+
+  assert.deepEqual(
+    parseClaudeStreamEvent({
+      type: 'assistant',
+      message: {
+        id: 'msg_skill',
+        content: [
+          {
+            type: 'tool_use',
+            id: 'toolu_skill',
+            name: 'Skill',
+            input: { skill: 'code-review', args: 'high' },
+          },
+        ],
+      },
+    }),
+    [
+      {
+        type: 'activity',
+        itemId: 'toolu_skill',
+        kind: 'tool',
+        status: 'completed',
+        toolName: 'Skill',
+        summary: '调用技能: code-review',
+        toolInput: { skill: 'code-review', args: 'high' },
+      },
+    ],
+  )
+})

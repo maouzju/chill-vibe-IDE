@@ -8047,8 +8047,8 @@ a.message-file-reference-link:focus-visible {
   color: var(--accent);
 }
 
-/* 思考档位旋钮：圈内数字 = 第几档，强调色弧长 = 在本模型档位里走到哪；
-   悬停滚轮调档；思考关闭时弧清空、数字变淡。 */
+/* 思考档位旋钮：圈内字母 = 档位缩写（H / XH …），强调色弧长 = 在本模型档位里走到哪；
+   悬停滚轮调档；思考关闭时弧清空、字母变淡。 */
 .composer-settings-trigger.is-reasoning-knob svg {
   width: 1.3rem;
   height: 1.3rem;
@@ -8066,7 +8066,7 @@ a.message-file-reference-link:focus-visible {
 
 .composer-settings-trigger.is-reasoning-knob .knob-level {
   color: var(--ink-2);
-  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.02em;
   transition: opacity 120ms var(--ease);
 }
 
@@ -8090,7 +8090,7 @@ a.message-file-reference-link:focus-visible {
   opacity: 0.55;
 }
 
-/* 滚轮调档时在旋钮上方短暂报出档位名：数字只说第几档，名字（超高 / 最高）要靠这一下对上。 */
+/* 滚轮调档时在旋钮上方短暂报出档位名：圈内只有缩写，全名（超高 / 最高）和第几档靠这一下对上。 */
 .composer-reasoning-flash {
   position: absolute;
   right: 0;

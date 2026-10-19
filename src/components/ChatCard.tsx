@@ -45,6 +45,7 @@ import {
 } from '../../shared/models'
 import {
   getReasoningOptionsForModel,
+  getReasoningShortLabel,
   isClaudeAlwaysThinkingModel,
   normalizeReasoningEffortForModel,
   shouldEnableThinkingForDepthChange,
@@ -5205,6 +5206,7 @@ const ChatCardView = ({
                         <ReasoningKnobIcon
                           steps={reasoningDialOptions.length}
                           index={reasoningKnobIndex}
+                          label={getReasoningShortLabel(reasoningValue)}
                         />
                       ) : (
                         <SlidersIcon />

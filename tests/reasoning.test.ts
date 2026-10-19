@@ -7,6 +7,7 @@ import {
   getDefaultReasoningEffortForModel,
   getReasoningOptions,
   getReasoningOptionsForModel,
+  getReasoningShortLabel,
   isClaudeAlwaysThinkingModel,
   normalizeReasoningEffort,
   normalizeReasoningEffortForModel,
@@ -302,5 +303,22 @@ describe('reasoning helpers', () => {
     assert.equal(stepReasoningEffort(claude, 'auto', 1), 'high')
     assert.equal(stepReasoningEffort(claude, 'auto', -1), 'medium')
     assert.equal(stepReasoningEffort(claude, 'max', 1), 'ultracode')
+  })
+
+  it('gives every reasoning tier a distinct 1-2 letter knob code', () => {
+    const expected = {
+      auto: 'A',
+      low: 'L',
+      medium: 'M',
+      high: 'H',
+      xhigh: 'XH',
+      max: 'MX',
+      ultra: 'U',
+      ultracode: 'UC',
+    } as const
+    for (const [effort, code] of Object.entries(expected)) {
+      assert.equal(getReasoningShortLabel(effort as keyof typeof expected), code)
+    }
+    assert.equal(new Set(Object.values(expected)).size, Object.keys(expected).length)
   })
 })

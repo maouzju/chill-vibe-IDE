@@ -185,15 +185,15 @@ for (const theme of ['dark', 'light'] as const) {
     const knob = page.locator('.pane-tab-panel.is-active .composer-settings-trigger.is-reasoning-knob').first()
     const flash = page.locator('.pane-tab-panel.is-active .composer-reasoning-flash')
     await expect(knob).toHaveAttribute('data-reasoning-effort', 'medium')
-    // 档位直接写成圈内数字（低=1），不再靠数细刻度：gpt-6-luna 共 5 档，中 = 第 2 档。
-    await expect(knob.locator('.knob-level')).toHaveText('2')
+    // 档位直接写成圈内缩写（中 = M），不再靠数细刻度也不用心算序号；第几档留在 title / 气泡里。
+    await expect(knob.locator('.knob-level')).toHaveText('M')
     await expect(knob.locator('.knob-fill')).toHaveCount(1)
     await expect(knob).toHaveAttribute('title', /中（第 2\/5 档）/)
 
     await knob.hover()
     await page.mouse.wheel(0, -100)
     await expect(knob).toHaveAttribute('data-reasoning-effort', 'high')
-    await expect(knob.locator('.knob-level')).toHaveText('3')
+    await expect(knob.locator('.knob-level')).toHaveText('H')
     // 滚一格就在旋钮上方报出档位名，数字和名字当场对上。
     await expect(flash).toHaveText('高 · 3/5')
     await page.mouse.wheel(0, -100)
@@ -201,11 +201,11 @@ for (const theme of ['dark', 'light'] as const) {
     await page.mouse.wheel(0, -100)
     // 到顶停住不回绕，气泡照样报「已在最高」。
     await expect(knob).toHaveAttribute('data-reasoning-effort', 'max')
-    await expect(knob.locator('.knob-level')).toHaveText('5')
+    await expect(knob.locator('.knob-level')).toHaveText('MX')
     await expect(flash).toHaveText('最高 · 5/5')
     await page.mouse.wheel(0, 100)
     await expect(knob).toHaveAttribute('data-reasoning-effort', 'xhigh')
-    await expect(knob.locator('.knob-level')).toHaveText('4')
+    await expect(knob.locator('.knob-level')).toHaveText('XH')
     // 气泡是一次性的，过一会自己消失，不常驻占地方。
     await expect(flash).toHaveCount(0, { timeout: 3_000 })
 
@@ -233,15 +233,15 @@ for (const theme of ['dark', 'light'] as const) {
     await knob.hover()
     await page.mouse.wheel(0, 100)
     await expect(knob).toHaveAttribute('data-reasoning-effort', 'medium')
-    // Claude 明确档位 6 档（低…Ultracode），中 = 第 2 档，与 Codex 同一数字同一档。
-    await expect(knob.locator('.knob-level')).toHaveText('2')
+    // Claude 与 Codex 同一档同一缩写：中 = M。
+    await expect(knob.locator('.knob-level')).toHaveText('M')
     await page.mouse.wheel(0, 100)
     await expect(knob).toHaveAttribute('data-reasoning-effort', 'low')
     // 从「低」继续往下滚停在「低」，不会滚进「自动」（那反而想得更多）。
     await page.mouse.wheel(0, 100)
     await expect(knob).toHaveAttribute('data-reasoning-effort', 'low')
     await expect(knob.locator('.knob-auto')).toHaveCount(0)
-    await expect(knob.locator('.knob-level')).toHaveText('1')
+    await expect(knob.locator('.knob-level')).toHaveText('L')
     await expect(page.locator('.pane-tab-panel.is-active .composer-reasoning-flash')).toHaveText('低 · 1/6')
   })
 

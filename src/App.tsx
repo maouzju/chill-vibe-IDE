@@ -110,6 +110,7 @@ import {
   type CardRecoveryStatus,
 } from './stream-recovery-feedback'
 import { getFallbackRetryDelayMs } from './fallback-retry'
+import { isSensitiveWordRejection } from '../shared/sensitive-word-rejection'
 import {
   consumeRunDurationMessage,
   recordRunStart,
@@ -6048,7 +6049,9 @@ function App() {
           // show the failed recovery banner so the user isn't left wondering.
           // Tag it with the dying stream so a later stream on this card can
           // retire the banner without a late signal from THIS stream reviving it.
-          if (lostStreamStopReason) {
+          // 敏感词拦截：服务端能打码的已经走 recoverable 续传了，走到这里说明词不在可改的历史里，
+          // 兜底重试只会每 5~30 分钟再撞一次同一堵墙（2026-10-21 死循环现场），直接停。
+          if (lostStreamStopReason || isSensitiveWordRejection(message)) {
             markRecoveryFailed(card.id, card.streamId)
           } else {
             scheduleFallbackRetry(columnId, card.id, card.streamId)

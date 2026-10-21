@@ -98,7 +98,12 @@ import {
 } from './provider-stream-recovery.js'
 import { readStringPreserveWhitespace } from './provider-stream-text.js'
 import { getCodexNativeTurnCompletion } from './native-turn-completion.js'
-import { repairClaudeSessionForResume } from './claude-session-repair.js'
+import {
+  countSensitiveWordsInClaudeSession,
+  registerSensitiveWordScrub,
+  repairClaudeSessionForResume,
+} from './claude-session-repair.js'
+import { extractBlockedSensitiveWords, isSensitiveWordRejection } from '../shared/sensitive-word-rejection.js'
 import { resolveProviderCommandLaunch } from './provider-command-launch.js'
 import { buildGeminiArgs, buildGeminiPrompt, createGeminiStreamParser } from './gemini-runtime.js'
 import {
@@ -1489,6 +1494,11 @@ const classifyLiveProviderStreamRecovery = (
     message,
     hint,
   )
+
+  // 敏感词拦截重试必挂，不能被下面的「瞬时故障一律续传」兜进循环。
+  if (isSensitiveWordRejection(message)) {
+    return baseRecovery
+  }
 
   if (options?.transientOnly) {
     if (baseRecovery.recoverable) {
@@ -3839,6 +3849,27 @@ export const createClaudeTurnParser = (hooks: {
           console.warn(`[claude-result] turn failed. ${JSON.stringify(diagnostics)}`)
           void writeServerLog('ERROR', '[claude-result] turn failed.', diagnostics)
           const hint = classifyLaunchErrorHint(message)
+          // 中转站敏感词拦截：存档里还找得到被点名的词就登记打码、丢进程续传一次（spawn 前落盘）；
+          // 找不到（词在系统提示词/规则里，或已打过码）就停在终态，不能再刷同一请求。
+          if (isSensitiveWordRejection(message)) {
+            const scrubSessionId = emittedSessionId ?? request.sessionId
+            const words = extractBlockedSensitiveWords(message)
+            const found = scrubSessionId ? countSensitiveWordsInClaudeSession(scrubSessionId, words) : 0
+            void writeServerLog('WARN', '[sensitive-word] relay rejected turn.', {
+              sessionId: scrubSessionId ?? null,
+              wordCount: words.length,
+              occurrencesInHistory: found,
+            })
+            if (scrubSessionId && found > 0) {
+              registerSensitiveWordScrub(scrubSessionId, words)
+              sink.onError(message, hint, { recoverable: true, recoveryMode: 'resume-session' })
+            } else {
+              sink.onError(message, hint, {})
+            }
+            hooks.onSettled?.()
+            hooks.killChild()
+            return
+          }
           sink.onError(message, hint, classifyLiveProviderStreamRecovery(request, message, hint, emittedSessionId))
           hooks.onSettled?.()
           // 坏历史已在进程内存里，复用它每轮必 400；丢掉让续传新起进程先修存档再 --resume。

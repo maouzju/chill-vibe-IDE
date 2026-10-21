@@ -217,7 +217,62 @@ export const stripEmptyThinkingBlocks = (content: string) => {
   return removed === 0 ? { content, removed: 0 } : { content: output.join('\n'), removed }
 }
 
-// 返回修掉的条数（合成回复 + 档位戳 + 空 thinking 块）；任何读写失败都 fail-open 返回 0，照常 --resume。
+// 中转站敏感词拦截（见 shared/sensitive-word-rejection.ts）：报错点名的词在存档里逐字打码。
+// 合成报错气泡（isApiErrorMessage）本身也回显了这个词，一并打码，但不算「历史里还有」——
+// 只有它的话说明词来自系统提示词/规则文件，打码续传也没用。
+const SENSITIVE_WORD_MASK = '****'
+
+const escapeRegExp = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+
+export const maskSensitiveWordsInTranscript = (content: string, words: string[]) => {
+  const usable = words.filter((word) => word && content.includes(word))
+  if (usable.length === 0) {
+    return { content, masked: 0, maskedInHistory: 0 }
+  }
+  const pattern = new RegExp(usable.map(escapeRegExp).join('|'), 'g')
+  let masked = 0
+  let maskedInHistory = 0
+  const output = content.split('\n').map((raw) => {
+    const hits = raw.match(pattern)?.length ?? 0
+    if (hits === 0) {
+      return raw
+    }
+    masked += hits
+    if (parseEntry(raw)?.isApiErrorMessage !== true) {
+      maskedInHistory += hits
+    }
+    return raw.replace(pattern, SENSITIVE_WORD_MASK)
+  })
+  return { content: output.join('\n'), masked, maskedInHistory }
+}
+
+// 待打码的词按会话登记，下一次 spawn 前的 repair 里落盘后清掉。
+const pendingSensitiveWordScrubs = new Map<string, Set<string>>()
+
+export const registerSensitiveWordScrub = (sessionId: string, words: string[]) => {
+  const pending = pendingSensitiveWordScrubs.get(sessionId) ?? new Set<string>()
+  for (const word of words) pending.add(word)
+  pendingSensitiveWordScrubs.set(sessionId, pending)
+}
+
+// 同步读：只在报错那一刻判断「存档里还有没有这个词」，决定要不要续传。
+export const countSensitiveWordsInClaudeSession = (
+  sessionId: string,
+  words: string[],
+  findSessionFile: (sessionId: string) => string | null = findClaudeSessionFile,
+) => {
+  try {
+    const filePath = findSessionFile(sessionId)
+    if (!filePath) {
+      return 0
+    }
+    return maskSensitiveWordsInTranscript(fs.readFileSync(filePath, 'utf8'), words).maskedInHistory
+  } catch {
+    return 0
+  }
+}
+
+// 返回修掉的条数（合成回复 + 档位戳 + 空 thinking 块 + 敏感词）；任何读写失败都 fail-open 返回 0，照常 --resume。
 export const repairClaudeSessionForResume = async (
   sessionId: string,
   findSessionFile: (sessionId: string) => string | null = findClaudeSessionFile,
@@ -233,23 +288,30 @@ export const repairClaudeSessionForResume = async (
       : { content: original, removed: 0 }
     const efforts = stripTurnEffortsWhenTailDangles(synthetic.content)
     const thinking = stripEmptyThinkingBlocks(efforts.content)
-    if (synthetic.removed === 0 && efforts.stripped === 0 && thinking.removed === 0) {
+    const scrubWords = pendingSensitiveWordScrubs.get(sessionId)
+    pendingSensitiveWordScrubs.delete(sessionId)
+    const sensitive = scrubWords
+      ? maskSensitiveWordsInTranscript(thinking.content, [...scrubWords])
+      : { content: thinking.content, masked: 0 }
+    if (synthetic.removed === 0 && efforts.stripped === 0 && thinking.removed === 0 && sensitive.masked === 0) {
       return 0
     }
     const tempPath = `${filePath}.chill-vibe-repair.tmp`
-    await fs.promises.writeFile(tempPath, thinking.content, 'utf8')
+    await fs.promises.writeFile(tempPath, sensitive.content, 'utf8')
     await fs.promises.rename(tempPath, filePath)
+    // 日志只记个数不记词本身：server.log 常被贴进会话里取证，带词又会被拦。
     const summary = {
       sessionId,
       syntheticRemoved: synthetic.removed,
       effortStripped: efforts.stripped,
       emptyThinkingRemoved: thinking.removed,
+      sensitiveWordsMasked: sensitive.masked,
     }
     // 症状：2026-10-14 取证「续传到底有没有修过存档」只能去数 jsonl 里剩几个空块。
     // 根因：打包版后端无控制台，console.warn 不落盘（同 providers.ts 的 [claude-result]）。
     console.warn(`[claude-session-repair] removed. ${JSON.stringify(summary)}`)
     void writeServerLog('INFO', '[claude-session-repair] removed.', summary)
-    return synthetic.removed + efforts.stripped + thinking.removed
+    return synthetic.removed + efforts.stripped + thinking.removed + sensitive.masked
   } catch (error) {
     void writeServerLog('WARN', '[claude-session-repair] repair skipped.', {
       sessionId,

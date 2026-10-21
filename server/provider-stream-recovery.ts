@@ -1,4 +1,5 @@
 import type { ChatRequest, StreamActivity, StreamErrorEvent, StreamErrorHint } from '../shared/schema.js'
+import { isSensitiveWordRejection } from '../shared/sensitive-word-rejection.js'
 
 // Whether a structured activity proves the turn actually produced output for the
 // user. Reasoning/thinking is the model's internal monologue, so it does NOT
@@ -186,6 +187,12 @@ export const classifyProviderStreamErrorRecovery = (
   }
 
   if (isPermanentConnectError(normalizedMessage)) {
+    return {}
+  }
+
+  // 敏感词拦截带着 CLI 的「server-side issue, usually temporary」后缀，但重试必挂；
+  // 能不能续传由 providers.ts 看存档里有没有这个词、打码后再决定。
+  if (isSensitiveWordRejection(message)) {
     return {}
   }
 

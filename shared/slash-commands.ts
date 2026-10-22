@@ -114,6 +114,34 @@ export const getSlashCompletionQuery = (input: string) => {
   return match ? match[1].toLowerCase() : null
 }
 
+// 症状：技能名是英文（predict-needs），用户敲 `/预判` 或 `/needs` 补全菜单一条都没有。
+// 根因：旧过滤只做 name.startsWith。为什么不能换回去：中文描述/名字中段才是用户真正记得的线索。
+export const filterSlashCommands = <T extends { name: string; description?: string | undefined }>(
+  commands: T[],
+  query: string,
+): T[] => {
+  if (!query) {
+    return commands
+  }
+
+  const prefix: T[] = []
+  const nameContains: T[] = []
+  const descriptionContains: T[] = []
+
+  for (const command of commands) {
+    const name = command.name.toLowerCase()
+    if (name.startsWith(query)) {
+      prefix.push(command)
+    } else if (name.includes(query)) {
+      nameContains.push(command)
+    } else if (command.description?.toLowerCase().includes(query)) {
+      descriptionContains.push(command)
+    }
+  }
+
+  return [...prefix, ...nameContains, ...descriptionContains]
+}
+
 export const isLocalSlashCommandInput = (input: string) => {
   const parsed = parseSlashCommandInput(input)
   return Boolean(parsed && LOCAL_SLASH_COMMAND_NAMES.has(parsed.name))

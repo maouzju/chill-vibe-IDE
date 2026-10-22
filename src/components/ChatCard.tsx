@@ -52,6 +52,7 @@ import {
   stepReasoningEffort,
 } from '../../shared/reasoning'
 import {
+  filterSlashCommands,
   getLocalSlashCommands,
   getSlashCompletionQuery,
   isLocalSlashCommandInput,
@@ -3376,11 +3377,7 @@ const ChatCardView = ({
       return []
     }
 
-    if (!slashQuery) {
-      return slashCommands
-    }
-
-    return slashCommands.filter((command) => command.name.startsWith(slashQuery))
+    return filterSlashCommands(slashCommands, slashQuery)
   }, [slashCommands, slashQuery])
   const activeSlashIndex =
     filteredSlashCommands.length === 0

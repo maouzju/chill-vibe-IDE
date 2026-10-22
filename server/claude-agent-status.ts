@@ -202,7 +202,7 @@ const readWorkflowAgentState = (entry: JsonRecord): WorkflowAgentState | undefin
 // 只认基础设施类错误：这类失败说明上游在出事，后面的分支多半同样会死，值得父 agent 立刻介入；
 //   脚本/schema/分类器拦截这类失败由 Workflow 脚本自己处理，收尾通知里自然会交代。
 const catastrophicWorkflowErrorPattern =
-  /\b(?:429|5\d\d)\b|rate.?limit|usage.?limit|quota|overload|timed? ?out|timeout|stall|ECONN|ETIMEDOUT|EAI_AGAIN|socket hang up|network|fetch failed|API Error|connection (?:error|reset|closed|refused)/iu
+  /(?:HTTP|status|code|error|API)\D{0,8}(?:429|5\d\d)\b|\b(?:429|5\d\d)\s+(?:error|too many|internal|bad gateway|service|gateway)|rate.?limit|usage.?limit|quota|overload|timed? ?out|timeout|\bstall(?:ed|ing)?\b|ECONN|ETIMEDOUT|EAI_AGAIN|socket hang up|network|fetch failed|API Error|connection (?:error|reset|closed|refused)/iu
 
 export const isCatastrophicWorkflowError = (error: string) =>
   !/blocked/iu.test(error) && catastrophicWorkflowErrorPattern.test(error)

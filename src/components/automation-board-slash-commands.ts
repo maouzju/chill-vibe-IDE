@@ -1,4 +1,4 @@
-import { getSlashCompletionQuery } from '../../shared/slash-commands'
+import { filterSlashCommands, getSlashCompletionQuery } from '../../shared/slash-commands'
 import type { SlashCommand } from '../../shared/schema'
 
 export const filterAutomationBoardSlashCommands = (
@@ -7,7 +7,7 @@ export const filterAutomationBoardSlashCommands = (
 ) => {
   const query = getSlashCompletionQuery(draft)
   if (query === null) return []
-  return query ? commands.filter((command) => command.name.startsWith(query)) : commands
+  return filterSlashCommands(commands, query)
 }
 
 export const applyAutomationBoardSlashCompletion = (command: SlashCommand) =>

@@ -89,7 +89,7 @@ test('seenDiscoveredModels defaults to empty and normalizes garbage away', () =>
 })
 
 const makeIo = (files: Record<string, string>, env: Record<string, string> = {}) => ({
-  homedir: 'H:',
+  homedir: '/fake-home',
   env,
   readFile: async (filePath: string) => {
     const normalized = filePath.replace(/\\/g, '/')
@@ -116,7 +116,7 @@ test('discovery falls back to ~/.claude/settings.json env when routing is off', 
     'claude',
     settings,
     makeIo(
-      { 'H:/.claude/settings.json': JSON.stringify({ env: { ANTHROPIC_AUTH_TOKEN: 'sk-file', ANTHROPIC_BASE_URL: 'https://a.example' } }) },
+      { '/fake-home/.claude/settings.json': JSON.stringify({ env: { ANTHROPIC_AUTH_TOKEN: 'sk-file', ANTHROPIC_BASE_URL: 'https://a.example' } }) },
       { ANTHROPIC_API_KEY: 'sk-env', ANTHROPIC_BASE_URL: 'https://env.example' },
     ),
   )
@@ -138,7 +138,7 @@ test('codex discovery reads the active model_provider section of config.toml', a
   const endpoint = await resolveModelDiscoveryEndpoint(
     'codex',
     settings,
-    makeIo({ 'H:/.codex/config.toml': toml, 'H:/.codex/auth.json': JSON.stringify({ OPENAI_API_KEY: 'sk-codex' }) }),
+    makeIo({ '/fake-home/.codex/config.toml': toml, '/fake-home/.codex/auth.json': JSON.stringify({ OPENAI_API_KEY: 'sk-codex' }) }),
   )
   assert.equal(endpoint?.url, 'https://duck.example/v1/models')
   assert.equal(endpoint?.headers.authorization, 'Bearer sk-codex')
@@ -147,7 +147,7 @@ test('codex discovery reads the active model_provider section of config.toml', a
     'codex',
     settings,
     makeIo(
-      { 'H:/.codex/config.toml': `${toml}\nenv_key = "DUCK_KEY"` },
+      { '/fake-home/.codex/config.toml': `${toml}\nenv_key = "DUCK_KEY"` },
       { DUCK_KEY: 'sk-from-env' },
     ),
   )

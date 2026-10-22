@@ -379,6 +379,7 @@ export type IdeAction =
           | 'weatherCity'
           | 'promptVaultDismissedAt'
           | 'acknowledgedModelUpgrades'
+          | 'seenDiscoveredModels'
           | 'systemPrompt'
           | 'modelPromptRules'
           | 'codexPersonality'

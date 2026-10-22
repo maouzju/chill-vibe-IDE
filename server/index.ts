@@ -89,8 +89,10 @@ import { SetupManager } from './setup-manager.js'
 import { OllamaManager } from './ollama-manager.js'
 import { CliCompatManager } from './cli-compat-manager.js'
 import { cliCompatRequestSchema } from '../shared/cli-compat.js'
+import { discoverProviderModels } from './model-discovery.js'
 import {
   deleteSessionHistoryEntry,
+  loadState,
   loadClosedWorkspaceSnapshot,
   loadSessionHistoryEntry,
   loadStateForRenderer,
@@ -283,6 +285,10 @@ app.post('/api/setup/run', (request, response) => {
   }
 
   response.status(202).json(setupManager.start(parsed.data))
+})
+
+app.get('/api/models/discover', async (_request, response) => {
+  response.json(await discoverProviderModels((await loadState()).settings))
 })
 
 app.get('/api/cli-compat/status', async (_request, response) => {

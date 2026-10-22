@@ -139,6 +139,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   fetchSetupStatus: () => ipcRenderer.invoke('desktop:fetch-setup-status'),
   runEnvironmentSetup: (request: unknown) =>
     ipcRenderer.invoke('desktop:run-environment-setup', request),
+  discoverModels: () => ipcRenderer.invoke('desktop:discover-models'),
   fetchCliCompatStatus: () => ipcRenderer.invoke('desktop:fetch-cli-compat-status'),
   installCliCompat: (request: unknown) => ipcRenderer.invoke('desktop:install-cli-compat', request),
   setCliCompatActive: (request: unknown) => ipcRenderer.invoke('desktop:set-cli-compat-active', request),

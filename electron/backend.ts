@@ -75,10 +75,12 @@ import { SetupManager } from '../server/setup-manager.ts'
 import { OllamaManager } from '../server/ollama-manager.ts'
 import { CliCompatManager } from '../server/cli-compat-manager.ts'
 import { cliCompatRequestSchema } from '../shared/cli-compat.ts'
+import { discoverProviderModels } from '../server/model-discovery.ts'
 import {
   captureRendererCrash as captureRendererCrashState,
   deleteSessionHistoryEntry,
   dismissRecentCrashRecovery as dismissRecentCrashRecoveryState,
+  loadState,
   loadStateForRenderer,
   loadSessionHistoryEntry as loadInternalSessionHistoryEntry,
   loadClosedWorkspaceSnapshot as loadClosedWorkspaceSnapshotState,
@@ -438,6 +440,9 @@ export const createDesktopBackend = (deps: DesktopBackendDependencies = {}) => {
     },
     runEnvironmentSetup(request?: unknown) {
       return getSetupManager().start(setupRunRequestSchema.parse(request ?? {}))
+    },
+    async discoverModels() {
+      return discoverProviderModels((await loadState()).settings)
     },
     async fetchCliCompatStatus() {
       return getCliCompatManager().getStatus()

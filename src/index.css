@@ -1342,6 +1342,25 @@ body.is-card-dragging .lane-drop-zone-top {
   justify-content: flex-end;
 }
 
+.model-discovery-list li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+.model-discovery-name {
+  display: grid;
+  gap: 0.15rem;
+  min-width: 0;
+}
+
+.model-discovery-meta {
+  color: var(--ink-2);
+  font-size: 0.82rem;
+  overflow-wrap: anywhere;
+}
+
 .routing-panel-columns {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));

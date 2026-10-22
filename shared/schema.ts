@@ -857,6 +857,8 @@ export const appSettingsSchema = z.object({
   promptVaultDismissedAt: z.string().default(''),
   // 已弹过「默认模型有更强新型号」提示的 provider:旧>新 键（shared/models.ts MODEL_SUCCESSORS），每条只弹一次。
   acknowledgedModelUpgrades: z.array(z.string()).default([]),
+  // 新模型自动发现：已经问过用户（加入或忽略）的 provider:model 键，每个型号只问一次（shared/model-discovery.ts）。
+  seenDiscoveredModels: z.array(z.string()).default([]),
   systemPrompt: z.string().default(defaultSystemPrompt),
   modelPromptRules: z.array(modelPromptRuleSchema).default([]),
   codexPersonality: codexPersonalitySettingSchema.default('default'),
@@ -1162,6 +1164,7 @@ export const appStateSchema = z.object({
     weatherCity: '',
     promptVaultDismissedAt: '',
     acknowledgedModelUpgrades: [],
+    seenDiscoveredModels: [],
     systemPrompt: defaultSystemPrompt,
     modelPromptRules: [],
     codexPersonality: 'default',

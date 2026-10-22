@@ -1,4 +1,5 @@
 import type { CliCompatRequest, CliCompatStatus } from '../shared/cli-compat'
+import type { ProviderModelDiscovery } from '../shared/model-discovery'
 import type {
   AppSettings,
   AppState,
@@ -139,6 +140,7 @@ declare global {
       importCcSwitchRouting?: (request: CcSwitchImportRequest) => Promise<CcSwitchImportResponse>
       fetchSetupStatus?: () => Promise<SetupStatus>
       runEnvironmentSetup?: (request?: SetupRunRequestInput) => Promise<SetupStatus>
+      discoverModels?: () => Promise<ProviderModelDiscovery[]>
       fetchCliCompatStatus?: () => Promise<CliCompatStatus>
       installCliCompat?: (request: CliCompatRequest) => Promise<CliCompatStatus>
       setCliCompatActive?: (request: CliCompatRequest) => Promise<CliCompatStatus>

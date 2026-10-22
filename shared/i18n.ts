@@ -151,6 +151,12 @@ type LocaleText = {
   modelUpgradeDialogKeep: string
   modelUpgradeItemSeparator: string
   modelUpgradeDialogConfirm: string
+  modelDiscoveryDialogTitle: string
+  modelDiscoveryDialogBody: string
+  modelDiscoveryDialogNote: string
+  modelDiscoveryDialogAddOne: string
+  modelDiscoveryDialogAddAll: string
+  modelDiscoveryDialogIgnore: string
   agentOutsideWorkspaceWriteLabel: string
   agentOutsideWorkspaceWriteNote: string
   computerUseLabel: string
@@ -690,6 +696,12 @@ const localeTextByLanguage: Record<AppLanguage, LocaleText> = {
     modelUpgradeDialogKeep: '保持不变',
     modelUpgradeItemSeparator: '：',
     modelUpgradeDialogConfirm: '设为新模型',
+    modelDiscoveryDialogTitle: '发现新模型',
+    modelDiscoveryDialogBody: '你正在用的接口已经能用这些新型号：',
+    modelDiscoveryDialogNote: '每个型号只问一次；加入后可在 设置 → 模型下拉菜单 里删掉。',
+    modelDiscoveryDialogAddOne: '加入下拉',
+    modelDiscoveryDialogAddAll: '全部加入',
+    modelDiscoveryDialogIgnore: '忽略',
     computerUseLabel: '允许 Agent 使用浏览器（Computer Use）',
     computerUseNote:
       '打开后 Claude 与 Codex 会话都会拿到浏览器控制工具，可以替你打开网页、点击、填表、读取页面。Claude 装了 Claude in Chrome 扩展时优先走扩展；否则两者都使用 Playwright MCP，需要先执行 npm i -g @playwright/mcp（或本机能用 npx）。浏览器会以你的身份操作已登录网站，默认关闭。切换后下一条消息生效。',
@@ -1272,6 +1284,12 @@ const localeTextByLanguage: Record<AppLanguage, LocaleText> = {
     modelUpgradeDialogKeep: 'Keep current',
     modelUpgradeItemSeparator: ': ',
     modelUpgradeDialogConfirm: 'Switch to new model',
+    modelDiscoveryDialogTitle: 'New models found',
+    modelDiscoveryDialogBody: 'Your endpoint now serves these new models:',
+    modelDiscoveryDialogNote: 'Asked once per model; remove them anytime in Settings → Model menu.',
+    modelDiscoveryDialogAddOne: 'Add to menu',
+    modelDiscoveryDialogAddAll: 'Add all',
+    modelDiscoveryDialogIgnore: 'Ignore',
     computerUseLabel: 'Allow Agent to use the browser (Computer Use)',
     computerUseNote:
       'When on, both Claude and Codex sessions get browser-control tools to open pages, click, fill forms, and read page state on your behalf. Claude prefers the Claude in Chrome extension when it is installed; otherwise both use the Playwright MCP, which needs npm i -g @playwright/mcp (or a working npx). The browser acts as you on sites you are signed in to, so this is off by default. Takes effect from the next message.',

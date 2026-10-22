@@ -1398,6 +1398,7 @@ function registerDesktopHandlers() {
   ipcMain.handle('desktop:run-environment-setup', (_event, request: unknown) =>
     desktopBackend.runEnvironmentSetup(request),
   )
+  ipcMain.handle('desktop:discover-models', () => desktopBackend.discoverModels())
   ipcMain.handle('desktop:fetch-cli-compat-status', () => desktopBackend.fetchCliCompatStatus())
   ipcMain.handle('desktop:install-cli-compat', (_event, request: unknown) =>
     desktopBackend.installCliCompat(request),

@@ -213,8 +213,10 @@ import {
   subscribeWorkspaceAdminCommands,
   subscribeRemoteCommands,
   judgeUrgeWithOllama,
+  discoverModels,
   type RemoteMonitorStartResponse,
 } from './api'
+import { findDiscoveredNewModels, type DiscoveredModel, type ProviderModelDiscovery } from '../shared/model-discovery'
 import {
   getLatestAssistantTurnText,
   planAutoUrgeForCompletedCard,
@@ -455,6 +457,8 @@ const emptySessionHistory: SessionHistoryEntry[] = []
 const maxResumeSessionLoopAttempts = 2
 const defaultRecoverableStreamRetryLimit = 6
 const maxConcurrentInterruptedSessionResumes = 2
+// 新模型自动发现：启动就绪后再等这么久才问端点（不和启动探测抢资源）。
+const modelDiscoveryDelayMs = 3000
 const interruptedSessionResumeBatchDelayMs = 350
 // 服务端说"终态最长推迟 N 毫秒"之后，本地兜底再多等这一点：覆盖 IPC 往返与
 // 终态事件的渲染排队，免得兜底刚好卡在服务端发 done 的同一毫秒上抢跑。
@@ -1765,6 +1769,89 @@ function App() {
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
   }, [dismissModelUpgrade, modelUpgradeDialogVisible])
+
+  // 新模型自动发现：启动就绪后问一次端点的模型列表（SPEC model-auto-discovery）。
+  // 弹不弹同样由已落盘的 settings 推导：任一出口都把键写进 seenDiscoveredModels，每个型号只问一次。
+  // 让位于上面的换代提示，两个弹窗不叠着出。
+  const [discoveredModelLists, setDiscoveredModelLists] = useState<ProviderModelDiscovery[]>([])
+  const modelDiscoveryStartedRef = useRef(false)
+  useEffect(() => {
+    if (loadStatus !== 'ready' || modelDiscoveryStartedRef.current) {
+      return
+    }
+    modelDiscoveryStartedRef.current = true
+    // 晚几秒再问：启动时 CLI 探测、会话恢复都在抢网络和主进程，这条提示不急。
+    const timer = window.setTimeout(() => {
+      void discoverModels().then(setDiscoveredModelLists)
+    }, modelDiscoveryDelayMs)
+    return () => window.clearTimeout(timer)
+  }, [loadStatus])
+
+  const newDiscoveredModels = useMemo(
+    () =>
+      discoveredModelLists.flatMap((entry) =>
+        findDiscoveredNewModels({
+          provider: entry.provider,
+          ids: entry.ids,
+          customModels: appState.settings.modelPickerCustomModels,
+          seen: appState.settings.seenDiscoveredModels,
+        }).filter((candidate) => isValidCustomPickerModelName(candidate.model)),
+      ),
+    [discoveredModelLists, appState.settings.modelPickerCustomModels, appState.settings.seenDiscoveredModels],
+  )
+  const modelDiscoveryDialogVisible =
+    loadStatus === 'ready' &&
+    newDiscoveredModels.length > 0 &&
+    !modelUpgradeDialogVisible &&
+    !onboardingOpen &&
+    !startupRecovery &&
+    !recentCrashRecovery &&
+    !interruptedSessionRecovery
+
+  const resolveDiscoveredModels = useCallback(
+    (entries: DiscoveredModel[], add: boolean) => {
+      const settings = appStateRef.current.settings
+      applyAction({
+        type: 'updateSettings',
+        patch: {
+          seenDiscoveredModels: [...settings.seenDiscoveredModels, ...entries.map((entry) => entry.key)],
+          ...(add
+            ? {
+                modelPickerCustomModels: [
+                  ...settings.modelPickerCustomModels,
+                  ...entries.map((entry) => ({
+                    id: crypto.randomUUID(),
+                    provider: entry.provider,
+                    model: entry.model,
+                    label: entry.label,
+                  })),
+                ],
+              }
+            : {}),
+        },
+      })
+    },
+    [applyAction],
+  )
+
+  const dismissModelDiscovery = useCallback(() => {
+    resolveDiscoveredModels(newDiscoveredModels, false)
+  }, [newDiscoveredModels, resolveDiscoveredModels])
+
+  useEffect(() => {
+    if (!modelDiscoveryDialogVisible) {
+      return
+    }
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        dismissModelDiscovery()
+      }
+    }
+
+    window.addEventListener('keydown', handleKeyDown)
+    return () => window.removeEventListener('keydown', handleKeyDown)
+  }, [dismissModelDiscovery, modelDiscoveryDialogVisible])
 
   const persistAfterAction = useCallback(
     (actionType: IdeAction['type'], nextState: AppState) => {
@@ -12706,6 +12793,57 @@ function App() {
                   </AppButton>
                   <AppButton tone="primary" type="button" onClick={confirmModelUpgrade}>
                     {text.modelUpgradeDialogConfirm}
+                  </AppButton>
+                </div>
+              </div>
+            </div>
+          </section>
+        </div>
+      ) : null}
+
+      {modelDiscoveryDialogVisible ? (
+        <div className="structured-preview-layer">
+          <div className="structured-preview-backdrop" onClick={dismissModelDiscovery} />
+          <section
+            className="structured-preview-dialog model-upgrade-dialog model-discovery-dialog"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="model-discovery-dialog-title"
+          >
+            <div className="structured-preview-card">
+              <div className="structured-preview-header">
+                <div className="structured-preview-copy">
+                  <h3 id="model-discovery-dialog-title">{text.modelDiscoveryDialogTitle}</h3>
+                  <p className="settings-note">{text.modelDiscoveryDialogBody}</p>
+                </div>
+              </div>
+
+              <div className="structured-preview-body">
+                <ul className="model-upgrade-list model-discovery-list">
+                  {newDiscoveredModels.map((entry) => (
+                    <li key={entry.key}>
+                      <span className="model-discovery-name">
+                        <strong>{entry.label}</strong>
+                        <span className="model-discovery-meta">
+                          {getProviderLabel(appState.settings.language, entry.provider)}
+                          {text.modelUpgradeItemSeparator}
+                          <code>{entry.model}</code>
+                        </span>
+                      </span>
+                      <AppButton type="button" onClick={() => resolveDiscoveredModels([entry], true)}>
+                        {text.modelDiscoveryDialogAddOne}
+                      </AppButton>
+                    </li>
+                  ))}
+                </ul>
+                <p className="settings-note">{text.modelDiscoveryDialogNote}</p>
+
+                <div className="settings-actions">
+                  <AppButton type="button" onClick={dismissModelDiscovery}>
+                    {text.modelDiscoveryDialogIgnore}
+                  </AppButton>
+                  <AppButton tone="primary" type="button" onClick={() => resolveDiscoveredModels(newDiscoveredModels, true)}>
+                    {text.modelDiscoveryDialogAddAll}
                   </AppButton>
                 </div>
               </div>

@@ -679,6 +679,7 @@ export const createDefaultSettings = (language: AppLanguage = defaultAppLanguage
   promptVaultDismissedAt: '',
   // 全新安装不算「升级」：当前已知的换代提示一律视为已读，只有存档里没有该字段的老用户才会被提示。
   acknowledgedModelUpgrades: listModelUpgradeKeys(),
+  seenDiscoveredModels: [],
   systemPrompt: defaultSystemPrompt,
   modelPromptRules: [],
   codexPersonality: 'default',
@@ -922,6 +923,13 @@ export const normalizeAppSettings = (settings?: Partial<AppSettings> | null): Ap
           ),
         ]
       : defaults.acknowledgedModelUpgrades,
+    seenDiscoveredModels: [
+      ...new Set(
+        (Array.isArray(settings?.seenDiscoveredModels) ? settings.seenDiscoveredModels : []).filter(
+          (key): key is string => typeof key === 'string' && key.length > 0,
+        ),
+      ),
+    ],
     systemPrompt: normalizeSystemPrompt(settings?.systemPrompt),
     modelPromptRules: normalizeModelPromptRules(settings?.modelPromptRules),
     codexPersonality: normalizeCodexPersonality(settings?.codexPersonality),

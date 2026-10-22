@@ -1,4 +1,5 @@
 import { cliCompatStatusSchema, type CliCompatRequest, type CliCompatStatus } from '../shared/cli-compat'
+import type { ProviderModelDiscovery } from '../shared/model-discovery'
 import { z } from 'zod'
 
 import {
@@ -542,6 +543,25 @@ const postJson = async (url: string, body: unknown) => {
   }
 
   return (await response.json()) as unknown
+}
+
+// 新模型自动发现：失败一律当「没发现」，这是锦上添花的提示，不能给启动添堵。
+export const discoverModels = async (): Promise<ProviderModelDiscovery[]> => {
+  try {
+    const desktop = getDesktopApi()
+    const raw = desktop?.discoverModels ? await desktop.discoverModels() : await (async () => {
+      const response = await fetch('/api/models/discover')
+      if (!response.ok) throw new Error('Failed to discover models')
+      return (await response.json()) as unknown
+    })()
+    if (!Array.isArray(raw)) return []
+    return raw.filter(
+      (entry): entry is ProviderModelDiscovery =>
+        Boolean(entry) && typeof entry.provider === 'string' && Array.isArray(entry.ids),
+    )
+  } catch {
+    return []
+  }
 }
 
 export const fetchCliCompatStatus = async (): Promise<CliCompatStatus> => {

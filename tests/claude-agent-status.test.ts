@@ -7,6 +7,7 @@ import {
   claudeAgentElapsedPrefix,
   claudeWorkflowSummaryPrefix,
   createClaudeAgentStatusTracker,
+  isCatastrophicWorkflowError,
   syntheticClaudeAgentId,
 } from '../server/claude-agent-status'
 
@@ -965,4 +966,24 @@ test('the Workflow entry carries structured counts while running', () => {
   const tracker = startWorkflow()
   const running = tracker.handleEvent(workflowProgress('design:d', 3, 3_000, { phase: 'Design', live }))
   assert.deepEqual(running.activity?.agents[0]?.workflowCounts, { done: 1, running: 1, failed: 2, queued: 1, total: 5 })
+})
+
+// 叫醒只认基础设施类失败：error 原文是 CLI workflow_agent 条目自带的（claude 2.1.280）。
+test('Workflow counts single out failures caused by infrastructure errors', () => {
+  const live: WorkflowAgentState[] = [
+    ['Build', 'build:a', 'error', { error: 'API Error: 529 {"type":"overloaded_error"}' }],
+    ['Build', 'build:b', 'error', { error: 'Agent output did not match schema: missing "files"' }],
+    ['Build', 'build:c', 'error', { error: '[build:c] blocked by safety classifier: network access' }],
+    ['Build', 'build:d', 'error', { error: 'Request timed out after 600000ms' }],
+    ['Build', 'build:e', 'progress'],
+  ]
+  const tracker = startWorkflow()
+  const running = tracker.handleEvent(workflowProgress('build:e', 3, 3_000, { phase: 'Build', live }))
+  assert.deepEqual(running.activity?.agents[0]?.workflowCounts, {
+    done: 0, running: 1, failed: 4, queued: 0, total: 5,
+    catastrophic: 2, catastrophicSample: 'Request timed out after 600000ms',
+  })
+  assert.equal(isCatastrophicWorkflowError('429 rate_limit_error'), true)
+  assert.equal(isCatastrophicWorkflowError('fetch failed'), true)
+  assert.equal(isCatastrophicWorkflowError('TypeError: cannot read properties of undefined'), false)
 })

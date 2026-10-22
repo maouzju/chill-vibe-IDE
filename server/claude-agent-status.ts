@@ -196,6 +196,17 @@ const readWorkflowAgentState = (entry: JsonRecord): WorkflowAgentState | undefin
   }
 }
 
+// 症状：父卡被「失败 2/3（已完成 0，在跑 1）」叫醒，可那两次失败是脚本自己会重试/兜底的普通失败（2026-10-22 用户截图）。
+// 根因：2026-10-16 版叫醒只数 failed 过半，不分失败原因；而 Workflow 刚起步时 total 只算已派出的几个，过半门槛极低。
+//   2026-10-22 抠 claude 2.1.280：workflow_agent 的 state=error 条目带 error 原文（异常 message / 限流原文 / 安全分类器拦截）。
+// 只认基础设施类错误：这类失败说明上游在出事，后面的分支多半同样会死，值得父 agent 立刻介入；
+//   脚本/schema/分类器拦截这类失败由 Workflow 脚本自己处理，收尾通知里自然会交代。
+const catastrophicWorkflowErrorPattern =
+  /\b(?:429|5\d\d)\b|rate.?limit|usage.?limit|quota|overload|timed? ?out|timeout|stall|ECONN|ETIMEDOUT|EAI_AGAIN|socket hang up|network|fetch failed|API Error|connection (?:error|reset|closed|refused)/iu
+
+export const isCatastrophicWorkflowError = (error: string) =>
+  !/blocked/iu.test(error) && catastrophicWorkflowErrorPattern.test(error)
+
 // 与心跳 description 同一身份：按 CLI 拼 description 的原样拼（它不 trim phase 名与 label），再像 readString 那样只 trim 两端。
 const workflowEntryKey = (entry: JsonRecord) => {
   if (typeof entry.label !== 'string') return undefined
@@ -310,7 +321,20 @@ export const createClaudeAgentStatusTracker = ({
     }
     const states = entries.map(readWorkflowAgentState)
     const count = (state: WorkflowAgentState) => states.filter((value) => value === state).length
-    return { done: count('done'), running: count('running'), failed: count('failed'), queued: count('queued'), total: entries.length }
+    const catastrophicErrors = entries
+      .filter((_entry, index) => states[index] === 'failed')
+      .map((entry) => readString(entry, 'error'))
+      .filter((error): error is string => error !== undefined && isCatastrophicWorkflowError(error))
+    return {
+      done: count('done'),
+      running: count('running'),
+      failed: count('failed'),
+      queued: count('queued'),
+      total: entries.length,
+      ...(catastrophicErrors.length > 0
+        ? { catastrophic: catastrophicErrors.length, catastrophicSample: catastrophicErrors.at(-1)!.slice(0, 160) }
+        : {}),
+    }
   }
 
   const formatWorkflowSummary = (counts: NonNullable<StreamAgentEntry['workflowCounts']>) => {

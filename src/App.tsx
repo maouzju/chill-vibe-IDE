@@ -221,7 +221,7 @@ import {
   getLatestAssistantTurnText,
   planAutoUrgeForCompletedCard,
 } from './components/chat-auto-urge'
-import { buildWorkflowFailureWakePrompt, detectWorkflowFailureMajority } from './components/workflow-failure-wake'
+import { buildWorkflowFailureWakePrompt, detectWorkflowCatastrophicFailure } from './components/workflow-failure-wake'
 import { resolveAppLoadError } from './app-load-error'
 import { clearDragPayload, peekDragPayload, readDragPayload, releaseDragPayloadIfStale } from './dnd'
 import {
@@ -6293,7 +6293,7 @@ function App() {
           if (next !== card) {
             const action: IdeAction = { type: 'updateCard', columnId: column.id, cardId, patch: { messages: next.messages } }
             persistAfterAction(action.type, applyAction(action))
-            for (const hit of detectWorkflowFailureMajority(card, next)) {
+            for (const hit of detectWorkflowCatastrophicFailure(card, next)) {
               const key = `${cardId}:${hit.threadId}`
               if (workflowFailureWakesSentRef.current.has(key)) continue
               workflowFailureWakesSentRef.current.add(key)

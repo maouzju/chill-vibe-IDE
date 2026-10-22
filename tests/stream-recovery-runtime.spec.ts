@@ -724,8 +724,9 @@ for (const theme of ['light', 'dark'] as const) {
   })
 }
 
-// 2026-10-16：后台 Workflow 失败过半时父卡收到一次提醒；父卡正在答别的就排到这轮之后，不打断。
-test('a background Workflow crossing half failed queues one wake-up notice for the parent card', async ({ page }) => {
+// 2026-10-16：后台 Workflow 子 agent 灾难性失败时父卡收到一次提醒；父卡正在答别的就排到这轮之后，不打断。
+// 2026-10-22 起只数 429 / 过载 / 超时这类基础设施失败（catastrophic），累计到 2 个才叫。
+test('a background Workflow whose sub-agents keep dying of infrastructure errors queues one wake-up notice for the parent card', async ({ page }) => {
   const mock = await installMockDesktopBridge(page, { claude: true })
   await page.goto(appUrl)
   await expect(page.locator('.pane-tab-panel.is-active .composer textarea').first()).toBeVisible()
@@ -736,7 +737,7 @@ test('a background Workflow crossing half failed queues one wake-up notice for t
         cardId: 'card-1', streamId: 'agent-runtime:test', sessionId: 'session-1',
         agentStatus: { itemId: 'agent-status:claude', kind: 'agents', status: 'completed', view: 'status',
           agents: [{ threadId: 'wf_test', nickname: 'Design Workflow', role: 'Workflow', status: 'running', activity: [`failed ${value}`],
-            workflowCounts: { done: 1, running: 5 - value, failed: value, queued: 0, total: 6 } }] },
+            workflowCounts: { done: 1, running: 5 - value, failed: value, queued: 0, total: 6, catastrophic: value - 1 } }] },
       } }))
     }, failed)
     await expect(page.locator('.subagent-dock .structured-agent-activity-line').first()).toHaveText(`failed ${failed}`)

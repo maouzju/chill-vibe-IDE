@@ -992,3 +992,18 @@ test('Workflow counts single out failures caused by infrastructure errors', () =
   assert.equal(isCatastrophicWorkflowError('Request failed with status code 503'), true)
   assert.equal(isCatastrophicWorkflowError('stream stalled for 120s'), true)
 })
+
+test('Workflow background receipt keeps run id and script path for resume after IDE restart', () => {
+  const tracker = createClaudeAgentStatusTracker()
+  tracker.beginSynthetic('workflow:wf', 'Workflow')
+  tracker.handleEvent({ type: 'user', message: { content: [
+    {
+      type: 'tool_result',
+      tool_use_id: 'wf',
+      content: 'Workflow launched in background. Task ID: w9\nSummary: test\nTranscript dir: C:\\t\\wf_ab12cd34-ef5\nScript file: C:\\s\\probe-wf_ab12cd34-ef5.js\nRun ID: wf_ab12cd34-ef5\nTo resume after editing the script: Workflow(...)',
+    },
+  ] } })
+  const agent = tracker.snapshot().agents[0]
+  assert.equal(agent?.workflowRunId, 'wf_ab12cd34-ef5')
+  assert.equal(agent?.workflowScriptPath, 'C:\\s\\probe-wf_ab12cd34-ef5.js')
+})

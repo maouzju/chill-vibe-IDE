@@ -34,12 +34,16 @@ export const collectInterruptedAgents = (messages: ChatMessage[]): InterruptedAg
       const role = readOptionalString(agent.role)
       const model = readOptionalString(agent.model)
       const lastMessage = readOptionalString(agent.message)
+      const workflowRunId = readOptionalString(agent.workflowRunId)
+      const workflowScriptPath = readOptionalString(agent.workflowScriptPath)
       return [{
         threadId,
         ...(nickname ? { nickname } : {}),
         ...(role ? { role } : {}),
         ...(model ? { model } : {}),
         ...(lastMessage ? { message: lastMessage.slice(0, 400) } : {}),
+        ...(workflowRunId ? { workflowRunId } : {}),
+        ...(workflowScriptPath ? { workflowScriptPath } : {}),
       }]
     })
   }
@@ -52,6 +56,12 @@ const describeAgent = (agent: InterruptedAgent) => {
   if (label) parts.push(`name: ${label}`)
   if (agent.model) parts.push(`model: ${agent.model}`)
   if (agent.message) parts.push(`last status: ${agent.message.replace(/\s+/g, ' ')}`)
+  if (agent.workflowRunId) {
+    // 2026-09-27 实测同一会话内 Workflow({resumeFromRunId}) 能续上；换了会话找不到脚本时才退回读 journal。
+    parts.push(agent.workflowScriptPath
+      ? `Workflow resume: Workflow({ scriptPath: ${JSON.stringify(agent.workflowScriptPath)}, resumeFromRunId: ${JSON.stringify(agent.workflowRunId)} })`
+      : `Workflow resume: Workflow({ resumeFromRunId: ${JSON.stringify(agent.workflowRunId)} }) with the same script and args`)
+  }
   return parts.join(' | ')
 }
 
@@ -60,7 +70,7 @@ const resumeInstructionByProvider = (provider: Provider | undefined) => {
     return 'For each one, call resume_agent with its id (then send_input / wait as before) so it continues from its own thread; only spawn a fresh agent with the same task if resume_agent fails.'
   }
   if (provider === 'claude') {
-    return 'For each one, call SendMessage with its id (the CLI continues it from its saved transcript) and keep it in the background as before; ids starting with "workflow:" were Workflow runs: read their journal and re-run only the unfinished part. Only relaunch an Agent with the same task description if SendMessage fails.'
+    return 'For each one, call SendMessage with its id (the CLI continues it from its saved transcript) and keep it in the background as before; ids starting with "workflow:" were Workflow runs, not agents: do not SendMessage them; relaunch each with its listed Workflow resume call (finished agent() calls replay from cache instantly), and only if that call errors, read the journal of that run and re-run just the unfinished part. Only relaunch an Agent with the same task description if SendMessage fails.'
   }
   return 'Restart each of them with the same task so the work continues where it stopped.'
 }

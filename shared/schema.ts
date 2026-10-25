@@ -1280,6 +1280,8 @@ export const interruptedSessionEntrySchema = z.object({
         role: z.string().optional(),
         model: z.string().optional(),
         message: z.string().optional(),
+        workflowRunId: z.string().optional(),
+        workflowScriptPath: z.string().optional(),
       }),
     )
     .default([]),
@@ -2019,6 +2021,10 @@ export const streamAgentEntrySchema = z.object({
   reasoningEffort: z.string().optional(),
   status: streamAgentStatusSchema.default('pendingInit'),
   message: z.string().nullable().optional(),
+  // Claude Workflow 条目专用：后台回执里的 Run ID / Script file。关 IDE 重开续跑时交给模型做
+  //   Workflow({scriptPath, resumeFromRunId})，已完成的 agent 走缓存不重跑。老快照没有，保持可选。
+  workflowRunId: z.string().optional(),
+  workflowScriptPath: z.string().optional(),
   activity: z.array(z.string()).optional(),
   // Workflow 条目在跑时的结构化计数（与 📋 汇总行同源）；渲染端据此判断"子 agent 灾难性失败"去叫醒父卡。
   workflowCounts: z.object({

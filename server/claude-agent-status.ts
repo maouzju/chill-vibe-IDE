@@ -377,6 +377,8 @@ export const createClaudeAgentStatusTracker = ({
       status: agent.status,
       ...(agent.message !== undefined ? { message: agent.message } : {}),
       ...(workflowCounts ? { workflowCounts } : {}),
+      ...(agent.workflowRunId ? { workflowRunId: agent.workflowRunId } : {}),
+      ...(agent.workflowScriptPath ? { workflowScriptPath: agent.workflowScriptPath } : {}),
       activity: [
         ...agent.preview.map((entry) => entry.line),
         ...(summary ? [summary] : []),
@@ -542,6 +544,11 @@ export const createClaudeAgentStatusTracker = ({
         } else if (task) {
           aliases.set(task[1], id)
           background.add(id)
+          // 关 IDE 重开后靠这两项让模型 resumeFromRunId 续跑（2026-09-27 实测同会话可续，换会话找不到脚本）。
+          const runId = /^Run ID:\s*(wf_\S+)\s*$/mu.exec(result.text)?.[1]
+          const scriptPath = /^Script file:\s*(\S.*?)\s*$/mu.exec(result.text)?.[1]
+          if (runId) agent.workflowRunId = runId
+          if (scriptPath) agent.workflowScriptPath = scriptPath
         } else if (asyncLaunch) {
           // 2026-09-08 实测 claude 2.1.263 顺序是 tool_use → task_started（条目已别名到原生 task_id）
           // → 这份回执；它只是派发回执，终态由 system:task_notification 决定。

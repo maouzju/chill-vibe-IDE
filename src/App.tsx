@@ -148,6 +148,7 @@ import type {
   TopTabName,
   WakeTimerMode,
 } from '../shared/schema'
+import { isCliLoginProfile } from '../shared/schema'
 import {
   closeWindow,
   type ChatStreamSource,
@@ -2777,6 +2778,27 @@ function App() {
       }))
     },
     [applyActions, persistAfterActions, profileDrafts],
+  )
+
+  // 官方会员登录（docs/specs/cli-official-login-profile）：每个 provider 只需要一条，已有就直接启用。
+  const addCliLoginProviderProfile = useCallback(
+    (provider: Provider) => {
+      const existing = appStateRef.current.settings.providerProfiles[provider].profiles.find(isCliLoginProfile)
+      const profile = existing ?? {
+        id: crypto.randomUUID(),
+        name: panelText.cliLoginProfileName,
+        baseUrl: '',
+        apiKey: '',
+        authMode: 'cli-login' as const,
+      }
+      const actions: IdeAction[] = [
+        ...(existing ? [] : [{ type: 'upsertProviderProfile' as const, provider, profile }]),
+        { type: 'setActiveProviderProfile', provider, profileId: profile.id },
+      ]
+      persistAfterActions(actions, applyActions(actions))
+      setSwitchNotice(null)
+    },
+    [applyActions, panelText.cliLoginProfileName, persistAfterActions],
   )
 
   const updateProviderProfile = useCallback(
@@ -8970,7 +8992,7 @@ function App() {
       (['claude', 'codex'] as const).some((provider) => {
         const collection = appState.settings.providerProfiles[provider]
         const active = collection.profiles.find((profile) => profile.id === collection.activeProfileId)
-        return Boolean(active?.apiKey.trim())
+        return Boolean(active && (isCliLoginProfile(active) || active.apiKey.trim()))
       }),
     [appState.settings.cliRoutingEnabled, appState.settings.providerProfiles],
   )
@@ -9784,6 +9806,10 @@ function App() {
                     />
                   </label>
 
+                  {isCliLoginProfile(profile) ? (
+                    <p className="settings-note">{panelText.cliLoginNote[provider]}</p>
+                  ) : (
+                  <>
                   <div className="settings-field">
                     <span>{panelText.apiKey}</span>
                     <div className="api-key-field">
@@ -9829,6 +9855,8 @@ function App() {
                   </label>
 
                   <p className="settings-note">{panelText.baseUrlNote}</p>
+                  </>
+                  )}
 
                   <div className="settings-actions provider-profile-actions">
                     <AppButton
@@ -9924,6 +9952,11 @@ function App() {
                 >
                   {panelText.addProfile}
                 </AppButton>
+                {collection.profiles.some(isCliLoginProfile) ? null : (
+                  <AppButton type="button" onClick={() => addCliLoginProviderProfile(provider)}>
+                    {panelText.addCliLoginProfile}
+                  </AppButton>
+                )}
               </div>
             </div>
           </div>

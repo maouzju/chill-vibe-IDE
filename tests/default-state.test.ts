@@ -774,3 +774,26 @@ describe('archiveCardToHistory usage totals', () => {
     assert.equal(entries[0]?.usageTotals, undefined)
   })
 })
+
+// 官方会员登录配置没有 key；归一化若丢掉 authMode，重启后它会变成一条空 key 的普通配置，
+// 会员登录静默失效、回落全局中转站（docs/specs/cli-official-login-profile）。
+it('normalizeAppSettings keeps the cli-login auth mode on provider profiles', () => {
+  const settings = normalizeAppSettings({
+    cliRoutingEnabled: true,
+    providerProfiles: {
+      claude: {
+        activeProfileId: 'login',
+        profiles: [
+          { id: 'login', name: '官方会员登录', apiKey: '', baseUrl: '', authMode: 'cli-login' },
+          { id: 'relay', name: 'Relay', apiKey: 'sk-relay', baseUrl: '' },
+        ],
+      },
+      codex: { activeProfileId: '', profiles: [] },
+      gemini: { activeProfileId: '', profiles: [] },
+    },
+  })
+
+  assert.equal(settings.providerProfiles.claude.profiles[0]?.authMode, 'cli-login')
+  assert.equal(settings.providerProfiles.claude.profiles[1]?.authMode, undefined)
+  assert.equal(settings.providerProfiles.claude.activeProfileId, 'login')
+})

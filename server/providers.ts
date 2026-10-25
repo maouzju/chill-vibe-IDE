@@ -46,6 +46,7 @@ import {
   toClaudeEffortFlagValue,
 } from '../shared/reasoning.js'
 import { providerSupportsImageAttachments } from '../shared/chat-attachments.js'
+import { isCliLoginProfile } from '../shared/schema.js'
 import type {
   AppLanguage,
   AppSettings,
@@ -693,6 +694,11 @@ export const resolveProviderRuntime = async (
           ),
         }
       : getActiveProviderProfile(settings, provider)
+
+    if (!localEntry && isCliLoginProfile(getActiveProviderProfile(settings, provider))) {
+      return resolveCliLoginRuntime(provider, baseEnv)
+    }
+
     const apiKey = activeProfile?.apiKey.trim()
 
     if (!apiKey) {
@@ -786,6 +792,40 @@ export const resolveProviderRuntime = async (
       args: [],
       env: baseEnv,
     }
+  }
+}
+
+// 「官方会员登录」配置（docs/specs/cli-official-login-profile）：让 CLI 用自己 OAuth 登录的账号。
+// 光是不注入不够——用户全局配置常写死中转站（~/.claude/settings.json env、~/.codex/config.toml
+// model_provider），会员登录照样被盖掉，所以要主动中和：
+// · claude：三个键经 --settings 给空串（2026-10-25 实测 CLI 2.1.280 回落 OAuth，未登录报
+//   `Not logged in · Please run /login`）；省略键会被 settings.json 的 env 继承，不能只删进程环境。
+// · codex：钉回内置 openai provider。被否决：`forced_login_method="chatgpt"` —— 2026-10-25 实测
+//   codex-cli 0.156.1 发现 auth.json 是 API key 时会 “Logging out” 删掉 auth.json，毁掉用户中转配置。
+// · gemini：去掉 API key 环境变量，CLI 走 Google 登录。
+const cliLoginStrippedEnvKeys: Record<Provider, readonly string[]> = {
+  claude: ['ANTHROPIC_API_KEY', 'ANTHROPIC_AUTH_TOKEN', 'ANTHROPIC_BASE_URL'],
+  codex: ['OPENAI_API_KEY', 'OPENAI_BASE_URL'],
+  gemini: ['GEMINI_API_KEY', 'GOOGLE_API_KEY', 'GOOGLE_GEMINI_BASE_URL'],
+}
+
+const resolveCliLoginRuntime = (provider: Provider, baseEnv: NodeJS.ProcessEnv): ProviderRuntime => {
+  const env = { ...baseEnv }
+  for (const key of cliLoginStrippedEnvKeys[provider]) {
+    delete env[key]
+  }
+
+  if (provider === 'claude') {
+    return {
+      args: [],
+      env,
+      claudeSettingsEnv: Object.fromEntries(cliLoginStrippedEnvKeys.claude.map((key) => [key, ''])),
+    }
+  }
+
+  return {
+    args: provider === 'codex' ? ['-c', 'model_provider="openai"'] : [],
+    env,
   }
 }
 

@@ -4,7 +4,7 @@ import path from 'node:path'
 
 import { getActiveProviderProfile } from '../shared/default-state.js'
 import { parseModelListIds, type ProviderModelDiscovery } from '../shared/model-discovery.js'
-import type { AppSettings, Provider } from '../shared/schema.js'
+import { isCliLoginProfile, type AppSettings, type Provider } from '../shared/schema.js'
 
 // 新模型自动发现的服务端一半：问「CLI 实际在用」的那个端点要模型列表。
 // 凭证来源必须和 CLI 真正生效的一致（见 server/providers.ts:588 的双来源说明）：
@@ -110,6 +110,8 @@ export const resolveModelDiscoveryEndpoint = async (
 ): Promise<ModelDiscoveryEndpoint | null> => {
   if (settings.cliRoutingEnabled) {
     const profile = getActiveProviderProfile(settings, provider)
+    // 官方会员登录没有可探测的 key，也不该回落去读全局配置里的中转站。
+    if (isCliLoginProfile(profile)) return null
     const apiKey = profile?.apiKey.trim()
     if (apiKey) return buildEndpoint(provider, profile?.baseUrl ?? '', apiKey)
   }

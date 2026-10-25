@@ -216,6 +216,18 @@ describe('deriveEnvironmentHealth', () => {
     })
     assert.equal(missing.account.state, 'warn')
     assert.deepEqual(missing.account.fix, { kind: 'connect-account' })
+
+    // 官方会员登录配置没有 key，但同样是可用账号（docs/specs/cli-official-login-profile）。
+    const officialLogin = withProfile('codex', '')
+    officialLogin.providerProfiles.codex.profiles[0]!.authMode = 'cli-login'
+    const official = deriveEnvironmentHealth({
+      onboardingStatus: onboarding(true, true),
+      providers: providers(true, true),
+      cliCompatStatus: null,
+      settings: officialLogin,
+    })
+    assert.equal(official.account.state, 'ok')
+    assert.deepEqual(official.account.providers, ['codex'])
   })
 
   it('derives the version light from the compat manager and offers the matching fix', () => {

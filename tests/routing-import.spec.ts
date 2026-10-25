@@ -307,6 +307,28 @@ test('keeps provider profile name fields inline on desktop and stacked on narrow
   await expectStacked()
 })
 
+// 官方会员登录（docs/specs/cli-official-login-profile）：一键添加并启用，卡片只留说明，不显示 key / 地址。
+test('adds an official subscription login profile without key or base url fields', async ({ page }) => {
+  await mockBaseApis(page)
+  await page.setViewportSize({ width: 1280, height: 900 })
+  await openRoutingPanel(page)
+
+  const claudeSection = page.locator('#app-panel-routing .switch-provider-section').first()
+  await claudeSection.getByRole('button', { name: /用官方会员登录|Use official subscription login/ }).click()
+
+  const loginCard = claudeSection.locator('.provider-profile-card.is-active')
+  await expect(loginCard).toHaveCount(1)
+  await expect(loginCard).toContainText('/login')
+  await expect(loginCard.locator('input[type="password"]')).toHaveCount(0)
+  await expect(
+    claudeSection.getByRole('button', { name: /用官方会员登录|Use official subscription login/ }),
+  ).toHaveCount(0)
+
+  await claudeSection.screenshot({ path: 'test-results/cli-login-profile-dark.png' })
+  await page.evaluate(() => document.documentElement.setAttribute('data-theme', 'light'))
+  await claudeSection.screenshot({ path: 'test-results/cli-login-profile-light.png' })
+})
+
 test('shows localized routing copy when the app language is zh-CN', async ({ page }) => {
   await mockBaseApis(page)
 

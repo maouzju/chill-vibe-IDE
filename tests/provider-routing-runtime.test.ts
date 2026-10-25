@@ -772,3 +772,112 @@ describe('cc-switch provider profile import merge', () => {
     }
   })
 })
+
+// 官方会员登录（docs/specs/cli-official-login-profile）：用户全局配置常写死中转站
+// （~/.claude/settings.json env、~/.codex/config.toml model_provider），不主动压掉的话
+// `claude /login` / `codex login` 登了会员也用不上。
+describe('official cli-login profile', () => {
+  const stageCliLogin = () => {
+    const state = createDefaultState('')
+    state.settings.cliRoutingEnabled = true
+    state.settings.resilientProxyEnabled = true
+    for (const provider of ['claude', 'codex', 'gemini'] as const) {
+      state.settings.providerProfiles[provider] = {
+        activeProfileId: `${provider}-login`,
+        profiles: [
+          { id: `${provider}-login`, name: '官方会员登录', apiKey: '', baseUrl: '', authMode: 'cli-login' },
+        ],
+      }
+    }
+    return state.settings
+  }
+
+  const hostKeys = [
+    'ANTHROPIC_API_KEY',
+    'ANTHROPIC_AUTH_TOKEN',
+    'ANTHROPIC_BASE_URL',
+    'OPENAI_API_KEY',
+    'OPENAI_BASE_URL',
+    'GEMINI_API_KEY',
+    'GOOGLE_GEMINI_BASE_URL',
+  ] as const
+  let saved: Record<string, string | undefined> = {}
+
+  beforeEach(() => {
+    saved = Object.fromEntries(hostKeys.map((key) => [key, process.env[key]]))
+    for (const key of hostKeys) process.env[key] = `relay-${key}`
+  })
+
+  afterEach(() => {
+    for (const key of hostKeys) {
+      if (typeof saved[key] === 'string') process.env[key] = saved[key]
+      else delete process.env[key]
+    }
+  })
+
+  // 2026-10-25 实测：--settings 里三个键给空串，CLI 回落 OAuth（未登录报 Not logged in）。
+  it('neutralizes relay credentials for claude so the OAuth login wins', async () => {
+    const { resolveProviderRuntime, setProviderRuntimeSettingsOverride } = await import('../server/providers.ts')
+    setProviderRuntimeSettingsOverride(stageCliLogin())
+
+    try {
+      const runtime = await resolveProviderRuntime('claude')
+      assert.deepEqual(runtime.claudeSettingsEnv, {
+        ANTHROPIC_API_KEY: '',
+        ANTHROPIC_AUTH_TOKEN: '',
+        ANTHROPIC_BASE_URL: '',
+      })
+      assert.equal(runtime.env.ANTHROPIC_API_KEY, undefined)
+      assert.equal(runtime.env.ANTHROPIC_AUTH_TOKEN, undefined)
+      assert.equal(runtime.env.ANTHROPIC_BASE_URL, undefined)
+    } finally {
+      setProviderRuntimeSettingsOverride(null)
+    }
+  })
+
+  // 绝不能带 forced_login_method="chatgpt"：2026-10-25 实测 auth.json 是 API key 时
+  // codex 会 “Logging out” 删掉 auth.json，把用户的中转站配置一起毁了。
+  it('forces the built-in openai provider for codex without forcing a login method', async () => {
+    const { resolveProviderRuntime, setProviderRuntimeSettingsOverride } = await import('../server/providers.ts')
+    setProviderRuntimeSettingsOverride(stageCliLogin())
+
+    try {
+      const runtime = await resolveProviderRuntime('codex')
+      assert.deepEqual(runtime.args, ['-c', 'model_provider="openai"'])
+      assert.equal(runtime.args.some((arg) => arg.includes('forced_login_method')), false)
+      assert.equal(runtime.env.OPENAI_API_KEY, undefined)
+      assert.equal(runtime.env.OPENAI_BASE_URL, undefined)
+    } finally {
+      setProviderRuntimeSettingsOverride(null)
+    }
+  })
+
+  it('drops api-key env for gemini so the Google login is used', async () => {
+    const { resolveProviderRuntime, setProviderRuntimeSettingsOverride } = await import('../server/providers.ts')
+    setProviderRuntimeSettingsOverride(stageCliLogin())
+
+    try {
+      const runtime = await resolveProviderRuntime('gemini')
+      assert.deepEqual(runtime.args, [])
+      assert.equal(runtime.env.GEMINI_API_KEY, undefined)
+      assert.equal(runtime.env.GOOGLE_GEMINI_BASE_URL, undefined)
+    } finally {
+      setProviderRuntimeSettingsOverride(null)
+    }
+  })
+
+  it('leaves the host env untouched when cli routing is off', async () => {
+    const { resolveProviderRuntime, setProviderRuntimeSettingsOverride } = await import('../server/providers.ts')
+    const settings = stageCliLogin()
+    settings.cliRoutingEnabled = false
+    setProviderRuntimeSettingsOverride(settings)
+
+    try {
+      const runtime = await resolveProviderRuntime('codex')
+      assert.deepEqual(runtime.args, [])
+      assert.equal(runtime.env.OPENAI_API_KEY, 'relay-OPENAI_API_KEY')
+    } finally {
+      setProviderRuntimeSettingsOverride(null)
+    }
+  })
+})

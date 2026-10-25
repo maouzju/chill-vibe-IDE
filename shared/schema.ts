@@ -420,8 +420,14 @@ export const providerProfileSchema = z.object({
   name: z.string().default(''),
   apiKey: z.string().default(''),
   baseUrl: z.string().default(''),
+  // 'cli-login'：用 CLI 自己登录的官方会员账号，忽略 apiKey/baseUrl，并压掉全局配置里的
+  // 中转站凭据（docs/specs/cli-official-login-profile）。缺省即 API key，老数据零迁移。
+  authMode: z.enum(['api-key', 'cli-login']).optional(),
 })
 export type ProviderProfile = z.infer<typeof providerProfileSchema>
+
+export const isCliLoginProfile = (profile: Pick<ProviderProfile, 'authMode'> | null | undefined) =>
+  profile?.authMode === 'cli-login'
 
 export const providerProfileCollectionSchema = z.object({
   activeProfileId: z.string().default(''),

@@ -13,6 +13,15 @@ export const getPanelText = (language: AppState['settings']['language']) =>
         baseUrl: 'Base URL',
         baseUrlNote: 'Leave Base URL blank to use the official endpoint.',
         addProfile: 'Add profile',
+        addCliLoginProfile: 'Use official subscription login',
+        cliLoginProfileName: 'Official subscription login',
+        cliLoginNote: {
+          claude:
+            'Uses your Claude subscription (Pro / Max). Run `claude` in a terminal and type /login first. Relay settings in ~/.claude/settings.json are ignored while this is active.',
+          codex:
+            'Uses your ChatGPT subscription (Plus / Pro). Run `codex login` in a terminal first. Note: logging in replaces the API key in ~/.codex/auth.json.',
+          gemini: 'Uses your Google account. Run `gemini` in a terminal and follow the login prompt first.',
+        },
         activateProfile: 'Use profile',
         activeProfile: 'Active',
         removeProfile: 'Remove',
@@ -155,6 +164,15 @@ export const getPanelText = (language: AppState['settings']['language']) =>
         baseUrl: 'Base URL',
         baseUrlNote: '留空 Base URL 即使用官方接口地址。',
         addProfile: '添加',
+        addCliLoginProfile: '用官方会员登录',
+        cliLoginProfileName: '官方会员登录',
+        cliLoginNote: {
+          claude:
+            '用 Claude 会员账号（Pro / Max）。先在终端运行 claude，输入 /login 登录。启用期间不读 ~/.claude/settings.json 里的中转站配置。',
+          codex:
+            '用 ChatGPT 会员账号（Plus / Pro）。先在终端运行 codex login 登录。注意：登录会覆盖 ~/.codex/auth.json 里原来的 API Key。',
+          gemini: '用 Google 账号。先在终端运行 gemini，按提示登录。',
+        },
         activateProfile: '启用',
         activeProfile: '当前启用',
         removeProfile: '移除',

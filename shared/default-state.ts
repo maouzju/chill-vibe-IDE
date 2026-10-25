@@ -473,6 +473,7 @@ const normalizeProviderProfiles = (
           name: normalizeText(profile?.name) || `${fallbackPrefix} ${index + 1}`,
           apiKey: normalizeText(profile?.apiKey),
           baseUrl: normalizeBaseUrl(profile?.baseUrl),
+          ...(profile?.authMode === 'cli-login' ? { authMode: 'cli-login' as const } : {}),
         }))
       : []
 

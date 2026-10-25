@@ -1,5 +1,12 @@
 import { cliCompatNeedsAction, type CliCompatStatus } from '../../../shared/cli-compat'
-import type { AppLanguage, AppSettings, OnboardingStatus, Provider, ProviderStatus } from '../../../shared/schema'
+import {
+  isCliLoginProfile,
+  type AppLanguage,
+  type AppSettings,
+  type OnboardingStatus,
+  type Provider,
+  type ProviderStatus,
+} from '../../../shared/schema'
 
 // 设置面板的「目录」：每一项归哪个分类、算基础还是高级、叫什么、用人话怎么解释。
 // App.tsx 只负责生产控件 JSX，排版/分层/搜索全部看这里——所以这里是纯数据，能用 Node 测试钉住。
@@ -373,7 +380,7 @@ const resolveAvailableProviders = (input: EnvironmentHealthInput): Provider[] | 
 const hasKeyedActiveProfile = (settings: EnvironmentHealthInput['settings'], provider: Provider) => {
   const collection = settings.providerProfiles[provider]
   const active = collection.profiles.find((profile) => profile.id === collection.activeProfileId)
-  return Boolean(active && active.apiKey.trim())
+  return Boolean(active && (isCliLoginProfile(active) || active.apiKey.trim()))
 }
 
 export const deriveEnvironmentHealth = (input: EnvironmentHealthInput): EnvironmentHealth => {

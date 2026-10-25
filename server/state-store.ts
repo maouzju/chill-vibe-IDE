@@ -28,7 +28,7 @@ import {
 } from '../shared/default-state.js'
 import { normalizeBrainstormAnswerCount } from '../shared/brainstorm.js'
 import { getWorkspaceTitle } from '../shared/i18n.js'
-import { isInterruptedSessionRecoverable } from '../shared/interrupted-session-recovery.js'
+import { collectInterruptedAgents, isInterruptedSessionRecoverable } from '../shared/interrupted-session-recovery.js'
 import {
   hideInternalSessionHistoryEntries,
   invalidateSessionHistoryCatalogCache,
@@ -1542,6 +1542,7 @@ const inspectInterruptedSessionRecovery = (state: AppState): InterruptedSessionR
           provider: card.provider,
           sessionId: card.sessionId,
           ...(card.sessionModel?.trim() ? { sessionModel: card.sessionModel.trim() } : {}),
+          interruptedAgents: collectInterruptedAgents(card.messages),
           recoverable: isInterruptedSessionRecoverable({
             sessionId: card.sessionId,
             sessionModel: card.sessionModel,
@@ -1602,6 +1603,26 @@ const renderInterruptedSessionsAsIdle = (
                 status: 'declined',
               }),
             },
+          }
+        }
+
+        // 子 agent 随进程树一起死了：快照里的 running 落成 interrupted，免得面板永远挂「运行中」；
+        //   续跑时 entry.interruptedAgents 已带上名单，模型重新接回后会推新快照。
+        if (message.meta.kind === 'agents' && payload.view === 'status' && Array.isArray(payload.agents)) {
+          let changedAgents = false
+          const agents = payload.agents.map((agent) => {
+            if (!agent || typeof agent !== 'object' || Array.isArray(agent)) return agent
+            const status = (agent as { status?: unknown }).status
+            if (status !== 'running' && status !== 'pendingInit') return agent
+            changedAgents = true
+            return { ...(agent as Record<string, unknown>), status: 'interrupted' }
+          })
+          if (changedAgents) {
+            didNormalize = true
+            return {
+              ...message,
+              meta: { ...message.meta, structuredData: JSON.stringify({ ...payload, agents }) },
+            }
           }
         }
 

@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 
 import {
+  buildInterruptedSessionResumePrompt,
   getInterruptedSessionResumeRequest,
   hasInterruptedSessionRetryPayload,
   isInterruptedSessionRecoverable,
@@ -76,4 +77,23 @@ test('session resume requires a matching recorded model when the request model i
     ),
     null,
   )
+})
+
+test('session resume names sub-agents interrupted by IDE shutdown so the model reattaches them', () => {
+  const agents = [{ threadId: 'agent-a', nickname: 'scout', message: 'reading files' }]
+  const request = getInterruptedSessionResumeRequest({
+    sessionId: 'session-1',
+    sessionModel: 'claude-opus-5-5',
+    resumeMode: 'resume',
+    resumePrompt: '',
+    resumeAttachments: [],
+    provider: 'claude',
+    interruptedAgents: agents,
+  }, 'claude-opus-5-5')
+
+  assert.equal(request?.sessionId, 'session-1')
+  assert.match(request?.prompt ?? '', /agent-a/)
+  assert.match(request?.prompt ?? '', /SendMessage/)
+  assert.match(buildInterruptedSessionResumePrompt('codex', agents), /resume_agent/)
+  assert.equal(buildInterruptedSessionResumePrompt('claude', []), '')
 })

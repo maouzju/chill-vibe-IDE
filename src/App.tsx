@@ -7611,6 +7611,8 @@ function App() {
       resumeMode: entry.resumeMode,
       resumePrompt: entry.resumePrompt,
       resumeAttachments: entry.resumeAttachments,
+      provider: card.provider,
+      interruptedAgents: entry.interruptedAgents,
     }, resolvedModel)
 
     if (!column.workspacePath.trim() || !resumeRequest) {

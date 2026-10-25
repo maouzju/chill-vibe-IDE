@@ -2662,7 +2662,50 @@ describe('state-store persistence', () => {
       resumeMode: 'resume',
       resumePrompt: '',
       resumeAttachments: [],
+      interruptedAgents: [],
     })
+  })
+
+  it('loadStateForRenderer records sub-agents that were running at shutdown and settles their panel', async () => {
+    const { saveState, loadStateForRenderer } = await import('../server/state-store.ts')
+    const state = createDefaultState('D:/resume-recovery-agents')
+    const firstCard = getFirstCard(state)
+    assert.ok(firstCard)
+    firstCard.provider = 'claude'
+    firstCard.status = 'streaming'
+    firstCard.streamId = 'stream-agents-1'
+    firstCard.sessionId = 'session-agents-1'
+    firstCard.messages = [
+      {
+        id: 'msg-agents',
+        role: 'assistant',
+        content: '',
+        meta: {
+          kind: 'agents',
+          provider: 'claude',
+          structuredData: JSON.stringify({
+            itemId: 'agents-1',
+            kind: 'agents',
+            status: 'completed',
+            view: 'status',
+            agents: [
+              { threadId: 'agent-a', nickname: 'scout', status: 'running', message: 'reading files' },
+              { threadId: 'agent-b', nickname: 'done', status: 'completed' },
+            ],
+          }),
+        },
+        createdAt: new Date('2026-10-25T05:59:30.000Z').toISOString(),
+      },
+    ]
+
+    await saveState(state)
+    const loaded = await loadStateForRenderer()
+
+    assert.deepEqual(loaded.recovery.interruptedSessions?.entries[0]?.interruptedAgents, [
+      { threadId: 'agent-a', nickname: 'scout', message: 'reading files' },
+    ])
+    const snapshot = JSON.parse(getFirstCard(loaded.state)?.messages[0]?.meta?.structuredData ?? '{}')
+    assert.deepEqual(snapshot.agents.map((agent: { status: string }) => agent.status), ['interrupted', 'completed'])
   })
 
   it('loadStateForRenderer keeps resumable interrupted sessions recoverable after configured default model changes', async () => {
@@ -2753,6 +2796,7 @@ describe('state-store persistence', () => {
           sizeBytes: 4096,
         },
       ],
+      interruptedAgents: [],
     })
   })
 

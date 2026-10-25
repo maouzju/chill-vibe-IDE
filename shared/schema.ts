@@ -1271,6 +1271,18 @@ export const interruptedSessionEntrySchema = z.object({
   resumeMode: interruptedSessionResumeModeSchema.default('resume'),
   resumePrompt: z.string().default(''),
   resumeAttachments: z.array(imageAttachmentSchema).default([]),
+  // 关 IDE 时还在跑的子 agent（取最新 status 快照里的 running/pendingInit），续跑时点名让模型原地续上。
+  interruptedAgents: z
+    .array(
+      z.object({
+        threadId: z.string().min(1),
+        nickname: z.string().optional(),
+        role: z.string().optional(),
+        model: z.string().optional(),
+        message: z.string().optional(),
+      }),
+    )
+    .default([]),
 })
 export type InterruptedSessionEntry = z.infer<typeof interruptedSessionEntrySchema>
 

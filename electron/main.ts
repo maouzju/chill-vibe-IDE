@@ -43,7 +43,7 @@ import {
   revealMessageLocalLinkTarget,
 } from './message-local-link.js'
 import { runLocalFileTarget } from './local-file-run.js'
-import { localImageProtocolScheme } from '../shared/local-image-protocol.js'
+import { isCopyableImageSrc, localImageProtocolScheme } from '../shared/local-image-protocol.js'
 import { resolveLocalImageRequestTarget } from './local-image-protocol.js'
 import {
   getLocalImageSnapshotKey,
@@ -1617,6 +1617,27 @@ function registerDesktopHandlers() {
   ipcMain.handle('desktop:copy-file-to-clipboard', (_event, request) =>
     desktopBackend.copyFileToClipboard(request),
   )
+  ipcMain.handle('desktop:fetch-image-bytes', async (_event, request: { src?: unknown }) => {
+    const src = typeof request?.src === 'string' ? request.src.trim() : ''
+
+    if (!isCopyableImageSrc(src)) {
+      throw new Error('This image source cannot be copied.')
+    }
+
+    const response = await net.fetch(src)
+
+    if (!response.ok) {
+      throw new Error(`Image request failed (${response.status}).`)
+    }
+
+    const bytes = new Uint8Array(await response.arrayBuffer())
+
+    if (bytes.byteLength > 64 * 1024 * 1024) {
+      throw new Error('Image is too large to copy.')
+    }
+
+    return { mimeType: response.headers.get('content-type') ?? '', data: bytes }
+  })
   ipcMain.handle('desktop:write-file', (_event, request) =>
     desktopBackend.writeFile(request),
   )

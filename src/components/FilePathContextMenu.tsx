@@ -1,19 +1,14 @@
 import type { Ref } from 'react'
 
-import type {
-  FilePathContextMenuAction,
-  FilePathContextMenuActionKey,
-} from './file-path-context-menu'
-
-export const FilePathContextMenu = ({
+export const FilePathContextMenu = <Key extends string>({
   position,
   actions,
   onSelect,
   ref,
 }: {
   position: { left: number; top: number }
-  actions: FilePathContextMenuAction[]
-  onSelect: (key: FilePathContextMenuActionKey) => void
+  actions: Array<{ key: Key; label: string }>
+  onSelect: (key: Key) => void
   ref?: Ref<HTMLDivElement>
 }) => (
   <div

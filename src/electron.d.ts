@@ -234,6 +234,7 @@ declare global {
       deleteEntry?: (request: FileDeleteRequest) => Promise<void>
       readFile?: (request: FileReadRequest) => Promise<FileReadResponse>
       copyFileToClipboard?: (request: FileReadRequest) => Promise<void>
+      fetchImageBytes?: (request: { src: string }) => Promise<{ mimeType: string; data: Uint8Array }>
       writeFile?: (request: FileWriteRequest) => Promise<FileWriteResponse | void>
       readNearestTsconfig?: (request: FileReadRequest) => Promise<{
         compilerOptions: Record<string, unknown> | null

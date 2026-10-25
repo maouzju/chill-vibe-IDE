@@ -30,6 +30,17 @@ export const getLocalImageProtocolUrl = (
   return `${localImageProtocolScheme}://local/?${params.toString()}`
 }
 
+// The main process fetches image bytes on the renderer's behalf (custom schemes
+// are not CORS-readable from the renderer), so the allowlist must exclude file:
+// and bare paths — otherwise "copy image" becomes an arbitrary local file read.
+const copyableImageSrcPattern = new RegExp(
+  `^(?:${localImageProtocolScheme}|${attachmentProtocolScheme}|https?|data):`,
+  'i',
+)
+
+export const isCopyableImageSrc = (src: string | null | undefined) =>
+  copyableImageSrcPattern.test(src?.trim() ?? '')
+
 // Markdown image sources written by the model are usually plain local paths
 // (workspace-relative or absolute). The renderer cannot load those directly, so
 // anything that points at the local filesystem is routed through the privileged

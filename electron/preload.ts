@@ -247,6 +247,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.invoke('desktop:read-file', request),
   copyFileToClipboard: (request: unknown) =>
     ipcRenderer.invoke('desktop:copy-file-to-clipboard', request),
+  fetchImageBytes: (request: unknown) =>
+    ipcRenderer.invoke('desktop:fetch-image-bytes', request),
   writeFile: (request: unknown) =>
     ipcRenderer.invoke('desktop:write-file', request),
   readNearestTsconfig: (request: unknown) =>

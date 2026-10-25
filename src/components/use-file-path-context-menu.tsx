@@ -11,13 +11,16 @@ import { createPortal } from 'react-dom'
 
 import type { AppLanguage } from '../../shared/schema'
 import { openMessageLocalLink, runLocalFile } from '../api'
+import { copyImageToClipboard } from './copy-image-to-clipboard'
 import { FilePathContextMenu } from './FilePathContextMenu'
 import {
   buildFilePathContextMenuActions,
+  buildImageContextMenuActions,
   isRunnableFilePath,
   clampFilePathContextMenuPosition,
   resolveFilePathContextMenuCopyValue,
   resolveFilePathContextMenuTarget,
+  resolveImageContextMenuTarget,
   type FilePathContextMenuActionKey,
   type FilePathContextMenuTarget,
 } from './file-path-context-menu'
@@ -32,7 +35,8 @@ export const useFilePathContextMenu = ({
   onOpenFile?: (relativePath: string, options?: { line?: number }) => void
 }) => {
   const [menuState, setMenuState] = useState<{
-    target: FilePathContextMenuTarget
+    target: FilePathContextMenuTarget | null
+    imageSrc: string | null
     x: number
     y: number
   } | null>(null)
@@ -98,33 +102,45 @@ export const useFilePathContextMenu = ({
   }, [menuState])
 
   const handleContextMenu = useCallback((event: ReactMouseEvent<HTMLElement>) => {
-    const target = resolveFilePathContextMenuTarget(event.target)
+    // 图片优先：被链接包住的图，用户右键想要的是图本身而不是链接路径。
+    const image = resolveImageContextMenuTarget(event.target)
+    const target = image ? null : resolveFilePathContextMenuTarget(event.target)
 
-    if (!target) {
+    if (!image && !target) {
       return
     }
 
     event.preventDefault()
     event.stopPropagation()
-    setMenuState({ target, x: event.clientX, y: event.clientY })
+    setMenuState({ target, imageSrc: image?.src ?? null, x: event.clientX, y: event.clientY })
     setPosition({ left: event.clientX, top: event.clientY })
   }, [])
 
-  const actions = useMemo(
+  const actions = useMemo<Array<{ key: FilePathContextMenuActionKey | 'copy-image'; label: string }>>(
     () =>
-      buildFilePathContextMenuActions({
-        language,
-        canOpenInEditor: Boolean(onOpenFile),
-        revealOnly: menuState?.target.revealOnly === true,
-        runnable: menuState ? isRunnableFilePath(menuState.target.openPath) : false,
-      }),
+      menuState?.imageSrc
+        ? buildImageContextMenuActions(language)
+        : buildFilePathContextMenuActions({
+            language,
+            canOpenInEditor: Boolean(onOpenFile),
+            revealOnly: menuState?.target?.revealOnly === true,
+            runnable: menuState?.target ? isRunnableFilePath(menuState.target.openPath) : false,
+          }),
     [language, onOpenFile, menuState],
   )
 
   const runAction = useCallback(
-    (key: FilePathContextMenuActionKey) => {
+    (key: FilePathContextMenuActionKey | 'copy-image') => {
       const target = menuState?.target
+      const imageSrc = menuState?.imageSrc
       closeMenu()
+
+      if (key === 'copy-image') {
+        if (imageSrc) {
+          void copyImageToClipboard(imageSrc).catch(() => undefined)
+        }
+        return
+      }
 
       if (!target) {
         return

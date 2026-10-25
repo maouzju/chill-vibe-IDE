@@ -103,6 +103,21 @@ export const buildFilePathContextMenuActions = ({
   return actions
 }
 
+export type ImageContextMenuTarget = { src: string }
+
+export type ImageContextMenuAction = { key: 'copy-image'; label: string }
+
+export const resolveImageContextMenuTarget = (node: unknown): ImageContextMenuTarget | null => {
+  const img = (node as ClosestCapableNode | null)?.closest?.('img[src]') ?? null
+  const src = img?.getAttribute?.('src')?.trim()
+
+  return src ? { src } : null
+}
+
+export const buildImageContextMenuActions = (language: AppLanguage): ImageContextMenuAction[] => [
+  { key: 'copy-image', label: language === 'en' ? 'Copy Image' : '复制图片' },
+]
+
 const CONTEXT_MENU_VIEWPORT_MARGIN = 8
 
 export const clampFilePathContextMenuPosition = ({

@@ -922,6 +922,35 @@ test('a synthetic Workflow entry also picks up its model from the sidechain', ()
   assert.equal(update.activity?.agents[0]?.model, 'claude-sonnet-5')
 })
 
+// 2026-10-25 实测 claude 2.1.280：sidechain 只推首条 user 行，不再推 assistant 行，
+// 模型只能从父回合 Agent tool_use 的 input.model 拿。
+const agentToolUse = (id: string, input: Record<string, unknown>) => ({
+  type: 'assistant',
+  session_id: sessionId,
+  message: { role: 'assistant', content: [{ type: 'tool_use', id, name: 'Agent', input }] },
+})
+
+test('the Agent tool_use input.model labels the sub-agent when the CLI streams no sidechain assistant line', () => {
+  const tracker = createClaudeAgentStatusTracker()
+  tracker.beginSynthetic(syntheticClaudeAgentId(toolUseId), 'Agent')
+  const dispatch = tracker.handleEvent(agentToolUse(toolUseId, { description: 'probe', prompt: 'x', model: 'haiku', subagent_type: 'Explore' }))
+  assert.equal(dispatch.handled, false, 'the parent assistant line must still reach the main card')
+  tracker.handleEvent(taskStarted())
+  assert.equal(tracker.snapshot().agents.length, 1)
+  assert.equal(tracker.snapshot().agents[0]?.model, 'haiku')
+
+  // 真实 id 晚到（旧 CLI 仍推 sidechain assistant 行）时覆盖别名。
+  tracker.handleEvent(sidechainAssistant(toolUseId, 'claude-haiku-5-5'))
+  assert.equal(tracker.snapshot().agents[0]?.model, 'claude-haiku-5-5')
+})
+
+test('task_started without a prior synthetic entry still picks up the dispatched model', () => {
+  const tracker = createClaudeAgentStatusTracker()
+  tracker.handleEvent(agentToolUse(toolUseId, { description: 'probe', prompt: 'x', model: 'opus' }))
+  tracker.handleEvent(taskStarted())
+  assert.equal(tracker.snapshot().agents[0]?.model, 'opus')
+})
+
 // 2026-09-25 用户实测：主回合用 SendMessage 续跑一个已完成的子代理，回执 toolUseResult 带
 // resumedAgentId，面板整段空白。
 test('SendMessage 续跑已完成的子代理时面板重新显示它', () => {

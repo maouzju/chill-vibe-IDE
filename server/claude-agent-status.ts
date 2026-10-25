@@ -264,6 +264,8 @@ export const createClaudeAgentStatusTracker = ({
   const background = new Set<string>()
   // tool_use_id → 条目 id：sidechain 行只带 parent_tool_use_id，要靠它找回子代理条目。
   const toolUseIds = new Map<string, string>()
+  // tool_use_id → 派发时 input.model 的别名（haiku/opus…），等 task_started 建条目时贴上。
+  const dispatchModels = new Map<string, string>()
 
   const ensureAgent = (
     taskId: string,
@@ -503,6 +505,30 @@ export const createClaudeAgentStatusTracker = ({
     return true
   }
 
+  // 症状：面板子代理条目一直没有模型徽章（2026-10-25 用户截图：派了 5 个 haiku 看不出模型）。
+  // 根因：2026-10-25 实测 claude 2.1.280 的 sidechain 只推首条 user 行，不再推 assistant 行，
+  //   attachSidechainModel 的数据源断了；唯一剩下的是父回合 Agent tool_use 的 input.model。
+  // 边界：只有别名、且未填时（继承主模型）不显示；旧 CLI 若仍推 sidechain 行，真实 id 会覆盖别名。
+  const noteDispatchModels = (value: JsonRecord) => {
+    if (value.type !== 'assistant') return false
+    const content = readRecord(value, 'message')?.content
+    if (!Array.isArray(content)) return false
+    let changed = false
+    for (const block of content) {
+      if (!isRecord(block) || block.type !== 'tool_use' || (block.name !== 'Agent' && block.name !== 'Task')) continue
+      const id = readString(block, 'id')
+      const model = readString(readRecord(block, 'input'), 'model')
+      if (!id || !model) continue
+      dispatchModels.set(id, model)
+      const agent = agents.get(resolveTask(toolUseIds.get(id) ?? syntheticClaudeAgentId(id)))
+      if (agent && !agent.model) {
+        agent.model = model
+        changed = true
+      }
+    }
+    return changed
+  }
+
   const handleEvent = (value: unknown): ClaudeAgentTrackerUpdate => {
     if (!isRecord(value)) {
       return { handled: false }
@@ -511,6 +537,7 @@ export const createClaudeAgentStatusTracker = ({
     if (parentToolUseId) {
       return { handled: false, ...(attachSidechainModel(parentToolUseId, value) ? { activity: snapshot() } : {}) }
     }
+    if (noteDispatchModels(value)) return { handled: false, activity: snapshot() }
 
     // 2026-09-08 原生记录：Workflow 可立即报文件不存在，也可返回后台 task id。
     // 不能把 tool_result 一律当完成；别名让后续 task_notification 结算同一计时器。
@@ -609,11 +636,13 @@ export const createClaudeAgentStatusTracker = ({
         return { handled: true }
       }
       retireSyntheticFor(value)
-      ensureAgent(taskId, {
+      const started = ensureAgent(taskId, {
         nickname: readString(value, 'description'),
         role: readString(value, 'subagent_type'),
         status: 'running',
       })
+      const dispatched = toolUseId ? dispatchModels.get(toolUseId) : undefined
+      if (dispatched && !started.model) started.model = dispatched
       return { handled: true, activity: snapshot() }
     }
 
@@ -633,6 +662,8 @@ export const createClaudeAgentStatusTracker = ({
         role: readString(value, 'subagent_type'),
         status: 'running',
       })
+      const dispatched = toolUseId ? dispatchModels.get(toolUseId) : undefined
+      if (dispatched && !agent.model) agent.model = dispatched
       const key = previewKey(action)
       const progress = Array.isArray(value.workflow_progress) ? value.workflow_progress : undefined
       if (progress) {

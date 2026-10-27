@@ -207,7 +207,7 @@ test('dragging a column headline onto the topbar dock zone tucks the column away
 
   const chips = page.locator('.app-topbar-docked-column')
   await expect(chips).toHaveCount(2)
-  await expect(chips).toHaveText(['alpha', 'beta'])
+  await expect(chips).toHaveText(['beta', 'alpha'])
 
   await expect.poll(() => mock.readState().columns[0]?.docked).toBe(true)
   await expect.poll(() => mock.readState().columns.map((column) => column.id)).toEqual([
@@ -304,4 +304,76 @@ test('a docked chip keeps running while a finished turn still has subagents runn
     path: 'test-results/column-dock-subagents-running.png',
     animations: 'disabled',
   })
+})
+
+const dockedFixture = (names: string[], boardNames: string[] = []) => [
+  ...names.map((name, index) => ({
+    ...createColumnFixture(`dock-${index}`, `d:\\Git\\${name}`, true),
+    dockedOrder: index + 1,
+  })),
+  ...boardNames.map((name, index) => createColumnFixture(`board-${index}`, `d:\\Git\\${name}`)),
+]
+
+test('dropping a column between docked chips inserts it exactly there', async ({ page }) => {
+  const mock = await mockAppApis(page, 'dark', dockedFixture(['alpha', 'beta', 'gamma'], ['delta', 'omega']))
+  await page.setViewportSize({ width: 1440, height: 960 })
+  await page.goto(appUrl)
+
+  const headline = page.locator('.workspace-column').first().locator('.column-headline')
+  const dataTransfer = await page.evaluateHandle(() => new DataTransfer())
+  const headlineBox = await headline.boundingBox()
+  if (!headlineBox) {
+    throw new Error('Expected the column headline to be visible')
+  }
+  await headline.dispatchEvent('dragstart', {
+    dataTransfer,
+    clientX: headlineBox.x + 10,
+    clientY: headlineBox.y + 10,
+    bubbles: true,
+    cancelable: true,
+  })
+
+  const beta = page.locator('.app-topbar-docked-column', { hasText: 'beta' })
+  const betaBox = await beta.boundingBox()
+  if (!betaBox) {
+    throw new Error('Expected the beta chip to be visible')
+  }
+  const pointer = {
+    dataTransfer,
+    clientX: betaBox.x + 3,
+    clientY: betaBox.y + betaBox.height / 2,
+    bubbles: true,
+    cancelable: true,
+  }
+  await beta.dispatchEvent('dragover', pointer)
+  await expect(beta).toHaveClass(/is-drop-before/)
+  await beta.dispatchEvent('drop', pointer)
+
+  await expect(page.locator('.app-topbar-docked-column')).toHaveText(['alpha', 'delta', 'beta', 'gamma'])
+  await expect.poll(() => mock.readState().columns.filter((column) => column.docked).length).toBe(4)
+})
+
+test('many docked chips compact first, then wrap onto extra rows without scrolling', async ({ page }) => {
+  const names = ['alpha-workspace', 'bravo-workspace', 'charlie-workspace', 'delta-workspace', 'echo-workspace',
+    'foxtrot-workspace', 'golf-workspace', 'hotel-workspace', 'india-workspace', 'juliet-workspace',
+    'kilo-workspace', 'lima-workspace']
+  await mockAppApis(page, 'dark', dockedFixture(names, ['board']))
+  await page.setViewportSize({ width: 760, height: 700 })
+  await page.goto(appUrl)
+
+  const list = page.locator('.app-tab-list')
+  const chips = page.locator('.app-topbar-docked-column')
+  await expect(chips).toHaveCount(12)
+  await expect(list).toHaveAttribute('data-rows', 'multi')
+  await expect(list).toHaveAttribute('data-density', '2')
+  const rowTops = await chips.evaluateAll((elements) => [...new Set(elements.map((el) => Math.round(el.getBoundingClientRect().top)))])
+  expect(rowTops.length).toBeGreaterThan(1)
+
+  // A roomy window keeps one row at the most relaxed density.
+  await page.setViewportSize({ width: 2200, height: 700 })
+  await expect(list).toHaveAttribute('data-rows', 'single')
+  await expect(list).toHaveAttribute('data-density', '0')
+
+  await page.setViewportSize({ width: 760, height: 700 })
+  await page.screenshot({ path: 'test-results/column-dock-multirow.png', clip: { x: 0, y: 0, width: 760, height: 140 } })
 })

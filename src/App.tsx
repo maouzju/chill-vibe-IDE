@@ -225,6 +225,8 @@ import {
 import { buildWorkflowFailureWakePrompt, detectWorkflowCatastrophicFailure } from './components/workflow-failure-wake'
 import { resolveAppLoadError } from './app-load-error'
 import { clearDragPayload, peekDragPayload, readDragPayload, releaseDragPayloadIfStale } from './dnd'
+import { resolveDockInsertion, type DockInsertion } from './components/docked-chip-insertion'
+import { useTopbarChipDensity } from './components/useTopbarDensity'
 import {
   isProviderStatusExplicitlyUnavailable,
   startInitialAppLoad,
@@ -812,6 +814,9 @@ function App() {
   // 顶栏停靠落区只在"正在拖一列"期间存在（ui-principles 规则 3：闲置 chrome 退场）。
   const [columnDragInFlight, setColumnDragInFlight] = useState(false)
   const [dockZoneOver, setDockZoneOver] = useState(false)
+  const [draggingDockedChipId, setDraggingDockedChipId] = useState<string | null>(null)
+  const [dockInsertion, setDockInsertion] = useState<DockInsertion | null>(null)
+  const topbarTabListRef = useRef<HTMLDivElement>(null)
   const [updateStatus, setUpdateStatus] = useState<'idle' | 'checking' | 'downloading' | 'ready' | 'installing' | 'no-update' | 'error'>('idle')
   const [updateResult, setUpdateResult] = useState<UpdateCheckResult | null>(null)
   const [downloadProgress, setDownloadProgress] = useState(0)
@@ -859,7 +864,20 @@ function App() {
     () => selectDockedColumnsInOrder(appState.columns),
     [appState.columns],
   )
+  const dockedChips = useMemo(
+    () =>
+      dockedColumns.map((column) => ({
+        column,
+        label: column.workspacePath.split(/[/\\]/).filter(Boolean).at(-1) ?? column.title,
+        status: selectDockedColumnStatus(column),
+      })),
+    [dockedColumns],
+  )
   const draggingDockedColumnIdRef = useRef<string | null>(null)
+  const dockedChipsLayoutSignature = `${dockedChips
+    .map(({ column, label, status }) => `${column.id}:${label}:${status.hasNewResult ? 1 : 0}`)
+    .join('|')}#${columnDragInFlight ? 1 : 0}#${appState.settings.language}`
+  useTopbarChipDensity(topbarTabListRef, dockedChipsLayoutSignature)
 
   useEffect(() => {
     // dragstart 走冒泡阶段：WorkspaceColumn 的 React handler 已经 writeDragPayload，
@@ -911,21 +929,61 @@ function App() {
     return () => window.clearInterval(timer)
   }, [columnDragInFlight])
 
-  const handleTopbarColumnDragOver = useCallback((event: DragEvent<HTMLElement>) => {
-    if (readDragPayload(event)?.type !== 'column') {
-      return
-    }
-    event.preventDefault()
-    event.dataTransfer.dropEffect = 'move'
-    setDockZoneOver(true)
-  }, [])
+  const resolveTopbarDockInsertion = useCallback(
+    (event: DragEvent<HTMLElement>, excludeId?: string): DockInsertion | null => {
+      const list = topbarTabListRef.current
+      if (!list) {
+        return null
+      }
+      const chips = Array.from(list.querySelectorAll<HTMLElement>('.app-topbar-docked-column'))
+        .filter((element) => element.dataset.columnId)
+        .map((element) => {
+          const rect = element.getBoundingClientRect()
+          return {
+            id: element.dataset.columnId as string,
+            left: rect.left,
+            right: rect.right,
+            top: rect.top,
+            bottom: rect.bottom,
+          }
+        })
+      if (event.target instanceof Element && event.target.closest('.app-topbar-dock-zone')) {
+        // 拖工作区落在落区 = 照旧追加到最后；拖 chip 落在落区 = 移到最后。
+        const last = excludeId === undefined ? undefined : chips.filter((chip) => chip.id !== excludeId).at(-1)
+        return last ? { targetId: last.id, placement: 'after' } : null
+      }
+      return resolveDockInsertion(chips, { x: event.clientX, y: event.clientY }, excludeId)
+    },
+    [],
+  )
 
-  const handleTopbarColumnDragLeave = useCallback((event: DragEvent<HTMLElement>) => {
+  const handleTopbarDockDragOver = useCallback(
+    (event: DragEvent<HTMLElement>) => {
+      const draggedChipId = draggingDockedColumnIdRef.current
+      const isColumnDrag = draggedChipId === null && readDragPayload(event)?.type === 'column'
+      if (draggedChipId === null && !isColumnDrag) {
+        return
+      }
+      event.preventDefault()
+      event.dataTransfer.dropEffect = 'move'
+      setDockZoneOver(
+        isColumnDrag && event.target instanceof Element && event.target.closest('.app-topbar-dock-zone') !== null,
+      )
+      const next = resolveTopbarDockInsertion(event, draggedChipId ?? undefined)
+      setDockInsertion((previous) =>
+        previous?.targetId === next?.targetId && previous?.placement === next?.placement ? previous : next,
+      )
+    },
+    [resolveTopbarDockInsertion],
+  )
+
+  const handleTopbarDockDragLeave = useCallback((event: DragEvent<HTMLElement>) => {
     const nextTarget = event.relatedTarget
     if (nextTarget instanceof Node && event.currentTarget.contains(nextTarget)) {
       return
     }
     setDockZoneOver(false)
+    setDockInsertion(null)
   }, [])
 
   const availableQuickToolModels = useMemo(
@@ -1606,19 +1664,39 @@ function App() {
 
   const applyAction = useCallback((action: IdeAction) => applyActions([action]), [applyActions])
 
-  const handleTopbarColumnDrop = useCallback(
+  const handleTopbarDockDrop = useCallback(
     (event: DragEvent<HTMLElement>) => {
-      const payload = readDragPayload(event)
-      if (payload?.type !== 'column') {
+      const draggedChipId = draggingDockedColumnIdRef.current
+      const payload = draggedChipId === null ? readDragPayload(event) : null
+      if (draggedChipId === null && payload?.type !== 'column') {
         return
       }
       event.preventDefault()
-      applyAction({ type: 'dockColumn', columnId: payload.columnId })
-      clearDragPayload()
-      setColumnDragInFlight(false)
+      const insertion = resolveTopbarDockInsertion(event, draggedChipId ?? undefined)
+      if (draggedChipId !== null) {
+        draggingDockedColumnIdRef.current = null
+        setDraggingDockedChipId(null)
+        if (insertion) {
+          applyAction({
+            type: 'reorderDockedColumn',
+            columnId: draggedChipId,
+            targetColumnId: insertion.targetId,
+            placement: insertion.placement,
+          })
+        }
+      } else if (payload?.type === 'column') {
+        applyAction({
+          type: 'dockColumn',
+          columnId: payload.columnId,
+          ...(insertion ? { targetColumnId: insertion.targetId, placement: insertion.placement } : {}),
+        })
+        clearDragPayload()
+        setColumnDragInFlight(false)
+      }
       setDockZoneOver(false)
+      setDockInsertion(null)
     },
-    [applyAction],
+    [applyAction, resolveTopbarDockInsertion],
   )
 
   const closeCodexFastModeDialog = useCallback(() => {
@@ -11688,12 +11766,14 @@ function App() {
       <WeatherAmbientOverlay />
       <header className="app-topbar">
         <div
-          className={`app-topbar-frame${columnDragInFlight ? ' is-column-drop-target' : ''}`}
-          onDragOver={columnDragInFlight ? handleTopbarColumnDragOver : undefined}
-          onDragLeave={columnDragInFlight ? handleTopbarColumnDragLeave : undefined}
-          onDrop={columnDragInFlight ? handleTopbarColumnDrop : undefined}
+          className={`app-topbar-frame${
+            columnDragInFlight || draggingDockedChipId !== null ? ' is-column-drop-target' : ''
+          }`}
+          onDragOver={columnDragInFlight || draggingDockedChipId !== null ? handleTopbarDockDragOver : undefined}
+          onDragLeave={columnDragInFlight || draggingDockedChipId !== null ? handleTopbarDockDragLeave : undefined}
+          onDrop={columnDragInFlight || draggingDockedChipId !== null ? handleTopbarDockDrop : undefined}
         >
-          <div className="app-tab-list" role="tablist" aria-label={topTabText.navLabel}>
+          <div ref={topbarTabListRef} className="app-tab-list" role="tablist" aria-label={topTabText.navLabel}>
             {topTabs.map((tab) => {
               const active = activeTab === tab.id
 
@@ -11728,14 +11808,17 @@ function App() {
             >
               <PlusIcon />
             </button>
-            {dockedColumns.map((column) => {
-              const label =
-                column.workspacePath.split(/[/\\]/).filter(Boolean).at(-1) ?? column.title
-              const { running, hasNewResult } = selectDockedColumnStatus(column)
+            {dockedChips.map(({ column, label, status: { running, hasNewResult } }) => {
               const statusSuffix = running
                 ? ` — ${text.dockedColumnRunning}`
                 : hasNewResult
                   ? ` — ${text.dockedColumnNewResult}`
+                  : ''
+              const dropClass =
+                dockInsertion?.targetId === column.id
+                  ? dockInsertion.placement === 'before'
+                    ? ' is-drop-before'
+                    : ' is-drop-after'
                   : ''
               return (
                 <button
@@ -11743,7 +11826,7 @@ function App() {
                   type="button"
                   className={`app-topbar-docked-column${running ? ' is-running' : ''}${
                     hasNewResult ? ' has-new-result' : ''
-                  }`}
+                  }${draggingDockedChipId === column.id ? ' is-dragging' : ''}${dropClass}`}
                   data-column-id={column.id}
                   title={`${column.workspacePath || column.title}${statusSuffix}`}
                   aria-label={`${text.restoreDockedColumn(label)}${statusSuffix}`}
@@ -11753,33 +11836,17 @@ function App() {
                     draggingDockedColumnIdRef.current = column.id
                     event.dataTransfer.effectAllowed = 'move'
                     event.dataTransfer.setData('application/x-chill-vibe-docked-column', column.id)
+                    // 推迟到 dragstart 之后再改 DOM，避免 Chromium 因拖拽源在 dragstart 内被改动而取消拖拽。
+                    window.setTimeout(() => {
+                      if (draggingDockedColumnIdRef.current === column.id) {
+                        setDraggingDockedChipId(column.id)
+                      }
+                    }, 0)
                   }}
                   onDragEnd={() => {
                     draggingDockedColumnIdRef.current = null
-                  }}
-                  onDragOver={(event) => {
-                    const sourceId = draggingDockedColumnIdRef.current
-                    if (!sourceId || sourceId === column.id) {
-                      return
-                    }
-                    event.preventDefault()
-                    event.dataTransfer.dropEffect = 'move'
-                  }}
-                  onDrop={(event) => {
-                    const sourceId = draggingDockedColumnIdRef.current
-                    draggingDockedColumnIdRef.current = null
-                    if (!sourceId || sourceId === column.id) {
-                      return
-                    }
-                    event.preventDefault()
-                    event.stopPropagation()
-                    const rect = event.currentTarget.getBoundingClientRect()
-                    applyAction({
-                      type: 'reorderDockedColumn',
-                      columnId: sourceId,
-                      targetColumnId: column.id,
-                      placement: event.clientX < rect.left + rect.width / 2 ? 'before' : 'after',
-                    })
+                    setDraggingDockedChipId(null)
+                    setDockInsertion(null)
                   }}
                 >
                   {label}

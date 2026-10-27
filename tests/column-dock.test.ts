@@ -375,6 +375,32 @@ describe('docked column chip order', () => {
     assert.deepEqual(selectDockedColumnsInOrder(state.columns).map((c) => c.id), ['column-2', 'column-3', 'column-1'])
   })
 
+  it('dockColumn can insert the new chip before/after a chosen docked chip', async () => {
+    const { selectDockedColumnsInOrder } = await import('../src/state.ts')
+    const dockTwo = () => {
+      let state = createState()
+      for (const id of ['column-1', 'column-2']) {
+        state = ideReducer(state, { type: 'dockColumn', columnId: id })
+      }
+      return state
+    }
+    const order = (state: AppState) => selectDockedColumnsInOrder(state.columns).map((c) => c.id)
+
+    assert.deepEqual(
+      order(ideReducer(dockTwo(), { type: 'dockColumn', columnId: 'column-3', targetColumnId: 'column-1', placement: 'before' })),
+      ['column-3', 'column-1', 'column-2'],
+    )
+    assert.deepEqual(
+      order(ideReducer(dockTwo(), { type: 'dockColumn', columnId: 'column-3', targetColumnId: 'column-1', placement: 'after' })),
+      ['column-1', 'column-3', 'column-2'],
+    )
+    // a target that is not a docked chip falls back to appending at the end
+    assert.deepEqual(
+      order(ideReducer(dockTwo(), { type: 'dockColumn', columnId: 'column-3', targetColumnId: 'missing', placement: 'before' })),
+      ['column-1', 'column-2', 'column-3'],
+    )
+  })
+
   it('puts a newly docked column after legacy docked columns without an order', () => {
     const state = createState()
     state.columns = state.columns.map((column, index) =>

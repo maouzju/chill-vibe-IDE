@@ -514,14 +514,44 @@ body.is-card-dragging .lane-drop-zone-top {
   flex: 1 1 auto;
   min-width: 0;
   gap: 0.7rem;
-  overflow-x: auto;
-  scrollbar-width: none;
+  /* 收起的工作区多了就换行，不再横向滚动藏起来；换行前先由 useTopbarChipDensity 逐档收紧（data-density）。 */
+  flex-wrap: wrap;
   -webkit-app-region: drag;
   app-region: drag;
 }
 
-.app-tab-list::-webkit-scrollbar {
-  display: none;
+.app-tab-list[data-density] {
+  row-gap: 0.3rem;
+}
+
+.app-tab-list[data-rows='multi'] {
+  padding-bottom: 0.4rem;
+}
+
+.app-tab-list[data-density='1'] {
+  column-gap: 0.55rem;
+}
+
+.app-tab-list[data-density='2'] {
+  column-gap: 0.4rem;
+}
+
+.app-tab-list[data-density='1'] .app-topbar-docked-column {
+  max-width: 7rem;
+  padding-inline: 0.45rem;
+}
+
+.app-tab-list[data-density='2'] .app-topbar-docked-column {
+  max-width: 5.5rem;
+  padding-inline: 0.35rem;
+  font-size: 0.7rem;
+}
+
+/* 拖动工作区 / 收起的 chip 期间整条顶栏都要接得住 dragover，不能被窗口拖拽区吞掉 */
+.app-topbar-frame.is-column-drop-target,
+.app-topbar-frame.is-column-drop-target .app-tab-list {
+  -webkit-app-region: no-drag;
+  app-region: no-drag;
 }
 
 .app-topbar-add-column {
@@ -672,6 +702,19 @@ body.is-card-dragging .lane-drop-zone-top {
     animation: none;
     border-color: color-mix(in srgb, var(--warn) 70%, var(--line));
   }
+}
+
+/* 拖动中的 chip 半透明；插入位置用 chip 侧边的强调线标出（!important 才压得过 is-running 的呼吸动画） */
+.app-topbar-docked-column.is-dragging {
+  opacity: 0.45;
+}
+
+.app-topbar-docked-column.is-drop-before {
+  box-shadow: inset 2px 0 0 0 var(--accent) !important;
+}
+
+.app-topbar-docked-column.is-drop-after {
+  box-shadow: inset -2px 0 0 0 var(--accent) !important;
 }
 
 /* 只在拖动一列期间出现的停靠落区 */

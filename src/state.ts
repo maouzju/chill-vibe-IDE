@@ -448,7 +448,7 @@ export type IdeAction =
       targetColumnId: string
       placement: Placement
     }
-  | { type: 'dockColumn'; columnId: string }
+  | { type: 'dockColumn'; columnId: string; targetColumnId?: string; placement?: 'before' | 'after' }
   | { type: 'undockColumn'; columnId: string }
   | { type: 'reorderDockedColumn'; columnId: string; targetColumnId: string; placement: 'before' | 'after' }
   | { type: 'removeColumn'; columnId: string; workspaceCloseId?: string }
@@ -2481,6 +2481,23 @@ const ideReducerCore = (state: AppState, action: IdeAction): AppState => {
           legacyOrders.set(column.id, maxOrder + legacyOrders.size + 1)
         }
       })
+
+      const anchorId = action.targetColumnId
+      if (anchorId !== undefined && dockedColumns.some((column) => column.id === anchorId)) {
+        // 指定了插入位置：按当前顺序整体重编号，新 chip 插到锚点前/后。
+        const ordered = selectDockedColumnsInOrder(state.columns).map((column) => column.id)
+        ordered.splice(ordered.indexOf(anchorId) + (action.placement === 'before' ? 0 : 1), 0, action.columnId)
+        return touchState({
+          ...state,
+          columns: state.columns.map((column) =>
+            column.id === action.columnId
+              ? { ...column, docked: true, dockedOrder: ordered.indexOf(column.id) + 1 }
+              : column.docked === true
+                ? { ...column, dockedOrder: ordered.indexOf(column.id) + 1 }
+                : column,
+          ),
+        })
+      }
 
       return touchState({
         ...state,

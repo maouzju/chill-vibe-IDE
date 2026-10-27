@@ -1176,6 +1176,7 @@ function App() {
   >(null)
   const wakeTimerCompletionTimersRef = useRef(new Map<string, number>())
   const allAgentsDoneSoundTimerRef = useRef<number | null>(null)
+  const workspaceDoneSoundTimersRef = useRef(new Map<string, number>())
   const recoverLiveStreamRef = useRef<(
     (
       columnId: string,
@@ -3997,6 +3998,48 @@ function App() {
     }, wakeTimerCompletionStabilityMs + 200)
   }, [])
 
+  // 单工作区版：只看该列自己的卡，别的工作区还在跑也照响。
+  const scheduleWorkspaceDoneSound = useCallback((columnId: string) => {
+    const pending = workspaceDoneSoundTimersRef.current.get(columnId)
+    if (pending !== undefined) {
+      window.clearTimeout(pending)
+    }
+
+    const timer = window.setTimeout(() => {
+      workspaceDoneSoundTimersRef.current.delete(columnId)
+      const state = appStateRef.current
+      if (!state.settings.workspaceDoneSoundEnabled) {
+        return
+      }
+
+      const column = state.columns.find((candidate) => candidate.id === columnId)
+      if (!column) {
+        return
+      }
+
+      const columnCards = Object.values(column.cards)
+        .filter((card) => !MODEL_PICKER_HIDDEN_TOOL_MODELS.has(card.model))
+      const columnCardIds = new Set(Object.keys(column.cards))
+      const activeStreamCount = [...activeStreamsRef.current.keys()]
+        .filter((cardId) => columnCardIds.has(cardId)).length
+      const queuedSendCount = [...queuedSendRequestsRef.current.entries()]
+        .filter(([cardId]) => columnCardIds.has(cardId))
+        .reduce((total, [, queue]) => total + queue.length, 0)
+      if (!isAllAgentWorkComplete({
+        activeStreamCount,
+        queuedSendCount,
+        cards: columnCards,
+      })) {
+        return
+      }
+
+      const audio = new Audio(getAllAgentsDoneSoundUrl())
+      audio.volume = state.settings.allAgentsDoneSoundVolume
+      audio.play().catch(() => {})
+    }, wakeTimerCompletionStabilityMs + 200)
+    workspaceDoneSoundTimersRef.current.set(columnId, timer)
+  }, [])
+
   const wakeTimerTopologySignature = useMemo(
     () => buildWakeTimerTopologySignature(
       appState.columns.map((column) => ({
@@ -5740,8 +5783,9 @@ function App() {
                 stopped: false,
                 agentDoneSoundEnabled: appStateRef.current.settings.agentDoneSoundEnabled,
                 allAgentsDoneSoundEnabled: appStateRef.current.settings.allAgentsDoneSoundEnabled,
+                workspaceDoneSoundEnabled: appStateRef.current.settings.workspaceDoneSoundEnabled,
               })
-            : { playAgentDone: false, checkAllAgentsDone: false }
+            : { playAgentDone: false, checkAllAgentsDone: false, checkWorkspaceDone: false }
           if (completionSoundPlan.playAgentDone) {
             const audio = new Audio(getAgentDoneSoundUrl())
             audio.volume = appStateRef.current.settings.agentDoneSoundVolume
@@ -5932,6 +5976,9 @@ function App() {
           }
           if (completionSoundPlan.checkAllAgentsDone) {
             scheduleAllAgentsDoneSound()
+          }
+          if (completionSoundPlan.checkWorkspaceDone) {
+            scheduleWorkspaceDoneSound(columnId)
           }
         },
         onError: ({ message, recoverable, recoveryMode, transientOnly, sessionId }) => {
@@ -6250,6 +6297,7 @@ function App() {
       persistAfterActions,
       requestStopForCard,
       scheduleAllAgentsDoneSound,
+      scheduleWorkspaceDoneSound,
       scheduleStableWakeTimerCompletion,
       updateRecoveryStatus,
     ],
@@ -6273,6 +6321,8 @@ function App() {
       window.clearTimeout(allAgentsDoneSoundTimerRef.current)
       allAgentsDoneSoundTimerRef.current = null
     }
+    workspaceDoneSoundTimersRef.current.forEach((timer) => window.clearTimeout(timer))
+    workspaceDoneSoundTimersRef.current.clear()
     if (streamRenderFlushHandleRef.current !== null) {
       window.clearTimeout(streamRenderFlushHandleRef.current)
       streamRenderFlushHandleRef.current = null
@@ -8491,6 +8541,8 @@ function App() {
       window.clearTimeout(allAgentsDoneSoundTimerRef.current)
       allAgentsDoneSoundTimerRef.current = null
     }
+    workspaceDoneSoundTimersRef.current.forEach((timer) => window.clearTimeout(timer))
+    workspaceDoneSoundTimersRef.current.clear()
 
     try {
       const state = await resetState()
@@ -11327,6 +11379,21 @@ function App() {
             />
           </div>
         )}
+
+        <label className="settings-toggle" htmlFor="workspace-done-sound-toggle">
+          <span>{text.workspaceDoneSoundLabel}</span>
+          <input
+            id="workspace-done-sound-toggle"
+            type="checkbox"
+            checked={appState.settings.workspaceDoneSoundEnabled}
+            onChange={(event) =>
+              applyAction({
+                type: 'updateSettings',
+                patch: { workspaceDoneSoundEnabled: event.target.checked },
+              })
+            }
+          />
+        </label>
 
         <div className="settings-hover-detail">
           <label className="settings-toggle" htmlFor="accessibility-support-toggle">

@@ -138,13 +138,16 @@ export const getCompletionSoundPlan = ({
   stopped,
   agentDoneSoundEnabled,
   allAgentsDoneSoundEnabled,
+  workspaceDoneSoundEnabled,
 }: {
   stopped: boolean | undefined
   agentDoneSoundEnabled: boolean
   allAgentsDoneSoundEnabled: boolean
+  workspaceDoneSoundEnabled: boolean
 }) => ({
   playAgentDone: !stopped && agentDoneSoundEnabled,
   checkAllAgentsDone: !stopped && allAgentsDoneSoundEnabled,
+  checkWorkspaceDone: !stopped && workspaceDoneSoundEnabled,
 })
 
 export const getStreamDonePlan = ({

@@ -86,24 +86,48 @@ test('completion sound toggles stay independent when the last agent finishes', (
       stopped: false,
       agentDoneSoundEnabled: true,
       allAgentsDoneSoundEnabled: true,
+      workspaceDoneSoundEnabled: false,
     }),
-    { playAgentDone: true, checkAllAgentsDone: true },
+    { playAgentDone: true, checkAllAgentsDone: true, checkWorkspaceDone: false },
   )
   assert.deepEqual(
     getCompletionSoundPlan({
       stopped: false,
       agentDoneSoundEnabled: false,
       allAgentsDoneSoundEnabled: true,
+      workspaceDoneSoundEnabled: false,
     }),
-    { playAgentDone: false, checkAllAgentsDone: true },
+    { playAgentDone: false, checkAllAgentsDone: true, checkWorkspaceDone: false },
   )
   assert.deepEqual(
     getCompletionSoundPlan({
       stopped: true,
       agentDoneSoundEnabled: true,
       allAgentsDoneSoundEnabled: true,
+      workspaceDoneSoundEnabled: false,
     }),
-    { playAgentDone: false, checkAllAgentsDone: false },
+    { playAgentDone: false, checkAllAgentsDone: false, checkWorkspaceDone: false },
+  )
+})
+
+test('workspace-done sound is gated by its own toggle and manual stops', () => {
+  assert.deepEqual(
+    getCompletionSoundPlan({
+      stopped: false,
+      agentDoneSoundEnabled: false,
+      allAgentsDoneSoundEnabled: false,
+      workspaceDoneSoundEnabled: true,
+    }),
+    { playAgentDone: false, checkAllAgentsDone: false, checkWorkspaceDone: true },
+  )
+  assert.deepEqual(
+    getCompletionSoundPlan({
+      stopped: true,
+      agentDoneSoundEnabled: true,
+      allAgentsDoneSoundEnabled: true,
+      workspaceDoneSoundEnabled: true,
+    }),
+    { playAgentDone: false, checkAllAgentsDone: false, checkWorkspaceDone: false },
   )
 })
 

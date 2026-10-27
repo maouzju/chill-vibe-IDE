@@ -22,3 +22,7 @@
 - 更新后全量主题检查：159/159 通过；`pnpm test:quality` 通过。
 - 更新后 Electron 产物：`dist/release-20260726-192359/Chill Vibe-0.18.18-win.zip`，可直接运行 `dist/release-20260726-192359/win-unpacked/Chill Vibe.exe`。
 - 当前 Electron 开发运行时已重启，5173 健康检查返回 200，renderer 进程已就绪。
+
+## 单工作区全完成提示音
+
+- [x] 先补设置归一化与 `getCompletionSoundPlan.checkWorkspaceDone` 红测，再加字段、文案、设置勾选项与按列的稳定检查。

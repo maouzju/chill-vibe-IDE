@@ -361,6 +361,7 @@ export type IdeAction =
           | 'agentDoneSoundVolume'
           | 'allAgentsDoneSoundEnabled'
           | 'allAgentsDoneSoundVolume'
+          | 'workspaceDoneSoundEnabled'
           | 'crossProviderSkillReuseEnabled'
           | 'accessibilitySupportEnabled'
           | 'closeBehavior'

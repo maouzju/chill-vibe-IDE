@@ -229,6 +229,7 @@ describe('default-state helpers', () => {
       agentDoneSoundVolume: 0.7,
       allAgentsDoneSoundEnabled: false,
       allAgentsDoneSoundVolume: 0.7,
+      workspaceDoneSoundEnabled: false,
       crossProviderSkillReuseEnabled: true,
       autoUrgeEnabled: false,
       autoUrgeMessage: '你必须百分百验证通过你要解决的问题，才能结束回答，如果确定解决了，回复YES，否则不准停下来',
@@ -475,6 +476,14 @@ describe('default-state helpers', () => {
     assert.equal(normalizeAppSettings({}).allAgentsDoneSoundEnabled, false)
     assert.equal(
       normalizeAppSettings({ allAgentsDoneSoundEnabled: true } as never).allAgentsDoneSoundEnabled,
+      true,
+    )
+  })
+
+  it('keeps the workspace-done sound opt-in across normalization', () => {
+    assert.equal(normalizeAppSettings({}).workspaceDoneSoundEnabled, false)
+    assert.equal(
+      normalizeAppSettings({ workspaceDoneSoundEnabled: true } as never).workspaceDoneSoundEnabled,
       true,
     )
   })

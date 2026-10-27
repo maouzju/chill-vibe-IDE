@@ -36,6 +36,7 @@ type LocaleText = {
   agentDoneSoundLabel: string
   agentDoneSoundVolumeLabel: string
   allAgentsDoneSoundLabel: string
+  workspaceDoneSoundLabel: string
   autoUrgeLabel: string
   autoUrgeHint: string
   autoUrgeTypesLabel: string
@@ -579,6 +580,7 @@ const localeTextByLanguage: Record<AppLanguage, LocaleText> = {
     agentDoneSoundLabel: 'Agent 完成音效',
     agentDoneSoundVolumeLabel: '音量',
     allAgentsDoneSoundLabel: '全完成提示音',
+    workspaceDoneSoundLabel: '单工作区全完成提示音',
     autoUrgeLabel: '自动鞭策',
     autoUrgeHint: '这个会话每答完一轮就自动追发一条催办消息，直到回复里出现成功触发词。适合让 Agent 自己把活干完，不用你守着按回车。',
     autoUrgeTypesLabel: '鞭策类型',
@@ -1161,6 +1163,7 @@ const localeTextByLanguage: Record<AppLanguage, LocaleText> = {
     agentDoneSoundLabel: 'Agent Done Sound',
     agentDoneSoundVolumeLabel: 'Volume',
     allAgentsDoneSoundLabel: 'All Agents Done Sound',
+    workspaceDoneSoundLabel: 'Workspace Done Sound',
     autoUrgeLabel: 'Auto Urge',
     autoUrgeHint: 'After every reply this chat automatically sends a follow-up nudge, until the answer contains the success keyword. Lets an agent finish on its own instead of waiting on your Enter key.',
     autoUrgeTypesLabel: 'Urge Types',

@@ -1248,17 +1248,28 @@ const FileTreeCardInner = ({ cardId, workspacePath, language, onOpenFile }: File
     })
   }, [clearDropState, workspacePath])
 
+  // 症状：同 pane 开两张文件树，把一张的 tab 拖到另一张的内容上，分栏预览亮了松手却没反应。
+  // 根因（2026-10-27 复现）：这里原先对任何 drop 都 stopPropagation，pane 的分栏 drop 被吞掉。
+  // 只拦文件树自己的条目；tab 等其他拖拽必须冒泡给 PaneView。见 tests/pane-drop-split-over-card-body.spec.ts。
   const handleItemDrop = useCallback((event: ReactDragEvent<HTMLButtonElement>, target: FileTreeDropTarget) => {
+    if (readDragPayload(event)?.type !== 'file-tree-entry') {
+      clearDropState()
+      return
+    }
     event.preventDefault()
     event.stopPropagation()
     void completeMove(event, target).catch(reportActionError)
-  }, [completeMove, reportActionError])
+  }, [clearDropState, completeMove, reportActionError])
 
   const handleRootDrop = useCallback((event: ReactDragEvent<HTMLDivElement>) => {
+    if (readDragPayload(event)?.type !== 'file-tree-entry') {
+      clearDropState()
+      return
+    }
     event.preventDefault()
     event.stopPropagation()
     void completeMove(event, null).catch(reportActionError)
-  }, [completeMove, reportActionError])
+  }, [clearDropState, completeMove, reportActionError])
 
   const handleDragEnd = useCallback(() => {
     clearDropState()

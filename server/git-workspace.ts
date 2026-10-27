@@ -199,6 +199,18 @@ const workspaceSnapshotContentStore = createWorkspaceSnapshotContentStore(
   workspaceSnapshotSharedContentMaxBytes,
 )
 
+// 症状 — the Git card's stage / commit-all died with `error: short read while
+//   indexing nul ... fatal: adding files failed`, taking every other file down.
+// 根因 — 2026-10-27 kubi 仓库里有个 bash `> nul` 误建的 `nul` 文件；Windows 把
+//   CON/PRN/AUX/NUL/COM1-9/LPT1-9（含带扩展名的 nul.txt）当设备，git 读不了。
+// 被否决 — 让用户手删：AI agent 会反复造出它，所以这里永远跳过这些路径。
+const windowsReservedBaseNamePattern = /^(con|prn|aux|nul|com[1-9]|lpt[1-9])(\..*)?$/i
+const isWindowsReservedPath = (entry: string) =>
+  process.platform === 'win32' &&
+  windowsReservedBaseNamePattern.test(entry.split(/[\\/]/).pop() ?? '')
+const windowsReservedExcludePathspecs = ['con', 'prn', 'aux', 'nul', 'com[1-9]', 'lpt[1-9]']
+  .flatMap((name) => [`:(exclude,icase,glob)**/${name}`, `:(exclude,icase,glob)**/${name}.*`])
+
 const normalizePathList = (paths: string[]) =>
   Array.from(
     new Set(
@@ -2252,7 +2264,10 @@ export const setGitWorkspaceStage = async ({
     //   each original path for existence would cost an extra Git process on the
     //   hot staging path for a no-op. Guarded by the "stages a modified rename
     //   target without feeding git add the vanished original path" test.
-    await runGitWithPathspecs(repoRoot, ['add'], normalizedPaths)
+    const stagePaths = normalizedPaths.filter((entry) => !isWindowsReservedPath(entry))
+    if (stagePaths.length > 0) {
+      await runGitWithPathspecs(repoRoot, ['add'], stagePaths)
+    }
     return await inspectResolvedGitWorkspace(
       workspacePath,
       repoRoot,
@@ -2620,7 +2635,12 @@ export const commitAllGitWorkspace = async ({
     throw new Error('No changes to commit.')
   }
 
-  await runGit(status.repoRoot, ['add', '--all'])
+  await runGit(
+    status.repoRoot,
+    process.platform === 'win32'
+      ? ['add', '--all', '--', '.', ...windowsReservedExcludePathspecs]
+      : ['add', '--all'],
+  )
 
   return commitGitWorkspace({ workspacePath, summary, description })
 }

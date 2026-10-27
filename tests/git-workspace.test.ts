@@ -1210,6 +1210,21 @@ describe('git workspace helpers', () => {
     assert.equal(status.changes.length, 1)
   })
 
+  it('stages the rest of the batch when a Windows reserved-name file like nul is present', { skip: process.platform !== 'win32' }, async () => {
+    const repoPath = await createTempRepo()
+    await writeFile(`\\\\?\\${path.join(repoPath, 'nul')}`, 'stray redirect output\n')
+    await writeFile(path.join(repoPath, 'real.txt'), 'real change\n')
+
+    const status = await setGitWorkspaceStage({
+      workspacePath: repoPath,
+      paths: ['nul', 'real.txt'],
+      staged: true,
+    })
+
+    const real = status.changes.find((change) => change.path === 'real.txt')
+    assert.equal(real?.stagedStatus, 'A')
+  })
+
   it('unstages a staged copy without touching the copy source', async () => {
     const repoPath = await createStagedCopyRepo()
 

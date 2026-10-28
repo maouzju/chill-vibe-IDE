@@ -4116,7 +4116,7 @@ function App() {
       }
 
       const audio = new Audio(getAllAgentsDoneSoundUrl())
-      audio.volume = state.settings.allAgentsDoneSoundVolume
+      audio.volume = state.settings.workspaceDoneSoundVolume
       audio.play().catch(() => {})
     }, wakeTimerCompletionStabilityMs + 200)
     workspaceDoneSoundTimersRef.current.set(columnId, timer)
@@ -11476,6 +11476,40 @@ function App() {
             }
           />
         </label>
+
+        {appState.settings.workspaceDoneSoundEnabled && (
+          <div className="settings-row">
+            <div className="settings-row-copy">
+              <label htmlFor="workspace-done-sound-volume">{text.agentDoneSoundVolumeLabel}</label>
+              <span>{Math.round(appState.settings.workspaceDoneSoundVolume * 100)}%</span>
+            </div>
+            <input
+              id="workspace-done-sound-volume"
+              className="settings-range"
+              type="range"
+              min={0}
+              max={1}
+              step={0.05}
+              value={appState.settings.workspaceDoneSoundVolume}
+              onChange={(event) =>
+                applyAction({
+                  type: 'updateSettings',
+                  patch: { workspaceDoneSoundVolume: Number(event.target.value) },
+                })
+              }
+              onMouseUp={(event) => {
+                const audio = new Audio(getAllAgentsDoneSoundUrl())
+                audio.volume = Number((event.target as HTMLInputElement).value)
+                audio.play().catch(() => {})
+              }}
+              onTouchEnd={(event) => {
+                const audio = new Audio(getAllAgentsDoneSoundUrl())
+                audio.volume = Number((event.target as HTMLInputElement).value)
+                audio.play().catch(() => {})
+              }}
+            />
+          </div>
+        )}
 
         <div className="settings-hover-detail">
           <label className="settings-toggle" htmlFor="accessibility-support-toggle">

@@ -660,6 +660,7 @@ export const createDefaultSettings = (language: AppLanguage = defaultAppLanguage
   allAgentsDoneSoundEnabled: false,
   allAgentsDoneSoundVolume: 0.7,
   workspaceDoneSoundEnabled: false,
+  workspaceDoneSoundVolume: 0.7,
   crossProviderSkillReuseEnabled: true,
   accessibilitySupportEnabled: false,
   closeBehavior: 'quit',
@@ -871,6 +872,12 @@ export const normalizeAppSettings = (settings?: Partial<AppSettings> | null): Ap
       typeof settings?.workspaceDoneSoundEnabled === 'boolean'
         ? settings.workspaceDoneSoundEnabled
         : defaults.workspaceDoneSoundEnabled,
+    workspaceDoneSoundVolume: clampScale(
+      settings?.workspaceDoneSoundVolume,
+      0,
+      1,
+      defaults.workspaceDoneSoundVolume,
+    ),
     crossProviderSkillReuseEnabled:
       typeof settings?.crossProviderSkillReuseEnabled === 'boolean'
         ? settings.crossProviderSkillReuseEnabled

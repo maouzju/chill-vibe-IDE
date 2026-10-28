@@ -193,6 +193,16 @@
   --stats-heat-3: #30a14e;
   --stats-heat-4: #216e39;
   --stats-tile-bg: color-mix(in srgb, var(--panel-soft) 72%, var(--panel));
+  /* 统计卡「全部 Claude 用量」的项目色板：前 7 名各一色，其余灰（参考 token-dashboard） */
+  --usage-s1: #2a78d6;
+  --usage-s2: #eb6834;
+  --usage-s3: #1baf7a;
+  --usage-s4: #eda100;
+  --usage-s5: #e87ba4;
+  --usage-s6: #008300;
+  --usage-s7: #4a3aa7;
+  --usage-other: #b9b8b2;
+  --usage-grid: rgba(60, 70, 62, 0.1);
   --structured-group-bg: rgba(245, 248, 255, 0.92);
   --structured-group-border: rgba(9, 105, 218, 0.12);
   --structured-card-bg: rgba(255, 255, 255, 0.98);
@@ -373,6 +383,15 @@
   --stats-heat-3: #26a641;
   --stats-heat-4: #39d353;
   --stats-tile-bg: color-mix(in srgb, var(--panel-strong) 70%, var(--panel-soft));
+  --usage-s1: #3987e5;
+  --usage-s2: #d95926;
+  --usage-s3: #199e70;
+  --usage-s4: #c98500;
+  --usage-s5: #d55181;
+  --usage-s6: #2f9a2f;
+  --usage-s7: #9085e9;
+  --usage-other: #5a5955;
+  --usage-grid: rgba(226, 234, 255, 0.08);
   --structured-group-bg: rgba(22, 31, 45, 0.96);
   --structured-group-border: rgba(47, 129, 247, 0.16);
   --structured-card-bg: rgba(13, 17, 23, 0.98);
@@ -16950,9 +16969,334 @@ body.is-col-resizing .automation-board-lane-resize-handle::after {
   transition: width 0.2s ease;
 }
 
+/* -- Stats Card: 视图切换 + 「全部 Claude 用量」视图（docs/specs/claude-usage-ledger） ---- */
+/*
+ * 壳子不抢高度：原来 .stats-card 直接挂在卡片体里按内容撑高、空间不够时自己滚动，
+ * 这里只是在它上面加一行切换，所以壳子同样不 flex-grow（加了会把本应用视图拉成整卡高）。
+ */
+.stats-card-shell {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.stats-view-switch {
+  display: flex;
+  padding: 10px 16px 0;
+}
+
+.usage-view {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
+}
+
+.usage-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 10px;
+  align-items: center;
+}
+
+.usage-refresh {
+  border: 1px solid var(--line);
+}
+
+.usage-refresh:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
+.usage-status {
+  overflow: hidden;
+  flex: 1 1 120px;
+  min-width: 0;
+  font-size: 10px;
+  color: var(--ink-4);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.usage-kpis {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.usage-kpi-top {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.usage-section {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--stats-tile-bg);
+}
+
+.usage-section-head {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 10px;
+  align-items: center;
+}
+
+.usage-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px 10px;
+  font-size: 10px;
+  color: var(--ink-3);
+}
+
+.usage-legend-item {
+  display: inline-flex;
+  gap: 4px;
+  align-items: center;
+}
+
+.usage-swatch {
+  display: inline-block;
+  flex: none;
+  width: 9px;
+  height: 9px;
+  border-radius: 3px;
+}
+
+.usage-chart-host {
+  position: relative;
+  width: 100%;
+  min-width: 0;
+}
+
+.usage-chart {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+
+.usage-gridline {
+  stroke: var(--usage-grid);
+}
+
+.usage-axis-text {
+  font-size: 10px;
+  fill: var(--ink-4);
+}
+
+/* 段的颜色由内联 style 的 fill 给出（var(--usage-sN)），这里只留兜底 */
+.usage-bar-segment {
+  fill: var(--usage-other);
+}
+
+.usage-hit {
+  fill: transparent;
+}
+
+.usage-hit.is-hover {
+  fill: var(--accent-soft);
+}
+
+.usage-tooltip {
+  position: absolute;
+  top: 8px;
+  z-index: 2;
+  min-width: 170px;
+  max-width: 240px;
+  padding: 7px 9px;
+  border: 1px solid var(--line-strong);
+  border-radius: 8px;
+  background: var(--panel-strong);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.14);
+  font-size: 10px;
+  color: var(--ink-2);
+  pointer-events: none;
+}
+
+.usage-tooltip-row {
+  display: flex;
+  gap: 10px;
+  justify-content: space-between;
+}
+
+.usage-tooltip-row span:first-child {
+  display: inline-flex;
+  gap: 4px;
+  align-items: center;
+  overflow: hidden;
+  min-width: 0;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.usage-tooltip-row span:last-child,
+.usage-tooltip-row b:last-child {
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.usage-search {
+  margin-left: auto;
+  width: 160px;
+  max-width: 100%;
+  padding: 3px 8px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--panel);
+  color: var(--ink-1);
+  font: inherit;
+  font-size: 11px;
+}
+
+.usage-search:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.usage-table-scroll {
+  overflow-x: auto;
+  max-width: 100%;
+}
+
+.usage-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 11px;
+  color: var(--ink-2);
+}
+
+.usage-table th {
+  padding: 4px 6px;
+  border-bottom: 1px solid var(--line);
+  font-size: 10px;
+  font-weight: 500;
+  color: var(--ink-3);
+  text-align: left;
+  white-space: nowrap;
+}
+
+.usage-table td {
+  padding: 6px;
+  border-bottom: 1px solid var(--line-soft);
+  vertical-align: middle;
+}
+
+.usage-table tbody tr:last-child td {
+  border-bottom: none;
+}
+
+.usage-table .usage-num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.usage-col-rank {
+  color: var(--ink-4);
+}
+
+.usage-project-name {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  font-weight: 600;
+  color: var(--ink-1);
+  white-space: nowrap;
+}
+
+.usage-project-path {
+  overflow: hidden;
+  max-width: 220px;
+  font-size: 9px;
+  color: var(--ink-4);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.usage-share {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  min-width: 110px;
+}
+
+.usage-share-track {
+  overflow: hidden;
+  flex: 1;
+  height: 6px;
+  border-radius: 3px;
+  background: var(--stats-heat-0);
+}
+
+.usage-share-fill {
+  height: 100%;
+  border-radius: 0 3px 3px 0;
+  background: var(--accent);
+}
+
+.usage-share span {
+  width: 40px;
+  font-size: 10px;
+  color: var(--ink-3);
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.usage-models {
+  font-size: 10px;
+  color: var(--ink-3);
+  white-space: nowrap;
+}
+
+.usage-table-empty {
+  padding: 18px;
+  font-size: 11px;
+  color: var(--ink-4);
+  text-align: center;
+}
+
+.usage-note {
+  font-size: 9px;
+  color: var(--ink-4);
+}
+
+@container stats-card (max-width: 720px) {
+  .usage-kpis {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  /* 窄卡先收次要列，整表仍可横向滚动兜底（ui-principles 规则 6：按卡片自己的宽度 reflow） */
+  .usage-col-models,
+  .usage-col-chars,
+  .usage-col-last {
+    display: none;
+  }
+}
+
 @container stats-card (max-width: 420px) {
   .stats-card-summary {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .usage-kpis {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .usage-col-share,
+  .usage-col-rank {
+    display: none;
+  }
+
+  .usage-search {
+    width: 100%;
+    margin-left: 0;
   }
 
   .stats-heatmap-footer {

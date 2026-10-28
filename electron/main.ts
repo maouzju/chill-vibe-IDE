@@ -1465,6 +1465,7 @@ function registerDesktopHandlers() {
   ipcMain.handle('desktop:list-external-history', (_event, request) =>
     desktopBackend.listExternalHistory(request),
   )
+  ipcMain.handle('desktop:claude-usage', (_event, request) => desktopBackend.getClaudeUsage(request))
   ipcMain.handle('desktop:load-external-session', (_event, request) =>
     desktopBackend.loadExternalSession(request),
   )

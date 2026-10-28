@@ -17,6 +17,8 @@ import {
   compactedCardHistoryLoadResponseSchema,
   externalHistoryListRequestSchema,
   externalHistoryListResponseSchema,
+  claudeUsageRequestSchema,
+  claudeUsageResponseSchema,
   externalSessionLoadRequestSchema,
   externalSessionLoadResponseSchema,
   internalSessionHistoryLoadRequestSchema,
@@ -95,6 +97,8 @@ import {
   type NativeTurnCompletionResponse,
   type ExternalHistoryListRequest,
   type ExternalHistoryListResponse,
+  type ClaudeUsageRequest,
+  type ClaudeUsageResponse,
   type ExternalSessionLoadRequest,
   type ExternalSessionLoadResponse,
   type InternalSessionHistoryLoadRequest,
@@ -510,6 +514,23 @@ export const listExternalHistory = async (
   const fn = requireDesktopAction(getDesktopApi()?.listExternalHistory)
 
   return readDesktop(() => fn(parsed), externalHistoryListResponseSchema)
+}
+
+/** 桌面走 IPC、浏览器走 fetch（docs/specs/claude-usage-ledger FR-6）。 */
+export const fetchClaudeUsage = async (request: ClaudeUsageRequest): Promise<ClaudeUsageResponse> => {
+  const parsed = claudeUsageRequestSchema.parse(request)
+  const desktop = getDesktopApi()
+  if (desktop?.getClaudeUsage) {
+    return readDesktop(() => desktop.getClaudeUsage!(parsed), claudeUsageResponseSchema)
+  }
+
+  const query = new URLSearchParams({ from: parsed.from, to: parsed.to })
+  for (const workspace of parsed.workspaces) query.append('workspace', workspace)
+  for (const urge of parsed.urgeMessages) query.append('urge', urge)
+  if (parsed.refresh) query.set('refresh', '1')
+  const response = await fetch(`/api/claude-usage?${query.toString()}`)
+  if (!response.ok) throw new Error('Failed to fetch Claude usage')
+  return claudeUsageResponseSchema.parse(await response.json())
 }
 
 export const loadExternalSession = async (

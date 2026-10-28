@@ -173,6 +173,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.invoke('desktop:stop-chat', streamId, origin),
   listExternalHistory: (request: unknown) =>
     ipcRenderer.invoke('desktop:list-external-history', request),
+  getClaudeUsage: (request: unknown) => ipcRenderer.invoke('desktop:claude-usage', request),
   loadExternalSession: (request: unknown) =>
     ipcRenderer.invoke('desktop:load-external-session', request),
   subscribeChatStream: (streamId: string, subscriptionId: string) =>

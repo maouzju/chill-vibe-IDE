@@ -2331,3 +2331,76 @@ export const gitFileLineDiffSchema = z.object({
   removed: z.array(z.number()),
 })
 export type GitFileLineDiffResponse = z.infer<typeof gitFileLineDiffSchema>
+
+// ── Claude usage ledger（docs/specs/claude-usage-ledger）────────────────────────
+
+const usageDayKeySchema = z.string().regex(/^\d{4}-\d{2}-\d{2}$/)
+
+export const claudeUsageRequestSchema = z.object({
+  from: usageDayKeySchema,
+  to: usageDayKeySchema,
+  /** Chill Vibe 已配置的工作区路径；cwd 落在其下的会话归该工作区（FR-4）。 */
+  workspaces: z.array(z.string()).default([]),
+  /** 用户设置里的自动鞭策文案；提示词统计要把它们剔除（FR-5）。 */
+  urgeMessages: z.array(z.string()).default([]),
+  /** 为 true 时后台重新扫描新增文件；响应不等扫描结束。 */
+  refresh: z.boolean().default(false),
+})
+export type ClaudeUsageRequest = z.infer<typeof claudeUsageRequestSchema>
+
+export const claudeUsageModelFamilySchema = z.enum(['fable', 'opus', 'sonnet', 'haiku'])
+export type ClaudeUsageModelFamily = z.infer<typeof claudeUsageModelFamilySchema>
+
+export const claudeUsageProjectSchema = z.object({
+  /** 项目 id：工作区 / Git 目录名，或 `(temp)` 这类特殊桶（前端翻译显示名）。 */
+  id: z.string(),
+  path: z.string().nullable(),
+  costUsd: z.number(),
+  share: z.number(),
+  tokens: z.number(),
+  outputTokens: z.number(),
+  // zod 4 的 z.record(enum) 要求键穷举；一个项目通常只用过其中一两族，必须是 partialRecord
+  costByFamily: z.partialRecord(claudeUsageModelFamilySchema, z.number()),
+  sessions: z.number().int(),
+  prompts: z.number().int(),
+  promptChars: z.number().int(),
+  lastUsedAt: z.string().nullable(),
+})
+export type ClaudeUsageProject = z.infer<typeof claudeUsageProjectSchema>
+
+const usageDailyMetricSchema = z.record(z.string(), z.record(z.string(), z.number()))
+
+export const claudeUsageResponseSchema = z.object({
+  from: usageDayKeySchema,
+  to: usageDayKeySchema,
+  kpi: z.object({
+    totalCostUsd: z.number(),
+    activeDays: z.number().int(),
+    dailyAverageCostUsd: z.number(),
+    totalTokens: z.number(),
+    outputTokens: z.number(),
+    sessions: z.number().int(),
+    projects: z.number().int(),
+    topProject: z.string().nullable(),
+    topProjectShare: z.number(),
+  }),
+  /** `daily.cost['2026-10-27']['kubi'] = 12.3`，四个口径同形。 */
+  daily: z.object({
+    cost: usageDailyMetricSchema,
+    tokens: usageDailyMetricSchema,
+    prompts: usageDailyMetricSchema,
+    promptChars: usageDailyMetricSchema,
+  }),
+  projects: z.array(claudeUsageProjectSchema),
+  /** 全时段费用前 7 的项目 id，决定着色；筛时段不换色。 */
+  colorOrder: z.array(z.string()),
+  span: z.object({ from: usageDayKeySchema, to: usageDayKeySchema }).nullable(),
+  scan: z.object({
+    scanning: z.boolean(),
+    done: z.number().int(),
+    total: z.number().int(),
+    lastScanAt: z.string().nullable(),
+    error: z.string().nullable(),
+  }),
+})
+export type ClaudeUsageResponse = z.infer<typeof claudeUsageResponseSchema>

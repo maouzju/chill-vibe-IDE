@@ -14,17 +14,20 @@ import type { BoardColumn, SessionHistoryEntry } from '../shared/schema'
 export type StatsSourceSnapshot = {
   columns: readonly BoardColumn[]
   sessionHistory: readonly SessionHistoryEntry[]
+  /** 用户设置里各鞭策档案的文案；「全部 Claude 用量」视图把它们随请求送给账本剔除（claude-usage-ledger FR-5）。 */
+  autoUrgeMessages: readonly string[]
 }
 
-const emptySnapshot: StatsSourceSnapshot = { columns: [], sessionHistory: [] }
+const emptySnapshot: StatsSourceSnapshot = { columns: [], sessionHistory: [], autoUrgeMessages: [] }
 
 let snapshot: StatsSourceSnapshot = emptySnapshot
 
 export const publishStatsSource = (
   columns: readonly BoardColumn[],
   sessionHistory: readonly SessionHistoryEntry[],
+  autoUrgeMessages: readonly string[] = [],
 ) => {
-  snapshot = { columns, sessionHistory }
+  snapshot = { columns, sessionHistory, autoUrgeMessages }
 }
 
 export const readStatsSource = (): StatsSourceSnapshot => snapshot

@@ -993,7 +993,11 @@ function App() {
 
   // 统计卡走模块级快照而不是 props，理由见 src/stats-card-source.ts 顶部注释。
   // 这里只是一次 O(1) 赋值，故意不做条件判断——漏一次就等于统计卡看到旧数据。
-  publishStatsSource(appState.columns, appState.sessionHistory)
+  publishStatsSource(
+    appState.columns,
+    appState.sessionHistory,
+    appState.settings.autoUrgeProfiles.map((profile) => profile.message),
+  )
   const autoUrgeProfileTemplate =
     appState.settings.autoUrgeProfiles[appState.settings.autoUrgeProfiles.length - 1] ?? null
   const activeAutoUrgeProfile =

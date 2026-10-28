@@ -22,6 +22,7 @@ import {
 } from '../server/file-watcher.ts'
 import { readNearestTsconfig } from '../server/tsconfig-discovery.ts'
 import { listExternalSessions, loadExternalSession } from '../server/external-history.ts'
+import { getClaudeUsage } from '../server/claude-usage-ledger.ts'
 import { loadCompactedCardHistoryForDisplay } from '../server/compacted-card-history.ts'
 import { getAppDataDir } from '../server/app-paths.ts'
 import { forkProviderSession } from '../server/session-fork.ts'
@@ -119,6 +120,7 @@ import {
   rendererCrashCaptureRequestSchema,
   ccSwitchImportRequestSchema,
   externalHistoryListRequestSchema,
+  claudeUsageRequestSchema,
   externalSessionLoadRequestSchema,
   internalSessionHistoryDeleteRequestSchema,
   internalSessionHistoryHideRequestSchema,
@@ -611,6 +613,10 @@ export const createDesktopBackend = (deps: DesktopBackendDependencies = {}) => {
     },
     async loadExternalSession(request: ExternalSessionLoadRequest) {
       return loadExternalSession(externalSessionLoadRequestSchema.parse(request))
+    },
+    // 统计卡「全部 Claude 用量」：账本懒建，数据目录此时已由 configureDesktopEnvironment 配好（pitfall 77/79）。
+    async getClaudeUsage(request: unknown) {
+      return getClaudeUsage(claudeUsageRequestSchema.parse(request))
     },
 
     // ── Remote Monitor（手机远程监工）────────────────────────────────────────

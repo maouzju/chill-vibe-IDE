@@ -446,6 +446,55 @@ type LocaleText = {
   statsWeekdayLabels: readonly string[]
   statsMonthLabels: readonly string[]
 
+  // Stats card — 「全部 Claude 用量」视图（docs/specs/claude-usage-ledger）
+  statsViewLabel: string
+  statsViewBoard: string
+  statsViewClaude: string
+  usagePresetToday: string
+  usagePresetYesterday: string
+  usagePresetLast7: string
+  usagePresetLast30: string
+  usagePresetThisMonth: string
+  usagePresetLastMonth: string
+  usagePresetAll: string
+  usageRefresh: string
+  usageScanning: (done: number, total: number) => string
+  usageUpdatedAt: (time: string) => string
+  usageNeverScanned: string
+  usageLoadFailed: string
+  usageKpiTotalCost: string
+  usageKpiDailyAverage: string
+  usageKpiActiveDays: (days: number) => string
+  usageKpiTokens: string
+  usageKpiOutputTokens: (tokens: string) => string
+  usageKpiSessions: string
+  usageKpiProjects: (count: number) => string
+  usageKpiTop: string
+  usageKpiTopShare: (percent: string) => string
+  usageMetricCost: string
+  usageMetricTokens: string
+  usageMetricPrompts: string
+  usageMetricPromptChars: string
+  usageChartTitle: Record<'cost' | 'tokens' | 'prompts' | 'promptChars', string>
+  usageOtherProjects: string
+  usageTooltipRest: (count: number) => string
+  usageTooltipEmpty: string
+  usageTableTitle: string
+  usageSearchPlaceholder: string
+  usageColProject: string
+  usageColCost: string
+  usageColShare: string
+  usageColTokens: string
+  usageColModels: string
+  usageColSessions: string
+  usageColPrompts: string
+  usageColChars: string
+  usageColLastUsed: string
+  usageTableEmpty: string
+  usagePriceNote: (copiedOn: string) => string
+  usageProjectLabels: Record<'(temp)' | '(git-root)' | '(claude-config)' | '(home)' | '(unknown)', string>
+  usageFamilyLabels: Record<'fable' | 'opus' | 'sonnet' | 'haiku', string>
+
   // Automation Board
   automationBoardTitle: string
   automationBoardLaneStandby: string
@@ -1034,6 +1083,66 @@ const localeTextByLanguage: Record<AppLanguage, LocaleText> = {
       '1月', '2月', '3月', '4月', '5月', '6月',
       '7月', '8月', '9月', '10月', '11月', '12月',
     ],
+
+    statsViewLabel: '统计范围',
+    statsViewBoard: '本应用',
+    statsViewClaude: '全部 Claude 用量',
+    usagePresetToday: '今天',
+    usagePresetYesterday: '昨天',
+    usagePresetLast7: '近 7 天',
+    usagePresetLast30: '近 30 天',
+    usagePresetThisMonth: '本月',
+    usagePresetLastMonth: '上月',
+    usagePresetAll: '全部',
+    usageRefresh: '刷新',
+    usageScanning: (done, total) => `正在读取会话记录 ${done}/${total}（首次较慢，之后只读新增）`,
+    usageUpdatedAt: (time) => `数据更新于 ${time}`,
+    usageNeverScanned: '还没扫描过',
+    usageLoadFailed: '读取用量失败',
+    usageKpiTotalCost: '总费用',
+    usageKpiDailyAverage: '日均费用',
+    usageKpiActiveDays: (days) => `${days} 个有使用的日子`,
+    usageKpiTokens: '总 Token',
+    usageKpiOutputTokens: (tokens) => `其中输出 ${tokens}`,
+    usageKpiSessions: '会话数',
+    usageKpiProjects: (count) => `${count} 个项目`,
+    usageKpiTop: '最大头',
+    usageKpiTopShare: (percent) => `占 ${percent}`,
+    usageMetricCost: '费用',
+    usageMetricTokens: 'Token',
+    usageMetricPrompts: '提示词次数',
+    usageMetricPromptChars: '提示词字符数',
+    usageChartTitle: {
+      cost: '每日费用',
+      tokens: '每日 Token',
+      prompts: '每日提示词次数',
+      promptChars: '每日提示词字符数',
+    },
+    usageOtherProjects: '其他',
+    usageTooltipRest: (count) => `其余 ${count} 个`,
+    usageTooltipEmpty: '没有使用',
+    usageTableTitle: '各项目消耗',
+    usageSearchPlaceholder: '搜索项目 / 路径',
+    usageColProject: '项目',
+    usageColCost: '费用',
+    usageColShare: '占比',
+    usageColTokens: 'Token',
+    usageColModels: '模型构成',
+    usageColSessions: '会话',
+    usageColPrompts: '提示词',
+    usageColChars: '字符数',
+    usageColLastUsed: '最近使用',
+    usageTableEmpty: '这个时段没有使用记录',
+    usagePriceNote: (copiedOn) =>
+      `费用按 Claude API 公开价估算（${copiedOn} 抄录，含缓存读写）；提示词只算你亲手打的部分。`,
+    usageProjectLabels: {
+      '(temp)': '临时目录',
+      '(git-root)': 'Git 根目录',
+      '(claude-config)': 'Claude 配置',
+      '(home)': '用户目录',
+      '(unknown)': '未知目录',
+    },
+    usageFamilyLabels: { fable: 'Fable', opus: 'Opus', sonnet: 'Sonnet', haiku: 'Haiku' },
 
     automationBoardTitle: '自动化看板',
     automationBoardLaneStandby: '待命',
@@ -1640,6 +1749,66 @@ const localeTextByLanguage: Record<AppLanguage, LocaleText> = {
       'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
       'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec',
     ],
+
+    statsViewLabel: 'Scope',
+    statsViewBoard: 'This app',
+    statsViewClaude: 'All Claude usage',
+    usagePresetToday: 'Today',
+    usagePresetYesterday: 'Yesterday',
+    usagePresetLast7: 'Last 7 days',
+    usagePresetLast30: 'Last 30 days',
+    usagePresetThisMonth: 'This month',
+    usagePresetLastMonth: 'Last month',
+    usagePresetAll: 'All time',
+    usageRefresh: 'Refresh',
+    usageScanning: (done, total) => `Reading session logs ${done}/${total} (first pass is slow; later passes read only new lines)`,
+    usageUpdatedAt: (time) => `Updated ${time}`,
+    usageNeverScanned: 'Not scanned yet',
+    usageLoadFailed: 'Could not load usage',
+    usageKpiTotalCost: 'Total cost',
+    usageKpiDailyAverage: 'Daily average',
+    usageKpiActiveDays: (days) => `${days} active ${days === 1 ? 'day' : 'days'}`,
+    usageKpiTokens: 'Total tokens',
+    usageKpiOutputTokens: (tokens) => `${tokens} output`,
+    usageKpiSessions: 'Sessions',
+    usageKpiProjects: (count) => `${count} ${count === 1 ? 'project' : 'projects'}`,
+    usageKpiTop: 'Top project',
+    usageKpiTopShare: (percent) => `${percent} of cost`,
+    usageMetricCost: 'Cost',
+    usageMetricTokens: 'Tokens',
+    usageMetricPrompts: 'Prompts',
+    usageMetricPromptChars: 'Prompt chars',
+    usageChartTitle: {
+      cost: 'Daily cost',
+      tokens: 'Daily tokens',
+      prompts: 'Daily prompts',
+      promptChars: 'Daily prompt characters',
+    },
+    usageOtherProjects: 'Other',
+    usageTooltipRest: (count) => `${count} more`,
+    usageTooltipEmpty: 'No usage',
+    usageTableTitle: 'By project',
+    usageSearchPlaceholder: 'Search project / path',
+    usageColProject: 'Project',
+    usageColCost: 'Cost',
+    usageColShare: 'Share',
+    usageColTokens: 'Tokens',
+    usageColModels: 'Models',
+    usageColSessions: 'Sessions',
+    usageColPrompts: 'Prompts',
+    usageColChars: 'Chars',
+    usageColLastUsed: 'Last used',
+    usageTableEmpty: 'No usage in this period',
+    usagePriceNote: (copiedOn) =>
+      `Cost is an estimate at public Claude API prices (copied ${copiedOn}, cache reads/writes included); prompts count only what you typed yourself.`,
+    usageProjectLabels: {
+      '(temp)': 'Temp folders',
+      '(git-root)': 'Git root',
+      '(claude-config)': 'Claude config',
+      '(home)': 'Home folder',
+      '(unknown)': 'Unknown folder',
+    },
+    usageFamilyLabels: { fable: 'Fable', opus: 'Opus', sonnet: 'Sonnet', haiku: 'Haiku' },
 
     automationBoardTitle: 'Automation Board',
     automationBoardLaneStandby: 'Standby',

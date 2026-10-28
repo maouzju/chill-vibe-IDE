@@ -12,6 +12,7 @@ import {
   closedWorkspaceSnapshotSchema,
   compactedCardHistoryLoadRequestSchema,
   externalHistoryListRequestSchema,
+  claudeUsageRequestSchema,
   externalSessionLoadRequestSchema,
   internalSessionHistoryDeleteRequestSchema,
   internalSessionHistoryHideRequestSchema,
@@ -48,6 +49,7 @@ import { resolveImageAttachmentPath, storeImageAttachment } from './attachments.
 import { getAppDataDir, getDefaultWorkspacePath } from './app-paths.js'
 import { importCcSwitchProfiles } from './cc-switch-import.js'
 import { listExternalSessions, loadExternalSession } from './external-history.js'
+import { getClaudeUsage } from './claude-usage-ledger.js'
 import { forkProviderSession } from './session-fork.js'
 import {
   getClaudeNativeTurnCompletion,
@@ -867,6 +869,32 @@ app.get('/api/external-history', async (request, response) => {
   } catch (error) {
     response.status(500).json({
       message: error instanceof Error ? error.message : 'Unable to list external history.',
+    })
+  }
+})
+
+// docs/specs/claude-usage-ledger FR-6：请求不等扫描，先用已有聚合作答。
+app.get('/api/claude-usage', async (request, response) => {
+  const asList = (value: unknown) =>
+    Array.isArray(value) ? value.filter((item): item is string => typeof item === 'string') : typeof value === 'string' ? [value] : []
+  const parsed = claudeUsageRequestSchema.safeParse({
+    from: request.query.from,
+    to: request.query.to,
+    workspaces: asList(request.query.workspace),
+    urgeMessages: asList(request.query.urge),
+    refresh: request.query.refresh === '1' || request.query.refresh === 'true',
+  })
+
+  if (!parsed.success) {
+    response.status(400).json({ message: 'from/to must be YYYY-MM-DD.' })
+    return
+  }
+
+  try {
+    response.json(await getClaudeUsage(parsed.data))
+  } catch (error) {
+    response.status(500).json({
+      message: error instanceof Error ? error.message : 'Unable to read Claude usage.',
     })
   }
 })

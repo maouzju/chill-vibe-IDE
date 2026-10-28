@@ -102,7 +102,9 @@
 - [x] `pnpm test:quality`、`tests/stats-card-theme.spec.ts` 快照。
 
 ## 后续可做（未做，非阻塞）
-- 真·全局历史：`~/.claude/projects` 与 `~/.codex` 里的会话是更完整的数据源，但需要一个
-  全局扫描端点，风险见 requirements.md 的 FR-3。
+- ~~真·全局历史：`~/.claude/projects` 与 `~/.codex` 里的会话是更完整的数据源，但需要一个
+  全局扫描端点，风险见 requirements.md 的 FR-3。~~ Claude 侧已做（2026-10-28），作为本卡的
+  第二视图「全部 Claude 用量」，走服务端后台增量扫描，见 `docs/specs/claude-usage-ledger/`；
+  本视图（「本应用」）的 FR-3 口径不变。`~/.codex` 仍未覆盖。
 - 存量归档中 sidecar 已丢失的条目永远补不回用量，只能一直计入
   `archivedSessionsWithoutUsage`。可接受：随着新归档积累，这个数字只减不增。

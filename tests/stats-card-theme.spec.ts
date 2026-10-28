@@ -180,6 +180,69 @@ const installMockApis = async (page: Page, theme: 'dark' | 'light') => {
   await page.route('**/api/slash-commands', async (route) => {
     await route.fulfill({ json: [] })
   })
+
+  // 「全部 Claude 用量」视图：mock 桥上没有 getClaudeUsage，api 回落到 fetch，这里喂固定数据。
+  await page.route('**/api/claude-usage**', async (route) => {
+    const url = new URL(route.request().url())
+    await route.fulfill({ json: createUsageFixture(url.searchParams.get('from') ?? '2026-09-29', url.searchParams.get('to') ?? '2026-10-28') })
+  })
+}
+
+/**
+ * 与 shared/schema.ts 的 claudeUsageResponseSchema 同形。四个项目 + 其他，足够画出堆叠、
+ * 图例折叠与表格的次要列；日期写死，截图不随"今天"漂移。
+ */
+const createUsageFixture = (from: string, to: string) => {
+  const projects = ['kubi', 'score-card-game', 'TaleCity', '(temp)']
+  const daily: Record<string, Record<string, number>> = {}
+  const tokens: Record<string, Record<string, number>> = {}
+  const prompts: Record<string, Record<string, number>> = {}
+  const chars: Record<string, Record<string, number>> = {}
+  for (let offset = 0; offset < 14; offset += 1) {
+    const day = `2026-10-${String(14 + offset).padStart(2, '0')}`
+    daily[day] = { kubi: 420 + offset * 37, 'score-card-game': 180 + (offset % 4) * 60, TaleCity: offset % 3 === 0 ? 90 : 0, '(temp)': 12 }
+    tokens[day] = { kubi: 300_000_000, 'score-card-game': 120_000_000, TaleCity: 40_000_000, '(temp)': 2_000_000 }
+    prompts[day] = { kubi: 80 + offset, 'score-card-game': 55, TaleCity: 12 }
+    chars[day] = { kubi: 24_000, 'score-card-game': 15_000, TaleCity: 3_000 }
+  }
+  const rows = [
+    { id: 'kubi', path: 'D:\\Git\\kubi', costUsd: 11_790, tokens: 8_670_000_000, outputTokens: 120_000_000, costByFamily: { opus: 9_500, fable: 1_900, sonnet: 390 }, sessions: 976, prompts: 3_243, promptChars: 8_400_000, lastUsedAt: '2026-10-27T11:26:00.000Z' },
+    { id: 'score-card-game', path: 'D:\\Git\\score-card-game', costUsd: 7_405, tokens: 5_150_000_000, outputTokens: 60_000_000, costByFamily: { opus: 4_900, fable: 1_400, sonnet: 960, haiku: 145 }, sessions: 777, prompts: 2_479, promptChars: 6_500_000, lastUsedAt: '2026-10-27T10:52:00.000Z' },
+    { id: 'TaleCity', path: 'D:\\Git\\TaleCity', costUsd: 1_210, tokens: 913_100_000, outputTokens: 9_000_000, costByFamily: { opus: 1_210 }, sessions: 41, prompts: 209, promptChars: 1_600_000, lastUsedAt: '2026-10-16T08:44:00.000Z' },
+    { id: '(temp)', path: null, costUsd: 168, tokens: 28_000_000, outputTokens: 400_000, costByFamily: { sonnet: 168 }, sessions: 9, prompts: 0, promptChars: 0, lastUsedAt: '2026-10-20T01:00:00.000Z' },
+  ]
+  const total = rows.reduce((sum, row) => sum + row.costUsd, 0)
+  return {
+    from,
+    to,
+    kpi: {
+      totalCostUsd: total,
+      activeDays: 14,
+      dailyAverageCostUsd: total / 14,
+      totalTokens: rows.reduce((sum, row) => sum + row.tokens, 0),
+      outputTokens: rows.reduce((sum, row) => sum + row.outputTokens, 0),
+      sessions: rows.reduce((sum, row) => sum + row.sessions, 0),
+      projects: rows.length,
+      topProject: 'kubi',
+      topProjectShare: rows[0]!.costUsd / total,
+    },
+    daily: { cost: daily, tokens, prompts, promptChars: chars },
+    projects: rows.map((row) => ({ ...row, share: row.costUsd / total })),
+    colorOrder: projects,
+    span: { from: '2026-09-01', to: '2026-10-28' },
+    scan: { scanning: false, done: 120, total: 120, lastScanAt: '2026-10-28T11:27:20.000Z', error: null },
+  }
+}
+
+const openClaudeUsageView = async (page: Page) => {
+  const shell = page.locator('[data-stats-card-shell]').first()
+  await expect(shell).toBeVisible()
+  await shell.locator('[data-picker="view"] .stats-range-button', { hasText: 'All Claude usage' }).click()
+  const view = shell.locator('[data-claude-usage]')
+  await expect(view).toBeVisible()
+  await expect(view.locator('.usage-kpis .stats-tile')).toHaveCount(5)
+  await expect(view.locator('.usage-chart rect.usage-bar-segment').first()).toBeVisible()
+  return { shell, view }
 }
 
 /**
@@ -289,4 +352,63 @@ test('a narrow card keeps the calendar inside its bounds', async ({ page }) => {
   expect(overflow.cellWidth).toBeLessThan(20)
 
   await expect(card).toHaveScreenshot('stats-card-narrow-light.png', { maxDiffPixelRatio: 0.01 })
+})
+
+for (const theme of ['light', 'dark'] as const) {
+  test(`the all-Claude usage view renders KPIs, chart and table in the ${theme} theme`, async ({ page }) => {
+    await page.setViewportSize({ width: 1280, height: 1000 })
+    await installMockApis(page, theme)
+    await page.goto(appUrl)
+
+    const { view } = await openClaudeUsageView(page)
+
+    await expect(view.locator('[data-picker="usage-preset"] .stats-range-button.is-active')).toHaveText('Last 30 days')
+    await expect(view.locator('.usage-kpis .stats-tile-value').first()).toHaveText('$20,573')
+    // 四个项目各一色，图例里没有「其他」（colorOrder 覆盖了全部）
+    await expect(view.locator('.usage-legend-item')).toHaveCount(4)
+    await expect(view.locator('.usage-table tbody tr')).toHaveCount(4)
+    await expect(view.locator('.usage-table tbody tr').nth(3).locator('.usage-project-name')).toHaveText('Temp folders')
+    await expect(view.locator('.usage-status')).toHaveText(/Updated \d{2}:\d{2}:\d{2}/)
+
+    // 悬停柱子弹出当天明细（提示框绝对定位在图表容器内，不用 fixed）
+    await view.locator('.usage-hit').nth(3).hover()
+    await expect(view.locator('.usage-tooltip')).toBeVisible()
+    await expect(view.locator('.usage-tooltip')).toContainText('2026-10-17')
+
+    // 切口径不换色、不重拉：图例顺序不变
+    await view.locator('[data-picker="usage-metric"] .stats-range-button', { hasText: 'Prompts' }).click()
+    await expect(view.locator('.usage-legend-item').first()).toHaveText('kubi')
+    await view.locator('[data-picker="usage-metric"] .stats-range-button', { hasText: 'Cost' }).click()
+    await page.mouse.move(5, 5)
+    await expect(view.locator('.usage-tooltip')).toHaveCount(0)
+
+    await expect(view).toHaveScreenshot(`stats-card-usage-${theme}.png`, { maxDiffPixelRatio: 0.01 })
+  })
+}
+
+test('the all-Claude usage view folds columns on a narrow card instead of overflowing', async ({ page }) => {
+  await page.setViewportSize({ width: 560, height: 1000 })
+  await installMockApis(page, 'light')
+  await page.goto(appUrl)
+
+  const { shell, view } = await openClaudeUsageView(page)
+
+  const layout = await view.evaluate((node) => {
+    const scroller = node.querySelector('.usage-table-scroll') as HTMLElement | null
+    const modelsHeader = node.querySelector('th.usage-col-models') as HTMLElement | null
+    const chart = node.querySelector('.usage-chart') as SVGElement | null
+    return {
+      viewRight: Math.round(node.getBoundingClientRect().right),
+      chartRight: Math.round(chart?.getBoundingClientRect().right ?? 0),
+      kpiColumns: getComputedStyle(node.querySelector('.usage-kpis') as HTMLElement).gridTemplateColumns.split(' ').length,
+      modelsHidden: modelsHeader ? getComputedStyle(modelsHeader).display === 'none' : false,
+      tableClips: scroller ? getComputedStyle(scroller).overflowX !== 'visible' : false,
+    }
+  })
+
+  expect(layout.chartRight).toBeLessThanOrEqual(layout.viewRight)
+  expect(layout.kpiColumns).toBeLessThanOrEqual(3)
+  expect(layout.modelsHidden).toBe(true)
+  expect(layout.tableClips).toBe(true)
+  await expect(shell).toHaveScreenshot('stats-card-usage-narrow-light.png', { maxDiffPixelRatio: 0.01 })
 })

@@ -85,8 +85,12 @@ const resolveExternalHistoryHomeDirs = () => {
   return Array.from(unique)
 }
 
-const getClaudeProjectsDirs = () =>
+/** 所有候选家目录下的 `~/.claude/projects`（pitfall 32：HOME 与 USERPROFILE 可能不一致）。用量账本也从这里扫。 */
+export const getClaudeProjectsDirs = () =>
   resolveExternalHistoryHomeDirs().map((homeDir) => path.join(homeDir, '.claude', 'projects'))
+
+/** 候选家目录本身（用量账本按它判断 `~/.claude` / `~` 的特殊归属）。 */
+export const getExternalHistoryHomeDirs = () => resolveExternalHistoryHomeDirs()
 const getCodexBaseDirs = () =>
   resolveExternalHistoryHomeDirs().map((homeDir) => path.join(homeDir, '.codex'))
 const getCodexSessionsDirs = () => getCodexBaseDirs().map((baseDir) => path.join(baseDir, 'sessions'))

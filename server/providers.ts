@@ -47,6 +47,11 @@ import {
 } from '../shared/reasoning.js'
 import { providerSupportsImageAttachments } from '../shared/chat-attachments.js'
 import { isCliLoginProfile } from '../shared/schema.js'
+import {
+  CLAUDE_EMPTY_CONTINUE_PROMPT,
+  CLAUDE_IMAGE_PROMPT_PREFIX_MULTI,
+  CLAUDE_IMAGE_PROMPT_PREFIX_SINGLE,
+} from '../shared/claude-prompt-markers.js'
 import type {
   AppLanguage,
   AppSettings,
@@ -4739,11 +4744,12 @@ const getClaudePrompt = (request: ChatRequest, attachmentPaths: string[]) => {
     // "No deferred tool marker found in the resumed session" unless we give it
     // something to continue with. Emit a neutral fallback so auto-resume feels
     // seamless instead of surfacing that error to the user.
-    return request.sessionId ? 'Please continue.' : ''
+    return request.sessionId ? CLAUDE_EMPTY_CONTINUE_PROMPT : ''
   }
 
+  // 前缀常量住在 shared：用量统计靠同一份常量把这层壳子剥掉（docs/specs/claude-usage-ledger FR-5）。
   const imagePrefix =
-    attachmentPaths.length > 1 ? 'Analyze these images:' : 'Analyze this image:'
+    attachmentPaths.length > 1 ? CLAUDE_IMAGE_PROMPT_PREFIX_MULTI : CLAUDE_IMAGE_PROMPT_PREFIX_SINGLE
   const imageRefs = attachmentPaths.join('\n')
 
   return prompt

@@ -1,4 +1,5 @@
 import { getChatMessageAttachments } from '../shared/chat-attachments.ts'
+import { getLatestTurnAttachmentLine, getSeededPromptCopy } from '../shared/chat-request-seeding-copy'
 import type {
   AppLanguage,
   CardStatus,
@@ -84,51 +85,17 @@ const getAttachmentLine = (
   const names = attachments.map((attachment) => attachment.fileName).join(', ')
   const count = attachments.length
 
-  if (language === 'en') {
-    if (prefix === 'latest-turn') {
-      return `The latest user turn includes ${count} attached image${count === 1 ? '' : 's'}: ${names}.`
-    }
-
-    return `Attached image${count === 1 ? '' : 's'}: ${names}`
+  if (prefix === 'latest-turn') {
+    // 文案住在 shared：用量统计要在服务端认出这一行（docs/specs/claude-usage-ledger FR-5）。
+    return getLatestTurnAttachmentLine(language, count, names)
   }
 
-  if (prefix === 'latest-turn') {
-    return `当前这条用户消息还包含 ${count} 张附图：${names}。`
+  if (language === 'en') {
+    return `Attached image${count === 1 ? '' : 's'}: ${names}`
   }
 
   return `附图：${names}`
 }
-
-const getSeededPromptCopy = (language: AppLanguage) =>
-  language === 'en'
-    ? {
-        intro: 'Continue this conversation in a new session.',
-        context: 'Treat the transcript below as prior context for the reply.',
-        transcriptLabel: 'Prior transcript:',
-        latestMessageLabel: 'Latest user message:',
-        emptyLatestMessage:
-          'Please continue. (The user sent an empty message, which means: keep working on the task above.)',
-        replyInstruction: 'Reply to the latest user message using the prior transcript as context.',
-        doNotMentionFork:
-          'Do not mention that the conversation was forked or replayed unless the user asks.',
-        attachedImagesLabel: 'Attached images',
-        omittedTranscript: (count: number) =>
-          `[Earlier transcript omitted: ${count} message${count === 1 ? '' : 's'}.]`,
-        truncatedBlock: (omittedChars: number) =>
-          `[Fork transcript truncated: ${omittedChars} characters omitted.]`,
-      }
-    : {
-        intro: '请在一个新的会话里继续这段对话。',
-        context: '把下面的 transcript 当作这次回复的已有上下文。',
-        transcriptLabel: '已有 transcript：',
-        latestMessageLabel: '当前用户消息：',
-        emptyLatestMessage: '请继续。（用户发送了空消息，含义是：继续完成上面的任务。）',
-        replyInstruction: '请基于上面的 transcript 回答当前用户消息。',
-        doNotMentionFork: '除非用户主动问起，否则不要提到这是分叉或重放出来的上下文。',
-        attachedImagesLabel: '附图',
-        omittedTranscript: (count: number) => `[更早的 transcript 已省略：${count} 条消息。]`,
-        truncatedBlock: (omittedChars: number) => `[分叉上下文已截断：省略 ${omittedChars} 个字符。]`,
-      }
 
 const truncateWithNotice = (
   value: string,

@@ -20,6 +20,8 @@ import type {
   NativeTurnCompletionResponse,
   ExternalHistoryListRequest,
   ExternalHistoryListResponse,
+  ClaudeUsageRequest,
+  ClaudeUsageResponse,
   ExternalSessionLoadRequest,
   ExternalSessionLoadResponse,
   InternalSessionHistoryLoadRequest,
@@ -172,6 +174,7 @@ declare global {
       // must read as "the terminal envelope was not deferred".
       stopChat?: (streamId: string, origin?: string) => Promise<{ settlingWithinMs?: number; interrupted?: boolean } | void>
       listExternalHistory?: (request: ExternalHistoryListRequest) => Promise<ExternalHistoryListResponse>
+      getClaudeUsage?: (request: ClaudeUsageRequest) => Promise<ClaudeUsageResponse>
       loadExternalSession?: (request: ExternalSessionLoadRequest) => Promise<ExternalSessionLoadResponse>
       subscribeChatStream?: (streamId: string, subscriptionId: string) => Promise<void>
       unsubscribeChatStream?: (subscriptionId: string) => Promise<void>

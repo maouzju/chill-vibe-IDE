@@ -4,6 +4,7 @@ import { maxSessionHistoryPerWorkspace } from '../../shared/default-state'
 import { getLocaleText } from '../../shared/i18n'
 import type { AppLanguage } from '../../shared/schema'
 import { readStatsSource } from '../stats-card-source'
+import { ClaudeUsagePanel } from './ClaudeUsageView'
 import {
   buildStatsHeatColumns,
   buildStatsMonthLabels,
@@ -76,7 +77,45 @@ type StatsCardProps = {
   language: AppLanguage
 }
 
+/**
+ * 卡片内的两个视图：`board` 是原来的本应用统计（只读渲染进程内存），`claude` 是服务端扫
+ * ~/.claude/projects 的全部 Claude 用量（docs/specs/claude-usage-ledger）。视图状态不落盘。
+ */
+export type StatsCardViewMode = 'board' | 'claude'
+
 export function StatsCard({ language }: StatsCardProps) {
+  const [view, setView] = useState<StatsCardViewMode>('board')
+  const text = getLocaleText(language)
+
+  return (
+    <div className="stats-card-shell" data-stats-card-shell>
+      <div className="stats-view-switch">
+        <div className="stats-range-picker" role="group" data-picker="view" aria-label={text.statsViewLabel}>
+          {(['board', 'claude'] as const).map((candidate) => (
+            <button
+              key={candidate}
+              type="button"
+              className={`stats-range-button${candidate === view ? ' is-active' : ''}`}
+              aria-pressed={candidate === view}
+              onClick={() => setView(candidate)}
+            >
+              {candidate === 'board' ? text.statsViewBoard : text.statsViewClaude}
+            </button>
+          ))}
+        </div>
+      </div>
+      {view === 'board' ? (
+        <BoardStatsCard language={language} />
+      ) : (
+        <div className="stats-card" data-stats-card data-stats-view="claude">
+          <ClaudeUsagePanel language={language} />
+        </div>
+      )}
+    </div>
+  )
+}
+
+function BoardStatsCard({ language }: StatsCardProps) {
   // 一年是 GitHub 贡献图的默认视野，也是这张卡最有信息量的默认值。
   const [rangeDays, setRangeDays] = useState<StatsRangeDays>(365)
   /**

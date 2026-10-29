@@ -1038,7 +1038,7 @@ test('Workflow background receipt keeps run id and script path for resume after 
 })
 
 test('synthetic sub-agent fallback keeps the dispatched model when CLI only sends tool_use', () => {
-  const tracker = createClaudeAgentStatusTracker({ language: 'zh' })
+  const tracker = createClaudeAgentStatusTracker({ language: 'zh-CN' })
   tracker.handleEvent({ type: 'assistant', message: { content: [
     { type: 'tool_use', id: 't1', name: 'Agent', input: { model: 'haiku' } },
   ] } })

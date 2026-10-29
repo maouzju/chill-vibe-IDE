@@ -1089,6 +1089,30 @@ export const getPreferredReasoningEffort = (
   )
 }
 
+/**
+ * 看板（模板 / 「加入待命」composer）里的深度档位解析。
+ *
+ * 症状（2026-10-29 用户反馈）：看板一打开，默认监工就是 Codex「超高」/ Claude
+ *   「最高」，不跟设置里记住的默认档位走。
+ * 根因：内置模板写死 'max'；空串虽然本意是"跟随默认"，却只解析到 provider 的
+ *   硬默认（normalizeReasoningEffortForModel），从没看 settings.modelReasoningEfforts。
+ * 为什么空串单独走 getPreferredReasoningEffort：那是新开聊天卡用的同一条规则，
+ *   看板"跟随默认"应当与它一致，而非另起一份默认表。
+ */
+export const resolveAutomationBoardReasoningEffort = (
+  settings: AppSettings,
+  provider: Provider,
+  model: string | null | undefined,
+  reasoningEffort: string | null | undefined,
+) =>
+  reasoningEffort?.trim()
+    ? normalizeReasoningEffortForModel(
+        provider,
+        getEffectiveCardModel(settings, provider, model),
+        reasoningEffort,
+      )
+    : getPreferredReasoningEffort(settings, provider, model)
+
 export const rememberModelReasoningEffort = (
   settings: AppSettings,
   provider: Provider,
@@ -1427,7 +1451,9 @@ export const createDefaultAutomationBoardSupervisorTemplate = (
     // "用用户配好的默认模型"，别在这里钉死某个具体型号。
     provider: 'codex',
     model: '',
-    reasoningEffort: 'max',
+    // 空串 = 跟随设置里该模型记住的默认档位（resolveAutomationBoardReasoningEffort）。
+    reasoningEffort: '',
+    reasoningEffortFollowsDefaultMigrated: true,
     thinkingEnabled: true,
     planMode: false,
     adminAccess: true,

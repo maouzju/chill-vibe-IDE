@@ -280,6 +280,39 @@ describe('createAutomationBoardItem', () => {
     assert.equal(next.columns[0]!.cards['new-item']?.adminAccess, undefined)
   })
 
+  // 2026-10-29：深度留空（模板 / composer 的「跟随默认」）建卡时要落到设置里该模型
+  // 记住的档位，和新开聊天卡同一条规则；以前落到 provider 硬默认。
+  it('resolves an empty depth to the remembered per-model effort when creating an item', () => {
+    const base = buildState({
+      cards: { 'board-1': boardCard([]) },
+      layout: pane('pane-1', ['board-1']),
+    })
+    const state = {
+      ...base,
+      settings: {
+        ...base.settings,
+        modelReasoningEfforts: {
+          ...base.settings.modelReasoningEfforts,
+          claude: { 'claude-opus-4-8': 'low' },
+        },
+      },
+    }
+
+    const next = ideReducer(state, {
+      type: 'createAutomationBoardItem',
+      columnId: 'column-1',
+      boardCardId: 'board-1',
+      lane: 'standby',
+      requirement: '跟随默认深度',
+      cardId: 'new-item',
+      provider: 'claude',
+      model: 'claude-opus-4-8',
+      reasoningEffort: '',
+    })
+
+    assert.equal(next.columns[0]!.cards['new-item']?.reasoningEffort, 'low')
+  })
+
   // FR12：composer 选的执行参数必须在**创建那一刻**就落到卡片上。事后改等于
   // 逐张管，而看板存在的意义就是不用逐张管。
   it('carries the composer execution settings onto the new item card', () => {

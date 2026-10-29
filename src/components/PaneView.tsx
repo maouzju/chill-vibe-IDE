@@ -104,6 +104,7 @@ type PaneViewProps = {
   globalUrgeProfileId: string
   repeatLoopEnabled?: boolean
   wakeTimerEnabled?: boolean
+  resolveDefaultReasoningEffort?: (provider: Provider, model: string) => string
   defaultAdminAccess?: boolean
   onSetAutoUrgeEnabled: (enabled: boolean) => void
   onAddTab: (paneId: string) => void
@@ -325,6 +326,7 @@ const PaneViewView = ({
   globalUrgeProfileId,
   repeatLoopEnabled = false,
   wakeTimerEnabled = false,
+  resolveDefaultReasoningEffort,
   defaultAdminAccess = false,
   onSetAutoUrgeEnabled,
   onAddTab,
@@ -1538,6 +1540,7 @@ const PaneViewView = ({
                   defaultProvider: column.provider,
                   defaultAdminAccess,
                   defaultModel: column.model,
+                  resolveDefaultReasoningEffort,
                   wakeTimerEnabled: wakeTimerEnabled === true,
                   repeatLoopEnabled: repeatLoopEnabled === true,
                   crossProviderSkillReuseEnabled,

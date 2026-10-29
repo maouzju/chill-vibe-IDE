@@ -913,7 +913,26 @@ const migratePersistedAutomationBoardWorkspace = (
     }
   }
 
-  return { ...rest, templates: dedupeTemplatesById(templates) }
+  // 症状（2026-10-29 用户反馈）：看板一打开，默认监工就是 Codex「超高」/ Opus「最高」。
+  // 根因：旧版内置监工模板写死 reasoningEffort 'max'，不跟设置里记住的默认档位走。
+  // 为什么要打标记：只看 'max' 分不清"旧默认"和"用户后来自己选的最高"；不打标记
+  //   每次加载都会把后者洗回跟随默认。迁过一次（或新种的）就不再碰。
+  const migratedTemplates = templates.map((template) => {
+    if (
+      !isRecord(template) ||
+      template.id !== automationBoardSupervisorTemplateId ||
+      template.reasoningEffortFollowsDefaultMigrated === true
+    ) {
+      return template
+    }
+    return {
+      ...template,
+      ...(template.reasoningEffort === 'max' ? { reasoningEffort: '' } : {}),
+      reasoningEffortFollowsDefaultMigrated: true,
+    }
+  })
+
+  return { ...rest, templates: dedupeTemplatesById(migratedTemplates) }
 }
 
 const normalizePersistedAutomationBoardWorkspaces = (

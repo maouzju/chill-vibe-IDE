@@ -132,6 +132,11 @@ export type AutomationBoardCardProps = {
   defaultProvider: Provider
   defaultAdminAccess: boolean
   defaultModel: string
+  /**
+   * 深度留空（= 跟随默认）时实际会落到哪一档：设置里该模型记住的档位
+   * （getPreferredReasoningEffort）。不传就退回 provider 硬默认。
+   */
+  resolveDefaultReasoningEffort?: (provider: Provider, model: string) => string
   wakeTimerEnabled: boolean
   repeatLoopEnabled: boolean
   crossProviderSkillReuseEnabled?: boolean
@@ -238,17 +243,23 @@ const resolveModelPickerValue = (provider: Provider, model: string, options = mo
  * 导出是为了让 SSR 单测能直接渲染 —— 与 `AutomationBoardTemplateConfig` 同一个
  * 理由（`renderToStaticMarkup` 点不开折叠面板）。
  */
+/** 换模型时深度要按新模型归一化，但空串（跟随默认）必须原样留着，不能被兑成硬默认。 */
+const keepFollowDefaultEffort = (provider: Provider, model: string, effort: string) =>
+  effort.trim() ? normalizeReasoningEffortForModel(provider, model, effort) : ''
+
 export const AutomationBoardModelSettings = ({
   value,
   language,
   onChange,
   showModel = true,
+  resolveDefaultReasoningEffort,
 }: {
   value: AutomationBoardComposeDefaults
   language: AppLanguage
   onChange: (patch: Partial<AutomationBoardComposeDefaults>) => void
   /** 待命 composer 把模型留在一级操作行，面板里就不再重复渲染一遍。 */
   showModel?: boolean
+  resolveDefaultReasoningEffort?: AutomationBoardCardProps['resolveDefaultReasoningEffort']
 }) => {
   const text = getLocaleText(language)
   const pickerOptions = getModelPickerOptions(value.provider, value.model)
@@ -258,11 +269,13 @@ export const AutomationBoardModelSettings = ({
     noneUnsupportedModel
   const thinkingOn = alwaysThinking || value.thinkingEnabled
   const reasoningOptions = getReasoningOptionsForModel(value.provider, value.model, language)
-  const reasoningValue = noneUnsupportedModel && value.thinkingEnabled === false ? 'low' : normalizeReasoningEffortForModel(
-    value.provider,
-    value.model,
-    value.reasoningEffort,
-  )
+  // 空串 = 跟随设置里记住的档位；下拉显示的必须是**实际会跑的**那一档，否则
+  // Opus 上空串会被 normalize 显示成硬默认「最高」（2026-10-29 用户反馈）。
+  const reasoningValue = noneUnsupportedModel && value.thinkingEnabled === false
+    ? 'low'
+    : !value.reasoningEffort.trim() && resolveDefaultReasoningEffort
+      ? resolveDefaultReasoningEffort(value.provider, value.model)
+      : normalizeReasoningEffortForModel(value.provider, value.model, value.reasoningEffort)
 
   return (
     <>
@@ -279,11 +292,7 @@ export const AutomationBoardModelSettings = ({
             onChange({
               provider: nextProvider,
               model: model ?? '',
-              reasoningEffort: normalizeReasoningEffortForModel(
-                nextProvider,
-                model ?? '',
-                value.reasoningEffort,
-              ),
+              reasoningEffort: keepFollowDefaultEffort(nextProvider, model ?? '', value.reasoningEffort),
             })
           }}
         >
@@ -783,11 +792,13 @@ export const AutomationBoardTemplateConfig = ({
   language,
   onUpdateTemplate,
   onRunTemplateNow,
+  resolveDefaultReasoningEffort,
 }: {
   template: AutomationBoardTemplate
   language: AppLanguage
   onUpdateTemplate: AutomationBoardCardProps['onUpdateTemplate']
   onRunTemplateNow: AutomationBoardCardProps['onRunTemplateNow']
+  resolveDefaultReasoningEffort?: AutomationBoardCardProps['resolveDefaultReasoningEffort']
 }) => {
   const text = getLocaleText(language)
   const laneLabels: Record<AutomationBoardLane, string> = {
@@ -872,6 +883,7 @@ export const AutomationBoardTemplateConfig = ({
             adminAccess: template.adminAccess,
           }}
           language={language}
+          resolveDefaultReasoningEffort={resolveDefaultReasoningEffort}
           onChange={(patch) => onUpdateTemplate(template.id, patch)}
         />
         {/* 超管说明只在开着时留在版面上。关着时它是"这个开关是干嘛的"的解释，
@@ -1481,7 +1493,8 @@ const AutomationBoardCardView = (props: AutomationBoardCardProps) => {
     const options = {
       provider: (provider as Provider) ?? props.defaultProvider,
       model: model ?? '',
-      reasoningEffort: normalizeReasoningEffortForModel(
+      // 空串原样交给 reducer，由它按设置里记住的档位解析（resolveAutomationBoardReasoningEffort）。
+      reasoningEffort: keepFollowDefaultEffort(
         composeDefaults.provider,
         composeDefaults.model,
         composeDefaults.reasoningEffort,
@@ -1781,7 +1794,7 @@ const AutomationBoardCardView = (props: AutomationBoardCardProps) => {
                       onSetComposeDefaults({
                         provider: nextProvider,
                         model: model ?? '',
-                        reasoningEffort: normalizeReasoningEffortForModel(
+                        reasoningEffort: keepFollowDefaultEffort(
                           nextProvider,
                           model ?? '',
                           composeDefaults.reasoningEffort,
@@ -1822,6 +1835,7 @@ const AutomationBoardCardView = (props: AutomationBoardCardProps) => {
                       value={composeDefaults}
                       language={language}
                       showModel={false}
+                      resolveDefaultReasoningEffort={props.resolveDefaultReasoningEffort}
                       onChange={onSetComposeDefaults}
                     />
                   </div>
@@ -1958,6 +1972,7 @@ const AutomationBoardCardView = (props: AutomationBoardCardProps) => {
             language={language}
             onUpdateTemplate={onUpdateTemplate}
             onRunTemplateNow={onRunTemplateNow}
+            resolveDefaultReasoningEffort={props.resolveDefaultReasoningEffort}
           />
         ) : null}
       </section>

@@ -970,7 +970,11 @@ export const automationBoardTemplateSchema = z.object({
   requirement: z.string().default(''),
   provider: providerSchema.default('codex'),
   model: z.string().default(''),
-  reasoningEffort: z.string().default('max'),
+  // 空串 = 跟随设置里该模型记住的默认档位，见 resolveAutomationBoardReasoningEffort。
+  reasoningEffort: z.string().default(''),
+  // 内置监工旧版写死 'max'，加载时一次性改回空串后打上这个标记 —— 没有它就分不清
+  // "旧默认"和"用户后来自己选的最高"，每次加载都会把后者洗掉。
+  reasoningEffortFollowsDefaultMigrated: z.boolean().optional(),
   thinkingEnabled: z.boolean().default(true),
   planMode: z.boolean().default(false),
   // 由本模板实例化出来的卡片是否带超管权限（= 能读写本工作区其他会话）。

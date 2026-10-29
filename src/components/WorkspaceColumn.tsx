@@ -169,6 +169,7 @@ type WorkspaceColumnProps = {
   globalUrgeProfileId: string
   repeatLoopEnabled?: boolean
   wakeTimerEnabled?: boolean
+  resolveDefaultReasoningEffort?: (provider: Provider, model: string) => string
   defaultAdminAccess?: boolean
   onSetAutoUrgeEnabled: (enabled: boolean) => void
   onChangeColumn: (
@@ -293,6 +294,7 @@ const WorkspaceColumnView = ({
   globalUrgeProfileId,
   repeatLoopEnabled = false,
   wakeTimerEnabled = false,
+  resolveDefaultReasoningEffort,
   defaultAdminAccess = false,
   onSetAutoUrgeEnabled,
   onChangeColumn,
@@ -1255,6 +1257,7 @@ const WorkspaceColumnView = ({
           globalUrgeProfileId={globalUrgeProfileId}
           repeatLoopEnabled={repeatLoopEnabled}
           wakeTimerEnabled={wakeTimerEnabled}
+          resolveDefaultReasoningEffort={resolveDefaultReasoningEffort}
           defaultAdminAccess={defaultAdminAccess}
           onSetAutoUrgeEnabled={onSetAutoUrgeEnabled}
           onAddTab={onAddTab}

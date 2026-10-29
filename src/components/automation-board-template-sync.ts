@@ -1,4 +1,4 @@
-import { getEffectiveCardModel } from '../../shared/default-state'
+import { getEffectiveCardModel, resolveAutomationBoardReasoningEffort } from '../../shared/default-state'
 import { normalizeReasoningEffortForModel } from '../../shared/reasoning'
 import type { AppSettings, AutomationBoardTemplate, ChatCard, Provider } from '../../shared/schema'
 
@@ -50,7 +50,9 @@ export const resolveAutomationBoardTemplateInstanceSync = (
 
   // 深度档位随 provider/model 变，所以要按**将要生效的**模型归一化，不能拿
   // 模板里存的原值直接钉上去（Codex 老模型上的 max/ultra 会被 CLI 当场拒绝）。
-  const nextReasoningEffort = normalizeReasoningEffortForModel(
+  // 模板深度留空 = 跟随设置里该模型记住的档位（2026-10-29），不是 provider 硬默认。
+  const nextReasoningEffort = resolveAutomationBoardReasoningEffort(
+    settings,
     template.provider,
     nextModel,
     template.reasoningEffort,

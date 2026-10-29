@@ -23,4 +23,10 @@ describe('default automation board supervisor template', () => {
     assert.equal(workspace.templates.length, 1)
     assert.equal(workspace.templates[0]?.id, automationBoardSupervisorTemplateId)
   })
+
+  // 2026-10-29 用户反馈：看板一打开，默认监工就是 Codex「超高」/ Claude「最高」，
+  // 不跟设置里记住的默认档位走。空串 = 跟随设置，别在模板里钉死某一档。
+  it('leaves the reasoning effort empty so it follows the configured default', () => {
+    assert.equal(createDefaultAutomationBoardSupervisorTemplate().reasoningEffort, '')
+  })
 })

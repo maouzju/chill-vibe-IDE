@@ -44,6 +44,7 @@ type WorkspaceColumnMemoProps = {
   globalUrgeProfileId: string
   repeatLoopEnabled?: boolean
   wakeTimerEnabled?: boolean
+  resolveDefaultReasoningEffort?: unknown
   recentWorkspaces: RecentWorkspace[]
   sessionHistory: SessionHistoryEntry[]
   cardRecoveryStatuses?: ReadonlyMap<string, CardRecoveryStatus>
@@ -79,6 +80,7 @@ type PaneViewMemoProps = {
   globalUrgeProfileId: string
   repeatLoopEnabled?: boolean
   wakeTimerEnabled?: boolean
+  resolveDefaultReasoningEffort?: unknown
   cardRecoveryStatuses?: ReadonlyMap<string, CardRecoveryStatus>
   queuedSendSummaries?: ReadonlyMap<string, QueuedSendSummary>
   getSubagentChildTabs?: (parentCardId: string) => Array<{ id: string; title: string }>
@@ -153,6 +155,7 @@ export const areWorkspaceColumnPropsEqual = (
   previous.globalUrgeProfileId === next.globalUrgeProfileId &&
   previous.repeatLoopEnabled === next.repeatLoopEnabled &&
   previous.wakeTimerEnabled === next.wakeTimerEnabled &&
+  previous.resolveDefaultReasoningEffort === next.resolveDefaultReasoningEffort &&
   previous.recentWorkspaces === next.recentWorkspaces &&
   previous.cardRecoveryStatuses === next.cardRecoveryStatuses &&
   previous.queuedSendSummaries === next.queuedSendSummaries &&
@@ -320,4 +323,5 @@ export const arePaneViewPropsEqual = (previous: PaneViewMemoProps, next: PaneVie
   previous.globalUrgeProfileId === next.globalUrgeProfileId &&
   previous.repeatLoopEnabled === next.repeatLoopEnabled &&
   previous.wakeTimerEnabled === next.wakeTimerEnabled &&
+  previous.resolveDefaultReasoningEffort === next.resolveDefaultReasoningEffort &&
   haveSamePaneCardRefs(previous, next)

@@ -23,6 +23,7 @@ import {
   normalizeSplitRatios,
   rememberModelReasoningEffort,
   resetCardSessions,
+  resolveAutomationBoardReasoningEffort,
   touchState,
   upsertStickyNoteArchiveEntry,
   updateStickyNoteArchiveViewState,
@@ -3545,7 +3546,13 @@ const ideReducerCore = (state: AppState, action: IdeAction): AppState => {
           requirement,
           provider,
           model: itemModel,
-          reasoningEffort: action.reasoningEffort,
+          // 空串 / 未给 = 跟随设置里该模型记住的档位，与新开聊天卡同一条规则（2026-10-29）。
+          reasoningEffort: resolveAutomationBoardReasoningEffort(
+            state.settings,
+            provider,
+            itemModel,
+            action.reasoningEffort,
+          ),
           thinkingEnabled: action.thinkingEnabled,
           planMode: action.planMode,
           // 与 addTab 同一道守卫：工具卡永不提权，默认开关只播种给会话卡（default-admin-access SPEC）。

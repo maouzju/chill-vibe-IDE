@@ -459,6 +459,42 @@ describe('automation board persistence', () => {
     assert.equal(loaded.automationBoards['D:/bad'], undefined)
   })
 
+  // 2026-10-29：旧版内置监工模板写死了 'max'。只迁一次把它改回「跟随默认」，
+  // 打过标记之后用户自己选的 'max' 不能每次加载都被洗掉。
+  it('moves the legacy hard-coded max on the built-in supervisor back to follow-default once', async () => {
+    const { loadState } = await import('../server/state-store.ts')
+    const supervisor = (patch: Record<string, unknown>) => ({
+      id: automationBoardSupervisorTemplateId,
+      name: '看板监工',
+      requirement: 'X',
+      provider: 'codex',
+      model: '',
+      reasoningEffort: 'max',
+      builtIn: true,
+      adminAccess: true,
+      ...patch,
+    })
+    const persisted = {
+      settings: createDefaultSettings(),
+      version: 1,
+      updatedAt: timestamp,
+      sessionHistory: [],
+      stickyNoteArchive: {},
+      automationBoards: {
+        'D:/legacy-max': { templates: [supervisor({})] },
+        'D:/chosen-max': { templates: [supervisor({ reasoningEffortFollowsDefaultMigrated: true })] },
+      },
+      columns: [],
+    }
+
+    await writeFile(path.join(tmpDir, 'state.json'), JSON.stringify(persisted), 'utf8')
+
+    const loaded = await loadState()
+
+    assert.equal(loaded.automationBoards['D:/legacy-max']?.templates[0]?.reasoningEffort, '')
+    assert.equal(loaded.automationBoards['D:/chosen-max']?.templates[0]?.reasoningEffort, 'max')
+  })
+
   // v2 迁移：v1 的工作区级 autoTrigger 折进内置监工模板，supervisor 指针丢弃。
   it('migrates a legacy autoTrigger into the built-in supervisor template', async () => {
     const { loadState } = await import('../server/state-store.ts')

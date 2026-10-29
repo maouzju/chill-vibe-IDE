@@ -48,6 +48,7 @@ type LayoutRendererProps = {
   globalUrgeProfileId: string
   repeatLoopEnabled?: boolean
   wakeTimerEnabled?: boolean
+  resolveDefaultReasoningEffort?: (provider: Provider, model: string) => string
   defaultAdminAccess?: boolean
   onSetAutoUrgeEnabled: (enabled: boolean) => void
   onAddTab: (paneId: string) => void

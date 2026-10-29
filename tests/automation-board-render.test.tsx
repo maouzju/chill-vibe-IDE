@@ -338,6 +338,22 @@ describe('AutomationBoardCard renders', () => {
     assert.ok(html.includes(text.automationBoardTemplateResetRequirementAction))
   })
 
+  // 2026-10-29：深度留空 = 跟随设置里记住的档位。下拉必须显示真正会跑的那一档，
+  // 以前空串被 normalize 成硬默认，Opus 上看着就是「最高」。
+  it('shows the remembered default depth when the template depth is left empty', () => {
+    const html = renderToStaticMarkup(
+      React.createElement(AutomationBoardTemplateConfig, {
+        template: makeTemplate({ provider: 'claude', model: 'claude-opus-5-5', reasoningEffort: '' }),
+        language: settings.language,
+        onUpdateTemplate: noop,
+        onRunTemplateNow: noop,
+        resolveDefaultReasoningEffort: () => 'low',
+      }),
+    )
+
+    assert.match(html, /<option value="low" selected="">/)
+  })
+
   // 超管说明是解释性文案，按 ui-principles 它在开关关着时属于 idle chrome，
   // 只有在权限真的开着时才是一条必须常驻的越权警告。
   it('prints the admin-access warning only while admin access is on', () => {

@@ -96,6 +96,25 @@ describe('automation board template instance sync', () => {
     assert.equal(sync, null)
   })
 
+  // 2026-10-29：模板深度留空 = 跟随设置里该模型记住的默认档位，不是 provider 的硬默认。
+  it('resolves an empty template depth against the remembered per-model effort', () => {
+    const base = settings()
+    const withPreference: AppSettings = {
+      ...base,
+      modelReasoningEfforts: {
+        ...base.modelReasoningEfforts,
+        codex: { [DEFAULT_CODEX_MODEL]: 'low' },
+      },
+    }
+    const sync = resolveAutomationBoardTemplateInstanceSync(
+      template({ reasoningEffort: '' }),
+      card({ reasoningEffort: 'xhigh' }),
+      withPreference,
+    )
+
+    assert.equal(sync?.patch?.reasoningEffort, 'low')
+  })
+
   it('carries the thinking, depth, plan and admin switches over', () => {
     const sync = resolveAutomationBoardTemplateInstanceSync(
       template({ reasoningEffort: 'high', thinkingEnabled: false, adminAccess: false }),

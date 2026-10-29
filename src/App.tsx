@@ -37,6 +37,7 @@ import {
   createAutomationBoardTemplateFromCard,
   createDefaultAutomationBoardWorkspaceState,
   getAutomationBoard,
+  getPreferredReasoningEffort,
   titleFromPrompt,
 } from '../shared/default-state'
 import { attachImagesToMessageMeta } from '../shared/chat-attachments'
@@ -4787,6 +4788,13 @@ function App() {
       return cardId
     },
     [applyAction, getColumn, persistAfterAction],
+  )
+
+  // 看板深度留空 = 跟随设置里该模型记住的档位；下拉要显示真正会跑的那一档。
+  const appSettings = appState.settings
+  const resolveBoardDefaultReasoningEffort = useCallback(
+    (provider: Provider, model: string) => getPreferredReasoningEffort(appSettings, provider, model),
+    [appSettings],
   )
 
   const automationBoardActions = useMemo<AutomationBoardActions>(
@@ -12164,6 +12172,7 @@ function App() {
             globalUrgeProfileId={appState.settings.autoUrgeGlobalProfileId}
             repeatLoopEnabled={appState.settings.repeatLoopEnabled}
             wakeTimerEnabled={appState.settings.wakeTimerEnabled}
+            resolveDefaultReasoningEffort={resolveBoardDefaultReasoningEffort}
             defaultAdminAccess={appState.settings.defaultAdminAccess}
             onSetAutoUrgeEnabled={setAutoUrgeEnabled}
             onChangeColumn={(patch) => {

@@ -182,9 +182,9 @@ const installMockApis = async (page: Page, theme: 'dark' | 'light') => {
   })
 
   // 「全部 Claude 用量」视图：mock 桥上没有 getClaudeUsage，api 回落到 fetch，这里喂固定数据。
+  // 区间固定，不跟请求里由「今天」算出的 from/to 走，否则每过一天截图的横轴就漂一格。
   await page.route('**/api/claude-usage**', async (route) => {
-    const url = new URL(route.request().url())
-    await route.fulfill({ json: createUsageFixture(url.searchParams.get('from') ?? '2026-09-29', url.searchParams.get('to') ?? '2026-10-28') })
+    await route.fulfill({ json: createUsageFixture('2026-09-29', '2026-10-28') })
   })
 }
 

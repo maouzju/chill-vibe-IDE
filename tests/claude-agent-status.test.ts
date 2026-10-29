@@ -1036,3 +1036,12 @@ test('Workflow background receipt keeps run id and script path for resume after 
   assert.equal(agent?.workflowRunId, 'wf_ab12cd34-ef5')
   assert.equal(agent?.workflowScriptPath, 'C:\\s\\probe-wf_ab12cd34-ef5.js')
 })
+
+test('synthetic sub-agent fallback keeps the dispatched model when CLI only sends tool_use', () => {
+  const tracker = createClaudeAgentStatusTracker({ language: 'zh' })
+  tracker.handleEvent({ type: 'assistant', message: { content: [
+    { type: 'tool_use', id: 't1', name: 'Agent', input: { model: 'haiku' } },
+  ] } })
+  tracker.beginSynthetic(syntheticClaudeAgentId('t1'), 'Agent')
+  assert.equal(tracker.snapshot().agents[0]?.model, 'haiku')
+})

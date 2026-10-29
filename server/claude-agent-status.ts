@@ -417,10 +417,12 @@ export const createClaudeAgentStatusTracker = ({
   const beginSynthetic = (taskId: string, toolName: string): StreamAgentsActivity => {
     if (agents.has(aliases.get(taskId) ?? taskId)) return snapshot()
     const fallbackNickname = language === 'en' ? 'Sub-agent' : '子代理'
+    const toolUseId = taskId.replace(/^workflow:/, '')
     ensureAgent(taskId, {
       nickname: toolName === 'Workflow' ? 'Workflow' : fallbackNickname,
       role: toolName,
       status: 'running',
+      model: dispatchModels.get(toolUseId),
     })
     return snapshot()
   }

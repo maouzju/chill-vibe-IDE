@@ -1225,6 +1225,25 @@ describe('git workspace helpers', () => {
     assert.equal(real?.stagedStatus, 'A')
   })
 
+  it('stages the rest of the batch when a selected path is gitignored', async () => {
+    const repoPath = await createTempRepo()
+    await writeFile(path.join(repoPath, '.gitignore'), 'gen/\n')
+    await runGit(repoPath, ['add', '.gitignore'])
+    await runGit(repoPath, ['commit', '-m', 'Ignore gen'])
+    await mkdir(path.join(repoPath, 'gen'), { recursive: true })
+    await writeFile(path.join(repoPath, 'gen', 'out.cs'), 'generated\n')
+    await writeFile(path.join(repoPath, 'real.txt'), 'real change\n')
+
+    const status = await setGitWorkspaceStage({
+      workspacePath: repoPath,
+      paths: ['gen', 'real.txt'],
+      staged: true,
+    })
+
+    const real = status.changes.find((change) => change.path === 'real.txt')
+    assert.equal(real?.stagedStatus, 'A')
+  })
+
   it('unstages a staged copy without touching the copy source', async () => {
     const repoPath = await createStagedCopyRepo()
 

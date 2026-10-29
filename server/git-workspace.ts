@@ -2266,7 +2266,21 @@ export const setGitWorkspaceStage = async ({
     //   target without feeding git add the vanished original path" test.
     const stagePaths = normalizedPaths.filter((entry) => !isWindowsReservedPath(entry))
     if (stagePaths.length > 0) {
-      await runGitWithPathspecs(repoRoot, ['add'], stagePaths)
+      // 症状 — 选中的路径里只要有一个被 .gitignore 忽略（如 CodeGen/ 目录），整次暂存报错弹一屏。
+      // 根因 — git add 遇到显式传入的已忽略路径会 exit 1，但其余路径其实已经加进索引了。
+      // 被否决 — 不加 -f：忽略的文件本就不该进提交；只吞「仅有忽略提示」这一种失败。
+      const addResult = await runGitWithPathspecs(repoRoot, ['-c', 'advice.addIgnoredFile=false', 'add'], stagePaths, {
+        allowFailure: true,
+      })
+      if (addResult.exitCode !== 0) {
+        const fatalLines = addResult.stderr
+          .split(/\r?\n/)
+          .map((line) => line.trim())
+          .filter((line) => /^(fatal|error):/i.test(line))
+        if (fatalLines.length > 0 || !/paths are ignored by one of your \.gitignore files/i.test(addResult.stderr)) {
+          throw new Error(fatalLines.join('\n') || addResult.stderr.trim() || 'git add failed')
+        }
+      }
     }
     return await inspectResolvedGitWorkspace(
       workspacePath,

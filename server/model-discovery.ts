@@ -156,6 +156,13 @@ export const discoverProviderModels = async (
   settings: AppSettings,
   io: ModelDiscoveryIo = defaultIo,
 ): Promise<ProviderModelDiscovery[]> => {
+  // 症状 — Electron 运行时测试随机红：启动 3s 后打真中转站，「发现新模型」弹窗在不定时刻盖住整页，
+  //   点击被 structured-preview-backdrop 拦截（2026-10-29，基线同样 2/3 红）。
+  // 根因 — 测试进程继承本机 ~/.codex、~/.claude 配置，发现结果取决于网络时延与真实型号列表。
+  // 被否决 — 测试里等弹窗再关：出现时刻不确定且依赖外网；这里由测试环境显式关掉发现。
+  if (process.env.CHILL_VIBE_DISABLE_MODEL_DISCOVERY === '1') {
+    return []
+  }
   const providers: Provider[] = ['claude', 'codex', 'gemini']
   const results = await Promise.all(
     providers.map(async (provider): Promise<ProviderModelDiscovery | null> => {

@@ -662,6 +662,78 @@ describe('cc-switch provider profile import merge', () => {
     }
   })
 
+  // 症状：把 DeepSeek 这类云端 Anthropic 兼容端点配成自定义端点条目后，断线续传完全不工作。
+  // 根因：绕开代理的判据是「是不是条目」，而不是「端点是不是本机/局域网」，远程条目被一并短路。
+  // 为什么不能换写法：重试有害的前提是推理在本地算不完；云端端点超时多半是网络抖动，重发有用。
+  it('keeps the resilient proxy for a remote custom endpoint entry', async () => {
+    const { resolveProviderRuntime, setProviderRuntimeSettingsOverride } = await import(
+      '../server/providers.ts'
+    )
+    const spy = await stageProxySpy()
+    const settings = stageSettings([
+      {
+        ...localEntry,
+        id: 'remote-1',
+        baseUrl: 'https://api.deepseek.com/anthropic',
+        apiKey: 'sk-remote',
+        model: 'deepseek-v4-pro',
+      },
+    ])
+    settings.resilientProxyEnabled = true
+    setProviderRuntimeSettingsOverride(settings)
+
+    try {
+      const runtime = await resolveProviderRuntime('claude', { localModelId: 'remote-1' })
+
+      assert.deepEqual(spy.captured, ['https://api.deepseek.com/anthropic'])
+      assert.equal(runtime.env.ANTHROPIC_BASE_URL, 'http://127.0.0.1:43210')
+      assert.equal(runtime.env.ANTHROPIC_API_KEY, 'sk-remote')
+    } finally {
+      spy.restore()
+      setProviderRuntimeSettingsOverride(null)
+    }
+  })
+
+  // 症状：自定义端点（DeepSeek 等）的卡里，子 agent / 标题生成等后台调用向端点请求 claude-haiku-*
+  //   这类 Anthropic 型号名，端点不认而失败。
+  // 根因：CLI 的 haiku/sonnet/opus/fable 别名落点被钉成 Anthropic 官方型号（shared/models.ts），
+  //   而条目的端点只认自己的模型名。
+  // 做法：claude 驱动的条目把四个别名与 SMALL_FAST 都钉到条目模型名，且写进 claudeSettingsEnv
+  //   压过用户 ~/.claude/settings.json（同 claude-settings-env-override 的优先级根因）。
+  it('pins every claude model alias to the entry model for a claude-driven entry', async () => {
+    const { resolveProviderRuntime, setProviderRuntimeSettingsOverride } = await import(
+      '../server/providers.ts'
+    )
+    setProviderRuntimeSettingsOverride(
+      stageSettings([
+        {
+          ...localEntry,
+          id: 'remote-2',
+          baseUrl: 'https://api.deepseek.com/anthropic',
+          apiKey: 'sk-remote',
+          model: 'deepseek-v4-pro',
+        },
+      ]),
+    )
+
+    try {
+      const runtime = await resolveProviderRuntime('claude', { localModelId: 'remote-2' })
+
+      for (const key of [
+        'ANTHROPIC_DEFAULT_HAIKU_MODEL',
+        'ANTHROPIC_DEFAULT_SONNET_MODEL',
+        'ANTHROPIC_DEFAULT_OPUS_MODEL',
+        'ANTHROPIC_DEFAULT_FABLE_MODEL',
+        'ANTHROPIC_SMALL_FAST_MODEL',
+      ]) {
+        assert.equal(runtime.env[key], 'deepseek-v4-pro', `env.${key}`)
+        assert.equal(runtime.claudeSettingsEnv?.[key], 'deepseek-v4-pro', `settings.${key}`)
+      }
+    } finally {
+      setProviderRuntimeSettingsOverride(null)
+    }
+  })
+
   // 另一条进入本地推理的路径：用户不建本地模型条目，直接在「接口配置」里手填一个
   // 指向本机的 profile。端点是本机推理服务这个事实不变，同样必须绕开代理。
   it('skips the resilient proxy for a hand-configured loopback profile', async () => {

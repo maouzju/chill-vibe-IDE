@@ -29,7 +29,7 @@ export const getPanelText = (language: AppState['settings']['language']) =>
         noProfilesDescription: 'Add a profile to switch this provider to another API endpoint.',
         localModelsTitle: 'Local models',
         localModelsDescription:
-          'Point a local inference server (Ollama, LM Studio, llama.cpp, vLLM) at one of the bundled CLIs. Saved entries show up in every card’s model picker and apply per card.',
+          'Give a model its own endpoint: a local inference server (Ollama, LM Studio, llama.cpp, vLLM) or a custom cloud endpoint (e.g. DeepSeek: drive it with Claude CLI, base URL https://api.deepseek.com/anthropic, your key and model name). Saved entries show up in every card’s model picker and apply per card without touching the global provider profile.',
         localModelLabelField: 'Display name',
         localModelHarnessField: 'Driven by',
         localModelNameField: 'Model name',
@@ -45,6 +45,7 @@ export const getPanelText = (language: AppState['settings']['language']) =>
           'Claude CLI appends /v1/messages itself, so point this at the host root — the server must expose an Anthropic-compatible Messages API. Heads-up: on a local model it costs about 3x the tokens per turn, and its thinking cannot be switched off (the CLI has no such flag), so the thinking toggle will look inert. Prefer Codex unless your server only speaks the Messages API.',
         localModelCodexBaseUrlNote:
           'Codex CLI speaks the Responses API and needs a /v1 suffix — leave it off and it gets added for you. Ollama 0.32.15 and newer serve this endpoint; on older builds it answers 404, in which case switch to the Claude harness.',
+        localModelPresetDeepSeek: 'Fill in DeepSeek',
         addLocalModel: 'Add local model',
         noLocalModels: 'No local models yet.',
         noLocalModelsDescription:
@@ -180,7 +181,7 @@ export const getPanelText = (language: AppState['settings']['language']) =>
         noProfilesDescription: '添加一个配置即可将此服务商切换到其他 API 地址。',
         localModelsTitle: '本地模型',
         localModelsDescription:
-          '把本机的推理服务（Ollama、LM Studio、llama.cpp、vLLM）接到内置的某个 CLI 上。保存后会出现在每张卡的模型选择器里，逐卡生效。',
+          '给某个模型单独配一个接口：本机推理服务（Ollama、LM Studio、llama.cpp、vLLM），或云端的自定义端点（例如 DeepSeek：驱动选 Claude CLI，地址 https://api.deepseek.com/anthropic，填上你的 key 和模型名）。保存后会出现在每张卡的模型选择器里，逐卡生效，不影响全局的服务商配置。',
         localModelLabelField: '显示名',
         localModelHarnessField: '驱动方式',
         localModelNameField: '模型名',
@@ -195,6 +196,7 @@ export const getPanelText = (language: AppState['settings']['language']) =>
           'Claude CLI 会自己补 /v1/messages，这里填到主机根即可，对方需要提供 Anthropic 兼容接口。注意：接本地模型时它每轮要多花约 3 倍 token，且思考关不掉（CLI 根本没有这个开关），界面上的「关闭思考」会像失灵一样。除非你的服务只提供 Messages API，否则建议用 Codex 驱动。',
         localModelCodexBaseUrlNote:
           'Codex CLI 走 Responses API，地址需要带 /v1 后缀——留空不填会自动补上。Ollama 0.32.15 起提供该端点；更老的版本会返回 404，那种情况请改用 Claude 驱动。',
+        localModelPresetDeepSeek: '一键填入 DeepSeek',
         addLocalModel: '添加本地模型',
         noLocalModels: '暂无本地模型。',
         noLocalModelsDescription: '添加一个，就能让某张卡改用本机跑的模型而不是云端。',

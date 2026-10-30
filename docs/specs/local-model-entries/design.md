@@ -252,6 +252,14 @@ Codex 侧没有这个问题：关思考落 `model_reasoning_effort="none"`（`se
 对已实现 Responses API 或 Anthropic Messages API 的其它本地服务（如较新的 vLLM、LM Studio）
 仍未逐一验证。
 
+## 云端自定义端点（如 DeepSeek，2026-10-30）
+
+条目机制不限本机：填云端 Anthropic 兼容地址 + key + 模型名，驱动选 claude 即可「这个模型走我额外配的供应商」。三处为此做的处理：
+
+- 断线续传代理只对本机/局域网端点跳过（`isLocalNetworkBaseUrl`）；云端条目保留代理，超时重发对网络抖动有用。
+- claude 驱动条目把 haiku/sonnet/opus/fable 别名与 `ANTHROPIC_SMALL_FAST_MODEL` 全钉到条目模型名，否则子 agent、标题生成会向端点请求 Anthropic 型号被拒。
+- 设置页草稿区有「一键填入 DeepSeek」（`applyDeepSeekLocalModelPreset`）：驱动 claude、地址 `https://api.deepseek.com/anthropic`、模型 `deepseek-v4-pro`，用户已填的 key 保留；填入后「高级」自动展开。
+
 ## 非目标 / 已知不覆盖
 
 - 不改 `AutomationBoardCard` 的模型选择（它用 `provider::model` 双冒号格式，另一套语义）。

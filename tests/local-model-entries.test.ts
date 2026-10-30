@@ -72,6 +72,20 @@ test('local model entries default to the codex harness', async () => {
   assert.equal(emptyLocalModelDraft().harness, 'codex')
 })
 
+test('the DeepSeek preset fills a claude-driven entry and keeps the typed api key', async () => {
+  const { applyDeepSeekLocalModelPreset, emptyLocalModelDraft } = await import(
+    '../src/app-helpers.ts'
+  )
+
+  const filled = applyDeepSeekLocalModelPreset({ ...emptyLocalModelDraft(), apiKey: 'sk-mine' })
+
+  // DeepSeek 只提供 Anthropic 兼容端点，驱动必须是 claude，否则 codex 会去打不存在的 /responses。
+  assert.equal(filled.harness, 'claude')
+  assert.equal(filled.baseUrl, 'https://api.deepseek.com/anthropic')
+  assert.ok(filled.model.startsWith('deepseek-'))
+  assert.equal(filled.apiKey, 'sk-mine')
+})
+
 test('normalizing local model entries drops unusable rows and dedupes ids', () => {
   const entries = normalizeLocalModelEntries([
     { id: 'a', label: 'A', harness: 'codex', baseUrl: 'http://a', apiKey: 'k', model: 'model-a' },

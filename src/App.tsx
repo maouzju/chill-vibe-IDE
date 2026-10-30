@@ -248,6 +248,7 @@ import {
   createLogMessages,
   createStructuredActivityMessage,
   createStructuredMessageId,
+  applyDeepSeekLocalModelPreset,
   emptyLocalModelDraft,
   emptyProfileDraft,
   errorMessage,
@@ -10905,6 +10906,15 @@ function App() {
             （resolveLocalModelDefaultBaseUrl / 占位密钥），要连非默认端口或远程
             机器再展开"高级"。 */}
         <div className="provider-profile-card is-draft">
+          <div className="settings-actions provider-profile-actions">
+            <AppButton
+              type="button"
+              onClick={() => setLocalModelDraft((prev) => applyDeepSeekLocalModelPreset(prev))}
+            >
+              {panelText.localModelPresetDeepSeek}
+            </AppButton>
+          </div>
+
           <label className="settings-field">
             <span>{panelText.localModelHarnessField}</span>
             <select
@@ -10949,7 +10959,7 @@ function App() {
             <p className="settings-note">{panelText.localModelOllamaOffline}</p>
           ) : null}
 
-          <details className="settings-section">
+          <details className="settings-section" open={localModelDraft.baseUrl !== '' ? true : undefined}>
             <summary>{panelText.localModelAdvanced}</summary>
 
             <label className="settings-field">

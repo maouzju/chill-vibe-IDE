@@ -420,6 +420,31 @@ const isLoopbackBaseUrl = (baseUrl: string) => {
   }
 }
 
+// 条目指向的是不是「本机或局域网」推理服务：云端自定义端点（如 DeepSeek）不是，要保留断线续传。
+// 认不出来按远端处理，与 isLoopbackBaseUrl 同一取向。
+const isLocalNetworkBaseUrl = (baseUrl: string) => {
+  try {
+    const hostname = new URL(baseUrl).hostname.replace(/^\[|\]$/g, '').toLowerCase()
+    if (isLoopbackHostname(hostname)) {
+      return true
+    }
+    if (hostname.includes(':')) {
+      return /^(fe80|fc|fd)/.test(hostname)
+    }
+    if (hostname.endsWith('.local') || hostname.endsWith('.lan') || !hostname.includes('.')) {
+      return true
+    }
+    const octets = hostname.split('.').map(Number)
+    if (octets.length === 4 && octets.every((n) => Number.isInteger(n) && n >= 0 && n <= 255)) {
+      const [a, b] = octets
+      return a === 10 || (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168) || (a === 169 && b === 254)
+    }
+    return false
+  } catch {
+    return false
+  }
+}
+
 const maybeResolveProxyBaseUrl = async (
   provider: Provider,
   baseUrl: string,
@@ -729,7 +754,8 @@ export const resolveProviderRuntime = async (
     // Gemini 走 Google 自有协议，断线续传代理只认 OpenAI/Anthropic 两种流格式，不套。
     const useResilientProxy =
       provider !== 'gemini' &&
-      Boolean(settings.resilientProxyEnabled) && !localEntry && !isLoopbackBaseUrl(baseUrl)
+      Boolean(settings.resilientProxyEnabled) &&
+      !(localEntry ? isLocalNetworkBaseUrl(baseUrl) : isLoopbackBaseUrl(baseUrl))
     const runtimeBaseUrl = await maybeResolveProxyBaseUrl(
       provider,
       baseUrl,
@@ -756,10 +782,25 @@ export const resolveProviderRuntime = async (
     if (provider === 'claude') {
       // 三个键必须整组覆盖：用户 settings.json 里常驻的通常是 ANTHROPIC_AUTH_TOKEN，
       // 只压 API_KEY 会让 CLI 拿着用户的云端 token 去打我们指定的端点。
+      // 自定义端点条目：端点只认自己的模型名，CLI 的 haiku/sonnet/opus/fable 别名与后台小模型
+      // 默认落到 Anthropic 官方型号会被拒（子 agent、标题生成等），统一钉到条目的模型名。
+      const entryModel = localEntry?.model.trim()
+      const aliasPins: Record<string, string> = entryModel
+        ? Object.fromEntries(
+            [
+              'ANTHROPIC_DEFAULT_HAIKU_MODEL',
+              'ANTHROPIC_DEFAULT_SONNET_MODEL',
+              'ANTHROPIC_DEFAULT_OPUS_MODEL',
+              'ANTHROPIC_DEFAULT_FABLE_MODEL',
+              'ANTHROPIC_SMALL_FAST_MODEL',
+            ].map((key) => [key, entryModel]),
+          )
+        : {}
       const claudeSettingsEnv = {
         ANTHROPIC_API_KEY: apiKey,
         ANTHROPIC_AUTH_TOKEN: apiKey,
         ANTHROPIC_BASE_URL: runtimeBaseUrl,
+        ...aliasPins,
       }
 
       return {

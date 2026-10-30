@@ -492,6 +492,35 @@ export const isWakeTimerConditionReady = ({
   return pendingTargetIds.length === 0
 }
 
+/**
+ * 症状：2026-10-30 待唤醒条卡在「等待 1 个其他 Agent 完成」，该项目早已没有在跑的 agent，消息不发车。
+ * 根因：pendingTargetIds 只靠完成广播摘除；目标被打断 / 报错 / 流丢失时不广播，id 永远留着，
+ *   而 flush 只剔「卡已不存在」的 id。
+ * 被否决：给每种终止路径各补一次广播 —— 终止路径太多；判据直接认目标当前是否还在跑。
+ *   只作用于自己挂的 workspace-agents：left-tab 要认待唤醒批次，显式名单靠兜底超时。
+ */
+export const pruneIdleWorkspaceWakeTimerTargets = ({
+  mode,
+  explicitTargets,
+  targetIds,
+  cards,
+}: {
+  mode: WakeTimerMode
+  explicitTargets: boolean
+  targetIds: readonly string[]
+  cards: readonly WakeTimerCardSnapshot[]
+}) => {
+  if (mode !== 'workspace-agents' || explicitTargets) {
+    return [...targetIds]
+  }
+  const busy = new Set(
+    cards
+      .filter((card) => card.status === 'streaming' || card.backgroundWorkPending === true)
+      .map((card) => card.id),
+  )
+  return targetIds.filter((targetId) => busy.has(targetId))
+}
+
 export const removeCompletedWakeTimerTarget = (
   targetIds: readonly string[],
   completedCardId: string,

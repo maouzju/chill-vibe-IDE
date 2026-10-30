@@ -11,6 +11,7 @@ import {
   buildWakeTimerBatchEndPatch,
   collectWakeTimerDefaultPreference,
   isWakeTimerConditionReady,
+  pruneIdleWorkspaceWakeTimerTargets,
   mergeWakeTimerRequests,
   removeCompletedWakeTimerTarget,
   resolveSupervisorWakeTargets,
@@ -1157,5 +1158,37 @@ describe('run-success callbacks after an interrupted turn', () => {
     assert.equal(shouldRunCompletionCallbacksForLostStream({
       stopReason: 'ask-user-answer',
     }), true)
+  })
+})
+
+describe('pruneIdleWorkspaceWakeTimerTargets', () => {
+  const cards = [
+    { id: 'idle', status: 'idle' as const, isAgent: true },
+    { id: 'err', status: 'error' as const, isAgent: true },
+    { id: 'run', status: 'streaming' as const, isAgent: true },
+    { id: 'bg', status: 'idle' as const, isAgent: true, backgroundWorkPending: true },
+  ]
+
+  it('drops workspace-agents targets that are no longer running (interrupted/errored never broadcast completion)', () => {
+    assert.deepEqual(
+      pruneIdleWorkspaceWakeTimerTargets({
+        mode: 'workspace-agents',
+        explicitTargets: false,
+        targetIds: ['idle', 'err', 'run', 'bg'],
+        cards,
+      }),
+      ['run', 'bg'],
+    )
+  })
+
+  it('leaves left-tab and explicit lists untouched', () => {
+    assert.deepEqual(
+      pruneIdleWorkspaceWakeTimerTargets({ mode: 'left-tab', explicitTargets: false, targetIds: ['idle'], cards }),
+      ['idle'],
+    )
+    assert.deepEqual(
+      pruneIdleWorkspaceWakeTimerTargets({ mode: 'workspace-agents', explicitTargets: true, targetIds: ['idle'], cards }),
+      ['idle'],
+    )
   })
 })

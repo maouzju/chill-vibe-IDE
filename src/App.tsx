@@ -307,6 +307,7 @@ import {
   isWakeTimerConditionReady,
   mergeWakeTimerRequests,
   removeCompletedWakeTimerTarget,
+  pruneIdleWorkspaceWakeTimerTargets,
   shouldArmWakeTimerForDeferSend,
   shouldReleaseCompletedWakeTimerTarget,
   shouldQueueWakeTimerSend,
@@ -3805,6 +3806,15 @@ function App() {
         .map((card) => card.id),
     )
 
+    const allCardSnapshots = state.columns
+      .flatMap((column) => Object.values(column.cards))
+      .map((entry) => ({
+        id: entry.id,
+        status: entry.status,
+        isAgent: true,
+        backgroundWorkPending: entry.backgroundWorkPending,
+      }))
+
     for (const column of state.columns) {
       for (const card of Object.values(column.cards)) {
         const queue = card.wakeTimerQueuedSends ?? []
@@ -3813,10 +3823,15 @@ function App() {
         }
 
         const currentTargetIds = card.wakeTimerPendingTargetIds ?? []
-        const pendingTargetIds = currentTargetIds.filter(
-          (targetId) => targetId !== card.id && validTargetIds.has(targetId),
-        )
         const mode: WakeTimerMode = card.wakeTimerMode ?? 'workspace-agents'
+        const pendingTargetIds = pruneIdleWorkspaceWakeTimerTargets({
+          mode,
+          explicitTargets: card.wakeTimerExplicitTargets === true,
+          targetIds: currentTargetIds.filter(
+            (targetId) => targetId !== card.id && validTargetIds.has(targetId),
+          ),
+          cards: allCardSnapshots,
+        })
         const activePeerIds = mode === 'workspace-agents'
           ? Object.values(column.cards)
               .filter((peer) =>

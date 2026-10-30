@@ -108,17 +108,6 @@ export const emptyLocalModelDraft = (): Omit<LocalModelEntry, 'id'> => ({
   model: '',
 })
 
-// DeepSeek 一键预设：只覆盖驱动 / 地址 / 模型名，用户已填的 key 与显示名保留。
-// DeepSeek 只提供 Anthropic 兼容端点，所以驱动固定 claude（codex 会去打不存在的 /responses）。
-export const applyDeepSeekLocalModelPreset = (
-  draft: Omit<LocalModelEntry, 'id'>,
-): Omit<LocalModelEntry, 'id'> => ({
-  ...draft,
-  harness: 'claude',
-  baseUrl: 'https://api.deepseek.com/anthropic',
-  model: 'deepseek-v4-pro',
-})
-
 export const onboardingStorageKey ='chill-vibe:onboarding:v1'
 export const onboardingLanguages = [
   { value: 'zh-CN' as const, flag: '\u{1F1E8}\u{1F1F3}', label: '\u4E2D\u6587' },

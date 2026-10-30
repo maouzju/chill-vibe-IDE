@@ -248,7 +248,6 @@ import {
   createLogMessages,
   createStructuredActivityMessage,
   createStructuredMessageId,
-  applyDeepSeekLocalModelPreset,
   emptyLocalModelDraft,
   emptyProfileDraft,
   errorMessage,
@@ -764,9 +763,12 @@ function App() {
   })
   const [localModelDraft, setLocalModelDraft] =
     useState<Omit<LocalModelEntry, 'id'>>(emptyLocalModelDraft)
-  const [modelPickerDraft, setModelPickerDraft] = useState<{ provider: Provider; model: string; label: string }>(
-    { provider: 'codex', model: '', label: '' },
-  )
+  const [modelPickerDraft, setModelPickerDraft] = useState<{
+    provider: Provider
+    model: string
+    label: string
+    profileId: string
+  }>({ provider: 'codex', model: '', label: '', profileId: '' })
   const text = useMemo(() => getLocaleText(appState.settings.language), [appState.settings.language])
   const codexChatSettings = useMemo(
     () => ({
@@ -2973,11 +2975,17 @@ function App() {
       patch: {
         modelPickerCustomModels: [
           ...appStateRef.current.settings.modelPickerCustomModels,
-          { id: crypto.randomUUID(), provider: modelPickerDraft.provider, model, label: modelPickerDraft.label.trim() },
+          {
+            id: crypto.randomUUID(),
+            provider: modelPickerDraft.provider,
+            model,
+            label: modelPickerDraft.label.trim(),
+            ...(modelPickerDraft.profileId ? { profileId: modelPickerDraft.profileId } : {}),
+          },
         ],
       },
     })
-    setModelPickerDraft((prev) => ({ ...prev, model: '', label: '' }))
+    setModelPickerDraft((prev) => ({ ...prev, model: '', label: '', profileId: '' }))
   }, [applyAction, modelPickerDraft])
 
   const removeModelPickerCustomModel = useCallback(
@@ -10658,6 +10666,13 @@ function App() {
                   </span>
                   <code className="model-picker-custom-model">{entry.model}</code>
                   <span className="model-picker-custom-label">{entry.label}</span>
+                  {entry.profileId ? (
+                    <small className="model-picker-option-tag">
+                      {appState.settings.providerProfiles[entry.provider].profiles.find(
+                        (profile) => profile.id === entry.profileId,
+                      )?.name || panelText.modelPickerEndpointMissing}
+                    </small>
+                  ) : null}
                   <AppButton type="button" onClick={() => removeModelPickerCustomModel(entry.id)}>
                     {panelText.modelPickerRemove}
                   </AppButton>
@@ -10674,6 +10689,7 @@ function App() {
                 onChange={(event) =>
                   setModelPickerDraft((prev) => ({
                     ...prev,
+                    profileId: '',
                     provider:
                       event.target.value === 'claude' || event.target.value === 'gemini'
                         ? event.target.value
@@ -10714,6 +10730,26 @@ function App() {
                 onChange={(event) => setModelPickerDraft((prev) => ({ ...prev, label: event.target.value }))}
               />
             </label>
+            {modelPickerDraft.provider !== 'gemini' ? (
+              <label className="settings-field">
+                <span>{panelText.modelPickerEndpointField}</span>
+                <select
+                  className="control settings-input"
+                  data-testid="model-picker-endpoint-select"
+                  value={modelPickerDraft.profileId}
+                  onChange={(event) => setModelPickerDraft((prev) => ({ ...prev, profileId: event.target.value }))}
+                >
+                  <option value="">{panelText.modelPickerEndpointFollowGlobal}</option>
+                  {appState.settings.providerProfiles[modelPickerDraft.provider].profiles
+                    .filter((profile) => profile.authMode !== 'cli-login')
+                    .map((profile) => (
+                      <option key={profile.id} value={profile.id}>
+                        {profile.name || profile.baseUrl || profile.id}
+                      </option>
+                    ))}
+                </select>
+              </label>
+            ) : null}
             <AppButton
               tone="primary"
               type="button"
@@ -10906,15 +10942,6 @@ function App() {
             （resolveLocalModelDefaultBaseUrl / 占位密钥），要连非默认端口或远程
             机器再展开"高级"。 */}
         <div className="provider-profile-card is-draft">
-          <div className="settings-actions provider-profile-actions">
-            <AppButton
-              type="button"
-              onClick={() => setLocalModelDraft((prev) => applyDeepSeekLocalModelPreset(prev))}
-            >
-              {panelText.localModelPresetDeepSeek}
-            </AppButton>
-          </div>
-
           <label className="settings-field">
             <span>{panelText.localModelHarnessField}</span>
             <select
@@ -10959,7 +10986,7 @@ function App() {
             <p className="settings-note">{panelText.localModelOllamaOffline}</p>
           ) : null}
 
-          <details className="settings-section" open={localModelDraft.baseUrl !== '' ? true : undefined}>
+          <details className="settings-section">
             <summary>{panelText.localModelAdvanced}</summary>
 
             <label className="settings-field">

@@ -476,6 +476,9 @@ export const modelPickerCustomModelSchema = z.object({
   provider: providerSchema,
   model: z.string().min(1),
   label: z.string().default(''),
+  // 绑定「路由 → 供应商配置」里的某一个 profile：这个模型走该配置的接口，而不是全局 active。
+  // 缺省 = 跟随全局；profile 被删后按缺省处理（运行时回落 active）。
+  profileId: z.string().optional(),
 })
 export type ModelPickerCustomModel = z.infer<typeof modelPickerCustomModelSchema>
 

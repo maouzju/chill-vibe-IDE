@@ -694,6 +694,61 @@ describe('cc-switch provider profile import merge', () => {
     }
   })
 
+  // 需求：在模型下拉的自定义模型上绑一个「额外的供应商配置」，这个模型就走那个配置的接口，
+  // 其它模型继续跟随全局 active profile。任何模型都能这样配，不是某个厂商专属。
+  describe('model bound to a provider profile', () => {
+    const stageBound = (profileId: string) => {
+      const settings = stageSettings([])
+      settings.providerProfiles.claude.profiles.push({
+        id: 'claude-extra',
+        name: 'Extra',
+        apiKey: 'sk-extra',
+        baseUrl: 'https://extra.example/anthropic',
+      })
+      settings.modelPickerCustomModels = [
+        { id: 'm1', provider: 'claude', model: 'bound-model', label: '', ...(profileId ? { profileId } : {}) },
+      ]
+      return settings
+    }
+
+    it('routes the bound model through its own profile and pins aliases to it', async () => {
+      const { resolveProviderRuntime, setProviderRuntimeSettingsOverride } = await import(
+        '../server/providers.ts'
+      )
+      setProviderRuntimeSettingsOverride(stageBound('claude-extra'))
+      try {
+        const runtime = await resolveProviderRuntime('claude', { model: 'bound-model' })
+        assert.equal(runtime.env.ANTHROPIC_BASE_URL, 'https://extra.example/anthropic')
+        assert.equal(runtime.env.ANTHROPIC_API_KEY, 'sk-extra')
+        assert.equal(runtime.claudeSettingsEnv?.ANTHROPIC_BASE_URL, 'https://extra.example/anthropic')
+        assert.equal(runtime.env.ANTHROPIC_DEFAULT_HAIKU_MODEL, 'bound-model')
+        assert.equal(runtime.claudeSettingsEnv?.ANTHROPIC_SMALL_FAST_MODEL, 'bound-model')
+      } finally {
+        setProviderRuntimeSettingsOverride(null)
+      }
+    })
+
+    it('leaves other models, unbound entries and dangling bindings on the active profile', async () => {
+      const { resolveProviderRuntime, setProviderRuntimeSettingsOverride } = await import(
+        '../server/providers.ts'
+      )
+      try {
+        for (const [settings, model] of [
+          [stageBound('claude-extra'), 'some-other-model'],
+          [stageBound(''), 'bound-model'],
+          [stageBound('deleted-profile'), 'bound-model'],
+        ] as const) {
+          setProviderRuntimeSettingsOverride(settings)
+          const runtime = await resolveProviderRuntime('claude', { model })
+          assert.equal(runtime.env.ANTHROPIC_BASE_URL, 'https://cloud.example', model)
+          assert.equal(runtime.env.ANTHROPIC_API_KEY, 'sk-cloud', model)
+        }
+      } finally {
+        setProviderRuntimeSettingsOverride(null)
+      }
+    })
+  })
+
   // 症状：自定义端点（DeepSeek 等）的卡里，子 agent / 标题生成等后台调用向端点请求 claude-haiku-*
   //   这类 Anthropic 型号名，端点不认而失败。
   // 根因：CLI 的 haiku/sonnet/opus/fable 别名落点被钉成 Anthropic 官方型号（shared/models.ts），

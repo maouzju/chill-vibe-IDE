@@ -581,7 +581,8 @@ export const normalizeModelPickerCustomModels = (
 
     seenIds.add(id)
     seenKeys.add(key)
-    return [{ id, provider, model, label: normalizeText(entry.label) }]
+    const profileId = normalizeText(entry.profileId)
+    return [{ id, provider, model, label: normalizeText(entry.label), ...(profileId ? { profileId } : {}) }]
   })
 }
 
@@ -1139,6 +1140,25 @@ export const rememberModelReasoningEffort = (
 export const getActiveProviderProfile = (settings: AppSettings, provider: Provider) => {
   const collection = settings.providerProfiles[provider]
   return collection.profiles.find((profile) => profile.id === collection.activeProfileId)
+}
+
+// 模型下拉自定义项上绑定的供应商配置。没绑、profile 已被删、或该模型不是自定义项 → undefined，
+// 调用方回落全局 active profile。
+export const getModelBoundProviderProfile = (
+  settings: AppSettings,
+  provider: Provider,
+  model?: string | null,
+) => {
+  const modelName = model?.trim()
+  if (!modelName) {
+    return undefined
+  }
+  const bound = settings.modelPickerCustomModels.find(
+    (entry) => entry.provider === provider && entry.model === modelName && entry.profileId,
+  )
+  return bound
+    ? settings.providerProfiles[provider].profiles.find((profile) => profile.id === bound.profileId)
+    : undefined
 }
 
 export const getCardMinimumSize = (model?: string | null) =>

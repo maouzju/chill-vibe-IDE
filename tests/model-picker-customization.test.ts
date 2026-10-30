@@ -180,6 +180,22 @@ describe('model picker settings normalization', () => {
     ])
     assert.deepEqual(normalizeModelPickerCustomModels(undefined), [])
   })
+
+  // 自定义模型可绑定一个供应商配置（profileId）：只有真绑了才带这个键，没绑的旧数据保持原形状。
+  it('keeps a bound provider profile id and omits it when blank', () => {
+    assert.deepEqual(
+      normalizeModelPickerCustomModels([
+        { id: 'a', provider: 'claude', model: 'ds-model', label: '', profileId: ' extra ' },
+        { id: 'b', provider: 'claude', model: 'plain-model', label: '', profileId: '  ' },
+        { id: 'c', provider: 'claude', model: 'older-model', label: '' },
+      ]),
+      [
+        { id: 'a', provider: 'claude', model: 'ds-model', label: '', profileId: 'extra' },
+        { id: 'b', provider: 'claude', model: 'plain-model', label: '' },
+        { id: 'c', provider: 'claude', model: 'older-model', label: '' },
+      ],
+    )
+  })
 })
 
 describe('wheel step accumulator', () => {

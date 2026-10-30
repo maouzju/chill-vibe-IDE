@@ -50,6 +50,15 @@ modelPickerCustomModels: z.array(modelPickerCustomModelSchema).default([])
 
 `App` 用 `useMemo` 组 `modelPickerCustomization = { visibility, customModels }`（依赖两个 settings 字段的引用），沿 `localModelEntries` 同一条链：`WorkspaceColumn` → `LayoutRenderer`（展开 props）→ `PaneView` → `ChatCard`；`layout-memoization.ts` 两个比较器与 ChatCard 的比较器各加一行引用比较。
 
+## 自定义模型绑定供应商配置（2026-10-30）
+
+`modelPickerCustomModelSchema` 加可选 `profileId`，指向「路由 → 供应商配置」里同 provider 的某个 profile。任何模型都能这样绑，不是某个厂商专属。
+
+- 运行时：`resolveProviderRuntime(provider, { model })` 用 `getModelBoundProviderProfile` 按 `provider + 模型名` 找绑定 profile，找到就用它的 baseUrl/apiKey 取代全局 active；没绑、profile 被删、模型不是自定义项都回落 active。绑定模型不受 `cliRoutingEnabled` 全局开关短路（选中即显式指定）。
+- claude 驱动的绑定模型同样把 haiku/sonnet/opus/fable 别名与 SMALL_FAST 钉到该模型名（端点只认自己的型号）。
+- UI：设置 → 模型下拉 → 自定义模型的草稿行多一个「接口」下拉（默认「跟随全局服务商」，选项为该 provider 的 profile，cli-login 项不列）。
+- 已知不覆盖：绑定的 profile 本身被改地址/密钥时，不会像全局 active 那样自动作废原生 session（keepalive 进程会因 env 签名变化换新）。
+
 ## 被否决的替代
 
 - 下拉菜单里直接右键「隐藏此项」：发现性差，且用户明确要「在设置里」。

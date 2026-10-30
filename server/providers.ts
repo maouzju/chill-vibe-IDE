@@ -20,7 +20,7 @@ import {
   getProviderLabel,
   normalizeLanguage,
 } from '../shared/i18n.js'
-import { getActiveProviderProfile } from '../shared/default-state.js'
+import { getActiveProviderProfile, getModelBoundProviderProfile } from '../shared/default-state.js'
 import {
   buildClaudeAgentAliasModelEnv,
   getModelOptions,
@@ -660,7 +660,7 @@ export const describeCodexUpstreamFailure = (
 
 export const resolveProviderRuntime = async (
   provider: Provider,
-  options: { localModelId?: string } = {},
+  options: { localModelId?: string; model?: string } = {},
 ): Promise<ProviderRuntime> => {
   // 别名落点从模型目录钉给 CLI（见 shared/models.ts 的 CLAUDE_AGENT_MODEL_ALIASES）；
   // 用户自己在环境里配过的别名优先，不覆盖。
@@ -700,7 +700,12 @@ export const resolveProviderRuntime = async (
     // 为什么不能干脆把早退删掉：非本地模型必须保持"路由关了就完全不注入"，否则会拿应用内的
     //   云端 key 覆盖用户 ~/.codex/config.toml、~/.claude 里自己配的东西。所以是加 localEntry
     //   例外，不是移除判断。
-    if (!localEntry && !settings.cliRoutingEnabled) {
+    // 模型绑定了供应商配置同理：选中那个模型本身就是逐模型的显式指定，不受全局路由开关短路。
+    const boundProfile = localEntry
+      ? undefined
+      : getModelBoundProviderProfile(settings, provider, options.model)
+
+    if (!localEntry && !boundProfile && !settings.cliRoutingEnabled) {
       return {
         args: [],
         env: baseEnv,
@@ -723,9 +728,9 @@ export const resolveProviderRuntime = async (
             localEntry.baseUrl.trim() || resolveLocalModelDefaultBaseUrl(localEntry.harness),
           ),
         }
-      : getActiveProviderProfile(settings, provider)
+      : (boundProfile ?? getActiveProviderProfile(settings, provider))
 
-    if (!localEntry && isCliLoginProfile(getActiveProviderProfile(settings, provider))) {
+    if (!localEntry && isCliLoginProfile(boundProfile ?? getActiveProviderProfile(settings, provider))) {
       return resolveCliLoginRuntime(provider, baseEnv)
     }
 
@@ -784,7 +789,7 @@ export const resolveProviderRuntime = async (
       // 只压 API_KEY 会让 CLI 拿着用户的云端 token 去打我们指定的端点。
       // 自定义端点条目：端点只认自己的模型名，CLI 的 haiku/sonnet/opus/fable 别名与后台小模型
       // 默认落到 Anthropic 官方型号会被拒（子 agent、标题生成等），统一钉到条目的模型名。
-      const entryModel = localEntry?.model.trim()
+      const entryModel = localEntry?.model.trim() || (boundProfile ? options.model?.trim() : undefined)
       const aliasPins: Record<string, string> = entryModel
         ? Object.fromEntries(
             [
@@ -3340,6 +3345,7 @@ export const launchProviderRun = async (
   }
   const runtime = await resolveProviderRuntime(currentRequest.provider, {
     localModelId: requestedLocalModelId ?? undefined,
+    model: currentRequest.model,
   })
 
   // 首版不注入超管/浏览器/JEV MCP（docs/specs/gemini-cli-provider「非目标」），在准备它们之前分流。

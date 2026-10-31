@@ -71,7 +71,7 @@ import { normalizeAccentColor } from './theme.js'
 import {
   defaultSystemPrompt,
   normalizeModelPromptRules,
-  normalizeSystemPrompt,
+  normalizeStoredSystemPrompt,
 } from './system-prompt.js'
 
 const now = () => new Date().toISOString()
@@ -945,7 +945,7 @@ export const normalizeAppSettings = (settings?: Partial<AppSettings> | null): Ap
         ),
       ),
     ],
-    systemPrompt: normalizeSystemPrompt(settings?.systemPrompt),
+    systemPrompt: normalizeStoredSystemPrompt(settings?.systemPrompt),
     modelPromptRules: normalizeModelPromptRules(settings?.modelPromptRules),
     codexPersonality: normalizeCodexPersonality(settings?.codexPersonality),
     codexFastMode: typeof settings?.codexFastMode === 'boolean' ? settings.codexFastMode : false,

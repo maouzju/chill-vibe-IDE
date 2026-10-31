@@ -12,6 +12,12 @@ export const normalizeSystemPrompt = (value?: string | null) => {
   return trimmed.length > 0 ? trimmed : defaultSystemPrompt
 }
 
+// 10-31 用户反馈：设置里系统提示词最后一行回车换不了行。
+// 根因：updateSettings 每次按键都走 normalizeAppSettings → trim，末尾换行被立刻吃掉。
+// 存储层只做空值回退、保留原文；发给模型前再由 normalizeSystemPrompt trim。
+export const normalizeStoredSystemPrompt = (value?: string | null) =>
+  typeof value === 'string' && value.trim().length > 0 ? value : defaultSystemPrompt
+
 export const normalizeModelPromptRules = (
   rules?: Array<Partial<ModelPromptRule> | null | undefined> | null,
 ): ModelPromptRule[] =>

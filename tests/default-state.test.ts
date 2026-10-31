@@ -359,6 +359,12 @@ describe('default-state helpers', () => {
     assert.equal(garbage.computerUseEnabled, false)
   })
 
+  it('normalizes the desktop control toggle with an off default', () => {
+    assert.equal(normalizeAppSettings({}).desktopControlEnabled, false)
+    assert.equal(normalizeAppSettings({ desktopControlEnabled: true } as never).desktopControlEnabled, true)
+    assert.equal(normalizeAppSettings({ desktopControlEnabled: 'yes' } as never).desktopControlEnabled, false)
+  })
+
   it('normalizes the JEV toggle and key with safe defaults', () => {
     const defaults = normalizeAppSettings({})
     assert.equal(defaults.jevEnabled, false)

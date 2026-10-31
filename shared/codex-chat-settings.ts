@@ -10,7 +10,7 @@ export type CodexChatSettings = Pick<
   | 'attackPatternProtectionEnabled'
   | 'computerUseEnabled'
 > &
-  Partial<Pick<AppSettings, 'jevEnabled' | 'jevApiUrl'>>
+  Partial<Pick<AppSettings, 'desktopControlEnabled' | 'jevEnabled' | 'jevApiUrl'>>
 type CodexChatRequestOverrides = Pick<
   ChatRequest,
   | 'personality'
@@ -20,6 +20,7 @@ type CodexChatRequestOverrides = Pick<
   | 'codexIsolatedHomeEnabled'
   | 'attackPatternProtectionEnabled'
   | 'computerUseEnabled'
+  | 'desktopControlEnabled'
   | 'jevEnabled'
   | 'jevApiUrl'
 >
@@ -32,6 +33,7 @@ export const defaultCodexChatSettings: CodexChatSettings = {
   attackPatternProtectionEnabled: false,
   codexIsolatedHomeEnabled: true,
   computerUseEnabled: false,
+  desktopControlEnabled: false,
   jevEnabled: false,
   jevApiUrl: '',
 }
@@ -47,6 +49,7 @@ export const buildCodexChatRequestOverrides = (
         settings.codexDestructiveCommandProtectionEnabled,
       attackPatternProtectionEnabled: settings.attackPatternProtectionEnabled,
       ...(settings.computerUseEnabled ? { computerUseEnabled: true as const } : {}),
+      ...(settings.desktopControlEnabled ? { desktopControlEnabled: true as const } : {}),
       ...(settings.jevEnabled ? { jevEnabled: true as const, ...(settings.jevApiUrl ? { jevApiUrl: settings.jevApiUrl } : {}) } : {}),
     }
   }
@@ -58,6 +61,7 @@ export const buildCodexChatRequestOverrides = (
     codexIsolatedHomeEnabled: settings.codexIsolatedHomeEnabled,
     // 只在打开时带字段：请求 schema 默认 false，省略即关闭，旧断言的默认形状不变。
     ...(settings.computerUseEnabled ? { computerUseEnabled: true as const } : {}),
+    ...(settings.desktopControlEnabled ? { desktopControlEnabled: true as const } : {}),
     ...(settings.jevEnabled ? { jevEnabled: true as const, ...(settings.jevApiUrl ? { jevApiUrl: settings.jevApiUrl } : {}) } : {}),
     ...(settings.codexPersonality === 'default'
       ? {}

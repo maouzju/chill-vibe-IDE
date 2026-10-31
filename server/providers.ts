@@ -125,6 +125,7 @@ import { resilientProxyPool } from './resilient-proxy.js'
 import { createArchiveRecallRuntimeOverrides, getCodexArchiveRecallInstruction } from './archive-recall.js'
 import { createWorkspaceAdminRuntime } from './automation-board-session.js'
 import { createComputerUseRuntime } from './computer-use-runtime.js'
+import { createDesktopControlRuntime } from './desktop-control-runtime.js'
 import { createJevRuntime, mergeClaudeMcpConfigs } from './jev-runtime.js'
 import type { WorkspaceAdminClaudeMcpConfig } from './automation-board-runtime.js'
 import {
@@ -3381,6 +3382,17 @@ export const launchProviderRun = async (
     computerUseRuntime = null
   }
 
+  // 桌面操控（docs/specs/desktop-control-toggle）：同一形态，只在开关打开的 Windows 回合注入，fail-open。
+  let desktopControlRuntime: Awaited<ReturnType<typeof createDesktopControlRuntime>> = null
+  try {
+    desktopControlRuntime = await createDesktopControlRuntime(currentRequest)
+  } catch (error) {
+    console.warn(
+      `[desktop-control] Unable to prepare desktop MCP runtime: ${error instanceof Error ? error.message : String(error)}`,
+    )
+    desktopControlRuntime = null
+  }
+
   // JEV 快速判断 MCP（docs/specs/jev-mcp-toggle）：同一形态，设置打开且有 key 才注入。
   let jevRuntime: Awaited<ReturnType<typeof createJevRuntime>> = null
   try {
@@ -3406,12 +3418,14 @@ export const launchProviderRun = async (
       ...(archiveRecallRuntime?.runtimeArgs ?? []),
       ...(adminRuntime?.codexRuntimeArgs ?? []),
       ...(computerUseRuntime?.codexRuntimeArgs ?? []),
+      ...(desktopControlRuntime?.codexRuntimeArgs ?? []),
       ...(jevRuntime?.codexRuntimeArgs ?? []),
     ]
     const extraSystemPrompt = [
       ...(archiveRecallRuntime ? [getCodexArchiveRecallInstruction(language)] : []),
       ...(adminRuntime ? [adminRuntime.instruction] : []),
       ...(computerUseRuntime ? [computerUseRuntime.instruction] : []),
+      ...(desktopControlRuntime ? [desktopControlRuntime.instruction] : []),
       ...(jevRuntime ? [jevRuntime.instruction] : []),
     ]
     const codexRuntime = extraCodexArgs.length > 0
@@ -3442,6 +3456,7 @@ export const launchProviderRun = async (
   const claudeExtraInstructions = [
     ...(adminRuntime ? [adminRuntime.instruction] : []),
     ...(computerUseRuntime ? [computerUseRuntime.instruction] : []),
+    ...(desktopControlRuntime ? [desktopControlRuntime.instruction] : []),
     ...(jevRuntime ? [jevRuntime.instruction] : []),
   ]
   const claudeRequest = claudeExtraInstructions.length > 0
@@ -3461,8 +3476,12 @@ export const launchProviderRun = async (
     attachmentPaths,
     options?.claudeSessionPool ?? null,
     adminRuntime?.claudeMcpConfig,
-    // 可选 MCP 共用一条槽位：computer use 与 JEV 合并后一起走 --mcp-config。
-    mergeClaudeMcpConfigs(computerUseRuntime?.claudeMcpConfig, jevRuntime?.claudeMcpConfig),
+    // 可选 MCP 共用一条槽位：浏览器、桌面操控与 JEV 合并后一起走 --mcp-config。
+    mergeClaudeMcpConfigs(
+      computerUseRuntime?.claudeMcpConfig,
+      desktopControlRuntime?.claudeMcpConfig,
+      jevRuntime?.claudeMcpConfig,
+    ),
   )
 }
 
@@ -4419,6 +4438,8 @@ export const buildClaudeKeepaliveSignature = (
     readOnly: request.readOnly === true,
     // 切换浏览器控制开关必须换进程：旧进程的 argv 里没有（或多了）chill_vibe_browser MCP。
     computerUse: request.computerUseEnabled === true,
+    // 同理：桌面操控开关决定 argv 里有没有 chill_vibe_desktop MCP。
+    desktopControl: request.desktopControlEnabled === true,
     jev: request.jevEnabled === true,
     // JEV 的地址会进入 MCP 环境；不签它会让 Claude 常驻进程继续复用旧地址。
     jevApiUrl: request.jevEnabled === true ? request.jevApiUrl?.trim() ?? '' : '',

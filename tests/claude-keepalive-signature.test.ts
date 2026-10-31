@@ -139,3 +139,12 @@ test('keepalive signature changes when the run is read-only', () => {
     buildClaudeKeepaliveSignature({ ...request, readOnly: true }, true, runtime),
   )
 })
+
+// 桌面操控开关决定 argv 里有没有 chill_vibe_desktop MCP，切换后必须换进程。
+test('keepalive signature changes with the desktop control toggle', () => {
+  const runtime = { args: [], env: {} }
+  assert.notEqual(
+    buildClaudeKeepaliveSignature(request, true, runtime),
+    buildClaudeKeepaliveSignature({ ...request, desktopControlEnabled: true } as ChatRequest, true, runtime),
+  )
+})

@@ -694,6 +694,7 @@ export const createDefaultSettings = (language: AppLanguage = defaultAppLanguage
   defaultAdminAccess: false,
   codexIsolatedHomeEnabled: true,
   computerUseEnabled: false,
+  desktopControlEnabled: false,
   jevEnabled: false,
   jevApiKey: '',
   jevApiUrl: '',
@@ -952,6 +953,10 @@ export const normalizeAppSettings = (settings?: Partial<AppSettings> | null): Ap
       typeof settings?.computerUseEnabled === 'boolean'
         ? settings.computerUseEnabled
         : defaults.computerUseEnabled,
+    desktopControlEnabled:
+      typeof settings?.desktopControlEnabled === 'boolean'
+        ? settings.desktopControlEnabled
+        : defaults.desktopControlEnabled,
     jevEnabled: typeof settings?.jevEnabled === 'boolean' ? settings.jevEnabled : defaults.jevEnabled,
     jevApiKey: typeof settings?.jevApiKey === 'string' ? settings.jevApiKey.trim() : defaults.jevApiKey,
     jevApiUrl: typeof settings?.jevApiUrl === 'string' ? settings.jevApiUrl.trim() : defaults.jevApiUrl,

@@ -393,6 +393,7 @@ export type IdeAction =
           | 'defaultAdminAccess'
           | 'codexIsolatedHomeEnabled'
           | 'computerUseEnabled'
+          | 'desktopControlEnabled'
           | 'jevEnabled'
           | 'jevApiKey'
           | 'jevApiUrl'

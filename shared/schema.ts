@@ -880,6 +880,8 @@ export const appSettingsSchema = z.object({
   codexIsolatedHomeEnabled: z.boolean().default(true),
   // 允许 Agent 使用浏览器（computer use）。默认关：会以用户身份操作已登录网站。
   computerUseEnabled: z.boolean().default(false),
+  // 允许 Agent 操控 Windows 桌面（docs/specs/desktop-control-toggle）。默认关：会动真实鼠标键盘。
+  desktopControlEnabled: z.boolean().default(false),
   // JEV 快速判断 MCP（docs/specs/jev-mcp-toggle）。默认关；key 只在服务端读，不进 ChatRequest。
   jevEnabled: z.boolean().default(false),
   jevApiKey: z.string().default(''),
@@ -1191,6 +1193,7 @@ export const appStateSchema = z.object({
     attackPatternProtectionEnabled: false,
     codexIsolatedHomeEnabled: true,
     computerUseEnabled: false,
+    desktopControlEnabled: false,
     jevEnabled: false,
     jevApiKey: '',
     jevApiUrl: '',
@@ -1447,6 +1450,8 @@ export const chatRequestSchema = z.object({
   // optional 而非 default(false)：renderer 侧 ChatRequest 是输出类型，default 会让所有
   // 请求构造点（Brainstorm / Git Agent / 白噪音…）都被迫补这个字段；服务端只认 === true。
   computerUseEnabled: z.boolean().optional(),
+  // 同上：注入 Windows 桌面操控 MCP（docs/specs/desktop-control-toggle）。
+  desktopControlEnabled: z.boolean().optional(),
   // 同上：只在设置打开时带，服务端只认 === true；key 由服务端从 state 读取。
   jevEnabled: z.boolean().optional(),
   jevApiUrl: z.string().optional(),

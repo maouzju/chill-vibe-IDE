@@ -45,6 +45,28 @@ describe('Agent chat request settings', () => {
     )
   })
 
+  it('forwards the desktop control toggle to both providers only when it is on', () => {
+    const settings = {
+      codexPersonality: 'default' as const,
+      codexFastMode: false,
+      agentOutsideWorkspaceWriteEnabled: true,
+      codexDestructiveCommandProtectionEnabled: true,
+      attackPatternProtectionEnabled: false,
+      codexIsolatedHomeEnabled: true,
+      computerUseEnabled: false,
+      desktopControlEnabled: true,
+    }
+    assert.equal(buildCodexChatRequestOverrides('claude', settings).desktopControlEnabled, true)
+    assert.equal(buildCodexChatRequestOverrides('codex', settings).desktopControlEnabled, true)
+    for (const provider of ['claude', 'codex'] as const) {
+      assert.equal(
+        'desktopControlEnabled' in buildCodexChatRequestOverrides(provider, { ...settings, desktopControlEnabled: false }),
+        false,
+        '关闭时省略字段',
+      )
+    }
+  })
+
   it('forwards the JEV toggle to both providers only when it is on', () => {
     const settings = {
       codexPersonality: 'default' as const,

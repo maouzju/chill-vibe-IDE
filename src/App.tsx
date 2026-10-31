@@ -775,6 +775,7 @@ function App() {
       codexPersonality: appState.settings.codexPersonality,
       codexFastMode: appState.settings.codexFastMode,
       computerUseEnabled: appState.settings.computerUseEnabled,
+      desktopControlEnabled: appState.settings.desktopControlEnabled,
       jevEnabled: appState.settings.jevEnabled,
       jevApiUrl: appState.settings.jevApiUrl,
       agentOutsideWorkspaceWriteEnabled:
@@ -790,6 +791,7 @@ function App() {
       appState.settings.attackPatternProtectionEnabled,
       appState.settings.codexFastMode,
       appState.settings.computerUseEnabled,
+      appState.settings.desktopControlEnabled,
       appState.settings.jevEnabled,
       appState.settings.jevApiUrl,
       appState.settings.codexIsolatedHomeEnabled,
@@ -9542,6 +9544,31 @@ function App() {
           role="tooltip"
         >
           {text.computerUseNote}
+        </p>
+      </div>
+
+      <div className="settings-hover-detail">
+        <label className="settings-toggle" htmlFor={`${idPrefix}-desktop-control`}>
+          <span>{text.desktopControlLabel}</span>
+          <input
+            id={`${idPrefix}-desktop-control`}
+            type="checkbox"
+            aria-describedby={`${idPrefix}-desktop-control-note`}
+            checked={appState.settings.desktopControlEnabled}
+            onChange={(event) =>
+              applyAction({
+                type: 'updateSettings',
+                patch: { desktopControlEnabled: event.target.checked },
+              })
+            }
+          />
+        </label>
+        <p
+          id={`${idPrefix}-desktop-control-note`}
+          className="settings-note settings-hover-note"
+          role="tooltip"
+        >
+          {text.desktopControlNote}
         </p>
       </div>
     </div>

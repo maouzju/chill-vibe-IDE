@@ -162,6 +162,8 @@ type LocaleText = {
   agentOutsideWorkspaceWriteNote: string
   computerUseLabel: string
   computerUseNote: string
+  desktopControlLabel: string
+  desktopControlNote: string
   jevExplainMcp: string
   jevExplainJev: string
   jevLabel: string
@@ -756,6 +758,9 @@ const localeTextByLanguage: Record<AppLanguage, LocaleText> = {
     computerUseLabel: '允许 Agent 使用浏览器（Computer Use）',
     computerUseNote:
       '打开后 Claude 与 Codex 会话都会拿到浏览器控制工具，可以替你打开网页、点击、填表、读取页面。Claude 装了 Claude in Chrome 扩展时优先走扩展；否则两者都使用 Playwright MCP，需要先执行 npm i -g @playwright/mcp（或本机能用 npx）。浏览器会以你的身份操作已登录网站，默认关闭。切换后下一条消息生效。',
+    desktopControlLabel: '允许 Agent 操控电脑桌面（Windows）',
+    desktopControlNote:
+      '打开后 Claude 与 Codex 会话都能截屏、读窗口、点击、打字、按快捷键、启动应用，操作的是整个 Windows 桌面上的任意软件。用的是 Windows-MCP，需要先执行 uv tool install windows-mcp（或本机能用 uvx）。它动的是你真实的鼠标键盘，挪动鼠标就能抢回控制；为了不绕过上面的命令防护，它自带的 PowerShell、文件、进程、注册表工具已关闭。默认关闭，切换后下一条消息生效。',
     jevExplainMcp:
       'MCP 是什么：给 AI 外接工具的通用插口。插上一个 MCP，AI 在对话里就多了一样能自己决定用不用的工具。',
     jevExplainJev:
@@ -1405,6 +1410,9 @@ const localeTextByLanguage: Record<AppLanguage, LocaleText> = {
     computerUseLabel: 'Allow Agent to use the browser (Computer Use)',
     computerUseNote:
       'When on, both Claude and Codex sessions get browser-control tools to open pages, click, fill forms, and read page state on your behalf. Claude prefers the Claude in Chrome extension when it is installed; otherwise both use the Playwright MCP, which needs npm i -g @playwright/mcp (or a working npx). The browser acts as you on sites you are signed in to, so this is off by default. Takes effect from the next message.',
+    desktopControlLabel: 'Allow Agent to control the desktop (Windows)',
+    desktopControlNote:
+      'When on, both Claude and Codex sessions can capture the screen, read windows, click, type, press shortcuts, and launch apps anywhere on your Windows desktop. It uses Windows-MCP, which needs uv tool install windows-mcp (or a working uvx). It drives your real mouse and keyboard; move the mouse to take control back. Its PowerShell, file, process, and registry tools are switched off so it cannot bypass the command protections above. Off by default; takes effect from the next message.',
     jevExplainMcp:
       'What is MCP: a standard plug for giving the AI extra tools. Plug one in and the AI gains a tool it can choose to use during a chat.',
     jevExplainJev:

@@ -1015,8 +1015,10 @@ export const isQuickToolModelEnabled = (settings: AppSettings, model: string) =>
       return false
     case WEATHER_TOOL_MODEL:
       return settings.experimentalWeatherEnabled
+    // 统计卡（含 token 用量）10-31 起转正、常驻：用户找不到藏在「高级设置→实验功能」里的开关。
+    // 旧存档里的 experimentalStatsEnabled=false 不再生效，字段只为存档兼容保留。
     case STATS_TOOL_MODEL:
-      return settings.experimentalStatsEnabled
+      return true
     case MUSIC_TOOL_MODEL:
       return settings.experimentalMusicEnabled
     case WHITENOISE_TOOL_MODEL:

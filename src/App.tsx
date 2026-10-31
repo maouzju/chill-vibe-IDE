@@ -11629,20 +11629,6 @@ function App() {
       id: 'experimental',
       node: (
         <div className="settings-section">
-        <label className="settings-toggle" htmlFor="experimental-stats-toggle">
-          <span>{text.experimentalStatsLabel}</span>
-          <input
-            id="experimental-stats-toggle"
-            type="checkbox"
-            checked={appState.settings.experimentalStatsEnabled}
-            onChange={(event) =>
-              applyAction({
-                type: 'updateSettings',
-                patch: { experimentalStatsEnabled: event.target.checked },
-              })
-            }
-          />
-        </label>
 
         <label className="settings-toggle" htmlFor="experimental-weather-toggle">
           <span>{text.experimentalWeatherLabel}</span>

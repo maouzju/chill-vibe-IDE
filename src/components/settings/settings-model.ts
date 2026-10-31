@@ -262,8 +262,8 @@ export const settingsItemCatalog: readonly SettingsItemMeta[] = [
     category: 'system',
     tier: 'advanced',
     label: { 'zh-CN': '实验功能', en: 'Experimental' },
-    hint: hint('还在打磨的附加卡片：统计、天气、音乐、白噪音；', 'Extras still being polished: stats, weather, music, white noise.'),
-    keywords: ['experimental', '实验', 'weather', '天气', 'music', '音乐', 'white noise', '白噪音', 'stats', '统计'],
+    hint: hint('还在打磨的附加卡片：天气、音乐、白噪音；', 'Extras still being polished: weather, music, white noise.'),
+    keywords: ['experimental', '实验', 'weather', '天气', 'music', '音乐', 'white noise', '白噪音'],
     experimental: true,
   },
   {

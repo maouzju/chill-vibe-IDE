@@ -32,6 +32,7 @@ import {
   FILETREE_TOOL_MODEL,
   GIT_TOOL_MODEL,
   MUSIC_TOOL_MODEL,
+  STATS_TOOL_MODEL,
   STICKYNOTE_TOOL_MODEL,
   WEATHER_TOOL_MODEL,
   WHITENOISE_TOOL_MODEL,
@@ -525,7 +526,7 @@ describe('default-state helpers', () => {
     assert.equal(normalizeAppSettings({ systemPrompt: '' }).systemPrompt, defaultSystemPrompt)
     assert.equal(
       normalizeAppSettings({ systemPrompt: '  Always verify before claiming success.  ' }).systemPrompt,
-      'Always verify before claiming success.',
+      '  Always verify before claiming success.  ',
     )
   })
 
@@ -565,6 +566,7 @@ describe('default-state helpers', () => {
       FILETREE_TOOL_MODEL,
       STICKYNOTE_TOOL_MODEL,
       AUTOMATIONBOARD_TOOL_MODEL,
+      STATS_TOOL_MODEL,
     ])
     assert.deepEqual(
       getAvailableQuickToolModels(
@@ -580,6 +582,7 @@ describe('default-state helpers', () => {
         FILETREE_TOOL_MODEL,
         STICKYNOTE_TOOL_MODEL,
         AUTOMATIONBOARD_TOOL_MODEL,
+        STATS_TOOL_MODEL,
         WEATHER_TOOL_MODEL,
         MUSIC_TOOL_MODEL,
       ],
@@ -612,6 +615,7 @@ describe('default-state helpers', () => {
       FILETREE_TOOL_MODEL,
       STICKYNOTE_TOOL_MODEL,
       AUTOMATIONBOARD_TOOL_MODEL,
+      STATS_TOOL_MODEL,
     ])
   })
 

@@ -498,17 +498,21 @@ export const isWakeTimerConditionReady = ({
  *   而 flush 只剔「卡已不存在」的 id。
  * 被否决：给每种终止路径各补一次广播 —— 终止路径太多；判据直接认目标当前是否还在跑。
  *   只作用于自己挂的 workspace-agents：left-tab 要认待唤醒批次，显式名单靠兜底超时。
+ * settlingTargetIds：done 刚到、完成稳定窗口还没走完的目标照旧保留 —— 否则 idle 一闪就被剔，
+ *   绕过「真正完成」判据提前发车（2026-11-01 chat-interrupt「stays normally completed」e2e 红）。
  */
 export const pruneIdleWorkspaceWakeTimerTargets = ({
   mode,
   explicitTargets,
   targetIds,
   cards,
+  settlingTargetIds,
 }: {
   mode: WakeTimerMode
   explicitTargets: boolean
   targetIds: readonly string[]
   cards: readonly WakeTimerCardSnapshot[]
+  settlingTargetIds?: ReadonlySet<string>
 }) => {
   if (mode !== 'workspace-agents' || explicitTargets) {
     return [...targetIds]
@@ -518,7 +522,7 @@ export const pruneIdleWorkspaceWakeTimerTargets = ({
       .filter((card) => card.status === 'streaming' || card.backgroundWorkPending === true)
       .map((card) => card.id),
   )
-  return targetIds.filter((targetId) => busy.has(targetId))
+  return targetIds.filter((targetId) => busy.has(targetId) || settlingTargetIds?.has(targetId) === true)
 }
 
 export const removeCompletedWakeTimerTarget = (

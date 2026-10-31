@@ -702,9 +702,11 @@ export const resolveProviderRuntime = async (
     //   云端 key 覆盖用户 ~/.codex/config.toml、~/.claude 里自己配的东西。所以是加 localEntry
     //   例外，不是移除判断。
     // 模型绑定了供应商配置同理：选中那个模型本身就是逐模型的显式指定，不受全局路由开关短路。
-    const boundProfile = localEntry
+    // 绑定的配置没填密钥就当没绑定：否则下面 !apiKey 早退会让请求悄悄落到用户 ~/.claude、~/.codex 自带的端点。
+    const candidateBoundProfile = localEntry
       ? undefined
       : getModelBoundProviderProfile(settings, provider, options.model)
+    const boundProfile = candidateBoundProfile?.apiKey.trim() ? candidateBoundProfile : undefined
 
     if (!localEntry && !boundProfile && !settings.cliRoutingEnabled) {
       return {

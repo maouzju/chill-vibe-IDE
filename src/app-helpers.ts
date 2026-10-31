@@ -108,7 +108,7 @@ export const emptyLocalModelDraft = (): Omit<LocalModelEntry, 'id'> => ({
   model: '',
 })
 
-export const onboardingStorageKey ='chill-vibe:onboarding:v1'
+export const onboardingStorageKey = 'chill-vibe:onboarding:v1'
 export const onboardingLanguages = [
   { value: 'zh-CN' as const, flag: '\u{1F1E8}\u{1F1F3}', label: '\u4E2D\u6587' },
   { value: 'en' as const, flag: '\u{1F1FA}\u{1F1F8}', label: 'English' },

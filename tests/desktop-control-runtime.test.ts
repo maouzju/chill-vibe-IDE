@@ -185,3 +185,13 @@ test('getDesktopControlInstruction names the MCP server in both languages and te
     assert.ok(!claude.includes('tool_search'))
   }
 })
+
+test('createDesktopControlRuntime is skipped on read-only and plan-mode turns', async () => {
+  for (const overrides of [{ readOnly: true }, { planMode: true }] as const) {
+    const runtime = await createDesktopControlRuntime(
+      createRequest({ desktopControlEnabled: true, ...overrides }),
+      { platform: 'win32', homeDir: home, lookup: async () => ['windows-mcp'], exists: async () => true },
+    )
+    assert.equal(runtime, null)
+  }
+})

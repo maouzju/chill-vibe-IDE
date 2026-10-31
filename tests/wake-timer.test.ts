@@ -1191,4 +1191,18 @@ describe('pruneIdleWorkspaceWakeTimerTargets', () => {
       ['idle'],
     )
   })
+
+  it('keeps an idle target that is still inside its completion stability window', () => {
+    // done 刚到、稳定窗口没走完的目标还没「真正完成」（可能马上续跑），不能被当成闲置剔掉。
+    assert.deepEqual(
+      pruneIdleWorkspaceWakeTimerTargets({
+        mode: 'workspace-agents',
+        explicitTargets: false,
+        targetIds: ['idle', 'err', 'run'],
+        cards,
+        settlingTargetIds: new Set(['idle']),
+      }),
+      ['idle', 'run'],
+    )
+  })
 })

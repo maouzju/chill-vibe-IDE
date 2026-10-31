@@ -3842,6 +3842,7 @@ function App() {
             (targetId) => targetId !== card.id && validTargetIds.has(targetId),
           ),
           cards: allCardSnapshots,
+          settlingTargetIds: new Set(wakeTimerCompletionTimersRef.current.keys()),
         })
         const activePeerIds = mode === 'workspace-agents'
           ? Object.values(column.cards)
@@ -4055,6 +4056,9 @@ function App() {
         statusAfterStability: completedCard.status,
         backgroundWorkPending: completedCard.backgroundWorkPending === true,
       })) {
+        // 稳定窗口里目标转成 error/消失：它不再算 settling，重扫一次让闲置剪枝摘掉它，
+        // 否则要等下一次拓扑变化才发车。
+        flushReadyWakeTimersRef.current?.()
         return
       }
 

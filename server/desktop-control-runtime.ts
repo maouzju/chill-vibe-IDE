@@ -136,7 +136,7 @@ export const createDesktopControlRuntime = async (
   request: ChatRequest,
   deps: ResolveOptions = {},
 ): Promise<DesktopControlRuntime | null> => {
-  if (request.desktopControlEnabled !== true) {
+  if (request.desktopControlEnabled !== true || request.readOnly === true || request.planMode === true) {
     return null
   }
 

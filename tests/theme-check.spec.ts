@@ -3224,6 +3224,8 @@ test('card type and experimental settings groups keep tool toggles readable in b
   await expect(experimentalGroup).toContainText(/网易云音乐|NetEase Music/)
   await expect(experimentalGroup).toContainText(/Weather|\u5929\u6c14/)
   await expect(experimentalGroup).toContainText(/White Noise|\u767d\u566a\u97f3/)
+  // 统计卡 2026-11 转正为常驻卡，实验区不再有它的开关。
+  await expect(experimentalGroup).not.toContainText(/Stats|统计/)
   await expect(experimentalGroup.locator('.settings-tag-experimental')).toBeVisible()
   await expect(page.getByTestId('settings-leave-alone')).toContainText(/一般不用动|Usually leave as is/)
   await expect(experimentalGroup).toHaveScreenshot('experimental-settings-group-dark.png', {
@@ -8179,6 +8181,17 @@ test('dragging a tab over another tab shows a drop indicator in both themes', as
       return dt
     })
 
+    // 切回主面板后第一帧标签宽度会从 240px 跳到 120px；等宽度连续两次读数一致再取点，否则落在右半边变成 drop-after。
+    let lastWidth = -1
+    await expect
+      .poll(async () => {
+        const width = (await targetTab.boundingBox())?.width ?? -2
+        const stable = width === lastWidth
+        lastWidth = width
+        return stable
+      }, { intervals: [100, 100, 150] })
+      .toBe(true)
+
     const targetBox = await targetTab.boundingBox()
     if (!targetBox) throw new Error('Expected target tab to be visible')
 
@@ -8916,16 +8929,17 @@ for (const theme of ['dark', 'light'] as const) {
     const toolButtons = paneView.locator('.chat-empty-tool-button')
 
     await expect(page.locator('.app-topbar-tool-button')).toHaveCount(0)
-    await expect(toolButtons).toHaveCount(7)
+    await expect(toolButtons).toHaveCount(8)
     await expect(toolButtons.nth(0)).toContainText(/Git/)
     await expect(toolButtons.nth(1)).toContainText(/Files/)
     await expect(toolButtons.nth(2)).toContainText(/Sticky Note/)
-    // 自动化看板排在便签之后、环境类（天气/音乐/白噪音）之前 —— 顺序本身是断言的一部分，
+    // 自动化看板、统计排在便签之后、环境类（天气/音乐/白噪音）之前 —— 顺序本身是断言的一部分，
     // 环境类那三个可以被"已开一个就隐藏其余"整组摘掉，工作类不会。
     await expect(toolButtons.nth(3)).toContainText(/Automation Board/)
-    await expect(toolButtons.nth(4)).toContainText(/Weather/)
-    await expect(toolButtons.nth(5)).toContainText(/Music/)
-    await expect(toolButtons.nth(6)).toContainText(/White Noise/)
+    await expect(toolButtons.nth(4)).toContainText(/Stats/)
+    await expect(toolButtons.nth(5)).toContainText(/Weather/)
+    await expect(toolButtons.nth(6)).toContainText(/Music/)
+    await expect(toolButtons.nth(7)).toContainText(/White Noise/)
     await expect(paneView).toHaveScreenshot(`empty-chat-tool-entries-${theme}.png`, {
       animations: 'disabled',
       caret: 'hide',
@@ -8951,9 +8965,11 @@ for (const theme of ['dark', 'light'] as const) {
       '随手记下想法和待办。',
       // 这条明显比前三条长，正是"中文描述会不会被裁掉/撑破卡片"这条用例要盯的最坏情况。
       '把一批需求排成看板，执行中的自动开跑，跑完让监工接手。',
+      // 统计卡 2026-11 转正为常驻卡，排在看板之后。
+      '会话与消息的每日热力图，外加上下文用量概览。',
     ]
 
-    await expect(toolButtons).toHaveCount(4)
+    await expect(toolButtons).toHaveCount(expectedDescriptions.length)
 
     for (const [index, expectedDescription] of expectedDescriptions.entries()) {
       const button = toolButtons.nth(index)
@@ -8986,9 +9002,10 @@ for (const theme of ['dark', 'light'] as const) {
     const toolButtons = paneView.locator('.chat-empty-tool-button')
     const descriptions = paneView.locator('.chat-empty-tool-description')
 
-    await expect(toolButtons).toHaveCount(4)
+    // 工作类五个：Git / 文件 / 便签 / 看板 / 统计（常驻）
+    await expect(toolButtons).toHaveCount(5)
 
-    for (const index of [0, 1, 2, 3]) {
+    for (const index of [0, 1, 2, 3, 4]) {
       const button = toolButtons.nth(index)
       const description = descriptions.nth(index)
 
@@ -9083,13 +9100,14 @@ for (const theme of ['dark', 'light'] as const) {
     const paneView = page.locator('.pane-view').first()
     const toolButtons = paneView.locator('.chat-empty-tool-button')
 
-    await expect(toolButtons).toHaveCount(4)
+    await expect(toolButtons).toHaveCount(5)
     await expect(toolButtons.nth(0)).toContainText(/Git/)
     await expect(toolButtons.nth(1)).toContainText(/Files/)
     await expect(toolButtons.nth(2)).toContainText(/Sticky Note/)
-    // 这条用例盯的是"开了一个环境类就把环境类整组藏掉"。自动化看板是工作类，必须留着 ——
-    // 它出现在这里恰好证明隐藏规则认的是类别而不是"除前三个以外全砍"。
+    // 这条用例盯的是"开了一个环境类就把环境类整组藏掉"。自动化看板、统计是工作类，必须留着 ——
+    // 它们出现在这里恰好证明隐藏规则认的是类别而不是"除前三个以外全砍"。
     await expect(toolButtons.nth(3)).toContainText(/Automation Board/)
+    await expect(toolButtons.nth(4)).toContainText(/Stats/)
     await expect(toolButtons.filter({ hasText: /Weather/ })).toHaveCount(0)
     await expect(toolButtons.filter({ hasText: /Music/ })).toHaveCount(0)
     await expect(toolButtons.filter({ hasText: /White Noise/ })).toHaveCount(0)

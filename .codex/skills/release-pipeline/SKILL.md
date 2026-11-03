@@ -213,6 +213,8 @@ Guardrails:
 
 - **v0.21.20 (2026-11-01) 三条新教训。** (1) 审计子代理（opus 正确性）抓到的是上一个已提交 slice 里的真回归：唤醒定时器“空闲即修剪”跳过了完成稳定窗，排队消息 900 ms 内提前发出；它只在 `chat-interrupt` 的 e2e 里红，Node 全绿。对策：门禁里的“候选独有红”必须先单跑 `--repeat-each` 判定抖动/确定性，再读代码，不要默认当快照债。(2) 5199 被无关常驻进程占用时，`PW_PORT` 换成空闲端口跑完整门禁是有效门禁；用 `netstat` 确认新端口空闲，基线 worktree 另用一个端口。(3) 用 Bash heredoc 写含反斜杠的路径（如测试里的假盘符路径）会被折成单反斜杠并触发 `machine-path` 审计；这类字面量用 Edit 工具或直接避免写盘符。
 
+- **v0.21.21 (2026-11-03) 两条教训。** (1) 5199 与 5211 被无关进程占用时，`PW_PORT=5223` 跑完整门禁有效；Playwright 门禁红在基线债清单内（brainstorm/theme-check/text-editor/tool-card-settings）时，按标题对比 origin/main 基线 worktree 即可判定，基线用完即拆（仅 unlink junction）。(2) 发版后 `gh release view` 可能因 api.github.com 连接超时，但资产下载 URL 已 200；先重试 `gh` 查询，不要据此重传资产。
+
 ## Suggested Prompt Shapes
 
 - `Use $release-pipeline to audit this checkout, bump the version, and publish a GitHub release if it is safe.`

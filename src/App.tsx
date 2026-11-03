@@ -6081,6 +6081,9 @@ function App() {
 
           persistAfterActions(actions, applyActions(actions))
           if (!donePlan.finalizeLogicalRun) {
+            if (donePlan.releaseQueuedSends) {
+              dispatchNextQueuedSend(columnId, card.id)
+            }
             return
           }
           // 一轮正常收尾 = 会话已恢复：兜底重试清零，并剥掉此前堆叠的连续重复报错。

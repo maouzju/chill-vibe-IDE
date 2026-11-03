@@ -138,6 +138,7 @@ test('native background completion pauses the transport without finalizing the l
       kind: 'background-pending',
       finalizeLogicalRun: false,
       runSuccessCallbacks: false,
+      releaseQueuedSends: true,
     },
   )
   assert.deepEqual(
@@ -146,6 +147,7 @@ test('native background completion pauses the transport without finalizing the l
       kind: 'terminal',
       finalizeLogicalRun: true,
       runSuccessCallbacks: true,
+      releaseQueuedSends: true,
     },
   )
   assert.deepEqual(
@@ -154,6 +156,7 @@ test('native background completion pauses the transport without finalizing the l
       kind: 'stopped',
       finalizeLogicalRun: true,
       runSuccessCallbacks: false,
+      releaseQueuedSends: true,
     },
   )
 })

@@ -73,8 +73,10 @@ renderer `onDone` 先区分：
 - `completionGlow: true`
 - `consumeRunDurationMessage`
 - `scheduleStableWakeTimerCompletion`
-- `dispatchNextQueuedSend`
 - `scheduleAllAgentsDoneSound`
+
+例外：`dispatchNextQueuedSend` 在 `background-pending` 也执行（`releaseQueuedSends`）。延后队列只等
+“这一轮回复说完”，不陪后台任务/会话闹钟等到底，否则 3 小时自查闹钟会把它挂到空闲回收。
 
 App 层稳定完成广播的 Auto-Urge 计划在 `backgroundWorkPending` 时跳过，不再依赖 ChatCard effect。全完成检测与 wake-timer 的
 目标忙闲快照把该字段纳入判断，避免其他卡片的完成定时器从侧面误判。

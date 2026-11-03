@@ -167,6 +167,13 @@ export const getStreamDonePlan = ({
     kind,
     finalizeLogicalRun: kind !== 'background-pending',
     runSuccessCallbacks: kind === 'terminal',
+    // 症状：用户报「延后消息有时不会触发发送」（2026-11-03），卡片已 idle，「已延后 N 条」一直挂着。
+    // 根因：Stop 钩子只要 session_crons / background_tasks 非空就判 background-pending，而
+    //   Chill Vibe 自己就让父 agent 给后台 Workflow 定 3 小时自查闹钟；闹钟/后台 shell 不散，
+    //   每一轮都是 pending，延后队列只在 terminal 才放行，最多挂到 4 小时空闲回收。
+    // 为什么不能只放行 terminal：「延后」的语义是"等这一轮回复说完"，pending 时 CLI 已空闲、
+    //   可以接新输入（用户左键直接发也是这么走的）；后台任务没有上界，不能让队列陪着等。
+    releaseQueuedSends: true,
   } as const
 }
 

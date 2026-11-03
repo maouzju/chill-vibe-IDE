@@ -9,3 +9,9 @@
 7. [x] Tier 2：`tests/column-dock.spec.ts` Playwright 用例（点击恢复 + 拖拽停靠），亮暗主题各跑一次。
 8. [x] `pnpm test:quality`。
 9. [x] `pnpm electron:build` 出包，交付路径。
+
+## 增补（2026-11-03）右键收起 + 动效
+
+10. [x] i18n `dockColumnToTopbar`；`WorkspaceColumn` 项目名右键菜单。
+11. [x] `column-dock-animation.ts` 幽灵飞行 + chip 弹入 + 兄弟列 FLIP；App `dockColumnWithAnimation` 接右键与拖拽两条路径。
+12. [x] `tests/column-dock.spec.ts` 新增右键 / Esc 用例与菜单快照，逐帧截图人工核对亮暗主题。

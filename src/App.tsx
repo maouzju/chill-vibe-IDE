@@ -227,6 +227,7 @@ import { buildWorkflowFailureWakePrompt, detectWorkflowCatastrophicFailure } fro
 import { resolveAppLoadError } from './app-load-error'
 import { clearDragPayload, peekDragPayload, readDragPayload, releaseDragPayloadIfStale } from './dnd'
 import { resolveDockInsertion, type DockInsertion } from './components/docked-chip-insertion'
+import { captureColumnDockAnimation, playColumnDockAnimation } from './components/column-dock-animation'
 import { useTopbarChipDensity } from './components/useTopbarDensity'
 import {
   isProviderStatusExplicitlyUnavailable,
@@ -1675,6 +1676,19 @@ function App() {
 
   const applyAction = useCallback((action: IdeAction) => applyActions([action]), [applyActions])
 
+  const dockColumnWithAnimation = useCallback(
+    (columnId: string, insertion?: DockInsertion | null) => {
+      const animation = captureColumnDockAnimation(columnId)
+      applyAction({
+        type: 'dockColumn',
+        columnId,
+        ...(insertion ? { targetColumnId: insertion.targetId, placement: insertion.placement } : {}),
+      })
+      playColumnDockAnimation(animation)
+    },
+    [applyAction],
+  )
+
   const handleTopbarDockDrop = useCallback(
     (event: DragEvent<HTMLElement>) => {
       const draggedChipId = draggingDockedColumnIdRef.current
@@ -1696,18 +1710,14 @@ function App() {
           })
         }
       } else if (payload?.type === 'column') {
-        applyAction({
-          type: 'dockColumn',
-          columnId: payload.columnId,
-          ...(insertion ? { targetColumnId: insertion.targetId, placement: insertion.placement } : {}),
-        })
+        dockColumnWithAnimation(payload.columnId, insertion)
         clearDragPayload()
         setColumnDragInFlight(false)
       }
       setDockZoneOver(false)
       setDockInsertion(null)
     },
-    [applyAction, resolveTopbarDockInsertion],
+    [applyAction, dockColumnWithAnimation, resolveTopbarDockInsertion],
   )
 
   const closeCodexFastModeDialog = useCallback(() => {
@@ -12335,6 +12345,7 @@ function App() {
               })
             }
             onRemoveColumn={() => openCloseWorkspaceDialog(column.id)}
+            onDockColumn={() => dockColumnWithAnimation(column.id)}
             onResizeColumn={(widths) =>
               applyAction({
                 type: 'setColumnWidths',

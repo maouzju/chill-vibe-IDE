@@ -233,6 +233,7 @@ type LocaleText = {
   emptyColumnDescription: string
   addWorkspace: string
   dockColumnZoneLabel: string
+  dockColumnToTopbar: string
   restoreDockedColumn: (name: string) => string
   dockedColumnRunning: string
   dockedColumnNewResult: string
@@ -845,6 +846,7 @@ const localeTextByLanguage: Record<AppLanguage, LocaleText> = {
     emptyColumnDescription: '点击右上角加号可以新建会话，也可以把别的卡片拖进来。',
     addWorkspace: '新增工作区',
     dockColumnZoneLabel: '拖到这里收起',
+    dockColumnToTopbar: '收到上方',
     restoreDockedColumn: (name) => `恢复工作区 ${name}`,
     dockedColumnRunning: '正在运行',
     dockedColumnNewResult: '有新结果',
@@ -1501,6 +1503,7 @@ const localeTextByLanguage: Record<AppLanguage, LocaleText> = {
     emptyColumnDescription: 'Use the add button above, or drag a card here to keep going.',
     addWorkspace: 'Add workspace',
     dockColumnZoneLabel: 'Drop here to tuck away',
+    dockColumnToTopbar: 'Tuck into top bar',
     restoreDockedColumn: (name) => `Restore workspace ${name}`,
     dockedColumnRunning: 'Running',
     dockedColumnNewResult: 'New result',

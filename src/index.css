@@ -736,6 +736,25 @@ body.is-card-dragging .lane-drop-zone-top {
   box-shadow: inset -2px 0 0 0 var(--accent) !important;
 }
 
+/* 列收进顶栏时从列位置飞向 chip 的幽灵块；动画由 column-dock-animation.ts 用 WAAPI 一次性驱动，结束即移除。 */
+.column-dock-ghost {
+  position: fixed;
+  z-index: 9999;
+  pointer-events: none;
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid color-mix(in srgb, var(--accent) 70%, var(--line));
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--accent) 12%, var(--panel-strong));
+  box-shadow: 0 12px 32px -14px rgba(0, 0, 0, 0.45);
+  color: var(--ink-1);
+  font-size: 0.74rem;
+  white-space: nowrap;
+  overflow: hidden;
+}
+
 /* 只在拖动一列期间出现的停靠落区 */
 .app-topbar-dock-zone {
   flex: 0 0 auto;

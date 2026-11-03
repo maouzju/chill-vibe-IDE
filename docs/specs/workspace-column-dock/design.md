@@ -121,3 +121,23 @@
 本次没修的原因：`handleTopbarColumnDrop` 定义在 `persistAfterAction` 之前，直接引用会撞
 TDZ，得改成 ref 转发；而且只改 dock 一处会让它和邻近两个同类 action 写法不一致。
 要修就三个一起修，那是独立的一次改动，不该塞进发布候选。
+
+## 增补（2026-11-03）：右键项目名收起 + 收起动效
+
+### 右键入口
+
+`WorkspaceColumn` 新增可选 prop `onDockColumn`。右键 `.column-title-btn`（项目名）弹出 `.pane-tab-context-menu.column-title-context-menu`，唯一菜单项 `dockColumnToTopbar`（`收到上方` / `Tuck into top bar`）。右键只开菜单，不进入路径编辑；Esc / 点外部 / 窗口失焦关闭。位置复用 `clampFilePathContextMenuPosition` 防出屏。
+
+### 动效（`src/components/column-dock-animation.ts`）
+
+停靠列会整棵卸载，所以动效分两步：dispatch 前 `captureColumnDockAnimation` 量列与其余列的位置，dispatch 后 `playColumnDockAnimation` 在下一帧：
+
+1. 一个挂在 body 上的 `.column-dock-ghost` 从列的矩形插值 `left/top/width/height` 缩成药丸飞到新 chip 位置（420ms），结束即移除；
+2. 新 chip 在幽灵落地时 scale 弹入（260ms）；
+3. 其余列 FLIP 位移滑过来补位（320ms）。
+
+右键和拖拽两条收起路径都走 App 里的 `dockColumnWithAnimation`。全部是 WAAPI 一次性动画，不往 index.css 加无限动画；`prefers-reduced-motion: reduce` 时整段跳过。插值几何属性而非 `transform: scale`：列与 chip 宽高比差两个数量级，非等比缩放会把圆角压成椭圆、文字压扁。
+
+### 测试
+
+`tests/column-dock.spec.ts`：右键菜单（亮暗主题各一张菜单快照）→ 点击后幽灵块出现又消失 → 列进顶栏；Esc 关菜单不收起。

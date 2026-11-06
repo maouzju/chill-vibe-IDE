@@ -2631,7 +2631,9 @@ const ideReducerCore = (state: AppState, action: IdeAction): AppState => {
           !hasExplicitProvider && !hasExplicitModel ? state.settings.lastModel : undefined
         const provider = toolCardModels.has(action.model ?? '')
           ? 'codex'
-          : (action.provider ?? activeChatProvider ?? rememberedGlobal?.provider ?? column.provider)
+          : state.settings.pinNewSessionDefaults
+            ? (action.provider ?? column.provider)
+            : (action.provider ?? activeChatProvider ?? rememberedGlobal?.provider ?? column.provider)
         const rememberedColumnModel =
           !hasExplicitProvider &&
           !hasExplicitModel &&

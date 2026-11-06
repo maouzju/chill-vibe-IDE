@@ -115,6 +115,23 @@ describe('pinNewSessionDefaults setting', () => {
     assert.equal(card?.reasoningEffort, 'low')
   })
 
+  it('pinned: a new tab does not inherit the neighbouring card provider', () => {
+    const state = buildState(true)
+    const column = state.columns[0]!
+    const codexCard = { ...createCard('Codex one-off', undefined, 'codex', DEFAULT_CODEX_MODEL), id: 'card-special' }
+    const withCodexNeighbour: AppState = {
+      ...state,
+      columns: [{ ...column, cards: { 'card-special': codexCard } }],
+    }
+
+    const card = findNewCard(
+      ideReducer(withCodexNeighbour, { type: 'addTab', columnId: 'col-1', paneId: 'pane-1' }),
+    )
+
+    assert.equal(card?.provider, 'claude')
+    assert.equal(card?.model, 'claude-opus-5-5')
+  })
+
   it('unpinned: a new tab still inherits the neighbouring card model (unchanged behavior)', () => {
     const next = ideReducer(buildState(false), { type: 'addTab', columnId: 'col-1', paneId: 'pane-1' })
 

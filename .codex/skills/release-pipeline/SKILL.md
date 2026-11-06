@@ -215,6 +215,8 @@ Guardrails:
 
 - **v0.21.21 (2026-11-03) 两条教训。** (1) 5199 与 5211 被无关进程占用时，`PW_PORT=5223` 跑完整门禁有效；Playwright 门禁红在基线债清单内（brainstorm/theme-check/text-editor/tool-card-settings）时，按标题对比 origin/main 基线 worktree 即可判定，基线用完即拆（仅 unlink junction）。(2) 发版后 `gh release view` 可能因 api.github.com 连接超时，但资产下载 URL 已 200；先重试 `gh` 查询，不要据此重传资产。
 
+- **v0.21.22 (2026-11-06) 两条教训。** (1) 门禁 Playwright 红 25 项时，只在仓库外基线 worktree 跑那几个失败的 spec 文件（约 6.5 分钟）就够按标题对比，不必重跑全量；候选独有的 1 项用单跑 `--repeat-each=8 --workers=4` 证为抖动即可放行，豁免写进发布说明。(2) 预检时 Node 测试若用 Bash 后台启动，日志路径写成 `/d/Temp/...` 这类仓库外固定目录；用 `$TEMP` 在 cmd 后台里会解析成不同路径而读不到日志。审计里的 P3 产品问题（开关打开后新标签仍沿用邻卡供应商）用户确认是 bug，已红绿修复并随本版发出。
+
 ## Suggested Prompt Shapes
 
 - `Use $release-pipeline to audit this checkout, bump the version, and publish a GitHub release if it is safe.`

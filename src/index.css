@@ -2551,6 +2551,45 @@ body.is-card-dragging .lane-drop-zone-top {
   color: var(--ink-3);
 }
 
+/* 设置 → 默认思考档位（docs/specs/pin-new-session-defaults）：每行「模型名 | 档位下拉」。 */
+.reasoning-defaults-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(20rem, 1fr));
+  gap: 0.25rem 2rem;
+}
+
+/* 行底色把「模型名 | 下拉」框成一对：三列紧排时下拉贴着下一列的模型名，读不出归属。 */
+.reasoning-defaults-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.6rem;
+  min-width: 0;
+  padding: 0.2rem 0.2rem 0.2rem 0.5rem;
+  border-radius: 0.5rem;
+  background: var(--panel);
+  font-size: 0.84rem;
+  color: var(--ink-1);
+}
+
+.reasoning-defaults-model {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  min-width: 0;
+}
+
+.reasoning-defaults-model > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.reasoning-defaults-row .settings-input {
+  flex: 0 0 6.5rem;
+  width: 6.5rem;
+}
+
 .model-picker-custom-title {
   margin: 1.1rem 0 0.4rem;
 }

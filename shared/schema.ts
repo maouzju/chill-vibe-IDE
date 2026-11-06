@@ -788,6 +788,8 @@ export type CloseBehavior = z.infer<typeof closeBehaviorSchema>
 
 export const appSettingsSchema = z.object({
   defaultAdminAccess: z.boolean().default(false),
+  // 开 = 卡上换模型 / 拧档位只管那一张，新会话一律用设置里的默认（SPEC pin-new-session-defaults）。
+  pinNewSessionDefaults: z.boolean().default(false),
   language: appLanguageSchema.default('zh-CN'),
   theme: themeSchema.default('dark'),
   customThemeBase: customThemeBaseSchema.catch('dark').default('dark'),
@@ -1122,6 +1124,7 @@ export const appStateSchema = z.object({
   version: z.literal(1),
   settings: appSettingsSchema.default({
     defaultAdminAccess: false,
+    pinNewSessionDefaults: false,
     language: 'zh-CN',
     theme: 'dark',
     customThemeBase: 'dark',

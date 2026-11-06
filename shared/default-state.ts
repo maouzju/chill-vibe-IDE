@@ -692,6 +692,7 @@ export const createDefaultSettings = (language: AppLanguage = defaultAppLanguage
   codexDestructiveCommandProtectionEnabled: true,
   attackPatternProtectionEnabled: false,
   defaultAdminAccess: false,
+  pinNewSessionDefaults: false,
   codexIsolatedHomeEnabled: true,
   computerUseEnabled: false,
   desktopControlEnabled: false,
@@ -973,6 +974,7 @@ export const normalizeAppSettings = (settings?: Partial<AppSettings> | null): Ap
         ? settings.attackPatternProtectionEnabled
         : defaults.attackPatternProtectionEnabled,
     defaultAdminAccess: settings?.defaultAdminAccess === true,
+    pinNewSessionDefaults: settings?.pinNewSessionDefaults === true,
     codexIsolatedHomeEnabled:
       typeof settings?.codexIsolatedHomeEnabled === 'boolean'
         ? settings.codexIsolatedHomeEnabled

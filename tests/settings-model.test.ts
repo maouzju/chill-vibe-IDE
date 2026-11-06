@@ -134,8 +134,11 @@ describe('filterSettingsItems', () => {
 
     const modelHits = filterSettingsItems(settingsItemCatalog, '模型').map((item) => item.id)
     assert.ok(modelHits.includes('models'))
-    const removedEffortHits = filterSettingsItems(settingsItemCatalog, '思考').map((item) => item.id)
-    assert.ok(!removedEffortHits.includes('models'))
+    // v0.21.11 删掉了「默认模型」里的全局思考深度下拉，搜「思考」不该再落到那里；
+    // 11-06 起档位归独立的「默认思考档位」项（docs/specs/pin-new-session-defaults）。
+    const effortHits = filterSettingsItems(settingsItemCatalog, '思考').map((item) => item.id)
+    assert.ok(!effortHits.includes('models'))
+    assert.ok(effortHits.includes('reasoning-defaults'))
 
     const reconnectHits = filterSettingsItems(settingsItemCatalog, '断线').map((item) => item.id)
     assert.ok(reconnectHits.includes('account'))

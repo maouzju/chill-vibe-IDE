@@ -2947,6 +2947,47 @@ for (const theme of ['dark', 'light'] as const) {
 }
 
 for (const theme of ['dark', 'light'] as const) {
+  // docs/specs/pin-new-session-defaults：「只管这一张」开关 + 按 provider 分组的「模型 | 档位」表，默认模型带标签。
+  test(`reasoning defaults settings group renders in ${theme} theme`, async ({ page }) => {
+    const state = createMockState()
+    state.settings.language = theme === 'dark' ? 'zh-CN' : 'en'
+    state.settings.theme = theme
+    state.settings.pinNewSessionDefaults = true
+    state.settings.modelReasoningEfforts = {
+      ...state.settings.modelReasoningEfforts,
+      claude: { ...state.settings.modelReasoningEfforts.claude, 'claude-fable-5-1': 'max' },
+    }
+
+    await page.setViewportSize({ width: 1280, height: 1200 })
+    await mockAppApis(page, { state })
+    await page.goto(appUrl)
+    await page.locator('.card-shell').first().waitFor()
+
+    await page.locator('#app-tab-settings').click()
+    const item = await revealSettingsItem(page, 'reasoning-defaults')
+    const section = item.getByTestId('reasoning-defaults-settings')
+    await expect(section.locator('#pin-new-session-defaults')).toBeChecked()
+    await expect(section.locator('[data-reasoning-default-model="claude-fable-5-1"]')).toHaveValue('max')
+    await page.mouse.move(0, 0)
+    await expect(item).toHaveScreenshot(`reasoning-defaults-settings-${theme}.png`, {
+      animations: 'disabled',
+      caret: 'hide',
+    })
+
+    // 关掉开关表就收起：10-10 用户删过「卡上一调就被覆盖」的全局档位下拉，关着时它没有说了算的份。
+    await section.locator('#pin-new-session-defaults').uncheck()
+    await expect(section.locator('.reasoning-defaults-grid')).toHaveCount(0)
+    // 刚点过的开关还持有焦点，会把悬停说明弹出来；截的是收起后的常态。
+    await section.locator('#pin-new-session-defaults').blur()
+    await page.mouse.move(0, 0)
+    await expect(item).toHaveScreenshot(`reasoning-defaults-settings-off-${theme}.png`, {
+      animations: 'disabled',
+      caret: 'hide',
+    })
+  })
+}
+
+for (const theme of ['dark', 'light'] as const) {
   // docs/specs/jev-mcp-toggle：默认关、key 是密码框、MCP/JEV 两句人话解释常显。
   test(`JEV quick-judgment settings explain MCP and JEV in ${theme} theme`, async ({ page }) => {
     const state = createMockState()
@@ -3413,8 +3454,8 @@ test('settings panel lands on the basics view with a left nav and a single colum
 
   // 切到「模型与对话」：基础项直接可见，高级项默认收起。
   await settingsPanel.locator('#settings-nav-models').click()
-  // 系统提示词 / 默认模型 / 对话行为 / 模型下拉菜单（10-17 新增）/ JEV 快速判断（09-30 新增）。
-  await expect(visibleGroups).toHaveCount(5)
+  // 系统提示词 / 默认模型 / 默认思考档位（11-06 新增）/ 对话行为 / 模型下拉菜单（10-17 新增）/ JEV 快速判断（09-30 新增）。
+  await expect(visibleGroups).toHaveCount(6)
   await expect(visibleGroups.getByRole('heading', { name: '模型下拉菜单', exact: true })).toBeVisible()
   await expect(settingsPanel.locator('details.settings-advanced')).not.toHaveAttribute('open', '')
   await revealSettingsItem(page, 'local-models')

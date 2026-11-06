@@ -59,6 +59,7 @@ import {
   isModelPickerOptionVisible,
   isValidCustomPickerModelName,
   listConfigurableModelPickerOptions,
+  listReasoningDefaultModels,
   normalizeModel,
   resolveSlashModelInput,
   type ModelOption,
@@ -68,7 +69,7 @@ import {
   mergeImportedProviderProfiles,
   summarizeImportedProfiles,
 } from '../shared/provider-profile-import'
-import { getReasoningLabel, normalizeReasoningEffort } from '../shared/reasoning'
+import { getReasoningLabel, getReasoningOptionsForModel, normalizeReasoningEffort } from '../shared/reasoning'
 import { getInterruptedSessionResumeRequest } from '../shared/interrupted-session-recovery'
 import { formatLocalSlashHelp, parseSlashCommandInput } from '../shared/slash-commands'
 import {
@@ -10418,6 +10419,73 @@ function App() {
             {text.applyToExistingChats}
           </AppButton>
           </div>
+        </div>
+      ),
+    },
+    {
+      // 11-06 群友：卡上为特定任务调高档位，之后新会话全被带偏（docs/specs/pin-new-session-defaults）。
+      id: 'reasoning-defaults',
+      node: (
+        <div className="settings-section reasoning-defaults-settings" data-testid="reasoning-defaults-settings">
+          <div className="settings-hover-detail">
+            <label className="settings-toggle" htmlFor="pin-new-session-defaults">
+              <span>{panelText.pinNewSessionDefaultsLabel}</span>
+              <input
+                id="pin-new-session-defaults"
+                type="checkbox"
+                aria-describedby="pin-new-session-defaults-note"
+                checked={appState.settings.pinNewSessionDefaults}
+                onChange={(event) => applyAction({
+                  type: 'updateSettings',
+                  patch: { pinNewSessionDefaults: event.target.checked },
+                })}
+              />
+            </label>
+            <p id="pin-new-session-defaults-note" className="settings-note settings-hover-note" role="tooltip">
+              {panelText.pinNewSessionDefaultsHint}
+            </p>
+          </div>
+          {/* 10-10 用户删过全局思考深度下拉（「已经没啥意义了」）：卡上一调就被覆盖。表只在开关打开、
+              它真正说了算时才出现；关着就和以前一样只剩这一行开关。 */}
+          {appState.settings.pinNewSessionDefaults ? <p className="settings-note">{panelText.reasoningDefaultsDescription}</p> : null}
+          {appState.settings.pinNewSessionDefaults ? (['codex', 'claude'] as const).map((provider) => (
+            <fieldset className="model-picker-group" key={provider}>
+              <legend>{getProviderLabel(appState.settings.language, provider)}</legend>
+              <div className="reasoning-defaults-grid">
+                {listReasoningDefaultModels(appState.settings)
+                  .filter((entry) => entry.provider === provider)
+                  .map((entry) => (
+                    <label className="reasoning-defaults-row" key={entry.model}>
+                      <span className="reasoning-defaults-model">
+                        <span title={entry.model}>{entry.label}</span>
+                        {entry.isConfiguredDefault ? (
+                          <small className="model-picker-option-tag">{panelText.reasoningDefaultsConfiguredTag}</small>
+                        ) : null}
+                      </span>
+                      <select
+                        className="control settings-input"
+                        data-reasoning-default-model={entry.model}
+                        value={getPreferredReasoningEffort(appState.settings, provider, entry.model)}
+                        onChange={(event) =>
+                          applyAction({
+                            type: 'setModelReasoningEffortDefault',
+                            provider,
+                            model: entry.model,
+                            reasoningEffort: event.target.value,
+                          })
+                        }
+                      >
+                        {getReasoningOptionsForModel(provider, entry.model, appState.settings.language).map((option) => (
+                          <option key={option.value} value={option.value}>
+                            {option.label}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                  ))}
+              </div>
+            </fieldset>
+          )) : null}
         </div>
       ),
     },

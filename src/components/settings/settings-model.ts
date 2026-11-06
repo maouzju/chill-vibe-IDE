@@ -115,6 +115,21 @@ export const settingsItemCatalog: readonly SettingsItemMeta[] = [
     keywords: ['model', '模型', 'claude', 'codex', 'default'],
   },
   {
+    // 11-06 群友：卡上为特定任务调高档位，之后新会话全被带偏（docs/specs/pin-new-session-defaults）。
+    id: 'reasoning-defaults',
+    category: 'models',
+    tier: 'basic',
+    label: { 'zh-CN': '默认思考档位', en: 'Default reasoning effort' },
+    hint: hint(
+      '新开会话时每个模型用哪个思考档位，以及卡上改的模型和档位要不要记成默认；',
+      'Which reasoning effort each model starts with in new chats, and whether picks on a card become the default.',
+    ),
+    keywords: [
+      'effort', 'reasoning', 'thinking', '思考', '档位', '深度', '默认', 'default',
+      'pin', '固定', '覆盖', 'override', '新会话', '新窗口', 'new chat', 'new tab',
+    ],
+  },
+  {
     id: 'model-behavior',
     category: 'models',
     tier: 'basic',

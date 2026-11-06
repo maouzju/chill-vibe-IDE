@@ -49,6 +49,11 @@ export const getPanelText = (language: AppState['settings']['language']) =>
         noLocalModels: 'No local models yet.',
         noLocalModelsDescription:
           'Add one to run a card against a model on this machine instead of a cloud endpoint.',
+        pinNewSessionDefaultsLabel: 'Model and effort changes on a card stay on that card',
+        pinNewSessionDefaultsHint:
+          'Off: the model and effort you pick on a card become what new chats start with. On: new chats always start from the Default model setting, at the effort set in a table that appears below.',
+        reasoningDefaultsDescription: 'The reasoning effort each model starts with in a new chat. Chats already open keep their own.',
+        reasoningDefaultsConfiguredTag: 'default model',
         modelPickerDescription:
           'Unchecked models disappear from the dropdown; the one a card is already using always stays. Retired models can be checked back on.',
         modelPickerRetired: 'retired',
@@ -201,6 +206,11 @@ export const getPanelText = (language: AppState['settings']['language']) =>
         addLocalModel: '添加本地模型',
         noLocalModels: '暂无本地模型。',
         noLocalModelsDescription: '添加一个，就能让某张卡改用本机跑的模型而不是云端。',
+        pinNewSessionDefaultsLabel: '卡上改的模型和档位只管这一张',
+        pinNewSessionDefaultsHint:
+          '关闭时，卡上换的模型和档位会记成默认，下次新开会话沿用。打开后，新会话一律用「默认模型」，档位按下面出现的表来定。',
+        reasoningDefaultsDescription: '每个模型新开会话时用的思考档位。已经开着的会话不受影响。',
+        reasoningDefaultsConfiguredTag: '默认模型',
         modelPickerDescription:
           '取消勾选的模型会从下拉里消失，卡上正在用的那个始终保留；标着「已下架」的旧型号也能勾回来。',
         modelPickerRetired: '已下架',

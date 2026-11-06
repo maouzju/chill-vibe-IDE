@@ -391,6 +391,7 @@ export type IdeAction =
           | 'codexDestructiveCommandProtectionEnabled'
           | 'attackPatternProtectionEnabled'
           | 'defaultAdminAccess'
+          | 'pinNewSessionDefaults'
           | 'codexIsolatedHomeEnabled'
           | 'computerUseEnabled'
           | 'desktopControlEnabled'
@@ -409,10 +410,18 @@ export type IdeAction =
       patch: Partial<RequestModelSettings>
     }
   | {
+      /** 卡上拧档位顺手记成该模型的新会话默认；开了 pinNewSessionDefaults 时不记。 */
       type: 'rememberModelReasoningEffort'
       provider: Provider
       model: string
       reasoningEffort?: string
+    }
+  | {
+      /** 设置「默认思考档位」表的出口，不受 pinNewSessionDefaults 影响。 */
+      type: 'setModelReasoningEffortDefault'
+      provider: Provider
+      model: string
+      reasoningEffort: string
     }
   | {
       type: 'upsertProviderProfile'
@@ -1591,11 +1600,13 @@ const selectCardModel = (
   }
 
   const normalizedModel = normalizeStoredModel(provider, model)
+  // 开了「卡上改的只管这一张」就整条继承链都不记（SPEC pin-new-session-defaults）。
+  const remembersNewSessionSeed = rememberGlobalPreference && !state.settings.pinNewSessionDefaults
   // 本地模型令牌不能写进新 tab 的继承链（lastModel / column.model）：条目一旦被删，
   // 之后新建的每张卡都会默认落到一个不存在的条目上 —— 和工具卡令牌进继承链时造出空壳卡
   // 是同一类问题。本地条目本来就是逐卡生效的（SPEC local-model-entries 需求 #4）。
   const shouldRememberLastModel =
-    rememberGlobalPreference &&
+    remembersNewSessionSeed &&
     normalizedModel.length > 0 &&
     !toolCardModels.has(normalizedModel) &&
     !isLocalModelToken(normalizedModel)
@@ -1739,7 +1750,7 @@ const selectCardModel = (
     }
 
     const shouldRememberColumnModel =
-      rememberGlobalPreference &&
+      remembersNewSessionSeed &&
       provider === currentColumn.provider &&
       !toolCardModels.has(normalizedModel) &&
       !isLocalModelToken(normalizedModel)
@@ -2224,7 +2235,9 @@ const ideReducerCore = (state: AppState, action: IdeAction): AppState => {
       const provider =
         remembered?.provider ?? lastColumn?.provider ?? defaultProviderByIndex(state.columns.length)
       const language = state.settings.language
-      const model = remembered?.model || getConfiguredModel(state.settings, provider)
+      const model =
+        (state.settings.pinNewSessionDefaults ? undefined : remembered?.model) ||
+        getConfiguredModel(state.settings, provider)
       const nextColumn =
         action.column ??
         createColumn(
@@ -2244,6 +2257,8 @@ const ideReducerCore = (state: AppState, action: IdeAction): AppState => {
           ...nextColumn,
           cards: Object.fromEntries(Object.entries(nextColumn.cards).map(([id, card]) => [id, {
             ...card,
+            // createColumn 只按模型硬默认种档位；新列首卡与新 tab 一样取设置里的默认档位表。
+            reasoningEffort: getPreferredReasoningEffort(state.settings, card.provider, card.model),
             adminAccess: !toolCardModels.has(card.model) && state.settings.defaultAdminAccess,
           }])),
         }],
@@ -2275,6 +2290,23 @@ const ideReducerCore = (state: AppState, action: IdeAction): AppState => {
       return touchState(applyRequestModelPatch(state, action.patch))
     }
     case 'rememberModelReasoningEffort':
+      // 2026-11-06 群友：卡上为特定任务开了高档位，之后所有新会话都跟着高了。
+      // 卡上的档位与设置表走两个 action，是因为 reducer 看不到"谁在改"，
+      // 而开关只该拦卡上那一路（SPEC pin-new-session-defaults）。
+      if (state.settings.pinNewSessionDefaults) {
+        return state
+      }
+      return touchState(
+        mergeSettings(state, {
+          modelReasoningEfforts: rememberModelReasoningEffort(
+            state.settings,
+            action.provider,
+            action.model,
+            action.reasoningEffort,
+          ),
+        }),
+      )
+    case 'setModelReasoningEffortDefault':
       return touchState(
         mergeSettings(state, {
           modelReasoningEfforts: rememberModelReasoningEffort(
@@ -2625,12 +2657,16 @@ const ideReducerCore = (state: AppState, action: IdeAction): AppState => {
           isFableModel(rememberedColumnModel) &&
           ((rememberedActiveModel !== undefined && rememberedActiveModel !== rememberedColumnModel) ||
             (rememberedGlobalModel !== undefined && rememberedGlobalModel !== rememberedColumnModel))
+        // 开了 pinNewSessionDefaults：旁边那张卡恰恰就是被特调过的那张，
+        // 列种子 / 活动卡 / lastModel 三层继承都跳过，只认设置里的默认模型。
         const model =
           action.model ??
-          (staleFableColumnModel ? undefined : rememberedColumnModel) ??
-          rememberedActiveModel ??
-          rememberedGlobalModel ??
-          getConfiguredModel(state.settings, provider)
+          (state.settings.pinNewSessionDefaults
+            ? getConfiguredModel(state.settings, provider)
+            : (staleFableColumnModel ? undefined : rememberedColumnModel) ??
+              rememberedActiveModel ??
+              rememberedGlobalModel ??
+              getConfiguredModel(state.settings, provider))
         const newCard = {
           ...createCard(
             action.title,

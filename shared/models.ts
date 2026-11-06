@@ -749,6 +749,55 @@ export const buildModelPickerOptions = ({
   return options
 }
 
+export type ReasoningDefaultModel = {
+  provider: Provider
+  model: string
+  label: string
+  isConfiguredDefault: boolean
+}
+
+/**
+ * 设置「默认思考档位」表要列的模型（SPEC pin-new-session-defaults）：设置默认模型置顶，
+ * 其余跟会话卡模型下拉同一份可见范围（含用户自定义项），用户在下拉里关掉的不列。
+ * Gemini 只有「自动」一档，没东西可设，不列。
+ */
+export const listReasoningDefaultModels = (settings: {
+  requestModels: Partial<Record<Provider, string>>
+  modelPickerVisibility?: Record<string, boolean>
+  modelPickerCustomModels?: ModelPickerCustomModel[]
+}): ReasoningDefaultModel[] => {
+  const entries: ReasoningDefaultModel[] = []
+
+  for (const provider of ['codex', 'claude'] as const) {
+    const configured = normalizeStoredModel(provider, settings.requestModels[provider]) || getDefaultModel(provider)
+    const seen = new Set<string>()
+    const push = (model: string, label: string, isConfiguredDefault: boolean) => {
+      if (!model || seen.has(model) || isLocalModelToken(model) || TOOL_CARD_MODELS.has(model)) return
+      seen.add(model)
+      entries.push({ provider, model, label, isConfiguredDefault })
+    }
+
+    push(
+      configured,
+      MODEL_OPTIONS.find((option) => option.provider === provider && option.model === configured)?.label ?? configured,
+      true,
+    )
+    for (const option of buildModelPickerOptions({
+      customization: {
+        visibility: settings.modelPickerVisibility,
+        customModels: settings.modelPickerCustomModels,
+      },
+      current: { provider, model: configured },
+    })) {
+      if (option.provider === provider && !option.usesConfiguredDefault) {
+        push(option.model, option.label, false)
+      }
+    }
+  }
+
+  return entries
+}
+
 /**
  * 滚轮步进：direction 1 = 上一项（向上滚），-1 = 下一项；到头返回 null，不循环
  * （快速连滚时循环会从最后一项跳回第一项，比停住更让人迷惑）。

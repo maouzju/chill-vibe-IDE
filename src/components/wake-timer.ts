@@ -9,6 +9,7 @@ import {
   type WakeTimerMode,
 } from '../../shared/schema'
 import { getQueuedSendPreview } from './deferred-send-queue'
+import { hasRunningSubagentsCached } from './layout-memoization'
 import type { SendMessageMode, SendMessageOrigin } from './deferred-send-queue'
 
 export const wakeTimerCompletionStabilityMs = 1200
@@ -24,6 +25,8 @@ export type WakeTimerTopologyCardSnapshot = {
   id: string
   status: CardStatus
   backgroundWorkPending?: boolean
+  /** 见 isWakeTimerPeerBackgroundBusy：子 agent 跑完不改 status/backgroundWorkPending，也要触发重扫。 */
+  subagentsRunning?: boolean
   wakeTimerMode?: WakeTimerMode
   wakeTimerQueuedSendCount?: number
   wakeTimerPendingTargetIds?: readonly string[]
@@ -41,7 +44,12 @@ export const buildWakeTimerTopologySignature = (
 ) => columns.map((column) => {
   const cardIds = column.cards.map((card) => card.id).sort().join(',')
   const runtime = column.cards
-    .map((card) => `${card.id}:${card.status}:${card.backgroundWorkPending === true ? '1' : '0'}`)
+    .map((card) => [
+      card.id,
+      card.status,
+      card.backgroundWorkPending === true ? '1' : '0',
+      card.subagentsRunning === true ? '1' : '0',
+    ].join(':'))
     .sort()
     .join(',')
   const queued = column.cards
@@ -171,6 +179,20 @@ export const shouldConfirmWakeTimerCompletion = ({
   statusAfterStability: CardStatus
   backgroundWorkPending?: boolean
 }) => normalCompletion && statusAfterStability === 'idle' && !backgroundWorkPending
+
+/**
+ * 邻卡的「后台等待」在唤醒判据里算不算忙。
+ *
+ * 症状：2026-11-07 待唤醒卡挂在「等待 1 个其他 Agent 完成」，用户看遍 tab 没有一张在跑，只能手点立即唤醒。
+ * 根因：邻卡本轮结束时留着后台 Bash（npm run play）和 Monitor，Stop 钩子判 background-pending
+ *   （后台 shell / Monitor / 自查闹钟都算），卡变成 idle + backgroundWorkPending，tab 不亮，判据却算它忙，最长压 4 小时。
+ * 被否决：所有后台等待一律不算忙 —— 子 agent 还在跑时用户看得见（tab 呼吸），那是真在干活；
+ *   判据与 tab 的 is-streaming 同口径（hasRunningSubagentsCached），用户看不见的就不挡。
+ *   owner 自己的 backgroundWorkPending 不走这里，仍按原样挡自己。
+ */
+export const isWakeTimerPeerBackgroundBusy = (
+  card: Pick<ChatCard, 'messages'> & { backgroundWorkPending?: boolean },
+) => card.backgroundWorkPending === true && hasRunningSubagentsCached(card.messages)
 
 export type WakeTimerCardSnapshot = {
   id: string

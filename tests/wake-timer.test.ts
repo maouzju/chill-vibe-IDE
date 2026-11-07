@@ -11,6 +11,7 @@ import {
   buildWakeTimerBatchEndPatch,
   collectWakeTimerDefaultPreference,
   isWakeTimerConditionReady,
+  isWakeTimerPeerBackgroundBusy,
   pruneIdleWorkspaceWakeTimerTargets,
   mergeWakeTimerRequests,
   removeCompletedWakeTimerTarget,
@@ -1204,5 +1205,52 @@ describe('pruneIdleWorkspaceWakeTimerTargets', () => {
       }),
       ['idle', 'run'],
     )
+  })
+})
+
+// 症状：2026-11-07 待唤醒卡挂在「等待 1 个其他 Agent 完成」，用户看遍所有 tab 都没有在跑的卡。
+// 根因：邻卡本轮结束时还留着后台 Bash / Monitor / 自查闹钟，Stop 钩子判 background-pending，
+//   卡是 idle + backgroundWorkPending，tab 上什么都不显示，唤醒判据却把它算忙，最长压 4 小时。
+describe('wake timer peers holding only background shells or crons', () => {
+  const agentsMessage = (status: 'running' | 'completed') => ({
+    id: `agents-${status}`,
+    role: 'assistant' as const,
+    content: '',
+    createdAt: new Date().toISOString(),
+    meta: {
+      provider: 'claude' as const,
+      kind: 'agents' as const,
+      itemId: 'agent-status:claude',
+      structuredData: JSON.stringify({
+        itemId: 'agent-status:claude',
+        kind: 'agents',
+        status: 'completed',
+        view: 'status',
+        agents: [{ threadId: 'sub-1', status, activity: [] }],
+      }),
+    },
+  })
+
+  it('does not count a background-pending peer as busy unless its subagents are visibly running', () => {
+    assert.equal(isWakeTimerPeerBackgroundBusy({ backgroundWorkPending: true, messages: [] }), false)
+    assert.equal(
+      isWakeTimerPeerBackgroundBusy({ backgroundWorkPending: true, messages: [agentsMessage('completed')] }),
+      false,
+    )
+    assert.equal(
+      isWakeTimerPeerBackgroundBusy({ backgroundWorkPending: true, messages: [agentsMessage('running')] }),
+      true,
+    )
+    assert.equal(
+      isWakeTimerPeerBackgroundBusy({ backgroundWorkPending: false, messages: [agentsMessage('running')] }),
+      false,
+    )
+  })
+
+  it('re-flushes when a background-pending peer stops showing running subagents', () => {
+    const signature = (subagentsRunning: boolean) => buildWakeTimerTopologySignature([
+      { id: 'col', cards: [{ id: 'peer', status: 'idle', backgroundWorkPending: true, subagentsRunning }] },
+    ])
+    assert.notEqual(signature(true), signature(false))
   })
 })

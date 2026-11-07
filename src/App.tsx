@@ -307,6 +307,7 @@ import {
   buildWakeTimerBatchEndPatch,
   collectWakeTimerDefaultPreference,
   isWakeTimerConditionReady,
+  isWakeTimerPeerBackgroundBusy,
   mergeWakeTimerRequests,
   removeCompletedWakeTimerTarget,
   pruneIdleWorkspaceWakeTimerTargets,
@@ -3659,7 +3660,7 @@ function App() {
             status: entry.status,
             isAgent: !MODEL_PICKER_HIDDEN_TOOL_MODELS.has(entry.model),
             hasPendingWakeBatch: (entry.wakeTimerQueuedSends?.length ?? 0) > 0,
-            backgroundWorkPending: entry.backgroundWorkPending === true,
+            backgroundWorkPending: isWakeTimerPeerBackgroundBusy(entry),
           })),
           paneTabIds: resolveWakeTimerNeighbourIds({
             cardId,
@@ -3769,7 +3770,7 @@ function App() {
           status: entry.status,
           isAgent: !MODEL_PICKER_HIDDEN_TOOL_MODELS.has(entry.model),
           hasPendingWakeBatch: (entry.wakeTimerQueuedSends?.length ?? 0) > 0,
-          backgroundWorkPending: entry.backgroundWorkPending === true,
+          backgroundWorkPending: isWakeTimerPeerBackgroundBusy(entry),
         })),
         // 看板项不在任何 pane.tabs 里，所以 left-tab 模式的"左邻"要换成它
         // 所在泳道的上一项 —— 需求里的"左侧变为上方"。
@@ -3834,7 +3835,7 @@ function App() {
         id: entry.id,
         status: entry.status,
         isAgent: true,
-        backgroundWorkPending: entry.backgroundWorkPending,
+        backgroundWorkPending: isWakeTimerPeerBackgroundBusy(entry),
       }))
 
     for (const column of state.columns) {
@@ -3859,7 +3860,7 @@ function App() {
           ? Object.values(column.cards)
               .filter((peer) =>
                 peer.id !== card.id &&
-                (peer.status === 'streaming' || peer.backgroundWorkPending === true) &&
+                (peer.status === 'streaming' || isWakeTimerPeerBackgroundBusy(peer)) &&
                 !MODEL_PICKER_HIDDEN_TOOL_MODELS.has(peer.model),
               )
               .map((peer) => peer.id)
@@ -4176,6 +4177,7 @@ function App() {
           wakeTimerQueuedSendCount: card.wakeTimerQueuedSends?.length ?? 0,
           wakeTimerPendingTargetIds: card.wakeTimerPendingTargetIds,
           wakeTimerWakeAt: card.wakeTimerWakeAt,
+          subagentsRunning: isWakeTimerPeerBackgroundBusy(card),
           wakeTimerExplicitTargets: card.wakeTimerExplicitTargets === true,
         })),
       })),
@@ -6664,7 +6666,7 @@ function App() {
               status: entry.status,
               isAgent: !MODEL_PICKER_HIDDEN_TOOL_MODELS.has(entry.model),
               hasPendingWakeBatch: (entry.wakeTimerQueuedSends?.length ?? 0) > 0,
-              backgroundWorkPending: entry.backgroundWorkPending === true,
+              backgroundWorkPending: isWakeTimerPeerBackgroundBusy(entry),
               pendingWakeTargetIds: entry.wakeTimerPendingTargetIds,
             })),
           })

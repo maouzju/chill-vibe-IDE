@@ -204,6 +204,14 @@ test('local write subcommands get a larger budget than local reads', guardedTest
     ['revert', 'abc123'],
     ['stash', 'push'],
     ['-c', 'core.quotepath=false', 'commit', '-m', 'x'],
+    // 症状 — 卡片「提交」在上千文件时失败：提交前必走的暂存 `git add` 仍按 120s 读命令预算被杀。
+    // 根因 — 2026-08-13 只给 commit 等放宽了预算；add/rm/restore/reset 同样在写 index，
+    //   被杀同样留 index.lock，且文件越多越慢（暂存是提交链里最先、最久的一步）。
+    ['-c', 'advice.addIgnoredFile=false', 'add', '--pathspec-from-file=-', '--pathspec-file-nul'],
+    ['add', '--all', '--', '.'],
+    ['rm', '--cached', '--quiet', '--ignore-unmatch', '--pathspec-from-file=-'],
+    ['restore', '--staged', '--pathspec-from-file=-'],
+    ['reset', '--quiet', 'HEAD', '--pathspec-from-file=-'],
   ]) {
     const budgetMs = resolveGitRunTimeoutMs(args)
     assert.ok(

@@ -326,7 +326,10 @@ const gitNetworkSubcommands = new Set([
 // 为什么不干脆取消超时 — 兜底的职责没变（静默的 git 不能永远挂住调用方，见上面那段
 //   spawn 风暴的注释），只是把写命令的门槛抬到"正常但慢"之上。
 const gitLocalWriteRunTimeoutMs = 10 * 60 * 1000
+// 2026-11-07：卡片「提交」在上千文件时失败，提交前的暂存 `git add` 还在读命令预算上（同一根因，
+//   同样会被杀在写 index 中途留下 index.lock）。add/rm/restore/reset 是提交链的前半段，一并放宽。
 const gitLocalWriteSubcommands = new Set([
+  'add',
   'am',
   'apply',
   'cherry-pick',
@@ -334,7 +337,10 @@ const gitLocalWriteSubcommands = new Set([
   'gc',
   'merge',
   'rebase',
+  'restore',
+  'reset',
   'revert',
+  'rm',
   'stash',
 ])
 

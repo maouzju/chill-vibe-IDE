@@ -1796,11 +1796,15 @@ const ChatCardView = ({
         ? (language === 'en' ? 'Waiting for the left tab' : '等待左侧 Tab 完成')
         : (language === 'en' ? 'Left tab is complete' : '左侧 Tab 已完成')
     }
-    const pendingCount = card.wakeTimerPendingTargetIds?.length ?? 0
-    return pendingCount > 0
-      ? (language === 'en'
-          ? `Waiting for ${pendingCount} other agent${pendingCount === 1 ? '' : 's'}`
-          : `等待 ${pendingCount} 个其他 Agent 完成`)
+    // 2026-11-07 用户看遍 tab 找不到在跑的卡，只能手点立即唤醒：只给数量不给名字，
+    // 用户没法判断是判据错了还是自己漏看了哪张，所以和点名名单一样把标题列出来。
+    const pendingIds = card.wakeTimerPendingTargetIds ?? []
+    const titles = pendingIds.flatMap((id) => {
+      const title = wakeTimerTargetOptions?.find((option) => option.id === id)?.title
+      return title ? [title] : []
+    })
+    return pendingIds.length > 0
+      ? text.wakeTimerWaitingAgents(pendingIds.length, titles)
       : (language === 'en' ? 'Other agents are complete' : '其他 Agent 已完成')
   })()
   const wakeTimerQueuedSends = card.wakeTimerQueuedSends

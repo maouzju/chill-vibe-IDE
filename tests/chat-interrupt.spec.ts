@@ -954,7 +954,7 @@ test('switching the wake condition on a pending card re-schedules that batch', a
   // 待唤醒卡上直接换条件：批次不动，等待目标按新条件重算。
   await timerStatus.locator('.composer-wake-timer-mode-select').selectOption('workspace-agents')
 
-  await expect(timerStatus).toContainText('Waiting for 1 other agent')
+  await expect(timerStatus).toContainText('Waiting for 1 other agent: Busy peer')
   await expect.poll(
     () => mock.readState().columns[0]?.cards['card-1']?.wakeTimerMode,
   ).toBe('workspace-agents')

@@ -87,6 +87,7 @@ type LocaleText = {
   wakeTimerSessionsTimeoutLabel: string
   wakeTimerSessionsTimeoutHint: string
   wakeTimerWaitingSessions: (count: number, titles: readonly string[]) => string
+  wakeTimerWaitingAgents: (count: number, titles: readonly string[]) => string
   wakeTimerDurationLabel: string
   wakeTimerDurationHint: string
   wakeTimerMinutes: string
@@ -684,6 +685,8 @@ const localeTextByLanguage: Record<AppLanguage, LocaleText> = {
     wakeTimerSessionsTimeoutHint: '勾选的会话被停止、报错或一直没开跑时不会发完成信号，到这个时长就强制唤醒。',
     wakeTimerWaitingSessions: (count, titles) =>
       titles.length > 0 ? `等待 ${count} 个会话完成：${titles.join('、')}` : `等待 ${count} 个会话完成`,
+    wakeTimerWaitingAgents: (count, titles) =>
+      titles.length > 0 ? `等待 ${count} 个其他 Agent 完成：${titles.join('、')}` : `等待 ${count} 个其他 Agent 完成`,
     wakeTimerDurationLabel: '等待时长',
     wakeTimerDurationHint: '从挂起那一刻算起要等多少分钟，最长 7 天（10080 分钟）。',
     wakeTimerMinutes: '分钟',
@@ -1335,6 +1338,10 @@ const localeTextByLanguage: Record<AppLanguage, LocaleText> = {
       titles.length > 0
         ? `Waiting for ${count} session${count === 1 ? '' : 's'}: ${titles.join(', ')}`
         : `Waiting for ${count} session${count === 1 ? '' : 's'}`,
+    wakeTimerWaitingAgents: (count, titles) =>
+      titles.length > 0
+        ? `Waiting for ${count} other agent${count === 1 ? '' : 's'}: ${titles.join(', ')}`
+        : `Waiting for ${count} other agent${count === 1 ? '' : 's'}`,
     wakeTimerDurationLabel: 'Wait time',
     wakeTimerDurationHint: 'Minutes to wait from the moment the message is armed, up to 7 days (10080 minutes).',
     wakeTimerMinutes: 'minutes',

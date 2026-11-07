@@ -20,7 +20,75 @@ const languageRule = (language: AppLanguage) =>
     ? '所有面向用户的文本字段，包括 summary、strategy 的 label/description，以及任何 commit summary，都必须使用简体中文。'
     : 'All human-readable text fields, including summary, strategy labels/descriptions, and any commit summaries, must be written in English.'
 
+// 症状 — 本地改动上千个文件时 Git 卡片的 AI 分组提交报错/超时。
+// 根因 — 提示词把全部路径 + 改动列表塞进去后被硬截断在 6000 字，模型看到半截 JSON，
+//   还被要求在「全部提交」里逐个写出几千个路径；输出同样放不下，只会超时或解析失败。
+// 被否决 — 调大 MAX_PROMPT_CHARS：prompt 走命令行，Windows 上限就是 ENAMETOOLONG 的来源。
+// 做法：超过阈值改发「目录摘要」，模型用目录前缀 / "." 声明范围，执行期由
+//   scopeStrategyCommitPaths 展开成真实改动文件。
+const LARGE_CHANGE_THRESHOLD = 150
+const MAX_SUMMARY_DIRS = 40
+
+const summarizeChangeDirectories = (paths: readonly string[]) => {
+  const counts = new Map<string, number>()
+  for (const raw of paths) {
+    const segments = raw.replace(/\\/g, '/').split('/')
+    const dir = segments.length > 1 ? `${segments.slice(0, Math.min(2, segments.length - 1)).join('/')}/` : './'
+    counts.set(dir, (counts.get(dir) ?? 0) + 1)
+  }
+  const sorted = [...counts].sort((a, b) => b[1] - a[1])
+  const lines = sorted.slice(0, MAX_SUMMARY_DIRS).map(([dir, count]) => `- ${dir} (${count})`)
+  if (sorted.length > MAX_SUMMARY_DIRS) {
+    const restFiles = sorted.slice(MAX_SUMMARY_DIRS).reduce((sum, [, count]) => sum + count, 0)
+    lines.push(`- ... +${sorted.length - MAX_SUMMARY_DIRS} dirs (${restFiles})`)
+  }
+  return lines.join('\n')
+}
+
+const buildLargeAnalysisPrompt = (gitStatus: GitStatus, language: AppLanguage) => {
+  const total = gitStatus.changes.length
+  const summary = summarizeChangeDirectories(gitStatus.changes.map((change) => change.path))
+  const zh = language === 'zh-CN'
+  const instruction = zh
+    ? `你是一个 Git 提交助手。本次共有 ${total} 个改动文件，数量太大无法逐个列出，下面只给目录摘要（目录/改动数）。请按目录把改动分组，直接返回一个纯 JSON 对象，不要解释文字，也不要 markdown 代码块。
+
+JSON 格式:
+{"strategies":[{"label":"策略名","description":"说明","commits":[{"summary":"提交信息","paths":["目录/"]}]}]}
+
+规则:
+- paths 里只能写目录前缀（以 / 结尾，必须来自下面的摘要）或单个 "."，不要列举单个文件
+- 第一个策略必须是"全部提交"，commits 只有一条，paths 为 ["."]
+- 之后每个主要模块单独作为一个策略，label 用模块名，paths 为该模块的目录前缀
+- 策略数量不超过 8 个
+- ${languageRule(language)}
+- 只输出 JSON，不要任何其他内容
+
+改动目录摘要:
+${summary}`
+    : `You are a Git commit assistant. There are ${total} changed files — too many to list, so only a directory summary (dir/count) is given. Group the changes by directory and return a pure JSON object (no explanations, no markdown code blocks).
+
+JSON format:
+{"strategies":[{"label":"name","description":"desc","commits":[{"summary":"message","paths":["dir/"]}]}]}
+
+Rules:
+- paths may only contain directory prefixes (ending with /, taken from the summary below) or a single ".", never individual files
+- First strategy must be "Commit all": exactly one commit with paths ["."]
+- Then one strategy per major module: label is the module name, paths are that module's directory prefixes
+- At most 8 strategies
+- ${languageRule(language)}
+- Output ONLY JSON, nothing else
+
+Changed directories:
+${summary}`
+
+  return instruction.length > MAX_PROMPT_CHARS ? instruction.slice(0, MAX_PROMPT_CHARS) : instruction
+}
+
 export const buildAnalysisPrompt = (gitStatus: GitStatus, language: AppLanguage) => {
+  if (gitStatus.changes.length > LARGE_CHANGE_THRESHOLD) {
+    return buildLargeAnalysisPrompt(gitStatus, language)
+  }
+
   const changesDescription = gitStatus.changes
     .map((change) => {
       const stats = [
@@ -168,7 +236,15 @@ export const scopeStrategyCommitPaths = (
       continue
     }
     const canonical = allowedByKey.get(key)
-    if (canonical) pick(canonical)
+    if (canonical) {
+      pick(canonical)
+      continue
+    }
+    // 目录前缀：展开成该目录下的真实改动文件（只认整段目录，src/a 不吞 src/ab）。
+    const prefix = `${key}/`
+    for (const [allowedKey, allowedCanonical] of allowedByKey) {
+      if (allowedKey.startsWith(prefix)) pick(allowedCanonical)
+    }
   }
 
   return picked

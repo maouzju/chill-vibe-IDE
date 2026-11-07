@@ -9,7 +9,11 @@ import {
   settleGitAgentAnalysisStream,
 } from '../src/components/git-agent-stream.ts'
 import { GitAgentStrategyList } from '../src/components/GitAgentStrategyList.tsx'
-import { buildAnalysisPrompt, parseAnalysisResult } from '../src/components/git-agent-panel-utils.ts'
+import {
+  buildAnalysisPrompt,
+  parseAnalysisResult,
+  scopeStrategyCommitPaths,
+} from '../src/components/git-agent-panel-utils.ts'
 import { shouldShowConflictBanner } from '../src/components/git-utils.ts'
 
 ;(globalThis as typeof globalThis & { React: typeof React }).React = React
@@ -62,6 +66,50 @@ test('buildAnalysisPrompt requires human-readable output in the active UI langua
 
   const chinesePrompt = buildAnalysisPrompt(gitStatus, 'zh-CN')
   assert.ok(chinesePrompt.includes('必须使用简体中文。'))
+})
+
+const createHugeGitStatus = (count: number): GitStatus => {
+  const base = createGitStatus()
+  return {
+    ...base,
+    changes: Array.from({ length: count }, (_, index) => ({
+      ...base.changes[0]!,
+      path: `src/module${index % 40}/deep/nested/dir/some_long_file_name_${index}.ts`,
+      kind: index % 3 === 0 ? ('untracked' as const) : ('modified' as const),
+    })),
+  }
+}
+
+test('buildAnalysisPrompt summarizes by directory instead of listing thousands of paths', () => {
+  const gitStatus = createHugeGitStatus(4000)
+
+  for (const language of ['zh-CN', 'en'] as const) {
+    const prompt = buildAnalysisPrompt(gitStatus, language)
+
+    // 症状：几千个文件时旧提示词把路径清单硬截断在 6000 字，指令之外只剩半截 JSON，
+    //   模型既看不到完整清单、又被要求逐个写出全部路径，只会超时或输出残缺。
+    assert.ok(prompt.length <= 6000)
+    assert.ok(prompt.includes('src/module0/'), 'directory summary must name the top directories')
+    assert.ok(prompt.includes('4000'), 'summary must state the total change count')
+    assert.ok(!prompt.includes('some_long_file_name_1.ts'), 'must not enumerate individual files')
+    assert.ok(prompt.trimEnd().length > 0)
+  }
+})
+
+test('scopeStrategyCommitPaths expands directory prefixes to the changed files under them', () => {
+  const allowed = ['src/a/one.ts', 'src/a/deep/two.ts', 'src/ab/three.ts', 'docs/readme.md']
+
+  assert.deepEqual(
+    scopeStrategyCommitPaths(['src/a/'], allowed),
+    ['src/a/one.ts', 'src/a/deep/two.ts'],
+  )
+  // 不带斜杠的目录名同样展开，但不能误吞同前缀的兄弟目录 src/ab
+  assert.deepEqual(
+    scopeStrategyCommitPaths(['src/a'], allowed),
+    ['src/a/one.ts', 'src/a/deep/two.ts'],
+  )
+  assert.deepEqual(scopeStrategyCommitPaths(['src/a/one.ts'], allowed), ['src/a/one.ts'])
+  assert.deepEqual(scopeStrategyCommitPaths(['nope/'], allowed), [])
 })
 
 test('parseAnalysisResult keeps a strategy when only some commit entries are malformed', () => {

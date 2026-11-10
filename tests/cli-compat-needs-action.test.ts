@@ -5,6 +5,7 @@ import {
   cliCompatNeedsAction,
   compareCliVersions,
   isCliVersionInRange,
+  compatibleCliVersions,
   type CliCompatEntry,
 } from '../shared/cli-compat.ts'
 
@@ -72,4 +73,17 @@ test('versions compare numerically, not lexically', () => {
   assert.equal(compareCliVersions('0.158.0', '0.158.0'), 0)
   assert.equal(isCliVersionInRange('0.157.2', '0.156.1', '0.158.0'), true)
   assert.equal(isCliVersionInRange(null, '0.156.1', '0.158.0'), false)
+})
+
+// 2026-11-10 用户实测：默认模型 claude-fable-5-2 在 CLI 2.1.280 上直接 400
+//   「Claude Code 2.1.280 does not support this model; version 2.1.290 or newer is required」，
+//   而 2.1.280 当时还在兼容区间里，设置面板和健康灯都不提示升级。
+test('claude compat floor covers the CLI version the default Fable 5.2 model requires', () => {
+  const { version, minVersion } = compatibleCliVersions.claude
+  assert.equal(compareCliVersions(minVersion, '2.1.290') >= 0, true)
+  assert.equal(compareCliVersions(version, minVersion) >= 0, true)
+  assert.equal(
+    cliCompatNeedsAction({ ...base, compatibleVersion: version, minCompatibleVersion: minVersion, systemVersion: '2.1.280' }),
+    true,
+  )
 })

@@ -11,8 +11,10 @@ import type { Provider } from './schema.js'
 // 抬 version 时 minVersion 默认不动；只有当新代码真的依赖了新 CLI 才有的能力（参数/协议/工具）时才抬它。
 // 2026-09-29 升级实测：claude 2.1.280→2.1.284 --help 只增不删，stream-json/软打断/--resume 全通；
 // codex 0.156.1→0.158.0 app-server 协议 schema 只增不删（gatewayOAuth 等），工具表逐项一致，真实回合通过。
+// 2026-11-10 claude 2.1.284→2.1.322：用到的 21 个参数 --help 全在，stream-json 实跑 + stream-json 输入 --resume 通过。
+//   minVersion 抬到 2.1.290：默认模型 claude-fable-5-2 在 2.1.280 上服务端直接 400「version 2.1.290 or newer is required」。
 export const compatibleCliVersions: Record<Provider, { version: string; minVersion: string; npmPackage: string }> = {
-  claude: { version: '2.1.284', minVersion: '2.1.280', npmPackage: '@anthropic-ai/claude-code' },
+  claude: { version: '2.1.322', minVersion: '2.1.290', npmPackage: '@anthropic-ai/claude-code' },
   codex: { version: '0.158.0', minVersion: '0.156.1', npmPackage: '@openai/codex' },
   // 2026-10-14 本机实测 0.24.5 的 `-o stream-json` / `--resume` / `--approval-mode` 均可用（docs/specs/gemini-cli-provider）。
   gemini: { version: '0.24.5', minVersion: '0.24.0', npmPackage: '@google/gemini-cli' },

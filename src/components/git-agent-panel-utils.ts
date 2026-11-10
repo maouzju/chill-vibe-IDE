@@ -230,6 +230,13 @@ export const scopeStrategyCommitPaths = (
 
   for (const requested of requestedPaths) {
     if (typeof requested !== 'string') continue
+    // 摘要里根目录的写法是 "./"，去前缀后变成空串会命中整树通配，所以先按原始写法单独处理。
+    if (requested.trim().replace(/\\/g, '/') === './') {
+      for (const [allowedKey, allowedCanonical] of allowedByKey) {
+        if (!allowedKey.includes('/')) pick(allowedCanonical)
+      }
+      continue
+    }
     const key = normalizeComparablePath(requested)
     if (wholeTreePathTokens.has(key)) {
       for (const canonical of allowedByKey.values()) pick(canonical)

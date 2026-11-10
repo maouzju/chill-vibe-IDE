@@ -112,6 +112,13 @@ test('scopeStrategyCommitPaths expands directory prefixes to the changed files u
   assert.deepEqual(scopeStrategyCommitPaths(['nope/'], allowed), [])
 })
 
+test('scopeStrategyCommitPaths reads the root-directory token "./" as root-level files only', () => {
+  const allowed = ['package.json', 'README.md', 'src/a/one.ts', 'src/b/two.ts']
+
+  assert.deepEqual(scopeStrategyCommitPaths(['./'], allowed), ['package.json', 'README.md'])
+  assert.deepEqual(scopeStrategyCommitPaths(['.'], allowed), allowed)
+})
+
 test('parseAnalysisResult keeps a strategy when only some commit entries are malformed', () => {
   const raw = JSON.stringify({
     summary: '两个模块',

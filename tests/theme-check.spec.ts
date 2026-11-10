@@ -2955,7 +2955,7 @@ for (const theme of ['dark', 'light'] as const) {
     state.settings.pinNewSessionDefaults = true
     state.settings.modelReasoningEfforts = {
       ...state.settings.modelReasoningEfforts,
-      claude: { ...state.settings.modelReasoningEfforts.claude, 'claude-fable-5-1': 'max' },
+      claude: { ...state.settings.modelReasoningEfforts.claude, 'claude-fable-5-2': 'max' },
     }
 
     await page.setViewportSize({ width: 1280, height: 1200 })
@@ -2967,7 +2967,7 @@ for (const theme of ['dark', 'light'] as const) {
     const item = await revealSettingsItem(page, 'reasoning-defaults')
     const section = item.getByTestId('reasoning-defaults-settings')
     await expect(section.locator('#pin-new-session-defaults')).toBeChecked()
-    await expect(section.locator('[data-reasoning-default-model="claude-fable-5-1"]')).toHaveValue('max')
+    await expect(section.locator('[data-reasoning-default-model="claude-fable-5-2"]')).toHaveValue('max')
     await page.mouse.move(0, 0)
     await expect(item).toHaveScreenshot(`reasoning-defaults-settings-${theme}.png`, {
       animations: 'disabled',

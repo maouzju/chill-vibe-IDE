@@ -13,6 +13,8 @@ import type { Provider } from './schema.js'
 // codex 0.156.1→0.158.0 app-server 协议 schema 只增不删（gatewayOAuth 等），工具表逐项一致，真实回合通过。
 // 2026-11-10 claude 2.1.284→2.1.322：用到的 21 个参数 --help 全在，stream-json 实跑 + stream-json 输入 --resume 通过。
 //   minVersion 抬到 2.1.290：默认模型 claude-fable-5-2 在 2.1.280 上服务端直接 400「version 2.1.290 or newer is required」。
+//   另验：--settings 注入的安全/完成边界钩子照常触发；续聊 result.total_cost_usd 两版都是整会话累计（非新版回归）；
+//   MCP 工具改为先 ToolSearch 再调用，tool_result 里多出 {type:'tool_reference'}，claude-tool-result.ts 只取文字会安全跳过。
 export const compatibleCliVersions: Record<Provider, { version: string; minVersion: string; npmPackage: string }> = {
   claude: { version: '2.1.322', minVersion: '2.1.290', npmPackage: '@anthropic-ai/claude-code' },
   codex: { version: '0.158.0', minVersion: '0.156.1', npmPackage: '@openai/codex' },

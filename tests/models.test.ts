@@ -91,6 +91,7 @@ describe('model helpers', () => {
       getModelOptions('claude').map((option) => option.model),
       [
         '',
+        'claude-fable-5-2',
         'claude-fable-5-1',
         'claude-fable-5',
         DEFAULT_CLAUDE_MODEL,
@@ -116,11 +117,14 @@ describe('model helpers', () => {
     assert.equal(normalizeModel('claude', 'claude-haiku-4-5-20251001'), 'claude-haiku-4-5-20251001')
   })
 
-  it('resolves Fable 5.1 and Sonnet 5.5 aliases while keeping stored legacy ids usable', () => {
+  it('resolves Fable 5.2 and Sonnet 5.5 aliases while keeping stored legacy ids usable', () => {
     // 裸别名跟随最新一代（与官方 `sonnet` 别名语义一致）。
-    assert.equal(resolveSlashModel('claude', 'fable'), 'claude-fable-5-1')
+    assert.equal(resolveSlashModel('claude', 'fable'), 'claude-fable-5-2')
+    assert.equal(resolveSlashModel('claude', 'fable-5.2'), 'claude-fable-5-2')
+    assert.equal(resolveSlashModel('claude', 'claude-fable-5-2'), 'claude-fable-5-2')
     assert.equal(resolveSlashModel('claude', 'fable-5.1'), 'claude-fable-5-1')
     assert.equal(resolveSlashModel('claude', 'claude-fable-5-1'), 'claude-fable-5-1')
+    assert.equal(normalizeModel('claude', 'claude-fable-5-1'), 'claude-fable-5-1')
     // 精确的旧别名仍解析到旧 id，已保存的卡片不被静默改写（Pitfall #119）。
     assert.equal(resolveSlashModel('claude', 'fable-5'), 'claude-fable-5')
     assert.equal(resolveSlashModel('claude', 'claude-fable-5'), 'claude-fable-5')
@@ -194,7 +198,8 @@ describe('model helpers', () => {
     }
     assert.equal(visible.includes('claude-fable-5'), false)
     assert.equal(visible.includes('claude-sonnet-4-6'), false)
-    assert.equal(visible.includes('claude-fable-5-1'), true)
+    assert.equal(visible.includes('claude-fable-5-1'), false)
+    assert.equal(visible.includes('claude-fable-5-2'), true)
     assert.equal(visible.includes('gpt-6-astra'), true)
     // 与普通选择器的唯一差别：头脑风暴请求必须指名具体模型，没有「用默认模型」项。
     assert.equal(visible.includes(''), false)
@@ -206,7 +211,7 @@ describe('model helpers', () => {
       getModelOptions('claude')
         .filter(isModelPickerOptionVisible)
         .map((option) => option.model),
-      ['', 'claude-fable-5-1', DEFAULT_CLAUDE_MODEL, 'claude-sonnet-5-5', 'claude-haiku-5-5'],
+      ['', 'claude-fable-5-2', DEFAULT_CLAUDE_MODEL, 'claude-sonnet-5-5', 'claude-haiku-5-5'],
     )
   })
 
@@ -218,7 +223,7 @@ describe('model helpers', () => {
       ANTHROPIC_DEFAULT_HAIKU_MODEL: 'claude-haiku-5-5',
       ANTHROPIC_DEFAULT_SONNET_MODEL: 'claude-sonnet-5-5',
       ANTHROPIC_DEFAULT_OPUS_MODEL: DEFAULT_CLAUDE_MODEL,
-      ANTHROPIC_DEFAULT_FABLE_MODEL: 'claude-fable-5-1',
+      ANTHROPIC_DEFAULT_FABLE_MODEL: 'claude-fable-5-2',
     })
   })
 

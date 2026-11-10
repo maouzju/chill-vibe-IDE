@@ -189,10 +189,18 @@ export const MODEL_OPTIONS: ModelOption[] = [
   {
     // Mythos-class tier above Opus; never the default. Bare "fable" follows the
     // newest Fable generation, like bare "opus"/"sonnet" do.
+    label: 'Fable 5.2',
+    provider: 'claude',
+    model: 'claude-fable-5-2',
+    aliases: ['fable', 'fable-5.2', 'claude-fable-5-2'],
+  },
+  {
+    // Retired from the picker, but kept for exact legacy commands and saved cards.
     label: 'Fable 5.1',
     provider: 'claude',
     model: 'claude-fable-5-1',
-    aliases: ['fable', 'fable-5.1', 'claude-fable-5-1'],
+    aliases: ['fable-5.1', 'claude-fable-5-1'],
+    hiddenFromPicker: true,
   },
   {
     // Retired from the picker, but kept for exact legacy commands and saved cards.
@@ -413,7 +421,8 @@ export const MODEL_SUCCESSORS: Record<Provider, Record<string, string>> = {
     'claude-opus-5': 'claude-opus-5-5',
     'claude-sonnet-5': 'claude-sonnet-5-5',
     'claude-sonnet-4-6': 'claude-sonnet-5-5',
-    'claude-fable-5': 'claude-fable-5-1',
+    'claude-fable-5': 'claude-fable-5-2',
+    'claude-fable-5-1': 'claude-fable-5-2',
     'claude-haiku-4-5-20251001': 'claude-haiku-5-5',
   },
   gemini: {

@@ -15,10 +15,12 @@ describe('claude pricing', () => {
     assert.equal(CLAUDE_PRICING_COPIED_ON, '2026-10-28')
     // 照抄 prices.json：五档 [输入, 输出, 缓存写 5 分钟, 缓存写 1 小时, 缓存读]
     assert.deepEqual(claudePriceTable['claude-opus-5-5'], [4, 20, 5, 8, 0.2])
+    assert.deepEqual(claudePriceTable['claude-fable-5-2'], [8, 40, 10, 16, 0.2])
     assert.deepEqual(claudePriceTable['claude-haiku-5-5@long'], [0.5, 2.5, 0.625, 1, 0.05])
   })
 
   it('maps models to a family, mythos included', () => {
+    assert.equal(resolveClaudeModelFamily('claude-fable-5-2'), 'fable')
     assert.equal(resolveClaudeModelFamily('claude-fable-5-1'), 'fable')
     assert.equal(resolveClaudeModelFamily('claude-mythos-5'), 'fable')
     assert.equal(resolveClaudeModelFamily('claude-opus-4-1-20250805'), 'opus')

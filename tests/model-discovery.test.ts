@@ -10,7 +10,7 @@ import { resolveModelDiscoveryEndpoint } from '../server/model-discovery.ts'
 
 // 2026-10-22 真实中转站（duckcoding）返回的列表：全是目录里已有、更旧或非对话的变体，必须一条都不提示。
 const relayClaudeIds = [
-  'claude-fable-5', 'claude-fable-5-1', 'claude-haiku-4-5-20251001', 'claude-haiku-5-5', 'claude-opus-4-6',
+  'claude-fable-5', 'claude-fable-5-1', 'claude-fable-5-2', 'claude-haiku-4-5-20251001', 'claude-haiku-5-5', 'claude-opus-4-6',
   'claude-opus-4-7', 'claude-opus-4-8', 'claude-opus-5', 'claude-opus-5-5', 'claude-sonnet-4-6',
   'claude-sonnet-5', 'claude-sonnet-5-5',
 ]

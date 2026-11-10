@@ -25,6 +25,8 @@ export type ClaudePriceRow = readonly [
 export const CLAUDE_HAIKU_LONG_CONTEXT_THRESHOLD = 100_000
 
 export const claudePriceTable: Readonly<Record<string, ClaudePriceRow>> = {
+  'claude-fable-5-2': [8, 40, 10, 16, 0.2],
+  'claude-mythos-5-2': [8, 40, 10, 16, 0.2],
   'claude-fable-5-1': [10, 50, 12.5, 20, 0.25],
   'claude-mythos-5-1': [10, 50, 12.5, 20, 0.25],
   'claude-fable-5': [10, 50, 12.5, 20, 1],
@@ -42,7 +44,7 @@ export const claudePriceTable: Readonly<Record<string, ClaudePriceRow>> = {
   'claude-haiku-4-5': [1, 5, 1.25, 2, 0.1],
   'claude-3-5-haiku': [0.8, 4, 1, 1.6, 0.08],
   // 系列默认价：没收录的新型号退回这里
-  fable: [10, 50, 12.5, 20, 0.25],
+  fable: [8, 40, 10, 16, 0.2],
   opus: [4, 20, 5, 8, 0.2],
   sonnet: [2, 10, 2.5, 4, 0.1],
   haiku: [0.1, 0.5, 0.125, 0.2, 0.01],

@@ -98,20 +98,20 @@ test('wheel over the model button previews neighbours and commits once after the
   await page.mouse.wheel(0, -100)
   await expect(modelSelect).toContainText('GPT-6.1 Sol')
 
-  // 连滚两格向下：Luna → Astra → Fable 5.1（跨 provider）。中间的 Astra 只是预览。
+  // 连滚两格向下：Luna → Astra → Fable 5.2（跨 provider）。中间的 Astra 只是预览。
   await page.mouse.wheel(0, 100)
   await expect(modelSelect).toContainText('GPT-6 Luna')
   await page.mouse.wheel(0, 100)
   await expect(modelSelect).toContainText('GPT-6 Astra')
   await page.mouse.wheel(0, 100)
-  await expect(modelSelect).toContainText('Fable 5.1')
+  await expect(modelSelect).toContainText('Fable 5.2')
 
   await expect
     .poll(() => {
       const card = savedCard(api.current())
       return card ? `${card.provider}:${card.model}` : ''
     })
-    .toBe('claude:claude-fable-5-1')
+    .toBe('claude:claude-fable-5-2')
 
   // 只提交了终点：没有任何一次落盘停在路过的型号上。
   const passedThrough = api.saved.some((state) => {

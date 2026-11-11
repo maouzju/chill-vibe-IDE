@@ -406,10 +406,7 @@ const WorkspaceColumnView = ({
     setHistoryEntryMenuPosition(null)
   }, [])
 
-  const [titleMenu, setTitleMenu] = useState<{ left: number; top: number } | null>(null)
-  const titleMenuRef = useRef<HTMLDivElement | null>(null)
-  const closeTitleMenu = useCallback(() => setTitleMenu(null), [])
-
+  // 右键项目名直接收起到顶栏（11-11 用户要求：不要先弹菜单再点一下）。
   const handleTitleContextMenu = useCallback(
     (event: MouseEvent<HTMLElement>) => {
       if (!onDockColumn) {
@@ -418,58 +415,10 @@ const WorkspaceColumnView = ({
 
       event.preventDefault()
       event.stopPropagation()
-      setTitleMenu({ left: event.clientX, top: event.clientY })
+      onDockColumn()
     },
     [onDockColumn],
   )
-
-  useEffect(() => {
-    if (!titleMenu) {
-      return
-    }
-
-    const handlePointerDown = (event: globalThis.MouseEvent) => {
-      if (titleMenuRef.current && !titleMenuRef.current.contains(event.target as Node)) {
-        closeTitleMenu()
-      }
-    }
-    const handleEscape = (event: globalThis.KeyboardEvent) => {
-      if (event.key === 'Escape') {
-        closeTitleMenu()
-      }
-    }
-
-    window.addEventListener('mousedown', handlePointerDown)
-    window.addEventListener('keydown', handleEscape)
-    window.addEventListener('blur', closeTitleMenu)
-
-    return () => {
-      window.removeEventListener('mousedown', handlePointerDown)
-      window.removeEventListener('keydown', handleEscape)
-      window.removeEventListener('blur', closeTitleMenu)
-    }
-  }, [closeTitleMenu, titleMenu])
-
-  useLayoutEffect(() => {
-    const node = titleMenuRef.current
-    if (!titleMenu || !node) {
-      return
-    }
-
-    const rect = node.getBoundingClientRect()
-    const next = clampFilePathContextMenuPosition({
-      x: titleMenu.left,
-      y: titleMenu.top,
-      width: rect.width,
-      height: rect.height,
-      viewportWidth: window.innerWidth,
-      viewportHeight: window.innerHeight,
-    })
-
-    if (next.left !== titleMenu.left || next.top !== titleMenu.top) {
-      setTitleMenu(next)
-    }
-  }, [titleMenu])
 
   const closeHistoryEntryMenu = useCallback(() => {
     setHistoryEntryMenu(null)
@@ -1274,29 +1223,6 @@ const WorkspaceColumnView = ({
             )}
           </div>
         )}
-
-        {titleMenu && onDockColumn && typeof document !== 'undefined'
-          ? createPortal(
-              <div
-                ref={titleMenuRef}
-                role="menu"
-                className="pane-tab-context-menu column-title-context-menu"
-                style={{ left: titleMenu.left, top: titleMenu.top }}
-              >
-                <button
-                  type="button"
-                  role="menuitem"
-                  onClick={() => {
-                    closeTitleMenu()
-                    onDockColumn()
-                  }}
-                >
-                  {text.dockColumnToTopbar}
-                </button>
-              </div>,
-              document.body,
-            )
-          : null}
 
         {historyEntryMenu && historyEntryMenuPosition && typeof document !== 'undefined'
           ? createPortal(

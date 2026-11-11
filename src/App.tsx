@@ -1684,8 +1684,8 @@ function App() {
   const applyAction = useCallback((action: IdeAction) => applyActions([action]), [applyActions])
 
   const dockColumnWithAnimation = useCallback(
-    (columnId: string, insertion?: DockInsertion | null) => {
-      const animation = captureColumnDockAnimation(columnId)
+    (columnId: string, insertion?: DockInsertion | null, dropPoint?: { x: number; y: number } | null) => {
+      const animation = captureColumnDockAnimation(columnId, dropPoint)
       applyAction({
         type: 'dockColumn',
         columnId,
@@ -1717,7 +1717,7 @@ function App() {
           })
         }
       } else if (payload?.type === 'column') {
-        dockColumnWithAnimation(payload.columnId, insertion)
+        dockColumnWithAnimation(payload.columnId, insertion, { x: event.clientX, y: event.clientY })
         clearDragPayload()
         setColumnDragInFlight(false)
       }

@@ -157,49 +157,25 @@ for (const theme of ['light', 'dark'] as const) {
   })
 }
 
-for (const theme of ['light', 'dark'] as const) {
-  test(`right-clicking a column title offers tucking it into the top bar with a flight animation (${theme})`, async ({
-    page,
-  }) => {
-    const mock = await mockAppApis(page, theme)
-    await page.setViewportSize({ width: 1440, height: 960 })
-    await page.goto(appUrl)
-
-    const title = page.locator('.workspace-column .column-title-btn', { hasText: 'alpha' })
-    await title.click({ button: 'right' })
-
-    const menu = page.locator('.column-title-context-menu')
-    await expect(menu).toBeVisible()
-    const menuItem = menu.getByRole('menuitem', { name: 'Tuck into top bar' })
-    await expect(menuItem).toBeVisible()
-    // 右键只开菜单，不进入路径编辑。
-    await expect(page.locator('.workspace-path-input')).toHaveCount(0)
-    await expect(menu).toHaveScreenshot(`column-title-context-menu-${theme}.png`)
-
-    await menuItem.click()
-
-    await expect(menu).toHaveCount(0)
-    // 收起过程必须有动效：幽灵块从列飞向 chip，结束后自行移除。
-    await expect(page.locator('.column-dock-ghost')).toHaveCount(1)
-    await expect(page.locator('.column-dock-ghost')).toHaveCount(0)
-
-    await expect(page.locator('.workspace-column')).toHaveCount(1)
-    expect(await readColumnTitles(page)).toEqual(['gamma'])
-    await expect(page.locator('.app-topbar-docked-column')).toHaveText(['beta', 'alpha'])
-    await expect.poll(() => mock.readState().columns[0]?.docked).toBe(true)
-  })
-}
-
-test('Escape closes the column title context menu without docking', async ({ page }) => {
-  await mockAppApis(page, 'dark')
+test('right-clicking a column title tucks it straight into the top bar with a flight animation', async ({
+  page,
+}) => {
+  const mock = await mockAppApis(page, 'dark')
   await page.setViewportSize({ width: 1440, height: 960 })
   await page.goto(appUrl)
 
   await page.locator('.workspace-column .column-title-btn', { hasText: 'alpha' }).click({ button: 'right' })
-  await expect(page.locator('.column-title-context-menu')).toBeVisible()
-  await page.keyboard.press('Escape')
+
+  // 右键直接收起，不弹菜单，不进入路径编辑。
   await expect(page.locator('.column-title-context-menu')).toHaveCount(0)
-  await expect(page.locator('.workspace-column')).toHaveCount(2)
+  await expect(page.locator('.workspace-path-input')).toHaveCount(0)
+  await expect(page.locator('.column-dock-ghost')).toHaveCount(1)
+  await expect(page.locator('.column-dock-ghost')).toHaveCount(0)
+
+  await expect(page.locator('.workspace-column')).toHaveCount(1)
+  expect(await readColumnTitles(page)).toEqual(['gamma'])
+  await expect(page.locator('.app-topbar-docked-column')).toHaveText(['beta', 'alpha'])
+  await expect.poll(() => mock.readState().columns[0]?.docked).toBe(true)
 })
 
 test('dragging a column headline onto the topbar dock zone tucks the column away', async ({ page }) => {
@@ -245,6 +221,12 @@ test('dragging a column headline onto the topbar dock zone tucks the column away
   await expect(dockZone).toHaveClass(/is-over/)
 
   await dockZone.dispatchEvent('drop', pointer)
+
+  // 松手后幽灵块从松手点起飞，而不是回到列原位从头重播。
+  const ghost = page.locator('.column-dock-ghost')
+  await expect(ghost).toHaveCount(1)
+  const ghostTop = await ghost.evaluate((node) => node.getBoundingClientRect().top)
+  expect(ghostTop).toBeLessThan(zoneBox.y + zoneBox.height + 40)
 
   await expect(dockZone).toHaveCount(0)
   await expect(page.locator('.workspace-column')).toHaveCount(1)

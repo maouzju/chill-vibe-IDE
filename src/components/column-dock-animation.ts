@@ -17,7 +17,15 @@ export type ColumnDockAnimationSnapshot = {
   label: string
   sourceRect: DOMRect
   siblingRects: ColumnRectMap
+  /** 拖到顶栏松手时：幽灵块已经"在手上"，从松手点直接飞进 chip，不再从列原位重播整段。 */
+  fromDropPoint: boolean
 }
+
+export type ColumnDockDropPoint = { x: number; y: number }
+
+const DROP_GHOST_WIDTH = 160
+const DROP_GHOST_HEIGHT = 32
+const DROP_FLIGHT_MS = 220
 
 const prefersReducedMotion = () =>
   typeof window !== 'undefined' &&
@@ -37,7 +45,10 @@ const findDockedChip = (columnId: string) =>
   document.querySelector<HTMLElement>(`.app-topbar-docked-column[data-column-id="${escapeAttributeValue(columnId)}"]`)
 
 /** 在 dispatch dockColumn 之前调用：量好要飞走的列和其余列的位置。 */
-export const captureColumnDockAnimation = (columnId: string): ColumnDockAnimationSnapshot | null => {
+export const captureColumnDockAnimation = (
+  columnId: string,
+  dropPoint?: ColumnDockDropPoint | null,
+): ColumnDockAnimationSnapshot | null => {
   if (typeof document === 'undefined' || prefersReducedMotion() || !supportsWebAnimations()) {
     return null
   }
@@ -58,8 +69,19 @@ export const captureColumnDockAnimation = (columnId: string): ColumnDockAnimatio
   return {
     columnId,
     label: column.querySelector('.column-title-btn')?.textContent?.trim() ?? '',
-    sourceRect: column.getBoundingClientRect(),
+    // 症状(11-11)：拖到顶栏松手后，幽灵块又从列原位整段飞一遍，像动画从头重播。
+    // 根因：拖拽时列已经跟手到了顶栏，起点却仍取列的原始 rect。
+    // 拖拽路径改从松手点起飞；右键路径没有跟手过程，仍从列原位起飞。
+    sourceRect: dropPoint
+      ? new DOMRect(
+          dropPoint.x - DROP_GHOST_WIDTH / 2,
+          dropPoint.y - DROP_GHOST_HEIGHT / 2,
+          DROP_GHOST_WIDTH,
+          DROP_GHOST_HEIGHT,
+        )
+      : column.getBoundingClientRect(),
     siblingRects,
+    fromDropPoint: Boolean(dropPoint),
   }
 }
 
@@ -123,6 +145,22 @@ const flyGhostToChip = (snapshot: ColumnDockAnimationSnapshot, chip: HTMLElement
   const targetCenterX = targetRect.left + targetRect.width / 2
   const midCenterX = sourceCenterX + (targetCenterX - sourceCenterX) * 0.45
   const midTop = sourceRect.top + (targetRect.top - sourceRect.top) * 0.35
+
+  if (snapshot.fromDropPoint) {
+    const shortFlight = ghost.animate(
+      [
+        { ...frame(sourceRect), opacity: 0.95, borderRadius: '999px' },
+        { ...frame(targetRect), opacity: 0.6, borderRadius: '999px' },
+      ],
+      { duration: DROP_FLIGHT_MS, easing: 'ease-out', fill: 'forwards' },
+    )
+    const cleanupShort = () => ghost.remove()
+    shortFlight.onfinish = cleanupShort
+    shortFlight.oncancel = cleanupShort
+    window.setTimeout(cleanupShort, DROP_FLIGHT_MS + 500)
+    popDockedChip(chip, Math.round(DROP_FLIGHT_MS * 0.7))
+    return
+  }
 
   const flight = ghost.animate(
     [

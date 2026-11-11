@@ -41,7 +41,7 @@ import {
 } from '../shared/slash-commands.js'
 import {
   isClaudeAlwaysThinkingModel,
-  isUltracodeEffort,
+  isClaudeUltracodeActive,
   toCodexEffortValue,
   toClaudeEffortFlagValue,
 } from '../shared/reasoning.js'
@@ -4452,7 +4452,7 @@ export const buildClaudeKeepaliveSignature = (
           request.thinkingEnabled === false,
         ) ?? 'omitted'
       : 'omitted',
-    ultracode: request.thinkingEnabled !== false && isUltracodeEffort(request.reasoningEffort),
+    ultracode: isClaudeUltracodeActive(request),
     plan: Boolean(request.planMode),
     readOnly: request.readOnly === true,
     // 切换浏览器控制开关必须换进程：旧进程的 argv 里没有（或多了）chill_vibe_browser MCP。
@@ -5059,7 +5059,7 @@ export const buildClaudeArgs = (
     request.reasoningEffort,
     thinkingDisabled,
   )
-  const ultracodeActive = !thinkingDisabled && isUltracodeEffort(request.reasoningEffort)
+  const ultracodeActive = isClaudeUltracodeActive(request)
   // Symptom (October 6, 2026): Sonnet 5.5 through Mouxihub stayed terse at a high effort tier.
   // Root cause: Claude CLI inherited alwaysThinkingEnabled from ~/.claude/settings.json;
   // false there disables adaptive thinking even when the card has thinkingEnabled=true.

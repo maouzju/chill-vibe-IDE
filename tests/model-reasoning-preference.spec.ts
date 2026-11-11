@@ -242,7 +242,8 @@ for (const theme of ['dark', 'light'] as const) {
     await expect(knob).toHaveAttribute('data-reasoning-effort', 'low')
     await expect(knob.locator('.knob-auto')).toHaveCount(0)
     await expect(knob.locator('.knob-level')).toHaveText('L')
-    await expect(page.locator('.pane-tab-panel.is-active .composer-reasoning-flash')).toHaveText('低 · 1/6')
+    // 2026-11-11 起 Ultracode 改为独立勾选项，不再占刻度：Claude 刻度 = low…max 共 5 档。
+    await expect(page.locator('.pane-tab-panel.is-active .composer-reasoning-flash')).toHaveText('低 · 1/5')
   })
 
   test(`composer secondary settings stay openable while streaming in ${theme} theme`, async ({ page }) => {

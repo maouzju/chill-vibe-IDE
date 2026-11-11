@@ -236,6 +236,20 @@ export const normalizeReasoningEffort = (
 export const isUltracodeEffort = (effort?: string | null): boolean =>
   normalizeReasoningEffort('claude', effort) === 'ultracode'
 
+// 症状（2026-11-11）：用户发现 Claude Code 里 ultracode 只是个勾选项，我们却把它做成
+// 一个「超高＋工作流」档位，选了它就丢掉 max/high 等档位。
+// 根因：CLI 2.1.322 的 ultracode 设置键已改为「standing dynamic-workflow orchestration
+// at any effort level」，生效判据只剩 ultracode===true && workflows 开 && 模型支持，不再
+// 要求 effort===xhigh。为什么还认旧档位：看板模板 / 默认档位表 / 旧卡片里存着
+// 'ultracode'，它仍表示「超高＋ultracode」，删掉会静默降级成普通档位。
+export const isClaudeUltracodeActive = (request: {
+  ultracode?: boolean | null
+  reasoningEffort?: string | null
+  thinkingEnabled?: boolean | null
+}): boolean =>
+  request.ultracode === true ||
+  (request.thinkingEnabled !== false && isUltracodeEffort(request.reasoningEffort))
+
 // Model-aware normalization for persisted card tiers: on Fable the auto
 // (thinking-off) tier and empty/unknown values land on the model default high
 // instead of the provider-wide max; every other model keeps the plain

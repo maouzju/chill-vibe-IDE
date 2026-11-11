@@ -590,6 +590,7 @@ export type IdeAction =
           | 'reasoningEffort'
           | 'thinkingEnabled'
           | 'planMode'
+          | 'ultracode'
           | 'autoUrgeActive'
           | 'autoUrgeProfileId'
           | 'repeatLoopActive'
@@ -2786,6 +2787,7 @@ const ideReducerCore = (state: AppState, action: IdeAction): AppState => {
           id: action.cardId,
           thinkingEnabled: sourceCard.thinkingEnabled,
           planMode: sourceCard.planMode,
+          ultracode: sourceCard.ultracode,
           repeatLoopActive: true,
           repeatLoopRemaining:
             typeof sourceCard.repeatLoopRemaining === 'number'

@@ -499,6 +499,8 @@ type ChatCardProps = {
         | 'stickyNoteViewState'
         | 'title'
         | 'adminAccess'
+        | 'ultracode'
+        | 'reasoningEffort'
       >
     >,
   ) => void
@@ -3948,16 +3950,24 @@ const ChatCardView = ({
   const alwaysThinkingModel =
     (effectiveProvider === 'claude' && isClaudeAlwaysThinkingModel(reasoningModel)) ||
     noneUnsupportedModel
-  const reasoningValue = noneUnsupportedModel && card.thinkingEnabled === false ? 'low' : normalizeReasoningEffortForModel(
+  const storedReasoningValue = noneUnsupportedModel && card.thinkingEnabled === false ? 'low' : normalizeReasoningEffortForModel(
     effectiveProvider,
     reasoningModel,
     card.reasoningEffort,
   )
+  // Claude 的 ultracode 是独立勾选项（CLI 2.1.322 起与档位正交，见 isClaudeUltracodeActive）。
+  // 旧卡 / 看板模板存的 'ultracode' 档位 = 超高 + 勾选：档位旋钮显示超高，勾选框显示已勾。
+  const legacyUltracodeTier = effectiveProvider === 'claude' && storedReasoningValue === 'ultracode'
+  const reasoningValue = legacyUltracodeTier ? 'xhigh' : storedReasoningValue
+  const ultracodeChecked = effectiveProvider === 'claude' && (card.ultracode === true || legacyUltracodeTier)
   const menuMinWidth = modelMenuStyle?.minWidth ?? 0
   const menuMaxWidth = modelMenuStyle?.maxWidth ?? 0
   const menuMaxHeight = modelMenuStyle?.maxHeight ?? 0
   const reasoningOptions = useMemo(
-    () => getReasoningOptionsForModel(effectiveProvider, reasoningModel, language),
+    () =>
+      getReasoningOptionsForModel(effectiveProvider, reasoningModel, language).filter(
+        (option) => option.value !== 'ultracode',
+      ),
     [effectiveProvider, language, reasoningModel],
   )
   // 模型有多档可调时，设置按钮变成档位旋钮：图标显示当前档，悬停滚轮一格一档。
@@ -5382,6 +5392,26 @@ const ChatCardView = ({
                               ))}
                             </select>
                           </ComposerSettingsRow>
+                          {effectiveProvider === 'claude' ? (
+                            <ComposerSettingsRow label={text.ultracodeLabel} hint={text.ultracodeHint}>
+                              <input
+                                type="checkbox"
+                                className="composer-settings-checkbox"
+                                checked={ultracodeChecked}
+                                onChange={() =>
+                                  onPatchCard(
+                                    ultracodeChecked
+                                      ? {
+                                          ultracode: false,
+                                          // 取消旧 'ultracode' 档位时落回它原本的超高档。
+                                          ...(legacyUltracodeTier ? { reasoningEffort: 'xhigh' } : {}),
+                                        }
+                                      : { ultracode: true },
+                                  )
+                                }
+                              />
+                            </ComposerSettingsRow>
+                          ) : null}
                           {card.provider === 'claude' ? (
                             <ComposerSettingsRow label={text.planMode} hint={text.planModeHint}>
                               <input

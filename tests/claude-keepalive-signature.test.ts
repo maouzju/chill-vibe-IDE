@@ -93,6 +93,12 @@ test('keepalive signature tracks the real --effort argv, not the raw tier', () =
     sign({ model: 'claude-opus-4-8', reasoningEffort: 'xhigh' }),
   )
 
+  // 独立 ultracode 勾选项（CLI 2.1.322 起与档位正交）同样只差 --settings 键，不能共用进程。
+  assert.notEqual(
+    sign({ model: 'claude-opus-4-8', reasoningEffort: 'max', ultracode: true }),
+    sign({ model: 'claude-opus-4-8', reasoningEffort: 'max' }),
+  )
+
   // auto 省略整个 flag，与任何显式档位都是不同的启动配置。
   assert.notEqual(
     sign({ model: 'claude-opus-4-8', reasoningEffort: 'auto' }),

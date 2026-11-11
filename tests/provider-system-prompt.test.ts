@@ -26,6 +26,7 @@ const createRequest = (overrides: Partial<ChatRequest> = {}): ChatRequest => ({
   reasoningEffort: overrides.reasoningEffort ?? 'medium',
   thinkingEnabled: overrides.thinkingEnabled ?? true,
   planMode: overrides.planMode ?? false,
+  ultracode: overrides.ultracode,
   streamId: overrides.streamId,
   sessionId: overrides.sessionId,
   language: overrides.language ?? 'zh-CN',
@@ -359,6 +360,27 @@ test('claude non-ultracode tiers explicitly send ultracode:false so a user-level
   )
   const ultracodeSettings = JSON.parse(ultracodeArgs[ultracodeArgs.indexOf('--settings') + 1] ?? '{}')
   assert.equal(ultracodeSettings.ultracode, true)
+})
+
+// 2026-11-11 扒 CLI 2.1.322：ultracode 设置键描述为「standing dynamic-workflow
+// orchestration at any effort level」，生效判据只剩 `ultracode===true && workflows 开 &&
+// 模型支持`，不再要求 effort===xhigh。所以它是独立勾选项：档位照常上 --effort。
+test('claude ultracode toggle is orthogonal to the effort tier', () => {
+  for (const effort of ['low', 'high', 'max'] as const) {
+    const args = buildClaudeArgs(
+      createRequest({ provider: 'claude', model: 'claude-opus-4-8', reasoningEffort: effort, ultracode: true }),
+      [],
+    )
+    assert.equal(args[args.indexOf('--effort') + 1], effort)
+    const settings = JSON.parse(args[args.indexOf('--settings') + 1] ?? '{}')
+    assert.equal(settings.ultracode, true, `tier ${effort} with the toggle on must enable ultracode`)
+  }
+
+  const offArgs = buildClaudeArgs(
+    createRequest({ provider: 'claude', model: 'claude-opus-4-8', reasoningEffort: 'max', ultracode: false }),
+    [],
+  )
+  assert.equal(JSON.parse(offArgs[offArgs.indexOf('--settings') + 1] ?? '{}').ultracode, false)
 })
 
 test('claude fable 5 never sends --effort none because thinking cannot be turned off', () => {

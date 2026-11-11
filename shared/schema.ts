@@ -307,6 +307,10 @@ export const chatCardSchema = z.object({
   // 挂唤醒）。任何卡片都能开，默认关。optional 而非 default 的理由同上。
   // 关闭时 provider 启动里完全没有这组 MCP —— 这是权限边界，不只是优化。
   adminAccess: z.boolean().optional(),
+  // Ultracode 勾选项（Claude CLI 2.1.322 起与思考档位正交：任意档位 + 常驻
+  // dynamic workflow 编排）。旧卡片的 reasoningEffort === 'ultracode' 仍按
+  // 「超高 + ultracode」兼容解释，见 shared/reasoning.ts isClaudeUltracodeActive。
+  ultracode: z.boolean().optional(),
   // 这个会话是超管 agent 通过 create_session 派发的，不是用户亲手建的。只在派发
   // 那一刻写一次，之后不再变；tab 图标据此显示机器人而不是 provider 图标，
   // 让用户一眼分清哪些 tab 是自己开的、哪些是 agent 替自己开的。
@@ -1426,6 +1430,8 @@ export const chatRequestSchema = z.object({
   reasoningEffort: z.string().default('max'),
   thinkingEnabled: z.boolean().default(true),
   planMode: z.boolean().default(false),
+  // 卡片上的 Ultracode 勾选项，与 reasoningEffort 正交（仅 Claude 生效）。
+  ultracode: z.boolean().optional(),
   streamId: z.string().min(1).optional(),
   sessionId: z.string().optional(),
   // Card identity lets the Claude keepalive pool key long-lived CLI processes

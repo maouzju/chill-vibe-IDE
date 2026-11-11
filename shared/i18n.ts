@@ -361,6 +361,8 @@ type LocaleText = {
   thinkingDepthHint: string
   reasoningKnobTitle: (tier: string, level: number | null, levels: number) => string
   thinkingDepthInactiveHint: string
+  ultracodeLabel: string
+  ultracodeHint: string
   composerSettings: string
   stickyNotePlaceholder: string
   stickyNoteTitle: string
@@ -870,6 +872,8 @@ const localeTextByLanguage: Record<AppLanguage, LocaleText> = {
       `设置 · 思考深度：${tier}${level === null ? '' : `（第 ${level}/${levels} 档）`} · 悬停滚轮调节`,
     thinkingDepthHint: '思考多久：低=快而省，高/最高=遇到难题更靠谱但明显更慢。简单活儿用低就够。',
     thinkingDepthInactiveHint: '思考已关，这一档暂时不生效；直接选一个深度就会自动开启思考。',
+    ultracodeLabel: 'Ultracode',
+    ultracodeHint: 'Claude 专用：在当前思考深度上，让 Claude 自动编排多 Agent 工作流来做实质任务。和思考深度互不影响，耗量明显更大。',
     composerSettings: '对话设置',
     placeholderSetWorkspace: '请先设置工作区路径',
     placeholderInputTask: '输入任务，回车发送',
@@ -1532,6 +1536,8 @@ const localeTextByLanguage: Record<AppLanguage, LocaleText> = {
       `Settings · Thinking depth: ${tier}${level === null ? '' : ` (${level}/${levels})`} · scroll to adjust`,
     thinkingDepthHint: 'How long it reasons: low is fast and cheap, high/max holds up better on hard problems but is noticeably slower.',
     thinkingDepthInactiveHint: 'Thinking is off, so this tier is not in effect yet — picking a depth turns thinking back on.',
+    ultracodeLabel: 'Ultracode',
+    ultracodeHint: 'Claude only: at the current thinking depth, Claude orchestrates multi-agent workflows for substantive tasks. Independent of thinking depth; uses noticeably more tokens.',
     composerSettings: 'Chat settings',
     placeholderSetWorkspace: 'Set a workspace path first',
     placeholderInputTask: 'Type a task and press Enter',

@@ -99,6 +99,7 @@ test('every composer setting carries a hint and none of them is printed inline',
     'Wake timer',
     'Thinking',
     'Thinking depth',
+    'Ultracode',
     'Plan mode',
     'Admin access',
     'Auto Urge',
@@ -147,4 +148,25 @@ test('hovering a composer setting reveals its hint and leaving hides it again', 
 
   await settingsTrigger.hover()
   await expect(hint).toHaveCount(0)
+})
+
+// 2026-11-11：Claude 的 ultracode 是独立勾选项，不再占一个思考档位。
+test('ultracode is a standalone checkbox and is no longer a thinking-depth tier', async ({ page }) => {
+  await installMockApis(page)
+  await page.goto(appUrl)
+
+  await page.locator('.pane-tab-panel.is-active .composer-settings-trigger').first().click()
+  const settingsMenu = page.locator('.composer-settings-menu').first()
+  await expect(settingsMenu).toBeVisible()
+
+  const depthOptions = await settingsMenu.locator('select.reasoning-select option').allTextContents()
+  expect(depthOptions.some((label) => /ultracode/i.test(label))).toBe(false)
+
+  const row = settingsMenu.locator('.composer-settings-row', { hasText: 'Ultracode' })
+  const checkbox = row.locator('input[type="checkbox"]')
+  await expect(checkbox).not.toBeChecked()
+  await checkbox.click()
+  await expect(checkbox).toBeChecked()
+  // 档位保持不变：勾选与思考深度正交。
+  await expect(settingsMenu.locator('select.reasoning-select').first()).toHaveValue('medium')
 })

@@ -1113,6 +1113,8 @@ const normalizePersistedCard = (
     // 卡片级超管权限（v2 取代了看板上的 supervisorCardId 指针）。optional 而非
     // default：绝大多数卡片没有它，不给每张卡在 state.json 里加一个 false。
     adminAccess: card.adminAccess === true ? true : undefined,
+    // 手抄白名单：漏掉即重启丢 Ultracode 勾选。optional 同 adminAccess，不给每卡写 false。
+    ultracode: card.ultracode === true ? true : undefined,
     // agent 派发的会话标记：tab 图标据此显示机器人而不是 provider 图标。这个
     // return 是手抄白名单，漏掉它重启后就分不清哪些 tab 是 agent 替用户开的。
     spawnedByAgent: card.spawnedByAgent === true ? true : undefined,

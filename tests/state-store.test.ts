@@ -300,6 +300,23 @@ describe('state-store persistence', () => {
     const loaded = await loadState()
     assert.equal(loaded.columns[0]?.cards[card.id]?.spawnedByAgent, true)
   })
+  // 2026-11-11：Claude CLI 2.1.322 起 ultracode 是与档位正交的会话勾选项，卡片上
+  // 存独立布尔。normalizePersistedCard 是手抄白名单，漏掉它重启即丢勾选。
+  it('loadState keeps the per-card ultracode toggle', async () => {
+    const state = createDefaultState('D:/ultracode-toggle')
+    const card = getFirstCard(state)
+    assert.ok(card)
+
+    const rawState = structuredClone(state) as unknown as Record<string, unknown>
+    const rawColumns = rawState.columns as Array<Record<string, unknown>>
+    const rawCards = rawColumns[0]?.cards as Record<string, Record<string, unknown>>
+    rawCards[card.id]!.ultracode = true
+    await writeFile(path.join(tmpDir, 'state.json'), JSON.stringify(rawState, null, 2), 'utf8')
+
+    const { loadState } = await import('../server/state-store.ts')
+    const loaded = await loadState()
+    assert.equal(loaded.columns[0]?.cards[card.id]?.ultracode, true)
+  })
   it('loadState returns defaults when file is missing', async () => {
     const { loadState } = await import('../server/state-store.ts')
     const loaded = await loadState()

@@ -16,6 +16,21 @@ const transientRecoveryPlaceholderSequencePattern =
 // 就去翻工作目录捡别的会话的活干。错误回显不是进展，按占位符同等对待。
 const providerErrorEchoPattern = /^API Error:/i
 
+// 中转站说「previously rejected」不是普通网络抖动：继续 --resume 只会把同一个
+// 被上游拒绝的原生会话再送一遍。此类错误必须换新会话，并且只重放当前用户消息。
+export const isClaudePreviouslyRejectedUpstreamError = (message: string) =>
+  message.toLowerCase().includes('previously rejected by the upstream provider')
+
+export const shouldScheduleFallbackRetryAfterStreamFailure = ({
+  previouslyRejectedUpstream,
+  lostStreamStopReason,
+  sensitiveWordRejection,
+}: {
+  previouslyRejectedUpstream: boolean
+  lostStreamStopReason: boolean
+  sensitiveWordRejection: boolean
+}) => !previouslyRejectedUpstream && !lostStreamStopReason && !sensitiveWordRejection
+
 export const resolveStreamRecoveryMode = (
   error: Pick<StreamErrorEvent, 'recoverable' | 'recoveryMode'>,
   hasSessionId: boolean,
@@ -86,6 +101,48 @@ export type StreamRecoveryCheckpointTurn = {
   message: ChatMessage
   prompt: string
   attachments: ImageAttachment[]
+}
+
+// Fresh-session recovery has no native checkpoint to validate against. Once a
+// relay has explicitly rejected the old Claude session, appended error/system
+// messages must not make us fall back to replaying the whole transcript.
+export const resolveFreshSessionRecoveryTurn = ({
+  messages,
+  streamId,
+}: {
+  messages: ChatMessage[]
+  streamId?: string
+}): StreamRecoveryCheckpointTurn | null => {
+  const userMessageIndex = messages.findLastIndex((candidate) => candidate.role === 'user')
+  if (userMessageIndex < 0) {
+    return null
+  }
+
+  const message = messages[userMessageIndex]!
+  const attachments = getChatMessageAttachments(message)
+  if (!message.content.trim() && attachments.length === 0) {
+    return null
+  }
+
+  // 空续传（唤醒/鞭策）没有新的用户消息：最后一条 user 属于已完成的旧回合，
+  // 重放它会让模型把做完的活重做一遍。error 回显（system）不算回合归属，
+  // 其余尾随消息必须属于当前 streamId，否则返回 null 退回 seeded 整段续传。
+  const ownedByOlderTurn = messages
+    .slice(userMessageIndex + 1)
+    .some(
+      (trailing) =>
+        trailing.role === 'user' ||
+        (trailing.role !== 'system' && (!streamId || trailing.meta?.streamId !== streamId)),
+    )
+  if (ownedByOlderTurn) {
+    return null
+  }
+
+  return {
+    message,
+    prompt: message.content,
+    attachments,
+  }
 }
 
 export const resolveStreamRecoveryCheckpointTurn = ({

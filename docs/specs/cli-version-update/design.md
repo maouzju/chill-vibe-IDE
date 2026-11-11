@@ -24,6 +24,12 @@ setupRunRequest = {
 
 `runEnvironmentSetup()` 接收该请求并透传到 Electron preload / main / backend / server endpoint。旧调用不传请求时等价于 `install-missing`，保证 onboarding 不受影响。
 
+## 跨版本激活指针
+
+- `active.json` 可能保留在旧版本已经不在当前兼容区间内。
+- 启动前如果发现激活版本越界，但当前 pinned 兼容包已安装且可启动，自动将指针迁移到 pinned 版本。
+- pinned 包不可用时不拦截请求，回落系统 CLI，并由现有状态卡提示重新下载。
+
 ## PowerShell 脚本
 
 `scripts/setup-ai-cli.ps1` 新增参数：

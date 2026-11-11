@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 
 import type { ChatRequest } from '../shared/schema.ts'
-import { createClaudeTurnParser } from '../server/providers.ts'
+import { createClaudeTurnParser, shouldUseClaudeKeepalive } from '../server/providers.ts'
 import { classifyProviderStreamErrorRecovery } from '../server/provider-stream-recovery.ts'
 
 // 2026-09-29 现场：v0.20.31 已在 spawn 前摘合成回复（#386），用户仍红出
@@ -98,4 +98,39 @@ test('empty-thinking 400 whose relay request ids contain 401/403 is still resuma
   assert.equal(errors.length, 1)
   assert.equal(errors[0]!.hint, undefined)
   assert.deepEqual(errors[0]!.recovery, { recoverable: true, recoveryMode: 'resume-session' })
+})
+
+const previouslyRejectedMessage =
+  'API Error: 400 This request was previously rejected by the upstream provider and will not be retried. Please revise the content.'
+
+test('previously-rejected upstream 400 is resumable and discards the pooled process', () => {
+  assert.deepEqual(
+    classifyProviderStreamErrorRecovery({ sessionId: 's-1' }, previouslyRejectedMessage),
+    { recoverable: true, recoveryMode: 'resume-session' },
+  )
+  const request = {
+    provider: 'claude', workspacePath: '.', model: 'claude-opus-5', reasoningEffort: 'max',
+    thinkingEnabled: true, planMode: false, language: 'zh-CN', systemPrompt: '', modelPromptRules: [],
+    crossProviderSkillReuseEnabled: true, prompt: 'test', attachments: [], sessionId: 's-1',
+  } as ChatRequest
+  let killed = 0
+  createClaudeTurnParser({
+    request,
+    language: 'zh-CN',
+    killChild: () => { killed += 1 },
+    sink: {
+      onSession: () => {}, onDelta: () => {}, onLog: () => {}, onAssistantMessage: () => {},
+      onActivity: () => {}, onDone: () => {}, onError: () => {},
+    },
+  }).handleLine(JSON.stringify({
+    type: 'result', subtype: 'success', is_error: true, api_error_status: 400, result: previouslyRejectedMessage,
+  }))
+  assert.equal(killed, 1)
+})
+
+test('previously-rejected recovery can force a one-shot Claude process', () => {
+  assert.equal(
+    shouldUseClaudeKeepalive({ poolAvailable: true, cardId: 'card-1', forceSingleShot: true }),
+    false,
+  )
 })

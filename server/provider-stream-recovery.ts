@@ -122,12 +122,21 @@ const recoverableErrorPatterns = [
   //   request id，停在终态、之后每轮必挂（2026-10-02 另一台电脑仍复现）。
   // 根因：空块已在常驻进程内存里；与上一条同理，需丢进程、续传时 spawn 前摘块修存档。
   'each thinking block must contain thinking',
+  // 症状：中转站返回 previously rejected by the upstream provider 后，常驻 Claude 进程
+  // 会继续携带同一条被拒上下文，后续每轮都立即 400。丢进程并续传，让新进程
+  // 重新读取已修复的存档；不要扩大到其它 400，避免非法请求无限重试。
+  'previously rejected by the upstream provider',
 ] as const
 
 // 进程内存里的历史已坏，只能丢掉常驻进程、新起进程 --resume（spawn 前会修存档）。
-export const isClaudePoisonedHistoryError = (message: string) =>
-  message.toLowerCase().includes('system content must contain at least one block') ||
-  message.toLowerCase().includes('each thinking block must contain thinking')
+export const isClaudePoisonedHistoryError = (message: string) => {
+  const normalizedMessage = message.toLowerCase()
+  return (
+    normalizedMessage.includes('system content must contain at least one block') ||
+    normalizedMessage.includes('each thinking block must contain thinking') ||
+    normalizedMessage.includes('previously rejected by the upstream provider')
+  )
+}
 
 const zeroExitPattern = /\b(?:codex|claude) exited with status code:\s*0\b/i
 

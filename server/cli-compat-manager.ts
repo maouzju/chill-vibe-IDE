@@ -5,6 +5,7 @@ import path from 'node:path'
 
 import {
   compatibleCliVersions,
+  isCliVersionInRange,
   type CliCompatEntry,
   type CliCompatStatus,
 } from '../shared/cli-compat.js'
@@ -72,7 +73,8 @@ export const writeActiveCompatVersion = async (
 
   await mkdir(root, { recursive: true })
   const target = getActiveFilePath(root)
-  const temp = `${target}.tmp`
+  // 多张卡同时启动会并发修正 active.json，共用同名临时文件会让后到的 rename 抛 ENOENT。
+  const temp = `${target}.${process.pid}.${Math.random().toString(36).slice(2)}.tmp`
   await writeFile(temp, JSON.stringify(current, null, 2), 'utf8')
   await rename(temp, target)
 }
@@ -83,6 +85,9 @@ export const writeActiveCompatVersion = async (
 //   损坏的包照样被优先选中，系统 CLI 再健康也轮不到。
 // 做法：首次选中前真跑一次 `--version`，失败就回落系统 CLI 并记日志；结果按「路径+mtime」缓存，
 //   不让每条消息多付一次进程启动。被否决：只在 spawn 报错后重试 —— 启动点有 6 处，收口在这里最省。
+// 症状（2026-11-11 实测）：兼容包从 2.1.284 升到 2.1.322 后，旧 active.json 仍指向旧版，新版已安装却继续启动旧 CLI。
+// 根因：active.json 是跨版本持久指针，升级兼容区间后不会自动失效。
+// 做法：激活版本越界时优先切到当前已安装且可启动的 pinned 版本；没有就回落系统 CLI。
 export type CompatLaunchProbe = (bin: string) => Promise<boolean>
 const compatLaunchProbeCache = new Map<string, boolean>()
 const defaultCompatLaunchProbe: CompatLaunchProbe = async (bin) => (await readCliVersion(bin)) !== null
@@ -92,11 +97,13 @@ export const resolveCompatCommand = async (
   root = getCliCompatRoot(),
   probe: CompatLaunchProbe = defaultCompatLaunchProbe,
 ) => {
-  const version = (await readActiveCompatVersions(root))[provider]
-  if (!version) {
+  const activeVersion = (await readActiveCompatVersions(root))[provider]
+  if (!activeVersion) {
     return null
   }
 
+  const { version: pinnedVersion, minVersion } = compatibleCliVersions[provider]
+  const version = isCliVersionInRange(activeVersion, minVersion, pinnedVersion) ? activeVersion : pinnedVersion
   const bin = getCompatBinPath(provider, version, root)
   if (!existsSync(bin)) {
     return null
@@ -112,8 +119,16 @@ export const resolveCompatCommand = async (
       bin,
     })
   }
+  if (!launchable) {
+    return null
+  }
 
-  return launchable ? bin : null
+  if (version !== activeVersion) {
+    // 修正指针只是顺手优化，写失败不能让本轮启动报错。
+    await writeActiveCompatVersion(provider, version, root).catch(() => undefined)
+  }
+
+  return bin
 }
 
 const readCliVersion = async (command: string) => {
@@ -193,13 +208,12 @@ export class CliCompatManager {
 
   async getStatus(): Promise<CliCompatStatus> {
     const root = this.getRoot()
-    const active = await readActiveCompatVersions(root)
     const entries = await Promise.all(
       providers.map(async (provider): Promise<CliCompatEntry> => {
         const { version: compatibleVersion, minVersion: minCompatibleVersion } = compatibleCliVersions[provider]
-        const activeVersion = (await resolveCompatCommand(provider, root, this.probe))
-          ? (active[provider] ?? null)
-          : null
+        const resolvedCompat = await resolveCompatCommand(provider, root, this.probe)
+        const active = await readActiveCompatVersions(root)
+        const activeVersion = resolvedCompat ? (active[provider] ?? null) : null
         const systemCommand = await this.resolveSystemCommand(provider).catch(() => null)
 
         return {

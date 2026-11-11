@@ -4095,7 +4095,15 @@ export const createClaudeTurnParser = (hooks: {
   }
 }
 
-const isClaudeKeepaliveEnabled = () => process.env.CHILL_VIBE_CLAUDE_KEEPALIVE !== '0'
+export const shouldUseClaudeKeepalive = (options: {
+  poolAvailable: boolean
+  cardId?: string | null
+  forceSingleShot?: boolean
+}) =>
+  options.poolAvailable &&
+  Boolean(options.cardId?.trim()) &&
+  options.forceSingleShot !== true &&
+  process.env.CHILL_VIBE_CLAUDE_KEEPALIVE !== '0'
 
 const launchClaudeRun = async (
   request: ChatRequest,
@@ -4125,7 +4133,16 @@ const launchClaudeRun = async (
     env: safetyRuntime.env,
   }
 
-  if (pool && cardId && isClaudeKeepaliveEnabled()) {
+  if (shouldUseClaudeKeepalive({
+    poolAvailable: Boolean(pool),
+    cardId,
+    forceSingleShot: request.forceClaudeSingleShot,
+  })) {
+    // The predicate above narrows behavior, but TypeScript cannot infer the
+    // nullable pool from the standalone helper call.
+    if (!pool) {
+      return null
+    }
     return launchClaudeKeepaliveRun(
       request,
       sink,
@@ -4133,7 +4150,7 @@ const launchClaudeRun = async (
       preparedRuntime,
       attachmentPaths,
       pool,
-      cardId,
+      cardId!,
       safetyRuntime.hookCommand,
       workspaceAdminMcpConfig,
       computerUseMcpConfig,

@@ -88,9 +88,12 @@ import {
   getRecoverableStreamRetryLimit,
   getRecoverableStreamErrorSessionId,
   resolveNextFailedResumeSessionAttempt,
+  resolveFreshSessionRecoveryTurn,
+  isClaudePreviouslyRejectedUpstreamError,
   resolveStreamRecoveryCheckpointTurn,
   resolveStreamRecoveryMode,
   shouldKeepRecoveringResumeWithFreshSession,
+  shouldScheduleFallbackRetryAfterStreamFailure,
   shouldResetStreamRecoveryAttemptsForActivity,
   shouldResetStreamRecoveryAttemptsForText,
 } from './stream-recovery'
@@ -670,6 +673,7 @@ type StreamRecoveryTurnSnapshot = {
 type RecoverLiveStreamOptions = {
   clearSessionId?: boolean
   preferNativeCheckpoint?: boolean
+  freshSessionOnly?: boolean
 }
 
 const hasPendingAskUserMessage = (messages: ChatMessage[]) =>
@@ -1061,6 +1065,7 @@ function App() {
   const activePaneTargetRef = useRef<PaneTarget | null>(null)
   const streamRetryCountRef = useRef(new Map<string, number>())
   const resumeSessionLoopCountRef = useRef(new Map<string, number>())
+  const freshClaudeRecoveryAttemptRef = useRef(new Set<string>())
   // 当前这条流有没有真实进展（文本/工具，不含 reasoning 和 session 握手），
   // 供 resolveNextFailedResumeSessionAttempt 区分「连环死」与「隔很久各抽一次」。
   const streamMeaningfulProgressRef = useRef(new Set<string>())
@@ -5885,6 +5890,7 @@ function App() {
           clearStopCompletionFallbackTimer(card.id)
           streamRetryCountRef.current.delete(card.id)
           resumeSessionLoopCountRef.current.delete(card.id)
+          freshClaudeRecoveryAttemptRef.current.delete(card.id)
           streamRecoveryTurnRef.current.delete(card.id)
           queueFollowUpDuringStreamRef.current.delete(card.id)
           pendingAskUserDuringStreamRef.current.delete(card.id)
@@ -6186,8 +6192,12 @@ function App() {
             const maxRecoverableRetries = getRecoverableStreamRetryLimit(
               appStateRef.current.settings.resilientProxyMaxRetries,
             )
+            const previouslyRejectedUpstream =
+              card.provider === 'claude' && isClaudePreviouslyRejectedUpstreamError(message)
+            const freshRecoveryAlreadyAttempted =
+              previouslyRejectedUpstream && freshClaudeRecoveryAttemptRef.current.has(card.id)
 
-            if (retryCount < maxRecoverableRetries) {
+            if (retryCount < maxRecoverableRetries && !freshRecoveryAlreadyAttempted) {
               const shouldCountAgainstBudget = transientOnly !== true
               // This counter tracks failed resume turns, not visible progress.
               // A poisoned Codex session can emit reasoning (or even partial
@@ -6222,6 +6232,17 @@ function App() {
                   const hasLiveSessionId =
                     typeof liveCard.sessionId === 'string' &&
                     liveCard.sessionId.trim().length > 0
+                  // 中转站明确说「previously rejected」时，--resume 和 native fork 都会
+                  // 把同一条被拒上下文重新送回去；直接新开会话，只重放当前用户这一轮。
+                  if (isClaudePreviouslyRejectedUpstreamError(message) && card.provider === 'claude') {
+                    freshClaudeRecoveryAttemptRef.current.add(card.id)
+                    resumeSessionLoopCountRef.current.delete(card.id)
+                    void recoverLiveStreamRef.current?.(columnId, card.id, {
+                      clearSessionId: true,
+                      freshSessionOnly: true,
+                    })
+                    return
+                  }
                   if (
                     shouldKeepRecoveringResumeWithFreshSession({
                       recoverable,
@@ -6343,7 +6364,13 @@ function App() {
           // retire the banner without a late signal from THIS stream reviving it.
           // 敏感词拦截：服务端能打码的已经走 recoverable 续传了，走到这里说明词不在可改的历史里，
           // 兜底重试只会每 5~30 分钟再撞一次同一堵墙（2026-10-21 死循环现场），直接停。
-          if (lostStreamStopReason || isSensitiveWordRejection(message)) {
+          const previouslyRejectedUpstream =
+            card.provider === 'claude' && isClaudePreviouslyRejectedUpstreamError(message)
+          if (!shouldScheduleFallbackRetryAfterStreamFailure({
+            previouslyRejectedUpstream,
+            lostStreamStopReason: Boolean(lostStreamStopReason),
+            sensitiveWordRejection: isSensitiveWordRejection(message),
+          })) {
             markRecoveryFailed(card.id, card.streamId)
           } else {
             scheduleFallbackRetry(columnId, card.id, card.streamId)
@@ -7538,6 +7565,7 @@ function App() {
     // stream to own the normal cleanup path.
     runStartedAtRef.current.delete(cardId)
     streamRetryCountRef.current.delete(cardId)
+    freshClaudeRecoveryAttemptRef.current.delete(cardId)
     resumeSessionLoopCountRef.current.delete(cardId)
     streamRecoveryTurnRef.current.delete(cardId)
     pendingAskUserDuringStreamRef.current.delete(cardId)
@@ -8014,7 +8042,8 @@ function App() {
 
     const prefersNativeCheckpoint = options?.preferNativeCheckpoint === true
     const requestsSessionClear = options?.clearSessionId === true
-    if (!requestsSessionClear && !prefersNativeCheckpoint && !card.sessionId) {
+    const requestsFreshSessionOnly = options?.freshSessionOnly === true
+    if (!requestsSessionClear && !prefersNativeCheckpoint && !requestsFreshSessionOnly && !card.sessionId) {
       return false
     }
 
@@ -8068,6 +8097,9 @@ function App() {
           streamId: card.streamId,
         })
       : null
+    const freshSessionRecoveryTurn = requestsFreshSessionOnly
+      ? resolveFreshSessionRecoveryTurn({ messages: card.messages, streamId: card.streamId })
+      : null
     const checkpointTurn = prefersNativeCheckpoint
       ? (
           streamRecoveryTurnRef.current.get(cardId) ??
@@ -8086,7 +8118,7 @@ function App() {
     const sourceSessionId = card.sessionId?.trim() || null
     const sourceStreamId = card.streamId
     const forkedSessionId =
-      checkpointTurn && sourceSessionId
+      !requestsFreshSessionOnly && checkpointTurn && sourceSessionId
         ? await forkProviderSession({
             provider: card.provider,
             workspacePath: column.workspacePath,
@@ -8109,7 +8141,7 @@ function App() {
     }
 
     const shouldClearSessionId =
-      !forkedSessionId && (requestsSessionClear || prefersNativeCheckpoint)
+      !forkedSessionId && (requestsSessionClear || prefersNativeCheckpoint || requestsFreshSessionOnly)
 
     // Fact-check against the provider's native on-disk transcript before
     // resuming: a flaky relay can eat or corrupt the terminal event after the
@@ -8192,22 +8224,26 @@ function App() {
 
     const language = appStateRef.current.settings.language
     const freshSessionRecoveryPrompt = shouldClearSessionId
-      ? buildSeededChatPrompt({
+      ? requestsFreshSessionOnly && freshSessionRecoveryTurn
+        ? freshSessionRecoveryTurn.prompt
+        : buildSeededChatPrompt({
           language,
           prompt: language === 'en' ? 'Please continue.' : '\u8bf7\u7ee7\u7eed\u3002',
           attachments: [],
           messages: card.messages,
           provider: card.provider,
           status: card.status,
-        })
+          })
       : ''
     const freshSessionRecoveryAttachments = shouldClearSessionId
-      ? collectSeededChatAttachments({
+      ? requestsFreshSessionOnly && freshSessionRecoveryTurn
+        ? freshSessionRecoveryTurn.attachments
+        : collectSeededChatAttachments({
           messages: card.messages,
           attachments: [],
           provider: card.provider,
           status: card.status,
-        })
+          })
       : []
     const recoveryPrompt = forkedSessionId
       ? (checkpointTurn?.prompt ?? '')
@@ -8303,6 +8339,12 @@ function App() {
         prompt: recoveryPrompt,
         attachments: recoveryAttachments,
         archiveRecall,
+        // Claude 2.1.3xx can return the relay's "previously rejected" 400 on
+        // a pooled stdin turn even after the session is cleared. A fresh
+        // one-shot process removes the keepalive protocol from this recovery
+        // path; normal turns remain pooled.
+        forceClaudeSingleShot:
+          card.provider === 'claude' && requestsFreshSessionOnly,
       })
 
       if (response.streamId !== streamId) {

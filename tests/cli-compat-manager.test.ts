@@ -15,21 +15,56 @@ import { compatibleCliVersions } from '../shared/cli-compat.ts'
 
 const makeRoot = () => mkdtempSync(path.join(os.tmpdir(), 'cli-compat-'))
 const launches = async () => true
+const supportedClaudeVersion = compatibleCliVersions.claude.minVersion
 
 describe('cli compat manager', () => {
   it('resolves nothing until a compat version is both installed and active', async () => {
     const root = makeRoot()
     assert.equal(await resolveCompatCommand('claude', root, launches), null)
 
-    await writeActiveCompatVersion('claude', '2.1.280', root)
+    await writeActiveCompatVersion('claude', supportedClaudeVersion, root)
     // 激活了但二进制不在（被删/装一半）必须回落系统 CLI，不能返回一个不存在的路径
     assert.equal(await resolveCompatCommand('claude', root, launches), null)
 
-    const bin = getCompatBinPath('claude', '2.1.280', root)
+    const bin = getCompatBinPath('claude', supportedClaudeVersion, root)
     mkdirSync(path.dirname(bin), { recursive: true })
     writeFileSync(bin, '')
     assert.equal(await resolveCompatCommand('claude', root, launches), bin)
     assert.equal(await resolveCompatCommand('codex', root, launches), null)
+  })
+
+  it('automatically promotes an active compat CLI that fell below the current support floor', async () => {
+    const root = makeRoot()
+    const staleVersion = '2.1.284'
+    const pinnedVersion = compatibleCliVersions.claude.version
+    const staleBin = getCompatBinPath('claude', staleVersion, root)
+    const pinnedBin = getCompatBinPath('claude', pinnedVersion, root)
+    mkdirSync(path.dirname(staleBin), { recursive: true })
+    mkdirSync(path.dirname(pinnedBin), { recursive: true })
+    writeFileSync(staleBin, 'stale')
+    writeFileSync(pinnedBin, 'pinned')
+    await writeActiveCompatVersion('claude', staleVersion, root)
+
+    assert.equal(await resolveCompatCommand('claude', root, launches), pinnedBin)
+    assert.deepEqual(await readActiveCompatVersions(root), { claude: pinnedVersion })
+  })
+
+  it('reports the promoted pinned version as active after a stale pointer is repaired', async () => {
+    const root = makeRoot()
+    const staleVersion = '2.1.284'
+    const pinnedVersion = compatibleCliVersions.claude.version
+    const staleBin = getCompatBinPath('claude', staleVersion, root)
+    const pinnedBin = getCompatBinPath('claude', pinnedVersion, root)
+    mkdirSync(path.dirname(staleBin), { recursive: true })
+    mkdirSync(path.dirname(pinnedBin), { recursive: true })
+    writeFileSync(staleBin, 'stale')
+    writeFileSync(pinnedBin, 'pinned')
+    await writeActiveCompatVersion('claude', staleVersion, root)
+
+    const manager = new CliCompatManager(async () => null, async () => null, { root, probe: launches })
+    const claude = (await manager.getStatus()).entries.find((entry) => entry.provider === 'claude')
+    assert.equal(claude?.active, true)
+    assert.equal(claude?.activeVersion, pinnedVersion)
   })
 
   it('deactivating falls back to the system CLI', async () => {
@@ -47,10 +82,10 @@ describe('cli compat manager', () => {
 
   it('falls back to the system CLI when the active compat CLI cannot launch', async () => {
     const root = makeRoot()
-    const bin = getCompatBinPath('claude', '2.1.280', root)
+    const bin = getCompatBinPath('claude', supportedClaudeVersion, root)
     mkdirSync(path.dirname(bin), { recursive: true })
     writeFileSync(bin, 'broken')
-    await writeActiveCompatVersion('claude', '2.1.280', root)
+    await writeActiveCompatVersion('claude', supportedClaudeVersion, root)
 
     let probes = 0
     const failing = async () => {

@@ -1431,6 +1431,10 @@ export const chatRequestSchema = z.object({
   // Card identity lets the Claude keepalive pool key long-lived CLI processes
   // and route unsolicited turns (background-task wake-ups) back to the card.
   cardId: z.string().min(1).optional(),
+  // A poisoned upstream turn may be a keepalive-specific compatibility failure.
+  // Recovery can explicitly use a fresh one-shot CLI process without changing
+  // the normal per-card keepalive behavior.
+  forceClaudeSingleShot: z.boolean().optional(),
   language: appLanguageSchema.default('zh-CN'),
   systemPrompt: z.string().default(defaultSystemPrompt),
   modelPromptRules: z.array(modelPromptRuleSchema).default([]),

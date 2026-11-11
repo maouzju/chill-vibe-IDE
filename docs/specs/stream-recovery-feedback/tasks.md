@@ -126,3 +126,11 @@ Node verification: the initial five-case proving run failed four cases (5 raw re
 - [x] Verify focused Node coverage and the affected recovery/reasoning Playwright specs before release gating.
 
 Verification record (2026-10-16): `pnpm test` passed 3245 tests with 2 skipped; focused provider/recovery/reasoning coverage passed. Full release verification remains the release-pipeline gate.
+
+## Slice 13 - Claude upstream previously-rejected 400 (2026-11-11)
+
+- [x] Add red-first coverage for previously rejected by the upstream provider 400 responses.
+- [x] Classify only this fixed 400 phrase as bounded `resume-session`; discard the pooled Claude process before retrying, then create a fresh Claude session and replay only the current user turn.
+- [x] Cap fresh-session recovery at one automatic retry per card; if the new session is rejected too, surface the final error instead of looping.
+- [x] Run focused recovery tests, quality checks, package the Windows build, and start the isolated verified runtime.
+- [x] Claude 的 previously-rejected 400 恢复改走一次性进程；避免 2.1.3xx 的 keepalive stdin 会话继续复用被拒请求形状。

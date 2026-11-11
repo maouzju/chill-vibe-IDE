@@ -5,20 +5,79 @@ import { attachImagesToMessageMeta } from '../shared/chat-attachments.ts'
 import {
   getRecoverableStreamRetryLimit,
   getRecoverableStreamErrorSessionId,
+  isClaudePreviouslyRejectedUpstreamError,
   resolveNextFailedResumeSessionAttempt,
+  resolveFreshSessionRecoveryTurn,
   resolveStreamRecoveryMode,
   resolveStreamRecoveryCheckpointTurn,
   shouldFallbackToFreshSessionAfterResumeLoop,
   shouldFallbackToFreshSessionAfterTransientResumeLoop,
   shouldKeepRecoveringResumeWithFreshSession,
   shouldKeepRecoveringTransientResumeWithFreshSession,
+  shouldScheduleFallbackRetryAfterStreamFailure,
   shouldResetStreamRecoveryAttemptsForActivity,
   shouldResetStreamRecoveryAttemptsForText,
 } from '../src/stream-recovery.ts'
 
+test('previously-rejected Claude relay errors require a fresh session', () => {
+  assert.equal(
+    isClaudePreviouslyRejectedUpstreamError(
+      'API Error: 400 This request was previously rejected by the upstream provider and will not be retried.',
+    ),
+    true,
+  )
+  assert.equal(isClaudePreviouslyRejectedUpstreamError('API Error: 500 server-side issue, usually temporary'), false)
+})
+
+test('fresh Claude recovery replays only the latest user turn after appended error messages', () => {
+  const turn = resolveFreshSessionRecoveryTurn({
+    messages: [
+      recoveryMessage('old-user', 'user', '旧需求'),
+      recoveryMessage('old-assistant', 'assistant', '旧回复'),
+      recoveryMessage('current-user', 'user', '请继续处理当前问题'),
+      recoveryMessage('error', 'system', 'API Error: 400 This request was previously rejected by the upstream provider'),
+    ],
+  })
+
+  assert.equal(turn?.prompt, '请继续处理当前问题')
+  assert.deepEqual(turn?.attachments, [])
+})
+
+test('fresh Claude recovery refuses to replay a completed older turn on an empty continuation', () => {
+  const turn = resolveFreshSessionRecoveryTurn({
+    streamId: 'stream-now',
+    messages: [
+      recoveryMessage('old-user', 'user', '已经做完的旧需求'),
+      recoveryMessage('old-assistant', 'assistant', '做完了', { streamId: 'stream-old' }),
+      recoveryMessage('error', 'system', 'API Error: 400 previously rejected by the upstream provider'),
+    ],
+  })
+
+  assert.equal(turn, null)
+})
+
+test('previously-rejected Claude errors do not enter the delayed fallback retry loop', () => {
+  assert.equal(
+    shouldScheduleFallbackRetryAfterStreamFailure({
+      previouslyRejectedUpstream: true,
+      lostStreamStopReason: false,
+      sensitiveWordRejection: false,
+    }),
+    false,
+  )
+  assert.equal(
+    shouldScheduleFallbackRetryAfterStreamFailure({
+      previouslyRejectedUpstream: false,
+      lostStreamStopReason: false,
+      sensitiveWordRejection: false,
+    }),
+    true,
+  )
+})
+
 const recoveryMessage = (
   id: string,
-  role: 'user' | 'assistant',
+  role: 'user' | 'assistant' | 'system',
   content: string,
   meta?: Record<string, string>,
 ) => ({ id, role, content, createdAt: '2026-07-15T01:08:29.358Z', meta })

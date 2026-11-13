@@ -4,10 +4,18 @@ import { describe, it } from 'node:test'
 import { createMessage } from '../shared/default-state.ts'
 import type { CardStatus, ChatMessage, Provider } from '../shared/schema.ts'
 import {
+  clearPendingCompactBoundaryMessage,
+  finalizePendingCompactBoundaryMessage,
+  getCompactBoundaryTrigger,
   getCompactMessageWindow,
   getPendingCompactBoundaryMessage,
+  isAppAutoCompactRun,
+  isAppAutoCompactRunOnCard,
+  isHiddenCompactBoundaryMessage,
+  markAppAutoCompactRun,
   markCompactBoundaryMessage,
   mergeCompactedHistoryForDisplay,
+  settlePendingCompactBoundary,
   shouldAutoCompactCodexConversation,
   shouldWaitForCompactionBeforeSending,
 } from '../src/components/chat-card-compaction.ts'
@@ -762,5 +770,208 @@ describe('waiting for compaction before an ordinary follow-up', () => {
   it('never waits on ordinary messages or an empty transcript', () => {
     assert.equal(shouldWaitForCompactionBeforeSending(makeMessage('m4', 'user', '继续'), 'claude'), false)
     assert.equal(shouldWaitForCompactionBeforeSending(undefined, 'claude'), false)
+  })
+})
+
+describe('compaction the app starts on its own before sending a message', () => {
+  // 上下文快满时，App 先发一条隐藏的 /compact，用户那条消息排在它后面
+  // （docs/specs/context-usage-auto-compact）。
+  const appCompact = markAppAutoCompactRun(
+    markCompactBoundaryMessage(makeMessage('m5', 'user', '/compact'), { trigger: 'auto', hidden: true }),
+    'stream-1',
+  )
+
+  it('is a hidden auto boundary that remembers which turn runs it', () => {
+    assert.equal(getCompactBoundaryTrigger(appCompact, 'claude'), 'auto')
+    assert.equal(getCompactBoundaryTrigger(appCompact, 'codex'), 'auto')
+    assert.equal(isHiddenCompactBoundaryMessage(appCompact), true)
+    assert.equal(isAppAutoCompactRun(appCompact, 'stream-1'), true)
+  })
+
+  it('holds follow-ups while its own turn is still running', () => {
+    // 压缩途中用户又追加一句：要排在压缩后面，不能把压缩打断
+    // （打断了等于白压，下一条照样撞上「快满了」）。
+    assert.equal(shouldWaitForCompactionBeforeSending(appCompact, 'claude', 'stream-1'), true)
+    assert.equal(shouldWaitForCompactionBeforeSending(appCompact, 'codex', 'stream-1'), true)
+  })
+
+  it('stops holding as soon as that turn is over', () => {
+    // 这条隐藏边界之后可能很久都是 latest user message（比如紧跟着的是自动续跑），
+    // 不能重蹈「streaming 久了消息全变延后」的覆辙：只在它自己的回合里算数。
+    assert.equal(shouldWaitForCompactionBeforeSending(appCompact, 'claude', 'stream-2'), false)
+    assert.equal(shouldWaitForCompactionBeforeSending(appCompact, 'claude', undefined), false)
+    assert.equal(shouldWaitForCompactionBeforeSending(appCompact, 'claude'), false)
+    assert.equal(isAppAutoCompactRun(appCompact, 'stream-2'), false)
+    assert.equal(isAppAutoCompactRun(appCompact, undefined), false)
+    assert.equal(isAppAutoCompactRun(appCompact, ''), false)
+    assert.equal(isAppAutoCompactRun(undefined, 'stream-1'), false)
+  })
+
+  it('only tags a message that is a compaction boundary', () => {
+    const ordinary = makeMessage('m6', 'user', '继续')
+    assert.equal(markAppAutoCompactRun(ordinary, 'stream-1'), ordinary)
+    assert.equal(isAppAutoCompactRun(ordinary, 'stream-1'), false)
+
+    // 没有回合 id 就不打标。
+    const boundary = markCompactBoundaryMessage(makeMessage('m7', 'user', '/compact'), {
+      trigger: 'auto',
+      hidden: true,
+    })
+    assert.equal(markAppAutoCompactRun(boundary, ''), boundary)
+  })
+
+  it('keeps identifying the turn after a Codex boundary is finalized or cleared', () => {
+    // Codex 的边界先是 pending，压缩完成后 finalize、失败时 clear；
+    // 回合收尾（静默、不重试）还要认得出「这一回合是自动压缩」。
+    const pendingCodex = markAppAutoCompactRun(
+      markCompactBoundaryMessage(makeMessage('m8', 'user', '/compact'), {
+        trigger: 'auto',
+        hidden: true,
+        pending: true,
+      }),
+      'stream-3',
+    )
+
+    assert.equal(isAppAutoCompactRun(finalizePendingCompactBoundaryMessage(pendingCodex), 'stream-3'), true)
+    assert.equal(isAppAutoCompactRun(clearPendingCompactBoundaryMessage(pendingCodex), 'stream-3'), true)
+    // 清掉之后它不再是边界，但仍然是隐藏的，不会冒出一条用户没发过的 /compact。
+    assert.equal(getCompactBoundaryTrigger(clearPendingCompactBoundaryMessage(pendingCodex), 'codex'), null)
+    assert.equal(isHiddenCompactBoundaryMessage(clearPendingCompactBoundaryMessage(pendingCodex)), true)
+  })
+
+  it('leaves no boundary behind when a Claude compaction it started never happened', () => {
+    // 症状（要防的）：自动压缩被停止 / 失败后，更早的历史照样被折叠、重放历史时也被截掉，
+    // 而 CLI 那边其实根本没压缩过。
+    // 根因：Claude 的手动 /compact 靠消息内容识别，清掉边界标记后又被内容规则认回了边界。
+    const pendingClaude = markAppAutoCompactRun(
+      markCompactBoundaryMessage(makeMessage('m9', 'user', '/compact'), {
+        trigger: 'auto',
+        hidden: true,
+        pending: true,
+      }),
+      'stream-4',
+    )
+    const cleared = clearPendingCompactBoundaryMessage(pendingClaude)
+
+    assert.equal(getCompactBoundaryTrigger(cleared, 'claude'), null)
+    assert.equal(isHiddenCompactBoundaryMessage(cleared), true)
+
+    const window = getCompactMessageWindow(
+      [
+        makeMessage('m1', 'user', '第一条'),
+        makeMessage('m2', 'assistant', '回答'),
+        cleared,
+        makeMessage('m10', 'user', '继续'),
+      ],
+      'claude',
+      'idle',
+    )
+    assert.equal(window.hiddenMessageCount, 0)
+    assert.equal(window.compactMessageId, null)
+
+    // 用户自己发的 /compact 不受影响：照旧靠内容认。
+    assert.equal(getCompactBoundaryTrigger(makeMessage('m11', 'user', '/compact'), 'claude'), 'manual')
+    // 压缩成功（finalize）后是正常的自动边界。
+    assert.equal(
+      getCompactBoundaryTrigger(finalizePendingCompactBoundaryMessage(pendingClaude), 'claude'),
+      'auto',
+    )
+  })
+
+  it('only lets its pending boundary take effect once the CLI reported the compaction', () => {
+    const pendingAuto = markAppAutoCompactRun(
+      markCompactBoundaryMessage(makeMessage('m12', 'user', '/compact'), {
+        trigger: 'auto',
+        hidden: true,
+        pending: true,
+      }),
+      'stream-5',
+    )
+
+    for (const provider of ['claude', 'codex'] as const) {
+      // 压成了：边界生效。哪怕用户随后按了停止，CLI 那边也已经压过了。
+      for (const stopped of [false, true]) {
+        const settled = settlePendingCompactBoundary(pendingAuto, { stopped, compactionObserved: true })
+        assert.equal(getCompactBoundaryTrigger(settled, provider), 'auto')
+        assert.equal(getPendingCompactBoundaryMessage([settled]), null)
+      }
+
+      // 回合「正常结束」但 CLI 没报压缩（比如 /compact 被当成普通文本回答了）：撤销，
+      // 否则更早的历史会被折叠掉，而 CLI 的上下文一个字都没少。
+      for (const stopped of [false, true]) {
+        const settled = settlePendingCompactBoundary(pendingAuto, { stopped, compactionObserved: false })
+        assert.equal(getCompactBoundaryTrigger(settled, provider), null)
+        assert.equal(isHiddenCompactBoundaryMessage(settled), true)
+      }
+    }
+  })
+
+  it('keeps settling a /compact the user typed the way it always did', () => {
+    const pendingManual = markCompactBoundaryMessage(makeMessage('m13', 'user', '/compact'), {
+      pending: true,
+    })
+
+    // 用户自己敲的 Codex /compact：没被停止就生效，不看 CLI 报没报。
+    assert.equal(
+      getCompactBoundaryTrigger(
+        settlePendingCompactBoundary(pendingManual, { stopped: false, compactionObserved: false }),
+        'codex',
+      ),
+      'manual',
+    )
+    assert.equal(
+      getCompactBoundaryTrigger(
+        settlePendingCompactBoundary(pendingManual, { stopped: true, compactionObserved: true }),
+        'codex',
+      ),
+      null,
+    )
+  })
+
+  it('recognizes its own turn from the card messages when that turn ends', () => {
+    // 回合收尾（done、出错、等不到确认的停止）都要先认出「刚结束的这个回合是不是自动压缩」：
+    // 看最新一条 user 消息是不是这个回合发起的那条 /compact。
+    const pendingAuto = markAppAutoCompactRun(
+      markCompactBoundaryMessage(makeMessage('m14', 'user', '/compact'), {
+        trigger: 'auto',
+        hidden: true,
+        pending: true,
+      }),
+      'stream-6',
+    )
+    const note = makeMessage('m15', 'system', '上下文已用 85%，先自动压缩，再发送你的消息。', {
+      kind: 'log',
+    })
+    const earlier = makeMessage('m1', 'user', '第一条')
+
+    assert.equal(isAppAutoCompactRunOnCard([earlier, pendingAuto, note], 'stream-6'), true)
+    // 边界撤销之后（没压成）仍然认得：收尾的几步不是同时发生的。
+    assert.equal(
+      isAppAutoCompactRunOnCard(
+        [earlier, clearPendingCompactBoundaryMessage(pendingAuto), note],
+        'stream-6',
+      ),
+      true,
+    )
+
+    // 别的回合：这条 /compact 只是历史。
+    assert.equal(isAppAutoCompactRunOnCard([earlier, pendingAuto, note], 'stream-7'), false)
+    // 它后面已经有新的用户消息：现在跑的是那条消息的回合。
+    assert.equal(
+      isAppAutoCompactRunOnCard(
+        [earlier, pendingAuto, note, makeMessage('m16', 'user', '继续')],
+        'stream-6',
+      ),
+      false,
+    )
+    // 用户自己敲的 /compact 不是。
+    assert.equal(
+      isAppAutoCompactRunOnCard([earlier, makeMessage('m17', 'user', '/compact')], 'stream-6'),
+      false,
+    )
+    // 卡片没了 / 没有消息 / 回合 id 不知道。
+    assert.equal(isAppAutoCompactRunOnCard(undefined, 'stream-6'), false)
+    assert.equal(isAppAutoCompactRunOnCard([], 'stream-6'), false)
+    assert.equal(isAppAutoCompactRunOnCard([earlier, pendingAuto, note], undefined), false)
   })
 })

@@ -54,6 +54,10 @@ export const getPanelText = (language: AppState['settings']['language']) =>
           'Off: the model and effort you pick on a card become what new chats start with. On: new chats always start from the Default model setting, at the effort set in a table that appears below.',
         reasoningDefaultsDescription: 'The reasoning effort each model starts with in a new chat. Chats already open keep their own.',
         reasoningDefaultsConfiguredTag: 'default model',
+        autoCompactLabel: 'Compact before sending when the context is nearly full',
+        autoCompactHint:
+          'On: once a chat has used the share of its context window set below, it is compacted before your next message is sent. The message waits in the queue and goes out by itself afterwards, even if compacting fails. Off: only the compaction Claude / Codex do on their own mid-turn applies. Not available for Gemini.',
+        autoCompactThresholdLabel: 'Compact once usage reaches',
         modelPickerDescription:
           'Unchecked models disappear from the dropdown; the one a card is already using always stays. Retired models can be checked back on.',
         modelPickerRetired: 'retired',
@@ -211,6 +215,10 @@ export const getPanelText = (language: AppState['settings']['language']) =>
           '关闭时，卡上换的模型和档位会记成默认，下次新开会话沿用。打开后，新会话一律用「默认模型」，档位按下面出现的表来定。',
         reasoningDefaultsDescription: '每个模型新开会话时用的思考档位。已经开着的会话不受影响。',
         reasoningDefaultsConfiguredTag: '默认模型',
+        autoCompactLabel: '上下文快满时，先压缩再发送',
+        autoCompactHint:
+          '打开时：一条对话占用的上下文达到下面的比例后，你发下一条消息前会先自动压缩一次；消息在压缩期间排队，压完自动发出，压缩失败也照常发。关闭后只靠 Claude / Codex 在回合中途自己压缩。Gemini 不支持。',
+        autoCompactThresholdLabel: '占用达到多少时压缩',
         modelPickerDescription:
           '取消勾选的模型会从下拉里消失，卡上正在用的那个始终保留；标着「已下架」的旧型号也能勾回来。',
         modelPickerRetired: '已下架',

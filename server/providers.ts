@@ -65,6 +65,7 @@ import type {
   SlashCommand,
   SlashCommandRequest,
   StreamActivity,
+  StreamContextUsageEvent,
   StreamErrorEvent,
   StreamErrorHint,
   StreamCompletion,
@@ -77,7 +78,11 @@ import {
 } from './claude-structured-output.js'
 import {
   mapClaudeTurnStopReason,
+  readClaudeCompactBoundary,
+  readClaudeContextWindow,
+  readClaudeRequestContextUsage,
   readClaudeTurnUsage,
+  readCodexContextUsage,
 } from './provider-turn-telemetry.js'
 import { buildCodexInboundRequestRejection } from './codex-inbound-request.js'
 import {
@@ -187,6 +192,8 @@ type StreamSink = {
   onLog: (message: string) => void
   onAssistantMessage: (message: { itemId: string; content: string }) => void
   onActivity: (activity: StreamActivity) => void
+  // 上下文占用的实时信号（docs/specs/context-usage-auto-compact）。可选：Gemini 等不报的 provider 不用接。
+  onContextUsage?: (event: StreamContextUsageEvent) => void
   onStats?: (event: {
     event: ProxyStatsEvent
     endpoint: string
@@ -2920,6 +2927,8 @@ const launchCodexAppServerRun = async (
             ...activity,
             trigger: manualCompactRequest ? 'manual' : activity.trigger,
           })
+          // 压缩完的占用是未知：清掉旧值，等下一次请求报真值（docs/specs/context-usage-auto-compact）。
+          sink.onContextUsage?.({ reset: true })
         }
 
         if (manualCompactRequest && activity.status === 'completed') {
@@ -3005,6 +3014,20 @@ const launchCodexAppServerRun = async (
         if (!turnThreadId || turnThreadId === emittedSessionId) {
           const turn = readRecord(params, 'turn')
           activeTurnId = (turn ? readString(turn, 'id') : undefined) ?? null
+        }
+      }
+
+      // 上下文占用的实时信号（docs/specs/context-usage-auto-compact）。只认根线程：子 agent 线程有
+      // 自己的窗口。手动压缩请求期间不报——那一轮的用量属于「压缩请求」本身，不是压缩后的占用。
+      // 协议形状来自 0.147.0 的 `codex app-server generate-ts`；线上载荷没能实测（中转站 401），
+      // 所以这里不 return、不改任何既有状态，读不出来就当没这条通知。
+      if (method === 'thread/tokenUsage/updated' && !manualCompactRequest) {
+        const contextUsage = readCodexContextUsage(params)
+        if (contextUsage && (!contextUsage.threadId || contextUsage.threadId === emittedSessionId)) {
+          sink.onContextUsage?.({
+            used: contextUsage.used,
+            ...(contextUsage.size !== undefined ? { size: contextUsage.size } : {}),
+          })
         }
       }
 
@@ -3571,6 +3594,10 @@ export const createClaudeTurnParser = (hooks: {
   // one block share an id, and each new assistant message starts a new one.
   let claudeStreamMessageId: string | null = null
   let claudeTextBlockItemId: string | null = null
+  // 最近一次主线程请求的上下文占用（docs/specs/context-usage-auto-compact）。result 才报窗口大小，
+  // 那时要把它和最近的占用一起带出去；压缩边界之后清成未知。
+  let latestClaudeContextUsed: number | undefined
+  let claudeCompactionCount = 0
   // 症状：气泡「完成。末」下面紧跟一条完整的「已完成。……」（2026-09-16 用户截图，会话
   //   a2621231：半截属于 msg_011Cf6phFS，完整的是 msg_011Cf6pkDY）。
   // 根因：上游流吐了几个字就断，CLI 在同一进程内静默重试开了新 message；被弃的半截既没有
@@ -3724,6 +3751,31 @@ export const createClaudeTurnParser = (hooks: {
         hooks.onSessionId?.(event.session_id)
         sink.onSession(event.session_id)
         return
+      }
+
+      // 上下文占用的实时信号（docs/specs/context-usage-auto-compact）。放在所有会提前 return 的
+      // 分支之前：这里只读不改事件，不能因为后面某个分支吞掉事件而漏报。
+      const requestContextUsed = readClaudeRequestContextUsage(event)
+      if (requestContextUsed !== undefined) {
+        latestClaudeContextUsed = requestContextUsed
+        sink.onContextUsage?.({ used: requestContextUsed })
+      }
+
+      const compactBoundary = readClaudeCompactBoundary(event)
+      if (compactBoundary) {
+        latestClaudeContextUsed = undefined
+        sink.onContextUsage?.({ reset: true })
+        // 手动 /compact 不发活动：渲染端已经为用户敲的那条 /compact 建了边界，再发会重复插一条。
+        // CLI 回合中途自己压的才需要告诉渲染端「这里压过」。
+        if (compactBoundary.trigger !== 'manual') {
+          claudeCompactionCount += 1
+          sink.onActivity({
+            itemId: `claude-compaction:${readString(event, 'uuid') ?? claudeCompactionCount}`,
+            kind: 'compaction',
+            status: 'completed',
+            trigger: 'auto',
+          })
+        }
       }
 
       // 症状：派发子代理后卡片只剩通用计时器，用户无法判断跑了几个/跑到哪步/是否卡住。
@@ -3915,6 +3967,16 @@ export const createClaudeTurnParser = (hooks: {
       }
 
       if (event.type === 'result') {
+        // 窗口大小只有 result 才报。必须赶在 done / error 之前发出：终态之后 chat-manager
+        // 不再放行任何事件。压缩回合的 result 用量全 0，此时只带窗口、不带占用。
+        const contextWindow = readClaudeContextWindow(event)
+        if (contextWindow !== undefined) {
+          sink.onContextUsage?.({
+            ...(latestClaudeContextUsed !== undefined ? { used: latestClaudeContextUsed } : {}),
+            size: contextWindow,
+          })
+        }
+
         closeClaudeOpenTextBlock()
         markFinished()
 

@@ -4337,6 +4337,69 @@ body.is-card-dragging .lane-drop-zone-top {
   opacity: 0.72;
 }
 
+/* 上下文占用：小圆环 + 百分比。档位用 data-level，不借用裸的全局修饰类。 */
+.composer-context-usage {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.24rem;
+  margin-right: 0.14rem;
+  padding: 0 0.2rem;
+  color: var(--ink-3);
+  font-size: 0.66rem;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+  white-space: nowrap;
+  user-select: none;
+  cursor: default;
+}
+
+.composer-context-usage[data-level='warning'] {
+  color: var(--warn);
+}
+
+.composer-context-usage[data-level='danger'] {
+  color: var(--danger);
+}
+
+.composer-context-usage-ring {
+  width: 0.9rem;
+  height: 0.9rem;
+  flex-shrink: 0;
+}
+
+.composer-context-usage-track {
+  fill: none;
+  stroke: color-mix(in srgb, currentColor 22%, transparent);
+  stroke-width: 2;
+}
+
+.composer-context-usage-fill {
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: round;
+}
+
+/* 悬停说明：圆环贴着卡片右缘，HoverTooltip 默认的居中气泡会伸出卡片、被 .card-shell 的
+   overflow 裁掉。锚点退回 static，气泡改以 .composer 为准：贴右缘、浮在输入区上方、
+   宽度不超过它，窄卡里也不会伸出去。右对齐后小箭头对不准圆环，不画。 */
+.git-hover-tooltip-anchor:has(> .composer-context-usage) {
+  position: static;
+}
+
+.composer-context-usage + .git-hover-tooltip {
+  left: auto;
+  right: 0;
+  min-width: min(12rem, 100%);
+  max-width: min(18rem, 100%);
+  transform: none;
+}
+
+.composer-context-usage + .git-hover-tooltip::after {
+  display: none;
+}
+
 .composer-actions .icon-button {
   height: 1.78rem;
   min-width: 1.78rem;

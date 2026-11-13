@@ -6,7 +6,13 @@ import type {
 export type { QueuedSendRequest } from '../../shared/schema'
 
 export type SendMessageMode = 'auto' | 'defer' | 'interrupt'
-export type SendMessageOrigin = 'user' | 'auto-urge' | 'wake-timer-release' | 'workflow-failure-wake'
+// 'auto-compact'：上下文快满时 App 自己先发的那条 /compact（docs/specs/context-usage-auto-compact）。
+export type SendMessageOrigin =
+  | 'user'
+  | 'auto-urge'
+  | 'wake-timer-release'
+  | 'workflow-failure-wake'
+  | 'auto-compact'
 
 export type SendMessageOptions = {
   mode?: SendMessageMode

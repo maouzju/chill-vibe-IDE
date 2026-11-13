@@ -283,7 +283,8 @@ export const renderRemoteMonitorPage = () => `<!DOCTYPE html>
     }
   }
 
-  function getStream(streamId, cardId) {
+  // origin 只有 App 自己发起的回合才带（目前只有上下文快满时的自动 /compact）。
+  function getStream(streamId, cardId, origin) {
     var entry = streams.get(streamId)
     if (!entry) {
       entry = { cardId: cardId, liveText: '', items: [], texts: new Map(), acts: new Map(), state: 'streaming' }
@@ -291,6 +292,7 @@ export const renderRemoteMonitorPage = () => `<!DOCTYPE html>
       scheduleSnapshot()
     }
     if (cardId && !entry.cardId) { entry.cardId = cardId }
+    if (origin && !entry.origin) { entry.origin = origin }
     if (entry.cardId) {
       var order = cardStreams.get(entry.cardId)
       if (!order) { order = []; cardStreams.set(entry.cardId, order) }
@@ -300,7 +302,10 @@ export const renderRemoteMonitorPage = () => `<!DOCTYPE html>
   }
 
   function handleStreamEvent(payload) {
-    var entry = getStream(payload.streamId, payload.cardId)
+    var entry = getStream(payload.streamId, payload.cardId, payload.origin)
+    // 自动压缩回合是 App 替用户跑的，紧接着就是用户真正那条消息：跟电脑端一样不响铃、
+    // 不震动、不弹「跑完了」（被停也不提醒），否则一条消息要响两次。
+    var silent = entry.origin === 'auto-compact'
     var kind = payload.event
     var data = payload.data || {}
 
@@ -319,11 +324,11 @@ export const renderRemoteMonitorPage = () => `<!DOCTYPE html>
       entry.acts.set(data.itemId, data)
     } else if (kind === 'done') {
       entry.state = data && data.stopped ? 'stopped' : 'done'
-      notifyFinished(payload.streamId, false)
+      if (!silent) { notifyFinished(payload.streamId, false) }
       scheduleSnapshot()
     } else if (kind === 'error') {
       entry.state = 'error'
-      notifyFinished(payload.streamId, true)
+      if (!silent) { notifyFinished(payload.streamId, true) }
       scheduleSnapshot()
     }
 
@@ -337,16 +342,25 @@ export const renderRemoteMonitorPage = () => `<!DOCTYPE html>
     return card.streamId ? [card.streamId] : []
   }
 
-  function isCardRunning(card) {
+  // 卡片最后一条流；已经结束（跑完 / 出错）的自动压缩回合不算数，退回快照里的状态，
+  // 免得徽章闪一下「已完成」/「出错」——它后面紧跟着用户那条真正的消息。
+  function lastStreamOfCard(card) {
     var ids = streamIdsForCard(card)
     var last = ids.length ? streams.get(ids[ids.length - 1]) : null
+    if (last && last.origin === 'auto-compact' && (last.state === 'done' || last.state === 'error')) {
+      return null
+    }
+    return last
+  }
+
+  function isCardRunning(card) {
+    var last = lastStreamOfCard(card)
     if (last) { return last.state === 'streaming' }
     return card.status === 'streaming'
   }
 
   function statusOfCard(card) {
-    var ids = streamIdsForCard(card)
-    var last = ids.length ? streams.get(ids[ids.length - 1]) : null
+    var last = lastStreamOfCard(card)
     if (last) {
       if (last.state === 'streaming') { return 'streaming' }
       if (last.state === 'error') { return 'error' }
@@ -741,7 +755,10 @@ export const renderRemoteMonitorPage = () => `<!DOCTYPE html>
         }
       })
       if (entry.liveText) { blocks.push({ type: 'live', text: entry.liveText }) }
-      if (entry.state !== 'streaming' && isLast) { blocks.push({ type: 'state', state: entry.state }) }
+      // 自动压缩回合跑完 / 出错不落「本轮已完成 / 出错结束」；被停照常显示「已停止」。
+      if (entry.state !== 'streaming' && isLast && (entry.origin !== 'auto-compact' || entry.state === 'stopped')) {
+        blocks.push({ type: 'state', state: entry.state })
+      }
     })
     return blocks
   }

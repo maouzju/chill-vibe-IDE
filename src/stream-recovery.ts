@@ -46,6 +46,32 @@ export const resolveStreamRecoveryMode = (
   return 'reattach-stream'
 }
 
+/**
+ * App 自己在发送前发起的那次压缩（docs/specs/context-usage-auto-compact）出错了：
+ * 是放弃这次压缩，还是照常恢复。只有「重连同一条流」可以照常恢复。
+ *
+ * 症状（照常走完整恢复链会怎样）：续传之后这个回合的收尾被当成普通回合——响提示音、标未读，
+ *   循环发送也可能被触发；空提示续传是让模型凭空「继续」一个只有 /compact 的回合；
+ *   换新会话重放则是在一个空会话里再发一遍 /compact，原来的上下文反而丢了。
+ * 根因（2026-11-12 读 App.tsx 的 recoverLiveStream）：续传一律换新的 streamId，而自动压缩
+ *   回合是靠「那条 /compact 记着的 streamId == 卡上的 streamId」认出来的
+ *   （chat-card-compaction.ts 的 isAppAutoCompactRun）。服务端发的可恢复错误又全是
+ *   resume-session（server/providers.ts、server/provider-stream-recovery.ts）。
+ * 被否决的替代方案：让续传沿用原 streamId——服务端按 streamId 建流，旧流的 backlog 会串进来；
+ *   给续传后的新回合重新打自动压缩记号——空提示续传根本不会再执行 /compact，记号是假的。
+ *
+ * 放弃不等于卡住：压缩本来就只是「顺手」，放弃后排在它后面的用户消息照常发出。
+ */
+export const shouldAbandonFailedAutoCompactRun = ({
+  recoverable,
+  recoveryMode,
+  previouslyRejectedUpstream,
+}: {
+  recoverable: boolean | undefined
+  recoveryMode: StreamErrorRecoveryMode | undefined
+  previouslyRejectedUpstream: boolean
+}) => recoverable !== true || recoveryMode === 'resume-session' || previouslyRejectedUpstream
+
 export const getRecoverableStreamErrorSessionId = (
   error: Pick<StreamErrorEvent, 'recoverable' | 'recoveryMode' | 'sessionId'>,
 ) => {

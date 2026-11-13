@@ -44,6 +44,8 @@ type LayoutRendererProps = {
   autoUrgeProfiles?: AutoUrgeProfile[]
   autoUrgeMessage: string
   autoUrgeSuccessKeyword: string
+  autoCompactEnabled?: boolean
+  autoCompactThresholdPercent?: number
   globalUrgeActive: boolean
   globalUrgeProfileId: string
   repeatLoopEnabled?: boolean

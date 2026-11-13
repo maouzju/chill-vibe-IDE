@@ -1,3 +1,4 @@
+import type { ChatRequest } from '../shared/schema.js'
 import type { StreamEnvelope } from './chat-manager.js'
 
 // A "tap" is a global, read-only observer over every chat stream at once —
@@ -6,6 +7,9 @@ import type { StreamEnvelope } from './chat-manager.js'
 export type ChatStreamTapEvent = {
   streamId: string
   cardId?: string
+  // 只有 App 自己发起的回合才带（目前只有自动 /compact）：手机监工靠它不为这一回合
+  // 响铃 / 弹「跑完了」。用户发起的回合没有这个键。
+  origin?: ChatRequest['origin']
   envelope: StreamEnvelope
 }
 
@@ -14,11 +18,13 @@ export type TappableStreamRecord = {
   cardId?: string
   terminal: boolean
   backlog: StreamEnvelope[]
+  requestOrigin?: ChatRequest['origin']
 }
 
 export type ActiveStreamView = {
   streamId: string
   cardId?: string
+  origin?: ChatRequest['origin']
   backlog: StreamEnvelope[]
 }
 
@@ -64,6 +70,7 @@ export const buildActiveStreamViews = (records: Iterable<TappableStreamRecord>):
     views.push({
       streamId: record.id,
       cardId: record.cardId,
+      ...(record.requestOrigin ? { origin: record.requestOrigin } : {}),
       backlog: [...record.backlog],
     })
   }

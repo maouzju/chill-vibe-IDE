@@ -48,6 +48,9 @@ type LocaleText = {
   autoUrgeCurrentType: string
   autoUrgeRemoveType: string
   autoUrgeRunningStatus: string
+  contextUsageSummary: (used: string, size: string, percent: number) => string
+  contextUsageSummaryUnknownWindow: (used: string) => string
+  contextUsageAutoCompactHint: (summary: string, thresholdPercent: number) => string
   autoUrgeMessageLabel: string
   autoUrgeMessagePlaceholder: string
   autoUrgeSuccessKeywordLabel: string
@@ -647,6 +650,10 @@ const localeTextByLanguage: Record<AppLanguage, LocaleText> = {
     autoUrgeCurrentType: '当前类型',
     autoUrgeRemoveType: '删除类型',
     autoUrgeRunningStatus: '鞭策中...',
+    contextUsageSummary: (used, size, percent) => `上下文已用 ${used} / ${size}（${percent}%）`,
+    contextUsageSummaryUnknownWindow: (used) => `上下文已用 ${used}`,
+    contextUsageAutoCompactHint: (summary, thresholdPercent) =>
+      `${summary}。到 ${thresholdPercent}% 时，下一条消息发出前会先自动压缩。`,
     autoUrgeMessageLabel: '鞭策消息',
     autoUrgeMessagePlaceholder: '每次 Agent 回答后自动发送的消息',
     autoUrgeSuccessKeywordLabel: '成功触发词',
@@ -1298,6 +1305,10 @@ const localeTextByLanguage: Record<AppLanguage, LocaleText> = {
     autoUrgeCurrentType: 'Current Type',
     autoUrgeRemoveType: 'Remove Type',
     autoUrgeRunningStatus: 'Urging...',
+    contextUsageSummary: (used, size, percent) => `Context used: ${used} / ${size} (${percent}%)`,
+    contextUsageSummaryUnknownWindow: (used) => `Context used: ${used}`,
+    contextUsageAutoCompactHint: (summary, thresholdPercent) =>
+      `${summary}. At ${thresholdPercent}%, the conversation is compacted before your next message goes out.`,
     autoUrgeMessageLabel: 'Urge Message',
     autoUrgeMessagePlaceholder: 'Message sent automatically after each agent response',
     autoUrgeSuccessKeywordLabel: 'Success Keyword',

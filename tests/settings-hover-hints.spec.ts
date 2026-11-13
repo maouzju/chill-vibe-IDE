@@ -108,6 +108,7 @@ const hoverDocumentedToggles: Array<[toggleId: string, settingsItemId: string]> 
   ['global-urge-control-toggle', 'auto-urge'],
   ['close-behavior-select', 'general'],
   ['cross-provider-skill-reuse-toggle', 'model-behavior'],
+  ['auto-compact-toggle', 'auto-compact'],
 ]
 
 test('settings explanations stay behind hover instead of padding the panel', async ({ page }) => {

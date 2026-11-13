@@ -121,6 +121,16 @@ describe('settings catalog', () => {
       assert.ok(item?.hint?.en, `${id} needs an en hint`)
     }
   })
+
+  // 上下文快满自动压缩的开关和阈值（docs/specs/context-usage-auto-compact）。
+  // 目录里没登记的 id 会被 SettingsPanel 直接丢弃——漏登记 = 开关在界面上凭空消失。
+  it('lists auto compact as a basic model setting with a hint in both languages', () => {
+    const item = settingsItemCatalog.find((entry) => entry.id === 'auto-compact')
+    assert.equal(item?.category, 'models')
+    assert.equal(item?.tier, 'basic')
+    assert.ok(item?.hint?.['zh-CN'], 'auto-compact needs a zh hint')
+    assert.ok(item?.hint?.en, 'auto-compact needs an en hint')
+  })
 })
 
 describe('filterSettingsItems', () => {
@@ -143,6 +153,13 @@ describe('filterSettingsItems', () => {
     const reconnectHits = filterSettingsItems(settingsItemCatalog, '断线').map((item) => item.id)
     assert.ok(reconnectHits.includes('account'))
     assert.ok(filterSettingsItems(settingsItemCatalog, 'cc-switch').some((item) => item.id === 'account'))
+  })
+
+  it('finds auto compact by the words people would actually type', () => {
+    for (const query of ['压缩', 'compact', '上下文', 'context', 'token', '阈值']) {
+      const hits = filterSettingsItems(settingsItemCatalog, query).map((item) => item.id)
+      assert.ok(hits.includes('auto-compact'), `"${query}" should find auto-compact`)
+    }
   })
 
   it('returns an empty list when nothing matches', () => {

@@ -189,6 +189,7 @@ import { BrainstormCard } from './BrainstormCard'
 import { resolveBrainstormRequestTarget } from './brainstorm-card-utils'
 import { getLatestUserAnswerAfterAskUserMessage } from './ask-user-answer-state'
 import { formatAskUserFollowUpPrompt } from './ask-user-follow-up'
+import { ContextUsageIndicator } from './ContextUsageIndicator'
 import { HoverTooltip } from './HoverTooltip'
 import { MessageFileOpenContext } from './message-file-open-context'
 import type { MessageFileOpenContextValue } from './message-file-open-context'
@@ -443,6 +444,8 @@ type ChatCardProps = {
   autoUrgeProfiles?: AutoUrgeProfile[]
   autoUrgeMessage: string
   autoUrgeSuccessKeyword: string
+  autoCompactEnabled?: boolean
+  autoCompactThresholdPercent?: number
   globalUrgeActive: boolean
   globalUrgeProfileId: string
   repeatLoopEnabled?: boolean
@@ -923,6 +926,8 @@ const areChatCardPropsEqual = (previous: ChatCardProps, next: ChatCardProps) =>
   previous.autoUrgeProfiles === next.autoUrgeProfiles &&
   previous.autoUrgeMessage === next.autoUrgeMessage &&
   previous.autoUrgeSuccessKeyword === next.autoUrgeSuccessKeyword &&
+  previous.autoCompactEnabled === next.autoCompactEnabled &&
+  previous.autoCompactThresholdPercent === next.autoCompactThresholdPercent &&
   previous.globalUrgeActive === next.globalUrgeActive &&
   previous.globalUrgeProfileId === next.globalUrgeProfileId &&
   previous.repeatLoopEnabled === next.repeatLoopEnabled &&
@@ -1547,6 +1552,8 @@ const ChatCardView = ({
   autoUrgeProfiles = [],
   autoUrgeMessage,
   autoUrgeSuccessKeyword,
+  autoCompactEnabled = false,
+  autoCompactThresholdPercent,
   globalUrgeActive,
   globalUrgeProfileId,
   repeatLoopEnabled = false,
@@ -5190,6 +5197,16 @@ const ChatCardView = ({
                   onKeyDown={handleTextareaKeyDown}
                 />
                 <div className="composer-actions">
+                  <ContextUsageIndicator
+                    cardId={card.id}
+                    messages={card.messages}
+                    provider={card.provider}
+                    streaming={card.status === 'streaming'}
+                    hasSession={Boolean(card.sessionId)}
+                    language={language}
+                    autoCompactEnabled={autoCompactEnabled}
+                    autoCompactThresholdPercent={autoCompactThresholdPercent}
+                  />
                   {autoUrgeEnabled && effectiveUrge.active ? (
                     <span className="composer-auto-urge-status">{text.autoUrgeRunningStatus}</span>
                   ) : null}

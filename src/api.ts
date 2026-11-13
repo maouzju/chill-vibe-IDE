@@ -156,6 +156,7 @@ type StreamHandlers = {
   onLog?: (payload: StreamEventMap['log']) => void
   onAssistantMessage?: (payload: StreamEventMap['assistant_message']) => void
   onActivity?: (payload: StreamEventMap['activity']) => void
+  onContextUsage?: (payload: StreamEventMap['context_usage']) => void
   onStats?: (payload: StreamEventMap['stats']) => void
   onDone?: (payload: StreamEventMap['done']) => void
   onError?: (payload: StreamEventMap['error'] & { recoverable?: boolean; transientOnly?: boolean }) => void
@@ -183,6 +184,8 @@ export const dispatchChatStreamEvent = (
     handlers.onAssistantMessage?.(data as StreamEventMap['assistant_message'])
   } else if (eventName === 'activity') {
     handlers.onActivity?.(data as StreamEventMap['activity'])
+  } else if (eventName === 'context_usage') {
+    handlers.onContextUsage?.(data as StreamEventMap['context_usage'])
   } else if (eventName === 'stats') {
     handlers.onStats?.(data as StreamEventMap['stats'])
   } else if (eventName === 'done') {

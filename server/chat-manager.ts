@@ -7,10 +7,12 @@ import type {
   ChatRequest,
   StreamActivity,
   StreamAssistantMessage,
+  StreamContextUsageEvent,
   StreamErrorEvent,
   StreamErrorHint,
   StreamEventMap,
 } from '../shared/schema.js'
+import { mergeContextUsageEvents } from '../shared/context-usage.js'
 import { createClaudeAgentRuntime } from './claude-agent-runtime.js'
 import { readClaudeCompletionBoundary } from './claude-completion-boundary.js'
 import {
@@ -60,6 +62,9 @@ type StreamSubscriber = (payload: StreamEnvelope) => void
 type StreamRecord = {
   id: string
   cardId?: string
+  // 请求体带来的回合来源（目前只有 App 自己发的自动 /compact）。不叫 origin：
+  // ChatStopLogFields 里已有一个意思不同的 origin（停止来源，只进日志）。
+  requestOrigin?: ChatRequest['origin']
   backlog: StreamEnvelope[]
   listeners: Set<Response>
   subscribers: Set<StreamSubscriber>
@@ -214,9 +219,13 @@ export const compactStreamEnvelopeForBacklog = (payload: StreamEnvelope): Stream
 }
 
 // 每轮的用户需求以 user_message 事件进 backlog 并镜像给手机监工；空 prompt
-// （纯图片轮/续跑轮）不广播。
-export const buildUserMessageEnvelope = (prompt: string): StreamEnvelope | null => {
-  if (prompt.trim().length === 0) {
+// （纯图片轮/续跑轮）不广播。App 自己发起的回合（自动 /compact）不是用户说的话，
+// 电脑端也把它藏起来了，同样不广播。
+export const buildUserMessageEnvelope = (
+  prompt: string,
+  origin?: ChatRequest['origin'],
+): StreamEnvelope | null => {
+  if (origin === 'auto-compact' || prompt.trim().length === 0) {
     return null
   }
 
@@ -234,7 +243,29 @@ const getBacklogCoalesceKey = (payload: StreamEnvelope) => {
     return `${payload.event}:${assistantPayload.data.itemId}`
   }
 
+  // 一个长回合会报几百次占用（docs/specs/context-usage-auto-compact）；逐条留着会把
+  // backlog 挤满、把真正的消息挤出去。全流只留一条，见 mergeBacklogEntry。
+  if (payload.event === 'context_usage') {
+    return payload.event
+  }
+
   return null
+}
+
+// 同一个合并键的旧条目怎么被新条目取代。activity / assistant_message 是整条快照，直接换；
+// context_usage 是增量（后来的事件可能只带 used、不带 size），要折叠才不丢信息。
+const mergeBacklogEntry = (existing: StreamEnvelope, incoming: StreamEnvelope): StreamEnvelope => {
+  if (existing.event === 'context_usage' && incoming.event === 'context_usage') {
+    return {
+      event: 'context_usage',
+      data: mergeContextUsageEvents(
+        existing.data as StreamContextUsageEvent,
+        incoming.data as StreamContextUsageEvent,
+      ),
+    }
+  }
+
+  return incoming
 }
 
 export const appendStreamEnvelopeToBacklog = (
@@ -251,7 +282,8 @@ export const appendStreamEnvelopeToBacklog = (
     )
 
     if (existingIndex >= 0) {
-      backlog[existingIndex] = compactedPayload
+      // 返回的是**这一条**事件（发给在线订阅者），backlog 里留的是折叠后的那条（给重放用）。
+      backlog[existingIndex] = mergeBacklogEntry(backlog[existingIndex]!, compactedPayload)
       return compactedPayload
     }
   }
@@ -393,6 +425,7 @@ export class ChatManager {
     const record: StreamRecord = {
       id,
       cardId: request.cardId,
+      ...(request.origin ? { requestOrigin: request.origin } : {}),
       backlog: [],
       listeners: new Set(),
       subscribers: new Set(),
@@ -406,7 +439,7 @@ export class ChatManager {
 
     // 用户需求先于一切 assistant 输出进 backlog：手机监工（含 late-joiner
     // 重放）才能看到"需求在前、回答在后"的正确时间线。
-    const userEnvelope = buildUserMessageEnvelope(request.prompt)
+    const userEnvelope = buildUserMessageEnvelope(request.prompt, request.origin)
     if (userEnvelope) {
       this.emit(record, 'user_message', userEnvelope.data as StreamEventMap['user_message'])
     }
@@ -679,6 +712,7 @@ export class ChatManager {
           }
           this.emit(record, 'activity', activity)
         },
+        onContextUsage: (event) => this.emit(record, 'context_usage', event),
         onStats: (event) => this.emit(record, 'stats', event),
         onDone: (payload) => {
           if (!record.stopRequested) {
@@ -830,6 +864,7 @@ export class ChatManager {
         }
         this.emit(stream, 'activity', activity)
       },
+      onContextUsage: (event) => this.emit(stream, 'context_usage', event),
       onStats: (event) => this.emit(stream, 'stats', event),
       onDone: (payload) => {
         if (!stream.stopRequested) {
@@ -896,7 +931,12 @@ export class ChatManager {
       subscriber(payload)
     }
 
-    this.tapRegistry.broadcast({ streamId: stream.id, cardId: stream.cardId, envelope: payload })
+    this.tapRegistry.broadcast({
+      streamId: stream.id,
+      cardId: stream.cardId,
+      ...(stream.requestOrigin ? { origin: stream.requestOrigin } : {}),
+      envelope: payload,
+    })
   }
 
   private finalize<T extends Extract<StreamName, 'done' | 'error'>>(

@@ -40,7 +40,12 @@ type Harness = {
 }
 
 const createHarness = (options?: {
-  activeStreams?: Array<{ streamId: string; cardId?: string; backlog: Array<{ event: string; data: unknown }> }>
+  activeStreams?: Array<{
+    streamId: string
+    cardId?: string
+    origin?: 'auto-compact'
+    backlog: Array<{ event: string; data: unknown }>
+  }>
   dispatchResult?: boolean
   dispatch?: (command: RemoteMonitorCommand) => boolean | Promise<boolean>
   cardHistory?: Record<string, ReturnType<typeof buildRemoteMonitorCardHistory>>
@@ -59,6 +64,7 @@ const createHarness = (options?: {
       (options?.activeStreams ?? []).map((stream) => ({
         streamId: stream.streamId,
         cardId: stream.cardId,
+        ...(stream.origin ? { origin: stream.origin } : {}),
         backlog: stream.backlog as ChatStreamTapEvent['envelope'][],
       })),
     dispatchCommand: (command) => {
@@ -89,11 +95,11 @@ const readSseEvents = async (
   response: Response,
   expectedCount: number,
   timeoutMs = 5000,
-): Promise<Array<{ streamId: string; cardId?: string; event: string; data: unknown }>> => {
+): Promise<Array<{ streamId: string; cardId?: string; origin?: string; event: string; data: unknown }>> => {
   assert.ok(response.body, 'SSE response should expose a body stream')
   const reader = response.body.getReader()
   const decoder = new TextDecoder()
-  const events: Array<{ streamId: string; cardId?: string; event: string; data: unknown }> = []
+  const events: Array<{ streamId: string; cardId?: string; origin?: string; event: string; data: unknown }> = []
   let buffer = ''
   const deadline = Date.now() + timeoutMs
 
@@ -294,6 +300,41 @@ test('buildRemoteMonitorCardHistory maps persisted messages into renderable hist
   assert.equal(history[3]?.content, '修好了。')
 })
 
+// 电脑端把自动压缩的 /compact 存成隐藏消息（meta.compactHidden）、只显示一行 system 日志；
+// 手机历史要同口径：隐藏的不出门，日志和用户自己敲的 /compact 照常出门。
+test('buildRemoteMonitorCardHistory drops the hidden auto-compact prompt the desktop never shows', () => {
+  const history = buildRemoteMonitorCardHistory([
+    { id: 'm-1', role: 'user', content: '修一下登录', createdAt: '2026-11-12T10:00:00.000Z' },
+    { id: 'm-2', role: 'assistant', content: '修好了。', createdAt: '2026-11-12T10:00:05.000Z' },
+    {
+      id: 'm-3',
+      role: 'user',
+      content: '/compact',
+      createdAt: '2026-11-12T10:10:00.000Z',
+      meta: {
+        compactBoundary: 'true',
+        compactTrigger: 'auto',
+        compactHidden: 'true',
+        compactRunStreamId: 's-compact',
+      },
+    },
+    {
+      id: 'm-4',
+      role: 'system',
+      content: '上下文已用 85%，先自动压缩一下再发',
+      createdAt: '2026-11-12T10:10:00.000Z',
+      meta: { kind: 'log', provider: 'claude' },
+    },
+    { id: 'm-5', role: 'user', content: '/compact', createdAt: '2026-11-12T10:20:00.000Z' },
+    { id: 'm-6', role: 'assistant', content: '压缩完了。', createdAt: '2026-11-12T10:20:05.000Z' },
+  ])
+
+  assert.deepEqual(
+    history.map((entry) => entry.id),
+    ['m-1', 'm-2', 'm-4', 'm-5', 'm-6'],
+  )
+})
+
 test('remote monitor serves compacted card history with a valid token', async () => {
   const harness = createHarness({
     cardHistory: {
@@ -402,6 +443,70 @@ test('remote monitor SSE replays active stream backlog before forwarding live ta
   }
 })
 
+// 上下文快满时 App 替用户发的 /compact（docs/specs/context-usage-auto-compact）照常镜像给手机
+// （不镜像的话压缩期间那张卡在手机上像是闲着），但每条推送都要带来源，手机页才能不为它
+// 响铃、不弹「跑完了」。迟到的手机（重放 backlog）和在线的手机（实时 tap）都得拿到。
+test('remote monitor SSE tags auto-compact streams with their origin on replay and live', async () => {
+  const harness = createHarness({
+    activeStreams: [
+      {
+        streamId: 's-compact',
+        cardId: 'card-1',
+        origin: 'auto-compact',
+        backlog: [{ event: 'delta', data: { content: '压缩中' } }],
+      },
+      {
+        streamId: 's-user',
+        cardId: 'card-2',
+        backlog: [{ event: 'delta', data: { content: '好的' } }],
+      },
+    ],
+  })
+  const info = await startOnLoopback(harness)
+
+  try {
+    const response = await fetch(`http://127.0.0.1:${info.port}/api/events?token=${info.token}`)
+    assert.equal(response.status, 200)
+
+    const eventsPromise = readSseEvents(response, 4)
+    const deadline = Date.now() + 5000
+    while (harness.manager.getStatus().clientCount < 1) {
+      if (Date.now() > deadline) {
+        throw new Error('SSE client never registered')
+      }
+      await new Promise((resolve) => setTimeout(resolve, 10))
+    }
+    harness.emitTap({
+      streamId: 's-compact',
+      cardId: 'card-1',
+      origin: 'auto-compact',
+      envelope: { event: 'done', data: {} },
+    })
+    harness.emitTap({
+      streamId: 's-user',
+      cardId: 'card-2',
+      envelope: { event: 'done', data: {} },
+    })
+
+    const events = await eventsPromise
+    assert.deepEqual(
+      events.map((entry) => ({ streamId: entry.streamId, event: entry.event, origin: entry.origin })),
+      [
+        { streamId: 's-compact', event: 'delta', origin: 'auto-compact' },
+        { streamId: 's-user', event: 'delta', origin: undefined },
+        { streamId: 's-compact', event: 'done', origin: 'auto-compact' },
+        { streamId: 's-user', event: 'done', origin: undefined },
+      ],
+    )
+    assert.ok(
+      events.filter((entry) => entry.streamId === 's-user').every((entry) => !('origin' in entry)),
+      '普通回合的推送不该多出 origin 键',
+    )
+  } finally {
+    await harness.manager.stop()
+  }
+})
+
 test('remote monitor stop closes the server and releases the stream tap', async () => {
   const harness = createHarness()
   const info = await startOnLoopback(harness)
@@ -448,6 +553,39 @@ test('buildRemoteMonitorSnapshot maps cards to a lightweight preview without ful
   assert.ok((card.lastMessagePreview?.length ?? 0) <= 200)
   assert.ok(!('messages' in card), 'snapshot cards must not carry full transcripts')
   assert.ok(snapshot.generatedAt > 0)
+})
+
+test('buildRemoteMonitorSnapshot never previews the hidden auto-compact prompt', () => {
+  const snapshot = buildRemoteMonitorSnapshot({
+    columns: [
+      {
+        id: 'col-1',
+        title: '工作区',
+        cards: {
+          'card-1': {
+            id: 'card-1',
+            title: '长任务',
+            provider: 'claude',
+            model: 'claude-fable-5',
+            status: 'streaming',
+            streamId: 's-compact',
+            messages: [
+              { role: 'user', content: '修一下登录' },
+              { role: 'assistant', content: '修好了。' },
+              {
+                role: 'user',
+                content: '/compact',
+                meta: { compactBoundary: 'true', compactTrigger: 'auto', compactHidden: 'true' },
+              },
+              { role: 'system', content: '上下文已用 85%，先自动压缩一下再发' },
+            ],
+          },
+        },
+      },
+    ],
+  })
+
+  assert.equal(snapshot.columns[0]?.cards[0]?.lastMessagePreview, '修好了。')
 })
 
 test('buildRemoteMonitorSnapshot titles columns by workspace folder name like the desktop header', () => {

@@ -7,6 +7,7 @@ import type {
   ImageAttachment,
   Provider,
 } from '../shared/schema.ts'
+import { supportsArchiveRecall } from './archive-recall'
 import { getCompactMessageWindow, isHiddenCompactBoundaryMessage } from './components/chat-card-compaction'
 import {
   parseStructuredAskUserMessage,
@@ -247,6 +248,18 @@ const isReplayableMessage = (message: ChatMessage) => {
   )
 }
 
+// 带着历史另开新会话时，从哪条消息开始回放。
+//
+// 症状（2026-11-12 独立审查；pitfall #226 记过的缺口）：Claude 卡压缩过之后——自动压缩默认开着，
+//   用户往往不知道压过——换 provider、硬打断后会话被清、或恢复流时清了会话，新会话只拿到压缩
+//   之后的那几条，最初的需求和之前定下的事全没了。
+// 根因：这里先按压缩边界把更早的消息整段丢掉，然后才轮到字数预算挑。CLI 的压缩摘要留在旧会话里，
+//   带不到新会话；边界之前的原文只有 Codex 能靠归档回查再翻出来。
+// 所以只有带归档回查的 provider 才按边界截断，其它的把整段对话交给字数预算——和没压缩过的会话
+//   一样：开场需求必留，其余从新到旧挑。
+// 否决的替代：给 Claude 也接归档回查——服务端只有 Codex 那条 `-c mcp_servers…` 通路，Claude 得
+//   另做一套；只放过自动压缩的边界——手动 /compact 之后丢得一模一样；文字不截、图片照截——
+//   回放里会出现提到了却没带上的图。
 const getSeedingWindow = ({
   messages,
   provider,
@@ -256,7 +269,7 @@ const getSeedingWindow = ({
   provider?: Provider
   status?: CardStatus
 }) => {
-  if (!provider) {
+  if (!provider || !supportsArchiveRecall(provider)) {
     return messages
   }
 

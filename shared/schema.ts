@@ -859,6 +859,9 @@ export const appSettingsSchema = z.object({
   autoUrgeGlobalActive: z.boolean().default(false),
   autoUrgeGlobalProfileId: z.string().default(defaultAutoUrgeProfileId),
   repeatLoopEnabled: z.boolean().default(false),
+  // 上下文快满时发送前先自动 /compact（docs/specs/context-usage-auto-compact）。
+  autoCompactEnabled: z.boolean().default(true),
+  autoCompactThresholdPercent: z.number().finite().min(50).max(95).default(80),
   wakeTimerEnabled: z.boolean().default(true),
   // 新会话的唤醒方式种子：用户上次选的条件/时长。只喂新 Tab，不回溯改写已开的卡，
   // 与默认模型的 per-card 语义一致（AGENTS.md pitfall #40）。
@@ -1184,6 +1187,8 @@ export const appStateSchema = z.object({
     autoUrgeGlobalActive: false,
     autoUrgeGlobalProfileId: defaultAutoUrgeProfileId,
     repeatLoopEnabled: false,
+    autoCompactEnabled: true,
+    autoCompactThresholdPercent: 80,
     wakeTimerEnabled: true,
     wakeTimerDefaultMode: 'workspace-agents' as const,
     wakeTimerDefaultDurationMinutes: defaultWakeTimerDurationMinutes,
@@ -1470,6 +1475,10 @@ export const chatRequestSchema = z.object({
   jevApiUrl: z.string().optional(),
   personality: codexPersonalitySchema.optional(),
   serviceTier: z.literal('priority').optional(),
+  // 这一回合不是用户发起、而是 App 自己发的：目前只有上下文快满时的自动 /compact
+  // （docs/specs/context-usage-auto-compact）。只给手机监工用——不把它当用户消息镜像、
+  // 不为它响铃 / 弹「跑完了」。普通回合不带；只认这一个值，别的来源一律拒收。
+  origin: z.literal('auto-compact').optional(),
   // 这一回合带超管权限（card.adminAccess === true），是唯一会把工作区 MCP
   // 接进 provider 启动的回合。`selfCardId` 让 MCP 侧把请求方自己从会话清单里
   // 滤掉 —— 否则模型会把自己列出来再给自己发消息。
@@ -2195,10 +2204,21 @@ export type ProviderTurnUsage = {
   costUsd?: number
 }
 
+// 「当前上下文占了多少」的实时信号（docs/specs/context-usage-auto-compact）。
+// used = 最近一次**主线程**请求的输入侧（含缓存读写）+ 输出 token —— 不是 done.usage.used
+// 那种一回合所有请求之和（pitfall #322）。size = CLI 自报的上下文窗口。
+// reset = 刚压缩过：占用清成未知，等下一次请求的真值，不拿压缩摘要的估算冒充。
+export type StreamContextUsageEvent = {
+  used?: number
+  size?: number
+  reset?: true
+}
+
 export type StreamEventMap = {
   session: { sessionId: string }
   delta: { content: string; itemId?: string }
   log: { message: string }
+  context_usage: StreamContextUsageEvent
   // 开流即广播的用户需求原文：手机监工靠它把"谁发了什么"实时镜像到
   // 详情页消息流（电脑端渲染器自己维护 user 消息，收到后忽略）。
   user_message: { content: string }

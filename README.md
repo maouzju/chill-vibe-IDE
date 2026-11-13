@@ -55,6 +55,7 @@ Current scope is still intentionally narrower than a full traditional IDE. The p
 - per-card and global auto-urge follow-ups, with optional local Ollama completion judging
 - Claude desktop keepalive sessions, so background work can finish and report back without another user message
 - automatic compaction for long chat histories
+- per-card context usage indicator, plus automatic `/compact` before the next message once the window is nearly full (threshold configurable in Settings)
 - QR-code mobile monitoring for live history and tool activity, sending or stopping work, creating sessions, changing models, and completion alerts
 - drag and drop for columns and cards
 - resizable chat cards
@@ -284,6 +285,7 @@ Chill Vibe 的目标，是成为 AI 高密度工作流里比 VS Code 更轻的�
 - 卡片级与全员 Auto-Urge 自动追问，可选本地 Ollama 判断任务是否完成
 - Claude 桌面长驻会话，后台任务完成后无需用户追问即可自动回来汇报
 - 长聊天历史自动压缩折叠
+- 每张卡显示上下文占用；快满时在下一条消息发出前自动先 `/compact`（阈值可在设置里调）
 - 扫码开启手机监工：查看历史与工具活动、发送或停止任务、新建会话、切换模型，并接收完成提醒
 - 列与卡片的拖拽
 - 聊天卡片高度可调

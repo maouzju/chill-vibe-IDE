@@ -1230,6 +1230,11 @@ const upsertCardMessages = (messages: ChatMessage[], updates: ChatMessage[]) => 
     const existingIndex = nextMessages.findIndex((message) => message.id === update.id)
 
     if (existingIndex < 0) {
+      // 流式路径走 upsert 而不是 append，之前只在 append 去重，2026-11-12 截图连续 12 条
+      // 「API Error: 400 上游已负载」照样堆满；新增条目同样按连续重复报错丢弃。
+      if (isDuplicateTrailingErrorMessage(nextMessages, update)) {
+        continue
+      }
       nextMessages.push(update)
       continue
     }

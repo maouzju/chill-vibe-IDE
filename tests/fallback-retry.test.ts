@@ -100,3 +100,16 @@ test('real-world shapes: assistant "API Error" bubbles and differing request ids
   const prose = [user, msg('assistant', 'The log says API Error: x'), msg('assistant', 'The log says API Error: x')]
   assert.equal(stripConsecutiveDuplicateErrorMessages(prose), prose)
 })
+test('upsertMessages also drops a new consecutive duplicate "API Error" bubble (2026-11-12 screenshot: 12 stacked)', () => {
+  const state = createDefaultState('workspace')
+  const column = state.columns[0]!
+  const cardId = Object.keys(column.cards)[0]!
+  const upsert = (s: typeof state, m: ChatMessage) =>
+    ideReducer(s, { type: 'upsertMessages', columnId: column.id, cardId, messages: [m] })
+  let next = upsert(state, msg('user', 'go'))
+  next = upsert(next, msg('assistant', 'API Error: 400 上游已负载，请稍后重试 (request id: aaa)'))
+  next = upsert(next, duration())
+  next = upsert(next, msg('assistant', 'API Error: 400 上游已负载，请稍后重试 (request id: bbb)'))
+  const errors = next.columns[0]!.cards[cardId]!.messages.filter((m) => m.content.startsWith('API Error'))
+  assert.equal(errors.length, 1)
+})

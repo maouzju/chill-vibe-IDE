@@ -676,6 +676,8 @@ export const createDefaultSettings = (language: AppLanguage = defaultAppLanguage
   autoUrgeGlobalActive: false,
   autoUrgeGlobalProfileId: defaultAutoUrgeProfileId,
   repeatLoopEnabled: false,
+  autoCompactEnabled: true,
+  autoCompactThresholdPercent: 80,
   wakeTimerEnabled: true,
   wakeTimerDefaultMode: 'workspace-agents',
   wakeTimerDefaultDurationMinutes: defaultWakeTimerDurationMinutes,
@@ -911,6 +913,13 @@ export const normalizeAppSettings = (settings?: Partial<AppSettings> | null): Ap
       typeof settings?.repeatLoopEnabled === 'boolean'
         ? settings.repeatLoopEnabled
         : defaults.repeatLoopEnabled,
+    autoCompactEnabled:
+      typeof settings?.autoCompactEnabled === 'boolean'
+        ? settings.autoCompactEnabled
+        : defaults.autoCompactEnabled,
+    autoCompactThresholdPercent: Math.round(
+      clampScale(settings?.autoCompactThresholdPercent, 50, 95, defaults.autoCompactThresholdPercent),
+    ),
     wakeTimerEnabled:
       typeof settings?.wakeTimerEnabled === 'boolean'
         ? settings.wakeTimerEnabled

@@ -70,3 +70,28 @@ test('buildActiveStreamViews exposes only non-terminal streams with copied backl
   backlog.push(deltaEnvelope('c'))
   assert.equal(views[0]?.backlog.length, 2)
 })
+
+test('buildActiveStreamViews carries the request origin so late joiners can tell app-initiated runs apart', () => {
+  // 迟到的手机监工重放 backlog 时，也得知道哪条流是 App 自己发起的自动压缩——
+  // 否则它一连上就会为一条用户没发起的回合响铃。
+  const records: TappableStreamRecord[] = [
+    { id: 's-user', cardId: 'card-1', terminal: false, backlog: [deltaEnvelope('a')] },
+    {
+      id: 's-compact',
+      cardId: 'card-1',
+      terminal: false,
+      backlog: [],
+      requestOrigin: 'auto-compact',
+    },
+  ]
+
+  const views = buildActiveStreamViews(records)
+
+  assert.deepEqual(
+    views.map((view) => ({ streamId: view.streamId, origin: view.origin })),
+    [
+      { streamId: 's-user', origin: undefined },
+      { streamId: 's-compact', origin: 'auto-compact' },
+    ],
+  )
+})

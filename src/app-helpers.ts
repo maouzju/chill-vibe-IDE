@@ -553,6 +553,56 @@ export const runWorkspaceClose = async <TColumn>(
   effects.removeColumn()
 }
 
+export type AbandonedAutoCompactRunEffects<TAction> = {
+  /** 这张卡此刻还排着几条消息——取在 dispatchNextQueuedSend 之前，它会把队首取走。 */
+  queuedSendCount: number
+  /** 收尾要应用的 action（撤销边界、记占用、把卡置回 idle、那行「没压成」的说明）。 */
+  actions: readonly TAction[]
+  /** 把这张卡从「等它跑完」的人的名单里摘掉。 */
+  buildWaiterReleaseActions: () => TAction[]
+  /** 应用并落盘。 */
+  commitActions: (actions: TAction[]) => void
+  /** 把排在后面的用户消息发出去；真实实现里要到下一个微任务才真正开始发。 */
+  dispatchNextQueuedSend: () => void
+  flushReadyWakeTimers: () => void
+}
+
+/**
+ * App 自己发起的那次压缩被放弃之后的最后一步：落盘收尾、把排在后面的用户消息发出去、
+ * 决定要不要放行「等这张卡跑完」的其他卡。放弃的出口有两个（压缩回合出错 / 流丢了；
+ * 压缩请求压根没发出去），都走这里。
+ *
+ * 症状：卡 A 的自动压缩失败时，挂着「等工作区其他 Agent 完成」的卡 B 当场被唤醒——可 A 排在
+ *   压缩后面的那条用户消息下一个微任务就要发出去，A 根本没闲下来。
+ * 根因（2026-11-12 独立审查）：收尾把 A 置回 idle 之后紧跟着同步刷了一遍唤醒条件
+ *   （flushReadyWakeTimers）。判据只认「此刻在不在跑」（wake-timer.ts 的
+ *   pruneIdleWorkspaceWakeTimerTargets），不认「马上要发的排队消息」，而排队的消息要到
+ *   下一个微任务才把卡置回 streaming。
+ * 所以「放行等待方」和「刷唤醒条件」绑在同一个条件上：后面还排着消息就两样都不做——那条
+ *   消息的回合收尾时自然会广播完成；它要是没发成（本地命令、发送失败），卡片状态一变，
+ *   App.tsx 里跟着拓扑签名走的那次刷新会接手。
+ * 被否决的替代方案：
+ * - 让判据把「有排队消息的卡」也算忙：队列可能因为别的原因一直挂着（卡片报错后的「已延后
+ *   N 条」），等待方会被一张闲着的卡压到兜底超时。
+ * - 只在两处各加一个 if：这个缺陷之所以同时出现在两处，就是因为收尾是各写各的。
+ */
+export const finishAbandonedAutoCompactRun = <TAction>(
+  effects: AbandonedAutoCompactRunEffects<TAction>,
+): void => {
+  const handsOffToQueuedSend = effects.queuedSendCount > 0
+
+  effects.commitActions(
+    handsOffToQueuedSend
+      ? [...effects.actions]
+      : [...effects.actions, ...effects.buildWaiterReleaseActions()],
+  )
+  effects.dispatchNextQueuedSend()
+
+  if (!handsOffToQueuedSend) {
+    effects.flushReadyWakeTimers()
+  }
+}
+
 export const createStoppedRunMessage = (
   language: AppLanguage,
   reason: StoppedRunReason = 'manual',

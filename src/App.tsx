@@ -92,6 +92,7 @@ import {
   isClaudePreviouslyRejectedUpstreamError,
   resolveStreamRecoveryCheckpointTurn,
   resolveStreamRecoveryMode,
+  shouldAbandonFailedAutoCompactRun,
   shouldKeepRecoveringResumeWithFreshSession,
   shouldScheduleFallbackRetryAfterStreamFailure,
   shouldResetStreamRecoveryAttemptsForActivity,
@@ -258,6 +259,7 @@ import {
   errorMessage,
   finalizeStructuredActivityMessage,
   finalizeStreamedAssistantMessage,
+  finishAbandonedAutoCompactRun,
   canSendEmptyContinuation,
   shouldDropEmptyContinuationWhileStreaming,
   shouldSyncOllamaStatus,
@@ -284,10 +286,24 @@ import {
   clearPendingCompactBoundaryMessage,
   finalizePendingCompactBoundaryMessage,
   getPendingCompactBoundaryMessage,
+  isAppAutoCompactRunOnCard,
   isCompactBoundaryMessage,
+  markAppAutoCompactRun,
   markCompactBoundaryMessage,
   shouldWaitForCompactionBeforeSending,
 } from './components/chat-card-compaction'
+import {
+  getContextUsagePercent,
+  readPersistedContextUsage,
+  shouldAutoCompactBeforeSend,
+  summarizeAutoCompactFailureDetail,
+} from './components/context-usage'
+import {
+  applyContextUsageEvent,
+  forgetContextUsage,
+  seedContextUsage,
+  settleRunEndForCard,
+} from './components/context-usage-store'
 import { collectChangesSummaryFilesForStream } from './components/chat-card-parsing'
 import {
   buildQueuedSendRuntimeState,
@@ -543,23 +559,73 @@ const getStateRecoveryIssueLabel = (
     : 'A newer temp state file was found'
 }
 
-const getAutoCompactStatusMessage = (language: AppState['settings']['language']) =>
+// 压缩状态行写的是「谁」压的：Claude CLI 回合中途自己压缩时也会走到这里，
+// 不能再写死 Codex。
+const getAutoCompactStatusMessage = (
+  language: AppState['settings']['language'],
+  provider: Provider,
+) =>
   language === 'en'
-    ? 'Codex auto-compacted earlier session context, including hidden history and tool output, before continuing this reply.'
-    : 'Codex 已自动压缩更早的会话上下文（包括已折叠的历史和工具输出），然后继续当前回复。'
+    ? `${getProviderLabel(language, provider)} auto-compacted earlier session context, including hidden history and tool output, before continuing this reply.`
+    : `${getProviderLabel(language, provider)} 已自动压缩更早的会话上下文（包括已折叠的历史和工具输出），然后继续当前回复。`
 
 const getCompactionStatusMessage = (
   language: AppState['settings']['language'],
   trigger: 'manual' | 'auto',
+  provider: Provider,
 ) => {
   if (trigger === 'auto') {
-    return getAutoCompactStatusMessage(language)
+    return getAutoCompactStatusMessage(language, provider)
   }
 
   return language === 'en'
-    ? 'Codex compacted the current session context.'
-    : '\u5df2\u5b8c\u6210 Codex \u4f1a\u8bdd\u4e0a\u4e0b\u6587\u538b\u7f29\u3002'
+    ? `${getProviderLabel(language, provider)} compacted the current session context.`
+    : `\u5df2\u5b8c\u6210 ${getProviderLabel(language, provider)} \u4f1a\u8bdd\u4e0a\u4e0b\u6587\u538b\u7f29\u3002`
 }
+
+/** 自动压缩回合里唯一一行可见说明：为什么用户的消息没有立刻发出去。 */
+const getAutoCompactBeforeSendMessage = (
+  language: AppState['settings']['language'],
+  percent: number | undefined,
+) => {
+  if (percent === undefined) {
+    return language === 'en'
+      ? 'Context is almost full. Compacting it before sending your message.'
+      : '上下文快满了，先自动压缩，再发送你的消息。'
+  }
+
+  return language === 'en'
+    ? `Context is ${percent}% full. Compacting it before sending your message.`
+    : `上下文已用 ${percent}%，先自动压缩，再发送你的消息。`
+}
+
+/**
+ * 自动压缩没压成时补的一行。没有它，上面那句「先自动压缩，再发送」之后就没有下文，
+ * 指示器却还停在高位，看着像是坏了。`detail` 是 CLI 给的报错原文（有才带）。
+ */
+const getAutoCompactNotCompletedMessage = (
+  language: AppState['settings']['language'],
+  detail?: string,
+) => {
+  const shownDetail = summarizeAutoCompactFailureDetail(detail)
+
+  if (language === 'en') {
+    return shownDetail
+      ? `Auto-compact did not complete; the context was left as is. (${shownDetail})`
+      : 'Auto-compact did not complete; the context was left as is.'
+  }
+
+  return shownDetail
+    ? `自动压缩没有完成，上下文保持原样。（${shownDetail}）`
+    : '自动压缩没有完成，上下文保持原样。'
+}
+
+/** 和「先自动压缩，再发送」那行一样是一条不起眼的日志行，不是报错气泡。 */
+const createAutoCompactNotCompletedMessage = (
+  language: AppState['settings']['language'],
+  provider: Provider,
+  detail?: string,
+) => createMessage('system', getAutoCompactNotCompletedMessage(language, detail), { kind: 'log', provider })
 
 const getModelPromptRulesSummary = (
   rules: ModelPromptRule[],
@@ -591,7 +657,7 @@ const createCompactionStatusMessage = ({
 }): ChatMessage => ({
   id: `${provider}:${streamId}:compaction-status:${itemId}`,
   role: 'system',
-  content: getCompactionStatusMessage(language, trigger),
+  content: getCompactionStatusMessage(language, trigger, provider),
   createdAt: new Date().toISOString(),
   meta: {
     kind: 'log',
@@ -1229,6 +1295,8 @@ function App() {
       options?: SendMessageOptions,
     ) => Promise<void>
   ) | null>(null)
+  // 这张卡刚由 App 发过一次自动压缩：紧接着的那条用户消息不再压，压失败了也不会连环重压。
+  const autoCompactAttemptedRef = useRef(new Set<string>())
   const flushReadyWakeTimersRef = useRef<(() => void) | null>(null)
   // 每个 `${cardId}:${workflowThreadId}` 只叫醒一次父卡（见 workflow-failure-wake.ts）。
   const workflowFailureWakesSentRef = useRef(new Set<string>())
@@ -3464,6 +3532,16 @@ function App() {
       return
     }
 
+    // 等不到服务端确认的停止同样是回合收尾：占用照记，挂着的压缩边界照定。
+    // App 发起的压缩在这里被停掉时不另加「没有完成」的说明——下面已经有一行「已停止」。
+    const runEnd = settleRunEndForCard({
+      cardId,
+      messages: liveCard.messages,
+      provider: liveCard.provider,
+      isAutoCompactRun: isAppAutoCompactRunOnCard(liveCard.messages, stoppedStreamId),
+      boundary: { stopped: true },
+      durationMessage: consumeRunDurationMessage(runStartedAtRef.current, cardId),
+    })
     const actions: IdeAction[] = [
       {
         type: 'finishStoppedStream',
@@ -3476,13 +3554,20 @@ function App() {
         ...(softInterrupted ? { softInterrupted: true } : {}),
       },
     ]
-    const durationMessage = consumeRunDurationMessage(runStartedAtRef.current, cardId)
-    if (durationMessage) {
+    if (runEnd.updates.length > 0) {
+      actions.unshift({
+        type: 'upsertMessages',
+        columnId,
+        cardId,
+        messages: runEnd.updates,
+      })
+    }
+    if (runEnd.durationMessage) {
       actions.push({
         type: 'appendMessages',
         columnId,
         cardId,
-        messages: [durationMessage],
+        messages: [runEnd.durationMessage],
       })
     }
 
@@ -5847,6 +5932,17 @@ function App() {
             createStructuredActivityMessage(card.provider, card.streamId!, payload),
           )
         },
+        // 回合进行中的上下文占用只进外部 store（指示器自己订阅），不走 reducer：
+        // 一回合里每次请求都会报一次，走 reducer 会拖垮持久化队列和整条 memo 链。
+        // 落盘在 onDone 里跟着耗时消息一起做。
+        onContextUsage: (payload) => {
+          applyContextUsageEvent(card.id, payload, () => {
+            const liveCard = getColumn(columnId)?.cards[card.id]
+            return liveCard
+              ? readPersistedContextUsage(liveCard.messages, liveCard.provider)
+              : undefined
+          })
+        },
         onStats: (payload) => {
           const previousLocalRecoveryStats = localRecoveryStatsRef.current.get(card.id)
           const disconnectedLocalRecoveryStats = payload.event === 'disconnect'
@@ -5917,7 +6013,16 @@ function App() {
             stopAckByStreamIdRef.current.delete(card.streamId)
           }
 
-          const completionSoundPlan = donePlan.runSuccessCallbacks
+          // App 自己插的那一回合 /compact 不是「用户的任务跑完了」：不响提示音、不闪窗口、
+          // 不标未读、不触发鞭策 / 循环 / 唤醒这些「跑完之后」的回调。真正的完成是
+          // 紧跟其后、由队列发出的那条用户消息。
+          const isAutoCompactRun = isAppAutoCompactRunOnCard(
+            getColumnById(activityFlushedState.columns, columnId)?.cards[card.id]?.messages,
+            card.streamId,
+          )
+          const runSuccessCallbacks = donePlan.runSuccessCallbacks && !isAutoCompactRun
+
+          const completionSoundPlan = runSuccessCallbacks
             ? getCompletionSoundPlan({
                 stopped: false,
                 agentDoneSoundEnabled: appStateRef.current.settings.agentDoneSoundEnabled,
@@ -5931,7 +6036,7 @@ function App() {
             audio.play().catch(() => {})
           }
 
-          if (donePlan.runSuccessCallbacks) {
+          if (runSuccessCallbacks) {
             void flashWindowOnce().catch(() => undefined)
           }
 
@@ -5951,7 +6056,7 @@ function App() {
               : true
 
           const liveCard = liveColumn?.cards[card.id]
-          const repeatLoopPlan = liveCard
+          const repeatLoopPlan = liveCard && !isAutoCompactRun
             ? resolveRepeatLoopCompletion({
                 featureEnabled: appStateRef.current.settings.repeatLoopEnabled,
                 completionKind: donePlan.kind,
@@ -5959,9 +6064,6 @@ function App() {
               })
             : null
           const repeatedCardId = repeatLoopPlan ? createId() : null
-          const pendingCompactBoundary = liveCard
-            ? getPendingCompactBoundaryMessage(liveCard.messages)
-            : null
           const actions: IdeAction[] = []
 
           if (donePlan.kind === 'stopped') {
@@ -6005,25 +6107,18 @@ function App() {
               patch: {
                 status: 'idle',
                 streamId: undefined,
-                unread,
-                completionGlow: true,
+                // 自动压缩回合没有「新结果」可读，也不算跑完：不标未读、不亮完成光。
+                ...(isAutoCompactRun ? {} : { unread }),
+                completionGlow: !isAutoCompactRun,
                 backgroundWorkPending: false,
                 sessionModel: card.model,
               },
             })
-          }
-
-          if (pendingCompactBoundary && donePlan.finalizeLogicalRun) {
-            actions.unshift({
-              type: 'upsertMessages',
-              columnId,
-              cardId: card.id,
-              messages: [
-                stopped
-                  ? clearPendingCompactBoundaryMessage(pendingCompactBoundary)
-                  : finalizePendingCompactBoundaryMessage(pendingCompactBoundary),
-              ],
-            })
+            if (isAutoCompactRun && (queuedSendRequestsRef.current.get(card.id)?.length ?? 0) === 0) {
+              // 用户在压缩期间把排队的消息撤回了输入框：后面不会再有「真正的完成」来广播，
+              // 压缩期间才开始等这张卡的人得在这里放行，否则要白等到兜底超时。
+              actions.push(...buildWakeTimerTargetReleaseActions(card.id, { forceRelease: true }))
+            }
           }
 
           // Collect all file edits from this conversation and append a changes summary
@@ -6058,32 +6153,70 @@ function App() {
             }
           }
 
-          if (donePlan.finalizeLogicalRun) {
-            const durationMessage = consumeRunDurationMessage(runStartedAtRef.current, card.id)
-            if (durationMessage) {
-              actions.push({
-                type: 'appendMessages',
-                columnId,
-                cardId: card.id,
-                // 遥测搭在 run-duration 这条既有消息上：它每个逻辑回合结束都产生一条，
-                // 读它的地方只认 kind + durationMs，多挂几个 meta 键对它们透明。
-                // 另发一条新 kind 的 system 消息会新增一条渲染路径（未知 kind 会渲染
-                // 成空气泡），代价远大于收益。
-                messages: [
-                  attachTurnTelemetry(durationMessage, {
-                    turnStopReason,
-                    usage,
-                    // card 是订阅这条流时捕获的，所以这里拿到的是**这一轮开始时**
-                    // 生效的配置，而不是用户此刻可能已经改过的当前值。切模型/档位
-                    // 在本仓库没有任何协议事件，不落在这里就永远追溯不到。
-                    model: card.model,
-                    reasoningEffort: card.reasoningEffort,
-                    thinkingEnabled: card.thinkingEnabled,
-                    planMode: card.planMode,
-                  }),
-                ],
-              })
-            }
+          const consumedDurationMessage = donePlan.finalizeLogicalRun
+            ? consumeRunDurationMessage(runStartedAtRef.current, card.id)
+            : undefined
+          // 回合之间指示器和「发送前要不要先压缩」只认落盘值，所以收尾时把占用记到消息上，
+          // 和 status: 'idle' 同一批 action 提交，指示器不会闪一下旧值。挂着的压缩边界也在这里定。
+          const runEnd = settleRunEndForCard({
+            cardId: card.id,
+            messages: liveCard?.messages ?? [],
+            provider: card.provider,
+            isAutoCompactRun,
+            // 后台任务还挂着的普通回合不算跑完，边界留到真正跑完再定。App 自己发起的压缩例外：
+            // 排在它后面的用户消息马上就要发出去，到下一回合开头「压没压成」的信号就被清掉了，
+            // 留着不定的边界会被当成没压成撤销掉——压缩成功了，指示器却还显示快满。
+            boundary:
+              donePlan.finalizeLogicalRun || isAutoCompactRun ? { stopped: Boolean(stopped) } : undefined,
+            // 遥测搭在 run-duration 这条既有消息上：它每个逻辑回合结束都产生一条，
+            // 读它的地方只认 kind + durationMs，多挂几个 meta 键对它们透明。
+            // 另发一条新 kind 的 system 消息会新增一条渲染路径（未知 kind 会渲染
+            // 成空气泡），代价远大于收益。
+            durationMessage: consumedDurationMessage
+              ? attachTurnTelemetry(consumedDurationMessage, {
+                  turnStopReason,
+                  usage,
+                  // card 是订阅这条流时捕获的，所以这里拿到的是**这一轮开始时**
+                  // 生效的配置，而不是用户此刻可能已经改过的当前值。切模型/档位
+                  // 在本仓库没有任何协议事件，不落在这里就永远追溯不到。
+                  model: card.model,
+                  reasoningEffort: card.reasoningEffort,
+                  thinkingEnabled: card.thinkingEnabled,
+                  planMode: card.planMode,
+                })
+              : undefined,
+          })
+
+          if (runEnd.updates.length > 0) {
+            // 排在最前：upsertMessages 是整条替换，放在 finishStoppedStream 之后会用这里的旧副本
+            // 盖掉 reducer 刚收敛过的命令卡 / 子代理状态。
+            actions.unshift({
+              type: 'upsertMessages',
+              columnId,
+              cardId: card.id,
+              messages: runEnd.updates,
+            })
+          }
+
+          if (runEnd.autoCompactNotCompleted && !stopped) {
+            // 被停止的回合已经有一行「已停止」，不再重复解释。
+            actions.push({
+              type: 'appendMessages',
+              columnId,
+              cardId: card.id,
+              messages: [
+                createAutoCompactNotCompletedMessage(appStateRef.current.settings.language, card.provider),
+              ],
+            })
+          }
+
+          if (runEnd.durationMessage) {
+            actions.push({
+              type: 'appendMessages',
+              columnId,
+              cardId: card.id,
+              messages: [runEnd.durationMessage],
+            })
           }
 
           if (repeatLoopPlan && repeatedCardId) {
@@ -6109,7 +6242,7 @@ function App() {
           cancelFallbackRetry(card.id, { resetCount: true })
           const stripAction: IdeAction = { type: 'stripDuplicateErrorMessages', columnId, cardId: card.id }
           persistAfterAction(stripAction.type, applyAction(stripAction))
-          if (donePlan.runSuccessCallbacks) {
+          if (runSuccessCallbacks) {
             scheduleStableWakeTimerCompletion(card.id)
           }
           dispatchNextQueuedSend(columnId, card.id)
@@ -6125,7 +6258,7 @@ function App() {
         },
         onError: ({ message, recoverable, recoveryMode, transientOnly, sessionId }) => {
           flushBufferedAssistantDeltaForCard(card.id)
-          flushBufferedActivitiesForCard(card.id)
+          const errorFlushedState = flushBufferedActivitiesForCard(card.id)
           streamEditsActivityCountRef.current.delete(card.id)
           source.close()
           activeStreamsRef.current.delete(card.id)
@@ -6139,6 +6272,11 @@ function App() {
             stoppedRunReasonRef.current.delete(card.streamId)
             stopAckByStreamIdRef.current.delete(card.streamId)
           }
+          // 出错的是不是 App 自己在发送前插的那一回合 /compact（见下面的放弃分支）。
+          const isAutoCompactRun = isAppAutoCompactRunOnCard(
+            getColumnById(errorFlushedState.columns, columnId)?.cards[card.id]?.messages,
+            card.streamId,
+          )
 
           if (recoverable) {
             if (!streamRecoveryTurnRef.current.has(card.id)) {
@@ -6196,8 +6334,17 @@ function App() {
               card.provider === 'claude' && isClaudePreviouslyRejectedUpstreamError(message)
             const freshRecoveryAlreadyAttempted =
               previouslyRejectedUpstream && freshClaudeRecoveryAttemptRef.current.has(card.id)
+            // 自动压缩回合只有「重连同一条流」可以照常恢复；续传、换新会话都放弃
+            // （原因在 shouldAbandonFailedAutoCompactRun 的注释里）。
+            const abandonAutoCompactRun =
+              isAutoCompactRun &&
+              shouldAbandonFailedAutoCompactRun({ recoverable, recoveryMode, previouslyRejectedUpstream })
 
-            if (retryCount < maxRecoverableRetries && !freshRecoveryAlreadyAttempted) {
+            if (
+              retryCount < maxRecoverableRetries &&
+              !freshRecoveryAlreadyAttempted &&
+              !abandonAutoCompactRun
+            ) {
               const shouldCountAgainstBudget = transientOnly !== true
               // This counter tracks failed resume turns, not visible progress.
               // A poisoned Codex session can emit reasoning (or even partial
@@ -6299,15 +6446,107 @@ function App() {
             }).catch(() => undefined)
           }
 
+          // App 自己发起的那次压缩出错了，或者它那条流丢了：放弃这次压缩，不当成这张卡的故障。
+          //
+          // 症状（照下面普通回合的失败收尾会怎样）：卡片变成报错状态、挂上「恢复失败」横幅，
+          //   还排一个兜底重试去重发一个只有 /compact 的回合——而排在后面的用户消息根本没受影响，
+          //   它才是用户要的东西。
+          // 压缩本来就只是「顺手」：撤掉边界、把当时的占用记成基线（settleRunEndForCard，
+          //   这样不会每隔一条消息白压一次）、留一行说明，然后照常把用户的消息发出去。
+          if (isAutoCompactRun) {
+            forceResetRecoveryStatus(card.id)
+            streamRecoveryTurnRef.current.delete(card.id)
+            freshClaudeRecoveryAttemptRef.current.delete(card.id)
+            const activityFlushedState = flushBufferedActivitiesForCard(card.id)
+            const liveCard = getColumnById(activityFlushedState.columns, columnId)?.cards[card.id]
+            const runEnd = settleRunEndForCard({
+              cardId: card.id,
+              messages: liveCard?.messages ?? [],
+              provider: card.provider,
+              isAutoCompactRun: true,
+              boundary: { stopped: true },
+              durationMessage: consumeRunDurationMessage(runStartedAtRef.current, card.id),
+            })
+            const actions: IdeAction[] = [
+              {
+                type: 'settleStreamActivities',
+                columnId,
+                cardId: card.id,
+              },
+              {
+                type: 'updateCard',
+                columnId,
+                cardId: card.id,
+                // 不是 error：这张卡没坏，只是没压成。
+                patch: { status: 'idle', streamId: undefined, backgroundWorkPending: false },
+              },
+            ]
+
+            if (runEnd.updates.length > 0) {
+              actions.unshift({
+                type: 'upsertMessages',
+                columnId,
+                cardId: card.id,
+                messages: runEnd.updates,
+              })
+            }
+
+            if (runEnd.autoCompactNotCompleted) {
+              actions.push({
+                type: 'appendMessages',
+                columnId,
+                cardId: card.id,
+                messages: [
+                  createAutoCompactNotCompletedMessage(
+                    appStateRef.current.settings.language,
+                    card.provider,
+                    // 「Stream not found.」是内部的连接状态，对用户不是原因。
+                    message === 'Stream not found.' ? undefined : message,
+                  ),
+                ],
+              })
+            }
+
+            if (runEnd.durationMessage) {
+              actions.push({
+                type: 'appendMessages',
+                columnId,
+                cardId: card.id,
+                messages: [runEnd.durationMessage],
+              })
+            }
+
+            // 和 onDone 里一样：排队的消息被撤回输入框之后，后面不会再有「真正的完成」，
+            // 压缩期间才开始等这张卡的人得在这里放行；还排着消息就不放行、也不刷唤醒条件
+            // （见 finishAbandonedAutoCompactRun）。
+            finishAbandonedAutoCompactRun({
+              queuedSendCount: queuedSendRequestsRef.current.get(card.id)?.length ?? 0,
+              actions,
+              buildWaiterReleaseActions: () =>
+                buildWakeTimerTargetReleaseActions(card.id, { forceRelease: true }),
+              commitActions: (nextActions) => persistAfterActions(nextActions, applyActions(nextActions)),
+              dispatchNextQueuedSend: () => dispatchNextQueuedSend(columnId, card.id),
+              flushReadyWakeTimers: () => flushReadyWakeTimersRef.current?.(),
+            })
+            return
+          }
+
           // Stream expired or server restarted — gracefully return to idle
           // so the user can continue chatting with their existing messages.
           if (message === 'Stream not found.') {
             forceResetRecoveryStatus(card.id)
             const activityFlushedState = flushBufferedActivitiesForCard(card.id)
             const liveCard = getColumnById(activityFlushedState.columns, columnId)?.cards[card.id]
-            const pendingCompactBoundary = liveCard
-              ? getPendingCompactBoundaryMessage(liveCard.messages)
-              : null
+            // 出错 / 流丢了的回合同样把占用记下来：上下文超限恰恰是以报错收尾的，
+            // 不记的话下一条消息就不知道该先压缩。挂着的手动 /compact 边界按没压成撤掉。
+            const runEnd = settleRunEndForCard({
+              cardId: card.id,
+              messages: liveCard?.messages ?? [],
+              provider: card.provider,
+              isAutoCompactRun: false,
+              boundary: { stopped: true },
+              durationMessage: consumeRunDurationMessage(runStartedAtRef.current, card.id),
+            })
             const actions: IdeAction[] = [
               {
                 type: 'settleStreamActivities',
@@ -6321,22 +6560,21 @@ function App() {
                 patch: { status: 'idle', streamId: undefined, backgroundWorkPending: false },
               },
             ]
-            const durationMessage = consumeRunDurationMessage(runStartedAtRef.current, card.id)
-            if (durationMessage) {
+            if (runEnd.durationMessage) {
               actions.push({
                 type: 'appendMessages',
                 columnId,
                 cardId: card.id,
-                messages: [durationMessage],
+                messages: [runEnd.durationMessage],
               })
             }
 
-            if (pendingCompactBoundary) {
+            if (runEnd.updates.length > 0) {
               actions.unshift({
                 type: 'upsertMessages',
                 columnId,
                 cardId: card.id,
-                messages: [clearPendingCompactBoundaryMessage(pendingCompactBoundary)],
+                messages: runEnd.updates,
               })
             }
 
@@ -6377,9 +6615,15 @@ function App() {
           }
           const activityFlushedState = flushBufferedActivitiesForCard(card.id)
           const liveCard = getColumnById(activityFlushedState.columns, columnId)?.cards[card.id]
-          const pendingCompactBoundary = liveCard
-            ? getPendingCompactBoundaryMessage(liveCard.messages)
-            : null
+          // 占用照记、挂着的手动 /compact 边界按没压成撤掉（同上面的 `Stream not found.` 收尾）。
+          const runEnd = settleRunEndForCard({
+            cardId: card.id,
+            messages: liveCard?.messages ?? [],
+            provider: card.provider,
+            isAutoCompactRun: false,
+            boundary: { stopped: true },
+            durationMessage: consumeRunDurationMessage(runStartedAtRef.current, card.id),
+          })
           const actions: IdeAction[] = [
             {
               type: 'settleStreamActivities',
@@ -6399,22 +6643,21 @@ function App() {
               patch: { status: 'error', streamId: undefined, backgroundWorkPending: false },
             },
           ]
-          const durationMessage = consumeRunDurationMessage(runStartedAtRef.current, card.id)
-          if (durationMessage) {
+          if (runEnd.durationMessage) {
             actions.push({
               type: 'appendMessages',
               columnId,
               cardId: card.id,
-              messages: [durationMessage],
+              messages: [runEnd.durationMessage],
             })
           }
 
-          if (pendingCompactBoundary) {
+          if (runEnd.updates.length > 0) {
             actions.unshift({
               type: 'upsertMessages',
               columnId,
               cardId: card.id,
-              messages: [clearPendingCompactBoundaryMessage(pendingCompactBoundary)],
+              messages: runEnd.updates,
             })
           }
 
@@ -7473,6 +7716,12 @@ function App() {
     forceResetRecoveryStatus(cardId)
 
     if (card.status === 'streaming') {
+      // 自动压缩还没发出去，卡片就被别的来源拉起了新回合：不抢、也不排队。
+      // 用户那条消息还在队首，这一轮收尾时照常发出。
+      if (sendOrigin === 'auto-compact') {
+        return
+      }
+
       const sendMode = options.mode ?? 'auto'
       const latestUserMessage = [...card.messages].reverse().find((message) => message.role === 'user')
       const shouldAnswerAskUser =
@@ -7481,7 +7730,7 @@ function App() {
         hasLatestPendingAskUserMessage(card.messages, prompt)
       const shouldQueueUntilDone =
         shouldAnswerAskUser ||
-        shouldWaitForCompactionBeforeSending(latestUserMessage, card.provider)
+        shouldWaitForCompactionBeforeSending(latestUserMessage, card.provider, card.streamId)
       if (shouldAnswerAskUser) {
         pendingAskUserDuringStreamRef.current.set(cardId, true)
         enqueueQueuedSend(cardId, { id: crypto.randomUUID(), prompt, attachments })
@@ -7560,6 +7809,50 @@ function App() {
       return
     }
 
+    // 发送前先压缩（docs/specs/context-usage-auto-compact）：上下文快满时，把用户这条消息
+    // 放回队首（队列是落盘的，压缩期间关掉应用也不会丢），先替他发一条 /compact；压缩回合
+    // 收尾时既有的 dispatchNextQueuedSend 会把它照常发出。标记只被用户来源的发送消耗，
+    // 所以压完紧接着的那一条不会再压一遍，压失败了也不会连环重压。
+    const autoCompactRecentlyAttempted =
+      sendOrigin === 'user' && autoCompactAttemptedRef.current.delete(cardId)
+    if (
+      shouldAutoCompactBeforeSend({
+        enabled: appStateRef.current.settings.autoCompactEnabled,
+        thresholdPercent: appStateRef.current.settings.autoCompactThresholdPercent,
+        provider: card.provider,
+        origin: sendOrigin,
+        hasResumableSession: Boolean(resumeSessionId),
+        hasSendContent,
+        isSlashCommand: Boolean(parsedSlashCommand),
+        isToolCard: MODEL_PICKER_HIDDEN_TOOL_MODELS.has(card.model),
+        providerUnavailable: isProviderStatusExplicitlyUnavailable(providerStatus),
+        answersAskUser: hasPendingAskUserMessage(card.messages),
+        recentlyAttempted: autoCompactRecentlyAttempted,
+        usage: readPersistedContextUsage(card.messages, card.provider),
+      })
+    ) {
+      autoCompactAttemptedRef.current.add(cardId)
+      commitQueuedSends(cardId, [
+        { id: crypto.randomUUID(), prompt, attachments },
+        ...(queuedSendRequestsRef.current.get(cardId) ?? []),
+      ])
+      queueMicrotask(() => {
+        void sendMessageRef.current?.(columnId, cardId, '/compact', [], { origin: 'auto-compact' })
+      })
+      return
+    }
+
+    const isAutoCompactSend = sendOrigin === 'auto-compact'
+    // 压缩发不出去（本地 CLI 不可用，或这一瞬间会话已经接不上了）：不在对话里留任何痕迹，
+    // 直接放行排在后面的那条用户消息，由它自己照常发送或报错。
+    if (
+      isAutoCompactSend &&
+      (isProviderStatusExplicitlyUnavailable(providerStatus) || !resumeSessionId)
+    ) {
+      dispatchNextQueuedSend(columnId, cardId)
+      return
+    }
+
     // A user-authored turn starts a new recovery lifecycle. This also protects
     // reused card ids after a terminal startup/provider failure left no active
     // stream to own the normal cleanup path.
@@ -7579,14 +7872,11 @@ function App() {
       card.messages.length === 0 && !card.title
         ? titleFromPrompt(prompt)
         : card.title
-    const archiveRecall =
-      card.provider === 'codex'
-        ? buildArchiveRecallSnapshot({
-            messages: card.messages,
-            provider: card.provider,
-            status: card.status,
-          })
-        : undefined
+    const archiveRecall = buildArchiveRecallSnapshot({
+      messages: card.messages,
+      provider: card.provider,
+      status: card.status,
+    })
     const isManualCodexCompactRequest =
       card.provider === 'codex' &&
       attachments.length === 0 &&
@@ -7596,14 +7886,26 @@ function App() {
     // session means "continue from here". The user typed nothing, so no blank
     // user bubble should be appended, even if the provider later reports that
     // the local CLI is unavailable.
-    const baseUserMessage = isManualCodexCompactRequest
-      ? markCompactBoundaryMessage(
-          createMessage('user', '/compact', attachImagesToMessageMeta(attachments)),
-          { pending: true },
+    const streamId = crypto.randomUUID()
+    // App 自己发起的压缩：一条隐藏的自动边界，先挂着（pending）。压成了才生效；被停止、
+    // 失败或 CLI 根本没压，就把标记清掉，历史照旧完整显示（见 onDone / onError）。
+    const baseUserMessage = isAutoCompactSend
+      ? markAppAutoCompactRun(
+          markCompactBoundaryMessage(createMessage('user', '/compact'), {
+            trigger: 'auto',
+            hidden: true,
+            pending: true,
+          }),
+          streamId,
         )
-      : markCompactBoundaryMessage(
-          createMessage('user', prompt, attachImagesToMessageMeta(attachments)),
-        )
+      : isManualCodexCompactRequest
+        ? markCompactBoundaryMessage(
+            createMessage('user', '/compact', attachImagesToMessageMeta(attachments)),
+            { pending: true },
+          )
+        : markCompactBoundaryMessage(
+            createMessage('user', prompt, attachImagesToMessageMeta(attachments)),
+          )
     const language = appStateRef.current.settings.language
     const seedsTranscript = shouldStartFreshForModelChange || hasSeededChatTranscript(card)
     const seededRequestPrompt = seedsTranscript
@@ -7669,7 +7971,24 @@ function App() {
     const userMessage = baseUserMessage
     let requestPrompt = seededRequestPrompt
     let requestAttachments = seededRequestAttachments
-    const requestMessages = isEmptyContinuation ? [] : [userMessage]
+    // 此处的 card 还是追加边界之前的快照，读到的是压缩前的占用。
+    const usageBeforeSend = readPersistedContextUsage(card.messages, card.provider)
+    const autoCompactPercent = isAutoCompactSend ? getContextUsagePercent(usageBeforeSend) : undefined
+    const requestMessages = isEmptyContinuation
+      ? []
+      : isAutoCompactSend
+        ? [
+            userMessage,
+            createMessage(
+              'system',
+              getAutoCompactBeforeSendMessage(
+                language,
+                autoCompactPercent === undefined ? undefined : Math.floor(autoCompactPercent),
+              ),
+              { kind: 'log', provider: card.provider },
+            ),
+          ]
+        : [userMessage]
 
     if (isManualCodexCompactRequest) {
       requestPrompt = '/compact'
@@ -7689,7 +8008,6 @@ function App() {
       })
     }
 
-    const streamId = crypto.randomUUID()
     recordRunStart(runStartedAtRef.current, cardId, Date.now())
     const startedLocalRecoveryStats = beginOrContinueLocalRecoveryStatsRun(
       localRecoveryStatsRef.current.get(cardId),
@@ -7702,6 +8020,9 @@ function App() {
         endpoint: '/cli/local-stream',
       }).catch(() => undefined)
     }
+    // 每个回合开始时把实时占用对齐到落盘值：接着同一个 CLI 会话聊就沿用上一回合记下的数，
+    // 另开会话（换模型、带着历史重发）就是「还不知道」，免得指示器顶着旧会话的数字跑一整轮。
+    seedContextUsage(cardId, resumeSessionId && !seedsTranscript ? usageBeforeSend : undefined)
     queueFollowUpDuringStreamRef.current.set(cardId, isCompactBoundaryMessage(userMessage, card.provider))
     const startActions: IdeAction[] = [
       {
@@ -7765,6 +8086,9 @@ function App() {
         ...(card.adminAccess === true
           ? { adminAccess: { columnId, selfCardId: cardId } }
           : {}),
+        // App 替用户发的 /compact：告诉服务端这不是用户消息，手机监工才不把它镜像成
+        // 用户气泡、不为它响铃（docs/specs/context-usage-auto-compact）。
+        ...(isAutoCompactSend ? { origin: 'auto-compact' as const } : {}),
       })
 
       if (response.streamId !== streamId) {
@@ -7787,6 +8111,77 @@ function App() {
     } catch (error) {
       queueFollowUpDuringStreamRef.current.delete(cardId)
       pendingAskUserDuringStreamRef.current.delete(cardId)
+
+      if (isAutoCompactSend) {
+        // 压缩没发出去：和压缩回合出错（attachStream 的 onError）一个口径——不当成这张卡的故障，
+        // 不兜底重试（重试只会再发一遍 /compact）。撤掉边界、把当时的占用记成基线、留一行说明，
+        // 然后把排在后面的用户消息照常发出。
+        streamRecoveryTurnRef.current.delete(cardId)
+        const runEnd = settleRunEndForCard({
+          cardId,
+          messages: getColumn(columnId)?.cards[cardId]?.messages ?? [],
+          provider: card.provider,
+          isAutoCompactRun: true,
+          boundary: { stopped: true },
+          durationMessage: consumeRunDurationMessage(runStartedAtRef.current, cardId),
+        })
+        const actions: IdeAction[] = [
+          {
+            type: 'updateCard',
+            columnId,
+            cardId,
+            patch: { status: 'idle', streamId: undefined, backgroundWorkPending: false },
+          },
+        ]
+
+        if (runEnd.updates.length > 0) {
+          actions.unshift({
+            type: 'upsertMessages',
+            columnId,
+            cardId,
+            messages: runEnd.updates,
+          })
+        }
+
+        if (runEnd.autoCompactNotCompleted) {
+          actions.push({
+            type: 'appendMessages',
+            columnId,
+            cardId,
+            messages: [
+              createAutoCompactNotCompletedMessage(
+                language,
+                card.provider,
+                errorMessage(error, text.unexpectedError),
+              ),
+            ],
+          })
+        }
+
+        if (runEnd.durationMessage) {
+          actions.push({
+            type: 'appendMessages',
+            columnId,
+            cardId,
+            messages: [runEnd.durationMessage],
+          })
+        }
+
+        // 排队的消息在这期间被撤回输入框的话，后面不会再有「真正的完成」，压缩期间才开始等
+        // 这张卡的人得在这里放行；还排着消息就不放行、也不刷唤醒条件
+        // （见 finishAbandonedAutoCompactRun）。
+        finishAbandonedAutoCompactRun({
+          queuedSendCount: queuedSendRequestsRef.current.get(cardId)?.length ?? 0,
+          actions,
+          buildWaiterReleaseActions: () =>
+            buildWakeTimerTargetReleaseActions(cardId, { forceRelease: true }),
+          commitActions: (nextActions) => persistAfterActions(nextActions, applyActions(nextActions)),
+          dispatchNextQueuedSend: () => dispatchNextQueuedSend(columnId, cardId),
+          flushReadyWakeTimers: () => flushReadyWakeTimersRef.current?.(),
+        })
+        return
+      }
+
       const actions: IdeAction[] = [
         {
           type: 'appendMessages',
@@ -7890,14 +8285,11 @@ function App() {
       return
     }
 
-    const archiveRecall =
-      card.provider === 'codex'
-        ? buildArchiveRecallSnapshot({
-            messages: card.messages,
-            provider: card.provider,
-            status: card.status,
-          })
-        : undefined
+    const archiveRecall = buildArchiveRecallSnapshot({
+      messages: card.messages,
+      provider: card.provider,
+      status: card.status,
+    })
     const streamId = crypto.randomUUID()
     recordRunStart(runStartedAtRef.current, cardId, Date.now())
     const continuedLocalRecoveryStats = continueLocalRecoveryStatsRun(
@@ -8178,9 +8570,18 @@ function App() {
             })
           : null
         const repeatedCardId = repeatLoopPlan ? createId() : null
-        const pendingCompactBoundary = flushedCard
-          ? getPendingCompactBoundaryMessage(flushedCard.messages)
-          : null
+        // 事后才从 CLI 的转录确认「早就跑完了」的回合也是收尾：占用照记。挂着的压缩边界和原来
+        // 一样撤掉——「压缩完成」的事件没到过这边，不能当它压成了。
+        // App 自己发起的压缩到不了这里：它的续传在 onError 里就被放弃了
+        // （shouldAbandonFailedAutoCompactRun），所以不用问 isAppAutoCompactRunOnCard。
+        const runEnd = settleRunEndForCard({
+          cardId,
+          messages: flushedCard?.messages ?? [],
+          provider: card.provider,
+          isAutoCompactRun: false,
+          boundary: { stopped: true },
+          durationMessage: consumeRunDurationMessage(runStartedAtRef.current, cardId),
+        })
         const finalizeActions: IdeAction[] = [
           {
             type: 'updateCard',
@@ -8189,21 +8590,20 @@ function App() {
             patch: { status: 'idle', streamId: undefined, backgroundWorkPending: false },
           },
         ]
-        const durationMessage = consumeRunDurationMessage(runStartedAtRef.current, cardId)
-        if (durationMessage) {
+        if (runEnd.durationMessage) {
           finalizeActions.push({
             type: 'appendMessages',
             columnId,
             cardId,
-            messages: [durationMessage],
+            messages: [runEnd.durationMessage],
           })
         }
-        if (pendingCompactBoundary) {
+        if (runEnd.updates.length > 0) {
           finalizeActions.unshift({
             type: 'upsertMessages',
             columnId,
             cardId,
-            messages: [clearPendingCompactBoundaryMessage(pendingCompactBoundary)],
+            messages: runEnd.updates,
           })
         }
         if (repeatLoopPlan && repeatedCardId) {
@@ -8257,14 +8657,13 @@ function App() {
       : shouldClearSessionId
         ? freshSessionRecoveryAttachments
         : []
-    const archiveRecall =
-      card.provider === 'codex' && !forkedSessionId
-        ? buildArchiveRecallSnapshot({
-            messages: card.messages,
-            provider: card.provider,
-            status: card.status,
-          })
-        : undefined
+    const archiveRecall = forkedSessionId
+      ? undefined
+      : buildArchiveRecallSnapshot({
+          messages: card.messages,
+          provider: card.provider,
+          status: card.status,
+        })
     const streamId = crypto.randomUUID()
     recordRunStart(runStartedAtRef.current, cardId, Date.now())
     const startedLocalRecoveryStats = beginOrContinueLocalRecoveryStatsRun(
@@ -8520,6 +8919,10 @@ function App() {
   const closeTab = async (columnId: string, paneId: string, cardId: string) => {
     clearQueuedSends(cardId)
     await closeStream(cardId, true)
+    // 卡没了：运行期的上下文占用和「刚自动压缩过」的记号一起丢掉。
+    // 回合之间认的是落在消息上的值，从会话历史里恢复出来时不靠这里。
+    forgetContextUsage(cardId)
+    autoCompactAttemptedRef.current.delete(cardId)
     const column = appStateRef.current.columns.find((entry) => entry.id === columnId)
     const card = column?.cards[cardId]
 
@@ -8672,7 +9075,11 @@ function App() {
         })
       },
       clearQueuedSends,
-      closeStream: (cardId) => closeStream(cardId, true),
+      closeStream: async (cardId) => {
+        await closeStream(cardId, true)
+        forgetContextUsage(cardId)
+        autoCompactAttemptedRef.current.delete(cardId)
+      },
       removeColumn: () => applyAction({ type: 'removeColumn', columnId, workspaceCloseId }),
     })
 
@@ -10764,6 +11171,57 @@ function App() {
       ),
     },
     {
+      // 上下文快满时发送前先自动 /compact（docs/specs/context-usage-auto-compact）。
+      id: 'auto-compact',
+      node: (
+        <div className="settings-section" data-testid="auto-compact-settings">
+          <div className="settings-hover-detail">
+            <label className="settings-toggle" htmlFor="auto-compact-toggle">
+              <span>{panelText.autoCompactLabel}</span>
+              <input
+                id="auto-compact-toggle"
+                type="checkbox"
+                aria-describedby="auto-compact-note"
+                checked={appState.settings.autoCompactEnabled}
+                onChange={(event) =>
+                  applyAction({
+                    type: 'updateSettings',
+                    patch: { autoCompactEnabled: event.target.checked },
+                  })
+                }
+              />
+            </label>
+            <p id="auto-compact-note" className="settings-note settings-hover-note" role="tooltip">
+              {panelText.autoCompactHint}
+            </p>
+          </div>
+          {appState.settings.autoCompactEnabled ? (
+            <div className="settings-row">
+              <div className="settings-row-copy">
+                <label htmlFor="auto-compact-threshold">{panelText.autoCompactThresholdLabel}</label>
+                <span>{appState.settings.autoCompactThresholdPercent}%</span>
+              </div>
+              <input
+                id="auto-compact-threshold"
+                className="settings-range"
+                type="range"
+                min={50}
+                max={95}
+                step={5}
+                value={appState.settings.autoCompactThresholdPercent}
+                onChange={(event) =>
+                  applyAction({
+                    type: 'updateSettings',
+                    patch: { autoCompactThresholdPercent: Number(event.target.value) },
+                  })
+                }
+              />
+            </div>
+          ) : null}
+        </div>
+      ),
+    },
+    {
       id: 'model-picker',
       node: (
         <div className="settings-section model-picker-settings" data-testid="model-picker-settings">
@@ -12361,6 +12819,8 @@ function App() {
             autoUrgeProfiles={appState.settings.autoUrgeProfiles}
             autoUrgeMessage={appState.settings.autoUrgeMessage}
             autoUrgeSuccessKeyword={appState.settings.autoUrgeSuccessKeyword}
+            autoCompactEnabled={appState.settings.autoCompactEnabled}
+            autoCompactThresholdPercent={appState.settings.autoCompactThresholdPercent}
             globalUrgeActive={
               appState.settings.autoUrgeEnabled &&
               appState.settings.autoUrgeGlobalControlEnabled &&

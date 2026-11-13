@@ -401,6 +401,142 @@ test.describe('agent run duration summary', () => {
   }
 })
 
+// docs/specs/context-usage-auto-compact：输入框旁的上下文占用圆环。回合之间读的是记在对话里的数字，
+// 三档颜色跟着自动压缩阈值走（默认 80%：到它的 7/8 即 70% 开始提醒，到 80% 换危险色）。
+const createContextUsageState = (theme: 'dark' | 'light', used: number): AppState => {
+  const state = createRunDurationSummaryState(theme)
+  const card = state.columns[0]!.cards[0]!
+  // 没连着 CLI 会话的卡不显示占用：数字是那个会话的，会话没了它就不代表什么。
+  card.sessionId = 'context-usage-session'
+  card.messages = card.messages.map((message) =>
+    message.meta?.kind === 'run-duration'
+      ? {
+          ...message,
+          meta: {
+            ...message.meta,
+            contextUsageUsed: String(used),
+            contextUsageSize: '200000',
+            contextUsageProvider: 'codex',
+          },
+        }
+      : message,
+  )
+
+  return state
+}
+
+test.describe('composer context usage indicator', () => {
+  const levels = [
+    { level: 'normal', used: 80_000, label: '40%' },
+    { level: 'warning', used: 144_000, label: '72%' },
+    { level: 'danger', used: 172_000, label: '86%' },
+  ] as const
+
+  for (const theme of ['dark', 'light'] as const) {
+    for (const { level, used, label } of levels) {
+      test(`${level} level stays legible in ${theme} theme`, async ({ page }) => {
+        await mockAppApis(page, { state: createContextUsageState(theme, used) })
+        await page.setViewportSize({ width: 900, height: 720 })
+        await page.goto(appUrl)
+
+        const indicator = page.locator('.composer-context-usage')
+        await expect(indicator).toHaveAttribute('data-level', level)
+        await expect(indicator).toHaveText(label)
+        await expect(indicator).toHaveScreenshot(`composer-context-usage-${level}-${theme}.png`, {
+          animations: 'disabled',
+          caret: 'hide',
+        })
+      })
+    }
+
+    test(`sits with the composer actions and explains itself on hover in ${theme} theme`, async ({ page }) => {
+      await mockAppApis(page, { state: createContextUsageState(theme, 144_000) })
+      await page.setViewportSize({ width: 900, height: 720 })
+      await page.goto(appUrl)
+
+      const cardShell = page.locator('.card-shell').first()
+      const actions = page.locator('.composer-actions').first()
+      const indicator = actions.locator('.composer-context-usage')
+      await expect(indicator).toHaveAttribute(
+        'aria-label',
+        '上下文已用 144k / 200k（72%）',
+      )
+
+      // 圆环排在按钮区最前面，和按钮同一行，不把输入框那一行撑高。
+      const [actionsRect, indicatorRect, settingsRect] = await Promise.all([
+        readRect(actions),
+        readRect(indicator),
+        readRect(actions.locator('.composer-settings-trigger')),
+      ])
+      expect(indicatorRect.right).toBeLessThanOrEqual(settingsRect.left + 1)
+      expect(indicatorRect.top).toBeGreaterThanOrEqual(actionsRect.top - 1)
+      expect(indicatorRect.bottom).toBeLessThanOrEqual(actionsRect.bottom + 1)
+
+      await expect(actions).toHaveScreenshot(`composer-context-usage-actions-${theme}.png`, {
+        animations: 'disabled',
+        caret: 'hide',
+      })
+
+      await indicator.hover()
+      const tooltip = actions.locator('.git-hover-tooltip')
+      await expect(tooltip).toHaveText(
+        '上下文已用 144k / 200k（72%）。到 80% 时，下一条消息发出前会先自动压缩。',
+      )
+
+      // 气泡贴着卡片右下角弹出：不能伸出卡片，也不能被哪一层 overflow 裁掉。
+      const [cardRect, tooltipRect] = await Promise.all([readRect(cardShell), readRect(tooltip)])
+      expect(tooltipRect.left).toBeGreaterThanOrEqual(cardRect.left)
+      expect(tooltipRect.right).toBeLessThanOrEqual(cardRect.right)
+      expect(tooltipRect.top).toBeGreaterThanOrEqual(cardRect.top)
+      const clippedBy = await tooltip.evaluate((node) => {
+        const rect = node.getBoundingClientRect()
+
+        for (let parent = node.parentElement; parent; parent = parent.parentElement) {
+          const style = getComputedStyle(parent)
+
+          if (!/hidden|clip|auto|scroll/.test(`${style.overflowX} ${style.overflowY}`)) {
+            continue
+          }
+
+          const box = parent.getBoundingClientRect()
+
+          if (
+            rect.left < box.left - 0.5 ||
+            rect.right > box.right + 0.5 ||
+            rect.top < box.top - 0.5 ||
+            rect.bottom > box.bottom + 0.5
+          ) {
+            return parent.className || parent.tagName
+          }
+        }
+
+        return ''
+      })
+      expect(clippedBy, 'the hint must not be clipped by a scrolling or clipping ancestor').toBe('')
+
+      await expect(tooltip).toHaveScreenshot(`composer-context-usage-hint-${theme}.png`, {
+        animations: 'disabled',
+        caret: 'hide',
+      })
+
+      // 窄卡：气泡跟着输入区收窄、折行，仍然整个留在卡片里。
+      await page.mouse.move(0, 0)
+      await expect(tooltip).toHaveCount(0)
+      await page.setViewportSize({ width: 360, height: 720 })
+      await indicator.hover()
+      await expect(tooltip).toBeVisible()
+
+      const [narrowCardRect, narrowTooltipRect] = await Promise.all([
+        readRect(cardShell),
+        readRect(tooltip),
+      ])
+      expect(narrowTooltipRect.left).toBeGreaterThanOrEqual(narrowCardRect.left)
+      expect(narrowTooltipRect.right).toBeLessThanOrEqual(narrowCardRect.right)
+      expect(narrowTooltipRect.top).toBeGreaterThanOrEqual(narrowCardRect.top)
+    })
+  }
+})
+
 const createColumnHeaderDropState = (): AppState => {
   const state = createMockState()
   state.settings.language = 'en'
@@ -2988,6 +3124,49 @@ for (const theme of ['dark', 'light'] as const) {
 }
 
 for (const theme of ['dark', 'light'] as const) {
+  // docs/specs/context-usage-auto-compact：默认开、默认 80%；阈值滑块只在开着时出现。
+  test(`auto compact settings group renders in ${theme} theme`, async ({ page }) => {
+    const state = createMockState()
+    state.settings.language = theme === 'dark' ? 'zh-CN' : 'en'
+    state.settings.theme = theme
+
+    await page.setViewportSize({ width: 1280, height: 1200 })
+    await mockAppApis(page, { state })
+    await page.goto(appUrl)
+    await page.locator('.card-shell').first().waitFor()
+
+    await page.locator('#app-tab-settings').click()
+    const item = await revealSettingsItem(page, 'auto-compact')
+    const section = item.getByTestId('auto-compact-settings')
+    const toggle = section.locator('#auto-compact-toggle')
+    const threshold = section.locator('#auto-compact-threshold')
+    await expect(toggle).toBeChecked()
+    await expect(threshold).toHaveValue('80')
+    await page.mouse.move(0, 0)
+    await expect(item).toHaveScreenshot(`auto-compact-settings-${theme}.png`, {
+      animations: 'disabled',
+      caret: 'hide',
+    })
+
+    // 滑块一格 5%，旁边的数字跟着走。
+    await threshold.press('ArrowLeft')
+    await expect(threshold).toHaveValue('75')
+    await expect(section.locator('.settings-row-copy span')).toHaveText('75%')
+
+    // 关掉开关滑块就收起：关着时这个比例不管事。
+    await toggle.uncheck()
+    await expect(threshold).toHaveCount(0)
+    // 刚点过的开关还持有焦点，会把悬停说明弹出来；截的是收起后的常态。
+    await toggle.blur()
+    await page.mouse.move(0, 0)
+    await expect(item).toHaveScreenshot(`auto-compact-settings-off-${theme}.png`, {
+      animations: 'disabled',
+      caret: 'hide',
+    })
+  })
+}
+
+for (const theme of ['dark', 'light'] as const) {
   // docs/specs/jev-mcp-toggle：默认关、key 是密码框、MCP/JEV 两句人话解释常显。
   test(`JEV quick-judgment settings explain MCP and JEV in ${theme} theme`, async ({ page }) => {
     const state = createMockState()
@@ -3454,8 +3633,10 @@ test('settings panel lands on the basics view with a left nav and a single colum
 
   // 切到「模型与对话」：基础项直接可见，高级项默认收起。
   await settingsPanel.locator('#settings-nav-models').click()
-  // 系统提示词 / 默认模型 / 默认思考档位（11-06 新增）/ 对话行为 / 模型下拉菜单（10-17 新增）/ JEV 快速判断（09-30 新增）。
-  await expect(visibleGroups).toHaveCount(6)
+  // 系统提示词 / 默认模型 / 默认思考档位（11-06 新增）/ 对话行为 / 上下文自动压缩（11-12 新增）/
+  // 模型下拉菜单（10-17 新增）/ JEV 快速判断（09-30 新增）。
+  await expect(visibleGroups).toHaveCount(7)
+  await expect(visibleGroups.getByRole('heading', { name: '上下文自动压缩', exact: true })).toBeVisible()
   await expect(visibleGroups.getByRole('heading', { name: '模型下拉菜单', exact: true })).toBeVisible()
   await expect(settingsPanel.locator('details.settings-advanced')).not.toHaveAttribute('open', '')
   await revealSettingsItem(page, 'local-models')

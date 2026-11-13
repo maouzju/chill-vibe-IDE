@@ -10,6 +10,7 @@ import {
   resolveFreshSessionRecoveryTurn,
   resolveStreamRecoveryMode,
   resolveStreamRecoveryCheckpointTurn,
+  shouldAbandonFailedAutoCompactRun,
   shouldFallbackToFreshSessionAfterResumeLoop,
   shouldFallbackToFreshSessionAfterTransientResumeLoop,
   shouldKeepRecoveringResumeWithFreshSession,
@@ -70,6 +71,60 @@ test('previously-rejected Claude errors do not enter the delayed fallback retry 
       previouslyRejectedUpstream: false,
       lostStreamStopReason: false,
       sensitiveWordRejection: false,
+    }),
+    true,
+  )
+})
+
+test('an app-initiated compaction turn is only ever re-attached, never resumed or replayed', () => {
+  // 重连同一条流：回合 id 不变，收尾时还认得出它是自动压缩回合。
+  assert.equal(
+    shouldAbandonFailedAutoCompactRun({
+      recoverable: true,
+      recoveryMode: 'reattach-stream',
+      previouslyRejectedUpstream: false,
+    }),
+    false,
+  )
+  assert.equal(
+    shouldAbandonFailedAutoCompactRun({
+      recoverable: true,
+      recoveryMode: undefined,
+      previouslyRejectedUpstream: false,
+    }),
+    false,
+  )
+
+  // 续传会换回合 id、发空提示或另开会话重放 /compact：一律放弃这次压缩。
+  assert.equal(
+    shouldAbandonFailedAutoCompactRun({
+      recoverable: true,
+      recoveryMode: 'resume-session',
+      previouslyRejectedUpstream: false,
+    }),
+    true,
+  )
+  assert.equal(
+    shouldAbandonFailedAutoCompactRun({
+      recoverable: true,
+      recoveryMode: 'reattach-stream',
+      previouslyRejectedUpstream: true,
+    }),
+    true,
+  )
+  assert.equal(
+    shouldAbandonFailedAutoCompactRun({
+      recoverable: false,
+      recoveryMode: undefined,
+      previouslyRejectedUpstream: false,
+    }),
+    true,
+  )
+  assert.equal(
+    shouldAbandonFailedAutoCompactRun({
+      recoverable: undefined,
+      recoveryMode: undefined,
+      previouslyRejectedUpstream: false,
     }),
     true,
   )

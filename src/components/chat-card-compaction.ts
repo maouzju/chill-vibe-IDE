@@ -26,6 +26,7 @@ const compactBoundaryMetaKey = 'compactBoundary'
 const compactTriggerMetaKey = 'compactTrigger'
 const compactHiddenMetaKey = 'compactHidden'
 const compactPendingMetaKey = 'compactPending'
+const compactRunStreamMetaKey = 'compactRunStreamId'
 const performanceWindowThreshold = 1200
 const performanceVisibleMessageCount = 360
 const contentPerformanceWindowThresholdChars = 2_000_000
@@ -79,8 +80,15 @@ const isCompactCommandMessage = (message: ChatMessage) =>
 const hasExplicitCompactBoundary = (message: ChatMessage) =>
   message.role === 'user' && message.meta?.[compactBoundaryMetaKey] === 'true'
 
-const isCompactBoundaryPending = (message: ChatMessage) =>
+/** 这条边界还挂着：压缩回合没收尾，压没压成还没定（见 settlePendingCompactBoundary）。 */
+export const isCompactBoundaryPending = (message: ChatMessage) =>
   hasExplicitCompactBoundary(message) && message.meta?.[compactPendingMetaKey] === 'true'
+
+/** 这条 /compact 是 App 自己发起的自动压缩（markAppAutoCompactRun 留下的记号）。 */
+const isAppAutoCompactMessage = (message: ChatMessage) => {
+  const runStreamId = message.meta?.[compactRunStreamMetaKey]
+  return typeof runStreamId === 'string' && runStreamId.length > 0
+}
 
 export const getCompactBoundaryTrigger = (
   message: ChatMessage | undefined,
@@ -92,6 +100,17 @@ export const getCompactBoundaryTrigger = (
 
   if (hasExplicitCompactBoundary(message)) {
     return message.meta?.[compactTriggerMetaKey] === 'auto' ? 'auto' : 'manual'
+  }
+
+  // 症状：App 替用户发起的自动压缩被停止 / 失败之后，更早的历史照样被折叠，上下文占用
+  // 变成「未知」，带着历史另开会话时边界之前的内容也被丢掉——可 CLI 那边根本没压缩过。
+  // 根因（2026-11-12）：Claude 的 /compact 是靠消息内容认的，clearPendingCompactBoundaryMessage
+  // 清掉了显式标记，下面这条内容规则又把它认回了手动边界。
+  // 所以带着「由哪个回合发起」记号、却已经没有显式标记的 /compact，就是一次没发生的压缩。
+  // 被否决的替代方案：失败时把那条消息从历史里删掉——state 没有删除单条消息的 action，
+  // 为此新增一个高风险的 reducer 分支不值得。
+  if (isAppAutoCompactMessage(message)) {
+    return null
   }
 
   return provider === 'claude' && isCompactCommandMessage(message) ? 'manual' : null
@@ -148,6 +167,32 @@ export const clearPendingCompactBoundaryMessage = (message: ChatMessage): ChatMe
   })
 }
 
+/**
+ * 回合收尾时，还挂着（pending）的压缩边界是生效还是撤销。
+ *
+ * - 用户自己敲的 /compact：照旧，没被停止就生效。
+ * - App 自己发起的压缩：只有 CLI 确实报告过压缩完成才生效，和停没停无关。
+ *
+ * 症状（要防的）：自动压缩的回合「正常结束」了，但其实没压成（/compact 被当成普通文本
+ *   回答了，或者压缩请求被上游拒了却没报错）。边界一旦生效，更早的历史就被折叠、带着历史
+ *   另开会话时也被截掉，而 CLI 那边的上下文一个字都没少。
+ * 根因（2026-11-12）：Claude 的手动 /compact 不发 compaction 活动（server/providers.ts：
+ *   渲染端已经为用户敲的那条建了边界，再发会重复）。App 的自动压缩在 CLI 眼里就是一次手动
+ *   /compact，所以回合中途没有任何东西会把它的 pending 边界 finalize，只能在收尾时凭
+ *   「CLI 报没报过压缩」（context_usage 的 reset）来定。
+ * 被否决的替代方案：和手动的一样「没被停止就生效」——压没压成全靠猜，猜错就丢历史。
+ */
+export const settlePendingCompactBoundary = (
+  message: ChatMessage,
+  { stopped, compactionObserved }: { stopped: boolean; compactionObserved: boolean },
+): ChatMessage => {
+  const takesEffect = isAppAutoCompactMessage(message) ? compactionObserved : !stopped
+
+  return takesEffect
+    ? finalizePendingCompactBoundaryMessage(message)
+    : clearPendingCompactBoundaryMessage(message)
+}
+
 export const markCompactBoundaryMessage = (
   message: ChatMessage,
   options?: {
@@ -182,6 +227,52 @@ export const isCompactBoundaryMessage = (
 }
 
 /**
+ * 给「App 自己在发送前发起的那次压缩」的边界消息记上它是哪个回合跑的
+ * （docs/specs/context-usage-auto-compact）。
+ *
+ * 这种压缩整个回合就只干压缩这一件事，和「回合中途 CLI 自己压了一下」不同：
+ * 它要拦住后面的消息（见 shouldWaitForCompactionBeforeSending），收尾时也不该
+ * 响提示音、不该触发续跑。两处都靠这个回合 id 认它。
+ */
+export const markAppAutoCompactRun = (message: ChatMessage, streamId: string): ChatMessage => {
+  if (!hasExplicitCompactBoundary(message) || streamId.length === 0) {
+    return message
+  }
+
+  return {
+    ...message,
+    meta: {
+      ...message.meta,
+      [compactRunStreamMetaKey]: streamId,
+    },
+  }
+}
+
+/**
+ * 这条消息是不是 `streamId` 这个回合里 App 自己发起的压缩。
+ * 不要求它此刻仍是边界：压缩没成时边界会被清掉标记，但回合收尾还要认得它。
+ */
+export const isAppAutoCompactRun = (
+  message: ChatMessage | undefined,
+  streamId: string | undefined,
+) =>
+  typeof streamId === 'string' &&
+  streamId.length > 0 &&
+  message?.meta?.[compactRunStreamMetaKey] === streamId
+
+/**
+ * 卡片上 `streamId` 这个回合是不是 App 自己发起的压缩：看最新一条 user 消息。
+ * 回合收尾的每个出口（done、出错、等不到服务端确认的停止）都先问它，口径只此一处。
+ *
+ * 只看最新一条：压缩回合里不会再有别的 user 消息；后面一旦有了新的 user 消息，
+ * 就说明那次压缩早就收尾了。
+ */
+export const isAppAutoCompactRunOnCard = (
+  messages: readonly ChatMessage[] | undefined,
+  streamId: string | undefined,
+) => isAppAutoCompactRun(messages?.findLast((message) => message.role === 'user'), streamId)
+
+/**
  * 正在回答的卡上收到普通 follow-up 时，要不要先等这次压缩结束再发。
  *
  * 症状：2026-08-16 用户报"一个会话 streaming 久了之后再给他输入消息，居然自动
@@ -195,11 +286,21 @@ export const isCompactBoundaryMessage = (
  *   Claude 的手动 `/compact` 靠消息内容识别、从来没有 pending，换过去会把
  *   "用户自己发了 /compact 紧接着追加一句"这个原始需求（deferred-send-queue
  *   需求 8）一起弄丢。
+ *
+ * 2026-11-12 补充：App 在发送前自己发起的压缩（markAppAutoCompactRun）也要等——
+ *   用户那条消息本来就排在它后面，途中再追加的消息如果把压缩打断，等于白压。
+ *   但它的边界同样是「隐藏的自动边界」，为了不重蹈上面的覆辙，只在
+ *   `activeStreamId` 正是它自己那个回合时才算数；回合一结束就失效。
+ * 被否决：另开一个运行期 ref 记「正在自动压缩的卡」—— 停止、报错、重试、换会话
+ *   等清理点有八处以上，漏一处就是一张再也发不出消息的卡。
  */
 export const shouldWaitForCompactionBeforeSending = (
   latestUserMessage: ChatMessage | undefined,
   provider: Provider,
-) => getCompactBoundaryTrigger(latestUserMessage, provider) === 'manual'
+  activeStreamId?: string,
+) =>
+  getCompactBoundaryTrigger(latestUserMessage, provider) === 'manual' ||
+  isAppAutoCompactRun(latestUserMessage, activeStreamId)
 
 const findLatestCompactBoundary = (
   messages: ChatMessage[],

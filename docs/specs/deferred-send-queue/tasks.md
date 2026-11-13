@@ -28,3 +28,10 @@
 - [x] Let explicit interrupt mode bypass only the compact-boundary wait while preserving ordinary `/compact` queuing.
 - [x] Locally settle impossible `streaming` cards that have no live or persisted stream ID.
 - [x] Re-run focused browser coverage, quality checks, and Windows packaging.
+
+## 2026-11-12 pre-send auto-compact follow-up
+
+- [x] Add red unit tests in `tests/chat-card-compaction.test.ts`: a boundary stamped by `markAppAutoCompactRun()` makes ordinary sends wait only while its `compactRunStreamId` is the card's current `streamId`; mid-stream auto boundaries still never wait.
+- [x] Pass `card.streamId` into `shouldWaitForCompactionBeforeSending()` from `App.tsx`; explicit **Send now** (`interrupt`) keeps bypassing the wait.
+- [x] Record the new wait rule in requirements #8B and design step 7 (feature spec: `docs/specs/context-usage-auto-compact`).
+- [ ] Browser coverage for "send while the pre-send compaction turn is running" — not added; the rule is covered by unit tests only.

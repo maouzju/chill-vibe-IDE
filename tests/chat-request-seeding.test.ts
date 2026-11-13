@@ -2,8 +2,9 @@ import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
 
 import { attachImagesToMessageMeta } from '../shared/chat-attachments.ts'
-import type { ChatMessage, ImageAttachment } from '../shared/schema.ts'
+import { providerSchema, type ChatMessage, type ImageAttachment } from '../shared/schema.ts'
 import { resolveChatReplayMode } from '../src/app-helpers.ts'
+import { buildArchiveRecallSnapshot, supportsArchiveRecall } from '../src/archive-recall.ts'
 import {
   buildSeededChatPrompt,
   collectSeededChatAttachments,
@@ -352,6 +353,89 @@ describe('chat request seeding', () => {
     assert.match(prompt, /Visible follow-up after compact\./i)
   })
 
+  // 压缩之后「带着历史另开新会话」（换 provider、硬打断后会话被清、恢复流时清会话）：
+  // 新会话里既没有 CLI 那份压缩摘要，也没有原文。Codex 靠归档回查兜底，其它 provider 没有。
+  const compactedConversation = [
+    createMessage('user-1', 'user', 'Original task: migrate the billing reducer. PRE_COMPACT_REQUEST'),
+    createMessage('assistant-1', 'assistant', 'Decision: keep the legacy adapter. PRE_COMPACT_DECISION'),
+    createMessage('compact-1', 'user', '/compact', {
+      compactBoundary: 'true',
+      compactTrigger: 'auto',
+      compactHidden: 'true',
+      compactRunStreamId: 'stream-compact',
+    }),
+    createMessage('assistant-2', 'assistant', 'Continuing after the compaction. POST_COMPACT_NOTE'),
+    createMessage('user-2', 'user', 'Visible follow-up after compact.'),
+  ]
+
+  it('replays the conversation from before a compaction when the provider has no archive recall', () => {
+    for (const provider of ['claude', 'gemini'] as const) {
+      const prompt = buildSeededChatPrompt({
+        language: 'en',
+        provider,
+        status: 'idle',
+        prompt: 'Keep going.',
+        attachments: [],
+        messages: compactedConversation,
+      })
+
+      assert.match(prompt, /PRE_COMPACT_REQUEST/, provider)
+      assert.match(prompt, /PRE_COMPACT_DECISION/, provider)
+      assert.match(prompt, /POST_COMPACT_NOTE/, provider)
+      assert.doesNotMatch(prompt, /User:\s+Content:\s+\/compact/i, provider)
+    }
+  })
+
+  it('re-attaches images from before a compaction when the provider has no archive recall', () => {
+    const attachments = collectSeededChatAttachments({
+      provider: 'claude',
+      status: 'idle',
+      messages: [
+        createMessage(
+          'user-1',
+          'user',
+          'Image context from before the compaction.',
+          attachImagesToMessageMeta([imageAttachment]),
+        ),
+        createMessage('compact-1', 'user', '/compact'),
+        createMessage(
+          'assistant-1',
+          'assistant',
+          'Image context after the compaction.',
+          attachImagesToMessageMeta([secondImageAttachment]),
+        ),
+      ],
+      attachments: [],
+    })
+
+    assert.deepEqual(
+      attachments.map((attachment) => attachment.id),
+      ['attachment-1.png', 'attachment-2.png'],
+    )
+  })
+
+  it('never lets pre-compaction history fall between the seeded transcript and the archive recall', () => {
+    for (const provider of providerSchema.options) {
+      const archived =
+        buildArchiveRecallSnapshot({ messages: compactedConversation, provider, status: 'idle' })
+          ?.messages.some((message) => message.id === 'user-1') ?? false
+      const replayed = /PRE_COMPACT_REQUEST/.test(
+        buildSeededChatPrompt({
+          language: 'en',
+          provider,
+          status: 'idle',
+          prompt: 'Keep going.',
+          attachments: [],
+          messages: compactedConversation,
+        }),
+      )
+
+      // 恰好一处：两处都没有就是丢历史；两处都有就是同一段历史付两遍 token。
+      assert.deepEqual({ provider, archived, replayed }, { provider, archived: !replayed, replayed })
+      assert.equal(archived, supportsArchiveRecall(provider), provider)
+    }
+  })
+
   it('skips transient reconnect placeholders when replaying a fresh-session prompt', () => {
     const prompt = buildSeededChatPrompt({
       language: 'en',
@@ -428,17 +512,22 @@ describe('chat request seeding', () => {
     assert.match(prompt, /Progress note 11/)
   })
 
+  // 用 Codex：只有带归档回查的 provider 才按压缩边界截断回放（见上面
+  // 'replays the conversation from before a compaction…'），这条要测的是「截断 + 界面性能窗口」叠在一起。
   it('keeps post-compact history available for seeded requests when the UI adds a performance window', () => {
     const prompt = buildSeededChatPrompt({
       language: 'en',
-      provider: 'claude',
+      provider: 'codex',
       status: 'idle',
       prompt: 'Continue from the visible branch.',
       attachments: [],
       messages: [
         createMessage('old-user', 'user', 'Older context that should stay hidden after compact.'),
         createMessage('old-assistant', 'assistant', 'Older answer that should stay hidden after compact.'),
-        createMessage('compact-1', 'user', '/compact'),
+        createMessage('compact-1', 'user', '/compact', {
+          provider: 'codex',
+          compactBoundary: 'true',
+        }),
         ...Array.from({ length: 260 }, (_, index) =>
           createMessage(
             `follow-up-${index + 1}`,

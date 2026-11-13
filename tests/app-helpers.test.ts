@@ -10,6 +10,7 @@ import {
   createStructuredMessageId,
   finalizeStructuredActivityMessage,
   finalizeStreamedAssistantMessage,
+  finishAbandonedAutoCompactRun,
   getAgentDoneSoundUrl,
   getAllAgentsDoneSoundUrl,
   getCompletionSoundPlan,
@@ -24,6 +25,10 @@ import {
   willMoveTabAcrossColumns,
   resolveStreamedAssistantMessageTarget,
 } from '../src/app-helpers.ts'
+import {
+  isWakeTimerConditionReady,
+  pruneIdleWorkspaceWakeTimerTargets,
+} from '../src/components/wake-timer.ts'
 import { BRAINSTORM_TOOL_MODEL, GIT_TOOL_MODEL, STICKYNOTE_TOOL_MODEL } from '../shared/models.ts'
 import type { ChatMessage } from '../shared/schema.ts'
 
@@ -282,6 +287,109 @@ test('a cross-workspace tab move must stop the run and clear its queued sends to
       `${label}: a rejected move must have no side effects at all`,
     )
   }
+})
+
+/**
+ * 驱动真正的收尾编排。'compacting' 是那张自动压缩回合刚被放弃的卡，'waiter' 挂着
+ * 「等工作区里其他 Agent 跑完」的唤醒条件。
+ *
+ * 和真实的 App 一样：commit 之后那张卡瞬间是 idle；排在后面的用户消息要到下一个微任务才
+ * 真正发出去，那时卡才变回 streaming。flush 用的是真实的唤醒判据（wake-timer.ts），所以
+ * 测试看的是「等待方有没有在这个 idle 的瞬间被放行」，而不是某个函数调没调。
+ */
+const runAbandonedAutoCompact = ({ queuedSendCount }: { queuedSendCount: number }) => {
+  const trace: string[] = []
+  let compactingStatus: 'streaming' | 'idle' = 'streaming'
+  let waiterPendingTargetIds = ['compacting']
+  let waiterWoken = false
+
+  finishAbandonedAutoCompactRun({
+    queuedSendCount,
+    actions: ['settle-compact-run'],
+    buildWaiterReleaseActions: () => ['release-waiters'],
+    commitActions: (actions) => {
+      trace.push(`commit:${actions.join('+')}`)
+      compactingStatus = 'idle'
+
+      if (actions.includes('release-waiters')) {
+        waiterPendingTargetIds = []
+      }
+    },
+    dispatchNextQueuedSend: () => {
+      // 只是排了一个微任务：这一刻卡片还是 idle。
+      trace.push('dispatchNextQueuedSend')
+    },
+    flushReadyWakeTimers: () => {
+      trace.push('flushReadyWakeTimers')
+      waiterPendingTargetIds = pruneIdleWorkspaceWakeTimerTargets({
+        mode: 'workspace-agents',
+        explicitTargets: false,
+        targetIds: waiterPendingTargetIds,
+        cards: [{ id: 'compacting', status: compactingStatus, isAgent: true }],
+      })
+      waiterWoken = isWakeTimerConditionReady({
+        mode: 'workspace-agents',
+        ownerStatus: 'idle',
+        pendingTargetIds: waiterPendingTargetIds,
+        activePeerIds: compactingStatus === 'streaming' ? ['compacting'] : [],
+        wakeAt: undefined,
+        nowMs: 0,
+      })
+    },
+  })
+
+  return { trace, waiterPendingTargetIds, waiterWoken }
+}
+
+// 症状：卡 A 的自动压缩失败（或压根没发出去）时，挂着「等工作区其他 Agent 完成」的卡 B 当场被
+//   唤醒——可 A 排在压缩后面的那条用户消息下一个微任务就要发出去，A 根本没闲下来。
+// 根因（2026-11-12 独立审查）：收尾把 A 置回 idle 之后紧跟着同步刷了一遍唤醒条件；
+//   判据只认「此刻在不在跑」，不认「马上要发的排队消息」。
+test('an abandoned auto-compact run does not wake cards waiting on it while its queued send is about to go out', () => {
+  const { trace, waiterPendingTargetIds, waiterWoken } = runAbandonedAutoCompact({ queuedSendCount: 1 })
+
+  assert.equal(waiterWoken, false, 'the waiter must keep waiting: the card is about to run the queued user message')
+  assert.deepEqual(waiterPendingTargetIds, ['compacting'], 'the card stays on the waiter list')
+  assert.deepEqual(trace, ['commit:settle-compact-run', 'dispatchNextQueuedSend'])
+})
+
+// 反过来：排队的消息在压缩期间被撤回输入框的话，这张卡后面不会再有「真正的完成」来广播，
+// 等它的人必须在这里放行，否则要白等到兜底超时。
+test('an abandoned auto-compact run with nothing queued releases the cards waiting on it', () => {
+  const { trace, waiterPendingTargetIds, waiterWoken } = runAbandonedAutoCompact({ queuedSendCount: 0 })
+
+  assert.equal(waiterWoken, true)
+  assert.deepEqual(waiterPendingTargetIds, [])
+  assert.deepEqual(trace, [
+    'commit:settle-compact-run+release-waiters',
+    'dispatchNextQueuedSend',
+    'flushReadyWakeTimers',
+  ])
+})
+
+// 放弃自动压缩的出口有两个（压缩回合出错 / 流丢了；压缩请求压根没发出去）。两处各写各的
+// 正是这个缺陷能同时出现在两处的原因，所以都得走上面那个编排。
+test('both abandoned auto-compact exits in App.tsx go through the shared settle step', () => {
+  const appSource = readFileSync(new URL('../src/App.tsx', import.meta.url), 'utf8')
+
+  assert.equal(appSource.match(/\bfinishAbandonedAutoCompactRun\(\{/g)?.length ?? 0, 2)
+})
+
+// 自动压缩回合是 App 替用户发的 /compact：请求体要带上来源，服务端才不把它当成用户消息
+// 镜像给手机监工、手机也才不会为它响铃 / 弹「跑完了」。能发出自动压缩回合的只有正常发送
+// 那一处 requestChat（压缩回合出错走「放弃」，不走另两处的流恢复）。
+test('the auto-compact send tags its chat request with the auto-compact origin', () => {
+  const appSource = readFileSync(new URL('../src/App.tsx', import.meta.url), 'utf8')
+  const sendStart = appSource.indexOf("const isAutoCompactSend = sendOrigin === 'auto-compact'")
+  assert.ok(sendStart >= 0, 'sendMessage should still derive isAutoCompactSend')
+  const requestStart = appSource.indexOf('requestChat({', sendStart)
+  const requestEnd = appSource.indexOf('if (response.streamId !== streamId)', requestStart)
+  assert.ok(requestStart >= 0 && requestEnd > requestStart, 'the send path should still call requestChat')
+
+  assert.match(
+    appSource.slice(requestStart, requestEnd),
+    /\.\.\.\(isAutoCompactSend \? \{ origin: 'auto-compact'(?: as const)? \} : \{\}\)/,
+  )
 })
 
 test('getColumnById resolves a board column by its id', () => {

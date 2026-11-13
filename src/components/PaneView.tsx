@@ -100,6 +100,8 @@ type PaneViewProps = {
   autoUrgeProfiles?: AutoUrgeProfile[]
   autoUrgeMessage: string
   autoUrgeSuccessKeyword: string
+  autoCompactEnabled?: boolean
+  autoCompactThresholdPercent?: number
   globalUrgeActive: boolean
   globalUrgeProfileId: string
   repeatLoopEnabled?: boolean
@@ -322,6 +324,8 @@ const PaneViewView = ({
   autoUrgeProfiles = [],
   autoUrgeMessage,
   autoUrgeSuccessKeyword,
+  autoCompactEnabled,
+  autoCompactThresholdPercent,
   globalUrgeActive,
   globalUrgeProfileId,
   repeatLoopEnabled = false,
@@ -1624,6 +1628,8 @@ const PaneViewView = ({
                   autoUrgeProfiles={autoUrgeProfiles}
                   autoUrgeMessage={autoUrgeMessage}
                   autoUrgeSuccessKeyword={autoUrgeSuccessKeyword}
+                  autoCompactEnabled={autoCompactEnabled}
+                  autoCompactThresholdPercent={autoCompactThresholdPercent}
                   globalUrgeActive={globalUrgeActive}
                   globalUrgeProfileId={globalUrgeProfileId}
                   repeatLoopEnabled={repeatLoopEnabled}

@@ -141,6 +141,21 @@ export const settingsItemCatalog: readonly SettingsItemMeta[] = [
     keywords: ['personality', '人格', 'fast', 'skill', 'git agent'],
   },
   {
+    // 11-12：会话没处看上下文占用，快满也只能等 CLI 回合中途自己压（docs/specs/context-usage-auto-compact）。
+    id: 'auto-compact',
+    category: 'models',
+    tier: 'basic',
+    label: { 'zh-CN': '上下文自动压缩', en: 'Auto compact' },
+    hint: hint(
+      '对话快把上下文占满时，在你下一条消息发出前先自动压缩一次；输入框旁的小圆环显示当前占了多少；',
+      'When a chat is close to filling its context window, it is compacted before your next message goes out. The ring next to the composer shows how full it is.',
+    ),
+    keywords: [
+      'compact', '压缩', 'context', '上下文', 'token', 'window', '窗口', '占用', 'usage',
+      'threshold', '阈值', 'auto', '自动', 'summarize', '总结',
+    ],
+  },
+  {
     // 10-17 用户：下拉里关掉不用的默认项、加自己的模型名（docs/specs/model-picker-customization）。
     id: 'model-picker',
     category: 'models',

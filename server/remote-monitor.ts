@@ -89,7 +89,7 @@ type SnapshotSourceCard = {
   status: string
   streamId?: string
   reasoningEffort?: string
-  messages: Array<{ role: string; content: string }>
+  messages: Array<{ role: string; content: string; meta?: Record<string, string> }>
 }
 
 // AppState 的 column.cards 是 Record<cardId, card>，不是数组。
@@ -109,6 +109,15 @@ const columnDisplayTitle = (column: { title: string; workspacePath?: string }) =
   column.workspacePath?.split(/[/\\]/).filter(Boolean).at(-1) ?? column.title
 
 const previewMaxChars = 200
+
+// 上下文快满时 App 替用户发的 /compact（以及 CLI 自己压缩时补的边界）在电脑端是隐藏
+// 消息，只显示一行 system 日志；手机的历史和预览同口径，不把它当成用户说的话。
+// 与 src/components/chat-card-compaction.ts 的 isHiddenCompactBoundaryMessage 同一判定，
+// 服务端编译范围不含 src，这里照写字面量（先例：compacted-card-history.ts）。
+const isHiddenCompactBoundaryMessage = (message: {
+  role: string
+  meta?: Record<string, string>
+}) => message.role === 'user' && message.meta?.compactHidden === 'true'
 
 // 手机端的模型/档位选择器数据在服务端算好随快照下发，过滤逻辑与电脑端
 // 选择器同源（picker-visible 模型 + 模型感知档位，如 Fable 5 无 auto）。
@@ -140,6 +149,7 @@ export const buildRemoteMonitorSnapshot = (state: SnapshotSourceState): RemoteMo
       const lastConversationMessage = card.messages.findLast(
         (message) =>
           (message.role === 'assistant' || message.role === 'user') &&
+          !isHiddenCompactBoundaryMessage(message) &&
           message.content.trim().length > 0,
       )
 
@@ -163,10 +173,13 @@ export const buildRemoteMonitorSnapshot = (state: SnapshotSourceState): RemoteMo
 // 历史转录出门前统一走 session-history-compaction 的 transfer 压缩（消息数
 // 上限 + command/structuredData 字段级截断），再映射成手机端可直接渲染的
 // 轻量条目 —— 与快照同一条红线：绝不把全量转录发出程序边界（pitfall 183）。
+// 隐藏的 /compact 要在压缩之前滤掉，否则它白占条数上限的名额。
 export const buildRemoteMonitorCardHistory = (
   messages: ChatMessage[],
 ): RemoteMonitorHistoryEntry[] =>
-  compactSessionHistoryMessagesForTransfer(messages)
+  compactSessionHistoryMessagesForTransfer(
+    messages.filter((message) => !isHiddenCompactBoundaryMessage(message)),
+  )
     .map((message) => {
       let activity: unknown
       if (message.meta?.structuredData) {
@@ -306,6 +319,8 @@ export const createRemoteMonitorManager = (deps: RemoteMonitorDeps) => {
     const payload = {
       streamId: event.streamId,
       cardId: event.cardId,
+      // 只有 App 自己发起的回合才有；JSON.stringify 会省掉 undefined，普通回合不多键。
+      origin: event.origin,
       event: event.envelope.event,
       data: event.envelope.data,
     }
@@ -478,7 +493,12 @@ export const createRemoteMonitorManager = (deps: RemoteMonitorDeps) => {
       // Late joiners get the picture so far before live forwarding starts.
       for (const stream of deps.listActiveStreams()) {
         for (const envelope of stream.backlog) {
-          writeStreamEvent(response, { streamId: stream.streamId, cardId: stream.cardId, envelope })
+          writeStreamEvent(response, {
+            streamId: stream.streamId,
+            cardId: stream.cardId,
+            origin: stream.origin,
+            envelope,
+          })
         }
       }
 

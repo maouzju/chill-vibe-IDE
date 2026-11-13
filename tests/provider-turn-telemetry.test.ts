@@ -2,11 +2,20 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 
 import { createMessage } from '../shared/default-state.ts'
-import type { ChatRequest, StreamEventMap } from '../shared/schema.ts'
+import type {
+  ChatRequest,
+  StreamActivity,
+  StreamContextUsageEvent,
+  StreamEventMap,
+} from '../shared/schema.ts'
 import { createClaudeTurnParser } from '../server/providers.ts'
 import {
   mapClaudeTurnStopReason,
+  readClaudeCompactBoundary,
+  readClaudeContextWindow,
+  readClaudeRequestContextUsage,
   readClaudeTurnUsage,
+  readCodexContextUsage,
 } from '../server/provider-turn-telemetry.ts'
 import {
   attachTurnTelemetry,
@@ -287,4 +296,284 @@ test('summarizeTurnUsage adds completed cost segments when a session restarts it
   const totals = summarizeTurnUsage([message('m-1', '15.83'), message('m-2', '7.87')])
 
   assert.ok(Math.abs((totals?.costUsd ?? 0) - 23.7) < 1e-9)
+})
+
+// ---------------------------------------------------------------------------
+// 上下文占用的实时信号（docs/specs/context-usage-auto-compact）
+// ---------------------------------------------------------------------------
+
+// 2026-11-12 实测夹具：claude 2.1.233 `-p --output-format stream-json --include-partial-messages`
+// 的真实行（只删掉了与用量无关的 id / uuid / 计费明细）。
+const realMessageStart = {
+  type: 'stream_event',
+  event: {
+    type: 'message_start',
+    message: {
+      model: 'claude-haiku-4-5-20251001',
+      type: 'message',
+      role: 'assistant',
+      content: [],
+      usage: {
+        input_tokens: 10,
+        cache_creation_input_tokens: 44278,
+        cache_read_input_tokens: 0,
+        output_tokens: 1,
+        service_tier: 'standard',
+      },
+    },
+  },
+  session_id: 'ddcabbbe-0000-4000-8000-000000000000',
+  parent_tool_use_id: null,
+} satisfies Record<string, unknown>
+
+const realMessageDelta = {
+  type: 'stream_event',
+  event: {
+    type: 'message_delta',
+    delta: { stop_reason: 'end_turn', stop_sequence: null },
+    usage: {
+      input_tokens: 10,
+      cache_creation_input_tokens: 44278,
+      cache_read_input_tokens: 0,
+      output_tokens: 89,
+      output_tokens_details: { thinking_tokens: 81 },
+    },
+  },
+  session_id: 'ddcabbbe-0000-4000-8000-000000000000',
+  parent_tool_use_id: null,
+} satisfies Record<string, unknown>
+
+const realCompactBoundary = {
+  type: 'system',
+  subtype: 'compact_boundary',
+  session_id: 'ddcabbbe-0000-4000-8000-000000000000',
+  compact_metadata: {
+    trigger: 'manual',
+    pre_tokens: 44641,
+    post_tokens: 891,
+    cumulative_dropped_tokens: 43750,
+    duration_ms: 22163,
+  },
+} satisfies Record<string, unknown>
+
+// 手动 /compact 回合的 result：usage 全 0、没有任何 stream_event，但仍带 contextWindow。
+const realCompactResult = {
+  type: 'result',
+  subtype: 'success',
+  is_error: false,
+  duration_ms: 22170,
+  num_turns: 0,
+  result: '',
+  stop_reason: null,
+  session_id: 'ddcabbbe-0000-4000-8000-000000000000',
+  total_cost_usd: 0.0563255,
+  usage: {
+    input_tokens: 0,
+    cache_creation_input_tokens: 0,
+    cache_read_input_tokens: 0,
+    output_tokens: 0,
+    iterations: [],
+  },
+  modelUsage: {
+    'claude-haiku-4-5-20251001': {
+      inputTokens: 0,
+      outputTokens: 0,
+      cacheReadInputTokens: 0,
+      cacheCreationInputTokens: 0,
+      costUSD: 0,
+      contextWindow: 200000,
+      maxOutputTokens: 32000,
+    },
+  },
+} satisfies Record<string, unknown>
+
+const runClaudeLines = (events: Record<string, unknown>[]) => {
+  const timeline: string[] = []
+  const contextUsage: StreamContextUsageEvent[] = []
+  const activities: StreamActivity[] = []
+  const errors: string[] = []
+  const parser = createClaudeTurnParser({
+    request,
+    language: 'zh-CN',
+    killChild: () => {},
+    sink: {
+      onSession: () => {},
+      onDelta: () => {},
+      onLog: () => {},
+      onAssistantMessage: () => {},
+      onActivity: (activity) => {
+        activities.push(activity)
+        timeline.push(`activity:${activity.kind}`)
+      },
+      onContextUsage: (event) => {
+        contextUsage.push(event)
+        timeline.push('context_usage')
+      },
+      onDone: () => timeline.push('done'),
+      onError: (message: string) => errors.push(message),
+    },
+  })
+
+  for (const event of events) {
+    parser.handleLine(JSON.stringify(event))
+  }
+
+  return { timeline, contextUsage, activities, errors }
+}
+
+test('a Claude request reports its context occupancy as soon as it starts', () => {
+  // 占用 = 这一次请求的输入侧（含两类缓存）+ 输出，不是一回合所有请求之和（pitfall #322）。
+  assert.equal(readClaudeRequestContextUsage(realMessageStart), 10 + 44278 + 0 + 1)
+  // message_delta 的用量在 event.usage（不是 delta.usage），带着最终输出。
+  assert.equal(readClaudeRequestContextUsage(realMessageDelta), 10 + 44278 + 0 + 89)
+})
+
+test('sub-agent requests never count toward the main thread context occupancy', () => {
+  // 子 Agent 有自己的上下文窗口；把它的请求算进来会让主线程占用在 45k 和 3k 之间乱跳。
+  assert.equal(
+    readClaudeRequestContextUsage({ ...realMessageStart, parent_tool_use_id: 'toolu_01abc' }),
+    undefined,
+  )
+})
+
+test('a message_delta without input-side tokens is not reported as occupancy', () => {
+  // 只有输出的 delta 会把 45k 的占用报成 89 —— 宁可不报，沿用 message_start 的值。
+  assert.equal(
+    readClaudeRequestContextUsage({
+      ...realMessageDelta,
+      event: { type: 'message_delta', delta: {}, usage: { output_tokens: 89 } },
+    }),
+    undefined,
+  )
+  assert.equal(readClaudeRequestContextUsage(realSuccessResult), undefined)
+  assert.equal(
+    readClaudeRequestContextUsage({
+      type: 'stream_event',
+      event: { type: 'content_block_delta', delta: { type: 'text_delta', text: 'hi' } },
+      parent_tool_use_id: null,
+    }),
+    undefined,
+  )
+})
+
+test('the Claude context window comes from what the CLI itself reports', () => {
+  assert.equal(readClaudeContextWindow(realSuccessResult), 200000)
+  assert.equal(readClaudeContextWindow(realCompactResult), 200000)
+  assert.equal(readClaudeContextWindow({ type: 'result' }), undefined)
+})
+
+test('a Claude compact boundary is recognised with its trigger', () => {
+  assert.deepEqual(readClaudeCompactBoundary(realCompactBoundary), {
+    trigger: 'manual',
+    preTokens: 44641,
+  })
+  assert.deepEqual(
+    readClaudeCompactBoundary({
+      ...realCompactBoundary,
+      compact_metadata: { trigger: 'auto', pre_tokens: 181234 },
+    }),
+    { trigger: 'auto', preTokens: 181234 },
+  )
+  // CLI 回合内自带的自动压缩没实测到 trigger 取值：不是 manual 就按自动处理。
+  assert.deepEqual(
+    readClaudeCompactBoundary({ type: 'system', subtype: 'compact_boundary' }),
+    { trigger: 'auto', preTokens: undefined },
+  )
+  assert.equal(readClaudeCompactBoundary({ type: 'system', subtype: 'init' }), undefined)
+  assert.equal(readClaudeCompactBoundary(realSuccessResult), undefined)
+})
+
+test('a Claude turn streams occupancy during the turn and the window before done', () => {
+  const { timeline, contextUsage, errors } = runClaudeLines([
+    realMessageStart,
+    realMessageDelta,
+    realSuccessResult,
+  ])
+
+  assert.deepEqual(errors, [])
+  assert.deepEqual(contextUsage, [
+    { used: 44289 },
+    { used: 44377 },
+    // result 才知道窗口大小；它必须排在 done 之前，终态之后的事件会被 chat-manager 丢掉。
+    { used: 44377, size: 200000 },
+  ])
+  assert.deepEqual(timeline, ['context_usage', 'context_usage', 'context_usage', 'done'])
+})
+
+test('a manual Claude /compact resets occupancy without a duplicate compaction activity', () => {
+  const { contextUsage, activities, errors } = runClaudeLines([
+    realCompactBoundary,
+    realCompactResult,
+  ])
+
+  assert.deepEqual(errors, [])
+  // 压缩后的占用是未知：post_tokens（891）不含系统提示和工具定义，下一次请求实测 45261。
+  assert.deepEqual(contextUsage, [{ reset: true }, { size: 200000 }])
+  // 渲染端已经为用户敲的 /compact 建了边界，再发活动会重复插一条。
+  assert.deepEqual(
+    activities.filter((activity) => activity.kind === 'compaction'),
+    [],
+  )
+})
+
+test('a CLI-initiated Claude compaction surfaces as an auto compaction activity', () => {
+  const { contextUsage, activities } = runClaudeLines([
+    realMessageStart,
+    {
+      ...realCompactBoundary,
+      compact_metadata: { trigger: 'auto', pre_tokens: 181234, post_tokens: 2100 },
+    },
+  ])
+
+  assert.deepEqual(contextUsage, [{ used: 44289 }, { reset: true }])
+  const compactions = activities.filter((activity) => activity.kind === 'compaction')
+  assert.equal(compactions.length, 1)
+  assert.equal(compactions[0]?.kind === 'compaction' ? compactions[0].trigger : undefined, 'auto')
+})
+
+// Codex 协议 0.147.0（`codex app-server generate-ts` 导出的 ThreadTokenUsageUpdatedNotification）。
+// 数值取自本机历史会话记录里的真实用量事件；线上通知没能实测（中转站 401）。
+const codexTokenUsageParams = {
+  threadId: 'thread-root',
+  turnId: 'turn-1',
+  tokenUsage: {
+    total: {
+      totalTokens: 28954,
+      inputTokens: 28412,
+      cachedInputTokens: 12800,
+      cacheWriteInputTokens: 0,
+      outputTokens: 542,
+      reasoningOutputTokens: 320,
+    },
+    last: {
+      totalTokens: 14494,
+      inputTokens: 14223,
+      cachedInputTokens: 12800,
+      cacheWriteInputTokens: 0,
+      outputTokens: 271,
+      reasoningOutputTokens: 160,
+    },
+    modelContextWindow: 258400,
+  },
+} satisfies Record<string, unknown>
+
+test('a Codex token usage notification yields the last request occupancy and the window', () => {
+  // 占用取 last（最近一次请求），不是 total（整个线程累计，会越过窗口大小）。
+  assert.deepEqual(readCodexContextUsage(codexTokenUsageParams), {
+    threadId: 'thread-root',
+    used: 14494,
+    size: 258400,
+  })
+})
+
+test('a Codex token usage notification without a window still reports occupancy', () => {
+  assert.deepEqual(
+    readCodexContextUsage({
+      ...codexTokenUsageParams,
+      tokenUsage: { ...codexTokenUsageParams.tokenUsage, modelContextWindow: null },
+    }),
+    { threadId: 'thread-root', used: 14494, size: undefined },
+  )
+  assert.equal(readCodexContextUsage({ threadId: 'thread-root' }), undefined)
+  assert.equal(readCodexContextUsage({ threadId: 'thread-root', tokenUsage: { last: {} } }), undefined)
 })

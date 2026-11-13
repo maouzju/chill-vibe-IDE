@@ -376,6 +376,8 @@ export type IdeAction =
           | 'autoUrgeGlobalActive'
           | 'autoUrgeGlobalProfileId'
           | 'repeatLoopEnabled'
+          | 'autoCompactEnabled'
+          | 'autoCompactThresholdPercent'
           | 'wakeTimerEnabled'
           | 'wakeTimerDefaultMode'
           | 'wakeTimerDefaultDurationMinutes'

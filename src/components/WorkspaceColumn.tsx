@@ -165,6 +165,8 @@ type WorkspaceColumnProps = {
   autoUrgeProfiles?: AutoUrgeProfile[]
   autoUrgeMessage: string
   autoUrgeSuccessKeyword: string
+  autoCompactEnabled?: boolean
+  autoCompactThresholdPercent?: number
   globalUrgeActive: boolean
   globalUrgeProfileId: string
   repeatLoopEnabled?: boolean
@@ -291,6 +293,8 @@ const WorkspaceColumnView = ({
   autoUrgeProfiles = [],
   autoUrgeMessage,
   autoUrgeSuccessKeyword,
+  autoCompactEnabled,
+  autoCompactThresholdPercent,
   globalUrgeActive,
   globalUrgeProfileId,
   repeatLoopEnabled = false,
@@ -1270,6 +1274,8 @@ const WorkspaceColumnView = ({
           autoUrgeProfiles={autoUrgeProfiles}
           autoUrgeMessage={autoUrgeMessage}
           autoUrgeSuccessKeyword={autoUrgeSuccessKeyword}
+          autoCompactEnabled={autoCompactEnabled}
+          autoCompactThresholdPercent={autoCompactThresholdPercent}
           globalUrgeActive={globalUrgeActive}
           globalUrgeProfileId={globalUrgeProfileId}
           repeatLoopEnabled={repeatLoopEnabled}

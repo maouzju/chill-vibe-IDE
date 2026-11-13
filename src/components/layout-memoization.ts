@@ -40,6 +40,8 @@ type WorkspaceColumnMemoProps = {
   autoUrgeProfiles?: AutoUrgeProfile[]
   autoUrgeMessage: string
   autoUrgeSuccessKeyword: string
+  autoCompactEnabled?: boolean
+  autoCompactThresholdPercent?: number
   globalUrgeActive: boolean
   globalUrgeProfileId: string
   repeatLoopEnabled?: boolean
@@ -76,6 +78,8 @@ type PaneViewMemoProps = {
   autoUrgeProfiles?: AutoUrgeProfile[]
   autoUrgeMessage: string
   autoUrgeSuccessKeyword: string
+  autoCompactEnabled?: boolean
+  autoCompactThresholdPercent?: number
   globalUrgeActive: boolean
   globalUrgeProfileId: string
   repeatLoopEnabled?: boolean
@@ -151,6 +155,12 @@ export const areWorkspaceColumnPropsEqual = (
   previous.autoUrgeProfiles === next.autoUrgeProfiles &&
   previous.autoUrgeMessage === next.autoUrgeMessage &&
   previous.autoUrgeSuccessKeyword === next.autoUrgeSuccessKeyword &&
+  // 症状（要防的）：设置里改了自动压缩的开关 / 阈值，已打开卡片上的上下文圆环仍按旧值
+  //   上色、悬停说明也是旧的，直到那一列有别的变化才更新（2026-11-12 独立审查）。
+  // 根因：这两个设置不住在 `column` 里；这一层不比，下面 PaneView / ChatCard 的同名比较
+  //   就是死代码（同下方 automationBoardWorkspace 的教训，pitfall #265）。
+  previous.autoCompactEnabled === next.autoCompactEnabled &&
+  previous.autoCompactThresholdPercent === next.autoCompactThresholdPercent &&
   previous.globalUrgeActive === next.globalUrgeActive &&
   previous.globalUrgeProfileId === next.globalUrgeProfileId &&
   previous.repeatLoopEnabled === next.repeatLoopEnabled &&
@@ -319,6 +329,9 @@ export const arePaneViewPropsEqual = (previous: PaneViewMemoProps, next: PaneVie
   previous.autoUrgeProfiles === next.autoUrgeProfiles &&
   previous.autoUrgeMessage === next.autoUrgeMessage &&
   previous.autoUrgeSuccessKeyword === next.autoUrgeSuccessKeyword &&
+  // 见 areWorkspaceColumnPropsEqual 里的同名比较：链路上每一层都得比。
+  previous.autoCompactEnabled === next.autoCompactEnabled &&
+  previous.autoCompactThresholdPercent === next.autoCompactThresholdPercent &&
   previous.globalUrgeActive === next.globalUrgeActive &&
   previous.globalUrgeProfileId === next.globalUrgeProfileId &&
   previous.repeatLoopEnabled === next.repeatLoopEnabled &&

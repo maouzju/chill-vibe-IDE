@@ -115,3 +115,126 @@ export const readClaudeTurnUsage = (
     costUsd: readFiniteNumber(event.total_cost_usd),
   }
 }
+
+// ---------------------------------------------------------------------------
+// 上下文占用的实时信号（docs/specs/context-usage-auto-compact）
+//
+// 上面的 readClaudeTurnUsage 读的是 result.usage —— 一回合里**所有请求之和**
+// （pitfall #322），带工具调用的回合会远超窗口大小，不能当「现在占了多少」。
+// 占用要看最近一次主线程请求：它的输入侧就是此刻整段上下文。
+// ---------------------------------------------------------------------------
+
+/** Claude `result` 事件里 CLI 自报的上下文窗口（多模型时取最大）。 */
+export const readClaudeContextWindow = (event: Record<string, unknown>): number | undefined =>
+  readContextWindow(event)
+
+/**
+ * 读出一次 Claude **主线程**请求的上下文占用（输入侧含两类缓存 + 输出）。
+ *
+ * 2026-11-12 实测 CLI 2.1.233：
+ * - `message_start` 的用量在 `event.message.usage`，请求一发出就有输入侧；
+ * - `message_delta` 的用量在 `event.usage`（不是 `delta.usage`），是这次请求的最终值。
+ *
+ * 只认 `parent_tool_use_id` 为空的事件：子 Agent 有自己的窗口，算进来会让占用乱跳。
+ * `message_delta` 没带任何输入侧字段时返回 undefined —— 否则 45k 的占用会被报成
+ * 只有输出的几十个 token。
+ */
+export const readClaudeRequestContextUsage = (
+  event: Record<string, unknown>,
+): number | undefined => {
+  if (event.type !== 'stream_event') {
+    return undefined
+  }
+
+  if (event.parent_tool_use_id !== null && event.parent_tool_use_id !== undefined) {
+    return undefined
+  }
+
+  const streamEvent = readRecord(event.event)
+  const usage =
+    streamEvent?.type === 'message_start'
+      ? readRecord(readRecord(streamEvent.message)?.usage)
+      : streamEvent?.type === 'message_delta'
+        ? readRecord(streamEvent.usage)
+        : undefined
+
+  if (!usage) {
+    return undefined
+  }
+
+  const inputTokens = readFiniteNumber(usage.input_tokens)
+  const cacheReadTokens = readFiniteNumber(usage.cache_read_input_tokens)
+  const cacheCreationTokens = readFiniteNumber(usage.cache_creation_input_tokens)
+
+  if (
+    inputTokens === undefined &&
+    cacheReadTokens === undefined &&
+    cacheCreationTokens === undefined
+  ) {
+    return undefined
+  }
+
+  return (
+    (inputTokens ?? 0) +
+    (cacheReadTokens ?? 0) +
+    (cacheCreationTokens ?? 0) +
+    (readFiniteNumber(usage.output_tokens) ?? 0)
+  )
+}
+
+export type ClaudeCompactBoundary = {
+  trigger: 'manual' | 'auto'
+  preTokens: number | undefined
+}
+
+/**
+ * 识别 Claude 的 `system/compact_boundary`。
+ *
+ * 只实测到过 `trigger: "manual"`（用户发 `/compact`）。CLI 回合内自带的自动压缩
+ * 没能在 `-p` 模式下触发出来，所以「不是 manual」一律按自动处理，不去猜具体字面量。
+ * 刻意不返回 `post_tokens`：实测 891，而下一次请求真实输入侧 45261（它不含系统提示
+ * 和工具定义），拿它当压缩后占用会骗人。
+ */
+export const readClaudeCompactBoundary = (
+  event: Record<string, unknown>,
+): ClaudeCompactBoundary | undefined => {
+  if (event.type !== 'system' || event.subtype !== 'compact_boundary') {
+    return undefined
+  }
+
+  const metadata = readRecord(event.compact_metadata)
+
+  return {
+    trigger: metadata?.trigger === 'manual' ? 'manual' : 'auto',
+    preTokens: readFiniteNumber(metadata?.pre_tokens),
+  }
+}
+
+export type CodexContextUsage = {
+  threadId: string | undefined
+  used: number
+  size: number | undefined
+}
+
+/**
+ * 读出 Codex `thread/tokenUsage/updated` 通知的占用。
+ *
+ * 取 `tokenUsage.last`（最近一次请求）而不是 `total`（整个线程累计，会越过窗口）。
+ * 窗口取 `modelContextWindow`，协议里它可以是 null。
+ */
+export const readCodexContextUsage = (
+  params: Record<string, unknown>,
+): CodexContextUsage | undefined => {
+  const tokenUsage = readRecord(params.tokenUsage)
+  const used = readFiniteNumber(readRecord(tokenUsage?.last)?.totalTokens)
+
+  if (used === undefined) {
+    return undefined
+  }
+
+  return {
+    threadId: typeof params.threadId === 'string' ? params.threadId : undefined,
+    used,
+    size: readFiniteNumber(tokenUsage?.modelContextWindow),
+  }
+}

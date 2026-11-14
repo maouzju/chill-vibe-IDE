@@ -6,6 +6,7 @@ import {
   CloudIcon,
   FileTextIcon,
   FolderIcon,
+  GeminiIcon,
   GitBranchIcon,
   GptIcon,
   HeadphonesIcon,
@@ -81,6 +82,10 @@ export const getPaneTabIcon = (card: ChatCardState) => {
 
   if (card.provider === 'claude') {
     return <ClaudeIcon className="pane-tab-icon" aria-hidden="true" />
+  }
+
+  if (card.provider === 'gemini') {
+    return <GeminiIcon className="pane-tab-icon" aria-hidden="true" />
   }
 
   return <GptIcon className="pane-tab-icon" aria-hidden="true" />

@@ -259,3 +259,14 @@ export const getCodexNativeTurnCompletion = async (
     return 'unknown'
   }
 }
+
+// 按 provider 分派；Gemini 没有尾部判定，按 fail-open 契约直接 unknown（别拿它的 id 去扫 Codex rollout）。
+export const getNativeTurnCompletion = async (
+  provider: 'codex' | 'claude' | 'gemini',
+  sessionId: string,
+): Promise<NativeTurnCompletion> =>
+  provider === 'claude'
+    ? getClaudeNativeTurnCompletion(sessionId)
+    : provider === 'codex'
+      ? getCodexNativeTurnCompletion(sessionId)
+      : 'unknown'

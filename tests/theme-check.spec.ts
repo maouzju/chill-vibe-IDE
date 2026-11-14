@@ -3741,6 +3741,7 @@ for (const theme of ['dark', 'light'] as const) {
       await expect(settingsPanel).not.toContainText(/Codex 推荐默认使用|Codex recommends GPT/)
       await expect(modelSection.locator('#codex-model-input')).toHaveValue(state.settings.requestModels.codex)
       await expect(modelSection.locator('#claude-model-input')).toHaveValue(state.settings.requestModels.claude)
+      await expect(modelSection.locator('#gemini-model-input')).toBeVisible()
       await page.mouse.move(0, 0)
       await expect(modelSection).toHaveScreenshot(`model-settings-no-recommendation-${theme}-${width}.png`, {
         animations: 'disabled',

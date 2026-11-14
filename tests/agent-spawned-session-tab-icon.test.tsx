@@ -6,6 +6,7 @@ import { renderToStaticMarkup } from 'react-dom/server'
 import { createDefaultState, createAutomationBoardCard } from '../shared/default-state.ts'
 import { ideReducer } from '../src/state.ts'
 import { getPaneTabIcon } from '../src/components/pane-tab-icon.tsx'
+import { GeminiIcon, GptIcon } from '../src/components/Icons.tsx'
 
 ;(globalThis as typeof globalThis & { React: typeof React }).React = React
 
@@ -79,4 +80,14 @@ test('agent-spawned tab is appended silently without stealing the active tab', (
   const userPane = userNext.columns[0]!.layout
   assert.equal(userPane.type, 'pane')
   assert.equal((userPane as Extract<typeof userPane, { type: 'pane' }>).activeTabId, 'user')
+})
+
+// 2026-11-14：Gemini 卡的 tab 落到兜底分支显示成 GPT 图标。
+test('pane tab shows the gemini icon for gemini sessions', () => {
+  const state = createDefaultState()
+  const column = state.columns[0]!
+  const card = ideReducer(state, { type: 'addTab', columnId: column.id, paneId: column.layout.id, cardId: 'g', provider: 'gemini' }).columns[0]!.cards.g!
+  const markup = renderToStaticMarkup(getPaneTabIcon(card))
+  assert.equal(markup, renderToStaticMarkup(<GeminiIcon className="pane-tab-icon" aria-hidden="true" />))
+  assert.notEqual(markup, renderToStaticMarkup(<GptIcon className="pane-tab-icon" aria-hidden="true" />))
 })

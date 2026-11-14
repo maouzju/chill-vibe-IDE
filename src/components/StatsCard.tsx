@@ -396,6 +396,11 @@ export function StatsCardView({
           <span className="stats-provider-chip" data-provider="claude">
             Claude <b>{metrics.byProvider.claude}</b>
           </span>
+          {metrics.byProvider.gemini > 0 ? (
+            <span className="stats-provider-chip" data-provider="gemini">
+              Gemini <b>{metrics.byProvider.gemini}</b>
+            </span>
+          ) : null}
         </div>
 
         <div className="stats-tokens">

@@ -9,6 +9,7 @@ import {
   classifyClaudeSessionTailCompletion,
   getCodexNativeTurnCompletion,
   getClaudeNativeTurnCompletion,
+  getNativeTurnCompletion,
   type NativeTurnCompletion,
 } from '../server/native-turn-completion.ts'
 
@@ -493,5 +494,12 @@ describe('bounded native session tail reads', () => {
 
     assert.equal(await getClaudeNativeTurnCompletion(sessionId, () => sourcePath), 'unknown')
     assert.equal(await getCodexNativeTurnCompletion(sessionId, () => sourcePath), 'unknown')
+  })
+})
+
+// 2026-11-14：Gemini 会话 id 被拿去扫 Codex rollout 目录。没有 Gemini 尾部判定，按契约直接 unknown。
+describe('getNativeTurnCompletion', () => {
+  it('returns unknown for gemini without touching codex rollouts', async () => {
+    assert.equal(await getNativeTurnCompletion('gemini', 'any-session'), 'unknown')
   })
 })

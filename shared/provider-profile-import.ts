@@ -53,7 +53,7 @@ export const mergeImportedProviderProfiles = (
     const importedId = createImportedProfileId(provider, importedProfile.sourceId)
     const normalizedProfile: ProviderProfile = {
       id: importedId,
-      name: trimText(importedProfile.name) || `${provider === 'claude' ? 'Claude' : 'Codex'} ${nextProfiles.length + 1}`,
+      name: trimText(importedProfile.name) || `${provider === 'claude' ? 'Claude' : provider === 'gemini' ? 'Gemini' : 'Codex'} ${nextProfiles.length + 1}`,
       apiKey: trimText(importedProfile.apiKey),
       baseUrl: normalizeBaseUrl(importedProfile.baseUrl),
     }

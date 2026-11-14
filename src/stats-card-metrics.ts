@@ -77,7 +77,7 @@ export type StatsMetrics = {
   currentStreak: number
   longestStreak: number
   activeDays: number
-  byProvider: { codex: number; claude: number }
+  byProvider: { codex: number; claude: number; gemini: number }
   /**
    * 覆盖打开中的会话 + 归档时汇总过用量的历史会话。
    * 更早的存量归档没有 `usageTotals`，只能缺席（见 SPEC FR-3）。
@@ -301,7 +301,7 @@ export const computeStatsMetrics = ({
 
   let activeSessions = 0
   let totalMessages = 0
-  const byProvider = { codex: 0, claude: 0 }
+  const byProvider = { codex: 0, claude: 0, gemini: 0 }
 
   const tokens: StatsTokens = {
     input: 0,
@@ -322,11 +322,7 @@ export const computeStatsMetrics = ({
       }
 
       activeSessions += 1
-      if (card.provider === 'claude') {
-        byProvider.claude += 1
-      } else {
-        byProvider.codex += 1
-      }
+      byProvider[card.provider] += 1
 
       const messages = card.messages ?? []
       totalMessages += messages.length
@@ -377,11 +373,7 @@ export const computeStatsMetrics = ({
 
   for (const entry of sessionHistory) {
     archivedSessions += 1
-    if (entry.provider === 'claude') {
-      byProvider.claude += 1
-    } else {
-      byProvider.codex += 1
-    }
+    byProvider[entry.provider] += 1
 
     const messageCount = entry.messageCount ?? entry.messages?.length ?? 0
     totalMessages += messageCount

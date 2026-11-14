@@ -47,6 +47,7 @@ import { formatLocalizedDateTime, getLocaleText, getProviderLabel } from '../sha
 import {
   DEFAULT_CLAUDE_MODEL,
   DEFAULT_CODEX_MODEL,
+  DEFAULT_GEMINI_MODEL,
   FILETREE_TOOL_MODEL,
   IMAGEEDITOR_TOOL_MODEL,
   MODEL_PICKER_HIDDEN_TOOL_MODELS,
@@ -2927,7 +2928,7 @@ function App() {
       const profiles = appStateRef.current.settings.providerProfiles[provider].profiles
       const profile = {
         id: crypto.randomUUID(),
-        name: draft.name.trim() || `${provider === 'claude' ? 'Claude' : 'Codex'} ${profiles.length + 1}`,
+        name: draft.name.trim() || `${getProviderLabel(appStateRef.current.settings.language, provider)} ${profiles.length + 1}`,
         baseUrl: draft.baseUrl.trim(),
         apiKey,
       }
@@ -9629,7 +9630,7 @@ function App() {
   const onboardingHasUsableAccount = useMemo(
     () =>
       !appState.settings.cliRoutingEnabled ||
-      (['claude', 'codex'] as const).some((provider) => {
+      (['claude', 'codex', 'gemini'] as const).some((provider) => {
         const collection = appState.settings.providerProfiles[provider]
         const active = collection.profiles.find((profile) => profile.id === collection.activeProfileId)
         return Boolean(active && (isCliLoginProfile(active) || active.apiKey.trim()))
@@ -10861,6 +10862,25 @@ function App() {
               })
             }
             placeholder={DEFAULT_CLAUDE_MODEL}
+          />
+        </label>
+
+        <label className="settings-field" htmlFor="gemini-model-input">
+          <span className="settings-field-label">
+            <ModelIcon className="settings-field-icon" aria-hidden="true" />
+            <span className="settings-field-label-text">Gemini</span>
+          </span>
+          <input
+            id="gemini-model-input"
+            className="control settings-input"
+            value={appState.settings.requestModels.gemini}
+            onChange={(event) =>
+              applyAction({
+                type: 'updateRequestModels',
+                patch: { gemini: event.target.value },
+              })
+            }
+            placeholder={DEFAULT_GEMINI_MODEL}
           />
         </label>
 
@@ -13300,12 +13320,16 @@ function App() {
                         onChange={(event) =>
                           setOnboardingAccountDraft((prev) => ({
                             ...prev,
-                            provider: event.target.value === 'codex' ? 'codex' : 'claude',
+                            provider:
+                              event.target.value === 'codex' || event.target.value === 'gemini'
+                                ? event.target.value
+                                : 'claude',
                           }))
                         }
                       >
                         <option value="claude">Claude</option>
                         <option value="codex">Codex</option>
+                        <option value="gemini">Gemini</option>
                       </select>
                     </label>
                     <label className="settings-field" htmlFor="onboarding-account-api-key">
@@ -13330,7 +13354,9 @@ function App() {
                         placeholder={
                           onboardingAccountDraft.provider === 'claude'
                             ? 'https://api.anthropic.com'
-                            : 'https://api.openai.com/v1'
+                            : onboardingAccountDraft.provider === 'gemini'
+                              ? 'https://generativelanguage.googleapis.com'
+                              : 'https://api.openai.com/v1'
                         }
                         onChange={(event) =>
                           setOnboardingAccountDraft((prev) => ({ ...prev, baseUrl: event.target.value }))
@@ -13342,14 +13368,14 @@ function App() {
 
                 {onboardingStage === 'model' ? (
                   <div className="onboarding-model-form" data-testid="onboarding-model-form">
-                    {(['claude', 'codex'] as const).map((provider) => (
+                    {(['claude', 'codex', 'gemini'] as const).map((provider) => (
                       <label className="settings-field" htmlFor={`onboarding-model-${provider}`} key={provider}>
                         <span>{getProviderLabel(onboardingLanguage, provider)}</span>
                         <input
                           id={`onboarding-model-${provider}`}
                           className="control settings-input"
                           value={appState.settings.requestModels[provider]}
-                          placeholder={provider === 'claude' ? DEFAULT_CLAUDE_MODEL : DEFAULT_CODEX_MODEL}
+                          placeholder={provider === 'claude' ? DEFAULT_CLAUDE_MODEL : provider === 'gemini' ? DEFAULT_GEMINI_MODEL : DEFAULT_CODEX_MODEL}
                           onChange={(event) =>
                             applyAction({ type: 'updateRequestModels', patch: { [provider]: event.target.value } })
                           }

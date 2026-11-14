@@ -205,7 +205,17 @@ test('provider breakdown counts live and archived sessions together', () => {
     sessionHistory: [historyEntry({ archivedAt: localIso('2026-08-15'), provider: 'claude' })],
   })
 
-  assert.deepEqual(metrics.byProvider, { codex: 1, claude: 2 })
+  assert.deepEqual(metrics.byProvider, { codex: 1, claude: 2, gemini: 0 })
+})
+
+// 2026-11-14：Gemini 会话落进 else 分支被算成 Codex。
+test('provider breakdown counts gemini sessions on their own', () => {
+  const metrics = compute({
+    columns: [column([card({ id: 'g', provider: 'gemini', model: 'gemini-3.8-flash' })])],
+    sessionHistory: [historyEntry({ archivedAt: localIso('2026-08-15'), provider: 'gemini' })],
+  })
+
+  assert.deepEqual(metrics.byProvider, { codex: 0, claude: 0, gemini: 2 })
 })
 
 test('recent windows count sessions, not messages', () => {

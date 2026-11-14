@@ -52,8 +52,7 @@ import { listExternalSessions, loadExternalSession } from './external-history.js
 import { getClaudeUsage } from './claude-usage-ledger.js'
 import { forkProviderSession } from './session-fork.js'
 import {
-  getClaudeNativeTurnCompletion,
-  getCodexNativeTurnCompletion,
+  getNativeTurnCompletion,
 } from './native-turn-completion.js'
 import {
   hideInternalSessionHistoryEntries,
@@ -975,10 +974,7 @@ app.post('/api/chat/native-turn-completion', async (request, response) => {
 
   // Fail-open by contract: 'unknown' keeps the caller on the existing resume
   // path, so this endpoint never returns an error for lookup failures.
-  const completion =
-    parsed.data.provider === 'claude'
-      ? await getClaudeNativeTurnCompletion(parsed.data.sessionId)
-      : await getCodexNativeTurnCompletion(parsed.data.sessionId)
+  const completion = await getNativeTurnCompletion(parsed.data.provider, parsed.data.sessionId)
   response.json({ completion })
 })
 

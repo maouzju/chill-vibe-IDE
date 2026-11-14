@@ -4,13 +4,35 @@ import type { ChatRequest, ProviderTurnUsage, StreamCommandActivity } from '../s
 // 纯函数部分独立成模块：providers.ts 只负责起进程，参数与 stream-json 事件映射在这里可单测。
 
 // 只读回合用 default：无头模式下 gemini-cli 会把需要审批的 shell / 编辑 / 写文件工具整个排除。
-export const buildGeminiArgs = (request: Pick<ChatRequest, 'model' | 'sessionId' | 'readOnly'>) => {
+// 粘贴图片：Gemini CLI 在提示词里认 `@路径` 来读文件（含图片，模型是多模态的）；
+// 但 @ 只允许读工作区内的目录，附件在应用数据目录里，所以要 --include-directories 放行。
+// 路径统一正斜杠，空格用反斜杠转义（CLI 的 @ 语法以空白分词）。
+const toGeminiPath = (path: string) => path.replace(/\\/g, '/')
+
+const geminiAttachmentDirectories = (attachmentPaths: string[]) => [
+  ...new Set(
+    attachmentPaths
+      .map((path) => toGeminiPath(path.trim()))
+      .filter(Boolean)
+      .map((path) => path.slice(0, Math.max(path.lastIndexOf('/'), 0)))
+      .filter(Boolean),
+  ),
+]
+
+export const buildGeminiArgs = (
+  request: Pick<ChatRequest, 'model' | 'sessionId' | 'readOnly'>,
+  attachmentPaths: string[] = [],
+) => {
   const args = [
     '--output-format',
     'stream-json',
     '--approval-mode',
     request.readOnly === true ? 'default' : 'yolo',
   ]
+  const attachmentDirectories = geminiAttachmentDirectories(attachmentPaths)
+  if (attachmentDirectories.length > 0) {
+    args.push('--include-directories', attachmentDirectories.join(','))
+  }
   const model = request.model?.trim()
   if (model) {
     args.push('--model', model)
@@ -24,12 +46,20 @@ export const buildGeminiArgs = (request: Pick<ChatRequest, 'model' | 'sessionId'
 
 // Gemini CLI 没有 append-system-prompt 参数；GEMINI_SYSTEM_MD 会整段替换内置提示词（连工具说明一起丢），
 // 所以系统提示词作为前导块拼进 stdin。续聊（--resume）时 CLI 已带着历史，不重复注入。
-export const buildGeminiPrompt = (request: Pick<ChatRequest, 'prompt' | 'systemPrompt' | 'sessionId'>) => {
+export const buildGeminiPrompt = (
+  request: Pick<ChatRequest, 'prompt' | 'systemPrompt' | 'sessionId'>,
+  attachmentPaths: string[] = [],
+) => {
+  const refs = attachmentPaths
+    .map((path) => toGeminiPath(path.trim()).replace(/ /g, '\\ '))
+    .filter(Boolean)
+    .map((path) => `@${path}`)
+  const prompt = refs.length > 0 ? `${request.prompt}\n\n${refs.join('\n')}` : request.prompt
   const systemPrompt = request.systemPrompt.trim()
   if (!systemPrompt || request.sessionId?.trim()) {
-    return request.prompt
+    return prompt
   }
-  return `<system_instructions>\n${systemPrompt}\n</system_instructions>\n\n${request.prompt}`
+  return `<system_instructions>\n${systemPrompt}\n</system_instructions>\n\n${prompt}`
 }
 
 type GeminiSink = {

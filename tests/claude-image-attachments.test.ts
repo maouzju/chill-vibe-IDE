@@ -9,3 +9,7 @@ test('providerSupportsImageAttachments returns true for claude', () => {
 test('providerSupportsImageAttachments returns true for codex', () => {
   assert.equal(providerSupportsImageAttachments('codex'), true)
 })
+
+test('providerSupportsImageAttachments returns true for gemini', () => {
+  assert.equal(providerSupportsImageAttachments('gemini'), true)
+})

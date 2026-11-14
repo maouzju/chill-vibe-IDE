@@ -3376,7 +3376,7 @@ export const launchProviderRun = async (
 
   // 首版不注入超管/浏览器/JEV MCP（docs/specs/gemini-cli-provider「非目标」），在准备它们之前分流。
   if (currentRequest.provider === 'gemini') {
-    return launchGeminiRun(currentRequest, sink, language, runtime)
+    return launchGeminiRun(currentRequest, sink, language, runtime, attachmentPaths)
   }
 
   // 超管回合：把工作区 MCP 接进本次 provider 启动。只有 `card.adminAccess`
@@ -4236,11 +4236,12 @@ const launchGeminiRun = async (
   sink: StreamSink,
   language: AppLanguage,
   runtime: ProviderRuntime,
+  attachmentPaths: string[] = [],
 ) => {
   const managedChild = createManagedChildHandle()
   const child = await spawnProvider(
     request.provider,
-    [...runtime.args, ...buildGeminiArgs(request)],
+    [...runtime.args, ...buildGeminiArgs(request, attachmentPaths)],
     request.workspacePath,
     sink,
     language,
@@ -4280,7 +4281,7 @@ const launchGeminiRun = async (
 
   // prompt 走 stdin：绕开 Windows .cmd 垫片的命令行长度与引号转义。
   child.stdin.on('error', () => {})
-  child.stdin.end(buildGeminiPrompt(request))
+  child.stdin.end(buildGeminiPrompt(request, attachmentPaths))
 
   return managedChild.handle
 }

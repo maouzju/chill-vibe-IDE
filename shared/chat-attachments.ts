@@ -10,7 +10,7 @@ type AttachmentWindow = {
 }
 
 export const providerSupportsImageAttachments = (provider: Provider) =>
-  provider === 'codex' || provider === 'claude'
+  provider === 'codex' || provider === 'claude' || provider === 'gemini'
 
 export const getChatMessageAttachments = (
   message: Pick<ChatMessage, 'meta'> | { meta?: Record<string, string> },

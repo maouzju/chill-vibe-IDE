@@ -11,7 +11,7 @@ import {
   resolveSlashModel,
 } from '../shared/models.ts'
 import { appSettingsSchema } from '../shared/schema.ts'
-import { buildGeminiArgs, createGeminiStreamParser } from '../server/gemini-runtime.ts'
+import { buildGeminiArgs, buildGeminiPrompt, createGeminiStreamParser } from '../server/gemini-runtime.ts'
 
 const baseRequest = {
   provider: 'gemini' as const,
@@ -101,6 +101,21 @@ describe('gemini runtime', () => {
       '--model',
       'gemini-3.8-flash',
     ])
+  })
+
+  // 粘贴图片：Gemini CLI 靠提示词里的 @路径 读图，路径所在目录要用 --include-directories 放行。
+  it('passes pasted images as @path refs and includes their directory', () => {
+    const paths = ['C:\\Users\\demo\\a b\\data\\attachments\\one.png', 'C:\\Users\\demo\\a b\\data\\attachments\\two.png']
+    const args = buildGeminiArgs(baseRequest, paths)
+    const index = args.indexOf('--include-directories')
+    assert.ok(index >= 0)
+    assert.equal(args[index + 1], 'C:/Users/demo/a b/data/attachments')
+    assert.equal(args.filter((arg) => arg === '--include-directories').length, 1)
+    const prompt = buildGeminiPrompt(baseRequest, paths)
+    assert.ok(prompt.startsWith('hello'))
+    assert.ok(prompt.includes('@C:/Users/demo/a\\ b/data/attachments/one.png'))
+    assert.ok(prompt.includes('@C:/Users/demo/a\\ b/data/attachments/two.png'))
+    assert.equal(buildGeminiPrompt(baseRequest), 'hello')
   })
 
   it('maps stream-json events to sink calls', () => {

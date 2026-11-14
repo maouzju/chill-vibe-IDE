@@ -7500,7 +7500,7 @@ function App() {
 
           if (card.provider === 'codex') {
             lines.push(`${languageText.statusSlashMode}: ${languageText.codexSlashMode}`)
-          } else {
+          } else if (card.provider === 'claude') {
             lines.push(`${languageText.statusSlashMode}: ${languageText.claudeSlashMode}`)
           }
 

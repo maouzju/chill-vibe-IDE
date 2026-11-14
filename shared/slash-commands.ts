@@ -194,9 +194,10 @@ export const formatLocalSlashHelp = (
 
   if (provider === 'claude') {
     lines.push('', text.claudeSlashCommandsFooter)
-  } else {
+  } else if (provider === 'codex') {
     lines.push('', text.codexSlashCommandsFooterOne, text.codexSlashCommandsFooterTwo)
   }
+  // gemini 没有原生斜杠命令，只有应用内命令，不套 Codex 页脚。
 
   return lines.join('\n')
 }

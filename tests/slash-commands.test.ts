@@ -48,6 +48,7 @@ describe('slash command helpers', () => {
 
   it('formats help text and slash command descriptions', () => {
     assert.match(formatLocalSlashHelp('claude', 'en'), /Claude native slash commands/i)
+    assert.doesNotMatch(formatLocalSlashHelp('gemini', 'en'), /codex/i)
     assert.equal(
       getSlashCommandDescription('claude', 'cost', 'native', 'en'),
       'show cost and usage summary',

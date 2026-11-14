@@ -194,6 +194,50 @@ describe('automation board persistence', () => {
     })
   })
 
+  // 2026-11-14：持久化只认 claude，其余一律写成 codex，模板选 Gemini 重启就变回 Codex。
+  it('keeps a Gemini composer provider across restart', async () => {
+    const { saveState, loadState } = await import('../server/state-store.ts')
+    const state = buildStateWithBoard()
+    const board = state.columns[0]!.cards['board-1']!
+    board.automationBoard = {
+      ...board.automationBoard!,
+      composeDefaults: {
+        provider: 'gemini',
+        model: 'gemini-3.8-flash',
+        reasoningEffort: '',
+        thinkingEnabled: true,
+        planMode: false,
+        adminAccess: false,
+      },
+    }
+
+    await saveState(state)
+    const loaded = await loadState()
+
+    assert.equal(getAutomationBoard(loaded.columns[0]!.cards['board-1'])?.composeDefaults?.provider, 'gemini')
+  })
+
+  // 同一根因：读档的 isProvider 只认 codex/claude，Gemini 会话卡和列重启后都变成 Codex。
+  it('keeps Gemini chat cards and columns across restart', async () => {
+    const { saveState, loadState } = await import('../server/state-store.ts')
+    const state = buildStateWithBoard()
+    const column = state.columns[0]!
+    column.provider = 'gemini'
+    column.model = 'gemini-3.8-flash'
+    column.cards['gemini-card'] = {
+      ...createCard('Gemini', undefined, 'gemini', 'gemini-3.8-flash'),
+      id: 'gemini-card',
+      messages: [{ id: 'g1', role: 'assistant', content: 'hi', createdAt: timestamp }],
+    }
+
+    await saveState(state)
+    const loaded = await loadState()
+
+    assert.equal(loaded.columns[0]!.provider, 'gemini')
+    assert.equal(loaded.columns[0]!.cards['gemini-card']?.provider, 'gemini')
+    assert.equal(loaded.columns[0]!.cards['gemini-card']?.model, 'gemini-3.8-flash')
+  })
+
   it('drops lane widths that would render a lane invisible', async () => {
     const { saveState, loadState } = await import('../server/state-store.ts')
     const state = buildStateWithBoard()

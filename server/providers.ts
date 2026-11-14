@@ -1216,7 +1216,7 @@ const formatWorkspaceNotDirectory = (language: AppLanguage, workspacePath: strin
     : `工作区路径不是文件夹：${workspacePath}`
 
 const formatProviderUnavailableNote = (provider: Provider) =>
-  `${provider === 'codex' ? 'Codex' : 'Claude'} 命令未安装，或不在 PATH 中。`
+  `${getProviderLabel('zh-CN', provider)} 命令未安装，或不在 PATH 中。`
 
 const formatWorkspaceValidationReason = (
   language: AppLanguage,
@@ -1449,8 +1449,8 @@ const createClaudeTypedToolChatterFilter = () => {
 
 const formatImageAttachmentsUnsupported = (language: AppLanguage, provider: Provider) =>
   language === 'en'
-    ? `${getProviderLabel(language, provider)} does not currently support pasted image attachments in this app. Switch the card to Codex to send images.`
-    : `${getProviderLabel(language, provider)} 当前还不支持在这个应用里发送粘贴的图片。请将卡片切换到 Codex 后再发送。`
+    ? `${getProviderLabel(language, provider)} does not currently support pasted image attachments in this app. Remove the images and try again.`
+    : `${getProviderLabel(language, provider)} 当前还不支持在这个应用里发送粘贴的图片，请移除图片后重试。`
 
 const formatProviderUnexpectedCompletion = (language: AppLanguage, provider: Provider) => {
   const label = getProviderLabel(language, provider)

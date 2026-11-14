@@ -59,6 +59,7 @@ import {
   recentCrashRecoverySchema,
   sessionUsageTotalsSchema,
   wakeTimerModes,
+  providerSchema,
   type AppState,
   type AppStateLoadResponse,
   type AutomationBoardItem,
@@ -389,8 +390,10 @@ const getStateDiskStamp = async (dataDir = getAppDataDir()) => {
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value)
 
+// 曾手抄成 codex || claude，漏了 gemini：读档把 Gemini 卡/列/历史/看板模板全改回 Codex（2026-11-14）。
+// 名单只认 shared/schema.ts 的 providerSchema 一份。
 const isProvider = (value: unknown): value is Provider =>
-  value === 'codex' || value === 'claude'
+  providerSchema.safeParse(value).success
 
 // 曾经手抄一份，漏了自动化看板，读档时看板卡就不被当成工具卡。
 // 名单只在 shared/models.ts 维护一份。
@@ -742,7 +745,8 @@ const normalizePersistedAutomationBoardComposeDefaults = (
   }
 
   return {
-    provider: value.provider === 'claude' ? 'claude' : 'codex',
+    // 曾写成 claude ? claude : codex，看板模板选了 Gemini 重启就被改回 Codex（2026-11-14）。
+    provider: isProvider(value.provider) ? value.provider : 'codex',
     model: typeof value.model === 'string' ? value.model : '',
     reasoningEffort: typeof value.reasoningEffort === 'string' ? value.reasoningEffort : '',
     thinkingEnabled: value.thinkingEnabled !== false,

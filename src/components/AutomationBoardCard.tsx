@@ -1747,7 +1747,7 @@ const AutomationBoardCardView = (props: AutomationBoardCardProps) => {
                             </span>
                             {command.source === 'skill' && command.skillProvider ? (
                               <span className={`slash-command-badge is-provider-${command.skillProvider}`}>
-                                {command.skillProvider === 'codex' ? 'Codex' : 'Claude'}
+                                {command.skillProvider === 'codex' ? 'Codex' : command.skillProvider === 'gemini' ? 'Gemini' : 'Claude'}
                               </span>
                             ) : null}
                           </span>

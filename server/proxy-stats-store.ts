@@ -2,7 +2,7 @@ import fs from 'node:fs'
 import fsp from 'node:fs/promises'
 import path from 'node:path'
 
-import type { Provider } from '../shared/schema.js'
+import { providerSchema, type Provider } from '../shared/schema.js'
 import { getAppDataDir } from './app-paths.js'
 
 const PROXY_STATS_STORE_FILE = 'proxy-stats.json'
@@ -68,8 +68,10 @@ const createEmptyCounts = (): ProxyStatsCounts => ({
   recoveryFailures: 0,
 })
 
+// 曾手抄成 codex || claude，漏了 gemini：读档把 Gemini 卡/列/历史/看板模板全改回 Codex（2026-11-14）。
+// 名单只认 shared/schema.ts 的 providerSchema 一份。
 const isProvider = (value: unknown): value is Provider =>
-  value === 'codex' || value === 'claude'
+  providerSchema.safeParse(value).success
 
 const isProxyStatsEvent = (value: unknown): value is ProxyStatsEvent =>
   typeof value === 'string' && proxyStatsEventValues.includes(value as ProxyStatsEvent)

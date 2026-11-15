@@ -221,3 +221,5 @@ Guardrails:
 
 - `Use $release-pipeline to audit this checkout, bump the version, and publish a GitHub release if it is safe.`
 - `Use $release-pipeline for a full one-stop release: inspect for leaks, verify, commit, push, tag, package, and release.`
+
+- **v0.21.27（2026-11-14）补充。** 全量发布门禁中候选 Playwright 比基线多出 6 个失败（其中包含主题快照/计数变更和并发时序项），不能只看总失败数；应先按测试标题做基线集合差分，再对候选新增项用窄范围、重复运行验证。此次 8 项窄复核全部通过，基线仍稳定保留 26 项既有视觉失败，发布说明必须明确该豁免边界。

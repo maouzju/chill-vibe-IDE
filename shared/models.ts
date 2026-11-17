@@ -2,7 +2,7 @@ import type { LocalModelEntry, ModelPickerCustomModel, Provider } from './schema
 
 export const DEFAULT_CODEX_MODEL = 'gpt-6-sol'
 export const DEFAULT_CLAUDE_MODEL = 'claude-opus-5-5'
-// 2026-10-14 依据 ai.google.dev/gemini-api/docs/models：3.8 Flash 为最新稳定通用档（docs/specs/gemini-cli-provider）。
+// 2026-11-14：默认仍保持 Gemini 3.8 Flash；更新的 Gemini 4 型号进入可选列表。
 export const DEFAULT_GEMINI_MODEL = 'gemini-3.8-flash'
 export const DEFAULT_GIT_AGENT_MODEL = 'gpt-6-luna medium'
 /**
@@ -265,7 +265,19 @@ export const MODEL_OPTIONS: ModelOption[] = [
     hiddenFromPicker: true,
   },
   {
-    // 2026-10-13 上架的最新旗舰（Gemini API 标为 New Stable）；部分账号仍在灰度，失败时服务端会报 404。
+    // 2026-11-14：Google Gemini API 模型目录中的最新通用型号。
+    label: 'Gemini 4 Carbon',
+    provider: 'gemini',
+    model: 'gemini-4-carbon',
+    aliases: ['gemini-4-carbon', 'carbon', '4-carbon'],
+  },
+  {
+    label: 'Gemini 4 Hydrogen',
+    provider: 'gemini',
+    model: 'gemini-4-hydrogen',
+    aliases: ['gemini-4-hydrogen', 'hydrogen', '4-hydrogen'],
+  },
+  {
     label: 'Gemini 4 Argon',
     provider: 'gemini',
     model: 'gemini-4-argon',
@@ -285,10 +297,22 @@ export const MODEL_OPTIONS: ModelOption[] = [
     aliases: ['gemini-3.8-flash', 'flash', '3.8-flash', '3.8'],
   },
   {
+    label: 'Gemini 3 Flash',
+    provider: 'gemini',
+    model: 'gemini-3-flash-preview',
+    aliases: ['gemini-3-flash-preview', '3-flash', 'flash-3'],
+  },
+  {
     label: 'Gemini 3.5 Flash Lite',
     provider: 'gemini',
     model: 'gemini-3.5-flash-lite',
     aliases: ['gemini-3.5-flash-lite', 'flash-lite', 'lite'],
+  },
+  {
+    label: 'Gemini 3.1 Flash Lite',
+    provider: 'gemini',
+    model: 'gemini-3.1-flash-lite',
+    aliases: ['gemini-3.1-flash-lite', '3.1-flash-lite'],
   },
   {
     label: 'Gemini 3.6 Flash',
@@ -708,6 +732,320 @@ export const isValidCustomPickerModelName = (model: string) => {
   return customModelNamePattern.test(trimmed) && !isToolCardModel(trimmed) && !isLocalModelToken(trimmed)
 }
 
+const VARIANT_EFFORT_ORDER: Record<string, number> = {
+  ultra: 1,
+  max: 2,
+  xhigh: 3,
+  high: 4,
+  medium: 5,
+  low: 6,
+  minimal: 7,
+  auto: 8,
+}
+
+type ParsedPickerModelSeries = {
+  series: string
+  version: number[]
+  variantRank: number
+  variantOrder: number
+}
+
+const stripModelQualifierSuffixes = (raw: string) => {
+  let core = raw
+  let isPreview = false
+  let hasThinking = false
+  let effortOrder = 0
+  let hasSnapshot = false
+
+  while (true) {
+    const snapshotMatch = core.match(/^(.+)-(\d{8})$/)
+    if (snapshotMatch) {
+      core = snapshotMatch[1]!
+      hasSnapshot = true
+      continue
+    }
+    const previewMatch = core.match(/^(.+)-preview$/)
+    if (previewMatch) {
+      core = previewMatch[1]!
+      isPreview = true
+      continue
+    }
+    const thinkingEffortMatch = core.match(
+      /^(.+)-thinking-(minimal|low|medium|high|xhigh|max|ultra|auto)$/,
+    )
+    if (thinkingEffortMatch) {
+      core = thinkingEffortMatch[1]!
+      hasThinking = true
+      effortOrder = VARIANT_EFFORT_ORDER[thinkingEffortMatch[2]!] ?? 0
+      continue
+    }
+    const thinkingMatch = core.match(/^(.+)-thinking$/)
+    if (thinkingMatch) {
+      core = thinkingMatch[1]!
+      hasThinking = true
+      continue
+    }
+    const effortMatch = core.match(/^(.+)-(minimal|low|medium|high|xhigh|max|ultra)$/)
+    if (effortMatch) {
+      core = effortMatch[1]!
+      hasThinking = true
+      effortOrder = VARIANT_EFFORT_ORDER[effortMatch[2]!] ?? 0
+      continue
+    }
+    break
+  }
+
+  const variantRank = hasSnapshot ? 3 : hasThinking ? 2 : isPreview ? 1 : 0
+  return { core, variantRank, variantOrder: effortOrder }
+}
+
+const parsePickerModelSeriesCore = (provider: Provider, model: string, keepQualifiers: boolean): ParsedPickerModelSeries | null => {
+  let lower = model.trim().toLowerCase().replace(/^models\//, '')
+  if (provider === 'claude') lower = lower.replace(/^anthropic\//, '')
+  else if (provider === 'codex') lower = lower.replace(/^openai\//, '')
+  else if (provider === 'gemini') lower = lower.replace(/^google\//, '')
+
+  // 效果档 / 思考后缀可能就是型号名本身（如 gemini-4-ultra），剥掉后解析失败时由调用方用原名重试。
+  const { core, variantRank, variantOrder } = keepQualifiers
+    ? { core: lower, variantRank: 0, variantOrder: 0 }
+    : stripModelQualifierSuffixes(lower)
+
+  if (provider === 'claude') {
+    const modern = core.match(/^claude-([a-z]+)-(\d+)(?:[.-](\d+))?$/)
+    if (modern) {
+      return {
+        series: `claude:${modern[1]}`,
+        version: [Number(modern[2]), Number(modern[3] ?? 0)],
+        variantRank,
+        variantOrder,
+      }
+    }
+    const legacy = core.match(/^claude-(\d+)(?:[.-](\d+))?-([a-z]+)$/)
+    if (legacy) {
+      return {
+        series: `claude:${legacy[3]}`,
+        version: [Number(legacy[1]), Number(legacy[2] ?? 0)],
+        variantRank,
+        variantOrder,
+      }
+    }
+    return null
+  }
+
+  if (provider === 'codex') {
+    const gpt = core.match(/^gpt-(\d+(?:\.\d+)?)(?:-([a-z][a-z0-9-]*))?$/)
+    if (gpt) {
+      const [major, minor = 0] = gpt[1]!.split('.').map(Number)
+      return {
+        series: `codex:${gpt[2] ?? 'base'}`,
+        version: [major!, minor],
+        variantRank,
+        variantOrder,
+      }
+    }
+    const oSeries = core.match(/^o(\d+)(?:-([a-z][a-z0-9-]*))?$/)
+    if (oSeries) {
+      return {
+        series: `codex:o-${oSeries[2] ?? 'base'}`,
+        version: [Number(oSeries[1]), 0],
+        variantRank,
+        variantOrder,
+      }
+    }
+    return null
+  }
+
+  const gemini = core.match(/^gemini-(\d+(?:\.\d+)?)-([a-z][a-z0-9-]*)$/)
+  if (gemini) {
+    const [major, minor = 0] = gemini[1]!.split('.').map(Number)
+    return {
+      series: `gemini:${gemini[2]}`,
+      version: [major!, minor],
+      variantRank,
+      variantOrder,
+    }
+  }
+  return null
+}
+
+const parsePickerModelSeries = (provider: Provider, model: string): ParsedPickerModelSeries | null =>
+  parsePickerModelSeriesCore(provider, model, false) ?? parsePickerModelSeriesCore(provider, model, true)
+
+const compareModelVersions = (left: number[], right: number[]) => {
+  for (let index = 0; index < Math.max(left.length, right.length); index += 1) {
+    const diff = (left[index] ?? 0) - (right[index] ?? 0)
+    if (diff !== 0) return diff
+  }
+  return 0
+}
+
+const compareModelVersionsDesc = (left: number[], right: number[]) => compareModelVersions(right, left)
+
+const sortProviderPickerOptions = (provider: Provider, items: ModelOption[]): ModelOption[] => {
+  if (items.length <= 1) return items
+
+  // 从整份内置目录（含已下架项）采集该 provider 下已知系列的顺序与最高主版本，
+  // 这样即使某系列当前主推型号被隐藏，同系列的新型号或变体依然能锚定到正确位置。
+  const catalogIndexByKey = new Map<string, number>()
+  const builtInSeriesMeta = new Map<
+    string,
+    { orderIndex: number; maxMajor: number; entries: { key: string; builtInRank: number; version: number[] }[] }
+  >()
+  const builtInSeriesOrder: { series: string; maxMajor: number }[] = []
+
+  for (const option of MODEL_OPTIONS) {
+    if (option.provider !== provider || option.usesConfiguredDefault || TOOL_CARD_MODELS.has(option.model)) {
+      continue
+    }
+    const key = getModelPickerOptionKey(option)
+    catalogIndexByKey.set(key, catalogIndexByKey.size)
+    const parsed = parsePickerModelSeries(provider, option.model)
+    if (!parsed) continue
+    const major = parsed.version[0] ?? 0
+    const existing = builtInSeriesMeta.get(parsed.series)
+    if (!existing) {
+      const orderIndex = builtInSeriesOrder.length
+      builtInSeriesMeta.set(parsed.series, {
+        orderIndex,
+        maxMajor: major,
+        entries: [{ key, builtInRank: 0, version: parsed.version }],
+      })
+      builtInSeriesOrder.push({ series: parsed.series, maxMajor: major })
+    } else {
+      existing.entries.push({ key, builtInRank: existing.entries.length, version: parsed.version })
+      if (major > existing.maxMajor) {
+        existing.maxMajor = major
+        builtInSeriesOrder[existing.orderIndex]!.maxMajor = major
+      }
+    }
+  }
+
+  const resolveKnownSeriesPrefix = (series: string): string => {
+    if (builtInSeriesMeta.has(series)) return series
+    const prefix = `${provider}:`
+    if (!series.startsWith(prefix)) return series
+    const suffix = series.slice(prefix.length)
+    let bestMatch = ''
+    for (const candidate of builtInSeriesMeta.keys()) {
+      const candidateSuffix = candidate.slice(prefix.length)
+      if (suffix.startsWith(`${candidateSuffix}-`) && candidateSuffix.length > bestMatch.length) {
+        bestMatch = candidateSuffix
+      }
+    }
+    return bestMatch ? `${prefix}${bestMatch}` : series
+  }
+
+  const customSeriesFirstIndex = new Map<string, number>()
+  const decorated = items.map((option, index) => {
+    const key = getModelPickerOptionKey(option)
+    const catalogIndex = catalogIndexByKey.get(key)
+    const rawParsed =
+      parsePickerModelSeries(provider, option.model) ??
+      (option.label && option.label !== option.model
+        ? parsePickerModelSeries(provider, canonicalizeModelAlias(option.label))
+        : null)
+    const parsed = rawParsed
+      ? { ...rawParsed, series: resolveKnownSeriesPrefix(rawParsed.series) }
+      : null
+
+    if (!parsed) {
+      return {
+        option,
+        primaryRank: Number.MAX_SAFE_INTEGER,
+        tierGroupOrder: index,
+        slotNumber: 0,
+        version: [] as number[],
+        variantRank: 0,
+        variantOrder: 0,
+        tieBreaker: catalogIndex ?? items.length + index,
+      }
+    }
+
+    const builtIn = builtInSeriesMeta.get(parsed.series)
+    if (builtIn) {
+      const catalogMatch = builtIn.entries.find((entry) => entry.key === key)
+      let slotNumber: number
+      if (catalogMatch) {
+        slotNumber = catalogMatch.builtInRank * 2
+      } else {
+        const sameVersionMatch = builtIn.entries.find(
+          (entry) => compareModelVersions(entry.version, parsed.version) === 0,
+        )
+        if (sameVersionMatch) {
+          slotNumber = sameVersionMatch.builtInRank * 2 + 1
+        } else {
+          const olderEntry = builtIn.entries.find(
+            (entry) => compareModelVersions(entry.version, parsed.version) < 0,
+          )
+          slotNumber = olderEntry ? olderEntry.builtInRank * 2 - 1 : builtIn.entries.length * 2 + 1
+        }
+      }
+      return {
+        option,
+        primaryRank: builtIn.orderIndex * 2,
+        tierGroupOrder: 0,
+        slotNumber,
+        version: parsed.version,
+        variantRank: parsed.variantRank,
+        variantOrder: parsed.variantOrder,
+        tieBreaker: catalogIndex ?? items.length + index,
+      }
+    }
+
+    // 新系列（不在内置目录里）：按主版本放到同代内置系列之后、更低代际之前，
+    // 同一新系列内的多个变体共享同一个 tierGroupOrder 以保证挨在一起。
+    const major = parsed.version[0] ?? 0
+    let lastAnchorIndex = -1
+    for (let i = 0; i < builtInSeriesOrder.length; i += 1) {
+      if (builtInSeriesOrder[i]!.maxMajor >= major) {
+        lastAnchorIndex = i
+      }
+    }
+
+    let customGroup = customSeriesFirstIndex.get(parsed.series)
+    if (customGroup === undefined) {
+      customGroup = customSeriesFirstIndex.size
+      customSeriesFirstIndex.set(parsed.series, customGroup)
+    }
+
+    return {
+      option,
+      primaryRank: lastAnchorIndex >= 0 ? lastAnchorIndex * 2 + 1 : -1,
+      tierGroupOrder: customGroup,
+      slotNumber: 0,
+      version: parsed.version,
+      variantRank: parsed.variantRank,
+      variantOrder: parsed.variantOrder,
+      tieBreaker: index,
+    }
+  })
+
+  decorated.sort((left, right) => {
+    if (left.primaryRank !== right.primaryRank) {
+      return left.primaryRank - right.primaryRank
+    }
+    if (left.tierGroupOrder !== right.tierGroupOrder) {
+      return left.tierGroupOrder - right.tierGroupOrder
+    }
+    if (left.slotNumber !== right.slotNumber) {
+      return left.slotNumber - right.slotNumber
+    }
+    const versionDiff = compareModelVersionsDesc(left.version, right.version)
+    if (versionDiff !== 0) {
+      return versionDiff
+    }
+    if (left.variantRank !== right.variantRank) {
+      return left.variantRank - right.variantRank
+    }
+    if (left.variantOrder !== right.variantOrder) {
+      return left.variantOrder - right.variantOrder
+    }
+    return left.tieBreaker - right.tieBreaker
+  })
+
+  return decorated.map((entry) => entry.option)
+}
+
 export const buildModelPickerOptions = ({
   localModelEntries = [],
   customization,
@@ -730,12 +1068,38 @@ export const buildModelPickerOptions = ({
     options.push(option)
   }
 
-  // 本地条目与自定义项排在最前：它们是用户自己配的，找起来该比内置模型更快。
+  // 本地条目代表本机端点而非云端同系列型号，继续排在最前。
   if (mode === 'chat') {
     buildLocalModelOptions(localModelEntries).forEach(push)
   }
+
+  // 各 provider 的「跟随默认」占位项保持在具体型号之前。
+  if (mode === 'chat') {
+    for (const option of MODEL_OPTIONS) {
+      if (!option.usesConfiguredDefault) continue
+      if (
+        isModelPickerOptionEnabled(option, customization?.visibility) ||
+        getModelPickerOptionKey(option) === currentKey
+      ) {
+        push(option)
+      }
+    }
+  }
+
+  // 自定义项、当前未入库型号与已启用内置项按 provider + 同系列合并排列，不再把自定义项整体堆在顶部。
+  const providerPool: Record<Provider, ModelOption[]> = { codex: [], claude: [], gemini: [] }
+  const poolKeys = new Set<string>()
+  const pushToPool = (option: ModelOption) => {
+    const key = getModelPickerOptionKey(option)
+    if (seen.has(key) || poolKeys.has(key) || option.usesConfiguredDefault || TOOL_CARD_MODELS.has(option.model)) {
+      return
+    }
+    poolKeys.add(key)
+    providerPool[option.provider].push(option)
+  }
+
   for (const entry of customization?.customModels ?? []) {
-    push({ provider: entry.provider, model: entry.model, label: entry.label || entry.model })
+    pushToPool({ provider: entry.provider, model: entry.model, label: entry.label || entry.model })
   }
   // 当前卡模型不在目录里（`/model` 手打或设置里填的自定义名）：临时补一项，否则按钮显示
   // 与列表对不上、滚轮也找不到起点。本地令牌例外——条目被删时不该把令牌暴露给用户。
@@ -743,16 +1107,21 @@ export const buildModelPickerOptions = ({
     (option) => option.provider === current.provider && option.model === currentModel,
   )
   if (currentModel && !catalogued && !isLocalModelToken(currentModel)) {
-    push({ provider: current.provider, model: currentModel, label: currentModel })
+    pushToPool({ provider: current.provider, model: currentModel, label: currentModel })
   }
-  // 当前选中的内置项即使被关掉/已下架也原位保留（pitfall #394 同款），不恢复其他下架项。
+  // 当前选中的内置项即使被关掉/已下架也保留，不恢复其他下架项。
   for (const option of MODEL_OPTIONS) {
+    if (option.usesConfiguredDefault || TOOL_CARD_MODELS.has(option.model)) continue
     if (
       isModelPickerOptionEnabled(option, customization?.visibility) ||
-      (getModelPickerOptionKey(option) === currentKey && !TOOL_CARD_MODELS.has(option.model))
+      getModelPickerOptionKey(option) === currentKey
     ) {
-      push(option)
+      pushToPool(option)
     }
+  }
+
+  for (const provider of ['codex', 'claude', 'gemini'] as const) {
+    sortProviderPickerOptions(provider, providerPool[provider]).forEach(push)
   }
 
   return options

@@ -8,8 +8,8 @@ Chill Vibe 只支持 `codex` / `claude` 两个本地 CLI。用户要求接入 Go
 2. 流式输出：解析 `gemini -o stream-json` 的 JSONL 事件（init/message/tool_use/tool_result/error/result），助手文本增量显示、工具调用以活动条显示、result 结束回合并记录 token 用量。
 3. 续聊：`init.session_id` 回写为卡片 sessionId，下一轮用 `--resume <session_id>` 续接。
 4. 停止：可中断（杀子进程），不阻塞其它卡。
-5. 模型目录（2026-10-14 依据 ai.google.dev/gemini-api/docs/models）：
-   - 选择器可见：Gemini 4 Argon（`gemini-4-argon`）、Gemini 3.1 Pro（`gemini-3.1-pro-preview`）、Gemini 3.8 Flash（`gemini-3.8-flash`，默认）、Gemini 3.5 Flash Lite（`gemini-3.5-flash-lite`）。
+5. 模型目录（2026-11-14 依据 ai.google.dev/gemini-api/docs/models）：
+   - 选择器可见：Gemini 4 Carbon（`gemini-4-carbon`）、Gemini 4 Hydrogen（`gemini-4-hydrogen`）、Gemini 4 Argon（`gemini-4-argon`）、Gemini 3.1 Pro（`gemini-3.1-pro-preview`）、Gemini 3 Flash（`gemini-3-flash-preview`）、Gemini 3.8 Flash（`gemini-3.8-flash`，默认）、Gemini 3.5 Flash Lite（`gemini-3.5-flash-lite`）、Gemini 3.1 Flash Lite（`gemini-3.1-flash-lite`）。
    - 隐藏但保留别名：`gemini-3.6-flash`、`gemini-2.5-pro`、`gemini-2.5-flash`。
 6. 设置：默认模型 `requestModels.gemini`、系统提示词/接口配置（`providerProfiles.gemini`，填 key 时注入 `GEMINI_API_KEY`，填 baseUrl 时注入 `GOOGLE_GEMINI_BASE_URL`）。
 7. 环境检查 / provider 状态列出 Gemini CLI 是否安装。

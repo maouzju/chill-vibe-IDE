@@ -208,3 +208,51 @@ test('settings toggles built-ins and adds / removes custom models', async ({ pag
   await expect(section.locator('.model-picker-custom-row')).toHaveCount(0)
   await expect.poll(() => api.current().settings.modelPickerCustomModels).toEqual([])
 })
+
+test('dropdown groups custom and built-in models by provider and series', async ({ page }) => {
+  await mockApis(
+    page,
+    createSeededState({
+      modelPickerVisibility: {
+        'codex:': false,
+        'claude:': false,
+        'gemini:': false,
+        'codex:gpt-6-luna': false,
+        'codex:gpt-6-astra': false,
+        'gemini:gemini-3.1-pro-preview': false,
+        'gemini:gemini-3-flash-preview': false,
+        'gemini:gemini-3.8-flash': false,
+        'gemini:gemini-3.5-flash-lite': false,
+        'gemini:gemini-3.1-flash-lite': false,
+      },
+      modelPickerCustomModels: [
+        { id: 'c1', provider: 'claude', model: 'claude-fable-5-2', label: 'claude-fable-5-2' },
+        { id: 'c2', provider: 'gemini', model: 'gemini-4-hydrogen', label: 'gemini-4-hydrogen' },
+        { id: 'c3', provider: 'gemini', model: 'gemini-4-carbon', label: 'gemini-4-carbon' },
+        { id: 'c4', provider: 'gemini', model: 'gemini-4-argon-thinking-high', label: 'Gemini 4 Argon Thinking High' },
+        { id: 'c5', provider: 'gemini', model: 'gemini-4-argon-thinking-low', label: 'Gemini 4 Argon Thinking Low' },
+        { id: 'c6', provider: 'gemini', model: 'gemini-4-argon-thinking-medium', label: 'Gemini 4 Argon Thinking Medium' },
+      ],
+    }),
+  )
+  await page.goto(appUrl)
+
+  const modelSelect = page.locator('.model-select').first()
+  await modelSelect.click()
+  const menu = page.locator('.model-dropdown-menu')
+  await expect(menu).toBeVisible()
+  await expect(menu.locator('.model-dropdown-option')).toHaveText([
+    'GPT-6.1 Sol',
+    'GPT-6 Luna',
+    'claude-fable-5-2',
+    'Opus 5.5',
+    'Sonnet 5.5',
+    'Haiku 5.5',
+    'gemini-4-carbon',
+    'gemini-4-hydrogen',
+    'Gemini 4 Argon',
+    'Gemini 4 Argon Thinking High',
+    'Gemini 4 Argon Thinking Medium',
+    'Gemini 4 Argon Thinking Low',
+  ])
+})

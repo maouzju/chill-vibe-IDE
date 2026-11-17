@@ -35,6 +35,7 @@ const EXTERNAL_PROJECT_NAMES = new Set([
 ])
 const ALLOWED_SYNTHETIC_ARTIFACTS = new Set([
   'tests/fixtures/claude-unsolicited-real-wake.jsonl',
+  'tests/fixtures/claude-unsolicited-failed-wake.jsonl',
 ])
 const BLOCKED_ARTIFACT_SEGMENTS = [
   '.codex-artifacts',

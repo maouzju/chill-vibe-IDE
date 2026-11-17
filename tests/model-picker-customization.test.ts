@@ -78,7 +78,7 @@ describe('model picker customization (SPEC model-picker-customization)', () => {
     assert.deepEqual(indexes, [...indexes].sort((a, b) => a - b))
   })
 
-  it('orders local entries, then custom entries, then built-ins, deduping by key', () => {
+  it('keeps local entries first, groups custom entries with their provider series, and dedupes by key', () => {
     const options = buildModelPickerOptions({
       localModelEntries: [
         { id: 'qwen', label: 'Qwen', harness: 'codex', baseUrl: '', apiKey: '', model: 'qwen3' },
@@ -87,17 +87,138 @@ describe('model picker customization (SPEC model-picker-customization)', () => {
         customModels: [
           { id: 'c1', provider: 'codex', model: 'gpt-5.4', label: 'GPT 5.4' },
           // 与内置项重名：不重复出现，按自定义项（先到）保留
-          { id: 'c2', provider: visibleBuiltIn.provider, model: visibleBuiltIn.model, label: '' },
+          { id: 'c2', provider: visibleBuiltIn.provider, model: visibleBuiltIn.model, label: 'Custom Sol' },
         ],
       },
       current: { provider: 'codex', model: 'gpt-5.4' },
     })
     const keys = keysOf(options)
     assert.equal(keys[0], `codex:${buildLocalModelToken('qwen')}`)
-    assert.equal(keys[1], 'codex:gpt-5.4')
-    assert.equal(options[1]?.label, 'GPT 5.4')
+    assert.equal(keys.indexOf('codex:gpt-5.4') > keys.indexOf('codex:gpt-6-astra'), true)
+    assert.equal(keys.indexOf('codex:gpt-5.4') < keys.indexOf('claude:claude-opus-5-5'), true)
+    assert.equal(options.find((entry) => entry.model === 'gpt-5.4')?.label, 'GPT 5.4')
+    assert.equal(options.find((entry) => entry.model === visibleBuiltIn.model)?.label, 'Custom Sol')
     assert.equal(new Set(keys).size, keys.length)
     assert.equal(keys.filter((entry) => entry === getModelPickerOptionKey(visibleBuiltIn)).length, 1)
+  })
+
+  it('groups same-series custom and built-in models together in logical order', () => {
+    const options = buildModelPickerOptions({
+      customization: {
+        visibility: {
+          'codex:': false,
+          'claude:': false,
+          'gemini:': false,
+          'codex:gpt-6-luna': false,
+          'codex:gpt-6-astra': false,
+          'gemini:gemini-3.1-pro-preview': false,
+          'gemini:gemini-3-flash-preview': false,
+          'gemini:gemini-3.8-flash': false,
+          'gemini:gemini-3.5-flash-lite': false,
+          'gemini:gemini-3.1-flash-lite': false,
+        },
+        customModels: [
+          { id: '1', provider: 'claude', model: 'claude-fable-5-2', label: 'claude-fable-5-2' },
+          { id: '2', provider: 'gemini', model: 'gemini-4-hydrogen', label: 'gemini-4-hydrogen' },
+          { id: '3', provider: 'gemini', model: 'gemini-4-carbon', label: 'gemini-4-carbon' },
+          { id: '4', provider: 'gemini', model: 'gemini-4-argon-thinking-high', label: 'Gemini 4 Argon Thinking High' },
+          { id: '5', provider: 'gemini', model: 'gemini-4-argon-thinking-low', label: 'Gemini 4 Argon Thinking Low' },
+          { id: '6', provider: 'gemini', model: 'gemini-4-argon-thinking-medium', label: 'Gemini 4 Argon Thinking Medium' },
+        ],
+      },
+      current: { provider: 'gemini', model: 'gemini-4-argon' },
+    })
+
+    assert.deepEqual(
+      options.map((entry) => entry.label),
+      [
+        'GPT-6.1 Sol',
+        'claude-fable-5-2',
+        'Opus 5.5',
+        'Sonnet 5.5',
+        'Haiku 5.5',
+        'gemini-4-carbon',
+        'gemini-4-hydrogen',
+        'Gemini 4 Argon',
+        'Gemini 4 Argon Thinking High',
+        'Gemini 4 Argon Thinking Medium',
+        'Gemini 4 Argon Thinking Low',
+      ],
+    )
+  })
+
+  it('places newer/older discovered versions adjacent to their series and uncatalogued current models with their provider', () => {
+    const options = buildModelPickerOptions({
+      customization: {
+        visibility: { 'codex:': false, 'claude:': false, 'gemini:': false },
+        customModels: [
+          { id: '1', provider: 'gemini', model: 'gemini-3.9-flash', label: 'Gemini 3.9 Flash' },
+          { id: '2', provider: 'claude', model: 'claude-opus-6', label: 'Opus 6' },
+          { id: '3', provider: 'claude', model: 'claude-opus-4-8', label: 'Opus 4.8' },
+          { id: '4', provider: 'codex', model: 'gpt-6.2-sol', label: 'GPT-6.2 Sol' },
+          { id: '5', provider: 'gemini', model: 'gemini-4-neon', label: 'Gemini 4 Neon' },
+        ],
+      },
+      current: { provider: 'codex', model: 'deepseek-v4' },
+    })
+
+    assert.deepEqual(
+      options.map((entry) => entry.model),
+      [
+        'gpt-6.2-sol',
+        'gpt-6.1-sol',
+        'gpt-6-luna',
+        'gpt-6-astra',
+        'deepseek-v4',
+        'claude-fable-5-2',
+        'claude-opus-6',
+        'claude-opus-5-5',
+        'claude-opus-4-8',
+        'claude-sonnet-5-5',
+        'claude-haiku-5-5',
+        'gemini-4-carbon',
+        'gemini-4-hydrogen',
+        'gemini-4-argon',
+        'gemini-4-neon',
+        'gemini-3.1-pro-preview',
+        'gemini-3.9-flash',
+        'gemini-3.8-flash',
+        'gemini-3-flash-preview',
+        'gemini-3.5-flash-lite',
+        'gemini-3.1-flash-lite',
+      ],
+    )
+  })
+
+  it('keeps a series newest-first: a custom 3.7 Flash sorts between 3.8 Flash and 3 Flash', () => {
+    const models = buildModelPickerOptions({
+      customization: {
+        visibility: { 'codex:': false, 'claude:': false, 'gemini:': false },
+        customModels: [{ id: '1', provider: 'gemini', model: 'gemini-3.7-flash', label: 'Gemini 3.7 Flash' }],
+      },
+      current: { provider: 'codex', model: 'deepseek-v4' },
+    }).map((entry) => entry.model)
+
+    const at = (model: string) => models.indexOf(model)
+    assert.ok(at('gemini-3.8-flash') >= 0 && at('gemini-3.7-flash') >= 0 && at('gemini-3-flash-preview') >= 0)
+    assert.ok(at('gemini-3.8-flash') < at('gemini-3.7-flash'), 'custom 3.7 must not sort above 3.8')
+    assert.ok(at('gemini-3.7-flash') < at('gemini-3-flash-preview'), 'custom 3.7 must sort above 3 Flash')
+  })
+
+  it('treats a trailing tier word that is the model name itself (gemini-4-ultra) as part of the series', () => {
+    const models = buildModelPickerOptions({
+      customization: {
+        visibility: { 'codex:': false, 'claude:': false, 'gemini:': false },
+        customModels: [{ id: '1', provider: 'gemini', model: 'gemini-4-ultra', label: 'Gemini 4 Ultra' }],
+      },
+      current: { provider: 'codex', model: 'deepseek-v4' },
+    }).map((entry) => entry.model)
+
+    assert.ok(models.indexOf('gemini-4-ultra') >= 0, 'custom gemini-4-ultra must be listed')
+    assert.ok(
+      models.indexOf('gemini-4-ultra') < models.indexOf('gemini-3.1-pro-preview'),
+      'gemini-4-ultra belongs with the Gemini 4 group, not at the bottom',
+    )
   })
 
   it('adds a temporary option for an uncatalogued current model', () => {

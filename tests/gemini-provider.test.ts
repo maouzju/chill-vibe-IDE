@@ -45,14 +45,21 @@ describe('gemini provider catalog', () => {
       .filter((option) => isModelPickerOptionVisible(option) && option.model)
       .map((option) => option.model)
     assert.deepEqual(visible, [
+      'gemini-4-carbon',
+      'gemini-4-hydrogen',
       'gemini-4-argon',
       'gemini-3.1-pro-preview',
       'gemini-3.8-flash',
+      'gemini-3-flash-preview',
       'gemini-3.5-flash-lite',
+      'gemini-3.1-flash-lite',
     ])
     assert.equal(DEFAULT_GEMINI_MODEL, 'gemini-3.8-flash')
     assert.equal(getDefaultModel('gemini'), 'gemini-3.8-flash')
+    assert.equal(resolveSlashModel('gemini', 'carbon'), 'gemini-4-carbon')
+    assert.equal(resolveSlashModel('gemini', 'hydrogen'), 'gemini-4-hydrogen')
     assert.equal(resolveSlashModel('gemini', 'argon'), 'gemini-4-argon')
+    assert.equal(resolveSlashModel('gemini', '3-flash'), 'gemini-3-flash-preview')
     assert.equal(resolveSlashModel('gemini', 'flash'), 'gemini-3.8-flash')
     assert.equal(getProviderLabel('en', 'gemini'), 'Gemini')
   })

@@ -102,6 +102,30 @@ export const getRecoverableStreamRetryLimit = (configuredMaxRetries?: number) =>
   return defaultRecoverableStreamRetryLimit
 }
 
+const recoverableStreamRetryFastAttempts = 6
+const recoverableStreamRetryFastCapMs = 1500
+const recoverableStreamRetryBackoffCapMs = 5 * 60 * 1000
+
+// 症状：中转站长时间故障时同一张卡被机关枪式续传，每次新开会话或克隆整份存档。
+// 根因：2026-11-16 实证 resilientProxyMaxRetries = -1（无限）而两次续传之间封顶 1.5 秒；
+//   02:46~05:16 中转站持续吐空 200，同一张卡重试 639 次（约每 14 秒一次，每次带 3 万字种子），
+//   两周内 2111 个续传冷启动会话有 1685 个零输出。
+// 被否决：把无限改成有上限——用户要的是「不出永久失败」（pitfall #401）；改的是节奏不是次数。
+//   前 6 次保持原节奏，短抖动照旧秒接；封顶 5 分钟与兜底续传的起步间隔对齐。
+//   连续失败计数在出现真实进展时清零（shouldResetStreamRecoveryAttemptsFor*），退避随之复位。
+export const getRecoverableStreamRetryDelayMs = (retryCount: number, countsAgainstBudget: boolean) => {
+  if (!countsAgainstBudget) {
+    return 250
+  }
+
+  if (retryCount < recoverableStreamRetryFastAttempts) {
+    return Math.min(recoverableStreamRetryFastCapMs, 250 * (retryCount + 1))
+  }
+
+  const doublings = Math.min(retryCount - recoverableStreamRetryFastAttempts + 1, 20)
+  return Math.min(recoverableStreamRetryBackoffCapMs, recoverableStreamRetryFastCapMs * 2 ** doublings)
+}
+
 export const shouldResetStreamRecoveryAttemptsForText = (content: string) => {
   const normalized = content.trim()
 

@@ -189,6 +189,7 @@ Add/extend a `tests/theme-check.spec.ts` snapshot for `StreamingIndicator` with 
 ## 2026-10-16 fallback retry design
 
 - `fallback-retry.ts` owns the pure backoff schedule and consecutive-error normalization helpers; the schedule is 5, 10, 15, 20, 25, then 30 minutes and remains in renderer memory only.
+- `stream-recovery.ts` `getRecoverableStreamRetryDelayMs` owns the delay between recoverable (in-run) retries: 250 ms steps up to 1.5 s for the first six consecutive failures, then doubling up to a 5-minute cap. The streak resets on real progress. Added 2026-11-16 after an unlimited-retry card issued 639 attempts in 2.5 hours during a relay outage (AGENTS.md Known Pitfalls #427).
 - `ChatCard` schedules fallback recovery through the existing manual-recovery path after a final error, while user stops, new sends, normal completion, and native-completed checks cancel/reset the pending timer.
 - Recovery banners use the existing localized stream-recovery copy and include the next retry time/attempt; no error path opens Settings or Routing automatically.
 - `workflow-failure-wake.ts` derives a single parent-card wake-up from workflow counts, deferring while the parent is streaming and deduplicating by workflow identity.

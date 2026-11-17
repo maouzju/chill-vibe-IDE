@@ -134,3 +134,8 @@ Verification record (2026-10-16): `pnpm test` passed 3245 tests with 2 skipped; 
 - [x] Cap fresh-session recovery at one automatic retry per card; if the new session is rejected too, surface the final error instead of looping.
 - [x] Run focused recovery tests, quality checks, package the Windows build, and start the isolated verified runtime.
 - [x] Claude 的 previously-rejected 400 恢复改走一次性进程；避免 2.1.3xx 的 keepalive stdin 会话继续复用被拒请求形状。
+
+## Recoverable retry backoff (2026-11-16)
+
+- [x] Red-first: `tests/stream-recovery.test.ts` asserts the fast window, the doubling ramp, the 5-minute cap, and a bounded attempt count across a 2.5-hour outage.
+- [x] `getRecoverableStreamRetryDelayMs` replaces the inline 1.5 s-capped delay in `src/App.tsx`.

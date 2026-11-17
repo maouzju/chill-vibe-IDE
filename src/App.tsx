@@ -86,6 +86,7 @@ import {
   getSurfaceBaseAppearance,
 } from '../shared/theme'
 import {
+  getRecoverableStreamRetryDelayMs,
   getRecoverableStreamRetryLimit,
   getRecoverableStreamErrorSessionId,
   resolveNextFailedResumeSessionAttempt,
@@ -6423,7 +6424,7 @@ function App() {
 
                   attachStreamToCard(columnId, liveCard)
                 }
-              }, Math.min(1500, 250 * (shouldCountAgainstBudget ? retryCount + 1 : 1)))
+              }, getRecoverableStreamRetryDelayMs(retryCount, shouldCountAgainstBudget))
 
               return
             }

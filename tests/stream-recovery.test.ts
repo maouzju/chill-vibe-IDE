@@ -3,6 +3,7 @@ import test from 'node:test'
 
 import { attachImagesToMessageMeta } from '../shared/chat-attachments.ts'
 import {
+  getRecoverableStreamRetryDelayMs,
   getRecoverableStreamRetryLimit,
   getRecoverableStreamErrorSessionId,
   isClaudePreviouslyRejectedUpstreamError,
@@ -520,4 +521,34 @@ test('checkpoint recovery preserves attachment-only user turns', () => {
   })
 
   assert.deepEqual(turn?.attachments, [attachment])
+})
+
+// 2026-11-16 实证：重试设为无限（resilientProxyMaxRetries = -1）时，两次续传之间最多只等 1.5 秒，
+// 中转站吐了 2.5 小时空 200，同一张卡重试 639 次（约每 14 秒一次），每次新开一个带 3 万字种子的会话。
+test('recoverable retries back off once a failure streak outlasts the fast window', () => {
+  // 前 6 次保持原有节奏：短暂抖动要立刻接上。
+  assert.deepEqual(
+    [0, 1, 2, 3, 4, 5].map((retryCount) => getRecoverableStreamRetryDelayMs(retryCount, true)),
+    [250, 500, 750, 1000, 1250, 1500],
+  )
+  // 之后每次翻倍，封顶 5 分钟（与兜底续传的起步间隔对齐）。
+  assert.deepEqual(
+    [6, 7, 8, 9].map((retryCount) => getRecoverableStreamRetryDelayMs(retryCount, true)),
+    [3_000, 6_000, 12_000, 24_000],
+  )
+  assert.equal(getRecoverableStreamRetryDelayMs(13, true), 300_000)
+  assert.equal(getRecoverableStreamRetryDelayMs(639, true), 300_000)
+
+  // 2.5 小时的中转站故障：重试次数必须从几百次降到几十次。
+  let elapsedMs = 0
+  let attempts = 0
+  while (elapsedMs < 2.5 * 60 * 60 * 1000) {
+    elapsedMs += getRecoverableStreamRetryDelayMs(attempts, true) + 14_000
+    attempts += 1
+  }
+  assert.ok(attempts < 60, `expected a bounded retry storm, got ${attempts} attempts`)
+
+  // 不计预算的占位符错误没有连续失败计数可用，保持原样。
+  assert.equal(getRecoverableStreamRetryDelayMs(0, false), 250)
+  assert.equal(getRecoverableStreamRetryDelayMs(40, false), 250)
 })

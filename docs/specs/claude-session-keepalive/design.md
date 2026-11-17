@@ -53,6 +53,8 @@ stream-json 解析复用 providers.ts 现有折叠逻辑（事件类型、stripp
 
 空闲输出的 turn-start gate 必须区分顶层主 Agent 与子代理 sidechain：带非空 `parent_tool_use_id` 的 stdout 行仍归属于此前 `Agent` / `Task` 工具启动的子代理，即使它在父回合结束后才到达，也只作为后台进度忽略，不能创建 unsolicited stream。真实 task-notification 重新调用主 Agent 时，后续顶层 `init` / `message_start` 等行的 `parent_tool_use_id` 为空，仍按原链路唤醒并回放此前缓冲的任务通知。
 
+turn-start gate 还必须接住**首 token 前就失败的唤醒回合**（2026-11-16）：这种回合没有 `message_start`，只有 `status` / `api_retry` / 合成 assistant / `result(is_error)`。顶层 `result` 且 `is_error === true` 视为唤醒信号，缓冲行整体回放给 parser，由通用报错路径决定续传；重试期间的 bookkeeping 与成功 `result` 不唤醒。见 AGENTS.md Known Pitfalls #426。
+
 ### D5：watchdog 适配
 - turn-active：first-byte / stall / `openCommandCount>0` 时 disarm。
 - **后台等待型工具豁免（Workflow / 子代理）**：headless `claude -p` 对 `Workflow`/`Task`/`Agent` 这类工具是**同步等待**的——结果是本 turn 最终输出的一部分，CLI 默认等到 10 分钟（`CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS`，`0`=不限时），其间不吐 stdout。这类工具不会增加 `openCommandCount`，所以 120s 的 stall 看门狗会在 workflow 还没跑完时误杀 CLI（卡片表现为"卡住/回答中断"）。`createClaudeTurnParser` 现在用 `isClaudeBackgroundAwaitTool` 在解析到这类 tool_use 时**按 turn 锁存** `sawBackgroundAwaitTool`，`resolveLocalStreamStallTimeoutMs` 据此把 stall 窗口拉到 `CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS + 60s`（不限时则完全 disarm），让 CLI 自己的 cap / 进程关闭兜底，workflow 合成结果随后在**同一条 stream** 上正常续出。

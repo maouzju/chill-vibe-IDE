@@ -51,3 +51,10 @@
 - [x] `pnpm test:quality` 绿（eslint + 4×tsc）
 - [x] 全量单测按用户工作流移交 release-pipeline 发布验证环节执行（日常交付以窄测试 + quality 为门槛）
 - [x] 合并 main、清理 worktree
+
+## 首 token 前失败的唤醒回合被吞（2026-11-16）
+
+- [x] 实证：会话 31f1a23d 的 task-notification 已送达，唤醒回合连撞 429/ECONNRESET 后无人接手；CLI 2.1.322 恒 429 探针确认该形状无 `message_start`。
+- [x] 红测：`tests/claude-unsolicited-real-wake.test.ts` 两条新用例（等待超时 / 判据为 false）。
+- [x] 修复：`isClaudeTurnStartLine` 认顶层 `result(is_error)`。
+- [x] 绿测：`node --import tsx --test tests/claude-unsolicited-real-wake.test.ts tests/claude-session-pool.test.ts tests/claude-keepalive-run.test.ts`：35/35 通过。

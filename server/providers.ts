@@ -4470,8 +4470,18 @@ export const isClaudeTurnStartLine = (line: string) => {
   // 症状：system/init 与后台 bookkeeping 会把空闲主卡提前拉成 streaming，随后只能等 watchdog。
   // 根因：2026-08-01 实测真实 task-notification 会在前导行后发顶层 stream_event/message_start。
   // 被否决：未知 JSON fail-open 会继续误附着 sidechain；只认原生顶层开流信号，见对应 SPEC。
-  const streamEvent = event as { type?: unknown; event?: { type?: unknown } }
-  return streamEvent.type === 'stream_event' && streamEvent.event?.type === 'message_start'
+  const streamEvent = event as { type?: unknown; event?: { type?: unknown }; is_error?: unknown }
+  if (streamEvent.type === 'stream_event' && streamEvent.event?.type === 'message_start') {
+    return true
+  }
+
+  // 症状：agent 说「等后台任务完成我继续」后再无下文，卡片停在 idle，没有报错也没有自动续传。
+  // 根因：2026-11-16 实测（会话 31f1a23d + CLI 2.1.322 恒 429 探针）被 task-notification 唤醒的回合
+  //   首 token 前就失败时只发 status / api_retry / 合成 assistant / result(is_error)，全程没有
+  //   message_start，整轮烂在 idle 缓冲里，[claude-result] 日志也一行没有。
+  // 被否决：认 api_retry 或合成 assistant 更早唤醒——其后未必有 result 收口，卡会空挂 streaming；
+  //   认成功 result——它不可能没有 message_start，单独到达只会造出空回合。
+  return streamEvent.type === 'result' && streamEvent.is_error === true
 }
 
 export const isClaudeSidechainLine = (line: string) => {

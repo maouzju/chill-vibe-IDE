@@ -264,3 +264,90 @@ test('idle child-agent sidechain output is discarded before a later real wake-up
   assert.deepEqual(receivedLines, [topLevelInit, topLevelTurnStart])
   pool.closeAll()
 })
+
+// 2026-11-16 实测（CLI 2.1.322 + 恒 429 的假中转站）：被 task-notification 唤醒的回合如果
+// 首 token 前就失败，全程只有 system/status、system/api_retry、合成 assistant、result(is_error)，
+// 没有任何 stream_event/message_start。
+const failedWakeFixturePath = path.join(
+  path.dirname(fileURLToPath(import.meta.url)),
+  'fixtures',
+  'claude-unsolicited-failed-wake.jsonl',
+)
+
+test('a background wake-up that fails before the first token still surfaces its error', async () => {
+  const lines = (await readFile(failedWakeFixturePath, 'utf8'))
+    .split('\n')
+    .filter((line) => line.trim())
+  assert.ok(
+    !lines.some((line) => line.includes('"message_start"')),
+    'fixture must reproduce the no-message_start shape',
+  )
+
+  const { record, sink } = createRecordingSink()
+  let settled = 0
+  let wakeUps = 0
+  const pool = new ClaudeSessionPool({
+    idleTimeoutMs: 60_000,
+    shouldWakeOnLine: isClaudeTurnStartLine,
+    shouldIgnoreIdleLine: isClaudeSidechainLine,
+    onUnsolicited: (entry, attach) => {
+      wakeUps += 1
+      attach(
+        createClaudeUnsolicitedTurnAttachment({
+          entry,
+          sink,
+          killChild: () => {},
+          onSettled: () => {
+            settled += 1
+          },
+        }),
+      )
+    },
+  })
+
+  const { child, stdout } = createStubChild()
+  assert.ok(
+    await pool.acquireForTurn({
+      key: 'card-failed-wake',
+      signature: 'sig',
+      sessionId: 'session-failed-wake',
+      spawn: async () => child,
+      meta: { language: 'zh-CN', workspacePath: '.', model: 'claude-fable-5-2' },
+    }),
+  )
+
+  // 重试期间的 bookkeeping 不能提前唤醒：后面没有 result 时卡片会空挂在 streaming。
+  for (const line of lines.slice(0, -1)) {
+    stdout.write(`${line}\n`)
+  }
+  await new Promise((resolve) => setTimeout(resolve, 50))
+  assert.equal(wakeUps, 0, 'retry bookkeeping alone must not wake a stream')
+
+  stdout.write(`${lines.at(-1)}\n`)
+  await waitFor(() => record.done || record.errors.length > 0)
+
+  assert.equal(wakeUps, 1, 'the failed result must wake exactly one stream')
+  assert.equal(record.done, false, 'a failed wake-up must not be reported as done')
+  assert.equal(record.errors.length, 1, 'the API error must reach the card exactly once')
+  assert.match(record.errors[0], /429/)
+  assert.equal(settled, 1, 'turn must settle exactly once')
+
+  pool.closeAll()
+})
+
+test('only a failed top-level result wakes an idle card without message_start', () => {
+  const result = (patch: Record<string, unknown>) =>
+    JSON.stringify({ type: 'result', subtype: 'success', is_error: false, ...patch })
+
+  assert.equal(isClaudeTurnStartLine(result({ is_error: true, terminal_reason: 'api_error' })), true)
+  // 成功的 result 不可能没有先到的 message_start；单独到达只会是迟到的收尾，不能造出空回合。
+  assert.equal(isClaudeTurnStartLine(result({})), false)
+  assert.equal(
+    isClaudeTurnStartLine(result({ is_error: true, parent_tool_use_id: 'toolu_parent_agent_call' })),
+    false,
+  )
+  assert.equal(
+    isClaudeTurnStartLine(JSON.stringify({ type: 'system', subtype: 'api_retry', error_status: 429 })),
+    false,
+  )
+})

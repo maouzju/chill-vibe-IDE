@@ -445,6 +445,10 @@ import {
 import { WorkspaceColumn } from './components/WorkspaceColumn'
 import { resolveGitAgentModel, type GitAgentSessionRequest } from './components/git-operation-hub'
 import {
+  notifyGitWorkspaceMayHaveChanged,
+  shouldSignalGitChangeForActivity,
+} from './components/git-external-change-signal'
+import {
   drainStreamRenderBufferActionsForColumn,
   createQueuedPersistenceStateSnapshot,
   enqueueStreamDeltaBufferEntry,
@@ -5788,6 +5792,11 @@ function App() {
             return
           }
 
+          // 命令落定就提醒同仓库的 Git 卡重读（agent 可能刚 commit），见 git-external-change-signal.ts。
+          if (shouldSignalGitChangeForActivity(payload)) {
+            notifyGitWorkspaceMayHaveChanged(getColumn(columnId)?.workspacePath ?? '')
+          }
+
           if (shouldResetStreamRecoveryAttemptsForActivity('activity', payload.kind)) {
             streamRetryCountRef.current.delete(card.id)
             streamMeaningfulProgressRef.current.add(card.id)
@@ -5979,6 +5988,8 @@ function App() {
         },
         onDone: ({ stopped, interrupted, completion, turnStopReason, usage }) => {
           const donePlan = getStreamDonePlan({ stopped, completion })
+          // 回合结束兜底再提醒一次 Git 卡：改文件 / 提交不一定都走 command 活动（如原生编辑工具）。
+          notifyGitWorkspaceMayHaveChanged(getColumn(columnId)?.workspacePath ?? '')
           flushBufferedAssistantDeltaForCard(card.id)
           const activityFlushedState = flushBufferedActivitiesForCard(card.id)
           const receivedEditsActivities = streamEditsActivityCountRef.current.get(card.id) ?? 0

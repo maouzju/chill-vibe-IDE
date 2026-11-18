@@ -44,6 +44,11 @@ import {
   getGitDashboardVisibleChanges,
 } from './git-dashboard-windowing'
 import {
+  resolveExternalGitRefreshDelay,
+  subscribeGitWorkspaceChange,
+} from './git-external-change-signal'
+import {
+  gitStatusRefreshThrottleMs,
   mergeGitStatusPreservingPreviews,
   needsFullGitStatusFetch,
   resolveGitStatusFidelity,
@@ -185,6 +190,8 @@ export const GitToolCard = ({
   const activeRefreshIdRef = useRef(0)
   // 自动刷新的节流时钟；聚焦和 tab 激活共用同一个，否则来回切 tab 就能绕过节流。
   const lastRefreshRef = useRef(0)
+  // 外部变化信号被节流 / 在途顺延后还没兑现的那一发。
+  const externalRefreshOwedRef = useRef(false)
   // 当前这份 gitStatus 里的 patch 是服务端刚算的，还是自动刷新时从上一轮 merge 回来的旧内容。
   const statusFidelityRef = useRef<GitStatusFidelity>('preview')
 
@@ -344,6 +351,57 @@ export const GitToolCard = ({
 
     requestAutoRefresh(false)
   }, [isActive, requestAutoRefresh])
+
+  // 外部变化信号：同仓库的会话跑完一条命令 / 回合结束（App.tsx 发），或窗口从别处切回来。
+  // 没有它，卡片常驻并排时 agent 在隔壁提交完，这里还挂着提交前的列表（2026-11-18 用户报）。
+  // 信号不能丢只能顺延（见 resolveExternalGitRefreshDelay）；非激活时不用管，重新激活那一下自己会刷。
+  useEffect(() => {
+    if (!isActive || !workspacePath.trim()) {
+      return
+    }
+
+    let timer: ReturnType<typeof setTimeout> | null = null
+    const pump = () => {
+      if (timer !== null) {
+        clearTimeout(timer)
+        timer = null
+      }
+
+      const now = Date.now()
+      const delayMs = resolveExternalGitRefreshDelay({
+        now,
+        lastRefreshAt: lastRefreshRef.current,
+        inFlight: refreshingRef.current || createRepoPending || commitNewPending,
+        throttleMs: gitStatusRefreshThrottleMs,
+      })
+
+      if (delayMs > 0) {
+        externalRefreshOwedRef.current = true
+        timer = setTimeout(pump, delayMs)
+        return
+      }
+
+      externalRefreshOwedRef.current = false
+      lastRefreshRef.current = now
+      void refreshStatus(undefined, { trigger: 'auto' })
+    }
+
+    const unsubscribe = subscribeGitWorkspaceChange(workspacePath, pump)
+    window.addEventListener('focus', pump)
+
+    // 依赖变化（如提交 pending 翻转）会重跑本 effect 并清掉定时器，欠着的那一发在这里补上。
+    if (externalRefreshOwedRef.current) {
+      pump()
+    }
+
+    return () => {
+      unsubscribe()
+      window.removeEventListener('focus', pump)
+      if (timer !== null) {
+        clearTimeout(timer)
+      }
+    }
+  }, [commitNewPending, createRepoPending, isActive, refreshStatus, workspacePath])
 
   // 后台操作（同步、提交、策略执行）在 hub 里完成后回写的最新仓库状态
   useEffect(() => {

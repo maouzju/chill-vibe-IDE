@@ -12,7 +12,7 @@ export const getFallbackRetryDelayMs = (failureCount: number) =>
 
 // 报错有两种形态：不带 meta.kind 的普通 system 消息，以及 CLI 直接写成 assistant 气泡的
 // 「API Error: …」（2026-10-16 state.json 实测 16 段连续重复，多数是后者）。run-duration 等
-// 带 kind 的系统条、没内容的空气泡都不算「中间有进展」，所以隔着它们的同文报错依旧算连续重复。
+// 同一轮内的同文报错不论中间隔着什么都算重复（见下方 isDuplicateAfter）。
 const isPlainSystemMessage = (message: ChatMessage) =>
   message.role === 'system' && !message.meta?.kind
 
@@ -24,26 +24,30 @@ const isErrorMessage = (message: ChatMessage) =>
 const errorKey = (message: ChatMessage) =>
   message.content.replace(/\s*\(request id:[^)]*\)/gi, '').trim()
 
-const isTransparentBetweenErrors = (message: ChatMessage) =>
-  (message.role === 'system' && Boolean(message.meta?.kind) && !message.content.trim()) ||
-  (message.role === 'assistant' && !message.content.trim() && !message.meta?.structuredData)
-
-const findPreviousMeaningful = (messages: ChatMessage[], fromIndex: number) => {
-  for (let index = fromIndex; index >= 0; index -= 1) {
-    const message = messages[index]!
-    if (!isTransparentBetweenErrors(message)) {
-      return message
-    }
-  }
-  return undefined
-}
-
+// 症状：429/503 中转抽风时，每次兜底续传 CLI 都先做几步工具/命令再撞上同一句报错，
+//   2026-11-18 截图一轮里堆了 15 条同文「API Error: …(429)」，聊天流被刷屏。
+// 根因：原先只把「中间只隔着空气泡/run-duration」的同文报错算重复，隔着工具/命令就当「有进展、
+//   是新信息」放行——但报错文本一字不差，对用户没有新信息；重试次数横幅已经说明了失败了几次。
+// 决策：以「当前这一轮」（上一条用户消息之后）为范围，同文报错只留第一条，不管中间有无进展。
+// 被否决：只放宽到再隔几条——隔多少条没有道理；全卡范围去重——新一轮的同一句报错该重新露面。
 const isDuplicateAfter = (messages: ChatMessage[], endIndex: number, addition: ChatMessage) => {
-  if (!isErrorMessage(addition) || !errorKey(addition)) {
+  if (!isErrorMessage(addition)) {
     return false
   }
-  const previous = findPreviousMeaningful(messages, endIndex)
-  return Boolean(previous && isErrorMessage(previous) && errorKey(previous) === errorKey(addition))
+  const key = errorKey(addition)
+  if (!key) {
+    return false
+  }
+  for (let index = endIndex; index >= 0; index -= 1) {
+    const message = messages[index]!
+    if (message.role === 'user') {
+      return false
+    }
+    if (isErrorMessage(message) && errorKey(message) === key) {
+      return true
+    }
+  }
+  return false
 }
 
 export const isDuplicateTrailingErrorMessage = (messages: ChatMessage[], addition: ChatMessage) =>

@@ -34,11 +34,31 @@ test('a repeated error separated only by run-duration/empty bubbles counts as a 
   const messages = [msg('user', 'do it'), msg('system', 'API Error: 503'), duration(), msg('assistant', '')]
   assert.equal(isDuplicateTrailingErrorMessage(messages, msg('system', 'API Error: 503 ')), true)
   assert.equal(isDuplicateTrailingErrorMessage(messages, msg('system', 'API Error: 500')), false)
-  // Real progress in between means the second error is new information.
+  // 2026-11-18 截图：429 与工具/命令交替出现，一轮里堆了 15 条同文报错。同一轮（上一条用户消息之后）
+  // 内同文报错不管中间有没有进展都只留第一条；新的一轮（新用户消息）则重新算。
   assert.equal(
     isDuplicateTrailingErrorMessage([...messages, msg('assistant', 'partial work')], msg('system', 'API Error: 503')),
+    true,
+  )
+  assert.equal(
+    isDuplicateTrailingErrorMessage([...messages, msg('user', 'again')], msg('system', 'API Error: 503')),
     false,
   )
+})
+
+test('same-text errors interleaved with tool/command progress collapse to one within a turn', () => {
+  const user = msg('user', 'go')
+  const err = (rid: string) => msg('assistant', `API Error: Request rejected (429) · 上游已负载 (request id: ${rid})`)
+  const tool = () => msg('assistant', 'ran', { kind: 'tool', structuredData: '{}' })
+  const e1 = err('a')
+  const t1 = tool()
+  const e2 = err('b')
+  const t2 = tool()
+  const e3 = err('c')
+  const user2 = msg('user', 'next')
+  const e4 = err('d')
+  const stripped = stripConsecutiveDuplicateErrorMessages([user, e1, t1, e2, t2, e3, user2, e4])
+  assert.deepEqual(stripped.map((m) => m.id), [user.id, e1.id, t1.id, t2.id, user2.id, e4.id])
 })
 
 test('stripping keeps the first error of each consecutive run and leaves everything else', () => {
@@ -49,9 +69,10 @@ test('stripping keeps the first error of each consecutive run and leaves everyth
   const d2 = duration()
   const e3 = msg('system', 'boom')
   const reply = msg('assistant', 'done')
+  const user2 = msg('user', 'again')
   const e4 = msg('system', 'boom')
-  const stripped = stripConsecutiveDuplicateErrorMessages([user, e1, d1, e2, d2, e3, reply, e4])
-  assert.deepEqual(stripped.map((m) => m.id), [user.id, e1.id, d1.id, d2.id, reply.id, e4.id])
+  const stripped = stripConsecutiveDuplicateErrorMessages([user, e1, d1, e2, d2, e3, reply, user2, e4])
+  assert.deepEqual(stripped.map((m) => m.id), [user.id, e1.id, d1.id, d2.id, reply.id, user2.id, e4.id])
   const clean = [user, e1, reply]
   assert.equal(stripConsecutiveDuplicateErrorMessages(clean), clean)
 })

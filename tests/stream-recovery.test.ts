@@ -3,6 +3,7 @@ import test from 'node:test'
 
 import { attachImagesToMessageMeta } from '../shared/chat-attachments.ts'
 import {
+  createStreamRecoveryRetryScheduler,
   getRecoverableStreamRetryDelayMs,
   getRecoverableStreamRetryLimit,
   getRecoverableStreamErrorSessionId,
@@ -551,4 +552,67 @@ test('recoverable retries back off once a failure streak outlasts the fast windo
   // 不计预算的占位符错误没有连续失败计数可用，保持原样。
   assert.equal(getRecoverableStreamRetryDelayMs(0, false), 250)
   assert.equal(getRecoverableStreamRetryDelayMs(40, false), 250)
+})
+
+// 2026-11-18 用户反馈「手动停止的会话过一会又自己开了」。断线后等下一次续传的那段时间
+// （2026-11-16 起最长 5 分钟）卡片仍显示运行中，但服务端那条流早已终态：停止请求打到死流上
+// 是空操作（server.log 里 origin=manual / outcome=already-terminal），到点照样续传。
+test('a stop during the wait for the next recovery retry cancels that retry', () => {
+  const pending = new Map<number, () => void>()
+  let nextHandle = 1
+  const scheduler = createStreamRecoveryRetryScheduler({
+    setTimer: (run) => {
+      const handle = nextHandle++
+      pending.set(handle, run)
+      return handle
+    },
+    clearTimer: (handle) => {
+      pending.delete(handle)
+    },
+  })
+  const fired: string[] = []
+
+  scheduler.schedule('card-a', () => fired.push('card-a'), 300_000)
+  scheduler.schedule('card-b', () => fired.push('card-b'), 300_000)
+  assert.equal(scheduler.isPending('card-a'), true)
+
+  // 用户点了停止：这次续传必须被撤掉，并且要让调用方知道「这张卡刚才在等续传」。
+  assert.equal(scheduler.cancel('card-a'), true)
+  assert.equal(scheduler.isPending('card-a'), false)
+  // 没有在等续传的卡：停止走原来的服务端路径。
+  assert.equal(scheduler.cancel('card-a'), false)
+  assert.equal(scheduler.cancel('card-never'), false)
+
+  for (const run of [...pending.values()]) {
+    run()
+  }
+  assert.deepEqual(fired, ['card-b'])
+  // 到点触发后不再算「在等」，否则之后正常运行时点停止会被误判成本地收尾。
+  assert.equal(scheduler.isPending('card-b'), false)
+  assert.equal(scheduler.cancel('card-b'), false)
+})
+
+test('rescheduling a recovery retry for the same card replaces the previous one', () => {
+  const pending = new Map<number, () => void>()
+  let nextHandle = 1
+  const scheduler = createStreamRecoveryRetryScheduler({
+    setTimer: (run) => {
+      const handle = nextHandle++
+      pending.set(handle, run)
+      return handle
+    },
+    clearTimer: (handle) => {
+      pending.delete(handle)
+    },
+  })
+  const fired: string[] = []
+
+  scheduler.schedule('card-a', () => fired.push('first'), 250)
+  scheduler.schedule('card-a', () => fired.push('second'), 250)
+  assert.equal(pending.size, 1)
+
+  for (const run of [...pending.values()]) {
+    run()
+  }
+  assert.deepEqual(fired, ['second'])
 })

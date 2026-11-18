@@ -126,6 +126,54 @@ export const getRecoverableStreamRetryDelayMs = (retryCount: number, countsAgain
   return Math.min(recoverableStreamRetryBackoffCapMs, recoverableStreamRetryFastCapMs * 2 ** doublings)
 }
 
+// 症状：手动停止的会话过一会又自己跑起来（2026-11-18 用户反馈）。
+// 根因：可恢复断线后要等一段再续传，等的这段时间卡片仍显示「运行中 / 重连中」，但服务端那条流
+//   早已终态。此时点停止，请求打到死流上是空操作（server.log 实证 origin=manual、
+//   outcome=already-terminal 共 8 次），卡片不变，到点照样续传。2026-11-16 把等待封顶从 1.5 秒
+//   抬到 5 分钟后，这个窗口才大到用户按得中。
+// 为什么不能换写法：只在到点回调里比对 streamId 挡不住——停止没改任何状态，streamId 还是那条死流；
+//   必须有一个「这张卡正在等续传」的可撤销句柄，停止先撤它、再本地收尾。
+export type StreamRecoveryRetryTimers<Handle> = {
+  setTimer: (run: () => void, delayMs: number) => Handle
+  clearTimer: (handle: Handle) => void
+}
+
+export const createStreamRecoveryRetryScheduler = <Handle>(timers: StreamRecoveryRetryTimers<Handle>) => {
+  const pending = new Map<string, Handle>()
+
+  /** 撤掉这张卡在等的续传；返回它刚才是否真的在等。 */
+  const cancel = (cardId: string) => {
+    if (!pending.has(cardId)) {
+      return false
+    }
+    timers.clearTimer(pending.get(cardId) as Handle)
+    pending.delete(cardId)
+    return true
+  }
+
+  return {
+    schedule: (cardId: string, run: () => void, delayMs: number) => {
+      cancel(cardId)
+      const handle = timers.setTimer(() => {
+        // 另一轮已经重排过就不是「我这一次」了，别把它的句柄删掉。
+        if (pending.get(cardId) === handle) {
+          pending.delete(cardId)
+        }
+        run()
+      }, delayMs)
+      pending.set(cardId, handle)
+    },
+    cancel,
+    isPending: (cardId: string) => pending.has(cardId),
+    clear: () => {
+      for (const handle of pending.values()) {
+        timers.clearTimer(handle)
+      }
+      pending.clear()
+    },
+  }
+}
+
 export const shouldResetStreamRecoveryAttemptsForText = (content: string) => {
   const normalized = content.trim()
 

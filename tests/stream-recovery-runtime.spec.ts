@@ -660,6 +660,37 @@ test('reasoning-only progress does not bypass a finite recovery budget', async (
   expect(mock.readRequests()).toHaveLength(1)
 })
 
+// 2026-11-18 用户反馈「手动停止的会话过一会又自己开了」：续传等待期里服务端那条流已终态，
+// 停止打过去是空操作；等待从 1.5 秒抬到最长 5 分钟后用户才按得中这个窗口。
+test('stopping during the wait for the next recovery retry cancels it instead of resuming later', async ({ page }) => {
+  test.setTimeout(60_000)
+  const mock = await installMockDesktopBridge(page, { maxRetries: -1 })
+  await page.goto(appUrl)
+
+  await expect(page.locator('.pane-tab-panel.is-active .composer textarea').first()).toBeVisible()
+
+  // 连续 7 次可恢复断线：前 6 次秒接，第 7 次进入退避（等 3 秒才续传）。
+  for (let streamNumber = 1; streamNumber <= 7; streamNumber += 1) {
+    await expect.poll(() => hasDesktopStreamSubscription(page, `stream-${streamNumber}`)).toBe(true)
+    await emitDesktopStreamEvent(page, `stream-${streamNumber}`, 'error', {
+      message: 'Codex ended without emitting a terminal completion event.',
+      recoverable: true,
+      recoveryMode: 'resume-session',
+    })
+  }
+
+  const requestsBeforeStop = mock.readRequests().length
+  expect(requestsBeforeStop).toBe(6)
+  await page.locator('.pane-tab-panel.is-active .composer').getByRole('button', { name: /停止|Stop/ }).first().click()
+
+  await expect.poll(() => mock.readState().columns[0]?.cards['card-1']?.status).toBe('idle')
+  // 等过那 3 秒：不许再发起续传，卡片保持停止。
+  await page.waitForTimeout(4_500)
+  expect(mock.readRequests()).toHaveLength(requestsBeforeStop)
+  expect(mock.readState().columns[0]?.cards['card-1']?.status).toBe('idle')
+  expect(mock.readState().columns[0]?.cards['card-1']?.streamId).toBeUndefined()
+})
+
 test('transient-only reconnect errors do not exhaust the recovery budget', async ({ page }) => {
   const mock = await installMockDesktopBridge(page)
   await page.goto(appUrl)

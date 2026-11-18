@@ -86,6 +86,7 @@ import {
   getSurfaceBaseAppearance,
 } from '../shared/theme'
 import {
+  createStreamRecoveryRetryScheduler,
   getRecoverableStreamRetryDelayMs,
   getRecoverableStreamRetryLimit,
   getRecoverableStreamErrorSessionId,
@@ -1135,6 +1136,16 @@ function App() {
   const appStateRef = useRef(appState)
   const activePaneTargetRef = useRef<PaneTarget | null>(null)
   const streamRetryCountRef = useRef(new Map<string, number>())
+  // 断线后「在等下一次续传」的可撤销句柄；停止要先撤它（原因见 createStreamRecoveryRetryScheduler）。
+  const streamRecoveryRetrySchedulerRef = useRef(
+    createStreamRecoveryRetryScheduler<number>({
+      setTimer: (run, delayMs) => window.setTimeout(run, delayMs),
+      clearTimer: (handle) => window.clearTimeout(handle),
+    }),
+  )
+  const finalizeStoppedStreamWithoutServerAckRef = useRef<
+    ((columnId: string, cardId: string, reason: StoppedRunReason) => void) | null
+  >(null)
   const resumeSessionLoopCountRef = useRef(new Map<string, number>())
   const freshClaudeRecoveryAttemptRef = useRef(new Set<string>())
   // 当前这条流有没有真实进展（文本/工具，不含 reasoning 和 session 握手），
@@ -3313,6 +3324,18 @@ function App() {
         return false
       }
 
+      // 用户叫停 = 接手：5~30 分钟的兜底续传也一并撤销清零。
+      cancelFallbackRetry(cardId, { resetCount: true })
+      // 这张卡正在等下一次断线续传：服务端那条流早已终态，stopChat 打过去是空操作。
+      // 撤掉待触发的续传并本地收尾，否则到点（最长 5 分钟）它会自己再跑起来。
+      // `!active`：续传等待期里 EventSource 已经关掉；有活连接说明新一轮已经接上，
+      // 残留的句柄不算数，必须照常让服务端去停，否则界面停了、进程还在跑。
+      if (owner && !active && streamRecoveryRetrySchedulerRef.current.cancel(cardId)) {
+        forceResetRecoveryStatus(cardId)
+        finalizeStoppedStreamWithoutServerAckRef.current?.(owner.id, cardId, reason)
+        return true
+      }
+
       try {
         stoppedRunReasonRef.current.set(streamId, reason)
         if (!stopAckByStreamIdRef.current.has(streamId)) {
@@ -3377,10 +3400,12 @@ function App() {
     },
     [
       applyActions,
+      cancelFallbackRetry,
       clearStopCompletionFallbackTimer,
       deferStopCompletionFallbackTimer,
       flushBufferedActivitiesForCard,
       flushBufferedAssistantDeltaForCard,
+      forceResetRecoveryStatus,
       persistAfterActions,
       text.unexpectedError,
     ],
@@ -3586,6 +3611,7 @@ function App() {
     flushBufferedAssistantDeltaForCard,
     persistAfterActions,
   ])
+  finalizeStoppedStreamWithoutServerAckRef.current = finalizeStoppedStreamWithoutServerAck
 
   const sendNextQueuedNow = useCallback((columnId: string, cardId: string) => {
     const currentQueue = queuedSendRequestsRef.current.get(cardId)
@@ -6385,7 +6411,7 @@ function App() {
               // not look stuck on "1/unlimited".
               markRecoveryReconnecting(card.id, retryCount, maxRecoverableRetries)
 
-              window.setTimeout(() => {
+              streamRecoveryRetrySchedulerRef.current.schedule(card.id, () => {
                 const liveCard = getColumn(columnId)?.cards[card.id]
                 if (liveCard && liveCard.streamId === card.streamId) {
                   const hasLiveSessionId =
@@ -6751,6 +6777,7 @@ function App() {
     streamRenderCycleColumnIdsRef.current.length = 0
     stoppedRunReasonRef.current.clear()
     streamRetryCountRef.current.clear()
+    streamRecoveryRetrySchedulerRef.current.clear()
     resumeSessionLoopCountRef.current.clear()
     streamRecoveryTurnRef.current.clear()
     localRecoveryStatsRef.current.clear()

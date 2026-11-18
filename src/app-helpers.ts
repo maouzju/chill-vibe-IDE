@@ -286,24 +286,8 @@ export const getResumeSessionIdForModel = (
   return sessionModel === requestedModel ? card.sessionId : undefined
 }
 
-// Symptom: after switching a long conversation to another model (Codex -> Claude
-// especially), the model answered as if the opening request never existed and
-// asked the user to restate the task.
-// Root cause: `contextTransfer` marks the first sessionless turn after any model
-// switch, but this gate also required `provider === 'codex'`, so a transfer *into*
-// Claude/Fable fell back to the generic seeded replay. That replay fills a ~6000
-// character budget from the newest message backwards (chat-request-seeding.ts:369),
-// so the oldest user turns were dropped outright and replaced with a
-// "[Earlier transcript omitted: N messages.]" counter — the original request was
-// gone, not merely shortened. 2026-07-28.
-// Why not just raise the budget: the budget bounds an unbounded transcript; the
-// real fix is marking meaningful user/assistant prose as protected so it survives
-// eviction while tool/command detail still competes for the remaining space.
-export const resolveChatReplayMode = (
-  card: Pick<ChatCard, 'provider' | 'contextTransfer'>,
-  resumeSessionId: string | undefined,
-): 'fallback' | 'model-transfer' =>
-  card.contextTransfer && !resumeSessionId ? 'model-transfer' : 'fallback'
+// 换模型后的重放档位由 seeding 模块定，这里只是给既有调用方留着导入路径。
+export { resolveChatReplayMode } from './chat-request-seeding'
 
 // An empty send means "continue from here": only allowed when the card already
 // has something to continue (resumable session or user/assistant history) and

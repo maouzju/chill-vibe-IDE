@@ -3,6 +3,7 @@ import { getLatestTurnAttachmentLine, getSeededPromptCopy } from '../shared/chat
 import type {
   AppLanguage,
   CardStatus,
+  ChatCard,
   ChatMessage,
   ImageAttachment,
   Provider,
@@ -593,3 +594,43 @@ export const buildSeededChatPrompt = ({
 
   return buildSeededPromptBody(language, transcript, latestTurn)
 }
+
+// 换模型之后、新会话的第一次重放用哪一档预算。
+//
+// 症状：长会话换模型后，模型像没看过开场需求，要求用户重述任务（Codex→Claude、
+//   Claude↔Codex 两个方向都出现过）。
+// 根因（2026-07-28）：`contextTransfer` 标记换模型后的首次无会话回合，但档位判断曾写死
+//   `provider === 'codex'`，切进 Claude 的方向落回 6000 字符预算，从新到旧填，最早的需求
+//   整条被挤掉。另有一段恢复/续传路径（清会话重放）手写 buildSeededChatPrompt 却没传
+//   mode，同一份损失在那里第二次出现（2026-11-18 审查）。
+// 所以档位判断住在 seeding 模块里，并由 buildSeededChatPromptForCard 统一推导；
+// App 的调用点不再自己拼 mode，新加的恢复路径也不会再漏。
+export const resolveChatReplayMode = (
+  card: Pick<ChatCard, 'provider' | 'contextTransfer'>,
+  resumeSessionId: string | undefined,
+): ChatReplayMode =>
+  card.contextTransfer && !resumeSessionId ? 'model-transfer' : 'fallback'
+
+// 重放请求的唯一入口：档位跟着卡走，调用方只负责给出「这次有没有能续的原生会话」。
+export const buildSeededChatPromptForCard = ({
+  card,
+  resumeSessionId,
+  language,
+  prompt,
+  attachments,
+}: {
+  card: Pick<ChatCard, 'provider' | 'status' | 'messages' | 'contextTransfer'>
+  resumeSessionId: string | undefined
+  language: AppLanguage
+  prompt: string
+  attachments: ImageAttachment[]
+}) =>
+  buildSeededChatPrompt({
+    language,
+    prompt,
+    attachments,
+    messages: card.messages,
+    provider: card.provider,
+    status: card.status,
+    mode: resolveChatReplayMode(card, resumeSessionId),
+  })

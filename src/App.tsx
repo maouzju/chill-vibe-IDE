@@ -272,7 +272,6 @@ import {
   getColumnById,
   getResumeSessionIdForModel,
   isAllAgentWorkComplete,
-  resolveChatReplayMode,
   getRoutingImportText,
   importErrorMessage,
   isFirstOpenState,
@@ -404,7 +403,7 @@ import {
   publishTextEditorSettings,
   registerTextEditorSettingsPatchHandler,
 } from './components/text-editor-settings'
-import { buildSeededChatPrompt, collectSeededChatAttachments, hasSeededChatTranscript } from './chat-request-seeding'
+import { buildSeededChatPromptForCard, collectSeededChatAttachments, hasSeededChatTranscript } from './chat-request-seeding'
 import { buildArchiveRecallSnapshot } from './archive-recall'
 import { getOnboardingText, getPanelText, getResilientProxyText, getTopTabText } from './app-panel-text'
 import { AppButton } from './components/AppButton'
@@ -7656,7 +7655,6 @@ function App() {
     const resolvedReasoningEffort = normalizeReasoningEffort(card.provider, card.reasoningEffort)
     const resumeSessionId = getResumeSessionIdForModel(card, resolvedModel)
     const shouldStartFreshForModelChange = Boolean(card.sessionId?.trim()) && !resumeSessionId
-    const replayMode = resolveChatReplayMode(card, resumeSessionId)
     const parsedSlashCommand = parseSlashCommandInput(prompt)
 
     if (attachments.length === 0 && (await handleLocalSlashCommand(columnId, card, prompt))) {
@@ -7922,14 +7920,12 @@ function App() {
     const language = appStateRef.current.settings.language
     const seedsTranscript = shouldStartFreshForModelChange || hasSeededChatTranscript(card)
     const seededRequestPrompt = seedsTranscript
-      ? buildSeededChatPrompt({
+      ? buildSeededChatPromptForCard({
+          card,
+          resumeSessionId,
           language,
           prompt,
           attachments,
-          messages: card.messages,
-          provider: card.provider,
-          status: card.status,
-          mode: replayMode,
         })
       : prompt
     const seededRequestAttachments = seedsTranscript
@@ -8641,13 +8637,14 @@ function App() {
     const freshSessionRecoveryPrompt = shouldClearSessionId
       ? requestsFreshSessionOnly && freshSessionRecoveryTurn
         ? freshSessionRecoveryTurn.prompt
-        : buildSeededChatPrompt({
-          language,
-          prompt: language === 'en' ? 'Please continue.' : '\u8bf7\u7ee7\u7eed\u3002',
-          attachments: [],
-          messages: card.messages,
-          provider: card.provider,
-          status: card.status,
+        // \u8fd9\u6761\u8def\u5fc5\u7136\u6e05\u4f1a\u8bdd\u91cd\u653e\uff1a\u5e26 contextTransfer \u7684\u5361\u5fc5\u987b\u6309\u6362\u6a21\u578b\u6863\u4f4d\u56de\u653e\uff0c
+        // \u5426\u5219\u6362\u5b8c\u6a21\u578b\u7b2c\u4e00\u8f6e\u6d41\u65ad/\u88ab\u62d2\uff0c\u6700\u65e9\u7684\u9700\u6c42\u4f1a\u88ab 6000 \u5b57\u7b26\u9884\u7b97\u6324\u6389\u3002
+        : buildSeededChatPromptForCard({
+            card,
+            resumeSessionId: undefined,
+            language,
+            prompt: language === 'en' ? 'Please continue.' : '\u8bf7\u7ee7\u7eed\u3002',
+            attachments: [],
           })
       : ''
     const freshSessionRecoveryAttachments = shouldClearSessionId

@@ -49,15 +49,25 @@ Tool-card selection does not create transfer metadata.
 - `model-transfer`: meaningful user/assistant prose is protected from total-budget eviction;
   structured-only entries remain bounded/disposable.
 
-`App.sendMessage` selects `model-transfer` only when:
-
-- the target provider is Codex;
-- the card has `contextTransfer` metadata; and
-- no provider-native session matches the requested target model.
+`resolveChatReplayMode` selects `model-transfer` whenever the card carries a `contextTransfer`
+anchor and no provider-native session matches the requested target model — in every direction
+(Codex→Claude, Claude→Codex, and same-provider model switches). The provider check that originally
+gated this on Codex alone was removed on 2026-07-28 (pitfall 226).
 
 Once Codex emits its new session id, the active `sessionId/sessionModel` match the card model, so
 subsequent sends resume normally and do not seed again. The alternate anchor remains available for
 an explicit switch back.
+
+### Single entry point (2026-11-18)
+
+The replay-mode decision lives in `src/chat-request-seeding.ts` (`resolveChatReplayMode`) and is
+applied by `buildSeededChatPromptForCard`, which both `App.sendMessage` and the
+session-clearing recovery path (`recoverLiveStream` with `clearSessionId`) call. Call sites pass
+only the card and the resumable session id (recovery passes `undefined` — every recovery send
+clears the session, so a card holding a `contextTransfer` anchor must replay at the
+`model-transfer` fidelity). No call site passes `mode` by hand; a recovery path written without
+the wrapper previously fell back to the 6 000-character budget and dropped the opening request
+(pitfall 428).
 
 ## Persistence and history
 

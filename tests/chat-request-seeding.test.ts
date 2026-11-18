@@ -3,12 +3,13 @@ import { describe, it } from 'node:test'
 
 import { attachImagesToMessageMeta } from '../shared/chat-attachments.ts'
 import { providerSchema, type ChatMessage, type ImageAttachment } from '../shared/schema.ts'
-import { resolveChatReplayMode } from '../src/app-helpers.ts'
 import { buildArchiveRecallSnapshot, supportsArchiveRecall } from '../src/archive-recall.ts'
 import {
   buildSeededChatPrompt,
+  buildSeededChatPromptForCard,
   collectSeededChatAttachments,
   hasSeededChatTranscript,
+  resolveChatReplayMode,
 } from '../src/chat-request-seeding.ts'
 
 const timestamp = '2026-04-11T10:00:00.000Z'
@@ -805,6 +806,65 @@ describe('chat request seeding', () => {
     assert.ok(digestLines.length >= 100, `expected >=100 digest lines, got ${digestLines.length}`)
     assert.match(prompt, /inspect-step-300/)
     assert.match(prompt, /ORIGINAL TASK: fix battle settlement\./)
+  })
+
+  // 症状：换完模型后第一轮流断/被拒，恢复会清会话重放；这条路径之前手写了
+  //   buildSeededChatPrompt 却忘了传 mode，落回 6000 字符预算，最早的需求被挤掉。
+  // 根因：mode 由每个调用点自己推，恢复路径漏了一处（2026-11-18 审查发现）。
+  // 决策：App 不再自己推 mode，统一走 buildSeededChatPromptForCard；本测试守住
+  //   「同一张卡、同一份消息，不管从哪条路径重放，结果都按卡上的 contextTransfer 定档」。
+  it('buildSeededChatPromptForCard replays with model transfer whenever the card carries a transfer anchor', () => {
+    const messages: ChatMessage[] = [
+      createMessage('opening-user', 'user', 'ORIGINAL TASK: keep the daily report stable.'),
+      ...Array.from({ length: 60 }, (_, index) =>
+        createMessage(`command-${index + 1}`, 'assistant', '', {
+          kind: 'command',
+          structuredData: JSON.stringify({
+            itemId: `command-${index + 1}`,
+            kind: 'command',
+            status: 'completed',
+            command: `inspect-${index + 1}`,
+            output: `noisy output ${index + 1} ${'x'.repeat(900)}`,
+            exitCode: 0,
+          }),
+        }),
+      ),
+      createMessage('recent-assistant', 'assistant', 'Report pipeline is stable now.'),
+    ]
+    const transferredCard = {
+      provider: 'claude' as const,
+      status: 'idle' as const,
+      messages,
+      contextTransfer: {
+        sourceProvider: 'codex' as const,
+        sourceModel: 'gpt-5-codex',
+        sourceSessionId: 'codex-session',
+      },
+    }
+
+    // 恢复路径（清会话重放）调用时不带 resumeSessionId，结果必须和正常发送一致：
+    // 整段对话按换模型档位回放，不出现「N 条被省略」的计数器。
+    const recoveryPrompt = buildSeededChatPromptForCard({
+      card: transferredCard,
+      resumeSessionId: undefined,
+      language: 'en',
+      prompt: 'Please continue.',
+      attachments: [],
+    })
+    assert.match(recoveryPrompt, /ORIGINAL TASK: keep the daily report stable\./)
+    assert.doesNotMatch(recoveryPrompt, /Earlier transcript omitted/)
+
+    // 没有锚点的卡照旧走紧凑预算：结构化输出被截成摘要/截断块，完整输出不再出现。
+    const plainPrompt = buildSeededChatPromptForCard({
+      card: { ...transferredCard, contextTransfer: undefined },
+      resumeSessionId: undefined,
+      language: 'en',
+      prompt: 'Please continue.',
+      attachments: [],
+    })
+    assert.match(plainPrompt, /ORIGINAL TASK: keep the daily report stable\./)
+    assert.match(recoveryPrompt, /noisy output 1 x{900}/)
+    assert.doesNotMatch(plainPrompt, /noisy output 1 x{900}/)
   })
 
 })

@@ -17,9 +17,17 @@ const transientRecoveryPlaceholderSequencePattern =
 // 就去翻工作目录捡别的会话的活干。错误回显不是进展，按占位符同等对待。
 const providerErrorEchoPattern = /^API Error:/i
 
-// 中转站说「previously rejected」不是普通网络抖动：继续 --resume 只会把同一个
-// 被上游拒绝的原生会话再送一遍。此类错误必须换新会话，并且只重放当前用户消息。
+// 中转站说「previously rejected」不是普通网络抖动：继续 --resume 可能再次命中。
+// 恢复时保留原生会话上下文，只回滚当前未完成回合。
 export const isClaudePreviouslyRejectedUpstreamError = isPreviouslyRejectedUpstreamMessage
+
+export const shouldRecoverPreviouslyRejectedWithNativeCheckpoint = ({
+  provider,
+  hasSessionId,
+}: {
+  provider: string
+  hasSessionId: boolean
+}) => provider === 'claude' && hasSessionId
 
 export const shouldScheduleFallbackRetryAfterStreamFailure = ({
   previouslyRejectedUpstream,
@@ -186,6 +194,28 @@ export const shouldResetStreamRecoveryAttemptsForText = (content: string) => {
     transientRecoveryPlaceholderSequencePattern.test(normalized) ||
     providerErrorEchoPattern.test(normalized)
   )
+}
+
+// 玩家需求（2026-11-18）：不会发给模型的消息在会话里置灰，一眼看出哪些是「只给人看」的噪音。
+// 口径必须和回放过滤同源：assistant 侧的 `API Error:` / Reconnecting 回显（isReplayableMessage 与 CLI
+// 都会丢掉）、以及不带 kind 的普通 system 提示（回放只收 user/assistant）。带 kind 的结构化条目
+// （工具/命令/耗时等）各有自己的样式，不在此列；用户自己贴的报错是真实需求，不置灰。
+export const isContextExcludedMessage = (
+  message: Pick<ChatMessage, 'role' | 'content' | 'meta'>,
+) => {
+  if (message.meta?.kind || message.meta?.structuredData) {
+    return false
+  }
+  if (message.role === 'system') {
+    return message.content.trim().length > 0
+  }
+  if (message.role === 'assistant') {
+    return (
+      message.content.trim().length > 0 &&
+      !shouldResetStreamRecoveryAttemptsForText(message.content)
+    )
+  }
+  return false
 }
 
 export const shouldResetStreamRecoveryAttemptsForActivity = (

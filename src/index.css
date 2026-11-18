@@ -5734,6 +5734,12 @@ a.message-file-reference-link:focus-visible {
   background: rgba(60, 72, 62, 0.03);
 }
 
+/* 不会发给模型的消息（报错回显 / 系统提示）：整体置灰，只给人看 */
+.message-context-excluded {
+  opacity: 0.62;
+  filter: grayscale(1);
+}
+
 /* Log messages (tool output) */
 .message-is-log {
   max-width: 100%;

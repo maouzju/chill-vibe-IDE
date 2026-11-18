@@ -358,6 +358,7 @@ type LocaleText = {
   weatherLoading: string
   weatherConditions: Record<string, string>
   forkConversation: string
+  messageExcludedFromContext: string
   thinking: string
   thinkingHint: string
   thinkingDepthLabel: string
@@ -872,6 +873,7 @@ const localeTextByLanguage: Record<AppLanguage, LocaleText> = {
     adminAccessHint: '开启后，这个会话可以查看并操作本工作区的其他会话（发消息、换泳道、挂唤醒）。',
     adminAccessBadgeTitle: '这个会话有超管权限',
     forkConversation: '从此处分叉',
+    messageExcludedFromContext: '这条不会发给模型（报错 / 系统提示）',
     thinking: '思考',
     thinkingHint: '让模型先想再答。答得更稳，但更慢也更费额度；部分模型强制开启，关不掉。',
     thinkingDepthLabel: '思考深度',
@@ -1540,6 +1542,7 @@ const localeTextByLanguage: Record<AppLanguage, LocaleText> = {
       'Lets this session inspect and act on the other sessions in this workspace — message them, move them between lanes, arm wake timers.',
     adminAccessBadgeTitle: 'This session has admin access',
     forkConversation: 'Fork from here',
+    messageExcludedFromContext: 'Not sent to the model (error / system notice)',
     thinking: 'Thinking',
     thinkingHint: 'Let the model reason before answering. Steadier results, but slower and more expensive; some models always think and cannot turn it off.',
     thinkingDepthLabel: 'Thinking depth',

@@ -5,10 +5,12 @@ import { attachImagesToMessageMeta } from '../shared/chat-attachments.ts'
 import { isClaudePoisonedHistoryError } from '../server/provider-stream-recovery.ts'
 import {
   createStreamRecoveryRetryScheduler,
+  isContextExcludedMessage,
   getRecoverableStreamRetryDelayMs,
   getRecoverableStreamRetryLimit,
   getRecoverableStreamErrorSessionId,
   isClaudePreviouslyRejectedUpstreamError,
+  shouldRecoverPreviouslyRejectedWithNativeCheckpoint,
   resolveNextFailedResumeSessionAttempt,
   resolveFreshSessionRecoveryTurn,
   resolveStreamRecoveryMode,
@@ -31,6 +33,17 @@ test('previously-rejected Claude relay errors require a fresh session', () => {
     true,
   )
   assert.equal(isClaudePreviouslyRejectedUpstreamError('API Error: 500 server-side issue, usually temporary'), false)
+})
+
+test('previously-rejected recovery keeps the native conversation checkpoint', () => {
+  assert.equal(
+    shouldRecoverPreviouslyRejectedWithNativeCheckpoint({ provider: 'claude', hasSessionId: true }),
+    true,
+  )
+  assert.equal(
+    shouldRecoverPreviouslyRejectedWithNativeCheckpoint({ provider: 'codex', hasSessionId: true }),
+    false,
+  )
 })
 
 test('the Chinese relay wording of previously-rejected is recognised too', () => {
@@ -624,4 +637,20 @@ test('rescheduling a recovery retry for the same card replaces the previous one'
     run()
   }
   assert.deepEqual(fired, ['second'])
+})
+
+// 玩家需求（2026-11-18）：不会发给模型的消息在会话里置灰。判据必须和「回放过滤 / CLI 回显」同口径。
+test('messages that never reach the model are flagged so the chat can grey them out', () => {
+  const base = { id: 'm', createdAt: '2026-11-18T00:00:00.000Z' }
+  // CLI 把报错回显成 assistant 文本 / 重连占位 / 应用自己的普通系统提示：都不进上下文
+  assert.equal(isContextExcludedMessage({ ...base, role: 'assistant', content: 'API Error: Request rejected (429)' }), true)
+  assert.equal(isContextExcludedMessage({ ...base, role: 'assistant', content: 'Reconnecting... 2/5' }), true)
+  assert.equal(isContextExcludedMessage({ ...base, role: 'system', content: 'boom' }), true)
+  // 真实回复、用户消息、带 kind 的结构化条目（工具/命令/耗时）都在上下文里或另有样式
+  assert.equal(isContextExcludedMessage({ ...base, role: 'assistant', content: 'done' }), false)
+  assert.equal(isContextExcludedMessage({ ...base, role: 'user', content: 'API Error: 我贴给你看的报错' }), false)
+  assert.equal(
+    isContextExcludedMessage({ ...base, role: 'system', content: '12s', meta: { kind: 'run-duration' } } as never),
+    false,
+  )
 })

@@ -14,6 +14,7 @@ import {
 import type { AppLanguage, ChatMessage, ImageAttachment } from '../../shared/schema'
 import type { CardRecoveryStatus } from '../stream-recovery-feedback'
 import { formatRunDuration, readRunDurationMs } from '../run-duration-summary'
+import { isContextExcludedMessage } from '../stream-recovery'
 import {
   getAskUserAnswerKey,
   parseStructuredAgentsMessage,
@@ -422,9 +423,12 @@ const MessageBubbleView = ({
     ? message.meta?.model?.trim()
     : ''
 
+  const contextExcluded = isContextExcludedMessage(message)
+
   const article = (
     <article
-      className={`message message-${message.role}${structuredKind === 'log' ? ' message-is-log' : ''}${structuredKind && structuredKind !== 'log' ? ` message-is-structured message-is-${structuredKind}` : ''}${isStickyToTop ? ' is-sticky-anchor' : ''}`}
+      title={contextExcluded ? text.messageExcludedFromContext : undefined}
+      className={`message message-${message.role}${contextExcluded ? ' message-context-excluded' : ''}${structuredKind === 'log' ? ' message-is-log' : ''}${structuredKind && structuredKind !== 'log' ? ` message-is-structured message-is-${structuredKind}` : ''}${isStickyToTop ? ' is-sticky-anchor' : ''}`}
       data-message-id={message.id}
     >
       <div className="message-topline">

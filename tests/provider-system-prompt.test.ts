@@ -6207,7 +6207,7 @@ test('codex exec instructions authorise the agent to pick spawn_agent models fro
     assert.match(instructions, /spawn_agent/)
     assert.match(instructions, /reasoning_effort/)
     // 目录里 Codex 可见的模型都要列出来，agent 才知道自己能选什么。
-    for (const model of ['gpt-6.1-sol', 'gpt-6-astra', 'gpt-6-luna']) {
+    for (const model of ['gpt-6.2-sol', 'gpt-6.2-astra', 'gpt-6-luna']) {
       assert.match(instructions, new RegExp(model.replace(/\./g, '[.]')), `${language} must list ${model}`)
     }
     for (const retiredModel of ['gpt-6-sol', 'gpt-5.6-sol', 'gpt-5.6-terra', 'gpt-5.6-luna', 'gpt-5.5']) {

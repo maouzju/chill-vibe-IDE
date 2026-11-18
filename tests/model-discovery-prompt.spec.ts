@@ -7,7 +7,7 @@ import { appUrl } from './playwright-app-url.ts'
 // 端点返回：两条真·新型号 + 今天中转站上的旧型号/压缩变体（不该出现在弹窗里）。
 const discovered = [
   { provider: 'claude', ids: ['claude-opus-5-5', 'claude-opus-6', 'claude-opus-4-8'] },
-  { provider: 'codex', ids: ['gpt-6.1-sol', 'gpt-6.2-sol', 'gpt-6.2-sol-openai-compact', 'codex-auto-review'] },
+  { provider: 'codex', ids: ['gpt-6.2-sol', 'gpt-6.3-sol', 'gpt-6.3-sol-openai-compact', 'codex-auto-review'] },
 ]
 
 const mockApis = async (page: Page, theme: 'dark' | 'light') => {
@@ -61,7 +61,7 @@ for (const theme of ['dark', 'light'] as const) {
     await expect(dialog).toBeVisible({ timeout: 15_000 })
     await expect(dialog.getByRole('listitem')).toHaveCount(2)
     await expect(dialog).toContainText('Opus 6')
-    await expect(dialog).toContainText('GPT-6.2 Sol')
+    await expect(dialog).toContainText('GPT-6.3 Sol')
     await expect(dialog).not.toContainText('compact')
     await expect(dialog).toHaveScreenshot(`model-discovery-${theme}.png`, { maxDiffPixelRatio: 0.01 })
 
@@ -70,8 +70,8 @@ for (const theme of ['dark', 'light'] as const) {
 
     await expect
       .poll(() => getState().settings.modelPickerCustomModels.map((entry) => `${entry.provider}:${entry.model}`))
-      .toEqual(['claude:claude-opus-6', 'codex:gpt-6.2-sol'])
-    expect(getState().settings.seenDiscoveredModels).toEqual(['claude:claude-opus-6', 'codex:gpt-6.2-sol'])
+      .toEqual(['claude:claude-opus-6', 'codex:gpt-6.3-sol'])
+    expect(getState().settings.seenDiscoveredModels).toEqual(['claude:claude-opus-6', 'codex:gpt-6.3-sol'])
 
     await page.reload()
     await page.waitForTimeout(4_500)
@@ -91,7 +91,7 @@ test('adding one keeps the rest; ignore asks never again without adding', async 
   await dialog.getByRole('button', { name: /忽略|Ignore/ }).click()
   await expect(dialog).toBeHidden()
 
-  await expect.poll(() => getState().settings.seenDiscoveredModels).toEqual(['claude:claude-opus-6', 'codex:gpt-6.2-sol'])
+  await expect.poll(() => getState().settings.seenDiscoveredModels).toEqual(['claude:claude-opus-6', 'codex:gpt-6.3-sol'])
   expect(getState().settings.modelPickerCustomModels.map((entry) => entry.model)).toEqual(['claude-opus-6'])
 
   await page.reload()

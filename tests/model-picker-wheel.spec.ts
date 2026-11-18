@@ -96,13 +96,11 @@ test('wheel over the model button previews neighbours and commits once after the
 
   // 向上 = 上一项
   await page.mouse.wheel(0, -100)
-  await expect(modelSelect).toContainText('GPT-6.1 Sol')
+  await expect(modelSelect).toContainText('GPT-6.2 Astra')
 
-  // 连滚两格向下：Luna → Astra → Fable 5.2（跨 provider）。中间的 Astra 只是预览。
+  // 连滚两格向下：Luna → Fable 5.2（跨 provider）。
   await page.mouse.wheel(0, 100)
   await expect(modelSelect).toContainText('GPT-6 Luna')
-  await page.mouse.wheel(0, 100)
-  await expect(modelSelect).toContainText('GPT-6 Astra')
   await page.mouse.wheel(0, 100)
   await expect(modelSelect).toContainText('Fable 5.2')
 
@@ -116,7 +114,7 @@ test('wheel over the model button previews neighbours and commits once after the
   // 只提交了终点：没有任何一次落盘停在路过的型号上。
   const passedThrough = api.saved.some((state) => {
     const card = savedCard(state)
-    return card?.model === 'gpt-6-astra' || card?.model === 'gpt-6.1-sol'
+    return card?.model === 'gpt-6.2-astra'
   })
   expect(passedThrough).toBe(false)
 })
@@ -129,7 +127,7 @@ test('scrolling back to the original model and stopping changes nothing', async 
   await expect(modelSelect).toContainText('GPT-6 Luna')
   await modelSelect.hover()
   await page.mouse.wheel(0, 100)
-  await expect(modelSelect).toContainText('GPT-6 Astra')
+  await expect(modelSelect).toContainText('Fable 5.2')
   await page.mouse.wheel(0, -100)
   await expect(modelSelect).toContainText('GPT-6 Luna')
 
@@ -141,7 +139,7 @@ test('the dropdown honours hidden built-ins and custom entries from settings', a
   await mockApis(
     page,
     createSeededState({
-      modelPickerVisibility: { 'codex:gpt-6-astra': false, 'claude:claude-sonnet-5': true },
+      modelPickerVisibility: { 'codex:gpt-6.2-astra': false, 'claude:claude-sonnet-5': true },
       modelPickerCustomModels: [{ id: 'c1', provider: 'codex', model: 'deepseek-v4', label: 'DeepSeek V4' }],
     }),
   )
@@ -153,13 +151,13 @@ test('the dropdown honours hidden built-ins and custom entries from settings', a
   await expect(menu).toBeVisible()
   await expect(menu.getByRole('option', { name: 'DeepSeek V4' })).toBeVisible()
   await expect(menu.getByRole('option', { name: 'Sonnet 5', exact: true })).toBeVisible()
-  await expect(menu.getByRole('option', { name: 'GPT-6 Astra' })).toHaveCount(0)
+  await expect(menu.getByRole('option', { name: 'GPT-6.2 Astra' })).toHaveCount(0)
   await page.keyboard.press('Escape')
 
-  // 被关掉的 Astra 不在滚轮路径上：Luna 往下一格直接到下一个可见项。
+  // 被关掉的 6.2 Astra 不在滚轮路径上：Luna 往上一格直接到 6.2 Sol。
   await modelSelect.hover()
-  await page.mouse.wheel(0, 100)
-  await expect(modelSelect).not.toContainText('GPT-6 Astra')
+  await page.mouse.wheel(0, -100)
+  await expect(modelSelect).not.toContainText('GPT-6.2 Astra')
 })
 
 test('settings toggles built-ins and adds / removes custom models', async ({ page }) => {
@@ -171,7 +169,7 @@ test('settings toggles built-ins and adds / removes custom models', async ({ pag
   const section = item.getByTestId('model-picker-settings')
   await section.scrollIntoViewIfNeeded()
 
-  const astra = section.locator('[data-model-picker-key="codex:gpt-6-astra"]')
+  const astra = section.locator('[data-model-picker-key="codex:gpt-6.2-astra"]')
   await expect(astra).toBeChecked()
   await astra.uncheck()
   const retired = section.locator('[data-model-picker-key="claude:claude-sonnet-5"]')
@@ -179,11 +177,11 @@ test('settings toggles built-ins and adds / removes custom models', async ({ pag
   await retired.check()
   await expect
     .poll(() => api.current().settings.modelPickerVisibility)
-    .toEqual({ 'codex:gpt-6-astra': false, 'claude:claude-sonnet-5': true })
+    .toEqual({ 'codex:gpt-6.2-astra': false, 'claude:claude-sonnet-5': true })
 
   // 勾回默认状态 = 从覆盖表里删键
   await retired.uncheck()
-  await expect.poll(() => api.current().settings.modelPickerVisibility).toEqual({ 'codex:gpt-6-astra': false })
+  await expect.poll(() => api.current().settings.modelPickerVisibility).toEqual({ 'codex:gpt-6.2-astra': false })
 
   const draft = section.locator('.model-picker-custom-draft')
   const add = draft.getByRole('button', { name: /添加|Add/ })
@@ -218,7 +216,7 @@ test('dropdown groups custom and built-in models by provider and series', async 
         'claude:': false,
         'gemini:': false,
         'codex:gpt-6-luna': false,
-        'codex:gpt-6-astra': false,
+        'codex:gpt-6.2-astra': false,
         'gemini:gemini-3.1-pro-preview': false,
         'gemini:gemini-3-flash-preview': false,
         'gemini:gemini-3.8-flash': false,
@@ -242,7 +240,7 @@ test('dropdown groups custom and built-in models by provider and series', async 
   const menu = page.locator('.model-dropdown-menu')
   await expect(menu).toBeVisible()
   await expect(menu.locator('.model-dropdown-option')).toHaveText([
-    'GPT-6.1 Sol',
+    'GPT-6.2 Sol',
     'GPT-6 Luna',
     'claude-fable-5-2',
     'Opus 5.5',

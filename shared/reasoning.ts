@@ -147,6 +147,8 @@ const getCodexReasoningOptionValuesForModel = (model?: string | null): CodexReas
   if (
     isCodexNoneEffortUnsupportedModel(model) ||
     normalizedModel === 'gpt-6-sol' ||
+    normalizedModel === 'gpt-6.2-sol' ||
+    normalizedModel === 'gpt-6.2-astra' ||
     normalizedModel === 'gpt-5.6-sol' ||
     normalizedModel === 'gpt-5.6-terra' ||
     normalizedModel === 'gpt-5.6'

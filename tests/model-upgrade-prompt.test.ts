@@ -16,7 +16,7 @@ test('a default model beaten by a built-in successor triggers one suggestion per
   assert.deepEqual(
     suggestions.map(({ provider, from, to }) => ({ provider, from, to })),
     [
-      { provider: 'codex', from: 'gpt-6-sol', to: 'gpt-6.1-sol' },
+      { provider: 'codex', from: 'gpt-6-sol', to: 'gpt-6.2-sol' },
       { provider: 'claude', from: 'claude-sonnet-5', to: 'claude-sonnet-5-5' },
     ],
   )
@@ -24,7 +24,7 @@ test('a default model beaten by a built-in successor triggers one suggestion per
 
 test('no suggestion when the default is already the newest of its tier or a custom name', () => {
   assert.deepEqual(
-    findModelUpgradeSuggestions({ codex: 'gpt-6.1-sol', claude: 'claude-sonnet-5-5' }, []),
+    findModelUpgradeSuggestions({ codex: 'gpt-6.2-sol', claude: 'claude-sonnet-5-5' }, []),
     [],
   )
   assert.deepEqual(

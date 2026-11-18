@@ -132,7 +132,8 @@ describe('model picker customization (SPEC model-picker-customization)', () => {
     assert.deepEqual(
       options.map((entry) => entry.label),
       [
-        'GPT-6.1 Sol',
+        'GPT-6.2 Sol',
+        'GPT-6.2 Astra',
         'claude-fable-5-2',
         'Opus 5.5',
         'Sonnet 5.5',
@@ -155,7 +156,7 @@ describe('model picker customization (SPEC model-picker-customization)', () => {
           { id: '1', provider: 'gemini', model: 'gemini-3.9-flash', label: 'Gemini 3.9 Flash' },
           { id: '2', provider: 'claude', model: 'claude-opus-6', label: 'Opus 6' },
           { id: '3', provider: 'claude', model: 'claude-opus-4-8', label: 'Opus 4.8' },
-          { id: '4', provider: 'codex', model: 'gpt-6.2-sol', label: 'GPT-6.2 Sol' },
+          { id: '4', provider: 'codex', model: 'gpt-6.3-sol', label: 'GPT-6.3 Sol' },
           { id: '5', provider: 'gemini', model: 'gemini-4-neon', label: 'Gemini 4 Neon' },
         ],
       },
@@ -165,10 +166,10 @@ describe('model picker customization (SPEC model-picker-customization)', () => {
     assert.deepEqual(
       options.map((entry) => entry.model),
       [
+        'gpt-6.3-sol',
         'gpt-6.2-sol',
-        'gpt-6.1-sol',
+        'gpt-6.2-astra',
         'gpt-6-luna',
-        'gpt-6-astra',
         'deepseek-v4',
         'claude-fable-5-2',
         'claude-opus-6',

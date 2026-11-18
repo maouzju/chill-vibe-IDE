@@ -132,11 +132,26 @@ export const MODEL_OPTIONS: ModelOption[] = [
     usesConfiguredDefault: true,
   },
   {
-    // 2026-09-29 发布。裸别名 sol/6 仍归默认的 GPT-6 Sol：默认模型没动，`/model sol` 不该悄悄换代。
+    // 2026-11-17 发布（OpenAI 官方 + duckcoding 中转站实测 none/low/max 均可用，none 不被拒，
+    // 所以不进 CODEX_NONE_EFFORT_UNSUPPORTED_MODELS）。裸别名 sol/6 仍归默认的 GPT-6 Sol。
+    label: 'GPT-6.2 Sol',
+    provider: 'codex',
+    model: 'gpt-6.2-sol',
+    aliases: ['gpt-6.2-sol', '6.2-sol', 'sol-6.2', 'sol6.2', 'gpt62sol'],
+  },
+  {
+    label: 'GPT-6.2 Astra',
+    provider: 'codex',
+    model: 'gpt-6.2-astra',
+    aliases: ['gpt-6.2-astra', '6.2-astra', 'astra-6.2', 'astra6.2', 'gpt62astra', 'astra', '6.2'],
+  },
+  {
+    // 2026-11-18 起被 6.2 取代，退出选择器；别名与旧卡保留。
     label: 'GPT-6.1 Sol',
     provider: 'codex',
     model: 'gpt-6.1-sol',
     aliases: ['gpt-6.1-sol', '6.1', '6.1-sol', 'sol-6.1', 'sol6.1', 'gpt61sol'],
+    hiddenFromPicker: true,
   },
   {
     // Retired from the picker on 2026-10-01; keep aliases and stored cards working.
@@ -163,7 +178,8 @@ export const MODEL_OPTIONS: ModelOption[] = [
     label: 'GPT-6 Astra',
     provider: 'codex',
     model: 'gpt-6-astra',
-    aliases: ['gpt-6-astra', 'astra', 'gpt6', 'gpt-6'],
+    aliases: ['gpt-6-astra', 'gpt6', 'gpt-6'],
+    hiddenFromPicker: true,
   },
   {
     label: 'GPT-5.6 Terra',
@@ -437,8 +453,10 @@ export const buildClaudeAgentAliasModelEnv = (): Record<string, string> =>
  */
 export const MODEL_SUCCESSORS: Record<Provider, Record<string, string>> = {
   codex: {
-    'gpt-6-sol': 'gpt-6.1-sol',
-    'gpt-5.6-sol': 'gpt-6.1-sol',
+    'gpt-6-sol': 'gpt-6.2-sol',
+    'gpt-6.1-sol': 'gpt-6.2-sol',
+    'gpt-5.6-sol': 'gpt-6.2-sol',
+    'gpt-6-astra': 'gpt-6.2-astra',
     'gpt-5.6-luna': 'gpt-6-luna',
   },
   claude: {

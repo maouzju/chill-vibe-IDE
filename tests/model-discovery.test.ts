@@ -43,10 +43,10 @@ test('a newer version of a known tier is suggested, older and noise are not', ()
 
   const codex = findDiscoveredNewModels({
     provider: 'codex',
-    ids: [...relayCodexIds, 'gpt-6.2-sol', 'gpt-6.2-sol-openai-compact', 'gpt-6-terra', 'text-embedding-4'],
+    ids: [...relayCodexIds, 'gpt-6.3-sol', 'gpt-6.3-sol-openai-compact', 'gpt-6-terra', 'text-embedding-4'],
   })
   // gpt-6-terra：目录里 Terra 只到 5.6，6 比它新 → 也算新型号
-  assert.deepEqual(codex.map((entry) => entry.model), ['gpt-6.2-sol', 'gpt-6-terra'])
+  assert.deepEqual(codex.map((entry) => entry.model), ['gpt-6.3-sol', 'gpt-6-terra'])
 })
 
 test('a brand-new tier must be at least the provider\'s newest major version', () => {

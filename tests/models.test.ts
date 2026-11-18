@@ -77,6 +77,8 @@ describe('model helpers', () => {
         AUTOMATIONBOARD_TOOL_MODEL,
         STATS_TOOL_MODEL,
         '',
+        'gpt-6.2-sol',
+        'gpt-6.2-astra',
         'gpt-6.1-sol',
         DEFAULT_CODEX_MODEL,
         'gpt-6-luna',
@@ -144,9 +146,23 @@ describe('model helpers', () => {
     assert.equal(normalizeModel('claude', 'claude-sonnet-4-6'), 'claude-sonnet-4-6')
   })
 
-  it('resolves GPT-6 Astra aliases', () => {
+  it('resolves GPT-6 Astra aliases; bare astra follows 6.2', () => {
     assert.equal(resolveSlashModel('codex', 'gpt-6-astra'), 'gpt-6-astra')
-    assert.equal(resolveSlashModel('codex', 'astra'), 'gpt-6-astra')
+    assert.equal(resolveSlashModel('codex', 'astra'), 'gpt-6.2-astra')
+  })
+
+  // GPT-6.2（2026-11-17）：none 不被拒（真实中转站探针），所以不进 none 不支持名单；
+  // 裸 sol/6 仍归默认 GPT-6 Sol。
+  it('resolves GPT-6.2 aliases and keeps them out of the none-unsupported list', () => {
+    for (const alias of ['gpt-6.2-sol', '6.2-sol', 'sol-6.2', 'sol6.2', 'gpt62sol', 'GPT-6.2 Sol']) {
+      assert.equal(resolveSlashModel('codex', alias), 'gpt-6.2-sol', alias)
+    }
+    for (const alias of ['gpt-6.2-astra', '6.2-astra', 'astra-6.2', 'gpt62astra', '6.2']) {
+      assert.equal(resolveSlashModel('codex', alias), 'gpt-6.2-astra', alias)
+    }
+    assert.equal(resolveSlashModel('codex', 'sol'), DEFAULT_CODEX_MODEL)
+    assert.equal(isCodexNoneEffortUnsupportedModel('gpt-6.2-sol'), false)
+    assert.equal(isCodexNoneEffortUnsupportedModel('gpt-6.2-astra'), false)
   })
 
   // GPT-6.1 Sol（2026-09-29）用显式别名；裸 `sol`/`6` 跟随默认模型 GPT-6 Sol，
@@ -167,9 +183,9 @@ describe('model helpers', () => {
       getModelOptions('codex')
         .filter(isModelPickerOptionVisible)
         .map((option) => option.model),
-      ['', 'gpt-6.1-sol', 'gpt-6-luna', 'gpt-6-astra'],
+      ['', 'gpt-6.2-sol', 'gpt-6.2-astra', 'gpt-6-luna'],
     )
-    for (const model of ['gpt-6-sol', 'gpt-5.6-sol', 'gpt-5.6-terra', 'gpt-5.6-luna', 'gpt-5.5']) {
+    for (const model of ['gpt-6-sol', 'gpt-6.1-sol', 'gpt-6-astra', 'gpt-5.6-sol', 'gpt-5.6-terra', 'gpt-5.6-luna', 'gpt-5.5']) {
       const option = MODEL_OPTIONS.find((candidate) => candidate.model === model)
       assert.ok(option, `${model} must remain in the catalog for legacy compatibility`)
       assert.equal(isModelPickerOptionVisible(option), false, `${model} must stay out of the picker`)
@@ -200,7 +216,8 @@ describe('model helpers', () => {
     assert.equal(visible.includes('claude-sonnet-4-6'), false)
     assert.equal(visible.includes('claude-fable-5-1'), false)
     assert.equal(visible.includes('claude-fable-5-2'), true)
-    assert.equal(visible.includes('gpt-6-astra'), true)
+    assert.equal(visible.includes('gpt-6.2-astra'), true)
+    assert.equal(visible.includes('gpt-6-astra'), false)
     // 与普通选择器的唯一差别：头脑风暴请求必须指名具体模型，没有「用默认模型」项。
     assert.equal(visible.includes(''), false)
     assert.equal(visible.includes(GIT_TOOL_MODEL), false)

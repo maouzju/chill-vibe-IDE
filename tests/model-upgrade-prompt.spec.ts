@@ -58,7 +58,7 @@ for (const theme of ['dark', 'light'] as const) {
     const dialog = page.getByRole('dialog', { name: /有更强的新模型|A stronger model is available/ })
     await expect(dialog).toBeVisible()
     await expect(dialog).toContainText('GPT-6 Sol')
-    await expect(dialog).toContainText('GPT-6.1 Sol')
+    await expect(dialog).toContainText('GPT-6.2 Sol')
     await expect(dialog).toContainText('Sonnet 5.5')
     await expect(dialog).toHaveScreenshot(`model-upgrade-${theme}.png`, { maxDiffPixelRatio: 0.01 })
 
@@ -67,9 +67,9 @@ for (const theme of ['dark', 'light'] as const) {
 
     await expect
       .poll(() => getState().settings.requestModels)
-      .toEqual({ codex: 'gpt-6.1-sol', claude: 'claude-sonnet-5-5', gemini: DEFAULT_GEMINI_MODEL })
+      .toEqual({ codex: 'gpt-6.2-sol', claude: 'claude-sonnet-5-5', gemini: DEFAULT_GEMINI_MODEL })
     expect(getState().settings.acknowledgedModelUpgrades).toEqual(
-      expect.arrayContaining(['codex:gpt-6-sol>gpt-6.1-sol', 'claude:claude-sonnet-5>claude-sonnet-5-5']),
+      expect.arrayContaining(['codex:gpt-6-sol>gpt-6.2-sol', 'claude:claude-sonnet-5>claude-sonnet-5-5']),
     )
 
     await page.reload()

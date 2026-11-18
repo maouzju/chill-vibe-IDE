@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 
 import { attachImagesToMessageMeta } from '../shared/chat-attachments.ts'
+import { isClaudePoisonedHistoryError } from '../server/provider-stream-recovery.ts'
 import {
   createStreamRecoveryRetryScheduler,
   getRecoverableStreamRetryDelayMs,
@@ -30,6 +31,14 @@ test('previously-rejected Claude relay errors require a fresh session', () => {
     true,
   )
   assert.equal(isClaudePreviouslyRejectedUpstreamError('API Error: 500 server-side issue, usually temporary'), false)
+})
+
+test('the Chinese relay wording of previously-rejected is recognised too', () => {
+  const zh =
+    'API Error: 400 这段内容此前被上游拒绝过且高度相似，不再重试。请修改内容。 (request id: 20261118142717088-58ec0d04)'
+  assert.equal(isClaudePreviouslyRejectedUpstreamError(zh), true)
+  assert.equal(isClaudePoisonedHistoryError(zh), true)
+  assert.equal(isClaudePoisonedHistoryError('API Error: 400 请求参数不合法'), false)
 })
 
 test('fresh Claude recovery replays only the latest user turn after appended error messages', () => {

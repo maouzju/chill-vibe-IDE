@@ -1,4 +1,5 @@
 import type { ChatRequest, StreamActivity, StreamErrorEvent, StreamErrorHint } from '../shared/schema.js'
+import { isPreviouslyRejectedUpstreamMessage } from '../shared/previously-rejected-upstream.js'
 import { isSensitiveWordRejection } from '../shared/sensitive-word-rejection.js'
 
 // Whether a structured activity proves the turn actually produced output for the
@@ -134,7 +135,7 @@ export const isClaudePoisonedHistoryError = (message: string) => {
   return (
     normalizedMessage.includes('system content must contain at least one block') ||
     normalizedMessage.includes('each thinking block must contain thinking') ||
-    normalizedMessage.includes('previously rejected by the upstream provider')
+    isPreviouslyRejectedUpstreamMessage(message)
   )
 }
 
@@ -207,6 +208,7 @@ export const classifyProviderStreamErrorRecovery = (
 
   if (
     switchConfigRecoverable ||
+    isPreviouslyRejectedUpstreamMessage(message) ||
     recoverableErrorPatterns.some((pattern) => normalizedMessage.includes(pattern)) ||
     zeroExitPattern.test(normalizedMessage) ||
     rateLimitPattern.test(normalizedMessage)

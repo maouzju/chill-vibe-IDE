@@ -1,4 +1,5 @@
 import { getChatMessageAttachments } from '../shared/chat-attachments.js'
+import { isPreviouslyRejectedUpstreamMessage } from '../shared/previously-rejected-upstream.js'
 import type {
   ChatMessage,
   ImageAttachment,
@@ -18,8 +19,7 @@ const providerErrorEchoPattern = /^API Error:/i
 
 // 中转站说「previously rejected」不是普通网络抖动：继续 --resume 只会把同一个
 // 被上游拒绝的原生会话再送一遍。此类错误必须换新会话，并且只重放当前用户消息。
-export const isClaudePreviouslyRejectedUpstreamError = (message: string) =>
-  message.toLowerCase().includes('previously rejected by the upstream provider')
+export const isClaudePreviouslyRejectedUpstreamError = isPreviouslyRejectedUpstreamMessage
 
 export const shouldScheduleFallbackRetryAfterStreamFailure = ({
   previouslyRejectedUpstream,

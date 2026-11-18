@@ -87,6 +87,7 @@ const installMockChatBridge = async (page: Page) => {
     const win = window as Window & {
       electronAPI: NonNullable<typeof window.electronAPI>
       __repeatLoopPrompts?: string[]
+      __repeatLoopPendingCompletions?: Array<() => void>
     }
 
     const dispatchStreamEvent = (subscriptionId: string, eventName: string, data: unknown) => {
@@ -98,6 +99,7 @@ const installMockChatBridge = async (page: Page) => {
     }
 
     win.__repeatLoopPrompts = []
+    win.__repeatLoopPendingCompletions = []
     win.electronAPI.requestChat = async (request) => {
       const prompts = [
         ...(win.__repeatLoopPrompts ?? []),
@@ -109,12 +111,20 @@ const installMockChatBridge = async (page: Page) => {
     win.electronAPI.stopChat = async () => undefined
     win.electronAPI.subscribeChatStream = async (streamId, subscriptionId) => {
       const iteration = Number(streamId.split('-').at(-1) ?? '1')
-      window.setTimeout(() => {
+      const complete = () => {
         dispatchStreamEvent(subscriptionId, 'delta', {
           content: `Completed repeat iteration ${iteration}.`,
         })
         dispatchStreamEvent(subscriptionId, 'done', {})
-      }, iteration === 1 ? 60 : 900)
+      }
+      // 症状：整套 Playwright 并发跑时本用例偶发失败，标签数涨到 11。
+      // 根因：第 2 轮 900ms 后自动完成，负载下测试还没来得及取消勾选，循环就接着开了新标签。
+      // 所以第 2 轮起不再靠定时器，改由测试在取消勾选后手动放行，与机器快慢无关。
+      if (iteration === 1) {
+        window.setTimeout(complete, 60)
+      } else {
+        win.__repeatLoopPendingCompletions = [...(win.__repeatLoopPendingCompletions ?? []), complete]
+      }
     }
     win.electronAPI.unsubscribeChatStream = async () => undefined
   })
@@ -166,6 +176,13 @@ test('a checked repeat loop opens a fresh tab, reruns the earliest prompt, and s
   await expect(activeRepeatToggle).not.toBeChecked()
   await expect(activePanel.locator('.repeat-loop-status')).toBeHidden()
   await settingsTrigger.click()
+  // 取消勾选已生效，现在才放行第 2 轮；它完成后不应再排出第 3 轮。
+  await page.evaluate(() => {
+    const win = window as Window & { __repeatLoopPendingCompletions?: Array<() => void> }
+    const pending = win.__repeatLoopPendingCompletions ?? []
+    win.__repeatLoopPendingCompletions = []
+    pending.forEach((complete) => complete())
+  })
   await page.waitForTimeout(1_100)
 
   await expect(page.locator('.pane-tab')).toHaveCount(2)

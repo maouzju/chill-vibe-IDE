@@ -129,7 +129,7 @@ const recoverableErrorPatterns = [
   'previously rejected by the upstream provider',
 ] as const
 
-// 进程内存里的历史已坏，只能丢掉常驻进程、新起进程 --resume（spawn 前会修存档）。
+// 只丢掉常驻 CLI 进程里的请求状态，避免复用池内 stdin；卡片消息和原生会话历史不删除。
 export const isClaudePoisonedHistoryError = (message: string) => {
   const normalizedMessage = message.toLowerCase()
   return (

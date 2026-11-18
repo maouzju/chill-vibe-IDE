@@ -14,6 +14,7 @@ import {
   fetchCommitDiff,
   fetchGitLog,
   initGitWorkspace,
+  isWindowsReservedPath,
   inspectGitWorkspace,
   pullGitWorkspace,
   pushGitWorkspace,
@@ -1563,5 +1564,15 @@ describe('git sync with a tracking branch that is missing on the remote', () => 
 
     await assert.rejects(pushGitWorkspace(repoPath), /rejected|fast-forward/i)
     assert.equal((await runGit(remotePath, ['rev-parse', 'main'])).trim(), remoteHead)
+  })
+})
+
+describe('windows reserved device names', () => {
+  it('flags nul/con style paths so they never reach git add', () => {
+    const expected = process.platform === 'win32'
+    assert.equal(isWindowsReservedPath('nul'), expected)
+    assert.equal(isWindowsReservedPath('sub/NUL.txt'), expected)
+    assert.equal(isWindowsReservedPath('null.ts'), false)
+    assert.equal(isWindowsReservedPath('src/console.ts'), false)
   })
 })

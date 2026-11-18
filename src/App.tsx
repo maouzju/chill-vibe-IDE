@@ -93,6 +93,7 @@ import {
   resolveNextFailedResumeSessionAttempt,
   resolveFreshSessionRecoveryTurn,
   isClaudePreviouslyRejectedUpstreamError,
+  shouldRecoverPreviouslyRejectedWithNativeCheckpoint,
   resolveStreamRecoveryCheckpointTurn,
   resolveStreamRecoveryMode,
   shouldAbandonFailedAutoCompactRun,
@@ -235,7 +236,12 @@ import { buildWorkflowFailureWakePrompt, detectWorkflowCatastrophicFailure } fro
 import { resolveAppLoadError } from './app-load-error'
 import { clearDragPayload, peekDragPayload, readDragPayload, releaseDragPayloadIfStale } from './dnd'
 import { resolveDockInsertion, type DockInsertion } from './components/docked-chip-insertion'
-import { captureColumnDockAnimation, playColumnDockAnimation } from './components/column-dock-animation'
+import {
+  captureColumnDockAnimation,
+  captureColumnUndockAnimation,
+  playColumnDockAnimation,
+  playColumnUndockAnimation,
+} from './components/column-dock-animation'
 import { useTopbarChipDensity } from './components/useTopbarDensity'
 import {
   isProviderStatusExplicitlyUnavailable,
@@ -1776,6 +1782,15 @@ function App() {
         ...(insertion ? { targetColumnId: insertion.targetId, placement: insertion.placement } : {}),
       })
       playColumnDockAnimation(animation)
+    },
+    [applyAction],
+  )
+
+  const undockColumnWithAnimation = useCallback(
+    (columnId: string) => {
+      const animation = captureColumnUndockAnimation(columnId)
+      applyAction({ type: 'undockColumn', columnId })
+      playColumnUndockAnimation(animation)
     },
     [applyAction],
   )
@@ -6417,14 +6432,19 @@ function App() {
                   const hasLiveSessionId =
                     typeof liveCard.sessionId === 'string' &&
                     liveCard.sessionId.trim().length > 0
-                  // 中转站明确说「previously rejected」时，--resume 和 native fork 都会
-                  // 把同一条被拒上下文重新送回去；直接新开会话，只重放当前用户这一轮。
-                  if (isClaudePreviouslyRejectedUpstreamError(message) && card.provider === 'claude') {
+                  // 中转站的拒绝不等于整段聊天历史有毒；恢复时保留原生会话上下文，只回滚当前未完成回合。
+                  if (
+                    isClaudePreviouslyRejectedUpstreamError(message) &&
+                    shouldRecoverPreviouslyRejectedWithNativeCheckpoint({
+                      provider: card.provider,
+                      hasSessionId: hasLiveSessionId,
+                    })
+                  ) {
                     freshClaudeRecoveryAttemptRef.current.add(card.id)
                     resumeSessionLoopCountRef.current.delete(card.id)
                     void recoverLiveStreamRef.current?.(columnId, card.id, {
                       clearSessionId: true,
-                      freshSessionOnly: true,
+                      preferNativeCheckpoint: true,
                     })
                     return
                   }
@@ -8778,10 +8798,8 @@ function App() {
         prompt: recoveryPrompt,
         attachments: recoveryAttachments,
         archiveRecall,
-        // Claude 2.1.3xx can return the relay's "previously rejected" 400 on
-        // a pooled stdin turn even after the session is cleared. A fresh
-        // one-shot process removes the keepalive protocol from this recovery
-        // path; normal turns remain pooled.
+        // Native-checkpoint recovery keeps the full conversation; a one-shot process is
+        // only needed by the explicit fresh-session path. Normal turns remain pooled.
         forceClaudeSingleShot:
           card.provider === 'claude' && requestsFreshSessionOnly,
       })
@@ -12587,7 +12605,7 @@ function App() {
                   data-column-id={column.id}
                   title={`${column.workspacePath || column.title}${statusSuffix}`}
                   aria-label={`${text.restoreDockedColumn(label)}${statusSuffix}`}
-                  onClick={() => applyAction({ type: 'undockColumn', columnId: column.id })}
+                  onClick={() => undockColumnWithAnimation(column.id)}
                   draggable
                   onDragStart={(event) => {
                     draggingDockedColumnIdRef.current = column.id

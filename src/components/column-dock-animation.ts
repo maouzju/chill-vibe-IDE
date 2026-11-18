@@ -185,6 +185,96 @@ const flyGhostToChip = (snapshot: ColumnDockAnimationSnapshot, chip: HTMLElement
   popDockedChip(chip, Math.round(DOCK_FLIGHT_MS * 0.8))
 }
 
+export type ColumnUndockAnimationSnapshot = {
+  columnId: string
+  label: string
+  chipRect: DOMRect
+  siblingRects: ColumnRectMap
+}
+
+const UNDOCK_FLIGHT_MS = 380
+const UNDOCK_REVEAL_MS = 260
+
+/** 在 dispatch undockColumn 之前调用：量好 chip 和现有列的位置。 */
+export const captureColumnUndockAnimation = (columnId: string): ColumnUndockAnimationSnapshot | null => {
+  if (typeof document === 'undefined' || prefersReducedMotion() || !supportsWebAnimations()) {
+    return null
+  }
+
+  const chip = findDockedChip(columnId)
+  if (!chip) {
+    return null
+  }
+
+  const siblingRects: ColumnRectMap = new Map()
+  for (const sibling of document.querySelectorAll<HTMLElement>('.workspace-column[data-column-id]')) {
+    const id = sibling.dataset.columnId
+    if (id && id !== columnId) {
+      siblingRects.set(id, sibling.getBoundingClientRect())
+    }
+  }
+
+  return {
+    columnId,
+    label: chip.textContent?.trim() ?? '',
+    chipRect: chip.getBoundingClientRect(),
+    siblingRects,
+  }
+}
+
+/** 在 dispatch undockColumn 之后调用：幽灵块从 chip 放大到列的位置，列淡入，其余列滑开让位。 */
+export const playColumnUndockAnimation = (snapshot: ColumnUndockAnimationSnapshot | null) => {
+  if (!snapshot) {
+    return
+  }
+
+  window.requestAnimationFrame(() => {
+    const column = findBoardColumn(snapshot.columnId)
+    if (!column) {
+      return
+    }
+
+    slideSiblingColumns(snapshot.siblingRects)
+
+    const targetRect = column.getBoundingClientRect()
+    const { chipRect } = snapshot
+    if (targetRect.width === 0 || chipRect.width === 0) {
+      return
+    }
+
+    // 列本体只做淡入，避免整列内容被缩放压扁；放大的视觉由幽灵块承担。
+    column.animate([{ opacity: 0 }, { opacity: 0, offset: 0.55 }, { opacity: 1 }], {
+      duration: UNDOCK_FLIGHT_MS,
+      easing: 'ease-out',
+    })
+
+    const ghost = document.createElement('div')
+    ghost.className = 'column-dock-ghost'
+    ghost.setAttribute('aria-hidden', 'true')
+    ghost.textContent = snapshot.label
+    document.body.appendChild(ghost)
+
+    const frame = (rect: DOMRect) => ({
+      left: `${rect.left}px`,
+      top: `${rect.top}px`,
+      width: `${rect.width}px`,
+      height: `${rect.height}px`,
+    })
+    const flight = ghost.animate(
+      [
+        { ...frame(chipRect), opacity: 0.9, borderRadius: '999px' },
+        { ...frame(targetRect), opacity: 0.5, borderRadius: '10px', offset: 0.85 },
+        { ...frame(targetRect), opacity: 0, borderRadius: '10px' },
+      ],
+      { duration: UNDOCK_FLIGHT_MS + UNDOCK_REVEAL_MS * 0.3, easing: DOCK_EASE, fill: 'forwards' },
+    )
+    const cleanup = () => ghost.remove()
+    flight.onfinish = cleanup
+    flight.oncancel = cleanup
+    window.setTimeout(cleanup, UNDOCK_FLIGHT_MS + 600)
+  })
+}
+
 /** 在 dispatch dockColumn 之后调用：等 React 提交后让列飞进 chip、其余列滑过来补位。 */
 export const playColumnDockAnimation = (snapshot: ColumnDockAnimationSnapshot | null) => {
   if (!snapshot) {

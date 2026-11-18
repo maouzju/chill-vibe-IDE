@@ -205,7 +205,7 @@ const workspaceSnapshotContentStore = createWorkspaceSnapshotContentStore(
 //   CON/PRN/AUX/NUL/COM1-9/LPT1-9（含带扩展名的 nul.txt）当设备，git 读不了。
 // 被否决 — 让用户手删：AI agent 会反复造出它，所以这里永远跳过这些路径。
 const windowsReservedBaseNamePattern = /^(con|prn|aux|nul|com[1-9]|lpt[1-9])(\..*)?$/i
-const isWindowsReservedPath = (entry: string) =>
+export const isWindowsReservedPath = (entry: string) =>
   process.platform === 'win32' &&
   windowsReservedBaseNamePattern.test(entry.split(/[\\/]/).pop() ?? '')
 const windowsReservedExcludePathspecs = ['con', 'prn', 'aux', 'nul', 'com[1-9]', 'lpt[1-9]']
@@ -1738,7 +1738,10 @@ const inspectResolvedGitWorkspace = async (
     : null
   const parsedChanges = await attachContentSignatures(
     repoRoot,
-    lines.map(parseStatusLine).filter((change): change is GitChange => change !== null),
+    lines
+      .map(parseStatusLine)
+      .filter((change): change is GitChange => change !== null)
+      .filter((change) => !isWindowsReservedPath(change.path)),
   )
   const includeChangePreviews = options?.includeChangePreviews !== false
   const includeRepositoryDetails = options?.includeRepositoryDetails !== false

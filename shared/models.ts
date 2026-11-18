@@ -146,7 +146,7 @@ export const MODEL_OPTIONS: ModelOption[] = [
     aliases: ['gpt-6.2-astra', '6.2-astra', 'astra-6.2', 'astra6.2', 'gpt62astra', 'astra', '6.2'],
   },
   {
-    // 2026-11-18 起被 6.2 取代，退出选择器；别名与旧卡保留。
+    // 2026-11-17 起被 6.2 取代，退出选择器；别名与旧卡保留。
     label: 'GPT-6.1 Sol',
     provider: 'codex',
     model: 'gpt-6.1-sol',

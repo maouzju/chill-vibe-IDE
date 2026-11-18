@@ -4047,7 +4047,7 @@ export const createClaudeTurnParser = (hooks: {
           }
           sink.onError(message, hint, classifyLiveProviderStreamRecovery(request, message, hint, emittedSessionId))
           hooks.onSettled?.()
-          // 坏历史已在进程内存里，复用它每轮必 400；丢掉让续传新起进程先修存档再 --resume。
+          // 池内进程可能还握着导致 400 的请求状态；这里只杀进程，前端随后按 native checkpoint 保留上下文恢复。
           if (isClaudePoisonedHistoryError(message)) {
             hooks.killChild()
           }

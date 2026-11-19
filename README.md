@@ -6,197 +6,106 @@
 
 ## English
 
-### Overview
+Chill Vibe is a desktop app for running many AI coding agents across many projects in one window.
+It drives the `codex`, `claude`, and `gemini` CLIs you already have installed, lays every project out as a column and every task as a chat card, and keeps long-running agents working while you are away.
 
-Chill Vibe is an IDE for parallel vibe coding across multiple projects.
-It is built for solo developers working across multiple projects, and for workflows that frequently interact with AI knowledge bases, information-retrieval systems, and other chat-first tools.
-Chill Vibe keeps multiple workspaces running side-by-side in the same view so agent chats across projects stay visible, comparable, and actionable.
+It replaces the habit of opening five Cursor or VS Code windows and Alt-Tabbing between them.
 
-### Design Philosophy
+### Download
 
-Chill Vibe is intentionally opinionated:
+- Grab the latest Windows zip from [Releases](https://github.com/maouzju/chill-vibe-IDE/releases/latest), unzip, and run `Chill Vibe.exe`.
+- The app checks GitHub Releases and updates itself in place. Your data lives outside the app folder, so updating does not wipe it.
+- Official builds are Windows-only today. Other platforms can run from source (see [Develop](#develop)).
+- You need at least one of the `codex`, `claude`, or `gemini` CLIs on `PATH`. Settings shows the detected CLI versions and can update them.
 
-- simple by default
-- AI-first interaction instead of IDE ceremony
-- minimal setup and straightforward configuration
-- no permission theater unless it solves a real problem
-- no pre-AI legacy baggage unless it clearly earns its place
+### What It Does
 
-The goal is not to simulate a traditional IDE with an AI tab attached.
-The goal is to make AI chat the primary working surface, with low-friction configuration and room to scale across multiple projects at once.
+**1. All projects on one board**
 
-### Product Direction
+- One column per project, one card per task; cards stream side by side.
+- Split panes and tabs inside a column, drag and drop everywhere, resizable columns and cards.
+- Tuck a project into the top bar when you do not need it; the chip still shows whether its agents are running or have unread results.
+- Session history per workspace, with search, restore, and archive.
 
-Chill Vibe is aiming at a lighter alternative to VS Code for AI-heavy workflows:
+**2. Any model, same conversation**
 
-- faster to open
-- easier to run multiple workspaces side-by-side in one view
-- easier to see several projects at once
-- better for comparing parallel agent chats and runs across projects
-- less panel switching, less nesting, less UI weight
+- Codex, Claude, and Gemini cards in the same board, each with its own model and reasoning-effort setting.
+- Switch provider or model mid-conversation: context moves with the task, and switching back resumes the original native session.
+- Fork a conversation from any message.
+- Per-card context usage meter; the app runs `/compact` before your next message when the window is nearly full (threshold is configurable).
+- Claude plan mode, Ultracode (multi-agent workflows), slash commands, and skills shared across providers.
 
-The real competitor is not another AI IDE — it's opening multiple Cursor or VS Code windows and Alt-Tabbing between them. Chill Vibe replaces that with a single view where every project lives side by side.
+**3. Agents that keep working without you**
 
-Current scope is still intentionally narrower than a full traditional IDE. The project is focused on workspace lanes, chat threads, streaming output, local state recovery, and lightweight tool cards such as Git, Files, Editor, Sticky Notes, and ambience tools rather than a full file-edit-debug toolchain.
+- **Auto-urge**: when an agent stops early, the app sends a follow-up for you until a success keyword appears. A local Ollama model can judge completion instead of a keyword.
+- **Wake timer**: write a message now, send it when other agents finish, when the tab on the left finishes, when chosen sessions finish, or after a set time.
+- **Deferred send**: right-click send to queue a message for after the current turn.
+- **Repeat loop**: rerun the first prompt in a new tab, N times or until you stop it.
+- **Automation board**: a kanban of requirements with lanes; dropping an item into the running lane starts an agent. A built-in supervisor template reviews finished work, urges stalled agents, and moves items to done.
+- **Admin mode**: a session can read and operate the other sessions in its workspace.
+- **Mobile monitor**: scan a QR code to watch progress, send or stop work, start sessions, and switch models from your phone.
+- **Recovery**: API errors, relay hiccups, and stalled streams are retried and resumed automatically. After an app restart or crash, interrupted sessions, sub-agents, and Workflow runs pick up where they left off.
+- Completion sounds per agent, per workspace, or when everything is done.
 
-### Current Features
+**4. See what agents are doing**
 
-- board-style multi-column workspace layout
-- multiple chat cards per workspace
-- pane tabs with drag-and-drop reordering
-- local Codex CLI and Claude CLI integration
-- cross-provider model switching with context transfer and restoration of the original native session when switching back
-- streaming output over SSE
-- resumable sessions with native-checkpoint recovery, plus lossless conversation forks when provider history is available
-- image paste and attachments in chat
-- per-card model and reasoning-effort selection, plus Claude plan mode
-- grouped Codex questions and structured in-chat user prompts
-- slash commands and cross-provider skill reuse, with the current provider's skill taking precedence
-- per-card and global auto-urge follow-ups, with optional local Ollama completion judging
-- Claude desktop keepalive sessions, so background work can finish and report back without another user message
-- automatic compaction for long chat histories
-- per-card context usage indicator, plus automatic `/compact` before the next message once the window is nearly full (threshold configurable in Settings)
-- QR-code mobile monitoring for live history and tool activity, sending or stopping work, creating sessions, changing models, and completion alerts
-- drag and drop for columns and cards
-- resizable chat cards
-- light and dark themes with configurable background and accent colors
-- local persistence for layout, settings, and session metadata
-- built-in destructive-command protection for Codex and Claude agent runs
-- Electron desktop runtime with built-in release checks and zip-based handoff builds
-- experimental extras: git agent tools, file tree, text and image editor cards, brainstorm cards, weather overlay, white noise, music, sticky notes
+- Commands, file edits, todos, reasoning, and questions show up as structured blocks in the chat instead of raw terminal output.
+- A sub-agent panel shows each sub-agent's status and runtime; Workflow runs show their progress.
+- Agent questions render as clickable choice cards.
+- A stats card tracks token usage, cost, and activity by day.
 
-### Tech Stack
+**5. Guardrails**
 
-- React 19
-- TypeScript
-- Vite
-- Express 5
-- Electron
-- Zod
-- Playwright
+- Destructive-command protection (on by default) blocks high-risk deletion and destructive Git operations for all providers.
+- Optional: block writes outside the project folder, stop the session on attack-shaped output, isolate the Codex agent home.
+- Opt-in tools for agents: browser control (Playwright MCP), Windows desktop control (Windows-MCP), and JEV quick judgments.
 
-### Requirements
+**6. Bring your own endpoint**
 
-- Node.js 20 or newer
-- pnpm
-- local `codex` CLI and/or local `claude` CLI available on `PATH`
+- Multiple API profiles per provider (base URL + key), drag to reorder, switch with one click.
+- Or use your official subscription login instead of an API key.
+- Local models through Ollama (one-click install from Settings) and custom cloud endpoints such as DeepSeek, attached to the Codex or Claude harness.
+- New models on your endpoint are detected and offered once; the model menu is customizable.
+- Custom system prompt, plus per-model prompt rules.
 
-### Quick Start
+**7. Tool cards**
+
+- Git: status, diff, staging, sync, and AI-written commits. Sync conflicts open a visible session that resolves them.
+- Files, text editor, image viewer/editor, sticky notes, stats, automation board.
+- Experimental and off by default: brainstorm, music, white noise, weather.
+
+**8. Look and feel**
+
+- Light, dark, system, or custom theme with your own base and accent colors.
+- UI scale, font family, font size, and line height.
+- English and Simplified Chinese.
+- Close to tray, taskbar, or quit.
+
+### How To Use
+
+1. Add a column and point it at a project folder.
+2. In Settings → API, add a profile (base URL + key) or choose subscription login.
+3. Open a card, pick a model and reasoning effort, and send a prompt.
+4. Open more cards or columns and run them in parallel.
+
+### Develop
+
+Requirements: Node.js 20+, pnpm, and at least one provider CLI on `PATH`.
 
 ```bash
 pnpm install
-pnpm dev
+pnpm dev                        # Electron dev runtime
+pnpm build && pnpm start        # local production-mode run
+pnpm electron:build             # zip package
+pnpm electron:build:installer   # optional NSIS installer
 ```
 
-Default runtime:
+Stack: React 19, TypeScript, Vite, Express 5, Electron, Zod, Playwright.
 
-- Electron desktop app
+Verification:
 
-Local production-mode desktop run:
-
-```bash
-pnpm build
-pnpm start
-```
-
-Default desktop package build (zip payload):
-
-```bash
-pnpm electron:build
-```
-
-Optional installer build:
-
-```bash
-pnpm electron:build:installer
-```
-
-### How It Works
-
-1. Pick a provider for a column: `Codex` or `Claude`.
-2. Set an absolute workspace path for that column.
-3. Optionally set a default model for the column.
-4. Create one or more cards in that workspace.
-5. Send prompts directly from each card and compare results side-by-side.
-
-### Local Data
-
-Application data is stored locally.
-
-Default locations:
-
-```text
-Development: <repo>/.chill-vibe/
-Packaged desktop app: Electron userData/data
-```
-
-In development, Chill Vibe defaults to `.chill-vibe/` under the current repo.
-In packaged desktop builds, Chill Vibe defaults to the app's OS-managed Electron `userData` directory instead of the app folder, so replacing or updating the unpacked zip build does not wipe local state.
-Set `CHILL_VIBE_DATA_DIR` if you want app state to live somewhere else.
-
-This local data can include:
-
-- workspace layout
-- card sizing
-- chat history
-- provider session IDs
-- provider profile settings, including configured base URLs and API keys
-- UI settings
-- experimental feature data such as music session cookies, playback stats, white-noise scenes, and cached ambient audio
-
-### Security And Privacy
-
-Chill Vibe is designed for local use by default.
-
-- The desktop app talks to its local backend through Electron IPC rather than a browser-exposed HTTP API.
-- Chat requests can launch local CLI tools inside the workspace you choose.
-- Codex and Claude runs use an IDE-owned destructive-command guard by default to block high-risk deletion and destructive Git operations across protected paths; it can be explicitly disabled in Settings.
-- Spawned provider processes inherit your current shell environment.
-- State is stored on your machine and is not uploaded by the app itself.
-- The optional mobile monitor is off by default. When enabled, it listens on your local network and its random token grants control of active sessions, so use it only on a trusted network and close it when finished.
-- Some experimental features make direct third-party network requests, such as provider CLIs, weather lookups, music integrations, and on-demand ambient audio downloads.
-
-Read more:
-
-- [SECURITY.md](./SECURITY.md)
-- [PRIVACY.md](./PRIVACY.md)
-
-### Scripts
-
-```bash
-pnpm dev
-pnpm dev:client
-pnpm dev:restart
-pnpm build
-pnpm start
-pnpm electron:dev
-pnpm electron:build
-pnpm electron:build:zip
-pnpm electron:build:installer
-pnpm electron:build:portable
-pnpm legal:generate
-pnpm legal:check
-pnpm lint
-pnpm check
-pnpm test
-pnpm test:quality
-pnpm test:playwright
-pnpm test:playwright:full
-pnpm test:theme
-pnpm test:perf
-pnpm test:perf:electron
-pnpm test:electron
-pnpm test:risk
-pnpm test:release
-pnpm test:full
-pnpm verify
-```
-
-### Verification
-
-- `pnpm legal:check` verifies that the generated third-party dependency inventory is current.
-- `pnpm test:quality` runs ESLint and TypeScript checks.
-- `pnpm test` runs manifest-registered Node tests as isolated files with bounded concurrency.
+- `pnpm test:quality` runs ESLint and the TypeScript checks.
+- `pnpm test` runs the Node unit tests, isolated per file.
 - `pnpm test:playwright` runs the default Playwright smoke suite in headless mode.
 - `pnpm test:playwright:full` runs the full Playwright browser-flow regression suite in headless mode.
 - `pnpm test:theme` runs the Playwright theme and board-layout regression checks through the repo harness in headless mode.
@@ -206,258 +115,202 @@ pnpm verify
 - `pnpm test:risk` runs lint, type checks, Node tests, the Playwright smoke suite, and Electron runtime checks.
 - `pnpm test:release` runs resumable exact-tree release verification with per-stage logs, including a bounded 30-second multi-stream Electron chat performance gate after the production build.
 - `pnpm test:full` remains a compatibility alias for `pnpm test:release`.
-- `pnpm verify` runs `pnpm test:release`.
+- `pnpm legal:check` checks that the third-party dependency inventory is current.
 
-Electron dev note:
+`localhost:5173` in dev is the Electron renderer dev server; Chill Vibe has no separate browser product. `pnpm dev:restart` restarts the dev runtime.
 
-- `localhost:5173` is the renderer dev server used by Electron development. It does not mean Chill Vibe ships a separate browser runtime.
-- `pnpm dev:restart` restarts the Electron dev runtime for this repo.
+Contributors and coding agents must read [AGENTS.md](./AGENTS.md) first. See also [CONTRIBUTING.md](./CONTRIBUTING.md).
+
+### Local Data
+
+```text
+Development:          <repo>/.chill-vibe/
+Packaged desktop app: Electron userData/data
+```
+
+Set `CHILL_VIBE_DATA_DIR` to move it. If you run from a repo checkout, doing so keeps API keys and chat history out of your source tree.
+
+Stored locally: layout, chat history, provider session IDs, API profiles (base URLs and keys), settings, and data for experimental features (music cookies, cached ambient audio).
+
+### Security And Privacy
+
+- The desktop app talks to its backend over Electron IPC; there is no browser-exposed HTTP API.
+- Agents run local CLI tools in the workspace you choose and inherit your shell environment.
+- State stays on your machine. The app does not upload it.
+- The mobile monitor is off by default. When on, it listens on your LAN and its link token grants control of your sessions. Use it on trusted networks only and stop it afterwards.
+- Browser control and desktop control are off by default. They act as you, in your logged-in browser and with your real mouse and keyboard.
+- Experimental features call third-party services directly (weather, music, ambient audio downloads).
+
+More: [SECURITY.md](./SECURITY.md), [PRIVACY.md](./PRIVACY.md)
 
 ### Docs
 
 - [Why Chill Vibe works (Chinese product essay)](./docs/marketing/why-chill-vibe-works.md)
 - [Design notes](./docs/design.md)
+- [UI principles](./docs/ui-principles.md)
+- [Feature specs](./docs/specs)
 - [Contributor and agent rules](./AGENTS.md)
-- [Third-party notes](./THIRD_PARTY.md)
-- [Generated dependency inventory](./THIRD_PARTY_LICENSES.md)
 
 ### Open Source Notes
 
 - License: [MIT](./LICENSE)
-- This repository is suitable for local-first development workflows and experimentation.
-- Third-party services and externally hosted sample assets used by optional features are documented in [THIRD_PARTY.md](./THIRD_PARTY.md).
-- The generated npm dependency inventory lives in [THIRD_PARTY_LICENSES.md](./THIRD_PARTY_LICENSES.md) and packaged desktop builds carry the legal docs under `resources/legal/`.
-- Experimental integrations such as music are provided for local learning and experimentation only. You are responsible for complying with upstream service terms, copyright rules, and local law.
-- Sample-based ambient audio is downloaded on demand from third-party sources and cached locally instead of being bundled in this repository.
-- If you run Chill Vibe from a repository checkout, consider setting `CHILL_VIBE_DATA_DIR` so API keys, cookies, and chat history are not saved beside your source tree.
-- If you plan to expose the server beyond localhost, add your own authentication and network hardening first.
+- Third-party services and assets are listed in [THIRD_PARTY.md](./THIRD_PARTY.md); the generated dependency inventory is in [THIRD_PARTY_LICENSES.md](./THIRD_PARTY_LICENSES.md). Packaged builds carry both under `resources/legal/`.
+- Music and other experimental integrations are for local learning only. You are responsible for upstream terms, copyright, and local law.
+- Ambient audio samples are downloaded on demand and cached locally, not bundled.
+- If you expose any part of the app beyond your own machine, add your own authentication and network hardening first.
 
 <a id="zh-cn"></a>
 
 ## 简体中文
 
-### 项目简介
+Chill Vibe 是一个桌面应用，用来在一个窗口里同时跑多个项目的多个 AI 编程 Agent。
+它直接驱动你本机装好的 `codex`、`claude`、`gemini` CLI：一个项目一列，一个任务一张聊天卡，长任务在你离开电脑时也能接着跑。
 
-Chill Vibe 是一个解决并行 vibe coding 多个项目的 IDE。
-适合个人开发者 vibe coding 多项目，以及频繁与 AI 知识库、信息获取工作流交互的工作。
-Chill Vibe 让多个工作区直接在同一个视图里并排运行，让多个项目的 agent 聊天始终保持可见、可比较、可操作。
+它要替掉的做法是：开五个 Cursor 或 VS Code 窗口，然后 Alt-Tab 来回切。
 
-### 设计哲学
+### 下载
 
-Chill Vibe 有意保持明确取舍：
+- 到 [Releases](https://github.com/maouzju/chill-vibe-IDE/releases/latest) 下载最新的 Windows zip，解压后运行 `Chill Vibe.exe`。
+- 应用会检查 GitHub Releases 并原地自动更新。数据不放在应用文件夹里，更新不会清掉。
+- 官方包目前只有 Windows。其他平台可以从源码运行（见[开发](#开发)）。
+- `PATH` 里至少要有 `codex`、`claude`、`gemini` 其中一个 CLI。设置里能看到检测到的 CLI 版本，也能直接更新。
 
-- 默认简单
-- AI 交互优先，而不是 IDE 仪式感优先
-- 配置尽量少，而且要直观
-- 没必要就不要装模作样地搞权限戏法
-- 没必要就不要背上 AI 时代之前遗留下来的功能包袱
+### 能做什么
 
-它的目标不是做一个“挂了 AI 标签的传统 IDE”。
-它想做的是让 AI 聊天成为主工作界面，同时保持低摩擦配置，并且能自然扩展到多个项目并行运行。
+**1. 所有项目在一张看板上**
 
-### 产品方向
+- 一个项目一列，一个任务一张卡，多张卡并排流式输出。
+- 列内可分屏、开 tab，列和卡都能拖拽、调宽调高。
+- 暂时不看的项目可以收到顶栏；收起后的小标签仍会显示它的 Agent 在不在跑、有没有未读结果。
+- 每个工作区有历史会话，可搜索、恢复、归档。
 
-Chill Vibe 的目标，是成为 AI 高密度工作流里比 VS Code 更轻的一种选择：
+**2. 模型随便换，对话不重来**
 
-- 打开更快
-- 更容易在同一视图里并排运行多个工作区
-- 更容易同时查看多个项目
-- 更适合比较跨项目的并行 agent 聊天和运行结果
-- 更少的面板切换、更少的层级、更轻的 UI
+- Codex、Claude、Gemini 的卡可以放在同一张看板里，每张卡单独选模型和思考档位。
+- 对话中途换 Provider 或模型：上下文跟着任务走，切回去时接上原来的原生会话。
+- 可以从任意一条消息分叉出新会话。
+- 每张卡显示上下文占用；快满时在下一条消息发出前自动先 `/compact`（阈值可调）。
+- 支持 Claude 计划模式、Ultracode（多 Agent 工作流）、斜杠命令，Skill 可跨 Provider 复用。
 
-真正的竞品不是另一个 AI IDE —— 而是多开 Cursor 或 VS Code 窗口然后 Alt-Tab 来回切。Chill Vibe 把这件事变成一个画面里所有项目并排可见。
+**3. 不用守着的 Agent**
 
-当前范围依然有意比传统 IDE 更窄。项目目前聚焦在工作区列、聊天线程、流式输出、本地状态恢复，以及 Git、Files、Editor、便签和氛围工具这类轻量工具卡片，而不是完整的文件编辑、调试和终端工具链。
+- **自动鞭策**：Agent 提前停下时自动替你追问，直到回复里出现成功触发词。也可以让本地 Ollama 模型来判断任务是否做完。
+- **计划唤醒**：先把消息写好，等其他 Agent 完成、左侧 Tab 完成、指定会话完成，或到了指定时长再发出去。
+- **延后发送**：右键点发送，消息排到当前这轮结束后再发。
+- **循环重复**：任务完成后新开 Tab 重跑首条提示，可设次数，也可一直跑到手动取消。
+- **自动化看板**：按泳道管理需求，把需求拖进执行泳道就会启动一个 Agent。内置的「看板监工」模板会检查交付、催促停滞的 Agent、把做完的移到已完成列。
+- **超管模式**：让一个会话能查看和操作本工作区的其他会话。
+- **手机监工**：扫码后在手机上看进度、发需求、停任务、新建会话、换模型。
+- **断线续传**：API 报错、中转站抽风、输出卡住时自动重试并续上。应用重启或崩溃后，被打断的会话、子 Agent 和 Workflow 会从断点接着跑。
+- 完成提示音：单个 Agent 完成、单个工作区完成、全部完成，三档可分别开关。
 
-### 当前功能
+**4. 看得见 Agent 在干什么**
 
-- 看板式多列工作区布局
-- 每个工作区支持多张聊天卡片
-- 窗格 tab 页签，支持拖拽重排
-- 本地 Codex CLI 和 Claude CLI 集成
-- 跨 Provider / 模型切换时转移对话上下文，切回时可恢复原生会话
-- 基于 SSE 的流式输出
-- 可恢复会话，优先从原生会话检查点续传；Provider 历史可用时支持无损分叉会话
-- 聊天中粘贴图片和附件
-- 卡片级模型与思考档位选择，Claude 支持计划模式
-- Codex 问题组与聊天内结构化提问
-- 斜杠命令和跨 Provider Skill 复用，同名时当前 Provider 优先
-- 卡片级与全员 Auto-Urge 自动追问，可选本地 Ollama 判断任务是否完成
-- Claude 桌面长驻会话，后台任务完成后无需用户追问即可自动回来汇报
-- 长聊天历史自动压缩折叠
-- 每张卡显示上下文占用；快满时在下一条消息发出前自动先 `/compact`（阈值可在设置里调）
-- 扫码开启手机监工：查看历史与工具活动、发送或停止任务、新建会话、切换模型，并接收完成提醒
-- 列与卡片的拖拽
-- 聊天卡片高度可调
-- 明暗双主题，并可自定义背景色与主题色
-- 布局、设置和会话元数据的本地持久化
-- Codex 与 Claude Agent 运行默认启用高风险删除 / 破坏性 Git 操作防护
-- Electron 桌面运行时，内置版本检查与基于 zip 的桌面交付构建
-- 实验性附加功能：Git agent 工具、文件树、文本与图片编辑器卡片、Brainstorm 卡片、天气浮层、白噪音、音乐、便签
+- 命令、文件改动、待办、思考过程、提问都以结构化块显示在聊天里，不用翻终端输出。
+- 子 Agent 面板显示每个子 Agent 的状态和已运行时长，Workflow 显示进度。
+- Agent 的提问渲染成可点选的选项卡。
+- 统计卡按天查看 token 用量、费用和活跃情况。
 
-### 技术栈
+**5. 防护**
 
-- React 19
-- TypeScript
-- Vite
-- Express 5
-- Electron
-- Zod
-- Playwright
+- 破坏性命令防护默认开启，对所有 Provider 拦截高风险删除和破坏性 Git 操作。
+- 可选：禁止修改项目文件夹外的文件、检测到疑似攻击形状时中断会话、Codex Agent 使用隔离主目录。
+- 需要手动开启的 Agent 能力：操作浏览器（Playwright MCP）、操控 Windows 桌面（Windows-MCP）、JEV 快速判断。
 
-### 环境要求
+**6. 用自己的接口**
 
-- Node.js 20 或更高版本
-- pnpm
-- 本地 `codex` CLI 和/或本地 `claude` CLI，并且可通过 `PATH` 访问
+- 每个 Provider 可配多套 API 配置（地址 + key），可拖拽排序，一键切换。
+- 也可以不填 key，直接用官方会员登录。
+- 本地模型走 Ollama（设置里一键安装），还可以接 DeepSeek 这类自定义云端接口，挂在 Codex 或 Claude 的运行框架上。
+- 接口上出现新模型时会提示一次，可一键加入；模型下拉菜单可以自己增删。
+- 可自定义系统提示词，并按模型配置提示词规则。
 
-### 快速开始
+**7. 工具卡**
 
-```bash
-pnpm install
-pnpm dev
-```
+- Git：状态、差异、暂存、同步、AI 写提交信息。同步冲突会新开一个可见会话来解决。
+- 文件树、文本编辑器、图片查看/编辑、便签、统计、自动化看板。
+- 实验性功能，默认关闭：Brainstorm、音乐、白噪音、天气。
 
-默认运行方式：
+**8. 外观**
 
-- Electron 桌面应用
-
-本地生产模式运行：
-
-```bash
-pnpm build
-pnpm start
-```
-
-默认桌面打包（zip 负载）：
-
-```bash
-pnpm electron:build
-```
-
-如需额外构建安装器：
-
-```bash
-pnpm electron:build:installer
-```
+- 浅色、深色、跟随系统、自定义主题（背景色和主题色自选）。
+- 界面缩放、字体、字号、行高可调。
+- 界面语言：简体中文、English。
+- 点关闭按钮时可选退出、最小化到任务栏或缩到系统托盘。
 
 ### 使用方式
 
-1. 为某一列选择 provider：`Codex` 或 `Claude`。
-2. 为该列设置一个绝对工作区路径。
-3. 可选地给该列设置默认模型。
-4. 在这个工作区里创建一张或多张卡片。
-5. 直接从每张卡片发送提示词，并横向比较结果。
+1. 新增一列，选一个项目文件夹。
+2. 在 设置 → API 里添加一套配置（地址 + key），或选择官方会员登录。
+3. 打开一张卡，选模型和思考档位，发送需求。
+4. 再开几张卡或几列，让它们同时跑。
 
-### 本地数据
+### 开发
 
-应用数据会保存在本地。
-
-默认位置：
-
-```text
-开发态：<repo>/.chill-vibe/
-打包桌面应用：Electron userData/data
-```
-
-开发态默认会落在仓库下的 `.chill-vibe/`。
-打包后的桌面应用默认会落在系统管理的 Electron `userData` 目录，而不是应用文件夹本身，所以替换 zip 解压后的应用目录时不会清掉本地状态。
-如需改到别的位置，可设置 `CHILL_VIBE_DATA_DIR`。
-
-其中可能包含：
-
-- 工作区布局
-- 卡片尺寸
-- 聊天历史
-- provider 返回的 session ID
-- provider 配置，包括 base URL 和 API key
-- UI 设置
-- 实验性功能相关数据，例如音乐登录 cookie、播放统计、白噪音场景和缓存的环境音频
-
-### 安全与隐私
-
-Chill Vibe 默认按本地使用场景设计。
-
-- 桌面应用通过 Electron IPC 访问本地后端，而不是暴露浏览器可直连的 HTTP API。
-- 聊天请求可以在你指定的工作区中启动本地 CLI 工具。
-- Codex 与 Claude 默认启用 IDE 自带的破坏性命令防护，阻止跨越受保护路径的高风险删除和破坏性 Git 操作；可在设置中明确关闭。
-- 启动出来的 provider 子进程会继承当前 shell 环境变量。
-- 状态默认保存在你的机器上，不会由应用主动上传。
-- 手机监工默认关闭；开启后会监听局域网，随机 token 代表对活跃会话的操作权限，请只在可信网络中使用并在结束后关闭。
-- 一些实验性功能会直接请求第三方服务，例如 provider CLI、天气查询、音乐集成和按需下载的环境音频。
-
-更多说明：
-
-- [SECURITY.md](./SECURITY.md)
-- [PRIVACY.md](./PRIVACY.md)
-
-### 常用脚本
+环境要求：Node.js 20+、pnpm，`PATH` 里至少有一个 Provider CLI。
 
 ```bash
-pnpm dev
-pnpm dev:client
-pnpm dev:restart
-pnpm build
-pnpm start
-pnpm electron:dev
-pnpm electron:build
-pnpm electron:build:zip
-pnpm electron:build:installer
-pnpm electron:build:portable
-pnpm legal:generate
-pnpm legal:check
-pnpm lint
-pnpm check
-pnpm test
-pnpm test:quality
-pnpm test:playwright
-pnpm test:playwright:full
-pnpm test:theme
-pnpm test:perf
-pnpm test:perf:electron
-pnpm test:electron
-pnpm test:risk
-pnpm test:release
-pnpm test:full
-pnpm verify
+pnpm install
+pnpm dev                        # Electron 开发运行
+pnpm build && pnpm start        # 本地生产模式运行
+pnpm electron:build             # 打 zip 包
+pnpm electron:build:installer   # 可选：NSIS 安装器
 ```
 
-### 验证
+技术栈：React 19、TypeScript、Vite、Express 5、Electron、Zod、Playwright。
 
-- `pnpm legal:check` 校验生成的第三方依赖清单是否为最新。
+验证命令：
+
 - `pnpm test:quality` 运行 ESLint 和 TypeScript 检查。
-- `pnpm test` 以有界并发、文件隔离的方式运行清单中注册的 Node 测试。
+- `pnpm test` 运行 Node 单元测试，按文件隔离。
 - `pnpm test:playwright` 运行默认 Playwright smoke 回归测试。
 - `pnpm test:playwright:full` 运行完整的 Playwright 浏览器流程回归测试。
-- `pnpm test:theme` 运行 Playwright 主题回归测试。
-- `pnpm test:perf` 运行浏览器性能 smoke 切片：长聊天压缩逻辑、布局 memo 防护和加卡冻结回归。
-- `pnpm test:perf:electron` 运行针对桌面端性能问题的隐藏窗口 Electron 响应性 smoke。
-- `pnpm test:electron` 通过一次隐藏窗口会话运行 Electron 运行时和发布响应性测试。
+- `pnpm test:theme` 运行主题与看板布局的视觉回归检查。
+- `pnpm test:perf` 运行浏览器性能 smoke；`pnpm test:perf:electron` 运行 Electron 桌面端响应性 smoke。
+- `pnpm test:electron` 运行隐藏窗口的 Electron 运行时测试。
 - `pnpm test:risk` 运行 lint、类型检查、Node 测试、Playwright smoke 套件和 Electron 运行时检查。
 - `pnpm test:release` 按工作区精确指纹运行可恢复的发布校验，并为每个阶段保存日志；生产构建后还会运行有界的 30 秒 Electron 多流聊天性能门禁。
 - `pnpm test:full` 保留为 `pnpm test:release` 的兼容别名。
-- `pnpm verify` 运行 `pnpm test:release`。
+- `pnpm legal:check` 检查第三方依赖清单是否最新。
 
-Electron 开发说明：
+开发时的 `localhost:5173` 是 Electron 的 renderer dev server，Chill Vibe 没有单独的浏览器版。`pnpm dev:restart` 重启开发运行时。
 
-- `localhost:5173` 是 Electron 开发模式下使用的 renderer dev server，不代表 Chill Vibe 另有一个独立的浏览器产品。
-- `pnpm dev:restart` 会重启本仓库的 Electron 开发运行时。
+贡献者和编码 Agent 请先读 [AGENTS.md](./AGENTS.md)，另见 [CONTRIBUTING.md](./CONTRIBUTING.md)。
+
+### 本地数据
+
+```text
+开发态：        <repo>/.chill-vibe/
+打包桌面应用：  Electron userData/data
+```
+
+可用 `CHILL_VIBE_DATA_DIR` 改位置。从仓库 checkout 直接运行时建议设置它，免得 API key 和聊天历史落在源码目录旁边。
+
+本地保存的内容：布局、聊天历史、Provider 会话 ID、API 配置（地址和 key）、设置，以及实验性功能的数据（音乐登录 cookie、缓存的环境音频）。
+
+### 安全与隐私
+
+- 桌面应用通过 Electron IPC 访问后端，没有暴露给浏览器的 HTTP API。
+- Agent 会在你指定的工作区里运行本地 CLI 工具，并继承当前 shell 的环境变量。
+- 状态保存在你的机器上，应用不会上传。
+- 手机监工默认关闭。开启后监听局域网，拿到链接里的令牌就能操作你的会话。只在可信网络里用，用完停掉。
+- 操作浏览器和操控桌面默认关闭。开启后 Agent 以你的身份操作已登录的浏览器，动的是真实的鼠标键盘。
+- 实验性功能会直接请求第三方服务（天气、音乐、环境音频下载）。
+
+更多说明：[SECURITY.md](./SECURITY.md)、[PRIVACY.md](./PRIVACY.md)
 
 ### 文档
 
 - [为什么 Chill Vibe 好用](./docs/marketing/why-chill-vibe-works.md)
 - [设计说明](./docs/design.md)
+- [UI 原则](./docs/ui-principles.md)
+- [功能规格](./docs/specs)
 - [贡献与 Agent 规则](./AGENTS.md)
-- [第三方说明](./THIRD_PARTY.md)
-- [依赖许可证清单](./THIRD_PARTY_LICENSES.md)
 
 ### 开源说明
 
 - 许可证：[MIT](./LICENSE)
-- 这个仓库适合用于 local-first 开发工作流和实验用途。
-- 可选功能用到的第三方服务和外部托管的示例资源记录在 [THIRD_PARTY.md](./THIRD_PARTY.md)。
-- 生成的 npm 依赖清单在 [THIRD_PARTY_LICENSES.md](./THIRD_PARTY_LICENSES.md)，打包后的桌面应用会把法律文档带在 `resources/legal/` 下。
-- 音乐等实验性集成仅用于本地学习和实验交流。你需要自行确认上游服务条款、版权要求和所在地区法律是否允许。
-- 示例环境音频不会随仓库一起分发，而是在需要时从第三方来源按需下载并缓存到本地。
-- 如果你从仓库 checkout 直接运行 Chill Vibe，建议设置 `CHILL_VIBE_DATA_DIR`，避免 API key、cookie 和聊天历史保存在源码目录旁边。
-- 如果你计划把服务暴露到 localhost 之外，请先自行补上认证、传输安全和其他网络加固措施。
+- 用到的第三方服务和资源见 [THIRD_PARTY.md](./THIRD_PARTY.md)，生成的依赖清单见 [THIRD_PARTY_LICENSES.md](./THIRD_PARTY_LICENSES.md)。打包后的应用把这两份带在 `resources/legal/` 下。
+- 音乐等实验性集成仅供本地学习。上游服务条款、版权和当地法律是否允许，需要你自己确认。
+- 环境音频样本按需下载并缓存在本地，不随仓库分发。
+- 如果要把应用的任何部分暴露到本机之外，请先自行加上认证和网络加固。

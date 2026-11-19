@@ -1,6 +1,6 @@
 {
     "name":  "chill-vibe-ide",
-    "description":  "Lightweight local AI IDE for running multiple Codex and Claude workspaces side-by-side.",
+    "description":  "Desktop app for running many Codex, Claude, and Gemini coding agents across projects side-by-side.",
     "license":  "MIT",
     "version":  "0.21.29",
     "private":  true,

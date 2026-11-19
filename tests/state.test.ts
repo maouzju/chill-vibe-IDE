@@ -1207,6 +1207,42 @@ describe('ideReducer pane layout', () => {
     assert.equal(newCard?.model, 'gpt-5.4')
   })
 
+  it('reorders provider profiles without touching the active profile or sessions', () => {
+    const state = createState()
+    const mk = (id: string) => ({ id, name: id, baseUrl: `https://${id}.example.com`, apiKey: 'k' })
+    state.settings.providerProfiles.codex = {
+      activeProfileId: 'b',
+      profiles: [mk('a'), mk('b'), mk('c')],
+    }
+    state.columns[0]!.cards['card-1'] = createCard({
+      id: 'card-1',
+      provider: 'codex',
+      model: DEFAULT_CODEX_MODEL,
+      sessionId: 'keep-me',
+    })
+
+    const next = ideReducer(state, {
+      type: 'reorderProviderProfile',
+      provider: 'codex',
+      profileId: 'c',
+      targetProfileId: 'a',
+      placement: 'before',
+    })
+
+    assert.deepEqual(next.settings.providerProfiles.codex.profiles.map((p) => p.id), ['c', 'a', 'b'])
+    assert.equal(next.settings.providerProfiles.codex.activeProfileId, 'b')
+    assert.equal(next.columns[0]!.cards['card-1']?.sessionId, 'keep-me')
+
+    const after = ideReducer(next, {
+      type: 'reorderProviderProfile',
+      provider: 'codex',
+      profileId: 'c',
+      targetProfileId: 'b',
+      placement: 'after',
+    })
+    assert.deepEqual(after.settings.providerProfiles.codex.profiles.map((p) => p.id), ['a', 'b', 'c'])
+  })
+
   it('clears provider-native sessions when the active Codex routing profile changes', () => {
     const state = createState()
     state.settings.providerProfiles.codex = {

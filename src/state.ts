@@ -436,6 +436,13 @@ export type IdeAction =
       profileId: string
     }
   | {
+      type: 'reorderProviderProfile'
+      provider: Provider
+      profileId: string
+      targetProfileId: string
+      placement: 'before' | 'after'
+    }
+  | {
       type: 'setActiveProviderProfile'
       provider: Provider
       profileId: string
@@ -2353,6 +2360,26 @@ const ideReducerCore = (state: AppState, action: IdeAction): AppState => {
         })
 
       return touchState(clearSessionsForRoutingChanges(state, next, [action.provider]))
+    }
+    case 'reorderProviderProfile': {
+      // 只改展示顺序，不改路由（active 不变），所以不走 clearSessionsForRoutingChanges。
+      const profiles = state.settings.providerProfiles[action.provider].profiles
+      const source = profiles.find((profile) => profile.id === action.profileId)
+      if (!source || action.profileId === action.targetProfileId) {
+        return state
+      }
+      const rest = profiles.filter((profile) => profile.id !== action.profileId)
+      const targetIndex = rest.findIndex((profile) => profile.id === action.targetProfileId)
+      if (targetIndex < 0) {
+        return state
+      }
+      rest.splice(action.placement === 'before' ? targetIndex : targetIndex + 1, 0, source)
+      return touchState(
+        updateProviderProfileCollection(state, action.provider, (collection) => ({
+          ...collection,
+          profiles: rest,
+        })),
+      )
     }
     case 'setActiveProviderProfile': {
       const next = updateProviderProfileCollection(state, action.provider, (collection) => ({

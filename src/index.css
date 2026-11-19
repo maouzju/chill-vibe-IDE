@@ -2431,6 +2431,38 @@ body.is-card-dragging .lane-drop-zone-top {
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.4);
 }
 
+.provider-profile-card {
+  position: relative;
+}
+
+.provider-profile-drag-handle {
+  position: absolute;
+  top: 0.35rem;
+  right: 0.6rem;
+  padding: 0 0.3rem;
+  color: var(--muted, currentColor);
+  opacity: 0.5;
+  cursor: grab;
+  user-select: none;
+  line-height: 1.2;
+}
+
+.provider-profile-drag-handle:hover {
+  opacity: 1;
+}
+
+.provider-profile-card.is-dragging {
+  opacity: 0.45;
+}
+
+.provider-profile-card.is-drop-before {
+  box-shadow: 0 -3px 0 0 var(--accent, #4c8dff);
+}
+
+.provider-profile-card.is-drop-after {
+  box-shadow: 0 3px 0 0 var(--accent, #4c8dff);
+}
+
 .provider-profile-card .settings-field {
   display: grid;
   grid-template-columns: minmax(0, var(--provider-profile-label-width)) minmax(0, 1fr);

@@ -808,6 +808,12 @@ function App() {
   const [switchNotice, setSwitchNotice] = useState<string | null>(null)
   const [routingSubTab, setRoutingSubTab] = useState<'providers' | 'proxy'>('providers')
   const [visibleApiKeys, setVisibleApiKeys] = useState<Set<string>>(() => new Set())
+  const [profileDrag, setProfileDrag] = useState<{
+    provider: Provider
+    profileId: string
+    overId: string | null
+    placement: 'before' | 'after'
+  } | null>(null)
   const [settingsNotice, setSettingsNotice] = useState<string | null>(null)
   const [codexManagementPolicy, setCodexManagementPolicy] = useState<CodexManagementPolicy | null>(null)
   const [codexManagementPolicyPending, setCodexManagementPolicyPending] = useState(false)
@@ -10513,8 +10519,54 @@ function App() {
               return (
                 <div
                   key={profile.id}
-                  className={`provider-profile-card${active ? ' is-active' : ''}`}
+                  className={`provider-profile-card${active ? ' is-active' : ''}${
+                    profileDrag?.provider === provider && profileDrag.profileId === profile.id
+                      ? ' is-dragging'
+                      : ''
+                  }${
+                    profileDrag?.provider === provider && profileDrag.overId === profile.id
+                      ? ` is-drop-${profileDrag.placement}`
+                      : ''
+                  }`}
+                  onDragOver={(event) => {
+                    if (!profileDrag || profileDrag.provider !== provider) return
+                    event.preventDefault()
+                    const rect = event.currentTarget.getBoundingClientRect()
+                    const placement = event.clientY < rect.top + rect.height / 2 ? 'before' : 'after'
+                    if (profileDrag.overId !== profile.id || profileDrag.placement !== placement) {
+                      setProfileDrag({ ...profileDrag, overId: profile.id, placement })
+                    }
+                  }}
+                  onDrop={(event) => {
+                    if (!profileDrag || profileDrag.provider !== provider) return
+                    event.preventDefault()
+                    applyAction({
+                      type: 'reorderProviderProfile',
+                      provider,
+                      profileId: profileDrag.profileId,
+                      targetProfileId: profile.id,
+                      placement: profileDrag.placement,
+                    })
+                    setProfileDrag(null)
+                  }}
                 >
+                  <span
+                    className="provider-profile-drag-handle"
+                    role="button"
+                    aria-label={panelText.dragProfile}
+                    title={panelText.dragProfile}
+                    draggable
+                    onDragStart={(event) => {
+                      const card = event.currentTarget.parentElement
+                      if (card) event.dataTransfer.setDragImage(card, 16, 16)
+                      event.dataTransfer.effectAllowed = 'move'
+                      event.dataTransfer.setData('text/plain', profile.id)
+                      setProfileDrag({ provider, profileId: profile.id, overId: null, placement: 'before' })
+                    }}
+                    onDragEnd={() => setProfileDrag(null)}
+                  >
+                    ⠿
+                  </span>
                   <label className="settings-field">
                     <span>{panelText.profileName}</span>
                     <input

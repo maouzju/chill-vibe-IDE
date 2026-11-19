@@ -11,6 +11,8 @@ It drives the `codex`, `claude`, and `gemini` CLIs you already have installed, l
 
 It replaces the habit of opening five Cursor or VS Code windows and Alt-Tabbing between them.
 
+![Three projects on one board, each with its own agents running](./docs/images/board-en.png)
+
 ### Download
 
 - Grab the latest Windows zip from [Releases](https://github.com/maouzju/chill-vibe-IDE/releases/latest), unzip, and run `Chill Vibe.exe`.
@@ -167,6 +169,8 @@ Chill Vibe 是一个桌面应用，用来在一个窗口里同时跑多个项目
 它直接驱动你本机装好的 `codex`、`claude`、`gemini` CLI：一个项目一列，一个任务一张聊天卡，长任务在你离开电脑时也能接着跑。
 
 它要替掉的做法是：开五个 Cursor 或 VS Code 窗口，然后 Alt-Tab 来回切。
+
+![三个项目排在同一块面板上，各自的 Agent 同时在跑](./docs/images/board-zh-CN.png)
 
 ### 下载
 

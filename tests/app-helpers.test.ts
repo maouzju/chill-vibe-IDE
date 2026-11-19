@@ -1120,3 +1120,12 @@ test('ollama status syncs on the routing tab regardless of the urge judge settin
     false,
   )
 })
+
+// 症状：API 标签拖拽手柄松在别的服务商的输入框上，会把 profile id 当文本塞进去。
+// 根因：dragstart 用 text/plain 传 id，Chromium 对输入框的默认 drop 会插入文本。
+// 为什么不能换回：必须是自定义 MIME，输入框不接收。
+test('profile reorder drag payload never uses text/plain', () => {
+  const appSource = readFileSync(new URL('../src/App.tsx', import.meta.url), 'utf8')
+  assert.match(appSource, /setData\('application\/x-chill-vibe-profile', profile\.id\)/)
+  assert.doesNotMatch(appSource, /setData\('text\/plain', profile\.id\)/)
+})

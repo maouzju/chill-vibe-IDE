@@ -10560,7 +10560,7 @@ function App() {
                       const card = event.currentTarget.parentElement
                       if (card) event.dataTransfer.setDragImage(card, 16, 16)
                       event.dataTransfer.effectAllowed = 'move'
-                      event.dataTransfer.setData('text/plain', profile.id)
+                      event.dataTransfer.setData('application/x-chill-vibe-profile', profile.id)
                       setProfileDrag({ provider, profileId: profile.id, overId: null, placement: 'before' })
                     }}
                     onDragEnd={() => setProfileDrag(null)}

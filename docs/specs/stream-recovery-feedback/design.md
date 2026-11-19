@@ -88,6 +88,7 @@ export const shouldClearRecoveryStatusOnStreamIdle = (
    - `shouldSyncRuntimeSettings()` treats `resilientProxyStallTimeoutSec`, `resilientProxyFirstByteTimeoutSec`, and `resilientProxyMaxRetries` like routing settings.
    - `syncRuntimeSettings()` updates `setProviderRuntimeSettingsOverride()` and reconfigures the singleton `resilientProxyPool`, disposing existing proxy listeners when timeout/retry settings change.
    - `resolveProviderRuntime()` passes the current timeout/retry values into `resilientProxyPool.resolveBaseUrl()` so newly created provider proxies use the live settings.
+   - Proxy retries are bound to the client connection (2026-11-19, Known Pitfalls #430). `watchClientDisconnect()` in `server/resilient-proxy.ts` turns a `response` `close` before `end` into one abort signal per request; that signal is passed to the upstream `fetch`, the backoff `delay`, and the Responses tail poll, so a client that gave up (CLI timeout, user stop, mid-stream send) ends the loop immediately instead of being retried forever under `resilientProxyMaxRetries = -1`. A stream that is left before it drained (stall timeout, client gone) is cancelled with `reader.cancel()` so the abandoned generation does not keep running upstream. Client departures are not upstream faults and are not written to the disconnect stats.
 
 3. **Prop drilling**:
    - `App.tsx` → `ChatCard` (new optional prop `recoveryStatus?: CardRecoveryStatus`).

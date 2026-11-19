@@ -139,3 +139,10 @@ Verification record (2026-10-16): `pnpm test` passed 3245 tests with 2 skipped; 
 
 - [x] Red-first: `tests/stream-recovery.test.ts` asserts the fast window, the doubling ramp, the 5-minute cap, and a bounded attempt count across a 2.5-hour outage.
 - [x] `getRecoverableStreamRetryDelayMs` replaces the inline 1.5 s-capped delay in `src/App.tsx`.
+
+## Proxy zombie retries (2026-11-19)
+
+- [x] Red-first: `tests/resilient-proxy.test.ts` proves the proxy keeps hitting the upstream after the client left (messages / responses / chat completions), regenerates a completed reply with nobody listening, and leaves a stalled stream running while it retries.
+- [x] `watchClientDisconnect` + `ClientGoneError`: one abort signal per request for the upstream fetch, the backoff wait, and the Responses tail poll; `relaySseStream` cancels a stream it did not drain.
+- [x] Network-layer failures are labelled `network_<code>` in the disconnect stats instead of `unknown`.
+- [x] Run the focused proxy tests and `pnpm test:quality`; package the verified bug fix.

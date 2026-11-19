@@ -28,6 +28,8 @@ type StartResilientProxyServerOptions = {
   maxRecoveryRetries?: number
   maxRequestBodyBytes?: number
   safeResumeBodyBytes?: number
+  /** 重试间隔的起始毫秒数；只给测试缩短等待用，运行时配置不暴露。 */
+  retryDelayBaseMs?: number
   logger?: Logger
 }
 
@@ -67,6 +69,9 @@ type ParsedSseBlock = {
 class RetryableProxyError extends Error {}
 
 class StreamTimeoutError extends RetryableProxyError {}
+
+// 客户端（CLI）已经断开：这不是上游故障，绝不能进重试循环，见 watchClientDisconnect。
+class ClientGoneError extends Error {}
 
 class UpstreamServerError extends RetryableProxyError {
   status: number
@@ -114,8 +119,8 @@ const isRecord = (value: unknown): value is Record<string, unknown> =>
 
 const cloneJson = <T>(value: T): T => structuredClone(value)
 
-const retryDelayMs = (attempt: number) =>
-  Math.min(retryDelayCapMs, Math.round(retryDelayBaseMs * retryDelayBackoff ** Math.min(attempt, 20)))
+const retryDelayMs = (attempt: number, baseMs: number = retryDelayBaseMs) =>
+  Math.min(retryDelayCapMs, Math.round(baseMs * retryDelayBackoff ** Math.min(attempt, 20)))
 
 const hasNonWhitespaceText = (value: string) => value.trim().length > 0
 
@@ -275,9 +280,38 @@ const summarizeStreamFailure = (error: unknown) => {
 const classifyProxyError = (error: unknown): string => {
   if (error instanceof StreamTimeoutError) return 'timeout'
   if (error instanceof UpstreamServerError) return `upstream_${error.status}`
-  if (error instanceof RetryableProxyError && error.message.includes('client disconnected')) return 'client_disconnect'
   if (error instanceof RetryableProxyError) return 'stream_interrupted'
+  // Node fetch 的网络层失败（连不上 / 中途被掐）都是 TypeError，真正的原因在 cause.code。
+  if (error instanceof TypeError) {
+    const code = isRecord(error.cause) && typeof error.cause.code === 'string' ? error.cause.code : ''
+    return code ? `network_${code}` : 'network_error'
+  }
   return 'unknown'
+}
+
+// 症状：中转站后台刷出成片 0 秒 500，账单里出现没人看的回复；用户以为是 VPN / 中转站抽风。
+// 根因：2026-11-19 实测 —— 代理把「客户端断开」当成普通断线继续重试。CLI 超时放弃、用户点停止、
+//       流式中发新消息都会断开，而 resilientProxyMaxRetries = -1 时循环永不退出：352 秒里 280 个
+//       重试循环并存，最老的已第 217 轮，每秒向上游发 2.66 个没人等的请求；其中 116 次上游其实
+//       成功了，整段回复被读完后丢弃，30 秒后再生成一遍。
+// 为什么不能换写法：不能只在重试前查一次 response.destroyed —— 那样正在生成的那一次仍会跑完并计费，
+//       等退避的 30 秒也白占着；必须把同一个中止信号传给 fetch、退避等待和尾部轮询。
+//       Known Pitfalls #430，守卫 tests/resilient-proxy.test.ts。
+const watchClientDisconnect = (response: http.ServerResponse): AbortSignal => {
+  const controller = new AbortController()
+  const abortIfUnfinished = () => {
+    if (!response.writableEnded) {
+      controller.abort()
+    }
+  }
+
+  if (response.destroyed) {
+    abortIfUnfinished()
+  } else {
+    response.once('close', abortIfUnfinished)
+  }
+
+  return controller.signal
 }
 
 const createStreamState = (): StreamState => ({
@@ -688,6 +722,8 @@ class ResilientProxyServer {
 
   private readonly safeResumeBodyBytes: number
 
+  private readonly retryDelayBaseMs: number
+
   private readonly logger: Logger
 
   private server: http.Server | null = null
@@ -708,6 +744,7 @@ class ResilientProxyServer {
         : (options.maxRecoveryRetries ?? defaultMaxRecoveryRetries)
     this.maxRequestBodyBytes = options.maxRequestBodyBytes ?? defaultMaxRequestBodyBytes
     this.safeResumeBodyBytes = options.safeResumeBodyBytes ?? defaultSafeResumeBodyBytes
+    this.retryDelayBaseMs = options.retryDelayBaseMs ?? retryDelayBaseMs
     this.logger = options.logger ?? console
   }
 
@@ -756,6 +793,8 @@ class ResilientProxyServer {
   }
 
   private async handleRequest(request: http.IncomingMessage, response: http.ServerResponse) {
+    const clientGone = watchClientDisconnect(response)
+
     try {
       const bodyBuffer = await readRequestBody(request, this.maxRequestBodyBytes)
       const target = resolveAttemptTarget(request.url, this.upstreamBaseUrl)
@@ -763,12 +802,12 @@ class ResilientProxyServer {
       const endpoint = target.logicalPathname
 
       if (request.method === 'POST' && endpoint === '/v1/messages' && isRecord(body) && isStreamingRequestBody(body)) {
-        await this.handleMessagesStream(target, request, response, body)
+        await this.handleMessagesStream(target, request, response, body, clientGone)
         return
       }
 
       if (request.method === 'POST' && endpoint === '/v1/responses' && isRecord(body) && isStreamingRequestBody(body)) {
-        await this.handleResponsesStream(target, request, response, body)
+        await this.handleResponsesStream(target, request, response, body, clientGone)
         return
       }
 
@@ -778,12 +817,17 @@ class ResilientProxyServer {
         isRecord(body) &&
         isStreamingRequestBody(body)
       ) {
-        await this.handleChatCompletionsStream(target, request, response, body)
+        await this.handleChatCompletionsStream(target, request, response, body, clientGone)
         return
       }
 
-      await this.forwardDirect(target, request, response, bodyBuffer)
+      await this.forwardDirect(target, request, response, bodyBuffer, clientGone)
     } catch (error) {
+      // 客户端已经走了：没有人收这条错误，也别再往已销毁的连接上写。
+      if (clientGone.aborted) {
+        return
+      }
+
       if (response.headersSent) {
         response.destroy(error instanceof Error ? error : undefined)
         return
@@ -817,12 +861,14 @@ class ResilientProxyServer {
     request: http.IncomingMessage,
     response: http.ServerResponse,
     bodyBuffer: Buffer,
+    clientGone: AbortSignal,
   ) {
     const headers = createForwardHeaders(request.headers)
     const upstreamResponse = await fetch(buildUpstreamUrl(this.upstreamOrigin, target.upstreamPathname, target.search), {
       method: request.method,
       headers,
       body: bodyBuffer.length > 0 ? new Uint8Array(bodyBuffer) : undefined,
+      signal: clientGone,
     })
 
     writeResponseHeaders(response, upstreamResponse)
@@ -838,6 +884,7 @@ class ResilientProxyServer {
     request: http.IncomingMessage,
     response: http.ServerResponse,
     body: Record<string, unknown>,
+    clientGone: AbortSignal,
   ) {
     const endpoint = target.logicalPathname
     proxyStats.record(this.provider, 'request', endpoint)
@@ -859,10 +906,10 @@ class ResilientProxyServer {
 
         if (attempt > 0) {
           state.isFirstAttempt = false
-          await delay(retryDelayMs(attempt))
+          await delay(retryDelayMs(attempt, this.retryDelayBaseMs), undefined, { signal: clientGone })
         }
 
-        const upstreamResponse = await this.fetchStream(target, headers, attemptBody)
+        const upstreamResponse = await this.fetchStream(target, headers, attemptBody, clientGone)
         if (!writer.isStarted()) {
           writer.start(upstreamResponse.status, upstreamResponse.headers)
         }
@@ -887,6 +934,10 @@ class ResilientProxyServer {
         await writer.close()
         return
       } catch (error) {
+        if (this.abandonedByClient(clientGone, error, endpoint, attempt)) {
+          return
+        }
+
         if (error instanceof UpstreamClientError) {
           if (looksLikePrefillRejection(error.bodyText) && !prefillDisabled) {
             prefillDisabled = true
@@ -918,6 +969,7 @@ class ResilientProxyServer {
     request: http.IncomingMessage,
     response: http.ServerResponse,
     body: Record<string, unknown>,
+    clientGone: AbortSignal,
   ) {
     const endpoint = target.logicalPathname
     proxyStats.record(this.provider, 'request', endpoint)
@@ -934,10 +986,10 @@ class ResilientProxyServer {
         if (attempt > 0) {
           state.isFirstAttempt = false
           state.skipPrefix = state.accumulatedText
-          await delay(retryDelayMs(attempt))
+          await delay(retryDelayMs(attempt, this.retryDelayBaseMs), undefined, { signal: clientGone })
         }
 
-        const upstreamResponse = await this.fetchStream(target, headers, attemptBody)
+        const upstreamResponse = await this.fetchStream(target, headers, attemptBody, clientGone)
         if (!writer.isStarted()) {
           writer.start(upstreamResponse.status, upstreamResponse.headers)
         }
@@ -962,6 +1014,10 @@ class ResilientProxyServer {
         await writer.close()
         return
       } catch (error) {
+        if (this.abandonedByClient(clientGone, error, endpoint, attempt)) {
+          return
+        }
+
         if (error instanceof UpstreamClientError) {
           await this.finishClientError(response, writer, error)
           return
@@ -972,7 +1028,7 @@ class ResilientProxyServer {
           errorType: classifyProxyError(error),
         })
 
-        if (await this.recoverResponsesTail(target, headers, state, writer)) {
+        if (await this.recoverResponsesTail(target, headers, state, writer, clientGone)) {
           proxyStats.record(this.provider, 'recovery_success', endpoint, { attempt })
           await writer.close()
           return
@@ -994,6 +1050,7 @@ class ResilientProxyServer {
     request: http.IncomingMessage,
     response: http.ServerResponse,
     body: Record<string, unknown>,
+    clientGone: AbortSignal,
   ) {
     const endpoint = target.logicalPathname
     proxyStats.record(this.provider, 'request', endpoint)
@@ -1015,10 +1072,10 @@ class ResilientProxyServer {
 
         if (attempt > 0) {
           state.isFirstAttempt = false
-          await delay(retryDelayMs(attempt))
+          await delay(retryDelayMs(attempt, this.retryDelayBaseMs), undefined, { signal: clientGone })
         }
 
-        const upstreamResponse = await this.fetchStream(target, headers, attemptBody)
+        const upstreamResponse = await this.fetchStream(target, headers, attemptBody, clientGone)
         if (!writer.isStarted()) {
           writer.start(upstreamResponse.status, upstreamResponse.headers)
         }
@@ -1043,6 +1100,10 @@ class ResilientProxyServer {
         await writer.close()
         return
       } catch (error) {
+        if (this.abandonedByClient(clientGone, error, endpoint, attempt)) {
+          return
+        }
+
         if (error instanceof UpstreamClientError) {
           if (looksLikePrefillRejection(error.bodyText) && !prefillDisabled) {
             prefillDisabled = true
@@ -1115,10 +1176,26 @@ class ResilientProxyServer {
     )
   }
 
+  private abandonedByClient(clientGone: AbortSignal, error: unknown, endpoint: string, attempt: number) {
+    if (!clientGone.aborted && !(error instanceof ClientGoneError)) {
+      return false
+    }
+
+    // 只在「正替它重试时它走了」才留一行日志；普通的点停止不刷屏，也不记进断线统计（不是上游的错）。
+    if (attempt > 0) {
+      this.logger.info(
+        `[resilient-proxy] ${this.provider} client left; stopped retrying ${endpoint} after ${attempt} attempt(s)`,
+      )
+    }
+
+    return true
+  }
+
   private async fetchStream(
     target: AttemptTarget,
     headers: Headers,
     body: Record<string, unknown>,
+    clientGone: AbortSignal,
   ) {
     const requestHeaders = new Headers(headers)
     if (!requestHeaders.has('Content-Type')) {
@@ -1131,6 +1208,7 @@ class ResilientProxyServer {
         method: 'POST',
         headers: requestHeaders,
         body: JSON.stringify(body),
+        signal: clientGone,
       },
     )
 
@@ -1167,6 +1245,7 @@ class ResilientProxyServer {
     const decoder = new TextDecoder()
     let buffer = ''
     let receivedAny = false
+    let drained = false
 
     try {
       while (true) {
@@ -1193,16 +1272,22 @@ class ResilientProxyServer {
         }
       }
 
+      drained = true
       buffer += decoder.decode()
       if (buffer.trim()) {
         await onBlock(buffer.trim())
       }
     } finally {
+      // 没读完就离开（卡顿超时 / 客户端断开 / 解析出错）必须取消上游流：只 releaseLock 的话连接还挂着，
+      // 上游那一次生成会照常跑完并计费，而我们已经去发下一次了。
+      if (!drained) {
+        await reader.cancel().catch(() => undefined)
+      }
       reader.releaseLock()
     }
 
     if (writer.isDisconnected()) {
-      throw new RetryableProxyError('Downstream client disconnected.')
+      throw new ClientGoneError('Downstream client disconnected.')
     }
   }
 
@@ -1573,6 +1658,7 @@ class ResilientProxyServer {
     headers: Headers,
     state: StreamState,
     writer: SseClientWriter,
+    clientGone: AbortSignal,
   ) {
     if (!state.responseId) {
       return false
@@ -1584,11 +1670,12 @@ class ResilientProxyServer {
     requestHeaders.delete('Accept')
     const tailPath = `${target.upstreamPathname}/${state.responseId}`.replace(/\/{2,}/g, '/')
 
-    while (Date.now() < deadline) {
+    while (Date.now() < deadline && !clientGone.aborted) {
       try {
         const upstreamResponse = await fetch(buildUpstreamUrl(this.upstreamOrigin, tailPath, ''), {
           method: 'GET',
           headers: requestHeaders,
+          signal: clientGone,
         })
 
         if (upstreamResponse.status === 404) {
@@ -1615,6 +1702,10 @@ class ResilientProxyServer {
           return false
         }
       } catch {
+        if (clientGone.aborted) {
+          return false
+        }
+
         await delay(1_000)
         continue
       }

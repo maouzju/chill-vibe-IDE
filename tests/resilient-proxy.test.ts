@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import http from 'node:http'
 import { once } from 'node:events'
 import { describe, it } from 'node:test'
+import { setTimeout as delay } from 'node:timers/promises'
 import zlib from 'node:zlib'
 
 import { startResilientProxyServer } from '../server/resilient-proxy.ts'
@@ -102,6 +103,40 @@ const hasResponsesCompletedEvent = (payload: string) => {
   }
 
   return false
+}
+
+const waitFor = async (predicate: () => boolean, timeoutMs = 5_000) => {
+  const deadline = Date.now() + timeoutMs
+  while (!predicate()) {
+    if (Date.now() > deadline) {
+      throw new Error('Timed out waiting for the test condition.')
+    }
+
+    await delay(5)
+  }
+}
+
+const drainRequest = async (request: http.IncomingMessage) => {
+  for await (const chunk of request) {
+    void chunk
+  }
+}
+
+const listenOnLoopback = async (server: http.Server) => {
+  server.listen(0, '127.0.0.1')
+  await once(server, 'listening')
+  const address = server.address()
+  if (!address || typeof address === 'string') {
+    throw new Error('Failed to bind upstream test server.')
+  }
+
+  return `http://127.0.0.1:${address.port}`
+}
+
+const closeServer = async (server: http.Server) => {
+  server.closeAllConnections()
+  server.close()
+  await once(server, 'close').catch(() => undefined)
 }
 
 describe('internal resilient proxy', () => {
@@ -506,6 +541,263 @@ describe('internal resilient proxy', () => {
       await proxy.stop()
       upstream.close()
       await once(upstream, 'close').catch(() => undefined)
+    }
+  })
+
+  // 僵尸重试守卫（Known Pitfalls #430）：客户端已经走了，代理就不许再替它向上游发任何请求。
+  const clientGoneScenarios = [
+    {
+      name: 'Claude messages',
+      provider: 'claude' as const,
+      path: '/v1/messages',
+      body: { model: 'claude-fable-5-2', stream: true, messages: [{ role: 'user', content: 'hi' }] },
+    },
+    {
+      name: 'OpenAI responses',
+      provider: 'codex' as const,
+      path: '/v1/responses',
+      body: { model: 'gpt-6.2', stream: true, input: 'hi' },
+    },
+    {
+      name: 'chat completions',
+      provider: 'codex' as const,
+      path: '/v1/chat/completions',
+      body: { model: 'gpt-6.2', stream: true, messages: [{ role: 'user', content: 'hi' }] },
+    },
+  ]
+
+  for (const scenario of clientGoneScenarios) {
+    it(`stops retrying a failing upstream once the ${scenario.name} client has gone away`, async () => {
+      let requestCount = 0
+
+      const upstream = http.createServer(async (request, response) => {
+        requestCount += 1
+        await drainRequest(request)
+        response.statusCode = 500
+        response.setHeader('Content-Type', 'application/json')
+        response.end('{"error":{"message":"Internal server error"}}')
+      })
+
+      const upstreamBaseUrl = await listenOnLoopback(upstream)
+      const proxy = await startResilientProxyServer({
+        provider: scenario.provider,
+        upstreamBaseUrl,
+        maxRecoveryRetries: -1,
+        retryDelayBaseMs: 2,
+      })
+
+      try {
+        const client = new AbortController()
+        const pending = fetch(`${proxy.origin}${scenario.path}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'x-api-key': 'sk-test' },
+          body: JSON.stringify(scenario.body),
+          signal: client.signal,
+        })
+          .then((response) => response.text())
+          .catch(() => undefined)
+
+        // 代理已经在替这个请求重试了，此时客户端放弃（CLI 超时 / 用户点停止）。
+        await waitFor(() => requestCount >= 2)
+        client.abort()
+        await pending
+        await delay(100)
+
+        const countWhenClientLeft = requestCount
+        await delay(700)
+
+        assert.equal(
+          requestCount,
+          countWhenClientLeft,
+          'the proxy kept hammering the upstream for a client that already left',
+        )
+      } finally {
+        await proxy.stop()
+        await closeServer(upstream)
+      }
+    })
+  }
+
+  it('cancels the in-flight upstream generation once the client has gone away mid-stream', async () => {
+    let requestCount = 0
+    let upstreamCancelled = 0
+
+    const upstream = http.createServer(async (request, response) => {
+      requestCount += 1
+      await drainRequest(request)
+      response.on('close', () => {
+        if (!response.writableEnded) {
+          upstreamCancelled += 1
+        }
+      })
+
+      response.statusCode = 200
+      response.setHeader('Content-Type', 'text/event-stream')
+      response.write('event: message_start\n')
+      response.write('data: {"type":"message_start","message":{"id":"msg-1","model":"claude-fable-5-2"}}\n\n')
+      response.write('event: content_block_delta\n')
+      response.write('data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"partial "}}\n\n')
+      // 故意不结束：模拟一段还在生成中的长回复。
+    })
+
+    const upstreamBaseUrl = await listenOnLoopback(upstream)
+    const proxy = await startResilientProxyServer({
+      provider: 'claude',
+      upstreamBaseUrl,
+      maxRecoveryRetries: -1,
+      retryDelayBaseMs: 2,
+      stallTimeoutMs: 150,
+    })
+
+    try {
+      const client = new AbortController()
+      const response = await fetch(`${proxy.origin}/v1/messages`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-api-key': 'sk-test' },
+        body: JSON.stringify({
+          model: 'claude-fable-5-2',
+          stream: true,
+          messages: [{ role: 'user', content: 'write something long' }],
+        }),
+        signal: client.signal,
+      })
+
+      const reader = response.body!.getReader()
+      await reader.read()
+      client.abort()
+      await reader.read().catch(() => undefined)
+
+      await delay(700)
+
+      assert.equal(requestCount, 1, 'the proxy re-sent the request for a client that already left')
+      assert.equal(upstreamCancelled, 1, 'the abandoned upstream generation was left running')
+    } finally {
+      await proxy.stop()
+      await closeServer(upstream)
+    }
+  })
+
+  it('cancels a stalled upstream stream before retrying so two generations never run at once', async () => {
+    let requestCount = 0
+    let stalledStreamCancelled = false
+    let stalledStreamStillOpenAtRetry: boolean | null = null
+
+    const upstream = http.createServer(async (request, response) => {
+      requestCount += 1
+      await drainRequest(request)
+
+      response.statusCode = 200
+      response.setHeader('Content-Type', 'text/event-stream')
+      response.write('event: message_start\n')
+      response.write('data: {"type":"message_start","message":{"id":"msg-1","model":"claude-fable-5-2"}}\n\n')
+
+      if (requestCount === 1) {
+        response.on('close', () => {
+          stalledStreamCancelled = true
+        })
+        // 第一次卡住不动：既不出字也不结束。
+        return
+      }
+
+      stalledStreamStillOpenAtRetry = !stalledStreamCancelled
+      response.write('event: content_block_delta\n')
+      response.write('data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"done"}}\n\n')
+      response.write('event: message_stop\n')
+      response.write('data: {"type":"message_stop"}\n\n')
+      response.end()
+    })
+
+    const upstreamBaseUrl = await listenOnLoopback(upstream)
+    const proxy = await startResilientProxyServer({
+      provider: 'claude',
+      upstreamBaseUrl,
+      maxRecoveryRetries: 2,
+      retryDelayBaseMs: 40,
+      stallTimeoutMs: 120,
+    })
+
+    try {
+      const response = await fetch(`${proxy.origin}/v1/messages`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-api-key': 'sk-test' },
+        body: JSON.stringify({
+          model: 'claude-fable-5-2',
+          stream: true,
+          messages: [{ role: 'user', content: 'hi' }],
+        }),
+      })
+
+      assert.equal(parseSseDeltaText(await response.text()), 'done')
+      assert.equal(requestCount, 2)
+      assert.equal(
+        stalledStreamStillOpenAtRetry,
+        false,
+        'the stalled generation was still running upstream when the retry was sent',
+      )
+    } finally {
+      await proxy.stop()
+      await closeServer(upstream)
+    }
+  })
+
+  it('never regenerates a reply whose client left before the upstream finished it', async () => {
+    let requestCount = 0
+
+    const upstream = http.createServer(async (request, response) => {
+      requestCount += 1
+      await drainRequest(request)
+
+      response.statusCode = 200
+      response.setHeader('Content-Type', 'text/event-stream')
+      response.write('event: message_start\n')
+      response.write('data: {"type":"message_start","message":{"id":"msg-1","model":"claude-fable-5-2"}}\n\n')
+      response.write('event: content_block_delta\n')
+      response.write('data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"first "}}\n\n')
+
+      await delay(80)
+      if (response.destroyed) {
+        return
+      }
+
+      response.write('event: content_block_delta\n')
+      response.write('data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"second"}}\n\n')
+      response.write('event: message_stop\n')
+      response.write('data: {"type":"message_stop"}\n\n')
+      response.end()
+    })
+
+    const upstreamBaseUrl = await listenOnLoopback(upstream)
+    const proxy = await startResilientProxyServer({
+      provider: 'claude',
+      upstreamBaseUrl,
+      maxRecoveryRetries: -1,
+      retryDelayBaseMs: 2,
+    })
+
+    try {
+      const client = new AbortController()
+      const response = await fetch(`${proxy.origin}/v1/messages`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-api-key': 'sk-test' },
+        body: JSON.stringify({
+          model: 'claude-fable-5-2',
+          stream: true,
+          messages: [{ role: 'user', content: 'hi' }],
+        }),
+        signal: client.signal,
+      })
+
+      const reader = response.body!.getReader()
+      await reader.read()
+      client.abort()
+      await reader.read().catch(() => undefined)
+
+      await delay(700)
+
+      assert.equal(requestCount, 1, 'the proxy paid for the same reply again with nobody listening')
+    } finally {
+      await proxy.stop()
+      await closeServer(upstream)
     }
   })
 })

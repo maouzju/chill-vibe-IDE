@@ -995,7 +995,8 @@ function App() {
       setDockZoneOver(false)
     }
     // 症状：文件拖到窗口任意非落区松手，Chromium 默认导航到 file://，整个界面被替换。
-    // 根因：主进程没有 will-navigate 守卫，pane / 看板的 onDrop 对不认识的 payload 也不 preventDefault。
+    // 根因：当时主进程没有 will-navigate 守卫（2026-11-20 已补，#443），pane / 看板的 onDrop 对不认识的 payload 也不 preventDefault。
+    //   守卫补上后这层仍保留：守卫是兜底，在这里吞掉就不会走到被拦截再记一条告警日志那一步。
     // composer 自己的 drop 先 stopPropagation 落地路径（SPEC composer-drop-file-path），其余带 Files 的一律吞掉。
     const swallowStrayFileDrag = (event: globalThis.DragEvent) => {
       if (Array.from(event.dataTransfer?.types ?? []).includes('Files')) {

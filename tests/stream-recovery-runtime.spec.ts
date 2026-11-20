@@ -31,7 +31,14 @@ const hasDesktopStreamSubscription = async (page: Page, streamId: string) =>
 
 const installMockDesktopBridge = async (
   page: Page,
-  options: { maxRetries?: number; nativeFork?: boolean; deferNativeFork?: boolean; claude?: boolean; theme?: 'light' | 'dark' } = {},
+  options: {
+    maxRetries?: number
+    nativeFork?: boolean
+    deferNativeFork?: boolean
+    claude?: boolean
+    theme?: 'light' | 'dark'
+    stopUnknownStream?: boolean
+  } = {},
 ) => {
   await page.addInitScript(() => {
     const subscriptionsByStream = new Map<string, Set<string>>()
@@ -360,6 +367,11 @@ const installMockDesktopBridge = async (
   })
 
   await page.route('**/api/chat/stop/*', async (route) => {
+    if (options.stopUnknownStream) {
+      // 真实服务端对「不认识 / 已终态」的流就是这个回执（server/index.ts）。
+      await route.fulfill({ status: 404, json: { message: 'Stream not found or already finished.' } })
+      return
+    }
     await route.fulfill({ status: 204 })
   })
 
@@ -689,6 +701,71 @@ test('stopping during the wait for the next recovery retry cancels it instead of
   expect(mock.readRequests()).toHaveLength(requestsBeforeStop)
   expect(mock.readState().columns[0]?.cards['card-1']?.status).toBe('idle')
   expect(mock.readState().columns[0]?.cards['card-1']?.streamId).toBeUndefined()
+})
+
+test('stopping a card whose stream the server no longer knows finishes it locally instead of staying stuck', async ({ page }) => {
+  // 2026-11-20 现场：卡片挂着一个服务端早已没有的 streamId，停止键连点 19 次全是
+  // unknown-stream 空操作，卡在「生成中」近 9 小时。
+  const mock = await installMockDesktopBridge(page, { stopUnknownStream: true })
+  await page.goto(appUrl)
+
+  await expect.poll(() => hasDesktopStreamSubscription(page, 'stream-1')).toBe(true)
+  await page.locator('.pane-tab-panel.is-active .composer').getByRole('button', { name: /停止|Stop/ }).first().click()
+
+  await expect.poll(() => mock.readState().columns[0]?.cards['card-1']?.status).toBe('idle')
+  expect(mock.readState().columns[0]?.cards['card-1']?.streamId).toBeUndefined()
+  expect(mock.readRequests()).toHaveLength(0)
+})
+
+test('manual recovery keeps its new stream when the bridge answers between two renders', async ({ page }) => {
+  // 2026-11-20 现场：点「重连」后 7ms 新流就被 stale-response-guard 停掉，卡片却一直认着它。
+  // 桥的回执落在「上一帧的 effect 把 appStateRef 写回旧状态」之后、下一帧提交之前才会触发，
+  // 所以这里让 fork 和 requestChat 都在页面内用 MessageChannel 回执，不走网络；
+  // 2 跳 / 1 跳 / 5ms 是探针扫 32 种时序后修复前稳定变红的那一组。
+  await installMockDesktopBridge(page)
+  await page.addInitScript(() => {
+    const oneTask = () =>
+      new Promise<void>((resolve) => {
+        const channel = new MessageChannel()
+        channel.port1.onmessage = () => resolve()
+        channel.port2.postMessage(null)
+      })
+    const nextTask = async (hops: number) => {
+      for (let index = 0; index < hops; index += 1) await oneTask()
+    }
+    const stoppedStreams: string[] = []
+    Object.defineProperty(window, '__mockStoppedStreams', { configurable: true, value: stoppedStreams })
+    const api = window.electronAPI as unknown as Record<string, unknown>
+    api.forkProviderSession = async () => {
+      await nextTask(2)
+      return { sessionId: 'forked-session-1' }
+    }
+    api.requestChat = async (request: { streamId: string }) => {
+      await nextTask(1)
+      return { streamId: request.streamId }
+    }
+    api.stopChat = async (streamId: string) => {
+      stoppedStreams.push(streamId)
+      await new Promise((resolve) => setTimeout(resolve, 5))
+      return { stopped: true, settlingWithinMs: 0 }
+    }
+  })
+  await page.goto(appUrl)
+
+  const manualRecover = page.locator('.manual-stream-recovery-composer-button').first()
+  await expect(manualRecover).toBeVisible()
+  await manualRecover.click()
+
+  await expect
+    .poll(() =>
+      page.evaluate(() => (window as typeof window & { __mockStoppedStreams: string[] }).__mockStoppedStreams.length),
+    )
+    .toBeGreaterThan(0)
+  await page.waitForTimeout(500)
+  // 只许停掉被替换的旧流；新流一旦被自己的防呆误停，卡片就永远挂在「生成中」。
+  expect(
+    await page.evaluate(() => (window as typeof window & { __mockStoppedStreams: string[] }).__mockStoppedStreams),
+  ).toEqual(['stream-1'])
 })
 
 test('transient-only reconnect errors do not exhaust the recovery budget', async ({ page }) => {

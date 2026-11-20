@@ -954,6 +954,9 @@ export type StopChatResult = {
   // 服务端确认这次是软中断（进程与原生会话都活着）。done 丢了、渲染端只能本地收尾时，
   // 靠它决定保不保 sessionId；缺省按硬杀处理（pitfall #118 的旧前提）。
   interrupted?: boolean
+  // 服务端不认识这条流，或它早已终态：这次 stop 是空操作，不会再有 done 过来。
+  // 调用方要是还看着这条流在「生成中」，只能自己本地收尾。
+  notRunning?: boolean
 }
 
 const noDeferredSettle: StopChatResult = { settlingWithinMs: 0 }
@@ -967,17 +970,21 @@ export const stopChat = async (streamId: string, origin?: string): Promise<StopC
     // 也就是保持这次改动之前的兜底时序，不会因为缺字段而永远不兜底。
     const settlingWithinMs = (result as StopChatResult | undefined)?.settlingWithinMs
     const interrupted = (result as StopChatResult | undefined)?.interrupted === true
+    // 桌面桥透传 ChatManager.stop 的 { stopped }；只有明确的 false 才算空操作，
+    // 旧桥 / 测试桩的 undefined 不算。
+    const notRunning = (result as { stopped?: boolean } | undefined)?.stopped === false
     return {
       settlingWithinMs:
         Number.isFinite(settlingWithinMs) && (settlingWithinMs as number) > 0
           ? (settlingWithinMs as number)
           : 0,
       ...(interrupted ? { interrupted } : {}),
+      ...(notRunning ? { notRunning } : {}),
     }
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
     if (message.includes('Stream not found') || message.includes('already finished')) {
-      return noDeferredSettle
+      return { ...noDeferredSettle, notRunning: true }
     }
 
     throw error

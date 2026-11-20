@@ -791,6 +791,10 @@ const hasLatestPendingAskUserMessage = (
 
 function App() {
   const [appState, dispatch] = useReducer(ideReducer, createDefaultState(''))
+  // 与 dispatch 同批提交的序号：这一帧渲染出来的 appState 已经包含到第几批 applyActions。
+  // 用途见下方回写 appStateRef 的 effect。
+  const [renderedActionSeq, setRenderedActionSeq] = useState(0)
+  const appliedActionSeqRef = useRef(0)
   const [providers, setProviders] = useState<ProviderStatus[]>([])
   const [loadStatus, setLoadStatus] = useState<LoadStatus>('loading')
   const [loadError, setLoadError] = useState<unknown>(null)
@@ -1384,10 +1388,19 @@ function App() {
   // so the next occurrence in the wild is attributable (真实事故取证缺口).
   const streamEditsActivityCountRef = useRef(new Map<string, number>())
 
+  // 症状：点「重连」后卡片永久挂在「生成中」，停止键也没用（2026-11-20 现场卡了近 9 小时）。
+  // 根因：applyActions 同步把新状态写进 appStateRef，React 稍后才渲染。上一帧的这个 effect
+  //   若在中间触发，会把 ref 冲回旧状态；此时 requestChat 的回执到达，stale-response-guard
+  //   读到「卡上的 streamId 不是我」就把刚启动 7ms 的新流停掉，下一帧提交后卡片又认回这条死流。
+  //   探针 32 种回执时序里 2 种复现。
+  // 为什么不能直接删掉回写：reducer 在 React 里会重跑一遍，ref 要以渲染结果为准对齐；
+  //   所以只在「这一帧已包含全部已应用的 action」时才回写，落后的帧跳过。
   useEffect(() => {
-    appStateRef.current = appState
-    updateLatestKnownAppState(appState)
-  }, [appState])
+    if (renderedActionSeq === appliedActionSeqRef.current) {
+      appStateRef.current = appState
+    }
+    updateLatestKnownAppState(appStateRef.current)
+  }, [appState, renderedActionSeq])
 
   // Stuck-pane crime-scene capture: Ctrl+Shift+F9 dumps focus/pane/hit-test
   // state to logs/, and repeated rescue firings auto-dump. This is how a
@@ -1750,6 +1763,8 @@ function App() {
     setInterruptedSessionActionPending(false)
 
     dispatch({ type: 'replace', state })
+    appliedActionSeqRef.current += 1
+    setRenderedActionSeq(appliedActionSeqRef.current)
     setLoadStatus('ready')
   }, [
     lastQueuedSnapshot,
@@ -1773,6 +1788,8 @@ function App() {
     for (const action of actions) {
       dispatch(action)
     }
+    appliedActionSeqRef.current += 1
+    setRenderedActionSeq(appliedActionSeqRef.current)
 
     return nextState
   }, [])
@@ -3362,7 +3379,23 @@ function App() {
         if (!stopAckByStreamIdRef.current.has(streamId)) {
           stopAckByStreamIdRef.current.set(streamId, 'pending')
         }
-        const { settlingWithinMs, interrupted } = await stopChat(streamId, reason)
+        const { settlingWithinMs, interrupted, notRunning } = await stopChat(streamId, reason)
+        // 症状：卡片挂在「生成中」，停止键怎么点都没反应，只能关掉这张卡。
+        // 根因：2026-11-20 现场，卡上的 streamId 服务端早已没有（新流被 stale-response-guard
+        //   误停，见 #431），停止键 19 连点全是 unknown-stream 空操作；手动停止这条路没有
+        //   「等不到 done」的本地兜底，卡了近 9 小时。
+        // 为什么不能等 done：服务端说这条流不在跑，就不会再有终态事件；只要卡片还认着
+        //   这条流在生成，就在这里收尾。done 已经先到的话卡片早已换了状态，下面的判断会放过。
+        if (notRunning) {
+          stoppedRunReasonRef.current.delete(streamId)
+          const stuckOwner = appStateRef.current.columns.find((column) => Boolean(column.cards[cardId]))
+          const stuckCard = stuckOwner?.cards[cardId]
+          if (stuckOwner && stuckCard?.status === 'streaming' && stuckCard.streamId === streamId) {
+            forceResetRecoveryStatus(cardId)
+            finalizeStoppedStreamWithoutServerAckRef.current?.(stuckOwner.id, cardId, reason)
+          }
+          return true
+        }
         // done 先到时收尾路径已删掉条目，这里不再写回（否则每次停止漏一条）；
         // 重复 stop 只回报首次的结果（服务端幂等），已确认的软中断不被降级。
         const ack = stopAckByStreamIdRef.current.get(streamId)

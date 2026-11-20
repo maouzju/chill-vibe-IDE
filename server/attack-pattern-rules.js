@@ -173,7 +173,7 @@ export const attackPatternRules = [
 //   assessCodexToolUse 一上来就按工具类型分流，两者判据不一致。
 // 为什么不能顺手也扫写入正文：写文件的正文里出现攻击字符串只是「写了段文本」，
 //   不是「执行了它」；能力形状的判据必须落在真的会执行的那类调用上。
-const shellToolPattern = /^(?:Bash|shell|shell_command|exec_command|write_stdin)$/i
+const shellToolPattern = /^(?:Bash|shell|shell_command|exec_command|write_stdin|run_shell_command)$/i
 
 const collectCandidates = (input) => {
   const toolName = input?.tool_name

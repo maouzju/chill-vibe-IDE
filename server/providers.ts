@@ -137,6 +137,7 @@ import {
   ensureCodexSafetyHookTrusted,
   prepareCodexSafetyRuntime,
   prepareDestructiveCommandGuardRuntime,
+  prepareGeminiSafetyRuntime,
 } from './codex-safety.js'
 import {
   ClaudeSessionPool,
@@ -4256,6 +4257,18 @@ const launchGeminiRun = async (
   runtime: ProviderRuntime,
   attachmentPaths: string[] = [],
 ) => {
+  // 危险命令防护：以 BeforeTool 钩子注入（2026-11-20 前 Gemini 卡完全绕过防护）。
+  let safetyRuntime
+  try {
+    safetyRuntime = await prepareGeminiSafetyRuntime(request, runtime.env)
+  } catch (error) {
+    sink.onError(
+      error instanceof Error ? error.message : 'Unable to prepare Gemini Agent safety protection.',
+      'env-setup',
+    )
+    return null
+  }
+
   const managedChild = createManagedChildHandle()
   const child = await spawnProvider(
     request.provider,
@@ -4263,7 +4276,7 @@ const launchGeminiRun = async (
     request.workspacePath,
     sink,
     language,
-    runtime.env,
+    safetyRuntime.env,
     { stdin: 'pipe' },
   )
 

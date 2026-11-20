@@ -107,7 +107,7 @@ test('quotes the Windows hook launcher path with typographic quotes doubled', { 
     )
     const { hookCommand } = JSON.parse(stdout) as { hookCommand: string }
     const launcherPath = path.join(dataDir, 'codex-safety', 'pre-tool-use-guard.cmd')
-    assert.equal(hookCommand, `& '${launcherPath.replace(/['‘’‚‛]/g, '$&$&')}'`)
+    assert.equal(hookCommand, `& '${launcherPath.replace(/['‘’‚‛]/g, '$&$&')}'; exit $LASTEXITCODE`)
   } finally {
     await rm(dataDir, { recursive: true, force: true })
   }

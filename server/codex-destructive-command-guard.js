@@ -8,8 +8,9 @@ import {
   formatAttackPatternReason,
 } from './attack-pattern-rules.js'
 
-const shellToolPattern = /^(?:Bash|shell|shell_command|exec_command|write_stdin)$/i
-const directWriteToolPattern = /^(?:apply_patch|Edit|Write|NotebookEdit)$/i
+// Gemini CLI 的工具名：run_shell_command / write_file / replace（2026-11-20 补，否则 Gemini 卡整个绕过防护）。
+const shellToolPattern = /^(?:Bash|shell|shell_command|exec_command|write_stdin|run_shell_command)$/i
+const directWriteToolPattern = /^(?:apply_patch|Edit|Write|NotebookEdit|write_file|replace)$/i
 const pythonRmtreePattern = /\bshutil\.rmtree\s*\(/i
 const nodeRecursiveDeletePattern = /\b(?:fs\.)?(?:rm|rmSync)\s*\([^)]*recursive\s*:\s*true/is
 // 症状：PowerShell 的 `[IO.Directory]::Delete(<目录>, $true)` 被判为非破坏性放行（2026-11-20 审查）。

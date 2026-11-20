@@ -171,7 +171,10 @@ export const prepareDestructiveCommandGuardRuntime = async (
 
   const hookCommand = process.platform === 'win32'
     // 根因：PowerShell 把 U+2018~U+201B 弯引号也当单引号定界符，只加倍 ASCII ' 挡不住（2026-11-20 审查）。
-    ? `& '${launcherPath.replace(/['‘’‚‛]/g, '$&$&')}'`
+    // 症状：守卫判拦截（exit 2），Claude / Gemini 照样执行危险命令（2026-11-20 实测）。
+    // 根因：钩子都由 `powershell -Command` 执行，`& 'x.cmd'` 失败后 PowerShell 一律以 1 退出，
+    //   而 Claude Code 与 Gemini CLI 只把 2 当阻断，1 是「警告后放行」。必须显式透传 $LASTEXITCODE。
+    ? `& '${launcherPath.replace(/['‘’‚‛]/g, '$&$&')}'; exit $LASTEXITCODE`
     : `'${launcherPath.replace(/'/g, `'"'"'`)}'`
   env.CHILL_VIBE_CODEX_SAFETY_HOOK_COMMAND = hookCommand
 
@@ -243,6 +246,101 @@ export const prepareCodexSafetyRuntime = async (
     env: guardRuntime.env,
     hookCommand: guardRuntime.hookCommand,
   }
+}
+
+// Gemini CLI 只认钩子写在 settings.json 里（没有 -c 之类的命令行注入）。用户/工作区 settings
+// 都可能被 agent 自己改，所以写进优先级最高的 system 层：把 GEMINI_CLI_SYSTEM_SETTINGS_PATH
+// 指到应用数据目录里的副本，原 system 设置原样合并进来，system-defaults 路径钉回原位
+// （CLI 默认按 system 设置所在目录找 system-defaults.json，不钉会悄悄丢掉它）。
+const geminiSafetyHookMatcher = '^(?:run_shell_command|write_file|replace)$'
+const geminiSafetyHookTimeoutMs = safetyHookTimeoutSec * 1000
+
+const resolveGeminiSystemSettingsPath = (env: NodeJS.ProcessEnv) => {
+  const fromEnv = env.GEMINI_CLI_SYSTEM_SETTINGS_PATH?.trim()
+  if (fromEnv) return fromEnv
+  if (process.platform === 'darwin') return '/Library/Application Support/GeminiCli/settings.json'
+  if (process.platform === 'win32') return 'C:\\ProgramData\\gemini-cli\\settings.json'
+  return '/etc/gemini-cli/settings.json'
+}
+
+export type PreparedGeminiSafetyRuntime = PreparedDestructiveCommandGuardRuntime
+
+export const prepareGeminiSafetyRuntime = async (
+  request: ChatRequest,
+  baseEnv: NodeJS.ProcessEnv,
+): Promise<PreparedGeminiSafetyRuntime> => {
+  const guardRuntime = await prepareDestructiveCommandGuardRuntime(request, baseEnv)
+  if (!guardRuntime.hookCommand) {
+    return guardRuntime
+  }
+
+  const env = guardRuntime.env
+  const hookCommand = guardRuntime.hookCommand
+  const originalSettingsPath = resolveGeminiSystemSettingsPath(baseEnv)
+  const originalDefaultsPath =
+    baseEnv.GEMINI_CLI_SYSTEM_DEFAULTS_PATH?.trim() ||
+    path.join(path.dirname(originalSettingsPath), 'system-defaults.json')
+
+  let original: Record<string, unknown> = {}
+  const raw = await readFile(originalSettingsPath, 'utf8').catch(() => null)
+  if (raw !== null) {
+    try {
+      const parsed = JSON.parse(raw) as unknown
+      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+        original = parsed as Record<string, unknown>
+      }
+    } catch {
+      // 原 system 设置坏了 CLI 自己也读不了；只放我们的钩子，防护优先。
+    }
+  }
+
+  const originalHooks =
+    original.hooks && typeof original.hooks === 'object' && !Array.isArray(original.hooks)
+      ? (original.hooks as Record<string, unknown>)
+      : {}
+  const originalBeforeTool = Array.isArray(originalHooks.BeforeTool) ? originalHooks.BeforeTool : []
+  const originalDisabled = Array.isArray(originalHooks.disabled) ? originalHooks.disabled : []
+
+  const originalTools =
+    original.tools && typeof original.tools === 'object' && !Array.isArray(original.tools)
+      ? (original.tools as Record<string, unknown>)
+      : {}
+
+  const merged = {
+    ...original,
+    // CLI 判据是 tools.enableHooks && hooks.enabled，用户层关掉任一个都会让钩子整体失效。
+    tools: { ...originalTools, enableHooks: true },
+    hooks: {
+      ...originalHooks,
+      enabled: true,
+      // disabled 列表按命令名禁用钩子，且与用户层 UNION 合并；system 层只能保证自己不禁用我们。
+      disabled: originalDisabled.filter((entry) => entry !== hookCommand),
+      BeforeTool: [
+        ...originalBeforeTool,
+        {
+          matcher: geminiSafetyHookMatcher,
+          hooks: [
+            {
+              type: 'command',
+              command: hookCommand,
+              timeout: geminiSafetyHookTimeoutMs,
+            },
+          ],
+        },
+      ],
+    },
+  }
+
+  // 内容只取决于原 system 设置和统一的 launcher 命令，所有卡共用一份，不按卡分目录免得无界增长。
+  const settingsDir = path.join(getAppDataDir(), 'gemini-safety')
+  await mkdir(settingsDir, { recursive: true })
+  const settingsPath = path.join(settingsDir, 'system-settings.json')
+  await writeLauncherIfNeeded(settingsPath, `${JSON.stringify(merged, null, 2)}\n`)
+
+  env.GEMINI_CLI_SYSTEM_SETTINGS_PATH = settingsPath
+  env.GEMINI_CLI_SYSTEM_DEFAULTS_PATH = originalDefaultsPath
+
+  return { env, hookCommand }
 }
 
 type HookMetadata = {

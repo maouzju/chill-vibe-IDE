@@ -4,6 +4,7 @@ import { mkdtemp, readFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import test from 'node:test'
+import { pathToFileURL } from 'node:url'
 
 import {
   resolveDesktopDataDir,
@@ -11,7 +12,7 @@ import {
   resolveDesktopRuntimeProfilePaths,
   resolveDesktopWorkingDirectory,
 } from '../electron/runtime-environment.ts'
-import { getRendererLoadTarget } from '../electron/runtime-target.ts'
+import { getRendererLoadTarget, isAppRendererUrl } from '../electron/runtime-target.ts'
 import {
   powerShellCommand,
   prependPathEntry,
@@ -40,6 +41,37 @@ test('development Electron keeps the Vite renderer target', () => {
     kind: 'url',
     value: 'http://localhost:5173',
   })
+})
+
+test('dev renderer navigation stays on the Vite dev server origin only', () => {
+  const target = { kind: 'url', value: 'http://localhost:5173' } as const
+
+  assert.equal(isAppRendererUrl('http://localhost:5173/', target), true)
+  assert.equal(isAppRendererUrl('http://localhost:5173/?reload=1#/board', target), true)
+  assert.equal(isAppRendererUrl('http://localhost:5174/', target), false)
+  assert.equal(isAppRendererUrl('http://127.0.0.1:5173/', target), false)
+  assert.equal(isAppRendererUrl('https://evil.example/', target), false)
+  assert.equal(isAppRendererUrl('file:///C:/evil.html', target), false)
+  assert.equal(isAppRendererUrl('javascript:alert(1)', target), false)
+  assert.equal(isAppRendererUrl('not a url', target), false)
+})
+
+test('packaged renderer navigation stays on the bundled index.html only', () => {
+  const indexPath = path.join(process.cwd(), 'dist', 'client', 'index.html')
+  const target = { kind: 'file', value: indexPath } as const
+  const indexUrl = pathToFileURL(indexPath).toString()
+
+  assert.equal(isAppRendererUrl(indexUrl, target), true)
+  assert.equal(isAppRendererUrl(`${indexUrl}#/settings`, target), true)
+  assert.equal(isAppRendererUrl(`${indexUrl}?x=1`, target), true)
+  // A dropped local file or another bundled page must not inherit the preload.
+  assert.equal(
+    isAppRendererUrl(pathToFileURL(path.join(process.cwd(), 'dist', 'client', 'evil.html')).toString(), target),
+    false,
+  )
+  assert.equal(isAppRendererUrl(pathToFileURL(path.join(tmpdir(), 'dropped.html')).toString(), target), false)
+  assert.equal(isAppRendererUrl('https://evil.example/index.html', target), false)
+  assert.equal(isAppRendererUrl('data:text/html,<p>x</p>', target), false)
 })
 
 test('packaged Electron does not chdir into the bundled app.asar path', () => {

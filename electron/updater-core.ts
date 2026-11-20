@@ -560,7 +560,9 @@ export type WindowsZipReplaceScriptParams = {
   waitTimeoutSeconds: number
 }
 
-const escapePowerShellSingleQuoted = (value: string) => value.replace(/'/g, "''")
+// 症状：路径里带弯引号（如 Bob’s）时 PowerShell 字符串提前截断。
+// 根因：PowerShell 把 U+2018~U+201B 也当单引号定界符（2026-11-20 审查）；每个单引号类字符都要加倍。
+const escapePowerShellSingleQuoted = (value: string) => value.replace(/['‘’‚‛]/g, '$&$&')
 const utf8Bom = Buffer.from([0xef, 0xbb, 0xbf])
 
 export function encodePowerShellScriptUtf8Bom(script: string): Buffer {

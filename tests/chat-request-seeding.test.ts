@@ -513,6 +513,26 @@ describe('chat request seeding', () => {
     assert.match(prompt, /Progress note 11/)
   })
 
+  it('keeps the opening user request when the newest assistant reply alone exceeds the budget', () => {
+    const prompt = buildSeededChatPrompt({
+      language: 'en',
+      provider: 'claude',
+      status: 'idle',
+      prompt: 'Please continue.',
+      attachments: [],
+      messages: [
+        createMessage('user-1', 'user', 'Short task. OPENING_REQUEST_SENTINEL'),
+        createMessage('assistant-1', 'assistant', `Middle note ${'m'.repeat(300)}`),
+        createMessage('assistant-2', 'assistant', `LATEST_REPLY_HEAD ${'z'.repeat(8_000)}`),
+      ],
+    })
+
+    assert.match(prompt, /OPENING_REQUEST_SENTINEL/)
+    assert.match(prompt, /LATEST_REPLY_HEAD/)
+    assert.match(prompt, /Earlier transcript omitted:/i)
+    assert.ok(prompt.length <= 6_500, `expected seeded prompt to stay bounded, got ${prompt.length}`)
+  })
+
   // 用 Codex：只有带归档回查的 provider 才按压缩边界截断回放（见上面
   // 'replays the conversation from before a compaction…'），这条要测的是「截断 + 界面性能窗口」叠在一起。
   it('keeps post-compact history available for seeded requests when the UI adds a performance window', () => {

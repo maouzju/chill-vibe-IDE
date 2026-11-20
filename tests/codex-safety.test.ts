@@ -81,3 +81,34 @@ test('Codex and Claude share one destructive-command guard launcher while keepin
     await rm(dataDir, { recursive: true, force: true })
   }
 })
+
+// 2026-11-20 审查：hook 命令把 launcher 路径拼进 PowerShell 单引号字符串，数据目录里的
+// 弯引号（如用户名 O’Brien）同样是定界符，必须和 ASCII 单引号一起加倍。
+test('quotes the Windows hook launcher path with typographic quotes doubled', { skip: process.platform !== 'win32' }, async () => {
+  const dataDir = await mkdtemp(path.join(os.tmpdir(), 'chill-vibe-codex-safety-o’q‘-'))
+  const script = `
+    import { prepareDestructiveCommandGuardRuntime } from './server/codex-safety.ts'
+    const runtime = await prepareDestructiveCommandGuardRuntime({
+      provider: 'claude',
+      workspacePath: ${JSON.stringify(path.join(dataDir, 'ws'))},
+      prompt: 'test',
+      cardId: 'card-q',
+      codexDestructiveCommandProtectionEnabled: true,
+      codexIsolatedHomeEnabled: false,
+    }, process.env)
+    process.stdout.write(JSON.stringify({ hookCommand: runtime.hookCommand }))
+  `
+
+  try {
+    const { stdout } = await execFileAsync(
+      process.execPath,
+      ['--import', 'tsx', '--input-type=module', '--eval', script],
+      { cwd: process.cwd(), env: { ...process.env, CHILL_VIBE_DATA_DIR: dataDir }, windowsHide: true },
+    )
+    const { hookCommand } = JSON.parse(stdout) as { hookCommand: string }
+    const launcherPath = path.join(dataDir, 'codex-safety', 'pre-tool-use-guard.cmd')
+    assert.equal(hookCommand, `& '${launcherPath.replace(/['‘’‚‛]/g, '$&$&')}'`)
+  } finally {
+    await rm(dataDir, { recursive: true, force: true })
+  }
+})

@@ -93,7 +93,7 @@ import { cliCompatRequestSchema } from '../shared/cli-compat.js'
 import { discoverProviderModels } from './model-discovery.js'
 import {
   deleteSessionHistoryEntry,
-  loadState,
+  loadPersistedSettings,
   loadClosedWorkspaceSnapshot,
   loadSessionHistoryEntry,
   loadStateForRenderer,
@@ -289,7 +289,7 @@ app.post('/api/setup/run', (request, response) => {
 })
 
 app.get('/api/models/discover', async (_request, response) => {
-  response.json(await discoverProviderModels((await loadState()).settings))
+  response.json(await discoverProviderModels(await loadPersistedSettings()))
 })
 
 app.get('/api/cli-compat/status', async (_request, response) => {

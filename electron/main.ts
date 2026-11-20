@@ -94,6 +94,7 @@ import { checkForUpdate, downloadUpdate, installUpdate } from './updater.js'
 import {
   attachmentProtocolScheme,
   getRendererLoadTarget,
+  isAppRendererUrl,
 } from './runtime-target.js'
 import {
   getWindowIconPathForPlatform,
@@ -1753,6 +1754,32 @@ function createWindow() {
     return { action: 'deny' }
   })
 
+  const target = getRendererLoadTarget({
+    isDev,
+    clientDistDir,
+    devServerUrl: devClientUrl,
+  })
+
+  // 症状：链接拖进窗口空白处 / 点到普通 <a href>，整个 IDE 被外部页面替换，且该页面拿到完整 electronAPI。
+  // 根因（2026-11-20 审查）：只拦了 window.open，同窗口导航与重定向没有守卫；判定见 isAppRendererUrl。
+  // 外链交系统浏览器，与 setWindowOpenHandler 一致；重定向只拦不开，避免已放行的导航再弹一次浏览器。
+  win.webContents.on('will-navigate', (event) => {
+    if (isAppRendererUrl(event.url, target)) {
+      return
+    }
+    event.preventDefault()
+    void openExternalUrl(event.url).catch((error) => {
+      log.warn('[main] Blocked renderer navigation.', { url: event.url, error })
+    })
+  })
+  win.webContents.on('will-redirect', (event) => {
+    if (!event.isMainFrame || isAppRendererUrl(event.url, target)) {
+      return
+    }
+    event.preventDefault()
+    log.warn('[main] Blocked renderer redirect.', { url: event.url })
+  })
+
   if (shouldUseOffscreenValidationRendering) {
     win.webContents.setFrameRate(15)
     // Offscreen rendering only models a visible compositor when paint frames
@@ -1833,12 +1860,6 @@ function createWindow() {
   win.on('closed', cleanupSubscriptionsForWindow)
   win.webContents.once('destroyed', cleanupSubscriptionsForWindow)
   win.webContents.once('render-process-gone', cleanupSubscriptionsForWindow)
-
-  const target = getRendererLoadTarget({
-    isDev,
-    clientDistDir,
-    devServerUrl: devClientUrl,
-  })
 
   void loadRendererIntoWindow(win, target).catch((error: unknown) => {
     log.error('[main] Unexpected renderer load failure.', error)

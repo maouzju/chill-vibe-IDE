@@ -180,6 +180,106 @@ test('allows non-destructive shell commands', () => {
   assert.deepEqual(assess("rg --fixed-strings 'Remove-Item' server"), { allowed: true })
 })
 
+// 2026-11-20 审查：删除判定曾只认整串开头或 ; & | 之后的命令，换行、包一层 shell、
+// sudo/xargs/find -exec 前缀、参数后置都能绕过。这些命令只作为字符串传给判定函数。
+test('blocks deletions hidden behind newlines, shell wrappers, prefixes, and trailing flags', () => {
+  const commands = [
+    `cd '${workspace}'\nrm -rf '${home}'`,
+    `Set-Location '${workspace}'\r\nRemove-Item '${home}' -Recurse -Force`,
+    `Set-Location '${workspace}'\nif ($true) {\n  Remove-Item -LiteralPath '${home}' -Recurse -Force\n}`,
+    'bash -lc "rm -rf ~"',
+    "sh -c 'cd /tmp && rm -rf ~'",
+    `sudo rm -rf '${home}'`,
+    `sudo -u root rm -rf '${home}'`,
+    `env FOO=1 rm -rf '${home}'`,
+    `FOO=1 rm -rf '${home}'`,
+    `/usr/bin/rm -rf '${home}'`,
+    `find '${home}' -exec rm -rf {} +`,
+    `find '${home}' -type f -delete`,
+    `rm '${home}' -rf`,
+    `rm --recursive '${home}'`,
+    'ls | xargs rm -rf',
+    `rm \\\n  -rf '${home}'`,
+    'echo $(rm -rf ~)',
+    `cmd /c "rmdir /s /q ${home}"`,
+    `powershell -NoProfile -Command "Remove-Item '${home}' -Recurse -Force"`,
+    `powershell -NoProfile -EncodedCommand ${Buffer.from(`Remove-Item '${home}' -Recurse -Force`, 'utf16le').toString('base64')}`,
+    'git status\ngit reset --hard HEAD',
+    'sudo git clean -fdx',
+    'echo `rm -rf ~`',
+    `cd ${workspace}\\\nrm -rf '${home}'`,
+    `powershell -ExecutionPolicy Bypass -Command "Remove-Item '${home}' -Recurse"`,
+    `if true; then rm -rf '${home}'; fi`,
+  ]
+
+  for (const command of commands) {
+    assert.equal(assess(command).allowed, false, command)
+  }
+})
+
+test('checks every comma-separated Remove-Item path instead of only the first', () => {
+  const inside = path.join(workspace, 'tmp')
+  const outside = path.resolve(os.tmpdir(), 'chill-vibe-unrelated-projects')
+  const commands = [
+    `Remove-Item -LiteralPath ${inside},${outside} -Recurse -Force`,
+    `Remove-Item ${inside},${outside} -Recurse -Force`,
+    `Remove-Item -Path '${inside}','${outside}' -Recurse -Force`,
+    `Remove-Item -Path '${inside}', '${outside}' -Recurse -Force`,
+    `Remove-Item -Recurse -Force -LiteralPath '${inside}', '${outside}'`,
+  ]
+
+  for (const command of commands) {
+    assert.equal(assess(command).allowed, false, command)
+  }
+
+  assert.deepEqual(
+    assess(`Remove-Item -LiteralPath '${inside}','${path.join(workspace, 'dist')}' -Recurse -Force`),
+    { allowed: true },
+  )
+})
+
+test('still allows ordinary multi-line and prefixed commands after segment splitting', () => {
+  for (const command of [
+    'git status\ngit diff --stat',
+    'pnpm install\r\npnpm test:quality',
+    'git log --oneline | head -n 5',
+    'echo hello && echo world',
+    'bash -lc "pnpm install && pnpm test:quality"',
+    `sudo ls '${workspace}'`,
+    `find '${workspace}' -name '*.log'`,
+    `cd '${workspace}'\nrm -rf '${path.join(workspace, 'dist')}'`,
+    `rm -rf '${path.join(workspace, 'a')}'\nrm -rf '${path.join(workspace, 'b')}'`,
+    `find '${path.join(workspace, 'dist')}' -name '*.map' -delete`,
+    `Set-Location '${workspace}'\nif (Test-Path '${path.join(workspace, 'dist')}') { Remove-Item '${path.join(workspace, 'dist')}' -Recurse -Force }`,
+    "rg --fixed-strings 'Remove-Item' server",
+    'git rm -r --cached foo',
+    'pnpm test 2>&1 | tail -n 20',
+  ]) {
+    assert.deepEqual(assess(command), { allowed: true }, command)
+  }
+})
+
+test('applies the workspace write boundary to every line and prefixed command', () => {
+  const inside = path.join(workspace, 'generated', 'result.txt')
+  const outside = path.join(path.dirname(workspace), 'result.txt')
+
+  for (const command of [
+    `Set-Location '${workspace}'\nSet-Content -LiteralPath '${outside}' -Value no`,
+    `cd '${workspace}'\ncp '${inside}' '${outside}'`,
+    `sudo cp '${inside}' '${outside}'`,
+    `Set-Content -Path '${inside}','${outside}' -Value no`,
+  ]) {
+    assert.equal(assessWorkspaceBoundary('Bash', { command }).allowed, false, command)
+  }
+
+  assert.deepEqual(
+    assessWorkspaceBoundary('Bash', {
+      command: `Set-Location '${workspace}'\nSet-Content -LiteralPath '${inside}' -Value ok`,
+    }),
+    { allowed: true },
+  )
+})
+
 test('allows direct file writes inside the workspace and blocks outside or parent traversal targets', () => {
   assert.deepEqual(
     assessWorkspaceBoundary('Write', { file_path: path.join(workspace, 'src', 'inside.ts') }),

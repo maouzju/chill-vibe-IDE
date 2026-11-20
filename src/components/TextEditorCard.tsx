@@ -690,7 +690,7 @@ const TextEditorCardInner = ({ workspacePath, filePath, language }: TextEditorCa
         const reusesCachedModel = Boolean(cachedEntry && !cachedEntry.pathChanged && !cachedEntry.model.isDisposed())
         const model = reusesCachedModel && cachedEntry
           ? cachedEntry.model
-          : await module.createTextEditorModel(contentRef.current, normalizedFilePath, fileLanguage)
+          : await module.createTextEditorModel(contentRef.current, workspacePath, normalizedFilePath, fileLanguage)
         if (cancelled || !mountedRef.current || !editorContainerRef.current) {
           if (model !== cachedEntry?.model) {
             model.dispose()

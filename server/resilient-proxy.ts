@@ -58,6 +58,23 @@ type StreamState = {
   model: string
   awaitingToolResult: boolean
   toolNames: string[]
+  // 症状：断线重试后 thinking / 工具参数变成「上一次的半截 + 这一次的全文」，签名对不上，会话此后每轮 400。
+  // 根因：2026-11-20 审查 —— 重试是让上游从头再生成一遍，只有 index 0 的正文能靠前缀去重续写；
+  //       thinking、签名、工具参数、第二个及以后的块、Responses 已 done 的 item 都没法和新一次生成对上。
+  // 为什么不能换写法：别改成「把重试那次的这些增量丢掉」—— 客户端手里那半截永远补不完；
+  //       一旦送出过这类内容就只能让这条流失败，交给 CLI 自己的重连和上层断线续传。
+  seamlessRetryUnsafe: boolean
+  // 下面几项记「客户端实际收到了什么」。不能用 isFirstAttempt 代替：第一次在出流前就失败（5xx / 首字节超时）时，
+  // 重试那次的 message_start / response.created 才是客户端的第一份，吞掉它整条流就没有开头。
+  messageStartSent: boolean
+  firstBlockStartSent: boolean
+  responseCreatedSent: boolean
+  /** 已送达 output_item.added 的 item，键为 `${output_index}:${type}`。 */
+  responsesOpenedItems: Set<string>
+  /** 本次重试里 added 被当作重复吞掉的 output_index：客户端已经开了头，只补 done。 */
+  responsesResumedIndexes: Set<number>
+  /** 已送达 output_item.done 的 output_index，tail 恢复时据此只补没送达的。 */
+  responsesDoneIndexes: Set<number>
 }
 
 type ParsedSseBlock = {
@@ -325,6 +342,13 @@ const createStreamState = (): StreamState => ({
   model: '',
   awaitingToolResult: false,
   toolNames: [],
+  seamlessRetryUnsafe: false,
+  messageStartSent: false,
+  firstBlockStartSent: false,
+  responseCreatedSent: false,
+  responsesOpenedItems: new Set(),
+  responsesResumedIndexes: new Set(),
+  responsesDoneIndexes: new Set(),
 })
 
 const writeChunks = async (response: http.ServerResponse, text: string) => {
@@ -383,6 +407,7 @@ const trackChatCompletionToolDelta = (delta: Record<string, unknown>, state: Str
   const functionCall = isRecord(delta.function_call) ? delta.function_call : null
   if (functionCall) {
     state.awaitingToolResult = true
+    state.seamlessRetryUnsafe = true
     appendUnique(state.toolNames, functionCall.name)
   }
 
@@ -392,6 +417,7 @@ const trackChatCompletionToolDelta = (delta: Record<string, unknown>, state: Str
   }
 
   state.awaitingToolResult = true
+  state.seamlessRetryUnsafe = true
   for (const toolCall of toolCalls) {
     if (!isRecord(toolCall) || !isRecord(toolCall.function)) {
       continue
@@ -953,7 +979,7 @@ class ResilientProxyServer {
           errorType: classifyProxyError(error),
         })
 
-        if (attempt >= this.maxRecoveryRetries) {
+        if (this.mustGiveUp(state, endpoint, attempt)) {
           proxyStats.record(this.provider, 'recovery_fail', endpoint, { attempt })
           await this.finishStreamFailure(response, writer, error)
           return
@@ -986,6 +1012,7 @@ class ResilientProxyServer {
         if (attempt > 0) {
           state.isFirstAttempt = false
           state.skipPrefix = state.accumulatedText
+          state.responsesResumedIndexes.clear()
           await delay(retryDelayMs(attempt, this.retryDelayBaseMs), undefined, { signal: clientGone })
         }
 
@@ -1034,7 +1061,7 @@ class ResilientProxyServer {
           return
         }
 
-        if (attempt >= this.maxRecoveryRetries) {
+        if (this.mustGiveUp(state, endpoint, attempt)) {
           proxyStats.record(this.provider, 'recovery_fail', endpoint, { attempt })
           await this.finishStreamFailure(response, writer, error)
           return
@@ -1119,7 +1146,7 @@ class ResilientProxyServer {
           errorType: classifyProxyError(error),
         })
 
-        if (attempt >= this.maxRecoveryRetries) {
+        if (this.mustGiveUp(state, endpoint, attempt)) {
           proxyStats.record(this.provider, 'recovery_fail', endpoint, { attempt })
           await this.finishStreamFailure(response, writer, error)
           return
@@ -1128,6 +1155,17 @@ class ResilientProxyServer {
         attempt += 1
       }
     }
+  }
+
+  private mustGiveUp(state: StreamState, endpoint: string, attempt: number) {
+    if (state.seamlessRetryUnsafe) {
+      this.logger.warn(
+        `[resilient-proxy] ${this.provider} not retrying ${endpoint}: the client already holds content a regenerated reply cannot be merged into`,
+      )
+      return true
+    }
+
+    return attempt >= this.maxRecoveryRetries
   }
 
   private prepareMessagesRetryBody(
@@ -1348,7 +1386,8 @@ class ResilientProxyServer {
       const message = isRecord(payload.message) ? payload.message : null
       state.messageId = typeof message?.id === 'string' ? message.id : state.messageId
       state.model = typeof message?.model === 'string' ? message.model : state.model
-      if (state.isFirstAttempt) {
+      if (!state.messageStartSent) {
+        state.messageStartSent = true
         await writer.writeBlock(block)
       }
       return
@@ -1361,14 +1400,35 @@ class ResilientProxyServer {
         appendUnique(state.toolNames, contentBlock.name)
       }
 
-      if (state.isFirstAttempt || Number(payload.index ?? 0) > 0) {
-        await writer.writeBlock(block)
+      const isFirstBlock = Number(payload.index ?? 0) === 0
+      const resumable = isFirstBlock && contentBlock?.type === 'text'
+      if (isFirstBlock && state.firstBlockStartSent) {
+        if (resumable) {
+          // 客户端那个 index 0 的正文块还开着，重试的正文增量直接续在它后面。
+          return
+        }
+
+        // 走到这里时客户端手里的 index 0 必是正文块（否则早就不重试了），这次却不以正文开头，对不上。
+        state.seamlessRetryUnsafe = true
+        throw new RetryableProxyError('Retried stream no longer starts with the text block already delivered.')
       }
+
+      if (isFirstBlock) {
+        state.firstBlockStartSent = true
+      }
+      if (!resumable) {
+        state.seamlessRetryUnsafe = true
+      }
+      await writer.writeBlock(block)
       return
     }
 
     if (eventType === 'content_block_delta') {
       const delta = isRecord(payload.delta) ? payload.delta : null
+      if (delta?.type !== 'text_delta' || Number(payload.index ?? 0) > 0) {
+        state.seamlessRetryUnsafe = true
+      }
+
       if (delta?.type === 'text_delta' && typeof delta.text === 'string') {
         const nextText = filterRetryDelta(state, delta.text)
         if (!nextText) {
@@ -1446,11 +1506,14 @@ class ResilientProxyServer {
       state.responseId =
         typeof responsePayload?.id === 'string' ? responsePayload.id : state.responseId
       state.model = typeof responsePayload?.model === 'string' ? responsePayload.model : state.model
-      if (state.isFirstAttempt) {
+      if (!state.responseCreatedSent) {
+        state.responseCreatedSent = true
         await writer.writeBlock(block)
       }
       return
     }
+
+    const outputIndex = typeof payload.output_index === 'number' ? payload.output_index : null
 
     if (eventType === 'response.output_item.added') {
       const item = isRecord(payload.item) ? payload.item : null
@@ -1474,9 +1537,25 @@ class ResilientProxyServer {
         )
       }
 
-      if (state.isFirstAttempt) {
-        await writer.writeBlock(block)
+      // 重试是从头再生成：同位置同类型的 item 客户端已经开过头，不再开第二次，只给它补 done。
+      const itemKey = `${outputIndex ?? 0}:${String(item?.type ?? '')}`
+      if (state.responsesOpenedItems.has(itemKey)) {
+        state.responsesResumedIndexes.add(outputIndex ?? 0)
+        return
       }
+
+      state.responsesOpenedItems.add(itemKey)
+      state.responsesResumedIndexes.delete(outputIndex ?? 0)
+      await writer.writeBlock(block)
+      return
+    }
+
+    if (eventType === 'response.output_item.done') {
+      // Codex 靠这条把消息 / 工具调用写进历史并开始执行，重试那次的也必须送达。
+      // 送达后客户端就认定了这一次生成，之后再断线不能换一次生成接着发（见 seamlessRetryUnsafe）。
+      state.responsesDoneIndexes.add(outputIndex ?? state.responsesDoneIndexes.size)
+      state.seamlessRetryUnsafe = true
+      await writer.writeBlock(block)
       return
     }
 
@@ -1502,13 +1581,6 @@ class ResilientProxyServer {
       }
 
       await writer.writeBlock(block)
-      return
-    }
-
-    if (eventType === 'response.output_text.done') {
-      if (state.isFirstAttempt) {
-        await writer.writeBlock(block)
-      }
       return
     }
 
@@ -1545,9 +1617,27 @@ class ResilientProxyServer {
       return
     }
 
-    if (state.isFirstAttempt) {
-      await writer.writeBlock(block)
+    if (outputIndex === null) {
+      // response 级事件（in_progress 等）客户端在第一次已经收过。
+      if (state.isFirstAttempt) {
+        await writer.writeBlock(block)
+      }
+      return
     }
+
+    // 症状：重试成功后 Codex 历史里没有这段回复，工具调用也丢了，统计却记「已恢复」。
+    // 根因：2026-11-20 审查 —— 这里原先是「只有第一次才转发」，重试那次的 function_call_arguments.*、
+    //       output_text.done、content_part.* 全被吞掉（output_item.done 同理，现已在上面单独放行）。
+    // 为什么不能全放行：客户端已经开了头的 item，再发它的增量 / 子块 added 会接在上一次的半截后面；
+    //       这种 item 只放行各级 done（done 自带完整内容），客户端没见过的 item 整条放行。
+    if (
+      state.responsesResumedIndexes.has(outputIndex) &&
+      (eventType.endsWith('.delta') || eventType.endsWith('.added'))
+    ) {
+      return
+    }
+
+    await writer.writeBlock(block)
   }
 
   private async onChatCompletionsEvent(block: string, state: StreamState, writer: SseClientWriter) {
@@ -1742,6 +1832,24 @@ class ResilientProxyServer {
           output_index: 0,
           content_index: 0,
           delta: missingSuffix,
+        }),
+      )
+    }
+
+    // 断线前没送达 done 的 item 在这里补发：只补正文和 completed 的话，Codex 历史里没有这条消息 / 工具调用。
+    const output = Array.isArray(responseObject.output) ? responseObject.output : []
+    for (const [outputIndex, item] of output.entries()) {
+      if (!isRecord(item) || state.responsesDoneIndexes.has(outputIndex)) {
+        continue
+      }
+
+      state.responsesDoneIndexes.add(outputIndex)
+      await writer.writePayload(
+        'response.output_item.done',
+        JSON.stringify({
+          type: 'response.output_item.done',
+          output_index: outputIndex,
+          item,
         }),
       )
     }

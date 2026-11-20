@@ -259,6 +259,20 @@ test('renderMarkdown does not join paragraphs whose inline-code spans are alread
   )
 })
 
+test('renderMarkdown keeps out-of-range numeric entities in safe HTML tables instead of throwing', () => {
+  const content = [
+    '<table><tr><td style="color:&#9999999;">&#x110000; &#1114112; &#99999999; &#x41;</td></tr></table>',
+  ].join('\n')
+
+  const markup = renderToStaticMarkup(
+    React.createElement(React.Fragment, null, renderMarkdown(content)),
+  )
+
+  assert.match(markup, /&amp;#x110000;/)
+  assert.match(markup, /&amp;#1114112;/)
+  assert.match(markup, /A<\/td>/)
+})
+
 test('assistant markdown collapses source whitespace instead of inheriting pre-wrap from the message shell', () => {
   const css = readFileSync(new URL('../src/index.css', import.meta.url), 'utf8')
 

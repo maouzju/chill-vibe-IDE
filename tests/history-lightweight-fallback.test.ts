@@ -6,6 +6,7 @@ import os from 'node:os'
 import path from 'node:path'
 
 import { createDefaultState } from '../shared/default-state.ts'
+import type { ChatRequest } from '../shared/schema.ts'
 
 const require = createRequire(import.meta.url)
 const fs = require('node:fs') as typeof import('node:fs')
@@ -165,4 +166,132 @@ test('runtime and compatibility fallbacks only touch the bounded history index',
     syncBuiltinESMExports()
     delete process.env.CHILL_VIBE_DATA_DIR
   }
+})
+
+// 2026-11-20 审查：模型自动发现（每次启动几秒后）和 JEV（每轮对话）只要 settings，却走全量
+// loadState()：整目录 sidecar 并发读进主进程，缓存变成 full 后下一次保存又把每个 sidecar 重写一遍。
+test('settings-only callers never hydrate sidecars and the next save leaves existing sidecars alone', async () => {
+  const { loadStateForRenderer, loadSessionHistoryEntry, saveState } = await import('../server/state-store.ts')
+  const { createJevRuntime } = await import('../server/jev-runtime.ts')
+
+  const fixture = await makePreviewFixture('settings-only')
+  const statePath = path.join(fixture.root, 'state.json')
+  const persisted = JSON.parse(await originalReadFile(statePath, 'utf8')) as {
+    settings: Record<string, unknown>
+  }
+  persisted.settings.jevApiKey = 'jev-key-from-settings'
+  await writeFile(statePath, `${JSON.stringify(persisted, null, 2)}\n`, 'utf8')
+
+  // The indexed preview entry owns a complete transcript on disk, like every
+  // archived session in a real profile.
+  const indexedSidecarPath = path.join(fixture.sidecarDir, sidecarFileName(fixture.requestedId))
+  const indexedSidecarContent = `${JSON.stringify({
+    id: fixture.requestedId,
+    title: 'Indexed preview fallback',
+    sessionId: 'settings-only-session',
+    provider: 'codex',
+    model: 'gpt-5.5',
+    workspacePath: fixture.workspacePath,
+    messageCount: 1,
+    messages: [{
+      id: 'settings-only-indexed-message',
+      role: 'user',
+      content: 'Full transcript that must stay on disk untouched.',
+      createdAt: '2026-08-06T01:00:00.000Z',
+    }],
+    archivedAt: '2026-08-06T01:00:00.000Z',
+  }, null, 2)}\n`
+  await writeFile(indexedSidecarPath, indexedSidecarContent, 'utf8')
+
+  const originalWriteFile = fs.promises.writeFile
+  const originalRename = fs.promises.rename
+  // readdir is deliberately not spied here: the settings loader also kicks off
+  // the orphaned .tmp cleanup, which lists file names (never contents).
+  const sidecarReads: string[] = []
+  const sidecarWrites: string[] = []
+
+  fs.promises.readFile = (async (...args: Parameters<typeof fs.promises.readFile>) => {
+    if (isSessionHistoryPath(args[0])) {
+      sidecarReads.push(path.basename(String(args[0])))
+    }
+    return originalReadFile(...args)
+  }) as typeof fs.promises.readFile
+  fs.promises.writeFile = (async (...args: Parameters<typeof fs.promises.writeFile>) => {
+    if (isSessionHistoryPath(args[0])) {
+      sidecarWrites.push(path.basename(String(args[0])))
+    }
+    return originalWriteFile(...args)
+  }) as typeof fs.promises.writeFile
+  fs.promises.rename = (async (...args: Parameters<typeof fs.promises.rename>) => {
+    if (isSessionHistoryPath(args[1])) {
+      sidecarWrites.push(path.basename(String(args[1])))
+    }
+    return originalRename(...args)
+  }) as typeof fs.promises.rename
+  syncBuiltinESMExports()
+
+  try {
+    setDataDir(fixture.root)
+
+    const keyFilePath = path.join(fixture.root, 'jev', 'api-key')
+    const runtime = await createJevRuntime(
+      {
+        provider: 'claude',
+        workspacePath: fixture.workspacePath,
+        language: 'zh-CN',
+        jevEnabled: true,
+      } as ChatRequest,
+      { keyFilePath },
+    )
+    assert.ok(runtime, 'the JEV key must still be read from persisted settings')
+    assert.equal(await originalReadFile(keyFilePath, 'utf8'), 'jev-key-from-settings')
+    const readsAfterSettingsLoad = [...sidecarReads]
+
+    // The renderer's next routine save carries preview history only.
+    const { state } = await loadStateForRenderer()
+    await saveState(state)
+
+    assert.deepEqual(
+      {
+        sidecarReads: readsAfterSettingsLoad,
+        sidecarWritesOnNextSave: sidecarWrites,
+      },
+      { sidecarReads: [], sidecarWritesOnNextSave: [] },
+      'reading settings must not hydrate session-history sidecars, and the following save must not rewrite them',
+    )
+    assert.equal(await originalReadFile(indexedSidecarPath, 'utf8'), indexedSidecarContent)
+
+    // Pitfall 53: the preview save must not cost the archived transcript.
+    const restored = await loadSessionHistoryEntry({ entryId: fixture.requestedId })
+    assert.equal(restored.entry.messages[0]?.content, 'Full transcript that must stay on disk untouched.')
+  } finally {
+    fs.promises.readFile = originalReadFile as typeof fs.promises.readFile
+    fs.promises.writeFile = originalWriteFile as typeof fs.promises.writeFile
+    fs.promises.rename = originalRename as typeof fs.promises.rename
+    syncBuiltinESMExports()
+    delete process.env.CHILL_VIBE_DATA_DIR
+  }
+})
+
+test('no production module reaches for the full loadState() loader', async () => {
+  const offenders: string[] = []
+  for (const dirName of ['server', 'electron']) {
+    const dirPath = path.join(process.cwd(), dirName)
+    const fileNames = await originalReaddir(dirPath, { recursive: true })
+    for (const fileName of fileNames) {
+      if (!fileName.endsWith('.ts') || path.basename(fileName) === 'state-store.ts') {
+        continue
+      }
+      const source = await originalReadFile(path.join(dirPath, fileName), 'utf8')
+      if (/\bawait loadState\(\)/.test(source)) {
+        offenders.push(`${dirName}/${fileName.replace(/\\/g, '/')}`)
+      }
+    }
+  }
+
+  assert.deepEqual(
+    offenders,
+    [],
+    'loadState() hydrates every session-history sidecar (pitfall 253); settings-only callers must use loadPersistedSettings()',
+  )
 })

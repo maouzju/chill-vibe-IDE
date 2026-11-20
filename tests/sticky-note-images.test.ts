@@ -16,10 +16,27 @@ const attachment = (id: string): ImageAttachment => ({
 
 describe('sticky note image state helpers', () => {
   it('persists a new image-only note while keeping a truly empty new note virtual', () => {
-    assert.equal(shouldPersistStickyNoteDocument(false, '', []), false)
-    assert.equal(shouldPersistStickyNoteDocument(false, '正文', []), true)
-    assert.equal(shouldPersistStickyNoteDocument(false, '', [attachment('image-only')]), true)
-    assert.equal(shouldPersistStickyNoteDocument(true, '', []), true)
+    const settled = { diskLoadPending: false }
+    assert.equal(shouldPersistStickyNoteDocument({ ...settled, hasLocalDocument: false, content: '', attachments: [] }), false)
+    assert.equal(shouldPersistStickyNoteDocument({ ...settled, hasLocalDocument: false, content: '正文', attachments: [] }), true)
+    assert.equal(
+      shouldPersistStickyNoteDocument({ ...settled, hasLocalDocument: false, content: '', attachments: [attachment('image-only')] }),
+      true,
+    )
+    assert.equal(shouldPersistStickyNoteDocument({ ...settled, hasLocalDocument: true, content: '', attachments: [] }), true)
+  })
+
+  it('never saves while the on-disk note is still loading, so an early unmount cannot wipe its images', () => {
+    // The mount effect resets attachments to [] until loadStickyNote resolves; the
+    // server overwrites the index with whatever attachments a save carries.
+    assert.equal(
+      shouldPersistStickyNoteDocument({ diskLoadPending: true, hasLocalDocument: false, content: '正文', attachments: [] }),
+      false,
+    )
+    assert.equal(
+      shouldPersistStickyNoteDocument({ diskLoadPending: true, hasLocalDocument: true, content: '正文', attachments: [] }),
+      false,
+    )
   })
 
   it('keeps insertion order, deduplicates ids, and respects the attachment limit', () => {

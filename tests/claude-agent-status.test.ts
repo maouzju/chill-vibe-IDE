@@ -611,6 +611,22 @@ test('task_updated with a terminal status retires the sub-agent from the running
   assert.equal(tracker.hasRunningAgents(), false)
 })
 
+// CLI 的 patch 是新旧状态差异：只改描述 / 暂停计时 / 前台 Agent 被自动转后台时不带 status。
+test('task_updated without a status leaves the running sub-agent running', () => {
+  const tracker = createClaudeAgentStatusTracker()
+  tracker.handleEvent(taskStarted())
+  for (const patch of [{ is_backgrounded: true }, { description: 'renamed' }, { total_paused_ms: 1200 }]) {
+    const update = tracker.handleEvent({ type: 'system', subtype: 'task_updated', task_id: taskId, patch })
+    assert.equal(update.handled, true)
+    assert.equal(tracker.hasRunningAgents(), true, `patch ${JSON.stringify(patch)} must not settle the agent`)
+  }
+  assert.equal(tracker.hasBackgroundAgents(), true, 'an auto-backgrounded agent counts as background work')
+  tracker.handleEvent(taskProgress('Running Count total files', 3, 28570))
+  assert.equal(tracker.snapshot()?.agents.length, 1)
+  tracker.handleEvent(taskNotification('completed'))
+  assert.equal(tracker.hasRunningAgents(), false)
+})
+
 test('task_notification settles the sub-agent when no task_updated arrives', () => {
   const tracker = createClaudeAgentStatusTracker()
   tracker.handleEvent(taskStarted())

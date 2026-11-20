@@ -8,8 +8,8 @@ import tsWorker from 'monaco-editor/esm/vs/language/typescript/ts.worker?worker'
 
 import {
   normalizeTextEditorLanguageId,
-  normalizeTextEditorModelPath,
   resolveTextEditorLanguageLoaderId,
+  resolveTextEditorModelUriParts,
 } from './text-editor-monaco-config'
 
 type MonacoTextModel = monaco.editor.ITextModel
@@ -106,17 +106,20 @@ export const ensureTextEditorMonacoLanguage = async (languageId: string | null |
 
 export const createTextEditorModel = (
   content: string,
+  workspacePath: string,
   filePath: string,
   languageId: string | null | undefined,
 ) => {
   return ensureTextEditorMonacoLanguage(languageId)
     .then((resolvedLanguage) => {
-      const uri = monaco.Uri.from({
-        scheme: 'file',
-        path: normalizeTextEditorModelPath(filePath),
-      })
-      const existingModel = monaco.editor.getModel(uri)
-      existingModel?.dispose()
+      // Never dispose a same-URI model: another editor (or the model cache) owns it.
+      const toUri = (parts: { authority: string; path: string }) =>
+        monaco.Uri.from({ scheme: 'file', ...parts })
+      const uri = toUri(resolveTextEditorModelUriParts(
+        workspacePath,
+        filePath,
+        (parts) => monaco.editor.getModel(toUri(parts)) !== null,
+      ))
       return monaco.editor.createModel(content, resolvedLanguage, uri)
     })
 }

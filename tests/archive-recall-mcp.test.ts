@@ -1,8 +1,10 @@
 ﻿import assert from 'node:assert/strict'
+import { spawn } from 'node:child_process'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { after, describe, it } from 'node:test'
+import { fileURLToPath } from 'node:url'
 
 import { callArchiveRecallTool, searchArchiveMessages } from '../server/archive-recall-mcp.js'
 
@@ -73,5 +75,65 @@ describe('archive recall MCP tools', () => {
     assert.equal(result.content[1]?.type, 'image')
     assert.equal(result.content[1]?.mimeType, 'image/png')
     assert.match(result.content[1]?.data ?? '', /^[A-Za-z0-9+/=]+$/)
+  })
+
+  // Codex 用换行分帧（NDJSON）跟 MCP stdio 服务端握手；服务端只认 Content-Length 时一个字节都不回。
+  it('answers initialize, tools/list and tools/call over newline-delimited stdio', async () => {
+    const snapshotPath = path.join(tempRoot, 'snapshot.json')
+    fs.writeFileSync(snapshotPath, JSON.stringify(snapshot))
+    const scriptPath = fileURLToPath(new URL('../server/archive-recall-mcp.js', import.meta.url))
+    const child = spawn(process.execPath, [scriptPath], {
+      stdio: ['pipe', 'pipe', 'pipe'],
+      env: { ...process.env, CHILL_VIBE_ARCHIVE_RECALL_FILE: snapshotPath },
+    })
+    try {
+      const messages: Array<Record<string, unknown>> = []
+      let pending = ''
+      const waiters: Array<() => void> = []
+      child.stdout.setEncoding('utf8')
+      child.stdout.on('data', (chunk: string) => {
+        pending += chunk
+        const parts = pending.split('\n')
+        pending = parts.pop() ?? ''
+        for (const part of parts) {
+          if (part.trim()) messages.push(JSON.parse(part))
+        }
+        for (const wake of waiters.splice(0)) wake()
+      })
+      const waitForId = (id: number) =>
+        new Promise<Record<string, unknown>>((resolve, reject) => {
+          const timer = setTimeout(() => reject(new Error(`timed out waiting for id ${id}`)), 5000)
+          const check = () => {
+            const found = messages.find((message) => message.id === id)
+            if (found) {
+              clearTimeout(timer)
+              resolve(found)
+            } else {
+              waiters.push(check)
+            }
+          }
+          check()
+        })
+
+      child.stdin.write(`${JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'initialize', params: { protocolVersion: '2025-03-26' } })}\n`)
+      const init = await waitForId(1)
+      assert.equal((init.result as { serverInfo: { name: string } }).serverInfo.name, 'chill-vibe-archive-recall')
+
+      child.stdin.write(`${JSON.stringify({ jsonrpc: '2.0', method: 'notifications/initialized' })}\n`)
+      child.stdin.write(`${JSON.stringify({ jsonrpc: '2.0', id: 2, method: 'tools/list' })}\n`)
+      const list = await waitForId(2)
+      assert.deepEqual(
+        (list.result as { tools: Array<{ name: string }> }).tools.map((tool) => tool.name).sort(),
+        ['read_compacted_history', 'search_compacted_history'],
+      )
+
+      child.stdin.write(
+        `${JSON.stringify({ jsonrpc: '2.0', id: 3, method: 'tools/call', params: { name: 'search_compacted_history', arguments: { query: 'quality check' } } })}\n`,
+      )
+      const call = await waitForId(3)
+      assert.match(JSON.stringify(call.result), /hidden-assistant/)
+    } finally {
+      child.kill()
+    }
   })
 })

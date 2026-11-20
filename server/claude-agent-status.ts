@@ -711,7 +711,15 @@ export const createClaudeAgentStatusTracker = ({
       if (!patch) {
         return { handled: true }
       }
-      setStatus(existing, mapTerminalStatus(readString(patch, 'status')))
+      // 症状：前台 Agent 被自动转后台后从面板消失，之后的进度全被终态守卫丢掉。
+      // 根因（2026-11-20 审查）：CLI 的 patch 是新旧状态差异，只改描述/暂停计时/is_backgrounded 时不带 status，
+      //   mapTerminalStatus(undefined) 落进 default 被记成 completed。未知的 status 字符串仍按终态收敛（见上方 ADR），只跳过缺失。
+      if (patch.is_backgrounded === true) background.add(taskId)
+      const patchStatus = readString(patch, 'status')
+      if (!patchStatus) {
+        return { handled: true }
+      }
+      setStatus(existing, mapTerminalStatus(patchStatus))
       return { handled: true, activity: snapshot() }
     }
 

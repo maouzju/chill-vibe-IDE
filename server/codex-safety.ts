@@ -170,7 +170,8 @@ export const prepareDestructiveCommandGuardRuntime = async (
   env.CHILL_VIBE_CODEX_GUARD_SCRIPT = guardScriptPath
 
   const hookCommand = process.platform === 'win32'
-    ? `& '${launcherPath.replace(/'/g, "''")}'`
+    // 根因：PowerShell 把 U+2018~U+201B 弯引号也当单引号定界符，只加倍 ASCII ' 挡不住（2026-11-20 审查）。
+    ? `& '${launcherPath.replace(/['‘’‚‛]/g, '$&$&')}'`
     : `'${launcherPath.replace(/'/g, `'"'"'`)}'`
   env.CHILL_VIBE_CODEX_SAFETY_HOOK_COMMAND = hookCommand
 

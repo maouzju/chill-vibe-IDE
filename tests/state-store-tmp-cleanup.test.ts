@@ -85,4 +85,25 @@ describe('orphaned temp file cleanup', () => {
 
     assert.fail('the stale temp file was still there after loading state')
   })
+
+  // 2026-11-20：模型自动发现 / JEV 改走只读 settings 的 loadPersistedSettings 后，生产里已没有
+  // 任何地方调用 loadState；回收必须跟着搬过来，否则上面那条用例照样绿、孤儿却再也没人收。
+  it('keeps reclaiming orphans when production only loads settings', async () => {
+    const { loadPersistedSettings } = await import('../server/state-store.ts')
+
+    const orphan = path.join(tmpDir, 'state.tmp.1776013290495')
+    await writeAged(orphan, 'x'.repeat(1024), 30 * dayMs)
+
+    await loadPersistedSettings()
+
+    const deadline = Date.now() + 5000
+    while (Date.now() < deadline) {
+      if (!(await readdir(tmpDir)).includes('state.tmp.1776013290495')) {
+        return
+      }
+      await new Promise((resolve) => setTimeout(resolve, 25))
+    }
+
+    assert.fail('the stale temp file was still there after loading settings')
+  })
 })

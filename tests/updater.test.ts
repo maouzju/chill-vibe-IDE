@@ -539,6 +539,15 @@ describe('buildWindowsZipReplaceScript', () => {
     assert.match(script, /D:\\My''Dir\\Chill/)
   })
 
+  // 2026-11-20 审查：PowerShell 也把 U+2018~U+201B 弯引号当单引号定界符，必须一起加倍。
+  test('doubles typographic single quotes inside paths too', () => {
+    const script = buildWindowsZipReplaceScript({
+      ...baseParams,
+      targetDir: 'D:\\Bob\u2019s\u2018\u201A\u201BDir\\Chill',
+    })
+    assert.equal(script.includes('D:\\Bob\u2019\u2019s\u2018\u2018\u201A\u201A\u201B\u201BDir\\Chill'), true)
+  })
+
   test('uses UTF-8 output encoding so Chinese paths survive the shell roundtrip', () => {
     const script = buildWindowsZipReplaceScript(baseParams)
     assert.match(script, /UTF8Encoding/)

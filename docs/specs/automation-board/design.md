@@ -396,7 +396,7 @@ DOM 骨架：
 | 文件 | 职责 |
 |---|---|
 | `server/automation-board-bridge.ts` | loopback HTTP 服务 + deps 接口；`createAutomationBoardBridge(deps)` → `{ start(), stop(), status() }`（照 `createRemoteMonitorManager` 的形状，不是一次性的 start 函数） |
-| `server/automation-board-mcp.js` | stdio JSON-RPC MCP 服务器（协议帧照抄 `archive-recall-mcp.js` 的 `Content-Length` 实现），所有工具经 `fetch` 打到 bridge |
+| `server/automation-board-mcp.js` | stdio JSON-RPC MCP 服务器（换行分帧的 JSON-RPC；最初照抄 `archive-recall-mcp.js` 的 `Content-Length` 实现，两处都已改掉，见文件内 ADR），所有工具经 `fetch` 打到 bridge |
 | `server/automation-board-runtime.ts` | 为监工回合生成 provider runtime overrides 的**纯函数**（codex `-c mcp_servers.*` / claude `--mcp-config`）+ 系统提示补充；`execPath` / `isElectron` 由调用方传入，函数内不读 `process` |
 | `server/automation-board-session.ts` | 进程内状态：镜像表 + 懒启动的 bridge + 命令 dispatcher 登记；`createAutomationBoardSupervisorRuntime(request)` 是 providers.ts 唯一的入口 |
 

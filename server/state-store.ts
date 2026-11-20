@@ -2800,6 +2800,18 @@ const loadRendererStartupState = async (dataDir = getAppDataDir()): Promise<AppS
   }
 }
 
+// 症状：启动几秒后的模型自动发现（JEV 开启时每轮对话）只要 settings，却走全量 loadState()：
+//   整个 session-history 目录并发读进主进程（现场 8,863 个 / 约 974MB，无日志闪退）。
+// 根因：2026-11-20 审查。磁盘上的索引恒为 preview，loadState 每次都未命中缓存并全量水合；
+//   水合后缓存是 full，下一次保存 mergePersistedSessionHistory 又把每个 sidecar 重写一遍。
+// 不能换回 loadState，也别顺手删掉下面这行回收：它此前只挂在 loadState 上，而模型发现和 JEV
+//   是生产里仅有的 loadState 调用方（2026-08-11 积压 556.8MB 孤儿 .tmp 的修复靠它们触发）。
+export const loadPersistedSettings = async (): Promise<AppState['settings']> => {
+  const dataDir = getAppDataDir()
+  startOrphanedTempCleanupOnce(dataDir)
+  return (await loadRendererStartupState(dataDir)).settings
+}
+
 /**
  * Lightweight index read for merge decisions: cached lightweight state first,
  * then the raw state.json history array. Never hydrates session-history

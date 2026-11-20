@@ -411,16 +411,34 @@ const buildBoundedTranscript = (
       continue
     }
 
+    // 症状：最新一条助手长回复独自超出预算时，转录只剩「更早 N 条被省略」，开场需求和这条回复都丢了。
+    // 根因（2026-11-20 审查）：这里截断后直接 break，更早的 protected 条目没机会 unshift；截断又按满预算算，
+    //   收尾循环加上省略提示后超限，把这条刚截断的回复也删掉。
+    // 决策：截断上限先扣掉更早 protected 条目和省略提示的长度，再继续往旧走只收 protected；别改回 break。
     if (selected.length === 0) {
+      const olderProtectedChars = entries
+        .slice(0, index)
+        .filter((older) => older.protected)
+        .reduce((total, older) => total + older.text.length + 2, 0)
+      const noticeReserve = copy.omittedTranscript(index).length + 2
       selected.unshift({
         text: truncateWithNotice(
           entry.text,
-          Math.max(remainingBudget, MIN_REPLAY_ENTRY_CHARS),
+          Math.max(remainingBudget - olderProtectedChars - noticeReserve, MIN_REPLAY_ENTRY_CHARS),
           copy.truncatedBlock,
         ),
         protected: false,
       })
-      omittedCount += index
+      usedChars += selected[0]!.text.length
+      for (let olderIndex = index - 1; olderIndex >= 0; olderIndex -= 1) {
+        const older = entries[olderIndex]!
+        if (older.protected) {
+          selected.unshift(older)
+          usedChars += older.text.length + 2
+        } else {
+          omittedCount += 1
+        }
+      }
       break
     }
 

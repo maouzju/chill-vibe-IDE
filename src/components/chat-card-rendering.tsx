@@ -648,18 +648,24 @@ const HTML_ENTITY_MAP: Record<string, string> = {
 const MAX_SAFE_HTML_TABLE_ROWS = 80
 const MAX_SAFE_HTML_TABLE_CELLS = 12
 
+// 症状：回复里出现 `&#x110000;` 这类越界数字实体时整个渲染进程白屏，消息已落盘重载照样崩。
+// 根因（2026-11-20 审查）：String.fromCodePoint 对 >0x10FFFF 抛 RangeError，渲染期同步调用且只有顶层错误边界。
+// 决策：越界原样保留实体文本；只判 Number.isFinite 不够，别改回去。
+const decodeNumericEntity = (entity: string, codePoint: number) =>
+  Number.isInteger(codePoint) && codePoint >= 0 && codePoint <= 0x10ffff
+    ? String.fromCodePoint(codePoint)
+    : entity
+
 const decodeHtmlEntities = (value: string) =>
   value.replace(/&(#x[\da-f]+|#\d+|[a-z][\da-z]+);/gi, (entity, body: string) => {
     const normalizedBody = body.toLowerCase()
 
     if (normalizedBody.startsWith('#x')) {
-      const codePoint = Number.parseInt(normalizedBody.slice(2), 16)
-      return Number.isFinite(codePoint) ? String.fromCodePoint(codePoint) : entity
+      return decodeNumericEntity(entity, Number.parseInt(normalizedBody.slice(2), 16))
     }
 
     if (normalizedBody.startsWith('#')) {
-      const codePoint = Number.parseInt(normalizedBody.slice(1), 10)
-      return Number.isFinite(codePoint) ? String.fromCodePoint(codePoint) : entity
+      return decodeNumericEntity(entity, Number.parseInt(normalizedBody.slice(1), 10))
     }
 
     return HTML_ENTITY_MAP[normalizedBody] ?? entity

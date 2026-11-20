@@ -98,6 +98,60 @@ test('copyWorkspaceFileToClipboard uses Windows PowerShell Set-Clipboard with es
   assert.equal(scriptArg.includes(`'${escapedPath}'`), true)
 })
 
+// 按 PowerShell 分词器规则解析单引号字符串：U+0027 与 U+2018~U+201B 都是单引号定界符，
+// 两个连续的单引号类字符表示一个字面量。返回字面量内容与字符串结束后的剩余文本。
+const parsePowerShellSingleQuoted = (script: string) => {
+  const isSingleQuote = (char: string | undefined) =>
+    char !== undefined && /['‘’‚‛]/.test(char)
+  assert.equal(isSingleQuote(script[0]), true)
+  let value = ''
+  let index = 1
+  while (index < script.length) {
+    const char = script[index]
+    if (isSingleQuote(char)) {
+      if (!isSingleQuote(script[index + 1])) {
+        return { value, rest: script.slice(index + 1) }
+      }
+      value += script[index + 1]
+      index += 2
+      continue
+    }
+    value += char
+    index += 1
+  }
+  throw new Error('unterminated PowerShell string')
+}
+
+// 2026-11-20 审查：只转义 ASCII 单引号时，文件名里的弯引号会提前结束字符串并注入命令。
+test('copyWorkspaceFileToClipboard keeps typographic quotes in the file name inside the PowerShell literal', async (t) => {
+  const workspace = await createWorkspace()
+  t.after(async () => {
+    await rm(workspace, { recursive: true, force: true })
+  })
+
+  const fileNames = [
+    'it’s.txt',
+    'a’;Start-Process calc;’.txt',
+    'b‘;x;‚;y;‛.txt',
+  ]
+
+  for (const fileName of fileNames) {
+    await writeFile(path.join(workspace, fileName), 'x', 'utf8')
+    const { calls, run } = createRecordingRunner()
+    await copyWorkspaceFileToClipboard(
+      { workspacePath: workspace, relativePath: fileName },
+      { platform: 'win32', run },
+    )
+
+    const scriptArg = calls[0].args.at(-1) ?? ''
+    const prefix = 'Set-Clipboard -LiteralPath '
+    assert.equal(scriptArg.startsWith(prefix), true, scriptArg)
+    const parsed = parsePowerShellSingleQuoted(scriptArg.slice(prefix.length))
+    assert.equal(parsed.rest, '', scriptArg)
+    assert.equal(parsed.value.normalize(), path.join(workspace, fileName).normalize())
+  }
+})
+
 test('copyWorkspaceFileToClipboard uses osascript on macOS with escaped POSIX path', async (t) => {
   const workspace = await createWorkspace()
   t.after(async () => {

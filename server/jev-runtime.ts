@@ -6,7 +6,7 @@ import type { AppLanguage, ChatRequest, Provider } from '../shared/schema.js'
 import { getAppDataDir } from './app-paths.js'
 import type { WorkspaceAdminClaudeMcpConfig } from './automation-board-runtime.js'
 import { jevKeyFileEnvKey, jevRootEnvKey, jevUrlEnvKey } from './jev-mcp.js'
-import { loadState } from './state-store.js'
+import { loadPersistedSettings } from './state-store.js'
 
 // JEV 快速判断 MCP 的注入（docs/specs/jev-mcp-toggle），形态照 computer-use-runtime（pitfall #383）：
 // 只在 `request.jevEnabled === true` 且设置里填了 key 的回合注入，任何失败都 fail-open。
@@ -34,7 +34,7 @@ const getJevMcpScriptPath = () => fileURLToPath(new URL('./jev-mcp.js', import.m
 
 const getDefaultKeyFilePath = () => path.join(getAppDataDir(), 'jev', 'api-key')
 
-const loadApiKeyFromSettings = async () => (await loadState()).settings.jevApiKey ?? ''
+const loadApiKeyFromSettings = async () => (await loadPersistedSettings()).jevApiKey ?? ''
 
 const writeKeyFileIfChanged = async (keyFilePath: string, apiKey: string) => {
   const existing = await readFile(keyFilePath, 'utf8').catch(() => null)

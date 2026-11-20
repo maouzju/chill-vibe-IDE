@@ -81,7 +81,7 @@ import {
   captureRendererCrash as captureRendererCrashState,
   deleteSessionHistoryEntry,
   dismissRecentCrashRecovery as dismissRecentCrashRecoveryState,
-  loadState,
+  loadPersistedSettings,
   loadStateForRenderer,
   loadSessionHistoryEntry as loadInternalSessionHistoryEntry,
   loadClosedWorkspaceSnapshot as loadClosedWorkspaceSnapshotState,
@@ -444,7 +444,7 @@ export const createDesktopBackend = (deps: DesktopBackendDependencies = {}) => {
       return getSetupManager().start(setupRunRequestSchema.parse(request ?? {}))
     },
     async discoverModels() {
-      return discoverProviderModels((await loadState()).settings)
+      return discoverProviderModels(await loadPersistedSettings())
     },
     async fetchCliCompatStatus() {
       return getCliCompatManager().getStatus()

@@ -569,7 +569,10 @@ const resolveWindowsPowerShellPath = (): string => {
 
 const buildClipboardCopyInvocation = (platform: NodeJS.Platform, filePath: string): ClipboardCopyInvocation => {
   if (platform === 'win32') {
-    const escapedPath = filePath.replace(/'/g, "''")
+    // 症状：文件名 `a’;Start-Process calc;’.txt` 右键「复制文件」会执行 calc（2026-11-20 审查）。
+    // 根因：PowerShell 把 U+2018~U+201B 弯引号也当单引号定界符，只加倍 ASCII ' 挡不住。
+    // 每个单引号类字符都原样重复一遍；不要退回只转义 ASCII 单引号。
+    const escapedPath = filePath.replace(/['‘’‚‛]/g, '$&$&')
     return {
       command: resolveWindowsPowerShellPath(),
       args: ['-NoProfile', '-NonInteractive', '-Command', `Set-Clipboard -LiteralPath '${escapedPath}'`],

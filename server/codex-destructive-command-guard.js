@@ -1,3 +1,4 @@
+import { Buffer } from 'node:buffer'
 import fs from 'node:fs'
 import path from 'node:path'
 import { pathToFileURL } from 'node:url'
@@ -9,10 +10,6 @@ import {
 
 const shellToolPattern = /^(?:Bash|shell|shell_command|exec_command|write_stdin)$/i
 const directWriteToolPattern = /^(?:apply_patch|Edit|Write|NotebookEdit)$/i
-const powershellDeletePattern = /(?:^|[;&|{}]\s*)Remove-Item\b/i
-const posixDeletePattern = /(?:^|[;&|]\s*)rm\s+-[^\r\n;&|]*r/i
-const cmdRmdirPattern = /(?:^|[;&|]\s*)rmdir\s+[^\r\n;&|]*\/s/i
-const cmdDeletePattern = /(?:^|[;&|]\s*)del\s+[^\r\n;&|]*\/s/i
 const pythonRmtreePattern = /\bshutil\.rmtree\s*\(/i
 const nodeRecursiveDeletePattern = /\b(?:fs\.)?(?:rm|rmSync)\s*\([^)]*recursive\s*:\s*true/is
 const dotnetRecursiveDeletePattern = /\b(?:Directory|System\.IO\.Directory)\.Delete\s*\([^,]+,\s*true\s*\)/i
@@ -57,13 +54,90 @@ const tokenize = (value) => {
   return tokens
 }
 
+// 症状：`Remove-Item -LiteralPath D:\ws\tmp,D:\Projects -Recurse` 被判为工作区内删除放行，
+//   PowerShell 实际把逗号列表当 string[]，两个路径都删（2026-11-20 审查）。
+// 根因：旧 tokenize 只按空白切词，逗号列表被当成一个路径，pathContains 算出的相对路径
+//   `tmp,D:\Projects` 不是绝对路径于是判为工作区内。这里把引号外的逗号当数组分隔符，
+//   一个参数的每个值都要单独过检查；不要改回「一出现逗号就整体当一个字符串」。
+const argumentTokenPattern = /"(?:\\.|[^"\\])*"|'(?:''|[^'])*'|,|[^\s,]+/g
+
+const parseArgumentTokens = (value) => {
+  const tokens = []
+  for (const match of value.matchAll(argumentTokenPattern)) {
+    const raw = match[0]
+    if (raw === ',') {
+      tokens.push({ comma: true, start: match.index })
+      continue
+    }
+    const quoted =
+      raw.length >= 2 &&
+      ((raw.startsWith('"') && raw.endsWith('"')) || (raw.startsWith("'") && raw.endsWith("'")))
+    const text = quoted
+      ? raw.startsWith("'")
+        ? raw.slice(1, -1).replace(/''/g, "'")
+        : raw.slice(1, -1)
+      : raw.replace(/^['"]+|['"]+$/g, '')
+    tokens.push({ comma: false, quoted, text, start: match.index })
+  }
+  return tokens
+}
+
+// 把 token 合成 PowerShell 风格的参数组：逗号相连的值属于同一组；`-Name:value` 拆成参数 + 值。
+const parseArgumentGroups = (value) => {
+  const groups = []
+  let joinNext = false
+  for (const token of parseArgumentTokens(value)) {
+    if (token.comma) {
+      joinNext = groups.length > 0 && !groups.at(-1).parameter
+      continue
+    }
+    if (!token.text && !token.quoted) {
+      continue
+    }
+    if (!token.quoted && /^-/.test(token.text) && !joinNext) {
+      const colon = token.text.match(/^(-[^:]+):(.+)$/)
+      if (colon) {
+        groups.push({ parameter: true, values: [colon[1]], start: token.start })
+        groups.push({ parameter: false, values: [colon[2]], start: token.start })
+      } else {
+        groups.push({ parameter: true, values: [token.text], start: token.start })
+      }
+      joinNext = false
+      continue
+    }
+    if (joinNext) {
+      groups.at(-1).values.push(token.text)
+    } else {
+      groups.push({ parameter: false, values: [token.text], start: token.start })
+    }
+    joinNext = false
+  }
+  return groups
+}
+
+const findNamedArgumentValues = (groups, names) => {
+  const normalizedNames = new Set(names.map((name) => name.toLowerCase()))
+  for (let index = 0; index < groups.length - 1; index += 1) {
+    if (
+      groups[index].parameter &&
+      normalizedNames.has(groups[index].values[0].toLowerCase()) &&
+      !groups[index + 1].parameter
+    ) {
+      return groups[index + 1].values
+    }
+  }
+  return null
+}
+
+const powershellPathParameterNames = ['-LiteralPath', '-Path', '-PSPath', '-LP']
+
 const extractRmTargets = (command) => {
   const targets = []
   const pattern = /(?:^|[;&|]\s*)rm\s+([^\r\n;&|]+)/gi
   for (const match of command.matchAll(pattern)) {
-    for (const token of tokenize(match[1])) {
-      if (!token.startsWith('-')) {
-        targets.push(token)
+    for (const group of parseArgumentGroups(match[1])) {
+      if (!group.parameter) {
+        targets.push(...group.values)
       }
     }
   }
@@ -72,18 +146,18 @@ const extractRmTargets = (command) => {
 
 const extractPowerShellTargets = (command) => {
   const targets = []
-  const pattern = /Remove-Item\s+([^;\r\n}]+)/gi
+  const pattern = /(?:^|[;&|{}]\s*)(?:Remove-Item|ri)\s+([^;\r\n}]+)/gi
   for (const match of command.matchAll(pattern)) {
-    const tokens = tokenize(match[1])
-    const explicitPathIndex = tokens.findIndex((token) => /^-(?:LiteralPath|Path)$/i.test(token))
-    if (explicitPathIndex >= 0 && tokens[explicitPathIndex + 1]) {
-      targets.push(tokens[explicitPathIndex + 1])
+    const groups = parseArgumentGroups(match[1])
+    const explicit = findNamedArgumentValues(groups, powershellPathParameterNames)
+    if (explicit) {
+      targets.push(...explicit)
       continue
     }
 
-    const positional = tokens.find((token) => !token.startsWith('-'))
+    const positional = groups.find((group) => !group.parameter)
     if (positional) {
-      targets.push(positional)
+      targets.push(...positional.values)
     }
   }
   return targets
@@ -91,11 +165,12 @@ const extractPowerShellTargets = (command) => {
 
 const extractCmdTargets = (command) => {
   const targets = []
-  const pattern = /(?:^|[;&|]\s*)(?:rmdir|del)\s+([^\r\n;&|]+)/gi
+  const pattern = /(?:^|[;&|]\s*)(?:rmdir|rd|del|erase)\s+([^\r\n;&|]+)/gi
   for (const match of command.matchAll(pattern)) {
-    const positional = tokenize(match[1]).find((token) => !/^\/[a-z]+$/i.test(token))
-    if (positional) {
-      targets.push(positional)
+    for (const group of parseArgumentGroups(match[1])) {
+      if (!group.parameter) {
+        targets.push(...group.values.filter((value) => !/^\/[a-z]+$/i.test(value)))
+      }
     }
   }
   return targets
@@ -117,16 +192,6 @@ const extractFunctionTargets = (command) => {
   return targets
 }
 
-const findNamedArgument = (tokens, names) => {
-  const normalizedNames = new Set(names.map((name) => name.toLowerCase()))
-  for (let index = 0; index < tokens.length - 1; index += 1) {
-    if (normalizedNames.has(tokens[index].toLowerCase())) {
-      return tokens[index + 1]
-    }
-  }
-  return null
-}
-
 const extractRedirectionTargets = (command) => {
   const targets = []
   const pattern = />{1,2}\s*("(?:\\.|[^"\\])*"|'(?:''|[^'])*'|[^\s;&|]+)/g
@@ -144,27 +209,27 @@ const extractPowerShellWriteTargets = (command) => {
 
   for (const match of command.matchAll(pattern)) {
     const operation = match[1].toLowerCase()
-    const tokens = tokenize(match[2])
-    const pathValue = findNamedArgument(tokens, ['-LiteralPath', '-Path', '-FilePath'])
-    const destination = findNamedArgument(tokens, ['-Destination', '-NewName'])
-    const positional = tokens.filter((token) => !token.startsWith('-'))
+    const groups = parseArgumentGroups(match[2])
+    const pathValues = findNamedArgumentValues(groups, [...powershellPathParameterNames, '-FilePath'])
+    const destination = findNamedArgumentValues(groups, ['-Destination', '-NewName'])
+    const positional = groups.filter((group) => !group.parameter).map((group) => group.values)
 
     if (operation === 'copy-item') {
       const target = destination ?? positional.at(-1)
-      if (target) targets.push(target)
+      if (target) targets.push(...target)
       continue
     }
 
     if (operation === 'move-item' || operation === 'rename-item') {
-      const source = pathValue ?? positional[0]
+      const source = pathValues ?? positional[0]
       const target = destination ?? positional.at(-1)
-      if (source) targets.push(source)
-      if (target && target !== source) targets.push(target)
+      if (source) targets.push(...source)
+      if (target && target !== source) targets.push(...target)
       continue
     }
 
-    const target = pathValue ?? positional[0]
-    if (target) targets.push(target)
+    const target = pathValues ?? positional[0]
+    if (target) targets.push(...target)
   }
 
   return targets
@@ -224,15 +289,282 @@ const extractDirectWriteTargets = (toolName, toolInput) => {
   return targets
 }
 
-const extractShellWriteTargets = (command) => [
-  ...extractRedirectionTargets(command),
-  ...extractPowerShellWriteTargets(command),
-  ...extractPosixAndCmdWriteTargets(command),
-  ...extractRmTargets(command),
-  ...extractPowerShellTargets(command),
-  ...extractCmdTargets(command),
-  ...extractFunctionTargets(command),
+// 按子命令段提取写入目标；python/node/.NET 函数调用形式会被括号切段打散，由调用方对整条命令单独提取。
+const extractSegmentWriteTargets = (segment) => [
+  ...extractRedirectionTargets(segment),
+  ...extractPowerShellWriteTargets(segment),
+  ...extractPosixAndCmdWriteTargets(segment),
+  ...extractRmTargets(segment),
+  ...extractPowerShellTargets(segment),
+  ...extractCmdTargets(segment),
 ]
+
+// 症状：`cd D:\ws` 换行 `rm -rf ~`、`bash -lc "rm -rf ~"`、`sudo rm -rf ~`、`rm ~ -rf`、
+//   `find ~ -exec rm -rf {} +` 全被判为非破坏性直接放行（2026-11-20 审查）。
+// 根因：删除/写入/git 正则都锚在「整串开头或 ; & | 之后」且无 m 标志，换行、包壳、前缀命令、
+//   参数后置都不认。这里先把命令切成子命令段（换行、; & | ( ) { } 都算分隔，不管引号——
+//   多切只会多查），再剥掉 sudo/env/xargs 等前缀、展开 bash -c / cmd /c / powershell -Command /
+//   -EncodedCommand / iex，逐段判定。不要改回「在整串上加 m 标志」：包壳和前缀仍会漏。
+const lineContinuationPattern = /[\\`][ \t]*\r?\n/g
+const commandSegmentSeparatorPattern = /[\r\n;&|(){}]+/
+const maxCommandUnwrapDepth = 6
+
+const prefixRunnerNames = new Set([
+  'sudo', 'doas', 'env', 'nohup', 'time', 'nice', 'ionice', 'timeout', 'stdbuf', 'xargs',
+  'exec', 'command', 'builtin', 'busybox', 'setsid', 'unbuffer', 'wsl',
+  '!', 'if', 'then', 'else', 'elif', 'do', 'while', 'until',
+])
+const shellWrapperNames = new Set(['bash', 'sh', 'zsh', 'dash', 'ksh', 'ash', 'fish'])
+const powershellHostNames = new Set(['powershell', 'pwsh', 'powershell_ise'])
+const evalCommandNames = new Set(['eval', 'iex', 'invoke-expression'])
+const powershellDeleteNames = new Set(['remove-item', 'ri'])
+const cmdDeleteNames = new Set(['rmdir', 'rd', 'del', 'erase'])
+// 前缀命令（sudo 等）后面跳过选项和取值，找到第一个「我们关心的」命令名再从那里判定。
+const interestingCommandNames = new Set([
+  'sudo', 'doas', 'env', 'nohup', 'nice', 'ionice', 'timeout', 'stdbuf', 'xargs',
+  'exec', 'builtin', 'busybox', 'setsid', 'unbuffer', 'wsl',
+  ...shellWrapperNames,
+  ...powershellHostNames,
+  ...evalCommandNames,
+  ...powershellDeleteNames,
+  ...cmdDeleteNames,
+  'rm', 'find', 'git', 'cmd',
+  'set-content', 'add-content', 'out-file', 'new-item', 'copy-item', 'move-item', 'rename-item',
+  'touch', 'mkdir', 'md', 'cp', 'mv', 'copy', 'move', 'install', 'tee',
+])
+
+const commandNameOf = (value) =>
+  value.replace(/^.*[\\/]/, '').toLowerCase().replace(/\.(?:exe|cmd|bat|com)$/, '')
+
+const recursiveFlagPattern = /^-[^\s]*r/i
+
+const unwrapQuotedScript = (value) => {
+  const trimmed = value.trim()
+  const quoted = trimmed.match(/^(?:"(?:\\.|[^"\\])*"|'(?:''|[^'])*')/)
+  if (quoted) {
+    const raw = quoted[0]
+    return raw.startsWith("'") ? raw.slice(1, -1).replace(/''/g, "'") : raw.slice(1, -1)
+  }
+  return trimmed.replace(/^['"]/, '')
+}
+
+const decodePowerShellEncodedCommand = (value) => {
+  if (!/^[A-Za-z0-9+/=]+$/.test(value)) {
+    return null
+  }
+  const decoded = Buffer.from(value, 'base64').toString('utf16le')
+  return decoded.trim() ? decoded : null
+}
+
+const splitCommandSegments = (command) => {
+  const normalized = command.replace(/\$\{([A-Za-z_]\w*)\}/g, '$$$1')
+  const joined = normalized.replace(lineContinuationPattern, ' ')
+  const variants = new Set([normalized.replace(lineContinuationPattern, '\n'), joined])
+  if (joined.includes('`')) {
+    variants.add(joined.replace(/`/g, ';'))
+  }
+
+  const segments = new Set()
+  for (const variant of variants) {
+    for (const segment of variant.split(commandSegmentSeparatorPattern)) {
+      const trimmed = segment.trim()
+      if (trimmed) {
+        segments.add(trimmed)
+      }
+    }
+  }
+  return [...segments]
+}
+
+const createCommandAnalysis = () => ({ segments: [], deletions: [], blockReasons: [] })
+
+const mergeCommandAnalysis = (target, source) => {
+  target.segments.push(...source.segments)
+  target.deletions.push(...source.deletions)
+  target.blockReasons.push(...source.blockReasons)
+}
+
+const analyzeShellText = (text, depth = 0, analysis = createCommandAnalysis()) => {
+  if (depth > maxCommandUnwrapDepth) {
+    analysis.blockReasons.push('命令嵌套包装层数过多，无法安全确认实际执行内容。')
+    return analysis
+  }
+  for (const segment of splitCommandSegments(text)) {
+    analysis.segments.push(segment)
+    analyzeCommandSegment(segment, depth, analysis)
+  }
+  return analysis
+}
+
+const analyzeCommandSegment = (segment, depth, analysis) => {
+  if (depth > maxCommandUnwrapDepth) {
+    analysis.blockReasons.push('命令嵌套包装层数过多，无法安全确认实际执行内容。')
+    return
+  }
+
+  const tokens = parseArgumentTokens(segment).filter((token) => !token.comma)
+  let index = 0
+  while (index < tokens.length && !tokens[index].quoted && /^[A-Za-z_]\w*=/.test(tokens[index].text)) {
+    index += 1
+  }
+  if (index >= tokens.length) {
+    return
+  }
+
+  const restFrom = (position) => (position < tokens.length ? segment.slice(tokens[position].start) : '')
+  const head = commandNameOf(tokens[index].text)
+  analysis.segments.push(restFrom(index))
+
+  if (prefixRunnerNames.has(head)) {
+    const next = tokens.findIndex(
+      (token, position) => position > index && interestingCommandNames.has(commandNameOf(token.text)),
+    )
+    if (next < 0) {
+      return
+    }
+    const inner = createCommandAnalysis()
+    analyzeCommandSegment(restFrom(next), depth + 1, inner)
+    if (head === 'xargs') {
+      // xargs 的删除目标来自标准输入，执行前无法确认。
+      inner.deletions = inner.deletions.map(() => ({ targets: [] }))
+    }
+    mergeCommandAnalysis(analysis, inner)
+    return
+  }
+
+  if (shellWrapperNames.has(head)) {
+    let position = index + 1
+    let hasCommandFlag = false
+    while (position < tokens.length && !tokens[position].quoted && /^[-+]/.test(tokens[position].text)) {
+      const flag = tokens[position].text
+      if (/^[-+]o$/i.test(flag) || /^--(?:rcfile|init-file)$/i.test(flag)) {
+        position += 2
+        continue
+      }
+      if (/^-[A-Za-z]*c[A-Za-z]*$/.test(flag)) {
+        hasCommandFlag = true
+      }
+      position += 1
+    }
+    if (hasCommandFlag && position < tokens.length) {
+      analyzeShellText(unwrapQuotedScript(restFrom(position)), depth + 1, analysis)
+    }
+    return
+  }
+
+  if (head === 'cmd') {
+    const position = tokens.findIndex((token, offset) => offset > index && /^\/[ck]$/i.test(token.text))
+    if (position >= 0 && position + 1 < tokens.length) {
+      analyzeShellText(unwrapQuotedScript(restFrom(position + 1)), depth + 1, analysis)
+    }
+    return
+  }
+
+  if (powershellHostNames.has(head)) {
+    const flags = tokens.map((token) => (token.quoted ? '' : token.text.toLowerCase()))
+    const encodedIndex = flags.findIndex(
+      (flag, offset) =>
+        offset > index && (flag === '-ec' || (flag.length >= 2 && '-encodedcommand'.startsWith(flag))),
+    )
+    if (encodedIndex >= 0) {
+      const decoded = decodePowerShellEncodedCommand(tokens[encodedIndex + 1]?.text ?? '')
+      if (decoded === null) {
+        analysis.blockReasons.push('无法解码 PowerShell -EncodedCommand，无法安全确认实际执行内容。')
+      } else {
+        analyzeShellText(decoded, depth + 1, analysis)
+      }
+      return
+    }
+    const commandIndex = flags.findIndex(
+      (flag, offset) => offset > index && flag.length >= 2 && '-command'.startsWith(flag),
+    )
+    if (commandIndex >= 0) {
+      analyzeShellText(unwrapQuotedScript(restFrom(commandIndex + 1)), depth + 1, analysis)
+      return
+    }
+    const scriptIndex = tokens.findIndex(
+      (token, offset) => offset > index && (token.quoted || !token.text.startsWith('-')),
+    )
+    if (scriptIndex >= 0) {
+      analyzeShellText(unwrapQuotedScript(restFrom(scriptIndex)), depth + 1, analysis)
+    }
+    return
+  }
+
+  if (evalCommandNames.has(head)) {
+    const scriptIndex = tokens.findIndex(
+      (token, offset) => offset > index && (token.quoted || !token.text.startsWith('-')),
+    )
+    if (scriptIndex >= 0) {
+      analyzeShellText(unwrapQuotedScript(restFrom(scriptIndex)), depth + 1, analysis)
+    }
+    return
+  }
+
+  if (head === 'find') {
+    const roots = []
+    let position = index + 1
+    while (position < tokens.length && (tokens[position].quoted || !/^[-!(]/.test(tokens[position].text))) {
+      roots.push(tokens[position].text)
+      position += 1
+    }
+    let destructive = false
+    for (let offset = position; offset < tokens.length; offset += 1) {
+      if (tokens[offset].quoted) continue
+      const flag = tokens[offset].text.toLowerCase()
+      if (flag === '-delete') {
+        destructive = true
+      }
+      if (/^-(?:exec|execdir|ok|okdir)$/.test(flag) && offset + 1 < tokens.length) {
+        const inner = createCommandAnalysis()
+        analyzeCommandSegment(restFrom(offset + 1), depth + 1, inner)
+        analysis.segments.push(...inner.segments)
+        analysis.blockReasons.push(...inner.blockReasons)
+        if (inner.deletions.length > 0) {
+          destructive = true
+        }
+      }
+    }
+    if (destructive) {
+      // find 删除的是起点目录下的内容，按起点目录判定；未写起点时默认是相对的 `.`。
+      analysis.deletions.push({ targets: roots.length > 0 ? roots : ['.'] })
+    }
+    return
+  }
+
+  const groups = parseArgumentGroups(restFrom(index + 1))
+  const parameters = groups.filter((group) => group.parameter).map((group) => group.values[0])
+  const values = groups.filter((group) => !group.parameter).flatMap((group) => group.values)
+
+  if (head === 'rm') {
+    if (parameters.some((flag) => recursiveFlagPattern.test(flag))) {
+      analysis.deletions.push({
+        targets: findNamedArgumentValues(groups, powershellPathParameterNames) ?? values,
+      })
+    }
+    return
+  }
+
+  if (powershellDeleteNames.has(head)) {
+    const explicit = findNamedArgumentValues(groups, powershellPathParameterNames)
+    const positional = groups.find((group) => !group.parameter)
+    analysis.deletions.push({ targets: explicit ?? positional?.values ?? [] })
+    return
+  }
+
+  if (cmdDeleteNames.has(head)) {
+    const recursive =
+      values.some((value) => /^\/s$/i.test(value)) ||
+      parameters.some((flag) => recursiveFlagPattern.test(flag))
+    if (recursive) {
+      analysis.deletions.push({
+        targets:
+          findNamedArgumentValues(groups, powershellPathParameterNames) ??
+          values.filter((value) => !/^\/[a-z]+$/i.test(value)),
+      })
+    }
+  }
+}
 
 const normalizeComparablePath = (value, pathApi) => {
   const normalized = pathApi.normalize(value)
@@ -523,17 +855,26 @@ export const assessCodexToolUse = (input, options = {}) => {
     return { allowed: true }
   }
 
+  const analysis = analyzeShellText(command)
+  const segments = [...new Set(analysis.segments)]
+
   if (!outsideWorkspaceWriteEnabled) {
-    const writeTargets = extractShellWriteTargets(command)
-    if (writeTargets.length === 0 && shellWriteCommandPattern.test(command)) {
-      return {
-        allowed: false,
-        reason: '检测到文件写入命令，但无法安全确定最终目标是否位于当前项目内。',
+    for (const segment of segments) {
+      const writeTargets = extractSegmentWriteTargets(segment)
+      if (writeTargets.length === 0 && shellWriteCommandPattern.test(segment)) {
+        return {
+          allowed: false,
+          reason: '检测到文件写入命令，但无法安全确定最终目标是否位于当前项目内。',
+        }
+      }
+      const writeReason = assessWorkspaceWriteTargets(writeTargets, context)
+      if (writeReason) {
+        return { allowed: false, reason: writeReason }
       }
     }
-    const writeReason = assessWorkspaceWriteTargets(writeTargets, context)
-    if (writeReason) {
-      return { allowed: false, reason: writeReason }
+    const functionWriteReason = assessWorkspaceWriteTargets(extractFunctionTargets(command), context)
+    if (functionWriteReason) {
+      return { allowed: false, reason: functionWriteReason }
     }
   }
 
@@ -541,9 +882,15 @@ export const assessCodexToolUse = (input, options = {}) => {
     return { allowed: true }
   }
 
-  const gitReason = assessGitCommand(command)
-  if (gitReason) {
-    return { allowed: false, reason: gitReason }
+  for (const segment of segments) {
+    const gitReason = assessGitCommand(segment)
+    if (gitReason) {
+      return { allowed: false, reason: gitReason }
+    }
+  }
+
+  if (analysis.blockReasons.length > 0) {
+    return { allowed: false, reason: analysis.blockReasons[0] }
   }
 
   if (automaticTemporaryCleanupPattern.test(command) && bindMountPattern.test(command)) {
@@ -554,10 +901,7 @@ export const assessCodexToolUse = (input, options = {}) => {
   }
 
   const destructive =
-    powershellDeletePattern.test(command) ||
-    posixDeletePattern.test(command) ||
-    cmdRmdirPattern.test(command) ||
-    cmdDeletePattern.test(command) ||
+    analysis.deletions.length > 0 ||
     pythonRmtreePattern.test(command) ||
     nodeRecursiveDeletePattern.test(command) ||
     dotnetRecursiveDeletePattern.test(command)
@@ -585,13 +929,11 @@ export const assessCodexToolUse = (input, options = {}) => {
   }
 
   const targets = [
-    ...extractRmTargets(command),
-    ...extractPowerShellTargets(command),
-    ...extractCmdTargets(command),
+    ...analysis.deletions.flatMap((deletion) => deletion.targets),
     ...extractFunctionTargets(command),
   ]
 
-  if (targets.length === 0) {
+  if (targets.length === 0 || analysis.deletions.some((deletion) => deletion.targets.length === 0)) {
     return {
       allowed: false,
       reason: '检测到递归删除，但无法安全确定最终目标。请改用明确的工作区子目录。',

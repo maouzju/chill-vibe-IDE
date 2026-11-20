@@ -313,10 +313,11 @@ const loadSnapshotFromEnv = () => {
   }
 }
 
+// 症状：Codex 压缩后注入本服务端，握手超时，search/read_compacted_history 从未可用。
+// 根因（2026-11-20 审查）：这里原是 LSP 的 Content-Length 分帧，而 MCP stdio 是换行分帧的 JSON-RPC，
+//   换行帧的 initialize 永远凑不出 \r\n\r\n 头，服务端一个字节都不回。同 automation-board-mcp.js 的 ADR，别改回去。
 const sendMessage = (message) => {
-  const payload = Buffer.from(JSON.stringify(message), 'utf8')
-  process.stdout.write(`Content-Length: ${payload.length}\r\n\r\n`)
-  process.stdout.write(payload)
+  process.stdout.write(`${JSON.stringify(message)}\n`)
 }
 
 const sendError = (id, code, message) => {
@@ -373,32 +374,15 @@ const handleRequest = async (request, snapshot) => {
 
 const startStdioServer = () => {
   const snapshot = loadSnapshotFromEnv()
-  let buffer = Buffer.alloc(0)
-
+  let pending = ''
+  process.stdin.setEncoding('utf8')
   process.stdin.on('data', (chunk) => {
-    buffer = Buffer.concat([buffer, Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)])
-
-    while (true) {
-      const headerEnd = buffer.indexOf('\r\n\r\n')
-      if (headerEnd === -1) {
-        return
-      }
-
-      const headerText = buffer.subarray(0, headerEnd).toString('utf8')
-      const lengthMatch = headerText.match(/Content-Length: (\d+)/i)
-      if (!lengthMatch) {
-        buffer = Buffer.alloc(0)
-        return
-      }
-
-      const contentLength = Number(lengthMatch[1])
-      const messageEnd = headerEnd + 4 + contentLength
-      if (buffer.length < messageEnd) {
-        return
-      }
-
-      const payload = buffer.subarray(headerEnd + 4, messageEnd).toString('utf8')
-      buffer = buffer.subarray(messageEnd)
+    pending += chunk
+    const lines = pending.split('\n')
+    pending = lines.pop() ?? ''
+    for (const line of lines) {
+      const payload = line.trim()
+      if (!payload) continue
 
       let request
       try {

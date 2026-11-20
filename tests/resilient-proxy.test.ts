@@ -105,6 +105,27 @@ const hasResponsesCompletedEvent = (payload: string) => {
   return false
 }
 
+const parseSseEvents = (payload: string) => {
+  const events: Array<Record<string, unknown>> = []
+  for (const block of payload.split(/\r?\n\r?\n/)) {
+    const dataLine = block.split(/\r?\n/).find((line) => line.startsWith('data: '))
+    const data = dataLine?.slice(6)
+    if (!data || data === '[DONE]') {
+      continue
+    }
+
+    events.push(JSON.parse(data) as Record<string, unknown>)
+  }
+
+  return events
+}
+
+const writeSseEvents = (response: http.ServerResponse, events: Array<Record<string, unknown>>) => {
+  for (const event of events) {
+    response.write(`event: ${String(event.type)}\ndata: ${JSON.stringify(event)}\n\n`)
+  }
+}
+
 const waitFor = async (predicate: () => boolean, timeoutMs = 5_000) => {
   const deadline = Date.now() + timeoutMs
   while (!predicate()) {
@@ -795,6 +816,464 @@ describe('internal resilient proxy', () => {
       await delay(700)
 
       assert.equal(requestCount, 1, 'the proxy paid for the same reply again with nobody listening')
+    } finally {
+      await proxy.stop()
+      await closeServer(upstream)
+    }
+  })
+
+  // ── 重试不许把两次生成拼在一起（2026-11-20 审查）────────────────────────────────
+
+  const postStream = async (origin: string, path: string, body: Record<string, unknown>) => {
+    const response = await fetch(`${origin}${path}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-api-key': 'sk-test' },
+      body: JSON.stringify(body),
+    })
+
+    return parseSseEvents(await response.text())
+  }
+
+  const messagesBody = {
+    model: 'claude-fable-5-2',
+    stream: true,
+    messages: [{ role: 'user', content: 'hi' }],
+  }
+
+  const fullThinkingReply = [
+    { type: 'message_start', message: { id: 'msg-2', model: 'claude-fable-5-2' } },
+    { type: 'content_block_start', index: 0, content_block: { type: 'thinking', thinking: '' } },
+    { type: 'content_block_delta', index: 0, delta: { type: 'thinking_delta', thinking: 'Second attempt thoughts.' } },
+    { type: 'content_block_delta', index: 0, delta: { type: 'signature_delta', signature: 'sig-second' } },
+    { type: 'content_block_stop', index: 0 },
+    { type: 'content_block_start', index: 1, content_block: { type: 'tool_use', id: 'toolu-2', name: 'Bash', input: {} } },
+    { type: 'content_block_delta', index: 1, delta: { type: 'input_json_delta', partial_json: '{"command":"ls"}' } },
+    { type: 'content_block_stop', index: 1 },
+    { type: 'message_delta', delta: { stop_reason: 'tool_use', stop_sequence: null } },
+    { type: 'message_stop' },
+  ]
+
+  const unreplayableMessagesScenarios = [
+    {
+      name: 'a thinking block',
+      firstAttempt: [
+        { type: 'message_start', message: { id: 'msg-1', model: 'claude-fable-5-2' } },
+        { type: 'content_block_start', index: 0, content_block: { type: 'thinking', thinking: '' } },
+        { type: 'content_block_delta', index: 0, delta: { type: 'thinking_delta', thinking: 'First attempt th' } },
+      ],
+    },
+    {
+      name: 'tool_use input',
+      firstAttempt: [
+        { type: 'message_start', message: { id: 'msg-1', model: 'claude-fable-5-2' } },
+        { type: 'content_block_start', index: 0, content_block: { type: 'text', text: '' } },
+        { type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text: 'Running it.' } },
+        { type: 'content_block_stop', index: 0 },
+        { type: 'content_block_start', index: 1, content_block: { type: 'tool_use', id: 'toolu-1', name: 'Bash', input: {} } },
+        { type: 'content_block_delta', index: 1, delta: { type: 'input_json_delta', partial_json: '{"comm' } },
+      ],
+    },
+  ]
+
+  for (const scenario of unreplayableMessagesScenarios) {
+    it(`never splices a regenerated Claude reply onto ${scenario.name} the client already half-received`, async () => {
+      let requestCount = 0
+
+      const upstream = http.createServer(async (request, response) => {
+        requestCount += 1
+        await drainRequest(request)
+        response.statusCode = 200
+        response.setHeader('Content-Type', 'text/event-stream')
+        writeSseEvents(response, requestCount === 1 ? scenario.firstAttempt : fullThinkingReply)
+        response.end()
+      })
+
+      const upstreamBaseUrl = await listenOnLoopback(upstream)
+      const proxy = await startResilientProxyServer({
+        provider: 'claude',
+        upstreamBaseUrl,
+        maxRecoveryRetries: 2,
+        retryDelayBaseMs: 2,
+      })
+
+      try {
+        const events = await postStream(proxy.origin, '/v1/messages', messagesBody)
+        const deltas = events
+          .filter((event) => event.type === 'content_block_delta')
+          .map((event) => event.delta as Record<string, unknown>)
+
+        assert.equal(requestCount, 1, 'the proxy regenerated the reply on top of a half-delivered block')
+        assert.equal(
+          deltas.map((delta) => delta.thinking ?? '').join(''),
+          scenario.name === 'a thinking block' ? 'First attempt th' : '',
+        )
+        assert.equal(
+          deltas.map((delta) => delta.partial_json ?? '').join(''),
+          scenario.name === 'tool_use input' ? '{"comm' : '',
+        )
+        assert.equal(deltas.some((delta) => delta.type === 'signature_delta'), false)
+        assert.equal(events.at(-1)?.type, 'error', 'the client must be told the stream failed')
+      } finally {
+        await proxy.stop()
+        await closeServer(upstream)
+      }
+    })
+  }
+
+  it('fails the stream when a retried Claude reply opens with thinking over a text block the client already holds', async () => {
+    let requestCount = 0
+
+    const upstream = http.createServer(async (request, response) => {
+      requestCount += 1
+      await drainRequest(request)
+      response.statusCode = 200
+      response.setHeader('Content-Type', 'text/event-stream')
+      writeSseEvents(
+        response,
+        requestCount === 1
+          ? [
+              { type: 'message_start', message: { id: 'msg-1', model: 'claude-fable-5-2' } },
+              { type: 'content_block_start', index: 0, content_block: { type: 'text', text: '' } },
+              { type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text: 'Sure, ' } },
+            ]
+          : fullThinkingReply,
+      )
+      response.end()
+    })
+
+    const upstreamBaseUrl = await listenOnLoopback(upstream)
+    const proxy = await startResilientProxyServer({
+      provider: 'claude',
+      upstreamBaseUrl,
+      maxRecoveryRetries: 3,
+      retryDelayBaseMs: 2,
+    })
+
+    try {
+      const events = await postStream(proxy.origin, '/v1/messages', messagesBody)
+      const deltaTypes = events
+        .filter((event) => event.type === 'content_block_delta')
+        .map((event) => (event.delta as Record<string, unknown>).type)
+
+      assert.deepEqual(deltaTypes, ['text_delta'], 'thinking was appended to the open text block')
+      assert.equal(requestCount, 2)
+      assert.equal(events.at(-1)?.type, 'error', 'the client must be told the stream failed')
+    } finally {
+      await proxy.stop()
+      await closeServer(upstream)
+    }
+  })
+
+  it('still delivers message_start and the first block start when the first Claude attempt failed before streaming', async () => {
+    let requestCount = 0
+
+    const upstream = http.createServer(async (request, response) => {
+      requestCount += 1
+      await drainRequest(request)
+      if (requestCount === 1) {
+        response.statusCode = 500
+        response.end('{"error":{"message":"Internal server error"}}')
+        return
+      }
+
+      response.statusCode = 200
+      response.setHeader('Content-Type', 'text/event-stream')
+      writeSseEvents(response, fullThinkingReply)
+      response.end()
+    })
+
+    const upstreamBaseUrl = await listenOnLoopback(upstream)
+    const proxy = await startResilientProxyServer({
+      provider: 'claude',
+      upstreamBaseUrl,
+      maxRecoveryRetries: 2,
+      retryDelayBaseMs: 2,
+    })
+
+    try {
+      const events = await postStream(proxy.origin, '/v1/messages', messagesBody)
+
+      assert.equal(requestCount, 2)
+      assert.deepEqual(
+        events.map((event) => event.type),
+        fullThinkingReply.map((event) => event.type),
+        'a retry after a pre-stream failure must relay the reply untouched',
+      )
+    } finally {
+      await proxy.stop()
+      await closeServer(upstream)
+    }
+  })
+
+  const responsesBody = { model: 'gpt-6.2', stream: true, input: 'hi' }
+
+  const startResponsesUpstream = async (attempts: Array<Array<Record<string, unknown>> | number>, tail?: Record<string, unknown>) => {
+    const counts = { post: 0, get: 0 }
+
+    const upstream = http.createServer(async (request, response) => {
+      await drainRequest(request)
+      if (request.method === 'GET') {
+        counts.get += 1
+        response.statusCode = tail ? 200 : 404
+        response.setHeader('Content-Type', 'application/json')
+        response.end(JSON.stringify(tail ?? { error: { message: 'not found' } }))
+        return
+      }
+
+      const attempt = attempts[Math.min(counts.post, attempts.length - 1)]
+      counts.post += 1
+      if (typeof attempt === 'number') {
+        response.statusCode = attempt
+        response.end('{"error":{"message":"Internal server error"}}')
+        return
+      }
+
+      response.statusCode = 200
+      response.setHeader('Content-Type', 'text/event-stream')
+      writeSseEvents(response, attempt)
+      response.end()
+    })
+
+    const upstreamBaseUrl = await listenOnLoopback(upstream)
+    const proxy = await startResilientProxyServer({
+      provider: 'codex',
+      upstreamBaseUrl,
+      maxRecoveryRetries: 2,
+      retryDelayBaseMs: 2,
+    })
+
+    return {
+      counts,
+      proxy,
+      stop: async () => {
+        await proxy.stop()
+        await closeServer(upstream)
+      },
+    }
+  }
+
+  const regeneratedResponse = [
+    { type: 'response.created', response: { id: 'resp-2', model: 'gpt-6.2', status: 'in_progress' } },
+    { type: 'response.output_item.added', output_index: 0, item: { id: 'msg-2', type: 'message', role: 'assistant', content: [] } },
+    { type: 'response.output_text.delta', item_id: 'msg-2', output_index: 0, content_index: 0, delta: 'Hello world' },
+    { type: 'response.output_text.done', item_id: 'msg-2', output_index: 0, content_index: 0, text: 'Hello world' },
+    {
+      type: 'response.output_item.done',
+      output_index: 0,
+      item: { id: 'msg-2', type: 'message', role: 'assistant', content: [{ type: 'output_text', text: 'Hello world' }] },
+    },
+    { type: 'response.output_item.added', output_index: 1, item: { id: 'fc-2', type: 'function_call', name: 'shell', arguments: '' } },
+    { type: 'response.function_call_arguments.delta', item_id: 'fc-2', output_index: 1, delta: '{"cmd":"ls"}' },
+    { type: 'response.function_call_arguments.done', item_id: 'fc-2', output_index: 1, arguments: '{"cmd":"ls"}' },
+    {
+      type: 'response.output_item.done',
+      output_index: 1,
+      item: { id: 'fc-2', type: 'function_call', name: 'shell', arguments: '{"cmd":"ls"}', call_id: 'call-2' },
+    },
+    { type: 'response.completed', response: { id: 'resp-2', model: 'gpt-6.2', status: 'completed' } },
+  ]
+
+  const doneItemIds = (events: Array<Record<string, unknown>>) =>
+    events
+      .filter((event) => event.type === 'response.output_item.done')
+      .map((event) => (event.item as Record<string, unknown>).id)
+
+  it('delivers output_item.done and function call events from a retried Codex response', async () => {
+    const harness = await startResponsesUpstream([
+      [
+        { type: 'response.created', response: { id: 'resp-1', model: 'gpt-6.2', status: 'in_progress' } },
+        { type: 'response.output_item.added', output_index: 0, item: { id: 'msg-1', type: 'message', role: 'assistant', content: [] } },
+        { type: 'response.output_text.delta', item_id: 'msg-1', output_index: 0, content_index: 0, delta: 'Hello ' },
+      ],
+      regeneratedResponse,
+    ])
+
+    try {
+      const events = await postStream(harness.proxy.origin, '/v1/responses', responsesBody)
+      const types = events.map((event) => event.type)
+
+      assert.equal(harness.counts.post, 2)
+      assert.deepEqual(doneItemIds(events), ['msg-2', 'fc-2'], 'the retried items never reached the client')
+      assert.equal(
+        events
+          .filter((event) => event.type === 'response.output_text.delta')
+          .map((event) => event.delta)
+          .join(''),
+        'Hello world',
+      )
+      assert.equal(types.filter((type) => type === 'response.created').length, 1)
+      assert.deepEqual(
+        events
+          .filter((event) => event.type === 'response.output_item.added')
+          .map((event) => (event.item as Record<string, unknown>).id),
+        ['msg-1', 'fc-2'],
+      )
+      assert.equal(types.includes('response.function_call_arguments.delta'), true)
+      assert.equal(types.includes('response.function_call_arguments.done'), true)
+      assert.equal(types.at(-1), 'response.completed')
+    } finally {
+      await harness.stop()
+    }
+  })
+
+  it('completes a half-streamed Codex function call from its done events instead of appending new argument deltas', async () => {
+    const harness = await startResponsesUpstream([
+      [
+        { type: 'response.created', response: { id: 'resp-1', model: 'gpt-6.2', status: 'in_progress' } },
+        { type: 'response.output_item.added', output_index: 0, item: { id: 'fc-1', type: 'function_call', name: 'shell', arguments: '' } },
+        { type: 'response.function_call_arguments.delta', item_id: 'fc-1', output_index: 0, delta: '{"cmd":"l' },
+      ],
+      [
+        { type: 'response.created', response: { id: 'resp-2', model: 'gpt-6.2', status: 'in_progress' } },
+        { type: 'response.output_item.added', output_index: 0, item: { id: 'fc-2', type: 'function_call', name: 'shell', arguments: '' } },
+        { type: 'response.function_call_arguments.delta', item_id: 'fc-2', output_index: 0, delta: '{"cmd":"ls"}' },
+        { type: 'response.function_call_arguments.done', item_id: 'fc-2', output_index: 0, arguments: '{"cmd":"ls"}' },
+        {
+          type: 'response.output_item.done',
+          output_index: 0,
+          item: { id: 'fc-2', type: 'function_call', name: 'shell', arguments: '{"cmd":"ls"}', call_id: 'call-2' },
+        },
+        { type: 'response.completed', response: { id: 'resp-2', model: 'gpt-6.2', status: 'completed' } },
+      ],
+    ])
+
+    try {
+      const events = await postStream(harness.proxy.origin, '/v1/responses', responsesBody)
+
+      assert.deepEqual(doneItemIds(events), ['fc-2'])
+      assert.equal(
+        events
+          .filter((event) => event.type === 'response.function_call_arguments.delta')
+          .map((event) => event.delta)
+          .join(''),
+        '{"cmd":"l',
+        'regenerated argument deltas were appended to the half-delivered ones',
+      )
+      assert.equal(
+        events.find((event) => event.type === 'response.function_call_arguments.done')?.arguments,
+        '{"cmd":"ls"}',
+      )
+      assert.equal(events.filter((event) => event.type === 'response.output_item.added').length, 1)
+    } finally {
+      await harness.stop()
+    }
+  })
+
+  const committedFirstAttempt = [
+    { type: 'response.created', response: { id: 'resp-1', model: 'gpt-6.2', status: 'in_progress' } },
+    { type: 'response.output_item.added', output_index: 0, item: { id: 'rs-1', type: 'reasoning', summary: [] } },
+    { type: 'response.output_item.done', output_index: 0, item: { id: 'rs-1', type: 'reasoning', summary: [] } },
+    { type: 'response.output_item.added', output_index: 1, item: { id: 'msg-1', type: 'message', role: 'assistant', content: [] } },
+    { type: 'response.output_text.delta', item_id: 'msg-1', output_index: 1, content_index: 0, delta: 'Hello ' },
+  ]
+
+  it('does not regenerate a Codex response after the client already committed one of its items', async () => {
+    const harness = await startResponsesUpstream([committedFirstAttempt, regeneratedResponse])
+
+    try {
+      const events = await postStream(harness.proxy.origin, '/v1/responses', responsesBody)
+
+      assert.equal(harness.counts.post, 1, 'a second generation was mixed into items the client already recorded')
+      assert.deepEqual(doneItemIds(events), ['rs-1'])
+      assert.equal(events.at(-1)?.type, 'error', 'the client must be told the stream failed')
+    } finally {
+      await harness.stop()
+    }
+  })
+
+  it('replays the missing output_item.done events when a Codex response is recovered from its tail', async () => {
+    const harness = await startResponsesUpstream([committedFirstAttempt], {
+      id: 'resp-1',
+      object: 'response',
+      model: 'gpt-6.2',
+      status: 'completed',
+      output: [
+        { id: 'rs-1', type: 'reasoning', summary: [] },
+        { id: 'msg-1', type: 'message', role: 'assistant', content: [{ type: 'output_text', text: 'Hello world' }] },
+        { id: 'fc-1', type: 'function_call', name: 'shell', arguments: '{"cmd":"ls"}', call_id: 'call-1' },
+      ],
+    })
+
+    try {
+      const events = await postStream(harness.proxy.origin, '/v1/responses', responsesBody)
+
+      assert.equal(harness.counts.post, 1)
+      assert.deepEqual(doneItemIds(events), ['rs-1', 'msg-1', 'fc-1'])
+      assert.deepEqual(
+        events.filter((event) => event.type === 'response.output_item.done').map((event) => event.output_index),
+        [0, 1, 2],
+      )
+      assert.equal(events.at(-1)?.type, 'response.completed')
+    } finally {
+      await harness.stop()
+    }
+  })
+
+  it('still delivers response.created and item starts when the first Codex attempt failed before streaming', async () => {
+    const harness = await startResponsesUpstream([500, regeneratedResponse])
+
+    try {
+      const events = await postStream(harness.proxy.origin, '/v1/responses', responsesBody)
+
+      assert.equal(harness.counts.post, 2)
+      assert.deepEqual(
+        events.map((event) => event.type),
+        regeneratedResponse.map((event) => event.type),
+        'a retry after a pre-stream failure must relay the response untouched',
+      )
+    } finally {
+      await harness.stop()
+    }
+  })
+
+  it('never splices regenerated chat completion tool call arguments onto half-delivered ones', async () => {
+    let requestCount = 0
+    const toolCallChunk = (args: string) => ({
+      id: 'chatcmpl-1',
+      model: 'gpt-6.2',
+      choices: [
+        {
+          index: 0,
+          delta: { tool_calls: [{ index: 0, id: 'call-1', type: 'function', function: { name: 'shell', arguments: args } }] },
+          finish_reason: null,
+        },
+      ],
+    })
+
+    const upstream = http.createServer(async (request, response) => {
+      requestCount += 1
+      await drainRequest(request)
+      response.statusCode = 200
+      response.setHeader('Content-Type', 'text/event-stream')
+      if (requestCount === 1) {
+        response.end(`data: ${JSON.stringify(toolCallChunk('{"cmd":"l'))}\n\n`)
+        return
+      }
+
+      response.write(`data: ${JSON.stringify(toolCallChunk('{"cmd":"ls"}'))}\n\n`)
+      response.write(
+        `data: ${JSON.stringify({ id: 'chatcmpl-1', model: 'gpt-6.2', choices: [{ index: 0, delta: {}, finish_reason: 'tool_calls' }] })}\n\n`,
+      )
+      response.end('data: [DONE]\n\n')
+    })
+
+    const upstreamBaseUrl = await listenOnLoopback(upstream)
+    const proxy = await startResilientProxyServer({
+      provider: 'codex',
+      upstreamBaseUrl,
+      maxRecoveryRetries: 2,
+      retryDelayBaseMs: 2,
+    })
+
+    try {
+      const events = await postStream(proxy.origin, '/v1/chat/completions', {
+        model: 'gpt-6.2',
+        stream: true,
+        messages: [{ role: 'user', content: 'hi' }],
+      })
+
+      assert.equal(requestCount, 1, 'the proxy regenerated the reply on top of a half-delivered tool call')
+      assert.equal(events.at(-1)?.type, 'error', 'the client must be told the stream failed')
     } finally {
       await proxy.stop()
       await closeServer(upstream)

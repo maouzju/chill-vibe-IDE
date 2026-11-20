@@ -192,6 +192,8 @@ export function StickyNoteCard({
   const imageInputRef = useRef<HTMLInputElement | null>(null)
   const shouldRestoreViewStateRef = useRef(true)
   const hasLocalDocumentRef = useRef(false)
+  // True from mount / noteId switch until we know the on-disk attachments (see shouldPersistStickyNoteDocument).
+  const diskLoadPendingRef = useRef(true)
   const activeNoteIdRef = useRef(noteId)
   const latestLocalRef = useRef(local)
   const latestAttachmentsRef = useRef<ImageAttachment[]>(attachments)
@@ -226,11 +228,12 @@ export function StickyNoteCard({
   ) => {
     const effectiveNoteId = activeNoteIdRef.current.trim()
     if (!workspacePath.trim() || !effectiveNoteId) return null
-    if (!shouldPersistStickyNoteDocument(
-      hasLocalDocumentRef.current,
-      value,
-      nextAttachments,
-    )) return null
+    if (!shouldPersistStickyNoteDocument({
+      diskLoadPending: diskLoadPendingRef.current,
+      hasLocalDocument: hasLocalDocumentRef.current,
+      content: value,
+      attachments: nextAttachments,
+    })) return null
 
     try {
       const document = await saveStickyNote({
@@ -264,6 +267,7 @@ export function StickyNoteCard({
     let cancelled = false
     const uploadGeneration = ++uploadGenerationRef.current
     hasLocalDocumentRef.current = false
+    diskLoadPendingRef.current = true
     activeNoteIdRef.current = noteId
     latestAttachmentsRef.current = []
     setAttachments([])
@@ -274,6 +278,7 @@ export function StickyNoteCard({
     void refreshSavedNotes().then(async (notes) => {
       if (cancelled) return
       if (!notes.some((entry) => entry.noteId === noteId)) {
+        diskLoadPendingRef.current = false
         if (latestLocalRef.current.trim() !== '') {
           await saveLocalDocument(latestLocalRef.current, true)
         }
@@ -283,6 +288,7 @@ export function StickyNoteCard({
       const document = await loadStickyNote({ workspacePath, noteId })
       if (cancelled || uploadGenerationRef.current !== uploadGeneration) return
       hasLocalDocumentRef.current = true
+      diskLoadPendingRef.current = false
       setVersions(document.versions)
       latestAttachmentsRef.current = document.attachments
       setAttachments(document.attachments)
@@ -418,6 +424,7 @@ export function StickyNoteCard({
       const document = await loadStickyNote({ workspacePath, noteId: summary.noteId })
       activeNoteIdRef.current = document.noteId
       hasLocalDocumentRef.current = true
+      diskLoadPendingRef.current = false
       latestLocalRef.current = document.content
       latestAttachmentsRef.current = document.attachments
       latestTitleRef.current = document.title

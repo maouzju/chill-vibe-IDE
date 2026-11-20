@@ -259,7 +259,7 @@ const resolveGeminiSystemSettingsPath = (env: NodeJS.ProcessEnv) => {
   const fromEnv = env.GEMINI_CLI_SYSTEM_SETTINGS_PATH?.trim()
   if (fromEnv) return fromEnv
   if (process.platform === 'darwin') return '/Library/Application Support/GeminiCli/settings.json'
-  if (process.platform === 'win32') return 'C:\\ProgramData\\gemini-cli\\settings.json'
+  if (process.platform === 'win32') return path.win32.join(env.ProgramData?.trim() || env.ALLUSERSPROFILE?.trim() || '', 'gemini-cli', 'settings.json')
   return '/etc/gemini-cli/settings.json'
 }
 

@@ -10,6 +10,7 @@ import {
   downloadWithResume,
   resolveDownloadedAssetStrategy,
   runUpdateExitSequence,
+  isAllowedUpdateDownloadUrl,
   isDownloadedAssetPathAllowed,
   createUpdateInstallGate,
   type UpdateCheckResult,
@@ -172,6 +173,11 @@ export async function downloadUpdate(
   assetUrl: string,
   onProgress: (percent: number) => void,
 ): Promise<string> {
+  // 下载出来的路径会进 installUpdate 的白名单，所以来源必须在这里卡死。
+  if (!isAllowedUpdateDownloadUrl(assetUrl)) {
+    throw new Error('Update download URL is not an official release asset.')
+  }
+
   const existing = inFlightDownloads.get(assetUrl)
 
   if (existing) {

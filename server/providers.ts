@@ -1170,15 +1170,28 @@ export const tryInterruptProviderTurn = (child: InterruptibleChild | null | unde
 const createManagedChildHandle = () => {
   let activeChild: ChildProcess | null = null
   let interruptHandler: (() => boolean) | null = null
+  // 症状：Claude 首次尝试失败、自动重试的几秒空窗里点停止，界面显示已停，后台却又起了一个进程
+  //   以 bypassPermissions 跑完整轮（keepalive 下还把这条消息写进常驻进程）。
+  // 根因（2026-11-20 审查）：空窗里 activeChild / interruptHandler 都是空的，kill 与 interruptTurn
+  //   是空操作，重试方又无从得知「这个 handle 已经被停过」。
+  // 为什么不在 ChatManager 侧挡：它只拿得到这个 handle，重试发生在 launch 闭包里，只有这里能记账。
+  //   kill / interruptTurn 的调用方只有停止与关停路径，所以任一被调用即视为不再重试。
+  let stopped = false
   const handle = new EventEmitter() as ChildProcess
 
-  ;(handle as ChildProcess & { kill: ChildProcess['kill'] }).kill = ((signal?: NodeJS.Signals | number) =>
-    activeChild?.kill(signal) ?? false) as ChildProcess['kill']
+  ;(handle as ChildProcess & { kill: ChildProcess['kill'] }).kill = ((signal?: NodeJS.Signals | number) => {
+    stopped = true
+    return activeChild?.kill(signal) ?? false
+  }) as ChildProcess['kill']
 
-  ;(handle as InterruptibleChild).interruptTurn = () => interruptHandler?.() === true
+  ;(handle as InterruptibleChild).interruptTurn = () => {
+    stopped = true
+    return interruptHandler?.() === true
+  }
 
   return {
     handle,
+    isStopped: () => stopped,
     setActiveChild: (child: ChildProcess | null) => {
       activeChild = child
     },
@@ -1872,6 +1885,8 @@ const spawnProvider = async (
   env: NodeJS.ProcessEnv,
   options?: {
     stdin?: 'ignore' | 'pipe'
+    // 命令解析（where.exe，本机最坏数秒）期间这次运行已被停止：不再起进程，也不报错。
+    isCancelled?: () => boolean
   },
 ) => {
   const command = await resolveCommand(provider)
@@ -1896,6 +1911,9 @@ const spawnProvider = async (
 
   try {
     const launch = await resolveProviderCommandLaunch({ command, args })
+    if (options?.isCancelled?.()) {
+      return null
+    }
     const child = spawn(launch.command, launch.args, {
       cwd: workspacePath,
       env,
@@ -4314,6 +4332,11 @@ const launchClaudeSingleShotRun = async (
     ]
 
     reportUnsupportedClaudeFlags(args, runtime.env)
+    // 自动重试的空窗里被停止过就不再起进程（见 createManagedChildHandle 的 stopped）。
+    // 首次尝试时 handle 还没交给调用方，这里恒为 false。
+    if (managedChild.isStopped()) {
+      return false
+    }
     if (currentRequest.sessionId) {
       await repairClaudeSessionForResume(currentRequest.sessionId)
     }
@@ -4325,10 +4348,16 @@ const launchClaudeSingleShotRun = async (
       sink,
       language,
       runtime.env,
+      { isCancelled: managedChild.isStopped },
     )
 
     if (!child) {
       managedChild.setActiveChild(null)
+      return false
+    }
+
+    if (managedChild.isStopped()) {
+      child.kill()
       return false
     }
 
@@ -4381,6 +4410,7 @@ const launchClaudeSingleShotRun = async (
       if (
         includeEffort &&
         !fallbackAttempted &&
+        !managedChild.isStopped() &&
         code !== 0 &&
         !parser.sawStreamOutput() &&
         isClaudeEffortUnsupported(detail)
@@ -4395,6 +4425,7 @@ const launchClaudeSingleShotRun = async (
 
       if (
         !staleSessionFallbackAttempted &&
+        !managedChild.isStopped() &&
         code !== 0 &&
         !parser.sawStreamOutput() &&
         currentRequest.sessionId?.trim() &&
@@ -4573,6 +4604,11 @@ const launchClaudeKeepaliveRun = async (
   const completionBoundaryHook = buildClaudeCompletionBoundaryHookCommand(completionBoundaryPath)
 
   const startAttempt = async (includeEffort: boolean): Promise<boolean> => {
+    // 自动重试的空窗里被停止过就不再 acquire / 写入消息（见 createManagedChildHandle 的 stopped）。
+    // 首次尝试时 handle 还没交给调用方，这里恒为 false。
+    if (managedChild.isStopped()) {
+      return false
+    }
     // A user-authored turn supersedes the renderer's prior idle-wait marker.
     // Clear pool metadata before acquire can recycle an incompatible old child;
     // this prevents that intentional replacement from masquerading as a crash.
@@ -4615,7 +4651,7 @@ const launchClaudeKeepaliveRun = async (
           sink,
           language,
           runtime.env,
-          { stdin: 'pipe' },
+          { stdin: 'pipe', isCancelled: managedChild.isStopped },
         )
 
         if (spawned && (!spawned.stdout || !spawned.stderr || !spawned.stdin)) {
@@ -4636,6 +4672,11 @@ const launchClaudeKeepaliveRun = async (
     })
 
     if (!acquired) {
+      return false
+    }
+
+    // acquire 期间被停止：进程原样留在池里空闲，绝不能把已取消的消息写进去。
+    if (managedChild.isStopped()) {
       return false
     }
 
@@ -4701,6 +4742,7 @@ const launchClaudeKeepaliveRun = async (
         if (
           includeEffort &&
           !fallbackAttempted &&
+          !managedChild.isStopped() &&
           code !== 0 &&
           !parser.sawStreamOutput() &&
           isClaudeEffortUnsupported(detail)
@@ -4715,6 +4757,7 @@ const launchClaudeKeepaliveRun = async (
 
         if (
           !staleSessionFallbackAttempted &&
+          !managedChild.isStopped() &&
           code !== 0 &&
           !parser.sawStreamOutput() &&
           currentRequest.sessionId?.trim() &&

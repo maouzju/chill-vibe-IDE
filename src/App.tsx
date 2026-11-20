@@ -269,6 +269,7 @@ import {
   finalizeStructuredActivityMessage,
   finalizeStreamedAssistantMessage,
   finishAbandonedAutoCompactRun,
+  finishFailedTurnStart,
   canSendEmptyContinuation,
   shouldDropEmptyContinuationWhileStreaming,
   shouldSyncOllamaStatus,
@@ -351,6 +352,7 @@ import {
   type AutomationBoardLocation,
 } from './components/automation-board-transitions'
 import {
+  createAutomationBoardTriggerChainTracker,
   resolveAutomationBoardTemplateInstanceCardId,
   resolveAutomationBoardTemplateTriggerDecisions,
   type AutomationBoardCardActivity,
@@ -449,7 +451,11 @@ import {
   EyeOffIcon,
 } from './components/Icons'
 import { WorkspaceColumn } from './components/WorkspaceColumn'
-import { resolveGitAgentModel, type GitAgentSessionRequest } from './components/git-operation-hub'
+import {
+  resolveGitAgentModel,
+  type GitAgentSessionHandle,
+  type GitAgentSessionRequest,
+} from './components/git-operation-hub'
 import {
   notifyGitWorkspaceMayHaveChanged,
   shouldSignalGitChangeForActivity,
@@ -4640,7 +4646,7 @@ function App() {
   // 与超管 create_session 的 running 路径同法：预生成 cardId 原子建卡，再复用 sendMessage。
   // 不带 spawnedByAgent，新 tab 直接成为活动 tab —— "显式打开"正是这次需求本身。
   const openAgentSessionTab = useCallback(
-    (columnId: string, paneId: string, request: GitAgentSessionRequest): boolean => {
+    (columnId: string, paneId: string, request: GitAgentSessionRequest): GitAgentSessionHandle | false => {
       const column = getColumn(columnId)
       if (!column) {
         return false
@@ -4664,7 +4670,10 @@ function App() {
       rememberPaneTarget(columnId, targetPaneId)
       persistAfterAction(addTab.type, applyAction(addTab))
       void sendMessageRef.current?.(columnId, cardId, request.prompt, [])
-      return true
+      // 关 tab / 删卡会把卡从 column.cards 移走；跨列拖动仍算在，所以查所有列。
+      return {
+        isOpen: () => appStateRef.current.columns.some((entry) => Boolean(entry.cards[cardId])),
+      }
     },
     [applyAction, getColumn, persistAfterAction, rememberPaneTarget, resolveColumnPaneTarget],
   )
@@ -4872,6 +4881,7 @@ function App() {
   // 两条独立的自动化，一个刚跑过不该把另一个也挡住。不入盘 —— 重启后允许再
   // 触发一次是可接受且更安全的行为。
   const automationBoardLastFiredAtRef = useRef(new Map<string, number>())
+  const automationBoardTriggerChainsRef = useRef(createAutomationBoardTriggerChainTracker())
 
   const applyAutomationBoardTransition = useCallback(
     (
@@ -5307,7 +5317,13 @@ function App() {
    * applyAutomationBoardTransition 挪回目标道，中断/发送语义才与拖拽一致。
    */
   const fireAutomationBoardTemplateTrigger = useCallback(
-    (columnId: string, boardCardId: string, templateId: string) => {
+    (
+      columnId: string,
+      boardCardId: string,
+      templateId: string,
+      // 拉起这次触发的那条链；手动「立即运行」不传，即新链起点。
+      parentTriggerChain: readonly string[] = [],
+    ) => {
       const column = getColumn(columnId)
       const board = getAutomationBoard(column?.cards[boardCardId])
       if (!column || !board || !column.workspacePath.trim()) {
@@ -5333,6 +5349,9 @@ function App() {
 
       if (!reuseCardId) {
         const cardId = instantiateAutomationBoardTemplate(columnId, boardCardId, templateId, lane)
+        if (cardId && lane === 'running') {
+          automationBoardTriggerChainsRef.current.recordFired(cardId, parentTriggerChain, templateId)
+        }
         if (cardId) {
           const remember: IdeAction = {
             type: 'setAutomationBoardTemplateInstance',
@@ -5400,6 +5419,7 @@ function App() {
           patch: { startedAt: new Date().toISOString() },
         }
         persistAfterAction(stamp.type, applyAction(stamp))
+        automationBoardTriggerChainsRef.current.recordFired(reuseCardId, parentTriggerChain, templateId)
         void sendMessageRef.current?.(columnId, reuseCardId, template.requirement, [])
       }
 
@@ -5420,6 +5440,8 @@ function App() {
   const evaluateAutomationBoardTemplateTriggers = useCallback(
     (settledCardId: string) => {
       const state = appStateRef.current
+      // 先取走（取即删）：同一张卡的链只给它这一次稳定完成用，见 createAutomationBoardTriggerChainTracker。
+      const triggerChainTemplateIds = automationBoardTriggerChainsRef.current.takeForSettledCard(settledCardId)
 
       for (const column of state.columns) {
         if (!column.workspacePath.trim()) {
@@ -5465,11 +5487,17 @@ function App() {
             cardActivity,
             lastFiredAtMs,
             nowMs: Date.now(),
+            triggerChainTemplateIds,
           })
 
           for (const decision of decisions) {
             if (decision.fire) {
-              fireAutomationBoardTemplateTrigger(column.id, boardCard.id, decision.templateId)
+              fireAutomationBoardTemplateTrigger(
+                column.id,
+                boardCard.id,
+                decision.templateId,
+                triggerChainTemplateIds,
+              )
             }
           }
         }
@@ -7731,8 +7759,6 @@ function App() {
     if (!column || !card || !column.workspacePath.trim()) {
       return
     }
-    // 用户亲自发了新消息就是接手了，兜底重试撤销并清零。
-    cancelFallbackRetry(cardId, { resetCount: true })
 
     const providerStatus = providerByName[card.provider] as ProviderStatus | undefined
     const resolvedModel = normalizeModel(
@@ -7808,6 +7834,10 @@ function App() {
       return
     }
 
+    // 用户亲自发了新消息就是接手了，兜底重试撤销并清零。
+    // 必须放在上面几条提前 return（本地斜杠命令、收进待唤醒队列、丢弃空继续）之后：那几条不起
+    // 新回合，提前撤销会让报错卡永远停在 error、横幅还挂着到点不会发生的续传时间（2026-11-20 审查）。
+    cancelFallbackRetry(cardId, { resetCount: true })
     // A brand-new send clears any previous recovery banner (including failed),
     // otherwise stale "Reconnect failed" can linger on the card after the user
     // retries manually.
@@ -8311,10 +8341,19 @@ function App() {
         })
       }
 
-      persistAfterActions(actions, applyActions(actions))
       if (!isManualCodexCompactRequest) {
         scheduleFallbackRetry(columnId, cardId)
       }
+      // 这张卡此后不会再广播完成：放行等它的人、派发排在后面的消息（见 finishFailedTurnStart）。
+      finishFailedTurnStart({
+        queuedSendCount: queuedSendRequestsRef.current.get(cardId)?.length ?? 0,
+        actions,
+        buildWaiterReleaseActions: () =>
+          buildWakeTimerTargetReleaseActions(cardId, { forceRelease: true }),
+        commitActions: (nextActions) => persistAfterActions(nextActions, applyActions(nextActions)),
+        dispatchNextQueuedSend: () => dispatchNextQueuedSend(columnId, cardId),
+        flushReadyWakeTimers: () => flushReadyWakeTimersRef.current?.(),
+      })
     }
   }
   sendMessageRef.current = sendMessage
@@ -8503,12 +8542,22 @@ function App() {
           messages: [durationMessage],
         })
       }
-      persistAfterActions(actions, applyActions(actions))
+      finishFailedTurnStart({
+        queuedSendCount: queuedSendRequestsRef.current.get(cardId)?.length ?? 0,
+        actions,
+        buildWaiterReleaseActions: () =>
+          buildWakeTimerTargetReleaseActions(cardId, { forceRelease: true }),
+        commitActions: (nextActions) => persistAfterActions(nextActions, applyActions(nextActions)),
+        dispatchNextQueuedSend: () => dispatchNextQueuedSend(columnId, cardId),
+        flushReadyWakeTimers: () => flushReadyWakeTimersRef.current?.(),
+      })
     }
   }, [
     applyAction,
     applyActions,
     attachStream,
+    buildWakeTimerTargetReleaseActions,
+    dispatchNextQueuedSend,
     getColumn,
     scheduleFallbackRetry,
     persistAfterAction,
@@ -8576,8 +8625,16 @@ function App() {
           messages: [durationMessage],
         })
       }
-      persistAfterActions(actions, applyActions(actions))
       scheduleFallbackRetry(columnId, cardId)
+      finishFailedTurnStart({
+        queuedSendCount: queuedSendRequestsRef.current.get(cardId)?.length ?? 0,
+        actions,
+        buildWaiterReleaseActions: () =>
+          buildWakeTimerTargetReleaseActions(cardId, { forceRelease: true }),
+        commitActions: (nextActions) => persistAfterActions(nextActions, applyActions(nextActions)),
+        dispatchNextQueuedSend: () => dispatchNextQueuedSend(columnId, cardId),
+        flushReadyWakeTimers: () => flushReadyWakeTimersRef.current?.(),
+      })
       return false
     }
 
@@ -8902,13 +8959,22 @@ function App() {
           messages: [durationMessage],
         })
       }
-      persistAfterActions(actions, applyActions(actions))
+      finishFailedTurnStart({
+        queuedSendCount: queuedSendRequestsRef.current.get(cardId)?.length ?? 0,
+        actions,
+        buildWaiterReleaseActions: () =>
+          buildWakeTimerTargetReleaseActions(cardId, { forceRelease: true }),
+        commitActions: (nextActions) => persistAfterActions(nextActions, applyActions(nextActions)),
+        dispatchNextQueuedSend: () => dispatchNextQueuedSend(columnId, cardId),
+        flushReadyWakeTimers: () => flushReadyWakeTimersRef.current?.(),
+      })
       return false
     }
   }, [
     applyAction,
     applyActions,
     attachStream,
+    buildWakeTimerTargetReleaseActions,
     cancelFallbackRetry,
     scheduleFallbackRetry,
     clearRecoveryStatusForNewStream,

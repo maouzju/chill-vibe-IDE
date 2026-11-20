@@ -14,7 +14,7 @@ import type {
 } from '../shared/schema'
 import { findPaneInLayout } from './state'
 import { getLocaleText } from '../shared/i18n'
-import { BRAINSTORM_TOOL_MODEL, GIT_TOOL_MODEL, STICKYNOTE_TOOL_MODEL } from '../shared/models'
+import { AUTOMATIONBOARD_TOOL_MODEL, BRAINSTORM_TOOL_MODEL, GIT_TOOL_MODEL, STICKYNOTE_TOOL_MODEL } from '../shared/models'
 import type { ChatStreamSource } from './api'
 import type { SendMessageOrigin } from './components/deferred-send-queue'
 
@@ -460,7 +460,10 @@ export const willMoveTabAcrossColumns = (
   const sourceColumn = state.columns.find((column) => column.id === move.sourceColumnId)
   const targetColumn = state.columns.find((column) => column.id === move.targetColumnId)
   if (!sourceColumn || !targetColumn) return false
-  if (!sourceColumn.cards[move.tabId]) return false
+  const movingCard = sourceColumn.cards[move.tabId]
+  if (!movingCard) return false
+  // 与 state.ts moveTab 同口径：看板卡跨列被 reducer 拒绝（2026-11-20 审查），不能停它的流/清队列。
+  if ((movingCard as { model?: unknown }).model === AUTOMATIONBOARD_TOOL_MODEL) return false
   if (!findPaneInLayout(sourceColumn.layout, move.sourcePaneId)) return false
   if (!findPaneInLayout(targetColumn.layout, move.targetPaneId)) return false
 
@@ -586,6 +589,19 @@ export const finishAbandonedAutoCompactRun = <TAction>(
     effects.flushReadyWakeTimers()
   }
 }
+
+/**
+ * 一轮的启动请求失败（POST /api/chat、续传/恢复请求抛错、本地 CLI 不可用）后的收尾。
+ *
+ * 症状：卡片停在 error，等它的超管白等兜底超时（最长约 1 小时）才醒，排在后面的延后消息一直挂着。
+ * 根因（2026-11-20 审查）：attachStream 的 onError 终态分支放行等待者并派发队列，启动失败的
+ *   catch 只置 error、排兜底重试——这张卡此后不会再广播完成，等于把下游晾着。
+ * 放行与派发的取舍与 finishAbandonedAutoCompactRun 同一条规则（还排着消息就交给那一轮去广播），
+ *   所以直接复用，不另写一份。
+ */
+export const finishFailedTurnStart = <TAction>(
+  effects: AbandonedAutoCompactRunEffects<TAction>,
+): void => finishAbandonedAutoCompactRun(effects)
 
 export const createStoppedRunMessage = (
   language: AppLanguage,

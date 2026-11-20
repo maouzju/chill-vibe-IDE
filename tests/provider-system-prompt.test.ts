@@ -15,8 +15,11 @@ import {
   isCodexNativeReconnectPlaceholderForTesting,
   launchProviderRun,
   normalizeProviderExitCode,
+  resolveCommand,
   setProviderRuntimeSettingsOverride,
+  tryInterruptProviderTurn,
 } from '../server/providers.ts'
+import { ClaudeSessionPool } from '../server/claude-session-pool.ts'
 import { prependPathEntry, writeNodeEntrypointShim } from './test-shell-helpers.ts'
 
 const createRequest = (overrides: Partial<ChatRequest> = {}): ChatRequest => ({
@@ -4033,6 +4036,197 @@ test('claude automatically retries without -r when the resumed session is stale 
       `retry launch must preserve the original prompt, got ${JSON.stringify(launches[1])}`,
     )
   } finally {
+    await rm(capturePath, { force: true }).catch(() => {})
+  }
+})
+
+// 2026-11-20 审查：首次尝试失败后的自动重试要先 await 命令解析 / 修档 / spawn。这段空窗里 handle 上
+// 没有活动进程，停止是空操作；旧实现的重试进程会在「已停止」之后照常起来并跑完整轮。
+// 这里在重试提示那条 log 之后的下一个事件循环 tick 执行 ChatManager.stop 的同一套动作，正落在空窗里。
+const stopDuringClaudeRetryGap = async (
+  request: ChatRequest,
+  retryNoticePattern: RegExp,
+  options?: Parameters<typeof launchProviderRun>[2],
+) => {
+  type Handle = NonNullable<Awaited<ReturnType<typeof launchProviderRun>>>
+  const terminalEvents: string[] = []
+  let resolveHandle!: (handle: Handle) => void
+  const handleReady = new Promise<Handle>((resolve) => {
+    resolveHandle = resolve
+  })
+  let resolveStopped!: () => void
+  const stopped = new Promise<void>((resolve) => {
+    resolveStopped = resolve
+  })
+
+  const handle = await launchProviderRun(request, {
+    onSession: () => undefined,
+    onDelta: () => undefined,
+    onLog: (message) => {
+      if (!retryNoticePattern.test(message)) {
+        return
+      }
+      void handleReady.then((launched) => setImmediate(() => {
+        if (!tryInterruptProviderTurn(launched)) {
+          launched.kill()
+        }
+        resolveStopped()
+      }))
+    },
+    onAssistantMessage: () => undefined,
+    onActivity: () => undefined,
+    onDone: () => terminalEvents.push('done'),
+    onError: (message) => terminalEvents.push(`error:${message}`),
+  }, options)
+  assert.ok(handle, 'Expected fake provider command to launch.')
+  resolveHandle(handle)
+  await stopped
+
+  // 给「本该被拦下的重试」留足时间真的跑起来：再走一遍同样的命令解析，外加假 CLI 的启动时间。
+  await resolveCommand('claude')
+  await new Promise((resolve) => setTimeout(resolve, 1_500))
+  return terminalEvents
+}
+
+const readCaptureLines = async (capturePath: string) =>
+  (await readFile(capturePath, 'utf8'))
+    .trim()
+    .split(/\r?\n/)
+    .map((line) => JSON.parse(line) as unknown)
+
+test('claude single-shot: stopping during the stale-session retry gap does not launch the retry', async () => {
+  const capturePath = path.join(
+    os.tmpdir(),
+    `chill-vibe-claude-stale-stop-${Date.now()}-${Math.random().toString(36).slice(2)}.jsonl`,
+  )
+
+  try {
+    const terminalEvents = await withFakeProviderCommand(
+      'claude',
+      buildFakeClaudeStaleSessionScript(capturePath),
+      async (workspacePath) =>
+        stopDuringClaudeRetryGap(
+          createRequest({
+            provider: 'claude',
+            model: 'claude-sonnet-4-6',
+            language: 'en',
+            workspacePath,
+            sessionId: 'stale-session-id',
+            prompt: 'Cancelled prompt.',
+          }),
+          /stale|resumed session|new session/i,
+        ),
+    )
+
+    const launches = await readCaptureLines(capturePath)
+    assert.equal(launches.length, 1, `a stopped run must not relaunch, got ${JSON.stringify(launches)}`)
+    assert.deepEqual(terminalEvents, [])
+  } finally {
+    await rm(capturePath, { force: true }).catch(() => {})
+  }
+})
+
+test('claude single-shot: stopping during the --effort fallback retry gap does not launch the retry', async () => {
+  const capturePath = path.join(
+    os.tmpdir(),
+    `chill-vibe-claude-effort-stop-${Date.now()}-${Math.random().toString(36).slice(2)}.jsonl`,
+  )
+
+  try {
+    const terminalEvents = await withFakeProviderCommand(
+      'claude',
+      buildFakeClaudeLegacyEffortScript(capturePath),
+      async (workspacePath) =>
+        stopDuringClaudeRetryGap(
+          createRequest({
+            provider: 'claude',
+            model: 'claude-sonnet-4-6',
+            language: 'en',
+            workspacePath,
+            prompt: 'Cancelled prompt.',
+          }),
+          /--effort/,
+        ),
+    )
+
+    const launches = await readCaptureLines(capturePath)
+    assert.equal(launches.length, 1, `a stopped run must not relaunch, got ${JSON.stringify(launches)}`)
+    assert.deepEqual(terminalEvents, [])
+  } finally {
+    await rm(capturePath, { force: true }).catch(() => {})
+  }
+})
+
+const buildFakeClaudeKeepaliveStaleSessionScript = (capturePath: string) =>
+  [
+    "const fs = require('node:fs')",
+    "const readline = require('node:readline')",
+    `const capturePath = ${JSON.stringify(capturePath)}`,
+    "const argv = process.argv.slice(2)",
+    "const capture = (entry) => fs.appendFileSync(capturePath, `${JSON.stringify(entry)}\\n`, 'utf8')",
+    "capture({ kind: 'launch', resumed: argv.includes('-r') })",
+    "const reply = (message) => process.stdout.write(`${JSON.stringify(message)}\\n`)",
+    "if (argv.includes('-r')) {",
+    "  process.stderr.write('Error: No deferred tool marker found in the resumed session. Either the session was not deferred, the marker is stale (tool already ran), or it exceeds the tail-scan window. Provide a prompt to continue the conversation.\\n')",
+    '  process.exit(1)',
+    '}',
+    "const rl = readline.createInterface({ input: process.stdin })",
+    "rl.on('line', (line) => {",
+    '  let message',
+    '  try { message = JSON.parse(line) } catch { return }',
+    "  if (!message || message.type !== 'user') return",
+    "  capture({ kind: 'user-message' })",
+    "  reply({ type: 'system', subtype: 'init', session_id: 'claude-session-recovered' })",
+    "  reply({ type: 'assistant', message: { content: [{ type: 'text', text: 'Recovered reply' }] } })",
+    "  reply({ type: 'result', is_error: false, result: 'ok' })",
+    '})',
+    "rl.on('close', () => process.exit(0))",
+  ].join('\n')
+
+test('claude keepalive: stopping during the stale-session retry gap neither respawns nor writes the prompt', async () => {
+  const capturePath = path.join(
+    os.tmpdir(),
+    `chill-vibe-claude-keepalive-stale-stop-${Date.now()}-${Math.random().toString(36).slice(2)}.jsonl`,
+  )
+  const pool = new ClaudeSessionPool({ onUnsolicited: () => {} })
+
+  try {
+    const terminalEvents = await withFakeProviderCommand(
+      'claude',
+      buildFakeClaudeKeepaliveStaleSessionScript(capturePath),
+      async (workspacePath) => {
+        try {
+          return await stopDuringClaudeRetryGap(
+            {
+              ...createRequest({
+                provider: 'claude',
+                model: 'claude-sonnet-4-6',
+                language: 'en',
+                workspacePath,
+                sessionId: 'stale-session-id',
+                prompt: 'Cancelled prompt.',
+              }),
+              cardId: 'card-keepalive-retry-gap',
+            },
+            /stale|resumed session|new session/i,
+            { claudeSessionPool: pool },
+          )
+        } finally {
+          pool.dispose()
+        }
+      },
+    )
+
+    const captured = await readCaptureLines(capturePath)
+    assert.deepEqual(
+      captured,
+      [{ kind: 'launch', resumed: true }],
+      'a stopped run must not respawn the pooled CLI or hand it the cancelled prompt',
+    )
+    assert.deepEqual(terminalEvents, [])
+    assert.equal(pool.hasEntry('card-keepalive-retry-gap'), false)
+  } finally {
+    pool.dispose()
     await rm(capturePath, { force: true }).catch(() => {})
   }
 })

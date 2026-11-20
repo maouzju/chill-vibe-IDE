@@ -11,6 +11,7 @@ import {
   finalizeStructuredActivityMessage,
   finalizeStreamedAssistantMessage,
   finishAbandonedAutoCompactRun,
+  finishFailedTurnStart,
   getAgentDoneSoundUrl,
   getAllAgentsDoneSoundUrl,
   getCompletionSoundPlan,
@@ -29,7 +30,7 @@ import {
   isWakeTimerConditionReady,
   pruneIdleWorkspaceWakeTimerTargets,
 } from '../src/components/wake-timer.ts'
-import { BRAINSTORM_TOOL_MODEL, GIT_TOOL_MODEL, STICKYNOTE_TOOL_MODEL } from '../shared/models.ts'
+import { AUTOMATIONBOARD_TOOL_MODEL, BRAINSTORM_TOOL_MODEL, GIT_TOOL_MODEL, STICKYNOTE_TOOL_MODEL } from '../shared/models.ts'
 import type { ChatMessage } from '../shared/schema.ts'
 
 const makeMessage = (role: ChatMessage['role'], content = ''): ChatMessage => ({
@@ -240,6 +241,19 @@ test('willMoveTabAcrossColumns only accepts a move the reducer will really perfo
     'a stale source pane aborts the move, so the run must not be stopped',
   )
   assert.equal(willMoveTabAcrossColumns(state, { ...move, tabId: 'card-gone' }), false)
+  assert.equal(
+    willMoveTabAcrossColumns(
+      {
+        columns: [
+          { ...state.columns[0]!, cards: { 'card-1': { id: 'card-1', model: AUTOMATIONBOARD_TOOL_MODEL } } },
+          state.columns[1]!,
+        ],
+      },
+      move,
+    ),
+    false,
+    'the reducer refuses to move a board card across columns, so nothing must be stopped',
+  )
 })
 
 // 停掉一次运行实际上是**两个**必须成对出现的动作：拆流 + 清队列。closeStream 只做前者，
@@ -365,6 +379,75 @@ test('an abandoned auto-compact run with nothing queued releases the cards waiti
     'dispatchNextQueuedSend',
     'flushReadyWakeTimers',
   ])
+})
+
+// 症状：一轮的启动请求（POST /api/chat、续传、恢复）直接失败后，卡片停在 error，
+//   等它的超管要白等兜底超时才醒，排在后面的延后消息也一直挂着。
+// 根因（2026-11-20 审查）：attachStream 的 onError 终态分支会放行等待者并派发队列，
+//   启动失败的 catch 只置 error、排兜底重试，三件事一件没做。
+test('a failed turn start releases its waiters when nothing is queued', () => {
+  const trace: string[] = []
+
+  finishFailedTurnStart({
+    queuedSendCount: 0,
+    actions: ['mark-error'],
+    buildWaiterReleaseActions: () => ['release-waiters'],
+    commitActions: (actions) => trace.push(`commit:${actions.join('+')}`),
+    dispatchNextQueuedSend: () => trace.push('dispatchNextQueuedSend'),
+    flushReadyWakeTimers: () => trace.push('flushReadyWakeTimers'),
+  })
+
+  assert.deepEqual(trace, [
+    'commit:mark-error+release-waiters',
+    'dispatchNextQueuedSend',
+    'flushReadyWakeTimers',
+  ])
+})
+
+test('a failed turn start hands off to the next queued send instead of waking waiters early', () => {
+  const trace: string[] = []
+
+  finishFailedTurnStart({
+    queuedSendCount: 2,
+    actions: ['mark-error'],
+    buildWaiterReleaseActions: () => ['release-waiters'],
+    commitActions: (actions) => trace.push(`commit:${actions.join('+')}`),
+    dispatchNextQueuedSend: () => trace.push('dispatchNextQueuedSend'),
+    flushReadyWakeTimers: () => trace.push('flushReadyWakeTimers'),
+  })
+
+  assert.deepEqual(trace, ['commit:mark-error', 'dispatchNextQueuedSend'])
+})
+
+// 启动失败的出口：sendMessage / resumeInterruptedSession / recoverLiveStream 的 catch，
+// 以及 recoverLiveStream 的「本地 CLI 不可用」（同样排了兜底重试）。各写各的就是这个缺陷的来源。
+test('every failed turn-start exit in App.tsx goes through the shared settle step', () => {
+  const appSource = readFileSync(new URL('../src/App.tsx', import.meta.url), 'utf8')
+
+  assert.equal(appSource.match(/\bfinishFailedTurnStart\(\{/g)?.length ?? 0, 4)
+})
+
+// 症状：报错卡上输入 /status、或消息被收进待唤醒队列后，兜底续传被撤销清零，
+//   卡片永远停在 error，横幅却还显示「HH:MM 自动续传」。
+// 根因（2026-11-20 审查）：撤销放在 sendMessage 第一行，排在几条不起新回合的提前 return 之前。
+test('sendMessage only retires the fallback retry once it is really starting a new turn', () => {
+  const appSource = readFileSync(new URL('../src/App.tsx', import.meta.url), 'utf8')
+  const start = appSource.indexOf('const sendMessage = async (')
+  const end = appSource.indexOf('sendMessageRef.current = sendMessage', start)
+  assert.ok(start >= 0 && end > start, 'sendMessage should still be found')
+  const body = appSource.slice(start, end)
+
+  const cancelAt = body.indexOf('cancelFallbackRetry(cardId, { resetCount: true })')
+  assert.ok(cancelAt >= 0, 'sendMessage should still retire the fallback retry')
+  for (const earlyReturn of [
+    'handleLocalSlashCommand(columnId, card, prompt)',
+    'enqueueWakeTimerSend(',
+    'shouldDropEmptyContinuationWhileStreaming({',
+  ]) {
+    const at = body.indexOf(earlyReturn)
+    assert.ok(at >= 0, `${earlyReturn} should still be in sendMessage`)
+    assert.ok(cancelAt > at, `the fallback retry must survive the ${earlyReturn} early return`)
+  }
 })
 
 // 放弃自动压缩的出口有两个（压缩回合出错 / 流丢了；压缩请求压根没发出去）。两处各写各的

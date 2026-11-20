@@ -819,19 +819,100 @@ const isAmbiguousClaudeProtocolMarkerLine = (line: string) => {
   )
 }
 
+const LEAKED_CLAUDE_TOOL_XML_PATTERNS = [
+  /(?<!`)<function_calls>\s*<invoke(?:\s+[^>\n]*?)?>[\s\S]*?(?:<\/invoke>\s*<\/function_calls>|$)/gi,
+  /(?<!`)<invoke(?:\s+[^>\n]*?)?>[\s\S]*?(?:<\/invoke>|$)/gi,
+  /(?<!`)<?antml:invoke\s+name="[\s\S]*?(?:<\/invoke[^\n<]*?>|$)/gi,
+  /(?<!`)<parameter\s+[^>\n]*?>[\s\S]*?(?:<\/parameter>|$)/gi,
+]
+
+const MARKDOWN_FENCE_OPEN_PATTERN = /^ {0,3}(`{3,}|~{3,})/
+const MARKDOWN_BLANK_LINE_PATTERN = /\n[ \t\r]*\n/
+
+// [start, end) offsets of fenced code blocks (``` / ~~~, unclosed runs to the
+// end) and inline code spans (matching backtick runs within one paragraph).
+const findMarkdownCodeRanges = (content: string): Array<[number, number]> => {
+  const fenceRanges: Array<[number, number]> = []
+  let fence: { char: string; length: number; start: number } | null = null
+  let offset = 0
+  for (const line of content.split('\n')) {
+    const lineEnd = offset + line.length
+    if (fence) {
+      const close = line.match(/^ {0,3}(`{3,}|~{3,})[ \t\r]*$/)
+      if (close && close[1][0] === fence.char && close[1].length >= fence.length) {
+        fenceRanges.push([fence.start, lineEnd])
+        fence = null
+      }
+    } else {
+      const open = line.match(MARKDOWN_FENCE_OPEN_PATTERN)
+      if (open && !(open[1][0] === '`' && line.slice(open[0].length).includes('`'))) {
+        fence = { char: open[1][0], length: open[1].length, start: offset }
+      }
+    }
+    offset = lineEnd + 1
+  }
+  if (fence) fenceRanges.push([fence.start, content.length])
+
+  const ranges: Array<[number, number]> = []
+  let gapStart = 0
+  const collectInlineSpans = (gapEnd: number) => {
+    const gap = content.slice(gapStart, gapEnd)
+    const runPattern = /`+/g
+    let opener: RegExpExecArray | null
+    while ((opener = runPattern.exec(gap)) !== null) {
+      const closePattern = new RegExp(`(?<!\`)${opener[0]}(?!\`)`, 'g')
+      closePattern.lastIndex = opener.index + opener[0].length
+      const closer = closePattern.exec(gap)
+      if (!closer || MARKDOWN_BLANK_LINE_PATTERN.test(gap.slice(opener.index, closer.index))) continue
+      const spanEnd = closer.index + closer[0].length
+      ranges.push([gapStart + opener.index, gapStart + spanEnd])
+      runPattern.lastIndex = spanEnd
+    }
+  }
+  for (const [start, end] of fenceRanges) {
+    collectInlineSpans(start)
+    ranges.push([start, end])
+    gapStart = end
+  }
+  collectInlineSpans(content.length)
+  return ranges
+}
+
+// 症状：助手在 ```xml 代码块里贴 `<Parameter Name="x"/>`、BPEL `<invoke partnerLink=…>` 时，从该标签到消息末尾全部消失。
+// 根因（2026-11-20 审查）：剥离正则不识别代码块，未闭合时 `$` 吃到整串结尾。
+// 决策：仍在整串上匹配（泄漏的工具 XML 参数里常带反引号/围栏，先切段会把一次泄漏切碎、剥不干净），只跳过起点落在代码里的匹配。
+const stripPatternOutsideCode = (content: string, pattern: RegExp) => {
+  let ranges: Array<[number, number]> | null = null
+  let result = ''
+  let cursor = 0
+  pattern.lastIndex = 0
+  let match: RegExpExecArray | null
+  while ((match = pattern.exec(content)) !== null) {
+    const matchStart = match.index
+    ranges ??= findMarkdownCodeRanges(content)
+    const codeRange = ranges.find(([start, end]) => matchStart >= start && matchStart < end)
+    if (codeRange) {
+      pattern.lastIndex = codeRange[1]
+      continue
+    }
+    result += content.slice(cursor, matchStart)
+    cursor = matchStart + match[0].length
+  }
+  return result + content.slice(cursor)
+}
+
 // Strips tool-call XML that Claude typed as text — including the
 // gateway-mangled variant where the leading `<` was eaten and the internal
 // namespace leaks (`antml:invoke name="...">`), with an intact or mangled
-// (`</invoke">`) close. Backtick-prefixed mentions stay untouched, and the
-// antml form additionally requires ` name="` so prose discussing the marker
-// itself is never swallowed. Shared by the message sanitize chain here and the
-// markdown renderer fallback.
+// (`</invoke">`) close. Backtick-prefixed mentions, fenced code blocks and
+// inline code spans stay untouched, and the antml form additionally requires
+// ` name="` so prose discussing the marker itself is never swallowed. Shared by
+// the message sanitize chain here and the markdown renderer fallback.
 export const stripLeakedClaudeToolXml = (content: string) =>
-  content
-    .replace(/(?<!`)<function_calls>\s*<invoke(?:\s+[^>\n]*?)?>[\s\S]*?(?:<\/invoke>\s*<\/function_calls>|$)/gi, '')
-    .replace(/(?<!`)<invoke(?:\s+[^>\n]*?)?>[\s\S]*?(?:<\/invoke>|$)/gi, '')
-    .replace(/(?<!`)<?antml:invoke\s+name="[\s\S]*?(?:<\/invoke[^\n<]*?>|$)/gi, '')
-    .replace(/(?<!`)<parameter\s+[^>\n]*?>[\s\S]*?(?:<\/parameter>|$)/gi, '')
+  LEAKED_CLAUDE_TOOL_XML_PATTERNS.reduce(
+    (current, pattern) => stripPatternOutsideCode(current, pattern),
+    content,
+  )
 
 // Streaming re-renders call the sanitize/detection chain below on every
 // history message for every delta, and each call line-splits and regex-scans

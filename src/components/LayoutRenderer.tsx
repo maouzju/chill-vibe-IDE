@@ -18,7 +18,7 @@ import type {
   AutomationBoardActions,
   AutomationBoardWorkspaceView,
 } from './automation-board-host'
-import type { GitAgentSessionRequest } from './git-operation-hub'
+import type { GitAgentSessionHandle, GitAgentSessionRequest } from './git-operation-hub'
 import type { SubagentTabSummary } from './subagent-cross-column-navigation'
 import { PaneView } from './PaneView'
 import { SplitResizeHandle } from './SplitResizeHandle'
@@ -126,7 +126,7 @@ type LayoutRendererProps = {
   onManualRecoverStream?: (cardId: string) => Promise<unknown>
   onForkConversation?: (cardId: string, messageId: string) => void
   onOpenFile?: (paneId: string, relativePath: string, options?: { line?: number }) => void
-  onOpenAgentSession?: (paneId: string, request: GitAgentSessionRequest) => boolean
+  onOpenAgentSession?: (paneId: string, request: GitAgentSessionRequest) => boolean | GitAgentSessionHandle
   cardRecoveryStatuses?: ReadonlyMap<string, CardRecoveryStatus>
   queuedSendSummaries?: ReadonlyMap<string, QueuedSendSummary>
   getSubagentChildTabs?: (parentCardId: string) => SubagentTabSummary[]

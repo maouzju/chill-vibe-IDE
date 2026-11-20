@@ -51,45 +51,115 @@ export function getCachedAudioPath(generator: string): string | null {
 
 // ── Download with follow-redirect ──────────────────────────────────────────
 
-function downloadFile(url: string, dest: string): Promise<void> {
+// Socket inactivity budget, not a total-duration cap: a slow but progressing
+// download is never cut off, only a connection that goes silent.
+export const AUDIO_DOWNLOAD_IDLE_TIMEOUT_MS = 30_000
+
+function downloadFile(url: string, dest: string, idleTimeoutMs: number): Promise<void> {
   return new Promise((resolve, reject) => {
     const dir = path.dirname(dest)
     if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true })
 
-    const get = url.startsWith('https') ? https.get : http.get
+    const tmpDest = dest + '.tmp'
+    let settled = false
+    let activeFile: fs.WriteStream | null = null
+    const removeTmp = () => {
+      try { fs.unlinkSync(tmpDest) } catch { /* never created or already gone */ }
+    }
+    // Reject only after the half-written .tmp is closed and removed, so an
+    // immediate retry never races the old handle for the same temp path.
+    const fail = (err: Error) => {
+      if (settled) return
+      settled = true
+      const file = activeFile
+      if (!file) {
+        reject(err)
+        return
+      }
+      const cleanUpAndReject = () => {
+        removeTmp()
+        reject(err)
+      }
+      if (file.closed) {
+        cleanUpAndReject()
+        return
+      }
+      file.once('close', cleanUpAndReject)
+      file.destroy()
+    }
 
+    // 症状：白噪音卡永远「加载中」，同名 generator 重启前再也加载不了；相对 Location / 跨协议跳转直接 uncaughtException。
+    // 根因（2026-11-20 审查）：裸 get 无超时、res 出错/断流没人监听，Promise 永不落定；协议只按首个 URL 选一次，
+    //   重定向地址原样交给 get，在响应回调里同步抛 ERR_INVALID_URL / ERR_INVALID_PROTOCOL，外层 Promise 接不到。
+    // 每一跳都要 new URL(location, 当前地址) 再按协议选 http/https，且 get 必须包在 try 里——别改回「只选一次 get」。
     function doRequest(requestUrl: string, redirectCount: number) {
       if (redirectCount > 5) {
-        reject(new Error('Too many redirects'))
+        fail(new Error('Too many redirects'))
         return
       }
 
-      get(requestUrl, (res) => {
-        if (res.statusCode && res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
-          res.resume() // drain the response to free the socket
-          doRequest(res.headers.location, redirectCount + 1)
-          return
-        }
+      let req: http.ClientRequest
+      try {
+        const get = new URL(requestUrl).protocol === 'http:' ? http.get : https.get
+        req = get(requestUrl, (res) => {
+          if (res.statusCode && res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
+            res.resume() // drain the response to free the socket
+            let nextUrl: string
+            try {
+              nextUrl = new URL(res.headers.location, requestUrl).toString()
+            } catch (err) {
+              fail(err as Error)
+              return
+            }
+            doRequest(nextUrl, redirectCount + 1)
+            return
+          }
 
-        if (!res.statusCode || res.statusCode >= 400) {
-          reject(new Error(`HTTP ${res.statusCode} downloading ${requestUrl}`))
-          return
-        }
+          if (!res.statusCode || res.statusCode >= 400) {
+            res.resume()
+            fail(new Error(`HTTP ${res.statusCode} downloading ${requestUrl}`))
+            return
+          }
 
-        const tmpDest = dest + '.tmp'
-        const file = fs.createWriteStream(tmpDest)
-        res.pipe(file)
-        file.on('finish', () => {
-          file.close(() => {
-            fs.renameSync(tmpDest, dest)
-            resolve()
+          const file = fs.createWriteStream(tmpDest)
+          activeFile = file
+          // res.pipe(file) does not forward response errors or a dropped connection
+          // to the file stream, so neither 'finish' nor 'error' would ever fire.
+          res.on('error', fail)
+          res.on('close', () => {
+            if (!res.complete) fail(new Error(`Connection dropped downloading ${requestUrl}`))
+          })
+          res.pipe(file)
+          file.on('finish', () => {
+            file.close(() => {
+              if (settled) {
+                removeTmp()
+                return
+              }
+              try {
+                fs.renameSync(tmpDest, dest)
+              } catch (err) {
+                fail(err as Error)
+                return
+              }
+              settled = true
+              resolve()
+            })
+          })
+          file.on('error', (err) => {
+            req.destroy()
+            fail(err)
           })
         })
-        file.on('error', (err) => {
-          fs.unlinkSync(tmpDest)
-          reject(err)
-        })
-      }).on('error', reject)
+      } catch (err) {
+        fail(err as Error)
+        return
+      }
+
+      req.setTimeout(idleTimeoutMs, () => {
+        req.destroy(new Error(`Download timed out after ${idleTimeoutMs}ms of inactivity: ${requestUrl}`))
+      })
+      req.on('error', fail)
     }
 
     doRequest(url, 0)
@@ -108,7 +178,11 @@ const downloadInProgress = new Map<string, Promise<string>>()
  * @param generator - the generator name (used as cache key)
  * @param url - optional direct download URL (for dynamically-sourced audio)
  */
-export async function ensureAudioCached(generator: string, url?: string): Promise<string> {
+export async function ensureAudioCached(
+  generator: string,
+  url?: string,
+  options?: { idleTimeoutMs?: number },
+): Promise<string> {
   // Determine download URL: explicit url > legacy AUDIO_SOURCES fallback
   const legacySource = AUDIO_SOURCES[generator]
   const downloadUrl = url || legacySource?.url
@@ -128,7 +202,7 @@ export async function ensureAudioCached(generator: string, url?: string): Promis
   const inProgress = downloadInProgress.get(generator)
   if (inProgress) return inProgress
 
-  const promise = downloadFile(downloadUrl, filePath)
+  const promise = downloadFile(downloadUrl, filePath, options?.idleTimeoutMs ?? AUDIO_DOWNLOAD_IDLE_TIMEOUT_MS)
     .then(() => {
       downloadInProgress.delete(generator)
       return filePath

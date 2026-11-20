@@ -60,7 +60,9 @@ function normalizeRelativePath(value) {
 }
 
 function normalizeForCompare(value) {
-  return String(value ?? '').replaceAll('\\', '/').toLowerCase()
+  // Runs of backslashes collapse to one `/` so an escaped `C:\\Users\\...`
+  // compares like its forward-slash spelling.
+  return String(value ?? '').replace(/\\+/gu, '/').toLowerCase()
 }
 
 export function createReleaseSafetyFinding(pathName, category, line) {
@@ -203,8 +205,11 @@ function scanCredentialPatterns(pathName, text, findings, seen) {
 
 function scanPathPatterns(pathName, text, baselineText, findings, seen) {
   const candidates = []
+  // `(?:\\\\|[\\/])`: JSON / JS string literals escape every backslash of a
+  // Windows path (`C:\\Users\\...`); the 2026-11-20 review found those produced
+  // zero candidates.
   const pathRegexes = [
-    /\b[A-Za-z]:[\\/][^\\/\s"'<>`]+(?:[\\/][^\s"'<>`]*)?/gimu,
+    /\b[A-Za-z]:(?:\\\\|[\\/])[^\\/\s"'<>`]+(?:[\\/][^\s"'<>`]*)?/gimu,
     /\b(?:file:\/\/)?\/(?:home|Users)\/[^\s"'<>]+/gimu,
   ]
   for (const regex of pathRegexes) candidates.push(...findMatches(text, regex))
@@ -314,6 +319,30 @@ function credentialRedactionRegex() {
   ]
 }
 
+function pathRedactionRegexes() {
+  return [
+    /\b[A-Za-z]:[\\/]Users[\\/][^\s"'<>]+/gimu,
+    /\b(?:file:\/\/)?\/(?:home|Users)\/[^\s"'<>]+/gimu,
+    /\b[A-Za-z]:[\\/](?!(?:Windows|Program Files(?: \(x86\))?|ProgramData)[\\/])[^\s"'<>]+/gimu,
+  ]
+}
+
+function repoRootRedactionValues(options) {
+  const repoRoot = String(options.repoRoot ?? '').trim()
+  if (!repoRoot) return []
+  const variants = [repoRoot, repoRoot.replaceAll('\\', '/'), repoRoot.replaceAll('/', '\\')]
+  return uniqueStrings(variants)
+}
+
+function sensitiveRedactionValues(options) {
+  const sensitiveValues = [
+    ...(Array.isArray(options.sensitiveValues) ? options.sensitiveValues : []),
+    ...Object.entries(options.env ?? {}).filter(([key]) => /(?:TOKEN|KEY|SECRET|PASSWORD)/iu.test(key)).map(([, value]) => value).filter((value) => value != null),
+  ]
+  return uniqueStrings(sensitiveValues)
+    .filter((value) => !/^(?:sk-(?:test|codex|claude|old|new|existing|manual)|0+)$/iu.test(value))
+}
+
 /** Redact untrusted command output without touching email addresses. */
 export function redactReleaseLogText(text, options = {}) {
   let output = stripAnsi(text)
@@ -321,28 +350,53 @@ export function redactReleaseLogText(text, options = {}) {
     output = output.replace(regex, '<redacted-credential>')
   }
 
-  const repoRoot = String(options.repoRoot ?? '').trim()
-  if (repoRoot) {
-    const variants = [repoRoot, repoRoot.replaceAll('\\', '/'), repoRoot.replaceAll('/', '\\')]
-    for (const variant of uniqueStrings(variants)) {
-      output = output.replaceAll(variant, '<redacted-path>')
-      output = output.replaceAll(`file://${variant}`, '<redacted-path>')
-    }
+  for (const variant of repoRootRedactionValues(options)) {
+    output = output.replaceAll(variant, '<redacted-path>')
+    output = output.replaceAll(`file://${variant}`, '<redacted-path>')
   }
 
-  output = output.replace(/\b[A-Za-z]:[\\/]Users[\\/][^\s"'<>]+/gimu, '<redacted-path>')
-  output = output.replace(/\b(?:file:\/\/)?\/(?:home|Users)\/[^\s"'<>]+/gimu, '<redacted-path>')
-  output = output.replace(/\b[A-Za-z]:[\\/](?!(?:Windows|Program Files(?: \(x86\))?|ProgramData)[\\/])[^\s"'<>]+/gimu, '<redacted-path>')
+  for (const regex of pathRedactionRegexes()) {
+    output = output.replace(regex, '<redacted-path>')
+  }
 
-  const sensitiveValues = [
-    ...(Array.isArray(options.sensitiveValues) ? options.sensitiveValues : []),
-    ...Object.entries(options.env ?? {}).filter(([key]) => /(?:TOKEN|KEY|SECRET|PASSWORD)/iu.test(key)).map(([, value]) => value).filter((value) => value != null),
-  ]
-  for (const value of uniqueStrings(sensitiveValues)) {
-    if (/^(?:sk-(?:test|codex|claude|old|new|existing|manual)|0+)$/iu.test(value)) continue
+  for (const value of sensitiveRedactionValues(options)) {
     output = output.replaceAll(value, '<redacted-credential>')
   }
   return output
+}
+
+/**
+ * Move a streaming cut back so it never lands inside anything the redactor
+ * would replace.  Spans are found on the whole pending buffer (emit + tail),
+ * so a value straddling the cut is seen as one piece.
+ */
+function redactionSafeCut(text, cut, options) {
+  const spans = []
+  for (const regex of [...credentialRedactionRegex(), ...pathRedactionRegexes()]) {
+    for (const match of findMatches(text, regex)) {
+      spans.push([match.index, match.index + match.value.length])
+    }
+  }
+  // A private-key block whose END line has not arrived yet must not be split.
+  const openKey = /-----BEGIN\s+(?:(?:RSA|EC|DSA|OPENSSH|PGP)\s+)?PRIVATE\s+KEY-----(?![\s\S]*-----END\s)/imu.exec(text)
+  if (openKey) spans.push([openKey.index, text.length])
+  for (const value of [...repoRootRedactionValues(options), ...sensitiveRedactionValues(options)]) {
+    for (let index = text.indexOf(value); index >= 0; index = text.indexOf(value, index + 1)) {
+      spans.push([index, index + value.length])
+    }
+  }
+  let safeCut = cut
+  let moved = true
+  while (moved) {
+    moved = false
+    for (const [start, end] of spans) {
+      if (start < safeCut && safeCut < end) {
+        safeCut = start
+        moved = true
+      }
+    }
+  }
+  return safeCut
 }
 
 export function createReleaseLogRedactor(options = {}) {
@@ -352,7 +406,11 @@ export function createReleaseLogRedactor(options = {}) {
       pending += String(chunk ?? '')
       // Keep a tail so a token split across child-process chunks is still
       // recognized on the next push.  Credentials are much shorter than this.
-      const safeLength = Math.max(0, pending.length - 512)
+      // Symptom (2026-11-20 review): cutting at a fixed `length - 512` could
+      // split `sk-ant-AB|…` itself, and neither half matched a redaction rule.
+      // The cut now backs off to the start of any match spanning it; rejected
+      // "cut at the last whitespace": it splits `Bearer <token>` the same way.
+      const safeLength = redactionSafeCut(pending, Math.max(0, pending.length - 512), options)
       const emit = pending.slice(0, safeLength)
       pending = pending.slice(safeLength)
       return redactReleaseLogText(emit, options)
@@ -418,21 +476,23 @@ async function scanCandidatePath(repoRoot, baseRef, relativePath) {
       break
     }
   }
-  let stats
+  // A missing worktree copy must still fall through to the index scan below:
+  // `git add leak.env && rm leak.env` used to return [] here and pass the
+  // audit with the credential staged (2026-11-20 review).
+  let stats = null
   try {
     stats = await lstat(absolutePath)
   } catch (error) {
-    if (error?.code === 'ENOENT') return []
-    throw error
+    if (error?.code !== 'ENOENT') throw error
   }
   const baseline = readBaselineFile(repoRoot, baseRef, relativePath)
   const findings = []
   const scanContent = (content, options = {}) => {
     findings.push(...auditReleasePath(relativePath, content, { baselineText: baseline, ...options }))
   }
-  if (stats.isSymbolicLink()) {
+  if (stats?.isSymbolicLink()) {
     findings.push(createReleaseSafetyFinding(relativePath, 'unsafe-path'))
-  } else if (stats.isFile()) {
+  } else if (stats?.isFile()) {
     if (stats.size > MAX_SCAN_BYTES) {
       findings.push(createReleaseSafetyFinding(relativePath, 'unscannable-file'))
     } else {

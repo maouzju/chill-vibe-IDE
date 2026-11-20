@@ -843,6 +843,15 @@ export class ChatManager {
       workspaceSnapshot = null
     }
 
+    // 症状：发出消息后在快照阶段点停止，已取消的 prompt 仍被写进常驻 Claude 进程的原生转录，
+    //   随后整个常驻进程连同它的后台任务 / 闹钟被硬杀。
+    // 根因（2026-11-20 审查）：这段 await 里 stream.child 还是空的，stop() 只能直接收尾；
+    //   launcher 却照常 acquire + 写入消息，返回后才在下面被 kill()。
+    // 为什么不能只靠下面那次检查：它在 launcher 返回之后，消息那时已经发给 CLI 了。
+    if (stream.stopRequested || stream.terminal) {
+      return
+    }
+
     const touchedPaths = new Set<string>()
 
     const child = await this.providerLauncher(request, {

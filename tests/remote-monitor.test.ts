@@ -1,4 +1,6 @@
 import assert from 'node:assert/strict'
+import { once } from 'node:events'
+import net from 'node:net'
 import test from 'node:test'
 
 import {
@@ -49,6 +51,7 @@ const createHarness = (options?: {
   dispatchResult?: boolean
   dispatch?: (command: RemoteMonitorCommand) => boolean | Promise<boolean>
   cardHistory?: Record<string, ReturnType<typeof buildRemoteMonitorCardHistory>>
+  onListActiveStreams?: () => void
 }): Harness => {
   const listeners = new Set<(event: ChatStreamTapEvent) => void>()
   const dispatchedCommands: RemoteMonitorCommand[] = []
@@ -60,13 +63,15 @@ const createHarness = (options?: {
       listeners.add(listener)
       return () => listeners.delete(listener)
     },
-    listActiveStreams: () =>
-      (options?.activeStreams ?? []).map((stream) => ({
+    listActiveStreams: () => {
+      options?.onListActiveStreams?.()
+      return (options?.activeStreams ?? []).map((stream) => ({
         streamId: stream.streamId,
         cardId: stream.cardId,
         ...(stream.origin ? { origin: stream.origin } : {}),
         backlog: stream.backlog as ChatStreamTapEvent['envelope'][],
-      })),
+      }))
+    },
     dispatchCommand: (command) => {
       dispatchedCommands.push(command)
       if (options?.dispatch) {
@@ -502,6 +507,96 @@ test('remote monitor SSE tags auto-compact streams with their origin on replay a
       events.filter((entry) => entry.streamId === 's-user').every((entry) => !('origin' in entry)),
       '普通回合的推送不该多出 origin 键',
     )
+  } finally {
+    await harness.manager.stop()
+  }
+})
+
+const waitForClientCount = async (harness: Harness, expected: number, timeoutMs = 5000) => {
+  const deadline = Date.now() + timeoutMs
+  while (harness.manager.getStatus().clientCount !== expected) {
+    if (Date.now() > deadline) {
+      throw new Error(`SSE client count never reached ${expected}`)
+    }
+    await new Promise((resolve) => setTimeout(resolve, 10))
+  }
+}
+
+test('remote monitor drops an SSE client that stopped reading instead of buffering events without bound', async () => {
+  const harness = createHarness()
+  const info = await startOnLoopback(harness)
+  // 模拟手机锁屏 / 浏览器切后台：连接还在，但对端不再读。
+  const socket = net.connect(info.port, '127.0.0.1')
+  socket.pause()
+  socket.on('error', () => undefined)
+
+  try {
+    await once(socket, 'connect')
+    socket.write(`GET /api/events?token=${info.token} HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n`)
+    await waitForClientCount(harness, 1)
+
+    const chunk = 'x'.repeat(256 * 1024)
+    const maxEmittedBytes = 96 * 1024 * 1024
+    let emittedBytes = 0
+    while (harness.manager.getStatus().clientCount > 0 && emittedBytes < maxEmittedBytes) {
+      harness.emitTap({
+        streamId: 's-1',
+        cardId: 'card-1',
+        envelope: { event: 'delta', data: { content: chunk } },
+      })
+      emittedBytes += chunk.length
+      // 让出事件循环，socket 才有机会把能写的写进内核缓冲。
+      await new Promise((resolve) => setImmediate(resolve))
+    }
+
+    assert.equal(
+      harness.manager.getStatus().clientCount,
+      0,
+      `a client that never reads was still attached after ${emittedBytes} bytes were queued for it`,
+    )
+
+    // 断开的是连接本身，不是只把它从名单里划掉：对端恢复读取后必须看到连接已关。
+    const closed = once(socket, 'close')
+    socket.resume()
+    await closed
+  } finally {
+    socket.destroy()
+    await harness.manager.stop()
+  }
+})
+
+test('remote monitor keeps a reading SSE client through a backlog replay far larger than the slow-client cap', async () => {
+  const bigChunk = 'y'.repeat(1024 * 1024)
+  const backlogEvents = 24
+  const harness: Harness = createHarness({
+    // 重放是同步一口气写完的（24MB，远超上限），紧跟着就来一条实时事件：这个客户端一点都不慢，不能被踢。
+    // 注意：Windows 上内核会把这一大口整个收下，待发字节当场归零，所以去掉重放豁免这条测试在
+    // Windows 上照样过；它在「内核只收一部分」的平台（Linux / macOS）上才是红的。
+    onListActiveStreams: () => {
+      process.nextTick(() => {
+        harness.emitTap({
+          streamId: 's-1',
+          cardId: 'card-1',
+          envelope: { event: 'done', data: {} },
+        })
+      })
+    },
+    activeStreams: [
+      {
+        streamId: 's-1',
+        cardId: 'card-1',
+        backlog: Array.from({ length: backlogEvents }, () => ({ event: 'delta', data: { content: bigChunk } })),
+      },
+    ],
+  })
+  const info = await startOnLoopback(harness)
+
+  try {
+    const response = await fetch(`http://127.0.0.1:${info.port}/api/events?token=${info.token}`)
+    const events = await readSseEvents(response, backlogEvents + 1, 20_000)
+    assert.equal(events.length, backlogEvents + 1)
+    assert.equal(events.at(-1)?.event, 'done')
+    assert.equal(harness.manager.getStatus().clientCount, 1)
   } finally {
     await harness.manager.stop()
   }

@@ -272,9 +272,22 @@ const looksLikePrefillRejection = (bodyText: string) => {
     return true
   }
 
-  return (
+  if (
     normalized.includes('latest assistant message cannot be modified') ||
     normalized.includes('must remain as they were in the original response')
+  ) {
+    return true
+  }
+
+  // 症状：开 thinking 的卡正文输出到一半断线，带 prefill 的重试被 400，整轮直接失败。
+  // 根因：2026-11-20 审查。thinking 开着时上游要求最后一条 assistant 消息以 thinking 块开头，
+  //   报错是 "Expected `thinking` or `redacted_thinking`, but found `text`. When `thinking` is enabled,
+  //   a final `assistant` message must start with a thinking block…"，上面的关键词一个都不含。
+  // 不改成「请求体带 thinking 就永远不 prefill」：那会改掉现有的续写行为，这里只是认出这条拒绝再退回无 prefill。
+  const withoutBackticks = normalized.replaceAll('`', '')
+  return (
+    withoutBackticks.includes('must start with a thinking block') ||
+    withoutBackticks.includes('expected thinking or redacted_thinking')
   )
 }
 

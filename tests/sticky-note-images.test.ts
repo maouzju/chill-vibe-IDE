@@ -4,6 +4,7 @@ import { describe, it } from 'node:test'
 import type { ImageAttachment } from '../shared/schema.ts'
 import {
   mergeStickyNoteAttachments,
+  resolveStickyNotePendingFlush,
   shouldPersistStickyNoteDocument,
 } from '../src/components/sticky-note-images.ts'
 
@@ -47,6 +48,27 @@ describe('sticky note image state helpers', () => {
         2,
       ).map((entry) => entry.id),
       ['first.png', 'second.png'],
+    )
+  })
+
+  it('flushes an unsaved debounced edit to the old note before switching notes', () => {
+    // User cleared note A, then opened note B within 500ms: the pending edit must be
+    // written to A right now (never dropped, never left to fire against B).
+    assert.deepEqual(
+      resolveStickyNotePendingFlush({ debouncePending: true, checkpointPending: true, latestContent: '' }),
+      { content: '', checkpoint: true, propagateToCard: true },
+    )
+    assert.deepEqual(
+      resolveStickyNotePendingFlush({ debouncePending: false, checkpointPending: true, latestContent: 'typed' }),
+      { content: 'typed', checkpoint: true, propagateToCard: false },
+    )
+    assert.deepEqual(
+      resolveStickyNotePendingFlush({ debouncePending: true, checkpointPending: false, latestContent: 'typed' }),
+      { content: 'typed', checkpoint: false, propagateToCard: true },
+    )
+    assert.equal(
+      resolveStickyNotePendingFlush({ debouncePending: false, checkpointPending: false, latestContent: 'typed' }),
+      null,
     )
   })
 })

@@ -23,8 +23,31 @@ export type DragStartActiveTabRestoreInput = {
  */
 export const decideDragStartActiveTabRestore = (
   input: DragStartActiveTabRestoreInput,
-): string | null =>
-  decideDragStartGestureUndo(input) ?? decideDragStartBoardReveal(input)
+): string | null => decideDragStartViewSwap(input).activateTabId
+
+export type DragStartViewSwap = {
+  /** dragstart 时要切到的 tab。 */
+  activateTabId: string | null
+  /** dragend 后若拖拽没被吸收，要切回的 tab。 */
+  restoreOnDragEndTabId: string | null
+}
+
+/**
+ * 症状：80ms 兜底误切到被拖的 B、dragstart 撤回到 A 之后，dragend 又把视图切回 B。
+ * 根因（2026-11-20 审查）：调用方用「活动 tab 是否等于被拖 tab」区分两条分支，可撤回分支下
+ *   它也必然成立，于是撤回也被登记成「dragend 要还原」。
+ * 被否决：在 PaneView 里再补条件拼凑 —— 两条分支只有这里分得清，结果必须一起带出去。
+ */
+export const decideDragStartViewSwap = (input: DragStartActiveTabRestoreInput): DragStartViewSwap => {
+  const undoTabId = decideDragStartGestureUndo(input)
+  if (undoTabId) {
+    return { activateTabId: undoTabId, restoreOnDragEndTabId: null }
+  }
+  const boardTabId = decideDragStartBoardReveal(input)
+  return boardTabId
+    ? { activateTabId: boardTabId, restoreOnDragEndTabId: input.draggedTabId }
+    : { activateTabId: null, restoreOnDragEndTabId: null }
+}
 
 const decideDragStartGestureUndo = ({
   draggedTabId,

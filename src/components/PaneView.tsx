@@ -46,7 +46,7 @@ import type {
 } from './automation-board-host'
 import { resolveTabAbsorbTarget } from './pane-tab-board-absorb'
 import { resolvePaneTabCloseTargets } from './pane-tab-close-targets'
-import { decideDragStartActiveTabRestore } from './pane-tab-drag-view'
+import { decideDragStartViewSwap } from './pane-tab-drag-view'
 import { decideMisroutedTabPointerRescue, isPointerWithinRect } from './pane-tab-rescue'
 import { decideTabStripWheelScroll } from './pane-tab-wheel'
 import {
@@ -64,7 +64,7 @@ import {
   CloseIcon,
   PlusIcon,
 } from './Icons'
-import type { GitAgentSessionRequest } from './git-operation-hub'
+import type { GitAgentSessionHandle, GitAgentSessionRequest } from './git-operation-hub'
 import { getPaneTabIcon } from './pane-tab-icon'
 import type { SubagentTabSummary } from './subagent-cross-column-navigation'
 
@@ -183,7 +183,7 @@ type PaneViewProps = {
   onManualRecoverStream?: (cardId: string) => Promise<unknown>
   onForkConversation?: (cardId: string, messageId: string) => void
   onOpenFile?: (paneId: string, relativePath: string, options?: { line?: number }) => void
-  onOpenAgentSession?: (paneId: string, request: GitAgentSessionRequest) => boolean
+  onOpenAgentSession?: (paneId: string, request: GitAgentSessionRequest) => boolean | GitAgentSessionHandle
   cardRecoveryStatuses?: ReadonlyMap<string, CardRecoveryStatus>
   queuedSendSummaries?: ReadonlyMap<string, QueuedSendSummary>
 }
@@ -767,9 +767,9 @@ const PaneViewView = ({
 
     // 拖动期间 pane 必须显示得出落点，否则「把 chat tab 拖进本 pane 的自动化看板
     // 泳道」永远做不到：落点要么被自己这一拖切没了，要么（拖的就是当前视图时）
-    // 从一开始就没露出来。两种判据都在 decideDragStartActiveTabRestore 里。
+    // 从一开始就没露出来。两种判据都在 decideDragStartViewSwap 里。
     const gesture = tabPointerDownRef.current
-    const restoreTabId = decideDragStartActiveTabRestore({
+    const { activateTabId, restoreOnDragEndTabId } = decideDragStartViewSwap({
       draggedTabId: tabId,
       gesture: gesture
         ? { tabId: gesture.tabId, activeTabIdAtPointerDown: gesture.activeTabIdAtPointerDown }
@@ -780,12 +780,11 @@ const PaneViewView = ({
         Boolean(getAutomationBoard(column.cards[paneTabId])),
       ),
     })
-    if (restoreTabId) {
+    if (activateTabId) {
       // 只有「为了亮出看板而让位」需要还原：撤回手势自己造成的切换本来就是回到
       // 用户原本在看的东西，再还原一次等于把它又切走。
-      boardRevealRestoreRef.current =
-        pane.activeTabId === tabId && restoreTabId !== tabId ? tabId : null
-      onSetActiveTab(pane.id, restoreTabId)
+      boardRevealRestoreRef.current = restoreOnDragEndTabId
+      onSetActiveTab(pane.id, activateTabId)
     }
 
     if (gesture && gesture.tabId === tabId) {
@@ -1598,6 +1597,11 @@ const PaneViewView = ({
                     automationBoardActions.setComposeDefaults(column.id, card.id, patch),
                   onSetComposerDraft: (draft) =>
                     automationBoardActions.setComposerDraft(column.id, card.id, draft),
+                  draftAttachments: card.draftAttachments,
+                  onSetDraftAttachments: (attachments) =>
+                    automationBoardActions.patchItemCard(column.id, card.id, {
+                      draftAttachments: attachments,
+                    }),
                 }
               : undefined
           return (

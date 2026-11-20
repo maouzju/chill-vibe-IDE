@@ -51,7 +51,7 @@ test('dev renderer navigation stays on the Vite dev server origin only', () => {
   assert.equal(isAppRendererUrl('http://localhost:5174/', target), false)
   assert.equal(isAppRendererUrl('http://127.0.0.1:5173/', target), false)
   assert.equal(isAppRendererUrl('https://evil.example/', target), false)
-  assert.equal(isAppRendererUrl('file:///C:/evil.html', target), false)
+  assert.equal(isAppRendererUrl('file:///srv/evil.html', target), false)
   assert.equal(isAppRendererUrl('javascript:alert(1)', target), false)
   assert.equal(isAppRendererUrl('not a url', target), false)
 })
@@ -298,6 +298,47 @@ test('Electron quit flow flushes renderer persistence and waits for queued state
   assert.match(preloadBody, /ipcRenderer\.on\('app:flush-state-before-quit'/)
   assert.match(preloadBody, /window\.dispatchEvent\(new Event\('chill-vibe:flush-state-before-quit'\)\)/)
   assert.match(persistenceBody, /window\.addEventListener\('chill-vibe:flush-state-before-quit', handlePageHide\)/)
+})
+
+// 2026-11-20 审查：Windows 关机 / 注销不发 before-quit / will-quit，sentinel 只在 will-quit
+// 写成 clean，守护会在关机途中把应用拉起来。逻辑在 createSessionEndHandler，这里钉接线。
+test('Electron marks a clean exit when Windows ends the session', async () => {
+  const mainBody = await readFile(path.join(process.cwd(), 'electron', 'main.ts'), 'utf8')
+
+  assert.match(
+    mainBody,
+    /const handleWindowsSessionEnd = createSessionEndHandler\(\{[\s\S]+?markCleanExit: \(\) => writeRunSentinel\(true\)/,
+  )
+  assert.match(mainBody, /win\.on\('session-end', handleWindowsSessionEnd\)/)
+  // query-session-end 可能被别的程序否决，关机取消后应用还在跑，那时标 clean 会把真被杀误判成正常退出。
+  assert.doesNotMatch(mainBody, /'query-session-end'/)
+})
+
+// 2026-11-20 审查：whenReady 启动链没有 catch，抛错后进程没有窗口却占着单实例锁。
+test('Electron startup chain exits through handleStartupFailure instead of lingering', async () => {
+  const mainBody = await readFile(path.join(process.cwd(), 'electron', 'main.ts'), 'utf8')
+  const start = mainBody.indexOf('app.whenReady().then(async () => {')
+  assert.ok(start >= 0, 'expected the whenReady startup chain in electron/main.ts')
+  const chain = mainBody.slice(start, mainBody.indexOf("app.on('before-quit'", start))
+
+  assert.match(chain, /\}\)\.catch\(\(error: unknown\) => \{\s*handleStartupFailure\(error, \{/)
+  assert.match(chain, /releaseSingleInstanceLock: \(\) => app\.releaseSingleInstanceLock\(\)/)
+  assert.match(chain, /exit: \(code\) => app\.exit\(code\)/)
+  assert.match(chain, /markCleanExit: \(\) => writeRunSentinel\(true\)/)
+})
+
+// 2026-11-20 审查 + 本机 936 实测：路径写进 .cmd 后被 cmd 按 OEM 代码页读成乱码，
+// 守护从未起来。路径必须走环境块（buildRelaunchGuardLauncher），不能再拼进批处理。
+test('Electron relaunch guard passes paths through the environment, not the batch file', async () => {
+  const mainBody = await readFile(path.join(process.cwd(), 'electron', 'main.ts'), 'utf8')
+  const start = mainBody.indexOf('async function spawnCrashRelaunchGuard(')
+  assert.ok(start >= 0, 'expected spawnCrashRelaunchGuard in electron/main.ts')
+  const body = mainBody.slice(start, mainBody.indexOf('\n}', start))
+
+  assert.match(body, /const launcher = buildRelaunchGuardLauncher\(\{/)
+  assert.match(body, /writeFile\(launcherPath, launcher\.script, 'utf8'\)/)
+  assert.match(body, /env: \{ \.\.\.process\.env, \.\.\.launcher\.env \}/)
+  assert.doesNotMatch(body, /quote\(process\.execPath\)/)
 })
 
 test('Electron update install flushes renderer and queued main-process state before updater exit', async () => {

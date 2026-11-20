@@ -4,6 +4,7 @@ import { describe, it } from 'node:test'
 import { createDefaultAutomationBoardTemplateTrigger } from '../shared/schema.ts'
 import type { AutomationBoard, AutomationBoardTemplate } from '../shared/schema.ts'
 import {
+  createAutomationBoardTriggerChainTracker,
   resolveAutomationBoardTemplateInstanceCardId,
   resolveAutomationBoardTemplateTriggerDecisions,
   type AutomationBoardCardActivity,
@@ -156,6 +157,73 @@ describe('automation board template triggers', () => {
       }),
       [{ templateId: 'tpl-supervisor', fire: true, reason: 'ready' }],
     )
+  })
+
+  // 两个开着触发器的模板互相叫醒：A 的实例答完拉起 B，B 的实例答完又拉起 A，
+  // 无限乒乓烧额度。同一条触发链里已经触发过的模板不能再被触发。
+  it('does not fire a template that already fired earlier in the same trigger chain', () => {
+    const templates = [
+      template({ id: 'tpl-a', builtIn: false }),
+      template({ id: 'tpl-b', builtIn: false }),
+    ]
+    const result = decide({
+      templates,
+      board: board([{ cardId: 'b-run', lane: 'running', templateId: 'tpl-b' }]),
+      settledCardId: 'b-run',
+      cardActivity: activity({ 'b-run': {} }),
+      triggerChainTemplateIds: ['tpl-a', 'tpl-b'],
+    })
+
+    assert.deepEqual(result, [
+      { templateId: 'tpl-a', fire: false, reason: 'chain-cycle' },
+      { templateId: 'tpl-b', fire: false, reason: 'self-triggered' },
+    ])
+  })
+
+  it('stops the A -> B -> A ping-pong after one pass when chains are tracked per instance', () => {
+    const templates = [
+      template({ id: 'tpl-a', builtIn: false }),
+      template({ id: 'tpl-b', builtIn: false }),
+    ]
+    const tracker = createAutomationBoardTriggerChainTracker()
+    const items: ItemSeed[] = [
+      { cardId: 'a-run', lane: 'running', templateId: 'tpl-a' },
+      { cardId: 'b-run', lane: 'running', templateId: 'tpl-b' },
+    ]
+    const instanceOf: Record<string, string> = { 'tpl-a': 'a-run', 'tpl-b': 'b-run' }
+    const fired: string[] = []
+    // 用户点了 A 的「立即运行」：A 是这条链的起点。
+    tracker.recordFired('a-run', [], 'tpl-a')
+    const queue = ['a-run']
+
+    while (queue.length > 0 && fired.length < 20) {
+      const settledCardId = queue.shift()!
+      const chain = tracker.takeForSettledCard(settledCardId)
+      const decisions = decide({
+        templates,
+        board: board(items),
+        settledCardId,
+        cardActivity: activity({ 'a-run': {}, 'b-run': {} }),
+        triggerChainTemplateIds: chain,
+      })
+      for (const decision of decisions.filter((entry) => entry.fire)) {
+        fired.push(decision.templateId)
+        tracker.recordFired(instanceOf[decision.templateId]!, chain, decision.templateId)
+        queue.push(instanceOf[decision.templateId]!)
+      }
+    }
+
+    // A 答完拉起 B（链 [A,B]）；B 答完时 A 已在链里，不再回拉 A。
+    assert.deepEqual(fired, ['tpl-b'])
+    assert.deepEqual(queue, [])
+  })
+
+  it('starts a fresh chain once the instance settles, so a later manual run is not blocked', () => {
+    const tracker = createAutomationBoardTriggerChainTracker()
+    tracker.recordFired('a-run', ['tpl-b'], 'tpl-a')
+
+    assert.deepEqual(tracker.takeForSettledCard('a-run'), ['tpl-b', 'tpl-a'])
+    assert.deepEqual(tracker.takeForSettledCard('a-run'), [])
   })
 
   it('waits while another running item is still streaming', () => {

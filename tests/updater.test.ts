@@ -35,6 +35,53 @@ test('update installation only accepts an explicitly downloaded asset path', () 
   assert.equal(isDownloadedAssetPathAllowed('/tmp/calc.exe', allowed), false)
 })
 
+// 2026-11-20 审查：downloadUpdate 原样接受渲染端给的任意 URL，下载完即进入 installUpdate
+// 的白名单，等于「先下载后安装」任意包。下载入口必须只认官方仓库的 release 资产。
+test('update downloads only accept release assets of the official repository', () => {
+  const official = 'https://github.com/maouzju/chill-vibe-IDE/releases/download/v0.21.30/Chill.Vibe-0.21.30-win.zip'
+  for (const url of [
+    official,
+    'https://github.com/maouzju/chill-vibe-IDE/releases/download/v0.21.30/Chill.Vibe-0.21.30-mac.dmg',
+    // GitHub 的 owner/repo 段不区分大小写，API 返回的大小写不由我们控制。
+    'https://github.com/MAOUZJU/Chill-Vibe-IDE/releases/download/v0.21.30/Chill.Vibe-0.21.30-win.zip',
+    'https://GITHUB.com/maouzju/chill-vibe-IDE/releases/download/v0.21.30/Chill.Vibe-0.21.30-win.zip',
+  ]) {
+    assert.equal(updaterCore.isAllowedUpdateDownloadUrl(url), true, url)
+  }
+
+  for (const url of [
+    'https://evil.example/x-win.zip',
+    official.replace('https:', 'http:'),
+    official.replace('github.com', 'github.com.evil.example'),
+    official.replace('github.com', 'user:pass@github.com'),
+    official.replace('maouzju/', 'other/'),
+    official.replace('chill-vibe-IDE', 'chill-vibe-IDE-fork'),
+    `${official}?x=1`,
+    `${official}#x`,
+    official.replace('/Chill.Vibe', '/nested/Chill.Vibe'),
+    'https://github.com/maouzju/chill-vibe-IDE/releases/download/v0.21.30/',
+    'https://github.com/maouzju/chill-vibe-IDE/releases/download/v0.21.30/../../../../other/repo/releases/download/v1/x.zip',
+    'https://github.com/maouzju/chill-vibe-IDE/archive/refs/tags/v0.21.30.zip',
+    'file:///srv/x-win.zip',
+    'not a url',
+    '',
+  ]) {
+    assert.equal(updaterCore.isAllowedUpdateDownloadUrl(url), false, url)
+  }
+})
+
+// The gate above is only worth anything if downloadUpdate checks it before any
+// fetch or dedup lookup; updater.ts imports Electron, so the wiring is pinned by source.
+test('downloadUpdate rejects a non-release URL before touching the network or the dedup table', async () => {
+  const source = await readFile(new URL('../electron/updater.ts', import.meta.url), 'utf8')
+  const start = source.indexOf('export async function downloadUpdate(')
+  assert.notEqual(start, -1, 'downloadUpdate moved or was renamed.')
+  const body = source.slice(start, source.indexOf('\n}', start))
+  const gateAt = body.search(/if \(!isAllowedUpdateDownloadUrl\(assetUrl\)\) \{\s*throw /)
+  assert.ok(gateAt >= 0, 'downloadUpdate must refuse URLs that are not official release assets.')
+  assert.ok(gateAt < body.indexOf('inFlightDownloads'), 'the URL gate must run before the in-flight dedup lookup.')
+})
+
 test('update installation gate rejects concurrent jobs until the first job is released', () => {
   const gate = createUpdateInstallGate()
   assert.equal(gate.tryAcquire(), true)
@@ -272,6 +319,7 @@ describe('更新检查的官方页面回退', () => {
     assert.deepEqual(calls, [updaterCore.GITHUB_API_URL, `${base}/releases/latest`, `${base}/releases/expanded_assets/v0.20.19`])
     assert.equal(result.latestVersion, '0.20.19')
     assert.equal(result.assetUrl, `https://github.com${zipPath}`)
+    assert.equal(updaterCore.isAllowedUpdateDownloadUrl(result.assetUrl!), true)
     assert.equal(result.htmlUrl, pageUrl)
     assert.equal(result.error, undefined)
   })
@@ -543,9 +591,12 @@ describe('buildWindowsZipReplaceScript', () => {
   test('doubles typographic single quotes inside paths too', () => {
     const script = buildWindowsZipReplaceScript({
       ...baseParams,
-      targetDir: 'D:\\Bob\u2019s\u2018\u201A\u201BDir\\Chill',
+      targetDir: ['D:', 'Bob’s‘‚‛Dir', 'Chill'].join('\\'),
     })
-    assert.equal(script.includes('D:\\Bob\u2019\u2019s\u2018\u2018\u201A\u201A\u201B\u201BDir\\Chill'), true)
+    assert.equal(
+      script.includes(['D:', 'Bob’’s‘‘‚‚‛‛Dir', 'Chill'].join('\\')),
+      true,
+    )
   })
 
   test('uses UTF-8 output encoding so Chinese paths survive the shell roundtrip', () => {

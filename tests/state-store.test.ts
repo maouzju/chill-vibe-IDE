@@ -1104,6 +1104,172 @@ describe('state-store persistence', () => {
     }
   })
 
+  it('compactPersistedCommandOutput leaves its own output alone on the next pass', async () => {
+    const { compactPersistedCommandOutput } = await import('../server/session-history-compaction.ts')
+    const original = `${'A'.repeat(5_000)}${'Z'.repeat(5_000)}`
+
+    const first = compactPersistedCommandOutput(original)
+    assert.equal(first.didCompact, true)
+    assert.match(first.output, /\[Output truncated in saved state\. 9488 characters omitted\.\]/)
+
+    const second = compactPersistedCommandOutput(first.output)
+    assert.equal(second.didCompact, false, 'an already-compacted output must not be reported as needing compaction')
+    assert.equal(second.output, first.output, 'the real omitted-character count must survive a second pass')
+
+    // 只有「头 256 + 标记 + 尾 256」这一种形状算已压缩；别的超长输出照常压。
+    const lookalike = `${'A'.repeat(300)}\n\n[Output truncated in saved state. 12 characters omitted.]\n\n${'Z'.repeat(256)}`
+    assert.equal(compactPersistedCommandOutput(lookalike).didCompact, true)
+  })
+
+  it('compactSessionHistoryMessagesForTransfer leaves an already-trimmed payload alone on the next restore', async () => {
+    const { compactSessionHistoryMessagesForTransfer } = await import('../server/session-history-compaction.ts')
+    const message = {
+      id: 'assistant-edits',
+      role: 'assistant' as const,
+      content: '',
+      createdAt: new Date('2026-11-20T05:00:00.000Z').toISOString(),
+      meta: {
+        provider: 'claude',
+        kind: 'edits',
+        structuredData: JSON.stringify({ kind: 'edits', patch: `${'P'.repeat(30_000)}${'Q'.repeat(30_000)}` }),
+      },
+    }
+
+    const first = compactSessionHistoryMessagesForTransfer([message])
+    assert.match(first[0]?.meta?.structuredData ?? '', /56000 characters omitted/)
+
+    const second = compactSessionHistoryMessagesForTransfer(first)
+    assert.equal(
+      second[0]?.meta?.structuredData,
+      first[0]?.meta?.structuredData,
+      'restoring an already-trimmed transcript again must not rewrite the omitted-character count',
+    )
+  })
+
+  it('loadState does not rewrite state.json when command output was already compacted by a previous save', async () => {
+    const stateFile = path.join(tmpDir, 'state.json')
+    const { saveState, loadState } = await import('../server/state-store.ts')
+    const state = createDefaultState('D:/compaction-idempotent')
+    const firstCard = getFirstCard(state)
+    assert.ok(firstCard, 'expected a default card to exist in the first column')
+    firstCard.messages = [
+      {
+        id: 'assistant-command',
+        role: 'assistant',
+        content: '',
+        createdAt: new Date('2026-11-20T05:00:00.000Z').toISOString(),
+        meta: {
+          provider: 'codex',
+          kind: 'command',
+          itemId: 'item-command',
+          structuredData: JSON.stringify({
+            type: 'activity',
+            itemId: 'item-command',
+            kind: 'command',
+            status: 'completed',
+            command: 'pnpm test',
+            output: `${'A'.repeat(5_000)}${'Z'.repeat(5_000)}`,
+            exitCode: 0,
+          }),
+        },
+      },
+    ]
+
+    await saveState(state)
+    const persisted = await readFile(stateFile, 'utf8')
+    assert.match(persisted, /9488 characters omitted/)
+
+    // Same bytes, new mtime: forces the next loadState past the in-process cache.
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    await writeFile(stateFile, persisted, 'utf8')
+
+    const loaded = await loadState()
+    const output = JSON.parse(getFirstCard(loaded)?.messages[0]?.meta?.structuredData ?? '{}').output as string
+    assert.match(output, /9488 characters omitted/, 'the omitted-character count must not be rewritten on load')
+    assert.equal(
+      await readFile(stateFile, 'utf8'),
+      persisted,
+      'a read of already-compacted state must stay read-only instead of running a full save',
+    )
+  })
+
+  it('loadState compaction write-back never overwrites a newer save that landed while it was loading', async () => {
+    const stateFile = path.join(tmpDir, 'state.json')
+    const { saveState, loadState } = await import('../server/state-store.ts')
+
+    // 盘上是一份旧的大存档，里面有一条没压缩过的命令输出 → loadState 会走压缩回写。
+    const staleState = createDefaultState('D:/compaction-writeback-race')
+    const staleCard = getFirstCard(staleState)
+    assert.ok(staleCard, 'expected a default card to exist in the first column')
+    staleCard.messages = [
+      ...Array.from({ length: 300 }, (_, index) => ({
+        id: `stale-${index}`,
+        role: index % 2 === 0 ? ('user' as const) : ('assistant' as const),
+        content: `stale message ${index} ${'s'.repeat(20_000)}`,
+        createdAt: new Date(Date.UTC(2026, 10, 20, 0, 0, index)).toISOString(),
+      })),
+      {
+        id: 'stale-command',
+        role: 'assistant' as const,
+        content: '',
+        createdAt: new Date(Date.UTC(2026, 10, 20, 1, 0, 0)).toISOString(),
+        meta: {
+          provider: 'codex',
+          kind: 'command',
+          itemId: 'item-stale-command',
+          structuredData: JSON.stringify({
+            type: 'activity',
+            itemId: 'item-stale-command',
+            kind: 'command',
+            status: 'completed',
+            command: 'pnpm test',
+            output: `${'A'.repeat(5_000)}${'Z'.repeat(5_000)}`,
+            exitCode: 0,
+          }),
+        },
+      },
+    ]
+    await writeFile(stateFile, JSON.stringify(staleState, null, 2), 'utf8')
+
+    // 渲染端此刻保存的新状态：同一张卡多了一条刚发出去的消息。
+    const freshState = createDefaultState('D:/compaction-writeback-race')
+    const freshCard = getFirstCard(freshState)
+    assert.ok(freshCard, 'expected a default card to exist in the first column')
+    freshCard.messages = [
+      {
+        id: 'fresh-user-message',
+        role: 'user',
+        content: 'sent while loadState was compacting',
+        createdAt: new Date(Date.UTC(2026, 10, 20, 2, 0, 0)).toISOString(),
+      },
+    ]
+
+    const loading = loadState()
+    const saving = saveState(freshState)
+    const [loaded] = await Promise.all([loading, saving])
+
+    assert.match(
+      await readFile(stateFile, 'utf8'),
+      /sent while loadState was compacting/,
+      'the compaction write-back put the stale disk image back over the newer save',
+    )
+    assert.equal(
+      getFirstCard(loaded)?.messages.at(-1)?.content,
+      'sent while loadState was compacting',
+      'loadState must hand back the newer state instead of the image it read before the save landed',
+    )
+    assert.equal(
+      getFirstCard(await loadState())?.messages.at(-1)?.content,
+      'sent while loadState was compacting',
+      'the in-process cache must not be left pointing at the stale image',
+    )
+
+    const leftovers = (await readdir(tmpDir)).filter(
+      (fileName) => fileName.startsWith('state.tmp.') || fileName === 'state.wal',
+    )
+    assert.deepEqual(leftovers, [], 'no temp or WAL file may be left behind by the two writers')
+  })
+
   it('saveState creates backup when overwriting real content with empty state', async () => {
     const { saveState } = await import('../server/state-store.ts')
 

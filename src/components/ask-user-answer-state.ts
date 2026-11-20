@@ -159,3 +159,41 @@ export const getAskUserAnsweredOption = (
 ) =>
   askUserAnswers[getAskUserAnswerKey(askUserMessage)] ??
   getLatestUserAnswerAfterAskUserMessage(messages, askUserMessage)
+
+// 选择题卡在 window 上监听 Enter / 方向键（点选项后焦点在隐藏 radio 上，也可能没有焦点）。
+// 焦点在可输入文字的控件里时这些键属于那个控件：输入框按 Enter 发消息不能连带提交选项。
+// radio / checkbox / button 不算可编辑，否则「点选项再按 Enter」就失效了。
+const NON_TEXT_INPUT_TYPES = new Set(['radio', 'checkbox', 'button', 'submit', 'reset', 'range', 'color', 'file', 'image'])
+
+export const isAskUserKeyTargetEditable = (
+  target: { tagName?: string; type?: string; isContentEditable?: boolean } | null | undefined,
+): boolean => {
+  if (!target) return false
+  if (target.isContentEditable === true) return true
+  const tagName = (target.tagName ?? '').toUpperCase()
+  if (tagName === 'TEXTAREA' || tagName === 'SELECT') return true
+  if (tagName === 'INPUT') return !NON_TEXT_INPUT_TYPES.has((target.type || 'text').toLowerCase())
+  return false
+}
+
+// 按键落在可编辑控件里时选择题卡不响应；唯一例外是本卡自己的「其他」单行输入框里按 Enter 仍然提交
+// （原有用法），输入法上屏的那次 Enter 不算，方向键留给输入框移动光标。
+export const shouldAskUserIgnoreKey = (input: {
+  key: string
+  isComposing: boolean
+  targetEditable: boolean
+  targetIsOwnOtherInput: boolean
+}): boolean => {
+  if (!input.targetEditable) return false
+  return !(input.targetIsOwnOtherInput && input.key === 'Enter' && !input.isComposing)
+}
+
+// 同屏多张未答选择题卡只让一张响应：焦点所在的那张优先，否则取最后一张可见的未答卡。
+// 非活动 tab 的卡仍挂在 DOM 里（hidden），不参与。
+export const pickAskUserKeyboardOwnerIndex = (
+  cards: ReadonlyArray<{ answered: boolean; hidden: boolean; containsTarget: boolean }>,
+): number => {
+  const focused = cards.findIndex((card) => !card.answered && card.containsTarget)
+  if (focused >= 0) return focused
+  return cards.findLastIndex((card) => !card.answered && !card.hidden)
+}

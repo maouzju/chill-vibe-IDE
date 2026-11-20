@@ -211,15 +211,31 @@ export class ClaudeSessionPool {
     //   正在收尾中断的旧进程并立刻 --resume 同一 session，两个 CLI 并发写同一份转录，
     //   留下空 content 的消息，API 回 400「system content must contain at least one block」。
     //   同一 session 的中断收尾必须先走完，签名不符的换进程放到收尾之后。
+    let drained: PoolEntry | undefined
     if (existing && !existing.closed && existing.state === 'turn-active' &&
       existing.interruptRequested &&
       requestedSessionId !== null && existing.sessionId === requestedSessionId) {
+      drained = existing
       await new Promise<void>((resolve) => existing!.interruptDrainWaiters.add(resolve))
       existing = this.entries.get(options.key)
     }
 
     if (this.disposed || this.acquireGenerations.get(options.key) !== generation) {
       return null
+    }
+
+    // 症状：停止后 30s 内 CLI 没回收尾、用户已发下一条 → 转录被并发写坏（同上 400），或修档的 rename
+    //   冲掉旧进程最后写入的行。
+    // 根因（2026-11-20 审查）：等待也会被兜底计时器的 removeEntry(kill) 解除，那时 entry 已出池、
+    //   进程只是收到了 kill 还没 close；下面的「等旧进程退出」只认仍在池里的 existing，被整段跳过。
+    // 为什么不在 removeEntry 里等 close 再放行等待者：release / dispose / closeAll 也走它，必须同步返回。
+    //   这里复用 waitForChildClose，上界仍是 respawnCloseWaitMs。
+    if (drained && existing !== drained && !drained.closed) {
+      await this.waitForChildClose(drained)
+      if (this.disposed || this.acquireGenerations.get(options.key) !== generation) {
+        return null
+      }
+      existing = this.entries.get(options.key)
     }
 
     if (existing) {

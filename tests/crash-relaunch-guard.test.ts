@@ -1,7 +1,12 @@
 import assert from 'node:assert/strict'
+import { spawn } from 'node:child_process'
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import path from 'node:path'
 import test from 'node:test'
 
 import {
+  buildRelaunchGuardLauncher,
   decideGuardAction,
   guardPipePath,
   buildRelaunchEnv,
@@ -127,3 +132,95 @@ test('building the relaunch env leaves the guard own environment untouched', () 
   buildRelaunchEnv(source)
   assert.equal(source.ELECTRON_RUN_AS_NODE, '1')
 })
+
+// 2026-11-20 审查 + 本机（ACP/OEMCP=936）实测：路径以 UTF-8 写进 relaunch-guard.cmd，
+// 由 detached cmd 解析时按 936 解码成乱码，守护从未起来；批处理首行加 chcp 65001
+// 也无效（detached 的 cmd 没有控制台）。所以路径必须完全不进批处理文件。
+const launcherPaths = (root: string) => ({
+  execPath: path.join(root, 'Chill Vibe.exe'),
+  guardScript: path.join(root, 'resources', 'crash-relaunch-guard-main.mjs'),
+  pipePath: '\\\\.\\pipe\\chill-vibe-relaunch-5960',
+  sentinelPath: path.join(root, 'data', 'run-sentinel.json'),
+  historyPath: path.join(root, 'data', 'relaunch-history.json'),
+})
+
+for (const root of [['D:', '中文 目录', 'Chill Vibe IDE'].join('\\'), 'C:\\Program Files\\Chill Vibe IDE']) {
+  test(`the relaunch guard launcher script stays ASCII and carries paths out of band (${root})`, () => {
+    const paths = launcherPaths(root)
+    const launcher = buildRelaunchGuardLauncher(paths)
+
+    // eslint-disable-next-line no-control-regex -- the whole file must be 7-bit ASCII
+    assert.match(launcher.script, /^[\x00-\x7f]*$/)
+    for (const value of Object.values(paths)) {
+      assert.equal(launcher.script.includes(value), false)
+      assert.ok(Object.values(launcher.env).includes(value))
+    }
+    assert.match(launcher.script, /^@echo off\r\nset ELECTRON_RUN_AS_NODE=1\r\n/)
+    assert.match(launcher.script, /start "" \/b /)
+  })
+}
+
+const runLauncherForReal = process.platform === 'win32' ? test : test.skip
+
+for (const dirName of ['中文 下载', 'plain dir']) {
+  runLauncherForReal(`the relaunch guard launcher really starts the guard from a "${dirName}" install`, async () => {
+    const root = await mkdtemp(path.join(tmpdir(), 'cv-guard-launcher-'))
+    try {
+      const installDir = path.join(root, dirName)
+      await mkdir(installDir, { recursive: true })
+      const probeScript = path.join(installDir, 'probe-guard.mjs')
+      const markerPath = path.join(installDir, 'marker.json')
+      // The probe stands in for crash-relaunch-guard-main.mjs: it records exactly
+      // what the guard would have received.
+      await writeFile(
+        probeScript,
+        [
+          "import { writeFileSync } from 'node:fs'",
+          'const leaked = Object.keys(process.env).filter((key) => key.startsWith("CHILL_VIBE_GUARD_LAUNCH_"))',
+          `writeFileSync(${JSON.stringify(markerPath)}, JSON.stringify({ argv: process.argv.slice(2), runAsNode: process.env.ELECTRON_RUN_AS_NODE ?? null, leaked }))`,
+        ].join('\n'),
+      )
+      const paths = {
+        execPath: process.execPath,
+        guardScript: probeScript,
+        pipePath: '\\\\.\\pipe\\chill-vibe-relaunch-5960',
+        sentinelPath: path.join(installDir, 'run-sentinel.json'),
+        historyPath: path.join(installDir, 'relaunch-history.json'),
+      }
+      const launcher = buildRelaunchGuardLauncher(paths)
+      const launcherPath = path.join(installDir, 'relaunch-guard.cmd')
+      await writeFile(launcherPath, launcher.script, 'utf8')
+
+      // Same spawn shape as electron/main.ts spawnCrashRelaunchGuard.
+      const child = spawn(process.env.COMSPEC ?? 'cmd.exe', ['/c', launcherPath], {
+        detached: true,
+        stdio: 'ignore',
+        windowsHide: true,
+        env: { ...process.env, ...launcher.env },
+      })
+      child.unref()
+
+      let marker: string | null = null
+      for (let attempt = 0; attempt < 100 && marker === null; attempt += 1) {
+        await new Promise((resolve) => setTimeout(resolve, 100))
+        marker = await readFile(markerPath, 'utf8').catch(() => null)
+      }
+      assert.ok(marker, 'the guard process never started')
+      const recorded = JSON.parse(marker) as { argv: string[]; runAsNode: string | null; leaked: string[] }
+      assert.deepEqual(recorded.argv, [
+        '--pipe',
+        paths.pipePath,
+        '--sentinel',
+        paths.sentinelPath,
+        '--history',
+        paths.historyPath,
+        '--exec',
+        paths.execPath,
+      ])
+      assert.equal(recorded.runAsNode, '1')
+      assert.deepEqual(recorded.leaked, [])
+    } finally {
+      await rm(root, { recursive: true, force: true }).catch(() => undefined)
+    }
+  })
+}

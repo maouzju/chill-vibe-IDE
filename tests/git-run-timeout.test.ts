@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { EventEmitter } from 'node:events'
 import { PassThrough } from 'node:stream'
 import type { ChildProcess } from 'node:child_process'
-import { mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { spawn } from 'node:child_process'
 import os from 'node:os'
 import path from 'node:path'
@@ -402,5 +402,73 @@ test('the workspace diff hard timeout aborts the underlying git work', guardedTe
   await waitFor(
     () => observedSignal?.aborted === true,
     'the hard timeout must abort the diff, not merely stop awaiting it',
+  )
+})
+
+// 症状 — 留着 index.lock 时在 Git 卡上暂存上千个文件，后端 uncaughtException 上报 fatal，
+//   用户看不到正常的 index.lock 报错。根因（2026-11-20 审查）：git 读 stdin 前就退出，
+//   写 pathspec 得到的 EPIPE 只以 stdin 的异步 'error' 事件出现，而 stdin 上没人监听。
+const createEpipeStdinGitChild = () => {
+  const process = new EventEmitter()
+  const stderr = new PassThrough()
+  const stdin = Object.assign(new EventEmitter(), {
+    end: () => {
+      setImmediate(() => {
+        stdin.emit('error', Object.assign(new Error('write EPIPE'), { code: 'EPIPE' }))
+        stderr.write('fatal: Unable to create \'.git/index.lock\': File exists.\n')
+        setImmediate(() => process.emit('close', 128))
+      })
+    },
+  })
+
+  return Object.assign(process, {
+    stdout: new PassThrough(),
+    stderr,
+    stdin,
+    kill: () => true,
+  }) satisfies SupervisedGitChild
+}
+
+test('an EPIPE on the pathspec stdin surfaces as the normal git failure, not an uncaught exception', guardedTest, async () => {
+  const child = createEpipeStdinGitChild()
+
+  await assert.rejects(
+    superviseGitChild(child, ['add', '--pathspec-from-file=-'], { stdin: 'a.txt\0', timeoutMs: 5_000 }),
+    /index\.lock/,
+    'the exit code and stderr must flow through the close branch as usual',
+  )
+})
+
+// 症状 — 工作区里有未被 ignore 的嵌套仓库（clone 的参考仓库 / agent 建的 worktree）时，每轮
+//   发消息前的基线快照都是 null，兜底改动卡永远不出现；回合中途 clone 进来则收尾 diff 整体失败。
+// 根因（2026-11-20 审查）：status 输出 `?? nested/` 目录条目，stat 能过、readFile 抛 EISDIR。
+test('an untracked nested repository does not break the baseline snapshot or the end-of-turn diff', guardedRepoTest, async (t) => {
+  const repoPath = await createTempRepo()
+  t.after(async () => {
+    await removeTempTree(repoPath)
+  })
+
+  const nestedPath = path.join(repoPath, 'reference-clone')
+  await mkdir(nestedPath)
+  await runGitCli(nestedPath, ['init', '--initial-branch=main'])
+  await writeFile(path.join(nestedPath, 'inner.txt'), 'inner\n')
+  await writeFile(path.join(repoPath, 'tracked.txt'), 'dirty before the turn\n')
+
+  const snapshot = await captureWorkspaceSnapshot(repoPath, { timeoutMs: 120_000 })
+  assert.ok(snapshot, 'a nested repository must not turn the whole baseline into null')
+  assert.equal(snapshot.files['tracked.txt']?.content, 'dirty before the turn\n')
+
+  // An agent clones another repository into the workspace mid-turn, and also edits a file.
+  const lateClone = path.join(repoPath, 'cloned-mid-turn')
+  await mkdir(lateClone)
+  await runGitCli(lateClone, ['init', '--initial-branch=main'])
+  await writeFile(path.join(lateClone, 'inner.txt'), 'inner\n')
+  await writeFile(path.join(repoPath, 'tracked.txt'), 'edited by the agent\n')
+
+  const diff = await diffWorkspaceSnapshot(snapshot, repoPath)
+  assert.deepEqual(
+    diff.files.map((file) => file.path),
+    ['tracked.txt'],
+    'the real edit must survive; nested repositories are skipped, not fatal',
   )
 })

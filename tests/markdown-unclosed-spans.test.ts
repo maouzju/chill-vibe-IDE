@@ -181,6 +181,49 @@ test('renderMarkdown keeps backtick-prefixed Claude XML tag mentions as prose', 
   assert.match(markup, /这里只是在说标签/)
 })
 
+test('stripLeakedClaudeToolXml keeps <invoke>/<Parameter> inside fenced code blocks and everything after them', () => {
+  const content = [
+    '下面是 MSBuild 片段：',
+    '',
+    '```xml',
+    '<Parameter Name="x" ParameterType="System.String" />',
+    '<invoke partnerLink="shipping" operation="ship" />',
+    '```',
+    '',
+    '~~~',
+    '<parameter name="command">ls',
+    '~~~',
+    '',
+    '后面的说明必须还在。',
+  ].join('\n')
+
+  assert.equal(stripLeakedClaudeToolXmlFromMarkdown(content), content)
+  const crlfContent = content.replace(/\n/g, '\r\n')
+  assert.equal(stripLeakedClaudeToolXmlFromMarkdown(crlfContent), crlfContent)
+})
+
+test('stripLeakedClaudeToolXml keeps inline code spans that contain tool-like tags', () => {
+  const content = '用 `foo <invoke partnerLink="a">` 调用，后面还有正文。'
+  assert.equal(stripLeakedClaudeToolXmlFromMarkdown(content), content)
+})
+
+test('stripLeakedClaudeToolXml still strips leaked tool XML outside code blocks around a fence', () => {
+  const content = [
+    '```js',
+    'const a = 1',
+    '```',
+    '现在改发射音调用点',
+    '<invoke name="Grep">',
+    '<parameter name="pattern">`foo`</parameter>',
+    '</invoke>',
+  ].join('\n')
+
+  assert.equal(
+    stripLeakedClaudeToolXmlFromMarkdown(content),
+    ['```js', 'const a = 1', '```', '现在改发射音调用点', ''].join('\n'),
+  )
+})
+
 test('closeUnclosedMarkdownSpans closes a fence right before the prose that follows it', () => {
   // Reproduces the screenshot regression: an unterminated ```bash fence is
   // followed by a blank line and several real paragraphs. Appending the closing

@@ -451,6 +451,22 @@ describe('setAutomationBoardComposeDefaults', () => {
     assert.equal(getBoard(next).composeDefaults?.reasoningEffort, 'low')
   })
 
+  // 界面在 composeDefaults 未落盘时显示 settings.defaultAdminAccess；reducer 兜底
+  // 写死 false 会让第一次只改模型就把用户看到的超管勾选悄悄落盘成 false。
+  it('seeds adminAccess from settings.defaultAdminAccess, matching what the composer shows', () => {
+    const state = buildState()
+    state.settings = { ...state.settings, defaultAdminAccess: true }
+
+    const next = ideReducer(state, {
+      type: 'setAutomationBoardComposeDefaults',
+      columnId: 'column-1',
+      boardCardId: 'board-1',
+      patch: { provider: 'claude', model: 'claude-opus-4-8' },
+    })
+
+    assert.equal(getBoard(next).composeDefaults?.adminAccess, true)
+  })
+
   it('leaves the items untouched so no lane re-renders on a settings change', () => {
     const state = buildState()
     const itemsBefore = getBoard(state).items
@@ -880,6 +896,55 @@ describe('moveTabToAutomationBoard — atomic absorb', () => {
     })
 
     assert.deepEqual(next.sessionHistory, [])
+  })
+})
+
+describe('moveTab — board card across columns', () => {
+  const twoColumnState = (): AppState => {
+    const state = buildState()
+    state.columns.push({
+      ...state.columns[0]!,
+      id: 'column-2',
+      workspacePath: 'D:/repo/two',
+      layout: pane('pane-2', ['chat-2']),
+      cards: { 'chat-2': itemCard('chat-2') },
+    })
+    return state
+  }
+
+  // 项卡只在 column.cards 里、不进 pane.tabs；只搬看板卡会让项卡在源列成游离卡，
+  // 目标列看板三道全空，跑着的项卡还在后台写源工作区。
+  it('refuses to move a board card to another column so its items are not orphaned', () => {
+    const state = twoColumnState()
+
+    const next = ideReducer(state, {
+      type: 'moveTab',
+      sourceColumnId: 'column-1',
+      sourcePaneId: 'pane-1',
+      tabId: 'board-1',
+      targetColumnId: 'column-2',
+      targetPaneId: 'pane-2',
+      index: 0,
+    })
+
+    assert.equal(next, state)
+  })
+
+  it('still moves an ordinary chat card across columns', () => {
+    const state = twoColumnState()
+
+    const next = ideReducer(state, {
+      type: 'moveTab',
+      sourceColumnId: 'column-1',
+      sourcePaneId: 'pane-1',
+      tabId: 'chat-1',
+      targetColumnId: 'column-2',
+      targetPaneId: 'pane-2',
+      index: 0,
+    })
+
+    assert.equal(next.columns[0]!.cards['chat-1'], undefined)
+    assert.ok(next.columns[1]!.cards['chat-1'])
   })
 })
 

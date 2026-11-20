@@ -39,7 +39,10 @@ export type GitRunOptions = {
 export type SupervisedGitChild = {
   stdout: { on: (event: 'data', listener: (chunk: Buffer) => void) => unknown } | null
   stderr: { on: (event: 'data', listener: (chunk: Buffer) => void) => unknown } | null
-  stdin: { end: (data: string | Buffer) => void } | null
+  stdin: {
+    end: (data: string | Buffer) => void
+    on: (event: 'error', listener: (error: Error) => void) => unknown
+  } | null
   on: {
     (event: 'error', listener: (error: Error) => void): unknown
     (event: 'close', listener: (code: number | null) => void): unknown
@@ -489,6 +492,10 @@ export const superviseGitChild = async (
       settle(() => reject(error))
     })
     if (options?.stdin !== undefined && child.stdin) {
+      // 症状：留着 index.lock 时暂存上千文件 → 后端 uncaughtException 报 fatal（2026-11-20 审查）。
+      // 根因：git 读 stdin 前就退出时 EPIPE 只以 stdin 的异步 'error' 出现（同 claude-session-pool 的实证）。
+      // 吞掉即可：真正的失败由退出码 + stderr 走 close 分支；别改成 reject，那会抢在带 stderr 的报错之前。
+      child.stdin.on('error', () => {})
       child.stdin.end(options.stdin)
     }
     child.on('close', (code) => {
@@ -880,10 +887,10 @@ const readWorkspaceFile = async (repoRoot: string, relativePath: string) => {
 const readWorkspaceFileStat = async (repoRoot: string, relativePath: string) => {
   try {
     const stats = await stat(path.join(repoRoot, relativePath))
-    return { size: stats.size, mtimeMs: stats.mtimeMs }
+    return { size: stats.size, mtimeMs: stats.mtimeMs, isDirectory: stats.isDirectory() }
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
-      return { size: 0, mtimeMs: 0 }
+      return { size: 0, mtimeMs: 0, isDirectory: false }
     }
 
     throw error
@@ -1902,7 +1909,14 @@ const captureWorkspaceSnapshotWithin = async (
       break
     }
 
-    const fileSize = await readWorkspaceFileSize(status.repoRoot, change.path)
+    // 症状：工作区里有未 ignore 的嵌套仓库时每轮快照都是 null，兜底改动卡永远不出（2026-11-20 审查）。
+    // 根因：status 给出 `?? nested/` 这类目录条目，stat 能过、readFile 抛 EISDIR，整份快照被 catch 成 null。
+    // 目录不可快照，跳过它而不是让 readWorkspaceFile 把 EISDIR 当 null——那会把目录记成"已删除"的基线。
+    const fileStat = await readWorkspaceFileStat(status.repoRoot, change.path)
+    if (fileStat.isDirectory) {
+      continue
+    }
+    const fileSize = fileStat.size
     if (
       fileSize > workspaceSnapshotMaxFileBytes ||
       retainedBytes + fileSize > workspaceSnapshotMaxTotalBytes
@@ -2085,7 +2099,12 @@ export const diffWorkspaceSnapshot = async (
       continue
     }
 
-    const currentFileSize = await readWorkspaceFileSize(snapshot.repoRoot, change.path)
+    // 与快照同理：回合中途 clone 进来的嵌套仓库是目录条目，readFile 会 EISDIR 让整次 diff 丢光。
+    const currentFileStat = await readWorkspaceFileStat(snapshot.repoRoot, change.path)
+    if (currentFileStat.isDirectory) {
+      continue
+    }
+    const currentFileSize = currentFileStat.size
     if (currentFileSize > maxFileBytes) {
       editedFiles.push(createOmittedEditedFile(change, 'file-too-large'))
       continue
@@ -2152,7 +2171,11 @@ export const diffWorkspaceSnapshot = async (
       continue
     }
 
-    const currentFileSize = await readWorkspaceFileSize(snapshot.repoRoot, snapshotFile.path)
+    const currentFileStat = await readWorkspaceFileStat(snapshot.repoRoot, snapshotFile.path)
+    if (currentFileStat.isDirectory) {
+      continue
+    }
+    const currentFileSize = currentFileStat.size
     if (currentFileSize > maxFileBytes) {
       editedFiles.push(createOmittedEditedFile({
         path: snapshotFile.path,

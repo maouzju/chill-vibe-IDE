@@ -3,6 +3,8 @@ import test from 'node:test'
 
 import {
   classifyPreviousRun,
+  createSessionEndHandler,
+  handleStartupFailure,
   parseRunSentinel,
   serializeRunSentinel,
   shouldRelaunch,
@@ -122,4 +124,107 @@ test('a truncated sentinel is treated as absent, not as a hard kill', () => {
   const partial = serializeRunSentinel(sentinel()).slice(0, 20)
   assert.equal(parseRunSentinel(partial), null)
   assert.equal(classifyPreviousRun(parseRunSentinel(partial), { alive: false }), 'none')
+})
+
+// 2026-11-20 审查：Windows 关机 / 注销 / 重启不发 before-quit / will-quit，sentinel 停在
+// cleanExit=false —— 守护会在关机途中把应用拉起来，下次启动还误记一条「被外部强杀」。
+test('session end marks a clean exit first, then only fires a flush without waiting on it', () => {
+  const calls: string[] = []
+  const handleSessionEnd = createSessionEndHandler({
+    markCleanExit: () => calls.push('mark'),
+    requestFlush: () => {
+      calls.push('flush')
+      // A flush that never settles must not hold the handler (and so the shutdown).
+      return new Promise<void>(() => undefined)
+    },
+  })
+
+  assert.equal(handleSessionEnd(), undefined)
+  assert.deepEqual(calls, ['mark', 'flush'])
+})
+
+test('session end runs once even though every window reports it', () => {
+  let marks = 0
+  const handleSessionEnd = createSessionEndHandler({
+    markCleanExit: () => {
+      marks += 1
+    },
+    requestFlush: () => undefined,
+  })
+
+  handleSessionEnd()
+  handleSessionEnd()
+  assert.equal(marks, 1)
+})
+
+test('session end swallows step failures so the other step still runs', () => {
+  const calls: string[] = []
+  const handleSessionEnd = createSessionEndHandler({
+    markCleanExit: () => {
+      calls.push('mark')
+      throw new Error('disk gone')
+    },
+    requestFlush: () => {
+      calls.push('flush')
+      throw new Error('backend gone')
+    },
+  })
+
+  assert.doesNotThrow(() => handleSessionEnd())
+  assert.deepEqual(calls, ['mark', 'flush'])
+})
+
+test('a rejected best-effort flush during session end does not become an unhandled rejection', async () => {
+  const handleSessionEnd = createSessionEndHandler({
+    markCleanExit: () => undefined,
+    requestFlush: () => Promise.reject(new Error('backend gone')),
+  })
+  const unhandled: unknown[] = []
+  const onUnhandled = (reason: unknown) => unhandled.push(reason)
+  process.on('unhandledRejection', onUnhandled)
+  try {
+    handleSessionEnd()
+    await new Promise((resolve) => setTimeout(resolve, 20))
+  } finally {
+    process.off('unhandledRejection', onUnhandled)
+  }
+  assert.deepEqual(unhandled, [])
+})
+
+// 2026-11-20 审查：whenReady 启动链没有 catch，任一步抛错（如清用户数据时 rm 撞上 EBUSY）
+// 进程就成了没有窗口、却占着单实例锁的僵尸；再点图标只会唤起一个没有 IPC handler 的空窗口。
+test('a startup failure logs, stands the guard down, releases the lock and exits non-zero', () => {
+  const calls: string[] = []
+  const failure = new Error('EBUSY: resource busy or locked')
+  handleStartupFailure(failure, {
+    logError: (error) => calls.push(`log:${(error as Error).message}`),
+    markCleanExit: () => calls.push('mark'),
+    shutdownBackend: () => calls.push('backend'),
+    releaseSingleInstanceLock: () => calls.push('unlock'),
+    exit: (code) => calls.push(`exit:${code}`),
+  })
+
+  assert.deepEqual(calls, [
+    'log:EBUSY: resource busy or locked',
+    'mark',
+    'backend',
+    'unlock',
+    'exit:1',
+  ])
+})
+
+test('a startup failure still exits when logging or cleanup throws', () => {
+  const calls: string[] = []
+  const boom = () => {
+    throw new Error('boom')
+  }
+  handleStartupFailure(new Error('x'), {
+    logError: boom,
+    markCleanExit: boom,
+    shutdownBackend: boom,
+    releaseSingleInstanceLock: boom,
+    exit: (code) => calls.push(`exit:${code}`),
+  })
+
+  assert.deepEqual(calls, ['exit:1'])
 })

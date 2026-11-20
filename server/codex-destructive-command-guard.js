@@ -12,7 +12,16 @@ const shellToolPattern = /^(?:Bash|shell|shell_command|exec_command|write_stdin)
 const directWriteToolPattern = /^(?:apply_patch|Edit|Write|NotebookEdit)$/i
 const pythonRmtreePattern = /\bshutil\.rmtree\s*\(/i
 const nodeRecursiveDeletePattern = /\b(?:fs\.)?(?:rm|rmSync)\s*\([^)]*recursive\s*:\s*true/is
-const dotnetRecursiveDeletePattern = /\b(?:Directory|System\.IO\.Directory)\.Delete\s*\([^,]+,\s*true\s*\)/i
+// 症状：PowerShell 的 `[IO.Directory]::Delete(<目录>, $true)` 被判为非破坏性放行（2026-11-20 审查）。
+// 根因：旧正则只认 C# 的 `Directory.Delete(x, true)`，PowerShell 静态调用用 `]::` 且布尔是 `$true`。
+//   DirectoryInfo 的 `.Delete($true)` 目标是运行时对象，执行前无法确认，一律按无法确认目标拦截。
+const dotnetRecursiveDeletePattern = /\bDirectory\]?(?:\.|::)Delete\s*\([^,]+,\s*\$?true\s*\)/i
+// PowerShell 方法名不分大小写但布尔必须写 `$true`；C# 写 `.Delete(true)` 区分大小写——
+// 不放宽成 /i 的 `true`，否则 JS 的 `set.delete(true)` 也会被误拦。
+const dotnetDirectoryInfoRecursiveDeletePattern = {
+  test: (command) =>
+    /\.delete\s*\(\s*\$true\s*\)/i.test(command) || /\.Delete\s*\(\s*true\s*\)/.test(command),
+}
 const powershellHomeAssignmentPattern = /\$home\s*=/i
 const automaticTemporaryCleanupPattern = /\b(?:tempfile\.)?TemporaryDirectory\s*\(/i
 const bindMountPattern = /\b(?:mount_bind\s*\(|mount\s+(?:--bind\b|-o\s+bind\b)|bind[-_ ]mount)\b/i
@@ -54,10 +63,10 @@ const tokenize = (value) => {
   return tokens
 }
 
-// 症状：`Remove-Item -LiteralPath D:\ws\tmp,D:\Projects -Recurse` 被判为工作区内删除放行，
+// 症状：`Remove-Item -LiteralPath <工作区>\tmp,<项目外目录> -Recurse` 被判为工作区内删除放行，
 //   PowerShell 实际把逗号列表当 string[]，两个路径都删（2026-11-20 审查）。
 // 根因：旧 tokenize 只按空白切词，逗号列表被当成一个路径，pathContains 算出的相对路径
-//   `tmp,D:\Projects` 不是绝对路径于是判为工作区内。这里把引号外的逗号当数组分隔符，
+//   逗号后那一截不是绝对路径于是判为工作区内。这里把引号外的逗号当数组分隔符，
 //   一个参数的每个值都要单独过检查；不要改回「一出现逗号就整体当一个字符串」。
 const argumentTokenPattern = /"(?:\\.|[^"\\])*"|'(?:''|[^'])*'|,|[^\s,]+/g
 
@@ -181,7 +190,7 @@ const extractFunctionTargets = (command) => {
   const patterns = [
     /shutil\.rmtree\s*\(\s*([^,)]+)/gi,
     /(?:fs\.)?(?:rm|rmSync)\s*\(\s*([^,)]+)/gi,
-    /(?:Directory|System\.IO\.Directory)\.Delete\s*\(\s*([^,)]+)/gi,
+    /\bDirectory\]?(?:\.|::)Delete\s*\(\s*([^,)]+)/gi,
   ]
 
   for (const pattern of patterns) {
@@ -278,7 +287,8 @@ const extractDirectWriteTargets = (toolName, toolInput) => {
       : typeof toolInput?.input === 'string'
         ? toolInput.input
         : ''
-    const patchPathPattern = /^\*\*\* (?:Add|Update|Delete) File:\s*(.+)$/gm
+    // `*** Move to:` 是 Update 段的改名目标，内容会写到新路径，必须和 Add/Update 一样过边界检查（2026-11-20 审查）。
+    const patchPathPattern = /^\*\*\* (?:(?:Add|Update|Delete) File|Move to):\s*(.+)$/gm
     for (const match of patchText.matchAll(patchPathPattern)) {
       if (match[1]?.trim()) {
         targets.push(match[1].trim())
@@ -299,7 +309,7 @@ const extractSegmentWriteTargets = (segment) => [
   ...extractCmdTargets(segment),
 ]
 
-// 症状：`cd D:\ws` 换行 `rm -rf ~`、`bash -lc "rm -rf ~"`、`sudo rm -rf ~`、`rm ~ -rf`、
+// 症状：`cd <工作区>` 换行 `rm -rf ~`、`bash -lc "rm -rf ~"`、`sudo rm -rf ~`、`rm ~ -rf`、
 //   `find ~ -exec rm -rf {} +` 全被判为非破坏性直接放行（2026-11-20 审查）。
 // 根因：删除/写入/git 正则都锚在「整串开头或 ; & | 之后」且无 m 标志，换行、包壳、前缀命令、
 //   参数后置都不认。这里先把命令切成子命令段（换行、; & | ( ) { } 都算分隔，不管引号——
@@ -356,8 +366,18 @@ const decodePowerShellEncodedCommand = (value) => {
   return decoded.trim() ? decoded : null
 }
 
+// 症状：关掉项目外写入后，`git rev-parse HEAD 2>/dev/null`、`Get-Command node 2>$null`、
+//   `npm test 2>&1` 全被当成项目外写入拦下（2026-11-20 审查）。
+// 根因：所有 `>` 后面的词都被当写入目标；`2>&1` 还会被按 & 切段，剩个没目标的 `>` 被判「无法确定」。
+//   这里只剥掉「不落盘」的重定向（空设备 / 合并流），必须带边界，`> /dev/nullx`、`2>$nullTarget`
+//   仍按普通写入判定；不要改成「整条命令里出现 /dev/null 就放行」，那会连同真正的写入一起放走。
+const discardRedirectionPattern =
+  /(?:[0-9*&]?>{1,2}\s*(?:\/dev\/null|\$null|nul)(?=$|[\s;&|)}'"])|[0-9*]?>&[0-9])/gi
+
 const splitCommandSegments = (command) => {
-  const normalized = command.replace(/\$\{([A-Za-z_]\w*)\}/g, '$$$1')
+  const normalized = command
+    .replace(/\$\{([A-Za-z_]\w*)\}/g, '$$$1')
+    .replace(discardRedirectionPattern, ' ')
   const joined = normalized.replace(lineContinuationPattern, ' ')
   const variants = new Set([normalized.replace(lineContinuationPattern, '\n'), joined])
   if (joined.includes('`')) {
@@ -904,7 +924,8 @@ export const assessCodexToolUse = (input, options = {}) => {
     analysis.deletions.length > 0 ||
     pythonRmtreePattern.test(command) ||
     nodeRecursiveDeletePattern.test(command) ||
-    dotnetRecursiveDeletePattern.test(command)
+    dotnetRecursiveDeletePattern.test(command) ||
+    dotnetDirectoryInfoRecursiveDeletePattern.test(command)
 
   if (!destructive) {
     return { allowed: true }
@@ -920,7 +941,8 @@ export const assessCodexToolUse = (input, options = {}) => {
   if (
     /shutil\.rmtree\s*\(\s*(?!["'])/i.test(command) ||
     /(?:fs\.)?(?:rm|rmSync)\s*\(\s*(?!["'])/i.test(command) ||
-    /(?:Directory|System\.IO\.Directory)\.Delete\s*\(\s*(?!["'])/i.test(command)
+    /\bDirectory\]?(?:\.|::)Delete\s*\(\s*(?!["'])/i.test(command) ||
+    dotnetDirectoryInfoRecursiveDeletePattern.test(command)
   ) {
     return {
       allowed: false,

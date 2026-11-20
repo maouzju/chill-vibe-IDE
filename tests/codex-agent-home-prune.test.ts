@@ -14,8 +14,10 @@ const createHome = async (root: string, name: string, ageDays: number) => {
   const dir = path.join(root, name)
   await mkdir(dir, { recursive: true })
   // 目录里放点内容，确保删除走的是递归路径而不是只对空目录有效。
-  await writeFile(path.join(dir, 'marker.txt'), name, 'utf8')
+  const marker = path.join(dir, 'marker.txt')
+  await writeFile(marker, name, 'utf8')
   const stamp = new Date(Date.now() - ageDays * dayMs)
+  await utimes(marker, stamp, stamp)
   await utimes(dir, stamp, stamp)
   return dir
 }
@@ -56,6 +58,38 @@ test('never removes a home that is currently in use', async () => {
 
     assert.equal(result.removed, 1)
     assert.deepEqual(await listNames(root), ['active-key'], '正在使用的隔离 HOME 必须保留')
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+// 症状：卡 A 的隔离 HOME 按卡复用，每天都在往 .cache 之类子目录写，但顶层目录 mtime 超过 7 天，
+// 被别的卡触发的回收整个递归删掉（2026-11-20 审查）。
+// 根因：目录 mtime 只在直接子项增删时变，往子目录里写文件不会刷新它。
+test('keeps a home whose nested files were written recently even if the top-level mtime is old', async () => {
+  const root = await createRoot()
+  try {
+    const active = await createHome(root, 'reused-card', 30)
+    const cacheDir = path.join(active, '.cache', 'tool')
+    await mkdir(cacheDir, { recursive: true })
+    const old = new Date(Date.now() - 30 * dayMs)
+    await utimes(path.join(active, '.cache'), old, old)
+    await utimes(cacheDir, old, old)
+    await writeFile(path.join(cacheDir, 'fresh.bin'), 'x', 'utf8')
+    await utimes(active, old, old)
+
+    const stale = await createHome(root, 'abandoned-card', 30)
+    const staleNested = path.join(stale, '.cache')
+    await mkdir(staleNested, { recursive: true })
+    await writeFile(path.join(staleNested, 'old.bin'), 'x', 'utf8')
+    await utimes(path.join(staleNested, 'old.bin'), old, old)
+    await utimes(staleNested, old, old)
+    await utimes(stale, old, old)
+
+    const result = await pruneStaleCodexAgentHomes({ rootDir: root, nowMs: Date.now() })
+
+    assert.equal(result.removed, 1)
+    assert.deepEqual(await listNames(root), ['reused-card'], '子目录里最近还有写入的隔离 HOME 必须保留')
   } finally {
     await rm(root, { recursive: true, force: true })
   }

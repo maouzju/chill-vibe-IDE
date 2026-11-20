@@ -15,6 +15,7 @@ import {
   type MusicTrack,
 } from '../api'
 import type { AppLanguage } from '../../shared/schema'
+import { createMusicPlaybackGate, playMusicTrackWhenCurrent } from './music-playback'
 
 type MusicTab = 'playlists' | 'explore'
 
@@ -411,16 +412,22 @@ export function MusicCard({ language, showAlbumCover, onTitleChange }: MusicCard
   const [volume, setVolume] = useState(0.7)
   const audioRef = useRef<HTMLAudioElement | null>(null)
   const queueLengthRef = useRef(0)
+  const playbackGateRef = useRef(createMusicPlaybackGate())
 
   const playTrackAudio = useCallback(async (track: MusicTrack) => {
     const audio = audioRef.current
     if (!audio) return
+    const gate = playbackGateRef.current
+    const token = gate.begin()
 
     try {
-      const source = await getMusicSongUrl(track.id)
-      if (!source.url) return
-      audio.src = source.url
-      await audio.play()
+      const played = await playMusicTrackWhenCurrent({
+        trackId: track.id,
+        audio,
+        getSongUrl: getMusicSongUrl,
+        isCurrent: () => gate.isCurrent(token) && audioRef.current === audio,
+      })
+      if (!played) return
       void recordMusicPlay(track.id)
     } catch {
       // ignore playback errors
@@ -445,8 +452,12 @@ export function MusicCard({ language, showAlbumCover, onTitleChange }: MusicCard
     audio.addEventListener('pause', () => setIsPlaying(false))
     audio.addEventListener('play', () => setIsPlaying(true))
     audioRef.current = audio
+    const gate = createMusicPlaybackGate()
+    playbackGateRef.current = gate
 
     return () => {
+      gate.cancel()
+      if (audioRef.current === audio) audioRef.current = null
       audio.pause()
       audio.src = ''
     }
@@ -540,6 +551,7 @@ export function MusicCard({ language, showAlbumCover, onTitleChange }: MusicCard
       setPlaylists([])
       setCurrentTrack(null)
       setQueue([])
+      playbackGateRef.current.begin()
       if (audioRef.current) {
         audioRef.current.pause()
         audioRef.current.src = ''

@@ -393,6 +393,89 @@ describe('internal resilient proxy', () => {
     }
   })
 
+  it('drops the assistant prefill and retries when thinking mode rejects a text-only final assistant message', async () => {
+    const requests: Record<string, unknown>[] = []
+
+    const upstream = http.createServer(async (request, response) => {
+      const body = await readJsonBody(request)
+      requests.push(body)
+      const lastMessage = (body.messages as Array<Record<string, unknown>>).at(-1)
+
+      if (lastMessage?.role === 'assistant') {
+        response.statusCode = 400
+        response.setHeader('Content-Type', 'application/json')
+        response.end(
+          JSON.stringify({
+            type: 'error',
+            error: {
+              type: 'invalid_request_error',
+              message:
+                'messages.1.content.0.type: Expected `thinking` or `redacted_thinking`, but found `text`. When `thinking` is enabled, a final `assistant` message must start with a thinking block (preceeding the lastmost set of `tool_use` and `tool_result` blocks). We recommend you include thinking blocks from previous turns. To avoid this requirement, disable `thinking`.',
+            },
+          }),
+        )
+        return
+      }
+
+      response.statusCode = 200
+      response.setHeader('Content-Type', 'text/event-stream')
+      writeSseEvents(response, [
+        { type: 'message_start', message: { id: 'msg-1', model: 'claude-opus-4-7' } },
+        { type: 'content_block_start', index: 0, content_block: { type: 'text', text: '' } },
+      ])
+
+      if (requests.length === 1) {
+        writeSseEvents(response, [
+          { type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text: 'Hello ' } },
+        ])
+        response.end()
+        return
+      }
+
+      writeSseEvents(response, [
+        { type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text: 'Hello world' } },
+        { type: 'message_stop' },
+      ])
+      response.end()
+    })
+
+    const upstreamBaseUrl = await listenOnLoopback(upstream)
+    const proxy = await startResilientProxyServer({
+      provider: 'claude',
+      upstreamBaseUrl,
+      maxRecoveryRetries: 2,
+    })
+
+    try {
+      const response = await fetch(`${proxy.clientBaseUrl}/v1/messages`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-api-key': 'sk-test' },
+        body: JSON.stringify({
+          model: 'claude-opus-4-7',
+          stream: true,
+          thinking: { type: 'enabled', budget_tokens: 2048 },
+          messages: [{ role: 'user', content: 'Say hello' }],
+        }),
+      })
+
+      assert.equal(response.status, 200)
+      const payload = await response.text()
+
+      assert.equal(parseSseDeltaText(payload), 'Hello world')
+      assert.equal(
+        parseSseEvents(payload).some((event) => event.type === 'error'),
+        false,
+        'the 400 about the prefill must not reach the client',
+      )
+      assert.equal(requests.length, 3)
+      assert.equal((requests[1]?.messages as Array<Record<string, unknown>>).at(-1)?.role, 'assistant')
+      assert.deepEqual(requests[2]?.messages, [{ role: 'user', content: 'Say hello' }])
+    } finally {
+      await proxy.stop()
+      await closeServer(upstream)
+    }
+  })
+
   it('treats a terminal Claude message_delta as a completed stream even when message_stop is omitted', async () => {
     const requests: Record<string, unknown>[] = []
 

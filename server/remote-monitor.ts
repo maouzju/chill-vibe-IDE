@@ -223,6 +223,12 @@ const readRequestBody = (request: http.IncomingMessage, maxBytes = maxActionBody
 
 const defaultPort = 8791
 const sseHeartbeatIntervalMs = 15_000
+// 症状：手机锁屏 / 浏览器切后台后连接不断、只是不读，电脑上所有会话的流式事件在本进程里无限堆积。
+// 根因：2026-11-20 审查。response.write 的返回值没人看，内核缓冲满后数据全留在 socket 的用户态写队列，
+//   要等 TCP 自己超时才释放（实测一个不读的连接能攒下 96MB 还挂着）。
+// 不做「超限就跳过这条事件、连接留着」：手机端会缺中间一段还以为是连续的；断开后 EventSource
+//   2 秒自动重连，由 backlog 重放补齐。
+const maxSsePendingBytes = 8 * 1024 * 1024
 
 const resolvePreferredPort = (requested?: number) => {
   if (typeof requested === 'number' && Number.isInteger(requested) && requested >= 0) {
@@ -314,8 +320,10 @@ export const createRemoteMonitorManager = (deps: RemoteMonitorDeps) => {
   let runtimeInfo: RemoteMonitorRuntimeInfo | null = null
   const sseClients = new Set<http.ServerResponse>()
   const heartbeatTimers = new Map<http.ServerResponse, ReturnType<typeof setInterval>>()
+  // 刚连上时的 backlog 重放是同步一口气写完的，可以远大于上限；这部分排空之前不算进「慢」。
+  const sseReplayPendingBytes = new WeakMap<http.ServerResponse, number>()
 
-  const writeStreamEvent = (response: http.ServerResponse, event: ChatStreamTapEvent) => {
+  const formatStreamEvent = (event: ChatStreamTapEvent) => {
     const payload = {
       streamId: event.streamId,
       cardId: event.cardId,
@@ -324,7 +332,7 @@ export const createRemoteMonitorManager = (deps: RemoteMonitorDeps) => {
       event: event.envelope.event,
       data: event.envelope.data,
     }
-    response.write(`event: stream\ndata: ${JSON.stringify(payload)}\n\n`)
+    return `event: stream\ndata: ${JSON.stringify(payload)}\n\n`
   }
 
   const closeSseClient = (response: http.ServerResponse) => {
@@ -334,6 +342,18 @@ export const createRemoteMonitorManager = (deps: RemoteMonitorDeps) => {
       heartbeatTimers.delete(response)
     }
     sseClients.delete(response)
+  }
+
+  /** Live writes only (tap events, heartbeats). Severs the client once its unread backlog passes the cap. */
+  const writeLiveSseChunk = (response: http.ServerResponse, chunk: string) => {
+    const allowedPendingBytes = maxSsePendingBytes + (sseReplayPendingBytes.get(response) ?? 0)
+    if (response.writableLength > allowedPendingBytes) {
+      closeSseClient(response)
+      response.destroy()
+      return
+    }
+
+    response.write(chunk)
   }
 
   // 症状：写命令送不到时手机端仍收到 202「已接受」，用户以为发出去了其实没有。
@@ -493,18 +513,25 @@ export const createRemoteMonitorManager = (deps: RemoteMonitorDeps) => {
       // Late joiners get the picture so far before live forwarding starts.
       for (const stream of deps.listActiveStreams()) {
         for (const envelope of stream.backlog) {
-          writeStreamEvent(response, {
-            streamId: stream.streamId,
-            cardId: stream.cardId,
-            origin: stream.origin,
-            envelope,
-          })
+          response.write(
+            formatStreamEvent({
+              streamId: stream.streamId,
+              cardId: stream.cardId,
+              origin: stream.origin,
+              envelope,
+            }),
+          )
         }
+      }
+
+      if (response.writableNeedDrain) {
+        sseReplayPendingBytes.set(response, response.writableLength)
+        response.once('drain', () => sseReplayPendingBytes.delete(response))
       }
 
       sseClients.add(response)
       const heartbeat = setInterval(() => {
-        response.write(': heartbeat\n\n')
+        writeLiveSseChunk(response, ': heartbeat\n\n')
       }, sseHeartbeatIntervalMs)
       heartbeatTimers.set(response, heartbeat)
 
@@ -550,7 +577,7 @@ export const createRemoteMonitorManager = (deps: RemoteMonitorDeps) => {
       server = nextServer
       untap = deps.tapStreams((event) => {
         for (const client of sseClients) {
-          writeStreamEvent(client, event)
+          writeLiveSseChunk(client, formatStreamEvent(event))
         }
       })
 

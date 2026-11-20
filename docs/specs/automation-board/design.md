@@ -357,6 +357,8 @@ export const resolveAutomationBoardAutoTriggerDecision = ({
 
 跨列一律拒绝（不 `preventDefault`，因此不出落点提示也不能 drop），理由见 requirements FR4。
 
+看板 tab 本身同样不能拖到另一列（pitfall #482）：`moveTab` 与 `willMoveTabAcrossColumns` 对看板卡同口径拒绝，松手后看板留在原位。只搬看板卡会留下一个空看板和一批游离项卡；连项卡一起搬要逐张重绑工作区并覆盖目标列的看板存档，未做。
+
 拖拽源：项卡片头部整体 `draggable`。**禁止**在其 mousedown 上 `preventDefault`（pitfall 176/454：那会让 `dragstart` 永不触发）；需要防抢焦点时走显式焦点转移。
 
 ## 紧凑渲染（FR3 / NFR1）

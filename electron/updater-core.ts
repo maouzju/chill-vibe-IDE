@@ -210,6 +210,35 @@ export function resolveDownloadedAssetStrategy(
   return 'shell-open'
 }
 
+// 症状：downloadUpdate 接受渲染端给的任意 URL，下载完即进 installUpdate 的路径白名单，
+//       「先下载后安装」就能用任意包替换安装目录（2026-11-20 审查）。
+// 只校验入口 URL：官方仓库 /releases/download/<tag>/<file>。不校验 302 之后的最终地址 ——
+// 跳转由 github.com 自己发（objects./release-assets.githubusercontent.com，域名 GitHub 改过），
+// 卡死 CDN 域名只会让将来的更新失效；Electron 36 的 Response.url 实测也常为空。
+// owner/repo 大小写不敏感：GitHub 路径本身如此，API 返回的大小写不由我们决定。
+export function isAllowedUpdateDownloadUrl(assetUrl: string): boolean {
+  let url: URL
+  try {
+    url = new URL(assetUrl)
+  } catch {
+    return false
+  }
+
+  if (!isOfficialReleaseUrl(url)) return false
+
+  const segments = url.pathname.split('/')
+  // ['', owner, repo, 'releases', 'download', tag, file]
+  if (segments.length !== 7 || segments[0] !== '') return false
+  const [, owner, repo, releases, download, tag, file] = segments
+  return (
+    `${owner}/${repo}`.toLowerCase() === GITHUB_REPO.toLowerCase() &&
+    releases === 'releases' &&
+    download === 'download' &&
+    Boolean(tag) &&
+    Boolean(file)
+  )
+}
+
 export function isDownloadedAssetPathAllowed(
   assetPath: string,
   allowedPaths: ReadonlySet<string>,

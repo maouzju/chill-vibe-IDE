@@ -82,6 +82,11 @@ export type GitAgentSessionRequest = {
   reasoningEffort?: string
 }
 
+/** 宿主对已开会话的只读探针：卡还在（tab 没被关 / 卡没被删）就是 open。 */
+export type GitAgentSessionHandle = {
+  isOpen: () => boolean
+}
+
 export type GitOperationContext = {
   workspacePath: string
   language: AppLanguage
@@ -90,7 +95,8 @@ export type GitOperationContext = {
   modelPromptRules: ModelPromptRule[]
   codexChatSettings?: CodexChatSettings
   crossProviderSkillReuseEnabled: boolean
-  openAgentSession?: (request: GitAgentSessionRequest) => boolean
+  /** true = 开了但宿主无法追踪（视为一直开着）；handle = 可查询会话是否还在。 */
+  openAgentSession?: (request: GitAgentSessionRequest) => boolean | GitAgentSessionHandle
 }
 
 type ChatStreamHandlers = {
@@ -146,7 +152,7 @@ type WorkspaceSession = {
   analysisDone: boolean
   analysisRunId: number
   syncRunId: number
-  conflictSessionOpen: boolean
+  conflictSession: GitAgentSessionHandle | null
   noticeTimeout: ReturnType<typeof setTimeout> | null
   noticeToken: number
 }
@@ -294,7 +300,7 @@ export const createGitOperationHub = (deps: GitOperationHubDeps) => {
         analysisDone: false,
         analysisRunId: 0,
         syncRunId: 0,
-        conflictSessionOpen: false,
+        conflictSession: null,
         noticeTimeout: null,
         noticeToken: 0,
       }
@@ -634,6 +640,16 @@ export const createGitOperationHub = (deps: GitOperationHubDeps) => {
         const pullResult = await deps.pullGitChanges({ workspacePath })
         latestStatus = pullResult.status
         if (!stillCurrent()) return
+        // 重试与 beginSync 同一套判断：被本地改动挡住时服务端什么都没拉，继续 push 会谎报「同步完成」。
+        if (pullResult.blockedFiles && pullResult.blockedFiles.length > 0) {
+          patch(workspacePath, {
+            lastStatus: latestStatus,
+            blockedFiles: pullResult.blockedFiles,
+            syncPanelOpen: false,
+            syncStep: { kind: 'idle' },
+          })
+          return
+        }
         patch(workspacePath, { lastStatus: latestStatus })
       } catch (error) {
         pullFailedMessage = errorMessage(error, text.pullError)
@@ -660,7 +676,10 @@ export const createGitOperationHub = (deps: GitOperationHubDeps) => {
       // 症状：冲突时面板只剩一行「正在调用 Codex 解决...」，Agent 在后台静默取舍两边改动后直接 push。
       // 根因：2026-10-13 用户明确要求冲突必须显式打开一个 Chill Vibe 会话继续干，过程可见、可纠正。
       // 被否决：保留后台流并加个"查看过程"入口 —— 仍是用户没看过就 push；push 改由会话里的 Agent 完成。
-      if (session.conflictSessionOpen) {
+      // 症状：冲突会话 tab 被关掉后，之后每次同步都报「会话仍在进行」，只能重启应用。
+      // 根因（2026-11-20 审查）：原先只存一个 boolean，与会话卡的生命周期无关。
+      // 被否决：轮询 / 定时器监听关闭 —— 只在下一次同步时问宿主「卡还在不在」就够了。
+      if (session.conflictSession?.isOpen()) {
         patch(workspacePath, { syncStep: { kind: 'error', message: text.syncConflictPending } })
         return
       }
@@ -681,13 +700,13 @@ export const createGitOperationHub = (deps: GitOperationHubDeps) => {
         patch(workspacePath, { syncStep: { kind: 'error', message: text.syncConflictNoSession } })
         return
       }
-      session.conflictSessionOpen = true
+      session.conflictSession = opened === true ? { isOpen: () => true } : opened
       patch(workspacePath, { syncPanelOpen: false, syncStep: { kind: 'idle' } })
       showTransientNotice(workspacePath, { tone: 'info', message: text.syncConflictHandedOff })
       return
     }
 
-    session.conflictSessionOpen = false
+    session.conflictSession = null
     patch(workspacePath, { syncStep: { kind: 'push' } })
     try {
       const pushResult = await deps.pushGitChanges({ workspacePath })
@@ -788,7 +807,10 @@ export const createGitOperationHub = (deps: GitOperationHubDeps) => {
       await deps.setGitStage({ workspacePath, paths: blockedFiles, staged: true })
       const summary =
         language === 'zh-CN' ? '同步前自动提交冲突文件' : 'Auto-commit conflicting files before sync'
-      await deps.commitGitChanges({ workspacePath, summary, description: '' })
+      // 症状：用户另外暂存的文件没出现在弹窗里，却被这笔「同步前自动提交」带走并紧接着 push。
+      // 根因（2026-11-20 审查）：不带 paths 时服务端提交整个 index；弹窗只承诺提交这 N 个冲突文件。
+      // 被否决：改服务端默认加 --only —— 不带 paths 提交整个 index 是 commitAll 依赖的合法语义。
+      await deps.commitGitChanges({ workspacePath, summary, description: '', paths: blockedFiles })
       const updated = await deps.fetchGitStatus(workspacePath)
       patch(workspacePath, {
         lastStatus: updated,

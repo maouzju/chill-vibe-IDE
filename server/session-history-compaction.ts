@@ -12,8 +12,21 @@ const maxPersistedCommandOutputChars = 512
 const persistedCommandOutputHeadChars = 256
 const persistedCommandOutputTailChars = 256
 
+const persistedCommandOutputMarkerPattern = /^\n\n\[Output truncated in saved state\. \d+ characters omitted\.\]\n\n$/
+
+// 症状：读一次档就整份重写一次（WAL、tmp、fsync、快照轮转），省略字数还被改成 61 之类的假数。
+// 根因：2026-11-20 审查。压缩产物是 256 + 标记 + 256 ≈ 575 字符，仍大于 512 的阈值，
+//   于是已压缩过的输出每次都被判成「还要压」，didCompact 恒为 true。
+// 不把阈值抬到 ~600：那会让 513–600 字符的原始输出从此不压，改了落盘内容；
+//   这里只认「头 256 + 标记 + 尾 256」这一种形状，旧版 24KB+8KB 的产物照常重压。
+const isAlreadyCompactedCommandOutput = (output: string) =>
+  output.length > persistedCommandOutputHeadChars + persistedCommandOutputTailChars &&
+  persistedCommandOutputMarkerPattern.test(
+    output.slice(persistedCommandOutputHeadChars, output.length - persistedCommandOutputTailChars),
+  )
+
 export const compactPersistedCommandOutput = (output: string) => {
-  if (output.length <= maxPersistedCommandOutputChars) {
+  if (output.length <= maxPersistedCommandOutputChars || isAlreadyCompactedCommandOutput(output)) {
     return {
       output,
       didCompact: false,
@@ -104,8 +117,17 @@ export const compactPersistedMessages = (messages: ChatMessage[]) => {
 // raw JSON string would leave the card rendering degraded after restore.
 const transferStructuredDataBudgetChars = 4_000
 
+const transferTrimMarkerPattern = /^\n\n\[Output truncated in restored session\. \d+ characters omitted\.\]\n\n$/
+
+// 与上面 isAlreadyCompactedCommandOutput 同一个坑：裁剪产物（2000 + 标记 + 2000）仍大于 4000 的预算，
+// 裁过的归档再恢复一次就会被重裁，省略字数被改成约 70 的假数。
+const isAlreadyTrimmedTransferText = (value: string) =>
+  transferTrimMarkerPattern.test(
+    value.slice(transferStructuredDataBudgetChars / 2, value.length - transferStructuredDataBudgetChars / 2),
+  )
+
 const trimTransferText = (value: string) =>
-  value.length <= transferStructuredDataBudgetChars
+  value.length <= transferStructuredDataBudgetChars || isAlreadyTrimmedTransferText(value)
     ? value
     : [
         value.slice(0, transferStructuredDataBudgetChars / 2),

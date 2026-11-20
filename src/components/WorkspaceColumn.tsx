@@ -56,7 +56,7 @@ import type {
   AutomationBoardActions,
   AutomationBoardWorkspaceView,
 } from './automation-board-host'
-import type { GitAgentSessionRequest } from './git-operation-hub'
+import type { GitAgentSessionHandle, GitAgentSessionRequest } from './git-operation-hub'
 import { LayoutRenderer } from './LayoutRenderer'
 
 const openFolderNative = async (): Promise<FolderDialogResult> => {
@@ -256,7 +256,7 @@ type WorkspaceColumnProps = {
   onManualRecoverStream?: (cardId: string) => Promise<unknown>
   onForkConversation?: (cardId: string, messageId: string) => void
   onOpenFile?: (paneId: string, relativePath: string, options?: { line?: number }) => void
-  onOpenAgentSession?: (paneId: string, request: GitAgentSessionRequest) => boolean
+  onOpenAgentSession?: (paneId: string, request: GitAgentSessionRequest) => boolean | GitAgentSessionHandle
   recentWorkspaces: RecentWorkspace[]
   onRecordRecentWorkspace: (path: string) => void
   onRemoveRecentWorkspaces: (paths: string[]) => void

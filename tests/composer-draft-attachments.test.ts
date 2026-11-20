@@ -8,6 +8,7 @@ import {
   hydrateDraftAttachments,
   mergeUploadedDraftAttachments,
   promoteDraftAttachment,
+  resolveComposerAfterSubmit,
   sameImageAttachmentLists,
   type PendingComposerAttachment,
 } from '../src/components/composer-draft-attachments'
@@ -138,4 +139,36 @@ test('mergeUploadedDraftAttachments reuses copied originals and deduplicates by 
     assert.equal(added.id, 'new-original')
     assert.equal(added.previewUrl, getImageAttachmentUrl('new-original'))
   }
+})
+
+// 2026-11-20 审查：发送时要先等粘贴图片上传完，上传结束后无条件清空输入框和附件，
+// 等待期间新敲的字、新粘贴的图一起被吞掉，也不会发出去。
+test('resolveComposerAfterSubmit clears everything when nothing changed during the upload wait', () => {
+  const sent = [uploadedEntry('a')]
+  assert.deepEqual(
+    resolveComposerAfterSubmit({ draftAtSubmit: 'hello', draftNow: 'hello', sentAttachments: sent, pendingNow: sent }),
+    { draft: '', attachments: [] },
+  )
+})
+
+test('resolveComposerAfterSubmit keeps text typed and images pasted while the upload was pending', () => {
+  const sent = [uploadedEntry('a')]
+  const result = resolveComposerAfterSubmit({
+    draftAtSubmit: 'hello',
+    draftNow: 'hello 下一句',
+    sentAttachments: sent,
+    pendingNow: [uploadedEntry('a'), uploadedEntry('b')],
+  })
+  assert.equal(result.draft, ' 下一句')
+  assert.deepEqual(result.attachments.map((entry) => entry.id), ['b'])
+})
+
+test('resolveComposerAfterSubmit keeps the whole draft when the sent text was edited in place', () => {
+  const result = resolveComposerAfterSubmit({
+    draftAtSubmit: 'hello',
+    draftNow: 'help',
+    sentAttachments: [],
+    pendingNow: [],
+  })
+  assert.equal(result.draft, 'help')
 })

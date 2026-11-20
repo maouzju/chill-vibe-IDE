@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { describe, it, beforeEach, afterEach } from 'node:test'
-import { mkdir, writeFile, rm, readdir, open as realOpen } from 'node:fs/promises'
+import { mkdir, writeFile, rm, readdir, stat, open as realOpen, type FileHandle } from 'node:fs/promises'
 import { existsSync } from 'node:fs'
 import path from 'node:path'
 import os from 'node:os'
@@ -256,5 +256,139 @@ describe('state-store crash recovery', () => {
       'the WAL was dropped before the target reached the platter',
     )
     assert.equal(existsSync(walPath), false, 'the WAL should be removed once the write is durable')
+  })
+
+  // 下面三条走真实保存 / 读档路径，没有可注入的 open，所以直接在 FileHandle 原型上记 fsync。
+  // 用 inode 认文件：tmp 改名成正式文件后 inode 不变。
+  const trackFsyncs = async (watch: Record<string, string>) => {
+    const probe = await realOpen(path.join(tmpDir, 'fsync-probe'), 'w')
+    const proto = Object.getPrototypeOf(probe) as { sync: (this: FileHandle) => Promise<void> }
+    await probe.close()
+    await rm(path.join(tmpDir, 'fsync-probe'), { force: true })
+
+    const originalSync = proto.sync
+    const synced: Array<{ ino: bigint; present: Record<string, boolean> }> = []
+    proto.sync = async function (this: FileHandle) {
+      const info = await this.stat({ bigint: true })
+      synced.push({
+        ino: info.ino,
+        present: Object.fromEntries(Object.entries(watch).map(([name, filePath]) => [name, existsSync(filePath)])),
+      })
+      return originalSync.call(this)
+    }
+
+    return {
+      synced,
+      restore: () => {
+        proto.sync = originalSync
+      },
+    }
+  }
+
+  const inodeOf = async (filePath: string) => (await stat(filePath, { bigint: true })).ino
+
+  it('fsyncs a session-history sidecar before state.json is allowed to shrink it to a preview', async () => {
+    const { saveState } = await import('../server/state-store.ts')
+    const state = withMessages('D:/sidecar-durability')
+    state.sessionHistory = [
+      {
+        id: 'history-durable',
+        title: 'Archived session',
+        sessionId: 'session-durable',
+        provider: 'codex',
+        model: 'gpt-5.5',
+        workspacePath: 'D:/sidecar-durability',
+        archivedAt: new Date(Date.UTC(2026, 10, 20, 1, 0, 0)).toISOString(),
+        messages: Array.from({ length: 12 }, (_, index) => ({
+          id: `history-durable-${index}`,
+          role: index % 2 === 0 ? ('user' as const) : ('assistant' as const),
+          content: `archived message ${index}`,
+          createdAt: new Date(Date.UTC(2026, 10, 20, 0, 0, index)).toISOString(),
+        })),
+      },
+    ]
+
+    const sidecarPath = path.join(
+      tmpDir,
+      'session-history',
+      `${Buffer.from('history-durable', 'utf8').toString('base64url')}.json`,
+    )
+    const tracker = await trackFsyncs({ sidecar: sidecarPath })
+    try {
+      await saveState(state)
+    } finally {
+      tracker.restore()
+    }
+
+    const sidecarIno = await inodeOf(sidecarPath)
+    const stateIno = await inodeOf(path.join(tmpDir, 'state.json'))
+    const sidecarSyncs = tracker.synced.flatMap((entry, index) => (entry.ino === sidecarIno ? [{ index, ...entry }] : []))
+    const firstStateSync = tracker.synced.findIndex((entry) => entry.ino === stateIno)
+
+    assert.ok(
+      sidecarSyncs.some((entry) => !entry.present.sidecar),
+      'the sidecar temp file was never fsynced before the rename — a power loss leaves an all-NUL sidecar',
+    )
+    assert.ok(
+      sidecarSyncs.some((entry) => entry.present.sidecar),
+      'the renamed sidecar was never fsynced',
+    )
+    assert.ok(firstStateSync >= 0, 'state.json should still be fsynced')
+    assert.ok(
+      sidecarSyncs.every((entry) => entry.index < firstStateSync),
+      'the sidecar must reach the platter before state.json, which only keeps an 8-message preview',
+    )
+  })
+
+  it('fsyncs the closed-workspace snapshot sidecar', async () => {
+    const { saveClosedWorkspaceSnapshot } = await import('../server/state-store.ts')
+    const state = withMessages('D:/closed-durability')
+    const sidecarDir = path.join(tmpDir, 'closed-workspaces')
+
+    const tracker = await trackFsyncs({})
+    try {
+      await saveClosedWorkspaceSnapshot({
+        closeId: 'closed-durable',
+        closedAt: '2026-11-20T10:00:00.000Z',
+        column: state.columns[0]!,
+      })
+    } finally {
+      tracker.restore()
+    }
+
+    const files = await readdir(sidecarDir)
+    assert.deepEqual(files.filter((fileName) => fileName.endsWith('.tmp')), [])
+    assert.equal(files.length, 1)
+    const snapshotIno = await inodeOf(path.join(sidecarDir, files[0]!))
+    assert.equal(
+      tracker.synced.filter((entry) => entry.ino === snapshotIno).length,
+      2,
+      'expected one fsync on the temp file and one on the renamed snapshot',
+    )
+  })
+
+  it('fsyncs the state file promoted from a WAL before dropping that WAL', async () => {
+    const { loadState } = await import('../server/state-store.ts')
+    const walPath = path.join(tmpDir, 'state.wal')
+    const statePath = path.join(tmpDir, 'state.json')
+    await writeFile(walPath, `${JSON.stringify(withMessages('D:/wal-promote'), null, 2)}\n`, 'utf8')
+
+    const tracker = await trackFsyncs({ wal: walPath })
+    let loaded: Awaited<ReturnType<typeof loadState>>
+    try {
+      loaded = await loadState()
+    } finally {
+      tracker.restore()
+    }
+
+    assert.equal(getFirstCard(loaded)?.messages[0]?.content, 'survived the power loss')
+    assert.equal(existsSync(walPath), false)
+    const stateIno = await inodeOf(statePath)
+    const stateSyncs = tracker.synced.filter((entry) => entry.ino === stateIno)
+    assert.ok(stateSyncs.length > 0, 'the promoted state.json was never fsynced')
+    assert.ok(
+      stateSyncs.every((entry) => entry.present.wal),
+      'the WAL was dropped before the promoted state reached the platter',
+    )
   })
 })

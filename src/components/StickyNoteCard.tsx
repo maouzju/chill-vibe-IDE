@@ -37,6 +37,7 @@ import { CloseIcon, CopyIcon, ImageIcon } from './Icons'
 import { useDialogFocus } from './dialog-focus'
 import {
   mergeStickyNoteAttachments,
+  resolveStickyNotePendingFlush,
   shouldPersistStickyNoteDocument,
 } from './sticky-note-images'
 
@@ -419,7 +420,25 @@ export function StickyNoteCard({
     flushViewState()
   }, [flushViewState, saveLocalDocument])
 
+  // Must run before activeNoteIdRef moves: saveLocalDocument reads the target note id synchronously.
+  const flushPendingEditToActiveNote = async () => {
+    const flush = resolveStickyNotePendingFlush({
+      debouncePending: timerRef.current !== null,
+      checkpointPending: checkpointTimerRef.current !== null,
+      latestContent: latestLocalRef.current,
+    })
+    if (timerRef.current) clearTimeout(timerRef.current)
+    if (checkpointTimerRef.current) clearTimeout(checkpointTimerRef.current)
+    timerRef.current = null
+    checkpointTimerRef.current = null
+    pendingRef.current = null
+    if (!flush) return
+    if (flush.propagateToCard) onChangeRef.current(flush.content)
+    await saveLocalDocument(flush.content, flush.checkpoint)
+  }
+
   const openSavedNote = async (summary: StickyNoteSummary) => {
+    await flushPendingEditToActiveNote()
     try {
       const document = await loadStickyNote({ workspacePath, noteId: summary.noteId })
       activeNoteIdRef.current = document.noteId
@@ -441,7 +460,8 @@ export function StickyNoteCard({
     }
   }
 
-  const restoreLegacyArchive = () => {
+  const restoreLegacyArchive = async () => {
+    await flushPendingEditToActiveNote()
     latestLocalRef.current = archivedContent
     setLocal(archivedContent)
     onChangeRef.current(archivedContent)
@@ -466,6 +486,7 @@ export function StickyNoteCard({
 
   const restoreVersion = async (version: StickyNoteVersionSummary) => {
     setLoadingHistory(true)
+    await flushPendingEditToActiveNote()
     try {
       const document = await restoreStickyNoteVersion({
         workspacePath,
@@ -694,7 +715,7 @@ export function StickyNoteCard({
             </button>
           ))}
           {!searchActive && showLegacyRestore ? (
-            <button type="button" className="sticky-note-existing-entry" onClick={restoreLegacyArchive}>
+            <button type="button" className="sticky-note-existing-entry" onClick={() => void restoreLegacyArchive()}>
               <span>
                 <strong>{text.stickyNoteRestorePrompt}</strong>
                 <small>{archivedContent.trim().split('\n')[0].slice(0, 80)}</small>

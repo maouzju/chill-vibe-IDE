@@ -806,6 +806,74 @@ test('签名变更的同 session 重发会等中断收尾且旧进程退出后�
   pool.dispose()
 })
 
+// 2026-11-20 审查：中断收尾等到的是「兜底计时器把旧进程 kill 了」时，旧实现醒来发现 entry 已不在池里，
+// 就跳过「等旧进程退出」直接修档 + --resume 同一 session，而旧进程此刻只是收到了 kill、还没 close。
+test('兜底 kill 结束中断收尾等待后，同 session 的新进程要等旧进程真正退出才 spawn', async (t) => {
+  const pool = new ClaudeSessionPool({ onUnsolicited: () => {}, interruptDrainTimeoutMs: 30 })
+  t.after(() => pool.dispose())
+  const first = createFakeChild()
+  // kill 已发出，但进程迟迟不退出（Windows 经 shim、或还在刷最后几行转录）。
+  first.kill = () => {
+    first.killed = true
+    return true
+  }
+  let oldClosed = false
+  await pool.acquireForTurn({ key: 'card-1', signature: 'sig-a', sessionId: undefined, spawn: async () => first })
+  pool.beginTurn('card-1', createAttachment().attachment, first)
+  pool.updateSessionId('card-1', 'session-1')
+  assert.equal(pool.interruptTurn('card-1', first), true)
+
+  const events: string[] = []
+  const replacement = createFakeChild()
+  const acquire = pool.acquireForTurn({
+    key: 'card-1',
+    signature: 'sig-a',
+    sessionId: 'session-1',
+    spawn: async () => {
+      events.push(`spawn:${oldClosed ? 'old-closed' : 'old-alive'}`)
+      return replacement
+    },
+  })
+
+  await waitFor(() => first.killed)
+  await new Promise((resolve) => setTimeout(resolve, 40))
+  assert.deepEqual(events, [], '旧进程还没退出，不能 spawn 去 --resume 同一 session')
+
+  oldClosed = true
+  first.emitExit(null)
+  const result = await acquire
+  assert.equal(result?.child, replacement)
+  assert.equal(result?.reused, false)
+  assert.deepEqual(events, ['spawn:old-closed'])
+})
+
+test('兜底 kill 后旧进程始终不退出时，等待有上界，新请求不会被永久挂住', async (t) => {
+  const pool = new ClaudeSessionPool({
+    onUnsolicited: () => {},
+    interruptDrainTimeoutMs: 30,
+    respawnCloseWaitMs: 60,
+  })
+  t.after(() => pool.dispose())
+  const first = createFakeChild()
+  first.kill = () => {
+    first.killed = true
+    return true
+  }
+  await pool.acquireForTurn({ key: 'card-1', signature: 'sig-a', sessionId: undefined, spawn: async () => first })
+  pool.beginTurn('card-1', createAttachment().attachment, first)
+  pool.updateSessionId('card-1', 'session-1')
+  assert.equal(pool.interruptTurn('card-1', first), true)
+
+  const replacement = createFakeChild()
+  const result = await pool.acquireForTurn({
+    key: 'card-1',
+    signature: 'sig-a',
+    sessionId: 'session-1',
+    spawn: async () => replacement,
+  })
+  assert.equal(result?.child, replacement)
+})
+
 // 2026-10-16：父 agent 用 CronCreate 定的 3 小时自查闹钟不出任何 stdout，30 分钟空闲回收会把它连同进程一起杀掉。
 test('pending native background work (e.g. a session cron) keeps the idle process alive for the longer background window', async () => {
   const pool = createPool({ idleTimeoutMs: 40, backgroundIdleTimeoutMs: 400 })

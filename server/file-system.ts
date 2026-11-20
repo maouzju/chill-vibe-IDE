@@ -699,6 +699,8 @@ export const writeWorkspaceFile = async (
     options,
   )
 
+  let writeEncoding = request.encoding
+
   if (request.expectedRevision) {
     const currentBuffer = await readFile(targetPath).catch((error: NodeJS.ErrnoException) => {
       // A deleted file cannot lose anyone's edits, so restoring it is not a conflict.
@@ -713,11 +715,22 @@ export const writeWorkspaceFile = async (
       // always look conflicted against their own revision.
       const currentContent = decodeWithEncoding(currentBuffer, request.encoding)
       if (computeFileRevision(currentContent) !== request.expectedRevision) {
-        throw new FileRevisionConflictError()
+        // encodeForWrite may have upgraded a legacy-encoded file to UTF-8 on the
+        // previous save while the editor still holds the old encoding id. If the
+        // disk is exactly our last save as UTF-8, it is not a conflict — and the
+        // file stays UTF-8 instead of flipping back.
+        const detected = detectAndDecode(currentBuffer)
+        if (
+          detected.encoding !== 'utf8' ||
+          computeFileRevision(detected.content) !== request.expectedRevision
+        ) {
+          throw new FileRevisionConflictError()
+        }
+        writeEncoding = 'utf8'
       }
     }
   }
 
-  await writeFile(targetPath, encodeForWrite(request.content, request.encoding))
+  await writeFile(targetPath, encodeForWrite(request.content, writeEncoding))
   return { revision: computeFileRevision(request.content) }
 }

@@ -529,6 +529,49 @@ test('sync flow surfaces blocked files instead of opening the panel', async () =
   assert.equal(snapshot.syncPanelOpen, false)
 })
 
+// 2026-11-20 审查：用户另外暂存、没出现在弹窗里的文件不能被「同步前自动提交冲突文件」顺手带走再 push。
+test('confirming blocked files commits only those paths, not the whole index', async () => {
+  const fake = createFakeDeps()
+  fake.deps.pullGitChanges = async () => ({
+    status: createGitStatus(),
+    blockedFiles: ['src/b.ts'],
+  })
+  const hub = createGitOperationHub(fake.deps)
+  const ws = 'D:\\repo'
+
+  await hub.beginSync(createContext(ws))
+  fake.deps.pullGitChanges = async () => ({ status: createGitStatus() })
+  await hub.confirmBlockedCommit(createContext(ws))
+
+  assert.equal(fake.commitRequests.length, 1)
+  assert.deepEqual(fake.commitRequests[0]?.paths, ['src/b.ts'])
+})
+
+// 2026-11-20 审查：重试同步时 pull 被本地改动挡住（什么都没拉），不能继续 push 并报「同步完成」。
+test('retrying sync stops on blocked files instead of pushing and reporting success', async () => {
+  const fake = createFakeDeps()
+  fake.deps.pullGitChanges = async () => {
+    throw new Error('network down')
+  }
+  const hub = createGitOperationHub(fake.deps)
+  const ws = 'D:\\repo'
+
+  await hub.beginSync(createContext(ws))
+  assert.equal(hub.getSnapshot(ws).syncStep.kind, 'error')
+
+  fake.deps.pullGitChanges = async () => ({
+    status: createGitStatus(),
+    blockedFiles: ['src/a.ts'],
+  })
+  await hub.retrySync(createContext(ws))
+
+  const snapshot = hub.getSnapshot(ws)
+  assert.equal(fake.calls.includes('pushGitChanges'), false)
+  assert.deepEqual(snapshot.blockedFiles, ['src/a.ts'])
+  assert.equal(snapshot.syncPanelOpen, false)
+  assert.notEqual(snapshot.notice?.tone, 'success')
+})
+
 const createConflictStatus = () =>
   createGitStatus({
     hasConflicts: true,
@@ -641,6 +684,36 @@ test('a second sync while the conflict session is still open does not open anoth
 
   assert.equal(sessions.length, 1)
   assert.equal(hub.getSnapshot(ws).syncStep.kind, 'error')
+  assert.equal(fake.calls.includes('pushGitChanges'), false)
+})
+
+// 2026-11-20 审查：冲突会话的 tab 被关掉后，标记曾永远停在「会话仍在进行」，只能重启应用。
+test('a sync after the conflict session tab was closed opens a fresh session', async () => {
+  const fake = createFakeDeps()
+  fake.deps.pullGitChanges = async () => ({ status: createConflictStatus() })
+  const hub = createGitOperationHub(fake.deps)
+  const ws = 'D:\\repo'
+  const sessions: GitAgentSessionRequest[] = []
+  let firstSessionAlive = true
+  const context: GitOperationContext = {
+    ...createContext(ws),
+    openAgentSession: (request: GitAgentSessionRequest) => {
+      sessions.push(request)
+      const index = sessions.length
+      return { isOpen: () => (index === 1 ? firstSessionAlive : true) }
+    },
+  }
+
+  await hub.beginSync(context)
+  await hub.beginSync(context)
+  assert.equal(sessions.length, 1)
+  assert.equal(hub.getSnapshot(ws).syncStep.kind, 'error')
+
+  firstSessionAlive = false
+  await hub.beginSync(context)
+
+  assert.equal(sessions.length, 2)
+  assert.equal(hub.getSnapshot(ws).syncStep.kind, 'idle')
   assert.equal(fake.calls.includes('pushGitChanges'), false)
 })
 

@@ -224,6 +224,38 @@ const SENSITIVE_WORD_MASK = '****'
 
 const escapeRegExp = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 
+// 症状：打码后 --resume 每轮 400（thinking 签名校验失败），或某一行变成非法 JSON 被 CLI 跳过、
+//   parentUuid 链断开丢历史。
+// 根因（2026-11-20 审查）：旧实现对整行原始 JSON 做 raw.replace，thinking 正文被改而 signature 还是
+//   原文的签名；词的首字母恰好是转义字母（`\t` + word）时还会替换出 `\****` 这种非法转义。
+// 为什么不连签名一起摘掉 thinking 块：那是另一种有损修档，且词只在 thinking 里时本来就不该续传
+//   （maskedInHistory 不计它 → 调用方停在终态）。所以只改解析后的字符串值，thinking 块整个跳过；
+//   解析失败的行原样保留。
+const SIGNED_BLOCK_TYPES = new Set(['thinking', 'redacted_thinking'])
+
+const maskStringsOutsideSignedBlocks = (value: unknown, pattern: RegExp, onHits: (hits: number) => void): unknown => {
+  if (typeof value === 'string') {
+    const hits = value.match(pattern)?.length ?? 0
+    if (hits === 0) {
+      return value
+    }
+    onHits(hits)
+    return value.replace(pattern, SENSITIVE_WORD_MASK)
+  }
+  if (Array.isArray(value)) {
+    return value.map((item) => maskStringsOutsideSignedBlocks(item, pattern, onHits))
+  }
+  if (!value || typeof value !== 'object') {
+    return value
+  }
+  const record = value as Record<string, unknown>
+  if (typeof record.type === 'string' && SIGNED_BLOCK_TYPES.has(record.type)) {
+    return value
+  }
+  return Object.fromEntries(Object.entries(record).map(([key, item]) =>
+    [key, key === 'signature' ? item : maskStringsOutsideSignedBlocks(item, pattern, onHits)]))
+}
+
 export const maskSensitiveWordsInTranscript = (content: string, words: string[]) => {
   const usable = words.filter((word) => word && content.includes(word))
   if (usable.length === 0) {
@@ -233,17 +265,27 @@ export const maskSensitiveWordsInTranscript = (content: string, words: string[])
   let masked = 0
   let maskedInHistory = 0
   const output = content.split('\n').map((raw) => {
-    const hits = raw.match(pattern)?.length ?? 0
+    if (!usable.some((word) => raw.includes(word))) {
+      return raw
+    }
+    const entry = parseEntry(raw)
+    if (!entry) {
+      return raw
+    }
+    let hits = 0
+    const maskedEntry = maskStringsOutsideSignedBlocks(entry, pattern, (count) => {
+      hits += count
+    })
     if (hits === 0) {
       return raw
     }
     masked += hits
-    if (parseEntry(raw)?.isApiErrorMessage !== true) {
+    if (entry.isApiErrorMessage !== true) {
       maskedInHistory += hits
     }
-    return raw.replace(pattern, SENSITIVE_WORD_MASK)
+    return JSON.stringify(maskedEntry)
   })
-  return { content: output.join('\n'), masked, maskedInHistory }
+  return masked === 0 ? { content, masked: 0, maskedInHistory: 0 } : { content: output.join('\n'), masked, maskedInHistory }
 }
 
 // 待打码的词按会话登记，下一次 spawn 前的 repair 里落盘后清掉。

@@ -23,6 +23,7 @@ test('stop kills a provider child that resolves after stop was requested', async
   })
   let resolveLaunch!: (child: ChildProcess) => void
   let killed = false
+  let launchStarted = false
   const launchPromise = new Promise<ChildProcess>((resolve) => {
     resolveLaunch = resolve
   })
@@ -31,7 +32,10 @@ test('stop kills a provider child that resolves after stop was requested', async
     // git 快照，实测（2026-08-02）74ms~3.5s 波动，能吃掉下面 2s 的等待预算并假红。
     workspaceSnapshotter: async () => null,
     workspaceDiffer: async () => ({ files: [] }),
-    providerLauncher: async () => await launchPromise,
+    providerLauncher: async () => {
+      launchStarted = true
+      return await launchPromise
+    },
   })
   const request = {
     streamId: 'stop-before-child',
@@ -50,6 +54,8 @@ test('stop kills a provider child that resolves after stop was requested', async
   } satisfies ChatRequest
 
   manager.createStream(request)
+  // 停止落在「launcher 已被调用、child 还没回来」的窗口；更早（快照阶段）的停止根本不会启动，见下一条。
+  await waitFor(() => launchStarted, 'provider launch should be in flight before stop')
   assert.equal(manager.stop('stop-before-child').stopped, true)
   resolveLaunch({
     kill: () => {
@@ -64,6 +70,76 @@ test('stop kills a provider child that resolves after stop was requested', async
 
   assert.equal(killed, true)
   manager.closeAll()
+})
+
+// 2026-11-20 审查：发送后 git status 慢（本机单次最坏 6.9s），用户在快照阶段就点了停止。旧实现照样调用
+// launcher：已取消的 prompt 被写进常驻 Claude 进程的原生转录，随后整个常驻进程（连同后台任务）被硬杀。
+test('stop during the pre-launch workspace snapshot never launches the provider', async (t) => {
+  const workspacePath = await mkdtemp(path.join(os.tmpdir(), 'chill-vibe-stop-snapshot-'))
+  t.after(async () => {
+    await rm(workspacePath, { recursive: true, force: true })
+  })
+
+  let snapshotStarted = false
+  let releaseSnapshot!: () => void
+  const snapshotGate = new Promise<void>((resolve) => {
+    releaseSnapshot = resolve
+  })
+  let launchCount = 0
+  let killed = false
+
+  const manager = new ChatManager({
+    workspaceSnapshotter: async () => {
+      snapshotStarted = true
+      await snapshotGate
+      return null
+    },
+    workspaceDiffer: async () => ({ files: [] }),
+    providerLauncher: async () => {
+      launchCount += 1
+      return {
+        kill: () => {
+          killed = true
+          return true
+        },
+      } as unknown as ChildProcess
+    },
+  })
+  t.after(() => manager.closeAll())
+
+  const request = {
+    streamId: 'stop-during-snapshot',
+    cardId: 'card-stop-during-snapshot',
+    provider: 'claude',
+    prompt: 'test',
+    workspacePath,
+    attachments: [],
+    model: '',
+    reasoningEffort: 'max',
+    thinkingEnabled: true,
+    planMode: false,
+    language: 'zh-CN',
+    systemPrompt: '',
+    modelPromptRules: [],
+    crossProviderSkillReuseEnabled: true,
+  } satisfies ChatRequest
+
+  const events: StreamEnvelope[] = []
+  manager.createStream(request)
+  manager.subscribe('stop-during-snapshot', (payload) => {
+    events.push(payload)
+  })
+
+  await waitFor(() => snapshotStarted, 'workspace snapshot should be in flight before stop')
+  assert.equal(manager.stop('stop-during-snapshot').stopped, true)
+  assert.equal(events.filter((item) => item.event === 'done').length, 1, 'stop still settles the stream immediately')
+
+  releaseSnapshot()
+  await new Promise((resolve) => setTimeout(resolve, 50))
+
+  assert.equal(launchCount, 0, 'a stream stopped before launch must never reach the provider launcher')
+  assert.equal(killed, false)
+  assert.equal(events.filter((item) => item.event === 'done' || item.event === 'error').length, 1)
 })
 
 // 症状：turn 已 onDone、工作区 diff 还在 await 时用户点停止 → edits 改动卡被排在

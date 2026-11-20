@@ -94,6 +94,63 @@ export const buildRelaunchEnv = (
   return next
 }
 
+export type RelaunchGuardLauncherPaths = {
+  execPath: string
+  guardScript: string
+  pipePath: string
+  sentinelPath: string
+  historyPath: string
+}
+
+const launcherEnvKeys = {
+  execPath: 'CHILL_VIBE_GUARD_LAUNCH_EXEC',
+  guardScript: 'CHILL_VIBE_GUARD_LAUNCH_SCRIPT',
+  pipePath: 'CHILL_VIBE_GUARD_LAUNCH_PIPE',
+  sentinelPath: 'CHILL_VIBE_GUARD_LAUNCH_SENTINEL',
+  historyPath: 'CHILL_VIBE_GUARD_LAUNCH_HISTORY',
+} as const satisfies Record<keyof RelaunchGuardLauncherPaths, string>
+
+// 症状：安装路径或数据目录含中文时守护从未 attach，main.log 却照写
+//       "Crash relaunch guard started."。根因（2026-11-20 审查，本机 936 实测）：路径以 UTF-8
+//       写进 .cmd，detached 的 cmd 按 OEM 代码页解析成乱码。被否决：首行 chcp 65001 ——
+//       detached cmd 没有控制台，实测无效；按 OEM 代码页写盘 —— 码表外字符（如 emoji 用户名）仍坏。
+// 所以批处理只保留 ASCII，路径走 UTF-16 的环境块，在 start 同一行展开后立刻清掉
+// （%VAR% 在整行解析时就已展开），守护和它复活的应用都不会继承这些变量。
+export const buildRelaunchGuardLauncher = (
+  paths: RelaunchGuardLauncherPaths,
+): { script: string; env: Record<string, string> } => {
+  const env: Record<string, string> = {}
+  for (const key of Object.keys(launcherEnvKeys) as (keyof RelaunchGuardLauncherPaths)[]) {
+    env[launcherEnvKeys[key]] = paths[key].replace(/"/g, '')
+  }
+
+  const ref = (key: keyof RelaunchGuardLauncherPaths) => `"%${launcherEnvKeys[key]}%"`
+  const clear = Object.values(launcherEnvKeys).map((name) => `set "${name}="`)
+
+  // `start "" /b` is the whole point: taskkill /T walks the target's children,
+  // so a guard spawned directly from the app would be killed alongside the app it
+  // exists to resurrect. Routing through a cmd that exits immediately leaves
+  // the guard parented to a dead PID, outside any tree that names the app.
+  const start = [
+    'start "" /b',
+    ref('execPath'),
+    ref('guardScript'),
+    '--pipe',
+    ref('pipePath'),
+    '--sentinel',
+    ref('sentinelPath'),
+    '--history',
+    ref('historyPath'),
+    '--exec',
+    ref('execPath'),
+  ].join(' ')
+
+  return {
+    script: ['@echo off', 'set ELECTRON_RUN_AS_NODE=1', [...clear, start].join(' & '), ''].join('\r\n'),
+    env,
+  }
+}
+
 export const parseGuardArgs = (argv: readonly string[]): GuardArgs | null => {
   const read = (flag: string): string | null => {
     const index = argv.indexOf(flag)

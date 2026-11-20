@@ -126,6 +126,7 @@ import {
   hydrateDraftAttachments,
   mergeUploadedDraftAttachments,
   promoteDraftAttachment,
+  resolveComposerAfterSubmit,
   sameImageAttachmentLists,
   type PendingComposerAttachment,
 } from './composer-draft-attachments'
@@ -157,7 +158,7 @@ import {
   recordAppliedActionsForForensics,
   recordMissingComposerForForensics,
 } from '../diagnostics/stuck-pane-forensics'
-import { createDraftSyncScheduler, draftSyncIdleMs } from './chat-draft-sync'
+import { createDraftEchoTracker, createDraftSyncScheduler, draftSyncIdleMs } from './chat-draft-sync'
 import {
   evaluateAutoUrge,
   getLatestAssistantTurnText,
@@ -171,7 +172,7 @@ import {
 } from '../api'
 import { canSendEmptyContinuation } from '../app-helpers'
 import { GitToolCard, type GitInfoSummary } from './GitToolCard'
-import type { GitAgentSessionRequest } from './git-operation-hub'
+import type { GitAgentSessionHandle, GitAgentSessionRequest } from './git-operation-hub'
 import { MusicCard } from './MusicCard'
 import { WhiteNoiseCard } from './WhiteNoiseCard'
 import { WeatherCard } from './WeatherCard'
@@ -510,7 +511,7 @@ type ChatCardProps = {
   onChangeTitle: (title: string) => void
   onForkConversation?: (messageId: string) => void
   onOpenFile?: (relativePath: string, options?: { line?: number }) => void
-  onOpenAgentSession?: (request: GitAgentSessionRequest) => boolean
+  onOpenAgentSession?: (request: GitAgentSessionRequest) => boolean | GitAgentSessionHandle
   isRestored: boolean
   chromeMode?: 'card' | 'pane'
   isActive?: boolean
@@ -1727,6 +1728,7 @@ const ChatCardView = ({
     setPendingAttachments([...next])
   }, [])
   const composingRef = useRef(false)
+  const submitUploadInFlightRef = useRef(false)
   const compositionEndUnlockHandleRef = useRef<number | null>(null)
   const composerRef = useRef<HTMLDivElement>(null)
   const hasWorkspacePath = workspacePath.trim().length > 0
@@ -1916,11 +1918,16 @@ const ChatCardView = ({
   useEffect(() => {
     onDraftChangeRef.current = onDraftChange
   }, [onDraftChange])
+  const draftEchoTrackerRef = useRef<ReturnType<typeof createDraftEchoTracker> | null>(null)
+  if (draftEchoTrackerRef.current === null) {
+    draftEchoTrackerRef.current = createDraftEchoTracker()
+  }
   const draftSyncSchedulerRef = useRef<ReturnType<typeof createDraftSyncScheduler> | null>(null)
   if (draftSyncSchedulerRef.current === null) {
     draftSyncSchedulerRef.current = createDraftSyncScheduler({
       idleMs: draftSyncIdleMs,
       onSync: (nextValue) => {
+        draftEchoTrackerRef.current?.noteOutgoing(nextValue)
         onDraftChangeRef.current(nextValue)
       },
     })
@@ -2008,8 +2015,10 @@ const ChatCardView = ({
 
   const syncDraftFromCard = useCallback(
     (nextDraft: string) => {
+      // 自己刚同步出去的旧值回来时不回写，见 createDraftEchoTracker。
+      const isOwnEcho = draftEchoTrackerRef.current?.consumeIncoming(nextDraft) ?? false
       if (composingRef.current) return
-      if (draftValueRef.current === nextDraft) {
+      if (draftValueRef.current === nextDraft || isOwnEcho) {
         return
       }
 
@@ -2110,7 +2119,13 @@ const ChatCardView = ({
     [patchCard, sendAutoUrge],
   )
 
+  const draftEchoCardIdRef = useRef(card.id)
   useEffect(() => {
+    if (draftEchoCardIdRef.current !== card.id) {
+      // 换卡后旧卡推出去的值不能被当成新卡的回声。
+      draftEchoCardIdRef.current = card.id
+      draftEchoTrackerRef.current = createDraftEchoTracker()
+    }
     // The local draft stays responsive while persisted state can still restore or clear it.
     syncDraftFromCard(card.draft ?? '')
   }, [card.draft, card.id, syncDraftFromCard])
@@ -3692,38 +3707,53 @@ const ChatCardView = ({
   }
 
   const handleSubmit = async (options?: SendMessageOptions) => {
-    if (sendDisabled) return
+    // 症状：粘贴大图后立刻 Enter，上传那几百毫秒里再按一次会把同一条连发两遍；期间新敲的字 / 新粘的图被清空。
+    // 根因（2026-11-20 审查）：sendDisabled 是渲染期快照，等上传时不会变；上传完又无条件清空整个输入框。
+    // 决策：只在等上传这段挡重入（不挡到 onSend 结束，见 pitfall 123），清空只去掉这次真正发出去的部分。
+    if (sendDisabled || submitUploadInFlightRef.current) return
     // 滚轮预览还没提交就按了发送：先落定，否则按钮显示的模型和这条消息实际用的对不上。
     // sendMessage 读的是 appStateRef，换模型的 applyAction 同步更新它。
     modelWheelRef.current.flush()
-    const prompt = draftValueRef.current.trim()
+    const draftAtSubmit = draftValueRef.current
+    const prompt = draftAtSubmit.trim()
     // The ref is the attachment source of truth: a background paste upload may
     // have promoted entries after this render's state snapshot was taken.
     const sentAttachments = pendingAttachmentsRef.current
     let attachments: ImageAttachment[] = []
 
+    submitUploadInFlightRef.current = true
     try {
       attachments = await Promise.all(sentAttachments.map((attachment) => uploadPendingImage(attachment)))
     } catch (error) {
       setComposerError(error instanceof Error ? error.message : text.unexpectedError)
       return
+    } finally {
+      submitUploadInFlightRef.current = false
     }
-    draftValueRef.current = ''
+    const remaining = resolveComposerAfterSubmit({
+      draftAtSubmit,
+      draftNow: draftValueRef.current,
+      sentAttachments,
+      pendingNow: pendingAttachmentsRef.current,
+    })
+    draftValueRef.current = remaining.draft
     if (textareaRef.current) {
-      textareaRef.current.value = ''
+      if (textareaRef.current.value !== remaining.draft) {
+        textareaRef.current.value = remaining.draft
+      }
       textareaRef.current.focus()
     }
-    syncDraftDerivedState('')
+    syncDraftDerivedState(remaining.draft)
     scheduleComposerResize()
-    applyPendingAttachments([])
+    applyPendingAttachments(remaining.attachments)
     setComposerAttachmentPreview(null)
     setComposerError(null)
     discardPendingDraftSync()
-    onDraftChange('')
+    onDraftChange(remaining.draft)
     // The background paste upload may have persisted draft attachments after
     // this render's card snapshot, so clear whenever anything was sent too.
     if (sentAttachments.length > 0 || (card.draftAttachments ?? []).length > 0) {
-      onPatchCard({ draftAttachments: [] })
+      onPatchCard({ draftAttachments: collectPersistedDraftAttachments(remaining.attachments) })
     }
 
     scrollMessageListToBottom('instant')

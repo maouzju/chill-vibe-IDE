@@ -3,7 +3,7 @@ import { once } from 'node:events'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
-import { auditReleasePath } from './audit-release-safety.mjs'
+import { auditReleasePath, createReleaseSafetyFinding } from './audit-release-safety.mjs'
 
 const scriptRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const DEFAULT_TIMEOUT_MS = 120_000
@@ -24,6 +24,7 @@ const HISTORY_CATEGORIES = new Set([
   'personal-path',
   'external-project-path',
   'debug-artifact',
+  'unscannable-file',
 ])
 
 function parseInteger(value, fallback) {
@@ -129,14 +130,20 @@ async function scanObjects(repoRoot, objectInfo, timeoutMs) {
         const body = buffer.subarray(newline + 1, newline + 1 + size)
         buffer = buffer.subarray(newline + 1 + size + 1)
         const oid = parts[0]
-        if (parts[1] !== 'blob' || size > MAX_SCAN_BYTES) continue
-        const text = body.includes(0) ? body.toString('latin1') : body.toString('utf8')
+        if (parts[1] !== 'blob') continue
+        // Symptom (2026-11-20 review): a >32 MB `crash.dmp` printed "clean"
+        // because oversized blobs were skipped before the path-only rules ran.
+        // Oversized blobs now get the path rules on empty text plus a
+        // fail-closed `unscannable-file`, matching the worktree audit.
+        const oversized = size > MAX_SCAN_BYTES
+        const text = oversized ? '' : body.includes(0) ? body.toString('latin1') : body.toString('utf8')
         const objectPaths = objectInfo.paths.get(oid) ?? new Set(['<unmapped-blob>'])
         for (const objectPath of objectPaths) {
           const objectFindings = auditReleasePath(objectPath, text, {
             baselineText: '',
             untracked: false,
           })
+          if (oversized) objectFindings.push(createReleaseSafetyFinding(objectPath, 'unscannable-file'))
           for (const finding of objectFindings) {
             if (!HISTORY_CATEGORIES.has(finding.category)) continue
             const line = finding.line ?? 0

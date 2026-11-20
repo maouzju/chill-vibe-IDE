@@ -125,3 +125,57 @@ export const shouldRelaunch = (
   const recent = relaunchHistoryMs.filter((at) => nowMs - at < windowMs)
   return recent.length < maxRelaunches
 }
+
+const callIgnoringErrors = (step: () => unknown): unknown => {
+  try {
+    return step()
+  } catch {
+    return undefined
+  }
+}
+
+export type SessionEndSteps = {
+  markCleanExit: () => void
+  requestFlush: () => unknown
+}
+
+// 症状：开着应用关机 / 重启 / 注销，下次启动 main.log 误记「killed from outside」，守护还可能
+//       在关机途中把应用拉起来。根因（2026-11-20 审查）：Windows 结束会话时 Electron 不发
+//       before-quit / will-quit，而 sentinel 只在 will-quit 写成 clean。
+// 只挂 session-end（已不可撤销）不挂 query-session-end：后者可能被别的程序否决，关机取消后
+// 应用还在跑，提前标 clean 会让之后真正的强杀被读成正常退出。处理函数绝不 await —— 系统
+// 只给几秒，等刷盘会拖住关机；刷盘只是尽力发出去。
+export const createSessionEndHandler = ({ markCleanExit, requestFlush }: SessionEndSteps) => {
+  let handled = false
+  return (): void => {
+    if (handled) {
+      return
+    }
+    handled = true
+    callIgnoringErrors(markCleanExit)
+    const pending = callIgnoringErrors(requestFlush)
+    if (pending && typeof (pending as PromiseLike<unknown>).then === 'function') {
+      void Promise.resolve(pending).catch(() => undefined)
+    }
+  }
+}
+
+export type StartupFailureSteps = {
+  logError: (error: unknown) => void
+  markCleanExit: () => void
+  shutdownBackend: () => void
+  releaseSingleInstanceLock: () => void
+  exit: (code: number) => void
+}
+
+// 症状：启动链中途抛错（如清用户数据时 rm 撞上 EBUSY）后，进程没有窗口却占着单实例锁，
+//       再点图标只唤起一个没有任何 IPC handler 的空窗口（2026-11-20 审查）。
+// app.exit 跳过 will-quit，所以和更新退出一样要自己把 sentinel 写成 clean（见 #352），
+// 否则守护把一次必然复现的启动失败当成被杀，反复拉起直到节流。
+export const handleStartupFailure = (error: unknown, steps: StartupFailureSteps): void => {
+  callIgnoringErrors(() => steps.logError(error))
+  callIgnoringErrors(steps.markCleanExit)
+  callIgnoringErrors(steps.shutdownBackend)
+  callIgnoringErrors(steps.releaseSingleInstanceLock)
+  steps.exit(1)
+}

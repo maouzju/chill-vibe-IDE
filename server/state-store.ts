@@ -239,16 +239,9 @@ const writeSessionHistorySidecars = async (entries: SessionHistoryEntry[], dataD
   const newlyCreated = await Promise.all(
     entries.filter(isFullSessionHistoryEntry).map(async (entry) => {
       const filePath = getSessionHistoryEntryFilePath(entry.id, dataDir)
-      const tmpFilePath = `${filePath}.tmp`
       const existed = await stat(filePath).then(() => true).catch(() => false)
-      try {
-        await writeFile(tmpFilePath, `${JSON.stringify(entry, null, 2)}\n`, 'utf8')
-        await rename(tmpFilePath, filePath)
-        return existed ? null : entry
-      } catch (error) {
-        await unlink(tmpFilePath).catch(() => undefined)
-        throw error
-      }
+      await writeSidecarFileDurably(filePath, `${JSON.stringify(entry, null, 2)}\n`)
+      return existed ? null : entry
     }),
   )
 
@@ -1931,10 +1924,14 @@ const recoverFromWal = async (dataDir = getAppDataDir()): Promise<AppState | nul
     const recoveredState = sanitizeRecoveredWalState(raw)
 
     if (recoveredState) {
-      // WAL is valid — promote it to the main file atomically
+      // WAL is valid — promote it to the main file atomically. Same ordering rule as
+      // atomicWriteFile below: the promoted data must be flushed before the WAL goes away,
+      // or a second power loss leaves an all-NUL state.json and no WAL to roll back to.
       const tmpFile = getTmpFilePath(dataDir)
-      await writeFile(tmpFile, walContent, 'utf8')
-      await rename(tmpFile, getStateFilePathForDir(dataDir))
+      const stateFile = getStateFilePathForDir(dataDir)
+      await writeFileSynced(tmpFile, walContent, defaultStateWriteFsDeps)
+      await rename(tmpFile, stateFile)
+      await syncExistingFile(stateFile, defaultStateWriteFsDeps)
       await removeWal(dataDir)
       console.warn('[state-store] Recovered state from WAL after crash.')
       return setCachedState(recoveredState, dataDir, await getStateDiskStamp(dataDir))
@@ -1984,6 +1981,27 @@ const syncExistingFile = async (target: string, deps: StateWriteFsDeps) => {
     await handle.sync()
   } finally {
     await handle.close()
+  }
+}
+
+// 症状：关掉工作区后掉电，归档会话只剩 state.json 里的 8 条预览，sidecar 是等长的全 NUL。
+// 根因：2026-11-20 审查。sidecar 是归档正文唯一的完整落点，却只做 writeFile + rename、从不 fsync；
+//   紧接着写的 state.json 有 fsync，于是「索引已落盘、正文还在 page cache」。
+// 不能只 fsync 改名后的文件：改名先落盘、数据页没落盘正是全 NUL 的成因（见下方 atomicWriteFile 的 ADR）。
+// 这里没有 WAL：sidecar 写坏了还能从上一份完整文件读，只要 tmp 先刷盘再改名即可。
+const writeSidecarFileDurably = async (
+  filePath: string,
+  content: string,
+  deps: StateWriteFsDeps = defaultStateWriteFsDeps,
+) => {
+  const tmpFilePath = `${filePath}.tmp`
+  try {
+    await writeFileSynced(tmpFilePath, content, deps)
+    await rename(tmpFilePath, filePath)
+    await syncExistingFile(filePath, deps)
+  } catch (error) {
+    await unlink(tmpFilePath).catch(() => undefined)
+    throw error
   }
 }
 
@@ -2428,16 +2446,9 @@ export const saveClosedWorkspaceSnapshot = async (
   const dataDir = getAppDataDir()
   const sidecarDir = getClosedWorkspaceDirPath(dataDir)
   const filePath = getClosedWorkspaceFilePath(normalizedSnapshot.column.workspacePath, dataDir)
-  const tmpFilePath = `${filePath}.tmp`
 
   await mkdir(sidecarDir, { recursive: true })
-  try {
-    await writeFile(tmpFilePath, `${JSON.stringify(normalizedSnapshot, null, 2)}\n`, 'utf8')
-    await rename(tmpFilePath, filePath)
-  } catch (error) {
-    await unlink(tmpFilePath).catch(() => undefined)
-    throw error
-  }
+  await writeSidecarFileDurably(filePath, `${JSON.stringify(normalizedSnapshot, null, 2)}\n`)
 
   return normalizedSnapshot
 }
@@ -2614,7 +2625,7 @@ const preTrimOversizedMessages = (raw: unknown) => {
 
 // ── Public API ────────────────────────────────────────────────────────────────
 
-export const loadState = async () => {
+export const loadState = async (): Promise<AppState> => {
   const dataDir = getAppDataDir()
   startOrphanedTempCleanupOnce(dataDir)
   const cachedStateEntry = getCachedStateEntry(dataDir)
@@ -2658,7 +2669,7 @@ export const loadState = async () => {
 
     if (sanitized.state.columns.length > 0 || !Array.isArray((raw as Record<string, unknown>).columns)) {
       if (sanitized.didCompactStructuredData) {
-        return saveStateToDataDir(sanitized.state, dataDir)
+        return (await saveCompactedStateIfDiskUnchanged(sanitized.state, dataDir, file)) ?? loadState()
       }
 
       return setCachedState(
@@ -2682,7 +2693,7 @@ export const loadState = async () => {
 
       if (retrySanitized.state.columns.length > 0) {
         if (retrySanitized.didCompactStructuredData) {
-          return saveStateToDataDir(retrySanitized.state, dataDir)
+          return (await saveCompactedStateIfDiskUnchanged(retrySanitized.state, dataDir, file)) ?? loadState()
         }
 
         return setCachedState(
@@ -2993,6 +3004,17 @@ const saveStateToDataDir = async (
 
 const saveStateToDataDirWithLock = async (state: AppState, dataDir: string) =>
   withWriteLock(() => saveStateToDataDir(state, dataDir))
+
+// 症状：读档压缩回写把渲染端刚存的新状态盖回旧盘面（刚发的消息、草稿、设置改动丢失），缓存也跟着变旧。
+// 根因：2026-11-20 审查。回写不拿写锁，写的又是 loadState 开头读到的内容；与加锁保存并发时
+//   后落盘的是旧内容，两边还共用 state.wal 和按毫秒命名的 tmp。
+// 光加锁不够：排到锁时盘面可能已经被更新的保存换掉，所以拿到锁后要重读比对，变了就不写（返回 null，
+//   调用方重新读档）。不直接删掉回写：旧版超大命令输出要靠它瘦身一次。
+const saveCompactedStateIfDiskUnchanged = (state: AppState, dataDir: string, loadedContent: string) =>
+  withWriteLock(async () => {
+    const currentContent = await readFile(getStateFilePathForDir(dataDir), 'utf8').catch(() => null)
+    return currentContent === loadedContent ? saveStateToDataDir(state, dataDir) : null
+  })
 
 export const saveState = async (state: AppState) => {
   const dataDir = getAppDataDir()

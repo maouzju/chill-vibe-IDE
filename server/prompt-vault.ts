@@ -63,7 +63,8 @@ export const recordPromptVault = async (dataDir: string, settings: AppState['set
     savedAt: new Date().toISOString(),
   }
   const target = getPromptVaultPath(dataDir)
-  // 临时文件名唯一：loadState 的压缩保存不走写锁，可能与加锁保存并发写同一份存档。
+  // 临时文件名唯一：不依赖调用方是否持有 state.json 的写锁，并发写同一份存档也不会互踩 tmp。
+  // （当初的并发来源是 loadState 的压缩回写不走写锁，2026-11-20 起它已进写锁；唯一文件名仍保留作兜底。）
   tempCounter += 1
   const temp = `${target}.${process.pid}.${tempCounter}.tmp`
   await mkdir(dataDir, { recursive: true })

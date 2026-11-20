@@ -157,6 +157,18 @@ describe('AutomationBoardCard renders', () => {
     assert.ok(!standbyLane.includes('automation-board-lane-running"'))
   })
 
+  // 待命草稿的图片原来只在组件 useState 里，切 tab 卸载再挂回来就没了；
+  // 已上传的那部分要存进看板卡自己的 draftAttachments，挂载时恢复。
+  it('restores the standby composer images persisted on the board card', () => {
+    const html = renderBoard({
+      draftAttachments: [
+        { id: 'img-draft-1', fileName: 'shot.png', mimeType: 'image/png', sizeBytes: 12 },
+      ],
+    })
+
+    assert.ok(html.includes('img-draft-1'), 'the persisted draft image should be rendered on mount')
+  })
+
   it('hides the running counter when no item is streaming', () => {
     const board = {
       items: [

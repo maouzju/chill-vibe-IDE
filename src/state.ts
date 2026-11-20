@@ -3063,6 +3063,13 @@ const ideReducerCore = (state: AppState, action: IdeAction): AppState => {
         return touchState(next)
       }
 
+      // 症状：看板卡拖到另一列后目标看板三道全空，项卡留在源列成了游离卡，跑着的项卡还在写源工作区。
+      // 根因（2026-11-20 审查）：项卡只在 column.cards、不在 pane.tabs，这里只搬了看板卡这一张。
+      // 为什么不连项卡一起搬：项卡的会话属于源工作区，跨工作区要逐张 rebind 并停流，还会覆盖目标工作区的看板存档；先拒绝。
+      if (movingCard.model === AUTOMATIONBOARD_TOOL_MODEL) {
+        return state
+      }
+
       let nextState = state
 
       nextState = updateColumn(nextState, action.sourceColumnId, (column) => {
@@ -3722,7 +3729,9 @@ const ideReducerCore = (state: AppState, action: IdeAction): AppState => {
             reasoningEffort: '',
             thinkingEnabled: true,
             planMode: false,
-            adminAccess: false,
+            // 必须与 AutomationBoardCard 未落盘时的显示兜底同口径（2026-11-20 审查：
+            // 写死 false 会让第一次只改模型就把界面上勾着的超管悄悄落盘成关）。
+            adminAccess: state.settings.defaultAdminAccess,
           }),
           ...action.patch,
         },

@@ -17,6 +17,22 @@ export const shouldPersistStickyNoteDocument = ({
   attachments: readonly ImageAttachment[]
 }) => !diskLoadPending && (hasLocalDocument || content.trim().length > 0 || attachments.length > 0)
 
+// 症状 (2026-11-20 审查): 清空便签后 500ms 内点开另一条已存笔记，旧防抖定时器触发，把 '' 写进新笔记。
+// 根因: 定时器触发时按 activeNoteIdRef.current 落盘，切换笔记 / 还原版本时没有处理还在途的定时器。
+// 否决: 直接 clearTimeout 丢弃会丢用户刚敲的字；切换前必须按旧笔记 id 立刻落盘。
+export const resolveStickyNotePendingFlush = ({
+  debouncePending,
+  checkpointPending,
+  latestContent,
+}: {
+  debouncePending: boolean
+  checkpointPending: boolean
+  latestContent: string
+}): { content: string; checkpoint: boolean; propagateToCard: boolean } | null => {
+  if (!debouncePending && !checkpointPending) return null
+  return { content: latestContent, checkpoint: checkpointPending, propagateToCard: debouncePending }
+}
+
 export const mergeStickyNoteAttachments = (
   current: readonly ImageAttachment[],
   incoming: readonly ImageAttachment[],

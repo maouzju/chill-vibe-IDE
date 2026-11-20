@@ -12,6 +12,7 @@ import {
 import type { AppLanguage, FileReadResponse } from '../../shared/schema'
 import {
   resolveTextEditorExternalRefresh,
+  resolveTextEditorSaveConflict,
   resolveTextEditorSaveIntent,
   shouldFlushTextEditorSave,
 } from './tool-card-state'
@@ -414,28 +415,47 @@ const TextEditorCardInner = ({ workspacePath, filePath, language }: TextEditorCa
         revisionRef.current = expectedRevision
       }
 
-      const result = await saveFileContent(
+      let result = await saveFileContent(
         workspacePath,
         targetFilePath,
         textContent,
         force ? undefined : expectedRevision ?? undefined,
         encodingRef.current ?? undefined,
       )
+      let retried = false
 
-      if (result.conflict) {
+      while (result.conflict) {
         // Re-read the disk so the conflict banner can offer both versions.
         const diskResult = await fetchFileContent(workspacePath, targetFilePath).catch(() => null)
-        const resolution = diskResult && !diskResult.binary && !diskResult.tooLarge
-          ? resolveTextEditorExternalRefresh(savedContentRef.current, contentRef.current, diskResult.content)
-          : null
+        const resolution = resolveTextEditorSaveConflict({
+          savedContent: savedContentRef.current,
+          content: contentRef.current,
+          diskContent: diskResult && !diskResult.binary && !diskResult.tooLarge ? diskResult.content : null,
+          diskRevision: diskResult?.revision ?? null,
+          retried,
+        })
 
-        if (resolution?.kind === 'refresh') {
+        if (resolution.kind === 'retry') {
+          // Disk still equals our baseline: only our own earlier save moved the revision.
+          retried = true
+          revisionRef.current = resolution.revision
+          result = await saveFileContent(
+            workspacePath,
+            targetFilePath,
+            textContent,
+            resolution.revision,
+            encodingRef.current ?? undefined,
+          )
+          continue
+        }
+
+        if (resolution.kind === 'refresh') {
           // The disk already matches the local buffer — adopt it instead of alarming.
           applyResolvedRefresh(resolution.content)
-          revisionRef.current = diskResult?.revision ?? null
+          revisionRef.current = resolution.revision
           clearConflict()
         } else {
-          enterConflict(diskResult && !diskResult.binary && !diskResult.tooLarge ? diskResult.content : '')
+          enterConflict(resolution.diskContent)
         }
         return
       }

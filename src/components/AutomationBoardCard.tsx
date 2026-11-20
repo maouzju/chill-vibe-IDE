@@ -45,7 +45,10 @@ import {
   toAutomationBoardLaneWidths,
 } from './automation-board-lane-resize'
 import {
+  collectPersistedDraftAttachments,
+  hydrateDraftAttachments,
   promoteDraftAttachment,
+  sameImageAttachmentLists,
   type PendingComposerAttachment,
 } from './composer-draft-attachments'
 import { collectPastedImageFiles, uploadPendingImage } from './composer-image-paste'
@@ -181,6 +184,9 @@ export type AutomationBoardCardProps = {
   onSetComposeDefaults: (patch: Partial<AutomationBoardComposeDefaults>) => void
   /** 待命草稿落盘。只在失焦与卸载时调，理由见 automation-board-host.ts。 */
   onSetComposerDraft: (draft: string) => void
+  /** 待命草稿里已上传的图片，存在看板卡自己的 `draftAttachments` 上（与 ChatCard 同一字段）。 */
+  draftAttachments?: ImageAttachment[]
+  onSetDraftAttachments?: (attachments: ImageAttachment[]) => void
 }
 
 /**
@@ -1048,7 +1054,38 @@ const AutomationBoardCardView = (props: AutomationBoardCardProps) => {
   const slashMenuElRef = useRef<HTMLDivElement | null>(null)
   // 待命草稿的粘贴图片。需求经常本身就是一张截图，只能打字等于逼用户先建卡
   // 再去卡里粘一遍。
-  const [draftImages, setDraftImages] = useState<PendingComposerAttachment[]>([])
+  // 症状：粘图后切 tab 再回来，文字在、图没了，每粘一次还泄漏一个 blob URL（2026-11-20 审查）。
+  // 根因：图片只活在这个 useState 里，看板切 tab 会整棵卸载。已上传的那部分照 ChatCard 的做法
+  //   镜像进看板卡的 draftAttachments，挂载时恢复；本地 objectURL 在卸载/移除/提交时统一 revoke。
+  const [draftImages, setDraftImagesState] = useState<PendingComposerAttachment[]>(() =>
+    hydrateDraftAttachments(props.draftAttachments ?? []),
+  )
+  // 上传可能在卸载之后才完成，所以当前列表与落盘出口都走 ref，不依赖已经卸载的 state。
+  const draftImagesRef = useRef(draftImages)
+  const persistedDraftAttachmentsRef = useRef<readonly ImageAttachment[]>(props.draftAttachments ?? [])
+  const setDraftAttachmentsRef = useRef(props.onSetDraftAttachments)
+  useEffect(() => {
+    setDraftAttachmentsRef.current = props.onSetDraftAttachments
+  })
+  const setDraftImages = (next: PendingComposerAttachment[]) => {
+    draftImagesRef.current = next
+    setDraftImagesState(next)
+    const persisted = collectPersistedDraftAttachments(next)
+    if (!sameImageAttachmentLists(persisted, persistedDraftAttachmentsRef.current)) {
+      persistedDraftAttachmentsRef.current = persisted
+      setDraftAttachmentsRef.current?.(persisted)
+    }
+  }
+  useEffect(
+    () => () => {
+      for (const entry of draftImagesRef.current) {
+        if (entry.previewUrl.startsWith('blob:')) {
+          URL.revokeObjectURL(entry.previewUrl)
+        }
+      }
+    },
+    [],
+  )
   const [dropLane, setDropLane] = useState<AutomationBoardLane | null>(null)
   const [rejectedDrop, setRejectedDrop] = useState(false)
   // 同时只展开一个模板的配置面板：模板条是横向滚动的一行，两个面板同时展开
@@ -1446,22 +1483,22 @@ const AutomationBoardCardView = (props: AutomationBoardCardProps) => {
       previewUrl: URL.createObjectURL(file),
     }))
 
-    setDraftImages((current) => [...current, ...entries])
+    setDraftImages([...draftImagesRef.current, ...entries])
 
     for (const entry of entries) {
       void uploadPendingImage(entry)
         .then((uploaded) => {
-          setDraftImages(
-            (current) =>
-              promoteDraftAttachment(
-                current,
-                entry.id,
-                uploaded,
-                // 继续用本地 objectURL 当预览：换成 attachment:// 会让缩略图
-                // 在上传完成的那一帧闪一下白。
-                entry.previewUrl,
-              ).next as PendingComposerAttachment[],
+          const { replaced, next } = promoteDraftAttachment(
+            draftImagesRef.current,
+            entry.id,
+            uploaded,
+            // 继续用本地 objectURL 当预览：换成 attachment:// 会让缩略图
+            // 在上传完成的那一帧闪一下白。卸载时由上面的清理 effect 统一 revoke。
+            entry.previewUrl,
           )
+          if (replaced) {
+            setDraftImages(next as PendingComposerAttachment[])
+          }
         })
         // 上传失败不该吃掉这张图：条目留在 local 态，提交时还会再传一次。
         .catch(() => undefined)
@@ -1469,13 +1506,13 @@ const AutomationBoardCardView = (props: AutomationBoardCardProps) => {
   }
 
   const removeDraftImage = (attachmentId: string) => {
-    setDraftImages((current) => {
-      const target = current.find((entry) => entry.id === attachmentId)
-      if (target?.kind === 'local') {
-        URL.revokeObjectURL(target.previewUrl)
-      }
-      return current.filter((entry) => entry.id !== attachmentId)
-    })
+    const current = draftImagesRef.current
+    const target = current.find((entry) => entry.id === attachmentId)
+    // promote 之后的条目沿用本地 objectURL，不能只认 kind === 'local'。
+    if (target?.previewUrl.startsWith('blob:')) {
+      URL.revokeObjectURL(target.previewUrl)
+    }
+    setDraftImages(current.filter((entry) => entry.id !== attachmentId))
   }
 
   const submitDraft = () => {
@@ -1524,7 +1561,7 @@ const AutomationBoardCardView = (props: AutomationBoardCardProps) => {
       )
 
       for (const entry of images) {
-        if (entry.kind === 'local') {
+        if (entry.previewUrl.startsWith('blob:')) {
           URL.revokeObjectURL(entry.previewUrl)
         }
       }

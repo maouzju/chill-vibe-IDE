@@ -69,10 +69,13 @@ import type { WindowPointerDragController } from './window-pointer-drag.js'
 import { loadRendererWithRetry } from './renderer-load-retry.js'
 import {
   classifyPreviousRun,
+  createSessionEndHandler,
+  handleStartupFailure,
   parseRunSentinel,
   serializeRunSentinel,
 } from './crash-relaunch-policy.js'
 import {
+  buildRelaunchGuardLauncher,
   guardHistoryPath,
   guardPipePath,
   guardSentinelPath,
@@ -427,6 +430,7 @@ function configureDesktopEnvironment() {
 }
 
 let crashDumpDirectory: string | null = null
+let crashLoggerReady = false
 
 // Every long-freeze investigation so far has ended at "the JS call stack was
 // empty" — the renderer main thread is blocked outside app JS, and nothing on
@@ -524,37 +528,22 @@ async function spawnCrashRelaunchGuard(dataDir: string, pipePath: string) {
   try {
     const guardScript = path.join(moduleDir, 'crash-relaunch-guard-main.mjs')
     const launcherPath = path.join(dataDir, 'relaunch-guard.cmd')
-    const quote = (value: string) => `"${value.replace(/"/g, '')}"`
+    // 路径不进批处理文件，走环境块传给 cmd —— 见 buildRelaunchGuardLauncher 的注释。
+    const launcher = buildRelaunchGuardLauncher({
+      execPath: process.execPath,
+      guardScript,
+      pipePath,
+      sentinelPath: guardSentinelPath(dataDir),
+      historyPath: guardHistoryPath(dataDir),
+    })
 
-    // `start "" /b` is the whole point: taskkill /T walks the target's children,
-    // so a guard spawned directly from here would be killed alongside the app it
-    // exists to resurrect. Routing through a cmd that exits immediately leaves
-    // the guard parented to a dead PID, outside any tree that names this process.
-    const launcher = [
-      '@echo off',
-      'set ELECTRON_RUN_AS_NODE=1',
-      [
-        'start "" /b',
-        quote(process.execPath),
-        quote(guardScript),
-        '--pipe',
-        quote(pipePath),
-        '--sentinel',
-        quote(guardSentinelPath(dataDir)),
-        '--history',
-        quote(guardHistoryPath(dataDir)),
-        '--exec',
-        quote(process.execPath),
-      ].join(' '),
-      '',
-    ].join('\r\n')
-
-    await writeFile(launcherPath, launcher, 'utf8')
+    await writeFile(launcherPath, launcher.script, 'utf8')
 
     const child = spawn(process.env.COMSPEC ?? 'cmd.exe', ['/c', launcherPath], {
       detached: true,
       stdio: 'ignore',
       windowsHide: true,
+      env: { ...process.env, ...launcher.env },
     })
     child.unref()
     log.info('[main] Crash relaunch guard started.', { pipePath })
@@ -827,6 +816,20 @@ function scheduleQuitAfterFlush() {
     app.quit()
   })()
 }
+
+// Windows 关机 / 注销 / 重启不发 before-quit / will-quit —— 见 createSessionEndHandler。
+// 每个窗口都会收到 session-end，处理函数自身幂等。
+const handleWindowsSessionEnd = createSessionEndHandler({
+  markCleanExit: () => writeRunSentinel(true),
+  requestFlush: () => {
+    for (const win of BrowserWindow.getAllWindows()) {
+      if (!win.isDestroyed()) {
+        win.webContents.send('app:flush-state-before-quit')
+      }
+    }
+    return desktopBackend.flushStateWrites()
+  },
+})
 
 async function flushStateBeforeUpdate() {
   for (const win of BrowserWindow.getAllWindows()) {
@@ -1803,6 +1806,7 @@ function createWindow() {
   })
   attachWindowDiagnostics(win)
   attachFrameStallWatchdog(win, (message, meta) => log.warn(message, meta))
+  win.on('session-end', handleWindowsSessionEnd)
 
   win.on('close', (event) => {
     const closeAction = resolveWindowCloseAction({
@@ -1908,6 +1912,7 @@ app.whenReady().then(async () => {
   }
   await clearUserDataOnLaunchIfNeeded()
   initCrashLogger()
+  crashLoggerReady = true
   recordRunStartAndClassifyPreviousRun()
   startCrashRelaunchGuard()
   configureCrashDumpCollection()
@@ -1935,6 +1940,24 @@ app.whenReady().then(async () => {
     if (!focusPrimaryWindow(BrowserWindow.getAllWindows())) {
       createWindow()
     }
+  })
+}).catch((error: unknown) => {
+  handleStartupFailure(error, {
+    logError: (failure) => {
+      // 清用户数据的 rm 排在 initCrashLogger 之前；不补一次初始化，这条日志会落到默认路径。
+      if (!crashLoggerReady) {
+        try {
+          initCrashLogger()
+        } catch {
+          // 日志本身起不来也必须继续退出。
+        }
+      }
+      log.error('[main] Startup failed; exiting instead of lingering without a window.', failure)
+    },
+    markCleanExit: () => writeRunSentinel(true),
+    shutdownBackend: () => backendHost.shutdown(),
+    releaseSingleInstanceLock: () => app.releaseSingleInstanceLock(),
+    exit: (code) => app.exit(code),
   })
 })
 

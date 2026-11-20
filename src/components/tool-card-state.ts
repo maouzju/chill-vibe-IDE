@@ -65,6 +65,45 @@ export const resolveTextEditorExternalRefresh = (
   return { kind: 'refresh', content: diskContent }
 }
 
+export type TextEditorSaveConflictResolution =
+  | { kind: 'retry'; revision: string }
+  | { kind: 'refresh'; content: string; revision: string | null }
+  | { kind: 'conflict'; diskContent: string }
+
+// 症状 (2026-11-20 审查): 定时保存 A 在途时失焦 flush 又发保存 B（同一个旧 revision），A 先落盘、B 被判
+//   修订号冲突，弹「文件已被外部修改」并停掉自动保存，选「采用磁盘版本」还会吞掉刚打的字。
+// 根因: 冲突后重读的磁盘内容等于编辑器基线 savedContent（只是自己上一次保存推进了 revision），
+//   resolveTextEditorExternalRefresh 返回 null，调用方把 null 也当冲突。
+// 否决: 不改 resolveTextEditorExternalRefresh 本身（syncFileSnapshot 依赖它的 null=无事可做）；只重试一次，防 revision 抖动死循环。
+export const resolveTextEditorSaveConflict = ({
+  savedContent,
+  content,
+  diskContent,
+  diskRevision,
+  retried,
+}: {
+  savedContent: string
+  content: string
+  diskContent: string | null
+  diskRevision: string | null
+  retried: boolean
+}): TextEditorSaveConflictResolution => {
+  if (diskContent === null) {
+    return { kind: 'conflict', diskContent: '' }
+  }
+
+  const resolution = resolveTextEditorExternalRefresh(savedContent, content, diskContent)
+  if (resolution?.kind === 'refresh') {
+    return { kind: 'refresh', content: resolution.content, revision: diskRevision }
+  }
+
+  if (resolution === null && diskContent === savedContent && diskRevision && !retried) {
+    return { kind: 'retry', revision: diskRevision }
+  }
+
+  return { kind: 'conflict', diskContent }
+}
+
 export const resolveTextEditorSaveIntent = ({
   savedContent,
   content,

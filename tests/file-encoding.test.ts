@@ -113,6 +113,57 @@ test('edited GBK content is written back in GBK, not UTF-8', async (t) => {
   assert.notEqual(after.toString('utf8'), edited)
 })
 
+// 症状 — 被判成 windows-1252 等单字节/旧编码的文件，用户加了中文或 emoji 保存后磁盘上全变 '?'，
+//   下一次保存还因 revision 对不上误报冲突。根因（2026-11-20 审查）：iconv.encode 对表示不了的字符静默替换。
+test('characters the legacy encoding cannot represent are saved as UTF-8 instead of ?', async (t) => {
+  const workspace = await makeWorkspace(t)
+  await writeFile(path.join(workspace, 'legacy.cfg'), iconv.encode('café\r\n', 'windows-1252'))
+
+  const read = await readWorkspaceFile({ workspacePath: workspace, relativePath: 'legacy.cfg' })
+  const edited = 'café\r\n# 中文注释 \u{1F600}\r\n'
+
+  const write = await writeWorkspaceFile({
+    workspacePath: workspace,
+    relativePath: 'legacy.cfg',
+    content: edited,
+    expectedRevision: read.revision,
+    encoding: 'windows-1252',
+  })
+
+  const after = await readRawFile(path.join(workspace, 'legacy.cfg'))
+  assert.equal(after.toString('utf8'), edited, 'the user input must reach disk intact')
+
+  // The editor still holds the old encoding id; its next save must not false-conflict.
+  await writeWorkspaceFile({
+    workspacePath: workspace,
+    relativePath: 'legacy.cfg',
+    content: `${edited}more\r\n`,
+    expectedRevision: write.revision,
+    encoding: 'windows-1252',
+  })
+  assert.equal((await readRawFile(path.join(workspace, 'legacy.cfg'))).toString('utf8'), `${edited}more\r\n`)
+
+  const reread = await readWorkspaceFile({ workspacePath: workspace, relativePath: 'legacy.cfg' })
+  assert.equal(reread.encoding, 'utf8')
+})
+
+test('representable edits to a legacy-encoded file keep the original encoding', async (t) => {
+  const workspace = await makeWorkspace(t)
+  await writeFile(path.join(workspace, 'legacy.cfg'), iconv.encode('café\r\n', 'windows-1252'))
+
+  const read = await readWorkspaceFile({ workspacePath: workspace, relativePath: 'legacy.cfg' })
+  await writeWorkspaceFile({
+    workspacePath: workspace,
+    relativePath: 'legacy.cfg',
+    content: 'café crème\r\n',
+    expectedRevision: read.revision,
+    encoding: 'windows-1252',
+  })
+
+  const after = await readRawFile(path.join(workspace, 'legacy.cfg'))
+  assert.deepEqual(after, iconv.encode('café crème\r\n', 'windows-1252'))
+})
+
 test('UTF-8 BOM round-trip save keeps the BOM on disk', async (t) => {
   const workspace = await makeWorkspace(t)
   await writeFile(path.join(workspace, 'with-bom.txt'), Buffer.concat([

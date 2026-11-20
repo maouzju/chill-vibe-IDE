@@ -160,6 +160,76 @@ test('streaming release redaction handles credentials split across chunks', () =
   assert.match(output, /<redacted-credential>/)
 })
 
+test('streaming release redaction never emits half a credential when its own cut lands inside one', () => {
+  // Built at runtime so this file never carries a credential-shaped literal.
+  const anthropic = 'sk-ant-' + 'K'.repeat(48)
+  const envToken = 'Q'.repeat(40)
+  const secrets = [anthropic, 'Bearer ' + 'W'.repeat(40), envToken]
+  for (const secret of secrets) {
+    for (let offset = 1; offset < secret.length; offset += 1) {
+      // One push of `head + secret + tail`: the redactor keeps the last 512
+      // characters, so the tail length decides where its own cut lands.
+      const head = 'x'.repeat(700) + ' '
+      const tail = ' ' + '.'.repeat(512 - (secret.length - offset) - 1)
+      const redactor = createReleaseLogRedactor({ env: { GH_TOKEN: envToken } })
+      const output = redactor.push(head + secret + tail) + redactor.flush()
+      const secretBody = secret.slice(-20)
+      assert.ok(!output.includes(secretBody.slice(0, 8)), `leaked part of a secret at offset ${offset}`)
+      assert.match(output, /<redacted-credential>/)
+    }
+  }
+})
+
+test('release safety audit flags JSON-escaped double-backslash Windows paths', () => {
+  const personal = ['C:', 'Users', 'alice', 'work', 'secret-proj'].join('\\\\')
+  const external = ['D:', 'Git', 'other-client-repo', 'src'].join('\\\\')
+  const findings = auditReleaseText(
+    'docs/state-snapshot.json',
+    `{"cwd": "${personal}",\n"root": "${external}"}`,
+    { baselineText: '' },
+  )
+  assert.deepEqual(findings.map(({ category }) => category), [
+    'personal-path',
+    'external-project-path',
+  ])
+  // Escaped synthetic fixture paths stay allowed in tests, just like the
+  // single-backslash and forward-slash spellings.
+  const synthetic = ['C:', 'Users', 'demo', 'project'].join('\\\\')
+  const repo = ['D:', 'Git', 'chill-vibe', 'src'].join('\\\\')
+  assert.deepEqual(
+    auditReleaseText('tests/example.test.ts', `"${synthetic}"\n"${repo}"`, { baselineText: '' }),
+    [],
+  )
+})
+
+test('candidate audit scans staged content when the worktree copy was deleted', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'release-safety-staged-deleted-'))
+  const runGit = (...args: string[]) => {
+    const result = spawnSync('git', args, { cwd: root, encoding: 'utf8' })
+    assert.equal(result.status, 0, result.stderr)
+  }
+  try {
+    runGit('init', '--quiet')
+    runGit('config', 'user.name', 'Release Safety Test')
+    runGit('config', 'user.email', 'fixture@example.invalid')
+    await writeFile(path.join(root, 'safe.txt'), 'safe\n', 'utf8')
+    runGit('add', 'safe.txt')
+    runGit('commit', '--quiet', '-m', 'base')
+
+    const token = ['ghp_', '123456789012345678901234567890'].join('')
+    await writeFile(path.join(root, 'leak.env'), `TOKEN=${token}\n`, 'utf8')
+    runGit('add', 'leak.env')
+    await rm(path.join(root, 'leak.env'))
+
+    const findings = await auditReleaseCandidate({ repoRoot: root, base: 'HEAD' })
+    assert.deepEqual(findings.map(({ category, path: findingPath }) => ({ category, path: findingPath })), [
+      { category: 'github-token', path: 'leak.env' },
+    ])
+  } finally {
+    await rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 })
+  }
+})
+
 test('candidate audit fails closed when the base ref cannot be resolved', async () => {
   await assert.rejects(
     auditReleaseCandidate({ repoRoot: process.cwd(), base: 'refs/heads/does-not-exist' }),

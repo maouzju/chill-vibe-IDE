@@ -9,6 +9,7 @@ export type AutomationBoardTriggerReason =
   | 'disabled'
   | 'not-board-item'
   | 'self-triggered'
+  | 'chain-cycle'
   | 'still-running'
   | 'throttled'
   | 'ready'
@@ -43,6 +44,7 @@ export const resolveAutomationBoardTemplateTriggerDecisions = ({
   cardActivity,
   lastFiredAtMs,
   nowMs,
+  triggerChainTemplateIds = [],
 }: {
   templates: readonly AutomationBoardTemplate[]
   board: AutomationBoard | undefined
@@ -50,6 +52,8 @@ export const resolveAutomationBoardTemplateTriggerDecisions = ({
   cardActivity: Record<string, AutomationBoardCardActivity>
   lastFiredAtMs: Record<string, number>
   nowMs: number
+  /** 引出 settledCardId 这一轮的触发链上已经触发过的模板（见 createAutomationBoardTriggerChainTracker）。 */
+  triggerChainTemplateIds?: readonly string[]
 }): AutomationBoardTemplateTriggerDecision[] => {
   const settledItem = board?.items.find(
     (item) => item.cardId === settledCardId && item.lane === 'running',
@@ -78,6 +82,13 @@ export const resolveAutomationBoardTemplateTriggerDecisions = ({
 
     if (settledItem.templateId && settledItem.templateId === template.id) {
       return decide('self-triggered')
+    }
+
+    // 症状：两个开着触发器的模板放在同一张看板上，A 的实例答完拉起 B、B 的又拉起 A，无限乒乓烧额度。
+    // 根因（2026-11-20 审查）：上面只挡"自己叫醒自己"，隔一层就挡不住；节流按模板各算、默认 1 分钟，比一轮短。
+    // 为什么不用次数/深度上限：那要新定一个数值；链上去重不需要数值，链长天然不超过模板数。
+    if (triggerChainTemplateIds.includes(template.id)) {
+      return decide('chain-cycle')
     }
 
     if (stillRunning) {
@@ -127,4 +138,31 @@ export const resolveAutomationBoardTemplateInstanceCardId = ({
   }
 
   return board.items.filter((item) => item.templateId === templateId).at(-1)?.cardId ?? ''
+}
+
+/**
+ * 每张实例卡"这一轮是哪条触发链拉起来的"。只在内存里：重启后链断开，最多再多跑一轮。
+ *
+ * 链在该卡下一次稳定完成时被取走（take 即删），所以用户之后手动给这张卡发消息
+ * 跑出来的那一轮是新链的起点，不会被旧链挡住。
+ */
+export const createAutomationBoardTriggerChainTracker = () => {
+  const chains = new Map<string, readonly string[]>()
+
+  return {
+    takeForSettledCard(cardId: string): readonly string[] {
+      const chain = chains.get(cardId) ?? []
+      chains.delete(cardId)
+      return chain
+    },
+    recordFired(instanceCardId: string, parentChain: readonly string[], templateId: string) {
+      if (!instanceCardId) {
+        return
+      }
+      chains.set(
+        instanceCardId,
+        parentChain.includes(templateId) ? [...parentChain] : [...parentChain, templateId],
+      )
+    },
+  }
 }

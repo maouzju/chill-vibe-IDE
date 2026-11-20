@@ -443,12 +443,26 @@ export const rearmWakeTimerBatchForPatch = ({
     return arm
   }
 
+  // 症状：「指定会话」批次里 A 已跑完被摘掉，改超时 / 加勾 C 后 A 又回到名单，批次只能干等兜底超时。
+  // 根因（2026-11-20 审查）：名单按完整 wakeTimerTargetCardIds 重新 resolve，而 resolve 刻意不看忙闲（见上），
+  //   已空闲的 A 不会再广播完成。决策：已是名单批次时只保留「上次 pending 还剩的」+「这次新勾的」；
+  //   不能改成按忙闲过滤——刚建的卡还没进 streaming，会被当场剔掉。
+  const previousTargetIds = card.wakeTimerTargetCardIds
+  const previousPendingIds = card.wakeTimerPendingTargetIds
+  const pendingTargetIds =
+    arm.explicitTargets === true &&
+    card.wakeTimerExplicitTargets === true &&
+    hasWakeTimerTargetList(previousTargetIds) &&
+    Array.isArray(previousPendingIds)
+      ? arm.pendingTargetIds.filter((id) => previousPendingIds.includes(id) || !previousTargetIds.includes(id))
+      : arm.pendingTargetIds
+
   return {
     ok: true,
     patch: {
       wakeTimerArmedAt: arm.armedAt,
       wakeTimerWakeAt: arm.wakeAt,
-      wakeTimerPendingTargetIds: arm.pendingTargetIds,
+      wakeTimerPendingTargetIds: pendingTargetIds,
       wakeTimerExplicitTargets: arm.explicitTargets === true ? true : undefined,
     },
   }

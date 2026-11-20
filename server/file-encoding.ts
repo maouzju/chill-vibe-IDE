@@ -105,7 +105,14 @@ export const encodeForWrite = (content: string, encoding: string | undefined): B
     // These ids only come from BOM sniffing, so the rewritten file keeps its BOM.
     return iconv.encode(content, encoding, { addBOM: true })
   }
-  return iconv.encodingExists(encoding) ? iconv.encode(content, encoding) : Buffer.from(content, 'utf8')
+  if (!iconv.encodingExists(encoding)) {
+    return Buffer.from(content, 'utf8')
+  }
+  // 症状：被判成 windows-1252 / shift_jis 等的文件加了中文或 emoji 后保存，磁盘上全成 '?'（2026-11-20 审查）。
+  // 根因：iconv.encode 遇到目标编码表示不了的字符静默替换，不抛错。往返不一致就改存 UTF-8，用户输入不丢；
+  // 不选"报错让用户挑"：编辑卡只会亮通用的保存失败、每次自动保存都再失败，没有能走出去的界面。
+  const encoded = iconv.encode(content, encoding)
+  return iconv.decode(encoded, encoding) === content ? encoded : Buffer.from(content, 'utf8')
 }
 
 // 症状：2026-09-13 用户机（Windows 用户名含中文）卡上一发消息就报 CLI 找不到 / 读不到 claude.cmd，

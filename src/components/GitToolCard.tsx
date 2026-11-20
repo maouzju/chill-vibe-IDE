@@ -36,6 +36,7 @@ import { useFilePathContextMenu } from './use-file-path-context-menu'
 import { GitBranchIcon } from './Icons'
 import {
   gitOperationHub,
+  type GitAgentSessionHandle,
   type GitAgentSessionRequest,
   type GitOperationContext,
 } from './git-operation-hub'
@@ -88,7 +89,7 @@ type GitToolCardProps = {
   onAgentPanelToggle?: (open: boolean) => void
   onGitInfoChange?: (info: GitInfoSummary | null) => void
   onOpenFile?: (relativePath: string, options?: { line?: number }) => void
-  onOpenAgentSession?: (request: GitAgentSessionRequest) => boolean
+  onOpenAgentSession?: (request: GitAgentSessionRequest) => boolean | GitAgentSessionHandle
 }
 
 const legacyGitToolCompactHeight = 190

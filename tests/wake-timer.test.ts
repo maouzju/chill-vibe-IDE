@@ -544,6 +544,52 @@ describe('指定会话名单（wakeTimerTargetCardIds）', () => {
     assert.equal(result?.ok === true ? result.patch.wakeTimerWakeAt : null, '2026-09-20T01:30:00.000Z')
   })
 
+  // 2026-11-20 审查：pending 已摘掉跑完的 A，改时长 / 加勾 C 不能把 A 加回来——
+  // A 已空闲不会再广播完成，批次只能干等兜底超时。
+  it('名单卡上改时长不会把已完成的目标加回等待名单', () => {
+    const result = rearmWakeTimerBatchForPatch({
+      patch: { wakeTimerDurationMinutes: 60 },
+      card: {
+        id: 'owner',
+        wakeTimerMode: 'workspace-agents' as const,
+        wakeTimerDurationMinutes: 30,
+        wakeTimerQueuedSends: [request('one', '等 A 和 B 做完')],
+        wakeTimerExplicitTargets: true,
+        wakeTimerPendingTargetIds: ['peer-running'],
+        wakeTimerTargetCardIds: ['peer-idle', 'peer-running'],
+      },
+      cards,
+      paneTabIds: ['owner'],
+      nowMs,
+    })
+    assert.equal(result?.ok, true)
+    assert.deepEqual(result?.ok === true ? result.patch.wakeTimerPendingTargetIds : null, ['peer-running'])
+    assert.equal(result?.ok === true ? result.patch.wakeTimerWakeAt : null, '2026-09-20T01:00:00.000Z')
+  })
+
+  it('名单卡上加勾新会话只追加新勾的，已完成的不回来', () => {
+    const result = rearmWakeTimerBatchForPatch({
+      patch: { wakeTimerTargetCardIds: ['peer-idle', 'peer-running', 'user-chat'] },
+      card: {
+        id: 'owner',
+        wakeTimerMode: 'workspace-agents' as const,
+        wakeTimerDurationMinutes: 30,
+        wakeTimerQueuedSends: [request('one', '等 A 和 B 做完')],
+        wakeTimerExplicitTargets: true,
+        wakeTimerPendingTargetIds: ['peer-running'],
+        wakeTimerTargetCardIds: ['peer-idle', 'peer-running'],
+      },
+      cards,
+      paneTabIds: ['owner'],
+      nowMs,
+    })
+    assert.equal(result?.ok, true)
+    assert.deepEqual(
+      result?.ok === true ? result.patch.wakeTimerPendingTargetIds : null,
+      ['peer-running', 'user-chat'],
+    )
+  })
+
   it('超管点名的批次（没有持久化名单）碰一下时长框仍不会被重算掉', () => {
     assert.equal(
       rearmWakeTimerBatchForPatch({

@@ -3,7 +3,10 @@ import { readFile } from 'node:fs/promises'
 import path from 'node:path'
 import { describe, it } from 'node:test'
 
-import { decideDragStartActiveTabRestore } from '../src/components/pane-tab-drag-view.ts'
+import {
+  decideDragStartActiveTabRestore,
+  decideDragStartViewSwap,
+} from '../src/components/pane-tab-drag-view.ts'
 
 const paneViewSourcePath = path.join(process.cwd(), 'src', 'components', 'PaneView.tsx')
 
@@ -179,6 +182,60 @@ describe('dragging a pane tab keeps the pane showing what it showed before the g
   })
 })
 
+// 2026-11-20 审查：撤回「80ms 兜底误切到被拖 tab」后，dragend 又把视图切回被拖的 tab，
+// 用户原本在看的 A 被偷换。只有「为亮出看板而让位」才需要在 dragend 还原。
+describe('drag-start view swap says whether dragend must put the view back', () => {
+  it('undoing the gesture own switch never asks dragend to switch to the dragged tab again', () => {
+    assert.deepEqual(
+      decideDragStartViewSwap({
+        draggedTabId: 'chat-b',
+        gesture: { tabId: 'chat-b', activeTabIdAtPointerDown: 'chat-a' },
+        currentActiveTabId: 'chat-b',
+        paneTabIds: ['chat-a', 'chat-b'],
+      }),
+      { activateTabId: 'chat-a', restoreOnDragEndTabId: null },
+    )
+  })
+
+  it('undoing the gesture own switch back onto a board still leaves the board showing after dragend', () => {
+    assert.deepEqual(
+      decideDragStartViewSwap({
+        draggedTabId: 'chat-1',
+        gesture: { tabId: 'chat-1', activeTabIdAtPointerDown: 'chat-0' },
+        currentActiveTabId: 'chat-1',
+        paneTabIds: ['board-1', 'chat-0', 'chat-1'],
+        boardTabIds: ['board-1'],
+      }),
+      { activateTabId: 'chat-0', restoreOnDragEndTabId: null },
+    )
+  })
+
+  it('making way for the board asks dragend to come back to the dragged tab', () => {
+    assert.deepEqual(
+      decideDragStartViewSwap({
+        draggedTabId: 'chat-1',
+        gesture: { tabId: 'chat-1', activeTabIdAtPointerDown: 'chat-1' },
+        currentActiveTabId: 'chat-1',
+        paneTabIds: ['board-1', 'chat-1'],
+        boardTabIds: ['board-1'],
+      }),
+      { activateTabId: 'board-1', restoreOnDragEndTabId: 'chat-1' },
+    )
+  })
+
+  it('does nothing when neither applies', () => {
+    assert.deepEqual(
+      decideDragStartViewSwap({
+        draggedTabId: 'chat-1',
+        gesture: null,
+        currentActiveTabId: 'chat-0',
+        paneTabIds: ['chat-0', 'chat-1'],
+      }),
+      { activateTabId: null, restoreOnDragEndTabId: null },
+    )
+  })
+})
+
 describe('PaneView wires the drag-start restore', () => {
   it('records the pre-gesture active tab on pointerdown and restores it on dragstart', async () => {
     const source = await readFile(paneViewSourcePath, 'utf8')
@@ -198,8 +255,13 @@ describe('PaneView wires the drag-start restore', () => {
     )
     assert.match(
       dragStartBlock,
-      /decideDragStartActiveTabRestore/,
+      /decideDragStartViewSwap\(/,
       'dragstart must undo a switch this gesture caused, or a board tab disappears before it can be a drop target',
+    )
+    assert.match(
+      dragStartBlock,
+      /boardRevealRestoreRef\.current = [^\n]*restoreOnDragEndTabId/,
+      'only the board-reveal branch may schedule a dragend restore; the gesture-undo branch must not',
     )
     assert.match(
       dragStartBlock,

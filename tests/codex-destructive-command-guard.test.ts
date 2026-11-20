@@ -259,6 +259,91 @@ test('still allows ordinary multi-line and prefixed commands after segment split
   }
 })
 
+// 2026-11-20 审查（中危）：PowerShell 静态调用 `[IO.Directory]::Delete(x, $true)` 和
+// DirectoryInfo 的 `.Delete($true)` 曾被判为非破坏性直接放行。
+test('blocks PowerShell .NET recursive directory deletes while allowing look-alikes', () => {
+  const outside = path.join(home, 'Documents')
+  const inside = path.join(workspace, 'dist')
+  for (const command of [
+    `[IO.Directory]::Delete('${outside}', $true)`,
+    `[System.IO.Directory]::Delete('${outside}', $true)`,
+    `powershell -NoProfile -Command "[IO.Directory]::Delete('${outside}', $true)"`,
+    `[IO.Directory]::Delete($target, $true)`,
+    `(Get-Item '${outside}').Delete($true)`,
+    `dotnet script -e "new DirectoryInfo(@\\"${outside}\\").Delete(true);"`,
+  ]) {
+    assert.equal(assess(command).allowed, false, command)
+  }
+
+  for (const command of [
+    `[IO.Directory]::Delete('${outside}')`,
+    `[IO.Directory]::Delete('${outside}', $false)`,
+    `[IO.Directory]::Delete('${inside}', $true)`,
+    `[IO.File]::Delete('${path.join(workspace, 'a.txt')}')`,
+    `(Get-Item '${path.join(workspace, 'a.txt')}').Delete()`,
+    'node -e "const s = new Set([true]); s.delete(true)"',
+  ]) {
+    assert.deepEqual(assess(command), { allowed: true }, command)
+  }
+})
+
+// 2026-11-20 审查（中危）：关掉项目外写入后，`2>/dev/null`、`2>$null`、`2>&1` 这类
+// 只丢弃 / 合并输出的重定向被当成项目外写入拦截，只读命令全军覆没。
+test('lets discard-only redirections through the workspace write boundary', () => {
+  const outside = path.join(path.dirname(workspace), 'result.txt')
+  for (const command of [
+    'git rev-parse HEAD 2>/dev/null',
+    'ls >/dev/null 2>&1',
+    'git status &>/dev/null',
+    'Get-Command node 2>$null',
+    'Get-Command node > $NULL',
+    'Get-Command node *>$null',
+    'where node >NUL 2>NUL',
+    'npm test 2>&1',
+    'npm test 2>&1 | tail -n 20',
+    'bash -lc "git rev-parse HEAD 2>/dev/null"',
+  ]) {
+    assert.deepEqual(assessWorkspaceBoundary('Bash', { command }), { allowed: true }, command)
+  }
+
+  for (const command of [
+    `npm test 2>&1 > '${outside}'`,
+    `git rev-parse HEAD 2>/dev/null > '${outside}'`,
+    'echo no > /dev/nullx',
+    'echo no 2>$nullTarget',
+    `Get-Command node 2>$null; echo no > '${outside}'`,
+  ]) {
+    assert.equal(assessWorkspaceBoundary('Bash', { command }).allowed, false, command)
+  }
+})
+
+// 2026-11-20 审查（中危）：apply_patch 的 `*** Move to:` 目标没进边界检查，
+// Update File 指向工作区内即可把文件挪到项目外。
+test('checks apply_patch Move to targets against the workspace boundary', () => {
+  const patch = (moveTo: string) => [
+    '*** Begin Patch',
+    `*** Update File: ${path.join(workspace, 'src', 'a.txt')}`,
+    `*** Move to: ${moveTo}`,
+    '@@',
+    '-old',
+    '+new',
+    '*** End Patch',
+  ].join('\n')
+
+  assert.equal(
+    assessWorkspaceBoundary('apply_patch', { patch: patch(path.join(path.dirname(workspace), 'escaped.txt')) }).allowed,
+    false,
+  )
+  assert.equal(
+    assessWorkspaceBoundary('apply_patch', { input: patch(path.join('..', 'escaped.txt')) }).allowed,
+    false,
+  )
+  assert.deepEqual(
+    assessWorkspaceBoundary('apply_patch', { patch: patch(path.join(workspace, 'src', 'b.txt')) }),
+    { allowed: true },
+  )
+})
+
 test('applies the workspace write boundary to every line and prefixed command', () => {
   const inside = path.join(workspace, 'generated', 'result.txt')
   const outside = path.join(path.dirname(workspace), 'result.txt')

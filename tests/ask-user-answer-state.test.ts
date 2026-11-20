@@ -6,6 +6,9 @@ import { buildRenderableMessages } from '../src/components/chat-card-parsing.ts'
 import {
   getAskUserAnsweredOption,
   getLatestUserAnswerAfterAskUserMessage,
+  isAskUserKeyTargetEditable,
+  pickAskUserKeyboardOwnerIndex,
+  shouldAskUserIgnoreKey,
   shouldExitPlanModeForAskUserAnswer,
 } from '../src/components/ask-user-answer-state.ts'
 
@@ -257,4 +260,55 @@ test('restored merged ask-user answer state resolves the reply after consecutive
     getAskUserAnsweredOption(messages, mergedAskUser, {}),
     '[1] Choose? -> Fast\n[2] Choose? -> Deep',
   )
+})
+
+// 2026-11-20 审查：选择题卡在 window 上听 Enter/方向键，在输入框里打字按 Enter 会连带提交选项、
+// 方向键被吞；同屏多张未答卡还会一起响应。
+test('ask-user keyboard ignores keys typed into text fields, select and contenteditable', () => {
+  assert.equal(isAskUserKeyTargetEditable({ tagName: 'TEXTAREA' }), true)
+  assert.equal(isAskUserKeyTargetEditable({ tagName: 'INPUT', type: 'text' }), true)
+  assert.equal(isAskUserKeyTargetEditable({ tagName: 'INPUT' }), true)
+  assert.equal(isAskUserKeyTargetEditable({ tagName: 'SELECT' }), true)
+  assert.equal(isAskUserKeyTargetEditable({ tagName: 'DIV', isContentEditable: true }), true)
+  // 点选项后焦点落在隐藏的 radio 上，Enter 提交必须照旧可用。
+  assert.equal(isAskUserKeyTargetEditable({ tagName: 'INPUT', type: 'radio' }), false)
+  assert.equal(isAskUserKeyTargetEditable({ tagName: 'BUTTON' }), false)
+  assert.equal(isAskUserKeyTargetEditable({ tagName: 'BODY' }), false)
+  assert.equal(isAskUserKeyTargetEditable(null), false)
+})
+
+test('ask-user keyboard: Enter inside the card\'s own "other" input still submits, everything else typed into fields is ignored', () => {
+  const key = (overrides: Partial<Parameters<typeof shouldAskUserIgnoreKey>[0]>) =>
+    shouldAskUserIgnoreKey({
+      key: 'Enter',
+      isComposing: false,
+      targetEditable: true,
+      targetIsOwnOtherInput: false,
+      ...overrides,
+    })
+  // 聊天输入框 / 别的卡的输入框：不响应。
+  assert.equal(key({}), true)
+  // 本卡「其他」输入框里按 Enter：照旧提交。
+  assert.equal(key({ targetIsOwnOtherInput: true }), false)
+  // 输入法上屏的 Enter、方向键移动光标：不响应。
+  assert.equal(key({ targetIsOwnOtherInput: true, isComposing: true }), true)
+  assert.equal(key({ targetIsOwnOtherInput: true, key: 'ArrowLeft' }), true)
+  // 焦点不在可编辑控件上：照常响应。
+  assert.equal(key({ targetEditable: false }), false)
+  assert.equal(key({ targetEditable: false, key: 'ArrowRight' }), false)
+})
+
+test('ask-user keyboard: only one unanswered card responds, preferring the one holding focus', () => {
+  const card = (overrides: Partial<{ answered: boolean; hidden: boolean; containsTarget: boolean }>) => ({
+    answered: false,
+    hidden: false,
+    containsTarget: false,
+    ...overrides,
+  })
+  assert.equal(pickAskUserKeyboardOwnerIndex([card({}), card({ containsTarget: true }), card({})]), 1)
+  assert.equal(pickAskUserKeyboardOwnerIndex([card({}), card({}), card({ answered: true })]), 1)
+  // 非活动 tab 里仍挂着的卡不抢按键。
+  assert.equal(pickAskUserKeyboardOwnerIndex([card({}), card({ hidden: true })]), 0)
+  assert.equal(pickAskUserKeyboardOwnerIndex([card({ answered: true })]), -1)
+  assert.equal(pickAskUserKeyboardOwnerIndex([]), -1)
 })

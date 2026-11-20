@@ -84,3 +84,23 @@ export const mergeUploadedDraftAttachments = (
 
   return additions.length > 0 ? [...pending, ...additions] : pending.slice()
 }
+
+// 发送要先等粘贴图片上传完；这期间用户可能接着打字或再粘贴。上传结束后只清掉真正发出去的部分：
+// 草稿仍以发送时的快照开头就去掉这段前缀，否则（发送的文字被就地改过）整段保留，宁可让用户自己删也不吞字。
+export const resolveComposerAfterSubmit = ({
+  draftAtSubmit,
+  draftNow,
+  sentAttachments,
+  pendingNow,
+}: {
+  draftAtSubmit: string
+  draftNow: string
+  sentAttachments: readonly PendingComposerAttachment[]
+  pendingNow: readonly PendingComposerAttachment[]
+}): { draft: string; attachments: PendingComposerAttachment[] } => {
+  const sentIds = new Set(sentAttachments.map((entry) => entry.id))
+  return {
+    draft: draftNow.startsWith(draftAtSubmit) ? draftNow.slice(draftAtSubmit.length) : draftNow,
+    attachments: pendingNow.filter((entry) => !sentIds.has(entry.id)),
+  }
+}

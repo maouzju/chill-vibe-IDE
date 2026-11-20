@@ -45,3 +45,22 @@ test('history audit scans reachable blobs without inspecting commit emails', asy
     await rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 })
   }
 })
+
+test('history audit still reports path-only findings for blobs over the content-scan limit', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'chill-vibe-history-audit-large-'))
+  try {
+    runGit(root, 'init', '--quiet')
+    runGit(root, 'config', 'user.name', 'History Audit Fixture')
+    runGit(root, 'config', 'user.email', 'fixture@example.invalid')
+    // 33 MB: just over the 32 MB content-scan limit.
+    await writeFile(path.join(root, 'crash.dmp'), Buffer.alloc(33 * 1024 * 1024, 0x61))
+    runGit(root, 'add', 'crash.dmp')
+    runGit(root, 'commit', '--quiet', '-m', 'oversized dump')
+
+    const report = await auditGitHistory({ repoRoot: root, timeoutMs: 60_000 })
+    const categories = report.findings.map((finding) => `${finding.category}:${finding.path}`).sort()
+    assert.deepEqual(categories, ['debug-artifact:crash.dmp', 'unscannable-file:crash.dmp'])
+  } finally {
+    await rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 })
+  }
+})

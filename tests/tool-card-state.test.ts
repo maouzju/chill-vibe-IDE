@@ -6,6 +6,7 @@ import {
   clearFileTreeCacheForCard,
   getCachedFileTreeNodes,
   getFileTreeCacheKey,
+  resolveTextEditorSaveConflict,
   resolveTextEditorSaveIntent,
   resolveTextEditorExternalRefresh,
   shouldFlushTextEditorSave,
@@ -111,5 +112,79 @@ test('text editor refreshes missing-revision saves when disk already matches the
       content: 'agent wrote new file\n',
       revision: 'disk-revision',
     },
+  )
+})
+
+test('a revision conflict whose disk content still equals the editor baseline retries instead of entering conflict', () => {
+  // Timer save A advanced the revision; flush save B (stale revision) is rejected.
+  // Disk holds A's text, which is already the baseline: nobody else touched the file.
+  assert.deepEqual(
+    resolveTextEditorSaveConflict({
+      savedContent: 'A text',
+      content: 'A text plus a few more keys',
+      diskContent: 'A text',
+      diskRevision: 'rev-after-A',
+      retried: false,
+    }),
+    { kind: 'retry', revision: 'rev-after-A' },
+  )
+
+  // A second conflict on the retry means the revision keeps moving; stop retrying.
+  assert.deepEqual(
+    resolveTextEditorSaveConflict({
+      savedContent: 'A text',
+      content: 'A text plus a few more keys',
+      diskContent: 'A text',
+      diskRevision: 'rev-after-A',
+      retried: true,
+    }),
+    { kind: 'conflict', diskContent: 'A text' },
+  )
+
+  // Without a fresh revision a retry would be an unconditional overwrite; keep the old conflict path.
+  assert.deepEqual(
+    resolveTextEditorSaveConflict({
+      savedContent: 'A text',
+      content: 'A text plus a few more keys',
+      diskContent: 'A text',
+      diskRevision: null,
+      retried: false,
+    }),
+    { kind: 'conflict', diskContent: 'A text' },
+  )
+})
+
+test('a revision conflict caused by a real external edit still enters conflict', () => {
+  assert.deepEqual(
+    resolveTextEditorSaveConflict({
+      savedContent: 'A text',
+      content: 'A text plus local edits',
+      diskContent: 'someone else rewrote this',
+      diskRevision: 'rev-external',
+      retried: false,
+    }),
+    { kind: 'conflict', diskContent: 'someone else rewrote this' },
+  )
+
+  assert.deepEqual(
+    resolveTextEditorSaveConflict({
+      savedContent: 'A text',
+      content: 'A text plus local edits',
+      diskContent: 'A text plus local edits',
+      diskRevision: 'rev-same',
+      retried: false,
+    }),
+    { kind: 'refresh', content: 'A text plus local edits', revision: 'rev-same' },
+  )
+
+  assert.deepEqual(
+    resolveTextEditorSaveConflict({
+      savedContent: 'A text',
+      content: 'A text plus local edits',
+      diskContent: null,
+      diskRevision: null,
+      retried: false,
+    }),
+    { kind: 'conflict', diskContent: '' },
   )
 })

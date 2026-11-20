@@ -21,6 +21,11 @@ import {
   getAskUserDraft,
   setAskUserDraft,
 } from './ask-user-draft-cache'
+import {
+  isAskUserKeyTargetEditable,
+  pickAskUserKeyboardOwnerIndex,
+  shouldAskUserIgnoreKey,
+} from './ask-user-answer-state'
 import { useDialogFocus } from './dialog-focus'
 import { CloseIcon } from './Icons'
 import {
@@ -1035,6 +1040,7 @@ export const AskUserQuestionCard = ({
   const [currentIndex, setCurrentIndex] = useState(0)
   const [lastSubmittedItemId, setLastSubmittedItemId] = useState<string | null>(null)
   const otherInputRef = useRef<HTMLInputElement>(null)
+  const cardRef = useRef<HTMLElement>(null)
   const submitStartedRef = useRef<string | null>(null)
   const isSubmitting = !isAnswered && lastSubmittedItemId === answerKey
 
@@ -1120,6 +1126,24 @@ export const AskUserQuestionCard = ({
   useEffect(() => {
     if (!isAnswered) {
       const handler = (e: KeyboardEvent) => {
+        if (e.key !== 'Enter' && e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return
+        // 症状：在输入框按 Enter 发消息会连带提交选中的选项、Shift+Enter 换行被吞、方向键翻题不移光标；
+        //   同屏多张未答卡一起响应。根因（2026-11-20 审查）：window 监听不看事件目标、不分卡。
+        // 决策：不改挂到卡片根节点——焦点离开卡片（点了消息区空白、落在 body）时原本也能按 Enter 提交，挂根节点会丢掉这一体验。
+        const target = e.target instanceof HTMLElement ? e.target : null
+        if (shouldAskUserIgnoreKey({
+          key: e.key,
+          isComposing: e.isComposing,
+          targetEditable: isAskUserKeyTargetEditable(target),
+          targetIsOwnOtherInput: target !== null && target === otherInputRef.current,
+        })) return
+        const cardNodes = Array.from(document.querySelectorAll<HTMLElement>('.ask-user-card'))
+        const ownerIndex = pickAskUserKeyboardOwnerIndex(cardNodes.map((node) => ({
+          answered: node.classList.contains('is-answered'),
+          hidden: node.closest('.pane-tab-panel:not(.is-active)') !== null,
+          containsTarget: target !== null && node.contains(target),
+        })))
+        if (ownerIndex < 0 || cardNodes[ownerIndex] !== cardRef.current) return
         if (e.key === 'Enter' && allAnswered) {
           e.preventDefault()
           handleSubmit()
@@ -1146,7 +1170,7 @@ export const AskUserQuestionCard = ({
   const answeredForRadio = isAnswered && !isMulti ? answeredOption : selected
 
   return (
-    <section className={`ask-user-card${isAnswered ? ' is-answered' : ''}`}>
+    <section ref={cardRef} className={`ask-user-card${isAnswered ? ' is-answered' : ''}`}>
       <div className="ask-user-title-bar">
         <span className="ask-user-title">{current.header || labels.other}</span>
         {isMulti ? (

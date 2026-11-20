@@ -4293,6 +4293,10 @@ const launchGeminiRun = async (
   managedChild.setActiveChild(child)
   const parser = createGeminiStreamParser(sink, {
     formatExit: (code) => formatProviderExit(language, request.provider, code),
+    describeAuthMissing: (raw) =>
+      language === 'en'
+        ? `Gemini CLI is not signed in. Run \`gemini\` in a terminal once and sign in with Google, or fill in a Gemini API key in Settings.\n${raw}`
+        : `Gemini CLI 还没登录：在终端运行一次 \`gemini\` 用 Google 账号登录，或在设置里填 Gemini API Key。\n${raw}`,
   })
   const stdoutLines = readLines(child.stdout, parser.handleLine)
   const stderrLines = readLines(child.stderr, parser.handleStderrLine)

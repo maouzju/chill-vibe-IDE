@@ -198,4 +198,25 @@ describe('gemini runtime', () => {
     parser.handleProcessClosed(1)
     assert.deepEqual(crashed.calls.at(-1), ['error', 'quota exceeded'])
   })
+
+  // 2026-11-20 用户截图：本机 Gemini CLI 没登录，卡片红字前三行是 CLI 0.24.5 自己的
+  // 「Invalid hook event name: enabled/disabled/notifications」（它把 hooks 下的开关键也当事件名遍历），
+  // 真正原因埋在最后一句英文里，用户只问出「用不了 gemini 吗」。
+  it('drops hook-registry noise and leads with login guidance when Gemini is not signed in', () => {
+    const crashed = createSink()
+    const parser = createGeminiStreamParser(crashed.sink, {
+      describeAuthMissing: (raw) => `Gemini 还没登录。\n${raw}`,
+    })
+    parser.handleStderrLine('Invalid hook event name: enabled')
+    parser.handleStderrLine('Invalid hook event name: disabled')
+    parser.handleStderrLine('Invalid hook event name: notifications')
+    parser.handleStderrLine('Hook registry initialized with 1 hook entries')
+    parser.handleStderrLine(
+      'Please set an Auth method in your C:\\Users\\u\\.gemini\\settings.json or specify one of the following environment variables before running: GEMINI_API_KEY, GOOGLE_GENAI_USE_VERTEXAI, GOOGLE_GENAI_USE_GCA',
+    )
+    parser.handleProcessClosed(1)
+    const message = String(crashed.calls.at(-1)?.[1])
+    assert.doesNotMatch(message, /Invalid hook event name|Hook registry initialized/)
+    assert.match(message, /^Gemini 还没登录。\nPlease set an Auth method/)
+  })
 })

@@ -90,8 +90,17 @@ const describeToolCall = (toolName: string, parameters: unknown) => {
 }
 
 // CLI 启动时往 stderr 打的提示行不是错误，别让它们挤进失败摘要。
+// 「Invalid hook event name: enabled/disabled/notifications」是 CLI 0.24.5 自己的告警：它把 hooks 下的
+// 开关键也当事件名遍历（hookRegistry.processHooksConfiguration），钩子照常注册，与报错无关。
 const isGeminiStderrNoise = (line: string) =>
-  /^YOLO mode is enabled/i.test(line) || /^Shell cwd was reset/i.test(line) || /^Loaded cached credentials/i.test(line)
+  /^YOLO mode is enabled/i.test(line) ||
+  /^Shell cwd was reset/i.test(line) ||
+  /^Loaded cached credentials/i.test(line) ||
+  /^Invalid hook event name:/i.test(line) ||
+  /^Hook registry initialized/i.test(line)
+
+// CLI 没登录/没配 key 时的固定文案；给它补一句人话怎么登录。
+const isGeminiAuthMissing = (text: string) => /please set an auth method/i.test(text)
 
 // CLI 把上游报错包成「[API Error: {"error":{"message":"<再一层 JSON>"}}]」，最内层 message 才是人话。
 const parseJsonLoose = (text: string): unknown => {
@@ -128,7 +137,10 @@ const isStackTraceLine = (line: string) => /^at\s/.test(line)
 
 export const createGeminiStreamParser = (
   sink: GeminiSink,
-  options: { formatExit?: (code: number | null) => string } = {},
+  options: {
+    formatExit?: (code: number | null) => string
+    describeAuthMissing?: (raw: string) => string
+  } = {},
 ) => {
   let settled = false
   const stderrLines: string[] = []
@@ -248,6 +260,11 @@ export const createGeminiStreamParser = (
       const diagnostics = apiLine
         ? unwrapGeminiApiError(apiLine.slice(apiLine.search(/ApiError:|\[API Error:/)))
         : stderrLines.filter((line) => !isStackTraceLine(line)).slice(-6).join('\n')
+      if (diagnostics && options.describeAuthMissing && isGeminiAuthMissing(diagnostics)) {
+        const described = options.describeAuthMissing(diagnostics)
+        settle(() => sink.onError(described))
+        return
+      }
       settle(() =>
         sink.onError(diagnostics || options.formatExit?.(code) || `Gemini CLI exited with code ${code ?? 'unknown'}.`),
       )

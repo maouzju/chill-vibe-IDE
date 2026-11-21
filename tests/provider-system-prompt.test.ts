@@ -6310,6 +6310,79 @@ const buildFakeCodexInterruptibleAppServerScript = (capturePath: string) =>
     '})',
   ].join('\n')
 
+// 流式中发消息不能杀子 agent（2026-11-20 用户，pitfall #488）：Codex 走 turn/steer 插进活动回合，
+// 绝不发 turn/interrupt；回合被中断后再插话必须如实返回 false 让渲染端退回排队。
+test('codex app-server injects a mid-turn message with turn/steer instead of interrupting', async () => {
+  const capturePath = path.join(
+    os.tmpdir(),
+    `chill-vibe-codex-steer-${Date.now()}-${Math.random().toString(36).slice(2)}.jsonl`,
+  )
+  const readCaptured = async () =>
+    (await readFile(capturePath, 'utf8').catch(() => ''))
+      .trim()
+      .split(/\r?\n/)
+      .filter(Boolean)
+      .map((line) => JSON.parse(line) as { method?: string; params?: Record<string, unknown> })
+  const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
+  const script = buildFakeCodexInterruptibleAppServerScript(capturePath).replace(
+    "  if (request.method === 'turn/interrupt' && request.id) {",
+    "  if (request.method === 'turn/steer' && request.id) { reply({ id: request.id, result: { turnId: 'turn-1' } }); return }\n  if (request.method === 'turn/interrupt' && request.id) {",
+  )
+
+  try {
+    const outcome = await withFakeProviderCommand('codex', script, async (workspacePath) => {
+      const child = await launchProviderRun(
+        createRequest({ provider: 'codex', language: 'en', workspacePath }),
+        {
+          onSession: () => undefined,
+          onDelta: () => undefined,
+          onLog: () => undefined,
+          onAssistantMessage: () => undefined,
+          onActivity: () => undefined,
+          onDone: () => undefined,
+          onError: () => undefined,
+        },
+      )
+      assert.ok(child)
+      const handle = child as typeof child & {
+        injectUserMessage?: (m: { prompt: string; attachments: [] }) => Promise<boolean>
+        interruptTurn?: () => boolean
+      }
+      assert.equal(typeof handle.injectUserMessage, 'function')
+      assert.equal(await handle.injectUserMessage?.({ prompt: 'early', attachments: [] }), false, 'no active turn yet')
+
+      const deadline = Date.now() + 5_000
+      let injected = false
+      while (Date.now() < deadline && !injected) {
+        injected = (await handle.injectUserMessage?.({ prompt: 'Mid-turn follow-up', attachments: [] })) === true
+        if (!injected) await sleep(20)
+      }
+      const requestsAfterSteer = await readCaptured()
+      handle.interruptTurn?.()
+      const afterInterrupt = await handle.injectUserMessage?.({ prompt: 'late', attachments: [] })
+      await sleep(300)
+      child.kill()
+      return { injected, requestsAfterSteer, afterInterrupt }
+    })
+
+    assert.equal(outcome.injected, true)
+    const steer = outcome.requestsAfterSteer.find((request) => request.method === 'turn/steer')
+    assert.deepEqual(steer?.params, {
+      threadId: 'thread-1',
+      expectedTurnId: 'turn-1',
+      input: [{ type: 'text', text: 'Mid-turn follow-up', text_elements: [] }],
+    })
+    assert.equal(
+      outcome.requestsAfterSteer.some((request) => request.method === 'turn/interrupt'),
+      false,
+      'injecting must never interrupt the turn',
+    )
+    assert.equal(outcome.afterInterrupt, false, 'an interrupted turn no longer accepts injected messages')
+  } finally {
+    await rm(capturePath, { force: true }).catch(() => {})
+  }
+})
+
 test('codex app-server soft-interrupts the active turn with turn/interrupt instead of killing the process', async () => {
   const capturePath = path.join(
     os.tmpdir(),

@@ -2760,10 +2760,38 @@ const launchCodexAppServerRun = async (
   //   resume 本地零样本，没实证不赌。
   let activeTurnId: string | null = null
   let interruptFallbackKillTimer: ReturnType<typeof setTimeout> | undefined
+  let codexInterruptRequested = false
+  // 回合中插话：Codex app-server 的 turn/steer（expectedTurnId 是服务端前置校验，回合对不上直接拒）。
+  // 真探针 scripts/probe-codex-midturn-steer.mjs（0.156.1）：主线程在跑命令时 steer，同一回合的
+  // final_answer 就带上了新消息，不 interrupt，因此子 agent 不会被掐。见 pitfall #488。
+  ;(child as InterruptibleChild).injectUserMessage = async (message) => {
+    if (finished || codexInterruptRequested || manualCompactRequest || !emittedSessionId || !activeTurnId) {
+      return false
+    }
+    const paths = await resolveAttachmentPaths(message.attachments)
+    const input = buildCodexAppServerInput(
+      { ...currentRequest, prompt: message.prompt, attachments: message.attachments, sessionId: undefined },
+      paths,
+    )
+    if (input.length === 0 || finished || !activeTurnId) {
+      return false
+    }
+    try {
+      await sendRequest(
+        'turn/steer',
+        { threadId: emittedSessionId, expectedTurnId: activeTurnId, input },
+        codexTurnInterruptAckTimeoutMs,
+      )
+      return true
+    } catch {
+      return false
+    }
+  }
   ;(child as InterruptibleChild).interruptTurn = () => {
     if (finished || !emittedSessionId || !activeTurnId) {
       return false
     }
+    codexInterruptRequested = true
 
     void sendRequest(
       'turn/interrupt',

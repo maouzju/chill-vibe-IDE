@@ -6,6 +6,7 @@ import remarkGfm from 'remark-gfm'
 import type { AppLanguage, ChatMessage, StreamEditedFile } from '../../shared/schema'
 import { resolveMarkdownImageSrc } from '../../shared/local-image-protocol'
 import { MessageImageSnapshotContext } from './message-image-snapshot-context'
+import { MarkdownZoomableImage } from './ImageLightbox'
 import { openExternalLink, openMessageLocalLink } from '../api'
 import { parseStructuredAgentsMessage, readStructuredData, stripLeakedClaudeToolXml } from './chat-card-parsing'
 import type { StructuredToolGroupItem } from './chat-card-parsing'
@@ -1060,7 +1061,7 @@ const createMarkdownComponents = (workspacePath?: string) => {
     }
 
     // 带快照键的图必须在消息挂载时就请求，否则懒加载会把"展示那一刻"推迟到滚动进视口。
-    return <img {...rest} src={resolvedSrc} loading={snapshotKey ? undefined : 'lazy'} />
+    return <MarkdownZoomableImage {...rest} src={resolvedSrc} loading={snapshotKey ? undefined : 'lazy'} />
   }
 
   const MarkdownAnchor = (props: WithMarkdownNode<ComponentProps<'a'>>) => {

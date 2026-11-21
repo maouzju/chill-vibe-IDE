@@ -5504,7 +5504,7 @@ test('streaming plain replies keep inline cursor blocks out of the transcript ac
   await expectQuietStreamingReply('light')
 })
 
-test('message attachment previews open larger dialogs and stay legible across themes', async ({ page }) => {
+test('message attachment previews open a zoomable lightbox across themes', async ({ page }) => {
   await mockAppApis(page, { state: createAttachmentPreviewState() })
   await page.route('**/api/attachments/*', async (route) => {
     await route.fulfill({
@@ -5537,21 +5537,29 @@ test('message attachment previews open larger dialogs and stay legible across th
   await attachmentFrame.click()
 
   const dialog = page.getByRole('dialog')
-  const dialogCard = dialog.locator('.message-attachment-preview-card')
-  const dialogImage = dialog.locator('.message-attachment-preview-image')
+  const dialogImage = dialog.locator('.image-lightbox-image')
+  const percent = dialog.locator('.image-lightbox-percent')
   const minimumPreviewWidth = inlineFrameRect.width * 1.6
 
   await expect(dialog).toBeVisible()
   await expect(dialogImage).toBeVisible()
   await expect.poll(async () => (await readRect(dialogImage)).width).toBeGreaterThan(minimumPreviewWidth)
-  expect(maxChannel(await readComputedRgb(dialogCard, 'background-color'))).toBeLessThan(90)
-  expect(lacksGreenCast(await readComputedRgb(dialogCard, 'background-color'))).toBeTruthy()
-  await expect(dialogCard).toHaveScreenshot('message-attachment-preview-dark.png', {
+  await expect(dialog).toHaveScreenshot('message-attachment-preview-dark.png', {
     animations: 'disabled',
     caret: 'hide',
   })
 
-  await dialog.locator('.message-attachment-preview-close').click()
+  // 滚轮以光标为锚放大，双击回到适应窗口
+  const fitPercent = await percent.textContent()
+  const imageBox = (await dialogImage.boundingBox())!
+  await page.mouse.move(imageBox.x + imageBox.width / 2, imageBox.y + imageBox.height / 2)
+  await page.mouse.wheel(0, -400)
+  await expect.poll(async () => (await readRect(dialogImage)).width).toBeGreaterThan(imageBox.width * 1.5)
+  await expect(percent).not.toHaveText(fitPercent ?? '')
+  await dialogImage.dblclick()
+  await expect(percent).toHaveText(fitPercent ?? '')
+
+  await dialog.locator('.image-lightbox-close').click()
   await expect(dialog).toBeHidden()
 
   await settingsTab.click()
@@ -5566,11 +5574,57 @@ test('message attachment previews open larger dialogs and stay legible across th
 
   await expect(dialog).toBeVisible()
   await expect.poll(async () => (await readRect(dialogImage)).width).toBeGreaterThan(minimumPreviewWidth)
-  expect(maxChannel(await readComputedRgb(dialogCard, 'background-color'))).toBeGreaterThan(180)
-  await expect(dialogCard).toHaveScreenshot('message-attachment-preview-light.png', {
+  await page.keyboard.press('Escape')
+  await expect(dialog).toBeHidden()
+  await attachmentFrame.click()
+  await expect(dialog).toBeVisible()
+  await expect(dialog).toHaveScreenshot('message-attachment-preview-light.png', {
     animations: 'disabled',
     caret: 'hide',
   })
+})
+
+test('assistant markdown images open the lightbox and arrow keys switch between them', async ({ page }) => {
+  const state = createMockState()
+  state.settings.language = 'zh-CN'
+  const svgA = `data:image/svg+xml;utf8,${encodeURIComponent(attachmentPreviewSvg)}`
+  const svgB = `data:image/svg+xml;utf8,${encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="400" height="300"><rect width="400" height="300" fill="#e0703a"/></svg>')}`
+  state.columns[0]!.cards[0]!.messages = [
+    {
+      id: 'assistant-images-1',
+      role: 'assistant',
+      content: `效果图如下：
+
+![首页截图](${svgA})
+
+![设置页截图](${svgB})`,
+      createdAt: '2026-04-05T12:08:00.000Z',
+    },
+  ]
+  await mockAppApis(page, { state })
+  await page.goto(appUrl)
+
+  const inlineImage = page.locator('.message-content img.message-zoomable-image').first()
+  await inlineImage.waitFor()
+  await inlineImage.click()
+
+  const dialog = page.getByRole('dialog')
+  await expect(dialog).toBeVisible()
+  await expect(dialog.locator('.image-lightbox-counter')).toHaveText('1 / 2')
+  await expect(dialog.locator('.image-lightbox-name')).toHaveText('首页截图')
+  await expect.poll(async () => (await readRect(dialog.locator('.image-lightbox-image'))).width).toBeGreaterThan(300)
+  await expect(dialog).toHaveScreenshot('assistant-markdown-image-lightbox.png', {
+    animations: 'disabled',
+    caret: 'hide',
+  })
+
+  await page.keyboard.press('ArrowRight')
+  await expect(dialog.locator('.image-lightbox-counter')).toHaveText('2 / 2')
+  await expect(dialog.locator('.image-lightbox-name')).toHaveText('设置页截图')
+
+  // 点空白处关闭
+  await page.mouse.click(8, 300)
+  await expect(dialog).toBeHidden()
 })
 
 for (const theme of ['dark', 'light'] as const) {

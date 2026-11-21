@@ -1,5 +1,4 @@
-import { memo, useId, useState } from 'react'
-import { createPortal } from 'react-dom'
+import { memo, useState } from 'react'
 
 import {
   getChatMessageAttachments,
@@ -31,7 +30,8 @@ import {
   renderMarkdown,
   summarizeReasoningPreview,
 } from './chat-card-rendering'
-import { CloseIcon, GitBranchIcon } from './Icons'
+import { GitBranchIcon } from './Icons'
+import { ImageLightbox } from './ImageLightbox'
 import {
   AskUserQuestionCard,
   ChangesSummaryCard,
@@ -42,7 +42,6 @@ import {
   StructuredTodoCard,
   StructuredToolCard,
 } from './StructuredBlocks'
-import { useDialogFocus } from './dialog-focus'
 import { MessageImageSnapshotContext } from './message-image-snapshot-context'
 import type { ChangesSummaryFile } from './StructuredBlocks'
 import {
@@ -60,71 +59,6 @@ const parseChangesSummaryFiles = (raw: string | undefined): ChangesSummaryFile[]
   }
 }
 
-type PreviewAttachment = {
-  attachment: ImageAttachment
-  altText: string
-}
-
-const MessageAttachmentPreviewDialog = ({
-  language,
-  preview,
-  onClose,
-}: {
-  language: AppLanguage
-  preview: PreviewAttachment
-  onClose: () => void
-}) => {
-  const labels = getStructuredLabels(language)
-  const titleId = useId()
-  const dialogRef = useDialogFocus<HTMLElement>({ isOpen: true, onClose })
-
-  const dialogLayer = (
-    <div className="structured-preview-layer">
-      <div
-        className="structured-preview-backdrop"
-        onClick={onClose}
-      />
-      <section
-        ref={dialogRef}
-        className="structured-preview-dialog message-attachment-preview-dialog"
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby={titleId}
-        tabIndex={-1}
-      >
-        <div className="structured-preview-card message-attachment-preview-card">
-          <div className="structured-preview-header">
-            <div className="structured-preview-copy">
-              <h3 id={titleId}>{preview.attachment.fileName || preview.altText}</h3>
-            </div>
-
-            <button
-              type="button"
-              className="btn btn-ghost structured-preview-close message-attachment-preview-close"
-              onClick={onClose}
-              aria-label={labels.closeDetails}
-            >
-              <CloseIcon />
-            </button>
-          </div>
-
-          <div className="structured-preview-body message-attachment-preview-body">
-            <img
-              className="message-attachment-preview-image"
-              src={getImageAttachmentUrl(preview.attachment.id)}
-              alt={preview.altText}
-            />
-          </div>
-        </div>
-      </section>
-    </div>
-  )
-
-  return typeof document !== 'undefined'
-    ? createPortal(dialogLayer, document.body)
-    : dialogLayer
-}
-
 const MessageAttachments = ({
   language,
   attachments,
@@ -134,13 +68,17 @@ const MessageAttachments = ({
 }) => {
   const text = getLocaleText(language)
   const labels = getStructuredLabels(language)
-  const [preview, setPreview] = useState<PreviewAttachment | null>(null)
+  const [previewIndex, setPreviewIndex] = useState<number | null>(null)
+  const images = attachments.map((attachment, index) => ({
+    src: getImageAttachmentUrl(attachment.id),
+    alt: attachment.fileName || text.pastedImageAlt(index + 1),
+  }))
 
   return (
     <>
       <div className="message-attachment-list">
         {attachments.map((attachment, index) => {
-          const altText = attachment.fileName || text.pastedImageAlt(index + 1)
+          const altText = images[index]!.alt
 
           return (
             <button
@@ -148,11 +86,11 @@ const MessageAttachments = ({
               type="button"
               className="message-attachment-frame"
               aria-label={labels.openDetails(altText)}
-              onClick={() => setPreview({ attachment, altText })}
+              onClick={() => setPreviewIndex(index)}
             >
               <img
                 className="message-attachment-image"
-                src={getImageAttachmentUrl(attachment.id)}
+                src={images[index]!.src}
                 alt={altText}
                 loading="lazy"
               />
@@ -160,11 +98,11 @@ const MessageAttachments = ({
           )
         })}
       </div>
-      {preview ? (
-        <MessageAttachmentPreviewDialog
-          language={language}
-          preview={preview}
-          onClose={() => setPreview(null)}
+      {previewIndex !== null ? (
+        <ImageLightbox
+          images={images}
+          initialIndex={previewIndex}
+          onClose={() => setPreviewIndex(null)}
         />
       ) : null}
     </>

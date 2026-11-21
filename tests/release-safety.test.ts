@@ -116,6 +116,47 @@ test('release safety audit keeps flagging real drive paths outside tests or with
   assert.deepEqual(rescueDir.map(({ category }) => category), ['machine-path'])
 })
 
+test('release safety audit allows invented D:/Git and C:/Users fixture roots in tests', () => {
+  // 2026-11-21: the history audit reported 708 findings for made-up fixture
+  // roots (`target-workspace`, `alpha`, `demo-workspace`...), because it has no
+  // unchanged-baseline to spare old tests.  An invented name that does not exist
+  // on this machine cannot leak anything; test authors must not have to look it up.
+  const noLocalPaths = { localPathExists: () => false }
+  const escaped = ['D:', 'Git', 'target-workspace', 'src'].join('\\\\')
+  const forward = ['D:/Git/', 'weather-workspace/app.ts'].join('')
+  const user = ['C:/Users/', 'fixture/.claude/settings.json'].join('')
+  assert.deepEqual(
+    auditReleaseText('tests/example.test.ts', `"${escaped}"\n${forward}\n${user}`, {
+      baselineText: '',
+      ...noLocalPaths,
+    }),
+    [],
+  )
+})
+
+test('release safety audit still flags fixture roots that exist on this machine or are denylisted', () => {
+  const existing = new Set(['d:/git/my-real-game', 'c:/users/real-person'])
+  const localPathExists = (absolutePath: string) => existing.has(absolutePath.toLowerCase())
+  const realProject = ['D:/Git/', 'my-real-game/src/main.ts'].join('')
+  const realUser = ['C:/Users/', 'real-person/AppData/x.log'].join('')
+  const denylisted = ['D:/Git/', ['chill', '-storm'].join(''), '/a.ts'].join('')
+  assert.deepEqual(
+    auditReleaseText('tests/example.test.ts', `${realProject}\n${realUser}\n${denylisted}`, {
+      baselineText: '',
+      localPathExists,
+    }).map(({ category }) => category).sort(),
+    ['personal-path', 'external-project-path', 'external-project-path'].sort(),
+  )
+  // Outside tests/ the rule stays strict even for invented names.
+  assert.deepEqual(
+    auditReleaseText('scripts/bench.ts', ['D:/Git/', 'target-workspace/a.ts'].join(''), {
+      baselineText: '',
+      localPathExists: () => false,
+    }).map(({ category }) => category),
+    ['external-project-path'],
+  )
+})
+
 test('release safety audit ignores personal email addresses', () => {
   assert.deepEqual(auditReleaseText('release.txt', 'author@example.com <author@example.com>'), [])
 })

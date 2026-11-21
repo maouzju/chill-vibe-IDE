@@ -2777,11 +2777,14 @@ const launchCodexAppServerRun = async (
       return false
     }
     try {
-      await sendRequest(
-        'turn/steer',
-        { threadId: emittedSessionId, expectedTurnId: activeTurnId, input },
-        codexTurnInterruptAckTimeoutMs,
-      )
+      // 不设确认超时（2026-11-21 审计）：请求已写进 stdin，超时不等于被拒；按失败退回
+      // 「排队+打断」会让同一条消息到达两次并打断子 agent。服务端拒收或进程结束
+      // （rejectPendingRequests）仍会如实返回 false。
+      await sendRequest('turn/steer', {
+        threadId: emittedSessionId,
+        expectedTurnId: activeTurnId,
+        input,
+      })
       return true
     } catch {
       return false

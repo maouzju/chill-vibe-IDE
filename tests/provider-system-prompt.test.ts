@@ -6383,6 +6383,56 @@ test('codex app-server injects a mid-turn message with turn/steer instead of int
   }
 })
 
+// 2026-11-21 审计：turn/steer 曾复用 5 秒确认超时。超时不等于服务端拒收——请求早已写进 stdin，
+// 渲染端却按失败退回「排队+打断」，同一条消息到达模型两次、子 agent 被打断。慢回执也必须算成功。
+test('codex app-server treats a slow turn/steer acknowledgement as delivered, not as a failure', async () => {
+  const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
+  const capturePath = path.join(
+    os.tmpdir(),
+    `chill-vibe-codex-slow-steer-${Date.now()}-${Math.random().toString(36).slice(2)}.jsonl`,
+  )
+  const script = buildFakeCodexInterruptibleAppServerScript(capturePath).replace(
+    "  if (request.method === 'turn/interrupt' && request.id) {",
+    "  if (request.method === 'turn/steer' && request.id) { setTimeout(() => reply({ id: request.id, result: { turnId: 'turn-1' } }), 6500); return }\n  if (request.method === 'turn/interrupt' && request.id) {",
+  )
+
+  try {
+    const injected = await withFakeProviderCommand('codex', script, async (workspacePath) => {
+      const child = await launchProviderRun(
+        createRequest({ provider: 'codex', language: 'en', workspacePath }),
+        {
+          onSession: () => undefined,
+          onDelta: () => undefined,
+          onLog: () => undefined,
+          onAssistantMessage: () => undefined,
+          onActivity: () => undefined,
+          onDone: () => undefined,
+          onError: () => undefined,
+        },
+      )
+      assert.ok(child)
+      const handle = child as typeof child & {
+        injectUserMessage?: (m: { prompt: string; attachments: [] }) => Promise<boolean>
+      }
+      // Wait until the turn is active (an early call returns false immediately, without a request).
+      const deadline = Date.now() + 5_000
+      let result: boolean | undefined
+      while (Date.now() < deadline) {
+        const started = Date.now()
+        result = await handle.injectUserMessage?.({ prompt: 'Slow follow-up', attachments: [] })
+        if (result === true || Date.now() - started > 1_000) break
+        await sleep(20)
+      }
+      child.kill()
+      return result
+    })
+
+    assert.equal(injected, true, 'a steer acknowledged after the old 5 s timeout was still delivered')
+  } finally {
+    await rm(capturePath, { force: true }).catch(() => {})
+  }
+})
+
 test('codex app-server soft-interrupts the active turn with turn/interrupt instead of killing the process', async () => {
   const capturePath = path.join(
     os.tmpdir(),

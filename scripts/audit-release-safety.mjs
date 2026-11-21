@@ -91,7 +91,41 @@ function isTestPath(pathName) {
   return normalized === 'tests' || normalized.startsWith('tests/')
 }
 
-function isAllowedSyntheticPath(pathName, value) {
+const localPathExistsCache = new Map()
+function defaultLocalPathExists(absolutePath) {
+  // Only this machine can tell an invented fixture root from a real checkout.
+  // CI (Linux) never has these Windows roots, so it falls back to the denylist.
+  if (process.platform !== 'win32') return false
+  const key = absolutePath.toLowerCase()
+  if (!localPathExistsCache.has(key)) localPathExistsCache.set(key, fs.existsSync(absolutePath))
+  return localPathExistsCache.get(key)
+}
+
+function currentUserName() {
+  try {
+    return os.userInfo().username.toLowerCase()
+  } catch {
+    return ''
+  }
+}
+
+// 症状：2026-11-21 历史审计报 717 条，其中 708 条是测试里编的假根目录
+// （D:/Git/<编的项目名>、C:/Users/<编的用户名>），每个测试作者都得去绕扫描器。
+// 根因：历史审计没有"基线未变"兜底，而 11-20 起又能识别 \\ 转义写法，老测试一次性全红。
+// 为什么这样判：编出来的名字在本机不存在就泄露不了任何东西；真实项目/用户目录
+// 在本机一定存在，再加真名黑名单兜底 CI。只放宽 tests/，生产代码仍从严。
+function isInventedFixtureRoot(name, absolutePath, options) {
+  if (!/^[a-z0-9][a-z0-9._-]*$/u.test(name)) return false
+  for (const denied of EXTERNAL_PROJECT_NAMES) {
+    if (name.includes(denied.toLowerCase())) return false
+  }
+  const localPathExists = typeof options.localPathExists === 'function'
+    ? options.localPathExists
+    : defaultLocalPathExists
+  return !localPathExists(absolutePath)
+}
+
+function isAllowedSyntheticPath(pathName, value, options = {}) {
   const normalizedPath = normalizeRelativePath(pathName).toLowerCase()
   const normalizedValue = normalizeForCompare(value)
   if (normalizedValue === 'd:/git/chill-vibe' || normalizedValue.startsWith('d:/git/chill-vibe/')) {
@@ -109,6 +143,18 @@ function isAllowedSyntheticPath(pathName, value) {
     if (normalizedValue === `d:/git/${project}` || normalizedValue.startsWith(`d:/git/${project}/`)) {
       return true
     }
+  }
+  const fixtureUser = normalizedValue.match(/^c:\/users\/([^/]+)/u)?.[1]
+  if (
+    fixtureUser
+    && fixtureUser !== currentUserName()
+    && isInventedFixtureRoot(fixtureUser, `C:/Users/${fixtureUser}`, options)
+  ) {
+    return true
+  }
+  const fixtureProject = normalizedValue.match(/^d:\/git\/([^/]+)/u)?.[1]
+  if (fixtureProject && isInventedFixtureRoot(fixtureProject, `D:/Git/${fixtureProject}`, options)) {
+    return true
   }
   // Symptom: v0.20.8's new crash-recovery tests reported 9 `machine-path`
   // findings for invented workspace roots (`D:/<made-up-name>`), while the
@@ -203,7 +249,7 @@ function scanCredentialPatterns(pathName, text, findings, seen) {
   }
 }
 
-function scanPathPatterns(pathName, text, baselineText, findings, seen) {
+function scanPathPatterns(pathName, text, baselineText, findings, seen, options = {}) {
   const candidates = []
   // `(?:\\\\|[\\/])`: JSON / JS string literals escape every backslash of a
   // Windows path (`C:\\Users\\...`); the 2026-11-20 review found those produced
@@ -229,7 +275,7 @@ function scanPathPatterns(pathName, text, baselineText, findings, seen) {
       /[\\/]$/u.test(value) ||
       /\.join\($/u.test(value)
     ) continue
-    if (isAllowedSyntheticPath(pathName, value) || valueIsInBaseline(value, baselineText)) continue
+    if (isAllowedSyntheticPath(pathName, value, options) || valueIsInBaseline(value, baselineText)) continue
     const normalized = normalizeForCompare(value)
     if (/^[a-z]:[\\/]users[\\/]/u.test(normalized) || /\/(?:home|users)\//u.test(normalized)) {
       addFinding(findings, seen, pathName, 'personal-path', lineNumberAt(text, match.index))
@@ -268,7 +314,7 @@ export function auditReleaseText(pathName, text, options = {}) {
   const content = String(text ?? '')
   const baselineText = options.baselineText == null ? '' : String(options.baselineText)
   scanCredentialPatterns(pathName, content, findings, seen)
-  scanPathPatterns(pathName, content, baselineText, findings, seen)
+  scanPathPatterns(pathName, content, baselineText, findings, seen, options)
   return findings.sort((left, right) => {
     const pathOrder = left.path.localeCompare(right.path)
     if (pathOrder !== 0) return pathOrder

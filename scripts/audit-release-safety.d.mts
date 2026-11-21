@@ -6,6 +6,8 @@ export interface ReleaseSafetyFinding {
 
 export interface ReleaseSafetyAuditOptions {
   baselineText?: string
+  /** Test seam: whether an absolute Windows path exists on this machine. Defaults to a cached fs check on win32. */
+  localPathExists?: (absolutePath: string) => boolean
 }
 
 export interface ReleaseCandidateAuditOptions {

@@ -9,7 +9,10 @@ import { appUrl } from './playwright-app-url.ts'
 const redPixel =
   'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8DwHwAFBQIAX8jx0gAAAABJRU5ErkJggg=='
 
-const installChatWithImage = async (page: Page) => {
+const installChatWithImage = async (
+  page: Page,
+  content = `截图如下：\n\n![红点](${redPixel})\n\n以上。`,
+) => {
   await installMockElectronBridge(page)
 
   const state = createPlaywrightState({
@@ -46,7 +49,7 @@ const installChatWithImage = async (page: Page) => {
               {
                 id: 'assistant-1',
                 role: 'assistant',
-                content: `截图如下：\n\n![红点](${redPixel})\n\n以上。`,
+                content,
                 createdAt: new Date().toISOString(),
               },
             ],
@@ -108,4 +111,31 @@ test('right-clicking an image in an assistant reply copies it to the clipboard a
       }),
     )
     .toContain('image/png')
+})
+
+// 灯箱挂在 body 上，但 React 合成事件沿组件树冒泡：图被包在链接里时，
+// 灯箱里每次点击（关闭/缩放/空白处）都会冒到外层 <a> 的 onClick，再弹一次外部浏览器。
+test('clicks inside the lightbox of a linked image do not trigger the outer link', async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 820 })
+  await installChatWithImage(page, `看图：\n\n[![红点](${redPixel})](https://example.com/target)\n`)
+  await page.addInitScript(() => {
+    const opened: string[] = []
+    ;(window as unknown as { __openedLinks: string[] }).__openedLinks = opened
+    const api = (window as unknown as { electronAPI?: Record<string, unknown> }).electronAPI
+    if (api) api.openExternalLink = async (href: string) => { opened.push(href) }
+  })
+  await page.goto(appUrl)
+
+  const image = page.locator('.message-list img.message-zoomable-image').first()
+  await expect(image).toBeVisible()
+  await image.click()
+
+  const dialog = page.locator('.image-lightbox')
+  await expect(dialog).toBeVisible()
+  await dialog.locator('.image-lightbox-percent').click()
+  await dialog.locator('.image-lightbox-close').click()
+  await expect(dialog).toHaveCount(0)
+
+  const opened = await page.evaluate(() => (window as unknown as { __openedLinks: string[] }).__openedLinks)
+  expect(opened).toEqual([])
 })

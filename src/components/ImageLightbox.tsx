@@ -274,6 +274,9 @@ export const ImageLightbox = ({
       aria-modal="true"
       aria-label={text.dialog}
       tabIndex={-1}
+      // 灯箱挂在 body 上，但 React 合成事件沿组件树冒泡：图包在链接里时，
+      // 灯箱里每次点击都会冒到外层 <a> 的 onClick 再开一次外部链接（2026-11-21 审计）。
+      onClick={(event) => event.stopPropagation()}
     >
       <div className="image-lightbox-topbar">
         <div className="image-lightbox-title" title={current.alt}>

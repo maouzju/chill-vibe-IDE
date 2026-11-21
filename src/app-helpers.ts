@@ -17,6 +17,7 @@ import { getLocaleText } from '../shared/i18n'
 import { AUTOMATIONBOARD_TOOL_MODEL, BRAINSTORM_TOOL_MODEL, GIT_TOOL_MODEL, STICKYNOTE_TOOL_MODEL } from '../shared/models'
 import type { ChatStreamSource } from './api'
 import type { SendMessageOrigin } from './components/deferred-send-queue'
+import { selectDockedAgentStatus } from './components/chat-card-parsing'
 
 // 什么时候值得去探一次本机 Ollama 状态。两个消费方互不相干：
 // · 「路由」页的本地模型条目 —— 模型名下拉要列出已装模型，与自动鞭策没有任何关系；
@@ -327,6 +328,17 @@ export const shouldDropEmptyContinuationWhileStreaming = (input: {
   !input.answersPendingAskUser &&
   (input.mode ?? 'auto') === 'auto' &&
   (input.origin ?? 'user') === 'user'
+
+// 症状：2026-11-20 用户反馈「聊天容易直接杀掉会话里的子 agent」——流式中左键发消息，
+//   在跑的子代理 / 后台 Workflow 当场全灭。
+// 根因：auto 发送在流式中 = 排队 + 软打断，而 CLI 的 interrupt 会 kill 全部 running 子代理
+//   （pitfall #318 三路实证；不打断、回合结束再发则子代理全程存活，见 probe-claude-subagent-next-turn）。
+// 决策：卡上最新子代理快照还有运行中条目时，auto 发送只排队不打断；显式「立即发送」(interrupt) 照旧。
+export const shouldQueueSendToKeepSubagentsAlive = (input: {
+  mode?: 'auto' | 'defer' | 'interrupt'
+  messages: ChatMessage[]
+}): boolean =>
+  (input.mode ?? 'auto') === 'auto' && selectDockedAgentStatus(input.messages) !== null
 
 export const getRoutingImportText = (language: AppState['settings']['language']) =>
   language === 'en'

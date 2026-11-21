@@ -272,6 +272,7 @@ import {
   finishFailedTurnStart,
   canSendEmptyContinuation,
   shouldDropEmptyContinuationWhileStreaming,
+  shouldQueueSendToKeepSubagentsAlive,
   shouldSyncOllamaStatus,
   getAgentDoneSoundUrl,
   getAllAgentsDoneSoundUrl,
@@ -7858,7 +7859,11 @@ function App() {
         hasLatestPendingAskUserMessage(card.messages, prompt)
       const shouldQueueUntilDone =
         shouldAnswerAskUser ||
-        shouldWaitForCompactionBeforeSending(latestUserMessage, card.provider, card.streamId)
+        shouldWaitForCompactionBeforeSending(latestUserMessage, card.provider, card.streamId) ||
+        shouldQueueSendToKeepSubagentsAlive({
+          mode: sendMode,
+          messages: card.messages,
+        })
       if (shouldAnswerAskUser) {
         pendingAskUserDuringStreamRef.current.set(cardId, true)
         enqueueQueuedSend(cardId, { id: crypto.randomUUID(), prompt, attachments })

@@ -809,6 +809,7 @@ A living list of traps that have wasted time before. **When you hit a new pitfal
 | 485 | **历史审计静默跳过超过 32MB 的 blob，连只看路径的调试产物规则也一起跳了。** | `scripts/audit-git-history.mjs`：超大 blob 用空文本过路径规则，并追加一条 `unscannable-file`（判失败）。守卫：`tests/history-audit.test.ts`（`history audit still reports path-only findings…`）。 |
 | 486 | **用脚本改完一个文件，diff 从几十行爆成几千行。** 2026-11-20 修中危批时两次撞到。`chat-card-parsing.ts` 等文件是 CRLF / LF 混用（git 标 `-text`），`sed -i`、python 文本模式、按行读写都会把整文件换行统一掉。 | 改这类文件只用 Edit 工具；已经翻了就按 HEAD 逐行还原行尾（未改动的行沿用原行尾）。提交前看 `git diff --numstat`，增删行数接近文件总行数就是换行被翻了。 |
 | 487 | **新写的测试 / 注释让 `release:audit` 多出一批 machine-path / personal-path。** 同批次实测多出 10 条。非测试文件里任何盘符路径都算命中；测试文件只放行 `SYNTHETIC_USERS` / `SYNTHETIC_PROJECTS` 里的假名和「盘符 + 单段 ASCII」。 | 注释里的例子写占位（`<工作区>`、`<目录>`），不写盘符路径；测试里的假工作区用白名单假名；确实需要多段或非 ASCII 假路径时用数组 `join` 拼，不要照抄用户真实目录名。不要为了过审计去扩白名单。 |
+| 488 | **流式中左键发消息，会话里在跑的子 agent / 后台 Workflow 全被杀。** 2026-11-20 用户反馈。auto 发送在流式中 = 排队 + 软打断，CLI 的 interrupt 会 kill 全部 running 子代理（#318 三路实证）。 | `src/app-helpers.ts` `shouldQueueSendToKeepSubagentsAlive`：最新子代理快照仍有运行中条目时 auto 发送只排队、回合结束再发；队列「立即发送」等显式 `interrupt` 照旧可打断。不要改成「打断后再恢复子代理」——被杀者 `stoppedByUser`，CLI 拒绝 resume。守卫：`tests/app-helpers.test.ts`（`shouldQueueSendToKeepSubagentsAlive …`）。 |
 
 ### Self-maintenance rule
 

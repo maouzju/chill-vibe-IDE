@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
+import { createMessage } from '../shared/default-state.ts'
 import test from 'node:test'
 
 import {
@@ -23,6 +24,7 @@ import {
   resolvePaneTabTitle,
   resolveTabMoveSideEffects,
   shouldDropEmptyContinuationWhileStreaming,
+  shouldQueueSendToKeepSubagentsAlive,
   willMoveTabAcrossColumns,
   resolveStreamedAssistantMessageTarget,
 } from '../src/app-helpers.ts'
@@ -1211,4 +1213,46 @@ test('profile reorder drag payload never uses text/plain', () => {
   const appSource = readFileSync(new URL('../src/App.tsx', import.meta.url), 'utf8')
   assert.match(appSource, /setData\('application\/x-chill-vibe-profile', profile\.id\)/)
   assert.doesNotMatch(appSource, /setData\('text\/plain', profile\.id\)/)
+})
+
+// 症状（2026-11-20 用户）：流式中左键发消息，会话里在跑的子 agent / 后台 Workflow 全被杀。
+// 根因：auto 模式发送 = 排队 + 软打断，CLI 的 interrupt 会 kill 全部 running 子代理（pitfall #318 三路实证）。
+// 决策：卡上有运行中子代理时 auto 发送只排队，回合结束再发；显式「立即发送」(interrupt) 仍可打断。
+const makeRunningAgentsMessage = (status: string) =>
+  createMessage('assistant', '', {
+    provider: 'claude',
+    kind: 'agents',
+    itemId: 'agent-status:claude',
+    structuredData: JSON.stringify({
+      itemId: 'agent-status:claude',
+      kind: 'agents',
+      status: 'completed',
+      view: 'status',
+      agents: [{ threadId: 'task-1', role: 'Explore', status, activity: [] }],
+    }),
+  })
+
+test('shouldQueueSendToKeepSubagentsAlive queues auto sends while a subagent is running', () => {
+  const messages = [createMessage('user', 'go'), makeRunningAgentsMessage('running')]
+  assert.equal(shouldQueueSendToKeepSubagentsAlive({ mode: 'auto', messages }), true)
+  assert.equal(shouldQueueSendToKeepSubagentsAlive({ messages }), true)
+  assert.equal(
+    shouldQueueSendToKeepSubagentsAlive({ mode: 'auto', messages: [makeRunningAgentsMessage('pendingInit')] }),
+    true,
+  )
+})
+
+test('shouldQueueSendToKeepSubagentsAlive leaves explicit interrupts and agent-free cards alone', () => {
+  const running = [makeRunningAgentsMessage('running')]
+  assert.equal(shouldQueueSendToKeepSubagentsAlive({ mode: 'interrupt', messages: running }), false)
+  assert.equal(shouldQueueSendToKeepSubagentsAlive({ mode: 'auto', messages: [createMessage('user', 'go')] }), false)
+  assert.equal(
+    shouldQueueSendToKeepSubagentsAlive({ mode: 'auto', messages: [makeRunningAgentsMessage('completed')] }),
+    false,
+  )
+})
+
+test('sendMessage streaming branch consults the subagent keep-alive guard', () => {
+  const source = readFileSync(new URL('../src/App.tsx', import.meta.url), 'utf8')
+  assert.match(source, /shouldQueueSendToKeepSubagentsAlive\(\{\s*mode: sendMode,\s*messages: card\.messages/)
 })

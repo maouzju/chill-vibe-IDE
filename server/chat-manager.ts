@@ -5,6 +5,7 @@ import type { Request, Response } from 'express'
 import type {
   ClaudeAgentStatusPush,
   ChatRequest,
+  ImageAttachment,
   StreamActivity,
   StreamAssistantMessage,
   StreamContextUsageEvent,
@@ -38,6 +39,7 @@ import {
   isClaudeTurnStartLine,
   launchProviderRun,
   tryInterruptProviderTurn,
+  tryInjectProviderTurnMessage,
 } from './providers.js'
 
 type StreamName = keyof StreamEventMap
@@ -533,6 +535,24 @@ export class ChatManager {
   // 让这次推迟白做（症状：改动卡照样丢失，见 Known Pitfall 244）。
   //
   // `origin` 只用于日志：谁在停这条流（渲染端的停止原因 / 兜底路径名）。缺省记 'unknown'。
+  // 回合中插话：把用户新消息直接写进正在跑的回合，不打断（子代理因此不会被 CLI 杀掉）。
+  // 返回 false 时调用方必须退回原有的排队路径，消息不能丢。
+  async injectMessage(streamId: string, message: { prompt: string; attachments: ImageAttachment[] }) {
+    const stream = this.streams.get(streamId)
+    if (!stream || stream.terminal || stream.stopRequested || stream.stopHook) {
+      return { injected: false }
+    }
+    const injected = await tryInjectProviderTurnMessage(stream.child, message)
+    void writeServerLog('INFO', '[chat-inject]', {
+      streamId,
+      cardId: stream.cardId,
+      injected,
+      ageMs: Date.now() - stream.startedAt,
+      attachments: message.attachments.length,
+    })
+    return { injected }
+  }
+
   stop(streamId: string, origin?: string): ChatStreamStopResult {
     const stream = this.streams.get(streamId)
 

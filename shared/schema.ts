@@ -83,6 +83,12 @@ export const imageAttachmentSchema = z.object({
 })
 export type ImageAttachment = z.infer<typeof imageAttachmentSchema>
 
+// 回合中插话请求（渲染端 → 服务端）：见 ChatManager.injectMessage。
+export const injectChatMessageRequestSchema = z.object({
+  prompt: z.string(),
+  attachments: z.array(imageAttachmentSchema).default([]),
+})
+
 export const queuedSendRequestSchema = z.object({
   id: z.string().min(1),
   prompt: z.string(),

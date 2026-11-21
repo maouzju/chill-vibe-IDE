@@ -340,6 +340,19 @@ export const shouldQueueSendToKeepSubagentsAlive = (input: {
 }): boolean =>
   (input.mode ?? 'auto') === 'auto' && selectDockedAgentStatus(input.messages) !== null
 
+// 流式中哪些发送先尝试「插进正在跑的回合」：只有普通的 auto 发送、带内容、不是斜杠命令、
+// 不在等压缩。显式 interrupt / defer 是用户点名的语义；斜杠命令插进去会被当正文。
+export const shouldTryMidTurnInject = (input: {
+  mode?: 'auto' | 'defer' | 'interrupt'
+  hasContent: boolean
+  isSlashCommand: boolean
+  waitsForCompaction: boolean
+}): boolean =>
+  (input.mode ?? 'auto') === 'auto' &&
+  input.hasContent &&
+  !input.isSlashCommand &&
+  !input.waitsForCompaction
+
 export const getRoutingImportText = (language: AppState['settings']['language']) =>
   language === 'en'
     ? {

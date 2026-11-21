@@ -1147,7 +1147,12 @@ const formatCodexStaleSessionRecoveryNotice = (language: AppLanguage) =>
 // Codex app-server 路径靠 JSON-RPC `turn/interrupt`（见 launchCodexAppServerRun）；
 // 两者都只 abort 当前 turn 而保住进程与会话。没挂上这个方法的路径（Claude 非
 // keepalive 回退等）停止仍走 kill。
-export type InterruptibleChild = ChildProcess & { interruptTurn?: () => boolean }
+export type MidTurnMessage = { prompt: string; attachments: ImageAttachment[] }
+export type InterruptibleChild = ChildProcess & {
+  interruptTurn?: () => boolean
+  // 回合中插话（不打断）：只有 Claude keepalive 路径挂得上，见 ClaudeSessionPool.injectUserMessage。
+  injectUserMessage?: (message: MidTurnMessage) => Promise<boolean>
+}
 
 // turn/interrupt 发出后 Codex 正常在几十毫秒内回 turn/completed(interrupted) 并由
 // finishWithDone 释放进程；这两个兜底只在 app-server 不回应时把它硬杀掉，避免僵尸进程。
@@ -1168,9 +1173,25 @@ export const tryInterruptProviderTurn = (child: InterruptibleChild | null | unde
   }
 }
 
+// 插话失败一律如实返回 false：调用方据此退回「排队」，绝不能假装发出去了。
+export const tryInjectProviderTurnMessage = async (
+  child: InterruptibleChild | null | undefined,
+  message: MidTurnMessage,
+) => {
+  if (typeof child?.injectUserMessage !== 'function') {
+    return false
+  }
+  try {
+    return (await child.injectUserMessage(message)) === true
+  } catch {
+    return false
+  }
+}
+
 const createManagedChildHandle = () => {
   let activeChild: ChildProcess | null = null
   let interruptHandler: (() => boolean) | null = null
+  let injectHandler: ((message: MidTurnMessage) => Promise<boolean>) | null = null
   // 症状：Claude 首次尝试失败、自动重试的几秒空窗里点停止，界面显示已停，后台却又起了一个进程
   //   以 bypassPermissions 跑完整轮（keepalive 下还把这条消息写进常驻进程）。
   // 根因（2026-11-20 审查）：空窗里 activeChild / interruptHandler 都是空的，kill 与 interruptTurn
@@ -1190,6 +1211,13 @@ const createManagedChildHandle = () => {
     return interruptHandler?.() === true
   }
 
+  ;(handle as InterruptibleChild).injectUserMessage = async (message: MidTurnMessage) => {
+    if (stopped || !injectHandler) {
+      return false
+    }
+    return (await injectHandler(message)) === true
+  }
+
   return {
     handle,
     isStopped: () => stopped,
@@ -1198,6 +1226,9 @@ const createManagedChildHandle = () => {
     },
     setInterruptHandler: (fn: (() => boolean) | null) => {
       interruptHandler = fn
+    },
+    setInjectHandler: (fn: ((message: MidTurnMessage) => Promise<boolean>) | null) => {
+      injectHandler = fn
     },
   }
 }
@@ -4707,6 +4738,22 @@ const launchClaudeKeepaliveRun = async (
     //   序号在下面 beginTurn 之后才取得，-1 是 fail-closed 哨兵，拿不到就宁可不中断。
     let turnSerial = -1
     managedChild.setInterruptHandler(() => pool.interruptTurn(cardId, child, turnSerial))
+    managedChild.setInjectHandler(async (message) => {
+      const paths = await resolveAttachmentPaths(message.attachments)
+      const text = getClaudePrompt(
+        { ...currentRequest, prompt: message.prompt, attachments: message.attachments, sessionId: undefined },
+        paths,
+      )
+      if (!text) {
+        return false
+      }
+      return pool.injectUserMessage(
+        cardId,
+        JSON.stringify({ type: 'user', message: { role: 'user', content: [{ type: 'text', text }] } }),
+        child,
+        turnSerial,
+      )
+    })
     pool.updateMeta(cardId, { backgroundWorkPending: false }, child)
     clearClaudeCompletionBoundarySnapshot(completionBoundaryPath)
 
@@ -4725,6 +4772,7 @@ const launchClaudeKeepaliveRun = async (
         // 这一轮已收口，中断入口必须随之失效：留着它，后续对同一个 handle 的
         // stop 会把中断发到进程的下一轮活儿上。
         managedChild.setInterruptHandler(null)
+        managedChild.setInjectHandler(null)
         pool.endTurn(cardId, child)
       },
       onSessionId: (sessionId) => pool.updateSessionId(cardId, sessionId, child),

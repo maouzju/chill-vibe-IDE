@@ -137,6 +137,8 @@ const installMockApis = async (
     nativeTurnCompletion?: 'completed' | 'incomplete' | 'unknown'
     wakeTimerEnabled?: boolean
     peerCard?: MockCardState & { id: string; title: string }
+    // 服务端能否把消息插进正在跑的回合（真实只有 Claude keepalive 能）。缺省 false = 旧路径。
+    injectAccepted?: boolean
   } = {},
 ) => {
   await page.addInitScript(() => {
@@ -365,6 +367,12 @@ const installMockApis = async (
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(request),
         }),
+      injectChatMessage: async (streamId, request) =>
+        jsonRequest(`/api/chat/inject/${encodeURIComponent(streamId)}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(request),
+        }),
       stopChat: async (streamId) =>
         jsonRequest(`/api/chat/stop/${encodeURIComponent(streamId)}`, {
           method: 'POST',
@@ -572,6 +580,15 @@ const installMockApis = async (
 
   await page.route('**/api/slash-commands', async (route) => {
     await route.fulfill({ json: [] })
+  })
+
+  await page.route('**/api/chat/inject/*', async (route) => {
+    const streamId = decodeURIComponent(route.request().url().split('/').at(-1) ?? '')
+    const body = JSON.parse(route.request().postData() ?? '{}')
+    if (options.injectAccepted === true) {
+      requests.push(`inject:${streamId}:${body.prompt}`)
+    }
+    await route.fulfill({ json: { injected: options.injectAccepted === true } })
   })
 
   await page.route('**/api/chat/stop/*', async (route) => {
@@ -1229,6 +1246,41 @@ test('left-clicking send while a card is running interrupts and sends immediatel
   await expect.poll(() => mock.readState().columns[0]?.cards['card-1']?.status).toBe('streaming')
   await expect.poll(() => mock.readState().columns[0]?.cards['card-1']?.streamId).toBe('stream-2')
   await expect.poll(() => mock.readState().columns[0]?.cards['card-1']?.messages[1]?.meta?.stopReason).toBe('user-interrupt')
+})
+
+// 症状（2026-11-20 用户）：流式中发消息会杀掉会话里在跑的子 agent。要的是「消息立马发、子 agent 别死」：
+// 能插进正在跑的回合就只插话，不 stop、不开新回合，卡片继续 streaming。
+test('left-click send on a running Claude card injects into the live turn instead of interrupting', async ({ page }) => {
+  const mock = await installMockApis(page, {
+    injectAccepted: true,
+    initialCard: {
+      status: 'streaming',
+      streamId: 'stream-1',
+      sessionId: 'claude-session-1',
+      sessionModel: 'claude-opus-5-5',
+      provider: 'claude' as const,
+      model: 'claude-opus-5-5',
+      messages: [{ id: 'assistant-1', role: 'assistant', content: 'Still answering', createdAt: new Date().toISOString() }],
+    },
+  })
+  await page.goto(appUrl)
+
+  const textarea = getActiveComposerTextarea(page)
+  await expect(textarea).toBeVisible()
+  await textarea.fill('Mid-turn follow-up')
+  await page.getByRole('button', { name: 'Send message' }).click()
+
+  await expect(textarea).toHaveValue('')
+  await expect.poll(() => mock.readRequests()).toEqual(['inject:stream-1:Mid-turn follow-up'])
+  await expect(page.locator('.composer-queued-send')).toHaveCount(0)
+  await expect.poll(() => {
+    const card = mock.readState().columns[0]?.cards['card-1']
+    return card?.messages.map((message) => `${message.role}:${message.content}`)
+  }).toEqual(['assistant:Still answering', 'user:Mid-turn follow-up'])
+  const card = mock.readState().columns[0]?.cards['card-1']
+  expect(card?.status).toBe('streaming')
+  expect(card?.streamId).toBe('stream-1')
+  expect(card?.sessionId).toBe('claude-session-1')
 })
 
 test('left-click send still dispatches when the stale stream never emits done after stop', async ({ page }) => {

@@ -172,6 +172,7 @@ declare global {
       // Resolves with the stop result when the bridge is new enough; older
       // packaged bridges (and test stubs) resolve with undefined, which callers
       // must read as "the terminal envelope was not deferred".
+      injectChatMessage?: (streamId: string, request: { prompt: string; attachments: ImageAttachment[] }) => Promise<{ injected?: boolean } | void>
       stopChat?: (streamId: string, origin?: string) => Promise<{ settlingWithinMs?: number; interrupted?: boolean } | void>
       listExternalHistory?: (request: ExternalHistoryListRequest) => Promise<ExternalHistoryListResponse>
       getClaudeUsage?: (request: ClaudeUsageRequest) => Promise<ClaudeUsageResponse>

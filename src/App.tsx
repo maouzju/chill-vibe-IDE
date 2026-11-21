@@ -195,6 +195,7 @@ import {
   runOllamaPull,
   saveClosedWorkspaceSnapshot,
   stopChat,
+  injectChatMessage,
   subscribeUnsolicitedStreams,
   syncAccessibilitySupport,
   syncRuntimeSettings,
@@ -273,6 +274,7 @@ import {
   canSendEmptyContinuation,
   shouldDropEmptyContinuationWhileStreaming,
   shouldQueueSendToKeepSubagentsAlive,
+  shouldTryMidTurnInject,
   shouldSyncOllamaStatus,
   getAgentDoneSoundUrl,
   getAllAgentsDoneSoundUrl,
@@ -7857,9 +7859,14 @@ function App() {
         pendingAskUserDuringStreamRef.current.get(cardId) === true ||
         hasPendingAskUserMessage(card.messages) ||
         hasLatestPendingAskUserMessage(card.messages, prompt)
+      const waitsForCompaction = shouldWaitForCompactionBeforeSending(
+        latestUserMessage,
+        card.provider,
+        card.streamId,
+      )
       const shouldQueueUntilDone =
         shouldAnswerAskUser ||
-        shouldWaitForCompactionBeforeSending(latestUserMessage, card.provider, card.streamId) ||
+        waitsForCompaction ||
         shouldQueueSendToKeepSubagentsAlive({
           mode: sendMode,
           messages: card.messages,
@@ -7887,6 +7894,42 @@ function App() {
           )
         }
         return
+      }
+      // 症状：2026-11-20 用户——流式中发消息会杀掉会话里在跑的子 agent，要的是「消息立马发、子 agent 别死」。
+      // 根因：auto 发送 = 排队 + 软打断，CLI 的 interrupt 会 kill 全部 running 子代理（pitfall #318）。
+      // 决策：先把消息直接插进正在跑的回合（真 CLI 探针证实下一个工具边界就被模型看到、子代理存活，
+      //   scripts/probe-claude-midturn-message.mjs）；插不进（Codex / 非常驻进程 / 回合恰好收尾）才退回
+      //   下面的旧路径。显式「立即发送」(interrupt) 与「延后」(defer) 不走插话。
+      if (
+        shouldTryMidTurnInject({
+          mode: sendMode,
+          hasContent: hasSendContent,
+          isSlashCommand: Boolean(parsedSlashCommand),
+          waitsForCompaction,
+        })
+      ) {
+        const liveStreamId = activeStreamsRef.current.get(cardId)?.streamId ?? card.streamId
+        if (
+          liveStreamId &&
+          (await injectChatMessage(liveStreamId, { prompt, attachments: attachments.slice() }))
+        ) {
+          const injectActions: IdeAction[] = [
+            {
+              type: 'appendMessages',
+              columnId,
+              cardId,
+              messages: [createMessage('user', prompt, attachImagesToMessageMeta(attachments))],
+            },
+          ]
+          persistAfterActions(injectActions, applyActions(injectActions))
+          return
+        }
+        // 插话往返期间这一轮可能已经收尾：再按旧路径「排队 + 打断」，排队消息就没人派发了。
+        // 卡已不在跑就按空闲卡重新走一遍发送（不会再进这个分支，不会递归）。
+        if (getColumn(columnId)?.cards[cardId]?.status !== 'streaming') {
+          await sendMessage(columnId, cardId, prompt, attachments, options)
+          return
+        }
       }
       // 症状：旧流卡在 `/compact` 后，队列“立即发送”会取出再入队，永远无法中断。
       // 根因：2026-07-28 现场 latest user 一直是 compact boundary，覆盖了显式 interrupt 意图。

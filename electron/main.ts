@@ -1463,6 +1463,9 @@ function registerDesktopHandlers() {
   ipcMain.handle('desktop:upload-image-attachment', (_event, request) =>
     desktopBackend.uploadImageAttachment(request),
   )
+  ipcMain.handle('desktop:inject-chat-message', (_event, streamId, request) =>
+    desktopBackend.injectChatMessage(String(streamId), request),
+  )
   ipcMain.handle('desktop:stop-chat', (_event, streamId, origin) =>
     desktopBackend.stopChat(streamId, typeof origin === 'string' ? origin : undefined),
   )

@@ -19,6 +19,7 @@ import {
   internalSessionHistoryListRequestSchema,
   internalSessionHistoryLoadRequestSchema,
   chatRequestSchema,
+  injectChatMessageRequestSchema,
   forkSessionRequestSchema,
   nativeTurnCompletionRequestSchema,
   gitCommitRequestSchema,
@@ -980,6 +981,15 @@ app.post('/api/chat/native-turn-completion', async (request, response) => {
 
 app.get('/api/chat/stream/:streamId', (request, response) => {
   chatManager.attach(request.params.streamId, request, response)
+})
+
+app.post('/api/chat/inject/:streamId', async (request, response) => {
+  const parsed = injectChatMessageRequestSchema.safeParse(request.body)
+  if (!parsed.success) {
+    response.json({ injected: false })
+    return
+  }
+  response.json(await chatManager.injectMessage(request.params.streamId, parsed.data))
 })
 
 app.post('/api/chat/stop/:streamId', (request, response) => {

@@ -257,6 +257,12 @@ export const installMockElectronBridge = async (page: Page) => {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(request),
         }),
+      injectChatMessage: async (streamId, request) =>
+        jsonRequest(`/api/chat/inject/${encodeURIComponent(streamId)}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(request),
+        }),
       stopChat: async (streamId, origin) =>
         jsonRequest(
           `/api/chat/stop/${encodeURIComponent(streamId)}${origin ? `?origin=${encodeURIComponent(origin)}` : ''}`,

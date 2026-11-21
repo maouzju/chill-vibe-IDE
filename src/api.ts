@@ -961,6 +961,24 @@ export type StopChatResult = {
 
 const noDeferredSettle: StopChatResult = { settlingWithinMs: 0 }
 
+// 回合中插话：消息直接进正在跑的回合，不打断、不杀子代理。桥缺失 / 服务端拒绝 / IPC 出错一律
+// 返回 false，调用方退回排队路径，消息绝不丢。
+export const injectChatMessage = async (
+  streamId: string,
+  request: { prompt: string; attachments: ImageAttachment[] },
+): Promise<boolean> => {
+  const inject = getDesktopApi()?.injectChatMessage
+  if (typeof inject !== 'function') {
+    return false
+  }
+  try {
+    const result = await inject(streamId, request)
+    return (result as { injected?: boolean } | undefined)?.injected === true
+  } catch {
+    return false
+  }
+}
+
 // origin：谁在停这条流（渲染端的停止原因 / 兜底路径名），只落 server.log 取证，不影响语义。
 export const stopChat = async (streamId: string, origin?: string): Promise<StopChatResult> => {
   const stop = requireDesktopAction(getDesktopApi()?.stopChat)

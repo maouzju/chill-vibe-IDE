@@ -113,6 +113,7 @@ import {
 import {
   appSettingsSchema,
   attachmentUploadRequestSchema,
+  injectChatMessageRequestSchema,
   appStateSchema,
   compactedCardHistoryLoadRequestSchema,
   closedWorkspaceLoadRequestSchema,
@@ -206,7 +207,9 @@ export type ChatStreamSubscribeResult = {
 type ChatManagerLike = Pick<
   ChatManager,
   'closeAll' | 'createStream' | 'stop' | 'subscribe' | 'tapAll' | 'listActiveStreams'
->
+> &
+  // 可选：测试替身不实现时，插话一律视为失败，渲染端退回排队路径。
+  Partial<Pick<ChatManager, 'injectMessage'>>
 type SetupManagerLike = Pick<SetupManager, 'dispose' | 'getStatus' | 'start'>
 type OllamaManagerLike = Pick<OllamaManager, 'dispose' | 'getStatus' | 'startInstall' | 'startPull' | 'judge'>
 type MusicManagerLike = Pick<
@@ -546,6 +549,13 @@ export const createDesktopBackend = (deps: DesktopBackendDependencies = {}) => {
         forkPoint: parsed.forkPoint,
       })
       return { sessionId }
+    },
+    async injectChatMessage(streamId: string, request: unknown) {
+      const parsed = injectChatMessageRequestSchema.safeParse(request)
+      if (!parsed.success) {
+        return { injected: false }
+      }
+      return (await getChatManager().injectMessage?.(streamId, parsed.data)) ?? { injected: false }
     },
     async stopChat(streamId: string, origin?: string) {
       // Stop is intentionally idempotent from the renderer's point of view.

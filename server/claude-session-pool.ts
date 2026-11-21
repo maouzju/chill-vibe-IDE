@@ -420,6 +420,40 @@ export class ClaudeSessionPool {
     return true
   }
 
+  // 回合进行中「插话」：不打断，直接把 user 帧写进活动回合。
+  // 症状：2026-11-20 用户——流式中发消息会杀掉会话里在跑的子 agent，想要「消息立马发、子 agent 别死」。
+  // 根因：旧路径是「软中断 + 排队重发」，而 CLI 的 interrupt 会 kill 全部 running 子代理（pitfall #318）。
+  //   真 CLI 探针（scripts/probe-claude-midturn-message.mjs，2.1.322）：回合中写 user 帧，CLI 在下一个
+  //   工具边界交给模型、同一轮作答，子代理进程全程存活。
+  // 为什么要求 turn-active + 序号匹配 + 未请求中断：空闲进程收到 user 帧会被 CLI 当新回合跑，
+  //   渲染端已不在听；已中断的回合马上收尾，写进去的话会被当成下一轮，同样没人接。
+  injectUserMessage(
+    key: string,
+    jsonLine: string,
+    expectedChild: ClaudeSessionPoolChild,
+    expectedTurnSerial: number,
+  ) {
+    const entry = this.entries.get(key)
+    if (
+      !entry ||
+      entry.child !== expectedChild ||
+      entry.turnSerial !== expectedTurnSerial ||
+      entry.closed ||
+      entry.state !== 'turn-active' ||
+      entry.interruptRequested ||
+      !entry.child.stdin
+    ) {
+      return false
+    }
+    try {
+      entry.child.stdin.write(`${jsonLine}
+`)
+      return true
+    } catch {
+      return false
+    }
+  }
+
   updateSessionId(key: string, sessionId: string, expectedChild?: ClaudeSessionPoolChild) {
     const entry = this.entries.get(key)
     if (entry && (!expectedChild || entry.child === expectedChild) && sessionId.trim()) {

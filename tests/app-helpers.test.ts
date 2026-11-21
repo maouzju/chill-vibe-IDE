@@ -25,6 +25,7 @@ import {
   resolveTabMoveSideEffects,
   shouldDropEmptyContinuationWhileStreaming,
   shouldQueueSendToKeepSubagentsAlive,
+  shouldTryMidTurnInject,
   willMoveTabAcrossColumns,
   resolveStreamedAssistantMessageTarget,
 } from '../src/app-helpers.ts'
@@ -1255,4 +1256,23 @@ test('shouldQueueSendToKeepSubagentsAlive leaves explicit interrupts and agent-f
 test('sendMessage streaming branch consults the subagent keep-alive guard', () => {
   const source = readFileSync(new URL('../src/App.tsx', import.meta.url), 'utf8')
   assert.match(source, /shouldQueueSendToKeepSubagentsAlive\(\{\s*mode: sendMode,\s*messages: card\.messages/)
+})
+
+// 用户要的是「消息立马发、子 agent 别死」：流式中普通发送先插进正在跑的回合，插不进才退回排队 / 打断。
+test('shouldTryMidTurnInject only covers plain auto sends with content', () => {
+  const base = { hasContent: true, isSlashCommand: false, waitsForCompaction: false }
+  assert.equal(shouldTryMidTurnInject(base), true)
+  assert.equal(shouldTryMidTurnInject({ ...base, mode: 'auto' }), true)
+  assert.equal(shouldTryMidTurnInject({ ...base, mode: 'interrupt' }), false)
+  assert.equal(shouldTryMidTurnInject({ ...base, mode: 'defer' }), false)
+  assert.equal(shouldTryMidTurnInject({ ...base, hasContent: false }), false)
+  assert.equal(shouldTryMidTurnInject({ ...base, isSlashCommand: true }), false)
+  assert.equal(shouldTryMidTurnInject({ ...base, waitsForCompaction: true }), false)
+})
+
+test('sendMessage streaming branch tries mid-turn inject before queue/interrupt', () => {
+  const source = readFileSync(new URL('../src/App.tsx', import.meta.url), 'utf8')
+  const injectAt = source.indexOf('await injectChatMessage(liveStreamId')
+  const interruptAt = source.indexOf("await requestStopForCard(cardId, 'user-interrupt')")
+  assert.ok(injectAt > 0 && interruptAt > injectAt, 'inject must be attempted before interrupting')
 })

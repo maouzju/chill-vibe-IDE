@@ -81,6 +81,40 @@ describe('provider runtime routing', () => {
     }
   })
 
+  it('skips injection only for the provider whose routing is individually disabled', async () => {
+    const { saveState } = await import('../server/state-store.ts')
+    const { resolveProviderRuntime } = await import('../server/providers.ts')
+    const state = createDefaultState('')
+    const originalOpenAiApiKey = process.env.OPENAI_API_KEY
+    const originalOpenAiBaseUrl = process.env.OPENAI_BASE_URL
+    delete process.env.OPENAI_API_KEY
+    delete process.env.OPENAI_BASE_URL
+
+    state.settings.cliRoutingEnabled = true
+    state.settings.cliRoutingDisabledProviders = ['codex']
+    state.settings.resilientProxyEnabled = false
+    state.settings.providerProfiles.codex = {
+      activeProfileId: 'codex-profile-1',
+      profiles: [{ id: 'codex-profile-1', name: 'Codex Proxy', apiKey: 'sk-codex', baseUrl: 'https://codex.example/v1' }],
+    }
+    state.settings.providerProfiles.claude = {
+      activeProfileId: 'claude-profile-1',
+      profiles: [{ id: 'claude-profile-1', name: 'Claude Proxy', apiKey: 'sk-claude', baseUrl: 'https://claude.example' }],
+    }
+    await saveState(state)
+
+    try {
+      const codex = await resolveProviderRuntime('codex')
+      assert.deepEqual(codex.args, [])
+      assert.equal(codex.env.OPENAI_API_KEY, undefined)
+      const claude = await resolveProviderRuntime('claude')
+      assert.equal(claude.env.ANTHROPIC_BASE_URL, 'https://claude.example')
+    } finally {
+      restoreEnvVar('OPENAI_API_KEY', originalOpenAiApiKey)
+      restoreEnvVar('OPENAI_BASE_URL', originalOpenAiBaseUrl)
+    }
+  })
+
   it('does not inject provider profile settings when only resilient proxy is enabled (CLI routing controls injection)', async () => {
     const { saveState } = await import('../server/state-store.ts')
     const { resolveProviderRuntime } = await import('../server/providers.ts')

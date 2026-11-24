@@ -1,6 +1,7 @@
 import { cliCompatNeedsAction, type CliCompatStatus } from '../../../shared/cli-compat'
 import {
   isCliLoginProfile,
+  isCliRoutingEnabledFor,
   type AppLanguage,
   type AppSettings,
   type OnboardingStatus,
@@ -388,7 +389,7 @@ export type EnvironmentHealthInput = {
   onboardingStatus: OnboardingStatus | null
   providers: readonly ProviderStatus[]
   cliCompatStatus: CliCompatStatus | null
-  settings: Pick<AppSettings, 'providerProfiles' | 'cliRoutingEnabled'>
+  settings: Pick<AppSettings, 'providerProfiles' | 'cliRoutingEnabled' | 'cliRoutingDisabledProviders'>
 }
 
 const allProviders: readonly Provider[] = ['claude', 'codex']
@@ -431,10 +432,10 @@ export const deriveEnvironmentHealth = (input: EnvironmentHealthInput): Environm
     if (available === null) {
       return { state: 'unknown', fix: null, providers: [] }
     }
-    if (!input.settings.cliRoutingEnabled) {
+    if (!allProviders.some((provider) => isCliRoutingEnabledFor(input.settings, provider))) {
       return { state: 'ok', fix: null, providers: available, viaCliLogin: true }
     }
-    const keyed = allProviders.filter((provider) => hasKeyedActiveProfile(input.settings, provider))
+    const keyed = allProviders.filter((provider) => !isCliRoutingEnabledFor(input.settings, provider) || hasKeyedActiveProfile(input.settings, provider))
     if (keyed.length > 0) {
       return { state: 'ok', fix: null, providers: keyed }
     }

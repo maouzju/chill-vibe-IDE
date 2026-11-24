@@ -33,6 +33,7 @@ const zh = {
   } satisfies Record<SettingsCategoryId, string>,
   accountSummary: {
     routingOff: '接口路由已关闭：Claude / Codex 用各自 CLI 自己登录的账号。',
+    providerRoutingOff: (provider: string) => `${provider}：接口已单独关闭，用 CLI 自己登录的账号`,
     using: (provider: string, profile: string) => `${provider}：正在用「${profile}」`,
     noProfile: (provider: string) => `${provider}：还没有启用的配置`,
     open: '去「接口」选项卡管理',
@@ -126,6 +127,7 @@ const en: typeof zh = {
   },
   accountSummary: {
     routingOff: 'Routing is off: Claude / Codex use their own CLI login.',
+    providerRoutingOff: (provider: string) => `${provider}: routing off, uses its own CLI login`,
     using: (provider: string, profile: string) => `${provider}: using "${profile}"`,
     noProfile: (provider: string) => `${provider}: no active profile yet`,
     open: 'Manage in the Routing tab',

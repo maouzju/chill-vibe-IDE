@@ -829,3 +829,35 @@ it('normalizeAppSettings keeps the cli-login auth mode on provider profiles', ()
   assert.equal(settings.providerProfiles.claude.profiles[1]?.authMode, undefined)
   assert.equal(settings.providerProfiles.claude.activeProfileId, 'login')
 })
+
+describe('archiveCardToHistory pending wake messages', () => {
+  const baseCard = () => ({
+    ...createCard('Wake Chat', undefined, 'codex', DEFAULT_CODEX_MODEL),
+    title: 'Wake Chat',
+  })
+
+  it('keeps queued wake-timer prompts on the archived entry even when the card has no messages', () => {
+    const entries = archiveCardToHistory(
+      [],
+      {
+        ...baseCard(),
+        wakeTimerQueuedSends: [
+          { id: 'q1', prompt: '等构建完再跑回归', attachments: [] },
+          { id: 'q2', prompt: '顺便看下日志', attachments: [] },
+        ],
+      },
+      'D:/Git/demo',
+    )
+
+    assert.equal(entries.length, 1)
+    assert.equal(entries[0].pendingWake?.prompt, '等构建完再跑回归\n\n顺便看下日志')
+  })
+
+  it('does not add pendingWake when nothing is queued', () => {
+    const entries = archiveCardToHistory([], { ...baseCard(), messages: [
+      { id: 'm1', role: 'user' as const, content: 'hi', createdAt: new Date().toISOString() },
+    ] }, 'D:/Git/demo')
+
+    assert.equal(entries[0].pendingWake, undefined)
+  })
+})

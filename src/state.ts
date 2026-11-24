@@ -344,6 +344,7 @@ export type IdeAction =
           | 'lineHeightScale'
           | 'resilientProxyEnabled'
           | 'cliRoutingEnabled'
+          | 'cliRoutingDisabledProviders'
           | 'resilientProxyStallTimeoutSec'
           | 'resilientProxyFirstByteTimeoutSec'
           | 'resilientProxyMaxRetries'
@@ -1439,13 +1440,15 @@ const archiveColumnChatsToHistory = (
   history: SessionHistoryEntry[] | undefined,
   column: BoardColumn | undefined,
   workspaceCloseId?: string,
+  language: AppState['settings']['language'] = 'zh-CN',
 ) => {
   if (!column) {
     return history ?? []
   }
 
   return getOrderedColumnCards(column).reduce(
-    (nextHistory, card) => archiveCardToHistory(nextHistory, card, column.workspacePath, workspaceCloseId),
+    (nextHistory, card) =>
+      archiveCardToHistory(nextHistory, card, column.workspacePath, workspaceCloseId, language),
     history ?? [],
   )
 }
@@ -1829,8 +1832,9 @@ const buildRestoredCard = (state: AppState, entry: SessionHistoryEntry): ChatCar
   repeatLoopRemaining: undefined,
   collapsed: false,
   unread: false,
-  draft: '',
-  draftAttachments: [],
+  // 关闭时还挂着的待唤醒消息回到输入框，由用户决定重发还是丢弃；不自动重新武装计时器。
+  draft: entry.pendingWake?.prompt ?? '',
+  draftAttachments: entry.pendingWake?.attachments.map((attachment) => ({ ...attachment })) ?? [],
   queuedSends: [],
   wakeTimerActive: false,
   wakeTimerAutoActivated: false,
@@ -2624,6 +2628,7 @@ const ideReducerCore = (state: AppState, action: IdeAction): AppState => {
         state.sessionHistory,
         column,
         action.workspaceCloseId,
+        state.settings.language,
       )
       return touchState({
         ...state,
@@ -2958,7 +2963,7 @@ const ideReducerCore = (state: AppState, action: IdeAction): AppState => {
 
       const sessionHistory =
         column.workspacePath.trim() !== ''
-          ? archiveCardToHistory(state.sessionHistory, card, column.workspacePath)
+          ? archiveCardToHistory(state.sessionHistory, card, column.workspacePath, undefined, state.settings.language)
           : state.sessionHistory
 
       const next = updateColumn({ ...state, sessionHistory }, action.columnId, (currentColumn) => {
@@ -3242,7 +3247,7 @@ const ideReducerCore = (state: AppState, action: IdeAction): AppState => {
       const resetCard = resetColumn?.cards[action.cardId]
       const sessionHistory =
         resetCard && resetColumn?.workspacePath
-          ? archiveCardToHistory(state.sessionHistory, resetCard, resetColumn.workspacePath)
+          ? archiveCardToHistory(state.sessionHistory, resetCard, resetColumn.workspacePath, undefined, state.settings.language)
           : state.sessionHistory
 
       const next = updateCard({ ...state, sessionHistory }, action.columnId, action.cardId, (card) => ({
@@ -3796,7 +3801,7 @@ const ideReducerCore = (state: AppState, action: IdeAction): AppState => {
       const removedCard = action.deleteCard ? column.cards[action.cardId] : undefined
       const sessionHistory =
         removedCard && column.workspacePath.trim() !== ''
-          ? archiveCardToHistory(state.sessionHistory, removedCard, column.workspacePath)
+          ? archiveCardToHistory(state.sessionHistory, removedCard, column.workspacePath, undefined, state.settings.language)
           : state.sessionHistory
 
       return touchState(
@@ -3839,7 +3844,7 @@ const ideReducerCore = (state: AppState, action: IdeAction): AppState => {
         for (const item of doomed) {
           const card = column.cards[item.cardId]
           if (card) {
-            sessionHistory = archiveCardToHistory(sessionHistory, card, column.workspacePath)
+            sessionHistory = archiveCardToHistory(sessionHistory, card, column.workspacePath, undefined, state.settings.language)
           }
         }
       }

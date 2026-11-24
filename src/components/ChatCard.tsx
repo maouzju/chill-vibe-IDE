@@ -1850,6 +1850,10 @@ const ChatCardView = ({
   const pendingCompactedHistoryRevealRef = useRef<{
     scrollHeight: number
     scrollTop: number
+    // 症状：压缩后会话自动跳到最上方。根因：压缩后列表变短(unscrollable)→自动展开历史，
+    // 展开无条件关掉贴底并按「旧 scrollTop+增量」定位，旧 scrollTop≈0 就停在顶部。
+    // 展开前本来就贴底的，展开后必须继续贴底，不能换成锚点定位。
+    wasPinned?: boolean
   } | null>(null)
   const userExpandedRef = useRef<Set<string>>(new Set())
   const handleOpenWorkspaceFile = useCallback(
@@ -4156,13 +4160,13 @@ const ChatCardView = ({
         const node = messageListRef.current
         if (
           node &&
-          !shouldAutoScrollRef.current &&
           pendingCompactedHistoryRevealRef.current === null &&
           messages.length > 0
         ) {
           pendingCompactedHistoryRevealRef.current = {
             scrollHeight: node.scrollHeight,
             scrollTop: node.scrollTop,
+            wasPinned: shouldAutoScrollRef.current,
           }
         }
         setArchivedCompactedMessages((current) =>
@@ -4222,6 +4226,16 @@ const ChatCardView = ({
     }
 
     pendingCompactedHistoryRevealRef.current = null
+    if (pendingReveal.wasPinned) {
+      const bottomScrollTop = getProgrammaticBottomScrollTarget({
+        scrollHeight: node.scrollHeight,
+        clientHeight: node.clientHeight,
+      })
+      shouldAutoScrollRef.current = true
+      lastScrollTopRef.current = bottomScrollTop
+      node.scrollTop = bottomScrollTop
+      return
+    }
     const nextScrollTop = getScrollTopAfterCompactedHistoryReveal({
       previousScrollTop: pendingReveal.scrollTop,
       previousScrollHeight: pendingReveal.scrollHeight,
@@ -4299,14 +4313,16 @@ const ChatCardView = ({
       }
 
       const node = messageListRef.current
+      const wasPinned = shouldAutoScrollRef.current
       if (node) {
         pendingCompactedHistoryRevealRef.current = {
           scrollHeight: node.scrollHeight,
           scrollTop: node.scrollTop,
+          wasPinned,
         }
       }
 
-      shouldAutoScrollRef.current = false
+      shouldAutoScrollRef.current = wasPinned && node !== null
       setRevealedCompactedHistoryCount((current) =>
         current + Math.min(requestedMessageCount, compactMessageWindow.hiddenMessageCount),
       )

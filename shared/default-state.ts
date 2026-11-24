@@ -641,6 +641,7 @@ export const createDefaultSettings = (language: AppLanguage = defaultAppLanguage
   lineHeightScale: 1,
   resilientProxyEnabled: true,
   cliRoutingEnabled: true,
+  cliRoutingDisabledProviders: [],
   resilientProxyStallTimeoutSec: 60,
   resilientProxyMaxRetries: 6,
   resilientProxyFirstByteTimeoutSec: 90,
@@ -793,6 +794,11 @@ export const normalizeAppSettings = (settings?: Partial<AppSettings> | null): Ap
       typeof settings?.cliRoutingEnabled === 'boolean'
         ? settings.cliRoutingEnabled
         : defaults.cliRoutingEnabled,
+    cliRoutingDisabledProviders: Array.isArray(settings?.cliRoutingDisabledProviders)
+      ? (['claude', 'codex', 'gemini'] as const).filter((provider) =>
+          (settings.cliRoutingDisabledProviders as unknown[]).includes(provider),
+        )
+      : defaults.cliRoutingDisabledProviders,
     resilientProxyStallTimeoutSec: clampScale(
       settings?.resilientProxyStallTimeoutSec,
       10,
@@ -1921,8 +1927,9 @@ export const archiveCardToHistory = (
   card: ChatCard,
   workspacePath: string,
   workspaceCloseId?: string,
+  language: AppLanguage = defaultAppLanguage,
 ): SessionHistoryEntry[] => {
-  const entry = createSessionHistoryEntry(card, workspacePath, now(), workspaceCloseId)
+  const entry = createSessionHistoryEntry(card, workspacePath, now(), workspaceCloseId, language)
   if (!entry) {
     return history ?? []
   }
@@ -1948,14 +1955,12 @@ const prependSessionHistoryEntry = (
   })
 }
 
-const getSessionHistoryTitle = (card: ChatCard) => {
-  const trimmedTitle = card.title.trim()
-  if (trimmedTitle.length > 0) {
-    return trimmedTitle
-  }
 
-  const firstUserMessage = card.messages.find((message) => message.role === 'user')?.content ?? ''
-  return titleFromPrompt(firstUserMessage)
+const getPendingWakeForHistory = (card: ChatCard): SessionHistoryEntry['pendingWake'] => {
+  const queue = card.wakeTimerQueuedSends ?? []
+  const prompt = queue.map((request) => request.prompt.trim()).filter(Boolean).join('\n\n')
+  const attachments = queue.flatMap((request) => request.attachments.map((attachment) => ({ ...attachment })))
+  return prompt || attachments.length > 0 ? { prompt, attachments } : undefined
 }
 
 const createSessionHistoryEntry = (
@@ -1963,14 +1968,28 @@ const createSessionHistoryEntry = (
   workspacePath: string,
   archivedAt = now(),
   workspaceCloseId?: string,
+  language: AppLanguage = defaultAppLanguage,
 ): SessionHistoryEntry | null => {
-  if (card.messages.length === 0) {
+  const pendingWake = getPendingWakeForHistory(card)
+  if (card.messages.length === 0 && !pendingWake) {
     return null
   }
 
   return {
     id: createId(),
-    title: getSessionHistoryTitle(card),
+    // 顺序：显式标题 → 首条用户消息 → 待唤醒提示词 → 待唤醒占位 → 语言自己的"新会话"。
+    // 不能直接用 getSessionHistoryTitle：它在无标题时已经兜底成固定中文的"新会话"，
+    // 会把"待唤醒消息"这一支和英文 UI 一起吃掉。
+    title:
+      card.title.trim() ||
+      titleFromPrompt(
+        card.messages.find((message) => message.role === 'user')?.content ?? '',
+        '',
+      ) ||
+      pendingWake?.prompt.trim().slice(0, 40) ||
+      (pendingWake ? (language === 'en' ? 'Pending wake message' : '待唤醒消息') : '') ||
+      getLocaleText(language).newChat,
+    pendingWake,
     sessionId: card.sessionId,
     sessionModel: card.sessionModel,
     contextTransfer: card.contextTransfer,

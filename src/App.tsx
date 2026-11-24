@@ -158,7 +158,7 @@ import type {
   TopTabName,
   WakeTimerMode,
 } from '../shared/schema'
-import { isCliLoginProfile } from '../shared/schema'
+import { isCliLoginProfile, isCliRoutingEnabledFor, setProviderRouting } from '../shared/schema'
 import {
   closeWindow,
   type ChatStreamSource,
@@ -9837,13 +9837,13 @@ function App() {
         : panelText.setupIdle)
   const onboardingHasUsableAccount = useMemo(
     () =>
-      !appState.settings.cliRoutingEnabled ||
       (['claude', 'codex', 'gemini'] as const).some((provider) => {
+        if (!isCliRoutingEnabledFor(appState.settings, provider)) return true
         const collection = appState.settings.providerProfiles[provider]
         const active = collection.profiles.find((profile) => profile.id === collection.activeProfileId)
         return Boolean(active && (isCliLoginProfile(active) || active.apiKey.trim()))
       }),
-    [appState.settings.cliRoutingEnabled, appState.settings.providerProfiles],
+    [appState.settings],
   )
   const onboardingStage: OnboardingStage = resolveOnboardingWizardStage({
     statusLoaded: !onboardingStatusPending && Boolean(onboardingStatus),
@@ -10591,11 +10591,16 @@ function App() {
           <label className="toggle-switch">
             <input
               type="checkbox"
-              checked={appState.settings.cliRoutingEnabled}
+              checked={
+                appState.settings.cliRoutingEnabled &&
+                appState.settings.cliRoutingDisabledProviders.length === 0
+              }
               onChange={(event) =>
                 applyAction({
                   type: 'updateSettings',
-                  patch: { cliRoutingEnabled: event.target.checked },
+                  patch: event.target.checked
+                    ? { cliRoutingEnabled: true, cliRoutingDisabledProviders: [] }
+                    : { cliRoutingEnabled: false },
                 })
               }
             />
@@ -10651,7 +10656,24 @@ function App() {
           key={provider}
           className="settings-group routing-group switch-provider-group switch-provider-section"
         >
-          <h3 className="settings-group-title">{providerLabel}</h3>
+          <div className="settings-toggle-row routing-provider-toggle-row">
+            <h3 className="settings-group-title">{providerLabel}</h3>
+            <label className="toggle-switch" title={resilientProxyText.cliRoutingProviderToggle}>
+              <input
+                type="checkbox"
+                aria-label={providerLabel}
+                checked={isCliRoutingEnabledFor(appState.settings, provider)}
+                onChange={(event) =>
+                  applyAction({
+                    type: 'updateSettings',
+                    patch: setProviderRouting(appState.settings, provider, event.target.checked),
+                  })
+                }
+              />
+              <span className="toggle-switch-track" />
+              <span className="toggle-switch-knob" />
+            </label>
+          </div>
 
           <div className="settings-section switch-provider-group-body">
             {collection.profiles.length === 0 ? (
@@ -11055,7 +11077,9 @@ function App() {
                 const label = getProviderLabel(appState.settings.language, provider)
                 return (
                   <li key={provider} className="settings-note">
-                    {active
+                    {!isCliRoutingEnabledFor(appState.settings, provider)
+                      ? settingsPanelCopy.accountSummary.providerRoutingOff(label)
+                      : active
                       ? settingsPanelCopy.accountSummary.using(label, active.name || label)
                       : settingsPanelCopy.accountSummary.noProfile(label)}
                   </li>

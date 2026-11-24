@@ -626,3 +626,11 @@ test('shows the verified CLI range and does not nag when the system CLI is insid
   const codexRow = page.locator('.cli-compat-row[data-provider="codex"]')
   await expect(codexRow.getByRole('button', { name: /下载兼容版并切换/ })).toBeVisible()
 })
+
+test('each provider section has its own routing toggle', async ({ page }) => {
+  await mockBaseApis(page)
+  await openRoutingPanel(page)
+  const toggles = page.locator('#app-panel-routing .routing-provider-toggle-row .toggle-switch')
+  await expect(toggles.first()).toBeVisible()
+  expect(await toggles.count()).toBeGreaterThanOrEqual(2)
+})

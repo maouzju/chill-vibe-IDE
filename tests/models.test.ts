@@ -26,6 +26,7 @@ import {
   isToolCardModel,
   normalizeModel,
   normalizeStoredModel,
+  resolveModelDisplayLabel,
   resolveSlashModel,
   resolveSlashModelInput,
 } from '../shared/models.ts'
@@ -382,4 +383,11 @@ describe('model helpers', () => {
     assert.equal(resolveSlashModelInput('codex', 'rm -rf /'), null)
     assert.equal(resolveSlashModelInput('codex', 'x'.repeat(200)), null)
   })
+})
+
+it('子代理徽章：别名/真实 id 显示具体型号，未知串原样', () => {
+  assert.equal(resolveModelDisplayLabel('fable'), 'Fable 5.2')
+  assert.equal(resolveModelDisplayLabel('claude-fable-5-2'), 'Fable 5.2')
+  assert.equal(resolveModelDisplayLabel('haiku'), 'Haiku 5.5')
+  assert.equal(resolveModelDisplayLabel('haiku×2 / opus'), 'haiku×2 / opus')
 })

@@ -436,6 +436,36 @@ export const providerProfileSchema = z.object({
 })
 export type ProviderProfile = z.infer<typeof providerProfileSchema>
 
+export const routingProviders = ['claude', 'codex', 'gemini'] as const
+
+// 逐服务商开关的纯逻辑：只算 updateSettings 的 patch，便于单测覆盖「总开关关着时只开一个」这个边界。
+// 症状：总开关关着时 UI 把每个服务商都画成关闭，但 cliRoutingEnabled=false 本身不记录"谁被关"；
+//   若开某一个时只把它从 disabled 列表移除再置 true，其余从未进过列表的服务商会被一起打开。
+export const setProviderRouting = (
+  settings: Pick<AppSettings, 'cliRoutingEnabled' | 'cliRoutingDisabledProviders'>,
+  provider: Provider,
+  enabled: boolean,
+): Pick<AppSettings, 'cliRoutingEnabled' | 'cliRoutingDisabledProviders'> => {
+  const rest = (settings.cliRoutingDisabledProviders ?? []).filter((item) => item !== provider)
+  if (!enabled) {
+    return {
+      cliRoutingEnabled: settings.cliRoutingEnabled,
+      cliRoutingDisabledProviders: [...rest, provider],
+    }
+  }
+  return settings.cliRoutingEnabled
+    ? { cliRoutingEnabled: true, cliRoutingDisabledProviders: rest }
+    : {
+        cliRoutingEnabled: true,
+        cliRoutingDisabledProviders: routingProviders.filter((item) => item !== provider),
+      }
+}
+
+export const isCliRoutingEnabledFor = (
+  settings: { cliRoutingEnabled: boolean; cliRoutingDisabledProviders?: readonly string[] },
+  provider: string,
+) => settings.cliRoutingEnabled && !(settings.cliRoutingDisabledProviders ?? []).includes(provider)
+
 export const isCliLoginProfile = (profile: Pick<ProviderProfile, 'authMode'> | null | undefined) =>
   profile?.authMode === 'cli-login'
 
@@ -525,6 +555,11 @@ export const sessionUsageTotalsSchema = z.object({
 })
 export type SessionUsageTotals = z.infer<typeof sessionUsageTotalsSchema>
 
+export const sessionHistoryPendingWakeSchema = z.object({
+  prompt: z.string(),
+  attachments: z.array(imageAttachmentSchema).default([]),
+})
+
 export const sessionHistoryEntrySchema = z.object({
   id: z.string().min(1),
   title: z.string().min(1),
@@ -538,6 +573,10 @@ export const sessionHistoryEntrySchema = z.object({
   messageCount: z.number().int().nonnegative().optional(),
   messagesPreview: z.boolean().optional(),
   usageTotals: sessionUsageTotalsSchema.optional(),
+  // 症状：关掉还挂着「待唤醒」的卡后，排队消息随卡消失，历史里找不回（误关就丢）。
+  // 根因：归档只存 messages，wakeTimerQueuedSends 不在其中；零消息的卡连归档都跳过。
+  // 为什么不塞进 messages：那会让没真正发出的话混进会话转录，恢复后被模型当成已说过。
+  pendingWake: sessionHistoryPendingWakeSchema.optional(),
   workspaceCloseId: z.string().min(1).optional(),
   archivedAt: z.string().datetime(),
 })
@@ -813,6 +852,8 @@ export const appSettingsSchema = z.object({
   lineHeightScale: z.number().finite().default(1),
   resilientProxyEnabled: z.boolean().default(true),
   cliRoutingEnabled: z.boolean().default(true),
+  // 逐服务商关掉接口路由（2026-11-20 用户要求接口能单独启用，原来只有一个全开/全关总开关）。
+  cliRoutingDisabledProviders: z.array(providerSchema).default([]),
   resilientProxyStallTimeoutSec: z.number().finite().min(10).max(300).default(60),
   resilientProxyMaxRetries: z.number().int().min(-1).max(50).default(6),
   resilientProxyFirstByteTimeoutSec: z.number().finite().min(30).max(600).default(90),
@@ -1151,6 +1192,7 @@ export const appStateSchema = z.object({
     lineHeightScale: 1,
     resilientProxyEnabled: true,
     cliRoutingEnabled: true,
+    cliRoutingDisabledProviders: [],
     resilientProxyStallTimeoutSec: 60,
     resilientProxyMaxRetries: 6,
     resilientProxyFirstByteTimeoutSec: 90,

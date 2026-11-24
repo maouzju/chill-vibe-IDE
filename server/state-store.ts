@@ -58,6 +58,7 @@ import {
   legacyAutomationBoardAutoTriggerSchema,
   recentCrashRecoverySchema,
   sessionUsageTotalsSchema,
+  sessionHistoryPendingWakeSchema,
   wakeTimerModes,
   providerSchema,
   type AppState,
@@ -1206,6 +1207,7 @@ const normalizePersistedSessionHistoryEntry = (
     //   已被裁成预览、meta 已剥离，renderSessionHistoryForRenderer 的补算分支再也救不回来。
     // 为什么不能省掉校验直接透传：这份数据来自磁盘，坏值会一路流进统计卡的除法。
     usageTotals: sessionUsageTotalsSchema.safeParse(entry.usageTotals).data,
+    pendingWake: sessionHistoryPendingWakeSchema.safeParse(entry.pendingWake).data,
     workspaceCloseId: normalizeOptionalString(entry.workspaceCloseId),
     archivedAt: normalizePersistedTimestamp(entry.archivedAt),
   }

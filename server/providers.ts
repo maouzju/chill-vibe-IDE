@@ -46,7 +46,7 @@ import {
   toClaudeEffortFlagValue,
 } from '../shared/reasoning.js'
 import { providerSupportsImageAttachments } from '../shared/chat-attachments.js'
-import { isCliLoginProfile } from '../shared/schema.js'
+import { isCliLoginProfile, isCliRoutingEnabledFor } from '../shared/schema.js'
 import {
   CLAUDE_EMPTY_CONTINUE_PROMPT,
   CLAUDE_IMAGE_PROMPT_PREFIX_MULTI,
@@ -716,7 +716,7 @@ export const resolveProviderRuntime = async (
       : getModelBoundProviderProfile(settings, provider, options.model)
     const boundProfile = candidateBoundProfile?.apiKey.trim() ? candidateBoundProfile : undefined
 
-    if (!localEntry && !boundProfile && !settings.cliRoutingEnabled) {
+    if (!localEntry && !boundProfile && !isCliRoutingEnabledFor(settings, provider)) {
       return {
         args: [],
         env: baseEnv,

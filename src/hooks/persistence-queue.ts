@@ -261,6 +261,7 @@ export const shouldPersistActionImmediately = (
 
 const runtimeSyncSettingsKeys = [
   'cliRoutingEnabled',
+  'cliRoutingDisabledProviders',
   'resilientProxyEnabled',
   'resilientProxyStallTimeoutSec',
   'resilientProxyFirstByteTimeoutSec',

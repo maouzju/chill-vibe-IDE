@@ -18095,3 +18095,11 @@ body.is-col-resizing .automation-board-lane-resize-handle::after {
 .settings-item .cli-compat-settings > .settings-group-title {
   display: none;
 }
+
+/* 接口页每个服务商标题右侧的单独启用开关（2026-11-20）。 */
+.routing-provider-toggle-row {
+  margin-bottom: 8px;
+}
+.routing-provider-toggle-row > .settings-group-title {
+  margin: 0;
+}

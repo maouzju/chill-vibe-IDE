@@ -5,6 +5,7 @@ import type {
   StreamAgentStatus,
 } from '../shared/schema.js'
 import { claudeWorkflowSummaryPrefix } from '../shared/claude-agent-push.js'
+import { resolveReportedModelLabel } from '../shared/models.js'
 import { parseClaudeToolResults } from './claude-tool-result.js'
 
 // 症状：Claude 派发子代理后卡片只剩一个通用计时器，用户无法判断跑到哪一步、是否卡住。
@@ -357,7 +358,10 @@ export const createClaudeAgentStatusTracker = ({
       .filter((entry) => readWorkflowAgentState(entry) === 'running')
     const counts = new Map<string, number>()
     for (const entry of running) {
-      const model = readString(entry, 'model') ?? (language === 'en' ? 'default' : '默认')
+      const raw = readString(entry, 'model')
+      // CLI 给的是家族级 id / 别名（claude-fable-5、fable），要换成实际绑定到的版本名再计数，
+      // 否则面板写出「claude-fable-5×10」，见 shared/models.ts resolveReportedModelLabel 的症状注。
+      const model = raw === undefined ? (language === 'en' ? 'default' : '默认') : resolveReportedModelLabel(raw)
       counts.set(model, (counts.get(model) ?? 0) + 1)
     }
     if (counts.size === 0) return undefined

@@ -423,7 +423,33 @@ test('the Workflow entry badge lists the models of running agents, with unset on
       ['Wave1', 'A4:audio', 'done', { model: 'claude-opus-5-5' }],
     ],
   }))
-  assert.equal(update.activity?.agents[0]?.model, 'claude-sonnet-5-5×2 / 默认')
+  assert.equal(update.activity?.agents[0]?.model, 'Sonnet 5.5×2 / 默认')
+})
+
+// 症状（2026-11-24 用户截图）：Workflow 徽章写着「claude-fable-5×10」，看不出实际跑的是 Fable 5.2，
+//   还容易误读成派发了旧代。
+// 根因：CLI workflow_progress 上报 agent 别名时给的是家族级 id（fable → claude-fable-5），
+//   真实落点由 ANTHROPIC_DEFAULT_FABLE_MODEL 钉到具体版本（claude-fable-5-2）。
+test('the Workflow badge resolves CLI family ids and aliases to the model actually bound', () => {
+  const tracker = startWorkflow()
+  const update = tracker.handleEvent(workflowProgress('A1:core', 3, 30_000, {
+    phase: 'Wave1',
+    live: [
+      ['Wave1', 'A1:core', 'progress', { model: 'claude-fable-5' }],
+      ['Wave1', 'A2:render', 'progress', { model: 'fable' }],
+    ],
+  }))
+  assert.equal(update.activity?.agents[0]?.model, 'Fable 5.2×2')
+})
+
+// 显式钉了带补丁号的旧代时不冒充新代：面板要如实说 Fable 5.1。
+test('an explicitly pinned older model keeps its own label', () => {
+  const tracker = startWorkflow()
+  const update = tracker.handleEvent(workflowProgress('A1:core', 3, 30_000, {
+    phase: 'Wave1',
+    live: [['Wave1', 'A1:core', 'progress', { model: 'claude-fable-5-1' }]],
+  }))
+  assert.equal(update.activity?.agents[0]?.model, 'Fable 5.1')
 })
 
 test('the Workflow entry has no model badge when no agent names a model', () => {

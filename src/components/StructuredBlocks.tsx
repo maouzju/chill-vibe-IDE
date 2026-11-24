@@ -13,6 +13,7 @@ import type {
   StructuredToolMessage,
 } from './chat-card-parsing'
 import { cleanCommandDisplay, buildToolGroupSummary, getStructuredLabels, summarizeCommandDisplay } from './chat-card-rendering'
+import { resolveReportedModelLabel } from '../../shared/models'
 import { resolveOpenableFilePath } from './structured-file-paths'
 import { buildReadLinePresentation, buildToolDetails } from './structured-tool-details'
 import type { ToolDetail } from './structured-tool-details'
@@ -524,7 +525,7 @@ export const StructuredAgentsCard = ({
                     <code className="structured-agent-path">{agentLabel}</code>
                     {agent.model ? (
                       <span className="structured-agent-model">
-                        {agent.reasoningEffort ? `${agent.model} · ${agent.reasoningEffort}` : agent.model}
+                        {agent.reasoningEffort ? `${resolveReportedModelLabel(agent.model)} · ${agent.reasoningEffort}` : resolveReportedModelLabel(agent.model)}
                       </span>
                     ) : null}
                     <span className={`structured-agent-status is-${agent.status}`}>

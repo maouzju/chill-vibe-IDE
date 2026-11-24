@@ -1163,8 +1163,9 @@ test('the live sub-agent status panel shows each agent model and reasoning effor
 
   const markup = renderCard(card)
 
-  assert.match(markup, /structured-agent-model[^>]*>gpt-5\.6-luna · medium</)
-  assert.match(markup, /structured-agent-model[^>]*>claude-haiku-4-5-20251001</)
+  // 徽章显示人类可读的型号名，而不是 CLI 内部 id（2026-11-24 用户截图：claude-fable-5×10 看不出是 5.2）。
+  assert.match(markup, /structured-agent-model[^>]*>GPT-5\.6 Luna · medium</)
+  assert.match(markup, /structured-agent-model[^>]*>Haiku 4\.5</)
   // 没有模型信息的老条目不渲染徽标，也不能出现 undefined。
   assert.equal((markup.match(/structured-agent-model/g) ?? []).length, 2)
   assert.doesNotMatch(markup, /undefined/)

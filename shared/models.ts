@@ -507,6 +507,37 @@ export const findModelUpgradeSuggestions = (
 export const getModelLabel = (provider: Provider, model: string) =>
   MODEL_OPTIONS.find((option) => option.provider === provider && option.model === model)?.label ?? model
 
+// 症状（2026-11-20）：子代理面板徽章只写「fable」，看不出是 5.2 还是 5.1。
+// 根因：派发入参 input.model 只是别名，原样展示；别名表其实就在 MODEL_OPTIONS.aliases。
+// 边界：只认别名/真实 id 精确匹配，认不出的（自定义、workflow 的「a×2 / b」聚合串）原样返回。
+export const resolveModelDisplayLabel = (model: string) => {
+  const key = model.trim().toLowerCase()
+  const hit = MODEL_OPTIONS.find(
+    (option) =>
+      option.model.toLowerCase() === key ||
+      (option.aliases ?? []).some((alias) => alias.toLowerCase() === key),
+  )
+  return hit?.label ?? model
+}
+
+// 症状（2026-11-24 用户截图）：子代理面板徽章显示「claude-fable-5×10」，看不出实际跑的是 Fable 5.2，
+//   还容易被读成「派发了旧代」。
+// 根因：Claude CLI 的 workflow_progress 上报 agent 别名时给的是家族级 id（fable → claude-fable-5），
+//   真实落点由 ANTHROPIC_DEFAULT_FABLE_MODEL 钉到具体版本（claude-fable-5-2，见 buildClaudeAgentAliasModelEnv）。
+// 边界：带补丁号的显式旧代（claude-fable-5-1）不按家族展开——用户钉了旧代就要如实显示旧代。
+export const resolveReportedModelLabel = (model: string) => {
+  const key = model.trim().toLowerCase()
+  if (!key) {
+    return model
+  }
+  const bound = resolveClaudeAgentAliasModels().find(({ alias, option }) => {
+    // 家族级 id = 具体模型去掉末尾的补丁号：claude-fable-5-2 → claude-fable-5。
+    const family = option.model.toLowerCase().replace(/-\d+$/, '')
+    return key === alias || key === family
+  })
+  return resolveModelDisplayLabel(bound ? bound.option.model : model)
+}
+
 export const normalizeStoredModel = (provider: Provider, model?: string | null) => {
   const trimmed = model?.trim() ?? ''
 

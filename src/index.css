@@ -11469,11 +11469,14 @@ body,
   display: inline-flex;
 }
 
+/* 气泡默认以锚点为中心展开；超出最近的裁剪祖先时，HoverTooltip 会量出偏移写进
+   --git-tooltip-shift-x / -y（见 pitfall #418 的窄卡截断）。变量缺省 0px，所以普通
+   情形与原来的居中定位完全等价。 */
 .git-hover-tooltip {
   position: absolute;
   left: 50%;
-  bottom: calc(100% + 0.5rem);
-  transform: translateX(-50%);
+  bottom: calc(100% + 0.5rem - var(--git-tooltip-shift-y, 0px));
+  transform: translateX(calc(-50% + var(--git-tooltip-shift-x, 0px)));
   width: max-content;
   min-width: 12rem;
   max-width: min(18rem, 60vw);
@@ -11491,10 +11494,11 @@ body,
   z-index: 20;
 }
 
+/* 气泡被夹回卡片内时，小箭头反向补偿，仍然指向锚点中心。 */
 .git-hover-tooltip::after {
   content: '';
   position: absolute;
-  left: 50%;
+  left: calc(50% - var(--git-tooltip-shift-x, 0px));
   top: 100%;
   transform: translateX(-50%);
   border: 0.38rem solid transparent;

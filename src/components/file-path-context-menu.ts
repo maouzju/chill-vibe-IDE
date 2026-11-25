@@ -26,6 +26,19 @@ export const isRunnableFilePath = (filePath: string) => {
   return dotIndex > 0 && RUNNABLE_FILE_EXTENSIONS.has(name.slice(dotIndex + 1).toLowerCase())
 }
 
+// 「用默认应用打开」走和「直接运行」同一条 start 通道，所以 mp3/html/pdf 这类文档能直接开；
+// 但脚本/安装包类扩展名 start 会真的执行，这类仍要走运行确认框，不能免确认放行。
+const EXECUTING_DEFAULT_OPEN_EXTENSIONS = new Set([
+  'bat', 'cmd', 'com', 'exe', 'lnk', 'msi', 'vbs', 'vbe', 'js', 'jse', 'wsf', 'wsh',
+  'ps1', 'hta', 'reg', 'scr', 'pif', 'msc', 'jar', 'cpl', 'gadget', 'appx', 'msix',
+])
+
+export const isExecutingDefaultOpenPath = (filePath: string) => {
+  const name = filePath.split(/[\\/]/).pop() ?? ''
+  const dotIndex = name.lastIndexOf('.')
+  return dotIndex > 0 && EXECUTING_DEFAULT_OPEN_EXTENSIONS.has(name.slice(dotIndex + 1).toLowerCase())
+}
+
 export type FilePathContextMenuAction = {
   key: FilePathContextMenuActionKey
   label: string

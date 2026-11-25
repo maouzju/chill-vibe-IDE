@@ -17,7 +17,7 @@ import { clearDragPayload, readDragPayload, writeDragPayload } from '../dnd'
 import type { AppLanguage, FileEntry, FileSearchEntry } from '../../shared/schema'
 import { dispatchWorkspaceEntryMoved, getWorkspaceEntryBaseName } from '../workspace-entry-remap'
 import { describeFileActionError } from './file-action-errors'
-import { isRunnableFilePath } from './file-path-context-menu'
+import { isExecutingDefaultOpenPath, isRunnableFilePath } from './file-path-context-menu'
 import { resolveFileTreeMoveDestination } from './file-tree-dnd'
 import {
   applyRefreshedFileTreeDirectories,
@@ -357,6 +357,7 @@ const getActionText = (language: AppLanguage) => ({
   revealInSystem: language === 'en' ? 'Show in System' : '在系统中显示',
   refresh: language === 'en' ? 'Refresh' : '刷新',
   run: language === 'en' ? 'Run' : '直接运行',
+  openDefault: language === 'en' ? 'Open with Default App' : '用默认应用打开',
   runDialogTitle: (name: string) =>
     language === 'en' ? `Run "${name}"?` : `运行“${name}”？`,
   runDialogHint:
@@ -872,6 +873,10 @@ const FileTreeCardInner = ({ cardId, workspacePath, language, onOpenFile }: File
       contextMenuActions.push({ key: 'run', label: actionText.run })
     }
 
+    if (!target.isDirectory && !isRunnableFilePath(target.path)) {
+      contextMenuActions.push({ key: 'open-default', label: actionText.openDefault })
+    }
+
     contextMenuActions.push(
       target.isDirectory
         ? {
@@ -960,6 +965,14 @@ const FileTreeCardInner = ({ cardId, workspacePath, language, onOpenFile }: File
     switch (key) {
       case 'run':
         requestRunFile(target.path)
+        return
+      case 'open-default':
+        // 文档/媒体类直接交给系统默认应用；会被 start 执行的脚本类仍走确认框。
+        if (isExecutingDefaultOpenPath(target.path)) {
+          requestRunFile(target.path)
+        } else {
+          await runLocalFile(target.path, workspacePath)
+        }
         return
       case 'toggle':
         await toggleDirectory(target.path)

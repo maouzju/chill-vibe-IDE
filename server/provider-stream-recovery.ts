@@ -1,5 +1,6 @@
 import type { ChatRequest, StreamActivity, StreamErrorEvent, StreamErrorHint } from '../shared/schema.js'
 import { isPreviouslyRejectedUpstreamMessage } from '../shared/previously-rejected-upstream.js'
+import { isRelaySessionBlockedMessage } from '../shared/relay-session-blocked.js'
 import { isSensitiveWordRejection } from '../shared/sensitive-word-rejection.js'
 
 // Whether a structured activity proves the turn actually produced output for the
@@ -135,7 +136,9 @@ export const isClaudePoisonedHistoryError = (message: string) => {
   return (
     normalizedMessage.includes('system content must contain at least one block') ||
     normalizedMessage.includes('each thinking block must contain thinking') ||
-    isPreviouslyRejectedUpstreamMessage(message)
+    isPreviouslyRejectedUpstreamMessage(message) ||
+    // 常驻进程还握着被屏蔽的那段对话，留着它下一条消息照样 403。
+    isRelaySessionBlockedMessage(message)
   )
 }
 
@@ -188,6 +191,16 @@ export const classifyProviderStreamErrorRecovery = (
   const normalizedMessage = message.trim().toLowerCase()
   if (!normalizedMessage) {
     return {}
+  }
+
+  // 中转站把这一个会话屏蔽了（见 shared/relay-session-blocked.ts）。CLI 给 403 加的
+  // "Failed to authenticate." 前缀会让它带上 switch-config 提示，所以必须排在提示判断之前。
+  // 这里只标成可恢复；前端认出这条报错后改用可见历史重开，不会真的 --resume 被屏蔽的会话。
+  if (isRelaySessionBlockedMessage(message)) {
+    return {
+      recoverable: true,
+      recoveryMode: 'resume-session',
+    }
   }
 
   const switchConfigRecoverable = isRecoverableSwitchConfigError(normalizedMessage)

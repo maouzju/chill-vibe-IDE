@@ -29,6 +29,31 @@ export const shouldRecoverPreviouslyRejectedWithNativeCheckpoint = ({
   hasSessionId: boolean
 }) => provider === 'claude' && hasSessionId
 
+// 中转站屏蔽了这张卡当前的会话（shared/relay-session-blocked.ts）：屏蔽按对话内容算，
+// 原生分叉（新会话号、同一段历史）照样 403，所以这张卡之后的每一种恢复——自动续传、手动「重连」、
+// 兜底续传——只要还指着被屏蔽的那个会话，都必须改成「清会话、用可见历史重开」。
+// 卡已经换到别的会话（或本来就没有会话）时原样放行。
+export const resolveRelayBlockedSessionRecoveryOptions = ({
+  options,
+  sessionId,
+  blockedSessionId,
+}: {
+  options: { clearSessionId?: boolean; preferNativeCheckpoint?: boolean; freshSessionOnly?: boolean } | undefined
+  sessionId: string | undefined
+  blockedSessionId: string | undefined
+}) => {
+  const requested = {
+    clearSessionId: options?.clearSessionId === true,
+    preferNativeCheckpoint: options?.preferNativeCheckpoint === true,
+    freshSessionOnly: options?.freshSessionOnly === true,
+  }
+  const current = sessionId?.trim()
+  if (!current || current !== blockedSessionId?.trim()) {
+    return requested
+  }
+  return { clearSessionId: true, preferNativeCheckpoint: false, freshSessionOnly: false }
+}
+
 export const shouldScheduleFallbackRetryAfterStreamFailure = ({
   previouslyRejectedUpstream,
   lostStreamStopReason,

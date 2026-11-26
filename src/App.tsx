@@ -91,6 +91,7 @@ import {
   getRecoverableStreamRetryLimit,
   getRecoverableStreamErrorSessionId,
   resolveNextFailedResumeSessionAttempt,
+  resolveRelayBlockedSessionRecoveryOptions,
   resolveFreshSessionRecoveryTurn,
   isClaudePreviouslyRejectedUpstreamError,
   shouldRecoverPreviouslyRejectedWithNativeCheckpoint,
@@ -120,6 +121,7 @@ import {
   type CardRecoveryStatus,
 } from './stream-recovery-feedback'
 import { getFallbackRetryDelayMs } from './fallback-retry'
+import { isRelaySessionBlockedMessage } from '../shared/relay-session-blocked'
 import { isSensitiveWordRejection } from '../shared/sensitive-word-rejection'
 import {
   consumeRunDurationMessage,
@@ -1174,6 +1176,9 @@ function App() {
   >(null)
   const resumeSessionLoopCountRef = useRef(new Map<string, number>())
   const freshClaudeRecoveryAttemptRef = useRef(new Set<string>())
+  // 卡 id → 被中转站屏蔽的会话号（shared/relay-session-blocked.ts）。recoverLiveStream 靠它把
+  // 这张卡之后的每一种恢复都改成「用可见历史重开」；卡换到新会话后这条记录自然不再命中。
+  const relayBlockedSessionRef = useRef(new Map<string, string>())
   // 当前这条流有没有真实进展（文本/工具，不含 reasoning 和 session 握手），
   // 供 resolveNextFailedResumeSessionAttempt 区分「连环死」与「隔很久各抽一次」。
   const streamMeaningfulProgressRef = useRef(new Set<string>())
@@ -6402,6 +6407,17 @@ function App() {
             card.streamId,
           )
 
+          const relaySessionBlocked = isRelaySessionBlockedMessage(message)
+          if (relaySessionBlocked) {
+            const blockedSessionId =
+              sessionId?.trim() ||
+              getColumn(columnId)?.cards[card.id]?.sessionId?.trim() ||
+              card.sessionId?.trim()
+            if (blockedSessionId) {
+              relayBlockedSessionRef.current.set(card.id, blockedSessionId)
+            }
+          }
+
           if (recoverable) {
             if (!streamRecoveryTurnRef.current.has(card.id)) {
               const liveCard = getColumn(columnId)?.cards[card.id] ?? card
@@ -6456,8 +6472,11 @@ function App() {
             )
             const previouslyRejectedUpstream =
               card.provider === 'claude' && isClaudePreviouslyRejectedUpstreamError(message)
+            // 被屏蔽的会话同理只自动重开一次：重开的新会话又被屏蔽，就交给慢节奏的兜底续传，
+            // 不在这里按秒级节奏反复重放整段历史。
             const freshRecoveryAlreadyAttempted =
-              previouslyRejectedUpstream && freshClaudeRecoveryAttemptRef.current.has(card.id)
+              (previouslyRejectedUpstream || relaySessionBlocked) &&
+              freshClaudeRecoveryAttemptRef.current.has(card.id)
             // 自动压缩回合只有「重连同一条流」可以照常恢复；续传、换新会话都放弃
             // （原因在 shouldAbandonFailedAutoCompactRun 的注释里）。
             const abandonAutoCompactRun =
@@ -6503,6 +6522,14 @@ function App() {
                   const hasLiveSessionId =
                     typeof liveCard.sessionId === 'string' &&
                     liveCard.sessionId.trim().length > 0
+                  // 会话被中转站屏蔽：原生分叉带着同一段历史照样 403，只能用可见历史重开
+                  // （recoverLiveStream 里还有同一条兜底，管手动「重连」和兜底续传）。
+                  if (relaySessionBlocked) {
+                    freshClaudeRecoveryAttemptRef.current.add(card.id)
+                    resumeSessionLoopCountRef.current.delete(card.id)
+                    void recoverLiveStreamRef.current?.(columnId, card.id, { clearSessionId: true })
+                    return
+                  }
                   // 中转站的拒绝不等于整段聊天历史有毒；恢复时保留原生会话上下文，只回滚当前未完成回合。
                   if (
                     isClaudePreviouslyRejectedUpstreamError(message) &&
@@ -8627,9 +8654,15 @@ function App() {
       return false
     }
 
-    const prefersNativeCheckpoint = options?.preferNativeCheckpoint === true
-    const requestsSessionClear = options?.clearSessionId === true
-    const requestsFreshSessionOnly = options?.freshSessionOnly === true
+    const {
+      preferNativeCheckpoint: prefersNativeCheckpoint,
+      clearSessionId: requestsSessionClear,
+      freshSessionOnly: requestsFreshSessionOnly,
+    } = resolveRelayBlockedSessionRecoveryOptions({
+      options,
+      sessionId: card.sessionId,
+      blockedSessionId: relayBlockedSessionRef.current.get(cardId),
+    })
     if (!requestsSessionClear && !prefersNativeCheckpoint && !requestsFreshSessionOnly && !card.sessionId) {
       return false
     }

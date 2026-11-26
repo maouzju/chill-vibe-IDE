@@ -224,4 +224,5 @@ Guardrails:
 - `Use $release-pipeline to audit this checkout, bump the version, and publish a GitHub release if it is safe.`
 - `Use $release-pipeline for a full one-stop release: inspect for leaks, verify, commit, push, tag, package, and release.`
 
+- **v0.21.34（2026-11-26）三条教训。** (1) 审计 `machine-path` 对任何绝对形态的测试夹具都报（包括 `/data/x.png`），测试里的图片路径用相对路径。(2) 清理基线 worktree 时直接跑了 `git worktree remove --force`，它穿过 junction 删掉了主仓库的 `node_modules/.bin` 与 `.modules.yaml`，与上文 v0.21.11 条目是同一个坑：先 `Directory.Delete(junction)` 再拆，失败即停。修复：把损坏的 `node_modules` 整体 `Move-Item` 到仓库外，再 `pnpm install --frozen-lockfile`（直接在原目录上装会因 `.pnpm` 残缺报 ENOENT）。(3) 本版门禁的 Playwright 候选独有红「transient-only reconnect…」在 origin/main 上单跑也 4/8 红，属既有时序债而非候选引入；判据要同时跑基线单跑，不能只看候选。
 - **v0.21.27（2026-11-14）补充。** 全量发布门禁中候选 Playwright 比基线多出 6 个失败（其中包含主题快照/计数变更和并发时序项），不能只看总失败数；应先按测试标题做基线集合差分，再对候选新增项用窄范围、重复运行验证。此次 8 项窄复核全部通过，基线仍稳定保留 26 项既有视觉失败，发布说明必须明确该豁免边界。

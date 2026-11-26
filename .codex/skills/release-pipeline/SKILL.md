@@ -219,6 +219,8 @@ Guardrails:
 
 - **v0.21.22 (2026-11-06) 两条教训。** (1) 门禁 Playwright 红 25 项时，只在仓库外基线 worktree 跑那几个失败的 spec 文件（约 6.5 分钟）就够按标题对比，不必重跑全量；候选独有的 1 项用单跑 `--repeat-each=8 --workers=4` 证为抖动即可放行，豁免写进发布说明。(2) 预检时 Node 测试若用 Bash 后台启动，日志路径写成 `/d/Temp/...` 这类仓库外固定目录；用 `$TEMP` 在 cmd 后台里会解析成不同路径而读不到日志。审计里的 P3 产品问题（开关打开后新标签仍沿用邻卡供应商）用户确认是 bug，已红绿修复并随本版发出。
 
+- **v0.21.35（2026-11-26）两条教训。** (1) Windows 上 `node --test --test-force-exit` 在测试进程里同时起本地 HTTP 服务和 `fetch` 客户端时，收尾会撞 libuv 断言 `UV_HANDLE_CLOSING`（不带该参数、或收尾前等 50ms 都不崩）；runner 默认带该参数，所以新增这类测试要在文件里加 `after()` 让出 100ms，别去改被测代码（本版先后排除了 unref、connection:close、signal、超时设置，白花一小时）。(2) `release:audit` 只扫已提交内容，改完文件要先提交再重审计；安全钩子会拦相对路径的递归删除，清理残留目录一律给绝对路径。基线 `transient-only reconnect…` 在 origin/main 单跑 6/16 红，是既有时序债，候选 3/8 同量级即放行。
+
 ## Suggested Prompt Shapes
 
 - `Use $release-pipeline to audit this checkout, bump the version, and publish a GitHub release if it is safe.`

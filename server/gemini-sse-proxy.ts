@@ -130,7 +130,8 @@ const readRequestBody = (request: http.IncomingMessage) =>
 
 const writeChunk = (response: http.ServerResponse, chunk: string | Uint8Array) =>
   new Promise<void>((resolve) => {
-    if (response.write(chunk)) {
+    // 客户端已销毁时 write 只返回 false 且不再发 drain/close，不守卫会让 Promise 永久挂起。
+    if (response.destroyed || response.write(chunk)) {
       resolve()
       return
     }

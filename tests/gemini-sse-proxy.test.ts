@@ -1,11 +1,11 @@
 import assert from 'node:assert/strict'
 import http from 'node:http'
 import type { AddressInfo } from 'node:net'
-import { describe, it } from 'node:test'
+import { after, describe, it } from 'node:test'
 
 import { createSseCommentStripper, startGeminiSseProxyServer } from '../server/gemini-sse-proxy.ts'
 
-// 2026-11-26 抓包实样（D:\Temp\gem-diag\cap\5.res.bin）：首字 20.9s 的回复前面先来了两个 `: ping`。
+// 2026-11-26 抓包实样（诊断抓包目录里的第 5 份响应）：首字 20.9s 的回复前面先来了两个 `: ping`。
 const pingedStream =
   ': ping\n\n: ping\n\ndata: {"candidates":[{"content":{"role":"model","parts":[{"text":"hi"}]}}]}\n\n' +
   'data: {"candidates":[{"content":{"role":"model","parts":[]},"finishReason":"STOP"}]}\n\n'
@@ -89,6 +89,10 @@ describe('gemini sse comment stripper', () => {
 })
 
 describe('gemini sse proxy server', () => {
+  // Windows + --test-force-exit：客户端 fetch 的 socket 还在关闭时进程被强退，会撞 libuv 断言（UV_HANDLE_CLOSING）。
+  // 与代理实现无关（最小复现里等 50ms 即不崩），收尾前让出一小段时间。
+  after(() => new Promise<void>((resolve) => setTimeout(resolve, 100)))
+
   const startUpstream = async (
     handler: (request: http.IncomingMessage, body: string, response: http.ServerResponse) => void,
   ) => {

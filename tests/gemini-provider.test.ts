@@ -137,8 +137,8 @@ describe('gemini runtime', () => {
       '<system_instructions>\nbe brief\n</system_instructions>\n\nPlease continue.',
     )
     // 只贴图不打字不算空：@路径 本身就是输入，不加占位。
-    const imageOnly = buildGeminiPrompt({ ...resumed, prompt: '', language: 'en' }, ['C:\\data\\one.png'])
-    assert.ok(imageOnly.includes('@C:/data/one.png'))
+    const imageOnly = buildGeminiPrompt({ ...resumed, prompt: '', language: 'en' }, ['shots/one.png'])
+    assert.ok(imageOnly.includes('@shots/one.png'))
     assert.ok(!imageOnly.includes('Please continue.'))
   })
 

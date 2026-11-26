@@ -6,7 +6,7 @@ Chill Vibe 只支持 `codex` / `claude` 两个本地 CLI。用户要求接入 Go
 ## 需求
 1. `gemini` 作为第三个 provider：卡片可以选 Gemini 模型，消息经本地 `gemini` CLI 执行（遵守 AGENTS.md「AI 请求走本地 CLI」）。
 2. 流式输出：解析 `gemini -o stream-json` 的 JSONL 事件（init/message/tool_use/tool_result/error/result），助手文本增量显示、工具调用以活动条显示、result 结束回合并记录 token 用量。
-3. 续聊：`init.session_id` 回写为卡片 sessionId，下一轮用 `--resume <session_id>` 续接。
+3. 续聊：`init.session_id` 回写为卡片 sessionId，下一轮用 `--resume <session_id>` 续接。手动「重连」和兜底续传同样原地续这个会话（Gemini 没有无损分叉，清会话重开会丢掉读过的全部文件内容）；原地续传一点输出都没有就再断，才退回可见历史重开。空发送补「请继续。」，stdin 不能是空串。
 4. 停止：可中断（杀子进程），不阻塞其它卡。
 5. 模型目录（2026-11-14 依据 ai.google.dev/gemini-api/docs/models）：
    - 选择器可见：Gemini 4 Carbon（`gemini-4-carbon`）、Gemini 4 Hydrogen（`gemini-4-hydrogen`）、Gemini 4 Argon（`gemini-4-argon`）、Gemini 3.1 Pro（`gemini-3.1-pro-preview`）、Gemini 3 Flash（`gemini-3-flash-preview`）、Gemini 3.8 Flash（`gemini-3.8-flash`，默认）、Gemini 3.5 Flash Lite（`gemini-3.5-flash-lite`）、Gemini 3.1 Flash Lite（`gemini-3.1-flash-lite`）。

@@ -1,8 +1,10 @@
 import { getChatMessageAttachments } from '../shared/chat-attachments.js'
 import { isPreviouslyRejectedUpstreamMessage } from '../shared/previously-rejected-upstream.js'
+import { providerSupportsLosslessSessionFork } from '../shared/provider-session-fork.js'
 import type {
   ChatMessage,
   ImageAttachment,
+  Provider,
   StreamActivity,
   StreamErrorEvent,
   StreamErrorRecoveryMode,
@@ -52,6 +54,35 @@ export const resolveRelayBlockedSessionRecoveryOptions = ({
     return requested
   }
   return { clearSessionId: true, preferNativeCheckpoint: false, freshSessionOnly: false }
+}
+
+// 症状：Gemini 卡每次兜底续传 / 手动「重连」后把同一批文件重读一遍，像失忆。
+// 根因：2026-11-26 实证——这条路一律「原生分叉，分不了就清会话用可见历史重开」，而 Gemini 没有
+//   无损分叉（shared/provider-session-fork.ts），于是 9 次重试开了 9 个新会话；重开用的可见历史里
+//   只有「跑过哪些命令」，没有文件内容。同日实测：对被上游掐断的会话 `gemini --resume`，模型
+//   0 次工具调用就答对了之前读到的文件内容。
+// 决策：没有无损分叉的 provider 先原地续传；同一个会话原地续传后一点输出都没有就再断，才判它
+//   坏了、退回清会话重开（否则坏会话会被兜底续传无限续下去）。
+// 被否决：把工具输出塞进可见历史——存档里的输出早已压成摘要，重放预算也装不下。
+export const resolveManualRecoveryPlan = ({
+  provider,
+  resumeSessionId,
+  previousInPlaceResumeSessionId,
+  madeMeaningfulProgress,
+}: {
+  provider: Provider
+  resumeSessionId: string | undefined
+  previousInPlaceResumeSessionId: string | undefined
+  madeMeaningfulProgress: boolean
+}): 'resume-in-place' | 'checkpoint-or-fresh' => {
+  const sessionId = resumeSessionId?.trim()
+  if (!sessionId || providerSupportsLosslessSessionFork(provider)) {
+    return 'checkpoint-or-fresh'
+  }
+  if (previousInPlaceResumeSessionId?.trim() === sessionId && !madeMeaningfulProgress) {
+    return 'checkpoint-or-fresh'
+  }
+  return 'resume-in-place'
 }
 
 export const shouldScheduleFallbackRetryAfterStreamFailure = ({

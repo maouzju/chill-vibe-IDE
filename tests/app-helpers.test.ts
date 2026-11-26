@@ -433,6 +433,24 @@ test('every failed turn-start exit in App.tsx goes through the shared settle ste
 // 症状：报错卡上输入 /status、或消息被收进待唤醒队列后，兜底续传被撤销清零，
 //   卡片永远停在 error，横幅却还显示「HH:MM 自动续传」。
 // 根因（2026-11-20 审查）：撤销放在 sendMessage 第一行，排在几条不起新回合的提前 return 之前。
+// 2026-11-26：手动「重连」和兜底续传曾无条件清会话；Gemini 没有无损分叉，等于每次重试都丢光上下文。
+// 这条只钉接线（判定本身在 tests/stream-recovery.test.ts）：必须先问 resolveManualRecoveryPlan，
+// 原地续传走不带选项的 recoverLiveStream，并且排在清会话那条之前。
+test('manual recovery asks for a plan before it clears the session', () => {
+  const appSource = readFileSync(new URL('../src/App.tsx', import.meta.url), 'utf8')
+  const start = appSource.indexOf('const manuallyRecoverStream = useCallback(')
+  const end = appSource.indexOf('manuallyRecoverStreamRef.current = manuallyRecoverStream', start)
+  assert.ok(start >= 0 && end > start, 'manuallyRecoverStream should still be found')
+  const body = appSource.slice(start, end)
+
+  const planAt = body.indexOf('resolveManualRecoveryPlan({')
+  const inPlaceAt = body.indexOf('recoverLiveStreamRef.current?.(columnId, cardId)')
+  const clearAt = body.indexOf('clearSessionId: true')
+  assert.ok(planAt >= 0, 'manual recovery should consult resolveManualRecoveryPlan')
+  assert.ok(inPlaceAt > planAt, 'the in-place resume should follow the plan')
+  assert.ok(clearAt > inPlaceAt, 'clearing the session stays the fallback branch')
+})
+
 test('sendMessage only retires the fallback retry once it is really starting a new turn', () => {
   const appSource = readFileSync(new URL('../src/App.tsx', import.meta.url), 'utf8')
   const start = appSource.indexOf('const sendMessage = async (')

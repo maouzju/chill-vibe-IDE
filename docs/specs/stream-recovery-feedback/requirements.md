@@ -55,6 +55,7 @@ The streaming indicator must not describe completed, failed, or declined command
 - Errors never auto-open the Settings or Routing page.
 - Consecutive identical error messages (separated only by run-duration rows or empty bubbles) are not appended again; once the session completes a turn normally, legacy consecutive duplicates are stripped from the transcript.
 - Fallback state is in-memory only and does not survive restart.
+- 2026-11-26: manual recovery and the fallback retry must not throw away a provider session that has no lossless fork (Gemini). They resume that session in place (`--resume`, empty prompt → `请继续。`) so everything the model already read stays in context. Only when the same session was resumed in place and failed again without any real output is it treated as dead and restarted from the seeded transcript. Claude and Codex keep the native-checkpoint fork. The auto-resume escape hatch (requirement 4) is unchanged.
 
 ## Non-goals
 

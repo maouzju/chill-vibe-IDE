@@ -3,8 +3,11 @@ import test from 'node:test'
 
 import { attachImagesToMessageMeta } from '../shared/chat-attachments.ts'
 import { isClaudePoisonedHistoryError } from '../server/provider-stream-recovery.ts'
+import { forkProviderSession } from '../server/session-fork.ts'
+import { providerSupportsLosslessSessionFork } from '../shared/provider-session-fork.ts'
 import {
   createStreamRecoveryRetryScheduler,
+  resolveManualRecoveryPlan,
   isContextExcludedMessage,
   getRecoverableStreamRetryDelayMs,
   getRecoverableStreamRetryLimit,
@@ -640,6 +643,93 @@ test('rescheduling a recovery retry for the same card replaces the previous one'
 })
 
 // 玩家需求（2026-11-18）：不会发给模型的消息在会话里置灰。判据必须和「回放过滤 / CLI 回显」同口径。
+// 2026-11-26 实证：一张 Gemini 卡 9 次兜底续传开了 9 个新会话，每次只带一份「跑过哪些命令」的清单，
+// 文件内容一个字没有，模型只能把同一批文件重读一遍（151 条命令、0 句正文）。
+test('manual and fallback recovery keep a Gemini session instead of restarting it from a seeded transcript', () => {
+  assert.equal(
+    resolveManualRecoveryPlan({
+      provider: 'gemini',
+      resumeSessionId: 'session-1',
+      previousInPlaceResumeSessionId: undefined,
+      madeMeaningfulProgress: false,
+    }),
+    'resume-in-place',
+  )
+  // 上一次原地续传跑出了真东西再断：会话是好的，接着续，上下文越攒越全。
+  assert.equal(
+    resolveManualRecoveryPlan({
+      provider: 'gemini',
+      resumeSessionId: 'session-1',
+      previousInPlaceResumeSessionId: 'session-1',
+      madeMeaningfulProgress: true,
+    }),
+    'resume-in-place',
+  )
+})
+
+test('a Gemini session that died again without any output is abandoned for a fresh one', () => {
+  assert.equal(
+    resolveManualRecoveryPlan({
+      provider: 'gemini',
+      resumeSessionId: 'session-1',
+      previousInPlaceResumeSessionId: 'session-1',
+      madeMeaningfulProgress: false,
+    }),
+    'checkpoint-or-fresh',
+  )
+  // 卡已经换了会话：那次失败记在旧会话头上，新会话照样先原地续。
+  assert.equal(
+    resolveManualRecoveryPlan({
+      provider: 'gemini',
+      resumeSessionId: 'session-2',
+      previousInPlaceResumeSessionId: 'session-1',
+      madeMeaningfulProgress: false,
+    }),
+    'resume-in-place',
+  )
+})
+
+test('manual recovery is unchanged for providers with a lossless fork and for cards without a session', () => {
+  for (const provider of ['claude', 'codex'] as const) {
+    assert.equal(
+      resolveManualRecoveryPlan({
+        provider,
+        resumeSessionId: 'session-1',
+        previousInPlaceResumeSessionId: undefined,
+        madeMeaningfulProgress: false,
+      }),
+      'checkpoint-or-fresh',
+    )
+  }
+  for (const resumeSessionId of [undefined, '', '   ']) {
+    assert.equal(
+      resolveManualRecoveryPlan({
+        provider: 'gemini',
+        resumeSessionId,
+        previousInPlaceResumeSessionId: undefined,
+        madeMeaningfulProgress: false,
+      }),
+      'checkpoint-or-fresh',
+    )
+  }
+})
+
+test('the lossless-fork capability list matches what the server fork actually supports', async () => {
+  assert.equal(providerSupportsLosslessSessionFork('claude'), true)
+  assert.equal(providerSupportsLosslessSessionFork('codex'), true)
+  assert.equal(providerSupportsLosslessSessionFork('gemini'), false)
+  // 服务端对不支持的 provider 按契约返回 null；两边必须是同一张表。
+  assert.equal(
+    await forkProviderSession({
+      provider: 'gemini',
+      workspacePath: 'D:/demo',
+      sessionId: 'session-1',
+      forkPoint: { content: 'hello', createdAt: '2026-11-26T00:00:00.000Z' },
+    }),
+    null,
+  )
+})
+
 test('messages that never reach the model are flagged so the chat can grey them out', () => {
   const base = { id: 'm', createdAt: '2026-11-18T00:00:00.000Z' }
   // CLI 把报错回显成 assistant 文本 / 重连占位 / 应用自己的普通系统提示：都不进上下文

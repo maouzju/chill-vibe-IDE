@@ -91,6 +91,7 @@ import {
   getRecoverableStreamRetryLimit,
   getRecoverableStreamErrorSessionId,
   resolveNextFailedResumeSessionAttempt,
+  resolveManualRecoveryPlan,
   resolveRelayBlockedSessionRecoveryOptions,
   resolveFreshSessionRecoveryTurn,
   isClaudePreviouslyRejectedUpstreamError,
@@ -1179,6 +1180,9 @@ function App() {
   // 卡 id → 被中转站屏蔽的会话号（shared/relay-session-blocked.ts）。recoverLiveStream 靠它把
   // 这张卡之后的每一种恢复都改成「用可见历史重开」；卡换到新会话后这条记录自然不再命中。
   const relayBlockedSessionRef = useRef(new Map<string, string>())
+  // 卡 id → 上一次手动「重连」/兜底续传原地续的那个会话号（resolveManualRecoveryPlan 的逃生舱判据）。
+  // 一轮正常收尾或用户发新消息时随兜底续传的计数一起清掉。
+  const inPlaceResumeRecoveryRef = useRef(new Map<string, string>())
   // 当前这条流有没有真实进展（文本/工具，不含 reasoning 和 session 握手），
   // 供 resolveNextFailedResumeSessionAttempt 区分「连环死」与「隔很久各抽一次」。
   const streamMeaningfulProgressRef = useRef(new Set<string>())
@@ -1257,6 +1261,9 @@ function App() {
   // 2026-10-16 用户需求：永远不要真正的错误中断状态 —— 终态报错改为按 5/10/…/30 分钟
   // 退避的无限兜底续传；用户发新消息、手动续传或一轮正常收尾即撤销/清零。
   const cancelFallbackRetry = useCallback((cardId: string, options?: { resetCount?: boolean }) => {
+    if (options?.resetCount) {
+      inPlaceResumeRecoveryRef.current.delete(cardId)
+    }
     const entry = fallbackRetryRef.current.get(cardId)
     if (!entry) {
       return
@@ -9140,6 +9147,28 @@ function App() {
         },
       }
       persistAfterAction(action.type, applyAction(action))
+
+      // 没有无损分叉的 provider（Gemini）先原地续传，别一上来就清会话（原因见 resolveManualRecoveryPlan）。
+      const resumeSessionId = getResumeSessionIdForModel(
+        currentCard,
+        normalizeModel(
+          currentCard.provider,
+          currentCard.model || appStateRef.current.settings.requestModels[currentCard.provider],
+        ),
+      )
+      const recoveryPlan = resolveManualRecoveryPlan({
+        provider: currentCard.provider,
+        resumeSessionId,
+        previousInPlaceResumeSessionId: inPlaceResumeRecoveryRef.current.get(cardId),
+        madeMeaningfulProgress: streamMeaningfulProgressRef.current.has(cardId),
+      })
+      if (recoveryPlan === 'resume-in-place' && resumeSessionId) {
+        // 「有没有进展」只算这一次原地续传自己的：先清掉上一条流留下的记号。
+        inPlaceResumeRecoveryRef.current.set(cardId, resumeSessionId.trim())
+        streamMeaningfulProgressRef.current.delete(cardId)
+        return recoverLiveStreamRef.current?.(columnId, cardId) ?? false
+      }
+      inPlaceResumeRecoveryRef.current.delete(cardId)
 
       return recoverLiveStreamRef.current?.(columnId, cardId, {
         clearSessionId: true,

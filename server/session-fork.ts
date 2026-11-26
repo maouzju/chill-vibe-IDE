@@ -2,6 +2,8 @@ import fs from 'fs'
 import os from 'os'
 import path from 'path'
 
+import { providerSupportsLosslessSessionFork } from '../shared/provider-session-fork.js'
+
 // Lossless conversation fork: copy the provider's own native session file,
 // truncated strictly before the fork-point user turn, under a fresh session id.
 // The forked card then resumes through the provider's normal native resume path
@@ -474,8 +476,9 @@ export const forkProviderSession = async (
   options: ForkProviderSessionOptions,
   dependencies: ForkProviderSessionDependencies = {},
 ): Promise<string | null> => {
-  // Gemini CLI 的会话文件格式未做无损手术，按契约返回 null 让渲染端走 seeded 回放。
-  if (options.provider === 'gemini') {
+  // Gemini CLI 的会话文件格式未做无损手术，按契约返回 null；渲染端据同一张表改走原地续传
+  // （src/stream-recovery.ts 的 resolveManualRecoveryPlan），实在不行才 seeded 回放。
+  if (!providerSupportsLosslessSessionFork(options.provider)) {
     return null
   }
 

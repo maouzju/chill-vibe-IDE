@@ -126,6 +126,7 @@ import { createAsyncTtlCache } from './provider-slash-command-cache.js'
 import { loadStateForRenderer } from './state-store.js'
 import { proxyStats, type ProxyStatsEvent } from './proxy-stats-store.js'
 import type { ResilientProxyRuntimeConfig } from './resilient-proxy.js'
+import { geminiSseProxyPool } from './gemini-sse-proxy.js'
 import { resilientProxyPool } from './resilient-proxy.js'
 import { createArchiveRecallRuntimeOverrides, getCodexArchiveRecallInstruction } from './archive-recall.js'
 import { createWorkspaceAdminRuntime } from './automation-board-session.js'
@@ -785,12 +786,23 @@ export const resolveProviderRuntime = async (
 
     if (provider === 'gemini') {
       // 只在用户填了自定义地址时才覆盖：默认官方端点由 CLI 自己决定。
+      // 自定义地址一律经本地清洗代理（server/gemini-sse-proxy.ts，pitfall #492）：中转站首字慢时发的
+      // `: ping` 心跳会让 CLI 把整段回复判成 `Incomplete JSON segment at the end`。这是协议兼容，
+      // 与「断线续传代理」开关无关；代理起不来就退回直连，不能因此发不出消息。
+      const customBaseUrl = activeProfile?.baseUrl.trim()
+      const geminiBaseUrl = customBaseUrl
+        ? await geminiSseProxyPool.resolveBaseUrl(customBaseUrl).catch((error: unknown) => {
+            const message = error instanceof Error ? error.message : String(error)
+            console.warn(`[gemini-sse-proxy] Falling back to direct gemini upstream: ${message}`)
+            return runtimeBaseUrl
+          })
+        : ''
       return {
         args: [],
         env: {
           ...baseEnv,
           GEMINI_API_KEY: apiKey,
-          ...(activeProfile?.baseUrl.trim() ? { GOOGLE_GEMINI_BASE_URL: runtimeBaseUrl } : {}),
+          ...(geminiBaseUrl ? { GOOGLE_GEMINI_BASE_URL: geminiBaseUrl } : {}),
         },
       }
     }

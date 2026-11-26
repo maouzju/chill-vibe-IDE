@@ -86,6 +86,7 @@ import {
 } from './git-workspace.js'
 import { inspectOnboardingStatus } from './onboarding-status.js'
 import { getProviderSlashCommands, getProviderStatuses, resolveSystemCommand, validateWorkspacePath } from './providers.js'
+import { geminiSseProxyPool } from './gemini-sse-proxy.js'
 import { resilientProxyPool } from './resilient-proxy.js'
 import { SetupManager } from './setup-manager.js'
 import { OllamaManager } from './ollama-manager.js'
@@ -1064,7 +1065,7 @@ void startServer()
 const shutdown = () => {
   chatManager.closeAll()
   setupManager.dispose()
-  void resilientProxyPool.dispose().finally(() => {
+  void Promise.allSettled([resilientProxyPool.dispose(), geminiSseProxyPool.dispose()]).finally(() => {
     process.exit(0)
   })
 }

@@ -71,6 +71,7 @@ import {
   publishWorkspaceSessionMirror as publishWorkspaceSessionMirrorState,
   setWorkspaceAdminCommandDispatcher,
 } from '../server/automation-board-session.ts'
+import { geminiSseProxyPool } from '../server/gemini-sse-proxy.ts'
 import { resilientProxyPool } from '../server/resilient-proxy.ts'
 import { SetupManager } from '../server/setup-manager.ts'
 import { OllamaManager } from '../server/ollama-manager.ts'
@@ -677,6 +678,7 @@ export const createDesktopBackend = (deps: DesktopBackendDependencies = {}) => {
       setupManager?.dispose()
       ollamaManager?.dispose()
       await resilientProxyPool.dispose()
+      await geminiSseProxyPool.dispose()
       // Proxy stats now buffer in memory and write on a throttle, so an ordinary
       // quit has to drain them explicitly. The process-exit hook inside the store
       // is the backstop for paths that never reach dispose().

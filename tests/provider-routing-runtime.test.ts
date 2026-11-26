@@ -1042,3 +1042,54 @@ describe('official cli-login profile', () => {
     }
   })
 })
+
+// 症状：Gemini 卡读文件顺、一到写文件 / 长回答必报 `Incomplete JSON segment at the end`（pitfall #492）。
+// 2026-11-26 抓包：中转站首字慢时先发 `: ping` 心跳，gemini-cli 0.24.5 的流解析器不认 SSE 注释。
+// 自定义端点一律经本地清洗代理；官方端点不发这种心跳，且端点由 CLI 自己决定，不套。
+describe('gemini relay endpoint goes through the sse cleaning proxy', () => {
+  const stageGemini = (baseUrl: string) => {
+    const state = createDefaultState('')
+    state.settings.cliRoutingEnabled = true
+    // 清洗是协议兼容，不是断线续传：续传代理关着也必须生效。
+    state.settings.resilientProxyEnabled = false
+    state.settings.providerProfiles.gemini = {
+      activeProfileId: 'gemini-relay',
+      profiles: [{ id: 'gemini-relay', name: 'relay', apiKey: 'relay-key', baseUrl }],
+    }
+    return state.settings
+  }
+
+  it('points the CLI at a loopback proxy instead of the relay itself', async () => {
+    const { resolveProviderRuntime, setProviderRuntimeSettingsOverride } = await import('../server/providers.ts')
+    const { geminiSseProxyPool } = await import('../server/gemini-sse-proxy.ts')
+    setProviderRuntimeSettingsOverride(stageGemini('https://relay.example.test/'))
+
+    try {
+      const runtime = await resolveProviderRuntime('gemini')
+      assert.equal(runtime.env.GEMINI_API_KEY, 'relay-key')
+      assert.match(runtime.env.GOOGLE_GEMINI_BASE_URL ?? '', /^http:\/\/127\.0\.0\.1:\d+$/)
+
+      const again = await resolveProviderRuntime('gemini')
+      assert.equal(again.env.GOOGLE_GEMINI_BASE_URL, runtime.env.GOOGLE_GEMINI_BASE_URL)
+    } finally {
+      setProviderRuntimeSettingsOverride(null)
+      await geminiSseProxyPool.dispose()
+    }
+  })
+
+  it('leaves the official endpoint to the CLI when no base url is configured', async () => {
+    const { resolveProviderRuntime, setProviderRuntimeSettingsOverride } = await import('../server/providers.ts')
+    const original = process.env.GOOGLE_GEMINI_BASE_URL
+    delete process.env.GOOGLE_GEMINI_BASE_URL
+    setProviderRuntimeSettingsOverride(stageGemini(''))
+
+    try {
+      const runtime = await resolveProviderRuntime('gemini')
+      assert.equal(runtime.env.GEMINI_API_KEY, 'relay-key')
+      assert.equal(runtime.env.GOOGLE_GEMINI_BASE_URL, undefined)
+    } finally {
+      setProviderRuntimeSettingsOverride(null)
+      if (typeof original === 'string') process.env.GOOGLE_GEMINI_BASE_URL = original
+    }
+  })
+})

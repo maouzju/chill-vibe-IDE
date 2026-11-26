@@ -1,6 +1,7 @@
 import type { AppLanguage, StreamAgentsActivity } from '../shared/schema.js'
 import { createClaudeAgentStatusTracker, syntheticClaudeAgentId } from './claude-agent-status.js'
 import type { ClaudeCompletionBoundary } from './claude-completion-boundary.js'
+import { isClaudeNoOpTaskNotificationResult } from './provider-turn-telemetry.js'
 
 // 回合结束不代表后台 Workflow 结束（2026-09-08 原生回执实证）。
 // 时钟归属于长驻进程，不向已经 done 的聊天流继续写事件。
@@ -42,7 +43,8 @@ export const createClaudeAgentRuntime = (options: {
       }
       const update = tracker.handleEvent(event)
       if (update.activity) publish(update.activity)
-      if (event.type === 'result' && published) {
+      // CLI 续接时的空收尾 result 不是任何回合的终点（见 isClaudeNoOpTaskNotificationResult），不结算面板。
+      if (event.type === 'result' && published && !isClaudeNoOpTaskNotificationResult(event)) {
         const boundary = options.readCompletionBoundary()
         const keep = !event.is_error && (boundary === 'background-pending' || (boundary === 'unknown' && tracker.hasBackgroundAgents()))
         // 回合报错只中断本回合的条目；仍在后台跑的 Workflow 不归这一回合管，

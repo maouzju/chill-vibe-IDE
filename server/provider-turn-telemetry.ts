@@ -49,6 +49,21 @@ export const mapClaudeTurnStopReason = (
   return undefined
 }
 
+/**
+ * CLI 为一条「不需要模型作答」的 task-notification 自己发的空收尾：零轮次、非错误、来源是通知。
+ *
+ * 2026-11-27 实测（claude 2.1.322，scripts/probe-claude-resume-killed-agents.mjs）：会话里挂着后台
+ * 子代理时进程树被杀，新进程 `--resume` 后 0.7s 就先吐一条
+ * `system/task_notification status=stopped`（…didn't finish before the previous session ended）
+ * 和这个 result，写进 stdin 的那条 user 消息 20 多秒后才有自己的 message_start 和第二个 result。
+ * 只认 origin + num_turns：本地斜杠命令 / 压缩回合同样零用量，但它们没有 task-notification 来源。
+ */
+export const isClaudeNoOpTaskNotificationResult = (event: Record<string, unknown>): boolean =>
+  event.type === 'result' &&
+  event.is_error !== true &&
+  event.num_turns === 0 &&
+  readRecord(event.origin)?.kind === 'task-notification'
+
 // 上下文窗口来自 CLI 自报的 modelUsage[*].contextWindow。一个回合可能横跨多个
 // 模型（子 agent 常用更便宜的档），此时取最大窗口：used 是各模型 token 之和，
 // 配最大窗口会**低估**占用率。这个方向是刻意的——宁可少报警，也不要在多模型

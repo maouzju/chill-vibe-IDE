@@ -77,6 +77,7 @@ import {
   isClaudeBackgroundAwaitTool,
 } from './claude-structured-output.js'
 import {
+  isClaudeNoOpTaskNotificationResult,
   mapClaudeTurnStopReason,
   readClaudeCompactBoundary,
   readClaudeContextWindow,
@@ -3666,6 +3667,8 @@ export const createClaudeTurnParser = (hooks: {
   })
   let sawClaudeDelta = false
   let sawClaudeStreamOutput = false
+  // 本回合模型是否真的开过口（顶层 message_start）；用来区分「回合收尾」和 CLI 的空收尾 result。
+  let sawClaudeTopLevelMessageStart = false
   // Track whether the turn produced anything real, so a turn whose only output
   // was a tool call typed as text (stripped, never executed) can be auto-resumed
   // instead of silently dead-ending.
@@ -3996,6 +3999,9 @@ export const createClaudeTurnParser = (hooks: {
       }
 
       if (event.type === 'stream_event' && event.event?.type === 'message_start') {
+        if (!(typeof event.parent_tool_use_id === 'string' && event.parent_tool_use_id.trim())) {
+          sawClaudeTopLevelMessageStart = true
+        }
         retractOrphanedClaudeTextBlock()
         const startedMessageId = readString(event.event.message, 'id')
         claudeStreamMessageId = startedMessageId ?? null
@@ -4060,6 +4066,17 @@ export const createClaudeTurnParser = (hooks: {
       }
 
       if (event.type === 'result') {
+        // 症状：重启后「继续上次会话」，带后台子代理的卡 1~2 秒就落回 idle；开着循环重复的卡
+        //   同时被判「跑完一轮」，凭空多开一个 Tab 重跑首条提示（2026-11-27 用户 state.json：
+        //   3 张卡续跑后 ~1s 各多一条用量全 0 的 run-duration，其中一张 spawn 了循环 Tab）。
+        // 根因：CLI 续接时先为「上次没跑完的后台子代理」自产一条通知并发零轮次 result，我们写进
+        //   stdin 的续跑提示是它后面的第二轮（探针实测 0.7s vs 28s，pitfall #493）。
+        // 被否决：按「零用量」或「没有 message_start」一刀切——压缩回合 / 本地斜杠命令的真收尾
+        //   也长这样；只有 origin=task-notification 且模型没开过口才是别人的收尾。
+        if (!sawClaudeTopLevelMessageStart && isClaudeNoOpTaskNotificationResult(event)) {
+          return
+        }
+
         // 窗口大小只有 result 才报。必须赶在 done / error 之前发出：终态之后 chat-manager
         // 不再放行任何事件。压缩回合的 result 用量全 0，此时只带窗口、不带占用。
         const contextWindow = readClaudeContextWindow(event)

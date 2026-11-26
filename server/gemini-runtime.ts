@@ -1,3 +1,7 @@
+import {
+  CLAUDE_EMPTY_CONTINUE_PROMPT,
+  CLAUDE_EMPTY_CONTINUE_PROMPT_ZH,
+} from '../shared/claude-prompt-markers.js'
 import type { ChatRequest, ProviderTurnUsage, StreamCommandActivity } from '../shared/schema.js'
 
 // Gemini CLI headless 运行（docs/specs/gemini-cli-provider）。
@@ -46,15 +50,28 @@ export const buildGeminiArgs = (
 
 // Gemini CLI 没有 append-system-prompt 参数；GEMINI_SYSTEM_MD 会整段替换内置提示词（连工具说明一起丢），
 // 所以系统提示词作为前导块拼进 stdin。续聊（--resume）时 CLI 已带着历史，不重复注入。
+//
+// 症状：Gemini 卡报「No input provided via stdin. Input can be provided by piping data into gemini…」。
+// 根因：2026-11-26 实证——已有会话的卡上空发送（续聊不注入系统提示词）时 stdin 是空串，
+//   gemini-cli 0.24.5 在 `if (!input)` 处以退出码 42 直接退出，连会话文件都不写。
+// 被否决：只在有 sessionId 时兜底（像 getClaudePrompt）——新会话空发送只剩系统提示词块，
+//   模型拿不到任何用户输入；这里的不变量是「stdin 里一定有一句用户的话」。
 export const buildGeminiPrompt = (
-  request: Pick<ChatRequest, 'prompt' | 'systemPrompt' | 'sessionId'>,
+  request: Pick<ChatRequest, 'prompt' | 'systemPrompt' | 'sessionId'> &
+    Partial<Pick<ChatRequest, 'language'>>,
   attachmentPaths: string[] = [],
 ) => {
   const refs = attachmentPaths
     .map((path) => toGeminiPath(path.trim()).replace(/ /g, '\\ '))
     .filter(Boolean)
     .map((path) => `@${path}`)
-  const prompt = refs.length > 0 ? `${request.prompt}\n\n${refs.join('\n')}` : request.prompt
+  const userPrompt =
+    request.prompt.trim() || refs.length > 0
+      ? request.prompt
+      : request.language === 'en'
+        ? CLAUDE_EMPTY_CONTINUE_PROMPT
+        : CLAUDE_EMPTY_CONTINUE_PROMPT_ZH
+  const prompt = refs.length > 0 ? `${userPrompt}\n\n${refs.join('\n')}` : userPrompt
   const systemPrompt = request.systemPrompt.trim()
   if (!systemPrompt || request.sessionId?.trim()) {
     return prompt

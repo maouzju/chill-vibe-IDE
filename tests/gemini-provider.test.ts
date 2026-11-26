@@ -125,6 +125,23 @@ describe('gemini runtime', () => {
     assert.equal(buildGeminiPrompt(baseRequest), 'hello')
   })
 
+  // 2026-11-26 实证：Gemini 卡在已有会话上空发送（续聊，不重复注入系统提示词），stdin 是空串，
+  // CLI 直接退出并报「No input provided via stdin」。Claude 有同样的占位兜底（getClaudePrompt）。
+  it('never hands the CLI an empty stdin when the user sends nothing', () => {
+    const resumed = { ...baseRequest, sessionId: 'abc-123', systemPrompt: 'be brief' }
+    assert.equal(buildGeminiPrompt({ ...resumed, prompt: '', language: 'zh-CN' }), '请继续。')
+    assert.equal(buildGeminiPrompt({ ...resumed, prompt: '  \n', language: 'en' }), 'Please continue.')
+    // 新会话也一样：系统提示词之后必须跟着一句真正的用户输入。
+    assert.equal(
+      buildGeminiPrompt({ ...baseRequest, systemPrompt: 'be brief', prompt: '', language: 'en' }),
+      '<system_instructions>\nbe brief\n</system_instructions>\n\nPlease continue.',
+    )
+    // 只贴图不打字不算空：@路径 本身就是输入，不加占位。
+    const imageOnly = buildGeminiPrompt({ ...resumed, prompt: '', language: 'en' }, ['C:\\data\\one.png'])
+    assert.ok(imageOnly.includes('@C:/data/one.png'))
+    assert.ok(!imageOnly.includes('Please continue.'))
+  })
+
   it('maps stream-json events to sink calls', () => {
     const { calls, sink } = createSink()
     const parser = createGeminiStreamParser(sink)

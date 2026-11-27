@@ -335,6 +335,9 @@ export const chatCardSchema = z.object({
   automationBoardTemplateId: z.string().optional(),
   messages: z.array(chatMessageSchema).default([]),
   messageCount: z.number().int().nonnegative().optional(),
+  // 读档预裁剪过窗口（首条可能已进归档）。持久标记：messageCount 不随追加更新，
+  // 只靠 messageCount > messages.length 推断会在窗口涨过旧计数后失效（2026-11-27 审计）。
+  messageWindowTrimmed: z.boolean().optional(),
 })
 export type ChatCard = z.infer<typeof chatCardSchema>
 
@@ -575,9 +578,6 @@ export const sessionHistoryEntrySchema = z.object({
   workspacePath: z.string().min(1),
   messages: z.array(chatMessageSchema).default([]),
   messageCount: z.number().int().nonnegative().optional(),
-  // 读档预裁剪过窗口（首条可能已进归档）。持久标记：messageCount 不随追加更新，
-  // 只靠 messageCount > messages.length 推断会在窗口涨过旧计数后失效（2026-11-27 审计）。
-  messageWindowTrimmed: z.boolean().optional(),
   messagesPreview: z.boolean().optional(),
   usageTotals: sessionUsageTotalsSchema.optional(),
   // 症状：关掉还挂着「待唤醒」的卡后，排队消息随卡消失，历史里找不回（误关就丢）。

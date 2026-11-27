@@ -43,7 +43,7 @@ const buildState = (cards: Record<string, ChatCard>): AppState => ({
       id: 'column-1',
       title: 'Workspace',
       provider: 'codex',
-      workspacePath: 'D:/repo/one',
+      workspacePath: 'repo/one',
       model: DEFAULT_CODEX_MODEL,
       width: undefined,
       layout: {
@@ -198,7 +198,7 @@ describe('wake timer peer busy', () => {
 describe('system prompts carry the convention for every provider', () => {
   const request = (provider: ChatRequest['provider']): ChatRequest => ({
     provider,
-    workspacePath: 'D:/repo/one',
+    workspacePath: 'repo/one',
     model: provider === 'claude' ? 'claude-opus-5' : DEFAULT_CODEX_MODEL,
     reasoningEffort: 'medium',
     thinkingEnabled: true,

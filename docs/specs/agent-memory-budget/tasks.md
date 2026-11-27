@@ -13,7 +13,7 @@
 ## Slice 3 — 设置面板（Tier 2）
 
 - [x] i18n 中英；App.tsx 控件；index.css 网格。
-- [x] `tests/theme-check.spec.ts` 计数 +1，`codex-safety-settings-{dark,light}` 快照有意刷新；截图 `D:\Temp\memory-budget-settings.png`。
+- [x] `tests/theme-check.spec.ts` 计数 +1，`codex-safety-settings-{dark,light}` 快照有意刷新。
 
 ## Slice 4 — 收尾
 

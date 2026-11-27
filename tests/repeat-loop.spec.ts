@@ -4,7 +4,10 @@ import { installMockElectronBridge } from './electron-bridge.ts'
 import { createPlaywrightState } from './playwright-state.ts'
 import { appUrl } from './playwright-app-url.ts'
 
-const installMockApis = async (page: Page) => {
+const installMockApis = async (
+  page: Page,
+  options: { card?: Record<string, unknown>; archivedMessages?: unknown[] } = {},
+) => {
   await installMockElectronBridge(page)
 
   let state = createPlaywrightState({
@@ -45,6 +48,7 @@ const installMockApis = async (page: Page) => {
             reasoningEffort: 'medium',
             draft: '',
             messages: [],
+            ...options.card,
           },
         ],
       },
@@ -79,6 +83,19 @@ const installMockApis = async (page: Page) => {
   })
   await page.route('**/api/slash-commands', async (route) => {
     await route.fulfill({ json: [] })
+  })
+  await page.route('**/api/compacted-card-history/**', async (route) => {
+    await route.fulfill({
+      json: {
+        snapshot: options.archivedMessages
+          ? {
+              hiddenReason: 'compact',
+              hiddenMessageCount: options.archivedMessages.length,
+              messages: options.archivedMessages,
+            }
+          : null,
+      },
+    })
   })
 }
 
@@ -190,4 +207,34 @@ test('a checked repeat loop opens a fresh tab, reruns the earliest prompt, and s
     'Run the same verification from scratch.',
     'Run the same verification from scratch.',
   ])
+})
+
+// 2026-11-27 用户截图：343 条的长会话重启后首条提示被裁进归档，循环重复跑完一轮什么都没发生。
+test('a long repeat-loop card whose first prompt was archived still reruns the true first prompt', async ({ page }) => {
+  const createdAt = new Date().toISOString()
+  await installMockApis(page, {
+    card: {
+      repeatLoopActive: true,
+      repeatLoopRemaining: 6,
+      messageCount: 343,
+      sessionId: 'long-session',
+      sessionModel: 'gpt-5.5',
+      messages: [
+        { id: 'tail-assistant', role: 'assistant', content: 'Previous round finished.', createdAt },
+      ],
+    },
+    archivedMessages: [
+      { id: 'first-user', role: 'user', content: 'Original first prompt', createdAt },
+      { id: 'first-assistant', role: 'assistant', content: 'ok', createdAt },
+    ],
+  })
+  await page.goto(appUrl)
+  await installMockChatBridge(page)
+
+  const activePanel = page.locator('.pane-tab-panel.is-active')
+  await activePanel.locator('.composer textarea').fill('Later follow-up')
+  await activePanel.getByRole('button', { name: 'Send message' }).click()
+
+  await expect.poll(() => readPrompts(page)).toEqual(['Later follow-up', 'Original first prompt'])
+  await expect(page.locator('.pane-tab')).toHaveCount(2)
 })

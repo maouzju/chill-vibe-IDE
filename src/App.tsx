@@ -228,6 +228,7 @@ import {
   subscribeWorkspaceAdminCommands,
   subscribeRemoteCommands,
   judgeUrgeWithOllama,
+  loadCompactedCardHistory,
   discoverModels,
   type RemoteMonitorStartResponse,
 } from './api'
@@ -415,7 +416,11 @@ const resolveAutomationBoardWorkspace = (
   workspacePath: string,
 ): AutomationBoardWorkspaceView =>
   state.automationBoards[workspacePath] ?? getDefaultAutomationBoardWorkspace(state.settings.language)
-import { resolveRepeatLoopCompletion } from './components/repeat-loop'
+import {
+  getEarliestRepeatLoopPrompt,
+  needsArchivedRepeatLoopPrompt,
+  resolveRepeatLoopCompletion,
+} from './components/repeat-loop'
 import { getAutoReadCardIdsForVisiblePanes, shouldMarkCardUnreadOnStreamDone } from './components/pane-read-state'
 import { clearFileTreeCacheForCard } from './components/tool-card-state'
 import { evictTextEditorModel, retargetTextEditorPaths } from './components/text-editor-model-cache'
@@ -4263,6 +4268,39 @@ function App() {
     [applyAction, persistAfterAction],
   )
 
+  // 长会话的首条提示被裁进归档后，循环重复去归档里取回再开下一轮（见 repeat-loop.ts needsArchivedRepeatLoopPrompt）。
+  const spawnRepeatLoopFromArchive = useCallback(async (columnId: string, sourceCardId: string) => {
+    let archivedPrompt: string | null = null
+    try {
+      const response = await loadCompactedCardHistory({ cardId: sourceCardId })
+      archivedPrompt = getEarliestRepeatLoopPrompt(response.snapshot?.messages ?? [])
+    } catch (error) {
+      console.warn('[repeat-loop] failed to load archived first prompt', error)
+    }
+    // 取归档期间用户可能已经接手（发消息 / 关循环 / 删卡），只在仍然闲着时开下一轮。
+    const liveCard = appStateRef.current.columns
+      .find((column) => column.id === columnId)
+      ?.cards[sourceCardId]
+    if (!liveCard || liveCard.status !== 'idle' || liveCard.repeatLoopActive !== true) {
+      return
+    }
+    // 归档是对话的完整前缀，它的首条才是真首条；归档缺失才退回窗口里最早的那条。
+    const prompt = archivedPrompt ?? getEarliestRepeatLoopPrompt(liveCard.messages)
+    if (!prompt) {
+      console.warn(`[repeat-loop] card ${sourceCardId} has no first prompt in window or archive; loop skipped`)
+      return
+    }
+    const repeatedCardId = createId()
+    const action: IdeAction = {
+      type: 'spawnRepeatLoopTab',
+      columnId,
+      sourceCardId,
+      cardId: repeatedCardId,
+    }
+    persistAfterAction(action.type, applyAction(action))
+    void sendMessageRef.current?.(columnId, repeatedCardId, prompt, [])
+  }, [applyAction, persistAfterAction])
+
   const scheduleStableWakeTimerCompletion = useCallback((completedCardId: string) => {
     const previousTimer = wakeTimerCompletionTimersRef.current.get(completedCardId)
     if (previousTimer !== undefined) {
@@ -6306,6 +6344,13 @@ function App() {
               })
             : null
           const repeatedCardId = repeatLoopPlan ? createId() : null
+          const repeatLoopNeedsArchive = !repeatLoopPlan && liveCard && !isAutoCompactRun
+            ? needsArchivedRepeatLoopPrompt({
+                featureEnabled: appStateRef.current.settings.repeatLoopEnabled,
+                completionKind: donePlan.kind,
+                card: liveCard,
+              })
+            : false
           const actions: IdeAction[] = []
 
           if (donePlan.kind === 'stopped') {
@@ -6494,6 +6539,8 @@ function App() {
           dispatchNextQueuedSend(columnId, card.id)
           if (repeatLoopPlan && repeatedCardId) {
             void sendMessageRef.current?.(columnId, repeatedCardId, repeatLoopPlan.prompt, [])
+          } else if (repeatLoopNeedsArchive) {
+            void spawnRepeatLoopFromArchive(columnId, card.id)
           }
           if (completionSoundPlan.checkAllAgentsDone) {
             scheduleAllAgentsDoneSound()
@@ -6951,6 +6998,7 @@ function App() {
       })
     },
     [
+      spawnRepeatLoopFromArchive,
       applyAction,
       applyActions,
       buildWakeTimerTargetReleaseActions,
@@ -8925,6 +8973,13 @@ function App() {
             })
           : null
         const repeatedCardId = repeatLoopPlan ? createId() : null
+        const repeatLoopNeedsArchive = !repeatLoopPlan && flushedCard
+          ? needsArchivedRepeatLoopPrompt({
+              featureEnabled: appStateRef.current.settings.repeatLoopEnabled,
+              completionKind: 'terminal',
+              card: flushedCard,
+            })
+          : false
         // 事后才从 CLI 的转录确认「早就跑完了」的回合也是收尾：占用照记。挂着的压缩边界和原来
         // 一样撤掉——「压缩完成」的事件没到过这边，不能当它压成了。
         // App 自己发起的压缩到不了这里：它的续传在 onError 里就被放弃了
@@ -8974,6 +9029,8 @@ function App() {
         dispatchNextQueuedSend(columnId, cardId)
         if (repeatLoopPlan && repeatedCardId) {
           void sendMessageRef.current?.(columnId, repeatedCardId, repeatLoopPlan.prompt, [])
+        } else if (repeatLoopNeedsArchive) {
+          void spawnRepeatLoopFromArchive(columnId, cardId)
         }
         return true
       }
@@ -9173,6 +9230,7 @@ function App() {
       return false
     }
   }, [
+    spawnRepeatLoopFromArchive,
     applyAction,
     applyActions,
     attachStream,

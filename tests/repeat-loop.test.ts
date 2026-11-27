@@ -15,6 +15,7 @@ import { appSettingsSchema, type ChatCard } from '../shared/schema.ts'
 import { WEATHER_TOOL_MODEL } from '../shared/models.ts'
 import {
   getEarliestRepeatLoopPrompt,
+  needsArchivedRepeatLoopPrompt,
   resolveRepeatLoopCompletion,
 } from '../src/components/repeat-loop.ts'
 import { ideReducer, type IdeAction } from '../src/state.ts'
@@ -128,6 +129,59 @@ describe('agent repeat loop state', () => {
     ]
 
     assert.equal(getEarliestRepeatLoopPrompt(messages), '  first prompt\nwith details  ')
+  })
+
+  // 2026-11-27 用户截图：343 条的长会话重启后只留最后 300 条，首条提示进了归档 sidecar，
+  // 循环重复在窗口里找不到首条提示就静默不跑。
+  it('asks for the archived first prompt when the long card window lost it', () => {
+    const card = createCard('Long repeat source')
+    card.repeatLoopActive = true
+    card.repeatLoopRemaining = 6
+    card.messageCount = 343
+    card.messages = [
+      { id: 'assistant-1', role: 'assistant', content: 'done', createdAt: timestamp },
+    ]
+
+    assert.equal(
+      resolveRepeatLoopCompletion({ featureEnabled: true, completionKind: 'terminal', card }),
+      null,
+    )
+    assert.equal(
+      needsArchivedRepeatLoopPrompt({ featureEnabled: true, completionKind: 'terminal', card }),
+      true,
+    )
+    // 同样遵守其它门槛。
+    card.messageCount = 343
+    assert.equal(
+      needsArchivedRepeatLoopPrompt({ featureEnabled: true, completionKind: 'background-pending', card }),
+      false,
+    )
+    card.repeatLoopRemaining = 0
+    assert.equal(
+      needsArchivedRepeatLoopPrompt({ featureEnabled: true, completionKind: 'terminal', card }),
+      false,
+    )
+    // 裁过之后用户又发了一条：窗口最早的 user 不是首条，不能直接拿来重跑。
+    card.repeatLoopRemaining = 6
+    card.messages = [{ id: 'user-later', role: 'user', content: 'later follow-up', createdAt: timestamp }]
+    assert.equal(
+      resolveRepeatLoopCompletion({ featureEnabled: true, completionKind: 'terminal', card }),
+      null,
+    )
+    assert.equal(
+      needsArchivedRepeatLoopPrompt({ featureEnabled: true, completionKind: 'terminal', card }),
+      true,
+    )
+    // 没被裁过、窗口里就有首条：同步路径直接用，不翻归档。
+    card.messageCount = 1
+    assert.equal(
+      needsArchivedRepeatLoopPrompt({ featureEnabled: true, completionKind: 'terminal', card }),
+      false,
+    )
+    assert.deepEqual(
+      resolveRepeatLoopCompletion({ featureEnabled: true, completionKind: 'terminal', card }),
+      { prompt: 'later follow-up', remainingRepeats: 6 },
+    )
   })
 
   it('only schedules a clean terminal repeat after other queued continuations are exhausted', () => {

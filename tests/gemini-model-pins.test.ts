@@ -12,6 +12,13 @@ import { mergeGeminiInternalModelPins, pinGeminiInternalModels } from '../server
 //   gemini-2.5-pro / 2.5-flash / 2.5-flash-lite，不跟随 --model；中转站分组只开了卡上选的模型。
 //   一次搜索塞进 68 万字符让上下文过 50% 阈值，压缩改调 gemini-2.5-pro 被拒，整轮失败。
 
+type PinnedSettings = {
+  general: { vimMode: boolean }
+  hooks: { enabled: boolean }
+  experimental: { enableAgents: boolean; codebaseInvestigatorSettings: { model: string } }
+  modelConfigs: { customOverrides: Array<{ match: { model: string }; modelConfig: { model: string } }> }
+}
+
 const CLI_BUILT_IN_MODELS = [
   'gemini-2.5-pro',
   'gemini-2.5-flash',
@@ -29,14 +36,14 @@ test('merge redirects every CLI built-in internal model to the card model and ke
       modelConfigs: { customOverrides: [{ match: { model: 'x' }, modelConfig: { model: 'y' } }] },
     },
     'gemini-4-neon',
-  ) as Record<string, any>
+  ) as unknown as PinnedSettings
 
   assert.equal(merged.general.vimMode, true)
   assert.equal(merged.hooks.enabled, true)
   assert.equal(merged.experimental.enableAgents, true)
   assert.equal(merged.experimental.codebaseInvestigatorSettings.model, 'gemini-4-neon')
 
-  const overrides = merged.modelConfigs.customOverrides as Array<{ match: { model: string }; modelConfig: { model: string } }>
+  const overrides = merged.modelConfigs.customOverrides
   assert.deepEqual(overrides[0], { match: { model: 'x' }, modelConfig: { model: 'y' } })
   for (const builtIn of CLI_BUILT_IN_MODELS) {
     const pin = overrides.find((entry) => entry.match.model === builtIn)
@@ -46,8 +53,8 @@ test('merge redirects every CLI built-in internal model to the card model and ke
 })
 
 test('merge does not add a self-referencing pin when the card already uses a built-in model', () => {
-  const merged = mergeGeminiInternalModelPins({}, 'gemini-2.5-flash') as Record<string, any>
-  const overrides = merged.modelConfigs.customOverrides as Array<{ match: { model: string } }>
+  const merged = mergeGeminiInternalModelPins({}, 'gemini-2.5-flash') as unknown as PinnedSettings
+  const overrides = merged.modelConfigs.customOverrides
   assert.equal(overrides.some((entry) => entry.match.model === 'gemini-2.5-flash'), false)
   assert.ok(overrides.some((entry) => entry.match.model === 'gemini-2.5-pro'))
 })

@@ -270,7 +270,7 @@ export const prepareCodexSafetyRuntime = async (
 const geminiSafetyHookMatcher = '^(?:run_shell_command|write_file|replace)$'
 const geminiSafetyHookTimeoutMs = safetyHookTimeoutSec * 1000
 
-const resolveGeminiSystemSettingsPath = (env: NodeJS.ProcessEnv) => {
+export const resolveGeminiSystemSettingsPath = (env: NodeJS.ProcessEnv) => {
   const fromEnv = env.GEMINI_CLI_SYSTEM_SETTINGS_PATH?.trim()
   if (fromEnv) return fromEnv
   if (process.platform === 'darwin') return '/Library/Application Support/GeminiCli/settings.json'

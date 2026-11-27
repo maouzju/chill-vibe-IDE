@@ -128,6 +128,7 @@ import { createAsyncTtlCache } from './provider-slash-command-cache.js'
 import { loadStateForRenderer } from './state-store.js'
 import { proxyStats, type ProxyStatsEvent } from './proxy-stats-store.js'
 import type { ResilientProxyRuntimeConfig } from './resilient-proxy.js'
+import { pinGeminiInternalModels } from './gemini-model-pins.js'
 import { geminiSseProxyPool } from './gemini-sse-proxy.js'
 import { resilientProxyPool } from './resilient-proxy.js'
 import { createArchiveRecallRuntimeOverrides, getCodexArchiveRecallInstruction } from './archive-recall.js'
@@ -4366,6 +4367,14 @@ const launchGeminiRun = async (
       'env-setup',
     )
     return null
+  }
+
+  // 中转站只开了卡上选的型号；CLI 的压缩/循环检测等内部调用写死 gemini-2.5-*，要钉到同一型号
+  // （server/gemini-model-pins.ts，pitfall #497）。钉不上不拦发送，最多退回旧行为。
+  if (safetyRuntime.env.GOOGLE_GEMINI_BASE_URL?.trim()) {
+    await pinGeminiInternalModels(safetyRuntime.env, request.model).catch((error: unknown) => {
+      console.warn(`[gemini-model-pins] skipped: ${error instanceof Error ? error.message : String(error)}`)
+    })
   }
 
   const managedChild = createManagedChildHandle()

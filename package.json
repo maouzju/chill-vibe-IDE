@@ -2,7 +2,7 @@
     "name":  "chill-vibe-ide",
     "description":  "Desktop app for running many Codex, Claude, and Gemini coding agents across projects side-by-side.",
     "license":  "MIT",
-    "version":  "0.22.1",
+    "version":  "0.22.2",
     "private":  true,
     "type":  "module",
     "main":  "dist/electron/main.mjs",

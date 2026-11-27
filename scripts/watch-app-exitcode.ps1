@@ -42,6 +42,14 @@ function Get-Role($commandLine) {
 }
 
 Write-Line "[EXITWATCH-START] tracking all '$appName' processes -> $logPath"
+# 症状：2026-11-27 用户把这个窗口当成「打包卡住了」——它是常驻监视器，永不自行退出。
+# 所以启动时和每次全部进程退出后都明确提示：这不是打包/构建，可随时关闭。
+Write-Host ''
+Write-Host '  [提示] 这是 Chill Vibe 退出码监视器（常驻），不是打包进程，不会自己结束。' -ForegroundColor Yellow
+Write-Host '         它只记录进程退出原因到 logspp-exit-code.log，看完可以直接关掉本窗口。' -ForegroundColor Yellow
+Write-Host ''
+$hadTracked = $false
+try { $Host.UI.RawUI.WindowTitle = 'Chill Vibe 退出码监视器（常驻，可随时关闭）' } catch {}
 
 # pid -> @{ Proc; Role }
 $tracked = @{}
@@ -123,6 +131,12 @@ while ($true) {
             Write-Line "[EXIT] pid=$processId role=$($entry.Role) code=$code hex=$hex :: $meaning stillAlive=$survivorText"
         }
         $tracked.Remove($processId)
+    }
+
+    if ($tracked.Count -gt 0) { $hadTracked = $true }
+    elseif ($hadTracked) {
+        $hadTracked = $false
+        Write-Host '  [提示] Chill Vibe 进程已全部退出，监视器继续等待下一次启动（不是卡住）；不需要可直接关闭窗口。' -ForegroundColor Yellow
     }
 
     Start-Sleep -Milliseconds 500

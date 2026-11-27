@@ -1124,6 +1124,12 @@ const normalizePersistedCard = (
     automationBoardTemplateId: normalizeOptionalString(card.automationBoardTemplateId),
     messages: rawMessages,
     messageCount: normalizePositiveInteger(card.messageCount, rawMessages.length),
+    // 这个标记必须跨每次保存保留：窗口之后会涨过 messageCount，靠计数推断会丢失裁剪事实。
+    // 旧数据没有标记时，计数已超过窗口就说明读档前被裁过，补记一次。
+    ...(card.messageWindowTrimmed === true ||
+    normalizePositiveInteger(card.messageCount, rawMessages.length) > rawMessages.length
+      ? { messageWindowTrimmed: true }
+      : {}),
   }
 }
 
@@ -2615,6 +2621,7 @@ const preTrimOversizedMessages = (raw: unknown) => {
         if (Array.isArray(c.messages) && c.messages.length > preTrimMaxCardMessages) {
           const previousCount = typeof c.messageCount === 'number' ? c.messageCount : 0
           c.messageCount = Math.max(previousCount, c.messages.length)
+          c.messageWindowTrimmed = true
           c.messages = c.messages.slice(-preTrimMaxCardMessages)
         }
       }

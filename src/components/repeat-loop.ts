@@ -13,8 +13,9 @@ export const getEarliestRepeatLoopPrompt = (
   return firstUserPrompt?.content ?? null
 }
 
-const isRepeatLoopWindowTruncated = (card: Pick<ChatCard, 'messages' | 'messageCount'>) =>
-  (card.messageCount ?? 0) > card.messages.length
+// 持久标记优先：messageCount 读档后不随追加更新，单靠 messageCount > length 会在窗口涨过它之后失效。
+const isRepeatLoopWindowTruncated = (card: Pick<ChatCard, 'messages' | 'messageCount' | 'messageWindowTrimmed'>) =>
+  card.messageWindowTrimmed === true || (card.messageCount ?? 0) > card.messages.length
 
 type RepeatLoopCompletionInput = {
   featureEnabled: boolean

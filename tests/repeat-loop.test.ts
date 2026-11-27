@@ -69,6 +69,26 @@ describe('agent repeat loop state', () => {
     assert.equal((restoredCard as ChatCard & { repeatLoopActive?: boolean }).repeatLoopActive, true)
   })
 
+  // 审计发现（2026-11-27）：标记若不过持久化白名单，重启后长会话又会退回「计数推断」，首条丢失。
+  it('keeps the trimmed-window marker across persisted saves', async () => {
+    const { loadState, saveState } = await import('../server/state-store.ts')
+    const state = createDefaultState('D:/repeat-loop-trim')
+    const column = state.columns[0]!
+    const card = column.cards[getFirstPane(column.layout).activeTabId]!
+    Object.assign(card, {
+      messageWindowTrimmed: true,
+      messageCount: 343,
+      messages: [{ id: 'assistant-late', role: 'assistant', content: 'late reply', createdAt: timestamp }],
+    })
+
+    await saveState(state)
+    const restored = await loadState()
+    const restoredColumn = restored.columns[0]!
+    const restoredCard = restoredColumn.cards[getFirstPane(restoredColumn.layout).activeTabId]!
+
+    assert.equal((restoredCard as ChatCard & { messageWindowTrimmed?: boolean }).messageWindowTrimmed, true)
+  })
+
   it('spawns a fresh background tab without interrupting the tab where the user is typing', () => {
     const state = createDefaultState('D:/repeat-loop')
     const column = state.columns[0]!
@@ -129,6 +149,31 @@ describe('agent repeat loop state', () => {
     ]
 
     assert.equal(getEarliestRepeatLoopPrompt(messages), '  first prompt\nwith details  ')
+  })
+
+  // 审计发现（2026-11-27）：读档裁剪后 messageCount 不随追加更新，窗口涨过它之后「被裁过」的判据失效，
+  // 窗口里最早的追问会被当成首条重跑。裁剪标记必须是持久的，不能靠计数推断。
+  it('keeps the archive path after a trimmed window grows past its stored count', () => {
+    const card = createCard('Grown trimmed card')
+    card.repeatLoopActive = true
+    card.repeatLoopRemaining = 6
+    card.messageCount = 343
+    card.messageWindowTrimmed = true
+    card.messages = Array.from({ length: 350 }, (_, index) => ({
+      id: `message-${index}`,
+      role: index === 0 ? 'user' : 'assistant',
+      content: index === 0 ? 'later follow-up' : `reply ${index}`,
+      createdAt: timestamp,
+    }))
+
+    assert.equal(
+      resolveRepeatLoopCompletion({ featureEnabled: true, completionKind: 'terminal', card }),
+      null,
+    )
+    assert.equal(
+      needsArchivedRepeatLoopPrompt({ featureEnabled: true, completionKind: 'terminal', card }),
+      true,
+    )
   })
 
   // 2026-11-27 用户截图：343 条的长会话重启后只留最后 300 条，首条提示进了归档 sidecar，

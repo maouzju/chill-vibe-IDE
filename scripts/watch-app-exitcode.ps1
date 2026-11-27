@@ -46,7 +46,7 @@ Write-Line "[EXITWATCH-START] tracking all '$appName' processes -> $logPath"
 # 所以启动时和每次全部进程退出后都明确提示：这不是打包/构建，可随时关闭。
 Write-Host ''
 Write-Host '  [提示] 这是 Chill Vibe 退出码监视器（常驻），不是打包进程，不会自己结束。' -ForegroundColor Yellow
-Write-Host '         它只记录进程退出原因到 logspp-exit-code.log，看完可以直接关掉本窗口。' -ForegroundColor Yellow
+Write-Host '         它只记录进程退出原因到 logs\app-exit-code.log，看完可以直接关掉本窗口。' -ForegroundColor Yellow
 Write-Host ''
 $hadTracked = $false
 try { $Host.UI.RawUI.WindowTitle = 'Chill Vibe 退出码监视器（常驻，可随时关闭）' } catch {}

@@ -19,6 +19,10 @@ const safetyEnvironmentKeys = [
   'CHILL_VIBE_DESTRUCTIVE_COMMAND_PROTECTION_ENABLED',
   'CHILL_VIBE_OUTSIDE_WORKSPACE_WRITE_ENABLED',
   'CHILL_VIBE_ATTACK_PATTERN_PROTECTION_ENABLED',
+  'CHILL_VIBE_MEMORY_BUDGET_ENABLED',
+  'CHILL_VIBE_MEMORY_BUDGET_MIN_FREE_GB',
+  'CHILL_VIBE_MEMORY_BUDGET_MIN_COMMIT_GB',
+  'CHILL_VIBE_MEMORY_BUDGET_MAX_HEAVY_PROCESSES',
   'CHILL_VIBE_CODEX_GUARD_EXECUTABLE',
   'CHILL_VIBE_CODEX_GUARD_SCRIPT',
   'CHILL_VIBE_CODEX_SAFETY_HOOK_COMMAND',
@@ -138,10 +142,14 @@ export const prepareDestructiveCommandGuardRuntime = async (
   // 高风险命令，又想单独开这一项（2026-09-17 玩家要求默认关闭）。
   const attackPatternProtectionEnabled = request.attackPatternProtectionEnabled === true
 
+  // AI 内存预算（docs/specs/agent-memory-budget）：与上面三项独立，单独开着也要注入同一个钩子。
+  const memoryBudget = request.memoryBudget
+
   if (
     outsideWorkspaceWriteEnabled &&
     !destructiveCommandProtectionEnabled &&
-    !attackPatternProtectionEnabled
+    !attackPatternProtectionEnabled &&
+    !memoryBudget
   ) {
     return { env }
   }
@@ -166,6 +174,13 @@ export const prepareDestructiveCommandGuardRuntime = async (
     destructiveCommandProtectionEnabled ? '1' : '0'
   env.CHILL_VIBE_OUTSIDE_WORKSPACE_WRITE_ENABLED = outsideWorkspaceWriteEnabled ? '1' : '0'
   env.CHILL_VIBE_ATTACK_PATTERN_PROTECTION_ENABLED = attackPatternProtectionEnabled ? '1' : '0'
+  if (memoryBudget) {
+    // 阈值只走环境变量：钩子命令文本必须所有卡一致，否则 Codex 信任哈希互相打架（pitfall #206）。
+    env.CHILL_VIBE_MEMORY_BUDGET_ENABLED = '1'
+    env.CHILL_VIBE_MEMORY_BUDGET_MIN_FREE_GB = String(memoryBudget.minFreeGb)
+    env.CHILL_VIBE_MEMORY_BUDGET_MIN_COMMIT_GB = String(memoryBudget.minCommitGb)
+    env.CHILL_VIBE_MEMORY_BUDGET_MAX_HEAVY_PROCESSES = String(memoryBudget.maxHeavyProcesses)
+  }
   env.CHILL_VIBE_CODEX_GUARD_EXECUTABLE = process.execPath
   env.CHILL_VIBE_CODEX_GUARD_SCRIPT = guardScriptPath
 

@@ -601,7 +601,7 @@ test('Claude safety hook covers direct file writes and is injected into keepaliv
   }
   const hookGroup = settings.hooks?.PreToolUse?.[0]
   const hook = hookGroup?.hooks?.[0]
-  assert.equal(hookGroup?.matcher, 'Bash|Edit|Write|NotebookEdit')
+  assert.equal(hookGroup?.matcher, 'Bash|PowerShell|Edit|Write|NotebookEdit')
   assert.equal(hook?.type, 'command')
   assert.equal(hook?.command, process.platform === 'win32' ? 'powershell.exe' : '/bin/sh')
   assert.deepEqual(
@@ -747,7 +747,7 @@ test('Claude does not inject its unsupported Bash sandbox on native Windows', ()
   }
 
   assert.equal(settings.sandbox, undefined)
-  assert.equal(settings.hooks?.PreToolUse?.[0]?.matcher, 'Bash|Edit|Write|NotebookEdit')
+  assert.equal(settings.hooks?.PreToolUse?.[0]?.matcher, 'Bash|PowerShell|Edit|Write|NotebookEdit')
 })
 
 test('Claude launch applies and removes the shared Agent safety hook with the settings', async () => {

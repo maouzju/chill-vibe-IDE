@@ -2001,6 +2001,30 @@ body.is-card-dragging .lane-drop-zone-top {
   font-size: 0.82rem;
 }
 
+/* 分组末尾的条目，向下弹的说明会被分组卡片裁掉一截（2026-11-27 截图实测），改成向上弹。 */
+.settings-hover-detail.is-note-above .settings-hover-note {
+  top: auto;
+  bottom: calc(100% + 0.4rem);
+  transform: translateY(0.2rem);
+}
+
+.settings-hover-detail.is-note-above:hover .settings-hover-note,
+.settings-hover-detail.is-note-above:focus-within .settings-hover-note {
+  transform: translateY(0);
+}
+
+/* AI 内存预算的三个阈值并排一行；窄屏自动折行（docs/specs/agent-memory-budget）。 */
+.memory-budget-fields {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(9.5rem, 1fr));
+  gap: 0.55rem 0.7rem;
+  margin-top: 0.55rem;
+}
+
+.memory-budget-fields .settings-field + .settings-field {
+  margin-top: 0;
+}
+
 .font-preview-card {
   margin-top: 0.72rem;
   padding: 0.78rem 0.86rem;

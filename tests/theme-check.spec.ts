@@ -3280,8 +3280,18 @@ for (const theme of ['dark', 'light'] as const) {
     // 计数原为 3，但 main（eda37cf）上实测就有 4 个 checkbox —— 那笔 3 是历史遗留的
     // 陈旧计数（超管开关后加时没同步），不是本次新增开关引入的。攻形检测开关让它变 5。
     // 索引断言换成按 id 定位：新开关插在中间，.last() 这类索引依赖是静默红的温床。
-    // 浏览器控制（computer use）开关让它变 6，桌面操控开关让它变 7。
-    await expect(safetySettings.locator('input[type="checkbox"]')).toHaveCount(7)
+    // 浏览器控制（computer use）开关让它变 6，桌面操控开关让它变 7，AI 内存预算让它变 8。
+    await expect(safetySettings.locator('input[type="checkbox"]')).toHaveCount(8)
+    // AI 内存预算默认开启，三个阈值默认 8 GB / 8 GB / 8 个（docs/specs/agent-memory-budget）。
+    await expect(safetySettings.locator('input[id$="-memory-budget"]')).toBeChecked()
+    await expect(safetySettings.locator('input[id$="-memory-budget-min-free"]')).toHaveValue('8')
+    await expect(safetySettings.locator('input[id$="-memory-budget-min-commit"]')).toHaveValue('8')
+    await expect(safetySettings.locator('input[id$="-memory-budget-max-heavy"]')).toHaveValue('8')
+    await expect(safetySettings).toContainText(
+      theme === 'dark'
+        ? 'AI 内存预算：内存紧张时暂缓 Agent 的重任务'
+        : 'AI memory budget: hold heavy Agent commands when memory is low',
+    )
     // 超管默认关闭、隔离主目录默认开启 —— 原断言写的是 .first()/.last() 索引，
     // 两条都对不上实际默认值（同属上面那笔陈旧计数的遗留债）。
     await expect(safetySettings.locator('input[id$="-default-admin-access"]')).not.toBeChecked()
@@ -3325,7 +3335,7 @@ for (const theme of ['dark', 'light'] as const) {
         : 'Stop the session when an attack shape is detected',
     )
     const safetyDetails = safetySettings.locator('.settings-hover-note')
-    await expect(safetyDetails).toHaveCount(7)
+    await expect(safetyDetails).toHaveCount(8)
     await expect(safetyDetails.first()).toBeHidden()
     await safetySettings.locator('.settings-hover-detail').first().hover()
     await expect(safetyDetails.first()).toBeVisible()

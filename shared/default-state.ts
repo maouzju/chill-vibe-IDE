@@ -694,6 +694,10 @@ export const createDefaultSettings = (language: AppLanguage = defaultAppLanguage
   agentOutsideWorkspaceWriteEnabled: true,
   codexDestructiveCommandProtectionEnabled: true,
   attackPatternProtectionEnabled: false,
+  memoryBudgetEnabled: true,
+  memoryBudgetMinFreeGb: 8,
+  memoryBudgetMinCommitGb: 8,
+  memoryBudgetMaxHeavyProcesses: 8,
   defaultAdminAccess: false,
   pinNewSessionDefaults: false,
   codexIsolatedHomeEnabled: true,
@@ -988,6 +992,19 @@ export const normalizeAppSettings = (settings?: Partial<AppSettings> | null): Ap
       typeof settings?.attackPatternProtectionEnabled === 'boolean'
         ? settings.attackPatternProtectionEnabled
         : defaults.attackPatternProtectionEnabled,
+    memoryBudgetEnabled:
+      typeof settings?.memoryBudgetEnabled === 'boolean'
+        ? settings.memoryBudgetEnabled
+        : defaults.memoryBudgetEnabled,
+    memoryBudgetMinFreeGb: Math.round(
+      clampScale(settings?.memoryBudgetMinFreeGb, 0, 256, defaults.memoryBudgetMinFreeGb),
+    ),
+    memoryBudgetMinCommitGb: Math.round(
+      clampScale(settings?.memoryBudgetMinCommitGb, 0, 256, defaults.memoryBudgetMinCommitGb),
+    ),
+    memoryBudgetMaxHeavyProcesses: Math.round(
+      clampScale(settings?.memoryBudgetMaxHeavyProcesses, 1, 64, defaults.memoryBudgetMaxHeavyProcesses),
+    ),
     defaultAdminAccess: settings?.defaultAdminAccess === true,
     pinNewSessionDefaults: settings?.pinNewSessionDefaults === true,
     codexIsolatedHomeEnabled:

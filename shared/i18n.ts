@@ -185,6 +185,11 @@ type LocaleText = {
   codexDestructiveCommandProtectionLabel: string
   attackPatternProtectionLabel: string
   attackPatternProtectionNote: string
+  memoryBudgetLabel: string
+  memoryBudgetNote: string
+  memoryBudgetMinFreeLabel: string
+  memoryBudgetMinCommitLabel: string
+  memoryBudgetMaxHeavyLabel: string
   codexDestructiveCommandProtectionNote: string
   codexIsolatedHomeLabel: string
   codexIsolatedHomeNote: string
@@ -804,6 +809,12 @@ const localeTextByLanguage: Record<AppLanguage, LocaleText> = {
     attackPatternProtectionLabel: '检测到疑似攻击形状时立即中断会话',
     attackPatternProtectionNote:
       '默认关闭。开启后在每次工具调用执行前检查已知攻击形状：远程内容直接管道进解释器、base64 编码执行、计划任务/服务/自启动等持久化写入、切换 npm/pip 包源、矿池与匿名网络、即时通讯机器人回传。命中时命令不执行，且整个会话立即停止并说明情况，是否继续由你决定。这是按固定规则匹配的机械检查，只覆盖最省事的一档攻击写法；攻击者换个写法即可绕过，不构成完整防护。',
+    memoryBudgetLabel: 'AI 内存预算：内存紧张时暂缓 Agent 的重任务',
+    memoryBudgetNote:
+      '默认开启。Agent 要跑 node、pnpm、python、测试、打包、eslint 这类吃内存的命令前，先看整机：空闲内存或剩余可提交内存低于下限，或者占 200MB 以上的 node / electron / python 等大进程超过上限，这条命令就不执行，Agent 会收到当前数字和最大的几个进程，按提示等一会儿、降低并发，或先停掉它自己开的进程。git、看文件、查看和结束进程不受影响；检查本身出错时照常放行。Claude、Codex、Gemini 都生效。',
+    memoryBudgetMinFreeLabel: '最低空闲内存（GB）',
+    memoryBudgetMinCommitLabel: '最低剩余可提交内存（GB）',
+    memoryBudgetMaxHeavyLabel: '大进程上限（个）',
     codexIsolatedHomeLabel: '使用隔离的 Codex Agent 主目录',
     codexIsolatedHomeNote:
       '默认开启。在 Windows 隔离 USERPROFILE 和 PowerShell 的 $HOME；其他平台隔离 HOME，降低主目录变量展开错误的风险。Codex 登录、配置及 Windows Git 全局配置仍沿用原位置。它不能隔离绝对路径或任意外部程序，需与上方命令防护配合。',
@@ -1471,6 +1482,12 @@ const localeTextByLanguage: Record<AppLanguage, LocaleText> = {
     attackPatternProtectionLabel: 'Stop the session when an attack shape is detected',
     attackPatternProtectionNote:
       'Off by default. When enabled, every tool call is checked before execution for known attack shapes: remote content piped straight into an interpreter, base64-encoded execution, persistence writes (scheduled tasks, services, auto-start), package registry switches, mining pools and anonymity networks, and chat-bot data exfiltration. On a hit the command does not run and the whole session stops with an explanation; whether to continue is your call. This is a fixed-rule mechanical check covering the laziest tier of attack writing only, so a different phrasing walks past it.',
+    memoryBudgetLabel: 'AI memory budget: hold heavy Agent commands when memory is low',
+    memoryBudgetNote:
+      'On by default. Before an Agent runs a memory-hungry command (node, pnpm, python, tests, builds, eslint…), the whole machine is checked. If free memory or remaining commit memory is below the limit, or too many large node / electron / python processes (200 MB or more) are running, the command does not run. The Agent gets the current numbers and the biggest processes, and is told to wait, lower its parallelism, or stop processes it started itself. git, reading files, and listing or stopping processes are never held. If the check itself fails, the command runs. Applies to Claude, Codex and Gemini.',
+    memoryBudgetMinFreeLabel: 'Min free memory (GB)',
+    memoryBudgetMinCommitLabel: 'Min commit memory left (GB)',
+    memoryBudgetMaxHeavyLabel: 'Max large processes',
     codexIsolatedHomeLabel: 'Use an isolated Codex Agent home',
     codexIsolatedHomeNote:
       'On by default. Windows isolates USERPROFILE and PowerShell $HOME while other platforms isolate HOME, reducing damage from home-variable expansion mistakes. Codex login/configuration and Windows Git global config stay in their original location. Absolute paths and arbitrary external programs are not isolated, so keep the command guard above enabled too.',

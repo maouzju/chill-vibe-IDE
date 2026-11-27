@@ -7,9 +7,17 @@ import {
   detectAttackPatterns,
   formatAttackPatternReason,
 } from './attack-pattern-rules.js'
+import {
+  evaluateMemoryBudget,
+  isHeavyShellCommand,
+  probeSystemMemory,
+  readMemoryBudgetFromEnv,
+} from './memory-budget-guard.js'
 
 // Gemini CLI 的工具名：run_shell_command / write_file / replace（2026-11-20 补，否则 Gemini 卡整个绕过防护）。
-const shellToolPattern = /^(?:Bash|shell|shell_command|exec_command|write_stdin|run_shell_command)$/i
+// Claude Code 在 Windows 上另有原生 PowerShell 工具（CLI 2.1.322 默认启用），2026-11-27 前钩子 matcher
+// 与这里都不认它，Claude 卡改用 PowerShell 工具就整个绕过防护（与上面 Gemini 同根因）。
+const shellToolPattern = /^(?:Bash|PowerShell|shell|shell_command|exec_command|write_stdin|run_shell_command)$/i
 const directWriteToolPattern = /^(?:apply_patch|Edit|Write|NotebookEdit|write_file|replace)$/i
 const pythonRmtreePattern = /\bshutil\.rmtree\s*\(/i
 const nodeRecursiveDeletePattern = /\b(?:fs\.)?(?:rm|rmSync)\s*\([^)]*recursive\s*:\s*true/is
@@ -999,10 +1007,48 @@ export const destructiveCommandExitCode = 2
 // 失配、拦截功能无声消失。哨兵不含非 ASCII 字符，任何单字节编码下都原样存活。
 export const attackPatternStderrMarker = 'CHILL_VIBE_ATTACK_PATTERN_BLOCK'
 
-const evaluateToolUse = (input) => {
+/** 子命令段（已展开 bash -c / powershell -Command / cmd /c 等包装层）里是否有会启动重任务的命令。 */
+export const isHeavyShellToolCommand = (command) => {
+  const normalized = normalizeCommand(command)
+  if (!normalized) {
+    return false
+  }
+  return isHeavyShellCommand([...new Set(analyzeShellText(normalized).segments)])
+}
+
+// AI 内存预算（docs/specs/agent-memory-budget）：只在攻形 / 危险命令 / 越界写都放行后才检查。
+// 与上面的防护相反，这里一律 fail-open —— 探测超时、出错都放行，绝不能因为测内存把 agent 卡死。
+const assessMemoryBudgetForToolUse = async (input, env, probeMemory) => {
+  const budget = readMemoryBudgetFromEnv(env)
+  if (!budget) {
+    return null
+  }
+  const toolName = typeof input?.tool_name === 'string' ? input.tool_name : ''
+  if (!shellToolPattern.test(toolName) || /^write_stdin$/i.test(toolName)) {
+    return null
+  }
+  try {
+    if (!isHeavyShellToolCommand(input?.tool_input?.command)) {
+      return null
+    }
+    const snapshot = await probeMemory({ budget })
+    if (!snapshot) {
+      return null
+    }
+    const verdict = evaluateMemoryBudget(snapshot, budget)
+    return verdict.allowed ? null : { exitCode: memoryBudgetExitCode, reason: verdict.reason, raw: true }
+  } catch {
+    return null
+  }
+}
+
+export const memoryBudgetExitCode = 2
+
+export const evaluateToolUse = async (input, options = {}) => {
+  const env = options.env ?? process.env
   const attackPatternsEnabled = resolveBooleanSetting(
     undefined,
-    process.env.CHILL_VIBE_ATTACK_PATTERN_PROTECTION_ENABLED,
+    env.CHILL_VIBE_ATTACK_PATTERN_PROTECTION_ENABLED,
     false,
   )
   if (attackPatternsEnabled) {
@@ -1022,24 +1068,51 @@ const evaluateToolUse = (input) => {
     }
   }
 
-  const result = assessCodexToolUse(input)
-  if (result.allowed) {
-    return null
+  const result = assessCodexToolUse(
+    input,
+    options.env
+      ? {
+          destructiveCommandProtectionEnabled: resolveBooleanSetting(
+            undefined,
+            env.CHILL_VIBE_DESTRUCTIVE_COMMAND_PROTECTION_ENABLED,
+            true,
+          ),
+          outsideWorkspaceWriteEnabled: resolveBooleanSetting(
+            undefined,
+            env.CHILL_VIBE_OUTSIDE_WORKSPACE_WRITE_ENABLED,
+            true,
+          ),
+        }
+      : {},
+  )
+  if (!result.allowed) {
+    return {
+      exitCode: destructiveCommandExitCode,
+      reason: result.reason ?? '已阻止高风险操作。',
+    }
   }
-  return {
-    exitCode: destructiveCommandExitCode,
-    reason: result.reason ?? '已阻止高风险操作。',
-  }
+
+  return assessMemoryBudgetForToolUse(input, env, options.probeMemory ?? probeSystemMemory)
 }
 
 const runCli = async () => {
+  let input
   try {
-    const input = JSON.parse(await readStdin())
-    const verdict = evaluateToolUse(input)
+    input = JSON.parse(await readStdin())
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    process.stderr.write(`Chill Vibe 安全防护无法解析命令，已失败关闭：${message}
+`)
+    process.exitCode = destructiveCommandExitCode
+    return
+  }
+  try {
+    const verdict = await evaluateToolUse(input)
     if (!verdict) {
       return
     }
-    process.stderr.write(`Chill Vibe 安全防护：${verdict.reason}
+    process.stderr.write(verdict.raw ? `${verdict.reason}
+` : `Chill Vibe 安全防护：${verdict.reason}
 `)
     process.exitCode = verdict.exitCode
   } catch (error) {

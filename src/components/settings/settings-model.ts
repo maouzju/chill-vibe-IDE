@@ -269,7 +269,7 @@ export const settingsItemCatalog: readonly SettingsItemMeta[] = [
       'Limits which folders the agent may write, whether it can run destructive commands, and whether it may drive a browser.',
     ),
     keywords: [
-      'safety', '安全', 'sandbox', '沙箱', 'policy', '策略', 'admin', '超管', 'destructive', 'computer use', '浏览器', 'browser', 'isolated', '隔离', 'workspace', 'permission', '权限',
+      'safety', '安全', 'sandbox', '沙箱', 'policy', '策略', 'admin', '超管', 'destructive', 'computer use', '浏览器', 'browser', 'isolated', '隔离', 'workspace', 'permission', '权限', 'memory', '内存', 'budget', '预算',
     ],
   },
 

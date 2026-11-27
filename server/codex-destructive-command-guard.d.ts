@@ -31,3 +31,20 @@ export function assessCodexToolUse(
 export const attackPatternExitCode: number
 export const destructiveCommandExitCode: number
 export const attackPatternStderrMarker: string
+export const memoryBudgetExitCode: number
+
+export function isHeavyShellToolCommand(command: unknown): boolean
+
+export type GuardVerdict = {
+  exitCode: number
+  reason: string
+  raw?: boolean
+}
+
+export function evaluateToolUse(
+  input: CodexPreToolUseInput,
+  options?: {
+    env?: NodeJS.ProcessEnv | Record<string, string | undefined>
+    probeMemory?: (options: { budget: import('./memory-budget-guard.js').MemoryBudget }) => Promise<import('./memory-budget-guard.js').MemorySnapshot | null>
+  },
+): Promise<GuardVerdict | null>

@@ -4696,6 +4696,8 @@ export const buildClaudeKeepaliveSignature = (
     outsideWorkspaceWrite: request.agentOutsideWorkspaceWriteEnabled !== false,
     destructiveCommandProtection: request.codexDestructiveCommandProtectionEnabled === true,
     attackPatternProtection: request.attackPatternProtectionEnabled === true,
+    // 内存预算阈值经 env 只在 spawn 时交给钩子；不签它，改了阈值的常驻进程仍按旧值拦。
+    memoryBudget: request.memoryBudget ?? null,
     safetyHookCommand: safetyHookCommand ?? '',
     completionBoundaryHook: completionBoundaryHook ?? null,
   })
@@ -5329,7 +5331,8 @@ export const buildClaudeArgs = (
   const safetyHookCommand = (
     request.codexDestructiveCommandProtectionEnabled === true ||
     outsideWorkspaceWriteRestricted ||
-    request.attackPatternProtectionEnabled === true
+    request.attackPatternProtectionEnabled === true ||
+    Boolean(request.memoryBudget)
   )
     ? options?.safetyHookCommand
     : undefined
@@ -5428,7 +5431,8 @@ export const buildClaudeArgs = (
                 ? {
                     PreToolUse: [
                       {
-                        matcher: 'Bash|Edit|Write|NotebookEdit',
+                        // PowerShell：Windows 上 Claude Code 的原生 shell 工具，漏掉它等于整个绕过守卫（2026-11-27）。
+                        matcher: 'Bash|PowerShell|Edit|Write|NotebookEdit',
                         hooks: [
                           {
                             type: 'command',

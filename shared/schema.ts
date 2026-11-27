@@ -937,6 +937,11 @@ export const appSettingsSchema = z.object({
   agentOutsideWorkspaceWriteEnabled: z.boolean().default(true),
   codexDestructiveCommandProtectionEnabled: z.boolean().default(true),
   attackPatternProtectionEnabled: z.boolean().default(false),
+  // AI 内存预算（docs/specs/agent-memory-budget）：agent 跑重任务 shell 命令前检查整机资源，超标拒绝。默认开。
+  memoryBudgetEnabled: z.boolean().default(true),
+  memoryBudgetMinFreeGb: z.number().finite().min(0).max(256).default(8),
+  memoryBudgetMinCommitGb: z.number().finite().min(0).max(256).default(8),
+  memoryBudgetMaxHeavyProcesses: z.number().int().min(1).max(64).default(8),
   codexIsolatedHomeEnabled: z.boolean().default(true),
   // 允许 Agent 使用浏览器（computer use）。默认关：会以用户身份操作已登录网站。
   computerUseEnabled: z.boolean().default(false),
@@ -1255,6 +1260,10 @@ export const appStateSchema = z.object({
     agentOutsideWorkspaceWriteEnabled: true,
     codexDestructiveCommandProtectionEnabled: true,
     attackPatternProtectionEnabled: false,
+    memoryBudgetEnabled: true,
+    memoryBudgetMinFreeGb: 8,
+    memoryBudgetMinCommitGb: 8,
+    memoryBudgetMaxHeavyProcesses: 8,
     codexIsolatedHomeEnabled: true,
     computerUseEnabled: false,
     desktopControlEnabled: false,
@@ -1516,6 +1525,15 @@ export const chatRequestSchema = z.object({
   codexDestructiveCommandProtectionEnabled: z.boolean().default(true),
   attackPatternProtectionEnabled: z.boolean().default(false),
   codexIsolatedHomeEnabled: z.boolean().default(true),
+  // AI 内存预算（docs/specs/agent-memory-budget）：只在设置开启时带；省略 = 关闭。
+  // 阈值经环境变量交给 PreToolUse 钩子，钩子命令文本保持各卡一致（pitfall #206）。
+  memoryBudget: z
+    .object({
+      minFreeGb: z.number().finite().min(0).max(256),
+      minCommitGb: z.number().finite().min(0).max(256),
+      maxHeavyProcesses: z.number().int().min(1).max(64),
+    })
+    .optional(),
   // 这一回合是否注入浏览器控制 MCP（两条 provider 共用，见 docs/specs/computer-use-toggle）。
   // optional 而非 default(false)：renderer 侧 ChatRequest 是输出类型，default 会让所有
   // 请求构造点（Brainstorm / Git Agent / 白噪音…）都被迫补这个字段；服务端只认 === true。

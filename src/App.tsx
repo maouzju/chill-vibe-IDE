@@ -899,8 +899,16 @@ function App() {
         appState.settings.codexDestructiveCommandProtectionEnabled,
       attackPatternProtectionEnabled: appState.settings.attackPatternProtectionEnabled,
       codexIsolatedHomeEnabled: appState.settings.codexIsolatedHomeEnabled,
+      memoryBudgetEnabled: appState.settings.memoryBudgetEnabled,
+      memoryBudgetMinFreeGb: appState.settings.memoryBudgetMinFreeGb,
+      memoryBudgetMinCommitGb: appState.settings.memoryBudgetMinCommitGb,
+      memoryBudgetMaxHeavyProcesses: appState.settings.memoryBudgetMaxHeavyProcesses,
     }),
     [
+      appState.settings.memoryBudgetEnabled,
+      appState.settings.memoryBudgetMinFreeGb,
+      appState.settings.memoryBudgetMinCommitGb,
+      appState.settings.memoryBudgetMaxHeavyProcesses,
       appState.settings.agentOutsideWorkspaceWriteEnabled,
       appState.settings.codexDestructiveCommandProtectionEnabled,
       appState.settings.attackPatternProtectionEnabled,
@@ -10420,6 +10428,68 @@ function App() {
           {text.desktopControlNote}
         </p>
       </div>
+
+      <div className="settings-hover-detail is-note-above">
+        <label className="settings-toggle" htmlFor={`${idPrefix}-memory-budget`}>
+          <span>{text.memoryBudgetLabel}</span>
+          <input
+            id={`${idPrefix}-memory-budget`}
+            type="checkbox"
+            aria-describedby={`${idPrefix}-memory-budget-note`}
+            checked={appState.settings.memoryBudgetEnabled}
+            onChange={(event) =>
+              applyAction({
+                type: 'updateSettings',
+                patch: { memoryBudgetEnabled: event.target.checked },
+              })
+            }
+          />
+        </label>
+        <p
+          id={`${idPrefix}-memory-budget-note`}
+          className="settings-note settings-hover-note"
+          role="tooltip"
+        >
+          {text.memoryBudgetNote}
+        </p>
+      </div>
+      {appState.settings.memoryBudgetEnabled ? (
+        <div className="memory-budget-fields">
+          {(
+            [
+              ['min-free', 'memoryBudgetMinFreeGb', text.memoryBudgetMinFreeLabel, 0, 256],
+              ['min-commit', 'memoryBudgetMinCommitGb', text.memoryBudgetMinCommitLabel, 0, 256],
+              ['max-heavy', 'memoryBudgetMaxHeavyProcesses', text.memoryBudgetMaxHeavyLabel, 1, 64],
+            ] as const
+          ).map(([suffix, key, label, min, max]) => (
+            <label className="settings-field" htmlFor={`${idPrefix}-memory-budget-${suffix}`} key={key}>
+              <span>{label}</span>
+              <input
+                id={`${idPrefix}-memory-budget-${suffix}`}
+                className="control settings-input"
+                type="number"
+                inputMode="numeric"
+                min={min}
+                max={max}
+                step={1}
+                value={appState.settings[key]}
+                onChange={(event) => {
+                  const next = Number(event.target.value)
+                  if (event.target.value.trim() === '' || !Number.isFinite(next)) {
+                    return
+                  }
+                  applyAction({
+                    type: 'updateSettings',
+                    patch: { [key]: Math.round(Math.min(max, Math.max(min, next))) } as {
+                      [K in typeof key]?: number
+                    },
+                  })
+                }}
+              />
+            </label>
+          ))}
+        </div>
+      ) : null}
     </div>
   )
 

@@ -69,14 +69,14 @@ test('pin writes a derived system settings layer on top of the current one and p
     await writeFile(currentSettings, JSON.stringify({ hooks: { enabled: true, BeforeTool: [{ matcher: 'm' }] } }))
     const env: NodeJS.ProcessEnv = {
       GEMINI_CLI_SYSTEM_SETTINGS_PATH: currentSettings,
-      GEMINI_CLI_SYSTEM_DEFAULTS_PATH: 'C:/orig/system-defaults.json',
+      GEMINI_CLI_SYSTEM_DEFAULTS_PATH: 'orig/system-defaults.json',
     }
 
     await pinGeminiInternalModels(env, 'gemini-4-neon')
 
     assert.ok(env.GEMINI_CLI_SYSTEM_SETTINGS_PATH)
     assert.notEqual(path.resolve(env.GEMINI_CLI_SYSTEM_SETTINGS_PATH!), path.resolve(currentSettings))
-    assert.equal(env.GEMINI_CLI_SYSTEM_DEFAULTS_PATH, 'C:/orig/system-defaults.json')
+    assert.equal(env.GEMINI_CLI_SYSTEM_DEFAULTS_PATH, 'orig/system-defaults.json')
     const written = JSON.parse(await readFile(env.GEMINI_CLI_SYSTEM_SETTINGS_PATH!, 'utf8'))
     assert.deepEqual(written.hooks.BeforeTool, [{ matcher: 'm' }])
     assert.ok(

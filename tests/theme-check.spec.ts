@@ -401,6 +401,49 @@ test.describe('agent run duration summary', () => {
   }
 })
 
+// docs/specs/agent-declared-pending：agent 用 <chill-vibe-pending> 声明「未完成」后，
+// 输入框上方出状态条、tab 保持运行态、正文里的标记不外露。
+const createAgentPendingState = (theme: 'dark' | 'light'): AppState => {
+  const state = createRunDurationSummaryState(theme)
+  const card = state.columns[0]!.cards[0]!
+  card.messages = [
+    card.messages[0]!,
+    {
+      id: 'pending-assistant-1',
+      role: 'assistant',
+      content: '打包已经在后台跑起来了，大约 20 分钟。\n\n<chill-vibe-pending minutes="20">等 Windows 打包产出 zip</chill-vibe-pending>',
+      createdAt: '2026-07-19T12:00:04.000Z',
+    },
+  ]
+  card.backgroundWorkPending = true
+  card.agentPendingReason = '等 Windows 打包产出 zip'
+  card.agentPendingUntil = '2099-07-19T04:20:00.000Z'
+  return state
+}
+
+test.describe('agent declared pending strip', () => {
+  test.use({ timezoneId: 'Asia/Shanghai' })
+  for (const theme of ['dark', 'light'] as const) {
+    test(`shows the waiting reason in ${theme} theme`, async ({ page }) => {
+      await mockAppApis(page, { state: createAgentPendingState(theme) })
+      await page.setViewportSize({ width: 900, height: 720 })
+      await page.goto(appUrl)
+
+      const strip = page.locator('.composer-agent-pending')
+      await expect(strip).toContainText('后台未完成：等 Windows 打包产出 zip · 12:20 自查')
+      await expect(strip.getByRole('button', { name: '立即自查' })).toBeVisible()
+      await expect(strip.getByRole('button', { name: '标为已完成' })).toBeVisible()
+      await expect(page.locator('.message-bubble, .message').filter({ hasText: '打包已经在后台跑起来了' }).first()).not.toContainText('chill-vibe-pending')
+      await expect(page.getByText('<chill-vibe-pending', { exact: false })).toHaveCount(0)
+      await expect(page.locator('.pane-tab.is-streaming')).toHaveCount(1)
+      await expect(strip).toHaveScreenshot(`agent-pending-strip-${theme}.png`, {
+        animations: 'disabled',
+        caret: 'hide',
+      })
+    })
+  }
+})
+
 // docs/specs/context-usage-auto-compact：输入框旁的上下文占用圆环。回合之间读的是记在对话里的数字，
 // 三档颜色跟着自动压缩阈值走（默认 80%：到它的 7/8 即 70% 开始提醒，到 80% 换危险色）。
 const createContextUsageState = (theme: 'dark' | 'light', used: number): AppState => {

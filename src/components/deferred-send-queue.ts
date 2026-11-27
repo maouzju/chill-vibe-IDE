@@ -13,6 +13,8 @@ export type SendMessageOrigin =
   | 'wake-timer-release'
   | 'workflow-failure-wake'
   | 'auto-compact'
+  // agent 用 <chill-vibe-pending> 声明未完成后，到点由 App 发的自查（docs/specs/agent-declared-pending）。
+  | 'agent-pending-checkin'
 
 export type SendMessageOptions = {
   mode?: SendMessageMode

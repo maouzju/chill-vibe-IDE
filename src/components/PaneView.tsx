@@ -67,6 +67,7 @@ import {
 import type { GitAgentSessionHandle, GitAgentSessionRequest } from './git-operation-hub'
 import { getPaneTabIcon } from './pane-tab-icon'
 import type { SubagentTabSummary } from './subagent-cross-column-navigation'
+import { isAgentDeclaredPending } from '../../shared/agent-pending-marker'
 
 type DropEdge = 'left' | 'right' | 'top' | 'bottom'
 type DropPlacement = 'before' | 'after'
@@ -1337,6 +1338,7 @@ const PaneViewView = ({
             const isStreaming =
               card.status === 'streaming' ||
               (card.status === 'idle' && hasRunningSubagentsCached(card.messages)) ||
+              (card.status === 'idle' && isAgentDeclaredPending(card)) ||
               automationBoardHasActiveRun(getAutomationBoard(card), column.cards)
             const isBeforeActive = pane.tabs[index + 1] === pane.activeTabId
             const tabClassName = [

@@ -8,6 +8,7 @@ import {
   type QueuedSendRequest,
   type WakeTimerMode,
 } from '../../shared/schema'
+import { isAgentDeclaredPending } from '../../shared/agent-pending-marker'
 import { getQueuedSendPreview } from './deferred-send-queue'
 import { hasRunningSubagentsCached } from './layout-memoization'
 import type { SendMessageMode, SendMessageOrigin } from './deferred-send-queue'
@@ -191,8 +192,11 @@ export const shouldConfirmWakeTimerCompletion = ({
  *   owner 自己的 backgroundWorkPending 不走这里，仍按原样挡自己。
  */
 export const isWakeTimerPeerBackgroundBusy = (
-  card: Pick<ChatCard, 'messages'> & { backgroundWorkPending?: boolean },
-) => card.backgroundWorkPending === true && hasRunningSubagentsCached(card.messages)
+  card: Pick<ChatCard, 'messages'> & { backgroundWorkPending?: boolean; agentPendingUntil?: string },
+) =>
+  card.backgroundWorkPending === true &&
+  // agent 用 <chill-vibe-pending> 显式说了「还没做完」：有上界（到点自查），tab 也在呼吸，算忙。
+  (hasRunningSubagentsCached(card.messages) || isAgentDeclaredPending(card))
 
 export type WakeTimerCardSnapshot = {
   id: string

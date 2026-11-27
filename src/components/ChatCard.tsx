@@ -17,6 +17,7 @@ import {
   providerSupportsImageAttachments,
 } from '../../shared/chat-attachments'
 import { parseImageAttachmentsFromClipboardHtml } from '../../shared/image-attachment-clipboard'
+import { buildAgentPendingCheckInPrompt, isAgentDeclaredPending } from '../../shared/agent-pending-marker'
 import {
   getLocaleText,
   getSlashCommandSourceLabel,
@@ -505,6 +506,7 @@ type ChatCardProps = {
         | 'adminAccess'
         | 'ultracode'
         | 'reasoningEffort'
+        | 'backgroundWorkPending'
       >
     >,
   ) => void
@@ -4595,6 +4597,22 @@ const ChatCardView = ({
       : wakeTimerEnabled
         ? `${text.sendMessage} \u00b7 ${language === 'en' ? 'Right-click holds the message for a scheduled wake instead of sending now.' : '\u53f3\u952e\u6539\u4e3a\u8ba1\u5212\u5524\u9192\uff1a\u5148\u6512\u7740\uff0c\u6ee1\u8db3\u5524\u9192\u6761\u4ef6\u518d\u53d1\u3002'}`
         : `${text.sendMessage} \u00b7 ${language === 'en' ? 'Right-click sends later if an answer is running.' : '\u5982\u679c\u6b63\u5728\u56de\u7b54\uff0c\u53f3\u952e\u4f1a\u5ef6\u540e\u53d1\u9001\u3002'}`
+  // agent 用 <chill-vibe-pending> 声明了「还没做完」：告诉用户在等什么、几点自查（docs/specs/agent-declared-pending）。
+  const agentPendingText =
+    card.status === 'idle' && isAgentDeclaredPending(card)
+      ? text.agentPendingStatus(
+          card.agentPendingReason ?? '',
+          new Date(card.agentPendingUntil!).toLocaleTimeString(language, { hour: '2-digit', minute: '2-digit' }),
+        )
+      : ''
+  const handleAgentPendingCheckInNow = () => {
+    void onSend(buildAgentPendingCheckInPrompt(card.agentPendingReason ?? '', language), [], {
+      origin: 'agent-pending-checkin',
+    })
+  }
+  const handleAgentPendingMarkDone = () => {
+    onPatchCard({ backgroundWorkPending: false })
+  }
   const queuedSendText = queuedSendSummary
     ? text.queuedSendSummary(
         queuedSendSummary.count,
@@ -5190,6 +5208,31 @@ const ChatCardView = ({
                   onWakeNow={onWakeTimerBatchNow}
                   onCancel={handleCancelWakeTimerBatch}
                 />
+              ) : null}
+
+              {agentPendingText ? (
+                <div
+                  className="composer-queued-send composer-agent-pending"
+                  role="status"
+                  title={agentPendingText}
+                >
+                  <span className="composer-agent-pending-dot" aria-hidden="true" />
+                  <span className="composer-queued-send-text">{agentPendingText}</span>
+                  <button
+                    type="button"
+                    className="composer-queued-send-action"
+                    onClick={handleAgentPendingCheckInNow}
+                  >
+                    {text.agentPendingCheckInNow}
+                  </button>
+                  <button
+                    type="button"
+                    className="composer-queued-send-action"
+                    onClick={handleAgentPendingMarkDone}
+                  >
+                    {text.agentPendingMarkDone}
+                  </button>
+                </div>
               ) : null}
 
               {queuedSendSummary ? (

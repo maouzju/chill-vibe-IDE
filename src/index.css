@@ -18103,3 +18103,28 @@ body.is-col-resizing .automation-board-lane-resize-handle::after {
 .routing-provider-toggle-row > .settings-group-title {
   margin: 0;
 }
+
+/* agent 用 <chill-vibe-pending> 声明「未完成」时的状态条，复用延后消息条的骨架。 */
+.composer-agent-pending {
+  border-color: var(--accent-line);
+}
+
+.composer-agent-pending-dot {
+  flex: 0 0 auto;
+  width: 0.42rem;
+  height: 0.42rem;
+  border-radius: 999px;
+  background: var(--accent);
+  animation: composer-agent-pending-pulse 1.8s ease-in-out infinite;
+}
+
+@keyframes composer-agent-pending-pulse {
+  0%, 100% { opacity: 0.35; }
+  50% { opacity: 1; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .composer-agent-pending-dot {
+    animation: none;
+  }
+}

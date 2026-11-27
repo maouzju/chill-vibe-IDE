@@ -76,6 +76,7 @@ import type {
 } from '../shared/schema'
 import { isDuplicateTrailingErrorMessage, stripConsecutiveDuplicateErrorMessages } from './fallback-retry'
 import { automationBoardRequirementMaxChars, defaultAutoUrgeProfileId } from '../shared/schema'
+import { isAgentDeclaredPending } from '../shared/agent-pending-marker'
 
 type Placement = 'before' | 'after'
 
@@ -174,9 +175,11 @@ export const selectDockedColumnStatus = (
     //   和"看板 running 道有活卡"（PaneView isStreaming），两处判据分了叉。
     // 被否决的替代: 认 backgroundWorkPending —— 它没有上界（会粘住），tab 也不认它；
     //   chip 必须与 tab 同判据，否则展开后 tab 不亮、chip 却在呼吸。
+    // agent 显式声明的「未完成」有上界（到点自查），不会像原生 backgroundWorkPending 那样粘住。
     const cardRunning =
       card.status === 'streaming' ||
       (card.status === 'idle' && hasRunningSubagentsCached(card.messages)) ||
+      (card.status === 'idle' && isAgentDeclaredPending(card)) ||
       automationBoardHasActiveRun(getAutomationBoard(card), column.cards)
     if (cardRunning) running = true
     // 症状（2026-09-10）: 收起的列偶尔亮"有新结果"，拖回来却没有没看过的回答。
@@ -609,6 +612,8 @@ export type IdeAction =
           | 'unread'
           | 'completionGlow'
           | 'backgroundWorkPending'
+          | 'agentPendingReason'
+          | 'agentPendingUntil'
           | 'stickyNote'
           | 'stickyNoteId'
           | 'stickyNoteViewState'
@@ -1478,10 +1483,25 @@ const updateCard = (
       ...column,
       cards: {
         ...column.cards,
-        [cardId]: updater(current),
+        [cardId]: dropStaleAgentPendingDeclaration(updater(current)),
       },
     }
   })
+
+// agent 声明的「未完成」只能挂在 backgroundWorkPending 上：~20 处结算路径都只写
+// backgroundWorkPending: false，在这里统一带走声明字段，免得 tab 一直呼吸。
+const dropStaleAgentPendingDeclaration = (card: ChatCard): ChatCard => {
+  if (
+    card.backgroundWorkPending === true ||
+    (card.agentPendingReason === undefined && card.agentPendingUntil === undefined)
+  ) {
+    return card
+  }
+  const next = { ...card }
+  delete next.agentPendingReason
+  delete next.agentPendingUntil
+  return next
+}
 
 const clearPmLinksForCardId = (state: AppState, removedCardId: string) => ({
   ...state,

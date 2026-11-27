@@ -1,6 +1,7 @@
 import type { ComponentProps, CSSProperties, ReactNode } from 'react'
 import { createContext, useContext } from 'react'
 import ReactMarkdown, { defaultUrlTransform } from 'react-markdown'
+import { stripAgentPendingMarkers } from '../../shared/agent-pending-marker'
 import remarkGfm from 'remark-gfm'
 
 import type { AppLanguage, ChatMessage, StreamEditedFile } from '../../shared/schema'
@@ -1186,7 +1187,8 @@ const renderPlainMarkdown = (content: string, workspacePath: string | undefined,
 export const stripLeakedClaudeToolXmlFromMarkdown = stripLeakedClaudeToolXml
 
 export const renderMarkdown = (content: string, workspacePath?: string) => {
-  const safeContent = stripLeakedClaudeToolXmlFromMarkdown(content)
+  // <chill-vibe-pending> 是给 Chill Vibe 看的「未完成」标记，状态条已经展示了，正文里藏起来。
+  const safeContent = stripAgentPendingMarkers(stripLeakedClaudeToolXmlFromMarkdown(content))
   const chunks = splitMarkdownAndSafeHtmlTables(safeContent)
 
   if (chunks.length === 1 && chunks[0]?.kind === 'markdown') {

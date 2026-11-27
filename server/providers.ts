@@ -118,6 +118,7 @@ import {
 import { extractBlockedSensitiveWords, isSensitiveWordRejection } from '../shared/sensitive-word-rejection.js'
 import { resolveProviderCommandLaunch } from './provider-command-launch.js'
 import { buildGeminiArgs, buildGeminiPrompt, createGeminiStreamParser } from './gemini-runtime.js'
+import { buildAgentPendingInstruction } from '../shared/agent-pending-marker.js'
 import {
   discoverProviderSkills,
   getReusableSkillProviders,
@@ -407,6 +408,12 @@ const getClaudeBackgroundCheckInInstruction = (language: AppLanguage) =>
   normalizeLanguage(language) === 'en'
     ? 'Background check-in: when you launch a Workflow or a background Agent that may run longer than about 10 minutes, also arm a recurring safety-net self check-in with CronCreate every 3 hours (not more often — it only guards against extreme cases such as a run that hangs for hours; Chill Vibe separately wakes you when Workflow sub-agents keep dying of catastrophic errors such as 429 / overloaded / timeouts). On each check-in, inspect progress (task output, the workflow journal/agent transcripts) and act: if most branches have failed or agents have produced nothing for a long time (429 / overloaded / timeouts), stop it with TaskStop and tell the user what failed instead of waiting for a degraded result; otherwise end the turn quietly. Call CronDelete as soon as the background work finishes or is stopped.'
     : '后台自查闹钟：当你发起可能跑超过约 10 分钟的 Workflow 或后台 Agent 时，同时用 CronCreate 给自己定一个每 3 小时一次的兜底自查闹钟（不要更频繁——它只防极端情况，比如一跑几个小时挂死；Workflow 子 agent 接连撞上 429 / 过载 / 超时这类灾难性错误时 Chill Vibe 另会叫醒你）。每次被唤醒时查看进度（任务输出、workflow 的 journal / 子 agent 转录）并处理：如果大部分分支已失败，或子 agent 长时间零输出（429 / 过载 / 超时），就用 TaskStop 停掉并告诉用户哪里失败了，不要干等残缺结果；否则安静结束本轮。后台工作结束或被停止后立刻用 CronDelete 删掉闹钟。'
+
+// Gemini 只在新会话首回合把系统提示包进 <system_instructions>；「未完成标记」约定跟着一起进。
+export const buildGeminiSystemPrompt = (request: Pick<ChatRequest, 'systemPrompt' | 'language'>) =>
+  [request.systemPrompt.trim(), buildAgentPendingInstruction(normalizeLanguage(request.language))]
+    .filter(Boolean)
+    .join('\n\n')
 
 // 超管 create_session 的候选目录：读不到设置就不带（旧行为），绝不让超管回合因此失败。
 const resolveWorkspaceAdminModelCatalog = async () => {
@@ -2141,6 +2148,7 @@ export const buildCodexAppServerBaseInstructions = (request: ChatRequest) =>
     buildProviderSystemPrompt(request.language, request.systemPrompt),
     getCodexAskUserQuestionInstruction(request.language),
     getCodexSubagentModelInstruction(request.language),
+    buildAgentPendingInstruction(normalizeLanguage(request.language)),
     getWindowsShellSafetyInstruction(),
   ].join(' ')
 
@@ -4407,7 +4415,7 @@ const launchGeminiRun = async (
 
   // prompt 走 stdin：绕开 Windows .cmd 垫片的命令行长度与引号转义。
   child.stdin.on('error', () => {})
-  child.stdin.end(buildGeminiPrompt(request, attachmentPaths))
+  child.stdin.end(buildGeminiPrompt({ ...request, systemPrompt: buildGeminiSystemPrompt(request) }, attachmentPaths))
 
   return managedChild.handle
 }
@@ -5029,6 +5037,7 @@ export const buildCodexArgs = (request: ChatRequest, attachmentPaths: string[]) 
     buildProviderSystemPrompt(request.language, getRequestBaseSystemPrompt(request)),
     getCodexAskUserQuestionInstruction(request.language),
     getCodexSubagentModelInstruction(request.language),
+    buildAgentPendingInstruction(normalizeLanguage(request.language)),
     getWindowsShellSafetyInstruction(),
   ].join(' ')
 
@@ -5358,6 +5367,7 @@ export const buildClaudeArgs = (
     getClaudeAskUserQuestionInstruction(request.language),
     getClaudeSubagentModelInstruction(request.language),
     getClaudeBackgroundCheckInInstruction(request.language),
+    buildAgentPendingInstruction(normalizeLanguage(request.language)),
     getWindowsShellSafetyInstruction(),
   ].join(' ')
 

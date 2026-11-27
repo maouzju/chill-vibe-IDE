@@ -265,6 +265,9 @@ type LocaleText = {
   wakeTimerQueuePreview: (preview: string, attachmentCount: number) => string
   queuedSendNow: string
   queuedSendCancel: string
+  agentPendingStatus: (reason: string, checkInTime: string) => string
+  agentPendingCheckInNow: string
+  agentPendingMarkDone: string
   slashCommands: string
   loadingSlashCommands: string
   noMatchingSlashCommands: string
@@ -904,6 +907,9 @@ const localeTextByLanguage: Record<AppLanguage, LocaleText> = {
     },
     queuedSendNow: '立即发送',
     queuedSendCancel: '取消',
+    agentPendingStatus: (reason, checkInTime) => `后台未完成：${reason} · ${checkInTime} 自查`,
+    agentPendingCheckInNow: '立即自查',
+    agentPendingMarkDone: '标为已完成',
     slashCommands: '斜杠命令',
     loadingSlashCommands: '正在加载斜杠命令...',
     noMatchingSlashCommands: '没有匹配的斜杠命令。',
@@ -1579,6 +1585,9 @@ const localeTextByLanguage: Record<AppLanguage, LocaleText> = {
     },
     queuedSendNow: 'Send now',
     queuedSendCancel: 'Cancel',
+    agentPendingStatus: (reason, checkInTime) => `Still running in background: ${reason} · check-in at ${checkInTime}`,
+    agentPendingCheckInNow: 'Check now',
+    agentPendingMarkDone: 'Mark done',
     slashCommands: 'Slash commands',
     loadingSlashCommands: 'Loading slash commands...',
     noMatchingSlashCommands: 'No matching slash commands.',

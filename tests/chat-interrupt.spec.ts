@@ -1075,6 +1075,84 @@ test('canceling a wake timer restores the queued messages before the current dra
   await expect.poll(() => mock.readRequests()).toEqual([])
 })
 
+// docs/specs/agent-declared-pending：回复末尾带 <chill-vibe-pending> = 整件事还没做完。
+test('a reply ending with the unfinished marker keeps the card pending instead of completing', async ({ page }) => {
+  const mock = await installMockApis(page, {
+    initialCard: {
+      status: 'idle',
+      provider: 'codex',
+      model: 'gpt-5.5',
+      messages: [],
+    },
+  })
+  await page.goto(appUrl)
+
+  const textarea = getActiveComposerTextarea(page)
+  await textarea.fill('Kick off the release build')
+  await page.getByRole('button', { name: 'Send message' }).click()
+
+  await expect.poll(() => mock.readRequests()).toEqual(['message:Kick off the release build'])
+  await emitStreamEvent(page, 'stream-2', 'delta', {
+    content: 'Build started in the background.\n\n<chill-vibe-pending minutes="20">waiting for CI</chill-vibe-pending>',
+  })
+  await emitStreamEvent(page, 'stream-2', 'done', {})
+
+  const strip = page.locator('.composer-agent-pending')
+  await expect(strip).toContainText('Still running in background: waiting for CI')
+  await expect(page.locator('.message-assistant')).toContainText('Build started in the background.')
+  await expect(page.locator('.message-assistant')).not.toContainText('chill-vibe-pending')
+  await expect(page.locator('.message-run-duration')).toHaveCount(0)
+  await expect.poll(() => mock.readState().columns[0]?.cards['card-1']?.backgroundWorkPending).toBe(true)
+
+  await strip.getByRole('button', { name: 'Check now' }).click()
+  await expect.poll(() => mock.readChatRequests().at(-1)?.prompt ?? '').toContain('[Chill Vibe check-in]')
+  await expect.poll(() => mock.readChatRequests().at(-1)?.prompt ?? '').toContain('waiting for CI')
+})
+
+test('workspace wake timer keeps waiting while a peer declared its work unfinished', async ({ page }) => {
+  const mock = await installMockApis(page, {
+    wakeTimerEnabled: true,
+    initialCard: {
+      status: 'idle',
+      provider: 'codex',
+      model: 'gpt-5.5',
+      wakeTimerActive: true,
+      wakeTimerMode: 'workspace-agents',
+      messages: [],
+    },
+    peerCard: {
+      id: 'card-2',
+      title: 'Running peer',
+      status: 'streaming',
+      streamId: 'peer-stream-1',
+      sessionId: 'peer-session-1',
+      sessionModel: 'gpt-5.5',
+      provider: 'codex',
+      model: 'gpt-5.5',
+      messages: [{
+        id: 'peer-user-1',
+        role: 'user',
+        content: 'Package the app',
+        createdAt: new Date().toISOString(),
+      }],
+    },
+  })
+  await page.goto(appUrl)
+
+  const textarea = getActiveComposerTextarea(page)
+  await textarea.fill('Wake after the peer is really done')
+  await page.getByRole('button', { name: 'Send message' }).click()
+  await expect(page.locator('.composer-wake-timer-status')).toContainText('Waiting for 1 other agent')
+
+  await emitStreamEvent(page, 'peer-stream-1', 'delta', {
+    content: 'Packaging is running.\n\n<chill-vibe-pending minutes="30">waiting for the zip</chill-vibe-pending>',
+  })
+  await emitStreamEvent(page, 'peer-stream-1', 'done', {})
+  await page.waitForTimeout(1800)
+  await expect(page.locator('.composer-wake-timer-status')).toContainText('Waiting for 1 other agent')
+  expect(mock.readChatRequests()).toHaveLength(0)
+})
+
 test('workspace wake timer releases only after a running peer stays normally completed', async ({ page }) => {
   const mock = await installMockApis(page, {
     wakeTimerEnabled: true,

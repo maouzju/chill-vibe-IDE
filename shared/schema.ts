@@ -258,6 +258,10 @@ export const chatCardSchema = z.object({
   unread: z.boolean().default(false),
   completionGlow: z.boolean().optional(),
   backgroundWorkPending: z.boolean().optional(),
+  // agent 用 <chill-vibe-pending> 显式声明的「未完成」：在等什么、几点自查。只在
+  // backgroundWorkPending === true 时有意义，reducer 的 updateCard 会随它一起清（见 agent-declared-pending SPEC）。
+  agentPendingReason: z.string().optional(),
+  agentPendingUntil: z.string().optional(),
   draft: z.string().default(''),
   draftAttachments: z.array(imageAttachmentSchema).default([]),
   queuedSends: z.array(queuedSendRequestSchema).default([]),

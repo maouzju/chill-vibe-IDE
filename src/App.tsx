@@ -237,6 +237,14 @@ import {
   planAutoUrgeForCompletedCard,
 } from './components/chat-auto-urge'
 import { buildWorkflowFailureWakePrompt, detectWorkflowCatastrophicFailure } from './components/workflow-failure-wake'
+import {
+  AGENT_PENDING_MAX_CHECK_INS,
+  buildAgentPendingCheckInPrompt,
+  buildAgentPendingGiveUpNotice,
+  isAgentDeclaredPending,
+  parseAgentPendingMarker,
+  planAgentPendingDeadlines,
+} from '../shared/agent-pending-marker'
 import { resolveAppLoadError } from './app-load-error'
 import { clearDragPayload, peekDragPayload, readDragPayload, releaseDragPayloadIfStale } from './dnd'
 import { resolveDockInsertion, type DockInsertion } from './components/docked-chip-insertion'
@@ -1374,6 +1382,9 @@ function App() {
     | null
   >(null)
   const wakeTimerCompletionTimersRef = useRef(new Map<string, number>())
+  // agent 声明未完成：每张卡连续自动自查了几次 / 哪个截止时间已经发过自查。
+  const agentPendingCheckInCountRef = useRef(new Map<string, number>())
+  const agentPendingFiredRef = useRef(new Map<string, string>())
   const allAgentsDoneSoundTimerRef = useRef<number | null>(null)
   const workspaceDoneSoundTimersRef = useRef(new Map<string, number>())
   const recoverLiveStreamRef = useRef<(
@@ -4385,6 +4396,80 @@ function App() {
     queueMicrotask(() => flushReadyWakeTimersRef.current?.())
   }, [wakeTimerTopologySignature])
 
+  // agent 声明「未完成」的到点自查（docs/specs/agent-declared-pending）。只挂一个定时器到最早
+  // 到期点；签名带 status，卡开始/结束 streaming 都会重算。firedRef 防同一个截止时间重复发。
+  const agentPendingSignature = useMemo(() => {
+    const parts: string[] = []
+    for (const column of appState.columns) {
+      for (const card of Object.values(column.cards)) {
+        if (isAgentDeclaredPending(card)) {
+          parts.push(`${card.id}:${card.status}:${card.agentPendingUntil}`)
+        }
+      }
+    }
+    return parts.sort().join(',')
+  }, [appState.columns])
+  useEffect(() => {
+    if (!agentPendingSignature) {
+      return
+    }
+    let timer: number | undefined
+    const run = () => {
+      timer = undefined
+      const state = appStateRef.current
+      const entries = state.columns.flatMap((column) =>
+        Object.values(column.cards).map((entryCard) => ({ columnId: column.id, card: entryCard })),
+      )
+      const plan = planAgentPendingDeadlines(entries.map((entry) => entry.card), Date.now())
+      for (const dueCardId of plan.due) {
+        const entry = entries.find((candidate) => candidate.card.id === dueCardId)
+        const until = entry?.card.agentPendingUntil
+        if (!entry || !until || agentPendingFiredRef.current.get(dueCardId) === until) {
+          continue
+        }
+        agentPendingFiredRef.current.set(dueCardId, until)
+        const language = state.settings.language
+        const count = agentPendingCheckInCountRef.current.get(dueCardId) ?? 0
+        if (count >= AGENT_PENDING_MAX_CHECK_INS) {
+          agentPendingCheckInCountRef.current.delete(dueCardId)
+          const actions: IdeAction[] = [
+            {
+              type: 'updateCard',
+              columnId: entry.columnId,
+              cardId: dueCardId,
+              patch: { backgroundWorkPending: false },
+            },
+            {
+              type: 'appendMessages',
+              columnId: entry.columnId,
+              cardId: dueCardId,
+              messages: [createMessage('assistant', buildAgentPendingGiveUpNotice(language))],
+            },
+          ]
+          persistAfterActions(actions, applyActions(actions))
+          continue
+        }
+        agentPendingCheckInCountRef.current.set(dueCardId, count + 1)
+        void sendMessageRef.current?.(
+          entry.columnId,
+          dueCardId,
+          buildAgentPendingCheckInPrompt(entry.card.agentPendingReason ?? '', language),
+          [],
+          { origin: 'agent-pending-checkin', mode: 'auto' },
+        )
+      }
+      if (plan.nextAt !== undefined) {
+        timer = window.setTimeout(run, Math.max(0, plan.nextAt - Date.now()) + 50)
+      }
+    }
+    run()
+    return () => {
+      if (timer !== undefined) {
+        window.clearTimeout(timer)
+      }
+    }
+  }, [agentPendingSignature, applyActions, persistAfterActions])
+
   // 不再只给 duration 排定时器：wakeAt 现在是所有批次的硬上界（超管注册的等待
   // 靠它兜底），漏排就等于那条上界不存在。
   //
@@ -6110,7 +6195,6 @@ function App() {
           }
         },
         onDone: ({ stopped, interrupted, completion, turnStopReason, usage }) => {
-          const donePlan = getStreamDonePlan({ stopped, completion })
           // 回合结束兜底再提醒一次 Git 卡：改文件 / 提交不一定都走 command 活动（如原生编辑工具）。
           notifyGitWorkspaceMayHaveChanged(getColumn(columnId)?.workspacePath ?? '')
           flushBufferedAssistantDeltaForCard(card.id)
@@ -6156,6 +6240,20 @@ function App() {
             getColumnById(activityFlushedState.columns, columnId)?.cards[card.id]?.messages,
             card.streamId,
           )
+          // agent 在本回合最终回复里用 <chill-vibe-pending> 显式声明「还没做完」：与原生后台
+          // 等待走同一条 background-pending 结算（不响完成、不放行唤醒、不鞭策），另记原因和自查时间。
+          // 见 docs/specs/agent-declared-pending。
+          const agentPendingMarker = !stopped && !isAutoCompactRun
+            ? parseAgentPendingMarker(
+                getLatestAssistantTurnText(
+                  getColumnById(activityFlushedState.columns, columnId)?.cards[card.id]?.messages ?? [],
+                ),
+              )
+            : null
+          const donePlan = getStreamDonePlan({
+            stopped,
+            completion: agentPendingMarker ? 'background-pending' : completion,
+          })
           const runSuccessCallbacks = donePlan.runSuccessCallbacks && !isAutoCompactRun
 
           const completionSoundPlan = runSuccessCallbacks
@@ -6231,6 +6329,10 @@ function App() {
                 status: 'idle',
                 streamId: undefined,
                 backgroundWorkPending: true,
+                agentPendingReason: agentPendingMarker?.reason,
+                agentPendingUntil: agentPendingMarker
+                  ? new Date(Date.now() + agentPendingMarker.minutes * 60_000).toISOString()
+                  : undefined,
                 completionGlow: false,
                 sessionModel: card.model,
               },
@@ -7812,6 +7914,10 @@ function App() {
     }
 
     const sendOrigin = options.origin ?? 'user'
+    // 自动自查只数「连续」的：任何别的来源发出的消息都说明有人接手了，计数归零。
+    if (sendOrigin !== 'agent-pending-checkin') {
+      agentPendingCheckInCountRef.current.delete(cardId)
+    }
     const answersPendingAskUser =
       card.status === 'streaming' &&
       (
